@@ -8,6 +8,8 @@
 //!     -e POSTGRES_DB=mstest -p 55432:5432 postgres:16-alpine
 //!   DATABASE_URL=postgres://msuser:mspass@localhost:55432/mstest cargo run -p server
 
+mod orchestration;
+
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -219,9 +221,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // —— task 模块(Shepherd 任务拆分 DAG)——
     let task_repo = Arc::new(PgTaskRepository::new(pool.clone()));
+    let task_admin = TaskService::new(task_repo.clone());
     let task_routes = task::adapters::http::router(
         CreateDecompositionUseCase::new(task_repo.clone()),
-        TaskService::new(task_repo),
+        task_admin.clone(),
+        sessions.clone(),
+    );
+
+    // —— verification 模块(Shepherd 完整性验证:需求↔任务↔实现 追溯 + 缺口检测)——
+    let ver_repo = Arc::new(PgVerificationRepository::new(pool.clone()));
+    let ver_admin = VerificationService::new(ver_repo.clone());
+    let verification_routes = verification::adapters::http::router(
+        CreateVerificationUseCase::new(ver_repo.clone()),
+        ver_admin.clone(),
         sessions.clone(),
     );
 
@@ -236,17 +248,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     } else {
         Arc::new(delivery::adapters::EchoAgentExecutor::new())
     };
+    // 交付落终态 → 编排器自动回灌验证(需求↔任务↔实现 闭环)。
+    let delivery_observer = orchestration::delivery_observer(task_admin, ver_admin);
     let delivery_svc =
-        DeliveryService::new(Arc::new(PgDeliveryRepository::new(pool.clone())), agent);
+        DeliveryService::new(Arc::new(PgDeliveryRepository::new(pool.clone())), agent)
+            .with_observer(delivery_observer);
     let delivery_routes = delivery::adapters::http::router(delivery_svc, sessions.clone());
-
-    // —— verification 模块(Shepherd 完整性验证:需求↔任务↔实现 追溯 + 缺口检测)——
-    let ver_repo = Arc::new(PgVerificationRepository::new(pool.clone()));
-    let verification_routes = verification::adapters::http::router(
-        CreateVerificationUseCase::new(ver_repo.clone()),
-        VerificationService::new(ver_repo),
-        sessions.clone(),
-    );
 
     // —— case 模块 ——
     let review_repo = Arc::new(PgReviewRepository::new(pool.clone()));

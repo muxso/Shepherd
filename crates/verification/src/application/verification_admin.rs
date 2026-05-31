@@ -50,6 +50,15 @@ impl VerificationService {
         Ok(self.get(id).await?.report())
     }
 
+    /// 按需求版本查找验证(编排器用:据交付定位要回灌的验证)。
+    pub async fn find_by_requirement_version(
+        &self,
+        requirement_id: &str,
+        requirement_version: u32,
+    ) -> Result<Option<Verification>, VerificationCmdError> {
+        Ok(self.repo.find_by_requirement_version(requirement_id, requirement_version).await?)
+    }
+
     /// 建立覆盖链:某任务覆盖某条验收标准(需求 → 任务 追溯)。
     pub async fn link(
         &self,

@@ -2,9 +2,12 @@
 
 use std::sync::Arc;
 
-use crate::domain::{Deliverable, DeliverableKind, DeliveryAttempt, DeliveryError, ExecutorKind};
+use crate::domain::{
+    AttemptStatus, Deliverable, DeliverableKind, DeliveryAttempt, DeliveryError, ExecutorKind,
+};
 use crate::ports::{
-    AgentExecutor, DeliveryRepository, DispatchOutcome, ExecError, RepoError, WorkSpec,
+    AgentExecutor, DeliveryObserver, DeliveryRepository, DispatchOutcome, ExecError, RepoError,
+    WorkSpec,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -35,11 +38,28 @@ impl From<DeliveryError> for DeliveryCmdError {
 pub struct DeliveryService {
     repo: Arc<dyn DeliveryRepository>,
     executor: Arc<dyn AgentExecutor>,
+    /// 可选观察者:尝试落终态后通知(组装根桥接到 orchestrator)。
+    observer: Option<Arc<dyn DeliveryObserver>>,
 }
 
 impl DeliveryService {
     pub fn new(repo: Arc<dyn DeliveryRepository>, executor: Arc<dyn AgentExecutor>) -> Self {
-        Self { repo, executor }
+        Self { repo, executor, observer: None }
+    }
+
+    /// 挂上观察者(终态通知)。
+    pub fn with_observer(mut self, observer: Arc<dyn DeliveryObserver>) -> Self {
+        self.observer = Some(observer);
+        self
+    }
+
+    /// 尝试落终态(Delivered/Failed)时通知观察者(尽力而为)。
+    async fn notify_settled(&self, attempt: &DeliveryAttempt) {
+        if matches!(attempt.status, AttemptStatus::Delivered | AttemptStatus::Failed) {
+            if let Some(o) = &self.observer {
+                o.on_settled(attempt).await;
+            }
+        }
     }
 
     /// 派发一个任务给执行者:建尝试 → 调执行者 → 按结果推进。
@@ -81,6 +101,7 @@ impl DeliveryService {
             Err(ExecError::Backend(msg)) => attempt.fail(&msg)?,
         }
         self.repo.save(&attempt).await?;
+        self.notify_settled(&attempt).await;
         Ok(attempt)
     }
 
@@ -125,6 +146,7 @@ impl DeliveryService {
             summary: summary.to_string(),
         })?;
         self.repo.save(&a).await?;
+        self.notify_settled(&a).await;
         Ok(a)
     }
 
@@ -133,6 +155,7 @@ impl DeliveryService {
         let mut a = self.get(id).await?;
         a.fail(error)?;
         self.repo.save(&a).await?;
+        self.notify_settled(&a).await;
         Ok(a)
     }
 }
@@ -211,6 +234,64 @@ mod tests {
             s.report_running(&a.id, "r").await.unwrap_err(),
             DeliveryCmdError::Conflict(_)
         ));
+    }
+
+    #[tokio::test]
+    async fn observer_notified_on_terminal_settlement() {
+        use crate::ports::DeliveryObserver;
+        use async_trait::async_trait;
+        use std::sync::Mutex;
+
+        #[derive(Default)]
+        struct Spy {
+            settled: Mutex<Vec<(String, String)>>, // (task_id, status)
+        }
+        #[async_trait]
+        impl DeliveryObserver for Spy {
+            async fn on_settled(&self, a: &DeliveryAttempt) {
+                self.settled.lock().unwrap().push((a.task_id.clone(), a.status.as_str().to_string()));
+            }
+        }
+
+        let spy = Arc::new(Spy::default());
+        let svc = DeliveryService::new(
+            Arc::new(InMemoryDeliveryRepository::new()),
+            Arc::new(StubAgentExecutor::new(StubBehavior::Complete { deliverable: deliverable() })),
+        )
+        .with_observer(spy.clone());
+
+        // 同步完成 → Delivered 终态 → 观察者被通知一次
+        svc.dispatch("d1", "t1", "x", "", &[], "CLAUDE_CODE", None).await.expect("dispatch");
+        assert_eq!(spy.settled.lock().unwrap().as_slice(), &[("t1".into(), "DELIVERED".into())]);
+    }
+
+    #[tokio::test]
+    async fn observer_not_notified_on_non_terminal() {
+        use crate::ports::DeliveryObserver;
+        use async_trait::async_trait;
+        use std::sync::Mutex;
+
+        #[derive(Default)]
+        struct Spy {
+            n: Mutex<usize>,
+        }
+        #[async_trait]
+        impl DeliveryObserver for Spy {
+            async fn on_settled(&self, _a: &DeliveryAttempt) {
+                *self.n.lock().unwrap() += 1;
+            }
+        }
+
+        let spy = Arc::new(Spy::default());
+        let svc = DeliveryService::new(
+            Arc::new(InMemoryDeliveryRepository::new()),
+            Arc::new(StubAgentExecutor::new(StubBehavior::Accept { run_id: "r".into() })),
+        )
+        .with_observer(spy.clone());
+
+        // 异步接单 → Running(非终态)→ 不通知
+        svc.dispatch("d1", "t1", "x", "", &[], "CODEX", None).await.expect("dispatch");
+        assert_eq!(*spy.n.lock().unwrap(), 0);
     }
 
     #[tokio::test]
