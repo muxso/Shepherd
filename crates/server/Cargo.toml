@@ -17,6 +17,8 @@ requirement = { path = "../requirement", features = ["pg", "http"] }
 task = { path = "../task", features = ["pg", "http"] }
 delivery = { path = "../delivery", features = ["pg", "http", "exec-http", "exec-local"] }
 verification = { path = "../verification", features = ["pg", "http"] }
+orchestrator = { path = "../orchestrator" }
+async-trait = "0.1"
 api-test = { path = "../api-test", features = ["pg", "http", "jmeter", "local"] }
 migrate = { path = "../migrate" }
 axum = "0.8"

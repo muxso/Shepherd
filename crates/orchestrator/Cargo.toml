@@ -1,0 +1,18 @@
+[package]
+name = "orchestrator"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+
+# Shepherd 跨上下文编排(process manager)。纯协调逻辑,无 IO:在自己的 gateway 端口上工作,
+# 由组装根把端口接到 task / verification 的真实服务,把 delivery 的 observer 钩子桥接到这里。
+# 不依赖任何业务 crate —— 上下文之间因此保持解耦。
+[dependencies]
+async-trait = "0.1"
+thiserror = "2"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+
+[lints]
+workspace = true

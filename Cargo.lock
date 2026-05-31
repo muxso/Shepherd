@@ -1090,6 +1090,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9f7c3e4beb33f85d45ae3e3a1792185706c8e16d043238c593331cc7cd313b50"
 
 [[package]]
+name = "orchestrator"
+version = "0.0.1"
+dependencies = [
+ "async-trait",
+ "thiserror",
+ "tokio",
+]
+
+[[package]]
 name = "parking"
 version = "2.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1610,11 +1619,13 @@ name = "server"
 version = "0.0.1"
 dependencies = [
  "api-test",
+ "async-trait",
  "axum",
  "bug",
  "case",
  "delivery",
  "migrate",
+ "orchestrator",
  "project",
  "requirement",
  "system-setting",
