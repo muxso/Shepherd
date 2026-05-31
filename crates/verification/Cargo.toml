@@ -1,0 +1,32 @@
+[package]
+name = "verification"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+
+# Shepherd 完整性验证上下文:需求 ←→ 任务 ←→ 实现 双向追溯 + 缺口检测。
+# 一个需求版本一个 Verification 聚合,持有验收标准 + 覆盖链(criterion ↔ task)。
+# 把"每条验收标准是否被已交付且验证的任务覆盖"聚合成确定性的完整性报告(复用 case-review 的聚合精神)。
+# 通过 requirement_id/version + decomposition_id/task_id(字符串)引用其它上下文,无类型耦合。
+[dependencies]
+kernel = { path = "../kernel" }
+async-trait = "0.1"
+thiserror = "2"
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "postgres"], optional = true }
+axum = { version = "0.8", optional = true }
+serde = { version = "1", features = ["derive"], optional = true }
+webauth = { path = "../webauth", optional = true }
+
+[features]
+pg = ["dep:sqlx"]
+http = ["dep:axum", "dep:serde", "dep:webauth", "webauth/http"]
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+tower = { version = "0.5", features = ["util"] }
+serde_json = "1"
+migrate = { path = "../migrate" }
+webauth = { path = "../webauth", features = ["http", "test-util"] }
+
+[lints]
+workspace = true
