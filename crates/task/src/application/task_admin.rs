@@ -84,6 +84,19 @@ impl TaskService {
         Ok(d)
     }
 
+    /// 沿 happy path 把任务推进到 target(幂等;供编排器据交付进度镜像任务状态)。
+    pub async fn advance_to(
+        &self,
+        decomposition_id: &str,
+        task_id: &str,
+        target: TaskStatus,
+    ) -> Result<Decomposition, TaskCmdError> {
+        let mut d = self.get(decomposition_id).await?;
+        d.advance_to(task_id, target)?;
+        self.repo.save(&d).await?;
+        Ok(d)
+    }
+
     /// 状态流转(Running/Delivered/Verified/Failed/重试 Pending)。
     pub async fn transition(
         &self,

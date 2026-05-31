@@ -1,56 +1,93 @@
-//! 用例:交付结果 → 验证回灌。
+//! 用例:交付进度 → 同时(1)驱动任务生命周期 +(2)终态时回灌验证。
 //!
-//! 一次交付尝试进入终态后调用 `on_settled`:据拆分图定位需求版本 → 找到验证 → 同步该任务的
-//! 覆盖链 `satisfied`(Delivered ⇒ true,Failed ⇒ false)。验证报告随之刷新完整性/缺口。
+//! 一次交付尝试每进入 Running/Delivered/Failed,编排器据进度:
+//! - **镜像任务状态**:Running⇒任务推进到 Running,Delivered⇒Delivered,Failed⇒Failed(尽力而为);
+//! - **回灌验证**(仅终态):据拆分图定位需求版本 → 找验证 → 同步该任务覆盖链
+//!   `satisfied`(Delivered⇒true,Failed⇒false)。
 
 use std::sync::Arc;
 
-use crate::ports::{DecompositionGateway, OrchError, VerificationGateway};
+use crate::ports::{OrchError, TaskGateway, TaskTarget, VerificationGateway};
 
-/// 回灌结果(便于观测与测试)。
+/// 交付进度(对应 delivery 尝试的非初始状态)。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DeliveryProgress {
+    Running,
+    Delivered,
+    Failed,
+}
+
+/// 验证回灌结果。
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum FeedbackOutcome {
-    /// 找不到拆分图,无从定位需求 —— 跳过。
+pub enum VerificationSync {
+    /// 非终态(Running),暂不回灌。
+    NotApplicable,
+    /// 找不到拆分图,无从定位需求。
     NoDecomposition,
-    /// 该需求版本尚未开启验证 —— 跳过。
+    /// 该需求版本尚未开启验证。
     NoVerification,
-    /// 已把该任务状态同步进验证。
+    /// 已同步覆盖链。
     Synced { verification_id: String, satisfied: bool },
+}
+
+/// 一次编排的效果(便于观测与测试)。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FeedbackOutcome {
+    /// 任务是否被成功推进(尽力而为:依赖未满足等会导致 false)。
+    pub task_advanced: bool,
+    pub verification: VerificationSync,
 }
 
 #[derive(Clone)]
 pub struct DeliveryFeedbackOrchestrator {
-    decomposition: Arc<dyn DecompositionGateway>,
+    task: Arc<dyn TaskGateway>,
     verification: Arc<dyn VerificationGateway>,
 }
 
 impl DeliveryFeedbackOrchestrator {
-    pub fn new(
-        decomposition: Arc<dyn DecompositionGateway>,
-        verification: Arc<dyn VerificationGateway>,
-    ) -> Self {
-        Self { decomposition, verification }
+    pub fn new(task: Arc<dyn TaskGateway>, verification: Arc<dyn VerificationGateway>) -> Self {
+        Self { task, verification }
     }
 
-    /// 交付尝试进入终态后回灌验证。`delivered` = 该尝试是否交付成功(Delivered)。
-    pub async fn on_settled(
+    /// 交付进度推进时调用:驱动任务 + (终态)回灌验证。
+    pub async fn on_progress(
         &self,
         decomposition_id: &str,
         task_id: &str,
-        delivered: bool,
+        progress: DeliveryProgress,
     ) -> Result<FeedbackOutcome, OrchError> {
-        let Some((requirement_id, version)) =
-            self.decomposition.requirement_of(decomposition_id).await?
-        else {
-            return Ok(FeedbackOutcome::NoDecomposition);
+        // (1) 驱动任务生命周期 —— 尽力而为(依赖未满足/非法流转不阻断验证回灌)。
+        let target = match progress {
+            DeliveryProgress::Running => TaskTarget::Running,
+            DeliveryProgress::Delivered => TaskTarget::Delivered,
+            DeliveryProgress::Failed => TaskTarget::Failed,
         };
-        let Some(verification_id) =
-            self.verification.find_verification(&requirement_id, version).await?
-        else {
-            return Ok(FeedbackOutcome::NoVerification);
+        let task_advanced =
+            self.task.advance_task(decomposition_id, task_id, target).await.is_ok();
+
+        // (2) 终态回灌验证。
+        let verification = match progress {
+            DeliveryProgress::Running => VerificationSync::NotApplicable,
+            DeliveryProgress::Delivered | DeliveryProgress::Failed => {
+                let satisfied = matches!(progress, DeliveryProgress::Delivered);
+                match self.task.requirement_of(decomposition_id).await? {
+                    None => VerificationSync::NoDecomposition,
+                    Some((req_id, version)) => {
+                        match self.verification.find_verification(&req_id, version).await? {
+                            None => VerificationSync::NoVerification,
+                            Some(vid) => {
+                                self.verification
+                                    .sync(&vid, decomposition_id, task_id, satisfied)
+                                    .await?;
+                                VerificationSync::Synced { verification_id: vid, satisfied }
+                            }
+                        }
+                    }
+                }
+            }
         };
-        self.verification.sync(&verification_id, decomposition_id, task_id, delivered).await?;
-        Ok(FeedbackOutcome::Synced { verification_id, satisfied: delivered })
+
+        Ok(FeedbackOutcome { task_advanced, verification })
     }
 }
 
@@ -61,33 +98,35 @@ mod tests {
     use std::sync::Mutex;
 
     #[derive(Default)]
-    struct FakeDecomp {
+    struct FakeTask {
         // decomposition_id -> (requirement_id, version)
-        map: Mutex<Vec<(String, String, u32)>>,
+        map: Vec<(String, String, u32)>,
+        advanced: Mutex<Vec<(String, String, TaskTarget)>>,
+        // 模拟推进失败(如依赖未满足)
+        advance_fails: bool,
     }
-    impl FakeDecomp {
+    impl FakeTask {
         fn with(id: &str, req: &str, ver: u32) -> Self {
-            Self { map: Mutex::new(vec![(id.into(), req.into(), ver)]) }
+            Self { map: vec![(id.into(), req.into(), ver)], ..Default::default() }
         }
     }
     #[async_trait]
-    impl DecompositionGateway for FakeDecomp {
+    impl TaskGateway for FakeTask {
         async fn requirement_of(&self, id: &str) -> Result<Option<(String, u32)>, OrchError> {
-            Ok(self
-                .map
-                .lock()
-                .unwrap()
-                .iter()
-                .find(|(d, _, _)| d == id)
-                .map(|(_, r, v)| (r.clone(), *v)))
+            Ok(self.map.iter().find(|(d, _, _)| d == id).map(|(_, r, v)| (r.clone(), *v)))
+        }
+        async fn advance_task(&self, d: &str, t: &str, target: TaskTarget) -> Result<(), OrchError> {
+            if self.advance_fails {
+                return Err(OrchError::Gateway("deps not satisfied".into()));
+            }
+            self.advanced.lock().unwrap().push((d.into(), t.into(), target));
+            Ok(())
         }
     }
 
     #[derive(Default)]
     struct FakeVerif {
-        // (requirement_id, version) -> verification_id
         found: Option<(String, u32, String)>,
-        // 记录 sync 调用
         synced: Mutex<Vec<(String, String, String, bool)>>,
     }
     #[async_trait]
@@ -102,45 +141,60 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn delivered_syncs_verification_satisfied_true() {
-        let decomp = Arc::new(FakeDecomp::with("d1", "req1", 1));
-        let verif = Arc::new(FakeVerif {
-            found: Some(("req1".into(), 1, "v1".into())),
-            ..Default::default()
-        });
-        let orch = DeliveryFeedbackOrchestrator::new(decomp, verif.clone());
-
-        let out = orch.on_settled("d1", "t1", true).await.expect("ok");
-        assert_eq!(out, FeedbackOutcome::Synced { verification_id: "v1".into(), satisfied: true });
-        assert_eq!(verif.synced.lock().unwrap().as_slice(), &[("v1".into(), "d1".into(), "t1".into(), true)]);
-    }
-
-    #[tokio::test]
-    async fn failed_syncs_satisfied_false() {
-        let decomp = Arc::new(FakeDecomp::with("d1", "req1", 1));
+    async fn delivered_advances_task_and_syncs_verification() {
+        let task = Arc::new(FakeTask::with("d1", "req1", 1));
         let verif = Arc::new(FakeVerif { found: Some(("req1".into(), 1, "v1".into())), ..Default::default() });
-        let orch = DeliveryFeedbackOrchestrator::new(decomp, verif.clone());
+        let orch = DeliveryFeedbackOrchestrator::new(task.clone(), verif.clone());
 
-        let out = orch.on_settled("d1", "t1", false).await.expect("ok");
-        assert_eq!(out, FeedbackOutcome::Synced { verification_id: "v1".into(), satisfied: false });
-        assert!(!verif.synced.lock().unwrap()[0].3);
+        let out = orch.on_progress("d1", "t1", DeliveryProgress::Delivered).await.expect("ok");
+        assert!(out.task_advanced);
+        assert_eq!(out.verification, VerificationSync::Synced { verification_id: "v1".into(), satisfied: true });
+        assert_eq!(task.advanced.lock().unwrap().as_slice(), &[("d1".into(), "t1".into(), TaskTarget::Delivered)]);
+        assert!(verif.synced.lock().unwrap()[0].3);
     }
 
     #[tokio::test]
-    async fn no_decomposition_is_skipped() {
-        let orch = DeliveryFeedbackOrchestrator::new(
-            Arc::new(FakeDecomp::default()),
-            Arc::new(FakeVerif::default()),
-        );
-        assert_eq!(orch.on_settled("ghost", "t1", true).await.expect("ok"), FeedbackOutcome::NoDecomposition);
+    async fn running_advances_task_only_no_verification() {
+        let task = Arc::new(FakeTask::with("d1", "req1", 1));
+        let verif = Arc::new(FakeVerif { found: Some(("req1".into(), 1, "v1".into())), ..Default::default() });
+        let orch = DeliveryFeedbackOrchestrator::new(task.clone(), verif.clone());
+
+        let out = orch.on_progress("d1", "t1", DeliveryProgress::Running).await.expect("ok");
+        assert!(out.task_advanced);
+        assert_eq!(out.verification, VerificationSync::NotApplicable);
+        assert_eq!(task.advanced.lock().unwrap()[0].2, TaskTarget::Running);
+        assert!(verif.synced.lock().unwrap().is_empty());
     }
 
     #[tokio::test]
-    async fn no_verification_is_skipped() {
-        let orch = DeliveryFeedbackOrchestrator::new(
-            Arc::new(FakeDecomp::with("d1", "req1", 1)),
-            Arc::new(FakeVerif::default()), // found = None
-        );
-        assert_eq!(orch.on_settled("d1", "t1", true).await.expect("ok"), FeedbackOutcome::NoVerification);
+    async fn failed_advances_failed_and_syncs_unsatisfied() {
+        let task = Arc::new(FakeTask::with("d1", "req1", 1));
+        let verif = Arc::new(FakeVerif { found: Some(("req1".into(), 1, "v1".into())), ..Default::default() });
+        let orch = DeliveryFeedbackOrchestrator::new(task.clone(), verif.clone());
+
+        let out = orch.on_progress("d1", "t1", DeliveryProgress::Failed).await.expect("ok");
+        assert_eq!(out.verification, VerificationSync::Synced { verification_id: "v1".into(), satisfied: false });
+        assert_eq!(task.advanced.lock().unwrap()[0].2, TaskTarget::Failed);
+    }
+
+    #[tokio::test]
+    async fn task_advance_failure_does_not_block_verification() {
+        let task = Arc::new(FakeTask { map: vec![("d1".into(), "req1".into(), 1)], advance_fails: true, ..Default::default() });
+        let verif = Arc::new(FakeVerif { found: Some(("req1".into(), 1, "v1".into())), ..Default::default() });
+        let orch = DeliveryFeedbackOrchestrator::new(task, verif.clone());
+
+        let out = orch.on_progress("d1", "t1", DeliveryProgress::Delivered).await.expect("ok");
+        assert!(!out.task_advanced); // 推进失败
+        // 但验证照常回灌
+        assert!(matches!(out.verification, VerificationSync::Synced { .. }));
+    }
+
+    #[tokio::test]
+    async fn no_verification_still_advances_task() {
+        let task = Arc::new(FakeTask::with("d1", "req1", 1));
+        let orch = DeliveryFeedbackOrchestrator::new(task.clone(), Arc::new(FakeVerif::default()));
+        let out = orch.on_progress("d1", "t1", DeliveryProgress::Delivered).await.expect("ok");
+        assert!(out.task_advanced);
+        assert_eq!(out.verification, VerificationSync::NoVerification);
     }
 }

@@ -233,6 +233,30 @@ impl Decomposition {
         self.transition(id, TaskStatus::Dispatched)
     }
 
+    /// 沿 happy path 把任务**推进到** `target`(幂等:已到达或更靠后则 no-op)。
+    /// Pending→Dispatched→Running→Delivered→Verified 逐级推进(Dispatched 仍受依赖门控);
+    /// `target = Failed` 时从 Dispatched/Running/Delivered 直接置失败。
+    /// 主要供编排器据交付进度镜像任务状态;不可达则保持原状(no-op)。
+    pub fn advance_to(&mut self, id: &str, target: TaskStatus) -> Result<(), TaskError> {
+        if self.task(id).is_none() {
+            return Err(TaskError::NoSuchTask(id.to_string()));
+        }
+        loop {
+            let cur = self.task(id).expect("exists").status;
+            if cur == target {
+                return Ok(());
+            }
+            let Some(next) = next_toward(cur, target) else {
+                return Ok(()); // 无法继续推进 → 幂等 no-op
+            };
+            if next == TaskStatus::Dispatched {
+                self.dispatch(id)?; // 带依赖门控
+            } else {
+                self.transition(id, next)?;
+            }
+        }
+    }
+
     /// 通用状态流转(派发请用 `dispatch` 以带上依赖门控)。
     pub fn transition(&mut self, id: &str, to: TaskStatus) -> Result<(), TaskError> {
         // 依赖门控:转入 Dispatched 必须依赖就绪
@@ -247,6 +271,37 @@ impl Decomposition {
         task.status = to;
         Ok(())
     }
+}
+
+/// happy chain 上 `cur` 朝 `target` 的下一步;无法推进返回 None。
+fn next_toward(cur: TaskStatus, target: TaskStatus) -> Option<TaskStatus> {
+    use TaskStatus::*;
+    if target == Failed {
+        return match cur {
+            Dispatched | Running | Delivered => Some(Failed),
+            _ => None,
+        };
+    }
+    fn rank(s: TaskStatus) -> Option<u8> {
+        match s {
+            Pending => Some(0),
+            Dispatched => Some(1),
+            Running => Some(2),
+            Delivered => Some(3),
+            Verified => Some(4),
+            Failed => None,
+        }
+    }
+    let (rc, rt) = (rank(cur)?, rank(target)?);
+    if rc >= rt {
+        return None;
+    }
+    Some(match rc + 1 {
+        1 => Dispatched,
+        2 => Running,
+        3 => Delivered,
+        _ => Verified,
+    })
 }
 
 #[cfg(test)]
@@ -353,6 +408,47 @@ mod tests {
         d.transition("t4", TaskStatus::Delivered).expect("d");
         d.transition("t4", TaskStatus::Verified).expect("v");
         assert!(d.is_complete());
+    }
+
+    #[test]
+    fn advance_to_walks_happy_path_for_root_task() {
+        let mut d = Decomposition::new("d1", "req1", 1);
+        d.add_task(nt("A", &[])).expect("a"); // t1,无依赖
+        // 从 Pending 一步推进到 Delivered(走 Dispatched→Running→Delivered)
+        d.advance_to("t1", TaskStatus::Delivered).expect("advance");
+        assert_eq!(d.task("t1").expect("t1").status, TaskStatus::Delivered);
+    }
+
+    #[test]
+    fn advance_to_is_idempotent_when_already_past() {
+        let mut d = Decomposition::new("d1", "req1", 1);
+        d.add_task(nt("A", &[])).expect("a");
+        d.advance_to("t1", TaskStatus::Delivered).expect("to delivered");
+        // 目标在当前之前 → no-op,不报错,不回退
+        d.advance_to("t1", TaskStatus::Running).expect("noop");
+        assert_eq!(d.task("t1").expect("t1").status, TaskStatus::Delivered);
+    }
+
+    #[test]
+    fn advance_to_failed_from_running() {
+        let mut d = Decomposition::new("d1", "req1", 1);
+        d.add_task(nt("A", &[])).expect("a");
+        d.advance_to("t1", TaskStatus::Running).expect("to running");
+        d.advance_to("t1", TaskStatus::Failed).expect("to failed");
+        assert_eq!(d.task("t1").expect("t1").status, TaskStatus::Failed);
+    }
+
+    #[test]
+    fn advance_to_blocked_by_unsatisfied_deps() {
+        let mut d = Decomposition::new("d1", "req1", 1);
+        d.add_task(nt("A", &[])).expect("a"); // t1
+        d.add_task(nt("B", &["t1"])).expect("b"); // t2 依赖 t1(未完成)
+        // 依赖未满足 → 推进到 Running 时 dispatch 失败
+        assert_eq!(
+            d.advance_to("t2", TaskStatus::Running).unwrap_err(),
+            TaskError::DependenciesNotSatisfied
+        );
+        assert_eq!(d.task("t2").expect("t2").status, TaskStatus::Pending);
     }
 
     #[test]

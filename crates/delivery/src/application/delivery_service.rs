@@ -53,11 +53,14 @@ impl DeliveryService {
         self
     }
 
-    /// 尝试落终态(Delivered/Failed)时通知观察者(尽力而为)。
-    async fn notify_settled(&self, attempt: &DeliveryAttempt) {
-        if matches!(attempt.status, AttemptStatus::Delivered | AttemptStatus::Failed) {
+    /// 尝试进入 Running/Delivered/Failed 时通知观察者(尽力而为)。
+    async fn notify_progress(&self, attempt: &DeliveryAttempt) {
+        if matches!(
+            attempt.status,
+            AttemptStatus::Running | AttemptStatus::Delivered | AttemptStatus::Failed
+        ) {
             if let Some(o) = &self.observer {
-                o.on_settled(attempt).await;
+                o.on_progress(attempt).await;
             }
         }
     }
@@ -101,7 +104,7 @@ impl DeliveryService {
             Err(ExecError::Backend(msg)) => attempt.fail(&msg)?,
         }
         self.repo.save(&attempt).await?;
-        self.notify_settled(&attempt).await;
+        self.notify_progress(&attempt).await;
         Ok(attempt)
     }
 
@@ -126,6 +129,7 @@ impl DeliveryService {
         let mut a = self.get(id).await?;
         a.start_running(run_id)?;
         self.repo.save(&a).await?;
+        self.notify_progress(&a).await;
         Ok(a)
     }
 
@@ -146,7 +150,7 @@ impl DeliveryService {
             summary: summary.to_string(),
         })?;
         self.repo.save(&a).await?;
-        self.notify_settled(&a).await;
+        self.notify_progress(&a).await;
         Ok(a)
     }
 
@@ -155,7 +159,7 @@ impl DeliveryService {
         let mut a = self.get(id).await?;
         a.fail(error)?;
         self.repo.save(&a).await?;
-        self.notify_settled(&a).await;
+        self.notify_progress(&a).await;
         Ok(a)
     }
 }
@@ -248,7 +252,7 @@ mod tests {
         }
         #[async_trait]
         impl DeliveryObserver for Spy {
-            async fn on_settled(&self, a: &DeliveryAttempt) {
+            async fn on_progress(&self, a: &DeliveryAttempt) {
                 self.settled.lock().unwrap().push((a.task_id.clone(), a.status.as_str().to_string()));
             }
         }
@@ -266,7 +270,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn observer_not_notified_on_non_terminal() {
+    async fn observer_notified_on_running_progress() {
         use crate::ports::DeliveryObserver;
         use async_trait::async_trait;
         use std::sync::Mutex;
@@ -277,7 +281,7 @@ mod tests {
         }
         #[async_trait]
         impl DeliveryObserver for Spy {
-            async fn on_settled(&self, _a: &DeliveryAttempt) {
+            async fn on_progress(&self, _a: &DeliveryAttempt) {
                 *self.n.lock().unwrap() += 1;
             }
         }
@@ -289,9 +293,9 @@ mod tests {
         )
         .with_observer(spy.clone());
 
-        // 异步接单 → Running(非终态)→ 不通知
+        // 异步接单 → Running(进度推进)→ 通知一次(供编排器驱动任务到 Running)
         svc.dispatch("d1", "t1", "x", "", &[], "CODEX", None).await.expect("dispatch");
-        assert_eq!(*spy.n.lock().unwrap(), 0);
+        assert_eq!(*spy.n.lock().unwrap(), 1);
     }
 
     #[tokio::test]
