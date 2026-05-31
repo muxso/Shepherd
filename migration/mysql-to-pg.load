@@ -1,0 +1,72 @@
+/*
+ * MeterSphere MySQL → PostgreSQL 数据迁移(pgloader 命令文件)
+ * ============================================================
+ * 前提:
+ *   1. 目标 PG 的表结构由 ms-migrate 先建好(本脚本只迁数据,不建表):
+ *        DATABASE_URL=postgres://... cargo run -p ms-server   # 启动时自动 migrate
+ *      或单独跑迁移(见 migration/README.md)。
+ *   2. pgloader 已安装(brew install pgloader / apt-get install pgloader)。
+ *   3. 先在**副本**上 dry-run,核对行数与抽样数据后再对生产执行。
+ *
+ * 设计:
+ *   - `WITH data only` + `create no tables`:尊重 ms-migrate 的 schema,pgloader 不碰 DDL。
+ *   - 用 MySQL 侧 MATERIALIZE VIEWS 把源表**重塑**成目标列集合(我们的 PG 是裁剪过的子集),
+ *     视图名与目标表名一致,pgloader 即按名加载 view → table。
+ *   - CAST 把 MySQL 的 tinyint(1) 映射为 PG boolean。
+ *
+ * ⚠️ 下面视图里的源列名按 MeterSphere 习惯命名(snake_case),**务必**对照真实
+ *    MySQL schema 校正(尤其 organization_id / project_id 等外键列、软删除列名)。
+ */
+
+LOAD DATABASE
+     FROM      mysql://MS_USER:MS_PASS@MYSQL_HOST:3306/metersphere
+     INTO      postgresql://msuser:mspass@PG_HOST:5432/mstest
+
+ WITH data only,
+      create no tables,
+      create no indexes,
+      truncate,
+      disable triggers,
+      preserve index names,
+      workers = 4, concurrency = 1,
+      batch rows = 5000
+
+  SET PostgreSQL PARAMETERS
+      maintenance_work_mem = '256MB',
+      work_mem = '64MB'
+
+  CAST type tinyint when (= 1 precision) to boolean using tinyint-to-boolean,
+       type tinyint to smallint drop typemod
+
+ -- 只迁下面这些重塑后的视图(名字即目标 ms_* 表名)
+ INCLUDING ONLY TABLE NAMES MATCHING ~/^ms_/
+
+ MATERIALIZE VIEWS
+   ms_user AS $$
+     SELECT id, name, email
+     FROM   `user`
+     WHERE  COALESCE(deleted, 0) = 0
+   $$,
+
+   ms_project AS $$
+     SELECT id, organization_id, name,
+            COALESCE(enable, 1)  AS enable,
+            COALESCE(deleted, 0) AS deleted
+     FROM   project
+   $$,
+
+   ms_resource_pool AS $$
+     SELECT id, name,
+            COALESCE(enable, 1)  AS enabled,
+            COALESCE(deleted, 0) AS deleted
+     FROM   test_resource_pool
+   $$
+
+   /* 其余目标表按同样套路追加视图(对照真实源表列名):
+      ms_bug, ms_status_item, ms_status_flow,
+      ms_case_review, ms_case_review_history, ms_case_review_status,
+      ms_test_plan, ms_test_plan_case_count,
+      ms_project_api_config, ms_api_batch_report
+      ── 注意:带 gen_random_uuid() 默认值的 id 列,迁移时应沿用源端既有 id,
+         以保持跨表外键引用(case_id / project_id / pool_id 等)一致。 */
+ ;

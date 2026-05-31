@@ -1,0 +1,33 @@
+[workspace]
+resolver = "2"
+# 唯一的二进制入口是组装根 server(crates/server/src/main.rs)。
+# 设为 default-members 后,根目录直接 `cargo run` 即启动它,无需 `-p server`。
+default-members = ["crates/server"]
+members = [
+    "crates/kernel",
+    "crates/webauth",
+    "crates/system-setting",
+    "crates/server",
+    "crates/project",
+    "crates/case",
+    "crates/bug",
+    "crates/test-plan",
+    "crates/migrate",
+    "crates/api-runner",
+    "crates/api-test",
+    "crates/requirement",
+    "crates/task",
+    "crates/delivery",
+    "crates/verification",
+]
+
+# 统一版本/lint 策略。阶段 0 刻意零外部依赖,保证离线可编译、测试秒级反馈。
+# 引入 sqlx/axum/tokio 等 IO 依赖时,只加在 adapters 层的 crate,domain/application 永远保持纯净。
+[workspace.package]
+edition = "2021"
+version = "0.0.1"
+license = "GPL-2.0"
+
+[workspace.lints.clippy]
+# 领域层禁止 panic/unwrap,逼迫用 Result 表达边界(TDD 友好)
+unwrap_used = "warn"

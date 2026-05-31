@@ -1,0 +1,138 @@
+//! 内存版鉴权适配器(test double 兼本地/演示用)。
+//! 注:`PlainPasswordHasher` 仅供测试/本地——生产用 `adapters::auth::Argon2PasswordHasher`(feature=auth)。
+
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
+use std::time::{SystemTime, UNIX_EPOCH};
+
+use async_trait::async_trait;
+use kernel::permission::PermissionSet;
+
+use crate::domain::Session;
+use crate::ports::{
+    AuthRepoError, CredentialRepository, PasswordHasher, SessionStore, UserCredential,
+};
+
+// ---- 凭证仓储 ----
+#[derive(Clone, Default)]
+pub struct InMemoryCredentialRepository {
+    users: HashMap<String, UserCredential>,
+}
+
+impl InMemoryCredentialRepository {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn with_user<I, S>(mut self, username: &str, user_id: &str, password_hash: &str, perms: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.users.insert(
+            username.to_string(),
+            UserCredential {
+                user_id: user_id.to_string(),
+                password_hash: password_hash.to_string(),
+                permissions: perms.into_iter().map(Into::into).collect(),
+            },
+        );
+        self
+    }
+}
+
+#[async_trait]
+impl CredentialRepository for InMemoryCredentialRepository {
+    async fn find_by_username(
+        &self,
+        username: &str,
+    ) -> Result<Option<UserCredential>, AuthRepoError> {
+        Ok(self.users.get(username).cloned())
+    }
+}
+
+// ---- 会话存储 ----
+#[derive(Default)]
+struct SessionState {
+    sessions: HashMap<String, Session>,
+    seq: u64,
+}
+
+#[derive(Clone, Default)]
+pub struct InMemorySessionStore {
+    state: Arc<Mutex<SessionState>>,
+}
+
+fn now_ms() -> i64 {
+    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as i64).unwrap_or(0)
+}
+
+impl InMemorySessionStore {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// 测试辅助:塞一个**已过期**会话,验证过期被拒。
+    pub fn insert_expired(&self, token: &str, user_id: &str) {
+        self.state.lock().expect("lock").sessions.insert(
+            token.to_string(),
+            Session {
+                token: token.to_string(),
+                user_id: user_id.to_string(),
+                permissions: PermissionSet::default(),
+                expires_at_ms: 0,
+            },
+        );
+    }
+}
+
+#[async_trait]
+impl SessionStore for InMemorySessionStore {
+    async fn create(
+        &self,
+        user_id: &str,
+        permissions: PermissionSet,
+        ttl_secs: i64,
+    ) -> Result<String, AuthRepoError> {
+        let mut st = self.state.lock().expect("lock");
+        st.seq += 1;
+        let token = format!("sess-{}", st.seq);
+        st.sessions.insert(
+            token.clone(),
+            Session {
+                token: token.clone(),
+                user_id: user_id.to_string(),
+                permissions,
+                expires_at_ms: now_ms() + ttl_secs * 1000,
+            },
+        );
+        Ok(token)
+    }
+
+    async fn get(&self, token: &str) -> Result<Option<Session>, AuthRepoError> {
+        let st = self.state.lock().expect("lock");
+        Ok(match st.sessions.get(token) {
+            Some(s) if s.expires_at_ms > now_ms() => Some(s.clone()),
+            _ => None, // 不存在或已过期
+        })
+    }
+
+    async fn revoke(&self, token: &str) -> Result<(), AuthRepoError> {
+        self.state.lock().expect("lock").sessions.remove(token);
+        Ok(())
+    }
+}
+
+// ---- 明文哈希器(仅测试/本地!) ----
+/// **不安全**:`hash` 原样返回明文,`verify` 直接比较。仅用于测试与本地演示。
+#[derive(Clone, Default)]
+pub struct PlainPasswordHasher;
+
+impl PasswordHasher for PlainPasswordHasher {
+    fn hash(&self, plain: &str) -> String {
+        plain.to_string()
+    }
+    fn verify(&self, plain: &str, hash: &str) -> bool {
+        plain == hash
+    }
+}

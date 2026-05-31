@@ -1,0 +1,20 @@
+[package]
+name = "webauth"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+
+# 跨模块共享的鉴权基元:会话端口 + AuthUser + axum 提取器(http feature)。
+# 各业务模块的 http 适配器复用它做 RBAC;组装根注入同一个 SessionStore 实例。
+[dependencies]
+kernel = { path = "../kernel" }
+async-trait = "0.1"
+thiserror = "2"
+axum = { version = "0.8", optional = true }
+
+[features]
+http = ["dep:axum"]
+test-util = []
+
+[lints]
+workspace = true
