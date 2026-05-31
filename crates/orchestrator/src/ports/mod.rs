@@ -9,14 +9,30 @@ pub enum OrchError {
     Gateway(String),
 }
 
-/// 任务拆分图 → 它归属的需求版本。
+/// 任务推进目标(编排器自有,组装根映射到 task 的状态)。Dispatched 由推进过程隐含。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TaskTarget {
+    Running,
+    Delivered,
+    Failed,
+}
+
+/// task 上下文侧:定位需求版本 + 推进任务生命周期。
 #[async_trait]
-pub trait DecompositionGateway: Send + Sync {
+pub trait TaskGateway: Send + Sync {
     /// 拆分图归属的 (requirement_id, version);不存在返回 None。
     async fn requirement_of(
         &self,
         decomposition_id: &str,
     ) -> Result<Option<(String, u32)>, OrchError>;
+
+    /// 把任务推进到 target(实现侧沿 happy path 走、幂等)。
+    async fn advance_task(
+        &self,
+        decomposition_id: &str,
+        task_id: &str,
+        target: TaskTarget,
+    ) -> Result<(), OrchError>;
 }
 
 /// 验证侧:查某需求版本的验证 + 同步任务的覆盖链状态。
