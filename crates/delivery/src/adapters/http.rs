@@ -17,7 +17,7 @@ use serde::{Deserialize, Serialize};
 use webauth::{AuthUser, SessionStore};
 
 use crate::application::{DeliveryCmdError, DeliveryService};
-use crate::domain::DeliveryAttempt;
+use crate::domain::{DeliveryAttempt, ExecutionEvent};
 
 #[derive(Clone)]
 struct DelState {
@@ -38,6 +38,7 @@ pub fn router(svc: DeliveryService, sessions: Arc<dyn SessionStore>) -> Router {
         .route("/delivery/{id}/running", post(report_running))
         .route("/delivery/{id}/complete", post(complete))
         .route("/delivery/{id}/fail", post(fail))
+        .route("/delivery/{id}/events", post(record_event).get(list_events))
         .with_state(DelState { svc, sessions })
 }
 
@@ -82,6 +83,34 @@ struct CompleteBody {
 #[derive(Deserialize)]
 struct FailBody {
     error: String,
+}
+
+#[derive(Deserialize)]
+struct EventBody {
+    kind: String,
+    message: String,
+    #[serde(default)]
+    detail: Option<String>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct EventResponse {
+    seq: i64,
+    kind: String,
+    message: String,
+    detail: Option<String>,
+}
+
+impl From<&ExecutionEvent> for EventResponse {
+    fn from(e: &ExecutionEvent) -> Self {
+        Self {
+            seq: e.seq,
+            kind: e.kind.as_str().to_string(),
+            message: e.message.clone(),
+            detail: e.detail.clone(),
+        }
+    }
 }
 
 #[derive(Serialize)]
@@ -219,6 +248,31 @@ async fn fail(
     }
 }
 
+async fn record_event(
+    user: AuthUser,
+    State(st): State<DelState>,
+    Path(id): Path<String>,
+    Json(b): Json<EventBody>,
+) -> Response {
+    if !user.can("DELIVERY", "UPDATE") {
+        return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
+    match st.svc.record_event(&id, &b.kind, &b.message, b.detail.as_deref()).await {
+        Ok(e) => (StatusCode::CREATED, Json(EventResponse::from(&e))).into_response(),
+        Err(e) => cmd_err(e),
+    }
+}
+
+async fn list_events(State(st): State<DelState>, Path(id): Path<String>) -> Response {
+    match st.svc.events(&id).await {
+        Ok(list) => {
+            let body: Vec<EventResponse> = list.iter().map(EventResponse::from).collect();
+            (StatusCode::OK, Json(body)).into_response()
+        }
+        Err(e) => cmd_err(e),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -309,6 +363,50 @@ mod tests {
         let (app, t) = app_with("DELIVERY:READ", StubBehavior::Accept { run_id: "r".into() }).await;
         assert_eq!(
             app.oneshot(req("POST", "/delivery", r#"{"decompositionId":"d1","taskId":"t1","title":"x","executor":"CODEX"}"#, Some(&t))).await.expect("r").status(),
+            StatusCode::FORBIDDEN
+        );
+    }
+
+    #[tokio::test]
+    async fn record_and_list_execution_events() {
+        let (app, t) = app_with("DELIVERY:READ+EXECUTE+UPDATE", StubBehavior::Accept { run_id: "r".into() }).await;
+        let r = app
+            .clone()
+            .oneshot(req("POST", "/delivery", r#"{"decompositionId":"d1","taskId":"t1","title":"x","executor":"CLAUDE_CODE"}"#, Some(&t)))
+            .await
+            .expect("r");
+        let id = json(r).await["id"].as_str().expect("id").to_string();
+
+        // 上报执行事件
+        let e = app
+            .clone()
+            .oneshot(req("POST", &format!("/delivery/{id}/events"), r#"{"kind":"DECISION","message":"选用 argon2","detail":"PHC"}"#, Some(&t)))
+            .await
+            .expect("r");
+        assert_eq!(e.status(), StatusCode::CREATED);
+        assert_eq!(json(e).await["kind"], "DECISION");
+        app.clone().oneshot(req("POST", &format!("/delivery/{id}/events"), r#"{"kind":"FILE_CHANGE","message":"edit auth.rs"}"#, Some(&t))).await.expect("r");
+
+        // 审计读取
+        let list = app.clone().oneshot(req("GET", &format!("/delivery/{id}/events"), "", Some(&t))).await.expect("r");
+        assert_eq!(list.status(), StatusCode::OK);
+        let arr = json(list).await;
+        assert_eq!(arr.as_array().expect("a").len(), 2);
+        assert_eq!(arr[0]["message"], "选用 argon2");
+
+        // 未知 kind → 400
+        assert_eq!(
+            app.oneshot(req("POST", &format!("/delivery/{id}/events"), r#"{"kind":"X","message":"m"}"#, Some(&t))).await.expect("r").status(),
+            StatusCode::BAD_REQUEST
+        );
+    }
+
+    #[tokio::test]
+    async fn record_event_requires_update_permission() {
+        let (app, t) = app_with("DELIVERY:READ", StubBehavior::Accept { run_id: "r".into() }).await;
+        // 只读令牌不能上报事件 → 403(尝试不存在也会先过 RBAC)
+        assert_eq!(
+            app.oneshot(req("POST", "/delivery/whatever/events", r#"{"kind":"LOG","message":"m"}"#, Some(&t))).await.expect("r").status(),
             StatusCode::FORBIDDEN
         );
     }

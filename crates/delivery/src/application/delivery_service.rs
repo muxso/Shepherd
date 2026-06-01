@@ -3,7 +3,8 @@
 use std::sync::Arc;
 
 use crate::domain::{
-    AttemptStatus, Deliverable, DeliverableKind, DeliveryAttempt, DeliveryError, ExecutorKind,
+    AttemptStatus, Deliverable, DeliverableKind, DeliveryAttempt, DeliveryError, EventKind,
+    ExecutionEvent, ExecutorKind, NewExecutionEvent,
 };
 use crate::ports::{
     AgentExecutor, DeliveryObserver, DeliveryRepository, DispatchOutcome, ExecError, RepoError,
@@ -154,6 +155,29 @@ impl DeliveryService {
         Ok(a)
     }
 
+    /// 记录一条执行事件(AI 执行者上报决策/文件变更/测试结果;审计轨迹)。
+    pub async fn record_event(
+        &self,
+        attempt_id: &str,
+        kind: &str,
+        message: &str,
+        detail: Option<&str>,
+    ) -> Result<ExecutionEvent, DeliveryCmdError> {
+        // 尝试须存在
+        self.get(attempt_id).await?;
+        let kind = EventKind::parse(kind)
+            .ok_or_else(|| DeliveryCmdError::Validation(format!("unknown event kind: {kind}")))?;
+        let new = NewExecutionEvent::new(kind, message, detail)
+            .map_err(|e| DeliveryCmdError::Validation(e.to_string()))?;
+        Ok(self.repo.append_event(attempt_id, &new).await?)
+    }
+
+    /// 某尝试的执行事件(审计读取)。
+    pub async fn events(&self, attempt_id: &str) -> Result<Vec<ExecutionEvent>, DeliveryCmdError> {
+        self.get(attempt_id).await?;
+        Ok(self.repo.list_events(attempt_id).await?)
+    }
+
     /// 异步回调:执行者失败。
     pub async fn fail(&self, id: &str, error: &str) -> Result<DeliveryAttempt, DeliveryCmdError> {
         let mut a = self.get(id).await?;
@@ -296,6 +320,36 @@ mod tests {
         // 异步接单 → Running(进度推进)→ 通知一次(供编排器驱动任务到 Running)
         svc.dispatch("d1", "t1", "x", "", &[], "CODEX", None).await.expect("dispatch");
         assert_eq!(*spy.n.lock().unwrap(), 1);
+    }
+
+    #[tokio::test]
+    async fn records_and_lists_execution_events() {
+        let s = svc(StubBehavior::Accept { run_id: "r".into() });
+        let a = s.dispatch("d1", "t1", "build", "", &[], "CLAUDE_CODE", None).await.expect("dispatch");
+
+        s.record_event(&a.id, "DECISION", "选用 argon2", Some("PHC 格式")).await.expect("ev1");
+        s.record_event(&a.id, "FILE_CHANGE", "edit auth.rs", None).await.expect("ev2");
+        s.record_event(&a.id, "TEST_RESULT", "cargo test 通过", None).await.expect("ev3");
+
+        let events = s.events(&a.id).await.expect("events");
+        assert_eq!(events.len(), 3);
+        assert_eq!(events[0].kind, EventKind::Decision);
+        assert!(events[0].seq < events[1].seq && events[1].seq < events[2].seq); // 单调
+        assert_eq!(events[1].message, "edit auth.rs");
+    }
+
+    #[tokio::test]
+    async fn record_event_rejects_unknown_kind_and_missing_attempt() {
+        let s = svc(StubBehavior::Accept { run_id: "r".into() });
+        let a = s.dispatch("d1", "t1", "x", "", &[], "CODEX", None).await.expect("dispatch");
+        assert!(matches!(
+            s.record_event(&a.id, "WHAT", "m", None).await.unwrap_err(),
+            DeliveryCmdError::Validation(_)
+        ));
+        assert_eq!(
+            s.record_event("ghost", "LOG", "m", None).await.unwrap_err(),
+            DeliveryCmdError::NotFound
+        );
     }
 
     #[tokio::test]
