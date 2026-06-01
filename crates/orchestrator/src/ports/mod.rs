@@ -9,11 +9,12 @@ pub enum OrchError {
     Gateway(String),
 }
 
-/// 任务推进目标(编排器自有,组装根映射到 task 的状态)。Dispatched 由推进过程隐含。
+/// 任务推进目标(编排器自有,组装根映射到 task 的状态)。Dispatched/Delivered 由推进过程隐含。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TaskTarget {
     Running,
-    Delivered,
+    /// 交付成功并被接受 → 任务验证通过(解锁依赖它的下游任务)。
+    Verified,
     Failed,
 }
 

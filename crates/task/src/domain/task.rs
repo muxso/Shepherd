@@ -430,6 +430,21 @@ mod tests {
     }
 
     #[test]
+    fn advance_to_verified_unlocks_dependents() {
+        let mut d = Decomposition::new("d1", "req1", 1);
+        d.add_task(nt("A", &[])).expect("a"); // t1
+        d.add_task(nt("B", &["t1"])).expect("b"); // t2 依赖 t1
+        // 把 A 一路推进到 Verified
+        d.advance_to("t1", TaskStatus::Verified).expect("verify A");
+        assert_eq!(d.task("t1").expect("t1").status, TaskStatus::Verified);
+        // 现在 B 就绪、可派发(依赖已 Verified)
+        assert_eq!(d.ready_tasks().iter().map(|t| t.id.clone()).collect::<Vec<_>>(), vec!["t2"]);
+        // 编排器随后也能把 B 推进到 Verified(deps 已满足)
+        d.advance_to("t2", TaskStatus::Verified).expect("verify B");
+        assert!(d.is_complete());
+    }
+
+    #[test]
     fn advance_to_failed_from_running() {
         let mut d = Decomposition::new("d1", "req1", 1);
         d.add_task(nt("A", &[])).expect("a");

@@ -57,9 +57,10 @@ impl DeliveryFeedbackOrchestrator {
         progress: DeliveryProgress,
     ) -> Result<FeedbackOutcome, OrchError> {
         // (1) 驱动任务生命周期 —— 尽力而为(依赖未满足/非法流转不阻断验证回灌)。
+        // 交付成功 ⇒ 任务直接推进到 Verified(解锁下游依赖);失败 ⇒ Failed;进行中 ⇒ Running。
         let target = match progress {
             DeliveryProgress::Running => TaskTarget::Running,
-            DeliveryProgress::Delivered => TaskTarget::Delivered,
+            DeliveryProgress::Delivered => TaskTarget::Verified,
             DeliveryProgress::Failed => TaskTarget::Failed,
         };
         let task_advanced =
@@ -149,7 +150,7 @@ mod tests {
         let out = orch.on_progress("d1", "t1", DeliveryProgress::Delivered).await.expect("ok");
         assert!(out.task_advanced);
         assert_eq!(out.verification, VerificationSync::Synced { verification_id: "v1".into(), satisfied: true });
-        assert_eq!(task.advanced.lock().unwrap().as_slice(), &[("d1".into(), "t1".into(), TaskTarget::Delivered)]);
+        assert_eq!(task.advanced.lock().unwrap().as_slice(), &[("d1".into(), "t1".into(), TaskTarget::Verified)]);
         assert!(verif.synced.lock().unwrap()[0].3);
     }
 

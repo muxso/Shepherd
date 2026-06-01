@@ -39,7 +39,7 @@ impl TaskGateway for TaskServiceGateway {
     ) -> Result<(), OrchError> {
         let status = match target {
             TaskTarget::Running => TaskStatus::Running,
-            TaskTarget::Delivered => TaskStatus::Delivered,
+            TaskTarget::Verified => TaskStatus::Verified,
             TaskTarget::Failed => TaskStatus::Failed,
         };
         match self.svc.advance_to(decomposition_id, task_id, status).await {
