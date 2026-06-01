@@ -110,27 +110,47 @@ tool_handler!(AddTask, TaskService, |self, args| {
     Ok(json!({ "taskId": id }))
 });
 
-tool_handler!(DispatchDelivery, DeliveryService, |self, args| {
-    let a = self
-        .svc
-        .dispatch(
-            req_str(&args, "decompositionId")?,
-            req_str(&args, "taskId")?,
-            req_str(&args, "title")?,
-            opt_str(&args, "description"),
-            &str_vec(&args, "acceptanceCriteria"),
-            req_str(&args, "executor")?,
-            None,
-            args.get("instructions").and_then(|x| x.as_str()).map(String::from),
-        )
-        .await
-        .map_err(|e| format!("{e:?}"))?;
-    Ok(json!({
-        "attemptId": a.id,
-        "status": a.status.as_str(),
-        "deliverable": a.deliverable.as_ref().map(|d| json!({ "kind": d.kind.as_str(), "reference": d.reference }))
-    }))
-});
+/// 派发工具:可直接传 `skillIds`(+`projectId`)→ 自动 compose 成行为规范注入(无需先调 compose)。
+struct DispatchDelivery {
+    delivery: DeliveryService,
+    skills: SkillService,
+}
+
+#[async_trait]
+impl ToolHandler for DispatchDelivery {
+    async fn call(&self, args: Value) -> Result<Value, String> {
+        let mut instructions = args.get("instructions").and_then(|x| x.as_str()).map(String::from);
+        let skill_ids = str_vec(&args, "skillIds");
+        if !skill_ids.is_empty() {
+            // 直接按 skillIds 自动组合行为规范(可与显式 instructions 合并)。
+            let project = req_str(&args, "projectId")?;
+            let comp = self.skills.compose(project, &skill_ids).await.map_err(|e| format!("{e:?}"))?;
+            instructions = Some(match instructions {
+                Some(extra) if !extra.trim().is_empty() => format!("{}\n\n{}", comp.instructions, extra),
+                _ => comp.instructions,
+            });
+        }
+        let a = self
+            .delivery
+            .dispatch(
+                req_str(&args, "decompositionId")?,
+                req_str(&args, "taskId")?,
+                req_str(&args, "title")?,
+                opt_str(&args, "description"),
+                &str_vec(&args, "acceptanceCriteria"),
+                req_str(&args, "executor")?,
+                None,
+                instructions,
+            )
+            .await
+            .map_err(|e| format!("{e:?}"))?;
+        Ok(json!({
+            "attemptId": a.id,
+            "status": a.status.as_str(),
+            "deliverable": a.deliverable.as_ref().map(|d| json!({ "kind": d.kind.as_str(), "reference": d.reference }))
+        }))
+    }
+}
 
 tool_handler!(CreateVerification, CreateVerificationUseCase, |self, args| {
     let v = self
@@ -260,7 +280,8 @@ pub fn router(
         .requires("TASK", "ADD"))
         .tool(Tool::new(
             "shepherd_dispatch_delivery",
-            "把一个任务派发给 AI 执行者(executor: CLAUDE_CODE | CODEX);自动驱动任务并回灌验证。",
+            "把任务派发给 AI 执行者(executor: CLAUDE_CODE | CODEX);自动驱动任务、过验证门并回灌验证。\
+             可直接传 skillIds(+projectId)自动组合行为规范注入,无需先调 compose。",
             obj(
                 json!({
                     "decompositionId": { "type": "string" },
@@ -269,11 +290,13 @@ pub fn router(
                     "description": { "type": "string" },
                     "acceptanceCriteria": { "type": "array", "items": { "type": "string" } },
                     "executor": { "type": "string", "enum": ["CLAUDE_CODE", "CODEX"] },
-                    "instructions": { "type": "string", "description": "可选:由 shepherd_compose_skills 得到的行为规范" }
+                    "projectId": { "type": "string", "description": "skillIds 非空时必填(用于组合)" },
+                    "skillIds": { "type": "array", "items": { "type": "string" }, "description": "可选:自动组合这些 skill 为行为规范" },
+                    "instructions": { "type": "string", "description": "可选:显式行为规范(与 skillIds 组合结果合并)" }
                 }),
                 &["decompositionId", "taskId", "title", "executor"],
             ),
-            Arc::new(DispatchDelivery { svc: delivery }),
+            Arc::new(DispatchDelivery { delivery, skills: skills.clone() }),
         )
         .requires("DELIVERY", "EXECUTE"))
         .tool(Tool::new(
