@@ -11,6 +11,7 @@
 mod judge;
 mod mcp_tools;
 mod orchestration;
+mod planner;
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -42,7 +43,7 @@ use requirement::application::{
     CreateRequirementUseCase, ListRequirementsUseCase, RequirementService,
 };
 use requirement::adapters::pg::PgRequirementRepository;
-use task::application::{CreateDecompositionUseCase, TaskService};
+use task::application::{BreakdownUseCase, CreateDecompositionUseCase, TaskService};
 use task::adapters::pg::PgTaskRepository;
 use delivery::application::DeliveryService;
 use delivery::adapters::pg::PgDeliveryRepository;
@@ -227,8 +228,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // —— task 模块(Shepherd 任务拆分 DAG)——
     let task_repo = Arc::new(PgTaskRepository::new(pool.clone()));
     let task_admin = TaskService::new(task_repo.clone());
+    // 规划器:默认启发式;设 SHEPHERD_PLANNER_URL 用远端 LLM 规划器。
+    let task_planner = planner::build_planner();
     let task_routes = task::adapters::http::router(
         CreateDecompositionUseCase::new(task_repo.clone()),
+        BreakdownUseCase::new(task_repo.clone(), task_planner.clone()),
         task_admin.clone(),
         sessions.clone(),
     );
@@ -276,6 +280,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         CreateDecompositionUseCase::new(task_repo.clone()),
         task_admin,
         mcp_delivery,
+        BreakdownUseCase::new(task_repo.clone(), task_planner),
         CreateVerificationUseCase::new(ver_repo.clone()),
         ver_admin,
         CreateSkillUseCase::new(skill_repo.clone()),

@@ -45,7 +45,8 @@ impl<S: Send + Sync> FromRequestParts<S> for WantsSse {
 use delivery::application::DeliveryService;
 use requirement::application::CreateRequirementUseCase;
 use skill::application::{CreateSkillUseCase, SkillService};
-use task::application::{CreateDecompositionUseCase, TaskService};
+use task::application::{BreakdownUseCase, CreateDecompositionUseCase, TaskService};
+use task::ports::RequirementSpec;
 use verification::application::{CreateVerificationUseCase, VerificationService};
 
 // —— 取参助手 ——
@@ -152,6 +153,21 @@ impl ToolHandler for DispatchDelivery {
     }
 }
 
+tool_handler!(Breakdown, BreakdownUseCase, |self, args| {
+    let spec = RequirementSpec {
+        requirement_id: req_str(&args, "requirementId")?.to_string(),
+        requirement_version: req_u32(&args, "requirementVersion")?,
+        title: req_str(&args, "title")?.to_string(),
+        description: opt_str(&args, "description").to_string(),
+        acceptance_criteria: str_vec(&args, "acceptanceCriteria"),
+    };
+    let d = self.svc.execute(&spec).await.map_err(|e| format!("{e:?}"))?;
+    Ok(json!({
+        "decompositionId": d.id,
+        "tasks": d.tasks.iter().map(|t| json!({"id": t.id, "title": t.title, "dependencies": t.dependencies})).collect::<Vec<_>>()
+    }))
+});
+
 tool_handler!(CreateVerification, CreateVerificationUseCase, |self, args| {
     let v = self
         .svc
@@ -230,6 +246,7 @@ pub fn router(
     decompose: CreateDecompositionUseCase,
     tasks: TaskService,
     delivery: DeliveryService,
+    breakdown: BreakdownUseCase,
     create_verification: CreateVerificationUseCase,
     verification: VerificationService,
     create_skill: CreateSkillUseCase,
@@ -299,6 +316,22 @@ pub fn router(
             Arc::new(DispatchDelivery { delivery, skills: skills.clone() }),
         )
         .requires("DELIVERY", "EXECUTE"))
+        .tool(Tool::new(
+            "shepherd_breakdown",
+            "自动拆分:据需求规格(标题/描述/验收标准)用规划器(默认启发式,可配 LLM)生成任务 DAG。",
+            obj(
+                json!({
+                    "requirementId": { "type": "string" },
+                    "requirementVersion": { "type": "integer" },
+                    "title": { "type": "string" },
+                    "description": { "type": "string" },
+                    "acceptanceCriteria": { "type": "array", "items": { "type": "string" } }
+                }),
+                &["requirementId", "requirementVersion", "title"],
+            ),
+            Arc::new(Breakdown { svc: breakdown }),
+        )
+        .requires("TASK", "ADD"))
         .tool(Tool::new(
             "shepherd_create_verification",
             "为某需求版本开启完整性验证(传入验收标准快照),返回 verificationId。",

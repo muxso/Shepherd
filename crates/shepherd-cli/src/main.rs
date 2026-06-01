@@ -97,6 +97,14 @@ enum ReqCmd {
         #[arg(long)]
         project: String,
     },
+    /// 自动拆分需求为任务 DAG(取基线版本规格,交规划器拆分)。
+    Breakdown {
+        #[arg(long)]
+        req: String,
+        /// 使用 AI 规划器(默认即用服务端配置的规划器;此标志仅为可读性)。
+        #[arg(long, default_value_t = false)]
+        ai: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -258,6 +266,27 @@ fn run(cli: Cli) -> R<()> {
                 )?),
                 ReqCmd::List { project } => {
                     pretty(&c.get(&format!("/requirement?projectId={project}"), true)?)
+                }
+                ReqCmd::Breakdown { req, ai: _ } => {
+                    // 取需求基线版本的规格,交服务端规划器拆分。
+                    let r = c.get(&format!("/requirement/{req}"), true)?;
+                    let title = r["title"].as_str().unwrap_or("").to_string();
+                    let bv = r["baselineVersion"].as_u64().unwrap_or(1);
+                    let ver = r["versions"]
+                        .as_array()
+                        .and_then(|a| a.iter().find(|v| v["version"].as_u64() == Some(bv)));
+                    let (desc, criteria) = match ver {
+                        Some(v) => (
+                            v["description"].as_str().unwrap_or("").to_string(),
+                            v["acceptanceCriteria"].clone(),
+                        ),
+                        None => (String::new(), json!([])),
+                    };
+                    pretty(&c.post(
+                        "/decomposition/breakdown",
+                        json!({"requirementId": req, "requirementVersion": bv, "title": title, "description": desc, "acceptanceCriteria": criteria}),
+                        true,
+                    )?);
                 }
             }
         }
