@@ -20,6 +20,7 @@ use webauth::{AuthUser, SessionStore};
 
 use delivery::application::DeliveryService;
 use requirement::application::CreateRequirementUseCase;
+use skill::application::{CreateSkillUseCase, SkillService};
 use task::application::{CreateDecompositionUseCase, TaskService};
 use verification::application::{CreateVerificationUseCase, VerificationService};
 
@@ -96,6 +97,7 @@ tool_handler!(DispatchDelivery, DeliveryService, |self, args| {
             &str_vec(&args, "acceptanceCriteria"),
             req_str(&args, "executor")?,
             None,
+            args.get("instructions").and_then(|x| x.as_str()).map(String::from),
         )
         .await
         .map_err(|e| format!("{e:?}"))?;
@@ -126,6 +128,30 @@ tool_handler!(LinkCoverage, VerificationService, |self, args| {
         .await
         .map_err(|e| format!("{e:?}"))?;
     Ok(json!({ "ok": true }))
+});
+
+tool_handler!(CreateSkill, CreateSkillUseCase, |self, args| {
+    let s = self
+        .svc
+        .execute(
+            req_str(&args, "projectId")?,
+            req_str(&args, "name")?,
+            opt_str(&args, "description"),
+            req_str(&args, "instructions")?,
+            &str_vec(&args, "includes"),
+        )
+        .await
+        .map_err(|e| format!("{e:?}"))?;
+    Ok(json!({ "skillId": s.id, "name": s.name }))
+});
+
+tool_handler!(ComposeSkills, SkillService, |self, args| {
+    let c = self
+        .svc
+        .compose(req_str(&args, "projectId")?, &str_vec(&args, "skillIds"))
+        .await
+        .map_err(|e| format!("{e:?}"))?;
+    Ok(json!({ "skillIds": c.skill_ids, "instructions": c.instructions }))
 });
 
 tool_handler!(CompletenessReport, VerificationService, |self, args| {
@@ -162,6 +188,8 @@ pub fn router(
     delivery: DeliveryService,
     create_verification: CreateVerificationUseCase,
     verification: VerificationService,
+    create_skill: CreateSkillUseCase,
+    skills: SkillService,
     sessions: Arc<dyn SessionStore>,
 ) -> Router {
     let server = McpServer::new("shepherd", env!("CARGO_PKG_VERSION"))
@@ -213,7 +241,8 @@ pub fn router(
                     "title": { "type": "string" },
                     "description": { "type": "string" },
                     "acceptanceCriteria": { "type": "array", "items": { "type": "string" } },
-                    "executor": { "type": "string", "enum": ["CLAUDE_CODE", "CODEX"] }
+                    "executor": { "type": "string", "enum": ["CLAUDE_CODE", "CODEX"] },
+                    "instructions": { "type": "string", "description": "可选:由 shepherd_compose_skills 得到的行为规范" }
                 }),
                 &["decompositionId", "taskId", "title", "executor"],
             ),
@@ -245,6 +274,33 @@ pub fn router(
                 &["verificationId", "criterionIndex", "decompositionId", "taskId"],
             ),
             Arc::new(LinkCoverage { svc: verification.clone() }),
+        ))
+        .tool(Tool::new(
+            "shepherd_create_skill",
+            "定义一个可复用的 AI Skill(行为规范);includes 可组合其它 skill。",
+            obj(
+                json!({
+                    "projectId": { "type": "string" },
+                    "name": { "type": "string" },
+                    "description": { "type": "string" },
+                    "instructions": { "type": "string" },
+                    "includes": { "type": "array", "items": { "type": "string" } }
+                }),
+                &["projectId", "name", "instructions"],
+            ),
+            Arc::new(CreateSkill { svc: create_skill }),
+        ))
+        .tool(Tool::new(
+            "shepherd_compose_skills",
+            "把若干 skill 经 includes 展开组合成一份有序去重的行为规范(instructions),可直接喂给 dispatch。",
+            obj(
+                json!({
+                    "projectId": { "type": "string" },
+                    "skillIds": { "type": "array", "items": { "type": "string" } }
+                }),
+                &["projectId", "skillIds"],
+            ),
+            Arc::new(ComposeSkills { svc: skills }),
         ))
         .tool(Tool::new(
             "shepherd_completeness_report",

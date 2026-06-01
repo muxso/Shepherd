@@ -17,6 +17,7 @@ requirement = { path = "../requirement", features = ["pg", "http"] }
 task = { path = "../task", features = ["pg", "http"] }
 delivery = { path = "../delivery", features = ["pg", "http", "exec-http", "exec-local"] }
 verification = { path = "../verification", features = ["pg", "http"] }
+skill = { path = "../skill", features = ["pg", "http"] }
 orchestrator = { path = "../orchestrator" }
 mcp = { path = "../mcp" }
 webauth = { path = "../webauth", features = ["http"] }

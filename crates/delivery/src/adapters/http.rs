@@ -57,6 +57,8 @@ struct DispatchBody {
     executor: String,
     #[serde(default)]
     context: Option<String>,
+    #[serde(default)]
+    instructions: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -178,6 +180,7 @@ async fn dispatch(user: AuthUser, State(st): State<DelState>, Json(b): Json<Disp
             &b.acceptance_criteria,
             &b.executor,
             b.context,
+            b.instructions,
         )
         .await
     {

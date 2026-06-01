@@ -93,6 +93,7 @@ impl DeliveryService {
         acceptance_criteria: &[String],
         executor: &str,
         context: Option<String>,
+        instructions: Option<String>,
     ) -> Result<DeliveryAttempt, DeliveryCmdError> {
         if decomposition_id.trim().is_empty() || task_id.trim().is_empty() {
             return Err(DeliveryCmdError::Validation("decompositionId/taskId required".into()));
@@ -112,6 +113,7 @@ impl DeliveryService {
             acceptance_criteria: acceptance_criteria.to_vec(),
             executor: kind,
             context,
+            instructions,
         };
 
         // 执行者运行中 emit 的事件落到本次尝试。
@@ -230,7 +232,7 @@ mod tests {
     async fn sync_executor_completes_to_delivered() {
         let s = svc(StubBehavior::Complete { deliverable: deliverable() });
         let a = s
-            .dispatch("d1", "t1", "build login", "do it", &["c1".into()], "CLAUDE_CODE", None)
+            .dispatch("d1", "t1", "build login", "do it", &["c1".into()], "CLAUDE_CODE", None, None)
             .await
             .expect("dispatch");
         assert_eq!(a.status, AttemptStatus::Delivered);
@@ -241,7 +243,7 @@ mod tests {
     async fn async_executor_goes_running_then_callback_completes() {
         let s = svc(StubBehavior::Accept { run_id: "run-1".into() });
         let a = s
-            .dispatch("d1", "t1", "build", "", &[], "CODEX", None)
+            .dispatch("d1", "t1", "build", "", &[], "CODEX", None, None)
             .await
             .expect("dispatch");
         assert_eq!(a.status, AttemptStatus::Running);
@@ -256,7 +258,7 @@ mod tests {
     #[tokio::test]
     async fn executor_backend_error_records_failed_not_lost() {
         let s = svc(StubBehavior::Error { message: "spawn failed".into() });
-        let a = s.dispatch("d1", "t1", "build", "", &[], "CLAUDE_CODE", None).await.expect("dispatch");
+        let a = s.dispatch("d1", "t1", "build", "", &[], "CLAUDE_CODE", None, None).await.expect("dispatch");
         assert_eq!(a.status, AttemptStatus::Failed);
         assert_eq!(a.error.as_deref(), Some("spawn failed"));
     }
@@ -265,7 +267,7 @@ mod tests {
     async fn unknown_executor_is_validation() {
         let s = svc(StubBehavior::Accept { run_id: "r".into() });
         assert!(matches!(
-            s.dispatch("d1", "t1", "x", "", &[], "GPT5", None).await.unwrap_err(),
+            s.dispatch("d1", "t1", "x", "", &[], "GPT5", None, None).await.unwrap_err(),
             DeliveryCmdError::Validation(_)
         ));
     }
@@ -273,7 +275,7 @@ mod tests {
     #[tokio::test]
     async fn callback_on_terminal_is_conflict() {
         let s = svc(StubBehavior::Complete { deliverable: deliverable() });
-        let a = s.dispatch("d1", "t1", "x", "", &[], "CODEX", None).await.expect("dispatch");
+        let a = s.dispatch("d1", "t1", "x", "", &[], "CODEX", None, None).await.expect("dispatch");
         // 已 Delivered,再 report_running 应冲突
         assert!(matches!(
             s.report_running(&a.id, "r").await.unwrap_err(),
@@ -306,7 +308,7 @@ mod tests {
         .with_observer(spy.clone());
 
         // 同步完成 → Delivered 终态 → 观察者被通知一次
-        svc.dispatch("d1", "t1", "x", "", &[], "CLAUDE_CODE", None).await.expect("dispatch");
+        svc.dispatch("d1", "t1", "x", "", &[], "CLAUDE_CODE", None, None).await.expect("dispatch");
         assert_eq!(spy.settled.lock().unwrap().as_slice(), &[("t1".into(), "DELIVERED".into())]);
     }
 
@@ -335,7 +337,7 @@ mod tests {
         .with_observer(spy.clone());
 
         // 异步接单 → Running(进度推进)→ 通知一次(供编排器驱动任务到 Running)
-        svc.dispatch("d1", "t1", "x", "", &[], "CODEX", None).await.expect("dispatch");
+        svc.dispatch("d1", "t1", "x", "", &[], "CODEX", None, None).await.expect("dispatch");
         assert_eq!(*spy.n.lock().unwrap(), 1);
     }
 
@@ -347,7 +349,7 @@ mod tests {
             Arc::new(InMemoryDeliveryRepository::new()),
             Arc::new(EchoAgentExecutor::new()),
         );
-        let a = s.dispatch("d1", "t1", "实现登录", "", &[], "CLAUDE_CODE", None).await.expect("dispatch");
+        let a = s.dispatch("d1", "t1", "实现登录", "", &[], "CLAUDE_CODE", None, None).await.expect("dispatch");
         let events = s.events(&a.id).await.expect("events");
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].kind, EventKind::Log);
@@ -356,7 +358,7 @@ mod tests {
     #[tokio::test]
     async fn records_and_lists_execution_events() {
         let s = svc(StubBehavior::Accept { run_id: "r".into() });
-        let a = s.dispatch("d1", "t1", "build", "", &[], "CLAUDE_CODE", None).await.expect("dispatch");
+        let a = s.dispatch("d1", "t1", "build", "", &[], "CLAUDE_CODE", None, None).await.expect("dispatch");
 
         s.record_event(&a.id, "DECISION", "选用 argon2", Some("PHC 格式")).await.expect("ev1");
         s.record_event(&a.id, "FILE_CHANGE", "edit auth.rs", None).await.expect("ev2");
@@ -372,7 +374,7 @@ mod tests {
     #[tokio::test]
     async fn record_event_rejects_unknown_kind_and_missing_attempt() {
         let s = svc(StubBehavior::Accept { run_id: "r".into() });
-        let a = s.dispatch("d1", "t1", "x", "", &[], "CODEX", None).await.expect("dispatch");
+        let a = s.dispatch("d1", "t1", "x", "", &[], "CODEX", None, None).await.expect("dispatch");
         assert!(matches!(
             s.record_event(&a.id, "WHAT", "m", None).await.unwrap_err(),
             DeliveryCmdError::Validation(_)
@@ -386,8 +388,8 @@ mod tests {
     #[tokio::test]
     async fn list_by_task_and_not_found() {
         let s = svc(StubBehavior::Accept { run_id: "r".into() });
-        s.dispatch("d1", "t1", "x", "", &[], "CODEX", None).await.expect("d");
-        s.dispatch("d1", "t1", "y", "", &[], "CODEX", None).await.expect("d");
+        s.dispatch("d1", "t1", "x", "", &[], "CODEX", None, None).await.expect("d");
+        s.dispatch("d1", "t1", "y", "", &[], "CODEX", None, None).await.expect("d");
         assert_eq!(s.list_by_task("d1", "t1").await.expect("list").len(), 2);
         assert_eq!(s.get("ghost").await.unwrap_err(), DeliveryCmdError::NotFound);
     }
