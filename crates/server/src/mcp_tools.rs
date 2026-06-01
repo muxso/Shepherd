@@ -7,16 +7,40 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use axum::{
-    extract::{FromRef, State},
-    http::StatusCode,
+    extract::{FromRef, FromRequestParts, State},
+    http::{header::ACCEPT, request::Parts, StatusCode},
     response::{IntoResponse, Response},
     routing::post,
     Json, Router,
 };
 use serde_json::{json, Value};
 
-use mcp::{McpServer, Tool, ToolHandler};
+use mcp::{CapabilityChecker, McpServer, Tool, ToolHandler};
 use webauth::{AuthUser, SessionStore};
+
+/// 用会话权限实现 MCP 能力检查(按工具 RBAC)。
+struct UserCaps<'a>(&'a AuthUser);
+impl CapabilityChecker for UserCaps<'_> {
+    fn allows(&self, resource: &str, action: &str) -> bool {
+        self.0.can(resource, action)
+    }
+}
+
+/// 提取器:客户端是否要求 SSE(`Accept: text/event-stream`)。
+struct WantsSse(bool);
+
+impl<S: Send + Sync> FromRequestParts<S> for WantsSse {
+    type Rejection = std::convert::Infallible;
+    async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
+        let sse = parts
+            .headers
+            .get(ACCEPT)
+            .and_then(|v| v.to_str().ok())
+            .map(|s| s.contains("text/event-stream"))
+            .unwrap_or(false);
+        Ok(WantsSse(sse))
+    }
+}
 
 use delivery::application::DeliveryService;
 use requirement::application::CreateRequirementUseCase;
@@ -206,7 +230,8 @@ pub fn router(
                 &["projectId", "title"],
             ),
             Arc::new(CreateRequirement { svc: create_requirement }),
-        ))
+        )
+        .requires("REQUIREMENT", "ADD"))
         .tool(Tool::new(
             "shepherd_decompose",
             "为某需求版本开启任务拆分图,返回 decompositionId。",
@@ -215,7 +240,8 @@ pub fn router(
                 &["requirementId", "requirementVersion"],
             ),
             Arc::new(Decompose { svc: decompose }),
-        ))
+        )
+        .requires("TASK", "ADD"))
         .tool(Tool::new(
             "shepherd_add_task",
             "向拆分图加入一个任务(可声明 dependencies 为已存在任务的本地 id),返回 taskId。",
@@ -230,7 +256,8 @@ pub fn router(
                 &["decompositionId", "title"],
             ),
             Arc::new(AddTask { svc: tasks }),
-        ))
+        )
+        .requires("TASK", "ADD"))
         .tool(Tool::new(
             "shepherd_dispatch_delivery",
             "把一个任务派发给 AI 执行者(executor: CLAUDE_CODE | CODEX);自动驱动任务并回灌验证。",
@@ -247,7 +274,8 @@ pub fn router(
                 &["decompositionId", "taskId", "title", "executor"],
             ),
             Arc::new(DispatchDelivery { svc: delivery }),
-        ))
+        )
+        .requires("DELIVERY", "EXECUTE"))
         .tool(Tool::new(
             "shepherd_create_verification",
             "为某需求版本开启完整性验证(传入验收标准快照),返回 verificationId。",
@@ -260,7 +288,8 @@ pub fn router(
                 &["requirementId", "requirementVersion"],
             ),
             Arc::new(CreateVerification { svc: create_verification }),
-        ))
+        )
+        .requires("VERIFICATION", "ADD"))
         .tool(Tool::new(
             "shepherd_link_coverage",
             "建立覆盖追溯:某任务覆盖某条验收标准(criterionIndex 为 0-based)。",
@@ -274,7 +303,8 @@ pub fn router(
                 &["verificationId", "criterionIndex", "decompositionId", "taskId"],
             ),
             Arc::new(LinkCoverage { svc: verification.clone() }),
-        ))
+        )
+        .requires("VERIFICATION", "UPDATE"))
         .tool(Tool::new(
             "shepherd_create_skill",
             "定义一个可复用的 AI Skill(行为规范);includes 可组合其它 skill。",
@@ -289,7 +319,8 @@ pub fn router(
                 &["projectId", "name", "instructions"],
             ),
             Arc::new(CreateSkill { svc: create_skill }),
-        ))
+        )
+        .requires("SKILL", "ADD"))
         .tool(Tool::new(
             "shepherd_compose_skills",
             "把若干 skill 经 includes 展开组合成一份有序去重的行为规范(instructions),可直接喂给 dispatch。",
@@ -301,21 +332,41 @@ pub fn router(
                 &["projectId", "skillIds"],
             ),
             Arc::new(ComposeSkills { svc: skills }),
-        ))
+        )
+        .requires("SKILL", "READ"))
         .tool(Tool::new(
             "shepherd_completeness_report",
             "获取完整性报告:整体是否完成 + 缺口清单(UNCOVERED / UNVERIFIED)。",
             obj(json!({ "verificationId": { "type": "string" } }), &["verificationId"]),
             Arc::new(CompletenessReport { svc: verification }),
-        ));
+        )
+        .requires("VERIFICATION", "READ"));
 
     Router::new().route("/mcp", post(mcp_handler)).with_state(McpState { server: Arc::new(server), sessions })
 }
 
-/// JSON-RPC 入口。需有效会话(`_user`)。通知(无 id)→ 202。
-async fn mcp_handler(_user: AuthUser, State(st): State<McpState>, Json(body): Json<Value>) -> Response {
-    match st.server.dispatch(body).await {
-        Some(resp) => (StatusCode::OK, Json(resp)).into_response(),
+/// JSON-RPC 入口。需有效会话;按会话权限做**按工具 RBAC**(只暴露/放行有权工具)。
+/// 若客户端 `Accept: text/event-stream`,响应以单条 SSE 事件返回(Streamable HTTP 子集)。
+async fn mcp_handler(
+    user: AuthUser,
+    WantsSse(wants_sse): WantsSse,
+    State(st): State<McpState>,
+    Json(body): Json<Value>,
+) -> Response {
+    let resp = st.server.dispatch(body, &UserCaps(&user)).await;
+
+    match resp {
+        // 通知:无响应体。
         None => StatusCode::ACCEPTED.into_response(),
+        Some(resp) if wants_sse => {
+            let body = format!("event: message\ndata: {}\n\n", serde_json::to_string(&resp).unwrap_or_default());
+            Response::builder()
+                .status(StatusCode::OK)
+                .header(axum::http::header::CONTENT_TYPE, "text/event-stream")
+                .header(axum::http::header::CACHE_CONTROL, "no-cache")
+                .body(axum::body::Body::from(body))
+                .expect("sse response")
+        }
+        Some(resp) => (StatusCode::OK, Json(resp)).into_response(),
     }
 }
