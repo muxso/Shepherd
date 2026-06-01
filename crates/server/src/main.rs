@@ -8,6 +8,7 @@
 //!     -e POSTGRES_DB=mstest -p 55432:5432 postgres:16-alpine
 //!   DATABASE_URL=postgres://msuser:mspass@localhost:55432/mstest cargo run -p server
 
+mod breakdown_route;
 mod judge;
 mod mcp_tools;
 mod orchestration;
@@ -218,10 +219,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // —— requirement 模块(Shepherd 需求管理,多版本)——
     let req_repo = Arc::new(PgRequirementRepository::new(pool.clone()));
+    let req_admin = RequirementService::new(req_repo.clone());
     let requirement_routes = requirement::adapters::http::router(
         CreateRequirementUseCase::new(req_repo.clone()),
         ListRequirementsUseCase::new(req_repo.clone()),
-        RequirementService::new(req_repo.clone()),
+        req_admin.clone(),
         sessions.clone(),
     );
 
@@ -234,6 +236,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         CreateDecompositionUseCase::new(task_repo.clone()),
         BreakdownUseCase::new(task_repo.clone(), task_planner.clone()),
         task_admin.clone(),
+        sessions.clone(),
+    );
+
+    // —— 服务端复合:据 requirementId 取规格自动拆分 ——
+    let breakdown_routes = breakdown_route::router(
+        req_admin.clone(),
+        BreakdownUseCase::new(task_repo.clone(), task_planner.clone()),
         sessions.clone(),
     );
 
@@ -280,6 +289,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         CreateDecompositionUseCase::new(task_repo.clone()),
         task_admin,
         mcp_delivery,
+        req_admin,
         BreakdownUseCase::new(task_repo.clone(), task_planner),
         CreateVerificationUseCase::new(ver_repo.clone()),
         ver_admin,
@@ -344,6 +354,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .merge(task_routes)
         .merge(delivery_routes)
         .merge(verification_routes)
+        .merge(breakdown_routes)
         .merge(skill_routes)
         .merge(mcp_routes)
         .merge(case_routes)

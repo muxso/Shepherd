@@ -43,7 +43,7 @@ impl<S: Send + Sync> FromRequestParts<S> for WantsSse {
 }
 
 use delivery::application::DeliveryService;
-use requirement::application::CreateRequirementUseCase;
+use requirement::application::{CreateRequirementUseCase, RequirementCmdError, RequirementService};
 use skill::application::{CreateSkillUseCase, SkillService};
 use task::application::{BreakdownUseCase, CreateDecompositionUseCase, TaskService};
 use task::ports::RequirementSpec;
@@ -153,20 +153,37 @@ impl ToolHandler for DispatchDelivery {
     }
 }
 
-tool_handler!(Breakdown, BreakdownUseCase, |self, args| {
-    let spec = RequirementSpec {
-        requirement_id: req_str(&args, "requirementId")?.to_string(),
-        requirement_version: req_u32(&args, "requirementVersion")?,
-        title: req_str(&args, "title")?.to_string(),
-        description: opt_str(&args, "description").to_string(),
-        acceptance_criteria: str_vec(&args, "acceptanceCriteria"),
-    };
-    let d = self.svc.execute(&spec).await.map_err(|e| format!("{e:?}"))?;
-    Ok(json!({
-        "decompositionId": d.id,
-        "tasks": d.tasks.iter().map(|t| json!({"id": t.id, "title": t.title, "dependencies": t.dependencies})).collect::<Vec<_>>()
-    }))
-});
+/// 自动拆分工具:仅需 requirementId(+可选 version),**服务端取规格**后拆分。
+struct Breakdown {
+    requirements: RequirementService,
+    breakdown: BreakdownUseCase,
+}
+
+#[async_trait]
+impl ToolHandler for Breakdown {
+    async fn call(&self, args: Value) -> Result<Value, String> {
+        let id = req_str(&args, "requirementId")?;
+        let req = match self.requirements.get(id).await {
+            Ok(r) => r,
+            Err(RequirementCmdError::NotFound) => return Err("requirement not found".into()),
+            Err(e) => return Err(format!("{e:?}")),
+        };
+        let version = args.get("requirementVersion").and_then(|v| v.as_u64()).map(|n| n as u32).unwrap_or(req.baseline_version);
+        let ver = req.version(version).ok_or("requirement version not found")?;
+        let spec = RequirementSpec {
+            requirement_id: req.id.clone(),
+            requirement_version: version,
+            title: req.title.clone(),
+            description: ver.description.clone(),
+            acceptance_criteria: ver.acceptance_criteria.iter().map(|c| c.text.clone()).collect(),
+        };
+        let d = self.breakdown.execute(&spec).await.map_err(|e| format!("{e:?}"))?;
+        Ok(json!({
+            "decompositionId": d.id,
+            "tasks": d.tasks.iter().map(|t| json!({"id": t.id, "title": t.title, "dependencies": t.dependencies})).collect::<Vec<_>>()
+        }))
+    }
+}
 
 tool_handler!(CreateVerification, CreateVerificationUseCase, |self, args| {
     let v = self
@@ -246,6 +263,7 @@ pub fn router(
     decompose: CreateDecompositionUseCase,
     tasks: TaskService,
     delivery: DeliveryService,
+    requirements: RequirementService,
     breakdown: BreakdownUseCase,
     create_verification: CreateVerificationUseCase,
     verification: VerificationService,
@@ -318,18 +336,16 @@ pub fn router(
         .requires("DELIVERY", "EXECUTE"))
         .tool(Tool::new(
             "shepherd_breakdown",
-            "自动拆分:据需求规格(标题/描述/验收标准)用规划器(默认启发式,可配 LLM)生成任务 DAG。",
+            "自动拆分:仅需 requirementId(可选 requirementVersion),服务端取需求规格并用规划器\
+             (默认启发式,可配 LLM)生成任务 DAG。",
             obj(
                 json!({
                     "requirementId": { "type": "string" },
-                    "requirementVersion": { "type": "integer" },
-                    "title": { "type": "string" },
-                    "description": { "type": "string" },
-                    "acceptanceCriteria": { "type": "array", "items": { "type": "string" } }
+                    "requirementVersion": { "type": "integer", "description": "可选,默认基线版本" }
                 }),
-                &["requirementId", "requirementVersion", "title"],
+                &["requirementId"],
             ),
-            Arc::new(Breakdown { svc: breakdown }),
+            Arc::new(Breakdown { requirements, breakdown }),
         )
         .requires("TASK", "ADD"))
         .tool(Tool::new(
