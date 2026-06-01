@@ -44,6 +44,9 @@ impl Judge for HttpJudge {
 
 /// 按环境选择验证门。
 pub fn build_judge() -> Arc<dyn Judge> {
+    if let Some(j) = crate::llm::judge() {
+        return j; // 真实 LLM 验证门(SHEPHERD_LLM_URL)
+    }
     match std::env::var("SHEPHERD_JUDGE_URL") {
         Ok(url) if !url.trim().is_empty() => {
             let client = reqwest::Client::builder()

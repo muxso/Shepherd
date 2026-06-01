@@ -10,6 +10,7 @@
 
 mod breakdown_route;
 mod judge;
+mod llm;
 mod mcp_tools;
 mod orchestration;
 mod planner;
@@ -272,6 +273,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     } else if let Ok(cmd) = std::env::var("SHEPHERD_AGENT_CMD") {
         let argv: Vec<String> = cmd.split_whitespace().map(String::from).collect();
         Arc::new(delivery::adapters::local::LocalCommandAgentExecutor::new(argv.clone(), argv))
+    } else if let Some(e) = llm::executor() {
+        e // 真实 LLM 执行者(SHEPHERD_LLM_URL)
     } else {
         Arc::new(delivery::adapters::EchoAgentExecutor::new())
     };

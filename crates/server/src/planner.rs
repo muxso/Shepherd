@@ -64,6 +64,9 @@ impl Planner for HttpPlanner {
 
 /// 按环境选择规划器。
 pub fn build_planner() -> Arc<dyn Planner> {
+    if let Some(p) = crate::llm::planner() {
+        return p; // 真实 LLM 规划器(SHEPHERD_LLM_URL)
+    }
     match std::env::var("SHEPHERD_PLANNER_URL") {
         Ok(url) if !url.trim().is_empty() => {
             let client = reqwest::Client::builder()
