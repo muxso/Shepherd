@@ -8,6 +8,7 @@
 //!     -e POSTGRES_DB=mstest -p 55432:5432 postgres:16-alpine
 //!   DATABASE_URL=postgres://msuser:mspass@localhost:55432/mstest cargo run -p server
 
+mod mcp_tools;
 mod orchestration;
 
 use std::sync::Arc;
@@ -215,7 +216,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let requirement_routes = requirement::adapters::http::router(
         CreateRequirementUseCase::new(req_repo.clone()),
         ListRequirementsUseCase::new(req_repo.clone()),
-        RequirementService::new(req_repo),
+        RequirementService::new(req_repo.clone()),
         sessions.clone(),
     );
 
@@ -249,11 +250,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Arc::new(delivery::adapters::EchoAgentExecutor::new())
     };
     // 交付落终态 → 编排器自动回灌验证(需求↔任务↔实现 闭环)。
-    let delivery_observer = orchestration::delivery_observer(task_admin, ver_admin);
+    let delivery_observer = orchestration::delivery_observer(task_admin.clone(), ver_admin.clone());
     let delivery_svc =
         DeliveryService::new(Arc::new(PgDeliveryRepository::new(pool.clone())), agent)
             .with_observer(delivery_observer);
+    let mcp_delivery = delivery_svc.clone();
     let delivery_routes = delivery::adapters::http::router(delivery_svc, sessions.clone());
+
+    // —— MCP 集成(把全链路暴露为 MCP 工具,POST /mcp,JSON-RPC)——
+    let mcp_routes = mcp_tools::router(
+        CreateRequirementUseCase::new(req_repo.clone()),
+        CreateDecompositionUseCase::new(task_repo.clone()),
+        task_admin,
+        mcp_delivery,
+        CreateVerificationUseCase::new(ver_repo.clone()),
+        ver_admin,
+        sessions.clone(),
+    );
 
     // —— case 模块 ——
     let review_repo = Arc::new(PgReviewRepository::new(pool.clone()));
@@ -311,6 +324,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .merge(task_routes)
         .merge(delivery_routes)
         .merge(verification_routes)
+        .merge(mcp_routes)
         .merge(case_routes)
         .merge(bug_routes)
         .merge(plan_routes)
