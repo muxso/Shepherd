@@ -39,6 +39,7 @@ struct WorkSpecDto<'a> {
     acceptance_criteria: &'a [String],
     executor: &'a str,
     context: Option<&'a str>,
+    instructions: Option<&'a str>,
 }
 
 #[derive(Deserialize)]
@@ -85,6 +86,7 @@ impl AgentExecutor for HttpAgentExecutor {
             acceptance_criteria: &spec.acceptance_criteria,
             executor: spec.executor.as_str(),
             context: spec.context.as_deref(),
+            instructions: spec.instructions.as_deref(),
         };
         let url = format!("{}/dispatch", self.base_url.trim_end_matches('/'));
         let resp = self
@@ -156,6 +158,7 @@ mod tests {
             acceptance_criteria: vec![],
             executor: ExecutorKind::Codex,
             context: None,
+            instructions: None,
         }
     }
 

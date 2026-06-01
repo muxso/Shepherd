@@ -46,7 +46,11 @@ impl LocalCommandAgentExecutor {
 }
 
 fn spec_to_prompt(spec: &WorkSpec) -> String {
-    let mut p = format!("# Task: {}\n\n{}\n", spec.title, spec.description);
+    let mut p = String::new();
+    if let Some(instr) = &spec.instructions {
+        p.push_str(&format!("# Behavior (skills)\n{instr}\n\n"));
+    }
+    p.push_str(&format!("# Task: {}\n\n{}\n", spec.title, spec.description));
     if !spec.acceptance_criteria.is_empty() {
         p.push_str("\nAcceptance criteria:\n");
         for c in &spec.acceptance_criteria {
@@ -177,6 +181,7 @@ mod tests {
             acceptance_criteria: vec!["c1".into()],
             executor: kind,
             context: None,
+            instructions: None,
         }
     }
 

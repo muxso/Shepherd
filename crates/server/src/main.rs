@@ -48,6 +48,8 @@ use delivery::adapters::pg::PgDeliveryRepository;
 use delivery::ports::AgentExecutor;
 use verification::application::{CreateVerificationUseCase, VerificationService};
 use verification::adapters::pg::PgVerificationRepository;
+use skill::application::{CreateSkillUseCase, SkillService};
+use skill::adapters::pg::PgSkillRepository;
 use system_setting::adapters::auth::Argon2PasswordHasher;
 use system_setting::adapters::oidc::{FeishuProvider, WecomProvider};
 use system_setting::adapters::pg::{
@@ -150,6 +152,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 "TASK:READ+ADD+EXECUTE+UPDATE".to_string(),
                 "DELIVERY:READ+EXECUTE+UPDATE".to_string(),
                 "VERIFICATION:READ+ADD+UPDATE".to_string(),
+                "SKILL:READ+ADD+UPDATE+DELETE".to_string(),
             ],
         )
         .await?;
@@ -238,6 +241,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         sessions.clone(),
     );
 
+    // —— skill 模块(Shepherd AI Skill 编排:定义/复用/组合)——
+    let skill_repo = Arc::new(PgSkillRepository::new(pool.clone()));
+    let skill_admin = SkillService::new(skill_repo.clone());
+    let skill_routes = skill::adapters::http::router(
+        CreateSkillUseCase::new(skill_repo.clone()),
+        skill_admin.clone(),
+        sessions.clone(),
+    );
+
     // —— delivery 模块(Shepherd 交付执行:任务 → AI 执行者)——
     // 执行者按环境路由:SHEPHERD_AGENT_URL → 远端 Agent API(异步);
     // SHEPHERD_AGENT_CMD → 本地 spawn(同步);都没配 → Echo 桩(无真实 agent)。
@@ -265,6 +277,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         mcp_delivery,
         CreateVerificationUseCase::new(ver_repo.clone()),
         ver_admin,
+        CreateSkillUseCase::new(skill_repo.clone()),
+        skill_admin,
         sessions.clone(),
     );
 
@@ -324,6 +338,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .merge(task_routes)
         .merge(delivery_routes)
         .merge(verification_routes)
+        .merge(skill_routes)
         .merge(mcp_routes)
         .merge(case_routes)
         .merge(bug_routes)

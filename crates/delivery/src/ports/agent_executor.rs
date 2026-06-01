@@ -26,6 +26,8 @@ pub struct WorkSpec {
     pub executor: ExecutorKind,
     /// 可选的仓库/分支等上下文提示。
     pub context: Option<String>,
+    /// 可选的 AI 行为规范(由 skill 组合而来,注入执行者提示以规范行为)。
+    pub instructions: Option<String>,
 }
 
 /// 下发结果(据此推进交付尝试状态):
