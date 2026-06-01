@@ -8,6 +8,7 @@
 //!     -e POSTGRES_DB=mstest -p 55432:5432 postgres:16-alpine
 //!   DATABASE_URL=postgres://msuser:mspass@localhost:55432/mstest cargo run -p server
 
+mod judge;
 mod mcp_tools;
 mod orchestration;
 

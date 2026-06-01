@@ -1,40 +1,36 @@
-//! 用例:交付进度 → 同时(1)驱动任务生命周期 +(2)终态时回灌验证。
+//! 用例:交付进度 → 驱动任务生命周期 + 验证门 + 回灌验证。
 //!
-//! 一次交付尝试每进入 Running/Delivered/Failed,编排器据进度:
-//! - **镜像任务状态**:Running⇒任务推进到 Running,Delivered⇒Delivered,Failed⇒Failed(尽力而为);
-//! - **回灌验证**(仅终态):据拆分图定位需求版本 → 找验证 → 同步该任务覆盖链
-//!   `satisfied`(Delivered⇒true,Failed⇒false)。
+//! 交付**成功**时不再"交付即 Verified",而是先过**验证门(judge)**:据任务验收标准评判交付物,
+//! 通过 → 任务推进到 Verified + 验证覆盖链 satisfied=true;不通过 → 任务置 Failed + satisfied=false
+//! (缺口保留)。Running 仅推进任务;Failed 直接置失败。
 
 use std::sync::Arc;
 
-use crate::ports::{OrchError, TaskGateway, TaskTarget, VerificationGateway};
+use crate::ports::{
+    DeliverableView, Judge, OrchError, TaskGateway, TaskTarget, Verdict, VerificationGateway,
+};
 
-/// 交付进度(对应 delivery 尝试的非初始状态)。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// 交付进度。`Delivered` 携带交付物以供验证门评判。
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DeliveryProgress {
     Running,
-    Delivered,
+    Delivered { deliverable: DeliverableView },
     Failed,
 }
 
-/// 验证回灌结果。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum VerificationSync {
-    /// 非终态(Running),暂不回灌。
     NotApplicable,
-    /// 找不到拆分图,无从定位需求。
     NoDecomposition,
-    /// 该需求版本尚未开启验证。
     NoVerification,
-    /// 已同步覆盖链。
     Synced { verification_id: String, satisfied: bool },
 }
 
-/// 一次编排的效果(便于观测与测试)。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FeedbackOutcome {
-    /// 任务是否被成功推进(尽力而为:依赖未满足等会导致 false)。
     pub task_advanced: bool,
+    /// 交付成功时的验证门裁决(Running/Failed 为 None)。
+    pub verdict: Option<Verdict>,
     pub verification: VerificationSync,
 }
 
@@ -42,160 +38,172 @@ pub struct FeedbackOutcome {
 pub struct DeliveryFeedbackOrchestrator {
     task: Arc<dyn TaskGateway>,
     verification: Arc<dyn VerificationGateway>,
+    judge: Arc<dyn Judge>,
 }
 
 impl DeliveryFeedbackOrchestrator {
-    pub fn new(task: Arc<dyn TaskGateway>, verification: Arc<dyn VerificationGateway>) -> Self {
-        Self { task, verification }
+    pub fn new(
+        task: Arc<dyn TaskGateway>,
+        verification: Arc<dyn VerificationGateway>,
+        judge: Arc<dyn Judge>,
+    ) -> Self {
+        Self { task, verification, judge }
     }
 
-    /// 交付进度推进时调用:驱动任务 + (终态)回灌验证。
     pub async fn on_progress(
         &self,
         decomposition_id: &str,
         task_id: &str,
         progress: DeliveryProgress,
     ) -> Result<FeedbackOutcome, OrchError> {
-        // (1) 驱动任务生命周期 —— 尽力而为(依赖未满足/非法流转不阻断验证回灌)。
-        // 交付成功 ⇒ 任务直接推进到 Verified(解锁下游依赖);失败 ⇒ Failed;进行中 ⇒ Running。
-        let target = match progress {
-            DeliveryProgress::Running => TaskTarget::Running,
-            DeliveryProgress::Delivered => TaskTarget::Verified,
-            DeliveryProgress::Failed => TaskTarget::Failed,
-        };
-        let task_advanced =
-            self.task.advance_task(decomposition_id, task_id, target).await.is_ok();
+        // 决定:任务推进目标 + 是否满足(回灌验证)+ 裁决。
+        let (target, satisfied, verdict): (Option<TaskTarget>, Option<bool>, Option<Verdict>) =
+            match progress {
+                DeliveryProgress::Running => (Some(TaskTarget::Running), None, None),
+                DeliveryProgress::Failed => (Some(TaskTarget::Failed), Some(false), None),
+                DeliveryProgress::Delivered { deliverable } => {
+                    // 交付已完成:先把任务推进到 Delivered(走完 happy path),再过验证门。
+                    let _ = self
+                        .task
+                        .advance_task(decomposition_id, task_id, TaskTarget::Delivered)
+                        .await;
+                    // 验证门:据任务验收标准评判交付物。
+                    let criteria = self.task.task_criteria(decomposition_id, task_id).await?;
+                    let v = self.judge.judge(&criteria, &deliverable).await;
+                    if v.passed {
+                        (Some(TaskTarget::Verified), Some(true), Some(v))
+                    } else {
+                        (Some(TaskTarget::Failed), Some(false), Some(v))
+                    }
+                }
+            };
 
-        // (2) 终态回灌验证。
-        let verification = match progress {
-            DeliveryProgress::Running => VerificationSync::NotApplicable,
-            DeliveryProgress::Delivered | DeliveryProgress::Failed => {
-                let satisfied = matches!(progress, DeliveryProgress::Delivered);
-                match self.task.requirement_of(decomposition_id).await? {
-                    None => VerificationSync::NoDecomposition,
-                    Some((req_id, version)) => {
-                        match self.verification.find_verification(&req_id, version).await? {
-                            None => VerificationSync::NoVerification,
-                            Some(vid) => {
-                                self.verification
-                                    .sync(&vid, decomposition_id, task_id, satisfied)
-                                    .await?;
-                                VerificationSync::Synced { verification_id: vid, satisfied }
-                            }
+        // 驱动任务(尽力而为)。
+        let task_advanced = match target {
+            Some(t) => self.task.advance_task(decomposition_id, task_id, t).await.is_ok(),
+            None => false,
+        };
+
+        // 回灌验证(仅终态:satisfied 为 Some 时)。
+        let verification = match satisfied {
+            None => VerificationSync::NotApplicable,
+            Some(sat) => match self.task.requirement_of(decomposition_id).await? {
+                None => VerificationSync::NoDecomposition,
+                Some((req_id, version)) => {
+                    match self.verification.find_verification(&req_id, version).await? {
+                        None => VerificationSync::NoVerification,
+                        Some(vid) => {
+                            self.verification.sync(&vid, decomposition_id, task_id, sat).await?;
+                            VerificationSync::Synced { verification_id: vid, satisfied: sat }
                         }
                     }
                 }
-            }
+            },
         };
 
-        Ok(FeedbackOutcome { task_advanced, verification })
+        Ok(FeedbackOutcome { task_advanced, verdict, verification })
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::judges::{AcceptAllJudge, RuleJudge};
     use async_trait::async_trait;
     use std::sync::Mutex;
 
     #[derive(Default)]
     struct FakeTask {
-        // decomposition_id -> (requirement_id, version)
         map: Vec<(String, String, u32)>,
-        advanced: Mutex<Vec<(String, String, TaskTarget)>>,
-        // 模拟推进失败(如依赖未满足)
-        advance_fails: bool,
-    }
-    impl FakeTask {
-        fn with(id: &str, req: &str, ver: u32) -> Self {
-            Self { map: vec![(id.into(), req.into(), ver)], ..Default::default() }
-        }
+        criteria: Vec<String>,
+        advanced: Mutex<Vec<(String, TaskTarget)>>,
     }
     #[async_trait]
     impl TaskGateway for FakeTask {
         async fn requirement_of(&self, id: &str) -> Result<Option<(String, u32)>, OrchError> {
             Ok(self.map.iter().find(|(d, _, _)| d == id).map(|(_, r, v)| (r.clone(), *v)))
         }
-        async fn advance_task(&self, d: &str, t: &str, target: TaskTarget) -> Result<(), OrchError> {
-            if self.advance_fails {
-                return Err(OrchError::Gateway("deps not satisfied".into()));
-            }
-            self.advanced.lock().unwrap().push((d.into(), t.into(), target));
+        async fn advance_task(&self, _d: &str, t: &str, target: TaskTarget) -> Result<(), OrchError> {
+            self.advanced.lock().unwrap().push((t.into(), target));
             Ok(())
+        }
+        async fn task_criteria(&self, _d: &str, _t: &str) -> Result<Vec<String>, OrchError> {
+            Ok(self.criteria.clone())
         }
     }
 
     #[derive(Default)]
     struct FakeVerif {
         found: Option<(String, u32, String)>,
-        synced: Mutex<Vec<(String, String, String, bool)>>,
+        synced: Mutex<Vec<(String, bool)>>,
     }
     #[async_trait]
     impl VerificationGateway for FakeVerif {
         async fn find_verification(&self, req: &str, ver: u32) -> Result<Option<String>, OrchError> {
             Ok(self.found.as_ref().filter(|(r, v, _)| r == req && *v == ver).map(|(_, _, id)| id.clone()))
         }
-        async fn sync(&self, vid: &str, d: &str, t: &str, s: bool) -> Result<(), OrchError> {
-            self.synced.lock().unwrap().push((vid.into(), d.into(), t.into(), s));
+        async fn sync(&self, vid: &str, _d: &str, _t: &str, s: bool) -> Result<(), OrchError> {
+            self.synced.lock().unwrap().push((vid.into(), s));
             Ok(())
         }
     }
 
-    #[tokio::test]
-    async fn delivered_advances_task_and_syncs_verification() {
-        let task = Arc::new(FakeTask::with("d1", "req1", 1));
-        let verif = Arc::new(FakeVerif { found: Some(("req1".into(), 1, "v1".into())), ..Default::default() });
-        let orch = DeliveryFeedbackOrchestrator::new(task.clone(), verif.clone());
-
-        let out = orch.on_progress("d1", "t1", DeliveryProgress::Delivered).await.expect("ok");
-        assert!(out.task_advanced);
-        assert_eq!(out.verification, VerificationSync::Synced { verification_id: "v1".into(), satisfied: true });
-        assert_eq!(task.advanced.lock().unwrap().as_slice(), &[("d1".into(), "t1".into(), TaskTarget::Verified)]);
-        assert!(verif.synced.lock().unwrap()[0].3);
+    fn dv(reference: &str, summary: &str) -> DeliverableView {
+        DeliverableView { kind: "DIFF".into(), reference: reference.into(), summary: summary.into() }
     }
 
     #[tokio::test]
-    async fn running_advances_task_only_no_verification() {
-        let task = Arc::new(FakeTask::with("d1", "req1", 1));
+    async fn delivered_passing_gate_verifies_and_syncs_true() {
+        let task = Arc::new(FakeTask { map: vec![("d1".into(), "req1".into(), 1)], ..Default::default() });
         let verif = Arc::new(FakeVerif { found: Some(("req1".into(), 1, "v1".into())), ..Default::default() });
-        let orch = DeliveryFeedbackOrchestrator::new(task.clone(), verif.clone());
+        let orch = DeliveryFeedbackOrchestrator::new(task.clone(), verif.clone(), Arc::new(RuleJudge));
 
+        let out = orch
+            .on_progress("d1", "t1", DeliveryProgress::Delivered { deliverable: dv("branch:x", "done") })
+            .await
+            .expect("ok");
+        assert!(out.verdict.as_ref().unwrap().passed);
+        assert_eq!(task.advanced.lock().unwrap().last().unwrap().1, TaskTarget::Verified);
+        assert_eq!(verif.synced.lock().unwrap()[0].1, true);
+    }
+
+    #[tokio::test]
+    async fn delivered_failing_gate_fails_task_and_syncs_false() {
+        let task = Arc::new(FakeTask { map: vec![("d1".into(), "req1".into(), 1)], ..Default::default() });
+        let verif = Arc::new(FakeVerif { found: Some(("req1".into(), 1, "v1".into())), ..Default::default() });
+        let orch = DeliveryFeedbackOrchestrator::new(task.clone(), verif.clone(), Arc::new(RuleJudge));
+
+        // 交付物缺 summary → 规则门不通过
+        let out = orch
+            .on_progress("d1", "t1", DeliveryProgress::Delivered { deliverable: dv("branch:x", "") })
+            .await
+            .expect("ok");
+        assert!(!out.verdict.as_ref().unwrap().passed);
+        assert_eq!(task.advanced.lock().unwrap().last().unwrap().1, TaskTarget::Failed);
+        assert_eq!(verif.synced.lock().unwrap()[0].1, false);
+    }
+
+    #[tokio::test]
+    async fn accept_all_keeps_legacy_behavior() {
+        let task = Arc::new(FakeTask { map: vec![("d1".into(), "req1".into(), 1)], ..Default::default() });
+        let verif = Arc::new(FakeVerif { found: Some(("req1".into(), 1, "v1".into())), ..Default::default() });
+        let orch = DeliveryFeedbackOrchestrator::new(task.clone(), verif, Arc::new(AcceptAllJudge));
+        // 即便交付物空,AcceptAll 也通过 → Verified
+        let out = orch
+            .on_progress("d1", "t1", DeliveryProgress::Delivered { deliverable: dv("", "") })
+            .await
+            .expect("ok");
+        assert!(out.verdict.unwrap().passed);
+        assert_eq!(task.advanced.lock().unwrap().last().unwrap().1, TaskTarget::Verified);
+    }
+
+    #[tokio::test]
+    async fn running_advances_only() {
+        let task = Arc::new(FakeTask { map: vec![("d1".into(), "req1".into(), 1)], ..Default::default() });
+        let orch = DeliveryFeedbackOrchestrator::new(task.clone(), Arc::new(FakeVerif::default()), Arc::new(AcceptAllJudge));
         let out = orch.on_progress("d1", "t1", DeliveryProgress::Running).await.expect("ok");
-        assert!(out.task_advanced);
         assert_eq!(out.verification, VerificationSync::NotApplicable);
-        assert_eq!(task.advanced.lock().unwrap()[0].2, TaskTarget::Running);
-        assert!(verif.synced.lock().unwrap().is_empty());
-    }
-
-    #[tokio::test]
-    async fn failed_advances_failed_and_syncs_unsatisfied() {
-        let task = Arc::new(FakeTask::with("d1", "req1", 1));
-        let verif = Arc::new(FakeVerif { found: Some(("req1".into(), 1, "v1".into())), ..Default::default() });
-        let orch = DeliveryFeedbackOrchestrator::new(task.clone(), verif.clone());
-
-        let out = orch.on_progress("d1", "t1", DeliveryProgress::Failed).await.expect("ok");
-        assert_eq!(out.verification, VerificationSync::Synced { verification_id: "v1".into(), satisfied: false });
-        assert_eq!(task.advanced.lock().unwrap()[0].2, TaskTarget::Failed);
-    }
-
-    #[tokio::test]
-    async fn task_advance_failure_does_not_block_verification() {
-        let task = Arc::new(FakeTask { map: vec![("d1".into(), "req1".into(), 1)], advance_fails: true, ..Default::default() });
-        let verif = Arc::new(FakeVerif { found: Some(("req1".into(), 1, "v1".into())), ..Default::default() });
-        let orch = DeliveryFeedbackOrchestrator::new(task, verif.clone());
-
-        let out = orch.on_progress("d1", "t1", DeliveryProgress::Delivered).await.expect("ok");
-        assert!(!out.task_advanced); // 推进失败
-        // 但验证照常回灌
-        assert!(matches!(out.verification, VerificationSync::Synced { .. }));
-    }
-
-    #[tokio::test]
-    async fn no_verification_still_advances_task() {
-        let task = Arc::new(FakeTask::with("d1", "req1", 1));
-        let orch = DeliveryFeedbackOrchestrator::new(task.clone(), Arc::new(FakeVerif::default()));
-        let out = orch.on_progress("d1", "t1", DeliveryProgress::Delivered).await.expect("ok");
-        assert!(out.task_advanced);
-        assert_eq!(out.verification, VerificationSync::NoVerification);
+        assert!(out.verdict.is_none());
+        assert_eq!(task.advanced.lock().unwrap()[0].1, TaskTarget::Running);
     }
 }

@@ -9,4 +9,5 @@
 //! ② 把 delivery 的 `DeliveryObserver` 钩子桥接到本编排器。上下文彼此仍不相互依赖。
 
 pub mod application;
+pub mod judges;
 pub mod ports;

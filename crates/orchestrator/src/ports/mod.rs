@@ -13,12 +13,14 @@ pub enum OrchError {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TaskTarget {
     Running,
-    /// 交付成功并被接受 → 任务验证通过(解锁依赖它的下游任务)。
+    /// 已交付(过验证门前的中间态)。
+    Delivered,
+    /// 交付成功并通过验证门 → 任务验证通过(解锁依赖它的下游任务)。
     Verified,
     Failed,
 }
 
-/// task 上下文侧:定位需求版本 + 推进任务生命周期。
+/// task 上下文侧:定位需求版本 + 推进任务生命周期 + 取任务验收标准。
 #[async_trait]
 pub trait TaskGateway: Send + Sync {
     /// 拆分图归属的 (requirement_id, version);不存在返回 None。
@@ -34,6 +36,34 @@ pub trait TaskGateway: Send + Sync {
         task_id: &str,
         target: TaskTarget,
     ) -> Result<(), OrchError>;
+
+    /// 取任务的验收标准(交给 judge 评判交付物)。
+    async fn task_criteria(
+        &self,
+        decomposition_id: &str,
+        task_id: &str,
+    ) -> Result<Vec<String>, OrchError>;
+}
+
+/// 交付物视图(编排器自有,与 delivery 的类型解耦)。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DeliverableView {
+    pub kind: String,
+    pub reference: String,
+    pub summary: String,
+}
+
+/// 验证门裁决。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Verdict {
+    pub passed: bool,
+    pub reason: String,
+}
+
+/// 验证门(judge):据验收标准评判交付物是否达标。可由规则或 LLM 实现。
+#[async_trait]
+pub trait Judge: Send + Sync {
+    async fn judge(&self, criteria: &[String], deliverable: &DeliverableView) -> Verdict;
 }
 
 /// 验证侧:查某需求版本的验证 + 同步任务的覆盖链状态。
