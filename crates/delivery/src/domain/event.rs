@@ -20,6 +20,8 @@ pub enum EventKind {
     TestResult,
     /// 工具调用。
     ToolCall,
+    /// 验证门裁决(通过/不通过 + 理由)。
+    Verdict,
     /// 普通日志。
     Log,
 }
@@ -31,6 +33,7 @@ impl EventKind {
             Self::FileChange => "FILE_CHANGE",
             Self::TestResult => "TEST_RESULT",
             Self::ToolCall => "TOOL_CALL",
+            Self::Verdict => "VERDICT",
             Self::Log => "LOG",
         }
     }
@@ -41,6 +44,7 @@ impl EventKind {
             "FILE_CHANGE" => Some(Self::FileChange),
             "TEST_RESULT" => Some(Self::TestResult),
             "TOOL_CALL" => Some(Self::ToolCall),
+            "VERDICT" => Some(Self::Verdict),
             "LOG" => Some(Self::Log),
             _ => None,
         }
@@ -100,6 +104,7 @@ mod tests {
             EventKind::FileChange,
             EventKind::TestResult,
             EventKind::ToolCall,
+            EventKind::Verdict,
             EventKind::Log,
         ] {
             assert_eq!(EventKind::parse(k.as_str()), Some(k));
