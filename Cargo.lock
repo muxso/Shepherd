@@ -1749,6 +1749,8 @@ dependencies = [
  "orchestrator",
  "project",
  "requirement",
+ "reqwest",
+ "serde",
  "serde_json",
  "skill",
  "system-setting",
