@@ -4,8 +4,8 @@
 
 use async_trait::async_trait;
 
-use crate::domain::{Deliverable, DeliverableKind};
-use crate::ports::{AgentExecutor, DispatchOutcome, ExecError, WorkSpec};
+use crate::domain::{Deliverable, DeliverableKind, EventKind, NewExecutionEvent};
+use crate::ports::{AgentExecutor, DispatchOutcome, EventSink, ExecError, WorkSpec};
 
 /// 默认桩:同步完成,交付物回显任务标题(reference 指向一个占位)。
 #[derive(Clone, Default)]
@@ -19,7 +19,18 @@ impl EchoAgentExecutor {
 
 #[async_trait]
 impl AgentExecutor for EchoAgentExecutor {
-    async fn dispatch(&self, spec: &WorkSpec) -> Result<DispatchOutcome, ExecError> {
+    async fn dispatch(
+        &self,
+        spec: &WorkSpec,
+        sink: &dyn EventSink,
+    ) -> Result<DispatchOutcome, ExecError> {
+        if let Ok(ev) = NewExecutionEvent::new(
+            EventKind::Log,
+            &format!("echo executor: no real agent, completing {}", spec.title),
+            None,
+        ) {
+            sink.emit(ev).await;
+        }
         Ok(DispatchOutcome::Completed {
             deliverable: Deliverable {
                 kind: DeliverableKind::Diff,
@@ -51,7 +62,11 @@ impl StubAgentExecutor {
 
 #[async_trait]
 impl AgentExecutor for StubAgentExecutor {
-    async fn dispatch(&self, _spec: &WorkSpec) -> Result<DispatchOutcome, ExecError> {
+    async fn dispatch(
+        &self,
+        _spec: &WorkSpec,
+        _sink: &dyn EventSink,
+    ) -> Result<DispatchOutcome, ExecError> {
         match &self.behavior {
             StubBehavior::Accept { run_id } => {
                 Ok(DispatchOutcome::Accepted { run_id: run_id.clone() })

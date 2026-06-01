@@ -7,6 +7,7 @@ use async_trait::async_trait;
 use thiserror::Error;
 
 use crate::domain::{Deliverable, ExecutorKind};
+use crate::ports::EventSink;
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum ExecError {
@@ -38,5 +39,10 @@ pub enum DispatchOutcome {
 
 #[async_trait]
 pub trait AgentExecutor: Send + Sync {
-    async fn dispatch(&self, spec: &WorkSpec) -> Result<DispatchOutcome, ExecError>;
+    /// 派发工作给执行者;运行中产生的执行事件经 `sink` 实时回流(供审计)。
+    async fn dispatch(
+        &self,
+        spec: &WorkSpec,
+        sink: &dyn EventSink,
+    ) -> Result<DispatchOutcome, ExecError>;
 }
