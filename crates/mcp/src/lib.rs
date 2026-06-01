@@ -23,6 +23,20 @@ pub trait ToolHandler: Send + Sync {
     async fn call(&self, args: Value) -> Result<Value, String>;
 }
 
+/// 调用方能力检查(由组装根用会话权限实现)。协议层不认识具体 RBAC 语义,只问"是否允许"。
+/// `Send + Sync`:`&dyn CapabilityChecker` 需可跨 `.await` 传递(handler future 须 Send)。
+pub trait CapabilityChecker: Send + Sync {
+    fn allows(&self, resource: &str, action: &str) -> bool;
+}
+
+/// 放行一切(无鉴权场景/测试)。
+pub struct AllowAll;
+impl CapabilityChecker for AllowAll {
+    fn allows(&self, _resource: &str, _action: &str) -> bool {
+        true
+    }
+}
+
 /// 一个已注册的工具。
 pub struct Tool {
     pub name: String,
@@ -30,6 +44,8 @@ pub struct Tool {
     /// 入参的 JSON Schema。
     pub input_schema: Value,
     pub handler: Arc<dyn ToolHandler>,
+    /// 调用所需能力 (resource, action);None 表示无需特定权限。
+    pub required: Option<(String, String)>,
 }
 
 impl Tool {
@@ -44,6 +60,20 @@ impl Tool {
             description: description.into(),
             input_schema,
             handler,
+            required: None,
+        }
+    }
+
+    /// 声明调用此工具所需能力(resource:action)。
+    pub fn requires(mut self, resource: impl Into<String>, action: impl Into<String>) -> Self {
+        self.required = Some((resource.into(), action.into()));
+        self
+    }
+
+    fn allowed_by(&self, checker: &dyn CapabilityChecker) -> bool {
+        match &self.required {
+            Some((r, a)) => checker.allows(r, a),
+            None => true,
         }
     }
 }
@@ -65,8 +95,8 @@ impl McpServer {
         self
     }
 
-    /// 处理一个 JSON-RPC 消息。通知(无 `id`)返回 `None`。
-    pub async fn dispatch(&self, message: Value) -> Option<Value> {
+    /// 处理一个 JSON-RPC 消息(`checker` 决定哪些工具可见/可调)。通知(无 `id`)返回 `None`。
+    pub async fn dispatch(&self, message: Value, checker: &dyn CapabilityChecker) -> Option<Value> {
         let id = message.get("id").cloned();
         let method = message.get("method").and_then(|m| m.as_str()).unwrap_or("").to_string();
 
@@ -81,8 +111,8 @@ impl McpServer {
                 Ok(self.initialize_result(&pv))
             }
             "ping" => Ok(json!({})),
-            "tools/list" => Ok(self.tools_list()),
-            "tools/call" => self.tools_call(message.get("params")).await,
+            "tools/list" => Ok(self.tools_list(checker)),
+            "tools/call" => self.tools_call(message.get("params"), checker).await,
             _ => Err((-32601, format!("method not found: {method}"))),
         };
 
@@ -104,16 +134,22 @@ impl McpServer {
         })
     }
 
-    fn tools_list(&self) -> Value {
+    fn tools_list(&self, checker: &dyn CapabilityChecker) -> Value {
+        // 只列出调用方有权调用的工具(模型只看见能用的)。
         let tools: Vec<Value> = self
             .tools
             .iter()
+            .filter(|t| t.allowed_by(checker))
             .map(|t| json!({ "name": t.name, "description": t.description, "inputSchema": t.input_schema }))
             .collect();
         json!({ "tools": tools })
     }
 
-    async fn tools_call(&self, params: Option<&Value>) -> Result<Value, (i64, String)> {
+    async fn tools_call(
+        &self,
+        params: Option<&Value>,
+        checker: &dyn CapabilityChecker,
+    ) -> Result<Value, (i64, String)> {
         let params = params.ok_or((-32602, "missing params".to_string()))?;
         let name = params
             .get("name")
@@ -126,6 +162,11 @@ impl McpServer {
             .iter()
             .find(|t| t.name == name)
             .ok_or((-32602, format!("unknown tool: {name}")))?;
+
+        // 按工具 RBAC:权限不足 → JSON-RPC 错误(-32003)。
+        if !tool.allowed_by(checker) {
+            return Err((-32003, format!("permission denied for tool: {name}")));
+        }
 
         // 工具执行错误以 isError 结果回给模型(非 JSON-RPC error)。
         Ok(match tool.handler.call(args).await {
@@ -168,7 +209,7 @@ mod tests {
     #[tokio::test]
     async fn initialize_echoes_protocol_version_and_serverinfo() {
         let req = json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18"}});
-        let resp = server().dispatch(req).await.expect("response");
+        let resp = server().dispatch(req, &AllowAll).await.expect("response");
         assert_eq!(resp["result"]["protocolVersion"], "2025-06-18");
         assert_eq!(resp["result"]["serverInfo"]["name"], "shepherd");
         assert_eq!(resp["id"], 1);
@@ -176,7 +217,7 @@ mod tests {
 
     #[tokio::test]
     async fn tools_list_returns_registered() {
-        let resp = server().dispatch(json!({"jsonrpc":"2.0","id":2,"method":"tools/list"})).await.expect("r");
+        let resp = server().dispatch(json!({"jsonrpc":"2.0","id":2,"method":"tools/list"}), &AllowAll).await.expect("r");
         let tools = resp["result"]["tools"].as_array().expect("arr");
         assert_eq!(tools.len(), 1);
         assert_eq!(tools[0]["name"], "echo");
@@ -186,7 +227,7 @@ mod tests {
     #[tokio::test]
     async fn tools_call_success_wraps_text_content() {
         let req = json!({"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"echo","arguments":{"x":1}}});
-        let resp = server().dispatch(req).await.expect("r");
+        let resp = server().dispatch(req, &AllowAll).await.expect("r");
         assert_eq!(resp["result"]["isError"], false);
         let text = resp["result"]["content"][0]["text"].as_str().expect("text");
         let parsed: Value = serde_json::from_str(text).expect("json");
@@ -196,7 +237,7 @@ mod tests {
     #[tokio::test]
     async fn tool_handler_error_is_iserror_result_not_jsonrpc_error() {
         let req = json!({"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"echo","arguments":{"fail":true}}});
-        let resp = server().dispatch(req).await.expect("r");
+        let resp = server().dispatch(req, &AllowAll).await.expect("r");
         assert!(resp.get("error").is_none());
         assert_eq!(resp["result"]["isError"], true);
         assert_eq!(resp["result"]["content"][0]["text"], "boom");
@@ -204,15 +245,44 @@ mod tests {
 
     #[tokio::test]
     async fn unknown_tool_and_method_are_jsonrpc_errors() {
-        let r1 = server().dispatch(json!({"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"nope"}})).await.expect("r");
+        let r1 = server().dispatch(json!({"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"nope"}}), &AllowAll).await.expect("r");
         assert_eq!(r1["error"]["code"], -32602);
-        let r2 = server().dispatch(json!({"jsonrpc":"2.0","id":6,"method":"frobnicate"})).await.expect("r");
+        let r2 = server().dispatch(json!({"jsonrpc":"2.0","id":6,"method":"frobnicate"}), &AllowAll).await.expect("r");
         assert_eq!(r2["error"]["code"], -32601);
     }
 
     #[tokio::test]
     async fn notification_without_id_yields_no_response() {
-        let resp = server().dispatch(json!({"jsonrpc":"2.0","method":"notifications/initialized"})).await;
+        let resp = server().dispatch(json!({"jsonrpc":"2.0","method":"notifications/initialized"}), &AllowAll).await;
         assert!(resp.is_none());
+    }
+
+    struct Denies(&'static str); // 拒绝某 resource
+    impl CapabilityChecker for Denies {
+        fn allows(&self, resource: &str, _action: &str) -> bool {
+            resource != self.0
+        }
+    }
+
+    fn guarded_server() -> McpServer {
+        McpServer::new("shepherd", "0.1").tool(
+            Tool::new("secret", "guarded", json!({"type":"object"}), Arc::new(EchoTool))
+                .requires("SECRET", "READ"),
+        )
+    }
+
+    #[tokio::test]
+    async fn tools_list_hides_disallowed_tools() {
+        let allowed = guarded_server().dispatch(json!({"jsonrpc":"2.0","id":1,"method":"tools/list"}), &AllowAll).await.expect("r");
+        assert_eq!(allowed["result"]["tools"].as_array().expect("a").len(), 1);
+        let denied = guarded_server().dispatch(json!({"jsonrpc":"2.0","id":1,"method":"tools/list"}), &Denies("SECRET")).await.expect("r");
+        assert_eq!(denied["result"]["tools"].as_array().expect("a").len(), 0); // 被过滤
+    }
+
+    #[tokio::test]
+    async fn tools_call_denied_without_capability() {
+        let req = json!({"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"secret","arguments":{}}});
+        let resp = guarded_server().dispatch(req, &Denies("SECRET")).await.expect("r");
+        assert_eq!(resp["error"]["code"], -32003);
     }
 }
