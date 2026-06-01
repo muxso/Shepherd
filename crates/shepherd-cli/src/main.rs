@@ -59,6 +59,12 @@ enum Cmd {
         executor: String,
         #[arg(long)]
         instructions: Option<String>,
+        /// 可选:项目 id(配合 --skills 自动组合行为规范)。
+        #[arg(long)]
+        project: Option<String>,
+        /// 可选:skill id 逗号分隔,派发前自动 compose 为行为规范注入。
+        #[arg(long, value_delimiter = ',')]
+        skills: Vec<String>,
     },
     /// 完整性验证。
     Verify {
@@ -269,11 +275,22 @@ fn run(cli: Cli) -> R<()> {
                 )?),
             }
         }
-        Cmd::Dispatch { decomp, task, title, executor, instructions } => {
+        Cmd::Dispatch { decomp, task, title, executor, instructions, project, skills } => {
             let c = Client::new(Config::load())?;
+            // 若给了 --skills,先 compose 成行为规范(与 --instructions 合并)。
+            let mut instr = instructions;
+            if !skills.is_empty() {
+                let project = project.ok_or("--skills 需配合 --project")?;
+                let comp = c.post("/skill/compose", json!({"projectId": project, "skillIds": skills}), true)?;
+                let composed = comp["instructions"].as_str().unwrap_or("").to_string();
+                instr = Some(match instr {
+                    Some(extra) if !extra.trim().is_empty() => format!("{composed}\n\n{extra}"),
+                    _ => composed,
+                });
+            }
             pretty(&c.post(
                 "/delivery",
-                json!({"decompositionId": decomp, "taskId": task, "title": title, "executor": executor, "instructions": instructions}),
+                json!({"decompositionId": decomp, "taskId": task, "title": title, "executor": executor, "instructions": instr}),
                 true,
             )?);
         }
