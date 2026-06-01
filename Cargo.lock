@@ -989,6 +989,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "47e1ffaa40ddd1f3ed91f717a33c8c0ee23fff369e3aa8772b9605cc1d22f4c3"
 
 [[package]]
+name = "mcp"
+version = "0.0.1"
+dependencies = [
+ "async-trait",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "md-5"
 version = "0.10.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1624,10 +1634,12 @@ dependencies = [
  "bug",
  "case",
  "delivery",
+ "mcp",
  "migrate",
  "orchestrator",
  "project",
  "requirement",
+ "serde_json",
  "system-setting",
  "task",
  "test-plan",
@@ -1637,6 +1649,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "verification",
+ "webauth",
 ]
 
 [[package]]
