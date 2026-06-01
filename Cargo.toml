@@ -22,6 +22,7 @@ members = [
     "crates/orchestrator",
     "crates/mcp",
     "crates/skill",
+    "crates/shepherd-cli",
 ]
 
 # 统一版本/lint 策略。阶段 0 刻意零外部依赖,保证离线可编译、测试秒级反馈。
