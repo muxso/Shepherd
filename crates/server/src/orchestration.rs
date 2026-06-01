@@ -7,6 +7,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 
+use delivery::application::DeliveryService;
 use delivery::domain::{AttemptStatus, DeliveryAttempt};
 use delivery::ports::DeliveryObserver;
 use orchestrator::application::{DeliveryFeedbackOrchestrator, DeliveryProgress};
@@ -100,9 +101,11 @@ impl VerificationGateway for VerificationServiceGateway {
     }
 }
 
-/// delivery 观察者 → 编排器:交付进度推进时驱动任务 + 验证门 +(终态)回灌验证。
+/// delivery 观察者 → 编排器:交付进度推进时驱动任务 + 验证门 +(终态)回灌验证;
+/// 并把验证门裁决记入该尝试的审计事件(`recorder` 为无观察者的 DeliveryService,避免 Arc 环)。
 struct OrchestratorObserver {
     orchestrator: Arc<DeliveryFeedbackOrchestrator>,
+    recorder: DeliveryService,
 }
 
 #[async_trait]
@@ -129,20 +132,33 @@ impl DeliveryObserver for OrchestratorObserver {
             AttemptStatus::Failed => DeliveryProgress::Failed,
             AttemptStatus::Dispatched => return,
         };
-        let _ = self.orchestrator.on_progress(&attempt.decomposition_id, &attempt.task_id, progress).await;
+        if let Ok(outcome) =
+            self.orchestrator.on_progress(&attempt.decomposition_id, &attempt.task_id, progress).await
+        {
+            // 把验证门裁决记入交付审计轨迹(尽力而为)。
+            if let Some(v) = outcome.verdict {
+                let msg = if v.passed {
+                    format!("验证门通过: {}", v.reason)
+                } else {
+                    format!("验证门未通过: {}", v.reason)
+                };
+                let _ = self.recorder.record_event(&attempt.id, "VERDICT", &msg, None).await;
+            }
+        }
     }
 }
 
-/// 组装交付编排观察者:驱动任务生命周期 + 验证门(judge)+ 回灌验证。
-/// judge 由 `judge::build_judge()` 按环境选择(默认 AcceptAll,设 SHEPHERD_JUDGE_URL 用 HTTP/LLM judge)。
+/// 组装交付编排观察者:驱动任务生命周期 + 验证门(judge)+ 回灌验证 + 裁决记审计。
+/// `recorder` 应为**无观察者**的 DeliveryService(避免 Arc 环);judge 由 `judge::build_judge()` 按环境选择。
 pub fn delivery_observer(
     task: TaskService,
     verification: VerificationService,
+    recorder: DeliveryService,
 ) -> Arc<dyn DeliveryObserver> {
     let orchestrator = Arc::new(DeliveryFeedbackOrchestrator::new(
         Arc::new(TaskServiceGateway { svc: task }),
         Arc::new(VerificationServiceGateway { svc: verification }),
         judge::build_judge(),
     ));
-    Arc::new(OrchestratorObserver { orchestrator })
+    Arc::new(OrchestratorObserver { orchestrator, recorder })
 }

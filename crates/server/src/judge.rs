@@ -45,13 +45,13 @@ impl Judge for HttpJudge {
 /// 按环境选择验证门。
 pub fn build_judge() -> Arc<dyn Judge> {
     match std::env::var("SHEPHERD_JUDGE_URL") {
-        Ok(url) => {
+        Ok(url) if !url.trim().is_empty() => {
             let client = reqwest::Client::builder()
                 .no_proxy()
                 .build()
                 .unwrap_or_else(|_| reqwest::Client::new());
             Arc::new(HttpJudge { client, url })
         }
-        Err(_) => Arc::new(AcceptAllJudge),
+        _ => Arc::new(AcceptAllJudge),
     }
 }

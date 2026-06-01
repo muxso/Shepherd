@@ -275,11 +275,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     } else {
         Arc::new(delivery::adapters::EchoAgentExecutor::new())
     };
-    // 交付落终态 → 编排器自动回灌验证(需求↔任务↔实现 闭环)。
-    let delivery_observer = orchestration::delivery_observer(task_admin.clone(), ver_admin.clone());
-    let delivery_svc =
-        DeliveryService::new(Arc::new(PgDeliveryRepository::new(pool.clone())), agent)
-            .with_observer(delivery_observer);
+    // 基础 DeliveryService(无观察者),既作交付主体也作编排器记审计的 recorder(避免 Arc 环)。
+    let base_delivery = DeliveryService::new(Arc::new(PgDeliveryRepository::new(pool.clone())), agent);
+    // 交付落终态 → 编排器驱动任务 + 验证门 + 回灌验证 + 裁决记审计。
+    let delivery_observer = orchestration::delivery_observer(
+        task_admin.clone(),
+        ver_admin.clone(),
+        base_delivery.clone(),
+    );
+    let delivery_svc = base_delivery.with_observer(delivery_observer);
     let mcp_delivery = delivery_svc.clone();
     let delivery_routes = delivery::adapters::http::router(delivery_svc, sessions.clone());
 

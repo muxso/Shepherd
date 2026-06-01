@@ -65,13 +65,13 @@ impl Planner for HttpPlanner {
 /// 按环境选择规划器。
 pub fn build_planner() -> Arc<dyn Planner> {
     match std::env::var("SHEPHERD_PLANNER_URL") {
-        Ok(url) => {
+        Ok(url) if !url.trim().is_empty() => {
             let client = reqwest::Client::builder()
                 .no_proxy()
                 .build()
                 .unwrap_or_else(|_| reqwest::Client::new());
             Arc::new(HttpPlanner { client, url })
         }
-        Err(_) => Arc::new(HeuristicPlanner),
+        _ => Arc::new(HeuristicPlanner),
     }
 }
