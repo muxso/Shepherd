@@ -1,17 +1,21 @@
-//! 本地子进程执行者(feature = "exec-local"):spawn `claude`/`codex` headless,**同步**跑完。
+//! 本地子进程执行者(feature = "exec-local"):spawn `claude`/`codex` headless,**流式**读取
+//! 其 stdout 并实时回流执行事件,**同步**跑完。
 //!
-//! 约定:把任务规格作为提示写入子进程 stdin;子进程(或其 wrapper)在 stdout 输出
-//! `{"reference": "...", "summary": "..."}` 表示交付物;非零退出 → `ExecError`。
-//! 同步完成 → `DispatchOutcome::Completed`(对齐 api-test 原生 runner 的语义)。
+//! 约定(子进程或其 wrapper 按行输出 JSON):
+//! - 事件行 `{"event":"DECISION","message":"...","detail":"..."}` → 经 sink 实时回流(审计轨迹);
+//! - 结果行 `{"reference":"...","summary":"..."}` → 作为交付物;
+//! - 其它行 → 作为 LOG 事件回流。
+//!
+//! 非零退出 → `ExecError`;同步完成 → `DispatchOutcome::Completed`。
 
 use std::process::Stdio;
 
 use async_trait::async_trait;
-use tokio::io::AsyncWriteExt;
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::process::Command;
 
-use crate::domain::{Deliverable, DeliverableKind, ExecutorKind};
-use crate::ports::{AgentExecutor, DispatchOutcome, ExecError, WorkSpec};
+use crate::domain::{Deliverable, DeliverableKind, EventKind, ExecutorKind, NewExecutionEvent};
+use crate::ports::{AgentExecutor, DispatchOutcome, EventSink, ExecError, WorkSpec};
 
 /// 按执行者种类路由到不同的 argv(程序 + 参数)。
 #[derive(Clone)]
@@ -55,26 +59,40 @@ fn spec_to_prompt(spec: &WorkSpec) -> String {
     p
 }
 
-fn parse_result(stdout: &str, task_id: &str) -> (String, String) {
-    #[derive(serde::Deserialize)]
-    struct R {
-        #[serde(default)]
-        reference: Option<String>,
-        #[serde(default)]
-        summary: Option<String>,
+/// 一行 stdout 的分类。
+enum Line {
+    Event(NewExecutionEvent),
+    Result { reference: String, summary: String },
+    Plain(String),
+}
+
+fn classify(line: &str) -> Line {
+    if let Ok(v) = serde_json::from_str::<serde_json::Value>(line) {
+        if let Some(kind) = v.get("event").and_then(|k| k.as_str()) {
+            let message = v.get("message").and_then(|m| m.as_str()).unwrap_or("").to_string();
+            let detail = v.get("detail").and_then(|d| d.as_str());
+            let kind = EventKind::parse(kind).unwrap_or(EventKind::Log);
+            if let Ok(ev) = NewExecutionEvent::new(kind, &message, detail) {
+                return Line::Event(ev);
+            }
+        }
+        if v.get("reference").is_some() || v.get("summary").is_some() {
+            return Line::Result {
+                reference: v.get("reference").and_then(|r| r.as_str()).unwrap_or("").to_string(),
+                summary: v.get("summary").and_then(|s| s.as_str()).unwrap_or("").to_string(),
+            };
+        }
     }
-    if let Ok(r) = serde_json::from_str::<R>(stdout.trim()) {
-        return (
-            r.reference.unwrap_or_else(|| format!("local://{task_id}")),
-            r.summary.unwrap_or_default(),
-        );
-    }
-    (format!("local://{task_id}"), stdout.trim().to_string())
+    Line::Plain(line.to_string())
 }
 
 #[async_trait]
 impl AgentExecutor for LocalCommandAgentExecutor {
-    async fn dispatch(&self, spec: &WorkSpec) -> Result<DispatchOutcome, ExecError> {
+    async fn dispatch(
+        &self,
+        spec: &WorkSpec,
+        sink: &dyn EventSink,
+    ) -> Result<DispatchOutcome, ExecError> {
         let argv = self.argv(spec.executor);
         let (program, args) =
             argv.split_first().ok_or_else(|| ExecError::Backend("empty executor command".into()))?;
@@ -95,17 +113,38 @@ impl AgentExecutor for LocalCommandAgentExecutor {
             // stdin 在此 drop → 向子进程发送 EOF
         }
 
-        let out = child.wait_with_output().await.map_err(|e| ExecError::Backend(e.to_string()))?;
-        if !out.status.success() {
-            let err = String::from_utf8_lossy(&out.stderr);
-            return Err(ExecError::Backend(format!(
-                "executor exited {}: {}",
-                out.status,
-                err.trim()
-            )));
+        let stdout = child.stdout.take().ok_or_else(|| ExecError::Backend("no stdout".into()))?;
+        let mut lines = BufReader::new(stdout).lines();
+        let mut result: Option<(String, String)> = None;
+        while let Some(line) = lines.next_line().await.map_err(|e| ExecError::Backend(e.to_string()))? {
+            let line = line.trim();
+            if line.is_empty() {
+                continue;
+            }
+            match classify(line) {
+                Line::Event(ev) => sink.emit(ev).await,
+                Line::Result { reference, summary } => result = Some((reference, summary)),
+                Line::Plain(text) => {
+                    if let Ok(ev) = NewExecutionEvent::new(EventKind::Log, &text, None) {
+                        sink.emit(ev).await;
+                    }
+                }
+            }
         }
-        let stdout = String::from_utf8_lossy(&out.stdout);
-        let (reference, summary) = parse_result(&stdout, &spec.task_id);
+
+        let status = child.wait().await.map_err(|e| ExecError::Backend(e.to_string()))?;
+        if !status.success() {
+            let mut err = String::new();
+            if let Some(mut stderr) = child.stderr.take() {
+                let _ = stderr.read_to_string(&mut err).await;
+            }
+            return Err(ExecError::Backend(format!("executor exited {}: {}", status, err.trim())));
+        }
+
+        let (reference, summary) =
+            result.unwrap_or_else(|| (format!("local://{}", spec.task_id), String::new()));
+        let reference =
+            if reference.is_empty() { format!("local://{}", spec.task_id) } else { reference };
         Ok(DispatchOutcome::Completed {
             deliverable: Deliverable { kind: DeliverableKind::Diff, reference, summary },
         })
@@ -115,6 +154,19 @@ impl AgentExecutor for LocalCommandAgentExecutor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::EventKind;
+    use std::sync::Mutex;
+
+    #[derive(Default)]
+    struct RecordingSink {
+        events: Mutex<Vec<(EventKind, String)>>,
+    }
+    #[async_trait]
+    impl EventSink for RecordingSink {
+        async fn emit(&self, e: NewExecutionEvent) {
+            self.events.lock().unwrap().push((e.kind, e.message));
+        }
+    }
 
     fn spec(kind: ExecutorKind) -> WorkSpec {
         WorkSpec {
@@ -129,23 +181,43 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn completes_parsing_json_stdout() {
-        // 子进程吞掉 stdin 后输出 JSON 交付物
+    async fn streams_events_then_completes_with_result() {
+        // 子进程吞掉 stdin 后,先输出两条事件行,再输出结果行
+        let script = r#"cat >/dev/null; printf '{"event":"DECISION","message":"用 argon2"}\n{"event":"FILE_CHANGE","message":"edit auth.rs"}\n{"reference":"branch:x","summary":"done"}\n'"#;
         let exec = LocalCommandAgentExecutor::new(
-            vec![
-                "/bin/sh".into(),
-                "-c".into(),
-                r#"cat >/dev/null; printf '{"reference":"branch:test","summary":"ok"}'"#.into(),
-            ],
+            vec!["/bin/sh".into(), "-c".into(), script.into()],
             vec!["/bin/sh".into(), "-c".into(), "true".into()],
         );
-        match exec.dispatch(&spec(ExecutorKind::ClaudeCode)).await.expect("dispatch") {
+        let sink = RecordingSink::default();
+        let out = exec.dispatch(&spec(ExecutorKind::ClaudeCode), &sink).await.expect("dispatch");
+        match out {
             DispatchOutcome::Completed { deliverable } => {
-                assert_eq!(deliverable.reference, "branch:test");
-                assert_eq!(deliverable.summary, "ok");
+                assert_eq!(deliverable.reference, "branch:x");
+                assert_eq!(deliverable.summary, "done");
             }
             other => panic!("expected Completed, got {other:?}"),
         }
+        let events = sink.events.lock().unwrap();
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0], (EventKind::Decision, "用 argon2".to_string()));
+        assert_eq!(events[1].0, EventKind::FileChange);
+    }
+
+    #[tokio::test]
+    async fn plain_lines_become_log_events() {
+        let exec = LocalCommandAgentExecutor::new(
+            vec!["/bin/sh".into(), "-c".into(), "cat >/dev/null; printf 'just text\\n'".into()],
+            vec![],
+        );
+        let sink = RecordingSink::default();
+        let out = exec.dispatch(&spec(ExecutorKind::ClaudeCode), &sink).await.expect("dispatch");
+        match out {
+            DispatchOutcome::Completed { deliverable } => assert_eq!(deliverable.reference, "local://t1"),
+            other => panic!("expected Completed, got {other:?}"),
+        }
+        let events = sink.events.lock().unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0], (EventKind::Log, "just text".to_string()));
     }
 
     #[tokio::test]
@@ -154,24 +226,10 @@ mod tests {
             vec!["/bin/sh".into(), "-c".into(), "echo boom >&2; exit 3".into()],
             vec![],
         );
+        let sink = RecordingSink::default();
         assert!(matches!(
-            exec.dispatch(&spec(ExecutorKind::ClaudeCode)).await,
+            exec.dispatch(&spec(ExecutorKind::ClaudeCode), &sink).await,
             Err(ExecError::Backend(_))
         ));
-    }
-
-    #[tokio::test]
-    async fn plain_stdout_becomes_summary() {
-        let exec = LocalCommandAgentExecutor::new(
-            vec!["/bin/sh".into(), "-c".into(), "cat >/dev/null; printf 'just text'".into()],
-            vec![],
-        );
-        match exec.dispatch(&spec(ExecutorKind::ClaudeCode)).await.expect("dispatch") {
-            DispatchOutcome::Completed { deliverable } => {
-                assert_eq!(deliverable.reference, "local://t1");
-                assert_eq!(deliverable.summary, "just text");
-            }
-            other => panic!("expected Completed, got {other:?}"),
-        }
     }
 }

@@ -6,10 +6,25 @@ use crate::domain::{
     AttemptStatus, Deliverable, DeliverableKind, DeliveryAttempt, DeliveryError, EventKind,
     ExecutionEvent, ExecutorKind, NewExecutionEvent,
 };
+use async_trait::async_trait;
+
 use crate::ports::{
-    AgentExecutor, DeliveryObserver, DeliveryRepository, DispatchOutcome, ExecError, RepoError,
-    WorkSpec,
+    AgentExecutor, DeliveryObserver, DeliveryRepository, DispatchOutcome, EventSink, ExecError,
+    RepoError, WorkSpec,
 };
+
+/// 把执行者运行中 emit 的事件落到当前交付尝试(尽力而为)。
+struct RepoEventSink {
+    repo: Arc<dyn DeliveryRepository>,
+    attempt_id: String,
+}
+
+#[async_trait]
+impl EventSink for RepoEventSink {
+    async fn emit(&self, event: crate::domain::NewExecutionEvent) {
+        let _ = self.repo.append_event(&self.attempt_id, &event).await;
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DeliveryCmdError {
@@ -99,7 +114,9 @@ impl DeliveryService {
             context,
         };
 
-        match self.executor.dispatch(&spec).await {
+        // 执行者运行中 emit 的事件落到本次尝试。
+        let sink = RepoEventSink { repo: self.repo.clone(), attempt_id: attempt.id.clone() };
+        match self.executor.dispatch(&spec, &sink).await {
             Ok(DispatchOutcome::Accepted { run_id }) => attempt.start_running(&run_id)?,
             Ok(DispatchOutcome::Completed { deliverable }) => attempt.deliver(deliverable)?,
             Err(ExecError::Backend(msg)) => attempt.fail(&msg)?,
@@ -320,6 +337,20 @@ mod tests {
         // 异步接单 → Running(进度推进)→ 通知一次(供编排器驱动任务到 Running)
         svc.dispatch("d1", "t1", "x", "", &[], "CODEX", None).await.expect("dispatch");
         assert_eq!(*spy.n.lock().unwrap(), 1);
+    }
+
+    #[tokio::test]
+    async fn executor_emitted_events_are_recorded_automatically() {
+        use crate::adapters::EchoAgentExecutor;
+        // Echo 执行者运行中 emit 一条 LOG 事件 → 应自动落到该尝试,无需手动 record_event
+        let s = DeliveryService::new(
+            Arc::new(InMemoryDeliveryRepository::new()),
+            Arc::new(EchoAgentExecutor::new()),
+        );
+        let a = s.dispatch("d1", "t1", "实现登录", "", &[], "CLAUDE_CODE", None).await.expect("dispatch");
+        let events = s.events(&a.id).await.expect("events");
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].kind, EventKind::Log);
     }
 
     #[tokio::test]

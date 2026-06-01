@@ -9,8 +9,8 @@
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
-use crate::domain::{Deliverable, DeliverableKind};
-use crate::ports::{AgentExecutor, DispatchOutcome, ExecError, WorkSpec};
+use crate::domain::{Deliverable, DeliverableKind, EventKind, NewExecutionEvent};
+use crate::ports::{AgentExecutor, DispatchOutcome, EventSink, ExecError, WorkSpec};
 
 #[derive(Clone)]
 pub struct HttpAgentExecutor {
@@ -50,6 +50,14 @@ struct DeliverableDto {
 }
 
 #[derive(Deserialize)]
+struct EventDto {
+    kind: String,
+    message: String,
+    #[serde(default)]
+    detail: Option<String>,
+}
+
+#[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct DispatchResponse {
     status: String,
@@ -57,11 +65,18 @@ struct DispatchResponse {
     run_id: Option<String>,
     #[serde(default)]
     deliverable: Option<DeliverableDto>,
+    /// 远端可一并回带运行中产生的事件,这里逐条回流给 sink(审计)。
+    #[serde(default)]
+    events: Vec<EventDto>,
 }
 
 #[async_trait]
 impl AgentExecutor for HttpAgentExecutor {
-    async fn dispatch(&self, spec: &WorkSpec) -> Result<DispatchOutcome, ExecError> {
+    async fn dispatch(
+        &self,
+        spec: &WorkSpec,
+        sink: &dyn EventSink,
+    ) -> Result<DispatchOutcome, ExecError> {
         let dto = WorkSpecDto {
             decomposition_id: &spec.decomposition_id,
             task_id: &spec.task_id,
@@ -84,6 +99,14 @@ impl AgentExecutor for HttpAgentExecutor {
         }
         let body: DispatchResponse =
             resp.json().await.map_err(|e| ExecError::Backend(e.to_string()))?;
+
+        // 回流远端带回的执行事件(审计轨迹)。
+        for ev in &body.events {
+            let kind = EventKind::parse(&ev.kind).unwrap_or(EventKind::Log);
+            if let Ok(e) = NewExecutionEvent::new(kind, &ev.message, ev.detail.as_deref()) {
+                sink.emit(e).await;
+            }
+        }
 
         match body.status.as_str() {
             "accepted" => {
@@ -109,7 +132,20 @@ impl AgentExecutor for HttpAgentExecutor {
 mod tests {
     use super::*;
     use crate::domain::ExecutorKind;
+    use crate::ports::NoopEventSink;
     use axum::{routing::post, Json, Router};
+    use std::sync::Mutex;
+
+    #[derive(Default)]
+    struct RecordingSink {
+        kinds: Mutex<Vec<String>>,
+    }
+    #[async_trait]
+    impl EventSink for RecordingSink {
+        async fn emit(&self, e: NewExecutionEvent) {
+            self.kinds.lock().unwrap().push(e.kind.as_str().to_string());
+        }
+    }
 
     fn spec() -> WorkSpec {
         WorkSpec {
@@ -139,7 +175,7 @@ mod tests {
             post(|| async { Json(serde_json::json!({"status":"accepted","runId":"run-x"})) }),
         );
         let url = serve(app).await;
-        match HttpAgentExecutor::new(url).dispatch(&spec()).await.expect("dispatch") {
+        match HttpAgentExecutor::new(url).dispatch(&spec(), &NoopEventSink).await.expect("dispatch") {
             DispatchOutcome::Accepted { run_id } => assert_eq!(run_id, "run-x"),
             other => panic!("expected Accepted, got {other:?}"),
         }
@@ -157,13 +193,35 @@ mod tests {
             }),
         );
         let url = serve(app).await;
-        match HttpAgentExecutor::new(url).dispatch(&spec()).await.expect("dispatch") {
+        match HttpAgentExecutor::new(url).dispatch(&spec(), &NoopEventSink).await.expect("dispatch") {
             DispatchOutcome::Completed { deliverable } => {
                 assert_eq!(deliverable.kind, DeliverableKind::PullRequest);
                 assert_eq!(deliverable.reference, "pr/9");
             }
             other => panic!("expected Completed, got {other:?}"),
         }
+    }
+
+    #[tokio::test]
+    async fn emits_events_returned_by_remote() {
+        let app = Router::new().route(
+            "/dispatch",
+            post(|| async {
+                Json(serde_json::json!({
+                    "status":"completed",
+                    "deliverable":{"kind":"DIFF","reference":"branch:y","summary":"ok"},
+                    "events":[
+                        {"kind":"DECISION","message":"用 argon2","detail":"PHC"},
+                        {"kind":"TEST_RESULT","message":"12/12 通过"}
+                    ]
+                }))
+            }),
+        );
+        let url = serve(app).await;
+        let sink = RecordingSink::default();
+        let out = HttpAgentExecutor::new(url).dispatch(&spec(), &sink).await.expect("dispatch");
+        assert!(matches!(out, DispatchOutcome::Completed { .. }));
+        assert_eq!(sink.kinds.lock().unwrap().as_slice(), &["DECISION".to_string(), "TEST_RESULT".to_string()]);
     }
 
     #[tokio::test]
@@ -174,7 +232,7 @@ mod tests {
         );
         let url = serve(app).await;
         assert!(matches!(
-            HttpAgentExecutor::new(url).dispatch(&spec()).await,
+            HttpAgentExecutor::new(url).dispatch(&spec(), &NoopEventSink).await,
             Err(ExecError::Backend(_))
         ));
     }
