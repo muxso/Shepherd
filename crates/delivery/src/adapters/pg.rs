@@ -7,7 +7,8 @@ use async_trait::async_trait;
 use sqlx::{PgPool, Row};
 
 use crate::domain::{
-    AttemptStatus, Deliverable, DeliverableKind, DeliveryAttempt, ExecutorKind,
+    AttemptStatus, Deliverable, DeliverableKind, DeliveryAttempt, EventKind, ExecutionEvent,
+    ExecutorKind, NewExecutionEvent,
 };
 use crate::ports::{DeliveryRepository, RepoError};
 
@@ -125,6 +126,54 @@ impl DeliveryRepository for PgDeliveryRepository {
         .await
         .map_err(map_err)?;
         Ok(())
+    }
+
+    async fn append_event(
+        &self,
+        attempt_id: &str,
+        event: &NewExecutionEvent,
+    ) -> Result<ExecutionEvent, RepoError> {
+        let seq: i64 = sqlx::query(
+            "INSERT INTO ms_delivery_event (attempt_id, kind, message, detail) \
+             VALUES ($1, $2, $3, $4) RETURNING seq",
+        )
+        .bind(attempt_id)
+        .bind(event.kind.as_str())
+        .bind(&event.message)
+        .bind(&event.detail)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(map_err)?
+        .try_get("seq")
+        .map_err(map_err)?;
+        Ok(ExecutionEvent {
+            seq,
+            kind: event.kind,
+            message: event.message.clone(),
+            detail: event.detail.clone(),
+        })
+    }
+
+    async fn list_events(&self, attempt_id: &str) -> Result<Vec<ExecutionEvent>, RepoError> {
+        let rows = sqlx::query(
+            "SELECT seq, kind, message, detail FROM ms_delivery_event \
+             WHERE attempt_id = $1 ORDER BY seq",
+        )
+        .bind(attempt_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(map_err)?;
+        rows.iter()
+            .map(|r| {
+                let kind_s: String = r.try_get("kind").map_err(map_err)?;
+                Ok(ExecutionEvent {
+                    seq: r.try_get("seq").map_err(map_err)?,
+                    kind: EventKind::parse(&kind_s).unwrap_or(EventKind::Log),
+                    message: r.try_get("message").map_err(map_err)?,
+                    detail: r.try_get("detail").map_err(map_err)?,
+                })
+            })
+            .collect()
     }
 }
 

@@ -3,7 +3,7 @@
 use async_trait::async_trait;
 use thiserror::Error;
 
-use crate::domain::{DeliveryAttempt, ExecutorKind};
+use crate::domain::{DeliveryAttempt, ExecutionEvent, ExecutorKind, NewExecutionEvent};
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum RepoError {
@@ -31,4 +31,14 @@ pub trait DeliveryRepository: Send + Sync {
     ) -> Result<Vec<DeliveryAttempt>, RepoError>;
 
     async fn save(&self, attempt: &DeliveryAttempt) -> Result<(), RepoError>;
+
+    /// 追加一条执行事件(分配单调 seq)。
+    async fn append_event(
+        &self,
+        attempt_id: &str,
+        event: &NewExecutionEvent,
+    ) -> Result<ExecutionEvent, RepoError>;
+
+    /// 某尝试的执行事件(按 seq 升序)。
+    async fn list_events(&self, attempt_id: &str) -> Result<Vec<ExecutionEvent>, RepoError>;
 }
