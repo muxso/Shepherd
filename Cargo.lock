@@ -1757,6 +1757,7 @@ dependencies = [
  "task",
  "test-plan",
  "tokio",
+ "tokio-stream",
  "tower",
  "tower-http",
  "tracing",

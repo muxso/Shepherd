@@ -3,17 +3,24 @@
 //!
 //! `/mcp` 需有效会话(`AuthUser`,无令牌→401);细粒度按工具 RBAC 留作后续。
 
-use std::sync::Arc;
+use std::collections::HashSet;
+use std::convert::Infallible;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use async_trait::async_trait;
 use axum::{
     extract::{FromRef, FromRequestParts, State},
-    http::{header::ACCEPT, request::Parts, StatusCode},
+    http::{header::ACCEPT, request::Parts, HeaderValue, StatusCode},
+    response::sse::{Event, KeepAlive, Sse},
     response::{IntoResponse, Response},
     routing::post,
     Json, Router,
 };
 use serde_json::{json, Value};
+use tokio_stream::wrappers::IntervalStream;
+use tokio_stream::StreamExt;
 
 use mcp::{CapabilityChecker, McpServer, Tool, ToolHandler};
 use webauth::{AuthUser, SessionStore};
@@ -39,6 +46,43 @@ impl<S: Send + Sync> FromRequestParts<S> for WantsSse {
             .map(|s| s.contains("text/event-stream"))
             .unwrap_or(false);
         Ok(WantsSse(sse))
+    }
+}
+
+const SESSION_HEADER: &str = "mcp-session-id";
+
+/// MCP 会话登记表(Streamable HTTP):initialize 时签发会话 id,后续请求校验,DELETE 终止。
+/// id 用进程内自增计数(/mcp 已由 Bearer 鉴权,会话 id 非鉴权边界)。
+#[derive(Default)]
+struct McpSessions {
+    active: Mutex<HashSet<String>>,
+    counter: AtomicU64,
+}
+
+impl McpSessions {
+    fn mint(&self) -> String {
+        let n = self.counter.fetch_add(1, Ordering::Relaxed);
+        let id = format!("mcp-sess-{n}");
+        self.active.lock().expect("lock").insert(id.clone());
+        id
+    }
+    fn contains(&self, id: &str) -> bool {
+        self.active.lock().expect("lock").contains(id)
+    }
+    fn remove(&self, id: &str) -> bool {
+        self.active.lock().expect("lock").remove(id)
+    }
+}
+
+/// 提取器:`Mcp-Session-Id` 请求头(可选)。
+struct SessionHeader(Option<String>);
+
+impl<S: Send + Sync> FromRequestParts<S> for SessionHeader {
+    type Rejection = Infallible;
+    async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
+        Ok(SessionHeader(
+            parts.headers.get(SESSION_HEADER).and_then(|v| v.to_str().ok()).map(String::from),
+        ))
     }
 }
 
@@ -249,6 +293,7 @@ fn obj(props: Value, required: &[&str]) -> Value {
 struct McpState {
     server: Arc<McpServer>,
     sessions: Arc<dyn SessionStore>,
+    mcp_sessions: Arc<McpSessions>,
 }
 
 impl FromRef<McpState> for Arc<dyn SessionStore> {
@@ -414,21 +459,40 @@ pub fn router(
         )
         .requires("VERIFICATION", "READ"));
 
-    Router::new().route("/mcp", post(mcp_handler)).with_state(McpState { server: Arc::new(server), sessions })
+    Router::new()
+        .route("/mcp", post(mcp_handler).get(mcp_sse).delete(mcp_delete))
+        .with_state(McpState {
+            server: Arc::new(server),
+            sessions,
+            mcp_sessions: Arc::new(McpSessions::default()),
+        })
 }
 
-/// JSON-RPC 入口。需有效会话;按会话权限做**按工具 RBAC**(只暴露/放行有权工具)。
-/// 若客户端 `Accept: text/event-stream`,响应以单条 SSE 事件返回(Streamable HTTP 子集)。
+/// 判断 JSON-RPC 消息是否为 initialize。
+fn is_initialize(body: &Value) -> bool {
+    body.get("method").and_then(|m| m.as_str()) == Some("initialize")
+}
+
+/// JSON-RPC 入口(POST)。需有效会话(Bearer);按工具 RBAC。
+/// - `initialize` 签发 `Mcp-Session-Id`(响应头);后续请求若带该头则校验(未知 → 404)。
+/// - `Accept: text/event-stream` → 单条 SSE 事件返回(Streamable HTTP)。
 async fn mcp_handler(
     user: AuthUser,
     WantsSse(wants_sse): WantsSse,
+    SessionHeader(sid): SessionHeader,
     State(st): State<McpState>,
     Json(body): Json<Value>,
 ) -> Response {
+    if let Some(id) = &sid {
+        if !st.mcp_sessions.contains(id) {
+            return (StatusCode::NOT_FOUND, "unknown session").into_response();
+        }
+    }
+    let mint = is_initialize(&body);
     let resp = st.server.dispatch(body, &UserCaps(&user)).await;
+    let new_sid = if mint { Some(st.mcp_sessions.mint()) } else { None };
 
-    match resp {
-        // 通知:无响应体。
+    let mut response = match resp {
         None => StatusCode::ACCEPTED.into_response(),
         Some(resp) if wants_sse => {
             let body = format!("event: message\ndata: {}\n\n", serde_json::to_string(&resp).unwrap_or_default());
@@ -440,5 +504,43 @@ async fn mcp_handler(
                 .expect("sse response")
         }
         Some(resp) => (StatusCode::OK, Json(resp)).into_response(),
+    };
+    if let Some(id) = new_sid {
+        if let Ok(v) = HeaderValue::from_str(&id) {
+            response.headers_mut().insert(SESSION_HEADER, v);
+        }
+    }
+    response
+}
+
+/// 长连接 SSE(GET):服务端 → 客户端的消息流。先发 `ready`,再周期心跳保活。
+async fn mcp_sse(
+    _user: AuthUser,
+    SessionHeader(sid): SessionHeader,
+    State(st): State<McpState>,
+) -> Response {
+    if let Some(id) = &sid {
+        if !st.mcp_sessions.contains(id) {
+            return (StatusCode::NOT_FOUND, "unknown session").into_response();
+        }
+    }
+    let ready = tokio_stream::once(Ok::<Event, Infallible>(
+        Event::default().event("ready").data(json!({ "server": "shepherd" }).to_string()),
+    ));
+    let beats = IntervalStream::new(tokio::time::interval(Duration::from_secs(15)))
+        .map(|_| Ok::<Event, Infallible>(Event::default().event("heartbeat").data("ping")));
+    Sse::new(ready.chain(beats)).keep_alive(KeepAlive::default()).into_response()
+}
+
+/// 终止会话(DELETE)。
+async fn mcp_delete(
+    _user: AuthUser,
+    SessionHeader(sid): SessionHeader,
+    State(st): State<McpState>,
+) -> Response {
+    match sid {
+        Some(id) if st.mcp_sessions.remove(&id) => StatusCode::NO_CONTENT.into_response(),
+        Some(_) => (StatusCode::NOT_FOUND, "unknown session").into_response(),
+        None => (StatusCode::BAD_REQUEST, "missing Mcp-Session-Id").into_response(),
     }
 }
