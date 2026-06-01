@@ -1,0 +1,79 @@
+//! 启发式规划器(默认,无需 LLM):每条验收标准拆成一个任务;多于一条时追加一个
+//! 依赖全部前置的"集成验证"任务。确定性、可测;LLM 规划器由组装根以 HTTP 适配器接入。
+
+use async_trait::async_trait;
+
+use crate::ports::{PlanError, PlannedTask, Planner, RequirementSpec};
+
+#[derive(Clone, Default)]
+pub struct HeuristicPlanner;
+
+impl HeuristicPlanner {
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+#[async_trait]
+impl Planner for HeuristicPlanner {
+    async fn plan(&self, spec: &RequirementSpec) -> Result<Vec<PlannedTask>, PlanError> {
+        if spec.acceptance_criteria.is_empty() {
+            return Ok(vec![PlannedTask {
+                title: format!("实现 {}", spec.title),
+                description: spec.description.clone(),
+                acceptance_criteria: Vec::new(),
+                dependencies: Vec::new(),
+            }]);
+        }
+        let mut tasks: Vec<PlannedTask> = spec
+            .acceptance_criteria
+            .iter()
+            .map(|c| PlannedTask {
+                title: format!("实现: {c}"),
+                description: String::new(),
+                acceptance_criteria: vec![c.clone()],
+                dependencies: Vec::new(),
+            })
+            .collect();
+        if tasks.len() > 1 {
+            let deps: Vec<usize> = (0..tasks.len()).collect();
+            tasks.push(PlannedTask {
+                title: format!("集成验证: {}", spec.title),
+                description: "集成并验证全部验收标准".into(),
+                acceptance_criteria: spec.acceptance_criteria.clone(),
+                dependencies: deps,
+            });
+        }
+        Ok(tasks)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn spec(criteria: &[&str]) -> RequirementSpec {
+        RequirementSpec {
+            requirement_id: "r1".into(),
+            requirement_version: 1,
+            title: "登录".into(),
+            description: "d".into(),
+            acceptance_criteria: criteria.iter().map(|s| s.to_string()).collect(),
+        }
+    }
+
+    #[tokio::test]
+    async fn one_task_per_criterion_plus_integration() {
+        let plan = HeuristicPlanner.plan(&spec(&["登录成功", "错误密码拒绝"])).await.expect("plan");
+        assert_eq!(plan.len(), 3); // 2 标准 + 集成
+        assert_eq!(plan[2].dependencies, vec![0, 1]);
+        assert_eq!(plan[0].acceptance_criteria, vec!["登录成功".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn no_criteria_yields_single_task() {
+        let plan = HeuristicPlanner.plan(&spec(&[])).await.expect("plan");
+        assert_eq!(plan.len(), 1);
+        assert!(plan[0].dependencies.is_empty());
+    }
+}

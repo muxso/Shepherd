@@ -17,13 +17,16 @@ use serde::{Deserialize, Serialize};
 use webauth::{AuthUser, SessionStore};
 
 use crate::application::{
-    CreateDecompositionError, CreateDecompositionUseCase, TaskCmdError, TaskService,
+    BreakdownError, BreakdownUseCase, CreateDecompositionError, CreateDecompositionUseCase,
+    TaskCmdError, TaskService,
 };
 use crate::domain::{Decomposition, Task, TaskStatus};
+use crate::ports::RequirementSpec;
 
 #[derive(Clone)]
 struct TaskState {
     create: CreateDecompositionUseCase,
+    breakdown: BreakdownUseCase,
     admin: TaskService,
     sessions: Arc<dyn SessionStore>,
 }
@@ -36,17 +39,19 @@ impl FromRef<TaskState> for Arc<dyn SessionStore> {
 
 pub fn router(
     create: CreateDecompositionUseCase,
+    breakdown: BreakdownUseCase,
     admin: TaskService,
     sessions: Arc<dyn SessionStore>,
 ) -> Router {
     Router::new()
         .route("/decomposition", post(create_decomposition))
+        .route("/decomposition/breakdown", post(breakdown_requirement))
         .route("/decomposition/{id}", get(get_decomposition))
         .route("/decomposition/{id}/ready", get(ready_tasks))
         .route("/decomposition/{id}/task", post(add_task))
         .route("/decomposition/{id}/task/{task_id}/dispatch", post(dispatch_task))
         .route("/decomposition/{id}/task/{task_id}/status", post(transition_task))
-        .with_state(TaskState { create, admin, sessions })
+        .with_state(TaskState { create, breakdown, admin, sessions })
 }
 
 // ---- DTO ----
@@ -56,6 +61,43 @@ pub fn router(
 struct CreateBody {
     requirement_id: String,
     requirement_version: u32,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct BreakdownBody {
+    requirement_id: String,
+    requirement_version: u32,
+    title: String,
+    #[serde(default)]
+    description: String,
+    #[serde(default)]
+    acceptance_criteria: Vec<String>,
+}
+
+async fn breakdown_requirement(
+    user: AuthUser,
+    State(st): State<TaskState>,
+    Json(b): Json<BreakdownBody>,
+) -> Response {
+    if !user.can("TASK", "ADD") {
+        return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
+    let spec = RequirementSpec {
+        requirement_id: b.requirement_id,
+        requirement_version: b.requirement_version,
+        title: b.title,
+        description: b.description,
+        acceptance_criteria: b.acceptance_criteria,
+    };
+    match st.breakdown.execute(&spec).await {
+        Ok(d) => (StatusCode::CREATED, Json(DecompositionResponse::from(&d))).into_response(),
+        Err(BreakdownError::EmptyRequirement) => (StatusCode::BAD_REQUEST, "requirement id required").into_response(),
+        Err(BreakdownError::AlreadyExists) => (StatusCode::CONFLICT, "decomposition already exists").into_response(),
+        Err(BreakdownError::Validation(_)) => (StatusCode::BAD_REQUEST, "invalid planned task").into_response(),
+        Err(BreakdownError::Plan(_)) => (StatusCode::BAD_GATEWAY, "planner error").into_response(),
+        Err(BreakdownError::Repo(_)) => (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
+    }
 }
 
 #[derive(Deserialize)]
@@ -242,6 +284,10 @@ mod tests {
         let token = sessions.create("u", set, 3600).await.expect("token");
         let r = router(
             CreateDecompositionUseCase::new(repo.clone()),
+            crate::application::BreakdownUseCase::new(
+                repo.clone(),
+                Arc::new(crate::adapters::HeuristicPlanner),
+            ),
             TaskService::new(repo),
             sessions,
         );
@@ -325,6 +371,31 @@ mod tests {
         app.clone().oneshot(req("POST", &format!("/decomposition/{did}/task"), r#"{"title":"A"}"#, Some(&t))).await.expect("r");
         assert_eq!(
             app.oneshot(req("POST", &format!("/decomposition/{did}/task/t1/dispatch"), "", Some(&t))).await.expect("r").status(),
+            StatusCode::FORBIDDEN
+        );
+    }
+
+    #[tokio::test]
+    async fn breakdown_builds_decomposition_via_planner() {
+        let (app, t) = app_with("TASK:READ+ADD+EXECUTE+UPDATE").await;
+        let r = app
+            .clone()
+            .oneshot(req("POST", "/decomposition/breakdown", r#"{"requirementId":"req1","requirementVersion":1,"title":"登录","acceptanceCriteria":["登录成功","错误密码拒绝"]}"#, Some(&t)))
+            .await
+            .expect("r");
+        assert_eq!(r.status(), StatusCode::CREATED);
+        let v = json(r).await;
+        // 启发式:2 标准 + 集成验证 = 3 任务,集成依赖前两个
+        assert_eq!(v["tasks"].as_array().expect("a").len(), 3);
+        assert_eq!(v["tasks"][2]["dependencies"], serde_json::json!(["t1", "t2"]));
+        assert_eq!(v["readyTaskIds"], serde_json::json!(["t1", "t2"]));
+    }
+
+    #[tokio::test]
+    async fn breakdown_requires_add_permission() {
+        let (app, t) = app_with("TASK:READ").await;
+        assert_eq!(
+            app.oneshot(req("POST", "/decomposition/breakdown", r#"{"requirementId":"req1","requirementVersion":1,"title":"x"}"#, Some(&t))).await.expect("r").status(),
             StatusCode::FORBIDDEN
         );
     }
