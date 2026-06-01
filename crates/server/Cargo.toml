@@ -29,6 +29,7 @@ api-test = { path = "../api-test", features = ["pg", "http", "jmeter", "local"] 
 migrate = { path = "../migrate" }
 axum = "0.8"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "signal", "time"] }
+tokio-stream = { version = "0.1", features = ["time"] }
 tower = "0.5"
 tower-http = { version = "0.6", features = ["trace", "timeout", "limit"] }
 tracing = "0.1"
