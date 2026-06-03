@@ -82,6 +82,48 @@ enum Cmd {
         #[command(subcommand)]
         cmd: AgentCmd,
     },
+    /// 注销当前会话(撤销服务端令牌并清空本地 token)。
+    Logout,
+    /// 项目管理。
+    Project {
+        #[command(subcommand)]
+        cmd: ProjectCmd,
+    },
+    /// 缺陷管理。
+    Bug {
+        #[command(subcommand)]
+        cmd: BugCmd,
+    },
+    /// 用例评审。
+    Case {
+        #[command(subcommand)]
+        cmd: CaseCmd,
+    },
+    /// 测试计划。
+    Plan {
+        #[command(subcommand)]
+        cmd: PlanCmd,
+    },
+    /// 接口测试(批量执行)。
+    Api {
+        #[command(subcommand)]
+        cmd: ApiCmd,
+    },
+    /// 用户管理。
+    User {
+        #[command(subcommand)]
+        cmd: UserCmd,
+    },
+    /// 组织管理。
+    Org {
+        #[command(subcommand)]
+        cmd: OrgCmd,
+    },
+    /// 角色与授权。
+    Role {
+        #[command(subcommand)]
+        cmd: RoleCmd,
+    },
 }
 
 #[derive(Subcommand)]
@@ -192,6 +234,241 @@ enum SkillCmd {
     },
 }
 
+#[derive(Subcommand)]
+enum ProjectCmd {
+    /// 新建项目。
+    Create {
+        #[arg(long)]
+        org: String,
+        #[arg(long)]
+        name: String,
+    },
+    /// 分页列出组织内项目。
+    List {
+        #[arg(long)]
+        org: String,
+        #[arg(long, default_value_t = 1)]
+        current: u32,
+        #[arg(long = "page-size", default_value_t = 10)]
+        page_size: u32,
+    },
+}
+
+#[derive(Subcommand)]
+enum BugCmd {
+    /// 新建缺陷。
+    Create {
+        #[arg(long)]
+        project: String,
+        #[arg(long)]
+        title: String,
+        #[arg(long, default_value = "NEW")]
+        status: String,
+    },
+    /// 流转缺陷状态。
+    Status {
+        #[arg(long)]
+        id: String,
+        #[arg(long)]
+        to: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum CaseCmd {
+    /// 提交一次用例评审意见。
+    Review {
+        #[arg(long)]
+        review: String,
+        #[arg(long)]
+        case: String,
+        #[arg(long)]
+        reviewer: String,
+        /// PASS | UN_PASS | UNDER_REVIEWED。
+        #[arg(long)]
+        status: String,
+        /// UN_PASS 必填。
+        #[arg(long)]
+        content: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
+enum PlanCmd {
+    /// 新建测试计划(或分组)。
+    Create {
+        #[arg(long)]
+        project: String,
+        #[arg(long)]
+        name: String,
+        /// TEST_PLAN | GROUP。
+        #[arg(long = "type", default_value = "TEST_PLAN")]
+        plan_type: String,
+        #[arg(long)]
+        group: Option<String>,
+    },
+    /// 计划执行统计。
+    Stats {
+        #[arg(long)]
+        id: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum ApiCmd {
+    /// 批量执行接口用例。
+    BatchRun {
+        #[arg(long)]
+        project: String,
+        #[arg(long, value_delimiter = ',')]
+        cases: Vec<String>,
+        /// 运行模式(如 SERIAL | PARALLEL)。
+        #[arg(long = "mode", default_value = "PARALLEL")]
+        run_mode: String,
+        /// 资源池 id(批量执行需客户端提供)。
+        #[arg(long)]
+        pool: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
+enum UserCmd {
+    /// 新建用户。
+    Create {
+        #[arg(long)]
+        name: String,
+        #[arg(long)]
+        email: String,
+    },
+    /// 分页列出用户。
+    List {
+        #[arg(long, default_value_t = 1)]
+        current: u32,
+        #[arg(long = "page-size", default_value_t = 10)]
+        page_size: u32,
+    },
+    /// 查看单个用户。
+    Get {
+        #[arg(long)]
+        id: String,
+    },
+    /// 更新用户。
+    Update {
+        #[arg(long)]
+        id: String,
+        #[arg(long)]
+        name: String,
+        #[arg(long)]
+        email: String,
+        /// 标记禁用(默认启用)。
+        #[arg(long, default_value_t = false)]
+        disable: bool,
+    },
+    /// 删除用户。
+    Delete {
+        #[arg(long)]
+        id: String,
+    },
+    /// 按 id 批量解析用户名(逗号分隔)。
+    Names {
+        #[arg(long, value_delimiter = ',')]
+        ids: Vec<String>,
+    },
+}
+
+#[derive(Subcommand)]
+enum OrgCmd {
+    /// 新建组织。
+    Create {
+        #[arg(long)]
+        name: String,
+        #[arg(long, default_value_t = false)]
+        disable: bool,
+    },
+    /// 分页列出组织。
+    List {
+        #[arg(long, default_value_t = 1)]
+        current: u32,
+        #[arg(long = "page-size", default_value_t = 10)]
+        page_size: u32,
+    },
+    /// 查看单个组织。
+    Get {
+        #[arg(long)]
+        id: String,
+    },
+    /// 更新组织。
+    Update {
+        #[arg(long)]
+        id: String,
+        #[arg(long)]
+        name: String,
+        #[arg(long, default_value_t = false)]
+        disable: bool,
+    },
+    /// 删除组织。
+    Delete {
+        #[arg(long)]
+        id: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum RoleCmd {
+    /// 新建角色。
+    Create {
+        #[arg(long)]
+        name: String,
+        #[arg(long)]
+        scope: Option<String>,
+        /// 权限串,逗号分隔(如 PROJECT:READ+ADD)。
+        #[arg(long, value_delimiter = ',')]
+        permissions: Vec<String>,
+    },
+    /// 分页列出角色。
+    List {
+        #[arg(long, default_value_t = 1)]
+        current: u32,
+        #[arg(long = "page-size", default_value_t = 10)]
+        page_size: u32,
+    },
+    /// 查看单个角色。
+    Get {
+        #[arg(long)]
+        id: String,
+    },
+    /// 更新角色。
+    Update {
+        #[arg(long)]
+        id: String,
+        #[arg(long)]
+        name: String,
+        #[arg(long)]
+        scope: Option<String>,
+        #[arg(long, value_delimiter = ',')]
+        permissions: Vec<String>,
+    },
+    /// 删除角色。
+    Delete {
+        #[arg(long)]
+        id: String,
+    },
+    /// 给用户授予角色。
+    Grant {
+        #[arg(long)]
+        user: String,
+        #[arg(long)]
+        role: String,
+    },
+    /// 撤销用户的角色。
+    Revoke {
+        #[arg(long)]
+        user: String,
+        #[arg(long)]
+        role: String,
+    },
+}
+
 #[derive(Serialize, Deserialize, Default, Clone)]
 struct Config {
     url: String,
@@ -272,6 +549,12 @@ impl Client {
     }
     fn get(&self, path: &str, auth: bool) -> R<Value> {
         self.send(self.http.get(self.url(path)), auth)
+    }
+    fn put(&self, path: &str, body: Value, auth: bool) -> R<Value> {
+        self.send(self.http.put(self.url(path)).json(&body), auth)
+    }
+    fn delete(&self, path: &str, auth: bool) -> R<Value> {
+        self.send(self.http.delete(self.url(path)), auth)
     }
 }
 
@@ -446,6 +729,152 @@ fn run(cli: Cli) -> R<()> {
                 SkillCmd::Compose { project, ids } => pretty(&c.post(
                     "/skill/compose",
                     json!({"projectId": project, "skillIds": ids}),
+                    true,
+                )?),
+            }
+        }
+        Cmd::Logout => {
+            let mut cfg = Config::load();
+            let c = Client::new(cfg.clone())?;
+            // 服务端撤销当前令牌(忽略未登录/已失效)。
+            let _ = c.post("/auth/logout", json!({}), true);
+            cfg.token.clear();
+            cfg.save()?;
+            println!("✅ 已注销,本地会话已清空");
+        }
+        Cmd::Project { cmd } => {
+            let c = Client::new(Config::load())?;
+            match cmd {
+                ProjectCmd::Create { org, name } => pretty(&c.post(
+                    "/project",
+                    json!({"organizationId": org, "name": name}),
+                    true,
+                )?),
+                ProjectCmd::List { org, current, page_size } => pretty(&c.get(
+                    &format!("/project?organizationId={org}&current={current}&pageSize={page_size}"),
+                    true,
+                )?),
+            }
+        }
+        Cmd::Bug { cmd } => {
+            let c = Client::new(Config::load())?;
+            match cmd {
+                BugCmd::Create { project, title, status } => pretty(&c.post(
+                    "/bug",
+                    json!({"projectId": project, "title": title, "initialStatus": status}),
+                    true,
+                )?),
+                BugCmd::Status { id, to } => {
+                    pretty(&c.post(&format!("/bug/{id}/status"), json!({"status": to}), true)?)
+                }
+            }
+        }
+        Cmd::Case { cmd } => {
+            let c = Client::new(Config::load())?;
+            match cmd {
+                CaseCmd::Review { review, case, reviewer, status, content } => pretty(&c.post(
+                    &format!("/case-review/{review}/{case}"),
+                    json!({"reviewerId": reviewer, "status": status, "content": content}),
+                    true,
+                )?),
+            }
+        }
+        Cmd::Plan { cmd } => {
+            let c = Client::new(Config::load())?;
+            match cmd {
+                PlanCmd::Create { project, name, plan_type, group } => {
+                    let mut body = json!({"projectId": project, "name": name, "type": plan_type});
+                    if let Some(g) = group {
+                        body["groupId"] = json!(g);
+                    }
+                    pretty(&c.post("/test-plan", body, true)?)
+                }
+                PlanCmd::Stats { id } => {
+                    pretty(&c.get(&format!("/test-plan/{id}/statistics"), true)?)
+                }
+            }
+        }
+        Cmd::Api { cmd } => {
+            let c = Client::new(Config::load())?;
+            match cmd {
+                ApiCmd::BatchRun { project, cases, run_mode, pool } => pretty(&c.post(
+                    "/api/batch-run",
+                    json!({"projectId": project, "caseIds": cases, "runMode": run_mode, "poolId": pool}),
+                    true,
+                )?),
+            }
+        }
+        Cmd::User { cmd } => {
+            let c = Client::new(Config::load())?;
+            match cmd {
+                UserCmd::Create { name, email } => {
+                    pretty(&c.post("/system/user", json!({"name": name, "email": email}), true)?)
+                }
+                UserCmd::List { current, page_size } => pretty(&c.get(
+                    &format!("/system/user?current={current}&pageSize={page_size}"),
+                    true,
+                )?),
+                UserCmd::Get { id } => pretty(&c.get(&format!("/system/user/{id}"), true)?),
+                UserCmd::Update { id, name, email, disable } => pretty(&c.put(
+                    &format!("/system/user/{id}"),
+                    json!({"name": name, "email": email, "enable": !disable}),
+                    true,
+                )?),
+                UserCmd::Delete { id } => pretty(&c.delete(&format!("/system/user/{id}"), true)?),
+                UserCmd::Names { ids } => pretty(&c.get(
+                    &format!("/system/user/names?ids={}", ids.join(",")),
+                    true,
+                )?),
+            }
+        }
+        Cmd::Org { cmd } => {
+            let c = Client::new(Config::load())?;
+            match cmd {
+                OrgCmd::Create { name, disable } => pretty(&c.post(
+                    "/organization",
+                    json!({"name": name, "enable": !disable}),
+                    true,
+                )?),
+                OrgCmd::List { current, page_size } => pretty(&c.get(
+                    &format!("/organization?current={current}&pageSize={page_size}"),
+                    true,
+                )?),
+                OrgCmd::Get { id } => pretty(&c.get(&format!("/organization/{id}"), true)?),
+                OrgCmd::Update { id, name, disable } => pretty(&c.put(
+                    &format!("/organization/{id}"),
+                    json!({"name": name, "enable": !disable}),
+                    true,
+                )?),
+                OrgCmd::Delete { id } => pretty(&c.delete(&format!("/organization/{id}"), true)?),
+            }
+        }
+        Cmd::Role { cmd } => {
+            let c = Client::new(Config::load())?;
+            match cmd {
+                RoleCmd::Create { name, scope, permissions } => pretty(&c.post(
+                    "/role",
+                    json!({"name": name, "scope": scope, "permissions": permissions}),
+                    true,
+                )?),
+                RoleCmd::List { current, page_size } => pretty(&c.get(
+                    &format!("/role?current={current}&pageSize={page_size}"),
+                    true,
+                )?),
+                RoleCmd::Get { id } => pretty(&c.get(&format!("/role/{id}"), true)?),
+                RoleCmd::Update { id, name, scope, permissions } => pretty(&c.put(
+                    &format!("/role/{id}"),
+                    json!({"name": name, "scope": scope, "permissions": permissions}),
+                    true,
+                )?),
+                RoleCmd::Delete { id } => pretty(&c.delete(&format!("/role/{id}"), true)?),
+                RoleCmd::Grant { user, role } => pretty(&c.post(
+                    "/user-role/grant",
+                    json!({"userId": user, "roleId": role}),
+                    true,
+                )?),
+                RoleCmd::Revoke { user, role } => pretty(&c.post(
+                    "/user-role/revoke",
+                    json!({"userId": user, "roleId": role}),
                     true,
                 )?),
             }
