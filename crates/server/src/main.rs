@@ -15,6 +15,7 @@ mod mcp_tools;
 mod openapi;
 mod orchestration;
 mod planner;
+mod scenario_run;
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -156,6 +157,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 "BUG:READ+ADD+UPDATE".to_string(),
                 "TEST_PLAN:READ+ADD".to_string(),
                 "CASE_REVIEW:READ+REVIEW".to_string(),
+                "API_DEFINITION:READ+ADD+UPDATE+DELETE".to_string(),
+                "API_SCENARIO:READ+ADD+UPDATE+DELETE+EXECUTE".to_string(),
                 "REQUIREMENT:READ+ADD+UPDATE+DELETE".to_string(),
                 "TASK:READ+ADD+EXECUTE+UPDATE".to_string(),
                 "DELIVERY:READ+EXECUTE+UPDATE".to_string(),
@@ -352,8 +355,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         };
     let api_pools = Arc::new(PgResourcePool::new(pool.clone()));
     let api_executor = Arc::new(PgBatchReportExecutor::new(pool.clone(), dispatcher));
-    let apitest_routes =
-        api_test::adapters::http::router(StartBatchRunUseCase::new(api_pools, api_executor));
+    let batch_run_uc = StartBatchRunUseCase::new(api_pools, api_executor);
+    let apitest_routes = api_test::adapters::http::router(batch_run_uc.clone());
+
+    // —— 接口定义模块(目录 + 用例 + Mock)——
+    let apidef_repo = Arc::new(api_definition::adapters::pg::PgApiDefinitionRepository::new(pool.clone()));
+    let apidef_routes = api_definition::adapters::http::router(apidef_repo, sessions.clone());
+
+    // —— 场景模块 + 组装根执行桥(编译 → 批量运行)——
+    let scenario_repo =
+        Arc::new(api_scenario::adapters::pg::PgApiScenarioRepository::new(pool.clone()));
+    let scenario_routes =
+        api_scenario::adapters::http::router(scenario_repo.clone(), sessions.clone());
+    let scenario_run_routes = scenario_run::router(
+        api_scenario::application::CompileScenarioUseCase::new(scenario_repo),
+        batch_run_uc,
+        sessions.clone(),
+    );
 
     // —— 合并为单一应用 + 生产中间件 ——
     let app = user_routes
@@ -372,6 +390,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .merge(bug_routes)
         .merge(plan_routes)
         .merge(apitest_routes)
+        .merge(apidef_routes)
+        .merge(scenario_routes)
+        .merge(scenario_run_routes)
         .merge(openapi::routes())
         .merge(health_routes(pool.clone()))
         // 由外到内:请求日志 → 整体超时 → 请求体上限(防超大 body 打爆内存)

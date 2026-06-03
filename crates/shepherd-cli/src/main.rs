@@ -124,6 +124,16 @@ enum Cmd {
         #[command(subcommand)]
         cmd: RoleCmd,
     },
+    /// 接口定义(目录 + 用例 + Mock)。
+    Apidef {
+        #[command(subcommand)]
+        cmd: ApidefCmd,
+    },
+    /// 场景(编排 + 步骤 + 编译 + 运行)。
+    Scenario {
+        #[command(subcommand)]
+        cmd: ScenarioCmd,
+    },
 }
 
 #[derive(Subcommand)]
@@ -466,6 +476,127 @@ enum RoleCmd {
         user: String,
         #[arg(long)]
         role: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum ApidefCmd {
+    /// 新建接口定义。
+    Create {
+        #[arg(long)]
+        project: String,
+        #[arg(long)]
+        name: String,
+        /// 接口类型 HTTP | TCP | SQL | DUBBO。
+        #[arg(long, default_value = "HTTP")]
+        protocol: String,
+        #[arg(long, default_value = "GET")]
+        method: String,
+        #[arg(long, default_value = "")]
+        path: String,
+    },
+    /// 列出项目内接口定义。
+    List {
+        #[arg(long)]
+        project: String,
+    },
+    /// 查看单个接口定义。
+    Get {
+        #[arg(long)]
+        id: String,
+    },
+    /// 给定义加接口用例(落 ms_api_case,可被批量运行)。
+    Case {
+        #[arg(long)]
+        def: String,
+        #[arg(long)]
+        name: String,
+        #[arg(long, default_value = "GET")]
+        method: String,
+        #[arg(long)]
+        url: String,
+        #[arg(long)]
+        body: Option<String>,
+    },
+    /// 列出定义下的接口用例。
+    Cases {
+        #[arg(long)]
+        def: String,
+    },
+    /// 给定义加 Mock。
+    Mock {
+        #[arg(long)]
+        def: String,
+        #[arg(long)]
+        name: String,
+        #[arg(long = "status", default_value_t = 200)]
+        response_status: i32,
+        #[arg(long)]
+        body: Option<String>,
+    },
+    /// 列出定义下的 Mock。
+    Mocks {
+        #[arg(long)]
+        def: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum ScenarioCmd {
+    /// 新建场景。
+    Create {
+        #[arg(long)]
+        project: String,
+        #[arg(long)]
+        name: String,
+    },
+    /// 列出项目内场景。
+    List {
+        #[arg(long)]
+        project: String,
+    },
+    /// 查看单个场景(含步骤)。
+    Get {
+        #[arg(long)]
+        id: String,
+    },
+    /// 加步骤:kind=request|case|scenario。
+    Step {
+        #[arg(long)]
+        scenario: String,
+        /// request | case | scenario。
+        #[arg(long)]
+        kind: String,
+        #[arg(long = "ref-mode", default_value = "REFERENCE")]
+        ref_mode: String,
+        #[arg(long, default_value_t = 1)]
+        order: i32,
+        /// case/scenario 步骤:被引用的 id。
+        #[arg(long = "ref")]
+        ref_id: Option<String>,
+        /// request 步骤:内联请求。
+        #[arg(long)]
+        method: Option<String>,
+        #[arg(long)]
+        url: Option<String>,
+        #[arg(long)]
+        body: Option<String>,
+    },
+    /// 编译场景为可运行步骤(递归展开子场景)。
+    Compile {
+        #[arg(long)]
+        id: String,
+    },
+    /// 运行场景(编译 → 批量执行)。
+    Run {
+        #[arg(long)]
+        id: String,
+        #[arg(long)]
+        project: String,
+        #[arg(long = "mode", default_value = "PARALLEL")]
+        run_mode: String,
+        #[arg(long)]
+        pool: Option<String>,
     },
 }
 
@@ -875,6 +1006,68 @@ fn run(cli: Cli) -> R<()> {
                 RoleCmd::Revoke { user, role } => pretty(&c.post(
                     "/user-role/revoke",
                     json!({"userId": user, "roleId": role}),
+                    true,
+                )?),
+            }
+        }
+        Cmd::Apidef { cmd } => {
+            let c = Client::new(Config::load())?;
+            match cmd {
+                ApidefCmd::Create { project, name, protocol, method, path } => pretty(&c.post(
+                    "/api/definition",
+                    json!({"projectId": project, "name": name, "protocol": protocol, "method": method, "path": path}),
+                    true,
+                )?),
+                ApidefCmd::List { project } => {
+                    pretty(&c.get(&format!("/api/definition?projectId={project}"), true)?)
+                }
+                ApidefCmd::Get { id } => pretty(&c.get(&format!("/api/definition/{id}"), true)?),
+                ApidefCmd::Case { def, name, method, url, body } => pretty(&c.post(
+                    &format!("/api/definition/{def}/case"),
+                    json!({"name": name, "method": method, "url": url, "body": body, "assertions": []}),
+                    true,
+                )?),
+                ApidefCmd::Cases { def } => {
+                    pretty(&c.get(&format!("/api/definition/{def}/case"), true)?)
+                }
+                ApidefCmd::Mock { def, name, response_status, body } => pretty(&c.post(
+                    &format!("/api/definition/{def}/mock"),
+                    json!({"name": name, "responseStatus": response_status, "responseBody": body}),
+                    true,
+                )?),
+                ApidefCmd::Mocks { def } => {
+                    pretty(&c.get(&format!("/api/definition/{def}/mock"), true)?)
+                }
+            }
+        }
+        Cmd::Scenario { cmd } => {
+            let c = Client::new(Config::load())?;
+            match cmd {
+                ScenarioCmd::Create { project, name } => pretty(&c.post(
+                    "/api/scenario",
+                    json!({"projectId": project, "name": name}),
+                    true,
+                )?),
+                ScenarioCmd::List { project } => {
+                    pretty(&c.get(&format!("/api/scenario?projectId={project}"), true)?)
+                }
+                ScenarioCmd::Get { id } => pretty(&c.get(&format!("/api/scenario/{id}"), true)?),
+                ScenarioCmd::Step { scenario, kind, ref_mode, order, ref_id, method, url, body } => {
+                    let mut step = json!({"kind": kind.to_uppercase(), "refMode": ref_mode.to_uppercase(), "order": order});
+                    if let Some(r) = ref_id {
+                        step["refId"] = json!(r);
+                    }
+                    if let Some(m) = method {
+                        step["request"] = json!({"method": m, "url": url.unwrap_or_default(), "body": body});
+                    }
+                    pretty(&c.post(&format!("/api/scenario/{scenario}/step"), step, true)?)
+                }
+                ScenarioCmd::Compile { id } => {
+                    pretty(&c.get(&format!("/api/scenario/{id}/compile"), true)?)
+                }
+                ScenarioCmd::Run { id, project, run_mode, pool } => pretty(&c.post(
+                    &format!("/api/scenario/{id}/run"),
+                    json!({"projectId": project, "runMode": run_mode, "poolId": pool}),
                     true,
                 )?),
             }
