@@ -50,6 +50,11 @@ impl BugRepository for PgBugRepository {
             items.push(StatusItem { id, name, internal });
         }
 
+        // 未单独配置状态流的项目回落到领域默认种子流,保证缺陷功能开箱即用。
+        if items.is_empty() {
+            return Ok(StatusFlowGraph::default_bug_flow());
+        }
+
         let edge_rows =
             sqlx::query("SELECT from_id, to_id FROM ms_status_flow WHERE project_id = $1")
                 .bind(project_id)

@@ -5,7 +5,7 @@ use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 
-use crate::domain::{Bug, NewBug, StatusFlowGraph, StatusItem};
+use crate::domain::{Bug, NewBug, StatusFlowGraph};
 use crate::ports::{BugRepository, RepoError};
 
 #[derive(Default)]
@@ -30,26 +30,10 @@ impl InMemoryBugRepository {
         self.state.lock().expect("lock").flows.insert(project_id.to_string(), flow);
     }
 
-    /// 便捷构造:为项目装上典型缺陷流(NEW→RESOLVED→CLOSED→REOPENED…)。
+    /// 便捷构造:为项目装上默认缺陷流(种子,复用领域 `default_bug_flow`)。
     pub fn with_default_flow(project_id: &str) -> Self {
         let repo = Self::new();
-        let items = vec![
-            StatusItem::new("NEW", "新建", true),
-            StatusItem::new("RESOLVED", "已解决", true),
-            StatusItem::new("CLOSED", "已关闭", true),
-            StatusItem::new("REOPENED", "重新打开", true),
-            StatusItem::new("REJECTED", "已拒绝", true),
-        ];
-        let edges = vec![
-            ("NEW".into(), "RESOLVED".into()),
-            ("NEW".into(), "REJECTED".into()),
-            ("RESOLVED".into(), "CLOSED".into()),
-            ("RESOLVED".into(), "REOPENED".into()),
-            ("REOPENED".into(), "RESOLVED".into()),
-            ("CLOSED".into(), "REOPENED".into()),
-            ("REJECTED".into(), "REOPENED".into()),
-        ];
-        repo.set_flow(project_id, StatusFlowGraph::new(items, edges));
+        repo.set_flow(project_id, StatusFlowGraph::default_bug_flow());
         repo
     }
 
