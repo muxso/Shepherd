@@ -22,6 +22,8 @@ members = [
     "crates/orchestrator",
     "crates/mcp",
     "crates/skill",
+    "crates/api-definition",
+    "crates/api-scenario",
     "crates/shepherd-cli",
 ]
 
