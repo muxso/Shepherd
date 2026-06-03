@@ -29,6 +29,7 @@ reqwest = { version = "0.12", default-features = false, features = ["json", "rus
 api-test = { path = "../api-test", features = ["pg", "http", "jmeter", "local"] }
 api-definition = { path = "../api-definition", features = ["pg", "http"] }
 api-scenario = { path = "../api-scenario", features = ["pg", "http"] }
+environment = { path = "../environment", features = ["pg", "http"] }
 migrate = { path = "../migrate" }
 axum = "0.8"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "signal", "time"] }

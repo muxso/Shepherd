@@ -159,6 +159,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 "CASE_REVIEW:READ+REVIEW".to_string(),
                 "API_DEFINITION:READ+ADD+UPDATE+DELETE".to_string(),
                 "API_SCENARIO:READ+ADD+UPDATE+DELETE+EXECUTE".to_string(),
+                "ENVIRONMENT:READ+ADD+UPDATE+DELETE".to_string(),
                 "REQUIREMENT:READ+ADD+UPDATE+DELETE".to_string(),
                 "TASK:READ+ADD+EXECUTE+UPDATE".to_string(),
                 "DELIVERY:READ+EXECUTE+UPDATE".to_string(),
@@ -368,6 +369,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let apidef_repo = Arc::new(api_definition::adapters::pg::PgApiDefinitionRepository::new(pool.clone()));
     let apidef_routes = api_definition::adapters::http::router(apidef_repo, sessions.clone());
 
+    // —— 环境模块(项目级 base_url + 默认头 + 变量)——
+    let env_repo = Arc::new(environment::adapters::pg::PgEnvironmentRepository::new(pool.clone()));
+    let environment_routes = environment::adapters::http::router(env_repo, sessions.clone());
+
     // —— 场景模块 + 组装根执行桥(编译 → 批量运行)——
     let scenario_repo =
         Arc::new(api_scenario::adapters::pg::PgApiScenarioRepository::new(pool.clone()));
@@ -399,6 +404,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .merge(apitest_routes)
         .merge(case_exec_routes)
         .merge(apidef_routes)
+        .merge(environment_routes)
         .merge(scenario_routes)
         .merge(scenario_run_routes)
         .merge(openapi::routes())
