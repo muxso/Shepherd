@@ -263,3 +263,33 @@ async fn scenario_api_definition_to_run() {
     // 运行:无资源池 → 桥接到批量运行用例,在入口明确 400(证明已通到池解析规则)
     assert_eq!(s.status("POST", &format!("/api/scenario/{scn}/run"), json!({"projectId":&p,"runMode":"PARALLEL"}), Some(&t)).await, 400);
 }
+
+// ============ 场景 7:独立用例 + 执行记录分页 ============
+#[tokio::test]
+#[ignore = "需要 PostgreSQL"]
+async fn scenario_standalone_case_and_executions() {
+    let s = TestServer::start().await;
+    let t = s.login().await;
+    let org = s.post("/organization", json!({"name":format!("exorg-{}", free_port())}), Some(&t)).await["id"]
+        .as_str().unwrap().to_string();
+    let p = s.post("/project", json!({"organizationId":&org,"name":format!("exproj-{}", free_port())}), Some(&t)).await["id"]
+        .as_str().unwrap().to_string();
+    // 用例可独立于接口定义存在:不传 apiDefinitionId 也能建
+    let case = s.post("/api/case", json!({"projectId":&p,"name":"独立用例","method":"GET","url":"https://example.com/ping"}), Some(&t)).await;
+    assert_eq!(case["apiDefinitionId"], ""); // 独立
+    let case_id = case["id"].as_str().unwrap().to_string();
+    // 项目级用例分页:total=1
+    let page = s.get(&format!("/api/case?projectId={p}&current=1&pageSize=10"), &t).await;
+    assert_eq!(page["total"], 1);
+    assert_eq!(page["totalPages"], 1);
+    assert_eq!(page["items"].as_array().unwrap().len(), 1);
+    // 用例执行记录分页(尚未执行 → 空页,但端点/分页结构成立)
+    let cexec = s.get(&format!("/api/case/{case_id}/executions?current=1&pageSize=10"), &t).await;
+    assert_eq!(cexec["total"], 0);
+    assert!(cexec["items"].is_array());
+    // 场景执行记录分页(同上,空页)
+    let scn = s.post("/api/scenario", json!({"projectId":&p,"name":"空执行场景"}), Some(&t)).await["id"].as_str().unwrap().to_string();
+    let sexec = s.get(&format!("/api/scenario/{scn}/executions?current=1&pageSize=10"), &t).await;
+    assert_eq!(sexec["total"], 0);
+    assert_eq!(sexec["current"], 1);
+}

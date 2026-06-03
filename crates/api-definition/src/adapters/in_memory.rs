@@ -12,6 +12,7 @@ use crate::ports::{ApiDefinitionRepository, RepoError};
 struct State {
     definitions: HashMap<String, ApiDefinition>, // id -> 接口定义
     cases: HashMap<String, ApiCase>,             // id -> 用例
+    case_order: Vec<String>,                     // 用例插入顺序(项目级分页按此)
     mocks: HashMap<String, ApiMock>,             // id -> Mock
     seq: u64,
 }
@@ -81,6 +82,7 @@ impl ApiDefinitionRepository for InMemoryApiDefinitionRepository {
             assertions: c.assertions.clone(),
         };
         state.cases.insert(case.id.clone(), case.clone());
+        state.case_order.push(case.id.clone());
         Ok(case)
     }
 
@@ -93,6 +95,31 @@ impl ApiDefinitionRepository for InMemoryApiDefinitionRepository {
             .cloned()
             .collect();
         out.sort_by(|a, b| a.id.cmp(&b.id));
+        Ok(out)
+    }
+
+    async fn count_cases_by_project(&self, project_id: &str) -> Result<u64, RepoError> {
+        let state = self.state.lock().expect("lock");
+        Ok(state.cases.values().filter(|c| c.project_id == project_id).count() as u64)
+    }
+
+    async fn list_cases_by_project(
+        &self,
+        project_id: &str,
+        offset: u64,
+        limit: u32,
+    ) -> Result<Vec<ApiCase>, RepoError> {
+        let state = self.state.lock().expect("lock");
+        // 按插入顺序遍历,过滤出项目用例,再做 offset/limit 切片。
+        let out: Vec<ApiCase> = state
+            .case_order
+            .iter()
+            .filter_map(|id| state.cases.get(id))
+            .filter(|c| c.project_id == project_id)
+            .skip(offset as usize)
+            .take(limit as usize)
+            .cloned()
+            .collect();
         Ok(out)
     }
 

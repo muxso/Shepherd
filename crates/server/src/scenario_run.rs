@@ -19,7 +19,9 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use utoipa::{OpenApi, ToSchema};
 
-use api_scenario::application::{CompileError, CompileScenarioUseCase};
+use api_scenario::application::{
+    CompileError, CompileScenarioUseCase, RecordScenarioExecutionUseCase,
+};
 use api_test::application::StartBatchRunUseCase;
 use api_test::domain::{BatchRunError, BatchRunMode, RunModeConfig};
 use webauth::{AuthUser, SessionStore};
@@ -28,6 +30,7 @@ use webauth::{AuthUser, SessionStore};
 struct RunState {
     compile: CompileScenarioUseCase,
     batch: StartBatchRunUseCase,
+    recorder: RecordScenarioExecutionUseCase,
     sessions: Arc<dyn SessionStore>,
 }
 
@@ -40,11 +43,12 @@ impl FromRef<RunState> for Arc<dyn SessionStore> {
 pub fn router(
     compile: CompileScenarioUseCase,
     batch: StartBatchRunUseCase,
+    recorder: RecordScenarioExecutionUseCase,
     sessions: Arc<dyn SessionStore>,
 ) -> Router {
     Router::new()
         .route("/api/scenario/{id}/run", post(run_scenario))
-        .with_state(RunState { compile, batch, sessions })
+        .with_state(RunState { compile, batch, recorder, sessions })
 }
 
 #[derive(Debug, Deserialize, ToSchema)]
@@ -118,6 +122,12 @@ async fn run_scenario(
     let config = RunModeConfig { mode, pool_id: req.pool_id, retry: None };
     match st.batch.execute(&req.project_id, case_ids, config).await {
         Ok(report_id) => {
+            // 记一条场景执行记录(已派发待跑 → PENDING,带报告 id 供轮询状态)。
+            // 记录失败不影响运行结果,仅忽略。
+            let _ = st
+                .recorder
+                .execute(&id, &req.project_id, "PENDING", count as i32, Some(&report_id))
+                .await;
             (StatusCode::OK, Json(RunScenarioResponse { report_id, case_count: count }))
                 .into_response()
         }

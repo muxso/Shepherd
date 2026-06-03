@@ -495,13 +495,16 @@ enum ApidefCmd {
         #[arg(long, default_value = "")]
         path: String,
     },
-    /// 从 OpenAPI 3.x / Swagger 2.0(JSON 文件)批量导入接口定义。
+    /// 从 OpenAPI 3.x / Swagger 2.0 批量导入接口定义(--file 本地 / --url 远程二选一)。
     Import {
         #[arg(long)]
         project: String,
         /// OpenAPI/Swagger JSON 文件路径。
         #[arg(long)]
-        file: String,
+        file: Option<String>,
+        /// OpenAPI/Swagger JSON 的 URL(如服务自身的 /api-docs/openapi.json)。
+        #[arg(long)]
+        url: Option<String>,
     },
     /// 列出项目内接口定义。
     List {
@@ -530,6 +533,39 @@ enum ApidefCmd {
     Cases {
         #[arg(long)]
         def: String,
+    },
+    /// 新建接口用例(可独立于定义:省略 --def 即独立用例)。
+    CaseNew {
+        #[arg(long)]
+        project: String,
+        #[arg(long)]
+        def: Option<String>,
+        #[arg(long)]
+        name: String,
+        #[arg(long, default_value = "GET")]
+        method: String,
+        #[arg(long)]
+        url: String,
+        #[arg(long)]
+        body: Option<String>,
+    },
+    /// 分页列出项目内接口用例(独立视图)。
+    CaseList {
+        #[arg(long)]
+        project: String,
+        #[arg(long, default_value_t = 1)]
+        current: u32,
+        #[arg(long = "page-size", default_value_t = 10)]
+        page_size: u32,
+    },
+    /// 分页查看某用例的执行记录。
+    CaseExec {
+        #[arg(long)]
+        case: String,
+        #[arg(long, default_value_t = 1)]
+        current: u32,
+        #[arg(long = "page-size", default_value_t = 10)]
+        page_size: u32,
     },
     /// 给定义加 Mock。
     Mock {
@@ -594,6 +630,15 @@ enum ScenarioCmd {
     Compile {
         #[arg(long)]
         id: String,
+    },
+    /// 分页查看场景执行记录(含执行状态)。
+    Executions {
+        #[arg(long)]
+        id: String,
+        #[arg(long, default_value_t = 1)]
+        current: u32,
+        #[arg(long = "page-size", default_value_t = 10)]
+        page_size: u32,
     },
     /// 运行场景(编译 → 批量执行)。
     Run {
@@ -691,6 +736,14 @@ impl Client {
     }
     fn put(&self, path: &str, body: Value, auth: bool) -> R<Value> {
         self.send(self.http.put(self.url(path)).json(&body), auth)
+    }
+    /// 拉取任意 URL 的文本(用于 import --url 读取远程 OpenAPI 文档)。
+    fn fetch_text(&self, url: &str) -> R<String> {
+        let resp = self.http.get(url).send()?;
+        if !resp.status().is_success() {
+            return Err(format!("拉取 {url} 失败:HTTP {}", resp.status()).into());
+        }
+        Ok(resp.text()?)
     }
     fn delete(&self, path: &str, auth: bool) -> R<Value> {
         self.send(self.http.delete(self.url(path)), auth)
@@ -1026,10 +1079,15 @@ fn run(cli: Cli) -> R<()> {
                     json!({"projectId": project, "name": name, "protocol": protocol, "method": method, "path": path}),
                     true,
                 )?),
-                ApidefCmd::Import { project, file } => {
-                    let raw = std::fs::read_to_string(&file)?;
-                    let content: Value = serde_json::from_str(&raw)
-                        .map_err(|e| format!("{file} 不是合法 JSON: {e}"))?;
+                ApidefCmd::Import { project, file, url } => {
+                    // --url 远程拉取 / --file 本地读取(二选一,url 优先)。
+                    let raw = match (url, file) {
+                        (Some(u), _) => c.fetch_text(&u)?,
+                        (None, Some(f)) => std::fs::read_to_string(&f)?,
+                        (None, None) => return Err("需指定 --file 或 --url".into()),
+                    };
+                    let content: Value =
+                        serde_json::from_str(&raw).map_err(|e| format!("导入内容不是合法 JSON: {e}"))?;
                     pretty(&c.post(
                         "/api/definition/import",
                         json!({"projectId": project, "content": content}),
@@ -1048,6 +1106,19 @@ fn run(cli: Cli) -> R<()> {
                 ApidefCmd::Cases { def } => {
                     pretty(&c.get(&format!("/api/definition/{def}/case"), true)?)
                 }
+                ApidefCmd::CaseNew { project, def, name, method, url, body } => pretty(&c.post(
+                    "/api/case",
+                    json!({"projectId": project, "apiDefinitionId": def, "name": name, "method": method, "url": url, "body": body, "assertions": []}),
+                    true,
+                )?),
+                ApidefCmd::CaseList { project, current, page_size } => pretty(&c.get(
+                    &format!("/api/case?projectId={project}&current={current}&pageSize={page_size}"),
+                    true,
+                )?),
+                ApidefCmd::CaseExec { case, current, page_size } => pretty(&c.get(
+                    &format!("/api/case/{case}/executions?current={current}&pageSize={page_size}"),
+                    true,
+                )?),
                 ApidefCmd::Mock { def, name, response_status, body } => pretty(&c.post(
                     &format!("/api/definition/{def}/mock"),
                     json!({"name": name, "responseStatus": response_status, "responseBody": body}),
@@ -1083,6 +1154,10 @@ fn run(cli: Cli) -> R<()> {
                 ScenarioCmd::Compile { id } => {
                     pretty(&c.get(&format!("/api/scenario/{id}/compile"), true)?)
                 }
+                ScenarioCmd::Executions { id, current, page_size } => pretty(&c.get(
+                    &format!("/api/scenario/{id}/executions?current={current}&pageSize={page_size}"),
+                    true,
+                )?),
                 ScenarioCmd::Run { id, project, run_mode, pool } => pretty(&c.post(
                     &format!("/api/scenario/{id}/run"),
                     json!({"projectId": project, "runMode": run_mode, "poolId": pool}),

@@ -357,6 +357,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let api_executor = Arc::new(PgBatchReportExecutor::new(pool.clone(), dispatcher));
     let batch_run_uc = StartBatchRunUseCase::new(api_pools, api_executor);
     let apitest_routes = api_test::adapters::http::router(batch_run_uc.clone());
+    // 用例执行记录(分页读 ms_api_case_result)。
+    let case_exec_routes = api_test::adapters::http::executions_router(
+        api_test::application::ListCaseExecutionsUseCase::new(Arc::new(
+            api_test::adapters::PgCaseExecutionQuery::new(pool.clone()),
+        )),
+    );
 
     // —— 接口定义模块(目录 + 用例 + Mock)——
     let apidef_repo = Arc::new(api_definition::adapters::pg::PgApiDefinitionRepository::new(pool.clone()));
@@ -368,8 +374,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let scenario_routes =
         api_scenario::adapters::http::router(scenario_repo.clone(), sessions.clone());
     let scenario_run_routes = scenario_run::router(
-        api_scenario::application::CompileScenarioUseCase::new(scenario_repo),
+        api_scenario::application::CompileScenarioUseCase::new(scenario_repo.clone()),
         batch_run_uc,
+        api_scenario::application::RecordScenarioExecutionUseCase::new(scenario_repo),
         sessions.clone(),
     );
 
@@ -390,6 +397,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .merge(bug_routes)
         .merge(plan_routes)
         .merge(apitest_routes)
+        .merge(case_exec_routes)
         .merge(apidef_routes)
         .merge(scenario_routes)
         .merge(scenario_run_routes)

@@ -215,6 +215,68 @@ impl CaseResultSink for PgCaseResultSink {
     }
 }
 
+// ---- 用例执行记录读模型:按 case_id 倒序分页查 ms_api_case_result ----
+use crate::ports::{CaseExecutionQueryPort, CaseExecutionRecord};
+
+#[derive(Clone)]
+pub struct PgCaseExecutionQuery {
+    pool: PgPool,
+}
+
+impl PgCaseExecutionQuery {
+    pub fn new(pool: PgPool) -> Self {
+        Self { pool }
+    }
+}
+
+#[async_trait]
+impl CaseExecutionQueryPort for PgCaseExecutionQuery {
+    async fn count_by_case(&self, case_id: &str) -> Result<u64, PortError> {
+        let row = sqlx::query("SELECT COUNT(*) AS n FROM ms_api_case_result WHERE case_id = $1")
+            .bind(case_id)
+            .fetch_one(&self.pool)
+            .await
+            .map_err(map_err)?;
+        let n: i64 = row.try_get("n").map_err(map_err)?;
+        Ok(n as u64)
+    }
+
+    async fn list_by_case(
+        &self,
+        case_id: &str,
+        offset: u64,
+        limit: u32,
+    ) -> Result<Vec<CaseExecutionRecord>, PortError> {
+        // sqlx 未启用 chrono/time feature,故在 SQL 内用 to_char 把 TIMESTAMPTZ 归一为 RFC3339 字符串。
+        let rows = sqlx::query(
+            "SELECT report_id, case_id, outcome, failures, \
+                    to_char(executed_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"') AS executed_at \
+             FROM ms_api_case_result \
+             WHERE case_id = $1 \
+             ORDER BY executed_at DESC \
+             LIMIT $2 OFFSET $3",
+        )
+        .bind(case_id)
+        .bind(limit as i64)
+        .bind(offset as i64)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(map_err)?;
+
+        rows.into_iter()
+            .map(|r| {
+                Ok(CaseExecutionRecord {
+                    report_id: r.try_get("report_id").map_err(map_err)?,
+                    case_id: r.try_get("case_id").map_err(map_err)?,
+                    outcome: r.try_get("outcome").map_err(map_err)?,
+                    failures: r.try_get("failures").map_err(map_err)?,
+                    executed_at: r.try_get("executed_at").map_err(map_err)?,
+                })
+            })
+            .collect()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -284,5 +346,43 @@ mod tests {
 
         // NoopDispatcher 也能用(本地无执行节点)
         let _ = PgBatchReportExecutor::new(pool.clone(), Arc::new(NoopDispatcher));
+    }
+
+    #[tokio::test]
+    #[ignore = "需要 DATABASE_URL 指向一个 PostgreSQL 实例"]
+    async fn pg_case_execution_query_pagination() {
+        let url = std::env::var("DATABASE_URL").expect("set DATABASE_URL");
+        let pool = PgPool::connect(&url).await.expect("connect");
+        migrate::run(&pool).await.expect("migrate");
+        sqlx::raw_sql("TRUNCATE ms_api_case_result").execute(&pool).await.expect("truncate");
+        // 三条记录,executed_at 递增 → 倒序后 r3、r2、r1
+        sqlx::raw_sql(
+            "INSERT INTO ms_api_case_result (report_id, case_id, outcome, failures, executed_at) VALUES \
+                ('r1','c1','SUCCESS','[]'::jsonb,        '2026-05-31T00:00:01Z'), \
+                ('r2','c1','FAILED','[\"boom\"]'::jsonb, '2026-05-31T00:00:02Z'), \
+                ('r3','c1','SUCCESS','[]'::jsonb,        '2026-05-31T00:00:03Z'), \
+                ('r9','c2','SUCCESS','[]'::jsonb,        '2026-05-31T00:00:09Z');",
+        )
+        .execute(&pool)
+        .await
+        .expect("seed");
+
+        let q = PgCaseExecutionQuery::new(pool.clone());
+        assert_eq!(q.count_by_case("c1").await.expect("count"), 3);
+        assert_eq!(q.count_by_case("c2").await.expect("count"), 1);
+
+        // 第 1 页 2 条:倒序 → r3, r2
+        let page1 = q.list_by_case("c1", 0, 2).await.expect("page1");
+        assert_eq!(page1.len(), 2);
+        assert_eq!(page1[0].report_id, "r3");
+        assert_eq!(page1[1].report_id, "r2");
+        assert_eq!(page1[0].outcome, "SUCCESS");
+        assert_eq!(page1[1].failures, serde_json::json!(["boom"]));
+        assert_eq!(page1[0].executed_at, "2026-05-31T00:00:03Z"); // RFC3339 归一
+
+        // 第 2 页(offset=2)剩 r1
+        let page2 = q.list_by_case("c1", 2, 2).await.expect("page2");
+        assert_eq!(page2.len(), 1);
+        assert_eq!(page2[0].report_id, "r1");
     }
 }

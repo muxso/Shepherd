@@ -149,6 +149,35 @@ impl ApiDefinitionRepository for PgApiDefinitionRepository {
         rows.iter().map(row_to_case).collect()
     }
 
+    async fn count_cases_by_project(&self, project_id: &str) -> Result<u64, RepoError> {
+        let row = sqlx::query("SELECT COUNT(*) AS n FROM ms_api_case WHERE project_id = $1")
+            .bind(project_id)
+            .fetch_one(&self.pool)
+            .await
+            .map_err(map_err)?;
+        let n: i64 = row.try_get("n").map_err(map_err)?;
+        Ok(n as u64)
+    }
+
+    async fn list_cases_by_project(
+        &self,
+        project_id: &str,
+        offset: u64,
+        limit: u32,
+    ) -> Result<Vec<ApiCase>, RepoError> {
+        let rows = sqlx::query(
+            "SELECT id, api_definition_id, project_id, name, method, url, body, assertions \
+             FROM ms_api_case WHERE project_id = $1 ORDER BY id LIMIT $2 OFFSET $3",
+        )
+        .bind(project_id)
+        .bind(limit as i64)
+        .bind(offset as i64)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(map_err)?;
+        rows.iter().map(row_to_case).collect()
+    }
+
     async fn insert_mock(&self, m: &NewApiMock) -> Result<ApiMock, RepoError> {
         let row = sqlx::query(
             "INSERT INTO ms_api_mock \
@@ -224,6 +253,24 @@ mod tests {
         let cases = repo.list_cases(&def.id).await.expect("list cases");
         assert_eq!(cases.len(), 1);
         assert!(cases[0].assertions.is_array());
+
+        // 项目级用例分页(含上面这条 def 用例 + 一条独立用例)
+        let standalone = NewApiCase::new(
+            "",
+            "p1",
+            "独立用例",
+            "GET",
+            "/ping",
+            None,
+            serde_json::json!([]),
+        )
+        .expect("valid");
+        repo.insert_case(&standalone).await.expect("insert standalone");
+        assert_eq!(repo.count_cases_by_project("p1").await.expect("count"), 2);
+        let page = repo.list_cases_by_project("p1", 0, 1).await.expect("page");
+        assert_eq!(page.len(), 1);
+        let page2 = repo.list_cases_by_project("p1", 1, 10).await.expect("page");
+        assert_eq!(page2.len(), 1);
 
         // Mock 往返
         let nm = NewApiMock::new(

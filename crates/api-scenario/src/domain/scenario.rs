@@ -69,6 +69,51 @@ impl ScenarioStatus {
     }
 }
 
+/// 场景执行状态。默认 Pending(待执行)。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ExecutionStatus {
+    #[default]
+    Pending,
+    Running,
+    Success,
+    Error,
+}
+
+impl ExecutionStatus {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            ExecutionStatus::Pending => "PENDING",
+            ExecutionStatus::Running => "RUNNING",
+            ExecutionStatus::Success => "SUCCESS",
+            ExecutionStatus::Error => "ERROR",
+        }
+    }
+
+    /// 解析状态字符串;未知值返回 None(与 ScenarioStatus 的回落不同,执行状态需精确)。
+    pub fn parse(s: &str) -> Option<ExecutionStatus> {
+        match s {
+            "PENDING" => Some(ExecutionStatus::Pending),
+            "RUNNING" => Some(ExecutionStatus::Running),
+            "SUCCESS" => Some(ExecutionStatus::Success),
+            "ERROR" => Some(ExecutionStatus::Error),
+            _ => None,
+        }
+    }
+}
+
+/// 场景执行记录。每次场景运行落一条:记录状态、用例数与报告 id。
+/// created_at 为 RFC3339 字符串(纯领域不引入时间库依赖)。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ScenarioExecution {
+    pub id: String,
+    pub scenario_id: String,
+    pub project_id: String,
+    pub status: ExecutionStatus,
+    pub case_count: i32,
+    pub report_id: Option<String>,
+    pub created_at: String,
+}
+
 /// 步骤引用模式。默认 Reference(引用)。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum RefMode {
@@ -272,6 +317,20 @@ mod tests {
         }
         assert_eq!(ScenarioStatus::default(), ScenarioStatus::Draft);
         assert_eq!(ScenarioStatus::parse("???"), ScenarioStatus::Draft); // 未知回落
+    }
+
+    #[test]
+    fn execution_status_as_str_and_parse_roundtrip() {
+        for s in [
+            ExecutionStatus::Pending,
+            ExecutionStatus::Running,
+            ExecutionStatus::Success,
+            ExecutionStatus::Error,
+        ] {
+            assert_eq!(ExecutionStatus::parse(s.as_str()), Some(s));
+        }
+        assert_eq!(ExecutionStatus::default(), ExecutionStatus::Pending);
+        assert_eq!(ExecutionStatus::parse("???"), None); // 未知 → None
     }
 
     #[test]

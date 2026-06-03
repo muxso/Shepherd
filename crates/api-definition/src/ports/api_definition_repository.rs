@@ -35,6 +35,17 @@ pub trait ApiDefinitionRepository: Send + Sync {
     /// 列出某接口定义下的用例。
     async fn list_cases(&self, api_definition_id: &str) -> Result<Vec<ApiCase>, RepoError>;
 
+    /// 统计项目下的用例总数(含独立用例,即 api_definition_id 为空者)。
+    async fn count_cases_by_project(&self, project_id: &str) -> Result<u64, RepoError>;
+
+    /// 分页列出项目下的用例(按插入顺序),offset/limit 由调用方算好。
+    async fn list_cases_by_project(
+        &self,
+        project_id: &str,
+        offset: u64,
+        limit: u32,
+    ) -> Result<Vec<ApiCase>, RepoError>;
+
     /// 插入 Mock。
     async fn insert_mock(&self, m: &NewApiMock) -> Result<ApiMock, RepoError>;
 

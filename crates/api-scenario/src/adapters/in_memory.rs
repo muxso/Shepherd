@@ -6,7 +6,8 @@ use std::sync::{Arc, Mutex};
 use async_trait::async_trait;
 
 use crate::domain::{
-    ApiScenario, NewApiScenario, NewScenarioStep, ScenarioStatus, ScenarioStep,
+    ApiScenario, ExecutionStatus, NewApiScenario, NewScenarioStep, ScenarioExecution,
+    ScenarioStatus, ScenarioStep,
 };
 use crate::ports::{ApiScenarioRepository, RepoError};
 
@@ -21,6 +22,8 @@ struct State {
     scenarios: HashMap<String, Record>, // scenario_id -> 记录
     scn_seq: u64,
     step_seq: u64,
+    executions: Vec<ScenarioExecution>, // 追加序;created_at 为合成递增串
+    exec_seq: u64,
 }
 
 #[derive(Clone, Default)]
@@ -98,5 +101,57 @@ impl ApiScenarioRepository for InMemoryApiScenarioRepository {
             rec.scenario.steps.push(stored.clone());
         }
         Ok(stored)
+    }
+
+    async fn record_execution(
+        &self,
+        scenario_id: &str,
+        project_id: &str,
+        status: &str,
+        case_count: i32,
+        report_id: Option<&str>,
+    ) -> Result<ScenarioExecution, RepoError> {
+        let mut state = self.state.lock().expect("lock");
+        state.exec_seq += 1;
+        let n = state.exec_seq;
+        // 未知状态回落到 Pending,保持落库可解析。
+        let status = ExecutionStatus::parse(status).unwrap_or_default();
+        let exec = ScenarioExecution {
+            id: format!("exec-{n}"),
+            scenario_id: scenario_id.to_string(),
+            project_id: project_id.to_string(),
+            status,
+            case_count,
+            report_id: report_id.map(|s| s.to_string()),
+            // 合成递增的时间串,保证测试确定性且降序排序可用。
+            created_at: format!("exec-{n}"),
+        };
+        state.executions.push(exec.clone());
+        Ok(exec)
+    }
+
+    async fn count_executions(&self, scenario_id: &str) -> Result<u64, RepoError> {
+        let state = self.state.lock().expect("lock");
+        Ok(state.executions.iter().filter(|e| e.scenario_id == scenario_id).count() as u64)
+    }
+
+    async fn list_executions(
+        &self,
+        scenario_id: &str,
+        offset: u64,
+        limit: u32,
+    ) -> Result<Vec<ScenarioExecution>, RepoError> {
+        let state = self.state.lock().expect("lock");
+        // created_at 降序(最新在前):exec_seq 递增,逆序遍历即可。
+        let out: Vec<ScenarioExecution> = state
+            .executions
+            .iter()
+            .rev()
+            .filter(|e| e.scenario_id == scenario_id)
+            .skip(offset as usize)
+            .take(limit as usize)
+            .cloned()
+            .collect();
+        Ok(out)
     }
 }
