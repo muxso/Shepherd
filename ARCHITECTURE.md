@@ -1,11 +1,16 @@
-# MeterSphere Rust 重构:整体架构 · TDD 方法论 · 迁移路线
+# Shepherd:整体架构 · TDD 方法论 · 演进路线
 
-> 本文是六个阶段增量重构的收尾综述,面向团队评审。代码见同目录各 crate,
-> 操作性说明(怎么跑、怎么起服务)见 `README.md`,本文聚焦**为什么这样设计**。
+> **Shepherd** 是一个用 Rust 构建的 **AI 研发监督平台**,由 MeterSphere 测试管理后端的六边形重构
+> **演进而来**:先用 TDD + 六边形把测试管理域翻正(§一~§四,讲"为什么这样设计"),再在同一骨架上
+> 长出 Shepherd 的核心链路——**需求(多版本)→ 任务拆分(DAG)→ 派发给 AI 执行者 → 完整性验证**,
+> 并以编排器把这条链自动联动(§五)。操作说明见 `README.md`。
 
-当前规模:**11 个 crate(1 上下文 1 crate + 1 个共享 `webauth`,无 `ms-` 前缀)/ 242 个单元·用例·e2e 测试 + 真库集成测试**,
-覆盖 6 个业务模块(system-setting / project / case / bug / test-plan / api-test)。
-**鉴权(本地 + OIDC 飞书/企业微信)与跨模块 RBAC 已闭环**:每个写端点都经 `webauth::AuthUser` 提取器做按资源权限校验(见 §2.4)。
+当前规模:**19 个 crate / 393 个单元·用例·e2e 测试**,clippy `--all-features` 零告警,全程真库
+(PostgreSQL 16)验证。覆盖:测试管理域(system-setting / project / case / bug / test-plan / api-test)
++ **Shepherd 域**(requirement / task / delivery / verification / orchestrator / skill)+ 接入层
+(mcp / shepherd-cli)。
+**鉴权(本地 + OIDC 飞书/企业微信)与跨模块按资源 RBAC 已闭环**(见 §2.4);
+**三个 AI 触点(拆分 / 执行 / 验证)均可接真实 LLM**(见 §五)。
 
 ---
 
@@ -56,12 +61,25 @@
 
 | crate | 角色 | 关键点 |
 |---|---|---|
+| **共享** | | |
 | `kernel` | 共享内核(分页、权限 `PermissionSet`) | 零依赖 |
-| `webauth` | 共享鉴权基元(`AuthUser` / `Session` / `SessionStore` 端口 + axum 提取器) | 仅依赖 kernel;`http` feature 门控 axum 提取器,`test-util` 提供内存会话存储 |
-| `<context>`(system-setting/project/case/bug/test-plan/api-test) | 一个限界上下文 | `src/{domain,ports,application,adapters}`;`adapters::pg`(feature=pg)、`adapters::http`(feature=http)等门控 |
-| `api-runner` | 原生 HTTP 执行器 + 纯函数断言引擎 | 可独立复用的库 |
-| `migrate` | 版本化迁移(`sqlx migrate!`) | schema 单一真源 |
-| `server` | **组装根**:唯一认识具体类型、拼装、起服务 | 唯一 bin |
+| `webauth` | 共享鉴权基元(`AuthUser` / `Session` / `SessionStore` 端口 + axum 提取器) | 仅依赖 kernel;`http` feature 门控提取器,`test-util` 内存会话 |
+| **测试管理域**(MeterSphere 重构) | | |
+| `system-setting` | 用户·组织·角色·鉴权(本地 + OIDC) | 一个限界上下文,下同 |
+| `project` `case` `bug` `test-plan` | 项目 / 用例评审 / 缺陷 / 测试计划 | `src/{domain,ports,application,adapters}` |
+| `api-test` `api-runner` | 接口批量执行(池解析 quirk)/ 原生 HTTP 执行器 + 断言引擎 | `local`/`jmeter` feature |
+| **Shepherd 域**(AI 研发监督) | | |
+| `requirement` | 需求(多版本:线性快照 + baseline) | 表 `ms_requirement(_version)` |
+| `task` | 任务拆分 DAG(依赖、就绪门控、状态机)+ `Planner` 端口 | 一致性边界 = `Decomposition` 聚合 |
+| `delivery` | 派发给 AI 执行者 + 执行决策日志审计 | `AgentExecutor`/`EventSink`/`DeliveryObserver` 端口 |
+| `verification` | 需求↔任务↔实现 双向追溯 + 缺口检测 | 覆盖链聚合 → 完整性报告 |
+| `orchestrator` | 跨上下文编排(process manager):交付→驱动任务→验证门→回灌验证 | **纯协调,零业务依赖**,在自有 gateway 端口上工作 |
+| `skill` | AI Skill 编排(定义/复用/`compose` 传递展开防环) | 注入执行者提示规范行为 |
+| **接入层 / 组装** | | |
+| `mcp` | Model Context Protocol 引擎(JSON-RPC + 工具注册表) | 协议层,零业务知识 |
+| `migrate` | 版本化迁移(`sqlx migrate!`,19 个迁移) | schema 单一真源 |
+| `server` | **组装根**:唯一认识具体类型;接 LLM/judge/planner、桥接 orchestrator、合并路由、起服务 | 唯一服务 bin |
+| `shepherd-cli` | CLI(`shepherd`):封装 REST 全链路 + `agent connect` | 第二个 bin |
 
 **纯净如何保证**(收敛 crate 数的同时不丢编译屏障):
 - 默认 `cargo build -p <context>` **不启用任何 IO feature** → sqlx/axum 不在依赖图,纯层 import 不到(编译期屏障);
@@ -73,7 +91,7 @@
 > 想换存储/框架/执行器(JMeter↔原生 runner),改动收敛在这一个文件 + feature 开关。
 
 > **重构历史**:初版曾按"层 × 模块"拆成 24 个 `ms-` 前缀 crate(每上下文 core/-pg/-http 三个)。
-> 那是过度工程 + 命名冗余;现收敛为 10 个无前缀 crate(1 上下文 1 crate + feature 门控),
+> 那是过度工程 + 命名冗余;现为"1 上下文 1 crate + 少量共享/接入 crate"(feature 门控),
 > 更符合 Rust 社区惯例,同时保住"纯层不碰 IO"的保证(默认 build 屏障 + 架构测试)。
 
 ### 2.3 已兑现的回报
@@ -189,7 +207,78 @@ memory 里两条真实 quirk 被固化为**真库端到端验证过的契约**:
 
 ---
 
-## 五、迁移路线(Strangler Fig + 一次性切库)
+## 五、Shepherd 领域:主链路 · AI 层 · 自动联动
+
+测试管理域翻正后,**同一六边形骨架**上长出了 Shepherd 的核心——"牧羊人"三支柱:
+**引领**(拆需求为任务)·**监管**(追踪 AI 执行)·**验证**(需求↔实现缺口检测)。
+
+### 5.1 主链路与上下文边界
+
+```
+project ─▶ requirement(多版本) ─▶ task(拆分 DAG,可独立交付)
+                                      │ 派发
+                                      ▼
+                               delivery(AI 执行者:Claude Code / Codex)
+                                      │ 交付落终态
+                          ┌───────────┴───────────┐  ← orchestrator(纯协调)
+                          ▼                       ▼
+                   驱动任务生命周期           验证门(judge)+ 回灌验证
+                  (…→Verified 解锁下游)      verification(完整性报告/缺口)
+```
+
+**上下文彼此零类型依赖**:跨上下文只用字符串 id 互引(`requirement_id` / `decomposition_id` /
+`task_id`)。需要协调的地方(交付→任务/验证、需求→任务拆分)统一收到**组装根**或 `orchestrator`:
+
+- `orchestrator` 是 **process manager**,在自有 gateway 端口(`TaskGateway` / `VerificationGateway` /
+  `Judge`)上工作,**不依赖任何业务 crate**;组装根把这些端口接到 task/verification 的真实服务,
+  并把 delivery 的 `DeliveryObserver` 钩子桥接进来。
+- 一次 `dispatch` → 执行者跑(流式 emit 执行事件)→ 落终态触发 observer → orchestrator:
+  ① 把任务沿 happy path 推到 Delivered;② 过**验证门** judge(通过→任务 Verified 解锁下游 +
+  验证 satisfied;不通过→任务 Failed,缺口保留);③ 裁决记入交付审计事件。**全自动,无需手动流转。**
+
+### 5.2 沿用的核心手法(与测试管理域同源)
+
+| Shepherd 机制 | 复用的既有抽象 |
+|---|---|
+| AI 执行者派发(本地子进程 / 远端 API) | api-test 的 `TaskDispatcher` / `DispatchOutcome`(异步 Accepted / 同步 Completed) |
+| 完整性验证(覆盖链聚合 → 状态) | case-review 的 `Verdict` 投票聚合状态机 |
+| 任务拆分 DAG(无环、就绪门控) | bug 的数据驱动状态机 + project 的软删除/唯一索引 |
+| 需求多版本(不可变快照) | "make illegal states unrepresentable":版本只追加不改写 |
+
+`task` 的 `Decomposition`、`skill` 的 `compose`(includes 传递展开 + DFS 防环)都是**纯领域**、
+毫秒级穷举可测,延续了"把最复杂的规则钉成可回归契约"的主线。
+
+### 5.3 AI 触点:端口 + 可插拔适配器
+
+三个 AI 触点都是**端口**,组装根按环境选适配器(默认无需 AI,可升级到真实 LLM):
+
+| 触点 | 端口(在) | 默认 | 真实 LLM(`SHEPHERD_LLM_URL`) | 其它 |
+|---|---|---|---|---|
+| 拆分 | `task::Planner` | `HeuristicPlanner`(每标准一任务 + 集成) | `LlmPlanner` | bespoke HTTP(`SHEPHERD_PLANNER_URL`) |
+| 执行 | `delivery::AgentExecutor` | `EchoAgentExecutor` | `LlmExecutor` | 本地 spawn(`SHEPHERD_AGENT_CMD`)/ 远端(`_AGENT_URL`) |
+| 验证门 | `orchestrator::Judge` | `AcceptAllJudge` | `LlmJudge`(fail-closed) | `RuleJudge` / HTTP(`SHEPHERD_JUDGE_URL`) |
+
+LLM 适配器(`server/src/llm.rs`)统一走 OpenAI 兼容 `chat/completions`,用任务专属提示让模型产出
+JSON,`extract_json` 容忍散文/围栏。**领域/应用对"是否用 AI、用哪个模型"完全无感。**
+
+### 5.4 接入层:MCP + CLI
+
+- **MCP**(`mcp` 引擎 + 组装根注册 10 个 `shepherd_*` 工具):AI 经 Model Context Protocol 直接驱动
+  全链路。Streamable HTTP:`initialize` 签发 `Mcp-Session-Id`、`GET /mcp` 长连接 SSE、`DELETE` 终止;
+  **按工具 RBAC**(会话权限决定可见/可调,`tools/list` 过滤、无权 `-32003`)。
+- **CLI**(`shepherd`):`login` / `req add·list·breakdown` / `decompose` / `task add` / `dispatch`
+  (`--skills` 自动 compose)/ `verify` / `skill` / `agent connect`(选默认执行者)。
+
+### 5.5 自动联动的"诚实边界"
+
+- 任务的"Verified"当前由**验证门通过**判定(默认 AcceptAll = 交付即通过;配 judge 才严格)。
+- `delivery` 已记 attempt + 执行事件 + judge 裁决审计;尚未记 agent 的逐 token 决策。
+- MCP SSE 目前只发 ready + 心跳,无服务端主动推送的业务消息。
+- LLM 为 OpenAI 兼容形态(可接 Anthropic compat 端点),原生 Messages API 未适配。
+
+---
+
+## 六、迁移路线(Strangler Fig + 一次性切库)
 
 ### 5.1 数据库引擎决策的连带影响
 
@@ -258,7 +347,7 @@ memory 里两条真实 quirk 被固化为**真库端到端验证过的契约**:
 
 ---
 
-## 六、风险与权衡(给评审者)
+## 七、风险与权衡(给评审者)
 
 | 风险 | 缓解 |
 |---|---|
@@ -270,8 +359,10 @@ memory 里两条真实 quirk 被固化为**真库端到端验证过的契约**:
 
 ---
 
-## 七、一句话总结
+## 八、一句话总结
 
-这次重构的本质不是"把 Java 翻译成 Rust",而是**用测试驱动出一个 IO 与逻辑解耦的架构**:
-让最复杂的业务规则(三类状态机)和最隐蔽的踩坑经验(两条 quirk)都变成毫秒级、可回归、
-真库验证过的契约——而这些,恰恰是 Java 版当初最难测、最容易再次踩坑的地方。
+Shepherd 不是"把 Java 翻译成 Rust",而是**用测试驱动出一个 IO 与逻辑解耦的架构**,再在这套
+骨架上长出 AI 研发监督的主链路:把最复杂的规则(任务 DAG、覆盖链聚合、skill 组合、验证门)
+都钉成毫秒级、可回归、真库验证过的纯领域契约;把"用不用 AI、用哪个模型"全部收进组装根的
+端口选择——领域永远不感知 IO,也不感知 LLM。**需求→拆分→派发→验证一条链自动联动,
+而每一环都既能跑桩、也能接真实大模型。**
