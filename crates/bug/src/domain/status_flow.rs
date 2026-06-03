@@ -38,6 +38,34 @@ impl StatusFlowGraph {
         Self { items, edges }
     }
 
+    /// 项目默认缺陷状态流(种子):新建→{已解决,已拒绝},已解决→{已关闭,重新打开},
+    /// 重新打开→已解决,已关闭/已拒绝→重新打开。未单独配置状态流的项目回落到它,
+    /// 保证缺陷创建/流转开箱即用。是 in-memory / PG 适配器共享的唯一事实源。
+    pub fn default_bug_flow() -> Self {
+        let items = vec![
+            StatusItem::new("NEW", "新建", true),
+            StatusItem::new("RESOLVED", "已解决", true),
+            StatusItem::new("CLOSED", "已关闭", true),
+            StatusItem::new("REOPENED", "重新打开", true),
+            StatusItem::new("REJECTED", "已拒绝", true),
+        ];
+        let edges = vec![
+            ("NEW".into(), "RESOLVED".into()),
+            ("NEW".into(), "REJECTED".into()),
+            ("RESOLVED".into(), "CLOSED".into()),
+            ("RESOLVED".into(), "REOPENED".into()),
+            ("REOPENED".into(), "RESOLVED".into()),
+            ("CLOSED".into(), "REOPENED".into()),
+            ("REJECTED".into(), "REOPENED".into()),
+        ];
+        Self::new(items, edges)
+    }
+
+    /// 是否为空图(无任何状态项)——适配器据此判断项目是否需要回落默认流。
+    pub fn is_empty(&self) -> bool {
+        self.items.is_empty()
+    }
+
     pub fn contains(&self, id: &str) -> bool {
         self.items.contains_key(id)
     }
@@ -65,26 +93,20 @@ impl StatusFlowGraph {
 mod tests {
     use super::*;
 
-    /// 典型缺陷流:NEW→{RESOLVED,REJECTED},RESOLVED→{CLOSED,REOPENED},
-    /// REOPENED→{RESOLVED},CLOSED→{REOPENED},REJECTED→{REOPENED}
+    /// 典型缺陷流即默认种子流,直接复用领域构造,避免多处副本漂移。
     fn bug_flow() -> StatusFlowGraph {
-        let items = vec![
-            StatusItem::new("NEW", "新建", true),
-            StatusItem::new("RESOLVED", "已解决", true),
-            StatusItem::new("CLOSED", "已关闭", true),
-            StatusItem::new("REOPENED", "重新打开", true),
-            StatusItem::new("REJECTED", "已拒绝", true),
-        ];
-        let edges = vec![
-            ("NEW".into(), "RESOLVED".into()),
-            ("NEW".into(), "REJECTED".into()),
-            ("RESOLVED".into(), "CLOSED".into()),
-            ("RESOLVED".into(), "REOPENED".into()),
-            ("REOPENED".into(), "RESOLVED".into()),
-            ("CLOSED".into(), "REOPENED".into()),
-            ("REJECTED".into(), "REOPENED".into()),
-        ];
-        StatusFlowGraph::new(items, edges)
+        StatusFlowGraph::default_bug_flow()
+    }
+
+    #[test]
+    fn default_bug_flow_is_nonempty_and_wired() {
+        let g = StatusFlowGraph::default_bug_flow();
+        assert!(!g.is_empty());
+        assert!(g.contains("NEW") && g.contains("CLOSED"));
+        assert!(g.can_transition("NEW", "RESOLVED"));
+        assert!(g.can_transition("RESOLVED", "CLOSED"));
+        assert!(!g.can_transition("NEW", "CLOSED"));
+        assert!(StatusFlowGraph::default().is_empty()); // Default 仍是空图
     }
 
     #[test]
