@@ -114,6 +114,44 @@ impl Assertion {
     }
 }
 
+/// `${name}` 变量替换。**纯函数**:把 `template` 中形如 `${key}` 的占位符替换为
+/// `vars[key]`;未知键或残缺花括号原样保留。供执行器对 url/headers/body 注入环境变量。
+pub fn substitute(template: &str, vars: &std::collections::BTreeMap<String, String>) -> String {
+    // 无占位符快路径,避免无谓分配。
+    if !template.contains("${") {
+        return template.to_string();
+    }
+    let mut out = String::with_capacity(template.len());
+    let mut rest = template;
+    while let Some(start) = rest.find("${") {
+        out.push_str(&rest[..start]);
+        let after = &rest[start + 2..];
+        match after.find('}') {
+            Some(end) => {
+                let key = &after[..end];
+                match vars.get(key) {
+                    Some(val) => out.push_str(val),
+                    None => {
+                        // 未知键:原样保留 `${key}`。
+                        out.push_str("${");
+                        out.push_str(key);
+                        out.push('}');
+                    }
+                }
+                rest = &after[end + 1..];
+            }
+            None => {
+                // 没有闭合花括号:剩余原样输出并结束。
+                out.push_str("${");
+                rest = after;
+                break;
+            }
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
 /// 对一组断言求值得到用例结果。**纯函数**:同样输入恒得同样结果。
 pub fn evaluate(assertions: &[Assertion], resp: &ResponseSnapshot) -> CaseReport {
     let failures: Vec<String> = assertions.iter().filter_map(|a| a.check(resp)).collect();
@@ -216,6 +254,23 @@ mod tests {
         let arr: Vec<Assertion> =
             serde_json::from_value(serde_json::json!([{"type":"StatusIs","args":201}])).expect("de");
         assert_eq!(arr, vec![Assertion::StatusIs(201)]);
+    }
+
+    #[test]
+    fn substitute_replaces_known_and_keeps_unknown() {
+        let mut vars = std::collections::BTreeMap::new();
+        vars.insert("host".to_string(), "example.com".to_string());
+        vars.insert("tok".to_string(), "abc".to_string());
+        assert_eq!(substitute("http://${host}/x", &vars), "http://example.com/x");
+        assert_eq!(substitute("Bearer ${tok}", &vars), "Bearer abc");
+        // 未知键原样保留
+        assert_eq!(substitute("${missing}/p", &vars), "${missing}/p");
+        // 无占位符快路径
+        assert_eq!(substitute("plain", &vars), "plain");
+        // 残缺花括号原样
+        assert_eq!(substitute("a${host", &vars), "a${host");
+        // 多个占位符
+        assert_eq!(substitute("${host}:${tok}", &vars), "example.com:abc");
     }
 
     #[test]

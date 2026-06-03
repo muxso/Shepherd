@@ -11,9 +11,39 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use futures::stream::{self, StreamExt};
-use crate::domain::BatchRunMode;
+use crate::domain::{BatchRunMode, ResolvedEnv};
 use crate::ports::{DispatchOutcome, PortError, RunTask, TaskDispatcher};
-use api_runner::{Assertion, CaseOutcome, ReqwestRunner, RequestSpec};
+use api_runner::{substitute, Assertion, CaseOutcome, ReqwestRunner, RequestSpec};
+
+/// 把已解析环境注入一条请求规格:相对 url 拼 base_url、并入默认头(已有同名不覆盖)、
+/// 对 url/headers/body 做 `${var}` 替换。空环境直接返回。纯函数,便于穷举测试。
+fn apply_env(req: &mut RequestSpec, env: &ResolvedEnv) {
+    if env.is_empty() {
+        return;
+    }
+    // base_url:仅对相对 url 生效(绝对 url 原样)。
+    let is_absolute = req.url.starts_with("http://") || req.url.starts_with("https://");
+    if !env.base_url.is_empty() && !is_absolute {
+        let sep = if req.url.is_empty() || req.url.starts_with('/') { "" } else { "/" };
+        req.url = format!("{}{sep}{}", env.base_url, req.url);
+    }
+    // 默认头:用例已有同名头(忽略大小写)优先,环境只补缺。
+    for (k, v) in &env.headers {
+        if !req.headers.iter().any(|(hk, _)| hk.eq_ignore_ascii_case(k)) {
+            req.headers.push((k.clone(), v.clone()));
+        }
+    }
+    // 变量替换:url / 各头值 / body。
+    if !env.variables.is_empty() {
+        req.url = substitute(&req.url, &env.variables);
+        for (_, v) in req.headers.iter_mut() {
+            *v = substitute(v, &env.variables);
+        }
+        if let Some(b) = req.body.as_mut() {
+            *b = substitute(b, &env.variables);
+        }
+    }
+}
 
 /// 默认并发上限(PARALLEL 模式下同时在跑的用例数)。
 pub const DEFAULT_CONCURRENCY: usize = 8;
@@ -69,10 +99,16 @@ impl LocalRunnerDispatcher {
         self
     }
 
-    /// 跑单个用例:执行 + 判定 + 写明细。返回是否通过。
-    async fn run_one(&self, report_id: &str, case_id: &str) -> Result<bool, PortError> {
+    /// 跑单个用例:执行 + 判定 + 写明细。返回是否通过。注入运行环境(base/头/变量)。
+    async fn run_one(
+        &self,
+        report_id: &str,
+        case_id: &str,
+        env: &ResolvedEnv,
+    ) -> Result<bool, PortError> {
         let (outcome, failures): (&str, Vec<String>) = match self.specs.spec_of(case_id).await? {
-            Some(spec) => {
+            Some(mut spec) => {
+                apply_env(&mut spec.request, env);
                 let report = self.runner.run_case(&spec.request, &spec.assertions).await;
                 match report.outcome {
                     CaseOutcome::Success => ("SUCCESS", Vec::new()),
@@ -94,7 +130,7 @@ impl TaskDispatcher for LocalRunnerDispatcher {
             BatchRunMode::Serial => {
                 let mut v = Vec::with_capacity(task.case_ids.len());
                 for id in &task.case_ids {
-                    v.push(self.run_one(&task.report_id, id).await);
+                    v.push(self.run_one(&task.report_id, id, &task.env).await);
                 }
                 v
             }
@@ -103,7 +139,7 @@ impl TaskDispatcher for LocalRunnerDispatcher {
             BatchRunMode::Parallel => {
                 let mut futs = Vec::with_capacity(task.case_ids.len());
                 for id in &task.case_ids {
-                    futs.push(self.run_one(&task.report_id, id));
+                    futs.push(self.run_one(&task.report_id, id, &task.env));
                 }
                 stream::iter(futs).buffer_unordered(self.max_concurrency).collect().await
             }
@@ -194,7 +230,41 @@ mod tests {
             pool_id: "pool1".into(),
             mode,
             case_ids: case_ids.iter().map(|s| s.to_string()).collect(),
+            env: ResolvedEnv::default(),
         }
+    }
+
+    #[test]
+    fn apply_env_prefixes_base_merges_headers_and_substitutes() {
+        use std::collections::BTreeMap;
+        let mut vars = BTreeMap::new();
+        vars.insert("tok".to_string(), "secret".to_string());
+        let env = ResolvedEnv {
+            base_url: "http://h:1".into(),
+            headers: vec![("Authorization".into(), "Bearer ${tok}".into())],
+            variables: vars,
+        };
+        // 相对 url + 无头:base 前缀 + 注入头 + 变量替换
+        let mut req = RequestSpec {
+            method: HttpMethod::Get,
+            url: "/api/x".into(),
+            headers: vec![],
+            body: None,
+        };
+        apply_env(&mut req, &env);
+        assert_eq!(req.url, "http://h:1/api/x");
+        assert_eq!(req.headers, vec![("Authorization".to_string(), "Bearer secret".to_string())]);
+
+        // 绝对 url 不前缀;用例已有同名头(忽略大小写)优先,环境不覆盖
+        let mut req2 = RequestSpec {
+            method: HttpMethod::Get,
+            url: "http://other/y".into(),
+            headers: vec![("authorization".into(), "keep".into())],
+            body: None,
+        };
+        apply_env(&mut req2, &env);
+        assert_eq!(req2.url, "http://other/y");
+        assert_eq!(req2.headers, vec![("authorization".to_string(), "keep".to_string())]);
     }
 
     #[tokio::test]

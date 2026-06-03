@@ -356,7 +356,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         };
     let api_pools = Arc::new(PgResourcePool::new(pool.clone()));
     let api_executor = Arc::new(PgBatchReportExecutor::new(pool.clone(), dispatcher));
-    let batch_run_uc = StartBatchRunUseCase::new(api_pools, api_executor);
+    let api_envs = Arc::new(api_test::adapters::pg::PgEnvironment::new(pool.clone()));
+    let batch_run_uc = StartBatchRunUseCase::new(api_pools, api_executor, api_envs);
     let apitest_routes = api_test::adapters::http::router(batch_run_uc.clone());
     // 用例执行记录(分页读 ms_api_case_result)。
     let case_exec_routes = api_test::adapters::http::executions_router(

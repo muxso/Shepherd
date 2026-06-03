@@ -2,5 +2,6 @@
 pub mod runner;
 
 pub use runner::{
-    evaluate, Assertion, CaseOutcome, CaseReport, HttpMethod, RequestSpec, ResponseSnapshot,
+    evaluate, substitute, Assertion, CaseOutcome, CaseReport, HttpMethod, RequestSpec,
+    ResponseSnapshot,
 };

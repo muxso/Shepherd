@@ -37,6 +37,9 @@ struct BatchRunRequest {
     run_mode: String,
     #[serde(default)]
     pool_id: Option<String>,
+    /// 运行所用环境 id(注入 base_url/默认头/变量);缺省不注入。
+    #[serde(default)]
+    environment_id: Option<String>,
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -54,7 +57,8 @@ async fn batch_run(
     let Some(mode) = BatchRunMode::parse(&req.run_mode) else {
         return (StatusCode::BAD_REQUEST, "unknown run mode").into_response();
     };
-    let config = RunModeConfig { mode, pool_id: req.pool_id, retry: None };
+    let config =
+        RunModeConfig { mode, pool_id: req.pool_id, retry: None, environment_id: req.environment_id };
 
     match uc.execute(&req.project_id, req.case_ids, config).await {
         Ok(rep) => (
@@ -180,12 +184,16 @@ mod tests {
     use super::*;
     use axum::body::Body;
     use axum::http::Request;
-    use crate::adapters::{FakeResourcePool, SpyExecutor};
+    use crate::adapters::{FakeEnvironment, FakeResourcePool, SpyExecutor};
     use std::sync::Arc;
     use tower::ServiceExt;
 
     fn app(pools: FakeResourcePool) -> Router {
-        let uc = StartBatchRunUseCase::new(Arc::new(pools), Arc::new(SpyExecutor::new()));
+        let uc = StartBatchRunUseCase::new(
+            Arc::new(pools),
+            Arc::new(SpyExecutor::new()),
+            Arc::new(FakeEnvironment::new()),
+        );
         router(uc)
     }
 

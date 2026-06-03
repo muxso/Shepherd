@@ -59,6 +59,9 @@ struct RunScenarioBody {
     run_mode: String,
     #[serde(default)]
     pool_id: Option<String>,
+    /// 运行所用环境 id(注入 base_url/默认头/变量);缺省不注入。
+    #[serde(default)]
+    environment_id: Option<String>,
 }
 
 fn default_mode() -> String {
@@ -120,7 +123,8 @@ async fn run_scenario(
     let Some(mode) = BatchRunMode::parse(&req.run_mode) else {
         return (StatusCode::BAD_REQUEST, "unknown run mode").into_response();
     };
-    let config = RunModeConfig { mode, pool_id: req.pool_id, retry: None };
+    let config =
+        RunModeConfig { mode, pool_id: req.pool_id, retry: None, environment_id: req.environment_id };
     match st.batch.execute(&req.project_id, case_ids, config).await {
         Ok(rep) => {
             // 闭环:用批量运行回传的真实状态落场景执行记录——同步 runner 跑完即

@@ -2,7 +2,7 @@
 
 use async_trait::async_trait;
 
-use crate::domain::BatchRunMode;
+use crate::domain::{BatchRunMode, ResolvedEnv};
 
 use thiserror::Error;
 
@@ -22,12 +22,21 @@ pub trait ResourcePoolPort: Send + Sync {
     async fn is_pool_available(&self, pool_id: &str) -> Result<bool, PortError>;
 }
 
-/// 派发到执行器的规格(已解析出有效池)。
+/// 运行环境来源:把 environmentId 解析为可注入的 base_url/默认头/变量。
+#[async_trait]
+pub trait EnvironmentPort: Send + Sync {
+    /// 解析环境;不存在/被禁用返回 `None`(执行器按空环境处理)。
+    async fn resolve(&self, environment_id: &str) -> Result<Option<ResolvedEnv>, PortError>;
+}
+
+/// 派发到执行器的规格(已解析出有效池 + 运行环境)。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DispatchSpec {
     pub case_ids: Vec<String>,
     pub pool_id: String,
     pub mode: BatchRunMode,
+    /// 已解析的运行环境(空环境表示不注入)。
+    pub env: ResolvedEnv,
 }
 
 /// 派发结果:报告 id + 派发后即刻的报告状态。
@@ -52,6 +61,8 @@ pub struct RunTask {
     pub pool_id: String,
     pub mode: BatchRunMode,
     pub case_ids: Vec<String>,
+    /// 已解析的运行环境(空环境表示不注入)。
+    pub env: ResolvedEnv,
 }
 
 /// 下发结果:据此决定报告状态。
