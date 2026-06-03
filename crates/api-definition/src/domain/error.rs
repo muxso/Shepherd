@@ -28,6 +28,9 @@ pub enum ApiDefinitionError {
     /// Mock 响应状态码越界(应在 100..=599)。
     #[error("response status out of range: {0}")]
     BadResponseStatus(i32),
+    /// 导入文档无法解析(非 OpenAPI/Swagger,或 paths 缺失/格式错)。
+    #[error("unrecognized import document: {0}")]
+    BadImport(String),
 }
 
 /// HTTP 方法白名单。把任意大小写规整成大写后校验,返回规整后的方法名。

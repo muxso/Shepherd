@@ -495,6 +495,14 @@ enum ApidefCmd {
         #[arg(long, default_value = "")]
         path: String,
     },
+    /// 从 OpenAPI 3.x / Swagger 2.0(JSON 文件)批量导入接口定义。
+    Import {
+        #[arg(long)]
+        project: String,
+        /// OpenAPI/Swagger JSON 文件路径。
+        #[arg(long)]
+        file: String,
+    },
     /// 列出项目内接口定义。
     List {
         #[arg(long)]
@@ -1018,6 +1026,16 @@ fn run(cli: Cli) -> R<()> {
                     json!({"projectId": project, "name": name, "protocol": protocol, "method": method, "path": path}),
                     true,
                 )?),
+                ApidefCmd::Import { project, file } => {
+                    let raw = std::fs::read_to_string(&file)?;
+                    let content: Value = serde_json::from_str(&raw)
+                        .map_err(|e| format!("{file} 不是合法 JSON: {e}"))?;
+                    pretty(&c.post(
+                        "/api/definition/import",
+                        json!({"projectId": project, "content": content}),
+                        true,
+                    )?)
+                }
                 ApidefCmd::List { project } => {
                     pretty(&c.get(&format!("/api/definition?projectId={project}"), true)?)
                 }
