@@ -11,8 +11,8 @@
 use async_trait::async_trait;
 
 use crate::domain::{
-    ApiScenario, InlineRequest, NewApiScenario, NewScenarioStep, RefMode, ScenarioStatus,
-    ScenarioStep, StepKind,
+    ApiScenario, ExecutionStatus, InlineRequest, NewApiScenario, NewScenarioStep, RefMode,
+    ScenarioExecution, ScenarioStatus, ScenarioStep, StepKind,
 };
 use crate::ports::{ApiScenarioRepository, RepoError};
 use sqlx::{PgPool, Row};
@@ -86,6 +86,22 @@ fn row_to_step(row: &sqlx::postgres::PgRow) -> Result<ScenarioStep, RepoError> {
     };
 
     Ok(ScenarioStep { id, order, kind, ref_mode: RefMode::parse(&ref_mode_s), snapshot })
+}
+
+/// 由执行记录行重建 `ScenarioExecution`。created_at 以 `created_at::text` 取 String,
+/// 避免引入 chrono/time 依赖。
+fn row_to_execution(row: &sqlx::postgres::PgRow) -> Result<ScenarioExecution, RepoError> {
+    let status_s: String = row.try_get("status").map_err(map_err)?;
+    Ok(ScenarioExecution {
+        id: row.try_get("id").map_err(map_err)?,
+        scenario_id: row.try_get("scenario_id").map_err(map_err)?,
+        project_id: row.try_get("project_id").map_err(map_err)?,
+        // 未知状态回落到 Pending(库里理应只存合法值)。
+        status: ExecutionStatus::parse(&status_s).unwrap_or_default(),
+        case_count: row.try_get("case_count").map_err(map_err)?,
+        report_id: row.try_get("report_id").map_err(map_err)?,
+        created_at: row.try_get::<String, _>("created_at").map_err(map_err)?,
+    })
 }
 
 impl PgApiScenarioRepository {
@@ -195,6 +211,65 @@ impl ApiScenarioRepository for PgApiScenarioRepository {
         .map_err(map_err)?;
         row_to_step(&row)
     }
+
+    async fn record_execution(
+        &self,
+        scenario_id: &str,
+        project_id: &str,
+        status: &str,
+        case_count: i32,
+        report_id: Option<&str>,
+    ) -> Result<ScenarioExecution, RepoError> {
+        let row = sqlx::query(
+            "INSERT INTO ms_api_scenario_execution \
+                (scenario_id, project_id, status, case_count, report_id) \
+             VALUES ($1, $2, $3, $4, $5) \
+             RETURNING id, scenario_id, project_id, status, case_count, report_id, \
+                       created_at::text AS created_at",
+        )
+        .bind(scenario_id)
+        .bind(project_id)
+        .bind(status)
+        .bind(case_count)
+        .bind(report_id)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(map_err)?;
+        row_to_execution(&row)
+    }
+
+    async fn count_executions(&self, scenario_id: &str) -> Result<u64, RepoError> {
+        let row = sqlx::query(
+            "SELECT COUNT(*) AS n FROM ms_api_scenario_execution WHERE scenario_id = $1",
+        )
+        .bind(scenario_id)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(map_err)?;
+        let n: i64 = row.try_get("n").map_err(map_err)?;
+        Ok(n as u64)
+    }
+
+    async fn list_executions(
+        &self,
+        scenario_id: &str,
+        offset: u64,
+        limit: u32,
+    ) -> Result<Vec<ScenarioExecution>, RepoError> {
+        let rows = sqlx::query(
+            "SELECT id, scenario_id, project_id, status, case_count, report_id, \
+                    created_at::text AS created_at \
+             FROM ms_api_scenario_execution WHERE scenario_id = $1 \
+             ORDER BY created_at DESC OFFSET $2 LIMIT $3",
+        )
+        .bind(scenario_id)
+        .bind(offset as i64)
+        .bind(limit as i64)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(map_err)?;
+        rows.iter().map(row_to_execution).collect()
+    }
 }
 
 #[cfg(test)]
@@ -271,5 +346,43 @@ mod tests {
         let list = repo.list_scenarios("p1").await.expect("list");
         assert_eq!(list.len(), 1);
         assert_eq!(list[0].steps.len(), 3);
+    }
+
+    #[tokio::test]
+    #[ignore = "需要 DATABASE_URL 指向一个 PostgreSQL 实例"]
+    async fn pg_execution_roundtrip() {
+        let url = std::env::var("DATABASE_URL").expect("set DATABASE_URL");
+        let pool = PgPool::connect(&url).await.expect("connect");
+        migrate::run(&pool).await.expect("migrate");
+        sqlx::raw_sql("TRUNCATE ms_api_scenario_execution")
+            .execute(&pool)
+            .await
+            .expect("truncate");
+
+        let repo = PgApiScenarioRepository::new(pool.clone());
+
+        let e1 = repo
+            .record_execution("scn-1", "p1", "PENDING", 3, None)
+            .await
+            .expect("rec1");
+        assert_eq!(e1.status, ExecutionStatus::Pending);
+        assert_eq!(e1.case_count, 3);
+        assert!(e1.report_id.is_none());
+        assert!(!e1.created_at.is_empty());
+
+        repo.record_execution("scn-1", "p1", "SUCCESS", 5, Some("rep-9"))
+            .await
+            .expect("rec2");
+        // 另一场景不应混入。
+        repo.record_execution("scn-2", "p1", "ERROR", 1, None).await.expect("rec3");
+
+        let total = repo.count_executions("scn-1").await.expect("count");
+        assert_eq!(total, 2);
+
+        let page = repo.list_executions("scn-1", 0, 10).await.expect("list");
+        assert_eq!(page.len(), 2);
+        // created_at DESC:最新(SUCCESS, rep-9)在前。
+        assert_eq!(page[0].status, ExecutionStatus::Success);
+        assert_eq!(page[0].report_id.as_deref(), Some("rep-9"));
     }
 }

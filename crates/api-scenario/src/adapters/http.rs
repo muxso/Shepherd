@@ -13,12 +13,14 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
+use kernel::page::PageRequest;
 use crate::application::{
     AddStepError, AddStepUseCase, CompileError, CompileScenarioUseCase, CreateScenarioError,
-    CreateScenarioUseCase, GetScenarioUseCase, ListScenariosUseCase,
+    CreateScenarioUseCase, GetScenarioUseCase, ListScenarioExecutionsUseCase, ListScenariosUseCase,
 };
 use crate::domain::{
-    ApiScenario, InlineRequest, NewScenarioStep, RefMode, RunnableStep, ScenarioStep, StepKind,
+    ApiScenario, InlineRequest, NewScenarioStep, RefMode, RunnableStep, ScenarioExecution,
+    ScenarioStep, StepKind,
 };
 use crate::ports::ApiScenarioRepository;
 use serde::{Deserialize, Serialize};
@@ -32,6 +34,7 @@ struct ScenarioAppState {
     get: GetScenarioUseCase,
     add_step: AddStepUseCase,
     compile: CompileScenarioUseCase,
+    list_executions: ListScenarioExecutionsUseCase,
     sessions: Arc<dyn SessionStore>,
 }
 
@@ -51,7 +54,8 @@ pub fn router(
         list: ListScenariosUseCase::new(repo.clone()),
         get: GetScenarioUseCase::new(repo.clone()),
         add_step: AddStepUseCase::new(repo.clone()),
-        compile: CompileScenarioUseCase::new(repo),
+        compile: CompileScenarioUseCase::new(repo.clone()),
+        list_executions: ListScenarioExecutionsUseCase::new(repo),
         sessions,
     };
     Router::new()
@@ -59,6 +63,7 @@ pub fn router(
         .route("/api/scenario/{id}", get(get_scenario))
         .route("/api/scenario/{id}/step", post(add_step))
         .route("/api/scenario/{id}/compile", get(compile_scenario))
+        .route("/api/scenario/{id}/executions", get(list_executions))
         .with_state(state)
 }
 
@@ -201,6 +206,59 @@ struct ScenarioListQuery {
     project_id: String,
 }
 
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+struct ScenarioExecutionDto {
+    id: String,
+    scenario_id: String,
+    project_id: String,
+    status: String,
+    case_count: i32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    report_id: Option<String>,
+    created_at: String,
+}
+
+impl From<ScenarioExecution> for ScenarioExecutionDto {
+    fn from(e: ScenarioExecution) -> Self {
+        Self {
+            id: e.id,
+            scenario_id: e.scenario_id,
+            project_id: e.project_id,
+            status: e.status.as_str().to_string(),
+            case_count: e.case_count,
+            report_id: e.report_id,
+            created_at: e.created_at,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, IntoParams)]
+#[serde(rename_all = "camelCase")]
+struct ExecutionListQuery {
+    #[serde(default = "default_current")]
+    current: u32,
+    #[serde(default = "default_page_size")]
+    page_size: u32,
+}
+
+fn default_current() -> u32 {
+    1
+}
+fn default_page_size() -> u32 {
+    10
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+struct ScenarioExecutionPageResponse {
+    total: u64,
+    current: u32,
+    page_size: u32,
+    total_pages: u64,
+    items: Vec<ScenarioExecutionDto>,
+}
+
 // ---------------- handlers ----------------
 
 #[utoipa::path(post, path = "/api/scenario", tag = "api-scenario", request_body = ScenarioCreateBody, responses((status = 201, body = ScenarioResponse), (status = 400)), security(("bearer" = [])))]
@@ -330,9 +388,35 @@ async fn compile_scenario(
     }
 }
 
+#[utoipa::path(get, path = "/api/scenario/{id}/executions", tag = "api-scenario", params(("id" = String, Path), ExecutionListQuery), responses((status = 200, body = ScenarioExecutionPageResponse), (status = 400)))]
+async fn list_executions(
+    State(st): State<ScenarioAppState>,
+    Path(id): Path<String>,
+    Query(q): Query<ExecutionListQuery>,
+) -> Response {
+    // 分页参数校验复用 kernel:非法参数 → 400(而不是打到存储才炸)。
+    let page = match PageRequest::new(q.current, q.page_size) {
+        Ok(p) => p,
+        Err(_) => return (StatusCode::BAD_REQUEST, "invalid page params").into_response(),
+    };
+    match st.list_executions.execute(&id, page).await {
+        Ok(page) => {
+            let body = ScenarioExecutionPageResponse {
+                total: page.total,
+                current: page.current,
+                page_size: page.page_size,
+                total_pages: page.total_pages(),
+                items: page.items.into_iter().map(ScenarioExecutionDto::from).collect(),
+            };
+            (StatusCode::OK, Json(body)).into_response()
+        }
+        Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
+    }
+}
+
 #[derive(OpenApi)]
 #[openapi(
-    paths(create_scenario, list_scenarios, get_scenario, add_step, compile_scenario),
+    paths(create_scenario, list_scenarios, get_scenario, add_step, compile_scenario, list_executions),
     components(schemas(
         ScenarioCreateBody,
         ScenarioResponse,
@@ -341,7 +425,9 @@ async fn compile_scenario(
         InlineRequestBody,
         InlineRequestDto,
         CompiledStepDto,
-        CompileResultDto
+        CompileResultDto,
+        ScenarioExecutionDto,
+        ScenarioExecutionPageResponse
     )),
     tags((name = "api-scenario", description = "接口场景编排"))
 )]
@@ -606,8 +692,68 @@ mod tests {
             "InlineRequestDto",
             "CompiledStepDto",
             "CompileResultDto",
+            "ScenarioExecutionDto",
+            "ScenarioExecutionPageResponse",
         ] {
             assert!(schemas.contains_key(name), "missing schema {name}");
         }
+    }
+
+    /// 构造 app 并交出底层仓储,便于直接记录执行(HTTP 无写执行端点)。
+    async fn app_with_repo() -> (Router, Arc<InMemoryApiScenarioRepository>) {
+        let repo = Arc::new(InMemoryApiScenarioRepository::new());
+        let sessions = Arc::new(InMemorySessionStore::new());
+        let r = router(repo.clone(), sessions);
+        (r, repo)
+    }
+
+    #[tokio::test]
+    async fn list_executions_returns_paginated_body() {
+        use crate::ports::ApiScenarioRepository;
+        let (app, repo) = app_with_repo().await;
+        // 记录 3 条执行(状态各异),另一场景 1 条不应混入。
+        for i in 0..3 {
+            let status = if i == 2 { "SUCCESS" } else { "PENDING" };
+            repo.record_execution("scn-1", "p1", status, i, None).await.expect("rec");
+        }
+        repo.record_execution("scn-2", "p1", "ERROR", 0, None).await.expect("rec");
+
+        // 读端点,无需令牌。
+        let resp = app
+            .oneshot(get_req("/api/scenario/scn-1/executions?current=1&pageSize=2"))
+            .await
+            .expect("resp");
+        assert_eq!(resp.status(), StatusCode::OK);
+        let v = json_body(resp).await;
+        assert_eq!(v["total"], 3);
+        assert_eq!(v["totalPages"], 2); // ceil(3/2)
+        assert_eq!(v["items"].as_array().expect("arr").len(), 2);
+        // 最新(SUCCESS)在前;status 字段存在并往返。
+        assert_eq!(v["items"][0]["status"], "SUCCESS");
+        assert_eq!(v["items"][0]["scenarioId"], "scn-1");
+    }
+
+    #[tokio::test]
+    async fn list_executions_empty_ok() {
+        let (app, _repo) = app_with_repo().await;
+        let resp = app
+            .oneshot(get_req("/api/scenario/scn-x/executions"))
+            .await
+            .expect("resp");
+        assert_eq!(resp.status(), StatusCode::OK);
+        let v = json_body(resp).await;
+        assert_eq!(v["total"], 0);
+        assert_eq!(v["totalPages"], 0);
+        assert_eq!(v["items"].as_array().expect("arr").len(), 0);
+    }
+
+    #[tokio::test]
+    async fn list_executions_bad_page_params_400() {
+        let (app, _repo) = app_with_repo().await;
+        let resp = app
+            .oneshot(get_req("/api/scenario/scn-1/executions?current=0&pageSize=10"))
+            .await
+            .expect("resp");
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
     }
 }

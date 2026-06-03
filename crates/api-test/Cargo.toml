@@ -12,10 +12,13 @@ license.workspace = true
 [dependencies]
 async-trait = "0.1"
 thiserror = "2"
+# kernel/serde_json 属核心:用例执行记录读模型(CaseExecutionRecord)的分页与 failures(JSONB)
+# 都落在纯核心层(ports/application),故非 feature 门控。serde_json::Value 不属 IO,架构守卫放行。
+kernel = { path = "../kernel" }
+serde_json = "1"
 api-runner = { path = "../api-runner", optional = true }
 futures = { version = "0.3", optional = true }
 sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "postgres", "json"], optional = true }
-serde_json = { version = "1", optional = true }
 axum = { version = "0.8", optional = true }
 utoipa = { version = "5", optional = true }
 serde = { version = "1", features = ["derive"], optional = true }
@@ -23,7 +26,7 @@ reqwest = { version = "0.12", default-features = false, features = ["json", "rus
 
 [features]
 local = ["dep:api-runner", "dep:futures"]
-pg = ["dep:sqlx", "dep:serde_json", "local"]
+pg = ["dep:sqlx", "local"]
 http = ["dep:axum", "dep:serde", "dep:utoipa"]
 jmeter = ["dep:reqwest", "dep:serde"]
 

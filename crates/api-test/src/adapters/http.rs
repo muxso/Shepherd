@@ -4,19 +4,29 @@
 //! **池不可用 → 409**(引用了但不可用)。两者都在入口返回,而非下游 500。
 
 use axum::{
-    extract::State,
+    extract::{Path, Query, State},
     http::StatusCode,
     response::{IntoResponse, Response},
-    routing::post,
+    routing::{get, post},
     Json, Router,
 };
-use crate::application::StartBatchRunUseCase;
+use crate::application::{ListCaseExecutionsUseCase, StartBatchRunUseCase};
 use crate::domain::{BatchRunError, BatchRunMode, RunModeConfig};
+use crate::ports::CaseExecutionRecord;
+use kernel::page::PageRequest;
 use serde::{Deserialize, Serialize};
-use utoipa::{OpenApi, ToSchema};
+use utoipa::{IntoParams, OpenApi, ToSchema};
 
 pub fn router(use_case: StartBatchRunUseCase) -> Router {
     Router::new().route("/api/batch-run", post(batch_run)).with_state(use_case)
+}
+
+/// 用例执行记录(用例执行记录)分页查询的只读路由——开放(无鉴权)。
+/// 不改动 `router(StartBatchRunUseCase)` 的既有签名,单独挂一条 GET。
+pub fn executions_router(uc: ListCaseExecutionsUseCase) -> Router {
+    Router::new()
+        .route("/api/case/{caseId}/executions", get(list_executions))
+        .with_state(uc)
 }
 
 #[derive(Debug, Deserialize, ToSchema)]
@@ -64,8 +74,99 @@ async fn batch_run(
     }
 }
 
+// ---- 用例执行记录分页查询(只读) ----
+
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+struct CaseExecutionRecordDto {
+    report_id: String,
+    case_id: String,
+    outcome: String,
+    failures: serde_json::Value,
+    executed_at: String,
+}
+
+impl From<CaseExecutionRecord> for CaseExecutionRecordDto {
+    fn from(r: CaseExecutionRecord) -> Self {
+        Self {
+            report_id: r.report_id,
+            case_id: r.case_id,
+            outcome: r.outcome,
+            failures: r.failures,
+            executed_at: r.executed_at,
+        }
+    }
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+struct CaseExecutionPageResponse {
+    total: u64,
+    current: u32,
+    page_size: u32,
+    total_pages: u64,
+    items: Vec<CaseExecutionRecordDto>,
+}
+
+#[derive(Debug, Deserialize, IntoParams)]
+#[serde(rename_all = "camelCase")]
+struct CaseExecutionQuery {
+    #[serde(default = "default_current")]
+    current: u32,
+    #[serde(default = "default_page_size")]
+    page_size: u32,
+}
+
+fn default_current() -> u32 {
+    1
+}
+fn default_page_size() -> u32 {
+    10
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/case/{caseId}/executions",
+    tag = "api-test",
+    params(("caseId" = String, Path, description = "用例 id"), CaseExecutionQuery),
+    responses((status = 200, body = CaseExecutionPageResponse), (status = 400))
+)]
+async fn list_executions(
+    State(uc): State<ListCaseExecutionsUseCase>,
+    Path(case_id): Path<String>,
+    Query(q): Query<CaseExecutionQuery>,
+) -> Response {
+    // 分页参数校验复用 kernel:非法参数 → 400(而非打到 DB 才炸)
+    let page = match PageRequest::new(q.current, q.page_size) {
+        Ok(p) => p,
+        Err(_) => return (StatusCode::BAD_REQUEST, "invalid page params").into_response(),
+    };
+    match uc.execute(&case_id, page).await {
+        Ok(page) => {
+            let body = CaseExecutionPageResponse {
+                total: page.total,
+                current: page.current,
+                page_size: page.page_size,
+                total_pages: page.total_pages(),
+                items: page.items.into_iter().map(CaseExecutionRecordDto::from).collect(),
+            };
+            (StatusCode::OK, Json(body)).into_response()
+        }
+        Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
+    }
+}
+
 #[derive(OpenApi)]
-#[openapi(paths(batch_run), components(schemas(BatchRunRequest, BatchRunResponse)), tags((name = "api-test", description = "接口批量执行")))]
+#[openapi(
+    paths(batch_run, list_executions),
+    components(schemas(
+        BatchRunRequest,
+        BatchRunResponse,
+        CaseExecutionRecordDto,
+        CaseExecutionPageResponse
+    )),
+    tags((name = "api-test", description = "接口批量执行"))
+)]
 struct ApiDoc;
 pub fn openapi() -> utoipa::openapi::OpenApi { ApiDoc::openapi() }
 
@@ -139,6 +240,100 @@ mod tests {
         let pools = FakeResourcePool::new().with_available("pool1");
         let resp = app(pools)
             .oneshot(post(r#"{"projectId":"p1","caseIds":["c1"],"runMode":"WAT","poolId":"pool1"}"#))
+            .await
+            .expect("resp");
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    // ---- 用例执行记录分页路由 ----
+    use crate::ports::{CaseExecutionQueryPort, CaseExecutionRecord, PortError};
+    use async_trait::async_trait;
+
+    struct FakeQuery {
+        total: u64,
+    }
+
+    #[async_trait]
+    impl CaseExecutionQueryPort for FakeQuery {
+        async fn count_by_case(&self, _case_id: &str) -> Result<u64, PortError> {
+            Ok(self.total)
+        }
+        async fn list_by_case(
+            &self,
+            case_id: &str,
+            offset: u64,
+            limit: u32,
+        ) -> Result<Vec<CaseExecutionRecord>, PortError> {
+            let end = (offset + limit as u64).min(self.total);
+            Ok((offset..end)
+                .map(|i| CaseExecutionRecord {
+                    report_id: format!("r{i}"),
+                    case_id: case_id.to_string(),
+                    outcome: "SUCCESS".into(),
+                    failures: serde_json::json!([]),
+                    executed_at: "2026-05-31T00:00:00Z".into(),
+                })
+                .collect())
+        }
+    }
+
+    fn exec_app(total: u64) -> Router {
+        executions_router(ListCaseExecutionsUseCase::new(Arc::new(FakeQuery { total })))
+    }
+
+    #[tokio::test]
+    async fn executions_returns_paginated_body() {
+        let resp = exec_app(3)
+            .oneshot(
+                Request::builder()
+                    .uri("/api/case/c1/executions?current=1&pageSize=2")
+                    .body(Body::empty())
+                    .expect("req"),
+            )
+            .await
+            .expect("resp");
+        assert_eq!(resp.status(), StatusCode::OK);
+        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.expect("body");
+        let v: serde_json::Value = serde_json::from_slice(&bytes).expect("json");
+        assert_eq!(v["total"], 3);
+        assert_eq!(v["current"], 1);
+        assert_eq!(v["pageSize"], 2);
+        assert_eq!(v["totalPages"], 2); // ceil(3/2)
+        let items = v["items"].as_array().expect("arr");
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0]["reportId"], "r0");
+        assert_eq!(items[0]["caseId"], "c1");
+        assert_eq!(items[0]["executedAt"], "2026-05-31T00:00:00Z");
+        assert!(items[0]["failures"].is_array());
+    }
+
+    #[tokio::test]
+    async fn executions_defaults_apply_without_query() {
+        let resp = exec_app(0)
+            .oneshot(
+                Request::builder()
+                    .uri("/api/case/c1/executions")
+                    .body(Body::empty())
+                    .expect("req"),
+            )
+            .await
+            .expect("resp");
+        assert_eq!(resp.status(), StatusCode::OK);
+        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.expect("body");
+        let v: serde_json::Value = serde_json::from_slice(&bytes).expect("json");
+        assert_eq!(v["current"], 1); // 默认
+        assert_eq!(v["pageSize"], 10); // 默认
+    }
+
+    #[tokio::test]
+    async fn executions_bad_page_params_returns_400() {
+        let resp = exec_app(3)
+            .oneshot(
+                Request::builder()
+                    .uri("/api/case/c1/executions?current=0&pageSize=10")
+                    .body(Body::empty())
+                    .expect("req"),
+            )
             .await
             .expect("resp");
         assert_eq!(resp.status(), StatusCode::BAD_REQUEST);

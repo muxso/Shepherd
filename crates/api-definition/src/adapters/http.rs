@@ -15,10 +15,12 @@ use axum::{
     Json, Router,
 };
 use crate::application::{
-    AddApiCaseError, AddApiCaseUseCase, AddApiMockError, AddApiMockUseCase,
-    CreateApiDefinitionError, CreateApiDefinitionUseCase, ImportApiDefinitionsUseCase, ImportError,
-    ListApiCasesUseCase, ListApiDefinitionsUseCase, ListApiMocksUseCase,
+    AddApiCaseError, AddApiCaseUseCase, AddApiMockError, AddApiMockUseCase, CreateApiCaseError,
+    CreateApiCaseUseCase, CreateApiDefinitionError, CreateApiDefinitionUseCase,
+    ImportApiDefinitionsUseCase, ImportError, ListApiCasesUseCase, ListApiDefinitionsUseCase,
+    ListApiMocksUseCase, ListProjectCasesUseCase,
 };
+use kernel::page::PageRequest;
 use crate::domain::{ApiCase, ApiDefinition, ApiMock, ApiProtocol};
 use crate::ports::ApiDefinitionRepository;
 use serde::{Deserialize, Serialize};
@@ -31,6 +33,8 @@ struct ApiDefinitionState {
     list_def: ListApiDefinitionsUseCase,
     add_case: AddApiCaseUseCase,
     list_case: ListApiCasesUseCase,
+    create_case: CreateApiCaseUseCase,
+    list_project_case: ListProjectCasesUseCase,
     add_mock: AddApiMockUseCase,
     list_mock: ListApiMocksUseCase,
     import_def: ImportApiDefinitionsUseCase,
@@ -54,6 +58,8 @@ pub fn router(
         list_def: ListApiDefinitionsUseCase::new(repo.clone()),
         add_case: AddApiCaseUseCase::new(repo.clone()),
         list_case: ListApiCasesUseCase::new(repo.clone()),
+        create_case: CreateApiCaseUseCase::new(repo.clone()),
+        list_project_case: ListProjectCasesUseCase::new(repo.clone()),
         add_mock: AddApiMockUseCase::new(repo.clone()),
         list_mock: ListApiMocksUseCase::new(repo.clone()),
         import_def: ImportApiDefinitionsUseCase::new(repo.clone()),
@@ -65,6 +71,7 @@ pub fn router(
         .route("/api/definition/import", post(import_definitions))
         .route("/api/definition/{id}", axum::routing::get(get_definition))
         .route("/api/definition/{id}/case", post(create_case).get(list_cases))
+        .route("/api/case", post(create_standalone_case).get(list_project_cases))
         .route("/api/definition/{id}/mock", post(create_mock).get(list_mocks))
         .with_state(state)
 }
@@ -295,6 +302,107 @@ async fn list_cases(State(st): State<ApiDefinitionState>, Path(id): Path<String>
     }
 }
 
+// ---------- 项目级(独立)用例 handlers ----------
+
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+struct StandaloneCaseBody {
+    project_id: String,
+    #[serde(default)]
+    api_definition_id: Option<String>,
+    name: String,
+    method: String,
+    url: String,
+    #[serde(default)]
+    body: Option<String>,
+    #[serde(default)]
+    assertions: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Deserialize, IntoParams)]
+#[serde(rename_all = "camelCase")]
+struct CaseListQuery {
+    project_id: String,
+    #[serde(default = "default_current")]
+    current: u32,
+    #[serde(default = "default_page_size")]
+    page_size: u32,
+}
+
+fn default_current() -> u32 {
+    1
+}
+fn default_page_size() -> u32 {
+    10
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+struct ApiCasePageResponse {
+    total: u64,
+    current: u32,
+    page_size: u32,
+    total_pages: u64,
+    items: Vec<ApiCaseResponse>,
+}
+
+#[utoipa::path(post, path = "/api/case", tag = "api-definition", request_body = StandaloneCaseBody, responses((status = 201, body = ApiCaseResponse), (status = 400), (status = 401), (status = 403)), security(("bearer" = [])))]
+async fn create_standalone_case(
+    user: AuthUser,
+    State(st): State<ApiDefinitionState>,
+    Json(req): Json<StandaloneCaseBody>,
+) -> Response {
+    if !user.can("API_DEFINITION", "ADD") {
+        return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
+    let assertions = req.assertions.unwrap_or_else(|| serde_json::json!([]));
+    match st
+        .create_case
+        .execute(
+            &req.project_id,
+            req.api_definition_id.as_deref(),
+            &req.name,
+            &req.method,
+            &req.url,
+            req.body,
+            assertions,
+        )
+        .await
+    {
+        Ok(c) => (StatusCode::CREATED, Json(ApiCaseResponse::from(c))).into_response(),
+        Err(CreateApiCaseError::Validation(_)) => {
+            (StatusCode::BAD_REQUEST, "invalid api case payload").into_response()
+        }
+        Err(CreateApiCaseError::Repo(_)) => {
+            (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response()
+        }
+    }
+}
+
+#[utoipa::path(get, path = "/api/case", tag = "api-definition", params(CaseListQuery), responses((status = 200, body = ApiCasePageResponse), (status = 400)))]
+async fn list_project_cases(
+    State(st): State<ApiDefinitionState>,
+    Query(q): Query<CaseListQuery>,
+) -> Response {
+    let page = match PageRequest::new(q.current, q.page_size) {
+        Ok(p) => p,
+        Err(_) => return (StatusCode::BAD_REQUEST, "invalid page params").into_response(),
+    };
+    match st.list_project_case.execute(&q.project_id, page).await {
+        Ok(page) => {
+            let body = ApiCasePageResponse {
+                total: page.total,
+                current: page.current,
+                page_size: page.page_size,
+                total_pages: page.total_pages(),
+                items: page.items.into_iter().map(ApiCaseResponse::from).collect(),
+            };
+            (StatusCode::OK, Json(body)).into_response()
+        }
+        Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
+    }
+}
+
 // ---------- Mock handlers ----------
 
 #[utoipa::path(post, path = "/api/definition/{id}/mock", tag = "api-definition", params(("id" = String, Path)), request_body = ApiMockCreateBody, responses((status = 201, body = ApiMockResponse), (status = 400), (status = 404)), security(("bearer" = [])))]
@@ -398,6 +506,8 @@ async fn import_definitions(
         get_definition,
         create_case,
         list_cases,
+        create_standalone_case,
+        list_project_cases,
         create_mock,
         list_mocks
     ),
@@ -406,6 +516,8 @@ async fn import_definitions(
         ApiDefinitionResponse,
         ApiCaseCreateBody,
         ApiCaseResponse,
+        StandaloneCaseBody,
+        ApiCasePageResponse,
         ApiMockCreateBody,
         ApiMockResponse,
         ImportBody,
@@ -629,6 +741,127 @@ mod tests {
                 r#"{"name":"用例","method":"GET","url":"/x","assertions":{}}"#,
                 Some(&t),
             ))
+            .await
+            .expect("resp");
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn standalone_case_201_without_definition() {
+        let (app, t) = app().await;
+        let resp = app
+            .clone()
+            .oneshot(post(
+                "/api/case",
+                r#"{"projectId":"p1","name":"用例","method":"post","url":"/login"}"#,
+                Some(&t),
+            ))
+            .await
+            .expect("resp");
+        assert_eq!(resp.status(), StatusCode::CREATED);
+        let v = json_body(resp).await;
+        assert_eq!(v["projectId"], "p1");
+        assert_eq!(v["apiDefinitionId"], "");
+        assert_eq!(v["method"], "POST");
+    }
+
+    #[tokio::test]
+    async fn standalone_case_201_with_definition() {
+        let (app, t) = app().await;
+        let resp = app
+            .clone()
+            .oneshot(post(
+                "/api/case",
+                r#"{"projectId":"p1","apiDefinitionId":"def-9","name":"用例","method":"GET","url":"/x","assertions":[]}"#,
+                Some(&t),
+            ))
+            .await
+            .expect("resp");
+        assert_eq!(resp.status(), StatusCode::CREATED);
+        let v = json_body(resp).await;
+        assert_eq!(v["apiDefinitionId"], "def-9");
+    }
+
+    #[tokio::test]
+    async fn standalone_case_without_token_401() {
+        let (app, _t) = app().await;
+        let resp = app
+            .oneshot(post(
+                "/api/case",
+                r#"{"projectId":"p1","name":"用例","method":"GET","url":"/x"}"#,
+                None,
+            ))
+            .await
+            .expect("resp");
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn standalone_case_without_permission_403() {
+        let repo = Arc::new(InMemoryApiDefinitionRepository::new());
+        let sessions = Arc::new(InMemorySessionStore::new());
+        let perms = PermissionSet::from_raw(["API_DEFINITION:READ".to_string()]).expect("perms");
+        let token = sessions.create("viewer", perms, 3600).await.expect("token");
+        let app = router(repo, sessions);
+        let resp = app
+            .oneshot(post(
+                "/api/case",
+                r#"{"projectId":"p1","name":"用例","method":"GET","url":"/x"}"#,
+                Some(&token),
+            ))
+            .await
+            .expect("resp");
+        assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn standalone_case_bad_payload_400() {
+        let (app, t) = app().await;
+        let resp = app
+            .oneshot(post(
+                "/api/case",
+                r#"{"projectId":"p1","name":"用例","method":"GET","url":"/x","assertions":{}}"#,
+                Some(&t),
+            ))
+            .await
+            .expect("resp");
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn list_project_cases_paginated() {
+        let (app, t) = app().await;
+        for i in 1..=3 {
+            let _ = app
+                .clone()
+                .oneshot(post(
+                    "/api/case",
+                    &format!(
+                        r#"{{"projectId":"p1","name":"c{i}","method":"GET","url":"/x"}}"#
+                    ),
+                    Some(&t),
+                ))
+                .await
+                .expect("seed");
+        }
+
+        // 读端点,无需令牌
+        let resp = app
+            .oneshot(get("/api/case?projectId=p1&current=1&pageSize=2"))
+            .await
+            .expect("resp");
+        assert_eq!(resp.status(), StatusCode::OK);
+        let v = json_body(resp).await;
+        assert_eq!(v["total"], 3);
+        assert_eq!(v["totalPages"], 2); // ceil(3/2)
+        assert_eq!(v["items"].as_array().expect("arr").len(), 2);
+    }
+
+    #[tokio::test]
+    async fn list_project_cases_bad_page_params_400() {
+        let (app, _t) = app().await;
+        let resp = app
+            .oneshot(get("/api/case?projectId=p1&current=0&pageSize=10"))
             .await
             .expect("resp");
         assert_eq!(resp.status(), StatusCode::BAD_REQUEST);

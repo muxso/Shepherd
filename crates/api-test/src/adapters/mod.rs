@@ -6,6 +6,8 @@ pub use test_doubles::{FakeResourcePool, NoopDispatcher, SpyDispatcher, SpyExecu
 pub mod local;
 #[cfg(feature = "pg")]
 pub mod pg;
+#[cfg(feature = "pg")]
+pub use pg::PgCaseExecutionQuery;
 #[cfg(feature = "http")]
 pub mod http;
 #[cfg(feature = "jmeter")]
