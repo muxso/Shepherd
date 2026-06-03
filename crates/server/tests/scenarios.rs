@@ -133,8 +133,13 @@ async fn scenario_auth_and_rbac() {
     // admin 建项目 → 201;读列表开放 → 200
     assert_eq!(s.status("POST", "/project", json!({"organizationId":&p,"name":"Demo"}), Some(&t)).await, 201);
     assert_eq!(s.status("GET", &format!("/project?organizationId={p}"), Value::Null, Some(&t)).await, 200);
-    // admin 无 BUG 权限 → 建缺陷 403(按资源 RBAC)
-    assert_eq!(s.status("POST", "/bug", json!({"projectId":&p,"title":"b","initialStatus":"NEW"}), Some(&t)).await, 403);
+    // admin 持 BUG:ADD → 建缺陷 201;新项目未配状态流,回落默认种子流(NEW 合法初态)
+    let bug = s.post("/bug", json!({"projectId":&p,"title":"b","initialStatus":"NEW"}), Some(&t)).await;
+    let bug_id = bug["id"].as_str().unwrap().to_string();
+    assert_eq!(bug["status"], "NEW");
+    // 默认流允许 NEW→RESOLVED;禁止 NEW→CLOSED 跳转(状态机门禁 → 409)
+    assert_eq!(s.post(&format!("/bug/{bug_id}/status"), json!({"status":"RESOLVED"}), Some(&t)).await["status"], "RESOLVED");
+    assert_eq!(s.status("POST", &format!("/bug/{bug_id}/status"), json!({"status":"NEW"}), Some(&t)).await, 409);
 }
 
 // ============ 场景 2:需求多版本(requirement)============
