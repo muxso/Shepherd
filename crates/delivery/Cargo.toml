@@ -14,6 +14,7 @@ async-trait = "0.1"
 thiserror = "2"
 sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "postgres"], optional = true }
 axum = { version = "0.8", optional = true }
+utoipa = { version = "5", optional = true }
 serde = { version = "1", features = ["derive"], optional = true }
 serde_json = { version = "1", optional = true }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"], optional = true }
@@ -22,7 +23,7 @@ webauth = { path = "../webauth", optional = true }
 
 [features]
 pg = ["dep:sqlx"]
-http = ["dep:axum", "dep:serde", "dep:webauth", "webauth/http"]
+http = ["dep:axum", "dep:serde", "dep:webauth", "webauth/http", "dep:utoipa"]
 # 真实执行器适配器(可选):
 exec-http = ["dep:reqwest", "dep:serde", "dep:serde_json"]   # 对接 Agent SDK/API(远端,异步)
 exec-local = ["dep:tokio", "dep:serde", "dep:serde_json"]    # 本地 spawn claude/codex headless(同步)

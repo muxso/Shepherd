@@ -17,13 +17,14 @@ futures = { version = "0.3", optional = true }
 sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "postgres", "json"], optional = true }
 serde_json = { version = "1", optional = true }
 axum = { version = "0.8", optional = true }
+utoipa = { version = "5", optional = true }
 serde = { version = "1", features = ["derive"], optional = true }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"], optional = true }
 
 [features]
 local = ["dep:api-runner", "dep:futures"]
 pg = ["dep:sqlx", "dep:serde_json", "local"]
-http = ["dep:axum", "dep:serde"]
+http = ["dep:axum", "dep:serde", "dep:utoipa"]
 jmeter = ["dep:reqwest", "dep:serde"]
 
 [dev-dependencies]

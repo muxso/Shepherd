@@ -34,6 +34,10 @@ impl Modify for BearerAddon {
 pub fn merged() -> utoipa::openapi::OpenApi {
     let mut doc = Base::openapi();
     doc.merge(requirement::adapters::http::openapi());
+    doc.merge(task::adapters::http::openapi());
+    doc.merge(delivery::adapters::http::openapi());
+    doc.merge(verification::adapters::http::openapi());
+    doc.merge(skill::adapters::http::openapi());
     doc
 }
 

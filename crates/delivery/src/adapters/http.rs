@@ -15,6 +15,7 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use webauth::{AuthUser, SessionStore};
+use utoipa::{IntoParams, OpenApi, ToSchema};
 
 use crate::application::{DeliveryCmdError, DeliveryService};
 use crate::domain::{DeliveryAttempt, ExecutionEvent};
@@ -44,7 +45,7 @@ pub fn router(svc: DeliveryService, sessions: Arc<dyn SessionStore>) -> Router {
 
 // ---- DTO ----
 
-#[derive(Deserialize)]
+#[derive(Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 struct DispatchBody {
     decomposition_id: String,
@@ -61,20 +62,20 @@ struct DispatchBody {
     instructions: Option<String>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, IntoParams)]
 #[serde(rename_all = "camelCase")]
 struct ListQuery {
     decomposition_id: String,
     task_id: String,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 struct RunningBody {
     run_id: String,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, ToSchema)]
 struct CompleteBody {
     kind: String,
     reference: String,
@@ -82,12 +83,12 @@ struct CompleteBody {
     summary: String,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, ToSchema)]
 struct FailBody {
     error: String,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, ToSchema)]
 struct EventBody {
     kind: String,
     message: String,
@@ -95,7 +96,7 @@ struct EventBody {
     detail: Option<String>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 struct EventResponse {
     seq: i64,
@@ -115,7 +116,7 @@ impl From<&ExecutionEvent> for EventResponse {
     }
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 struct DeliverableResponse {
     kind: String,
@@ -123,7 +124,7 @@ struct DeliverableResponse {
     summary: String,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 struct AttemptResponse {
     id: String,
@@ -166,6 +167,7 @@ fn cmd_err(e: DeliveryCmdError) -> Response {
 
 // ---- 处理器 ----
 
+#[utoipa::path(post, path = "/delivery", tag = "delivery", request_body = DispatchBody, responses((status = 201, body = AttemptResponse)), security(("bearer" = [])))]
 async fn dispatch(user: AuthUser, State(st): State<DelState>, Json(b): Json<DispatchBody>) -> Response {
     if !user.can("DELIVERY", "EXECUTE") {
         return (StatusCode::FORBIDDEN, "permission denied").into_response();
@@ -189,6 +191,7 @@ async fn dispatch(user: AuthUser, State(st): State<DelState>, Json(b): Json<Disp
     }
 }
 
+#[utoipa::path(get, path = "/delivery", tag = "delivery", params(ListQuery), responses((status = 200, body = [AttemptResponse])))]
 async fn list_by_task(State(st): State<DelState>, Query(q): Query<ListQuery>) -> Response {
     match st.svc.list_by_task(&q.decomposition_id, &q.task_id).await {
         Ok(list) => {
@@ -199,6 +202,7 @@ async fn list_by_task(State(st): State<DelState>, Query(q): Query<ListQuery>) ->
     }
 }
 
+#[utoipa::path(get, path = "/delivery/{id}", tag = "delivery", params(("id" = String, Path)), responses((status = 200, body = AttemptResponse), (status = 404)))]
 async fn get_attempt(State(st): State<DelState>, Path(id): Path<String>) -> Response {
     match st.svc.get(&id).await {
         Ok(a) => (StatusCode::OK, Json(AttemptResponse::from(&a))).into_response(),
@@ -206,6 +210,7 @@ async fn get_attempt(State(st): State<DelState>, Path(id): Path<String>) -> Resp
     }
 }
 
+#[utoipa::path(post, path = "/delivery/{id}/running", tag = "delivery", params(("id" = String, Path)), request_body = RunningBody, responses((status = 200, body = AttemptResponse)), security(("bearer" = [])))]
 async fn report_running(
     user: AuthUser,
     State(st): State<DelState>,
@@ -221,6 +226,7 @@ async fn report_running(
     }
 }
 
+#[utoipa::path(post, path = "/delivery/{id}/complete", tag = "delivery", params(("id" = String, Path)), request_body = CompleteBody, responses((status = 200, body = AttemptResponse)), security(("bearer" = [])))]
 async fn complete(
     user: AuthUser,
     State(st): State<DelState>,
@@ -236,6 +242,7 @@ async fn complete(
     }
 }
 
+#[utoipa::path(post, path = "/delivery/{id}/fail", tag = "delivery", params(("id" = String, Path)), request_body = FailBody, responses((status = 200, body = AttemptResponse)), security(("bearer" = [])))]
 async fn fail(
     user: AuthUser,
     State(st): State<DelState>,
@@ -251,6 +258,7 @@ async fn fail(
     }
 }
 
+#[utoipa::path(post, path = "/delivery/{id}/events", tag = "delivery", params(("id" = String, Path)), request_body = EventBody, responses((status = 201, body = EventResponse)), security(("bearer" = [])))]
 async fn record_event(
     user: AuthUser,
     State(st): State<DelState>,
@@ -266,6 +274,7 @@ async fn record_event(
     }
 }
 
+#[utoipa::path(get, path = "/delivery/{id}/events", tag = "delivery", params(("id" = String, Path)), responses((status = 200, body = [EventResponse])))]
 async fn list_events(State(st): State<DelState>, Path(id): Path<String>) -> Response {
     match st.svc.events(&id).await {
         Ok(list) => {
@@ -275,6 +284,15 @@ async fn list_events(State(st): State<DelState>, Path(id): Path<String>) -> Resp
         Err(e) => cmd_err(e),
     }
 }
+
+#[derive(OpenApi)]
+#[openapi(
+    paths(dispatch, list_by_task, get_attempt, report_running, complete, fail, record_event, list_events),
+    components(schemas(DispatchBody, RunningBody, CompleteBody, FailBody, EventBody, EventResponse, DeliverableResponse, AttemptResponse)),
+    tags((name = "delivery", description = "交付执行(AI 执行者)"))
+)]
+struct ApiDoc;
+pub fn openapi() -> utoipa::openapi::OpenApi { ApiDoc::openapi() }
 
 #[cfg(test)]
 mod tests {
