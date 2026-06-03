@@ -8,9 +8,10 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use crate::domain::ResolvedEnv;
 use crate::ports::{
-    BatchExecutorPort, DispatchOutcome, DispatchReport, DispatchSpec, PortError, ResourcePoolPort,
-    RunTask, TaskDispatcher,
+    BatchExecutorPort, DispatchOutcome, DispatchReport, DispatchSpec, EnvironmentPort, PortError,
+    ResourcePoolPort, RunTask, TaskDispatcher,
 };
 use sqlx::{PgPool, Row};
 
@@ -59,6 +60,66 @@ impl ResourcePoolPort for PgResourcePool {
     }
 }
 
+// ---- 运行环境信息源 ----
+// 直读 environment 上下文的 ms_environment 表(与 PgResourcePool 直读 ms_resource_pool 同构:
+// 跨上下文只读邻域表,不引入 crate 依赖)。headers JSONB 数组、variables JSONB 对象。
+#[derive(Clone)]
+pub struct PgEnvironment {
+    pool: PgPool,
+}
+
+impl PgEnvironment {
+    pub fn new(pool: PgPool) -> Self {
+        Self { pool }
+    }
+}
+
+#[async_trait]
+impl EnvironmentPort for PgEnvironment {
+    async fn resolve(&self, environment_id: &str) -> Result<Option<ResolvedEnv>, PortError> {
+        let row = sqlx::query(
+            "SELECT base_url, headers, variables FROM ms_environment \
+             WHERE id = $1 AND enabled AND NOT deleted",
+        )
+        .bind(environment_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(map_err)?;
+        let Some(row) = row else { return Ok(None) };
+        let base_url: String = row.try_get("base_url").map_err(map_err)?;
+        let headers_json: serde_json::Value = row.try_get("headers").map_err(map_err)?;
+        let vars_json: serde_json::Value = row.try_get("variables").map_err(map_err)?;
+        let headers = headers_json
+            .as_array()
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|h| {
+                        let name = h.get("name")?.as_str()?.to_string();
+                        let value =
+                            h.get("value").and_then(|x| x.as_str()).unwrap_or("").to_string();
+                        Some((name, value))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        let variables = vars_json
+            .as_object()
+            .map(|obj| {
+                obj.iter()
+                    .map(|(k, v)| {
+                        let s = match v {
+                            serde_json::Value::String(s) => s.clone(),
+                            other => other.to_string(),
+                        };
+                        (k.clone(), s)
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        Ok(Some(ResolvedEnv { base_url, headers, variables }))
+    }
+}
+
 // ---- 批量执行器:落报告 + 下发执行节点 ----
 #[derive(Clone)]
 pub struct PgBatchReportExecutor {
@@ -104,6 +165,7 @@ impl BatchExecutorPort for PgBatchReportExecutor {
             pool_id: spec.pool_id.clone(),
             mode: spec.mode,
             case_ids: spec.case_ids.clone(),
+            env: spec.env.clone(),
         };
         match self.dispatcher.dispatch_task(&task).await {
             // 3) 据结果更新报告状态
@@ -315,6 +377,7 @@ mod tests {
             case_ids: vec!["c1".into(), "c2".into()],
             pool_id: "pool1".into(),
             mode: BatchRunMode::Parallel,
+            env: ResolvedEnv::default(),
         };
 
         // 下发成功:报告 RUNNING,且下发器收到带 report_id 的任务
