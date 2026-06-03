@@ -68,6 +68,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "api-definition"
+version = "0.0.1"
+dependencies = [
+ "async-trait",
+ "axum",
+ "kernel",
+ "migrate",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "thiserror",
+ "tokio",
+ "tower",
+ "utoipa",
+ "webauth",
+]
+
+[[package]]
 name = "api-runner"
 version = "0.0.1"
 dependencies = [
@@ -76,6 +94,24 @@ dependencies = [
  "serde",
  "serde_json",
  "tokio",
+]
+
+[[package]]
+name = "api-scenario"
+version = "0.0.1"
+dependencies = [
+ "async-trait",
+ "axum",
+ "kernel",
+ "migrate",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "thiserror",
+ "tokio",
+ "tower",
+ "utoipa",
+ "webauth",
 ]
 
 [[package]]
@@ -1746,6 +1782,8 @@ dependencies = [
 name = "server"
 version = "0.0.1"
 dependencies = [
+ "api-definition",
+ "api-scenario",
  "api-test",
  "async-trait",
  "axum",

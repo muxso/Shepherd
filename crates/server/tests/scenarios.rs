@@ -229,3 +229,37 @@ async fn scenario_mcp_tools() {
     let call: Value = s.post("/mcp", json!({"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"shepherd_create_requirement","arguments":{"projectId":proj(),"title":"经 MCP 建的需求"}}}), Some(&t)).await;
     assert_eq!(call["result"]["isError"], false);
 }
+
+// ============ 场景 6:接口测试链路(组织→项目→接口定义→用例/Mock→场景→编译→运行)============
+#[tokio::test]
+#[ignore = "需要 PostgreSQL"]
+async fn scenario_api_definition_to_run() {
+    let s = TestServer::start().await;
+    let t = s.login().await;
+    // 组织 → 项目
+    let org = s.post("/organization", json!({"name":format!("apiorg-{}", free_port())}), Some(&t)).await["id"]
+        .as_str().unwrap().to_string();
+    let p = s.post("/project", json!({"organizationId":&org,"name":format!("apiproj-{}", free_port())}), Some(&t)).await["id"]
+        .as_str().unwrap().to_string();
+    // 接口定义
+    let def = s.post("/api/definition", json!({"projectId":&p,"name":"登录接口","protocol":"HTTP","method":"POST","path":"/auth/login"}), Some(&t)).await;
+    assert_eq!(def["status"], "DRAFT");
+    let def_id = def["id"].as_str().unwrap().to_string();
+    // 接口用例(落 ms_api_case,可被批量运行)
+    let case_id = s.post(&format!("/api/definition/{def_id}/case"), json!({"name":"正确凭证","method":"POST","url":"https://example.com/auth/login","assertions":[]}), Some(&t)).await["id"]
+        .as_str().unwrap().to_string();
+    // Mock
+    assert_eq!(s.status("POST", &format!("/api/definition/{def_id}/mock"), json!({"name":"登录200","responseStatus":200}), Some(&t)).await, 201);
+    // 定义列表含 1 条
+    assert_eq!(s.get(&format!("/api/definition?projectId={p}"), &t).await.as_array().unwrap().len(), 1);
+    // 场景 + 两步骤(引用用例 + 内联请求)
+    let scn = s.post("/api/scenario", json!({"projectId":&p,"name":"登录冒烟"}), Some(&t)).await["id"].as_str().unwrap().to_string();
+    assert_eq!(s.status("POST", &format!("/api/scenario/{scn}/step"), json!({"kind":"CASE","refMode":"REFERENCE","order":1,"refId":&case_id}), Some(&t)).await, 201);
+    assert_eq!(s.status("POST", &format!("/api/scenario/{scn}/step"), json!({"kind":"REQUEST","order":2,"request":{"method":"GET","url":"https://example.com/health"}}), Some(&t)).await, 201);
+    // 编译 → 第一步是引用的用例 caseId,第二步是内联请求
+    let comp = s.get(&format!("/api/scenario/{scn}/compile"), &t).await;
+    assert_eq!(comp["steps"][0]["caseId"], case_id);
+    assert_eq!(comp["steps"][1]["request"]["method"], "GET");
+    // 运行:无资源池 → 桥接到批量运行用例,在入口明确 400(证明已通到池解析规则)
+    assert_eq!(s.status("POST", &format!("/api/scenario/{scn}/run"), json!({"projectId":&p,"runMode":"PARALLEL"}), Some(&t)).await, 400);
+}
