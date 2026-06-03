@@ -134,6 +134,11 @@ enum Cmd {
         #[command(subcommand)]
         cmd: ScenarioCmd,
     },
+    /// 环境(项目级 base_url + 默认头 + 变量;运行时注入)。
+    Env {
+        #[command(subcommand)]
+        cmd: EnvCmd,
+    },
 }
 
 #[derive(Subcommand)]
@@ -338,6 +343,9 @@ enum ApiCmd {
         /// 资源池 id(批量执行需客户端提供)。
         #[arg(long)]
         pool: Option<String>,
+        /// 运行所用环境 id(注入 base_url/默认头/变量)。
+        #[arg(long)]
+        env: Option<String>,
     },
 }
 
@@ -584,6 +592,20 @@ enum ApidefCmd {
         #[arg(long = "page-size", default_value_t = 10)]
         page_size: u32,
     },
+    /// 单独执行某条接口用例(可选环境/资源池),回写执行记录。
+    CaseRun {
+        #[arg(long)]
+        case: String,
+        #[arg(long)]
+        project: String,
+        #[arg(long = "mode", default_value = "SERIAL")]
+        run_mode: String,
+        #[arg(long)]
+        pool: Option<String>,
+        /// 运行所用环境 id(注入 base_url/默认头/变量)。
+        #[arg(long)]
+        env: Option<String>,
+    },
     /// 给定义加 Mock。
     Mock {
         #[arg(long)]
@@ -667,6 +689,57 @@ enum ScenarioCmd {
         run_mode: String,
         #[arg(long)]
         pool: Option<String>,
+        /// 运行所用环境 id(注入 base_url/默认头/变量)。
+        #[arg(long)]
+        env: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
+enum EnvCmd {
+    /// 新建环境。--header 形如 "Name: value"(可重复);--var 形如 key=value(可重复)。
+    Create {
+        #[arg(long)]
+        project: String,
+        #[arg(long)]
+        name: String,
+        /// 基础地址(相对 url 前缀),如 http://localhost:8088。
+        #[arg(long, default_value = "")]
+        base: String,
+        #[arg(long = "header")]
+        headers: Vec<String>,
+        #[arg(long = "var")]
+        vars: Vec<String>,
+    },
+    /// 列出项目内环境。
+    List {
+        #[arg(long)]
+        project: String,
+    },
+    /// 查看单个环境。
+    Get {
+        #[arg(long)]
+        id: String,
+    },
+    /// 更新环境(整体覆盖 name/base/headers/vars)。
+    Update {
+        #[arg(long)]
+        id: String,
+        #[arg(long)]
+        project: String,
+        #[arg(long)]
+        name: String,
+        #[arg(long, default_value = "")]
+        base: String,
+        #[arg(long = "header")]
+        headers: Vec<String>,
+        #[arg(long = "var")]
+        vars: Vec<String>,
+    },
+    /// 删除环境。
+    Delete {
+        #[arg(long)]
+        id: String,
     },
 }
 
@@ -778,6 +851,28 @@ fn status_assertions(expect_status: Option<u16>) -> Value {
         Some(code) => json!([{ "type": "StatusIs", "args": code }]),
         None => json!([]),
     }
+}
+
+/// `--header "Name: value"` 列表 → JSON 数组 `[{"name","value"}]`(按首个冒号切分)。
+fn parse_headers(items: &[String]) -> R<Value> {
+    let mut arr = Vec::with_capacity(items.len());
+    for it in items {
+        let (name, value) = it
+            .split_once(':')
+            .ok_or_else(|| format!("--header 需 'Name: value' 格式:{it}"))?;
+        arr.push(json!({"name": name.trim(), "value": value.trim()}));
+    }
+    Ok(Value::Array(arr))
+}
+
+/// `--var key=value` 列表 → JSON 对象 `{k:v}`(按首个等号切分)。
+fn parse_vars(items: &[String]) -> R<Value> {
+    let mut map = serde_json::Map::with_capacity(items.len());
+    for it in items {
+        let (k, v) = it.split_once('=').ok_or_else(|| format!("--var 需 'key=value' 格式:{it}"))?;
+        map.insert(k.trim().to_string(), json!(v));
+    }
+    Ok(Value::Object(map))
 }
 
 fn run(cli: Cli) -> R<()> {
@@ -1015,9 +1110,9 @@ fn run(cli: Cli) -> R<()> {
         Cmd::Api { cmd } => {
             let c = Client::new(Config::load())?;
             match cmd {
-                ApiCmd::BatchRun { project, cases, run_mode, pool } => pretty(&c.post(
+                ApiCmd::BatchRun { project, cases, run_mode, pool, env } => pretty(&c.post(
                     "/api/batch-run",
-                    json!({"projectId": project, "caseIds": cases, "runMode": run_mode, "poolId": pool}),
+                    json!({"projectId": project, "caseIds": cases, "runMode": run_mode, "poolId": pool, "environmentId": env}),
                     true,
                 )?),
             }
@@ -1148,6 +1243,11 @@ fn run(cli: Cli) -> R<()> {
                     &format!("/api/case/{case}/executions?current={current}&pageSize={page_size}"),
                     true,
                 )?),
+                ApidefCmd::CaseRun { case, project, run_mode, pool, env } => pretty(&c.post(
+                    &format!("/api/case/{case}/run"),
+                    json!({"projectId": project, "runMode": run_mode, "poolId": pool, "environmentId": env}),
+                    true,
+                )?),
                 ApidefCmd::Mock { def, name, response_status, body } => pretty(&c.post(
                     &format!("/api/definition/{def}/mock"),
                     json!({"name": name, "responseStatus": response_status, "responseBody": body}),
@@ -1187,11 +1287,33 @@ fn run(cli: Cli) -> R<()> {
                     &format!("/api/scenario/{id}/executions?current={current}&pageSize={page_size}"),
                     true,
                 )?),
-                ScenarioCmd::Run { id, project, run_mode, pool } => pretty(&c.post(
+                ScenarioCmd::Run { id, project, run_mode, pool, env } => pretty(&c.post(
                     &format!("/api/scenario/{id}/run"),
-                    json!({"projectId": project, "runMode": run_mode, "poolId": pool}),
+                    json!({"projectId": project, "runMode": run_mode, "poolId": pool, "environmentId": env}),
                     true,
                 )?),
+            }
+        }
+        Cmd::Env { cmd } => {
+            let c = Client::new(Config::load())?;
+            match cmd {
+                EnvCmd::Create { project, name, base, headers, vars } => pretty(&c.post(
+                    "/api/environment",
+                    json!({"projectId": project, "name": name, "baseUrl": base,
+                           "headers": parse_headers(&headers)?, "variables": parse_vars(&vars)?}),
+                    true,
+                )?),
+                EnvCmd::List { project } => {
+                    pretty(&c.get(&format!("/api/environment?projectId={project}"), true)?)
+                }
+                EnvCmd::Get { id } => pretty(&c.get(&format!("/api/environment/{id}"), true)?),
+                EnvCmd::Update { id, project, name, base, headers, vars } => pretty(&c.put(
+                    &format!("/api/environment/{id}"),
+                    json!({"projectId": project, "name": name, "baseUrl": base,
+                           "headers": parse_headers(&headers)?, "variables": parse_vars(&vars)?}),
+                    true,
+                )?),
+                EnvCmd::Delete { id } => pretty(&c.delete(&format!("/api/environment/{id}"), true)?),
             }
         }
     }
@@ -1203,7 +1325,9 @@ fn run(cli: Cli) -> R<()> {
 /// 设计:
 ///  - 成功用例:断言文档化成功码(POST→201,其余→200),代表正常路径预期。
 ///  - 失败用例:断言 401(未授权),代表负向路径预期。
+///
 /// 实际执行时(无凭证)受保护接口多返回 401,会如实回写各自 SUCCESS/ERROR,演示执行闭环。
+/// 配上带 `Authorization` 的环境(`env create --header`)再跑,正向用例即转绿。
 fn gen_suite(c: &Client, project: &str, base: &str, no_scenario: bool) -> R<()> {
     let defs = c.get(&format!("/api/definition?projectId={project}"), true)?;
     let list = defs.as_array().ok_or("接口定义列表不是数组")?;
