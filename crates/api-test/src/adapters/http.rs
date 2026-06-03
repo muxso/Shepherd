@@ -18,7 +18,10 @@ use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, OpenApi, ToSchema};
 
 pub fn router(use_case: StartBatchRunUseCase) -> Router {
-    Router::new().route("/api/batch-run", post(batch_run)).with_state(use_case)
+    Router::new()
+        .route("/api/batch-run", post(batch_run))
+        .route("/api/case/{id}/run", post(run_case))
+        .with_state(use_case)
 }
 
 /// 用例执行记录(用例执行记录)分页查询的只读路由——开放(无鉴权)。
@@ -60,7 +63,15 @@ async fn batch_run(
     let config =
         RunModeConfig { mode, pool_id: req.pool_id, retry: None, environment_id: req.environment_id };
 
-    match uc.execute(&req.project_id, req.case_ids, config).await {
+    dispatch_to_response(uc.execute(&req.project_id, req.case_ids, config).await)
+}
+
+/// 把派发结果映射为 HTTP 响应(batch-run 与单例 case run 共用)。
+/// 错误码:未配置池 → 400,池不可用 → 409,其余入口校验 → 400,后端 → 500。
+fn dispatch_to_response(
+    result: Result<crate::ports::DispatchReport, BatchRunError>,
+) -> Response {
+    match result {
         Ok(rep) => (
             StatusCode::OK,
             Json(BatchRunResponse { report_id: rep.report_id, status: rep.status }),
@@ -81,6 +92,47 @@ async fn batch_run(
             (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response()
         }
     }
+}
+
+/// 单条用例执行入参(路径带 caseId)。
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+struct CaseRunRequest {
+    project_id: String,
+    #[serde(default = "default_serial")]
+    run_mode: String,
+    #[serde(default)]
+    pool_id: Option<String>,
+    /// 运行所用环境 id(注入 base_url/默认头/变量);缺省不注入。
+    #[serde(default)]
+    environment_id: Option<String>,
+}
+
+fn default_serial() -> String {
+    "SERIAL".to_string()
+}
+
+/// 单条接口用例执行:复用批量运行链路(单元素用例集),返回报告 id + 状态。
+/// 明细仍由 `GET /api/case/{caseId}/executions` 查询。
+#[utoipa::path(
+    post,
+    path = "/api/case/{id}/run",
+    tag = "api-test",
+    params(("id" = String, Path)),
+    request_body = CaseRunRequest,
+    responses((status = 200, body = BatchRunResponse), (status = 400), (status = 409))
+)]
+async fn run_case(
+    State(uc): State<StartBatchRunUseCase>,
+    Path(id): Path<String>,
+    Json(req): Json<CaseRunRequest>,
+) -> Response {
+    let Some(mode) = BatchRunMode::parse(&req.run_mode) else {
+        return (StatusCode::BAD_REQUEST, "unknown run mode").into_response();
+    };
+    let config =
+        RunModeConfig { mode, pool_id: req.pool_id, retry: None, environment_id: req.environment_id };
+    dispatch_to_response(uc.execute(&req.project_id, vec![id], config).await)
 }
 
 // ---- 用例执行记录分页查询(只读) ----
@@ -167,9 +219,10 @@ async fn list_executions(
 
 #[derive(OpenApi)]
 #[openapi(
-    paths(batch_run, list_executions),
+    paths(batch_run, run_case, list_executions),
     components(schemas(
         BatchRunRequest,
+        CaseRunRequest,
         BatchRunResponse,
         CaseExecutionRecordDto,
         CaseExecutionPageResponse
@@ -246,6 +299,22 @@ mod tests {
             .await
             .expect("resp");
         assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn single_case_run_returns_200_with_report() {
+        let pools = FakeResourcePool::new().with_available("pool1");
+        let req = Request::builder()
+            .method("POST")
+            .uri("/api/case/c1/run")
+            .header("content-type", "application/json")
+            .body(Body::from(r#"{"projectId":"p1","poolId":"pool1"}"#.to_string()))
+            .expect("req");
+        let resp = app(pools).oneshot(req).await.expect("resp");
+        assert_eq!(resp.status(), StatusCode::OK);
+        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.expect("body");
+        let v: serde_json::Value = serde_json::from_slice(&bytes).expect("json");
+        assert!(v["reportId"].as_str().expect("id").starts_with("report-"));
     }
 
     #[tokio::test]
