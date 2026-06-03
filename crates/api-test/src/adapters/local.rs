@@ -55,7 +55,8 @@ pub struct LocalRunnerDispatcher {
 
 impl LocalRunnerDispatcher {
     pub fn new(specs: Arc<dyn CaseSpecSource>, sink: Arc<dyn CaseResultSink>) -> Self {
-        Self { specs, sink, runner: ReqwestRunner::new(), max_concurrency: DEFAULT_CONCURRENCY }
+        // 就地 runner 直连被测主机,默认绕过环境代理(否则 http_proxy 会劫持目标请求)。
+        Self { specs, sink, runner: ReqwestRunner::no_proxy(), max_concurrency: DEFAULT_CONCURRENCY }
     }
 
     pub fn with_concurrency(mut self, n: usize) -> Self {

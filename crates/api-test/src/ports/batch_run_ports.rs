@@ -30,10 +30,19 @@ pub struct DispatchSpec {
     pub mode: BatchRunMode,
 }
 
-/// 批量执行器(对接 JMeter/K8s 的边界;此处只抽象出"派发并返回报告 id")。
+/// 派发结果:报告 id + 派发后即刻的报告状态。
+/// 同步 runner 跑完即 SUCCESS/ERROR;异步执行器(JMeter)接受后为 RUNNING。
+/// 携带 status 让上游(如场景执行记录)能在派发后立即落到真实状态,而非永远 PENDING。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DispatchReport {
+    pub report_id: String,
+    pub status: String,
+}
+
+/// 批量执行器(对接 JMeter/K8s 的边界;此处抽象出"派发并返回报告 id + 状态")。
 #[async_trait]
 pub trait BatchExecutorPort: Send + Sync {
-    async fn dispatch(&self, spec: &DispatchSpec) -> Result<String, PortError>;
+    async fn dispatch(&self, spec: &DispatchSpec) -> Result<DispatchReport, PortError>;
 }
 
 /// 一个待下发给执行节点的运行任务(报告已落库,带 report_id)。

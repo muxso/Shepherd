@@ -69,6 +69,7 @@ fn default_mode() -> String {
 #[serde(rename_all = "camelCase")]
 struct RunScenarioResponse {
     report_id: String,
+    status: String,
     case_count: usize,
 }
 
@@ -121,14 +122,21 @@ async fn run_scenario(
     };
     let config = RunModeConfig { mode, pool_id: req.pool_id, retry: None };
     match st.batch.execute(&req.project_id, case_ids, config).await {
-        Ok(report_id) => {
-            // 记一条场景执行记录(已派发待跑 → PENDING,带报告 id 供轮询状态)。
-            // 记录失败不影响运行结果,仅忽略。
+        Ok(rep) => {
+            // 闭环:用批量运行回传的真实状态落场景执行记录——同步 runner 跑完即
+            // SUCCESS/ERROR,异步执行器为 RUNNING(后续由执行节点回写)。记录失败不影响运行结果。
             let _ = st
                 .recorder
-                .execute(&id, &req.project_id, "PENDING", count as i32, Some(&report_id))
+                .execute(&id, &req.project_id, &rep.status, count as i32, Some(&rep.report_id))
                 .await;
-            (StatusCode::OK, Json(RunScenarioResponse { report_id, case_count: count }))
+            (
+                StatusCode::OK,
+                Json(RunScenarioResponse {
+                    report_id: rep.report_id,
+                    status: rep.status,
+                    case_count: count,
+                }),
+            )
                 .into_response()
         }
         Err(BatchRunError::ResourcePoolNotConfigured) => (

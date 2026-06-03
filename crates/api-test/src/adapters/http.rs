@@ -43,6 +43,7 @@ struct BatchRunRequest {
 #[serde(rename_all = "camelCase")]
 struct BatchRunResponse {
     report_id: String,
+    status: String,
 }
 
 #[utoipa::path(post, path = "/api/batch-run", tag = "api-test", request_body = BatchRunRequest, responses((status = 200, body = BatchRunResponse), (status = 400), (status = 409)))]
@@ -56,7 +57,11 @@ async fn batch_run(
     let config = RunModeConfig { mode, pool_id: req.pool_id, retry: None };
 
     match uc.execute(&req.project_id, req.case_ids, config).await {
-        Ok(report_id) => (StatusCode::OK, Json(BatchRunResponse { report_id })).into_response(),
+        Ok(rep) => (
+            StatusCode::OK,
+            Json(BatchRunResponse { report_id: rep.report_id, status: rep.status }),
+        )
+            .into_response(),
         Err(BatchRunError::NoCases) => (StatusCode::BAD_REQUEST, "no cases to run").into_response(),
         Err(BatchRunError::InvalidRetryConfig) => {
             (StatusCode::BAD_REQUEST, "invalid retry config").into_response()

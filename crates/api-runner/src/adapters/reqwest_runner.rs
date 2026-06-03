@@ -23,6 +23,13 @@ impl ReqwestRunner {
         Self { client }
     }
 
+    /// 绕过环境代理(http_proxy/all_proxy 等)的 client。就地 runner 直连被测主机,
+    /// 不应被开发环境的全局代理劫持(与 CLI、本地 e2e 的 no_proxy 约定一致)。
+    pub fn no_proxy() -> Self {
+        let client = reqwest::Client::builder().no_proxy().build().expect("build no_proxy client");
+        Self { client }
+    }
+
     /// 执行一次请求,返回响应快照。
     pub async fn execute(&self, spec: &RequestSpec) -> Result<ResponseSnapshot, RunError> {
         let method = reqwest::Method::from_bytes(spec.method.as_str().as_bytes())

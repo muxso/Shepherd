@@ -9,8 +9,8 @@ use std::sync::{Arc, Mutex};
 use async_trait::async_trait;
 
 use crate::ports::{
-    BatchExecutorPort, DispatchOutcome, DispatchSpec, PortError, ResourcePoolPort, RunTask,
-    TaskDispatcher,
+    BatchExecutorPort, DispatchOutcome, DispatchReport, DispatchSpec, PortError, ResourcePoolPort,
+    RunTask, TaskDispatcher,
 };
 
 /// 可配置的资源池替身:项目默认池映射 + 可用池集合。
@@ -73,10 +73,10 @@ impl SpyExecutor {
 
 #[async_trait]
 impl BatchExecutorPort for SpyExecutor {
-    async fn dispatch(&self, spec: &DispatchSpec) -> Result<String, PortError> {
+    async fn dispatch(&self, spec: &DispatchSpec) -> Result<DispatchReport, PortError> {
         let mut d = self.dispatches.lock().expect("lock");
         d.push(spec.clone());
-        Ok(format!("report-{}", d.len()))
+        Ok(DispatchReport { report_id: format!("report-{}", d.len()), status: "SUCCESS".to_string() })
     }
 }
 
