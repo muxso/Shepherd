@@ -16,6 +16,7 @@ use axum::{
 use kernel::page::PageRequest;
 use serde::{Deserialize, Serialize};
 use webauth::{AuthUser, SessionStore};
+use utoipa::{IntoParams, OpenApi, ToSchema};
 
 use crate::application::{
     CreateRequirementError, CreateRequirementUseCase, ListRequirementsUseCase, RequirementCmdError,
@@ -58,7 +59,7 @@ pub fn router(
 
 // ---- DTO ----
 
-#[derive(Deserialize)]
+#[derive(Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 struct CreateBody {
     project_id: String,
@@ -69,7 +70,7 @@ struct CreateBody {
     acceptance_criteria: Vec<String>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 struct ReviseBody {
     #[serde(default)]
@@ -78,17 +79,17 @@ struct ReviseBody {
     acceptance_criteria: Vec<String>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, ToSchema)]
 struct SetBaselineBody {
     version: u32,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, ToSchema)]
 struct RenameBody {
     title: String,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 struct VersionResponse {
     version: u32,
@@ -106,7 +107,7 @@ impl From<&crate::domain::RequirementVersion> for VersionResponse {
     }
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 struct RequirementResponse {
     id: String,
@@ -134,7 +135,7 @@ impl From<Requirement> for RequirementResponse {
     }
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 struct RequirementPage {
     total: u64,
@@ -144,7 +145,7 @@ struct RequirementPage {
     items: Vec<RequirementResponse>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, IntoParams)]
 #[serde(rename_all = "camelCase")]
 struct ListQuery {
     project_id: String,
@@ -183,6 +184,7 @@ fn create_err(e: CreateRequirementError) -> Response {
 
 // ---- 处理器 ----
 
+#[utoipa::path(post, path = "/requirement", tag = "requirement", request_body = CreateBody, responses((status = 201, body = RequirementResponse), (status = 401), (status = 403), (status = 409)), security(("bearer" = [])))]
 async fn create_requirement(user: AuthUser, State(st): State<ReqState>, Json(b): Json<CreateBody>) -> Response {
     if !user.can("REQUIREMENT", "ADD") {
         return (StatusCode::FORBIDDEN, "permission denied").into_response();
@@ -193,6 +195,7 @@ async fn create_requirement(user: AuthUser, State(st): State<ReqState>, Json(b):
     }
 }
 
+#[utoipa::path(get, path = "/requirement", tag = "requirement", params(ListQuery), responses((status = 200, body = RequirementPage)))]
 async fn list_requirements(State(st): State<ReqState>, Query(q): Query<ListQuery>) -> Response {
     let page = match PageRequest::new(q.current, q.page_size) {
         Ok(p) => p,
@@ -213,6 +216,7 @@ async fn list_requirements(State(st): State<ReqState>, Query(q): Query<ListQuery
     }
 }
 
+#[utoipa::path(get, path = "/requirement/{id}", tag = "requirement", params(("id" = String, Path, description = "需求 id")), responses((status = 200, body = RequirementResponse), (status = 404)))]
 async fn get_requirement(State(st): State<ReqState>, Path(id): Path<String>) -> Response {
     match st.admin.get(&id).await {
         Ok(r) => (StatusCode::OK, Json(RequirementResponse::from(r))).into_response(),
@@ -220,6 +224,7 @@ async fn get_requirement(State(st): State<ReqState>, Path(id): Path<String>) -> 
     }
 }
 
+#[utoipa::path(get, path = "/requirement/{id}/version/{n}", tag = "requirement", params(("id" = String, Path, description = "需求 id"), ("n" = u32, Path, description = "版本号")), responses((status = 200, body = VersionResponse), (status = 404)))]
 async fn get_version(State(st): State<ReqState>, Path((id, n)): Path<(String, u32)>) -> Response {
     match st.admin.get(&id).await {
         Ok(r) => match r.version(n) {
@@ -230,11 +235,12 @@ async fn get_version(State(st): State<ReqState>, Path((id, n)): Path<(String, u3
     }
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, ToSchema)]
 struct VersionCreated {
     version: u32,
 }
 
+#[utoipa::path(post, path = "/requirement/{id}/version", tag = "requirement", params(("id" = String, Path)), request_body = ReviseBody, responses((status = 201, body = VersionCreated), (status = 404), (status = 409)), security(("bearer" = [])))]
 async fn revise_requirement(
     user: AuthUser,
     State(st): State<ReqState>,
@@ -250,6 +256,7 @@ async fn revise_requirement(
     }
 }
 
+#[utoipa::path(put, path = "/requirement/{id}/baseline", tag = "requirement", params(("id" = String, Path)), request_body = SetBaselineBody, responses((status = 200, body = RequirementResponse), (status = 404)), security(("bearer" = [])))]
 async fn set_baseline(
     user: AuthUser,
     State(st): State<ReqState>,
@@ -265,6 +272,7 @@ async fn set_baseline(
     }
 }
 
+#[utoipa::path(put, path = "/requirement/{id}", tag = "requirement", params(("id" = String, Path)), request_body = RenameBody, responses((status = 200, body = RequirementResponse), (status = 404), (status = 409)), security(("bearer" = [])))]
 async fn rename_requirement(
     user: AuthUser,
     State(st): State<ReqState>,
@@ -280,6 +288,7 @@ async fn rename_requirement(
     }
 }
 
+#[utoipa::path(post, path = "/requirement/{id}/archive", tag = "requirement", params(("id" = String, Path)), responses((status = 200, body = RequirementResponse), (status = 404)), security(("bearer" = [])))]
 async fn archive_requirement(user: AuthUser, State(st): State<ReqState>, Path(id): Path<String>) -> Response {
     if !user.can("REQUIREMENT", "UPDATE") {
         return (StatusCode::FORBIDDEN, "permission denied").into_response();
@@ -290,6 +299,7 @@ async fn archive_requirement(user: AuthUser, State(st): State<ReqState>, Path(id
     }
 }
 
+#[utoipa::path(delete, path = "/requirement/{id}", tag = "requirement", params(("id" = String, Path)), responses((status = 204), (status = 404)), security(("bearer" = [])))]
 async fn delete_requirement(user: AuthUser, State(st): State<ReqState>, Path(id): Path<String>) -> Response {
     if !user.can("REQUIREMENT", "DELETE") {
         return (StatusCode::FORBIDDEN, "permission denied").into_response();
@@ -298,6 +308,22 @@ async fn delete_requirement(user: AuthUser, State(st): State<ReqState>, Path(id)
         Ok(()) => StatusCode::NO_CONTENT.into_response(),
         Err(e) => cmd_err(e),
     }
+}
+
+/// 本上下文的 OpenAPI 文档(组装根合并)。
+#[derive(OpenApi)]
+#[openapi(
+    paths(
+        create_requirement, list_requirements, get_requirement, get_version,
+        revise_requirement, set_baseline, rename_requirement, archive_requirement, delete_requirement
+    ),
+    components(schemas(CreateBody, ReviseBody, SetBaselineBody, RenameBody, VersionResponse, RequirementResponse, RequirementPage, VersionCreated)),
+    tags((name = "requirement", description = "需求管理(多版本)"))
+)]
+struct ApiDoc;
+
+pub fn openapi() -> utoipa::openapi::OpenApi {
+    ApiDoc::openapi()
 }
 
 #[cfg(test)]

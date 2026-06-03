@@ -12,6 +12,7 @@ mod breakdown_route;
 mod judge;
 mod llm;
 mod mcp_tools;
+mod openapi;
 mod orchestration;
 mod planner;
 
@@ -368,6 +369,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .merge(bug_routes)
         .merge(plan_routes)
         .merge(apitest_routes)
+        .merge(openapi::routes())
         .merge(health_routes(pool.clone()))
         // 由外到内:请求日志 → 整体超时 → 请求体上限(防超大 body 打爆内存)
         .layer(TraceLayer::new_for_http())

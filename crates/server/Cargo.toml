@@ -23,6 +23,7 @@ mcp = { path = "../mcp" }
 webauth = { path = "../webauth", features = ["http"] }
 async-trait = "0.1"
 serde = { version = "1", features = ["derive"] }
+utoipa = "5"
 serde_json = "1"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 api-test = { path = "../api-test", features = ["pg", "http", "jmeter", "local"] }
