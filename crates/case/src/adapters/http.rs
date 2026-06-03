@@ -17,6 +17,7 @@ use crate::application::{SubmitReviewError, SubmitReviewUseCase};
 use crate::domain::{ReviewError, ReviewStatus, Verdict};
 use crate::ports::RepoError;
 use serde::{Deserialize, Serialize};
+use utoipa::{OpenApi, ToSchema};
 use webauth::{AuthUser, SessionStore};
 
 #[derive(Clone)]
@@ -37,7 +38,7 @@ pub fn router(use_case: SubmitReviewUseCase, sessions: Arc<dyn SessionStore>) ->
         .with_state(ReviewState { use_case, sessions })
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 struct SubmitRequest {
     reviewer_id: String,
@@ -46,11 +47,12 @@ struct SubmitRequest {
     content: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 struct SubmitResponse {
     status: String,
 }
 
+#[utoipa::path(post, path = "/case-review/{review_id}/{case_id}", tag = "case", params(("review_id" = String, Path), ("case_id" = String, Path)), request_body = SubmitRequest, responses((status = 200, body = SubmitResponse), (status = 400), (status = 404)), security(("bearer" = [])))]
 async fn submit_review(
     user: AuthUser,
     State(st): State<ReviewState>,
@@ -88,6 +90,11 @@ async fn submit_review(
         }
     }
 }
+
+#[derive(OpenApi)]
+#[openapi(paths(submit_review), components(schemas(SubmitRequest, SubmitResponse)), tags((name = "case", description = "用例评审")))]
+struct ApiDoc;
+pub fn openapi() -> utoipa::openapi::OpenApi { ApiDoc::openapi() }
 
 #[cfg(test)]
 mod tests {

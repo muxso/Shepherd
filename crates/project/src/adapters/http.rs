@@ -16,6 +16,7 @@ use axum::{
 use kernel::page::PageRequest;
 use crate::application::{CreateProjectError, CreateProjectUseCase, ListProjectsUseCase};
 use serde::{Deserialize, Serialize};
+use utoipa::{IntoParams, OpenApi, ToSchema};
 use webauth::{AuthUser, SessionStore};
 
 #[derive(Clone)]
@@ -41,14 +42,14 @@ pub fn router(
         .with_state(ProjectState { create, list, sessions })
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 struct CreateProjectRequest {
     organization_id: String,
     name: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 struct ProjectResponse {
     id: String,
@@ -63,6 +64,7 @@ impl From<crate::domain::Project> for ProjectResponse {
     }
 }
 
+#[utoipa::path(post, path = "/project", tag = "project", request_body = CreateProjectRequest, responses((status = 201, body = ProjectResponse), (status = 401), (status = 403), (status = 409)), security(("bearer" = [])))]
 async fn create_project(
     user: AuthUser,
     State(st): State<ProjectState>,
@@ -85,7 +87,7 @@ async fn create_project(
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, IntoParams)]
 #[serde(rename_all = "camelCase")]
 struct ListQuery {
     organization_id: String,
@@ -102,7 +104,7 @@ fn default_page_size() -> u32 {
     10
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 struct PageResponse {
     total: u64,
@@ -112,6 +114,7 @@ struct PageResponse {
     items: Vec<ProjectResponse>,
 }
 
+#[utoipa::path(get, path = "/project", tag = "project", params(ListQuery), responses((status = 200, body = PageResponse)))]
 async fn list_projects(State(st): State<ProjectState>, Query(q): Query<ListQuery>) -> Response {
     // 分页参数校验复用 kernel:非法参数 → 400(而不是打到 DB 才炸)
     let page = match PageRequest::new(q.current, q.page_size) {
@@ -132,6 +135,11 @@ async fn list_projects(State(st): State<ProjectState>, Query(q): Query<ListQuery
         Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
     }
 }
+
+#[derive(OpenApi)]
+#[openapi(paths(create_project, list_projects), components(schemas(CreateProjectRequest, ProjectResponse, PageResponse)), tags((name = "project", description = "项目管理")))]
+struct ApiDoc;
+pub fn openapi() -> utoipa::openapi::OpenApi { ApiDoc::openapi() }
 
 #[cfg(test)]
 mod tests {

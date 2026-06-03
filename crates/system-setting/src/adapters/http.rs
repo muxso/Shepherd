@@ -13,6 +13,7 @@ use axum::{
     Json, Router,
 };
 use serde::{Deserialize, Serialize};
+use utoipa::{IntoParams, OpenApi, ToSchema};
 
 use crate::application::{
     CreateUserError, CreateUserUseCase, LoginUseCase, OidcLoginUseCase, OrgCmdError,
@@ -58,17 +59,18 @@ pub fn router(
 }
 
 // ---- 登录 ----
-#[derive(Deserialize)]
+#[derive(Deserialize, ToSchema)]
 struct LoginRequest {
     username: String,
     password: String,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, ToSchema)]
 struct LoginResponse {
     token: String,
 }
 
+#[utoipa::path(post, path = "/auth/login", tag = "auth", request_body = LoginRequest, responses((status = 200, body = LoginResponse), (status = 401)))]
 async fn login_handler(State(st): State<AppState>, Json(req): Json<LoginRequest>) -> Response {
     match st.login.execute(&req.username, &req.password).await {
         Ok(token) => (StatusCode::OK, Json(LoginResponse { token })).into_response(),
@@ -82,6 +84,7 @@ async fn login_handler(State(st): State<AppState>, Json(req): Json<LoginRequest>
 }
 
 /// 登出:撤销 Authorization 头里的令牌。幂等,总返回 204。
+#[utoipa::path(post, path = "/auth/logout", tag = "auth", responses((status = 204)), security(("bearer" = [])))]
 async fn logout_handler(State(st): State<AppState>, headers: HeaderMap) -> Response {
     if let Some(token) = headers
         .get(AUTHORIZATION)
@@ -94,13 +97,13 @@ async fn logout_handler(State(st): State<AppState>, headers: HeaderMap) -> Respo
 }
 
 // ---- 建用户(受保护) ----
-#[derive(Deserialize)]
+#[derive(Deserialize, ToSchema)]
 struct CreateUserRequest {
     name: String,
     email: String,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 struct UserResponse {
     id: String,
@@ -123,7 +126,7 @@ fn user_err_response(e: UserCmdError) -> Response {
     }
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 struct UserPage {
     total: u64,
@@ -133,6 +136,7 @@ struct UserPage {
     items: Vec<UserResponse>,
 }
 
+#[utoipa::path(get, path = "/system/user", tag = "user", params(OrgListQuery), responses((status = 200, body = UserPage)), security(("bearer" = [])))]
 async fn list_users(user: AuthUser, State(st): State<AppState>, Query(q): Query<OrgListQuery>) -> Response {
     if !user.can("SYSTEM_USER", "READ") {
         return (StatusCode::FORBIDDEN, "permission denied").into_response();
@@ -156,6 +160,7 @@ async fn list_users(user: AuthUser, State(st): State<AppState>, Query(q): Query<
     }
 }
 
+#[utoipa::path(get, path = "/system/user/{id}", tag = "user", params(("id" = String, Path)), responses((status = 200, body = UserResponse), (status = 404)), security(("bearer" = [])))]
 async fn get_user(user: AuthUser, State(st): State<AppState>, Path(id): Path<String>) -> Response {
     if !user.can("SYSTEM_USER", "READ") {
         return (StatusCode::FORBIDDEN, "permission denied").into_response();
@@ -166,7 +171,7 @@ async fn get_user(user: AuthUser, State(st): State<AppState>, Path(id): Path<Str
     }
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 struct UpdateUserBody {
     name: String,
@@ -178,6 +183,7 @@ fn tru() -> bool {
     true
 }
 
+#[utoipa::path(put, path = "/system/user/{id}", tag = "user", params(("id" = String, Path)), request_body = UpdateUserBody, responses((status = 200, body = UserResponse), (status = 404)), security(("bearer" = [])))]
 async fn update_user(
     user: AuthUser,
     State(st): State<AppState>,
@@ -193,6 +199,7 @@ async fn update_user(
     }
 }
 
+#[utoipa::path(delete, path = "/system/user/{id}", tag = "user", params(("id" = String, Path)), responses((status = 204), (status = 404)), security(("bearer" = [])))]
 async fn delete_user(user: AuthUser, State(st): State<AppState>, Path(id): Path<String>) -> Response {
     if !user.can("SYSTEM_USER", "DELETE") {
         return (StatusCode::FORBIDDEN, "permission denied").into_response();
@@ -203,6 +210,7 @@ async fn delete_user(user: AuthUser, State(st): State<AppState>, Path(id): Path<
     }
 }
 
+#[utoipa::path(post, path = "/system/user", tag = "user", request_body = CreateUserRequest, responses((status = 201, body = UserResponse), (status = 409)), security(("bearer" = [])))]
 async fn create_user(
     user: AuthUser, // 401 if missing/invalid token(提取器保证)
     State(st): State<AppState>,
@@ -226,12 +234,13 @@ async fn create_user(
     }
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, IntoParams)]
 struct NamesQuery {
     #[serde(default)]
     ids: String,
 }
 
+#[utoipa::path(get, path = "/system/user/names", tag = "user", params(NamesQuery), responses((status = 200)))]
 async fn resolve_names(State(st): State<AppState>, Query(q): Query<NamesQuery>) -> Response {
     let ids: Vec<String> = q
         .ids
@@ -252,12 +261,13 @@ pub fn oidc_router(oidc: OidcLoginUseCase) -> Router {
         .with_state(oidc)
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, IntoParams)]
 struct AuthorizeQuery {
     #[serde(default)]
     state: String,
 }
 
+#[utoipa::path(get, path = "/auth/oidc/{provider}/authorize", tag = "auth", params(("provider" = String, Path), AuthorizeQuery), responses((status = 302), (status = 404)))]
 async fn oidc_authorize(
     State(uc): State<OidcLoginUseCase>,
     Path(provider): Path<String>,
@@ -269,7 +279,7 @@ async fn oidc_authorize(
     }
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, IntoParams)]
 struct CallbackQuery {
     code: String,
     #[serde(default)]
@@ -277,6 +287,7 @@ struct CallbackQuery {
     state: String,
 }
 
+#[utoipa::path(get, path = "/auth/oidc/{provider}/callback", tag = "auth", params(("provider" = String, Path), CallbackQuery), responses((status = 200), (status = 401)))]
 async fn oidc_callback(
     State(uc): State<OidcLoginUseCase>,
     Path(provider): Path<String>,
@@ -316,7 +327,7 @@ pub fn org_router(svc: OrganizationService, sessions: Arc<dyn SessionStore>) -> 
         .with_state(OrgState { svc, sessions })
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 struct OrgResponse {
     id: String,
@@ -338,7 +349,7 @@ fn org_err_response(e: OrgCmdError) -> Response {
     }
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, ToSchema)]
 struct OrgBody {
     name: String,
     #[serde(default = "default_true")]
@@ -348,6 +359,7 @@ fn default_true() -> bool {
     true
 }
 
+#[utoipa::path(post, path = "/organization", tag = "organization", request_body = OrgBody, responses((status = 201, body = OrgResponse), (status = 409)), security(("bearer" = [])))]
 async fn create_org(user: AuthUser, State(st): State<OrgState>, Json(req): Json<OrgBody>) -> Response {
     if !user.can("ORGANIZATION", "ADD") {
         return (StatusCode::FORBIDDEN, "permission denied").into_response();
@@ -358,7 +370,7 @@ async fn create_org(user: AuthUser, State(st): State<OrgState>, Json(req): Json<
     }
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, IntoParams)]
 #[serde(rename_all = "camelCase")]
 struct OrgListQuery {
     #[serde(default = "one")]
@@ -373,7 +385,7 @@ fn ten() -> u32 {
     10
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 struct OrgPage {
     total: u64,
@@ -383,6 +395,7 @@ struct OrgPage {
     items: Vec<OrgResponse>,
 }
 
+#[utoipa::path(get, path = "/organization", tag = "organization", params(OrgListQuery), responses((status = 200, body = OrgPage)), security(("bearer" = [])))]
 async fn list_orgs(user: AuthUser, State(st): State<OrgState>, Query(q): Query<OrgListQuery>) -> Response {
     if !user.can("ORGANIZATION", "READ") {
         return (StatusCode::FORBIDDEN, "permission denied").into_response();
@@ -407,6 +420,7 @@ async fn list_orgs(user: AuthUser, State(st): State<OrgState>, Query(q): Query<O
     }
 }
 
+#[utoipa::path(get, path = "/organization/{id}", tag = "organization", params(("id" = String, Path)), responses((status = 200, body = OrgResponse), (status = 404)), security(("bearer" = [])))]
 async fn get_org(user: AuthUser, State(st): State<OrgState>, Path(id): Path<String>) -> Response {
     if !user.can("ORGANIZATION", "READ") {
         return (StatusCode::FORBIDDEN, "permission denied").into_response();
@@ -417,6 +431,7 @@ async fn get_org(user: AuthUser, State(st): State<OrgState>, Path(id): Path<Stri
     }
 }
 
+#[utoipa::path(put, path = "/organization/{id}", tag = "organization", params(("id" = String, Path)), request_body = OrgBody, responses((status = 200, body = OrgResponse), (status = 404)), security(("bearer" = [])))]
 async fn update_org(
     user: AuthUser,
     State(st): State<OrgState>,
@@ -432,6 +447,7 @@ async fn update_org(
     }
 }
 
+#[utoipa::path(delete, path = "/organization/{id}", tag = "organization", params(("id" = String, Path)), responses((status = 204), (status = 404)), security(("bearer" = [])))]
 async fn delete_org(user: AuthUser, State(st): State<OrgState>, Path(id): Path<String>) -> Response {
     if !user.can("ORGANIZATION", "DELETE") {
         return (StatusCode::FORBIDDEN, "permission denied").into_response();
@@ -468,7 +484,7 @@ pub fn role_router(
         .with_state(RoleState { roles, grants, sessions })
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 struct RoleResponse {
     id: String,
@@ -490,7 +506,7 @@ fn role_err_response(e: RoleCmdError) -> Response {
     }
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, ToSchema)]
 struct RoleBody {
     name: String,
     #[serde(default)]
@@ -499,6 +515,7 @@ struct RoleBody {
     permissions: Vec<String>,
 }
 
+#[utoipa::path(post, path = "/role", tag = "role", request_body = RoleBody, responses((status = 201, body = RoleResponse), (status = 409)), security(("bearer" = [])))]
 async fn create_role(user: AuthUser, State(st): State<RoleState>, Json(req): Json<RoleBody>) -> Response {
     if !user.can("USER_ROLE", "ADD") {
         return (StatusCode::FORBIDDEN, "permission denied").into_response();
@@ -513,7 +530,7 @@ async fn create_role(user: AuthUser, State(st): State<RoleState>, Json(req): Jso
     }
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 struct RolePage {
     total: u64,
@@ -523,6 +540,7 @@ struct RolePage {
     items: Vec<RoleResponse>,
 }
 
+#[utoipa::path(get, path = "/role", tag = "role", params(OrgListQuery), responses((status = 200, body = RolePage)), security(("bearer" = [])))]
 async fn list_roles(user: AuthUser, State(st): State<RoleState>, Query(q): Query<OrgListQuery>) -> Response {
     if !user.can("USER_ROLE", "READ") {
         return (StatusCode::FORBIDDEN, "permission denied").into_response();
@@ -546,6 +564,7 @@ async fn list_roles(user: AuthUser, State(st): State<RoleState>, Query(q): Query
     }
 }
 
+#[utoipa::path(get, path = "/role/{id}", tag = "role", params(("id" = String, Path)), responses((status = 200, body = RoleResponse), (status = 404)), security(("bearer" = [])))]
 async fn get_role(user: AuthUser, State(st): State<RoleState>, Path(id): Path<String>) -> Response {
     if !user.can("USER_ROLE", "READ") {
         return (StatusCode::FORBIDDEN, "permission denied").into_response();
@@ -556,6 +575,7 @@ async fn get_role(user: AuthUser, State(st): State<RoleState>, Path(id): Path<St
     }
 }
 
+#[utoipa::path(put, path = "/role/{id}", tag = "role", params(("id" = String, Path)), request_body = RoleBody, responses((status = 200, body = RoleResponse), (status = 404)), security(("bearer" = [])))]
 async fn update_role(
     user: AuthUser,
     State(st): State<RoleState>,
@@ -571,6 +591,7 @@ async fn update_role(
     }
 }
 
+#[utoipa::path(delete, path = "/role/{id}", tag = "role", params(("id" = String, Path)), responses((status = 204), (status = 404)), security(("bearer" = [])))]
 async fn delete_role(user: AuthUser, State(st): State<RoleState>, Path(id): Path<String>) -> Response {
     if !user.can("USER_ROLE", "DELETE") {
         return (StatusCode::FORBIDDEN, "permission denied").into_response();
@@ -581,13 +602,14 @@ async fn delete_role(user: AuthUser, State(st): State<RoleState>, Path(id): Path
     }
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 struct GrantBody {
     user_id: String,
     role_id: String,
 }
 
+#[utoipa::path(post, path = "/user-role/grant", tag = "role", request_body = GrantBody, responses((status = 200)), security(("bearer" = [])))]
 async fn grant_role(user: AuthUser, State(st): State<RoleState>, Json(req): Json<GrantBody>) -> Response {
     if !user.can("USER_ROLE", "UPDATE") {
         return (StatusCode::FORBIDDEN, "permission denied").into_response();
@@ -598,6 +620,7 @@ async fn grant_role(user: AuthUser, State(st): State<RoleState>, Json(req): Json
     }
 }
 
+#[utoipa::path(post, path = "/user-role/revoke", tag = "role", request_body = GrantBody, responses((status = 200)), security(("bearer" = [])))]
 async fn revoke_role(user: AuthUser, State(st): State<RoleState>, Json(req): Json<GrantBody>) -> Response {
     if !user.can("USER_ROLE", "UPDATE") {
         return (StatusCode::FORBIDDEN, "permission denied").into_response();
@@ -606,6 +629,23 @@ async fn revoke_role(user: AuthUser, State(st): State<RoleState>, Json(req): Jso
         Ok(()) => StatusCode::NO_CONTENT.into_response(),
         Err(e) => role_err_response(e),
     }
+}
+
+#[derive(OpenApi)]
+#[openapi(
+    paths(
+        login_handler, logout_handler, resolve_names, oidc_authorize, oidc_callback,
+        create_user, list_users, get_user, update_user, delete_user,
+        create_org, list_orgs, get_org, update_org, delete_org,
+        create_role, list_roles, get_role, update_role, delete_role, grant_role, revoke_role
+    ),
+    components(schemas(LoginRequest, LoginResponse, CreateUserRequest, UserResponse, UserPage, UpdateUserBody, OrgResponse, OrgBody, OrgPage, RoleResponse, RoleBody, RolePage, GrantBody)),
+    tags((name = "auth", description = "鉴权"), (name = "user", description = "用户管理"), (name = "organization", description = "组织"), (name = "role", description = "角色 / 授权"))
+)]
+struct ApiDoc;
+
+pub fn openapi() -> utoipa::openapi::OpenApi {
+    ApiDoc::openapi()
 }
 
 #[cfg(test)]

@@ -18,6 +18,7 @@ use crate::application::{
 };
 use crate::domain::{Bug, BugError};
 use serde::{Deserialize, Serialize};
+use utoipa::{OpenApi, ToSchema};
 use webauth::{AuthUser, SessionStore};
 
 #[derive(Clone)]
@@ -44,7 +45,7 @@ pub fn router(
         .with_state(BugState { create, change, sessions })
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 struct BugResponse {
     id: String,
@@ -59,7 +60,7 @@ impl From<Bug> for BugResponse {
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 struct CreateBugRequest {
     project_id: String,
@@ -67,6 +68,7 @@ struct CreateBugRequest {
     initial_status: String,
 }
 
+#[utoipa::path(post, path = "/bug", tag = "bug", request_body = CreateBugRequest, responses((status = 201, body = BugResponse), (status = 400)), security(("bearer" = [])))]
 async fn create_bug(
     user: AuthUser,
     State(st): State<BugState>,
@@ -86,11 +88,12 @@ async fn create_bug(
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 struct ChangeStatusRequest {
     status: String,
 }
 
+#[utoipa::path(post, path = "/bug/{id}/status", tag = "bug", params(("id" = String, Path)), request_body = ChangeStatusRequest, responses((status = 200, body = BugResponse), (status = 404), (status = 409)), security(("bearer" = [])))]
 async fn change_status(
     user: AuthUser,
     State(st): State<BugState>,
@@ -116,6 +119,11 @@ async fn change_status(
         }
     }
 }
+
+#[derive(OpenApi)]
+#[openapi(paths(create_bug, change_status), components(schemas(CreateBugRequest, ChangeStatusRequest, BugResponse)), tags((name = "bug", description = "缺陷管理")))]
+struct ApiDoc;
+pub fn openapi() -> utoipa::openapi::OpenApi { ApiDoc::openapi() }
 
 #[cfg(test)]
 mod tests {
