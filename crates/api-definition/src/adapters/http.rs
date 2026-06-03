@@ -1,0 +1,634 @@
+//! 接口定义上下文的 HTTP 适配器。
+//!
+//! 路由覆盖接口定义 / 用例 / Mock 三聚合的增查。本层只做 DTO 翻译 + 错误码映射,
+//! 校验规则全在 domain/application。RBAC 资源串为 `API_DEFINITION`:写端点需
+//! `API_DEFINITION:ADD`(无令牌→401,缺权限→403),读端点开放。
+//! 错误映射:校验失败→400,接口定义不存在→404,仓储错误→500。
+
+use std::sync::Arc;
+
+use axum::{
+    extract::{FromRef, Path, Query, State},
+    http::StatusCode,
+    response::{IntoResponse, Response},
+    routing::post,
+    Json, Router,
+};
+use crate::application::{
+    AddApiCaseError, AddApiCaseUseCase, AddApiMockError, AddApiMockUseCase,
+    CreateApiDefinitionError, CreateApiDefinitionUseCase, ListApiCasesUseCase,
+    ListApiDefinitionsUseCase, ListApiMocksUseCase,
+};
+use crate::domain::{ApiCase, ApiDefinition, ApiMock, ApiProtocol};
+use crate::ports::ApiDefinitionRepository;
+use serde::{Deserialize, Serialize};
+use utoipa::{IntoParams, OpenApi, ToSchema};
+use webauth::{AuthUser, SessionStore};
+
+#[derive(Clone)]
+struct ApiDefinitionState {
+    create_def: CreateApiDefinitionUseCase,
+    list_def: ListApiDefinitionsUseCase,
+    add_case: AddApiCaseUseCase,
+    list_case: ListApiCasesUseCase,
+    add_mock: AddApiMockUseCase,
+    list_mock: ListApiMocksUseCase,
+    repo: Arc<dyn ApiDefinitionRepository>,
+    sessions: Arc<dyn SessionStore>,
+}
+
+impl FromRef<ApiDefinitionState> for Arc<dyn SessionStore> {
+    fn from_ref(s: &ApiDefinitionState) -> Self {
+        s.sessions.clone()
+    }
+}
+
+/// 装配接口定义上下文的全部路由。内部从仓储构建各用例。
+pub fn router(
+    repo: Arc<dyn ApiDefinitionRepository>,
+    sessions: Arc<dyn SessionStore>,
+) -> Router {
+    let state = ApiDefinitionState {
+        create_def: CreateApiDefinitionUseCase::new(repo.clone()),
+        list_def: ListApiDefinitionsUseCase::new(repo.clone()),
+        add_case: AddApiCaseUseCase::new(repo.clone()),
+        list_case: ListApiCasesUseCase::new(repo.clone()),
+        add_mock: AddApiMockUseCase::new(repo.clone()),
+        list_mock: ListApiMocksUseCase::new(repo.clone()),
+        repo,
+        sessions,
+    };
+    Router::new()
+        .route("/api/definition", post(create_definition).get(list_definitions))
+        .route("/api/definition/{id}", axum::routing::get(get_definition))
+        .route("/api/definition/{id}/case", post(create_case).get(list_cases))
+        .route("/api/definition/{id}/mock", post(create_mock).get(list_mocks))
+        .with_state(state)
+}
+
+// ---------- DTO ----------
+
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+struct ApiDefinitionResponse {
+    id: String,
+    project_id: String,
+    name: String,
+    protocol: String,
+    method: String,
+    path: String,
+    status: String,
+}
+
+impl From<ApiDefinition> for ApiDefinitionResponse {
+    fn from(d: ApiDefinition) -> Self {
+        Self {
+            id: d.id,
+            project_id: d.project_id,
+            name: d.name,
+            protocol: d.protocol.as_str().to_string(),
+            method: d.method,
+            path: d.path,
+            status: d.status.as_str().to_string(),
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+struct ApiDefinitionCreateBody {
+    project_id: String,
+    name: String,
+    #[serde(default)]
+    protocol: Option<String>,
+    #[serde(default)]
+    method: Option<String>,
+    #[serde(default)]
+    path: Option<String>,
+}
+
+#[derive(Debug, Deserialize, IntoParams)]
+#[serde(rename_all = "camelCase")]
+struct DefinitionListQuery {
+    project_id: String,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+struct ApiCaseResponse {
+    id: String,
+    api_definition_id: String,
+    project_id: String,
+    name: String,
+    method: String,
+    url: String,
+    body: Option<String>,
+    assertions: serde_json::Value,
+}
+
+impl From<ApiCase> for ApiCaseResponse {
+    fn from(c: ApiCase) -> Self {
+        Self {
+            id: c.id,
+            api_definition_id: c.api_definition_id,
+            project_id: c.project_id,
+            name: c.name,
+            method: c.method,
+            url: c.url,
+            body: c.body,
+            assertions: c.assertions,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+struct ApiCaseCreateBody {
+    name: String,
+    method: String,
+    url: String,
+    #[serde(default)]
+    body: Option<String>,
+    #[serde(default)]
+    assertions: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+struct ApiMockResponse {
+    id: String,
+    api_definition_id: String,
+    name: String,
+    match_rule: serde_json::Value,
+    response_status: i32,
+    response_body: Option<String>,
+    enabled: bool,
+}
+
+impl From<ApiMock> for ApiMockResponse {
+    fn from(m: ApiMock) -> Self {
+        Self {
+            id: m.id,
+            api_definition_id: m.api_definition_id,
+            name: m.name,
+            match_rule: m.match_rule,
+            response_status: m.response_status,
+            response_body: m.response_body,
+            enabled: m.enabled,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+struct ApiMockCreateBody {
+    name: String,
+    #[serde(default)]
+    match_rule: Option<serde_json::Value>,
+    #[serde(default)]
+    response_status: Option<i32>,
+    #[serde(default)]
+    response_body: Option<String>,
+    #[serde(default)]
+    enabled: Option<bool>,
+}
+
+// ---------- 接口定义 handlers ----------
+
+#[utoipa::path(post, path = "/api/definition", tag = "api-definition", request_body = ApiDefinitionCreateBody, responses((status = 201, body = ApiDefinitionResponse), (status = 400)), security(("bearer" = [])))]
+async fn create_definition(
+    user: AuthUser,
+    State(st): State<ApiDefinitionState>,
+    Json(req): Json<ApiDefinitionCreateBody>,
+) -> Response {
+    if !user.can("API_DEFINITION", "ADD") {
+        return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
+    // 协议缺省 HTTP;非法协议串直接 400(不落到用例)。
+    let protocol = match req.protocol.as_deref() {
+        None => ApiProtocol::Http,
+        Some(s) => match ApiProtocol::parse(s) {
+            Some(p) => p,
+            None => return (StatusCode::BAD_REQUEST, "unknown protocol").into_response(),
+        },
+    };
+    let method = req.method.as_deref().unwrap_or_default();
+    let path = req.path.as_deref().unwrap_or_default();
+    match st.create_def.execute(&req.project_id, &req.name, protocol, method, path).await {
+        Ok(d) => (StatusCode::CREATED, Json(ApiDefinitionResponse::from(d))).into_response(),
+        Err(CreateApiDefinitionError::Validation(_)) => {
+            (StatusCode::BAD_REQUEST, "invalid api definition payload").into_response()
+        }
+        Err(CreateApiDefinitionError::Repo(_)) => {
+            (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response()
+        }
+    }
+}
+
+#[utoipa::path(get, path = "/api/definition", tag = "api-definition", params(DefinitionListQuery), responses((status = 200, body = [ApiDefinitionResponse])))]
+async fn list_definitions(
+    State(st): State<ApiDefinitionState>,
+    Query(q): Query<DefinitionListQuery>,
+) -> Response {
+    match st.list_def.execute(&q.project_id).await {
+        Ok(list) => {
+            let items: Vec<ApiDefinitionResponse> =
+                list.into_iter().map(ApiDefinitionResponse::from).collect();
+            (StatusCode::OK, Json(items)).into_response()
+        }
+        Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
+    }
+}
+
+#[utoipa::path(get, path = "/api/definition/{id}", tag = "api-definition", params(("id" = String, Path)), responses((status = 200, body = ApiDefinitionResponse), (status = 404)))]
+async fn get_definition(
+    State(st): State<ApiDefinitionState>,
+    Path(id): Path<String>,
+) -> Response {
+    // 单条按 id 读取直查仓储(读端点,无需用例编排)。
+    match st.repo.get_definition(&id).await {
+        Ok(Some(d)) => (StatusCode::OK, Json(ApiDefinitionResponse::from(d))).into_response(),
+        Ok(None) => (StatusCode::NOT_FOUND, "api definition not found").into_response(),
+        Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
+    }
+}
+
+// ---------- 用例 handlers ----------
+
+#[utoipa::path(post, path = "/api/definition/{id}/case", tag = "api-definition", params(("id" = String, Path)), request_body = ApiCaseCreateBody, responses((status = 201, body = ApiCaseResponse), (status = 400), (status = 404)), security(("bearer" = [])))]
+async fn create_case(
+    user: AuthUser,
+    State(st): State<ApiDefinitionState>,
+    Path(id): Path<String>,
+    Json(req): Json<ApiCaseCreateBody>,
+) -> Response {
+    if !user.can("API_DEFINITION", "ADD") {
+        return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
+    let assertions = req.assertions.unwrap_or_else(|| serde_json::json!([]));
+    match st.add_case.execute(&id, &req.name, &req.method, &req.url, req.body, assertions).await {
+        Ok(c) => (StatusCode::CREATED, Json(ApiCaseResponse::from(c))).into_response(),
+        Err(AddApiCaseError::NotFound) => {
+            (StatusCode::NOT_FOUND, "api definition not found").into_response()
+        }
+        Err(AddApiCaseError::Validation(_)) => {
+            (StatusCode::BAD_REQUEST, "invalid api case payload").into_response()
+        }
+        Err(AddApiCaseError::Repo(_)) => {
+            (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response()
+        }
+    }
+}
+
+#[utoipa::path(get, path = "/api/definition/{id}/case", tag = "api-definition", params(("id" = String, Path)), responses((status = 200, body = [ApiCaseResponse])))]
+async fn list_cases(State(st): State<ApiDefinitionState>, Path(id): Path<String>) -> Response {
+    match st.list_case.execute(&id).await {
+        Ok(list) => {
+            let items: Vec<ApiCaseResponse> =
+                list.into_iter().map(ApiCaseResponse::from).collect();
+            (StatusCode::OK, Json(items)).into_response()
+        }
+        Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
+    }
+}
+
+// ---------- Mock handlers ----------
+
+#[utoipa::path(post, path = "/api/definition/{id}/mock", tag = "api-definition", params(("id" = String, Path)), request_body = ApiMockCreateBody, responses((status = 201, body = ApiMockResponse), (status = 400), (status = 404)), security(("bearer" = [])))]
+async fn create_mock(
+    user: AuthUser,
+    State(st): State<ApiDefinitionState>,
+    Path(id): Path<String>,
+    Json(req): Json<ApiMockCreateBody>,
+) -> Response {
+    if !user.can("API_DEFINITION", "ADD") {
+        return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
+    let match_rule = req.match_rule.unwrap_or_else(|| serde_json::json!({}));
+    let response_status = req.response_status.unwrap_or(200);
+    let enabled = req.enabled.unwrap_or(true);
+    match st
+        .add_mock
+        .execute(&id, &req.name, match_rule, response_status, req.response_body, enabled)
+        .await
+    {
+        Ok(m) => (StatusCode::CREATED, Json(ApiMockResponse::from(m))).into_response(),
+        Err(AddApiMockError::NotFound) => {
+            (StatusCode::NOT_FOUND, "api definition not found").into_response()
+        }
+        Err(AddApiMockError::Validation(_)) => {
+            (StatusCode::BAD_REQUEST, "invalid api mock payload").into_response()
+        }
+        Err(AddApiMockError::Repo(_)) => {
+            (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response()
+        }
+    }
+}
+
+#[utoipa::path(get, path = "/api/definition/{id}/mock", tag = "api-definition", params(("id" = String, Path)), responses((status = 200, body = [ApiMockResponse])))]
+async fn list_mocks(State(st): State<ApiDefinitionState>, Path(id): Path<String>) -> Response {
+    match st.list_mock.execute(&id).await {
+        Ok(list) => {
+            let items: Vec<ApiMockResponse> =
+                list.into_iter().map(ApiMockResponse::from).collect();
+            (StatusCode::OK, Json(items)).into_response()
+        }
+        Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
+    }
+}
+
+#[derive(OpenApi)]
+#[openapi(
+    paths(
+        create_definition,
+        list_definitions,
+        get_definition,
+        create_case,
+        list_cases,
+        create_mock,
+        list_mocks
+    ),
+    components(schemas(
+        ApiDefinitionCreateBody,
+        ApiDefinitionResponse,
+        ApiCaseCreateBody,
+        ApiCaseResponse,
+        ApiMockCreateBody,
+        ApiMockResponse
+    )),
+    tags((name = "api-definition", description = "接口定义"))
+)]
+struct ApiDoc;
+pub fn openapi() -> utoipa::openapi::OpenApi {
+    ApiDoc::openapi()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::body::Body;
+    use axum::http::Request;
+    use crate::adapters::InMemoryApiDefinitionRepository;
+    use kernel::permission::PermissionSet;
+    use std::sync::Arc;
+    use tower::ServiceExt;
+    use webauth::testing::InMemorySessionStore;
+
+    /// app + 一个拥有 `API_DEFINITION:READ+ADD` 的令牌。
+    async fn app() -> (Router, String) {
+        let repo = Arc::new(InMemoryApiDefinitionRepository::new());
+        let sessions = Arc::new(InMemorySessionStore::new());
+        let perms =
+            PermissionSet::from_raw(["API_DEFINITION:READ+ADD".to_string()]).expect("perms");
+        let token = sessions.create("admin", perms, 3600).await.expect("token");
+        let r = router(repo, sessions);
+        (r, token)
+    }
+
+    fn post(uri: &str, body: &str, token: Option<&str>) -> Request<Body> {
+        let mut b = Request::builder()
+            .method("POST")
+            .uri(uri)
+            .header("content-type", "application/json");
+        if let Some(t) = token {
+            b = b.header("authorization", format!("Bearer {t}"));
+        }
+        b.body(Body::from(body.to_string())).expect("req")
+    }
+
+    fn get(uri: &str) -> Request<Body> {
+        Request::builder().uri(uri).body(Body::empty()).expect("req")
+    }
+
+    async fn json_body(resp: Response) -> serde_json::Value {
+        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.expect("body");
+        serde_json::from_slice(&bytes).expect("json")
+    }
+
+    async fn create_definition_returns_id(app: &Router, t: &str) -> String {
+        let resp = app
+            .clone()
+            .oneshot(post(
+                "/api/definition",
+                r#"{"projectId":"p1","name":"登录","method":"POST","path":"/login"}"#,
+                Some(t),
+            ))
+            .await
+            .expect("resp");
+        assert_eq!(resp.status(), StatusCode::CREATED);
+        let v = json_body(resp).await;
+        v["id"].as_str().expect("id").to_string()
+    }
+
+    #[tokio::test]
+    async fn create_definition_201() {
+        let (app, t) = app().await;
+        let resp = app
+            .clone()
+            .oneshot(post(
+                "/api/definition",
+                r#"{"projectId":"p1","name":"登录","method":"post","path":"/login"}"#,
+                Some(&t),
+            ))
+            .await
+            .expect("resp");
+        assert_eq!(resp.status(), StatusCode::CREATED);
+        let v = json_body(resp).await;
+        assert_eq!(v["method"], "POST");
+        assert_eq!(v["protocol"], "HTTP");
+        assert_eq!(v["status"], "DRAFT");
+    }
+
+    #[tokio::test]
+    async fn create_definition_without_token_401() {
+        let (app, _t) = app().await;
+        let resp = app
+            .oneshot(post(
+                "/api/definition",
+                r#"{"projectId":"p1","name":"x"}"#,
+                None,
+            ))
+            .await
+            .expect("resp");
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn create_definition_without_permission_403() {
+        let repo = Arc::new(InMemoryApiDefinitionRepository::new());
+        let sessions = Arc::new(InMemorySessionStore::new());
+        let perms = PermissionSet::from_raw(["API_DEFINITION:READ".to_string()]).expect("perms");
+        let token = sessions.create("viewer", perms, 3600).await.expect("token");
+        let app = router(repo, sessions);
+        let resp = app
+            .oneshot(post(
+                "/api/definition",
+                r#"{"projectId":"p1","name":"x","method":"GET"}"#,
+                Some(&token),
+            ))
+            .await
+            .expect("resp");
+        assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn create_definition_invalid_method_400() {
+        let (app, t) = app().await;
+        let resp = app
+            .oneshot(post(
+                "/api/definition",
+                r#"{"projectId":"p1","name":"x","method":"FETCH"}"#,
+                Some(&t),
+            ))
+            .await
+            .expect("resp");
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn create_definition_unknown_protocol_400() {
+        let (app, t) = app().await;
+        let resp = app
+            .oneshot(post(
+                "/api/definition",
+                r#"{"projectId":"p1","name":"x","protocol":"grpc","method":"GET"}"#,
+                Some(&t),
+            ))
+            .await
+            .expect("resp");
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn list_and_get_definition() {
+        let (app, t) = app().await;
+        let id = create_definition_returns_id(&app, &t).await;
+
+        // 列表为读端点,无需令牌
+        let resp = app.clone().oneshot(get("/api/definition?projectId=p1")).await.expect("resp");
+        assert_eq!(resp.status(), StatusCode::OK);
+        let v = json_body(resp).await;
+        assert_eq!(v.as_array().expect("arr").len(), 1);
+
+        // 按 id 取
+        let resp = app
+            .clone()
+            .oneshot(get(&format!("/api/definition/{id}")))
+            .await
+            .expect("resp");
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        // 不存在 404
+        let resp = app.oneshot(get("/api/definition/ghost")).await.expect("resp");
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn add_case_201_and_list() {
+        let (app, t) = app().await;
+        let id = create_definition_returns_id(&app, &t).await;
+        let resp = app
+            .clone()
+            .oneshot(post(
+                &format!("/api/definition/{id}/case"),
+                r#"{"name":"用例","method":"POST","url":"/login","assertions":[]}"#,
+                Some(&t),
+            ))
+            .await
+            .expect("resp");
+        assert_eq!(resp.status(), StatusCode::CREATED);
+        let v = json_body(resp).await;
+        assert_eq!(v["projectId"], "p1");
+
+        let resp = app
+            .oneshot(get(&format!("/api/definition/{id}/case")))
+            .await
+            .expect("resp");
+        assert_eq!(resp.status(), StatusCode::OK);
+        let v = json_body(resp).await;
+        assert_eq!(v.as_array().expect("arr").len(), 1);
+    }
+
+    #[tokio::test]
+    async fn add_case_to_missing_definition_404() {
+        let (app, t) = app().await;
+        let resp = app
+            .oneshot(post(
+                "/api/definition/ghost/case",
+                r#"{"name":"用例","method":"GET","url":"/x"}"#,
+                Some(&t),
+            ))
+            .await
+            .expect("resp");
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn add_case_bad_payload_400() {
+        let (app, t) = app().await;
+        let id = create_definition_returns_id(&app, &t).await;
+        // assertions 不是数组
+        let resp = app
+            .oneshot(post(
+                &format!("/api/definition/{id}/case"),
+                r#"{"name":"用例","method":"GET","url":"/x","assertions":{}}"#,
+                Some(&t),
+            ))
+            .await
+            .expect("resp");
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn add_mock_201_and_list() {
+        let (app, t) = app().await;
+        let id = create_definition_returns_id(&app, &t).await;
+        let resp = app
+            .clone()
+            .oneshot(post(
+                &format!("/api/definition/{id}/mock"),
+                r#"{"name":"挡板","responseStatus":404,"enabled":false}"#,
+                Some(&t),
+            ))
+            .await
+            .expect("resp");
+        assert_eq!(resp.status(), StatusCode::CREATED);
+        let v = json_body(resp).await;
+        assert_eq!(v["responseStatus"], 404);
+        assert_eq!(v["enabled"], false);
+        assert_eq!(v["matchRule"], serde_json::json!({}));
+
+        let resp = app
+            .oneshot(get(&format!("/api/definition/{id}/mock")))
+            .await
+            .expect("resp");
+        assert_eq!(resp.status(), StatusCode::OK);
+        let v = json_body(resp).await;
+        assert_eq!(v.as_array().expect("arr").len(), 1);
+    }
+
+    #[tokio::test]
+    async fn add_mock_bad_status_400() {
+        let (app, t) = app().await;
+        let id = create_definition_returns_id(&app, &t).await;
+        let resp = app
+            .oneshot(post(
+                &format!("/api/definition/{id}/mock"),
+                r#"{"name":"挡板","responseStatus":700}"#,
+                Some(&t),
+            ))
+            .await
+            .expect("resp");
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn add_mock_to_missing_definition_404() {
+        let (app, t) = app().await;
+        let resp = app
+            .oneshot(post("/api/definition/ghost/mock", r#"{"name":"挡板"}"#, Some(&t)))
+            .await
+            .expect("resp");
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    }
+}
