@@ -94,6 +94,7 @@ dependencies = [
  "thiserror",
  "tokio",
  "tower",
+ "utoipa",
 ]
 
 [[package]]
@@ -245,6 +246,7 @@ dependencies = [
  "thiserror",
  "tokio",
  "tower",
+ "utoipa",
  "webauth",
 ]
 
@@ -280,6 +282,7 @@ dependencies = [
  "thiserror",
  "tokio",
  "tower",
+ "utoipa",
  "webauth",
 ]
 
@@ -430,6 +433,7 @@ dependencies = [
  "thiserror",
  "tokio",
  "tower",
+ "utoipa",
  "webauth",
 ]
 
@@ -1353,6 +1357,7 @@ dependencies = [
  "thiserror",
  "tokio",
  "tower",
+ "utoipa",
  "webauth",
 ]
 
@@ -1851,6 +1856,7 @@ dependencies = [
  "thiserror",
  "tokio",
  "tower",
+ "utoipa",
  "webauth",
 ]
 
@@ -2162,6 +2168,7 @@ dependencies = [
  "thiserror",
  "tokio",
  "tower",
+ "utoipa",
  "webauth",
 ]
 
@@ -2179,6 +2186,7 @@ dependencies = [
  "thiserror",
  "tokio",
  "tower",
+ "utoipa",
  "webauth",
 ]
 
@@ -2196,6 +2204,7 @@ dependencies = [
  "thiserror",
  "tokio",
  "tower",
+ "utoipa",
  "webauth",
 ]
 
@@ -2530,6 +2539,7 @@ dependencies = [
  "thiserror",
  "tokio",
  "tower",
+ "utoipa",
  "webauth",
 ]
 

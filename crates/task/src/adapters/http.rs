@@ -15,6 +15,7 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use webauth::{AuthUser, SessionStore};
+use utoipa::{OpenApi, ToSchema};
 
 use crate::application::{
     BreakdownError, BreakdownUseCase, CreateDecompositionError, CreateDecompositionUseCase,
@@ -56,14 +57,15 @@ pub fn router(
 
 // ---- DTO ----
 
-#[derive(Deserialize)]
+#[derive(Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(as = TaskCreateBody)]
 struct CreateBody {
     requirement_id: String,
     requirement_version: u32,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 struct BreakdownBody {
     requirement_id: String,
@@ -75,6 +77,7 @@ struct BreakdownBody {
     acceptance_criteria: Vec<String>,
 }
 
+#[utoipa::path(post, path = "/decomposition/breakdown", tag = "task", request_body = BreakdownBody, responses((status = 201, body = DecompositionResponse), (status = 409)), security(("bearer" = [])))]
 async fn breakdown_requirement(
     user: AuthUser,
     State(st): State<TaskState>,
@@ -100,7 +103,7 @@ async fn breakdown_requirement(
     }
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 struct AddTaskBody {
     title: String,
@@ -112,12 +115,12 @@ struct AddTaskBody {
     dependencies: Vec<String>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, ToSchema)]
 struct StatusBody {
     status: String,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 struct TaskResponse {
     id: String,
@@ -141,7 +144,7 @@ impl From<&Task> for TaskResponse {
     }
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 struct DecompositionResponse {
     id: String,
@@ -165,7 +168,7 @@ impl From<&Decomposition> for DecompositionResponse {
     }
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 struct TaskCreated {
     task_id: String,
@@ -185,6 +188,7 @@ fn cmd_err(e: TaskCmdError) -> Response {
 
 // ---- 处理器 ----
 
+#[utoipa::path(post, path = "/decomposition", tag = "task", request_body = CreateBody, responses((status = 201, body = DecompositionResponse), (status = 409)), security(("bearer" = [])))]
 async fn create_decomposition(user: AuthUser, State(st): State<TaskState>, Json(b): Json<CreateBody>) -> Response {
     if !user.can("TASK", "ADD") {
         return (StatusCode::FORBIDDEN, "permission denied").into_response();
@@ -203,6 +207,7 @@ async fn create_decomposition(user: AuthUser, State(st): State<TaskState>, Json(
     }
 }
 
+#[utoipa::path(get, path = "/decomposition/{id}", tag = "task", params(("id" = String, Path)), responses((status = 200, body = DecompositionResponse), (status = 404)))]
 async fn get_decomposition(State(st): State<TaskState>, Path(id): Path<String>) -> Response {
     match st.admin.get(&id).await {
         Ok(d) => (StatusCode::OK, Json(DecompositionResponse::from(&d))).into_response(),
@@ -210,6 +215,7 @@ async fn get_decomposition(State(st): State<TaskState>, Path(id): Path<String>) 
     }
 }
 
+#[utoipa::path(get, path = "/decomposition/{id}/ready", tag = "task", params(("id" = String, Path)), responses((status = 200, body = [TaskResponse]), (status = 404)))]
 async fn ready_tasks(State(st): State<TaskState>, Path(id): Path<String>) -> Response {
     match st.admin.get(&id).await {
         Ok(d) => {
@@ -220,6 +226,7 @@ async fn ready_tasks(State(st): State<TaskState>, Path(id): Path<String>) -> Res
     }
 }
 
+#[utoipa::path(post, path = "/decomposition/{id}/task", tag = "task", params(("id" = String, Path)), request_body = AddTaskBody, responses((status = 201, body = TaskCreated), (status = 409)), security(("bearer" = [])))]
 async fn add_task(
     user: AuthUser,
     State(st): State<TaskState>,
@@ -235,6 +242,7 @@ async fn add_task(
     }
 }
 
+#[utoipa::path(post, path = "/decomposition/{id}/task/{task_id}/dispatch", tag = "task", params(("id" = String, Path), ("task_id" = String, Path)), responses((status = 200, body = DecompositionResponse), (status = 409)), security(("bearer" = [])))]
 async fn dispatch_task(
     user: AuthUser,
     State(st): State<TaskState>,
@@ -249,6 +257,7 @@ async fn dispatch_task(
     }
 }
 
+#[utoipa::path(post, path = "/decomposition/{id}/task/{task_id}/status", tag = "task", params(("id" = String, Path), ("task_id" = String, Path)), request_body = StatusBody, responses((status = 200, body = DecompositionResponse), (status = 409)), security(("bearer" = [])))]
 async fn transition_task(
     user: AuthUser,
     State(st): State<TaskState>,
@@ -265,6 +274,18 @@ async fn transition_task(
         Ok(d) => (StatusCode::OK, Json(DecompositionResponse::from(&d))).into_response(),
         Err(e) => cmd_err(e),
     }
+}
+
+#[derive(OpenApi)]
+#[openapi(
+    paths(create_decomposition, breakdown_requirement, get_decomposition, ready_tasks, add_task, dispatch_task, transition_task),
+    components(schemas(CreateBody, BreakdownBody, AddTaskBody, StatusBody, TaskResponse, DecompositionResponse, TaskCreated)),
+    tags((name = "task", description = "任务拆分 DAG"))
+)]
+struct ApiDoc;
+
+pub fn openapi() -> utoipa::openapi::OpenApi {
+    ApiDoc::openapi()
 }
 
 #[cfg(test)]

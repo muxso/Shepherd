@@ -61,6 +61,7 @@ pub fn router(
 
 #[derive(Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(as = RequirementCreateBody)]
 struct CreateBody {
     project_id: String,
     title: String,

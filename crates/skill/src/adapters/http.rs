@@ -12,6 +12,7 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use webauth::{AuthUser, SessionStore};
+use utoipa::{IntoParams, OpenApi, ToSchema};
 
 use crate::application::{CreateSkillError, CreateSkillUseCase, SkillCmdError, SkillService};
 use crate::domain::Skill;
@@ -41,8 +42,9 @@ pub fn router(
         .with_state(SkillState { create, admin, sessions })
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(as = SkillCreateBody)]
 struct CreateBody {
     project_id: String,
     name: String,
@@ -53,7 +55,7 @@ struct CreateBody {
     includes: Vec<String>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 struct UpdateBody {
     name: String,
@@ -69,20 +71,20 @@ fn tru() -> bool {
     true
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, IntoParams)]
 #[serde(rename_all = "camelCase")]
 struct ListQuery {
     project_id: String,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 struct ComposeBody {
     project_id: String,
     skill_ids: Vec<String>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 struct SkillResponse {
     id: String,
@@ -108,7 +110,7 @@ impl From<&Skill> for SkillResponse {
     }
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 struct ComposeResponse {
     skill_ids: Vec<String>,
@@ -125,6 +127,7 @@ fn cmd_err(e: SkillCmdError) -> Response {
     }
 }
 
+#[utoipa::path(post, path = "/skill", tag = "skill", request_body = CreateBody, responses((status = 201, body = SkillResponse), (status = 409)), security(("bearer" = [])))]
 async fn create_skill(user: AuthUser, State(st): State<SkillState>, Json(b): Json<CreateBody>) -> Response {
     if !user.can("SKILL", "ADD") {
         return (StatusCode::FORBIDDEN, "permission denied").into_response();
@@ -137,6 +140,7 @@ async fn create_skill(user: AuthUser, State(st): State<SkillState>, Json(b): Jso
     }
 }
 
+#[utoipa::path(get, path = "/skill", tag = "skill", params(ListQuery), responses((status = 200, body = [SkillResponse])))]
 async fn list_skills(State(st): State<SkillState>, Query(q): Query<ListQuery>) -> Response {
     match st.admin.list(&q.project_id).await {
         Ok(items) => {
@@ -147,6 +151,7 @@ async fn list_skills(State(st): State<SkillState>, Query(q): Query<ListQuery>) -
     }
 }
 
+#[utoipa::path(get, path = "/skill/{id}", tag = "skill", params(("id" = String, Path)), responses((status = 200, body = SkillResponse), (status = 404)))]
 async fn get_skill(State(st): State<SkillState>, Path(id): Path<String>) -> Response {
     match st.admin.get(&id).await {
         Ok(s) => (StatusCode::OK, Json(SkillResponse::from(&s))).into_response(),
@@ -154,6 +159,7 @@ async fn get_skill(State(st): State<SkillState>, Path(id): Path<String>) -> Resp
     }
 }
 
+#[utoipa::path(put, path = "/skill/{id}", tag = "skill", params(("id" = String, Path)), request_body = UpdateBody, responses((status = 200, body = SkillResponse), (status = 409)), security(("bearer" = [])))]
 async fn update_skill(
     user: AuthUser,
     State(st): State<SkillState>,
@@ -169,6 +175,7 @@ async fn update_skill(
     }
 }
 
+#[utoipa::path(delete, path = "/skill/{id}", tag = "skill", params(("id" = String, Path)), responses((status = 204), (status = 404)), security(("bearer" = [])))]
 async fn delete_skill(user: AuthUser, State(st): State<SkillState>, Path(id): Path<String>) -> Response {
     if !user.can("SKILL", "DELETE") {
         return (StatusCode::FORBIDDEN, "permission denied").into_response();
@@ -179,6 +186,7 @@ async fn delete_skill(user: AuthUser, State(st): State<SkillState>, Path(id): Pa
     }
 }
 
+#[utoipa::path(post, path = "/skill/compose", tag = "skill", request_body = ComposeBody, responses((status = 200, body = ComposeResponse), (status = 409)), security(("bearer" = [])))]
 async fn compose(user: AuthUser, State(st): State<SkillState>, Json(b): Json<ComposeBody>) -> Response {
     if !user.can("SKILL", "READ") {
         return (StatusCode::FORBIDDEN, "permission denied").into_response();
@@ -188,6 +196,15 @@ async fn compose(user: AuthUser, State(st): State<SkillState>, Json(b): Json<Com
         Err(e) => cmd_err(e),
     }
 }
+
+#[derive(OpenApi)]
+#[openapi(
+    paths(create_skill, list_skills, compose, get_skill, update_skill, delete_skill),
+    components(schemas(CreateBody, UpdateBody, ComposeBody, SkillResponse, ComposeResponse)),
+    tags((name = "skill", description = "AI Skill 编排"))
+)]
+struct ApiDoc;
+pub fn openapi() -> utoipa::openapi::OpenApi { ApiDoc::openapi() }
 
 #[cfg(test)]
 mod tests {

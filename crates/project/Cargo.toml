@@ -10,12 +10,13 @@ async-trait = "0.1"
 thiserror = "2"
 sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "postgres"], optional = true }
 axum = { version = "0.8", optional = true }
+utoipa = { version = "5", optional = true }
 webauth = { path = "../webauth", optional = true }
 serde = { version = "1", features = ["derive"], optional = true }
 
 [features]
 pg = ["dep:sqlx"]
-http = ["dep:axum", "dep:serde", "dep:webauth", "webauth/http"]
+http = ["dep:axum", "dep:serde", "dep:webauth", "webauth/http", "dep:utoipa"]
 
 [dev-dependencies]
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }

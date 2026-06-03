@@ -14,6 +14,7 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use webauth::{AuthUser, SessionStore};
+use utoipa::{OpenApi, ToSchema};
 
 use crate::application::{
     CreateVerificationError, CreateVerificationUseCase, VerificationCmdError, VerificationService,
@@ -49,8 +50,9 @@ pub fn router(
 
 // ---- DTO ----
 
-#[derive(Deserialize)]
+#[derive(Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(as = VerificationCreateBody)]
 struct CreateBody {
     requirement_id: String,
     requirement_version: u32,
@@ -58,7 +60,7 @@ struct CreateBody {
     criteria: Vec<String>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 struct LinkBody {
     criterion_index: u32,
@@ -66,7 +68,7 @@ struct LinkBody {
     task_id: String,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 struct SyncBody {
     decomposition_id: String,
@@ -74,7 +76,7 @@ struct SyncBody {
     satisfied: bool,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 struct LinkResponse {
     decomposition_id: String,
@@ -82,7 +84,7 @@ struct LinkResponse {
     satisfied: bool,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 struct CriterionResponse {
     index: u32,
@@ -91,7 +93,7 @@ struct CriterionResponse {
     links: Vec<LinkResponse>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 struct VerificationResponse {
     id: String,
@@ -130,7 +132,7 @@ impl From<&Verification> for VerificationResponse {
     }
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 struct GapResponse {
     criterion_index: u32,
@@ -138,7 +140,7 @@ struct GapResponse {
     kind: String,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 struct ReportResponse {
     complete: bool,
@@ -177,6 +179,7 @@ fn cmd_err(e: VerificationCmdError) -> Response {
 
 // ---- 处理器 ----
 
+#[utoipa::path(post, path = "/verification", tag = "verification", request_body = CreateBody, responses((status = 201, body = VerificationResponse), (status = 409)), security(("bearer" = [])))]
 async fn create_verification(user: AuthUser, State(st): State<VerState>, Json(b): Json<CreateBody>) -> Response {
     if !user.can("VERIFICATION", "ADD") {
         return (StatusCode::FORBIDDEN, "permission denied").into_response();
@@ -195,6 +198,7 @@ async fn create_verification(user: AuthUser, State(st): State<VerState>, Json(b)
     }
 }
 
+#[utoipa::path(get, path = "/verification/{id}", tag = "verification", params(("id" = String, Path)), responses((status = 200, body = VerificationResponse), (status = 404)))]
 async fn get_verification(State(st): State<VerState>, Path(id): Path<String>) -> Response {
     match st.admin.get(&id).await {
         Ok(v) => (StatusCode::OK, Json(VerificationResponse::from(&v))).into_response(),
@@ -202,6 +206,7 @@ async fn get_verification(State(st): State<VerState>, Path(id): Path<String>) ->
     }
 }
 
+#[utoipa::path(get, path = "/verification/{id}/report", tag = "verification", params(("id" = String, Path)), responses((status = 200, body = ReportResponse), (status = 404)))]
 async fn get_report(State(st): State<VerState>, Path(id): Path<String>) -> Response {
     match st.admin.report(&id).await {
         Ok(r) => (StatusCode::OK, Json(ReportResponse::from(r))).into_response(),
@@ -209,6 +214,7 @@ async fn get_report(State(st): State<VerState>, Path(id): Path<String>) -> Respo
     }
 }
 
+#[utoipa::path(post, path = "/verification/{id}/link", tag = "verification", params(("id" = String, Path)), request_body = LinkBody, responses((status = 200, body = VerificationResponse), (status = 404)), security(("bearer" = [])))]
 async fn link(
     user: AuthUser,
     State(st): State<VerState>,
@@ -224,6 +230,7 @@ async fn link(
     }
 }
 
+#[utoipa::path(post, path = "/verification/{id}/sync", tag = "verification", params(("id" = String, Path)), request_body = SyncBody, responses((status = 200, body = VerificationResponse), (status = 404)), security(("bearer" = [])))]
 async fn sync_task(
     user: AuthUser,
     State(st): State<VerState>,
@@ -238,6 +245,15 @@ async fn sync_task(
         Err(e) => cmd_err(e),
     }
 }
+
+#[derive(OpenApi)]
+#[openapi(
+    paths(create_verification, get_verification, get_report, link, sync_task),
+    components(schemas(CreateBody, LinkBody, SyncBody, LinkResponse, CriterionResponse, VerificationResponse, GapResponse, ReportResponse)),
+    tags((name = "verification", description = "完整性验证"))
+)]
+struct ApiDoc;
+pub fn openapi() -> utoipa::openapi::OpenApi { ApiDoc::openapi() }
 
 #[cfg(test)]
 mod tests {
