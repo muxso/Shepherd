@@ -23,7 +23,7 @@ struct Cli {
 enum Cmd {
     /// 登录并保存会话。
     Login {
-        #[arg(long, default_value = "http://127.0.0.1:8088")]
+        #[arg(long, default_value = "http://localhost:8088")]
         url: String,
         #[arg(long)]
         user: String,
@@ -281,15 +281,27 @@ fn pretty(v: &Value) {
 
 fn run(cli: Cli) -> R<()> {
     match cli.cmd {
-        Cmd::Login { url, user, password } => {
+        Cmd::Login {
+            url,
+            user,
+            password,
+        } => {
             let mut cfg = Config::load(); // 保留已连接的 agent
             cfg.url = url;
             let client = Client::new(cfg.clone())?;
-            let v = client.post("/auth/login", json!({"username": user, "password": password}), false)?;
+            let v = client.post(
+                "/auth/login",
+                json!({"username": user, "password": password}),
+                false,
+            )?;
             let token = v["token"].as_str().ok_or("登录响应缺少 token")?;
             cfg.token = token.to_string();
             cfg.save()?;
-            println!("✅ 已登录 {} → 会话存于 {}", cfg.url, config_path().display());
+            println!(
+                "✅ 已登录 {} → 会话存于 {}",
+                cfg.url,
+                config_path().display()
+            );
         }
         Cmd::Agent { cmd } => match cmd {
             AgentCmd::Connect { kind } => {
@@ -301,15 +313,29 @@ fn run(cli: Cli) -> R<()> {
                 println!(
                     "✅ 已连接 agent: {executor}  服务 {} {}",
                     cfg.url,
-                    if healthy { "(可达)" } else { "(暂不可达)" }
+                    if healthy {
+                        "(可达)"
+                    } else {
+                        "(暂不可达)"
+                    }
                 );
             }
             AgentCmd::Status => {
                 let cfg = Config::load();
                 let healthy = Client::new(cfg.clone())?.get("/healthz", false).is_ok();
                 println!("服务  : {}", cfg.url);
-                println!("登录  : {}", if cfg.token.is_empty() { "未登录" } else { "已登录" });
-                println!("agent : {}", cfg.agent.as_deref().unwrap_or("(未连接,默认 CLAUDE_CODE)"));
+                println!(
+                    "登录  : {}",
+                    if cfg.token.is_empty() {
+                        "未登录"
+                    } else {
+                        "已登录"
+                    }
+                );
+                println!(
+                    "agent : {}",
+                    cfg.agent.as_deref().unwrap_or("(未连接,默认 CLAUDE_CODE)")
+                );
                 println!("健康  : {}", if healthy { "可达" } else { "不可达" });
             }
             AgentCmd::Disconnect => {
@@ -342,28 +368,50 @@ fn run(cli: Cli) -> R<()> {
         }
         Cmd::Decompose { req, version } => {
             let c = Client::new(Config::load())?;
-            pretty(&c.post("/decomposition", json!({"requirementId": req, "requirementVersion": version}), true)?);
+            pretty(&c.post(
+                "/decomposition",
+                json!({"requirementId": req, "requirementVersion": version}),
+                true,
+            )?);
         }
         Cmd::Task { cmd } => {
             let c = Client::new(Config::load())?;
             match cmd {
-                TaskCmd::Add { decomp, title, deps } => pretty(&c.post(
+                TaskCmd::Add {
+                    decomp,
+                    title,
+                    deps,
+                } => pretty(&c.post(
                     &format!("/decomposition/{decomp}/task"),
                     json!({"title": title, "dependencies": deps}),
                     true,
                 )?),
             }
         }
-        Cmd::Dispatch { decomp, task, title, executor, instructions, project, skills } => {
+        Cmd::Dispatch {
+            decomp,
+            task,
+            title,
+            executor,
+            instructions,
+            project,
+            skills,
+        } => {
             let cfg = Config::load();
             // 执行者:显式 --executor 优先,否则用已连接 agent,再否则默认。
-            let exec = executor.or_else(|| cfg.agent.clone()).unwrap_or_else(|| "CLAUDE_CODE".into());
+            let exec = executor
+                .or_else(|| cfg.agent.clone())
+                .unwrap_or_else(|| "CLAUDE_CODE".into());
             let c = Client::new(cfg)?;
             // 若给了 --skills,先 compose 成行为规范(与 --instructions 合并)。
             let mut instr = instructions;
             if !skills.is_empty() {
                 let project = project.ok_or("--skills 需配合 --project")?;
-                let comp = c.post("/skill/compose", json!({"projectId": project, "skillIds": skills}), true)?;
+                let comp = c.post(
+                    "/skill/compose",
+                    json!({"projectId": project, "skillIds": skills}),
+                    true,
+                )?;
                 let composed = comp["instructions"].as_str().unwrap_or("").to_string();
                 instr = Some(match instr {
                     Some(extra) if !extra.trim().is_empty() => format!("{composed}\n\n{extra}"),
@@ -406,7 +454,6 @@ fn run(cli: Cli) -> R<()> {
     Ok(())
 }
 
-
 fn main() {
     if let Err(e) = run(Cli::parse()) {
         eprintln!("✗ {e}");
@@ -433,14 +480,23 @@ mod tests {
 
     #[test]
     fn url_join_trims_slash() {
-        let c = Client::new(Config { url: "http://h:1/".into(), token: "t".into(), agent: None }).expect("client");
+        let c = Client::new(Config {
+            url: "http://h:1/".into(),
+            token: "t".into(),
+            agent: None,
+        })
+        .expect("client");
         assert_eq!(c.url("/x"), "http://h:1/x");
     }
 
     #[test]
     fn config_defaults_url_when_empty() {
         // 不依赖文件/环境:空配置应回落默认 URL(此处直接验证逻辑)
-        let c = Config { url: String::new(), token: String::new(), agent: None };
+        let c = Config {
+            url: String::new(),
+            token: String::new(),
+            agent: None,
+        };
         assert!(c.url.is_empty());
     }
 }

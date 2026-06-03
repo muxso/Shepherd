@@ -16,6 +16,7 @@ use crate::application::{
 };
 use crate::domain::{Plan, PlanType, ROOT_GROUP};
 use serde::{Deserialize, Serialize};
+use utoipa::{OpenApi, ToSchema};
 use webauth::{AuthUser, SessionStore};
 
 #[derive(Clone)]
@@ -42,7 +43,7 @@ pub fn router(
         .with_state(PlanState { create, stats, sessions })
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 struct CreatePlanRequest {
     project_id: String,
@@ -57,7 +58,7 @@ fn default_group() -> String {
     ROOT_GROUP.to_string()
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 struct PlanResponse {
     id: String,
@@ -80,6 +81,7 @@ impl From<Plan> for PlanResponse {
     }
 }
 
+#[utoipa::path(post, path = "/test-plan", tag = "test-plan", request_body = CreatePlanRequest, responses((status = 201, body = PlanResponse), (status = 400)), security(("bearer" = [])))]
 async fn create_plan(
     user: AuthUser,
     State(st): State<PlanState>,
@@ -105,7 +107,7 @@ async fn create_plan(
     }
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 struct StatisticsResponse {
     status: String,
@@ -115,6 +117,7 @@ struct StatisticsResponse {
     is_pass: bool,
 }
 
+#[utoipa::path(get, path = "/test-plan/{id}/statistics", tag = "test-plan", params(("id" = String, Path)), responses((status = 200, body = StatisticsResponse), (status = 404)))]
 async fn statistics(State(st): State<PlanState>, Path(id): Path<String>) -> Response {
     match st.stats.execute(&id).await {
         Ok(s) => (
@@ -136,6 +139,11 @@ async fn statistics(State(st): State<PlanState>, Path(id): Path<String>) -> Resp
         }
     }
 }
+
+#[derive(OpenApi)]
+#[openapi(paths(create_plan, statistics), components(schemas(CreatePlanRequest, PlanResponse, StatisticsResponse)), tags((name = "test-plan", description = "测试计划")))]
+struct ApiDoc;
+pub fn openapi() -> utoipa::openapi::OpenApi { ApiDoc::openapi() }
 
 #[cfg(test)]
 mod tests {

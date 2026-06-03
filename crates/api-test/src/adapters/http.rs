@@ -13,12 +13,13 @@ use axum::{
 use crate::application::StartBatchRunUseCase;
 use crate::domain::{BatchRunError, BatchRunMode, RunModeConfig};
 use serde::{Deserialize, Serialize};
+use utoipa::{OpenApi, ToSchema};
 
 pub fn router(use_case: StartBatchRunUseCase) -> Router {
     Router::new().route("/api/batch-run", post(batch_run)).with_state(use_case)
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 struct BatchRunRequest {
     project_id: String,
@@ -28,12 +29,13 @@ struct BatchRunRequest {
     pool_id: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 struct BatchRunResponse {
     report_id: String,
 }
 
+#[utoipa::path(post, path = "/api/batch-run", tag = "api-test", request_body = BatchRunRequest, responses((status = 200, body = BatchRunResponse), (status = 400), (status = 409)))]
 async fn batch_run(
     State(uc): State<StartBatchRunUseCase>,
     Json(req): Json<BatchRunRequest>,
@@ -61,6 +63,11 @@ async fn batch_run(
         }
     }
 }
+
+#[derive(OpenApi)]
+#[openapi(paths(batch_run), components(schemas(BatchRunRequest, BatchRunResponse)), tags((name = "api-test", description = "接口批量执行")))]
+struct ApiDoc;
+pub fn openapi() -> utoipa::openapi::OpenApi { ApiDoc::openapi() }
 
 #[cfg(test)]
 mod tests {
