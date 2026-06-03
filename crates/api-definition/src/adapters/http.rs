@@ -16,8 +16,8 @@ use axum::{
 };
 use crate::application::{
     AddApiCaseError, AddApiCaseUseCase, AddApiMockError, AddApiMockUseCase,
-    CreateApiDefinitionError, CreateApiDefinitionUseCase, ListApiCasesUseCase,
-    ListApiDefinitionsUseCase, ListApiMocksUseCase,
+    CreateApiDefinitionError, CreateApiDefinitionUseCase, ImportApiDefinitionsUseCase, ImportError,
+    ListApiCasesUseCase, ListApiDefinitionsUseCase, ListApiMocksUseCase,
 };
 use crate::domain::{ApiCase, ApiDefinition, ApiMock, ApiProtocol};
 use crate::ports::ApiDefinitionRepository;
@@ -33,6 +33,7 @@ struct ApiDefinitionState {
     list_case: ListApiCasesUseCase,
     add_mock: AddApiMockUseCase,
     list_mock: ListApiMocksUseCase,
+    import_def: ImportApiDefinitionsUseCase,
     repo: Arc<dyn ApiDefinitionRepository>,
     sessions: Arc<dyn SessionStore>,
 }
@@ -55,11 +56,13 @@ pub fn router(
         list_case: ListApiCasesUseCase::new(repo.clone()),
         add_mock: AddApiMockUseCase::new(repo.clone()),
         list_mock: ListApiMocksUseCase::new(repo.clone()),
+        import_def: ImportApiDefinitionsUseCase::new(repo.clone()),
         repo,
         sessions,
     };
     Router::new()
         .route("/api/definition", post(create_definition).get(list_definitions))
+        .route("/api/definition/import", post(import_definitions))
         .route("/api/definition/{id}", axum::routing::get(get_definition))
         .route("/api/definition/{id}/case", post(create_case).get(list_cases))
         .route("/api/definition/{id}/mock", post(create_mock).get(list_mocks))
@@ -337,10 +340,60 @@ async fn list_mocks(State(st): State<ApiDefinitionState>, Path(id): Path<String>
     }
 }
 
+// ---------- 导入 handler ----------
+
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+struct ImportBody {
+    project_id: String,
+    /// OpenAPI 3.x / Swagger 2.0 文档(JSON)。
+    content: serde_json::Value,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+struct ImportResultResponse {
+    created: Vec<ApiDefinitionResponse>,
+    skipped: usize,
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/definition/import",
+    tag = "api-definition",
+    request_body = ImportBody,
+    responses((status = 201, body = ImportResultResponse), (status = 400)),
+    security(("bearer" = []))
+)]
+async fn import_definitions(
+    user: AuthUser,
+    State(st): State<ApiDefinitionState>,
+    Json(req): Json<ImportBody>,
+) -> Response {
+    if !user.can("API_DEFINITION", "ADD") {
+        return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
+    match st.import_def.execute(&req.project_id, &req.content).await {
+        Ok(out) => {
+            let created: Vec<ApiDefinitionResponse> =
+                out.created.into_iter().map(ApiDefinitionResponse::from).collect();
+            (StatusCode::CREATED, Json(ImportResultResponse { created, skipped: out.skipped }))
+                .into_response()
+        }
+        Err(ImportError::Parse(_)) => {
+            (StatusCode::BAD_REQUEST, "unrecognized openapi/swagger document").into_response()
+        }
+        Err(ImportError::Repo(_)) => {
+            (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response()
+        }
+    }
+}
+
 #[derive(OpenApi)]
 #[openapi(
     paths(
         create_definition,
+        import_definitions,
         list_definitions,
         get_definition,
         create_case,
@@ -354,7 +407,9 @@ async fn list_mocks(State(st): State<ApiDefinitionState>, Path(id): Path<String>
         ApiCaseCreateBody,
         ApiCaseResponse,
         ApiMockCreateBody,
-        ApiMockResponse
+        ApiMockResponse,
+        ImportBody,
+        ImportResultResponse
     )),
     tags((name = "api-definition", description = "接口定义"))
 )]
