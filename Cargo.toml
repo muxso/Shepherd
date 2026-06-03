@@ -24,6 +24,7 @@ members = [
     "crates/skill",
     "crates/api-definition",
     "crates/api-scenario",
+    "crates/environment",
     "crates/shepherd-cli",
 ]
 

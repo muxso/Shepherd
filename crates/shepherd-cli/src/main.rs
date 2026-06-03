@@ -528,6 +528,9 @@ enum ApidefCmd {
         url: String,
         #[arg(long)]
         body: Option<String>,
+        /// 期望状态码:给定即生成 StatusIs 断言(决定用例成功/失败);省略则空断言(恒成功)。
+        #[arg(long = "expect-status")]
+        expect_status: Option<u16>,
     },
     /// 列出定义下的接口用例。
     Cases {
@@ -548,6 +551,20 @@ enum ApidefCmd {
         url: String,
         #[arg(long)]
         body: Option<String>,
+        /// 期望状态码:给定即生成 StatusIs 断言(决定用例成功/失败);省略则空断言(恒成功)。
+        #[arg(long = "expect-status")]
+        expect_status: Option<u16>,
+    },
+    /// 为项目内每个接口定义批量生成「成功(期望 2xx)+ 失败(期望 401)」用例,并各建一条场景串联两者。
+    GenSuite {
+        #[arg(long)]
+        project: String,
+        /// 用例请求的基础 URL(拼到 OpenAPI path 前)。
+        #[arg(long, default_value = "http://localhost:8088")]
+        base: String,
+        /// 仅生成用例,不建场景。
+        #[arg(long = "no-scenario", default_value_t = false)]
+        no_scenario: bool,
     },
     /// 分页列出项目内接口用例(独立视图)。
     CaseList {
@@ -752,6 +769,15 @@ impl Client {
 
 fn pretty(v: &Value) {
     println!("{}", serde_json::to_string_pretty(v).unwrap_or_default());
+}
+
+/// 把期望状态码翻成 runner 认得的断言数组(`[{"type":"StatusIs","args":N}]`);
+/// 省略 → 空断言(无失败项 → 恒判 Success)。
+fn status_assertions(expect_status: Option<u16>) -> Value {
+    match expect_status {
+        Some(code) => json!([{ "type": "StatusIs", "args": code }]),
+        None => json!([]),
+    }
 }
 
 fn run(cli: Cli) -> R<()> {
@@ -1098,19 +1124,22 @@ fn run(cli: Cli) -> R<()> {
                     pretty(&c.get(&format!("/api/definition?projectId={project}"), true)?)
                 }
                 ApidefCmd::Get { id } => pretty(&c.get(&format!("/api/definition/{id}"), true)?),
-                ApidefCmd::Case { def, name, method, url, body } => pretty(&c.post(
+                ApidefCmd::Case { def, name, method, url, body, expect_status } => pretty(&c.post(
                     &format!("/api/definition/{def}/case"),
-                    json!({"name": name, "method": method, "url": url, "body": body, "assertions": []}),
+                    json!({"name": name, "method": method, "url": url, "body": body, "assertions": status_assertions(expect_status)}),
                     true,
                 )?),
                 ApidefCmd::Cases { def } => {
                     pretty(&c.get(&format!("/api/definition/{def}/case"), true)?)
                 }
-                ApidefCmd::CaseNew { project, def, name, method, url, body } => pretty(&c.post(
+                ApidefCmd::CaseNew { project, def, name, method, url, body, expect_status } => pretty(&c.post(
                     "/api/case",
-                    json!({"projectId": project, "apiDefinitionId": def, "name": name, "method": method, "url": url, "body": body, "assertions": []}),
+                    json!({"projectId": project, "apiDefinitionId": def, "name": name, "method": method, "url": url, "body": body, "assertions": status_assertions(expect_status)}),
                     true,
                 )?),
+                ApidefCmd::GenSuite { project, base, no_scenario } => {
+                    gen_suite(&c, &project, base.trim_end_matches('/'), no_scenario)?
+                }
                 ApidefCmd::CaseList { project, current, page_size } => pretty(&c.get(
                     &format!("/api/case?projectId={project}&current={current}&pageSize={page_size}"),
                     true,
@@ -1166,6 +1195,101 @@ fn run(cli: Cli) -> R<()> {
             }
         }
     }
+    Ok(())
+}
+
+/// 为项目内每个接口定义生成「成功 + 失败」两条用例,并(默认)各建一条场景串联两者。
+///
+/// 设计:
+///  - 成功用例:断言文档化成功码(POST→201,其余→200),代表正常路径预期。
+///  - 失败用例:断言 401(未授权),代表负向路径预期。
+/// 实际执行时(无凭证)受保护接口多返回 401,会如实回写各自 SUCCESS/ERROR,演示执行闭环。
+fn gen_suite(c: &Client, project: &str, base: &str, no_scenario: bool) -> R<()> {
+    let defs = c.get(&format!("/api/definition?projectId={project}"), true)?;
+    let list = defs.as_array().ok_or("接口定义列表不是数组")?;
+    if list.is_empty() {
+        return Err("项目内没有接口定义,先 `apidef import`".into());
+    }
+    let (mut cases, mut scenarios, mut steps, mut failed) = (0u32, 0u32, 0u32, 0u32);
+    for d in list {
+        let def_id = d["id"].as_str().unwrap_or_default();
+        let name = d["name"].as_str().unwrap_or("(unnamed)");
+        let method = d["method"].as_str().unwrap_or("GET").to_uppercase();
+        let path = d["path"].as_str().unwrap_or("");
+        let url = format!("{base}{path}");
+        let success_code = if method == "POST" { 201 } else { 200 };
+
+        // 成功 + 失败两条用例(挂到定义下,可被批量/场景运行)。
+        let mk_case = |label: &str, code: u16| {
+            c.post(
+                "/api/case",
+                json!({
+                    "projectId": project,
+                    "apiDefinitionId": def_id,
+                    "name": format!("{name} [{label}]"),
+                    "method": method,
+                    "url": url,
+                    "body": Value::Null,
+                    "assertions": [{"type": "StatusIs", "args": code}],
+                }),
+                true,
+            )
+        };
+        let ok = match mk_case(&format!("成功·期望{success_code}"), success_code) {
+            Ok(v) => v,
+            Err(e) => {
+                eprintln!("✗ {name}: 成功用例创建失败:{e}");
+                failed += 1;
+                continue;
+            }
+        };
+        let bad = match mk_case("失败·期望401", 401) {
+            Ok(v) => v,
+            Err(e) => {
+                eprintln!("✗ {name}: 失败用例创建失败:{e}");
+                failed += 1;
+                continue;
+            }
+        };
+        cases += 2;
+        let (ok_id, bad_id) = (
+            ok["id"].as_str().unwrap_or_default().to_string(),
+            bad["id"].as_str().unwrap_or_default().to_string(),
+        );
+
+        if no_scenario {
+            continue;
+        }
+        // 每个接口一条场景:顺序串联「成功 → 失败」两步(引用模式)。
+        let sc = match c.post(
+            "/api/scenario",
+            json!({"projectId": project, "name": format!("{name} 场景")}),
+            true,
+        ) {
+            Ok(v) => v,
+            Err(e) => {
+                eprintln!("✗ {name}: 场景创建失败:{e}");
+                failed += 1;
+                continue;
+            }
+        };
+        let sc_id = sc["id"].as_str().unwrap_or_default();
+        scenarios += 1;
+        for (order, ref_id) in [(1, &ok_id), (2, &bad_id)] {
+            match c.post(
+                &format!("/api/scenario/{sc_id}/step"),
+                json!({"kind": "CASE", "refMode": "REFERENCE", "order": order, "refId": ref_id}),
+                true,
+            ) {
+                Ok(_) => steps += 1,
+                Err(e) => eprintln!("✗ {name}: 步骤{order}添加失败:{e}"),
+            }
+        }
+    }
+    println!(
+        "✅ 生成完成:{} 个接口 → {cases} 条用例、{scenarios} 条场景、{steps} 个步骤(失败 {failed})",
+        list.len()
+    );
     Ok(())
 }
 

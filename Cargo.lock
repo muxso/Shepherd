@@ -524,6 +524,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "environment"
+version = "0.0.1"
+dependencies = [
+ "async-trait",
+ "axum",
+ "kernel",
+ "migrate",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "thiserror",
+ "tokio",
+ "tower",
+ "utoipa",
+ "webauth",
+]
+
+[[package]]
 name = "equivalent"
 version = "1.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1791,6 +1809,7 @@ dependencies = [
  "bug",
  "case",
  "delivery",
+ "environment",
  "mcp",
  "migrate",
  "orchestrator",
