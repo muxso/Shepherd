@@ -9,8 +9,8 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use crate::ports::{
-    BatchExecutorPort, DispatchOutcome, DispatchSpec, PortError, ResourcePoolPort, RunTask,
-    TaskDispatcher,
+    BatchExecutorPort, DispatchOutcome, DispatchReport, DispatchSpec, PortError, ResourcePoolPort,
+    RunTask, TaskDispatcher,
 };
 use sqlx::{PgPool, Row};
 
@@ -84,7 +84,7 @@ impl PgBatchReportExecutor {
 
 #[async_trait]
 impl BatchExecutorPort for PgBatchReportExecutor {
-    async fn dispatch(&self, spec: &DispatchSpec) -> Result<String, PortError> {
+    async fn dispatch(&self, spec: &DispatchSpec) -> Result<DispatchReport, PortError> {
         // 1) 落 PENDING 报告
         let row = sqlx::query(
             "INSERT INTO ms_api_batch_report (pool_id, run_mode, case_count) \
@@ -110,12 +110,12 @@ impl BatchExecutorPort for PgBatchReportExecutor {
             Ok(DispatchOutcome::Accepted) => {
                 // 异步执行器(JMeter):已接受,远端运行中
                 self.set_status(&report_id, "RUNNING").await?;
-                Ok(report_id)
+                Ok(DispatchReport { report_id, status: "RUNNING".to_string() })
             }
             Ok(DispatchOutcome::Completed { status }) => {
                 // 同步执行器(原生 runner):就地跑完,写最终状态
                 self.set_status(&report_id, &status).await?;
-                Ok(report_id)
+                Ok(DispatchReport { report_id, status })
             }
             Err(e) => {
                 // 下发失败:报告标记 DISPATCH_FAILED 并向上报错(不让任务"卡在 PENDING")
@@ -320,16 +320,17 @@ mod tests {
         // 下发成功:报告 RUNNING,且下发器收到带 report_id 的任务
         let spy = SpyDispatcher::new();
         let exec = PgBatchReportExecutor::new(pool.clone(), Arc::new(spy.clone()));
-        let report_id = exec.dispatch(&spec).await.expect("dispatch");
+        let rep = exec.dispatch(&spec).await.expect("dispatch");
+        assert_eq!(rep.status, "RUNNING"); // 回传状态与报告一致
         let row = sqlx::query("SELECT case_count, status FROM ms_api_batch_report WHERE id = $1")
-            .bind(&report_id)
+            .bind(&rep.report_id)
             .fetch_one(&pool)
             .await
             .expect("report row");
         assert_eq!(row.try_get::<i32, _>("case_count").expect("cc"), 2);
         assert_eq!(row.try_get::<String, _>("status").expect("st"), "RUNNING");
         let task = spy.last().expect("dispatched");
-        assert_eq!(task.report_id, report_id); // report_id 透传给执行节点
+        assert_eq!(task.report_id, rep.report_id); // report_id 透传给执行节点
         assert_eq!(task.case_ids.len(), 2);
 
         // 下发失败:报告 DISPATCH_FAILED,且 dispatch 向上报错

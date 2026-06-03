@@ -3,7 +3,7 @@ pub mod batch_run_ports;
 pub mod case_execution_ports;
 
 pub use batch_run_ports::{
-    BatchExecutorPort, DispatchOutcome, DispatchSpec, PortError, ResourcePoolPort, RunTask,
-    TaskDispatcher,
+    BatchExecutorPort, DispatchOutcome, DispatchReport, DispatchSpec, PortError, ResourcePoolPort,
+    RunTask, TaskDispatcher,
 };
 pub use case_execution_ports::{CaseExecutionQueryPort, CaseExecutionRecord};

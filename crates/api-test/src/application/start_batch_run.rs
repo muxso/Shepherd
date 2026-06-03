@@ -11,7 +11,7 @@
 use std::sync::Arc;
 
 use crate::domain::{resolve_effective_pool, BatchRunCommand, BatchRunError, RunModeConfig};
-use crate::ports::{BatchExecutorPort, DispatchSpec, PortError, ResourcePoolPort};
+use crate::ports::{BatchExecutorPort, DispatchReport, DispatchSpec, PortError, ResourcePoolPort};
 
 impl From<PortError> for BatchRunError {
     fn from(e: PortError) -> Self {
@@ -38,7 +38,7 @@ impl StartBatchRunUseCase {
         project_id: &str,
         case_ids: Vec<String>,
         config: RunModeConfig,
-    ) -> Result<String, BatchRunError> {
+    ) -> Result<DispatchReport, BatchRunError> {
         // 1) 命令校验
         let cmd = BatchRunCommand::new(case_ids, config)?;
 
@@ -134,6 +134,7 @@ mod tests {
             .execute("proj1", vec!["c1".into()], config(Some("client-pool")))
             .await
             .expect("ok");
-        assert!(report.starts_with("report-"));
+        assert!(report.report_id.starts_with("report-"));
+        assert_eq!(report.status, "SUCCESS");
     }
 }
