@@ -41,11 +41,120 @@ pub struct ResponseSnapshot {
     pub status: u16,
     pub headers: Vec<(String, String)>,
     pub body: String,
+    /// 请求耗时(毫秒),供 RESPONSE_TIME 断言。执行器测量;构造测试快照时给 0 即可。
+    pub elapsed_ms: u64,
+}
+
+/// 断言匹配操作符(对齐前端 `RequestAssertionCondition`)。SCREAMING_SNAKE 序列化:
+/// `EQUALS` / `NOT_EQUALS` / `CONTAINS` / `GT_OR_EQUALS` / `LENGTH_GT` / `REGEX` / `UNCHECKED` …
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum MatchCondition {
+    Equals,
+    NotEquals,
+    Contains,
+    NotContains,
+    StartWith,
+    EndWith,
+    Empty,
+    NotEmpty,
+    Regex,
+    /// 数值比较(两侧能 parse 为 f64 才成立)。
+    Gt,
+    GtOrEquals,
+    Lt,
+    LtOrEquals,
+    /// 长度比较(actual 的字符数 与 expected 解析出的整数)。
+    LengthEquals,
+    LengthNotEquals,
+    LengthGt,
+    LengthGtOrEquals,
+    LengthLt,
+    LengthLtOrEquals,
+    /// 不校验:恒通过。
+    Unchecked,
+}
+
+impl MatchCondition {
+    /// 用该操作符比较 `actual` 与 `expected`,满足返回 true。
+    pub fn matches(&self, actual: &str, expected: &str) -> bool {
+        use MatchCondition::*;
+        // 数值比较:两侧都能 parse 为 f64。
+        let num = |f: fn(f64, f64) -> bool| match (actual.parse::<f64>(), expected.parse::<f64>()) {
+            (Ok(a), Ok(b)) => f(a, b),
+            _ => false,
+        };
+        // 长度比较:actual 字符数 vs expected 解析出的 usize。
+        let len = |f: fn(usize, usize) -> bool| match expected.trim().parse::<usize>() {
+            Ok(b) => f(actual.chars().count(), b),
+            Err(_) => false,
+        };
+        match self {
+            Unchecked => true,
+            Equals => actual == expected,
+            NotEquals => actual != expected,
+            Contains => actual.contains(expected),
+            NotContains => !actual.contains(expected),
+            StartWith => actual.starts_with(expected),
+            EndWith => actual.ends_with(expected),
+            Empty => actual.is_empty(),
+            NotEmpty => !actual.is_empty(),
+            Regex => regex::Regex::new(expected).map(|re| re.is_match(actual)).unwrap_or(false),
+            Gt => num(|a, b| a > b),
+            GtOrEquals => num(|a, b| a >= b),
+            Lt => num(|a, b| a < b),
+            LtOrEquals => num(|a, b| a <= b),
+            LengthEquals => len(|a, b| a == b),
+            LengthNotEquals => len(|a, b| a != b),
+            LengthGt => len(|a, b| a > b),
+            LengthGtOrEquals => len(|a, b| a >= b),
+            LengthLt => len(|a, b| a < b),
+            LengthLtOrEquals => len(|a, b| a <= b),
+        }
+    }
+}
+
+/// 把前端常见的 JSONPath(`$.a.b` / `$.a[0]` / `$['k']`)规整为 JSON Pointer(`/a/b` / `/a/0` / `/k`)。
+/// 已是 Pointer(以 `/` 开头)则原样返回。仅支持点/下标的简单路径,不支持过滤/通配。
+fn json_path_to_pointer(path: &str) -> String {
+    let p = path.trim();
+    if p.starts_with('/') {
+        return p.to_string();
+    }
+    let p = p.strip_prefix('$').unwrap_or(p);
+    // 把 ['k'] / ["k"] / [n] 统一成 .k / .n
+    let normalized = p
+        .replace("['", ".")
+        .replace("']", "")
+        .replace("[\"", ".")
+        .replace("\"]", "")
+        .replace('[', ".")
+        .replace(']', "");
+    let mut out = String::new();
+    for seg in normalized.split('.') {
+        if seg.is_empty() {
+            continue;
+        }
+        out.push('/');
+        // RFC6901 转义(~ → ~0,/ → ~1)。
+        out.push_str(&seg.replace('~', "~0").replace('/', "~1"));
+    }
+    out
+}
+
+/// 把 JSON 值取成可比较的字符串(字符串原样,其余用紧凑 JSON 文本)。
+fn json_value_to_string(v: &serde_json::Value) -> String {
+    match v {
+        serde_json::Value::String(s) => s.clone(),
+        other => other.to_string(),
+    }
 }
 
 /// 断言种类(对应 JMeter 的 Response Assertion / JSON Assertion)。
 /// 邻接标签(tag+content)以支持基元 newtype 变体如 `StatusIs(u16)`:
 /// `{"type":"StatusIs","args":200}` / `{"type":"JsonFieldEquals","args":{"pointer":..,"expected":..}}`。
+/// 带操作符的新变体(对齐前端 MeterSphere 断言矩阵):
+/// `{"type":"ResponseBody","args":{"condition":"CONTAINS","expected":"ok"}}`。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", content = "args")]
 pub enum Assertion {
@@ -57,6 +166,16 @@ pub enum Assertion {
     HeaderEquals { name: String, value: String },
     /// 响应体按 JSON Pointer(RFC 6901,如 `/data/id`)取值后等于某字符串。
     JsonFieldEquals { pointer: String, expected: String },
+    /// 状态码按操作符匹配(RESPONSE_CODE)。
+    ResponseCode { condition: MatchCondition, expected: String },
+    /// 响应头(名不区分大小写)按操作符匹配(RESPONSE_HEADER)。
+    ResponseHeader { name: String, condition: MatchCondition, expected: String },
+    /// 整个响应体按操作符匹配(RESPONSE_BODY,含 REGEX/CONTAINS 等)。
+    ResponseBody { condition: MatchCondition, expected: String },
+    /// 响应体按 JSONPath 取值后按操作符匹配(JSON_PATH;path 支持 `$.a.b` 或 Pointer)。
+    JsonPath { path: String, condition: MatchCondition, expected: String },
+    /// 响应耗时不超过 max_ms 毫秒(RESPONSE_TIME)。
+    ResponseTime { max_ms: u64 },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -110,6 +229,47 @@ impl Assertion {
                     }
                 }
             }
+            Assertion::ResponseCode { condition, expected } => {
+                let actual = resp.status.to_string();
+                (!condition.matches(&actual, expected)).then(|| {
+                    format!("status {condition:?}: 期望 {expected},实际 {actual}")
+                })
+            }
+            Assertion::ResponseHeader { name, condition, expected } => {
+                let got = resp
+                    .headers
+                    .iter()
+                    .find(|(k, _)| k.eq_ignore_ascii_case(name))
+                    .map(|(_, v)| v.as_str())
+                    .unwrap_or("");
+                (!condition.matches(got, expected)).then(|| {
+                    format!("header {name} {condition:?}: 期望 {expected},实际 {got:?}")
+                })
+            }
+            Assertion::ResponseBody { condition, expected } => {
+                (!condition.matches(&resp.body, expected)).then(|| {
+                    format!("body {condition:?}: 期望 {expected}")
+                })
+            }
+            Assertion::JsonPath { path, condition, expected } => {
+                match serde_json::from_str::<serde_json::Value>(&resp.body) {
+                    Err(_) => Some("body 不是合法 JSON".to_string()),
+                    Ok(v) => {
+                        let pointer = json_path_to_pointer(path);
+                        match v.pointer(&pointer) {
+                            None => Some(format!("json {path}: 路径不存在")),
+                            Some(found) => {
+                                let actual = json_value_to_string(found);
+                                (!condition.matches(&actual, expected)).then(|| {
+                                    format!("json {path} {condition:?}: 期望 {expected},实际 {actual}")
+                                })
+                            }
+                        }
+                    }
+                }
+            }
+            Assertion::ResponseTime { max_ms } => (resp.elapsed_ms > *max_ms)
+                .then(|| format!("耗时: 期望 ≤{max_ms}ms,实际 {}ms", resp.elapsed_ms)),
         }
     }
 }
@@ -168,6 +328,7 @@ mod tests {
             status,
             headers: headers.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect(),
             body: body.to_string(),
+            elapsed_ms: 0,
         }
     }
 
@@ -254,6 +415,184 @@ mod tests {
         let arr: Vec<Assertion> =
             serde_json::from_value(serde_json::json!([{"type":"StatusIs","args":201}])).expect("de");
         assert_eq!(arr, vec![Assertion::StatusIs(201)]);
+    }
+
+    #[test]
+    fn match_condition_string_ops() {
+        use MatchCondition::*;
+        assert!(Equals.matches("ok", "ok"));
+        assert!(NotEquals.matches("ok", "no"));
+        assert!(Contains.matches("hello world", "world"));
+        assert!(NotContains.matches("hello", "x"));
+        assert!(StartWith.matches("hello", "he"));
+        assert!(EndWith.matches("hello", "lo"));
+        assert!(Empty.matches("", "ignored"));
+        assert!(NotEmpty.matches("a", "ignored"));
+        assert!(Unchecked.matches("anything", "whatever"));
+        assert!(Regex.matches("abc123", r"^[a-z]+\d+$"));
+        assert!(!Regex.matches("ABC", r"^\d+$"));
+        // 非法正则 → 不匹配,不 panic
+        assert!(!Regex.matches("x", "("));
+    }
+
+    #[test]
+    fn match_condition_numeric_and_length_ops() {
+        use MatchCondition::*;
+        assert!(Gt.matches("10", "5"));
+        assert!(GtOrEquals.matches("5", "5"));
+        assert!(Lt.matches("3", "9"));
+        assert!(LtOrEquals.matches("9", "9"));
+        // 非数值 → false
+        assert!(!Gt.matches("abc", "5"));
+        // 长度:actual 字符数 vs expected 整数
+        assert!(LengthEquals.matches("abc", "3"));
+        assert!(LengthNotEquals.matches("abc", "4"));
+        assert!(LengthGt.matches("abcd", "3"));
+        assert!(LengthGtOrEquals.matches("abc", "3"));
+        assert!(LengthLt.matches("ab", "3"));
+        assert!(LengthLtOrEquals.matches("abc", "3"));
+        // expected 非整数 → false
+        assert!(!LengthEquals.matches("abc", "x"));
+    }
+
+    #[test]
+    fn match_condition_serde_screaming_snake() {
+        assert_eq!(
+            serde_json::to_value(MatchCondition::GtOrEquals).expect("ser"),
+            serde_json::json!("GT_OR_EQUALS")
+        );
+        assert_eq!(
+            serde_json::to_value(MatchCondition::LengthLtOrEquals).expect("ser"),
+            serde_json::json!("LENGTH_LT_OR_EQUALS")
+        );
+        let c: MatchCondition =
+            serde_json::from_value(serde_json::json!("NOT_CONTAINS")).expect("de");
+        assert_eq!(c, MatchCondition::NotContains);
+    }
+
+    #[test]
+    fn response_code_header_body_assertions() {
+        let r = resp(404, r#"{"msg":"not found"}"#, &[("X-Trace", "abc-123")]);
+        // RESPONSE_CODE 操作符
+        assert_eq!(
+            evaluate(
+                &[Assertion::ResponseCode {
+                    condition: MatchCondition::Equals,
+                    expected: "404".into()
+                }],
+                &r
+            )
+            .outcome,
+            CaseOutcome::Success
+        );
+        // RESPONSE_HEADER 正则
+        assert_eq!(
+            evaluate(
+                &[Assertion::ResponseHeader {
+                    name: "x-trace".into(),
+                    condition: MatchCondition::Regex,
+                    expected: r"^abc-\d+$".into(),
+                }],
+                &r
+            )
+            .outcome,
+            CaseOutcome::Success
+        );
+        // RESPONSE_BODY 包含
+        assert_eq!(
+            evaluate(
+                &[Assertion::ResponseBody {
+                    condition: MatchCondition::Contains,
+                    expected: "not found".into()
+                }],
+                &r
+            )
+            .outcome,
+            CaseOutcome::Success
+        );
+    }
+
+    #[test]
+    fn json_path_assertion_dotted_and_pointer() {
+        let r = resp(200, r#"{"data":{"id":"u1","items":[10,20]}}"#, &[]);
+        // 点式 $.data.id
+        assert_eq!(
+            evaluate(
+                &[Assertion::JsonPath {
+                    path: "$.data.id".into(),
+                    condition: MatchCondition::Equals,
+                    expected: "u1".into()
+                }],
+                &r
+            )
+            .outcome,
+            CaseOutcome::Success
+        );
+        // 下标 $.data.items[1]
+        assert_eq!(
+            evaluate(
+                &[Assertion::JsonPath {
+                    path: "$.data.items[1]".into(),
+                    condition: MatchCondition::Equals,
+                    expected: "20".into()
+                }],
+                &r
+            )
+            .outcome,
+            CaseOutcome::Success
+        );
+        // 路径不存在 → 失败
+        let miss = evaluate(
+            &[Assertion::JsonPath {
+                path: "$.data.ghost".into(),
+                condition: MatchCondition::Equals,
+                expected: "x".into(),
+            }],
+            &r,
+        );
+        assert_eq!(miss.outcome, CaseOutcome::Error);
+    }
+
+    #[test]
+    fn json_path_to_pointer_forms() {
+        assert_eq!(json_path_to_pointer("$.a.b"), "/a/b");
+        assert_eq!(json_path_to_pointer("$.a[0].b"), "/a/0/b");
+        assert_eq!(json_path_to_pointer("$['k'].v"), "/k/v");
+        assert_eq!(json_path_to_pointer("/already/pointer"), "/already/pointer");
+    }
+
+    #[test]
+    fn response_time_assertion() {
+        let mut r = resp(200, "", &[]);
+        r.elapsed_ms = 120;
+        assert_eq!(
+            evaluate(&[Assertion::ResponseTime { max_ms: 200 }], &r).outcome,
+            CaseOutcome::Success
+        );
+        assert_eq!(
+            evaluate(&[Assertion::ResponseTime { max_ms: 100 }], &r).outcome,
+            CaseOutcome::Error
+        );
+    }
+
+    #[test]
+    fn legacy_assertions_still_deserialize() {
+        // 既有数据格式不破:StatusIs / JsonFieldEquals 照常工作
+        let arr: Vec<Assertion> = serde_json::from_value(serde_json::json!([
+            {"type":"StatusIs","args":200},
+            {"type":"JsonFieldEquals","args":{"pointer":"/id","expected":"x"}}
+        ]))
+        .expect("de");
+        assert_eq!(arr.len(), 2);
+        // 新变体序列化形态
+        let a = Assertion::ResponseBody {
+            condition: MatchCondition::Contains,
+            expected: "ok".into(),
+        };
+        assert_eq!(
+            serde_json::to_value(&a).expect("ser"),
+            serde_json::json!({"type":"ResponseBody","args":{"condition":"CONTAINS","expected":"ok"}})
+        );
     }
 
     #[test]
