@@ -58,12 +58,28 @@ impl ReqwestRunner {
 
     /// 执行 + 断言,一步得到用例结果。传输失败也算 Error(带原因)。
     pub async fn run_case(&self, spec: &RequestSpec, assertions: &[Assertion]) -> CaseReport {
+        self.run_case_with_snapshot(spec, assertions).await.0
+    }
+
+    /// 同 [`run_case`](Self::run_case),但额外返回响应快照(供后置 EXTRACT 提取参数)。
+    /// 传输失败时快照为 `None`。
+    pub async fn run_case_with_snapshot(
+        &self,
+        spec: &RequestSpec,
+        assertions: &[Assertion],
+    ) -> (CaseReport, Option<ResponseSnapshot>) {
         match self.execute(spec).await {
-            Ok(snapshot) => evaluate(assertions, &snapshot),
-            Err(RunError::Transport(msg)) => CaseReport {
-                outcome: crate::domain::CaseOutcome::Error,
-                failures: vec![format!("transport: {msg}")],
-            },
+            Ok(snapshot) => {
+                let report = evaluate(assertions, &snapshot);
+                (report, Some(snapshot))
+            }
+            Err(RunError::Transport(msg)) => (
+                CaseReport {
+                    outcome: crate::domain::CaseOutcome::Error,
+                    failures: vec![format!("transport: {msg}")],
+                },
+                None,
+            ),
         }
     }
 }
