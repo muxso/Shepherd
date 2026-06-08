@@ -13,7 +13,7 @@ use async_trait::async_trait;
 use futures::stream::{self, StreamExt};
 use crate::domain::{BatchRunMode, ResolvedEnv};
 use crate::ports::{DispatchOutcome, PortError, RunTask, TaskDispatcher};
-use api_runner::{substitute, Assertion, CaseOutcome, ReqwestRunner, RequestSpec};
+use api_runner::{substitute, Assertion, CaseOutcome, Processor, ReqwestRunner, RequestSpec};
 
 /// 把已解析环境注入一条请求规格:相对 url 拼 base_url、并入默认头(已有同名不覆盖)、
 /// 对 url/headers/body 做 `${var}` 替换。空环境直接返回。纯函数,便于穷举测试。
@@ -48,11 +48,13 @@ fn apply_env(req: &mut RequestSpec, env: &ResolvedEnv) {
 /// 默认并发上限(PARALLEL 模式下同时在跑的用例数)。
 pub const DEFAULT_CONCURRENCY: usize = 8;
 
-/// 一个用例的可执行规格:请求 + 断言。
+/// 一个用例的可执行规格:请求 + 断言 + 前后置处理器。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CaseRunSpec {
     pub request: RequestSpec,
     pub assertions: Vec<Assertion>,
+    /// 前后置处理器(WAIT 前置 sleep、EXTRACT 后置写变量);串行执行时生效。
+    pub processors: Vec<Processor>,
 }
 
 /// 出站端口:按 case_id 取可执行规格(真实实现查 PG 的 ms_api_case)。
@@ -221,6 +223,7 @@ mod tests {
         CaseRunSpec {
             request: RequestSpec { method: HttpMethod::Get, url, headers: vec![], body: None },
             assertions,
+            processors: vec![],
         }
     }
 

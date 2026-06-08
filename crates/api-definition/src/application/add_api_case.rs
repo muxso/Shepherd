@@ -36,6 +36,7 @@ impl AddApiCaseUseCase {
         url: &str,
         body: Option<String>,
         assertions: serde_json::Value,
+        processors: serde_json::Value,
     ) -> Result<ApiCase, AddApiCaseError> {
         // 用例的归属项目以接口定义为准,不由调用方指定,避免错配。
         let def = self
@@ -51,7 +52,8 @@ impl AddApiCaseUseCase {
             url,
             body,
             assertions,
-        )?;
+        )?
+        .with_processors(processors);
         Ok(self.repo.insert_case(&new_case).await?)
     }
 }
@@ -72,7 +74,7 @@ mod tests {
             .expect("ok");
         let uc = AddApiCaseUseCase::new(repo);
         let c = uc
-            .execute(&def.id, "用例", "POST", "/login", None, serde_json::json!([]))
+            .execute(&def.id, "用例", "POST", "/login", None, serde_json::json!([]), serde_json::json!([]))
             .await
             .expect("ok");
         assert_eq!(c.project_id, "p1");
@@ -84,7 +86,7 @@ mod tests {
         let repo = Arc::new(InMemoryApiDefinitionRepository::new());
         let uc = AddApiCaseUseCase::new(repo);
         let err = uc
-            .execute("ghost", "用例", "GET", "/x", None, serde_json::json!([]))
+            .execute("ghost", "用例", "GET", "/x", None, serde_json::json!([]), serde_json::json!([]))
             .await
             .unwrap_err();
         assert_eq!(err, AddApiCaseError::NotFound);
@@ -99,7 +101,7 @@ mod tests {
             .expect("ok");
         let uc = AddApiCaseUseCase::new(repo);
         let err = uc
-            .execute(&def.id, "用例", "GET", "/x", None, serde_json::json!({}))
+            .execute(&def.id, "用例", "GET", "/x", None, serde_json::json!({}), serde_json::json!([]))
             .await
             .unwrap_err();
         assert_eq!(err, AddApiCaseError::Validation(ApiDefinitionError::BadAssertions));

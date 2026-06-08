@@ -190,7 +190,7 @@ impl BatchExecutorPort for PgBatchReportExecutor {
 
 // ---- 用例规格源:供原生 runner 取 ms_api_case 的请求+断言 ----
 use crate::adapters::local::{CaseResultSink, CaseRunSpec, CaseSpecSource};
-use api_runner::{Assertion, HttpMethod, RequestSpec};
+use api_runner::{Assertion, HttpMethod, Processor, RequestSpec};
 
 #[derive(Clone)]
 pub struct PgCaseSpecSource {
@@ -216,11 +216,12 @@ fn parse_method(s: &str) -> HttpMethod {
 #[async_trait]
 impl CaseSpecSource for PgCaseSpecSource {
     async fn spec_of(&self, case_id: &str) -> Result<Option<CaseRunSpec>, PortError> {
-        let row = sqlx::query("SELECT method, url, body, assertions FROM ms_api_case WHERE id = $1")
-            .bind(case_id)
-            .fetch_optional(&self.pool)
-            .await
-            .map_err(map_err)?;
+        let row =
+            sqlx::query("SELECT method, url, body, assertions, processors FROM ms_api_case WHERE id = $1")
+                .bind(case_id)
+                .fetch_optional(&self.pool)
+                .await
+                .map_err(map_err)?;
         let Some(r) = row else { return Ok(None) };
 
         let method: String = r.try_get("method").map_err(map_err)?;
@@ -229,10 +230,14 @@ impl CaseSpecSource for PgCaseSpecSource {
         let assertions_json: serde_json::Value = r.try_get("assertions").map_err(map_err)?;
         let assertions: Vec<Assertion> = serde_json::from_value(assertions_json)
             .map_err(|e| PortError::Backend(format!("bad assertions json: {e}")))?;
+        // 处理器宽容解析:脏数据回落空,不阻断执行。
+        let processors_json: serde_json::Value = r.try_get("processors").map_err(map_err)?;
+        let processors: Vec<Processor> = serde_json::from_value(processors_json).unwrap_or_default();
 
         Ok(Some(CaseRunSpec {
             request: RequestSpec { method: parse_method(&method), url, headers: vec![], body },
             assertions,
+            processors,
         }))
     }
 }
