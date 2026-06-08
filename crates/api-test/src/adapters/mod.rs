@@ -6,6 +6,8 @@ pub use test_doubles::{
 
 #[cfg(feature = "local")]
 pub mod local;
+#[cfg(feature = "local")]
+pub mod plan;
 #[cfg(feature = "pg")]
 pub mod pg;
 #[cfg(feature = "pg")]
