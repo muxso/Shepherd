@@ -12,6 +12,6 @@ pub mod domain;
 
 pub use adapters::ReqwestRunner;
 pub use domain::{
-    evaluate, substitute, Assertion, CaseOutcome, CaseReport, HttpMethod, MatchCondition,
-    RequestSpec, ResponseSnapshot,
+    evaluate, run_extracts, substitute, wait_millis, Assertion, CaseOutcome, CaseReport,
+    ExtractKind, Extractor, HttpMethod, MatchCondition, Processor, RequestSpec, ResponseSnapshot,
 };

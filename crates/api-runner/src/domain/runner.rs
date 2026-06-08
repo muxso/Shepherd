@@ -319,6 +319,82 @@ pub fn evaluate(assertions: &[Assertion], resp: &ResponseSnapshot) -> CaseReport
     CaseReport { outcome, failures }
 }
 
+// ---------- 前后置处理器(EXTRACT 参数提取 / TIME_WAITING 等待) ----------
+
+/// 参数提取方式(对齐前端 `RequestExtractExpressionEnum`)。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum ExtractKind {
+    JsonPath,
+    Regex,
+}
+
+/// 单条提取规则:从响应取值写入变量 `variable`。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Extractor {
+    pub variable: String,
+    pub kind: ExtractKind,
+    /// JSONPath(`$.a.b`/Pointer)或正则(取第 1 捕获组,无组取整体匹配)。
+    pub expression: String,
+}
+
+impl Extractor {
+    /// 从响应提取 `(变量名, 值)`;取不到返回 None。
+    pub fn extract(&self, resp: &ResponseSnapshot) -> Option<(String, String)> {
+        let value = match self.kind {
+            ExtractKind::JsonPath => {
+                let v: serde_json::Value = serde_json::from_str(&resp.body).ok()?;
+                let pointer = json_path_to_pointer(&self.expression);
+                json_value_to_string(v.pointer(&pointer)?)
+            }
+            ExtractKind::Regex => {
+                let re = regex::Regex::new(&self.expression).ok()?;
+                let caps = re.captures(&resp.body)?;
+                caps.get(1).or_else(|| caps.get(0))?.as_str().to_string()
+            }
+        };
+        Some((self.variable.clone(), value))
+    }
+}
+
+/// 前/后置处理器(本阶段:等待 + 参数提取;脚本/SQL 留待后续)。
+/// 邻接标签:`{"type":"Wait","args":{"ms":500}}` / `{"type":"Extract","args":{"extractors":[..]}}`。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", content = "args")]
+pub enum Processor {
+    /// 等待固定毫秒(TIME_WAITING / CONSTANT_TIMER)。
+    Wait { ms: u64 },
+    /// 参数提取(EXTRACT):把若干提取结果写入运行上下文变量。
+    Extract { extractors: Vec<Extractor> },
+}
+
+/// 处理器集合里所有 Wait 的总毫秒数(执行器据此 sleep)。**纯函数**。
+pub fn wait_millis(processors: &[Processor]) -> u64 {
+    processors
+        .iter()
+        .map(|p| match p {
+            Processor::Wait { ms } => *ms,
+            _ => 0,
+        })
+        .sum()
+}
+
+/// 对响应跑所有 Extract 处理器,产出 `(变量名, 值)` 列表(按出现顺序)。**纯函数**。
+pub fn run_extracts(processors: &[Processor], resp: &ResponseSnapshot) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    for p in processors {
+        if let Processor::Extract { extractors } = p {
+            for e in extractors {
+                if let Some(kv) = e.extract(resp) {
+                    out.push(kv);
+                }
+            }
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -593,6 +669,76 @@ mod tests {
             serde_json::to_value(&a).expect("ser"),
             serde_json::json!({"type":"ResponseBody","args":{"condition":"CONTAINS","expected":"ok"}})
         );
+    }
+
+    #[test]
+    fn extractor_jsonpath_and_regex() {
+        let r = resp(200, r#"{"data":{"token":"tok-42","n":7}}"#, &[]);
+        let jp = Extractor {
+            variable: "tk".into(),
+            kind: ExtractKind::JsonPath,
+            expression: "$.data.token".into(),
+        };
+        assert_eq!(jp.extract(&r), Some(("tk".into(), "tok-42".into())));
+        // 数字取值转字符串
+        let jn = Extractor {
+            variable: "num".into(),
+            kind: ExtractKind::JsonPath,
+            expression: "$.data.n".into(),
+        };
+        assert_eq!(jn.extract(&r), Some(("num".into(), "7".into())));
+        // 正则取第 1 捕获组
+        let rx = Extractor {
+            variable: "id".into(),
+            kind: ExtractKind::Regex,
+            expression: r#""token":"(tok-\d+)""#.into(),
+        };
+        assert_eq!(rx.extract(&r), Some(("id".into(), "tok-42".into())));
+        // 取不到 → None
+        let miss = Extractor {
+            variable: "x".into(),
+            kind: ExtractKind::JsonPath,
+            expression: "$.nope".into(),
+        };
+        assert_eq!(miss.extract(&r), None);
+    }
+
+    #[test]
+    fn processors_wait_and_extract_helpers() {
+        let r = resp(200, r#"{"id":"u9"}"#, &[]);
+        let procs = vec![
+            Processor::Wait { ms: 100 },
+            Processor::Wait { ms: 50 },
+            Processor::Extract {
+                extractors: vec![Extractor {
+                    variable: "uid".into(),
+                    kind: ExtractKind::JsonPath,
+                    expression: "$.id".into(),
+                }],
+            },
+        ];
+        assert_eq!(wait_millis(&procs), 150);
+        assert_eq!(run_extracts(&procs, &r), vec![("uid".to_string(), "u9".to_string())]);
+    }
+
+    #[test]
+    fn processor_serde_shape() {
+        let p = Processor::Extract {
+            extractors: vec![Extractor {
+                variable: "v".into(),
+                kind: ExtractKind::JsonPath,
+                expression: "$.a".into(),
+            }],
+        };
+        assert_eq!(
+            serde_json::to_value(&p).expect("ser"),
+            serde_json::json!({"type":"Extract","args":{"extractors":[
+                {"variable":"v","kind":"JSON_PATH","expression":"$.a"}
+            ]}})
+        );
+        let w: Processor =
+            serde_json::from_value(serde_json::json!({"type":"Wait","args":{"ms":250}})).expect("de");
+        assert_eq!(w, Processor::Wait { ms: 250 });
     }
 
     #[test]
