@@ -12,11 +12,13 @@ pub struct NewApiCase {
     pub url: String,
     pub body: Option<String>,
     pub assertions: serde_json::Value,
+    /// 前后置处理器(EXTRACT/WAIT)JSON 数组;默认空。runner 透传,不在此校验形态。
+    pub processors: serde_json::Value,
 }
 
 impl NewApiCase {
     /// 校验:name/url 非空(trim);method 在 HTTP 方法白名单内并规整大写;
-    /// assertions 必须是 JSON 数组。
+    /// assertions 必须是 JSON 数组。processors 默认空数组(见 [`with_processors`](Self::with_processors))。
     pub fn new(
         api_definition_id: &str,
         project_id: &str,
@@ -46,7 +48,15 @@ impl NewApiCase {
             url: url.to_string(),
             body,
             assertions,
+            processors: serde_json::Value::Array(Vec::new()),
         })
+    }
+
+    /// 附加前后置处理器(非数组则回落空数组,保持存储形态稳定)。
+    pub fn with_processors(mut self, processors: serde_json::Value) -> Self {
+        self.processors =
+            if processors.is_array() { processors } else { serde_json::Value::Array(Vec::new()) };
+        self
     }
 }
 
@@ -61,6 +71,7 @@ pub struct ApiCase {
     pub url: String,
     pub body: Option<String>,
     pub assertions: serde_json::Value,
+    pub processors: serde_json::Value,
 }
 
 #[cfg(test)]

@@ -52,6 +52,7 @@ fn row_to_case(row: &sqlx::postgres::PgRow) -> Result<ApiCase, RepoError> {
         url: row.try_get("url").map_err(map_err)?,
         body: row.try_get("body").map_err(map_err)?,
         assertions: row.try_get("assertions").map_err(map_err)?,
+        processors: row.try_get("processors").map_err(map_err)?,
     })
 }
 
@@ -120,9 +121,9 @@ impl ApiDefinitionRepository for PgApiDefinitionRepository {
     async fn insert_case(&self, c: &NewApiCase) -> Result<ApiCase, RepoError> {
         let row = sqlx::query(
             "INSERT INTO ms_api_case \
-                (api_definition_id, project_id, name, method, url, body, assertions) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7) \
-             RETURNING id, api_definition_id, project_id, name, method, url, body, assertions",
+                (api_definition_id, project_id, name, method, url, body, assertions, processors) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8) \
+             RETURNING id, api_definition_id, project_id, name, method, url, body, assertions, processors",
         )
         .bind(&c.api_definition_id)
         .bind(&c.project_id)
@@ -131,6 +132,7 @@ impl ApiDefinitionRepository for PgApiDefinitionRepository {
         .bind(&c.url)
         .bind(&c.body)
         .bind(&c.assertions)
+        .bind(&c.processors)
         .fetch_one(&self.pool)
         .await
         .map_err(map_err)?;
@@ -139,7 +141,7 @@ impl ApiDefinitionRepository for PgApiDefinitionRepository {
 
     async fn list_cases(&self, api_definition_id: &str) -> Result<Vec<ApiCase>, RepoError> {
         let rows = sqlx::query(
-            "SELECT id, api_definition_id, project_id, name, method, url, body, assertions \
+            "SELECT id, api_definition_id, project_id, name, method, url, body, assertions, processors \
              FROM ms_api_case WHERE api_definition_id = $1",
         )
         .bind(api_definition_id)
@@ -166,7 +168,7 @@ impl ApiDefinitionRepository for PgApiDefinitionRepository {
         limit: u32,
     ) -> Result<Vec<ApiCase>, RepoError> {
         let rows = sqlx::query(
-            "SELECT id, api_definition_id, project_id, name, method, url, body, assertions \
+            "SELECT id, api_definition_id, project_id, name, method, url, body, assertions, processors \
              FROM ms_api_case WHERE project_id = $1 ORDER BY id LIMIT $2 OFFSET $3",
         )
         .bind(project_id)

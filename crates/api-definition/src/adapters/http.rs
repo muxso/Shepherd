@@ -134,6 +134,7 @@ struct ApiCaseResponse {
     url: String,
     body: Option<String>,
     assertions: serde_json::Value,
+    processors: serde_json::Value,
 }
 
 impl From<ApiCase> for ApiCaseResponse {
@@ -147,6 +148,7 @@ impl From<ApiCase> for ApiCaseResponse {
             url: c.url,
             body: c.body,
             assertions: c.assertions,
+            processors: c.processors,
         }
     }
 }
@@ -161,6 +163,9 @@ struct ApiCaseCreateBody {
     body: Option<String>,
     #[serde(default)]
     assertions: Option<serde_json::Value>,
+    /// 前后置处理器(EXTRACT/WAIT)数组;缺省空。
+    #[serde(default)]
+    processors: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -276,7 +281,8 @@ async fn create_case(
         return (StatusCode::FORBIDDEN, "permission denied").into_response();
     }
     let assertions = req.assertions.unwrap_or_else(|| serde_json::json!([]));
-    match st.add_case.execute(&id, &req.name, &req.method, &req.url, req.body, assertions).await {
+    let processors = req.processors.unwrap_or_else(|| serde_json::json!([]));
+    match st.add_case.execute(&id, &req.name, &req.method, &req.url, req.body, assertions, processors).await {
         Ok(c) => (StatusCode::CREATED, Json(ApiCaseResponse::from(c))).into_response(),
         Err(AddApiCaseError::NotFound) => {
             (StatusCode::NOT_FOUND, "api definition not found").into_response()
@@ -317,6 +323,9 @@ struct StandaloneCaseBody {
     body: Option<String>,
     #[serde(default)]
     assertions: Option<serde_json::Value>,
+    /// 前后置处理器(EXTRACT/WAIT)数组;缺省空。
+    #[serde(default)]
+    processors: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Deserialize, IntoParams)]
@@ -356,6 +365,7 @@ async fn create_standalone_case(
         return (StatusCode::FORBIDDEN, "permission denied").into_response();
     }
     let assertions = req.assertions.unwrap_or_else(|| serde_json::json!([]));
+    let processors = req.processors.unwrap_or_else(|| serde_json::json!([]));
     match st
         .create_case
         .execute(
@@ -366,6 +376,7 @@ async fn create_standalone_case(
             &req.url,
             req.body,
             assertions,
+            processors,
         )
         .await
     {
