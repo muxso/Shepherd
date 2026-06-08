@@ -41,6 +41,8 @@ impl ReqwestRunner {
         if let Some(body) = &spec.body {
             req = req.body(body.clone());
         }
+        // 计时覆盖「发送 → 读完响应体」,供 RESPONSE_TIME 断言。
+        let started = std::time::Instant::now();
         let resp = req.send().await.map_err(|e| RunError::Transport(e.to_string()))?;
 
         let status = resp.status().as_u16();
@@ -50,7 +52,8 @@ impl ReqwestRunner {
             .map(|(k, v)| (k.as_str().to_string(), v.to_str().unwrap_or("").to_string()))
             .collect();
         let body = resp.text().await.map_err(|e| RunError::Transport(e.to_string()))?;
-        Ok(ResponseSnapshot { status, headers, body })
+        let elapsed_ms = started.elapsed().as_millis() as u64;
+        Ok(ResponseSnapshot { status, headers, body, elapsed_ms })
     }
 
     /// 执行 + 断言,一步得到用例结果。传输失败也算 Error(带原因)。
