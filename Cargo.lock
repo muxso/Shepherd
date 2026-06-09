@@ -1815,6 +1815,7 @@ name = "server"
 version = "0.0.1"
 dependencies = [
  "api-definition",
+ "api-runner",
  "api-scenario",
  "api-test",
  "async-trait",
