@@ -30,6 +30,9 @@ pub enum ScenarioError {
     /// COPY 模式必须携带快照。
     #[error("copy ref_mode requires a snapshot")]
     MissingSnapshot,
+    /// 控制器载荷不是 JSON 对象。
+    #[error("control step payload must be a json object")]
+    InvalidControl,
     /// 编译时检测到子场景递归成环。
     #[error("cycle detected at scenario: {0}")]
     CycleDetected(String),
@@ -169,7 +172,41 @@ impl InlineRequest {
     }
 }
 
-/// 步骤类型:内联请求 / 引用接口用例 / 引用子场景(可嵌套)。
+/// 逻辑控制器类型(对应前端 ScenarioStepType 的控制器子集)。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ControlKind {
+    /// 循环控制器(定次)。
+    Loop,
+    /// 条件控制器。
+    If,
+    /// 仅一次控制器。
+    Once,
+    /// 等待控制器。
+    Timer,
+}
+
+impl ControlKind {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            ControlKind::Loop => "LOOP",
+            ControlKind::If => "IF",
+            ControlKind::Once => "ONCE",
+            ControlKind::Timer => "TIMER",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        match s.trim().to_uppercase().as_str() {
+            "LOOP" => Some(ControlKind::Loop),
+            "IF" => Some(ControlKind::If),
+            "ONCE" => Some(ControlKind::Once),
+            "TIMER" => Some(ControlKind::Timer),
+            _ => None,
+        }
+    }
+}
+
+/// 步骤类型:内联请求 / 引用接口用例 / 引用子场景 / 逻辑控制器。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StepKind {
     /// 内联请求。
@@ -178,6 +215,8 @@ pub enum StepKind {
     Case { case_id: String },
     /// 引用子场景(可嵌套)。
     Scenario { scenario_id: String },
+    /// 逻辑控制器:类型 + 自包含 JSON 载荷(含子步骤)。落库 kind=控制器类型,inline=载荷。
+    Control { control: ControlKind, payload: serde_json::Value },
 }
 
 impl StepKind {
@@ -187,6 +226,60 @@ impl StepKind {
             StepKind::Request(_) => "REQUEST",
             StepKind::Case { .. } => "CASE",
             StepKind::Scenario { .. } => "SCENARIO",
+            StepKind::Control { control, .. } => control.as_str(),
+        }
+    }
+}
+
+/// 编译产物的计划树节点(中立表示,组装根再转成执行器节点)。
+/// 控制器子步骤本版仅支持叶子(CASE/REQUEST),不嵌套控制器。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PlanStep {
+    Case(String),
+    Request(InlineRequest),
+    Loop { times: u32, body: Vec<PlanStep> },
+    If { variable: String, operator: String, value: String, body: Vec<PlanStep> },
+    Once { body: Vec<PlanStep> },
+    Timer { ms: u64 },
+}
+
+/// 把控制器载荷里的一个子步骤(叶子)解析为 PlanStep。无法识别返回 None。
+fn parse_leaf(v: &serde_json::Value) -> Option<PlanStep> {
+    match v.get("kind").and_then(|k| k.as_str())?.to_uppercase().as_str() {
+        "CASE" => Some(PlanStep::Case(v.get("refId")?.as_str()?.to_string())),
+        "REQUEST" => {
+            let method = v.get("method").and_then(|m| m.as_str()).unwrap_or("GET");
+            let url = v.get("url").and_then(|u| u.as_str()).unwrap_or_default();
+            let body = v.get("body").and_then(|b| b.as_str()).map(String::from);
+            InlineRequest::new(method, url, body).ok().map(PlanStep::Request)
+        }
+        _ => None,
+    }
+}
+
+/// 把控制器(类型 + 载荷)解析为 PlanStep。children 解析失败的叶子被跳过。
+pub fn parse_control(control: ControlKind, payload: &serde_json::Value) -> PlanStep {
+    let body = || -> Vec<PlanStep> {
+        payload
+            .get("children")
+            .and_then(|c| c.as_array())
+            .map(|arr| arr.iter().filter_map(parse_leaf).collect())
+            .unwrap_or_default()
+    };
+    match control {
+        ControlKind::Loop => PlanStep::Loop {
+            times: payload.get("times").and_then(|t| t.as_u64()).unwrap_or(1) as u32,
+            body: body(),
+        },
+        ControlKind::If => PlanStep::If {
+            variable: payload.get("variable").and_then(|v| v.as_str()).unwrap_or_default().to_string(),
+            operator: payload.get("operator").and_then(|v| v.as_str()).unwrap_or("EQUALS").to_string(),
+            value: payload.get("value").and_then(|v| v.as_str()).unwrap_or_default().to_string(),
+            body: body(),
+        },
+        ControlKind::Once => PlanStep::Once { body: body() },
+        ControlKind::Timer => {
+            PlanStep::Timer { ms: payload.get("ms").and_then(|m| m.as_u64()).unwrap_or(0) }
         }
     }
 }
@@ -262,6 +355,12 @@ impl NewScenarioStep {
                     return Err(ScenarioError::EmptyScenarioId);
                 }
             }
+            // 控制器载荷必须是 JSON 对象(具体字段在编译期宽容解析)。
+            StepKind::Control { payload, .. } => {
+                if !payload.is_object() {
+                    return Err(ScenarioError::InvalidControl);
+                }
+            }
         }
         // COPY 模式必须有快照,REFERENCE 可为空。
         if ref_mode == RefMode::Copy && snapshot.is_none() {
@@ -297,7 +396,8 @@ pub fn flatten_step(step: &ScenarioStep) -> Option<RunnableStep> {
     match &step.kind {
         StepKind::Request(req) => Some(RunnableStep::from_request(req.clone())),
         StepKind::Case { case_id } => Some(RunnableStep::from_case(case_id.clone())),
-        StepKind::Scenario { .. } => None,
+        // SCENARIO 需仓储递归;CONTROL 需树形编译——都不在单层展开里。
+        StepKind::Scenario { .. } | StepKind::Control { .. } => None,
     }
 }
 

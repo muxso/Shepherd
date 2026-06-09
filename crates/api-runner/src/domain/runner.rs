@@ -192,8 +192,17 @@ pub struct CaseReport {
 }
 
 impl Assertion {
+    /// 该断言是否需要把响应体解析为 JSON(供 [`evaluate`] 决定是否预解析一次)。
+    fn needs_json(&self) -> bool {
+        matches!(self, Assertion::JsonFieldEquals { .. } | Assertion::JsonPath { .. })
+    }
+
     /// 对单条断言求值,通过返回 None,失败返回 Some(原因)。
-    fn check(&self, resp: &ResponseSnapshot) -> Option<String> {
+    ///
+    /// `json` 是**整批断言共享的一次性解析结果**:存在 JSON 类断言时由 [`evaluate`] 预解析,
+    /// `Some(v)` 为解析成功的值,`None` 表示 body 非合法 JSON(JSON 类断言据此直接判失败)。
+    /// 非 JSON 断言忽略该参数。
+    fn check(&self, resp: &ResponseSnapshot, json: Option<&serde_json::Value>) -> Option<String> {
         match self {
             Assertion::StatusIs(want) => (resp.status != *want)
                 .then(|| format!("status: 期望 {want},实际 {}", resp.status)),
@@ -208,27 +217,22 @@ impl Assertion {
                 (got != Some(value.as_str()))
                     .then(|| format!("header {name}: 期望 {value},实际 {got:?}"))
             }
-            Assertion::JsonFieldEquals { pointer, expected } => {
-                let parsed: Result<serde_json::Value, _> = serde_json::from_str(&resp.body);
-                match parsed {
-                    Err(_) => Some("body 不是合法 JSON".to_string()),
-                    Ok(v) => {
-                        let got = v.pointer(pointer);
-                        let matches = match got {
-                            // 字符串值:直接比字符串
-                            Some(serde_json::Value::String(s)) => s == expected,
-                            // 数字/布尔等:把期望也解析为 JSON 做类型化比较(42 == 42,而非 "42")
-                            Some(other) => serde_json::from_str::<serde_json::Value>(expected)
-                                .map(|e| &e == other)
-                                .unwrap_or(false),
-                            None => false,
-                        };
-                        (!matches).then(|| {
-                            format!("json {pointer}: 期望 {expected},实际 {got:?}")
-                        })
-                    }
+            Assertion::JsonFieldEquals { pointer, expected } => match json {
+                None => Some("body 不是合法 JSON".to_string()),
+                Some(v) => {
+                    let got = v.pointer(pointer);
+                    let matches = match got {
+                        // 字符串值:直接比字符串
+                        Some(serde_json::Value::String(s)) => s == expected,
+                        // 数字/布尔等:把期望也解析为 JSON 做类型化比较(42 == 42,而非 "42")
+                        Some(other) => serde_json::from_str::<serde_json::Value>(expected)
+                            .map(|e| &e == other)
+                            .unwrap_or(false),
+                        None => false,
+                    };
+                    (!matches).then(|| format!("json {pointer}: 期望 {expected},实际 {got:?}"))
                 }
-            }
+            },
             Assertion::ResponseCode { condition, expected } => {
                 let actual = resp.status.to_string();
                 (!condition.matches(&actual, expected)).then(|| {
@@ -251,23 +255,21 @@ impl Assertion {
                     format!("body {condition:?}: 期望 {expected}")
                 })
             }
-            Assertion::JsonPath { path, condition, expected } => {
-                match serde_json::from_str::<serde_json::Value>(&resp.body) {
-                    Err(_) => Some("body 不是合法 JSON".to_string()),
-                    Ok(v) => {
-                        let pointer = json_path_to_pointer(path);
-                        match v.pointer(&pointer) {
-                            None => Some(format!("json {path}: 路径不存在")),
-                            Some(found) => {
-                                let actual = json_value_to_string(found);
-                                (!condition.matches(&actual, expected)).then(|| {
-                                    format!("json {path} {condition:?}: 期望 {expected},实际 {actual}")
-                                })
-                            }
+            Assertion::JsonPath { path, condition, expected } => match json {
+                None => Some("body 不是合法 JSON".to_string()),
+                Some(v) => {
+                    let pointer = json_path_to_pointer(path);
+                    match v.pointer(&pointer) {
+                        None => Some(format!("json {path}: 路径不存在")),
+                        Some(found) => {
+                            let actual = json_value_to_string(found);
+                            (!condition.matches(&actual, expected)).then(|| {
+                                format!("json {path} {condition:?}: 期望 {expected},实际 {actual}")
+                            })
                         }
                     }
                 }
-            }
+            },
             Assertion::ResponseTime { max_ms } => (resp.elapsed_ms > *max_ms)
                 .then(|| format!("耗时: 期望 ≤{max_ms}ms,实际 {}ms", resp.elapsed_ms)),
         }
@@ -314,7 +316,15 @@ pub fn substitute(template: &str, vars: &std::collections::BTreeMap<String, Stri
 
 /// 对一组断言求值得到用例结果。**纯函数**:同样输入恒得同样结果。
 pub fn evaluate(assertions: &[Assertion], resp: &ResponseSnapshot) -> CaseReport {
-    let failures: Vec<String> = assertions.iter().filter_map(|a| a.check(resp)).collect();
+    // 仅当存在 JSON 类断言时才把响应体解析**一次**,所有 JSON 断言共享结果,
+    // 避免「每条 JSON 断言各 parse 一遍整个 body」的重复开销。
+    let json = assertions
+        .iter()
+        .any(Assertion::needs_json)
+        .then(|| serde_json::from_str::<serde_json::Value>(&resp.body).ok())
+        .flatten();
+    let failures: Vec<String> =
+        assertions.iter().filter_map(|a| a.check(resp, json.as_ref())).collect();
     let outcome = if failures.is_empty() { CaseOutcome::Success } else { CaseOutcome::Error };
     CaseReport { outcome, failures }
 }
