@@ -27,6 +27,7 @@ utoipa = "5"
 serde_json = "1"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 api-test = { path = "../api-test", features = ["pg", "http", "jmeter", "local"] }
+api-runner = { path = "../api-runner" }
 api-definition = { path = "../api-definition", features = ["pg", "http"] }
 api-scenario = { path = "../api-scenario", features = ["pg", "http"] }
 environment = { path = "../environment", features = ["pg", "http"] }

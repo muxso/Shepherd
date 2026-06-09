@@ -357,7 +357,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let api_pools = Arc::new(PgResourcePool::new(pool.clone()));
     let api_executor = Arc::new(PgBatchReportExecutor::new(pool.clone(), dispatcher));
     let api_envs = Arc::new(api_test::adapters::pg::PgEnvironment::new(pool.clone()));
-    let batch_run_uc = StartBatchRunUseCase::new(api_pools, api_executor, api_envs);
+    let batch_run_uc = StartBatchRunUseCase::new(api_pools, api_executor, api_envs.clone());
     let apitest_routes = api_test::adapters::http::router(batch_run_uc.clone());
     // 用例执行记录(分页读 ms_api_case_result)。
     let case_exec_routes = api_test::adapters::http::executions_router(
@@ -379,9 +379,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Arc::new(api_scenario::adapters::pg::PgApiScenarioRepository::new(pool.clone()));
     let scenario_routes =
         api_scenario::adapters::http::router(scenario_repo.clone(), sessions.clone());
+    // 场景执行走计划树执行器(顺序 + 控制器 + 运行上下文),外层补建报告 + 记录。
+    let plan_executor = api_test::adapters::plan::PlanExecutor::new(
+        Arc::new(PgCaseSpecSource::new(pool.clone())),
+        Arc::new(PgCaseResultSink::new(pool.clone())),
+    );
     let scenario_run_routes = scenario_run::router(
         api_scenario::application::CompileScenarioUseCase::new(scenario_repo.clone()),
-        batch_run_uc,
+        plan_executor,
+        api_envs,
+        api_test::adapters::PgBatchReport::new(pool.clone()),
         api_scenario::application::RecordScenarioExecutionUseCase::new(scenario_repo),
         sessions.clone(),
     );

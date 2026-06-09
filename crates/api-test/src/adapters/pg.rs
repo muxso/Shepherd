@@ -282,6 +282,44 @@ impl CaseResultSink for PgCaseResultSink {
     }
 }
 
+// ---- 批量报告读写:供计划树执行(场景)外层补建报告 + 回写最终状态 ----
+// 计划树执行不经资源池(本地 runner 就地跑),pool_id 落占位 'local'。
+#[derive(Clone)]
+pub struct PgBatchReport {
+    pool: PgPool,
+}
+
+impl PgBatchReport {
+    pub fn new(pool: PgPool) -> Self {
+        Self { pool }
+    }
+
+    /// 落一行 RUNNING 报告,返回 report_id(用例结果按此 report_id 归组)。
+    pub async fn create(&self, run_mode: &str, case_count: i32) -> Result<String, PortError> {
+        let row = sqlx::query(
+            "INSERT INTO ms_api_batch_report (pool_id, run_mode, case_count, status) \
+             VALUES ('local', $1, $2, 'RUNNING') RETURNING id",
+        )
+        .bind(run_mode)
+        .bind(case_count)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(map_err)?;
+        row.try_get("id").map_err(map_err)
+    }
+
+    /// 回写报告最终状态(SUCCESS/ERROR)。
+    pub async fn set_status(&self, report_id: &str, status: &str) -> Result<(), PortError> {
+        sqlx::query("UPDATE ms_api_batch_report SET status = $2 WHERE id = $1")
+            .bind(report_id)
+            .bind(status)
+            .execute(&self.pool)
+            .await
+            .map_err(map_err)?;
+        Ok(())
+    }
+}
+
 // ---- 用例执行记录读模型:按 case_id 倒序分页查 ms_api_case_result ----
 use crate::ports::{CaseExecutionQueryPort, CaseExecutionRecord};
 
