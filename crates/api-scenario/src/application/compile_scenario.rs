@@ -8,7 +8,9 @@
 use std::collections::HashSet;
 use std::sync::Arc;
 
-use crate::domain::{flatten_step, RunnableStep, ScenarioError, StepKind};
+use crate::domain::{
+    flatten_step, parse_control, PlanStep, RunnableStep, ScenarioError, StepKind,
+};
 use crate::ports::{ApiScenarioRepository, RepoError};
 
 use thiserror::Error;
@@ -90,10 +92,61 @@ impl CompileScenarioUseCase {
                         let sub = self.compile_inner(sub_id, visited, depth + 1).await?;
                         out.extend(sub);
                     }
+                    // 控制器不参与旧扁平编译(扁平 RunnableStep 无法表达层级);走 compile_plan。
+                    StepKind::Control { .. } => {}
                 }
             }
 
             // 回溯:离开当前场景,允许它在兄弟分支再次出现(只禁同一路径成环)。
+            visited.remove(scenario_id);
+            Ok(out)
+        })
+    }
+
+    /// 编译为**计划树**(保留控制器层级):CASE/REQUEST → 叶子;CONTROL → 控制器节点
+    /// (子步骤为叶子);SCENARIO → 递归子场景并平铺接上。环/深度检测同 [`execute`]。
+    pub async fn compile_plan(&self, scenario_id: &str) -> Result<Vec<PlanStep>, CompileError> {
+        let mut visited = HashSet::new();
+        self.compile_plan_inner(scenario_id, &mut visited, 0).await
+    }
+
+    fn compile_plan_inner<'a>(
+        &'a self,
+        scenario_id: &'a str,
+        visited: &'a mut HashSet<String>,
+        depth: usize,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Result<Vec<PlanStep>, CompileError>> + Send + 'a>,
+    > {
+        Box::pin(async move {
+            if depth >= MAX_DEPTH {
+                return Err(CompileError::Depth(ScenarioError::MaxDepthExceeded(MAX_DEPTH)));
+            }
+            if !visited.insert(scenario_id.to_string()) {
+                return Err(CompileError::Cycle(ScenarioError::CycleDetected(
+                    scenario_id.to_string(),
+                )));
+            }
+            let scenario = self
+                .repo
+                .get_scenario(scenario_id)
+                .await?
+                .ok_or_else(|| CompileError::NotFound(scenario_id.to_string()))?;
+
+            let mut out = Vec::new();
+            for step in &scenario.steps {
+                match &step.kind {
+                    StepKind::Case { case_id } => out.push(PlanStep::Case(case_id.clone())),
+                    StepKind::Request(req) => out.push(PlanStep::Request(req.clone())),
+                    StepKind::Control { control, payload } => {
+                        out.push(parse_control(*control, payload))
+                    }
+                    StepKind::Scenario { scenario_id: sub_id } => {
+                        let sub = self.compile_plan_inner(sub_id, visited, depth + 1).await?;
+                        out.extend(sub);
+                    }
+                }
+            }
             visited.remove(scenario_id);
             Ok(out)
         })
@@ -138,6 +191,28 @@ mod tests {
         assert_eq!(steps.len(), 2);
         assert!(steps[0].request.is_some());
         assert_eq!(steps[1].case_id.as_deref(), Some("case-1"));
+    }
+
+    #[tokio::test]
+    async fn compile_plan_keeps_controller_hierarchy() {
+        use crate::domain::{ControlKind, PlanStep};
+        let repo = Arc::new(InMemoryApiScenarioRepository::new());
+        let id = new_scenario(&repo, "ctrl").await;
+        add(&repo, &id, 0, StepKind::Case { case_id: "c0".into() }).await;
+        // LOOP 控制器:循环 3 次,子步骤为 CASE c1
+        let payload = serde_json::json!({"times": 3, "children": [{"kind":"CASE","refId":"c1"}]});
+        add(&repo, &id, 1, StepKind::Control { control: ControlKind::Loop, payload }).await;
+
+        let plan = CompileScenarioUseCase::new(repo).compile_plan(&id).await.expect("plan");
+        assert_eq!(plan.len(), 2);
+        assert_eq!(plan[0], PlanStep::Case("c0".into()));
+        match &plan[1] {
+            PlanStep::Loop { times, body } => {
+                assert_eq!(*times, 3);
+                assert_eq!(body, &vec![PlanStep::Case("c1".into())]);
+            }
+            other => panic!("expected Loop, got {other:?}"),
+        }
     }
 
     #[tokio::test]
