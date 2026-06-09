@@ -243,8 +243,12 @@ pub enum PlanStep {
     Timer { ms: u64 },
 }
 
-/// 把控制器载荷里的一个子步骤(叶子)解析为 PlanStep。无法识别返回 None。
-fn parse_leaf(v: &serde_json::Value) -> Option<PlanStep> {
+/// 控制器嵌套深度上限,防止病态深载荷耗尽栈。
+const MAX_CONTROL_DEPTH: usize = 10;
+
+/// 把一个子步骤解析为 PlanStep:叶子(CASE/REQUEST)或**嵌套控制器**(LOOP/IF/ONCE/TIMER)。
+/// 超过深度上限或无法识别 → None(被跳过)。
+fn parse_plan_step(v: &serde_json::Value, depth: usize) -> Option<PlanStep> {
     match v.get("kind").and_then(|k| k.as_str())?.to_uppercase().as_str() {
         "CASE" => Some(PlanStep::Case(v.get("refId")?.as_str()?.to_string())),
         "REQUEST" => {
@@ -253,17 +257,20 @@ fn parse_leaf(v: &serde_json::Value) -> Option<PlanStep> {
             let body = v.get("body").and_then(|b| b.as_str()).map(String::from);
             InlineRequest::new(method, url, body).ok().map(PlanStep::Request)
         }
-        _ => None,
+        other => match ControlKind::parse(other) {
+            // 子步骤本身是控制器:同一对象既带 kind 又是其载荷,递归(深度受限)。
+            Some(ck) if depth < MAX_CONTROL_DEPTH => Some(parse_control_inner(ck, v, depth + 1)),
+            _ => None,
+        },
     }
 }
 
-/// 把控制器(类型 + 载荷)解析为 PlanStep。children 解析失败的叶子被跳过。
-pub fn parse_control(control: ControlKind, payload: &serde_json::Value) -> PlanStep {
+fn parse_control_inner(control: ControlKind, payload: &serde_json::Value, depth: usize) -> PlanStep {
     let body = || -> Vec<PlanStep> {
         payload
             .get("children")
             .and_then(|c| c.as_array())
-            .map(|arr| arr.iter().filter_map(parse_leaf).collect())
+            .map(|arr| arr.iter().filter_map(|c| parse_plan_step(c, depth)).collect())
             .unwrap_or_default()
     };
     match control {
@@ -282,6 +289,11 @@ pub fn parse_control(control: ControlKind, payload: &serde_json::Value) -> PlanS
             PlanStep::Timer { ms: payload.get("ms").and_then(|m| m.as_u64()).unwrap_or(0) }
         }
     }
+}
+
+/// 把控制器(类型 + 载荷)解析为 PlanStep。子步骤可为叶子或嵌套控制器;解析失败的子步骤被跳过。
+pub fn parse_control(control: ControlKind, payload: &serde_json::Value) -> PlanStep {
+    parse_control_inner(control, payload, 1)
 }
 
 /// 已持久化的场景步骤。
@@ -404,6 +416,47 @@ pub fn flatten_step(step: &ScenarioStep) -> Option<RunnableStep> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parse_control_nests_controllers() {
+        // LOOP ×2 内含 IF(make==yes)→ CASE c1
+        let payload = serde_json::json!({
+            "times": 2,
+            "children": [
+                { "kind": "IF", "variable": "make", "operator": "EQUALS", "value": "yes",
+                  "children": [ { "kind": "CASE", "refId": "c1" } ] }
+            ]
+        });
+        let plan = parse_control(ControlKind::Loop, &payload);
+        match plan {
+            PlanStep::Loop { times, body } => {
+                assert_eq!(times, 2);
+                assert_eq!(body.len(), 1);
+                match &body[0] {
+                    PlanStep::If { variable, operator, value, body } => {
+                        assert_eq!(variable, "make");
+                        assert_eq!(operator, "EQUALS");
+                        assert_eq!(value, "yes");
+                        assert_eq!(body, &vec![PlanStep::Case("c1".into())]);
+                    }
+                    other => panic!("expected nested If, got {other:?}"),
+                }
+            }
+            other => panic!("expected Loop, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_control_caps_nesting_depth() {
+        // 构造超深嵌套 LOOP 链,应在上限处停止(不 panic/不爆栈)
+        let mut node = serde_json::json!({ "kind": "CASE", "refId": "leaf" });
+        for _ in 0..50 {
+            node = serde_json::json!({ "kind": "LOOP", "times": 1, "children": [node] });
+        }
+        // 顶层再包一层解析;只要返回且不 panic 即可
+        let plan = parse_control(ControlKind::Loop, &serde_json::json!({"times":1,"children":[node]}));
+        assert!(matches!(plan, PlanStep::Loop { .. }));
+    }
 
     #[test]
     fn status_as_str_and_parse_roundtrip() {
