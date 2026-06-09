@@ -643,11 +643,11 @@ enum ScenarioCmd {
         #[arg(long)]
         id: String,
     },
-    /// 加步骤:kind=request|case|scenario。
+    /// 加步骤:kind=request|case|scenario|loop|if|once|timer。
     Step {
         #[arg(long)]
         scenario: String,
-        /// request | case | scenario。
+        /// request | case | scenario | loop | if | once | timer。
         #[arg(long)]
         kind: String,
         #[arg(long = "ref-mode", default_value = "REFERENCE")]
@@ -664,6 +664,10 @@ enum ScenarioCmd {
         url: Option<String>,
         #[arg(long)]
         body: Option<String>,
+        /// 控制器步骤(loop/if/once/timer)的载荷 JSON,如
+        /// '{"times":3,"children":[{"kind":"CASE","refId":"c1"}]}'。
+        #[arg(long = "control-json")]
+        control_json: Option<String>,
     },
     /// 编译场景为可运行步骤(递归展开子场景)。
     Compile {
@@ -1270,13 +1274,17 @@ fn run(cli: Cli) -> R<()> {
                     pretty(&c.get(&format!("/api/scenario?projectId={project}"), true)?)
                 }
                 ScenarioCmd::Get { id } => pretty(&c.get(&format!("/api/scenario/{id}"), true)?),
-                ScenarioCmd::Step { scenario, kind, ref_mode, order, ref_id, method, url, body } => {
+                ScenarioCmd::Step { scenario, kind, ref_mode, order, ref_id, method, url, body, control_json } => {
                     let mut step = json!({"kind": kind.to_uppercase(), "refMode": ref_mode.to_uppercase(), "order": order});
                     if let Some(r) = ref_id {
                         step["refId"] = json!(r);
                     }
                     if let Some(m) = method {
                         step["request"] = json!({"method": m, "url": url.unwrap_or_default(), "body": body});
+                    }
+                    if let Some(cj) = control_json {
+                        step["control"] = serde_json::from_str(&cj)
+                            .map_err(|e| format!("--control-json 不是合法 JSON: {e}"))?;
                     }
                     pretty(&c.post(&format!("/api/scenario/{scenario}/step"), step, true)?)
                 }
