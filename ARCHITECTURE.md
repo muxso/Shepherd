@@ -320,7 +320,7 @@ JSON,`extract_json` 容忍散文/围栏。**领域/应用对"是否用 AI、用�
 - **不一定要 JMeter,且已走通**:原生 Rust runner `api-runner`(reqwest + 纯函数断言引擎
   StatusIs/BodyContains/HeaderEquals/JsonFieldEquals)经 `api-test` 的 local 适配器
   接成 `TaskDispatcher`:取 `ms_api_case`(`PgCaseSpecSource`,断言存 JSONB)→ reqwest 就地跑 → 聚合 →
-  `DispatchOutcome::Completed{status}`(同步跑完,报告直接最终态)。组装根按 `MS_RUNNER=local` 选它,
+  `DispatchOutcome::Completed{status}`(同步跑完,报告直接最终态)。组装根**默认**选它(`MS_EXECUTOR_URL` 配则走 JMeter,`MS_RUNNER=noop` 才显式占位),
   真库 + stub 目标端到端验证:全过→SUCCESS、含失败→ERROR。`TaskDispatcher` 用 `DispatchOutcome` 区分
   **异步 JMeter(Accepted→RUNNING)** 与 **同步原生(Completed)**,两者并存按需路由;压测留给 JMeter/Goose。
   - **per-case 明细**:每个用例结果(SUCCESS/ERROR + 失败原因)经 `CaseResultSink` 写入 `ms_api_case_result`(JSONB)。
