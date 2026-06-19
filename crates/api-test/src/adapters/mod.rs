@@ -11,7 +11,7 @@ pub mod plan;
 #[cfg(feature = "pg")]
 pub mod pg;
 #[cfg(feature = "pg")]
-pub use pg::{PgBatchReport, PgCaseExecutionQuery, PgEnvironment};
+pub use pg::{PgBatchReport, PgCaseExecutionQuery, PgEnvironment, PgResourcePoolAdmin};
 #[cfg(feature = "http")]
 pub mod http;
 #[cfg(feature = "jmeter")]
