@@ -10,6 +10,8 @@ license.workspace = true
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# 断言操作符 REGEX / 正则体断言用;纯库,无 IO,domain 可用。
+regex = "1"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "net"] }

@@ -18,6 +18,8 @@ kernel = { path = "../kernel" }
 serde_json = "1"
 api-runner = { path = "../api-runner", optional = true }
 futures = { version = "0.3", optional = true }
+# 串行执行 WAIT 处理器需要 sleep;只在 local 执行器启用。
+tokio = { version = "1", features = ["time"], optional = true }
 sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "postgres", "json"], optional = true }
 axum = { version = "0.8", optional = true }
 utoipa = { version = "5", optional = true }
@@ -25,7 +27,7 @@ serde = { version = "1", features = ["derive"], optional = true }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"], optional = true }
 
 [features]
-local = ["dep:api-runner", "dep:futures"]
+local = ["dep:api-runner", "dep:futures", "dep:tokio"]
 pg = ["dep:sqlx", "local"]
 http = ["dep:axum", "dep:serde", "dep:utoipa"]
 jmeter = ["dep:reqwest", "dep:serde"]

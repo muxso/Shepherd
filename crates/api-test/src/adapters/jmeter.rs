@@ -109,6 +109,7 @@ mod tests {
             pool_id: "pool1".into(),
             mode: BatchRunMode::Parallel,
             case_ids: vec!["c1".into(), "c2".into()],
+            env: crate::domain::ResolvedEnv::default(),
         }
     }
 

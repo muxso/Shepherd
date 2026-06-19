@@ -50,13 +50,13 @@ mod tests {
         let create = CreateApiCaseUseCase::new(repo.clone());
         for i in 0..5 {
             create
-                .execute("p1", None, &format!("c{i}"), "GET", "/x", None, serde_json::json!([]))
+                .execute("p1", None, &format!("c{i}"), "GET", "/x", None, serde_json::json!([]), serde_json::json!([]))
                 .await
                 .expect("ok");
         }
         // 另一个项目的用例不应计入
         create
-            .execute("p2", None, "other", "GET", "/x", None, serde_json::json!([]))
+            .execute("p2", None, "other", "GET", "/x", None, serde_json::json!([]), serde_json::json!([]))
             .await
             .expect("ok");
 

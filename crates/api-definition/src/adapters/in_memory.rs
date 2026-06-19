@@ -80,6 +80,7 @@ impl ApiDefinitionRepository for InMemoryApiDefinitionRepository {
             url: c.url.clone(),
             body: c.body.clone(),
             assertions: c.assertions.clone(),
+            processors: c.processors.clone(),
         };
         state.cases.insert(case.id.clone(), case.clone());
         state.case_order.push(case.id.clone());
