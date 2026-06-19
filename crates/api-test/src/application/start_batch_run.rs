@@ -10,8 +10,10 @@
 
 use std::sync::Arc;
 
-use crate::domain::{resolve_effective_pool, BatchRunCommand, BatchRunError, RunModeConfig};
-use crate::ports::{BatchExecutorPort, DispatchReport, DispatchSpec, PortError, ResourcePoolPort};
+use crate::domain::{resolve_effective_pool, BatchRunCommand, BatchRunError, ResolvedEnv, RunModeConfig};
+use crate::ports::{
+    BatchExecutorPort, DispatchReport, DispatchSpec, EnvironmentPort, PortError, ResourcePoolPort,
+};
 
 impl From<PortError> for BatchRunError {
     fn from(e: PortError) -> Self {
@@ -25,11 +27,16 @@ impl From<PortError> for BatchRunError {
 pub struct StartBatchRunUseCase {
     pools: Arc<dyn ResourcePoolPort>,
     executor: Arc<dyn BatchExecutorPort>,
+    envs: Arc<dyn EnvironmentPort>,
 }
 
 impl StartBatchRunUseCase {
-    pub fn new(pools: Arc<dyn ResourcePoolPort>, executor: Arc<dyn BatchExecutorPort>) -> Self {
-        Self { pools, executor }
+    pub fn new(
+        pools: Arc<dyn ResourcePoolPort>,
+        executor: Arc<dyn BatchExecutorPort>,
+        envs: Arc<dyn EnvironmentPort>,
+    ) -> Self {
+        Self { pools, executor, envs }
     }
 
     /// 返回派发后的报告 id。
@@ -52,8 +59,14 @@ impl StartBatchRunUseCase {
             return Err(BatchRunError::ResourcePoolUnavailable { pool_id });
         }
 
-        // 4) 派发
-        let spec = DispatchSpec { case_ids: cmd.case_ids, pool_id, mode: cmd.config.mode };
+        // 4) 解析运行环境(给定 environmentId 才解析;缺失/查无 → 空环境,不注入)
+        let env = match cmd.config.environment_id.as_deref().filter(|s| !s.trim().is_empty()) {
+            Some(id) => self.envs.resolve(id).await?.unwrap_or_default(),
+            None => ResolvedEnv::default(),
+        };
+
+        // 5) 派发
+        let spec = DispatchSpec { case_ids: cmd.case_ids, pool_id, mode: cmd.config.mode, env };
         Ok(self.executor.dispatch(&spec).await?)
     }
 }
@@ -61,15 +74,20 @@ impl StartBatchRunUseCase {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::adapters::{FakeResourcePool, SpyExecutor};
+    use crate::adapters::{FakeEnvironment, FakeResourcePool, SpyExecutor};
     use crate::domain::BatchRunMode;
 
     fn config(pool: Option<&str>) -> RunModeConfig {
-        RunModeConfig { mode: BatchRunMode::Parallel, pool_id: pool.map(str::to_string), retry: None }
+        RunModeConfig {
+            mode: BatchRunMode::Parallel,
+            pool_id: pool.map(str::to_string),
+            retry: None,
+            environment_id: None,
+        }
     }
 
     fn uc(pools: FakeResourcePool, exec: SpyExecutor) -> StartBatchRunUseCase {
-        StartBatchRunUseCase::new(Arc::new(pools), Arc::new(exec))
+        StartBatchRunUseCase::new(Arc::new(pools), Arc::new(exec), Arc::new(FakeEnvironment::new()))
     }
 
     #[tokio::test]
@@ -114,6 +132,24 @@ mod tests {
         let err = uc.execute("proj1", vec!["c1".into()], config(Some("dead-pool"))).await.unwrap_err();
         assert_eq!(err, BatchRunError::ResourcePoolUnavailable { pool_id: "dead-pool".into() });
         assert_eq!(exec.dispatch_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn resolves_environment_into_dispatch_spec() {
+        use crate::adapters::FakeEnvironment;
+        let exec = SpyExecutor::new();
+        let pools = FakeResourcePool::new().with_available("client-pool");
+        let env = ResolvedEnv {
+            base_url: "http://h".into(),
+            headers: vec![("A".into(), "b".into())],
+            variables: Default::default(),
+        };
+        let envs = FakeEnvironment::new().with("e1", env.clone());
+        let uc = StartBatchRunUseCase::new(Arc::new(pools), Arc::new(exec.clone()), Arc::new(envs));
+        let mut cfg = config(Some("client-pool"));
+        cfg.environment_id = Some("e1".into());
+        uc.execute("proj1", vec!["c1".into()], cfg).await.expect("ok");
+        assert_eq!(exec.last_env(), Some(env)); // 环境解析并透传到派发规格
     }
 
     #[tokio::test]

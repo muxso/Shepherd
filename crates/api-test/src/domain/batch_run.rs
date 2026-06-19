@@ -39,6 +39,8 @@ pub struct RunModeConfig {
     pub pool_id: Option<String>,
     /// 失败重试:开启则必须带合法的重试次数。
     pub retry: Option<RetryConfig>,
+    /// 运行所用环境 id;`None`/空表示不注入环境(base_url/默认头/变量)。
+    pub environment_id: Option<String>,
 }
 
 use thiserror::Error;
@@ -109,6 +111,7 @@ mod tests {
             mode: BatchRunMode::Parallel,
             pool_id: pool.map(str::to_string),
             retry: None,
+            environment_id: None,
         }
     }
 
@@ -159,6 +162,7 @@ mod tests {
             mode: BatchRunMode::Serial,
             pool_id: Some("p".into()),
             retry: Some(RetryConfig { times: 0, interval_ms: 100 }),
+            environment_id: None,
         };
         assert_eq!(
             BatchRunCommand::new(vec!["c1".into()], config),

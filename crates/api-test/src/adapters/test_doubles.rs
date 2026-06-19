@@ -8,9 +8,10 @@ use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 
+use crate::domain::ResolvedEnv;
 use crate::ports::{
-    BatchExecutorPort, DispatchOutcome, DispatchReport, DispatchSpec, PortError, ResourcePoolPort,
-    RunTask, TaskDispatcher,
+    BatchExecutorPort, DispatchOutcome, DispatchReport, DispatchSpec, EnvironmentPort, PortError,
+    ResourcePoolPort, RunTask, TaskDispatcher,
 };
 
 /// 可配置的资源池替身:项目默认池映射 + 可用池集合。
@@ -69,6 +70,10 @@ impl SpyExecutor {
     pub fn last_case_count(&self) -> Option<usize> {
         self.dispatches.lock().expect("lock").last().map(|d| d.case_ids.len())
     }
+
+    pub fn last_env(&self) -> Option<ResolvedEnv> {
+        self.dispatches.lock().expect("lock").last().map(|d| d.env.clone())
+    }
 }
 
 #[async_trait]
@@ -114,6 +119,30 @@ impl TaskDispatcher for SpyDispatcher {
             return Err(PortError::Backend("executor node unreachable".into()));
         }
         Ok(DispatchOutcome::Accepted)
+    }
+}
+
+/// 可配置的运行环境替身:environmentId → ResolvedEnv 映射,查无返回 None。
+#[derive(Clone, Default)]
+pub struct FakeEnvironment {
+    envs: HashMap<String, ResolvedEnv>,
+}
+
+impl FakeEnvironment {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn with(mut self, id: &str, env: ResolvedEnv) -> Self {
+        self.envs.insert(id.to_string(), env);
+        self
+    }
+}
+
+#[async_trait]
+impl EnvironmentPort for FakeEnvironment {
+    async fn resolve(&self, environment_id: &str) -> Result<Option<ResolvedEnv>, PortError> {
+        Ok(self.envs.get(environment_id).cloned())
     }
 }
 

@@ -7,22 +7,60 @@
 //!  - **并发执行**:PARALLEL 模式按并发上限并行跑,SERIAL 顺序跑;
 //!  - 聚合为整体状态(任一失败/缺失即 ERROR)→ `DispatchOutcome::Completed { status }`。
 
+use std::collections::BTreeMap;
 use std::sync::Arc;
+use std::time::Duration;
 
 use async_trait::async_trait;
 use futures::stream::{self, StreamExt};
-use crate::domain::BatchRunMode;
+use crate::domain::{BatchRunMode, ResolvedEnv};
 use crate::ports::{DispatchOutcome, PortError, RunTask, TaskDispatcher};
-use api_runner::{Assertion, CaseOutcome, ReqwestRunner, RequestSpec};
+use api_runner::{
+    run_extracts, substitute, wait_millis, Assertion, CaseOutcome, Processor, ReqwestRunner,
+    RequestSpec, ResponseSnapshot,
+};
+
+/// 静态环境注入:相对 url 拼 base_url、并入默认头(已有同名不覆盖)。**不**做变量替换
+/// (替换交给 `substitute_request`,用运行时上下文变量,而非仅环境变量)。
+pub(crate) fn apply_env_static(req: &mut RequestSpec, env: &ResolvedEnv) {
+    // base_url:仅对相对 url 生效(绝对 url 原样)。
+    let is_absolute = req.url.starts_with("http://") || req.url.starts_with("https://");
+    if !env.base_url.is_empty() && !is_absolute {
+        let sep = if req.url.is_empty() || req.url.starts_with('/') { "" } else { "/" };
+        req.url = format!("{}{sep}{}", env.base_url, req.url);
+    }
+    // 默认头:用例已有同名头(忽略大小写)优先,环境只补缺。
+    for (k, v) in &env.headers {
+        if !req.headers.iter().any(|(hk, _)| hk.eq_ignore_ascii_case(k)) {
+            req.headers.push((k.clone(), v.clone()));
+        }
+    }
+}
+
+/// 用运行上下文变量对 url / 各头值 / body 做 `${var}` 替换。空表直接返回。
+pub(crate) fn substitute_request(req: &mut RequestSpec, vars: &BTreeMap<String, String>) {
+    if vars.is_empty() {
+        return;
+    }
+    req.url = substitute(&req.url, vars);
+    for (_, v) in req.headers.iter_mut() {
+        *v = substitute(v, vars);
+    }
+    if let Some(b) = req.body.as_mut() {
+        *b = substitute(b, vars);
+    }
+}
 
 /// 默认并发上限(PARALLEL 模式下同时在跑的用例数)。
 pub const DEFAULT_CONCURRENCY: usize = 8;
 
-/// 一个用例的可执行规格:请求 + 断言。
+/// 一个用例的可执行规格:请求 + 断言 + 前后置处理器。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CaseRunSpec {
     pub request: RequestSpec,
     pub assertions: Vec<Assertion>,
+    /// 前后置处理器(WAIT 前置 sleep、EXTRACT 后置写变量);串行执行时生效。
+    pub processors: Vec<Processor>,
 }
 
 /// 出站端口:按 case_id 取可执行规格(真实实现查 PG 的 ms_api_case)。
@@ -69,20 +107,41 @@ impl LocalRunnerDispatcher {
         self
     }
 
-    /// 跑单个用例:执行 + 判定 + 写明细。返回是否通过。
-    async fn run_one(&self, report_id: &str, case_id: &str) -> Result<bool, PortError> {
-        let (outcome, failures): (&str, Vec<String>) = match self.specs.spec_of(case_id).await? {
+    /// 跑单个用例:静态环境注入 → 变量替换 → WAIT 前置 → 执行判定 → 写明细。
+    /// 返回 `(是否通过, 该用例的处理器, 响应快照)`,后两者供串行 RunContext 做 EXTRACT。
+    async fn run_one(
+        &self,
+        report_id: &str,
+        case_id: &str,
+        env: &ResolvedEnv,
+        vars: &BTreeMap<String, String>,
+    ) -> Result<(bool, Vec<Processor>, Option<ResponseSnapshot>), PortError> {
+        let (outcome, failures, processors, snapshot): (
+            &str,
+            Vec<String>,
+            Vec<Processor>,
+            Option<ResponseSnapshot>,
+        ) = match self.specs.spec_of(case_id).await? {
             Some(spec) => {
-                let report = self.runner.run_case(&spec.request, &spec.assertions).await;
+                let mut req = spec.request;
+                apply_env_static(&mut req, env);
+                substitute_request(&mut req, vars);
+                // WAIT 前置:think-time。
+                let wait = wait_millis(&spec.processors);
+                if wait > 0 {
+                    tokio::time::sleep(Duration::from_millis(wait)).await;
+                }
+                let (report, snap) =
+                    self.runner.run_case_with_snapshot(&req, &spec.assertions).await;
                 match report.outcome {
-                    CaseOutcome::Success => ("SUCCESS", Vec::new()),
-                    CaseOutcome::Error => ("ERROR", report.failures),
+                    CaseOutcome::Success => ("SUCCESS", Vec::new(), spec.processors, snap),
+                    CaseOutcome::Error => ("ERROR", report.failures, spec.processors, snap),
                 }
             }
-            None => ("ERROR", vec![format!("case spec not found: {case_id}")]),
+            None => ("ERROR", vec![format!("case spec not found: {case_id}")], Vec::new(), None),
         };
         self.sink.record(report_id, case_id, outcome, &failures).await?;
-        Ok(outcome == "SUCCESS")
+        Ok((outcome == "SUCCESS", processors, snapshot))
     }
 }
 
@@ -90,22 +149,35 @@ impl LocalRunnerDispatcher {
 impl TaskDispatcher for LocalRunnerDispatcher {
     async fn dispatch_task(&self, task: &RunTask) -> Result<DispatchOutcome, PortError> {
         let results: Vec<Result<bool, PortError>> = match task.mode {
-            // 顺序执行
+            // 顺序执行 + RunContext:环境变量作种子,EXTRACT 后置把提取值写入上下文,
+            // 后续步骤的 ${var} 即可引用(数据驱动/跨步传参)。
             BatchRunMode::Serial => {
+                let mut vars = task.env.variables.clone();
                 let mut v = Vec::with_capacity(task.case_ids.len());
                 for id in &task.case_ids {
-                    v.push(self.run_one(&task.report_id, id).await);
+                    match self.run_one(&task.report_id, id, &task.env, &vars).await {
+                        Ok((pass, processors, snapshot)) => {
+                            if let Some(snap) = &snapshot {
+                                for (k, val) in run_extracts(&processors, snap) {
+                                    vars.insert(k, val);
+                                }
+                            }
+                            v.push(Ok(pass));
+                        }
+                        Err(e) => v.push(Err(e)),
+                    }
                 }
                 v
             }
-            // 并发执行(并发上限 max_concurrency)。显式收集 future(无闭包),避开闭包返回
-            // borrow future 的高阶生命周期限制。
+            // 并发执行:各用例独立、无共享上下文,仅用环境变量替换;EXTRACT 不跨用例传递。
             BatchRunMode::Parallel => {
                 let mut futs = Vec::with_capacity(task.case_ids.len());
                 for id in &task.case_ids {
-                    futs.push(self.run_one(&task.report_id, id));
+                    futs.push(self.run_one(&task.report_id, id, &task.env, &task.env.variables));
                 }
-                stream::iter(futs).buffer_unordered(self.max_concurrency).collect().await
+                let raw: Vec<Result<(bool, Vec<Processor>, Option<ResponseSnapshot>), PortError>> =
+                    stream::iter(futs).buffer_unordered(self.max_concurrency).collect().await;
+                raw.into_iter().map(|r| r.map(|(pass, _, _)| pass)).collect()
             }
         };
 
@@ -185,6 +257,7 @@ mod tests {
         CaseRunSpec {
             request: RequestSpec { method: HttpMethod::Get, url, headers: vec![], body: None },
             assertions,
+            processors: vec![],
         }
     }
 
@@ -194,7 +267,100 @@ mod tests {
             pool_id: "pool1".into(),
             mode,
             case_ids: case_ids.iter().map(|s| s.to_string()).collect(),
+            env: ResolvedEnv::default(),
         }
+    }
+
+    #[test]
+    fn env_static_inject_then_substitute_with_context_vars() {
+        let env = ResolvedEnv {
+            base_url: "http://h:1".into(),
+            headers: vec![("Authorization".into(), "Bearer ${tok}".into())],
+            variables: BTreeMap::new(),
+        };
+        // 上下文变量(可来自环境种子或上一步 EXTRACT)
+        let mut vars = BTreeMap::new();
+        vars.insert("tok".to_string(), "secret".to_string());
+
+        // 相对 url + 无头:static 注入 base+头,再用上下文变量替换
+        let mut req = RequestSpec {
+            method: HttpMethod::Get,
+            url: "/api/x".into(),
+            headers: vec![],
+            body: None,
+        };
+        apply_env_static(&mut req, &env);
+        substitute_request(&mut req, &vars);
+        assert_eq!(req.url, "http://h:1/api/x");
+        assert_eq!(req.headers, vec![("Authorization".to_string(), "Bearer secret".to_string())]);
+
+        // 绝对 url 不前缀;用例已有同名头(忽略大小写)优先,环境不覆盖
+        let mut req2 = RequestSpec {
+            method: HttpMethod::Get,
+            url: "http://other/y".into(),
+            headers: vec![("authorization".into(), "keep".into())],
+            body: None,
+        };
+        apply_env_static(&mut req2, &env);
+        assert_eq!(req2.url, "http://other/y");
+        assert_eq!(req2.headers, vec![("authorization".to_string(), "keep".to_string())]);
+    }
+
+    #[tokio::test]
+    async fn serial_extract_passes_var_to_next_step() {
+        use api_runner::{ExtractKind, Extractor, MatchCondition};
+        // mock:/token 返回 token;/echo 回显 query 参数 id
+        let app = Router::new()
+            .route("/token", get(|| async { Json(serde_json::json!({"token": "T-99"})) }))
+            .route(
+                "/echo",
+                get(|q: axum::extract::Query<HashMap<String, String>>| async move {
+                    q.0.get("id").cloned().unwrap_or_default()
+                }),
+            );
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        tokio::spawn(async move { axum::serve(listener, app).await.expect("serve") });
+        let base = format!("http://{addr}");
+
+        // 用例 A:GET /token,后置 EXTRACT $.token → 变量 tk
+        let a = CaseRunSpec {
+            request: RequestSpec {
+                method: HttpMethod::Get,
+                url: format!("{base}/token"),
+                headers: vec![],
+                body: None,
+            },
+            assertions: vec![Assertion::StatusIs(200)],
+            processors: vec![Processor::Extract {
+                extractors: vec![Extractor {
+                    variable: "tk".into(),
+                    kind: ExtractKind::JsonPath,
+                    expression: "$.token".into(),
+                }],
+            }],
+        };
+        // 用例 B:GET /echo?id=${tk},断言回显体等于上一步提取的 T-99
+        let b = CaseRunSpec {
+            request: RequestSpec {
+                method: HttpMethod::Get,
+                url: format!("{base}/echo?id=${{tk}}"),
+                headers: vec![],
+                body: None,
+            },
+            assertions: vec![Assertion::ResponseBody {
+                condition: MatchCondition::Equals,
+                expected: "T-99".into(),
+            }],
+            processors: vec![],
+        };
+        let specs = InMemorySpecs::default().with("a", a).with("b", b);
+        let sink = SpySink::default();
+        let d = LocalRunnerDispatcher::new(Arc::new(specs), Arc::new(sink.clone()));
+
+        // 串行:A 提取 tk → B 的 ${tk} 替换为 T-99 → 断言通过
+        let outcome = d.dispatch_task(&task(BatchRunMode::Serial, &["a", "b"])).await.expect("ok");
+        assert_eq!(outcome, DispatchOutcome::Completed { status: "SUCCESS".into() });
     }
 
     #[tokio::test]

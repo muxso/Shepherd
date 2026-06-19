@@ -11,8 +11,8 @@
 use async_trait::async_trait;
 
 use crate::domain::{
-    ApiScenario, ExecutionStatus, InlineRequest, NewApiScenario, NewScenarioStep, RefMode,
-    ScenarioExecution, ScenarioStatus, ScenarioStep, StepKind,
+    ApiScenario, ControlKind, ExecutionStatus, InlineRequest, NewApiScenario, NewScenarioStep,
+    RefMode, ScenarioExecution, ScenarioStatus, ScenarioStep, StepKind,
 };
 use crate::ports::{ApiScenarioRepository, RepoError};
 use sqlx::{PgPool, Row};
@@ -76,12 +76,21 @@ fn row_to_step(row: &sqlx::postgres::PgRow) -> Result<ScenarioStep, RepoError> {
                 RepoError::Backend("SCENARIO step missing ref_id".into())
             })?,
         },
+        // 控制器:inline 即载荷(含子步骤)。
+        "LOOP" | "IF" | "ONCE" | "TIMER" => {
+            let control = ControlKind::parse(&kind_s)
+                .ok_or_else(|| RepoError::Backend(format!("bad control kind: {kind_s}")))?;
+            let payload = inline.clone().ok_or_else(|| {
+                RepoError::Backend("control step missing inline payload".into())
+            })?;
+            StepKind::Control { control, payload }
+        }
         other => return Err(RepoError::Backend(format!("unknown step kind: {other}"))),
     };
 
-    // COPY 模式的快照即 inline(REQUEST 已把 inline 消费为请求体,这里对非 REQUEST 保留)。
+    // COPY 模式的快照即 inline(REQUEST/CONTROL 已把 inline 消费,这里对其余保留)。
     let snapshot = match &kind {
-        StepKind::Request(_) => None,
+        StepKind::Request(_) | StepKind::Control { .. } => None,
         _ => inline,
     };
 
@@ -192,6 +201,8 @@ impl ApiScenarioRepository for PgApiScenarioRepository {
             StepKind::Scenario { scenario_id } => {
                 (Some(scenario_id.clone()), step.snapshot.clone())
             }
+            // 控制器:载荷整体存 inline,ref_id 留空。
+            StepKind::Control { payload, .. } => (None, Some(payload.clone())),
         };
 
         let row = sqlx::query(

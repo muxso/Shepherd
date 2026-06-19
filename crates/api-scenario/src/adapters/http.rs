@@ -19,8 +19,8 @@ use crate::application::{
     CreateScenarioUseCase, GetScenarioUseCase, ListScenarioExecutionsUseCase, ListScenariosUseCase,
 };
 use crate::domain::{
-    ApiScenario, InlineRequest, NewScenarioStep, RefMode, RunnableStep, ScenarioExecution,
-    ScenarioStep, StepKind,
+    ApiScenario, ControlKind, InlineRequest, NewScenarioStep, RefMode, RunnableStep,
+    ScenarioExecution, ScenarioStep, StepKind,
 };
 use crate::ports::ApiScenarioRepository;
 use serde::{Deserialize, Serialize};
@@ -104,16 +104,20 @@ struct ScenarioStepResponse {
     scenario_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     request: Option<InlineRequestDto>,
+    /// 控制器载荷(LOOP/IF/ONCE/TIMER 步骤)。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    control: Option<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     snapshot: Option<serde_json::Value>,
 }
 
 impl From<&ScenarioStep> for ScenarioStepResponse {
     fn from(s: &ScenarioStep) -> Self {
-        let (case_id, scenario_id, request) = match &s.kind {
-            StepKind::Request(r) => (None, None, Some(InlineRequestDto::from(r))),
-            StepKind::Case { case_id } => (Some(case_id.clone()), None, None),
-            StepKind::Scenario { scenario_id } => (None, Some(scenario_id.clone()), None),
+        let (case_id, scenario_id, request, control) = match &s.kind {
+            StepKind::Request(r) => (None, None, Some(InlineRequestDto::from(r)), None),
+            StepKind::Case { case_id } => (Some(case_id.clone()), None, None, None),
+            StepKind::Scenario { scenario_id } => (None, Some(scenario_id.clone()), None, None),
+            StepKind::Control { payload, .. } => (None, None, None, Some(payload.clone())),
         };
         Self {
             id: s.id.clone(),
@@ -123,6 +127,7 @@ impl From<&ScenarioStep> for ScenarioStepResponse {
             case_id,
             scenario_id,
             request,
+            control,
             snapshot: s.snapshot.clone(),
         }
     }
@@ -153,7 +158,7 @@ impl From<ApiScenario> for ScenarioResponse {
 #[derive(Debug, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 struct AddStepBody {
-    /// "REQUEST" | "CASE" | "SCENARIO"
+    /// "REQUEST" | "CASE" | "SCENARIO" | "LOOP" | "IF" | "ONCE" | "TIMER"
     kind: String,
     /// "REFERENCE" | "COPY",缺省 REFERENCE。
     #[serde(default)]
@@ -163,6 +168,10 @@ struct AddStepBody {
     request: Option<InlineRequestBody>,
     #[serde(default)]
     ref_id: Option<String>,
+    /// 控制器载荷(kind 为 LOOP/IF/ONCE/TIMER 时必填),如
+    /// `{"times":3,"children":[{"kind":"CASE","refId":"c1"}]}`。
+    #[serde(default)]
+    control: Option<serde_json::Value>,
     #[serde(default)]
     snapshot: Option<serde_json::Value>,
 }
@@ -339,6 +348,15 @@ async fn add_step(
                 return (StatusCode::BAD_REQUEST, "refId required for SCENARIO").into_response()
             }
         },
+        "LOOP" | "IF" | "ONCE" | "TIMER" => {
+            let Some(control) = ControlKind::parse(&req.kind) else {
+                return (StatusCode::BAD_REQUEST, "unknown control kind").into_response();
+            };
+            let Some(payload) = req.control else {
+                return (StatusCode::BAD_REQUEST, "control payload required").into_response();
+            };
+            StepKind::Control { control, payload }
+        }
         _ => return (StatusCode::BAD_REQUEST, "unknown step kind").into_response(),
     };
 

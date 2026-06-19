@@ -36,11 +36,12 @@ impl CreateApiCaseUseCase {
         url: &str,
         body: Option<String>,
         assertions: serde_json::Value,
+        processors: serde_json::Value,
     ) -> Result<ApiCase, CreateApiCaseError> {
         // 独立用例:api_definition_id 缺省为空串(领域允许)。
         let def_id = api_definition_id.unwrap_or_default();
-        let new_case =
-            NewApiCase::new(def_id, project_id, name, method, url, body, assertions)?;
+        let new_case = NewApiCase::new(def_id, project_id, name, method, url, body, assertions)?
+            .with_processors(processors);
         Ok(self.repo.insert_case(&new_case).await?)
     }
 }
@@ -55,7 +56,7 @@ mod tests {
         let repo = Arc::new(InMemoryApiDefinitionRepository::new());
         let uc = CreateApiCaseUseCase::new(repo);
         let c = uc
-            .execute("p1", None, "用例", "post", "/login", None, serde_json::json!([]))
+            .execute("p1", None, "用例", "post", "/login", None, serde_json::json!([]), serde_json::json!([]))
             .await
             .expect("ok");
         assert_eq!(c.project_id, "p1");
@@ -68,7 +69,7 @@ mod tests {
         let repo = Arc::new(InMemoryApiDefinitionRepository::new());
         let uc = CreateApiCaseUseCase::new(repo);
         let c = uc
-            .execute("p1", Some("def-1"), "用例", "GET", "/x", None, serde_json::json!([]))
+            .execute("p1", Some("def-1"), "用例", "GET", "/x", None, serde_json::json!([]), serde_json::json!([]))
             .await
             .expect("ok");
         assert_eq!(c.api_definition_id, "def-1");
@@ -79,7 +80,7 @@ mod tests {
         let repo = Arc::new(InMemoryApiDefinitionRepository::new());
         let uc = CreateApiCaseUseCase::new(repo);
         let err = uc
-            .execute("p1", None, "用例", "GET", "/x", None, serde_json::json!({}))
+            .execute("p1", None, "用例", "GET", "/x", None, serde_json::json!({}), serde_json::json!([]))
             .await
             .unwrap_err();
         assert_eq!(err, CreateApiCaseError::Validation(ApiDefinitionError::BadAssertions));

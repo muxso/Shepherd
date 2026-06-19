@@ -30,6 +30,9 @@ pub enum ScenarioError {
     /// COPY 模式必须携带快照。
     #[error("copy ref_mode requires a snapshot")]
     MissingSnapshot,
+    /// 控制器载荷不是 JSON 对象。
+    #[error("control step payload must be a json object")]
+    InvalidControl,
     /// 编译时检测到子场景递归成环。
     #[error("cycle detected at scenario: {0}")]
     CycleDetected(String),
@@ -169,7 +172,41 @@ impl InlineRequest {
     }
 }
 
-/// 步骤类型:内联请求 / 引用接口用例 / 引用子场景(可嵌套)。
+/// 逻辑控制器类型(对应前端 ScenarioStepType 的控制器子集)。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ControlKind {
+    /// 循环控制器(定次)。
+    Loop,
+    /// 条件控制器。
+    If,
+    /// 仅一次控制器。
+    Once,
+    /// 等待控制器。
+    Timer,
+}
+
+impl ControlKind {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            ControlKind::Loop => "LOOP",
+            ControlKind::If => "IF",
+            ControlKind::Once => "ONCE",
+            ControlKind::Timer => "TIMER",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        match s.trim().to_uppercase().as_str() {
+            "LOOP" => Some(ControlKind::Loop),
+            "IF" => Some(ControlKind::If),
+            "ONCE" => Some(ControlKind::Once),
+            "TIMER" => Some(ControlKind::Timer),
+            _ => None,
+        }
+    }
+}
+
+/// 步骤类型:内联请求 / 引用接口用例 / 引用子场景 / 逻辑控制器。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StepKind {
     /// 内联请求。
@@ -178,6 +215,8 @@ pub enum StepKind {
     Case { case_id: String },
     /// 引用子场景(可嵌套)。
     Scenario { scenario_id: String },
+    /// 逻辑控制器:类型 + 自包含 JSON 载荷(含子步骤)。落库 kind=控制器类型,inline=载荷。
+    Control { control: ControlKind, payload: serde_json::Value },
 }
 
 impl StepKind {
@@ -187,8 +226,74 @@ impl StepKind {
             StepKind::Request(_) => "REQUEST",
             StepKind::Case { .. } => "CASE",
             StepKind::Scenario { .. } => "SCENARIO",
+            StepKind::Control { control, .. } => control.as_str(),
         }
     }
+}
+
+/// 编译产物的计划树节点(中立表示,组装根再转成执行器节点)。
+/// 控制器子步骤本版仅支持叶子(CASE/REQUEST),不嵌套控制器。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PlanStep {
+    Case(String),
+    Request(InlineRequest),
+    Loop { times: u32, body: Vec<PlanStep> },
+    If { variable: String, operator: String, value: String, body: Vec<PlanStep> },
+    Once { body: Vec<PlanStep> },
+    Timer { ms: u64 },
+}
+
+/// 控制器嵌套深度上限,防止病态深载荷耗尽栈。
+const MAX_CONTROL_DEPTH: usize = 10;
+
+/// 把一个子步骤解析为 PlanStep:叶子(CASE/REQUEST)或**嵌套控制器**(LOOP/IF/ONCE/TIMER)。
+/// 超过深度上限或无法识别 → None(被跳过)。
+fn parse_plan_step(v: &serde_json::Value, depth: usize) -> Option<PlanStep> {
+    match v.get("kind").and_then(|k| k.as_str())?.to_uppercase().as_str() {
+        "CASE" => Some(PlanStep::Case(v.get("refId")?.as_str()?.to_string())),
+        "REQUEST" => {
+            let method = v.get("method").and_then(|m| m.as_str()).unwrap_or("GET");
+            let url = v.get("url").and_then(|u| u.as_str()).unwrap_or_default();
+            let body = v.get("body").and_then(|b| b.as_str()).map(String::from);
+            InlineRequest::new(method, url, body).ok().map(PlanStep::Request)
+        }
+        other => match ControlKind::parse(other) {
+            // 子步骤本身是控制器:同一对象既带 kind 又是其载荷,递归(深度受限)。
+            Some(ck) if depth < MAX_CONTROL_DEPTH => Some(parse_control_inner(ck, v, depth + 1)),
+            _ => None,
+        },
+    }
+}
+
+fn parse_control_inner(control: ControlKind, payload: &serde_json::Value, depth: usize) -> PlanStep {
+    let body = || -> Vec<PlanStep> {
+        payload
+            .get("children")
+            .and_then(|c| c.as_array())
+            .map(|arr| arr.iter().filter_map(|c| parse_plan_step(c, depth)).collect())
+            .unwrap_or_default()
+    };
+    match control {
+        ControlKind::Loop => PlanStep::Loop {
+            times: payload.get("times").and_then(|t| t.as_u64()).unwrap_or(1) as u32,
+            body: body(),
+        },
+        ControlKind::If => PlanStep::If {
+            variable: payload.get("variable").and_then(|v| v.as_str()).unwrap_or_default().to_string(),
+            operator: payload.get("operator").and_then(|v| v.as_str()).unwrap_or("EQUALS").to_string(),
+            value: payload.get("value").and_then(|v| v.as_str()).unwrap_or_default().to_string(),
+            body: body(),
+        },
+        ControlKind::Once => PlanStep::Once { body: body() },
+        ControlKind::Timer => {
+            PlanStep::Timer { ms: payload.get("ms").and_then(|m| m.as_u64()).unwrap_or(0) }
+        }
+    }
+}
+
+/// 把控制器(类型 + 载荷)解析为 PlanStep。子步骤可为叶子或嵌套控制器;解析失败的子步骤被跳过。
+pub fn parse_control(control: ControlKind, payload: &serde_json::Value) -> PlanStep {
+    parse_control_inner(control, payload, 1)
 }
 
 /// 已持久化的场景步骤。
@@ -262,6 +367,12 @@ impl NewScenarioStep {
                     return Err(ScenarioError::EmptyScenarioId);
                 }
             }
+            // 控制器载荷必须是 JSON 对象(具体字段在编译期宽容解析)。
+            StepKind::Control { payload, .. } => {
+                if !payload.is_object() {
+                    return Err(ScenarioError::InvalidControl);
+                }
+            }
         }
         // COPY 模式必须有快照,REFERENCE 可为空。
         if ref_mode == RefMode::Copy && snapshot.is_none() {
@@ -297,13 +408,55 @@ pub fn flatten_step(step: &ScenarioStep) -> Option<RunnableStep> {
     match &step.kind {
         StepKind::Request(req) => Some(RunnableStep::from_request(req.clone())),
         StepKind::Case { case_id } => Some(RunnableStep::from_case(case_id.clone())),
-        StepKind::Scenario { .. } => None,
+        // SCENARIO 需仓储递归;CONTROL 需树形编译——都不在单层展开里。
+        StepKind::Scenario { .. } | StepKind::Control { .. } => None,
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parse_control_nests_controllers() {
+        // LOOP ×2 内含 IF(make==yes)→ CASE c1
+        let payload = serde_json::json!({
+            "times": 2,
+            "children": [
+                { "kind": "IF", "variable": "make", "operator": "EQUALS", "value": "yes",
+                  "children": [ { "kind": "CASE", "refId": "c1" } ] }
+            ]
+        });
+        let plan = parse_control(ControlKind::Loop, &payload);
+        match plan {
+            PlanStep::Loop { times, body } => {
+                assert_eq!(times, 2);
+                assert_eq!(body.len(), 1);
+                match &body[0] {
+                    PlanStep::If { variable, operator, value, body } => {
+                        assert_eq!(variable, "make");
+                        assert_eq!(operator, "EQUALS");
+                        assert_eq!(value, "yes");
+                        assert_eq!(body, &vec![PlanStep::Case("c1".into())]);
+                    }
+                    other => panic!("expected nested If, got {other:?}"),
+                }
+            }
+            other => panic!("expected Loop, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_control_caps_nesting_depth() {
+        // 构造超深嵌套 LOOP 链,应在上限处停止(不 panic/不爆栈)
+        let mut node = serde_json::json!({ "kind": "CASE", "refId": "leaf" });
+        for _ in 0..50 {
+            node = serde_json::json!({ "kind": "LOOP", "times": 1, "children": [node] });
+        }
+        // 顶层再包一层解析;只要返回且不 panic 即可
+        let plan = parse_control(ControlKind::Loop, &serde_json::json!({"times":1,"children":[node]}));
+        assert!(matches!(plan, PlanStep::Loop { .. }));
+    }
 
     #[test]
     fn status_as_str_and_parse_roundtrip() {

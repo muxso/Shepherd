@@ -8,9 +8,10 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use crate::domain::ResolvedEnv;
 use crate::ports::{
-    BatchExecutorPort, DispatchOutcome, DispatchReport, DispatchSpec, PortError, ResourcePoolPort,
-    RunTask, TaskDispatcher,
+    BatchExecutorPort, DispatchOutcome, DispatchReport, DispatchSpec, EnvironmentPort, PortError,
+    ResourcePoolPort, RunTask, TaskDispatcher,
 };
 use sqlx::{PgPool, Row};
 
@@ -59,6 +60,66 @@ impl ResourcePoolPort for PgResourcePool {
     }
 }
 
+// ---- 运行环境信息源 ----
+// 直读 environment 上下文的 ms_environment 表(与 PgResourcePool 直读 ms_resource_pool 同构:
+// 跨上下文只读邻域表,不引入 crate 依赖)。headers JSONB 数组、variables JSONB 对象。
+#[derive(Clone)]
+pub struct PgEnvironment {
+    pool: PgPool,
+}
+
+impl PgEnvironment {
+    pub fn new(pool: PgPool) -> Self {
+        Self { pool }
+    }
+}
+
+#[async_trait]
+impl EnvironmentPort for PgEnvironment {
+    async fn resolve(&self, environment_id: &str) -> Result<Option<ResolvedEnv>, PortError> {
+        let row = sqlx::query(
+            "SELECT base_url, headers, variables FROM ms_environment \
+             WHERE id = $1 AND enabled AND NOT deleted",
+        )
+        .bind(environment_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(map_err)?;
+        let Some(row) = row else { return Ok(None) };
+        let base_url: String = row.try_get("base_url").map_err(map_err)?;
+        let headers_json: serde_json::Value = row.try_get("headers").map_err(map_err)?;
+        let vars_json: serde_json::Value = row.try_get("variables").map_err(map_err)?;
+        let headers = headers_json
+            .as_array()
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|h| {
+                        let name = h.get("name")?.as_str()?.to_string();
+                        let value =
+                            h.get("value").and_then(|x| x.as_str()).unwrap_or("").to_string();
+                        Some((name, value))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        let variables = vars_json
+            .as_object()
+            .map(|obj| {
+                obj.iter()
+                    .map(|(k, v)| {
+                        let s = match v {
+                            serde_json::Value::String(s) => s.clone(),
+                            other => other.to_string(),
+                        };
+                        (k.clone(), s)
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        Ok(Some(ResolvedEnv { base_url, headers, variables }))
+    }
+}
+
 // ---- 批量执行器:落报告 + 下发执行节点 ----
 #[derive(Clone)]
 pub struct PgBatchReportExecutor {
@@ -104,6 +165,7 @@ impl BatchExecutorPort for PgBatchReportExecutor {
             pool_id: spec.pool_id.clone(),
             mode: spec.mode,
             case_ids: spec.case_ids.clone(),
+            env: spec.env.clone(),
         };
         match self.dispatcher.dispatch_task(&task).await {
             // 3) 据结果更新报告状态
@@ -128,7 +190,7 @@ impl BatchExecutorPort for PgBatchReportExecutor {
 
 // ---- 用例规格源:供原生 runner 取 ms_api_case 的请求+断言 ----
 use crate::adapters::local::{CaseResultSink, CaseRunSpec, CaseSpecSource};
-use api_runner::{Assertion, HttpMethod, RequestSpec};
+use api_runner::{Assertion, HttpMethod, Processor, RequestSpec};
 
 #[derive(Clone)]
 pub struct PgCaseSpecSource {
@@ -154,11 +216,12 @@ fn parse_method(s: &str) -> HttpMethod {
 #[async_trait]
 impl CaseSpecSource for PgCaseSpecSource {
     async fn spec_of(&self, case_id: &str) -> Result<Option<CaseRunSpec>, PortError> {
-        let row = sqlx::query("SELECT method, url, body, assertions FROM ms_api_case WHERE id = $1")
-            .bind(case_id)
-            .fetch_optional(&self.pool)
-            .await
-            .map_err(map_err)?;
+        let row =
+            sqlx::query("SELECT method, url, body, assertions, processors FROM ms_api_case WHERE id = $1")
+                .bind(case_id)
+                .fetch_optional(&self.pool)
+                .await
+                .map_err(map_err)?;
         let Some(r) = row else { return Ok(None) };
 
         let method: String = r.try_get("method").map_err(map_err)?;
@@ -167,10 +230,14 @@ impl CaseSpecSource for PgCaseSpecSource {
         let assertions_json: serde_json::Value = r.try_get("assertions").map_err(map_err)?;
         let assertions: Vec<Assertion> = serde_json::from_value(assertions_json)
             .map_err(|e| PortError::Backend(format!("bad assertions json: {e}")))?;
+        // 处理器宽容解析:脏数据回落空,不阻断执行。
+        let processors_json: serde_json::Value = r.try_get("processors").map_err(map_err)?;
+        let processors: Vec<Processor> = serde_json::from_value(processors_json).unwrap_or_default();
 
         Ok(Some(CaseRunSpec {
             request: RequestSpec { method: parse_method(&method), url, headers: vec![], body },
             assertions,
+            processors,
         }))
     }
 }
@@ -211,6 +278,44 @@ impl CaseResultSink for PgCaseResultSink {
         .execute(&self.pool)
         .await
         .map_err(map_err)?;
+        Ok(())
+    }
+}
+
+// ---- 批量报告读写:供计划树执行(场景)外层补建报告 + 回写最终状态 ----
+// 计划树执行不经资源池(本地 runner 就地跑),pool_id 落占位 'local'。
+#[derive(Clone)]
+pub struct PgBatchReport {
+    pool: PgPool,
+}
+
+impl PgBatchReport {
+    pub fn new(pool: PgPool) -> Self {
+        Self { pool }
+    }
+
+    /// 落一行 RUNNING 报告,返回 report_id(用例结果按此 report_id 归组)。
+    pub async fn create(&self, run_mode: &str, case_count: i32) -> Result<String, PortError> {
+        let row = sqlx::query(
+            "INSERT INTO ms_api_batch_report (pool_id, run_mode, case_count, status) \
+             VALUES ('local', $1, $2, 'RUNNING') RETURNING id",
+        )
+        .bind(run_mode)
+        .bind(case_count)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(map_err)?;
+        row.try_get("id").map_err(map_err)
+    }
+
+    /// 回写报告最终状态(SUCCESS/ERROR)。
+    pub async fn set_status(&self, report_id: &str, status: &str) -> Result<(), PortError> {
+        sqlx::query("UPDATE ms_api_batch_report SET status = $2 WHERE id = $1")
+            .bind(report_id)
+            .bind(status)
+            .execute(&self.pool)
+            .await
+            .map_err(map_err)?;
         Ok(())
     }
 }
@@ -315,6 +420,7 @@ mod tests {
             case_ids: vec!["c1".into(), "c2".into()],
             pool_id: "pool1".into(),
             mode: BatchRunMode::Parallel,
+            env: ResolvedEnv::default(),
         };
 
         // 下发成功:报告 RUNNING,且下发器收到带 report_id 的任务

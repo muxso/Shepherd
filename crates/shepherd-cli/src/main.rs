@@ -134,6 +134,11 @@ enum Cmd {
         #[command(subcommand)]
         cmd: ScenarioCmd,
     },
+    /// 环境(项目级 base_url + 默认头 + 变量;运行时注入)。
+    Env {
+        #[command(subcommand)]
+        cmd: EnvCmd,
+    },
 }
 
 #[derive(Subcommand)]
@@ -338,6 +343,9 @@ enum ApiCmd {
         /// 资源池 id(批量执行需客户端提供)。
         #[arg(long)]
         pool: Option<String>,
+        /// 运行所用环境 id(注入 base_url/默认头/变量)。
+        #[arg(long)]
+        env: Option<String>,
     },
 }
 
@@ -528,6 +536,9 @@ enum ApidefCmd {
         url: String,
         #[arg(long)]
         body: Option<String>,
+        /// 期望状态码:给定即生成 StatusIs 断言(决定用例成功/失败);省略则空断言(恒成功)。
+        #[arg(long = "expect-status")]
+        expect_status: Option<u16>,
     },
     /// 列出定义下的接口用例。
     Cases {
@@ -548,6 +559,20 @@ enum ApidefCmd {
         url: String,
         #[arg(long)]
         body: Option<String>,
+        /// 期望状态码:给定即生成 StatusIs 断言(决定用例成功/失败);省略则空断言(恒成功)。
+        #[arg(long = "expect-status")]
+        expect_status: Option<u16>,
+    },
+    /// 为项目内每个接口定义批量生成「成功(期望 2xx)+ 失败(期望 401)」用例,并各建一条场景串联两者。
+    GenSuite {
+        #[arg(long)]
+        project: String,
+        /// 用例请求的基础 URL(拼到 OpenAPI path 前)。
+        #[arg(long, default_value = "http://localhost:8088")]
+        base: String,
+        /// 仅生成用例,不建场景。
+        #[arg(long = "no-scenario", default_value_t = false)]
+        no_scenario: bool,
     },
     /// 分页列出项目内接口用例(独立视图)。
     CaseList {
@@ -566,6 +591,20 @@ enum ApidefCmd {
         current: u32,
         #[arg(long = "page-size", default_value_t = 10)]
         page_size: u32,
+    },
+    /// 单独执行某条接口用例(可选环境/资源池),回写执行记录。
+    CaseRun {
+        #[arg(long)]
+        case: String,
+        #[arg(long)]
+        project: String,
+        #[arg(long = "mode", default_value = "SERIAL")]
+        run_mode: String,
+        #[arg(long)]
+        pool: Option<String>,
+        /// 运行所用环境 id(注入 base_url/默认头/变量)。
+        #[arg(long)]
+        env: Option<String>,
     },
     /// 给定义加 Mock。
     Mock {
@@ -604,11 +643,11 @@ enum ScenarioCmd {
         #[arg(long)]
         id: String,
     },
-    /// 加步骤:kind=request|case|scenario。
+    /// 加步骤:kind=request|case|scenario|loop|if|once|timer。
     Step {
         #[arg(long)]
         scenario: String,
-        /// request | case | scenario。
+        /// request | case | scenario | loop | if | once | timer。
         #[arg(long)]
         kind: String,
         #[arg(long = "ref-mode", default_value = "REFERENCE")]
@@ -625,6 +664,10 @@ enum ScenarioCmd {
         url: Option<String>,
         #[arg(long)]
         body: Option<String>,
+        /// 控制器步骤(loop/if/once/timer)的载荷 JSON,如
+        /// '{"times":3,"children":[{"kind":"CASE","refId":"c1"}]}'。
+        #[arg(long = "control-json")]
+        control_json: Option<String>,
     },
     /// 编译场景为可运行步骤(递归展开子场景)。
     Compile {
@@ -650,6 +693,57 @@ enum ScenarioCmd {
         run_mode: String,
         #[arg(long)]
         pool: Option<String>,
+        /// 运行所用环境 id(注入 base_url/默认头/变量)。
+        #[arg(long)]
+        env: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
+enum EnvCmd {
+    /// 新建环境。--header 形如 "Name: value"(可重复);--var 形如 key=value(可重复)。
+    Create {
+        #[arg(long)]
+        project: String,
+        #[arg(long)]
+        name: String,
+        /// 基础地址(相对 url 前缀),如 http://localhost:8088。
+        #[arg(long, default_value = "")]
+        base: String,
+        #[arg(long = "header")]
+        headers: Vec<String>,
+        #[arg(long = "var")]
+        vars: Vec<String>,
+    },
+    /// 列出项目内环境。
+    List {
+        #[arg(long)]
+        project: String,
+    },
+    /// 查看单个环境。
+    Get {
+        #[arg(long)]
+        id: String,
+    },
+    /// 更新环境(整体覆盖 name/base/headers/vars)。
+    Update {
+        #[arg(long)]
+        id: String,
+        #[arg(long)]
+        project: String,
+        #[arg(long)]
+        name: String,
+        #[arg(long, default_value = "")]
+        base: String,
+        #[arg(long = "header")]
+        headers: Vec<String>,
+        #[arg(long = "var")]
+        vars: Vec<String>,
+    },
+    /// 删除环境。
+    Delete {
+        #[arg(long)]
+        id: String,
     },
 }
 
@@ -752,6 +846,37 @@ impl Client {
 
 fn pretty(v: &Value) {
     println!("{}", serde_json::to_string_pretty(v).unwrap_or_default());
+}
+
+/// 把期望状态码翻成 runner 认得的断言数组(`[{"type":"StatusIs","args":N}]`);
+/// 省略 → 空断言(无失败项 → 恒判 Success)。
+fn status_assertions(expect_status: Option<u16>) -> Value {
+    match expect_status {
+        Some(code) => json!([{ "type": "StatusIs", "args": code }]),
+        None => json!([]),
+    }
+}
+
+/// `--header "Name: value"` 列表 → JSON 数组 `[{"name","value"}]`(按首个冒号切分)。
+fn parse_headers(items: &[String]) -> R<Value> {
+    let mut arr = Vec::with_capacity(items.len());
+    for it in items {
+        let (name, value) = it
+            .split_once(':')
+            .ok_or_else(|| format!("--header 需 'Name: value' 格式:{it}"))?;
+        arr.push(json!({"name": name.trim(), "value": value.trim()}));
+    }
+    Ok(Value::Array(arr))
+}
+
+/// `--var key=value` 列表 → JSON 对象 `{k:v}`(按首个等号切分)。
+fn parse_vars(items: &[String]) -> R<Value> {
+    let mut map = serde_json::Map::with_capacity(items.len());
+    for it in items {
+        let (k, v) = it.split_once('=').ok_or_else(|| format!("--var 需 'key=value' 格式:{it}"))?;
+        map.insert(k.trim().to_string(), json!(v));
+    }
+    Ok(Value::Object(map))
 }
 
 fn run(cli: Cli) -> R<()> {
@@ -989,9 +1114,9 @@ fn run(cli: Cli) -> R<()> {
         Cmd::Api { cmd } => {
             let c = Client::new(Config::load())?;
             match cmd {
-                ApiCmd::BatchRun { project, cases, run_mode, pool } => pretty(&c.post(
+                ApiCmd::BatchRun { project, cases, run_mode, pool, env } => pretty(&c.post(
                     "/api/batch-run",
-                    json!({"projectId": project, "caseIds": cases, "runMode": run_mode, "poolId": pool}),
+                    json!({"projectId": project, "caseIds": cases, "runMode": run_mode, "poolId": pool, "environmentId": env}),
                     true,
                 )?),
             }
@@ -1098,25 +1223,33 @@ fn run(cli: Cli) -> R<()> {
                     pretty(&c.get(&format!("/api/definition?projectId={project}"), true)?)
                 }
                 ApidefCmd::Get { id } => pretty(&c.get(&format!("/api/definition/{id}"), true)?),
-                ApidefCmd::Case { def, name, method, url, body } => pretty(&c.post(
+                ApidefCmd::Case { def, name, method, url, body, expect_status } => pretty(&c.post(
                     &format!("/api/definition/{def}/case"),
-                    json!({"name": name, "method": method, "url": url, "body": body, "assertions": []}),
+                    json!({"name": name, "method": method, "url": url, "body": body, "assertions": status_assertions(expect_status)}),
                     true,
                 )?),
                 ApidefCmd::Cases { def } => {
                     pretty(&c.get(&format!("/api/definition/{def}/case"), true)?)
                 }
-                ApidefCmd::CaseNew { project, def, name, method, url, body } => pretty(&c.post(
+                ApidefCmd::CaseNew { project, def, name, method, url, body, expect_status } => pretty(&c.post(
                     "/api/case",
-                    json!({"projectId": project, "apiDefinitionId": def, "name": name, "method": method, "url": url, "body": body, "assertions": []}),
+                    json!({"projectId": project, "apiDefinitionId": def, "name": name, "method": method, "url": url, "body": body, "assertions": status_assertions(expect_status)}),
                     true,
                 )?),
+                ApidefCmd::GenSuite { project, base, no_scenario } => {
+                    gen_suite(&c, &project, base.trim_end_matches('/'), no_scenario)?
+                }
                 ApidefCmd::CaseList { project, current, page_size } => pretty(&c.get(
                     &format!("/api/case?projectId={project}&current={current}&pageSize={page_size}"),
                     true,
                 )?),
                 ApidefCmd::CaseExec { case, current, page_size } => pretty(&c.get(
                     &format!("/api/case/{case}/executions?current={current}&pageSize={page_size}"),
+                    true,
+                )?),
+                ApidefCmd::CaseRun { case, project, run_mode, pool, env } => pretty(&c.post(
+                    &format!("/api/case/{case}/run"),
+                    json!({"projectId": project, "runMode": run_mode, "poolId": pool, "environmentId": env}),
                     true,
                 )?),
                 ApidefCmd::Mock { def, name, response_status, body } => pretty(&c.post(
@@ -1141,13 +1274,17 @@ fn run(cli: Cli) -> R<()> {
                     pretty(&c.get(&format!("/api/scenario?projectId={project}"), true)?)
                 }
                 ScenarioCmd::Get { id } => pretty(&c.get(&format!("/api/scenario/{id}"), true)?),
-                ScenarioCmd::Step { scenario, kind, ref_mode, order, ref_id, method, url, body } => {
+                ScenarioCmd::Step { scenario, kind, ref_mode, order, ref_id, method, url, body, control_json } => {
                     let mut step = json!({"kind": kind.to_uppercase(), "refMode": ref_mode.to_uppercase(), "order": order});
                     if let Some(r) = ref_id {
                         step["refId"] = json!(r);
                     }
                     if let Some(m) = method {
                         step["request"] = json!({"method": m, "url": url.unwrap_or_default(), "body": body});
+                    }
+                    if let Some(cj) = control_json {
+                        step["control"] = serde_json::from_str(&cj)
+                            .map_err(|e| format!("--control-json 不是合法 JSON: {e}"))?;
                     }
                     pretty(&c.post(&format!("/api/scenario/{scenario}/step"), step, true)?)
                 }
@@ -1158,14 +1295,133 @@ fn run(cli: Cli) -> R<()> {
                     &format!("/api/scenario/{id}/executions?current={current}&pageSize={page_size}"),
                     true,
                 )?),
-                ScenarioCmd::Run { id, project, run_mode, pool } => pretty(&c.post(
+                ScenarioCmd::Run { id, project, run_mode, pool, env } => pretty(&c.post(
                     &format!("/api/scenario/{id}/run"),
-                    json!({"projectId": project, "runMode": run_mode, "poolId": pool}),
+                    json!({"projectId": project, "runMode": run_mode, "poolId": pool, "environmentId": env}),
                     true,
                 )?),
             }
         }
+        Cmd::Env { cmd } => {
+            let c = Client::new(Config::load())?;
+            match cmd {
+                EnvCmd::Create { project, name, base, headers, vars } => pretty(&c.post(
+                    "/api/environment",
+                    json!({"projectId": project, "name": name, "baseUrl": base,
+                           "headers": parse_headers(&headers)?, "variables": parse_vars(&vars)?}),
+                    true,
+                )?),
+                EnvCmd::List { project } => {
+                    pretty(&c.get(&format!("/api/environment?projectId={project}"), true)?)
+                }
+                EnvCmd::Get { id } => pretty(&c.get(&format!("/api/environment/{id}"), true)?),
+                EnvCmd::Update { id, project, name, base, headers, vars } => pretty(&c.put(
+                    &format!("/api/environment/{id}"),
+                    json!({"projectId": project, "name": name, "baseUrl": base,
+                           "headers": parse_headers(&headers)?, "variables": parse_vars(&vars)?}),
+                    true,
+                )?),
+                EnvCmd::Delete { id } => pretty(&c.delete(&format!("/api/environment/{id}"), true)?),
+            }
+        }
     }
+    Ok(())
+}
+
+/// 为项目内每个接口定义生成「成功 + 失败」两条用例,并(默认)各建一条场景串联两者。
+///
+/// 设计:
+///  - 成功用例:断言文档化成功码(POST→201,其余→200),代表正常路径预期。
+///  - 失败用例:断言 401(未授权),代表负向路径预期。
+///
+/// 实际执行时(无凭证)受保护接口多返回 401,会如实回写各自 SUCCESS/ERROR,演示执行闭环。
+/// 配上带 `Authorization` 的环境(`env create --header`)再跑,正向用例即转绿。
+fn gen_suite(c: &Client, project: &str, base: &str, no_scenario: bool) -> R<()> {
+    let defs = c.get(&format!("/api/definition?projectId={project}"), true)?;
+    let list = defs.as_array().ok_or("接口定义列表不是数组")?;
+    if list.is_empty() {
+        return Err("项目内没有接口定义,先 `apidef import`".into());
+    }
+    let (mut cases, mut scenarios, mut steps, mut failed) = (0u32, 0u32, 0u32, 0u32);
+    for d in list {
+        let def_id = d["id"].as_str().unwrap_or_default();
+        let name = d["name"].as_str().unwrap_or("(unnamed)");
+        let method = d["method"].as_str().unwrap_or("GET").to_uppercase();
+        let path = d["path"].as_str().unwrap_or("");
+        let url = format!("{base}{path}");
+        let success_code = if method == "POST" { 201 } else { 200 };
+
+        // 成功 + 失败两条用例(挂到定义下,可被批量/场景运行)。
+        let mk_case = |label: &str, code: u16| {
+            c.post(
+                "/api/case",
+                json!({
+                    "projectId": project,
+                    "apiDefinitionId": def_id,
+                    "name": format!("{name} [{label}]"),
+                    "method": method,
+                    "url": url,
+                    "body": Value::Null,
+                    "assertions": [{"type": "StatusIs", "args": code}],
+                }),
+                true,
+            )
+        };
+        let ok = match mk_case(&format!("成功·期望{success_code}"), success_code) {
+            Ok(v) => v,
+            Err(e) => {
+                eprintln!("✗ {name}: 成功用例创建失败:{e}");
+                failed += 1;
+                continue;
+            }
+        };
+        let bad = match mk_case("失败·期望401", 401) {
+            Ok(v) => v,
+            Err(e) => {
+                eprintln!("✗ {name}: 失败用例创建失败:{e}");
+                failed += 1;
+                continue;
+            }
+        };
+        cases += 2;
+        let (ok_id, bad_id) = (
+            ok["id"].as_str().unwrap_or_default().to_string(),
+            bad["id"].as_str().unwrap_or_default().to_string(),
+        );
+
+        if no_scenario {
+            continue;
+        }
+        // 每个接口一条场景:顺序串联「成功 → 失败」两步(引用模式)。
+        let sc = match c.post(
+            "/api/scenario",
+            json!({"projectId": project, "name": format!("{name} 场景")}),
+            true,
+        ) {
+            Ok(v) => v,
+            Err(e) => {
+                eprintln!("✗ {name}: 场景创建失败:{e}");
+                failed += 1;
+                continue;
+            }
+        };
+        let sc_id = sc["id"].as_str().unwrap_or_default();
+        scenarios += 1;
+        for (order, ref_id) in [(1, &ok_id), (2, &bad_id)] {
+            match c.post(
+                &format!("/api/scenario/{sc_id}/step"),
+                json!({"kind": "CASE", "refMode": "REFERENCE", "order": order, "refId": ref_id}),
+                true,
+            ) {
+                Ok(_) => steps += 1,
+                Err(e) => eprintln!("✗ {name}: 步骤{order}添加失败:{e}"),
+            }
+        }
+    }
+    println!(
+        "✅ 生成完成:{} 个接口 → {cases} 条用例、{scenarios} 条场景、{steps} 个步骤(失败 {failed})",
+        list.len()
+    );
     Ok(())
 }
 
