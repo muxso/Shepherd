@@ -42,6 +42,11 @@ enum Cmd {
         #[arg(long, default_value_t = 1)]
         version: u32,
     },
+    /// 复查任务拆分图(按 id 读回完整 DAG + 各任务当前状态)。
+    Decomposition {
+        #[command(subcommand)]
+        cmd: DecompositionCmd,
+    },
     /// 任务管理。
     Task {
         #[command(subcommand)]
@@ -206,6 +211,20 @@ enum TaskCmd {
         /// 依赖任务本地 id,逗号分隔。
         #[arg(long, value_delimiter = ',')]
         deps: Vec<String>,
+    },
+}
+
+#[derive(Subcommand)]
+enum DecompositionCmd {
+    /// 读回完整拆分图(含 complete / readyTaskIds / 各任务当前状态)。
+    Get {
+        #[arg(long)]
+        id: String,
+    },
+    /// 只看当前就绪(依赖全部 Verified、可派发)的任务。
+    Ready {
+        #[arg(long)]
+        id: String,
     },
 }
 
@@ -973,6 +992,17 @@ fn run(cli: Cli) -> R<()> {
                 json!({"requirementId": req, "requirementVersion": version}),
                 true,
             )?);
+        }
+        Cmd::Decomposition { cmd } => {
+            let c = Client::new(Config::load())?;
+            match cmd {
+                DecompositionCmd::Get { id } => {
+                    pretty(&c.get(&format!("/decomposition/{id}"), true)?)
+                }
+                DecompositionCmd::Ready { id } => {
+                    pretty(&c.get(&format!("/decomposition/{id}/ready"), true)?)
+                }
+            }
         }
         Cmd::Task { cmd } => {
             let c = Client::new(Config::load())?;
