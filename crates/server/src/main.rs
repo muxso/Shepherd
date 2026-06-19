@@ -161,6 +161,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 "API_DEFINITION:READ+ADD+UPDATE+DELETE".to_string(),
                 "API_SCENARIO:READ+ADD+UPDATE+DELETE+EXECUTE".to_string(),
                 "ENVIRONMENT:READ+ADD+UPDATE+DELETE".to_string(),
+                "RESOURCE_POOL:READ+ADD".to_string(),
                 "REQUIREMENT:READ+ADD+UPDATE+DELETE".to_string(),
                 "TASK:READ+ADD+EXECUTE+UPDATE".to_string(),
                 "DELIVERY:READ+EXECUTE+UPDATE".to_string(),
@@ -364,6 +365,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let api_envs = Arc::new(api_test::adapters::pg::PgEnvironment::new(pool.clone()));
     let batch_run_uc = StartBatchRunUseCase::new(api_pools, api_executor, api_envs.clone());
     let apitest_routes = api_test::adapters::http::router(batch_run_uc.clone());
+    // 资源池管理(创建/列出):补上 batch-run 所需池的入口,免手工 INSERT。
+    let api_pool_admin = Arc::new(api_test::adapters::pg::PgResourcePoolAdmin::new(pool.clone()));
+    let resource_pool_routes = api_test::adapters::http::resource_pool_router(
+        api_test::application::CreateResourcePoolUseCase::new(api_pool_admin.clone()),
+        api_test::application::ListResourcePoolsUseCase::new(api_pool_admin),
+        sessions.clone(),
+    );
     // 用例执行记录(分页读 ms_api_case_result)。
     let case_exec_routes = api_test::adapters::http::executions_router(
         api_test::application::ListCaseExecutionsUseCase::new(Arc::new(
@@ -415,6 +423,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .merge(bug_routes)
         .merge(plan_routes)
         .merge(apitest_routes)
+        .merge(resource_pool_routes)
         .merge(case_exec_routes)
         .merge(apidef_routes)
         .merge(environment_routes)

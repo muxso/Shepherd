@@ -8,10 +8,10 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use crate::domain::ResolvedEnv;
+use crate::domain::{NewResourcePool, ResolvedEnv, ResourcePool};
 use crate::ports::{
     BatchExecutorPort, DispatchOutcome, DispatchReport, DispatchSpec, EnvironmentPort, PortError,
-    ResourcePoolPort, RunTask, TaskDispatcher,
+    ResourcePoolAdminPort, ResourcePoolPort, RunTask, TaskDispatcher,
 };
 use sqlx::{PgPool, Row};
 
@@ -57,6 +57,57 @@ impl ResourcePoolPort for PgResourcePool {
         .await
         .map_err(map_err)?;
         Ok(row.try_get::<bool, _>("ok").map_err(map_err)?)
+    }
+}
+
+// ---- 资源池管理(创建 / 列出)----
+#[derive(Clone)]
+pub struct PgResourcePoolAdmin {
+    pool: PgPool,
+}
+
+impl PgResourcePoolAdmin {
+    pub fn new(pool: PgPool) -> Self {
+        Self { pool }
+    }
+}
+
+#[async_trait]
+impl ResourcePoolAdminPort for PgResourcePoolAdmin {
+    async fn create(&self, new_pool: &NewResourcePool) -> Result<ResourcePool, PortError> {
+        // id 走表默认 gen_random_uuid()::text(见迁移 0025)。
+        let row = sqlx::query(
+            "INSERT INTO ms_resource_pool (name, enabled, deleted) VALUES ($1, $2, false) \
+             RETURNING id, name, enabled",
+        )
+        .bind(&new_pool.name)
+        .bind(new_pool.enabled)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(map_err)?;
+        Ok(ResourcePool {
+            id: row.try_get("id").map_err(map_err)?,
+            name: row.try_get("name").map_err(map_err)?,
+            enabled: row.try_get("enabled").map_err(map_err)?,
+        })
+    }
+
+    async fn list(&self) -> Result<Vec<ResourcePool>, PortError> {
+        let rows = sqlx::query(
+            "SELECT id, name, enabled FROM ms_resource_pool WHERE NOT deleted ORDER BY name",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(map_err)?;
+        rows.into_iter()
+            .map(|r| {
+                Ok(ResourcePool {
+                    id: r.try_get("id").map_err(map_err)?,
+                    name: r.try_get("name").map_err(map_err)?,
+                    enabled: r.try_get("enabled").map_err(map_err)?,
+                })
+            })
+            .collect()
     }
 }
 

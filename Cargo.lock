@@ -133,6 +133,7 @@ dependencies = [
  "tokio",
  "tower",
  "utoipa",
+ "webauth",
 ]
 
 [[package]]
