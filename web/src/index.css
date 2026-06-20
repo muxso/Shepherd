@@ -10,3 +10,10 @@ body {
 .ms-mono {
   font-family: ui-monospace, Menlo, Consolas, monospace;
 }
+/* 选中行高亮(三栏联动) */
+.ms-row-active > td {
+  background: #e8f0ff !important;
+}
+.ant-table-tbody > tr:hover > td {
+  background: #f5f8ff;
+}

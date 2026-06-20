@@ -198,7 +198,7 @@ export default function Scenarios() {
         open={createOpen}
         onCancel={() => setCreateOpen(false)}
         footer={null}
-        destroyOnClose
+        destroyOnHidden
       >
         <CreateScenarioForm
           projectId={projectId}
@@ -214,7 +214,7 @@ export default function Scenarios() {
         open={stepOpen}
         onCancel={() => setStepOpen(false)}
         footer={null}
-        destroyOnClose
+        destroyOnHidden
         width={600}
       >
         {selected && (

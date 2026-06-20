@@ -67,7 +67,7 @@ export default function MocksPanel({ definition }: { definition: ApiDefinition }
         open={open}
         onCancel={() => setOpen(false)}
         footer={null}
-        destroyOnClose
+        destroyOnHidden
         width={560}
       >
         <CreateMockForm
