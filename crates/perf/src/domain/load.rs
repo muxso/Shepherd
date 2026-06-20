@@ -13,17 +13,28 @@ pub enum LoadError {
     ZeroConcurrency,
     #[error("iterations must be > 0")]
     ZeroIterations,
+    #[error("duration_ms must be > 0")]
+    ZeroDuration,
 }
 
-/// 负载计划:`concurrency` 个并发"虚拟用户",合计执行 `iterations` 次请求。
+/// 施压模式:固定总次数,或持续固定时长。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LoadMode {
+    /// 合计执行 `n` 次请求。
+    Iterations(usize),
+    /// 持续施压 `ms` 毫秒(每个并发 worker 各跑满整段时长)。
+    DurationMs(u64),
+}
+
+/// 负载计划:`concurrency` 个并发"虚拟用户",按 `mode` 施压。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LoadPlan {
     pub concurrency: usize,
-    pub iterations: usize,
+    pub mode: LoadMode,
 }
 
 impl LoadPlan {
-    /// 构造即校验:并发与总次数都必须 > 0。
+    /// 固定次数模式。构造即校验:并发与总次数都必须 > 0。
     pub fn new(concurrency: usize, iterations: usize) -> Result<Self, LoadError> {
         if concurrency == 0 {
             return Err(LoadError::ZeroConcurrency);
@@ -31,7 +42,18 @@ impl LoadPlan {
         if iterations == 0 {
             return Err(LoadError::ZeroIterations);
         }
-        Ok(Self { concurrency, iterations })
+        Ok(Self { concurrency, mode: LoadMode::Iterations(iterations) })
+    }
+
+    /// 时长模式。构造即校验:并发与时长都必须 > 0。
+    pub fn duration_ms(concurrency: usize, duration_ms: u64) -> Result<Self, LoadError> {
+        if concurrency == 0 {
+            return Err(LoadError::ZeroConcurrency);
+        }
+        if duration_ms == 0 {
+            return Err(LoadError::ZeroDuration);
+        }
+        Ok(Self { concurrency, mode: LoadMode::DurationMs(duration_ms) })
     }
 }
 
@@ -126,7 +148,14 @@ mod tests {
     fn plan_validates_nonzero() {
         assert_eq!(LoadPlan::new(0, 10).unwrap_err(), LoadError::ZeroConcurrency);
         assert_eq!(LoadPlan::new(4, 0).unwrap_err(), LoadError::ZeroIterations);
-        assert!(LoadPlan::new(4, 100).is_ok());
+        assert_eq!(LoadPlan::new(4, 100).expect("ok").mode, LoadMode::Iterations(100));
+    }
+
+    #[test]
+    fn duration_plan_validates_and_sets_mode() {
+        assert_eq!(LoadPlan::duration_ms(0, 1000).unwrap_err(), LoadError::ZeroConcurrency);
+        assert_eq!(LoadPlan::duration_ms(4, 0).unwrap_err(), LoadError::ZeroDuration);
+        assert_eq!(LoadPlan::duration_ms(4, 5000).expect("ok").mode, LoadMode::DurationMs(5000));
     }
 
     #[test]
