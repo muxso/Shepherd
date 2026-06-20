@@ -26,6 +26,7 @@ members = [
     "crates/api-scenario",
     "crates/environment",
     "crates/perf",
+    "crates/case-management",
     "crates/shepherd-cli",
 ]
 
