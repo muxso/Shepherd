@@ -159,6 +159,11 @@ enum Cmd {
         #[command(subcommand)]
         cmd: PerfCmd,
     },
+    /// 资源池(批量/场景执行的执行节点归属;batch-run/scenario run 需要 --pool)。
+    Pool {
+        #[command(subcommand)]
+        cmd: PoolCmd,
+    },
 }
 
 #[derive(Subcommand)]
@@ -195,6 +200,20 @@ enum PerfCmd {
         #[arg(long)]
         id: String,
     },
+}
+
+#[derive(Subcommand)]
+enum PoolCmd {
+    /// 新建资源池。
+    Create {
+        #[arg(long)]
+        name: String,
+        /// 标记禁用(默认启用)。
+        #[arg(long, default_value_t = false)]
+        disable: bool,
+    },
+    /// 列出资源池。
+    List,
 }
 
 #[derive(Subcommand)]
@@ -1618,6 +1637,17 @@ fn run(cli: Cli) -> R<()> {
                     )?)
                 }
                 PerfCmd::Report { id } => pretty(&c.get(&format!("/perf/report/{id}"), true)?),
+            }
+        }
+        Cmd::Pool { cmd } => {
+            let c = Client::new(Config::load())?;
+            match cmd {
+                PoolCmd::Create { name, disable } => pretty(&c.post(
+                    "/api/resource-pool",
+                    json!({"name": name, "enabled": !disable}),
+                    true,
+                )?),
+                PoolCmd::List => pretty(&c.get("/api/resource-pool", true)?),
             }
         }
     }
