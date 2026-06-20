@@ -18,3 +18,8 @@ pub use sql::SqlPlugin;
 pub mod redis;
 #[cfg(feature = "redis")]
 pub use redis::RedisPlugin;
+
+#[cfg(feature = "websocket")]
+pub mod websocket;
+#[cfg(feature = "websocket")]
+pub use websocket::WebSocketPlugin;
