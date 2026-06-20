@@ -2306,6 +2306,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "probe"
+version = "0.0.1"
+dependencies = [
+ "api-runner",
+ "async-trait",
+ "bytes",
+ "http",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "thiserror",
+ "tokio",
+ "tonic",
+]
+
+[[package]]
 name = "proc-macro2"
 version = "1.0.106"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2665,6 +2681,7 @@ version = "0.0.1"
 dependencies = [
  "api-runner",
  "axum 0.8.9",
+ "probe",
  "serde",
  "serde_json",
  "tokio",
