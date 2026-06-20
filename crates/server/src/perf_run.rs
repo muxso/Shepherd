@@ -20,12 +20,15 @@ use utoipa::{OpenApi, ToSchema};
 use webauth::{AuthUser, SessionStore};
 
 use api_runner::{Assertion, HttpMethod, RequestSpec};
-use perf::adapters::{run_load, ApiRunnerExecutor, PgPerfReportStore};
+use perf::adapters::{run_collect, ApiRunnerExecutor, ParquetObjectStoreSink, PgPerfReportStore};
 use perf::domain::LoadPlan;
+use perf::ports::SampleSink;
 
 #[derive(Clone)]
 struct PerfState {
     store: PgPerfReportStore,
+    /// 原始样本下沉(Parquet+对象存储);未配置 PERF_SAMPLES_PATH 则为 None,仅存聚合。
+    sink: Option<Arc<dyn SampleSink>>,
     sessions: Arc<dyn SessionStore>,
 }
 
@@ -37,10 +40,31 @@ impl FromRef<PerfState> for Arc<dyn SessionStore> {
 
 pub fn router(pool: PgPool, sessions: Arc<dyn SessionStore>) -> Router {
     let store = PgPerfReportStore::new(pool);
+    // 配置了 PERF_SAMPLES_PATH 才下沉原始样本(本地 object_store 后端;生产可换 S3)。
+    // 构造失败则降级为不下沉(仅聚合),不影响压测可用。
+    let sink: Option<Arc<dyn SampleSink>> = std::env::var("PERF_SAMPLES_PATH")
+        .ok()
+        .filter(|p| !p.trim().is_empty())
+        .and_then(|root| {
+            if let Err(e) = std::fs::create_dir_all(&root) {
+                tracing::warn!("PERF_SAMPLES_PATH 不可建({root}): {e};样本下沉关闭");
+                return None;
+            }
+            match ParquetObjectStoreSink::new_local(&root, "perf") {
+                Ok(s) => {
+                    tracing::info!("perf 样本下沉已启用 → {root}");
+                    Some(Arc::new(s) as Arc<dyn SampleSink>)
+                }
+                Err(e) => {
+                    tracing::warn!("perf 样本下沉初始化失败: {e:?};仅存聚合");
+                    None
+                }
+            }
+        });
     Router::new()
         .route("/perf/run", post(run_perf))
         .route("/perf/report/{id}", get(get_report))
-        .with_state(PerfState { store, sessions })
+        .with_state(PerfState { store, sink, sessions })
 }
 
 #[derive(Debug, Deserialize, ToSchema)]
@@ -119,11 +143,24 @@ async fn run_perf(user: AuthUser, State(st): State<PerfState>, Json(req): Json<R
     let assertions: Vec<Assertion> =
         req.expect_status.map(|c| vec![Assertion::StatusIs(c)]).unwrap_or_default();
     let store = st.store.clone();
+    let sink = st.sink.clone();
     let id = report_id.clone();
     tokio::spawn(async move {
         let exec = Arc::new(ApiRunnerExecutor::new(spec, assertions));
-        let report = run_load(&plan, exec).await;
-        let _ = store.finish(&id, &report).await;
+        // run_collect 同时拿到聚合报告与原始逐请求样本。
+        let (report, samples) = run_collect(&plan, exec).await;
+        // 原始样本下沉对象存储(配置了 sink 才做);成功则把存储键随报告落库。
+        let samples_key: Option<String> = match &sink {
+            Some(s) => match s.write(&id, &samples).await {
+                Ok(key) => Some(key),
+                Err(e) => {
+                    tracing::warn!(report = %id, "perf 样本下沉失败: {e:?}");
+                    None
+                }
+            },
+            None => None,
+        };
+        let _ = store.finish(&id, &report, samples_key.as_deref()).await;
     });
 
     (StatusCode::OK, Json(RunPerfResponse { report_id, status: "RUNNING".to_string() })).into_response()

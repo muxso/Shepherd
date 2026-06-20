@@ -43,11 +43,17 @@ impl PgPerfReportStore {
     }
 
     /// 跑完回写:状态置 COMPLETED + 聚合指标(error_rate 表征质量,延迟分位存 jsonb)。
-    pub async fn finish(&self, id: &str, report: &LoadReport) -> Result<(), sqlx::Error> {
+    /// `samples_key` 为原始样本下沉对象存储后的键(无则置空)。
+    pub async fn finish(
+        &self,
+        id: &str,
+        report: &LoadReport,
+        samples_key: Option<&str>,
+    ) -> Result<(), sqlx::Error> {
         let latency = serde_json::to_value(report.latency).unwrap_or_else(|_| json!({}));
         sqlx::query(
             "UPDATE ms_perf_report SET status='COMPLETED', total=$2, success=$3, failed=$4, \
-             error_rate=$5, throughput_rps=$6, elapsed_ms=$7, latency=$8 WHERE id=$1",
+             error_rate=$5, throughput_rps=$6, elapsed_ms=$7, latency=$8, samples_key=$9 WHERE id=$1",
         )
         .bind(id)
         .bind(report.total as i32)
@@ -57,6 +63,7 @@ impl PgPerfReportStore {
         .bind(report.throughput_rps)
         .bind(report.elapsed_ms as i64)
         .bind(latency)
+        .bind(samples_key)
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -66,7 +73,8 @@ impl PgPerfReportStore {
     pub async fn get_json(&self, id: &str) -> Result<Option<Value>, sqlx::Error> {
         let row = sqlx::query(
             "SELECT id, project_id, method, url, concurrency, iterations, status, total, success, \
-             failed, error_rate, throughput_rps, elapsed_ms, latency FROM ms_perf_report WHERE id = $1",
+             failed, error_rate, throughput_rps, elapsed_ms, latency, samples_key \
+             FROM ms_perf_report WHERE id = $1",
         )
         .bind(id)
         .fetch_optional(&self.pool)
@@ -87,6 +95,7 @@ impl PgPerfReportStore {
                 "throughputRps": r.try_get::<f64, _>("throughput_rps").unwrap_or_default(),
                 "elapsedMs": r.try_get::<i64, _>("elapsed_ms").unwrap_or_default(),
                 "latency": r.try_get::<Value, _>("latency").unwrap_or_else(|_| json!({})),
+                "samplesKey": r.try_get::<Option<String>, _>("samples_key").unwrap_or_default(),
             })
         }))
     }
