@@ -29,12 +29,94 @@ use api_test::adapters::pg::PgCaseSpecSource;
 use test_plan::application::PlanCaseUseCase;
 use test_plan::domain::{AssertionResult, CaseResult, CaseStatus, RequestInfo, StepResult};
 
+/// 计划执行器:跑计划内挂入的用例/场景并回写结果。HTTP 端点与定时调度共用。
 #[derive(Clone)]
-struct RunState {
+pub struct PlanRunner {
     cases: PlanCaseUseCase,
     specs: Arc<PgCaseSpecSource>,
     compile: CompileScenarioUseCase,
     runner: Arc<ReqwestRunner>,
+}
+
+/// 一次计划执行的汇总。
+pub struct RunSummary {
+    pub total: usize,
+    pub executed: usize,
+    pub success: usize,
+    pub failed: usize,
+}
+
+impl PlanRunner {
+    pub fn new(pool: PgPool) -> Self {
+        let plan_repo = Arc::new(test_plan::adapters::pg::PgPlanRepository::new(pool.clone()));
+        let scenario_repo =
+            Arc::new(api_scenario::adapters::pg::PgApiScenarioRepository::new(pool.clone()));
+        Self {
+            cases: PlanCaseUseCase::new(plan_repo),
+            specs: Arc::new(PgCaseSpecSource::new(pool)),
+            compile: CompileScenarioUseCase::new(scenario_repo),
+            runner: Arc::new(ReqwestRunner::no_proxy()),
+        }
+    }
+
+    /// 执行计划:逐条跑挂入的用例/场景并回写结果。
+    pub async fn run(&self, plan_id: &str) -> Result<RunSummary, ()> {
+        let cases = self.cases.list(plan_id).await.map_err(|_| ())?;
+        let total = cases.len();
+        let (mut executed, mut success, mut failed) = (0usize, 0usize, 0usize);
+        for pc in &cases {
+            // 1) 普通用例(ms_api_case)。
+            if let Ok(Some(spec)) = self.specs.spec_of(&pc.case_id).await {
+                let (status, result) =
+                    run_request(&self.runner, &spec.request, &spec.assertions).await;
+                executed += 1;
+                match status {
+                    CaseStatus::Success => success += 1,
+                    _ => failed += 1,
+                }
+                let _ = self.cases.record(plan_id, &pc.case_id, status, Some(result)).await;
+                continue;
+            }
+            // 2) 场景(ms_api_scenario):编译树 → 逐叶执行 → 嵌套步骤。
+            if let Ok(steps_plan) = self.compile.compile_plan(&pc.case_id).await {
+                let steps = run_steps(&steps_plan, &self.runner, &self.specs).await;
+                let ok = !steps.is_empty() && steps.iter().all(|s| s.status == CaseStatus::Success);
+                let status = if ok { CaseStatus::Success } else { CaseStatus::Error };
+                executed += 1;
+                if ok {
+                    success += 1;
+                } else {
+                    failed += 1;
+                }
+                let result = CaseResult {
+                    latency_ms: steps.iter().map(|s| s.latency_ms).sum(),
+                    steps,
+                    ..Default::default()
+                };
+                let _ = self.cases.record(plan_id, &pc.case_id, status, Some(result)).await;
+                continue;
+            }
+            // 3) 既非用例也非场景:无法执行,记 BLOCK。
+            let _ = self
+                .cases
+                .record(
+                    plan_id,
+                    &pc.case_id,
+                    CaseStatus::Block,
+                    Some(CaseResult {
+                        body: Some("用例规格未找到(非 ms_api_case / 非场景)".into()),
+                        ..Default::default()
+                    }),
+                )
+                .await;
+        }
+        Ok(RunSummary { total, executed, success, failed })
+    }
+}
+
+#[derive(Clone)]
+struct RunState {
+    plan_runner: PlanRunner,
     sessions: Arc<dyn SessionStore>,
 }
 
@@ -45,16 +127,9 @@ impl FromRef<RunState> for Arc<dyn SessionStore> {
 }
 
 pub fn router(pool: PgPool, sessions: Arc<dyn SessionStore>) -> Router {
-    let plan_repo = Arc::new(test_plan::adapters::pg::PgPlanRepository::new(pool.clone()));
-    let scenario_repo =
-        Arc::new(api_scenario::adapters::pg::PgApiScenarioRepository::new(pool.clone()));
-    Router::new().route("/test-plan/{id}/run", post(run_plan)).with_state(RunState {
-        cases: PlanCaseUseCase::new(plan_repo),
-        specs: Arc::new(PgCaseSpecSource::new(pool)),
-        compile: CompileScenarioUseCase::new(scenario_repo),
-        runner: Arc::new(ReqwestRunner::no_proxy()),
-        sessions,
-    })
+    Router::new()
+        .route("/test-plan/{id}/run", post(run_plan))
+        .with_state(RunState { plan_runner: PlanRunner::new(pool), sessions })
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -236,61 +311,20 @@ async fn run_plan(user: AuthUser, State(st): State<RunState>, Path(id): Path<Str
     if !user.can("TEST_PLAN", "EXECUTE") {
         return (StatusCode::FORBIDDEN, "permission denied").into_response();
     }
-    let cases = match st.cases.list(&id).await {
-        Ok(c) => c,
-        Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
-    };
-    let total = cases.len();
-    let (mut executed, mut success, mut failed) = (0usize, 0usize, 0usize);
-
-    for pc in &cases {
-        // 1) 普通用例(ms_api_case)。
-        if let Ok(Some(spec)) = st.specs.spec_of(&pc.case_id).await {
-            let (status, result) = run_request(&st.runner, &spec.request, &spec.assertions).await;
-            executed += 1;
-            match status {
-                CaseStatus::Success => success += 1,
-                _ => failed += 1,
-            }
-            let _ = st.cases.record(&id, &pc.case_id, status, Some(result)).await;
-            continue;
-        }
-        // 2) 场景(ms_api_scenario):编译树 → 逐叶执行 → 嵌套步骤。
-        if let Ok(steps_plan) = st.compile.compile_plan(&pc.case_id).await {
-            let steps = run_steps(&steps_plan, &st.runner, &st.specs).await;
-            let ok = !steps.is_empty() && steps.iter().all(|s| s.status == CaseStatus::Success);
-            let status = if ok { CaseStatus::Success } else { CaseStatus::Error };
-            executed += 1;
-            if ok {
-                success += 1;
-            } else {
-                failed += 1;
-            }
-            let result = CaseResult {
-                latency_ms: steps.iter().map(|s| s.latency_ms).sum(),
-                steps,
-                ..Default::default()
-            };
-            let _ = st.cases.record(&id, &pc.case_id, status, Some(result)).await;
-            continue;
-        }
-        // 3) 既非用例也非场景:无法执行,记 BLOCK。
-        let _ = st
-            .cases
-            .record(
-                &id,
-                &pc.case_id,
-                CaseStatus::Block,
-                Some(CaseResult {
-                    body: Some("用例规格未找到(非 ms_api_case / 非场景)".into()),
-                    ..Default::default()
-                }),
-            )
-            .await;
+    match st.plan_runner.run(&id).await {
+        Ok(s) => (
+            StatusCode::OK,
+            Json(RunPlanResponse {
+                plan_id: id,
+                total: s.total,
+                executed: s.executed,
+                success: s.success,
+                failed: s.failed,
+            }),
+        )
+            .into_response(),
+        Err(()) => (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
     }
-
-    (StatusCode::OK, Json(RunPlanResponse { plan_id: id, total, executed, success, failed }))
-        .into_response()
 }
 
 #[derive(OpenApi)]

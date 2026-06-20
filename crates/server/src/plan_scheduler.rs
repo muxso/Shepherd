@@ -27,6 +27,7 @@ use test_plan::application::{
 struct SchedState {
     create: CreateScheduleUseCase,
     run_uc: ScheduledRunUseCase,
+    plan_runner: crate::plan_run::PlanRunner,
     sched: Arc<JobScheduler>,
     sessions: Arc<dyn SessionStore>,
 }
@@ -37,17 +38,32 @@ impl FromRef<SchedState> for Arc<dyn SessionStore> {
     }
 }
 
-/// 注册一个 cron job:到点调用 `ScheduledRunUseCase.execute(plan_id)`(尽力而为,出错只记日志)。
-async fn register_job(sched: &JobScheduler, run_uc: &ScheduledRunUseCase, plan_id: &str, cron: &str) {
+/// 注册一个 cron job:到点先**真跑计划**(执行用例/场景 + 回写结果),再拍统计快照。
+/// 尽力而为,出错只记日志。
+async fn register_job(
+    sched: &JobScheduler,
+    run_uc: &ScheduledRunUseCase,
+    runner: &crate::plan_run::PlanRunner,
+    plan_id: &str,
+    cron: &str,
+) {
     let uc = run_uc.clone();
+    let runner = runner.clone();
     let pid = plan_id.to_string();
     let job = Job::new_async(cron, move |_uuid, _l| {
         let uc = uc.clone();
+        let runner = runner.clone();
         let pid = pid.clone();
         Box::pin(async move {
+            // 1) 真跑计划(执行 + 回写每条用例结果)。
+            match runner.run(&pid).await {
+                Ok(s) => tracing::info!(plan = %pid, executed = s.executed, success = s.success, failed = s.failed, "scheduled plan executed"),
+                Err(()) => tracing::warn!(plan = %pid, "scheduled plan execute failed"),
+            }
+            // 2) 拍统计快照(趋势)。
             match uc.execute(&pid).await {
                 Ok(run) => tracing::info!(plan = %pid, status = %run.status, "scheduled plan run snapshot"),
-                Err(e) => tracing::warn!(plan = %pid, "scheduled run failed: {e:?}"),
+                Err(e) => tracing::warn!(plan = %pid, "scheduled snapshot failed: {e:?}"),
             }
         })
     });
@@ -70,12 +86,13 @@ pub async fn build(
     let store = Arc::new(PgScheduleStore::new(pool.clone()));
     let create = CreateScheduleUseCase::new(store.clone());
     let run_uc = ScheduledRunUseCase::new(PlanStatisticsUseCase::new(plan_repo), store);
+    let plan_runner = crate::plan_run::PlanRunner::new(pool.clone());
 
     let sched = JobScheduler::new().await?;
     // 启动时加载已启用计划。
     if let Ok(schedules) = create.list_enabled().await {
         for s in schedules {
-            register_job(&sched, &run_uc, &s.plan_id, &s.cron).await;
+            register_job(&sched, &run_uc, &plan_runner, &s.plan_id, &s.cron).await;
         }
     }
     sched.start().await?;
@@ -84,7 +101,7 @@ pub async fn build(
     Ok(Router::new()
         .route("/test-plan/{id}/schedule", post(create_schedule))
         .route("/test-plan/{id}/runs", get(list_runs))
-        .with_state(SchedState { create, run_uc, sched, sessions }))
+        .with_state(SchedState { create, run_uc, plan_runner, sched, sessions }))
 }
 
 #[derive(Debug, Deserialize)]
@@ -114,7 +131,7 @@ async fn create_schedule(
     match st.create.execute(&id, &b.cron, true).await {
         Ok(s) => {
             // 立即挂上 live cron(无需重启)。
-            register_job(&st.sched, &st.run_uc, &s.plan_id, &s.cron).await;
+            register_job(&st.sched, &st.run_uc, &st.plan_runner, &s.plan_id, &s.cron).await;
             (
                 StatusCode::CREATED,
                 Json(ScheduleResponse {
