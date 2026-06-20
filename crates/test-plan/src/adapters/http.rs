@@ -243,6 +243,7 @@ async fn record_result(user: AuthUser, State(st): State<PlanState>, Path((id, ca
                 reason: a.reason,
             })
             .collect(),
+        ..Default::default()
     };
     match st.cases.record(&id, &case_id, status, Some(result)).await {
         Ok(true) => StatusCode::OK.into_response(),
