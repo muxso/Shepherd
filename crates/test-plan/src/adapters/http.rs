@@ -12,7 +12,7 @@ use axum::{
     Json, Router,
 };
 use crate::application::{
-    CreatePlanError, CreatePlanUseCase, PlanStatisticsError, PlanStatisticsUseCase,
+    report_html, CreatePlanError, CreatePlanUseCase, PlanStatisticsError, PlanStatisticsUseCase,
 };
 use crate::domain::{Plan, PlanType, ROOT_GROUP};
 use serde::{Deserialize, Serialize};
@@ -40,6 +40,7 @@ pub fn router(
     Router::new()
         .route("/test-plan", post(create_plan))
         .route("/test-plan/{id}/statistics", get(statistics))
+        .route("/test-plan/{id}/report", get(report))
         .with_state(PlanState { create, stats, sessions })
 }
 
@@ -140,8 +141,26 @@ async fn statistics(State(st): State<PlanState>, Path(id): Path<String>) -> Resp
     }
 }
 
+#[utoipa::path(get, path = "/test-plan/{id}/report", tag = "test-plan", params(("id" = String, Path)), responses((status = 200, description = "HTML 报告"), (status = 404)))]
+async fn report(State(st): State<PlanState>, Path(id): Path<String>) -> Response {
+    match st.stats.with_name(&id).await {
+        Ok((name, s)) => (
+            StatusCode::OK,
+            [("content-type", "text/html; charset=utf-8")],
+            report_html(&name, &s),
+        )
+            .into_response(),
+        Err(PlanStatisticsError::PlanNotFound) => {
+            (StatusCode::NOT_FOUND, "plan not found").into_response()
+        }
+        Err(PlanStatisticsError::Repo(_)) => {
+            (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response()
+        }
+    }
+}
+
 #[derive(OpenApi)]
-#[openapi(paths(create_plan, statistics), components(schemas(CreatePlanRequest, PlanResponse, StatisticsResponse)), tags((name = "test-plan", description = "测试计划")))]
+#[openapi(paths(create_plan, statistics, report), components(schemas(CreatePlanRequest, PlanResponse, StatisticsResponse)), tags((name = "test-plan", description = "测试计划")))]
 struct ApiDoc;
 pub fn openapi() -> utoipa::openapi::OpenApi { ApiDoc::openapi() }
 

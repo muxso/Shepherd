@@ -408,6 +408,11 @@ enum PlanCmd {
         #[arg(long)]
         id: String,
     },
+    /// 导出 HTML 报告(打印到 stdout,可 `> report.html`)。
+    Report {
+        #[arg(long)]
+        id: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -909,6 +914,23 @@ impl Client {
     fn get(&self, path: &str, auth: bool) -> R<Value> {
         self.send(self.http.get(self.url(path)), auth)
     }
+    /// GET 返回原始文本(用于 HTML 报告等非 JSON 响应)。
+    fn get_text(&self, path: &str, auth: bool) -> R<String> {
+        let mut rb = self.http.get(self.url(path));
+        if auth {
+            if self.cfg.token.is_empty() {
+                return Err("未登录:先执行 `shepherd login`".into());
+            }
+            rb = rb.bearer_auth(&self.cfg.token);
+        }
+        let resp = rb.send()?;
+        let status = resp.status();
+        let text = resp.text().unwrap_or_default();
+        if !status.is_success() {
+            return Err(format!("HTTP {status}: {text}").into());
+        }
+        Ok(text)
+    }
     fn put(&self, path: &str, body: Value, auth: bool) -> R<Value> {
         self.send(self.http.put(self.url(path)).json(&body), auth)
     }
@@ -1210,6 +1232,9 @@ fn run(cli: Cli) -> R<()> {
                 }
                 PlanCmd::Stats { id } => {
                     pretty(&c.get(&format!("/test-plan/{id}/statistics"), true)?)
+                }
+                PlanCmd::Report { id } => {
+                    print!("{}", c.get_text(&format!("/test-plan/{id}/report"), false)?)
                 }
             }
         }
