@@ -9,26 +9,58 @@ SRV=$!; trap 'kill $SRV 2>/dev/null' EXIT
 for i in $(seq 1 100); do curl -sf http://127.0.0.1:9180/healthz >/dev/null 2>&1 && break; sleep 0.5; done
 B=http://127.0.0.1:9180
 T=0; P=0; F=0
-RPT="docs/api-coverage.md"; mkdir -p docs; : > "$RPT"
+RPT="docs/api-coverage.md"; HTML="docs/api-coverage.html"; mkdir -p docs; : > "$RPT"
 echo "# Shepherd 全量 API 自测报告" >> "$RPT"
 echo >> "$RPT"
-printf '> 逐端点断言:状态码 + 关键响应字段 + 业务结果。由 scripts/api-coverage.sh 生成。\n\n' >> "$RPT"
+printf '> 逐端点断言:状态码 + 关键响应字段 + 业务结果。由 scripts/api-coverage.sh 生成。HTML 版见 api-coverage.html。\n\n' >> "$RPT"
 row() { printf '| %s | %s | %s |\n' "$1" "$2" "$3" >> "$RPT"; }
-sec() { echo "== $1 =="; printf '\n## %s\n\n| 检查 | 结果 | 说明 |\n|---|---|---|\n' "$1" >> "$RPT"; }
+# —— HTML 报告:卡片 + 甜甜圈 + 每端点可折叠卡(请求体/响应/断言)——
+BODY="$(mktemp)"
+esc() { python3 -c 'import sys,html;print(html.escape(sys.stdin.read()),end="")'; }   # 转义 <>&
+h() { printf '%s\n' "$*" >> "$BODY"; }
+CUR_M=""; CUR_P=""; CUR_B=""; CUR_HS=""; CUR_RESP=""; CUR_ROWS=""; CUR_AP=0; CUR_AF=0
+flush_call() {
+  [ -z "$CUR_M" ] && return
+  local bcol badge req body_disp
+  if [ "$CUR_AF" -gt 0 ]; then bcol="#c62828"; badge="✗ $CUR_AP/$((CUR_AP+CUR_AF))"
+  elif [ "$CUR_AP" -gt 0 ]; then bcol="#2e7d32"; badge="✓ $CUR_AP"
+  else bcol="#8a9099"; badge="—"; fi
+  req=""; [ -n "$CUR_B" ] && req="<div class=sec>请求体</div><pre>$(printf '%s' "$CUR_B" | esc)</pre>"
+  # 二进制/非文本响应(如 ZIP 导出)用占位,保证 HTML 始终是合法 UTF-8;文本按字符截断。
+  body_disp=$(printf '%s' "$CUR_RESP" | python3 -c '
+import sys, html
+raw = sys.stdin.buffer.read()
+try:
+    s = raw.decode("utf-8")
+    if "\x00" in s or s[:2] == "PK":
+        raise ValueError
+    print(html.escape(s[:4000]), end="")
+except Exception:
+    print("(二进制/非文本响应,约 %d 字节,已省略)" % len(raw), end="")
+')
+  h "<details class=case>"
+  h "<summary><span class=kind>$CUR_M</span><span class=cname>$(printf '%s' "$CUR_P" | esc)</span><span class=badge style=\"background:$bcol;color:#fff\">$badge</span><span class=meta>HTTP $CUR_HS</span></summary>"
+  h "<div class=cdetail>$req<div class=sec>响应(HTTP $CUR_HS)</div><pre>$body_disp</pre>"
+  [ -n "$CUR_ROWS" ] && h "<div class=sec>断言</div><table class=assert><tr><th>检查</th><th>结果</th><th>说明</th></tr>$CUR_ROWS</table>"
+  h "</div></details>"
+  CUR_M=""; CUR_ROWS=""; CUR_AP=0; CUR_AF=0
+}
+sec() { flush_call; echo "== $1 =="; printf '\n## %s\n\n| 检查 | 结果 | 说明 |\n|---|---|---|\n' "$1" >> "$RPT"; h "<h2 class=detail>$1</h2>"; }
 RESP=""; HS=""
-# call METHOD PATH [BODY] → 设 RESP(响应体)+ HS(状态码)
-call() { local m=$1 p=$2 b=${3:-} out
+# call METHOD PATH [BODY] → 设 RESP(响应体)+ HS(状态码),并起一张 HTML 端点卡
+call() { flush_call; local m=$1 p=$2 b=${3:-} out
   if [ -n "$b" ]; then out=$(curl -s -w $'\n%{http_code}' -X "$m" -H "$A" -H 'content-type: application/json' "$B$p" -d "$b")
   else out=$(curl -s -w $'\n%{http_code}' -X "$m" -H "$A" "$B$p"); fi
-  HS="${out##*$'\n'}"; RESP="${out%$'\n'*}"; }
+  HS="${out##*$'\n'}"; RESP="${out%$'\n'*}"
+  CUR_M="$m"; CUR_P="$p"; CUR_B="$b"; CUR_HS="$HS"; CUR_RESP="$RESP"; }
 # sc desc expectedCodes  → 断状态码
-sc() { T=$((T+1)); if [[ " $2 " == *" $HS "* ]]; then P=$((P+1)); row "$1(状态)" "✅ $HS" ""; else F=$((F+1)); echo "  ✗ [$1] 状态=$HS 期望 $2  resp=$(printf %s "$RESP"|head -c160)"; row "$1(状态)" "❌ $HS" "期望 $2"; fi; }
+sc() { T=$((T+1)); if [[ " $2 " == *" $HS "* ]]; then P=$((P+1)); CUR_AP=$((CUR_AP+1)); row "$1(状态)" "✅ $HS" ""; CUR_ROWS="$CUR_ROWS<tr><td>$1(状态)</td><td style=color:#2e7d32>✓ $HS</td><td></td></tr>"; else F=$((F+1)); CUR_AF=$((CUR_AF+1)); echo "  ✗ [$1] 状态=$HS 期望 $2  resp=$(printf %s "$RESP"|head -c160)"; row "$1(状态)" "❌ $HS" "期望 $2"; CUR_ROWS="$CUR_ROWS<tr><td>$1(状态)</td><td style=color:#c62828>✗ $HS</td><td>期望 $2</td></tr>"; fi; }
 # jchk desc pyBoolExpr  → 断响应字段/业务结果(d=响应 JSON)
 jchk() { T=$((T+1)); local r; r=$(printf %s "$RESP" | python3 -c "import sys,json
 try:d=json.load(sys.stdin)
 except:d=None
 print(bool($2))" 2>/dev/null)
-  if [ "$r" = "True" ]; then P=$((P+1)); row "$1" "✅" ""; else F=$((F+1)); echo "  ✗ [$1] 断言失败:$2  resp=$(printf %s "$RESP"|head -c160)"; row "$1" "❌" "$2"; fi; }
+  if [ "$r" = "True" ]; then P=$((P+1)); CUR_AP=$((CUR_AP+1)); row "$1" "✅" ""; CUR_ROWS="$CUR_ROWS<tr><td>$1</td><td style=color:#2e7d32>✓</td><td></td></tr>"; else F=$((F+1)); CUR_AF=$((CUR_AF+1)); echo "  ✗ [$1] 断言失败:$2  resp=$(printf %s "$RESP"|head -c160)"; row "$1" "❌" "$2"; CUR_ROWS="$CUR_ROWS<tr><td>$1</td><td style=color:#c62828>✗</td><td>$(printf '%s' "$2" | esc)</td></tr>"; fi; }
 jval() { printf %s "$RESP" | python3 -c "import sys,json;d=json.load(sys.stdin);print($1)" 2>/dev/null; }
 
 A="authorization: Bearer x"  # 占位,登录后覆盖
@@ -153,9 +185,78 @@ call POST "/runner-agent/$AG/refresh" '{}'; sc "刷新能力(agent 不可达→5
 call POST /runner/probe '{"protocol":"http","target":"http://127.0.0.1:1/x"}'; sc "中央探测(不可达→502)" "200 404 502"
 call POST /mcp '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'; sc "MCP tools/list" 200; jchk "≥15 个工具且含 shepherd_run_test_plan" 'len(d["result"]["tools"])>=15 and any(t["name"]=="shepherd_run_test_plan" for t in d["result"]["tools"])'
 
+flush_call   # 收尾最后一张端点卡
 echo
 echo "############ 深度 API 自测:断言 $T 条(端点 + 字段 + 业务结果),通过 $P,失败 $F ############"
 { echo; echo "## 汇总"; echo; echo "- 断言总数:$T"; echo "- 通过:$P"; echo "- 失败:$F"; echo "- 结论:$([ "$F" -eq 0 ] && echo "全绿 ✅" || echo "有失败 ❌")"; } >> "$RPT"
-echo "报告 → $RPT"
+
+# —— 组装 HTML:头部卡片 + 甜甜圈(周长 2πr=263.89,r=42)+ 端点卡 body ——
+RATE=$(python3 -c "print(f'{($P*100/$T) if $T else 0:.1f}')")
+DP=$(python3 -c "print(f'{263.894*$P/$T:.2f}' if $T else '0')")
+DF=$(python3 -c "print(f'{263.894*$F/$T:.2f}' if $T else '0')")
+VERD=$([ "$F" -eq 0 ] && echo '<span style=color:#2e7d32>全部通过</span>' || echo '<span style=color:#c62828>有失败</span>')
+{
+cat <<HEAD
+<!DOCTYPE html>
+<html lang="zh"><head><meta charset="utf-8"><title>Shepherd 全量 API 自测</title>
+<style>
+ body{font-family:-apple-system,Segoe UI,Helvetica,sans-serif;max-width:980px;margin:32px auto;color:#1f2329;padding:0 16px}
+ h1{font-size:22px;margin:0 0 2px} .sub{color:#8a9099;margin-bottom:20px;font-size:13px}
+ .cards{display:flex;gap:16px;flex-wrap:wrap;margin-bottom:24px}
+ .card{flex:1;min-width:260px;border:1px solid #eceff1;border-radius:10px;padding:16px 18px;background:#fff}
+ .card h3{margin:0 0 12px;font-size:14px;color:#5b6470}
+ .row{display:flex;justify-content:space-between;padding:6px 0;font-size:14px} .row b{font-weight:600}
+ .donutwrap{display:flex;align-items:center;gap:16px} .donutwrap .legend{flex:1}
+ h2.detail{font-size:16px;margin:24px 0 12px;border-left:3px solid #1664ff;padding-left:8px}
+ details.case{border:1px solid #eceff1;border-radius:8px;margin:8px 0;background:#fff}
+ summary{list-style:none;cursor:pointer;display:flex;align-items:center;gap:12px;padding:12px 14px}
+ summary::-webkit-details-marker{display:none}
+ .kind{font-size:11px;color:#1664ff;background:#eaf1ff;border-radius:4px;padding:2px 7px;font-weight:600}
+ .cname{font-weight:600;flex:1;font-family:ui-monospace,Menlo,monospace;font-size:13px}
+ .badge{font-size:12px;font-weight:600;border-radius:4px;padding:2px 8px} .meta{color:#8a9099;font-size:12px}
+ .cdetail{padding:4px 16px 16px;border-top:1px solid #f2f3f5}
+ .sec{font-weight:600;font-size:13px;margin:12px 0 6px;color:#5b6470}
+ table.assert{width:100%;border-collapse:collapse;font-size:13px}
+ table.assert th,table.assert td{border:1px solid #eceff1;padding:7px 10px;text-align:left}
+ table.assert th{background:#fafbfc;color:#5b6470;font-weight:600}
+ pre{background:#0f1419;color:#d6deeb;padding:12px;border-radius:6px;overflow:auto;font-size:12px;line-height:1.5;white-space:pre-wrap;word-break:break-all}
+ .toolbar{display:flex;gap:10px;align-items:center;margin:6px 0 14px}
+ .toolbar input{padding:7px 10px;border:1px solid #dfe3e8;border-radius:6px;font-size:13px;flex:1;max-width:280px}
+ .toolbar button{padding:7px 12px;border:1px solid #dfe3e8;border-radius:6px;background:#fff;cursor:pointer;font-size:13px}
+</style></head><body>
+ <h1>Shepherd 全量 API 自测</h1>
+ <div class="sub">逐端点:请求 + 响应 + 断言(状态码/关键字段/业务结果)　·　结论:${VERD}</div>
+ <div class="cards">
+  <div class="card"><h3>报告分析</h3>
+   <div class="row"><span>断言总数</span><b>${T}</b></div>
+   <div class="row"><span>通过</span><b style=color:#2e7d32>${P}</b></div>
+   <div class="row"><span>失败</span><b style=color:#c62828>${F}</b></div>
+   <div class="row"><span>通过率</span><b>${RATE}%</b></div>
+  </div>
+  <div class="card"><h3>断言分布</h3>
+   <div class="donutwrap">
+    <svg width="120" height="120" viewBox="0 0 120 120"><g transform="rotate(-90 60 60)"><circle cx="60" cy="60" r="42" fill="none" stroke="#f0f2f5" stroke-width="16"/><circle cx="60" cy="60" r="42" fill="none" stroke="#2e7d32" stroke-width="16" stroke-dasharray="${DP} 263.894" stroke-dashoffset="0"/><circle cx="60" cy="60" r="42" fill="none" stroke="#c62828" stroke-width="16" stroke-dasharray="${DF} 263.894" stroke-dashoffset="-${DP}"/></g><text x="60" y="56" text-anchor="middle" font-size="20" font-weight="700" fill="#1f2329">${T}</text><text x="60" y="74" text-anchor="middle" font-size="11" fill="#8a9099">断言</text></svg>
+    <div class="legend">
+     <div class="row"><span style="color:#2e7d32">● 通过</span><b>${P}　${RATE}%</b></div>
+     <div class="row"><span style="color:#c62828">● 失败</span><b>${F}</b></div>
+    </div>
+   </div>
+  </div>
+ </div>
+ <div class="toolbar"><input id="q" placeholder="过滤路径…" oninput="flt()"><button onclick="ex(true)">展开全部</button><button onclick="ex(false)">收起全部</button></div>
+HEAD
+cat "$BODY"
+cat <<'FOOT'
+<script>
+ function ex(o){document.querySelectorAll('details.case').forEach(d=>d.open=o)}
+ function flt(){var q=document.getElementById('q').value.toLowerCase();
+  document.querySelectorAll('details.case').forEach(d=>{var t=d.querySelector('.cname').textContent.toLowerCase();d.style.display=t.includes(q)?'':'none'})}
+</script>
+</body></html>
+FOOT
+} > "$HTML"
+rm -f "$BODY"
+
+echo "报告 → $RPT  |  $HTML"
 [ "$F" -eq 0 ] && echo "✅ 全绿" || echo "❌ 有失败"
 exit $F
