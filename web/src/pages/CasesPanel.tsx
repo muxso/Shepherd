@@ -256,7 +256,7 @@ function CreateCaseModal({
       onCancel={onClose}
       onOk={() => form.submit()}
       confirmLoading={saving}
-      destroyOnClose
+      destroyOnHidden
       width={620}
     >
       <Form

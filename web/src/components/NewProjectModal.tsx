@@ -37,7 +37,7 @@ export default function NewProjectModal({ open, onClose }: { open: boolean; onCl
   }
 
   return (
-    <Modal title="新建项目" open={open} onCancel={onClose} onOk={() => form.submit()} confirmLoading={saving} destroyOnClose>
+    <Modal title="新建项目" open={open} onCancel={onClose} onOk={() => form.submit()} confirmLoading={saving} destroyOnHidden>
       <Form
         form={form}
         layout="vertical"
