@@ -329,6 +329,115 @@ pub fn evaluate(assertions: &[Assertion], resp: &ResponseSnapshot) -> CaseReport
     CaseReport { outcome, failures }
 }
 
+/// 单条断言的结构化结果(供报告逐条展示:断言项/匹配条件/匹配值/返回值/状态/原因)。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AssertionReport {
+    pub item: String,      // 断言项
+    pub condition: String, // 匹配条件
+    pub expected: String,  // 匹配值(期望)
+    pub actual: String,    // 返回值(实际)
+    pub passed: bool,
+    pub reason: String, // 失败原因(通过则空)
+}
+
+fn cond_label(c: &MatchCondition) -> String {
+    use MatchCondition::*;
+    match c {
+        Equals => "等于",
+        NotEquals => "不等于",
+        Contains => "包含",
+        NotContains => "不包含",
+        StartWith => "开头为",
+        EndWith => "结尾为",
+        Empty => "为空",
+        NotEmpty => "非空",
+        Regex => "正则",
+        Gt => "大于",
+        GtOrEquals => "≥",
+        Lt => "小于",
+        LtOrEquals => "≤",
+        LengthEquals => "长度=",
+        LengthNotEquals => "长度≠",
+        LengthGt => "长度>",
+        LengthGtOrEquals => "长度≥",
+        LengthLt => "长度<",
+        LengthLtOrEquals => "长度≤",
+        Unchecked => "不校验",
+    }
+    .to_string()
+}
+
+fn truncate(s: &str, n: usize) -> String {
+    if s.chars().count() <= n {
+        s.to_string()
+    } else {
+        let t: String = s.chars().take(n).collect();
+        format!("{t}…")
+    }
+}
+
+/// 同 [`evaluate`],但逐条返回结构化断言结果(供报告渲染断言表)。**纯函数**。
+pub fn evaluate_detailed(assertions: &[Assertion], resp: &ResponseSnapshot) -> Vec<AssertionReport> {
+    let json = assertions
+        .iter()
+        .any(Assertion::needs_json)
+        .then(|| serde_json::from_str::<serde_json::Value>(&resp.body).ok())
+        .flatten();
+    let header = |name: &str| {
+        resp.headers
+            .iter()
+            .find(|(k, _)| k.eq_ignore_ascii_case(name))
+            .map(|(_, v)| v.clone())
+            .unwrap_or_default()
+    };
+    let json_at = |ptr: &str| {
+        json.as_ref().and_then(|v| v.pointer(ptr)).map(|x| x.to_string()).unwrap_or_default()
+    };
+    assertions
+        .iter()
+        .map(|a| {
+            let reason = a.check(resp, json.as_ref());
+            let passed = reason.is_none();
+            let (item, condition, expected, actual) = match a {
+                Assertion::StatusIs(n) => {
+                    ("状态码".to_string(), "等于".to_string(), n.to_string(), resp.status.to_string())
+                }
+                Assertion::BodyContains(s) => {
+                    ("响应体".to_string(), "包含".to_string(), s.clone(), truncate(&resp.body, 60))
+                }
+                Assertion::HeaderEquals { name, value } => {
+                    (format!("响应头[{name}]"), "等于".to_string(), value.clone(), header(name))
+                }
+                Assertion::JsonFieldEquals { pointer, expected } => {
+                    (format!("JSON {pointer}"), "等于".to_string(), expected.clone(), json_at(pointer))
+                }
+                Assertion::ResponseCode { condition, expected } => {
+                    ("状态码".to_string(), cond_label(condition), expected.clone(), resp.status.to_string())
+                }
+                Assertion::ResponseHeader { name, condition, expected } => {
+                    (format!("响应头[{name}]"), cond_label(condition), expected.clone(), header(name))
+                }
+                Assertion::ResponseBody { condition, expected } => {
+                    ("响应体".to_string(), cond_label(condition), expected.clone(), truncate(&resp.body, 60))
+                }
+                Assertion::JsonPath { path, condition, expected } => (
+                    format!("JSONPath {path}"),
+                    cond_label(condition),
+                    expected.clone(),
+                    json_at(&json_path_to_pointer(path)),
+                ),
+                Assertion::ResponseTime { max_ms } => (
+                    "响应耗时(ms)".to_string(),
+                    "≤".to_string(),
+                    max_ms.to_string(),
+                    resp.elapsed_ms.to_string(),
+                ),
+            };
+            AssertionReport { item, condition, expected, actual, passed, reason: reason.unwrap_or_default() }
+        })
+        .collect()
+}
+
 // ---------- 前后置处理器(EXTRACT 参数提取 / TIME_WAITING 等待) ----------
 
 /// 参数提取方式(对齐前端 `RequestExtractExpressionEnum`)。
@@ -416,6 +525,30 @@ mod tests {
             body: body.to_string(),
             elapsed_ms: 0,
         }
+    }
+
+    #[test]
+    fn evaluate_detailed_reports_each_assertion() {
+        let r = resp(200, r#"{"name":"alice"}"#, &[]);
+        let a = vec![
+            Assertion::StatusIs(200),
+            Assertion::StatusIs(500),
+            Assertion::BodyContains("alice".into()),
+        ];
+        let reports = evaluate_detailed(&a, &r);
+        assert_eq!(reports.len(), 3);
+        // 第 1 条:状态码 等于 200,通过,实际 200
+        assert_eq!(reports[0].item, "状态码");
+        assert_eq!(reports[0].condition, "等于");
+        assert_eq!(reports[0].expected, "200");
+        assert_eq!(reports[0].actual, "200");
+        assert!(reports[0].passed);
+        // 第 2 条:期望 500 → 失败,带原因
+        assert!(!reports[1].passed);
+        assert!(reports[1].reason.contains("期望 500"));
+        // 第 3 条:响应体 包含 alice,通过
+        assert_eq!(reports[2].item, "响应体");
+        assert!(reports[2].passed);
     }
 
     #[test]
