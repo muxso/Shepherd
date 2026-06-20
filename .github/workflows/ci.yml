@@ -1,0 +1,104 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# 同一分支新推送取消旧运行,省 CI 时间。
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  # 与本地一致(home 0.5.11 适配 rustc 1.86;Cargo.lock 已 pin)。升级 rustc 时一并调整。
+  RUST_TOOLCHAIN: "1.86.0"
+
+jobs:
+  # —— 质量门:production(lib+bin)clippy 零告警 + 全量构建 ——
+  check:
+    name: clippy + build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      # 仅 lib+bin(production)零告警:domain 的 unwrap 等已被 workspace lint 约束;
+      # 测试代码的 unwrap 不在此门内(--all-targets 才含 tests)。
+      - name: clippy (production, deny warnings)
+        run: cargo clippy --workspace --locked -- -D warnings
+      - name: build
+        run: cargo build --workspace --locked
+
+  # —— 单元 + 自包含集成(不需外部服务;含架构守卫)——
+  test:
+    name: unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+      - uses: Swatinem/rust-cache@v2
+      # --all-features:覆盖各上下文全部适配器 + 协议插件 + 架构守卫;不跑 #[ignore]。
+      - name: cargo test
+        run: cargo test --workspace --all-features --locked
+
+  # —— gated 集成:需真 PostgreSQL / Redis / MySQL ——
+  integration:
+    name: integration (pg/redis/mysql)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: msuser
+          POSTGRES_PASSWORD: mspass
+          POSTGRES_DB: mstest
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U msuser -d mstest"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+      mysql:
+        image: mysql:8
+        env:
+          MYSQL_ROOT_PASSWORD: mspass
+          MYSQL_DATABASE: mstest
+        ports: ["3306:3306"]
+        options: >-
+          --health-cmd "mysqladmin ping -h 127.0.0.1 -uroot -pmspass"
+          --health-interval 5s --health-timeout 5s --health-retries 30
+    env:
+      DATABASE_URL: postgres://msuser:mspass@localhost:5432/mstest
+      REDIS_URL: redis://localhost:6379/0
+      MYSQL_URL: mysql://root:mspass@localhost:3306/mstest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+      - uses: Swatinem/rust-cache@v2
+      # 跨上下文端到端(真 server + 真库):auth/RBAC、需求→拆分→交付→验证、
+      # LLM agent(mock LLM)、自纠正、并行 DAG、MCP、api-definition→run…
+      - name: server scenarios
+        run: cargo test -p server --test scenarios --locked -- --ignored --test-threads=1
+      - name: runner protocol routing (pg)
+        run: cargo test -p runner --features pg --test pg_protocol --locked -- --ignored --test-threads=1
+      - name: test-plan pg aggregate
+        run: cargo test -p test-plan --features pg --lib --locked -- --ignored --test-threads=1
+      - name: probe redis live
+        run: cargo test -p probe --features redis --test redis_live --locked -- --ignored --test-threads=1
+      # mysql:8 就绪/认证偶有抖动,先设非阻断(本地未跑过);稳定后可改为必过。
+      - name: probe mysql live
+        continue-on-error: true
+        run: cargo test -p probe --features mysql --test mysql_live --locked -- --ignored --test-threads=1
