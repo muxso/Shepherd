@@ -17,3 +17,20 @@ body {
 .ant-table-tbody > tr:hover > td {
   background: #f5f8ff;
 }
+/* 多 Tab 工作区:内容区铺满可用高度并各自滚动 */
+.ms-worktabs {
+  display: flex;
+  flex-direction: column;
+}
+.ms-worktabs .ant-tabs-nav {
+  margin-bottom: 0;
+  padding: 0 8px;
+}
+.ms-worktabs .ant-tabs-content-holder {
+  flex: 1;
+  overflow: hidden;
+}
+.ms-worktabs .ant-tabs-content,
+.ms-worktabs .ant-tabs-tabpane {
+  height: 100%;
+}
