@@ -4,6 +4,13 @@ import Login from './pages/Login'
 import AppShell from './components/AppShell'
 import ApiDefinitions from './pages/ApiDefinitions'
 import Scenarios from './pages/Scenarios'
+import TestPlans from './pages/TestPlans'
+import Perf from './pages/Perf'
+import Requirements from './pages/Requirements'
+import Orchestration from './pages/Orchestration'
+import Bugs from './pages/Bugs'
+import Skills from './pages/Skills'
+import Mcp from './pages/Mcp'
 import {
   OrganizationsPage,
   RolesPage,
@@ -12,7 +19,6 @@ import {
   FunctionalCasesPage,
   EnvironmentsPage,
   ResourcePoolsPage,
-  Placeholder,
 } from './pages/resources'
 
 export default function App() {
@@ -32,14 +38,13 @@ export default function App() {
         <Route path="/role" element={<RolesPage />} />
         <Route path="/user" element={<UsersPage />} />
         <Route path="/project" element={<ProjectsPage />} />
-        {/* 下一波接入 */}
-        <Route path="/test-plan" element={<Placeholder name="测试计划" />} />
-        <Route path="/perf" element={<Placeholder name="性能压测" />} />
-        <Route path="/requirement" element={<Placeholder name="需求(版本/基线)" />} />
-        <Route path="/orchestration" element={<Placeholder name="拆分 / 交付 / 验证" />} />
-        <Route path="/bug" element={<Placeholder name="缺陷" />} />
-        <Route path="/skill" element={<Placeholder name="技能" />} />
-        <Route path="/mcp" element={<Placeholder name="MCP 工具" />} />
+        <Route path="/test-plan" element={<TestPlans />} />
+        <Route path="/perf" element={<Perf />} />
+        <Route path="/requirement" element={<Requirements />} />
+        <Route path="/orchestration" element={<Orchestration />} />
+        <Route path="/bug" element={<Bugs />} />
+        <Route path="/skill" element={<Skills />} />
+        <Route path="/mcp" element={<Mcp />} />
         <Route path="*" element={<Navigate to="/api/definition" replace />} />
       </Routes>
     </AppShell>
