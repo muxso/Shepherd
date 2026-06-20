@@ -572,10 +572,13 @@ enum PlanCmd {
         #[arg(long)]
         id: String,
     },
-    /// 导出 HTML 报告(打印到 stdout,可 `> report.html`)。
+    /// 导出报告到 stdout:默认 HTML(可 `> report.html`);--markdown 导出 Markdown(可 `> report.md`)。
     Report {
         #[arg(long)]
         id: String,
+        /// 导出 Markdown(而非 HTML)。
+        #[arg(long)]
+        markdown: bool,
     },
     /// 给计划配定时执行(cron 6 段:秒 分 时 日 月 周)。
     Schedule {
@@ -1486,8 +1489,13 @@ fn run(cli: Cli) -> R<()> {
                 PlanCmd::Stats { id } => {
                     pretty(&c.get(&format!("/test-plan/{id}/statistics"), true)?)
                 }
-                PlanCmd::Report { id } => {
-                    print!("{}", c.get_text(&format!("/test-plan/{id}/report"), false)?)
+                PlanCmd::Report { id, markdown } => {
+                    let path = if markdown {
+                        format!("/test-plan/{id}/report.md")
+                    } else {
+                        format!("/test-plan/{id}/report")
+                    };
+                    print!("{}", c.get_text(&path, false)?)
                 }
                 PlanCmd::Schedule { id, cron } => pretty(&c.post(
                     &format!("/test-plan/{id}/schedule"),
