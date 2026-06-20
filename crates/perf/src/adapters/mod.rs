@@ -21,3 +21,8 @@ pub use api_runner_exec::ApiRunnerExecutor;
 pub mod pg;
 #[cfg(feature = "pg")]
 pub use pg::PgPerfReportStore;
+
+#[cfg(feature = "sql-exec")]
+pub mod sql_exec;
+#[cfg(feature = "sql-exec")]
+pub use sql_exec::SqlExecutor;
