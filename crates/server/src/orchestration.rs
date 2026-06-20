@@ -86,6 +86,24 @@ impl VerificationGateway for VerificationServiceGateway {
         }
     }
 
+    async fn link(
+        &self,
+        verification_id: &str,
+        decomposition_id: &str,
+        task_id: &str,
+        criteria_texts: &[String],
+    ) -> Result<(), OrchError> {
+        match self
+            .svc
+            .link_by_criteria_texts(verification_id, decomposition_id, task_id, criteria_texts)
+            .await
+        {
+            Ok(_) => Ok(()),
+            Err(VerificationCmdError::NotFound) => Ok(()),
+            Err(e) => Err(OrchError::Gateway(format!("{e:?}"))),
+        }
+    }
+
     async fn sync(
         &self,
         verification_id: &str,

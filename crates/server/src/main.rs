@@ -250,16 +250,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         sessions.clone(),
     );
 
-    // —— 服务端复合:据 requirementId 取规格自动拆分 ——
-    let breakdown_routes = breakdown_route::router(
-        req_admin.clone(),
-        BreakdownUseCase::new(task_repo.clone(), task_planner.clone()),
-        sessions.clone(),
-    );
-
     // —— verification 模块(Shepherd 完整性验证:需求↔任务↔实现 追溯 + 缺口检测)——
     let ver_repo = Arc::new(PgVerificationRepository::new(pool.clone()));
     let ver_admin = VerificationService::new(ver_repo.clone());
+
+    // —— 服务端复合:据 requirementId 取规格自动拆分,并顺手开验证账本(幂等)——
+    let breakdown_routes = breakdown_route::router(
+        req_admin.clone(),
+        BreakdownUseCase::new(task_repo.clone(), task_planner.clone()),
+        CreateVerificationUseCase::new(ver_repo.clone()),
+        sessions.clone(),
+    );
     let verification_routes = verification::adapters::http::router(
         CreateVerificationUseCase::new(ver_repo.clone()),
         ver_admin.clone(),
