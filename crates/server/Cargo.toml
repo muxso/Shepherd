@@ -32,6 +32,7 @@ api-definition = { path = "../api-definition", features = ["pg", "http"] }
 api-scenario = { path = "../api-scenario", features = ["pg", "http"] }
 environment = { path = "../environment", features = ["pg", "http"] }
 case-management = { path = "../case-management", features = ["pg", "http"] }
+runner = { path = "../runner", features = ["pg", "http", "client"] }
 mock-runtime = { path = "../mock-runtime", features = ["http", "pg", "template"] }
 perf = { path = "../perf", features = ["engine", "api-runner-exec", "pg", "parquet-sink", "sql-exec"] }
 migrate = { path = "../migrate" }

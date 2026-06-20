@@ -2389,6 +2389,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "runner"
+version = "0.0.1"
+dependencies = [
+ "api-runner",
+ "async-trait",
+ "axum",
+ "kernel",
+ "migrate",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "thiserror",
+ "tokio",
+ "tower",
+ "utoipa",
+ "webauth",
+]
+
+[[package]]
 name = "runner-agent"
 version = "0.0.1"
 dependencies = [
@@ -2589,6 +2609,7 @@ dependencies = [
  "project",
  "requirement",
  "reqwest",
+ "runner",
  "serde",
  "serde_json",
  "skill",
