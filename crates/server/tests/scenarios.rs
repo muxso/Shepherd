@@ -38,16 +38,21 @@ impl Drop for TestServer {
 
 impl TestServer {
     async fn start() -> TestServer {
+        Self::start_with_env(&[]).await
+    }
+
+    /// 同 [`start`],但额外注入环境变量(如 SHEPHERD_LLM_URL 切到 LLM 适配器)。
+    async fn start_with_env(extra: &[(&str, &str)]) -> TestServer {
         let port = free_port();
-        let child = Command::new(env!("CARGO_BIN_EXE_server"))
-            .env("DATABASE_URL", db_url())
+        let mut cmd = Command::new(env!("CARGO_BIN_EXE_server"));
+        cmd.env("DATABASE_URL", db_url())
             .env("MS_BIND", format!("127.0.0.1:{port}"))
             .env("MS_ADMIN_PASSWORD", "s3cret")
-            .env("RUST_LOG", "warn")
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .expect("spawn server binary");
+            .env("RUST_LOG", "warn");
+        for (k, v) in extra {
+            cmd.env(k, v);
+        }
+        let child = cmd.stdout(Stdio::null()).stderr(Stdio::null()).spawn().expect("spawn server binary");
         let base = format!("http://127.0.0.1:{port}");
         let http = reqwest::Client::builder().no_proxy().build().expect("client");
         // 等待健康(最多 ~20s)。
@@ -185,6 +190,64 @@ async fn scenario_shepherd_full_chain() {
     let rep = s.get(&format!("/verification/{vid}/report"), &t).await;
     assert_eq!(rep["satisfied"], 1);
     assert_eq!(rep["complete"], false);
+}
+
+// ============ 场景 3b:LLM agent 端到端(mock LLM 驱动规划器 + 验证门 + 执行者)============
+
+/// 起一个内容感知的 OpenAI 兼容 mock:按 system 提示返回规划/裁决/执行的 JSON。
+/// 返回 chat completions URL。规划器→2 任务(区别于启发式的 3);裁决→不通过(区别于 AcceptAll)。
+async fn serve_mock_llm() -> String {
+    use axum::{routing::post, Json, Router};
+    let app = Router::new().route(
+        "/v1/chat/completions",
+        post(|Json(body): Json<Value>| async move {
+            let sys = body["messages"][0]["content"].as_str().unwrap_or("");
+            let content = if sys.contains("规划器") {
+                r#"[{"title":"LLM任务A","description":"","acceptanceCriteria":["登录成功"],"dependencies":[]},{"title":"LLM任务B","description":"","acceptanceCriteria":["错误密码拒绝"],"dependencies":[0]}]"#
+            } else if sys.contains("评审") {
+                r#"{"passed":false,"reason":"LLM 判定不通过(缺测试)"}"#
+            } else if sys.contains("执行者") {
+                r#"{"reference":"branch:llm-feat","summary":"LLM 执行者完成"}"#
+            } else {
+                "{}"
+            };
+            Json(json!({ "choices": [ { "message": { "content": content } } ] }))
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("bind llm");
+    let addr = listener.local_addr().expect("addr");
+    tokio::spawn(async move { axum::serve(listener, app).await.expect("serve llm") });
+    format!("http://{addr}/v1/chat/completions")
+}
+
+#[tokio::test]
+#[ignore = "需要 PostgreSQL"]
+async fn scenario_llm_agent_end_to_end() {
+    // mock LLM 必须先起,并在 server 进程生命周期内保持可达。
+    let llm_url = serve_mock_llm().await;
+    let s = TestServer::start_with_env(&[("SHEPHERD_LLM_URL", &llm_url)]).await;
+    let p = proj();
+    let t = s.login().await;
+
+    let rid = s
+        .post("/requirement", json!({"projectId":&p,"title":"登录特性","acceptanceCriteria":["登录成功","错误密码拒绝"]}), Some(&t))
+        .await["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    // 自动拆分:走 LLM 规划器 → 2 任务(启发式会给 3),且标题来自 LLM。
+    let bd = s.post(&format!("/requirement/{rid}/breakdown"), Value::Null, Some(&t)).await;
+    let did = bd["id"].as_str().unwrap().to_string();
+    let tasks = bd["tasks"].as_array().unwrap();
+    assert_eq!(tasks.len(), 2, "应由 LLM 规划器产出 2 任务,而非启发式的 3: {bd}");
+    assert_eq!(tasks[0]["title"], "LLM任务A");
+
+    // 派发 t1:LLM 执行者产出交付物 → 编排器经 LLM 验证门裁决(本 mock 判不通过)。
+    let _ = s.post("/delivery", json!({"decompositionId":&did,"taskId":"t1","title":"实现登录API","executor":"CLAUDE_CODE"}), Some(&t)).await;
+    let dec = s.get(&format!("/decomposition/{did}"), &t).await;
+    // LLM judge 判不通过 → 任务不应被标记 VERIFIED(以此区别于默认 AcceptAll)。
+    assert_ne!(dec["tasks"][0]["status"], "VERIFIED", "LLM 判不通过时任务不应 VERIFIED: {dec}");
 }
 
 // ============ 场景 4:AI Skill 组合(skill)============
