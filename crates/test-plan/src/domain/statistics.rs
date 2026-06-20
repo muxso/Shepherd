@@ -30,6 +30,69 @@ impl ExecStatus {
     }
 }
 
+/// 计划内单个用例的执行结果状态。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CaseStatus {
+    Pending,   // 待执行(刚挂入计划)
+    Success,   // 通过
+    Error,     // 失败
+    FakeError, // 误报(已知问题/非真失败)
+    Block,     // 阻塞
+}
+
+impl CaseStatus {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            CaseStatus::Pending => "PENDING",
+            CaseStatus::Success => "SUCCESS",
+            CaseStatus::Error => "ERROR",
+            CaseStatus::FakeError => "FAKE_ERROR",
+            CaseStatus::Block => "BLOCK",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        match s.trim().to_uppercase().as_str() {
+            "PENDING" => Some(CaseStatus::Pending),
+            "SUCCESS" => Some(CaseStatus::Success),
+            "ERROR" => Some(CaseStatus::Error),
+            "FAKE_ERROR" => Some(CaseStatus::FakeError),
+            "BLOCK" => Some(CaseStatus::Block),
+            _ => None,
+        }
+    }
+}
+
+/// 单条断言的判定结果(供报告逐条展示:断言项/返回值/匹配条件/匹配值/状态/原因)。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AssertionResult {
+    pub item: String,      // 断言项,如「状态码」
+    pub actual: String,    // 返回值(实际)
+    pub condition: String, // 匹配条件,如「等于/包含」
+    pub expected: String,  // 匹配值(期望)
+    pub passed: bool,      // 是否通过
+    pub reason: String,    // 失败原因(通过则空)
+}
+
+/// 一条用例的执行明细(供报告展开:耗时/大小/状态码/断言/响应体)。
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct CaseResult {
+    pub latency_ms: u64,
+    pub response_size: u64,
+    pub status_code: Option<i64>,
+    pub assertions: Vec<AssertionResult>,
+    pub body: Option<String>,
+}
+
+/// 计划内一条用例:id + 名称 + 当前状态 + 执行明细(未执行则 None)。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PlanCase {
+    pub case_id: String,
+    pub name: String,
+    pub status: CaseStatus,
+    pub result: Option<CaseResult>,
+}
+
 /// 一个计划的用例执行结果计数。
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct CaseCounts {
