@@ -44,10 +44,19 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
     throw new ApiError(res.status, text || `${res.status} ${res.statusText}`)
   }
   if (!text) return undefined as T
+  // 2xx 但返回 HTML(典型:dev 代理未命中 → Vite 回 index.html)。
+  // 早期直接抛出清晰错误,避免把 HTML 字符串当数据塞进 state 引发白屏。
+  const ct = res.headers.get('content-type') || ''
+  if (ct.includes('text/html') || text.trimStart().startsWith('<')) {
+    throw new ApiError(
+      502,
+      '后端未连通:收到 HTML 而非 JSON。请确认 server 跑在 :9180,并重启前端 dev(npm run dev)使代理生效。',
+    )
+  }
   try {
     return JSON.parse(text) as T
   } catch {
-    return text as unknown as T
+    throw new ApiError(500, `响应不是合法 JSON:${text.slice(0, 120)}`)
   }
 }
 
@@ -145,9 +154,40 @@ export interface ResourcePool {
   enabled: boolean
 }
 
+export interface Role {
+  id: string
+  name: string
+  permissions?: string[]
+}
+
+export interface User {
+  id: string
+  name: string
+  email: string
+  enable?: boolean
+}
+
+export interface FunctionalCase {
+  id: string
+  projectId: string
+  name: string
+  module?: string
+  priority?: string
+  status?: string
+}
+
+export interface Environment {
+  id: string
+  name: string
+  baseUrl: string
+  protocols?: string[]
+}
+
 export type RunMode = 'PARALLEL' | 'SERIAL'
 
 // ---------- 端点封装 ----------
+
+const emptyPage = <T>(): Page<T> => ({ total: 0, current: 1, pageSize: 0, totalPages: 0, items: [] })
 
 export const api = {
   login: (username: string, password: string) =>
@@ -156,12 +196,16 @@ export const api = {
   organizations: () => http.get<Page<Organization>>('/organization?pageSize=100'),
   createOrganization: (name: string) => http.post<Organization>('/organization', { name }),
   projects: (organizationId: string) =>
-    http.get<Page<Project>>(`/project?organizationId=${encodeURIComponent(organizationId)}&pageSize=100`),
+    organizationId
+      ? http.get<Page<Project>>(`/project?organizationId=${encodeURIComponent(organizationId)}&pageSize=100`)
+      : Promise.resolve(emptyPage<Project>()),
   createProject: (organizationId: string, name: string) =>
     http.post<Project>('/project', { organizationId, name }),
 
   definitions: (projectId: string) =>
-    http.get<ApiDefinition[]>(`/api/definition?projectId=${encodeURIComponent(projectId)}`),
+    projectId
+      ? http.get<ApiDefinition[]>(`/api/definition?projectId=${encodeURIComponent(projectId)}`)
+      : Promise.resolve([] as ApiDefinition[]),
   getDefinition: (id: string) => http.get<ApiDefinition>(`/api/definition/${id}`),
   createDefinition: (b: {
     projectId: string
@@ -192,6 +236,28 @@ export const api = {
   resourcePools: () => http.get<ResourcePool[]>('/api/resource-pool'),
   createResourcePool: (name: string, enabled = true) =>
     http.post<ResourcePool>('/api/resource-pool', { name, enabled }),
+
+  // 角色 / 用户(平台级)
+  roles: () => http.get<Page<Role>>('/role?pageSize=100'),
+  createRole: (b: { name: string; permissions?: string[] }) => http.post<Role>('/role', b),
+  users: () => http.get<Page<User>>('/system/user?pageSize=100'),
+  createUser: (b: { name: string; email: string }) => http.post<User>('/system/user', b),
+
+  // 功能用例(项目级)
+  functionalCases: (projectId: string) =>
+    projectId
+      ? http.get<FunctionalCase[]>(`/functional-case?projectId=${encodeURIComponent(projectId)}`)
+      : Promise.resolve([] as FunctionalCase[]),
+  createFunctionalCase: (b: { projectId: string; name: string; priority?: string; module?: string }) =>
+    http.post<FunctionalCase>('/functional-case', b),
+
+  // 环境(项目级)
+  environments: (projectId: string) =>
+    projectId
+      ? http.get<Environment[]>(`/api/environment?projectId=${encodeURIComponent(projectId)}`)
+      : Promise.resolve([] as Environment[]),
+  createEnvironment: (b: { projectId: string; name: string; baseUrl: string }) =>
+    http.post<Environment>('/api/environment', b),
   caseExecutions: (caseId: string) =>
     http.get<Page<CaseExecution>>(`/api/case/${caseId}/executions?pageSize=50`),
 
@@ -202,7 +268,9 @@ export const api = {
   ) => http.post<ApiMock>(`/api/definition/${definitionId}/mock`, b),
 
   scenarios: (projectId: string) =>
-    http.get<Scenario[]>(`/api/scenario?projectId=${encodeURIComponent(projectId)}`),
+    projectId
+      ? http.get<Scenario[]>(`/api/scenario?projectId=${encodeURIComponent(projectId)}`)
+      : Promise.resolve([] as Scenario[]),
   getScenario: (id: string) => http.get<Scenario & { steps: ScenarioStep[] }>(`/api/scenario/${id}`),
   createScenario: (projectId: string, name: string) =>
     http.post<Scenario>('/api/scenario', { projectId, name }),
