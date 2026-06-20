@@ -3,19 +3,25 @@
 //! 错误码映射体现 quirk 的两种失败:**未配置池 → 400**(客户端该传/项目该配),
 //! **池不可用 → 409**(引用了但不可用)。两者都在入口返回,而非下游 500。
 
+use std::sync::Arc;
+
 use axum::{
-    extract::{Path, Query, State},
+    extract::{FromRef, Path, Query, State},
     http::StatusCode,
     response::{IntoResponse, Response},
     routing::{get, post},
     Json, Router,
 };
-use crate::application::{ListCaseExecutionsUseCase, StartBatchRunUseCase};
-use crate::domain::{BatchRunError, BatchRunMode, RunModeConfig};
+use crate::application::{
+    CreateResourcePoolError, CreateResourcePoolUseCase, ListCaseExecutionsUseCase,
+    ListResourcePoolsUseCase, StartBatchRunUseCase,
+};
+use crate::domain::{BatchRunError, BatchRunMode, ResourcePool, RunModeConfig};
 use crate::ports::CaseExecutionRecord;
 use kernel::page::PageRequest;
 use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, OpenApi, ToSchema};
+use webauth::{AuthUser, SessionStore};
 
 pub fn router(use_case: StartBatchRunUseCase) -> Router {
     Router::new()
@@ -217,15 +223,103 @@ async fn list_executions(
     }
 }
 
+// ---------- 资源池管理(创建 / 列出)----------
+
+/// 资源池管理路由。写端点(创建)走 RBAC 资源串 `RESOURCE_POOL`,读端点(列出)开放。
+/// 自带 state(含 sessions),不影响 batch-run 既有路由。
+#[derive(Clone)]
+struct ResourcePoolState {
+    create: CreateResourcePoolUseCase,
+    list: ListResourcePoolsUseCase,
+    sessions: Arc<dyn SessionStore>,
+}
+
+impl FromRef<ResourcePoolState> for Arc<dyn SessionStore> {
+    fn from_ref(s: &ResourcePoolState) -> Self {
+        s.sessions.clone()
+    }
+}
+
+pub fn resource_pool_router(
+    create: CreateResourcePoolUseCase,
+    list: ListResourcePoolsUseCase,
+    sessions: Arc<dyn SessionStore>,
+) -> Router {
+    let state = ResourcePoolState { create, list, sessions };
+    Router::new()
+        .route("/api/resource-pool", post(create_resource_pool).get(list_resource_pools))
+        .with_state(state)
+}
+
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+struct ResourcePoolBody {
+    name: String,
+    #[serde(default = "default_true")]
+    enabled: bool,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+struct ResourcePoolResponse {
+    id: String,
+    name: String,
+    enabled: bool,
+}
+
+impl From<ResourcePool> for ResourcePoolResponse {
+    fn from(p: ResourcePool) -> Self {
+        Self { id: p.id, name: p.name, enabled: p.enabled }
+    }
+}
+
+#[utoipa::path(post, path = "/api/resource-pool", tag = "api-test", request_body = ResourcePoolBody, responses((status = 201, body = ResourcePoolResponse), (status = 400), (status = 403)), security(("bearer" = [])))]
+async fn create_resource_pool(
+    user: AuthUser,
+    State(st): State<ResourcePoolState>,
+    Json(req): Json<ResourcePoolBody>,
+) -> Response {
+    if !user.can("RESOURCE_POOL", "ADD") {
+        return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
+    match st.create.execute(&req.name, req.enabled).await {
+        Ok(p) => (StatusCode::CREATED, Json(ResourcePoolResponse::from(p))).into_response(),
+        Err(CreateResourcePoolError::Validation(_)) => {
+            (StatusCode::BAD_REQUEST, "invalid resource pool payload").into_response()
+        }
+        Err(CreateResourcePoolError::Backend(_)) => {
+            (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response()
+        }
+    }
+}
+
+#[utoipa::path(get, path = "/api/resource-pool", tag = "api-test", responses((status = 200, body = [ResourcePoolResponse])))]
+async fn list_resource_pools(State(st): State<ResourcePoolState>) -> Response {
+    match st.list.execute().await {
+        Ok(list) => {
+            let items: Vec<ResourcePoolResponse> =
+                list.into_iter().map(ResourcePoolResponse::from).collect();
+            (StatusCode::OK, Json(items)).into_response()
+        }
+        Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
+    }
+}
+
 #[derive(OpenApi)]
 #[openapi(
-    paths(batch_run, run_case, list_executions),
+    paths(batch_run, run_case, list_executions, create_resource_pool, list_resource_pools),
     components(schemas(
         BatchRunRequest,
         CaseRunRequest,
         BatchRunResponse,
         CaseExecutionRecordDto,
-        CaseExecutionPageResponse
+        CaseExecutionPageResponse,
+        ResourcePoolBody,
+        ResourcePoolResponse
     )),
     tags((name = "api-test", description = "接口批量执行"))
 )]
@@ -419,5 +513,111 @@ mod tests {
             .await
             .expect("resp");
         assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    // ---- 资源池管理路由(RBAC) ----
+    use crate::domain::{NewResourcePool, ResourcePool};
+    use crate::ports::ResourcePoolAdminPort;
+    use kernel::permission::PermissionSet;
+    use std::sync::Mutex;
+    use webauth::testing::InMemorySessionStore;
+
+    #[derive(Default)]
+    struct FakePoolAdmin {
+        pools: Mutex<Vec<ResourcePool>>,
+    }
+
+    #[async_trait]
+    impl ResourcePoolAdminPort for FakePoolAdmin {
+        async fn create(&self, p: &NewResourcePool) -> Result<ResourcePool, PortError> {
+            let mut g = self.pools.lock().expect("lock");
+            let view =
+                ResourcePool { id: format!("p{}", g.len() + 1), name: p.name.clone(), enabled: p.enabled };
+            g.push(view.clone());
+            Ok(view)
+        }
+        async fn list(&self) -> Result<Vec<ResourcePool>, PortError> {
+            Ok(self.pools.lock().expect("lock").clone())
+        }
+    }
+
+    /// 资源池路由 + 一个拥有 `RESOURCE_POOL:READ+ADD` 的令牌。
+    async fn pool_app() -> (Router, String) {
+        let admin = Arc::new(FakePoolAdmin::default());
+        let sessions = Arc::new(InMemorySessionStore::new());
+        let perms =
+            PermissionSet::from_raw(["RESOURCE_POOL:READ+ADD".to_string()]).expect("perms");
+        let token = sessions.create("admin", perms, 3600).await.expect("token");
+        let r = resource_pool_router(
+            CreateResourcePoolUseCase::new(admin.clone()),
+            ListResourcePoolsUseCase::new(admin),
+            sessions,
+        );
+        (r, token)
+    }
+
+    fn pool_post(body: &str, token: Option<&str>) -> Request<Body> {
+        let mut b = Request::builder()
+            .method("POST")
+            .uri("/api/resource-pool")
+            .header("content-type", "application/json");
+        if let Some(t) = token {
+            b = b.header("authorization", format!("Bearer {t}"));
+        }
+        b.body(Body::from(body.to_string())).expect("req")
+    }
+
+    #[tokio::test]
+    async fn create_pool_with_permission_201() {
+        let (app, t) = pool_app().await;
+        let resp = app.oneshot(pool_post(r#"{"name":"本地池"}"#, Some(&t))).await.expect("resp");
+        assert_eq!(resp.status(), StatusCode::CREATED);
+        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.expect("body");
+        let v: serde_json::Value = serde_json::from_slice(&bytes).expect("json");
+        assert_eq!(v["name"], "本地池");
+        assert_eq!(v["enabled"], true);
+        assert!(v["id"].as_str().expect("id").starts_with('p'));
+    }
+
+    #[tokio::test]
+    async fn create_pool_without_token_401() {
+        let (app, _t) = pool_app().await;
+        let resp = app.oneshot(pool_post(r#"{"name":"x"}"#, None)).await.expect("resp");
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn create_pool_without_permission_403() {
+        let admin = Arc::new(FakePoolAdmin::default());
+        let sessions = Arc::new(InMemorySessionStore::new());
+        // 仅有读权限,无 ADD。
+        let perms = PermissionSet::from_raw(["RESOURCE_POOL:READ".to_string()]).expect("perms");
+        let token = sessions.create("viewer", perms, 3600).await.expect("token");
+        let app = resource_pool_router(
+            CreateResourcePoolUseCase::new(admin.clone()),
+            ListResourcePoolsUseCase::new(admin),
+            sessions,
+        );
+        let resp = app.oneshot(pool_post(r#"{"name":"x"}"#, Some(&token))).await.expect("resp");
+        assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn create_pool_blank_name_400() {
+        let (app, t) = pool_app().await;
+        let resp = app.oneshot(pool_post(r#"{"name":"   "}"#, Some(&t))).await.expect("resp");
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn list_pools_is_open_200() {
+        let (app, _t) = pool_app().await;
+        let resp = app
+            .oneshot(
+                Request::builder().uri("/api/resource-pool").body(Body::empty()).expect("req"),
+            )
+            .await
+            .expect("resp");
+        assert_eq!(resp.status(), StatusCode::OK);
     }
 }
