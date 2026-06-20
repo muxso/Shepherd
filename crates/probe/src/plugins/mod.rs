@@ -14,6 +14,11 @@ pub mod sql;
 #[cfg(feature = "sql")]
 pub use sql::SqlPlugin;
 
+#[cfg(feature = "mysql")]
+pub mod mysql;
+#[cfg(feature = "mysql")]
+pub use mysql::MysqlPlugin;
+
 #[cfg(feature = "redis")]
 pub mod redis;
 #[cfg(feature = "redis")]
