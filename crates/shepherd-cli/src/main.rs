@@ -497,6 +497,13 @@ enum FcaseCmd {
         #[arg(long, default_value = "cases.xlsx")]
         out: String,
     },
+    /// 从 Excel(.xlsx)导入用例。
+    Import {
+        #[arg(long)]
+        project: String,
+        #[arg(long)]
+        file: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -1023,6 +1030,16 @@ impl Client {
     }
     fn get(&self, path: &str, auth: bool) -> R<Value> {
         self.send(self.http.get(self.url(path)), auth)
+    }
+    /// POST 原始字节(用于上传 xlsx 等二进制),返回 JSON。
+    fn post_bytes(&self, path: &str, bytes: Vec<u8>, auth: bool) -> R<Value> {
+        self.send(
+            self.http
+                .post(self.url(path))
+                .header("content-type", "application/octet-stream")
+                .body(bytes),
+            auth,
+        )
     }
     /// GET 返回原始字节(用于 xlsx 等二进制响应)。
     fn get_bytes(&self, path: &str, auth: bool) -> R<Vec<u8>> {
@@ -1593,6 +1610,14 @@ fn run(cli: Cli) -> R<()> {
                     let bytes = c.get_bytes(&format!("/functional-case/export?projectId={project}"), true)?;
                     std::fs::write(&out, &bytes)?;
                     println!("✅ 已导出 {} 字节 → {out}", bytes.len());
+                }
+                FcaseCmd::Import { project, file } => {
+                    let bytes = std::fs::read(&file)?;
+                    pretty(&c.post_bytes(
+                        &format!("/functional-case/import?projectId={project}"),
+                        bytes,
+                        true,
+                    )?)
                 }
             }
         }
