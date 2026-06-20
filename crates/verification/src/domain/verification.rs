@@ -202,6 +202,37 @@ impl Verification {
         Ok(())
     }
 
+    /// 按验收标准**文本**自动建立覆盖链:对每条文本(trim 后)等于某条标准的,
+    /// 都把该任务 link 到那条标准(去重)。返回新建的链数。
+    ///
+    /// 供编排器在任务终态时据任务的 `acceptance_criteria` 自动关联,免手工 `verify link`。
+    /// 文本匹配是确定性的:启发式规划器每条标准生成一个 `acceptance_criteria=[标准原文]` 的任务,
+    /// 集成任务则携带全部标准 —— 故按原文匹配即可命中对应标准。
+    pub fn link_task_by_texts(
+        &mut self,
+        decomposition_id: &str,
+        task_id: &str,
+        texts: &[String],
+    ) -> usize {
+        let indices: Vec<u32> = self
+            .criteria
+            .iter()
+            .filter(|c| texts.iter().any(|t| t.trim() == c.text))
+            .map(|c| c.index)
+            .collect();
+        let mut created = 0;
+        for idx in indices {
+            let before = self.criterion(idx).map(|c| c.links.len()).unwrap_or(0);
+            // 索引来自自身标准,link 必成功;去重在 link 内部处理。
+            let _ = self.link(idx, decomposition_id, task_id);
+            let after = self.criterion(idx).map(|c| c.links.len()).unwrap_or(0);
+            if after > before {
+                created += 1;
+            }
+        }
+        created
+    }
+
     /// 同步某任务的交付/验证状态到它的**所有**覆盖链(delivery 验证通过即 satisfied=true)。
     /// 返回被更新的链数。
     pub fn sync_task(&mut self, decomposition_id: &str, task_id: &str, satisfied: bool) -> usize {
@@ -345,6 +376,28 @@ mod tests {
         v.link(0, "d1", "t1").expect("l");
         v.link(1, "d1", "t1").expect("l");
         assert_eq!(v.sync_task("d1", "t1", true), 2);
+        assert!(v.is_complete());
+    }
+
+    #[test]
+    fn link_task_by_texts_matches_and_dedups() {
+        let mut v = v(); // 标准: 登录成功 / 错误密码拒绝
+        // 任务 t1 的验收标准含一条匹配 + 一条无关 → 只命中"登录成功"
+        let n = v.link_task_by_texts("d1", "t1", &[" 登录成功 ".into(), "无关标准".into()]);
+        assert_eq!(n, 1);
+        assert_eq!(v.criterion(0).expect("c0").status(), CriterionStatus::Pending);
+        assert_eq!(v.criterion(1).expect("c1").status(), CriterionStatus::Uncovered);
+        // 再次调用幂等(去重),不新增链
+        assert_eq!(v.link_task_by_texts("d1", "t1", &["登录成功".into()]), 0);
+    }
+
+    #[test]
+    fn link_task_by_texts_integration_task_covers_all() {
+        let mut v = v();
+        // 集成任务携带全部标准 → 两条都被覆盖
+        let n = v.link_task_by_texts("d1", "t9", &["登录成功".into(), "错误密码拒绝".into()]);
+        assert_eq!(n, 2);
+        v.sync_task("d1", "t9", true);
         assert!(v.is_complete());
     }
 
