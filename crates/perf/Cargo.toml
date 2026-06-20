@@ -14,16 +14,13 @@ serde = { version = "1", features = ["derive"] }
 async-trait = "0.1"
 tokio = { version = "1", features = ["rt", "macros", "time"], optional = true }
 api-runner = { path = "../api-runner", optional = true }
-# 样本下沉到 Parquet + 对象存储(列存冷/分析层)。压缩用 UNCOMPRESSED,纯 Rust 无 C 依赖。
-arrow = { version = "53", optional = true }
-parquet = { version = "53", default-features = false, features = ["arrow"], optional = true }
-object_store = { version = "0.11", optional = true }
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "postgres", "json"], optional = true }
+serde_json = { version = "1", optional = true }
 
 [features]
 engine = ["dep:tokio"]
 api-runner-exec = ["dep:api-runner"]
-# Parquet 样本下沉(object_store:本地/内存/S3)。
-parquet-sink = ["dep:arrow", "dep:parquet", "dep:object_store"]
+pg = ["dep:sqlx", "dep:serde_json"]
 
 [dev-dependencies]
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "time", "net"] }
