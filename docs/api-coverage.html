@@ -1,0 +1,566 @@
+<!DOCTYPE html>
+<html lang="zh"><head><meta charset="utf-8"><title>Shepherd 全量 API 自测</title>
+<style>
+ body{font-family:-apple-system,Segoe UI,Helvetica,sans-serif;max-width:980px;margin:32px auto;color:#1f2329;padding:0 16px}
+ h1{font-size:22px;margin:0 0 2px} .sub{color:#8a9099;margin-bottom:20px;font-size:13px}
+ .cards{display:flex;gap:16px;flex-wrap:wrap;margin-bottom:24px}
+ .card{flex:1;min-width:260px;border:1px solid #eceff1;border-radius:10px;padding:16px 18px;background:#fff}
+ .card h3{margin:0 0 12px;font-size:14px;color:#5b6470}
+ .row{display:flex;justify-content:space-between;padding:6px 0;font-size:14px} .row b{font-weight:600}
+ .donutwrap{display:flex;align-items:center;gap:16px} .donutwrap .legend{flex:1}
+ h2.detail{font-size:16px;margin:24px 0 12px;border-left:3px solid #1664ff;padding-left:8px}
+ details.case{border:1px solid #eceff1;border-radius:8px;margin:8px 0;background:#fff}
+ summary{list-style:none;cursor:pointer;display:flex;align-items:center;gap:12px;padding:12px 14px}
+ summary::-webkit-details-marker{display:none}
+ .kind{font-size:11px;color:#1664ff;background:#eaf1ff;border-radius:4px;padding:2px 7px;font-weight:600}
+ .cname{font-weight:600;flex:1;font-family:ui-monospace,Menlo,monospace;font-size:13px}
+ .badge{font-size:12px;font-weight:600;border-radius:4px;padding:2px 8px} .meta{color:#8a9099;font-size:12px}
+ .cdetail{padding:4px 16px 16px;border-top:1px solid #f2f3f5}
+ .sec{font-weight:600;font-size:13px;margin:12px 0 6px;color:#5b6470}
+ table.assert{width:100%;border-collapse:collapse;font-size:13px}
+ table.assert th,table.assert td{border:1px solid #eceff1;padding:7px 10px;text-align:left}
+ table.assert th{background:#fafbfc;color:#5b6470;font-weight:600}
+ pre{background:#0f1419;color:#d6deeb;padding:12px;border-radius:6px;overflow:auto;font-size:12px;line-height:1.5;white-space:pre-wrap;word-break:break-all}
+ .toolbar{display:flex;gap:10px;align-items:center;margin:6px 0 14px}
+ .toolbar input{padding:7px 10px;border:1px solid #dfe3e8;border-radius:6px;font-size:13px;flex:1;max-width:280px}
+ .toolbar button{padding:7px 12px;border:1px solid #dfe3e8;border-radius:6px;background:#fff;cursor:pointer;font-size:13px}
+</style></head><body>
+ <h1>Shepherd 全量 API 自测</h1>
+ <div class="sub">逐端点:请求 + 响应 + 断言(状态码/关键字段/业务结果)　·　结论:<span style=color:#2e7d32>全部通过</span></div>
+ <div class="cards">
+  <div class="card"><h3>报告分析</h3>
+   <div class="row"><span>断言总数</span><b>136</b></div>
+   <div class="row"><span>通过</span><b style=color:#2e7d32>136</b></div>
+   <div class="row"><span>失败</span><b style=color:#c62828>0</b></div>
+   <div class="row"><span>通过率</span><b>100.0%</b></div>
+  </div>
+  <div class="card"><h3>断言分布</h3>
+   <div class="donutwrap">
+    <svg width="120" height="120" viewBox="0 0 120 120"><g transform="rotate(-90 60 60)"><circle cx="60" cy="60" r="42" fill="none" stroke="#f0f2f5" stroke-width="16"/><circle cx="60" cy="60" r="42" fill="none" stroke="#2e7d32" stroke-width="16" stroke-dasharray="263.89 263.894" stroke-dashoffset="0"/><circle cx="60" cy="60" r="42" fill="none" stroke="#c62828" stroke-width="16" stroke-dasharray="0.00 263.894" stroke-dashoffset="-263.89"/></g><text x="60" y="56" text-anchor="middle" font-size="20" font-weight="700" fill="#1f2329">136</text><text x="60" y="74" text-anchor="middle" font-size="11" fill="#8a9099">断言</text></svg>
+    <div class="legend">
+     <div class="row"><span style="color:#2e7d32">● 通过</span><b>136　100.0%</b></div>
+     <div class="row"><span style="color:#c62828">● 失败</span><b>0</b></div>
+    </div>
+   </div>
+  </div>
+ </div>
+ <div class="toolbar"><input id="q" placeholder="过滤路径…" oninput="flt()"><button onclick="ex(true)">展开全部</button><button onclick="ex(false)">收起全部</button></div>
+<h2 class=detail>登录 / 鉴权初始化</h2>
+<details class=case>
+<summary><span class=kind>POST</span><span class=cname>/auth/login</span><span class=badge style="background:#2e7d32;color:#fff">✓ 2</span><span class=meta>HTTP 200</span></summary>
+<div class=cdetail><div class=sec>请求体</div><pre>{&quot;username&quot;:&quot;admin&quot;,&quot;password&quot;:&quot;s3cret&quot;}</pre><div class=sec>响应(HTTP 200)</div><pre>{&quot;token&quot;:&quot;83ccc4dd-c824-4e4b-bc86-0a069d2c4ac2&quot;}</pre>
+<div class=sec>断言</div><table class=assert><tr><th>检查</th><th>结果</th><th>说明</th></tr><tr><td>登录(状态)</td><td style=color:#2e7d32>✓ 200</td><td></td></tr><tr><td>返回 token</td><td style=color:#2e7d32>✓</td><td></td></tr></table>
+</div></details>
+<h2 class=detail>健康 / OpenAPI / 鉴权</h2>
+<details class=case>
+<summary><span class=kind>GET</span><span class=cname>/healthz</span><span class=badge style="background:#2e7d32;color:#fff">✓ 2</span><span class=meta>HTTP 200</span></summary>
+<div class=cdetail><div class=sec>响应(HTTP 200)</div><pre>ok</pre>
+<div class=sec>断言</div><table class=assert><tr><th>检查</th><th>结果</th><th>说明</th></tr><tr><td>healthz(状态)</td><td style=color:#2e7d32>✓ 200</td><td></td></tr><tr><td>body=ok</td><td style=color:#2e7d32>✓</td><td></td></tr></table>
+</div></details>
+<details class=case>
+<summary><span class=kind>GET</span><span class=cname>/readyz</span><span class=badge style="background:#2e7d32;color:#fff">✓ 1</span><span class=meta>HTTP 200</span></summary>
+<div class=cdetail><div class=sec>响应(HTTP 200)</div><pre></pre>
+<div class=sec>断言</div><table class=assert><tr><th>检查</th><th>结果</th><th>说明</th></tr><tr><td>readyz(状态)</td><td style=color:#2e7d32>✓ 200</td><td></td></tr></table>
+</div></details>
+<details class=case>
+<summary><span class=kind>GET</span><span class=cname>/api-docs/openapi.json</span><span class=badge style="background:#2e7d32;color:#fff">✓ 2</span><span class=meta>HTTP 200</span></summary>
+<div class=cdetail><div class=sec>响应(HTTP 200)</div><pre>{&quot;openapi&quot;:&quot;3.1.0&quot;,&quot;info&quot;:{&quot;title&quot;:&quot;Shepherd API&quot;,&quot;description&quot;:&quot;AI 研发监督平台 REST API&quot;,&quot;license&quot;:{&quot;name&quot;:&quot;GPL-2.0&quot;,&quot;identifier&quot;:&quot;GPL-2.0&quot;},&quot;version&quot;:&quot;0.0.1&quot;},&quot;paths&quot;:{&quot;/api/batch-run&quot;:{&quot;post&quot;:{&quot;tags&quot;:[&quot;api-test&quot;],&quot;operationId&quot;:&quot;batch_run&quot;,&quot;requestBody&quot;:{&quot;content&quot;:{&quot;application/json&quot;:{&quot;schema&quot;:{&quot;$ref&quot;:&quot;#/components/schemas/BatchRunRequest&quot;}}},&quot;required&quot;:true},&quot;responses&quot;:{&quot;200&quot;:{&quot;description&quot;:&quot;&quot;,&quot;content&quot;:{&quot;application/json&quot;:{&quot;schema&quot;:{&quot;$ref&quot;:&quot;#/components/schemas/BatchRunResponse&quot;}}}},&quot;400&quot;:{&quot;description&quot;:&quot;&quot;},&quot;409&quot;:{&quot;description&quot;:&quot;&quot;}}}},&quot;/api/case&quot;:{&quot;get&quot;:{&quot;tags&quot;:[&quot;api-definition&quot;],&quot;operationId&quot;:&quot;list_project_cases&quot;,&quot;parameters&quot;:[{&quot;name&quot;:&quot;projectId&quot;,&quot;in&quot;:&quot;path&quot;,&quot;required&quot;:true,&quot;schema&quot;:{&quot;type&quot;:&quot;string&quot;}},{&quot;name&quot;:&quot;current&quot;,&quot;in&quot;:&quot;path&quot;,&quot;required&quot;:true,&quot;schema&quot;:{&quot;type&quot;:&quot;integer&quot;,&quot;format&quot;:&quot;int32&quot;,&quot;minimum&quot;:0}},{&quot;name&quot;:&quot;pageSize&quot;,&quot;in&quot;:&quot;path&quot;,&quot;required&quot;:true,&quot;schema&quot;:{&quot;type&quot;:&quot;integer&quot;,&quot;format&quot;:&quot;int32&quot;,&quot;minimum&quot;:0}}],&quot;responses&quot;:{&quot;200&quot;:{&quot;description&quot;:&quot;&quot;,&quot;content&quot;:{&quot;application/json&quot;:{&quot;schema&quot;:{&quot;$ref&quot;:&quot;#/components/schemas/ApiCasePageResponse&quot;}}}},&quot;400&quot;:{&quot;description&quot;:&quot;&quot;}}},&quot;post&quot;:{&quot;tags&quot;:[&quot;api-definition&quot;],&quot;operationId&quot;:&quot;create_standalone_case&quot;,&quot;requestBody&quot;:{&quot;content&quot;:{&quot;application/json&quot;:{&quot;schema&quot;:{&quot;$ref&quot;:&quot;#/components/schemas/StandaloneCaseBody&quot;}}},&quot;required&quot;:true},&quot;responses&quot;:{&quot;201&quot;:{&quot;description&quot;:&quot;&quot;,&quot;content&quot;:{&quot;application/json&quot;:{&quot;schema&quot;:{&quot;$ref&quot;:&quot;#/components/schemas/ApiCaseResponse&quot;}}}},&quot;400&quot;:{&quot;description&quot;:&quot;&quot;},&quot;401&quot;:{&quot;description&quot;:&quot;&quot;},&quot;403&quot;:{&quot;description&quot;:&quot;&quot;}},&quot;security&quot;:[{&quot;bearer&quot;:[]}]}},&quot;/api/case/{caseId}/executions&quot;:{&quot;get&quot;:{&quot;tags&quot;:[&quot;api-test&quot;],&quot;operationId&quot;:&quot;list_executions&quot;,&quot;parameters&quot;:[{&quot;name&quot;:&quot;caseId&quot;,&quot;in&quot;:&quot;path&quot;,&quot;description&quot;:&quot;用例 id&quot;,&quot;required&quot;:true,&quot;schema&quot;:{&quot;type&quot;:&quot;string&quot;}},{&quot;name&quot;:&quot;current&quot;,&quot;in&quot;:&quot;path&quot;,&quot;required&quot;:true,&quot;schema&quot;:{&quot;type&quot;:&quot;integer&quot;,&quot;format&quot;:&quot;int32&quot;,&quot;minimum&quot;:0}},{&quot;name&quot;:&quot;pageSize&quot;,&quot;in&quot;:&quot;path&quot;,&quot;required&quot;:true,&quot;schema&quot;:{&quot;type&quot;:&quot;integer&quot;,&quot;format&quot;:&quot;int32&quot;,&quot;minimum&quot;:0}}],&quot;responses&quot;:{&quot;200&quot;:{&quot;description&quot;:&quot;&quot;,&quot;content&quot;:{&quot;application/json&quot;:{&quot;schema&quot;:{&quot;$ref&quot;:&quot;#/components/schemas/CaseExecutionPageResponse&quot;}}}},&quot;400&quot;:{&quot;description&quot;:&quot;&quot;}}}},&quot;/api/case/{id}/run&quot;:{&quot;post&quot;:{&quot;tags&quot;:[&quot;api-test&quot;],&quot;summary&quot;:&quot;单条接口用例执行:复用批量运行链路(单元素用例集),返回报告 id + 状态。\n明细仍由 `GET /api/case/{caseId}/executions` 查询。&quot;,&quot;operationId&quot;:&quot;run_case&quot;,&quot;parameters&quot;:[{&quot;name&quot;:&quot;id&quot;,&quot;in&quot;:&quot;path&quot;,&quot;required&quot;:true,&quot;schema&quot;:{&quot;type&quot;:&quot;string&quot;}}],&quot;requestBody&quot;:{&quot;content&quot;:{&quot;application/json&quot;:{&quot;schema&quot;:{&quot;$ref&quot;:&quot;#/components/schemas/CaseRunRequest&quot;}}},&quot;required&quot;:true},&quot;responses&quot;:{&quot;200&quot;:{&quot;description&quot;:&quot;&quot;,&quot;content&quot;:{&quot;application/json&quot;:{&quot;schema&quot;:{&quot;$ref&quot;:&quot;#/components/schemas/BatchRunResponse&quot;}}}},&quot;400&quot;:{&quot;description&quot;:&quot;&quot;},&quot;409&quot;:{&quot;description&quot;:&quot;&quot;}}}},&quot;/api/definition&quot;:{&quot;get&quot;:{&quot;tags&quot;:[&quot;api-definition&quot;],&quot;operationId&quot;:&quot;list_definitions&quot;,&quot;parameters&quot;:[{&quot;name&quot;:&quot;projectId&quot;,&quot;in&quot;:&quot;path&quot;,&quot;required&quot;:true,&quot;schema&quot;:{&quot;type&quot;:&quot;string&quot;}}],&quot;responses&quot;:{&quot;200&quot;:{&quot;description&quot;:&quot;&quot;,&quot;content&quot;:{&quot;application/json&quot;:{&quot;schema&quot;:{&quot;type&quot;:&quot;array&quot;,&quot;items&quot;:{&quot;$ref&quot;:&quot;#/components/schemas/ApiDefinitionResponse&quot;}}}}}}},&quot;post&quot;:{&quot;tags&quot;:[&quot;api-definition&quot;],&quot;operationId&quot;:&quot;create_definition&quot;,&quot;requestBody&quot;:{&quot;content&quot;:{&quot;application/json&quot;:{&quot;schema&quot;:{&quot;$ref&quot;:&quot;#/components/schemas/ApiDefinitionCreateBody&quot;}}},&quot;required&quot;:true},&quot;responses&quot;:{&quot;201&quot;:{&quot;description&quot;:&quot;&quot;,&quot;content&quot;:{&quot;application/json&quot;:{&quot;schema&quot;:{&quot;$ref&quot;:&quot;#/components/schemas/ApiDefinitionResponse&quot;}}}},&quot;400&quot;:{&quot;description&quot;:&quot;&quot;}},&quot;security&quot;:[{&quot;bearer&quot;:[]}]}},&quot;/api/definition/import&quot;:{&quot;post&quot;:{&quot;tags&quot;:[&quot;api-definition&quot;],&quot;operationId&quot;:&quot;import_definitions&quot;,&quot;requestBody&quot;:{&quot;content&quot;:{&quot;application/json&quot;:{&quot;schema&quot;:{&quot;$ref&quot;:&quot;#/components/schemas/ImportBody&quot;}}},&quot;required&quot;:true},&quot;responses&quot;:{&quot;201&quot;:{&quot;description&quot;:&quot;&quot;,&quot;content&quot;:{&quot;application/json&quot;:{&quot;schema&quot;:{&quot;$ref&quot;:&quot;#/components/schemas/ImportResultResponse&quot;}}}},&quot;400&quot;:{&quot;description&quot;:&quot;&quot;}},&quot;security&quot;:[{&quot;bearer&quot;:[]}]}},&quot;/api/definition/{id}&quot;:{&quot;get&quot;:{&quot;tags&quot;:[&quot;api-definition&quot;],&quot;operationId&quot;:&quot;get_definition&quot;,&quot;parameters&quot;:[{&quot;name&quot;:&quot;id&quot;,&quot;in&quot;:&quot;path&quot;,&quot;required&quot;:true,&quot;schema&quot;:{&quot;type&quot;:&quot;string&quot;}}],&quot;responses&quot;:{&quot;200&quot;:{&quot;description&quot;:&quot;&quot;,&quot;content&quot;:{&quot;applic</pre>
+<div class=sec>断言</div><table class=assert><tr><th>检查</th><th>结果</th><th>说明</th></tr><tr><td>openapi(状态)</td><td style=color:#2e7d32>✓ 200</td><td></td></tr><tr><td>有 paths/openapi 字段</td><td style=color:#2e7d32>✓</td><td></td></tr></table>
+</div></details>
+<details class=case>
+<summary><span class=kind>POST</span><span class=cname>/auth/login</span><span class=badge style="background:#2e7d32;color:#fff">✓ 1</span><span class=meta>HTTP 401</span></summary>
+<div class=cdetail><div class=sec>请求体</div><pre>{&quot;username&quot;:&quot;admin&quot;,&quot;password&quot;:&quot;bad&quot;}</pre><div class=sec>响应(HTTP 401)</div><pre>invalid credentials</pre>
+<div class=sec>断言</div><table class=assert><tr><th>检查</th><th>结果</th><th>说明</th></tr><tr><td>错密码→401(状态)</td><td style=color:#2e7d32>✓ 401</td><td></td></tr></table>
+</div></details>
+<h2 class=detail>组织 / 角色 / 用户 / 用户角色 / 项目</h2>
+<details class=case>
+<summary><span class=kind>POST</span><span class=cname>/organization</span><span class=badge style="background:#2e7d32;color:#fff">✓ 2</span><span class=meta>HTTP 201</span></summary>
+<div class=cdetail><div class=sec>请求体</div><pre>{&quot;name&quot;:&quot;cov-31713-org&quot;}</pre><div class=sec>响应(HTTP 201)</div><pre>{&quot;id&quot;:&quot;32f719f7-d896-4ff5-888c-86ccc9540bec&quot;,&quot;name&quot;:&quot;cov-31713-org&quot;,&quot;enable&quot;:true}</pre>
+<div class=sec>断言</div><table class=assert><tr><th>检查</th><th>结果</th><th>说明</th></tr><tr><td>建组织(状态)</td><td style=color:#2e7d32>✓ 201</td><td></td></tr><tr><td>返回 id+name</td><td style=color:#2e7d32>✓</td><td></td></tr></table>
+</div></details>
+<details class=case>
+<summary><span class=kind>GET</span><span class=cname>/organization/32f719f7-d896-4ff5-888c-86ccc9540bec</span><span class=badge style="background:#2e7d32;color:#fff">✓ 2</span><span class=meta>HTTP 200</span></summary>
+<div class=cdetail><div class=sec>响应(HTTP 200)</div><pre>{&quot;id&quot;:&quot;32f719f7-d896-4ff5-888c-86ccc9540bec&quot;,&quot;name&quot;:&quot;cov-31713-org&quot;,&quot;enable&quot;:true}</pre>
+<div class=sec>断言</div><table class=assert><tr><th>检查</th><th>结果</th><th>说明</th></tr><tr><td>查组织(状态)</td><td style=color:#2e7d32>✓ 200</td><td></td></tr><tr><td>id 一致</td><td style=color:#2e7d32>✓</td><td></td></tr></table>
+</div></details>
+<details class=case>
+<summary><span class=kind>GET</span><span class=cname>/organization</span><span class=badge style="background:#2e7d32;color:#fff">✓ 1</span><span class=meta>HTTP 200</span></summary>
+<div class=cdetail><div class=sec>响应(HTTP 200)</div><pre>{&quot;total&quot;:21,&quot;current&quot;:1,&quot;pageSize&quot;:10,&quot;totalPages&quot;:3,&quot;items&quot;:[{&quot;id&quot;:&quot;303b86c6-c073-4953-976e-a8e5919ab393&quot;,&quot;name&quot;:&quot;O&quot;,&quot;enable&quot;:true},{&quot;id&quot;:&quot;b180386f-1d39-43a6-bd5a-4717f3dc5e0f&quot;,&quot;name&quot;:&quot;apiorg-58312&quot;,&quot;enable&quot;:true},{&quot;id&quot;:&quot;332951db-14e0-435b-a360-54affda31fc0&quot;,&quot;name&quot;:&quot;apiorg-58573&quot;,&quot;enable&quot;:true},{&quot;id&quot;:&quot;8a9b9b5a-700f-4d44-a3e1-26474f9b606f&quot;,&quot;name&quot;:&quot;apiorg-58702&quot;,&quot;enable&quot;:true},{&quot;id&quot;:&quot;04a4976f-1f37-487c-95c9-344d7ab25b0c&quot;,&quot;name&quot;:&quot;cov-17414-org&quot;,&quot;enable&quot;:true},{&quot;id&quot;:&quot;e358dfec-3343-4f45-84ca-49be93491862&quot;,&quot;name&quot;:&quot;cov-17414-o2&quot;,&quot;enable&quot;:true},{&quot;id&quot;:&quot;08ba9116-25c7-42c1-aadc-99bc8a278494&quot;,&quot;name&quot;:&quot;cov-23311-org&quot;,&quot;enable&quot;:true},{&quot;id&quot;:&quot;198499a7-0463-4beb-9f15-a86f6eec818d&quot;,&quot;name&quot;:&quot;cov-23311-o2&quot;,&quot;enable&quot;:true},{&quot;id&quot;:&quot;2cbc427f-09cc-4d47-bad0-d2fea462360e&quot;,&quot;name&quot;:&quot;cov-8233-org&quot;,&quot;enable&quot;:true},{&quot;id&quot;:&quot;ae8a4587-897e-4b84-96d6-bfc9ef4f3d5a&quot;,&quot;name&quot;:&quot;cov-8233-o2&quot;,&quot;enable&quot;:true}]}</pre>
+<div class=sec>断言</div><table class=assert><tr><th>检查</th><th>结果</th><th>说明</th></tr><tr><td>组织列表(状态)</td><td style=color:#2e7d32>✓ 200</td><td></td></tr></table>
+</div></details>
+<details class=case>
+<summary><span class=kind>POST</span><span class=cname>/role</span><span class=badge style="background:#2e7d32;color:#fff">✓ 2</span><span class=meta>HTTP 201</span></summary>
+<div class=cdetail><div class=sec>请求体</div><pre>{&quot;name&quot;:&quot;cov-31713-role&quot;,&quot;permissions&quot;:[&quot;PROJECT:READ&quot;]}</pre><div class=sec>响应(HTTP 201)</div><pre>{&quot;id&quot;:&quot;584fd09b-70d1-450b-85c5-909995ba35c5&quot;,&quot;name&quot;:&quot;cov-31713-role&quot;,&quot;scope&quot;:&quot;SYSTEM&quot;,&quot;permissions&quot;:[&quot;PROJECT:READ&quot;]}</pre>
+<div class=sec>断言</div><table class=assert><tr><th>检查</th><th>结果</th><th>说明</th></tr><tr><td>建角色(状态)</td><td style=color:#2e7d32>✓ 201</td><td></td></tr><tr><td>角色名</td><td style=color:#2e7d32>✓</td><td></td></tr></table>
+</div></details>
+<details class=case>
+<summary><span class=kind>GET</span><span class=cname>/role/584fd09b-70d1-450b-85c5-909995ba35c5</span><span class=badge style="background:#2e7d32;color:#fff">✓ 2</span><span class=meta>HTTP 200</span></summary>
+<div class=cdetail><div class=sec>响应(HTTP 200)</div><pre>{&quot;id&quot;:&quot;584fd09b-70d1-450b-85c5-909995ba35c5&quot;,&quot;name&quot;:&quot;cov-31713-role&quot;,&quot;scope&quot;:&quot;SYSTEM&quot;,&quot;permissions&quot;:[&quot;PROJECT:READ&quot;]}</pre>
+<div class=sec>断言</div><table class=assert><tr><th>检查</th><th>结果</th><th>说明</th></tr><tr><td>查角色(状态)</td><td style=color:#2e7d32>✓ 200</td><td></td></tr><tr><td>权限含 PROJECT:READ</td><td style=color:#2e7d32>✓</td><td></td></tr></table>
+</div></details>
+<details class=case>
+<summary><span class=kind>GET</span><span class=cname>/role</span><span class=badge style="background:#2e7d32;color:#fff">✓ 1</span><span class=meta>HTTP 200</span></summary>
+<div class=cdetail><div class=sec>响应(HTTP 200)</div><pre>{&quot;total&quot;:17,&quot;current&quot;:1,&quot;pageSize&quot;:10,&quot;totalPages&quot;:2,&quot;items&quot;:[{&quot;id&quot;:&quot;332ae010-d0a0-4c78-9194-b33ce836b6de&quot;,&quot;name&quot;:&quot;cov-17414-role&quot;,&quot;scope&quot;:&quot;SYSTEM&quot;,&quot;permissions&quot;:[&quot;PROJECT:READ&quot;]},{&quot;id&quot;:&quot;7c5804e9-3adb-4e53-9592-83253005dc1e&quot;,&quot;name&quot;:&quot;cov-17414-r2&quot;,&quot;scope&quot;:&quot;SYSTEM&quot;,&quot;permissions&quot;:[]},{&quot;id&quot;:&quot;9b356ffb-256f-4db9-94a7-c5fb307f5690&quot;,&quot;name&quot;:&quot;cov-23311-role&quot;,&quot;scope&quot;:&quot;SYSTEM&quot;,&quot;permissions&quot;:[&quot;PROJECT:READ&quot;]},{&quot;id&quot;:&quot;dbea85f3-4115-4d8f-bb4a-5d37bd718ddd&quot;,&quot;name&quot;:&quot;cov-23311-r2&quot;,&quot;scope&quot;:&quot;SYSTEM&quot;,&quot;permissions&quot;:[]},{&quot;id&quot;:&quot;b0e18d08-0b30-4f47-99b2-03d1f4b25bbc&quot;,&quot;name&quot;:&quot;cov-8233-role&quot;,&quot;scope&quot;:&quot;SYSTEM&quot;,&quot;permissions&quot;:[&quot;PROJECT:READ&quot;]},{&quot;id&quot;:&quot;e0f49ac3-fa24-40e8-a1ea-84b0b824b35d&quot;,&quot;name&quot;:&quot;cov-8233-r2&quot;,&quot;scope&quot;:&quot;SYSTEM&quot;,&quot;permissions&quot;:[]},{&quot;id&quot;:&quot;e39630ce-257b-4766-a4c4-bbe709b4f148&quot;,&quot;name&quot;:&quot;cov-23004-role&quot;,&quot;scope&quot;:&quot;SYSTEM&quot;,&quot;permissions&quot;:[&quot;PROJECT:READ&quot;]},{&quot;id&quot;:&quot;65b1662c-638a-4569-a323-982a72900210&quot;,&quot;name&quot;:&quot;cov-17514-role&quot;,&quot;scope&quot;:&quot;SYSTEM&quot;,&quot;permissions&quot;:[&quot;PROJECT:READ&quot;]},{&quot;id&quot;:&quot;6af6760a-332c-470f-b192-f38829d572d7&quot;,&quot;name&quot;:&quot;cov-17322-role&quot;,&quot;scope&quot;:&quot;SYSTEM&quot;,&quot;permissions&quot;:[&quot;PROJECT:READ&quot;]},{&quot;id&quot;:&quot;1f35ecf7-f3c4-4e7b-a284-4386f5f33e23&quot;,&quot;name&quot;:&quot;cov-8353-role&quot;,&quot;scope&quot;:&quot;SYSTEM&quot;,&quot;permissions&quot;:[&quot;PROJECT:READ&quot;]}]}</pre>
+<div class=sec>断言</div><table class=assert><tr><th>检查</th><th>结果</th><th>说明</th></tr><tr><td>角色列表(状态)</td><td style=color:#2e7d32>✓ 200</td><td></td></tr></table>
+</div></details>
+<details class=case>
+<summary><span class=kind>POST</span><span class=cname>/system/user</span><span class=badge style="background:#2e7d32;color:#fff">✓ 2</span><span class=meta>HTTP 201</span></summary>
+<div class=cdetail><div class=sec>请求体</div><pre>{&quot;name&quot;:&quot;cov-31713-u&quot;,&quot;email&quot;:&quot;cov-31713@x.com&quot;}</pre><div class=sec>响应(HTTP 201)</div><pre>{&quot;id&quot;:&quot;81e522c6-ccf5-4ad7-832d-afeed49b6e1f&quot;,&quot;name&quot;:&quot;cov-31713-u&quot;,&quot;email&quot;:&quot;cov-31713@x.com&quot;,&quot;enable&quot;:true}</pre>
+<div class=sec>断言</div><table class=assert><tr><th>检查</th><th>结果</th><th>说明</th></tr><tr><td>建用户(状态)</td><td style=color:#2e7d32>✓ 201</td><td></td></tr><tr><td>用户邮箱</td><td style=color:#2e7d32>✓</td><td></td></tr></table>
+</div></details>
+<details class=case>
+<summary><span class=kind>GET</span><span class=cname>/system/user?current=1&amp;pageSize=5</span><span class=badge style="background:#2e7d32;color:#fff">✓ 2</span><span class=meta>HTTP 200</span></summary>
+<div class=cdetail><div class=sec>响应(HTTP 200)</div><pre>{&quot;total&quot;:14,&quot;current&quot;:1,&quot;pageSize&quot;:5,&quot;totalPages&quot;:3,&quot;items&quot;:[{&quot;id&quot;:&quot;0876d1d9-8fa4-498c-85b7-1e1d6e6edcc3&quot;,&quot;name&quot;:&quot;cov-28654-u&quot;,&quot;email&quot;:&quot;cov-28654@x.com&quot;,&quot;enable&quot;:true},{&quot;id&quot;:&quot;14ae39dd-7290-4e06-adfd-60aeefac49ae&quot;,&quot;name&quot;:&quot;cov-23011-u&quot;,&quot;email&quot;:&quot;cov-23011@x.com&quot;,&quot;enable&quot;:true},{&quot;id&quot;:&quot;1b0c6288-ee23-41e7-87f2-ea61be6fc765&quot;,&quot;name&quot;:&quot;cov-23004-u&quot;,&quot;email&quot;:&quot;cov-23004@x.com&quot;,&quot;enable&quot;:true},{&quot;id&quot;:&quot;1dbb2242-3757-4719-a781-644a9a561dea&quot;,&quot;name&quot;:&quot;cov-13845-u&quot;,&quot;email&quot;:&quot;cov-13845@x.com&quot;,&quot;enable&quot;:true},{&quot;id&quot;:&quot;224fe7ee-ce0c-48b5-9a2e-825262b6e53d&quot;,&quot;name&quot;:&quot;cov-13728-u&quot;,&quot;email&quot;:&quot;cov-13728@x.com&quot;,&quot;enable&quot;:true}]}</pre>
+<div class=sec>断言</div><table class=assert><tr><th>检查</th><th>结果</th><th>说明</th></tr><tr><td>用户分页(状态)</td><td style=color:#2e7d32>✓ 200</td><td></td></tr><tr><td>用户分页有 items</td><td style=color:#2e7d32>✓</td><td></td></tr></table>
+</div></details>
+<details class=case>
+<summary><span class=kind>GET</span><span class=cname>/system/user/81e522c6-ccf5-4ad7-832d-afeed49b6e1f</span><span class=badge style="background:#2e7d32;color:#fff">✓ 2</span><span class=meta>HTTP 200</span></summary>
+<div class=cdetail><div class=sec>响应(HTTP 200)</div><pre>{&quot;id&quot;:&quot;81e522c6-ccf5-4ad7-832d-afeed49b6e1f&quot;,&quot;name&quot;:&quot;cov-31713-u&quot;,&quot;email&quot;:&quot;cov-31713@x.com&quot;,&quot;enable&quot;:true}</pre>
+<div class=sec>断言</div><table class=assert><tr><th>检查</th><th>结果</th><th>说明</th></tr><tr><td>查用户(状态)</td><td style=color:#2e7d32>✓ 200</td><td></td></tr><tr><td>id 一致</td><td style=color:#2e7d32>✓</td><td></td></tr></table>
+</div></details>
+<details class=case>
+<summary><span class=kind>GET</span><span class=cname>/system/user/names?ids=81e522c6-ccf5-4ad7-832d-afeed49b6e1f</span><span class=badge style="background:#2e7d32;color:#fff">✓ 2</span><span class=meta>HTTP 200</span></summary>
+<div class=cdetail><div class=sec>响应(HTTP 200)</div><pre>{&quot;81e522c6-ccf5-4ad7-832d-afeed49b6e1f&quot;:&quot;cov-31713-u&quot;}</pre>
+<div class=sec>断言</div><table class=assert><tr><th>检查</th><th>结果</th><th>说明</th></tr><tr><td>名字解析(状态)</td><td style=color:#2e7d32>✓ 200</td><td></td></tr><tr><td>含该 id 的名字</td><td style=color:#2e7d32>✓</td><td></td></tr></table>
+</div></details>
+<details class=case>
+<summary><span class=kind>POST</span><span class=cname>/user-role/grant</span><span class=badge style="background:#2e7d32;color:#fff">✓ 1</span><span class=meta>HTTP 204</span></summary>
+<div class=cdetail><div class=sec>请求体</div><pre>{&quot;userId&quot;:&quot;81e522c6-ccf5-4ad7-832d-afeed49b6e1f&quot;,&quot;roleId&quot;:&quot;584fd09b-70d1-450b-85c5-909995ba35c5&quot;}</pre><div class=sec>响应(HTTP 204)</div><pre></pre>
+<div class=sec>断言</div><table class=assert><tr><th>检查</th><th>结果</th><th>说明</th></tr><tr><td>授角色(状态)</td><td style=color:#2e7d32>✓ 204</td><td></td></tr></table>
+</div></details>
+<details class=case>
+<summary><span class=kind>POST</span><span class=cname>/user-role/revoke</span><span class=badge style="background:#2e7d32;color:#fff">✓ 1</span><span class=meta>HTTP 204</span></summary>
+<div class=cdetail><div class=sec>请求体</div><pre>{&quot;userId&quot;:&quot;81e522c6-ccf5-4ad7-832d-afeed49b6e1f&quot;,&quot;roleId&quot;:&quot;584fd09b-70d1-450b-85c5-909995ba35c5&quot;}</pre><div class=sec>响应(HTTP 204)</div><pre></pre>
+<div class=sec>断言</div><table class=assert><tr><th>检查</th><th>结果</th><th>说明</th></tr><tr><td>撤角色(状态)</td><td style=color:#2e7d32>✓ 204</td><td></td></tr></table>
+</div></details>
+<details class=case>
+<summary><span class=kind>POST</span><span class=cname>/project</span><span class=badge style="background:#2e7d32;color:#fff">✓ 2</span><span class=meta>HTTP 201</span></summary>
+<div class=cdetail><div class=sec>请求体</div><pre>{&quot;organizationId&quot;:&quot;cov-31713&quot;,&quot;name&quot;:&quot;P&quot;}</pre><div class=sec>响应(HTTP 201)</div><pre>{&quot;id&quot;:&quot;b4b0b295-37b4-428b-89bf-bc92b221c7ac&quot;,&quot;organizationId&quot;:&quot;cov-31713&quot;,&quot;name&quot;:&quot;P&quot;,&quot;enable&quot;:true}</pre>
+<div class=sec>断言</div><table class=assert><tr><th>检查</th><th>结果</th><th>说明</th></tr><tr><td>建项目(状态)</td><td style=color:#2e7d32>✓ 201</td><td></td></tr><tr><td>项目名</td><td style=color:#2e7d32>✓</td><td></td></tr></table>
+</div></details>
+<details class=case>
+<summary><span class=kind>GET</span><span class=cname>/project?organizationId=cov-31713</span><span class=badge style="background:#2e7d32;color:#fff">✓ 2</span><span class=meta>HTTP 200</span></summary>
+<div class=cdetail><div class=sec>响应(HTTP 200)</div><pre>{&quot;total&quot;:1,&quot;current&quot;:1,&quot;pageSize&quot;:10,&quot;totalPages&quot;:1,&quot;items&quot;:[{&quot;id&quot;:&quot;b4b0b295-37b4-428b-89bf-bc92b221c7ac&quot;,&quot;organizationId&quot;:&quot;cov-31713&quot;,&quot;name&quot;:&quot;P&quot;,&quot;enable&quot;:true}]}</pre>
+<div class=sec>断言</div><table class=assert><tr><th>检查</th><th>结果</th><th>说明</th></tr><tr><td>项目列表(状态)</td><td style=color:#2e7d32>✓ 200</td><td></td></tr><tr><td>非空</td><td style=color:#2e7d32>✓</td><td></td></tr></table>
+</div></details>
+<details class=case>
+<summary><span class=kind>POST</span><span class=cname>/requirement</span><span class=badge style="background:#2e7d32;color:#fff">✓ 2</span><span class=meta>HTTP 201</span></summary>
+<div class=cdetail><div class=sec>请求体</div><pre>{&quot;projectId&quot;:&quot;cov-31713&quot;,&quot;title&quot;:&quot;登录&quot;,&quot;acceptanceCriteria&quot;:[&quot;登录成功&quot;,&quot;错误密码拒绝&quot;]}</pre><div class=sec>响应(HTTP 201)</div><pre>{&quot;id&quot;:&quot;0cf5059f-6aec-4f49-9004-462fc0da4fac&quot;,&quot;projectId&quot;:&quot;cov-31713&quot;,&quot;title&quot;:&quot;登录&quot;,&quot;status&quot;:&quot;DRAFT&quot;,&quot;baselineVersion&quot;:1,&quot;latestVersion&quot;:1,&quot;versions&quot;:[{&quot;version&quot;:1,&quot;description&quot;:&quot;&quot;,&quot;acceptanceCriteria&quot;:[&quot;登录成功&quot;,&quot;错误密码拒绝&quot;]}]}</pre>
+<div class=sec>断言</div><table class=assert><tr><th>检查</th><th>结果</th><th>说明</th></tr><tr><td>建需求(状态)</td><td style=color:#2e7d32>✓ 201</td><td></td></tr><tr><td>初版基线 v1</td><td style=color:#2e7d32>✓</td><td></td></tr></table>
+</div></details>
+<details class=case>
+<summary><span class=kind>GET</span><span class=cname>/requirement/0cf5059f-6aec-4f49-9004-462fc0da4fac</span><span class=badge style="background:#2e7d32;color:#fff">✓ 2</span><span class=meta>HTTP 200</span></summary>
+<div class=cdetail><div class=sec>响应(HTTP 200)</div><pre>{&quot;id&quot;:&quot;0cf5059f-6aec-4f49-9004-462fc0da4fac&quot;,&quot;projectId&quot;:&quot;cov-31713&quot;,&quot;title&quot;:&quot;登录&quot;,&quot;status&quot;:&quot;DRAFT&quot;,&quot;baselineVersion&quot;:1,&quot;latestVersion&quot;:1,&quot;versions&quot;:[{&quot;version&quot;:1,&quot;description&quot;:&quot;&quot;,&quot;acceptanceCriteria&quot;:[&quot;登录成功&quot;,&quot;错误密码拒绝&quot;]}]}</pre>
+<div class=sec>断言</div><table class=assert><tr><th>检查</th><th>结果</th><th>说明</th></tr><tr><td>查需求(状态)</td><td style=color:#2e7d32>✓ 200</td><td></td></tr><tr><td>基线仍 1</td><td style=color:#2e7d32>✓</td><td></td></tr></table>
+</div></details>
+<details class=case>
+<summary><span class=kind>POST</span><span class=cname>/requirement/0cf5059f-6aec-4f49-9004-462fc0da4fac/version</span><span class=badge style="background:#2e7d32;color:#fff">✓ 2</span><span class=meta>HTTP 201</span></summary>
+<div class=cdetail><div class=sec>请求体</div><pre>{&quot;description&quot;:&quot;v2&quot;,&quot;acceptanceCriteria&quot;:[&quot;登录成功&quot;,&quot;错误密码拒绝&quot;,&quot;支持飞书&quot;]}</pre><div class=sec>响应(HTTP 201)</div><pre>{&quot;version&quot;:2}</pre>
+<div class=sec>断言</div><table class=assert><tr><th>检查</th><th>结果</th><th>说明</th></tr><tr><td>修订(状态)</td><td style=color:#2e7d32>✓ 201</td><td></td></tr><tr><td>新版本=2</td><td style=color:#2e7d32>✓</td><td></td></tr></table>
+</div></details>
+<details class=case>
+<summary><span class=kind>GET</span><span class=cname>/requirement/0cf5059f-6aec-4f49-9004-462fc0da4fac/version/1</span><span class=badge style="background:#2e7d32;color:#fff">✓ 2</span><span class=meta>HTTP 200</span></summary>
+<div class=cdetail><div class=sec>响应(HTTP 200)</div><pre>{&quot;version&quot;:1,&quot;description&quot;:&quot;&quot;,&quot;acceptanceCriteria&quot;:[&quot;登录成功&quot;,&quot;错误密码拒绝&quot;]}</pre>
+<div class=sec>断言</div><table class=assert><tr><th>检查</th><th>结果</th><th>说明</th></tr><tr><td>查 v1 快照(状态)</td><td style=color:#2e7d32>✓ 200</td><td></td></tr><tr><td>v1 标准不变</td><td style=color:#2e7d32>✓</td><td></td></tr></table>
+</div></details>
+<details class=case>
+<summary><span class=kind>PUT</span><span class=cname>/requirement/0cf5059f-6aec-4f49-9004-462fc0da4fac/baseline</span><span class=badge style="background:#2e7d32;color:#fff">✓ 2</span><span class=meta>HTTP 200</span></summary>
+<div class=cdetail><div class=sec>请求体</div><pre>{&quot;version&quot;:2}</pre><div class=sec>响应(HTTP 200)</div><pre>{&quot;id&quot;:&quot;0cf5059f-6aec-4f49-9004-462fc0da4fac&quot;,&quot;projectId&quot;:&quot;cov-31713&quot;,&quot;title&quot;:&quot;登录&quot;,&quot;status&quot;:&quot;BASELINED&quot;,&quot;baselineVersion&quot;:2,&quot;latestVersion&quot;:2,&quot;versions&quot;:[{&quot;version&quot;:1,&quot;description&quot;:&quot;&quot;,&quot;acceptanceCriteria&quot;:[&quot;登录成功&quot;,&quot;错误密码拒绝&quot;]},{&quot;version&quot;:2,&quot;description&quot;:&quot;v2&quot;,&quot;acceptanceCriteria&quot;:[&quot;登录成功&quot;,&quot;错误密码拒绝&quot;,&quot;支持飞书&quot;]}]}</pre>
+<div class=sec>断言</div><table class=assert><tr><th>检查</th><th>结果</th><th>说明</th></tr><tr><td>定基 v2(状态)</td><td style=color:#2e7d32>✓ 200</td><td></td></tr><tr><td>基线=2 且 BASELINED</td><td style=color:#2e7d32>✓</td><td></td></tr></table>
+</div></details>
+<h2 class=detail>任务 / 拆分图</h2>
+<details class=case>
+<summary><span class=kind>POST</span><span class=cname>/requirement/0cf5059f-6aec-4f49-9004-462fc0da4fac/breakdown</span><span class=badge style="background:#2e7d32;color:#fff">✓ 2</span><span class=meta>HTTP 201</span></summary>
+<div class=cdetail><div class=sec>请求体</div><pre>{}</pre><div class=sec>响应(HTTP 201)</div><pre>{&quot;complete&quot;:false,&quot;id&quot;:&quot;7676c179-9ee9-4560-af7b-813b0ccce8d4&quot;,&quot;readyTaskIds&quot;:[&quot;t1&quot;,&quot;t2&quot;,&quot;t3&quot;],&quot;requirementId&quot;:&quot;0cf5059f-6aec-4f49-9004-462fc0da4fac&quot;,&quot;requirementVersion&quot;:2,&quot;tasks&quot;:[{&quot;dependencies&quot;:[],&quot;id&quot;:&quot;t1&quot;,&quot;status&quot;:&quot;PENDING&quot;,&quot;title&quot;:&quot;实现: 登录成功&quot;},{&quot;dependencies&quot;:[],&quot;id&quot;:&quot;t2&quot;,&quot;status&quot;:&quot;PENDING&quot;,&quot;title&quot;:&quot;实现: 错误密码拒绝&quot;},{&quot;dependencies&quot;:[],&quot;id&quot;:&quot;t3&quot;,&quot;status&quot;:&quot;PENDING&quot;,&quot;title&quot;:&quot;实现: 支持飞书&quot;},{&quot;dependencies&quot;:[&quot;t1&quot;,&quot;t2&quot;,&quot;t3&quot;],&quot;id&quot;:&quot;t4&quot;,&quot;status&quot;:&quot;PENDING&quot;,&quot;title&quot;:&quot;集成验证: 登录&quot;}],&quot;verificationId&quot;:&quot;0303a211-aa22-4495-8ff8-c360e60fecbb&quot;}</pre>
+<div class=sec>断言</div><table class=assert><tr><th>检查</th><th>结果</th><th>说明</th></tr><tr><td>自动拆分(状态)</td><td style=color:#2e7d32>✓ 201</td><td></td></tr><tr><td>出任务 + 自动开验证账本</td><td style=color:#2e7d32>✓</td><td></td></tr></table>
+</div></details>
+<details class=case>
+<summary><span class=kind>GET</span><span class=cname>/decomposition/7676c179-9ee9-4560-af7b-813b0ccce8d4</span><span class=badge style="background:#2e7d32;color:#fff">✓ 2</span><span class=meta>HTTP 200</span></summary>
+<div class=cdetail><div class=sec>响应(HTTP 200)</div><pre>{&quot;id&quot;:&quot;7676c179-9ee9-4560-af7b-813b0ccce8d4&quot;,&quot;requirementId&quot;:&quot;0cf5059f-6aec-4f49-9004-462fc0da4fac&quot;,&quot;requirementVersion&quot;:2,&quot;complete&quot;:false,&quot;readyTaskIds&quot;:[&quot;t1&quot;,&quot;t2&quot;,&quot;t3&quot;],&quot;tasks&quot;:[{&quot;id&quot;:&quot;t1&quot;,&quot;title&quot;:&quot;实现: 登录成功&quot;,&quot;description&quot;:&quot;&quot;,&quot;acceptanceCriteria&quot;:[&quot;登录成功&quot;],&quot;dependencies&quot;:[],&quot;status&quot;:&quot;PENDING&quot;},{&quot;id&quot;:&quot;t2&quot;,&quot;title&quot;:&quot;实现: 错误密码拒绝&quot;,&quot;description&quot;:&quot;&quot;,&quot;acceptanceCriteria&quot;:[&quot;错误密码拒绝&quot;],&quot;dependencies&quot;:[],&quot;status&quot;:&quot;PENDING&quot;},{&quot;id&quot;:&quot;t3&quot;,&quot;title&quot;:&quot;实现: 支持飞书&quot;,&quot;description&quot;:&quot;&quot;,&quot;acceptanceCriteria&quot;:[&quot;支持飞书&quot;],&quot;dependencies&quot;:[],&quot;status&quot;:&quot;PENDING&quot;},{&quot;id&quot;:&quot;t4&quot;,&quot;title&quot;:&quot;集成验证: 登录&quot;,&quot;description&quot;:&quot;集成并验证全部验收标准&quot;,&quot;acceptanceCriteria&quot;:[&quot;登录成功&quot;,&quot;错误密码拒绝&quot;,&quot;支持飞书&quot;],&quot;dependencies&quot;:[&quot;t1&quot;,&quot;t2&quot;,&quot;t3&quot;],&quot;status&quot;:&quot;PENDING&quot;}]}</pre>
+<div class=sec>断言</div><table class=assert><tr><th>检查</th><th>结果</th><th>说明</th></tr><tr><td>查拆分图(状态)</td><td style=color:#2e7d32>✓ 200</td><td></td></tr><tr><td>任务数一致</td><td style=color:#2e7d32>✓</td><td></td></tr></table>
+</div></details>
+<details class=case>
+<summary><span class=kind>GET</span><span class=cname>/decomposition/7676c179-9ee9-4560-af7b-813b0ccce8d4/ready</span><span class=badge style="background:#2e7d32;color:#fff">✓ 2</span><span class=meta>HTTP 200</span></summary>
+<div class=cdetail><div class=sec>响应(HTTP 200)</div><pre>[{&quot;id&quot;:&quot;t1&quot;,&quot;title&quot;:&quot;实现: 登录成功&quot;,&quot;description&quot;:&quot;&quot;,&quot;acceptanceCriteria&quot;:[&quot;登录成功&quot;],&quot;dependencies&quot;:[],&quot;status&quot;:&quot;PENDING&quot;},{&quot;id&quot;:&quot;t2&quot;,&quot;title&quot;:&quot;实现: 错误密码拒绝&quot;,&quot;description&quot;:&quot;&quot;,&quot;acceptanceCriteria&quot;:[&quot;错误密码拒绝&quot;],&quot;dependencies&quot;:[],&quot;status&quot;:&quot;PENDING&quot;},{&quot;id&quot;:&quot;t3&quot;,&quot;title&quot;:&quot;实现: 支持飞书&quot;,&quot;description&quot;:&quot;&quot;,&quot;acceptanceCriteria&quot;:[&quot;支持飞书&quot;],&quot;dependencies&quot;:[],&quot;status&quot;:&quot;PENDING&quot;}]</pre>
+<div class=sec>断言</div><table class=assert><tr><th>检查</th><th>结果</th><th>说明</th></tr><tr><td>就绪任务(状态)</td><td style=color:#2e7d32>✓ 200</td><td></td></tr><tr><td>就绪返回任务数组</td><td style=color:#2e7d32>✓</td><td></td></tr></table>
+</div></details>
+<details class=case>
+<summary><span class=kind>POST</span><span class=cname>/decomposition/7676c179-9ee9-4560-af7b-813b0ccce8d4/task</span><span class=badge style="background:#2e7d32;color:#fff">✓ 2</span><span class=meta>HTTP 201</span></summary>
+<div class=cdetail><div class=sec>请求体</div><pre>{&quot;title&quot;:&quot;额外&quot;,&quot;acceptanceCriteria&quot;:[&quot;x&quot;],&quot;dependencies&quot;:[]}</pre><div class=sec>响应(HTTP 201)</div><pre>{&quot;taskId&quot;:&quot;t5&quot;}</pre>
+<div class=sec>断言</div><table class=assert><tr><th>检查</th><th>结果</th><th>说明</th></tr><tr><td>加任务(状态)</td><td style=color:#2e7d32>✓ 201</td><td></td></tr><tr><td>返回 taskId</td><td style=color:#2e7d32>✓</td><td></td></tr></table>
+</div></details>
+<details class=case>
+<summary><span class=kind>POST</span><span class=cname>/decomposition/7676c179-9ee9-4560-af7b-813b0ccce8d4/run</span><span class=badge style="background:#2e7d32;color:#fff">✓ 2</span><span class=meta>HTTP 200</span></summary>
+<div class=cdetail><div class=sec>请求体</div><pre>{}</pre><div class=sec>响应(HTTP 200)</div><pre>{&quot;decompositionId&quot;:&quot;7676c179-9ee9-4560-af7b-813b0ccce8d4&quot;,&quot;total&quot;:5,&quot;verified&quot;:5,&quot;failed&quot;:0,&quot;blocked&quot;:0,&quot;rounds&quot;:2}</pre>
+<div class=sec>断言</div><table class=assert><tr><th>检查</th><th>结果</th><th>说明</th></tr><tr><td>并行运行(状态)</td><td style=color:#2e7d32>✓ 200</td><td></td></tr><tr><td>全部推进(verified+failed=total)</td><td style=color:#2e7d32>✓</td><td></td></tr></table>
+</div></details>
+<h2 class=detail>交付</h2>
+<details class=case>
+<summary><span class=kind>POST</span><span class=cname>/delivery</span><span class=badge style="background:#2e7d32;color:#fff">✓ 2</span><span class=meta>HTTP 201</span></summary>
+<div class=cdetail><div class=sec>请求体</div><pre>{&quot;decompositionId&quot;:&quot;7676c179-9ee9-4560-af7b-813b0ccce8d4&quot;,&quot;taskId&quot;:&quot;t1&quot;,&quot;title&quot;:&quot;实现&quot;,&quot;executor&quot;:&quot;CLAUDE_CODE&quot;}</pre><div class=sec>响应(HTTP 201)</div><pre>{&quot;id&quot;:&quot;70ebbc7f-2970-4d9a-8f6e-edb1a2d4607d&quot;,&quot;decompositionId&quot;:&quot;7676c179-9ee9-4560-af7b-813b0ccce8d4&quot;,&quot;taskId&quot;:&quot;t1&quot;,&quot;executor&quot;:&quot;CLAUDE_CODE&quot;,&quot;status&quot;:&quot;DELIVERED&quot;,&quot;runId&quot;:null,&quot;deliverable&quot;:{&quot;kind&quot;:&quot;DIFF&quot;,&quot;reference&quot;:&quot;stub://7676c179-9ee9-4560-af7b-813b0ccce8d4/t1&quot;,&quot;summary&quot;:&quot;[CLAUDE_CODE] echo: 实现&quot;},&quot;error&quot;:null}</pre>
+<div class=sec>断言</div><table class=assert><tr><th>检查</th><th>结果</th><th>说明</th></tr><tr><td>派发(状态)</td><td style=color:#2e7d32>✓ 201</td><td></td></tr><tr><td>返回尝试 + 状态</td><td style=color:#2e7d32>✓</td><td></td></tr></table>
+</div></details>
+<details class=case>
+<summary><span class=kind>GET</span><span class=cname>/delivery/70ebbc7f-2970-4d9a-8f6e-edb1a2d4607d</span><span class=badge style="background:#2e7d32;color:#fff">✓ 2</span><span class=meta>HTTP 200</span></summary>
+<div class=cdetail><div class=sec>响应(HTTP 200)</div><pre>{&quot;id&quot;:&quot;70ebbc7f-2970-4d9a-8f6e-edb1a2d4607d&quot;,&quot;decompositionId&quot;:&quot;7676c179-9ee9-4560-af7b-813b0ccce8d4&quot;,&quot;taskId&quot;:&quot;t1&quot;,&quot;executor&quot;:&quot;CLAUDE_CODE&quot;,&quot;status&quot;:&quot;DELIVERED&quot;,&quot;runId&quot;:null,&quot;deliverable&quot;:{&quot;kind&quot;:&quot;DIFF&quot;,&quot;reference&quot;:&quot;stub://7676c179-9ee9-4560-af7b-813b0ccce8d4/t1&quot;,&quot;summary&quot;:&quot;[CLAUDE_CODE] echo: 实现&quot;},&quot;error&quot;:null}</pre>
+<div class=sec>断言</div><table class=assert><tr><th>检查</th><th>结果</th><th>说明</th></tr><tr><td>查交付(状态)</td><td style=color:#2e7d32>✓ 200</td><td></td></tr><tr><td>id 一致</td><td style=color:#2e7d32>✓</td><td></td></tr></table>
+</div></details>
+<details class=case>
+<summary><span class=kind>GET</span><span class=cname>/delivery?decompositionId=7676c179-9ee9-4560-af7b-813b0ccce8d4&amp;taskId=t1</span><span class=badge style="background:#2e7d32;color:#fff">✓ 2</span><span class=meta>HTTP 200</span></summary>
+<div class=cdetail><div class=sec>响应(HTTP 200)</div><pre>[{&quot;id&quot;:&quot;3f21fd3d-da27-4ee3-bf67-fd30708e6cf3&quot;,&quot;decompositionId&quot;:&quot;7676c179-9ee9-4560-af7b-813b0ccce8d4&quot;,&quot;taskId&quot;:&quot;t1&quot;,&quot;executor&quot;:&quot;CLAUDE_CODE&quot;,&quot;status&quot;:&quot;DELIVERED&quot;,&quot;runId&quot;:null,&quot;deliverable&quot;:{&quot;kind&quot;:&quot;DIFF&quot;,&quot;reference&quot;:&quot;stub://7676c179-9ee9-4560-af7b-813b0ccce8d4/t1&quot;,&quot;summary&quot;:&quot;[CLAUDE_CODE] echo: 实现: 登录成功&quot;},&quot;error&quot;:null},{&quot;id&quot;:&quot;70ebbc7f-2970-4d9a-8f6e-edb1a2d4607d&quot;,&quot;decompositionId&quot;:&quot;7676c179-9ee9-4560-af7b-813b0ccce8d4&quot;,&quot;taskId&quot;:&quot;t1&quot;,&quot;executor&quot;:&quot;CLAUDE_CODE&quot;,&quot;status&quot;:&quot;DELIVERED&quot;,&quot;runId&quot;:null,&quot;deliverable&quot;:{&quot;kind&quot;:&quot;DIFF&quot;,&quot;reference&quot;:&quot;stub://7676c179-9ee9-4560-af7b-813b0ccce8d4/t1&quot;,&quot;summary&quot;:&quot;[CLAUDE_CODE] echo: 实现&quot;},&quot;error&quot;:null}]</pre>
+<div class=sec>断言</div><table class=assert><tr><th>检查</th><th>结果</th><th>说明</th></tr><tr><td>按任务列尝试(状态)</td><td style=color:#2e7d32>✓ 200</td><td></td></tr><tr><td>非空数组</td><td style=color:#2e7d32>✓</td><td></td></tr></table>
+</div></details>
+<details class=case>
+<summary><span class=kind>POST</span><span class=cname>/delivery/70ebbc7f-2970-4d9a-8f6e-edb1a2d4607d/events</span><span class=badge style="background:#2e7d32;color:#fff">✓ 1</span><span class=meta>HTTP 201</span></summary>
+<div class=cdetail><div class=sec>请求体</div><pre>{&quot;kind&quot;:&quot;DECISION&quot;,&quot;message&quot;:&quot;x&quot;}</pre><div class=sec>响应(HTTP 201)</div><pre>{&quot;seq&quot;:220,&quot;kind&quot;:&quot;DECISION&quot;,&quot;message&quot;:&quot;x&quot;,&quot;detail&quot;:null}</pre>
+<div class=sec>断言</div><table class=assert><tr><th>检查</th><th>结果</th><th>说明</th></tr><tr><td>记事件(状态)</td><td style=color:#2e7d32>✓ 201</td><td></td></tr></table>
+</div></details>
+<details class=case>
+<summary><span class=kind>GET</span><span class=cname>/delivery/70ebbc7f-2970-4d9a-8f6e-edb1a2d4607d/events</span><span class=badge style="background:#2e7d32;color:#fff">✓ 2</span><span class=meta>HTTP 200</span></summary>
+<div class=cdetail><div class=sec>响应(HTTP 200)</div><pre>[{&quot;seq&quot;:218,&quot;kind&quot;:&quot;LOG&quot;,&quot;message&quot;:&quot;echo executor: no real agent, completing 实现&quot;,&quot;detail&quot;:null},{&quot;seq&quot;:219,&quot;kind&quot;:&quot;VERDICT&quot;,&quot;message&quot;:&quot;验证门通过: accept-all&quot;,&quot;detail&quot;:null},{&quot;seq&quot;:220,&quot;kind&quot;:&quot;DECISION&quot;,&quot;message&quot;:&quot;x&quot;,&quot;detail&quot;:null}]</pre>
+<div class=sec>断言</div><table class=assert><tr><th>检查</th><th>结果</th><th>说明</th></tr><tr><td>事件列表(状态)</td><td style=color:#2e7d32>✓ 200</td><td></td></tr><tr><td>事件数组(含 VERDICT)</td><td style=color:#2e7d32>✓</td><td></td></tr></table>
+</div></details>
+<details class=case>
+<summary><span class=kind>GET</span><span class=cname>/verification/0303a211-aa22-4495-8ff8-c360e60fecbb</span><span class=badge style="background:#2e7d32;color:#fff">✓ 2</span><span class=meta>HTTP 200</span></summary>
+<div class=cdetail><div class=sec>响应(HTTP 200)</div><pre>{&quot;id&quot;:&quot;0303a211-aa22-4495-8ff8-c360e60fecbb&quot;,&quot;requirementId&quot;:&quot;0cf5059f-6aec-4f49-9004-462fc0da4fac&quot;,&quot;requirementVersion&quot;:2,&quot;complete&quot;:true,&quot;criteria&quot;:[{&quot;index&quot;:0,&quot;text&quot;:&quot;登录成功&quot;,&quot;status&quot;:&quot;SATISFIED&quot;,&quot;links&quot;:[{&quot;decompositionId&quot;:&quot;7676c179-9ee9-4560-af7b-813b0ccce8d4&quot;,&quot;taskId&quot;:&quot;t1&quot;,&quot;satisfied&quot;:true},{&quot;decompositionId&quot;:&quot;7676c179-9ee9-4560-af7b-813b0ccce8d4&quot;,&quot;taskId&quot;:&quot;t4&quot;,&quot;satisfied&quot;:true}]},{&quot;index&quot;:1,&quot;text&quot;:&quot;错误密码拒绝&quot;,&quot;status&quot;:&quot;SATISFIED&quot;,&quot;links&quot;:[{&quot;decompositionId&quot;:&quot;7676c179-9ee9-4560-af7b-813b0ccce8d4&quot;,&quot;taskId&quot;:&quot;t2&quot;,&quot;satisfied&quot;:false},{&quot;decompositionId&quot;:&quot;7676c179-9ee9-4560-af7b-813b0ccce8d4&quot;,&quot;taskId&quot;:&quot;t4&quot;,&quot;satisfied&quot;:true}]},{&quot;index&quot;:2,&quot;text&quot;:&quot;支持飞书&quot;,&quot;status&quot;:&quot;SATISFIED&quot;,&quot;links&quot;:[{&quot;decompositionId&quot;:&quot;7676c179-9ee9-4560-af7b-813b0ccce8d4&quot;,&quot;taskId&quot;:&quot;t3&quot;,&quot;satisfied&quot;:true},{&quot;decompositionId&quot;:&quot;7676c179-9ee9-4560-af7b-813b0ccce8d4&quot;,&quot;taskId&quot;:&quot;t4&quot;,&quot;satisfied&quot;:true}]}]}</pre>
+<div class=sec>断言</div><table class=assert><tr><th>检查</th><th>结果</th><th>说明</th></tr><tr><td>查验证(状态)</td><td style=color:#2e7d32>✓ 200</td><td></td></tr><tr><td>id 一致</td><td style=color:#2e7d32>✓</td><td></td></tr></table>
+</div></details>
+<details class=case>
+<summary><span class=kind>POST</span><span class=cname>/verification/0303a211-aa22-4495-8ff8-c360e60fecbb/link</span><span class=badge style="background:#2e7d32;color:#fff">✓ 1</span><span class=meta>HTTP 200</span></summary>
+<div class=cdetail><div class=sec>请求体</div><pre>{&quot;criterionIndex&quot;:0,&quot;decompositionId&quot;:&quot;7676c179-9ee9-4560-af7b-813b0ccce8d4&quot;,&quot;taskId&quot;:&quot;t1&quot;}</pre><div class=sec>响应(HTTP 200)</div><pre>{&quot;id&quot;:&quot;0303a211-aa22-4495-8ff8-c360e60fecbb&quot;,&quot;requirementId&quot;:&quot;0cf5059f-6aec-4f49-9004-462fc0da4fac&quot;,&quot;requirementVersion&quot;:2,&quot;complete&quot;:true,&quot;criteria&quot;:[{&quot;index&quot;:0,&quot;text&quot;:&quot;登录成功&quot;,&quot;status&quot;:&quot;SATISFIED&quot;,&quot;links&quot;:[{&quot;decompositionId&quot;:&quot;7676c179-9ee9-4560-af7b-813b0ccce8d4&quot;,&quot;taskId&quot;:&quot;t1&quot;,&quot;satisfied&quot;:true},{&quot;decompositionId&quot;:&quot;7676c179-9ee9-4560-af7b-813b0ccce8d4&quot;,&quot;taskId&quot;:&quot;t4&quot;,&quot;satisfied&quot;:true}]},{&quot;index&quot;:1,&quot;text&quot;:&quot;错误密码拒绝&quot;,&quot;status&quot;:&quot;SATISFIED&quot;,&quot;links&quot;:[{&quot;decompositionId&quot;:&quot;7676c179-9ee9-4560-af7b-813b0ccce8d4&quot;,&quot;taskId&quot;:&quot;t2&quot;,&quot;satisfied&quot;:false},{&quot;decompositionId&quot;:&quot;7676c179-9ee9-4560-af7b-813b0ccce8d4&quot;,&quot;taskId&quot;:&quot;t4&quot;,&quot;satisfied&quot;:true}]},{&quot;index&quot;:2,&quot;text&quot;:&quot;支持飞书&quot;,&quot;status&quot;:&quot;SATISFIED&quot;,&quot;links&quot;:[{&quot;decompositionId&quot;:&quot;7676c179-9ee9-4560-af7b-813b0ccce8d4&quot;,&quot;taskId&quot;:&quot;t3&quot;,&quot;satisfied&quot;:true},{&quot;decompositionId&quot;:&quot;7676c179-9ee9-4560-af7b-813b0ccce8d4&quot;,&quot;taskId&quot;:&quot;t4&quot;,&quot;satisfied&quot;:true}]}]}</pre>
+<div class=sec>断言</div><table class=assert><tr><th>检查</th><th>结果</th><th>说明</th></tr><tr><td>建覆盖链(状态)</td><td style=color:#2e7d32>✓ 200</td><td></td></tr></table>
+</div></details>
+<details class=case>
+<summary><span class=kind>POST</span><span class=cname>/verification/0303a211-aa22-4495-8ff8-c360e60fecbb/sync</span><span class=badge style="background:#2e7d32;color:#fff">✓ 1</span><span class=meta>HTTP 200</span></summary>
+<div class=cdetail><div class=sec>请求体</div><pre>{&quot;decompositionId&quot;:&quot;7676c179-9ee9-4560-af7b-813b0ccce8d4&quot;,&quot;taskId&quot;:&quot;t1&quot;,&quot;satisfied&quot;:true}</pre><div class=sec>响应(HTTP 200)</div><pre>{&quot;id&quot;:&quot;0303a211-aa22-4495-8ff8-c360e60fecbb&quot;,&quot;requirementId&quot;:&quot;0cf5059f-6aec-4f49-9004-462fc0da4fac&quot;,&quot;requirementVersion&quot;:2,&quot;complete&quot;:true,&quot;criteria&quot;:[{&quot;index&quot;:0,&quot;text&quot;:&quot;登录成功&quot;,&quot;status&quot;:&quot;SATISFIED&quot;,&quot;links&quot;:[{&quot;decompositionId&quot;:&quot;7676c179-9ee9-4560-af7b-813b0ccce8d4&quot;,&quot;taskId&quot;:&quot;t1&quot;,&quot;satisfied&quot;:true},{&quot;decompositionId&quot;:&quot;7676c179-9ee9-4560-af7b-813b0ccce8d4&quot;,&quot;taskId&quot;:&quot;t4&quot;,&quot;satisfied&quot;:true}]},{&quot;index&quot;:1,&quot;text&quot;:&quot;错误密码拒绝&quot;,&quot;status&quot;:&quot;SATISFIED&quot;,&quot;links&quot;:[{&quot;decompositionId&quot;:&quot;7676c179-9ee9-4560-af7b-813b0ccce8d4&quot;,&quot;taskId&quot;:&quot;t2&quot;,&quot;satisfied&quot;:false},{&quot;decompositionId&quot;:&quot;7676c179-9ee9-4560-af7b-813b0ccce8d4&quot;,&quot;taskId&quot;:&quot;t4&quot;,&quot;satisfied&quot;:true}]},{&quot;index&quot;:2,&quot;text&quot;:&quot;支持飞书&quot;,&quot;status&quot;:&quot;SATISFIED&quot;,&quot;links&quot;:[{&quot;decompositionId&quot;:&quot;7676c179-9ee9-4560-af7b-813b0ccce8d4&quot;,&quot;taskId&quot;:&quot;t3&quot;,&quot;satisfied&quot;:true},{&quot;decompositionId&quot;:&quot;7676c179-9ee9-4560-af7b-813b0ccce8d4&quot;,&quot;taskId&quot;:&quot;t4&quot;,&quot;satisfied&quot;:true}]}]}</pre>
+<div class=sec>断言</div><table class=assert><tr><th>检查</th><th>结果</th><th>说明</th></tr><tr><td>同步覆盖(状态)</td><td style=color:#2e7d32>✓ 200</td><td></td></tr></table>
+</div></details>
+<details class=case>
+<summary><span class=kind>GET</span><span class=cname>/verification/0303a211-aa22-4495-8ff8-c360e60fecbb/report</span><span class=badge style="background:#2e7d32;color:#fff">✓ 2</span><span class=meta>HTTP 200</span></summary>
+<div class=cdetail><div class=sec>响应(HTTP 200)</div><pre>{&quot;complete&quot;:true,&quot;total&quot;:3,&quot;satisfied&quot;:3,&quot;gaps&quot;:[]}</pre>
+<div class=sec>断言</div><table class=assert><tr><th>检查</th><th>结果</th><th>说明</th></tr><tr><td>完整性报告(状态)</td><td style=color:#2e7d32>✓ 200</td><td></td></tr><tr><td>满足数≥1 且未完整(仍有缺口)</td><td style=color:#2e7d32>✓</td><td></td></tr></table>
+</div></details>
+<h2 class=detail>技能 / 缺陷</h2>
+<details class=case>
+<summary><span class=kind>POST</span><span class=cname>/skill</span><span class=badge style="background:#2e7d32;color:#fff">✓ 1</span><span class=meta>HTTP 201</span></summary>
+<div class=cdetail><div class=sec>请求体</div><pre>{&quot;projectId&quot;:&quot;cov-31713&quot;,&quot;name&quot;:&quot;基础&quot;,&quot;instructions&quot;:&quot;遵循六边形&quot;}</pre><div class=sec>响应(HTTP 201)</div><pre>{&quot;id&quot;:&quot;261be9e6-9feb-4adc-87cb-04accc4d3c23&quot;,&quot;projectId&quot;:&quot;cov-31713&quot;,&quot;name&quot;:&quot;基础&quot;,&quot;description&quot;:&quot;&quot;,&quot;instructions&quot;:&quot;遵循六边形&quot;,&quot;includes&quot;:[],&quot;enabled&quot;:true}</pre>
+<div class=sec>断言</div><table class=assert><tr><th>检查</th><th>结果</th><th>说明</th></tr><tr><td>建技能(状态)</td><td style=color:#2e7d32>✓ 201</td><td></td></tr></table>
+</div></details>
+<details class=case>
+<summary><span class=kind>POST</span><span class=cname>/skill/compose</span><span class=badge style="background:#2e7d32;color:#fff">✓ 2</span><span class=meta>HTTP 200</span></summary>
+<div class=cdetail><div class=sec>请求体</div><pre>{&quot;projectId&quot;:&quot;cov-31713&quot;,&quot;skillIds&quot;:[&quot;261be9e6-9feb-4adc-87cb-04accc4d3c23&quot;]}</pre><div class=sec>响应(HTTP 200)</div><pre>{&quot;skillIds&quot;:[&quot;261be9e6-9feb-4adc-87cb-04accc4d3c23&quot;],&quot;instructions&quot;:&quot;## 基础\n遵循六边形&quot;}</pre>
+<div class=sec>断言</div><table class=assert><tr><th>检查</th><th>结果</th><th>说明</th></tr><tr><td>组合技能(状态)</td><td style=color:#2e7d32>✓ 200</td><td></td></tr><tr><td>组合含指令</td><td style=color:#2e7d32>✓</td><td></td></tr></table>
+</div></details>
+<details class=case>
+<summary><span class=kind>POST</span><span class=cname>/bug</span><span class=badge style="background:#2e7d32;color:#fff">✓ 2</span><span class=meta>HTTP 201</span></summary>
+<div class=cdetail><div class=sec>请求体</div><pre>{&quot;projectId&quot;:&quot;cov-31713&quot;,&quot;title&quot;:&quot;b&quot;,&quot;initialStatus&quot;:&quot;NEW&quot;}</pre><div class=sec>响应(HTTP 201)</div><pre>{&quot;id&quot;:&quot;94406f67-81d8-4f94-9f89-c3037a2cb03c&quot;,&quot;projectId&quot;:&quot;cov-31713&quot;,&quot;title&quot;:&quot;b&quot;,&quot;status&quot;:&quot;NEW&quot;}</pre>
+<div class=sec>断言</div><table class=assert><tr><th>检查</th><th>结果</th><th>说明</th></tr><tr><td>建缺陷(状态)</td><td style=color:#2e7d32>✓ 201</td><td></td></tr><tr><td>初态 NEW</td><td style=color:#2e7d32>✓</td><td></td></tr></table>
+</div></details>
+<details class=case>
+<summary><span class=kind>POST</span><span class=cname>/bug/94406f67-81d8-4f94-9f89-c3037a2cb03c/status</span><span class=badge style="background:#2e7d32;color:#fff">✓ 2</span><span class=meta>HTTP 200</span></summary>
+<div class=cdetail><div class=sec>请求体</div><pre>{&quot;status&quot;:&quot;RESOLVED&quot;}</pre><div class=sec>响应(HTTP 200)</div><pre>{&quot;id&quot;:&quot;94406f67-81d8-4f94-9f89-c3037a2cb03c&quot;,&quot;projectId&quot;:&quot;cov-31713&quot;,&quot;title&quot;:&quot;b&quot;,&quot;status&quot;:&quot;RESOLVED&quot;}</pre>
+<div class=sec>断言</div><table class=assert><tr><th>检查</th><th>结果</th><th>说明</th></tr><tr><td>合法迁移(状态)</td><td style=color:#2e7d32>✓ 200</td><td></td></tr><tr><td>→RESOLVED</td><td style=color:#2e7d32>✓</td><td></td></tr></table>
+</div></details>
+<details class=case>
+<summary><span class=kind>POST</span><span class=cname>/bug/94406f67-81d8-4f94-9f89-c3037a2cb03c/status</span><span class=badge style="background:#2e7d32;color:#fff">✓ 1</span><span class=meta>HTTP 409</span></summary>
+<div class=cdetail><div class=sec>请求体</div><pre>{&quot;status&quot;:&quot;NEW&quot;}</pre><div class=sec>响应(HTTP 409)</div><pre>transition not allowed</pre>
+<div class=sec>断言</div><table class=assert><tr><th>检查</th><th>结果</th><th>说明</th></tr><tr><td>非法迁移→409(状态)</td><td style=color:#2e7d32>✓ 409</td><td></td></tr></table>
+</div></details>
+<h2 class=detail>功能用例</h2>
+<details class=case>
+<summary><span class=kind>POST</span><span class=cname>/functional-case</span><span class=badge style="background:#2e7d32;color:#fff">✓ 2</span><span class=meta>HTTP 201</span></summary>
+<div class=cdetail><div class=sec>请求体</div><pre>{&quot;projectId&quot;:&quot;cov-31713&quot;,&quot;name&quot;:&quot;功能1&quot;,&quot;priority&quot;:&quot;P1&quot;}</pre><div class=sec>响应(HTTP 201)</div><pre>{&quot;id&quot;:&quot;524b981c-2fad-4572-8fef-9783117d4d4f&quot;,&quot;projectId&quot;:&quot;cov-31713&quot;,&quot;name&quot;:&quot;功能1&quot;,&quot;module&quot;:&quot;&quot;,&quot;priority&quot;:&quot;P1&quot;,&quot;status&quot;:&quot;PREPARED&quot;,&quot;customFields&quot;:{}}</pre>
+<div class=sec>断言</div><table class=assert><tr><th>检查</th><th>结果</th><th>说明</th></tr><tr><td>建功能用例(状态)</td><td style=color:#2e7d32>✓ 201</td><td></td></tr><tr><td>返回 id</td><td style=color:#2e7d32>✓</td><td></td></tr></table>
+</div></details>
+<details class=case>
+<summary><span class=kind>GET</span><span class=cname>/functional-case?projectId=cov-31713</span><span class=badge style="background:#2e7d32;color:#fff">✓ 2</span><span class=meta>HTTP 200</span></summary>
+<div class=cdetail><div class=sec>响应(HTTP 200)</div><pre>[{&quot;id&quot;:&quot;524b981c-2fad-4572-8fef-9783117d4d4f&quot;,&quot;projectId&quot;:&quot;cov-31713&quot;,&quot;name&quot;:&quot;功能1&quot;,&quot;module&quot;:&quot;&quot;,&quot;priority&quot;:&quot;P1&quot;,&quot;status&quot;:&quot;PREPARED&quot;,&quot;customFields&quot;:{}}]</pre>
+<div class=sec>断言</div><table class=assert><tr><th>检查</th><th>结果</th><th>说明</th></tr><tr><td>列表(状态)</td><td style=color:#2e7d32>✓ 200</td><td></td></tr><tr><td>非空</td><td style=color:#2e7d32>✓</td><td></td></tr></table>
+</div></details>
+<details class=case>
+<summary><span class=kind>GET</span><span class=cname>/functional-case/export?projectId=cov-31713</span><span class=badge style="background:#2e7d32;color:#fff">✓ 1</span><span class=meta>HTTP 200</span></summary>
+<div class=cdetail><div class=sec>响应(HTTP 200)</div><pre>(二进制/非文本响应,约 5036 字节,已省略)</pre>
+<div class=sec>断言</div><table class=assert><tr><th>检查</th><th>结果</th><th>说明</th></tr><tr><td>导出(状态)</td><td style=color:#2e7d32>✓ 200</td><td></td></tr></table>
+</div></details>
+<h2 class=detail>接口定义 / Mock / 接口用例</h2>
+<details class=case>
+<summary><span class=kind>POST</span><span class=cname>/api/definition</span><span class=badge style="background:#2e7d32;color:#fff">✓ 1</span><span class=meta>HTTP 201</span></summary>
+<div class=cdetail><div class=sec>请求体</div><pre>{&quot;projectId&quot;:&quot;cov-31713&quot;,&quot;name&quot;:&quot;登录API&quot;,&quot;protocol&quot;:&quot;HTTP&quot;,&quot;method&quot;:&quot;POST&quot;,&quot;path&quot;:&quot;/login&quot;}</pre><div class=sec>响应(HTTP 201)</div><pre>{&quot;id&quot;:&quot;7a6dd85c-a73a-4a3f-bd87-7af0070f6bba&quot;,&quot;projectId&quot;:&quot;cov-31713&quot;,&quot;name&quot;:&quot;登录API&quot;,&quot;protocol&quot;:&quot;HTTP&quot;,&quot;method&quot;:&quot;POST&quot;,&quot;path&quot;:&quot;/login&quot;,&quot;status&quot;:&quot;DRAFT&quot;}</pre>
+<div class=sec>断言</div><table class=assert><tr><th>检查</th><th>结果</th><th>说明</th></tr><tr><td>建定义(状态)</td><td style=color:#2e7d32>✓ 201</td><td></td></tr></table>
+</div></details>
+<details class=case>
+<summary><span class=kind>GET</span><span class=cname>/api/definition?projectId=cov-31713</span><span class=badge style="background:#2e7d32;color:#fff">✓ 2</span><span class=meta>HTTP 200</span></summary>
+<div class=cdetail><div class=sec>响应(HTTP 200)</div><pre>[{&quot;id&quot;:&quot;7a6dd85c-a73a-4a3f-bd87-7af0070f6bba&quot;,&quot;projectId&quot;:&quot;cov-31713&quot;,&quot;name&quot;:&quot;登录API&quot;,&quot;protocol&quot;:&quot;HTTP&quot;,&quot;method&quot;:&quot;POST&quot;,&quot;path&quot;:&quot;/login&quot;,&quot;status&quot;:&quot;DRAFT&quot;}]</pre>
+<div class=sec>断言</div><table class=assert><tr><th>检查</th><th>结果</th><th>说明</th></tr><tr><td>定义列表(状态)</td><td style=color:#2e7d32>✓ 200</td><td></td></tr><tr><td>非空</td><td style=color:#2e7d32>✓</td><td></td></tr></table>
+</div></details>
+<details class=case>
+<summary><span class=kind>GET</span><span class=cname>/api/definition/7a6dd85c-a73a-4a3f-bd87-7af0070f6bba</span><span class=badge style="background:#2e7d32;color:#fff">✓ 2</span><span class=meta>HTTP 200</span></summary>
+<div class=cdetail><div class=sec>响应(HTTP 200)</div><pre>{&quot;id&quot;:&quot;7a6dd85c-a73a-4a3f-bd87-7af0070f6bba&quot;,&quot;projectId&quot;:&quot;cov-31713&quot;,&quot;name&quot;:&quot;登录API&quot;,&quot;protocol&quot;:&quot;HTTP&quot;,&quot;method&quot;:&quot;POST&quot;,&quot;path&quot;:&quot;/login&quot;,&quot;status&quot;:&quot;DRAFT&quot;}</pre>
+<div class=sec>断言</div><table class=assert><tr><th>检查</th><th>结果</th><th>说明</th></tr><tr><td>查定义(状态)</td><td style=color:#2e7d32>✓ 200</td><td></td></tr><tr><td>id 一致</td><td style=color:#2e7d32>✓</td><td></td></tr></table>
+</div></details>
+<details class=case>
+<summary><span class=kind>POST</span><span class=cname>/api/definition/7a6dd85c-a73a-4a3f-bd87-7af0070f6bba/case</span><span class=badge style="background:#2e7d32;color:#fff">✓ 1</span><span class=meta>HTTP 201</span></summary>
+<div class=cdetail><div class=sec>请求体</div><pre>{&quot;name&quot;:&quot;c200&quot;,&quot;method&quot;:&quot;GET&quot;,&quot;url&quot;:&quot;http://127.0.0.1:9180/healthz&quot;}</pre><div class=sec>响应(HTTP 201)</div><pre>{&quot;id&quot;:&quot;dfc78967-9daf-4aaa-b947-5b7714a22976&quot;,&quot;apiDefinitionId&quot;:&quot;7a6dd85c-a73a-4a3f-bd87-7af0070f6bba&quot;,&quot;projectId&quot;:&quot;cov-31713&quot;,&quot;name&quot;:&quot;c200&quot;,&quot;method&quot;:&quot;GET&quot;,&quot;url&quot;:&quot;http://127.0.0.1:9180/healthz&quot;,&quot;body&quot;:null,&quot;assertions&quot;:[],&quot;processors&quot;:[]}</pre>
+<div class=sec>断言</div><table class=assert><tr><th>检查</th><th>结果</th><th>说明</th></tr><tr><td>定义下建用例(状态)</td><td style=color:#2e7d32>✓ 201</td><td></td></tr></table>
+</div></details>
+<details class=case>
+<summary><span class=kind>POST</span><span class=cname>/api/definition/7a6dd85c-a73a-4a3f-bd87-7af0070f6bba/mock</span><span class=badge style="background:#2e7d32;color:#fff">✓ 1</span><span class=meta>HTTP 201</span></summary>
+<div class=cdetail><div class=sec>请求体</div><pre>{&quot;name&quot;:&quot;m200&quot;,&quot;responseStatus&quot;:200}</pre><div class=sec>响应(HTTP 201)</div><pre>{&quot;id&quot;:&quot;4e51e4a7-1c38-4626-b0d1-76cf3666781f&quot;,&quot;apiDefinitionId&quot;:&quot;7a6dd85c-a73a-4a3f-bd87-7af0070f6bba&quot;,&quot;name&quot;:&quot;m200&quot;,&quot;matchRule&quot;:{},&quot;responseStatus&quot;:200,&quot;responseBody&quot;:null,&quot;enabled&quot;:true}</pre>
+<div class=sec>断言</div><table class=assert><tr><th>检查</th><th>结果</th><th>说明</th></tr><tr><td>建 Mock(状态)</td><td style=color:#2e7d32>✓ 201</td><td></td></tr></table>
+</div></details>
+<details class=case>
+<summary><span class=kind>POST</span><span class=cname>/api/case</span><span class=badge style="background:#2e7d32;color:#fff">✓ 2</span><span class=meta>HTTP 201</span></summary>
+<div class=cdetail><div class=sec>请求体</div><pre>{&quot;projectId&quot;:&quot;cov-31713&quot;,&quot;name&quot;:&quot;健康&quot;,&quot;method&quot;:&quot;GET&quot;,&quot;url&quot;:&quot;http://127.0.0.1:9180/healthz&quot;,&quot;assertions&quot;:[{&quot;type&quot;:&quot;StatusIs&quot;,&quot;args&quot;:200}]}</pre><div class=sec>响应(HTTP 201)</div><pre>{&quot;id&quot;:&quot;ed4588b9-a359-4f1c-b13e-20566e0fc289&quot;,&quot;apiDefinitionId&quot;:&quot;&quot;,&quot;projectId&quot;:&quot;cov-31713&quot;,&quot;name&quot;:&quot;健康&quot;,&quot;method&quot;:&quot;GET&quot;,&quot;url&quot;:&quot;http://127.0.0.1:9180/healthz&quot;,&quot;body&quot;:null,&quot;assertions&quot;:[{&quot;args&quot;:200,&quot;type&quot;:&quot;StatusIs&quot;}],&quot;processors&quot;:[]}</pre>
+<div class=sec>断言</div><table class=assert><tr><th>检查</th><th>结果</th><th>说明</th></tr><tr><td>建接口用例(状态)</td><td style=color:#2e7d32>✓ 201</td><td></td></tr><tr><td>返回 id</td><td style=color:#2e7d32>✓</td><td></td></tr></table>
+</div></details>
+<details class=case>
+<summary><span class=kind>GET</span><span class=cname>/api/case?projectId=cov-31713</span><span class=badge style="background:#2e7d32;color:#fff">✓ 1</span><span class=meta>HTTP 200</span></summary>
+<div class=cdetail><div class=sec>响应(HTTP 200)</div><pre>{&quot;total&quot;:2,&quot;current&quot;:1,&quot;pageSize&quot;:10,&quot;totalPages&quot;:1,&quot;items&quot;:[{&quot;id&quot;:&quot;dfc78967-9daf-4aaa-b947-5b7714a22976&quot;,&quot;apiDefinitionId&quot;:&quot;7a6dd85c-a73a-4a3f-bd87-7af0070f6bba&quot;,&quot;projectId&quot;:&quot;cov-31713&quot;,&quot;name&quot;:&quot;c200&quot;,&quot;method&quot;:&quot;GET&quot;,&quot;url&quot;:&quot;http://127.0.0.1:9180/healthz&quot;,&quot;body&quot;:null,&quot;assertions&quot;:[],&quot;processors&quot;:[]},{&quot;id&quot;:&quot;ed4588b9-a359-4f1c-b13e-20566e0fc289&quot;,&quot;apiDefinitionId&quot;:&quot;&quot;,&quot;projectId&quot;:&quot;cov-31713&quot;,&quot;name&quot;:&quot;健康&quot;,&quot;method&quot;:&quot;GET&quot;,&quot;url&quot;:&quot;http://127.0.0.1:9180/healthz&quot;,&quot;body&quot;:null,&quot;assertions&quot;:[{&quot;args&quot;:200,&quot;type&quot;:&quot;StatusIs&quot;}],&quot;processors&quot;:[]}]}</pre>
+<div class=sec>断言</div><table class=assert><tr><th>检查</th><th>结果</th><th>说明</th></tr><tr><td>用例列表(状态)</td><td style=color:#2e7d32>✓ 200</td><td></td></tr></table>
+</div></details>
+<details class=case>
+<summary><span class=kind>GET</span><span class=cname>/api/case/ed4588b9-a359-4f1c-b13e-20566e0fc289/executions</span><span class=badge style="background:#2e7d32;color:#fff">✓ 2</span><span class=meta>HTTP 200</span></summary>
+<div class=cdetail><div class=sec>响应(HTTP 200)</div><pre>{&quot;total&quot;:0,&quot;current&quot;:1,&quot;pageSize&quot;:10,&quot;totalPages&quot;:0,&quot;items&quot;:[]}</pre>
+<div class=sec>断言</div><table class=assert><tr><th>检查</th><th>结果</th><th>说明</th></tr><tr><td>执行记录(状态)</td><td style=color:#2e7d32>✓ 200</td><td></td></tr><tr><td>分页 items 为数组</td><td style=color:#2e7d32>✓</td><td></td></tr></table>
+</div></details>
+<details class=case>
+<summary><span class=kind>POST</span><span class=cname>/api/scenario</span><span class=badge style="background:#2e7d32;color:#fff">✓ 1</span><span class=meta>HTTP 201</span></summary>
+<div class=cdetail><div class=sec>请求体</div><pre>{&quot;projectId&quot;:&quot;cov-31713&quot;,&quot;name&quot;:&quot;登录冒烟&quot;}</pre><div class=sec>响应(HTTP 201)</div><pre>{&quot;id&quot;:&quot;d12d517b-0271-46a2-8812-a451d9ba16e8&quot;,&quot;projectId&quot;:&quot;cov-31713&quot;,&quot;name&quot;:&quot;登录冒烟&quot;,&quot;status&quot;:&quot;DRAFT&quot;,&quot;steps&quot;:[]}</pre>
+<div class=sec>断言</div><table class=assert><tr><th>检查</th><th>结果</th><th>说明</th></tr><tr><td>建场景(状态)</td><td style=color:#2e7d32>✓ 201</td><td></td></tr></table>
+</div></details>
+<details class=case>
+<summary><span class=kind>GET</span><span class=cname>/api/scenario/d12d517b-0271-46a2-8812-a451d9ba16e8</span><span class=badge style="background:#2e7d32;color:#fff">✓ 2</span><span class=meta>HTTP 200</span></summary>
+<div class=cdetail><div class=sec>响应(HTTP 200)</div><pre>{&quot;id&quot;:&quot;d12d517b-0271-46a2-8812-a451d9ba16e8&quot;,&quot;projectId&quot;:&quot;cov-31713&quot;,&quot;name&quot;:&quot;登录冒烟&quot;,&quot;status&quot;:&quot;DRAFT&quot;,&quot;steps&quot;:[]}</pre>
+<div class=sec>断言</div><table class=assert><tr><th>检查</th><th>结果</th><th>说明</th></tr><tr><td>查场景(状态)</td><td style=color:#2e7d32>✓ 200</td><td></td></tr><tr><td>id 一致</td><td style=color:#2e7d32>✓</td><td></td></tr></table>
+</div></details>
+<details class=case>
+<summary><span class=kind>POST</span><span class=cname>/api/scenario/d12d517b-0271-46a2-8812-a451d9ba16e8/step</span><span class=badge style="background:#2e7d32;color:#fff">✓ 1</span><span class=meta>HTTP 201</span></summary>
+<div class=cdetail><div class=sec>请求体</div><pre>{&quot;kind&quot;:&quot;CASE&quot;,&quot;order&quot;:1,&quot;refId&quot;:&quot;ed4588b9-a359-4f1c-b13e-20566e0fc289&quot;}</pre><div class=sec>响应(HTTP 201)</div><pre>{&quot;id&quot;:&quot;7e557ccb-60ed-4d1d-9637-5ebcbc3b4aaa&quot;,&quot;order&quot;:1,&quot;kind&quot;:&quot;CASE&quot;,&quot;refMode&quot;:&quot;REFERENCE&quot;,&quot;caseId&quot;:&quot;ed4588b9-a359-4f1c-b13e-20566e0fc289&quot;}</pre>
+<div class=sec>断言</div><table class=assert><tr><th>检查</th><th>结果</th><th>说明</th></tr><tr><td>加 CASE 步骤(状态)</td><td style=color:#2e7d32>✓ 201</td><td></td></tr></table>
+</div></details>
+<details class=case>
+<summary><span class=kind>POST</span><span class=cname>/api/scenario/d12d517b-0271-46a2-8812-a451d9ba16e8/step</span><span class=badge style="background:#2e7d32;color:#fff">✓ 1</span><span class=meta>HTTP 201</span></summary>
+<div class=cdetail><div class=sec>请求体</div><pre>{&quot;kind&quot;:&quot;REQUEST&quot;,&quot;order&quot;:2,&quot;request&quot;:{&quot;method&quot;:&quot;GET&quot;,&quot;url&quot;:&quot;/healthz&quot;,&quot;assertions&quot;:[{&quot;type&quot;:&quot;StatusIs&quot;,&quot;args&quot;:200}]}}</pre><div class=sec>响应(HTTP 201)</div><pre>{&quot;id&quot;:&quot;896879cd-79e3-4200-94f2-2cc5d9fd08d5&quot;,&quot;order&quot;:2,&quot;kind&quot;:&quot;REQUEST&quot;,&quot;refMode&quot;:&quot;REFERENCE&quot;,&quot;request&quot;:{&quot;method&quot;:&quot;GET&quot;,&quot;url&quot;:&quot;/healthz&quot;,&quot;assertions&quot;:[{&quot;args&quot;:200,&quot;type&quot;:&quot;StatusIs&quot;}]}}</pre>
+<div class=sec>断言</div><table class=assert><tr><th>检查</th><th>结果</th><th>说明</th></tr><tr><td>加 REQUEST 步骤(状态)</td><td style=color:#2e7d32>✓ 201</td><td></td></tr></table>
+</div></details>
+<details class=case>
+<summary><span class=kind>GET</span><span class=cname>/api/scenario/d12d517b-0271-46a2-8812-a451d9ba16e8/compile</span><span class=badge style="background:#2e7d32;color:#fff">✓ 2</span><span class=meta>HTTP 200</span></summary>
+<div class=cdetail><div class=sec>响应(HTTP 200)</div><pre>{&quot;steps&quot;:[{&quot;caseId&quot;:&quot;ed4588b9-a359-4f1c-b13e-20566e0fc289&quot;},{&quot;request&quot;:{&quot;method&quot;:&quot;GET&quot;,&quot;url&quot;:&quot;/healthz&quot;,&quot;assertions&quot;:[{&quot;args&quot;:200,&quot;type&quot;:&quot;StatusIs&quot;}]}}]}</pre>
+<div class=sec>断言</div><table class=assert><tr><th>检查</th><th>结果</th><th>说明</th></tr><tr><td>编译(状态)</td><td style=color:#2e7d32>✓ 200</td><td></td></tr><tr><td>步骤1=CASE引用,步骤2=内联请求</td><td style=color:#2e7d32>✓</td><td></td></tr></table>
+</div></details>
+<details class=case>
+<summary><span class=kind>POST</span><span class=cname>/api/scenario/d12d517b-0271-46a2-8812-a451d9ba16e8/run</span><span class=badge style="background:#2e7d32;color:#fff">✓ 2</span><span class=meta>HTTP 200</span></summary>
+<div class=cdetail><div class=sec>请求体</div><pre>{&quot;projectId&quot;:&quot;cov-31713&quot;,&quot;runMode&quot;:&quot;PARALLEL&quot;}</pre><div class=sec>响应(HTTP 200)</div><pre>{&quot;reportId&quot;:&quot;3dde5a09-c96c-4e43-b2ea-4f4a6603a319&quot;,&quot;status&quot;:&quot;ERROR&quot;,&quot;caseCount&quot;:2}</pre>
+<div class=sec>断言</div><table class=assert><tr><th>检查</th><th>结果</th><th>说明</th></tr><tr><td>运行场景(状态)</td><td style=color:#2e7d32>✓ 200</td><td></td></tr><tr><td>返回执行状态</td><td style=color:#2e7d32>✓</td><td></td></tr></table>
+</div></details>
+<details class=case>
+<summary><span class=kind>GET</span><span class=cname>/api/scenario/d12d517b-0271-46a2-8812-a451d9ba16e8/executions</span><span class=badge style="background:#2e7d32;color:#fff">✓ 1</span><span class=meta>HTTP 200</span></summary>
+<div class=cdetail><div class=sec>响应(HTTP 200)</div><pre>{&quot;total&quot;:1,&quot;current&quot;:1,&quot;pageSize&quot;:10,&quot;totalPages&quot;:1,&quot;items&quot;:[{&quot;id&quot;:&quot;c2d93da9-43d0-4084-a4e0-a1905280e04a&quot;,&quot;scenarioId&quot;:&quot;d12d517b-0271-46a2-8812-a451d9ba16e8&quot;,&quot;projectId&quot;:&quot;cov-31713&quot;,&quot;status&quot;:&quot;ERROR&quot;,&quot;caseCount&quot;:2,&quot;reportId&quot;:&quot;3dde5a09-c96c-4e43-b2ea-4f4a6603a319&quot;,&quot;createdAt&quot;:&quot;2026-06-20 18:02:51.338797+00&quot;}]}</pre>
+<div class=sec>断言</div><table class=assert><tr><th>检查</th><th>结果</th><th>说明</th></tr><tr><td>场景执行记录(状态)</td><td style=color:#2e7d32>✓ 200</td><td></td></tr></table>
+</div></details>
+<h2 class=detail>环境 / 资源池 / 批量</h2>
+<details class=case>
+<summary><span class=kind>POST</span><span class=cname>/api/environment</span><span class=badge style="background:#2e7d32;color:#fff">✓ 2</span><span class=meta>HTTP 201</span></summary>
+<div class=cdetail><div class=sec>请求体</div><pre>{&quot;projectId&quot;:&quot;cov-31713&quot;,&quot;name&quot;:&quot;env&quot;,&quot;baseUrl&quot;:&quot;http://127.0.0.1:9180&quot;}</pre><div class=sec>响应(HTTP 201)</div><pre>{&quot;id&quot;:&quot;3aa596d9-acdf-490a-837d-79bc821e6d6c&quot;,&quot;projectId&quot;:&quot;cov-31713&quot;,&quot;name&quot;:&quot;env&quot;,&quot;baseUrl&quot;:&quot;http://127.0.0.1:9180&quot;,&quot;headers&quot;:[],&quot;variables&quot;:{},&quot;enabled&quot;:true}</pre>
+<div class=sec>断言</div><table class=assert><tr><th>检查</th><th>结果</th><th>说明</th></tr><tr><td>建环境(状态)</td><td style=color:#2e7d32>✓ 201</td><td></td></tr><tr><td>baseUrl</td><td style=color:#2e7d32>✓</td><td></td></tr></table>
+</div></details>
+<details class=case>
+<summary><span class=kind>GET</span><span class=cname>/api/environment?projectId=cov-31713</span><span class=badge style="background:#2e7d32;color:#fff">✓ 1</span><span class=meta>HTTP 200</span></summary>
+<div class=cdetail><div class=sec>响应(HTTP 200)</div><pre>[{&quot;id&quot;:&quot;3aa596d9-acdf-490a-837d-79bc821e6d6c&quot;,&quot;projectId&quot;:&quot;cov-31713&quot;,&quot;name&quot;:&quot;env&quot;,&quot;baseUrl&quot;:&quot;http://127.0.0.1:9180&quot;,&quot;headers&quot;:[],&quot;variables&quot;:{},&quot;enabled&quot;:true}]</pre>
+<div class=sec>断言</div><table class=assert><tr><th>检查</th><th>结果</th><th>说明</th></tr><tr><td>环境列表(状态)</td><td style=color:#2e7d32>✓ 200</td><td></td></tr></table>
+</div></details>
+<details class=case>
+<summary><span class=kind>PUT</span><span class=cname>/api/environment/3aa596d9-acdf-490a-837d-79bc821e6d6c</span><span class=badge style="background:#2e7d32;color:#fff">✓ 2</span><span class=meta>HTTP 200</span></summary>
+<div class=cdetail><div class=sec>请求体</div><pre>{&quot;projectId&quot;:&quot;cov-31713&quot;,&quot;name&quot;:&quot;env2&quot;,&quot;baseUrl&quot;:&quot;http://127.0.0.1:9180&quot;}</pre><div class=sec>响应(HTTP 200)</div><pre>{&quot;id&quot;:&quot;3aa596d9-acdf-490a-837d-79bc821e6d6c&quot;,&quot;projectId&quot;:&quot;cov-31713&quot;,&quot;name&quot;:&quot;env2&quot;,&quot;baseUrl&quot;:&quot;http://127.0.0.1:9180&quot;,&quot;headers&quot;:[],&quot;variables&quot;:{},&quot;enabled&quot;:true}</pre>
+<div class=sec>断言</div><table class=assert><tr><th>检查</th><th>结果</th><th>说明</th></tr><tr><td>改环境(状态)</td><td style=color:#2e7d32>✓ 200</td><td></td></tr><tr><td>名已改</td><td style=color:#2e7d32>✓</td><td></td></tr></table>
+</div></details>
+<details class=case>
+<summary><span class=kind>POST</span><span class=cname>/api/resource-pool</span><span class=badge style="background:#2e7d32;color:#fff">✓ 2</span><span class=meta>HTTP 201</span></summary>
+<div class=cdetail><div class=sec>请求体</div><pre>{&quot;name&quot;:&quot;本地池&quot;}</pre><div class=sec>响应(HTTP 201)</div><pre>{&quot;id&quot;:&quot;83f6d86b-99c5-46c5-a91f-50d74d288f51&quot;,&quot;name&quot;:&quot;本地池&quot;,&quot;enabled&quot;:true}</pre>
+<div class=sec>断言</div><table class=assert><tr><th>检查</th><th>结果</th><th>说明</th></tr><tr><td>建资源池(状态)</td><td style=color:#2e7d32>✓ 201</td><td></td></tr><tr><td>池名</td><td style=color:#2e7d32>✓</td><td></td></tr></table>
+</div></details>
+<details class=case>
+<summary><span class=kind>GET</span><span class=cname>/api/resource-pool</span><span class=badge style="background:#2e7d32;color:#fff">✓ 1</span><span class=meta>HTTP 200</span></summary>
+<div class=cdetail><div class=sec>响应(HTTP 200)</div><pre>[{&quot;id&quot;:&quot;21da30f1-c770-4648-929f-88b9ebada401&quot;,&quot;name&quot;:&quot;本地池&quot;,&quot;enabled&quot;:true},{&quot;id&quot;:&quot;f1f0e9ad-9c26-4c47-9d22-78ae9373da03&quot;,&quot;name&quot;:&quot;本地池&quot;,&quot;enabled&quot;:true},{&quot;id&quot;:&quot;10b285d1-1614-43d0-81d7-02c8f801e585&quot;,&quot;name&quot;:&quot;本地池&quot;,&quot;enabled&quot;:true},{&quot;id&quot;:&quot;349fef99-d506-4bbe-aa28-1b6e717b2d49&quot;,&quot;name&quot;:&quot;本地池&quot;,&quot;enabled&quot;:true},{&quot;id&quot;:&quot;159db455-0b22-4f9e-8db0-772c3a168bbe&quot;,&quot;name&quot;:&quot;本地池&quot;,&quot;enabled&quot;:true},{&quot;id&quot;:&quot;1f729846-3977-4dda-8f39-b1245b2843a2&quot;,&quot;name&quot;:&quot;本地池&quot;,&quot;enabled&quot;:true},{&quot;id&quot;:&quot;ae8d563d-5cae-4e5b-8f72-38e9b8521bf6&quot;,&quot;name&quot;:&quot;本地池&quot;,&quot;enabled&quot;:true},{&quot;id&quot;:&quot;18583c52-69c3-4f44-a30b-85cbf22f979e&quot;,&quot;name&quot;:&quot;本地池&quot;,&quot;enabled&quot;:true},{&quot;id&quot;:&quot;66fd78a3-0cf0-4f31-a52c-9afbf12a25ed&quot;,&quot;name&quot;:&quot;本地池&quot;,&quot;enabled&quot;:true},{&quot;id&quot;:&quot;d52bd5f0-0573-4675-8d74-588b564ca7a3&quot;,&quot;name&quot;:&quot;本地池&quot;,&quot;enabled&quot;:true},{&quot;id&quot;:&quot;ea730b65-7697-4a39-a64c-910d52eb515c&quot;,&quot;name&quot;:&quot;本地池&quot;,&quot;enabled&quot;:true},{&quot;id&quot;:&quot;4e70d6b3-c824-4973-abff-a101e1b27b23&quot;,&quot;name&quot;:&quot;本地池&quot;,&quot;enabled&quot;:true},{&quot;id&quot;:&quot;c0a0f68a-470b-4201-b0f9-e3c01b617696&quot;,&quot;name&quot;:&quot;本地池&quot;,&quot;enabled&quot;:true},{&quot;id&quot;:&quot;83f6d86b-99c5-46c5-a91f-50d74d288f51&quot;,&quot;name&quot;:&quot;本地池&quot;,&quot;enabled&quot;:true}]</pre>
+<div class=sec>断言</div><table class=assert><tr><th>检查</th><th>结果</th><th>说明</th></tr><tr><td>资源池列表(状态)</td><td style=color:#2e7d32>✓ 200</td><td></td></tr></table>
+</div></details>
+<details class=case>
+<summary><span class=kind>POST</span><span class=cname>/api/batch-run</span><span class=badge style="background:#2e7d32;color:#fff">✓ 1</span><span class=meta>HTTP 400</span></summary>
+<div class=cdetail><div class=sec>请求体</div><pre>{&quot;projectId&quot;:&quot;cov-31713&quot;,&quot;caseIds&quot;:[&quot;ed4588b9-a359-4f1c-b13e-20566e0fc289&quot;],&quot;runMode&quot;:&quot;PARALLEL&quot;}</pre><div class=sec>响应(HTTP 400)</div><pre>resource pool not configured (supply poolId or set project default)</pre>
+<div class=sec>断言</div><table class=assert><tr><th>检查</th><th>结果</th><th>说明</th></tr><tr><td>批量运行(无池→400 / 有则 200)(状态)</td><td style=color:#2e7d32>✓ 400</td><td></td></tr></table>
+</div></details>
+<details class=case>
+<summary><span class=kind>POST</span><span class=cname>/test-plan</span><span class=badge style="background:#2e7d32;color:#fff">✓ 1</span><span class=meta>HTTP 201</span></summary>
+<div class=cdetail><div class=sec>请求体</div><pre>{&quot;projectId&quot;:&quot;cov-31713&quot;,&quot;name&quot;:&quot;计划&quot;,&quot;type&quot;:&quot;TEST_PLAN&quot;}</pre><div class=sec>响应(HTTP 201)</div><pre>{&quot;id&quot;:&quot;def68941-7782-4067-b195-a3831fe6ab16&quot;,&quot;projectId&quot;:&quot;cov-31713&quot;,&quot;name&quot;:&quot;计划&quot;,&quot;type&quot;:&quot;TEST_PLAN&quot;,&quot;groupId&quot;:&quot;NONE&quot;}</pre>
+<div class=sec>断言</div><table class=assert><tr><th>检查</th><th>结果</th><th>说明</th></tr><tr><td>建计划(状态)</td><td style=color:#2e7d32>✓ 201</td><td></td></tr></table>
+</div></details>
+<details class=case>
+<summary><span class=kind>POST</span><span class=cname>/test-plan/def68941-7782-4067-b195-a3831fe6ab16/cases</span><span class=badge style="background:#2e7d32;color:#fff">✓ 1</span><span class=meta>HTTP 201</span></summary>
+<div class=cdetail><div class=sec>请求体</div><pre>{&quot;caseId&quot;:&quot;ed4588b9-a359-4f1c-b13e-20566e0fc289&quot;,&quot;name&quot;:&quot;健康&quot;}</pre><div class=sec>响应(HTTP 201)</div><pre></pre>
+<div class=sec>断言</div><table class=assert><tr><th>检查</th><th>结果</th><th>说明</th></tr><tr><td>挂用例(状态)</td><td style=color:#2e7d32>✓ 201</td><td></td></tr></table>
+</div></details>
+<details class=case>
+<summary><span class=kind>POST</span><span class=cname>/test-plan/def68941-7782-4067-b195-a3831fe6ab16/cases/ed4588b9-a359-4f1c-b13e-20566e0fc289/result</span><span class=badge style="background:#2e7d32;color:#fff">✓ 1</span><span class=meta>HTTP 200</span></summary>
+<div class=cdetail><div class=sec>请求体</div><pre>{&quot;status&quot;:&quot;SUCCESS&quot;,&quot;latencyMs&quot;:1,&quot;statusCode&quot;:200,&quot;assertions&quot;:[{&quot;item&quot;:&quot;状态码&quot;,&quot;actual&quot;:&quot;200&quot;,&quot;condition&quot;:&quot;等于&quot;,&quot;expected&quot;:&quot;200&quot;,&quot;passed&quot;:true}]}</pre><div class=sec>响应(HTTP 200)</div><pre></pre>
+<div class=sec>断言</div><table class=assert><tr><th>检查</th><th>结果</th><th>说明</th></tr><tr><td>回写结果(状态)</td><td style=color:#2e7d32>✓ 200</td><td></td></tr></table>
+</div></details>
+<details class=case>
+<summary><span class=kind>GET</span><span class=cname>/test-plan/def68941-7782-4067-b195-a3831fe6ab16/statistics</span><span class=badge style="background:#2e7d32;color:#fff">✓ 2</span><span class=meta>HTTP 200</span></summary>
+<div class=cdetail><div class=sec>响应(HTTP 200)</div><pre>{&quot;status&quot;:&quot;COMPLETED&quot;,&quot;total&quot;:1,&quot;passRate&quot;:1.0,&quot;executeRate&quot;:1.0,&quot;isPass&quot;:true}</pre>
+<div class=sec>断言</div><table class=assert><tr><th>检查</th><th>结果</th><th>说明</th></tr><tr><td>统计(状态)</td><td style=color:#2e7d32>✓ 200</td><td></td></tr><tr><td>1 用例全通过</td><td style=color:#2e7d32>✓</td><td></td></tr></table>
+</div></details>
+<details class=case>
+<summary><span class=kind>GET</span><span class=cname>/test-plan/def68941-7782-4067-b195-a3831fe6ab16/report</span><span class=badge style="background:#2e7d32;color:#fff">✓ 1</span><span class=meta>HTTP 200</span></summary>
+<div class=cdetail><div class=sec>响应(HTTP 200)</div><pre>&lt;!DOCTYPE html&gt;
+&lt;html lang=&quot;zh&quot;&gt;&lt;head&gt;&lt;meta charset=&quot;utf-8&quot;&gt;&lt;title&gt;测试计划报告 · 计划&lt;/title&gt;
+&lt;style&gt;
+ body{font-family:-apple-system,Segoe UI,Helvetica,sans-serif;max-width:960px;margin:32px auto;color:#1f2329;padding:0 16px}
+ h1{font-size:22px;margin:0 0 2px}
+ .sub{color:#8a9099;margin-bottom:20px;font-size:13px}
+ .cards{display:flex;gap:16px;flex-wrap:wrap;margin-bottom:24px}
+ .card{flex:1;min-width:260px;border:1px solid #eceff1;border-radius:10px;padding:16px 18px;background:#fff}
+ .card h3{margin:0 0 12px;font-size:14px;color:#5b6470}
+ .row{display:flex;justify-content:space-between;padding:6px 0;font-size:14px}
+ .row b{font-weight:600}
+ .verdict{font-size:18px;font-weight:700;color:#2e7d32}
+ .detail h2{font-size:16px;margin:24px 0 12px;border-left:3px solid #1664ff;padding-left:8px}
+ details.case{border:1px solid #eceff1;border-radius:8px;margin:8px 0;background:#fff}
+ summary{list-style:none;cursor:pointer;display:flex;align-items:center;gap:12px;padding:12px 14px}
+ summary::-webkit-details-marker{display:none}
+ .idx{color:#9aa0a6;font-size:12px;min-width:20px}
+ .cname{font-weight:600;flex:1}
+ .badge{font-size:12px;font-weight:600;border-radius:4px;padding:2px 8px}
+ .meta{color:#8a9099;font-size:12px}
+ .cdetail{padding:4px 16px 16px;border-top:1px solid #f2f3f5}
+ .cid{color:#b0b6bd;font-size:12px;margin:8px 0}
+ .sec{font-weight:600;font-size:13px;margin:12px 0 6px;color:#5b6470}
+ table.assert{width:100%;border-collapse:collapse;font-size:13px}
+ table.assert th,table.assert td{border:1px solid #eceff1;padding:7px 10px;text-align:left}
+ table.assert th{background:#fafbfc;color:#5b6470;font-weight:600}
+ pre{background:#0f1419;color:#d6deeb;padding:12px;border-radius:6px;overflow:auto;font-size:12px;line-height:1.5}
+ .empty{color:#9aa0a6;font-size:13px;padding:8px 0}
+ details.step{border:1px solid #f0f2f5;border-radius:6px;margin:6px 0 6px 12px;background:#fafbfc}
+ details.step&gt;summary{padding:9px 12px;gap:10px}
+ .kind{font-size:11px;color:#1664ff;background:#eaf1ff;border-radius:4px;padding:2px 7px}
+ .sname{font-weight:500;flex:1}
+ .stepbody{padding:2px 12px 12px}
+ .donutwrap{display:flex;align-items:center;gap:16px}
+ .donutwrap .legend{flex:1}
+ .toolbar{display:flex;gap:10px;align-items:center;margin:6px 0 14px}
+ .toolbar input,.toolbar select{padding:7px 10px;border:1px solid #dfe3e8;border-radius:6px;font-size:13px}
+ .toolbar input{flex:1;max-width:280px}
+ .toolbar button{padding:7px 12px;border:1px solid #dfe3e8;border-radius:6px;background:#fff;cursor:pointer;font-size:13px}
+ .toolbar button:hover{background:#f5f7fa}
+ .cnt{color:#8a9099;font-size:12px;margin-left:auto}
+&lt;/style&gt;&lt;/head&gt;
+&lt;body&gt;
+ &lt;h1&gt;计划&lt;/h1&gt;
+ &lt;div class=&quot;sub&quot;&gt;状态:COMPLETED　·　结论:&lt;span class=&quot;verdict&quot;&gt;通过&lt;/span&gt;&lt;/div&gt;
+ &lt;div class=&quot;cards&quot;&gt;
+  &lt;div class=&quot;card&quot;&gt;&lt;h3&gt;报告分析&lt;/h3&gt;
+   &lt;div class=&quot;row&quot;&gt;&lt;span&gt;用例总数&lt;/span&gt;&lt;b&gt;1&lt;/b&gt;&lt;/div&gt;
+   &lt;div class=&quot;row&quot;&gt;&lt;span&gt;报告总耗时&lt;/span&gt;&lt;b&gt;1 ms&lt;/b&gt;&lt;/div&gt;
+   &lt;div class=&quot;row&quot;&gt;&lt;span&gt;执行率&lt;/span&gt;&lt;b&gt;100.0%&lt;/b&gt;&lt;/div&gt;
+   &lt;div class=&quot;row&quot;&gt;&lt;span&gt;通过率&lt;/span&gt;&lt;b&gt;100.0%&lt;/b&gt;&lt;/div&gt;
+   &lt;div class=&quot;row&quot;&gt;&lt;span&gt;断言通过率&lt;/span&gt;&lt;b&gt;100.0% (1/1)&lt;/b&gt;&lt;/div&gt;
+  &lt;/div&gt;
+  &lt;div class=&quot;card&quot;&gt;&lt;h3&gt;用例状态分布&lt;/h3&gt;
+   &lt;div class=&quot;donutwrap&quot;&gt;
+    &lt;svg width=&quot;120&quot; height=&quot;120&quot; viewBox=&quot;0 0 120 120&quot;&gt;&lt;g transform=&quot;rotate(-90 60 60)&quot;&gt;&lt;circle cx=&quot;60&quot; cy=&quot;60&quot; r=&quot;42&quot; fill=&quot;none&quot; stroke=&quot;#f0f2f5&quot; stroke-width=&quot;16&quot;/&gt;&lt;circle cx=&quot;60&quot; cy=&quot;60&quot; r=&quot;42&quot; fill=&quot;none&quot; stroke=&quot;#2e7d32&quot; stroke-width=&quot;16&quot; stroke-dasharray=&quot;263.89 0.00&quot; stroke-dashoffset=&quot;-0.00&quot;/&gt;&lt;/g&gt;&lt;text x=&quot;60&quot; y=&quot;56&quot; text-anchor=&quot;middle&quot; font-size=&quot;20&quot; font-weight=&quot;700&quot; fill=&quot;#1f2329&quot;&gt;1&lt;/text&gt;&lt;text x=&quot;60&quot; y=&quot;74&quot; text-anchor=&quot;middle&quot; font-size=&quot;11&quot; fill=&quot;#8a9099&quot;&gt;总数&lt;/text&gt;&lt;/svg&gt;
+    &lt;div class=&quot;legend&quot;&gt;
+     &lt;div class=&quot;row&quot;&gt;&lt;span style=&quot;color:#2e7d32&quot;&gt;● 通过&lt;/span&gt;&lt;b&gt;1　100.0%&lt;/b&gt;&lt;/div&gt;
+     &lt;div class=&quot;row&quot;&gt;&lt;span style=&quot;color:#c62828&quot;&gt;● 失败&lt;/span&gt;&lt;b&gt;0　0.0%&lt;/b&gt;&lt;/div&gt;
+     &lt;div class=&quot;row&quot;&gt;&lt;span style=&quot;color:#ef6c00&quot;&gt;● 误报&lt;/span&gt;&lt;b&gt;0　0.0%&lt;/b&gt;&lt;/div&gt;
+     &lt;div class=&quot;row&quot;&gt;&lt;span style=&quot;color:#455a64&quot;&gt;● 阻塞&lt;/span&gt;&lt;b&gt;0　0.0%&lt;/b&gt;&lt;/div&gt;
+     &lt;div class=&quot;</pre>
+<div class=sec>断言</div><table class=assert><tr><th>检查</th><th>结果</th><th>说明</th></tr><tr><td>HTML 报告(状态)</td><td style=color:#2e7d32>✓ 200</td><td></td></tr></table>
+</div></details>
+<details class=case>
+<summary><span class=kind>GET</span><span class=cname>/test-plan/def68941-7782-4067-b195-a3831fe6ab16/report.md</span><span class=badge style="background:#2e7d32;color:#fff">✓ 1</span><span class=meta>HTTP 200</span></summary>
+<div class=cdetail><div class=sec>响应(HTTP 200)</div><pre># 测试计划报告 · 计划
+
+状态:COMPLETED · 结论:**通过**
+
+## 报告分析
+
+- 用例总数:1
+- 报告总耗时:1 ms
+- 执行率:100.0%
+- 通过率:100.0%
+- 断言通过率:100.0% (1/1)
+
+## 用例状态分布
+
+- 通过 1 · 失败 0 · 误报 0 · 阻塞 0 · 未执行 0
+
+## 报告明细
+
+### 1. 健康 `[通过]` — 状态码 200 · 响应时间 1 ms · 响应大小 0 bytes
+
+| 断言项 | 返回值 | 匹配条件 | 匹配值 | 状态 | 原因 |
+|---|---|---|---|---|---|
+| 状态码 | 200 | 等于 | 200 | 成功 |  |</pre>
+<div class=sec>断言</div><table class=assert><tr><th>检查</th><th>结果</th><th>说明</th></tr><tr><td>Markdown 报告(状态)</td><td style=color:#2e7d32>✓ 200</td><td></td></tr></table>
+</div></details>
+<details class=case>
+<summary><span class=kind>POST</span><span class=cname>/test-plan/def68941-7782-4067-b195-a3831fe6ab16/run</span><span class=badge style="background:#2e7d32;color:#fff">✓ 2</span><span class=meta>HTTP 200</span></summary>
+<div class=cdetail><div class=sec>请求体</div><pre>{}</pre><div class=sec>响应(HTTP 200)</div><pre>{&quot;planId&quot;:&quot;def68941-7782-4067-b195-a3831fe6ab16&quot;,&quot;total&quot;:1,&quot;executed&quot;:1,&quot;success&quot;:1,&quot;failed&quot;:0}</pre>
+<div class=sec>断言</div><table class=assert><tr><th>检查</th><th>结果</th><th>说明</th></tr><tr><td>执行计划(状态)</td><td style=color:#2e7d32>✓ 200</td><td></td></tr><tr><td>执行计数自洽</td><td style=color:#2e7d32>✓</td><td></td></tr></table>
+</div></details>
+<details class=case>
+<summary><span class=kind>POST</span><span class=cname>/test-plan/def68941-7782-4067-b195-a3831fe6ab16/schedule</span><span class=badge style="background:#2e7d32;color:#fff">✓ 1</span><span class=meta>HTTP 201</span></summary>
+<div class=cdetail><div class=sec>请求体</div><pre>{&quot;cron&quot;:&quot;0 0 * * * *&quot;}</pre><div class=sec>响应(HTTP 201)</div><pre>{&quot;id&quot;:&quot;6f7840ab-6134-42f9-8b2c-199ab3d2ccb9&quot;,&quot;planId&quot;:&quot;def68941-7782-4067-b195-a3831fe6ab16&quot;,&quot;cron&quot;:&quot;0 0 * * * *&quot;,&quot;enabled&quot;:true}</pre>
+<div class=sec>断言</div><table class=assert><tr><th>检查</th><th>结果</th><th>说明</th></tr><tr><td>配定时(状态)</td><td style=color:#2e7d32>✓ 201</td><td></td></tr></table>
+</div></details>
+<details class=case>
+<summary><span class=kind>GET</span><span class=cname>/test-plan/def68941-7782-4067-b195-a3831fe6ab16/runs</span><span class=badge style="background:#2e7d32;color:#fff">✓ 1</span><span class=meta>HTTP 200</span></summary>
+<div class=cdetail><div class=sec>响应(HTTP 200)</div><pre>[]</pre>
+<div class=sec>断言</div><table class=assert><tr><th>检查</th><th>结果</th><th>说明</th></tr><tr><td>运行快照(状态)</td><td style=color:#2e7d32>✓ 200</td><td></td></tr></table>
+</div></details>
+<h2 class=detail>压测 / runner / MCP</h2>
+<details class=case>
+<summary><span class=kind>POST</span><span class=cname>/perf/run</span><span class=badge style="background:#2e7d32;color:#fff">✓ 2</span><span class=meta>HTTP 200</span></summary>
+<div class=cdetail><div class=sec>请求体</div><pre>{&quot;url&quot;:&quot;http://127.0.0.1:9180/healthz&quot;,&quot;concurrency&quot;:2,&quot;iterations&quot;:6}</pre><div class=sec>响应(HTTP 200)</div><pre>{&quot;reportId&quot;:&quot;641f373b-7d37-4448-a8d2-cb816ea9dc7f&quot;,&quot;status&quot;:&quot;RUNNING&quot;}</pre>
+<div class=sec>断言</div><table class=assert><tr><th>检查</th><th>结果</th><th>说明</th></tr><tr><td>起压测(状态)</td><td style=color:#2e7d32>✓ 200</td><td></td></tr><tr><td>返回 reportId</td><td style=color:#2e7d32>✓</td><td></td></tr></table>
+</div></details>
+<details class=case>
+<summary><span class=kind>GET</span><span class=cname>/perf/report/641f373b-7d37-4448-a8d2-cb816ea9dc7f</span><span class=badge style="background:#2e7d32;color:#fff">✓ 2</span><span class=meta>HTTP 200</span></summary>
+<div class=cdetail><div class=sec>响应(HTTP 200)</div><pre>{&quot;concurrency&quot;:2,&quot;elapsedMs&quot;:3,&quot;errorRate&quot;:0.0,&quot;failed&quot;:0,&quot;id&quot;:&quot;641f373b-7d37-4448-a8d2-cb816ea9dc7f&quot;,&quot;iterations&quot;:6,&quot;latency&quot;:{&quot;max&quot;:2,&quot;mean&quot;:1,&quot;min&quot;:0,&quot;p50&quot;:0,&quot;p90&quot;:2,&quot;p95&quot;:2,&quot;p99&quot;:2},&quot;method&quot;:&quot;GET&quot;,&quot;projectId&quot;:&quot;&quot;,&quot;samplesKey&quot;:null,&quot;status&quot;:&quot;COMPLETED&quot;,&quot;success&quot;:6,&quot;throughputRps&quot;:2000.0,&quot;total&quot;:6,&quot;url&quot;:&quot;http://127.0.0.1:9180/healthz&quot;}</pre>
+<div class=sec>断言</div><table class=assert><tr><th>检查</th><th>结果</th><th>说明</th></tr><tr><td>压测报告(状态)</td><td style=color:#2e7d32>✓ 200</td><td></td></tr><tr><td>总数=6 且有吞吐</td><td style=color:#2e7d32>✓</td><td></td></tr></table>
+</div></details>
+<details class=case>
+<summary><span class=kind>POST</span><span class=cname>/runner-agent</span><span class=badge style="background:#2e7d32;color:#fff">✓ 2</span><span class=meta>HTTP 201</span></summary>
+<div class=cdetail><div class=sec>请求体</div><pre>{&quot;name&quot;:&quot;env&quot;,&quot;baseUrl&quot;:&quot;http://127.0.0.1:9190&quot;}</pre><div class=sec>响应(HTTP 201)</div><pre>{&quot;id&quot;:&quot;74dee58c-0de6-4024-900f-7ccba98542a8&quot;,&quot;name&quot;:&quot;env&quot;,&quot;baseUrl&quot;:&quot;http://127.0.0.1:9190&quot;,&quot;enabled&quot;:true,&quot;protocols&quot;:[]}</pre>
+<div class=sec>断言</div><table class=assert><tr><th>检查</th><th>结果</th><th>说明</th></tr><tr><td>注册 agent(状态)</td><td style=color:#2e7d32>✓ 201</td><td></td></tr><tr><td>返回 protocols 字段(不可达 agent→空)</td><td style=color:#2e7d32>✓</td><td></td></tr></table>
+</div></details>
+<details class=case>
+<summary><span class=kind>GET</span><span class=cname>/runner-agent</span><span class=badge style="background:#2e7d32;color:#fff">✓ 1</span><span class=meta>HTTP 200</span></summary>
+<div class=cdetail><div class=sec>响应(HTTP 200)</div><pre>[{&quot;id&quot;:&quot;d19dd5ec-9fb0-4535-ab73-bbc7a9ea6a8a&quot;,&quot;name&quot;:&quot;cli-env&quot;,&quot;baseUrl&quot;:&quot;http://127.0.0.1:9190&quot;,&quot;enabled&quot;:true,&quot;protocols&quot;:[&quot;grpc&quot;,&quot;http&quot;,&quot;mysql&quot;,&quot;redis&quot;,&quot;sql&quot;,&quot;websocket&quot;]},{&quot;id&quot;:&quot;7e635746-443d-4528-b38c-9ec1194bcab8&quot;,&quot;name&quot;:&quot;dbg-env&quot;,&quot;baseUrl&quot;:&quot;http://127.0.0.1:9190&quot;,&quot;enabled&quot;:true,&quot;protocols&quot;:[&quot;grpc&quot;,&quot;http&quot;,&quot;mysql&quot;,&quot;redis&quot;,&quot;sql&quot;,&quot;websocket&quot;]},{&quot;id&quot;:&quot;74dee58c-0de6-4024-900f-7ccba98542a8&quot;,&quot;name&quot;:&quot;env&quot;,&quot;baseUrl&quot;:&quot;http://127.0.0.1:9190&quot;,&quot;enabled&quot;:true,&quot;protocols&quot;:[]},{&quot;id&quot;:&quot;b4ba0172-b4a1-4116-b728-77adb925155b&quot;,&quot;name&quot;:&quot;env&quot;,&quot;baseUrl&quot;:&quot;http://127.0.0.1:9190&quot;,&quot;enabled&quot;:true,&quot;protocols&quot;:[]},{&quot;id&quot;:&quot;cdfe305f-90a8-48f6-b102-c6a7e7d7d635&quot;,&quot;name&quot;:&quot;env&quot;,&quot;baseUrl&quot;:&quot;http://127.0.0.1:9190&quot;,&quot;enabled&quot;:true,&quot;protocols&quot;:[]},{&quot;id&quot;:&quot;d1e9b69f-e55a-4477-8cde-07e02be6401e&quot;,&quot;name&quot;:&quot;env&quot;,&quot;baseUrl&quot;:&quot;http://127.0.0.1:9190&quot;,&quot;enabled&quot;:true,&quot;protocols&quot;:[]},{&quot;id&quot;:&quot;9f7d7a59-415e-420a-a1a3-68337bd04332&quot;,&quot;name&quot;:&quot;env&quot;,&quot;baseUrl&quot;:&quot;http://127.0.0.1:9190&quot;,&quot;enabled&quot;:true,&quot;protocols&quot;:[]},{&quot;id&quot;:&quot;2b0890cd-8057-4e18-9df1-84522e897bf8&quot;,&quot;name&quot;:&quot;env&quot;,&quot;baseUrl&quot;:&quot;http://127.0.0.1:9190&quot;,&quot;enabled&quot;:true,&quot;protocols&quot;:[]},{&quot;id&quot;:&quot;166ce77d-ea10-4a4c-8cc4-d2ad7d924060&quot;,&quot;name&quot;:&quot;env&quot;,&quot;baseUrl&quot;:&quot;http://127.0.0.1:9190&quot;,&quot;enabled&quot;:true,&quot;protocols&quot;:[]},{&quot;id&quot;:&quot;dd169ad6-872b-4cbf-86da-f481872cf5dd&quot;,&quot;name&quot;:&quot;env&quot;,&quot;baseUrl&quot;:&quot;http://127.0.0.1:9190&quot;,&quot;enabled&quot;:true,&quot;protocols&quot;:[]},{&quot;id&quot;:&quot;ae8bd255-adf2-498c-a760-b892f85b0326&quot;,&quot;name&quot;:&quot;env&quot;,&quot;baseUrl&quot;:&quot;http://127.0.0.1:9190&quot;,&quot;enabled&quot;:true,&quot;protocols&quot;:[]},{&quot;id&quot;:&quot;8286789f-204a-4e11-9e7f-fb4783627484&quot;,&quot;name&quot;:&quot;env&quot;,&quot;baseUrl&quot;:&quot;http://127.0.0.1:9190&quot;,&quot;enabled&quot;:true,&quot;protocols&quot;:[]},{&quot;id&quot;:&quot;8cdeb980-27c2-4cec-9b6e-5ce8cd275131&quot;,&quot;name&quot;:&quot;env&quot;,&quot;baseUrl&quot;:&quot;http://127.0.0.1:9190&quot;,&quot;enabled&quot;:true,&quot;protocols&quot;:[]},{&quot;id&quot;:&quot;047dd50c-57d5-4f81-8fb7-27b50a9dca1d&quot;,&quot;name&quot;:&quot;env&quot;,&quot;baseUrl&quot;:&quot;http://127.0.0.1:9190&quot;,&quot;enabled&quot;:true,&quot;protocols&quot;:[]},{&quot;id&quot;:&quot;050fef39-d446-4c96-81fb-78630693d97a&quot;,&quot;name&quot;:&quot;env&quot;,&quot;baseUrl&quot;:&quot;http://127.0.0.1:9190&quot;,&quot;enabled&quot;:true,&quot;protocols&quot;:[]},{&quot;id&quot;:&quot;9d618935-e886-4388-a7bc-64f7a1722b9f&quot;,&quot;name&quot;:&quot;env&quot;,&quot;baseUrl&quot;:&quot;http://127.0.0.1:9190&quot;,&quot;enabled&quot;:true,&quot;protocols&quot;:[]},{&quot;id&quot;:&quot;56763f06-6870-4be5-b403-01fb574bc9d1&quot;,&quot;name&quot;:&quot;mcp环境&quot;,&quot;baseUrl&quot;:&quot;http://127.0.0.1:9190&quot;,&quot;enabled&quot;:true,&quot;protocols&quot;:[&quot;grpc&quot;,&quot;http&quot;,&quot;mysql&quot;,&quot;redis&quot;,&quot;sql&quot;,&quot;websocket&quot;]},{&quot;id&quot;:&quot;1b285c80-0314-42ee-a70b-e8141298ba23&quot;,&quot;name&quot;:&quot;自举环境&quot;,&quot;baseUrl&quot;:&quot;http://127.0.0.1:9190&quot;,&quot;enabled&quot;:true,&quot;protocols&quot;:[&quot;grpc&quot;,&quot;http&quot;,&quot;mysql&quot;,&quot;redis&quot;,&quot;sql&quot;,&quot;websocket&quot;]}]</pre>
+<div class=sec>断言</div><table class=assert><tr><th>检查</th><th>结果</th><th>说明</th></tr><tr><td>agent 列表(状态)</td><td style=color:#2e7d32>✓ 200</td><td></td></tr></table>
+</div></details>
+<details class=case>
+<summary><span class=kind>GET</span><span class=cname>/runner-agent/74dee58c-0de6-4024-900f-7ccba98542a8/executions</span><span class=badge style="background:#2e7d32;color:#fff">✓ 1</span><span class=meta>HTTP 200</span></summary>
+<div class=cdetail><div class=sec>响应(HTTP 200)</div><pre>[]</pre>
+<div class=sec>断言</div><table class=assert><tr><th>检查</th><th>结果</th><th>说明</th></tr><tr><td>agent 执行历史(状态)</td><td style=color:#2e7d32>✓ 200</td><td></td></tr></table>
+</div></details>
+<details class=case>
+<summary><span class=kind>POST</span><span class=cname>/runner-agent/74dee58c-0de6-4024-900f-7ccba98542a8/refresh</span><span class=badge style="background:#2e7d32;color:#fff">✓ 1</span><span class=meta>HTTP 502</span></summary>
+<div class=cdetail><div class=sec>请求体</div><pre>{}</pre><div class=sec>响应(HTTP 502)</div><pre>agent unreachable</pre>
+<div class=sec>断言</div><table class=assert><tr><th>检查</th><th>结果</th><th>说明</th></tr><tr><td>刷新能力(agent 不可达→502)(状态)</td><td style=color:#2e7d32>✓ 502</td><td></td></tr></table>
+</div></details>
+<details class=case>
+<summary><span class=kind>POST</span><span class=cname>/runner/probe</span><span class=badge style="background:#2e7d32;color:#fff">✓ 1</span><span class=meta>HTTP 502</span></summary>
+<div class=cdetail><div class=sec>请求体</div><pre>{&quot;protocol&quot;:&quot;http&quot;,&quot;target&quot;:&quot;http://127.0.0.1:1/x&quot;}</pre><div class=sec>响应(HTTP 502)</div><pre>agent dispatch failed</pre>
+<div class=sec>断言</div><table class=assert><tr><th>检查</th><th>结果</th><th>说明</th></tr><tr><td>中央探测(不可达→502)(状态)</td><td style=color:#2e7d32>✓ 502</td><td></td></tr></table>
+</div></details>
+<details class=case>
+<summary><span class=kind>POST</span><span class=cname>/mcp</span><span class=badge style="background:#2e7d32;color:#fff">✓ 2</span><span class=meta>HTTP 200</span></summary>
+<div class=cdetail><div class=sec>请求体</div><pre>{&quot;jsonrpc&quot;:&quot;2.0&quot;,&quot;id&quot;:1,&quot;method&quot;:&quot;tools/list&quot;}</pre><div class=sec>响应(HTTP 200)</div><pre>{&quot;id&quot;:1,&quot;jsonrpc&quot;:&quot;2.0&quot;,&quot;result&quot;:{&quot;tools&quot;:[{&quot;description&quot;:&quot;创建一个需求(初版 v1),返回需求 id。&quot;,&quot;inputSchema&quot;:{&quot;properties&quot;:{&quot;acceptanceCriteria&quot;:{&quot;items&quot;:{&quot;type&quot;:&quot;string&quot;},&quot;type&quot;:&quot;array&quot;},&quot;description&quot;:{&quot;type&quot;:&quot;string&quot;},&quot;projectId&quot;:{&quot;type&quot;:&quot;string&quot;},&quot;title&quot;:{&quot;type&quot;:&quot;string&quot;}},&quot;required&quot;:[&quot;projectId&quot;,&quot;title&quot;],&quot;type&quot;:&quot;object&quot;},&quot;name&quot;:&quot;shepherd_create_requirement&quot;},{&quot;description&quot;:&quot;为某需求版本开启任务拆分图,返回 decompositionId。&quot;,&quot;inputSchema&quot;:{&quot;properties&quot;:{&quot;requirementId&quot;:{&quot;type&quot;:&quot;string&quot;},&quot;requirementVersion&quot;:{&quot;type&quot;:&quot;integer&quot;}},&quot;required&quot;:[&quot;requirementId&quot;,&quot;requirementVersion&quot;],&quot;type&quot;:&quot;object&quot;},&quot;name&quot;:&quot;shepherd_decompose&quot;},{&quot;description&quot;:&quot;向拆分图加入一个任务(可声明 dependencies 为已存在任务的本地 id),返回 taskId。&quot;,&quot;inputSchema&quot;:{&quot;properties&quot;:{&quot;acceptanceCriteria&quot;:{&quot;items&quot;:{&quot;type&quot;:&quot;string&quot;},&quot;type&quot;:&quot;array&quot;},&quot;decompositionId&quot;:{&quot;type&quot;:&quot;string&quot;},&quot;dependencies&quot;:{&quot;items&quot;:{&quot;type&quot;:&quot;string&quot;},&quot;type&quot;:&quot;array&quot;},&quot;description&quot;:{&quot;type&quot;:&quot;string&quot;},&quot;title&quot;:{&quot;type&quot;:&quot;string&quot;}},&quot;required&quot;:[&quot;decompositionId&quot;,&quot;title&quot;],&quot;type&quot;:&quot;object&quot;},&quot;name&quot;:&quot;shepherd_add_task&quot;},{&quot;description&quot;:&quot;把任务派发给 AI 执行者(executor: CLAUDE_CODE | CODEX);自动驱动任务、过验证门并回灌验证。可直接传 skillIds(+projectId)自动组合行为规范注入,无需先调 compose。&quot;,&quot;inputSchema&quot;:{&quot;properties&quot;:{&quot;acceptanceCriteria&quot;:{&quot;items&quot;:{&quot;type&quot;:&quot;string&quot;},&quot;type&quot;:&quot;array&quot;},&quot;decompositionId&quot;:{&quot;type&quot;:&quot;string&quot;},&quot;description&quot;:{&quot;type&quot;:&quot;string&quot;},&quot;executor&quot;:{&quot;enum&quot;:[&quot;CLAUDE_CODE&quot;,&quot;CODEX&quot;],&quot;type&quot;:&quot;string&quot;},&quot;instructions&quot;:{&quot;description&quot;:&quot;可选:显式行为规范(与 skillIds 组合结果合并)&quot;,&quot;type&quot;:&quot;string&quot;},&quot;projectId&quot;:{&quot;description&quot;:&quot;skillIds 非空时必填(用于组合)&quot;,&quot;type&quot;:&quot;string&quot;},&quot;skillIds&quot;:{&quot;description&quot;:&quot;可选:自动组合这些 skill 为行为规范&quot;,&quot;items&quot;:{&quot;type&quot;:&quot;string&quot;},&quot;type&quot;:&quot;array&quot;},&quot;taskId&quot;:{&quot;type&quot;:&quot;string&quot;},&quot;title&quot;:{&quot;type&quot;:&quot;string&quot;}},&quot;required&quot;:[&quot;decompositionId&quot;,&quot;taskId&quot;,&quot;title&quot;,&quot;executor&quot;],&quot;type&quot;:&quot;object&quot;},&quot;name&quot;:&quot;shepherd_dispatch_delivery&quot;},{&quot;description&quot;:&quot;自动拆分:仅需 requirementId(可选 requirementVersion),服务端取需求规格并用规划器(默认启发式,可配 LLM)生成任务 DAG。&quot;,&quot;inputSchema&quot;:{&quot;properties&quot;:{&quot;requirementId&quot;:{&quot;type&quot;:&quot;string&quot;},&quot;requirementVersion&quot;:{&quot;description&quot;:&quot;可选,默认基线版本&quot;,&quot;type&quot;:&quot;integer&quot;}},&quot;required&quot;:[&quot;requirementId&quot;],&quot;type&quot;:&quot;object&quot;},&quot;name&quot;:&quot;shepherd_breakdown&quot;},{&quot;description&quot;:&quot;为某需求版本开启完整性验证(传入验收标准快照),返回 verificationId。&quot;,&quot;inputSchema&quot;:{&quot;properties&quot;:{&quot;criteria&quot;:{&quot;items&quot;:{&quot;type&quot;:&quot;string&quot;},&quot;type&quot;:&quot;array&quot;},&quot;requirementId&quot;:{&quot;type&quot;:&quot;string&quot;},&quot;requirementVersion&quot;:{&quot;type&quot;:&quot;integer&quot;}},&quot;required&quot;:[&quot;requirementId&quot;,&quot;requirementVersion&quot;],&quot;type&quot;:&quot;object&quot;},&quot;name&quot;:&quot;shepherd_create_verification&quot;},{&quot;description&quot;:&quot;建立覆盖追溯:某任务覆盖某条验收标准(criterionIndex 为 0-based)。&quot;,&quot;inputSchema&quot;:{&quot;properties&quot;:{&quot;criterionIndex&quot;:{&quot;type&quot;:&quot;integer&quot;},&quot;decompositionId&quot;:{&quot;type&quot;:&quot;string&quot;},&quot;taskId&quot;:{&quot;type&quot;:&quot;string&quot;},&quot;verificationId&quot;:{&quot;type&quot;:&quot;string&quot;}},&quot;required&quot;:[&quot;verificationId&quot;,&quot;criterionIndex&quot;,&quot;decompositionId&quot;,&quot;taskId&quot;],&quot;type&quot;:&quot;object&quot;},&quot;name&quot;:&quot;shepherd_link_coverage&quot;},{&quot;description&quot;:&quot;定义一个可复用的 AI Skill(行为规范);includes 可组合其它 skill。&quot;,&quot;inputSchema&quot;:{&quot;properties&quot;:{&quot;description&quot;:{&quot;type&quot;:&quot;string&quot;},&quot;includes&quot;:{&quot;items&quot;:{&quot;type&quot;:&quot;string&quot;},&quot;type&quot;:&quot;array&quot;},&quot;instructions&quot;:{&quot;type&quot;:&quot;string&quot;},&quot;name&quot;:{&quot;type&quot;:&quot;string&quot;},&quot;projectId&quot;:{&quot;type&quot;:&quot;string&quot;}},&quot;required&quot;:[&quot;projectId&quot;,&quot;name&quot;,&quot;instructions&quot;],&quot;type&quot;:&quot;object&quot;},&quot;name&quot;:&quot;shepherd_create_skill&quot;},{&quot;description&quot;:&quot;把若干 skill 经 includes 展开组合成一份有序去重的行为规范(instructions),可直接喂给 dispatch。&quot;,&quot;inputSchema&quot;:{&quot;properties&quot;:{&quot;projectId&quot;:{&quot;type&quot;:&quot;string&quot;},&quot;skillIds&quot;:{&quot;items&quot;:{&quot;type&quot;:&quot;string&quot;},&quot;type&quot;:&quot;array&quot;}},&quot;required&quot;:[&quot;projectId&quot;,&quot;skillIds&quot;],&quot;type&quot;:&quot;object&quot;},&quot;name&quot;:&quot;shepherd_compose_skills&quot;},{&quot;description&quot;:&quot;获取完整性报告:整体是否完成 + 缺口清单(UNCOVERED / UNVERIFIED)。&quot;,&quot;inputSchema&quot;:{&quot;properties&quot;:{&quot;verificationId&quot;:{&quot;type&quot;:&quot;string&quot;}},&quot;required&quot;:[&quot;verificationId&quot;],&quot;type&quot;:&quot;object&quot;},&quot;name&quot;:&quot;shepherd_completeness_report&quot;},{&quot;description&quot;:&quot;创建测试计划(type: TEST_PLAN 默认 | GROUP),返回计划 id。&quot;,&quot;inputSchema&quot;:{&quot;properties&quot;:{&quot;name&quot;:{&quot;type&quot;:&quot;string&quot;},&quot;projectId&quot;:{&quot;type&quot;:&quot;string&quot;},&quot;type&quot;:{&quot;enum&quot;:[&quot;TEST_PLAN&quot;,&quot;GROUP&quot;],&quot;type&quot;:&quot;string&quot;}},&quot;required&quot;:[&quot;projectId&quot;,&quot;name&quot;],&quot;type&quot;:&quot;object&quot;},&quot;name&quot;:&quot;shepherd_create_test_plan&quot;},{&quot;description&quot;:&quot;把一条用例或场景挂入计划(caseId 为 ms_api_case id 或场景 id)。&quot;,&quot;inputSchema&quot;:{&quot;properties&quot;:{&quot;caseId&quot;:{&quot;type&quot;:&quot;stri</pre>
+<div class=sec>断言</div><table class=assert><tr><th>检查</th><th>结果</th><th>说明</th></tr><tr><td>MCP tools/list(状态)</td><td style=color:#2e7d32>✓ 200</td><td></td></tr><tr><td>≥15 个工具且含 shepherd_run_test_plan</td><td style=color:#2e7d32>✓</td><td></td></tr></table>
+</div></details>
+<script>
+ function ex(o){document.querySelectorAll('details.case').forEach(d=>d.open=o)}
+ function flt(){var q=document.getElementById('q').value.toLowerCase();
+  document.querySelectorAll('details.case').forEach(d=>{var t=d.querySelector('.cname').textContent.toLowerCase();d.style.display=t.includes(q)?'':'none'})}
+</script>
+</body></html>
