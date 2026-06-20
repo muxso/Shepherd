@@ -435,6 +435,13 @@ enum RunnerCmd {
         #[arg(long = "expect-status")]
         expect_status: Option<u16>,
     },
+    /// 把一条**已存储的用例**(api-case)派给某 agent 执行。
+    RunCase {
+        #[arg(long)]
+        agent: String,
+        #[arg(long)]
+        case: String,
+    },
     /// 查某 agent 的远程执行历史。
     Executions {
         #[arg(long)]
@@ -1585,6 +1592,11 @@ fn run(cli: Cli) -> R<()> {
                         "request": {"method": method.to_uppercase(), "url": url, "headers": [], "body": body},
                         "assertions": status_assertions(expect_status),
                     }),
+                    true,
+                )?),
+                RunnerCmd::RunCase { agent, case } => pretty(&c.post(
+                    &format!("/runner-agent/{agent}/run-case"),
+                    json!({"caseId": case}),
                     true,
                 )?),
                 RunnerCmd::Executions { agent } => {

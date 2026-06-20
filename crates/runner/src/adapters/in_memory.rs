@@ -7,9 +7,9 @@ use async_trait::async_trait;
 use api_runner::{Assertion, RequestSpec};
 
 use crate::domain::{
-    DispatchTarget, ExecutionRecord, NewRunnerAgent, RemoteResult, RunnerAgent,
+    CaseSpec, DispatchTarget, ExecutionRecord, NewRunnerAgent, RemoteResult, RunnerAgent,
 };
-use crate::ports::{ExecutionStore, PortError, RemoteRunner, RunnerAgentStore};
+use crate::ports::{CaseSpecSource, ExecutionStore, PortError, RemoteRunner, RunnerAgentStore};
 
 #[derive(Default)]
 pub struct InMemoryAgentStore {
@@ -106,6 +106,34 @@ impl ExecutionStore for InMemoryExecutionStore {
             .take(limit as usize)
             .cloned()
             .collect())
+    }
+}
+
+/// 内存用例规格来源(测试)。`seed` 预置 case_id → 规格。
+#[derive(Default)]
+pub struct InMemoryCaseSpecSource {
+    specs: Mutex<Vec<(String, CaseSpec)>>,
+}
+
+impl InMemoryCaseSpecSource {
+    pub fn new() -> Self {
+        Self::default()
+    }
+    pub fn seed(&self, case_id: &str, request: RequestSpec, assertions: Vec<Assertion>) {
+        self.specs.lock().expect("lock").push((case_id.to_string(), CaseSpec { request, assertions }));
+    }
+}
+
+#[async_trait]
+impl CaseSpecSource for InMemoryCaseSpecSource {
+    async fn spec_of(&self, case_id: &str) -> Result<Option<CaseSpec>, PortError> {
+        Ok(self
+            .specs
+            .lock()
+            .map_err(|e| PortError::Backend(e.to_string()))?
+            .iter()
+            .find(|(id, _)| id == case_id)
+            .map(|(_, s)| s.clone()))
     }
 }
 
