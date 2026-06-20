@@ -220,6 +220,33 @@ enum VerifyCmd {
         #[arg(long, value_delimiter = ',')]
         criteria: Vec<String>,
     },
+    /// 建立覆盖链:某任务覆盖某条验收标准(需求 → 任务 追溯)。
+    Link {
+        /// 验证 id。
+        #[arg(long)]
+        id: String,
+        /// 验收标准下标(0 起)。
+        #[arg(long)]
+        criterion: u32,
+        /// 拆分图 id。
+        #[arg(long)]
+        decomp: String,
+        /// 任务本地 id(如 t1)。
+        #[arg(long)]
+        task: String,
+    },
+    /// 同步任务的交付/验证状态到其覆盖链(任务 → 实现 追溯)。
+    Sync {
+        #[arg(long)]
+        id: String,
+        #[arg(long)]
+        decomp: String,
+        #[arg(long)]
+        task: String,
+        /// 标记为未验证(默认按已验证 satisfied=true 同步)。
+        #[arg(long, default_value_t = false)]
+        unsatisfied: bool,
+    },
     /// 完整性报告。
     Report {
         #[arg(long)]
@@ -1030,6 +1057,16 @@ fn run(cli: Cli) -> R<()> {
                 VerifyCmd::Create { req, version, criteria } => pretty(&c.post(
                     "/verification",
                     json!({"requirementId": req, "requirementVersion": version, "criteria": criteria}),
+                    true,
+                )?),
+                VerifyCmd::Link { id, criterion, decomp, task } => pretty(&c.post(
+                    &format!("/verification/{id}/link"),
+                    json!({"criterionIndex": criterion, "decompositionId": decomp, "taskId": task}),
+                    true,
+                )?),
+                VerifyCmd::Sync { id, decomp, task, unsatisfied } => pretty(&c.post(
+                    &format!("/verification/{id}/sync"),
+                    json!({"decompositionId": decomp, "taskId": task, "satisfied": !unsatisfied}),
                     true,
                 )?),
                 VerifyCmd::Report { id } => pretty(&c.get(&format!("/verification/{id}/report"), true)?),
