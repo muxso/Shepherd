@@ -1,0 +1,32 @@
+[package]
+name = "probe"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+
+# 协议探测插件系统:协议无关的请求/结果/断言(domain,纯函数)+ ProtocolPlugin 端口 + 注册表。
+# 每种协议是一个 feature 门控的插件(http 默认;grpc/sql 等按需);
+# runner 按启用的 feature 决定支持哪些协议 —— 不同部署支持不同系统。断言对输入输出生效。
+[dependencies]
+async-trait = "0.1"
+thiserror = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# 插件依赖(feature 门控)
+api-runner = { path = "../api-runner", optional = true }
+tonic = { version = "0.12", optional = true }
+bytes = { version = "1", optional = true }
+http = { version = "1", optional = true }
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "postgres"], optional = true }
+
+[features]
+default = ["http"]
+http = ["dep:api-runner"]
+grpc = ["dep:tonic", "dep:bytes", "dep:http"]
+sql = ["dep:sqlx"]
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "net"] }
+
+[lints]
+workspace = true
