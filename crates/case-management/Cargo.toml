@@ -1,0 +1,33 @@
+[package]
+name = "case-management"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+
+# 功能用例管理:用例 CRUD + 自定义字段(jsonb)+ Excel 导出。
+# domain/ports/application 纯净;sqlx/axum/xlsx 只在 adapters,feature 门控。
+[dependencies]
+kernel = { path = "../kernel" }
+async-trait = "0.1"
+thiserror = "2"
+serde_json = "1"
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "postgres", "json"], optional = true }
+axum = { version = "0.8", optional = true }
+utoipa = { version = "5", optional = true }
+webauth = { path = "../webauth", optional = true }
+serde = { version = "1", features = ["derive"], optional = true }
+rust_xlsxwriter = { version = "0.79", optional = true }
+
+[features]
+pg = ["dep:sqlx"]
+http = ["dep:axum", "dep:serde", "dep:webauth", "webauth/http", "dep:utoipa", "dep:rust_xlsxwriter"]
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+tower = { version = "0.5", features = ["util"] }
+serde_json = "1"
+migrate = { path = "../migrate" }
+webauth = { path = "../webauth", features = ["http", "test-util"] }
+
+[lints]
+workspace = true

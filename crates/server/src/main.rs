@@ -179,6 +179,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 "API_DEFINITION:READ+ADD+UPDATE+DELETE".to_string(),
                 "API_SCENARIO:READ+ADD+UPDATE+DELETE+EXECUTE".to_string(),
                 "ENVIRONMENT:READ+ADD+UPDATE+DELETE".to_string(),
+                "FUNCTIONAL_CASE:READ+ADD".to_string(),
                 "PERF:READ+EXECUTE".to_string(),
                 "REQUIREMENT:READ+ADD+UPDATE+DELETE".to_string(),
                 "TASK:READ+ADD+EXECUTE+UPDATE".to_string(),
@@ -399,6 +400,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let env_repo = Arc::new(environment::adapters::pg::PgEnvironmentRepository::new(pool.clone()));
     let environment_routes = environment::adapters::http::router(env_repo, sessions.clone());
 
+    // —— 功能用例管理(CRUD + 自定义字段 + Excel 导出)——
+    let case_repo = Arc::new(case_management::adapters::pg::PgCaseRepository::new(pool.clone()));
+    let functional_case_routes = case_management::adapters::http::router(
+        case_management::application::CreateCaseUseCase::new(case_repo.clone()),
+        case_management::application::ListCasesUseCase::new(case_repo),
+        sessions.clone(),
+    );
+
     // —— 场景模块 + 组装根执行桥(编译 → 批量运行)——
     let scenario_repo =
         Arc::new(api_scenario::adapters::pg::PgApiScenarioRepository::new(pool.clone()));
@@ -441,6 +450,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .merge(case_exec_routes)
         .merge(apidef_routes)
         .merge(environment_routes)
+        .merge(functional_case_routes)
         .merge(scenario_routes)
         .merge(scenario_run_routes)
         .merge(perf_routes)

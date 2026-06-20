@@ -144,6 +144,11 @@ enum Cmd {
         #[command(subcommand)]
         cmd: EnvCmd,
     },
+    /// 功能用例(CRUD + 自定义字段 + Excel 导出)。
+    Fcase {
+        #[command(subcommand)]
+        cmd: FcaseCmd,
+    },
     /// 原生压测(并发施压 + 延迟分位/吞吐报告;无 JMeter)。
     Perf {
         #[command(subcommand)]
@@ -392,6 +397,37 @@ enum CaseCmd {
         /// UN_PASS 必填。
         #[arg(long)]
         content: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
+enum FcaseCmd {
+    /// 新建功能用例。--field key=value(可重复)设自定义字段。
+    Create {
+        #[arg(long)]
+        project: String,
+        #[arg(long)]
+        name: String,
+        #[arg(long, default_value = "")]
+        module: String,
+        #[arg(long, default_value = "P2")]
+        priority: String,
+        #[arg(long, default_value = "PREPARED")]
+        status: String,
+        #[arg(long = "field")]
+        fields: Vec<String>,
+    },
+    /// 列出项目内功能用例。
+    List {
+        #[arg(long)]
+        project: String,
+    },
+    /// 导出为 Excel(.xlsx)写入 --out 文件。
+    Export {
+        #[arg(long)]
+        project: String,
+        #[arg(long, default_value = "cases.xlsx")]
+        out: String,
     },
 }
 
@@ -919,6 +955,22 @@ impl Client {
     }
     fn get(&self, path: &str, auth: bool) -> R<Value> {
         self.send(self.http.get(self.url(path)), auth)
+    }
+    /// GET 返回原始字节(用于 xlsx 等二进制响应)。
+    fn get_bytes(&self, path: &str, auth: bool) -> R<Vec<u8>> {
+        let mut rb = self.http.get(self.url(path));
+        if auth {
+            if self.cfg.token.is_empty() {
+                return Err("未登录:先执行 `shepherd login`".into());
+            }
+            rb = rb.bearer_auth(&self.cfg.token);
+        }
+        let resp = rb.send()?;
+        let status = resp.status();
+        if !status.is_success() {
+            return Err(format!("HTTP {status}: {}", resp.text().unwrap_or_default()).into());
+        }
+        Ok(resp.bytes()?.to_vec())
     }
     /// GET 返回原始文本(用于 HTML 报告等非 JSON 响应)。
     fn get_text(&self, path: &str, auth: bool) -> R<String> {
@@ -1455,6 +1507,25 @@ fn run(cli: Cli) -> R<()> {
                     true,
                 )?),
                 EnvCmd::Delete { id } => pretty(&c.delete(&format!("/api/environment/{id}"), true)?),
+            }
+        }
+        Cmd::Fcase { cmd } => {
+            let c = Client::new(Config::load())?;
+            match cmd {
+                FcaseCmd::Create { project, name, module, priority, status, fields } => pretty(&c.post(
+                    "/functional-case",
+                    json!({"projectId": project, "name": name, "module": module, "priority": priority,
+                           "status": status, "customFields": parse_vars(&fields)?}),
+                    true,
+                )?),
+                FcaseCmd::List { project } => {
+                    pretty(&c.get(&format!("/functional-case?projectId={project}"), true)?)
+                }
+                FcaseCmd::Export { project, out } => {
+                    let bytes = c.get_bytes(&format!("/functional-case/export?projectId={project}"), true)?;
+                    std::fs::write(&out, &bytes)?;
+                    println!("✅ 已导出 {} 字节 → {out}", bytes.len());
+                }
             }
         }
         Cmd::Perf { cmd } => {
