@@ -18,12 +18,15 @@ tonic = { version = "0.12", optional = true }
 bytes = { version = "1", optional = true }
 http = { version = "1", optional = true }
 sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "postgres"], optional = true }
+# Redis 协议:纯 Rust 客户端(无 C 依赖),tokio 异步多路复用连接。
+redis = { version = "0.27", default-features = false, features = ["tokio-comp"], optional = true }
 
 [features]
 default = ["http"]
 http = ["dep:api-runner"]
 grpc = ["dep:tonic", "dep:bytes", "dep:http"]
 sql = ["dep:sqlx"]
+redis = ["dep:redis"]
 
 [dev-dependencies]
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "net"] }

@@ -36,7 +36,7 @@ runner = { path = "../runner", features = ["pg", "http", "client"] }
 mock-runtime = { path = "../mock-runtime", features = ["http", "pg", "template"] }
 # 压测统一经 probe 注册表(probe-exec)驱动任意协议;probe 提供 http/grpc/sql 插件类型与默认注册表。
 perf = { path = "../perf", features = ["engine", "pg", "parquet-sink", "probe-exec"] }
-probe = { path = "../probe", features = ["http", "grpc", "sql"] }
+probe = { path = "../probe", features = ["http", "grpc", "sql", "redis"] }
 migrate = { path = "../migrate" }
 axum = "0.8"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "signal", "time"] }

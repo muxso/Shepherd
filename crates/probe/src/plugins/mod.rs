@@ -13,3 +13,8 @@ pub use grpc::GrpcPlugin;
 pub mod sql;
 #[cfg(feature = "sql")]
 pub use sql::SqlPlugin;
+
+#[cfg(feature = "redis")]
+pub mod redis;
+#[cfg(feature = "redis")]
+pub use redis::RedisPlugin;
