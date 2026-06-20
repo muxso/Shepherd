@@ -102,3 +102,8 @@ jobs:
       - name: probe mysql live
         continue-on-error: true
         run: cargo test -p probe --features mysql --test mysql_live --locked -- --ignored --test-threads=1
+      # 全量 API 自测:脚本起 server + 编排打 ~80 个端点 + 断状态码(资源链)。需先有 server 二进制。
+      - name: build server binary
+        run: cargo build -p server --locked
+      - name: full API self-test (scripts/api-coverage.sh)
+        run: bash scripts/api-coverage.sh

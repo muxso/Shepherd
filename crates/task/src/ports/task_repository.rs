@@ -3,7 +3,7 @@
 use async_trait::async_trait;
 use thiserror::Error;
 
-use crate::domain::Decomposition;
+use crate::domain::{Decomposition, TaskStatus};
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum RepoError {
@@ -31,5 +31,15 @@ pub trait TaskRepository: Send + Sync {
     async fn get(&self, id: &str) -> Result<Option<Decomposition>, RepoError>;
 
     /// 持久化聚合:追加新任务/依赖边并更新任务状态(幂等)。
+    /// 注意:整图写,仅用于「加任务/建图」。**状态推进禁用此法**——并发推进同图兄弟任务时
+    /// 各自回写整张快照会互相覆盖(丢更新)。单任务状态变更请走 [`save_task_status`]。
     async fn save(&self, decomposition: &Decomposition) -> Result<(), RepoError>;
+
+    /// 原子更新**单个**任务的状态(行级写)。避免并发推进兄弟任务时整图回写互相覆盖。
+    async fn save_task_status(
+        &self,
+        decomposition_id: &str,
+        task_id: &str,
+        status: TaskStatus,
+    ) -> Result<(), RepoError>;
 }

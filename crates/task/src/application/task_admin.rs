@@ -80,7 +80,7 @@ impl TaskService {
     ) -> Result<Decomposition, TaskCmdError> {
         let mut d = self.get(decomposition_id).await?;
         d.dispatch(task_id)?;
-        self.repo.save(&d).await?;
+        self.persist_status(&d, decomposition_id, task_id).await?;
         Ok(d)
     }
 
@@ -93,7 +93,7 @@ impl TaskService {
     ) -> Result<Decomposition, TaskCmdError> {
         let mut d = self.get(decomposition_id).await?;
         d.advance_to(task_id, target)?;
-        self.repo.save(&d).await?;
+        self.persist_status(&d, decomposition_id, task_id).await?;
         Ok(d)
     }
 
@@ -106,8 +106,25 @@ impl TaskService {
     ) -> Result<Decomposition, TaskCmdError> {
         let mut d = self.get(decomposition_id).await?;
         d.transition(task_id, to)?;
-        self.repo.save(&d).await?;
+        self.persist_status(&d, decomposition_id, task_id).await?;
         Ok(d)
+    }
+
+    /// 把内存中已推进的目标任务状态行级落库(避免整图回写丢更新)。
+    async fn persist_status(
+        &self,
+        d: &Decomposition,
+        decomposition_id: &str,
+        task_id: &str,
+    ) -> Result<(), TaskCmdError> {
+        let status = d
+            .tasks
+            .iter()
+            .find(|t| t.id == task_id)
+            .map(|t| t.status)
+            .expect("任务在成功推进后必存在");
+        self.repo.save_task_status(decomposition_id, task_id, status).await?;
+        Ok(())
     }
 }
 
@@ -165,6 +182,29 @@ mod tests {
             svc.transition(&did, "t1", TaskStatus::Verified).await.unwrap_err(),
             TaskCmdError::Conflict(TaskError::TransitionNotAllowed { from: "PENDING", to: "VERIFIED" })
         );
+    }
+
+    // 回归:并发推进同图兄弟任务不得互相覆盖(旧实现整图回写 → 丢更新)。
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn concurrent_sibling_advance_no_lost_update() {
+        let (svc, did) = seeded().await;
+        let svc = Arc::new(svc);
+        // 钻石根 t1,兄弟 t2/t3 依赖 t1。
+        let t1 = svc.add_task(&did, "root", "", &[], &[]).await.expect("t1");
+        svc.add_task(&did, "left", "", &[], &[t1.clone()]).await.expect("t2");
+        svc.add_task(&did, "right", "", &[], &[t1.clone()]).await.expect("t3");
+        svc.advance_to(&did, &t1, TaskStatus::Verified).await.expect("t1 verified");
+
+        // 并发把兄弟 t2、t3 推到 Verified。
+        let (s2, s3, d2, d3) = (svc.clone(), svc.clone(), did.clone(), did.clone());
+        let h2 = tokio::spawn(async move { s2.advance_to(&d2, "t2", TaskStatus::Verified).await });
+        let h3 = tokio::spawn(async move { s3.advance_to(&d3, "t3", TaskStatus::Verified).await });
+        h2.await.expect("join t2").expect("t2 advanced");
+        h3.await.expect("join t3").expect("t3 advanced");
+
+        let d = svc.get(&did).await.expect("get");
+        assert_eq!(d.task("t2").expect("t2").status, TaskStatus::Verified, "t2 应保持 Verified");
+        assert_eq!(d.task("t3").expect("t3").status, TaskStatus::Verified, "t3 不应被兄弟回写覆盖");
     }
 
     #[tokio::test]

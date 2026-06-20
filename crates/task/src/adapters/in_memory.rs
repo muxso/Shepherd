@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 
-use crate::domain::Decomposition;
+use crate::domain::{Decomposition, TaskStatus};
 use crate::ports::{RepoError, TaskRepository};
 
 #[derive(Default)]
@@ -61,6 +61,22 @@ impl TaskRepository for InMemoryTaskRepository {
         let mut st = self.state.lock().expect("lock");
         if let Some(slot) = st.decompositions.iter_mut().find(|d| d.id == decomposition.id) {
             *slot = decomposition.clone();
+        }
+        Ok(())
+    }
+
+    async fn save_task_status(
+        &self,
+        decomposition_id: &str,
+        task_id: &str,
+        status: TaskStatus,
+    ) -> Result<(), RepoError> {
+        // 锁内只改目标任务这一行,等价于 pg 的行级更新 → 并发推进无丢更新。
+        let mut st = self.state.lock().expect("lock");
+        if let Some(d) = st.decompositions.iter_mut().find(|d| d.id == decomposition_id) {
+            if let Some(t) = d.tasks.iter_mut().find(|t| t.id == task_id) {
+                t.status = status;
+            }
         }
         Ok(())
     }
