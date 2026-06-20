@@ -22,12 +22,7 @@ pub mod pg;
 #[cfg(feature = "pg")]
 pub use pg::PgPerfReportStore;
 
-#[cfg(feature = "sql-exec")]
-pub mod sql_exec;
-#[cfg(feature = "sql-exec")]
-pub use sql_exec::SqlExecutor;
-
-#[cfg(feature = "grpc-exec")]
-pub mod grpc_exec;
-#[cfg(feature = "grpc-exec")]
-pub use grpc_exec::GrpcExecutor;
+#[cfg(feature = "probe-exec")]
+pub mod probe_exec;
+#[cfg(feature = "probe-exec")]
+pub use probe_exec::ProbeExecutor;
