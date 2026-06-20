@@ -67,6 +67,16 @@ impl PlanStatisticsUseCase {
         }
     }
 
+    /// 同 [`execute`](Self::execute),并附带计划名(供报告渲染)。
+    pub async fn with_name(
+        &self,
+        plan_id: &str,
+    ) -> Result<(String, PlanStatistics), PlanStatisticsError> {
+        let plan = self.repo.get(plan_id).await?.ok_or(PlanStatisticsError::PlanNotFound)?;
+        let stats = self.execute(plan_id).await?;
+        Ok((plan.name, stats))
+    }
+
     fn stats(counts: CaseCounts, status: ExecStatus, threshold: f64) -> PlanStatistics {
         PlanStatistics {
             status,
