@@ -171,6 +171,12 @@ enum PerfCmd {
         /// 期望状态码(给定则成功=该码命中;省略则成功=HTTP 可达)。
         #[arg(long = "expect-status")]
         expect_status: Option<u16>,
+        /// 协议:HTTP(默认)| SQL。SQL 时 --url 为连接串、--query 为语句。
+        #[arg(long, default_value = "HTTP")]
+        protocol: String,
+        /// SQL 协议待压测语句(默认 SELECT 1)。
+        #[arg(long)]
+        query: Option<String>,
         #[arg(long, default_value = "")]
         project: String,
     },
@@ -1454,12 +1460,13 @@ fn run(cli: Cli) -> R<()> {
         Cmd::Perf { cmd } => {
             let c = Client::new(Config::load())?;
             match cmd {
-                PerfCmd::Run { url, method, concurrency, iterations, duration_ms, expect_status, project } => {
+                PerfCmd::Run { url, method, concurrency, iterations, duration_ms, expect_status, protocol, query, project } => {
                     pretty(&c.post(
                         "/perf/run",
                         json!({"url": url, "method": method, "concurrency": concurrency,
                                "iterations": iterations, "durationMs": duration_ms,
-                               "expectStatus": expect_status, "projectId": project}),
+                               "expectStatus": expect_status, "protocol": protocol, "query": query,
+                               "projectId": project}),
                         true,
                     )?)
                 }

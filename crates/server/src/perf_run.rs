@@ -20,9 +20,11 @@ use utoipa::{OpenApi, ToSchema};
 use webauth::{AuthUser, SessionStore};
 
 use api_runner::{Assertion, HttpMethod, RequestSpec};
-use perf::adapters::{run_collect, ApiRunnerExecutor, ParquetObjectStoreSink, PgPerfReportStore};
+use perf::adapters::{
+    run_collect, ApiRunnerExecutor, ParquetObjectStoreSink, PgPerfReportStore, SqlExecutor,
+};
 use perf::domain::LoadPlan;
-use perf::ports::SampleSink;
+use perf::ports::{RequestExecutor, SampleSink};
 
 #[derive(Clone)]
 struct PerfState {
@@ -85,6 +87,16 @@ struct RunPerfBody {
     /// 期望状态码:给定则成功=该码命中;省略则成功=HTTP 可达。
     #[serde(default)]
     expect_status: Option<u16>,
+    /// 协议:HTTP(默认)| SQL。SQL 时 url 为连接串、query 为待压测语句。
+    #[serde(default = "default_protocol")]
+    protocol: String,
+    /// SQL 协议待压测的语句(默认 SELECT 1)。
+    #[serde(default)]
+    query: Option<String>,
+}
+
+fn default_protocol() -> String {
+    "HTTP".to_string()
 }
 
 fn default_method() -> String {
@@ -133,32 +145,47 @@ async fn run_perf(user: AuthUser, State(st): State<PerfState>, Json(req): Json<R
     // 报告里记录的 iterations:时长模式记 0(实际完成数见 total)。
     let planned_iterations = if req.duration_ms.is_some() { 0 } else { req.iterations as i32 };
 
-    // 1) 落 RUNNING 报告
+    // 1) 据协议构建执行器(SQL 连接失败提前返回)。
+    //    报告记录:HTTP 记 method+url;SQL 记 method=SQL、url=语句(不存连接串,避免泄漏口令)。
+    let (executor, report_method, report_url): (Arc<dyn RequestExecutor>, String, String) =
+        if req.protocol.eq_ignore_ascii_case("SQL") {
+            let query = req.query.clone().unwrap_or_else(|| "SELECT 1".to_string());
+            match SqlExecutor::connect(&req.url, &query, req.concurrency as u32).await {
+                Ok(e) => (Arc::new(e), "SQL".to_string(), query),
+                Err(e) => {
+                    return (StatusCode::BAD_GATEWAY, format!("sql connect failed: {e}"))
+                        .into_response()
+                }
+            }
+        } else {
+            let spec = RequestSpec {
+                method: method_of(&req.method),
+                url: req.url.clone(),
+                headers: vec![],
+                body: None,
+            };
+            let assertions: Vec<Assertion> =
+                req.expect_status.map(|c| vec![Assertion::StatusIs(c)]).unwrap_or_default();
+            (Arc::new(ApiRunnerExecutor::new(spec, assertions)), req.method.to_uppercase(), req.url.clone())
+        };
+
+    // 2) 落 RUNNING 报告
     let report_id = match st
         .store
-        .create(&req.project_id, &req.method.to_uppercase(), &req.url, req.concurrency as i32, planned_iterations)
+        .create(&req.project_id, &report_method, &report_url, req.concurrency as i32, planned_iterations)
         .await
     {
         Ok(id) => id,
         Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "create report error").into_response(),
     };
 
-    // 2) 后台并发施压,跑完回写聚合指标(不阻塞响应)
-    let spec = RequestSpec {
-        method: method_of(&req.method),
-        url: req.url.clone(),
-        headers: vec![],
-        body: None,
-    };
-    let assertions: Vec<Assertion> =
-        req.expect_status.map(|c| vec![Assertion::StatusIs(c)]).unwrap_or_default();
+    // 3) 后台并发施压,跑完回写聚合指标(不阻塞响应)
     let store = st.store.clone();
     let sink = st.sink.clone();
     let id = report_id.clone();
     tokio::spawn(async move {
-        let exec = Arc::new(ApiRunnerExecutor::new(spec, assertions));
         // run_collect 同时拿到聚合报告与原始逐请求样本。
-        let (report, samples) = run_collect(&plan, exec).await;
+        let (report, samples) = run_collect(&plan, executor).await;
         // 原始样本下沉对象存储(配置了 sink 才做);成功则把存储键随报告落库。
         let samples_key: Option<String> = match &sink {
             Some(s) => match s.write(&id, &samples).await {
