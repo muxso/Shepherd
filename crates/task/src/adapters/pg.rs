@@ -173,6 +173,23 @@ impl TaskRepository for PgTaskRepository {
         tx.commit().await.map_err(map_err)?;
         Ok(())
     }
+
+    async fn save_task_status(
+        &self,
+        decomposition_id: &str,
+        task_id: &str,
+        status: TaskStatus,
+    ) -> Result<(), RepoError> {
+        // 行级原子更新:只写目标任务这一行,不触碰兄弟任务 → 并发推进无丢更新。
+        sqlx::query("UPDATE ms_task SET status = $3 WHERE decomposition_id = $1 AND id = $2")
+            .bind(decomposition_id)
+            .bind(task_id)
+            .bind(status.as_str())
+            .execute(&self.pool)
+            .await
+            .map_err(map_err)?;
+        Ok(())
+    }
 }
 
 #[cfg(test)]
