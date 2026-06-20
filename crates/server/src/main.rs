@@ -9,6 +9,7 @@
 //!   DATABASE_URL=postgres://msuser:mspass@localhost:55432/mstest cargo run -p server
 
 mod breakdown_route;
+mod debug_send;
 mod decomposition_run;
 mod judge;
 mod llm;
@@ -480,6 +481,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // —— 原生压测(perf):POST /perf/run 后台施压 + GET /perf/report/{id} ——
     let perf_routes = perf_run::router(pool.clone(), sessions.clone());
+    let debug_send_routes = debug_send::router(sessions.clone());
 
     // —— 测试计划定时执行(cron 到点拍统计快照)——
     let plan_scheduler_routes = plan_scheduler::build(pool.clone(), sessions.clone()).await?;
@@ -512,6 +514,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .merge(scenario_routes)
         .merge(scenario_run_routes)
         .merge(perf_routes)
+        .merge(debug_send_routes)
         .merge(plan_scheduler_routes)
         .merge(openapi::routes())
         .merge(health_routes(pool.clone()))
