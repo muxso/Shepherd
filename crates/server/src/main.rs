@@ -325,6 +325,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let delivery_routes = delivery::adapters::http::router(delivery_svc, sessions.clone());
 
     // —— MCP 集成(把全链路暴露为 MCP 工具,POST /mcp,JSON-RPC)——
+    // MCP 也暴露测试计划 / 探测工具(独立实例,指向同一 pool)。
+    let mcp_plan_repo = Arc::new(PgPlanRepository::new(pool.clone()));
+    let mcp_remote_probe = Arc::new(runner::adapters::ReqwestRemoteProbe::new());
+    let mcp_runner_svc = runner::application::RunnerService::new(
+        Arc::new(runner::adapters::pg::PgRunnerAgentStore::new(pool.clone())),
+        Arc::new(runner::adapters::ReqwestRemoteRunner::new()),
+        mcp_remote_probe.clone(),
+        mcp_remote_probe,
+        Arc::new(runner::adapters::pg::PgExecutionStore::new(pool.clone())),
+        Arc::new(runner::adapters::pg::PgCaseSpecSource::new(pool.clone())),
+    );
     let mcp_routes = mcp_tools::router(
         CreateRequirementUseCase::new(req_repo.clone()),
         CreateDecompositionUseCase::new(task_repo.clone()),
@@ -336,6 +347,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         ver_admin,
         CreateSkillUseCase::new(skill_repo.clone()),
         skill_admin,
+        CreatePlanUseCase::new(mcp_plan_repo.clone()),
+        test_plan::application::PlanCaseUseCase::new(mcp_plan_repo.clone()),
+        PlanStatisticsUseCase::new(mcp_plan_repo),
+        plan_run::PlanRunner::new(pool.clone()),
+        mcp_runner_svc,
         sessions.clone(),
     );
 
