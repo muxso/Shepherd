@@ -149,6 +149,11 @@ enum Cmd {
         #[command(subcommand)]
         cmd: FcaseCmd,
     },
+    /// 远程执行 agent(按环境注册 + 把用例派给 agent 就地执行)。
+    Runner {
+        #[command(subcommand)]
+        cmd: RunnerCmd,
+    },
     /// 原生压测(并发施压 + 延迟分位/吞吐报告;无 JMeter)。
     Perf {
         #[command(subcommand)]
@@ -397,6 +402,38 @@ enum CaseCmd {
         /// UN_PASS 必填。
         #[arg(long)]
         content: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
+enum RunnerCmd {
+    /// 注册一个环境内的 runner-agent。
+    Register {
+        #[arg(long)]
+        name: String,
+        /// agent 入口,如 http://10.0.0.5:9100。
+        #[arg(long = "base-url")]
+        base_url: String,
+        /// 可选共享密钥(对应 agent 的 RUNNER_TOKEN)。
+        #[arg(long)]
+        token: Option<String>,
+    },
+    /// 列出已注册 agent。
+    List,
+    /// 把一条自包含用例派给某 agent 就地执行。
+    Run {
+        /// agent id(来自 register/list)。
+        #[arg(long)]
+        agent: String,
+        #[arg(long)]
+        url: String,
+        #[arg(long, default_value = "GET")]
+        method: String,
+        #[arg(long)]
+        body: Option<String>,
+        /// 期望状态码(给定则生成 StatusIs 断言)。
+        #[arg(long = "expect-status")]
+        expect_status: Option<u16>,
     },
 }
 
@@ -1526,6 +1563,25 @@ fn run(cli: Cli) -> R<()> {
                     std::fs::write(&out, &bytes)?;
                     println!("✅ 已导出 {} 字节 → {out}", bytes.len());
                 }
+            }
+        }
+        Cmd::Runner { cmd } => {
+            let c = Client::new(Config::load())?;
+            match cmd {
+                RunnerCmd::Register { name, base_url, token } => pretty(&c.post(
+                    "/runner-agent",
+                    json!({"name": name, "baseUrl": base_url, "token": token}),
+                    true,
+                )?),
+                RunnerCmd::List => pretty(&c.get("/runner-agent", true)?),
+                RunnerCmd::Run { agent, url, method, body, expect_status } => pretty(&c.post(
+                    &format!("/runner-agent/{agent}/run"),
+                    json!({
+                        "request": {"method": method.to_uppercase(), "url": url, "headers": [], "body": body},
+                        "assertions": status_assertions(expect_status),
+                    }),
+                    true,
+                )?),
             }
         }
         Cmd::Perf { cmd } => {
