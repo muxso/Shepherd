@@ -17,7 +17,8 @@ api-runner = { path = "../api-runner", optional = true }
 tonic = { version = "0.12", optional = true }
 bytes = { version = "1", optional = true }
 http = { version = "1", optional = true }
-sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "postgres"], optional = true }
+# SQL 驱动按需启用:sql→postgres、mysql→mysql(同一 sqlx 依赖,feature 加驱动)。
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio"], optional = true }
 # Redis 协议:纯 Rust 客户端(无 C 依赖),tokio 异步多路复用连接。
 redis = { version = "0.27", default-features = false, features = ["tokio-comp"], optional = true }
 # WebSocket 协议:纯 Rust(tokio-tungstenite,默认 connect+handshake,无 TLS C 依赖;支持 ws://)。
@@ -29,7 +30,8 @@ tokio = { version = "1", default-features = false, features = ["time"], optional
 default = ["http"]
 http = ["dep:api-runner"]
 grpc = ["dep:tonic", "dep:bytes", "dep:http"]
-sql = ["dep:sqlx"]
+sql = ["dep:sqlx", "sqlx/postgres"]
+mysql = ["dep:sqlx", "sqlx/mysql"]
 redis = ["dep:redis"]
 websocket = ["dep:tokio-tungstenite", "dep:futures-util", "dep:tokio"]
 

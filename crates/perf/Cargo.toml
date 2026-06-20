@@ -27,8 +27,8 @@ probe = { path = "../probe", default-features = false, optional = true }
 engine = ["dep:tokio"]
 api-runner-exec = ["dep:api-runner"]
 pg = ["dep:sqlx", "dep:serde_json"]
-# 统一执行器:压测经 probe 注册表驱动任意协议(http/grpc/sql/redis/websocket 插件全启)。
-probe-exec = ["dep:probe", "probe/http", "probe/grpc", "probe/sql", "probe/redis", "probe/websocket"]
+# 统一执行器:压测经 probe 注册表驱动任意协议(http/grpc/sql/mysql/redis/websocket 插件全启)。
+probe-exec = ["dep:probe", "probe/http", "probe/grpc", "probe/sql", "probe/mysql", "probe/redis", "probe/websocket"]
 # Parquet 样本下沉(object_store:本地/内存/S3)。
 parquet-sink = ["dep:arrow", "dep:parquet", "dep:object_store"]
 
