@@ -3,6 +3,7 @@
 use async_trait::async_trait;
 use crate::domain::{
     AssertionResult, CaseCounts, CaseResult, CaseStatus, NewPlan, Plan, PlanCase, PlanType,
+    RequestInfo, StepResult,
 };
 use crate::ports::{PlanRepository, RepoError};
 use sqlx::{PgPool, Row};
@@ -172,26 +173,54 @@ impl PlanRepository for PgPlanRepository {
     }
 }
 
+fn assertions_to_json(a: &[AssertionResult]) -> serde_json::Value {
+    serde_json::Value::Array(
+        a.iter()
+            .map(|a| serde_json::json!({
+                "item": a.item, "actual": a.actual, "condition": a.condition,
+                "expected": a.expected, "passed": a.passed, "reason": a.reason,
+            }))
+            .collect(),
+    )
+}
+
+fn headers_to_json(h: &[(String, String)]) -> serde_json::Value {
+    serde_json::Value::Array(
+        h.iter().map(|(n, v)| serde_json::json!({"name": n, "value": v})).collect(),
+    )
+}
+
+fn step_to_json(s: &StepResult) -> serde_json::Value {
+    serde_json::json!({
+        "name": s.name, "kind": s.kind, "status": s.status.as_str(),
+        "latencyMs": s.latency_ms, "statusCode": s.status_code,
+        "assertions": assertions_to_json(&s.assertions),
+        "children": s.children.iter().map(step_to_json).collect::<Vec<_>>(),
+    })
+}
+
 /// CaseResult → jsonb(明细落库)。
 fn result_to_json(r: &CaseResult) -> serde_json::Value {
+    let request = r.request.as_ref().map(|req| {
+        serde_json::json!({
+            "method": req.method, "url": req.url, "body": req.body,
+            "headers": headers_to_json(&req.headers),
+        })
+    });
     serde_json::json!({
         "latencyMs": r.latency_ms,
         "responseSize": r.response_size,
         "statusCode": r.status_code,
         "body": r.body,
-        "assertions": r.assertions.iter().map(|a| serde_json::json!({
-            "item": a.item, "actual": a.actual, "condition": a.condition,
-            "expected": a.expected, "passed": a.passed, "reason": a.reason,
-        })).collect::<Vec<_>>(),
+        "assertions": assertions_to_json(&r.assertions),
+        "responseHeaders": headers_to_json(&r.response_headers),
+        "request": request,
+        "steps": r.steps.iter().map(step_to_json).collect::<Vec<_>>(),
     })
 }
 
-/// jsonb → CaseResult(形态不符的字段安全回落)。
-fn result_from_json(v: &serde_json::Value) -> CaseResult {
-    let s = |k: &str| v.get(k).and_then(|x| x.as_str()).unwrap_or_default().to_string();
-    let assertions = v
-        .get("assertions")
-        .and_then(|a| a.as_array())
+fn assertions_from_json(v: &serde_json::Value) -> Vec<AssertionResult> {
+    v.as_array()
         .map(|arr| {
             arr.iter()
                 .map(|a| AssertionResult {
@@ -204,13 +233,72 @@ fn result_from_json(v: &serde_json::Value) -> CaseResult {
                 })
                 .collect()
         })
-        .unwrap_or_default();
+        .unwrap_or_default()
+}
+
+fn headers_from_json(v: &serde_json::Value) -> Vec<(String, String)> {
+    v.as_array()
+        .map(|arr| {
+            arr.iter()
+                .map(|h| {
+                    (
+                        h.get("name").and_then(|x| x.as_str()).unwrap_or_default().to_string(),
+                        h.get("value").and_then(|x| x.as_str()).unwrap_or_default().to_string(),
+                    )
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn step_from_json(v: &serde_json::Value) -> StepResult {
+    StepResult {
+        name: v.get("name").and_then(|x| x.as_str()).unwrap_or_default().to_string(),
+        kind: v.get("kind").and_then(|x| x.as_str()).unwrap_or_default().to_string(),
+        status: v
+            .get("status")
+            .and_then(|x| x.as_str())
+            .and_then(CaseStatus::parse)
+            .unwrap_or(CaseStatus::Pending),
+        latency_ms: v.get("latencyMs").and_then(|x| x.as_u64()).unwrap_or(0),
+        status_code: v.get("statusCode").and_then(|x| x.as_i64()),
+        assertions: v.get("assertions").map(assertions_from_json).unwrap_or_default(),
+        children: v
+            .get("children")
+            .and_then(|c| c.as_array())
+            .map(|arr| arr.iter().map(step_from_json).collect())
+            .unwrap_or_default(),
+    }
+}
+
+/// jsonb → CaseResult(形态不符的字段安全回落)。
+fn result_from_json(v: &serde_json::Value) -> CaseResult {
+    let opt_str = |k: &str| {
+        let s = v.get(k).and_then(|x| x.as_str()).unwrap_or_default().to_string();
+        if s.is_empty() { None } else { Some(s) }
+    };
+    let request = v.get("request").filter(|r| r.is_object()).map(|r| RequestInfo {
+        method: r.get("method").and_then(|x| x.as_str()).unwrap_or_default().to_string(),
+        url: r.get("url").and_then(|x| x.as_str()).unwrap_or_default().to_string(),
+        headers: r.get("headers").map(headers_from_json).unwrap_or_default(),
+        body: {
+            let b = r.get("body").and_then(|x| x.as_str()).unwrap_or_default().to_string();
+            if b.is_empty() { None } else { Some(b) }
+        },
+    });
     CaseResult {
         latency_ms: v.get("latencyMs").and_then(|x| x.as_u64()).unwrap_or(0),
         response_size: v.get("responseSize").and_then(|x| x.as_u64()).unwrap_or(0),
         status_code: v.get("statusCode").and_then(|x| x.as_i64()),
-        assertions,
-        body: { let b = s("body"); if b.is_empty() { None } else { Some(b) } },
+        assertions: v.get("assertions").map(assertions_from_json).unwrap_or_default(),
+        body: opt_str("body"),
+        response_headers: v.get("responseHeaders").map(headers_from_json).unwrap_or_default(),
+        request,
+        steps: v
+            .get("steps")
+            .and_then(|s| s.as_array())
+            .map(|arr| arr.iter().map(step_from_json).collect())
+            .unwrap_or_default(),
     }
 }
 
@@ -384,6 +472,7 @@ mod tests {
                 reason: String::new(),
             }],
             body: Some("ok".into()),
+            ..Default::default()
         };
         assert!(repo.record_result(&child.id, "ca", CaseStatus::Success, Some(&res)).await.expect("rec a"));
         assert!(repo.record_result(&child.id, "cb", CaseStatus::Success, None).await.expect("rec b"));
