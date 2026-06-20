@@ -305,6 +305,15 @@ enum DecompositionCmd {
         #[arg(long)]
         id: String,
     },
+    /// 并行编排:按依赖图逐层并发派发整张任务 DAG(自动驱动验证门)。
+    Run {
+        #[arg(long)]
+        id: String,
+        #[arg(long, default_value = "CLAUDE_CODE")]
+        executor: String,
+        #[arg(long, default_value_t = 4)]
+        concurrency: usize,
+    },
 }
 
 #[derive(Subcommand)]
@@ -1325,6 +1334,11 @@ fn run(cli: Cli) -> R<()> {
                 DecompositionCmd::Ready { id } => {
                     pretty(&c.get(&format!("/decomposition/{id}/ready"), true)?)
                 }
+                DecompositionCmd::Run { id, executor, concurrency } => pretty(&c.post(
+                    &format!("/decomposition/{id}/run"),
+                    json!({"executor": executor, "maxConcurrency": concurrency}),
+                    true,
+                )?),
             }
         }
         Cmd::Task { cmd } => {

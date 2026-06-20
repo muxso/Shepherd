@@ -9,6 +9,7 @@
 //!   DATABASE_URL=postgres://msuser:mspass@localhost:55432/mstest cargo run -p server
 
 mod breakdown_route;
+mod decomposition_run;
 mod judge;
 mod llm;
 mod mcp_tools;
@@ -325,6 +326,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
     let delivery_svc = base_delivery.with_observer(delivery_observer);
     let mcp_delivery = delivery_svc.clone();
+    // 多任务并行编排:按依赖图逐层并发派发整张任务 DAG。
+    let decomposition_run_routes =
+        decomposition_run::router(task_admin.clone(), delivery_svc.clone(), sessions.clone());
     let delivery_routes = delivery::adapters::http::router(delivery_svc, sessions.clone());
 
     // —— MCP 集成(把全链路暴露为 MCP 工具,POST /mcp,JSON-RPC)——
@@ -489,6 +493,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .merge(requirement_routes)
         .merge(task_routes)
         .merge(delivery_routes)
+        .merge(decomposition_run_routes)
         .merge(verification_routes)
         .merge(breakdown_routes)
         .merge(skill_routes)
