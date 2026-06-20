@@ -24,10 +24,11 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 [features]
-default = ["http", "grpc", "sql", "redis", "websocket"]
+default = ["http", "grpc", "sql", "mysql", "redis", "websocket"]
 http = ["probe/http"]
 grpc = ["probe/grpc"]
 sql = ["probe/sql"]
+mysql = ["probe/mysql"]
 redis = ["probe/redis"]
 websocket = ["probe/websocket"]
 
