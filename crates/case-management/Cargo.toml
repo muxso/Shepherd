@@ -17,10 +17,11 @@ utoipa = { version = "5", optional = true }
 webauth = { path = "../webauth", optional = true }
 serde = { version = "1", features = ["derive"], optional = true }
 rust_xlsxwriter = { version = "0.79", optional = true }
+calamine = { version = "0.26", optional = true }
 
 [features]
 pg = ["dep:sqlx"]
-http = ["dep:axum", "dep:serde", "dep:webauth", "webauth/http", "dep:utoipa", "dep:rust_xlsxwriter"]
+http = ["dep:axum", "dep:serde", "dep:webauth", "webauth/http", "dep:utoipa", "dep:rust_xlsxwriter", "dep:calamine"]
 
 [dev-dependencies]
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
