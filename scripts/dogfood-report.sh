@@ -25,13 +25,19 @@ C2=$(mkcase "就绪检查"     GET "$BASE/readyz"  '[{"type":"StatusIs","args":2
 C3=$(mkcase "断言失败示例" GET "$BASE/healthz" '[{"type":"StatusIs","args":500}]')
 echo "cases: $C1 $C2 $C3"
 
-# 建计划 + 挂入用例
+# 建一个场景(CASE 步骤引用 C1 + 内联 REQUEST 带断言)→ 展示报告里的嵌套步骤树
+SC=$(curl -s -XPOST $BASE/api/scenario -H "$AUTH" -H 'content-type: application/json' -d '{"projectId":"p1","name":"健康检查场景"}' | J 'd["id"]')
+curl -s -XPOST "$BASE/api/scenario/$SC/step" -H "$AUTH" -H 'content-type: application/json' -d "{\"kind\":\"CASE\",\"order\":1,\"refId\":\"$C1\"}" >/dev/null
+curl -s -XPOST "$BASE/api/scenario/$SC/step" -H "$AUTH" -H 'content-type: application/json' -d "{\"kind\":\"REQUEST\",\"order\":2,\"request\":{\"method\":\"GET\",\"url\":\"$BASE/readyz\",\"assertions\":[{\"type\":\"StatusIs\",\"args\":200}]}}" >/dev/null
+echo "scenario=$SC"
+
+# 建计划 + 挂入用例 + 挂入场景
 PID=$(curl -s -XPOST $BASE/test-plan -H "$AUTH" -H 'content-type: application/json' -d '{"projectId":"p1","name":"Shepherd 自举回归","type":"TEST_PLAN"}' | J 'd["id"]')
-for pair in "$C1:基础健康检查" "$C2:就绪检查" "$C3:断言失败示例"; do
+for pair in "$C1:基础健康检查" "$C2:就绪检查" "$C3:断言失败示例" "$SC:健康检查场景"; do
   cid="${pair%%:*}"; cname="${pair##*:}"
   curl -s -XPOST "$BASE/test-plan/$PID/cases" -H "$AUTH" -H 'content-type: application/json' -d "{\"caseId\":\"$cid\",\"name\":\"$cname\"}" >/dev/null
 done
-echo "plan=$PID linked 3 cases"
+echo "plan=$PID linked 3 cases + 1 scenario"
 
 # 跑计划:自动执行 + 回写结果
 echo "=== POST /test-plan/$PID/run(自动执行+回写)==="

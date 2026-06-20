@@ -4,7 +4,7 @@
 //! 逐用例明细(可展开看断言表 + 响应体)。渲染与 IO 解耦,可穷举单测。
 
 use crate::application::PlanStatistics;
-use crate::domain::{CaseStatus, PlanCase};
+use crate::domain::{AssertionResult, CaseStatus, PlanCase, StepResult};
 
 /// HTML 转义(防内容里的特殊字符破坏页面)。
 fn escape(s: &str) -> String {
@@ -25,6 +25,60 @@ fn badge(status: CaseStatus) -> (&'static str, &'static str, &'static str) {
     }
 }
 
+/// 断言表(无断言返回空)。
+fn assertion_table(a: &[AssertionResult]) -> String {
+    if a.is_empty() {
+        return String::new();
+    }
+    let rows: String = a
+        .iter()
+        .map(|a| {
+            let (st, sc) = if a.passed { ("成功", "#2e7d32") } else { ("失败", "#c62828") };
+            format!(
+                "<tr><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td style=\"color:{sc}\">{st}</td><td>{}</td></tr>",
+                escape(&a.item), escape(&a.actual), escape(&a.condition), escape(&a.expected), escape(&a.reason),
+            )
+        })
+        .collect();
+    format!(
+        "<div class=\"sec\">断言</div><table class=\"assert\"><tr>\
+         <th>断言项</th><th>返回值</th><th>匹配条件</th><th>匹配值</th><th>状态</th><th>原因</th></tr>{rows}</table>"
+    )
+}
+
+/// 头部键值表(响应头/请求头)。
+fn headers_table(title: &str, h: &[(String, String)]) -> String {
+    if h.is_empty() {
+        return String::new();
+    }
+    let rows: String = h
+        .iter()
+        .map(|(k, v)| format!("<tr><td>{}</td><td>{}</td></tr>", escape(k), escape(v)))
+        .collect();
+    format!("<div class=\"sec\">{}</div><table class=\"assert\"><tr><th>名称</th><th>值</th></tr>{rows}</table>", escape(title))
+}
+
+/// 递归渲染一个场景步骤(及其子步骤)。
+fn render_step(s: &StepResult) -> String {
+    let (label, color, bg) = badge(s.status);
+    let code = s.status_code.map(|c| format!("状态码 {c}　")).unwrap_or_default();
+    let kind = escape(&s.kind);
+    let name = escape(&s.name);
+    let assert = assertion_table(&s.assertions);
+    let children: String = s.children.iter().map(render_step).collect();
+    let inner = if assert.is_empty() && children.is_empty() {
+        String::new()
+    } else {
+        format!("<div class=\"stepbody\">{assert}{children}</div>")
+    };
+    format!(
+        r#"<details class="step"><summary><span class="kind">{kind}</span><span class="sname">{name}</span>
+ <span class="badge" style="color:{color};background:{bg}">{label}</span>
+ <span class="meta">{code}响应时间 {lat} ms</span></summary>{inner}</details>"#,
+        lat = s.latency_ms,
+    )
+}
+
 /// 渲染单条用例(summary 行 + 可展开明细)。
 fn render_case(idx: usize, c: &PlanCase) -> String {
     let (label, color, bg) = badge(c.status);
@@ -39,44 +93,60 @@ fn render_case(idx: usize, c: &PlanCase) -> String {
         })
         .unwrap_or_default();
 
-    // 断言表
-    let assertions_html = c
-        .result
-        .as_ref()
-        .filter(|r| !r.assertions.is_empty())
-        .map(|r| {
-            let rows: String = r
-                .assertions
-                .iter()
-                .map(|a| {
-                    let (st, sc) = if a.passed { ("成功", "#2e7d32") } else { ("失败", "#c62828") };
+    // 步骤树(场景用例)/ 断言表 / 响应头 / 响应体 / 实际请求
+    let (steps_html, assertions_html, headers_html, body_html, request_html) = match c.result.as_ref()
+    {
+        None => (String::new(), String::new(), String::new(), String::new(), String::new()),
+        Some(r) => {
+            let steps = if r.steps.is_empty() {
+                String::new()
+            } else {
+                let inner: String = r.steps.iter().map(render_step).collect();
+                format!("<div class=\"sec\">步骤</div>{inner}")
+            };
+            let body = r
+                .body
+                .as_ref()
+                .filter(|b| !b.is_empty())
+                .map(|b| format!("<div class=\"sec\">响应体</div><pre>{}</pre>", escape(b)))
+                .unwrap_or_default();
+            let request = r
+                .request
+                .as_ref()
+                .map(|req| {
+                    let hdr = headers_table("请求头", &req.headers);
+                    let b = req
+                        .body
+                        .as_ref()
+                        .filter(|x| !x.is_empty())
+                        .map(|x| format!("<pre>{}</pre>", escape(x)))
+                        .unwrap_or_default();
                     format!(
-                        "<tr><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td style=\"color:{sc}\">{st}</td><td>{}</td></tr>",
-                        escape(&a.item), escape(&a.actual), escape(&a.condition),
-                        escape(&a.expected), escape(&a.reason),
+                        "<div class=\"sec\">实际请求</div><pre>{} {}</pre>{hdr}{b}",
+                        escape(&req.method),
+                        escape(&req.url),
                     )
                 })
-                .collect();
-            format!(
-                "<div class=\"sec\">断言</div><table class=\"assert\"><tr>\
-                 <th>断言项</th><th>返回值</th><th>匹配条件</th><th>匹配值</th><th>状态</th><th>原因</th></tr>{rows}</table>"
+                .unwrap_or_default();
+            (
+                steps,
+                assertion_table(&r.assertions),
+                headers_table("响应头", &r.response_headers),
+                body,
+                request,
             )
-        })
-        .unwrap_or_default();
+        }
+    };
 
-    // 响应体
-    let body_html = c
-        .result
-        .as_ref()
-        .and_then(|r| r.body.as_ref())
-        .filter(|b| !b.is_empty())
-        .map(|b| format!("<div class=\"sec\">响应体</div><pre>{}</pre>", escape(b)))
-        .unwrap_or_default();
-
-    let detail = if assertions_html.is_empty() && body_html.is_empty() {
+    let detail = if steps_html.is_empty()
+        && assertions_html.is_empty()
+        && headers_html.is_empty()
+        && body_html.is_empty()
+        && request_html.is_empty()
+    {
         "<div class=\"empty\">无执行明细</div>".to_string()
     } else {
-        format!("{assertions_html}{body_html}")
+        format!("{steps_html}{assertions_html}{body_html}{headers_html}{request_html}")
     };
 
     format!(
@@ -154,6 +224,11 @@ pub fn report_html(name: &str, stats: &PlanStatistics, cases: &[PlanCase]) -> St
  table.assert th{{background:#fafbfc;color:#5b6470;font-weight:600}}
  pre{{background:#0f1419;color:#d6deeb;padding:12px;border-radius:6px;overflow:auto;font-size:12px;line-height:1.5}}
  .empty{{color:#9aa0a6;font-size:13px;padding:8px 0}}
+ details.step{{border:1px solid #f0f2f5;border-radius:6px;margin:6px 0 6px 12px;background:#fafbfc}}
+ details.step>summary{{padding:9px 12px;gap:10px}}
+ .kind{{font-size:11px;color:#1664ff;background:#eaf1ff;border-radius:4px;padding:2px 7px}}
+ .sname{{font-weight:500;flex:1}}
+ .stepbody{{padding:2px 12px 12px}}
 </style></head>
 <body>
  <h1>{name}</h1>
@@ -230,6 +305,7 @@ mod tests {
                         reason: String::new(),
                     }],
                     body: Some("ok".into()),
+                    ..Default::default()
                 }),
             },
             PlanCase {
@@ -249,9 +325,87 @@ mod tests {
                         reason: "期望 500,实际 200".into(),
                     }],
                     body: None,
+                    ..Default::default()
                 }),
             },
         ]
+    }
+
+    fn scenario_case() -> PlanCase {
+        PlanCase {
+            case_id: "scn1".into(),
+            name: "下单场景".into(),
+            status: CaseStatus::Success,
+            result: Some(CaseResult {
+                latency_ms: 30,
+                steps: vec![
+                    StepResult {
+                        name: "登录".into(),
+                        kind: "接口用例".into(),
+                        status: CaseStatus::Success,
+                        latency_ms: 10,
+                        status_code: Some(200),
+                        assertions: vec![AssertionResult {
+                            item: "状态码".into(),
+                            actual: "200".into(),
+                            condition: "等于".into(),
+                            expected: "200".into(),
+                            passed: true,
+                            reason: String::new(),
+                        }],
+                        children: vec![],
+                    },
+                    StepResult {
+                        name: "循环下单".into(),
+                        kind: "循环控制器".into(),
+                        status: CaseStatus::Success,
+                        latency_ms: 20,
+                        status_code: None,
+                        assertions: vec![],
+                        children: vec![StepResult {
+                            name: "创建订单".into(),
+                            kind: "接口用例".into(),
+                            status: CaseStatus::Success,
+                            latency_ms: 20,
+                            status_code: Some(201),
+                            assertions: vec![],
+                            children: vec![],
+                        }],
+                    },
+                ],
+                ..Default::default()
+            }),
+        }
+    }
+
+    #[test]
+    fn renders_scenario_step_tree() {
+        let html = report_html("场景", &stats(), &[scenario_case()]);
+        assert!(html.contains("步骤"));
+        assert!(html.contains("登录"));
+        assert!(html.contains("循环控制器"));
+        assert!(html.contains("创建订单")); // 嵌套子步骤
+        assert!(html.contains("接口用例"));
+    }
+
+    #[test]
+    fn renders_headers_and_request_panels() {
+        use crate::domain::RequestInfo;
+        let mut cs = cases();
+        if let Some(r) = cs[0].result.as_mut() {
+            r.response_headers = vec![("Content-Type".into(), "application/json".into())];
+            r.request = Some(RequestInfo {
+                method: "GET".into(),
+                url: "http://x/healthz".into(),
+                headers: vec![("Accept".into(), "*/*".into())],
+                body: None,
+            });
+        }
+        let html = report_html("面板", &stats(), &cs);
+        assert!(html.contains("响应头"));
+        assert!(html.contains("Content-Type"));
+        assert!(html.contains("实际请求"));
+        assert!(html.contains("http://x/healthz"));
     }
 
     #[test]

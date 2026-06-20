@@ -74,7 +74,28 @@ pub struct AssertionResult {
     pub reason: String,    // 失败原因(通过则空)
 }
 
-/// 一条用例的执行明细(供报告展开:耗时/大小/状态码/断言/响应体)。
+/// 实际请求信息(供报告「实际请求」面板)。
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct RequestInfo {
+    pub method: String,
+    pub url: String,
+    pub headers: Vec<(String, String)>,
+    pub body: Option<String>,
+}
+
+/// 场景嵌套步骤结果(供报告步骤树:接口用例/接口定义/控制器/脚本 等;可递归含子步骤)。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StepResult {
+    pub name: String,
+    pub kind: String, // 接口用例 / 接口定义 / 循环控制器 / 条件控制器 / 等待 …
+    pub status: CaseStatus,
+    pub latency_ms: u64,
+    pub status_code: Option<i64>,
+    pub assertions: Vec<AssertionResult>,
+    pub children: Vec<StepResult>,
+}
+
+/// 一条用例的执行明细(供报告展开:耗时/大小/状态码/断言/响应体/响应头/实际请求/步骤树)。
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct CaseResult {
     pub latency_ms: u64,
@@ -82,6 +103,12 @@ pub struct CaseResult {
     pub status_code: Option<i64>,
     pub assertions: Vec<AssertionResult>,
     pub body: Option<String>,
+    /// 响应头(供「响应头」面板)。
+    pub response_headers: Vec<(String, String)>,
+    /// 实际请求(供「实际请求」面板)。
+    pub request: Option<RequestInfo>,
+    /// 场景嵌套步骤(非场景用例则空)。
+    pub steps: Vec<StepResult>,
 }
 
 /// 计划内一条用例:id + 名称 + 当前状态 + 执行明细(未执行则 None)。
