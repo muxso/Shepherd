@@ -159,6 +159,41 @@ fn render_case(idx: usize, c: &PlanCase) -> String {
     )
 }
 
+/// 纯 SVG 环形图(无 JS):各段按占比画弧,中心显示总数。
+fn donut_svg(segments: &[(u64, &str)], total: u64, center: &str) -> String {
+    let r = 42.0_f64;
+    let circ = 2.0 * std::f64::consts::PI * r;
+    let mut arcs = String::new();
+    if total == 0 {
+        arcs.push_str(
+            "<circle cx=\"60\" cy=\"60\" r=\"42\" fill=\"none\" stroke=\"#eceff1\" stroke-width=\"16\"/>",
+        );
+    } else {
+        // 底环 + 逐段弧(rotate -90 使 0 点在顶部)。
+        arcs.push_str("<circle cx=\"60\" cy=\"60\" r=\"42\" fill=\"none\" stroke=\"#f0f2f5\" stroke-width=\"16\"/>");
+        let mut offset = 0.0_f64;
+        for (n, color) in segments {
+            if *n == 0 {
+                continue;
+            }
+            let len = *n as f64 / total as f64 * circ;
+            arcs.push_str(&format!(
+                "<circle cx=\"60\" cy=\"60\" r=\"42\" fill=\"none\" stroke=\"{color}\" stroke-width=\"16\" \
+                 stroke-dasharray=\"{len:.2} {gap:.2}\" stroke-dashoffset=\"{off:.2}\"/>",
+                gap = circ - len,
+                off = -offset,
+            ));
+            offset += len;
+        }
+    }
+    format!(
+        "<svg width=\"120\" height=\"120\" viewBox=\"0 0 120 120\">\
+         <g transform=\"rotate(-90 60 60)\">{arcs}</g>\
+         <text x=\"60\" y=\"56\" text-anchor=\"middle\" font-size=\"20\" font-weight=\"700\" fill=\"#1f2329\">{center}</text>\
+         <text x=\"60\" y=\"74\" text-anchor=\"middle\" font-size=\"11\" fill=\"#8a9099\">总数</text></svg>"
+    )
+}
+
 /// 由计划名 + 统计 + 逐用例明细生成自包含 HTML 报告。
 pub fn report_html(name: &str, stats: &PlanStatistics, cases: &[PlanCase]) -> String {
     let name = escape(name);
@@ -186,6 +221,19 @@ pub fn report_html(name: &str, stats: &PlanStatistics, cases: &[PlanCase]) -> St
     }
     let assert_pct = if assert_total == 0 { 100.0 } else { assert_pass as f64 / assert_total as f64 * 100.0 };
     let pct = |n: u64| if stats.total == 0 { 0.0 } else { n as f64 / stats.total as f64 * 100.0 };
+
+    // 用例状态环形图(纯 SVG)。
+    let status_donut = donut_svg(
+        &[
+            (n_succ, "#2e7d32"),
+            (n_err, "#c62828"),
+            (n_fake, "#ef6c00"),
+            (n_block, "#455a64"),
+            (n_pend, "#bdbdbd"),
+        ],
+        stats.total,
+        &stats.total.to_string(),
+    );
 
     let cases_html: String =
         cases.iter().enumerate().map(|(i, c)| render_case(i + 1, c)).collect();
@@ -229,6 +277,8 @@ pub fn report_html(name: &str, stats: &PlanStatistics, cases: &[PlanCase]) -> St
  .kind{{font-size:11px;color:#1664ff;background:#eaf1ff;border-radius:4px;padding:2px 7px}}
  .sname{{font-weight:500;flex:1}}
  .stepbody{{padding:2px 12px 12px}}
+ .donutwrap{{display:flex;align-items:center;gap:16px}}
+ .donutwrap .legend{{flex:1}}
 </style></head>
 <body>
  <h1>{name}</h1>
@@ -242,11 +292,16 @@ pub fn report_html(name: &str, stats: &PlanStatistics, cases: &[PlanCase]) -> St
    <div class="row"><span>断言通过率</span><b>{assert_pct:.1}% ({assert_pass}/{assert_total})</b></div>
   </div>
   <div class="card"><h3>用例状态分布</h3>
-   <div class="row"><span style="color:#2e7d32">● 通过</span><b>{n_succ}　{p_succ:.1}%</b></div>
-   <div class="row"><span style="color:#c62828">● 失败</span><b>{n_err}　{p_err:.1}%</b></div>
-   <div class="row"><span style="color:#ef6c00">● 误报</span><b>{n_fake}　{p_fake:.1}%</b></div>
-   <div class="row"><span style="color:#455a64">● 阻塞</span><b>{n_block}　{p_block:.1}%</b></div>
-   <div class="row"><span style="color:#757575">● 未执行</span><b>{n_pend}　{p_pend:.1}%</b></div>
+   <div class="donutwrap">
+    {status_donut}
+    <div class="legend">
+     <div class="row"><span style="color:#2e7d32">● 通过</span><b>{n_succ}　{p_succ:.1}%</b></div>
+     <div class="row"><span style="color:#c62828">● 失败</span><b>{n_err}　{p_err:.1}%</b></div>
+     <div class="row"><span style="color:#ef6c00">● 误报</span><b>{n_fake}　{p_fake:.1}%</b></div>
+     <div class="row"><span style="color:#455a64">● 阻塞</span><b>{n_block}　{p_block:.1}%</b></div>
+     <div class="row"><span style="color:#757575">● 未执行</span><b>{n_pend}　{p_pend:.1}%</b></div>
+    </div>
+   </div>
   </div>
  </div>
  <div class="detail"><h2>报告明细</h2>{detail_section}</div>
@@ -267,6 +322,7 @@ pub fn report_html(name: &str, stats: &PlanStatistics, cases: &[PlanCase]) -> St
         n_fake = n_fake, p_fake = pct(n_fake),
         n_block = n_block, p_block = pct(n_block),
         n_pend = n_pend, p_pend = pct(n_pend),
+        status_donut = status_donut,
         detail_section = detail_section,
     )
 }
@@ -376,6 +432,14 @@ mod tests {
                 ..Default::default()
             }),
         }
+    }
+
+    #[test]
+    fn renders_status_donut() {
+        let html = report_html("环形", &stats(), &cases());
+        assert!(html.contains("<svg"));
+        assert!(html.contains("总数"));
+        assert!(html.contains("stroke-dasharray")); // 至少一段弧
     }
 
     #[test]
