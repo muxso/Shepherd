@@ -143,18 +143,21 @@ impl RefMode {
 }
 
 /// 内联请求。method 必须在允许集合内,url 非空。
+/// `assertions` 为**中立 JSON 数组**(api-runner Assertion 的序列化形式),组装根执行时再解析为
+/// 具体断言——与 ms_api_case 的 assertions 同构,保持 api-scenario 与 api-runner 解耦。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InlineRequest {
     pub method: String,
     pub url: String,
     pub body: Option<String>,
+    pub assertions: serde_json::Value,
 }
 
 const ALLOWED_METHODS: &[&str] =
     &["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"];
 
 impl InlineRequest {
-    /// 校验构造:method 须在允许集合,url 非空。
+    /// 校验构造:method 须在允许集合,url 非空。断言默认空数组(可链式 [`with_assertions`])。
     pub fn new(
         method: &str,
         url: &str,
@@ -168,7 +171,14 @@ impl InlineRequest {
         if url.is_empty() {
             return Err(ScenarioError::EmptyUrl);
         }
-        Ok(Self { method, url: url.to_string(), body })
+        Ok(Self { method, url: url.to_string(), body, assertions: serde_json::Value::Array(vec![]) })
+    }
+
+    /// 附加断言(中立 JSON 数组)。非数组值归一为空数组,避免下游误判。
+    pub fn with_assertions(mut self, assertions: serde_json::Value) -> Self {
+        self.assertions =
+            if assertions.is_array() { assertions } else { serde_json::Value::Array(vec![]) };
+        self
     }
 }
 
@@ -255,7 +265,12 @@ fn parse_plan_step(v: &serde_json::Value, depth: usize) -> Option<PlanStep> {
             let method = v.get("method").and_then(|m| m.as_str()).unwrap_or("GET");
             let url = v.get("url").and_then(|u| u.as_str()).unwrap_or_default();
             let body = v.get("body").and_then(|b| b.as_str()).map(String::from);
-            InlineRequest::new(method, url, body).ok().map(PlanStep::Request)
+            let assertions =
+                v.get("assertions").cloned().unwrap_or_else(|| serde_json::Value::Array(vec![]));
+            InlineRequest::new(method, url, body)
+                .ok()
+                .map(|r| r.with_assertions(assertions))
+                .map(PlanStep::Request)
         }
         other => match ControlKind::parse(other) {
             // 子步骤本身是控制器:同一对象既带 kind 又是其载荷,递归(深度受限)。
@@ -574,6 +589,41 @@ mod tests {
         let r = flatten_step(&s).expect("some");
         assert_eq!(r, RunnableStep::from_request(req));
         assert!(r.case_id.is_none());
+    }
+
+    #[test]
+    fn inline_request_carries_assertions() {
+        let a = serde_json::json!([{"type": "StatusIs", "args": 200}]);
+        let req = InlineRequest::new("GET", "http://x", None)
+            .expect("valid")
+            .with_assertions(a.clone());
+        assert_eq!(req.assertions, a);
+        // 默认空数组。
+        assert_eq!(
+            InlineRequest::new("GET", "http://x", None).expect("valid").assertions,
+            serde_json::json!([])
+        );
+        // 非数组归一为空数组。
+        let coerced = InlineRequest::new("GET", "http://x", None)
+            .expect("valid")
+            .with_assertions(serde_json::json!({"bad": 1}));
+        assert_eq!(coerced.assertions, serde_json::json!([]));
+    }
+
+    #[test]
+    fn control_child_request_parses_assertions() {
+        // 控制器子步骤里的内联请求也应带断言(parse_plan_step REQUEST 分支)。
+        let v = serde_json::json!({
+            "kind": "REQUEST", "method": "GET", "url": "http://x",
+            "assertions": [{"type": "StatusIs", "args": 201}]
+        });
+        let step = parse_plan_step(&v, 0).expect("parsed");
+        match step {
+            PlanStep::Request(r) => {
+                assert_eq!(r.assertions, serde_json::json!([{"type": "StatusIs", "args": 201}]))
+            }
+            other => panic!("expected request, got {other:?}"),
+        }
     }
 
     #[test]

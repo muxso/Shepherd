@@ -83,11 +83,20 @@ struct InlineRequestDto {
     url: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     body: Option<String>,
+    /// 断言数组(api-runner Assertion 的序列化形式);空则省略。
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[schema(value_type = Vec<Object>)]
+    assertions: Vec<serde_json::Value>,
 }
 
 impl From<&InlineRequest> for InlineRequestDto {
     fn from(r: &InlineRequest) -> Self {
-        Self { method: r.method.clone(), url: r.url.clone(), body: r.body.clone() }
+        Self {
+            method: r.method.clone(),
+            url: r.url.clone(),
+            body: r.body.clone(),
+            assertions: r.assertions.as_array().cloned().unwrap_or_default(),
+        }
     }
 }
 
@@ -183,6 +192,10 @@ struct InlineRequestBody {
     url: String,
     #[serde(default)]
     body: Option<String>,
+    /// 断言数组(api-runner Assertion 形式,如 `[{"type":"StatusIs","args":200}]`);默认空。
+    #[serde(default)]
+    #[schema(value_type = Vec<Object>)]
+    assertions: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -332,7 +345,11 @@ async fn add_step(
                 return (StatusCode::BAD_REQUEST, "request payload required").into_response();
             };
             match InlineRequest::new(&r.method, &r.url, r.body) {
-                Ok(req) => StepKind::Request(req),
+                Ok(req) => StepKind::Request(
+                    req.with_assertions(
+                        r.assertions.unwrap_or_else(|| serde_json::Value::Array(vec![])),
+                    ),
+                ),
                 Err(_) => {
                     return (StatusCode::BAD_REQUEST, "invalid inline request").into_response()
                 }

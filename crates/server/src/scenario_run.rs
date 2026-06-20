@@ -19,7 +19,7 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use utoipa::{OpenApi, ToSchema};
 
-use api_runner::{HttpMethod, MatchCondition, RequestSpec};
+use api_runner::{Assertion, HttpMethod, MatchCondition, RequestSpec};
 use api_scenario::application::{
     CompileError, CompileScenarioUseCase, RecordScenarioExecutionUseCase,
 };
@@ -114,7 +114,9 @@ fn to_node(step: &PlanStep, once: &mut u32) -> PlanNode {
                 headers: vec![],
                 body: r.body.clone(),
             },
-            assertions: vec![],
+            // 中立 JSON 断言 → 具体 Assertion(形态不符则回落空,不致命),执行器据此判定。
+            assertions: serde_json::from_value::<Vec<Assertion>>(r.assertions.clone())
+                .unwrap_or_default(),
             processors: vec![],
         }),
         PlanStep::Loop { times, body } => {
@@ -247,4 +249,41 @@ struct ApiDoc;
 
 pub fn openapi() -> utoipa::openapi::OpenApi {
     ApiDoc::openapi()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use api_scenario::domain::InlineRequest;
+
+    #[test]
+    fn inline_request_assertions_flow_into_leaf() {
+        // 场景内联请求的中立 JSON 断言 → 执行器 Leaf::Request 的具体 Assertion。
+        let req = InlineRequest::new("GET", "http://x/ok", None)
+            .expect("valid")
+            .with_assertions(serde_json::json!([
+                {"type": "StatusIs", "args": 200},
+                {"type": "BodyContains", "args": "ok"}
+            ]));
+        let mut once = 0;
+        match to_node(&PlanStep::Request(req), &mut once) {
+            PlanNode::Leaf(Leaf::Request { assertions, .. }) => {
+                assert_eq!(
+                    assertions,
+                    vec![Assertion::StatusIs(200), Assertion::BodyContains("ok".into())]
+                );
+            }
+            other => panic!("expected Leaf::Request, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn inline_request_without_assertions_is_empty() {
+        let req = InlineRequest::new("GET", "http://x/ok", None).expect("valid");
+        let mut once = 0;
+        match to_node(&PlanStep::Request(req), &mut once) {
+            PlanNode::Leaf(Leaf::Request { assertions, .. }) => assert!(assertions.is_empty()),
+            other => panic!("expected Leaf::Request, got {other:?}"),
+        }
+    }
 }
