@@ -2664,6 +2664,7 @@ dependencies = [
  "axum 0.8.9",
  "kernel",
  "migrate",
+ "probe",
  "reqwest",
  "serde",
  "serde_json",
