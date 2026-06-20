@@ -162,9 +162,12 @@ enum PerfCmd {
         /// 并发"虚拟用户"数。
         #[arg(long, default_value_t = 10)]
         concurrency: u32,
-        /// 合计请求次数。
+        /// 合计请求次数(时长模式下被忽略)。
         #[arg(long, default_value_t = 100)]
         iterations: u32,
+        /// 时长模式:持续压测该毫秒数(给定则忽略 --iterations)。
+        #[arg(long = "duration-ms")]
+        duration_ms: Option<u64>,
         /// 期望状态码(给定则成功=该码命中;省略则成功=HTTP 可达)。
         #[arg(long = "expect-status")]
         expect_status: Option<u16>,
@@ -1426,11 +1429,12 @@ fn run(cli: Cli) -> R<()> {
         Cmd::Perf { cmd } => {
             let c = Client::new(Config::load())?;
             match cmd {
-                PerfCmd::Run { url, method, concurrency, iterations, expect_status, project } => {
+                PerfCmd::Run { url, method, concurrency, iterations, duration_ms, expect_status, project } => {
                     pretty(&c.post(
                         "/perf/run",
                         json!({"url": url, "method": method, "concurrency": concurrency,
-                               "iterations": iterations, "expectStatus": expect_status, "projectId": project}),
+                               "iterations": iterations, "durationMs": duration_ms,
+                               "expectStatus": expect_status, "projectId": project}),
                         true,
                     )?)
                 }
