@@ -37,5 +37,9 @@ pub fn default_registry() -> PluginRegistry {
     {
         reg = reg.with(std::sync::Arc::new(plugins::RedisPlugin::new()));
     }
+    #[cfg(feature = "websocket")]
+    {
+        reg = reg.with(std::sync::Arc::new(plugins::WebSocketPlugin::new()));
+    }
     reg
 }
