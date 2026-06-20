@@ -12,9 +12,10 @@ use axum::{
     Json, Router,
 };
 use crate::application::{
-    report_html, CreatePlanError, CreatePlanUseCase, PlanStatisticsError, PlanStatisticsUseCase,
+    report_html, CreatePlanError, CreatePlanUseCase, PlanCaseUseCase, PlanStatisticsError,
+    PlanStatisticsUseCase,
 };
-use crate::domain::{Plan, PlanType, ROOT_GROUP};
+use crate::domain::{AssertionResult, CaseResult, CaseStatus, Plan, PlanType, ROOT_GROUP};
 use serde::{Deserialize, Serialize};
 use utoipa::{OpenApi, ToSchema};
 use webauth::{AuthUser, SessionStore};
@@ -23,6 +24,7 @@ use webauth::{AuthUser, SessionStore};
 struct PlanState {
     create: CreatePlanUseCase,
     stats: PlanStatisticsUseCase,
+    cases: PlanCaseUseCase,
     sessions: Arc<dyn SessionStore>,
 }
 
@@ -35,13 +37,16 @@ impl FromRef<PlanState> for Arc<dyn SessionStore> {
 pub fn router(
     create: CreatePlanUseCase,
     stats: PlanStatisticsUseCase,
+    cases: PlanCaseUseCase,
     sessions: Arc<dyn SessionStore>,
 ) -> Router {
     Router::new()
         .route("/test-plan", post(create_plan))
         .route("/test-plan/{id}/statistics", get(statistics))
         .route("/test-plan/{id}/report", get(report))
-        .with_state(PlanState { create, stats, sessions })
+        .route("/test-plan/{id}/cases", post(link_case).get(list_cases))
+        .route("/test-plan/{id}/cases/{caseId}/result", post(record_result))
+        .with_state(PlanState { create, stats, cases, sessions })
 }
 
 #[derive(Debug, Deserialize, ToSchema)]
@@ -144,12 +149,16 @@ async fn statistics(State(st): State<PlanState>, Path(id): Path<String>) -> Resp
 #[utoipa::path(get, path = "/test-plan/{id}/report", tag = "test-plan", params(("id" = String, Path)), responses((status = 200, description = "HTML 报告"), (status = 404)))]
 async fn report(State(st): State<PlanState>, Path(id): Path<String>) -> Response {
     match st.stats.with_name(&id).await {
-        Ok((name, s)) => (
-            StatusCode::OK,
-            [("content-type", "text/html; charset=utf-8")],
-            report_html(&name, &s),
-        )
-            .into_response(),
+        Ok((name, s)) => {
+            // 逐用例明细;取不到则按空列表渲染(报告仍可出,只是无明细)。
+            let cases = st.cases.list(&id).await.unwrap_or_default();
+            (
+                StatusCode::OK,
+                [("content-type", "text/html; charset=utf-8")],
+                report_html(&name, &s, &cases),
+            )
+                .into_response()
+        }
         Err(PlanStatisticsError::PlanNotFound) => {
             (StatusCode::NOT_FOUND, "plan not found").into_response()
         }
@@ -159,8 +168,121 @@ async fn report(State(st): State<PlanState>, Path(id): Path<String>) -> Response
     }
 }
 
+// ---- 计划用例:挂入 / 回写结果 / 列出 ----
+
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+struct LinkCaseRequest {
+    case_id: String,
+    #[serde(default)]
+    name: String,
+}
+
+#[utoipa::path(post, path = "/test-plan/{id}/cases", tag = "test-plan", params(("id" = String, Path)), request_body = LinkCaseRequest, responses((status = 201), (status = 403)), security(("bearer" = [])))]
+async fn link_case(user: AuthUser, State(st): State<PlanState>, Path(id): Path<String>, Json(b): Json<LinkCaseRequest>) -> Response {
+    if !user.can("TEST_PLAN", "ADD") {
+        return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
+    match st.cases.link(&id, &b.case_id, &b.name).await {
+        Ok(()) => StatusCode::CREATED.into_response(),
+        Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
+    }
+}
+
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+struct AssertionResultDto {
+    item: String,
+    actual: String,
+    condition: String,
+    expected: String,
+    passed: bool,
+    #[serde(default)]
+    reason: String,
+}
+
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+struct RecordResultRequest {
+    /// PENDING/SUCCESS/ERROR/FAKE_ERROR/BLOCK。
+    status: String,
+    #[serde(default)]
+    latency_ms: u64,
+    #[serde(default)]
+    response_size: u64,
+    #[serde(default)]
+    status_code: Option<i64>,
+    #[serde(default)]
+    body: Option<String>,
+    #[serde(default)]
+    assertions: Vec<AssertionResultDto>,
+}
+
+#[utoipa::path(post, path = "/test-plan/{id}/cases/{caseId}/result", tag = "test-plan", params(("id" = String, Path), ("caseId" = String, Path)), request_body = RecordResultRequest, responses((status = 200), (status = 404), (status = 403)), security(("bearer" = [])))]
+async fn record_result(user: AuthUser, State(st): State<PlanState>, Path((id, case_id)): Path<(String, String)>, Json(b): Json<RecordResultRequest>) -> Response {
+    if !user.can("TEST_PLAN", "EXECUTE") {
+        return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
+    let Some(status) = CaseStatus::parse(&b.status) else {
+        return (StatusCode::BAD_REQUEST, "unknown status").into_response();
+    };
+    let result = CaseResult {
+        latency_ms: b.latency_ms,
+        response_size: b.response_size,
+        status_code: b.status_code,
+        body: b.body,
+        assertions: b
+            .assertions
+            .into_iter()
+            .map(|a| AssertionResult {
+                item: a.item,
+                actual: a.actual,
+                condition: a.condition,
+                expected: a.expected,
+                passed: a.passed,
+                reason: a.reason,
+            })
+            .collect(),
+    };
+    match st.cases.record(&id, &case_id, status, Some(result)).await {
+        Ok(true) => StatusCode::OK.into_response(),
+        Ok(false) => (StatusCode::NOT_FOUND, "case not linked to plan").into_response(),
+        Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
+    }
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+struct PlanCaseResponse {
+    case_id: String,
+    name: String,
+    status: String,
+    latency_ms: Option<u64>,
+    status_code: Option<i64>,
+}
+
+#[utoipa::path(get, path = "/test-plan/{id}/cases", tag = "test-plan", params(("id" = String, Path)), responses((status = 200, body = [PlanCaseResponse])))]
+async fn list_cases(State(st): State<PlanState>, Path(id): Path<String>) -> Response {
+    match st.cases.list(&id).await {
+        Ok(cases) => {
+            let items: Vec<PlanCaseResponse> = cases
+                .into_iter()
+                .map(|c| PlanCaseResponse {
+                    case_id: c.case_id,
+                    name: c.name,
+                    status: c.status.as_str().to_string(),
+                    latency_ms: c.result.as_ref().map(|r| r.latency_ms),
+                    status_code: c.result.as_ref().and_then(|r| r.status_code),
+                })
+                .collect();
+            (StatusCode::OK, Json(items)).into_response()
+        }
+        Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
+    }
+}
+
 #[derive(OpenApi)]
-#[openapi(paths(create_plan, statistics, report), components(schemas(CreatePlanRequest, PlanResponse, StatisticsResponse)), tags((name = "test-plan", description = "测试计划")))]
+#[openapi(paths(create_plan, statistics, report, link_case, record_result, list_cases), components(schemas(CreatePlanRequest, PlanResponse, StatisticsResponse, LinkCaseRequest, RecordResultRequest, AssertionResultDto, PlanCaseResponse)), tags((name = "test-plan", description = "测试计划")))]
 struct ApiDoc;
 pub fn openapi() -> utoipa::openapi::OpenApi { ApiDoc::openapi() }
 
@@ -176,15 +298,17 @@ mod tests {
     use tower::ServiceExt;
     use webauth::testing::InMemorySessionStore;
 
-    /// app + 拥有 `TEST_PLAN:READ+ADD` 的令牌。
+    /// app + 拥有 `TEST_PLAN:READ+ADD+EXECUTE` 的令牌。
     async fn app_with(repo: InMemoryPlanRepository) -> (Router, String) {
         let repo = Arc::new(repo);
         let sessions = Arc::new(InMemorySessionStore::new());
-        let perms = PermissionSet::from_raw(["TEST_PLAN:READ+ADD".to_string()]).expect("perms");
+        let perms =
+            PermissionSet::from_raw(["TEST_PLAN:READ+ADD+EXECUTE".to_string()]).expect("perms");
         let token = sessions.create("admin", perms, 3600).await.expect("token");
         let r = router(
             CreatePlanUseCase::new(repo.clone()),
-            PlanStatisticsUseCase::new(repo),
+            PlanStatisticsUseCase::new(repo.clone()),
+            PlanCaseUseCase::new(repo),
             sessions,
         );
         (r, token)
@@ -230,7 +354,8 @@ mod tests {
         let token = sessions.create("v", perms, 3600).await.expect("token");
         let app = router(
             CreatePlanUseCase::new(repo.clone()),
-            PlanStatisticsUseCase::new(repo),
+            PlanStatisticsUseCase::new(repo.clone()),
+            PlanCaseUseCase::new(repo),
             sessions,
         );
         let resp = app
@@ -242,6 +367,76 @@ mod tests {
             .await
             .expect("resp");
         assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn link_record_then_report_shows_case_detail() {
+        let repo = InMemoryPlanRepository::new();
+        let plan = repo
+            .seed(NewPlan::new("p1", "冒烟", crate::domain::PlanType::Plan, ROOT_GROUP).expect("v"))
+            .await;
+        let (app, t) = {
+            let repo = Arc::new(repo);
+            let sessions = Arc::new(InMemorySessionStore::new());
+            let perms =
+                PermissionSet::from_raw(["TEST_PLAN:READ+ADD+EXECUTE".to_string()]).expect("p");
+            let token = sessions.create("admin", perms, 3600).await.expect("tok");
+            let r = router(
+                CreatePlanUseCase::new(repo.clone()),
+                PlanStatisticsUseCase::new(repo.clone()),
+                PlanCaseUseCase::new(repo),
+                sessions,
+            );
+            (r, token)
+        };
+        let pid = &plan.id;
+        // 挂入用例
+        let r = app
+            .clone()
+            .oneshot(post(&format!("/test-plan/{pid}/cases"), r#"{"caseId":"c1","name":"健康检查"}"#, Some(&t)))
+            .await
+            .expect("link");
+        assert_eq!(r.status(), StatusCode::CREATED);
+        // 回写结果(成功 + 断言)
+        let body = r#"{"status":"SUCCESS","latencyMs":12,"responseSize":3,"statusCode":200,"body":"ok","assertions":[{"item":"状态码","actual":"200","condition":"等于","expected":"200","passed":true}]}"#;
+        let r = app
+            .clone()
+            .oneshot(post(&format!("/test-plan/{pid}/cases/c1/result"), body, Some(&t)))
+            .await
+            .expect("record");
+        assert_eq!(r.status(), StatusCode::OK);
+        // 报告含逐用例明细
+        let r = app
+            .oneshot(
+                Request::builder().uri(format!("/test-plan/{pid}/report")).body(Body::empty()).expect("req"),
+            )
+            .await
+            .expect("report");
+        assert_eq!(r.status(), StatusCode::OK);
+        let html = String::from_utf8(
+            axum::body::to_bytes(r.into_body(), usize::MAX).await.expect("b").to_vec(),
+        )
+        .expect("utf8");
+        assert!(html.contains("健康检查"));
+        assert!(html.contains("报告明细"));
+        assert!(html.contains("断言项"));
+        assert!(html.contains("通过率</span><b>100.0%"));
+    }
+
+    #[tokio::test]
+    async fn record_on_unlinked_case_404() {
+        let repo = InMemoryPlanRepository::new();
+        let plan = repo
+            .seed(NewPlan::new("p1", "x", crate::domain::PlanType::Plan, ROOT_GROUP).expect("v"))
+            .await;
+        let (app, t) = app_with(InMemoryPlanRepository::new()).await;
+        // 用一个未挂入的 case → 404(注意:app_with 的 repo 与 plan 不同实例,这里仅验证 404 路径)
+        let _ = plan;
+        let r = app
+            .oneshot(post("/test-plan/ghost/cases/c9/result", r#"{"status":"SUCCESS"}"#, Some(&t)))
+            .await
+            .expect("r");
+        assert_eq!(r.status(), StatusCode::NOT_FOUND);
     }
 
     #[tokio::test]

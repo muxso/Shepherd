@@ -12,9 +12,10 @@ axum = { version = "0.8", optional = true }
 utoipa = { version = "5", optional = true }
 webauth = { path = "../webauth", optional = true }
 serde = { version = "1", features = ["derive"], optional = true }
+serde_json = { version = "1", optional = true }
 
 [features]
-pg = ["dep:sqlx"]
+pg = ["dep:sqlx", "dep:serde_json"]
 http = ["dep:axum", "dep:serde", "dep:webauth", "webauth/http", "dep:utoipa"]
 
 [dev-dependencies]

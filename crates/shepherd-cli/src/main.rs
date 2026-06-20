@@ -581,6 +581,39 @@ enum PlanCmd {
         #[arg(long)]
         id: String,
     },
+    /// 把一条用例挂入计划。
+    LinkCase {
+        #[arg(long)]
+        id: String,
+        #[arg(long)]
+        case: String,
+        #[arg(long, default_value = "")]
+        name: String,
+    },
+    /// 回写某用例在计划内的执行结果。
+    Result {
+        #[arg(long)]
+        id: String,
+        #[arg(long)]
+        case: String,
+        /// SUCCESS | ERROR | FAKE_ERROR | BLOCK | PENDING。
+        #[arg(long, default_value = "SUCCESS")]
+        status: String,
+        #[arg(long = "latency-ms", default_value_t = 0)]
+        latency_ms: u64,
+        #[arg(long = "status-code")]
+        status_code: Option<i64>,
+        #[arg(long)]
+        body: Option<String>,
+        /// 断言数组 JSON,如 '[{"item":"状态码","actual":"200","condition":"等于","expected":"200","passed":true}]'。
+        #[arg(long = "assertions-json")]
+        assertions_json: Option<String>,
+    },
+    /// 列出计划内用例(含状态)。
+    Cases {
+        #[arg(long)]
+        id: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -1445,6 +1478,25 @@ fn run(cli: Cli) -> R<()> {
                 PlanCmd::Runs { id } => {
                     pretty(&c.get(&format!("/test-plan/{id}/runs"), true)?)
                 }
+                PlanCmd::LinkCase { id, case, name } => pretty(&c.post(
+                    &format!("/test-plan/{id}/cases"),
+                    json!({"caseId": case, "name": name}),
+                    true,
+                )?),
+                PlanCmd::Result { id, case, status, latency_ms, status_code, body, assertions_json } => {
+                    let assertions: Value = match assertions_json {
+                        Some(aj) => serde_json::from_str(&aj)
+                            .map_err(|e| format!("--assertions-json 不是合法 JSON: {e}"))?,
+                        None => json!([]),
+                    };
+                    pretty(&c.post(
+                        &format!("/test-plan/{id}/cases/{case}/result"),
+                        json!({"status": status, "latencyMs": latency_ms, "statusCode": status_code,
+                               "body": body, "assertions": assertions}),
+                        true,
+                    )?)
+                }
+                PlanCmd::Cases { id } => pretty(&c.get(&format!("/test-plan/{id}/cases"), true)?),
             }
         }
         Cmd::Api { cmd } => {
