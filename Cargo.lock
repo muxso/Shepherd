@@ -103,12 +103,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "anyhow"
-version = "1.0.102"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7f202df86484c868dbad7eaa557ef785d5c66295e41b460ef922eca0723b842c"
-
-[[package]]
 name = "api-definition"
 version = "0.0.1"
 dependencies = [
@@ -2214,18 +2208,14 @@ dependencies = [
  "arrow",
  "async-trait",
  "axum 0.8.9",
- "bytes",
- "http",
  "object_store",
  "parquet",
+ "probe",
  "serde",
  "serde_json",
  "sqlx",
  "thiserror",
  "tokio",
- "tokio-stream",
- "tonic",
- "tonic-health",
 ]
 
 [[package]]
@@ -2355,20 +2345,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2796faa41db3ec313a31f7624d9286acf277b52de526150b7e69f3debf891ee5"
 dependencies = [
  "bytes",
- "prost-derive",
-]
-
-[[package]]
-name = "prost-derive"
-version = "0.13.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8a56d757972c98b346a9b766e3f02746cde6dd1cd1d1d563472929fdd74bec4d"
-dependencies = [
- "anyhow",
- "itertools",
- "proc-macro2",
- "quote",
- "syn",
 ]
 
 [[package]]
@@ -2875,6 +2851,7 @@ dependencies = [
  "mock-runtime",
  "orchestrator",
  "perf",
+ "probe",
  "project",
  "requirement",
  "reqwest",
@@ -3551,19 +3528,6 @@ dependencies = [
  "tower-layer",
  "tower-service",
  "tracing",
-]
-
-[[package]]
-name = "tonic-health"
-version = "0.12.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1eaf34ddb812120f5c601162d5429933c9b527d901ab0e7f930d3147e33a09b2"
-dependencies = [
- "async-stream",
- "prost",
- "tokio",
- "tokio-stream",
- "tonic",
 ]
 
 [[package]]
