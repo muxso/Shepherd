@@ -134,6 +134,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Ok(());
     }
 
+    // —— Mock 服务(可选,独立端口)——
+    // 设了 MOCK_BIND 才起:catch-all 路由,据 ms_api_mock+ms_api_definition 匹配并回放响应。
+    // 跑在独立监听上(被测系统把 base_url 指向它),不与主 API 路由冲突。
+    if let Ok(mock_bind) = std::env::var("MOCK_BIND") {
+        if !mock_bind.trim().is_empty() {
+            let source = Arc::new(mock_runtime::adapters::PgMockRuleSource::new(pool.clone()));
+            let mock_app = mock_runtime::adapters::http::router(source);
+            let listener = tokio::net::TcpListener::bind(&mock_bind).await?;
+            tracing::info!(%mock_bind, "mock server listening");
+            tokio::spawn(async move {
+                if let Err(e) = axum::serve(listener, mock_app).await {
+                    tracing::error!("mock server error: {e}");
+                }
+            });
+        }
+    }
+
     // —— system-setting 模块 ——
     let user_repo = Arc::new(PgUserRepository::new(pool.clone()));
     let user_uc = CreateUserUseCase::new(user_repo.clone());
