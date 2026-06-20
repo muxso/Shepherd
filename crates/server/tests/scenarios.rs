@@ -179,8 +179,8 @@ async fn scenario_shepherd_full_chain() {
     let bd = s.post(&format!("/requirement/{rid}/breakdown"), Value::Null, Some(&t)).await;
     let did = bd["id"].as_str().unwrap().to_string();
     assert_eq!(bd["tasks"].as_array().unwrap().len(), 3);
-    // 开验证 + 把标准 0 追溯到 t1
-    let vid = s.post("/verification", json!({"requirementId":&rid,"requirementVersion":1,"criteria":["登录成功","错误密码拒绝"]}), Some(&t)).await["id"].as_str().unwrap().to_string();
+    // breakdown 已**自动开验证账本**(同一份验收标准快照);直接取其 id,把标准 0 追溯到 t1。
+    let vid = bd["verificationId"].as_str().expect("breakdown 应自动开验证账本").to_string();
     let _ = s.post(&format!("/verification/{vid}/link"), json!({"criterionIndex":0,"decompositionId":&did,"taskId":"t1"}), Some(&t)).await;
     // 派发 t1(Echo 执行者同步完成)→ 编排器:任务驱动到 Verified + 回灌验证
     let _ = s.post("/delivery", json!({"decompositionId":&did,"taskId":"t1","title":"实现登录API","executor":"CLAUDE_CODE"}), Some(&t)).await;
@@ -428,8 +428,8 @@ async fn scenario_api_definition_to_run() {
     let comp = s.get(&format!("/api/scenario/{scn}/compile"), &t).await;
     assert_eq!(comp["steps"][0]["caseId"], case_id);
     assert_eq!(comp["steps"][1]["request"]["method"], "GET");
-    // 运行:无资源池 → 桥接到批量运行用例,在入口明确 400(证明已通到池解析规则)
-    assert_eq!(s.status("POST", &format!("/api/scenario/{scn}/run"), json!({"projectId":&p,"runMode":"PARALLEL"}), Some(&t)).await, 400);
+    // 运行:场景编译成计划树就地执行(无需资源池)→ 200(返回执行报告)。
+    assert_eq!(s.status("POST", &format!("/api/scenario/{scn}/run"), json!({"projectId":&p,"runMode":"PARALLEL"}), Some(&t)).await, 200);
 }
 
 // ============ 场景 7:独立用例 + 执行记录分页 ============
