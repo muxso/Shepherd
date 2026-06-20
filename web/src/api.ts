@@ -44,10 +44,19 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
     throw new ApiError(res.status, text || `${res.status} ${res.statusText}`)
   }
   if (!text) return undefined as T
+  // 2xx 但返回 HTML(典型:dev 代理未命中 → Vite 回 index.html)。
+  // 早期直接抛出清晰错误,避免把 HTML 字符串当数据塞进 state 引发白屏。
+  const ct = res.headers.get('content-type') || ''
+  if (ct.includes('text/html') || text.trimStart().startsWith('<')) {
+    throw new ApiError(
+      502,
+      '后端未连通:收到 HTML 而非 JSON。请确认 server 跑在 :9180,并重启前端 dev(npm run dev)使代理生效。',
+    )
+  }
   try {
     return JSON.parse(text) as T
   } catch {
-    return text as unknown as T
+    throw new ApiError(500, `响应不是合法 JSON:${text.slice(0, 120)}`)
   }
 }
 
