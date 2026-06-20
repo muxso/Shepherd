@@ -20,6 +20,10 @@ serde_json = { version = "1", optional = true }
 arrow = { version = "53", optional = true }
 parquet = { version = "53", default-features = false, features = ["arrow"], optional = true }
 object_store = { version = "0.11", optional = true }
+# gRPC 协议执行器(tonic + 字节透传 codec,调用任意 unary 方法)。
+tonic = { version = "0.12", optional = true }
+bytes = { version = "1", optional = true }
+http = { version = "1", optional = true }
 
 [features]
 engine = ["dep:tokio"]
@@ -27,6 +31,8 @@ api-runner-exec = ["dep:api-runner"]
 pg = ["dep:sqlx", "dep:serde_json"]
 # SQL 协议执行器(对目标库压测;复用 sqlx)。
 sql-exec = ["dep:sqlx"]
+# gRPC 协议执行器(tonic 字节 codec,调用任意 unary 方法)。
+grpc-exec = ["dep:tonic", "dep:bytes", "dep:http"]
 # Parquet 样本下沉(object_store:本地/内存/S3)。
 parquet-sink = ["dep:arrow", "dep:parquet", "dep:object_store"]
 
@@ -34,6 +40,9 @@ parquet-sink = ["dep:arrow", "dep:parquet", "dep:object_store"]
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "time", "net"] }
 axum = "0.8"
 serde_json = "1"
+tonic = "0.12"
+tonic-health = "0.12"
+tokio-stream = { version = "0.1", features = ["net"] }
 
 [lints]
 workspace = true

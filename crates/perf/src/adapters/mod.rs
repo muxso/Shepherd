@@ -26,3 +26,8 @@ pub use pg::PgPerfReportStore;
 pub mod sql_exec;
 #[cfg(feature = "sql-exec")]
 pub use sql_exec::SqlExecutor;
+
+#[cfg(feature = "grpc-exec")]
+pub mod grpc_exec;
+#[cfg(feature = "grpc-exec")]
+pub use grpc_exec::GrpcExecutor;
