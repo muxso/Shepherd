@@ -88,3 +88,85 @@ impl PlanRepository for InMemoryPlanRepository {
         Ok(self.state.lock().expect("lock").thresholds.get(plan_id).copied().unwrap_or(0.0))
     }
 }
+
+/// 内存定时调度 + 运行快照(测试)。同时实现 ScheduleStore 与 PlanRunStore。
+#[derive(Default)]
+pub struct InMemoryScheduleStore {
+    schedules: Mutex<Vec<crate::domain::Schedule>>,
+    runs: Mutex<Vec<crate::domain::PlanRun>>,
+}
+
+impl InMemoryScheduleStore {
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+#[async_trait]
+impl crate::ports::ScheduleStore for InMemoryScheduleStore {
+    async fn insert(
+        &self,
+        s: &crate::domain::NewSchedule,
+    ) -> Result<crate::domain::Schedule, RepoError> {
+        let mut g = self.schedules.lock().map_err(|e| RepoError::Backend(e.to_string()))?;
+        let view = crate::domain::Schedule {
+            id: format!("s{}", g.len() + 1),
+            plan_id: s.plan_id.clone(),
+            cron: s.cron.clone(),
+            enabled: s.enabled,
+        };
+        g.push(view.clone());
+        Ok(view)
+    }
+    async fn list_enabled(&self) -> Result<Vec<crate::domain::Schedule>, RepoError> {
+        Ok(self
+            .schedules
+            .lock()
+            .map_err(|e| RepoError::Backend(e.to_string()))?
+            .iter()
+            .filter(|s| s.enabled)
+            .cloned()
+            .collect())
+    }
+}
+
+#[async_trait]
+impl crate::ports::PlanRunStore for InMemoryScheduleStore {
+    async fn record(
+        &self,
+        plan_id: &str,
+        status: &str,
+        total: u64,
+        pass_rate: f64,
+        execute_rate: f64,
+    ) -> Result<crate::domain::PlanRun, RepoError> {
+        let mut g = self.runs.lock().map_err(|e| RepoError::Backend(e.to_string()))?;
+        let run = crate::domain::PlanRun {
+            id: format!("r{}", g.len() + 1),
+            plan_id: plan_id.to_string(),
+            status: status.to_string(),
+            total,
+            pass_rate,
+            execute_rate,
+            triggered_at: "1970-01-01T00:00:00Z".to_string(),
+        };
+        g.push(run.clone());
+        Ok(run)
+    }
+    async fn list_by_plan(
+        &self,
+        plan_id: &str,
+        limit: u32,
+    ) -> Result<Vec<crate::domain::PlanRun>, RepoError> {
+        Ok(self
+            .runs
+            .lock()
+            .map_err(|e| RepoError::Backend(e.to_string()))?
+            .iter()
+            .filter(|r| r.plan_id == plan_id)
+            .rev()
+            .take(limit as usize)
+            .cloned()
+            .collect())
+    }
+}
