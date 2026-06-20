@@ -33,5 +33,9 @@ pub fn default_registry() -> PluginRegistry {
     {
         reg = reg.with(std::sync::Arc::new(plugins::SqlPlugin::new()));
     }
+    #[cfg(feature = "redis")]
+    {
+        reg = reg.with(std::sync::Arc::new(plugins::RedisPlugin::new()));
+    }
     reg
 }
