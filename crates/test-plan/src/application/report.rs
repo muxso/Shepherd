@@ -149,13 +149,15 @@ fn render_case(idx: usize, c: &PlanCase) -> String {
         format!("{steps_html}{assertions_html}{body_html}{headers_html}{request_html}")
     };
 
+    // data-name / data-status:供报告明细的搜索 + 状态过滤(纯前端 inline JS)。
     format!(
-        r#"<details class="case">
+        r#"<details class="case" data-name="{name}" data-status="{status}">
  <summary><span class="idx">{idx}</span><span class="cname">{name}</span>
   <span class="badge" style="color:{color};background:{bg}">{label}</span>
   <span class="meta">{meta}</span></summary>
  <div class="cdetail"><div class="cid">用例 {case_id}</div>{detail}</div>
 </details>"#,
+        status = c.status.as_str(),
     )
 }
 
@@ -279,6 +281,12 @@ pub fn report_html(name: &str, stats: &PlanStatistics, cases: &[PlanCase]) -> St
  .stepbody{{padding:2px 12px 12px}}
  .donutwrap{{display:flex;align-items:center;gap:16px}}
  .donutwrap .legend{{flex:1}}
+ .toolbar{{display:flex;gap:10px;align-items:center;margin:6px 0 14px}}
+ .toolbar input,.toolbar select{{padding:7px 10px;border:1px solid #dfe3e8;border-radius:6px;font-size:13px}}
+ .toolbar input{{flex:1;max-width:280px}}
+ .toolbar button{{padding:7px 12px;border:1px solid #dfe3e8;border-radius:6px;background:#fff;cursor:pointer;font-size:13px}}
+ .toolbar button:hover{{background:#f5f7fa}}
+ .cnt{{color:#8a9099;font-size:12px;margin-left:auto}}
 </style></head>
 <body>
  <h1>{name}</h1>
@@ -304,7 +312,38 @@ pub fn report_html(name: &str, stats: &PlanStatistics, cases: &[PlanCase]) -> St
    </div>
   </div>
  </div>
- <div class="detail"><h2>报告明细</h2>{detail_section}</div>
+ <div class="detail"><h2>报告明细</h2>
+  <div class="toolbar">
+   <input id="q" type="search" placeholder="通过名称搜索" oninput="flt()">
+   <select id="f" onchange="flt()">
+    <option value="">全部状态</option>
+    <option value="SUCCESS">通过</option>
+    <option value="ERROR">失败</option>
+    <option value="FAKE_ERROR">误报</option>
+    <option value="BLOCK">阻塞</option>
+    <option value="PENDING">未执行</option>
+   </select>
+   <button type="button" onclick="exp(true)">全部展开</button>
+   <button type="button" onclick="exp(false)">全部收起</button>
+   <span id="cnt" class="cnt"></span>
+  </div>
+  {detail_section}</div>
+ <script>
+  function flt(){{
+   var q=(document.getElementById('q').value||'').toLowerCase();
+   var f=document.getElementById('f').value;
+   var n=0,t=0;
+   document.querySelectorAll('details.case').forEach(function(e){{
+    t++;
+    var ok=(e.getAttribute('data-name')||'').toLowerCase().indexOf(q)>=0
+        && (!f || e.getAttribute('data-status')===f);
+    e.style.display=ok?'':'none'; if(ok)n++;
+   }});
+   document.getElementById('cnt').textContent=n+' / '+t;
+  }}
+  function exp(o){{document.querySelectorAll('details.case').forEach(function(e){{e.open=o;}});}}
+  flt();
+ </script>
 </body></html>"#,
         name = name,
         status = stats.status.as_str(),
@@ -500,9 +539,10 @@ mod tests {
     #[test]
     fn escapes_content() {
         let mut cs = cases();
-        cs[0].name = "<script>".into();
+        // 用例名里的 XSS 载荷必须被转义(注意报告自身含 <script> 工具栏,故用 <img> 载荷避免误判)。
+        cs[0].name = "<img src=x onerror=alert(1)>".into();
         let html = report_html("<x>", &stats(), &cs);
-        assert!(!html.contains("<script>"));
-        assert!(html.contains("&lt;script&gt;"));
+        assert!(!html.contains("<img src=x"));
+        assert!(html.contains("&lt;img src=x"));
     }
 }
