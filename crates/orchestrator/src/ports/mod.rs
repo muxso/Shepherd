@@ -76,6 +76,16 @@ pub trait VerificationGateway: Send + Sync {
         version: u32,
     ) -> Result<Option<String>, OrchError>;
 
+    /// 按任务的验收标准**文本**自动建立覆盖链(幂等):把任务关联到文本匹配的标准上。
+    /// 须在 `sync` 前调用 —— 否则覆盖链为空,sync 无链可更,验证永远停在 UNCOVERED。
+    async fn link(
+        &self,
+        verification_id: &str,
+        decomposition_id: &str,
+        task_id: &str,
+        criteria_texts: &[String],
+    ) -> Result<(), OrchError>;
+
     /// 把某任务的交付验证状态同步进验证覆盖链。
     async fn sync(
         &self,

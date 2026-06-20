@@ -139,6 +139,38 @@ enum Cmd {
         #[command(subcommand)]
         cmd: EnvCmd,
     },
+    /// 原生压测(并发施压 + 延迟分位/吞吐报告;无 JMeter)。
+    Perf {
+        #[command(subcommand)]
+        cmd: PerfCmd,
+    },
+}
+
+#[derive(Subcommand)]
+enum PerfCmd {
+    /// 发起一轮压测(后台执行,立即返回 reportId)。
+    Run {
+        #[arg(long)]
+        url: String,
+        #[arg(long, default_value = "GET")]
+        method: String,
+        /// 并发"虚拟用户"数。
+        #[arg(long, default_value_t = 10)]
+        concurrency: u32,
+        /// 合计请求次数。
+        #[arg(long, default_value_t = 100)]
+        iterations: u32,
+        /// 期望状态码(给定则成功=该码命中;省略则成功=HTTP 可达)。
+        #[arg(long = "expect-status")]
+        expect_status: Option<u16>,
+        #[arg(long, default_value = "")]
+        project: String,
+    },
+    /// 查压测报告(吞吐/错误率/延迟分位)。
+    Report {
+        #[arg(long)]
+        id: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -219,6 +251,33 @@ enum VerifyCmd {
         version: u32,
         #[arg(long, value_delimiter = ',')]
         criteria: Vec<String>,
+    },
+    /// 建立覆盖链:某任务覆盖某条验收标准(需求 → 任务 追溯)。
+    Link {
+        /// 验证 id。
+        #[arg(long)]
+        id: String,
+        /// 验收标准下标(0 起)。
+        #[arg(long)]
+        criterion: u32,
+        /// 拆分图 id。
+        #[arg(long)]
+        decomp: String,
+        /// 任务本地 id(如 t1)。
+        #[arg(long)]
+        task: String,
+    },
+    /// 同步任务的交付/验证状态到其覆盖链(任务 → 实现 追溯)。
+    Sync {
+        #[arg(long)]
+        id: String,
+        #[arg(long)]
+        decomp: String,
+        #[arg(long)]
+        task: String,
+        /// 标记为未验证(默认按已验证 satisfied=true 同步)。
+        #[arg(long, default_value_t = false)]
+        unsatisfied: bool,
     },
     /// 完整性报告。
     Report {
@@ -1032,6 +1091,16 @@ fn run(cli: Cli) -> R<()> {
                     json!({"requirementId": req, "requirementVersion": version, "criteria": criteria}),
                     true,
                 )?),
+                VerifyCmd::Link { id, criterion, decomp, task } => pretty(&c.post(
+                    &format!("/verification/{id}/link"),
+                    json!({"criterionIndex": criterion, "decompositionId": decomp, "taskId": task}),
+                    true,
+                )?),
+                VerifyCmd::Sync { id, decomp, task, unsatisfied } => pretty(&c.post(
+                    &format!("/verification/{id}/sync"),
+                    json!({"decompositionId": decomp, "taskId": task, "satisfied": !unsatisfied}),
+                    true,
+                )?),
                 VerifyCmd::Report { id } => pretty(&c.get(&format!("/verification/{id}/report"), true)?),
             }
         }
@@ -1322,6 +1391,20 @@ fn run(cli: Cli) -> R<()> {
                     true,
                 )?),
                 EnvCmd::Delete { id } => pretty(&c.delete(&format!("/api/environment/{id}"), true)?),
+            }
+        }
+        Cmd::Perf { cmd } => {
+            let c = Client::new(Config::load())?;
+            match cmd {
+                PerfCmd::Run { url, method, concurrency, iterations, expect_status, project } => {
+                    pretty(&c.post(
+                        "/perf/run",
+                        json!({"url": url, "method": method, "concurrency": concurrency,
+                               "iterations": iterations, "expectStatus": expect_status, "projectId": project}),
+                        true,
+                    )?)
+                }
+                PerfCmd::Report { id } => pretty(&c.get(&format!("/perf/report/{id}"), true)?),
             }
         }
     }

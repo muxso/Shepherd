@@ -14,6 +14,7 @@ mod llm;
 mod mcp_tools;
 mod openapi;
 mod orchestration;
+mod perf_run;
 mod planner;
 mod scenario_run;
 
@@ -177,6 +178,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 "API_DEFINITION:READ+ADD+UPDATE+DELETE".to_string(),
                 "API_SCENARIO:READ+ADD+UPDATE+DELETE+EXECUTE".to_string(),
                 "ENVIRONMENT:READ+ADD+UPDATE+DELETE".to_string(),
+                "PERF:READ+EXECUTE".to_string(),
                 "REQUIREMENT:READ+ADD+UPDATE+DELETE".to_string(),
                 "TASK:READ+ADD+EXECUTE+UPDATE".to_string(),
                 "DELIVERY:READ+EXECUTE+UPDATE".to_string(),
@@ -265,16 +267,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         sessions.clone(),
     );
 
-    // —— 服务端复合:据 requirementId 取规格自动拆分 ——
-    let breakdown_routes = breakdown_route::router(
-        req_admin.clone(),
-        BreakdownUseCase::new(task_repo.clone(), task_planner.clone()),
-        sessions.clone(),
-    );
-
     // —— verification 模块(Shepherd 完整性验证:需求↔任务↔实现 追溯 + 缺口检测)——
     let ver_repo = Arc::new(PgVerificationRepository::new(pool.clone()));
     let ver_admin = VerificationService::new(ver_repo.clone());
+
+    // —— 服务端复合:据 requirementId 取规格自动拆分,并顺手开验证账本(幂等)——
+    let breakdown_routes = breakdown_route::router(
+        req_admin.clone(),
+        BreakdownUseCase::new(task_repo.clone(), task_planner.clone()),
+        CreateVerificationUseCase::new(ver_repo.clone()),
+        sessions.clone(),
+    );
     let verification_routes = verification::adapters::http::router(
         CreateVerificationUseCase::new(ver_repo.clone()),
         ver_admin.clone(),
@@ -410,6 +413,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         sessions.clone(),
     );
 
+    // —— 原生压测(perf):POST /perf/run 后台施压 + GET /perf/report/{id} ——
+    let perf_routes = perf_run::router(pool.clone(), sessions.clone());
+
     // —— 合并为单一应用 + 生产中间件 ——
     let app = user_routes
         .merge(oidc_routes)
@@ -432,6 +438,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .merge(environment_routes)
         .merge(scenario_routes)
         .merge(scenario_run_routes)
+        .merge(perf_routes)
         .merge(openapi::routes())
         .merge(health_routes(pool.clone()))
         // 由外到内:请求日志 → 整体超时 → 请求体上限(防超大 body 打爆内存)
