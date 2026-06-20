@@ -25,6 +25,7 @@ members = [
     "crates/api-definition",
     "crates/api-scenario",
     "crates/environment",
+    "crates/mock-runtime",
     "crates/shepherd-cli",
 ]
 
