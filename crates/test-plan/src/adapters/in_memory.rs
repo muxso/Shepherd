@@ -5,7 +5,7 @@ use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 
-use crate::domain::{CaseCounts, NewPlan, Plan};
+use crate::domain::{CaseCounts, CaseResult, CaseStatus, NewPlan, Plan, PlanCase};
 use crate::ports::{PlanRepository, RepoError};
 
 #[derive(Default)]
@@ -13,6 +13,7 @@ struct State {
     plans: HashMap<String, Plan>,
     counts: HashMap<String, CaseCounts>,
     thresholds: HashMap<String, f64>,
+    cases: HashMap<String, Vec<PlanCase>>,
     seq: u64,
 }
 
@@ -81,11 +82,65 @@ impl PlanRepository for InMemoryPlanRepository {
     }
 
     async fn case_counts(&self, plan_id: &str) -> Result<CaseCounts, RepoError> {
-        Ok(self.state.lock().expect("lock").counts.get(plan_id).copied().unwrap_or_default())
+        let state = self.state.lock().expect("lock");
+        // 挂入了用例 → 按状态聚合;否则回落到 set_counts 注入值(兼容既有统计测试)。
+        match state.cases.get(plan_id) {
+            Some(cases) if !cases.is_empty() => {
+                let mut c = CaseCounts::default();
+                for pc in cases {
+                    match pc.status {
+                        CaseStatus::Pending => c.pending += 1,
+                        CaseStatus::Success => c.success += 1,
+                        CaseStatus::Error => c.error += 1,
+                        CaseStatus::FakeError => c.fake_error += 1,
+                        CaseStatus::Block => c.block += 1,
+                    }
+                }
+                Ok(c)
+            }
+            _ => Ok(state.counts.get(plan_id).copied().unwrap_or_default()),
+        }
     }
 
     async fn pass_threshold(&self, plan_id: &str) -> Result<f64, RepoError> {
         Ok(self.state.lock().expect("lock").thresholds.get(plan_id).copied().unwrap_or(0.0))
+    }
+
+    async fn link_case(&self, plan_id: &str, case_id: &str, name: &str) -> Result<(), RepoError> {
+        let mut state = self.state.lock().expect("lock");
+        let cases = state.cases.entry(plan_id.to_string()).or_default();
+        if !cases.iter().any(|c| c.case_id == case_id) {
+            cases.push(PlanCase {
+                case_id: case_id.to_string(),
+                name: name.to_string(),
+                status: CaseStatus::Pending,
+                result: None,
+            });
+        }
+        Ok(())
+    }
+
+    async fn record_result(
+        &self,
+        plan_id: &str,
+        case_id: &str,
+        status: CaseStatus,
+        result: Option<&CaseResult>,
+    ) -> Result<bool, RepoError> {
+        let mut state = self.state.lock().expect("lock");
+        let Some(cases) = state.cases.get_mut(plan_id) else { return Ok(false) };
+        match cases.iter_mut().find(|c| c.case_id == case_id) {
+            Some(pc) => {
+                pc.status = status;
+                pc.result = result.cloned();
+                Ok(true)
+            }
+            None => Ok(false),
+        }
+    }
+
+    async fn list_cases(&self, plan_id: &str) -> Result<Vec<PlanCase>, RepoError> {
+        Ok(self.state.lock().expect("lock").cases.get(plan_id).cloned().unwrap_or_default())
     }
 }
 
