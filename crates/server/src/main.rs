@@ -15,6 +15,7 @@ mod mcp_tools;
 mod openapi;
 mod orchestration;
 mod perf_run;
+mod plan_run;
 mod plan_scheduler;
 mod planner;
 mod scenario_run;
@@ -359,6 +360,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         test_plan::application::PlanCaseUseCase::new(plan_repo),
         sessions.clone(),
     );
+    // 计划执行(跑挂入用例 + 自动回写结果)。
+    let plan_run_routes = plan_run::router(pool.clone(), sessions.clone());
 
     // —— api-test 批量运行模块 ——
     // 执行器(端口背后的适配器,domain/application 不感知),优先级从高到低:
@@ -474,6 +477,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .merge(case_routes)
         .merge(bug_routes)
         .merge(plan_routes)
+        .merge(plan_run_routes)
         .merge(apitest_routes)
         .merge(resource_pool_routes)
         .merge(case_exec_routes)
