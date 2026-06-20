@@ -7,7 +7,8 @@
 use std::sync::Arc;
 
 use crate::ports::{
-    DeliverableView, Judge, OrchError, TaskGateway, TaskTarget, Verdict, VerificationGateway,
+    DeliverableView, Judge, OrchError, Reviser, TaskGateway, TaskTarget, Verdict,
+    VerificationGateway,
 };
 
 /// 交付进度。`Delivered` 携带交付物以供验证门评判。
@@ -32,6 +33,8 @@ pub struct FeedbackOutcome {
     /// 交付成功时的验证门裁决(Running/Failed 为 None)。
     pub verdict: Option<Verdict>,
     pub verification: VerificationSync,
+    /// 自纠正迭代次数(验证门不通过后据反馈重做的轮数;无修订者/一次通过则 0)。
+    pub revisions: u32,
 }
 
 #[derive(Clone)]
@@ -39,6 +42,9 @@ pub struct DeliveryFeedbackOrchestrator {
     task: Arc<dyn TaskGateway>,
     verification: Arc<dyn VerificationGateway>,
     judge: Arc<dyn Judge>,
+    /// 可选自纠正:验证门不通过时据反馈重做,最多 `max_revisions` 轮。
+    reviser: Option<Arc<dyn Reviser>>,
+    max_revisions: u32,
 }
 
 impl DeliveryFeedbackOrchestrator {
@@ -47,7 +53,14 @@ impl DeliveryFeedbackOrchestrator {
         verification: Arc<dyn VerificationGateway>,
         judge: Arc<dyn Judge>,
     ) -> Self {
-        Self { task, verification, judge }
+        Self { task, verification, judge, reviser: None, max_revisions: 0 }
+    }
+
+    /// 启用自纠正迭代:验证门不通过 → 据反馈调 reviser 重做并复判,最多 `max_revisions` 轮。
+    pub fn with_revision(mut self, reviser: Arc<dyn Reviser>, max_revisions: u32) -> Self {
+        self.reviser = Some(reviser);
+        self.max_revisions = max_revisions;
+        self
     }
 
     pub async fn on_progress(
@@ -57,6 +70,7 @@ impl DeliveryFeedbackOrchestrator {
         progress: DeliveryProgress,
     ) -> Result<FeedbackOutcome, OrchError> {
         // 决定:任务推进目标 + 是否满足(回灌验证)+ 裁决 + 任务验收标准(用于自动建链)。
+        let mut revisions = 0u32;
         let (target, satisfied, verdict, criteria): (
             Option<TaskTarget>,
             Option<bool>,
@@ -78,7 +92,24 @@ impl DeliveryFeedbackOrchestrator {
                     .await;
                 // 验证门:据任务验收标准评判交付物。
                 let criteria = self.task.task_criteria(decomposition_id, task_id).await?;
-                let v = self.judge.judge(&criteria, &deliverable).await;
+                let mut current = deliverable;
+                let mut v = self.judge.judge(&criteria, &current).await;
+                // 自纠正迭代:不通过 → 据反馈重做并复判,最多 max_revisions 轮。
+                if let Some(reviser) = &self.reviser {
+                    while !v.passed && revisions < self.max_revisions {
+                        match reviser
+                            .revise(decomposition_id, task_id, &criteria, &current, &v.reason)
+                            .await
+                        {
+                            Ok(next) => {
+                                current = next;
+                                v = self.judge.judge(&criteria, &current).await;
+                                revisions += 1;
+                            }
+                            Err(_) => break, // 重做失败 → 停止迭代,按当前裁决落地
+                        }
+                    }
+                }
                 if v.passed {
                     (Some(TaskTarget::Verified), Some(true), Some(v), criteria)
                 } else {
@@ -114,7 +145,7 @@ impl DeliveryFeedbackOrchestrator {
             },
         };
 
-        Ok(FeedbackOutcome { task_advanced, verdict, verification })
+        Ok(FeedbackOutcome { task_advanced, verdict, verification, revisions })
     }
 }
 
@@ -234,6 +265,67 @@ mod tests {
             .expect("ok");
         assert!(out.verdict.unwrap().passed);
         assert_eq!(task.advanced.lock().unwrap().last().unwrap().1, TaskTarget::Verified);
+    }
+
+    /// 修订者:前 `fix_after` 次重做仍空 summary(判不过),之后产出带 summary 的交付物(判通过)。
+    struct FakeReviser {
+        calls: Mutex<u32>,
+        fix_after: u32,
+    }
+    #[async_trait]
+    impl crate::ports::Reviser for FakeReviser {
+        async fn revise(
+            &self,
+            _d: &str,
+            _t: &str,
+            _c: &[String],
+            _prev: &DeliverableView,
+            _feedback: &str,
+        ) -> Result<DeliverableView, OrchError> {
+            let mut n = self.calls.lock().unwrap();
+            *n += 1;
+            if *n >= self.fix_after {
+                Ok(dv("branch:fixed", "已据反馈补齐"))
+            } else {
+                Ok(dv("branch:retry", "")) // 仍缺 summary → RuleJudge 不通过
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn revision_loop_fixes_and_verifies() {
+        let task = Arc::new(FakeTask { map: vec![("d1".into(), "req1".into(), 1)], ..Default::default() });
+        let verif = Arc::new(FakeVerif { found: Some(("req1".into(), 1, "v1".into())), ..Default::default() });
+        // 第 1 轮重做即补齐(fix_after=1)→ 1 次修订后通过。
+        let reviser = Arc::new(FakeReviser { calls: Mutex::new(0), fix_after: 1 });
+        let orch = DeliveryFeedbackOrchestrator::new(task.clone(), verif.clone(), Arc::new(RuleJudge))
+            .with_revision(reviser, 3);
+        // 初始交付物缺 summary → 首判不通过 → 触发修订。
+        let out = orch
+            .on_progress("d1", "t1", DeliveryProgress::Delivered { deliverable: dv("branch:x", "") })
+            .await
+            .expect("ok");
+        assert!(out.verdict.as_ref().unwrap().passed);
+        assert_eq!(out.revisions, 1);
+        assert_eq!(task.advanced.lock().unwrap().last().unwrap().1, TaskTarget::Verified);
+        assert_eq!(verif.synced.lock().unwrap().last().unwrap().1, true);
+    }
+
+    #[tokio::test]
+    async fn revision_loop_exhausts_then_fails() {
+        let task = Arc::new(FakeTask { map: vec![("d1".into(), "req1".into(), 1)], ..Default::default() });
+        let verif = Arc::new(FakeVerif { found: Some(("req1".into(), 1, "v1".into())), ..Default::default() });
+        // 永不补齐(fix_after 极大)→ 用尽 2 轮仍失败。
+        let reviser = Arc::new(FakeReviser { calls: Mutex::new(0), fix_after: 99 });
+        let orch = DeliveryFeedbackOrchestrator::new(task.clone(), verif.clone(), Arc::new(RuleJudge))
+            .with_revision(reviser, 2);
+        let out = orch
+            .on_progress("d1", "t1", DeliveryProgress::Delivered { deliverable: dv("branch:x", "") })
+            .await
+            .expect("ok");
+        assert!(!out.verdict.as_ref().unwrap().passed);
+        assert_eq!(out.revisions, 2); // 用尽上限
+        assert_eq!(task.advanced.lock().unwrap().last().unwrap().1, TaskTarget::Failed);
     }
 
     #[tokio::test]
