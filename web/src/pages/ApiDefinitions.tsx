@@ -29,6 +29,7 @@ import { useApp } from '../context'
 import { methodColor, statusColor } from '../components/tags'
 import CasesPanel from './CasesPanel'
 import MocksPanel from './MocksPanel'
+import RequestEditor from '../components/RequestEditor'
 
 const METHODS = ['GET', 'POST', 'PUT', 'DELETE', 'PATCH']
 const PROTOCOLS = ['HTTP', 'GRPC', 'SQL', 'REDIS', 'WEBSOCKET']
@@ -250,6 +251,17 @@ export default function ApiDefinitions() {
                         <span className="ms-mono" style={{ fontSize: 12 }}>{selected.id}</span>
                       </Descriptions.Item>
                     </Descriptions>
+                  ),
+                },
+                {
+                  key: 'debug',
+                  label: '调试',
+                  children: (
+                    <RequestEditor
+                      key={selected.id}
+                      initialMethod={selected.method || 'GET'}
+                      initialUrl={selected.path || ''}
+                    />
                   ),
                 },
                 { key: 'cases', label: '接口用例', children: <CasesPanel definition={selected} /> },
