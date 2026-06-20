@@ -20,6 +20,32 @@ pub enum TemplateError {
     Render(String),
 }
 
+/// 注册动态数据函数:uuid()/now()/randint(min,max)/fake_name()/fake_email()。
+fn register_functions(env: &mut Environment<'static>) {
+    use fake::faker::internet::en::SafeEmail;
+    use fake::faker::name::en::Name;
+    use fake::Fake;
+
+    env.add_function("uuid", || uuid::Uuid::new_v4().to_string());
+    // Unix 毫秒时间戳(字符串,避免大整数精度问题)。
+    env.add_function("now", || {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis().to_string())
+            .unwrap_or_else(|_| "0".to_string())
+    });
+    // 随机整数 [min, max)(min>=max 时回落 min)。
+    env.add_function("randint", |min: i64, max: i64| -> i64 {
+        if min >= max {
+            min
+        } else {
+            (min..max).fake()
+        }
+    });
+    env.add_function("fake_name", || Name().fake::<String>());
+    env.add_function("fake_email", || SafeEmail().fake::<String>());
+}
+
 /// 用请求上下文渲染响应 body 模板。非模板字符串原样返回。
 pub fn render_body(template: &str, req: &MockRequest) -> Result<String, TemplateError> {
     if !template.contains("{{") && !template.contains("{%") && !template.contains("{#") {
@@ -32,7 +58,7 @@ pub fn render_body(template: &str, req: &MockRequest) -> Result<String, Template
         .unwrap_or(serde_json::Value::Null);
 
     let mut env = Environment::new();
-    env.add_function("uuid", || uuid::Uuid::new_v4().to_string());
+    register_functions(&mut env);
 
     env.render_str(
         template,
@@ -98,6 +124,18 @@ mod tests {
         let id = out.trim_start_matches(r#"{"id":""#).trim_end_matches(r#""}"#);
         assert_eq!(id.len(), 36);
         assert_eq!(id.matches('-').count(), 4);
+    }
+
+    #[test]
+    fn dynamic_functions_produce_data() {
+        // randint(1,2) 区间 [1,2) → 恒为 1(确定性)
+        assert_eq!(render_body("{{ randint(1, 2) }}", &req()).expect("ok"), "1");
+        // now() 为正整数毫秒
+        let now = render_body("{{ now() }}", &req()).expect("ok");
+        assert!(now.parse::<u64>().expect("num") > 0);
+        // fake_email 含 @,fake_name 非空
+        assert!(render_body("{{ fake_email() }}", &req()).expect("ok").contains('@'));
+        assert!(!render_body("{{ fake_name() }}", &req()).expect("ok").trim().is_empty());
     }
 
     #[test]
