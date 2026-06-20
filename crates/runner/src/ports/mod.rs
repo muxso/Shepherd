@@ -5,7 +5,9 @@ use thiserror::Error;
 
 use api_runner::{Assertion, RequestSpec};
 
-use crate::domain::{DispatchTarget, NewRunnerAgent, RemoteResult, RunnerAgent};
+use crate::domain::{
+    DispatchTarget, ExecutionRecord, NewRunnerAgent, RemoteResult, RunnerAgent,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum PortError {
@@ -31,4 +33,24 @@ pub trait RemoteRunner: Send + Sync {
         request: &RequestSpec,
         assertions: &[Assertion],
     ) -> Result<RemoteResult, PortError>;
+}
+
+/// 远程执行历史存档:记录每次派发结果 + 按 agent 查询。
+#[async_trait]
+pub trait ExecutionStore: Send + Sync {
+    /// 记录一次派发执行(method/url 为被测目标,result 为 agent 回传)。
+    async fn record(
+        &self,
+        agent_id: &str,
+        method: &str,
+        url: &str,
+        result: &RemoteResult,
+    ) -> Result<(), PortError>;
+
+    /// 按 agent 取最近执行记录(时间倒序,最多 limit 条)。
+    async fn list_by_agent(
+        &self,
+        agent_id: &str,
+        limit: u32,
+    ) -> Result<Vec<ExecutionRecord>, PortError>;
 }
