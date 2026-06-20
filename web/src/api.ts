@@ -60,8 +60,24 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
   }
 }
 
+// 原始文本 GET(用于 Markdown 报告等非 JSON 响应)。
+async function requestText(path: string): Promise<string> {
+  const headers: Record<string, string> = {}
+  const token = tokenStore.get()
+  if (token) headers['authorization'] = `Bearer ${token}`
+  const res = await fetch(path, { headers })
+  if (res.status === 401) {
+    onUnauthorized?.()
+    throw new ApiError(401, '登录已失效,请重新登录')
+  }
+  const text = await res.text()
+  if (!res.ok) throw new ApiError(res.status, text || `${res.status}`)
+  return text
+}
+
 export const http = {
   get: <T>(p: string) => request<T>('GET', p),
+  getText: (p: string) => requestText(p),
   post: <T>(p: string, b?: unknown) => request<T>('POST', p, b),
   put: <T>(p: string, b?: unknown) => request<T>('PUT', p, b),
   del: <T>(p: string, b?: unknown) => request<T>('DELETE', p, b),
@@ -183,6 +199,112 @@ export interface Environment {
   protocols?: string[]
 }
 
+export interface TestPlan {
+  id: string
+  projectId: string
+  name: string
+  planType?: string
+}
+
+export interface PlanStats {
+  status: string
+  total: number
+  passRate: number
+  executeRate: number
+  isPass: boolean
+}
+
+export interface PlanCase {
+  caseId: string
+  name: string
+  status: string
+  latencyMs?: number | null
+  statusCode?: number | null
+}
+
+export interface PerfLatency {
+  min: number
+  max: number
+  mean: number
+  p50: number
+  p90: number
+  p95: number
+  p99: number
+}
+
+export interface PerfReport {
+  id: string
+  projectId: string
+  method: string
+  url: string
+  concurrency: number
+  iterations: number
+  total: number
+  success: number
+  failed: number
+  errorRate: number
+  throughputRps: number
+  elapsedMs: number
+  status: string
+  latency: PerfLatency
+}
+
+export interface Requirement {
+  id: string
+  projectId?: string
+  title: string
+  baselineVersion: number
+  status: string
+  acceptanceCriteria?: string[]
+}
+
+export interface Task {
+  id: string
+  title: string
+  status: string
+  acceptanceCriteria?: string[]
+  dependencies?: string[]
+}
+
+export interface Decomposition {
+  id: string
+  tasks: Task[]
+  verificationId?: string
+}
+
+export interface DeliveryAttempt {
+  id?: string
+  attemptId?: string
+  status: string
+  taskId?: string
+  title?: string
+  executor?: string
+}
+
+export interface DeliveryEvent {
+  seq?: number
+  kind: string
+  message?: string
+  detail?: unknown
+}
+
+export interface VerificationReport {
+  satisfied?: number
+  complete?: boolean
+  [k: string]: unknown
+}
+
+export interface Bug {
+  id: string
+  title?: string
+  status: string
+}
+
+export interface McpTool {
+  name: string
+  description?: string
+}
+
 export type RunMode = 'PARALLEL' | 'SERIAL'
 
 // ---------- 端点封装 ----------
@@ -250,6 +372,87 @@ export const api = {
       : Promise.resolve([] as FunctionalCase[]),
   createFunctionalCase: (b: { projectId: string; name: string; priority?: string; module?: string }) =>
     http.post<FunctionalCase>('/functional-case', b),
+
+  // 项目接口用例(供测试计划挂载选择)
+  projectCases: (projectId: string) =>
+    projectId
+      ? http.get<Page<ApiCase>>(`/api/case?projectId=${encodeURIComponent(projectId)}&pageSize=100`)
+      : Promise.resolve(emptyPage<ApiCase>()),
+
+  // 测试计划(无 list 端点 → 列表由前端注册表维护)
+  createPlan: (b: { projectId: string; name: string; type?: string }) =>
+    http.post<TestPlan>('/test-plan', { type: 'TEST_PLAN', ...b }),
+  planStats: (id: string) => http.get<PlanStats>(`/test-plan/${id}/statistics`),
+  planCases: (id: string) => http.get<PlanCase[] | Page<PlanCase>>(`/test-plan/${id}/cases`),
+  linkPlanCase: (id: string, caseId: string, name: string) =>
+    http.post(`/test-plan/${id}/cases`, { caseId, name }),
+  runPlan: (id: string, environmentId?: string) =>
+    http.post<{ status?: string; total: number; executed: number }>(`/test-plan/${id}/run`, { environmentId }),
+  planSchedule: (id: string, cron: string) => http.post(`/test-plan/${id}/schedule`, { cron }),
+  planRuns: (id: string) => http.get<unknown[]>(`/test-plan/${id}/runs`),
+  planReportMd: (id: string) => http.getText(`/test-plan/${id}/report.md`),
+
+  // 性能压测(无 list 端点 → 报告列表由前端注册表维护)
+  runPerf: (b: {
+    projectId: string
+    method: string
+    url: string
+    concurrency: number
+    iterations: number
+  }) => http.post<{ reportId: string; status: string }>('/perf/run', b),
+  perfReport: (id: string) => http.get<PerfReport>(`/perf/report/${id}`),
+
+  // 需求(版本 / 基线 / 拆分)— 无 list 端点,列表用前端注册表
+  createRequirement: (b: { projectId: string; title: string; acceptanceCriteria: string[] }) =>
+    http.post<Requirement>('/requirement', b),
+  getRequirement: (id: string) => http.get<Requirement>(`/requirement/${id}`),
+  addRequirementVersion: (id: string, b: { description: string; acceptanceCriteria: string[] }) =>
+    http.post<{ version: number }>(`/requirement/${id}/version`, b),
+  setBaseline: (id: string, version: number) =>
+    http.put<Requirement>(`/requirement/${id}/baseline`, { version }),
+  breakdown: (id: string) =>
+    http.post<{ id: string; verificationId: string; tasks: Task[] }>(`/requirement/${id}/breakdown`, {}),
+
+  // 拆分图 / 任务
+  decomposition: (id: string) => http.get<Decomposition>(`/decomposition/${id}`),
+  decompositionReady: (id: string) => http.get<Task[]>(`/decomposition/${id}/ready`),
+  addTask: (id: string, b: { title: string; acceptanceCriteria: string[]; dependencies: string[] }) =>
+    http.post<{ taskId: string }>(`/decomposition/${id}/task`, b),
+  runDecomposition: (id: string) =>
+    http.post<{ total: number; verified: number; failed: number; blocked: number; rounds: number }>(
+      `/decomposition/${id}/run`,
+      {},
+    ),
+
+  // 交付
+  createDelivery: (b: { decompositionId: string; taskId: string; title: string; executor: string }) =>
+    http.post<DeliveryAttempt>('/delivery', b),
+  deliveries: (decompositionId: string, taskId: string) =>
+    http.get<DeliveryAttempt[]>(
+      `/delivery?decompositionId=${encodeURIComponent(decompositionId)}&taskId=${encodeURIComponent(taskId)}`,
+    ),
+  deliveryEvents: (attemptId: string) => http.get<DeliveryEvent[]>(`/delivery/${attemptId}/events`),
+
+  // 验证(覆盖链 / 报告)
+  verificationReport: (id: string) => http.get<VerificationReport>(`/verification/${id}/report`),
+  verificationLink: (id: string, b: { criterionIndex: number; decompositionId: string; taskId: string }) =>
+    http.post(`/verification/${id}/link`, b),
+  verificationSync: (id: string, b: { decompositionId: string; taskId: string; satisfied: boolean }) =>
+    http.post(`/verification/${id}/sync`, b),
+
+  // 缺陷 — 无 list 端点,列表用前端注册表
+  createBug: (b: { projectId: string; title: string; initialStatus: string }) => http.post<Bug>('/bug', b),
+  setBugStatus: (id: string, status: string) => http.post<Bug>(`/bug/${id}/status`, { status }),
+
+  // 技能 — 无 list 端点,列表用前端注册表
+  createSkill: (b: { projectId: string; name: string; instructions: string }) =>
+    http.post<{ id: string }>('/skill', b),
+  composeSkills: (projectId: string, skillIds: string[]) =>
+    http.post<{ instructions: string }>('/skill/compose', { projectId, skillIds }),
+
+  // MCP 工具
+  mcpTools: () =>
+    http.post<{ result: { tools: McpTool[] } }>('/mcp', { jsonrpc: '2.0', id: 1, method: 'tools/list' }),
 
   // 环境(项目级)
   environments: (projectId: string) =>
