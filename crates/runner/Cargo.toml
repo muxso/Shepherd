@@ -10,6 +10,8 @@ license.workspace = true
 [dependencies]
 kernel = { path = "../kernel" }
 api-runner = { path = "../api-runner" }
+# 只取协议无关的探测类型(ProbeRequest/ProbeOutcome/ProbeAssertion),不带任何协议插件(无 IO)。
+probe = { path = "../probe", default-features = false }
 async-trait = "0.1"
 thiserror = "2"
 serde = { version = "1", features = ["derive"] }
@@ -29,6 +31,7 @@ http = ["dep:axum", "dep:utoipa", "dep:webauth", "webauth/http", "client"]
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 tower = { version = "0.5", features = ["util"] }
 migrate = { path = "../migrate" }
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "postgres"] }
 webauth = { path = "../webauth", features = ["http", "test-util"] }
 
 [lints]

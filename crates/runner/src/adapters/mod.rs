@@ -1,7 +1,8 @@
 //! 适配器层。in_memory 始终编译;pg/client/http feature 门控。
 pub mod in_memory;
 pub use in_memory::{
-    InMemoryAgentStore, InMemoryCaseSpecSource, InMemoryExecutionStore, StubRemoteRunner,
+    InMemoryAgentStore, InMemoryCaseSpecSource, InMemoryExecutionStore, StubCapabilities,
+    StubRemoteProbe, StubRemoteRunner,
 };
 
 #[cfg(feature = "pg")]
@@ -12,7 +13,7 @@ pub use pg::{PgCaseSpecSource, PgExecutionStore, PgRunnerAgentStore};
 #[cfg(feature = "client")]
 pub mod reqwest_remote;
 #[cfg(feature = "client")]
-pub use reqwest_remote::ReqwestRemoteRunner;
+pub use reqwest_remote::{ReqwestRemoteProbe, ReqwestRemoteRunner};
 
 #[cfg(feature = "http")]
 pub mod http;
