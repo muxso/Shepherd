@@ -2,6 +2,10 @@
 //! (从需求基线/指定版本读出 title/description/验收标准)再交 task 的 BreakdownUseCase 拆分。
 //!
 //! 这是 requirement → task 的跨上下文协调,放在组装根;task / requirement 彼此不依赖。
+//!
+//! 拆分成功后**顺手开完整性验证账本**(同一份验收标准快照,幂等:已存在则跳过)。
+//! 配合编排器在交付终态按标准文本自动建覆盖链 + 回灌,`breakdown → dispatch` 即可让
+//! 完整性报告自动收敛,无需手工 `verify create` / `verify link`。
 
 use std::sync::Arc;
 
@@ -19,11 +23,13 @@ use webauth::{AuthUser, SessionStore};
 use requirement::application::{RequirementCmdError, RequirementService};
 use task::application::{BreakdownError, BreakdownUseCase};
 use task::ports::RequirementSpec;
+use verification::application::{CreateVerificationError, CreateVerificationUseCase};
 
 #[derive(Clone)]
 struct BreakdownState {
     reqs: RequirementService,
     breakdown: BreakdownUseCase,
+    create_verification: CreateVerificationUseCase,
     sessions: Arc<dyn SessionStore>,
 }
 
@@ -36,11 +42,12 @@ impl FromRef<BreakdownState> for Arc<dyn SessionStore> {
 pub fn router(
     reqs: RequirementService,
     breakdown: BreakdownUseCase,
+    create_verification: CreateVerificationUseCase,
     sessions: Arc<dyn SessionStore>,
 ) -> Router {
     Router::new()
         .route("/requirement/{id}/breakdown", post(breakdown_handler))
-        .with_state(BreakdownState { reqs, breakdown, sessions })
+        .with_state(BreakdownState { reqs, breakdown, create_verification, sessions })
 }
 
 #[derive(Deserialize)]
@@ -79,12 +86,31 @@ async fn breakdown_handler(
 
     match st.breakdown.execute(&spec).await {
         Ok(d) => {
+            // 顺手开验证账本(同一份验收标准快照)。幂等:已存在则跳过;有标准才开。
+            // 尽力而为——拆分已落库,开账本失败不应让整个 breakdown 失败(仅日志告警)。
+            let verification_id = if spec.acceptance_criteria.is_empty() {
+                None
+            } else {
+                match st
+                    .create_verification
+                    .execute(&spec.requirement_id, version, &spec.acceptance_criteria)
+                    .await
+                {
+                    Ok(v) => Some(v.id),
+                    Err(CreateVerificationError::AlreadyExists) => None,
+                    Err(e) => {
+                        tracing::warn!(requirement = %spec.requirement_id, version, "breakdown 后自动开验证失败: {e:?}");
+                        None
+                    }
+                }
+            };
             let body = json!({
                 "id": d.id,
                 "requirementId": d.requirement_id,
                 "requirementVersion": d.requirement_version,
                 "complete": d.is_complete(),
                 "readyTaskIds": d.ready_tasks().iter().map(|t| t.id.clone()).collect::<Vec<_>>(),
+                "verificationId": verification_id,
                 "tasks": d.tasks.iter().map(|t| json!({
                     "id": t.id, "title": t.title, "status": t.status.as_str(), "dependencies": t.dependencies
                 })).collect::<Vec<_>>()

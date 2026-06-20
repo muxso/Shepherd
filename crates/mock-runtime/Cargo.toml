@@ -1,0 +1,27 @@
+[package]
+name = "mock-runtime"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+
+# Mock 运行时:把 api-definition 里登记的 Mock 规则变成"可被真实请求命中的服务"。
+# 核心是零 IO 的匹配引擎(domain):给定一个请求视图 + 一组规则,确定性地选出命中的响应。
+# axum 兜底路由(http feature)只做 DTO 翻译,匹配/优先级全在 domain。
+[dependencies]
+thiserror = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+regex = "1"
+async-trait = "0.1"
+axum = { version = "0.8", optional = true }
+
+[features]
+http = ["dep:axum"]
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+tower = { version = "0.5", features = ["util"] }
+axum = "0.8"
+
+[lints]
+workspace = true

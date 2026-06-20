@@ -73,6 +73,21 @@ impl VerificationService {
         Ok(v)
     }
 
+    /// 按验收标准**文本**自动建立覆盖链(供编排器据任务 `acceptance_criteria` 自动关联)。
+    /// 对每条匹配到的标准都 link 该任务(幂等);返回更新后的聚合。
+    pub async fn link_by_criteria_texts(
+        &self,
+        id: &str,
+        decomposition_id: &str,
+        task_id: &str,
+        texts: &[String],
+    ) -> Result<Verification, VerificationCmdError> {
+        let mut v = self.get(id).await?;
+        v.link_task_by_texts(decomposition_id, task_id, texts);
+        self.repo.save(&v).await?;
+        Ok(v)
+    }
+
     /// 同步任务的交付/验证状态到其覆盖链(任务 → 实现 追溯;`satisfied` 通常来自 delivery 验证)。
     pub async fn sync_task(
         &self,
@@ -127,6 +142,21 @@ mod tests {
         assert!(r.complete);
         assert_eq!(r.satisfied, 2);
         assert!(r.criteria.iter().all(|c| c.status == CriterionStatus::Satisfied));
+    }
+
+    #[tokio::test]
+    async fn link_by_criteria_texts_then_sync_completes() {
+        let (svc, id) = seeded().await; // 标准: 登录成功 / 错误密码拒绝
+        // 按文本自动关联两个任务(模拟编排器据 acceptance_criteria 关联)
+        svc.link_by_criteria_texts(&id, "d1", "t1", &["登录成功".into()]).await.expect("link0");
+        svc.link_by_criteria_texts(&id, "d1", "t2", &["错误密码拒绝".into()]).await.expect("link1");
+        let r = svc.report(&id).await.expect("report");
+        // 已覆盖未验证
+        assert_eq!(r.gaps.iter().filter(|g| g.kind == GapKind::Unverified).count(), 2);
+        // 同步验证通过 → complete
+        svc.sync_task(&id, "d1", "t1", true).await.expect("sync0");
+        svc.sync_task(&id, "d1", "t2", true).await.expect("sync1");
+        assert!(svc.report(&id).await.expect("report").complete);
     }
 
     #[tokio::test]
