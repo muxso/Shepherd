@@ -13,6 +13,8 @@ path = "src/main.rs"
 
 [dependencies]
 api-runner = { path = "../api-runner" }
+# 协议插件:启用哪些 feature = 本 agent 支持哪些协议(默认 http/grpc/sql)。
+probe = { path = "../probe", features = ["http", "grpc", "sql"] }
 axum = "0.8"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "signal"] }
 serde = { version = "1", features = ["derive"] }
