@@ -56,7 +56,7 @@ async fn register_job(
         let pid = pid.clone();
         Box::pin(async move {
             // 1) 真跑计划(执行 + 回写每条用例结果)。
-            match runner.run(&pid).await {
+            match runner.run(&pid, None).await {
                 Ok(s) => tracing::info!(plan = %pid, executed = s.executed, success = s.success, failed = s.failed, "scheduled plan executed"),
                 Err(()) => tracing::warn!(plan = %pid, "scheduled plan execute failed"),
             }
