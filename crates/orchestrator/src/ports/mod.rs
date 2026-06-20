@@ -66,6 +66,20 @@ pub trait Judge: Send + Sync {
     async fn judge(&self, criteria: &[String], deliverable: &DeliverableView) -> Verdict;
 }
 
+/// 修订者:验证门不通过时,据反馈重做交付,产出新交付物(自纠正迭代)。
+/// 由组装根接到执行者(LLM/agent):把 judge 的 reason 作为反馈再跑一轮。
+#[async_trait]
+pub trait Reviser: Send + Sync {
+    async fn revise(
+        &self,
+        decomposition_id: &str,
+        task_id: &str,
+        criteria: &[String],
+        previous: &DeliverableView,
+        feedback: &str,
+    ) -> Result<DeliverableView, OrchError>;
+}
+
 /// 验证侧:查某需求版本的验证 + 同步任务的覆盖链状态。
 #[async_trait]
 pub trait VerificationGateway: Send + Sync {
