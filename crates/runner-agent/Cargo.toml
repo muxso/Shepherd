@@ -24,10 +24,11 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 [features]
-default = ["http", "grpc", "sql"]
+default = ["http", "grpc", "sql", "redis"]
 http = ["probe/http"]
 grpc = ["probe/grpc"]
 sql = ["probe/sql"]
+redis = ["probe/redis"]
 
 [dev-dependencies]
 tower = { version = "0.5", features = ["util"] }
