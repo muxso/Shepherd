@@ -1,6 +1,8 @@
-//! 领域层:计划 + 执行统计,零 IO。
+//! 领域层:计划 + 执行统计 + 定时调度,零 IO。
 pub mod plan;
+pub mod schedule;
 pub mod statistics;
 
 pub use plan::{NewPlan, Plan, PlanError, PlanType, ROOT_GROUP};
+pub use schedule::{NewSchedule, PlanRun, Schedule, ScheduleError};
 pub use statistics::{status_by_children, CaseCounts, ExecStatus};
