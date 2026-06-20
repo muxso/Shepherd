@@ -4,7 +4,8 @@ pub mod mock;
 pub mod template;
 
 pub use mock::{
-    match_request, BodyMatch, MatchRule, MockRequest, MockResponse, MockRule, StringMatch,
+    match_request, BodyMatch, ExtraConditions, MatchRule, MockRequest, MockResponse, MockRule,
+    StringMatch,
 };
 #[cfg(feature = "template")]
 pub use template::{render_body, TemplateError};
