@@ -1,25 +1,28 @@
-//! 功能用例 HTTP 适配器:CRUD + Excel 导出。
+//! 功能用例 HTTP 适配器:CRUD + Excel 导入/导出。
 //!
-//! RBAC 资源串 `FUNCTIONAL_CASE`:创建需 ADD;读(列出/导出)开放。
-//! 导出用 rust_xlsxwriter 把 `export_rows` 的纯行编码成 .xlsx 字节。
+//! RBAC 资源串 `FUNCTIONAL_CASE`:创建/导入需 ADD;读(列出/导出)开放。
+//! 导出用 rust_xlsxwriter 编 .xlsx;导入用 calamine 解 .xlsx 成纯行后交 application 解析。
 
 use std::collections::BTreeMap;
+use std::io::Cursor;
 use std::sync::Arc;
 
 use axum::{
+    body::Bytes,
     extract::{FromRef, Query, State},
     http::{header, StatusCode},
     response::{IntoResponse, Response},
     routing::{get, post},
     Json, Router,
 };
+use calamine::{Reader, Xlsx};
 use rust_xlsxwriter::Workbook;
 use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, OpenApi, ToSchema};
 use webauth::{AuthUser, SessionStore};
 
 use crate::application::{
-    export_rows, CreateCaseError, CreateCaseUseCase, ListCasesUseCase,
+    export_rows, CreateCaseError, CreateCaseUseCase, ImportCasesUseCase, ListCasesUseCase,
 };
 use crate::domain::FunctionalCase;
 
@@ -27,6 +30,7 @@ use crate::domain::FunctionalCase;
 struct CaseState {
     create: CreateCaseUseCase,
     list: ListCasesUseCase,
+    import: ImportCasesUseCase,
     sessions: Arc<dyn SessionStore>,
 }
 
@@ -39,12 +43,14 @@ impl FromRef<CaseState> for Arc<dyn SessionStore> {
 pub fn router(
     create: CreateCaseUseCase,
     list: ListCasesUseCase,
+    import: ImportCasesUseCase,
     sessions: Arc<dyn SessionStore>,
 ) -> Router {
     Router::new()
         .route("/functional-case", post(create_case).get(list_cases))
         .route("/functional-case/export", get(export_cases))
-        .with_state(CaseState { create, list, sessions })
+        .route("/functional-case/import", post(import_cases))
+        .with_state(CaseState { create, list, import, sessions })
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -145,6 +151,46 @@ async fn export_cases(State(st): State<CaseState>, Query(q): Query<ProjectQuery>
     }
 }
 
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+struct ImportResult {
+    imported: usize,
+}
+
+#[utoipa::path(post, path = "/functional-case/import", tag = "functional-case", params(ProjectQuery), request_body(content = Vec<u8>, description = "xlsx 文件字节"), responses((status = 200, body = ImportResult), (status = 400), (status = 403)), security(("bearer" = [])))]
+async fn import_cases(
+    user: AuthUser,
+    State(st): State<CaseState>,
+    Query(q): Query<ProjectQuery>,
+    body: Bytes,
+) -> Response {
+    if !user.can("FUNCTIONAL_CASE", "ADD") {
+        return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
+    let rows = match xlsx_to_rows(&body) {
+        Ok(r) => r,
+        Err(_) => return (StatusCode::BAD_REQUEST, "invalid xlsx").into_response(),
+    };
+    match st.import.execute(&q.project_id, &rows).await {
+        Ok(n) => (StatusCode::OK, Json(ImportResult { imported: n })).into_response(),
+        Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
+    }
+}
+
+/// xlsx 字节 → 纯行(首个工作表;每格转字符串)。
+fn xlsx_to_rows(bytes: &[u8]) -> Result<Vec<Vec<String>>, String> {
+    let mut wb: Xlsx<Cursor<Vec<u8>>> = calamine::open_workbook_from_rs(Cursor::new(bytes.to_vec()))
+        .map_err(|e: calamine::XlsxError| e.to_string())?;
+    let range = wb
+        .worksheet_range_at(0)
+        .ok_or_else(|| "no worksheet".to_string())?
+        .map_err(|e: calamine::XlsxError| e.to_string())?;
+    Ok(range
+        .rows()
+        .map(|r| r.iter().map(|c| c.to_string()).collect())
+        .collect())
+}
+
 /// 纯行(表头 + 数据行)→ xlsx 字节(首行加粗作表头)。
 fn rows_to_xlsx(rows: &[Vec<String>]) -> Result<Vec<u8>, rust_xlsxwriter::XlsxError> {
     let mut wb = Workbook::new();
@@ -164,8 +210,8 @@ fn rows_to_xlsx(rows: &[Vec<String>]) -> Result<Vec<u8>, rust_xlsxwriter::XlsxEr
 
 #[derive(OpenApi)]
 #[openapi(
-    paths(create_case, list_cases, export_cases),
-    components(schemas(CaseBody, CaseResponse)),
+    paths(create_case, list_cases, export_cases, import_cases),
+    components(schemas(CaseBody, CaseResponse, ImportResult)),
     tags((name = "functional-case", description = "功能用例"))
 )]
 struct ApiDoc;
@@ -191,7 +237,8 @@ mod tests {
         let token = sessions.create("u", set, 3600).await.expect("token");
         let r = router(
             CreateCaseUseCase::new(repo.clone()),
-            ListCasesUseCase::new(repo),
+            ListCasesUseCase::new(repo.clone()),
+            ImportCasesUseCase::new(repo),
             sessions,
         );
         (r, token)
@@ -233,6 +280,59 @@ mod tests {
         let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.expect("body");
         assert!(bytes.len() > 100);
         assert_eq!(&bytes[0..2], b"PK"); // xlsx = zip
+    }
+
+    #[tokio::test]
+    async fn import_xlsx_round_trip() {
+        let (app, t) = app("FUNCTIONAL_CASE:READ+ADD").await;
+        // 构造一个 xlsx(表头 + 2 行)上传。
+        let rows = vec![
+            vec!["名称".to_string(), "优先级".to_string(), "owner".to_string()],
+            vec!["登录成功".into(), "P0".into(), "alice".into()],
+            vec!["密码错误".into(), "P1".into(), "bob".into()],
+        ];
+        let xlsx = rows_to_xlsx(&rows).expect("xlsx");
+        let req = Request::builder()
+            .method("POST")
+            .uri("/functional-case/import?projectId=p1")
+            .header("authorization", format!("Bearer {t}"))
+            .body(Body::from(xlsx))
+            .expect("req");
+        let resp = app.clone().oneshot(req).await.expect("resp");
+        assert_eq!(resp.status(), StatusCode::OK);
+        let v: serde_json::Value = {
+            let b = axum::body::to_bytes(resp.into_body(), usize::MAX).await.expect("body");
+            serde_json::from_slice(&b).expect("json")
+        };
+        assert_eq!(v["imported"], 2);
+
+        // 导入的用例可列出。
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri("/functional-case?projectId=p1")
+                    .body(Body::empty())
+                    .expect("req"),
+            )
+            .await
+            .expect("resp");
+        let b = axum::body::to_bytes(resp.into_body(), usize::MAX).await.expect("body");
+        let list: serde_json::Value = serde_json::from_slice(&b).expect("json");
+        assert_eq!(list.as_array().expect("arr").len(), 2);
+        assert_eq!(list[0]["customFields"]["owner"], "alice");
+    }
+
+    #[tokio::test]
+    async fn import_requires_add_permission() {
+        let (app, t) = app("FUNCTIONAL_CASE:READ").await;
+        let xlsx = rows_to_xlsx(&[vec!["名称".to_string()], vec!["x".to_string()]]).expect("xlsx");
+        let req = Request::builder()
+            .method("POST")
+            .uri("/functional-case/import?projectId=p1")
+            .header("authorization", format!("Bearer {t}"))
+            .body(Body::from(xlsx))
+            .expect("req");
+        assert_eq!(app.oneshot(req).await.expect("resp").status(), StatusCode::FORBIDDEN);
     }
 
     #[tokio::test]

@@ -422,7 +422,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let case_repo = Arc::new(case_management::adapters::pg::PgCaseRepository::new(pool.clone()));
     let functional_case_routes = case_management::adapters::http::router(
         case_management::application::CreateCaseUseCase::new(case_repo.clone()),
-        case_management::application::ListCasesUseCase::new(case_repo),
+        case_management::application::ListCasesUseCase::new(case_repo.clone()),
+        case_management::application::ImportCasesUseCase::new(case_repo),
         sessions.clone(),
     );
 
