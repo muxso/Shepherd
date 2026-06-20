@@ -27,11 +27,11 @@ pub fn default_registry() -> PluginRegistry {
     }
     #[cfg(feature = "grpc")]
     {
-        reg = reg.with(std::sync::Arc::new(plugins::GrpcPlugin));
+        reg = reg.with(std::sync::Arc::new(plugins::GrpcPlugin::new()));
     }
     #[cfg(feature = "sql")]
     {
-        reg = reg.with(std::sync::Arc::new(plugins::SqlPlugin));
+        reg = reg.with(std::sync::Arc::new(plugins::SqlPlugin::new()));
     }
     reg
 }

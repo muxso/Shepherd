@@ -1,9 +1,14 @@
 //! gRPC 协议插件:target=端点,metadata["method"]=全方法路径,payload=请求字节(可空)。
 //! 字节透传 codec(不依赖 .proto);status=0(OK),output=响应字节长度摘要。
+//!
+//! 按端点缓存 Channel:压测时复用同一 HTTP/2 连接(Channel 克隆共享底层连接),
+//! 不会每请求重连,测的是目标服务吞吐而非建连开销。
 
 use async_trait::async_trait;
 use bytes::{Buf, BufMut, Bytes};
 use http::uri::PathAndQuery;
+use std::collections::HashMap;
+use std::sync::Mutex;
 use std::time::Instant;
 use tonic::client::Grpc;
 use tonic::codec::{Codec, DecodeBuf, Decoder, EncodeBuf, Encoder};
@@ -46,11 +51,31 @@ impl Codec for BytesCodec {
     }
 }
 
-pub struct GrpcPlugin;
+#[derive(Default)]
+pub struct GrpcPlugin {
+    /// 端点 → Channel(克隆复用同一 HTTP/2 连接)。
+    channels: Mutex<HashMap<String, Channel>>,
+}
 
-impl Default for GrpcPlugin {
-    fn default() -> Self {
-        Self
+impl GrpcPlugin {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// 取目标端点的 Channel(已有则复用)。连接在锁外建立。
+    async fn channel_for(&self, target: &str) -> Result<Channel, String> {
+        if let Some(c) = self.channels.lock().expect("channels lock").get(target).cloned() {
+            return Ok(c);
+        }
+        let endpoint = Channel::from_shared(target.to_string()).map_err(|e| e.to_string())?;
+        let channel = endpoint.connect().await.map_err(|e| e.to_string())?;
+        Ok(self
+            .channels
+            .lock()
+            .expect("channels lock")
+            .entry(target.to_string())
+            .or_insert(channel)
+            .clone())
     }
 }
 
@@ -77,15 +102,10 @@ impl ProtocolPlugin for GrpcPlugin {
                 return RawProbe { transport_ok: false, error: Some(e.to_string()), ..Default::default() }
             }
         };
-        let channel = match Channel::from_shared(req.target.clone()) {
-            Ok(c) => match c.connect().await {
-                Ok(ch) => ch,
-                Err(e) => {
-                    return RawProbe { transport_ok: false, error: Some(e.to_string()), ..Default::default() }
-                }
-            },
+        let channel = match self.channel_for(&req.target).await {
+            Ok(ch) => ch,
             Err(e) => {
-                return RawProbe { transport_ok: false, error: Some(e.to_string()), ..Default::default() }
+                return RawProbe { transport_ok: false, error: Some(e), ..Default::default() }
             }
         };
         let payload = Bytes::from(req.payload.clone().unwrap_or_default().into_bytes());
