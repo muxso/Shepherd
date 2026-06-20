@@ -139,6 +139,38 @@ enum Cmd {
         #[command(subcommand)]
         cmd: EnvCmd,
     },
+    /// 原生压测(并发施压 + 延迟分位/吞吐报告;无 JMeter)。
+    Perf {
+        #[command(subcommand)]
+        cmd: PerfCmd,
+    },
+}
+
+#[derive(Subcommand)]
+enum PerfCmd {
+    /// 发起一轮压测(后台执行,立即返回 reportId)。
+    Run {
+        #[arg(long)]
+        url: String,
+        #[arg(long, default_value = "GET")]
+        method: String,
+        /// 并发"虚拟用户"数。
+        #[arg(long, default_value_t = 10)]
+        concurrency: u32,
+        /// 合计请求次数。
+        #[arg(long, default_value_t = 100)]
+        iterations: u32,
+        /// 期望状态码(给定则成功=该码命中;省略则成功=HTTP 可达)。
+        #[arg(long = "expect-status")]
+        expect_status: Option<u16>,
+        #[arg(long, default_value = "")]
+        project: String,
+    },
+    /// 查压测报告(吞吐/错误率/延迟分位)。
+    Report {
+        #[arg(long)]
+        id: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -1359,6 +1391,20 @@ fn run(cli: Cli) -> R<()> {
                     true,
                 )?),
                 EnvCmd::Delete { id } => pretty(&c.delete(&format!("/api/environment/{id}"), true)?),
+            }
+        }
+        Cmd::Perf { cmd } => {
+            let c = Client::new(Config::load())?;
+            match cmd {
+                PerfCmd::Run { url, method, concurrency, iterations, expect_status, project } => {
+                    pretty(&c.post(
+                        "/perf/run",
+                        json!({"url": url, "method": method, "concurrency": concurrency,
+                               "iterations": iterations, "expectStatus": expect_status, "projectId": project}),
+                        true,
+                    )?)
+                }
+                PerfCmd::Report { id } => pretty(&c.get(&format!("/perf/report/{id}"), true)?),
             }
         }
     }
