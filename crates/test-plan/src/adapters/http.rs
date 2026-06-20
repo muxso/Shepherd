@@ -12,8 +12,8 @@ use axum::{
     Json, Router,
 };
 use crate::application::{
-    report_html, CreatePlanError, CreatePlanUseCase, PlanCaseUseCase, PlanStatisticsError,
-    PlanStatisticsUseCase,
+    report_html, report_markdown, CreatePlanError, CreatePlanUseCase, PlanCaseUseCase,
+    PlanStatisticsError, PlanStatisticsUseCase,
 };
 use crate::domain::{AssertionResult, CaseResult, CaseStatus, Plan, PlanType, ROOT_GROUP};
 use serde::{Deserialize, Serialize};
@@ -44,6 +44,7 @@ pub fn router(
         .route("/test-plan", post(create_plan))
         .route("/test-plan/{id}/statistics", get(statistics))
         .route("/test-plan/{id}/report", get(report))
+        .route("/test-plan/{id}/report.md", get(report_md))
         .route("/test-plan/{id}/cases", post(link_case).get(list_cases))
         .route("/test-plan/{id}/cases/{caseId}/result", post(record_result))
         .with_state(PlanState { create, stats, cases, sessions })
@@ -156,6 +157,27 @@ async fn report(State(st): State<PlanState>, Path(id): Path<String>) -> Response
                 StatusCode::OK,
                 [("content-type", "text/html; charset=utf-8")],
                 report_html(&name, &s, &cases),
+            )
+                .into_response()
+        }
+        Err(PlanStatisticsError::PlanNotFound) => {
+            (StatusCode::NOT_FOUND, "plan not found").into_response()
+        }
+        Err(PlanStatisticsError::Repo(_)) => {
+            (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response()
+        }
+    }
+}
+
+#[utoipa::path(get, path = "/test-plan/{id}/report.md", tag = "test-plan", params(("id" = String, Path)), responses((status = 200, description = "Markdown 报告"), (status = 404)))]
+async fn report_md(State(st): State<PlanState>, Path(id): Path<String>) -> Response {
+    match st.stats.with_name(&id).await {
+        Ok((name, s)) => {
+            let cases = st.cases.list(&id).await.unwrap_or_default();
+            (
+                StatusCode::OK,
+                [("content-type", "text/markdown; charset=utf-8")],
+                report_markdown(&name, &s, &cases),
             )
                 .into_response()
         }
@@ -283,7 +305,7 @@ async fn list_cases(State(st): State<PlanState>, Path(id): Path<String>) -> Resp
 }
 
 #[derive(OpenApi)]
-#[openapi(paths(create_plan, statistics, report, link_case, record_result, list_cases), components(schemas(CreatePlanRequest, PlanResponse, StatisticsResponse, LinkCaseRequest, RecordResultRequest, AssertionResultDto, PlanCaseResponse)), tags((name = "test-plan", description = "测试计划")))]
+#[openapi(paths(create_plan, statistics, report, report_md, link_case, record_result, list_cases), components(schemas(CreatePlanRequest, PlanResponse, StatisticsResponse, LinkCaseRequest, RecordResultRequest, AssertionResultDto, PlanCaseResponse)), tags((name = "test-plan", description = "测试计划")))]
 struct ApiDoc;
 pub fn openapi() -> utoipa::openapi::OpenApi { ApiDoc::openapi() }
 
