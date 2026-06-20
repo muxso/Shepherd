@@ -31,7 +31,7 @@ api-runner = { path = "../api-runner" }
 api-definition = { path = "../api-definition", features = ["pg", "http"] }
 api-scenario = { path = "../api-scenario", features = ["pg", "http"] }
 environment = { path = "../environment", features = ["pg", "http"] }
-mock-runtime = { path = "../mock-runtime", features = ["http", "pg"] }
+mock-runtime = { path = "../mock-runtime", features = ["http", "pg", "template"] }
 migrate = { path = "../migrate" }
 axum = "0.8"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "signal", "time"] }
