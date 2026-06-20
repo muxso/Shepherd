@@ -305,6 +305,13 @@ export interface McpTool {
   description?: string
 }
 
+export interface DebugResponse {
+  status: number
+  latencyMs: number
+  headers: [string, string][]
+  body: string
+}
+
 export type RunMode = 'PARALLEL' | 'SERIAL'
 
 // ---------- 端点封装 ----------
@@ -449,6 +456,10 @@ export const api = {
     http.post<{ id: string }>('/skill', b),
   composeSkills: (projectId: string, skillIds: string[]) =>
     http.post<{ instructions: string }>('/skill/compose', { projectId, skillIds }),
+
+  // 接口调试台:进程内即时发起请求(POST /api/debug/send)
+  debugSend: (b: { method: string; url: string; headers?: { key: string; value: string }[]; body?: string }) =>
+    http.post<DebugResponse>('/api/debug/send', b),
 
   // MCP 工具
   mcpTools: () =>
