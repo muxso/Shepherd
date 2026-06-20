@@ -17,7 +17,7 @@ use webauth::{AuthUser, SessionStore};
 
 use api_runner::{Assertion, RequestSpec};
 
-use crate::application::{RegisterError, RunViaAgentError, RunnerService};
+use crate::application::{RegisterError, RunCaseError, RunViaAgentError, RunnerService};
 use crate::domain::{ExecutionRecord, RunnerAgent};
 
 #[derive(Clone)]
@@ -36,6 +36,7 @@ pub fn router(svc: RunnerService, sessions: Arc<dyn SessionStore>) -> Router {
     Router::new()
         .route("/runner-agent", post(register).get(list))
         .route("/runner-agent/{id}/run", post(run_via))
+        .route("/runner-agent/{id}/run-case", post(run_case))
         .route("/runner-agent/{id}/executions", get(executions))
         .with_state(RunnerState { svc, sessions })
 }
@@ -131,6 +132,34 @@ async fn run_via(
     }
 }
 
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+struct RunCaseBody {
+    case_id: String,
+}
+
+#[utoipa::path(post, path = "/runner-agent/{id}/run-case", tag = "runner", params(("id" = String, Path)), request_body = RunCaseBody, responses((status = 200), (status = 404), (status = 502)), security(("bearer" = [])))]
+async fn run_case(
+    user: AuthUser,
+    State(st): State<RunnerState>,
+    Path(id): Path<String>,
+    Json(b): Json<RunCaseBody>,
+) -> Response {
+    if !user.can("RUNNER", "EXECUTE") {
+        return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
+    match st.svc.run_case(&id, &b.case_id).await {
+        Ok(result) => (StatusCode::OK, Json(result)).into_response(),
+        Err(RunCaseError::AgentNotFound) => {
+            (StatusCode::NOT_FOUND, "agent not found or disabled").into_response()
+        }
+        Err(RunCaseError::CaseNotFound) => (StatusCode::NOT_FOUND, "case not found").into_response(),
+        Err(RunCaseError::Backend(_)) => {
+            (StatusCode::BAD_GATEWAY, "agent dispatch failed").into_response()
+        }
+    }
+}
+
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 struct ExecutionResponse {
@@ -175,8 +204,8 @@ async fn executions(State(st): State<RunnerState>, Path(id): Path<String>) -> Re
 
 #[derive(OpenApi)]
 #[openapi(
-    paths(register, list, run_via, executions),
-    components(schemas(RegisterBody, AgentResponse, RunViaBody, ExecutionResponse)),
+    paths(register, list, run_via, run_case, executions),
+    components(schemas(RegisterBody, AgentResponse, RunViaBody, RunCaseBody, ExecutionResponse)),
     tags((name = "runner", description = "远程执行 agent"))
 )]
 struct ApiDoc;
@@ -188,21 +217,29 @@ pub fn openapi() -> utoipa::openapi::OpenApi {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::adapters::{InMemoryAgentStore, InMemoryExecutionStore, StubRemoteRunner};
+    use crate::adapters::{
+        InMemoryAgentStore, InMemoryCaseSpecSource, InMemoryExecutionStore, StubRemoteRunner,
+    };
     use axum::body::Body;
     use axum::http::Request;
     use kernel::permission::PermissionSet;
     use tower::ServiceExt;
     use webauth::testing::InMemorySessionStore;
 
-    async fn app(perms: &str) -> (Router, String) {
+    async fn app_full(perms: &str) -> (Router, String, Arc<InMemoryCaseSpecSource>) {
         let store = Arc::new(InMemoryAgentStore::new());
         let remote = Arc::new(StubRemoteRunner::success());
         let execs = Arc::new(InMemoryExecutionStore::new());
+        let cases = Arc::new(InMemoryCaseSpecSource::new());
         let sessions = Arc::new(InMemorySessionStore::new());
         let set = PermissionSet::from_raw([perms.to_string()]).expect("perms");
         let token = sessions.create("u", set, 3600).await.expect("token");
-        (router(RunnerService::new(store, remote, execs), sessions), token)
+        (router(RunnerService::new(store, remote, execs, cases.clone()), sessions), token, cases)
+    }
+
+    async fn app(perms: &str) -> (Router, String) {
+        let (r, t, _c) = app_full(perms).await;
+        (r, t)
     }
 
     fn post(uri: &str, body: &str, token: Option<&str>) -> Request<Body> {
@@ -261,6 +298,51 @@ mod tests {
         assert_eq!(v.as_array().expect("arr").len(), 1);
         assert_eq!(v[0]["outcome"], "SUCCESS");
         assert_eq!(v[0]["method"], "GET");
+    }
+
+    #[tokio::test]
+    async fn run_stored_case_via_agent() {
+        use api_runner::{Assertion, HttpMethod, RequestSpec};
+        let (app, t, cases) = app_full("RUNNER:READ+ADD+EXECUTE").await;
+        cases.seed(
+            "case1",
+            RequestSpec { method: HttpMethod::Get, url: "http://t/x".into(), headers: vec![], body: None },
+            vec![Assertion::StatusIs(200)],
+        );
+        let r = app
+            .clone()
+            .oneshot(post(
+                "/runner-agent",
+                r#"{"name":"环境A","baseUrl":"http://a:9100"}"#,
+                Some(&t),
+            ))
+            .await
+            .expect("r");
+        let id = json(r).await["id"].as_str().expect("id").to_string();
+
+        // 派"已存储用例"给 agent
+        let r = app
+            .oneshot(post(&format!("/runner-agent/{id}/run-case"), r#"{"caseId":"case1"}"#, Some(&t)))
+            .await
+            .expect("r");
+        assert_eq!(r.status(), StatusCode::OK);
+        assert_eq!(json(r).await["outcome"], "SUCCESS");
+    }
+
+    #[tokio::test]
+    async fn run_case_unknown_case_404() {
+        let (app, t) = app("RUNNER:READ+ADD+EXECUTE").await;
+        let r = app
+            .clone()
+            .oneshot(post("/runner-agent", r#"{"name":"e","baseUrl":"http://a"}"#, Some(&t)))
+            .await
+            .expect("r");
+        let id = json(r).await["id"].as_str().expect("id").to_string();
+        let r = app
+            .oneshot(post(&format!("/runner-agent/{id}/run-case"), r#"{"caseId":"ghost"}"#, Some(&t)))
+            .await
+            .expect("r");
+        assert_eq!(r.status(), StatusCode::NOT_FOUND);
     }
 
     #[tokio::test]
