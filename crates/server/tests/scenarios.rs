@@ -315,6 +315,46 @@ async fn scenario_llm_self_correction_loop() {
     assert_eq!(dec["tasks"][0]["status"], "VERIFIED", "自纠正后应通过验证门: {dec}");
 }
 
+// ============ 场景 3c:多任务并行编排(钻石 DAG)============
+#[tokio::test]
+#[ignore = "需要 PostgreSQL"]
+async fn scenario_parallel_decomposition_run() {
+    let s = TestServer::start().await; // 默认 Echo 执行者 + AcceptAll 验证门 → 派发即 Verified
+    let p = proj();
+    let t = s.login().await;
+    let rid = s
+        .post("/requirement", json!({"projectId":&p,"title":"并行特性","acceptanceCriteria":["a"]}), Some(&t))
+        .await["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    // 手建钻石 DAG:t1 → {t2,t3} → t4
+    let did = s
+        .post("/decomposition", json!({"requirementId":&rid,"requirementVersion":1}), Some(&t))
+        .await["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let add = |title: &str, deps: Vec<&str>| {
+        let deps: Vec<String> = deps.into_iter().map(String::from).collect();
+        json!({"title":title,"acceptanceCriteria":["x"],"dependencies":deps})
+    };
+    s.post(&format!("/decomposition/{did}/task"), add("根", vec![]), Some(&t)).await; // t1
+    s.post(&format!("/decomposition/{did}/task"), add("左", vec!["t1"]), Some(&t)).await; // t2
+    s.post(&format!("/decomposition/{did}/task"), add("右", vec!["t1"]), Some(&t)).await; // t3
+    s.post(&format!("/decomposition/{did}/task"), add("汇", vec!["t2", "t3"]), Some(&t)).await; // t4
+
+    // 并行编排:逐层并发派发 → 全部 Verified,3 层 = 3 轮。
+    let run = s.post(&format!("/decomposition/{did}/run"), json!({"maxConcurrency":4}), Some(&t)).await;
+    assert_eq!(run["total"], 4);
+    assert_eq!(run["verified"], 4, "钻石 DAG 应全部验证: {run}");
+    assert_eq!(run["failed"], 0);
+    assert_eq!(run["blocked"], 0);
+    // 至少 3 轮 = 尊重了 {t1}→{t2,t3}→{t4} 的依赖层级(非一轮全发);上界由 guard 兜底。
+    let rounds = run["rounds"].as_u64().unwrap();
+    assert!((3..=5).contains(&rounds), "应按依赖分层调度(≥3 轮): {run}");
+}
+
 // ============ 场景 4:AI Skill 组合(skill)============
 #[tokio::test]
 #[ignore = "需要 PostgreSQL"]
