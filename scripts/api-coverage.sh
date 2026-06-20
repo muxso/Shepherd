@@ -9,6 +9,12 @@ SRV=$!; trap 'kill $SRV 2>/dev/null' EXIT
 for i in $(seq 1 100); do curl -sf http://127.0.0.1:9180/healthz >/dev/null 2>&1 && break; sleep 0.5; done
 B=http://127.0.0.1:9180
 T=0; P=0; F=0
+RPT="docs/api-coverage.md"; mkdir -p docs; : > "$RPT"
+echo "# Shepherd 全量 API 自测报告" >> "$RPT"
+echo >> "$RPT"
+printf '> 逐端点断言:状态码 + 关键响应字段 + 业务结果。由 scripts/api-coverage.sh 生成。\n\n' >> "$RPT"
+row() { printf '| %s | %s | %s |\n' "$1" "$2" "$3" >> "$RPT"; }
+sec() { echo "== $1 =="; printf '\n## %s\n\n| 检查 | 结果 | 说明 |\n|---|---|---|\n' "$1" >> "$RPT"; }
 RESP=""; HS=""
 # call METHOD PATH [BODY] → 设 RESP(响应体)+ HS(状态码)
 call() { local m=$1 p=$2 b=${3:-} out
@@ -16,29 +22,30 @@ call() { local m=$1 p=$2 b=${3:-} out
   else out=$(curl -s -w $'\n%{http_code}' -X "$m" -H "$A" "$B$p"); fi
   HS="${out##*$'\n'}"; RESP="${out%$'\n'*}"; }
 # sc desc expectedCodes  → 断状态码
-sc() { T=$((T+1)); if [[ " $2 " == *" $HS "* ]]; then P=$((P+1)); else F=$((F+1)); echo "  ✗ [$1] 状态=$HS 期望 $2  resp=$(printf %s "$RESP"|head -c160)"; fi; }
+sc() { T=$((T+1)); if [[ " $2 " == *" $HS "* ]]; then P=$((P+1)); row "$1(状态)" "✅ $HS" ""; else F=$((F+1)); echo "  ✗ [$1] 状态=$HS 期望 $2  resp=$(printf %s "$RESP"|head -c160)"; row "$1(状态)" "❌ $HS" "期望 $2"; fi; }
 # jchk desc pyBoolExpr  → 断响应字段/业务结果(d=响应 JSON)
 jchk() { T=$((T+1)); local r; r=$(printf %s "$RESP" | python3 -c "import sys,json
 try:d=json.load(sys.stdin)
 except:d=None
 print(bool($2))" 2>/dev/null)
-  if [ "$r" = "True" ]; then P=$((P+1)); else F=$((F+1)); echo "  ✗ [$1] 断言失败:$2  resp=$(printf %s "$RESP"|head -c160)"; fi; }
+  if [ "$r" = "True" ]; then P=$((P+1)); row "$1" "✅" ""; else F=$((F+1)); echo "  ✗ [$1] 断言失败:$2  resp=$(printf %s "$RESP"|head -c160)"; row "$1" "❌" "$2"; fi; }
 jval() { printf %s "$RESP" | python3 -c "import sys,json;d=json.load(sys.stdin);print($1)" 2>/dev/null; }
 
 A="authorization: Bearer x"  # 占位,登录后覆盖
 PJ="cov-$RANDOM"
+sec "登录 / 鉴权初始化"
 call POST /auth/login '{"username":"admin","password":"s3cret"}'
 sc "登录" 200; jchk "返回 token" 'isinstance(d.get("token"),str) and len(d["token"])>10'
 A="authorization: Bearer $(jval 'd["token"]')"
 echo "server up; proj=$PJ"
 
-echo "== 健康 / OpenAPI / 鉴权 =="
+sec "健康 / OpenAPI / 鉴权"
 call GET /healthz;             sc "healthz" 200; jchk "body=ok" 'd is None'  # 纯文本 ok,非 JSON
 call GET /readyz;              sc "readyz" 200
 call GET /api-docs/openapi.json; sc "openapi" 200; jchk "有 paths/openapi 字段" '"openapi" in d and "paths" in d'
 call POST /auth/login '{"username":"admin","password":"bad"}'; sc "错密码→401" 401
 
-echo "== 组织 / 角色 / 用户 / 用户角色 / 项目 =="
+sec "组织 / 角色 / 用户 / 用户角色 / 项目"
 call POST /organization "{\"name\":\"$PJ-org\"}"; sc "建组织" "200 201"; jchk "返回 id+name" 'd.get("id") and d.get("name")=="'$PJ'-org"'; OID=$(jval 'd["id"]')
 call GET "/organization/$OID"; sc "查组织" 200; jchk "id 一致" 'd.get("id")=="'$OID'"'
 call GET /organization; sc "组织列表" 200
@@ -62,7 +69,7 @@ call POST "/requirement/$RID/version" '{"description":"v2","acceptanceCriteria":
 call GET "/requirement/$RID/version/1"; sc "查 v1 快照" 200; jchk "v1 标准不变" 'd["acceptanceCriteria"][0]=="登录成功" and len(d["acceptanceCriteria"])==2'
 call PUT "/requirement/$RID/baseline" '{"version":2}'; sc "定基 v2" "200 201"; jchk "基线=2 且 BASELINED" 'd.get("baselineVersion")==2 and d.get("status")=="BASELINED"'
 
-echo "== 任务 / 拆分图 =="
+sec "任务 / 拆分图"
 call POST "/requirement/$RID/breakdown" '{}'; sc "自动拆分" "200 201"
 jchk "出任务 + 自动开验证账本" 'len(d.get("tasks") or [])>=1 and bool(d.get("verificationId"))'
 DID=$(jval 'd["id"]'); VID=$(jval 'd["verificationId"]'); NTASK=$(jval 'len(d["tasks"])')
@@ -71,7 +78,7 @@ call GET "/decomposition/$DID/ready"; sc "就绪任务" 200; jchk "就绪返回�
 call POST "/decomposition/$DID/task" '{"title":"额外","acceptanceCriteria":["x"],"dependencies":[]}'; sc "加任务" "200 201"; jchk "返回 taskId" 'bool(d.get("taskId"))'
 call POST "/decomposition/$DID/run" '{}'; sc "并行运行" 200; jchk "全部推进(verified+failed=total)" 'd["verified"]+d["failed"]+d["blocked"]==d["total"] and d["total"]>=1'
 
-echo "== 交付 =="
+sec "交付"
 call POST /delivery "{\"decompositionId\":\"$DID\",\"taskId\":\"t1\",\"title\":\"实现\",\"executor\":\"CLAUDE_CODE\"}"; sc "派发" "200 201"
 jchk "返回尝试 + 状态" 'bool(d.get("id") or d.get("attemptId")) and bool(d.get("status"))'; AID=$(jval 'd.get("id") or d.get("attemptId")')
 call GET "/delivery/$AID"; sc "查交付" 200; jchk "id 一致" '(d.get("id") or d.get("attemptId"))=="'$AID'"'
@@ -85,19 +92,19 @@ call POST "/verification/$VID/link" "{\"criterionIndex\":0,\"decompositionId\":\
 call POST "/verification/$VID/sync" "{\"decompositionId\":\"$DID\",\"taskId\":\"t1\",\"satisfied\":true}"; sc "同步覆盖" "200 201"
 call GET "/verification/$VID/report"; sc "完整性报告" 200; jchk "满足数≥1 且未完整(仍有缺口)" 'd.get("satisfied",0)>=1 and d.get("complete") in (False,True)'
 
-echo "== 技能 / 缺陷 =="
+sec "技能 / 缺陷"
 call POST /skill "{\"projectId\":\"$PJ\",\"name\":\"基础\",\"instructions\":\"遵循六边形\"}"; sc "建技能" "200 201"; SID=$(jval 'd["id"]')
 call POST /skill/compose "{\"projectId\":\"$PJ\",\"skillIds\":[\"$SID\"]}"; sc "组合技能" "200 201"; jchk "组合含指令" '"遵循六边形" in d.get("instructions","")'
 call POST /bug "{\"projectId\":\"$PJ\",\"title\":\"b\",\"initialStatus\":\"NEW\"}"; sc "建缺陷" "200 201"; jchk "初态 NEW" 'd.get("status")=="NEW"'; BID=$(jval 'd["id"]')
 call POST "/bug/$BID/status" '{"status":"RESOLVED"}'; sc "合法迁移" "200 201"; jchk "→RESOLVED" 'd.get("status")=="RESOLVED"'
 call POST "/bug/$BID/status" '{"status":"NEW"}'; sc "非法迁移→409" 409
 
-echo "== 功能用例 =="
+sec "功能用例"
 call POST /functional-case "{\"projectId\":\"$PJ\",\"name\":\"功能1\",\"priority\":\"P1\"}"; sc "建功能用例" "200 201"; jchk "返回 id" 'bool(d.get("id"))'
 call GET "/functional-case?projectId=$PJ"; sc "列表" 200; jchk "非空" 'isinstance(d,list) and len(d)>=1'
 call GET "/functional-case/export?projectId=$PJ"; sc "导出" 200
 
-echo "== 接口定义 / Mock / 接口用例 =="
+sec "接口定义 / Mock / 接口用例"
 call POST /api/definition "{\"projectId\":\"$PJ\",\"name\":\"登录API\",\"protocol\":\"HTTP\",\"method\":\"POST\",\"path\":\"/login\"}"; sc "建定义" "200 201"; DEF=$(jval 'd["id"]')
 call GET "/api/definition?projectId=$PJ"; sc "定义列表" 200; jchk "非空" 'isinstance(d,list) and len(d)>=1'
 call GET "/api/definition/$DEF"; sc "查定义" 200; jchk "id 一致" 'd.get("id")=="'$DEF'"'
@@ -116,7 +123,7 @@ call GET "/api/scenario/$SCN/compile"; sc "编译" 200; jchk "步骤1=CASE引用
 call POST "/api/scenario/$SCN/run" "{\"projectId\":\"$PJ\",\"runMode\":\"PARALLEL\"}"; sc "运行场景" 200; jchk "返回执行状态" 'd.get("status") in ("SUCCESS","ERROR")'
 call GET "/api/scenario/$SCN/executions"; sc "场景执行记录" 200
 
-echo "== 环境 / 资源池 / 批量 =="
+sec "环境 / 资源池 / 批量"
 call POST /api/environment "{\"projectId\":\"$PJ\",\"name\":\"env\",\"baseUrl\":\"$B\"}"; sc "建环境" "200 201"; jchk "baseUrl" 'd.get("baseUrl")=="'$B'"'; ENV=$(jval 'd["id"]')
 call GET "/api/environment?projectId=$PJ"; sc "环境列表" 200
 call PUT "/api/environment/$ENV" "{\"projectId\":\"$PJ\",\"name\":\"env2\",\"baseUrl\":\"$B\"}"; sc "改环境" "200 201"; jchk "名已改" 'd.get("name")=="env2"'
@@ -135,7 +142,7 @@ call POST "/test-plan/$TP/run" '{}'; sc "执行计划" 200; jchk "执行计数�
 call POST "/test-plan/$TP/schedule" '{"cron":"0 0 * * * *"}'; sc "配定时" "200 201"
 call GET "/test-plan/$TP/runs"; sc "运行快照" 200
 
-echo "== 压测 / runner / MCP =="
+sec "压测 / runner / MCP"
 call POST /perf/run "{\"url\":\"$B/healthz\",\"concurrency\":2,\"iterations\":6}"; sc "起压测" 200; jchk "返回 reportId" 'bool(d.get("reportId"))'; PRID=$(jval 'd["reportId"]')
 sleep 1
 call GET "/perf/report/$PRID"; sc "压测报告" 200; jchk "总数=6 且有吞吐" 'd.get("total")==6 and d.get("throughputRps",0)>0'
@@ -148,5 +155,7 @@ call POST /mcp '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'; sc "MCP tools/l
 
 echo
 echo "############ 深度 API 自测:断言 $T 条(端点 + 字段 + 业务结果),通过 $P,失败 $F ############"
+{ echo; echo "## 汇总"; echo; echo "- 断言总数:$T"; echo "- 通过:$P"; echo "- 失败:$F"; echo "- 结论:$([ "$F" -eq 0 ] && echo "全绿 ✅" || echo "有失败 ❌")"; } >> "$RPT"
+echo "报告 → $RPT"
 [ "$F" -eq 0 ] && echo "✅ 全绿" || echo "❌ 有失败"
 exit $F
