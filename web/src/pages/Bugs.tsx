@@ -1,0 +1,126 @@
+import { useEffect, useState } from 'react'
+import { Button, Empty, Form, Input, Modal, Select, Table, Tag, Typography, message } from 'antd'
+import { PlusOutlined, ReloadOutlined } from '@ant-design/icons'
+import { api, ApiError } from '../api'
+import { useApp } from '../context'
+import { regAdd, regList, type RegItem } from '../registry'
+
+const STATUSES = ['NEW', 'IN_PROGRESS', 'RESOLVED', 'CLOSED', 'REJECTED', 'REOPENED']
+
+const bugColor = (s: string) => {
+  const v = s.toUpperCase()
+  if (v === 'RESOLVED' || v === 'CLOSED') return 'green'
+  if (v === 'REJECTED') return 'red'
+  if (v === 'NEW' || v === 'REOPENED') return 'orange'
+  return 'blue'
+}
+
+// 缺陷在 RegItem.meta.status 内维护当前状态(后端无 list 端点)。
+export default function Bugs() {
+  const { projectId } = useApp()
+  const [items, setItems] = useState<RegItem[]>([])
+  const [createOpen, setCreateOpen] = useState(false)
+
+  const refresh = () => setItems(regList('bug', projectId))
+  useEffect(refresh, [projectId])
+
+  if (!projectId)
+    return (
+      <div style={{ padding: 48 }}>
+        <Empty description="请先在顶部选择项目" />
+      </div>
+    )
+
+  const changeStatus = (item: RegItem) => {
+    let status = 'RESOLVED'
+    Modal.confirm({
+      title: `变更缺陷状态 · ${item.label}`,
+      content: (
+        <Select
+          defaultValue={status}
+          style={{ width: '100%', marginTop: 8 }}
+          onChange={(v) => (status = v)}
+          options={STATUSES.map((s) => ({ value: s, label: s }))}
+        />
+      ),
+      onOk: async () => {
+        try {
+          const b = await api.setBugStatus(item.id, status)
+          message.success(`已变更为 ${b.status}`)
+          setItems(regAdd('bug', projectId, { ...item, meta: { ...item.meta, status: b.status } }))
+        } catch (e) {
+          message.error(e instanceof ApiError ? `变更失败:${e.status}(非法流转?)` : '变更失败')
+        }
+      },
+    })
+  }
+
+  return (
+    <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '14px 16px', background: '#fff', borderBottom: '1px solid #f0f0f0' }}>
+        <Typography.Text strong style={{ fontSize: 15 }}>
+          缺陷
+        </Typography.Text>
+        <div style={{ flex: 1 }} />
+        <Button type="primary" icon={<PlusOutlined />} onClick={() => setCreateOpen(true)}>
+          新建缺陷
+        </Button>
+        <Button icon={<ReloadOutlined />} onClick={refresh} />
+      </div>
+      <div style={{ flex: 1, overflow: 'auto', padding: 16 }}>
+        <Table<RegItem>
+          rowKey="id"
+          size="middle"
+          dataSource={items}
+          pagination={{ pageSize: 15, size: 'small' }}
+          locale={{ emptyText: <Empty description="暂无缺陷" /> }}
+          columns={[
+            { title: '标题', dataIndex: 'label' },
+            {
+              title: '状态',
+              width: 130,
+              render: (_, r) => <Tag color={bugColor(r.meta?.status || 'NEW')}>{r.meta?.status || 'NEW'}</Tag>,
+            },
+            { title: 'ID', dataIndex: 'id', render: (v: string) => <span className="ms-mono" style={{ fontSize: 12 }}>{v}</span> },
+            {
+              title: '操作',
+              width: 120,
+              render: (_, r) => (
+                <Button type="link" size="small" onClick={() => changeStatus(r)}>
+                  变更状态
+                </Button>
+              ),
+            },
+          ]}
+        />
+      </div>
+
+      <Modal title="新建缺陷" open={createOpen} onCancel={() => setCreateOpen(false)} footer={null} destroyOnHidden>
+        <Form
+          layout="vertical"
+          initialValues={{ initialStatus: 'NEW' }}
+          onFinish={async (v: { title: string; initialStatus: string }) => {
+            try {
+              const b = await api.createBug({ projectId, title: v.title, initialStatus: v.initialStatus })
+              message.success('缺陷已创建')
+              setItems(regAdd('bug', projectId, { id: b.id, label: v.title, createdAt: Date.now(), meta: { status: b.status } }))
+              setCreateOpen(false)
+            } catch (e) {
+              message.error(e instanceof ApiError ? e.message : '创建失败')
+            }
+          }}
+        >
+          <Form.Item name="title" label="标题" rules={[{ required: true }]}>
+            <Input placeholder="如:登录按钮无响应" autoFocus />
+          </Form.Item>
+          <Form.Item name="initialStatus" label="初始状态">
+            <Select options={STATUSES.map((s) => ({ value: s, label: s }))} />
+          </Form.Item>
+          <Button type="primary" htmlType="submit" block>
+            创建
+          </Button>
+        </Form>
+      </Modal>
+    </div>
+  )
+}
