@@ -1,6 +1,6 @@
 # Shepherd 全量 API 自测报告
 
-> 逐端点断言:状态码 + 关键响应字段 + 业务结果。由 scripts/api-coverage.sh 生成。
+> 逐端点断言:状态码 + 关键响应字段 + 业务结果。由 scripts/api-coverage.sh 生成。HTML 版见 api-coverage.html。
 
 
 ## 登录 / 鉴权初始化
