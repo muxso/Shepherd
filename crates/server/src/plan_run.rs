@@ -24,8 +24,10 @@ use webauth::{AuthUser, SessionStore};
 use api_runner::{evaluate_detailed, Assertion, CaseOutcome, HttpMethod, ReqwestRunner, RequestSpec};
 use api_scenario::application::CompileScenarioUseCase;
 use api_scenario::domain::PlanStep;
-use api_test::adapters::local::CaseSpecSource;
-use api_test::adapters::pg::PgCaseSpecSource;
+use api_test::adapters::local::{apply_env_static, CaseSpecSource};
+use api_test::adapters::pg::{PgCaseSpecSource, PgEnvironment};
+use api_test::domain::ResolvedEnv;
+use api_test::ports::EnvironmentPort;
 use test_plan::application::PlanCaseUseCase;
 use test_plan::domain::{AssertionResult, CaseResult, CaseStatus, RequestInfo, StepResult};
 
@@ -36,6 +38,7 @@ pub struct PlanRunner {
     specs: Arc<PgCaseSpecSource>,
     compile: CompileScenarioUseCase,
     runner: Arc<ReqwestRunner>,
+    envs: Arc<PgEnvironment>,
 }
 
 /// 一次计划执行的汇总。
@@ -53,14 +56,21 @@ impl PlanRunner {
             Arc::new(api_scenario::adapters::pg::PgApiScenarioRepository::new(pool.clone()));
         Self {
             cases: PlanCaseUseCase::new(plan_repo),
-            specs: Arc::new(PgCaseSpecSource::new(pool)),
+            specs: Arc::new(PgCaseSpecSource::new(pool.clone())),
             compile: CompileScenarioUseCase::new(scenario_repo),
             runner: Arc::new(ReqwestRunner::no_proxy()),
+            envs: Arc::new(PgEnvironment::new(pool)),
         }
     }
 
     /// 执行计划:逐条跑挂入的用例/场景并回写结果。
-    pub async fn run(&self, plan_id: &str) -> Result<RunSummary, ()> {
+    /// `env_id` 给定则解析环境(base_url + 默认头如 Authorization)并注入每个请求 —— 据此可自测带鉴权的接口。
+    pub async fn run(&self, plan_id: &str, env_id: Option<&str>) -> Result<RunSummary, ()> {
+        let env: Option<ResolvedEnv> = match env_id.filter(|s| !s.trim().is_empty()) {
+            Some(id) => self.envs.resolve(id).await.ok().flatten(),
+            None => None,
+        };
+        let env = env.as_ref();
         let cases = self.cases.list(plan_id).await.map_err(|_| ())?;
         let total = cases.len();
         let (mut executed, mut success, mut failed) = (0usize, 0usize, 0usize);
@@ -68,7 +78,7 @@ impl PlanRunner {
             // 1) 普通用例(ms_api_case)。
             if let Ok(Some(spec)) = self.specs.spec_of(&pc.case_id).await {
                 let (status, result) =
-                    run_request(&self.runner, &spec.request, &spec.assertions).await;
+                    run_request(&self.runner, &spec.request, &spec.assertions, env).await;
                 executed += 1;
                 match status {
                     CaseStatus::Success => success += 1,
@@ -79,7 +89,7 @@ impl PlanRunner {
             }
             // 2) 场景(ms_api_scenario):编译树 → 逐叶执行 → 嵌套步骤。
             if let Ok(steps_plan) = self.compile.compile_plan(&pc.case_id).await {
-                let steps = run_steps(&steps_plan, &self.runner, &self.specs).await;
+                let steps = run_steps(&steps_plan, &self.runner, &self.specs, env).await;
                 let ok = !steps.is_empty() && steps.iter().all(|s| s.status == CaseStatus::Success);
                 let status = if ok { CaseStatus::Success } else { CaseStatus::Error };
                 executed += 1;
@@ -168,11 +178,18 @@ fn map_assertions(reps: Vec<api_runner::AssertionReport>) -> Vec<AssertionResult
 }
 
 /// 执行一个请求叶子,产出执行明细(状态/耗时/状态码/断言/响应头/响应体/实际请求)。
+/// `env` 给定则先注入(base_url + 默认头),实际请求记录注入后的形态。
 async fn run_request(
     runner: &ReqwestRunner,
     request: &RequestSpec,
     assertions: &[Assertion],
+    env: Option<&ResolvedEnv>,
 ) -> (CaseStatus, CaseResult) {
+    let mut request = request.clone();
+    if let Some(e) = env {
+        apply_env_static(&mut request, e);
+    }
+    let request = &request;
     let (report, snap) = runner.run_case_with_snapshot(request, assertions).await;
     let status = match report.outcome {
         CaseOutcome::Success => CaseStatus::Success,
@@ -209,17 +226,23 @@ fn run_steps<'a>(
     steps: &'a [PlanStep],
     runner: &'a ReqwestRunner,
     specs: &'a PgCaseSpecSource,
+    env: Option<&'a ResolvedEnv>,
 ) -> Pin<Box<dyn Future<Output = Vec<StepResult>> + Send + 'a>> {
     Box::pin(async move {
         let mut out = Vec::new();
         for step in steps {
-            out.push(run_step(step, runner, specs).await);
+            out.push(run_step(step, runner, specs, env).await);
         }
         out
     })
 }
 
-async fn run_step(step: &PlanStep, runner: &ReqwestRunner, specs: &PgCaseSpecSource) -> StepResult {
+async fn run_step(
+    step: &PlanStep,
+    runner: &ReqwestRunner,
+    specs: &PgCaseSpecSource,
+    env: Option<&ResolvedEnv>,
+) -> StepResult {
     // 控制器节点:聚合子步骤状态。
     let control = |name: String, kind: &str, children: Vec<StepResult>| {
         let ok = children.iter().all(|c| c.status == CaseStatus::Success);
@@ -237,7 +260,7 @@ async fn run_step(step: &PlanStep, runner: &ReqwestRunner, specs: &PgCaseSpecSou
     match step {
         PlanStep::Case(case_id) => match specs.spec_of(case_id).await {
             Ok(Some(spec)) => {
-                let (status, r) = run_request(runner, &spec.request, &spec.assertions).await;
+                let (status, r) = run_request(runner, &spec.request, &spec.assertions, env).await;
                 StepResult {
                     name: format!("{} {}", spec.request.method.as_str(), spec.request.url),
                     kind: "接口用例".to_string(),
@@ -267,7 +290,7 @@ async fn run_step(step: &PlanStep, runner: &ReqwestRunner, specs: &PgCaseSpecSou
             };
             let assertions: Vec<Assertion> =
                 serde_json::from_value(req.assertions.clone()).unwrap_or_default();
-            let (status, r) = run_request(runner, &spec, &assertions).await;
+            let (status, r) = run_request(runner, &spec, &assertions, env).await;
             StepResult {
                 name: format!("{} {}", req.method, req.url),
                 kind: "请求".to_string(),
@@ -279,15 +302,15 @@ async fn run_step(step: &PlanStep, runner: &ReqwestRunner, specs: &PgCaseSpecSou
             }
         }
         PlanStep::Loop { times, body } => {
-            control(format!("循环 x{times}"), "循环控制器", run_steps(body, runner, specs).await)
+            control(format!("循环 x{times}"), "循环控制器", run_steps(body, runner, specs, env).await)
         }
         PlanStep::If { variable, operator, value, body } => control(
             format!("若 {variable} {operator} {value}"),
             "条件控制器",
-            run_steps(body, runner, specs).await,
+            run_steps(body, runner, specs, env).await,
         ),
         PlanStep::Once { body } => {
-            control("仅一次".to_string(), "ONCE 控制器", run_steps(body, runner, specs).await)
+            control("仅一次".to_string(), "ONCE 控制器", run_steps(body, runner, specs, env).await)
         }
         PlanStep::Timer { ms } => StepResult {
             name: format!("等待 {ms}ms"),
@@ -301,17 +324,31 @@ async fn run_step(step: &PlanStep, runner: &ReqwestRunner, specs: &PgCaseSpecSou
     }
 }
 
+#[derive(Debug, Default, serde::Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+struct RunPlanBody {
+    /// 可选环境:注入 base_url + 默认头(如 Authorization),据此可自测带鉴权接口。
+    #[serde(default)]
+    environment_id: Option<String>,
+}
+
 #[utoipa::path(
     post, path = "/test-plan/{id}/run", tag = "test-plan",
     params(("id" = String, Path)),
+    request_body = RunPlanBody,
     responses((status = 200, body = RunPlanResponse), (status = 403)),
     security(("bearer" = []))
 )]
-async fn run_plan(user: AuthUser, State(st): State<RunState>, Path(id): Path<String>) -> Response {
+async fn run_plan(
+    user: AuthUser,
+    State(st): State<RunState>,
+    Path(id): Path<String>,
+    Json(body): Json<RunPlanBody>,
+) -> Response {
     if !user.can("TEST_PLAN", "EXECUTE") {
         return (StatusCode::FORBIDDEN, "permission denied").into_response();
     }
-    match st.plan_runner.run(&id).await {
+    match st.plan_runner.run(&id, body.environment_id.as_deref()).await {
         Ok(s) => (
             StatusCode::OK,
             Json(RunPlanResponse {
@@ -328,7 +365,7 @@ async fn run_plan(user: AuthUser, State(st): State<RunState>, Path(id): Path<Str
 }
 
 #[derive(OpenApi)]
-#[openapi(paths(run_plan), components(schemas(RunPlanResponse)), tags((name = "test-plan", description = "测试计划")))]
+#[openapi(paths(run_plan), components(schemas(RunPlanResponse, RunPlanBody)), tags((name = "test-plan", description = "测试计划")))]
 struct ApiDoc;
 
 pub fn openapi() -> utoipa::openapi::OpenApi {

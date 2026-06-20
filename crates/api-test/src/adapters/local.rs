@@ -22,7 +22,7 @@ use api_runner::{
 
 /// 静态环境注入:相对 url 拼 base_url、并入默认头(已有同名不覆盖)。**不**做变量替换
 /// (替换交给 `substitute_request`,用运行时上下文变量,而非仅环境变量)。
-pub(crate) fn apply_env_static(req: &mut RequestSpec, env: &ResolvedEnv) {
+pub fn apply_env_static(req: &mut RequestSpec, env: &ResolvedEnv) {
     // base_url:仅对相对 url 生效(绝对 url 原样)。
     let is_absolute = req.url.starts_with("http://") || req.url.starts_with("https://");
     if !env.base_url.is_empty() && !is_absolute {

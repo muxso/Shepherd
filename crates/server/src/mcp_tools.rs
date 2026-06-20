@@ -346,7 +346,7 @@ impl ToolHandler for RunTestPlan {
     async fn call(&self, args: Value) -> Result<Value, String> {
         let s = self
             .runner
-            .run(req_str(&args, "planId")?)
+            .run(req_str(&args, "planId")?, args.get("environmentId").and_then(|x| x.as_str()))
             .await
             .map_err(|()| "plan execute failed".to_string())?;
         Ok(json!({
@@ -581,8 +581,8 @@ pub fn router(
         .requires("TEST_PLAN", "ADD"))
         .tool(Tool::new(
             "shepherd_run_test_plan",
-            "执行计划:跑挂入的用例/场景并自动回写结果(随后报告即真实数据)。返回执行汇总。",
-            obj(json!({ "planId": { "type": "string" } }), &["planId"]),
+            "执行计划:跑挂入的用例/场景并自动回写结果(随后报告即真实数据)。可传 environmentId 注入鉴权头。返回执行汇总。",
+            obj(json!({ "planId": { "type": "string" }, "environmentId": { "type": "string", "description": "可选:注入 base_url + 默认头(如 Authorization)" } }), &["planId"]),
             Arc::new(RunTestPlan { runner: plan_runner }),
         )
         .requires("TEST_PLAN", "EXECUTE"))
