@@ -106,7 +106,30 @@ pub struct MatchRule {
     pub priority: i32,
 }
 
+/// 额外匹配条件:从 mock 的 `match_rule` jsonb 解析(均可选,缺省即不约束该维度)。
+/// 用于在「定义的 method+path」之上叠加 header/query/body 细粒度条件与优先级。
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct ExtraConditions {
+    pub headers: Vec<(String, StringMatch)>,
+    pub query: Vec<(String, StringMatch)>,
+    pub body: Vec<BodyMatch>,
+    pub priority: i32,
+}
+
 impl MatchRule {
+    /// 以接口定义的 method+path 为基,叠加 mock 的额外条件(match_rule jsonb)。
+    pub fn from_definition(method: &str, path: &str, extra: ExtraConditions) -> Self {
+        Self {
+            method: Some(method.to_string()),
+            path: path.to_string(),
+            headers: extra.headers,
+            query: extra.query,
+            body: extra.body,
+            priority: extra.priority,
+        }
+    }
+
     /// 该请求是否命中本规则(各维度皆满足)。
     pub fn matches(&self, req: &MockRequest) -> bool {
         // 方法
@@ -313,6 +336,30 @@ mod tests {
     fn invalid_regex_is_no_match_not_panic() {
         assert!(!StringMatch::Regex("[".into()).test("anything"));
         assert!(StringMatch::Regex("^Bearer".into()).test("Bearer xyz"));
+    }
+
+    #[test]
+    fn from_definition_layers_extra_conditions() {
+        // match_rule jsonb:额外要求 header X-Env=prod + 优先级 5
+        let extra: ExtraConditions = serde_json::from_str(
+            r#"{"headers":[["x-env",{"op":"equals","value":"prod"}]],"priority":5}"#,
+        )
+        .expect("parse extra");
+        let rule = MatchRule::from_definition("GET", "/users/*/orders", extra);
+        assert_eq!(rule.priority, 5);
+        // 基础 method+path 命中,但缺 X-Env 头 → 不命中
+        assert!(!rule.matches(&req()));
+        // 带上 X-Env=prod → 命中
+        let mut with_env = req();
+        with_env.headers.insert("x-env".into(), "prod".into());
+        assert!(rule.matches(&with_env));
+    }
+
+    #[test]
+    fn empty_extra_is_just_method_path() {
+        let rule = MatchRule::from_definition("GET", "/users/*/orders", ExtraConditions::default());
+        assert!(rule.matches(&req()));
+        assert_eq!(rule.priority, 0);
     }
 
     #[test]
