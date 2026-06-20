@@ -3,8 +3,12 @@
 use async_trait::async_trait;
 use sqlx::{PgPool, Row};
 
-use crate::domain::{DispatchTarget, ExecutionRecord, NewRunnerAgent, RemoteResult, RunnerAgent};
-use crate::ports::{ExecutionStore, PortError, RunnerAgentStore};
+use api_runner::{Assertion, HttpMethod, RequestSpec};
+
+use crate::domain::{
+    CaseSpec, DispatchTarget, ExecutionRecord, NewRunnerAgent, RemoteResult, RunnerAgent,
+};
+use crate::ports::{CaseSpecSource, ExecutionStore, PortError, RunnerAgentStore};
 
 #[derive(Clone)]
 pub struct PgRunnerAgentStore {
@@ -158,5 +162,44 @@ impl ExecutionStore for PgExecutionStore {
                 })
             })
             .collect()
+    }
+}
+
+/// PostgreSQL 用例规格来源:从 `ms_api_case` 取 method/url/body/assertions,
+/// 组装成可派发的 CaseSpec(跨上下文只读邻域表,与 mock/env 同构)。
+#[derive(Clone)]
+pub struct PgCaseSpecSource {
+    pool: PgPool,
+}
+
+impl PgCaseSpecSource {
+    pub fn new(pool: PgPool) -> Self {
+        Self { pool }
+    }
+}
+
+fn method_of(m: &str) -> HttpMethod {
+    serde_json::from_value(serde_json::Value::String(m.to_uppercase())).unwrap_or(HttpMethod::Get)
+}
+
+#[async_trait]
+impl CaseSpecSource for PgCaseSpecSource {
+    async fn spec_of(&self, case_id: &str) -> Result<Option<CaseSpec>, PortError> {
+        let row = sqlx::query("SELECT method, url, body, assertions FROM ms_api_case WHERE id = $1")
+            .bind(case_id)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(map_err)?;
+        let Some(r) = row else { return Ok(None) };
+        let method: String = r.try_get("method").map_err(map_err)?;
+        let url: String = r.try_get("url").map_err(map_err)?;
+        let body: Option<String> = r.try_get("body").map_err(map_err)?;
+        let assertions_json: serde_json::Value = r.try_get("assertions").map_err(map_err)?;
+        // assertions jsonb 数组 → Vec<Assertion>(形态不符则回落空,不致命)。
+        let assertions: Vec<Assertion> = serde_json::from_value(assertions_json).unwrap_or_default();
+        Ok(Some(CaseSpec {
+            request: RequestSpec { method: method_of(&method), url, headers: vec![], body },
+            assertions,
+        }))
     }
 }
