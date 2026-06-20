@@ -21,7 +21,8 @@ use webauth::{AuthUser, SessionStore};
 
 use api_runner::{Assertion, HttpMethod, RequestSpec};
 use perf::adapters::{
-    run_collect, ApiRunnerExecutor, ParquetObjectStoreSink, PgPerfReportStore, SqlExecutor,
+    run_collect, ApiRunnerExecutor, GrpcExecutor, ParquetObjectStoreSink, PgPerfReportStore,
+    SqlExecutor,
 };
 use perf::domain::LoadPlan;
 use perf::ports::{RequestExecutor, SampleSink};
@@ -154,6 +155,19 @@ async fn run_perf(user: AuthUser, State(st): State<PerfState>, Json(req): Json<R
                 Ok(e) => (Arc::new(e), "SQL".to_string(), query),
                 Err(e) => {
                     return (StatusCode::BAD_GATEWAY, format!("sql connect failed: {e}"))
+                        .into_response()
+                }
+            }
+        } else if req.protocol.eq_ignore_ascii_case("GRPC") {
+            // GRPC:url=端点,query=全方法路径(如 /grpc.health.v1.Health/Check),空请求体。
+            let method = match req.query.clone().filter(|q| !q.trim().is_empty()) {
+                Some(m) => m,
+                None => return (StatusCode::BAD_REQUEST, "grpc requires query=method path").into_response(),
+            };
+            match GrpcExecutor::connect(&req.url, &method, vec![]).await {
+                Ok(e) => (Arc::new(e), "GRPC".to_string(), method),
+                Err(e) => {
+                    return (StatusCode::BAD_GATEWAY, format!("grpc connect failed: {e}"))
                         .into_response()
                 }
             }

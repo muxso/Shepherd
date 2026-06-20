@@ -34,7 +34,7 @@ environment = { path = "../environment", features = ["pg", "http"] }
 case-management = { path = "../case-management", features = ["pg", "http"] }
 runner = { path = "../runner", features = ["pg", "http", "client"] }
 mock-runtime = { path = "../mock-runtime", features = ["http", "pg", "template"] }
-perf = { path = "../perf", features = ["engine", "api-runner-exec", "pg", "parquet-sink", "sql-exec"] }
+perf = { path = "../perf", features = ["engine", "api-runner-exec", "pg", "parquet-sink", "sql-exec", "grpc-exec"] }
 migrate = { path = "../migrate" }
 axum = "0.8"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "signal", "time"] }
