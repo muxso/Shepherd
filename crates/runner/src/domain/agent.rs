@@ -18,6 +18,8 @@ pub struct RunnerAgent {
     pub name: String,
     pub base_url: String,
     pub enabled: bool,
+    /// 该 agent 自报支持的协议(注册时从其 `/protocols` 拉取并落库)。
+    pub protocols: Vec<String>,
 }
 
 /// 待注册 agent(构造即校验:名称/地址非空)。`token` 为可选共享密钥。
@@ -54,6 +56,14 @@ impl NewRunnerAgent {
 pub struct DispatchTarget {
     pub base_url: String,
     pub token: Option<String>,
+}
+
+/// 「按协议选 agent」的候选:含 id/name(供回报选中的是谁)+ 派发目标(含 token)。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AgentTarget {
+    pub id: String,
+    pub name: String,
+    pub target: DispatchTarget,
 }
 
 /// agent 回传的执行结果(对应 runner-agent 的 RunResult)。

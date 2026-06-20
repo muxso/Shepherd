@@ -16,23 +16,22 @@ pub use domain::{evaluate, ProbeAssertion, ProbeOutcome, ProbeRequest, RawProbe}
 pub use ports::ProtocolPlugin;
 pub use registry::PluginRegistry;
 
-use std::sync::Arc;
-
 /// 据启用的 feature 组装默认插件注册表(http 默认在;grpc/sql 视 feature 而定)。
+/// 无任何插件 feature 时(如仅取协议类型的下游)返回空注册表。
 pub fn default_registry() -> PluginRegistry {
     #[allow(unused_mut)]
     let mut reg = PluginRegistry::new();
     #[cfg(feature = "http")]
     {
-        reg = reg.with(Arc::new(plugins::HttpPlugin::new()));
+        reg = reg.with(std::sync::Arc::new(plugins::HttpPlugin::new()));
     }
     #[cfg(feature = "grpc")]
     {
-        reg = reg.with(Arc::new(plugins::GrpcPlugin));
+        reg = reg.with(std::sync::Arc::new(plugins::GrpcPlugin));
     }
     #[cfg(feature = "sql")]
     {
-        reg = reg.with(Arc::new(plugins::SqlPlugin));
+        reg = reg.with(std::sync::Arc::new(plugins::SqlPlugin));
     }
     reg
 }

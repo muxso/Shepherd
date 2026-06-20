@@ -181,7 +181,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 "API_SCENARIO:READ+ADD+UPDATE+DELETE+EXECUTE".to_string(),
                 "ENVIRONMENT:READ+ADD+UPDATE+DELETE".to_string(),
                 "FUNCTIONAL_CASE:READ+ADD".to_string(),
-                "RUNNER:READ+ADD+EXECUTE".to_string(),
+                "RUNNER:READ+ADD+EDIT+EXECUTE".to_string(),
                 "PERF:READ+EXECUTE".to_string(),
                 "RESOURCE_POOL:READ+ADD".to_string(),
                 "REQUIREMENT:READ+ADD+UPDATE+DELETE".to_string(),
@@ -411,9 +411,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let environment_routes = environment::adapters::http::router(env_repo, sessions.clone());
 
     // —— runner 闭环(按环境注册 agent + 把用例派给 agent 就地执行)——
+    // ReqwestRemoteProbe 同时承担「派发 /probe」与「探测 agent /protocols 能力」。
+    let remote_probe = Arc::new(runner::adapters::ReqwestRemoteProbe::new());
     let runner_svc = runner::application::RunnerService::new(
         Arc::new(runner::adapters::pg::PgRunnerAgentStore::new(pool.clone())),
         Arc::new(runner::adapters::ReqwestRemoteRunner::new()),
+        remote_probe.clone(),
+        remote_probe,
         Arc::new(runner::adapters::pg::PgExecutionStore::new(pool.clone())),
         Arc::new(runner::adapters::pg::PgCaseSpecSource::new(pool.clone())),
     );

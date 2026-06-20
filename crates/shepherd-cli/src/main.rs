@@ -466,6 +466,35 @@ enum RunnerCmd {
         #[arg(long)]
         agent: String,
     },
+    /// 重拉某 agent 的 /protocols,刷新其协议能力快照。
+    Refresh {
+        #[arg(long)]
+        agent: String,
+    },
+    /// 按协议探测:只给协议,中央自动选支持它的 agent 就地执行(支持断言)。
+    Probe {
+        /// 协议名(http/grpc/sql/…)。
+        #[arg(long)]
+        protocol: String,
+        /// 目标(URL / gRPC 端点 / 连接串)。
+        #[arg(long)]
+        target: String,
+        /// 载荷(HTTP body / gRPC 请求字节 / SQL 语句)。
+        #[arg(long)]
+        payload: Option<String>,
+        /// 协议附加参数 k=v(可重复;如 method=POST、gRPC 的 method=/pkg.Svc/M)。
+        #[arg(long = "meta")]
+        meta: Vec<String>,
+        /// 断言:状态码等于。
+        #[arg(long = "expect-status")]
+        expect_status: Option<i64>,
+        /// 断言:输出包含子串。
+        #[arg(long)]
+        contains: Option<String>,
+        /// 断言:延迟不超过 ms。
+        #[arg(long = "latency-under")]
+        latency_under: Option<u64>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -1666,6 +1695,37 @@ fn run(cli: Cli) -> R<()> {
                 )?),
                 RunnerCmd::Executions { agent } => {
                     pretty(&c.get(&format!("/runner-agent/{agent}/executions"), true)?)
+                }
+                RunnerCmd::Refresh { agent } => pretty(&c.post(
+                    &format!("/runner-agent/{agent}/refresh"),
+                    json!({}),
+                    true,
+                )?),
+                RunnerCmd::Probe { protocol, target, payload, meta, expect_status, contains, latency_under } => {
+                    let mut metadata = serde_json::Map::new();
+                    for kv in &meta {
+                        if let Some((k, v)) = kv.split_once('=') {
+                            metadata.insert(k.to_string(), json!(v));
+                        }
+                    }
+                    let mut assertions: Vec<Value> = Vec::new();
+                    if let Some(s) = expect_status {
+                        assertions.push(json!({"type": "status_is", "value": s}));
+                    }
+                    if let Some(sub) = &contains {
+                        assertions.push(json!({"type": "output_contains", "value": sub}));
+                    }
+                    if let Some(ms) = latency_under {
+                        assertions.push(json!({"type": "latency_under_ms", "value": ms}));
+                    }
+                    pretty(&c.post(
+                        "/runner/probe",
+                        json!({
+                            "protocol": protocol, "target": target, "payload": payload,
+                            "metadata": metadata, "assertions": assertions,
+                        }),
+                        true,
+                    )?)
                 }
             }
         }

@@ -6,7 +6,8 @@ use sqlx::{PgPool, Row};
 use api_runner::{Assertion, HttpMethod, RequestSpec};
 
 use crate::domain::{
-    CaseSpec, DispatchTarget, ExecutionRecord, NewRunnerAgent, RemoteResult, RunnerAgent,
+    AgentTarget, CaseSpec, DispatchTarget, ExecutionRecord, NewRunnerAgent, RemoteResult,
+    RunnerAgent,
 };
 use crate::ports::{CaseSpecSource, ExecutionStore, PortError, RunnerAgentStore};
 
@@ -27,15 +28,20 @@ fn map_err(e: sqlx::Error) -> PortError {
 
 #[async_trait]
 impl RunnerAgentStore for PgRunnerAgentStore {
-    async fn insert(&self, a: &NewRunnerAgent) -> Result<RunnerAgent, PortError> {
+    async fn insert(
+        &self,
+        a: &NewRunnerAgent,
+        protocols: &[String],
+    ) -> Result<RunnerAgent, PortError> {
         let row = sqlx::query(
-            "INSERT INTO ms_runner_agent (name, base_url, token, enabled) \
-             VALUES ($1, $2, $3, $4) RETURNING id, name, base_url, enabled",
+            "INSERT INTO ms_runner_agent (name, base_url, token, enabled, protocols) \
+             VALUES ($1, $2, $3, $4, $5) RETURNING id, name, base_url, enabled, protocols",
         )
         .bind(&a.name)
         .bind(&a.base_url)
         .bind(&a.token)
         .bind(a.enabled)
+        .bind(protocols)
         .fetch_one(&self.pool)
         .await
         .map_err(map_err)?;
@@ -44,12 +50,14 @@ impl RunnerAgentStore for PgRunnerAgentStore {
             name: row.try_get("name").map_err(map_err)?,
             base_url: row.try_get("base_url").map_err(map_err)?,
             enabled: row.try_get("enabled").map_err(map_err)?,
+            protocols: row.try_get("protocols").map_err(map_err)?,
         })
     }
 
     async fn list(&self) -> Result<Vec<RunnerAgent>, PortError> {
         let rows = sqlx::query(
-            "SELECT id, name, base_url, enabled FROM ms_runner_agent WHERE NOT deleted ORDER BY name",
+            "SELECT id, name, base_url, enabled, protocols FROM ms_runner_agent \
+             WHERE NOT deleted ORDER BY name",
         )
         .fetch_all(&self.pool)
         .await
@@ -61,6 +69,7 @@ impl RunnerAgentStore for PgRunnerAgentStore {
                     name: r.try_get("name").map_err(map_err)?,
                     base_url: r.try_get("base_url").map_err(map_err)?,
                     enabled: r.try_get("enabled").map_err(map_err)?,
+                    protocols: r.try_get("protocols").map_err(map_err)?,
                 })
             })
             .collect()
@@ -82,6 +91,45 @@ impl RunnerAgentStore for PgRunnerAgentStore {
             })),
             None => Ok(None),
         }
+    }
+
+    async fn agents_for_protocol(
+        &self,
+        protocol: &str,
+    ) -> Result<Vec<AgentTarget>, PortError> {
+        // protocols 是 text[];`$1 = ANY(protocols)` 选出支持该协议的 enabled agent。
+        let rows = sqlx::query(
+            "SELECT id, name, base_url, token FROM ms_runner_agent \
+             WHERE enabled AND NOT deleted AND $1 = ANY(protocols) ORDER BY name",
+        )
+        .bind(protocol)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(map_err)?;
+        rows.into_iter()
+            .map(|r| {
+                Ok(AgentTarget {
+                    id: r.try_get("id").map_err(map_err)?,
+                    name: r.try_get("name").map_err(map_err)?,
+                    target: DispatchTarget {
+                        base_url: r.try_get("base_url").map_err(map_err)?,
+                        token: r.try_get("token").map_err(map_err)?,
+                    },
+                })
+            })
+            .collect()
+    }
+
+    async fn set_protocols(&self, id: &str, protocols: &[String]) -> Result<bool, PortError> {
+        let res = sqlx::query(
+            "UPDATE ms_runner_agent SET protocols = $2 WHERE id = $1 AND NOT deleted",
+        )
+        .bind(id)
+        .bind(protocols)
+        .execute(&self.pool)
+        .await
+        .map_err(map_err)?;
+        Ok(res.rows_affected() > 0)
     }
 }
 

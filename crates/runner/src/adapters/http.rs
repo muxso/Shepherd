@@ -16,8 +16,11 @@ use utoipa::{OpenApi, ToSchema};
 use webauth::{AuthUser, SessionStore};
 
 use api_runner::{Assertion, RequestSpec};
+use probe::{ProbeAssertion, ProbeRequest};
 
-use crate::application::{RegisterError, RunCaseError, RunViaAgentError, RunnerService};
+use crate::application::{
+    RegisterError, RunCaseError, RunProbeError, RunViaAgentError, RunnerService,
+};
 use crate::domain::{ExecutionRecord, RunnerAgent};
 
 #[derive(Clone)]
@@ -37,7 +40,10 @@ pub fn router(svc: RunnerService, sessions: Arc<dyn SessionStore>) -> Router {
         .route("/runner-agent", post(register).get(list))
         .route("/runner-agent/{id}/run", post(run_via))
         .route("/runner-agent/{id}/run-case", post(run_case))
+        .route("/runner-agent/{id}/refresh", post(refresh))
         .route("/runner-agent/{id}/executions", get(executions))
+        // 按协议选 agent:用户只给协议,中央路由到支持该协议的 agent 就地执行。
+        .route("/runner/probe", post(run_probe))
         .with_state(RunnerState { svc, sessions })
 }
 
@@ -63,11 +69,19 @@ struct AgentResponse {
     name: String,
     base_url: String,
     enabled: bool,
+    /// 该 agent 支持的协议(注册时从其 /protocols 拉取)。
+    protocols: Vec<String>,
 }
 
 impl From<RunnerAgent> for AgentResponse {
     fn from(a: RunnerAgent) -> Self {
-        Self { id: a.id, name: a.name, base_url: a.base_url, enabled: a.enabled }
+        Self {
+            id: a.id,
+            name: a.name,
+            base_url: a.base_url,
+            enabled: a.enabled,
+            protocols: a.protocols,
+        }
     }
 }
 
@@ -202,10 +216,93 @@ async fn executions(State(st): State<RunnerState>, Path(id): Path<String>) -> Re
     }
 }
 
+/// 重拉某 agent 的 /protocols 并写回能力快照(agent 换 feature/重建后用)。
+#[utoipa::path(post, path = "/runner-agent/{id}/refresh", tag = "runner", params(("id" = String, Path)), responses((status = 200), (status = 404), (status = 502)), security(("bearer" = [])))]
+async fn refresh(user: AuthUser, State(st): State<RunnerState>, Path(id): Path<String>) -> Response {
+    if !user.can("RUNNER", "EDIT") {
+        return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
+    match st.svc.refresh_capabilities(&id).await {
+        Ok(protocols) => (StatusCode::OK, Json(protocols)).into_response(),
+        Err(RunViaAgentError::AgentNotFound) => {
+            (StatusCode::NOT_FOUND, "agent not found or disabled").into_response()
+        }
+        Err(RunViaAgentError::Backend(_)) => {
+            (StatusCode::BAD_GATEWAY, "agent unreachable").into_response()
+        }
+    }
+}
+
+/// 按协议派发请求体:协议无关的自包含探测(中央据 protocol 选 agent)。
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+struct ProbeBody {
+    /// 协议名(http/grpc/sql/…),据此选支持它的 agent。
+    protocol: String,
+    /// 目标(URL / gRPC 端点 / 连接串)。
+    target: String,
+    #[serde(default)]
+    payload: Option<String>,
+    /// 协议附加参数(HTTP method/headers、gRPC 方法路径 等)。
+    #[serde(default)]
+    #[schema(value_type = Object)]
+    metadata: std::collections::BTreeMap<String, String>,
+    /// 通用断言(probe ProbeAssertion)。
+    #[serde(default)]
+    #[schema(value_type = Vec<Object>)]
+    assertions: Vec<ProbeAssertion>,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+struct ProbeReportResponse {
+    /// 中央选中的 agent。
+    agent_id: String,
+    agent_name: String,
+    /// 探测判定结果(probe ProbeOutcome)。
+    #[schema(value_type = Object)]
+    outcome: probe::ProbeOutcome,
+}
+
+#[utoipa::path(post, path = "/runner/probe", tag = "runner", request_body = ProbeBody, responses((status = 200, body = ProbeReportResponse), (status = 404), (status = 502)), security(("bearer" = [])))]
+async fn run_probe(user: AuthUser, State(st): State<RunnerState>, Json(b): Json<ProbeBody>) -> Response {
+    if !user.can("RUNNER", "EXECUTE") {
+        return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
+    let req = ProbeRequest {
+        protocol: b.protocol,
+        target: b.target,
+        payload: b.payload,
+        metadata: b.metadata,
+        assertions: b.assertions,
+    };
+    match st.svc.run_probe(&req).await {
+        Ok(report) => (
+            StatusCode::OK,
+            Json(ProbeReportResponse {
+                agent_id: report.agent_id,
+                agent_name: report.agent_name,
+                outcome: report.outcome,
+            }),
+        )
+            .into_response(),
+        // 没有支持该协议的 agent:404(中央侧无可路由目标)。
+        Err(RunProbeError::NoAgent(_)) => {
+            (StatusCode::NOT_FOUND, "no agent supports this protocol").into_response()
+        }
+        Err(RunProbeError::Backend(_)) => {
+            (StatusCode::BAD_GATEWAY, "agent dispatch failed").into_response()
+        }
+    }
+}
+
 #[derive(OpenApi)]
 #[openapi(
-    paths(register, list, run_via, run_case, executions),
-    components(schemas(RegisterBody, AgentResponse, RunViaBody, RunCaseBody, ExecutionResponse)),
+    paths(register, list, run_via, run_case, refresh, executions, run_probe),
+    components(schemas(
+        RegisterBody, AgentResponse, RunViaBody, RunCaseBody, ExecutionResponse, ProbeBody,
+        ProbeReportResponse
+    )),
     tags((name = "runner", description = "远程执行 agent"))
 )]
 struct ApiDoc;
@@ -218,7 +315,8 @@ pub fn openapi() -> utoipa::openapi::OpenApi {
 mod tests {
     use super::*;
     use crate::adapters::{
-        InMemoryAgentStore, InMemoryCaseSpecSource, InMemoryExecutionStore, StubRemoteRunner,
+        InMemoryAgentStore, InMemoryCaseSpecSource, InMemoryExecutionStore, StubCapabilities,
+        StubRemoteProbe, StubRemoteRunner,
     };
     use axum::body::Body;
     use axum::http::Request;
@@ -227,14 +325,25 @@ mod tests {
     use webauth::testing::InMemorySessionStore;
 
     async fn app_full(perms: &str) -> (Router, String, Arc<InMemoryCaseSpecSource>) {
+        let (app, token, _caps, cases) = app_with_caps(perms).await;
+        (app, token, cases)
+    }
+
+    async fn app_with_caps(
+        perms: &str,
+    ) -> (Router, String, Arc<StubCapabilities>, Arc<InMemoryCaseSpecSource>) {
         let store = Arc::new(InMemoryAgentStore::new());
         let remote = Arc::new(StubRemoteRunner::success());
+        let probe = Arc::new(StubRemoteProbe);
+        let caps = Arc::new(StubCapabilities::new());
         let execs = Arc::new(InMemoryExecutionStore::new());
         let cases = Arc::new(InMemoryCaseSpecSource::new());
         let sessions = Arc::new(InMemorySessionStore::new());
         let set = PermissionSet::from_raw([perms.to_string()]).expect("perms");
         let token = sessions.create("u", set, 3600).await.expect("token");
-        (router(RunnerService::new(store, remote, execs, cases.clone()), sessions), token, cases)
+        let svc =
+            RunnerService::new(store, remote, probe, caps.clone(), execs, cases.clone());
+        (router(svc, sessions), token, caps, cases)
     }
 
     async fn app(perms: &str) -> (Router, String) {
@@ -350,6 +459,64 @@ mod tests {
         let (app, t) = app("RUNNER:READ").await;
         let r = app
             .oneshot(post("/runner-agent", r#"{"name":"e","baseUrl":"http://x"}"#, Some(&t)))
+            .await
+            .expect("r");
+        assert_eq!(r.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn probe_routes_by_protocol_to_matching_agent() {
+        let (app, t, caps, _c) = app_with_caps("RUNNER:READ+ADD+EXECUTE").await;
+        // 两个环境的 agent 自报不同能力。
+        caps.set("http://grpc-env:9100", &["http", "grpc"]);
+        caps.set("http://sql-env:9100", &["http", "sql"]);
+        for (name, url) in [("gRPC环境", "http://grpc-env:9100"), ("SQL环境", "http://sql-env:9100")] {
+            app.clone()
+                .oneshot(post(
+                    "/runner-agent",
+                    &format!(r#"{{"name":"{name}","baseUrl":"{url}"}}"#),
+                    Some(&t),
+                ))
+                .await
+                .expect("reg");
+        }
+
+        // 只给协议 → 中央路由到支持 grpc 的那个 agent。
+        let r = app
+            .clone()
+            .oneshot(post(
+                "/runner/probe",
+                r#"{"protocol":"grpc","target":"grpc-env:50051","assertions":[{"type":"success"}]}"#,
+                Some(&t),
+            ))
+            .await
+            .expect("r");
+        assert_eq!(r.status(), StatusCode::OK);
+        let v = json(r).await;
+        assert_eq!(v["agentName"], "gRPC环境");
+        assert_eq!(v["outcome"]["success"], true);
+
+        // 协议 sql → 落到 SQL环境。
+        let r = app
+            .clone()
+            .oneshot(post("/runner/probe", r#"{"protocol":"sql","target":"x"}"#, Some(&t)))
+            .await
+            .expect("r");
+        assert_eq!(json(r).await["agentName"], "SQL环境");
+
+        // 没有 agent 支持 redis → 404。
+        let r = app
+            .oneshot(post("/runner/probe", r#"{"protocol":"redis","target":"x"}"#, Some(&t)))
+            .await
+            .expect("r");
+        assert_eq!(r.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn probe_requires_execute() {
+        let (app, t, _caps, _c) = app_with_caps("RUNNER:READ").await;
+        let r = app
+            .oneshot(post("/runner/probe", r#"{"protocol":"http","target":"x"}"#, Some(&t)))
             .await
             .expect("r");
         assert_eq!(r.status(), StatusCode::FORBIDDEN);

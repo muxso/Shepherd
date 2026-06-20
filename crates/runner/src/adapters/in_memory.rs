@@ -5,11 +5,16 @@ use std::sync::Mutex;
 use async_trait::async_trait;
 
 use api_runner::{Assertion, RequestSpec};
+use probe::{ProbeOutcome, ProbeRequest, RawProbe};
 
 use crate::domain::{
-    CaseSpec, DispatchTarget, ExecutionRecord, NewRunnerAgent, RemoteResult, RunnerAgent,
+    AgentTarget, CaseSpec, DispatchTarget, ExecutionRecord, NewRunnerAgent, RemoteResult,
+    RunnerAgent,
 };
-use crate::ports::{CaseSpecSource, ExecutionStore, PortError, RemoteRunner, RunnerAgentStore};
+use crate::ports::{
+    AgentCapabilities, CaseSpecSource, ExecutionStore, PortError, RemoteProbe, RemoteRunner,
+    RunnerAgentStore,
+};
 
 #[derive(Default)]
 pub struct InMemoryAgentStore {
@@ -24,13 +29,18 @@ impl InMemoryAgentStore {
 
 #[async_trait]
 impl RunnerAgentStore for InMemoryAgentStore {
-    async fn insert(&self, a: &NewRunnerAgent) -> Result<RunnerAgent, PortError> {
+    async fn insert(
+        &self,
+        a: &NewRunnerAgent,
+        protocols: &[String],
+    ) -> Result<RunnerAgent, PortError> {
         let mut g = self.agents.lock().map_err(|e| PortError::Backend(e.to_string()))?;
         let view = RunnerAgent {
             id: format!("a{}", g.len() + 1),
             name: a.name.clone(),
             base_url: a.base_url.clone(),
             enabled: a.enabled,
+            protocols: protocols.to_vec(),
         };
         g.push((view.clone(), a.token.clone()));
         Ok(view)
@@ -54,6 +64,90 @@ impl RunnerAgentStore for InMemoryAgentStore {
             .iter()
             .find(|(v, _)| v.id == id && v.enabled)
             .map(|(v, tok)| DispatchTarget { base_url: v.base_url.clone(), token: tok.clone() }))
+    }
+
+    async fn agents_for_protocol(
+        &self,
+        protocol: &str,
+    ) -> Result<Vec<AgentTarget>, PortError> {
+        Ok(self
+            .agents
+            .lock()
+            .map_err(|e| PortError::Backend(e.to_string()))?
+            .iter()
+            .filter(|(v, _)| v.enabled && v.protocols.iter().any(|p| p == protocol))
+            .map(|(v, tok)| AgentTarget {
+                id: v.id.clone(),
+                name: v.name.clone(),
+                target: DispatchTarget { base_url: v.base_url.clone(), token: tok.clone() },
+            })
+            .collect())
+    }
+
+    async fn set_protocols(&self, id: &str, protocols: &[String]) -> Result<bool, PortError> {
+        let mut g = self.agents.lock().map_err(|e| PortError::Backend(e.to_string()))?;
+        match g.iter_mut().find(|(v, _)| v.id == id) {
+            Some((v, _)) => {
+                v.protocols = protocols.to_vec();
+                Ok(true)
+            }
+            None => Ok(false),
+        }
+    }
+}
+
+/// 桩协议能力探测:按 base_url 预置该 agent 自报的协议(测试路由用)。
+#[derive(Default)]
+pub struct StubCapabilities {
+    by_url: Mutex<Vec<(String, Vec<String>)>>,
+}
+
+impl StubCapabilities {
+    pub fn new() -> Self {
+        Self::default()
+    }
+    /// 预置:某 base_url 的 agent 自报支持这些协议。
+    pub fn set(&self, base_url: &str, protocols: &[&str]) {
+        self.by_url
+            .lock()
+            .expect("lock")
+            .push((base_url.to_string(), protocols.iter().map(|s| s.to_string()).collect()));
+    }
+}
+
+#[async_trait]
+impl AgentCapabilities for StubCapabilities {
+    async fn protocols(&self, target: &DispatchTarget) -> Result<Vec<String>, PortError> {
+        Ok(self
+            .by_url
+            .lock()
+            .map_err(|e| PortError::Backend(e.to_string()))?
+            .iter()
+            .find(|(u, _)| *u == target.base_url)
+            .map(|(_, p)| p.clone())
+            .unwrap_or_default())
+    }
+}
+
+/// 桩远程探测:不发网络,据本地空注册表合成结果(回报传输成功 + 断言判定)。
+pub struct StubRemoteProbe;
+
+#[async_trait]
+impl RemoteProbe for StubRemoteProbe {
+    async fn probe(
+        &self,
+        _target: &DispatchTarget,
+        req: &ProbeRequest,
+    ) -> Result<ProbeOutcome, PortError> {
+        // 模拟 agent 就地执行成功:transport_ok + 回显 protocol 作输出。
+        let raw = RawProbe {
+            transport_ok: true,
+            status: Some(200),
+            latency_ms: 1,
+            output: Some(req.protocol.clone()),
+            error: None,
+        };
+        Ok(ProbeOutcome::from_raw(raw, &req.assertions))
     }
 }
 
