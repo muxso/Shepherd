@@ -614,6 +614,11 @@ enum PlanCmd {
         #[arg(long)]
         id: String,
     },
+    /// 执行计划:跑挂入的用例并自动回写结果(随后 `plan report` 即真实数据)。
+    Run {
+        #[arg(long)]
+        id: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -1497,6 +1502,9 @@ fn run(cli: Cli) -> R<()> {
                     )?)
                 }
                 PlanCmd::Cases { id } => pretty(&c.get(&format!("/test-plan/{id}/cases"), true)?),
+                PlanCmd::Run { id } => {
+                    pretty(&c.post(&format!("/test-plan/{id}/run"), json!({}), true)?)
+                }
             }
         }
         Cmd::Api { cmd } => {
