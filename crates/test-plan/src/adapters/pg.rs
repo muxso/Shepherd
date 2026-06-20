@@ -1,7 +1,9 @@
 //! PostgreSQL 实现的 `PlanRepository`。
 
 use async_trait::async_trait;
-use crate::domain::{CaseCounts, NewPlan, Plan, PlanType};
+use crate::domain::{
+    AssertionResult, CaseCounts, CaseResult, CaseStatus, NewPlan, Plan, PlanCase, PlanType,
+};
 use crate::ports::{PlanRepository, RepoError};
 use sqlx::{PgPool, Row};
 
@@ -73,27 +75,29 @@ impl PlanRepository for PgPlanRepository {
     }
 
     async fn case_counts(&self, plan_id: &str) -> Result<CaseCounts, RepoError> {
-        let row = sqlx::query(
-            "SELECT pending, success, error, fake_error, block \
-             FROM ms_test_plan_case_count WHERE plan_id = $1",
+        // 由挂入用例的 status 聚合(取代手填计数表)。
+        let rows = sqlx::query(
+            "SELECT status, count(*)::bigint AS n FROM ms_test_plan_case \
+             WHERE plan_id = $1 GROUP BY status",
         )
         .bind(plan_id)
-        .fetch_optional(&self.pool)
+        .fetch_all(&self.pool)
         .await
         .map_err(map_err)?;
-
-        let Some(r) = row else { return Ok(CaseCounts::default()) };
-        let get = |name: &str| -> Result<u64, RepoError> {
-            let v: i64 = r.try_get(name).map_err(map_err)?;
-            Ok(v.max(0) as u64)
-        };
-        Ok(CaseCounts {
-            pending: get("pending")?,
-            success: get("success")?,
-            error: get("error")?,
-            fake_error: get("fake_error")?,
-            block: get("block")?,
-        })
+        let mut c = CaseCounts::default();
+        for r in &rows {
+            let status: String = r.try_get("status").map_err(map_err)?;
+            let n = r.try_get::<i64, _>("n").map_err(map_err)?.max(0) as u64;
+            match CaseStatus::parse(&status) {
+                Some(CaseStatus::Pending) => c.pending += n,
+                Some(CaseStatus::Success) => c.success += n,
+                Some(CaseStatus::Error) => c.error += n,
+                Some(CaseStatus::FakeError) => c.fake_error += n,
+                Some(CaseStatus::Block) => c.block += n,
+                None => {}
+            }
+        }
+        Ok(c)
     }
 
     async fn pass_threshold(&self, plan_id: &str) -> Result<f64, RepoError> {
@@ -106,6 +110,107 @@ impl PlanRepository for PgPlanRepository {
             Some(r) => Ok(r.try_get::<f64, _>("pass_threshold").map_err(map_err)?),
             None => Ok(0.0),
         }
+    }
+
+    async fn link_case(&self, plan_id: &str, case_id: &str, name: &str) -> Result<(), RepoError> {
+        sqlx::query(
+            "INSERT INTO ms_test_plan_case (plan_id, case_id, name, status) \
+             VALUES ($1, $2, $3, 'PENDING') ON CONFLICT (plan_id, case_id) DO NOTHING",
+        )
+        .bind(plan_id)
+        .bind(case_id)
+        .bind(name)
+        .execute(&self.pool)
+        .await
+        .map_err(map_err)?;
+        Ok(())
+    }
+
+    async fn record_result(
+        &self,
+        plan_id: &str,
+        case_id: &str,
+        status: CaseStatus,
+        result: Option<&CaseResult>,
+    ) -> Result<bool, RepoError> {
+        let result_json = result.map(result_to_json);
+        let res = sqlx::query(
+            "UPDATE ms_test_plan_case SET status = $3, result = $4, executed_at = now() \
+             WHERE plan_id = $1 AND case_id = $2",
+        )
+        .bind(plan_id)
+        .bind(case_id)
+        .bind(status.as_str())
+        .bind(result_json)
+        .execute(&self.pool)
+        .await
+        .map_err(map_err)?;
+        Ok(res.rows_affected() > 0)
+    }
+
+    async fn list_cases(&self, plan_id: &str) -> Result<Vec<PlanCase>, RepoError> {
+        let rows = sqlx::query(
+            "SELECT case_id, name, status, result FROM ms_test_plan_case \
+             WHERE plan_id = $1 ORDER BY executed_at NULLS LAST, name, case_id",
+        )
+        .bind(plan_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(map_err)?;
+        rows.iter()
+            .map(|r| {
+                let status: String = r.try_get("status").map_err(map_err)?;
+                let result_json: Option<serde_json::Value> = r.try_get("result").map_err(map_err)?;
+                Ok(PlanCase {
+                    case_id: r.try_get("case_id").map_err(map_err)?,
+                    name: r.try_get("name").map_err(map_err)?,
+                    status: CaseStatus::parse(&status).unwrap_or(CaseStatus::Pending),
+                    result: result_json.map(|v| result_from_json(&v)),
+                })
+            })
+            .collect()
+    }
+}
+
+/// CaseResult → jsonb(明细落库)。
+fn result_to_json(r: &CaseResult) -> serde_json::Value {
+    serde_json::json!({
+        "latencyMs": r.latency_ms,
+        "responseSize": r.response_size,
+        "statusCode": r.status_code,
+        "body": r.body,
+        "assertions": r.assertions.iter().map(|a| serde_json::json!({
+            "item": a.item, "actual": a.actual, "condition": a.condition,
+            "expected": a.expected, "passed": a.passed, "reason": a.reason,
+        })).collect::<Vec<_>>(),
+    })
+}
+
+/// jsonb → CaseResult(形态不符的字段安全回落)。
+fn result_from_json(v: &serde_json::Value) -> CaseResult {
+    let s = |k: &str| v.get(k).and_then(|x| x.as_str()).unwrap_or_default().to_string();
+    let assertions = v
+        .get("assertions")
+        .and_then(|a| a.as_array())
+        .map(|arr| {
+            arr.iter()
+                .map(|a| AssertionResult {
+                    item: a.get("item").and_then(|x| x.as_str()).unwrap_or_default().to_string(),
+                    actual: a.get("actual").and_then(|x| x.as_str()).unwrap_or_default().to_string(),
+                    condition: a.get("condition").and_then(|x| x.as_str()).unwrap_or_default().to_string(),
+                    expected: a.get("expected").and_then(|x| x.as_str()).unwrap_or_default().to_string(),
+                    passed: a.get("passed").and_then(|x| x.as_bool()).unwrap_or(false),
+                    reason: a.get("reason").and_then(|x| x.as_str()).unwrap_or_default().to_string(),
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    CaseResult {
+        latency_ms: v.get("latencyMs").and_then(|x| x.as_u64()).unwrap_or(0),
+        response_size: v.get("responseSize").and_then(|x| x.as_u64()).unwrap_or(0),
+        status_code: v.get("statusCode").and_then(|x| x.as_i64()),
+        assertions,
+        body: { let b = s("body"); if b.is_empty() { None } else { Some(b) } },
     }
 }
 
@@ -233,7 +338,7 @@ mod tests {
         let url = std::env::var("DATABASE_URL").expect("set DATABASE_URL");
         let pool = PgPool::connect(&url).await.expect("connect");
         migrate::run(&pool).await.expect("migrate");
-        sqlx::raw_sql("TRUNCATE ms_test_plan, ms_test_plan_case_count")
+        sqlx::raw_sql("TRUNCATE ms_test_plan, ms_test_plan_case")
             .execute(&pool)
             .await
             .expect("truncate");
@@ -259,18 +364,49 @@ mod tests {
         assert_eq!(kids.len(), 1);
         assert_eq!(kids[0].id, child.id);
 
-        // case_counts:无记录默认 0;写入后读回
+        // case_counts:无挂入用例默认 0;挂入 + 回写后按 status 聚合
         assert_eq!(repo.case_counts(&child.id).await.expect("c"), CaseCounts::default());
-        sqlx::query(
-            "INSERT INTO ms_test_plan_case_count (plan_id, pending, success) VALUES ($1, 1, 2)",
-        )
-        .bind(&child.id)
-        .execute(&pool)
-        .await
-        .expect("seed counts");
+        repo.link_case(&child.id, "ca", "用例A").await.expect("link a");
+        repo.link_case(&child.id, "cb", "用例B").await.expect("link b");
+        repo.link_case(&child.id, "cc", "用例C").await.expect("link c");
+        // link 幂等
+        repo.link_case(&child.id, "ca", "用例A").await.expect("link a again");
+        let res = CaseResult {
+            latency_ms: 12,
+            response_size: 3,
+            status_code: Some(200),
+            assertions: vec![AssertionResult {
+                item: "状态码".into(),
+                actual: "200".into(),
+                condition: "等于".into(),
+                expected: "200".into(),
+                passed: true,
+                reason: String::new(),
+            }],
+            body: Some("ok".into()),
+        };
+        assert!(repo.record_result(&child.id, "ca", CaseStatus::Success, Some(&res)).await.expect("rec a"));
+        assert!(repo.record_result(&child.id, "cb", CaseStatus::Success, None).await.expect("rec b"));
+        // cc 留 PENDING
+        assert!(!repo.record_result(&child.id, "ghost", CaseStatus::Success, None).await.expect("rec ghost"));
+
         let c = repo.case_counts(&child.id).await.expect("c");
-        assert_eq!(c.pending, 1);
         assert_eq!(c.success, 2);
+        assert_eq!(c.pending, 1);
+        assert_eq!(c.total(), 3);
+
+        // list_cases 含明细往返
+        let cases = repo.list_cases(&child.id).await.expect("list");
+        assert_eq!(cases.len(), 3);
+        let ca = cases.iter().find(|x| x.case_id == "ca").expect("ca");
+        assert_eq!(ca.name, "用例A");
+        assert_eq!(ca.status, CaseStatus::Success);
+        let r = ca.result.as_ref().expect("result");
+        assert_eq!(r.latency_ms, 12);
+        assert_eq!(r.status_code, Some(200));
+        assert_eq!(r.assertions.len(), 1);
+        assert!(r.assertions[0].passed);
+        assert_eq!(r.body.as_deref(), Some("ok"));
 
         // pass_threshold 默认 1.0
         assert_eq!(repo.pass_threshold(&child.id).await.expect("t"), 1.0);
