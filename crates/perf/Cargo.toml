@@ -14,10 +14,13 @@ serde = { version = "1", features = ["derive"] }
 async-trait = "0.1"
 tokio = { version = "1", features = ["rt", "macros", "time"], optional = true }
 api-runner = { path = "../api-runner", optional = true }
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "postgres", "json"], optional = true }
+serde_json = { version = "1", optional = true }
 
 [features]
 engine = ["dep:tokio"]
 api-runner-exec = ["dep:api-runner"]
+pg = ["dep:sqlx", "dep:serde_json"]
 
 [dev-dependencies]
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "time", "net"] }
