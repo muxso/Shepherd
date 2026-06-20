@@ -82,16 +82,43 @@ struct RunPerfBody {
     /// 时长模式:给定则持续压测该毫秒数(忽略 iterations);省略则按 iterations 固定次数。
     #[serde(default)]
     duration_ms: Option<u64>,
-    /// 期望状态码:给定则成功=该码命中;省略则成功=HTTP 可达。
+    /// 期望状态码:给定 → StatusIs 断言(HTTP=状态码;其它协议 OK 时 status=0)。
     #[serde(default)]
     expect_status: Option<u16>,
-    /// 协议(经 probe 注册表):HTTP(默认)| SQL | GRPC | REDIS | …(取决于启用的插件)。
-    /// 非 HTTP 时 url 为目标(连接串/端点),query 为载荷(SQL=语句、GRPC=方法路径、REDIS=命令)。
+    /// 断言:输出包含子串(OutputContains)。
+    #[serde(default)]
+    expect_contains: Option<String>,
+    /// 断言:输出等于(OutputEquals)。
+    #[serde(default)]
+    expect_equals: Option<String>,
+    /// 断言:单次延迟不超过该毫秒数(LatencyUnderMs)。
+    #[serde(default)]
+    latency_under_ms: Option<u64>,
+    /// 协议(经 probe 注册表):HTTP(默认)| SQL | GRPC | REDIS | MYSQL | WEBSOCKET | …(取决于启用的插件)。
+    /// 非 HTTP 时 url 为目标(连接串/端点),query 为载荷(SQL=语句、GRPC=方法路径、REDIS=命令、WS=消息)。
     #[serde(default = "default_protocol")]
     protocol: String,
-    /// 协议载荷:SQL=语句(默认 SELECT 1)、GRPC=方法路径、REDIS=命令(默认 PING)。
+    /// 协议载荷:SQL=语句(默认 SELECT 1)、GRPC=方法路径、REDIS=命令(默认 PING)、WS=消息。
     #[serde(default)]
     query: Option<String>,
+}
+
+/// 把请求里的断言字段统一映射成 probe 断言(对**任意协议**生效)。
+fn build_assertions(req: &RunPerfBody) -> Vec<ProbeAssertion> {
+    let mut a = Vec::new();
+    if let Some(c) = req.expect_status {
+        a.push(ProbeAssertion::StatusIs(c as i64));
+    }
+    if let Some(s) = req.expect_contains.clone() {
+        a.push(ProbeAssertion::OutputContains(s));
+    }
+    if let Some(s) = req.expect_equals.clone() {
+        a.push(ProbeAssertion::OutputEquals(s));
+    }
+    if let Some(ms) = req.latency_under_ms {
+        a.push(ProbeAssertion::LatencyUnderMs(ms));
+    }
+    a
 }
 
 fn default_protocol() -> String {
@@ -144,6 +171,8 @@ async fn run_perf(user: AuthUser, State(st): State<PerfState>, Json(req): Json<R
     //    加协议 = 加 probe 插件,这里无需再改。报告记录:HTTP 记 method+url;
     //    SQL 记 method=SQL、url=语句(不存连接串,避免泄漏口令);GRPC 记 method=GRPC、url=方法路径。
     //    连接惰性建立并由插件按 target 缓存(压测复用连接);grpc 缺方法路径是纯校验,提前 400。
+    //    断言(expect_status/contains/equals/latency)对**任意协议**统一生效。
+    let assertions = build_assertions(&req);
     let proto = req.protocol.to_lowercase();
     let (probe_req, report_method, report_url): (ProbeRequest, String, String) = if proto == "sql" {
         let query = req.query.clone().unwrap_or_else(|| "SELECT 1".to_string());
@@ -153,7 +182,7 @@ async fn run_perf(user: AuthUser, State(st): State<PerfState>, Json(req): Json<R
                 target: req.url.clone(),
                 payload: Some(query.clone()),
                 metadata: std::collections::BTreeMap::new(),
-                assertions: vec![],
+                assertions,
             },
             "SQL".to_string(),
             query,
@@ -173,7 +202,7 @@ async fn run_perf(user: AuthUser, State(st): State<PerfState>, Json(req): Json<R
                 target: req.url.clone(),
                 payload: None,
                 metadata,
-                assertions: vec![],
+                assertions,
             },
             "GRPC".to_string(),
             method,
@@ -181,11 +210,7 @@ async fn run_perf(user: AuthUser, State(st): State<PerfState>, Json(req): Json<R
     } else if proto == "http" {
         let mut metadata = std::collections::BTreeMap::new();
         metadata.insert("method".to_string(), req.method.to_uppercase());
-        // expect_status 给定 → StatusIs 断言;省略 → 空断言(成功=HTTP 可达)。
-        let assertions = req
-            .expect_status
-            .map(|c| vec![ProbeAssertion::StatusIs(c as i64)])
-            .unwrap_or_default();
+        // 无断言时:成功=HTTP 可达(传输成功);有 expect_* 则按断言判定。
         (
             ProbeRequest {
                 protocol: "http".to_string(),
@@ -198,8 +223,8 @@ async fn run_perf(user: AuthUser, State(st): State<PerfState>, Json(req): Json<R
             req.url.clone(),
         )
     } else {
-        // 通用协议(redis 及未来插件):url=目标,query=载荷(redis 则为命令,默认 PING)。
-        // 加协议无需改这里 —— 只要 probe 有对应插件即可。
+        // 通用协议(redis/mysql/websocket 及未来插件):url=目标,query=载荷。
+        // 加协议无需改这里 —— 只要 probe 有对应插件即可;断言同样生效。
         let payload = req.query.clone();
         (
             ProbeRequest {
@@ -207,7 +232,7 @@ async fn run_perf(user: AuthUser, State(st): State<PerfState>, Json(req): Json<R
                 target: req.url.clone(),
                 payload: payload.clone(),
                 metadata: std::collections::BTreeMap::new(),
-                assertions: vec![],
+                assertions,
             },
             proto.to_uppercase(),
             payload.unwrap_or_else(|| req.url.clone()),
@@ -274,4 +299,43 @@ struct ApiDoc;
 
 pub fn openapi() -> utoipa::openapi::OpenApi {
     ApiDoc::openapi()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn body(v: serde_json::Value) -> RunPerfBody {
+        serde_json::from_value(v).expect("body")
+    }
+
+    #[test]
+    fn no_assertion_fields_yields_empty() {
+        // 无 expect_* → 空断言(成功=传输可达)。
+        assert!(build_assertions(&body(json!({"url": "http://x"}))).is_empty());
+    }
+
+    #[test]
+    fn maps_all_assertion_fields() {
+        let a = build_assertions(&body(json!({
+            "url": "http://x",
+            "expectStatus": 200,
+            "expectContains": "ok",
+            "expectEquals": "PONG",
+            "latencyUnderMs": 500
+        })));
+        assert_eq!(a.len(), 4);
+        assert!(a.contains(&ProbeAssertion::StatusIs(200)));
+        assert!(a.contains(&ProbeAssertion::OutputContains("ok".into())));
+        assert!(a.contains(&ProbeAssertion::OutputEquals("PONG".into())));
+        assert!(a.contains(&ProbeAssertion::LatencyUnderMs(500)));
+    }
+
+    #[test]
+    fn maps_subset() {
+        // 只给 contains → 只产出 OutputContains(redis/ws/mysql 压测带断言的常见用法)。
+        let a = build_assertions(&body(json!({"url": "redis://x", "expectContains": "hello"})));
+        assert_eq!(a, vec![ProbeAssertion::OutputContains("hello".into())]);
+    }
 }

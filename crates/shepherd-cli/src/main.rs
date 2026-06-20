@@ -183,13 +183,22 @@ enum PerfCmd {
         /// 时长模式:持续压测该毫秒数(给定则忽略 --iterations)。
         #[arg(long = "duration-ms")]
         duration_ms: Option<u64>,
-        /// 期望状态码(给定则成功=该码命中;省略则成功=HTTP 可达)。
+        /// 断言:期望状态码(HTTP=状态码;其它协议 OK 时为 0)。
         #[arg(long = "expect-status")]
         expect_status: Option<u16>,
-        /// 协议:HTTP(默认)| SQL。SQL 时 --url 为连接串、--query 为语句。
+        /// 断言:输出包含子串。
+        #[arg(long)]
+        contains: Option<String>,
+        /// 断言:输出等于。
+        #[arg(long)]
+        equals: Option<String>,
+        /// 断言:单次延迟不超过该毫秒数。
+        #[arg(long = "latency-under")]
+        latency_under: Option<u64>,
+        /// 协议:HTTP(默认)| SQL | GRPC | REDIS | MYSQL | WEBSOCKET。非 HTTP 时 --url 为目标、--query 为载荷。
         #[arg(long, default_value = "HTTP")]
         protocol: String,
-        /// SQL 协议待压测语句(默认 SELECT 1)。
+        /// 协议载荷:SQL=语句、GRPC=方法路径、REDIS=命令、WS=消息。
         #[arg(long)]
         query: Option<String>,
         #[arg(long, default_value = "")]
@@ -1732,12 +1741,14 @@ fn run(cli: Cli) -> R<()> {
         Cmd::Perf { cmd } => {
             let c = Client::new(Config::load())?;
             match cmd {
-                PerfCmd::Run { url, method, concurrency, iterations, duration_ms, expect_status, protocol, query, project } => {
+                PerfCmd::Run { url, method, concurrency, iterations, duration_ms, expect_status, contains, equals, latency_under, protocol, query, project } => {
                     pretty(&c.post(
                         "/perf/run",
                         json!({"url": url, "method": method, "concurrency": concurrency,
                                "iterations": iterations, "durationMs": duration_ms,
-                               "expectStatus": expect_status, "protocol": protocol, "query": query,
+                               "expectStatus": expect_status, "expectContains": contains,
+                               "expectEquals": equals, "latencyUnderMs": latency_under,
+                               "protocol": protocol, "query": query,
                                "projectId": project}),
                         true,
                     )?)
