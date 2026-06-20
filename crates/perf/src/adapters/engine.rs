@@ -9,8 +9,16 @@ use std::time::Instant;
 use crate::domain::{aggregate, LoadPlan, LoadReport, Sample};
 use crate::ports::RequestExecutor;
 
-/// 跑一轮压测:返回聚合报告(吞吐/错误率/延迟分位)。
+/// 跑一轮压测:返回聚合报告(吞吐/错误率/延迟分位)。原始样本不保留。
 pub async fn run_load(plan: &LoadPlan, exec: Arc<dyn RequestExecutor>) -> LoadReport {
+    run_collect(plan, exec).await.0
+}
+
+/// 同 [`run_load`],但额外返回**逐请求原始样本**(供 `SampleSink` 落 Parquet/对象存储)。
+pub async fn run_collect(
+    plan: &LoadPlan,
+    exec: Arc<dyn RequestExecutor>,
+) -> (LoadReport, Vec<Sample>) {
     let base = plan.iterations / plan.concurrency;
     let extra = plan.iterations % plan.concurrency;
 
@@ -41,7 +49,7 @@ pub async fn run_load(plan: &LoadPlan, exec: Arc<dyn RequestExecutor>) -> LoadRe
         }
     }
     let elapsed_ms = start.elapsed().as_millis() as u64;
-    aggregate(&samples, elapsed_ms)
+    (aggregate(&samples, elapsed_ms), samples)
 }
 
 #[cfg(test)]
