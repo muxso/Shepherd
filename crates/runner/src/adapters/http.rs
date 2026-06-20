@@ -8,7 +8,7 @@ use axum::{
     extract::{FromRef, Path, State},
     http::StatusCode,
     response::{IntoResponse, Response},
-    routing::post,
+    routing::{get, post},
     Json, Router,
 };
 use serde::{Deserialize, Serialize};
@@ -18,7 +18,7 @@ use webauth::{AuthUser, SessionStore};
 use api_runner::{Assertion, RequestSpec};
 
 use crate::application::{RegisterError, RunViaAgentError, RunnerService};
-use crate::domain::RunnerAgent;
+use crate::domain::{ExecutionRecord, RunnerAgent};
 
 #[derive(Clone)]
 struct RunnerState {
@@ -36,6 +36,7 @@ pub fn router(svc: RunnerService, sessions: Arc<dyn SessionStore>) -> Router {
     Router::new()
         .route("/runner-agent", post(register).get(list))
         .route("/runner-agent/{id}/run", post(run_via))
+        .route("/runner-agent/{id}/executions", get(executions))
         .with_state(RunnerState { svc, sessions })
 }
 
@@ -130,10 +131,52 @@ async fn run_via(
     }
 }
 
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+struct ExecutionResponse {
+    id: String,
+    agent_id: String,
+    method: String,
+    url: String,
+    outcome: String,
+    status: Option<u16>,
+    elapsed_ms: Option<u64>,
+    failures: Vec<String>,
+    executed_at: String,
+}
+
+impl From<ExecutionRecord> for ExecutionResponse {
+    fn from(e: ExecutionRecord) -> Self {
+        Self {
+            id: e.id,
+            agent_id: e.agent_id,
+            method: e.method,
+            url: e.url,
+            outcome: e.outcome,
+            status: e.status,
+            elapsed_ms: e.elapsed_ms,
+            failures: e.failures,
+            executed_at: e.executed_at,
+        }
+    }
+}
+
+#[utoipa::path(get, path = "/runner-agent/{id}/executions", tag = "runner", params(("id" = String, Path)), responses((status = 200, body = [ExecutionResponse])))]
+async fn executions(State(st): State<RunnerState>, Path(id): Path<String>) -> Response {
+    match st.svc.executions(&id, 50).await {
+        Ok(list) => {
+            let items: Vec<ExecutionResponse> =
+                list.into_iter().map(ExecutionResponse::from).collect();
+            (StatusCode::OK, Json(items)).into_response()
+        }
+        Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
+    }
+}
+
 #[derive(OpenApi)]
 #[openapi(
-    paths(register, list, run_via),
-    components(schemas(RegisterBody, AgentResponse, RunViaBody)),
+    paths(register, list, run_via, executions),
+    components(schemas(RegisterBody, AgentResponse, RunViaBody, ExecutionResponse)),
     tags((name = "runner", description = "远程执行 agent"))
 )]
 struct ApiDoc;
@@ -145,7 +188,7 @@ pub fn openapi() -> utoipa::openapi::OpenApi {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::adapters::{InMemoryAgentStore, StubRemoteRunner};
+    use crate::adapters::{InMemoryAgentStore, InMemoryExecutionStore, StubRemoteRunner};
     use axum::body::Body;
     use axum::http::Request;
     use kernel::permission::PermissionSet;
@@ -155,10 +198,11 @@ mod tests {
     async fn app(perms: &str) -> (Router, String) {
         let store = Arc::new(InMemoryAgentStore::new());
         let remote = Arc::new(StubRemoteRunner::success());
+        let execs = Arc::new(InMemoryExecutionStore::new());
         let sessions = Arc::new(InMemorySessionStore::new());
         let set = PermissionSet::from_raw([perms.to_string()]).expect("perms");
         let token = sessions.create("u", set, 3600).await.expect("token");
-        (router(RunnerService::new(store, remote), sessions), token)
+        (router(RunnerService::new(store, remote, execs), sessions), token)
     }
 
     fn post(uri: &str, body: &str, token: Option<&str>) -> Request<Body> {
@@ -191,6 +235,7 @@ mod tests {
 
         // 派用例给该 agent(桩远程 → SUCCESS)
         let r = app
+            .clone()
             .oneshot(post(
                 &format!("/runner-agent/{id}/run"),
                 r#"{"request":{"method":"GET","url":"http://t/x","headers":[],"body":null},"assertions":[{"type":"StatusIs","args":200}]}"#,
@@ -200,6 +245,22 @@ mod tests {
             .expect("r");
         assert_eq!(r.status(), StatusCode::OK);
         assert_eq!(json(r).await["outcome"], "SUCCESS");
+
+        // 执行历史:刚那次派发应入档。
+        let r = app
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/runner-agent/{id}/executions"))
+                    .body(Body::empty())
+                    .expect("req"),
+            )
+            .await
+            .expect("r");
+        assert_eq!(r.status(), StatusCode::OK);
+        let v = json(r).await;
+        assert_eq!(v.as_array().expect("arr").len(), 1);
+        assert_eq!(v[0]["outcome"], "SUCCESS");
+        assert_eq!(v[0]["method"], "GET");
     }
 
     #[tokio::test]
