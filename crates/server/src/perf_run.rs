@@ -85,10 +85,11 @@ struct RunPerfBody {
     /// 期望状态码:给定则成功=该码命中;省略则成功=HTTP 可达。
     #[serde(default)]
     expect_status: Option<u16>,
-    /// 协议:HTTP(默认)| SQL。SQL 时 url 为连接串、query 为待压测语句。
+    /// 协议(经 probe 注册表):HTTP(默认)| SQL | GRPC | REDIS | …(取决于启用的插件)。
+    /// 非 HTTP 时 url 为目标(连接串/端点),query 为载荷(SQL=语句、GRPC=方法路径、REDIS=命令)。
     #[serde(default = "default_protocol")]
     protocol: String,
-    /// SQL 协议待压测的语句(默认 SELECT 1)。
+    /// 协议载荷:SQL=语句(默认 SELECT 1)、GRPC=方法路径、REDIS=命令(默认 PING)。
     #[serde(default)]
     query: Option<String>,
 }
@@ -177,7 +178,7 @@ async fn run_perf(user: AuthUser, State(st): State<PerfState>, Json(req): Json<R
             "GRPC".to_string(),
             method,
         )
-    } else {
+    } else if proto == "http" {
         let mut metadata = std::collections::BTreeMap::new();
         metadata.insert("method".to_string(), req.method.to_uppercase());
         // expect_status 给定 → StatusIs 断言;省略 → 空断言(成功=HTTP 可达)。
@@ -195,6 +196,21 @@ async fn run_perf(user: AuthUser, State(st): State<PerfState>, Json(req): Json<R
             },
             req.method.to_uppercase(),
             req.url.clone(),
+        )
+    } else {
+        // 通用协议(redis 及未来插件):url=目标,query=载荷(redis 则为命令,默认 PING)。
+        // 加协议无需改这里 —— 只要 probe 有对应插件即可。
+        let payload = req.query.clone();
+        (
+            ProbeRequest {
+                protocol: proto.clone(),
+                target: req.url.clone(),
+                payload: payload.clone(),
+                metadata: std::collections::BTreeMap::new(),
+                assertions: vec![],
+            },
+            proto.to_uppercase(),
+            payload.unwrap_or_else(|| req.url.clone()),
         )
     };
     // 整轮压测共享一个注册表实例:插件内部按 target 缓存连接,worker 间复用;本轮结束随之释放。
