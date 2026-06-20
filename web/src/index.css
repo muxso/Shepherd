@@ -1,0 +1,12 @@
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+body {
+  font-family: -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif;
+}
+.ms-mono {
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+}
