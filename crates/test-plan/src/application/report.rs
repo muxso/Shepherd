@@ -366,6 +366,123 @@ pub fn report_html(name: &str, stats: &PlanStatistics, cases: &[PlanCase]) -> St
     )
 }
 
+// ===== Markdown 导出(纯文本、可 diff/可嵌入;不依赖 PDF) =====
+
+/// markdown 表格单元转义:竖线与换行会破坏表格。
+fn md_cell(s: &str) -> String {
+    s.replace('|', "\\|").replace('\n', " ")
+}
+
+fn md_status(status: CaseStatus) -> &'static str {
+    match status {
+        CaseStatus::Success => "通过",
+        CaseStatus::Error => "失败",
+        CaseStatus::FakeError => "误报",
+        CaseStatus::Block => "阻塞",
+        CaseStatus::Pending => "未执行",
+    }
+}
+
+fn md_assertions(out: &mut String, a: &[AssertionResult]) {
+    if a.is_empty() {
+        return;
+    }
+    out.push_str("\n| 断言项 | 返回值 | 匹配条件 | 匹配值 | 状态 | 原因 |\n");
+    out.push_str("|---|---|---|---|---|---|\n");
+    for x in a {
+        out.push_str(&format!(
+            "| {} | {} | {} | {} | {} | {} |\n",
+            md_cell(&x.item),
+            md_cell(&x.actual),
+            md_cell(&x.condition),
+            md_cell(&x.expected),
+            if x.passed { "成功" } else { "失败" },
+            md_cell(&x.reason),
+        ));
+    }
+}
+
+fn md_steps(out: &mut String, steps: &[StepResult], depth: usize) {
+    for s in steps {
+        let indent = "  ".repeat(depth);
+        let code = s.status_code.map(|c| format!(" · 状态码 {c}")).unwrap_or_default();
+        out.push_str(&format!(
+            "{indent}- [{}] {}（{}{code} · {} ms）\n",
+            md_status(s.status),
+            md_cell(&s.name),
+            md_cell(&s.kind),
+            s.latency_ms,
+        ));
+        md_steps(out, &s.children, depth + 1);
+    }
+}
+
+/// 由计划名 + 统计 + 逐用例明细生成 Markdown 报告(与 HTML 报告同源数据)。
+pub fn report_markdown(name: &str, stats: &PlanStatistics, cases: &[PlanCase]) -> String {
+    let verdict = if stats.is_pass { "通过" } else { "未通过" };
+    let total_latency: u64 =
+        cases.iter().filter_map(|c| c.result.as_ref()).map(|r| r.latency_ms).sum();
+    let (mut at, mut ap) = (0u64, 0u64);
+    let mut cnt = [0u64; 5]; // succ,err,fake,block,pend
+    for c in cases {
+        match c.status {
+            CaseStatus::Success => cnt[0] += 1,
+            CaseStatus::Error => cnt[1] += 1,
+            CaseStatus::FakeError => cnt[2] += 1,
+            CaseStatus::Block => cnt[3] += 1,
+            CaseStatus::Pending => cnt[4] += 1,
+        }
+        if let Some(r) = &c.result {
+            at += r.assertions.len() as u64;
+            ap += r.assertions.iter().filter(|a| a.passed).count() as u64;
+        }
+    }
+    let assert_pct = if at == 0 { 100.0 } else { ap as f64 / at as f64 * 100.0 };
+
+    let mut o = String::new();
+    o.push_str(&format!("# 测试计划报告 · {name}\n\n"));
+    o.push_str(&format!("状态:{} · 结论:**{verdict}**\n\n", stats.status.as_str()));
+    o.push_str("## 报告分析\n\n");
+    o.push_str(&format!("- 用例总数:{}\n", stats.total));
+    o.push_str(&format!("- 报告总耗时:{total_latency} ms\n"));
+    o.push_str(&format!("- 执行率:{:.1}%\n", stats.execute_rate * 100.0));
+    o.push_str(&format!("- 通过率:{:.1}%\n", stats.pass_rate * 100.0));
+    o.push_str(&format!("- 断言通过率:{assert_pct:.1}% ({ap}/{at})\n\n"));
+    o.push_str("## 用例状态分布\n\n");
+    o.push_str(&format!(
+        "- 通过 {} · 失败 {} · 误报 {} · 阻塞 {} · 未执行 {}\n\n",
+        cnt[0], cnt[1], cnt[2], cnt[3], cnt[4]
+    ));
+
+    o.push_str("## 报告明细\n");
+    if cases.is_empty() {
+        o.push_str("\n_该计划暂无挂入的用例_\n");
+        return o;
+    }
+    for (i, c) in cases.iter().enumerate() {
+        let meta = c
+            .result
+            .as_ref()
+            .map(|r| {
+                let code = r.status_code.map(|s| format!("状态码 {s} · ")).unwrap_or_default();
+                format!(" — {code}响应时间 {} ms · 响应大小 {} bytes", r.latency_ms, r.response_size)
+            })
+            .unwrap_or_default();
+        o.push_str(&format!("\n### {}. {} `[{}]`{meta}\n", i + 1, md_cell(&c.name), md_status(c.status)));
+        if let Some(r) = &c.result {
+            if !r.steps.is_empty() {
+                o.push_str("\n**步骤**\n\n");
+                md_steps(&mut o, &r.steps, 0);
+            }
+            md_assertions(&mut o, &r.assertions);
+            if let Some(b) = r.body.as_ref().filter(|b| !b.is_empty()) {
+                o.push_str(&format!("\n**响应体**\n\n```\n{}\n```\n", b));
+            }
+        }
+    }
+    o
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -471,6 +588,27 @@ mod tests {
                 ..Default::default()
             }),
         }
+    }
+
+    #[test]
+    fn renders_markdown_report() {
+        let md = report_markdown("冒烟", &stats(), &cases());
+        assert!(md.starts_with("# 测试计划报告 · 冒烟"));
+        assert!(md.contains("## 报告分析"));
+        assert!(md.contains("## 报告明细"));
+        assert!(md.contains("健康检查"));
+        assert!(md.contains("| 断言项 |")); // 断言表
+        assert!(md.contains("期望 500,实际 200"));
+        assert!(md.contains("20 ms")); // 报告总耗时 12+8
+        assert!(!md.contains("<svg")); // 纯 markdown,无 HTML
+    }
+
+    #[test]
+    fn markdown_renders_scenario_steps() {
+        let md = report_markdown("场景", &stats(), &[scenario_case()]);
+        assert!(md.contains("**步骤**"));
+        assert!(md.contains("登录"));
+        assert!(md.contains("创建订单")); // 嵌套子步骤
     }
 
     #[test]
