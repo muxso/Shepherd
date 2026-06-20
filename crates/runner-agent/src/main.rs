@@ -22,10 +22,13 @@ use axum::{
 use serde::{Deserialize, Serialize};
 
 use api_runner::{Assertion, CaseOutcome, ReqwestRunner, RequestSpec};
+use probe::{PluginRegistry, ProbeRequest};
 
 #[derive(Clone)]
 struct AgentState {
     runner: Arc<ReqwestRunner>,
+    /// 协议插件注册表(本 agent 构建启用的协议)。
+    registry: Arc<PluginRegistry>,
     /// 设了则要求 Bearer 鉴权。
     token: Option<String>,
 }
@@ -81,10 +84,39 @@ async fn run(State(st): State<AgentState>, headers: HeaderMap, Json(body): Json<
     .into_response()
 }
 
+/// Bearer 鉴权(设了 token 才校验)。
+fn authorized(token: &Option<String>, headers: &HeaderMap) -> bool {
+    match token {
+        None => true,
+        Some(expected) => headers
+            .get("authorization")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.strip_prefix("Bearer "))
+            .map(|t| t == expected)
+            .unwrap_or(false),
+    }
+}
+
+/// 多协议探测:据 protocol 经插件执行(http 默认;grpc/sql 等按本 agent 启用的 feature),
+/// 输出由通用断言判定。这就是「一个 runner 动态支持多种系统」。
+async fn probe(State(st): State<AgentState>, headers: HeaderMap, Json(req): Json<ProbeRequest>) -> Response {
+    if !authorized(&st.token, &headers) {
+        return (StatusCode::UNAUTHORIZED, "missing or bad token").into_response();
+    }
+    Json(st.registry.dispatch(&req).await).into_response()
+}
+
+/// 自报本 agent 支持的协议(供中央按能力选 agent)。
+async fn protocols(State(st): State<AgentState>) -> Response {
+    Json(st.registry.protocols()).into_response()
+}
+
 fn app(state: AgentState) -> Router {
     Router::new()
         .route("/healthz", get(healthz))
         .route("/run", post(run))
+        .route("/probe", post(probe))
+        .route("/protocols", get(protocols))
         .with_state(state)
 }
 
@@ -99,11 +131,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let bind = std::env::var("RUNNER_BIND").unwrap_or_else(|_| "0.0.0.0:9100".to_string());
     let token = std::env::var("RUNNER_TOKEN").ok().filter(|t| !t.trim().is_empty());
+    let registry = Arc::new(probe::default_registry());
     // no_proxy:直连目标环境的被测主机,不被全局代理劫持。
-    let state = AgentState { runner: Arc::new(ReqwestRunner::no_proxy()), token };
+    let state = AgentState { runner: Arc::new(ReqwestRunner::no_proxy()), registry, token };
 
     let listener = tokio::net::TcpListener::bind(&bind).await?;
-    tracing::info!(%bind, auth = state.token.is_some(), "runner-agent listening");
+    tracing::info!(%bind, auth = state.token.is_some(), protocols = ?state.registry.protocols(), "runner-agent listening");
     axum::serve(listener, app(state)).await?;
     Ok(())
 }
@@ -131,6 +164,7 @@ mod tests {
     fn state(token: Option<&str>) -> AgentState {
         AgentState {
             runner: Arc::new(ReqwestRunner::no_proxy()),
+            registry: Arc::new(probe::default_registry()),
             token: token.map(|t| t.to_string()),
         }
     }
@@ -148,6 +182,52 @@ mod tests {
         let v = json(resp).await;
         assert_eq!(v["outcome"], "ERROR");
         assert!(v["failures"].as_array().expect("arr").len() >= 1);
+    }
+
+    #[tokio::test]
+    async fn protocols_lists_enabled_plugins() {
+        let resp = app(state(None))
+            .oneshot(Request::builder().uri("/protocols").body(Body::empty()).expect("req"))
+            .await
+            .expect("resp");
+        let v = json(resp).await;
+        let names: Vec<String> =
+            v.as_array().expect("arr").iter().map(|s| s.as_str().unwrap_or("").to_string()).collect();
+        // 本 agent 构建启用了 http/grpc/sql 插件。
+        assert!(names.contains(&"http".to_string()));
+        assert!(names.contains(&"grpc".to_string()));
+        assert!(names.contains(&"sql".to_string()));
+    }
+
+    #[tokio::test]
+    async fn probe_http_transport_failure() {
+        // 多协议 /probe:http 探测不可达目标 → success=false(传输失败)。
+        let body = r#"{"protocol":"http","target":"http://127.0.0.1:1/nope","assertions":[{"type":"success"}]}"#;
+        let req = Request::builder()
+            .method("POST")
+            .uri("/probe")
+            .header("content-type", "application/json")
+            .body(Body::from(body))
+            .expect("req");
+        let resp = app(state(None)).oneshot(req).await.expect("resp");
+        assert_eq!(resp.status(), StatusCode::OK);
+        let v = json(resp).await;
+        assert_eq!(v["success"], false);
+        assert!(v["failures"].as_array().expect("arr").len() >= 1);
+    }
+
+    #[tokio::test]
+    async fn probe_unsupported_protocol() {
+        let body = r#"{"protocol":"smtp","target":"x","assertions":[]}"#;
+        let req = Request::builder()
+            .method("POST")
+            .uri("/probe")
+            .header("content-type", "application/json")
+            .body(Body::from(body))
+            .expect("req");
+        let v = json(app(state(None)).oneshot(req).await.expect("resp")).await;
+        assert_eq!(v["success"], false);
+        assert!(v["failures"][0].as_str().unwrap_or("").contains("unsupported protocol"));
     }
 
     #[tokio::test]
