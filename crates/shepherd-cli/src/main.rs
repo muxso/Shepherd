@@ -918,6 +918,13 @@ enum ScenarioCmd {
         url: Option<String>,
         #[arg(long)]
         body: Option<String>,
+        /// request 步骤:期望状态码(生成 StatusIs 断言)。
+        #[arg(long = "expect-status")]
+        expect_status: Option<u16>,
+        /// request 步骤:断言数组 JSON(覆盖 --expect-status),如
+        /// '[{"type":"StatusIs","args":200},{"type":"BodyContains","args":"ok"}]'。
+        #[arg(long = "assertions-json")]
+        assertions_json: Option<String>,
         /// 控制器步骤(loop/if/once/timer)的载荷 JSON,如
         /// '{"times":3,"children":[{"kind":"CASE","refId":"c1"}]}'。
         #[arg(long = "control-json")]
@@ -1603,13 +1610,19 @@ fn run(cli: Cli) -> R<()> {
                     pretty(&c.get(&format!("/api/scenario?projectId={project}"), true)?)
                 }
                 ScenarioCmd::Get { id } => pretty(&c.get(&format!("/api/scenario/{id}"), true)?),
-                ScenarioCmd::Step { scenario, kind, ref_mode, order, ref_id, method, url, body, control_json } => {
+                ScenarioCmd::Step { scenario, kind, ref_mode, order, ref_id, method, url, body, expect_status, assertions_json, control_json } => {
                     let mut step = json!({"kind": kind.to_uppercase(), "refMode": ref_mode.to_uppercase(), "order": order});
                     if let Some(r) = ref_id {
                         step["refId"] = json!(r);
                     }
                     if let Some(m) = method {
-                        step["request"] = json!({"method": m, "url": url.unwrap_or_default(), "body": body});
+                        // 断言:--assertions-json 优先,否则 --expect-status → StatusIs。
+                        let assertions = match assertions_json {
+                            Some(aj) => serde_json::from_str(&aj)
+                                .map_err(|e| format!("--assertions-json 不是合法 JSON: {e}"))?,
+                            None => status_assertions(expect_status),
+                        };
+                        step["request"] = json!({"method": m, "url": url.unwrap_or_default(), "body": body, "assertions": assertions});
                     }
                     if let Some(cj) = control_json {
                         step["control"] = serde_json::from_str(&cj)

@@ -62,8 +62,11 @@ fn row_to_step(row: &sqlx::postgres::PgRow) -> Result<ScenarioStep, RepoError> {
             let method = v.get("method").and_then(|m| m.as_str()).unwrap_or_default();
             let url = v.get("url").and_then(|u| u.as_str()).unwrap_or_default();
             let body = v.get("body").and_then(|b| b.as_str()).map(|s| s.to_string());
+            let assertions =
+                v.get("assertions").cloned().unwrap_or_else(|| serde_json::Value::Array(vec![]));
             let req = InlineRequest::new(method, url, body)
-                .map_err(|e| RepoError::Backend(e.to_string()))?;
+                .map_err(|e| RepoError::Backend(e.to_string()))?
+                .with_assertions(assertions);
             StepKind::Request(req)
         }
         "CASE" => StepKind::Case {
@@ -194,6 +197,10 @@ impl ApiScenarioRepository for PgApiScenarioRepository {
                 let mut v = serde_json::json!({ "method": req.method, "url": req.url });
                 if let Some(b) = &req.body {
                     v["body"] = serde_json::Value::String(b.clone());
+                }
+                // 仅当有断言时落库,空数组省略,保持 inline 简洁。
+                if req.assertions.as_array().is_some_and(|a| !a.is_empty()) {
+                    v["assertions"] = req.assertions.clone();
                 }
                 (None, Some(v))
             }
