@@ -45,9 +45,20 @@ async fn handle(State(st): State<MockState>, req: Request) -> Response {
         Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "rule source error").into_response(),
     };
     match match_request(&mock_req, &rules) {
-        Some(r) => build_response(&r.response),
+        Some(r) => build_response(&r.response, &mock_req),
         None => (StatusCode::NOT_FOUND, "no mock rule matched").into_response(),
     }
+}
+
+/// 渲染响应 body:启用 `template` feature 时按 minijinja 模板注入请求上下文,
+/// 渲染失败回落原始串(绝不 500);未启用则原样返回。
+#[cfg(feature = "template")]
+fn render_body(raw: String, req: &MockRequest) -> String {
+    crate::domain::render_body(&raw, req).unwrap_or(raw)
+}
+#[cfg(not(feature = "template"))]
+fn render_body(raw: String, _req: &MockRequest) -> String {
+    raw
 }
 
 /// `a=1&b=2` → map(简化版:不做 URL 解码,骨架够用,后续可接 form_urlencoded)。
@@ -61,15 +72,15 @@ fn parse_query(q: &str) -> BTreeMap<String, String> {
         .collect()
 }
 
-fn build_response(resp: &MockResponse) -> Response {
+fn build_response(resp: &MockResponse, req: &MockRequest) -> Response {
     let status = StatusCode::from_u16(resp.status).unwrap_or(StatusCode::OK);
     let mut builder = Response::builder().status(status);
     for (k, v) in &resp.headers {
         builder = builder.header(k, v);
     }
-    let body = Bytes::from(resp.body.clone().unwrap_or_default());
+    let rendered = render_body(resp.body.clone().unwrap_or_default(), req);
     builder
-        .body(Body::from(body))
+        .body(Body::from(Bytes::from(rendered)))
         .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
 }
 
@@ -120,6 +131,34 @@ mod tests {
             .await
             .expect("resp");
         assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[cfg(feature = "template")]
+    #[tokio::test]
+    async fn templated_body_renders_request_context() {
+        // 响应 body 含模板,命中后用请求(path/query)渲染。
+        let rule = MockRule {
+            id: "echo".into(),
+            rule: MatchRule { method: Some("GET".into()), path: "/echo/*".into(), ..Default::default() },
+            response: MockResponse {
+                status: 200,
+                headers: vec![],
+                body: Some(r#"{"path":"{{ path }}","status":"{{ query.status }}"}"#.into()),
+            },
+        };
+        let app = router(Arc::new(InMemoryRuleSource::new(vec![rule])));
+        let resp = app
+            .oneshot(
+                HttpRequest::builder()
+                    .method("GET")
+                    .uri("/echo/9?status=paid")
+                    .body(Body::empty())
+                    .expect("req"),
+            )
+            .await
+            .expect("resp");
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert_eq!(body_string(resp).await, r#"{"path":"/echo/9","status":"paid"}"#);
     }
 
     #[tokio::test]
