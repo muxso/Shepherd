@@ -8,3 +8,8 @@ pub use engine::run_load;
 pub mod api_runner_exec;
 #[cfg(feature = "api-runner-exec")]
 pub use api_runner_exec::ApiRunnerExecutor;
+
+#[cfg(feature = "pg")]
+pub mod pg;
+#[cfg(feature = "pg")]
+pub use pg::PgPerfReportStore;
