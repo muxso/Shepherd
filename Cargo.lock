@@ -1641,20 +1641,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "mock-runtime"
-version = "0.0.1"
-dependencies = [
- "async-trait",
- "axum",
- "regex",
- "serde",
- "serde_json",
- "thiserror",
- "tokio",
- "tower",
-]
-
-[[package]]
 name = "nu-ansi-term"
 version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
