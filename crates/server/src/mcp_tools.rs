@@ -93,6 +93,12 @@ use task::application::{BreakdownUseCase, CreateDecompositionUseCase, TaskServic
 use task::ports::RequirementSpec;
 use verification::application::{CreateVerificationUseCase, VerificationService};
 
+use crate::plan_run::PlanRunner;
+use probe::{ProbeAssertion, ProbeRequest};
+use runner::application::RunnerService;
+use test_plan::application::{CreatePlanUseCase, PlanCaseUseCase, PlanStatisticsUseCase};
+use test_plan::domain::{PlanType, ROOT_GROUP};
+
 // —— 取参助手 ——
 fn req_str<'a>(v: &'a Value, k: &str) -> Result<&'a str, String> {
     v.get(k).and_then(|x| x.as_str()).ok_or_else(|| format!("'{k}' (string) is required"))
@@ -302,6 +308,88 @@ impl FromRef<McpState> for Arc<dyn SessionStore> {
     }
 }
 
+// —— 测试计划 / 探测 MCP 工具 ——
+
+tool_handler!(CreateTestPlan, CreatePlanUseCase, |self, args| {
+    let pt = PlanType::parse(args.get("type").and_then(|x| x.as_str()).unwrap_or("TEST_PLAN"))
+        .unwrap_or(PlanType::Plan);
+    let p = self
+        .svc
+        .execute(req_str(&args, "projectId")?, req_str(&args, "name")?, pt, ROOT_GROUP)
+        .await
+        .map_err(|e| format!("{e:?}"))?;
+    Ok(json!({ "id": p.id, "name": p.name }))
+});
+
+tool_handler!(LinkPlanCase, PlanCaseUseCase, |self, args| {
+    self.svc
+        .link(req_str(&args, "planId")?, req_str(&args, "caseId")?, opt_str(&args, "name"))
+        .await
+        .map_err(|e| format!("{e:?}"))?;
+    Ok(json!({ "linked": true }))
+});
+
+tool_handler!(TestPlanStats, PlanStatisticsUseCase, |self, args| {
+    let s = self.svc.execute(req_str(&args, "planId")?).await.map_err(|e| format!("{e:?}"))?;
+    Ok(json!({
+        "status": s.status.as_str(), "total": s.total,
+        "passRate": s.pass_rate, "executeRate": s.execute_rate, "isPass": s.is_pass
+    }))
+});
+
+/// 执行计划:跑挂入的用例/场景并自动回写结果(复用 HTTP 端点同一 PlanRunner)。
+struct RunTestPlan {
+    runner: PlanRunner,
+}
+#[async_trait]
+impl ToolHandler for RunTestPlan {
+    async fn call(&self, args: Value) -> Result<Value, String> {
+        let s = self
+            .runner
+            .run(req_str(&args, "planId")?)
+            .await
+            .map_err(|()| "plan execute failed".to_string())?;
+        Ok(json!({
+            "total": s.total, "executed": s.executed, "success": s.success, "failed": s.failed
+        }))
+    }
+}
+
+/// 按协议探测:中央据 protocol 选支持它的 runner-agent 就地执行(带断言)。
+struct ProbeTool {
+    runner: RunnerService,
+}
+#[async_trait]
+impl ToolHandler for ProbeTool {
+    async fn call(&self, args: Value) -> Result<Value, String> {
+        let assertions: Vec<ProbeAssertion> = args
+            .get("assertions")
+            .cloned()
+            .map(|v| serde_json::from_value(v).unwrap_or_default())
+            .unwrap_or_default();
+        let metadata = args
+            .get("metadata")
+            .and_then(|m| m.as_object())
+            .map(|o| {
+                o.iter()
+                    .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string())))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let req = ProbeRequest {
+            protocol: req_str(&args, "protocol")?.to_string(),
+            target: req_str(&args, "target")?.to_string(),
+            payload: args.get("payload").and_then(|x| x.as_str()).map(String::from),
+            metadata,
+            assertions,
+        };
+        let rep = self.runner.run_probe(&req).await.map_err(|e| format!("{e:?}"))?;
+        Ok(json!({
+            "agentId": rep.agent_id, "agentName": rep.agent_name, "outcome": rep.outcome
+        }))
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn router(
     create_requirement: CreateRequirementUseCase,
@@ -314,6 +402,11 @@ pub fn router(
     verification: VerificationService,
     create_skill: CreateSkillUseCase,
     skills: SkillService,
+    create_plan: CreatePlanUseCase,
+    plan_cases: PlanCaseUseCase,
+    plan_stats: PlanStatisticsUseCase,
+    plan_runner: PlanRunner,
+    runner_svc: RunnerService,
     sessions: Arc<dyn SessionStore>,
 ) -> Router {
     let server = McpServer::new("shepherd", env!("CARGO_PKG_VERSION"))
@@ -457,7 +550,66 @@ pub fn router(
             obj(json!({ "verificationId": { "type": "string" } }), &["verificationId"]),
             Arc::new(CompletenessReport { svc: verification }),
         )
-        .requires("VERIFICATION", "READ"));
+        .requires("VERIFICATION", "READ"))
+        .tool(Tool::new(
+            "shepherd_create_test_plan",
+            "创建测试计划(type: TEST_PLAN 默认 | GROUP),返回计划 id。",
+            obj(
+                json!({
+                    "projectId": { "type": "string" },
+                    "name": { "type": "string" },
+                    "type": { "type": "string", "enum": ["TEST_PLAN", "GROUP"] }
+                }),
+                &["projectId", "name"],
+            ),
+            Arc::new(CreateTestPlan { svc: create_plan }),
+        )
+        .requires("TEST_PLAN", "ADD"))
+        .tool(Tool::new(
+            "shepherd_link_plan_case",
+            "把一条用例或场景挂入计划(caseId 为 ms_api_case id 或场景 id)。",
+            obj(
+                json!({
+                    "planId": { "type": "string" },
+                    "caseId": { "type": "string" },
+                    "name": { "type": "string", "description": "展示名(可选)" }
+                }),
+                &["planId", "caseId"],
+            ),
+            Arc::new(LinkPlanCase { svc: plan_cases }),
+        )
+        .requires("TEST_PLAN", "ADD"))
+        .tool(Tool::new(
+            "shepherd_run_test_plan",
+            "执行计划:跑挂入的用例/场景并自动回写结果(随后报告即真实数据)。返回执行汇总。",
+            obj(json!({ "planId": { "type": "string" } }), &["planId"]),
+            Arc::new(RunTestPlan { runner: plan_runner }),
+        )
+        .requires("TEST_PLAN", "EXECUTE"))
+        .tool(Tool::new(
+            "shepherd_test_plan_stats",
+            "取计划执行统计:状态/总数/通过率/执行率/是否通过。",
+            obj(json!({ "planId": { "type": "string" } }), &["planId"]),
+            Arc::new(TestPlanStats { svc: plan_stats }),
+        )
+        .requires("TEST_PLAN", "READ"))
+        .tool(Tool::new(
+            "shepherd_probe",
+            "按协议探测:中央据 protocol(http/grpc/sql/mysql/redis/websocket)选支持它的 runner-agent \
+             就地执行,可带断言。返回选中 agent + 判定结果。",
+            obj(
+                json!({
+                    "protocol": { "type": "string" },
+                    "target": { "type": "string", "description": "URL / 端点 / 连接串" },
+                    "payload": { "type": "string", "description": "可选载荷(body/语句/命令/消息)" },
+                    "metadata": { "type": "object", "description": "可选协议参数(如 gRPC method)" },
+                    "assertions": { "type": "array", "items": { "type": "object" }, "description": "可选 probe 断言数组" }
+                }),
+                &["protocol", "target"],
+            ),
+            Arc::new(ProbeTool { runner: runner_svc }),
+        )
+        .requires("RUNNER", "EXECUTE"));
 
     Router::new()
         .route("/mcp", post(mcp_handler).get(mcp_sse).delete(mcp_delete))
