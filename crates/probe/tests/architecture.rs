@@ -1,7 +1,8 @@
 //! 架构守卫:domain/ports 不得引用任何 IO crate(插件实现在 plugins,IO 在那)。
 use std::fs;
 use std::path::Path;
-const FORBIDDEN: &[&str] = &["sqlx", "axum", "reqwest", "tower_http", "tonic", "redis"];
+const FORBIDDEN: &[&str] =
+    &["sqlx", "axum", "reqwest", "tower_http", "tonic", "redis", "tokio_tungstenite"];
 #[test]
 fn pure_layers_have_no_io_imports() {
     let base = Path::new(env!("CARGO_MANIFEST_DIR"));
