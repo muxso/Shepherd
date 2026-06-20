@@ -7,7 +7,7 @@ license.workspace = true
 # 原生 Rust 压测引擎(替代 JMeter 的压测层)。
 # 核心是零 IO 的统计聚合(domain):给定一批 (延迟, 成败) 样本 + 总耗时 → 吞吐/错误率/延迟分位。
 # engine(tokio)按负载计划并发跑,经 RequestExecutor 端口执行单次请求;
-# api-runner-exec 把端口接到原生 reqwest 执行器(复用 api-runner),全程不碰 JMeter。
+# 多协议压测统一经 probe-exec(probe 注册表)驱动 —— 加协议=加 probe 插件,不必再写 bespoke 执行器。
 [dependencies]
 thiserror = "2"
 serde = { version = "1", features = ["derive"] }
@@ -20,19 +20,15 @@ serde_json = { version = "1", optional = true }
 arrow = { version = "53", optional = true }
 parquet = { version = "53", default-features = false, features = ["arrow"], optional = true }
 object_store = { version = "0.11", optional = true }
-# gRPC 协议执行器(tonic + 字节透传 codec,调用任意 unary 方法)。
-tonic = { version = "0.12", optional = true }
-bytes = { version = "1", optional = true }
-http = { version = "1", optional = true }
+# 协议插件注册表:让压测引擎经一个执行器驱动任意协议(http/grpc/sql/…),带统一断言。
+probe = { path = "../probe", default-features = false, optional = true }
 
 [features]
 engine = ["dep:tokio"]
 api-runner-exec = ["dep:api-runner"]
 pg = ["dep:sqlx", "dep:serde_json"]
-# SQL 协议执行器(对目标库压测;复用 sqlx)。
-sql-exec = ["dep:sqlx"]
-# gRPC 协议执行器(tonic 字节 codec,调用任意 unary 方法)。
-grpc-exec = ["dep:tonic", "dep:bytes", "dep:http"]
+# 统一执行器:压测经 probe 注册表驱动任意协议(http/grpc/sql 插件全启)。
+probe-exec = ["dep:probe", "probe/http", "probe/grpc", "probe/sql"]
 # Parquet 样本下沉(object_store:本地/内存/S3)。
 parquet-sink = ["dep:arrow", "dep:parquet", "dep:object_store"]
 
@@ -40,9 +36,6 @@ parquet-sink = ["dep:arrow", "dep:parquet", "dep:object_store"]
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "time", "net"] }
 axum = "0.8"
 serde_json = "1"
-tonic = "0.12"
-tonic-health = "0.12"
-tokio-stream = { version = "0.1", features = ["net"] }
 
 [lints]
 workspace = true

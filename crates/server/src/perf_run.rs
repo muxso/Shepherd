@@ -19,13 +19,10 @@ use serde::{Deserialize, Serialize};
 use utoipa::{OpenApi, ToSchema};
 use webauth::{AuthUser, SessionStore};
 
-use api_runner::{Assertion, HttpMethod, RequestSpec};
-use perf::adapters::{
-    run_collect, ApiRunnerExecutor, GrpcExecutor, ParquetObjectStoreSink, PgPerfReportStore,
-    SqlExecutor,
-};
+use perf::adapters::{run_collect, ParquetObjectStoreSink, PgPerfReportStore, ProbeExecutor};
 use perf::domain::LoadPlan;
 use perf::ports::{RequestExecutor, SampleSink};
+use probe::{ProbeAssertion, ProbeRequest};
 
 #[derive(Clone)]
 struct PerfState {
@@ -117,10 +114,6 @@ struct RunPerfResponse {
     status: String,
 }
 
-fn method_of(m: &str) -> HttpMethod {
-    serde_json::from_value(serde_json::Value::String(m.to_uppercase())).unwrap_or(HttpMethod::Get)
-}
-
 #[utoipa::path(
     post, path = "/perf/run", tag = "perf",
     request_body = RunPerfBody,
@@ -146,42 +139,67 @@ async fn run_perf(user: AuthUser, State(st): State<PerfState>, Json(req): Json<R
     // 报告里记录的 iterations:时长模式记 0(实际完成数见 total)。
     let planned_iterations = if req.duration_ms.is_some() { 0 } else { req.iterations as i32 };
 
-    // 1) 据协议构建执行器(SQL 连接失败提前返回)。
-    //    报告记录:HTTP 记 method+url;SQL 记 method=SQL、url=语句(不存连接串,避免泄漏口令)。
-    let (executor, report_method, report_url): (Arc<dyn RequestExecutor>, String, String) =
-        if req.protocol.eq_ignore_ascii_case("SQL") {
-            let query = req.query.clone().unwrap_or_else(|| "SELECT 1".to_string());
-            match SqlExecutor::connect(&req.url, &query, req.concurrency as u32).await {
-                Ok(e) => (Arc::new(e), "SQL".to_string(), query),
-                Err(e) => {
-                    return (StatusCode::BAD_GATEWAY, format!("sql connect failed: {e}"))
-                        .into_response()
-                }
+    // 1) 据协议构建**统一执行器**:协议无关的 ProbeRequest → ProbeExecutor(经 probe 注册表分发)。
+    //    加协议 = 加 probe 插件,这里无需再改。报告记录:HTTP 记 method+url;
+    //    SQL 记 method=SQL、url=语句(不存连接串,避免泄漏口令);GRPC 记 method=GRPC、url=方法路径。
+    //    连接惰性建立并由插件按 target 缓存(压测复用连接);grpc 缺方法路径是纯校验,提前 400。
+    let proto = req.protocol.to_lowercase();
+    let (probe_req, report_method, report_url): (ProbeRequest, String, String) = if proto == "sql" {
+        let query = req.query.clone().unwrap_or_else(|| "SELECT 1".to_string());
+        (
+            ProbeRequest {
+                protocol: "sql".to_string(),
+                target: req.url.clone(),
+                payload: Some(query.clone()),
+                metadata: std::collections::BTreeMap::new(),
+                assertions: vec![],
+            },
+            "SQL".to_string(),
+            query,
+        )
+    } else if proto == "grpc" {
+        let method = match req.query.clone().filter(|q| !q.trim().is_empty()) {
+            Some(m) => m,
+            None => {
+                return (StatusCode::BAD_REQUEST, "grpc requires query=method path").into_response()
             }
-        } else if req.protocol.eq_ignore_ascii_case("GRPC") {
-            // GRPC:url=端点,query=全方法路径(如 /grpc.health.v1.Health/Check),空请求体。
-            let method = match req.query.clone().filter(|q| !q.trim().is_empty()) {
-                Some(m) => m,
-                None => return (StatusCode::BAD_REQUEST, "grpc requires query=method path").into_response(),
-            };
-            match GrpcExecutor::connect(&req.url, &method, vec![]).await {
-                Ok(e) => (Arc::new(e), "GRPC".to_string(), method),
-                Err(e) => {
-                    return (StatusCode::BAD_GATEWAY, format!("grpc connect failed: {e}"))
-                        .into_response()
-                }
-            }
-        } else {
-            let spec = RequestSpec {
-                method: method_of(&req.method),
-                url: req.url.clone(),
-                headers: vec![],
-                body: None,
-            };
-            let assertions: Vec<Assertion> =
-                req.expect_status.map(|c| vec![Assertion::StatusIs(c)]).unwrap_or_default();
-            (Arc::new(ApiRunnerExecutor::new(spec, assertions)), req.method.to_uppercase(), req.url.clone())
         };
+        let mut metadata = std::collections::BTreeMap::new();
+        metadata.insert("method".to_string(), method.clone());
+        (
+            ProbeRequest {
+                protocol: "grpc".to_string(),
+                target: req.url.clone(),
+                payload: None,
+                metadata,
+                assertions: vec![],
+            },
+            "GRPC".to_string(),
+            method,
+        )
+    } else {
+        let mut metadata = std::collections::BTreeMap::new();
+        metadata.insert("method".to_string(), req.method.to_uppercase());
+        // expect_status 给定 → StatusIs 断言;省略 → 空断言(成功=HTTP 可达)。
+        let assertions = req
+            .expect_status
+            .map(|c| vec![ProbeAssertion::StatusIs(c as i64)])
+            .unwrap_or_default();
+        (
+            ProbeRequest {
+                protocol: "http".to_string(),
+                target: req.url.clone(),
+                payload: None,
+                metadata,
+                assertions,
+            },
+            req.method.to_uppercase(),
+            req.url.clone(),
+        )
+    };
+    // 整轮压测共享一个注册表实例:插件内部按 target 缓存连接,worker 间复用;本轮结束随之释放。
+    let registry = Arc::new(probe::default_registry());
+    let executor: Arc<dyn RequestExecutor> = Arc::new(ProbeExecutor::new(registry, probe_req));
 
     // 2) 落 RUNNING 报告
     let report_id = match st
