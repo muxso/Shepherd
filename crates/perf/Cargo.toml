@@ -25,6 +25,8 @@ object_store = { version = "0.11", optional = true }
 engine = ["dep:tokio"]
 api-runner-exec = ["dep:api-runner"]
 pg = ["dep:sqlx", "dep:serde_json"]
+# SQL 协议执行器(对目标库压测;复用 sqlx)。
+sql-exec = ["dep:sqlx"]
 # Parquet 样本下沉(object_store:本地/内存/S3)。
 parquet-sink = ["dep:arrow", "dep:parquet", "dep:object_store"]
 
