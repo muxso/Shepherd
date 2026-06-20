@@ -250,6 +250,71 @@ async fn scenario_llm_agent_end_to_end() {
     assert_ne!(dec["tasks"][0]["status"], "VERIFIED", "LLM 判不通过时任务不应 VERIFIED: {dec}");
 }
 
+/// 自纠正 mock LLM:验证门首轮判不通过、之后通过;执行者/规划器照常。
+/// 用于验证「judge 拒 → reviser 据反馈重做 → 复判通过」的端到端迭代。
+async fn serve_mock_llm_selfcorrect() -> String {
+    use axum::{routing::post, Json, Router};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+    let judge_calls = Arc::new(AtomicUsize::new(0));
+    let app = Router::new().route(
+        "/v1/chat/completions",
+        post(move |Json(body): Json<Value>| {
+            let jc = judge_calls.clone();
+            async move {
+                let sys = body["messages"][0]["content"].as_str().unwrap_or("");
+                let content: String = if sys.contains("规划器") {
+                    r#"[{"title":"LLM任务A","description":"","acceptanceCriteria":["登录成功"],"dependencies":[]}]"#.into()
+                } else if sys.contains("评审") {
+                    // 首次判不通过,触发修订;之后通过。
+                    if jc.fetch_add(1, Ordering::SeqCst) == 0 {
+                        r#"{"passed":false,"reason":"首轮缺测试"}"#.into()
+                    } else {
+                        r#"{"passed":true,"reason":"修订后达标"}"#.into()
+                    }
+                } else if sys.contains("执行者") {
+                    r#"{"reference":"branch:llm","summary":"实现/修订完成"}"#.into()
+                } else {
+                    "{}".into()
+                };
+                Json(json!({ "choices": [ { "message": { "content": content } } ] }))
+            }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("bind llm");
+    let addr = listener.local_addr().expect("addr");
+    tokio::spawn(async move { axum::serve(listener, app).await.expect("serve llm") });
+    format!("http://{addr}/v1/chat/completions")
+}
+
+#[tokio::test]
+#[ignore = "需要 PostgreSQL"]
+async fn scenario_llm_self_correction_loop() {
+    let llm_url = serve_mock_llm_selfcorrect().await;
+    // 开启自纠正(最多 2 轮)。
+    let s = TestServer::start_with_env(&[
+        ("SHEPHERD_LLM_URL", &llm_url),
+        ("SHEPHERD_MAX_REVISIONS", "2"),
+    ])
+    .await;
+    let p = proj();
+    let t = s.login().await;
+    let rid = s
+        .post("/requirement", json!({"projectId":&p,"title":"登录","acceptanceCriteria":["登录成功"]}), Some(&t))
+        .await["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let did = s.post(&format!("/requirement/{rid}/breakdown"), Value::Null, Some(&t)).await["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    // 派发 t1:执行者交付 → judge 首判不通过 → reviser 据反馈重做 → 复判通过 → 任务 VERIFIED。
+    let _ = s.post("/delivery", json!({"decompositionId":&did,"taskId":"t1","title":"实现登录","executor":"CLAUDE_CODE"}), Some(&t)).await;
+    let dec = s.get(&format!("/decomposition/{did}"), &t).await;
+    assert_eq!(dec["tasks"][0]["status"], "VERIFIED", "自纠正后应通过验证门: {dec}");
+}
+
 // ============ 场景 4:AI Skill 组合(skill)============
 #[tokio::test]
 #[ignore = "需要 PostgreSQL"]
