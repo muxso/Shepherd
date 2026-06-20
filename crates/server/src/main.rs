@@ -15,6 +15,7 @@ mod mcp_tools;
 mod openapi;
 mod orchestration;
 mod perf_run;
+mod plan_scheduler;
 mod planner;
 mod scenario_run;
 
@@ -449,6 +450,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // —— 原生压测(perf):POST /perf/run 后台施压 + GET /perf/report/{id} ——
     let perf_routes = perf_run::router(pool.clone(), sessions.clone());
 
+    // —— 测试计划定时执行(cron 到点拍统计快照)——
+    let plan_scheduler_routes = plan_scheduler::build(pool.clone(), sessions.clone()).await?;
+
     // —— 合并为单一应用 + 生产中间件 ——
     let app = user_routes
         .merge(oidc_routes)
@@ -475,6 +479,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .merge(scenario_routes)
         .merge(scenario_run_routes)
         .merge(perf_routes)
+        .merge(plan_scheduler_routes)
         .merge(openapi::routes())
         .merge(health_routes(pool.clone()))
         // 由外到内:请求日志 → 整体超时 → 请求体上限(防超大 body 打爆内存)

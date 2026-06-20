@@ -530,6 +530,19 @@ enum PlanCmd {
         #[arg(long)]
         id: String,
     },
+    /// 给计划配定时执行(cron 6 段:秒 分 时 日 月 周)。
+    Schedule {
+        #[arg(long)]
+        id: String,
+        /// cron 表达式,如 "0 */5 * * * *"(每 5 分钟)。
+        #[arg(long)]
+        cron: String,
+    },
+    /// 查计划的定时运行快照(通过率/执行率趋势)。
+    Runs {
+        #[arg(long)]
+        id: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -1378,6 +1391,14 @@ fn run(cli: Cli) -> R<()> {
                 }
                 PlanCmd::Report { id } => {
                     print!("{}", c.get_text(&format!("/test-plan/{id}/report"), false)?)
+                }
+                PlanCmd::Schedule { id, cron } => pretty(&c.post(
+                    &format!("/test-plan/{id}/schedule"),
+                    json!({"cron": cron}),
+                    true,
+                )?),
+                PlanCmd::Runs { id } => {
+                    pretty(&c.get(&format!("/test-plan/{id}/runs"), true)?)
                 }
             }
         }
