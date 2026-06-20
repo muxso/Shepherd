@@ -121,7 +121,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let db_url = std::env::var("DATABASE_URL")
         .unwrap_or_else(|_| "postgres://msuser:mspass@localhost:55432/mstest".to_string());
-    let bind = std::env::var("MS_BIND").unwrap_or_else(|_| "0.0.0.0:8080".to_string());
+    // 默认端口与 shepherd CLI 默认连接端口(8088)对齐,开箱即用免配 --url。
+    let bind = std::env::var("MS_BIND").unwrap_or_else(|_| "0.0.0.0:8088".to_string());
 
     // —— 一个连接池,多个模块共享;版本化迁移建/演进全部表(单一真源) ——
     let pool = migrate::connect(&db_url).await?;
@@ -355,25 +356,29 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     // —— api-test 批量运行模块 ——
-    // 执行器三选一(端口背后的适配器,domain/application 不感知):
-    //   MS_RUNNER=local  → 原生 Rust runner(reqwest 就地跑 ms_api_case,无 JMeter)
-    //   MS_EXECUTOR_URL  → HTTP 下发 JMeter 节点(异步)
-    //   都没配           → Noop(本地无执行器)
-    let dispatcher: Arc<dyn api_test::ports::TaskDispatcher> =
-        if std::env::var("MS_RUNNER").as_deref() == Ok("local") {
+    // 执行器(端口背后的适配器,domain/application 不感知),优先级从高到低:
+    //   MS_EXECUTOR_URL 非空 → HTTP 下发 JMeter 节点(异步,远端执行)
+    //   MS_RUNNER=noop       → Noop 占位(显式声明本地无执行器:批量运行恒 RUNNING,仅供演示)
+    //   默认                  → 原生 Rust runner(reqwest 就地跑 ms_api_case,无 JMeter)
+    // 注:默认选 local 而非 Noop —— 否则 `api batch-run` 会静默停在 RUNNING 且无结果。
+    let dispatcher: Arc<dyn api_test::ports::TaskDispatcher> = match std::env::var("MS_EXECUTOR_URL")
+    {
+        Ok(url) if !url.is_empty() => {
+            tracing::info!("api runner: HTTP dispatcher (JMeter) → {url}");
+            Arc::new(HttpTaskDispatcher::new(url))
+        }
+        _ if std::env::var("MS_RUNNER").as_deref() == Ok("noop") => {
+            tracing::warn!("api runner: Noop(MS_RUNNER=noop)—— 批量运行不会产出结果");
+            Arc::new(api_test::adapters::NoopDispatcher)
+        }
+        _ => {
+            tracing::info!("api runner: 本地原生 Rust runner(默认)");
             Arc::new(LocalRunnerDispatcher::new(
                 Arc::new(PgCaseSpecSource::new(pool.clone())),
                 Arc::new(PgCaseResultSink::new(pool.clone())),
             ))
-        } else if let Ok(url) = std::env::var("MS_EXECUTOR_URL") {
-            if !url.is_empty() {
-                Arc::new(HttpTaskDispatcher::new(url))
-            } else {
-                Arc::new(api_test::adapters::NoopDispatcher)
-            }
-        } else {
-            Arc::new(api_test::adapters::NoopDispatcher)
-        };
+        }
+    };
     let api_pools = Arc::new(PgResourcePool::new(pool.clone()));
     let api_executor = Arc::new(PgBatchReportExecutor::new(pool.clone(), dispatcher));
     let api_envs = Arc::new(api_test::adapters::pg::PgEnvironment::new(pool.clone()));
