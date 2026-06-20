@@ -405,6 +405,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let runner_svc = runner::application::RunnerService::new(
         Arc::new(runner::adapters::pg::PgRunnerAgentStore::new(pool.clone())),
         Arc::new(runner::adapters::ReqwestRemoteRunner::new()),
+        Arc::new(runner::adapters::pg::PgExecutionStore::new(pool.clone())),
     );
     let runner_routes = runner::adapters::http::router(runner_svc, sessions.clone());
 

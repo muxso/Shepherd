@@ -6,8 +6,10 @@ use async_trait::async_trait;
 
 use api_runner::{Assertion, RequestSpec};
 
-use crate::domain::{DispatchTarget, NewRunnerAgent, RemoteResult, RunnerAgent};
-use crate::ports::{PortError, RemoteRunner, RunnerAgentStore};
+use crate::domain::{
+    DispatchTarget, ExecutionRecord, NewRunnerAgent, RemoteResult, RunnerAgent,
+};
+use crate::ports::{ExecutionStore, PortError, RemoteRunner, RunnerAgentStore};
 
 #[derive(Default)]
 pub struct InMemoryAgentStore {
@@ -52,6 +54,58 @@ impl RunnerAgentStore for InMemoryAgentStore {
             .iter()
             .find(|(v, _)| v.id == id && v.enabled)
             .map(|(v, tok)| DispatchTarget { base_url: v.base_url.clone(), token: tok.clone() }))
+    }
+}
+
+/// 内存执行历史(测试)。
+#[derive(Default)]
+pub struct InMemoryExecutionStore {
+    records: Mutex<Vec<ExecutionRecord>>,
+}
+
+impl InMemoryExecutionStore {
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+#[async_trait]
+impl ExecutionStore for InMemoryExecutionStore {
+    async fn record(
+        &self,
+        agent_id: &str,
+        method: &str,
+        url: &str,
+        result: &RemoteResult,
+    ) -> Result<(), PortError> {
+        let mut g = self.records.lock().map_err(|e| PortError::Backend(e.to_string()))?;
+        let id = format!("e{}", g.len() + 1);
+        g.push(ExecutionRecord {
+            id,
+            agent_id: agent_id.to_string(),
+            method: method.to_string(),
+            url: url.to_string(),
+            outcome: result.outcome.clone(),
+            status: result.status,
+            elapsed_ms: result.elapsed_ms,
+            failures: result.failures.clone(),
+            executed_at: "1970-01-01T00:00:00Z".to_string(),
+        });
+        Ok(())
+    }
+
+    async fn list_by_agent(
+        &self,
+        agent_id: &str,
+        limit: u32,
+    ) -> Result<Vec<ExecutionRecord>, PortError> {
+        let g = self.records.lock().map_err(|e| PortError::Backend(e.to_string()))?;
+        Ok(g.iter()
+            .filter(|r| r.agent_id == agent_id)
+            .rev()
+            .take(limit as usize)
+            .cloned()
+            .collect())
     }
 }
 

@@ -435,6 +435,11 @@ enum RunnerCmd {
         #[arg(long = "expect-status")]
         expect_status: Option<u16>,
     },
+    /// 查某 agent 的远程执行历史。
+    Executions {
+        #[arg(long)]
+        agent: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -1582,6 +1587,9 @@ fn run(cli: Cli) -> R<()> {
                     }),
                     true,
                 )?),
+                RunnerCmd::Executions { agent } => {
+                    pretty(&c.get(&format!("/runner-agent/{agent}/executions"), true)?)
+                }
             }
         }
         Cmd::Perf { cmd } => {
