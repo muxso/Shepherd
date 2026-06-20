@@ -2389,6 +2389,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "runner-agent"
+version = "0.0.1"
+dependencies = [
+ "api-runner",
+ "axum",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tower",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "rust_xlsxwriter"
 version = "0.79.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"

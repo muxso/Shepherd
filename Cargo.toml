@@ -27,6 +27,7 @@ members = [
     "crates/environment",
     "crates/perf",
     "crates/case-management",
+    "crates/runner-agent",
     "crates/shepherd-cli",
 ]
 
