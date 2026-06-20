@@ -6,7 +6,7 @@ use thiserror::Error;
 use api_runner::{Assertion, RequestSpec};
 
 use crate::domain::{
-    DispatchTarget, ExecutionRecord, NewRunnerAgent, RemoteResult, RunnerAgent,
+    CaseSpec, DispatchTarget, ExecutionRecord, NewRunnerAgent, RemoteResult, RunnerAgent,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
@@ -33,6 +33,12 @@ pub trait RemoteRunner: Send + Sync {
         request: &RequestSpec,
         assertions: &[Assertion],
     ) -> Result<RemoteResult, PortError>;
+}
+
+/// 已存储用例规格来源:据 case_id 解析出可执行的「请求 + 断言」。
+#[async_trait]
+pub trait CaseSpecSource: Send + Sync {
+    async fn spec_of(&self, case_id: &str) -> Result<Option<CaseSpec>, PortError>;
 }
 
 /// 远程执行历史存档:记录每次派发结果 + 按 agent 查询。
