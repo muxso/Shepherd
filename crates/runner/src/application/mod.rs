@@ -6,8 +6,8 @@ use thiserror::Error;
 
 use api_runner::{Assertion, RequestSpec};
 
-use crate::domain::{AgentError, NewRunnerAgent, RemoteResult, RunnerAgent};
-use crate::ports::{PortError, RemoteRunner, RunnerAgentStore};
+use crate::domain::{AgentError, ExecutionRecord, NewRunnerAgent, RemoteResult, RunnerAgent};
+use crate::ports::{ExecutionStore, PortError, RemoteRunner, RunnerAgentStore};
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum RegisterError {
@@ -29,11 +29,16 @@ pub enum RunViaAgentError {
 pub struct RunnerService {
     store: Arc<dyn RunnerAgentStore>,
     remote: Arc<dyn RemoteRunner>,
+    executions: Arc<dyn ExecutionStore>,
 }
 
 impl RunnerService {
-    pub fn new(store: Arc<dyn RunnerAgentStore>, remote: Arc<dyn RemoteRunner>) -> Self {
-        Self { store, remote }
+    pub fn new(
+        store: Arc<dyn RunnerAgentStore>,
+        remote: Arc<dyn RemoteRunner>,
+        executions: Arc<dyn ExecutionStore>,
+    ) -> Self {
+        Self { store, remote, executions }
     }
 
     pub async fn register(
@@ -51,7 +56,7 @@ impl RunnerService {
         self.store.list().await
     }
 
-    /// 把自包含用例派给某 agent 就地执行,回传结果。
+    /// 把自包含用例派给某 agent 就地执行,回传结果。结果同时存档(尽力而为,不影响返回)。
     pub async fn run_via(
         &self,
         agent_id: &str,
@@ -60,20 +65,35 @@ impl RunnerService {
     ) -> Result<RemoteResult, RunViaAgentError> {
         let target =
             self.store.dispatch_target(agent_id).await?.ok_or(RunViaAgentError::AgentNotFound)?;
-        Ok(self.remote.run(&target, request, assertions).await?)
+        let result = self.remote.run(&target, request, assertions).await?;
+        let _ = self
+            .executions
+            .record(agent_id, request.method.as_str(), &request.url, &result)
+            .await;
+        Ok(result)
+    }
+
+    /// 某 agent 的最近执行历史。
+    pub async fn executions(
+        &self,
+        agent_id: &str,
+        limit: u32,
+    ) -> Result<Vec<ExecutionRecord>, PortError> {
+        self.executions.list_by_agent(agent_id, limit).await
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::adapters::{InMemoryAgentStore, StubRemoteRunner};
+    use crate::adapters::{InMemoryAgentStore, InMemoryExecutionStore, StubRemoteRunner};
     use api_runner::HttpMethod;
 
     fn svc() -> (RunnerService, Arc<InMemoryAgentStore>) {
         let store = Arc::new(InMemoryAgentStore::new());
         let remote = Arc::new(StubRemoteRunner::success());
-        (RunnerService::new(store.clone(), remote), store)
+        let execs = Arc::new(InMemoryExecutionStore::new());
+        (RunnerService::new(store.clone(), remote, execs), store)
     }
 
     fn spec() -> RequestSpec {
@@ -88,6 +108,13 @@ mod tests {
 
         let res = svc.run_via(&a.id, &spec(), &[Assertion::StatusIs(200)]).await.expect("run");
         assert_eq!(res.outcome, "SUCCESS");
+
+        // 派发后应有一条执行历史。
+        let execs = svc.executions(&a.id, 10).await.expect("execs");
+        assert_eq!(execs.len(), 1);
+        assert_eq!(execs[0].outcome, "SUCCESS");
+        assert_eq!(execs[0].method, "GET");
+        assert_eq!(execs[0].url, "http://t/x");
     }
 
     #[tokio::test]
