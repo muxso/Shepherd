@@ -79,6 +79,9 @@ struct RunPerfBody {
     concurrency: usize,
     #[serde(default = "default_iterations")]
     iterations: usize,
+    /// 时长模式:给定则持续压测该毫秒数(忽略 iterations);省略则按 iterations 固定次数。
+    #[serde(default)]
+    duration_ms: Option<u64>,
     /// 期望状态码:给定则成功=该码命中;省略则成功=HTTP 可达。
     #[serde(default)]
     expect_status: Option<u16>,
@@ -118,15 +121,22 @@ async fn run_perf(user: AuthUser, State(st): State<PerfState>, Json(req): Json<R
     if req.url.trim().is_empty() {
         return (StatusCode::BAD_REQUEST, "url required").into_response();
     }
-    let plan = match LoadPlan::new(req.concurrency, req.iterations) {
+    // 时长模式优先;否则固定次数。
+    let plan = match req.duration_ms {
+        Some(ms) => LoadPlan::duration_ms(req.concurrency, ms),
+        None => LoadPlan::new(req.concurrency, req.iterations),
+    };
+    let plan = match plan {
         Ok(p) => p,
         Err(e) => return (StatusCode::BAD_REQUEST, format!("invalid load plan: {e}")).into_response(),
     };
+    // 报告里记录的 iterations:时长模式记 0(实际完成数见 total)。
+    let planned_iterations = if req.duration_ms.is_some() { 0 } else { req.iterations as i32 };
 
     // 1) 落 RUNNING 报告
     let report_id = match st
         .store
-        .create(&req.project_id, &req.method.to_uppercase(), &req.url, req.concurrency as i32, req.iterations as i32)
+        .create(&req.project_id, &req.method.to_uppercase(), &req.url, req.concurrency as i32, planned_iterations)
         .await
     {
         Ok(id) => id,
