@@ -73,7 +73,7 @@
 | `task` | 任务拆分 DAG(依赖、就绪门控、状态机)+ `Planner` 端口 | 一致性边界 = `Decomposition` 聚合 |
 | `delivery` | 派发给 AI 执行者 + 执行决策日志审计 | `AgentExecutor`/`EventSink`/`DeliveryObserver` 端口 |
 | `verification` | 需求↔任务↔实现 双向追溯 + 缺口检测 | 覆盖链聚合 → 完整性报告 |
-| `orchestrator` | 跨上下文编排(process manager):交付→驱动任务→验证门→回灌验证 | **纯协调,零业务依赖**,在自有 gateway 端口上工作 |
+| `orchestrator` | 跨上下文编排(process manager):交付→驱动任务→验证门→**按验收标准文本自动建覆盖链**→回灌验证 | **纯协调,零业务依赖**,在自有 gateway 端口上工作 |
 | `skill` | AI Skill 编排(定义/复用/`compose` 传递展开防环) | 注入执行者提示规范行为 |
 | **接入层 / 组装** | | |
 | `mcp` | Model Context Protocol 引擎(JSON-RPC + 工具注册表) | 协议层,零业务知识 |
@@ -222,8 +222,8 @@ project ─▶ requirement(多版本) ─▶ task(拆分 DAG,可独立交付)
                                       │ 交付落终态
                           ┌───────────┴───────────┐  ← orchestrator(纯协调)
                           ▼                       ▼
-                   驱动任务生命周期           验证门(judge)+ 回灌验证
-                  (…→Verified 解锁下游)      verification(完整性报告/缺口)
+                   驱动任务生命周期        验证门(judge)+ 自动建链 + 回灌验证
+                  (…→Verified 解锁下游)   verification(按标准文本建覆盖链→完整性报告)
 ```
 
 **上下文彼此零类型依赖**:跨上下文只用字符串 id 互引(`requirement_id` / `decomposition_id` /
