@@ -551,6 +551,7 @@ const DICT: Record<string, { zh: string; en: string }> = {
   "editor.absoluteUrl": { zh: "请输入绝对 URL(以 http(s):// 开头)", en: "Enter an absolute URL (starting with http(s)://)" },
   "editor.sshUser": { zh: "用户名", en: "Username" },
   "editor.sshPass": { zh: "密码", en: "Password" },
+  "editor.grpcMethod": { zh: "完整方法路径,如 pkg.Service/Method", en: "Full method path, e.g. pkg.Service/Method" },
   "editor.sendFail": { zh: "发送失败", en: "Send failed" },
   "editor.response": { zh: "响应", en: "Response" },
   "editor.respBody": { zh: "响应体", en: "Response Body" },

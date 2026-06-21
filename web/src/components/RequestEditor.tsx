@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { AutoComplete, Button, Card, Input, Radio, Select, Space, Table, Tabs, Tag, Typography } from 'antd'
 import { message } from '../feedback'
 import { SendOutlined, PlusOutlined, DeleteOutlined } from '@ant-design/icons'
@@ -6,6 +6,50 @@ import { api, ApiError, type DebugResponse } from '../api'
 import { useI18n } from '../i18n'
 
 const METHODS = ['GET', 'POST', 'PUT', 'DELETE', 'PATCH']
+
+// 调试台协议 schema(声明式,数据驱动渲染)。后端协议插件 feature 门控、可动态插拔——
+// 新增一个协议=加一条 schema(+ 后端插件),无需改渲染分支。meta 为该协议的额外连接参数。
+interface MetaField {
+  key: string
+  labelKey: string
+  fallback: string
+  secret?: boolean
+}
+interface ProtoSpec {
+  value: string // 前端值;小写后即后端协议名(registry key)
+  proto: string // 后端协议名(用于按可用列表过滤)
+  label: string
+  urlPlaceholder: string // url 字段语义随协议而变(连接串/host:port/ws URL…)
+  bodyPlaceholder?: string // body=载荷(命令/SQL/发送文本…)
+  meta?: MetaField[] // 额外参数 → debug/send.meta(如 ssh user/password、grpc method)
+  httpMethod?: boolean // 仅 HTTP 显示方法下拉
+}
+const PROTOCOLS: ProtoSpec[] = [
+  { value: 'HTTP', proto: 'http', label: 'HTTP', urlPlaceholder: '/apis/... 或 http://...', httpMethod: true },
+  { value: 'REDIS', proto: 'redis', label: 'Redis', urlPlaceholder: 'redis://host:port/0', bodyPlaceholder: 'PING / SET k v / GET k' },
+  {
+    value: 'SSH',
+    proto: 'ssh',
+    label: 'SSH',
+    urlPlaceholder: 'host:port(默认 22)',
+    bodyPlaceholder: '要执行的命令',
+    meta: [
+      { key: 'user', labelKey: 'editor.sshUser', fallback: '用户名' },
+      { key: 'password', labelKey: 'editor.sshPass', fallback: '密码', secret: true },
+    ],
+  },
+  { value: 'SQL', proto: 'sql', label: 'SQL(PG)', urlPlaceholder: 'postgres://user:pass@host:port/db', bodyPlaceholder: 'SELECT 1' },
+  { value: 'MYSQL', proto: 'mysql', label: 'MySQL', urlPlaceholder: 'mysql://user:pass@host:port/db', bodyPlaceholder: 'SELECT 1' },
+  { value: 'WEBSOCKET', proto: 'websocket', label: 'WebSocket', urlPlaceholder: 'ws://host:port/path', bodyPlaceholder: '(可选)发送文本' },
+  {
+    value: 'GRPC',
+    proto: 'grpc',
+    label: 'gRPC',
+    urlPlaceholder: 'http://host:port',
+    bodyPlaceholder: '(请求字节,可空)',
+    meta: [{ key: 'method', labelKey: 'editor.grpcMethod', fallback: '完整方法路径,如 pkg.Service/Method' }],
+  },
+]
 type KV = { on: boolean; key: string; value: string; desc?: string }
 
 // MeterSphere @mock 变量(选取常用),发送前解析为随机值。
@@ -55,8 +99,13 @@ export default function RequestEditor({
   const { t } = useI18n()
   const [method, setMethod] = useState(initialMethod || 'GET')
   const [protocol, setProtocol] = useState('HTTP')
-  const [sshUser, setSshUser] = useState('')
-  const [sshPass, setSshPass] = useState('')
+  const [metaValues, setMetaValues] = useState<Record<string, string>>({})
+  const [availProtos, setAvailProtos] = useState<string[]>(['http'])
+  useEffect(() => {
+    api.debugProtocols().then((r) => setAvailProtos(r.protocols)).catch(() => undefined)
+  }, [])
+  const spec = PROTOCOLS.find((p) => p.value === protocol) || PROTOCOLS[0]
+  const protoOptions = PROTOCOLS.filter((p) => availProtos.includes(p.proto)).map((p) => ({ value: p.value, label: p.label }))
   const [url, setUrl] = useState(initialUrl)
   const [query, setQuery] = useState<KV[]>([{ on: true, key: '', value: '', desc: '' }])
   const [headers, setHeaders] = useState<KV[]>([{ on: true, key: '', value: '', desc: '' }])
@@ -80,7 +129,9 @@ export default function RequestEditor({
       setErr('')
       setResp(null)
       try {
-        const meta = protocol === 'SSH' ? { user: sshUser, password: sshPass } : undefined
+        const meta = spec.meta?.length
+          ? Object.fromEntries(spec.meta.map((f) => [f.key, metaValues[f.key] || '']))
+          : undefined
         setResp(await api.debugSend({ protocol: protocol.toLowerCase(), method, url: url.trim(), body: body.trim() || undefined, meta }))
       } catch (e) {
         setErr(e instanceof ApiError ? e.message : t('editor.sendFail', '发送失败'))
@@ -172,25 +223,36 @@ export default function RequestEditor({
   const reqPanel = (
     <>
       <Space.Compact style={{ width: '100%', marginBottom: 12 }}>
-        <Select value={protocol} onChange={setProtocol} style={{ width: 96 }} options={[{ value: 'HTTP', label: 'HTTP' }, { value: 'REDIS', label: 'Redis' }, { value: 'SSH', label: 'SSH' }]} />
-        {protocol === 'HTTP' && (
+        <Select value={protocol} onChange={setProtocol} style={{ width: 120 }} options={protoOptions} />
+        {spec.httpMethod && (
           <Select value={method} onChange={setMethod} style={{ width: 100 }} options={METHODS.map((m) => ({ value: m, label: m }))} />
         )}
-        <Input value={url} onChange={(e) => setUrl(e.target.value)} placeholder={protocol === 'REDIS' ? 'redis://host:port/0' : protocol === 'SSH' ? 'host:port(默认 22)' : t('editor.urlPlaceholder', '/apis/... 或 http://...')} className="ms-mono" onPressEnter={send} />
+        <Input value={url} onChange={(e) => setUrl(e.target.value)} placeholder={spec.httpMethod ? t('editor.urlPlaceholder', '/apis/... 或 http://...') : spec.urlPlaceholder} className="ms-mono" onPressEnter={send} />
         <Button type="primary" icon={<SendOutlined />} loading={sending} onClick={send}>{t('a.send', '发送')}</Button>
       </Space.Compact>
-      {protocol === 'SSH' && (
+      {spec.meta?.length ? (
         <Space.Compact style={{ width: '100%', marginBottom: 12 }}>
-          <Input style={{ width: 200 }} value={sshUser} onChange={(e) => setSshUser(e.target.value)} placeholder={t('editor.sshUser', '用户名')} />
-          <Input.Password style={{ flex: 1 }} value={sshPass} onChange={(e) => setSshPass(e.target.value)} placeholder={t('editor.sshPass', '密码')} />
+          {spec.meta.map((f) => {
+            const C = f.secret ? Input.Password : Input
+            return (
+              <C
+                key={f.key}
+                style={{ flex: 1 }}
+                value={metaValues[f.key] || ''}
+                onChange={(e) => setMetaValues((v) => ({ ...v, [f.key]: e.target.value }))}
+                placeholder={t(f.labelKey, f.fallback)}
+                className={f.secret ? undefined : 'ms-mono'}
+              />
+            )
+          })}
         </Space.Compact>
-      )}
+      ) : null}
       <Tabs
         size="small"
         items={[
           { key: 'query', label: `Query${queryCount ? ` (${queryCount})` : ''}`, children: <KvTable rows={query} setRows={setQuery} mock /> },
           { key: 'headers', label: `${t('editor.reqHeaders', '请求头')}${headerCount ? ` (${headerCount})` : ''}`, children: <KvTable rows={headers} setRows={setHeaders} mock /> },
-          { key: 'body', label: t('editor.reqBody', '请求体'), children: <Input.TextArea rows={8} value={body} onChange={(e) => setBody(e.target.value)} placeholder='{"username":"admin"}' className="ms-mono" /> },
+          { key: 'body', label: t('editor.reqBody', '请求体'), children: <Input.TextArea rows={8} value={body} onChange={(e) => setBody(e.target.value)} placeholder={spec.bodyPlaceholder || '{"username":"admin"}'} className="ms-mono" /> },
           {
             key: 'auth',
             label: t('editor.auth', '认证'),
