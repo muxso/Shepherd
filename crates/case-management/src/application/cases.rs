@@ -35,8 +35,10 @@ impl CreateCaseUseCase {
         priority: &str,
         status: &str,
         custom_fields: BTreeMap<String, String>,
+        steps: Vec<crate::domain::CaseStep>,
     ) -> Result<FunctionalCase, CreateCaseError> {
-        let new = NewFunctionalCase::new(project_id, name, module, priority, status, custom_fields)?;
+        let new =
+            NewFunctionalCase::new(project_id, name, module, priority, status, custom_fields, steps)?;
         Ok(self.repo.insert(&new).await?)
     }
 }
@@ -116,6 +118,7 @@ pub fn cases_from_rows(project_id: &str, rows: &[Vec<String>]) -> Vec<NewFunctio
                 cell(row, prio_i),
                 cell(row, status_i),
                 custom,
+                Vec::new(),
             )
             .ok()
         })
@@ -178,6 +181,7 @@ mod tests {
             priority: "P2".into(),
             status: "PREPARED".into(),
             custom_fields: fields.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect(),
+            steps: Vec::new(),
         }
     }
 
@@ -187,7 +191,7 @@ mod tests {
         let create = CreateCaseUseCase::new(repo.clone());
         let list = ListCasesUseCase::new(repo);
         create
-            .execute("p1", "登录成功", "登录", "P0", "", BTreeMap::new())
+            .execute("p1", "登录成功", "登录", "P0", "", BTreeMap::new(), Vec::new())
             .await
             .expect("created");
         let all = list.execute("p1").await.expect("listed");

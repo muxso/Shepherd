@@ -20,7 +20,6 @@ import {
   UserOutlined,
   ProjectOutlined,
   FileTextOutlined,
-  NodeIndexOutlined,
 } from '@ant-design/icons'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { useApp } from '../context'
@@ -32,7 +31,7 @@ const { Sider, Content } = Layout
 const TOP_NAV: { key: string; label: string; match: string[] }[] = [
   { key: '/api/definition', label: '接口测试', match: ['/api/', '/functional-case'] },
   { key: '/test-plan', label: '计划与执行', match: ['/test-plan', '/perf', '/environment', '/resource-pool'] },
-  { key: '/requirement', label: '需求与编排', match: ['/requirement', '/orchestration', '/bug', '/skill'] },
+  { key: '/requirement', label: '需求与编排', match: ['/requirement', '/bug', '/skill'] },
   { key: '/organization', label: '系统管理', match: ['/organization', '/role', '/user', '/project', '/mcp'] },
 ]
 
@@ -63,8 +62,7 @@ const SIDE_NAV = [
     label: '需求与编排',
     type: 'group' as const,
     children: [
-      { key: '/requirement', icon: <FileTextOutlined />, label: '需求' },
-      { key: '/orchestration', icon: <NodeIndexOutlined />, label: '拆分/交付/验证' },
+      { key: '/requirement', icon: <FileTextOutlined />, label: '需求与编排' },
       { key: '/bug', icon: <BugOutlined />, label: '缺陷' },
       { key: '/skill', icon: <BulbOutlined />, label: '技能' },
     ],
@@ -91,8 +89,7 @@ const SIDE_LABEL: Record<string, string> = {
   '/perf': '性能压测',
   '/environment': '环境',
   '/resource-pool': '资源池',
-  '/requirement': '需求',
-  '/orchestration': '拆分/交付/验证',
+  '/requirement': '需求与编排',
   '/bug': '缺陷',
   '/skill': '技能',
   '/organization': '组织',
