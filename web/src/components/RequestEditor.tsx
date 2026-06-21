@@ -71,6 +71,8 @@ export default function RequestEditor({
 
   const send = async () => {
     if (!url.trim()) return message.warning(t('editor.urlRequired', '请输入 URL'))
+    // 调试发送在服务端直连目标:必须绝对 URL,否则后端报 cryptic「transport: builder error」。
+    if (!/^https?:\/\//i.test(url.trim())) return message.warning(t('editor.absoluteUrl', '请输入绝对 URL(以 http(s):// 开头)'))
     // 拼 query(解析 @mock)
     const qs = query
       .filter((q) => q.on && q.key.trim())

@@ -519,6 +519,7 @@ const DICT: Record<string, { zh: string; en: string }> = {
   "editor.mockDatetime": { zh: "@datetime — 当前时间", en: "@datetime — current time" },
   "editor.mockEmail": { zh: "@email — 随机邮箱", en: "@email — random email" },
   "editor.urlRequired": { zh: "请输入 URL", en: "Please enter a URL" },
+  "editor.absoluteUrl": { zh: "请输入绝对 URL(以 http(s):// 开头)", en: "Enter an absolute URL (starting with http(s)://)" },
   "editor.sendFail": { zh: "发送失败", en: "Send failed" },
   "editor.response": { zh: "响应", en: "Response" },
   "editor.respBody": { zh: "响应体", en: "Response Body" },
