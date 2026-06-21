@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import {
   Button,
+  Checkbox,
   Descriptions,
   Dropdown,
   Empty,
@@ -13,6 +14,7 @@ import {
   Tabs,
   Tag,
   Tree,
+  Upload,
   message,
 } from 'antd'
 import {
@@ -33,6 +35,7 @@ import CasesPanel from './CasesPanel'
 import MocksPanel from './MocksPanel'
 import RequestEditor from '../components/RequestEditor'
 import { useOpenParam } from '../components/Workspace'
+import { parseOperations, buildCaseUrl } from '../openapi'
 
 const METHODS = ['GET', 'POST', 'PUT', 'DELETE', 'PATCH']
 const PROTOCOLS = ['HTTP', 'GRPC', 'SQL', 'REDIS', 'WEBSOCKET']
@@ -497,37 +500,93 @@ function ImportModal({
   onDone: () => void
 }) {
   const [text, setText] = useState('')
+  const [fileName, setFileName] = useState('')
+  const [genCases, setGenCases] = useState(true)
   const [saving, setSaving] = useState(false)
+
+  const readFile = (file: File) => {
+    const reader = new FileReader()
+    reader.onload = () => {
+      setText(String(reader.result || ''))
+      setFileName(file.name)
+    }
+    reader.readAsText(file)
+    return false // 阻止 antd 自动上传
+  }
+
+  const doImport = async () => {
+    let parsed: any
+    try {
+      parsed = JSON.parse(text)
+    } catch {
+      message.error('不是合法 JSON(上传文件或粘贴 OpenAPI/Swagger 文档)')
+      return
+    }
+    setSaving(true)
+    try {
+      const r = await api.importDefinitions(projectId, parsed)
+      let caseCount = 0
+      if (genCases && r.created.length) {
+        // 按 schema 自动为每个导入的接口生成一条用例(必填 query + 示例 body)。
+        const ops = parseOperations(parsed)
+        await Promise.all(
+          r.created.map(async (d) => {
+            const op = ops[`${d.method} ${d.path}`]
+            try {
+              await api.createCase(d.id, {
+                name: op?.summary || d.name,
+                method: d.method,
+                url: buildCaseUrl(d.path, op),
+                body: op?.bodyExample,
+                assertions: [{ type: 'StatusIs', args: 200 }],
+              })
+              caseCount++
+            } catch {
+              /* 单条失败不阻断 */
+            }
+          }),
+        )
+      }
+      message.success(`导入成功:新增接口 ${r.created.length},跳过 ${r.skipped}${genCases ? `,生成用例 ${caseCount}` : ''}`)
+      setText('')
+      setFileName('')
+      onDone()
+    } catch (e) {
+      message.error(e instanceof ApiError ? e.message : '导入失败')
+    } finally {
+      setSaving(false)
+    }
+  }
+
   return (
     <Modal
-      title="导入接口(OpenAPI 3.x / Swagger 2.0 JSON)"
+      title="导入接口(OpenAPI 3.x / Swagger 2.0)"
       open={open}
       onCancel={onClose}
       confirmLoading={saving}
       destroyOnHidden
-      width={640}
-      onOk={async () => {
-        let parsed: unknown
-        try {
-          parsed = JSON.parse(text)
-        } catch {
-          message.error('不是合法 JSON')
-          return
-        }
-        setSaving(true)
-        try {
-          const r = await api.importDefinitions(projectId, parsed)
-          message.success(`导入成功:新增 ${r.created.length},跳过 ${r.skipped}`)
-          setText('')
-          onDone()
-        } catch (e) {
-          message.error(e instanceof ApiError ? e.message : '导入失败')
-        } finally {
-          setSaving(false)
-        }
-      }}
+      width={680}
+      okText="导入"
+      okButtonProps={{ disabled: !text.trim() }}
+      onOk={doImport}
     >
-      <Input.TextArea rows={14} value={text} onChange={(e) => setText(e.target.value)} placeholder='{"openapi":"3.0.0","paths":{...}}' className="ms-mono" />
+      <Upload.Dragger accept=".json,.yaml,.yml" beforeUpload={readFile} showUploadList={false} style={{ marginBottom: 12 }}>
+        <p style={{ margin: 0 }}>
+          <InboxOutlined style={{ fontSize: 28, color: '#7c3aed' }} />
+        </p>
+        <p style={{ margin: '6px 0 0' }}>点击或拖拽 OpenAPI/Swagger JSON 文件到此</p>
+        {fileName && <p style={{ color: '#7c3aed', margin: '4px 0 0' }}>已选:{fileName}</p>}
+      </Upload.Dragger>
+      <Checkbox checked={genCases} onChange={(e) => setGenCases(e.target.checked)} style={{ marginBottom: 8 }}>
+        按 schema 自动生成用例(填充必填参数 + 示例请求体,免手敲)
+      </Checkbox>
+      <Input.TextArea
+        rows={8}
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        placeholder="也可直接粘贴文档内容"
+        className="ms-mono"
+      />
     </Modal>
   )
 }
