@@ -28,12 +28,12 @@ export default function Login() {
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
-        background: 'linear-gradient(135deg,#0b1f3a,#1664ff22)',
+        background: 'linear-gradient(135deg,#0b1f3a,#7c3aed22)',
       }}
     >
       <Card style={{ width: 360 }} variant="borderless">
         <div style={{ textAlign: 'center', marginBottom: 24 }}>
-          <DeploymentUnitOutlined style={{ fontSize: 36, color: '#1664ff' }} />
+          <DeploymentUnitOutlined style={{ fontSize: 36, color: '#7c3aed' }} />
           <Typography.Title level={3} style={{ margin: '8px 0 0' }}>
             Shepherd
           </Typography.Title>
