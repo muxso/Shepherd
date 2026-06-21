@@ -6,8 +6,8 @@ use std::sync::{Arc, Mutex};
 use async_trait::async_trait;
 
 use crate::domain::{
-    ApiCase, ApiDefinition, ApiModule, ApiMock, NewApiCase, NewApiDefinition, NewApiModule,
-    NewApiMock,
+    ApiCase, ApiDefinition, ApiDefinitionChange, ApiModule, ApiMock, NewApiCase, NewApiDefinition,
+    NewApiModule, NewApiMock,
 };
 use crate::ports::{ApiDefinitionRepository, RepoError};
 
@@ -19,6 +19,7 @@ struct State {
     mocks: HashMap<String, ApiMock>,             // id -> Mock
     modules: HashMap<String, ApiModule>,         // id -> 模块
     task_cases: Vec<(String, String, String)>,   // (decomposition_id, task_id, case_id)
+    changes: Vec<ApiDefinitionChange>,           // 变更历史(追加序)
     seq: u64,
 }
 
@@ -65,6 +66,43 @@ impl ApiDefinitionRepository for InMemoryApiDefinitionRepository {
             d.spec = spec.to_string();
         }
         Ok(())
+    }
+
+    async fn record_definition_change(
+        &self,
+        definition_id: &str,
+        action: &str,
+        detail: &str,
+        actor: &str,
+    ) -> Result<(), RepoError> {
+        let mut state = self.state.lock().expect("lock");
+        state.seq += 1;
+        let seq = state.seq;
+        state.changes.push(ApiDefinitionChange {
+            id: format!("change-{seq}"),
+            definition_id: definition_id.to_string(),
+            action: action.to_string(),
+            detail: detail.to_string(),
+            actor: actor.to_string(),
+            // 合成单调递增时间串,保证倒序稳定。
+            created_at: format!("{seq:020}"),
+        });
+        Ok(())
+    }
+
+    async fn list_definition_changes(
+        &self,
+        definition_id: &str,
+    ) -> Result<Vec<ApiDefinitionChange>, RepoError> {
+        let state = self.state.lock().expect("lock");
+        // 倒序(最新在前):追加序逆序遍历。
+        Ok(state
+            .changes
+            .iter()
+            .rev()
+            .filter(|c| c.definition_id == definition_id)
+            .cloned()
+            .collect())
     }
 
     async fn list_definitions(

@@ -142,6 +142,16 @@ export interface ApiModule {
   name: string
 }
 
+/** 接口定义变更历史一条(审计)。 */
+export interface ApiDefinitionChange {
+  id: string
+  definitionId: string
+  action: string
+  detail: string
+  actor: string
+  createdAt: string
+}
+
 export interface ApiCase {
   id: string
   apiDefinitionId: string
@@ -419,6 +429,8 @@ export const api = {
     http.get<{ cases: { id: string; name: string }[]; scenarios: { id: string; name: string }[] }>(
       `/api/definition/${id}/references`,
     ),
+  definitionChanges: (id: string) =>
+    http.get<ApiDefinitionChange[]>(`/api/definition/${id}/changes`),
   createDefinition: (b: {
     projectId: string
     name: string

@@ -7,8 +7,8 @@
 use async_trait::async_trait;
 
 use crate::domain::{
-    ApiCase, ApiDefinition, ApiModule, ApiMock, ApiProtocol, ApiStatus, NewApiCase,
-    NewApiDefinition, NewApiModule, NewApiMock,
+    ApiCase, ApiDefinition, ApiDefinitionChange, ApiModule, ApiMock, ApiProtocol, ApiStatus,
+    NewApiCase, NewApiDefinition, NewApiModule, NewApiMock,
 };
 use crate::ports::{ApiDefinitionRepository, RepoError};
 use sqlx::{PgPool, Row};
@@ -123,6 +123,54 @@ impl ApiDefinitionRepository for PgApiDefinitionRepository {
             .await
             .map_err(map_err)?;
         Ok(())
+    }
+
+    async fn record_definition_change(
+        &self,
+        definition_id: &str,
+        action: &str,
+        detail: &str,
+        actor: &str,
+    ) -> Result<(), RepoError> {
+        sqlx::query(
+            "INSERT INTO ms_api_definition_change (definition_id, action, detail, actor) \
+             VALUES ($1, $2, $3, $4)",
+        )
+        .bind(definition_id)
+        .bind(action)
+        .bind(detail)
+        .bind(actor)
+        .execute(&self.pool)
+        .await
+        .map_err(map_err)?;
+        Ok(())
+    }
+
+    async fn list_definition_changes(
+        &self,
+        definition_id: &str,
+    ) -> Result<Vec<ApiDefinitionChange>, RepoError> {
+        let rows = sqlx::query(
+            "SELECT id, definition_id, action, detail, actor, created_at::text AS created_at \
+             FROM ms_api_definition_change WHERE definition_id = $1 \
+             ORDER BY created_at DESC",
+        )
+        .bind(definition_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(map_err)?;
+        rows.iter()
+            .map(|row| {
+                Ok(ApiDefinitionChange {
+                    id: row.try_get("id").map_err(map_err)?,
+                    definition_id: row.try_get("definition_id").map_err(map_err)?,
+                    action: row.try_get("action").map_err(map_err)?,
+                    detail: row.try_get("detail").map_err(map_err)?,
+                    actor: row.try_get("actor").map_err(map_err)?,
+                    created_at: row.try_get::<String, _>("created_at").map_err(map_err)?,
+                })
+            })
+            .collect()
     }
 
     async fn list_definitions(
