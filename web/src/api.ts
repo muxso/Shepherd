@@ -115,10 +115,27 @@ export interface ApiSpecResponse {
   status?: number
   body?: string
 }
+/** 请求体 content-type(对标 MeterSphere)。 */
+export type ApiBodyType = 'none' | 'form-data' | 'x-www-form-urlencoded' | 'json' | 'xml' | 'raw' | 'binary'
+/** 认证模式。 */
+export interface ApiSpecAuth {
+  type?: 'none' | 'bearer' | 'basic'
+  token?: string
+}
 export interface ApiSpec {
+  // 基本信息
+  description?: string
+  tags?: string[]
+  // 请求
   requestHeaders?: ApiSpecKV[]
   requestQuery?: ApiSpecKV[]
+  /** REST 路径参数(/users/{id} 里的 {id})。 */
+  restParams?: ApiSpecKV[]
+  bodyType?: ApiBodyType
   requestBody?: string
+  /** form-data / urlencoded 的键值体。 */
+  formBody?: ApiSpecKV[]
+  auth?: ApiSpecAuth
   responses?: ApiSpecResponse[]
 }
 
