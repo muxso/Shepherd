@@ -223,11 +223,29 @@ export interface FunctionalCase {
   customFields?: Record<string, string>
 }
 
+export interface EnvHeader {
+  name: string
+  value: string
+}
+
 export interface Environment {
   id: string
+  projectId?: string
   name: string
   baseUrl: string
+  headers?: EnvHeader[]
+  variables?: Record<string, string>
+  enabled?: boolean
   protocols?: string[]
+}
+
+export interface EnvironmentBody {
+  projectId: string
+  name: string
+  baseUrl: string
+  headers?: EnvHeader[]
+  variables?: Record<string, string>
+  enabled?: boolean
 }
 
 export interface TestPlan {
@@ -541,8 +559,8 @@ export const api = {
     projectId
       ? http.get<Environment[]>(`/api/environment?projectId=${encodeURIComponent(projectId)}`)
       : Promise.resolve([] as Environment[]),
-  createEnvironment: (b: { projectId: string; name: string; baseUrl: string }) =>
-    http.post<Environment>('/api/environment', b),
+  createEnvironment: (b: EnvironmentBody) => http.post<Environment>('/api/environment', b),
+  updateEnvironment: (id: string, b: EnvironmentBody) => http.put<Environment>(`/api/environment/${id}`, b),
   caseExecutions: (caseId: string) =>
     http.get<Page<CaseExecution>>(`/api/case/${caseId}/executions?pageSize=50`),
 
