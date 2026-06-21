@@ -549,6 +549,8 @@ export const api = {
   // 接口调试台:进程内即时发起请求(POST /api/debug/send)
   debugSend: (b: { protocol?: string; method: string; url: string; headers?: { key: string; value: string }[]; body?: string; meta?: Record<string, string> }) =>
     http.post<DebugResponse>('/api/debug/send', b),
+  // 后端启用的协议插件(即插即用:开了哪个 feature 就返回哪个),供调试台动态渲染。
+  debugProtocols: () => http.get<{ protocols: string[] }>('/api/debug/protocols'),
 
   // MCP 工具
   mcpTools: () =>

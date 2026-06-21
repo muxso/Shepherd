@@ -9,7 +9,7 @@ use axum::{
     extract::FromRef,
     http::StatusCode,
     response::{IntoResponse, Response},
-    routing::post,
+    routing::{get, post},
     Json, Router,
 };
 use serde::{Deserialize, Serialize};
@@ -30,7 +30,20 @@ impl FromRef<DebugState> for Arc<dyn SessionStore> {
 }
 
 pub fn router(sessions: Arc<dyn SessionStore>) -> Router {
-    Router::new().route("/api/debug/send", post(send)).with_state(DebugState { sessions })
+    Router::new()
+        .route("/api/debug/send", post(send))
+        .route("/api/debug/protocols", get(protocols))
+        .with_state(DebugState { sessions })
+}
+
+/// 列出当前构建启用的协议插件(供前端动态渲染调试台,即插即用)。http 始终在。
+async fn protocols(_user: AuthUser) -> Response {
+    let mut list = default_registry().protocols();
+    if !list.iter().any(|p| p == "http") {
+        list.push("http".to_string());
+    }
+    list.sort();
+    (StatusCode::OK, Json(serde_json::json!({ "protocols": list }))).into_response()
 }
 
 #[derive(Debug, Deserialize)]
