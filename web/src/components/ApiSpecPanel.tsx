@@ -91,6 +91,8 @@ export function parseCurl(text: string): { method: string; url: string; headers:
  * create 模式由父组件托管 spec(value/onChange),不自行加载/保存,保存按钮也交给父级(新建接口 Tab)。
  */
 export type ExecMode = 'server' | 'local'
+/** 实际发送的请求(用于「实际请求 / 控制台 / cURL」展示)。 */
+export type SentRequest = { method: string; url: string; headers: { key: string; value: string }[]; body?: string }
 export interface ApiSpecPanelHandle {
   save: () => void
   /** cURL 导入:把解析结果合并进当前 spec(请求头/请求体),并回填请求行方法/路径。 */
@@ -168,6 +170,8 @@ const ApiSpecPanel = forwardRef<ApiSpecPanelHandle, {
   const [running, setRunning] = useState(false)
   const [resp, setResp] = useState<DebugResponse | null>(null)
   const [runErr, setRunErr] = useState('')
+  // 最近一次实际发送的请求(供「实际请求 / 控制台 / cURL」展示)。
+  const [lastReq, setLastReq] = useState<SentRequest | null>(null)
 
   // 把当前请求行 + spec 组装成可发送的请求(URL/headers/body)。失败时弹提示并返回 null。
   const buildRequest = (): { method: string; url: string; headers: { key: string; value: string }[]; body?: string } | null => {
@@ -214,6 +218,7 @@ const ApiSpecPanel = forwardRef<ApiSpecPanelHandle, {
   const execute = async (m: ExecMode = execMode) => {
     const req = buildRequest()
     if (!req) return
+    setLastReq(req)
     setRunning(true)
     setRunErr('')
     setResp(null)
@@ -362,10 +367,18 @@ const ApiSpecPanel = forwardRef<ApiSpecPanelHandle, {
         </div>
       )}
       {/* 下划线子标签(对齐 MeterSphere:基本信息/请求头/请求体/…/设置)。 */}
-      <Tabs items={tabs} size="small" />
+      <Tabs className="ms-detail-tabs" items={tabs} size="small" />
       {/* 底部「响应内容」:定义=示例响应(状态码 200/404…);调试=服务端执行结果。 */}
       {debug ? (
-        <DebugResultPanel running={running} resp={resp} err={runErr} />
+        <DebugResultPanel
+          running={running}
+          resp={resp}
+          err={runErr}
+          req={lastReq}
+          isHttp={(definition.protocol || 'HTTP').toUpperCase() === 'HTTP'}
+          extractors={spec.postProcessors as Record<string, unknown>[] | undefined}
+          assertions={spec.assertions as Record<string, unknown>[] | undefined}
+        />
       ) : (
         <ExampleResponsesPanel responses={spec.responses || []} onChange={(rows) => patch({ responses: rows })} />
       )}
@@ -451,21 +464,135 @@ function ExampleResponsesPanel({ responses, onChange }: { responses: ApiSpecResp
   )
 }
 
-/** 调试结果面板:仅展示执行结果(执行由请求行的「服务端/本地执行」触发;环境在顶栏选)。 */
+/** 把实际请求渲染成 cURL 命令。 */
+function reqToCurl(req: SentRequest): string {
+  const parts = [`curl -X ${req.method} '${req.url}'`]
+  for (const h of req.headers) parts.push(`  -H '${h.key}: ${(h.value || '').replace(/'/g, "'\\''")}'`)
+  if (req.body) parts.push(`  -d '${req.body.replace(/'/g, "'\\''")}'`)
+  return parts.join(' \\\n')
+}
+
+const codeBox: React.CSSProperties = { background: '#0f1419', color: '#d6deeb', padding: 12, borderRadius: 6, maxHeight: 360, overflow: 'auto', fontSize: 12, whiteSpace: 'pre-wrap', wordBreak: 'break-all', margin: 0 }
+
+/** 调试结果面板:响应体/响应头/实际请求/控制台/cURL/提取/断言(执行由请求行触发,环境在顶栏选)。 */
 function DebugResultPanel({
   running,
   resp,
   err,
+  req,
+  isHttp,
+  extractors,
+  assertions,
 }: {
   running: boolean
   resp: DebugResponse | null
   err: string
+  req: SentRequest | null
+  isHttp: boolean
+  extractors?: Record<string, unknown>[]
+  assertions?: Record<string, unknown>[]
 }) {
   const { t } = useI18n()
   const [view, setView] = useState<'json' | 'raw'>('json')
+
+  // 提取器(后置处理器里 type=Extract 的 extractors 列表)。
+  const extractRows = (extractors || [])
+    .filter((p) => String(p.type) === 'Extract')
+    .flatMap((p) => ((p.args as { extractors?: { variable?: string; kind?: string; expression?: string }[] })?.extractors || []))
+
+  const items = [
+    {
+      key: 'body',
+      label: t('editor.respBody', '响应体'),
+      children: (
+        <>
+          <Radio.Group size="small" value={view} onChange={(e) => setView(e.target.value)} optionType="button" style={{ marginBottom: 8 }}>
+            <Radio.Button value="json">JSON</Radio.Button>
+            <Radio.Button value="raw">Raw</Radio.Button>
+          </Radio.Group>
+          <pre style={codeBox}>{view === 'json' ? formatJson(resp?.body || '') : resp?.body || t('editor.empty', '(空)')}</pre>
+        </>
+      ),
+    },
+    {
+      key: 'headers',
+      label: `${t('editor.respHeaders', '响应头')}${resp?.headers.length ? ` (${resp.headers.length})` : ''}`,
+      children: (
+        <Table
+          size="small"
+          pagination={false}
+          rowKey={(_, i) => String(i)}
+          dataSource={(resp?.headers || []).map(([k, v]) => ({ k, v }))}
+          columns={[
+            { title: t('editor.colName', '名'), dataIndex: 'k', width: 220 },
+            { title: t('editor.colValue', '值'), dataIndex: 'v', render: (v: string) => <span className="ms-mono">{v}</span> },
+          ]}
+          locale={{ emptyText: t('apidef.none', '无') }}
+        />
+      ),
+    },
+    {
+      key: 'actual',
+      label: t('apidef.actualReq', '实际请求'),
+      children: req ? (
+        <pre style={codeBox}>{`${req.method} ${req.url}\n\n${req.headers.map((h) => `${h.key}: ${h.value}`).join('\n')}${req.body ? `\n\n${req.body}` : ''}`}</pre>
+      ) : (
+        <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('apidef.notRunYet', '尚未执行')} />
+      ),
+    },
+    {
+      key: 'console',
+      label: t('apidef.console', '控制台'),
+      children: (
+        <pre style={codeBox}>
+          {[
+            req ? `→ ${req.method} ${req.url}` : t('apidef.notRunYet', '尚未执行'),
+            err ? `✗ ${err}` : resp ? `← ${resp.status} · ${resp.latencyMs} ms` : running ? '… ' + t('a.loading', '加载中…') : '',
+          ].filter(Boolean).join('\n')}
+        </pre>
+      ),
+    },
+    // cURL 仅 HTTP 协议。
+    ...(isHttp
+      ? [{
+          key: 'curl',
+          label: 'cURL',
+          children: req ? <pre style={codeBox}>{reqToCurl(req)}</pre> : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('apidef.notRunYet', '尚未执行')} />,
+        }]
+      : []),
+    {
+      key: 'extract',
+      label: `${t('apidef.preExtract', '提取')}${extractRows.length ? ` (${extractRows.length})` : ''}`,
+      children: extractRows.length ? (
+        <Table
+          size="small"
+          pagination={false}
+          rowKey={(_, i) => String(i)}
+          dataSource={extractRows.map((e, i) => ({ ...e, _i: i }))}
+          columns={[
+            { title: t('apidef.extractVar', '变量'), dataIndex: 'variable', width: 200, render: (v: string) => <span className="ms-mono">{v || '—'}</span> },
+            { title: t('apidef.extractKind', '方式'), dataIndex: 'kind', width: 120 },
+            { title: t('apidef.extractExpr', '表达式'), dataIndex: 'expression', render: (v: string) => <span className="ms-mono">{v || '—'}</span> },
+          ]}
+        />
+      ) : (
+        <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('apidef.noExtract', '无提取(在「后置」配置;结果于用例执行产出)')} />
+      ),
+    },
+    {
+      key: 'assert',
+      label: `${t('apidef.assertions', '断言')}${assertions?.length ? ` (${assertions.length})` : ''}`,
+      children: assertions?.length ? (
+        <pre style={codeBox}>{formatJson(JSON.stringify(assertions))}</pre>
+      ) : (
+        <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('apidef.noAssert', '无断言(在「断言」配置;结果于用例执行校验)')} />
+      ),
+    },
+  ]
+
   return (
     <Card size="small" style={{ marginTop: 12 }} styles={{ body: { padding: 12 } }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: resp || err ? 12 : 0 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
         <span style={{ fontWeight: 600, fontSize: 13 }}>{t('apidef.responseContent', '响应内容')}</span>
         <Typography.Text type="secondary" style={{ fontSize: 12 }}>{t('apidef.runResult', '执行结果')}</Typography.Text>
         <div style={{ flex: 1 }} />
@@ -473,46 +600,7 @@ function DebugResultPanel({
         {resp && <Tag color={resp.status < 400 ? 'green' : 'red'}>{resp.status}</Tag>}
         {resp && <Typography.Text type="secondary" style={{ fontSize: 12 }}>{resp.latencyMs} ms</Typography.Text>}
       </div>
-      {err ? (
-        <Typography.Text type="danger">{err}</Typography.Text>
-      ) : resp ? (
-        <Tabs
-          size="small"
-          items={[
-            {
-              key: 'body',
-              label: t('editor.respBody', '响应体'),
-              children: (
-                <>
-                  <Radio.Group size="small" value={view} onChange={(e) => setView(e.target.value)} optionType="button" style={{ marginBottom: 8 }}>
-                    <Radio.Button value="json">JSON</Radio.Button>
-                    <Radio.Button value="raw">Raw</Radio.Button>
-                  </Radio.Group>
-                  <pre style={{ background: '#0f1419', color: '#d6deeb', padding: 12, borderRadius: 6, maxHeight: 360, overflow: 'auto', fontSize: 12, whiteSpace: 'pre-wrap', wordBreak: 'break-all', margin: 0 }}>
-                    {view === 'json' ? formatJson(resp.body || '') : resp.body || t('editor.empty', '(空)')}
-                  </pre>
-                </>
-              ),
-            },
-            {
-              key: 'headers',
-              label: `${t('editor.respHeaders', '响应头')} (${resp.headers.length})`,
-              children: (
-                <Table
-                  size="small"
-                  pagination={false}
-                  rowKey={(_, i) => String(i)}
-                  dataSource={resp.headers.map(([k, v]) => ({ k, v }))}
-                  columns={[
-                    { title: t('editor.colName', '名'), dataIndex: 'k', width: 220 },
-                    { title: t('editor.colValue', '值'), dataIndex: 'v', render: (v: string) => <span className="ms-mono">{v}</span> },
-                  ]}
-                />
-              ),
-            },
-          ]}
-        />
-      ) : null}
+      <Tabs className="ms-detail-tabs" size="small" items={items} />
     </Card>
   )
 }
