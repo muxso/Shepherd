@@ -6,8 +6,8 @@ use std::sync::{Arc, Mutex};
 use async_trait::async_trait;
 
 use crate::domain::{
-    ApiCase, ApiDefinition, ApiDefinitionChange, ApiModule, ApiMock, NewApiCase, NewApiDefinition,
-    NewApiModule, NewApiMock,
+    ApiCase, ApiDefinition, ApiDefinitionChange, ApiModule, ApiMock, ApiView, NewApiCase,
+    NewApiDefinition, NewApiModule, NewApiMock, NewApiView,
 };
 use crate::ports::{ApiDefinitionRepository, RepoError};
 
@@ -20,6 +20,7 @@ struct State {
     modules: HashMap<String, ApiModule>,         // id -> 模块
     task_cases: Vec<(String, String, String)>,   // (decomposition_id, task_id, case_id)
     changes: Vec<ApiDefinitionChange>,           // 变更历史(追加序)
+    views: Vec<ApiView>,                         // 列表视图(保存的筛选/列设置)
     seq: u64,
 }
 
@@ -280,6 +281,40 @@ impl ApiDefinitionRepository for InMemoryApiDefinitionRepository {
         if let Some(d) = state.definitions.get_mut(definition_id) {
             d.module_id = module_id.map(str::to_string);
         }
+        Ok(())
+    }
+
+    async fn insert_view(&self, v: &NewApiView) -> Result<ApiView, RepoError> {
+        let mut state = self.state.lock().expect("lock");
+        state.seq += 1;
+        let view = ApiView {
+            id: format!("apiview-{}", state.seq),
+            project_id: v.project_id.clone(),
+            user_id: v.user_id.clone(),
+            name: v.name.clone(),
+            config: v.config.clone(),
+            shared: v.shared,
+            created_at: format!("{:020}", state.seq),
+        };
+        state.views.push(view.clone());
+        Ok(view)
+    }
+
+    async fn list_views(&self, project_id: &str, user_id: &str) -> Result<Vec<ApiView>, RepoError> {
+        let state = self.state.lock().expect("lock");
+        let mut out: Vec<ApiView> = state
+            .views
+            .iter()
+            .filter(|v| v.project_id == project_id && (v.shared || v.user_id == user_id))
+            .cloned()
+            .collect();
+        out.reverse(); // 创建时间倒序
+        Ok(out)
+    }
+
+    async fn delete_view(&self, id: &str, user_id: &str) -> Result<(), RepoError> {
+        let mut state = self.state.lock().expect("lock");
+        state.views.retain(|v| !(v.id == id && v.user_id == user_id));
         Ok(())
     }
 
