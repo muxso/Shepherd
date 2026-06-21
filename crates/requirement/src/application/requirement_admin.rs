@@ -96,6 +96,14 @@ impl RequirementService {
         Ok(req)
     }
 
+    /// 标记交付:Baselined → Delivered(幂等)。验证完整性达成后由编排层调用。
+    pub async fn deliver(&self, id: &str) -> Result<Requirement, RequirementCmdError> {
+        let mut req = self.get(id).await?;
+        req.deliver()?;
+        self.repo.save(&req).await?;
+        Ok(req)
+    }
+
     pub async fn archive(&self, id: &str) -> Result<Requirement, RequirementCmdError> {
         let mut req = self.get(id).await?;
         req.archive();

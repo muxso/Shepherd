@@ -21,6 +21,7 @@ use utoipa::{OpenApi, ToSchema};
 use webauth::{AuthUser, SessionStore};
 
 use delivery::application::DeliveryService;
+use requirement::application::RequirementService;
 use task::application::{TaskCmdError, TaskService};
 use task::domain::TaskStatus;
 
@@ -28,6 +29,7 @@ use task::domain::TaskStatus;
 struct RunState {
     tasks: TaskService,
     delivery: DeliveryService,
+    requirements: RequirementService,
     sessions: Arc<dyn SessionStore>,
 }
 
@@ -40,11 +42,12 @@ impl FromRef<RunState> for Arc<dyn SessionStore> {
 pub fn router(
     tasks: TaskService,
     delivery: DeliveryService,
+    requirements: RequirementService,
     sessions: Arc<dyn SessionStore>,
 ) -> Router {
     Router::new()
         .route("/decomposition/{id}/run", post(run_decomposition))
-        .with_state(RunState { tasks, delivery, sessions })
+        .with_state(RunState { tasks, delivery, requirements, sessions })
 }
 
 #[derive(Debug, Deserialize, ToSchema)]
@@ -158,6 +161,16 @@ async fn run_decomposition(
     let verified = final_dec.tasks.iter().filter(|t| t.status == TaskStatus::Verified).count();
     let failed = final_dec.tasks.iter().filter(|t| t.status == TaskStatus::Failed).count();
     let blocked = total - verified - failed;
+
+    // 全部任务验证通过 = 该需求验收完整性达成 → 自动把需求标记交付(Baselined→Delivered)。
+    // best-effort:未定基线/已归档会被领域层拒绝,这里仅记日志不影响运行结果。
+    if total > 0 && verified == total {
+        if let Err(e) = st.requirements.deliver(&final_dec.requirement_id).await {
+            tracing::warn!(requirement = %final_dec.requirement_id, "自动标记交付失败(可能未定基线): {e:?}");
+        } else {
+            tracing::info!(requirement = %final_dec.requirement_id, "需求已自动标记交付(DELIVERED)");
+        }
+    }
 
     (
         StatusCode::OK,

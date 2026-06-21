@@ -19,22 +19,29 @@ import { useI18n } from '../i18n'
 
 const toLines = (s: string) => s.split('\n').map((x) => x.trim()).filter(Boolean)
 const taskColor = (s: string) => (s === 'VERIFIED' ? 'green' : s === 'FAILED' ? 'red' : s === 'PENDING' ? 'default' : 'blue')
+// 需求状态色:DRAFT 灰 / BASELINED 蓝 / DELIVERED 绿 / ARCHIVED 灰。
+const reqStatusColor = (s?: string) =>
+  s === 'DELIVERED' ? 'green' : s === 'BASELINED' ? 'blue' : s === 'ARCHIVED' ? 'default' : 'default'
+
+// 列表行 = 本地注册表项 + 后端需求状态。
+type ReqRow = RegItem & { status?: string }
 
 // 需求与编排合一:需求列表 → 详情 Tab(需求信息/版本/基线/拆分 → 拆分图任务+运行+交付+验证)。
 export default function Requirements() {
   const { t } = useI18n()
   const { projectId } = useApp()
-  const [items, setItems] = useState<RegItem[]>([])
+  const [items, setItems] = useState<ReqRow[]>([])
   const [createOpen, setCreateOpen] = useState(false)
   const tabs = useWorkTabs()
 
   // 列表以后端为准(含 CLI/API 建的需求),叠加本地注册表的 meta(拆分/验证链接)。
+  // 携带后端 status,让列表直观看到 DRAFT/BASELINED/DELIVERED。
   const loadList = async () => {
     const local = regList('requirement', projectId)
     const localById = new Map(local.map((r) => [r.id, r]))
     try {
       const page = await api.requirements(projectId)
-      setItems(page.items.map((r) => localById.get(r.id) || { id: r.id, label: r.title, createdAt: 0 }))
+      setItems(page.items.map((r) => ({ ...(localById.get(r.id) || { id: r.id, label: r.title, createdAt: 0 }), status: r.status })))
     } catch {
       setItems(local) // 后端不可用时回落本地
     }
@@ -64,7 +71,7 @@ export default function Requirements() {
         onClose={tabs.close}
         tabs={detailTabs}
         listContent={
-          <WorkList<RegItem>
+          <WorkList<ReqRow>
             onNew={() => setCreateOpen(true)}
             newLabel={t('req.new', '新建需求')}
             data={items}
@@ -72,6 +79,7 @@ export default function Requirements() {
             emptyText={t('req.empty', '暂无需求')}
             columns={[
               { title: t('req.title', '标题'), dataIndex: 'label' },
+              { title: t('req.status', '状态'), dataIndex: 'status', width: 120, render: (s?: string) => <Tag color={reqStatusColor(s)}>{s ? t(`req.status.${s}`, s) : '—'}</Tag> },
               { title: t('req.decomposed', '已拆分'), dataIndex: 'meta', width: 100, render: (m?: Record<string, string>) => (m?.decompositionId ? <Tag color="geekblue">{t('req.yes', '是')}</Tag> : '—') },
             ]}
           />
@@ -176,7 +184,7 @@ function RequirementDetail({ reqId, projectId, onChanged }: { reqId: string; pro
                 <Descriptions column={1} size="small" bordered>
                   <Descriptions.Item label={t('req.title', '标题')}>{req?.title}</Descriptions.Item>
                   <Descriptions.Item label={t('req.baselineVersion', '基线版本')}>v{req?.baselineVersion}</Descriptions.Item>
-                  <Descriptions.Item label={t('req.status', '状态')}>{req?.status}</Descriptions.Item>
+                  <Descriptions.Item label={t('req.status', '状态')}>{req?.status ? <Tag color={reqStatusColor(req.status)}>{t(`req.status.${req.status}`, req.status)}</Tag> : '—'}</Descriptions.Item>
                   <Descriptions.Item label={t('req.acceptanceCriteria', '验收标准')}>
                     {baselineCriteria.length ? (
                       <ul style={{ margin: 0, paddingLeft: 18 }}>{baselineCriteria.map((c, i) => <li key={i}>{c}</li>)}</ul>
