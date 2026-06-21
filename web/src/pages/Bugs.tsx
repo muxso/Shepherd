@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Button, Empty, Form, Input, Modal, Select, Table, Tag, Typography } from 'antd'
+import { Button, Empty, Form, Input, Modal, Select, Table, Tag, Tooltip, Typography } from 'antd'
 import { message, modal } from '../feedback'
 import { PlusOutlined, ReloadOutlined } from '@ant-design/icons'
 import { api, ApiError } from '../api'
@@ -84,7 +84,7 @@ export default function Bugs() {
               width: 130,
               render: (_, r) => <Tag color={bugColor(r.meta?.status || 'NEW')}>{r.meta?.status || 'NEW'}</Tag>,
             },
-            { title: 'ID', dataIndex: 'id', render: (v: string) => <span className="ms-mono" style={{ fontSize: 12 }}>{v}</span> },
+            { title: 'ID', dataIndex: 'id', width: 110, render: (v: string) => <Tooltip title={v}><span className="ms-mono" style={{ fontSize: 12, color: '#8a9099' }}>{v?.slice(0, 8)}</span></Tooltip> },
             {
               title: t('bug.action', '操作'),
               width: 120,
