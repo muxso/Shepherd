@@ -371,7 +371,7 @@ const ApiSpecPanel = forwardRef<ApiSpecPanelHandle, {
       )}
       {/* 另存为测试用例:命名后用当前请求新建用例。 */}
       <Modal
-        title={t('apidef.saveAsCase', '另存为用例')}
+        title={t('apidef.saveAsCase', '保存为新用例')}
         open={caseModalOpen}
         onCancel={() => setCaseModalOpen(false)}
         onOk={doSaveCase}

@@ -681,8 +681,19 @@ function ApiDetail({ definition }: { definition: ApiDefinition }) {
               >
                 <ThunderboltOutlined /> {execMode === 'local' ? t('apidef.localRun', '本地执行') : t('apidef.serverRun', '服务端执行')}
               </Dropdown.Button>
-              {/* 调试态「保存」= 另存为测试用例。 */}
-              <Button icon={<SaveOutlined />} onClick={() => specRef.current?.saveAsCase()}>{t('apidef.saveAsCase', '另存为用例')}</Button>
+              {/* 调试态「保存」= 主键保存定义(与定义态共享同一份 spec);下拉「保存为新用例」。 */}
+              <Dropdown.Button
+                icon={<DownOutlined />}
+                onClick={() => specRef.current?.save()}
+                menu={{
+                  items: [{ key: 'case', label: t('apidef.saveAsCase', '保存为新用例') }],
+                  onClick: ({ key }) => {
+                    if (key === 'case') specRef.current?.saveAsCase()
+                  },
+                }}
+              >
+                <SaveOutlined /> {t('a.save', '保存')}
+              </Dropdown.Button>
             </>
           ) : (
             <Button icon={<SaveOutlined />} onClick={() => specRef.current?.save()}>{t('a.save', '保存')}</Button>
@@ -691,7 +702,6 @@ function ApiDetail({ definition }: { definition: ApiDefinition }) {
       </div>
       <ApiSpecPanel
         ref={specRef}
-        key={defMode}
         definition={definition}
         mode={defMode === 'define' ? 'define' : 'debug'}
         reqMethod={reqMethod}
