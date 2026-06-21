@@ -177,6 +177,17 @@ export interface ApiDefinition {
   updatedAt?: string
 }
 
+/** 接口列表视图(保存的筛选/列/分页快照;config 为不透明 JSON)。 */
+export interface ApiView {
+  id: string
+  projectId: string
+  userId: string
+  name: string
+  config: Record<string, unknown>
+  shared: boolean
+  createdAt: string
+}
+
 export interface ApiModule {
   id: string
   projectId: string
@@ -491,6 +502,15 @@ export const api = {
     projectId
       ? http.get<ApiDefinition[]>(`/api/definition?projectId=${encodeURIComponent(projectId)}`)
       : Promise.resolve([] as ApiDefinition[]),
+
+  // 列表视图(保存筛选/列/分页快照;own + shared)。
+  views: (projectId: string) =>
+    projectId
+      ? http.get<ApiView[]>(`/api/api-view?projectId=${encodeURIComponent(projectId)}`)
+      : Promise.resolve([] as ApiView[]),
+  createView: (b: { projectId: string; name: string; config: unknown; shared?: boolean }) =>
+    http.post<ApiView>('/api/api-view', b),
+  deleteView: (id: string) => http.del(`/api/api-view/${id}`),
   getDefinition: (id: string) => http.get<ApiDefinition>(`/api/definition/${id}`),
   updateDefinitionSpec: (id: string, spec: ApiSpec) =>
     http.put(`/api/definition/${id}/spec`, { spec }),
