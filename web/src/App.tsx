@@ -6,6 +6,7 @@ import Login from './pages/Login'
 import AppShell from './components/AppShell'
 
 // 路由级懒加载:按页拆分 bundle,首屏只下登录/外壳,其余进入时按需加载。
+const Home = lazy(() => import('./pages/Home'))
 const ApiDefinitions = lazy(() => import('./pages/ApiDefinitions'))
 const Scenarios = lazy(() => import('./pages/Scenarios'))
 const TestPlans = lazy(() => import('./pages/TestPlans'))
@@ -30,7 +31,8 @@ export default function App() {
     <AppShell>
       <Suspense fallback={<div style={{ display: 'flex', justifyContent: 'center', paddingTop: 120 }}><Spin size="large" /></div>}>
         <Routes>
-          <Route path="/" element={<Navigate to="/api/definition" replace />} />
+          <Route path="/" element={<Navigate to="/home" replace />} />
+          <Route path="/home" element={<Home />} />
           <Route path="/api/definition" element={<ApiDefinitions />} />
           <Route path="/api/scenario" element={<Scenarios />} />
           <Route path="/functional-case" element={<FunctionalCases />} />
@@ -46,7 +48,7 @@ export default function App() {
           <Route path="/bug" element={<Bugs />} />
           <Route path="/skill" element={<Skills />} />
           <Route path="/mcp" element={<Mcp />} />
-          <Route path="*" element={<Navigate to="/api/definition" replace />} />
+          <Route path="*" element={<Navigate to="/home" replace />} />
         </Routes>
       </Suspense>
     </AppShell>

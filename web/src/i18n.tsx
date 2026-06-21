@@ -8,6 +8,18 @@ const DICT: Record<string, { zh: string; en: string }> = {
   // 文档标题(浏览器标签)
   'app.title': { zh: '接口测试管理', en: 'API Testing Management' },
   // 顶栏 / 一级导航
+  'top.home': { zh: '首页', en: 'Home' },
+  'g.home': { zh: '工作台', en: 'Workspace' },
+  'm.home': { zh: '工作台', en: 'Overview' },
+  'home.title': { zh: '项目概览', en: 'Project Overview' },
+  'home.def': { zh: '接口定义', en: 'API Definitions' },
+  'home.scenario': { zh: '场景用例', en: 'Scenarios' },
+  'home.apiCase': { zh: '接口用例', en: 'API Cases' },
+  'home.funcCase': { zh: '功能用例', en: 'Functional Cases' },
+  'home.plan': { zh: '测试计划', en: 'Test Plans' },
+  'home.req': { zh: '需求', en: 'Requirements' },
+  'home.bug': { zh: '缺陷', en: 'Bugs' },
+  'home.assetDist': { zh: '测试资产分布', en: 'Test Asset Distribution' },
   'top.api': { zh: '接口测试', en: 'API Testing' },
   'top.exec': { zh: '计划与执行', en: 'Plan & Run' },
   'top.orch': { zh: '需求与编排', en: 'Requirement & Orchestration' },
