@@ -1,13 +1,18 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
-import { Button, Dropdown, Empty, Form, Input, Modal, Select, Space, Switch, Tag, Tree, Typography, message } from 'antd'
+import { Button, Dropdown, Empty, Form, Input, Modal, Select, Space, Switch, Tag, Tree, Typography } from 'antd'
+import { message } from '../feedback'
 import { PlayCircleOutlined, PlusOutlined } from '@ant-design/icons'
 import { api, ApiError, type ApiCase, type Scenario, type ScenarioStep } from '../api'
 import { useApp } from '../context'
 import { methodColor } from '../components/tags'
 import { Workspace, WorkList, PaneHeader, useWorkTabs } from '../components/Workspace'
 import AssertionEditor from '../components/AssertionEditor'
+import { useI18n } from '../i18n'
+
+type TFn = (key: string, fallback?: string) => string
 
 export default function Scenarios() {
+  const { t } = useI18n()
   const { projectId } = useApp()
   const [list, setList] = useState<Scenario[]>([])
   const [loading, setLoading] = useState(false)
@@ -22,7 +27,7 @@ export default function Scenarios() {
     try {
       setList(await api.scenarios(projectId))
     } catch (e) {
-      message.error(e instanceof ApiError ? e.message : '加载场景失败')
+      message.error(e instanceof ApiError ? e.message : t('scenario.loadFailed', '加载场景失败'))
     } finally {
       setLoading(false)
     }
@@ -39,7 +44,7 @@ export default function Scenarios() {
     return [
       {
         key: 'ALL',
-        title: `全部场景 (${list.length})`,
+        title: `${t('scenario.allScenarios', '全部场景')} (${list.length})`,
         children: [...byStatus.entries()].map(([s, n]) => ({ key: `st:${s}`, title: `${s} (${n})` })),
       },
     ]
@@ -54,11 +59,11 @@ export default function Scenarios() {
     [list, search, statusKey],
   )
 
-  if (!projectId) return <div style={{ padding: 48 }}><Empty description="请先在顶部选择项目" /></div>
+  if (!projectId) return <div style={{ padding: 48 }}><Empty description={t('common.selectProject', '请先在顶部选择项目')} /></div>
 
   const left = (
     <>
-      <PaneHeader title="状态" />
+      <PaneHeader title={t('scenario.status', '状态')} />
       <div style={{ flex: 1, overflow: 'auto', padding: 8 }}>
         <Tree blockNode defaultExpandAll selectedKeys={[statusKey]} treeData={treeData} onSelect={(k) => k.length && setStatusKey(String(k[0]))} />
       </div>
@@ -74,7 +79,7 @@ export default function Scenarios() {
     <>
       <Workspace
         left={left}
-        listLabel="全部场景"
+        listLabel={t('scenario.allScenarios', '全部场景')}
         activeKey={tabs.activeKey}
         onChange={tabs.setActiveKey}
         onClose={tabs.close}
@@ -82,22 +87,22 @@ export default function Scenarios() {
         listContent={
           <WorkList<Scenario>
             onNew={() => setCreateOpen(true)}
-            newLabel="新建场景"
+            newLabel={t('scenario.newScenario', '新建场景')}
             onSearch={setSearch}
-            searchPlaceholder="搜索场景名"
+            searchPlaceholder={t('scenario.searchName', '搜索场景名')}
             onRefresh={load}
             data={filtered}
             loading={loading}
             onRowClick={(s) => tabs.open(s.id)}
-            emptyText="暂无场景"
+            emptyText={t('scenario.empty', '暂无场景')}
             columns={[
-              { title: '名称', dataIndex: 'name', ellipsis: true },
-              { title: '状态', dataIndex: 'status', width: 120, render: (s: string) => <Tag>{s}</Tag> },
+              { title: t('scenario.colName', '名称'), dataIndex: 'name', ellipsis: true },
+              { title: t('scenario.colStatus', '状态'), dataIndex: 'status', width: 120, render: (s: string) => <Tag>{s}</Tag> },
             ]}
           />
         }
       />
-      <Modal title="新建场景" open={createOpen} onCancel={() => setCreateOpen(false)} footer={null} destroyOnHidden>
+      <Modal title={t('scenario.newScenario', '新建场景')} open={createOpen} onCancel={() => setCreateOpen(false)} footer={null} destroyOnHidden>
         <CreateScenarioForm
           projectId={projectId}
           onCreated={(s) => {
@@ -111,14 +116,16 @@ export default function Scenarios() {
 }
 
 // 步骤类型 → 标签文案 + 颜色(对齐 MeterSphere)。
-const STEP_META: Record<string, { label: string; color: string }> = {
-  REQUEST: { label: '请求', color: 'blue' },
-  CASE: { label: '引用用例', color: 'green' },
-  SCENARIO: { label: '引用场景', color: 'geekblue' },
-  LOOP: { label: '循环控制器', color: 'purple' },
-  IF: { label: '条件控制器', color: 'magenta' },
-  ONCE: { label: '仅一次控制器', color: 'cyan' },
-  TIMER: { label: '等待时间', color: 'orange' },
+function makeStepMeta(t: TFn): Record<string, { label: string; color: string }> {
+  return {
+    REQUEST: { label: t('scenario.stepRequest', '请求'), color: 'blue' },
+    CASE: { label: t('scenario.stepCase', '引用用例'), color: 'green' },
+    SCENARIO: { label: t('scenario.stepScenario', '引用场景'), color: 'geekblue' },
+    LOOP: { label: t('scenario.stepLoop', '循环控制器'), color: 'purple' },
+    IF: { label: t('scenario.stepIf', '条件控制器'), color: 'magenta' },
+    ONCE: { label: t('scenario.stepOnce', '仅一次控制器'), color: 'cyan' },
+    TIMER: { label: t('scenario.stepTimer', '等待时间'), color: 'orange' },
+  }
 }
 
 interface Node {
@@ -128,35 +135,35 @@ interface Node {
 }
 
 // 把控制器载荷里的一个子步骤(原始 json)规整为 Node。
-function childToNode(c: any): Node {
+function childToNode(c: any, t: TFn): Node {
   const kind = String(c?.kind || '').toUpperCase()
-  if (kind === 'CASE') return { kind, content: <span className="ms-mono">用例 {c.refId}</span> }
+  if (kind === 'CASE') return { kind, content: <span className="ms-mono">{t('scenario.caseRef', '用例')} {c.refId}</span> }
   if (kind === 'REQUEST')
     return { kind, content: <Space><Tag color={methodColor(c.method || 'GET')}>{c.method || 'GET'}</Tag><span className="ms-mono">{c.url}</span></Space> }
-  return controlToNode(kind, c)
+  return controlToNode(kind, c, t)
 }
 
-function controlToNode(kind: string, payload: any): Node {
-  const children = Array.isArray(payload?.children) ? payload.children.map(childToNode) : []
+function controlToNode(kind: string, payload: any, t: TFn): Node {
+  const children = Array.isArray(payload?.children) ? payload.children.map((c: any) => childToNode(c, t)) : []
   let content: ReactNode = ''
-  if (kind === 'LOOP') content = `循环 ${payload?.times ?? 1} 次`
+  if (kind === 'LOOP') content = `${t('scenario.loopPrefix', '循环')} ${payload?.times ?? 1} ${t('scenario.loopSuffix', '次')}`
   else if (kind === 'IF') content = <span className="ms-mono">{payload?.variable} {payload?.operator} {payload?.value}</span>
-  else if (kind === 'ONCE') content = '仅执行一次'
-  else if (kind === 'TIMER') content = `等待 ${payload?.ms ?? 0} ms`
+  else if (kind === 'ONCE') content = t('scenario.onceOnly', '仅执行一次')
+  else if (kind === 'TIMER') content = `${t('scenario.waitPrefix', '等待')} ${payload?.ms ?? 0} ms`
   return { kind, content, children: kind === 'TIMER' ? undefined : children }
 }
 
 // 顶层步骤(ScenarioStep)→ Node。
-function stepToNode(s: ScenarioStep): Node {
+function stepToNode(s: ScenarioStep, t: TFn): Node {
   if (s.request) return { kind: 'REQUEST', content: <Space><Tag color={methodColor(s.request.method)}>{s.request.method}</Tag><span className="ms-mono">{s.request.url}</span></Space> }
-  if (s.caseId) return { kind: 'CASE', content: <span className="ms-mono">用例 {s.caseId}</span> }
-  if (s.scenarioId) return { kind: 'SCENARIO', content: <span className="ms-mono">子场景 {s.scenarioId}</span> }
-  if (s.control) return controlToNode(s.kind.toUpperCase(), s.control)
+  if (s.caseId) return { kind: 'CASE', content: <span className="ms-mono">{t('scenario.caseRef', '用例')} {s.caseId}</span> }
+  if (s.scenarioId) return { kind: 'SCENARIO', content: <span className="ms-mono">{t('scenario.subScenario', '子场景')} {s.scenarioId}</span> }
+  if (s.control) return controlToNode(s.kind.toUpperCase(), s.control, t)
   return { kind: s.kind, content: '—' }
 }
 
-function StepRow({ node, idx, depth }: { node: Node; idx: number; depth: number }) {
-  const meta = STEP_META[node.kind] || { label: node.kind, color: 'default' }
+function StepRow({ node, idx, depth, t }: { node: Node; idx: number; depth: number; t: TFn }) {
+  const meta = makeStepMeta(t)[node.kind] || { label: node.kind, color: 'default' }
   return (
     <>
       <div
@@ -179,12 +186,13 @@ function StepRow({ node, idx, depth }: { node: Node; idx: number; depth: number 
         <Tag color={meta.color} style={{ margin: 0 }}>{meta.label}</Tag>
         <span style={{ flex: 1, minWidth: 0 }}>{node.content}</span>
       </div>
-      {node.children?.map((c, i) => <StepRow key={i} node={c} idx={i + 1} depth={depth + 1} />)}
+      {node.children?.map((c, i) => <StepRow key={i} node={c} idx={i + 1} depth={depth + 1} t={t} />)}
     </>
   )
 }
 
 function ScenarioDetail({ scenario }: { scenario: Scenario }) {
+  const { t } = useI18n()
   const [steps, setSteps] = useState<ScenarioStep[]>([])
   const [running, setRunning] = useState(false)
   const [add, setAdd] = useState<string>('') // 当前打开的添加表单类型
@@ -194,7 +202,7 @@ function ScenarioDetail({ scenario }: { scenario: Scenario }) {
       const s = await api.getScenario(scenario.id)
       setSteps(s.steps || [])
     } catch (e) {
-      message.error(e instanceof ApiError ? e.message : '加载步骤失败')
+      message.error(e instanceof ApiError ? e.message : t('scenario.loadStepsFailed', '加载步骤失败'))
     }
   }
   useEffect(() => {
@@ -206,9 +214,9 @@ function ScenarioDetail({ scenario }: { scenario: Scenario }) {
     setRunning(true)
     try {
       await api.runScenario(scenario.id, scenario.projectId)
-      message.success('场景已触发执行')
+      message.success(t('scenario.triggered', '场景已触发执行'))
     } catch (e) {
-      message.error(e instanceof ApiError ? `执行失败:${e.status}` : '执行失败')
+      message.error(e instanceof ApiError ? `${t('scenario.execFailed', '执行失败')}:${e.status}` : t('scenario.execFailed', '执行失败'))
     } finally {
       setRunning(false)
     }
@@ -227,31 +235,31 @@ function ScenarioDetail({ scenario }: { scenario: Scenario }) {
         <Dropdown
           menu={{
             items: [
-              { type: 'group', label: '请求 / 场景', children: [
-                { key: 'CASE', label: '引用用例' },
-                { key: 'REQUEST', label: '自定义请求' },
-                { key: 'SCENARIO', label: '引用场景' },
+              { type: 'group', label: t('scenario.grpRequest', '请求 / 场景'), children: [
+                { key: 'CASE', label: t('scenario.stepCase', '引用用例') },
+                { key: 'REQUEST', label: t('scenario.customRequest', '自定义请求') },
+                { key: 'SCENARIO', label: t('scenario.stepScenario', '引用场景') },
               ] },
-              { type: 'group', label: '逻辑控制', children: [
-                { key: 'LOOP', label: '循环控制器' },
-                { key: 'IF', label: '条件控制器' },
-                { key: 'ONCE', label: '仅一次控制器' },
+              { type: 'group', label: t('scenario.grpLogic', '逻辑控制'), children: [
+                { key: 'LOOP', label: t('scenario.stepLoop', '循环控制器') },
+                { key: 'IF', label: t('scenario.stepIf', '条件控制器') },
+                { key: 'ONCE', label: t('scenario.stepOnce', '仅一次控制器') },
               ] },
-              { type: 'group', label: '其他', children: [{ key: 'TIMER', label: '等待时间' }] },
+              { type: 'group', label: t('scenario.grpOther', '其他'), children: [{ key: 'TIMER', label: t('scenario.stepTimer', '等待时间') }] },
             ],
             onClick: ({ key }) => setAdd(key),
           }}
         >
-          <Button icon={<PlusOutlined />} size="small">添加步骤 ▾</Button>
+          <Button icon={<PlusOutlined />} size="small">{t('scenario.addStep', '添加步骤')} ▾</Button>
         </Dropdown>
-        <Button type="primary" icon={<PlayCircleOutlined />} size="small" loading={running} onClick={run}>运行场景</Button>
-        <Typography.Text type="secondary" style={{ fontSize: 12 }}>共 {steps.length} 个步骤</Typography.Text>
+        <Button type="primary" icon={<PlayCircleOutlined />} size="small" loading={running} onClick={run}>{t('scenario.runScenario', '运行场景')}</Button>
+        <Typography.Text type="secondary" style={{ fontSize: 12 }}>{t('scenario.totalPrefix', '共')} {steps.length} {t('scenario.totalSuffix', '个步骤')}</Typography.Text>
       </Space>
 
       {ordered.length === 0 ? (
-        <Empty description="暂无步骤,点「添加步骤」" />
+        <Empty description={t('scenario.emptySteps', '暂无步骤,点「添加步骤」')} />
       ) : (
-        ordered.map((s, i) => <StepRow key={s.id} node={stepToNode(s)} idx={i + 1} depth={0} />)
+        ordered.map((s, i) => <StepRow key={s.id} node={stepToNode(s, t)} idx={i + 1} depth={0} t={t} />)
       )}
 
       <AddStepModal
@@ -267,6 +275,7 @@ function ScenarioDetail({ scenario }: { scenario: Scenario }) {
 }
 
 function CreateScenarioForm({ projectId, onCreated }: { projectId: string; onCreated: (s: Scenario) => void }) {
+  const { t } = useI18n()
   const [saving, setSaving] = useState(false)
   return (
     <Form
@@ -275,19 +284,19 @@ function CreateScenarioForm({ projectId, onCreated }: { projectId: string; onCre
         setSaving(true)
         try {
           const s = await api.createScenario(projectId, v.name)
-          message.success('场景已创建')
+          message.success(t('scenario.created', '场景已创建'))
           onCreated(s)
         } catch (e) {
-          message.error(e instanceof ApiError ? e.message : '创建失败')
+          message.error(e instanceof ApiError ? e.message : t('scenario.createFailed', '创建失败'))
         } finally {
           setSaving(false)
         }
       }}
     >
-      <Form.Item name="name" label="场景名" rules={[{ required: true }]}>
-        <Input placeholder="如:下单主流程" autoFocus />
+      <Form.Item name="name" label={t('scenario.name', '场景名')} rules={[{ required: true }]}>
+        <Input placeholder={t('scenario.namePlaceholder', '如:下单主流程')} autoFocus />
       </Form.Item>
-      <Button type="primary" htmlType="submit" loading={saving} block>创建</Button>
+      <Button type="primary" htmlType="submit" loading={saving} block>{t('a.create', '创建')}</Button>
     </Form>
   )
 }
@@ -296,14 +305,15 @@ function CreateScenarioForm({ projectId, onCreated }: { projectId: string; onCre
 type Child = { kind: 'CASE'; refId: string } | { kind: 'REQUEST'; method: string; url: string }
 
 function ChildrenBuilder({ value, onChange, projectCases }: { value: Child[]; onChange: (v: Child[]) => void; projectCases: ApiCase[] }) {
+  const { t } = useI18n()
   const add = (c: Child) => onChange([...value, c])
   return (
     <Space direction="vertical" style={{ width: '100%' }} size={6}>
       {value.map((c, i) => (
         <Space.Compact key={i} style={{ width: '100%' }}>
           <Input style={{ width: 70 }} value={c.kind} disabled />
-          <Input style={{ flex: 1 }} className="ms-mono" value={c.kind === 'CASE' ? `用例 ${c.refId}` : `${c.method} ${c.url}`} disabled />
-          <Button onClick={() => onChange(value.filter((_, idx) => idx !== i))}>删</Button>
+          <Input style={{ flex: 1 }} className="ms-mono" value={c.kind === 'CASE' ? `${t('scenario.caseRef', '用例')} ${c.refId}` : `${c.method} ${c.url}`} disabled />
+          <Button onClick={() => onChange(value.filter((_, idx) => idx !== i))}>{t('scenario.del', '删')}</Button>
         </Space.Compact>
       ))}
       <Space>
@@ -313,11 +323,11 @@ function ChildrenBuilder({ value, onChange, projectCases }: { value: Child[]; on
           style={{ width: 240 }}
           showSearch
           optionFilterProp="label"
-          placeholder="+ 加用例子步骤"
+          placeholder={t('scenario.addCaseChild', '+ 加用例子步骤')}
           onChange={(id) => add({ kind: 'CASE', refId: id })}
           options={projectCases.map((c) => ({ value: c.id, label: `${c.method} ${c.name}` }))}
         />
-        <Button size="small" onClick={() => add({ kind: 'REQUEST', method: 'GET', url: 'http://127.0.0.1:9180/healthz' })}>+ 加请求子步骤(示例)</Button>
+        <Button size="small" onClick={() => add({ kind: 'REQUEST', method: 'GET', url: 'http://127.0.0.1:9180/healthz' })}>{t('scenario.addRequestChild', '+ 加请求子步骤(示例)')}</Button>
       </Space>
     </Space>
   )
@@ -339,6 +349,7 @@ function AddStepModal({
   onClose: () => void
   onAdded: () => void
 }) {
+  const { t } = useI18n()
   const [form] = Form.useForm()
   const [saving, setSaving] = useState(false)
   const [children, setChildren] = useState<Child[]>([])
@@ -374,57 +385,57 @@ function AddStepModal({
       } else if (type === 'ONCE') {
         await api.addStep(scenarioId, { kind: 'ONCE', order: nextOrder, control: { children: childPayload } })
       }
-      message.success('步骤已添加')
+      message.success(t('scenario.stepAdded', '步骤已添加'))
       onAdded()
     } catch (e) {
-      message.error(e instanceof ApiError ? e.message : '添加失败')
+      message.error(e instanceof ApiError ? e.message : t('scenario.addFailed', '添加失败'))
     } finally {
       setSaving(false)
     }
   }
 
-  const title = (STEP_META[type]?.label || '步骤')
+  const title = (makeStepMeta(t)[type]?.label || t('scenario.step', '步骤'))
   return (
-    <Modal title={`添加 · ${title}`} open={!!type} onCancel={onClose} onOk={() => form.submit()} confirmLoading={saving} destroyOnHidden width={620}>
+    <Modal title={`${t('scenario.addPrefix', '添加')} · ${title}`} open={!!type} onCancel={onClose} onOk={() => form.submit()} confirmLoading={saving} destroyOnHidden width={620}>
       <Form form={form} layout="vertical" initialValues={{ method: 'GET', operator: '等于', times: 3, ms: 1000, assertions: [{ type: 'StatusIs', args: 200 }] }} onFinish={submit}>
         {(type === 'CASE' || type === 'SCENARIO') && (
-          <Form.Item name="refId" label={type === 'CASE' ? '引用用例' : '引用子场景'} rules={[{ required: true }]}>
+          <Form.Item name="refId" label={type === 'CASE' ? t('scenario.stepCase', '引用用例') : t('scenario.refSubScenario', '引用子场景')} rules={[{ required: true }]}>
             <Select
               showSearch
               optionFilterProp="label"
-              placeholder={type === 'CASE' ? '选择项目接口用例' : '选择子场景'}
+              placeholder={type === 'CASE' ? t('scenario.selectProjCase', '选择项目接口用例') : t('scenario.selectSubScenario', '选择子场景')}
               options={
                 type === 'CASE'
                   ? projCases.map((c) => ({ value: c.id, label: `${c.method} ${c.name}` }))
                   : scns.map((s) => ({ value: s.id, label: s.name }))
               }
-              notFoundContent={type === 'CASE' ? '项目暂无接口用例' : '项目暂无场景'}
+              notFoundContent={type === 'CASE' ? t('scenario.noProjCase', '项目暂无接口用例') : t('scenario.noScenario', '项目暂无场景')}
             />
           </Form.Item>
         )}
         {type === 'REQUEST' && (
           <>
             <Space.Compact style={{ width: '100%' }}>
-              <Form.Item name="method" label="方法" style={{ width: 120 }}><Select options={['GET', 'POST', 'PUT', 'DELETE', 'PATCH'].map((m) => ({ value: m, label: m }))} /></Form.Item>
+              <Form.Item name="method" label={t('scenario.method', '方法')} style={{ width: 120 }}><Select options={['GET', 'POST', 'PUT', 'DELETE', 'PATCH'].map((m) => ({ value: m, label: m }))} /></Form.Item>
               <Form.Item name="url" label="URL" style={{ flex: 1 }} rules={[{ required: true }]}><Input className="ms-mono" placeholder="http://127.0.0.1:9180/healthz" /></Form.Item>
             </Space.Compact>
-            <Form.Item name="body" label="请求体(可选)"><Input.TextArea rows={2} className="ms-mono" /></Form.Item>
-            <Form.Item name="assertions" label="断言"><AssertionEditor /></Form.Item>
+            <Form.Item name="body" label={t('scenario.bodyOptional', '请求体(可选)')}><Input.TextArea rows={2} className="ms-mono" /></Form.Item>
+            <Form.Item name="assertions" label={t('scenario.assertions', '断言')}><AssertionEditor /></Form.Item>
           </>
         )}
         {type === 'TIMER' && (
-          <Form.Item name="ms" label="等待时长 (ms)" rules={[{ required: true }]}><Input type="number" /></Form.Item>
+          <Form.Item name="ms" label={t('scenario.waitDuration', '等待时长 (ms)')} rules={[{ required: true }]}><Input type="number" /></Form.Item>
         )}
-        {type === 'LOOP' && <Form.Item name="times" label="循环次数" rules={[{ required: true }]}><Input type="number" /></Form.Item>}
+        {type === 'LOOP' && <Form.Item name="times" label={t('scenario.loopTimes', '循环次数')} rules={[{ required: true }]}><Input type="number" /></Form.Item>}
         {type === 'IF' && (
           <Space.Compact style={{ width: '100%' }}>
-            <Form.Item name="variable" label="变量" style={{ flex: 1 }} rules={[{ required: true }]}><Input className="ms-mono" placeholder="${count}" /></Form.Item>
-            <Form.Item name="operator" label="操作符" style={{ width: 110 }}><Select options={['等于', '不等于', '大于', '小于', '包含'].map((o) => ({ value: o, label: o }))} /></Form.Item>
-            <Form.Item name="value" label="值" style={{ width: 140 }} rules={[{ required: true }]}><Input /></Form.Item>
+            <Form.Item name="variable" label={t('scenario.variable', '变量')} style={{ flex: 1 }} rules={[{ required: true }]}><Input className="ms-mono" placeholder="${count}" /></Form.Item>
+            <Form.Item name="operator" label={t('scenario.operator', '操作符')} style={{ width: 110 }}><Select options={[['等于', t('scenario.opEq', '等于')], ['不等于', t('scenario.opNe', '不等于')], ['大于', t('scenario.opGt', '大于')], ['小于', t('scenario.opLt', '小于')], ['包含', t('scenario.opContains', '包含')]].map(([v, label]) => ({ value: v, label }))} /></Form.Item>
+            <Form.Item name="value" label={t('scenario.value', '值')} style={{ width: 140 }} rules={[{ required: true }]}><Input /></Form.Item>
           </Space.Compact>
         )}
         {isControl && (
-          <Form.Item label="子步骤(控制器内执行)">
+          <Form.Item label={t('scenario.childSteps', '子步骤(控制器内执行)')}>
             <ChildrenBuilder value={children} onChange={setChildren} projectCases={projCases} />
           </Form.Item>
         )}

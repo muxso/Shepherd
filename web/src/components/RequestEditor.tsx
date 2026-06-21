@@ -1,21 +1,25 @@
 import { useMemo, useState } from 'react'
-import { AutoComplete, Button, Card, Input, Radio, Select, Space, Table, Tabs, Tag, Typography, message } from 'antd'
+import { AutoComplete, Button, Card, Input, Radio, Select, Space, Table, Tabs, Tag, Typography } from 'antd'
+import { message } from '../feedback'
 import { SendOutlined, PlusOutlined, DeleteOutlined } from '@ant-design/icons'
 import { api, ApiError, type DebugResponse } from '../api'
+import { useI18n } from '../i18n'
 
 const METHODS = ['GET', 'POST', 'PUT', 'DELETE', 'PATCH']
 type KV = { on: boolean; key: string; value: string; desc?: string }
 
 // MeterSphere @mock 变量(选取常用),发送前解析为随机值。
-const MOCK_VARS = [
-  { value: '@natural', label: '@natural — 随机自然数' },
-  { value: '@integer', label: '@integer — 随机整数' },
-  { value: '@bool', label: '@bool — 随机布尔' },
-  { value: '@string', label: '@string — 随机字符串' },
-  { value: '@guid', label: '@guid — 随机 UUID' },
-  { value: '@datetime', label: '@datetime — 当前时间' },
-  { value: '@email', label: '@email — 随机邮箱' },
-]
+function makeMockVars(t: (key: string, fallback?: string) => string) {
+  return [
+    { value: '@natural', label: t('editor.mockNatural', '@natural — 随机自然数') },
+    { value: '@integer', label: t('editor.mockInteger', '@integer — 随机整数') },
+    { value: '@bool', label: t('editor.mockBool', '@bool — 随机布尔') },
+    { value: '@string', label: t('editor.mockString', '@string — 随机字符串') },
+    { value: '@guid', label: t('editor.mockGuid', '@guid — 随机 UUID') },
+    { value: '@datetime', label: t('editor.mockDatetime', '@datetime — 当前时间') },
+    { value: '@email', label: t('editor.mockEmail', '@email — 随机邮箱') },
+  ]
+}
 
 function resolveMock(s: string): string {
   return s.replace(/@(\w+)(\(\s*\d+\s*,\s*\d+\s*\))?/g, (whole, name: string) => {
@@ -48,6 +52,7 @@ export default function RequestEditor({
   initialMethod?: string
   initialUrl?: string
 }) {
+  const { t } = useI18n()
   const [method, setMethod] = useState(initialMethod || 'GET')
   const [url, setUrl] = useState(initialUrl)
   const [query, setQuery] = useState<KV[]>([{ on: true, key: '', value: '', desc: '' }])
@@ -65,7 +70,7 @@ export default function RequestEditor({
   const headerCount = headers.filter((h) => h.key.trim()).length
 
   const send = async () => {
-    if (!url.trim()) return message.warning('请输入 URL')
+    if (!url.trim()) return message.warning(t('editor.urlRequired', '请输入 URL'))
     // 拼 query(解析 @mock)
     const qs = query
       .filter((q) => q.on && q.key.trim())
@@ -81,7 +86,7 @@ export default function RequestEditor({
     try {
       setResp(await api.debugSend({ method, url: finalUrl, headers: hs, body: body.trim() ? resolveMock(body) : undefined }))
     } catch (e) {
-      setErr(e instanceof ApiError ? e.message : '发送失败')
+      setErr(e instanceof ApiError ? e.message : t('editor.sendFail', '发送失败'))
     } finally {
       setSending(false)
     }
@@ -92,7 +97,7 @@ export default function RequestEditor({
       size="small"
       title={
         <Space>
-          响应
+          {t('editor.response', '响应')}
           {resp && <Tag color={resp.status < 400 ? 'green' : 'red'}>{resp.status}</Tag>}
           {resp && <Typography.Text type="secondary" style={{ fontSize: 12 }}>{resp.latencyMs} ms</Typography.Text>}
         </Space>
@@ -106,7 +111,7 @@ export default function RequestEditor({
           items={[
             {
               key: 'body',
-              label: '响应体',
+              label: t('editor.respBody', '响应体'),
               children: (
                 <>
                   <Space style={{ marginBottom: 8 }}>
@@ -116,14 +121,14 @@ export default function RequestEditor({
                     </Radio.Group>
                   </Space>
                   <pre style={{ background: '#0f1419', color: '#d6deeb', padding: 12, borderRadius: 6, maxHeight: 360, overflow: 'auto', fontSize: 12, whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
-                    {respView === 'json' ? pretty(resp?.body || '') : resp?.body || '(空)'}
+                    {respView === 'json' ? pretty(resp?.body || '') : resp?.body || t('editor.empty', '(空)')}
                   </pre>
                 </>
               ),
             },
             {
               key: 'headers',
-              label: `响应头 (${resp?.headers.length || 0})`,
+              label: `${t('editor.respHeaders', '响应头')} (${resp?.headers.length || 0})`,
               children: (
                 <Table
                   size="small"
@@ -131,13 +136,13 @@ export default function RequestEditor({
                   rowKey={(_, i) => String(i)}
                   dataSource={(resp?.headers || []).map(([k, v]) => ({ k, v }))}
                   columns={[
-                    { title: '名', dataIndex: 'k', width: 220 },
-                    { title: '值', dataIndex: 'v', render: (v: string) => <span className="ms-mono">{v}</span> },
+                    { title: t('editor.colName', '名'), dataIndex: 'k', width: 220 },
+                    { title: t('editor.colValue', '值'), dataIndex: 'v', render: (v: string) => <span className="ms-mono">{v}</span> },
                   ]}
                 />
               ),
             },
-            { key: 'code', label: '响应码', children: <Tag color={(resp?.status || 0) < 400 ? 'green' : 'red'} style={{ fontSize: 14 }}>{resp?.status}</Tag> },
+            { key: 'code', label: t('editor.respCode', '响应码'), children: <Tag color={(resp?.status || 0) < 400 ? 'green' : 'red'} style={{ fontSize: 14 }}>{resp?.status}</Tag> },
           ]}
         />
       )}
@@ -149,22 +154,22 @@ export default function RequestEditor({
       <Space.Compact style={{ width: '100%', marginBottom: 12 }}>
         <Select value="HTTP" disabled style={{ width: 80 }} options={[{ value: 'HTTP', label: 'HTTP' }]} />
         <Select value={method} onChange={setMethod} style={{ width: 100 }} options={METHODS.map((m) => ({ value: m, label: m }))} />
-        <Input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="/apis/... 或 http://..." className="ms-mono" onPressEnter={send} />
-        <Button type="primary" icon={<SendOutlined />} loading={sending} onClick={send}>发送</Button>
+        <Input value={url} onChange={(e) => setUrl(e.target.value)} placeholder={t('editor.urlPlaceholder', '/apis/... 或 http://...')} className="ms-mono" onPressEnter={send} />
+        <Button type="primary" icon={<SendOutlined />} loading={sending} onClick={send}>{t('a.send', '发送')}</Button>
       </Space.Compact>
       <Tabs
         size="small"
         items={[
           { key: 'query', label: `Query${queryCount ? ` (${queryCount})` : ''}`, children: <KvTable rows={query} setRows={setQuery} mock /> },
-          { key: 'headers', label: `请求头${headerCount ? ` (${headerCount})` : ''}`, children: <KvTable rows={headers} setRows={setHeaders} mock /> },
-          { key: 'body', label: '请求体', children: <Input.TextArea rows={8} value={body} onChange={(e) => setBody(e.target.value)} placeholder='{"username":"admin"}' className="ms-mono" /> },
+          { key: 'headers', label: `${t('editor.reqHeaders', '请求头')}${headerCount ? ` (${headerCount})` : ''}`, children: <KvTable rows={headers} setRows={setHeaders} mock /> },
+          { key: 'body', label: t('editor.reqBody', '请求体'), children: <Input.TextArea rows={8} value={body} onChange={(e) => setBody(e.target.value)} placeholder='{"username":"admin"}' className="ms-mono" /> },
           {
             key: 'auth',
-            label: '认证',
+            label: t('editor.auth', '认证'),
             children: (
               <Space direction="vertical" style={{ width: '100%' }}>
                 <Radio.Group value={authType} onChange={(e) => setAuthType(e.target.value)}>
-                  <Radio value="none">无</Radio>
+                  <Radio value="none">{t('editor.authNone', '无')}</Radio>
                   <Radio value="bearer">Bearer Token</Radio>
                   <Radio value="basic">Basic (user:pass)</Radio>
                 </Radio.Group>
@@ -182,10 +187,10 @@ export default function RequestEditor({
   return (
     <div>
       <Space style={{ marginBottom: 8 }}>
-        <Typography.Text type="secondary" style={{ fontSize: 12 }}>响应布局</Typography.Text>
+        <Typography.Text type="secondary" style={{ fontSize: 12 }}>{t('editor.respLayout', '响应布局')}</Typography.Text>
         <Radio.Group size="small" value={respLayout} onChange={(e) => setRespLayout(e.target.value)} optionType="button">
-          <Radio.Button value="tb">上下</Radio.Button>
-          <Radio.Button value="lr">左右</Radio.Button>
+          <Radio.Button value="tb">{t('editor.layoutTb', '上下')}</Radio.Button>
+          <Radio.Button value="lr">{t('editor.layoutLr', '左右')}</Radio.Button>
         </Radio.Group>
       </Space>
       {respLayout === 'lr' && (resp || err) ? (
@@ -213,29 +218,30 @@ function pretty(s: string): string {
 
 // 键值表(Query / Headers 通用):启用 / 名 / 值(可选 @mock 下拉)/ 描述 / 删除。
 function KvTable({ rows, setRows, mock }: { rows: KV[]; setRows: (r: KV[]) => void; mock?: boolean }) {
-  const options = useMemo(() => MOCK_VARS, [])
+  const { t } = useI18n()
+  const options = useMemo(() => makeMockVars(t), [t])
   const upd = (i: number, patch: Partial<KV>) => setRows(rows.map((r, idx) => (idx === i ? { ...r, ...patch } : r)))
   return (
     <Space direction="vertical" style={{ width: '100%' }} size={6}>
       {rows.map((r, i) => (
         <Space.Compact key={i} style={{ width: '100%' }}>
-          <Input style={{ width: 200 }} placeholder="参数名" value={r.key} onChange={(e) => upd(i, { key: e.target.value })} className="ms-mono" />
+          <Input style={{ width: 200 }} placeholder={t('editor.paramName', '参数名')} value={r.key} onChange={(e) => upd(i, { key: e.target.value })} className="ms-mono" />
           {mock ? (
             <AutoComplete
               style={{ width: 220 }}
               value={r.value}
               onChange={(v) => upd(i, { value: v })}
               options={(r.value.includes('@') ? options : [])}
-              placeholder="参数值(输入 @ 选 mock)"
+              placeholder={t('editor.paramValueMock', '参数值(输入 @ 选 mock)')}
             />
           ) : (
-            <Input style={{ width: 220 }} placeholder="参数值" value={r.value} onChange={(e) => upd(i, { value: e.target.value })} />
+            <Input style={{ width: 220 }} placeholder={t('editor.paramValue', '参数值')} value={r.value} onChange={(e) => upd(i, { value: e.target.value })} />
           )}
-          <Input placeholder="描述" value={r.desc} onChange={(e) => upd(i, { desc: e.target.value })} />
+          <Input placeholder={t('editor.desc', '描述')} value={r.desc} onChange={(e) => upd(i, { desc: e.target.value })} />
           <Button icon={<DeleteOutlined />} onClick={() => setRows(rows.filter((_, idx) => idx !== i))} />
         </Space.Compact>
       ))}
-      <Button icon={<PlusOutlined />} size="small" onClick={() => setRows([...rows, { on: true, key: '', value: '', desc: '' }])}>加一行</Button>
+      <Button icon={<PlusOutlined />} size="small" onClick={() => setRows([...rows, { on: true, key: '', value: '', desc: '' }])}>{t('editor.addRow', '加一行')}</Button>
     </Space>
   )
 }

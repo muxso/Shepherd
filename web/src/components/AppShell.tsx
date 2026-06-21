@@ -20,91 +20,87 @@ import {
   UserOutlined,
   ProjectOutlined,
   FileTextOutlined,
+  GlobalOutlined,
 } from '@ant-design/icons'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { useApp } from '../context'
+import { useI18n } from '../i18n'
 import NewProjectModal from './NewProjectModal'
 
 const { Sider, Content } = Layout
 
-// 顶部一级导航:点击跳到该域的着陆页;高亮由当前路由推断。
-const TOP_NAV: { key: string; label: string; match: string[] }[] = [
-  { key: '/api/definition', label: '接口测试', match: ['/api/', '/functional-case'] },
-  { key: '/test-plan', label: '计划与执行', match: ['/test-plan', '/perf', '/environment', '/resource-pool'] },
-  { key: '/requirement', label: '需求与编排', match: ['/requirement', '/bug', '/skill'] },
-  { key: '/organization', label: '系统管理', match: ['/organization', '/role', '/user', '/project', '/mcp'] },
-]
-
-const SIDE_NAV = [
-  {
-    key: 'g-asset',
-    label: '测试资产',
-    type: 'group' as const,
-    children: [
-      { key: '/api/definition', icon: <ApiOutlined />, label: '接口定义' },
-      { key: '/api/scenario', icon: <PartitionOutlined />, label: '场景用例' },
-      { key: '/functional-case', icon: <ProfileOutlined />, label: '功能用例' },
-    ],
-  },
-  {
-    key: 'g-exec',
-    label: '计划与执行',
-    type: 'group' as const,
-    children: [
-      { key: '/test-plan', icon: <ScheduleOutlined />, label: '测试计划' },
-      { key: '/perf', icon: <ThunderboltOutlined />, label: '性能压测' },
-      { key: '/environment', icon: <CloudServerOutlined />, label: '环境' },
-      { key: '/resource-pool', icon: <DatabaseOutlined />, label: '资源池' },
-    ],
-  },
-  {
-    key: 'g-orch',
-    label: '需求与编排',
-    type: 'group' as const,
-    children: [
-      { key: '/requirement', icon: <FileTextOutlined />, label: '需求与编排' },
-      { key: '/bug', icon: <BugOutlined />, label: '缺陷' },
-      { key: '/skill', icon: <BulbOutlined />, label: '技能' },
-    ],
-  },
-  {
-    key: 'g-sys',
-    label: '系统管理',
-    type: 'group' as const,
-    children: [
-      { key: '/organization', icon: <ClusterOutlined />, label: '组织' },
-      { key: '/role', icon: <SafetyOutlined />, label: '角色' },
-      { key: '/user', icon: <UserOutlined />, label: '用户' },
-      { key: '/project', icon: <ProjectOutlined />, label: '项目' },
-      { key: '/mcp', icon: <TeamOutlined />, label: 'MCP 工具' },
-    ],
-  },
-]
-
-const SIDE_LABEL: Record<string, string> = {
-  '/api/definition': '接口定义',
-  '/api/scenario': '场景用例',
-  '/functional-case': '功能用例',
-  '/test-plan': '测试计划',
-  '/perf': '性能压测',
-  '/environment': '环境',
-  '/resource-pool': '资源池',
-  '/requirement': '需求与编排',
-  '/bug': '缺陷',
-  '/skill': '技能',
-  '/organization': '组织',
-  '/role': '角色',
-  '/user': '用户',
-  '/project': '项目',
-  '/mcp': 'MCP 工具',
+// 一级模块 = 顶栏导航项 + 它专属的左侧二级菜单(单一数据源)。
+// 顶栏只切模块,左栏随选中模块收敛成该模块的子项,避免顶/侧信息重复。
+// label 全走 i18n 字典 key,未登记的回落原文。
+interface ModuleDef {
+  key: string
+  labelKey: string
+  match: string[]
+  groupKey: string
+  children: { key: string; icon: ReactNode; labelKey: string }[]
 }
+
+const MODULES: ModuleDef[] = [
+  {
+    key: '/api/definition',
+    labelKey: 'top.api',
+    match: ['/api/', '/functional-case'],
+    groupKey: 'g.asset',
+    children: [
+      { key: '/api/definition', icon: <ApiOutlined />, labelKey: 'm.definition' },
+      { key: '/api/scenario', icon: <PartitionOutlined />, labelKey: 'm.scenario' },
+      { key: '/functional-case', icon: <ProfileOutlined />, labelKey: 'm.functional' },
+    ],
+  },
+  {
+    key: '/test-plan',
+    labelKey: 'top.exec',
+    match: ['/test-plan', '/perf', '/environment', '/resource-pool'],
+    groupKey: 'g.exec',
+    children: [
+      { key: '/test-plan', icon: <ScheduleOutlined />, labelKey: 'm.plan' },
+      { key: '/perf', icon: <ThunderboltOutlined />, labelKey: 'm.perf' },
+      { key: '/environment', icon: <CloudServerOutlined />, labelKey: 'm.environment' },
+      { key: '/resource-pool', icon: <DatabaseOutlined />, labelKey: 'm.pool' },
+    ],
+  },
+  {
+    key: '/requirement',
+    labelKey: 'top.orch',
+    match: ['/requirement', '/bug', '/skill'],
+    groupKey: 'g.orch',
+    children: [
+      { key: '/requirement', icon: <FileTextOutlined />, labelKey: 'm.requirement' },
+      { key: '/bug', icon: <BugOutlined />, labelKey: 'm.bug' },
+      { key: '/skill', icon: <BulbOutlined />, labelKey: 'm.skill' },
+    ],
+  },
+  {
+    key: '/organization',
+    labelKey: 'top.sys',
+    match: ['/organization', '/role', '/user', '/project', '/mcp'],
+    groupKey: 'g.sys',
+    children: [
+      { key: '/organization', icon: <ClusterOutlined />, labelKey: 'm.org' },
+      { key: '/role', icon: <SafetyOutlined />, labelKey: 'm.role' },
+      { key: '/user', icon: <UserOutlined />, labelKey: 'm.user' },
+      { key: '/project', icon: <ProjectOutlined />, labelKey: 'm.proj' },
+      { key: '/mcp', icon: <TeamOutlined />, labelKey: 'm.mcp' },
+    ],
+  },
+]
 
 export default function AppShell({ children }: { children: ReactNode }) {
   const { projects, projectId, setProjectId, logout } = useApp()
+  const { t, lang, setLang } = useI18n()
   const nav = useNavigate()
   const loc = useLocation()
   const [newProjOpen, setNewProjOpen] = useState(false)
   const currentProject = projects.find((p) => p.id === projectId)
+
+  // 当前所在模块由路由推断;左栏与面包屑都跟着它走。
+  const activeModule = MODULES.find((m) => m.match.some((x) => loc.pathname.startsWith(x))) || MODULES[0]
+  const currentChild = activeModule.children.find((c) => c.key === loc.pathname) || activeModule.children[0]
 
   return (
     <Layout style={{ height: '100vh' }}>
@@ -127,25 +123,38 @@ export default function AppShell({ children }: { children: ReactNode }) {
         <Menu
           mode="horizontal"
           theme="dark"
-          selectedKeys={[TOP_NAV.find((t) => t.match.some((m) => loc.pathname.startsWith(m)))?.key || '/api/definition']}
-          items={TOP_NAV.map((t) => ({ key: t.key, label: t.label }))}
+          selectedKeys={[activeModule.key]}
+          items={MODULES.map((m) => ({ key: m.key, label: t(m.labelKey) }))}
           onClick={(e) => nav(e.key)}
           style={{ flex: 1, background: 'transparent', borderBottom: 'none', minWidth: 0 }}
         />
         <Space size={8}>
           <Select
             size="small"
+            value={lang}
+            onChange={setLang}
+            style={{ width: 92 }}
+            suffixIcon={<GlobalOutlined style={{ color: '#fff' }} />}
+            options={[
+              { value: 'zh', label: '中文' },
+              { value: 'en', label: 'English' },
+            ]}
+          />
+          <Select
+            size="small"
             style={{ width: 200 }}
             value={projectId || undefined}
-            placeholder="选择项目"
+            placeholder={t('top.project')}
             onChange={setProjectId}
+            showSearch
+            optionFilterProp="label"
             options={projects.map((p) => ({ value: p.id, label: p.name }))}
-            notFoundContent="暂无项目"
+            notFoundContent={t('common.empty')}
           />
-          <Tooltip title="新建项目">
+          <Tooltip title={t('top.newProject')}>
             <Button type="text" size="small" icon={<PlusOutlined />} style={{ color: '#fff' }} onClick={() => setNewProjOpen(true)} />
           </Tooltip>
-          <Tooltip title="退出登录">
+          <Tooltip title={t('top.logout')}>
             <Button type="text" size="small" icon={<LogoutOutlined />} style={{ color: '#fff' }} onClick={logout} />
           </Tooltip>
         </Space>
@@ -156,13 +165,20 @@ export default function AppShell({ children }: { children: ReactNode }) {
           <Menu
             mode="inline"
             selectedKeys={[loc.pathname]}
-            items={SIDE_NAV}
+            items={[
+              {
+                key: activeModule.groupKey,
+                label: t(activeModule.groupKey),
+                type: 'group' as const,
+                children: activeModule.children.map((c) => ({ key: c.key, icon: c.icon, label: t(c.labelKey) })),
+              },
+            ]}
             onClick={(e) => nav(e.key)}
             style={{ height: '100%', borderInlineEnd: 'none', paddingTop: 4 }}
           />
         </Sider>
         <Layout style={{ background: '#f5f6f8' }}>
-          {/* 面包屑 */}
+          {/* 面包屑:模块 / 当前页 / 项目,均随路由真实变化 */}
           <div
             style={{
               height: 38,
@@ -176,8 +192,8 @@ export default function AppShell({ children }: { children: ReactNode }) {
           >
             <Breadcrumb
               items={[
-                { title: <Space size={4}><AppstoreOutlined />接口测试</Space> },
-                { title: SIDE_LABEL[loc.pathname] || '接口定义' },
+                { title: <Space size={4}><AppstoreOutlined />{t(activeModule.labelKey)}</Space> },
+                { title: t(currentChild.labelKey) },
                 ...(currentProject ? [{ title: <span style={{ color: '#7c3aed' }}>{currentProject.name}</span> }] : []),
               ]}
             />

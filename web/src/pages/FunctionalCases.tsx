@@ -1,16 +1,20 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Descriptions, Empty, Form, Input, Modal, Select, Space, Table, Tabs, Tag, Tree, message } from 'antd'
+import { Descriptions, Empty, Form, Input, Modal, Select, Space, Table, Tabs, Tag, Tree } from 'antd'
+import { message } from '../feedback'
 import type { ColumnsType } from 'antd/es/table'
 import { api, ApiError, type CaseStep, type FunctionalCase } from '../api'
 import { useApp } from '../context'
 import { Workspace, WorkList, PaneHeader, useWorkTabs } from '../components/Workspace'
 import StepsEditor from '../components/StepsEditor'
+import { useI18n } from '../i18n'
 
 const PRIORITIES = ['P0', 'P1', 'P2', 'P3']
 const prioColor = (p?: string) => (p === 'P0' ? 'red' : p === 'P1' ? 'orange' : 'blue')
 
 export default function FunctionalCases() {
+  const { t } = useI18n()
   const { projectId } = useApp()
+  const ungrouped = t('func.ungrouped', '未分组')
   const [cases, setCases] = useState<FunctionalCase[]>([])
   const [loading, setLoading] = useState(false)
   const [search, setSearch] = useState('')
@@ -24,7 +28,7 @@ export default function FunctionalCases() {
     try {
       setCases(await api.functionalCases(projectId))
     } catch (e) {
-      message.error(e instanceof ApiError ? e.message : '加载失败')
+      message.error(e instanceof ApiError ? e.message : t('func.loadFailed', '加载失败'))
     } finally {
       setLoading(false)
     }
@@ -38,39 +42,39 @@ export default function FunctionalCases() {
   // 左:按模块(自由文本)聚合成树。
   const treeData = useMemo(() => {
     const byMod = new Map<string, number>()
-    cases.forEach((c) => byMod.set(c.module || '未分组', (byMod.get(c.module || '未分组') || 0) + 1))
+    cases.forEach((c) => byMod.set(c.module || ungrouped, (byMod.get(c.module || ungrouped) || 0) + 1))
     return [
       {
         key: 'ALL',
-        title: `全部用例 (${cases.length})`,
+        title: `${t('func.allCases', '全部用例')} (${cases.length})`,
         children: [...byMod.entries()].map(([m, n]) => ({ key: `mod:${m}`, title: `${m} (${n})` })),
       },
     ]
-  }, [cases])
+  }, [cases, ungrouped, t])
 
   const filtered = useMemo(
     () =>
       cases.filter((c) => {
-        const mod = moduleKey === 'ALL' || (c.module || '未分组') === moduleKey.replace('mod:', '')
+        const mod = moduleKey === 'ALL' || (c.module || ungrouped) === moduleKey.replace('mod:', '')
         return mod && c.name.toLowerCase().includes(search.toLowerCase())
       }),
-    [cases, search, moduleKey],
+    [cases, search, moduleKey, ungrouped],
   )
 
   if (!projectId)
-    return <div style={{ padding: 48 }}><Empty description="请先在顶部选择项目" /></div>
+    return <div style={{ padding: 48 }}><Empty description={t('common.selectProject', '请先在顶部选择项目')} /></div>
 
   const columns: ColumnsType<FunctionalCase> = [
-    { title: '名称', dataIndex: 'name', ellipsis: true },
-    { title: '模块', dataIndex: 'module', width: 140, render: (m?: string) => m || '未分组' },
-    { title: '优先级', dataIndex: 'priority', width: 90, render: (p?: string) => <Tag color={prioColor(p)}>{p || 'P2'}</Tag> },
-    { title: '步骤', dataIndex: 'steps', width: 70, render: (s?: CaseStep[]) => (s?.length || 0) },
-    { title: '状态', dataIndex: 'status', width: 110, render: (s?: string) => <Tag>{s || 'PREPARED'}</Tag> },
+    { title: t('func.colName', '名称'), dataIndex: 'name', ellipsis: true },
+    { title: t('func.colModule', '模块'), dataIndex: 'module', width: 140, render: (m?: string) => m || ungrouped },
+    { title: t('func.colPriority', '优先级'), dataIndex: 'priority', width: 90, render: (p?: string) => <Tag color={prioColor(p)}>{p || 'P2'}</Tag> },
+    { title: t('func.colSteps', '步骤'), dataIndex: 'steps', width: 70, render: (s?: CaseStep[]) => (s?.length || 0) },
+    { title: t('func.colStatus', '状态'), dataIndex: 'status', width: 110, render: (s?: string) => <Tag>{s || 'PREPARED'}</Tag> },
   ]
 
   const left = (
     <>
-      <PaneHeader title="模块" />
+      <PaneHeader title={t('func.colModule', '模块')} />
       <div style={{ flex: 1, overflow: 'auto', padding: 8 }}>
         <Tree blockNode defaultExpandAll selectedKeys={[moduleKey]} treeData={treeData} onSelect={(k) => k.length && setModuleKey(String(k[0]))} />
       </div>
@@ -86,7 +90,7 @@ export default function FunctionalCases() {
     <>
       <Workspace
         left={left}
-        listLabel="全部用例"
+        listLabel={t('func.allCases', '全部用例')}
         activeKey={tabs.activeKey}
         onChange={tabs.setActiveKey}
         onClose={tabs.close}
@@ -94,15 +98,15 @@ export default function FunctionalCases() {
         listContent={
           <WorkList<FunctionalCase>
             onNew={() => setCreateOpen(true)}
-            newLabel="新建用例"
+            newLabel={t('func.newCase', '新建用例')}
             onSearch={setSearch}
-            searchPlaceholder="搜索用例名"
+            searchPlaceholder={t('func.searchName', '搜索用例名')}
             onRefresh={load}
             columns={columns}
             data={filtered}
             loading={loading}
             onRowClick={(c) => tabs.open(c.id)}
-            emptyText="暂无用例"
+            emptyText={t('func.emptyCase', '暂无用例')}
           />
         }
       />
@@ -121,6 +125,7 @@ export default function FunctionalCases() {
 }
 
 function CaseDetail({ c }: { c: FunctionalCase }) {
+  const { t } = useI18n()
   const cf = c.customFields || {}
   const stepsTable = (
     <Table<CaseStep>
@@ -128,11 +133,11 @@ function CaseDetail({ c }: { c: FunctionalCase }) {
       size="small"
       pagination={false}
       dataSource={c.steps || []}
-      locale={{ emptyText: <Empty description="无步骤" /> }}
+      locale={{ emptyText: <Empty description={t('func.noSteps', '无步骤')} /> }}
       columns={[
-        { title: '序号', width: 60, render: (_, __, i) => i + 1 },
-        { title: '用例步骤', dataIndex: 'step' },
-        { title: '预期结果', dataIndex: 'expected' },
+        { title: t('func.colIndex', '序号'), width: 60, render: (_, __, i) => i + 1 },
+        { title: t('func.colStep', '用例步骤'), dataIndex: 'step' },
+        { title: t('func.colExpected', '预期结果'), dataIndex: 'expected' },
       ]}
     />
   )
@@ -142,41 +147,41 @@ function CaseDetail({ c }: { c: FunctionalCase }) {
         items={[
           {
             key: 'info',
-            label: '基本信息',
+            label: t('func.tabInfo', '基本信息'),
             children: (
               <Descriptions column={2} size="small" bordered>
-                <Descriptions.Item label="名称">{c.name}</Descriptions.Item>
-                <Descriptions.Item label="模块">{c.module || '未分组'}</Descriptions.Item>
-                <Descriptions.Item label="优先级"><Tag color={prioColor(c.priority)}>{c.priority || 'P2'}</Tag></Descriptions.Item>
-                <Descriptions.Item label="状态">{c.status || 'PREPARED'}</Descriptions.Item>
+                <Descriptions.Item label={t('func.colName', '名称')}>{c.name}</Descriptions.Item>
+                <Descriptions.Item label={t('func.colModule', '模块')}>{c.module || t('func.ungrouped', '未分组')}</Descriptions.Item>
+                <Descriptions.Item label={t('func.colPriority', '优先级')}><Tag color={prioColor(c.priority)}>{c.priority || 'P2'}</Tag></Descriptions.Item>
+                <Descriptions.Item label={t('func.colStatus', '状态')}>{c.status || 'PREPARED'}</Descriptions.Item>
               </Descriptions>
             ),
           },
           {
             key: 'detail',
-            label: '详情',
+            label: t('a.detail', '详情'),
             children: (
               <Space direction="vertical" style={{ width: '100%' }} size={16}>
                 <div>
-                  <div style={{ fontWeight: 600, marginBottom: 6 }}>前置条件</div>
+                  <div style={{ fontWeight: 600, marginBottom: 6 }}>{t('func.prerequisite', '前置条件')}</div>
                   <div style={{ background: '#fafafa', border: '1px solid #f0f0f0', borderRadius: 6, padding: 10, minHeight: 40, whiteSpace: 'pre-wrap' }}>
-                    {cf['前置条件'] || <span style={{ color: '#bbb' }}>无</span>}
+                    {cf['前置条件'] || <span style={{ color: '#bbb' }}>{t('func.none', '无')}</span>}
                   </div>
                 </div>
                 <div>
-                  <div style={{ fontWeight: 600, marginBottom: 6 }}>步骤描述</div>
+                  <div style={{ fontWeight: 600, marginBottom: 6 }}>{t('func.stepsDesc', '步骤描述')}</div>
                   {stepsTable}
                 </div>
                 <div>
-                  <div style={{ fontWeight: 600, marginBottom: 6 }}>备注</div>
+                  <div style={{ fontWeight: 600, marginBottom: 6 }}>{t('func.remark', '备注')}</div>
                   <div style={{ background: '#fafafa', border: '1px solid #f0f0f0', borderRadius: 6, padding: 10, minHeight: 40, whiteSpace: 'pre-wrap' }}>
-                    {cf['备注'] || <span style={{ color: '#bbb' }}>无</span>}
+                    {cf['备注'] || <span style={{ color: '#bbb' }}>{t('func.none', '无')}</span>}
                   </div>
                 </div>
               </Space>
             ),
           },
-          { key: 'steps', label: `步骤与预期 (${c.steps?.length || 0})`, children: stepsTable },
+          { key: 'steps', label: `${t('func.tabStepsExpected', '步骤与预期')} (${c.steps?.length || 0})`, children: stepsTable },
         ]}
       />
     </div>
@@ -196,10 +201,11 @@ function CreateCaseModal({
   onClose: () => void
   onCreated: () => void
 }) {
+  const { t } = useI18n()
   const [form] = Form.useForm()
   const [saving, setSaving] = useState(false)
   return (
-    <Modal title="新建功能用例" open={open} onCancel={onClose} onOk={() => form.submit()} confirmLoading={saving} destroyOnHidden width={680}>
+    <Modal title={t('func.createTitle', '新建功能用例')} open={open} onCancel={onClose} onOk={() => form.submit()} confirmLoading={saving} destroyOnHidden width={680}>
       <Form
         form={form}
         layout="vertical"
@@ -219,33 +225,33 @@ function CreateCaseModal({
               steps: (v.steps || []).filter((s: CaseStep) => s.step.trim() || s.expected.trim()),
               customFields: Object.keys(customFields).length ? customFields : undefined,
             })
-            message.success('用例已创建')
+            message.success(t('func.created', '用例已创建'))
             onCreated()
           } catch (e) {
-            message.error(e instanceof ApiError ? e.message : '创建失败')
+            message.error(e instanceof ApiError ? e.message : t('func.createFailed', '创建失败'))
           } finally {
             setSaving(false)
           }
         }}
       >
-        <Form.Item name="name" label="用例名" rules={[{ required: true }]}>
-          <Input placeholder="如:登录成功" />
+        <Form.Item name="name" label={t('func.caseName', '用例名')} rules={[{ required: true }]}>
+          <Input placeholder={t('func.namePlaceholder', '如:登录成功')} />
         </Form.Item>
         <Space.Compact style={{ width: '100%' }}>
-          <Form.Item name="module" label="模块" style={{ flex: 1 }}>
-            <Input placeholder="如:登录" />
+          <Form.Item name="module" label={t('func.colModule', '模块')} style={{ flex: 1 }}>
+            <Input placeholder={t('func.modulePlaceholder', '如:登录')} />
           </Form.Item>
-          <Form.Item name="priority" label="优先级" style={{ width: 120 }}>
+          <Form.Item name="priority" label={t('func.colPriority', '优先级')} style={{ width: 120 }}>
             <Select options={PRIORITIES.map((p) => ({ value: p, label: p }))} />
           </Form.Item>
         </Space.Compact>
-        <Form.Item name="prerequisite" label="前置条件">
-          <Input.TextArea rows={2} placeholder="如:进入管理登录页 https://..." />
+        <Form.Item name="prerequisite" label={t('func.prerequisite', '前置条件')}>
+          <Input.TextArea rows={2} placeholder={t('func.prerequisitePlaceholder', '如:进入管理登录页 https://...')} />
         </Form.Item>
-        <Form.Item name="steps" label="测试步骤(步骤 + 预期结果)">
+        <Form.Item name="steps" label={t('func.testSteps', '测试步骤(步骤 + 预期结果)')}>
           <StepsEditor />
         </Form.Item>
-        <Form.Item name="remark" label="备注">
+        <Form.Item name="remark" label={t('func.remark', '备注')}>
           <Input.TextArea rows={2} />
         </Form.Item>
       </Form>

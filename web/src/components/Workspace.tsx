@@ -3,6 +3,7 @@ import { useSearchParams } from 'react-router-dom'
 import { Button, Empty, Input, Space, Table, Tabs } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
 import { PlusOutlined, ReloadOutlined } from '@ant-design/icons'
+import { useI18n } from '../i18n'
 
 const LIST_KEY = '__list__'
 
@@ -53,7 +54,7 @@ export interface WorkTab {
 export function Workspace({
   left,
   leftWidth = 220,
-  listLabel = '列表',
+  listLabel,
   listContent,
   tabs,
   activeKey,
@@ -69,9 +70,10 @@ export function Workspace({
   onChange: (k: string) => void
   onClose: (k: string) => void
 }) {
+  const { t } = useI18n()
   const items = [
-    { key: LIST_KEY, label: listLabel, closable: false, children: listContent },
-    ...tabs.map((t) => ({ key: t.key, label: t.label, children: t.children })),
+    { key: LIST_KEY, label: listLabel ?? t('ws.list', '列表'), closable: false, children: listContent },
+    ...tabs.map((tab) => ({ key: tab.key, label: tab.label, children: tab.children })),
   ]
   return (
     <div style={{ display: 'flex', height: '100%' }}>
@@ -99,17 +101,17 @@ export function Workspace({
 // 统一列表:工具栏(新建/自定义动作 + 搜索 + 刷新)+ 表格 + 分页。
 export function WorkList<T extends object>({
   onNew,
-  newLabel = '新建',
+  newLabel,
   extraActions,
   onSearch,
-  searchPlaceholder = '搜索',
+  searchPlaceholder,
   onRefresh,
   columns,
   data,
   loading,
   rowKey = 'id',
   onRowClick,
-  emptyText = '暂无数据',
+  emptyText,
 }: {
   onNew?: () => void
   newLabel?: string
@@ -124,17 +126,18 @@ export function WorkList<T extends object>({
   onRowClick?: (record: T) => void
   emptyText?: string
 }) {
+  const { t } = useI18n()
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 12px', borderBottom: '1px solid #f0f0f0' }}>
         {onNew && (
           <Button type="primary" icon={<PlusOutlined />} onClick={onNew}>
-            {newLabel}
+            {newLabel ?? t('a.new', '新建')}
           </Button>
         )}
         {extraActions}
         <div style={{ flex: 1 }} />
-        {onSearch && <Input.Search placeholder={searchPlaceholder} allowClear style={{ width: 240 }} onChange={(e) => onSearch(e.target.value)} />}
+        {onSearch && <Input.Search placeholder={searchPlaceholder ?? t('a.search', '搜索')} allowClear style={{ width: 240 }} onChange={(e) => onSearch(e.target.value)} />}
         {onRefresh && <Button icon={<ReloadOutlined />} onClick={onRefresh} />}
       </div>
       <div style={{ flex: 1, overflow: 'auto', padding: 12 }}>
@@ -145,8 +148,8 @@ export function WorkList<T extends object>({
           dataSource={data}
           columns={columns}
           onRow={onRowClick ? (r) => ({ onClick: () => onRowClick(r), style: { cursor: 'pointer' } }) : undefined}
-          pagination={{ pageSize: 15, size: 'small', showTotal: (t) => `共 ${t} 条` }}
-          locale={{ emptyText: <Empty description={emptyText} /> }}
+          pagination={{ pageSize: 15, size: 'small', showTotal: (n) => t('ws.total', '共 {n} 条').replace('{n}', String(n)) }}
+          locale={{ emptyText: <Empty description={emptyText ?? t('common.empty', '暂无数据')} /> }}
         />
       </div>
     </div>

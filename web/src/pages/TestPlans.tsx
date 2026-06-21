@@ -1,5 +1,6 @@
 import { useEffect, useState, type CSSProperties } from 'react'
-import { Button, Card, Col, Empty, Form, Input, Modal, Progress, Row, Select, Space, Table, Tag, message } from 'antd'
+import { Button, Card, Col, Empty, Form, Input, Modal, Progress, Row, Select, Space, Table, Tag } from 'antd'
+import { message, modal } from '../feedback'
 import { PlayCircleOutlined, FileMarkdownOutlined, LinkOutlined, ClockCircleOutlined } from '@ant-design/icons'
 import { api, ApiError, type ApiCase, type PlanCase, type PlanStats } from '../api'
 import { useApp } from '../context'
@@ -7,8 +8,10 @@ import { outcomeColor } from '../components/tags'
 import { regAdd, regList, type RegItem } from '../registry'
 import { Workspace, WorkList, useWorkTabs, useOpenParam } from '../components/Workspace'
 import Donut from '../components/Donut'
+import { useI18n } from '../i18n'
 
 export default function TestPlans() {
+  const { t } = useI18n()
   const { projectId } = useApp()
   const [plans, setPlans] = useState<RegItem[]>([])
   const [statsMap, setStatsMap] = useState<Record<string, PlanStats>>({})
@@ -36,16 +39,16 @@ export default function TestPlans() {
     setRunningId(id)
     try {
       const r = await api.runPlan(id)
-      message.success(`执行完成:${r.executed}/${r.total}`)
+      message.success(`${t('plan.runDone', '执行完成')}:${r.executed}/${r.total}`)
       loadStats(plans)
     } catch (e) {
-      message.error(e instanceof ApiError ? `执行失败:${e.status}` : '执行失败')
+      message.error(e instanceof ApiError ? `${t('plan.runFail', '执行失败')}:${e.status}` : t('plan.runFail', '执行失败'))
     } finally {
       setRunningId('')
     }
   }
 
-  if (!projectId) return <div style={{ padding: 48 }}><Empty description="请先在顶部选择项目" /></div>
+  if (!projectId) return <div style={{ padding: 48 }}><Empty description={t('common.selectProject', '请先在顶部选择项目')} /></div>
 
   const detailTabs = plans
     .filter((p) => tabs.openIds.includes(p.id))
@@ -54,7 +57,7 @@ export default function TestPlans() {
   return (
     <>
       <Workspace
-        listLabel="全部计划"
+        listLabel={t('plan.allPlans', '全部计划')}
         activeKey={tabs.activeKey}
         onChange={tabs.setActiveKey}
         onClose={tabs.close}
@@ -62,23 +65,23 @@ export default function TestPlans() {
         listContent={
           <WorkList<RegItem>
             onNew={() => setCreateOpen(true)}
-            newLabel="新建测试计划"
-            extraActions={<Button size="middle" onClick={() => loadStats(plans)}>刷新统计</Button>}
+            newLabel={t('plan.newPlan', '新建测试计划')}
+            extraActions={<Button size="middle" onClick={() => loadStats(plans)}>{t('plan.refreshStats', '刷新统计')}</Button>}
             data={plans}
             onRowClick={(p) => tabs.open(p.id)}
-            emptyText="暂无计划"
+            emptyText={t('plan.emptyPlans', '暂无计划')}
             columns={[
-              { title: '计划名', dataIndex: 'label', ellipsis: true },
+              { title: t('plan.colName', '计划名'), dataIndex: 'label', ellipsis: true },
               {
-                title: '状态',
+                title: t('plan.colStatus', '状态'),
                 width: 100,
                 render: (_, p) => {
                   const s = statsMap[p.id]
-                  return s ? <Tag color={s.isPass ? 'green' : s.executeRate > 0 ? 'blue' : 'default'}>{s.executeRate > 0 ? (s.isPass ? '已完成' : '进行中') : '未开始'}</Tag> : <Tag>—</Tag>
+                  return s ? <Tag color={s.isPass ? 'green' : s.executeRate > 0 ? 'blue' : 'default'}>{s.executeRate > 0 ? (s.isPass ? t('plan.statusDone', '已完成') : t('plan.statusRunning', '进行中')) : t('plan.statusNotStarted', '未开始')}</Tag> : <Tag>—</Tag>
                 },
               },
               {
-                title: '通过率',
+                title: t('plan.colPassRate', '通过率'),
                 width: 160,
                 render: (_, p) => {
                   const s = statsMap[p.id]
@@ -86,15 +89,15 @@ export default function TestPlans() {
                   return <Progress percent={pr} size="small" status={pr === 100 ? 'success' : 'active'} />
                 },
               },
-              { title: '用例数', width: 80, render: (_, p) => statsMap[p.id]?.total ?? 0 },
-              { title: '创建时间', dataIndex: 'createdAt', width: 180, render: (t: number) => new Date(t).toLocaleString() },
+              { title: t('plan.colCaseCount', '用例数'), width: 80, render: (_, p) => statsMap[p.id]?.total ?? 0 },
+              { title: t('plan.colCreatedAt', '创建时间'), dataIndex: 'createdAt', width: 180, render: (ts: number) => new Date(ts).toLocaleString() },
               {
-                title: '操作',
+                title: t('plan.colAction', '操作'),
                 width: 140,
                 render: (_, p) => (
                   <Space size={0} onClick={(e) => e.stopPropagation()}>
-                    <Button type="link" size="small" loading={runningId === p.id} onClick={() => runPlan(p.id)}>执行</Button>
-                    <Button type="link" size="small" onClick={() => tabs.open(p.id)}>报告</Button>
+                    <Button type="link" size="small" loading={runningId === p.id} onClick={() => runPlan(p.id)}>{t('plan.exec', '执行')}</Button>
+                    <Button type="link" size="small" onClick={() => tabs.open(p.id)}>{t('plan.report', '报告')}</Button>
                   </Space>
                 ),
               },
@@ -102,7 +105,7 @@ export default function TestPlans() {
           />
         }
       />
-      <Modal title="新建测试计划" open={createOpen} onCancel={() => setCreateOpen(false)} footer={null} destroyOnHidden>
+      <Modal title={t('plan.newPlan', '新建测试计划')} open={createOpen} onCancel={() => setCreateOpen(false)} footer={null} destroyOnHidden>
         <CreatePlanForm
           projectId={projectId}
           onCreated={(id, name) => {
@@ -117,6 +120,7 @@ export default function TestPlans() {
 }
 
 function CreatePlanForm({ projectId, onCreated }: { projectId: string; onCreated: (id: string, name: string) => void }) {
+  const { t } = useI18n()
   const [saving, setSaving] = useState(false)
   return (
     <Form
@@ -125,22 +129,23 @@ function CreatePlanForm({ projectId, onCreated }: { projectId: string; onCreated
         setSaving(true)
         try {
           const p = await api.createPlan({ projectId, name: v.name })
-          message.success('计划已创建')
+          message.success(t('plan.created', '计划已创建'))
           onCreated(p.id, v.name)
         } catch (e) {
-          message.error(e instanceof ApiError ? e.message : '创建失败')
+          message.error(e instanceof ApiError ? e.message : t('plan.createFail', '创建失败'))
         } finally {
           setSaving(false)
         }
       }}
     >
-      <Form.Item name="name" label="计划名" rules={[{ required: true }]}><Input placeholder="如:回归冒烟" autoFocus /></Form.Item>
-      <Button type="primary" htmlType="submit" loading={saving} block>创建</Button>
+      <Form.Item name="name" label={t('plan.colName', '计划名')} rules={[{ required: true }]}><Input placeholder={t('plan.namePlaceholder', '如:回归冒烟')} autoFocus /></Form.Item>
+      <Button type="primary" htmlType="submit" loading={saving} block>{t('a.create', '创建')}</Button>
     </Form>
   )
 }
 
 function PlanDetail({ planId, name, projectId }: { planId: string; name: string; projectId: string }) {
+  const { t } = useI18n()
   const [stats, setStats] = useState<PlanStats | null>(null)
   const [cases, setCases] = useState<PlanCase[]>([])
   const [loading, setLoading] = useState(false)
@@ -156,7 +161,7 @@ function PlanDetail({ planId, name, projectId }: { planId: string; name: string;
       setStats(s)
       setCases(Array.isArray(c) ? c : c.items)
     } catch (e) {
-      message.error(e instanceof ApiError ? e.message : '加载计划失败')
+      message.error(e instanceof ApiError ? e.message : t('plan.loadFail', '加载计划失败'))
     } finally {
       setLoading(false)
     }
@@ -170,10 +175,10 @@ function PlanDetail({ planId, name, projectId }: { planId: string; name: string;
     setRunning(true)
     try {
       const r = await api.runPlan(planId)
-      message.success(`执行完成:${r.executed}/${r.total}`)
+      message.success(`${t('plan.runDone', '执行完成')}:${r.executed}/${r.total}`)
       load()
     } catch (e) {
-      message.error(e instanceof ApiError ? `执行失败:${e.status}` : '执行失败')
+      message.error(e instanceof ApiError ? `${t('plan.runFail', '执行失败')}:${e.status}` : t('plan.runFail', '执行失败'))
     } finally {
       setRunning(false)
     }
@@ -183,20 +188,20 @@ function PlanDetail({ planId, name, projectId }: { planId: string; name: string;
       setMd(await api.planReportMd(planId))
       setMdOpen(true)
     } catch (e) {
-      message.error(e instanceof ApiError ? e.message : '获取报告失败')
+      message.error(e instanceof ApiError ? e.message : t('plan.reportFail', '获取报告失败'))
     }
   }
   const schedule = () => {
     let cron = '0 0 * * * *'
-    Modal.confirm({
-      title: '配置定时执行(cron)',
+    modal.confirm({
+      title: t('plan.scheduleTitle', '配置定时执行(cron)'),
       content: <Input defaultValue={cron} onChange={(e) => (cron = e.target.value)} style={{ marginTop: 8 }} className="ms-mono" />,
       onOk: async () => {
         try {
           await api.planSchedule(planId, cron)
-          message.success('定时已配置')
+          message.success(t('plan.scheduleDone', '定时已配置'))
         } catch (e) {
-          message.error(e instanceof ApiError ? e.message : '配置失败')
+          message.error(e instanceof ApiError ? e.message : t('plan.scheduleFail', '配置失败'))
         }
       },
     })
@@ -205,11 +210,11 @@ function PlanDetail({ planId, name, projectId }: { planId: string; name: string;
   return (
     <div style={{ padding: '12px 16px', height: '100%', overflow: 'auto' }}>
       <Space style={{ marginBottom: 12 }} wrap>
-        <Button icon={<LinkOutlined />} size="small" onClick={() => setLinkOpen(true)}>挂用例</Button>
-        <Button type="primary" icon={<PlayCircleOutlined />} size="small" loading={running} onClick={run}>执行计划</Button>
-        <Button icon={<ClockCircleOutlined />} size="small" onClick={schedule}>定时</Button>
-        <Button icon={<FileMarkdownOutlined />} size="small" onClick={openReport}>Markdown 报告</Button>
-        {stats && <Tag color={stats.isPass ? 'green' : 'red'}>{stats.isPass ? '通过' : '未通过'}</Tag>}
+        <Button icon={<LinkOutlined />} size="small" onClick={() => setLinkOpen(true)}>{t('plan.linkCase', '挂用例')}</Button>
+        <Button type="primary" icon={<PlayCircleOutlined />} size="small" loading={running} onClick={run}>{t('plan.runPlan', '执行计划')}</Button>
+        <Button icon={<ClockCircleOutlined />} size="small" onClick={schedule}>{t('plan.schedule', '定时')}</Button>
+        <Button icon={<FileMarkdownOutlined />} size="small" onClick={openReport}>{t('plan.mdReport', 'Markdown 报告')}</Button>
+        {stats && <Tag color={stats.isPass ? 'green' : 'red'}>{stats.isPass ? t('plan.pass', '通过') : t('plan.notPass', '未通过')}</Tag>}
       </Space>
       <ReportAnalytics stats={stats} cases={cases} />
       <div style={{ height: 16 }} />
@@ -219,16 +224,16 @@ function PlanDetail({ planId, name, projectId }: { planId: string; name: string;
         loading={loading}
         dataSource={cases}
         pagination={false}
-        locale={{ emptyText: <Empty description="未挂用例,点「挂用例」" /> }}
+        locale={{ emptyText: <Empty description={t('plan.noLinkedCase', '未挂用例,点「挂用例」')} /> }}
         columns={[
-          { title: '用例名', dataIndex: 'name', ellipsis: true },
-          { title: '结果', dataIndex: 'status', width: 110, render: (s: string) => <Tag color={outcomeColor(s)}>{s}</Tag> },
-          { title: '耗时(ms)', dataIndex: 'latencyMs', width: 100, render: (v?: number | null) => v ?? '—' },
-          { title: '状态码', dataIndex: 'statusCode', width: 90, render: (v?: number | null) => v ?? '—' },
+          { title: t('plan.caseName', '用例名'), dataIndex: 'name', ellipsis: true },
+          { title: t('plan.colResult', '结果'), dataIndex: 'status', width: 110, render: (s: string) => <Tag color={outcomeColor(s)}>{s}</Tag> },
+          { title: t('plan.colLatency', '耗时(ms)'), dataIndex: 'latencyMs', width: 100, render: (v?: number | null) => v ?? '—' },
+          { title: t('plan.colStatusCode', '状态码'), dataIndex: 'statusCode', width: 90, render: (v?: number | null) => v ?? '—' },
         ]}
       />
       <LinkCaseModal open={linkOpen} planId={planId} projectId={projectId} onClose={() => setLinkOpen(false)} onLinked={() => { setLinkOpen(false); load() }} />
-      <Modal title={`Markdown 报告 · ${name}`} open={mdOpen} onCancel={() => setMdOpen(false)} width={760} footer={<Button type="primary" onClick={() => setMdOpen(false)}>关闭</Button>}>
+      <Modal title={`${t('plan.mdReport', 'Markdown 报告')} · ${name}`} open={mdOpen} onCancel={() => setMdOpen(false)} width={760} footer={<Button type="primary" onClick={() => setMdOpen(false)}>{t('plan.close', '关闭')}</Button>}>
         <pre style={{ background: '#0f1419', color: '#d6deeb', padding: 12, borderRadius: 6, maxHeight: 520, overflow: 'auto', fontSize: 12 }}>{md}</pre>
       </Modal>
     </div>
@@ -236,6 +241,7 @@ function PlanDetail({ planId, name, projectId }: { planId: string; name: string;
 }
 
 function LinkCaseModal({ open, planId, projectId, onClose, onLinked }: { open: boolean; planId: string; projectId: string; onClose: () => void; onLinked: () => void }) {
+  const { t } = useI18n()
   const [cases, setCases] = useState<ApiCase[]>([])
   const [caseId, setCaseId] = useState('')
   const [saving, setSaving] = useState(false)
@@ -248,25 +254,25 @@ function LinkCaseModal({ open, planId, projectId, onClose, onLinked }: { open: b
     setSaving(true)
     try {
       await api.linkPlanCase(planId, c.id, c.name)
-      message.success('已挂入用例')
+      message.success(t('plan.linked', '已挂入用例'))
       onLinked()
     } catch (e) {
-      message.error(e instanceof ApiError ? e.message : '挂入失败')
+      message.error(e instanceof ApiError ? e.message : t('plan.linkFail', '挂入失败'))
     } finally {
       setSaving(false)
     }
   }
   return (
-    <Modal title="挂入接口用例" open={open} onCancel={onClose} onOk={link} confirmLoading={saving} okButtonProps={{ disabled: !caseId }} destroyOnHidden>
+    <Modal title={t('plan.linkApiCase', '挂入接口用例')} open={open} onCancel={onClose} onOk={link} confirmLoading={saving} okButtonProps={{ disabled: !caseId }} destroyOnHidden>
       <Select
         style={{ width: '100%' }}
         showSearch
-        placeholder="选择项目下的接口用例"
+        placeholder={t('plan.selectApiCase', '选择项目下的接口用例')}
         value={caseId || undefined}
         onChange={setCaseId}
         optionFilterProp="label"
         options={cases.map((c) => ({ value: c.id, label: `${c.method} ${c.name}` }))}
-        notFoundContent="项目暂无接口用例(先去「接口定义」建用例)"
+        notFoundContent={t('plan.noApiCase', '项目暂无接口用例(先去「接口定义」建用例)')}
       />
     </Modal>
   )
@@ -275,6 +281,7 @@ function LinkCaseModal({ open, planId, projectId, onClose, onLinked }: { open: b
 // 计划报告多卡分析(对齐 MeterSphere):报告分析 + 执行分析甜甜圈 + 用例状态条形。
 // 状态分布从 planCases 客户端聚合(SUCCESS/ERROR/FAKE_ERROR/BLOCK/PENDING)。
 function ReportAnalytics({ stats, cases }: { stats: PlanStats | null; cases: PlanCase[] }) {
+  const { t } = useI18n()
   const by = (s: string) => cases.filter((c) => (c.status || 'PENDING').toUpperCase() === s).length
   const success = by('SUCCESS')
   const error = by('ERROR')
@@ -284,24 +291,24 @@ function ReportAnalytics({ stats, cases }: { stats: PlanStats | null; cases: Pla
   const total = cases.length || stats?.total || 0
   const pct = (n: number) => (total ? ((n * 100) / total).toFixed(2) : '0.00')
   const segs = [
-    { label: '成功', value: success, color: '#2e7d32' },
-    { label: '失败', value: error, color: '#c62828' },
-    { label: '误报', value: fake, color: '#ef6c00' },
-    { label: '阻塞', value: block, color: '#722ed1' },
-    { label: '未执行', value: pending, color: '#bfbfbf' },
+    { label: t('plan.segSuccess', '成功'), value: success, color: '#2e7d32' },
+    { label: t('plan.segError', '失败'), value: error, color: '#c62828' },
+    { label: t('plan.segFake', '误报'), value: fake, color: '#ef6c00' },
+    { label: t('plan.segBlock', '阻塞'), value: block, color: '#722ed1' },
+    { label: t('plan.segPending', '未执行'), value: pending, color: '#bfbfbf' },
   ]
   return (
     <Row gutter={16}>
       <Col span={12}>
-        <Card size="small" title="报告分析">
-          <div style={rowStyle}><span>通过率</span><b style={{ color: '#2e7d32' }}>{((stats?.passRate ?? 0) * 100).toFixed(2)}%</b></div>
-          <div style={rowStyle}><span>执行完成率</span><b>{((stats?.executeRate ?? 0) * 100).toFixed(2)}%</b></div>
-          <div style={rowStyle}><span>用例总数</span><b>{total}</b></div>
-          <div style={rowStyle}><span>结论</span><b style={{ color: stats?.isPass ? '#2e7d32' : '#c62828' }}>{stats?.isPass ? '通过' : '未通过'}</b></div>
+        <Card size="small" title={t('plan.reportAnalysis', '报告分析')}>
+          <div style={rowStyle}><span>{t('plan.colPassRate', '通过率')}</span><b style={{ color: '#2e7d32' }}>{((stats?.passRate ?? 0) * 100).toFixed(2)}%</b></div>
+          <div style={rowStyle}><span>{t('plan.executeRate', '执行完成率')}</span><b>{((stats?.executeRate ?? 0) * 100).toFixed(2)}%</b></div>
+          <div style={rowStyle}><span>{t('plan.totalCases', '用例总数')}</span><b>{total}</b></div>
+          <div style={rowStyle}><span>{t('plan.conclusion', '结论')}</span><b style={{ color: stats?.isPass ? '#2e7d32' : '#c62828' }}>{stats?.isPass ? t('plan.pass', '通过') : t('plan.notPass', '未通过')}</b></div>
         </Card>
       </Col>
       <Col span={12}>
-        <Card size="small" title="执行分析">
+        <Card size="small" title={t('plan.execAnalysis', '执行分析')}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
             <Donut segments={segs} />
             <div style={{ flex: 1 }}>
@@ -316,7 +323,7 @@ function ReportAnalytics({ stats, cases }: { stats: PlanStats | null; cases: Pla
         </Card>
       </Col>
       <Col span={24} style={{ marginTop: 16 }}>
-        <Card size="small" title="用例状态分布">
+        <Card size="small" title={t('plan.statusDist', '用例状态分布')}>
           {segs.map((s) => (
             <div key={s.label} style={{ display: 'flex', alignItems: 'center', gap: 12, margin: '6px 0' }}>
               <span style={{ width: 48, color: s.color }}>{s.label}</span>

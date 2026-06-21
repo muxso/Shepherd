@@ -1,9 +1,11 @@
 import { useEffect, useState } from 'react'
-import { Button, Empty, Form, Input, Modal, Select, Table, Tag, Typography, message } from 'antd'
+import { Button, Empty, Form, Input, Modal, Select, Table, Tag, Typography } from 'antd'
+import { message, modal } from '../feedback'
 import { PlusOutlined, ReloadOutlined } from '@ant-design/icons'
 import { api, ApiError } from '../api'
 import { useApp } from '../context'
 import { regAdd, regList, type RegItem } from '../registry'
+import { useI18n } from '../i18n'
 
 const STATUSES = ['NEW', 'IN_PROGRESS', 'RESOLVED', 'CLOSED', 'REJECTED', 'REOPENED']
 
@@ -17,6 +19,7 @@ const bugColor = (s: string) => {
 
 // 缺陷在 RegItem.meta.status 内维护当前状态(后端无 list 端点)。
 export default function Bugs() {
+  const { t } = useI18n()
   const { projectId } = useApp()
   const [items, setItems] = useState<RegItem[]>([])
   const [createOpen, setCreateOpen] = useState(false)
@@ -27,14 +30,14 @@ export default function Bugs() {
   if (!projectId)
     return (
       <div style={{ padding: 48 }}>
-        <Empty description="请先在顶部选择项目" />
+        <Empty description={t('common.selectProject', '请先在顶部选择项目')} />
       </div>
     )
 
   const changeStatus = (item: RegItem) => {
     let status = 'RESOLVED'
-    Modal.confirm({
-      title: `变更缺陷状态 · ${item.label}`,
+    modal.confirm({
+      title: `${t('bug.changeStatus', '变更缺陷状态')} · ${item.label}`,
       content: (
         <Select
           defaultValue={status}
@@ -46,10 +49,10 @@ export default function Bugs() {
       onOk: async () => {
         try {
           const b = await api.setBugStatus(item.id, status)
-          message.success(`已变更为 ${b.status}`)
+          message.success(`${t('bug.changedTo', '已变更为')} ${b.status}`)
           setItems(regAdd('bug', projectId, { ...item, meta: { ...item.meta, status: b.status } }))
         } catch (e) {
-          message.error(e instanceof ApiError ? `变更失败:${e.status}(非法流转?)` : '变更失败')
+          message.error(e instanceof ApiError ? `${t('bug.changeFailedStatus', '变更失败')}:${e.status}${t('bug.illegalTransition', '(非法流转?)')}` : t('bug.changeFailed', '变更失败'))
         }
       },
     })
@@ -59,11 +62,11 @@ export default function Bugs() {
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '14px 16px', background: '#fff', borderBottom: '1px solid #f0f0f0' }}>
         <Typography.Text strong style={{ fontSize: 15 }}>
-          缺陷
+          {t('m.bug', '缺陷')}
         </Typography.Text>
         <div style={{ flex: 1 }} />
         <Button type="primary" icon={<PlusOutlined />} onClick={() => setCreateOpen(true)}>
-          新建缺陷
+          {t('bug.new', '新建缺陷')}
         </Button>
         <Button icon={<ReloadOutlined />} onClick={refresh} />
       </div>
@@ -73,21 +76,21 @@ export default function Bugs() {
           size="middle"
           dataSource={items}
           pagination={{ pageSize: 15, size: 'small' }}
-          locale={{ emptyText: <Empty description="暂无缺陷" /> }}
+          locale={{ emptyText: <Empty description={t('bug.empty', '暂无缺陷')} /> }}
           columns={[
-            { title: '标题', dataIndex: 'label' },
+            { title: t('bug.title', '标题'), dataIndex: 'label' },
             {
-              title: '状态',
+              title: t('bug.status', '状态'),
               width: 130,
               render: (_, r) => <Tag color={bugColor(r.meta?.status || 'NEW')}>{r.meta?.status || 'NEW'}</Tag>,
             },
             { title: 'ID', dataIndex: 'id', render: (v: string) => <span className="ms-mono" style={{ fontSize: 12 }}>{v}</span> },
             {
-              title: '操作',
+              title: t('bug.action', '操作'),
               width: 120,
               render: (_, r) => (
                 <Button type="link" size="small" onClick={() => changeStatus(r)}>
-                  变更状态
+                  {t('bug.changeStatusBtn', '变更状态')}
                 </Button>
               ),
             },
@@ -95,29 +98,29 @@ export default function Bugs() {
         />
       </div>
 
-      <Modal title="新建缺陷" open={createOpen} onCancel={() => setCreateOpen(false)} footer={null} destroyOnHidden>
+      <Modal title={t('bug.new', '新建缺陷')} open={createOpen} onCancel={() => setCreateOpen(false)} footer={null} destroyOnHidden>
         <Form
           layout="vertical"
           initialValues={{ initialStatus: 'NEW' }}
           onFinish={async (v: { title: string; initialStatus: string }) => {
             try {
               const b = await api.createBug({ projectId, title: v.title, initialStatus: v.initialStatus })
-              message.success('缺陷已创建')
+              message.success(t('bug.created', '缺陷已创建'))
               setItems(regAdd('bug', projectId, { id: b.id, label: v.title, createdAt: Date.now(), meta: { status: b.status } }))
               setCreateOpen(false)
             } catch (e) {
-              message.error(e instanceof ApiError ? e.message : '创建失败')
+              message.error(e instanceof ApiError ? e.message : t('bug.createFailed', '创建失败'))
             }
           }}
         >
-          <Form.Item name="title" label="标题" rules={[{ required: true }]}>
-            <Input placeholder="如:登录按钮无响应" autoFocus />
+          <Form.Item name="title" label={t('bug.title', '标题')} rules={[{ required: true }]}>
+            <Input placeholder={t('bug.titlePlaceholder', '如:登录按钮无响应')} autoFocus />
           </Form.Item>
-          <Form.Item name="initialStatus" label="初始状态">
+          <Form.Item name="initialStatus" label={t('bug.initialStatus', '初始状态')}>
             <Select options={STATUSES.map((s) => ({ value: s, label: s }))} />
           </Form.Item>
           <Button type="primary" htmlType="submit" block>
-            创建
+            {t('a.create', '创建')}
           </Button>
         </Form>
       </Modal>

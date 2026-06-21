@@ -1,9 +1,11 @@
 import { useEffect, useState } from 'react'
-import { Button, Empty, Form, Input, InputNumber, Modal, Select, Table, Typography, message } from 'antd'
+import { Button, Empty, Form, Input, InputNumber, Modal, Select, Table, Typography } from 'antd'
+import { message } from '../feedback'
 import type { ColumnsType } from 'antd/es/table'
 import { PlusOutlined, ReloadOutlined } from '@ant-design/icons'
 import { ApiError } from '../api'
 import { useApp } from '../context'
+import { useI18n } from '../i18n'
 
 export interface FieldDef {
   name: string
@@ -32,6 +34,7 @@ export interface CrudConfig<T> {
 // 数据驱动的资源页:工具栏(新建/刷新)+ 表格 + 由 fields 生成的新建表单。
 export default function CrudResource<T extends object>({ cfg }: { cfg: CrudConfig<T> }) {
   const { projectId } = useApp()
+  const { t } = useI18n()
   const [rows, setRows] = useState<T[]>([])
   const [loading, setLoading] = useState(false)
   const [open, setOpen] = useState(false)
@@ -47,7 +50,7 @@ export default function CrudResource<T extends object>({ cfg }: { cfg: CrudConfi
       setRows(Array.isArray(data) ? data : [])
     } catch (e) {
       setRows([])
-      message.error(e instanceof ApiError ? e.message : '加载失败')
+      message.error(e instanceof ApiError ? e.message : t('crud.loadFail', '加载失败'))
     } finally {
       setLoading(false)
     }
@@ -61,7 +64,7 @@ export default function CrudResource<T extends object>({ cfg }: { cfg: CrudConfi
   if (cfg.needsProject && !projectId)
     return (
       <div style={{ padding: 48 }}>
-        <Empty description="请先在顶部选择项目" />
+        <Empty description={t('common.selectProject', '请先在顶部选择项目')} />
       </div>
     )
 
@@ -90,7 +93,7 @@ export default function CrudResource<T extends object>({ cfg }: { cfg: CrudConfi
         <div style={{ flex: 1 }} />
         {cfg.create && (
           <Button type="primary" icon={<PlusOutlined />} onClick={() => setOpen(true)}>
-            新建
+            {t('a.new', '新建')}
           </Button>
         )}
         <Button icon={<ReloadOutlined />} onClick={load} />
@@ -102,20 +105,20 @@ export default function CrudResource<T extends object>({ cfg }: { cfg: CrudConfi
           loading={loading}
           dataSource={rows}
           columns={cfg.columns}
-          pagination={{ pageSize: 15, size: 'small', showTotal: (t) => `共 ${t} 条` }}
-          locale={{ emptyText: <Empty description="暂无数据" /> }}
+          pagination={{ pageSize: 15, size: 'small', showTotal: (n) => t('crud.total', '共 {n} 条').replace('{n}', String(n)) }}
+          locale={{ emptyText: <Empty description={t('common.empty', '暂无数据')} /> }}
         />
       </div>
 
       {cfg.create && (
         <CreateModal
-          title={`新建 · ${cfg.title}`}
+          title={`${t('a.new', '新建')} · ${cfg.title}`}
           open={open}
           fields={cfg.create.fields}
           onClose={() => setOpen(false)}
           onSubmit={async (vals) => {
             await cfg.create!.submit(vals, { projectId })
-            message.success('创建成功')
+            message.success(t('crud.createOk', '创建成功'))
             setOpen(false)
             load()
           }}
@@ -138,6 +141,7 @@ function CreateModal({
   onClose: () => void
   onSubmit: (vals: Record<string, unknown>) => Promise<void>
 }) {
+  const { t } = useI18n()
   const [form] = Form.useForm()
   const [saving, setSaving] = useState(false)
   const initialValues = Object.fromEntries(
@@ -162,7 +166,7 @@ function CreateModal({
           try {
             await onSubmit(vals)
           } catch (e) {
-            message.error(e instanceof ApiError ? e.message : '创建失败')
+            message.error(e instanceof ApiError ? e.message : t('crud.createFail', '创建失败'))
           } finally {
             setSaving(false)
           }
@@ -173,7 +177,7 @@ function CreateModal({
             key={f.name}
             name={f.name}
             label={f.label}
-            rules={f.required ? [{ required: true, message: `请输入${f.label}` }] : undefined}
+            rules={f.required ? [{ required: true, message: t('crud.fieldRequired', '请输入{label}').replace('{label}', f.label) }] : undefined}
           >
             {f.type === 'textarea' ? (
               <Input.TextArea rows={3} placeholder={f.placeholder} />

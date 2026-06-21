@@ -264,13 +264,22 @@ export interface PerfReport {
   latency: PerfLatency
 }
 
+export interface RequirementVersion {
+  version: number
+  description?: string
+  acceptanceCriteria?: string[]
+}
+
 export interface Requirement {
   id: string
   projectId?: string
   title: string
   baselineVersion: number
+  latestVersion?: number
   status: string
+  // 兼容两种返回:顶层 acceptanceCriteria(旧)或 versions[].acceptanceCriteria(现)。
   acceptanceCriteria?: string[]
+  versions?: RequirementVersion[]
 }
 
 export interface Task {
