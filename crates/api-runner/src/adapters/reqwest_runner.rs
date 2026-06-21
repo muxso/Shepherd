@@ -3,7 +3,7 @@
 
 use std::time::Duration;
 
-use crate::domain::{evaluate, Assertion, CaseReport, RequestSpec, ResponseSnapshot};
+use crate::domain::{Assertion, CaseReport, RequestSpec, ResponseSnapshot};
 
 /// 默认整体超时(发送→读完响应体)。慢接口/压测可经 [`ReqwestRunner::with_client`] 覆盖。
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
@@ -121,9 +121,20 @@ impl ReqwestRunner {
         spec: &RequestSpec,
         assertions: &[Assertion],
     ) -> (CaseReport, Option<ResponseSnapshot>) {
+        self.run_case_with_snapshot_vars(spec, assertions, &std::collections::BTreeMap::new()).await
+    }
+
+    /// 同 [`run_case_with_snapshot`](Self::run_case_with_snapshot),但带运行上下文变量
+    /// (供 `Variable` 断言读取已提取/环境变量)。
+    pub async fn run_case_with_snapshot_vars(
+        &self,
+        spec: &RequestSpec,
+        assertions: &[Assertion],
+        vars: &std::collections::BTreeMap<String, String>,
+    ) -> (CaseReport, Option<ResponseSnapshot>) {
         match self.execute(spec).await {
             Ok(snapshot) => {
-                let report = evaluate(assertions, &snapshot);
+                let report = crate::domain::evaluate_with_vars(assertions, &snapshot, vars);
                 (report, Some(snapshot))
             }
             Err(e) => (
