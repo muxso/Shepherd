@@ -121,7 +121,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
         }}
       >
         <Space style={{ color: '#fff', fontSize: 16, fontWeight: 700 }} size={6}>
-          <DeploymentUnitOutlined style={{ color: '#1664ff', fontSize: 18 }} />
+          <DeploymentUnitOutlined style={{ color: '#7c3aed', fontSize: 18 }} />
           Shepherd
         </Space>
         <Menu
@@ -178,7 +178,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
               items={[
                 { title: <Space size={4}><AppstoreOutlined />接口测试</Space> },
                 { title: SIDE_LABEL[loc.pathname] || '接口定义' },
-                ...(currentProject ? [{ title: <span style={{ color: '#1664ff' }}>{currentProject.name}</span> }] : []),
+                ...(currentProject ? [{ title: <span style={{ color: '#7c3aed' }}>{currentProject.name}</span> }] : []),
               ]}
             />
             <div style={{ flex: 1 }} />

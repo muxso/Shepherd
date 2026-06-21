@@ -374,7 +374,7 @@ function methodColorHex(m: string): string {
     case 'GET':
       return '#2e7d32'
     case 'POST':
-      return '#1664ff'
+      return '#7c3aed'
     case 'PUT':
       return '#ef6c00'
     case 'DELETE':
