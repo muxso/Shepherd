@@ -2,7 +2,10 @@
 
 use async_trait::async_trait;
 
-use crate::domain::{ApiCase, ApiDefinition, ApiMock, NewApiCase, NewApiDefinition, NewApiMock};
+use crate::domain::{
+    ApiCase, ApiDefinition, ApiModule, ApiMock, NewApiCase, NewApiDefinition, NewApiModule,
+    NewApiMock,
+};
 
 use thiserror::Error;
 
@@ -51,4 +54,25 @@ pub trait ApiDefinitionRepository: Send + Sync {
 
     /// 列出某接口定义下的 Mock(排除软删除)。
     async fn list_mocks(&self, api_definition_id: &str) -> Result<Vec<ApiMock>, RepoError>;
+
+    // ---- 模块(文件夹)----
+
+    /// 新建接口模块。
+    async fn insert_module(&self, m: &NewApiModule) -> Result<ApiModule, RepoError>;
+
+    /// 列出项目下的模块(排除软删除)。
+    async fn list_modules(&self, project_id: &str) -> Result<Vec<ApiModule>, RepoError>;
+
+    /// 重命名模块。
+    async fn rename_module(&self, id: &str, name: &str) -> Result<(), RepoError>;
+
+    /// 软删除模块,并把其下接口定义改为未归类(module_id = NULL)。
+    async fn delete_module(&self, id: &str) -> Result<(), RepoError>;
+
+    /// 把接口定义归入模块;module_id 为 None 表示移出到未归类。
+    async fn set_definition_module(
+        &self,
+        definition_id: &str,
+        module_id: Option<&str>,
+    ) -> Result<(), RepoError>;
 }

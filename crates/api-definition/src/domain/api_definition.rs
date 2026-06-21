@@ -121,6 +121,8 @@ pub struct ApiDefinition {
     pub method: String,
     pub path: String,
     pub status: ApiStatus,
+    /// 归属模块 id;None 表示未归类(顶层)。
+    pub module_id: Option<String>,
 }
 
 #[cfg(test)]
