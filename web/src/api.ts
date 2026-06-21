@@ -187,6 +187,8 @@ export interface Scenario {
   projectId: string
   name: string
   status: string
+  /** 列表接口已返回步骤,用于显示步骤数。 */
+  steps?: ScenarioStep[]
 }
 
 export interface ScenarioStep {

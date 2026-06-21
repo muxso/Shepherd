@@ -213,6 +213,7 @@ const DICT: Record<string, { zh: string; en: string }> = {
   "scenario.empty": { zh: "暂无场景", en: "No scenarios" },
   "scenario.colName": { zh: "名称", en: "Name" },
   "scenario.colStatus": { zh: "状态", en: "Status" },
+  "scenario.colSteps": { zh: "步骤数", en: "Steps" },
   "scenario.stepRequest": { zh: "请求", en: "Request" },
   "scenario.stepCase": { zh: "引用用例", en: "Reference Case" },
   "scenario.stepScenario": { zh: "引用场景", en: "Reference Scenario" },
