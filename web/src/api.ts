@@ -735,8 +735,8 @@ export const api = {
     scenarioId: string,
     b: { kind: string; order: number; refId?: string; request?: unknown; control?: unknown },
   ) => http.post<ScenarioStep>(`/api/scenario/${scenarioId}/step`, b),
-  runScenario: (scenarioId: string, projectId: string) =>
-    http.post<ScenarioRunResult>(`/api/scenario/${scenarioId}/run`, { projectId }),
+  runScenario: (scenarioId: string, projectId: string, opts?: { environmentId?: string; failureStrategy?: 'CONTINUE' | 'STOP' }) =>
+    http.post<ScenarioRunResult>(`/api/scenario/${scenarioId}/run`, { projectId, environmentId: opts?.environmentId, failureStrategy: opts?.failureStrategy }),
   scenarioExecutions: (scenarioId: string) =>
     http.get<Page<ScenarioExecution>>(`/api/scenario/${scenarioId}/executions`),
 }
