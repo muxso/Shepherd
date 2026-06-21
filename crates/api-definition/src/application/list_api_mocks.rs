@@ -42,12 +42,12 @@ mod tests {
     async fn lists_mocks_for_definition() {
         let repo = Arc::new(InMemoryApiDefinitionRepository::new());
         let def = CreateApiDefinitionUseCase::new(repo.clone())
-            .execute("p1", "x", ApiProtocol::Http, "GET", "/x")
+            .execute("p1", "x", ApiProtocol::Http, "GET", "/x", "u1")
             .await
             .expect("ok");
         let add = AddApiMockUseCase::new(repo.clone());
-        add.execute(&def.id, "m1", serde_json::json!({}), 200, None, true).await.expect("ok");
-        add.execute(&def.id, "m2", serde_json::json!({}), 404, None, false).await.expect("ok");
+        add.execute(&def.id, "m1", serde_json::json!({}), 200, None, true, crate::application::ApiMockExtras::default()).await.expect("ok");
+        add.execute(&def.id, "m2", serde_json::json!({}), 404, None, false, crate::application::ApiMockExtras::default()).await.expect("ok");
 
         let uc = ListApiMocksUseCase::new(repo);
         assert_eq!(uc.execute(&def.id).await.expect("ok").len(), 2);

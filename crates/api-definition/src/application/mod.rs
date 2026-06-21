@@ -9,8 +9,8 @@ pub mod list_api_definitions;
 pub mod list_api_mocks;
 pub mod list_project_cases;
 
-pub use add_api_case::{AddApiCaseError, AddApiCaseUseCase};
-pub use add_api_mock::{AddApiMockError, AddApiMockUseCase};
+pub use add_api_case::{AddApiCaseError, AddApiCaseUseCase, ApiCaseMeta};
+pub use add_api_mock::{AddApiMockError, AddApiMockUseCase, ApiMockExtras};
 pub use create_api_case::{CreateApiCaseError, CreateApiCaseUseCase};
 pub use create_api_definition::{CreateApiDefinitionError, CreateApiDefinitionUseCase};
 pub use import_api_definitions::{ImportApiDefinitionsUseCase, ImportError, ImportOutcome};

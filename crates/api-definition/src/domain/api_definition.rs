@@ -10,6 +10,10 @@ pub enum ApiProtocol {
     Tcp,
     Sql,
     Dubbo,
+    /// 仅 HTTP 走原生执行器;以下协议当前仅登记/存储(对齐前端可选项,避免「unknown protocol」)。
+    Grpc,
+    Redis,
+    WebSocket,
 }
 
 impl ApiProtocol {
@@ -19,6 +23,9 @@ impl ApiProtocol {
             ApiProtocol::Tcp => "TCP",
             ApiProtocol::Sql => "SQL",
             ApiProtocol::Dubbo => "DUBBO",
+            ApiProtocol::Grpc => "GRPC",
+            ApiProtocol::Redis => "REDIS",
+            ApiProtocol::WebSocket => "WEBSOCKET",
         }
     }
 
@@ -29,6 +36,9 @@ impl ApiProtocol {
             "TCP" => Some(ApiProtocol::Tcp),
             "SQL" => Some(ApiProtocol::Sql),
             "DUBBO" => Some(ApiProtocol::Dubbo),
+            "GRPC" => Some(ApiProtocol::Grpc),
+            "REDIS" => Some(ApiProtocol::Redis),
+            "WEBSOCKET" => Some(ApiProtocol::WebSocket),
             _ => None,
         }
     }
@@ -77,6 +87,8 @@ pub struct NewApiDefinition {
     pub status: ApiStatus,
     /// 请求/响应规格(不透明 JSON 文本;默认 "{}")。
     pub spec: String,
+    /// 创建人 user_id(可空串;由应用层注入)。
+    pub created_by: String,
 }
 
 impl NewApiDefinition {
@@ -110,7 +122,14 @@ impl NewApiDefinition {
             path: path.to_string(),
             status: ApiStatus::Draft,
             spec: "{}".to_string(),
+            created_by: String::new(),
         })
+    }
+
+    /// 设置创建人(链式)。
+    pub fn with_created_by(mut self, user_id: &str) -> Self {
+        self.created_by = user_id.to_string();
+        self
     }
 }
 
@@ -118,6 +137,8 @@ impl NewApiDefinition {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ApiDefinition {
     pub id: String,
+    /// 人类可读编号(对齐 MeterSphere 的【101093】式 ID;由序列分配,内存实现合成)。
+    pub num: i64,
     pub project_id: String,
     pub name: String,
     pub protocol: ApiProtocol,
@@ -128,6 +149,11 @@ pub struct ApiDefinition {
     pub module_id: Option<String>,
     /// 请求/响应规格(不透明 JSON 文本)。
     pub spec: String,
+    /// 创建人 user_id。
+    pub created_by: String,
+    /// 创建/更新时间(文本承载,避免引入时间库依赖;内存实现可为空串)。
+    pub created_at: String,
+    pub updated_at: String,
 }
 
 /// 接口定义变更历史一条(审计)。追加写;由仓储补 id/created_at。
@@ -155,7 +181,9 @@ mod tests {
         assert_eq!(ApiProtocol::Http.as_str(), "HTTP");
         assert_eq!(ApiProtocol::parse("http"), Some(ApiProtocol::Http));
         assert_eq!(ApiProtocol::parse("Dubbo"), Some(ApiProtocol::Dubbo));
-        assert_eq!(ApiProtocol::parse("grpc"), None);
+        assert_eq!(ApiProtocol::parse("grpc"), Some(ApiProtocol::Grpc));
+        assert_eq!(ApiProtocol::parse("websocket"), Some(ApiProtocol::WebSocket));
+        assert_eq!(ApiProtocol::parse("mqtt"), None);
     }
 
     #[test]
