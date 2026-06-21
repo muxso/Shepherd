@@ -343,13 +343,16 @@ function AddStepModal({
   const [saving, setSaving] = useState(false)
   const [children, setChildren] = useState<Child[]>([])
   const [projCases, setProjCases] = useState<ApiCase[]>([])
+  const [scns, setScns] = useState<Scenario[]>([])
   const isControl = ['LOOP', 'IF', 'ONCE'].includes(type)
 
   useEffect(() => {
     if (type) {
       setChildren([])
       form.resetFields()
-      if (isControl) api.projectCases(projectId).then((p) => setProjCases(p.items)).catch(() => undefined)
+      // CASE / 控制器 需要项目用例下拉;SCENARIO 需要场景下拉。
+      if (isControl || type === 'CASE') api.projectCases(projectId).then((p) => setProjCases(p.items)).catch(() => undefined)
+      if (type === 'SCENARIO') api.scenarios(projectId).then(setScns).catch(() => undefined)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [type])
@@ -385,8 +388,18 @@ function AddStepModal({
     <Modal title={`添加 · ${title}`} open={!!type} onCancel={onClose} onOk={() => form.submit()} confirmLoading={saving} destroyOnHidden width={620}>
       <Form form={form} layout="vertical" initialValues={{ method: 'GET', operator: '等于', times: 3, ms: 1000, assertions: [{ type: 'StatusIs', args: 200 }] }} onFinish={submit}>
         {(type === 'CASE' || type === 'SCENARIO') && (
-          <Form.Item name="refId" label={type === 'CASE' ? '用例 ID' : '子场景 ID'} rules={[{ required: true }]}>
-            <Input className="ms-mono" placeholder="引用的资源 id" />
+          <Form.Item name="refId" label={type === 'CASE' ? '引用用例' : '引用子场景'} rules={[{ required: true }]}>
+            <Select
+              showSearch
+              optionFilterProp="label"
+              placeholder={type === 'CASE' ? '选择项目接口用例' : '选择子场景'}
+              options={
+                type === 'CASE'
+                  ? projCases.map((c) => ({ value: c.id, label: `${c.method} ${c.name}` }))
+                  : scns.map((s) => ({ value: s.id, label: s.name }))
+              }
+              notFoundContent={type === 'CASE' ? '项目暂无接口用例' : '项目暂无场景'}
+            />
           </Form.Item>
         )}
         {type === 'REQUEST' && (
