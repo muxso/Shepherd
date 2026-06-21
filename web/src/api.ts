@@ -481,6 +481,9 @@ export const api = {
   createRequirement: (b: { projectId: string; title: string; acceptanceCriteria: string[] }) =>
     http.post<Requirement>('/requirement', b),
   getRequirement: (id: string) => http.get<Requirement>(`/requirement/${id}`),
+  // 列表走后端(分页),pageSize 取大值一次拉全 —— 让 CLI/API 建的需求也在 UI 可见。
+  requirements: (projectId: string) =>
+    http.get<Page<Requirement>>(`/requirement?projectId=${encodeURIComponent(projectId)}&current=1&pageSize=200`),
   addRequirementVersion: (id: string, b: { description: string; acceptanceCriteria: string[] }) =>
     http.post<{ version: number }>(`/requirement/${id}/version`, b),
   setBaseline: (id: string, version: number) =>

@@ -28,8 +28,19 @@ export default function Requirements() {
   const [createOpen, setCreateOpen] = useState(false)
   const tabs = useWorkTabs()
 
+  // 列表以后端为准(含 CLI/API 建的需求),叠加本地注册表的 meta(拆分/验证链接)。
+  const loadList = async () => {
+    const local = regList('requirement', projectId)
+    const localById = new Map(local.map((r) => [r.id, r]))
+    try {
+      const page = await api.requirements(projectId)
+      setItems(page.items.map((r) => localById.get(r.id) || { id: r.id, label: r.title, createdAt: 0 }))
+    } catch {
+      setItems(local) // 后端不可用时回落本地
+    }
+  }
   useEffect(() => {
-    setItems(regList('requirement', projectId))
+    loadList()
     tabs.reset()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId])
@@ -41,7 +52,7 @@ export default function Requirements() {
     .map((r) => ({
       key: r.id,
       label: r.label,
-      children: <RequirementDetail key={r.id} reqId={r.id} projectId={projectId} onChanged={() => setItems(regList('requirement', projectId))} />,
+      children: <RequirementDetail key={r.id} reqId={r.id} projectId={projectId} onChanged={loadList} />,
     }))
 
   return (
@@ -73,7 +84,8 @@ export default function Requirements() {
             try {
               const r = await api.createRequirement({ projectId, title: v.title, acceptanceCriteria: toLines(v.criteria || '') })
               message.success(t('req.created', '需求已创建'))
-              setItems(regAdd('requirement', projectId, { id: r.id, label: v.title, createdAt: Date.now() }))
+              regAdd('requirement', projectId, { id: r.id, label: v.title, createdAt: Date.now() })
+              loadList()
               setCreateOpen(false)
               tabs.open(r.id)
             } catch (e) {
