@@ -1,12 +1,13 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
-import { Button, Dropdown, Empty, Form, Input, Modal, Radio, Select, Space, Switch, Table, Tabs, Tag, Tree, Typography } from 'antd'
+import { Button, Drawer, Dropdown, Empty, Form, Input, Modal, Radio, Select, Space, Switch, Table, Tabs, Tag, Tree, Typography } from 'antd'
 import { message } from '../feedback'
-import { PlayCircleOutlined, PlusOutlined, SaveOutlined, ThunderboltOutlined, DownOutlined, LinkOutlined } from '@ant-design/icons'
-import { api, ApiError, type ApiCase, type Environment, type Scenario, type ScenarioExecution, type ScenarioRunResult, type ScenarioStep } from '../api'
+import { PlayCircleOutlined, PlusOutlined, SaveOutlined, ThunderboltOutlined, DownOutlined, LinkOutlined, SwapOutlined, DeleteOutlined, FullscreenOutlined, CloseOutlined } from '@ant-design/icons'
+import { api, ApiError, type ApiCase, type DebugResponse, type Environment, type Scenario, type ScenarioExecution, type ScenarioRunResult, type ScenarioStep } from '../api'
 import { useApp } from '../context'
 import { methodColor, statusColor, outcomeColor } from '../components/tags'
 import { Workspace, WorkList, PaneHeader, useWorkTabs } from '../components/Workspace'
 import AssertionEditor from '../components/AssertionEditor'
+import { DebugResultPanel, type SentRequest } from '../components/ApiSpecPanel'
 import { useI18n } from '../i18n'
 
 type TFn = (key: string, fallback?: string) => string
@@ -205,6 +206,8 @@ function ScenarioDetail({ scenario }: { scenario: Scenario }) {
   const [add, setAdd] = useState<string>('') // 当前打开的添加表单类型
   const [lastRun, setLastRun] = useState<ScenarioRunResult | null>(null)
   const [nameMap, setNameMap] = useState<Record<string, string>>({})
+  const [caseMap, setCaseMap] = useState<Record<string, ApiCase>>({})
+  const [selStep, setSelStep] = useState<{ step: ScenarioStep; idx: number } | null>(null)
   // 执行配置:环境 + 步骤失败规则(后端 run 已支持 environment_id/failure_strategy)。
   const [envs, setEnvs] = useState<Environment[]>([])
   const [envId, setEnvId] = useState<string>('')
@@ -229,9 +232,11 @@ function ScenarioDetail({ scenario }: { scenario: Scenario }) {
       api.environments(scenario.projectId).then((e) => (Array.isArray(e) ? e : [])).catch(() => []),
     ]).then(([cases, scns, environments]) => {
       const m: Record<string, string> = {}
-      cases.forEach((c) => (m[c.id] = `${c.method} ${c.name}`))
+      const cm: Record<string, ApiCase> = {}
+      cases.forEach((c) => { m[c.id] = `${c.method} ${c.name}`; cm[c.id] = c })
       scns.forEach((s) => (m[s.id] = s.name))
       setNameMap(m)
+      setCaseMap(cm)
       setEnvs(environments)
       setEnvId((cur) => cur || environments.find((e) => e.enabled !== false)?.id || '')
     })
@@ -267,7 +272,11 @@ function ScenarioDetail({ scenario }: { scenario: Scenario }) {
       {ordered.length === 0 ? (
         <Empty description={t('scenario.emptySteps', '暂无步骤,点「添加步骤」')} />
       ) : (
-        ordered.map((s, i) => <StepRow key={s.id} node={stepToNode(s, t, nameOf)} idx={i + 1} depth={0} t={t} />)
+        ordered.map((s, i) => (
+          <div key={s.id} onClick={() => setSelStep({ step: s, idx: i + 1 })} style={{ cursor: 'pointer' }}>
+            <StepRow node={stepToNode(s, t, nameOf)} idx={i + 1} depth={0} t={t} />
+          </div>
+        ))
       )}
       <div style={{ textAlign: 'center', marginTop: 10 }}>
         <Dropdown
@@ -342,7 +351,147 @@ function ScenarioDetail({ scenario }: { scenario: Scenario }) {
         </div>
       </div>
       <Tabs className="ms-detail-tabs" defaultActiveKey="steps" items={tabs} />
+      <StepDetailDrawer
+        sel={selStep}
+        caseMap={caseMap}
+        nameOf={nameOf}
+        env={envs.find((e) => e.id === envId)}
+        onClose={() => setSelStep(null)}
+      />
     </div>
+  )
+}
+
+// 解析 {{var}} + 相对路径补 baseUrl,把用例/内联请求组装成可发送请求(复用调试发送的约定)。
+function buildStepRequest(method: string, url: string, body: string | null | undefined, headers: { key: string; value: string }[], auth: { type: string; token?: string } | undefined, env?: Environment): SentRequest | null {
+  const resolveVars = (s: string): string =>
+    env?.variables ? s.replace(/\{\{\s*(\w+)\s*\}\}/g, (whole, k: string) => env.variables?.[k] ?? whole) : s
+  const path = (url || '').trim()
+  if (!path) return null
+  const raw = resolveVars(path)
+  let base = raw
+  if (!/^https?:\/\//i.test(raw)) {
+    const baseUrl = env?.baseUrl?.trim().replace(/\/+$/, '')
+    if (!baseUrl) return null
+    base = `${baseUrl}${raw.startsWith('/') ? '' : '/'}${raw}`
+  }
+  const hs: { key: string; value: string }[] = []
+  for (const eh of env?.headers || []) if (eh.name?.trim()) hs.push({ key: eh.name, value: resolveVars(eh.value || '') })
+  for (const h of headers) if (h.key?.trim()) hs.push({ key: h.key, value: resolveVars(h.value || '') })
+  if (auth?.type === 'bearer' && auth.token) hs.push({ key: 'Authorization', value: `Bearer ${auth.token}` })
+  if (auth?.type === 'basic' && auth.token) hs.push({ key: 'Authorization', value: `Basic ${btoa(auth.token)}` })
+  return { method: method || 'GET', url: base, headers: hs, body: body?.trim() ? resolveVars(body) : undefined }
+}
+
+// 步骤详情抽屉(对齐参考图 #25):点击步骤右侧展开;头部 + 服务端执行 + 请求标签 + 响应内容。
+// 引用用例展示其请求并可服务端执行;内联请求同理;控制器展示配置。删除/替换需后端,暂占位。
+function StepDetailDrawer({
+  sel,
+  caseMap,
+  nameOf,
+  env,
+  onClose,
+}: {
+  sel: { step: ScenarioStep; idx: number } | null
+  caseMap: Record<string, ApiCase>
+  nameOf: NameOf
+  env?: Environment
+  onClose: () => void
+}) {
+  const { t } = useI18n()
+  const [full, setFull] = useState(false)
+  const [running, setRunning] = useState(false)
+  const [resp, setResp] = useState<DebugResponse | null>(null)
+  const [err, setErr] = useState('')
+  const [lastReq, setLastReq] = useState<SentRequest | null>(null)
+  useEffect(() => { setResp(null); setErr(''); setLastReq(null) }, [sel?.step.id])
+
+  const step = sel?.step
+  const meta = step ? makeStepMeta(t)[step.kind.toUpperCase()] || { label: step.kind, color: 'default' } : null
+  const kase = step?.caseId ? caseMap[step.caseId] : undefined
+
+  // 当前步骤可发送的请求(CASE→其用例;REQUEST→内联);控制器无。
+  const reqInfo = (() => {
+    if (kase) return { method: kase.method, url: kase.url, body: kase.body, headers: kase.headers || [], auth: kase.auth, assertions: kase.assertions, processors: kase.processors }
+    if (step?.request) return { method: step.request.method, url: step.request.url, body: step.request.body ?? null, headers: [], auth: undefined, assertions: step.request.assertions, processors: undefined }
+    return null
+  })()
+
+  const run = async () => {
+    if (!reqInfo) return
+    const req = buildStepRequest(reqInfo.method, reqInfo.url, reqInfo.body, reqInfo.headers, reqInfo.auth as any, env)
+    if (!req) return message.warning(t('editor.needEnvOrAbs', '相对路径需先选择带 baseUrl 的环境,或填写绝对 URL(http(s)://)'))
+    setLastReq(req)
+    setRunning(true); setErr(''); setResp(null)
+    try {
+      setResp(await api.debugSend({ ...req, assertions: reqInfo.assertions as unknown[], processors: reqInfo.processors as unknown[] }))
+    } catch (e) {
+      setErr(e instanceof ApiError ? e.message : t('editor.sendFail', '发送失败'))
+    } finally {
+      setRunning(false)
+    }
+  }
+
+  const title = (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+      <span style={{ color: '#9aa0a6', fontSize: 12 }}>{sel?.idx}</span>
+      {meta && <Tag color={meta.color} style={{ margin: 0 }}>{meta.label}</Tag>}
+      <span style={{ fontWeight: 600 }}>{kase ? kase.name : step?.scenarioId ? nameOf(step.scenarioId) : step?.request?.url || meta?.label}</span>
+    </div>
+  )
+
+  const reqTabs = reqInfo
+    ? [
+        {
+          key: 'headers',
+          label: `${t('apidef.requestHeaders', '请求头')}${reqInfo.headers.length ? ` (${reqInfo.headers.length})` : ''}`,
+          children: reqInfo.headers.length ? (
+            <Table size="small" pagination={false} rowKey={(_, i) => String(i)} dataSource={reqInfo.headers} columns={[{ title: t('env.varName', '参数名称'), dataIndex: 'key' }, { title: t('env.varValue', '参数值'), dataIndex: 'value', render: (v: string) => <span className="ms-mono">{v}</span> }]} />
+          ) : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('apidef.none', '无')} />,
+        },
+        {
+          key: 'body',
+          label: t('apidef.requestBody', '请求体'),
+          children: reqInfo.body ? <pre className="ms-mono" style={{ background: '#f6f8fa', padding: 12, borderRadius: 6, margin: 0, fontSize: 12, maxHeight: 240, overflow: 'auto' }}>{reqInfo.body}</pre> : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('apidef.noBody', '请求没有 Body')} />,
+        },
+        {
+          key: 'assert',
+          label: t('apidef.assertions', '断言'),
+          children: Array.isArray(reqInfo.assertions) && (reqInfo.assertions as unknown[]).length ? <pre className="ms-mono" style={{ background: '#f6f8fa', padding: 12, borderRadius: 6, margin: 0, fontSize: 12 }}>{JSON.stringify(reqInfo.assertions, null, 2)}</pre> : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('apidef.none', '无')} />,
+        },
+      ]
+    : []
+
+  return (
+    <Drawer
+      open={!!sel}
+      onClose={onClose}
+      width={full ? '92%' : 680}
+      title={title}
+      closeIcon={false}
+      extra={
+        <Space>
+          <Button type="text" size="small" icon={<SwapOutlined />} disabled title={t('scenario.replaceSoon', '替换(即将接入)')}>{t('scenario.replace', '替换')}</Button>
+          <Button type="text" size="small" danger icon={<DeleteOutlined />} disabled title={t('scenario.deleteStepSoon', '删除步骤(需后端,即将接入)')}>{t('a.delete', '删除')}</Button>
+          <Button type="text" size="small" icon={<FullscreenOutlined />} onClick={() => setFull((v) => !v)}>{t('scenario.fullscreen', '全屏')}</Button>
+          <Button type="text" size="small" icon={<CloseOutlined />} onClick={onClose} />
+        </Space>
+      }
+    >
+      {reqInfo ? (
+        <>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+            <Tag color={methodColor(reqInfo.method)} style={{ margin: 0, fontWeight: 600 }}>{reqInfo.method}</Tag>
+            <Input readOnly value={reqInfo.url} className="ms-mono" style={{ flex: 1 }} />
+            <Button type="primary" icon={<ThunderboltOutlined />} loading={running} onClick={run}>{t('apidef.serverRun', '服务端执行')}</Button>
+          </div>
+          <Tabs className="ms-detail-tabs" size="small" items={reqTabs} />
+          <DebugResultPanel running={running} resp={resp} err={err} req={lastReq} isHttp extractors={reqInfo.processors as Record<string, unknown>[] | undefined} assertions={reqInfo.assertions as Record<string, unknown>[] | undefined} />
+        </>
+      ) : (
+        <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('scenario.controlStepInfo', '控制器步骤:在步骤列表中查看其配置与子步骤')} style={{ margin: '48px 0' }} />
+      )}
+    </Drawer>
   )
 }
 
