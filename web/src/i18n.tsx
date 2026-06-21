@@ -20,6 +20,7 @@ const DICT: Record<string, { zh: string; en: string }> = {
   'home.req': { zh: '需求', en: 'Requirements' },
   'home.bug': { zh: '缺陷', en: 'Bugs' },
   'home.assetDist': { zh: '测试资产分布', en: 'Test Asset Distribution' },
+  'home.cardSettings': { zh: '卡片设置', en: 'Card Settings' },
   'pc.title': { zh: '个人中心', en: 'Profile' },
   'pc.username': { zh: '用户名', en: 'Username' },
   'pc.project': { zh: '当前项目', en: 'Current Project' },
