@@ -7,7 +7,7 @@ use async_trait::async_trait;
 
 use crate::domain::{
     ApiScenario, ExecutionStatus, NewApiScenario, NewScenarioStep, ScenarioExecution,
-    ScenarioStatus, ScenarioStep,
+    ScenarioReference, ScenarioStatus, ScenarioStep, StepKind,
 };
 use crate::ports::{ApiScenarioRepository, RepoError};
 
@@ -152,6 +152,33 @@ impl ApiScenarioRepository for InMemoryApiScenarioRepository {
             .take(limit as usize)
             .cloned()
             .collect();
+        Ok(out)
+    }
+
+    async fn list_scenarios_referencing_cases(
+        &self,
+        case_ids: &[String],
+    ) -> Result<Vec<ScenarioReference>, RepoError> {
+        if case_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let state = self.state.lock().expect("lock");
+        let mut out: Vec<ScenarioReference> = state
+            .scenarios
+            .values()
+            .filter(|r| {
+                r.scenario.steps.iter().any(|st| match &st.kind {
+                    StepKind::Case { case_id } => case_ids.iter().any(|c| c == case_id),
+                    _ => false,
+                })
+            })
+            .map(|r| ScenarioReference {
+                id: r.scenario.id.clone(),
+                project_id: r.scenario.project_id.clone(),
+                name: r.scenario.name.clone(),
+            })
+            .collect();
+        out.sort_by(|a, b| a.name.cmp(&b.name));
         Ok(out)
     }
 }

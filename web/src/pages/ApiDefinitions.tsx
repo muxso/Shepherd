@@ -19,6 +19,7 @@ import CasesPanel from './CasesPanel'
 import MocksPanel from './MocksPanel'
 import RequestEditor from '../components/RequestEditor'
 import ApiSpecPanel from '../components/ApiSpecPanel'
+import ReferencesPanel from '../components/ReferencesPanel'
 import { useOpenParam } from '../components/Workspace'
 import { parseOperations, buildCaseUrl } from '../openapi'
 import { useI18n } from '../i18n'
@@ -418,6 +419,7 @@ function ApiDetail({ definition }: { definition: ApiDefinition }) {
             ),
           },
           { key: 'define', label: t('apidef.define', '定义'), children: <ApiSpecPanel definition={definition} mode="define" /> },
+          { key: 'refs', label: t('apidef.references', '引用关系'), children: <ReferencesPanel definition={definition} /> },
           { key: 'debug', label: t('apidef.debug', '调试'), children: <RequestEditor initialMethod={definition.method || 'GET'} initialUrl={definition.path || ''} /> },
           { key: 'cases', label: t('apidef.cases', '接口用例'), children: <CasesPanel definition={definition} /> },
           { key: 'mock', label: 'Mock', children: <MocksPanel definition={definition} /> },

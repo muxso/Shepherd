@@ -20,6 +20,7 @@ mod perf_run;
 mod plan_run;
 mod plan_scheduler;
 mod planner;
+mod references_route;
 mod scenario_run;
 
 use std::sync::Arc;
@@ -432,7 +433,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // —— 接口定义模块(目录 + 用例 + Mock)——
     let apidef_repo = Arc::new(api_definition::adapters::pg::PgApiDefinitionRepository::new(pool.clone()));
-    let apidef_routes = api_definition::adapters::http::router(apidef_repo, sessions.clone());
+    let apidef_routes = api_definition::adapters::http::router(apidef_repo.clone(), sessions.clone());
 
     // —— 环境模块(项目级 base_url + 默认头 + 变量)——
     let env_repo = Arc::new(environment::adapters::pg::PgEnvironmentRepository::new(pool.clone()));
@@ -465,6 +466,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Arc::new(api_scenario::adapters::pg::PgApiScenarioRepository::new(pool.clone()));
     let scenario_routes =
         api_scenario::adapters::http::router(scenario_repo.clone(), sessions.clone());
+    // 接口定义「引用关系」反查:编排 接口用例(apidef)+ 场景步骤(scenario)两仓储。
+    let references_routes = references_route::router(apidef_repo.clone(), scenario_repo.clone());
     // 场景执行走计划树执行器(顺序 + 控制器 + 运行上下文),外层补建报告 + 记录。
     let plan_executor = api_test::adapters::plan::PlanExecutor::new(
         Arc::new(PgCaseSpecSource::new(pool.clone())),
@@ -512,6 +515,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .merge(functional_case_routes)
         .merge(runner_routes)
         .merge(scenario_routes)
+        .merge(references_routes)
         .merge(scenario_run_routes)
         .merge(perf_routes)
         .merge(debug_send_routes)

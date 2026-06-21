@@ -3,7 +3,8 @@
 use async_trait::async_trait;
 
 use crate::domain::{
-    ApiScenario, NewApiScenario, NewScenarioStep, ScenarioExecution, ScenarioStep,
+    ApiScenario, NewApiScenario, NewScenarioStep, ScenarioExecution, ScenarioReference,
+    ScenarioStep,
 };
 
 use thiserror::Error;
@@ -59,4 +60,11 @@ pub trait ApiScenarioRepository: Send + Sync {
         offset: u64,
         limit: u32,
     ) -> Result<Vec<ScenarioExecution>, RepoError>;
+
+    /// 引用关系反查:返回引用了给定任一用例(步骤 kind=CASE 且 ref_id ∈ case_ids)的场景(去重)。
+    /// case_ids 为空时返回空。用于「接口定义 → 被哪些场景引用」。
+    async fn list_scenarios_referencing_cases(
+        &self,
+        case_ids: &[String],
+    ) -> Result<Vec<ScenarioReference>, RepoError>;
 }

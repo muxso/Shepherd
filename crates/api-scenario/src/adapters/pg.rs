@@ -12,7 +12,7 @@ use async_trait::async_trait;
 
 use crate::domain::{
     ApiScenario, ControlKind, ExecutionStatus, InlineRequest, NewApiScenario, NewScenarioStep,
-    RefMode, ScenarioExecution, ScenarioStatus, ScenarioStep, StepKind,
+    RefMode, ScenarioExecution, ScenarioReference, ScenarioStatus, ScenarioStep, StepKind,
 };
 use crate::ports::{ApiScenarioRepository, RepoError};
 use sqlx::{PgPool, Row};
@@ -287,6 +287,36 @@ impl ApiScenarioRepository for PgApiScenarioRepository {
         .await
         .map_err(map_err)?;
         rows.iter().map(row_to_execution).collect()
+    }
+
+    async fn list_scenarios_referencing_cases(
+        &self,
+        case_ids: &[String],
+    ) -> Result<Vec<ScenarioReference>, RepoError> {
+        if case_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        // 引用 = 步骤 kind='CASE' 且 ref_id ∈ case_ids(REFERENCE/COPY 皆计)。去重到场景级。
+        let rows = sqlx::query(
+            "SELECT DISTINCT s.id, s.project_id, s.name \
+             FROM ms_api_scenario s \
+             JOIN ms_api_scenario_step st ON st.scenario_id = s.id \
+             WHERE st.kind = 'CASE' AND st.ref_id = ANY($1) AND s.deleted = false \
+             ORDER BY s.name",
+        )
+        .bind(case_ids)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(map_err)?;
+        rows.iter()
+            .map(|row| {
+                Ok(ScenarioReference {
+                    id: row.try_get("id").map_err(map_err)?,
+                    project_id: row.try_get("project_id").map_err(map_err)?,
+                    name: row.try_get("name").map_err(map_err)?,
+                })
+            })
+            .collect()
     }
 }
 
