@@ -54,6 +54,7 @@ export default function RequestEditor({
 }) {
   const { t } = useI18n()
   const [method, setMethod] = useState(initialMethod || 'GET')
+  const [protocol, setProtocol] = useState('HTTP')
   const [url, setUrl] = useState(initialUrl)
   const [query, setQuery] = useState<KV[]>([{ on: true, key: '', value: '', desc: '' }])
   const [headers, setHeaders] = useState<KV[]>([{ on: true, key: '', value: '', desc: '' }])
@@ -71,6 +72,20 @@ export default function RequestEditor({
 
   const send = async () => {
     if (!url.trim()) return message.warning(t('editor.urlRequired', '请输入 URL'))
+    // 非 HTTP 协议(redis/ssh/…):url=连接目标,body=载荷(命令),走 probe 插件。
+    if (protocol !== 'HTTP') {
+      setSending(true)
+      setErr('')
+      setResp(null)
+      try {
+        setResp(await api.debugSend({ protocol: protocol.toLowerCase(), method, url: url.trim(), body: body.trim() || undefined }))
+      } catch (e) {
+        setErr(e instanceof ApiError ? e.message : t('editor.sendFail', '发送失败'))
+      } finally {
+        setSending(false)
+      }
+      return
+    }
     // 调试发送在服务端直连目标:必须绝对 URL,否则后端报 cryptic「transport: builder error」。
     if (!/^https?:\/\//i.test(url.trim())) return message.warning(t('editor.absoluteUrl', '请输入绝对 URL(以 http(s):// 开头)'))
     // 拼 query(解析 @mock)
@@ -154,9 +169,11 @@ export default function RequestEditor({
   const reqPanel = (
     <>
       <Space.Compact style={{ width: '100%', marginBottom: 12 }}>
-        <Select value="HTTP" disabled style={{ width: 80 }} options={[{ value: 'HTTP', label: 'HTTP' }]} />
-        <Select value={method} onChange={setMethod} style={{ width: 100 }} options={METHODS.map((m) => ({ value: m, label: m }))} />
-        <Input value={url} onChange={(e) => setUrl(e.target.value)} placeholder={t('editor.urlPlaceholder', '/apis/... 或 http://...')} className="ms-mono" onPressEnter={send} />
+        <Select value={protocol} onChange={setProtocol} style={{ width: 96 }} options={[{ value: 'HTTP', label: 'HTTP' }, { value: 'REDIS', label: 'Redis' }]} />
+        {protocol === 'HTTP' && (
+          <Select value={method} onChange={setMethod} style={{ width: 100 }} options={METHODS.map((m) => ({ value: m, label: m }))} />
+        )}
+        <Input value={url} onChange={(e) => setUrl(e.target.value)} placeholder={protocol === 'REDIS' ? 'redis://host:port/0' : t('editor.urlPlaceholder', '/apis/... 或 http://...')} className="ms-mono" onPressEnter={send} />
         <Button type="primary" icon={<SendOutlined />} loading={sending} onClick={send}>{t('a.send', '发送')}</Button>
       </Space.Compact>
       <Tabs

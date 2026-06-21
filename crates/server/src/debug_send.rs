@@ -16,6 +16,7 @@ use serde::{Deserialize, Serialize};
 use webauth::{AuthUser, SessionStore};
 
 use api_runner::{HttpMethod, ReqwestRunner, RequestSpec};
+use probe::{default_registry, ProbeRequest};
 
 #[derive(Clone)]
 struct DebugState {
@@ -42,11 +43,16 @@ struct HeaderKv {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct SendBody {
+    /// 协议:缺省/HTTP 走进程内 reqwest;其余(redis/ssh/…)走 probe 插件就地执行。
+    #[serde(default)]
+    protocol: Option<String>,
     #[serde(default = "default_method")]
     method: String,
+    /// HTTP 为 URL;非 HTTP 为连接目标(如 redis://host:port/0、ssh://user@host:port)。
     url: String,
     #[serde(default)]
     headers: Vec<HeaderKv>,
+    /// HTTP 为请求体;非 HTTP 为载荷(redis 命令行 / ssh 命令)。
     #[serde(default)]
     body: Option<String>,
 }
@@ -67,6 +73,47 @@ struct SendResponse {
 async fn send(_user: AuthUser, Json(req): Json<SendBody>) -> Response {
     if req.url.trim().is_empty() {
         return (StatusCode::BAD_REQUEST, "url required").into_response();
+    }
+    // 非 HTTP 协议:走 probe 插件(redis/ssh/…),就地执行一次并回传统一响应。
+    let proto = req.protocol.as_deref().unwrap_or("http").trim().to_lowercase();
+    if !proto.is_empty() && proto != "http" {
+        let reg = default_registry();
+        if !reg.protocols().iter().any(|p| p == &proto) {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({ "error": format!("unsupported protocol: {proto}") })),
+            )
+                .into_response();
+        }
+        let preq = ProbeRequest {
+            protocol: proto,
+            target: req.url.clone(),
+            payload: req.body.clone(),
+            metadata: Default::default(),
+            assertions: Vec::new(),
+        };
+        let out = reg.dispatch(&preq).await;
+        return if out.success {
+            (
+                StatusCode::OK,
+                Json(SendResponse {
+                    status: out.status.unwrap_or(0) as u16,
+                    latency_ms: out.latency_ms,
+                    headers: Vec::new(),
+                    body: out.output.unwrap_or_default(),
+                }),
+            )
+                .into_response()
+        } else {
+            (
+                StatusCode::BAD_GATEWAY,
+                Json(serde_json::json!({
+                    "error": out.failures.join("; "),
+                    "output": out.output,
+                })),
+            )
+                .into_response()
+        };
     }
     let method: HttpMethod =
         serde_json::from_value(serde_json::Value::String(req.method.to_uppercase()))
