@@ -5,7 +5,7 @@ import { api, ApiError, type ApiCase, type PlanCase, type PlanStats } from '../a
 import { useApp } from '../context'
 import { outcomeColor } from '../components/tags'
 import { regAdd, regList, type RegItem } from '../registry'
-import { Workspace, WorkList, useWorkTabs } from '../components/Workspace'
+import { Workspace, WorkList, useWorkTabs, useOpenParam } from '../components/Workspace'
 
 export default function TestPlans() {
   const { projectId } = useApp()
@@ -18,6 +18,7 @@ export default function TestPlans() {
     tabs.reset()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId])
+  useOpenParam(tabs.open) // 支持 ?open=<planId> 深链
 
   if (!projectId) return <div style={{ padding: 48 }}><Empty description="请先在顶部选择项目" /></div>
 

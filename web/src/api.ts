@@ -375,6 +375,16 @@ export const api = {
   moveDefinition: (definitionId: string, moduleId: string | null) =>
     http.put(`/api/definition/${definitionId}/module`, { moduleId }),
 
+  // 任务 ↔ 用例 关联(链路:任务→用例)
+  taskCases: (decompositionId: string, taskId: string) =>
+    http.get<ApiCase[]>(`/api/task-case?decompositionId=${encodeURIComponent(decompositionId)}&taskId=${encodeURIComponent(taskId)}`),
+  linkTaskCase: (decompositionId: string, taskId: string, caseId: string) =>
+    http.post('/api/task-case', { decompositionId, taskId, caseId }),
+  unlinkTaskCase: (decompositionId: string, taskId: string, caseId: string) =>
+    http.post('/api/task-case/unlink', { decompositionId, taskId, caseId }),
+  // 用例 → 计划 反查(链路:用例→计划)
+  plansByCase: (caseId: string) => http.get<{ planId: string; name: string }[]>(`/test-plan/by-case/${caseId}`),
+
   cases: (definitionId: string) =>
     http.get<ApiCase[]>(`/api/definition/${definitionId}/case`),
   createCase: (
