@@ -406,10 +406,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         _ => {
             tracing::info!("api runner: 本地原生 Rust runner(默认)");
-            Arc::new(LocalRunnerDispatcher::new(
-                Arc::new(PgCaseSpecSource::new(pool.clone())),
-                Arc::new(PgCaseResultSink::new(pool.clone())),
-            ))
+            // 注入环境变量回写端口:串行执行时「环境参数」提取结果写回环境。
+            Arc::new(
+                LocalRunnerDispatcher::new(
+                    Arc::new(PgCaseSpecSource::new(pool.clone())),
+                    Arc::new(PgCaseResultSink::new(pool.clone())),
+                )
+                .with_env_writer(Arc::new(api_test::adapters::pg::PgEnvironment::new(pool.clone()))),
+            )
         }
     };
     let api_pools = Arc::new(PgResourcePool::new(pool.clone()));

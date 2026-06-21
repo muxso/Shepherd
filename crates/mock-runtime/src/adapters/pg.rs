@@ -22,6 +22,24 @@ impl PgMockRuleSource {
     }
 }
 
+/// 解析 mock 的 `response_headers` jsonb([{key,value}])为 (名, 值) 列表;非数组/缺字段宽容跳过。
+fn parse_response_headers(v: &serde_json::Value) -> Vec<(String, String)> {
+    v.as_array()
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|item| {
+                    let k = item.get("key")?.as_str()?.trim();
+                    if k.is_empty() {
+                        return None;
+                    }
+                    let val = item.get("value").and_then(|x| x.as_str()).unwrap_or("");
+                    Some((k.to_string(), val.to_string()))
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 /// `/users/{id}/orders` → `/users/*/orders`(OpenAPI 路径参数 → 单段通配)。
 fn path_to_glob(path: &str) -> String {
     path.split('/')
@@ -40,7 +58,8 @@ fn path_to_glob(path: &str) -> String {
 impl MockRuleSource for PgMockRuleSource {
     async fn active_rules(&self) -> Result<Vec<MockRule>, SourceError> {
         let rows = sqlx::query(
-            "SELECT m.id, d.method, d.path, m.match_rule, m.response_status, m.response_body \
+            "SELECT m.id, d.method, d.path, m.match_rule, m.response_status, m.response_body, \
+                    m.response_headers, m.response_delay_ms \
              FROM ms_api_mock m JOIN ms_api_definition d ON d.id = m.api_definition_id \
              WHERE m.enabled AND NOT m.deleted AND NOT d.deleted AND d.protocol = 'HTTP'",
         )
@@ -57,12 +76,22 @@ impl MockRuleSource for PgMockRuleSource {
             let match_rule: serde_json::Value = r.try_get("match_rule").map_err(map)?;
             let status: i32 = r.try_get("response_status").map_err(map)?;
             let body: Option<String> = r.try_get("response_body").map_err(map)?;
+            // 自定义响应头 jsonb([{key,value}])→ (名, 值) 列表;形态不符回落空。
+            let resp_headers: serde_json::Value =
+                r.try_get("response_headers").unwrap_or_else(|_| serde_json::json!([]));
+            let headers = parse_response_headers(&resp_headers);
+            let delay_ms: i32 = r.try_get("response_delay_ms").unwrap_or(0);
             // match_rule jsonb → 额外条件;形态不符(如默认 {})则宽容回落空条件。
             let extra: ExtraConditions = serde_json::from_value(match_rule).unwrap_or_default();
             rules.push(MockRule {
                 id,
                 rule: MatchRule::from_definition(&method, &path_to_glob(&path), extra),
-                response: MockResponse { status: status as u16, headers: vec![], body },
+                response: MockResponse {
+                    status: status as u16,
+                    headers,
+                    body,
+                    delay_ms: delay_ms.max(0) as u64,
+                },
             });
         }
         Ok(rules)
