@@ -122,6 +122,15 @@ export interface ApiSpecAuth {
   type?: 'none' | 'bearer' | 'basic'
   token?: string
 }
+/** JSON 请求体 Schema 树节点(对齐 MeterSphere 的 Schema 表格)。 */
+export interface BodySchemaNode {
+  name: string
+  type: 'string' | 'integer' | 'number' | 'boolean' | 'object' | 'array'
+  value?: string
+  description?: string
+  children?: BodySchemaNode[]
+}
+
 export interface ApiSpec {
   // 基本信息
   description?: string
@@ -135,6 +144,8 @@ export interface ApiSpec {
   requestBody?: string
   /** form-data / urlencoded 的键值体。 */
   formBody?: ApiSpecKV[]
+  /** JSON 请求体的 Schema 树(参数名/类型/值/描述 + 嵌套);与 requestBody 文本并存。 */
+  bodySchema?: BodySchemaNode[]
   auth?: ApiSpecAuth
   responses?: ApiSpecResponse[]
 }

@@ -1,7 +1,9 @@
 import { useEffect, useState } from 'react'
-import { Button, Empty, Input, InputNumber, Radio, Segmented, Select, Space, Table, Tabs, Tag, Tooltip } from 'antd'
-import { CopyOutlined, PlusOutlined, DeleteOutlined, SaveOutlined } from '@ant-design/icons'
+import { Button, Drawer, Empty, Input, InputNumber, Radio, Segmented, Select, Space, Table, Tabs, Tag, Tooltip } from 'antd'
+import { CopyOutlined, PlusOutlined, DeleteOutlined, SaveOutlined, UploadOutlined } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
+import QueryParamTable from './QueryParamTable'
+import BodySchemaTree, { schemaToJson } from './BodySchemaTree'
 import {
   api,
   ApiError,
@@ -303,10 +305,13 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
   )
 }
 
-/** 请求体编辑器:content-type 选择(none/form-data/urlencoded/json/xml/raw/binary)。 */
+/** 请求体编辑器:对齐 MeterSphere(none/form-data/urlencoded/json[Schema 树|Json]/xml/raw/binary)。 */
 function BodyEditor({ spec, patch }: { spec: ApiSpec; patch: (p: Partial<ApiSpec>) => void }) {
   const { t } = useI18n()
   const bt = spec.bodyType || 'none'
+  const [jsonMode, setJsonMode] = useState<'schema' | 'json'>('schema')
+  const [batchOpen, setBatchOpen] = useState(false)
+
   return (
     <div>
       <Segmented
@@ -319,22 +324,85 @@ function BodyEditor({ spec, patch }: { spec: ApiSpec; patch: (p: Partial<ApiSpec
       {bt === 'none' ? (
         <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('apidef.noBody', '请求没有 Body')} style={{ margin: '12px 0' }} />
       ) : bt === 'form-data' || bt === 'x-www-form-urlencoded' ? (
-        <KVSection title="" rows={spec.formBody || []} editable onChange={(rows) => patch({ formBody: rows })} hideTitle />
+        <>
+          <div style={{ textAlign: 'right', marginBottom: 6 }}>
+            <Button type="link" size="small" onClick={() => setBatchOpen(true)}>{t('body.batchAdd', '批量添加')}</Button>
+          </div>
+          <QueryParamTable rows={(spec.formBody || []).map((r) => ({ enabled: true, key: r.name || '', type: 'string', value: r.value || '', minLen: '', maxLen: '', description: r.desc || '' }))} onChange={(rows) => patch({ formBody: rows.map((r) => ({ name: r.key, value: r.value, desc: r.description })) })} />
+          <BatchAddDrawer open={batchOpen} onClose={() => setBatchOpen(false)} onApply={(rows) => patch({ formBody: [...(spec.formBody || []), ...rows] })} />
+        </>
       ) : bt === 'binary' ? (
-        <div style={{ color: '#8a9099', fontSize: 13 }}>{t('apidef.binaryHint', '二进制 Body(上传文件):调试时选择文件发送')}</div>
-      ) : (
+        <Space.Compact style={{ width: '100%', maxWidth: 640 }}>
+          <Input placeholder={t('apidef.descLabel', '描述')} value={spec.requestBody || ''} onChange={(e) => patch({ requestBody: e.target.value })} />
+          <Button icon={<UploadOutlined />} title={t('body.uploadHint', '本地上传 / 关联文件(暂未接入)')} />
+        </Space.Compact>
+      ) : bt === 'json' ? (
         <div>
-          {bt === 'json' && (
-            <div style={{ textAlign: 'right', marginBottom: 6 }}>
-              <Button size="small" onClick={() => patch({ requestBody: formatJson(spec.requestBody || '') })}>
-                {t('apidef.format', '格式化')}
-              </Button>
-            </div>
+          <div style={{ display: 'flex', alignItems: 'center', marginBottom: 8 }}>
+            <Segmented size="small" value={jsonMode} onChange={(v) => setJsonMode(v as 'schema' | 'json')} options={[{ label: 'Schema', value: 'schema' }, { label: 'Json', value: 'json' }]} />
+            <div style={{ flex: 1 }} />
+            {jsonMode === 'json' && (
+              <Button size="small" onClick={() => patch({ requestBody: formatJson(spec.requestBody || '') })}>{t('apidef.format', '格式化')}</Button>
+            )}
+          </div>
+          {jsonMode === 'schema' ? (
+            <BodySchemaTree
+              nodes={spec.bodySchema || []}
+              onChange={(nodes) => patch({ bodySchema: nodes, requestBody: JSON.stringify(schemaToJson(nodes), null, 2) })}
+            />
+          ) : (
+            <Input.TextArea rows={8} value={spec.requestBody || ''} onChange={(e) => patch({ requestBody: e.target.value })} placeholder='{"key":"value"}' className="ms-mono" />
           )}
-          <Input.TextArea rows={8} value={spec.requestBody || ''} onChange={(e) => patch({ requestBody: e.target.value })} placeholder={bt === 'json' ? '{"key":"value"}' : bt} className="ms-mono" />
+        </div>
+      ) : (
+        // xml / raw
+        <div>
+          <div style={{ textAlign: 'right', marginBottom: 6 }}>
+            <Button size="small" onClick={() => patch({ requestBody: formatJson(spec.requestBody || '') })}>{t('apidef.format', '格式化')}</Button>
+          </div>
+          <Input.TextArea rows={8} value={spec.requestBody || ''} onChange={(e) => patch({ requestBody: e.target.value })} placeholder={bt} className="ms-mono" />
         </div>
       )}
     </div>
+  )
+}
+
+/** 批量添加抽屉:每行「参数名,类型,必填,参数值」(对齐 MeterSphere 快捷添加)。 */
+function BatchAddDrawer({ open, onClose, onApply }: { open: boolean; onClose: () => void; onApply: (rows: ApiSpecKV[]) => void }) {
+  const { t } = useI18n()
+  const [text, setText] = useState('')
+  const apply = () => {
+    const rows: ApiSpecKV[] = text
+      .split('\n')
+      .map((l) => l.trim())
+      .filter(Boolean)
+      .map((l) => {
+        const [name, , , value] = l.split(',')
+        return { name: (name || '').trim(), value: (value || '').trim(), desc: '' }
+      })
+      .filter((r) => r.name)
+    onApply(rows)
+    setText('')
+    onClose()
+  }
+  return (
+    <Drawer
+      title={t('body.batchAdd', '批量添加')}
+      open={open}
+      onClose={onClose}
+      width={480}
+      footer={
+        <div style={{ textAlign: 'right' }}>
+          <Space>
+            <Button onClick={onClose}>{t('a.cancel', '取消')}</Button>
+            <Button type="primary" onClick={apply}>{t('a.apply', '应用')}</Button>
+          </Space>
+        </div>
+      }
+    >
+      <div style={{ color: '#8a9099', fontSize: 12, marginBottom: 8 }}>{t('body.batchHint', '书写格式:参数名,类型,必填,参数值;多条记录换行分隔')}</div>
+      <Input.TextArea rows={12} value={text} onChange={(e) => setText(e.target.value)} placeholder={'username,string,true,admin\npassword,string,true,123'} className="ms-mono" />
+    </Drawer>
   )
 }
 
