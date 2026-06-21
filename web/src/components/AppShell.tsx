@@ -21,6 +21,7 @@ import {
   ProjectOutlined,
   FileTextOutlined,
   GlobalOutlined,
+  DashboardOutlined,
 } from '@ant-design/icons'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { useApp } from '../context'
@@ -41,6 +42,13 @@ interface ModuleDef {
 }
 
 const MODULES: ModuleDef[] = [
+  {
+    key: '/home',
+    labelKey: 'top.home',
+    match: ['/home'],
+    groupKey: 'g.home',
+    children: [{ key: '/home', icon: <DashboardOutlined />, labelKey: 'm.home' }],
+  },
   {
     key: '/api/definition',
     labelKey: 'top.api',
