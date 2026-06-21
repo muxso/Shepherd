@@ -26,7 +26,17 @@ const proxy = Object.fromEntries(
     '/runner',
     '/runner-agent',
     '/mcp',
-  ].map((p) => [p, { target, changeOrigin: true }]),
+  ].map((p) => [
+    p,
+    {
+      target,
+      changeOrigin: true,
+      // 关键:这些前缀同时是前端路由(/api/definition、/test-plan…)。
+      // 浏览器整页导航/刷新带 Accept: text/html → 返回 SPA;只有真正的 API fetch 才转发后端。
+      bypass: (req: { headers: Record<string, string | string[] | undefined> }) =>
+        (req.headers.accept as string | undefined)?.includes('text/html') ? '/index.html' : undefined,
+    },
+  ]),
 )
 
 export default defineConfig({
