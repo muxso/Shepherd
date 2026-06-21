@@ -11,6 +11,14 @@ pub struct NewApiMock {
     pub response_status: i32,
     pub response_body: Option<String>,
     pub enabled: bool,
+    /// 标签 JSON 数组;默认空。
+    pub tags: serde_json::Value,
+    /// 自定义响应头 JSON 数组([{key,value}]);默认空。
+    pub response_headers: serde_json::Value,
+    /// 响应延时(毫秒);默认 0。负值回落 0。
+    pub response_delay_ms: i32,
+    /// 是否跟随 API 定义返回(开启时忽略 response_body,返回定义示例);默认 false。
+    pub follow_definition: bool,
 }
 
 impl NewApiMock {
@@ -43,7 +51,31 @@ impl NewApiMock {
             response_status,
             response_body,
             enabled,
+            tags: serde_json::Value::Array(Vec::new()),
+            response_headers: serde_json::Value::Array(Vec::new()),
+            response_delay_ms: 0,
+            follow_definition: false,
         })
+    }
+
+    /// 附加 Mock 扩展项:标签 / 响应头 / 响应延时 / 跟随定义(对齐 MeterSphere)。
+    /// tags、response_headers 非数组回落空数组;延时取 max(0, ms)。
+    pub fn with_extras(
+        mut self,
+        tags: serde_json::Value,
+        response_headers: serde_json::Value,
+        response_delay_ms: i32,
+        follow_definition: bool,
+    ) -> Self {
+        self.tags = if tags.is_array() { tags } else { serde_json::Value::Array(Vec::new()) };
+        self.response_headers = if response_headers.is_array() {
+            response_headers
+        } else {
+            serde_json::Value::Array(Vec::new())
+        };
+        self.response_delay_ms = response_delay_ms.max(0);
+        self.follow_definition = follow_definition;
+        self
     }
 }
 
@@ -57,6 +89,10 @@ pub struct ApiMock {
     pub response_status: i32,
     pub response_body: Option<String>,
     pub enabled: bool,
+    pub tags: serde_json::Value,
+    pub response_headers: serde_json::Value,
+    pub response_delay_ms: i32,
+    pub follow_definition: bool,
 }
 
 #[cfg(test)]
@@ -77,6 +113,17 @@ mod tests {
         assert_eq!(m.name, "挡板");
         assert_eq!(m.response_status, 200);
         assert!(m.enabled);
+    }
+
+    #[test]
+    fn with_extras_clamps_delay_and_defaults_arrays() {
+        let m = NewApiMock::new("d", "n", serde_json::json!({}), 200, None, true)
+            .expect("ok")
+            .with_extras(serde_json::json!(["t"]), serde_json::json!("bad"), -5, true);
+        assert_eq!(m.tags, serde_json::json!(["t"]));
+        assert_eq!(m.response_headers, serde_json::json!([]));
+        assert_eq!(m.response_delay_ms, 0);
+        assert!(m.follow_definition);
     }
 
     #[test]

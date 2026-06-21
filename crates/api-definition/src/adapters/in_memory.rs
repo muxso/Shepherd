@@ -44,6 +44,8 @@ impl ApiDefinitionRepository for InMemoryApiDefinitionRepository {
         state.seq += 1;
         let def = ApiDefinition {
             id: format!("apidef-{}", state.seq),
+            // 内存实现合成编号(对齐 pg 序列起点 100001)。
+            num: 100000 + state.seq as i64,
             project_id: d.project_id.clone(),
             name: d.name.clone(),
             protocol: d.protocol,
@@ -52,6 +54,10 @@ impl ApiDefinitionRepository for InMemoryApiDefinitionRepository {
             status: d.status,
             module_id: None,
             spec: d.spec.clone(),
+            created_by: d.created_by.clone(),
+            // 内存实现无真实时钟,用序号合成单调时间串。
+            created_at: format!("{:020}", state.seq),
+            updated_at: format!("{:020}", state.seq),
         };
         state.definitions.insert(def.id.clone(), def.clone());
         Ok(def)
@@ -142,6 +148,13 @@ impl ApiDefinitionRepository for InMemoryApiDefinitionRepository {
             body: c.body.clone(),
             assertions: c.assertions.clone(),
             processors: c.processors.clone(),
+            priority: c.priority.clone(),
+            status: c.status.clone(),
+            tags: c.tags.clone(),
+            headers: c.headers.clone(),
+            query_params: c.query_params.clone(),
+            rest_params: c.rest_params.clone(),
+            auth: c.auth.clone(),
         };
         state.cases.insert(case.id.clone(), case.clone());
         state.case_order.push(case.id.clone());
@@ -196,6 +209,10 @@ impl ApiDefinitionRepository for InMemoryApiDefinitionRepository {
             response_status: m.response_status,
             response_body: m.response_body.clone(),
             enabled: m.enabled,
+            tags: m.tags.clone(),
+            response_headers: m.response_headers.clone(),
+            response_delay_ms: m.response_delay_ms,
+            follow_definition: m.follow_definition,
         };
         state.mocks.insert(mock.id.clone(), mock.clone());
         Ok(mock)

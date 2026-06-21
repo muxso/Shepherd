@@ -15,10 +15,10 @@ use axum::{
     Json, Router,
 };
 use crate::application::{
-    AddApiCaseError, AddApiCaseUseCase, AddApiMockError, AddApiMockUseCase, CreateApiCaseError,
-    CreateApiCaseUseCase, CreateApiDefinitionError, CreateApiDefinitionUseCase,
-    ImportApiDefinitionsUseCase, ImportError, ListApiCasesUseCase, ListApiDefinitionsUseCase,
-    ListApiMocksUseCase, ListProjectCasesUseCase,
+    AddApiCaseError, AddApiCaseUseCase, AddApiMockError, AddApiMockUseCase, ApiCaseMeta,
+    ApiMockExtras, CreateApiCaseError, CreateApiCaseUseCase, CreateApiDefinitionError,
+    CreateApiDefinitionUseCase, ImportApiDefinitionsUseCase, ImportError, ListApiCasesUseCase,
+    ListApiDefinitionsUseCase, ListApiMocksUseCase, ListProjectCasesUseCase,
 };
 use kernel::page::PageRequest;
 use crate::domain::{ApiCase, ApiDefinition, ApiModule, ApiMock, ApiProtocol, NewApiModule};
@@ -90,6 +90,7 @@ pub fn router(
 #[serde(rename_all = "camelCase")]
 struct ApiDefinitionResponse {
     id: String,
+    num: i64,
     project_id: String,
     name: String,
     protocol: String,
@@ -99,12 +100,16 @@ struct ApiDefinitionResponse {
     module_id: Option<String>,
     /// 请求/响应规格(不透明 JSON;约定见 0037 迁移)。
     spec: serde_json::Value,
+    created_by: String,
+    created_at: String,
+    updated_at: String,
 }
 
 impl From<ApiDefinition> for ApiDefinitionResponse {
     fn from(d: ApiDefinition) -> Self {
         Self {
             id: d.id,
+            num: d.num,
             project_id: d.project_id,
             name: d.name,
             protocol: d.protocol.as_str().to_string(),
@@ -114,6 +119,9 @@ impl From<ApiDefinition> for ApiDefinitionResponse {
             module_id: d.module_id,
             // spec 以 TEXT 存 JSON 文本;无法解析时回退为 {}。
             spec: serde_json::from_str(&d.spec).unwrap_or_else(|_| serde_json::json!({})),
+            created_by: d.created_by,
+            created_at: d.created_at,
+            updated_at: d.updated_at,
         }
     }
 }
@@ -187,6 +195,13 @@ struct ApiCaseResponse {
     body: Option<String>,
     assertions: serde_json::Value,
     processors: serde_json::Value,
+    priority: String,
+    status: String,
+    tags: serde_json::Value,
+    headers: serde_json::Value,
+    query_params: serde_json::Value,
+    rest_params: serde_json::Value,
+    auth: serde_json::Value,
 }
 
 impl From<ApiCase> for ApiCaseResponse {
@@ -201,6 +216,13 @@ impl From<ApiCase> for ApiCaseResponse {
             body: c.body,
             assertions: c.assertions,
             processors: c.processors,
+            priority: c.priority,
+            status: c.status,
+            tags: c.tags,
+            headers: c.headers,
+            query_params: c.query_params,
+            rest_params: c.rest_params,
+            auth: c.auth,
         }
     }
 }
@@ -218,6 +240,22 @@ struct ApiCaseCreateBody {
     /// 前后置处理器(EXTRACT/WAIT)数组;缺省空。
     #[serde(default)]
     processors: Option<serde_json::Value>,
+    /// 优先级 / 状态 / 标签 / 请求头(对齐 MeterSphere;均可选,缺省走域默认)。
+    #[serde(default)]
+    priority: Option<String>,
+    #[serde(default)]
+    status: Option<String>,
+    #[serde(default)]
+    tags: Option<serde_json::Value>,
+    #[serde(default)]
+    headers: Option<serde_json::Value>,
+    /// Query / REST 路径参数(数组)/ 认证(对象);均可选。
+    #[serde(default)]
+    query_params: Option<serde_json::Value>,
+    #[serde(default)]
+    rest_params: Option<serde_json::Value>,
+    #[serde(default)]
+    auth: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -230,6 +268,10 @@ struct ApiMockResponse {
     response_status: i32,
     response_body: Option<String>,
     enabled: bool,
+    tags: serde_json::Value,
+    response_headers: serde_json::Value,
+    response_delay_ms: i32,
+    follow_definition: bool,
 }
 
 impl From<ApiMock> for ApiMockResponse {
@@ -242,6 +284,10 @@ impl From<ApiMock> for ApiMockResponse {
             response_status: m.response_status,
             response_body: m.response_body,
             enabled: m.enabled,
+            tags: m.tags,
+            response_headers: m.response_headers,
+            response_delay_ms: m.response_delay_ms,
+            follow_definition: m.follow_definition,
         }
     }
 }
@@ -258,6 +304,15 @@ struct ApiMockCreateBody {
     response_body: Option<String>,
     #[serde(default)]
     enabled: Option<bool>,
+    /// 标签 / 响应头 / 响应延时(ms)/ 跟随定义(对齐 MeterSphere;均可选)。
+    #[serde(default)]
+    tags: Option<serde_json::Value>,
+    #[serde(default)]
+    response_headers: Option<serde_json::Value>,
+    #[serde(default)]
+    response_delay_ms: Option<i32>,
+    #[serde(default)]
+    follow_definition: Option<bool>,
 }
 
 // ---------- 接口定义 handlers ----------
@@ -281,7 +336,7 @@ async fn create_definition(
     };
     let method = req.method.as_deref().unwrap_or_default();
     let path = req.path.as_deref().unwrap_or_default();
-    match st.create_def.execute(&req.project_id, &req.name, protocol, method, path).await {
+    match st.create_def.execute(&req.project_id, &req.name, protocol, method, path, &user.user_id).await {
         Ok(d) => {
             // 审计:记录创建(best-effort,失败不阻断)。
             let _ = st
@@ -415,7 +470,16 @@ async fn create_case(
     }
     let assertions = req.assertions.unwrap_or_else(|| serde_json::json!([]));
     let processors = req.processors.unwrap_or_else(|| serde_json::json!([]));
-    match st.add_case.execute(&id, &req.name, &req.method, &req.url, req.body, assertions, processors).await {
+    let meta = ApiCaseMeta {
+        priority: req.priority.unwrap_or_default(),
+        status: req.status.unwrap_or_default(),
+        tags: req.tags.unwrap_or_else(|| serde_json::json!([])),
+        headers: req.headers.unwrap_or_else(|| serde_json::json!([])),
+        query_params: req.query_params.unwrap_or_else(|| serde_json::json!([])),
+        rest_params: req.rest_params.unwrap_or_else(|| serde_json::json!([])),
+        auth: req.auth.unwrap_or_else(|| serde_json::json!({})),
+    };
+    match st.add_case.execute(&id, &req.name, &req.method, &req.url, req.body, assertions, processors, meta).await {
         Ok(c) => (StatusCode::CREATED, Json(ApiCaseResponse::from(c))).into_response(),
         Err(AddApiCaseError::NotFound) => {
             (StatusCode::NOT_FOUND, "api definition not found").into_response()
@@ -562,9 +626,15 @@ async fn create_mock(
     let match_rule = req.match_rule.unwrap_or_else(|| serde_json::json!({}));
     let response_status = req.response_status.unwrap_or(200);
     let enabled = req.enabled.unwrap_or(true);
+    let extras = ApiMockExtras {
+        tags: req.tags.unwrap_or_else(|| serde_json::json!([])),
+        response_headers: req.response_headers.unwrap_or_else(|| serde_json::json!([])),
+        response_delay_ms: req.response_delay_ms.unwrap_or(0),
+        follow_definition: req.follow_definition.unwrap_or(false),
+    };
     match st
         .add_mock
-        .execute(&id, &req.name, match_rule, response_status, req.response_body, enabled)
+        .execute(&id, &req.name, match_rule, response_status, req.response_body, enabled, extras)
         .await
     {
         Ok(m) => (StatusCode::CREATED, Json(ApiMockResponse::from(m))).into_response(),
