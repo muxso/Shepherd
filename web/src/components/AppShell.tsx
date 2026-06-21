@@ -28,12 +28,12 @@ import NewProjectModal from './NewProjectModal'
 
 const { Sider, Content } = Layout
 
-// 顶部一级导航(接口测试 可用,其余占位以贴合 MeterSphere 整体观感)。
-const TOP_NAV = [
-  { key: 'workbench', label: '工作台', disabled: true },
-  { key: 'api', label: '接口测试', disabled: false },
-  { key: 'plan', label: '测试计划', disabled: true },
-  { key: 'report', label: '测试报告', disabled: true },
+// 顶部一级导航:点击跳到该域的着陆页;高亮由当前路由推断。
+const TOP_NAV: { key: string; label: string; match: string[] }[] = [
+  { key: '/api/definition', label: '接口测试', match: ['/api/', '/functional-case'] },
+  { key: '/test-plan', label: '计划与执行', match: ['/test-plan', '/perf', '/environment', '/resource-pool'] },
+  { key: '/requirement', label: '需求与编排', match: ['/requirement', '/orchestration', '/bug', '/skill'] },
+  { key: '/organization', label: '系统管理', match: ['/organization', '/role', '/user', '/project', '/mcp'] },
 ]
 
 const SIDE_NAV = [
@@ -130,8 +130,9 @@ export default function AppShell({ children }: { children: ReactNode }) {
         <Menu
           mode="horizontal"
           theme="dark"
-          selectedKeys={['api']}
-          items={TOP_NAV.map((t) => ({ key: t.key, label: t.label, disabled: t.disabled }))}
+          selectedKeys={[TOP_NAV.find((t) => t.match.some((m) => loc.pathname.startsWith(m)))?.key || '/api/definition']}
+          items={TOP_NAV.map((t) => ({ key: t.key, label: t.label }))}
+          onClick={(e) => nav(e.key)}
           style={{ flex: 1, background: 'transparent', borderBottom: 'none', minWidth: 0 }}
         />
         <Space size={8}>
