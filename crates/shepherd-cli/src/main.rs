@@ -265,6 +265,12 @@ enum ReqCmd {
     List {
         #[arg(long)]
         project: String,
+        /// 页码(从 1 起)。
+        #[arg(long, default_value_t = 1)]
+        page: u32,
+        /// 每页条数。
+        #[arg(long, default_value_t = 50)]
+        page_size: u32,
     },
     /// 自动拆分需求为任务 DAG(服务端取规格,交规划器拆分)。
     Breakdown {
@@ -1307,9 +1313,10 @@ fn run(cli: Cli) -> R<()> {
                     json!({"projectId": project, "title": title, "description": description, "acceptanceCriteria": criteria}),
                     true,
                 )?),
-                ReqCmd::List { project } => {
-                    pretty(&c.get(&format!("/requirement?projectId={project}"), true)?)
-                }
+                ReqCmd::List { project, page, page_size } => pretty(&c.get(
+                    &format!("/requirement?projectId={project}&current={page}&pageSize={page_size}"),
+                    true,
+                )?),
                 ReqCmd::Breakdown { req, version, ai: _ } => {
                     // 服务端据 requirementId 取规格并拆分。
                     let path = match version {
