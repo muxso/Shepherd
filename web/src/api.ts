@@ -172,6 +172,22 @@ export interface ScenarioStep {
   snapshot?: unknown
 }
 
+export interface ScenarioRunResult {
+  reportId: string
+  status: string
+  caseCount: number
+}
+
+export interface ScenarioExecution {
+  id: string
+  scenarioId: string
+  projectId: string
+  status: string
+  caseCount: number
+  reportId: string
+  createdAt: string
+}
+
 export interface ResourcePool {
   id: string
   name: string
@@ -545,5 +561,7 @@ export const api = {
     b: { kind: string; order: number; refId?: string; request?: unknown; control?: unknown },
   ) => http.post<ScenarioStep>(`/api/scenario/${scenarioId}/step`, b),
   runScenario: (scenarioId: string, projectId: string) =>
-    http.post<unknown>(`/api/scenario/${scenarioId}/run`, { projectId }),
+    http.post<ScenarioRunResult>(`/api/scenario/${scenarioId}/run`, { projectId }),
+  scenarioExecutions: (scenarioId: string) =>
+    http.get<Page<ScenarioExecution>>(`/api/scenario/${scenarioId}/executions`),
 }
