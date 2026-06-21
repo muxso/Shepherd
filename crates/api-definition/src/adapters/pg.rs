@@ -7,8 +7,8 @@
 use async_trait::async_trait;
 
 use crate::domain::{
-    ApiCase, ApiDefinition, ApiMock, ApiProtocol, ApiStatus, NewApiCase, NewApiDefinition,
-    NewApiMock,
+    ApiCase, ApiDefinition, ApiModule, ApiMock, ApiProtocol, ApiStatus, NewApiCase,
+    NewApiDefinition, NewApiModule, NewApiMock,
 };
 use crate::ports::{ApiDefinitionRepository, RepoError};
 use sqlx::{PgPool, Row};
@@ -39,6 +39,16 @@ fn row_to_definition(row: &sqlx::postgres::PgRow) -> Result<ApiDefinition, RepoE
         method: row.try_get("method").map_err(map_err)?,
         path: row.try_get("path").map_err(map_err)?,
         status: ApiStatus::parse(&status).unwrap_or_default(),
+        module_id: row.try_get::<Option<String>, _>("module_id").map_err(map_err)?,
+    })
+}
+
+fn row_to_module(row: &sqlx::postgres::PgRow) -> Result<ApiModule, RepoError> {
+    Ok(ApiModule {
+        id: row.try_get("id").map_err(map_err)?,
+        project_id: row.try_get("project_id").map_err(map_err)?,
+        parent_id: row.try_get::<Option<String>, _>("parent_id").map_err(map_err)?,
+        name: row.try_get("name").map_err(map_err)?,
     })
 }
 
@@ -77,7 +87,7 @@ impl ApiDefinitionRepository for PgApiDefinitionRepository {
         let row = sqlx::query(
             "INSERT INTO ms_api_definition (project_id, name, protocol, method, path, status) \
              VALUES ($1, $2, $3, $4, $5, $6) \
-             RETURNING id, project_id, name, protocol, method, path, status",
+             RETURNING id, project_id, name, protocol, method, path, status, module_id",
         )
         .bind(&d.project_id)
         .bind(&d.name)
@@ -93,7 +103,7 @@ impl ApiDefinitionRepository for PgApiDefinitionRepository {
 
     async fn get_definition(&self, id: &str) -> Result<Option<ApiDefinition>, RepoError> {
         let row = sqlx::query(
-            "SELECT id, project_id, name, protocol, method, path, status \
+            "SELECT id, project_id, name, protocol, method, path, status, module_id \
              FROM ms_api_definition WHERE id = $1 AND deleted = false",
         )
         .bind(id)
@@ -108,7 +118,7 @@ impl ApiDefinitionRepository for PgApiDefinitionRepository {
         project_id: &str,
     ) -> Result<Vec<ApiDefinition>, RepoError> {
         let rows = sqlx::query(
-            "SELECT id, project_id, name, protocol, method, path, status \
+            "SELECT id, project_id, name, protocol, method, path, status, module_id \
              FROM ms_api_definition WHERE project_id = $1 AND deleted = false",
         )
         .bind(project_id)
@@ -209,6 +219,71 @@ impl ApiDefinitionRepository for PgApiDefinitionRepository {
         .await
         .map_err(map_err)?;
         rows.iter().map(row_to_mock).collect()
+    }
+
+    async fn insert_module(&self, m: &NewApiModule) -> Result<ApiModule, RepoError> {
+        let row = sqlx::query(
+            "INSERT INTO ms_api_module (project_id, parent_id, name) VALUES ($1, $2, $3) \
+             RETURNING id, project_id, parent_id, name",
+        )
+        .bind(&m.project_id)
+        .bind(&m.parent_id)
+        .bind(&m.name)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(map_err)?;
+        row_to_module(&row)
+    }
+
+    async fn list_modules(&self, project_id: &str) -> Result<Vec<ApiModule>, RepoError> {
+        let rows = sqlx::query(
+            "SELECT id, project_id, parent_id, name FROM ms_api_module \
+             WHERE project_id = $1 AND deleted = false ORDER BY name",
+        )
+        .bind(project_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(map_err)?;
+        rows.iter().map(row_to_module).collect()
+    }
+
+    async fn rename_module(&self, id: &str, name: &str) -> Result<(), RepoError> {
+        sqlx::query("UPDATE ms_api_module SET name = $2 WHERE id = $1")
+            .bind(id)
+            .bind(name)
+            .execute(&self.pool)
+            .await
+            .map_err(map_err)?;
+        Ok(())
+    }
+
+    async fn delete_module(&self, id: &str) -> Result<(), RepoError> {
+        // 软删模块,并把其下定义改为未归类(避免悬挂的 module_id)。
+        sqlx::query("UPDATE ms_api_module SET deleted = true WHERE id = $1")
+            .bind(id)
+            .execute(&self.pool)
+            .await
+            .map_err(map_err)?;
+        sqlx::query("UPDATE ms_api_definition SET module_id = NULL WHERE module_id = $1")
+            .bind(id)
+            .execute(&self.pool)
+            .await
+            .map_err(map_err)?;
+        Ok(())
+    }
+
+    async fn set_definition_module(
+        &self,
+        definition_id: &str,
+        module_id: Option<&str>,
+    ) -> Result<(), RepoError> {
+        sqlx::query("UPDATE ms_api_definition SET module_id = $2 WHERE id = $1")
+            .bind(definition_id)
+            .bind(module_id)
+            .execute(&self.pool)
+            .await
+            .map_err(map_err)?;
+        Ok(())
     }
 }
 

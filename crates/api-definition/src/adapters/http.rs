@@ -11,7 +11,7 @@ use axum::{
     extract::{FromRef, Path, Query, State},
     http::StatusCode,
     response::{IntoResponse, Response},
-    routing::post,
+    routing::{post, put},
     Json, Router,
 };
 use crate::application::{
@@ -21,7 +21,7 @@ use crate::application::{
     ListApiMocksUseCase, ListProjectCasesUseCase,
 };
 use kernel::page::PageRequest;
-use crate::domain::{ApiCase, ApiDefinition, ApiMock, ApiProtocol};
+use crate::domain::{ApiCase, ApiDefinition, ApiModule, ApiMock, ApiProtocol, NewApiModule};
 use crate::ports::ApiDefinitionRepository;
 use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, OpenApi, ToSchema};
@@ -73,6 +73,9 @@ pub fn router(
         .route("/api/definition/{id}/case", post(create_case).get(list_cases))
         .route("/api/case", post(create_standalone_case).get(list_project_cases))
         .route("/api/definition/{id}/mock", post(create_mock).get(list_mocks))
+        .route("/api/module", post(create_module).get(list_modules))
+        .route("/api/module/{id}", put(rename_module).delete(delete_module))
+        .route("/api/definition/{id}/module", put(move_definition))
         .with_state(state)
 }
 
@@ -88,6 +91,7 @@ struct ApiDefinitionResponse {
     method: String,
     path: String,
     status: String,
+    module_id: Option<String>,
 }
 
 impl From<ApiDefinition> for ApiDefinitionResponse {
@@ -100,8 +104,47 @@ impl From<ApiDefinition> for ApiDefinitionResponse {
             method: d.method,
             path: d.path,
             status: d.status.as_str().to_string(),
+            module_id: d.module_id,
         }
     }
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+struct ApiModuleResponse {
+    id: String,
+    project_id: String,
+    parent_id: Option<String>,
+    name: String,
+}
+
+impl From<ApiModule> for ApiModuleResponse {
+    fn from(m: ApiModule) -> Self {
+        Self { id: m.id, project_id: m.project_id, parent_id: m.parent_id, name: m.name }
+    }
+}
+
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+struct ModuleCreateBody {
+    project_id: String,
+    #[serde(default)]
+    parent_id: Option<String>,
+    name: String,
+}
+
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+struct ModuleRenameBody {
+    name: String,
+}
+
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+struct MoveDefinitionBody {
+    /// 目标模块 id;null/缺省 = 移出到未归类。
+    #[serde(default)]
+    module_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize, ToSchema)]
@@ -455,6 +498,89 @@ async fn list_mocks(State(st): State<ApiDefinitionState>, Path(id): Path<String>
                 list.into_iter().map(ApiMockResponse::from).collect();
             (StatusCode::OK, Json(items)).into_response()
         }
+        Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
+    }
+}
+
+// ---------- 模块(文件夹)handlers ----------
+
+async fn create_module(
+    user: AuthUser,
+    State(st): State<ApiDefinitionState>,
+    Json(req): Json<ModuleCreateBody>,
+) -> Response {
+    if !user.can("API_DEFINITION", "ADD") {
+        return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
+    let new = match NewApiModule::new(&req.project_id, req.parent_id.as_deref(), &req.name) {
+        Ok(m) => m,
+        Err(_) => return (StatusCode::BAD_REQUEST, "invalid module payload").into_response(),
+    };
+    match st.repo.insert_module(&new).await {
+        Ok(m) => (StatusCode::CREATED, Json(ApiModuleResponse::from(m))).into_response(),
+        Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
+    }
+}
+
+async fn list_modules(
+    State(st): State<ApiDefinitionState>,
+    Query(q): Query<DefinitionListQuery>,
+) -> Response {
+    match st.repo.list_modules(&q.project_id).await {
+        Ok(list) => {
+            let items: Vec<ApiModuleResponse> =
+                list.into_iter().map(ApiModuleResponse::from).collect();
+            (StatusCode::OK, Json(items)).into_response()
+        }
+        Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
+    }
+}
+
+async fn rename_module(
+    user: AuthUser,
+    State(st): State<ApiDefinitionState>,
+    Path(id): Path<String>,
+    Json(req): Json<ModuleRenameBody>,
+) -> Response {
+    if !user.can("API_DEFINITION", "ADD") {
+        return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
+    let name = req.name.trim();
+    if name.is_empty() {
+        return (StatusCode::BAD_REQUEST, "empty name").into_response();
+    }
+    match st.repo.rename_module(&id, name).await {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
+    }
+}
+
+async fn delete_module(
+    user: AuthUser,
+    State(st): State<ApiDefinitionState>,
+    Path(id): Path<String>,
+) -> Response {
+    if !user.can("API_DEFINITION", "ADD") {
+        return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
+    match st.repo.delete_module(&id).await {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
+    }
+}
+
+async fn move_definition(
+    user: AuthUser,
+    State(st): State<ApiDefinitionState>,
+    Path(id): Path<String>,
+    Json(req): Json<MoveDefinitionBody>,
+) -> Response {
+    if !user.can("API_DEFINITION", "ADD") {
+        return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
+    let module = req.module_id.as_deref().filter(|s| !s.is_empty());
+    match st.repo.set_definition_module(&id, module).await {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
         Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
     }
 }

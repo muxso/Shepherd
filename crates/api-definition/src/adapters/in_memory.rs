@@ -5,7 +5,10 @@ use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 
-use crate::domain::{ApiCase, ApiDefinition, ApiMock, NewApiCase, NewApiDefinition, NewApiMock};
+use crate::domain::{
+    ApiCase, ApiDefinition, ApiModule, ApiMock, NewApiCase, NewApiDefinition, NewApiModule,
+    NewApiMock,
+};
 use crate::ports::{ApiDefinitionRepository, RepoError};
 
 #[derive(Default)]
@@ -14,6 +17,7 @@ struct State {
     cases: HashMap<String, ApiCase>,             // id -> 用例
     case_order: Vec<String>,                     // 用例插入顺序(项目级分页按此)
     mocks: HashMap<String, ApiMock>,             // id -> Mock
+    modules: HashMap<String, ApiModule>,         // id -> 模块
     seq: u64,
 }
 
@@ -44,6 +48,7 @@ impl ApiDefinitionRepository for InMemoryApiDefinitionRepository {
             method: d.method.clone(),
             path: d.path.clone(),
             status: d.status,
+            module_id: None,
         };
         state.definitions.insert(def.id.clone(), def.clone());
         Ok(def)
@@ -150,5 +155,58 @@ impl ApiDefinitionRepository for InMemoryApiDefinitionRepository {
             .collect();
         out.sort_by(|a, b| a.id.cmp(&b.id));
         Ok(out)
+    }
+
+    async fn insert_module(&self, m: &NewApiModule) -> Result<ApiModule, RepoError> {
+        let mut state = self.state.lock().expect("lock");
+        state.seq += 1;
+        let module = ApiModule {
+            id: format!("apimod-{}", state.seq),
+            project_id: m.project_id.clone(),
+            parent_id: m.parent_id.clone(),
+            name: m.name.clone(),
+        };
+        state.modules.insert(module.id.clone(), module.clone());
+        Ok(module)
+    }
+
+    async fn list_modules(&self, project_id: &str) -> Result<Vec<ApiModule>, RepoError> {
+        let state = self.state.lock().expect("lock");
+        let mut out: Vec<ApiModule> =
+            state.modules.values().filter(|m| m.project_id == project_id).cloned().collect();
+        out.sort_by(|a, b| a.id.cmp(&b.id));
+        Ok(out)
+    }
+
+    async fn rename_module(&self, id: &str, name: &str) -> Result<(), RepoError> {
+        let mut state = self.state.lock().expect("lock");
+        if let Some(m) = state.modules.get_mut(id) {
+            m.name = name.to_string();
+        }
+        Ok(())
+    }
+
+    async fn delete_module(&self, id: &str) -> Result<(), RepoError> {
+        let mut state = self.state.lock().expect("lock");
+        state.modules.remove(id);
+        // 其下定义改为未归类
+        for d in state.definitions.values_mut() {
+            if d.module_id.as_deref() == Some(id) {
+                d.module_id = None;
+            }
+        }
+        Ok(())
+    }
+
+    async fn set_definition_module(
+        &self,
+        definition_id: &str,
+        module_id: Option<&str>,
+    ) -> Result<(), RepoError> {
+        let mut state = self.state.lock().expect("lock");
+        if let Some(d) = state.definitions.get_mut(definition_id) {
+            d.module_id = module_id.map(str::to_string);
+        }
+        Ok(())
     }
 }
