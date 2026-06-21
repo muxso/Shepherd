@@ -20,7 +20,7 @@ const OrganizationsPage = lazy(() => import('./pages/resources').then((m) => ({ 
 const RolesPage = lazy(() => import('./pages/resources').then((m) => ({ default: m.RolesPage })))
 const UsersPage = lazy(() => import('./pages/resources').then((m) => ({ default: m.UsersPage })))
 const ProjectsPage = lazy(() => import('./pages/resources').then((m) => ({ default: m.ProjectsPage })))
-const EnvironmentsPage = lazy(() => import('./pages/resources').then((m) => ({ default: m.EnvironmentsPage })))
+const EnvironmentsPage = lazy(() => import('./pages/Environments').then((m) => ({ default: m.EnvironmentsPage })))
 const ResourcePoolsPage = lazy(() => import('./pages/resources').then((m) => ({ default: m.ResourcePoolsPage })))
 
 export default function App() {
