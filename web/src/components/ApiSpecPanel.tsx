@@ -1,6 +1,6 @@
 import { forwardRef, useEffect, useImperativeHandle, useState } from 'react'
-import { Button, Card, Drawer, Empty, Input, InputNumber, Radio, Segmented, Select, Space, Table, Tabs, Tag, Tooltip, Typography } from 'antd'
-import { CopyOutlined, PlusOutlined, DeleteOutlined, SaveOutlined, UploadOutlined, ThunderboltOutlined } from '@ant-design/icons'
+import { Button, Card, Drawer, Empty, Input, InputNumber, Modal, Radio, Segmented, Select, Space, Table, Tabs, Tag, Tooltip, Typography } from 'antd'
+import { CopyOutlined, PlusOutlined, DeleteOutlined, SaveOutlined, UploadOutlined } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
 import QueryParamTable from './QueryParamTable'
 import BodySchemaTree, { schemaToJson } from './BodySchemaTree'
@@ -90,12 +90,15 @@ export function parseCurl(text: string): { method: string; url: string; headers:
  * 接口「预览」(只读)/「定义」(可编辑)/「新建」(create:受控、无 id)共用面板。
  * create 模式由父组件托管 spec(value/onChange),不自行加载/保存,保存按钮也交给父级(新建接口 Tab)。
  */
+export type ExecMode = 'server' | 'local'
 export interface ApiSpecPanelHandle {
   save: () => void
   /** cURL 导入:把解析结果合并进当前 spec(请求头/请求体),并回填请求行方法/路径。 */
   applyCurl: (parsed: { method: string; url: string; headers: ApiSpecKV[]; body: string }) => void
-  /** 服务端执行(调试模式):用当前定义方法/路径 + spec 头/体发起调试请求。 */
-  execute: () => void
+  /** 执行(调试模式):server=服务端代理发起;local=浏览器本地直发。 */
+  execute: (mode?: ExecMode) => void
+  /** 另存为测试用例(调试模式「保存」):用当前请求 + 断言/处理器新建用例。 */
+  saveAsCase: () => void
 }
 
 const ApiSpecPanel = forwardRef<ApiSpecPanelHandle, {
@@ -108,7 +111,11 @@ const ApiSpecPanel = forwardRef<ApiSpecPanelHandle, {
   /** 调试请求行:方法/路径(由父级请求行维护,cURL 导入会回填)。 */
   reqMethod?: string
   reqPath?: string
-}>(function ApiSpecPanel({ definition, mode, value, onChange, hideSave, reqMethod, reqPath }, ref) {
+  /** 当前执行方式(由父级请求行的下拉选择)。 */
+  execMode?: ExecMode
+  /** 选中的环境(由父级顶栏环境选择器提供;调试执行用其 baseUrl/默认头/变量)。 */
+  env?: Environment
+}>(function ApiSpecPanel({ definition, mode, value, onChange, hideSave, reqMethod, reqPath, execMode = 'server', env }, ref) {
   const { t } = useI18n()
   const create = mode === 'create'
   const debug = mode === 'debug'
@@ -157,41 +164,28 @@ const ApiSpecPanel = forwardRef<ApiSpecPanelHandle, {
     }
   }
 
-  // 调试执行:环境 + 响应。环境提供 baseUrl(相对路径前缀)+ 默认头 + {{变量}}。
-  const [envs, setEnvs] = useState<Environment[]>([])
-  const [envId, setEnvId] = useState<string>('')
+  // 调试执行响应状态(环境由父级顶栏提供,经 env prop)。
   const [running, setRunning] = useState(false)
   const [resp, setResp] = useState<DebugResponse | null>(null)
   const [runErr, setRunErr] = useState('')
-  const env = envs.find((e) => e.id === envId)
 
-  useEffect(() => {
-    if (!debug) return
-    let alive = true
-    api
-      .environments(definition.projectId)
-      .then((list) => {
-        if (!alive) return
-        const arr = Array.isArray(list) ? list : []
-        setEnvs(arr)
-        setEnvId((cur) => cur || arr.find((e) => e.enabled !== false)?.id || '')
-      })
-      .catch(() => alive && setEnvs([]))
-    return () => {
-      alive = false
-    }
-  }, [debug, definition.projectId])
-
-  const execute = async () => {
+  // 把当前请求行 + spec 组装成可发送的请求(URL/headers/body)。失败时弹提示并返回 null。
+  const buildRequest = (): { method: string; url: string; headers: { key: string; value: string }[]; body?: string } | null => {
     const resolveVars = (s: string): string =>
       env?.variables ? s.replace(/\{\{\s*(\w+)\s*\}\}/g, (whole, k: string) => env.variables?.[k] ?? whole) : s
     const path = (reqPath ?? definition.path ?? '').trim()
-    if (!path) return message.warning(t('editor.urlRequired', '请输入 URL'))
+    if (!path) {
+      message.warning(t('editor.urlRequired', '请输入 URL'))
+      return null
+    }
     const rawUrl = resolveVars(path)
     let base = rawUrl
     if (!/^https?:\/\//i.test(rawUrl)) {
       const baseUrl = env?.baseUrl?.trim().replace(/\/+$/, '')
-      if (!baseUrl) return message.warning(t('editor.needEnvOrAbs', '相对路径需先选择带 baseUrl 的环境,或填写绝对 URL(http(s)://)'))
+      if (!baseUrl) {
+        message.warning(t('editor.needEnvOrAbs', '相对路径需先选择带 baseUrl 的环境,或填写绝对 URL(http(s)://)'))
+        return null
+      }
       base = `${baseUrl}${rawUrl.startsWith('/') ? '' : '/'}${rawUrl}`
     }
     const qs = (spec.requestQuery || [])
@@ -204,15 +198,69 @@ const ApiSpecPanel = forwardRef<ApiSpecPanelHandle, {
     for (const h of spec.requestHeaders || []) if (h.name?.trim()) hs.push({ key: h.name, value: resolveVars(h.value || '') })
     if (spec.auth?.type === 'bearer' && spec.auth.token) hs.push({ key: 'Authorization', value: `Bearer ${spec.auth.token}` })
     if (spec.auth?.type === 'basic' && spec.auth.token) hs.push({ key: 'Authorization', value: `Basic ${btoa(spec.auth.token)}` })
+    return { method: reqMethod || definition.method || 'GET', url: finalUrl, headers: hs, body: spec.requestBody?.trim() ? resolveVars(spec.requestBody) : undefined }
+  }
+
+  // 本地执行:浏览器直发(可能受 CORS 限制——这正是「本地」与「服务端代理」的区别)。
+  const localSend = async (req: { method: string; url: string; headers: { key: string; value: string }[]; body?: string }): Promise<DebugResponse> => {
+    const t0 = performance.now()
+    const res = await fetch(req.url, { method: req.method, headers: Object.fromEntries(req.headers.map((h) => [h.key, h.value])), body: req.body })
+    const text = await res.text()
+    const headers: [string, string][] = []
+    res.headers.forEach((v, k) => headers.push([k, v]))
+    return { status: res.status, latencyMs: Math.round(performance.now() - t0), headers, body: text }
+  }
+
+  const execute = async (m: ExecMode = execMode) => {
+    const req = buildRequest()
+    if (!req) return
     setRunning(true)
     setRunErr('')
     setResp(null)
     try {
-      setResp(await api.debugSend({ method: reqMethod || definition.method || 'GET', url: finalUrl, headers: hs, body: spec.requestBody?.trim() ? resolveVars(spec.requestBody) : undefined }))
+      setResp(m === 'local' ? await localSend(req) : await api.debugSend(req))
     } catch (e) {
-      setRunErr(e instanceof ApiError ? e.message : t('editor.sendFail', '发送失败'))
+      setRunErr(e instanceof ApiError ? e.message : e instanceof Error ? e.message : t('editor.sendFail', '发送失败'))
     } finally {
       setRunning(false)
+    }
+  }
+
+  // 另存为测试用例:用当前请求 + 断言/处理器/标签新建用例(对齐参考图 #9「保存=另存为用例」)。
+  const [caseModalOpen, setCaseModalOpen] = useState(false)
+  const [caseName, setCaseName] = useState('')
+  const [caseSaving, setCaseSaving] = useState(false)
+  const kvToCase = (rows?: ApiSpecKV[]) => (rows || []).filter((r) => r.name?.trim()).map((r) => ({ key: r.name, value: r.value || '' }))
+  const saveAsCase = () => {
+    setCaseName(`${definition.name} - ${t('apidef.debugCase', '调试用例')}`)
+    setCaseModalOpen(true)
+  }
+  const doSaveCase = async () => {
+    if (!caseName.trim()) {
+      message.warning(t('apidef.caseNameRequired', '请输入用例名称'))
+      return
+    }
+    setCaseSaving(true)
+    try {
+      await api.createCase(definition.id, {
+        name: caseName.trim(),
+        method: reqMethod || definition.method || 'GET',
+        url: reqPath || definition.path || '',
+        body: spec.requestBody || undefined,
+        headers: kvToCase(spec.requestHeaders),
+        queryParams: kvToCase(spec.requestQuery),
+        restParams: kvToCase(spec.restParams),
+        auth: spec.auth?.type && spec.auth.type !== 'none' ? { type: spec.auth.type, token: spec.auth.token } : undefined,
+        assertions: spec.assertions,
+        processors: [...(spec.preProcessors || []), ...(spec.postProcessors || [])],
+        tags: spec.tags,
+      })
+      message.success(t('apidef.caseSaved', '已另存为用例'))
+      setCaseModalOpen(false)
+    } catch (e) {
+      message.error(e instanceof ApiError ? e.message : t('apidef.saveFailed', '保存失败'))
+    } finally {
+      setCaseSaving(false)
     }
   }
 
@@ -223,8 +271,8 @@ const ApiSpecPanel = forwardRef<ApiSpecPanelHandle, {
     })
   }
 
-  // 暴露 save/execute/applyCurl 给父级(定义页请求行的按钮统一触发)。
-  useImperativeHandle(ref, () => ({ save, execute, applyCurl }), [save, execute, applyCurl])
+  // 暴露 save/execute/applyCurl/saveAsCase 给父级(定义页请求行的按钮统一触发)。
+  useImperativeHandle(ref, () => ({ save, execute, applyCurl, saveAsCase }), [save, execute, applyCurl, saveAsCase])
 
   if (loading) return <div style={{ padding: 24, color: '#999' }}>{t('a.loading', '加载中…')}</div>
 
@@ -317,18 +365,24 @@ const ApiSpecPanel = forwardRef<ApiSpecPanelHandle, {
       <Tabs items={tabs} size="small" />
       {/* 底部「响应内容」:定义=示例响应(状态码 200/404…);调试=服务端执行结果。 */}
       {debug ? (
-        <DebugResultPanel
-          envs={envs}
-          envId={envId}
-          setEnvId={setEnvId}
-          running={running}
-          resp={resp}
-          err={runErr}
-          onRun={execute}
-        />
+        <DebugResultPanel running={running} resp={resp} err={runErr} />
       ) : (
         <ExampleResponsesPanel responses={spec.responses || []} onChange={(rows) => patch({ responses: rows })} />
       )}
+      {/* 另存为测试用例:命名后用当前请求新建用例。 */}
+      <Modal
+        title={t('apidef.saveAsCase', '另存为用例')}
+        open={caseModalOpen}
+        onCancel={() => setCaseModalOpen(false)}
+        onOk={doSaveCase}
+        okButtonProps={{ loading: caseSaving }}
+        okText={t('a.save', '保存')}
+        cancelText={t('a.cancel', '取消')}
+        destroyOnHidden
+      >
+        <div style={{ fontSize: 13, color: '#5b6470', marginBottom: 6 }}>{t('apidef.caseName', '用例名称')}</div>
+        <Input value={caseName} onChange={(e) => setCaseName(e.target.value)} onPressEnter={doSaveCase} placeholder={t('apidef.caseName', '用例名称')} />
+      </Modal>
     </div>
   )
 })
@@ -397,23 +451,15 @@ function ExampleResponsesPanel({ responses, onChange }: { responses: ApiSpecResp
   )
 }
 
-/** 调试结果面板(服务端执行):环境选择 + 执行 + 响应体/响应头/响应码。 */
+/** 调试结果面板:仅展示执行结果(执行由请求行的「服务端/本地执行」触发;环境在顶栏选)。 */
 function DebugResultPanel({
-  envs,
-  envId,
-  setEnvId,
   running,
   resp,
   err,
-  onRun,
 }: {
-  envs: Environment[]
-  envId: string
-  setEnvId: (v: string) => void
   running: boolean
   resp: DebugResponse | null
   err: string
-  onRun: () => void
 }) {
   const { t } = useI18n()
   const [view, setView] = useState<'json' | 'raw'>('json')
@@ -421,20 +467,11 @@ function DebugResultPanel({
     <Card size="small" style={{ marginTop: 12 }} styles={{ body: { padding: 12 } }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: resp || err ? 12 : 0 }}>
         <span style={{ fontWeight: 600, fontSize: 13 }}>{t('apidef.responseContent', '响应内容')}</span>
-        <Select
-          size="small"
-          value={envId || undefined}
-          onChange={setEnvId}
-          style={{ width: 200 }}
-          placeholder={t('editor.selectEnv', '选择环境')}
-          allowClear
-          options={envs.map((e) => ({ value: e.id, label: e.baseUrl ? `${e.name} · ${e.baseUrl}` : e.name }))}
-          notFoundContent={t('editor.noEnvConfigured', '未配置环境,去「环境」页新建')}
-        />
+        <Typography.Text type="secondary" style={{ fontSize: 12 }}>{t('apidef.runResult', '执行结果')}</Typography.Text>
         <div style={{ flex: 1 }} />
+        {running && <Typography.Text type="secondary" style={{ fontSize: 12 }}>{t('a.loading', '加载中…')}</Typography.Text>}
         {resp && <Tag color={resp.status < 400 ? 'green' : 'red'}>{resp.status}</Tag>}
         {resp && <Typography.Text type="secondary" style={{ fontSize: 12 }}>{resp.latencyMs} ms</Typography.Text>}
-        <Button type="primary" icon={<ThunderboltOutlined />} loading={running} onClick={onRun}>{t('apidef.serverRun', '服务端执行')}</Button>
       </div>
       {err ? (
         <Typography.Text type="danger">{err}</Typography.Text>

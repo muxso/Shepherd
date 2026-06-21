@@ -15,15 +15,16 @@ import {
   SettingOutlined,
   ThunderboltOutlined,
   CodeOutlined,
+  DownOutlined,
 } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
-import { api, ApiError, type ApiDefinition, type ApiModule, type ApiSpec } from '../api'
+import { api, ApiError, type ApiDefinition, type ApiModule, type ApiSpec, type Environment } from '../api'
 import { useApp } from '../context'
 import { methodColor, statusColor } from '../components/tags'
 import CasesPanel from './CasesPanel'
 import MocksPanel from './MocksPanel'
 import RequestEditor from '../components/RequestEditor'
-import ApiSpecPanel, { emptySpec, parseCurl, type ApiSpecPanelHandle } from '../components/ApiSpecPanel'
+import ApiSpecPanel, { emptySpec, parseCurl, type ApiSpecPanelHandle, type ExecMode } from '../components/ApiSpecPanel'
 import ReferencesPanel from '../components/ReferencesPanel'
 import ChangeHistoryPanel from '../components/ChangeHistoryPanel'
 import { useOpenParam } from '../components/Workspace'
@@ -551,6 +552,28 @@ function ApiDetail({ definition }: { definition: ApiDefinition }) {
   const [reqPath, setReqPath] = useState(definition.path || '')
   const [curlOpen, setCurlOpen] = useState(false)
   const [curlText, setCurlText] = useState('')
+  // 调试执行方式:服务端代理(server)/ 浏览器本地直发(local)。
+  const [execMode, setExecMode] = useState<ExecMode>('server')
+  // 调试环境(顶栏选择;提供 baseUrl/默认头/变量)。
+  const [envs, setEnvs] = useState<Environment[]>([])
+  const [envId, setEnvId] = useState<string>('')
+
+  useEffect(() => {
+    if (defMode !== 'debug' || envs.length) return
+    let alive = true
+    api
+      .environments(definition.projectId)
+      .then((list) => {
+        if (!alive) return
+        const arr = Array.isArray(list) ? list : []
+        setEnvs(arr)
+        setEnvId((cur) => cur || arr.find((e) => e.enabled !== false)?.id || '')
+      })
+      .catch(() => alive && setEnvs([]))
+    return () => {
+      alive = false
+    }
+  }, [defMode, definition.projectId, envs.length])
 
   useEffect(() => {
     let alive = true
@@ -636,22 +659,34 @@ function ApiDetail({ definition }: { definition: ApiDefinition }) {
               { label: t('apidef.debug', '调试'), value: 'debug' },
             ]}
           />
-          {defMode === 'debug' && (
-            <Dropdown.Button
-              type="primary"
-              icon={<MoreOutlined />}
-              onClick={() => specRef.current?.execute()}
-              menu={{
-                items: [{ key: 'case', label: t('apidef.saveAsCase', '保存为新用例') }],
-                onClick: ({ key }) => {
-                  if (key === 'case') message.info(t('apidef.saveAsCaseHint', '可在「用例」标签新建用例'))
-                },
-              }}
-            >
-              <ThunderboltOutlined /> {t('apidef.serverRun', '服务端执行')}
-            </Dropdown.Button>
+          {defMode === 'debug' ? (
+            <>
+              {/* 执行:主键跑当前方式;下拉切「服务端执行 / 本地执行」并立即执行。 */}
+              <Dropdown.Button
+                type="primary"
+                icon={<DownOutlined />}
+                onClick={() => specRef.current?.execute(execMode)}
+                menu={{
+                  selectable: true,
+                  selectedKeys: [execMode],
+                  items: [
+                    { key: 'server', label: t('apidef.serverRun', '服务端执行') },
+                    { key: 'local', label: t('apidef.localRun', '本地执行') },
+                  ],
+                  onClick: ({ key }) => {
+                    setExecMode(key as ExecMode)
+                    specRef.current?.execute(key as ExecMode)
+                  },
+                }}
+              >
+                <ThunderboltOutlined /> {execMode === 'local' ? t('apidef.localRun', '本地执行') : t('apidef.serverRun', '服务端执行')}
+              </Dropdown.Button>
+              {/* 调试态「保存」= 另存为测试用例。 */}
+              <Button icon={<SaveOutlined />} onClick={() => specRef.current?.saveAsCase()}>{t('apidef.saveAsCase', '另存为用例')}</Button>
+            </>
+          ) : (
+            <Button icon={<SaveOutlined />} onClick={() => specRef.current?.save()}>{t('a.save', '保存')}</Button>
           )}
-          <Button icon={<SaveOutlined />} onClick={() => specRef.current?.save()}>{t('a.save', '保存')}</Button>
         </Space>
       </div>
       <ApiSpecPanel
@@ -661,6 +696,8 @@ function ApiDetail({ definition }: { definition: ApiDefinition }) {
         mode={defMode === 'define' ? 'define' : 'debug'}
         reqMethod={reqMethod}
         reqPath={reqPath}
+        execMode={execMode}
+        env={envs.find((e) => e.id === envId)}
         hideSave
       />
       <Modal
@@ -695,6 +732,18 @@ function ApiDetail({ definition }: { definition: ApiDefinition }) {
               <Button size="small" onClick={() => setTab('define')}>{t('a.edit', '编辑')}</Button>
               <Button type="primary" size="small" onClick={() => { setTab('define'); setDefMode('debug') }}>{t('apidef.serverRun', '服务端执行')}</Button>
             </Space>
+          ) : tab === 'define' && defMode === 'debug' ? (
+            // 调试态:环境选择器与 预览/定义/用例/MOCK 同一行(右上,对齐 MeterSphere)。
+            <Select
+              size="small"
+              value={envId || undefined}
+              onChange={setEnvId}
+              style={{ width: 240 }}
+              placeholder={t('editor.selectEnv', '选择环境')}
+              allowClear
+              options={envs.map((e) => ({ value: e.id, label: e.baseUrl ? `${e.name} · ${e.baseUrl}` : e.name }))}
+              notFoundContent={t('editor.noEnvConfigured', '未配置环境,去「环境」页新建')}
+            />
           ) : undefined
         }
         items={[
