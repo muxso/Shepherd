@@ -18,6 +18,7 @@ struct State {
     case_order: Vec<String>,                     // 用例插入顺序(项目级分页按此)
     mocks: HashMap<String, ApiMock>,             // id -> Mock
     modules: HashMap<String, ApiModule>,         // id -> 模块
+    task_cases: Vec<(String, String, String)>,   // (decomposition_id, task_id, case_id)
     seq: u64,
 }
 
@@ -208,5 +209,31 @@ impl ApiDefinitionRepository for InMemoryApiDefinitionRepository {
             d.module_id = module_id.map(str::to_string);
         }
         Ok(())
+    }
+
+    async fn link_task_case(&self, decomposition_id: &str, task_id: &str, case_id: &str) -> Result<(), RepoError> {
+        let mut state = self.state.lock().expect("lock");
+        let key = (decomposition_id.to_string(), task_id.to_string(), case_id.to_string());
+        if !state.task_cases.contains(&key) {
+            state.task_cases.push(key);
+        }
+        Ok(())
+    }
+
+    async fn unlink_task_case(&self, decomposition_id: &str, task_id: &str, case_id: &str) -> Result<(), RepoError> {
+        let mut state = self.state.lock().expect("lock");
+        state.task_cases.retain(|(d, t, c)| !(d == decomposition_id && t == task_id && c == case_id));
+        Ok(())
+    }
+
+    async fn list_cases_for_task(&self, decomposition_id: &str, task_id: &str) -> Result<Vec<ApiCase>, RepoError> {
+        let state = self.state.lock().expect("lock");
+        let ids: Vec<&String> = state
+            .task_cases
+            .iter()
+            .filter(|(d, t, _)| d == decomposition_id && t == task_id)
+            .map(|(_, _, c)| c)
+            .collect();
+        Ok(ids.iter().filter_map(|id| state.cases.get(*id)).cloned().collect())
     }
 }

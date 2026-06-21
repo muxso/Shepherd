@@ -285,6 +285,62 @@ impl ApiDefinitionRepository for PgApiDefinitionRepository {
             .map_err(map_err)?;
         Ok(())
     }
+
+    async fn link_task_case(
+        &self,
+        decomposition_id: &str,
+        task_id: &str,
+        case_id: &str,
+    ) -> Result<(), RepoError> {
+        sqlx::query(
+            "INSERT INTO ms_task_case (decomposition_id, task_id, case_id) VALUES ($1, $2, $3) \
+             ON CONFLICT DO NOTHING",
+        )
+        .bind(decomposition_id)
+        .bind(task_id)
+        .bind(case_id)
+        .execute(&self.pool)
+        .await
+        .map_err(map_err)?;
+        Ok(())
+    }
+
+    async fn unlink_task_case(
+        &self,
+        decomposition_id: &str,
+        task_id: &str,
+        case_id: &str,
+    ) -> Result<(), RepoError> {
+        sqlx::query(
+            "DELETE FROM ms_task_case WHERE decomposition_id = $1 AND task_id = $2 AND case_id = $3",
+        )
+        .bind(decomposition_id)
+        .bind(task_id)
+        .bind(case_id)
+        .execute(&self.pool)
+        .await
+        .map_err(map_err)?;
+        Ok(())
+    }
+
+    async fn list_cases_for_task(
+        &self,
+        decomposition_id: &str,
+        task_id: &str,
+    ) -> Result<Vec<ApiCase>, RepoError> {
+        let rows = sqlx::query(
+            "SELECT c.id, c.api_definition_id, c.project_id, c.name, c.method, c.url, c.body, \
+                    c.assertions, c.processors \
+             FROM ms_task_case tc JOIN ms_api_case c ON c.id = tc.case_id \
+             WHERE tc.decomposition_id = $1 AND tc.task_id = $2",
+        )
+        .bind(decomposition_id)
+        .bind(task_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(map_err)?;
+        rows.iter().map(row_to_case).collect()
+    }
 }
 
 #[cfg(test)]

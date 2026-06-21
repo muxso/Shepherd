@@ -76,6 +76,8 @@ pub fn router(
         .route("/api/module", post(create_module).get(list_modules))
         .route("/api/module/{id}", put(rename_module).delete(delete_module))
         .route("/api/definition/{id}/module", put(move_definition))
+        .route("/api/task-case", post(link_task_case).get(list_task_cases))
+        .route("/api/task-case/unlink", post(unlink_task_case))
         .with_state(state)
 }
 
@@ -581,6 +583,64 @@ async fn move_definition(
     let module = req.module_id.as_deref().filter(|s| !s.is_empty());
     match st.repo.set_definition_module(&id, module).await {
         Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
+    }
+}
+
+// ---------- 任务 ↔ 用例 关联 handlers ----------
+
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+struct TaskCaseBody {
+    decomposition_id: String,
+    task_id: String,
+    case_id: String,
+}
+
+#[derive(Debug, Deserialize, IntoParams)]
+#[serde(rename_all = "camelCase")]
+struct TaskCaseQuery {
+    decomposition_id: String,
+    task_id: String,
+}
+
+async fn link_task_case(
+    user: AuthUser,
+    State(st): State<ApiDefinitionState>,
+    Json(b): Json<TaskCaseBody>,
+) -> Response {
+    if !user.can("API_DEFINITION", "ADD") {
+        return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
+    match st.repo.link_task_case(&b.decomposition_id, &b.task_id, &b.case_id).await {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
+    }
+}
+
+async fn unlink_task_case(
+    user: AuthUser,
+    State(st): State<ApiDefinitionState>,
+    Json(b): Json<TaskCaseBody>,
+) -> Response {
+    if !user.can("API_DEFINITION", "ADD") {
+        return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
+    match st.repo.unlink_task_case(&b.decomposition_id, &b.task_id, &b.case_id).await {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
+    }
+}
+
+async fn list_task_cases(
+    State(st): State<ApiDefinitionState>,
+    Query(q): Query<TaskCaseQuery>,
+) -> Response {
+    match st.repo.list_cases_for_task(&q.decomposition_id, &q.task_id).await {
+        Ok(list) => {
+            let items: Vec<ApiCaseResponse> = list.into_iter().map(ApiCaseResponse::from).collect();
+            (StatusCode::OK, Json(items)).into_response()
+        }
         Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
     }
 }
