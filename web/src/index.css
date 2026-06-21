@@ -34,25 +34,47 @@ body {
 .ms-worktabs .ant-tabs-tabpane {
   height: 100%;
 }
-/* 工作 Tab 卡片标签:MeterSphere 风(浅底,选中白底 + 紫顶边) */
+/* 工作 Tab:MeterSphere 风(浅底浏览器式标签,选中白底 + 紫顶条) */
 .ms-worktabs .ant-tabs-nav {
-  background: #f5f6f8;
-  padding-top: 6px;
+  background: #fafbfc;
+  padding: 6px 8px 0;
+  border-bottom: 1px solid #eef0f2;
+  margin-bottom: 0;
+}
+.ms-worktabs .ant-tabs-nav::before {
+  border: none !important;
 }
 .ms-worktabs .ant-tabs-tab {
-  background: #eceef1 !important;
-  border: none !important;
-  border-radius: 6px 6px 0 0 !important;
-  margin: 0 2px 0 0 !important;
+  background: transparent !important;
+  border: 1px solid transparent !important;
+  border-bottom: none !important;
+  border-radius: 7px 7px 0 0 !important;
+  margin: 0 1px 0 0 !important;
   padding: 6px 14px !important;
+  font-size: 13px;
+  transition: background 0.15s;
+}
+.ms-worktabs .ant-tabs-tab .ant-tabs-tab-btn {
+  color: #5b6470 !important;
+}
+.ms-worktabs .ant-tabs-tab:hover {
+  background: #f0f1f4 !important;
 }
 .ms-worktabs .ant-tabs-tab-active {
   background: #fff !important;
+  border-color: #eef0f2 !important;
   box-shadow: inset 0 2px 0 #7c3aed;
 }
 .ms-worktabs .ant-tabs-tab-active .ant-tabs-tab-btn {
   color: #1f2329 !important;
   font-weight: 600;
+}
+.ms-worktabs .ant-tabs-tab .ant-tabs-tab-remove {
+  color: #b8bdc4 !important;
+  margin-left: 6px;
+}
+.ms-worktabs .ant-tabs-tab .ant-tabs-tab-remove:hover {
+  color: #5b6470 !important;
 }
 
 /* 表格观感:表头浅灰、行距更紧 */

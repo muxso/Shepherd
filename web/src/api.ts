@@ -114,6 +114,8 @@ export interface ApiSpecKV {
 export interface ApiSpecResponse {
   status?: number
   body?: string
+  /** 示例响应头(「响应内容」里「响应头」标签)。 */
+  headers?: ApiSpecKV[]
 }
 /** 请求体 content-type(对标 MeterSphere)。 */
 export type ApiBodyType = 'none' | 'form-data' | 'x-www-form-urlencoded' | 'json' | 'xml' | 'raw' | 'binary'
@@ -148,6 +150,11 @@ export interface ApiSpec {
   bodySchema?: BodySchemaNode[]
   auth?: ApiSpecAuth
   responses?: ApiSpecResponse[]
+  /** 前置/后置处理器(api-runner Processor JSON;wait/extract/script/sql)。 */
+  preProcessors?: unknown[]
+  postProcessors?: unknown[]
+  /** 断言(api-runner Assertion JSON)。 */
+  assertions?: unknown[]
 }
 
 export interface ApiDefinition {
