@@ -342,6 +342,15 @@ impl NewApiScenario {
     }
 }
 
+/// 场景对某资源(接口用例)的引用引用记录。用于「引用关系」反查:
+/// 给定一组用例 id,返回引用了它们的场景(去重后)。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ScenarioReference {
+    pub id: String,
+    pub project_id: String,
+    pub name: String,
+}
+
 /// 场景聚合根。steps 按 order 升序。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ApiScenario {
