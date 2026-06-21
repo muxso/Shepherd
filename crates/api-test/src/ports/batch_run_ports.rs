@@ -29,6 +29,12 @@ pub trait EnvironmentPort: Send + Sync {
     async fn resolve(&self, environment_id: &str) -> Result<Option<ResolvedEnv>, PortError>;
 }
 
+/// 环境变量回写:把「环境参数」作用域的提取结果持久化到该环境的变量表(跨用例/场景复用)。
+#[async_trait]
+pub trait EnvVarWriter: Send + Sync {
+    async fn set_vars(&self, environment_id: &str, vars: &[(String, String)]) -> Result<(), PortError>;
+}
+
 /// 派发到执行器的规格(已解析出有效池 + 运行环境)。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DispatchSpec {
@@ -37,6 +43,8 @@ pub struct DispatchSpec {
     pub mode: BatchRunMode,
     /// 已解析的运行环境(空环境表示不注入)。
     pub env: ResolvedEnv,
+    /// 环境 id(用于「环境参数」提取回写;空环境/未指定为 None)。
+    pub environment_id: Option<String>,
 }
 
 /// 派发结果:报告 id + 派发后即刻的报告状态。
@@ -63,6 +71,8 @@ pub struct RunTask {
     pub case_ids: Vec<String>,
     /// 已解析的运行环境(空环境表示不注入)。
     pub env: ResolvedEnv,
+    /// 环境 id(用于「环境参数」提取回写)。
+    pub environment_id: Option<String>,
 }
 
 /// 下发结果:据此决定报告状态。

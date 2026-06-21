@@ -425,6 +425,7 @@ mod tests {
                 variable: "tk".into(),
                 kind: api_runner::ExtractKind::JsonPath,
                 expression: "$.token".into(),
+                scope: api_runner::ExtractScope::Temp,
             }],
         }];
         let specs = InMemorySpecs::default()
