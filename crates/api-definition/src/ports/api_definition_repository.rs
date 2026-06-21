@@ -3,8 +3,8 @@
 use async_trait::async_trait;
 
 use crate::domain::{
-    ApiCase, ApiDefinition, ApiDefinitionChange, ApiModule, ApiMock, NewApiCase, NewApiDefinition,
-    NewApiModule, NewApiMock,
+    ApiCase, ApiDefinition, ApiDefinitionChange, ApiModule, ApiMock, ApiView, NewApiCase,
+    NewApiDefinition, NewApiModule, NewApiMock, NewApiView,
 };
 
 use thiserror::Error;
@@ -96,6 +96,17 @@ pub trait ApiDefinitionRepository: Send + Sync {
         definition_id: &str,
         module_id: Option<&str>,
     ) -> Result<(), RepoError>;
+
+    // ---- 列表视图(保存筛选/列设置/页大小)----
+
+    /// 保存一个视图。
+    async fn insert_view(&self, v: &NewApiView) -> Result<ApiView, RepoError>;
+
+    /// 列出项目下该用户可见的视图(本人创建 + 共享),按创建时间倒序。
+    async fn list_views(&self, project_id: &str, user_id: &str) -> Result<Vec<ApiView>, RepoError>;
+
+    /// 删除视图(仅本人创建可删)。
+    async fn delete_view(&self, id: &str, user_id: &str) -> Result<(), RepoError>;
 
     // ---- 任务 ↔ 用例 关联 ----
 

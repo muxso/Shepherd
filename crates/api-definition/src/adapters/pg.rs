@@ -8,7 +8,7 @@ use async_trait::async_trait;
 
 use crate::domain::{
     ApiCase, ApiDefinition, ApiDefinitionChange, ApiModule, ApiMock, ApiProtocol, ApiStatus,
-    NewApiCase, NewApiDefinition, NewApiModule, NewApiMock,
+    ApiView, NewApiCase, NewApiDefinition, NewApiModule, NewApiMock, NewApiView,
 };
 use crate::ports::{ApiDefinitionRepository, RepoError};
 use sqlx::{PgPool, Row};
@@ -75,6 +75,18 @@ fn row_to_case(row: &sqlx::postgres::PgRow) -> Result<ApiCase, RepoError> {
         query_params: row.try_get("query_params").unwrap_or_else(|_| serde_json::json!([])),
         rest_params: row.try_get("rest_params").unwrap_or_else(|_| serde_json::json!([])),
         auth: row.try_get("auth").unwrap_or_else(|_| serde_json::json!({})),
+    })
+}
+
+fn row_to_view(row: &sqlx::postgres::PgRow) -> Result<ApiView, RepoError> {
+    Ok(ApiView {
+        id: row.try_get("id").map_err(map_err)?,
+        project_id: row.try_get("project_id").map_err(map_err)?,
+        user_id: row.try_get("user_id").map_err(map_err)?,
+        name: row.try_get("name").map_err(map_err)?,
+        config: row.try_get("config").unwrap_or_else(|_| serde_json::json!({})),
+        shared: row.try_get("shared").unwrap_or(true),
+        created_at: row.try_get::<String, _>("created_at").unwrap_or_default(),
     })
 }
 
@@ -388,6 +400,47 @@ impl ApiDefinitionRepository for PgApiDefinitionRepository {
         sqlx::query("UPDATE ms_api_definition SET module_id = $2, updated_at = now() WHERE id = $1")
             .bind(definition_id)
             .bind(module_id)
+            .execute(&self.pool)
+            .await
+            .map_err(map_err)?;
+        Ok(())
+    }
+
+    async fn insert_view(&self, v: &NewApiView) -> Result<ApiView, RepoError> {
+        let row = sqlx::query(
+            "INSERT INTO ms_api_view (project_id, user_id, name, config, shared) \
+             VALUES ($1, $2, $3, $4, $5) \
+             RETURNING id, project_id, user_id, name, config, shared, created_at::text AS created_at",
+        )
+        .bind(&v.project_id)
+        .bind(&v.user_id)
+        .bind(&v.name)
+        .bind(&v.config)
+        .bind(v.shared)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(map_err)?;
+        Ok(row_to_view(&row)?)
+    }
+
+    async fn list_views(&self, project_id: &str, user_id: &str) -> Result<Vec<ApiView>, RepoError> {
+        let rows = sqlx::query(
+            "SELECT id, project_id, user_id, name, config, shared, created_at::text AS created_at \
+             FROM ms_api_view WHERE project_id = $1 AND (shared OR user_id = $2) \
+             ORDER BY created_at DESC",
+        )
+        .bind(project_id)
+        .bind(user_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(map_err)?;
+        rows.iter().map(row_to_view).collect()
+    }
+
+    async fn delete_view(&self, id: &str, user_id: &str) -> Result<(), RepoError> {
+        sqlx::query("DELETE FROM ms_api_view WHERE id = $1 AND user_id = $2")
+            .bind(id)
+            .bind(user_id)
             .execute(&self.pool)
             .await
             .map_err(map_err)?;

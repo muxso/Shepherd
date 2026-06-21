@@ -21,7 +21,7 @@ use crate::application::{
     ListApiDefinitionsUseCase, ListApiMocksUseCase, ListProjectCasesUseCase,
 };
 use kernel::page::PageRequest;
-use crate::domain::{ApiCase, ApiDefinition, ApiModule, ApiMock, ApiProtocol, NewApiModule};
+use crate::domain::{ApiCase, ApiDefinition, ApiModule, ApiMock, ApiProtocol, ApiView, NewApiModule, NewApiView};
 use crate::ports::ApiDefinitionRepository;
 use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, OpenApi, ToSchema};
@@ -79,6 +79,8 @@ pub fn router(
         .route("/api/module", post(create_module).get(list_modules))
         .route("/api/module/{id}", put(rename_module).delete(delete_module))
         .route("/api/definition/{id}/module", put(move_definition))
+        .route("/api/api-view", post(create_view).get(list_views))
+        .route("/api/api-view/{id}", axum::routing::delete(delete_view))
         .route("/api/task-case", post(link_task_case).get(list_task_cases))
         .route("/api/task-case/unlink", post(unlink_task_case))
         .with_state(state)
@@ -844,6 +846,85 @@ async fn list_task_cases(
             let items: Vec<ApiCaseResponse> = list.into_iter().map(ApiCaseResponse::from).collect();
             (StatusCode::OK, Json(items)).into_response()
         }
+        Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
+    }
+}
+
+// ---------- 列表视图 handlers ----------
+
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+struct ApiViewResponse {
+    id: String,
+    project_id: String,
+    user_id: String,
+    name: String,
+    config: serde_json::Value,
+    shared: bool,
+    created_at: String,
+}
+
+impl From<ApiView> for ApiViewResponse {
+    fn from(v: ApiView) -> Self {
+        Self {
+            id: v.id,
+            project_id: v.project_id,
+            user_id: v.user_id,
+            name: v.name,
+            config: v.config,
+            shared: v.shared,
+            created_at: v.created_at,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+struct ApiViewCreateBody {
+    project_id: String,
+    name: String,
+    #[serde(default)]
+    config: Option<serde_json::Value>,
+    #[serde(default)]
+    shared: Option<bool>,
+}
+
+async fn create_view(
+    user: AuthUser,
+    State(st): State<ApiDefinitionState>,
+    Json(req): Json<ApiViewCreateBody>,
+) -> Response {
+    let config = req.config.unwrap_or_else(|| serde_json::json!({}));
+    match NewApiView::new(&req.project_id, &user.user_id, &req.name, config, req.shared.unwrap_or(true)) {
+        Ok(nv) => match st.repo.insert_view(&nv).await {
+            Ok(v) => (StatusCode::CREATED, Json(ApiViewResponse::from(v))).into_response(),
+            Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
+        },
+        Err(_) => (StatusCode::BAD_REQUEST, "invalid view payload").into_response(),
+    }
+}
+
+async fn list_views(
+    user: AuthUser,
+    State(st): State<ApiDefinitionState>,
+    Query(q): Query<DefinitionListQuery>,
+) -> Response {
+    match st.repo.list_views(&q.project_id, &user.user_id).await {
+        Ok(list) => {
+            let items: Vec<ApiViewResponse> = list.into_iter().map(ApiViewResponse::from).collect();
+            (StatusCode::OK, Json(items)).into_response()
+        }
+        Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
+    }
+}
+
+async fn delete_view(
+    user: AuthUser,
+    State(st): State<ApiDefinitionState>,
+    Path(id): Path<String>,
+) -> Response {
+    match st.repo.delete_view(&id, &user.user_id).await {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
         Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
     }
 }
