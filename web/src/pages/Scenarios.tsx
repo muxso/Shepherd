@@ -4,7 +4,7 @@ import { message } from '../feedback'
 import { PlayCircleOutlined, PlusOutlined } from '@ant-design/icons'
 import { api, ApiError, type ApiCase, type Scenario, type ScenarioStep } from '../api'
 import { useApp } from '../context'
-import { methodColor } from '../components/tags'
+import { methodColor, statusColor } from '../components/tags'
 import { Workspace, WorkList, PaneHeader, useWorkTabs } from '../components/Workspace'
 import AssertionEditor from '../components/AssertionEditor'
 import { useI18n } from '../i18n'
@@ -97,7 +97,7 @@ export default function Scenarios() {
             emptyText={t('scenario.empty', '暂无场景')}
             columns={[
               { title: t('scenario.colName', '名称'), dataIndex: 'name', ellipsis: true },
-              { title: t('scenario.colStatus', '状态'), dataIndex: 'status', width: 120, render: (s: string) => <Tag>{s}</Tag> },
+              { title: t('scenario.colStatus', '状态'), dataIndex: 'status', width: 120, render: (s: string) => <Tag color={statusColor(s)}>{s}</Tag> },
             ]}
           />
         }
@@ -134,17 +134,20 @@ interface Node {
   children?: Node[]
 }
 
+// 引用 id → 可读名称(用例/子场景);未命中回落短 id,避免满屏 UUID。
+type NameOf = (id: string) => string
+
 // 把控制器载荷里的一个子步骤(原始 json)规整为 Node。
-function childToNode(c: any, t: TFn): Node {
+function childToNode(c: any, t: TFn, nameOf: NameOf): Node {
   const kind = String(c?.kind || '').toUpperCase()
-  if (kind === 'CASE') return { kind, content: <span className="ms-mono">{t('scenario.caseRef', '用例')} {c.refId}</span> }
+  if (kind === 'CASE') return { kind, content: <span className="ms-mono">{t('scenario.caseRef', '用例')} {nameOf(c.refId)}</span> }
   if (kind === 'REQUEST')
     return { kind, content: <Space><Tag color={methodColor(c.method || 'GET')}>{c.method || 'GET'}</Tag><span className="ms-mono">{c.url}</span></Space> }
-  return controlToNode(kind, c, t)
+  return controlToNode(kind, c, t, nameOf)
 }
 
-function controlToNode(kind: string, payload: any, t: TFn): Node {
-  const children = Array.isArray(payload?.children) ? payload.children.map((c: any) => childToNode(c, t)) : []
+function controlToNode(kind: string, payload: any, t: TFn, nameOf: NameOf): Node {
+  const children = Array.isArray(payload?.children) ? payload.children.map((c: any) => childToNode(c, t, nameOf)) : []
   let content: ReactNode = ''
   if (kind === 'LOOP') content = `${t('scenario.loopPrefix', '循环')} ${payload?.times ?? 1} ${t('scenario.loopSuffix', '次')}`
   else if (kind === 'IF') content = <span className="ms-mono">{payload?.variable} {payload?.operator} {payload?.value}</span>
@@ -154,11 +157,11 @@ function controlToNode(kind: string, payload: any, t: TFn): Node {
 }
 
 // 顶层步骤(ScenarioStep)→ Node。
-function stepToNode(s: ScenarioStep, t: TFn): Node {
+function stepToNode(s: ScenarioStep, t: TFn, nameOf: NameOf): Node {
   if (s.request) return { kind: 'REQUEST', content: <Space><Tag color={methodColor(s.request.method)}>{s.request.method}</Tag><span className="ms-mono">{s.request.url}</span></Space> }
-  if (s.caseId) return { kind: 'CASE', content: <span className="ms-mono">{t('scenario.caseRef', '用例')} {s.caseId}</span> }
-  if (s.scenarioId) return { kind: 'SCENARIO', content: <span className="ms-mono">{t('scenario.subScenario', '子场景')} {s.scenarioId}</span> }
-  if (s.control) return controlToNode(s.kind.toUpperCase(), s.control, t)
+  if (s.caseId) return { kind: 'CASE', content: <span className="ms-mono">{t('scenario.caseRef', '用例')} {nameOf(s.caseId)}</span> }
+  if (s.scenarioId) return { kind: 'SCENARIO', content: <span className="ms-mono">{t('scenario.subScenario', '子场景')} {nameOf(s.scenarioId)}</span> }
+  if (s.control) return controlToNode(s.kind.toUpperCase(), s.control, t, nameOf)
   return { kind: s.kind, content: '—' }
 }
 
@@ -196,6 +199,9 @@ function ScenarioDetail({ scenario }: { scenario: Scenario }) {
   const [steps, setSteps] = useState<ScenarioStep[]>([])
   const [running, setRunning] = useState(false)
   const [add, setAdd] = useState<string>('') // 当前打开的添加表单类型
+  const [nameMap, setNameMap] = useState<Record<string, string>>({})
+  // 引用名解析:命中用例/子场景名,未命中回落短 id(前 8 位),不再满屏 UUID。
+  const nameOf = (id: string) => nameMap[id] || (id ? id.slice(0, 8) : '—')
 
   const loadSteps = async () => {
     try {
@@ -207,6 +213,16 @@ function ScenarioDetail({ scenario }: { scenario: Scenario }) {
   }
   useEffect(() => {
     loadSteps()
+    // 拉项目用例 + 场景,建 id→名 映射供步骤展示。
+    Promise.all([
+      api.projectCases(scenario.projectId).then((p) => p.items).catch(() => []),
+      api.scenarios(scenario.projectId).then((s) => s).catch(() => []),
+    ]).then(([cases, scns]) => {
+      const m: Record<string, string> = {}
+      cases.forEach((c) => (m[c.id] = `${c.method} ${c.name}`))
+      scns.forEach((s) => (m[s.id] = s.name))
+      setNameMap(m)
+    })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scenario.id])
 
@@ -259,7 +275,7 @@ function ScenarioDetail({ scenario }: { scenario: Scenario }) {
       {ordered.length === 0 ? (
         <Empty description={t('scenario.emptySteps', '暂无步骤,点「添加步骤」')} />
       ) : (
-        ordered.map((s, i) => <StepRow key={s.id} node={stepToNode(s, t)} idx={i + 1} depth={0} t={t} />)
+        ordered.map((s, i) => <StepRow key={s.id} node={stepToNode(s, t, nameOf)} idx={i + 1} depth={0} t={t} />)
       )}
 
       <AddStepModal
