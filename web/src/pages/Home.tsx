@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Card, Col, Empty, Row, Spin, Statistic } from 'antd'
+import { Button, Card, Checkbox, Col, Dropdown, Empty, Row, Spin, Statistic } from 'antd'
 import {
   ApiOutlined,
   PartitionOutlined,
@@ -7,6 +7,7 @@ import {
   ScheduleOutlined,
   FileTextOutlined,
   BugOutlined,
+  SettingOutlined,
 } from '@ant-design/icons'
 import { api } from '../api'
 import { useApp } from '../context'
@@ -30,6 +31,19 @@ export default function Home() {
   const { t } = useI18n()
   const [c, setC] = useState<Counts | null>(null)
   const [loading, setLoading] = useState(false)
+  // 卡片显隐自定义(持久化),对标 MeterSphere「卡片设置」的简化版。
+  const CARDS_KEY = 'shepherd.home.cards'
+  const [shown, setShown] = useState<string[]>(() => {
+    try {
+      return JSON.parse(localStorage.getItem(CARDS_KEY) || '["overview","assets"]')
+    } catch {
+      return ['overview', 'assets']
+    }
+  })
+  const setShownP = (v: string[]) => {
+    setShown(v)
+    localStorage.setItem(CARDS_KEY, JSON.stringify(v))
+  }
 
   useEffect(() => {
     if (!projectId) {
@@ -84,7 +98,28 @@ export default function Home() {
 
   return (
     <div style={{ padding: 16, height: '100%', overflow: 'auto' }}>
+      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 12 }}>
+        <Dropdown
+          trigger={['click']}
+          popupRender={() => (
+            <Card size="small" styles={{ body: { padding: 12 } }}>
+              <Checkbox.Group
+                value={shown}
+                onChange={(v) => setShownP(v as string[])}
+                options={[
+                  { label: t('home.title', '项目概览'), value: 'overview' },
+                  { label: t('home.assetDist', '测试资产分布'), value: 'assets' },
+                ]}
+                style={{ display: 'flex', flexDirection: 'column', gap: 6 }}
+              />
+            </Card>
+          )}
+        >
+          <Button size="small" icon={<SettingOutlined />}>{t('home.cardSettings', '卡片设置')}</Button>
+        </Dropdown>
+      </div>
       <Spin spinning={loading}>
+        {shown.includes('overview') && (
         <Card title={t('home.title', '项目概览')} size="small" style={{ marginBottom: 16 }}>
           <Row gutter={[16, 16]}>
             {cards.map((card) => (
@@ -105,7 +140,9 @@ export default function Home() {
             ))}
           </Row>
         </Card>
+        )}
 
+        {shown.includes('assets') && (
         <Card title={t('home.assetDist', '测试资产分布')} size="small">
           {totalAssets === 0 ? (
             <Empty description={t('common.empty', '暂无数据')} />
@@ -127,6 +164,7 @@ export default function Home() {
             </div>
           )}
         </Card>
+        )}
       </Spin>
     </div>
   )
