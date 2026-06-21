@@ -121,6 +121,21 @@ export default function FunctionalCases() {
 }
 
 function CaseDetail({ c }: { c: FunctionalCase }) {
+  const cf = c.customFields || {}
+  const stepsTable = (
+    <Table<CaseStep>
+      rowKey={(_, i) => String(i)}
+      size="small"
+      pagination={false}
+      dataSource={c.steps || []}
+      locale={{ emptyText: <Empty description="无步骤" /> }}
+      columns={[
+        { title: '序号', width: 60, render: (_, __, i) => i + 1 },
+        { title: '用例步骤', dataIndex: 'step' },
+        { title: '预期结果', dataIndex: 'expected' },
+      ]}
+    />
+  )
   return (
     <div style={{ padding: '12px 16px', height: '100%', overflow: 'auto' }}>
       <Tabs
@@ -138,23 +153,30 @@ function CaseDetail({ c }: { c: FunctionalCase }) {
             ),
           },
           {
-            key: 'steps',
-            label: `步骤与预期 (${c.steps?.length || 0})`,
+            key: 'detail',
+            label: '详情',
             children: (
-              <Table<CaseStep>
-                rowKey={(_, i) => String(i)}
-                size="small"
-                pagination={false}
-                dataSource={c.steps || []}
-                locale={{ emptyText: <Empty description="无步骤" /> }}
-                columns={[
-                  { title: '#', width: 50, render: (_, __, i) => i + 1 },
-                  { title: '步骤描述', dataIndex: 'step' },
-                  { title: '预期结果', dataIndex: 'expected' },
-                ]}
-              />
+              <Space direction="vertical" style={{ width: '100%' }} size={16}>
+                <div>
+                  <div style={{ fontWeight: 600, marginBottom: 6 }}>前置条件</div>
+                  <div style={{ background: '#fafafa', border: '1px solid #f0f0f0', borderRadius: 6, padding: 10, minHeight: 40, whiteSpace: 'pre-wrap' }}>
+                    {cf['前置条件'] || <span style={{ color: '#bbb' }}>无</span>}
+                  </div>
+                </div>
+                <div>
+                  <div style={{ fontWeight: 600, marginBottom: 6 }}>步骤描述</div>
+                  {stepsTable}
+                </div>
+                <div>
+                  <div style={{ fontWeight: 600, marginBottom: 6 }}>备注</div>
+                  <div style={{ background: '#fafafa', border: '1px solid #f0f0f0', borderRadius: 6, padding: 10, minHeight: 40, whiteSpace: 'pre-wrap' }}>
+                    {cf['备注'] || <span style={{ color: '#bbb' }}>无</span>}
+                  </div>
+                </div>
+              </Space>
             ),
           },
+          { key: 'steps', label: `步骤与预期 (${c.steps?.length || 0})`, children: stepsTable },
         ]}
       />
     </div>
@@ -186,12 +208,16 @@ function CreateCaseModal({
         onFinish={async (v) => {
           setSaving(true)
           try {
+            const customFields: Record<string, string> = {}
+            if (v.prerequisite?.trim()) customFields['前置条件'] = v.prerequisite.trim()
+            if (v.remark?.trim()) customFields['备注'] = v.remark.trim()
             await api.createFunctionalCase({
               projectId,
               name: v.name,
               priority: v.priority,
               module: v.module || undefined,
               steps: (v.steps || []).filter((s: CaseStep) => s.step.trim() || s.expected.trim()),
+              customFields: Object.keys(customFields).length ? customFields : undefined,
             })
             message.success('用例已创建')
             onCreated()
@@ -213,8 +239,14 @@ function CreateCaseModal({
             <Select options={PRIORITIES.map((p) => ({ value: p, label: p }))} />
           </Form.Item>
         </Space.Compact>
+        <Form.Item name="prerequisite" label="前置条件">
+          <Input.TextArea rows={2} placeholder="如:进入管理登录页 https://..." />
+        </Form.Item>
         <Form.Item name="steps" label="测试步骤(步骤 + 预期结果)">
           <StepsEditor />
+        </Form.Item>
+        <Form.Item name="remark" label="备注">
+          <Input.TextArea rows={2} />
         </Form.Item>
       </Form>
     </Modal>

@@ -204,6 +204,7 @@ export interface FunctionalCase {
   priority?: string
   status?: string
   steps?: CaseStep[]
+  customFields?: Record<string, string>
 }
 
 export interface Environment {
@@ -419,6 +420,7 @@ export const api = {
     priority?: string
     module?: string
     steps?: CaseStep[]
+    customFields?: Record<string, string>
   }) => http.post<FunctionalCase>('/functional-case', b),
 
   // 项目接口用例(供测试计划挂载选择)
