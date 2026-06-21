@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { Button, Checkbox, Drawer, Dropdown, Empty, Input, Table, Modal, Popover, Segmented, Select, Space, Switch, Tabs, Tag, Tooltip, Tree, Upload } from 'antd'
+import { Button, Checkbox, Divider, Drawer, Dropdown, Empty, Input, Table, Modal, Popover, Segmented, Select, Space, Switch, Tabs, Tag, Tooltip, Tree, Upload } from 'antd'
+import { useSearchParams } from 'react-router-dom'
 import { message, modal } from '../feedback'
 import {
   PlusOutlined,
@@ -16,9 +17,12 @@ import {
   ThunderboltOutlined,
   CodeOutlined,
   DownOutlined,
+  ShareAltOutlined,
+  DeleteOutlined,
+  EyeOutlined,
 } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
-import { api, ApiError, type ApiDefinition, type ApiModule, type ApiSpec, type Environment } from '../api'
+import { api, ApiError, type ApiDefinition, type ApiModule, type ApiSpec, type ApiView, type Environment } from '../api'
 import { useApp } from '../context'
 import { methodColor, statusColor } from '../components/tags'
 import CasesPanel from './CasesPanel'
@@ -105,24 +109,97 @@ export default function ApiDefinitions() {
   const [advLogic, setAdvLogic] = useState<'all' | 'any'>('all')
   const [advConds, setAdvConds] = useState<AdvCond[]>([])
   const [advApplied, setAdvApplied] = useState<{ logic: 'all' | 'any'; conds: AdvCond[] }>({ logic: 'all', conds: [] })
+  // 列表视图(保存的筛选/列/分页快照)。
+  const [views, setViews] = useState<ApiView[]>([])
+  const [activeViewId, setActiveViewId] = useState<string | null>(null)
+  const [viewName, setViewName] = useState('')
+  const [viewPopOpen, setViewPopOpen] = useState(false)
+  const [searchParams, setSearchParams] = useSearchParams()
 
   const load = async () => {
     if (!projectId) {
       setDefs([])
       setModules([])
+      setViews([])
       return
     }
     setLoading(true)
     try {
-      const [ds, ms] = await Promise.all([api.definitions(projectId), api.modules(projectId)])
+      const [ds, ms, vs] = await Promise.all([api.definitions(projectId), api.modules(projectId), api.views(projectId)])
       setDefs(Array.isArray(ds) ? ds : [])
       setModules(Array.isArray(ms) ? ms : [])
+      setViews(Array.isArray(vs) ? vs : [])
     } catch (e) {
       message.error(e instanceof ApiError ? e.message : t('apidef.loadFailed', '加载失败'))
     } finally {
       setLoading(false)
     }
   }
+
+  // 视图快照:当前筛选/列/分页 → config;反向 applyConfig 把 config 写回各状态。
+  type ViewConfig = { search?: string; moduleKey?: string; pageSize?: number; hiddenCols?: string[]; advLogic?: 'all' | 'any'; advConds?: AdvCond[] }
+  const currentConfig = (): ViewConfig => ({ search, moduleKey, pageSize, hiddenCols, advLogic: advApplied.logic, advConds: advApplied.conds })
+  const applyConfig = (c: ViewConfig) => {
+    if (typeof c.search === 'string') setSearch(c.search)
+    if (typeof c.moduleKey === 'string') setModuleKey(c.moduleKey)
+    if (typeof c.pageSize === 'number') setPageSize(c.pageSize)
+    if (Array.isArray(c.hiddenCols)) setHiddenCols(c.hiddenCols)
+    const logic = c.advLogic ?? 'all'
+    const conds = Array.isArray(c.advConds) ? c.advConds : []
+    setAdvApplied({ logic, conds })
+    setAdvLogic(logic)
+    setAdvConds(conds)
+  }
+  const applyView = (v: ApiView) => {
+    applyConfig(v.config as ViewConfig)
+    setActiveViewId(v.id)
+    setViewPopOpen(false)
+    message.success(t('apidef.viewApplied', '已应用视图') + `「${v.name}」`)
+  }
+  const saveView = async () => {
+    const name = viewName.trim()
+    if (!name) return message.warning(t('apidef.viewNameRequired', '请输入视图名称'))
+    try {
+      const v = await api.createView({ projectId, name, config: currentConfig(), shared: true })
+      setViews((vs) => [v, ...vs])
+      setActiveViewId(v.id)
+      setViewName('')
+      message.success(t('apidef.viewSaved', '视图已保存'))
+    } catch (e) {
+      message.error(e instanceof ApiError ? e.message : t('apidef.saveFailed', '保存失败'))
+    }
+  }
+  const shareView = async (v: ApiView) => {
+    const url = `${window.location.origin}${window.location.pathname}?view=${encodeURIComponent(v.id)}`
+    try {
+      await navigator.clipboard?.writeText(url)
+      message.success(t('apidef.viewLinkCopied', '分享链接已复制'))
+    } catch {
+      message.info(url)
+    }
+  }
+  const removeView = async (v: ApiView) => {
+    try {
+      await api.deleteView(v.id)
+      setViews((vs) => vs.filter((x) => x.id !== v.id))
+      if (activeViewId === v.id) setActiveViewId(null)
+      message.success(t('apidef.viewDeleted', '视图已删除'))
+    } catch (e) {
+      message.error(e instanceof ApiError ? e.message : t('apidef.deleteFailed', '删除失败'))
+    }
+  }
+
+  // 深链 ?view=<id>:视图加载后命中即应用,然后清参数(避免重复)。
+  useEffect(() => {
+    const vid = searchParams.get('view')
+    if (!vid || !views.length) return
+    const v = views.find((x) => x.id === vid)
+    if (v) applyView(v)
+    const next = new URLSearchParams(searchParams)
+    next.delete('view')
+    setSearchParams(next, { replace: true })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [views])
 
   useEffect(() => {
     load()
@@ -312,7 +389,46 @@ export default function ApiDefinitions() {
         <Button type="primary" icon={<PlusOutlined />} onClick={() => { setCreating(true); setActiveKey(NEW_KEY) }}>{t('apidef.addApi', '添加接口')}</Button>
         <Button icon={<ImportOutlined />} onClick={() => setImportOpen(true)}>{t('a.import', '导入')}</Button>
         <div style={{ flex: 1 }} />
-        <Input.Search placeholder={t('apidef.searchPlaceholder', '搜索 ID/名称/路径')} allowClear style={{ width: 240 }} onChange={(e) => setSearch(e.target.value)} />
+        <Input.Search placeholder={t('apidef.searchPlaceholder', '搜索 ID/名称/路径')} allowClear style={{ width: 240 }} value={search} onChange={(e) => setSearch(e.target.value)} />
+        <Popover
+          trigger="click"
+          placement="bottomRight"
+          open={viewPopOpen}
+          onOpenChange={setViewPopOpen}
+          title={t('apidef.views', '视图')}
+          content={
+            <div style={{ width: 268 }}>
+              {views.length === 0 ? (
+                <div style={{ color: '#8a9099', fontSize: 12, padding: '2px 0 8px' }}>{t('apidef.noViews', '暂无视图,保存当前筛选为视图')}</div>
+              ) : (
+                <Space direction="vertical" size={2} style={{ width: '100%' }}>
+                  {views.map((v) => (
+                    <div key={v.id} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                      <a style={{ flex: 1, fontWeight: v.id === activeViewId ? 600 : 400, color: v.id === activeViewId ? '#7c3aed' : undefined, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} onClick={() => applyView(v)} title={v.name}>
+                        {v.name}
+                      </a>
+                      <Tooltip title={t('apidef.shareView', '分享')}>
+                        <Button type="text" size="small" icon={<ShareAltOutlined />} onClick={() => shareView(v)} />
+                      </Tooltip>
+                      <Tooltip title={t('a.delete', '删除')}>
+                        <Button type="text" size="small" danger icon={<DeleteOutlined />} onClick={() => removeView(v)} />
+                      </Tooltip>
+                    </div>
+                  ))}
+                </Space>
+              )}
+              <Divider style={{ margin: '8px 0' }} />
+              <Space.Compact style={{ width: '100%' }}>
+                <Input size="small" placeholder={t('apidef.viewName', '视图名称')} value={viewName} onChange={(e) => setViewName(e.target.value)} onPressEnter={saveView} />
+                <Button size="small" type="primary" onClick={saveView}>{t('apidef.saveCurrent', '保存当前')}</Button>
+              </Space.Compact>
+            </div>
+          }
+        >
+          <Button icon={<EyeOutlined />}>
+            {t('apidef.views', '视图')}{activeViewId ? `: ${views.find((v) => v.id === activeViewId)?.name ?? ''}` : ''}
+          </Button>
+        </Popover>
         <Button icon={<FilterOutlined />} onClick={() => { setAdvLogic(advApplied.logic); setAdvConds(advApplied.conds.length ? advApplied.conds : [{ field: 'name', op: 'contains', value: '' }]); setAdvOpen(true) }}>
           {t('apidef.filter', '筛选')}{advApplied.conds.length ? ` (${advApplied.conds.length})` : ''}
         </Button>
