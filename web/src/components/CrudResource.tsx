@@ -38,6 +38,7 @@ export default function CrudResource<T extends object>({ cfg }: { cfg: CrudConfi
   const [rows, setRows] = useState<T[]>([])
   const [loading, setLoading] = useState(false)
   const [open, setOpen] = useState(false)
+  const [q, setQ] = useState('')
 
   const load = async () => {
     if (cfg.needsProject && !projectId) {
@@ -91,6 +92,7 @@ export default function CrudResource<T extends object>({ cfg }: { cfg: CrudConfi
           )}
         </div>
         <div style={{ flex: 1 }} />
+        <Input.Search allowClear placeholder={t('a.search', '搜索')} style={{ width: 220 }} onChange={(e) => setQ(e.target.value)} />
         {cfg.create && (
           <Button type="primary" icon={<PlusOutlined />} onClick={() => setOpen(true)}>
             {t('a.new', '新建')}
@@ -103,7 +105,7 @@ export default function CrudResource<T extends object>({ cfg }: { cfg: CrudConfi
           rowKey={(cfg.rowKey || 'id') as string}
           size="middle"
           loading={loading}
-          dataSource={rows}
+          dataSource={q ? rows.filter((r) => JSON.stringify(r).toLowerCase().includes(q.toLowerCase())) : rows}
           columns={cfg.columns}
           pagination={{ pageSize: 15, size: 'small', showTotal: (n) => t('crud.total', '共 {n} 条').replace('{n}', String(n)) }}
           locale={{ emptyText: <Empty description={t('common.empty', '暂无数据')} /> }}
