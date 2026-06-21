@@ -422,7 +422,7 @@ function ApiDetail({ definition }: { definition: ApiDefinition }) {
           { key: 'define', label: t('apidef.define', '定义'), children: <ApiSpecPanel definition={definition} mode="define" /> },
           { key: 'refs', label: t('apidef.references', '引用关系'), children: <ReferencesPanel definition={definition} /> },
           { key: 'history', label: t('apidef.changeHistory', '变更历史'), children: <ChangeHistoryPanel definition={definition} /> },
-          { key: 'debug', label: t('apidef.debug', '调试'), children: <RequestEditor initialMethod={definition.method || 'GET'} initialUrl={definition.path || ''} /> },
+          { key: 'debug', label: t('apidef.debug', '调试'), children: <RequestEditor initialMethod={definition.method || 'GET'} initialUrl={definition.path || ''} lockedProtocol={definition.protocol} /> },
           { key: 'cases', label: t('apidef.cases', '接口用例'), children: <CasesPanel definition={definition} /> },
           { key: 'mock', label: 'Mock', children: <MocksPanel definition={definition} /> },
         ]}

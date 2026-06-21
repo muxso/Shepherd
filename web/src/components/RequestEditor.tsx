@@ -93,14 +93,18 @@ function resolveMock(s: string): string {
 export default function RequestEditor({
   initialMethod = 'GET',
   initialUrl = '',
+  lockedProtocol,
 }: {
   initialMethod?: string
   initialUrl?: string
+  /** 嵌入接口定义调试时:协议由定义决定并锁定(HTTP 定义不能切到 Redis/SSH…)。 */
+  lockedProtocol?: string
 }) {
   const { t } = useI18n()
   const { projectId } = useApp()
   const [method, setMethod] = useState(initialMethod || 'GET')
-  const [protocol, setProtocol] = useState('HTTP')
+  // 协议锁定时取定义协议(大写,与 PROTOCOLS.value 对齐);否则默认 HTTP 可切换。
+  const [protocol, setProtocol] = useState(() => (lockedProtocol ? lockedProtocol.toUpperCase() : 'HTTP'))
   const [metaValues, setMetaValues] = useState<Record<string, string>>({})
   const [availProtos, setAvailProtos] = useState<string[]>(['http'])
   // 环境:提供 baseUrl(相对路径前缀)+ 默认头 + {{变量}}。没有环境就无法对相对路径发请求——
@@ -261,7 +265,12 @@ export default function RequestEditor({
   const reqPanel = (
     <>
       <Space.Compact style={{ width: '100%', marginBottom: 12 }}>
-        <Select value={protocol} onChange={setProtocol} style={{ width: 120 }} options={protoOptions} />
+        {/* 协议:定义内调试锁定为定义协议(只读);独立调试可自由切换。 */}
+        {lockedProtocol ? (
+          <Select value={protocol} disabled style={{ width: 120 }} options={[{ value: protocol, label: spec.label }]} />
+        ) : (
+          <Select value={protocol} onChange={setProtocol} style={{ width: 120 }} options={protoOptions} />
+        )}
         {spec.httpMethod && (
           <Select value={method} onChange={setMethod} style={{ width: 100 }} options={METHODS.map((m) => ({ value: m, label: m }))} />
         )}
