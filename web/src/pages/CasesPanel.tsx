@@ -25,6 +25,7 @@ import {
   type RunMode,
 } from '../api'
 import { methodColor, outcomeColor } from '../components/tags'
+import AssertionEditor from '../components/AssertionEditor'
 
 const METHODS = ['GET', 'POST', 'PUT', 'DELETE', 'PATCH']
 
@@ -266,18 +267,9 @@ function CreateCaseModal({
         initialValues={{
           method: definition.method || 'GET',
           url: definition.path || '',
-          assertions: '[{"type":"StatusIs","args":200}]',
+          assertions: [{ type: 'StatusIs', args: 200 }],
         }}
         onFinish={async (v) => {
-          let assertions: unknown = []
-          if (v.assertions?.trim()) {
-            try {
-              assertions = JSON.parse(v.assertions)
-            } catch {
-              message.error('断言不是合法 JSON 数组')
-              return
-            }
-          }
           setSaving(true)
           try {
             await api.createCase(definition.id, {
@@ -285,7 +277,7 @@ function CreateCaseModal({
               method: v.method,
               url: v.url,
               body: v.body || undefined,
-              assertions,
+              assertions: v.assertions || [],
             })
             message.success('用例已创建')
             onCreated()
@@ -310,8 +302,8 @@ function CreateCaseModal({
         <Form.Item name="body" label="请求体(可选)">
           <Input.TextArea rows={3} className="ms-mono" placeholder='{"username":"admin"}' />
         </Form.Item>
-        <Form.Item name="assertions" label="断言(JSON 数组)" tooltip="如 StatusIs / BodyContains">
-          <Input.TextArea rows={3} className="ms-mono" />
+        <Form.Item name="assertions" label="断言">
+          <AssertionEditor />
         </Form.Item>
       </Form>
     </Modal>
