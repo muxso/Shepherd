@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
-import { Button, Dropdown, Empty, Form, Input, Modal, Select, Space, Switch, Tag, Tree, Typography } from 'antd'
+import { Button, Drawer, Dropdown, Empty, Form, Input, Modal, Select, Space, Switch, Table, Tag, Tree, Typography } from 'antd'
 import { message } from '../feedback'
-import { PlayCircleOutlined, PlusOutlined } from '@ant-design/icons'
-import { api, ApiError, type ApiCase, type Scenario, type ScenarioStep } from '../api'
+import { HistoryOutlined, PlayCircleOutlined, PlusOutlined } from '@ant-design/icons'
+import { api, ApiError, type ApiCase, type Scenario, type ScenarioExecution, type ScenarioRunResult, type ScenarioStep } from '../api'
 import { useApp } from '../context'
-import { methodColor, statusColor } from '../components/tags'
+import { methodColor, statusColor, outcomeColor } from '../components/tags'
 import { Workspace, WorkList, PaneHeader, useWorkTabs } from '../components/Workspace'
 import AssertionEditor from '../components/AssertionEditor'
 import { useI18n } from '../i18n'
@@ -199,6 +199,8 @@ function ScenarioDetail({ scenario }: { scenario: Scenario }) {
   const [steps, setSteps] = useState<ScenarioStep[]>([])
   const [running, setRunning] = useState(false)
   const [add, setAdd] = useState<string>('') // 当前打开的添加表单类型
+  const [lastRun, setLastRun] = useState<ScenarioRunResult | null>(null)
+  const [histOpen, setHistOpen] = useState(false)
   const [nameMap, setNameMap] = useState<Record<string, string>>({})
   // 引用名解析:命中用例/子场景名,未命中回落短 id(前 8 位),不再满屏 UUID。
   const nameOf = (id: string) => nameMap[id] || (id ? id.slice(0, 8) : '—')
@@ -229,8 +231,9 @@ function ScenarioDetail({ scenario }: { scenario: Scenario }) {
   const run = async () => {
     setRunning(true)
     try {
-      await api.runScenario(scenario.id, scenario.projectId)
-      message.success(t('scenario.triggered', '场景已触发执行'))
+      const r = await api.runScenario(scenario.id, scenario.projectId)
+      setLastRun(r)
+      message.success(`${t('scenario.triggered', '场景已触发执行')} · ${r.status}`)
     } catch (e) {
       message.error(e instanceof ApiError ? `${t('scenario.execFailed', '执行失败')}:${e.status}` : t('scenario.execFailed', '执行失败'))
     } finally {
@@ -269,6 +272,12 @@ function ScenarioDetail({ scenario }: { scenario: Scenario }) {
           <Button icon={<PlusOutlined />} size="small">{t('scenario.addStep', '添加步骤')} ▾</Button>
         </Dropdown>
         <Button type="primary" icon={<PlayCircleOutlined />} size="small" loading={running} onClick={run}>{t('scenario.runScenario', '运行场景')}</Button>
+        <Button icon={<HistoryOutlined />} size="small" onClick={() => setHistOpen(true)}>{t('scenario.history', '执行历史')}</Button>
+        {lastRun && (
+          <Tag color={outcomeColor(lastRun.status)} style={{ margin: 0 }}>
+            {lastRun.status} · {lastRun.caseCount} {t('scenario.caseUnit', '用例')}
+          </Tag>
+        )}
         <Typography.Text type="secondary" style={{ fontSize: 12 }}>{t('scenario.totalPrefix', '共')} {steps.length} {t('scenario.totalSuffix', '个步骤')}</Typography.Text>
       </Space>
 
@@ -286,7 +295,40 @@ function ScenarioDetail({ scenario }: { scenario: Scenario }) {
         onClose={() => setAdd('')}
         onAdded={onAdded}
       />
+      <ScenarioHistoryDrawer scenario={histOpen ? scenario : null} onClose={() => setHistOpen(false)} t={t} />
     </div>
+  )
+}
+
+// 场景执行历史:状态 + 用例数 + 时间。补上「运行后只有瞬时 toast」的可追溯缺口。
+function ScenarioHistoryDrawer({ scenario, onClose, t }: { scenario: Scenario | null; onClose: () => void; t: TFn }) {
+  const [rows, setRows] = useState<ScenarioExecution[]>([])
+  const [loading, setLoading] = useState(false)
+  useEffect(() => {
+    if (!scenario) return
+    setLoading(true)
+    api
+      .scenarioExecutions(scenario.id)
+      .then((p) => setRows(p.items))
+      .catch(() => setRows([]))
+      .finally(() => setLoading(false))
+  }, [scenario])
+  return (
+    <Drawer title={t('scenario.execHistory', '执行历史')} open={!!scenario} onClose={onClose} width={560}>
+      <Table<ScenarioExecution>
+        rowKey="id"
+        size="small"
+        loading={loading}
+        dataSource={rows}
+        locale={{ emptyText: <Empty description={t('scenario.noExec', '暂无执行记录')} /> }}
+        pagination={false}
+        columns={[
+          { title: t('scenario.colStatus', '状态'), dataIndex: 'status', width: 100, render: (s: string) => <Tag color={outcomeColor(s)}>{s}</Tag> },
+          { title: t('scenario.caseUnit', '用例'), dataIndex: 'caseCount', width: 80 },
+          { title: t('scenario.execTime', '时间'), dataIndex: 'createdAt', render: (v: string) => <span className="ms-mono" style={{ fontSize: 12 }}>{v?.slice(0, 19)}</span> },
+        ]}
+      />
+    </Drawer>
   )
 }
 
