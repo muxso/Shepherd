@@ -71,6 +71,7 @@ pub fn router(
         .route("/api/definition/import", post(import_definitions))
         .route("/api/definition/{id}", axum::routing::get(get_definition))
         .route("/api/definition/{id}/spec", put(update_definition_spec))
+        .route("/api/definition/{id}/changes", axum::routing::get(list_definition_changes))
         .route("/api/definition/{id}/case", post(create_case).get(list_cases))
         .route("/api/case", post(create_standalone_case).get(list_project_cases))
         .route("/api/definition/{id}/mock", post(create_mock).get(list_mocks))
@@ -280,7 +281,14 @@ async fn create_definition(
     let method = req.method.as_deref().unwrap_or_default();
     let path = req.path.as_deref().unwrap_or_default();
     match st.create_def.execute(&req.project_id, &req.name, protocol, method, path).await {
-        Ok(d) => (StatusCode::CREATED, Json(ApiDefinitionResponse::from(d))).into_response(),
+        Ok(d) => {
+            // 审计:记录创建(best-effort,失败不阻断)。
+            let _ = st
+                .repo
+                .record_definition_change(&d.id, "CREATE", &format!("{} {}", d.method, d.path), &user.user_id)
+                .await;
+            (StatusCode::CREATED, Json(ApiDefinitionResponse::from(d))).into_response()
+        }
         Err(CreateApiDefinitionError::Validation(_)) => {
             (StatusCode::BAD_REQUEST, "invalid api definition payload").into_response()
         }
@@ -343,7 +351,13 @@ async fn update_definition_spec(
     }
     let spec = req.spec.to_string();
     match st.repo.update_definition_spec(&id, &spec).await {
-        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Ok(()) => {
+            let _ = st
+                .repo
+                .record_definition_change(&id, "UPDATE_SPEC", "更新请求/响应规格", &user.user_id)
+                .await;
+            StatusCode::NO_CONTENT.into_response()
+        }
         Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
     }
 }
@@ -617,7 +631,52 @@ async fn move_definition(
     }
     let module = req.module_id.as_deref().filter(|s| !s.is_empty());
     match st.repo.set_definition_module(&id, module).await {
-        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Ok(()) => {
+            let detail = match module {
+                Some(m) => format!("移入模块 {m}"),
+                None => "移出到未归类".to_string(),
+            };
+            let _ = st.repo.record_definition_change(&id, "MOVE_MODULE", &detail, &user.user_id).await;
+            StatusCode::NO_CONTENT.into_response()
+        }
+        Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
+    }
+}
+
+// ---------- 变更历史(审计)handler ----------
+
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+struct ApiDefinitionChangeResponse {
+    id: String,
+    definition_id: String,
+    action: String,
+    detail: String,
+    actor: String,
+    created_at: String,
+}
+
+impl From<crate::domain::ApiDefinitionChange> for ApiDefinitionChangeResponse {
+    fn from(c: crate::domain::ApiDefinitionChange) -> Self {
+        Self {
+            id: c.id,
+            definition_id: c.definition_id,
+            action: c.action,
+            detail: c.detail,
+            actor: c.actor,
+            created_at: c.created_at,
+        }
+    }
+}
+
+#[utoipa::path(get, path = "/api/definition/{id}/changes", tag = "api-definition", params(("id" = String, Path)), responses((status = 200, body = [ApiDefinitionChangeResponse])))]
+async fn list_definition_changes(State(st): State<ApiDefinitionState>, Path(id): Path<String>) -> Response {
+    match st.repo.list_definition_changes(&id).await {
+        Ok(list) => {
+            let items: Vec<ApiDefinitionChangeResponse> =
+                list.into_iter().map(ApiDefinitionChangeResponse::from).collect();
+            (StatusCode::OK, Json(items)).into_response()
+        }
         Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
     }
 }
@@ -737,6 +796,7 @@ async fn import_definitions(
         list_definitions,
         get_definition,
         update_definition_spec,
+        list_definition_changes,
         create_case,
         list_cases,
         create_standalone_case,
@@ -748,6 +808,7 @@ async fn import_definitions(
         ApiDefinitionCreateBody,
         ApiDefinitionResponse,
         SpecUpdateBody,
+        ApiDefinitionChangeResponse,
         ApiCaseCreateBody,
         ApiCaseResponse,
         StandaloneCaseBody,

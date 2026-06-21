@@ -3,8 +3,8 @@
 use async_trait::async_trait;
 
 use crate::domain::{
-    ApiCase, ApiDefinition, ApiModule, ApiMock, NewApiCase, NewApiDefinition, NewApiModule,
-    NewApiMock,
+    ApiCase, ApiDefinition, ApiDefinitionChange, ApiModule, ApiMock, NewApiCase, NewApiDefinition,
+    NewApiModule, NewApiMock,
 };
 
 use thiserror::Error;
@@ -34,6 +34,21 @@ pub trait ApiDefinitionRepository: Send + Sync {
         &self,
         project_id: &str,
     ) -> Result<Vec<ApiDefinition>, RepoError>;
+
+    /// 追加一条接口定义变更历史(审计)。
+    async fn record_definition_change(
+        &self,
+        definition_id: &str,
+        action: &str,
+        detail: &str,
+        actor: &str,
+    ) -> Result<(), RepoError>;
+
+    /// 列出某接口定义的变更历史(按时间倒序,最新在前)。
+    async fn list_definition_changes(
+        &self,
+        definition_id: &str,
+    ) -> Result<Vec<ApiDefinitionChange>, RepoError>;
 
     /// 插入接口用例。
     async fn insert_case(&self, c: &NewApiCase) -> Result<ApiCase, RepoError>;

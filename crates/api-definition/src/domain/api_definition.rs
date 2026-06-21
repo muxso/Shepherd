@@ -130,6 +130,21 @@ pub struct ApiDefinition {
     pub spec: String,
 }
 
+/// 接口定义变更历史一条(审计)。追加写;由仓储补 id/created_at。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ApiDefinitionChange {
+    pub id: String,
+    pub definition_id: String,
+    /// 动作:CREATE | UPDATE_SPEC | MOVE_MODULE | RENAME | …
+    pub action: String,
+    /// 简短描述(可空串)。
+    pub detail: String,
+    /// 操作者 user_id。
+    pub actor: String,
+    /// 创建时间(以文本承载,避免引入时间库依赖)。
+    pub created_at: String,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
