@@ -2,7 +2,16 @@
 
 use std::collections::BTreeMap;
 
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
+
+/// 功能用例的一个测试步骤:步骤描述 + 预期结果(手工用例)。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CaseStep {
+    pub step: String,
+    pub expected: String,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum CaseError {
@@ -22,6 +31,8 @@ pub struct FunctionalCase {
     pub priority: String,
     pub status: String,
     pub custom_fields: BTreeMap<String, String>,
+    /// 手工测试步骤(步骤 + 预期结果)。
+    pub steps: Vec<CaseStep>,
 }
 
 /// 待创建用例(构造即校验:项目/名称非空;module/priority/status 缺省给默认)。
@@ -33,6 +44,7 @@ pub struct NewFunctionalCase {
     pub priority: String,
     pub status: String,
     pub custom_fields: BTreeMap<String, String>,
+    pub steps: Vec<CaseStep>,
 }
 
 impl NewFunctionalCase {
@@ -43,6 +55,7 @@ impl NewFunctionalCase {
         priority: &str,
         status: &str,
         custom_fields: BTreeMap<String, String>,
+        steps: Vec<CaseStep>,
     ) -> Result<Self, CaseError> {
         let project_id = project_id.trim();
         if project_id.is_empty() {
@@ -63,6 +76,7 @@ impl NewFunctionalCase {
             priority: with_default(priority, "P2"),
             status: with_default(status, "PREPARED"),
             custom_fields,
+            steps,
         })
     }
 }
@@ -77,7 +91,7 @@ mod tests {
 
     #[test]
     fn defaults_priority_and_status() {
-        let c = NewFunctionalCase::new("p1", "登录成功", "", "", "", fields()).expect("ok");
+        let c = NewFunctionalCase::new("p1", "登录成功", "", "", "", fields(), Vec::new()).expect("ok");
         assert_eq!(c.priority, "P2");
         assert_eq!(c.status, "PREPARED");
         assert_eq!(c.custom_fields["owner"], "alice");
@@ -85,7 +99,7 @@ mod tests {
 
     #[test]
     fn keeps_given_values_and_trims() {
-        let c = NewFunctionalCase::new(" p1 ", " 用例 ", "登录", "P0", "REVIEWING", fields())
+        let c = NewFunctionalCase::new(" p1 ", " 用例 ", "登录", "P0", "REVIEWING", fields(), Vec::new())
             .expect("ok");
         assert_eq!(c.project_id, "p1");
         assert_eq!(c.name, "用例");
@@ -96,11 +110,11 @@ mod tests {
     #[test]
     fn rejects_empty_project_and_name() {
         assert_eq!(
-            NewFunctionalCase::new(" ", "x", "", "", "", fields()).unwrap_err(),
+            NewFunctionalCase::new(" ", "x", "", "", "", fields(), Vec::new()).unwrap_err(),
             CaseError::EmptyProject
         );
         assert_eq!(
-            NewFunctionalCase::new("p1", "  ", "", "", "", fields()).unwrap_err(),
+            NewFunctionalCase::new("p1", "  ", "", "", "", fields(), Vec::new()).unwrap_err(),
             CaseError::EmptyName
         );
     }

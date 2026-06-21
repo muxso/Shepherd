@@ -7,16 +7,15 @@ import Scenarios from './pages/Scenarios'
 import TestPlans from './pages/TestPlans'
 import Perf from './pages/Perf'
 import Requirements from './pages/Requirements'
-import Orchestration from './pages/Orchestration'
 import Bugs from './pages/Bugs'
 import Skills from './pages/Skills'
 import Mcp from './pages/Mcp'
+import FunctionalCases from './pages/FunctionalCases'
 import {
   OrganizationsPage,
   RolesPage,
   UsersPage,
   ProjectsPage,
-  FunctionalCasesPage,
   EnvironmentsPage,
   ResourcePoolsPage,
 } from './pages/resources'
@@ -31,7 +30,7 @@ export default function App() {
         <Route path="/" element={<Navigate to="/api/definition" replace />} />
         <Route path="/api/definition" element={<ApiDefinitions />} />
         <Route path="/api/scenario" element={<Scenarios />} />
-        <Route path="/functional-case" element={<FunctionalCasesPage />} />
+        <Route path="/functional-case" element={<FunctionalCases />} />
         <Route path="/environment" element={<EnvironmentsPage />} />
         <Route path="/resource-pool" element={<ResourcePoolsPage />} />
         <Route path="/organization" element={<OrganizationsPage />} />
@@ -41,7 +40,6 @@ export default function App() {
         <Route path="/test-plan" element={<TestPlans />} />
         <Route path="/perf" element={<Perf />} />
         <Route path="/requirement" element={<Requirements />} />
-        <Route path="/orchestration" element={<Orchestration />} />
         <Route path="/bug" element={<Bugs />} />
         <Route path="/skill" element={<Skills />} />
         <Route path="/mcp" element={<Mcp />} />
