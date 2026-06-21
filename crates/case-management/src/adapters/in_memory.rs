@@ -30,6 +30,7 @@ impl CaseRepository for InMemoryCaseRepository {
             priority: c.priority.clone(),
             status: c.status.clone(),
             custom_fields: c.custom_fields.clone(),
+            steps: c.steps.clone(),
         };
         g.push(view.clone());
         Ok(view)

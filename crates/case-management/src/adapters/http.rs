@@ -24,7 +24,7 @@ use webauth::{AuthUser, SessionStore};
 use crate::application::{
     export_rows, CreateCaseError, CreateCaseUseCase, ImportCasesUseCase, ListCasesUseCase,
 };
-use crate::domain::FunctionalCase;
+use crate::domain::{CaseStep, FunctionalCase};
 
 #[derive(Clone)]
 struct CaseState {
@@ -63,6 +63,26 @@ struct CaseResponse {
     priority: String,
     status: String,
     custom_fields: BTreeMap<String, String>,
+    steps: Vec<CaseStepDto>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+struct CaseStepDto {
+    step: String,
+    expected: String,
+}
+
+impl From<CaseStep> for CaseStepDto {
+    fn from(s: CaseStep) -> Self {
+        Self { step: s.step, expected: s.expected }
+    }
+}
+
+impl From<CaseStepDto> for CaseStep {
+    fn from(s: CaseStepDto) -> Self {
+        Self { step: s.step, expected: s.expected }
+    }
 }
 
 impl From<FunctionalCase> for CaseResponse {
@@ -75,6 +95,7 @@ impl From<FunctionalCase> for CaseResponse {
             priority: c.priority,
             status: c.status,
             custom_fields: c.custom_fields,
+            steps: c.steps.into_iter().map(CaseStepDto::from).collect(),
         }
     }
 }
@@ -92,6 +113,8 @@ struct CaseBody {
     status: String,
     #[serde(default)]
     custom_fields: BTreeMap<String, String>,
+    #[serde(default)]
+    steps: Vec<CaseStepDto>,
 }
 
 #[derive(Debug, Deserialize, IntoParams)]
@@ -105,9 +128,10 @@ async fn create_case(user: AuthUser, State(st): State<CaseState>, Json(b): Json<
     if !user.can("FUNCTIONAL_CASE", "ADD") {
         return (StatusCode::FORBIDDEN, "permission denied").into_response();
     }
+    let steps: Vec<CaseStep> = b.steps.into_iter().map(CaseStep::from).collect();
     match st
         .create
-        .execute(&b.project_id, &b.name, &b.module, &b.priority, &b.status, b.custom_fields)
+        .execute(&b.project_id, &b.name, &b.module, &b.priority, &b.status, b.custom_fields, steps)
         .await
     {
         Ok(c) => (StatusCode::CREATED, Json(CaseResponse::from(c))).into_response(),
