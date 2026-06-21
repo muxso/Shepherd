@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react'
-import { Button, Checkbox, Drawer, Dropdown, Empty, Input, Table, Modal, Popover, Segmented, Select, Space, Switch, Tabs, Tag, Tree, Upload } from 'antd'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { Button, Checkbox, Drawer, Dropdown, Empty, Input, Table, Modal, Popover, Segmented, Select, Space, Switch, Tabs, Tag, Tooltip, Tree, Upload } from 'antd'
 import { message, modal } from '../feedback'
 import {
   PlusOutlined,
@@ -13,6 +13,8 @@ import {
   SaveOutlined,
   FilterOutlined,
   SettingOutlined,
+  ThunderboltOutlined,
+  CodeOutlined,
 } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
 import { api, ApiError, type ApiDefinition, type ApiModule, type ApiSpec } from '../api'
@@ -21,7 +23,7 @@ import { methodColor, statusColor } from '../components/tags'
 import CasesPanel from './CasesPanel'
 import MocksPanel from './MocksPanel'
 import RequestEditor from '../components/RequestEditor'
-import ApiSpecPanel, { emptySpec } from '../components/ApiSpecPanel'
+import ApiSpecPanel, { emptySpec, parseCurl, type ApiSpecPanelHandle } from '../components/ApiSpecPanel'
 import ReferencesPanel from '../components/ReferencesPanel'
 import ChangeHistoryPanel from '../components/ChangeHistoryPanel'
 import { useOpenParam } from '../components/Workspace'
@@ -541,15 +543,21 @@ function ApiDetail({ definition }: { definition: ApiDefinition }) {
   // 顶层标签 + 定义页内的 定义/调试 切换(对标 MeterSphere:调试是定义内的模式)。
   const [tab, setTab] = useState('preview')
   const [defMode, setDefMode] = useState<'define' | 'debug'>('define')
+  const specRef = useRef<ApiSpecPanelHandle>(null)
   const [modules, setModules] = useState<ApiModule[]>([])
-  const [meta, setMeta] = useState<{ tags: string[]; description?: string }>({ tags: [] })
+  const [meta, setMeta] = useState<{ tags: string[]; description?: string; spec?: ApiSpec }>({ tags: [] })
+  // 请求行方法/路径(cURL 导入会回填);初值取定义。
+  const [reqMethod, setReqMethod] = useState(definition.method || 'GET')
+  const [reqPath, setReqPath] = useState(definition.path || '')
+  const [curlOpen, setCurlOpen] = useState(false)
+  const [curlText, setCurlText] = useState('')
 
   useEffect(() => {
     let alive = true
     api.modules(definition.projectId).then((m) => alive && setModules(Array.isArray(m) ? m : [])).catch(() => undefined)
     api
       .getDefinition(definition.id)
-      .then((d) => alive && setMeta({ tags: d.spec?.tags || [], description: d.spec?.description }))
+      .then((d) => alive && setMeta({ tags: d.spec?.tags || [], description: d.spec?.description, spec: d.spec }))
       .catch(() => undefined)
     return () => {
       alive = false
@@ -594,23 +602,85 @@ function ApiDetail({ definition }: { definition: ApiDefinition }) {
     </>
   )
 
-  // 定义:定义/调试 模式切换 + 对应面板。
+  // 定义/调试共用同一编辑器外壳:请求行(协议/方法/路径)+ cURL 导入 + 行内 定义/调试 切换
+  // + 服务端执行/保存(对齐参考图 #6/#7)。调试在子标签下方追加「响应内容」面板。
+  const importCurl = () => {
+    const parsed = parseCurl(curlText)
+    if (!parsed) {
+      message.error(t('apidef.curlParseFail', 'cURL 解析失败,请检查命令'))
+      return
+    }
+    setReqMethod(parsed.method)
+    setReqPath(parsed.url)
+    specRef.current?.applyCurl(parsed)
+    setCurlOpen(false)
+    setCurlText('')
+    message.success(t('apidef.curlImported', '已导入 cURL'))
+  }
   const defineTab = (
     <div>
-      <Segmented
-        value={defMode}
-        onChange={(v) => setDefMode(v as 'define' | 'debug')}
-        options={[
-          { label: t('apidef.define', '定义'), value: 'define' },
-          { label: t('apidef.debug', '调试'), value: 'debug' },
-        ]}
-        style={{ marginBottom: 12 }}
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 12 }}>
+        <Tag color="blue" style={{ margin: 0, padding: '4px 10px' }}>{definition.protocol}</Tag>
+        {definition.protocol === 'HTTP' && <Tag color={methodColor(reqMethod)} style={{ margin: 0, padding: '4px 10px', fontWeight: 600 }}>{reqMethod || 'GET'}</Tag>}
+        <Input value={reqPath} onChange={(e) => setReqPath(e.target.value)} readOnly={defMode === 'define'} className="ms-mono" style={{ flex: 1, minWidth: 200 }} placeholder="/api/..." />
+        {/* 右侧动作统一收进 Space(不参与 flex 伸缩,保证路径输入框占满中段)。 */}
+        <Space size={8}>
+          <Tooltip title={t('apidef.importCurl', '导入 cURL')}>
+            <Button icon={<CodeOutlined />} onClick={() => setCurlOpen(true)} />
+          </Tooltip>
+          <Segmented
+            value={defMode}
+            onChange={(v) => setDefMode(v as 'define' | 'debug')}
+            options={[
+              { label: t('apidef.define', '定义'), value: 'define' },
+              { label: t('apidef.debug', '调试'), value: 'debug' },
+            ]}
+          />
+          {defMode === 'debug' && (
+            <Dropdown.Button
+              type="primary"
+              icon={<MoreOutlined />}
+              onClick={() => specRef.current?.execute()}
+              menu={{
+                items: [{ key: 'case', label: t('apidef.saveAsCase', '保存为新用例') }],
+                onClick: ({ key }) => {
+                  if (key === 'case') message.info(t('apidef.saveAsCaseHint', '可在「用例」标签新建用例'))
+                },
+              }}
+            >
+              <ThunderboltOutlined /> {t('apidef.serverRun', '服务端执行')}
+            </Dropdown.Button>
+          )}
+          <Button icon={<SaveOutlined />} onClick={() => specRef.current?.save()}>{t('a.save', '保存')}</Button>
+        </Space>
+      </div>
+      <ApiSpecPanel
+        ref={specRef}
+        key={defMode}
+        definition={definition}
+        mode={defMode === 'define' ? 'define' : 'debug'}
+        reqMethod={reqMethod}
+        reqPath={reqPath}
+        hideSave
       />
-      {defMode === 'define' ? (
-        <ApiSpecPanel definition={definition} mode="define" />
-      ) : (
-        <RequestEditor initialMethod={definition.method || 'GET'} initialUrl={definition.path || ''} lockedProtocol={definition.protocol} />
-      )}
+      <Modal
+        title={t('apidef.importCurl', '导入 cURL')}
+        open={curlOpen}
+        onCancel={() => setCurlOpen(false)}
+        onOk={importCurl}
+        okText={t('a.import', '导入')}
+        cancelText={t('a.cancel', '取消')}
+        width={680}
+        destroyOnHidden
+      >
+        <Input.TextArea
+          rows={10}
+          value={curlText}
+          onChange={(e) => setCurlText(e.target.value)}
+          placeholder={"curl -X POST 'https://api.example.com/login' \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"user\":\"admin\"}'"}
+          className="ms-mono"
+        />
+      </Modal>
     </div>
   )
 
