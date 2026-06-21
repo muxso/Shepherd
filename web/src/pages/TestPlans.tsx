@@ -1,11 +1,12 @@
-import { useEffect, useState } from 'react'
-import { Button, Card, Col, Empty, Form, Input, Modal, Row, Select, Space, Statistic, Table, Tag, message } from 'antd'
+import { useEffect, useState, type CSSProperties } from 'react'
+import { Button, Card, Col, Empty, Form, Input, Modal, Row, Select, Space, Table, Tag, message } from 'antd'
 import { PlayCircleOutlined, FileMarkdownOutlined, LinkOutlined, ClockCircleOutlined } from '@ant-design/icons'
 import { api, ApiError, type ApiCase, type PlanCase, type PlanStats } from '../api'
 import { useApp } from '../context'
 import { outcomeColor } from '../components/tags'
 import { regAdd, regList, type RegItem } from '../registry'
 import { Workspace, WorkList, useWorkTabs, useOpenParam } from '../components/Workspace'
+import Donut from '../components/Donut'
 
 export default function TestPlans() {
   const { projectId } = useApp()
@@ -157,12 +158,8 @@ function PlanDetail({ planId, name, projectId }: { planId: string; name: string;
         <Button icon={<FileMarkdownOutlined />} size="small" onClick={openReport}>Markdown 报告</Button>
         {stats && <Tag color={stats.isPass ? 'green' : 'red'}>{stats.isPass ? '通过' : '未通过'}</Tag>}
       </Space>
-      <Row gutter={16} style={{ marginBottom: 16 }}>
-        <Col span={6}><Card size="small"><Statistic title="用例总数" value={stats?.total ?? 0} /></Card></Col>
-        <Col span={6}><Card size="small"><Statistic title="通过率" value={((stats?.passRate ?? 0) * 100).toFixed(1)} suffix="%" valueStyle={{ color: '#2e7d32' }} /></Card></Col>
-        <Col span={6}><Card size="small"><Statistic title="执行率" value={((stats?.executeRate ?? 0) * 100).toFixed(1)} suffix="%" /></Card></Col>
-        <Col span={6}><Card size="small"><Statistic title="状态" value={stats?.status ?? '—'} /></Card></Col>
-      </Row>
+      <ReportAnalytics stats={stats} cases={cases} />
+      <div style={{ height: 16 }} />
       <Table<PlanCase>
         rowKey="caseId"
         size="small"
@@ -221,3 +218,65 @@ function LinkCaseModal({ open, planId, projectId, onClose, onLinked }: { open: b
     </Modal>
   )
 }
+
+// 计划报告多卡分析(对齐 MeterSphere):报告分析 + 执行分析甜甜圈 + 用例状态条形。
+// 状态分布从 planCases 客户端聚合(SUCCESS/ERROR/FAKE_ERROR/BLOCK/PENDING)。
+function ReportAnalytics({ stats, cases }: { stats: PlanStats | null; cases: PlanCase[] }) {
+  const by = (s: string) => cases.filter((c) => (c.status || 'PENDING').toUpperCase() === s).length
+  const success = by('SUCCESS')
+  const error = by('ERROR')
+  const fake = by('FAKE_ERROR')
+  const block = by('BLOCK')
+  const pending = by('PENDING')
+  const total = cases.length || stats?.total || 0
+  const pct = (n: number) => (total ? ((n * 100) / total).toFixed(2) : '0.00')
+  const segs = [
+    { label: '成功', value: success, color: '#2e7d32' },
+    { label: '失败', value: error, color: '#c62828' },
+    { label: '误报', value: fake, color: '#ef6c00' },
+    { label: '阻塞', value: block, color: '#722ed1' },
+    { label: '未执行', value: pending, color: '#bfbfbf' },
+  ]
+  return (
+    <Row gutter={16}>
+      <Col span={12}>
+        <Card size="small" title="报告分析">
+          <div style={rowStyle}><span>通过率</span><b style={{ color: '#2e7d32' }}>{((stats?.passRate ?? 0) * 100).toFixed(2)}%</b></div>
+          <div style={rowStyle}><span>执行完成率</span><b>{((stats?.executeRate ?? 0) * 100).toFixed(2)}%</b></div>
+          <div style={rowStyle}><span>用例总数</span><b>{total}</b></div>
+          <div style={rowStyle}><span>结论</span><b style={{ color: stats?.isPass ? '#2e7d32' : '#c62828' }}>{stats?.isPass ? '通过' : '未通过'}</b></div>
+        </Card>
+      </Col>
+      <Col span={12}>
+        <Card size="small" title="执行分析">
+          <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+            <Donut segments={segs} />
+            <div style={{ flex: 1 }}>
+              {segs.map((s) => (
+                <div key={s.label} style={rowStyle}>
+                  <span style={{ color: s.color }}>● {s.label}</span>
+                  <b>{s.value}　{pct(s.value)}%</b>
+                </div>
+              ))}
+            </div>
+          </div>
+        </Card>
+      </Col>
+      <Col span={24} style={{ marginTop: 16 }}>
+        <Card size="small" title="用例状态分布">
+          {segs.map((s) => (
+            <div key={s.label} style={{ display: 'flex', alignItems: 'center', gap: 12, margin: '6px 0' }}>
+              <span style={{ width: 48, color: s.color }}>{s.label}</span>
+              <div style={{ flex: 1, background: '#f0f2f5', borderRadius: 4, height: 10, overflow: 'hidden' }}>
+                <div style={{ width: `${pct(s.value)}%`, background: s.color, height: '100%' }} />
+              </div>
+              <span style={{ width: 90, textAlign: 'right', color: '#5b6470' }}>{s.value}　{pct(s.value)}%</span>
+            </div>
+          ))}
+        </Card>
+      </Col>
+    </Row>
+  )
+}
+
+const rowStyle: CSSProperties = { display: 'flex', justifyContent: 'space-between', padding: '6px 0', fontSize: 14 }
