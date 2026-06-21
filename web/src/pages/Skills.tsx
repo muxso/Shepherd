@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Button, Card, Empty, Form, Input, Modal, Select, Space, Table, Typography } from 'antd'
+import { Button, Card, Empty, Form, Input, Modal, Select, Space, Table, Tooltip, Typography } from 'antd'
 import { message } from '../feedback'
 import { PlusOutlined, ReloadOutlined, MergeCellsOutlined } from '@ant-design/icons'
 import { api, ApiError } from '../api'
@@ -49,7 +49,7 @@ export default function Skills() {
           columns={[
             { title: t('skill.name', '名称'), dataIndex: 'label' },
             { title: t('skill.instructionsSummary', '指令摘要'), render: (_, r) => <Typography.Text type="secondary" ellipsis style={{ maxWidth: 460 }}>{r.meta?.instructions || '—'}</Typography.Text> },
-            { title: 'ID', dataIndex: 'id', render: (v: string) => <span className="ms-mono" style={{ fontSize: 12 }}>{v}</span> },
+            { title: 'ID', dataIndex: 'id', width: 110, render: (v: string) => <Tooltip title={v}><span className="ms-mono" style={{ fontSize: 12, color: '#8a9099' }}>{v?.slice(0, 8)}</span></Tooltip> },
           ]}
         />
       </div>
