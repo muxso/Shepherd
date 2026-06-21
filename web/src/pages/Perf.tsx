@@ -56,8 +56,8 @@ export default function Perf() {
               style={{
                 cursor: 'pointer',
                 padding: '10px 14px',
-                background: r.id === selId ? '#e8f0ff' : undefined,
-                borderLeft: r.id === selId ? '3px solid #1664ff' : '3px solid transparent',
+                background: r.id === selId ? '#f3eefe' : undefined,
+                borderLeft: r.id === selId ? '3px solid #7c3aed' : '3px solid transparent',
               }}
             >
               <Space direction="vertical" size={2} style={{ width: '100%' }}>
@@ -185,7 +185,7 @@ function ReportView({ reportId }: { reportId: string }) {
     >
       <Row gutter={16} style={{ marginBottom: 16 }}>
         <Col span={6}><Card size="small"><Statistic title="总请求" value={rep.total} /></Card></Col>
-        <Col span={6}><Card size="small"><Statistic title="吞吐 (req/s)" value={rep.throughputRps} precision={1} valueStyle={{ color: '#1664ff' }} /></Card></Col>
+        <Col span={6}><Card size="small"><Statistic title="吞吐 (req/s)" value={rep.throughputRps} precision={1} valueStyle={{ color: '#7c3aed' }} /></Card></Col>
         <Col span={6}><Card size="small"><Statistic title="成功" value={rep.success} valueStyle={{ color: '#2e7d32' }} /></Card></Col>
         <Col span={6}><Card size="small"><Statistic title="失败率" value={(rep.errorRate * 100).toFixed(1)} suffix="%" valueStyle={{ color: rep.failed ? '#c62828' : undefined }} /></Card></Col>
       </Row>

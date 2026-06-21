@@ -12,10 +12,10 @@ body {
 }
 /* 选中行高亮(三栏联动) */
 .ms-row-active > td {
-  background: #e8f0ff !important;
+  background: #f3eefe !important;
 }
 .ant-table-tbody > tr:hover > td {
-  background: #f5f8ff;
+  background: #f7f3ff;
 }
 /* 多 Tab 工作区:内容区铺满可用高度并各自滚动 */
 .ms-worktabs {
