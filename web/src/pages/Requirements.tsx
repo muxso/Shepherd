@@ -424,7 +424,7 @@ function EventsDrawer({ decompId, task, onClose }: { decompId: string; task: Tas
   return (
     <Drawer title={task ? `${t('req.deliveryEvents', '交付事件')} · ${task.title}` : ''} open={!!task} onClose={onClose} width={520}>
       <Table<DeliveryEvent>
-        rowKey={(_, i) => String(i)}
+        rowKey={(r) => (r.seq != null ? String(r.seq) : `${r.kind}:${r.message ?? ''}`)}
         size="small"
         dataSource={events}
         pagination={false}
