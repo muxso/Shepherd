@@ -171,6 +171,26 @@ impl EnvironmentPort for PgEnvironment {
     }
 }
 
+#[async_trait]
+impl crate::ports::EnvVarWriter for PgEnvironment {
+    /// 把提取的「环境参数」合并进该环境的 variables(JSONB 对象 `||` 合并;同名覆盖)。
+    async fn set_vars(&self, environment_id: &str, vars: &[(String, String)]) -> Result<(), PortError> {
+        if vars.is_empty() {
+            return Ok(());
+        }
+        let obj = serde_json::Value::Object(
+            vars.iter().map(|(k, v)| (k.clone(), serde_json::Value::String(v.clone()))).collect(),
+        );
+        sqlx::query("UPDATE ms_environment SET variables = variables || $2 WHERE id = $1 AND NOT deleted")
+            .bind(environment_id)
+            .bind(&obj)
+            .execute(&self.pool)
+            .await
+            .map_err(map_err)?;
+        Ok(())
+    }
+}
+
 // ---- 批量执行器:落报告 + 下发执行节点 ----
 #[derive(Clone)]
 pub struct PgBatchReportExecutor {
@@ -217,6 +237,7 @@ impl BatchExecutorPort for PgBatchReportExecutor {
             mode: spec.mode,
             case_ids: spec.case_ids.clone(),
             env: spec.env.clone(),
+            environment_id: spec.environment_id.clone(),
         };
         match self.dispatcher.dispatch_task(&task).await {
             // 3) 据结果更新报告状态
@@ -264,15 +285,63 @@ fn parse_method(s: &str) -> HttpMethod {
     }
 }
 
+/// JSONB `[{key,value,enabled?}]` → `(名, 值)` 列表;非数组/缺名/`enabled:false` 跳过。
+fn parse_kv(v: &serde_json::Value) -> Vec<(String, String)> {
+    v.as_array()
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|it| {
+                    // 显式 enabled:false 视为停用,不参与执行(请求头/Query 共用)。
+                    if it.get("enabled").and_then(|x| x.as_bool()) == Some(false) {
+                        return None;
+                    }
+                    let k = it.get("key")?.as_str()?.trim();
+                    if k.is_empty() {
+                        return None;
+                    }
+                    Some((k.to_string(), it.get("value").and_then(|x| x.as_str()).unwrap_or("").to_string()))
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// 认证对象 `{type,token}` → 一条 Authorization 头(none/空则 None)。
+/// bearer → `Bearer <token>`;basic → `Basic <token>`(token 视为已编码或 user:pass,原样透传)。
+fn auth_header(v: &serde_json::Value) -> Option<(String, String)> {
+    let ty = v.get("type").and_then(|x| x.as_str()).unwrap_or("none");
+    let token = v.get("token").and_then(|x| x.as_str()).unwrap_or("").trim();
+    if token.is_empty() {
+        return None;
+    }
+    match ty {
+        "bearer" => Some(("Authorization".to_string(), format!("Bearer {token}"))),
+        "basic" => Some(("Authorization".to_string(), format!("Basic {token}"))),
+        _ => None,
+    }
+}
+
+/// 把 query 参数拼到 url 上(已带 `?` 则用 `&` 续接;不做 URL 编码,与既有调试链路一致)。
+fn merge_query(url: &str, query: &[(String, String)]) -> String {
+    if query.is_empty() {
+        return url.to_string();
+    }
+    let qs = query.iter().map(|(k, v)| format!("{k}={v}")).collect::<Vec<_>>().join("&");
+    let sep = if url.contains('?') { '&' } else { '?' };
+    format!("{url}{sep}{qs}")
+}
+
 #[async_trait]
 impl CaseSpecSource for PgCaseSpecSource {
     async fn spec_of(&self, case_id: &str) -> Result<Option<CaseRunSpec>, PortError> {
-        let row =
-            sqlx::query("SELECT method, url, body, assertions, processors FROM ms_api_case WHERE id = $1")
-                .bind(case_id)
-                .fetch_optional(&self.pool)
-                .await
-                .map_err(map_err)?;
+        let row = sqlx::query(
+            "SELECT method, url, body, assertions, processors, headers, query_params, auth \
+             FROM ms_api_case WHERE id = $1",
+        )
+        .bind(case_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(map_err)?;
         let Some(r) = row else { return Ok(None) };
 
         let method: String = r.try_get("method").map_err(map_err)?;
@@ -285,8 +354,18 @@ impl CaseSpecSource for PgCaseSpecSource {
         let processors_json: serde_json::Value = r.try_get("processors").map_err(map_err)?;
         let processors: Vec<Processor> = serde_json::from_value(processors_json).unwrap_or_default();
 
+        // 请求头 = 存储的 headers + 认证头;query 合入 URL(宽容解析,脏数据不阻断)。
+        let headers_json: serde_json::Value = r.try_get("headers").unwrap_or_else(|_| serde_json::json!([]));
+        let query_json: serde_json::Value = r.try_get("query_params").unwrap_or_else(|_| serde_json::json!([]));
+        let auth_json: serde_json::Value = r.try_get("auth").unwrap_or_else(|_| serde_json::json!({}));
+        let mut headers = parse_kv(&headers_json);
+        if let Some(a) = auth_header(&auth_json) {
+            headers.push(a);
+        }
+        let url = merge_query(&url, &parse_kv(&query_json));
+
         Ok(Some(CaseRunSpec {
-            request: RequestSpec { method: parse_method(&method), url, headers: vec![], body },
+            request: RequestSpec { method: parse_method(&method), url, headers, body },
             assertions,
             processors,
         }))
@@ -438,6 +517,39 @@ mod tests {
     use super::*;
     use crate::adapters::{SpyDispatcher, NoopDispatcher};
     use crate::domain::BatchRunMode;
+
+    #[test]
+    fn parse_kv_skips_blank_disabled_and_reads_values() {
+        let v = serde_json::json!([
+            {"key": "X-A", "value": "1"},
+            {"key": " ", "value": "skip"},
+            {"key": "X-B"},
+            {"key": "X-Off", "value": "x", "enabled": false}
+        ]);
+        assert_eq!(parse_kv(&v), vec![("X-A".into(), "1".into()), ("X-B".into(), "".into())]);
+        assert!(parse_kv(&serde_json::json!({})).is_empty());
+    }
+
+    #[test]
+    fn auth_header_bearer_and_basic_and_none() {
+        assert_eq!(
+            auth_header(&serde_json::json!({"type": "bearer", "token": "t"})),
+            Some(("Authorization".into(), "Bearer t".into()))
+        );
+        assert_eq!(
+            auth_header(&serde_json::json!({"type": "basic", "token": "dXNlcjpwYXNz"})),
+            Some(("Authorization".into(), "Basic dXNlcjpwYXNz".into()))
+        );
+        assert_eq!(auth_header(&serde_json::json!({"type": "none"})), None);
+        assert_eq!(auth_header(&serde_json::json!({"type": "bearer", "token": "  "})), None);
+    }
+
+    #[test]
+    fn merge_query_appends_with_right_separator() {
+        assert_eq!(merge_query("/x", &[("a".into(), "1".into())]), "/x?a=1");
+        assert_eq!(merge_query("/x?p=0", &[("a".into(), "1".into()), ("b".into(), "2".into())]), "/x?p=0&a=1&b=2");
+        assert_eq!(merge_query("/x", &[]), "/x");
+    }
 
     #[tokio::test]
     #[ignore = "需要 DATABASE_URL 指向一个 PostgreSQL 实例"]

@@ -14,10 +14,10 @@ use std::time::Duration;
 use async_trait::async_trait;
 use futures::stream::{self, StreamExt};
 use crate::domain::{BatchRunMode, ResolvedEnv};
-use crate::ports::{DispatchOutcome, PortError, RunTask, TaskDispatcher};
+use crate::ports::{DispatchOutcome, EnvVarWriter, PortError, RunTask, TaskDispatcher};
 use api_runner::{
-    run_extracts, substitute, wait_millis, Assertion, CaseOutcome, Processor, ReqwestRunner,
-    RequestSpec, ResponseSnapshot,
+    env_extracts, run_extracts, substitute, wait_millis, Assertion, CaseOutcome, Processor,
+    ReqwestRunner, RequestSpec, ResponseSnapshot,
 };
 
 /// 静态环境注入:相对 url 拼 base_url、并入默认头(已有同名不覆盖)。**不**做变量替换
@@ -89,12 +89,20 @@ pub struct LocalRunnerDispatcher {
     sink: Arc<dyn CaseResultSink>,
     runner: ReqwestRunner,
     max_concurrency: usize,
+    /// 「环境参数」提取回写端口;None 则不回写(默认)。
+    env_writer: Option<Arc<dyn EnvVarWriter>>,
 }
 
 impl LocalRunnerDispatcher {
     pub fn new(specs: Arc<dyn CaseSpecSource>, sink: Arc<dyn CaseResultSink>) -> Self {
         // 就地 runner 直连被测主机,默认绕过环境代理(否则 http_proxy 会劫持目标请求)。
-        Self { specs, sink, runner: ReqwestRunner::no_proxy(), max_concurrency: DEFAULT_CONCURRENCY }
+        Self {
+            specs,
+            sink,
+            runner: ReqwestRunner::no_proxy(),
+            max_concurrency: DEFAULT_CONCURRENCY,
+            env_writer: None,
+        }
     }
 
     pub fn with_concurrency(mut self, n: usize) -> Self {
@@ -104,6 +112,12 @@ impl LocalRunnerDispatcher {
 
     pub fn with_runner(mut self, runner: ReqwestRunner) -> Self {
         self.runner = runner;
+        self
+    }
+
+    /// 注入「环境参数」回写端口(串行执行时,EXTRACT 的 Env 作用域结果写回该环境)。
+    pub fn with_env_writer(mut self, writer: Arc<dyn EnvVarWriter>) -> Self {
+        self.env_writer = Some(writer);
         self
     }
 
@@ -131,8 +145,9 @@ impl LocalRunnerDispatcher {
                 if wait > 0 {
                     tokio::time::sleep(Duration::from_millis(wait)).await;
                 }
+                // 带运行上下文变量执行,使 Variable 断言可读取已提取/环境变量。
                 let (report, snap) =
-                    self.runner.run_case_with_snapshot(&req, &spec.assertions).await;
+                    self.runner.run_case_with_snapshot_vars(&req, &spec.assertions, vars).await;
                 match report.outcome {
                     CaseOutcome::Success => ("SUCCESS", Vec::new(), spec.processors, snap),
                     CaseOutcome::Error => ("ERROR", report.failures, spec.processors, snap),
@@ -153,18 +168,32 @@ impl TaskDispatcher for LocalRunnerDispatcher {
             // 后续步骤的 ${var} 即可引用(数据驱动/跨步传参)。
             BatchRunMode::Serial => {
                 let mut vars = task.env.variables.clone();
+                // 「环境参数」作用域的提取结果累积,串行跑完统一回写环境(一次写)。
+                let mut env_updates: Vec<(String, String)> = Vec::new();
                 let mut v = Vec::with_capacity(task.case_ids.len());
                 for id in &task.case_ids {
                     match self.run_one(&task.report_id, id, &task.env, &vars).await {
                         Ok((pass, processors, snapshot)) => {
                             if let Some(snap) = &snapshot {
+                                // 全部提取进运行上下文(供后续步骤 ${var});Env 作用域另收集回写。
                                 for (k, val) in run_extracts(&processors, snap) {
                                     vars.insert(k, val);
+                                }
+                                if self.env_writer.is_some() && task.environment_id.is_some() {
+                                    env_updates.extend(env_extracts(&processors, snap));
                                 }
                             }
                             v.push(Ok(pass));
                         }
                         Err(e) => v.push(Err(e)),
+                    }
+                }
+                // 回写环境变量(best-effort:失败不影响用例结果,仅记日志)。
+                if let (Some(writer), Some(env_id)) = (&self.env_writer, &task.environment_id) {
+                    if !env_updates.is_empty() {
+                        if let Err(e) = writer.set_vars(env_id, &env_updates).await {
+                            eprintln!("env var writeback failed (env={env_id}): {e:?}");
+                        }
                     }
                 }
                 v
@@ -268,7 +297,50 @@ mod tests {
             mode,
             case_ids: case_ids.iter().map(|s| s.to_string()).collect(),
             env: ResolvedEnv::default(),
+            environment_id: None,
         }
+    }
+
+    /// 间谍:记录被回写的环境变量(用于校验「环境参数」回写)。
+    #[derive(Clone, Default)]
+    struct SpyEnvWriter {
+        written: Arc<Mutex<Vec<(String, Vec<(String, String)>)>>>,
+    }
+    #[async_trait]
+    impl EnvVarWriter for SpyEnvWriter {
+        async fn set_vars(&self, env_id: &str, vars: &[(String, String)]) -> Result<(), PortError> {
+            self.written.lock().expect("lock").push((env_id.to_string(), vars.to_vec()));
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn serial_env_scoped_extract_writes_back_to_environment() {
+        use api_runner::{ExtractKind, ExtractScope, Extractor};
+        let app = Router::new()
+            .route("/token", get(|| async { Json(serde_json::json!({"token": "E-7"})) }));
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        tokio::spawn(async move { axum::serve(listener, app).await.expect("serve") });
+        // 用例:GET /token,后置 EXTRACT $.token → 变量 tk,作用域 Env
+        let a = CaseRunSpec {
+            request: RequestSpec { method: HttpMethod::Get, url: format!("http://{addr}/token"), headers: vec![], body: None },
+            assertions: vec![Assertion::StatusIs(200)],
+            processors: vec![Processor::Extract {
+                extractors: vec![Extractor { variable: "tk".into(), kind: ExtractKind::JsonPath, expression: "$.token".into(), scope: ExtractScope::Env }],
+            }],
+        };
+        let specs = InMemorySpecs::default().with("a", a);
+        let sink = SpySink::default();
+        let writer = SpyEnvWriter::default();
+        let d = LocalRunnerDispatcher::new(Arc::new(specs), Arc::new(sink))
+            .with_env_writer(Arc::new(writer.clone()));
+        let mut t = task(BatchRunMode::Serial, &["a"]);
+        t.environment_id = Some("env-1".into());
+        d.dispatch_task(&t).await.expect("ok");
+        // 断言:Env 作用域提取结果回写到 env-1。
+        let written = writer.written.lock().expect("lock").clone();
+        assert_eq!(written, vec![("env-1".to_string(), vec![("tk".to_string(), "E-7".to_string())])]);
     }
 
     #[test]
@@ -337,6 +409,7 @@ mod tests {
                     variable: "tk".into(),
                     kind: ExtractKind::JsonPath,
                     expression: "$.token".into(),
+                    scope: api_runner::ExtractScope::Temp,
                 }],
             }],
         };
