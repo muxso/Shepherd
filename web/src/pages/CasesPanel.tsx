@@ -25,9 +25,7 @@ import {
   type RunMode,
 } from '../api'
 import { methodColor, outcomeColor } from '../components/tags'
-import AssertionEditor from '../components/AssertionEditor'
-
-const METHODS = ['GET', 'POST', 'PUT', 'DELETE', 'PATCH']
+import CaseEditorDrawer from '../components/CaseEditorDrawer'
 
 export default function CasesPanel({ definition }: { definition: ApiDefinition }) {
   const [cases, setCases] = useState<ApiCase[]>([])
@@ -108,11 +106,11 @@ export default function CasesPanel({ definition }: { definition: ApiDefinition }
         ]}
       />
 
-      <CreateCaseModal
+      <CaseEditorDrawer
         open={createOpen}
         definition={definition}
         onClose={() => setCreateOpen(false)}
-        onCreated={() => {
+        onSaved={() => {
           setCreateOpen(false)
           load()
         }}
@@ -237,78 +235,6 @@ function RunModal({
   )
 }
 
-function CreateCaseModal({
-  open,
-  definition,
-  onClose,
-  onCreated,
-}: {
-  open: boolean
-  definition: ApiDefinition
-  onClose: () => void
-  onCreated: () => void
-}) {
-  const [form] = Form.useForm()
-  const [saving, setSaving] = useState(false)
-  return (
-    <Modal
-      title={`新建用例 · ${definition.name}`}
-      open={open}
-      onCancel={onClose}
-      onOk={() => form.submit()}
-      confirmLoading={saving}
-      destroyOnHidden
-      width={620}
-    >
-      <Form
-        form={form}
-        layout="vertical"
-        preserve={false}
-        initialValues={{
-          method: definition.method || 'GET',
-          url: definition.path || '',
-          assertions: [{ type: 'StatusIs', args: 200 }],
-        }}
-        onFinish={async (v) => {
-          setSaving(true)
-          try {
-            await api.createCase(definition.id, {
-              name: v.name,
-              method: v.method,
-              url: v.url,
-              body: v.body || undefined,
-              assertions: v.assertions || [],
-            })
-            message.success('用例已创建')
-            onCreated()
-          } catch (e) {
-            message.error(e instanceof ApiError ? e.message : '创建失败')
-          } finally {
-            setSaving(false)
-          }
-        }}
-      >
-        <Form.Item name="name" label="用例名" rules={[{ required: true }]}>
-          <Input placeholder="如:登录成功" />
-        </Form.Item>
-        <Space.Compact style={{ width: '100%' }}>
-          <Form.Item name="method" label="方法" style={{ width: 120 }}>
-            <Select options={METHODS.map((m) => ({ value: m, label: m }))} />
-          </Form.Item>
-          <Form.Item name="url" label="URL" style={{ flex: 1 }} rules={[{ required: true }]}>
-            <Input placeholder="http://127.0.0.1:9180/healthz" className="ms-mono" />
-          </Form.Item>
-        </Space.Compact>
-        <Form.Item name="body" label="请求体(可选)">
-          <Input.TextArea rows={3} className="ms-mono" placeholder='{"username":"admin"}' />
-        </Form.Item>
-        <Form.Item name="assertions" label="断言">
-          <AssertionEditor />
-        </Form.Item>
-      </Form>
-    </Modal>
-  )
-}
 
 function ExecutionsDrawer({ caseItem, onClose }: { caseItem: ApiCase | null; onClose: () => void }) {
   const [rows, setRows] = useState<CaseExecution[]>([])
