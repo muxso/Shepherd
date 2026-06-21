@@ -223,7 +223,11 @@ const ApiSpecPanel = forwardRef<ApiSpecPanelHandle, {
     setRunErr('')
     setResp(null)
     try {
-      setResp(m === 'local' ? await localSend(req) : await api.debugSend(req))
+      setResp(
+        m === 'local'
+          ? await localSend(req)
+          : await api.debugSend({ ...req, assertions: spec.assertions, processors: spec.postProcessors }),
+      )
     } catch (e) {
       setRunErr(e instanceof ApiError ? e.message : e instanceof Error ? e.message : t('editor.sendFail', '发送失败'))
     } finally {
@@ -562,8 +566,20 @@ function DebugResultPanel({
       : []),
     {
       key: 'extract',
-      label: `${t('apidef.preExtract', '提取')}${extractRows.length ? ` (${extractRows.length})` : ''}`,
-      children: extractRows.length ? (
+      label: `${t('apidef.preExtract', '提取')}${resp?.extractions?.length ? ` (${resp.extractions.length})` : extractRows.length ? ` (${extractRows.length})` : ''}`,
+      // 服务端执行回传实际提取值则展示「变量=值」;否则展示已配置的提取器。
+      children: resp?.extractions?.length ? (
+        <Table
+          size="small"
+          pagination={false}
+          rowKey={(_, i) => String(i)}
+          dataSource={resp.extractions.map(([k, v], i) => ({ k, v, _i: i }))}
+          columns={[
+            { title: t('apidef.extractVar', '变量'), dataIndex: 'k', width: 220, render: (v: string) => <span className="ms-mono">{v}</span> },
+            { title: t('apidef.extractVal', '值'), dataIndex: 'v', render: (v: string) => <span className="ms-mono">{v}</span> },
+          ]}
+        />
+      ) : extractRows.length ? (
         <Table
           size="small"
           pagination={false}
@@ -576,16 +592,31 @@ function DebugResultPanel({
           ]}
         />
       ) : (
-        <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('apidef.noExtract', '无提取(在「后置」配置;结果于用例执行产出)')} />
+        <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('apidef.noExtract', '无提取(在「后置」配置)')} />
       ),
     },
     {
       key: 'assert',
-      label: `${t('apidef.assertions', '断言')}${assertions?.length ? ` (${assertions.length})` : ''}`,
-      children: assertions?.length ? (
-        <pre style={codeBox}>{formatJson(JSON.stringify(assertions))}</pre>
+      label: `${t('apidef.assertions', '断言')}${resp?.assertions?.length ? ` (${resp.assertions.filter((a) => a.passed).length}/${resp.assertions.length})` : assertions?.length ? ` (${assertions.length})` : ''}`,
+      // 服务端执行回传逐条结果(通过/失败);否则展示「已配置、执行后出结果」。
+      children: resp?.assertions?.length ? (
+        <Table
+          size="small"
+          pagination={false}
+          rowKey={(_, i) => String(i)}
+          dataSource={resp.assertions.map((a, i) => ({ ...a, _i: i }))}
+          columns={[
+            { title: '', width: 56, dataIndex: 'passed', render: (p: boolean) => <Tag color={p ? 'green' : 'red'}>{p ? t('apidef.pass', '通过') : t('apidef.fail', '失败')}</Tag> },
+            { title: t('apidef.assertItem', '断言项'), dataIndex: 'item', render: (v: string) => <span className="ms-mono">{v}</span> },
+            { title: t('apidef.assertCond', '条件'), dataIndex: 'condition', width: 90 },
+            { title: t('apidef.assertExpected', '期望'), dataIndex: 'expected', render: (v: string) => <span className="ms-mono">{v || '—'}</span> },
+            { title: t('apidef.assertActual', '实际'), dataIndex: 'actual', render: (v: string, r) => <span className="ms-mono" style={{ color: r.passed ? undefined : '#ff4d4f' }}>{v || '—'}</span> },
+          ]}
+        />
+      ) : assertions?.length ? (
+        <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('apidef.assertConfigured', '已配置断言,点「服务端执行」查看校验结果')} />
       ) : (
-        <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('apidef.noAssert', '无断言(在「断言」配置;结果于用例执行校验)')} />
+        <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('apidef.noAssert', '无断言(在「断言」配置)')} />
       ),
     },
   ]

@@ -15,7 +15,10 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use webauth::{AuthUser, SessionStore};
 
-use api_runner::{HttpMethod, ReqwestRunner, RequestSpec};
+use api_runner::{
+    evaluate_detailed, run_extracts, Assertion, AssertionReport, HttpMethod, Processor,
+    ReqwestRunner, RequestSpec, ResponseSnapshot,
+};
 use probe::{default_registry, ProbeRequest};
 
 #[derive(Clone)]
@@ -71,10 +74,40 @@ struct SendBody {
     /// 协议附加参数(如 ssh 的 user/password),透传给 probe 插件 metadata。
     #[serde(default)]
     meta: std::collections::BTreeMap<String, String>,
+    /// 调试断言(HTTP):响应回来后逐条求值,结果随响应返回。
+    #[serde(default)]
+    assertions: Vec<Assertion>,
+    /// 调试后置处理器(HTTP):仅用其 Extract 抽取变量并回传(不回写环境)。
+    #[serde(default)]
+    processors: Vec<Processor>,
 }
 
 fn default_method() -> String {
     "GET".to_string()
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AssertionResult {
+    item: String,
+    condition: String,
+    expected: String,
+    actual: String,
+    passed: bool,
+    reason: String,
+}
+
+impl From<AssertionReport> for AssertionResult {
+    fn from(r: AssertionReport) -> Self {
+        Self {
+            item: r.item,
+            condition: r.condition,
+            expected: r.expected,
+            actual: r.actual,
+            passed: r.passed,
+            reason: r.reason,
+        }
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -84,6 +117,12 @@ struct SendResponse {
     latency_ms: u64,
     headers: Vec<(String, String)>,
     body: String,
+    /// 断言逐条结果(无断言则空)。
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    assertions: Vec<AssertionResult>,
+    /// 提取到的变量(变量名, 值)。
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    extractions: Vec<(String, String)>,
 }
 
 async fn send(_user: AuthUser, Json(req): Json<SendBody>) -> Response {
@@ -117,6 +156,8 @@ async fn send(_user: AuthUser, Json(req): Json<SendBody>) -> Response {
                     latency_ms: out.latency_ms,
                     headers: Vec::new(),
                     body: out.output.unwrap_or_default(),
+                    assertions: Vec::new(),
+                    extractions: Vec::new(),
                 }),
             )
                 .into_response()
@@ -141,16 +182,40 @@ async fn send(_user: AuthUser, Json(req): Json<SendBody>) -> Response {
         body: req.body,
     };
     match ReqwestRunner::no_proxy().execute(&spec).await {
-        Ok(s) => (
-            StatusCode::OK,
-            Json(SendResponse {
+        Ok(s) => {
+            // 用响应快照逐条求值断言、抽取变量(纯函数,复用 runner 逻辑)。
+            let snapshot = ResponseSnapshot {
                 status: s.status,
-                latency_ms: s.elapsed_ms,
                 headers: s.headers,
                 body: s.body,
-            }),
-        )
-            .into_response(),
+                elapsed_ms: s.elapsed_ms,
+            };
+            let assertions: Vec<AssertionResult> = if req.assertions.is_empty() {
+                Vec::new()
+            } else {
+                evaluate_detailed(&req.assertions, &snapshot)
+                    .into_iter()
+                    .map(Into::into)
+                    .collect()
+            };
+            let extractions = if req.processors.is_empty() {
+                Vec::new()
+            } else {
+                run_extracts(&req.processors, &snapshot)
+            };
+            (
+                StatusCode::OK,
+                Json(SendResponse {
+                    status: snapshot.status,
+                    latency_ms: snapshot.elapsed_ms,
+                    headers: snapshot.headers,
+                    body: snapshot.body,
+                    assertions,
+                    extractions,
+                }),
+            )
+                .into_response()
+        }
         // 传输失败(DNS/连接/超时):回 502 + 错误信息,前端调试台展示。
         Err(e) => (
             StatusCode::BAD_GATEWAY,
