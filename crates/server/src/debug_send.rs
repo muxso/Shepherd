@@ -55,6 +55,9 @@ struct SendBody {
     /// HTTP 为请求体;非 HTTP 为载荷(redis 命令行 / ssh 命令)。
     #[serde(default)]
     body: Option<String>,
+    /// 协议附加参数(如 ssh 的 user/password),透传给 probe 插件 metadata。
+    #[serde(default)]
+    meta: std::collections::BTreeMap<String, String>,
 }
 
 fn default_method() -> String {
@@ -89,7 +92,7 @@ async fn send(_user: AuthUser, Json(req): Json<SendBody>) -> Response {
             protocol: proto,
             target: req.url.clone(),
             payload: req.body.clone(),
-            metadata: Default::default(),
+            metadata: req.meta.clone(),
             assertions: Vec::new(),
         };
         let out = reg.dispatch(&preq).await;

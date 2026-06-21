@@ -55,6 +55,8 @@ export default function RequestEditor({
   const { t } = useI18n()
   const [method, setMethod] = useState(initialMethod || 'GET')
   const [protocol, setProtocol] = useState('HTTP')
+  const [sshUser, setSshUser] = useState('')
+  const [sshPass, setSshPass] = useState('')
   const [url, setUrl] = useState(initialUrl)
   const [query, setQuery] = useState<KV[]>([{ on: true, key: '', value: '', desc: '' }])
   const [headers, setHeaders] = useState<KV[]>([{ on: true, key: '', value: '', desc: '' }])
@@ -78,7 +80,8 @@ export default function RequestEditor({
       setErr('')
       setResp(null)
       try {
-        setResp(await api.debugSend({ protocol: protocol.toLowerCase(), method, url: url.trim(), body: body.trim() || undefined }))
+        const meta = protocol === 'SSH' ? { user: sshUser, password: sshPass } : undefined
+        setResp(await api.debugSend({ protocol: protocol.toLowerCase(), method, url: url.trim(), body: body.trim() || undefined, meta }))
       } catch (e) {
         setErr(e instanceof ApiError ? e.message : t('editor.sendFail', '发送失败'))
       } finally {
@@ -169,13 +172,19 @@ export default function RequestEditor({
   const reqPanel = (
     <>
       <Space.Compact style={{ width: '100%', marginBottom: 12 }}>
-        <Select value={protocol} onChange={setProtocol} style={{ width: 96 }} options={[{ value: 'HTTP', label: 'HTTP' }, { value: 'REDIS', label: 'Redis' }]} />
+        <Select value={protocol} onChange={setProtocol} style={{ width: 96 }} options={[{ value: 'HTTP', label: 'HTTP' }, { value: 'REDIS', label: 'Redis' }, { value: 'SSH', label: 'SSH' }]} />
         {protocol === 'HTTP' && (
           <Select value={method} onChange={setMethod} style={{ width: 100 }} options={METHODS.map((m) => ({ value: m, label: m }))} />
         )}
-        <Input value={url} onChange={(e) => setUrl(e.target.value)} placeholder={protocol === 'REDIS' ? 'redis://host:port/0' : t('editor.urlPlaceholder', '/apis/... 或 http://...')} className="ms-mono" onPressEnter={send} />
+        <Input value={url} onChange={(e) => setUrl(e.target.value)} placeholder={protocol === 'REDIS' ? 'redis://host:port/0' : protocol === 'SSH' ? 'host:port(默认 22)' : t('editor.urlPlaceholder', '/apis/... 或 http://...')} className="ms-mono" onPressEnter={send} />
         <Button type="primary" icon={<SendOutlined />} loading={sending} onClick={send}>{t('a.send', '发送')}</Button>
       </Space.Compact>
+      {protocol === 'SSH' && (
+        <Space.Compact style={{ width: '100%', marginBottom: 12 }}>
+          <Input style={{ width: 200 }} value={sshUser} onChange={(e) => setSshUser(e.target.value)} placeholder={t('editor.sshUser', '用户名')} />
+          <Input.Password style={{ flex: 1 }} value={sshPass} onChange={(e) => setSshPass(e.target.value)} placeholder={t('editor.sshPass', '密码')} />
+        </Space.Compact>
+      )}
       <Tabs
         size="small"
         items={[
