@@ -615,6 +615,7 @@ function ApiDetail({ definition }: { definition: ApiDefinition }) {
     <>
       {previewHeader}
       <Tabs
+        className="ms-detail-tabs"
         size="small"
         items={[
           { key: 'detail', label: t('apidef.detail', '详情'), children: <ApiSpecPanel definition={definition} mode="preview" /> },
@@ -734,6 +735,7 @@ function ApiDetail({ definition }: { definition: ApiDefinition }) {
   return (
     <div style={{ padding: '12px 16px', height: '100%', overflow: 'auto' }}>
       <Tabs
+        className="ms-detail-tabs"
         activeKey={tab}
         onChange={setTab}
         tabBarExtraContent={

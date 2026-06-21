@@ -17,64 +17,86 @@ body {
 .ant-table-tbody > tr:hover > td {
   background: #f7f3ff;
 }
-/* 多 Tab 工作区:内容区铺满可用高度并各自滚动 */
+/* 多 Tab 工作区:内容区铺满可用高度并各自滚动。
+   注意:全部选择器都用「> .ant-tabs-nav」直接子级限定,避免样式渗透到
+   详情里嵌套的「预览/定义/用例/MOCK」与子标签(那是普通 antd 线性 Tab)。 */
 .ms-worktabs {
   display: flex;
   flex-direction: column;
 }
-.ms-worktabs .ant-tabs-nav {
-  margin-bottom: 0;
-  padding: 0 8px;
-}
-.ms-worktabs .ant-tabs-content-holder {
+.ms-worktabs > .ant-tabs-content-holder {
   flex: 1;
   overflow: hidden;
 }
-.ms-worktabs .ant-tabs-content,
-.ms-worktabs .ant-tabs-tabpane {
+.ms-worktabs > .ant-tabs-content-holder > .ant-tabs-content {
   height: 100%;
 }
-/* 工作 Tab:MeterSphere 风(浅底浏览器式标签,选中白底 + 紫顶条) */
-.ms-worktabs .ant-tabs-nav {
+.ms-worktabs > .ant-tabs-content-holder > .ant-tabs-content > .ant-tabs-tabpane {
+  height: 100%;
+}
+/* 工作 Tab(仅顶层):MeterSphere 风浅底浏览器式标签,选中白底 + 紫顶条 */
+.ms-worktabs > .ant-tabs-nav {
   background: #fafbfc;
-  padding: 6px 8px 0;
+  padding: 6px 10px 0;
   border-bottom: 1px solid #eef0f2;
   margin-bottom: 0;
 }
-.ms-worktabs .ant-tabs-nav::before {
+.ms-worktabs > .ant-tabs-nav::before {
   border: none !important;
 }
-.ms-worktabs .ant-tabs-tab {
+.ms-worktabs > .ant-tabs-nav .ant-tabs-tab {
   background: transparent !important;
   border: 1px solid transparent !important;
   border-bottom: none !important;
-  border-radius: 7px 7px 0 0 !important;
-  margin: 0 1px 0 0 !important;
-  padding: 6px 14px !important;
+  border-radius: 8px 8px 0 0 !important;
+  margin: 0 2px 0 0 !important;
+  padding: 7px 16px !important;
   font-size: 13px;
-  transition: background 0.15s;
+  transition: background 0.15s, color 0.15s;
 }
-.ms-worktabs .ant-tabs-tab .ant-tabs-tab-btn {
+.ms-worktabs > .ant-tabs-nav .ant-tabs-tab .ant-tabs-tab-btn {
   color: #5b6470 !important;
 }
-.ms-worktabs .ant-tabs-tab:hover {
+.ms-worktabs > .ant-tabs-nav .ant-tabs-tab:hover {
   background: #f0f1f4 !important;
 }
-.ms-worktabs .ant-tabs-tab-active {
+.ms-worktabs > .ant-tabs-nav .ant-tabs-tab-active {
   background: #fff !important;
   border-color: #eef0f2 !important;
   box-shadow: inset 0 2px 0 #7c3aed;
 }
-.ms-worktabs .ant-tabs-tab-active .ant-tabs-tab-btn {
+.ms-worktabs > .ant-tabs-nav .ant-tabs-tab-active .ant-tabs-tab-btn {
   color: #1f2329 !important;
   font-weight: 600;
 }
-.ms-worktabs .ant-tabs-tab .ant-tabs-tab-remove {
+.ms-worktabs > .ant-tabs-nav .ant-tabs-tab .ant-tabs-tab-remove {
   color: #b8bdc4 !important;
   margin-left: 6px;
 }
-.ms-worktabs .ant-tabs-tab .ant-tabs-tab-remove:hover {
+.ms-worktabs > .ant-tabs-nav .ant-tabs-tab .ant-tabs-tab-remove:hover {
   color: #5b6470 !important;
+}
+
+/* 详情内「预览/定义/用例/MOCK」+ 子标签:干净的线性 Tab(扁平 + 紫色墨条/选中字)。 */
+.ms-detail-tabs > .ant-tabs-nav {
+  margin-bottom: 12px;
+}
+.ms-detail-tabs > .ant-tabs-nav .ant-tabs-tab {
+  padding: 8px 2px !important;
+  font-size: 14px;
+}
+.ms-detail-tabs > .ant-tabs-nav .ant-tabs-tab + .ant-tabs-tab {
+  margin-left: 22px !important;
+}
+.ms-detail-tabs > .ant-tabs-nav .ant-tabs-tab-active .ant-tabs-tab-btn {
+  color: #7c3aed !important;
+  font-weight: 600;
+}
+.ms-detail-tabs > .ant-tabs-nav .ant-tabs-tab:hover .ant-tabs-tab-btn {
+  color: #7c3aed !important;
+}
+.ms-detail-tabs > .ant-tabs-nav .ant-tabs-ink-bar {
+  background: #7c3aed;
 }
 
 /* 表格观感:表头浅灰、行距更紧 */
