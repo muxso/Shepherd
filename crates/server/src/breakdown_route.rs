@@ -117,7 +117,34 @@ async fn breakdown_handler(
             });
             (StatusCode::CREATED, Json(body)).into_response()
         }
-        Err(BreakdownError::AlreadyExists) => (StatusCode::CONFLICT, "decomposition already exists").into_response(),
+        Err(BreakdownError::AlreadyExists) => {
+            // 幂等:已拆分则回读现有拆分图(含现有验证账本 id)并返回 200,
+            // 让前端「自动拆分」可重入(原先重复点击会 409)。
+            match st.breakdown.find_existing(&spec.requirement_id, version).await {
+                Ok(Some(d)) => {
+                    let verification_id = st
+                        .create_verification
+                        .find_existing(&spec.requirement_id, version)
+                        .await
+                        .ok()
+                        .flatten()
+                        .map(|v| v.id);
+                    let body = json!({
+                        "id": d.id,
+                        "requirementId": d.requirement_id,
+                        "requirementVersion": d.requirement_version,
+                        "complete": d.is_complete(),
+                        "readyTaskIds": d.ready_tasks().iter().map(|t| t.id.clone()).collect::<Vec<_>>(),
+                        "verificationId": verification_id,
+                        "tasks": d.tasks.iter().map(|t| json!({
+                            "id": t.id, "title": t.title, "status": t.status.as_str(), "dependencies": t.dependencies
+                        })).collect::<Vec<_>>()
+                    });
+                    (StatusCode::OK, Json(body)).into_response()
+                }
+                _ => (StatusCode::CONFLICT, "decomposition already exists").into_response(),
+            }
+        }
         Err(BreakdownError::EmptyRequirement) => (StatusCode::BAD_REQUEST, "requirement id required").into_response(),
         Err(BreakdownError::Validation(_)) => (StatusCode::BAD_REQUEST, "invalid planned task").into_response(),
         Err(BreakdownError::Plan(_)) => (StatusCode::BAD_GATEWAY, "planner error").into_response(),
