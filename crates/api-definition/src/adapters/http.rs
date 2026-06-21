@@ -70,6 +70,7 @@ pub fn router(
         .route("/api/definition", post(create_definition).get(list_definitions))
         .route("/api/definition/import", post(import_definitions))
         .route("/api/definition/{id}", axum::routing::get(get_definition))
+        .route("/api/definition/{id}/spec", put(update_definition_spec))
         .route("/api/definition/{id}/case", post(create_case).get(list_cases))
         .route("/api/case", post(create_standalone_case).get(list_project_cases))
         .route("/api/definition/{id}/mock", post(create_mock).get(list_mocks))
@@ -94,6 +95,8 @@ struct ApiDefinitionResponse {
     path: String,
     status: String,
     module_id: Option<String>,
+    /// 请求/响应规格(不透明 JSON;约定见 0037 迁移)。
+    spec: serde_json::Value,
 }
 
 impl From<ApiDefinition> for ApiDefinitionResponse {
@@ -107,6 +110,8 @@ impl From<ApiDefinition> for ApiDefinitionResponse {
             path: d.path,
             status: d.status.as_str().to_string(),
             module_id: d.module_id,
+            // spec 以 TEXT 存 JSON 文本;无法解析时回退为 {}。
+            spec: serde_json::from_str(&d.spec).unwrap_or_else(|_| serde_json::json!({})),
         }
     }
 }
@@ -309,6 +314,36 @@ async fn get_definition(
     match st.repo.get_definition(&id).await {
         Ok(Some(d)) => (StatusCode::OK, Json(ApiDefinitionResponse::from(d))).into_response(),
         Ok(None) => (StatusCode::NOT_FOUND, "api definition not found").into_response(),
+        Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
+    }
+}
+
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+struct SpecUpdateBody {
+    /// 完整请求/响应规格(JSON 对象);服务端不透明存取。
+    spec: serde_json::Value,
+}
+
+#[utoipa::path(put, path = "/api/definition/{id}/spec", tag = "api-definition", params(("id" = String, Path)), request_body = SpecUpdateBody, responses((status = 204), (status = 404)), security(("bearer" = [])))]
+async fn update_definition_spec(
+    user: AuthUser,
+    State(st): State<ApiDefinitionState>,
+    Path(id): Path<String>,
+    Json(req): Json<SpecUpdateBody>,
+) -> Response {
+    if !user.can("API_DEFINITION", "ADD") {
+        return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
+    // 先确认存在,避免对幽灵 id 静默写入。
+    match st.repo.get_definition(&id).await {
+        Ok(Some(_)) => {}
+        Ok(None) => return (StatusCode::NOT_FOUND, "api definition not found").into_response(),
+        Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
+    }
+    let spec = req.spec.to_string();
+    match st.repo.update_definition_spec(&id, &spec).await {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
         Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
     }
 }
@@ -701,6 +736,7 @@ async fn import_definitions(
         import_definitions,
         list_definitions,
         get_definition,
+        update_definition_spec,
         create_case,
         list_cases,
         create_standalone_case,
@@ -711,6 +747,7 @@ async fn import_definitions(
     components(schemas(
         ApiDefinitionCreateBody,
         ApiDefinitionResponse,
+        SpecUpdateBody,
         ApiCaseCreateBody,
         ApiCaseResponse,
         StandaloneCaseBody,

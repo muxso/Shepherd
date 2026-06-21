@@ -75,6 +75,8 @@ pub struct NewApiDefinition {
     pub method: String,
     pub path: String,
     pub status: ApiStatus,
+    /// 请求/响应规格(不透明 JSON 文本;默认 "{}")。
+    pub spec: String,
 }
 
 impl NewApiDefinition {
@@ -107,6 +109,7 @@ impl NewApiDefinition {
             method,
             path: path.to_string(),
             status: ApiStatus::Draft,
+            spec: "{}".to_string(),
         })
     }
 }
@@ -123,6 +126,8 @@ pub struct ApiDefinition {
     pub status: ApiStatus,
     /// 归属模块 id;None 表示未归类(顶层)。
     pub module_id: Option<String>,
+    /// 请求/响应规格(不透明 JSON 文本)。
+    pub spec: String,
 }
 
 #[cfg(test)]

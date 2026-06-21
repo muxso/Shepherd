@@ -105,6 +105,23 @@ export interface Project {
   enable: boolean
 }
 
+/** 请求/响应规格(对标 MeterSphere 的「定义」标签):请求头/Query/Body + 响应样例。 */
+export interface ApiSpecKV {
+  name: string
+  value?: string
+  desc?: string
+}
+export interface ApiSpecResponse {
+  status?: number
+  body?: string
+}
+export interface ApiSpec {
+  requestHeaders?: ApiSpecKV[]
+  requestQuery?: ApiSpecKV[]
+  requestBody?: string
+  responses?: ApiSpecResponse[]
+}
+
 export interface ApiDefinition {
   id: string
   projectId: string
@@ -114,6 +131,8 @@ export interface ApiDefinition {
   path: string
   status: string
   moduleId?: string | null
+  /** 不透明 JSON 规格;服务端往返存取(见 0037 迁移)。 */
+  spec?: ApiSpec
 }
 
 export interface ApiModule {
@@ -394,6 +413,8 @@ export const api = {
       ? http.get<ApiDefinition[]>(`/api/definition?projectId=${encodeURIComponent(projectId)}`)
       : Promise.resolve([] as ApiDefinition[]),
   getDefinition: (id: string) => http.get<ApiDefinition>(`/api/definition/${id}`),
+  updateDefinitionSpec: (id: string, spec: ApiSpec) =>
+    http.put(`/api/definition/${id}/spec`, { spec }),
   createDefinition: (b: {
     projectId: string
     name: string

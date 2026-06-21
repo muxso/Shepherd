@@ -18,6 +18,7 @@ import { methodColor, statusColor } from '../components/tags'
 import CasesPanel from './CasesPanel'
 import MocksPanel from './MocksPanel'
 import RequestEditor from '../components/RequestEditor'
+import ApiSpecPanel from '../components/ApiSpecPanel'
 import { useOpenParam } from '../components/Workspace'
 import { parseOperations, buildCaseUrl } from '../openapi'
 import { useI18n } from '../i18n'
@@ -400,19 +401,23 @@ function ApiDetail({ definition }: { definition: ApiDefinition }) {
       <Tabs
         items={[
           {
-            key: 'info',
-            label: t('apidef.basicInfo', '基本信息'),
+            key: 'preview',
+            label: t('apidef.preview', '预览'),
             children: (
-              <Descriptions column={2} size="small" bordered>
-                <Descriptions.Item label={t('apidef.colName', '名称')}>{definition.name}</Descriptions.Item>
-                <Descriptions.Item label={t('apidef.protocol', '协议')}>{definition.protocol}</Descriptions.Item>
-                <Descriptions.Item label={t('apidef.method', '方法')}>{definition.method || '—'}</Descriptions.Item>
-                <Descriptions.Item label={t('apidef.colStatus', '状态')}>{definition.status}</Descriptions.Item>
-                <Descriptions.Item label={t('apidef.colPath', '路径')} span={2}><span className="ms-mono">{definition.path || '—'}</span></Descriptions.Item>
-                <Descriptions.Item label="ID" span={2}><span className="ms-mono" style={{ fontSize: 12 }}>{definition.id}</span></Descriptions.Item>
-              </Descriptions>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+                <Descriptions column={2} size="small" bordered>
+                  <Descriptions.Item label={t('apidef.colName', '名称')}>{definition.name}</Descriptions.Item>
+                  <Descriptions.Item label={t('apidef.protocol', '协议')}>{definition.protocol}</Descriptions.Item>
+                  <Descriptions.Item label={t('apidef.method', '方法')}>{definition.method || '—'}</Descriptions.Item>
+                  <Descriptions.Item label={t('apidef.colStatus', '状态')}>{definition.status}</Descriptions.Item>
+                  <Descriptions.Item label={t('apidef.colPath', '路径')} span={2}><span className="ms-mono">{definition.path || '—'}</span></Descriptions.Item>
+                  <Descriptions.Item label="ID" span={2}><span className="ms-mono" style={{ fontSize: 12 }}>{definition.id}</span></Descriptions.Item>
+                </Descriptions>
+                <ApiSpecPanel definition={definition} mode="preview" />
+              </div>
             ),
           },
+          { key: 'define', label: t('apidef.define', '定义'), children: <ApiSpecPanel definition={definition} mode="define" /> },
           { key: 'debug', label: t('apidef.debug', '调试'), children: <RequestEditor initialMethod={definition.method || 'GET'} initialUrl={definition.path || ''} /> },
           { key: 'cases', label: t('apidef.cases', '接口用例'), children: <CasesPanel definition={definition} /> },
           { key: 'mock', label: 'Mock', children: <MocksPanel definition={definition} /> },
