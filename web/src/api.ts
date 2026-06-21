@@ -191,6 +191,11 @@ export interface User {
   enable?: boolean
 }
 
+export interface CaseStep {
+  step: string
+  expected: string
+}
+
 export interface FunctionalCase {
   id: string
   projectId: string
@@ -198,6 +203,7 @@ export interface FunctionalCase {
   module?: string
   priority?: string
   status?: string
+  steps?: CaseStep[]
 }
 
 export interface Environment {
@@ -397,8 +403,13 @@ export const api = {
     projectId
       ? http.get<FunctionalCase[]>(`/functional-case?projectId=${encodeURIComponent(projectId)}`)
       : Promise.resolve([] as FunctionalCase[]),
-  createFunctionalCase: (b: { projectId: string; name: string; priority?: string; module?: string }) =>
-    http.post<FunctionalCase>('/functional-case', b),
+  createFunctionalCase: (b: {
+    projectId: string
+    name: string
+    priority?: string
+    module?: string
+    steps?: CaseStep[]
+  }) => http.post<FunctionalCase>('/functional-case', b),
 
   // 项目接口用例(供测试计划挂载选择)
   projectCases: (projectId: string) =>
