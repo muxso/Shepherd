@@ -50,6 +50,7 @@ impl ApiDefinitionRepository for InMemoryApiDefinitionRepository {
             path: d.path.clone(),
             status: d.status,
             module_id: None,
+            spec: d.spec.clone(),
         };
         state.definitions.insert(def.id.clone(), def.clone());
         Ok(def)
@@ -57,6 +58,13 @@ impl ApiDefinitionRepository for InMemoryApiDefinitionRepository {
 
     async fn get_definition(&self, id: &str) -> Result<Option<ApiDefinition>, RepoError> {
         Ok(self.state.lock().expect("lock").definitions.get(id).cloned())
+    }
+
+    async fn update_definition_spec(&self, id: &str, spec: &str) -> Result<(), RepoError> {
+        if let Some(d) = self.state.lock().expect("lock").definitions.get_mut(id) {
+            d.spec = spec.to_string();
+        }
+        Ok(())
     }
 
     async fn list_definitions(

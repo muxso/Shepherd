@@ -40,6 +40,7 @@ fn row_to_definition(row: &sqlx::postgres::PgRow) -> Result<ApiDefinition, RepoE
         path: row.try_get("path").map_err(map_err)?,
         status: ApiStatus::parse(&status).unwrap_or_default(),
         module_id: row.try_get::<Option<String>, _>("module_id").map_err(map_err)?,
+        spec: row.try_get::<String, _>("spec").unwrap_or_else(|_| "{}".to_string()),
     })
 }
 
@@ -85,9 +86,9 @@ impl ApiDefinitionRepository for PgApiDefinitionRepository {
         d: &NewApiDefinition,
     ) -> Result<ApiDefinition, RepoError> {
         let row = sqlx::query(
-            "INSERT INTO ms_api_definition (project_id, name, protocol, method, path, status) \
-             VALUES ($1, $2, $3, $4, $5, $6) \
-             RETURNING id, project_id, name, protocol, method, path, status, module_id",
+            "INSERT INTO ms_api_definition (project_id, name, protocol, method, path, status, spec) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7) \
+             RETURNING id, project_id, name, protocol, method, path, status, module_id, spec",
         )
         .bind(&d.project_id)
         .bind(&d.name)
@@ -95,6 +96,7 @@ impl ApiDefinitionRepository for PgApiDefinitionRepository {
         .bind(&d.method)
         .bind(&d.path)
         .bind(d.status.as_str())
+        .bind(&d.spec)
         .fetch_one(&self.pool)
         .await
         .map_err(map_err)?;
@@ -103,7 +105,7 @@ impl ApiDefinitionRepository for PgApiDefinitionRepository {
 
     async fn get_definition(&self, id: &str) -> Result<Option<ApiDefinition>, RepoError> {
         let row = sqlx::query(
-            "SELECT id, project_id, name, protocol, method, path, status, module_id \
+            "SELECT id, project_id, name, protocol, method, path, status, module_id, spec \
              FROM ms_api_definition WHERE id = $1 AND deleted = false",
         )
         .bind(id)
@@ -113,12 +115,22 @@ impl ApiDefinitionRepository for PgApiDefinitionRepository {
         row.as_ref().map(row_to_definition).transpose()
     }
 
+    async fn update_definition_spec(&self, id: &str, spec: &str) -> Result<(), RepoError> {
+        sqlx::query("UPDATE ms_api_definition SET spec = $2 WHERE id = $1 AND deleted = false")
+            .bind(id)
+            .bind(spec)
+            .execute(&self.pool)
+            .await
+            .map_err(map_err)?;
+        Ok(())
+    }
+
     async fn list_definitions(
         &self,
         project_id: &str,
     ) -> Result<Vec<ApiDefinition>, RepoError> {
         let rows = sqlx::query(
-            "SELECT id, project_id, name, protocol, method, path, status, module_id \
+            "SELECT id, project_id, name, protocol, method, path, status, module_id, spec \
              FROM ms_api_definition WHERE project_id = $1 AND deleted = false",
         )
         .bind(project_id)
