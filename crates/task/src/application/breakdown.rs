@@ -66,6 +66,15 @@ impl BreakdownUseCase {
         self.repo.save(&d).await?;
         Ok(d)
     }
+
+    /// 幂等支持:取某需求版本已存在的拆分图(供 breakdown 命中 AlreadyExists 时回读)。
+    pub async fn find_existing(
+        &self,
+        requirement_id: &str,
+        requirement_version: u32,
+    ) -> Result<Option<Decomposition>, RepoError> {
+        self.repo.find_by_requirement_version(requirement_id, requirement_version).await
+    }
 }
 
 #[cfg(test)]
