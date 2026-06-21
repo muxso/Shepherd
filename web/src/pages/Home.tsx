@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react'
-import { Button, Card, Checkbox, Col, Dropdown, Empty, Row, Spin, Statistic } from 'antd'
+import { useEffect, useMemo, useState } from 'react'
+import { Button, Card, Checkbox, Col, Dropdown, Empty, Row, Spin, Statistic, Tooltip } from 'antd'
 import {
   ApiOutlined,
   PartitionOutlined,
@@ -8,7 +8,12 @@ import {
   FileTextOutlined,
   BugOutlined,
   SettingOutlined,
+  ArrowUpOutlined,
+  ArrowDownOutlined,
+  ThunderboltOutlined,
+  SafetyCertificateOutlined,
 } from '@ant-design/icons'
+import { useNavigate } from 'react-router-dom'
 import { api } from '../api'
 import { useApp } from '../context'
 import { regList } from '../registry'
@@ -25,24 +30,59 @@ interface Counts {
   bug: number
 }
 
-// 首页工作台:当前项目测试资产概览(计数卡片 + 资产分布环形图)。对标 MeterSphere 首页。
+// 卡片清单(完整版「卡片设置」对标 MeterSphere):每张卡可独立显隐 + 自由排序。
+const ALL_CARDS = ['overview', 'assets', 'quality', 'shortcuts'] as const
+type CardKey = (typeof ALL_CARDS)[number]
+interface CardPref {
+  key: CardKey
+  shown: boolean
+}
+const CARDS_KEY = 'shepherd.home.cards.v2'
+
+/** 读持久化偏好;兼容旧格式(字符串数组=已显示的卡)。缺省全显示、按 ALL_CARDS 顺序。 */
+function loadPrefs(): CardPref[] {
+  const def = (): CardPref[] => ALL_CARDS.map((k) => ({ key: k, shown: true }))
+  try {
+    const raw = localStorage.getItem(CARDS_KEY)
+    if (raw) {
+      const parsed = JSON.parse(raw) as CardPref[]
+      // 校验 + 补齐新卡(向后兼容:新增卡默认显示并追加到末尾)。
+      const valid = parsed.filter((p) => (ALL_CARDS as readonly string[]).includes(p.key))
+      const missing = ALL_CARDS.filter((k) => !valid.some((p) => p.key === k)).map((k) => ({ key: k, shown: true }))
+      return [...valid, ...missing]
+    }
+    // 迁移旧 key:shepherd.home.cards = ["overview","assets"]
+    const old = localStorage.getItem('shepherd.home.cards')
+    if (old) {
+      const arr = JSON.parse(old) as string[]
+      return ALL_CARDS.map((k) => ({ key: k, shown: arr.includes(k) || k === 'quality' || k === 'shortcuts' }))
+    }
+  } catch {
+    /* ignore */
+  }
+  return def()
+}
+
+// 首页工作台:当前项目测试资产概览。对标 MeterSphere 首页(可自定义卡片显隐与排序)。
 export default function Home() {
   const { projectId } = useApp()
   const { t } = useI18n()
+  const navigate = useNavigate()
   const [c, setC] = useState<Counts | null>(null)
   const [loading, setLoading] = useState(false)
-  // 卡片显隐自定义(持久化),对标 MeterSphere「卡片设置」的简化版。
-  const CARDS_KEY = 'shepherd.home.cards'
-  const [shown, setShown] = useState<string[]>(() => {
-    try {
-      return JSON.parse(localStorage.getItem(CARDS_KEY) || '["overview","assets"]')
-    } catch {
-      return ['overview', 'assets']
-    }
-  })
-  const setShownP = (v: string[]) => {
-    setShown(v)
-    localStorage.setItem(CARDS_KEY, JSON.stringify(v))
+  const [prefs, setPrefs] = useState<CardPref[]>(loadPrefs)
+
+  const savePrefs = (next: CardPref[]) => {
+    setPrefs(next)
+    localStorage.setItem(CARDS_KEY, JSON.stringify(next))
+  }
+  const toggle = (key: CardKey, shown: boolean) => savePrefs(prefs.map((p) => (p.key === key ? { ...p, shown } : p)))
+  const move = (idx: number, dir: -1 | 1) => {
+    const j = idx + dir
+    if (j < 0 || j >= prefs.length) return
+    const next = [...prefs]
+    ;[next[idx], next[j]] = [next[j], next[idx]]
+    savePrefs(next)
   }
 
   useEffect(() => {
@@ -71,22 +111,25 @@ export default function Home() {
       .finally(() => setLoading(false))
   }, [projectId])
 
-  if (!projectId)
-    return (
-      <div style={{ padding: 48 }}>
-        <Empty description={t('common.selectProject', '请先在顶部选择项目')} />
-      </div>
-    )
+  const cardTitle: Record<CardKey, string> = {
+    overview: t('home.title', '项目概览'),
+    assets: t('home.assetDist', '测试资产分布'),
+    quality: t('home.quality', '质量概览'),
+    shortcuts: t('home.shortcuts', '快捷入口'),
+  }
 
-  const cards: { key: string; label: string; value: number; icon: React.ReactNode; color: string }[] = [
-    { key: 'def', label: t('home.def', '接口定义'), value: c?.def ?? 0, icon: <ApiOutlined />, color: '#7c3aed' },
-    { key: 'scenario', label: t('home.scenario', '场景用例'), value: c?.scenario ?? 0, icon: <PartitionOutlined />, color: '#1677ff' },
-    { key: 'apiCase', label: t('home.apiCase', '接口用例'), value: c?.apiCase ?? 0, icon: <ProfileOutlined />, color: '#13c2c2' },
-    { key: 'funcCase', label: t('home.funcCase', '功能用例'), value: c?.funcCase ?? 0, icon: <ProfileOutlined />, color: '#52c41a' },
-    { key: 'plan', label: t('home.plan', '测试计划'), value: c?.plan ?? 0, icon: <ScheduleOutlined />, color: '#fa8c16' },
-    { key: 'req', label: t('home.req', '需求'), value: c?.req ?? 0, icon: <FileTextOutlined />, color: '#eb2f96' },
-    { key: 'bug', label: t('home.bug', '缺陷'), value: c?.bug ?? 0, icon: <BugOutlined />, color: '#f5222d' },
-  ]
+  const cards = useMemo(
+    () => [
+      { key: 'def', label: t('home.def', '接口定义'), value: c?.def ?? 0, icon: <ApiOutlined />, color: '#7c3aed' },
+      { key: 'scenario', label: t('home.scenario', '场景用例'), value: c?.scenario ?? 0, icon: <PartitionOutlined />, color: '#1677ff' },
+      { key: 'apiCase', label: t('home.apiCase', '接口用例'), value: c?.apiCase ?? 0, icon: <ProfileOutlined />, color: '#13c2c2' },
+      { key: 'funcCase', label: t('home.funcCase', '功能用例'), value: c?.funcCase ?? 0, icon: <ProfileOutlined />, color: '#52c41a' },
+      { key: 'plan', label: t('home.plan', '测试计划'), value: c?.plan ?? 0, icon: <ScheduleOutlined />, color: '#fa8c16' },
+      { key: 'req', label: t('home.req', '需求'), value: c?.req ?? 0, icon: <FileTextOutlined />, color: '#eb2f96' },
+      { key: 'bug', label: t('home.bug', '缺陷'), value: c?.bug ?? 0, icon: <BugOutlined />, color: '#f5222d' },
+    ],
+    [c, t],
+  )
 
   const donutSegs = [
     { label: t('home.def', '接口定义'), value: c?.def ?? 0, color: '#7c3aed' },
@@ -95,6 +138,125 @@ export default function Home() {
     { label: t('home.funcCase', '功能用例'), value: c?.funcCase ?? 0, color: '#52c41a' },
   ]
   const totalAssets = donutSegs.reduce((s, x) => s + x.value, 0)
+  const totalCases = (c?.apiCase ?? 0) + (c?.funcCase ?? 0)
+  const bugRate = totalCases ? ((c?.bug ?? 0) * 100) / totalCases : 0
+
+  if (!projectId)
+    return (
+      <div style={{ padding: 48 }}>
+        <Empty description={t('common.selectProject', '请先在顶部选择项目')} />
+      </div>
+    )
+
+  const renderCard = (key: CardKey): React.ReactNode => {
+    switch (key) {
+      case 'overview':
+        return (
+          <Card title={cardTitle.overview} size="small" style={{ marginBottom: 16 }}>
+            <Row gutter={[16, 16]}>
+              {cards.map((card) => (
+                <Col key={card.key} xs={12} sm={8} md={6} lg={6} xl={3}>
+                  <Card size="small" styles={{ body: { padding: '14px 16px' } }}>
+                    <Statistic
+                      title={
+                        <span style={{ color: '#5b6470' }}>
+                          <span style={{ color: card.color, marginRight: 6 }}>{card.icon}</span>
+                          {card.label}
+                        </span>
+                      }
+                      value={card.value}
+                      valueStyle={{ color: card.color, fontWeight: 700 }}
+                    />
+                  </Card>
+                </Col>
+              ))}
+            </Row>
+          </Card>
+        )
+      case 'assets':
+        return (
+          <Card title={cardTitle.assets} size="small" style={{ marginBottom: 16 }}>
+            {totalAssets === 0 ? (
+              <Empty description={t('common.empty', '暂无数据')} />
+            ) : (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 32, padding: '8px 0' }}>
+                <Donut segments={donutSegs} size={140} thickness={20} />
+                <div style={{ flex: 1, maxWidth: 360 }}>
+                  {donutSegs.map((s) => (
+                    <div key={s.label} style={{ display: 'flex', alignItems: 'center', padding: '6px 0', fontSize: 13 }}>
+                      <span style={{ width: 10, height: 10, borderRadius: 2, background: s.color, marginRight: 8 }} />
+                      <span style={{ flex: 1, color: '#5b6470' }}>{s.label}</span>
+                      <b>{s.value}</b>
+                      <span style={{ width: 56, textAlign: 'right', color: '#8a9099' }}>
+                        {totalAssets ? ((s.value * 100) / totalAssets).toFixed(1) : '0'}%
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </Card>
+        )
+      case 'quality':
+        return (
+          <Card
+            title={
+              <span>
+                <SafetyCertificateOutlined style={{ color: '#52c41a', marginRight: 6 }} />
+                {cardTitle.quality}
+              </span>
+            }
+            size="small"
+            style={{ marginBottom: 16 }}
+          >
+            <Row gutter={[16, 16]}>
+              <Col xs={12} sm={6}>
+                <Statistic title={t('home.req', '需求')} value={c?.req ?? 0} valueStyle={{ color: '#eb2f96' }} />
+              </Col>
+              <Col xs={12} sm={6}>
+                <Statistic title={t('home.bug', '缺陷')} value={c?.bug ?? 0} valueStyle={{ color: '#f5222d' }} />
+              </Col>
+              <Col xs={12} sm={6}>
+                <Statistic title={t('home.plan', '测试计划')} value={c?.plan ?? 0} valueStyle={{ color: '#fa8c16' }} />
+              </Col>
+              <Col xs={12} sm={6}>
+                <Tooltip title={t('home.bugRateHint', '缺陷数 / 用例总数')}>
+                  <Statistic
+                    title={t('home.bugRate', '缺陷率')}
+                    value={bugRate}
+                    precision={1}
+                    suffix="%"
+                    valueStyle={{ color: bugRate > 20 ? '#f5222d' : '#52c41a' }}
+                  />
+                </Tooltip>
+              </Col>
+            </Row>
+          </Card>
+        )
+      case 'shortcuts':
+        return (
+          <Card
+            title={
+              <span>
+                <ThunderboltOutlined style={{ color: '#fa8c16', marginRight: 6 }} />
+                {cardTitle.shortcuts}
+              </span>
+            }
+            size="small"
+            style={{ marginBottom: 16 }}
+          >
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10 }}>
+              <Button icon={<ApiOutlined />} onClick={() => navigate('/api/definition')}>{t('home.def', '接口定义')}</Button>
+              <Button icon={<PartitionOutlined />} onClick={() => navigate('/api/scenario')}>{t('home.scenario', '场景用例')}</Button>
+              <Button icon={<ProfileOutlined />} onClick={() => navigate('/functional-case')}>{t('home.funcCase', '功能用例')}</Button>
+              <Button icon={<ScheduleOutlined />} onClick={() => navigate('/test-plan')}>{t('home.plan', '测试计划')}</Button>
+              <Button icon={<FileTextOutlined />} onClick={() => navigate('/requirement')}>{t('home.req', '需求')}</Button>
+              <Button icon={<BugOutlined />} onClick={() => navigate('/bug')}>{t('home.bug', '缺陷')}</Button>
+            </div>
+          </Card>
+        )
+    }
+  }
 
   return (
     <div style={{ padding: 16, height: '100%', overflow: 'auto' }}>
@@ -102,16 +264,17 @@ export default function Home() {
         <Dropdown
           trigger={['click']}
           popupRender={() => (
-            <Card size="small" styles={{ body: { padding: 12 } }}>
-              <Checkbox.Group
-                value={shown}
-                onChange={(v) => setShownP(v as string[])}
-                options={[
-                  { label: t('home.title', '项目概览'), value: 'overview' },
-                  { label: t('home.assetDist', '测试资产分布'), value: 'assets' },
-                ]}
-                style={{ display: 'flex', flexDirection: 'column', gap: 6 }}
-              />
+            <Card size="small" styles={{ body: { padding: 8 } }} style={{ width: 260, boxShadow: '0 6px 16px rgba(0,0,0,.12)' }}>
+              <div style={{ fontSize: 12, color: '#8a9099', padding: '2px 6px 8px' }}>{t('home.cardSettingsHint', '勾选显示,箭头调整顺序')}</div>
+              {prefs.map((p, i) => (
+                <div key={p.key} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 6px' }}>
+                  <Checkbox checked={p.shown} onChange={(e) => toggle(p.key, e.target.checked)} style={{ flex: 1 }}>
+                    {cardTitle[p.key]}
+                  </Checkbox>
+                  <Button type="text" size="small" icon={<ArrowUpOutlined />} disabled={i === 0} onClick={() => move(i, -1)} />
+                  <Button type="text" size="small" icon={<ArrowDownOutlined />} disabled={i === prefs.length - 1} onClick={() => move(i, 1)} />
+                </div>
+              ))}
             </Card>
           )}
         >
@@ -119,52 +282,8 @@ export default function Home() {
         </Dropdown>
       </div>
       <Spin spinning={loading}>
-        {shown.includes('overview') && (
-        <Card title={t('home.title', '项目概览')} size="small" style={{ marginBottom: 16 }}>
-          <Row gutter={[16, 16]}>
-            {cards.map((card) => (
-              <Col key={card.key} xs={12} sm={8} md={6} lg={6} xl={3}>
-                <Card size="small" styles={{ body: { padding: '14px 16px' } }}>
-                  <Statistic
-                    title={
-                      <span style={{ color: '#5b6470' }}>
-                        <span style={{ color: card.color, marginRight: 6 }}>{card.icon}</span>
-                        {card.label}
-                      </span>
-                    }
-                    value={card.value}
-                    valueStyle={{ color: card.color, fontWeight: 700 }}
-                  />
-                </Card>
-              </Col>
-            ))}
-          </Row>
-        </Card>
-        )}
-
-        {shown.includes('assets') && (
-        <Card title={t('home.assetDist', '测试资产分布')} size="small">
-          {totalAssets === 0 ? (
-            <Empty description={t('common.empty', '暂无数据')} />
-          ) : (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 32, padding: '8px 0' }}>
-              <Donut segments={donutSegs} size={140} thickness={20} />
-              <div style={{ flex: 1, maxWidth: 360 }}>
-                {donutSegs.map((s) => (
-                  <div key={s.label} style={{ display: 'flex', alignItems: 'center', padding: '6px 0', fontSize: 13 }}>
-                    <span style={{ width: 10, height: 10, borderRadius: 2, background: s.color, marginRight: 8 }} />
-                    <span style={{ flex: 1, color: '#5b6470' }}>{s.label}</span>
-                    <b>{s.value}</b>
-                    <span style={{ width: 56, textAlign: 'right', color: '#8a9099' }}>
-                      {totalAssets ? ((s.value * 100) / totalAssets).toFixed(1) : '0'}%
-                    </span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-        </Card>
-        )}
+        {prefs.filter((p) => p.shown).map((p) => <div key={p.key}>{renderCard(p.key)}</div>)}
+        {prefs.every((p) => !p.shown) && <Empty description={t('home.allHidden', '所有卡片已隐藏,点击右上角「卡片设置」开启')} />}
       </Spin>
     </div>
   )
