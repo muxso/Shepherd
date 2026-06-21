@@ -141,6 +141,8 @@ export interface ApiSpec {
 
 export interface ApiDefinition {
   id: string
+  /** 人类可读编号(【101093】式 ID;见 0042 迁移)。 */
+  num?: number
   projectId: string
   name: string
   protocol: string
@@ -150,6 +152,11 @@ export interface ApiDefinition {
   moduleId?: string | null
   /** 不透明 JSON 规格;服务端往返存取(见 0037 迁移)。 */
   spec?: ApiSpec
+  /** 创建人 user_id(见 0039 迁移)。 */
+  createdBy?: string
+  /** 创建/更新时间(服务端文本承载,如 "2026-06-21 12:34:56+00")。 */
+  createdAt?: string
+  updatedAt?: string
 }
 
 export interface ApiModule {
@@ -179,6 +186,14 @@ export interface ApiCase {
   body: string | null
   assertions: unknown
   processors: unknown
+  /** MeterSphere 对齐:优先级 / 状态 / 标签 / 请求头(见 0040 迁移)。 */
+  priority?: string
+  status?: string
+  tags?: string[]
+  headers?: { key: string; value: string }[]
+  queryParams?: { key: string; value: string }[]
+  restParams?: { key: string; value: string }[]
+  auth?: { type: string; token?: string }
 }
 
 export interface ApiMock {
@@ -189,6 +204,11 @@ export interface ApiMock {
   responseStatus: number
   responseBody: string | null
   enabled: boolean
+  /** MeterSphere 对齐:标签 / 响应头 / 响应延时(ms)/ 跟随定义(见 0040 迁移)。 */
+  tags?: string[]
+  responseHeaders?: { key: string; value: string }[]
+  responseDelayMs?: number
+  followDefinition?: boolean
 }
 
 export interface CaseExecution {
@@ -491,7 +511,21 @@ export const api = {
     http.get<ApiCase[]>(`/api/definition/${definitionId}/case`),
   createCase: (
     definitionId: string,
-    b: { name: string; method: string; url: string; body?: string; assertions?: unknown; processors?: unknown },
+    b: {
+      name: string
+      method: string
+      url: string
+      body?: string
+      assertions?: unknown
+      processors?: unknown
+      priority?: string
+      status?: string
+      tags?: string[]
+      headers?: { key: string; value: string }[]
+      queryParams?: { key: string; value: string }[]
+      restParams?: { key: string; value: string }[]
+      auth?: { type: string; token?: string }
+    },
   ) => http.post<ApiCase>(`/api/definition/${definitionId}/case`, b),
   runCase: (caseId: string, projectId: string, runMode: RunMode, poolId?: string) =>
     http.post<{ reportId: string; status: string }>(`/api/case/${caseId}/run`, {
@@ -627,7 +661,17 @@ export const api = {
   mocks: (definitionId: string) => http.get<ApiMock[]>(`/api/definition/${definitionId}/mock`),
   createMock: (
     definitionId: string,
-    b: { name: string; matchRule?: unknown; responseStatus?: number; responseBody?: string; enabled?: boolean },
+    b: {
+      name: string
+      matchRule?: unknown
+      responseStatus?: number
+      responseBody?: string
+      enabled?: boolean
+      tags?: string[]
+      responseHeaders?: { key: string; value: string }[]
+      responseDelayMs?: number
+      followDefinition?: boolean
+    },
   ) => http.post<ApiMock>(`/api/definition/${definitionId}/mock`, b),
 
   scenarios: (projectId: string) =>

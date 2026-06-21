@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from 'react'
-import { Button, Checkbox, Descriptions, Dropdown, Empty, Input, Table, Modal, Form, Segmented, Select, Space, Tabs, Tag, Tree, Upload } from 'antd'
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
+import { Button, Checkbox, Dropdown, Empty, Input, Table, Modal, Segmented, Select, Space, Tabs, Tag, Tree, Upload } from 'antd'
 import { message, modal } from '../feedback'
 import {
   PlusOutlined,
@@ -10,15 +10,16 @@ import {
   FolderAddOutlined,
   MoreOutlined,
   InboxOutlined,
+  SaveOutlined,
 } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
-import { api, ApiError, type ApiDefinition, type ApiModule } from '../api'
+import { api, ApiError, type ApiDefinition, type ApiModule, type ApiSpec } from '../api'
 import { useApp } from '../context'
 import { methodColor, statusColor } from '../components/tags'
 import CasesPanel from './CasesPanel'
 import MocksPanel from './MocksPanel'
 import RequestEditor from '../components/RequestEditor'
-import ApiSpecPanel from '../components/ApiSpecPanel'
+import ApiSpecPanel, { emptySpec } from '../components/ApiSpecPanel'
 import ReferencesPanel from '../components/ReferencesPanel'
 import ChangeHistoryPanel from '../components/ChangeHistoryPanel'
 import { useOpenParam } from '../components/Workspace'
@@ -28,6 +29,14 @@ import { useI18n } from '../i18n'
 const METHODS = ['GET', 'POST', 'PUT', 'DELETE', 'PATCH']
 const PROTOCOLS = ['HTTP', 'GRPC', 'SQL', 'REDIS', 'WEBSOCKET']
 const LIST_KEY = '__list__'
+const NEW_KEY = '__new__'
+
+/** 把服务端时间文本("2026-06-21 12:34:56.78+00")渲染为 "2026-06-21 12:34:56";空/解析失败回退 "—"。 */
+function fmtTs(ts?: string): string {
+  if (!ts) return '—'
+  const m = ts.match(/^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2}:\d{2})/)
+  return m ? `${m[1]} ${m[2]}` : '—'
+}
 
 export default function ApiDefinitions() {
   const { t } = useI18n()
@@ -37,7 +46,7 @@ export default function ApiDefinitions() {
   const [loading, setLoading] = useState(false)
   const [search, setSearch] = useState('')
   const [moduleKey, setModuleKey] = useState('ALL') // ALL | UNFILED | <moduleId>
-  const [createOpen, setCreateOpen] = useState(false)
+  const [creating, setCreating] = useState(false)
   const [importOpen, setImportOpen] = useState(false)
   const [moduleForm, setModuleForm] = useState<{ mode: 'create' | 'rename'; id?: string; parentId?: string | null; name?: string } | null>(null)
   const [openIds, setOpenIds] = useState<string[]>([])
@@ -136,6 +145,11 @@ export default function ApiDefinitions() {
   }
   useOpenParam(openDef) // 支持 ?open=<definitionId> 深链打开
   const closeTab = (id: string) => {
+    if (id === NEW_KEY) {
+      setCreating(false)
+      setActiveKey((cur) => (cur === NEW_KEY ? LIST_KEY : cur))
+      return
+    }
     setOpenIds((ids) => {
       const next = ids.filter((x) => x !== id)
       setActiveKey((cur) => (cur === id ? next[next.length - 1] || LIST_KEY : cur))
@@ -166,7 +180,7 @@ export default function ApiDefinitions() {
   }
 
   const columns: ColumnsType<ApiDefinition> = [
-    { title: 'ID', dataIndex: 'id', width: 96, render: (id: string) => <span className="ms-mono" style={{ color: '#8a9099', fontSize: 12 }} title={id}>{id.slice(0, 8)}</span> },
+    { title: 'ID', dataIndex: 'num', width: 90, render: (num: number | undefined, d) => <span className="ms-mono" style={{ color: '#8a9099', fontSize: 12 }} title={d.id}>{num ?? '—'}</span> },
     { title: t('apidef.colName', '名称'), dataIndex: 'name', ellipsis: true, render: (name: string) => <span style={{ fontWeight: 500 }}>{name}</span> },
     { title: t('apidef.protocol', '协议'), dataIndex: 'protocol', width: 90, render: (p: string) => <Tag>{p}</Tag> },
     { title: t('apidef.reqType', '请求类型'), dataIndex: 'method', width: 100, render: (m: string) => <Tag color={methodColor(m)} style={{ fontWeight: 600 }}>{m || '—'}</Tag> },
@@ -189,6 +203,19 @@ export default function ApiDefinitions() {
         const tags = spec?.tags || []
         return tags.length ? <Space size={[2, 2]} wrap>{tags.map((tg) => <Tag key={tg} style={{ margin: 0 }}>{tg}</Tag>)}</Space> : <span style={{ color: '#bbb' }}>—</span>
       },
+    },
+    {
+      title: t('apidef.colCreatedBy', '创建人'),
+      dataIndex: 'createdBy',
+      width: 110,
+      ellipsis: true,
+      render: (u?: string) => u ? <span style={{ color: '#5b6470' }}>{u}</span> : <span style={{ color: '#bbb' }}>—</span>,
+    },
+    {
+      title: t('apidef.colCreatedAt', '创建时间'),
+      dataIndex: 'createdAt',
+      width: 160,
+      render: (ts?: string) => <span style={{ color: '#8a9099', fontSize: 12 }}>{fmtTs(ts)}</span>,
     },
     {
       title: t('apidef.colAction', '操作'),
@@ -219,7 +246,7 @@ export default function ApiDefinitions() {
   const listTab = (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 12px', borderBottom: '1px solid #f0f0f0' }}>
-        <Button type="primary" icon={<PlusOutlined />} onClick={() => setCreateOpen(true)}>{t('apidef.addApi', '添加接口')}</Button>
+        <Button type="primary" icon={<PlusOutlined />} onClick={() => { setCreating(true); setActiveKey(NEW_KEY) }}>{t('apidef.addApi', '添加接口')}</Button>
         <Button icon={<ImportOutlined />} onClick={() => setImportOpen(true)}>{t('a.import', '导入')}</Button>
         <div style={{ flex: 1 }} />
         <Input.Search placeholder={t('apidef.searchPlaceholder', '搜索名称 / 路径')} allowClear style={{ width: 240 }} onChange={(e) => setSearch(e.target.value)} />
@@ -242,6 +269,23 @@ export default function ApiDefinitions() {
 
   const tabItems = [
     { key: LIST_KEY, label: t('apidef.allApis', '全部接口'), closable: false, children: listTab },
+    ...(creating
+      ? [{
+          key: NEW_KEY,
+          label: t('apidef.newApi', '新建接口'),
+          children: (
+            <NewDefinitionTab
+              projectId={projectId}
+              moduleId={['ALL', 'UNFILED'].includes(moduleKey) ? null : moduleKey}
+              onCancel={() => closeTab(NEW_KEY)}
+              onCreated={(d) => {
+                setCreating(false)
+                load().then(() => openDef(d.id))
+              }}
+            />
+          ),
+        }]
+      : []),
     ...openIds
       .map((id) => defs.find((d) => d.id === id))
       .filter((d): d is ApiDefinition => !!d)
@@ -297,16 +341,6 @@ export default function ApiDefinitions() {
         />
       </div>
 
-      <CreateDefinitionModal
-        open={createOpen}
-        onClose={() => setCreateOpen(false)}
-        projectId={projectId}
-        moduleId={['ALL', 'UNFILED'].includes(moduleKey) ? null : moduleKey}
-        onCreated={(d) => {
-          setCreateOpen(false)
-          load().then(() => openDef(d.id))
-        }}
-      />
       <ImportModal open={importOpen} onClose={() => setImportOpen(false)} projectId={projectId} onDone={() => { setImportOpen(false); load() }} />
       <ModuleFormModal
         state={moduleForm}
@@ -378,72 +412,62 @@ function ModuleFormModal({
   )
 }
 
-function methodColorHex(m: string): string {
-  switch (m.toUpperCase()) {
-    case 'GET':
-      return '#2e7d32'
-    case 'POST':
-      return '#7c3aed'
-    case 'PUT':
-      return '#ef6c00'
-    case 'DELETE':
-      return '#c62828'
-    default:
-      return '#5b6470'
-  }
-}
-
 function ApiDetail({ definition }: { definition: ApiDefinition }) {
   const { t } = useI18n()
-  // 定义页内的 定义/调试 切换(对标 MeterSphere:调试是定义内的模式,不是顶层标签)。
+  // 顶层标签 + 定义页内的 定义/调试 切换(对标 MeterSphere:调试是定义内的模式)。
+  const [tab, setTab] = useState('preview')
   const [defMode, setDefMode] = useState<'define' | 'debug'>('define')
+  const [modules, setModules] = useState<ApiModule[]>([])
+  const [meta, setMeta] = useState<{ tags: string[]; description?: string }>({ tags: [] })
 
-  const headerRow = (
-    <div style={{ display: 'flex', gap: 0, marginBottom: 12 }}>
-      <span
-        style={{
-          background: '#f5f7fa',
-          border: '1px solid #e5e8ec',
-          borderRight: 'none',
-          borderRadius: '6px 0 0 6px',
-          padding: '5px 12px',
-          fontWeight: 600,
-          color: methodColorHex(definition.method),
-        }}
-      >
-        {definition.method || definition.protocol}
-      </span>
-      <Input readOnly value={definition.path || '—'} className="ms-mono" style={{ borderRadius: '0 6px 6px 0' }} />
-      <Tag color={statusColor(definition.status)} style={{ marginLeft: 8, alignSelf: 'center' }}>{definition.status}</Tag>
+  useEffect(() => {
+    let alive = true
+    api.modules(definition.projectId).then((m) => alive && setModules(Array.isArray(m) ? m : [])).catch(() => undefined)
+    api
+      .getDefinition(definition.id)
+      .then((d) => alive && setMeta({ tags: d.spec?.tags || [], description: d.spec?.description }))
+      .catch(() => undefined)
+    return () => {
+      alive = false
+    }
+  }, [definition.id, definition.projectId])
+
+  const moduleName = modules.find((m) => m.id === definition.moduleId)?.name || t('apidef.unfiled', '未归类')
+
+  // 预览头:状态/方法/[id]/名称 + 元信息行(对齐参考图 #1)。
+  const previewHeader = (
+    <div style={{ marginBottom: 16 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10, flexWrap: 'wrap' }}>
+        <Tag color={statusColor(definition.status)} style={{ margin: 0 }}>{definition.status}</Tag>
+        <Tag color={methodColor(definition.method)} style={{ margin: 0, fontWeight: 600 }}>{definition.method || definition.protocol}</Tag>
+        <span className="ms-mono" style={{ color: '#8a9099', fontSize: 12 }}>[{definition.num ?? '—'}]</span>
+        <span style={{ fontWeight: 600, fontSize: 15, color: '#1f2329' }}>{definition.name}</span>
+      </div>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px 28px', fontSize: 12 }}>
+        <Meta label={t('apidef.colPath', '路径')} value={<span className="ms-mono">{definition.path || '—'}</span>} />
+        <Meta label={t('apidef.tags', '标签')} value={meta.tags.length ? meta.tags.join(', ') : '—'} />
+        <Meta label={t('apidef.descLabel', '描述')} value={meta.description || '—'} />
+        <Meta label={t('apidef.ownerModule', '所属模块')} value={moduleName} />
+        <Meta label={t('apidef.colCreatedBy', '创建人')} value={definition.createdBy || '—'} />
+        <Meta label={t('apidef.colCreatedAt', '创建时间')} value={fmtTs(definition.createdAt)} />
+        <Meta label={t('apidef.updatedAt', '更新时间')} value={fmtTs(definition.updatedAt)} />
+      </div>
     </div>
   )
 
-  // 预览:详情 / 引用关系 / 变更历史(对标参考图 #54,这三者是预览的子标签)。
+  // 预览:详情 / 引用关系 / 变更历史(对标参考图 #1,这三者是预览的子标签)。
   const previewTab = (
-    <Tabs
-      size="small"
-      items={[
-        {
-          key: 'detail',
-          label: t('apidef.detail', '详情'),
-          children: (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-              <Descriptions column={2} size="small" bordered>
-                <Descriptions.Item label={t('apidef.colName', '名称')}>{definition.name}</Descriptions.Item>
-                <Descriptions.Item label={t('apidef.protocol', '协议')}>{definition.protocol}</Descriptions.Item>
-                <Descriptions.Item label={t('apidef.method', '方法')}>{definition.method || '—'}</Descriptions.Item>
-                <Descriptions.Item label={t('apidef.colStatus', '状态')}>{definition.status}</Descriptions.Item>
-                <Descriptions.Item label={t('apidef.colPath', '路径')} span={2}><span className="ms-mono">{definition.path || '—'}</span></Descriptions.Item>
-                <Descriptions.Item label="ID" span={2}><span className="ms-mono" style={{ fontSize: 12 }}>{definition.id}</span></Descriptions.Item>
-              </Descriptions>
-              <ApiSpecPanel definition={definition} mode="preview" />
-            </div>
-          ),
-        },
-        { key: 'refs', label: t('apidef.references', '引用关系'), children: <ReferencesPanel definition={definition} /> },
-        { key: 'history', label: t('apidef.changeHistory', '变更历史'), children: <ChangeHistoryPanel definition={definition} /> },
-      ]}
-    />
+    <>
+      {previewHeader}
+      <Tabs
+        size="small"
+        items={[
+          { key: 'detail', label: t('apidef.detail', '详情'), children: <ApiSpecPanel definition={definition} mode="preview" /> },
+          { key: 'refs', label: t('apidef.references', '引用关系'), children: <ReferencesPanel definition={definition} /> },
+          { key: 'history', label: t('apidef.changeHistory', '变更历史'), children: <ChangeHistoryPanel definition={definition} /> },
+        ]}
+      />
+    </>
   )
 
   // 定义:定义/调试 模式切换 + 对应面板。
@@ -468,8 +492,17 @@ function ApiDetail({ definition }: { definition: ApiDefinition }) {
 
   return (
     <div style={{ padding: '12px 16px', height: '100%', overflow: 'auto' }}>
-      {headerRow}
       <Tabs
+        activeKey={tab}
+        onChange={setTab}
+        tabBarExtraContent={
+          tab === 'preview' ? (
+            <Space size={4}>
+              <Button size="small" onClick={() => setTab('define')}>{t('a.edit', '编辑')}</Button>
+              <Button type="primary" size="small" onClick={() => { setTab('define'); setDefMode('debug') }}>{t('apidef.serverRun', '服务端执行')}</Button>
+            </Space>
+          ) : undefined
+        }
         items={[
           { key: 'preview', label: t('apidef.preview', '预览'), children: previewTab },
           { key: 'define', label: t('apidef.define', '定义'), children: defineTab },
@@ -481,60 +514,86 @@ function ApiDetail({ definition }: { definition: ApiDefinition }) {
   )
 }
 
-function CreateDefinitionModal({
-  open,
-  onClose,
+/** 元信息条目:标签 + 值(对齐参考图预览头)。 */
+function Meta({ label, value }: { label: string; value: ReactNode }) {
+  return (
+    <span style={{ color: '#8a9099' }}>
+      {label} <span style={{ color: '#5b6470' }}>{value}</span>
+    </span>
+  )
+}
+
+/** 新建接口工作 Tab(对齐参考图:协议/方法/路径请求行 + 名称 + 描述 + 保存/取消)。 */
+function NewDefinitionTab({
   projectId,
   moduleId,
+  onCancel,
   onCreated,
 }: {
-  open: boolean
-  onClose: () => void
   projectId: string
   moduleId: string | null
+  onCancel: () => void
   onCreated: (d: ApiDefinition) => void
 }) {
   const { t } = useI18n()
-  const [form] = Form.useForm()
+  const [name, setName] = useState('')
+  const [protocol, setProtocol] = useState('HTTP')
+  const [method, setMethod] = useState('GET')
+  const [path, setPath] = useState('')
+  const [spec, setSpec] = useState<ApiSpec>(emptySpec())
+  const [defMode, setDefMode] = useState<'define' | 'debug'>('define')
   const [saving, setSaving] = useState(false)
+  const isHttp = protocol === 'HTTP'
+
+  const save = async () => {
+    if (!name.trim()) return message.warning(t('apidef.nameRequired', '请填接口名称'))
+    setSaving(true)
+    try {
+      const d = await api.createDefinition({ projectId, name: name.trim(), protocol, method: isHttp ? method : '', path })
+      if (moduleId) await api.moveDefinition(d.id, moduleId).catch(() => undefined)
+      // 把「定义」里编辑的请求/响应规格一并落库。
+      await api.updateDefinitionSpec(d.id, spec).catch(() => undefined)
+      message.success(t('apidef.apiCreated', '接口已创建'))
+      onCreated(d)
+    } catch (e) {
+      message.error(e instanceof ApiError ? e.message : t('apidef.createFailed', '创建失败'))
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  // 给 ApiSpecPanel(create)用的合成定义:无 id,仅带 projectId/protocol 供其渲染。
+  const draftDef = { id: '', num: 0, projectId, name, protocol, method, path, status: 'DRAFT', moduleId, spec } as unknown as ApiDefinition
+
   return (
-    <Modal title={t('apidef.addApi', '添加接口')} open={open} onCancel={onClose} onOk={() => form.submit()} confirmLoading={saving} destroyOnHidden>
-      <Form
-        form={form}
-        layout="vertical"
-        preserve={false}
-        initialValues={{ protocol: 'HTTP', method: 'GET' }}
-        onFinish={async (v) => {
-          setSaving(true)
-          try {
-            const d = await api.createDefinition({ projectId, ...v })
-            // 若当前选中某模块,创建后顺手归入
-            if (moduleId) await api.moveDefinition(d.id, moduleId).catch(() => undefined)
-            message.success(t('apidef.apiCreated', '接口已创建'))
-            onCreated(d)
-          } catch (e) {
-            message.error(e instanceof ApiError ? e.message : t('apidef.createFailed', '创建失败'))
-          } finally {
-            setSaving(false)
-          }
-        }}
-      >
-        <Form.Item name="name" label={t('apidef.colName', '名称')} rules={[{ required: true }]}>
-          <Input placeholder={t('apidef.namePlaceholder', '如:用户登录')} />
-        </Form.Item>
-        <Space>
-          <Form.Item name="protocol" label={t('apidef.protocol', '协议')}>
-            <Select style={{ width: 130 }} options={PROTOCOLS.map((p) => ({ value: p, label: p }))} />
-          </Form.Item>
-          <Form.Item name="method" label={t('apidef.method', '方法')}>
-            <Select style={{ width: 110 }} options={METHODS.map((m) => ({ value: m, label: m }))} />
-          </Form.Item>
-        </Space>
-        <Form.Item name="path" label={t('apidef.colPath', '路径')}>
-          <Input placeholder="/api/login" className="ms-mono" />
-        </Form.Item>
-      </Form>
-    </Modal>
+    <div style={{ padding: '12px 16px', height: '100%', overflow: 'auto' }}>
+      {/* 请求行:协议 + 方法 + 路径 + 定义/调试 + 保存(对齐参考图 #6/#7) */}
+      <div style={{ display: 'flex', gap: 8, marginBottom: 12, alignItems: 'center' }}>
+        <Select value={protocol} onChange={setProtocol} style={{ width: 120 }} options={PROTOCOLS.map((p) => ({ value: p, label: p }))} />
+        {isHttp && <Select value={method} onChange={setMethod} style={{ width: 100 }} options={METHODS.map((m) => ({ value: m, label: m }))} />}
+        <Input value={path} onChange={(e) => setPath(e.target.value)} placeholder={isHttp ? '/api/login' : t('apidef.pathOrTarget', '路径 / 目标')} className="ms-mono" style={{ flex: 1 }} />
+        {isHttp && (
+          <Segmented
+            value={defMode}
+            onChange={(v) => setDefMode(v as 'define' | 'debug')}
+            options={[
+              { label: t('apidef.define', '定义'), value: 'define' },
+              { label: t('apidef.debug', '调试'), value: 'debug' },
+            ]}
+          />
+        )}
+        <Button onClick={onCancel}>{t('a.cancel', '取消')}</Button>
+        <Button type="primary" loading={saving} icon={<SaveOutlined />} onClick={save}>{t('a.save', '保存')}</Button>
+      </div>
+      <Input value={name} onChange={(e) => setName(e.target.value)} placeholder={t('apidef.nameInputPlaceholder', '请输入接口名称')} style={{ marginBottom: 12 }} autoFocus />
+      {!isHttp ? (
+        <span style={{ color: '#8a9099', fontSize: 12 }}>{t('apidef.nonHttpHint', '该协议当前仅登记/存储,执行能力待接入;保存后可在列表查看。')}</span>
+      ) : defMode === 'define' ? (
+        <ApiSpecPanel definition={draftDef} mode="create" value={spec} onChange={setSpec} />
+      ) : (
+        <RequestEditor initialMethod={method} initialUrl={path} lockedProtocol={protocol} />
+      )}
+    </div>
   )
 }
 

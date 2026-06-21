@@ -1,9 +1,24 @@
 import { useEffect, useState } from 'react'
-import { Button, Empty, Form, Input, InputNumber, Modal, Space, Switch, Table, Tag } from 'antd'
+import { Button, Card, Empty, Input, InputNumber, Modal, Segmented, Space, Switch, Table, Tabs, Tag, Typography } from 'antd'
 import { message } from '../feedback'
 import { PlusOutlined, ReloadOutlined } from '@ant-design/icons'
-import { api, ApiError, type ApiDefinition, type ApiMock } from '../api'
+import { api, ApiError, type ApiBodyType, type ApiDefinition, type ApiMock } from '../api'
+import { methodColor } from '../components/tags'
+import KVEditor, { type KVRow } from '../components/KVEditor'
+import MatchConditionEditor, { type MatchCond, emptyCond } from '../components/MatchConditionEditor'
 import { useI18n } from '../i18n'
+
+const MATCH_BODY_TYPES: ApiBodyType[] = ['none', 'form-data', 'x-www-form-urlencoded', 'json', 'xml', 'raw', 'binary']
+const RESP_BODY_TYPES = ['json', 'xml', 'raw', 'binary'] as const
+
+/** 尽力格式化 JSON;非法原样返回。 */
+function formatJson(text: string): string {
+  try {
+    return JSON.stringify(JSON.parse(text), null, 2)
+  } catch {
+    return text
+  }
+}
 
 export default function MocksPanel({ definition }: { definition: ApiDefinition }) {
   const { t } = useI18n()
@@ -66,15 +81,16 @@ export default function MocksPanel({ definition }: { definition: ApiDefinition }
       />
 
       <Modal
-        title={`${t('mock.new', '新建 Mock')} · ${definition.name}`}
+        title={t('mock.newTitle', '创建 MOCK')}
         open={open}
         onCancel={() => setOpen(false)}
         footer={null}
         destroyOnHidden
-        width={560}
+        width={760}
       >
         <CreateMockForm
           definition={definition}
+          onClose={() => setOpen(false)}
           onCreated={() => {
             setOpen(false)
             load()
@@ -87,67 +103,227 @@ export default function MocksPanel({ definition }: { definition: ApiDefinition }
 
 function CreateMockForm({
   definition,
+  onClose,
   onCreated,
 }: {
   definition: ApiDefinition
+  onClose: () => void
   onCreated: () => void
 }) {
   const { t } = useI18n()
-  const [form] = Form.useForm()
+  const [name, setName] = useState('')
+  const [tags, setTags] = useState<string[]>([])
+  const [tagInput, setTagInput] = useState('')
+  const [matchHeaders, setMatchHeaders] = useState<MatchCond[]>([emptyCond()])
+  const [matchQuery, setMatchQuery] = useState<MatchCond[]>([emptyCond()])
+  const [matchType, setMatchType] = useState<ApiBodyType>('json')
+  const [matchBody, setMatchBody] = useState('')
+  const [followDef, setFollowDef] = useState(false)
+  const [respType, setRespType] = useState<(typeof RESP_BODY_TYPES)[number]>('json')
+  const [respBody, setRespBody] = useState('{"ok":true}')
+  const [respStatus, setRespStatus] = useState(200)
+  const [respHeaders, setRespHeaders] = useState<KVRow[]>([{ key: 'Content-Type', value: 'application/json' }])
+  const [respDelay, setRespDelay] = useState<number | null>(null)
   const [saving, setSaving] = useState(false)
+
+  const doSave = async (): Promise<boolean> => {
+    if (!name.trim()) {
+      message.warning(t('mock.nameRequired', '请输入期望名称'))
+      return false
+    }
+    // 组装 mock-runtime 的 ExtraConditions:headers/query 为 [名, {op,value}] 元组(op=等于/包含/正则);body 为子串包含。
+    const matchRule: Record<string, unknown> = {}
+    const toConds = (rows: MatchCond[]) => rows.filter((r) => r.name.trim()).map((r) => [r.name.trim(), { op: r.op, value: r.value }])
+    const mh = toConds(matchHeaders)
+    const mq = toConds(matchQuery)
+    if (mh.length) matchRule.headers = mh
+    if (mq.length) matchRule.query = mq
+    if (matchBody.trim()) matchRule.body = [{ kind: 'contains', value: matchBody.trim() }]
+    setSaving(true)
+    try {
+      await api.createMock(definition.id, {
+        name: name.trim(),
+        matchRule,
+        responseStatus: respStatus,
+        responseBody: followDef ? undefined : respBody || undefined,
+        enabled: true,
+        tags,
+        followDefinition: followDef,
+        responseHeaders: respHeaders.filter((h) => h.key.trim()),
+        responseDelayMs: respDelay ?? 0,
+      })
+      message.success(t('mock.created', 'Mock 已创建'))
+      return true
+    } catch (e) {
+      message.error(e instanceof ApiError ? e.message : t('mock.createFailed', '创建失败'))
+      return false
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const reset = () => {
+    setName('')
+    setTags([])
+    setTagInput('')
+    setMatchHeaders([emptyCond()])
+    setMatchQuery([emptyCond()])
+    setMatchType('json')
+    setMatchBody('')
+    setFollowDef(false)
+    setRespType('json')
+    setRespBody('{"ok":true}')
+    setRespStatus(200)
+    setRespHeaders([{ key: 'Content-Type', value: 'application/json' }])
+    setRespDelay(null)
+  }
+
+  const save = async () => {
+    if (await doSave()) onCreated()
+  }
+  const saveAndContinue = async () => {
+    if (await doSave()) {
+      reset()
+      message.info(t('mock.continueHint', '可继续创建下一条期望'))
+    }
+  }
+
+  const countCond = (rows: MatchCond[]) => rows.filter((r) => r.name.trim()).length
+
+  // 匹配规则子标签:请求头 / Query(参数名 + 等于/包含/正则 + 值)/ REST / 请求体(子串包含)。映射到 mock-runtime ExtraConditions。
+  const matchTabs = [
+    {
+      key: 'headers',
+      label: `${t('case.headers', '请求头')}${countCond(matchHeaders) ? ` (${countCond(matchHeaders)})` : ''}`,
+      children: <MatchConditionEditor rows={matchHeaders} onChange={setMatchHeaders} />,
+    },
+    {
+      key: 'query',
+      label: `Query${countCond(matchQuery) ? ` (${countCond(matchQuery)})` : ''}`,
+      children: <MatchConditionEditor rows={matchQuery} onChange={setMatchQuery} />,
+    },
+    { key: 'rest', label: 'REST', children: <Typography.Text type="secondary">{t('mock.matchRestHint', 'REST 路径参数匹配:匹配引擎暂以定义的 method+path 为基,不支持按 REST 段细化')}</Typography.Text> },
+    {
+      key: 'body',
+      label: `${t('apidef.requestBody', '请求体')}${matchBody.trim() ? ' (1)' : ''}`,
+      children: (
+        <div>
+          <Typography.Text type="secondary" style={{ fontSize: 12 }}>{t('mock.matchBodyContainsHint', '命中条件:请求体包含以下文本(子串)')}</Typography.Text>
+          <Segmented
+            size="small"
+            value={matchType}
+            onChange={(v) => setMatchType(v as ApiBodyType)}
+            options={MATCH_BODY_TYPES.map((x) => ({ label: x, value: x }))}
+            style={{ margin: '10px 0' }}
+          />
+          <div style={{ textAlign: 'right', marginBottom: 6 }}>
+            <Button size="small" onClick={() => setMatchBody(formatJson(matchBody))}>{t('apidef.format', '格式化')}</Button>
+          </div>
+          <Input.TextArea rows={6} value={matchBody} onChange={(e) => setMatchBody(e.target.value)} placeholder='{"fusiongold$symbollist#0": {}}' className="ms-mono" />
+        </div>
+      ),
+    },
+  ]
+
+  // 响应内容子标签:响应体 / 响应头 / 状态码 / 响应延时。
+  const respTabs = [
+    {
+      key: 'body',
+      label: t('case.respBody', '响应体'),
+      children: (
+        <div>
+          <Segmented
+            size="small"
+            value={respType}
+            onChange={(v) => setRespType(v as (typeof RESP_BODY_TYPES)[number])}
+            options={RESP_BODY_TYPES.map((x) => ({ label: x, value: x }))}
+            style={{ marginBottom: 10 }}
+          />
+          <div style={{ textAlign: 'right', marginBottom: 6 }}>
+            <Button size="small" disabled={followDef} onClick={() => setRespBody(formatJson(respBody))}>{t('apidef.format', '格式化')}</Button>
+          </div>
+          <Input.TextArea
+            rows={8}
+            value={respBody}
+            disabled={followDef}
+            onChange={(e) => setRespBody(e.target.value)}
+            placeholder='{"ok":true}'
+            className="ms-mono"
+          />
+        </div>
+      ),
+    },
+    {
+      key: 'headers',
+      label: `${t('case.respHeaders', '响应头')}${respHeaders.filter((h) => h.key.trim()).length ? ` (${respHeaders.filter((h) => h.key.trim()).length})` : ''}`,
+      children: <KVEditor rows={respHeaders} onChange={setRespHeaders} namePlaceholder="Content-Type" valuePlaceholder="application/json" />,
+    },
+    {
+      key: 'status',
+      label: t('mock.statusCode', '状态码'),
+      children: <InputNumber min={100} max={599} value={respStatus} onChange={(v) => setRespStatus(v ?? 200)} />,
+    },
+    {
+      key: 'delay',
+      label: t('mock.respDelay', '响应延时'),
+      children: (
+        <Space>
+          <span>{t('case.waitMs', '等待(ms)')}</span>
+          <InputNumber min={0} max={600000} value={respDelay ?? undefined} onChange={(v) => setRespDelay(v ?? null)} placeholder="0" />
+        </Space>
+      ),
+    },
+  ]
+
   return (
-    <Form
-      form={form}
-      layout="vertical"
-      initialValues={{ responseStatus: 200, enabled: true, responseBody: '{"ok":true}' }}
-      onFinish={async (v) => {
-        let matchRule: unknown = {}
-        if (v.matchRule?.trim()) {
-          try {
-            matchRule = JSON.parse(v.matchRule)
-          } catch {
-            message.error(t('mock.invalidJson', '匹配规则不是合法 JSON'))
-            return
-          }
-        }
-        setSaving(true)
-        try {
-          await api.createMock(definition.id, {
-            name: v.name,
-            matchRule,
-            responseStatus: v.responseStatus,
-            responseBody: v.responseBody || undefined,
-            enabled: v.enabled,
-          })
-          message.success(t('mock.created', 'Mock 已创建'))
-          onCreated()
-        } catch (e) {
-          message.error(e instanceof ApiError ? e.message : t('mock.createFailed', '创建失败'))
-        } finally {
-          setSaving(false)
-        }
-      }}
-    >
-      <Form.Item name="name" label={t('mock.colName', '名称')} rules={[{ required: true }]}>
-        <Input placeholder={t('mock.namePlaceholder', '如:默认成功响应')} />
-      </Form.Item>
-      <Space>
-        <Form.Item name="responseStatus" label={t('mock.colStatus', '响应码')}>
-          <InputNumber min={100} max={599} />
-        </Form.Item>
-        <Form.Item name="enabled" label={t('mock.colEnabled', '启用')} valuePropName="checked">
-          <Switch />
-        </Form.Item>
+    <div>
+      {/* 头部信息卡:【id】名称 + 请求类型 + 路径(对齐参考图 #4) */}
+      <Card size="small" styles={{ body: { padding: '10px 14px' } }} style={{ marginBottom: 12, background: '#fafbfc' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+          <span style={{ fontWeight: 600 }}>【{definition.num ?? '—'}】{definition.name}</span>
+          <div style={{ flex: 1 }} />
+          <span style={{ color: '#8a9099', fontSize: 12 }}>{t('apidef.reqType', '请求类型')} <Tag color={methodColor(definition.method)} style={{ margin: 0 }}>{definition.method || definition.protocol}</Tag></span>
+          <span style={{ color: '#8a9099', fontSize: 12 }}>{t('apidef.colPath', '路径')} <span className="ms-mono" style={{ color: '#5b6470' }}>{definition.path || '—'}</span></span>
+        </div>
+      </Card>
+
+      <Input value={name} onChange={(e) => setName(e.target.value)} placeholder={t('mock.namePlaceholder2', '请输入期望名称')} style={{ marginBottom: 10 }} />
+      <Space size={[4, 4]} wrap style={{ marginBottom: 14 }}>
+        {tags.map((tg) => (
+          <Tag key={tg} closable onClose={() => setTags(tags.filter((x) => x !== tg))}>{tg}</Tag>
+        ))}
+        <Input
+          size="small"
+          style={{ width: 180 }}
+          value={tagInput}
+          onChange={(e) => setTagInput(e.target.value)}
+          onPressEnter={() => {
+            const v = tagInput.trim()
+            if (v && !tags.includes(v)) setTags([...tags, v])
+            setTagInput('')
+          }}
+          placeholder={t('apidef.addTag', '添加标签,回车结束')}
+        />
       </Space>
-      <Form.Item name="matchRule" label={t('mock.matchRule', '匹配规则(JSON,可选)')}>
-        <Input.TextArea rows={3} className="ms-mono" placeholder='{"query":{"id":"1"}}' />
-      </Form.Item>
-      <Form.Item name="responseBody" label={t('mock.colBody', '响应体')}>
-        <Input.TextArea rows={3} className="ms-mono" />
-      </Form.Item>
-      <Button type="primary" htmlType="submit" loading={saving} block>
-        {t('a.create', '创建')}
-      </Button>
-    </Form>
+
+      <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 8 }}>{t('mock.matchRuleTitle', '匹配规则')}</div>
+      <Tabs size="small" items={matchTabs} />
+
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, fontWeight: 600, fontSize: 13, margin: '12px 0 8px' }}>
+        {t('mock.respContent', '响应内容')}
+        <span style={{ fontWeight: 400, color: '#8a9099', fontSize: 12 }}>
+          {t('mock.followDef', '跟随 API 定义')} <Switch size="small" checked={followDef} onChange={setFollowDef} />
+        </span>
+      </div>
+      <Tabs size="small" items={respTabs} />
+
+      <div style={{ textAlign: 'right', marginTop: 16 }}>
+        <Space>
+          <Button onClick={onClose}>{t('a.cancel', '取消')}</Button>
+          <Button loading={saving} onClick={saveAndContinue}>{t('case.saveContinue', '保存并继续创建')}</Button>
+          <Button type="primary" loading={saving} onClick={save}>{t('a.create', '创建')}</Button>
+        </Space>
+      </div>
+    </div>
   )
 }
