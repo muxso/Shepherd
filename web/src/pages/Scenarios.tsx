@@ -97,6 +97,7 @@ export default function Scenarios() {
             emptyText={t('scenario.empty', '暂无场景')}
             columns={[
               { title: t('scenario.colName', '名称'), dataIndex: 'name', ellipsis: true },
+              { title: t('scenario.colSteps', '步骤数'), dataIndex: 'steps', width: 100, render: (steps?: unknown[]) => <Tag color={steps?.length ? 'geekblue' : 'default'}>{steps?.length ?? 0}</Tag> },
               { title: t('scenario.colStatus', '状态'), dataIndex: 'status', width: 120, render: (s: string) => <Tag color={statusColor(s)}>{s}</Tag> },
             ]}
           />
