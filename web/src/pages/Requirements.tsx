@@ -10,6 +10,7 @@ import {
   Input,
   Modal,
   Row,
+  Select,
   Space,
   Statistic,
   Table,
@@ -18,10 +19,12 @@ import {
   Typography,
   message,
 } from 'antd'
+import { useNavigate } from 'react-router-dom'
 import { BranchesOutlined, FlagOutlined, PartitionOutlined, PlayCircleOutlined, SendOutlined } from '@ant-design/icons'
 import {
   api,
   ApiError,
+  type ApiCase,
   type DeliveryEvent,
   type Requirement,
   type Task,
@@ -183,7 +186,7 @@ function RequirementDetail({ reqId, projectId, onChanged }: { reqId: string; pro
             key: 'orch',
             label: '拆分 / 交付 / 验证',
             children: decompId ? (
-              <DecompositionView decompId={decompId} verificationId={verId} />
+              <DecompositionView decompId={decompId} verificationId={verId} projectId={projectId} />
             ) : (
               <Empty description="尚未拆分,去「需求信息」点「自动拆分」生成任务图" />
             ),
@@ -213,12 +216,13 @@ function RequirementDetail({ reqId, projectId, onChanged }: { reqId: string; pro
   )
 }
 
-function DecompositionView({ decompId, verificationId }: { decompId: string; verificationId?: string }) {
+function DecompositionView({ decompId, verificationId, projectId }: { decompId: string; verificationId?: string; projectId: string }) {
   const [tasks, setTasks] = useState<Task[]>([])
   const [running, setRunning] = useState(false)
   const [summary, setSummary] = useState<{ total: number; verified: number; failed: number; blocked: number; rounds: number } | null>(null)
   const [report, setReport] = useState<VerificationReport | null>(null)
   const [eventsFor, setEventsFor] = useState<Task | null>(null)
+  const [casesFor, setCasesFor] = useState<Task | null>(null)
 
   const load = async () => {
     try {
@@ -288,6 +292,7 @@ function DecompositionView({ decompId, verificationId }: { decompId: string; ver
             render: (_, t) => (
               <Space>
                 <Button type="link" size="small" icon={<SendOutlined />} onClick={() => dispatch(t)}>派发</Button>
+                <Button type="link" size="small" onClick={() => setCasesFor(t)}>用例</Button>
                 <Button type="link" size="small" onClick={() => setEventsFor(t)}>事件</Button>
               </Space>
             ),
@@ -308,7 +313,87 @@ function DecompositionView({ decompId, verificationId }: { decompId: string; ver
         </Card>
       )}
       <EventsDrawer decompId={decompId} task={eventsFor} onClose={() => setEventsFor(null)} />
+      <TaskCasesDrawer decompId={decompId} projectId={projectId} task={casesFor} onClose={() => setCasesFor(null)} />
     </Space>
+  )
+}
+
+// 任务关联用例 + 用例所属计划:打通 任务→用例→计划,均可点进对应页。
+function TaskCasesDrawer({ decompId, projectId, task, onClose }: { decompId: string; projectId: string; task: Task | null; onClose: () => void }) {
+  const nav = useNavigate()
+  const [linked, setLinked] = useState<ApiCase[]>([])
+  const [plansOf, setPlansOf] = useState<Record<string, { planId: string; name: string }[]>>({})
+  const [projCases, setProjCases] = useState<ApiCase[]>([])
+  const [pick, setPick] = useState('')
+
+  const load = async () => {
+    if (!task) return
+    const cs = await api.taskCases(decompId, task.id).catch(() => [])
+    setLinked(cs)
+    const map: Record<string, { planId: string; name: string }[]> = {}
+    await Promise.all(cs.map((c) => api.plansByCase(c.id).then((ps) => { map[c.id] = ps }).catch(() => undefined)))
+    setPlansOf(map)
+  }
+  useEffect(() => {
+    if (task) {
+      load()
+      api.projectCases(projectId).then((p) => setProjCases(p.items)).catch(() => undefined)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [task])
+
+  const linkCase = async () => {
+    if (!task || !pick) return
+    await api.linkTaskCase(decompId, task.id, pick).catch((e) => message.error(e instanceof ApiError ? e.message : '关联失败'))
+    setPick('')
+    load()
+  }
+  const unlink = async (caseId: string) => {
+    if (!task) return
+    await api.unlinkTaskCase(decompId, task.id, caseId)
+    load()
+  }
+
+  return (
+    <Drawer title={task ? `任务用例 · ${task.title}` : ''} open={!!task} onClose={onClose} width={560}>
+      <Space.Compact style={{ width: '100%', marginBottom: 12 }}>
+        <Select
+          style={{ flex: 1 }}
+          showSearch
+          placeholder="选择项目接口用例关联到本任务"
+          value={pick || undefined}
+          onChange={setPick}
+          optionFilterProp="label"
+          options={projCases.map((c) => ({ value: c.id, label: `${c.method} ${c.name}` }))}
+        />
+        <Button type="primary" onClick={linkCase} disabled={!pick}>关联</Button>
+      </Space.Compact>
+      <Table<ApiCase>
+        rowKey="id"
+        size="small"
+        dataSource={linked}
+        pagination={false}
+        locale={{ emptyText: <Empty description="未关联用例" /> }}
+        columns={[
+          {
+            title: '用例',
+            render: (_, c) => (
+              <a onClick={() => c.apiDefinitionId && nav(`/api/definition?open=${c.apiDefinitionId}`)}>{c.method} {c.name}</a>
+            ),
+          },
+          {
+            title: '所属计划',
+            render: (_, c) =>
+              (plansOf[c.id] || []).length
+                ? (plansOf[c.id] || []).map((p) => (
+                    <Tag key={p.planId} color="geekblue" style={{ cursor: 'pointer' }} onClick={() => nav(`/test-plan?open=${p.planId}`)}>{p.name}</Tag>
+                  ))
+                : <span style={{ color: '#bbb' }}>—</span>,
+          },
+          { title: '', width: 50, render: (_, c) => <Button type="link" size="small" danger onClick={() => unlink(c.id)}>移除</Button> },
+        ]}
+      />
+    </Drawer>
   )
 }
 

@@ -2913,6 +2913,7 @@ dependencies = [
  "serde",
  "serde_json",
  "skill",
+ "sqlx",
  "system-setting",
  "task",
  "test-plan",
