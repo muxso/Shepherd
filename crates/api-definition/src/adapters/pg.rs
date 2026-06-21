@@ -125,6 +125,16 @@ impl ApiDefinitionRepository for PgApiDefinitionRepository {
         Ok(())
     }
 
+    async fn update_definition_status(&self, id: &str, status: &str) -> Result<(), RepoError> {
+        sqlx::query("UPDATE ms_api_definition SET status = $2 WHERE id = $1 AND deleted = false")
+            .bind(id)
+            .bind(status)
+            .execute(&self.pool)
+            .await
+            .map_err(map_err)?;
+        Ok(())
+    }
+
     async fn record_definition_change(
         &self,
         definition_id: &str,

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Button, Checkbox, Descriptions, Dropdown, Empty, Input, Table, Modal, Form, Select, Space, Tabs, Tag, Tree, Upload } from 'antd'
+import { Button, Checkbox, Descriptions, Dropdown, Empty, Input, Table, Modal, Form, Segmented, Select, Space, Tabs, Tag, Tree, Upload } from 'antd'
 import { message, modal } from '../feedback'
 import {
   PlusOutlined,
@@ -381,50 +381,86 @@ function methodColorHex(m: string): string {
 
 function ApiDetail({ definition }: { definition: ApiDefinition }) {
   const { t } = useI18n()
+  // 定义页内的 定义/调试 切换(对标 MeterSphere:调试是定义内的模式,不是顶层标签)。
+  const [defMode, setDefMode] = useState<'define' | 'debug'>('define')
+
+  const headerRow = (
+    <div style={{ display: 'flex', gap: 0, marginBottom: 12 }}>
+      <span
+        style={{
+          background: '#f5f7fa',
+          border: '1px solid #e5e8ec',
+          borderRight: 'none',
+          borderRadius: '6px 0 0 6px',
+          padding: '5px 12px',
+          fontWeight: 600,
+          color: methodColorHex(definition.method),
+        }}
+      >
+        {definition.method || definition.protocol}
+      </span>
+      <Input readOnly value={definition.path || '—'} className="ms-mono" style={{ borderRadius: '0 6px 6px 0' }} />
+      <Tag color={statusColor(definition.status)} style={{ marginLeft: 8, alignSelf: 'center' }}>{definition.status}</Tag>
+    </div>
+  )
+
+  // 预览:详情 / 引用关系 / 变更历史(对标参考图 #54,这三者是预览的子标签)。
+  const previewTab = (
+    <Tabs
+      size="small"
+      items={[
+        {
+          key: 'detail',
+          label: t('apidef.detail', '详情'),
+          children: (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+              <Descriptions column={2} size="small" bordered>
+                <Descriptions.Item label={t('apidef.colName', '名称')}>{definition.name}</Descriptions.Item>
+                <Descriptions.Item label={t('apidef.protocol', '协议')}>{definition.protocol}</Descriptions.Item>
+                <Descriptions.Item label={t('apidef.method', '方法')}>{definition.method || '—'}</Descriptions.Item>
+                <Descriptions.Item label={t('apidef.colStatus', '状态')}>{definition.status}</Descriptions.Item>
+                <Descriptions.Item label={t('apidef.colPath', '路径')} span={2}><span className="ms-mono">{definition.path || '—'}</span></Descriptions.Item>
+                <Descriptions.Item label="ID" span={2}><span className="ms-mono" style={{ fontSize: 12 }}>{definition.id}</span></Descriptions.Item>
+              </Descriptions>
+              <ApiSpecPanel definition={definition} mode="preview" />
+            </div>
+          ),
+        },
+        { key: 'refs', label: t('apidef.references', '引用关系'), children: <ReferencesPanel definition={definition} /> },
+        { key: 'history', label: t('apidef.changeHistory', '变更历史'), children: <ChangeHistoryPanel definition={definition} /> },
+      ]}
+    />
+  )
+
+  // 定义:定义/调试 模式切换 + 对应面板。
+  const defineTab = (
+    <div>
+      <Segmented
+        value={defMode}
+        onChange={(v) => setDefMode(v as 'define' | 'debug')}
+        options={[
+          { label: t('apidef.define', '定义'), value: 'define' },
+          { label: t('apidef.debug', '调试'), value: 'debug' },
+        ]}
+        style={{ marginBottom: 12 }}
+      />
+      {defMode === 'define' ? (
+        <ApiSpecPanel definition={definition} mode="define" />
+      ) : (
+        <RequestEditor initialMethod={definition.method || 'GET'} initialUrl={definition.path || ''} lockedProtocol={definition.protocol} />
+      )}
+    </div>
+  )
+
   return (
     <div style={{ padding: '12px 16px', height: '100%', overflow: 'auto' }}>
-      <div style={{ display: 'flex', gap: 0, marginBottom: 12 }}>
-        <span
-          style={{
-            background: '#f5f7fa',
-            border: '1px solid #e5e8ec',
-            borderRight: 'none',
-            borderRadius: '6px 0 0 6px',
-            padding: '5px 12px',
-            fontWeight: 600,
-            color: methodColorHex(definition.method),
-          }}
-        >
-          {definition.method || definition.protocol}
-        </span>
-        <Input readOnly value={definition.path || '—'} className="ms-mono" style={{ borderRadius: '0 6px 6px 0' }} />
-        <Tag color={statusColor(definition.status)} style={{ marginLeft: 8, alignSelf: 'center' }}>{definition.status}</Tag>
-      </div>
+      {headerRow}
       <Tabs
         items={[
-          {
-            key: 'preview',
-            label: t('apidef.preview', '预览'),
-            children: (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-                <Descriptions column={2} size="small" bordered>
-                  <Descriptions.Item label={t('apidef.colName', '名称')}>{definition.name}</Descriptions.Item>
-                  <Descriptions.Item label={t('apidef.protocol', '协议')}>{definition.protocol}</Descriptions.Item>
-                  <Descriptions.Item label={t('apidef.method', '方法')}>{definition.method || '—'}</Descriptions.Item>
-                  <Descriptions.Item label={t('apidef.colStatus', '状态')}>{definition.status}</Descriptions.Item>
-                  <Descriptions.Item label={t('apidef.colPath', '路径')} span={2}><span className="ms-mono">{definition.path || '—'}</span></Descriptions.Item>
-                  <Descriptions.Item label="ID" span={2}><span className="ms-mono" style={{ fontSize: 12 }}>{definition.id}</span></Descriptions.Item>
-                </Descriptions>
-                <ApiSpecPanel definition={definition} mode="preview" />
-              </div>
-            ),
-          },
-          { key: 'define', label: t('apidef.define', '定义'), children: <ApiSpecPanel definition={definition} mode="define" /> },
-          { key: 'refs', label: t('apidef.references', '引用关系'), children: <ReferencesPanel definition={definition} /> },
-          { key: 'history', label: t('apidef.changeHistory', '变更历史'), children: <ChangeHistoryPanel definition={definition} /> },
-          { key: 'debug', label: t('apidef.debug', '调试'), children: <RequestEditor initialMethod={definition.method || 'GET'} initialUrl={definition.path || ''} lockedProtocol={definition.protocol} /> },
-          { key: 'cases', label: t('apidef.cases', '接口用例'), children: <CasesPanel definition={definition} /> },
-          { key: 'mock', label: 'Mock', children: <MocksPanel definition={definition} /> },
+          { key: 'preview', label: t('apidef.preview', '预览'), children: previewTab },
+          { key: 'define', label: t('apidef.define', '定义'), children: defineTab },
+          { key: 'cases', label: t('apidef.casesTab', '用例'), children: <CasesPanel definition={definition} /> },
+          { key: 'mock', label: 'MOCK', children: <MocksPanel definition={definition} /> },
         ]}
       />
     </div>
