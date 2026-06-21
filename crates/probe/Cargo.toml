@@ -25,6 +25,8 @@ redis = { version = "0.27", default-features = false, features = ["tokio-comp"],
 tokio-tungstenite = { version = "0.24", optional = true }
 futures-util = { version = "0.3", default-features = false, features = ["sink"], optional = true }
 tokio = { version = "1", default-features = false, features = ["time"], optional = true }
+# SSH 协议:纯 Rust(russh,无 libssh2 C 依赖)。target=host:port,payload=命令,认证用 metadata。
+russh = { version = "0.45", optional = true }
 
 [features]
 default = ["http"]
@@ -34,6 +36,7 @@ sql = ["dep:sqlx", "sqlx/postgres"]
 mysql = ["dep:sqlx", "sqlx/mysql"]
 redis = ["dep:redis"]
 websocket = ["dep:tokio-tungstenite", "dep:futures-util", "dep:tokio"]
+ssh = ["dep:russh"]
 
 [dev-dependencies]
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "net"] }
