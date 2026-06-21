@@ -117,7 +117,9 @@ const ApiSpecPanel = forwardRef<ApiSpecPanelHandle, {
   execMode?: ExecMode
   /** 选中的环境(由父级顶栏环境选择器提供;调试执行用其 baseUrl/默认头/变量)。 */
   env?: Environment
-}>(function ApiSpecPanel({ definition, mode, value, onChange, hideSave, reqMethod, reqPath, execMode = 'server', env }, ref) {
+  /** 「保存为新用例」成功后回调(父级据此跳转到「用例」标签并刷新)。 */
+  onCaseSaved?: () => void
+}>(function ApiSpecPanel({ definition, mode, value, onChange, hideSave, reqMethod, reqPath, execMode = 'server', env, onCaseSaved }, ref) {
   const { t } = useI18n()
   const create = mode === 'create'
   const debug = mode === 'debug'
@@ -266,6 +268,7 @@ const ApiSpecPanel = forwardRef<ApiSpecPanelHandle, {
       })
       message.success(t('apidef.caseSaved', '已另存为用例'))
       setCaseModalOpen(false)
+      onCaseSaved?.()
     } catch (e) {
       message.error(e instanceof ApiError ? e.message : t('apidef.saveFailed', '保存失败'))
     } finally {

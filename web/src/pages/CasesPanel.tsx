@@ -15,7 +15,7 @@ import { methodColor, outcomeColor } from '../components/tags'
 import CaseEditorDrawer from '../components/CaseEditorDrawer'
 import { useI18n } from '../i18n'
 
-export default function CasesPanel({ definition }: { definition: ApiDefinition }) {
+export default function CasesPanel({ definition, refreshToken }: { definition: ApiDefinition; refreshToken?: number }) {
   const { t } = useI18n()
   const [cases, setCases] = useState<ApiCase[]>([])
   const [loading, setLoading] = useState(false)
@@ -37,7 +37,7 @@ export default function CasesPanel({ definition }: { definition: ApiDefinition }
   useEffect(() => {
     load()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [definition.id])
+  }, [definition.id, refreshToken])
 
   return (
     <>

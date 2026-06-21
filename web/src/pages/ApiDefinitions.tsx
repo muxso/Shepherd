@@ -557,6 +557,8 @@ function ApiDetail({ definition }: { definition: ApiDefinition }) {
   // 调试环境(顶栏选择;提供 baseUrl/默认头/变量)。
   const [envs, setEnvs] = useState<Environment[]>([])
   const [envId, setEnvId] = useState<string>('')
+  // 「保存为新用例」后自增,驱动「用例」标签重新加载。
+  const [casesRefresh, setCasesRefresh] = useState(0)
 
   useEffect(() => {
     if (defMode !== 'debug' || envs.length) return
@@ -709,6 +711,7 @@ function ApiDetail({ definition }: { definition: ApiDefinition }) {
         reqPath={reqPath}
         execMode={execMode}
         env={envs.find((e) => e.id === envId)}
+        onCaseSaved={() => { setCasesRefresh((n) => n + 1); setTab('cases') }}
         hideSave
       />
       <Modal
@@ -761,7 +764,7 @@ function ApiDetail({ definition }: { definition: ApiDefinition }) {
         items={[
           { key: 'preview', label: t('apidef.preview', '预览'), children: previewTab },
           { key: 'define', label: t('apidef.define', '定义'), children: defineTab },
-          { key: 'cases', label: t('apidef.casesTab', '用例'), children: <CasesPanel definition={definition} /> },
+          { key: 'cases', label: t('apidef.casesTab', '用例'), children: <CasesPanel definition={definition} refreshToken={casesRefresh} /> },
           { key: 'mock', label: 'MOCK', children: <MocksPanel definition={definition} /> },
         ]}
       />
