@@ -153,21 +153,25 @@ export default function ApiDefinitions() {
     }
   }
 
+  // 复制接口:同协议/方法/路径新建一条「<名> copy」,归入同模块。
+  const duplicate = async (d: ApiDefinition) => {
+    try {
+      const c = await api.createDefinition({ projectId, name: `${d.name} copy`, protocol: d.protocol, method: d.method, path: d.path })
+      if (d.moduleId) await api.moveDefinition(c.id, d.moduleId).catch(() => undefined)
+      message.success(t('apidef.duplicated', '已复制'))
+      load()
+    } catch (e) {
+      message.error(e instanceof ApiError ? e.message : t('apidef.createFailed', '创建失败'))
+    }
+  }
+
   const columns: ColumnsType<ApiDefinition> = [
-    {
-      title: t('apidef.colName', '名称'),
-      dataIndex: 'name',
-      ellipsis: true,
-      render: (name: string, d) => (
-        <Space size={4}>
-          <Tag color={methodColor(d.method)} style={{ margin: 0, fontWeight: 600, minWidth: 48, textAlign: 'center' }}>
-            {d.method || d.protocol}
-          </Tag>
-          <span style={{ fontWeight: 500 }}>{name}</span>
-        </Space>
-      ),
-    },
+    { title: 'ID', dataIndex: 'id', width: 96, render: (id: string) => <span className="ms-mono" style={{ color: '#8a9099', fontSize: 12 }} title={id}>{id.slice(0, 8)}</span> },
+    { title: t('apidef.colName', '名称'), dataIndex: 'name', ellipsis: true, render: (name: string) => <span style={{ fontWeight: 500 }}>{name}</span> },
+    { title: t('apidef.protocol', '协议'), dataIndex: 'protocol', width: 90, render: (p: string) => <Tag>{p}</Tag> },
+    { title: t('apidef.reqType', '请求类型'), dataIndex: 'method', width: 100, render: (m: string) => <Tag color={methodColor(m)} style={{ fontWeight: 600 }}>{m || '—'}</Tag> },
     { title: t('apidef.colPath', '路径'), dataIndex: 'path', ellipsis: true, render: (p: string) => <span className="ms-mono" style={{ color: '#5b6470' }}>{p || '—'}</span> },
+    { title: t('apidef.colStatus', '状态'), dataIndex: 'status', width: 100, render: (s: string) => <Tag color={statusColor(s)}>{s}</Tag> },
     {
       title: t('apidef.colModule', '模块'),
       dataIndex: 'moduleId',
@@ -177,25 +181,35 @@ export default function ApiDefinitions() {
         return m ? <Tag color="geekblue">{m.name}</Tag> : <span style={{ color: '#bbb' }}>{t('apidef.unfiled', '未归类')}</span>
       },
     },
-    { title: t('apidef.colStatus', '状态'), dataIndex: 'status', width: 100, render: (s: string) => <Tag color={statusColor(s)}>{s}</Tag> },
+    {
+      title: t('apidef.tags', '标签'),
+      dataIndex: 'spec',
+      width: 140,
+      render: (spec?: ApiDefinition['spec']) => {
+        const tags = spec?.tags || []
+        return tags.length ? <Space size={[2, 2]} wrap>{tags.map((tg) => <Tag key={tg} style={{ margin: 0 }}>{tg}</Tag>)}</Space> : <span style={{ color: '#bbb' }}>—</span>
+      },
+    },
     {
       title: t('apidef.colAction', '操作'),
-      width: 120,
+      width: 150,
       render: (_, d) => (
         <Space size={0}>
-          <Button type="link" size="small" onClick={() => openDef(d.id)}>{t('apidef.open', '打开')}</Button>
+          <Button type="link" size="small" onClick={() => openDef(d.id)}>{t('a.edit', '编辑')}</Button>
+          <Button type="link" size="small" onClick={() => openDef(d.id)}>{t('apidef.run', '执行')}</Button>
           <Dropdown
             trigger={['click']}
             menu={{
               items: [
-                { key: 'UNFILED', label: t('apidef.moveToUnfiled', '移到「未归类」') },
+                { key: 'dup', label: t('apidef.duplicate', '复制') },
                 { type: 'divider' as const },
+                { key: 'UNFILED', label: t('apidef.moveToUnfiled', '移到「未归类」') },
                 ...modules.map((m) => ({ key: m.id, label: `${t('apidef.moveToPrefix', '移到')}「${m.name}」` })),
               ],
-              onClick: ({ key }) => move(d, key === 'UNFILED' ? null : key),
+              onClick: ({ key }) => (key === 'dup' ? duplicate(d) : move(d, key === 'UNFILED' ? null : key)),
             }}
           >
-            <Button type="link" size="small">{t('apidef.move', '移动')}</Button>
+            <Button type="link" size="small">{t('a.more', '更多')}</Button>
           </Dropdown>
         </Space>
       ),
