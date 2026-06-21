@@ -8,7 +8,6 @@ import {
   ReloadOutlined,
   ApiOutlined,
   FolderOutlined,
-  FolderAddOutlined,
   MoreOutlined,
   InboxOutlined,
   SaveOutlined,
@@ -20,6 +19,10 @@ import {
   ShareAltOutlined,
   DeleteOutlined,
   EyeOutlined,
+  EyeInvisibleOutlined,
+  UnorderedListOutlined,
+  MinusSquareOutlined,
+  SearchOutlined,
 } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
 import { api, ApiError, type ApiDefinition, type ApiModule, type ApiSpec, type ApiView, type Environment } from '../api'
@@ -115,6 +118,12 @@ export default function ApiDefinitions() {
   const [viewName, setViewName] = useState('')
   const [viewPopOpen, setViewPopOpen] = useState(false)
   const [searchParams, setSearchParams] = useSearchParams()
+  // 模块树:搜索 / 树内展示接口 / 隐藏空模块 / 协议过滤 / 受控展开(收起全部)。
+  const [moduleSearch, setModuleSearch] = useState('')
+  const [showInterfaces, setShowInterfaces] = useState(false)
+  const [hideEmpty, setHideEmpty] = useState(false)
+  const [protoFilter, setProtoFilter] = useState<string[]>([])
+  const [treeExpanded, setTreeExpanded] = useState<string[]>(['ALL'])
 
   const load = async () => {
     if (!projectId) {
@@ -208,33 +217,55 @@ export default function ApiDefinitions() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId])
 
-  // 模块树:全部接口 > [未归类] + 模块(按 parentId 嵌套)。
+  // 协议过滤选项:来自当前项目接口里出现过的协议(动态、即插即用)。
+  const protoOptions = useMemo(() => Array.from(new Set(defs.map((d) => d.protocol).filter(Boolean))).sort(), [defs])
+
+  // 模块树:全部接口 > [未归类] + 模块(parentId 嵌套);可选树内展示接口(方法标签),
+  // 支持 名称搜索 / 协议过滤 / 隐藏空模块 / 子树计数。
   const treeData = useMemo(() => {
-    const countIn = (mid: string) => defs.filter((d) => d.moduleId === mid).length
-    const unfiled = defs.filter((d) => !d.moduleId).length
+    const lc = (s: string) => s.toLowerCase()
+    const matchProto = (d: ApiDefinition) => protoFilter.length === 0 || protoFilter.includes(d.protocol)
+    const matchText = (d: ApiDefinition) => !moduleSearch || lc(d.name).includes(lc(moduleSearch)) || lc(d.path).includes(lc(moduleSearch))
+    const childModulesOf = (mid: string | null) => modules.filter((x) => (x.parentId || null) === mid)
+    const subtreeCount = (mid: string): number =>
+      defs.filter((d) => d.moduleId === mid && matchProto(d)).length +
+      childModulesOf(mid).reduce((n, c) => n + subtreeCount(c.id), 0)
+    const ifaceLeaf = (d: ApiDefinition) => ({ key: `api:${d.id}`, isLeaf: true, selectable: true, title: <InterfaceLeaf d={d} /> })
     const moduleNode = (m: ApiModule): any => {
-      const children = modules.filter((x) => (x.parentId || null) === m.id).map(moduleNode)
+      const subModules = childModulesOf(m.id).map(moduleNode).filter(Boolean)
+      const leaves = showInterfaces ? defs.filter((d) => d.moduleId === m.id && matchProto(d) && matchText(d)).map(ifaceLeaf) : []
+      const children = [...subModules, ...leaves]
+      const total = subtreeCount(m.id)
+      const nameMatch = !moduleSearch || lc(m.name).includes(lc(moduleSearch))
+      if (moduleSearch && !nameMatch && children.length === 0) return null // 搜索时:无命中则隐藏
+      if (hideEmpty && total === 0) return null
       return {
         key: m.id,
-        // 文件夹图标放进 title 内,不用 Tree 的 icon 槽:否则「icon + 100%宽 title」会溢出换行成两行。
-        title: <ModuleTitle name={`${m.name} (${countIn(m.id)})`} onAction={(a) => onModuleAction(a, m)} />,
+        title: <ModuleTitle name={m.name} count={total} onAction={(a) => onModuleAction(a, m)} />,
         children: children.length ? children : undefined,
       }
     }
-    const roots = modules.filter((m) => !m.parentId).map(moduleNode)
+    const roots = childModulesOf(null).map(moduleNode).filter(Boolean)
+    const unfiledDefs = defs.filter((d) => !d.moduleId && matchProto(d))
+    const unfiledLeaves = showInterfaces ? unfiledDefs.filter(matchText).map(ifaceLeaf) : []
+    const showUnfiled = !hideEmpty || unfiledDefs.length > 0
+    const allCount = defs.filter(matchProto).length
     return [
       {
         key: 'ALL',
-        title: `${t('apidef.allApis', '全部接口')} (${defs.length})`,
+        title: `${t('apidef.allApis', '全部接口')} (${allCount})`,
         icon: <ApiOutlined />,
         children: [
-          { key: 'UNFILED', title: `${t('apidef.unfiled', '未归类')} (${unfiled})`, icon: <InboxOutlined /> },
+          ...(showUnfiled ? [{ key: 'UNFILED', title: `${t('apidef.unfiled', '未归类')} (${unfiledDefs.length})`, icon: <InboxOutlined />, children: unfiledLeaves.length ? unfiledLeaves : undefined }] : []),
           ...roots,
         ],
       },
     ]
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [defs, modules])
+  }, [defs, modules, showInterfaces, moduleSearch, protoFilter, hideEmpty])
+
+  // 树内全部可展开的 key(供「收起全部 / 展开全部」)。
+  const allExpandableKeys = useMemo(() => ['ALL', ...modules.map((m) => m.id)], [modules])
 
   const onModuleAction = (action: string, m: ApiModule) => {
     if (action === 'rename') setModuleForm({ mode: 'rename', id: m.id, name: m.name })
@@ -515,20 +546,70 @@ export default function ApiDefinitions() {
 
   return (
     <div style={{ display: 'flex', height: '100%' }}>
-      <div style={{ width: 240, background: '#fff', borderRight: '1px solid #f0f0f0', display: 'flex', flexDirection: 'column' }}>
-        <div style={{ display: 'flex', alignItems: 'center', padding: '10px 12px', borderBottom: '1px solid #f5f5f5' }}>
-          <span style={{ fontWeight: 600 }}>{t('apidef.modules', '模块')}</span>
-          <div style={{ flex: 1 }} />
-          <Button size="small" type="text" icon={<FolderAddOutlined />} title={t('apidef.newTopModule', '新建顶层模块')} onClick={() => setModuleForm({ mode: 'create', parentId: null })} />
+      <div style={{ width: 252, background: '#fff', borderRight: '1px solid #f0f0f0', display: 'flex', flexDirection: 'column' }}>
+        {/* 搜索:模块 / 接口名称(路径)。 */}
+        <div style={{ padding: '10px 10px 6px' }}>
+          <Input
+            allowClear
+            size="small"
+            prefix={<SearchOutlined style={{ color: '#bbb' }} />}
+            placeholder={t('apidef.moduleSearch', '请输入模块/接口名称')}
+            value={moduleSearch}
+            onChange={(e) => setModuleSearch(e.target.value)}
+          />
+        </div>
+        {/* 工具条:全部接口 (N) + 隐藏空模块 / 树内显示接口 / 收起全部 / 协议过滤 / 新建模块。 */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 2, padding: '0 8px 8px', borderBottom: '1px solid #f5f5f5' }}>
+          <span style={{ fontWeight: 600, fontSize: 13, flex: 1, paddingLeft: 4 }}>
+            {t('apidef.allApis', '全部接口')} ({protoFilter.length ? defs.filter((d) => protoFilter.includes(d.protocol)).length : defs.length})
+          </span>
+          <Tooltip title={hideEmpty ? t('apidef.showEmpty', '显示空模块') : t('apidef.hideEmpty', '隐藏空模块')}>
+            <Button size="small" type="text" icon={hideEmpty ? <EyeInvisibleOutlined /> : <EyeOutlined />} onClick={() => setHideEmpty((v) => !v)} />
+          </Tooltip>
+          <Tooltip title={showInterfaces ? t('apidef.hideIfaces', '隐藏接口') : t('apidef.showIfaces', '树内显示接口')}>
+            <Button size="small" type="text" icon={<UnorderedListOutlined />} style={{ color: showInterfaces ? '#52c41a' : undefined }} onClick={() => setShowInterfaces((v) => !v)} />
+          </Tooltip>
+          <Tooltip title={treeExpanded.length ? t('apidef.collapseAll', '收起全部') : t('apidef.expandAll', '展开全部')}>
+            <Button size="small" type="text" icon={<MinusSquareOutlined />} onClick={() => setTreeExpanded(treeExpanded.length ? [] : allExpandableKeys)} />
+          </Tooltip>
+          <Popover
+            trigger="click"
+            placement="bottomRight"
+            title={t('apidef.protoFilter', '协议过滤')}
+            content={
+              <div style={{ width: 150 }}>
+                <Checkbox checked={protoFilter.length === 0} onChange={(e) => e.target.checked && setProtoFilter([])}>{t('apidef.allProtos', '全部')}</Checkbox>
+                <Divider style={{ margin: '8px 0' }} />
+                <Space direction="vertical" size={6} style={{ width: '100%' }}>
+                  {protoOptions.map((p) => (
+                    <Checkbox key={p} checked={protoFilter.includes(p)} onChange={(e) => setProtoFilter((prev) => (e.target.checked ? [...prev, p] : prev.filter((x) => x !== p)))}>{p}</Checkbox>
+                  ))}
+                </Space>
+              </div>
+            }
+          >
+            <Tooltip title={t('apidef.protoFilter', '协议过滤')}>
+              <Button size="small" type="text" icon={<FilterOutlined />} style={{ color: protoFilter.length ? '#7c3aed' : undefined }} />
+            </Tooltip>
+          </Popover>
+          <Tooltip title={t('apidef.newTopModule', '新建顶层模块')}>
+            <Button size="small" type="text" icon={<PlusOutlined />} style={{ color: '#52c41a' }} onClick={() => setModuleForm({ mode: 'create', parentId: null })} />
+          </Tooltip>
         </div>
         <div style={{ flex: 1, overflow: 'auto', padding: 8 }}>
           <Tree
             showIcon
             blockNode
-            defaultExpandAll
+            expandedKeys={treeExpanded}
+            onExpand={(keys) => setTreeExpanded(keys.map(String))}
             selectedKeys={[moduleKey]}
             treeData={treeData}
-            onSelect={(keys) => keys.length && setModuleKey(String(keys[0]))}
+            onSelect={(keys) => {
+              const k = String(keys[0] ?? '')
+              if (!k) return
+              if (k.startsWith('api:')) openDef(k.slice(4))
+              else { setModuleKey(k); setActiveKey(LIST_KEY) }
+            }}
           />
         </div>
       </div>
@@ -595,12 +676,25 @@ export default function ApiDefinitions() {
   )
 }
 
-function ModuleTitle({ name, onAction }: { name: string; onAction: (a: string) => void }) {
+/** 树内接口叶子:方法标签 + 名称(点击打开详情)。 */
+function InterfaceLeaf({ d }: { d: ApiDefinition }) {
+  return (
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, width: '100%', minWidth: 0 }} title={d.name}>
+      <Tag color={methodColor(d.method)} style={{ margin: 0, fontWeight: 600, fontSize: 11, lineHeight: '16px', padding: '0 5px', flexShrink: 0 }}>
+        {(d.protocol === 'HTTP' ? d.method : d.protocol) || 'GET'}
+      </Tag>
+      <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 13 }}>{d.name}</span>
+    </span>
+  )
+}
+
+function ModuleTitle({ name, count, onAction }: { name: string; count?: number; onAction: (a: string) => void }) {
   const { t } = useI18n()
   return (
     <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, width: '100%', minWidth: 0 }}>
       <FolderOutlined style={{ color: '#8a9099', flexShrink: 0 }} />
       <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{name}</span>
+      {count != null && <span style={{ color: '#a8adb5', fontSize: 12, flexShrink: 0 }}>{count}</span>}
       <Dropdown
         trigger={['click']}
         menu={{
