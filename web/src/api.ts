@@ -113,6 +113,14 @@ export interface ApiDefinition {
   method: string
   path: string
   status: string
+  moduleId?: string | null
+}
+
+export interface ApiModule {
+  id: string
+  projectId: string
+  parentId?: string | null
+  name: string
 }
 
 export interface ApiCase {
@@ -348,6 +356,18 @@ export const api = {
       projectId,
       content,
     }),
+
+  // 接口模块(文件夹)
+  modules: (projectId: string) =>
+    projectId
+      ? http.get<ApiModule[]>(`/api/module?projectId=${encodeURIComponent(projectId)}`)
+      : Promise.resolve([] as ApiModule[]),
+  createModule: (b: { projectId: string; parentId?: string | null; name: string }) =>
+    http.post<ApiModule>('/api/module', b),
+  renameModule: (id: string, name: string) => http.put(`/api/module/${id}`, { name }),
+  deleteModule: (id: string) => http.del(`/api/module/${id}`),
+  moveDefinition: (definitionId: string, moduleId: string | null) =>
+    http.put(`/api/definition/${definitionId}/module`, { moduleId }),
 
   cases: (definitionId: string) =>
     http.get<ApiCase[]>(`/api/definition/${definitionId}/case`),
