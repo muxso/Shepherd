@@ -73,8 +73,8 @@ export default function ApiDefinitions() {
       const children = modules.filter((x) => (x.parentId || null) === m.id).map(moduleNode)
       return {
         key: m.id,
+        // 文件夹图标放进 title 内,不用 Tree 的 icon 槽:否则「icon + 100%宽 title」会溢出换行成两行。
         title: <ModuleTitle name={`${m.name} (${countIn(m.id)})`} onAction={(a) => onModuleAction(a, m)} />,
-        icon: <FolderOutlined />,
         children: children.length ? children : undefined,
       }
     }
@@ -304,7 +304,8 @@ export default function ApiDefinitions() {
 function ModuleTitle({ name, onAction }: { name: string; onAction: (a: string) => void }) {
   const { t } = useI18n()
   return (
-    <span style={{ display: 'inline-flex', alignItems: 'center', width: '100%' }}>
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, width: '100%', minWidth: 0 }}>
+      <FolderOutlined style={{ color: '#8a9099', flexShrink: 0 }} />
       <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{name}</span>
       <Dropdown
         trigger={['click']}
