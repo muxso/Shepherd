@@ -15,6 +15,7 @@ export default function Login() {
     setLoading(true)
     try {
       const { token } = await api.login(v.username, v.password)
+      localStorage.setItem('shepherd.user', v.username) // 供个人中心展示(后端暂无 /me)
       login(token)
       message.success(t('login.ok', '登录成功'))
     } catch (e) {

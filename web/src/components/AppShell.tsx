@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from 'react'
-import { Layout, Menu, Select, Button, Space, Tooltip, Breadcrumb } from 'antd'
+import { Layout, Menu, Select, Button, Space, Tooltip, Breadcrumb, Drawer, Avatar, Descriptions } from 'antd'
 import {
   ApiOutlined,
   PartitionOutlined,
@@ -104,7 +104,9 @@ export default function AppShell({ children }: { children: ReactNode }) {
   const nav = useNavigate()
   const loc = useLocation()
   const [newProjOpen, setNewProjOpen] = useState(false)
+  const [pcOpen, setPcOpen] = useState(false)
   const currentProject = projects.find((p) => p.id === projectId)
+  const username = localStorage.getItem('shepherd.user') || 'admin'
 
   // 当前所在模块由路由推断;左栏与面包屑都跟着它走。
   const activeModule = MODULES.find((m) => m.match.some((x) => loc.pathname.startsWith(x))) || MODULES[0]
@@ -162,6 +164,11 @@ export default function AppShell({ children }: { children: ReactNode }) {
           <Tooltip title={t('top.newProject')}>
             <Button type="text" size="small" icon={<PlusOutlined />} style={{ color: '#fff' }} onClick={() => setNewProjOpen(true)} />
           </Tooltip>
+          <Tooltip title={t('pc.title', '个人中心')}>
+            <Avatar size={26} style={{ background: '#7c3aed', cursor: 'pointer' }} onClick={() => setPcOpen(true)}>
+              {username.slice(0, 1).toUpperCase()}
+            </Avatar>
+          </Tooltip>
           <Tooltip title={t('top.logout')}>
             <Button type="text" size="small" icon={<LogoutOutlined />} style={{ color: '#fff' }} onClick={logout} />
           </Tooltip>
@@ -211,6 +218,34 @@ export default function AppShell({ children }: { children: ReactNode }) {
         </Layout>
       </Layout>
       <NewProjectModal open={newProjOpen} onClose={() => setNewProjOpen(false)} />
+
+      {/* 个人中心(后端暂无 /me,展示登录态可得信息) */}
+      <Drawer title={t('pc.title', '个人中心')} open={pcOpen} onClose={() => setPcOpen(false)} width={420}>
+        <Space direction="vertical" size={16} style={{ width: '100%' }}>
+          <Space align="center" size={12}>
+            <Avatar size={48} style={{ background: '#7c3aed' }}>{username.slice(0, 1).toUpperCase()}</Avatar>
+            <span style={{ fontSize: 16, fontWeight: 600 }}>{username}</span>
+          </Space>
+          <Descriptions column={1} size="small" bordered>
+            <Descriptions.Item label={t('pc.username', '用户名')}>{username}</Descriptions.Item>
+            <Descriptions.Item label={t('pc.project', '当前项目')}>{currentProject?.name || '—'}</Descriptions.Item>
+            <Descriptions.Item label={t('pc.projectCount', '可见项目数')}>{projects.length}</Descriptions.Item>
+            <Descriptions.Item label={t('pc.lang', '语言')}>
+              <Select
+                size="small"
+                value={lang}
+                onChange={setLang}
+                style={{ width: 120 }}
+                options={[
+                  { value: 'zh', label: '中文' },
+                  { value: 'en', label: 'English' },
+                ]}
+              />
+            </Descriptions.Item>
+          </Descriptions>
+          <Button danger icon={<LogoutOutlined />} onClick={logout}>{t('top.logout', '退出登录')}</Button>
+        </Space>
+      </Drawer>
     </Layout>
   )
 }
