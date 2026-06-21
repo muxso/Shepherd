@@ -18,6 +18,7 @@ import { PlusOutlined, PlayCircleOutlined, ReloadOutlined } from '@ant-design/ic
 import { api, ApiError, type Scenario, type ScenarioStep } from '../api'
 import { useApp } from '../context'
 import { methodColor } from '../components/tags'
+import AssertionEditor from '../components/AssertionEditor'
 
 const STEP_KINDS = ['CASE', 'REQUEST', 'SCENARIO']
 
@@ -286,19 +287,17 @@ function AddStepForm({
         kind: 'REQUEST',
         order: nextOrder,
         method: 'GET',
-        assertions: '[{"type":"StatusIs","args":200}]',
+        assertions: [{ type: 'StatusIs', args: 200 }],
       }}
       onValuesChange={(c) => c.kind && setKind(c.kind)}
       onFinish={async (v) => {
         setSaving(true)
         try {
           if (v.kind === 'REQUEST') {
-            let assertions: unknown = []
-            if (v.assertions?.trim()) assertions = JSON.parse(v.assertions)
             await api.addStep(scenarioId, {
               kind: 'REQUEST',
               order: v.order,
-              request: { method: v.method, url: v.url, body: v.body || null, assertions },
+              request: { method: v.method, url: v.url, body: v.body || null, assertions: v.assertions || [] },
             })
           } else {
             await api.addStep(scenarioId, { kind: v.kind, order: v.order, refId: v.refId })
@@ -334,8 +333,8 @@ function AddStepForm({
           <Form.Item name="body" label="请求体(可选)">
             <Input.TextArea rows={2} className="ms-mono" />
           </Form.Item>
-          <Form.Item name="assertions" label="断言(JSON 数组)">
-            <Input.TextArea rows={2} className="ms-mono" />
+          <Form.Item name="assertions" label="断言">
+            <AssertionEditor />
           </Form.Item>
         </>
       ) : (
