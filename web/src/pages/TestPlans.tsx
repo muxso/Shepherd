@@ -1,5 +1,5 @@
 import { useEffect, useState, type CSSProperties } from 'react'
-import { Button, Card, Col, Empty, Form, Input, Modal, Row, Select, Space, Table, Tag, message } from 'antd'
+import { Button, Card, Col, Empty, Form, Input, Modal, Progress, Row, Select, Space, Table, Tag, message } from 'antd'
 import { PlayCircleOutlined, FileMarkdownOutlined, LinkOutlined, ClockCircleOutlined } from '@ant-design/icons'
 import { api, ApiError, type ApiCase, type PlanCase, type PlanStats } from '../api'
 import { useApp } from '../context'
@@ -11,15 +11,39 @@ import Donut from '../components/Donut'
 export default function TestPlans() {
   const { projectId } = useApp()
   const [plans, setPlans] = useState<RegItem[]>([])
+  const [statsMap, setStatsMap] = useState<Record<string, PlanStats>>({})
   const [createOpen, setCreateOpen] = useState(false)
+  const [runningId, setRunningId] = useState('')
   const tabs = useWorkTabs()
 
+  const loadStats = async (list: RegItem[]) => {
+    const entries = await Promise.all(
+      list.map((p) => api.planStats(p.id).then((s) => [p.id, s] as const).catch(() => null)),
+    )
+    setStatsMap(Object.fromEntries(entries.filter(Boolean) as [string, PlanStats][]))
+  }
+
   useEffect(() => {
-    setPlans(regList('plan', projectId))
+    const list = regList('plan', projectId)
+    setPlans(list)
+    loadStats(list)
     tabs.reset()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId])
   useOpenParam(tabs.open) // 支持 ?open=<planId> 深链
+
+  const runPlan = async (id: string) => {
+    setRunningId(id)
+    try {
+      const r = await api.runPlan(id)
+      message.success(`执行完成:${r.executed}/${r.total}`)
+      loadStats(plans)
+    } catch (e) {
+      message.error(e instanceof ApiError ? `执行失败:${e.status}` : '执行失败')
+    } finally {
+      setRunningId('')
+    }
+  }
 
   if (!projectId) return <div style={{ padding: 48 }}><Empty description="请先在顶部选择项目" /></div>
 
@@ -39,12 +63,41 @@ export default function TestPlans() {
           <WorkList<RegItem>
             onNew={() => setCreateOpen(true)}
             newLabel="新建测试计划"
+            extraActions={<Button size="middle" onClick={() => loadStats(plans)}>刷新统计</Button>}
             data={plans}
             onRowClick={(p) => tabs.open(p.id)}
             emptyText="暂无计划"
             columns={[
-              { title: '计划名', dataIndex: 'label' },
-              { title: '创建时间', dataIndex: 'createdAt', width: 200, render: (t: number) => new Date(t).toLocaleString() },
+              { title: '计划名', dataIndex: 'label', ellipsis: true },
+              {
+                title: '状态',
+                width: 100,
+                render: (_, p) => {
+                  const s = statsMap[p.id]
+                  return s ? <Tag color={s.isPass ? 'green' : s.executeRate > 0 ? 'blue' : 'default'}>{s.executeRate > 0 ? (s.isPass ? '已完成' : '进行中') : '未开始'}</Tag> : <Tag>—</Tag>
+                },
+              },
+              {
+                title: '通过率',
+                width: 160,
+                render: (_, p) => {
+                  const s = statsMap[p.id]
+                  const pr = Math.round((s?.passRate ?? 0) * 100)
+                  return <Progress percent={pr} size="small" status={pr === 100 ? 'success' : 'active'} />
+                },
+              },
+              { title: '用例数', width: 80, render: (_, p) => statsMap[p.id]?.total ?? 0 },
+              { title: '创建时间', dataIndex: 'createdAt', width: 180, render: (t: number) => new Date(t).toLocaleString() },
+              {
+                title: '操作',
+                width: 140,
+                render: (_, p) => (
+                  <Space size={0} onClick={(e) => e.stopPropagation()}>
+                    <Button type="link" size="small" loading={runningId === p.id} onClick={() => runPlan(p.id)}>执行</Button>
+                    <Button type="link" size="small" onClick={() => tabs.open(p.id)}>报告</Button>
+                  </Space>
+                ),
+              },
             ]}
           />
         }
