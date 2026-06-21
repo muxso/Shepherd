@@ -57,6 +57,18 @@ export default function CasesPanel({ definition }: { definition: ApiDefinition }
         columns={[
           { title: t('case.colName', '名称'), dataIndex: 'name', ellipsis: true },
           {
+            title: t('case.colPriority', '优先级'),
+            dataIndex: 'priority',
+            width: 80,
+            render: (p?: string) => <Tag color={p === 'P0' ? 'red' : p === 'P1' ? 'orange' : 'default'}>{p || 'P0'}</Tag>,
+          },
+          {
+            title: t('case.colStatus', '状态'),
+            dataIndex: 'status',
+            width: 90,
+            render: (s?: string) => <Tag>{s || '进行中'}</Tag>,
+          },
+          {
             title: t('case.colMethod', '方法'),
             dataIndex: 'method',
             width: 90,

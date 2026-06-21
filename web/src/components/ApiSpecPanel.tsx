@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Button, Empty, Input, InputNumber, Radio, Segmented, Select, Space, Table, Tag, Tooltip } from 'antd'
+import { Button, Empty, Input, InputNumber, Radio, Segmented, Select, Space, Table, Tabs, Tag, Tooltip } from 'antd'
 import { CopyOutlined, PlusOutlined, DeleteOutlined, SaveOutlined } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
 import {
@@ -36,7 +36,7 @@ async function copy(text: string, ok: string) {
 }
 
 const BODY_TYPES: ApiBodyType[] = ['none', 'form-data', 'x-www-form-urlencoded', 'json', 'xml', 'raw', 'binary']
-const emptySpec = (): ApiSpec => ({
+export const emptySpec = (): ApiSpec => ({
   requestHeaders: [],
   requestQuery: [],
   restParams: [],
@@ -48,31 +48,52 @@ const emptySpec = (): ApiSpec => ({
   tags: [],
 })
 
-/** 接口「预览」(只读)与「定义」(可编辑)共用面板。define 模式按 MeterSphere 用子标签组织。 */
-export default function ApiSpecPanel({ definition, mode }: { definition: ApiDefinition; mode: 'preview' | 'define' }) {
+/**
+ * 接口「预览」(只读)/「定义」(可编辑)/「新建」(create:受控、无 id)共用面板。
+ * create 模式由父组件托管 spec(value/onChange),不自行加载/保存,保存按钮也交给父级(新建接口 Tab)。
+ */
+export default function ApiSpecPanel({
+  definition,
+  mode,
+  value,
+  onChange,
+}: {
+  definition: ApiDefinition
+  mode: 'preview' | 'define' | 'create'
+  value?: ApiSpec
+  onChange?: (s: ApiSpec) => void
+}) {
   const { t } = useI18n()
-  const editable = mode === 'define'
-  const [spec, setSpec] = useState<ApiSpec>(emptySpec())
-  const [loading, setLoading] = useState(true)
+  const create = mode === 'create'
+  const editable = mode === 'define' || create
+  const [innerSpec, setInnerSpec] = useState<ApiSpec>(emptySpec())
+  const [loading, setLoading] = useState(!create)
   const [saving, setSaving] = useState(false)
   const [dirty, setDirty] = useState(false)
+  // create 模式用父级受控 spec;否则用内部状态(load/save)。
+  const spec = create ? value ?? emptySpec() : innerSpec
 
   useEffect(() => {
+    if (create) return
     let alive = true
     setLoading(true)
     api
       .getDefinition(definition.id)
-      .then((d) => alive && setSpec({ ...emptySpec(), ...(d.spec || {}) }))
-      .catch(() => alive && setSpec(emptySpec()))
+      .then((d) => alive && setInnerSpec({ ...emptySpec(), ...(d.spec || {}) }))
+      .catch(() => alive && setInnerSpec(emptySpec()))
       .finally(() => alive && setLoading(false))
     return () => {
       alive = false
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [definition.id])
+  }, [definition.id, create])
 
   const patch = (p: Partial<ApiSpec>) => {
-    setSpec((s) => ({ ...s, ...p }))
+    if (create) {
+      onChange?.({ ...spec, ...p })
+      return
+    }
+    setInnerSpec((s) => ({ ...s, ...p }))
     setDirty(true)
   }
 
@@ -111,7 +132,7 @@ export default function ApiSpecPanel({ definition, mode }: { definition: ApiDefi
     {
       key: 'basic',
       label: t('apidef.basicInfo', '基本信息'),
-      children: <BasicInfo definition={definition} spec={spec} patch={patch} />,
+      children: <BasicInfo definition={definition} spec={spec} patch={patch} create={create} />,
     },
     {
       key: 'headers',
@@ -143,41 +164,50 @@ export default function ApiSpecPanel({ definition, mode }: { definition: ApiDefi
       label: `${t('apidef.responses', '响应')}${spec.responses?.length ? ` (${spec.responses.length})` : ''}`,
       children: <ResponsesSection responses={spec.responses || []} editable onChange={(rows) => patch({ responses: rows })} />,
     },
+    {
+      key: 'settings',
+      label: t('apidef.settings', '设置'),
+      children: <SettingsTab definition={definition} />,
+    },
   ]
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-        <Button type="primary" icon={<SaveOutlined />} loading={saving} disabled={!dirty} onClick={save}>
-          {t('a.save', '保存')}
-        </Button>
-        {dirty && <span style={{ color: '#ef6c00', fontSize: 12 }}>{t('apidef.unsaved', '有未保存修改')}</span>}
-      </div>
-      {/* 子标签用 Segmented 取代 antd Tabs:在已嵌套于详情 Tabs 内时层级更清晰。 */}
-      <SubTabs tabs={tabs} />
+      {/* create 模式由「新建接口」Tab 顶部的保存按钮统一提交,这里不再重复。 */}
+      {!create && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <Button type="primary" icon={<SaveOutlined />} loading={saving} disabled={!dirty} onClick={save}>
+            {t('a.save', '保存')}
+          </Button>
+          {dirty && <span style={{ color: '#ef6c00', fontSize: 12 }}>{t('apidef.unsaved', '有未保存修改')}</span>}
+        </div>
+      )}
+      {/* 下划线子标签(对齐 MeterSphere:基本信息/请求头/请求体/…/设置)。 */}
+      <Tabs items={tabs} size="small" />
     </div>
   )
 }
 
-/** 轻量子标签(避免与外层 antd Tabs 视觉打架)。 */
-function SubTabs({ tabs }: { tabs: { key: string; label: string; children: React.ReactNode }[] }) {
-  const [active, setActive] = useState(tabs[0]?.key)
-  const cur = tabs.find((x) => x.key === active) || tabs[0]
+/** 设置:对齐参考图占位(当前接口元信息只读;状态/模块在「基本信息」维护)。 */
+function SettingsTab({ definition }: { definition: ApiDefinition }) {
+  const { t } = useI18n()
   return (
-    <div>
-      <Segmented
-        value={active}
-        onChange={(v) => setActive(String(v))}
-        options={tabs.map((x) => ({ label: x.label, value: x.key }))}
-        style={{ marginBottom: 14 }}
-      />
-      <div>{cur?.children}</div>
-    </div>
+    <Space direction="vertical" size={10} style={{ width: '100%', maxWidth: 520 }}>
+      <Field label={t('apidef.protocol', '协议')}>
+        <Tag color="blue">{definition.protocol}</Tag>
+      </Field>
+      <Field label={t('apidef.colCreatedBy', '创建人')}>
+        <span>{definition.createdBy || '—'}</span>
+      </Field>
+      <Field label="ID">
+        <span className="ms-mono" style={{ fontSize: 12 }}>{definition.id}</span>
+      </Field>
+    </Space>
   )
 }
 
 /** 基本信息:描述 / 所属模块 / 标签 / 状态。描述/标签存 spec(随保存);模块/状态为定义级,即时写入。 */
-function BasicInfo({ definition, spec, patch }: { definition: ApiDefinition; spec: ApiSpec; patch: (p: Partial<ApiSpec>) => void }) {
+function BasicInfo({ definition, spec, patch, create }: { definition: ApiDefinition; spec: ApiSpec; patch: (p: Partial<ApiSpec>) => void; create?: boolean }) {
   const { t } = useI18n()
   const [tagInput, setTagInput] = useState('')
   const tags = spec.tags || []
@@ -186,12 +216,13 @@ function BasicInfo({ definition, spec, patch }: { definition: ApiDefinition; spe
   const [status, setStatus] = useState(definition.status)
 
   useEffect(() => {
+    if (create) return // 新建态:模块/状态保存后再在「定义」里维护。
     let alive = true
     api.modules(definition.projectId).then((m) => alive && setModules(Array.isArray(m) ? m : [])).catch(() => undefined)
     return () => {
       alive = false
     }
-  }, [definition.projectId])
+  }, [definition.projectId, create])
 
   // 模块/状态是定义级属性,即时写后端(不走 spec 的「保存」按钮),对齐 MeterSphere。
   const changeModule = async (mid?: string) => {
@@ -218,16 +249,18 @@ function BasicInfo({ definition, spec, patch }: { definition: ApiDefinition; spe
       <Field label={t('apidef.descLabel', '描述')}>
         <Input.TextArea rows={4} value={spec.description || ''} onChange={(e) => patch({ description: e.target.value })} placeholder={t('apidef.descPlaceholder', '接口描述')} />
       </Field>
-      <Field label={t('apidef.ownerModule', '所属模块')}>
-        <Select
-          style={{ width: 280 }}
-          value={moduleId}
-          onChange={changeModule}
-          allowClear
-          placeholder={t('apidef.unfiled', '未归类')}
-          options={modules.map((m) => ({ value: m.id, label: m.name }))}
-        />
-      </Field>
+      {!create && (
+        <Field label={t('apidef.ownerModule', '所属模块')}>
+          <Select
+            style={{ width: 280 }}
+            value={moduleId}
+            onChange={changeModule}
+            allowClear
+            placeholder={t('apidef.unfiled', '未归类')}
+            options={modules.map((m) => ({ value: m.id, label: m.name }))}
+          />
+        </Field>
+      )}
       <Field label={t('apidef.tags', '标签')}>
         <Space size={[6, 6]} wrap>
           {tags.map((tg) => (
@@ -247,14 +280,16 @@ function BasicInfo({ definition, spec, patch }: { definition: ApiDefinition; spe
           />
         </Space>
       </Field>
-      <Field label={t('apidef.colStatus', '状态')}>
-        <Select
-          style={{ width: 180 }}
-          value={status}
-          onChange={changeStatus}
-          options={API_STATUSES.map((s) => ({ value: s, label: s }))}
-        />
-      </Field>
+      {!create && (
+        <Field label={t('apidef.colStatus', '状态')}>
+          <Select
+            style={{ width: 180 }}
+            value={status}
+            onChange={changeStatus}
+            options={API_STATUSES.map((s) => ({ value: s, label: s }))}
+          />
+        </Field>
+      )}
     </Space>
   )
 }
@@ -274,11 +309,13 @@ function BodyEditor({ spec, patch }: { spec: ApiSpec; patch: (p: Partial<ApiSpec
   const bt = spec.bodyType || 'none'
   return (
     <div>
-      <Radio.Group value={bt} onChange={(e) => patch({ bodyType: e.target.value })} optionType="button" size="small" style={{ marginBottom: 12 }}>
-        {BODY_TYPES.map((x) => (
-          <Radio.Button key={x} value={x}>{x}</Radio.Button>
-        ))}
-      </Radio.Group>
+      <Segmented
+        size="small"
+        value={bt}
+        onChange={(v) => patch({ bodyType: v as ApiBodyType })}
+        options={BODY_TYPES.map((x) => ({ label: x, value: x }))}
+        style={{ marginBottom: 12 }}
+      />
       {bt === 'none' ? (
         <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('apidef.noBody', '请求没有 Body')} style={{ margin: '12px 0' }} />
       ) : bt === 'form-data' || bt === 'x-www-form-urlencoded' ? (
@@ -286,10 +323,28 @@ function BodyEditor({ spec, patch }: { spec: ApiSpec; patch: (p: Partial<ApiSpec
       ) : bt === 'binary' ? (
         <div style={{ color: '#8a9099', fontSize: 13 }}>{t('apidef.binaryHint', '二进制 Body(上传文件):调试时选择文件发送')}</div>
       ) : (
-        <Input.TextArea rows={8} value={spec.requestBody || ''} onChange={(e) => patch({ requestBody: e.target.value })} placeholder={bt === 'json' ? '{"key":"value"}' : bt} className="ms-mono" />
+        <div>
+          {bt === 'json' && (
+            <div style={{ textAlign: 'right', marginBottom: 6 }}>
+              <Button size="small" onClick={() => patch({ requestBody: formatJson(spec.requestBody || '') })}>
+                {t('apidef.format', '格式化')}
+              </Button>
+            </div>
+          )}
+          <Input.TextArea rows={8} value={spec.requestBody || ''} onChange={(e) => patch({ requestBody: e.target.value })} placeholder={bt === 'json' ? '{"key":"value"}' : bt} className="ms-mono" />
+        </div>
       )}
     </div>
   )
+}
+
+/** 尽力格式化 JSON 文本;非法 JSON 原样返回。 */
+function formatJson(text: string): string {
+  try {
+    return JSON.stringify(JSON.parse(text), null, 2)
+  } catch {
+    return text
+  }
 }
 
 /** 认证:none / bearer / basic。 */

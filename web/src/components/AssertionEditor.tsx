@@ -1,63 +1,97 @@
 import { useState } from 'react'
-import { Button, Input, InputNumber, Select, Space, Typography } from 'antd'
+import { Button, Dropdown, Empty, Input, InputNumber, Segmented, Select, Space, Typography } from 'antd'
 import { PlusOutlined, DeleteOutlined } from '@ant-design/icons'
 import { useI18n } from '../i18n'
 
 // 后端断言(api-runner Assertion,serde tag=type/content=args)。
 export type Assertion = Record<string, unknown>
 
-function makeTypes(t: (key: string, fallback?: string) => string) {
-  return [
-    { value: 'StatusIs', label: t('assert.statusIs', '状态码等于') },
-    { value: 'BodyContains', label: t('assert.bodyContains', '响应体包含') },
-    { value: 'JsonFieldEquals', label: t('assert.jsonFieldEquals', 'JSON 字段等于') },
-    { value: 'HeaderEquals', label: t('assert.headerEquals', '响应头等于') },
-    { value: 'ResponseTime', label: t('assert.responseTime', '响应耗时 ≤ (ms)') },
-  ]
+type Cat = 'status' | 'header' | 'body' | 'variable' | 'time'
+
+// 内部行:统一承载各类断言字段,按类别序列化为后端 JSON。
+interface Row {
+  cat: Cat
+  name: string // 响应头名 / 变量名
+  bodyMode: 'jsonpath' | 'whole' // 响应体:JSONPath 取值 或 整体
+  path: string // JSONPath 表达式
+  condition: string // MatchCondition(SCREAMING_SNAKE)
+  expected: string
 }
 
-// 内部行表示:统一存 n(数字)/ s、s2(字符串),按类型序列化为后端 JSON。
-interface Row {
-  type: string
-  n: number
-  s: string
-  s2: string
-}
+const NUMERIC_CONDS = [
+  { value: 'EQUALS', label: '等于' },
+  { value: 'NOT_EQUALS', label: '不等于' },
+  { value: 'GT', label: '大于' },
+  { value: 'GT_OR_EQUALS', label: '大于等于' },
+  { value: 'LT', label: '小于' },
+  { value: 'LT_OR_EQUALS', label: '小于等于' },
+  { value: 'UNCHECKED', label: '不校验' },
+]
+const TEXT_CONDS = [
+  { value: 'CONTAINS', label: '包含' },
+  { value: 'NOT_CONTAINS', label: '不包含' },
+  { value: 'EQUALS', label: '等于' },
+  { value: 'NOT_EQUALS', label: '不等于' },
+  { value: 'REGEX', label: '正则' },
+]
+
+const emptyRow = (cat: Cat): Row => ({
+  cat,
+  name: cat === 'header' ? 'Content-Type' : '',
+  bodyMode: 'jsonpath',
+  path: '',
+  condition: cat === 'header' || cat === 'body' ? 'CONTAINS' : 'EQUALS',
+  expected: cat === 'status' ? '200' : '',
+})
 
 function toAssertion(r: Row): Assertion {
-  switch (r.type) {
-    case 'StatusIs':
-      return { type: 'StatusIs', args: r.n }
-    case 'BodyContains':
-      return { type: 'BodyContains', args: r.s }
-    case 'JsonFieldEquals':
-      return { type: 'JsonFieldEquals', args: { pointer: r.s, expected: r.s2 } }
-    case 'HeaderEquals':
-      return { type: 'HeaderEquals', args: { name: r.s, value: r.s2 } }
-    case 'ResponseTime':
-      return { type: 'ResponseTime', args: { max_ms: r.n } }
-    default:
-      return { type: 'StatusIs', args: r.n }
+  switch (r.cat) {
+    case 'status':
+      return { type: 'ResponseCode', args: { condition: r.condition, expected: r.expected } }
+    case 'header':
+      return { type: 'ResponseHeader', args: { name: r.name, condition: r.condition, expected: r.expected } }
+    case 'variable':
+      return { type: 'Variable', args: { name: r.name, condition: r.condition, expected: r.expected } }
+    case 'time':
+      return { type: 'ResponseTime', args: { max_ms: Number(r.expected) || 0 } }
+    case 'body':
+      return r.bodyMode === 'jsonpath'
+        ? { type: 'JsonPath', args: { path: r.path, condition: r.condition, expected: r.expected } }
+        : { type: 'ResponseBody', args: { condition: r.condition, expected: r.expected } }
   }
 }
 
 function fromAssertion(a: Assertion): Row {
-  const t = String(a.type || 'StatusIs')
+  const ty = String(a.type || 'StatusIs')
   const args = a.args as any
-  const base: Row = { type: t, n: 200, s: '', s2: '' }
-  if (t === 'StatusIs') base.n = Number(args) || 200
-  else if (t === 'BodyContains') base.s = String(args ?? '')
-  else if (t === 'JsonFieldEquals') {
-    base.s = String(args?.pointer ?? '')
-    base.s2 = String(args?.expected ?? '')
-  } else if (t === 'HeaderEquals') {
-    base.s = String(args?.name ?? '')
-    base.s2 = String(args?.value ?? '')
-  } else if (t === 'ResponseTime') base.n = Number(args?.max_ms) || 500
-  return base
+  const base = emptyRow('status')
+  switch (ty) {
+    case 'StatusIs':
+      return { ...base, cat: 'status', condition: 'EQUALS', expected: String(args ?? 200) }
+    case 'ResponseCode':
+      return { ...base, cat: 'status', condition: String(args?.condition || 'EQUALS'), expected: String(args?.expected ?? '') }
+    case 'HeaderEquals':
+      return { ...emptyRow('header'), name: String(args?.name ?? ''), condition: 'EQUALS', expected: String(args?.value ?? '') }
+    case 'ResponseHeader':
+      return { ...emptyRow('header'), name: String(args?.name ?? ''), condition: String(args?.condition || 'CONTAINS'), expected: String(args?.expected ?? '') }
+    case 'Variable':
+      return { ...emptyRow('variable'), name: String(args?.name ?? ''), condition: String(args?.condition || 'EQUALS'), expected: String(args?.expected ?? '') }
+    case 'ResponseTime':
+      return { ...emptyRow('time'), expected: String(args?.max_ms ?? 500) }
+    case 'BodyContains':
+      return { ...emptyRow('body'), bodyMode: 'whole', condition: 'CONTAINS', expected: String(args ?? '') }
+    case 'ResponseBody':
+      return { ...emptyRow('body'), bodyMode: 'whole', condition: String(args?.condition || 'CONTAINS'), expected: String(args?.expected ?? '') }
+    case 'JsonFieldEquals':
+      return { ...emptyRow('body'), bodyMode: 'jsonpath', path: String(args?.pointer ?? ''), condition: 'EQUALS', expected: String(args?.expected ?? '') }
+    case 'JsonPath':
+      return { ...emptyRow('body'), bodyMode: 'jsonpath', path: String(args?.path ?? ''), condition: String(args?.condition || 'EQUALS'), expected: String(args?.expected ?? '') }
+    default:
+      return base
+  }
 }
 
-// 受控:value 为后端断言数组,onChange 回传同结构。可放进 AntD Form.Item。
+// 受控:value 为后端断言数组,onChange 回传同结构。对齐 MeterSphere 断言矩阵(左列类别 + 右侧编辑)。
 export default function AssertionEditor({
   value,
   onChange,
@@ -66,64 +100,130 @@ export default function AssertionEditor({
   onChange?: (v: Assertion[]) => void
 }) {
   const { t } = useI18n()
-  const TYPES = makeTypes(t)
   const [rows, setRows] = useState<Row[]>(() => (value && value.length ? value.map(fromAssertion) : []))
+  const [sel, setSel] = useState(0)
 
   const push = (next: Row[]) => {
     setRows(next)
     onChange?.(next.map(toAssertion))
   }
   const update = (i: number, patch: Partial<Row>) => push(rows.map((r, idx) => (idx === i ? { ...r, ...patch } : r)))
+  const add = (cat: Cat) => {
+    push([...rows, emptyRow(cat)])
+    setSel(rows.length)
+  }
+
+  const CAT_LABEL: Record<Cat, string> = {
+    status: t('assert.catStatus', '状态码'),
+    header: t('assert.catHeader', '响应头'),
+    body: t('assert.catBody', '响应体'),
+    variable: t('assert.catVariable', '变量'),
+    time: t('assert.catTime', '响应耗时'),
+  }
+  const addMenu = {
+    items: (['status', 'header', 'body', 'variable', 'time'] as Cat[]).map((c) => ({ key: c, label: CAT_LABEL[c] })),
+    onClick: ({ key }: { key: string }) => add(key as Cat),
+  }
+
+  const cur = rows[sel]
 
   return (
-    <Space direction="vertical" style={{ width: '100%' }} size={6}>
-      {rows.length === 0 && (
-        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-          {t('assert.emptyHint', '无断言(执行只看传输是否可达)。点下方添加。')}
-        </Typography.Text>
+    <div>
+      <Dropdown menu={addMenu} trigger={['click']}>
+        <Button type="primary" ghost icon={<PlusOutlined />} size="small" style={{ marginBottom: 10 }}>
+          {t('assert.add', '断言')}
+        </Button>
+      </Dropdown>
+      {rows.length === 0 ? (
+        <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('assert.emptyHint', '无断言(执行只看传输是否可达)')} />
+      ) : (
+        <div style={{ display: 'flex', gap: 12, border: '1px solid #eef0f2', borderRadius: 6 }}>
+          {/* 左列:断言类别列表 */}
+          <div style={{ width: 160, borderRight: '1px solid #eef0f2', padding: 8 }}>
+            <Space direction="vertical" style={{ width: '100%' }} size={4}>
+              {rows.map((r, i) => (
+                <div
+                  key={i}
+                  onClick={() => setSel(i)}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 6,
+                    padding: '6px 8px',
+                    borderRadius: 4,
+                    cursor: 'pointer',
+                    background: i === sel ? '#f3eefe' : 'transparent',
+                  }}
+                >
+                  <span style={{ width: 18, height: 18, borderRadius: '50%', background: '#7c3aed', color: '#fff', fontSize: 11, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>{i + 1}</span>
+                  <span style={{ flex: 1, fontSize: 13 }}>{CAT_LABEL[r.cat]}</span>
+                  <Button
+                    type="text"
+                    size="small"
+                    danger
+                    icon={<DeleteOutlined />}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      const next = rows.filter((_, idx) => idx !== i)
+                      push(next)
+                      setSel(Math.max(0, Math.min(sel, next.length - 1)))
+                    }}
+                  />
+                </div>
+              ))}
+            </Space>
+          </div>
+          {/* 右侧:当前断言编辑 */}
+          <div style={{ flex: 1, padding: 12 }}>
+            {cur && <RowEditor row={cur} onChange={(p) => update(sel, p)} t={t} />}
+          </div>
+        </div>
       )}
-      {rows.map((r, i) => (
-        <Space.Compact key={i} style={{ width: '100%' }}>
-          <Select
-            value={r.type}
-            onChange={(t) => update(i, { type: t })}
-            options={TYPES}
-            style={{ width: 150 }}
-          />
-          {r.type === 'StatusIs' || r.type === 'ResponseTime' ? (
-            <InputNumber
-              value={r.n}
-              onChange={(v) => update(i, { n: Number(v) || 0 })}
-              style={{ width: 120 }}
-              placeholder={r.type === 'StatusIs' ? '200' : '500'}
-            />
-          ) : r.type === 'BodyContains' ? (
-            <Input value={r.s} onChange={(e) => update(i, { s: e.target.value })} placeholder={t('assert.substring', '子串')} />
-          ) : (
-            <>
-              <Input
-                value={r.s}
-                onChange={(e) => update(i, { s: e.target.value })}
-                placeholder={r.type === 'JsonFieldEquals' ? t('assert.pointerPlaceholder', 'Pointer 如 /data/id') : t('assert.headerNamePlaceholder', '头名 如 Content-Type')}
-                className="ms-mono"
-              />
-              <Input
-                value={r.s2}
-                onChange={(e) => update(i, { s2: e.target.value })}
-                placeholder={t('assert.expectedValue', '期望值')}
-              />
-            </>
-          )}
-          <Button icon={<DeleteOutlined />} onClick={() => push(rows.filter((_, idx) => idx !== i))} />
-        </Space.Compact>
-      ))}
-      <Button
-        icon={<PlusOutlined />}
-        size="small"
-        onClick={() => push([...rows, { type: 'StatusIs', n: 200, s: '', s2: '' }])}
-      >
-        {t('assert.add', '添加断言')}
-      </Button>
+    </div>
+  )
+}
+
+function RowEditor({ row, onChange, t }: { row: Row; onChange: (p: Partial<Row>) => void; t: (k: string, f?: string) => string }) {
+  const condOptions = row.cat === 'status' || row.cat === 'variable' ? NUMERIC_CONDS : TEXT_CONDS
+  if (row.cat === 'time') {
+    return (
+      <Space>
+        <span>{t('assert.maxMs', '最大耗时(ms)')}</span>
+        <InputNumber min={0} value={Number(row.expected) || 0} onChange={(v) => onChange({ expected: String(v ?? 0) })} style={{ width: 140 }} />
+      </Space>
+    )
+  }
+  return (
+    <Space direction="vertical" style={{ width: '100%' }} size={10}>
+      {row.cat === 'body' && (
+        <Segmented
+          size="small"
+          value={row.bodyMode}
+          onChange={(v) => onChange({ bodyMode: v as Row['bodyMode'] })}
+          options={[
+            { value: 'jsonpath', label: 'JSONPath' },
+            { value: 'whole', label: t('assert.wholeBody', '整体') },
+          ]}
+        />
+      )}
+      <Space.Compact style={{ width: '100%' }}>
+        {row.cat === 'header' && (
+          <Input value={row.name} onChange={(e) => onChange({ name: e.target.value })} placeholder="Content-Type" style={{ width: 200 }} className="ms-mono" />
+        )}
+        {row.cat === 'variable' && (
+          <Input value={row.name} onChange={(e) => onChange({ name: e.target.value })} placeholder={t('assert.varName', '变量名')} style={{ width: 200 }} className="ms-mono" />
+        )}
+        {row.cat === 'body' && row.bodyMode === 'jsonpath' && (
+          <Input value={row.path} onChange={(e) => onChange({ path: e.target.value })} placeholder="$.data.id" style={{ width: 240 }} className="ms-mono" />
+        )}
+        <Select value={row.condition} onChange={(v) => onChange({ condition: v })} options={condOptions} style={{ width: 130 }} />
+        {row.condition !== 'UNCHECKED' && (
+          <Input value={row.expected} onChange={(e) => onChange({ expected: e.target.value })} placeholder={t('assert.matchValue', '匹配值')} />
+        )}
+      </Space.Compact>
+      {row.cat === 'variable' && (
+        <Typography.Text type="secondary" style={{ fontSize: 12 }}>{t('assert.varHint', '变量来自前置/后置「提取参数」或环境变量')}</Typography.Text>
+      )}
     </Space>
   )
 }
