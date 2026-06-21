@@ -1,9 +1,18 @@
 import { useEffect, useState } from 'react'
-import { Button, Empty, Input, InputNumber, Segmented, Space, Table, Tag, Tooltip } from 'antd'
+import { Button, Empty, Input, InputNumber, Radio, Segmented, Space, Table, Tag, Tooltip } from 'antd'
 import { CopyOutlined, PlusOutlined, DeleteOutlined, SaveOutlined } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
-import { api, ApiError, type ApiDefinition, type ApiSpec, type ApiSpecKV, type ApiSpecResponse } from '../api'
+import {
+  api,
+  ApiError,
+  type ApiBodyType,
+  type ApiDefinition,
+  type ApiSpec,
+  type ApiSpecKV,
+  type ApiSpecResponse,
+} from '../api'
 import { message } from '../feedback'
+import { statusColor } from './tags'
 import { useI18n } from '../i18n'
 
 /** 复制文本到剪贴板(带轻提示)。navigator.clipboard 在非安全上下文可能缺失,降级 execCommand。 */
@@ -24,9 +33,20 @@ async function copy(text: string, ok: string) {
   }
 }
 
-const emptySpec = (): ApiSpec => ({ requestHeaders: [], requestQuery: [], requestBody: '', responses: [] })
+const BODY_TYPES: ApiBodyType[] = ['none', 'form-data', 'x-www-form-urlencoded', 'json', 'xml', 'raw', 'binary']
+const emptySpec = (): ApiSpec => ({
+  requestHeaders: [],
+  requestQuery: [],
+  restParams: [],
+  bodyType: 'none',
+  requestBody: '',
+  formBody: [],
+  auth: { type: 'none' },
+  responses: [],
+  tags: [],
+})
 
-/** 接口「预览」(只读)与「定义」(可编辑)共用面板。mode=preview 渲染,define 可编辑并保存 spec。 */
+/** 接口「预览」(只读)与「定义」(可编辑)共用面板。define 模式按 MeterSphere 用子标签组织。 */
 export default function ApiSpecPanel({ definition, mode }: { definition: ApiDefinition; mode: 'preview' | 'define' }) {
   const { t } = useI18n()
   const editable = mode === 'define'
@@ -38,7 +58,6 @@ export default function ApiSpecPanel({ definition, mode }: { definition: ApiDefi
   useEffect(() => {
     let alive = true
     setLoading(true)
-    // 始终拉最新 spec(列表接口虽带 spec,但编辑后需回读最新)。
     api
       .getDefinition(definition.id)
       .then((d) => alive && setSpec({ ...emptySpec(), ...(d.spec || {}) }))
@@ -70,41 +89,178 @@ export default function ApiSpecPanel({ definition, mode }: { definition: ApiDefi
 
   if (loading) return <div style={{ padding: 24, color: '#999' }}>{t('a.loading', '加载中…')}</div>
 
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
-      {editable && (
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <Button type="primary" icon={<SaveOutlined />} loading={saving} disabled={!dirty} onClick={save}>
-            {t('a.save', '保存')}
-          </Button>
-          {dirty && <span style={{ color: '#ef6c00', fontSize: 12 }}>{t('apidef.unsaved', '有未保存修改')}</span>}
-        </div>
-      )}
+  // 预览(只读):平铺各段。
+  if (!editable) {
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
+        <KVSection title={t('apidef.requestHeaders', '请求头')} rows={spec.requestHeaders || []} editable={false} onChange={() => {}} />
+        <KVSection title={t('apidef.requestQuery', 'Query 参数')} rows={spec.requestQuery || []} editable={false} onChange={() => {}} />
+        {(spec.restParams?.length ?? 0) > 0 && (
+          <KVSection title={t('apidef.restParams', 'REST 路径参数')} rows={spec.restParams || []} editable={false} onChange={() => {}} />
+        )}
+        <BodyView spec={spec} />
+        <ResponsesSection responses={spec.responses || []} editable={false} onChange={() => {}} />
+      </div>
+    )
+  }
 
-      <KVSection
-        title={t('apidef.requestHeaders', '请求头')}
-        rows={spec.requestHeaders || []}
-        editable={editable}
-        onChange={(rows) => patch({ requestHeaders: rows })}
-      />
-      <KVSection
-        title={t('apidef.requestQuery', 'Query 参数')}
-        rows={spec.requestQuery || []}
-        editable={editable}
-        onChange={(rows) => patch({ requestQuery: rows })}
-      />
-      <BodySection
-        title={t('apidef.requestBody', '请求体')}
-        value={spec.requestBody || ''}
-        editable={editable}
-        onChange={(v) => patch({ requestBody: v })}
-      />
-      <ResponsesSection
-        responses={spec.responses || []}
-        editable={editable}
-        onChange={(rows) => patch({ responses: rows })}
-      />
+  // 定义(可编辑):MeterSphere 风子标签。
+  const tabs = [
+    {
+      key: 'basic',
+      label: t('apidef.basicInfo', '基本信息'),
+      children: <BasicInfo definition={definition} spec={spec} patch={patch} />,
+    },
+    {
+      key: 'headers',
+      label: `${t('apidef.requestHeaders', '请求头')}${spec.requestHeaders?.length ? ` (${spec.requestHeaders.length})` : ''}`,
+      children: <KVSection title={t('apidef.requestHeaders', '请求头')} rows={spec.requestHeaders || []} editable onChange={(rows) => patch({ requestHeaders: rows })} hideTitle />,
+    },
+    {
+      key: 'body',
+      label: t('apidef.requestBody', '请求体'),
+      children: <BodyEditor spec={spec} patch={patch} />,
+    },
+    {
+      key: 'query',
+      label: `Query${spec.requestQuery?.length ? ` (${spec.requestQuery.length})` : ''}`,
+      children: <KVSection title="Query" rows={spec.requestQuery || []} editable onChange={(rows) => patch({ requestQuery: rows })} hideTitle />,
+    },
+    {
+      key: 'rest',
+      label: 'REST',
+      children: <KVSection title={t('apidef.restParams', 'REST 路径参数')} rows={spec.restParams || []} editable onChange={(rows) => patch({ restParams: rows })} hideTitle />,
+    },
+    {
+      key: 'auth',
+      label: t('apidef.auth', '认证'),
+      children: <AuthEditor spec={spec} patch={patch} />,
+    },
+    {
+      key: 'resp',
+      label: `${t('apidef.responses', '响应')}${spec.responses?.length ? ` (${spec.responses.length})` : ''}`,
+      children: <ResponsesSection responses={spec.responses || []} editable onChange={(rows) => patch({ responses: rows })} />,
+    },
+  ]
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <Button type="primary" icon={<SaveOutlined />} loading={saving} disabled={!dirty} onClick={save}>
+          {t('a.save', '保存')}
+        </Button>
+        {dirty && <span style={{ color: '#ef6c00', fontSize: 12 }}>{t('apidef.unsaved', '有未保存修改')}</span>}
+      </div>
+      {/* 子标签用 Segmented 取代 antd Tabs:在已嵌套于详情 Tabs 内时层级更清晰。 */}
+      <SubTabs tabs={tabs} />
     </div>
+  )
+}
+
+/** 轻量子标签(避免与外层 antd Tabs 视觉打架)。 */
+function SubTabs({ tabs }: { tabs: { key: string; label: string; children: React.ReactNode }[] }) {
+  const [active, setActive] = useState(tabs[0]?.key)
+  const cur = tabs.find((x) => x.key === active) || tabs[0]
+  return (
+    <div>
+      <Segmented
+        value={active}
+        onChange={(v) => setActive(String(v))}
+        options={tabs.map((x) => ({ label: x.label, value: x.key }))}
+        style={{ marginBottom: 14 }}
+      />
+      <div>{cur?.children}</div>
+    </div>
+  )
+}
+
+/** 基本信息:描述 / 所属模块 / 标签 / 状态。模块与状态为定义级(此处只读展示),描述/标签存 spec。 */
+function BasicInfo({ definition, spec, patch }: { definition: ApiDefinition; spec: ApiSpec; patch: (p: Partial<ApiSpec>) => void }) {
+  const { t } = useI18n()
+  const [tagInput, setTagInput] = useState('')
+  const tags = spec.tags || []
+  return (
+    <Space direction="vertical" size={16} style={{ width: '100%', maxWidth: 720 }}>
+      <Field label={t('apidef.descLabel', '描述')}>
+        <Input.TextArea rows={4} value={spec.description || ''} onChange={(e) => patch({ description: e.target.value })} placeholder={t('apidef.descPlaceholder', '接口描述')} />
+      </Field>
+      <Field label={t('apidef.ownerModule', '所属模块')}>
+        <Input readOnly value={definition.moduleId || t('apidef.unfiled', '未归类')} />
+      </Field>
+      <Field label={t('apidef.tags', '标签')}>
+        <Space size={[6, 6]} wrap>
+          {tags.map((tg) => (
+            <Tag key={tg} closable onClose={() => patch({ tags: tags.filter((x) => x !== tg) })}>{tg}</Tag>
+          ))}
+          <Input
+            size="small"
+            style={{ width: 140 }}
+            value={tagInput}
+            onChange={(e) => setTagInput(e.target.value)}
+            onPressEnter={() => {
+              const v = tagInput.trim()
+              if (v && !tags.includes(v)) patch({ tags: [...tags, v] })
+              setTagInput('')
+            }}
+            placeholder={t('apidef.addTag', '添加标签,回车结束')}
+          />
+        </Space>
+      </Field>
+      <Field label={t('apidef.colStatus', '状态')}>
+        <Tag color={statusColor(definition.status)}>{definition.status}</Tag>
+      </Field>
+    </Space>
+  )
+}
+
+function Field({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div>
+      <div style={{ fontSize: 13, color: '#5b6470', marginBottom: 6 }}>{label}</div>
+      {children}
+    </div>
+  )
+}
+
+/** 请求体编辑器:content-type 选择(none/form-data/urlencoded/json/xml/raw/binary)。 */
+function BodyEditor({ spec, patch }: { spec: ApiSpec; patch: (p: Partial<ApiSpec>) => void }) {
+  const { t } = useI18n()
+  const bt = spec.bodyType || 'none'
+  return (
+    <div>
+      <Radio.Group value={bt} onChange={(e) => patch({ bodyType: e.target.value })} optionType="button" size="small" style={{ marginBottom: 12 }}>
+        {BODY_TYPES.map((x) => (
+          <Radio.Button key={x} value={x}>{x}</Radio.Button>
+        ))}
+      </Radio.Group>
+      {bt === 'none' ? (
+        <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('apidef.noBody', '请求没有 Body')} style={{ margin: '12px 0' }} />
+      ) : bt === 'form-data' || bt === 'x-www-form-urlencoded' ? (
+        <KVSection title="" rows={spec.formBody || []} editable onChange={(rows) => patch({ formBody: rows })} hideTitle />
+      ) : bt === 'binary' ? (
+        <div style={{ color: '#8a9099', fontSize: 13 }}>{t('apidef.binaryHint', '二进制 Body(上传文件):调试时选择文件发送')}</div>
+      ) : (
+        <Input.TextArea rows={8} value={spec.requestBody || ''} onChange={(e) => patch({ requestBody: e.target.value })} placeholder={bt === 'json' ? '{"key":"value"}' : bt} className="ms-mono" />
+      )}
+    </div>
+  )
+}
+
+/** 认证:none / bearer / basic。 */
+function AuthEditor({ spec, patch }: { spec: ApiSpec; patch: (p: Partial<ApiSpec>) => void }) {
+  const { t } = useI18n()
+  const auth = spec.auth || { type: 'none' }
+  return (
+    <Space direction="vertical" size={12} style={{ width: '100%', maxWidth: 520 }}>
+      <Radio.Group value={auth.type || 'none'} onChange={(e) => patch({ auth: { ...auth, type: e.target.value } })}>
+        <Radio value="none">{t('editor.authNone', '无')}</Radio>
+        <Radio value="bearer">Bearer Token</Radio>
+        <Radio value="basic">Basic (user:pass)</Radio>
+      </Radio.Group>
+      {auth.type && auth.type !== 'none' && (
+        <Input value={auth.token || ''} onChange={(e) => patch({ auth: { ...auth, token: e.target.value } })} placeholder={auth.type === 'bearer' ? 'token' : 'user:pass'} className="ms-mono" />
+      )}
+    </Space>
   )
 }
 
@@ -118,17 +274,19 @@ function SectionTitle({ children, extra }: { children: React.ReactNode; extra?: 
   )
 }
 
-/** 键值对区块(请求头 / Query):预览=表格+复制,定义=可增删编辑 + Raw 切换。 */
+/** 键值对区块(请求头 / Query / REST / form 体):预览=表格+复制,定义=可增删编辑 + Raw 切换。 */
 function KVSection({
   title,
   rows,
   editable,
   onChange,
+  hideTitle,
 }: {
   title: string
   rows: ApiSpecKV[]
   editable: boolean
   onChange: (rows: ApiSpecKV[]) => void
+  hideTitle?: boolean
 }) {
   const { t } = useI18n()
   const [view, setView] = useState<'table' | 'raw'>('table')
@@ -139,7 +297,7 @@ function KVSection({
 
   const raw = rows.filter((r) => r.name).map((r) => `${r.name}: ${r.value ?? ''}`).join('\n')
 
-  const cols: ColumnsType<ApiSpecKV> = [
+  const cols: ColumnsType<ApiSpecKV & { _k: string }> = [
     {
       title: t('apidef.kvName', '名称'),
       dataIndex: 'name',
@@ -179,75 +337,74 @@ function KVSection({
 
   return (
     <div>
-      <SectionTitle
-        extra={
-          <Space size={8}>
-            {!editable && rows.length > 0 && (
-              <Segmented
-                size="small"
-                value={view}
-                onChange={(v) => setView(v as 'table' | 'raw')}
-                options={[
-                  { label: 'Table', value: 'table' },
-                  { label: 'Raw', value: 'raw' },
-                ]}
-              />
-            )}
-            {!editable && raw && (
-              <Button size="small" icon={<CopyOutlined />} onClick={() => copy(raw, t('apidef.copied', '已复制'))}>
-                {t('a.copy', '复制')}
-              </Button>
-            )}
-            {editable && (
-              <Button size="small" icon={<PlusOutlined />} onClick={addRow}>
-                {t('apidef.addRow', '添加')}
-              </Button>
-            )}
-          </Space>
-        }
-      >
-        {title} <Tag color="default" style={{ marginLeft: 4 }}>{rows.length}</Tag>
-      </SectionTitle>
-      {rows.length === 0 ? (
+      {!hideTitle && (
+        <SectionTitle
+          extra={
+            <Space size={8}>
+              {!editable && rows.length > 0 && (
+                <Segmented
+                  size="small"
+                  value={view}
+                  onChange={(v) => setView(v as 'table' | 'raw')}
+                  options={[
+                    { label: 'Table', value: 'table' },
+                    { label: 'Raw', value: 'raw' },
+                  ]}
+                />
+              )}
+              {!editable && raw && (
+                <Button size="small" icon={<CopyOutlined />} onClick={() => copy(raw, t('apidef.copied', '已复制'))}>
+                  {t('a.copy', '复制')}
+                </Button>
+              )}
+            </Space>
+          }
+        >
+          {title} <Tag color="default" style={{ marginLeft: 4 }}>{rows.length}</Tag>
+        </SectionTitle>
+      )}
+      {rows.length === 0 && !editable ? (
         <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('apidef.none', '无')} style={{ margin: '8px 0' }} />
       ) : !editable && view === 'raw' ? (
         <pre className="ms-mono" style={{ background: '#f6f8fa', padding: 12, borderRadius: 6, margin: 0, fontSize: 12 }}>{raw}</pre>
       ) : (
-        <Table size="small" rowKey="_k" pagination={false} columns={cols as ColumnsType<ApiSpecKV & { _k: string }>} dataSource={rows.map((r, i) => ({ ...r, _k: String(i) }))} />
+        <>
+          <Table size="small" rowKey="_k" pagination={false} columns={cols} dataSource={rows.map((r, i) => ({ ...r, _k: String(i) }))} locale={{ emptyText: t('apidef.none', '无') }} />
+          {editable && (
+            <Button size="small" icon={<PlusOutlined />} onClick={addRow} style={{ marginTop: 8 }}>
+              {t('apidef.addRow', '添加')}
+            </Button>
+          )}
+        </>
       )}
     </div>
   )
 }
 
-function BodySection({
-  title,
-  value,
-  editable,
-  onChange,
-}: {
-  title: string
-  value: string
-  editable: boolean
-  onChange: (v: string) => void
-}) {
+/** 预览模式的请求体只读视图(显示 content-type + 内容)。 */
+function BodyView({ spec }: { spec: ApiSpec }) {
   const { t } = useI18n()
+  const bt = spec.bodyType || (spec.requestBody ? 'raw' : 'none')
+  const isForm = bt === 'form-data' || bt === 'x-www-form-urlencoded'
   return (
     <div>
       <SectionTitle
         extra={
-          !editable && value ? (
-            <Button size="small" icon={<CopyOutlined />} onClick={() => copy(value, t('apidef.copied', '已复制'))}>
+          spec.requestBody ? (
+            <Button size="small" icon={<CopyOutlined />} onClick={() => copy(spec.requestBody || '', t('apidef.copied', '已复制'))}>
               {t('a.copy', '复制')}
             </Button>
           ) : undefined
         }
       >
-        {title}
+        {t('apidef.requestBody', '请求体')} <Tag color="blue" style={{ marginLeft: 4 }}>{bt}</Tag>
       </SectionTitle>
-      {editable ? (
-        <Input.TextArea rows={6} value={value} onChange={(e) => onChange(e.target.value)} placeholder='{"key":"value"}' className="ms-mono" />
-      ) : value ? (
-        <pre className="ms-mono" style={{ background: '#f6f8fa', padding: 12, borderRadius: 6, margin: 0, fontSize: 12, maxHeight: 320, overflow: 'auto' }}>{value}</pre>
+      {bt === 'none' ? (
+        <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('apidef.noBody', '请求没有 Body')} style={{ margin: '8px 0' }} />
+      ) : isForm ? (
+        <KVSection title="" rows={spec.formBody || []} editable={false} onChange={() => {}} hideTitle />
+      ) : spec.requestBody ? (
+        <pre className="ms-mono" style={{ background: '#f6f8fa', padding: 12, borderRadius: 6, margin: 0, fontSize: 12, maxHeight: 320, overflow: 'auto' }}>{spec.requestBody}</pre>
       ) : (
         <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('apidef.none', '无')} style={{ margin: '8px 0' }} />
       )}
@@ -269,7 +426,7 @@ function ResponsesSection({
   const addRow = () => onChange([...responses, { status: 200, body: '' }])
   const delRow = (i: number) => onChange(responses.filter((_, idx) => idx !== i))
 
-  const statusColor = (s?: number) => (s == null ? 'default' : s < 300 ? 'green' : s < 400 ? 'gold' : 'red')
+  const sc = (s?: number) => (s == null ? 'default' : s < 300 ? 'green' : s < 400 ? 'gold' : 'red')
 
   return (
     <div>
@@ -295,7 +452,7 @@ function ResponsesSection({
                 {editable ? (
                   <InputNumber min={100} max={599} value={r.status} onChange={(v) => setRow(i, { status: v ?? undefined })} />
                 ) : (
-                  <Tag color={statusColor(r.status)}>{r.status ?? '—'}</Tag>
+                  <Tag color={sc(r.status)}>{r.status ?? '—'}</Tag>
                 )}
                 <div style={{ flex: 1 }} />
                 {!editable && r.body && (
