@@ -2,7 +2,8 @@ import { useEffect, useMemo, useState } from 'react'
 import { AutoComplete, Button, Card, Input, Radio, Select, Space, Table, Tabs, Tag, Typography } from 'antd'
 import { message } from '../feedback'
 import { SendOutlined, PlusOutlined, DeleteOutlined } from '@ant-design/icons'
-import { api, ApiError, type DebugResponse } from '../api'
+import { api, ApiError, type DebugResponse, type Environment } from '../api'
+import { useApp } from '../context'
 import { useI18n } from '../i18n'
 
 const METHODS = ['GET', 'POST', 'PUT', 'DELETE', 'PATCH']
@@ -97,13 +98,38 @@ export default function RequestEditor({
   initialUrl?: string
 }) {
   const { t } = useI18n()
+  const { projectId } = useApp()
   const [method, setMethod] = useState(initialMethod || 'GET')
   const [protocol, setProtocol] = useState('HTTP')
   const [metaValues, setMetaValues] = useState<Record<string, string>>({})
   const [availProtos, setAvailProtos] = useState<string[]>(['http'])
+  // 环境:提供 baseUrl(相对路径前缀)+ 默认头 + {{变量}}。没有环境就无法对相对路径发请求——
+  // 这正是「环境都没有怎么发送」的根因,这里把环境接进调试台。
+  const [envs, setEnvs] = useState<Environment[]>([])
+  const [envId, setEnvId] = useState<string>('')
+  const env = envs.find((e) => e.id === envId)
   useEffect(() => {
     api.debugProtocols().then((r) => setAvailProtos(r.protocols)).catch(() => undefined)
   }, [])
+  useEffect(() => {
+    if (!projectId) {
+      setEnvs([])
+      return
+    }
+    api
+      .environments(projectId)
+      .then((list) => {
+        const arr = Array.isArray(list) ? list : []
+        setEnvs(arr)
+        // 默认选中首个启用的环境,让「发送」开箱即用。
+        setEnvId((cur) => cur || arr.find((e) => e.enabled !== false)?.id || '')
+      })
+      .catch(() => setEnvs([]))
+  }, [projectId])
+
+  // {{var}} 用环境变量解析(找不到保持原样)。
+  const resolveVars = (s: string): string =>
+    env?.variables ? s.replace(/\{\{\s*(\w+)\s*\}\}/g, (whole, k: string) => env.variables?.[k] ?? whole) : s
   const spec = PROTOCOLS.find((p) => p.value === protocol) || PROTOCOLS[0]
   const protoOptions = PROTOCOLS.filter((p) => availProtos.includes(p.proto)).map((p) => ({ value: p.value, label: p.label }))
   const [url, setUrl] = useState(initialUrl)
@@ -140,22 +166,34 @@ export default function RequestEditor({
       }
       return
     }
-    // 调试发送在服务端直连目标:必须绝对 URL,否则后端报 cryptic「transport: builder error」。
-    if (!/^https?:\/\//i.test(url.trim())) return message.warning(t('editor.absoluteUrl', '请输入绝对 URL(以 http(s):// 开头)'))
-    // 拼 query(解析 @mock)
+    // 解析 {{变量}},再据环境 baseUrl 把相对路径补成绝对 URL。
+    const raw = resolveVars(url.trim())
+    let base = raw
+    if (!/^https?:\/\//i.test(raw)) {
+      const baseUrl = env?.baseUrl?.trim().replace(/\/+$/, '')
+      if (!baseUrl) {
+        // 调试发送在服务端直连目标:相对路径必须有环境 baseUrl 兜底,否则无从发起。
+        return message.warning(t('editor.needEnvOrAbs', '相对路径需先选择带 baseUrl 的环境,或填写绝对 URL(http(s)://)'))
+      }
+      base = `${baseUrl}${raw.startsWith('/') ? '' : '/'}${raw}`
+    }
+    // 拼 query(解析 @mock + {{变量}})
     const qs = query
       .filter((q) => q.on && q.key.trim())
-      .map((q) => `${encodeURIComponent(q.key)}=${encodeURIComponent(resolveMock(q.value))}`)
+      .map((q) => `${encodeURIComponent(q.key)}=${encodeURIComponent(resolveMock(resolveVars(q.value)))}`)
       .join('&')
-    const finalUrl = qs ? `${url}${url.includes('?') ? '&' : '?'}${qs}` : url
-    const hs = headers.filter((h) => h.on && h.key.trim()).map((h) => ({ key: h.key, value: resolveMock(h.value) }))
+    const finalUrl = qs ? `${base}${base.includes('?') ? '&' : '?'}${qs}` : base
+    // 环境默认头先注入,显式请求头可覆盖(同名后写优先,由后端按顺序处理)。
+    const hs: { key: string; value: string }[] = []
+    for (const eh of env?.headers || []) if (eh.name?.trim()) hs.push({ key: eh.name, value: resolveVars(eh.value || '') })
+    for (const h of headers.filter((h) => h.on && h.key.trim())) hs.push({ key: h.key, value: resolveMock(resolveVars(h.value)) })
     if (authType === 'bearer' && authToken) hs.push({ key: 'Authorization', value: `Bearer ${authToken}` })
     if (authType === 'basic' && authToken) hs.push({ key: 'Authorization', value: `Basic ${btoa(authToken)}` })
     setSending(true)
     setErr('')
     setResp(null)
     try {
-      setResp(await api.debugSend({ method, url: finalUrl, headers: hs, body: body.trim() ? resolveMock(body) : undefined }))
+      setResp(await api.debugSend({ method, url: finalUrl, headers: hs, body: body.trim() ? resolveMock(resolveVars(body)) : undefined }))
     } catch (e) {
       setErr(e instanceof ApiError ? e.message : t('editor.sendFail', '发送失败'))
     } finally {
@@ -227,9 +265,26 @@ export default function RequestEditor({
         {spec.httpMethod && (
           <Select value={method} onChange={setMethod} style={{ width: 100 }} options={METHODS.map((m) => ({ value: m, label: m }))} />
         )}
+        {/* 环境选择器:HTTP 下提供 baseUrl + 默认头 + {{变量}}。空=无环境(需填绝对 URL)。 */}
+        {spec.httpMethod && (
+          <Select
+            value={envId || undefined}
+            onChange={setEnvId}
+            style={{ width: 168 }}
+            placeholder={t('editor.selectEnv', '选择环境')}
+            allowClear
+            options={envs.map((e) => ({ value: e.id, label: e.baseUrl ? `${e.name} · ${e.baseUrl}` : e.name }))}
+            notFoundContent={t('editor.noEnvConfigured', '未配置环境,去「环境」页新建')}
+          />
+        )}
         <Input value={url} onChange={(e) => setUrl(e.target.value)} placeholder={spec.httpMethod ? t('editor.urlPlaceholder', '/apis/... 或 http://...') : spec.urlPlaceholder} className="ms-mono" onPressEnter={send} />
         <Button type="primary" icon={<SendOutlined />} loading={sending} onClick={send}>{t('a.send', '发送')}</Button>
       </Space.Compact>
+      {spec.httpMethod && env?.baseUrl && (
+        <Typography.Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: -6, marginBottom: 10 }}>
+          {t('editor.effectiveUrl', '实际请求')}: <span className="ms-mono">{/^https?:\/\//i.test(url.trim()) ? url.trim() : `${env.baseUrl.replace(/\/+$/, '')}${url.trim().startsWith('/') ? '' : '/'}${url.trim()}`}</span>
+        </Typography.Text>
+      )}
       {spec.meta?.length ? (
         <Space.Compact style={{ width: '100%', marginBottom: 12 }}>
           {spec.meta.map((f) => {
