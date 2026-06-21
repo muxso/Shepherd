@@ -444,6 +444,8 @@ export const api = {
   getDefinition: (id: string) => http.get<ApiDefinition>(`/api/definition/${id}`),
   updateDefinitionSpec: (id: string, spec: ApiSpec) =>
     http.put(`/api/definition/${id}/spec`, { spec }),
+  updateDefinitionStatus: (id: string, status: string) =>
+    http.put(`/api/definition/${id}/status`, { status }),
   definitionReferences: (id: string) =>
     http.get<{ cases: { id: string; name: string }[]; scenarios: { id: string; name: string }[] }>(
       `/api/definition/${id}/references`,

@@ -72,6 +72,7 @@ pub fn router(
         .route("/api/definition/{id}", axum::routing::get(get_definition))
         .route("/api/definition/{id}/spec", put(update_definition_spec))
         .route("/api/definition/{id}/changes", axum::routing::get(list_definition_changes))
+        .route("/api/definition/{id}/status", put(update_definition_status))
         .route("/api/definition/{id}/case", post(create_case).get(list_cases))
         .route("/api/case", post(create_standalone_case).get(list_project_cases))
         .route("/api/definition/{id}/mock", post(create_mock).get(list_mocks))
@@ -355,6 +356,44 @@ async fn update_definition_spec(
             let _ = st
                 .repo
                 .record_definition_change(&id, "UPDATE_SPEC", "更新请求/响应规格", &user.user_id)
+                .await;
+            StatusCode::NO_CONTENT.into_response()
+        }
+        Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
+    }
+}
+
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+struct StatusUpdateBody {
+    /// DRAFT | DEBUGGING | COMPLETED | DEPRECATED
+    status: String,
+}
+
+#[utoipa::path(put, path = "/api/definition/{id}/status", tag = "api-definition", params(("id" = String, Path)), request_body = StatusUpdateBody, responses((status = 204), (status = 400), (status = 404)), security(("bearer" = [])))]
+async fn update_definition_status(
+    user: AuthUser,
+    State(st): State<ApiDefinitionState>,
+    Path(id): Path<String>,
+    Json(req): Json<StatusUpdateBody>,
+) -> Response {
+    if !user.can("API_DEFINITION", "ADD") {
+        return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
+    // 校验状态值合法。
+    let Some(status) = crate::domain::ApiStatus::parse(&req.status) else {
+        return (StatusCode::BAD_REQUEST, "invalid status").into_response();
+    };
+    match st.repo.get_definition(&id).await {
+        Ok(Some(_)) => {}
+        Ok(None) => return (StatusCode::NOT_FOUND, "api definition not found").into_response(),
+        Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
+    }
+    match st.repo.update_definition_status(&id, status.as_str()).await {
+        Ok(()) => {
+            let _ = st
+                .repo
+                .record_definition_change(&id, "STATUS", &format!("状态 → {}", status.as_str()), &user.user_id)
                 .await;
             StatusCode::NO_CONTENT.into_response()
         }
@@ -796,6 +835,7 @@ async fn import_definitions(
         list_definitions,
         get_definition,
         update_definition_spec,
+        update_definition_status,
         list_definition_changes,
         create_case,
         list_cases,
@@ -808,6 +848,7 @@ async fn import_definitions(
         ApiDefinitionCreateBody,
         ApiDefinitionResponse,
         SpecUpdateBody,
+        StatusUpdateBody,
         ApiDefinitionChangeResponse,
         ApiCaseCreateBody,
         ApiCaseResponse,

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Button, Empty, Input, InputNumber, Radio, Segmented, Space, Table, Tag, Tooltip } from 'antd'
+import { Button, Empty, Input, InputNumber, Radio, Segmented, Select, Space, Table, Tag, Tooltip } from 'antd'
 import { CopyOutlined, PlusOutlined, DeleteOutlined, SaveOutlined } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
 import {
@@ -7,13 +7,15 @@ import {
   ApiError,
   type ApiBodyType,
   type ApiDefinition,
+  type ApiModule,
   type ApiSpec,
   type ApiSpecKV,
   type ApiSpecResponse,
 } from '../api'
 import { message } from '../feedback'
-import { statusColor } from './tags'
 import { useI18n } from '../i18n'
+
+const API_STATUSES = ['DRAFT', 'DEBUGGING', 'COMPLETED', 'DEPRECATED']
 
 /** 复制文本到剪贴板(带轻提示)。navigator.clipboard 在非安全上下文可能缺失,降级 execCommand。 */
 async function copy(text: string, ok: string) {
@@ -174,18 +176,57 @@ function SubTabs({ tabs }: { tabs: { key: string; label: string; children: React
   )
 }
 
-/** 基本信息:描述 / 所属模块 / 标签 / 状态。模块与状态为定义级(此处只读展示),描述/标签存 spec。 */
+/** 基本信息:描述 / 所属模块 / 标签 / 状态。描述/标签存 spec(随保存);模块/状态为定义级,即时写入。 */
 function BasicInfo({ definition, spec, patch }: { definition: ApiDefinition; spec: ApiSpec; patch: (p: Partial<ApiSpec>) => void }) {
   const { t } = useI18n()
   const [tagInput, setTagInput] = useState('')
   const tags = spec.tags || []
+  const [modules, setModules] = useState<ApiModule[]>([])
+  const [moduleId, setModuleId] = useState<string | undefined>(definition.moduleId || undefined)
+  const [status, setStatus] = useState(definition.status)
+
+  useEffect(() => {
+    let alive = true
+    api.modules(definition.projectId).then((m) => alive && setModules(Array.isArray(m) ? m : [])).catch(() => undefined)
+    return () => {
+      alive = false
+    }
+  }, [definition.projectId])
+
+  // 模块/状态是定义级属性,即时写后端(不走 spec 的「保存」按钮),对齐 MeterSphere。
+  const changeModule = async (mid?: string) => {
+    setModuleId(mid)
+    try {
+      await api.moveDefinition(definition.id, mid || null)
+      message.success(t('apidef.moved', '已移动'))
+    } catch (e) {
+      message.error(e instanceof ApiError ? e.message : t('apidef.saveFailed', '保存失败'))
+    }
+  }
+  const changeStatus = async (s: string) => {
+    setStatus(s)
+    try {
+      await api.updateDefinitionStatus(definition.id, s)
+      message.success(t('apidef.statusUpdated', '状态已更新'))
+    } catch (e) {
+      message.error(e instanceof ApiError ? e.message : t('apidef.saveFailed', '保存失败'))
+    }
+  }
+
   return (
     <Space direction="vertical" size={16} style={{ width: '100%', maxWidth: 720 }}>
       <Field label={t('apidef.descLabel', '描述')}>
         <Input.TextArea rows={4} value={spec.description || ''} onChange={(e) => patch({ description: e.target.value })} placeholder={t('apidef.descPlaceholder', '接口描述')} />
       </Field>
       <Field label={t('apidef.ownerModule', '所属模块')}>
-        <Input readOnly value={definition.moduleId || t('apidef.unfiled', '未归类')} />
+        <Select
+          style={{ width: 280 }}
+          value={moduleId}
+          onChange={changeModule}
+          allowClear
+          placeholder={t('apidef.unfiled', '未归类')}
+          options={modules.map((m) => ({ value: m.id, label: m.name }))}
+        />
       </Field>
       <Field label={t('apidef.tags', '标签')}>
         <Space size={[6, 6]} wrap>
@@ -207,7 +248,12 @@ function BasicInfo({ definition, spec, patch }: { definition: ApiDefinition; spe
         </Space>
       </Field>
       <Field label={t('apidef.colStatus', '状态')}>
-        <Tag color={statusColor(definition.status)}>{definition.status}</Tag>
+        <Select
+          style={{ width: 180 }}
+          value={status}
+          onChange={changeStatus}
+          options={API_STATUSES.map((s) => ({ value: s, label: s }))}
+        />
       </Field>
     </Space>
   )

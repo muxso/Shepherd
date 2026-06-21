@@ -68,6 +68,15 @@ impl ApiDefinitionRepository for InMemoryApiDefinitionRepository {
         Ok(())
     }
 
+    async fn update_definition_status(&self, id: &str, status: &str) -> Result<(), RepoError> {
+        if let Some(d) = self.state.lock().expect("lock").definitions.get_mut(id) {
+            if let Some(s) = crate::domain::ApiStatus::parse(status) {
+                d.status = s;
+            }
+        }
+        Ok(())
+    }
+
     async fn record_definition_change(
         &self,
         definition_id: &str,

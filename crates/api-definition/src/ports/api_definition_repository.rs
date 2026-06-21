@@ -29,6 +29,9 @@ pub trait ApiDefinitionRepository: Send + Sync {
     /// 更新接口定义的请求/响应规格(spec,不透明 JSON 文本)。
     async fn update_definition_spec(&self, id: &str, spec: &str) -> Result<(), RepoError>;
 
+    /// 更新接口定义状态(DRAFT/DEBUGGING/COMPLETED/DEPRECATED)。
+    async fn update_definition_status(&self, id: &str, status: &str) -> Result<(), RepoError>;
+
     /// 列出项目下的接口定义(排除软删除)。
     async fn list_definitions(
         &self,
