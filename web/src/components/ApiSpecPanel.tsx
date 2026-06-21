@@ -482,7 +482,7 @@ function reqToCurl(req: SentRequest): string {
 const codeBox: React.CSSProperties = { background: '#0f1419', color: '#d6deeb', padding: 12, borderRadius: 6, maxHeight: 360, overflow: 'auto', fontSize: 12, whiteSpace: 'pre-wrap', wordBreak: 'break-all', margin: 0 }
 
 /** 调试结果面板:响应体/响应头/实际请求/控制台/cURL/提取/断言(执行由请求行触发,环境在顶栏选)。 */
-function DebugResultPanel({
+export function DebugResultPanel({
   running,
   resp,
   err,
