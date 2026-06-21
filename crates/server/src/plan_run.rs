@@ -13,11 +13,12 @@ use axum::{
     extract::{FromRef, Path, State},
     http::StatusCode,
     response::{IntoResponse, Response},
-    routing::post,
+    routing::{get, post},
     Json, Router,
 };
 use migrate::PgPool;
 use serde::Serialize;
+use sqlx::Row;
 use utoipa::{OpenApi, ToSchema};
 use webauth::{AuthUser, SessionStore};
 
@@ -127,6 +128,7 @@ impl PlanRunner {
 #[derive(Clone)]
 struct RunState {
     plan_runner: PlanRunner,
+    pool: PgPool,
     sessions: Arc<dyn SessionStore>,
 }
 
@@ -139,7 +141,36 @@ impl FromRef<RunState> for Arc<dyn SessionStore> {
 pub fn router(pool: PgPool, sessions: Arc<dyn SessionStore>) -> Router {
     Router::new()
         .route("/test-plan/{id}/run", post(run_plan))
-        .with_state(RunState { plan_runner: PlanRunner::new(pool), sessions })
+        // 用例 → 计划 反查:某用例被哪些计划挂入(打通 用例→计划 跳转)。
+        .route("/test-plan/by-case/{caseId}", get(plans_by_case))
+        .with_state(RunState { plan_runner: PlanRunner::new(pool.clone()), pool, sessions })
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PlanRef {
+    plan_id: String,
+    name: String,
+}
+
+async fn plans_by_case(State(st): State<RunState>, Path(case_id): Path<String>) -> Response {
+    let rows = sqlx::query(
+        "SELECT p.id AS id, p.name AS name FROM ms_test_plan_case tc \
+         JOIN ms_test_plan p ON p.id = tc.plan_id WHERE tc.case_id = $1 ORDER BY p.name",
+    )
+    .bind(&case_id)
+    .fetch_all(&st.pool)
+    .await;
+    match rows {
+        Ok(rows) => {
+            let out: Vec<PlanRef> = rows
+                .iter()
+                .map(|r| PlanRef { plan_id: r.get::<String, _>("id"), name: r.get::<String, _>("name") })
+                .collect();
+            (StatusCode::OK, Json(out)).into_response()
+        }
+        Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
+    }
 }
 
 #[derive(Debug, Serialize, ToSchema)]

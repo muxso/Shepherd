@@ -38,6 +38,7 @@ mock-runtime = { path = "../mock-runtime", features = ["http", "pg", "template"]
 perf = { path = "../perf", features = ["engine", "pg", "parquet-sink", "probe-exec"] }
 probe = { path = "../probe", features = ["http", "grpc", "sql", "mysql", "redis", "websocket"] }
 migrate = { path = "../migrate" }
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "postgres"] }
 axum = "0.8"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "signal", "time"] }
 tokio-stream = { version = "0.1", features = ["time"] }

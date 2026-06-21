@@ -75,4 +75,29 @@ pub trait ApiDefinitionRepository: Send + Sync {
         definition_id: &str,
         module_id: Option<&str>,
     ) -> Result<(), RepoError>;
+
+    // ---- 任务 ↔ 用例 关联 ----
+
+    /// 关联一条用例到某任务(幂等)。
+    async fn link_task_case(
+        &self,
+        decomposition_id: &str,
+        task_id: &str,
+        case_id: &str,
+    ) -> Result<(), RepoError>;
+
+    /// 解除关联。
+    async fn unlink_task_case(
+        &self,
+        decomposition_id: &str,
+        task_id: &str,
+        case_id: &str,
+    ) -> Result<(), RepoError>;
+
+    /// 列出某任务关联的用例(join ms_api_case)。
+    async fn list_cases_for_task(
+        &self,
+        decomposition_id: &str,
+        task_id: &str,
+    ) -> Result<Vec<ApiCase>, RepoError>;
 }

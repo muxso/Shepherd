@@ -32,6 +32,7 @@ import { methodColor, statusColor } from '../components/tags'
 import CasesPanel from './CasesPanel'
 import MocksPanel from './MocksPanel'
 import RequestEditor from '../components/RequestEditor'
+import { useOpenParam } from '../components/Workspace'
 
 const METHODS = ['GET', 'POST', 'PUT', 'DELETE', 'PATCH']
 const PROTOCOLS = ['HTTP', 'GRPC', 'SQL', 'REDIS', 'WEBSOCKET']
@@ -141,6 +142,7 @@ export default function ApiDefinitions() {
     setOpenIds((ids) => (ids.includes(id) ? ids : [...ids, id]))
     setActiveKey(id)
   }
+  useOpenParam(openDef) // 支持 ?open=<definitionId> 深链打开
   const closeTab = (id: string) => {
     setOpenIds((ids) => {
       const next = ids.filter((x) => x !== id)

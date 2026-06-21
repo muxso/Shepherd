@@ -1,9 +1,25 @@
-import { useState, type ReactNode } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { Button, Empty, Input, Space, Table, Tabs } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
 import { PlusOutlined, ReloadOutlined } from '@ant-design/icons'
 
 const LIST_KEY = '__list__'
+
+// 深链:读取 ?open=<id>,交给调用方打开对应详情 tab,然后清除该参数(避免重复触发)。
+export function useOpenParam(onOpen: (id: string) => void) {
+  const [params, setParams] = useSearchParams()
+  useEffect(() => {
+    const id = params.get('open')
+    if (id) {
+      onOpen(id)
+      const next = new URLSearchParams(params)
+      next.delete('open')
+      setParams(next, { replace: true })
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [params])
+}
 
 // 多 Tab 工作区状态:首个常驻列表 tab + 动态打开的详情 tab。
 export function useWorkTabs() {
