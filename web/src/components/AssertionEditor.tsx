@@ -1,17 +1,20 @@
 import { useState } from 'react'
 import { Button, Input, InputNumber, Select, Space, Typography } from 'antd'
 import { PlusOutlined, DeleteOutlined } from '@ant-design/icons'
+import { useI18n } from '../i18n'
 
 // 后端断言(api-runner Assertion,serde tag=type/content=args)。
 export type Assertion = Record<string, unknown>
 
-const TYPES = [
-  { value: 'StatusIs', label: '状态码等于' },
-  { value: 'BodyContains', label: '响应体包含' },
-  { value: 'JsonFieldEquals', label: 'JSON 字段等于' },
-  { value: 'HeaderEquals', label: '响应头等于' },
-  { value: 'ResponseTime', label: '响应耗时 ≤ (ms)' },
-]
+function makeTypes(t: (key: string, fallback?: string) => string) {
+  return [
+    { value: 'StatusIs', label: t('assert.statusIs', '状态码等于') },
+    { value: 'BodyContains', label: t('assert.bodyContains', '响应体包含') },
+    { value: 'JsonFieldEquals', label: t('assert.jsonFieldEquals', 'JSON 字段等于') },
+    { value: 'HeaderEquals', label: t('assert.headerEquals', '响应头等于') },
+    { value: 'ResponseTime', label: t('assert.responseTime', '响应耗时 ≤ (ms)') },
+  ]
+}
 
 // 内部行表示:统一存 n(数字)/ s、s2(字符串),按类型序列化为后端 JSON。
 interface Row {
@@ -62,6 +65,8 @@ export default function AssertionEditor({
   value?: Assertion[]
   onChange?: (v: Assertion[]) => void
 }) {
+  const { t } = useI18n()
+  const TYPES = makeTypes(t)
   const [rows, setRows] = useState<Row[]>(() => (value && value.length ? value.map(fromAssertion) : []))
 
   const push = (next: Row[]) => {
@@ -74,7 +79,7 @@ export default function AssertionEditor({
     <Space direction="vertical" style={{ width: '100%' }} size={6}>
       {rows.length === 0 && (
         <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-          无断言(执行只看传输是否可达)。点下方添加。
+          {t('assert.emptyHint', '无断言(执行只看传输是否可达)。点下方添加。')}
         </Typography.Text>
       )}
       {rows.map((r, i) => (
@@ -93,19 +98,19 @@ export default function AssertionEditor({
               placeholder={r.type === 'StatusIs' ? '200' : '500'}
             />
           ) : r.type === 'BodyContains' ? (
-            <Input value={r.s} onChange={(e) => update(i, { s: e.target.value })} placeholder="子串" />
+            <Input value={r.s} onChange={(e) => update(i, { s: e.target.value })} placeholder={t('assert.substring', '子串')} />
           ) : (
             <>
               <Input
                 value={r.s}
                 onChange={(e) => update(i, { s: e.target.value })}
-                placeholder={r.type === 'JsonFieldEquals' ? 'Pointer 如 /data/id' : '头名 如 Content-Type'}
+                placeholder={r.type === 'JsonFieldEquals' ? t('assert.pointerPlaceholder', 'Pointer 如 /data/id') : t('assert.headerNamePlaceholder', '头名 如 Content-Type')}
                 className="ms-mono"
               />
               <Input
                 value={r.s2}
                 onChange={(e) => update(i, { s2: e.target.value })}
-                placeholder="期望值"
+                placeholder={t('assert.expectedValue', '期望值')}
               />
             </>
           )}
@@ -117,7 +122,7 @@ export default function AssertionEditor({
         size="small"
         onClick={() => push([...rows, { type: 'StatusIs', n: 200, s: '', s2: '' }])}
       >
-        添加断言
+        {t('assert.add', '添加断言')}
       </Button>
     </Space>
   )

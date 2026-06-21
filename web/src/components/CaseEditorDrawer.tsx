@@ -1,9 +1,11 @@
 import { useEffect, useState } from 'react'
-import { Button, Card, Drawer, Form, Input, Select, Space, Table, Tabs, Tag, Typography, message } from 'antd'
+import { Button, Card, Drawer, Form, Input, Select, Space, Table, Tabs, Tag, Typography } from 'antd'
+import { message } from '../feedback'
 import { SendOutlined, PlusOutlined, DeleteOutlined } from '@ant-design/icons'
 import { api, ApiError, type ApiDefinition, type DebugResponse } from '../api'
 import { methodColor } from './tags'
 import AssertionEditor, { type Assertion } from './AssertionEditor'
+import { useI18n } from '../i18n'
 
 const METHODS = ['GET', 'POST', 'PUT', 'DELETE', 'PATCH']
 type HeaderRow = { key: string; value: string }
@@ -20,6 +22,7 @@ export default function CaseEditorDrawer({
   onClose: () => void
   onSaved: () => void
 }) {
+  const { t } = useI18n()
   const [name, setName] = useState('')
   const [method, setMethod] = useState(definition.method || 'GET')
   const [url, setUrl] = useState(definition.path || '')
@@ -49,29 +52,29 @@ export default function CaseEditorDrawer({
     setHeaders((hs) => hs.map((h, idx) => (idx === i ? { ...h, ...patch } : h)))
 
   const send = async () => {
-    if (!url.trim()) return message.warning('请输入 URL')
+    if (!url.trim()) return message.warning(t('case.urlRequired', '请输入 URL'))
     setSending(true)
     setErr('')
     setResp(null)
     try {
       setResp(await api.debugSend({ method, url, headers: headers.filter((h) => h.key.trim()), body: body.trim() || undefined }))
     } catch (e) {
-      setErr(e instanceof ApiError ? e.message : '发送失败')
+      setErr(e instanceof ApiError ? e.message : t('case.sendFailed', '发送失败'))
     } finally {
       setSending(false)
     }
   }
 
   const save = async () => {
-    if (!name.trim()) return message.warning('请填用例名')
-    if (!url.trim()) return message.warning('请填 URL')
+    if (!name.trim()) return message.warning(t('case.nameRequired', '请填用例名'))
+    if (!url.trim()) return message.warning(t('case.urlRequiredSave', '请填 URL'))
     setSaving(true)
     try {
       await api.createCase(definition.id, { name: name.trim(), method, url, body: body.trim() || undefined, assertions })
-      message.success('用例已保存')
+      message.success(t('case.saved', '用例已保存'))
       onSaved()
     } catch (e) {
-      message.error(e instanceof ApiError ? e.message : '保存失败')
+      message.error(e instanceof ApiError ? e.message : t('case.saveFailed', '保存失败'))
     } finally {
       setSaving(false)
     }
@@ -79,7 +82,7 @@ export default function CaseEditorDrawer({
 
   return (
     <Drawer
-      title={`新建用例 · ${definition.name}`}
+      title={`${t('case.newCase', '新建用例')} · ${definition.name}`}
       open={open}
       onClose={onClose}
       width="68%"
@@ -87,15 +90,15 @@ export default function CaseEditorDrawer({
       footer={
         <div style={{ textAlign: 'right' }}>
           <Space>
-            <Button onClick={onClose}>取消</Button>
-            <Button type="primary" loading={saving} onClick={save}>保存用例</Button>
+            <Button onClick={onClose}>{t('a.cancel', '取消')}</Button>
+            <Button type="primary" loading={saving} onClick={save}>{t('case.saveCase', '保存用例')}</Button>
           </Space>
         </div>
       }
     >
       <Form layout="vertical">
-        <Form.Item label="用例名" required style={{ marginBottom: 12 }}>
-          <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="如:登录成功" />
+        <Form.Item label={t('case.name', '用例名')} required style={{ marginBottom: 12 }}>
+          <Input value={name} onChange={(e) => setName(e.target.value)} placeholder={t('case.namePlaceholder', '如:登录成功')} />
         </Form.Item>
       </Form>
 
@@ -103,7 +106,7 @@ export default function CaseEditorDrawer({
       <Space.Compact style={{ width: '100%', marginBottom: 12 }}>
         <Select value={method} onChange={setMethod} style={{ width: 110 }} options={METHODS.map((m) => ({ value: m, label: m }))} />
         <Input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="http://127.0.0.1:9180/healthz" className="ms-mono" onPressEnter={send} />
-        <Button type="primary" icon={<SendOutlined />} loading={sending} onClick={send}>发送</Button>
+        <Button type="primary" icon={<SendOutlined />} loading={sending} onClick={send}>{t('a.send', '发送')}</Button>
       </Space.Compact>
 
       <Tabs
@@ -116,12 +119,12 @@ export default function CaseEditorDrawer({
               <Space direction="vertical" style={{ width: '100%' }}>
                 {headers.map((h, i) => (
                   <Space.Compact key={i} style={{ width: '100%' }}>
-                    <Input placeholder="名" value={h.key} onChange={(e) => setHeader(i, { key: e.target.value })} style={{ width: 240 }} className="ms-mono" />
-                    <Input placeholder="值" value={h.value} onChange={(e) => setHeader(i, { value: e.target.value })} />
+                    <Input placeholder={t('case.headerName', '名')} value={h.key} onChange={(e) => setHeader(i, { key: e.target.value })} style={{ width: 240 }} className="ms-mono" />
+                    <Input placeholder={t('case.headerValue', '值')} value={h.value} onChange={(e) => setHeader(i, { value: e.target.value })} />
                     <Button icon={<DeleteOutlined />} onClick={() => setHeaders((hs) => hs.filter((_, idx) => idx !== i))} />
                   </Space.Compact>
                 ))}
-                <Button icon={<PlusOutlined />} size="small" onClick={() => setHeaders((hs) => [...hs, { key: '', value: '' }])}>加一行</Button>
+                <Button icon={<PlusOutlined />} size="small" onClick={() => setHeaders((hs) => [...hs, { key: '', value: '' }])}>{t('case.addRow', '加一行')}</Button>
               </Space>
             ),
           },
@@ -132,7 +135,7 @@ export default function CaseEditorDrawer({
           },
           {
             key: 'assert',
-            label: `断言 (${assertions.length})`,
+            label: `${t('case.assertions', '断言')} (${assertions.length})`,
             children: <AssertionEditor value={assertions} onChange={setAssertions} />,
           },
         ]}
@@ -144,7 +147,7 @@ export default function CaseEditorDrawer({
           style={{ marginTop: 12 }}
           title={
             <Space>
-              响应
+              {t('case.response', '响应')}
               {resp && <Tag color={resp.status < 400 ? 'green' : 'red'}>{resp.status}</Tag>}
               {resp && <Typography.Text type="secondary" style={{ fontSize: 12 }}>{resp.latencyMs} ms</Typography.Text>}
               <Tag color={methodColor(method)}>{method}</Tag>
@@ -162,7 +165,7 @@ export default function CaseEditorDrawer({
                   label: 'Body',
                   children: (
                     <pre style={{ background: '#0f1419', color: '#d6deeb', padding: 12, borderRadius: 6, maxHeight: 280, overflow: 'auto', fontSize: 12, whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
-                      {resp?.body || '(空)'}
+                      {resp?.body || t('case.emptyBody', '(空)')}
                     </pre>
                   ),
                 },
@@ -176,8 +179,8 @@ export default function CaseEditorDrawer({
                       rowKey={(_, i) => String(i)}
                       dataSource={(resp?.headers || []).map(([k, v]) => ({ k, v }))}
                       columns={[
-                        { title: '名', dataIndex: 'k', width: 220 },
-                        { title: '值', dataIndex: 'v', render: (v: string) => <span className="ms-mono">{v}</span> },
+                        { title: t('case.headerName', '名'), dataIndex: 'k', width: 220 },
+                        { title: t('case.headerValue', '值'), dataIndex: 'v', render: (v: string) => <span className="ms-mono">{v}</span> },
                       ]}
                     />
                   ),
