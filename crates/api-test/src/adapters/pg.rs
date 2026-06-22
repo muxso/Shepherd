@@ -448,6 +448,64 @@ impl PgBatchReport {
             .map_err(map_err)?;
         Ok(())
     }
+
+    /// 报告明细:报告头(状态/用例数)+ 逐用例结果(case_id/通过失败/失败原因/时间)。
+    /// 不存在返回 None。注:当前未持久化响应时间/状态码/响应体(需执行器扩展)。
+    pub async fn detail(&self, report_id: &str) -> Result<Option<BatchReportDetail>, PortError> {
+        let header = sqlx::query("SELECT status, case_count FROM ms_api_batch_report WHERE id = $1")
+            .bind(report_id)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(map_err)?;
+        let Some(h) = header else { return Ok(None) };
+        let rows = sqlx::query(
+            "SELECT case_id, outcome, failures, executed_at::text AS executed_at \
+             FROM ms_api_case_result WHERE report_id = $1 ORDER BY executed_at",
+        )
+        .bind(report_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(map_err)?;
+        let results = rows
+            .iter()
+            .map(|r| {
+                let failures_v: serde_json::Value =
+                    r.try_get("failures").unwrap_or_else(|_| serde_json::Value::Array(vec![]));
+                let failures = failures_v
+                    .as_array()
+                    .map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect())
+                    .unwrap_or_default();
+                Ok(CaseResultRow {
+                    case_id: r.try_get("case_id").map_err(map_err)?,
+                    outcome: r.try_get("outcome").map_err(map_err)?,
+                    failures,
+                    executed_at: r.try_get::<String, _>("executed_at").map_err(map_err)?,
+                })
+            })
+            .collect::<Result<Vec<_>, PortError>>()?;
+        Ok(Some(BatchReportDetail {
+            status: h.try_get("status").map_err(map_err)?,
+            case_count: h.try_get("case_count").map_err(map_err)?,
+            results,
+        }))
+    }
+}
+
+/// 报告明细读模型(报告头 + 逐用例结果)。供场景报告页渲染。
+#[derive(Debug, Clone)]
+pub struct BatchReportDetail {
+    pub status: String,
+    pub case_count: i32,
+    pub results: Vec<CaseResultRow>,
+}
+
+/// 单条用例结果(report 明细行)。
+#[derive(Debug, Clone)]
+pub struct CaseResultRow {
+    pub case_id: String,
+    pub outcome: String,
+    pub failures: Vec<String>,
+    pub executed_at: String,
 }
 
 // ---- 用例执行记录读模型:按 case_id 倒序分页查 ms_api_case_result ----

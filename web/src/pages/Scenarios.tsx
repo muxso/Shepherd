@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { Button, Drawer, Dropdown, Empty, Form, Input, Modal, Radio, Segmented, Select, Space, Switch, Table, Tabs, Tag, Tree, Typography } from 'antd'
 import { message, modal } from '../feedback'
 import { PlayCircleOutlined, PlusOutlined, SaveOutlined, ThunderboltOutlined, DownOutlined, LinkOutlined, SwapOutlined, DeleteOutlined, FullscreenOutlined, CloseOutlined } from '@ant-design/icons'
-import { api, ApiError, type ApiCase, type DebugResponse, type Environment, type Scenario, type ScenarioExecution, type ScenarioRunResult, type ScenarioStep } from '../api'
+import { api, ApiError, type ApiCase, type DebugResponse, type Environment, type ReportResultItem, type Scenario, type ScenarioExecution, type ScenarioReportDetail, type ScenarioRunResult, type ScenarioStep } from '../api'
 import { useApp } from '../context'
 import { methodColor, statusColor, outcomeColor } from '../components/tags'
 import { Workspace, WorkList, PaneHeader, useWorkTabs } from '../components/Workspace'
@@ -344,7 +344,7 @@ function ScenarioDetail({ scenario }: { scenario: Scenario }) {
     { key: 'params', label: t('scenario.paramsTab', '参数'), children: <ScenarioParams params={form.params} onChange={(params) => patchForm({ params })} csv={form.csv} onCsvChange={(csv) => patchForm({ csv })} /> },
     { key: 'prepost', label: t('scenario.prePostTab', '前/后置'), children: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('scenario.prePostSoon', '前/后置处理即将接入')} style={{ margin: '32px 0' }} /> },
     { key: 'assert', label: t('apidef.assertions', '断言'), children: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('scenario.assertSoon', '场景级断言即将接入')} style={{ margin: '32px 0' }} /> },
-    { key: 'exec', label: t('scenario.execHistoryTab', '执行历史'), children: <ScenarioExecutionsTab scenarioId={scenario.id} t={t} /> },
+    { key: 'exec', label: t('scenario.execHistoryTab', '执行历史'), children: <ScenarioExecutionsTab scenarioId={scenario.id} nameOf={nameOf} t={t} /> },
     { key: 'change', label: t('apidef.changeHistory', '变更历史'), children: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('scenario.changeSoon', '变更历史即将接入')} style={{ margin: '32px 0' }} /> },
     { key: 'settings', label: t('apidef.settings', '设置'), children: <ScenarioSettings failureStrategy={failureStrategy} onFailureStrategy={setFailureStrategy} t={t} /> },
   ]
@@ -669,30 +669,102 @@ function ScenarioSettings({ failureStrategy, onFailureStrategy, t }: { failureSt
   )
 }
 
-// 执行历史标签(对齐参考图 #23):序号 / 状态 / 用例数 / 时间 / 操作。
-function ScenarioExecutionsTab({ scenarioId, t }: { scenarioId: string; t: TFn }) {
+// 执行历史标签(对齐参考图 #23):序号 / 状态 / 用例数 / 时间 / 操作(执行结果→报告)。
+function ScenarioExecutionsTab({ scenarioId, nameOf, t }: { scenarioId: string; nameOf: NameOf; t: TFn }) {
   const [rows, setRows] = useState<ScenarioExecution[]>([])
   const [loading, setLoading] = useState(false)
+  const [reportId, setReportId] = useState<string | null>(null)
   useEffect(() => {
     setLoading(true)
     api.scenarioExecutions(scenarioId).then((p) => setRows(p.items)).catch(() => setRows([])).finally(() => setLoading(false))
   }, [scenarioId])
   return (
-    <Table<ScenarioExecution>
-      rowKey="id"
-      size="small"
-      loading={loading}
-      dataSource={rows}
-      locale={{ emptyText: <Empty description={t('scenario.noExec', '暂无执行记录')} /> }}
-      pagination={{ pageSize: 20, size: 'small' }}
-      columns={[
-        { title: t('scenario.colSeq', '序号'), dataIndex: 'id', render: (v: string) => <span className="ms-mono" style={{ fontSize: 12 }}>{v.slice(0, 12)}</span> },
-        { title: t('scenario.colStatus', '执行状态'), dataIndex: 'status', width: 110, render: (s: string) => <Tag color={outcomeColor(s)}>{s}</Tag> },
-        { title: t('scenario.caseUnit', '用例'), dataIndex: 'caseCount', width: 80 },
-        { title: t('scenario.execTime', '操作时间'), dataIndex: 'createdAt', width: 200, render: (v: string) => <span className="ms-mono" style={{ fontSize: 12 }}>{v?.slice(0, 19)}</span> },
-        { title: t('apidef.colAction', '操作'), width: 100, render: () => <Button type="link" size="small" disabled>{t('scenario.viewResult', '执行结果')}</Button> },
-      ]}
-    />
+    <>
+      <Table<ScenarioExecution>
+        rowKey="id"
+        size="small"
+        loading={loading}
+        dataSource={rows}
+        locale={{ emptyText: <Empty description={t('scenario.noExec', '暂无执行记录')} /> }}
+        pagination={{ pageSize: 20, size: 'small' }}
+        columns={[
+          { title: t('scenario.colSeq', '序号'), dataIndex: 'id', render: (v: string) => <span className="ms-mono" style={{ fontSize: 12 }}>{v.slice(0, 12)}</span> },
+          { title: t('scenario.colStatus', '执行状态'), dataIndex: 'status', width: 110, render: (s: string) => <Tag color={outcomeColor(s)}>{s}</Tag> },
+          { title: t('scenario.caseUnit', '用例'), dataIndex: 'caseCount', width: 80 },
+          { title: t('scenario.execTime', '操作时间'), dataIndex: 'createdAt', width: 200, render: (v: string) => <span className="ms-mono" style={{ fontSize: 12 }}>{v?.slice(0, 19)}</span> },
+          { title: t('apidef.colAction', '操作'), width: 100, render: (_v, r) => <Button type="link" size="small" disabled={!r.reportId} onClick={() => setReportId(r.reportId)}>{t('scenario.viewResult', '执行结果')}</Button> },
+        ]}
+      />
+      <ScenarioReportModal reportId={reportId} nameOf={nameOf} onClose={() => setReportId(null)} />
+    </>
+  )
+}
+
+// 场景报告(对齐参考图 #26):报告头(状态/用例数)+ 报告明细逐步结果(通过/失败 + 失败原因)。
+// 注:响应时间/大小/状态码/响应体当前未持久化(执行器仅记录通过失败 + 失败原因),展示为 — ;
+// 完整明细需扩展执行器落库(后续切片)。
+function ScenarioReportModal({ reportId, nameOf, onClose }: { reportId: string | null; nameOf: NameOf; onClose: () => void }) {
+  const { t } = useI18n()
+  const [data, setData] = useState<ScenarioReportDetail | null>(null)
+  const [loading, setLoading] = useState(false)
+  const [search, setSearch] = useState('')
+  useEffect(() => {
+    if (!reportId) { setData(null); return }
+    setLoading(true)
+    api.scenarioReport(reportId).then(setData).catch(() => setData(null)).finally(() => setLoading(false))
+  }, [reportId])
+  const passN = data?.results.filter((r) => r.outcome === 'SUCCESS').length ?? 0
+  const rows = (data?.results || []).filter((r) => !search || r.caseId.toLowerCase().includes(search.toLowerCase()))
+  // caseId 多为可读请求行(GET http://...)或用例 UUID;UUID 用 nameOf 解析。
+  const label = (id: string) => (/^[0-9a-f]{8}-/.test(id) ? nameOf(id) : id)
+  return (
+    <Modal open={!!reportId} onCancel={onClose} footer={null} width="80%" title={t('scenario.report', '场景报告')} destroyOnHidden>
+      {loading ? (
+        <div style={{ padding: 32, color: '#999' }}>{t('a.loading', '加载中…')}</div>
+      ) : !data ? (
+        <Empty description={t('scenario.noReport', '暂无报告')} />
+      ) : (
+        <>
+          {/* 报告头 */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginBottom: 12, flexWrap: 'wrap' }}>
+            <Space><span style={{ color: '#8a9099', fontSize: 12 }}>{t('scenario.execStatus', '执行状态')}</span><Tag color={outcomeColor(data.status)}>{data.status}</Tag></Space>
+            <Space><span style={{ color: '#8a9099', fontSize: 12 }}>{t('scenario.caseUnit', '用例')}</span><span>{passN}/{data.caseCount} {t('scenario.passed', '通过')}</span></Space>
+            <span className="ms-mono" style={{ color: '#bbb', fontSize: 12 }}>{data.reportId.slice(0, 12)}</span>
+          </div>
+          {/* 报告明细 */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+            <Typography.Text strong>{t('scenario.reportDetail', '报告明细')}</Typography.Text>
+            <Segmented size="small" value="flat" options={[{ label: t('scenario.flatView', '平铺展示'), value: 'flat' }, { label: t('scenario.tabView', 'Tab 展示'), value: 'tab' }]} disabled />
+            <div style={{ flex: 1 }} />
+            <Input size="small" allowClear style={{ width: 220 }} placeholder={t('scenario.searchByName', '通过名称搜索')} value={search} onChange={(e) => setSearch(e.target.value)} />
+          </div>
+          <Typography.Text type="secondary" style={{ fontSize: 12 }}>{t('scenario.reportMetaSoon', '响应时间/大小/状态码/响应体暂未落库(执行器仅记录通过失败+原因),后续扩展')}</Typography.Text>
+          <div style={{ marginTop: 10 }}>
+            {rows.length === 0 ? <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('scenario.noStepResult', '无步骤结果')} /> : rows.map((r, i) => <ReportRow key={i} idx={i + 1} r={r} label={label} t={t} />)}
+          </div>
+        </>
+      )}
+    </Modal>
+  )
+}
+
+function ReportRow({ idx, r, label, t }: { idx: number; r: ReportResultItem; label: (id: string) => string; t: TFn }) {
+  const ok = r.outcome === 'SUCCESS'
+  return (
+    <div style={{ border: '1px solid #f0f0f0', borderRadius: 6, padding: '8px 12px', marginBottom: 6 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <span style={{ color: '#9aa0a6', fontSize: 12, minWidth: 18 }}>{idx}</span>
+        <span style={{ flex: 1, minWidth: 0 }} className="ms-mono">{label(r.caseId)}</span>
+        <Tag color={ok ? 'green' : 'red'} style={{ margin: 0 }}>{ok ? t('scenario.pass', '通过') : t('scenario.fail', '失败')}</Tag>
+        <span style={{ color: '#bbb', fontSize: 12 }}>{t('scenario.respTime', '响应时间')} —</span>
+        <span style={{ color: '#bbb', fontSize: 12 }}>{t('scenario.respSize', '响应大小')} —</span>
+      </div>
+      {r.failures.length > 0 && (
+        <div style={{ marginTop: 6, paddingLeft: 26 }}>
+          {r.failures.map((f, j) => <div key={j} style={{ color: '#ff4d4f', fontSize: 12 }} className="ms-mono">✗ {f}</div>)}
+        </div>
+      )}
+    </div>
   )
 }
 
