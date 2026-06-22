@@ -69,6 +69,7 @@ pub fn router(
         .route("/api/scenario/{id}/steps/order", axum::routing::patch(reorder_steps))
         .route("/api/scenario/{id}/compile", get(compile_scenario))
         .route("/api/scenario/{id}/executions", get(list_executions))
+        .route("/api/scenario/{id}/changes", get(list_changes))
         .with_state(state)
 }
 
@@ -318,7 +319,10 @@ async fn create_scenario(
         return (StatusCode::FORBIDDEN, "permission denied").into_response();
     }
     match st.create.execute(&req.project_id, &req.name, Some(&user.user_id)).await {
-        Ok(s) => (StatusCode::CREATED, Json(ScenarioResponse::from(s))).into_response(),
+        Ok(s) => {
+            let _ = st.repo.record_change(&s.id, "CREATE", Some(&s.name), Some(&user.user_id)).await;
+            (StatusCode::CREATED, Json(ScenarioResponse::from(s))).into_response()
+        }
         Err(CreateScenarioError::Validation(_)) => {
             (StatusCode::BAD_REQUEST, "invalid scenario payload").into_response()
         }
@@ -377,7 +381,10 @@ async fn update_scenario(
     };
     let meta = req.meta.clone().unwrap_or_else(|| serde_json::json!({}));
     match st.repo.update_scenario(&id, name, &status, &meta).await {
-        Ok(Some(s)) => (StatusCode::OK, Json(ScenarioResponse::from(s))).into_response(),
+        Ok(Some(s)) => {
+            let _ = st.repo.record_change(&id, "UPDATE", Some("更新基本信息/参数/设置"), Some(&user.user_id)).await;
+            (StatusCode::OK, Json(ScenarioResponse::from(s))).into_response()
+        }
         Ok(None) => (StatusCode::NOT_FOUND, "scenario not found").into_response(),
         Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
     }
@@ -401,7 +408,10 @@ async fn reorder_steps(
         return (StatusCode::FORBIDDEN, "permission denied").into_response();
     }
     match st.repo.reorder_steps(&id, &req.order).await {
-        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Ok(()) => {
+            let _ = st.repo.record_change(&id, "REORDER", Some("调整步骤顺序"), Some(&user.user_id)).await;
+            StatusCode::NO_CONTENT.into_response()
+        }
         Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
     }
 }
@@ -416,7 +426,10 @@ async fn delete_step(
         return (StatusCode::FORBIDDEN, "permission denied").into_response();
     }
     match st.repo.delete_step(&id, &step_id).await {
-        Ok(true) => StatusCode::NO_CONTENT.into_response(),
+        Ok(true) => {
+            let _ = st.repo.record_change(&id, "DELETE_STEP", Some("删除步骤"), Some(&user.user_id)).await;
+            StatusCode::NO_CONTENT.into_response()
+        }
         Ok(false) => (StatusCode::NOT_FOUND, "step not found").into_response(),
         Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
     }
@@ -480,6 +493,7 @@ async fn add_step(
 
     match st.add_step.execute(&id, &new_step).await {
         Ok(step) => {
+            let _ = st.repo.record_change(&id, "ADD_STEP", Some(&format!("新增步骤 {}", req.kind)), Some(&user.user_id)).await;
             (StatusCode::CREATED, Json(ScenarioStepResponse::from(&step))).into_response()
         }
         Err(AddStepError::NotFound) => {
@@ -538,6 +552,36 @@ async fn list_executions(
                 total_pages: page.total_pages(),
                 items: page.items.into_iter().map(ScenarioExecutionDto::from).collect(),
             };
+            (StatusCode::OK, Json(body)).into_response()
+        }
+        Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
+    }
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+struct ScenarioChangeDto {
+    id: String,
+    action: String,
+    detail: Option<String>,
+    user_id: Option<String>,
+    created_at: String,
+}
+
+#[utoipa::path(get, path = "/api/scenario/{id}/changes", tag = "api-scenario", params(("id" = String, Path)), responses((status = 200, body = [ScenarioChangeDto])))]
+async fn list_changes(State(st): State<ScenarioAppState>, Path(id): Path<String>) -> Response {
+    match st.repo.list_changes(&id).await {
+        Ok(list) => {
+            let body: Vec<ScenarioChangeDto> = list
+                .into_iter()
+                .map(|c| ScenarioChangeDto {
+                    id: c.id,
+                    action: c.action,
+                    detail: c.detail,
+                    user_id: c.user_id,
+                    created_at: c.created_at,
+                })
+                .collect();
             (StatusCode::OK, Json(body)).into_response()
         }
         Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),

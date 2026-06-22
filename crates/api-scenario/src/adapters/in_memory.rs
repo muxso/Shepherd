@@ -6,8 +6,8 @@ use std::sync::{Arc, Mutex};
 use async_trait::async_trait;
 
 use crate::domain::{
-    ApiScenario, ExecutionStatus, NewApiScenario, NewScenarioStep, ScenarioExecution,
-    ScenarioReference, ScenarioStatus, ScenarioStep, StepKind,
+    ApiScenario, ExecutionStatus, NewApiScenario, NewScenarioStep, ScenarioChange,
+    ScenarioExecution, ScenarioReference, ScenarioStatus, ScenarioStep, StepKind,
 };
 use crate::ports::{ApiScenarioRepository, RepoError};
 
@@ -24,6 +24,8 @@ struct State {
     step_seq: u64,
     executions: Vec<ScenarioExecution>, // 追加序;created_at 为合成递增串
     exec_seq: u64,
+    changes: Vec<ScenarioChange>, // 变更历史(追加序)
+    change_seq: u64,
 }
 
 #[derive(Clone, Default)]
@@ -141,6 +143,35 @@ impl ApiScenarioRepository for InMemoryApiScenarioRepository {
             }
         }
         Ok(())
+    }
+
+    async fn record_change(
+        &self,
+        scenario_id: &str,
+        action: &str,
+        detail: Option<&str>,
+        user_id: Option<&str>,
+    ) -> Result<(), RepoError> {
+        let mut state = self.state.lock().expect("lock");
+        state.change_seq += 1;
+        let seq = state.change_seq;
+        state.changes.push(ScenarioChange {
+            id: format!("chg-{seq}"),
+            scenario_id: scenario_id.to_string(),
+            action: action.to_string(),
+            detail: detail.map(|s| s.to_string()),
+            user_id: user_id.map(|s| s.to_string()),
+            created_at: format!("{seq:020}"),
+        });
+        Ok(())
+    }
+
+    async fn list_changes(&self, scenario_id: &str) -> Result<Vec<ScenarioChange>, RepoError> {
+        let state = self.state.lock().expect("lock");
+        let mut out: Vec<ScenarioChange> =
+            state.changes.iter().filter(|c| c.scenario_id == scenario_id).cloned().collect();
+        out.reverse(); // 最新在前
+        Ok(out)
     }
 
     async fn record_execution(
