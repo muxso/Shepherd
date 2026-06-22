@@ -35,11 +35,14 @@ fn map_err(e: sqlx::Error) -> RepoError {
 /// 由场景行重建 `ApiScenario`(steps 由调用方另行填充)。
 fn row_to_scenario(row: &sqlx::postgres::PgRow) -> Result<ApiScenario, RepoError> {
     let status: String = row.try_get("status").map_err(map_err)?;
+    // meta 列在 0044 后存在;旧行/缺列回落空对象。
+    let meta: serde_json::Value = row.try_get("meta").unwrap_or_else(|_| serde_json::json!({}));
     Ok(ApiScenario {
         id: row.try_get("id").map_err(map_err)?,
         project_id: row.try_get("project_id").map_err(map_err)?,
         name: row.try_get("name").map_err(map_err)?,
         status: ScenarioStatus::parse(&status),
+        meta,
         steps: Vec::new(),
     })
 }
@@ -139,7 +142,7 @@ impl ApiScenarioRepository for PgApiScenarioRepository {
     ) -> Result<ApiScenario, RepoError> {
         let row = sqlx::query(
             "INSERT INTO ms_api_scenario (project_id, name, status) VALUES ($1, $2, $3) \
-             RETURNING id, project_id, name, status, deleted",
+             RETURNING id, project_id, name, status, meta, deleted",
         )
         .bind(&s.project_id)
         .bind(&s.name)
@@ -152,10 +155,35 @@ impl ApiScenarioRepository for PgApiScenarioRepository {
 
     async fn get_scenario(&self, id: &str) -> Result<Option<ApiScenario>, RepoError> {
         let row = sqlx::query(
-            "SELECT id, project_id, name, status, deleted FROM ms_api_scenario \
+            "SELECT id, project_id, name, status, meta, deleted FROM ms_api_scenario \
              WHERE id = $1 AND deleted = false",
         )
         .bind(id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(map_err)?;
+        let Some(row) = row else { return Ok(None) };
+        let mut scenario = row_to_scenario(&row)?;
+        scenario.steps = self.load_steps(&scenario.id).await?;
+        Ok(Some(scenario))
+    }
+
+    async fn update_scenario(
+        &self,
+        id: &str,
+        name: &str,
+        status: &str,
+        meta: &serde_json::Value,
+    ) -> Result<Option<ApiScenario>, RepoError> {
+        let row = sqlx::query(
+            "UPDATE ms_api_scenario SET name = $2, status = $3, meta = $4 \
+             WHERE id = $1 AND deleted = false \
+             RETURNING id, project_id, name, status, meta, deleted",
+        )
+        .bind(id)
+        .bind(name)
+        .bind(status)
+        .bind(meta)
         .fetch_optional(&self.pool)
         .await
         .map_err(map_err)?;
@@ -170,7 +198,7 @@ impl ApiScenarioRepository for PgApiScenarioRepository {
         project_id: &str,
     ) -> Result<Vec<ApiScenario>, RepoError> {
         let rows = sqlx::query(
-            "SELECT id, project_id, name, status, deleted FROM ms_api_scenario \
+            "SELECT id, project_id, name, status, meta, deleted FROM ms_api_scenario \
              WHERE project_id = $1 AND deleted = false ORDER BY id",
         )
         .bind(project_id)

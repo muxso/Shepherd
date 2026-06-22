@@ -352,12 +352,15 @@ pub struct ScenarioReference {
 }
 
 /// 场景聚合根。steps 按 order 升序。
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// 注:`meta` 为不透明 JSON(描述/标签/等级/模块/参数),故不派生 `Eq`(serde_json::Value 无 Eq)。
+#[derive(Debug, Clone, PartialEq)]
 pub struct ApiScenario {
     pub id: String,
     pub project_id: String,
     pub name: String,
     pub status: ScenarioStatus,
+    /// 元信息(前端约定形状:{description, tags, priority, moduleId, params, csvParams})。
+    pub meta: serde_json::Value,
     pub steps: Vec<ScenarioStep>,
 }
 

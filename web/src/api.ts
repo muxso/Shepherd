@@ -80,6 +80,7 @@ export const http = {
   getText: (p: string) => requestText(p),
   post: <T>(p: string, b?: unknown) => request<T>('POST', p, b),
   put: <T>(p: string, b?: unknown) => request<T>('PUT', p, b),
+  patch: <T>(p: string, b?: unknown) => request<T>('PATCH', p, b),
   del: <T>(p: string, b?: unknown) => request<T>('DELETE', p, b),
 }
 
@@ -253,6 +254,8 @@ export interface Scenario {
   projectId: string
   name: string
   status: string
+  /** 元信息(描述/标签/等级/模块/参数);不透明 JSON(见 0044 迁移)。 */
+  meta?: Record<string, unknown>
   /** 列表接口已返回步骤,用于显示步骤数。 */
   steps?: ScenarioStep[]
 }
@@ -735,6 +738,8 @@ export const api = {
     scenarioId: string,
     b: { kind: string; order: number; refId?: string; request?: unknown; control?: unknown },
   ) => http.post<ScenarioStep>(`/api/scenario/${scenarioId}/step`, b),
+  updateScenario: (id: string, b: { name: string; status?: string; meta?: Record<string, unknown> }) =>
+    http.patch<Scenario>(`/api/scenario/${id}`, b),
   runScenario: (scenarioId: string, projectId: string, opts?: { environmentId?: string; failureStrategy?: 'CONTINUE' | 'STOP' }) =>
     http.post<ScenarioRunResult>(`/api/scenario/${scenarioId}/run`, { projectId, environmentId: opts?.environmentId, failureStrategy: opts?.failureStrategy }),
   scenarioExecutions: (scenarioId: string) =>

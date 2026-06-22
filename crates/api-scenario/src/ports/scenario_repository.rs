@@ -26,6 +26,16 @@ pub trait ApiScenarioRepository: Send + Sync {
     /// 按 id 取场景(steps 已加载,按 order 升序)。
     async fn get_scenario(&self, id: &str) -> Result<Option<ApiScenario>, RepoError>;
 
+    /// 更新场景基本信息:名称/状态/元信息(meta 整体替换)。返回更新后的场景(steps 已加载);
+    /// 场景不存在返回 Ok(None)。
+    async fn update_scenario(
+        &self,
+        id: &str,
+        name: &str,
+        status: &str,
+        meta: &serde_json::Value,
+    ) -> Result<Option<ApiScenario>, RepoError>;
+
     /// 列出某项目的场景(排除已删除;steps 已加载)。
     async fn list_scenarios(
         &self,

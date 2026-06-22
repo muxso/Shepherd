@@ -11,6 +11,11 @@ import { DebugResultPanel, type SentRequest } from '../components/ApiSpecPanel'
 import { useI18n } from '../i18n'
 
 type TFn = (key: string, fallback?: string) => string
+// 可编辑表单 + 场景参数行(存入 scenario.meta)。
+type ScenarioParam = { name: string; type: string; value: string; tags: string; desc: string }
+type ScenarioForm = { name: string; status: string; description: string; tags: string[]; priority: string; params: ScenarioParam[] }
+const SCENARIO_STATUSES = ['DRAFT', 'DEBUGGING', 'COMPLETED', 'DEPRECATED']
+const SCENARIO_PRIORITIES = ['P0', 'P1', 'P2', 'P3']
 
 export default function Scenarios() {
   const { t } = useI18n()
@@ -212,6 +217,34 @@ function ScenarioDetail({ scenario }: { scenario: Scenario }) {
   const [envs, setEnvs] = useState<Environment[]>([])
   const [envId, setEnvId] = useState<string>('')
   const [failureStrategy, setFailureStrategy] = useState<'CONTINUE' | 'STOP'>('CONTINUE')
+  // 可编辑基本信息 + 参数(保存走 PATCH /api/scenario/{id};meta 承载描述/标签/等级/参数)。
+  const m0 = (scenario.meta || {}) as Record<string, unknown>
+  const [form, setForm] = useState<ScenarioForm>({
+    name: scenario.name,
+    status: scenario.status,
+    description: typeof m0.description === 'string' ? m0.description : '',
+    tags: Array.isArray(m0.tags) ? (m0.tags as string[]) : [],
+    priority: typeof m0.priority === 'string' ? m0.priority : 'P0',
+    params: Array.isArray(m0.params) ? (m0.params as ScenarioParam[]) : [],
+  })
+  const [saving, setSaving] = useState(false)
+  const patchForm = (p: Partial<ScenarioForm>) => setForm((f) => ({ ...f, ...p }))
+  const onSave = async () => {
+    if (!form.name.trim()) return message.warning(t('scenario.nameRequired', '请输入场景名'))
+    setSaving(true)
+    try {
+      await api.updateScenario(scenario.id, {
+        name: form.name.trim(),
+        status: form.status,
+        meta: { description: form.description, tags: form.tags, priority: form.priority, params: form.params },
+      })
+      message.success(t('scenario.saved', '已保存'))
+    } catch (e) {
+      message.error(e instanceof ApiError ? e.message : t('scenario.saveFailed', '保存失败'))
+    } finally {
+      setSaving(false)
+    }
+  }
   // 引用名解析:命中用例/子场景名,未命中回落短 id(前 8 位),不再满屏 UUID。
   const nameOf = (id: string) => nameMap[id] || (id ? id.slice(0, 8) : '—')
 
@@ -305,9 +338,9 @@ function ScenarioDetail({ scenario }: { scenario: Scenario }) {
   )
 
   const tabs = [
-    { key: 'basic', label: t('apidef.basicInfo', '基本信息'), children: <ScenarioBasicInfo scenario={scenario} stepCount={steps.length} /> },
+    { key: 'basic', label: t('apidef.basicInfo', '基本信息'), children: <ScenarioBasicInfo scenario={scenario} stepCount={steps.length} form={form} patch={patchForm} /> },
     { key: 'steps', label: t('scenario.stepsTab', '步骤'), children: stepsTab },
-    { key: 'params', label: t('scenario.paramsTab', '参数'), children: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('scenario.paramsSoon', '场景参数(常规/CSV)即将接入')} style={{ margin: '32px 0' }} /> },
+    { key: 'params', label: t('scenario.paramsTab', '参数'), children: <ScenarioParams params={form.params} onChange={(params) => patchForm({ params })} /> },
     { key: 'prepost', label: t('scenario.prePostTab', '前/后置'), children: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('scenario.prePostSoon', '前/后置处理即将接入')} style={{ margin: '32px 0' }} /> },
     { key: 'assert', label: t('apidef.assertions', '断言'), children: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('scenario.assertSoon', '场景级断言即将接入')} style={{ margin: '32px 0' }} /> },
     { key: 'exec', label: t('scenario.execHistoryTab', '执行历史'), children: <ScenarioExecutionsTab scenarioId={scenario.id} t={t} /> },
@@ -339,14 +372,16 @@ function ScenarioDetail({ scenario }: { scenario: Scenario }) {
         >
           <ThunderboltOutlined /> {t('apidef.serverRun', '服务端执行')}
         </Dropdown.Button>
-        <Button icon={<SaveOutlined />} disabled title={t('scenario.saveSoon', '保存需后端 updateScenario(下一切片)')}>{t('a.save', '保存')}</Button>
+        <Button type="default" icon={<SaveOutlined />} loading={saving} onClick={onSave}>{t('a.save', '保存')}</Button>
       </div>
       {/* 头部:状态 / 等级 / [id] / 名称 / 标签 / 描述。 */}
       <div style={{ marginBottom: 14 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, flexWrap: 'wrap' }}>
-          <Tag color={statusColor(scenario.status)} style={{ margin: 0 }}>{scenario.status}</Tag>
+          <Tag color={statusColor(form.status)} style={{ margin: 0 }}>{form.status}</Tag>
+          <span style={{ color: '#ff4d4f', fontSize: 12, fontWeight: 600 }}>{form.priority}</span>
           <span className="ms-mono" style={{ color: '#8a9099', fontSize: 12 }}>[{scenario.id.slice(0, 8)}]</span>
-          <span style={{ fontWeight: 600, fontSize: 15, color: '#1f2329' }}>{scenario.name}</span>
+          <span style={{ fontWeight: 600, fontSize: 15, color: '#1f2329' }}>{form.name}</span>
+          {form.tags.map((tg) => <Tag key={tg} style={{ margin: 0 }}>{tg}</Tag>)}
           <LinkOutlined style={{ color: '#bbb' }} />
         </div>
       </div>
@@ -495,22 +530,71 @@ function StepDetailDrawer({
   )
 }
 
-// 基本信息(只读快照)。可编辑(名称/模块/等级/状态/描述)需后端 updateScenario,后续切片接入。
-function ScenarioBasicInfo({ scenario, stepCount }: { scenario: Scenario; stepCount: number }) {
+// 基本信息(可编辑,对齐参考图 #21):名称/等级/状态/标签/描述 + 只读 ID/步骤数。保存走顶部「保存」。
+function ScenarioBasicInfo({ scenario, stepCount, form, patch }: { scenario: Scenario; stepCount: number; form: ScenarioForm; patch: (p: Partial<ScenarioForm>) => void }) {
   const { t } = useI18n()
-  const field = (label: string, value: ReactNode) => (
+  const [tagInput, setTagInput] = useState('')
+  const field = (label: string, value: ReactNode, req?: boolean) => (
     <div style={{ marginBottom: 14 }}>
-      <div style={{ fontSize: 13, color: '#5b6470', marginBottom: 6 }}>{label}</div>
+      <div style={{ fontSize: 13, color: '#5b6470', marginBottom: 6 }}>{req && <span style={{ color: '#ff4d4f', marginRight: 4 }}>*</span>}{label}</div>
       {value}
     </div>
   )
   return (
     <div style={{ maxWidth: 560 }}>
-      {field(t('scenario.name', '场景名称'), <Input value={scenario.name} readOnly />)}
-      {field(t('scenario.colStatus', '状态'), <Tag color={statusColor(scenario.status)}>{scenario.status}</Tag>)}
+      {field(t('scenario.name', '场景名称'), <Input value={form.name} onChange={(e) => patch({ name: e.target.value })} placeholder={t('scenario.namePlaceholder', '如:下单主流程')} />, true)}
+      {field(t('scenario.priority', '场景等级'), <Select style={{ width: 200 }} value={form.priority} onChange={(v) => patch({ priority: v })} options={SCENARIO_PRIORITIES.map((p) => ({ value: p, label: p }))} />)}
+      {field(t('scenario.colStatus', '场景状态'), <Select style={{ width: 200 }} value={form.status} onChange={(v) => patch({ status: v })} options={SCENARIO_STATUSES.map((s) => ({ value: s, label: s }))} />)}
+      {field(t('scenario.tags', '标签'), (
+        <Space size={[6, 6]} wrap>
+          {form.tags.map((tg) => (
+            <Tag key={tg} closable onClose={() => patch({ tags: form.tags.filter((x) => x !== tg) })}>{tg}</Tag>
+          ))}
+          <Input
+            size="small"
+            style={{ width: 140 }}
+            value={tagInput}
+            onChange={(e) => setTagInput(e.target.value)}
+            onPressEnter={() => { const v = tagInput.trim(); if (v && !form.tags.includes(v)) patch({ tags: [...form.tags, v] }); setTagInput('') }}
+            placeholder={t('apidef.addTag', '添加标签,回车结束')}
+          />
+        </Space>
+      ))}
+      {field(t('scenario.descLabel', '描述'), <Input.TextArea rows={3} value={form.description} onChange={(e) => patch({ description: e.target.value })} placeholder={t('scenario.descPlaceholder', '请对该场景进行描述')} />)}
       {field(t('scenario.colSteps', '步骤数'), <span>{stepCount}</span>)}
       {field('ID', <span className="ms-mono" style={{ fontSize: 12 }}>{scenario.id}</span>)}
-      <Typography.Text type="secondary" style={{ fontSize: 12 }}>{t('scenario.metaSoon', '所属模块 / 等级 / 描述 等可编辑项需后端 updateScenario,下一切片接入')}</Typography.Text>
+      <Typography.Text type="secondary" style={{ fontSize: 12 }}>{t('scenario.moduleSoon', '所属模块 / 创建人 / 时间 需后端补列,后续接入')}</Typography.Text>
+    </div>
+  )
+}
+
+// 场景参数(对齐参考图 #22:变量名称/类型/参数值/标签/描述 + 加一行)。存入 meta.params。
+function ScenarioParams({ params, onChange }: { params: ScenarioParam[]; onChange: (p: ScenarioParam[]) => void }) {
+  const { t } = useI18n()
+  const set = (i: number, p: Partial<ScenarioParam>) => onChange(params.map((r, idx) => (idx === i ? { ...r, ...p } : r)))
+  return (
+    <div>
+      <div style={{ background: '#f6ffed', border: '1px solid #b7eb8f', borderRadius: 6, padding: '6px 10px', marginBottom: 12, fontSize: 12, color: '#389e0d' }}>
+        {t('scenario.varPriority', '变量优先级:临时参数 > 场景参数 > 环境参数')}
+      </div>
+      <Table<ScenarioParam & { _i: number }>
+        size="small"
+        rowKey="_i"
+        pagination={false}
+        dataSource={params.map((r, i) => ({ ...r, _i: i }))}
+        locale={{ emptyText: t('apidef.none', '无') }}
+        columns={[
+          { title: t('env.varName', '变量名称'), dataIndex: 'name', render: (v: string, _r, i) => <Input size="small" value={v} placeholder={t('a.input', '请输入')} onChange={(e) => set(i, { name: e.target.value })} className="ms-mono" /> },
+          { title: t('env.varType', '类型'), dataIndex: 'type', width: 110, render: (v: string, _r, i) => <Select size="small" style={{ width: '100%' }} value={v || '常量'} onChange={(val) => set(i, { type: val })} options={[{ value: '常量', label: t('env.constant', '常量') }, { value: '列表', label: t('env.list', '列表') }]} /> },
+          { title: t('env.varValue', '参数值'), dataIndex: 'value', render: (v: string, _r, i) => <Input size="small" value={v} onChange={(e) => set(i, { value: e.target.value })} /> },
+          { title: t('env.tags', '标签'), dataIndex: 'tags', width: 160, render: (v: string, _r, i) => <Input size="small" value={v} placeholder={t('apidef.addTag', '添加标签,回车结束')} onChange={(e) => set(i, { tags: e.target.value })} /> },
+          { title: t('env.varDesc', '描述'), dataIndex: 'desc', render: (v: string, _r, i) => <Input size="small" value={v} onChange={(e) => set(i, { desc: e.target.value })} /> },
+          { title: '', width: 44, render: (_v, _r, i) => <Button type="text" size="small" danger icon={<DeleteOutlined />} onClick={() => onChange(params.filter((_, idx) => idx !== i))} /> },
+        ]}
+      />
+      <Button size="small" icon={<PlusOutlined />} onClick={() => onChange([...params, { name: '', type: '常量', value: '', tags: '', desc: '' }])} style={{ marginTop: 8 }}>
+        {t('scenario.addRow', '加一行')}
+      </Button>
     </div>
   )
 }
