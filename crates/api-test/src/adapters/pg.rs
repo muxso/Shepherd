@@ -410,6 +410,38 @@ impl CaseResultSink for PgCaseResultSink {
         .map_err(map_err)?;
         Ok(())
     }
+
+    async fn record_detail(
+        &self,
+        report_id: &str,
+        case_id: &str,
+        status_code: i32,
+        latency_ms: i64,
+        resp_size: i64,
+        body: &str,
+        headers: &[(String, String)],
+    ) -> Result<(), PortError> {
+        // 响应体截断到 64KB,避免明细表膨胀。
+        let body_trunc: String = body.chars().take(65536).collect();
+        let headers_json = serde_json::to_value(headers)
+            .map_err(|e| PortError::Backend(format!("serialize headers: {e}")))?;
+        sqlx::query(
+            "UPDATE ms_api_case_result \
+               SET status_code = $3, latency_ms = $4, resp_size = $5, body = $6, headers = $7 \
+             WHERE report_id = $1 AND case_id = $2",
+        )
+        .bind(report_id)
+        .bind(case_id)
+        .bind(status_code)
+        .bind(latency_ms)
+        .bind(resp_size)
+        .bind(body_trunc)
+        .bind(headers_json)
+        .execute(&self.pool)
+        .await
+        .map_err(map_err)?;
+        Ok(())
+    }
 }
 
 // ---- 批量报告读写:供计划树执行(场景)外层补建报告 + 回写最终状态 ----
@@ -459,7 +491,8 @@ impl PgBatchReport {
             .map_err(map_err)?;
         let Some(h) = header else { return Ok(None) };
         let rows = sqlx::query(
-            "SELECT case_id, outcome, failures, executed_at::text AS executed_at \
+            "SELECT case_id, outcome, failures, executed_at::text AS executed_at, \
+                    status_code, latency_ms, resp_size, body, headers \
              FROM ms_api_case_result WHERE report_id = $1 ORDER BY executed_at",
         )
         .bind(report_id)
@@ -475,11 +508,20 @@ impl PgBatchReport {
                     .as_array()
                     .map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect())
                     .unwrap_or_default();
+                let headers_v: Option<serde_json::Value> = r.try_get("headers").ok().flatten();
+                let headers = headers_v
+                    .and_then(|v| serde_json::from_value::<Vec<(String, String)>>(v).ok())
+                    .unwrap_or_default();
                 Ok(CaseResultRow {
                     case_id: r.try_get("case_id").map_err(map_err)?,
                     outcome: r.try_get("outcome").map_err(map_err)?,
                     failures,
                     executed_at: r.try_get::<String, _>("executed_at").map_err(map_err)?,
+                    status_code: r.try_get("status_code").ok().flatten(),
+                    latency_ms: r.try_get("latency_ms").ok().flatten(),
+                    resp_size: r.try_get("resp_size").ok().flatten(),
+                    body: r.try_get("body").ok().flatten(),
+                    headers,
                 })
             })
             .collect::<Result<Vec<_>, PortError>>()?;
@@ -506,6 +548,12 @@ pub struct CaseResultRow {
     pub outcome: String,
     pub failures: Vec<String>,
     pub executed_at: String,
+    /// 响应明细(0045 后回填;旧行为 None)。
+    pub status_code: Option<i32>,
+    pub latency_ms: Option<i64>,
+    pub resp_size: Option<i64>,
+    pub body: Option<String>,
+    pub headers: Vec<(String, String)>,
 }
 
 // ---- 用例执行记录读模型:按 case_id 倒序分页查 ms_api_case_result ----

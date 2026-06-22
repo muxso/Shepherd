@@ -738,7 +738,6 @@ function ScenarioReportModal({ reportId, nameOf, onClose }: { reportId: string |
             <div style={{ flex: 1 }} />
             <Input size="small" allowClear style={{ width: 220 }} placeholder={t('scenario.searchByName', '通过名称搜索')} value={search} onChange={(e) => setSearch(e.target.value)} />
           </div>
-          <Typography.Text type="secondary" style={{ fontSize: 12 }}>{t('scenario.reportMetaSoon', '响应时间/大小/状态码/响应体暂未落库(执行器仅记录通过失败+原因),后续扩展')}</Typography.Text>
           <div style={{ marginTop: 10 }}>
             {rows.length === 0 ? <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('scenario.noStepResult', '无步骤结果')} /> : rows.map((r, i) => <ReportRow key={i} idx={i + 1} r={r} label={label} t={t} />)}
           </div>
@@ -749,19 +748,33 @@ function ScenarioReportModal({ reportId, nameOf, onClose }: { reportId: string |
 }
 
 function ReportRow({ idx, r, label, t }: { idx: number; r: ReportResultItem; label: (id: string) => string; t: TFn }) {
+  const [open, setOpen] = useState(false)
   const ok = r.outcome === 'SUCCESS'
+  const hasDetail = r.statusCode != null || r.body != null || (r.headers?.length ?? 0) > 0
+  // 用存储的响应明细合成一个 DebugResponse,复用调试的 7 标签面板。
+  const resp: DebugResponse | null = hasDetail
+    ? { status: r.statusCode ?? 0, latencyMs: r.latencyMs ?? 0, headers: r.headers ?? [], body: r.body ?? '' }
+    : null
+  const muted: React.CSSProperties = { color: '#bbb', fontSize: 12 }
   return (
-    <div style={{ border: '1px solid #f0f0f0', borderRadius: 6, padding: '8px 12px', marginBottom: 6 }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+    <div style={{ border: '1px solid #f0f0f0', borderRadius: 6, marginBottom: 6 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', cursor: hasDetail ? 'pointer' : 'default' }} onClick={() => hasDetail && setOpen((v) => !v)}>
+        {hasDetail && <span style={{ color: '#bbb', fontSize: 11 }}>{open ? '▾' : '▸'}</span>}
         <span style={{ color: '#9aa0a6', fontSize: 12, minWidth: 18 }}>{idx}</span>
         <span style={{ flex: 1, minWidth: 0 }} className="ms-mono">{label(r.caseId)}</span>
         <Tag color={ok ? 'green' : 'red'} style={{ margin: 0 }}>{ok ? t('scenario.pass', '通过') : t('scenario.fail', '失败')}</Tag>
-        <span style={{ color: '#bbb', fontSize: 12 }}>{t('scenario.respTime', '响应时间')} —</span>
-        <span style={{ color: '#bbb', fontSize: 12 }}>{t('scenario.respSize', '响应大小')} —</span>
+        {r.statusCode != null && <span style={muted}>{t('apidef.statusCode', '状态码')} <span style={{ color: r.statusCode < 400 ? '#52c41a' : '#ff4d4f' }}>{r.statusCode}</span></span>}
+        <span style={muted}>{t('scenario.respTime', '响应时间')} {r.latencyMs != null ? `${r.latencyMs} ms` : '—'}</span>
+        <span style={muted}>{t('scenario.respSize', '响应大小')} {r.respSize != null ? `${r.respSize} bytes` : '—'}</span>
       </div>
       {r.failures.length > 0 && (
-        <div style={{ marginTop: 6, paddingLeft: 26 }}>
+        <div style={{ padding: '0 12px 8px 40px' }}>
           {r.failures.map((f, j) => <div key={j} style={{ color: '#ff4d4f', fontSize: 12 }} className="ms-mono">✗ {f}</div>)}
+        </div>
+      )}
+      {open && resp && (
+        <div style={{ padding: '0 12px 12px' }}>
+          <DebugResultPanel running={false} resp={resp} err="" req={null} isHttp />
         </div>
       )}
     </div>

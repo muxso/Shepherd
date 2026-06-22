@@ -101,6 +101,12 @@ struct ReportResultItem {
     outcome: String,
     failures: Vec<String>,
     executed_at: String,
+    /// 响应明细(0045 后回填;旧报告为 null)。
+    status_code: Option<i32>,
+    latency_ms: Option<i64>,
+    resp_size: Option<i64>,
+    body: Option<String>,
+    headers: Vec<(String, String)>,
 }
 
 #[utoipa::path(get, path = "/api/scenario-report/{report_id}", tag = "api-scenario", params(("report_id" = String, Path)), responses((status = 200, body = ScenarioReportResponse), (status = 404)), security(("bearer" = [])))]
@@ -124,6 +130,11 @@ async fn scenario_report(
                         outcome: r.outcome,
                         failures: r.failures,
                         executed_at: r.executed_at,
+                        status_code: r.status_code,
+                        latency_ms: r.latency_ms,
+                        resp_size: r.resp_size,
+                        body: r.body,
+                        headers: r.headers,
                     })
                     .collect(),
             }),
