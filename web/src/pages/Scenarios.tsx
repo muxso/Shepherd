@@ -14,7 +14,7 @@ import { useI18n } from '../i18n'
 type TFn = (key: string, fallback?: string) => string
 // 可编辑表单 + 场景参数行(存入 scenario.meta)。
 type ScenarioParam = { name: string; type: string; value: string; tags: string; desc: string }
-type ScenarioForm = { name: string; status: string; description: string; tags: string[]; priority: string; params: ScenarioParam[]; csv: string; moduleId: string }
+type ScenarioForm = { name: string; status: string; description: string; tags: string[]; priority: string; params: ScenarioParam[]; csv: string; moduleId: string; disabledSteps: string[] }
 const SCENARIO_STATUSES = ['DRAFT', 'DEBUGGING', 'COMPLETED', 'DEPRECATED']
 const SCENARIO_PRIORITIES = ['P0', 'P1', 'P2', 'P3']
 
@@ -173,10 +173,11 @@ function stepToNode(s: ScenarioStep, t: TFn, nameOf: NameOf): Node {
   return { kind: s.kind, content: '—' }
 }
 
-function StepRow({ node, idx, depth, t, result }: { node: Node; idx: number; depth: number; t: TFn; result?: ReportResultItem }) {
+function StepRow({ node, idx, depth, t, result, enabled = true, onToggle, onRun }: { node: Node; idx: number; depth: number; t: TFn; result?: ReportResultItem; enabled?: boolean; onToggle?: () => void; onRun?: () => void }) {
   const meta = makeStepMeta(t)[node.kind] || { label: node.kind, color: 'default' }
   const ok = result?.outcome === 'SUCCESS'
   const muted: React.CSSProperties = { color: '#8a9099', fontSize: 12, whiteSpace: 'nowrap' }
+  const leaf = depth === 0
   return (
     <>
       <div
@@ -190,11 +191,16 @@ function StepRow({ node, idx, depth, t, result }: { node: Node; idx: number; dep
           borderRadius: 6,
           marginBottom: 6,
           background: depth ? '#fafafa' : '#fff',
+          opacity: enabled ? 1 : 0.5,
         }}
       >
         <span style={{ color: '#c9cdd4', cursor: 'grab' }}>⠿</span>
-        <Switch size="small" defaultChecked disabled />
-        <PlayCircleOutlined style={{ color: '#7c3aed' }} />
+        {/* 启用/禁用本步骤(禁用则置灰);播放=单步服务端执行。两者均阻止冒泡(不打开抽屉)。 */}
+        <Switch size="small" checked={enabled} disabled={!leaf || !onToggle} onChange={() => onToggle?.()} onClick={(_c, e) => e.stopPropagation()} />
+        <PlayCircleOutlined
+          style={{ color: leaf && onRun ? '#7c3aed' : '#c9cdd4', cursor: leaf && onRun ? 'pointer' : 'default' }}
+          onClick={(e) => { e.stopPropagation(); if (leaf) onRun?.() }}
+        />
         <span style={{ color: '#9aa0a6', fontSize: 12, minWidth: 18 }}>{idx}</span>
         <Tag color={meta.color} style={{ margin: 0 }}>{meta.label}</Tag>
         <span style={{ flex: 1, minWidth: 0 }}>{node.content}</span>
@@ -245,8 +251,10 @@ function ScenarioDetail({ scenario }: { scenario: Scenario }) {
     params: Array.isArray(m0.params) ? (m0.params as ScenarioParam[]) : [],
     csv: typeof m0.csvParams === 'string' ? (m0.csvParams as string) : '',
     moduleId: typeof m0.moduleId === 'string' ? (m0.moduleId as string) : '',
+    disabledSteps: Array.isArray(m0.disabledSteps) ? (m0.disabledSteps as string[]) : [],
   })
   const [modules, setModules] = useState<ApiModule[]>([])
+  const toggleStep = (id: string) => patchForm({ disabledSteps: form.disabledSteps.includes(id) ? form.disabledSteps.filter((x) => x !== id) : [...form.disabledSteps, id] })
   const [saving, setSaving] = useState(false)
   const patchForm = (p: Partial<ScenarioForm>) => setForm((f) => ({ ...f, ...p }))
   const onSave = async () => {
@@ -256,7 +264,7 @@ function ScenarioDetail({ scenario }: { scenario: Scenario }) {
       await api.updateScenario(scenario.id, {
         name: form.name.trim(),
         status: form.status,
-        meta: { description: form.description, tags: form.tags, priority: form.priority, params: form.params, csvParams: form.csv, moduleId: form.moduleId },
+        meta: { description: form.description, tags: form.tags, priority: form.priority, params: form.params, csvParams: form.csv, moduleId: form.moduleId, disabledSteps: form.disabledSteps },
       })
       message.success(t('scenario.saved', '已保存'))
     } catch (e) {
@@ -319,6 +327,27 @@ function ScenarioDetail({ scenario }: { scenario: Scenario }) {
   }
   // 步骤 → 结果键:CASE 用 case_id;REQUEST 用 "METHOD url"(对齐执行器 label)。
   const stepKey = (s: ScenarioStep): string | null => (s.caseId ? s.caseId : s.request ? `${s.request.method} ${s.request.url}` : null)
+  // 单步执行(点击步骤行播放按钮):组装该步请求走 /api/debug/send,把结果写回该步。
+  const runStep = async (s: ScenarioStep) => {
+    const kase = s.caseId ? caseMap[s.caseId] : undefined
+    const reqInfo = kase
+      ? { method: kase.method, url: kase.url, body: kase.body, headers: kase.headers || [], auth: kase.auth, assertions: kase.assertions, processors: kase.processors }
+      : s.request
+        ? { method: s.request.method, url: s.request.url, body: s.request.body ?? null, headers: [] as { key: string; value: string }[], auth: undefined, assertions: s.request.assertions, processors: undefined }
+        : null
+    const k = stepKey(s)
+    if (!reqInfo || !k) return
+    const env = envs.find((e) => e.id === envId)
+    const req = buildStepRequest(reqInfo.method, reqInfo.url, reqInfo.body, reqInfo.headers, reqInfo.auth as { type: string; token?: string } | undefined, env)
+    if (!req) return message.warning(t('editor.needEnvOrAbs', '相对路径需先选择带 baseUrl 的环境,或填写绝对 URL(http(s)://)'))
+    try {
+      const resp = await api.debugSend({ ...req, assertions: reqInfo.assertions as unknown[], processors: reqInfo.processors as unknown[] })
+      const fails = (resp.assertions || []).filter((a) => !a.passed)
+      setStepResults((prev) => ({ ...prev, [k]: { caseId: k, outcome: fails.length ? 'ERROR' : 'SUCCESS', failures: fails.map((a) => a.reason || a.item), executedAt: '', statusCode: resp.status, latencyMs: resp.latencyMs, respSize: resp.body.length, body: resp.body, headers: resp.headers } }))
+    } catch (e) {
+      message.error(e instanceof ApiError ? e.message : t('editor.sendFail', '发送失败'))
+    }
+  }
   // 拖拽重排:把 from 移到 to,乐观更新本地顺序后 PATCH 落库。
   const moveStep = async (from: number, to: number) => {
     if (from === to) return
@@ -362,7 +391,16 @@ function ScenarioDetail({ scenario }: { scenario: Scenario }) {
               onClick={() => setSelStep({ step: s, idx: i + 1 })}
               style={{ cursor: 'pointer', opacity: dragIdx === i ? 0.5 : 1 }}
             >
-              <StepRow node={stepToNode(s, t, nameOf)} idx={i + 1} depth={0} t={t} result={k ? stepResults[k] : undefined} />
+              <StepRow
+                node={stepToNode(s, t, nameOf)}
+                idx={i + 1}
+                depth={0}
+                t={t}
+                result={k ? stepResults[k] : undefined}
+                enabled={!form.disabledSteps.includes(s.id)}
+                onToggle={() => toggleStep(s.id)}
+                onRun={() => runStep(s)}
+              />
             </div>
           )
         })
