@@ -229,6 +229,7 @@ function ScenarioDetail({ scenario }: { scenario: Scenario }) {
   const [nameMap, setNameMap] = useState<Record<string, string>>({})
   const [caseMap, setCaseMap] = useState<Record<string, ApiCase>>({})
   const [selStep, setSelStep] = useState<{ step: ScenarioStep; idx: number } | null>(null)
+  const [dragIdx, setDragIdx] = useState<number | null>(null)
   // 执行配置:环境 + 步骤失败规则(后端 run 已支持 environment_id/failure_strategy)。
   const [envs, setEnvs] = useState<Environment[]>([])
   const [envId, setEnvId] = useState<string>('')
@@ -318,6 +319,20 @@ function ScenarioDetail({ scenario }: { scenario: Scenario }) {
   }
   // 步骤 → 结果键:CASE 用 case_id;REQUEST 用 "METHOD url"(对齐执行器 label)。
   const stepKey = (s: ScenarioStep): string | null => (s.caseId ? s.caseId : s.request ? `${s.request.method} ${s.request.url}` : null)
+  // 拖拽重排:把 from 移到 to,乐观更新本地顺序后 PATCH 落库。
+  const moveStep = async (from: number, to: number) => {
+    if (from === to) return
+    const arr = [...steps].sort((a, b) => a.order - b.order)
+    const [m] = arr.splice(from, 1)
+    arr.splice(to, 0, m)
+    setSteps(arr.map((s, i) => ({ ...s, order: i + 1 })))
+    try {
+      await api.reorderScenarioSteps(scenario.id, arr.map((s) => s.id))
+    } catch (e) {
+      message.error(e instanceof ApiError ? e.message : t('scenario.reorderFailed', '排序保存失败'))
+      loadSteps()
+    }
+  }
 
   const ordered = [...steps].sort((a, b) => a.order - b.order)
   const nextOrder = steps.length ? Math.max(...steps.map((s) => s.order)) + 1 : 1
@@ -338,7 +353,15 @@ function ScenarioDetail({ scenario }: { scenario: Scenario }) {
         ordered.map((s, i) => {
           const k = stepKey(s)
           return (
-            <div key={s.id} onClick={() => setSelStep({ step: s, idx: i + 1 })} style={{ cursor: 'pointer' }}>
+            <div
+              key={s.id}
+              draggable
+              onDragStart={() => setDragIdx(i)}
+              onDragOver={(e) => e.preventDefault()}
+              onDrop={(e) => { e.preventDefault(); if (dragIdx != null) moveStep(dragIdx, i); setDragIdx(null) }}
+              onClick={() => setSelStep({ step: s, idx: i + 1 })}
+              style={{ cursor: 'pointer', opacity: dragIdx === i ? 0.5 : 1 }}
+            >
               <StepRow node={stepToNode(s, t, nameOf)} idx={i + 1} depth={0} t={t} result={k ? stepResults[k] : undefined} />
             </div>
           )

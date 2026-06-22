@@ -52,6 +52,9 @@ pub trait ApiScenarioRepository: Send + Sync {
     /// 删除场景内某步骤(按 scenario_id + step_id)。返回是否命中删除。
     async fn delete_step(&self, scenario_id: &str, step_id: &str) -> Result<bool, RepoError>;
 
+    /// 重排场景步骤:按给定 step_id 顺序写 step_order(从 1 起)。未列出的步骤顺序不保证。
+    async fn reorder_steps(&self, scenario_id: &str, ordered_ids: &[String]) -> Result<(), RepoError>;
+
     /// 记录一次场景执行。status 为状态字符串("PENDING"/"RUNNING"/"SUCCESS"/"ERROR"),
     /// 非法值由调用方在领域层保证;仓储原样落库。
     async fn record_execution(

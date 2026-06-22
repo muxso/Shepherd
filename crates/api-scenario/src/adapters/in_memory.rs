@@ -132,6 +132,17 @@ impl ApiScenarioRepository for InMemoryApiScenarioRepository {
         Ok(rec.scenario.steps.len() != before)
     }
 
+    async fn reorder_steps(&self, scenario_id: &str, ordered_ids: &[String]) -> Result<(), RepoError> {
+        let mut state = self.state.lock().expect("lock");
+        let Some(rec) = state.scenarios.get_mut(scenario_id) else { return Ok(()) };
+        for (i, id) in ordered_ids.iter().enumerate() {
+            if let Some(st) = rec.scenario.steps.iter_mut().find(|s| &s.id == id) {
+                st.order = (i + 1) as i32;
+            }
+        }
+        Ok(())
+    }
+
     async fn record_execution(
         &self,
         scenario_id: &str,

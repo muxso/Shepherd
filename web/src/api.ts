@@ -766,6 +766,8 @@ export const api = {
     http.patch<Scenario>(`/api/scenario/${id}`, b),
   deleteScenarioStep: (scenarioId: string, stepId: string) =>
     http.del(`/api/scenario/${scenarioId}/step/${stepId}`),
+  reorderScenarioSteps: (scenarioId: string, order: string[]) =>
+    http.patch(`/api/scenario/${scenarioId}/steps/order`, { order }),
   runScenario: (scenarioId: string, projectId: string, opts?: { environmentId?: string; failureStrategy?: 'CONTINUE' | 'STOP' }) =>
     http.post<ScenarioRunResult>(`/api/scenario/${scenarioId}/run`, { projectId, environmentId: opts?.environmentId, failureStrategy: opts?.failureStrategy }),
   scenarioExecutions: (scenarioId: string) =>

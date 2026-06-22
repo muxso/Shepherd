@@ -66,6 +66,7 @@ pub fn router(
         .route("/api/scenario/{id}", get(get_scenario).patch(update_scenario))
         .route("/api/scenario/{id}/step", post(add_step))
         .route("/api/scenario/{id}/step/{step_id}", axum::routing::delete(delete_step))
+        .route("/api/scenario/{id}/steps/order", axum::routing::patch(reorder_steps))
         .route("/api/scenario/{id}/compile", get(compile_scenario))
         .route("/api/scenario/{id}/executions", get(list_executions))
         .with_state(state)
@@ -378,6 +379,29 @@ async fn update_scenario(
     match st.repo.update_scenario(&id, name, &status, &meta).await {
         Ok(Some(s)) => (StatusCode::OK, Json(ScenarioResponse::from(s))).into_response(),
         Ok(None) => (StatusCode::NOT_FOUND, "scenario not found").into_response(),
+        Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
+    }
+}
+
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+struct ReorderStepsBody {
+    /// 期望顺序的 step_id 列表(从第 1 位起写 step_order)。
+    order: Vec<String>,
+}
+
+#[utoipa::path(patch, path = "/api/scenario/{id}/steps/order", tag = "api-scenario", params(("id" = String, Path)), request_body = ReorderStepsBody, responses((status = 204), (status = 404)), security(("bearer" = [])))]
+async fn reorder_steps(
+    user: AuthUser,
+    State(st): State<ScenarioAppState>,
+    Path(id): Path<String>,
+    Json(req): Json<ReorderStepsBody>,
+) -> Response {
+    if !user.can("API_SCENARIO", "UPDATE") {
+        return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
+    match st.repo.reorder_steps(&id, &req.order).await {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
         Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
     }
 }

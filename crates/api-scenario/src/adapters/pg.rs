@@ -277,6 +277,19 @@ impl ApiScenarioRepository for PgApiScenarioRepository {
         Ok(res.rows_affected() > 0)
     }
 
+    async fn reorder_steps(&self, scenario_id: &str, ordered_ids: &[String]) -> Result<(), RepoError> {
+        for (i, id) in ordered_ids.iter().enumerate() {
+            sqlx::query("UPDATE ms_api_scenario_step SET step_order = $3 WHERE scenario_id = $1 AND id = $2")
+                .bind(scenario_id)
+                .bind(id)
+                .bind((i + 1) as i32)
+                .execute(&self.pool)
+                .await
+                .map_err(map_err)?;
+        }
+        Ok(())
+    }
+
     async fn record_execution(
         &self,
         scenario_id: &str,
