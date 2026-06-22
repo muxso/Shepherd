@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { Button, Drawer, Dropdown, Empty, Form, Input, Modal, Radio, Segmented, Select, Space, Switch, Table, Tabs, Tag, Tree, Typography } from 'antd'
 import { message, modal } from '../feedback'
-import { PlayCircleOutlined, PlusOutlined, SaveOutlined, ThunderboltOutlined, DownOutlined, LinkOutlined, SwapOutlined, DeleteOutlined, FullscreenOutlined, CloseOutlined } from '@ant-design/icons'
+import { PlayCircleOutlined, PlusOutlined, SaveOutlined, ThunderboltOutlined, DownOutlined, LinkOutlined, SwapOutlined, DeleteOutlined, FullscreenOutlined, CloseOutlined, SearchOutlined } from '@ant-design/icons'
 import { api, ApiError, type ApiCase, type ApiDefinition, type ApiModule, type DebugResponse, type Environment, type ReportResultItem, type Scenario, type ScenarioChange, type ScenarioExecution, type ScenarioReportDetail, type ScenarioRunResult, type ScenarioStep } from '../api'
 import type { ColumnsType } from 'antd/es/table'
 import { useApp } from '../context'
@@ -1126,9 +1126,13 @@ function ImportRequestDrawer({
   const { t } = useI18n()
   const [tab, setTab] = useState<'api' | 'case' | 'scenario'>('api')
   const [search, setSearch] = useState('')
+  const [protocol, setProtocol] = useState('HTTP')
+  const [moduleSearch, setModuleSearch] = useState('')
+  const [selModule, setSelModule] = useState('ALL') // ALL | UNFILED | <moduleId>
   const [defs, setDefs] = useState<ApiDefinition[]>([])
   const [cases, setCases] = useState<ApiCase[]>([])
   const [scns, setScns] = useState<Scenario[]>([])
+  const [modules, setModules] = useState<ApiModule[]>([])
   const [selApi, setSelApi] = useState<string[]>([])
   const [selCase, setSelCase] = useState<string[]>([])
   const [selScn, setSelScn] = useState<string[]>([])
@@ -1136,17 +1140,39 @@ function ImportRequestDrawer({
 
   useEffect(() => {
     if (!open) return
-    setSearch(''); setSelApi([]); setSelCase([]); setSelScn([])
+    setSearch(''); setModuleSearch(''); setSelModule('ALL'); setSelApi([]); setSelCase([]); setSelScn([])
     api.definitions(projectId).then((d) => setDefs(Array.isArray(d) ? d : [])).catch(() => setDefs([]))
     api.projectCases(projectId).then((p) => setCases(p.items)).catch(() => setCases([]))
     api.scenarios(projectId).then((s) => setScns(s.filter((x) => x.id !== scenarioId))).catch(() => setScns([]))
+    api.modules(projectId).then((m) => setModules(Array.isArray(m) ? m : [])).catch(() => setModules([]))
   }, [open, projectId, scenarioId])
 
   const lc = (s: string) => s.toLowerCase()
-  const fDefs = defs.filter((d) => !search || lc(d.name).includes(lc(search)) || lc(d.path).includes(lc(search)))
-  const fCases = cases.filter((c) => !search || lc(c.name).includes(lc(search)) || lc(c.url || '').includes(lc(search)))
-  const fScns = scns.filter((s) => !search || lc(s.name).includes(lc(search)))
+  // case → 其接口定义所属模块;scenario → meta.moduleId。
+  const defModuleMap = Object.fromEntries(defs.map((d) => [d.id, d.moduleId || '']))
+  const moduleOf = (x: ApiDefinition | ApiCase | Scenario): string =>
+    tab === 'api' ? (x as ApiDefinition).moduleId || '' : tab === 'case' ? defModuleMap[(x as ApiCase).apiDefinitionId] || '' : ((x as Scenario).meta?.moduleId as string) || ''
+  const inModule = (x: ApiDefinition | ApiCase | Scenario) => (selModule === 'ALL' ? true : selModule === 'UNFILED' ? !moduleOf(x) : moduleOf(x) === selModule)
+  const fDefs = defs.filter((d) => d.protocol === protocol && inModule(d) && (!search || lc(d.name).includes(lc(search)) || lc(d.path).includes(lc(search))))
+  const fCases = cases.filter((c) => inModule(c) && (!search || lc(c.name).includes(lc(search)) || lc(c.url || '').includes(lc(search))))
+  const fScns = scns.filter((s) => inModule(s) && (!search || lc(s.name).includes(lc(search))))
   const total = selApi.length + selCase.length + selScn.length
+
+  // 左侧模块树计数(按当前标签数据;接口受协议过滤)。
+  const activeData: (ApiDefinition | ApiCase | Scenario)[] = tab === 'api' ? defs.filter((d) => d.protocol === protocol) : tab === 'case' ? cases : scns
+  const countFor = (mid: string) => activeData.filter((x) => (mid === 'ALL' ? true : mid === 'UNFILED' ? !moduleOf(x) : moduleOf(x) === mid)).length
+  const shownModules = modules.filter((m) => !m.parentId).filter((m) => !moduleSearch || lc(m.name).includes(lc(moduleSearch)))
+  const moduleRow = (key: string, name: string, count: number) => (
+    <div
+      key={key}
+      onClick={() => setSelModule(key)}
+      style={{ display: 'flex', alignItems: 'center', padding: '6px 8px', borderRadius: 6, cursor: 'pointer', fontSize: 13, background: selModule === key ? '#f3eaff' : 'transparent', color: selModule === key ? '#7c3aed' : undefined }}
+    >
+      <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{name}</span>
+      <span style={{ color: '#a8adb5', fontSize: 12 }}>{count}</span>
+    </div>
+  )
+  const totalLabel = tab === 'api' ? t('apidef.allApis', '全部接口') : tab === 'case' ? t('scenario.allCases', '全部用例') : t('scenario.allScenarios', '全部场景')
 
   const doImport = async () => {
     setImporting(true)
@@ -1191,7 +1217,7 @@ function ImportRequestDrawer({
     <Drawer
       open={open}
       onClose={onClose}
-      width="72%"
+      width="82%"
       title={t('scenario.importSystem', '导入系统请求')}
       footer={
         <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
@@ -1204,28 +1230,50 @@ function ImportRequestDrawer({
         </div>
       }
     >
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
-        <Segmented
-          value={tab}
-          onChange={(v) => setTab(v as 'api' | 'case' | 'scenario')}
-          options={[
-            { label: `${t('scenario.tabApi', '接口')}`, value: 'api' },
-            { label: `${t('scenario.tabCase', '用例')}`, value: 'case' },
-            { label: `${t('scenario.tabScenario', '场景')}`, value: 'scenario' },
-          ]}
-        />
-        <div style={{ flex: 1 }} />
-        <Input allowClear style={{ width: 280 }} placeholder={t('scenario.searchByPathName', '通过路径或名称搜索')} value={search} onChange={(e) => setSearch(e.target.value)} />
+      <Segmented
+        value={tab}
+        onChange={(v) => setTab(v as 'api' | 'case' | 'scenario')}
+        options={[
+          { label: t('scenario.tabApi', '接口'), value: 'api' },
+          { label: t('scenario.tabCase', '用例'), value: 'case' },
+          { label: t('scenario.tabScenario', '场景'), value: 'scenario' },
+        ]}
+        style={{ marginBottom: 12 }}
+      />
+      <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
+        {/* 左侧筛选栏(对齐参考图 #34:项目 + 协议 + 模块搜索 + 模块树计数)。 */}
+        <div style={{ width: 240, flexShrink: 0 }}>
+          <Space.Compact style={{ width: '100%', marginBottom: 8 }}>
+            <Select size="small" value="__cur__" style={{ flex: 1 }} options={[{ value: '__cur__', label: t('scenario.curProject', '当前项目') }]} disabled />
+            {tab !== 'scenario' && (
+              <Select size="small" value={protocol} onChange={setProtocol} style={{ width: 96 }} options={['HTTP', 'SSH', 'AMQP', 'Redis', 'TCP', 'MongoDB', 'GRPC'].map((p) => ({ value: p, label: p }))} />
+            )}
+          </Space.Compact>
+          <Input size="small" allowClear prefix={<SearchOutlined style={{ color: '#bbb' }} />} placeholder={t('apidef.moduleSearch', '输入模块名称搜索')} value={moduleSearch} onChange={(e) => setModuleSearch(e.target.value)} style={{ marginBottom: 8 }} />
+          <div style={{ border: '1px solid #f0f0f0', borderRadius: 6, padding: 4, maxHeight: 460, overflow: 'auto' }}>
+            {moduleRow('ALL', `${totalLabel} (${countFor('ALL')})`, countFor('ALL'))}
+            {moduleRow('UNFILED', t('scenario.unfiled', '未规划'), countFor('UNFILED'))}
+            {shownModules.map((m) => moduleRow(m.id, m.name, countFor(m.id)))}
+          </div>
+        </div>
+        {/* 右侧结果表 */}
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+            <Typography.Text strong>{totalLabel} ({tab === 'api' ? fDefs.length : tab === 'case' ? fCases.length : fScns.length})</Typography.Text>
+            <div style={{ flex: 1 }} />
+            <Input allowClear size="small" style={{ width: 240 }} prefix={<SearchOutlined style={{ color: '#bbb' }} />} placeholder={t('scenario.searchByPathName', '通过路径或名称搜索')} value={search} onChange={(e) => setSearch(e.target.value)} />
+          </div>
+          {tab === 'api' && (
+            <Table<ApiDefinition> rowKey="id" size="small" columns={apiCols} dataSource={fDefs} pagination={{ pageSize: 10, size: 'small' }} rowSelection={{ selectedRowKeys: selApi, onChange: (k) => setSelApi(k.map(String)) }} locale={{ emptyText: <Empty description={t('scenario.noImportData', '暂无可引用数据,可切换项目获取数据')} /> }} />
+          )}
+          {tab === 'case' && (
+            <Table<ApiCase> rowKey="id" size="small" columns={caseCols} dataSource={fCases} pagination={{ pageSize: 10, size: 'small' }} rowSelection={{ selectedRowKeys: selCase, onChange: (k) => setSelCase(k.map(String)) }} locale={{ emptyText: <Empty description={t('scenario.noImportData', '暂无可引用数据,可切换项目获取数据')} /> }} />
+          )}
+          {tab === 'scenario' && (
+            <Table<Scenario> rowKey="id" size="small" columns={scnCols} dataSource={fScns} pagination={{ pageSize: 10, size: 'small' }} rowSelection={{ selectedRowKeys: selScn, onChange: (k) => setSelScn(k.map(String)) }} locale={{ emptyText: <Empty description={t('scenario.noImportData', '暂无可引用数据,可切换项目获取数据')} /> }} />
+          )}
+        </div>
       </div>
-      {tab === 'api' && (
-        <Table<ApiDefinition> rowKey="id" size="small" columns={apiCols} dataSource={fDefs} pagination={{ pageSize: 10, size: 'small' }} rowSelection={{ selectedRowKeys: selApi, onChange: (k) => setSelApi(k.map(String)) }} locale={{ emptyText: <Empty description={t('scenario.noImportData', '暂无可引用数据,可切换项目获取数据')} /> }} />
-      )}
-      {tab === 'case' && (
-        <Table<ApiCase> rowKey="id" size="small" columns={caseCols} dataSource={fCases} pagination={{ pageSize: 10, size: 'small' }} rowSelection={{ selectedRowKeys: selCase, onChange: (k) => setSelCase(k.map(String)) }} locale={{ emptyText: <Empty description={t('scenario.noImportData', '暂无可引用数据,可切换项目获取数据')} /> }} />
-      )}
-      {tab === 'scenario' && (
-        <Table<Scenario> rowKey="id" size="small" columns={scnCols} dataSource={fScns} pagination={{ pageSize: 10, size: 'small' }} rowSelection={{ selectedRowKeys: selScn, onChange: (k) => setSelScn(k.map(String)) }} locale={{ emptyText: <Empty description={t('scenario.noImportData', '暂无可引用数据,可切换项目获取数据')} /> }} />
-      )}
     </Drawer>
   )
 }
