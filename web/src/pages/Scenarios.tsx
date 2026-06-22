@@ -1,12 +1,12 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
-import { Button, Drawer, Dropdown, Empty, Form, Input, Modal, Radio, Segmented, Select, Space, Switch, Table, Tabs, Tag, Tree, Typography } from 'antd'
+import { Button, Drawer, Dropdown, Empty, Form, Input, Modal, Radio, Segmented, Select, Space, Switch, Table, Tabs, Tag, Typography } from 'antd'
 import { message, modal } from '../feedback'
-import { PlayCircleOutlined, PlusOutlined, SaveOutlined, ThunderboltOutlined, DownOutlined, LinkOutlined, SwapOutlined, DeleteOutlined, FullscreenOutlined, CloseOutlined, SearchOutlined } from '@ant-design/icons'
+import { PlayCircleOutlined, PlusOutlined, SaveOutlined, ThunderboltOutlined, DownOutlined, LinkOutlined, SwapOutlined, DeleteOutlined, FullscreenOutlined, CloseOutlined, SearchOutlined, FilterOutlined, ReloadOutlined, MoreOutlined, ImportOutlined } from '@ant-design/icons'
 import { api, ApiError, type ApiCase, type ApiDefinition, type ApiModule, type DebugResponse, type Environment, type ReportResultItem, type Scenario, type ScenarioChange, type ScenarioExecution, type ScenarioReportDetail, type ScenarioRunResult, type ScenarioStep } from '../api'
 import type { ColumnsType } from 'antd/es/table'
 import { useApp } from '../context'
 import { methodColor, statusColor, outcomeColor } from '../components/tags'
-import { Workspace, WorkList, PaneHeader, useWorkTabs } from '../components/Workspace'
+import { Workspace, useWorkTabs } from '../components/Workspace'
 import AssertionEditor from '../components/AssertionEditor'
 import ProcessorEditor from '../components/ProcessorEditor'
 import { DebugResultPanel, type SentRequest } from '../components/ApiSpecPanel'
@@ -23,17 +23,21 @@ export default function Scenarios() {
   const { t } = useI18n()
   const { projectId } = useApp()
   const [list, setList] = useState<Scenario[]>([])
+  const [modules, setModules] = useState<ApiModule[]>([])
   const [loading, setLoading] = useState(false)
   const [search, setSearch] = useState('')
-  const [statusKey, setStatusKey] = useState('ALL')
+  const [moduleSearch, setModuleSearch] = useState('')
+  const [selModule, setSelModule] = useState('ALL') // ALL | UNFILED | <moduleId>
   const [createOpen, setCreateOpen] = useState(false)
   const tabs = useWorkTabs()
 
   const load = async () => {
-    if (!projectId) return setList([])
+    if (!projectId) { setList([]); setModules([]); return }
     setLoading(true)
     try {
-      setList(await api.scenarios(projectId))
+      const [ss, mm] = await Promise.all([api.scenarios(projectId), api.modules(projectId).catch(() => [])])
+      setList(Array.isArray(ss) ? ss : [])
+      setModules(Array.isArray(mm) ? mm : [])
     } catch (e) {
       message.error(e instanceof ApiError ? e.message : t('scenario.loadFailed', '加载场景失败'))
     } finally {
@@ -46,36 +50,112 @@ export default function Scenarios() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId])
 
-  const treeData = useMemo(() => {
-    const byStatus = new Map<string, number>()
-    list.forEach((s) => byStatus.set(s.status, (byStatus.get(s.status) || 0) + 1))
-    return [
-      {
-        key: 'ALL',
-        title: `${t('scenario.allScenarios', '全部场景')} (${list.length})`,
-        children: [...byStatus.entries()].map(([s, n]) => ({ key: `st:${s}`, title: `${s} (${n})` })),
-      },
-    ]
-  }, [list])
+  const moduleOf = (s: Scenario) => (s.meta?.moduleId as string) || ''
+  const countFor = (mid: string) => list.filter((s) => (mid === 'ALL' ? true : mid === 'UNFILED' ? !moduleOf(s) : moduleOf(s) === mid)).length
+  const shownModules = useMemo(() => modules.filter((m) => !m.parentId).filter((m) => !moduleSearch || m.name.toLowerCase().includes(moduleSearch.toLowerCase())), [modules, moduleSearch])
 
-  const filtered = useMemo(
-    () =>
-      list.filter((s) => {
-        const st = statusKey === 'ALL' || s.status === statusKey.replace('st:', '')
-        return st && s.name.toLowerCase().includes(search.toLowerCase())
-      }),
-    [list, search, statusKey],
-  )
+  const filtered = useMemo(() => {
+    const q = search.toLowerCase()
+    return list.filter((s) => {
+      const inMod = selModule === 'ALL' ? true : selModule === 'UNFILED' ? !moduleOf(s) : moduleOf(s) === selModule
+      const tags = (s.meta?.tags as string[] | undefined) || []
+      const hit = !q || s.name.toLowerCase().includes(q) || s.id.toLowerCase().includes(q) || tags.some((tg) => tg.toLowerCase().includes(q))
+      return inMod && hit
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [list, search, selModule])
 
   if (!projectId) return <div style={{ padding: 48 }}><Empty description={t('common.selectProject', '请先在顶部选择项目')} /></div>
 
+  const moduleRow = (key: string, name: string, count: number) => (
+    <div
+      key={key}
+      onClick={() => setSelModule(key)}
+      style={{ display: 'flex', alignItems: 'center', padding: '7px 10px', borderRadius: 6, cursor: 'pointer', fontSize: 13, background: selModule === key ? '#f3eaff' : 'transparent', color: selModule === key ? '#7c3aed' : undefined }}
+    >
+      <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{name}</span>
+      <span style={{ color: '#a8adb5', fontSize: 12 }}>{count}</span>
+    </div>
+  )
+
+  // 左侧:新建/导入 + 模块搜索 + 模块树(计数)+ 回收站(对齐参考图 #33)。
   const left = (
     <>
-      <PaneHeader title={t('scenario.status', '状态')} />
-      <div style={{ flex: 1, overflow: 'auto', padding: 8 }}>
-        <Tree blockNode defaultExpandAll selectedKeys={[statusKey]} treeData={treeData} onSelect={(k) => k.length && setStatusKey(String(k[0]))} />
+      <div style={{ padding: '10px 10px 6px' }}>
+        <Space.Compact style={{ width: '100%', marginBottom: 8 }}>
+          <Button type="primary" icon={<PlusOutlined />} style={{ flex: 1 }} onClick={() => setCreateOpen(true)}>{t('scenario.newScenario', '新建场景')}</Button>
+          <Button icon={<ImportOutlined />} style={{ flex: 1 }} onClick={() => message.info(t('scenario.importScenarioSoon', '导入场景即将接入'))}>{t('scenario.importScenario', '导入场景')}</Button>
+        </Space.Compact>
+        <Input size="small" allowClear prefix={<SearchOutlined style={{ color: '#bbb' }} />} placeholder={t('scenario.moduleSearchPh', '请输入模块名称进行搜索')} value={moduleSearch} onChange={(e) => setModuleSearch(e.target.value)} />
       </div>
+      <div style={{ flex: 1, overflow: 'auto', padding: 8 }}>
+        {moduleRow('ALL', `${t('scenario.allScenarios', '全部场景')} (${countFor('ALL')})`, countFor('ALL'))}
+        {moduleRow('UNFILED', t('scenario.unplanned', '未规划场景'), countFor('UNFILED'))}
+        {shownModules.map((m) => moduleRow(m.id, m.name, countFor(m.id)))}
+      </div>
+      <div style={{ padding: '8px 14px', borderTop: '1px solid #f5f5f5', color: '#8a9099', fontSize: 12 }}>🗑 {t('scenario.recycleBin', '回收站')}</div>
     </>
+  )
+
+  const runFromList = async (s: Scenario, e: React.MouseEvent) => {
+    e.stopPropagation()
+    try {
+      const r = await api.runScenario(s.id, s.projectId)
+      message.success(`${t('scenario.triggered', '场景已触发执行')} · ${r.status}`)
+    } catch (err) {
+      message.error(err instanceof ApiError ? `${t('scenario.execFailed', '执行失败')}:${err.status}` : t('scenario.execFailed', '执行失败'))
+    }
+  }
+  const muted = (v?: string) => <span style={{ color: '#bbb' }}>{v || '—'}</span>
+  const richCols: ColumnsType<Scenario> = [
+    { title: 'ID', dataIndex: 'id', width: 110, render: (v: string) => <span className="ms-mono" style={{ fontSize: 12 }}>{v.slice(0, 8)}</span> },
+    { title: t('scenario.colSceneName', '场景名称'), dataIndex: 'name', ellipsis: true, render: (v: string) => <span style={{ fontWeight: 500 }}>{v}</span> },
+    { title: t('scenario.priority', '场景等级'), width: 110, render: (_v, s) => { const p = (s.meta?.priority as string) || 'P0'; return <span style={{ color: '#ff4d4f' }}>● {p}</span> } },
+    { title: t('scenario.colStatus', '状态'), dataIndex: 'status', width: 110, render: (s: string) => <Tag color={statusColor(s)}>{s}</Tag> },
+    { title: t('scenario.colExecResult', '执行结果'), width: 110, render: () => muted() },
+    { title: t('scenario.tags', '标签'), width: 160, render: (_v, s) => { const tags = (s.meta?.tags as string[] | undefined) || []; return tags.length ? <Space size={[4, 4]} wrap>{tags.map((tg) => <Tag key={tg} style={{ margin: 0 }}>{tg}</Tag>)}</Space> : muted() } },
+    { title: t('scenario.colSceneEnv', '场景环境'), width: 130, render: () => muted() },
+    { title: t('scenario.createdBy', '创建人'), dataIndex: 'createdBy', width: 110, render: (v?: string) => muted(v || undefined) },
+    { title: t('scenario.updatedBy', '更新人'), width: 110, render: (_v, s) => muted(s.createdBy || undefined) },
+    {
+      title: t('apidef.colAction', '操作'),
+      width: 160,
+      fixed: 'right',
+      render: (_v, s) => (
+        <Space size={4} onClick={(e) => e.stopPropagation()}>
+          <Button type="link" size="small" onClick={() => tabs.open(s.id)}>{t('a.edit', '编辑')}</Button>
+          <Button type="link" size="small" onClick={(e) => runFromList(s, e)}>{t('apidef.run', '执行')}</Button>
+          <Button type="link" size="small" onClick={() => message.info(t('scenario.copySoon', '复制场景即将接入'))}>{t('a.copy', '复制')}</Button>
+          <Dropdown menu={{ items: [{ key: 'del', label: t('a.delete', '删除'), danger: true }], onClick: () => message.info(t('scenario.deleteScenarioSoon', '删除场景即将接入')) }}><Button type="link" size="small" icon={<MoreOutlined />} /></Dropdown>
+        </Space>
+      ),
+    },
+  ]
+
+  const listContent = (
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 12px', borderBottom: '1px solid #f0f0f0' }}>
+        <div style={{ flex: 1 }} />
+        <Input allowClear prefix={<SearchOutlined style={{ color: '#bbb' }} />} placeholder={t('scenario.searchByIdNameTag', '通过 ID/名称/标签搜索')} style={{ width: 260 }} value={search} onChange={(e) => setSearch(e.target.value)} />
+        <Select size="middle" value="all" disabled style={{ width: 150 }} options={[{ value: 'all', label: `${t('scenario.view', '视图')}: ${t('scenario.allData', '全部数据')}` }]} />
+        <Button icon={<FilterOutlined />} disabled>{t('apidef.filter', '筛选')}</Button>
+        <Button icon={<ReloadOutlined />} onClick={load} />
+      </div>
+      <div style={{ flex: 1, overflow: 'auto', padding: 12 }}>
+        <Table<Scenario>
+          rowKey="id"
+          size="middle"
+          loading={loading}
+          dataSource={filtered}
+          columns={richCols}
+          scroll={{ x: 'max-content' }}
+          rowSelection={{ type: 'checkbox' }}
+          onRow={(s) => ({ onClick: () => tabs.open(s.id), style: { cursor: 'pointer' } })}
+          pagination={{ pageSize: 20, size: 'small', showTotal: (total) => `${t('apidef.totalPrefix', '共')} ${total} ${t('scenario.unit', '条')}` }}
+          locale={{ emptyText: <Empty description={t('scenario.empty', '暂无场景')} /> }}
+        />
+      </div>
+    </div>
   )
 
   const detailTabs = tabs.openIds
@@ -87,29 +167,13 @@ export default function Scenarios() {
     <>
       <Workspace
         left={left}
+        leftWidth={252}
         listLabel={t('scenario.allScenarios', '全部场景')}
         activeKey={tabs.activeKey}
         onChange={tabs.setActiveKey}
         onClose={tabs.close}
         tabs={detailTabs}
-        listContent={
-          <WorkList<Scenario>
-            onNew={() => setCreateOpen(true)}
-            newLabel={t('scenario.newScenario', '新建场景')}
-            onSearch={setSearch}
-            searchPlaceholder={t('scenario.searchName', '搜索场景名')}
-            onRefresh={load}
-            data={filtered}
-            loading={loading}
-            onRowClick={(s) => tabs.open(s.id)}
-            emptyText={t('scenario.empty', '暂无场景')}
-            columns={[
-              { title: t('scenario.colName', '名称'), dataIndex: 'name', ellipsis: true },
-              { title: t('scenario.colSteps', '步骤数'), dataIndex: 'steps', width: 100, render: (steps?: unknown[]) => <Tag color={steps?.length ? 'geekblue' : 'default'}>{steps?.length ?? 0}</Tag> },
-              { title: t('scenario.colStatus', '状态'), dataIndex: 'status', width: 120, render: (s: string) => <Tag color={statusColor(s)}>{s}</Tag> },
-            ]}
-          />
-        }
+        listContent={listContent}
       />
       <Modal title={t('scenario.newScenario', '新建场景')} open={createOpen} onCancel={() => setCreateOpen(false)} footer={null} destroyOnHidden>
         <CreateScenarioForm
