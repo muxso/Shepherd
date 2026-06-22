@@ -8,13 +8,14 @@ import { useApp } from '../context'
 import { methodColor, statusColor, outcomeColor } from '../components/tags'
 import { Workspace, WorkList, PaneHeader, useWorkTabs } from '../components/Workspace'
 import AssertionEditor from '../components/AssertionEditor'
+import ProcessorEditor from '../components/ProcessorEditor'
 import { DebugResultPanel, type SentRequest } from '../components/ApiSpecPanel'
 import { useI18n } from '../i18n'
 
 type TFn = (key: string, fallback?: string) => string
 // 可编辑表单 + 场景参数行(存入 scenario.meta)。
 type ScenarioParam = { name: string; type: string; value: string; tags: string; desc: string }
-type ScenarioForm = { name: string; status: string; description: string; tags: string[]; priority: string; params: ScenarioParam[]; csv: string; moduleId: string; disabledSteps: string[] }
+type ScenarioForm = { name: string; status: string; description: string; tags: string[]; priority: string; params: ScenarioParam[]; csv: string; moduleId: string; disabledSteps: string[]; preProcessors: unknown[]; postProcessors: unknown[]; assertions: unknown[]; envCookie: boolean; sharedCookie: boolean }
 const SCENARIO_STATUSES = ['DRAFT', 'DEBUGGING', 'COMPLETED', 'DEPRECATED']
 const SCENARIO_PRIORITIES = ['P0', 'P1', 'P2', 'P3']
 
@@ -252,6 +253,11 @@ function ScenarioDetail({ scenario }: { scenario: Scenario }) {
     csv: typeof m0.csvParams === 'string' ? (m0.csvParams as string) : '',
     moduleId: typeof m0.moduleId === 'string' ? (m0.moduleId as string) : '',
     disabledSteps: Array.isArray(m0.disabledSteps) ? (m0.disabledSteps as string[]) : [],
+    preProcessors: Array.isArray(m0.preProcessors) ? (m0.preProcessors as unknown[]) : [],
+    postProcessors: Array.isArray(m0.postProcessors) ? (m0.postProcessors as unknown[]) : [],
+    assertions: Array.isArray(m0.assertions) ? (m0.assertions as unknown[]) : [],
+    envCookie: typeof m0.envCookie === 'boolean' ? (m0.envCookie as boolean) : true,
+    sharedCookie: typeof m0.sharedCookie === 'boolean' ? (m0.sharedCookie as boolean) : false,
   })
   const [modules, setModules] = useState<ApiModule[]>([])
   const toggleStep = (id: string) => patchForm({ disabledSteps: form.disabledSteps.includes(id) ? form.disabledSteps.filter((x) => x !== id) : [...form.disabledSteps, id] })
@@ -264,7 +270,7 @@ function ScenarioDetail({ scenario }: { scenario: Scenario }) {
       await api.updateScenario(scenario.id, {
         name: form.name.trim(),
         status: form.status,
-        meta: { description: form.description, tags: form.tags, priority: form.priority, params: form.params, csvParams: form.csv, moduleId: form.moduleId, disabledSteps: form.disabledSteps },
+        meta: { description: form.description, tags: form.tags, priority: form.priority, params: form.params, csvParams: form.csv, moduleId: form.moduleId, disabledSteps: form.disabledSteps, preProcessors: form.preProcessors, postProcessors: form.postProcessors, assertions: form.assertions, envCookie: form.envCookie, sharedCookie: form.sharedCookie },
       })
       message.success(t('scenario.saved', '已保存'))
     } catch (e) {
@@ -435,11 +441,26 @@ function ScenarioDetail({ scenario }: { scenario: Scenario }) {
     { key: 'basic', label: t('apidef.basicInfo', '基本信息'), children: <ScenarioBasicInfo scenario={scenario} stepCount={steps.length} form={form} patch={patchForm} modules={modules} /> },
     { key: 'steps', label: t('scenario.stepsTab', '步骤'), children: stepsTab },
     { key: 'params', label: t('scenario.paramsTab', '参数'), children: <ScenarioParams params={form.params} onChange={(params) => patchForm({ params })} csv={form.csv} onCsvChange={(csv) => patchForm({ csv })} /> },
-    { key: 'prepost', label: t('scenario.prePostTab', '前/后置'), children: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('scenario.prePostSoon', '前/后置处理即将接入')} style={{ margin: '32px 0' }} /> },
-    { key: 'assert', label: t('apidef.assertions', '断言'), children: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('scenario.assertSoon', '场景级断言即将接入')} style={{ margin: '32px 0' }} /> },
+    {
+      key: 'prepost',
+      label: t('scenario.prePostTab', '前/后置'),
+      children: (
+        <Space direction="vertical" size={20} style={{ width: '100%' }}>
+          <div>
+            <Typography.Text strong>{t('apidef.preProcessors', '前置')}</Typography.Text>
+            <div style={{ marginTop: 8 }}><ProcessorEditor value={form.preProcessors as Record<string, unknown>[]} onChange={(v) => patchForm({ preProcessors: v })} allowed={['script', 'sql', 'wait']} /></div>
+          </div>
+          <div>
+            <Typography.Text strong>{t('apidef.postProcessors', '后置')}</Typography.Text>
+            <div style={{ marginTop: 8 }}><ProcessorEditor value={form.postProcessors as Record<string, unknown>[]} onChange={(v) => patchForm({ postProcessors: v })} allowed={['extract', 'script', 'sql', 'wait']} /></div>
+          </div>
+        </Space>
+      ),
+    },
+    { key: 'assert', label: t('apidef.assertions', '断言'), children: <AssertionEditor value={form.assertions as Record<string, unknown>[]} onChange={(v) => patchForm({ assertions: v })} /> },
     { key: 'exec', label: t('scenario.execHistoryTab', '执行历史'), children: <ScenarioExecutionsTab scenarioId={scenario.id} nameOf={nameOf} t={t} /> },
-    { key: 'change', label: t('apidef.changeHistory', '变更历史'), children: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('scenario.changeSoon', '变更历史即将接入')} style={{ margin: '32px 0' }} /> },
-    { key: 'settings', label: t('apidef.settings', '设置'), children: <ScenarioSettings failureStrategy={failureStrategy} onFailureStrategy={setFailureStrategy} t={t} /> },
+    { key: 'change', label: t('apidef.changeHistory', '变更历史'), children: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('scenario.changeSoon', '变更历史需后端审计日志,后续接入')} style={{ margin: '32px 0' }} /> },
+    { key: 'settings', label: t('apidef.settings', '设置'), children: <ScenarioSettings failureStrategy={failureStrategy} onFailureStrategy={setFailureStrategy} envCookie={form.envCookie} sharedCookie={form.sharedCookie} onCookie={(p) => patchForm(p)} t={t} /> },
   ]
 
   return (
@@ -748,16 +769,16 @@ function ScenarioParams({ params, onChange, csv, onCsvChange }: { params: Scenar
 }
 
 // 设置:步骤执行失败规则(对齐参考图 #24;映射到 run 的 failure_strategy)。Cookie 配置占位。
-function ScenarioSettings({ failureStrategy, onFailureStrategy, t }: { failureStrategy: 'CONTINUE' | 'STOP'; onFailureStrategy: (v: 'CONTINUE' | 'STOP') => void; t: TFn }) {
+function ScenarioSettings({ failureStrategy, onFailureStrategy, envCookie, sharedCookie, onCookie, t }: { failureStrategy: 'CONTINUE' | 'STOP'; onFailureStrategy: (v: 'CONTINUE' | 'STOP') => void; envCookie: boolean; sharedCookie: boolean; onCookie: (p: { envCookie?: boolean; sharedCookie?: boolean }) => void; t: TFn }) {
   return (
     <Space direction="vertical" size={18} style={{ width: '100%' }}>
       <div>
         <div style={{ fontWeight: 600, marginBottom: 8 }}>{t('scenario.cookieConfig', 'Cookie 配置')}</div>
         <Space direction="vertical" size={8}>
-          <Space><Switch disabled /><span>{t('scenario.envCookie', '环境 Cookie')}</span></Space>
-          <Space><Switch disabled /><span>{t('scenario.sharedCookie', '共享 Cookie')}</span></Space>
+          <Space><Switch checked={envCookie} onChange={(v) => onCookie({ envCookie: v })} /><span>{t('scenario.envCookie', '环境 Cookie')}</span></Space>
+          <Space><Switch checked={sharedCookie} onChange={(v) => onCookie({ sharedCookie: v })} /><span>{t('scenario.sharedCookie', '共享 Cookie(步骤间共享会话)')}</span></Space>
         </Space>
-        <Typography.Text type="secondary" style={{ fontSize: 12 }}>{t('scenario.cookieSoon', '(Cookie 管理即将接入)')}</Typography.Text>
+        <Typography.Text type="secondary" style={{ fontSize: 12 }}>{t('scenario.cookieSaveNote', '随保存写入 meta;执行期 Cookie 透传需后端会话支持')}</Typography.Text>
       </div>
       <div>
         <div style={{ fontWeight: 600, marginBottom: 8 }}>{t('scenario.failureRule', '步骤执行失败规则')}</div>
