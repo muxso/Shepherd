@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
-import { Button, Drawer, Dropdown, Empty, Form, Input, Modal, Radio, Segmented, Select, Space, Switch, Table, Tabs, Tag, Typography } from 'antd'
+import { Button, Drawer, Dropdown, Empty, Form, Input, Modal, Radio, Segmented, Select, Space, Switch, Table, Tabs, Tag, Typography, Upload } from 'antd'
 import { message, modal } from '../feedback'
-import { PlayCircleOutlined, PlusOutlined, SaveOutlined, ThunderboltOutlined, DownOutlined, LinkOutlined, SwapOutlined, DeleteOutlined, FullscreenOutlined, CloseOutlined, SearchOutlined, FilterOutlined, ReloadOutlined, MoreOutlined, ImportOutlined } from '@ant-design/icons'
+import { PlayCircleOutlined, PlusOutlined, SaveOutlined, ThunderboltOutlined, DownOutlined, LinkOutlined, SwapOutlined, DeleteOutlined, FullscreenOutlined, CloseOutlined, SearchOutlined, FilterOutlined, ReloadOutlined, MoreOutlined, ImportOutlined, InboxOutlined } from '@ant-design/icons'
 import { api, ApiError, type ApiCase, type ApiDefinition, type ApiModule, type DebugResponse, type Environment, type ReportResultItem, type Scenario, type ScenarioChange, type ScenarioExecution, type ScenarioReportDetail, type ScenarioRunResult, type ScenarioStep } from '../api'
 import type { ColumnsType } from 'antd/es/table'
 import { useApp } from '../context'
@@ -28,8 +28,9 @@ export default function Scenarios() {
   const [search, setSearch] = useState('')
   const [moduleSearch, setModuleSearch] = useState('')
   const [selModule, setSelModule] = useState('ALL') // ALL | UNFILED | <moduleId>
-  const [createOpen, setCreateOpen] = useState(false)
+  const [importOpen, setImportOpen] = useState(false) // 导入场景抽屉
   const tabs = useWorkTabs()
+  const NEW_KEY = '__new_scenario__'
 
   const load = async () => {
     if (!projectId) { setList([]); setModules([]); return }
@@ -83,8 +84,8 @@ export default function Scenarios() {
     <>
       <div style={{ padding: '10px 10px 6px' }}>
         <Space.Compact style={{ width: '100%', marginBottom: 8 }}>
-          <Button type="primary" icon={<PlusOutlined />} style={{ flex: 1 }} onClick={() => setCreateOpen(true)}>{t('scenario.newScenario', '新建场景')}</Button>
-          <Button icon={<ImportOutlined />} style={{ flex: 1 }} onClick={() => message.info(t('scenario.importScenarioSoon', '导入场景即将接入'))}>{t('scenario.importScenario', '导入场景')}</Button>
+          <Button type="primary" icon={<PlusOutlined />} style={{ flex: 1 }} onClick={() => tabs.open(NEW_KEY)}>{t('scenario.newScenario', '新建场景')}</Button>
+          <Button icon={<ImportOutlined />} style={{ flex: 1 }} onClick={() => setImportOpen(true)}>{t('scenario.importScenario', '导入场景')}</Button>
         </Space.Compact>
         <Input size="small" allowClear prefix={<SearchOutlined style={{ color: '#bbb' }} />} placeholder={t('scenario.moduleSearchPh', '请输入模块名称进行搜索')} value={moduleSearch} onChange={(e) => setModuleSearch(e.target.value)} />
       </div>
@@ -158,10 +159,16 @@ export default function Scenarios() {
     </div>
   )
 
-  const detailTabs = tabs.openIds
-    .map((id) => list.find((s) => s.id === id))
-    .filter((s): s is Scenario => !!s)
-    .map((s) => ({ key: s.id, label: s.name, children: <ScenarioDetail scenario={s} /> }))
+  const detailTabs = tabs.openIds.flatMap((id) => {
+    if (id === NEW_KEY)
+      return [{
+        key: NEW_KEY,
+        label: t('scenario.newScenario', '新建场景'),
+        children: <NewScenarioTab projectId={projectId} modules={modules} onCreated={(s) => { tabs.close(NEW_KEY); load().then(() => tabs.open(s.id)) }} />,
+      }]
+    const s = list.find((x) => x.id === id)
+    return s ? [{ key: s.id, label: s.name, children: <ScenarioDetail scenario={s} /> }] : []
+  })
 
   return (
     <>
@@ -175,15 +182,7 @@ export default function Scenarios() {
         tabs={detailTabs}
         listContent={listContent}
       />
-      <Modal title={t('scenario.newScenario', '新建场景')} open={createOpen} onCancel={() => setCreateOpen(false)} footer={null} destroyOnHidden>
-        <CreateScenarioForm
-          projectId={projectId}
-          onCreated={(s) => {
-            setCreateOpen(false)
-            load().then(() => tabs.open(s.id))
-          }}
-        />
-      </Modal>
+      <ImportScenarioDrawer open={importOpen} projectId={projectId} modules={modules} onClose={() => setImportOpen(false)} />
     </>
   )
 }
@@ -1000,33 +999,6 @@ function ReportRow({ idx, r, label, t }: { idx: number; r: ReportResultItem; lab
   )
 }
 
-function CreateScenarioForm({ projectId, onCreated }: { projectId: string; onCreated: (s: Scenario) => void }) {
-  const { t } = useI18n()
-  const [saving, setSaving] = useState(false)
-  return (
-    <Form
-      layout="vertical"
-      onFinish={async (v: { name: string }) => {
-        setSaving(true)
-        try {
-          const s = await api.createScenario(projectId, v.name)
-          message.success(t('scenario.created', '场景已创建'))
-          onCreated(s)
-        } catch (e) {
-          message.error(e instanceof ApiError ? e.message : t('scenario.createFailed', '创建失败'))
-        } finally {
-          setSaving(false)
-        }
-      }}
-    >
-      <Form.Item name="name" label={t('scenario.name', '场景名')} rules={[{ required: true }]}>
-        <Input placeholder={t('scenario.namePlaceholder', '如:下单主流程')} autoFocus />
-      </Form.Item>
-      <Button type="primary" htmlType="submit" loading={saving} block>{t('a.create', '创建')}</Button>
-    </Form>
-  )
-}
-
 // 控制器子步骤(叶子)构建:CASE 引用 或 内联 REQUEST。
 type Child = { kind: 'CASE'; refId: string } | { kind: 'REQUEST'; method: string; url: string }
 
@@ -1337,6 +1309,116 @@ function ImportRequestDrawer({
             <Table<Scenario> rowKey="id" size="small" columns={scnCols} dataSource={fScns} pagination={{ pageSize: 10, size: 'small' }} rowSelection={{ selectedRowKeys: selScn, onChange: (k) => setSelScn(k.map(String)) }} locale={{ emptyText: <Empty description={t('scenario.noImportData', '暂无可引用数据,可切换项目获取数据')} /> }} />
           )}
         </div>
+      </div>
+    </Drawer>
+  )
+}
+
+// 新建场景:全屏 tab(对齐参考图 #38)。左=步骤编辑器占位 + 右=基本信息表单;保存创建场景后转入详情。
+function NewScenarioTab({ projectId, modules, onCreated }: { projectId: string; modules: ApiModule[]; onCreated: (s: Scenario) => void }) {
+  const { t } = useI18n()
+  const [name, setName] = useState('')
+  const [moduleId, setModuleId] = useState('')
+  const [priority, setPriority] = useState('P0')
+  const [status, setStatus] = useState('DRAFT')
+  const [tags, setTags] = useState<string[]>([])
+  const [tagInput, setTagInput] = useState('')
+  const [desc, setDesc] = useState('')
+  const [saving, setSaving] = useState(false)
+  const save = async () => {
+    if (!name.trim()) return message.warning(t('scenario.nameRequired', '请输入场景名'))
+    setSaving(true)
+    try {
+      const s = await api.createScenario(projectId, name.trim())
+      await api.updateScenario(s.id, { name: name.trim(), status, meta: { moduleId, priority, tags, description: desc } })
+      message.success(t('scenario.created', '场景已创建'))
+      onCreated(s)
+    } catch (e) {
+      message.error(e instanceof ApiError ? e.message : t('scenario.createFailed', '创建失败'))
+    } finally {
+      setSaving(false)
+    }
+  }
+  const field = (label: string, node: ReactNode, req?: boolean) => (
+    <div style={{ marginBottom: 14 }}>
+      <div style={{ fontSize: 13, color: '#5b6470', marginBottom: 6 }}>{req && <span style={{ color: '#ff4d4f', marginRight: 4 }}>*</span>}{label}</div>
+      {node}
+    </div>
+  )
+  const soon = (label: string) => <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={`${label} · ${t('scenario.saveFirst', '保存场景后可编辑')}`} style={{ margin: '32px 0' }} />
+  const stepsTab = (
+    <div>
+      <Typography.Text strong style={{ fontSize: 13 }}>{t('scenario.totalPrefix', '共')} 0 {t('scenario.totalSuffix', '个步骤')}</Typography.Text>
+      <div style={{ marginTop: 10 }}><Button type="dashed" icon={<PlusOutlined />} block disabled>{t('scenario.addStep', '添加步骤')}</Button></div>
+      <Typography.Text type="secondary" style={{ fontSize: 12 }}>{t('scenario.saveFirstSteps', '保存场景后可添加步骤')}</Typography.Text>
+    </div>
+  )
+  return (
+    <div style={{ padding: '12px 16px', height: '100%', overflow: 'auto' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+        <div style={{ flex: 1 }} />
+        <Select size="small" disabled placeholder={t('editor.selectEnv', '选择环境')} style={{ width: 180 }} options={[]} />
+        <Button type="primary" icon={<ThunderboltOutlined />} disabled title={t('scenario.saveFirst', '保存场景后可执行')}>{t('apidef.serverRun', '服务端执行')}</Button>
+        <Button type="primary" icon={<SaveOutlined />} loading={saving} onClick={save}>{t('a.save', '保存')}</Button>
+      </div>
+      <div style={{ display: 'flex', gap: 16, alignItems: 'flex-start' }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <Tabs className="ms-detail-tabs" size="small" items={[
+            { key: 'steps', label: t('scenario.stepsTab', '步骤'), children: stepsTab },
+            { key: 'params', label: t('scenario.paramsTab', '参数'), children: soon(t('scenario.paramsTab', '参数')) },
+            { key: 'prepost', label: t('scenario.prePostTab', '前/后置'), children: soon(t('scenario.prePostTab', '前/后置')) },
+            { key: 'assert', label: t('apidef.assertions', '断言'), children: soon(t('apidef.assertions', '断言')) },
+            { key: 'settings', label: t('apidef.settings', '设置'), children: soon(t('apidef.settings', '设置')) },
+          ]} />
+        </div>
+        {/* 右侧基本信息表单(对齐 #38)。 */}
+        <div style={{ width: 320, flexShrink: 0, borderLeft: '1px solid #f0f0f0', paddingLeft: 16 }}>
+          {field(t('scenario.name', '场景名称'), <Input value={name} onChange={(e) => setName(e.target.value)} placeholder={t('scenario.namePlaceholder2', '请输入场景名称')} />, true)}
+          {field(t('scenario.ownerModule', '所属模块'), <Select style={{ width: '100%' }} value={moduleId || undefined} onChange={(v) => setModuleId(v || '')} allowClear placeholder={t('scenario.unplanned', '未规划场景')} options={modules.map((m) => ({ value: m.id, label: m.name }))} />)}
+          {field(t('scenario.priority', '场景等级'), <Select style={{ width: '100%' }} value={priority} onChange={setPriority} options={SCENARIO_PRIORITIES.map((p) => ({ value: p, label: p }))} />)}
+          {field(t('scenario.sceneStatus', '场景状态'), <Select style={{ width: '100%' }} value={status} onChange={setStatus} options={SCENARIO_STATUSES.map((s) => ({ value: s, label: s }))} />)}
+          {field(t('scenario.tags', '标签'), (
+            <Space size={[6, 6]} wrap>
+              {tags.map((tg) => <Tag key={tg} closable onClose={() => setTags(tags.filter((x) => x !== tg))}>{tg}</Tag>)}
+              <Input size="small" style={{ width: 140 }} value={tagInput} onChange={(e) => setTagInput(e.target.value)} onPressEnter={() => { const v = tagInput.trim(); if (v && !tags.includes(v)) setTags([...tags, v]); setTagInput('') }} placeholder={t('apidef.addTag', '添加标签,回车结束')} />
+            </Space>
+          ))}
+          {field(t('scenario.descLabel', '描述'), <Input.TextArea rows={3} value={desc} onChange={(e) => setDesc(e.target.value)} placeholder={t('scenario.descPlaceholder', '请对该场景进行描述')} />)}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// 导入场景抽屉(对齐参考图 #39):格式标签 + 所属模块 + 导入模式 + 文件拖拽。解析需后端,先占位。
+function ImportScenarioDrawer({ open, modules, onClose }: { open: boolean; projectId: string; modules: ApiModule[]; onClose: () => void }) {
+  const { t } = useI18n()
+  const [fmt, setFmt] = useState('MeterSphere')
+  const [moduleId, setModuleId] = useState('')
+  const [mode, setMode] = useState('skip')
+  const label = (s: string) => <div style={{ fontSize: 13, color: '#5b6470', margin: '14px 0 6px' }}>{s}</div>
+  return (
+    <Drawer
+      open={open}
+      onClose={onClose}
+      width={560}
+      title={t('scenario.importScenario', '导入场景')}
+      footer={<div style={{ textAlign: 'right' }}><Space><Button onClick={onClose}>{t('a.cancel', '取消')}</Button><Button type="primary" onClick={() => message.info(t('scenario.importParseSoon', '导入解析需后端支持(MeterSphere/Jmeter/Har),后续接入'))}>{t('scenario.doImport', '导入')}</Button></Space></div>}
+    >
+      <Segmented value={fmt} onChange={(v) => setFmt(v as string)} options={[{ label: 'MeterSphere', value: 'MeterSphere' }, { label: 'Jmeter', value: 'Jmeter' }, { label: 'Har', value: 'Har' }]} />
+      {label(t('scenario.ownerModule', '所属模块'))}
+      <Select style={{ width: '100%' }} value={moduleId || undefined} onChange={(v) => setModuleId(v || '')} allowClear placeholder={t('scenario.unplanned', '未规划场景')} options={modules.map((m) => ({ value: m.id, label: m.name }))} />
+      {label(t('scenario.importMode', '导入模式'))}
+      <Radio.Group value={mode} onChange={(e) => setMode(e.target.value)}>
+        <Radio value="cover">{t('scenario.modeCover', '覆盖')}</Radio>
+        <Radio value="skip">{t('scenario.modeSkip', '不覆盖')}</Radio>
+      </Radio.Group>
+      <div style={{ marginTop: 16 }}>
+        <Upload.Dragger maxCount={1} beforeUpload={() => false} accept=".ms,.json,.jmx,.har">
+          <p className="ant-upload-drag-icon"><InboxOutlined style={{ color: '#7c3aed' }} /></p>
+          <p className="ant-upload-text">{t('scenario.dropFile', '拖拽或点击此区域选择文件')}</p>
+          <p className="ant-upload-hint" style={{ fontSize: 12 }}>{t('scenario.fileHint', '仅支持 ms 格式文件,单个大小不超过 50 MB')}</p>
+        </Upload.Dragger>
       </div>
     </Drawer>
   )
