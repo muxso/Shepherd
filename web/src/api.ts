@@ -302,6 +302,15 @@ export interface ScenarioReportDetail {
   results: ReportResultItem[]
 }
 
+/** 场景变更历史一条(审计日志)。 */
+export interface ScenarioChange {
+  id: string
+  action: string // CREATE | UPDATE | ADD_STEP | DELETE_STEP | REORDER
+  detail?: string | null
+  userId?: string | null
+  createdAt: string
+}
+
 export interface ScenarioExecution {
   id: string
   scenarioId: string
@@ -774,4 +783,6 @@ export const api = {
     http.get<Page<ScenarioExecution>>(`/api/scenario/${scenarioId}/executions`),
   scenarioReport: (reportId: string) =>
     http.get<ScenarioReportDetail>(`/api/scenario-report/${reportId}`),
+  scenarioChanges: (scenarioId: string) =>
+    http.get<ScenarioChange[]>(`/api/scenario/${scenarioId}/changes`),
 }

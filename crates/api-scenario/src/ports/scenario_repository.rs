@@ -3,8 +3,8 @@
 use async_trait::async_trait;
 
 use crate::domain::{
-    ApiScenario, NewApiScenario, NewScenarioStep, ScenarioExecution, ScenarioReference,
-    ScenarioStep,
+    ApiScenario, NewApiScenario, NewScenarioStep, ScenarioChange, ScenarioExecution,
+    ScenarioReference, ScenarioStep,
 };
 
 use thiserror::Error;
@@ -54,6 +54,18 @@ pub trait ApiScenarioRepository: Send + Sync {
 
     /// 重排场景步骤:按给定 step_id 顺序写 step_order(从 1 起)。未列出的步骤顺序不保证。
     async fn reorder_steps(&self, scenario_id: &str, ordered_ids: &[String]) -> Result<(), RepoError>;
+
+    /// 追加一条变更历史(审计)。best-effort,调用方失败可忽略。
+    async fn record_change(
+        &self,
+        scenario_id: &str,
+        action: &str,
+        detail: Option<&str>,
+        user_id: Option<&str>,
+    ) -> Result<(), RepoError>;
+
+    /// 列出某场景的变更历史(按时间降序,最新在前)。
+    async fn list_changes(&self, scenario_id: &str) -> Result<Vec<ScenarioChange>, RepoError>;
 
     /// 记录一次场景执行。status 为状态字符串("PENDING"/"RUNNING"/"SUCCESS"/"ERROR"),
     /// 非法值由调用方在领域层保证;仓储原样落库。

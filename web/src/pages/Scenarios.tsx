@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { Button, Drawer, Dropdown, Empty, Form, Input, Modal, Radio, Segmented, Select, Space, Switch, Table, Tabs, Tag, Tree, Typography } from 'antd'
 import { message, modal } from '../feedback'
 import { PlayCircleOutlined, PlusOutlined, SaveOutlined, ThunderboltOutlined, DownOutlined, LinkOutlined, SwapOutlined, DeleteOutlined, FullscreenOutlined, CloseOutlined } from '@ant-design/icons'
-import { api, ApiError, type ApiCase, type ApiDefinition, type ApiModule, type DebugResponse, type Environment, type ReportResultItem, type Scenario, type ScenarioExecution, type ScenarioReportDetail, type ScenarioRunResult, type ScenarioStep } from '../api'
+import { api, ApiError, type ApiCase, type ApiDefinition, type ApiModule, type DebugResponse, type Environment, type ReportResultItem, type Scenario, type ScenarioChange, type ScenarioExecution, type ScenarioReportDetail, type ScenarioRunResult, type ScenarioStep } from '../api'
 import type { ColumnsType } from 'antd/es/table'
 import { useApp } from '../context'
 import { methodColor, statusColor, outcomeColor } from '../components/tags'
@@ -459,7 +459,7 @@ function ScenarioDetail({ scenario }: { scenario: Scenario }) {
     },
     { key: 'assert', label: t('apidef.assertions', '断言'), children: <AssertionEditor value={form.assertions as Record<string, unknown>[]} onChange={(v) => patchForm({ assertions: v })} /> },
     { key: 'exec', label: t('scenario.execHistoryTab', '执行历史'), children: <ScenarioExecutionsTab scenarioId={scenario.id} nameOf={nameOf} t={t} /> },
-    { key: 'change', label: t('apidef.changeHistory', '变更历史'), children: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('scenario.changeSoon', '变更历史需后端审计日志,后续接入')} style={{ margin: '32px 0' }} /> },
+    { key: 'change', label: t('apidef.changeHistory', '变更历史'), children: <ScenarioChangesTab scenarioId={scenario.id} t={t} /> },
     { key: 'settings', label: t('apidef.settings', '设置'), children: <ScenarioSettings failureStrategy={failureStrategy} onFailureStrategy={setFailureStrategy} envCookie={form.envCookie} sharedCookie={form.sharedCookie} onCookie={(p) => patchForm(p)} t={t} /> },
   ]
 
@@ -819,6 +819,39 @@ function ScenarioExecutionsTab({ scenarioId, nameOf, t }: { scenarioId: string; 
       />
       <ScenarioReportModal reportId={reportId} nameOf={nameOf} onClose={() => setReportId(null)} />
     </>
+  )
+}
+
+// 变更历史标签(审计日志):操作 / 详情 / 操作人 / 时间。
+const CHANGE_ACTIONS: Record<string, { label: string; color: string }> = {
+  CREATE: { label: '创建', color: 'green' },
+  UPDATE: { label: '更新', color: 'blue' },
+  ADD_STEP: { label: '新增步骤', color: 'geekblue' },
+  DELETE_STEP: { label: '删除步骤', color: 'red' },
+  REORDER: { label: '调整顺序', color: 'purple' },
+}
+function ScenarioChangesTab({ scenarioId, t }: { scenarioId: string; t: TFn }) {
+  const [rows, setRows] = useState<ScenarioChange[]>([])
+  const [loading, setLoading] = useState(false)
+  useEffect(() => {
+    setLoading(true)
+    api.scenarioChanges(scenarioId).then(setRows).catch(() => setRows([])).finally(() => setLoading(false))
+  }, [scenarioId])
+  return (
+    <Table<ScenarioChange>
+      rowKey="id"
+      size="small"
+      loading={loading}
+      dataSource={rows}
+      locale={{ emptyText: <Empty description={t('scenario.noChanges', '暂无变更记录')} /> }}
+      pagination={{ pageSize: 20, size: 'small' }}
+      columns={[
+        { title: t('scenario.changeAction', '操作'), dataIndex: 'action', width: 120, render: (a: string) => { const m = CHANGE_ACTIONS[a] || { label: a, color: 'default' }; return <Tag color={m.color}>{m.label}</Tag> } },
+        { title: t('scenario.changeDetail', '详情'), dataIndex: 'detail', render: (v?: string) => v || '—' },
+        { title: t('scenario.changeUser', '操作人'), dataIndex: 'userId', width: 140, render: (v?: string) => v || '—' },
+        { title: t('scenario.execTime', '时间'), dataIndex: 'createdAt', width: 200, render: (v: string) => <span className="ms-mono" style={{ fontSize: 12 }}>{v?.slice(0, 19)}</span> },
+      ]}
+    />
   )
 }
 

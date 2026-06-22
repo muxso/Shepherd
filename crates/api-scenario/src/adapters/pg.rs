@@ -12,7 +12,8 @@ use async_trait::async_trait;
 
 use crate::domain::{
     ApiScenario, ControlKind, ExecutionStatus, InlineRequest, NewApiScenario, NewScenarioStep,
-    RefMode, ScenarioExecution, ScenarioReference, ScenarioStatus, ScenarioStep, StepKind,
+    RefMode, ScenarioChange, ScenarioExecution, ScenarioReference, ScenarioStatus, ScenarioStep,
+    StepKind,
 };
 use crate::ports::{ApiScenarioRepository, RepoError};
 use sqlx::{PgPool, Row};
@@ -288,6 +289,50 @@ impl ApiScenarioRepository for PgApiScenarioRepository {
                 .map_err(map_err)?;
         }
         Ok(())
+    }
+
+    async fn record_change(
+        &self,
+        scenario_id: &str,
+        action: &str,
+        detail: Option<&str>,
+        user_id: Option<&str>,
+    ) -> Result<(), RepoError> {
+        sqlx::query(
+            "INSERT INTO ms_api_scenario_change (scenario_id, action, detail, user_id) \
+             VALUES ($1, $2, $3, $4)",
+        )
+        .bind(scenario_id)
+        .bind(action)
+        .bind(detail)
+        .bind(user_id)
+        .execute(&self.pool)
+        .await
+        .map_err(map_err)?;
+        Ok(())
+    }
+
+    async fn list_changes(&self, scenario_id: &str) -> Result<Vec<ScenarioChange>, RepoError> {
+        let rows = sqlx::query(
+            "SELECT id, scenario_id, action, detail, user_id, created_at::text AS created_at \
+             FROM ms_api_scenario_change WHERE scenario_id = $1 ORDER BY created_at DESC",
+        )
+        .bind(scenario_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(map_err)?;
+        rows.iter()
+            .map(|r| {
+                Ok(ScenarioChange {
+                    id: r.try_get("id").map_err(map_err)?,
+                    scenario_id: r.try_get("scenario_id").map_err(map_err)?,
+                    action: r.try_get("action").map_err(map_err)?,
+                    detail: r.try_get("detail").map_err(map_err)?,
+                    user_id: r.try_get("user_id").map_err(map_err)?,
+                    created_at: r.try_get::<String, _>("created_at").map_err(map_err)?,
+                })
+            })
+            .collect()
     }
 
     async fn record_execution(

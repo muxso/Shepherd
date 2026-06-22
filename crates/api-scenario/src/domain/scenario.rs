@@ -350,6 +350,17 @@ impl NewApiScenario {
     }
 }
 
+/// 场景变更历史一条记录(审计日志)。created_at 文本承载。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ScenarioChange {
+    pub id: String,
+    pub scenario_id: String,
+    pub action: String,
+    pub detail: Option<String>,
+    pub user_id: Option<String>,
+    pub created_at: String,
+}
+
 /// 场景对某资源(接口用例)的引用引用记录。用于「引用关系」反查:
 /// 给定一组用例 id,返回引用了它们的场景(去重后)。
 #[derive(Debug, Clone, PartialEq, Eq)]
