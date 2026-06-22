@@ -172,8 +172,10 @@ function stepToNode(s: ScenarioStep, t: TFn, nameOf: NameOf): Node {
   return { kind: s.kind, content: '—' }
 }
 
-function StepRow({ node, idx, depth, t }: { node: Node; idx: number; depth: number; t: TFn }) {
+function StepRow({ node, idx, depth, t, result }: { node: Node; idx: number; depth: number; t: TFn; result?: ReportResultItem }) {
   const meta = makeStepMeta(t)[node.kind] || { label: node.kind, color: 'default' }
+  const ok = result?.outcome === 'SUCCESS'
+  const muted: React.CSSProperties = { color: '#8a9099', fontSize: 12, whiteSpace: 'nowrap' }
   return (
     <>
       <div
@@ -195,6 +197,15 @@ function StepRow({ node, idx, depth, t }: { node: Node; idx: number; depth: numb
         <span style={{ color: '#9aa0a6', fontSize: 12, minWidth: 18 }}>{idx}</span>
         <Tag color={meta.color} style={{ margin: 0 }}>{meta.label}</Tag>
         <span style={{ flex: 1, minWidth: 0 }}>{node.content}</span>
+        {/* 执行后逐步结果(对齐参考图 #28):通过/状态码/响应时间/响应大小。 */}
+        {result && (
+          <>
+            <Tag color={ok ? 'green' : 'red'} style={{ margin: 0 }}>{ok ? t('scenario.pass', '通过') : t('scenario.fail', '失败')}</Tag>
+            {result.statusCode != null && <span style={muted}>{t('apidef.statusCode', '状态码')} <span style={{ color: result.statusCode < 400 ? '#52c41a' : '#ff4d4f' }}>{result.statusCode}</span></span>}
+            <span style={muted}>{t('scenario.respTime', '响应时间')} {result.latencyMs != null ? `${result.latencyMs} ms` : '—'}</span>
+            <span style={muted}>{t('scenario.respSize', '响应大小')} {result.respSize != null ? `${result.respSize} bytes` : '—'}</span>
+          </>
+        )}
       </div>
       {node.children?.map((c, i) => <StepRow key={i} node={c} idx={i + 1} depth={depth + 1} t={t} />)}
     </>
@@ -210,6 +221,9 @@ function ScenarioDetail({ scenario }: { scenario: Scenario }) {
   const [running, setRunning] = useState(false)
   const [add, setAdd] = useState<string>('') // 当前打开的添加表单类型
   const [lastRun, setLastRun] = useState<ScenarioRunResult | null>(null)
+  // 执行后逐步结果(按 caseId 归集:REQUEST→"METHOD url",CASE→case_id)+ 报告弹窗。
+  const [stepResults, setStepResults] = useState<Record<string, ReportResultItem>>({})
+  const [reportModalId, setReportModalId] = useState<string | null>(null)
   const [nameMap, setNameMap] = useState<Record<string, string>>({})
   const [caseMap, setCaseMap] = useState<Record<string, ApiCase>>({})
   const [selStep, setSelStep] = useState<{ step: ScenarioStep; idx: number } | null>(null)
@@ -286,6 +300,13 @@ function ScenarioDetail({ scenario }: { scenario: Scenario }) {
     try {
       const r = await api.runScenario(scenario.id, scenario.projectId, { environmentId: envId || undefined, failureStrategy })
       setLastRun(r)
+      // 拉报告明细,把逐步结果(通过/状态码/耗时/大小)映射到步骤行。
+      const rep = await api.scenarioReport(r.reportId).catch(() => null)
+      if (rep) {
+        const map: Record<string, ReportResultItem> = {}
+        rep.results.forEach((res) => { map[res.caseId] = res })
+        setStepResults(map)
+      }
       message.success(`${t('scenario.triggered', '场景已触发执行')} · ${r.status}`)
     } catch (e) {
       message.error(e instanceof ApiError ? `${t('scenario.execFailed', '执行失败')}:${e.status}` : t('scenario.execFailed', '执行失败'))
@@ -293,6 +314,8 @@ function ScenarioDetail({ scenario }: { scenario: Scenario }) {
       setRunning(false)
     }
   }
+  // 步骤 → 结果键:CASE 用 case_id;REQUEST 用 "METHOD url"(对齐执行器 label)。
+  const stepKey = (s: ScenarioStep): string | null => (s.caseId ? s.caseId : s.request ? `${s.request.method} ${s.request.url}` : null)
 
   const ordered = [...steps].sort((a, b) => a.order - b.order)
   const nextOrder = steps.length ? Math.max(...steps.map((s) => s.order)) + 1 : 1
@@ -310,11 +333,14 @@ function ScenarioDetail({ scenario }: { scenario: Scenario }) {
       {ordered.length === 0 ? (
         <Empty description={t('scenario.emptySteps', '暂无步骤,点「添加步骤」')} />
       ) : (
-        ordered.map((s, i) => (
-          <div key={s.id} onClick={() => setSelStep({ step: s, idx: i + 1 })} style={{ cursor: 'pointer' }}>
-            <StepRow node={stepToNode(s, t, nameOf)} idx={i + 1} depth={0} t={t} />
-          </div>
-        ))
+        ordered.map((s, i) => {
+          const k = stepKey(s)
+          return (
+            <div key={s.id} onClick={() => setSelStep({ step: s, idx: i + 1 })} style={{ cursor: 'pointer' }}>
+              <StepRow node={stepToNode(s, t, nameOf)} idx={i + 1} depth={0} t={t} result={k ? stepResults[k] : undefined} />
+            </div>
+          )
+        })
       )}
       <div style={{ textAlign: 'center', marginTop: 10 }}>
         <Dropdown
@@ -388,6 +414,9 @@ function ScenarioDetail({ scenario }: { scenario: Scenario }) {
           <span style={{ fontWeight: 600, fontSize: 15, color: '#1f2329' }}>{form.name}</span>
           {form.tags.map((tg) => <Tag key={tg} style={{ margin: 0 }}>{tg}</Tag>)}
           <LinkOutlined style={{ color: '#bbb' }} />
+          <div style={{ flex: 1 }} />
+          {/* 全部步骤执行完成后显示「查看执行报告」(对齐参考图 #28 红色区域)。 */}
+          {lastRun && <Button type="link" onClick={() => setReportModalId(lastRun.reportId)}>{t('scenario.viewReport', '查看执行报告')}</Button>}
         </div>
       </div>
       <Tabs className="ms-detail-tabs" defaultActiveKey="steps" items={tabs} />
@@ -400,6 +429,7 @@ function ScenarioDetail({ scenario }: { scenario: Scenario }) {
         onClose={() => setSelStep(null)}
         onDeleted={() => { setSelStep(null); loadSteps() }}
       />
+      <ScenarioReportModal reportId={reportModalId} nameOf={nameOf} onClose={() => setReportModalId(null)} />
     </div>
   )
 }
