@@ -326,6 +326,8 @@ pub struct ScenarioStep {
 pub struct NewApiScenario {
     pub project_id: String,
     pub name: String,
+    /// 创建人 user_id(组装根传入;无则 None)。
+    pub created_by: Option<String>,
 }
 
 impl NewApiScenario {
@@ -338,7 +340,13 @@ impl NewApiScenario {
         if name.is_empty() {
             return Err(ScenarioError::EmptyName);
         }
-        Ok(Self { project_id: project_id.to_string(), name: name.to_string() })
+        Ok(Self { project_id: project_id.to_string(), name: name.to_string(), created_by: None })
+    }
+
+    /// 设置创建人(链式)。
+    pub fn with_created_by(mut self, user_id: Option<&str>) -> Self {
+        self.created_by = user_id.map(|s| s.to_string());
+        self
     }
 }
 
@@ -361,6 +369,10 @@ pub struct ApiScenario {
     pub status: ScenarioStatus,
     /// 元信息(前端约定形状:{description, tags, priority, moduleId, params, csvParams})。
     pub meta: serde_json::Value,
+    /// 审计:创建人 user_id / 创建时间 / 更新时间(文本承载,见 0046 迁移)。
+    pub created_by: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
     pub steps: Vec<ScenarioStep>,
 }
 

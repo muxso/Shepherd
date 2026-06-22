@@ -155,6 +155,10 @@ struct ScenarioResponse {
     status: String,
     /// 元信息(描述/标签/等级/模块/参数);不透明 JSON。
     meta: serde_json::Value,
+    /// 审计:创建人/创建时间/更新时间(只读;见 0046 迁移)。
+    created_by: Option<String>,
+    created_at: String,
+    updated_at: String,
     steps: Vec<ScenarioStepResponse>,
 }
 
@@ -166,6 +170,9 @@ impl From<ApiScenario> for ScenarioResponse {
             name: s.name,
             status: s.status.as_str().to_string(),
             meta: s.meta,
+            created_by: s.created_by,
+            created_at: s.created_at,
+            updated_at: s.updated_at,
             steps: s.steps.iter().map(ScenarioStepResponse::from).collect(),
         }
     }
@@ -309,7 +316,7 @@ async fn create_scenario(
     if !user.can("API_SCENARIO", "ADD") {
         return (StatusCode::FORBIDDEN, "permission denied").into_response();
     }
-    match st.create.execute(&req.project_id, &req.name).await {
+    match st.create.execute(&req.project_id, &req.name, Some(&user.user_id)).await {
         Ok(s) => (StatusCode::CREATED, Json(ScenarioResponse::from(s))).into_response(),
         Err(CreateScenarioError::Validation(_)) => {
             (StatusCode::BAD_REQUEST, "invalid scenario payload").into_response()

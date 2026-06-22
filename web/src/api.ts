@@ -256,6 +256,10 @@ export interface Scenario {
   status: string
   /** 元信息(描述/标签/等级/模块/参数);不透明 JSON(见 0044 迁移)。 */
   meta?: Record<string, unknown>
+  /** 审计(只读;见 0046 迁移)。 */
+  createdBy?: string | null
+  createdAt?: string
+  updatedAt?: string
   /** 列表接口已返回步骤,用于显示步骤数。 */
   steps?: ScenarioStep[]
 }

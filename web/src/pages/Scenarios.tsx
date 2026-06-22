@@ -590,7 +590,10 @@ function ScenarioBasicInfo({ scenario, stepCount, form, patch }: { scenario: Sce
       {field(t('scenario.descLabel', '描述'), <Input.TextArea rows={3} value={form.description} onChange={(e) => patch({ description: e.target.value })} placeholder={t('scenario.descPlaceholder', '请对该场景进行描述')} />)}
       {field(t('scenario.colSteps', '步骤数'), <span>{stepCount}</span>)}
       {field('ID', <span className="ms-mono" style={{ fontSize: 12 }}>{scenario.id}</span>)}
-      <Typography.Text type="secondary" style={{ fontSize: 12 }}>{t('scenario.moduleSoon', '所属模块 / 创建人 / 时间 需后端补列,后续接入')}</Typography.Text>
+      {field(t('scenario.createdBy', '创建人'), <Input value={scenario.createdBy || '—'} readOnly />)}
+      {field(t('scenario.createdAt', '创建时间'), <Input value={scenario.createdAt?.slice(0, 19) || '—'} readOnly className="ms-mono" />)}
+      {field(t('scenario.updatedAt', '更新时间'), <Input value={scenario.updatedAt?.slice(0, 19) || '—'} readOnly className="ms-mono" />)}
+      <Typography.Text type="secondary" style={{ fontSize: 12 }}>{t('scenario.moduleSoon', '所属模块 需场景模块树概念,后续接入')}</Typography.Text>
     </div>
   )
 }
