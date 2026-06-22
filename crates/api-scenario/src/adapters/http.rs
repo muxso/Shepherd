@@ -35,6 +35,8 @@ struct ScenarioAppState {
     add_step: AddStepUseCase,
     compile: CompileScenarioUseCase,
     list_executions: ListScenarioExecutionsUseCase,
+    /// 直接用于 PATCH 更新场景基本信息(名称/状态/元信息);其余走用例。
+    repo: Arc<dyn ApiScenarioRepository>,
     sessions: Arc<dyn SessionStore>,
 }
 
@@ -55,12 +57,13 @@ pub fn router(
         get: GetScenarioUseCase::new(repo.clone()),
         add_step: AddStepUseCase::new(repo.clone()),
         compile: CompileScenarioUseCase::new(repo.clone()),
-        list_executions: ListScenarioExecutionsUseCase::new(repo),
+        list_executions: ListScenarioExecutionsUseCase::new(repo.clone()),
+        repo,
         sessions,
     };
     Router::new()
         .route("/api/scenario", post(create_scenario).get(list_scenarios))
-        .route("/api/scenario/{id}", get(get_scenario))
+        .route("/api/scenario/{id}", get(get_scenario).patch(update_scenario))
         .route("/api/scenario/{id}/step", post(add_step))
         .route("/api/scenario/{id}/compile", get(compile_scenario))
         .route("/api/scenario/{id}/executions", get(list_executions))
@@ -149,6 +152,8 @@ struct ScenarioResponse {
     project_id: String,
     name: String,
     status: String,
+    /// 元信息(描述/标签/等级/模块/参数);不透明 JSON。
+    meta: serde_json::Value,
     steps: Vec<ScenarioStepResponse>,
 }
 
@@ -159,9 +164,20 @@ impl From<ApiScenario> for ScenarioResponse {
             project_id: s.project_id,
             name: s.name,
             status: s.status.as_str().to_string(),
+            meta: s.meta,
             steps: s.steps.iter().map(ScenarioStepResponse::from).collect(),
         }
     }
+}
+
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+struct ScenarioUpdateBody {
+    name: String,
+    #[serde(default)]
+    status: Option<String>,
+    #[serde(default)]
+    meta: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Deserialize, ToSchema)]
@@ -321,6 +337,37 @@ async fn list_scenarios(
 #[utoipa::path(get, path = "/api/scenario/{id}", tag = "api-scenario", params(("id" = String, Path)), responses((status = 200, body = ScenarioResponse), (status = 404)))]
 async fn get_scenario(State(st): State<ScenarioAppState>, Path(id): Path<String>) -> Response {
     match st.get.execute(&id).await {
+        Ok(Some(s)) => (StatusCode::OK, Json(ScenarioResponse::from(s))).into_response(),
+        Ok(None) => (StatusCode::NOT_FOUND, "scenario not found").into_response(),
+        Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
+    }
+}
+
+#[utoipa::path(patch, path = "/api/scenario/{id}", tag = "api-scenario", params(("id" = String, Path)), request_body = ScenarioUpdateBody, responses((status = 200, body = ScenarioResponse), (status = 400), (status = 404)), security(("bearer" = [])))]
+async fn update_scenario(
+    user: AuthUser,
+    State(st): State<ScenarioAppState>,
+    Path(id): Path<String>,
+    Json(req): Json<ScenarioUpdateBody>,
+) -> Response {
+    if !user.can("API_SCENARIO", "UPDATE") {
+        return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
+    let name = req.name.trim();
+    if name.is_empty() {
+        return (StatusCode::BAD_REQUEST, "name required").into_response();
+    }
+    // 名称为一等列;状态缺省沿用已有(需先取);meta 整体替换(缺省空对象)。
+    let status = match &req.status {
+        Some(s) if !s.trim().is_empty() => s.trim().to_string(),
+        _ => match st.get.execute(&id).await {
+            Ok(Some(s)) => s.status.as_str().to_string(),
+            Ok(None) => return (StatusCode::NOT_FOUND, "scenario not found").into_response(),
+            Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
+        },
+    };
+    let meta = req.meta.clone().unwrap_or_else(|| serde_json::json!({}));
+    match st.repo.update_scenario(&id, name, &status, &meta).await {
         Ok(Some(s)) => (StatusCode::OK, Json(ScenarioResponse::from(s))).into_response(),
         Ok(None) => (StatusCode::NOT_FOUND, "scenario not found").into_response(),
         Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),

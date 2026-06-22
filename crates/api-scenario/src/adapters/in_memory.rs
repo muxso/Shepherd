@@ -50,10 +50,28 @@ impl ApiScenarioRepository for InMemoryApiScenarioRepository {
             project_id: s.project_id.clone(),
             name: s.name.clone(),
             status: ScenarioStatus::Draft,
+            meta: serde_json::json!({}),
             steps: Vec::new(),
         };
         state.scenarios.insert(scenario.id.clone(), Record { scenario: scenario.clone() });
         Ok(scenario)
+    }
+
+    async fn update_scenario(
+        &self,
+        id: &str,
+        name: &str,
+        status: &str,
+        meta: &serde_json::Value,
+    ) -> Result<Option<ApiScenario>, RepoError> {
+        let mut state = self.state.lock().expect("lock");
+        let Some(rec) = state.scenarios.get_mut(id) else { return Ok(None) };
+        rec.scenario.name = name.to_string();
+        rec.scenario.status = ScenarioStatus::parse(status);
+        rec.scenario.meta = meta.clone();
+        let mut s = rec.scenario.clone();
+        s.steps.sort_by_key(|st| st.order);
+        Ok(Some(s))
     }
 
     async fn get_scenario(&self, id: &str) -> Result<Option<ApiScenario>, RepoError> {
