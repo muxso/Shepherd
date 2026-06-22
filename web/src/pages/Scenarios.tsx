@@ -2,7 +2,8 @@ import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { Button, Drawer, Dropdown, Empty, Form, Input, Modal, Radio, Segmented, Select, Space, Switch, Table, Tabs, Tag, Tree, Typography } from 'antd'
 import { message, modal } from '../feedback'
 import { PlayCircleOutlined, PlusOutlined, SaveOutlined, ThunderboltOutlined, DownOutlined, LinkOutlined, SwapOutlined, DeleteOutlined, FullscreenOutlined, CloseOutlined } from '@ant-design/icons'
-import { api, ApiError, type ApiCase, type ApiModule, type DebugResponse, type Environment, type ReportResultItem, type Scenario, type ScenarioExecution, type ScenarioReportDetail, type ScenarioRunResult, type ScenarioStep } from '../api'
+import { api, ApiError, type ApiCase, type ApiDefinition, type ApiModule, type DebugResponse, type Environment, type ReportResultItem, type Scenario, type ScenarioExecution, type ScenarioReportDetail, type ScenarioRunResult, type ScenarioStep } from '../api'
+import type { ColumnsType } from 'antd/es/table'
 import { useApp } from '../context'
 import { methodColor, statusColor, outcomeColor } from '../components/tags'
 import { Workspace, WorkList, PaneHeader, useWorkTabs } from '../components/Workspace'
@@ -220,6 +221,7 @@ function ScenarioDetail({ scenario }: { scenario: Scenario }) {
   const [steps, setSteps] = useState<ScenarioStep[]>([])
   const [running, setRunning] = useState(false)
   const [add, setAdd] = useState<string>('') // 当前打开的添加表单类型
+  const [importOpen, setImportOpen] = useState(false) // 导入系统请求抽屉
   const [lastRun, setLastRun] = useState<ScenarioRunResult | null>(null)
   // 执行后逐步结果(按 caseId 归集:REQUEST→"METHOD url",CASE→case_id)+ 报告弹窗。
   const [stepResults, setStepResults] = useState<Record<string, ReportResultItem>>({})
@@ -347,9 +349,8 @@ function ScenarioDetail({ scenario }: { scenario: Scenario }) {
           menu={{
             items: [
               { type: 'group', label: t('scenario.grpRequest', '请求 / 场景'), children: [
-                { key: 'CASE', label: t('scenario.stepCase', '引用用例') },
+                { key: 'IMPORT', label: t('scenario.importSystem', '导入系统请求') },
                 { key: 'REQUEST', label: t('scenario.customRequest', '自定义请求') },
-                { key: 'SCENARIO', label: t('scenario.stepScenario', '引用场景') },
               ] },
               { type: 'group', label: t('scenario.grpLogic', '逻辑控制'), children: [
                 { key: 'LOOP', label: t('scenario.stepLoop', '循环控制器') },
@@ -358,13 +359,14 @@ function ScenarioDetail({ scenario }: { scenario: Scenario }) {
               ] },
               { type: 'group', label: t('scenario.grpOther', '其他'), children: [{ key: 'TIMER', label: t('scenario.stepTimer', '等待时间') }] },
             ],
-            onClick: ({ key }) => setAdd(key),
+            onClick: ({ key }) => (key === 'IMPORT' ? setImportOpen(true) : setAdd(key)),
           }}
         >
           <Button type="dashed" icon={<PlusOutlined />} block>{t('scenario.addStep', '添加步骤')}</Button>
         </Dropdown>
       </div>
       <AddStepModal type={add} scenarioId={scenario.id} projectId={scenario.projectId} nextOrder={nextOrder} onClose={() => setAdd('')} onAdded={onAdded} />
+      <ImportRequestDrawer open={importOpen} scenarioId={scenario.id} projectId={scenario.projectId} nextOrder={nextOrder} onClose={() => setImportOpen(false)} onImported={onAdded} />
     </div>
   )
 
@@ -986,5 +988,129 @@ function AddStepModal({
         )}
       </Form>
     </Modal>
+  )
+}
+
+// 导入系统请求(对齐参考图 #29):统一以抽屉浏览 接口/用例/场景,多选后「引用」批量加为步骤。
+// 接口→REQUEST(方法/路径);用例→CASE 引用;场景→SCENARIO 引用。简化:仅当前项目 + 名称搜索。
+function ImportRequestDrawer({
+  open,
+  scenarioId,
+  projectId,
+  nextOrder,
+  onClose,
+  onImported,
+}: {
+  open: boolean
+  scenarioId: string
+  projectId: string
+  nextOrder: number
+  onClose: () => void
+  onImported: () => void
+}) {
+  const { t } = useI18n()
+  const [tab, setTab] = useState<'api' | 'case' | 'scenario'>('api')
+  const [search, setSearch] = useState('')
+  const [defs, setDefs] = useState<ApiDefinition[]>([])
+  const [cases, setCases] = useState<ApiCase[]>([])
+  const [scns, setScns] = useState<Scenario[]>([])
+  const [selApi, setSelApi] = useState<string[]>([])
+  const [selCase, setSelCase] = useState<string[]>([])
+  const [selScn, setSelScn] = useState<string[]>([])
+  const [importing, setImporting] = useState(false)
+
+  useEffect(() => {
+    if (!open) return
+    setSearch(''); setSelApi([]); setSelCase([]); setSelScn([])
+    api.definitions(projectId).then((d) => setDefs(Array.isArray(d) ? d : [])).catch(() => setDefs([]))
+    api.projectCases(projectId).then((p) => setCases(p.items)).catch(() => setCases([]))
+    api.scenarios(projectId).then((s) => setScns(s.filter((x) => x.id !== scenarioId))).catch(() => setScns([]))
+  }, [open, projectId, scenarioId])
+
+  const lc = (s: string) => s.toLowerCase()
+  const fDefs = defs.filter((d) => !search || lc(d.name).includes(lc(search)) || lc(d.path).includes(lc(search)))
+  const fCases = cases.filter((c) => !search || lc(c.name).includes(lc(search)) || lc(c.url || '').includes(lc(search)))
+  const fScns = scns.filter((s) => !search || lc(s.name).includes(lc(search)))
+  const total = selApi.length + selCase.length + selScn.length
+
+  const doImport = async () => {
+    setImporting(true)
+    let order = nextOrder
+    try {
+      for (const id of selApi) {
+        const d = defs.find((x) => x.id === id)
+        if (d) await api.addStep(scenarioId, { kind: 'REQUEST', order: order++, request: { method: d.method || 'GET', url: d.path || '', assertions: [] } })
+      }
+      for (const id of selCase) await api.addStep(scenarioId, { kind: 'CASE', order: order++, refId: id })
+      for (const id of selScn) await api.addStep(scenarioId, { kind: 'SCENARIO', order: order++, refId: id })
+      message.success(t('scenario.imported', '已引用') + ` ${total}`)
+      onImported()
+      onClose()
+    } catch (e) {
+      message.error(e instanceof ApiError ? e.message : t('scenario.importFailed', '引用失败'))
+    } finally {
+      setImporting(false)
+    }
+  }
+
+  const apiCols: ColumnsType<ApiDefinition> = [
+    { title: 'ID', dataIndex: 'num', width: 90, render: (v?: number) => <span className="ms-mono" style={{ fontSize: 12 }}>{v ?? '—'}</span> },
+    { title: t('scenario.apiName', '接口名称'), dataIndex: 'name', ellipsis: true },
+    { title: t('apidef.colMethod', '请求类型'), dataIndex: 'method', width: 100, render: (m: string, r) => <Tag color={methodColor(m)}>{r.protocol === 'HTTP' ? m || 'GET' : r.protocol}</Tag> },
+    { title: t('apidef.colPath', '路径'), dataIndex: 'path', ellipsis: true, render: (v: string) => <span className="ms-mono" style={{ fontSize: 12 }}>{v || '—'}</span> },
+    { title: t('apidef.colStatus', '状态'), dataIndex: 'status', width: 100, render: (s: string) => <Tag color={statusColor(s)}>{s}</Tag> },
+  ]
+  const caseCols: ColumnsType<ApiCase> = [
+    { title: t('scenario.colName', '名称'), dataIndex: 'name', ellipsis: true },
+    { title: t('apidef.colMethod', '请求类型'), dataIndex: 'method', width: 100, render: (m: string) => <Tag color={methodColor(m)}>{m}</Tag> },
+    { title: t('apidef.colPath', '路径'), dataIndex: 'url', ellipsis: true, render: (v: string) => <span className="ms-mono" style={{ fontSize: 12 }}>{v || '—'}</span> },
+    { title: t('apidef.colStatus', '状态'), dataIndex: 'status', width: 100, render: (s?: string) => <Tag>{s || '—'}</Tag> },
+  ]
+  const scnCols: ColumnsType<Scenario> = [
+    { title: t('scenario.colName', '名称'), dataIndex: 'name', ellipsis: true },
+    { title: t('scenario.colSteps', '步骤数'), dataIndex: 'steps', width: 90, render: (s?: unknown[]) => <Tag color={s?.length ? 'geekblue' : 'default'}>{s?.length ?? 0}</Tag> },
+    { title: t('scenario.colStatus', '状态'), dataIndex: 'status', width: 110, render: (s: string) => <Tag color={statusColor(s)}>{s}</Tag> },
+  ]
+
+  return (
+    <Drawer
+      open={open}
+      onClose={onClose}
+      width="72%"
+      title={t('scenario.importSystem', '导入系统请求')}
+      footer={
+        <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+            {t('scenario.totalSelected', '共选择')} {total} · {t('scenario.apiName', '接口')} {selApi.length} · {t('scenario.caseUnit', '用例')} {selCase.length} · {t('scenario.scenarioUnit', '场景')} {selScn.length}
+          </Typography.Text>
+          <div style={{ flex: 1 }} />
+          <Button onClick={onClose}>{t('a.cancel', '取消')}</Button>
+          <Button type="primary" loading={importing} disabled={total === 0} onClick={doImport}>{t('scenario.doReference', '引用')}</Button>
+        </div>
+      }
+    >
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+        <Segmented
+          value={tab}
+          onChange={(v) => setTab(v as 'api' | 'case' | 'scenario')}
+          options={[
+            { label: `${t('scenario.tabApi', '接口')}`, value: 'api' },
+            { label: `${t('scenario.tabCase', '用例')}`, value: 'case' },
+            { label: `${t('scenario.tabScenario', '场景')}`, value: 'scenario' },
+          ]}
+        />
+        <div style={{ flex: 1 }} />
+        <Input allowClear style={{ width: 280 }} placeholder={t('scenario.searchByPathName', '通过路径或名称搜索')} value={search} onChange={(e) => setSearch(e.target.value)} />
+      </div>
+      {tab === 'api' && (
+        <Table<ApiDefinition> rowKey="id" size="small" columns={apiCols} dataSource={fDefs} pagination={{ pageSize: 10, size: 'small' }} rowSelection={{ selectedRowKeys: selApi, onChange: (k) => setSelApi(k.map(String)) }} locale={{ emptyText: <Empty description={t('scenario.noImportData', '暂无可引用数据,可切换项目获取数据')} /> }} />
+      )}
+      {tab === 'case' && (
+        <Table<ApiCase> rowKey="id" size="small" columns={caseCols} dataSource={fCases} pagination={{ pageSize: 10, size: 'small' }} rowSelection={{ selectedRowKeys: selCase, onChange: (k) => setSelCase(k.map(String)) }} locale={{ emptyText: <Empty description={t('scenario.noImportData', '暂无可引用数据,可切换项目获取数据')} /> }} />
+      )}
+      {tab === 'scenario' && (
+        <Table<Scenario> rowKey="id" size="small" columns={scnCols} dataSource={fScns} pagination={{ pageSize: 10, size: 'small' }} rowSelection={{ selectedRowKeys: selScn, onChange: (k) => setSelScn(k.map(String)) }} locale={{ emptyText: <Empty description={t('scenario.noImportData', '暂无可引用数据,可切换项目获取数据')} /> }} />
+      )}
+    </Drawer>
   )
 }
