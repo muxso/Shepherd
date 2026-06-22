@@ -13,7 +13,7 @@ use axum::{
     extract::{FromRef, Path, State},
     http::StatusCode,
     response::{IntoResponse, Response},
-    routing::post,
+    routing::{get, post},
     Json, Router,
 };
 use serde::{Deserialize, Serialize};
@@ -53,7 +53,10 @@ pub fn router(
     recorder: RecordScenarioExecutionUseCase,
     sessions: Arc<dyn SessionStore>,
 ) -> Router {
-    Router::new().route("/api/scenario/{id}/run", post(run_scenario)).with_state(RunState {
+    Router::new()
+        .route("/api/scenario/{id}/run", post(run_scenario))
+        .route("/api/scenario-report/{report_id}", get(scenario_report))
+        .with_state(RunState {
         compile,
         executor,
         envs,
@@ -77,6 +80,58 @@ struct RunScenarioBody {
 
 fn default_strategy() -> String {
     "CONTINUE".to_string()
+}
+
+// ---- 场景报告明细:GET /api/scenario-report/{report_id} ----
+
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+struct ScenarioReportResponse {
+    report_id: String,
+    status: String,
+    case_count: i32,
+    results: Vec<ReportResultItem>,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+struct ReportResultItem {
+    case_id: String,
+    /// SUCCESS | ERROR
+    outcome: String,
+    failures: Vec<String>,
+    executed_at: String,
+}
+
+#[utoipa::path(get, path = "/api/scenario-report/{report_id}", tag = "api-scenario", params(("report_id" = String, Path)), responses((status = 200, body = ScenarioReportResponse), (status = 404)), security(("bearer" = [])))]
+async fn scenario_report(
+    _user: AuthUser,
+    State(st): State<RunState>,
+    Path(report_id): Path<String>,
+) -> Response {
+    match st.reports.detail(&report_id).await {
+        Ok(Some(d)) => (
+            StatusCode::OK,
+            Json(ScenarioReportResponse {
+                report_id,
+                status: d.status,
+                case_count: d.case_count,
+                results: d
+                    .results
+                    .into_iter()
+                    .map(|r| ReportResultItem {
+                        case_id: r.case_id,
+                        outcome: r.outcome,
+                        failures: r.failures,
+                        executed_at: r.executed_at,
+                    })
+                    .collect(),
+            }),
+        )
+            .into_response(),
+        Ok(None) => (StatusCode::NOT_FOUND, "report not found").into_response(),
+        Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
+    }
 }
 
 #[derive(Debug, Serialize, ToSchema)]

@@ -278,6 +278,20 @@ export interface ScenarioRunResult {
   caseCount: number
 }
 
+/** 场景报告明细行(逐用例结果)。注:响应时间/大小/状态码暂未持久化(待执行器扩展)。 */
+export interface ReportResultItem {
+  caseId: string
+  outcome: string // SUCCESS | ERROR
+  failures: string[]
+  executedAt: string
+}
+export interface ScenarioReportDetail {
+  reportId: string
+  status: string
+  caseCount: number
+  results: ReportResultItem[]
+}
+
 export interface ScenarioExecution {
   id: string
   scenarioId: string
@@ -746,4 +760,6 @@ export const api = {
     http.post<ScenarioRunResult>(`/api/scenario/${scenarioId}/run`, { projectId, environmentId: opts?.environmentId, failureStrategy: opts?.failureStrategy }),
   scenarioExecutions: (scenarioId: string) =>
     http.get<Page<ScenarioExecution>>(`/api/scenario/${scenarioId}/executions`),
+  scenarioReport: (reportId: string) =>
+    http.get<ScenarioReportDetail>(`/api/scenario-report/${reportId}`),
 }
