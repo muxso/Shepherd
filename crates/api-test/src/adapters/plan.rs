@@ -222,6 +222,21 @@ impl PlanExecutor {
             CaseOutcome::Error => ("ERROR", report.failures),
         };
         self.sink.record(report_id, &case_id, outcome, &failures).await?;
+        // 响应明细回填(best-effort,失败不影响执行);供报告逐步展开响应体/头/状态码/耗时/大小。
+        if let Some(s) = &snap {
+            let _ = self
+                .sink
+                .record_detail(
+                    report_id,
+                    &case_id,
+                    s.status as i32,
+                    s.elapsed_ms as i64,
+                    s.body.len() as i64,
+                    &s.body,
+                    &s.headers,
+                )
+                .await;
+        }
         // EXTRACT 后置:写入上下文供后续节点引用。
         if let Some(s) = &snap {
             for (k, v) in run_extracts(&processors, s) {

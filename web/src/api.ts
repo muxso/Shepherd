@@ -284,6 +284,12 @@ export interface ReportResultItem {
   outcome: string // SUCCESS | ERROR
   failures: string[]
   executedAt: string
+  /** 响应明细(0045 后回填;旧报告为 null)。 */
+  statusCode?: number | null
+  latencyMs?: number | null
+  respSize?: number | null
+  body?: string | null
+  headers?: [string, string][]
 }
 export interface ScenarioReportDetail {
   reportId: string
