@@ -121,6 +121,14 @@ impl ApiScenarioRepository for InMemoryApiScenarioRepository {
         Ok(stored)
     }
 
+    async fn delete_step(&self, scenario_id: &str, step_id: &str) -> Result<bool, RepoError> {
+        let mut state = self.state.lock().expect("lock");
+        let Some(rec) = state.scenarios.get_mut(scenario_id) else { return Ok(false) };
+        let before = rec.scenario.steps.len();
+        rec.scenario.steps.retain(|s| s.id != step_id);
+        Ok(rec.scenario.steps.len() != before)
+    }
+
     async fn record_execution(
         &self,
         scenario_id: &str,

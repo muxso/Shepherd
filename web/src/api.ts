@@ -740,6 +740,8 @@ export const api = {
   ) => http.post<ScenarioStep>(`/api/scenario/${scenarioId}/step`, b),
   updateScenario: (id: string, b: { name: string; status?: string; meta?: Record<string, unknown> }) =>
     http.patch<Scenario>(`/api/scenario/${id}`, b),
+  deleteScenarioStep: (scenarioId: string, stepId: string) =>
+    http.del(`/api/scenario/${scenarioId}/step/${stepId}`),
   runScenario: (scenarioId: string, projectId: string, opts?: { environmentId?: string; failureStrategy?: 'CONTINUE' | 'STOP' }) =>
     http.post<ScenarioRunResult>(`/api/scenario/${scenarioId}/run`, { projectId, environmentId: opts?.environmentId, failureStrategy: opts?.failureStrategy }),
   scenarioExecutions: (scenarioId: string) =>
