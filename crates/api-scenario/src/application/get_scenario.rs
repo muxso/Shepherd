@@ -30,7 +30,7 @@ mod tests {
     async fn gets_existing_scenario_and_none_for_missing() {
         let repo = Arc::new(InMemoryApiScenarioRepository::new());
         let create = CreateScenarioUseCase::new(repo.clone());
-        let s = create.execute("p1", "a").await.expect("a");
+        let s = create.execute("p1", "a", None).await.expect("a");
 
         let uc = GetScenarioUseCase::new(repo);
         assert_eq!(uc.execute(&s.id).await.expect("get").expect("some").name, "a");

@@ -51,6 +51,9 @@ impl ApiScenarioRepository for InMemoryApiScenarioRepository {
             name: s.name.clone(),
             status: ScenarioStatus::Draft,
             meta: serde_json::json!({}),
+            created_by: s.created_by.clone(),
+            created_at: String::new(),
+            updated_at: String::new(),
             steps: Vec::new(),
         };
         state.scenarios.insert(scenario.id.clone(), Record { scenario: scenario.clone() });

@@ -29,8 +29,9 @@ impl CreateScenarioUseCase {
         &self,
         project_id: &str,
         name: &str,
+        created_by: Option<&str>,
     ) -> Result<ApiScenario, CreateScenarioError> {
-        let new_scenario = NewApiScenario::new(project_id, name)?;
+        let new_scenario = NewApiScenario::new(project_id, name)?.with_created_by(created_by);
         Ok(self.repo.insert_scenario(&new_scenario).await?)
     }
 }
@@ -44,7 +45,7 @@ mod tests {
     async fn creates_scenario_with_empty_steps() {
         let repo = InMemoryApiScenarioRepository::new();
         let uc = CreateScenarioUseCase::new(Arc::new(repo));
-        let s = uc.execute("p1", "下单链路").await.expect("ok");
+        let s = uc.execute("p1", "下单链路", None).await.expect("ok");
         assert_eq!(s.name, "下单链路");
         assert_eq!(s.project_id, "p1");
         assert!(s.steps.is_empty());
@@ -54,7 +55,7 @@ mod tests {
     async fn rejects_blank_name() {
         let repo = InMemoryApiScenarioRepository::new();
         let uc = CreateScenarioUseCase::new(Arc::new(repo));
-        let err = uc.execute("p1", "  ").await.unwrap_err();
+        let err = uc.execute("p1", "  ", None).await.unwrap_err();
         assert_eq!(err, CreateScenarioError::Validation(ScenarioError::EmptyName));
     }
 }
