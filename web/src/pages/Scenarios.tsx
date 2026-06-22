@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { Button, Drawer, Dropdown, Empty, Form, Input, Modal, Radio, Segmented, Select, Space, Switch, Table, Tabs, Tag, Tree, Typography } from 'antd'
 import { message, modal } from '../feedback'
 import { PlayCircleOutlined, PlusOutlined, SaveOutlined, ThunderboltOutlined, DownOutlined, LinkOutlined, SwapOutlined, DeleteOutlined, FullscreenOutlined, CloseOutlined } from '@ant-design/icons'
-import { api, ApiError, type ApiCase, type DebugResponse, type Environment, type ReportResultItem, type Scenario, type ScenarioExecution, type ScenarioReportDetail, type ScenarioRunResult, type ScenarioStep } from '../api'
+import { api, ApiError, type ApiCase, type ApiModule, type DebugResponse, type Environment, type ReportResultItem, type Scenario, type ScenarioExecution, type ScenarioReportDetail, type ScenarioRunResult, type ScenarioStep } from '../api'
 import { useApp } from '../context'
 import { methodColor, statusColor, outcomeColor } from '../components/tags'
 import { Workspace, WorkList, PaneHeader, useWorkTabs } from '../components/Workspace'
@@ -13,7 +13,7 @@ import { useI18n } from '../i18n'
 type TFn = (key: string, fallback?: string) => string
 // 可编辑表单 + 场景参数行(存入 scenario.meta)。
 type ScenarioParam = { name: string; type: string; value: string; tags: string; desc: string }
-type ScenarioForm = { name: string; status: string; description: string; tags: string[]; priority: string; params: ScenarioParam[]; csv: string }
+type ScenarioForm = { name: string; status: string; description: string; tags: string[]; priority: string; params: ScenarioParam[]; csv: string; moduleId: string }
 const SCENARIO_STATUSES = ['DRAFT', 'DEBUGGING', 'COMPLETED', 'DEPRECATED']
 const SCENARIO_PRIORITIES = ['P0', 'P1', 'P2', 'P3']
 
@@ -227,7 +227,9 @@ function ScenarioDetail({ scenario }: { scenario: Scenario }) {
     priority: typeof m0.priority === 'string' ? m0.priority : 'P0',
     params: Array.isArray(m0.params) ? (m0.params as ScenarioParam[]) : [],
     csv: typeof m0.csvParams === 'string' ? (m0.csvParams as string) : '',
+    moduleId: typeof m0.moduleId === 'string' ? (m0.moduleId as string) : '',
   })
+  const [modules, setModules] = useState<ApiModule[]>([])
   const [saving, setSaving] = useState(false)
   const patchForm = (p: Partial<ScenarioForm>) => setForm((f) => ({ ...f, ...p }))
   const onSave = async () => {
@@ -237,7 +239,7 @@ function ScenarioDetail({ scenario }: { scenario: Scenario }) {
       await api.updateScenario(scenario.id, {
         name: form.name.trim(),
         status: form.status,
-        meta: { description: form.description, tags: form.tags, priority: form.priority, params: form.params, csvParams: form.csv },
+        meta: { description: form.description, tags: form.tags, priority: form.priority, params: form.params, csvParams: form.csv, moduleId: form.moduleId },
       })
       message.success(t('scenario.saved', '已保存'))
     } catch (e) {
@@ -264,7 +266,8 @@ function ScenarioDetail({ scenario }: { scenario: Scenario }) {
       api.projectCases(scenario.projectId).then((p) => p.items).catch(() => []),
       api.scenarios(scenario.projectId).then((s) => s).catch(() => []),
       api.environments(scenario.projectId).then((e) => (Array.isArray(e) ? e : [])).catch(() => []),
-    ]).then(([cases, scns, environments]) => {
+      api.modules(scenario.projectId).then((mm) => (Array.isArray(mm) ? mm : [])).catch(() => []),
+    ]).then(([cases, scns, environments, mods]) => {
       const m: Record<string, string> = {}
       const cm: Record<string, ApiCase> = {}
       cases.forEach((c) => { m[c.id] = `${c.method} ${c.name}`; cm[c.id] = c })
@@ -273,6 +276,7 @@ function ScenarioDetail({ scenario }: { scenario: Scenario }) {
       setCaseMap(cm)
       setEnvs(environments)
       setEnvId((cur) => cur || environments.find((e) => e.enabled !== false)?.id || '')
+      setModules(mods)
     })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scenario.id])
@@ -339,7 +343,7 @@ function ScenarioDetail({ scenario }: { scenario: Scenario }) {
   )
 
   const tabs = [
-    { key: 'basic', label: t('apidef.basicInfo', '基本信息'), children: <ScenarioBasicInfo scenario={scenario} stepCount={steps.length} form={form} patch={patchForm} /> },
+    { key: 'basic', label: t('apidef.basicInfo', '基本信息'), children: <ScenarioBasicInfo scenario={scenario} stepCount={steps.length} form={form} patch={patchForm} modules={modules} /> },
     { key: 'steps', label: t('scenario.stepsTab', '步骤'), children: stepsTab },
     { key: 'params', label: t('scenario.paramsTab', '参数'), children: <ScenarioParams params={form.params} onChange={(params) => patchForm({ params })} csv={form.csv} onCsvChange={(csv) => patchForm({ csv })} /> },
     { key: 'prepost', label: t('scenario.prePostTab', '前/后置'), children: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('scenario.prePostSoon', '前/后置处理即将接入')} style={{ margin: '32px 0' }} /> },
@@ -558,7 +562,7 @@ function StepDetailDrawer({
 }
 
 // 基本信息(可编辑,对齐参考图 #21):名称/等级/状态/标签/描述 + 只读 ID/步骤数。保存走顶部「保存」。
-function ScenarioBasicInfo({ scenario, stepCount, form, patch }: { scenario: Scenario; stepCount: number; form: ScenarioForm; patch: (p: Partial<ScenarioForm>) => void }) {
+function ScenarioBasicInfo({ scenario, stepCount, form, patch, modules }: { scenario: Scenario; stepCount: number; form: ScenarioForm; patch: (p: Partial<ScenarioForm>) => void; modules: ApiModule[] }) {
   const { t } = useI18n()
   const [tagInput, setTagInput] = useState('')
   const field = (label: string, value: ReactNode, req?: boolean) => (
@@ -570,6 +574,7 @@ function ScenarioBasicInfo({ scenario, stepCount, form, patch }: { scenario: Sce
   return (
     <div style={{ maxWidth: 560 }}>
       {field(t('scenario.name', '场景名称'), <Input value={form.name} onChange={(e) => patch({ name: e.target.value })} placeholder={t('scenario.namePlaceholder', '如:下单主流程')} />, true)}
+      {field(t('scenario.ownerModule', '所属模块'), <Select style={{ width: 280 }} value={form.moduleId || undefined} onChange={(v) => patch({ moduleId: v || '' })} allowClear placeholder={t('apidef.unfiled', '未归类')} options={modules.map((m) => ({ value: m.id, label: m.name }))} notFoundContent={t('scenario.noModules', '项目暂无模块(在接口定义维护)')} />)}
       {field(t('scenario.priority', '场景等级'), <Select style={{ width: 200 }} value={form.priority} onChange={(v) => patch({ priority: v })} options={SCENARIO_PRIORITIES.map((p) => ({ value: p, label: p }))} />)}
       {field(t('scenario.colStatus', '场景状态'), <Select style={{ width: 200 }} value={form.status} onChange={(v) => patch({ status: v })} options={SCENARIO_STATUSES.map((s) => ({ value: s, label: s }))} />)}
       {field(t('scenario.tags', '标签'), (
@@ -593,7 +598,7 @@ function ScenarioBasicInfo({ scenario, stepCount, form, patch }: { scenario: Sce
       {field(t('scenario.createdBy', '创建人'), <Input value={scenario.createdBy || '—'} readOnly />)}
       {field(t('scenario.createdAt', '创建时间'), <Input value={scenario.createdAt?.slice(0, 19) || '—'} readOnly className="ms-mono" />)}
       {field(t('scenario.updatedAt', '更新时间'), <Input value={scenario.updatedAt?.slice(0, 19) || '—'} readOnly className="ms-mono" />)}
-      <Typography.Text type="secondary" style={{ fontSize: 12 }}>{t('scenario.moduleSoon', '所属模块 需场景模块树概念,后续接入')}</Typography.Text>
+      <Typography.Text type="secondary" style={{ fontSize: 12 }}>{t('scenario.moduleReuseNote', '所属模块复用项目接口模块(在「接口定义」维护);随保存写入')}</Typography.Text>
     </div>
   )
 }
