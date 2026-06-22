@@ -1032,6 +1032,7 @@ function ChildrenBuilder({ value, onChange, projectCases }: { value: Child[]; on
 }
 
 // 按类型分发的添加步骤弹窗:CASE/REQUEST/SCENARIO 叶子 + LOOP/IF/ONCE/TIMER 控制器(含子步骤)。
+type StepBody = { kind: string; order: number; refId?: string; request?: unknown; control?: unknown }
 function AddStepModal({
   type,
   scenarioId,
@@ -1039,6 +1040,7 @@ function AddStepModal({
   nextOrder,
   onClose,
   onAdded,
+  onLocalAdd,
 }: {
   type: string
   scenarioId: string
@@ -1046,6 +1048,8 @@ function AddStepModal({
   nextOrder: number
   onClose: () => void
   onAdded: () => void
+  /** 新建场景(无 id)时:不落库,回传步骤体到本地。 */
+  onLocalAdd?: (body: StepBody) => void
 }) {
   const { t } = useI18n()
   const [form] = Form.useForm()
@@ -1070,19 +1074,16 @@ function AddStepModal({
     setSaving(true)
     try {
       const childPayload = children.map((c) => (c.kind === 'CASE' ? { kind: 'CASE', refId: c.refId } : { kind: 'REQUEST', method: c.method, url: c.url, assertions: [] }))
-      if (type === 'CASE' || type === 'SCENARIO') {
-        await api.addStep(scenarioId, { kind: type, order: nextOrder, refId: v.refId })
-      } else if (type === 'REQUEST') {
-        await api.addStep(scenarioId, { kind: 'REQUEST', order: nextOrder, request: { method: v.method, url: v.url, body: v.body || null, assertions: v.assertions || [] } })
-      } else if (type === 'TIMER') {
-        await api.addStep(scenarioId, { kind: 'TIMER', order: nextOrder, control: { ms: Number(v.ms) || 1000 } })
-      } else if (type === 'LOOP') {
-        await api.addStep(scenarioId, { kind: 'LOOP', order: nextOrder, control: { times: Number(v.times) || 1, children: childPayload } })
-      } else if (type === 'IF') {
-        await api.addStep(scenarioId, { kind: 'IF', order: nextOrder, control: { variable: v.variable, operator: v.operator, value: v.value, children: childPayload } })
-      } else if (type === 'ONCE') {
-        await api.addStep(scenarioId, { kind: 'ONCE', order: nextOrder, control: { children: childPayload } })
-      }
+      let body: StepBody | null = null
+      if (type === 'CASE' || type === 'SCENARIO') body = { kind: type, order: nextOrder, refId: v.refId }
+      else if (type === 'REQUEST') body = { kind: 'REQUEST', order: nextOrder, request: { method: v.method, url: v.url, body: v.body || null, assertions: v.assertions || [] } }
+      else if (type === 'TIMER') body = { kind: 'TIMER', order: nextOrder, control: { ms: Number(v.ms) || 1000 } }
+      else if (type === 'LOOP') body = { kind: 'LOOP', order: nextOrder, control: { times: Number(v.times) || 1, children: childPayload } }
+      else if (type === 'IF') body = { kind: 'IF', order: nextOrder, control: { variable: v.variable, operator: v.operator, value: v.value, children: childPayload } }
+      else if (type === 'ONCE') body = { kind: 'ONCE', order: nextOrder, control: { children: childPayload } }
+      if (!body) return
+      if (onLocalAdd) onLocalAdd(body)
+      else await api.addStep(scenarioId, body)
       message.success(t('scenario.stepAdded', '步骤已添加'))
       onAdded()
     } catch (e) {
@@ -1151,6 +1152,7 @@ function ImportRequestDrawer({
   nextOrder,
   onClose,
   onImported,
+  onLocalImport,
 }: {
   open: boolean
   scenarioId: string
@@ -1158,6 +1160,8 @@ function ImportRequestDrawer({
   nextOrder: number
   onClose: () => void
   onImported: () => void
+  /** 新建场景(无 id)时:不落库,回传步骤体数组到本地。 */
+  onLocalImport?: (bodies: StepBody[]) => void
 }) {
   const { t } = useI18n()
   const [tab, setTab] = useState<'api' | 'case' | 'scenario'>('api')
@@ -1214,12 +1218,15 @@ function ImportRequestDrawer({
     setImporting(true)
     let order = nextOrder
     try {
+      const bodies: StepBody[] = []
       for (const id of selApi) {
         const d = defs.find((x) => x.id === id)
-        if (d) await api.addStep(scenarioId, { kind: 'REQUEST', order: order++, request: { method: d.method || 'GET', url: d.path || '', assertions: [] } })
+        if (d) bodies.push({ kind: 'REQUEST', order: order++, request: { method: d.method || 'GET', url: d.path || '', assertions: [] } })
       }
-      for (const id of selCase) await api.addStep(scenarioId, { kind: 'CASE', order: order++, refId: id })
-      for (const id of selScn) await api.addStep(scenarioId, { kind: 'SCENARIO', order: order++, refId: id })
+      for (const id of selCase) bodies.push({ kind: 'CASE', order: order++, refId: id })
+      for (const id of selScn) bodies.push({ kind: 'SCENARIO', order: order++, refId: id })
+      if (onLocalImport) onLocalImport(bodies)
+      else for (const b of bodies) await api.addStep(scenarioId, b)
       message.success(t('scenario.imported', '已引用') + ` ${total}`)
       onImported()
       onClose()
@@ -1325,11 +1332,16 @@ function NewScenarioTab({ projectId, modules, onCreated }: { projectId: string; 
   const [tagInput, setTagInput] = useState('')
   const [desc, setDesc] = useState('')
   const [saving, setSaving] = useState(false)
+  const [localSteps, setLocalSteps] = useState<StepBody[]>([])
+  const [add, setAdd] = useState('')
+  const [importOpen, setImportOpen] = useState(false)
+  const nextOrder = localSteps.length + 1
   const save = async () => {
     if (!name.trim()) return message.warning(t('scenario.nameRequired', '请输入场景名'))
     setSaving(true)
     try {
       const s = await api.createScenario(projectId, name.trim())
+      for (let i = 0; i < localSteps.length; i++) await api.addStep(s.id, { ...localSteps[i], order: i + 1 })
       await api.updateScenario(s.id, { name: name.trim(), status, meta: { moduleId, priority, tags, description: desc } })
       message.success(t('scenario.created', '场景已创建'))
       onCreated(s)
@@ -1346,11 +1358,49 @@ function NewScenarioTab({ projectId, modules, onCreated }: { projectId: string; 
     </div>
   )
   const soon = (label: string) => <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={`${label} · ${t('scenario.saveFirst', '保存场景后可编辑')}`} style={{ margin: '32px 0' }} />
+  // 本地步骤体 → 展示用伪步骤(无 id,仅用于 StepRow 渲染)。
+  const bodyToStep = (b: StepBody, i: number): ScenarioStep => ({
+    id: `local-${i}`,
+    order: b.order,
+    kind: b.kind,
+    refMode: 'REFERENCE',
+    caseId: b.kind === 'CASE' ? b.refId || null : null,
+    scenarioId: b.kind === 'SCENARIO' ? b.refId || null : null,
+    request: (b.request as ScenarioStep['request']) || null,
+    control: (b.control as ScenarioStep['control']) || null,
+  })
   const stepsTab = (
     <div>
-      <Typography.Text strong style={{ fontSize: 13 }}>{t('scenario.totalPrefix', '共')} 0 {t('scenario.totalSuffix', '个步骤')}</Typography.Text>
-      <div style={{ marginTop: 10 }}><Button type="dashed" icon={<PlusOutlined />} block disabled>{t('scenario.addStep', '添加步骤')}</Button></div>
-      <Typography.Text type="secondary" style={{ fontSize: 12 }}>{t('scenario.saveFirstSteps', '保存场景后可添加步骤')}</Typography.Text>
+      <Typography.Text strong style={{ fontSize: 13 }}>{t('scenario.totalPrefix', '共')} {localSteps.length} {t('scenario.totalSuffix', '个步骤')}</Typography.Text>
+      <div style={{ marginTop: 10 }}>
+        {localSteps.map((b, i) => (
+          <div key={i} style={{ position: 'relative' }}>
+            <StepRow node={stepToNode(bodyToStep(b, i), t, (id) => id.slice(0, 8))} idx={i + 1} depth={0} t={t} />
+            <Button type="text" size="small" danger icon={<DeleteOutlined />} onClick={() => setLocalSteps(localSteps.filter((_, idx) => idx !== i))} style={{ position: 'absolute', right: 8, top: 8 }} />
+          </div>
+        ))}
+        <Dropdown
+          menu={{
+            items: [
+              { type: 'group', label: t('scenario.grpRequest', '请求 / 场景'), children: [
+                { key: 'IMPORT', label: t('scenario.importSystem', '导入系统请求') },
+                { key: 'REQUEST', label: t('scenario.customRequest', '自定义请求') },
+              ] },
+              { type: 'group', label: t('scenario.grpLogic', '逻辑控制'), children: [
+                { key: 'LOOP', label: t('scenario.stepLoop', '循环控制器') },
+                { key: 'IF', label: t('scenario.stepIf', '条件控制器') },
+                { key: 'ONCE', label: t('scenario.stepOnce', '仅一次控制器') },
+              ] },
+              { type: 'group', label: t('scenario.grpOther', '其他'), children: [{ key: 'TIMER', label: t('scenario.stepTimer', '等待时间') }] },
+            ],
+            onClick: ({ key }) => (key === 'IMPORT' ? setImportOpen(true) : setAdd(key)),
+          }}
+        >
+          <Button type="dashed" icon={<PlusOutlined />} block>{t('scenario.addStep', '添加步骤')}</Button>
+        </Dropdown>
+      </div>
+      <AddStepModal type={add} scenarioId="" projectId={projectId} nextOrder={nextOrder} onClose={() => setAdd('')} onAdded={() => setAdd('')} onLocalAdd={(b) => setLocalSteps((prev) => [...prev, b])} />
+      <ImportRequestDrawer open={importOpen} scenarioId="" projectId={projectId} nextOrder={nextOrder} onClose={() => setImportOpen(false)} onImported={() => undefined} onLocalImport={(bs) => setLocalSteps((prev) => [...prev, ...bs])} />
     </div>
   )
   return (
