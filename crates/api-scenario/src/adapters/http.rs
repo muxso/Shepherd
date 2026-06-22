@@ -65,6 +65,7 @@ pub fn router(
         .route("/api/scenario", post(create_scenario).get(list_scenarios))
         .route("/api/scenario/{id}", get(get_scenario).patch(update_scenario))
         .route("/api/scenario/{id}/step", post(add_step))
+        .route("/api/scenario/{id}/step/{step_id}", axum::routing::delete(delete_step))
         .route("/api/scenario/{id}/compile", get(compile_scenario))
         .route("/api/scenario/{id}/executions", get(list_executions))
         .with_state(state)
@@ -370,6 +371,22 @@ async fn update_scenario(
     match st.repo.update_scenario(&id, name, &status, &meta).await {
         Ok(Some(s)) => (StatusCode::OK, Json(ScenarioResponse::from(s))).into_response(),
         Ok(None) => (StatusCode::NOT_FOUND, "scenario not found").into_response(),
+        Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
+    }
+}
+
+#[utoipa::path(delete, path = "/api/scenario/{id}/step/{step_id}", tag = "api-scenario", params(("id" = String, Path), ("step_id" = String, Path)), responses((status = 204), (status = 404)), security(("bearer" = [])))]
+async fn delete_step(
+    user: AuthUser,
+    State(st): State<ScenarioAppState>,
+    Path((id, step_id)): Path<(String, String)>,
+) -> Response {
+    if !user.can("API_SCENARIO", "UPDATE") {
+        return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
+    match st.repo.delete_step(&id, &step_id).await {
+        Ok(true) => StatusCode::NO_CONTENT.into_response(),
+        Ok(false) => (StatusCode::NOT_FOUND, "step not found").into_response(),
         Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
     }
 }

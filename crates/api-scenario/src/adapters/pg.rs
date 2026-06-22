@@ -258,6 +258,16 @@ impl ApiScenarioRepository for PgApiScenarioRepository {
         row_to_step(&row)
     }
 
+    async fn delete_step(&self, scenario_id: &str, step_id: &str) -> Result<bool, RepoError> {
+        let res = sqlx::query("DELETE FROM ms_api_scenario_step WHERE scenario_id = $1 AND id = $2")
+            .bind(scenario_id)
+            .bind(step_id)
+            .execute(&self.pool)
+            .await
+            .map_err(map_err)?;
+        Ok(res.rows_affected() > 0)
+    }
+
     async fn record_execution(
         &self,
         scenario_id: &str,

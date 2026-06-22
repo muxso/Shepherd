@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
-import { Button, Drawer, Dropdown, Empty, Form, Input, Modal, Radio, Select, Space, Switch, Table, Tabs, Tag, Tree, Typography } from 'antd'
-import { message } from '../feedback'
+import { Button, Drawer, Dropdown, Empty, Form, Input, Modal, Radio, Segmented, Select, Space, Switch, Table, Tabs, Tag, Tree, Typography } from 'antd'
+import { message, modal } from '../feedback'
 import { PlayCircleOutlined, PlusOutlined, SaveOutlined, ThunderboltOutlined, DownOutlined, LinkOutlined, SwapOutlined, DeleteOutlined, FullscreenOutlined, CloseOutlined } from '@ant-design/icons'
 import { api, ApiError, type ApiCase, type DebugResponse, type Environment, type Scenario, type ScenarioExecution, type ScenarioRunResult, type ScenarioStep } from '../api'
 import { useApp } from '../context'
@@ -13,7 +13,7 @@ import { useI18n } from '../i18n'
 type TFn = (key: string, fallback?: string) => string
 // 可编辑表单 + 场景参数行(存入 scenario.meta)。
 type ScenarioParam = { name: string; type: string; value: string; tags: string; desc: string }
-type ScenarioForm = { name: string; status: string; description: string; tags: string[]; priority: string; params: ScenarioParam[] }
+type ScenarioForm = { name: string; status: string; description: string; tags: string[]; priority: string; params: ScenarioParam[]; csv: string }
 const SCENARIO_STATUSES = ['DRAFT', 'DEBUGGING', 'COMPLETED', 'DEPRECATED']
 const SCENARIO_PRIORITIES = ['P0', 'P1', 'P2', 'P3']
 
@@ -226,6 +226,7 @@ function ScenarioDetail({ scenario }: { scenario: Scenario }) {
     tags: Array.isArray(m0.tags) ? (m0.tags as string[]) : [],
     priority: typeof m0.priority === 'string' ? m0.priority : 'P0',
     params: Array.isArray(m0.params) ? (m0.params as ScenarioParam[]) : [],
+    csv: typeof m0.csvParams === 'string' ? (m0.csvParams as string) : '',
   })
   const [saving, setSaving] = useState(false)
   const patchForm = (p: Partial<ScenarioForm>) => setForm((f) => ({ ...f, ...p }))
@@ -236,7 +237,7 @@ function ScenarioDetail({ scenario }: { scenario: Scenario }) {
       await api.updateScenario(scenario.id, {
         name: form.name.trim(),
         status: form.status,
-        meta: { description: form.description, tags: form.tags, priority: form.priority, params: form.params },
+        meta: { description: form.description, tags: form.tags, priority: form.priority, params: form.params, csvParams: form.csv },
       })
       message.success(t('scenario.saved', '已保存'))
     } catch (e) {
@@ -340,7 +341,7 @@ function ScenarioDetail({ scenario }: { scenario: Scenario }) {
   const tabs = [
     { key: 'basic', label: t('apidef.basicInfo', '基本信息'), children: <ScenarioBasicInfo scenario={scenario} stepCount={steps.length} form={form} patch={patchForm} /> },
     { key: 'steps', label: t('scenario.stepsTab', '步骤'), children: stepsTab },
-    { key: 'params', label: t('scenario.paramsTab', '参数'), children: <ScenarioParams params={form.params} onChange={(params) => patchForm({ params })} /> },
+    { key: 'params', label: t('scenario.paramsTab', '参数'), children: <ScenarioParams params={form.params} onChange={(params) => patchForm({ params })} csv={form.csv} onCsvChange={(csv) => patchForm({ csv })} /> },
     { key: 'prepost', label: t('scenario.prePostTab', '前/后置'), children: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('scenario.prePostSoon', '前/后置处理即将接入')} style={{ margin: '32px 0' }} /> },
     { key: 'assert', label: t('apidef.assertions', '断言'), children: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('scenario.assertSoon', '场景级断言即将接入')} style={{ margin: '32px 0' }} /> },
     { key: 'exec', label: t('scenario.execHistoryTab', '执行历史'), children: <ScenarioExecutionsTab scenarioId={scenario.id} t={t} /> },
@@ -388,10 +389,12 @@ function ScenarioDetail({ scenario }: { scenario: Scenario }) {
       <Tabs className="ms-detail-tabs" defaultActiveKey="steps" items={tabs} />
       <StepDetailDrawer
         sel={selStep}
+        scenarioId={scenario.id}
         caseMap={caseMap}
         nameOf={nameOf}
         env={envs.find((e) => e.id === envId)}
         onClose={() => setSelStep(null)}
+        onDeleted={() => { setSelStep(null); loadSteps() }}
       />
     </div>
   )
@@ -422,19 +425,43 @@ function buildStepRequest(method: string, url: string, body: string | null | und
 // 引用用例展示其请求并可服务端执行;内联请求同理;控制器展示配置。删除/替换需后端,暂占位。
 function StepDetailDrawer({
   sel,
+  scenarioId,
   caseMap,
   nameOf,
   env,
   onClose,
+  onDeleted,
 }: {
   sel: { step: ScenarioStep; idx: number } | null
+  scenarioId: string
   caseMap: Record<string, ApiCase>
   nameOf: NameOf
   env?: Environment
   onClose: () => void
+  onDeleted: () => void
 }) {
   const { t } = useI18n()
   const [full, setFull] = useState(false)
+  const [deleting, setDeleting] = useState(false)
+  const del = () => {
+    if (!sel) return
+    modal.confirm({
+      title: t('scenario.deleteStepConfirm', '删除该步骤?'),
+      okButtonProps: { danger: true },
+      onOk: async () => {
+        setDeleting(true)
+        try {
+          await api.deleteScenarioStep(scenarioId, sel.step.id)
+          message.success(t('scenario.stepDeleted', '步骤已删除'))
+          onDeleted()
+        } catch (e) {
+          message.error(e instanceof ApiError ? e.message : t('scenario.deleteFailed', '删除失败'))
+        } finally {
+          setDeleting(false)
+        }
+      },
+    })
+  }
   const [running, setRunning] = useState(false)
   const [resp, setResp] = useState<DebugResponse | null>(null)
   const [err, setErr] = useState('')
@@ -507,7 +534,7 @@ function StepDetailDrawer({
       extra={
         <Space>
           <Button type="text" size="small" icon={<SwapOutlined />} disabled title={t('scenario.replaceSoon', '替换(即将接入)')}>{t('scenario.replace', '替换')}</Button>
-          <Button type="text" size="small" danger icon={<DeleteOutlined />} disabled title={t('scenario.deleteStepSoon', '删除步骤(需后端,即将接入)')}>{t('a.delete', '删除')}</Button>
+          <Button type="text" size="small" danger icon={<DeleteOutlined />} loading={deleting} onClick={del}>{t('a.delete', '删除')}</Button>
           <Button type="text" size="small" icon={<FullscreenOutlined />} onClick={() => setFull((v) => !v)}>{t('scenario.fullscreen', '全屏')}</Button>
           <Button type="text" size="small" icon={<CloseOutlined />} onClick={onClose} />
         </Space>
@@ -568,15 +595,33 @@ function ScenarioBasicInfo({ scenario, stepCount, form, patch }: { scenario: Sce
   )
 }
 
-// 场景参数(对齐参考图 #22:变量名称/类型/参数值/标签/描述 + 加一行)。存入 meta.params。
-function ScenarioParams({ params, onChange }: { params: ScenarioParam[]; onChange: (p: ScenarioParam[]) => void }) {
+// 场景参数(对齐参考图 #22:常规参数表 + CSV 参数;变量名称/类型/参数值/标签/描述 + 加一行)。存入 meta.params / meta.csvParams。
+function ScenarioParams({ params, onChange, csv, onCsvChange }: { params: ScenarioParam[]; onChange: (p: ScenarioParam[]) => void; csv: string; onCsvChange: (v: string) => void }) {
   const { t } = useI18n()
+  const [mode, setMode] = useState<'normal' | 'csv'>('normal')
   const set = (i: number, p: Partial<ScenarioParam>) => onChange(params.map((r, idx) => (idx === i ? { ...r, ...p } : r)))
   return (
     <div>
       <div style={{ background: '#f6ffed', border: '1px solid #b7eb8f', borderRadius: 6, padding: '6px 10px', marginBottom: 12, fontSize: 12, color: '#389e0d' }}>
-        {t('scenario.varPriority', '变量优先级:临时参数 > 场景参数 > 环境参数')}
+        {t('scenario.varPriority', '变量优先级:临时参数 > 场景参数 > 环境参数;同名变量场景级 CSV 优先级最高')}
       </div>
+      <Segmented
+        size="small"
+        value={mode}
+        onChange={(v) => setMode(v as 'normal' | 'csv')}
+        options={[{ label: t('scenario.normalParams', '常规参数'), value: 'normal' }, { label: t('scenario.csvParams', 'CSV 参数'), value: 'csv' }]}
+        style={{ marginBottom: 12 }}
+      />
+      {mode === 'csv' ? (
+        <Input.TextArea
+          rows={10}
+          value={csv}
+          onChange={(e) => onCsvChange(e.target.value)}
+          placeholder={'name,age\nadmin,20\nguest,18'}
+          className="ms-mono"
+        />
+      ) : (
+      <>
       <Table<ScenarioParam & { _i: number }>
         size="small"
         rowKey="_i"
@@ -595,6 +640,8 @@ function ScenarioParams({ params, onChange }: { params: ScenarioParam[]; onChang
       <Button size="small" icon={<PlusOutlined />} onClick={() => onChange([...params, { name: '', type: '常量', value: '', tags: '', desc: '' }])} style={{ marginTop: 8 }}>
         {t('scenario.addRow', '加一行')}
       </Button>
+      </>
+      )}
     </div>
   )
 }
