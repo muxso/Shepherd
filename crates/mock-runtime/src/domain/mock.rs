@@ -175,6 +175,9 @@ pub struct MockResponse {
     pub headers: Vec<(String, String)>,
     #[serde(default)]
     pub body: Option<String>,
+    /// 命中后回放前的人为延时(毫秒);默认 0(不延时)。
+    #[serde(default)]
+    pub delay_ms: u64,
 }
 
 /// 一条完整 Mock 规则:条件 + 响应(`id` 便于审计/排错)。
@@ -259,7 +262,7 @@ mod tests {
     }
 
     fn rule(id: &str, m: MatchRule, status: u16) -> MockRule {
-        MockRule { id: id.into(), rule: m, response: MockResponse { status, headers: vec![], body: None } }
+        MockRule { id: id.into(), rule: m, response: MockResponse { status, headers: vec![], body: None, delay_ms: 0 } }
     }
 
     #[test]

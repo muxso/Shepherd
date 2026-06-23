@@ -26,7 +26,7 @@ serde = { version = "1", features = ["derive"] }
 utoipa = "5"
 serde_json = "1"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
-api-test = { path = "../api-test", features = ["pg", "http", "jmeter", "local"] }
+api-test = { path = "../api-test", features = ["pg", "http", "jmeter", "local", "parquet-archive"] }
 api-runner = { path = "../api-runner" }
 api-definition = { path = "../api-definition", features = ["pg", "http"] }
 api-scenario = { path = "../api-scenario", features = ["pg", "http"] }
@@ -36,7 +36,7 @@ runner = { path = "../runner", features = ["pg", "http", "client"] }
 mock-runtime = { path = "../mock-runtime", features = ["http", "pg", "template"] }
 # 压测统一经 probe 注册表(probe-exec)驱动任意协议;probe 提供 http/grpc/sql 插件类型与默认注册表。
 perf = { path = "../perf", features = ["engine", "pg", "parquet-sink", "probe-exec"] }
-probe = { path = "../probe", features = ["http", "grpc", "sql", "mysql", "redis", "websocket"] }
+probe = { path = "../probe", features = ["http", "grpc", "sql", "mysql", "redis", "websocket", "ssh"] }
 migrate = { path = "../migrate" }
 sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "postgres"] }
 axum = "0.8"

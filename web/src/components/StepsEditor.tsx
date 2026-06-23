@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { Button, Input, Space, Typography } from 'antd'
 import { PlusOutlined, DeleteOutlined } from '@ant-design/icons'
 import type { CaseStep } from '../api'
+import { useI18n } from '../i18n'
 
 // 受控:功能用例的「步骤 + 预期结果」行编辑器。可放进 AntD Form.Item。
 export default function StepsEditor({
@@ -11,6 +12,7 @@ export default function StepsEditor({
   value?: CaseStep[]
   onChange?: (v: CaseStep[]) => void
 }) {
+  const { t } = useI18n()
   const [rows, setRows] = useState<CaseStep[]>(() => value || [])
   const push = (next: CaseStep[]) => {
     setRows(next)
@@ -23,7 +25,7 @@ export default function StepsEditor({
     <Space direction="vertical" style={{ width: '100%' }} size={6}>
       {rows.length === 0 && (
         <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-          暂无步骤,点下方添加。
+          {t('steps.empty', '暂无步骤,点下方添加。')}
         </Typography.Text>
       )}
       {rows.map((r, i) => (
@@ -34,12 +36,12 @@ export default function StepsEditor({
             disabled
           />
           <Input
-            placeholder="步骤描述"
+            placeholder={t('steps.stepDesc', '步骤描述')}
             value={r.step}
             onChange={(e) => update(i, { step: e.target.value })}
           />
           <Input
-            placeholder="预期结果"
+            placeholder={t('steps.expected', '预期结果')}
             value={r.expected}
             onChange={(e) => update(i, { expected: e.target.value })}
           />
@@ -47,7 +49,7 @@ export default function StepsEditor({
         </Space.Compact>
       ))}
       <Button icon={<PlusOutlined />} size="small" onClick={() => push([...rows, { step: '', expected: '' }])}>
-        添加步骤
+        {t('steps.add', '添加步骤')}
       </Button>
     </Space>
   )

@@ -15,9 +15,15 @@ type R<T> = Result<T, Box<dyn Error>>;
 #[derive(Parser)]
 #[command(name = "shepherd", version, about = "Shepherd —— AI 研发监督平台 CLI")]
 struct Cli {
+    /// 以原始 JSON 输出(默认渲染人类可读表格 / 键值)。便于脚本/管道消费。
+    #[arg(long, global = true)]
+    json: bool,
     #[command(subcommand)]
     cmd: Cmd,
 }
+
+/// 全局输出模式:true=原始 JSON,false=人类可读。由 --json 设置。
+static JSON_OUTPUT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 #[derive(Subcommand)]
 enum Cmd {
@@ -265,6 +271,12 @@ enum ReqCmd {
     List {
         #[arg(long)]
         project: String,
+        /// 页码(从 1 起)。
+        #[arg(long, default_value_t = 1)]
+        page: u32,
+        /// 每页条数。
+        #[arg(long, default_value_t = 50)]
+        page_size: u32,
     },
     /// 自动拆分需求为任务 DAG(服务端取规格,交规划器拆分)。
     Breakdown {
@@ -1198,8 +1210,108 @@ impl Client {
     }
 }
 
+/// 统一输出:--json → 原始 JSON;否则人类可读(分页/数组渲染表格,对象渲染键值)。
 fn pretty(v: &Value) {
-    println!("{}", serde_json::to_string_pretty(v).unwrap_or_default());
+    if JSON_OUTPUT.load(std::sync::atomic::Ordering::Relaxed) {
+        println!("{}", serde_json::to_string_pretty(v).unwrap_or_default());
+        return;
+    }
+    render_human(v);
+}
+
+/// 标量值渲染成单元格文本;嵌套对象/数组压缩成摘要(避免撑爆表格)。
+fn cell(v: &Value) -> String {
+    match v {
+        Value::Null => "—".to_string(),
+        Value::String(s) => s.clone(),
+        Value::Bool(b) => b.to_string(),
+        Value::Number(n) => n.to_string(),
+        Value::Array(a) => format!("[{} 项]", a.len()),
+        Value::Object(o) => format!("{{{} 字段}}", o.len()),
+    }
+}
+
+/// 人类可读渲染:分页 {items,...} / 数组 → 表格;对象 → 键值;标量 → 原样。
+fn render_human(v: &Value) {
+    // 分页结构:渲染 items 表格 + 末尾分页摘要。
+    if let Some(items) = v.get("items").and_then(|x| x.as_array()) {
+        render_table(items);
+        let total = v.get("total").map(cell).unwrap_or_default();
+        let cur = v.get("current").map(cell).unwrap_or_default();
+        let pages = v.get("totalPages").map(cell).unwrap_or_default();
+        if !total.is_empty() {
+            println!("\n共 {total} 条 · 第 {cur} 页 / 共 {pages} 页");
+        }
+        return;
+    }
+    match v {
+        Value::Array(a) => render_table(a),
+        Value::Object(_) => render_kv(v),
+        other => println!("{}", cell(other)),
+    }
+}
+
+/// 对象数组 → 对齐表格。列 = 各行键的并集(保序);标量列优先,过宽值截断。
+fn render_table(items: &[Value]) {
+    if items.is_empty() {
+        println!("(空)");
+        return;
+    }
+    // 收集列(按首次出现顺序)。非对象元素回退为单列 value。
+    let mut cols: Vec<String> = Vec::new();
+    for it in items {
+        if let Some(o) = it.as_object() {
+            for k in o.keys() {
+                if !cols.contains(k) {
+                    cols.push(k.clone());
+                }
+            }
+        }
+    }
+    if cols.is_empty() {
+        for it in items {
+            println!("{}", cell(it));
+        }
+        return;
+    }
+    // 每列宽度 = max(表头, 各单元格),上限 40。
+    let trunc = |s: String| if s.chars().count() > 40 { format!("{}…", s.chars().take(39).collect::<String>()) } else { s };
+    let mut widths: Vec<usize> = cols.iter().map(|c| c.chars().count()).collect();
+    let rows: Vec<Vec<String>> = items
+        .iter()
+        .map(|it| {
+            cols.iter()
+                .map(|c| trunc(it.get(c).map(cell).unwrap_or_else(|| "—".to_string())))
+                .collect()
+        })
+        .collect();
+    for r in &rows {
+        for (i, c) in r.iter().enumerate() {
+            widths[i] = widths[i].max(c.chars().count());
+        }
+    }
+    let pad = |s: &str, w: usize| {
+        let n = s.chars().count();
+        format!("{}{}", s, " ".repeat(w.saturating_sub(n)))
+    };
+    let header: Vec<String> = cols.iter().enumerate().map(|(i, c)| pad(c, widths[i])).collect();
+    println!("{}", header.join("  "));
+    println!("{}", widths.iter().map(|w| "-".repeat(*w)).collect::<Vec<_>>().join("  "));
+    for r in &rows {
+        let line: Vec<String> = r.iter().enumerate().map(|(i, c)| pad(c, widths[i])).collect();
+        println!("{}", line.join("  "));
+    }
+}
+
+/// 对象 → 键值对齐输出。
+fn render_kv(v: &Value) {
+    if let Some(o) = v.as_object() {
+        let w = o.keys().map(|k| k.chars().count()).max().unwrap_or(0);
+        for (k, val) in o {
+            let pad = " ".repeat(w.saturating_sub(k.chars().count()));
+            println!("{k}{pad} : {}", cell(val));
+        }
+    }
 }
 
 /// 把期望状态码翻成 runner 认得的断言数组(`[{"type":"StatusIs","args":N}]`);
@@ -1234,6 +1346,7 @@ fn parse_vars(items: &[String]) -> R<Value> {
 }
 
 fn run(cli: Cli) -> R<()> {
+    JSON_OUTPUT.store(cli.json, std::sync::atomic::Ordering::Relaxed);
     match cli.cmd {
         Cmd::Login {
             url,
@@ -1307,9 +1420,10 @@ fn run(cli: Cli) -> R<()> {
                     json!({"projectId": project, "title": title, "description": description, "acceptanceCriteria": criteria}),
                     true,
                 )?),
-                ReqCmd::List { project } => {
-                    pretty(&c.get(&format!("/requirement?projectId={project}"), true)?)
-                }
+                ReqCmd::List { project, page, page_size } => pretty(&c.get(
+                    &format!("/requirement?projectId={project}&current={page}&pageSize={page_size}"),
+                    true,
+                )?),
                 ReqCmd::Breakdown { req, version, ai: _ } => {
                     // 服务端据 requirementId 取规格并拆分。
                     let path = match version {

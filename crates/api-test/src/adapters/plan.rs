@@ -17,7 +17,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use api_runner::{
-    run_extracts, wait_millis, Assertion, CaseOutcome, MatchCondition, Processor, ReqwestRunner,
+    evaluate_detailed_with_vars, run_extracts, wait_millis, Assertion, CaseOutcome, MatchCondition,
+    Processor, ReqwestRunner,
     RequestSpec,
 };
 
@@ -222,9 +223,41 @@ impl PlanExecutor {
             CaseOutcome::Error => ("ERROR", report.failures),
         };
         self.sink.record(report_id, &case_id, outcome, &failures).await?;
-        // EXTRACT 后置:写入上下文供后续节点引用。
+        // 响应明细回填(best-effort,失败不影响执行);供报告逐步展开响应体/头/状态码/耗时/
+        // 大小 + 逐条断言(含通过项)+ 提取变量。提取只算一次,既落库又写上下文。
         if let Some(s) = &snap {
-            for (k, v) in run_extracts(&processors, s) {
+            let detailed = evaluate_detailed_with_vars(&assertions, s, &state.vars);
+            let assertions_json = serde_json::Value::Array(
+                detailed
+                    .iter()
+                    .map(|a| {
+                        serde_json::json!({
+                            "item": a.item, "condition": a.condition, "expected": a.expected,
+                            "actual": a.actual, "passed": a.passed, "reason": a.reason,
+                        })
+                    })
+                    .collect(),
+            );
+            let extracts = run_extracts(&processors, s);
+            let extractions_json = serde_json::Value::Array(
+                extracts.iter().map(|(k, v)| serde_json::json!([k, v])).collect(),
+            );
+            let _ = self
+                .sink
+                .record_detail(
+                    report_id,
+                    &case_id,
+                    s.status as i32,
+                    s.elapsed_ms as i64,
+                    s.body.len() as i64,
+                    &s.body,
+                    &s.headers,
+                    &assertions_json,
+                    &extractions_json,
+                )
+                .await;
+            // EXTRACT 后置:写入上下文供后续节点引用。
+            for (k, v) in extracts {
                 state.vars.insert(k, v);
             }
         }
@@ -425,6 +458,7 @@ mod tests {
                 variable: "tk".into(),
                 kind: api_runner::ExtractKind::JsonPath,
                 expression: "$.token".into(),
+                scope: api_runner::ExtractScope::Temp,
             }],
         }];
         let specs = InMemorySpecs::default()

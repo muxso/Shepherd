@@ -28,3 +28,8 @@ pub use redis::RedisPlugin;
 pub mod websocket;
 #[cfg(feature = "websocket")]
 pub use websocket::WebSocketPlugin;
+
+#[cfg(feature = "ssh")]
+pub mod ssh;
+#[cfg(feature = "ssh")]
+pub use ssh::SshPlugin;

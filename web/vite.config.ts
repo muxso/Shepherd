@@ -25,6 +25,7 @@ const proxy = Object.fromEntries(
     '/perf',
     '/runner',
     '/runner-agent',
+    '/case-review',
     '/mcp',
   ].map((p) => [
     p,
@@ -42,4 +43,15 @@ const proxy = Object.fromEntries(
 export default defineConfig({
   plugins: [react()],
   server: { port: 5173, proxy },
+  build: {
+    rollupOptions: {
+      output: {
+        // 把体量大的第三方库拆成独立 vendor chunk:入口更小、首屏更快、依赖不变时可长期缓存。
+        manualChunks: {
+          'vendor-react': ['react', 'react-dom', 'react-router-dom'],
+          'vendor-antd': ['antd', '@ant-design/icons'],
+        },
+      },
+    },
+  },
 })

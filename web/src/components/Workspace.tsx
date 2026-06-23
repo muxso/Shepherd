@@ -1,10 +1,18 @@
-import { useEffect, useState, type ReactNode } from 'react'
+import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { Button, Empty, Input, Space, Table, Tabs } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
 import { PlusOutlined, ReloadOutlined } from '@ant-design/icons'
+import { useI18n } from '../i18n'
 
 const LIST_KEY = '__list__'
+
+// 工作区 Tab 栏右侧的额外内容插槽(DOM 节点)。活动 Tab 可通过 createPortal
+// 把自己的工具栏(如场景的「环境/服务端执行/保存」)投射到 Tab 栏同一行右侧。
+const ExtraSlotContext = createContext<HTMLElement | null>(null)
+export function useWorkspaceExtraSlot() {
+  return useContext(ExtraSlotContext)
+}
 
 // 深链:读取 ?open=<id>,交给调用方打开对应详情 tab,然后清除该参数(避免重复触发)。
 export function useOpenParam(onOpen: (id: string) => void) {
@@ -49,11 +57,67 @@ export interface WorkTab {
   children: ReactNode
 }
 
+// 统一的可拖拽左栏(树/筛选面板)。右缘提供 6px 拖拽热区,左右拖拽改宽,
+// 宽度在 [min, max] 内夹取;带 storageKey 时记忆到 localStorage(刷新保留)。
+export function ResizableSider({
+  children,
+  defaultWidth = 252,
+  min = 200,
+  max = 480,
+  storageKey,
+}: {
+  children: ReactNode
+  defaultWidth?: number
+  min?: number
+  max?: number
+  storageKey?: string
+}) {
+  const [width, setWidth] = useState(() => {
+    if (storageKey && typeof localStorage !== 'undefined') {
+      const saved = Number(localStorage.getItem(storageKey))
+      if (saved >= min && saved <= max) return saved
+    }
+    return defaultWidth
+  })
+  const drag = useRef<{ startX: number; startW: number } | null>(null)
+
+  useEffect(() => {
+    const onMove = (e: MouseEvent) => {
+      if (!drag.current) return
+      setWidth(Math.min(max, Math.max(min, drag.current.startW + (e.clientX - drag.current.startX))))
+    }
+    const onUp = () => {
+      if (!drag.current) return
+      drag.current = null
+      document.body.style.cursor = ''
+      document.body.style.userSelect = ''
+      if (storageKey) localStorage.setItem(storageKey, String(width))
+    }
+    window.addEventListener('mousemove', onMove)
+    window.addEventListener('mouseup', onUp)
+    return () => {
+      window.removeEventListener('mousemove', onMove)
+      window.removeEventListener('mouseup', onUp)
+    }
+  }, [width, max, min, storageKey])
+
+  return (
+    <div style={{ position: 'relative', width, flexShrink: 0, background: '#fff', borderRight: '1px solid #f0f0f0', display: 'flex', flexDirection: 'column' }}>
+      {children}
+      <div
+        onMouseDown={(e) => { drag.current = { startX: e.clientX, startW: width }; document.body.style.cursor = 'col-resize'; document.body.style.userSelect = 'none' }}
+        style={{ position: 'absolute', top: 0, right: -3, width: 6, height: '100%', cursor: 'col-resize', zIndex: 10 }}
+      />
+    </div>
+  )
+}
+
 // 统一三栏:左(树/筛选,可选)| 中右合一为多 Tab(列表常驻 + 详情多开)。
 export function Workspace({
   left,
   leftWidth = 220,
-  listLabel = '列表',
+  siderKey,
+  listLabel,
   listContent,
   tabs,
   activeKey,
@@ -62,6 +126,7 @@ export function Workspace({
 }: {
   left?: ReactNode
   leftWidth?: number
+  siderKey?: string
   listLabel?: string
   listContent: ReactNode
   tabs: WorkTab[]
@@ -69,47 +134,53 @@ export function Workspace({
   onChange: (k: string) => void
   onClose: (k: string) => void
 }) {
+  const { t } = useI18n()
+  // Tab 栏右侧插槽:活动 Tab 通过 useWorkspaceExtraSlot()+createPortal 投射工具栏。
+  const [slotEl, setSlotEl] = useState<HTMLDivElement | null>(null)
   const items = [
-    { key: LIST_KEY, label: listLabel, closable: false, children: listContent },
-    ...tabs.map((t) => ({ key: t.key, label: t.label, children: t.children })),
+    { key: LIST_KEY, label: listLabel ?? t('ws.list', '列表'), closable: false, children: listContent },
+    ...tabs.map((tab) => ({ key: tab.key, label: tab.label, children: tab.children })),
   ]
   return (
-    <div style={{ display: 'flex', height: '100%' }}>
-      {left !== undefined && (
-        <div style={{ width: leftWidth, background: '#fff', borderRight: '1px solid #f0f0f0', display: 'flex', flexDirection: 'column' }}>
-          {left}
+    <ExtraSlotContext.Provider value={slotEl}>
+      <div style={{ display: 'flex', height: '100%' }}>
+        {left !== undefined && (
+          <ResizableSider defaultWidth={leftWidth} storageKey={siderKey}>
+            {left}
+          </ResizableSider>
+        )}
+        <div style={{ flex: 1, minWidth: 0, background: '#fff' }}>
+          <Tabs
+            type="editable-card"
+            hideAdd
+            activeKey={activeKey}
+            onChange={onChange}
+            onEdit={(key, action) => action === 'remove' && onClose(String(key))}
+            items={items}
+            style={{ height: '100%' }}
+            className="ms-worktabs"
+            tabBarExtraContent={{ right: <div ref={setSlotEl} style={{ display: 'flex', alignItems: 'center', gap: 8, paddingRight: 12 }} /> }}
+          />
         </div>
-      )}
-      <div style={{ flex: 1, minWidth: 0, background: '#fff' }}>
-        <Tabs
-          type="editable-card"
-          hideAdd
-          activeKey={activeKey}
-          onChange={onChange}
-          onEdit={(key, action) => action === 'remove' && onClose(String(key))}
-          items={items}
-          style={{ height: '100%' }}
-          className="ms-worktabs"
-        />
       </div>
-    </div>
+    </ExtraSlotContext.Provider>
   )
 }
 
 // 统一列表:工具栏(新建/自定义动作 + 搜索 + 刷新)+ 表格 + 分页。
 export function WorkList<T extends object>({
   onNew,
-  newLabel = '新建',
+  newLabel,
   extraActions,
   onSearch,
-  searchPlaceholder = '搜索',
+  searchPlaceholder,
   onRefresh,
   columns,
   data,
   loading,
   rowKey = 'id',
   onRowClick,
-  emptyText = '暂无数据',
+  emptyText,
 }: {
   onNew?: () => void
   newLabel?: string
@@ -124,17 +195,18 @@ export function WorkList<T extends object>({
   onRowClick?: (record: T) => void
   emptyText?: string
 }) {
+  const { t } = useI18n()
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 12px', borderBottom: '1px solid #f0f0f0' }}>
         {onNew && (
           <Button type="primary" icon={<PlusOutlined />} onClick={onNew}>
-            {newLabel}
+            {newLabel ?? t('a.new', '新建')}
           </Button>
         )}
         {extraActions}
         <div style={{ flex: 1 }} />
-        {onSearch && <Input.Search placeholder={searchPlaceholder} allowClear style={{ width: 240 }} onChange={(e) => onSearch(e.target.value)} />}
+        {onSearch && <Input.Search placeholder={searchPlaceholder ?? t('a.search', '搜索')} allowClear style={{ width: 240 }} onChange={(e) => onSearch(e.target.value)} />}
         {onRefresh && <Button icon={<ReloadOutlined />} onClick={onRefresh} />}
       </div>
       <div style={{ flex: 1, overflow: 'auto', padding: 12 }}>
@@ -145,8 +217,8 @@ export function WorkList<T extends object>({
           dataSource={data}
           columns={columns}
           onRow={onRowClick ? (r) => ({ onClick: () => onRowClick(r), style: { cursor: 'pointer' } }) : undefined}
-          pagination={{ pageSize: 15, size: 'small', showTotal: (t) => `共 ${t} 条` }}
-          locale={{ emptyText: <Empty description={emptyText} /> }}
+          pagination={{ pageSize: 15, size: 'small', showTotal: (n) => t('ws.total', '共 {n} 条').replace('{n}', String(n)) }}
+          locale={{ emptyText: <Empty description={emptyText ?? t('common.empty', '暂无数据')} /> }}
         />
       </div>
     </div>

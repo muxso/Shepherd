@@ -64,12 +64,40 @@ impl TaskService {
         description: &str,
         acceptance_criteria: &[String],
         dependencies: &[String],
+        points: i32,
     ) -> Result<String, TaskCmdError> {
         let mut d = self.get(decomposition_id).await?;
-        let new = NewTask::new(title, description, acceptance_criteria, dependencies)?;
+        let new = NewTask::new(title, description, acceptance_criteria, dependencies)?.with_points(points);
         let id = d.add_task(new)?;
         self.repo.save(&d).await?;
         Ok(id)
+    }
+
+    /// 设置某任务的工作量(task point),整图回写后返回最新拆分图。
+    pub async fn set_points(
+        &self,
+        decomposition_id: &str,
+        task_id: &str,
+        points: i32,
+    ) -> Result<Decomposition, TaskCmdError> {
+        let mut d = self.get(decomposition_id).await?;
+        d.set_points(task_id, points)?;
+        self.repo.save(&d).await?;
+        Ok(d)
+    }
+
+    /// 指派任务负责人(人 / AI 执行机),整图回写后返回最新拆分图。
+    pub async fn set_assignee(
+        &self,
+        decomposition_id: &str,
+        task_id: &str,
+        assignee: &str,
+        kind: &str,
+    ) -> Result<Decomposition, TaskCmdError> {
+        let mut d = self.get(decomposition_id).await?;
+        d.set_assignee(task_id, assignee, kind)?;
+        self.repo.save(&d).await?;
+        Ok(d)
     }
 
     /// 派发任务(Pending→Dispatched,依赖须全部 Verified)。
@@ -147,8 +175,8 @@ mod tests {
     #[tokio::test]
     async fn add_dispatch_and_unlock_dependent() {
         let (svc, did) = seeded().await;
-        let a = svc.add_task(&did, "A", "", &[], &[]).await.expect("a");
-        let _b = svc.add_task(&did, "B", "", &[], &[a.clone()]).await.expect("b");
+        let a = svc.add_task(&did, "A", "", &[], &[], 0).await.expect("a");
+        let _b = svc.add_task(&did, "B", "", &[], &[a.clone()], 0).await.expect("b");
 
         // B 依赖未满足
         assert_eq!(
@@ -169,7 +197,7 @@ mod tests {
     async fn add_task_unknown_dependency_is_validation() {
         let (svc, did) = seeded().await;
         assert_eq!(
-            svc.add_task(&did, "B", "", &[], &["t9".to_string()]).await.unwrap_err(),
+            svc.add_task(&did, "B", "", &[], &["t9".to_string()], 0).await.unwrap_err(),
             TaskCmdError::Validation(TaskError::UnknownDependency("t9".into()))
         );
     }
@@ -177,7 +205,7 @@ mod tests {
     #[tokio::test]
     async fn illegal_transition_is_conflict() {
         let (svc, did) = seeded().await;
-        svc.add_task(&did, "A", "", &[], &[]).await.expect("a");
+        svc.add_task(&did, "A", "", &[], &[], 0).await.expect("a");
         assert_eq!(
             svc.transition(&did, "t1", TaskStatus::Verified).await.unwrap_err(),
             TaskCmdError::Conflict(TaskError::TransitionNotAllowed { from: "PENDING", to: "VERIFIED" })
@@ -190,9 +218,9 @@ mod tests {
         let (svc, did) = seeded().await;
         let svc = Arc::new(svc);
         // 钻石根 t1,兄弟 t2/t3 依赖 t1。
-        let t1 = svc.add_task(&did, "root", "", &[], &[]).await.expect("t1");
-        svc.add_task(&did, "left", "", &[], &[t1.clone()]).await.expect("t2");
-        svc.add_task(&did, "right", "", &[], &[t1.clone()]).await.expect("t3");
+        let t1 = svc.add_task(&did, "root", "", &[], &[], 0).await.expect("t1");
+        svc.add_task(&did, "left", "", &[], &[t1.clone()], 0).await.expect("t2");
+        svc.add_task(&did, "right", "", &[], &[t1.clone()], 0).await.expect("t3");
         svc.advance_to(&did, &t1, TaskStatus::Verified).await.expect("t1 verified");
 
         // 并发把兄弟 t2、t3 推到 Verified。

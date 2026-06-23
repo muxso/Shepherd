@@ -114,6 +114,8 @@ pub struct NewTask {
     pub description: String,
     pub acceptance_criteria: Vec<String>,
     pub dependencies: Vec<String>,
+    /// 工作量(task point);默认 0(未估)。
+    pub points: i32,
 }
 
 impl NewTask {
@@ -128,7 +130,14 @@ impl NewTask {
             description: description.trim().to_string(),
             acceptance_criteria: validate_criteria(acceptance_criteria)?,
             dependencies: dependencies.to_vec(),
+            points: 0,
         })
+    }
+
+    /// 设置工作量(链式;负数夹到 0)。
+    pub fn with_points(mut self, points: i32) -> Self {
+        self.points = points.max(0);
+        self
     }
 }
 
@@ -141,6 +150,12 @@ pub struct Task {
     pub acceptance_criteria: Vec<String>,
     pub dependencies: Vec<String>,
     pub status: TaskStatus,
+    /// 工作量(task point);0 = 未估。
+    pub points: i32,
+    /// 负责人 id/名;空 = 未分配。
+    pub assignee: String,
+    /// 负责人类型:HUMAN(人)/ AGENT(AI 执行机)/ 空。
+    pub assignee_kind: String,
 }
 
 /// 一个需求版本的任务拆分(任务 DAG)。聚合是一致性边界。
@@ -193,8 +208,27 @@ impl Decomposition {
             acceptance_criteria: new.acceptance_criteria,
             dependencies: deps,
             status: TaskStatus::Pending,
+            points: new.points,
+            assignee: String::new(),
+            assignee_kind: String::new(),
         });
         Ok(id)
+    }
+
+    /// 设置某任务的工作量(task point)。负数夹到 0;任务不存在 → NoSuchTask。
+    pub fn set_points(&mut self, id: &str, points: i32) -> Result<(), TaskError> {
+        let task = self.task_mut(id).ok_or_else(|| TaskError::NoSuchTask(id.to_string()))?;
+        task.points = points.max(0);
+        Ok(())
+    }
+
+    /// 指派负责人(人/AI 执行机)。assignee 为空即取消指派(kind 一并清空)。任务不存在 → NoSuchTask。
+    pub fn set_assignee(&mut self, id: &str, assignee: &str, kind: &str) -> Result<(), TaskError> {
+        let task = self.task_mut(id).ok_or_else(|| TaskError::NoSuchTask(id.to_string()))?;
+        let a = assignee.trim();
+        task.assignee = a.to_string();
+        task.assignee_kind = if a.is_empty() { String::new() } else { kind.trim().to_string() };
+        Ok(())
     }
 
     /// 某任务的依赖是否全部已 Verified。

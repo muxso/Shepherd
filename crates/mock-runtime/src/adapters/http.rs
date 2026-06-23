@@ -45,7 +45,13 @@ async fn handle(State(st): State<MockState>, req: Request) -> Response {
         Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "rule source error").into_response(),
     };
     match match_request(&mock_req, &rules) {
-        Some(r) => build_response(&r.response, &mock_req),
+        Some(r) => {
+            // 命中后按配置延时(模拟慢响应);0 则不等待。
+            if r.response.delay_ms > 0 {
+                tokio::time::sleep(std::time::Duration::from_millis(r.response.delay_ms)).await;
+            }
+            build_response(&r.response, &mock_req)
+        }
         None => (StatusCode::NOT_FOUND, "no mock rule matched").into_response(),
     }
 }

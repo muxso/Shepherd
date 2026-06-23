@@ -1,29 +1,32 @@
 import { Empty, Space, Table, Tag, Typography } from 'antd'
 import { ToolOutlined } from '@ant-design/icons'
 import CrudResource, { type CrudConfig } from '../components/CrudResource'
-import { api, type Environment, type FunctionalCase, type Organization, type ResourcePool, type Role, type User } from '../api'
+import { api, type Environment, type FunctionalCase, type Organization, type Role, type User } from '../api'
 import { useApp } from '../context'
+import { useI18n } from '../i18n'
+
+type TFn = ReturnType<typeof useI18n>['t']
 
 const mono = (v: string) => <span className="ms-mono" style={{ fontSize: 12, color: '#8a9099' }}>{v}</span>
 
 // —— 系统管理 ——
-const orgCfg: CrudConfig<Organization> = {
-  title: '组织',
+const makeOrgCfg = (t: TFn): CrudConfig<Organization> => ({
+  title: t('res.org', '组织'),
   list: () => api.organizations().then((p) => p.items),
-  create: { fields: [{ name: 'name', label: '组织名', required: true }], submit: (v) => api.createOrganization(String(v.name)) },
+  create: { fields: [{ name: 'name', label: t('res.orgName', '组织名'), required: true }], submit: (v) => api.createOrganization(String(v.name)) },
   columns: [
-    { title: '名称', dataIndex: 'name' },
+    { title: t('res.colName', '名称'), dataIndex: 'name' },
     { title: 'ID', dataIndex: 'id', render: mono },
   ],
-}
+})
 
-const roleCfg: CrudConfig<Role> = {
-  title: '角色',
+const makeRoleCfg = (t: TFn): CrudConfig<Role> => ({
+  title: t('res.role', '角色'),
   list: () => api.roles().then((p) => p.items),
   create: {
     fields: [
-      { name: 'name', label: '角色名', required: true },
-      { name: 'permissions', label: '权限(逗号分隔)', placeholder: 'PROJECT:READ,PROJECT:ADD' },
+      { name: 'name', label: t('res.roleName', '角色名'), required: true },
+      { name: 'permissions', label: t('res.permissionsComma', '权限(逗号分隔)'), placeholder: 'PROJECT:READ,PROJECT:ADD' },
     ],
     submit: (v) =>
       api.createRole({
@@ -35,40 +38,40 @@ const roleCfg: CrudConfig<Role> = {
       }),
   },
   columns: [
-    { title: '角色', dataIndex: 'name' },
-    { title: '权限', dataIndex: 'permissions', render: (p?: string[]) => (p?.length ? p.map((x) => <Tag key={x}>{x}</Tag>) : '—') },
+    { title: t('res.colRole', '角色'), dataIndex: 'name' },
+    { title: t('res.colPermissions', '权限'), dataIndex: 'permissions', render: (p?: string[]) => (p?.length ? p.map((x) => <Tag key={x}>{x}</Tag>) : '—') },
   ],
-}
+})
 
-const userCfg: CrudConfig<User> = {
-  title: '用户',
+const makeUserCfg = (t: TFn): CrudConfig<User> => ({
+  title: t('res.user', '用户'),
   list: () => api.users().then((p) => p.items),
   create: {
     fields: [
-      { name: 'name', label: '用户名', required: true },
-      { name: 'email', label: '邮箱', required: true },
+      { name: 'name', label: t('res.userName', '用户名'), required: true },
+      { name: 'email', label: t('res.email', '邮箱'), required: true },
     ],
     submit: (v) => api.createUser({ name: String(v.name), email: String(v.email) }),
   },
   columns: [
-    { title: '用户名', dataIndex: 'name' },
-    { title: '邮箱', dataIndex: 'email', render: mono },
-    { title: '启用', dataIndex: 'enable', render: (e?: boolean) => (e === false ? <Tag>停用</Tag> : <Tag color="green">启用</Tag>) },
+    { title: t('res.colUserName', '用户名'), dataIndex: 'name' },
+    { title: t('res.email', '邮箱'), dataIndex: 'email', render: mono },
+    { title: t('res.colEnabled', '启用'), dataIndex: 'enable', render: (e?: boolean) => (e === false ? <Tag>{t('res.disabled', '停用')}</Tag> : <Tag color="green">{t('res.enabled', '启用')}</Tag>) },
   ],
-}
+})
 
 // —— 测试资产 / 执行 ——
-const funcCaseCfg: CrudConfig<FunctionalCase> = {
-  title: '功能用例',
+const makeFuncCaseCfg = (t: TFn): CrudConfig<FunctionalCase> => ({
+  title: t('res.funcCase', '功能用例'),
   needsProject: true,
   list: ({ projectId }) => api.functionalCases(projectId),
   create: {
     fields: [
-      { name: 'name', label: '用例名', required: true },
-      { name: 'module', label: '模块', placeholder: '可选' },
+      { name: 'name', label: t('res.caseName', '用例名'), required: true },
+      { name: 'module', label: t('res.colModule', '模块'), placeholder: t('res.optional', '可选') },
       {
         name: 'priority',
-        label: '优先级',
+        label: t('res.colPriority', '优先级'),
         type: 'select',
         initial: 'P1',
         options: ['P0', 'P1', 'P2', 'P3'].map((p) => ({ value: p, label: p })),
@@ -78,60 +81,51 @@ const funcCaseCfg: CrudConfig<FunctionalCase> = {
       api.createFunctionalCase({ projectId, name: String(v.name), priority: v.priority as string, module: v.module as string }),
   },
   columns: [
-    { title: '名称', dataIndex: 'name' },
-    { title: '模块', dataIndex: 'module', render: (m?: string) => m || '—' },
-    { title: '优先级', dataIndex: 'priority', width: 90, render: (p?: string) => <Tag color="blue">{p || 'P1'}</Tag> },
-    { title: '状态', dataIndex: 'status', width: 120, render: (s?: string) => <Tag>{s || 'PREPARED'}</Tag> },
+    { title: t('res.colName', '名称'), dataIndex: 'name' },
+    { title: t('res.colModule', '模块'), dataIndex: 'module', render: (m?: string) => m || '—' },
+    { title: t('res.colPriority', '优先级'), dataIndex: 'priority', width: 90, render: (p?: string) => <Tag color="blue">{p || 'P1'}</Tag> },
+    { title: t('res.colStatus', '状态'), dataIndex: 'status', width: 120, render: (s?: string) => <Tag>{s || 'PREPARED'}</Tag> },
   ],
-}
+})
 
-const envCfg: CrudConfig<Environment> = {
-  title: '环境',
+const makeEnvCfg = (t: TFn): CrudConfig<Environment> => ({
+  title: t('res.env', '环境'),
   needsProject: true,
   list: ({ projectId }) => api.environments(projectId),
   create: {
     fields: [
-      { name: 'name', label: '环境名', required: true },
+      { name: 'name', label: t('res.envName', '环境名'), required: true },
       { name: 'baseUrl', label: 'Base URL', required: true, placeholder: 'http://127.0.0.1:9180' },
     ],
     submit: (v, { projectId }) => api.createEnvironment({ projectId, name: String(v.name), baseUrl: String(v.baseUrl) }),
   },
   columns: [
-    { title: '环境', dataIndex: 'name' },
+    { title: t('res.colEnv', '环境'), dataIndex: 'name' },
     { title: 'Base URL', dataIndex: 'baseUrl', render: mono },
-    { title: '协议', dataIndex: 'protocols', render: (p?: string[]) => (p?.length ? p.map((x) => <Tag key={x}>{x}</Tag>) : '—') },
+    { title: t('res.colProtocols', '协议'), dataIndex: 'protocols', render: (p?: string[]) => (p?.length ? p.map((x) => <Tag key={x}>{x}</Tag>) : '—') },
   ],
-}
+})
 
-const poolCfg: CrudConfig<ResourcePool> = {
-  title: '资源池',
-  list: () => api.resourcePools(),
-  create: { fields: [{ name: 'name', label: '资源池名', required: true }], submit: (v) => api.createResourcePool(String(v.name)) },
-  columns: [
-    { title: '名称', dataIndex: 'name' },
-    { title: '启用', dataIndex: 'enabled', width: 90, render: (e: boolean) => (e ? <Tag color="green">启用</Tag> : <Tag>停用</Tag>) },
-    { title: 'ID', dataIndex: 'id', render: mono },
-  ],
-}
+// 资源池列表/表单已迁出至 pages/ResourcePoolPage.tsx(对齐参考图,字段更丰富)。
 
-export const OrganizationsPage = () => <CrudResource cfg={orgCfg} />
-export const RolesPage = () => <CrudResource cfg={roleCfg} />
-export const UsersPage = () => <CrudResource cfg={userCfg} />
-export const FunctionalCasesPage = () => <CrudResource cfg={funcCaseCfg} />
-export const EnvironmentsPage = () => <CrudResource cfg={envCfg} />
-export const ResourcePoolsPage = () => <CrudResource cfg={poolCfg} />
+export const OrganizationsPage = () => { const { t } = useI18n(); return <CrudResource cfg={makeOrgCfg(t)} /> }
+export const RolesPage = () => { const { t } = useI18n(); return <CrudResource cfg={makeRoleCfg(t)} /> }
+export const UsersPage = () => { const { t } = useI18n(); return <CrudResource cfg={makeUserCfg(t)} /> }
+export const FunctionalCasesPage = () => { const { t } = useI18n(); return <CrudResource cfg={makeFuncCaseCfg(t)} /> }
+export const EnvironmentsPage = () => { const { t } = useI18n(); return <CrudResource cfg={makeEnvCfg(t)} /> }
 
 // 项目页:直接用 context 已加载的项目(无全局列表端点)。
 export function ProjectsPage() {
   const { projects } = useApp()
+  const { t } = useI18n()
   return (
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
       <div style={{ padding: '14px 16px', background: '#fff', borderBottom: '1px solid #f0f0f0' }}>
         <Typography.Text strong style={{ fontSize: 15 }}>
-          项目
+          {t('res.project', '项目')}
         </Typography.Text>
         <Typography.Text type="secondary" style={{ marginLeft: 8, fontSize: 12 }}>
-          新建项目在右上角「+」
+          {t('res.newProjectHint', '新建项目在右上角「+」')}
         </Typography.Text>
       </div>
       <div style={{ flex: 1, overflow: 'auto', padding: 16 }}>
@@ -140,11 +134,11 @@ export function ProjectsPage() {
           size="middle"
           dataSource={projects}
           pagination={{ pageSize: 15, size: 'small' }}
-          locale={{ emptyText: <Empty description="暂无项目" /> }}
+          locale={{ emptyText: <Empty description={t('res.emptyProject', '暂无项目')} /> }}
           columns={[
-            { title: '项目名', dataIndex: 'name' },
-            { title: '组织', dataIndex: 'organizationId', render: mono },
-            { title: '启用', dataIndex: 'enable', width: 90, render: (e: boolean) => (e ? <Tag color="green">启用</Tag> : <Tag>停用</Tag>) },
+            { title: t('res.projectName', '项目名'), dataIndex: 'name' },
+            { title: t('res.org', '组织'), dataIndex: 'organizationId', render: mono },
+            { title: t('res.colEnabled', '启用'), dataIndex: 'enable', width: 90, render: (e: boolean) => (e ? <Tag color="green">{t('res.enabled', '启用')}</Tag> : <Tag>{t('res.disabled', '停用')}</Tag>) },
           ]}
         />
       </div>
@@ -154,6 +148,7 @@ export function ProjectsPage() {
 
 // 占位页:尚未接入的模块(下一波)。
 export function Placeholder({ name }: { name: string }) {
+  const { t } = useI18n()
   return (
     <div style={{ padding: 64, textAlign: 'center' }}>
       <Empty
@@ -161,7 +156,7 @@ export function Placeholder({ name }: { name: string }) {
         description={
           <Space direction="vertical">
             <Typography.Text strong>{name}</Typography.Text>
-            <Typography.Text type="secondary">该模块规划中,下一波接入</Typography.Text>
+            <Typography.Text type="secondary">{t('res.planning', '该模块规划中,下一波接入')}</Typography.Text>
           </Space>
         }
       />

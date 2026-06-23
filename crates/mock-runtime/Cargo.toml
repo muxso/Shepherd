@@ -14,13 +14,14 @@ serde_json = "1"
 regex = "1"
 async-trait = "0.1"
 axum = { version = "0.8", optional = true }
+tokio = { version = "1", features = ["time"], optional = true }
 sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "postgres"], optional = true }
 minijinja = { version = "2", optional = true }
 uuid = { version = "1", features = ["v4"], optional = true }
 fake = { version = "2", optional = true }
 
 [features]
-http = ["dep:axum"]
+http = ["dep:axum", "dep:tokio"]
 pg = ["dep:sqlx"]
 # 响应体模板渲染(minijinja + 请求上下文 + uuid()/now()/randint()/fake_* 动态函数)。
 template = ["dep:minijinja", "dep:uuid", "dep:fake"]

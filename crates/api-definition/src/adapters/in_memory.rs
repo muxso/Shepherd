@@ -6,10 +6,10 @@ use std::sync::{Arc, Mutex};
 use async_trait::async_trait;
 
 use crate::domain::{
-    ApiCase, ApiDefinition, ApiModule, ApiMock, NewApiCase, NewApiDefinition, NewApiModule,
-    NewApiMock,
+    ApiCase, ApiDefinition, ApiDefinitionChange, ApiModule, ApiMock, ApiView, NewApiCase,
+    NewApiDefinition, NewApiModule, NewApiMock, NewApiView,
 };
-use crate::ports::{ApiDefinitionRepository, RepoError};
+use crate::ports::{ApiDefinitionRepository, ProjectMockRow, RepoError};
 
 #[derive(Default)]
 struct State {
@@ -19,6 +19,8 @@ struct State {
     mocks: HashMap<String, ApiMock>,             // id -> Mock
     modules: HashMap<String, ApiModule>,         // id -> 模块
     task_cases: Vec<(String, String, String)>,   // (decomposition_id, task_id, case_id)
+    changes: Vec<ApiDefinitionChange>,           // 变更历史(追加序)
+    views: Vec<ApiView>,                         // 列表视图(保存的筛选/列设置)
     seq: u64,
 }
 
@@ -43,6 +45,8 @@ impl ApiDefinitionRepository for InMemoryApiDefinitionRepository {
         state.seq += 1;
         let def = ApiDefinition {
             id: format!("apidef-{}", state.seq),
+            // 内存实现合成编号(对齐 pg 序列起点 100001)。
+            num: 100000 + state.seq as i64,
             project_id: d.project_id.clone(),
             name: d.name.clone(),
             protocol: d.protocol,
@@ -50,6 +54,11 @@ impl ApiDefinitionRepository for InMemoryApiDefinitionRepository {
             path: d.path.clone(),
             status: d.status,
             module_id: None,
+            spec: d.spec.clone(),
+            created_by: d.created_by.clone(),
+            // 内存实现无真实时钟,用序号合成单调时间串。
+            created_at: format!("{:020}", state.seq),
+            updated_at: format!("{:020}", state.seq),
         };
         state.definitions.insert(def.id.clone(), def.clone());
         Ok(def)
@@ -57,6 +66,77 @@ impl ApiDefinitionRepository for InMemoryApiDefinitionRepository {
 
     async fn get_definition(&self, id: &str) -> Result<Option<ApiDefinition>, RepoError> {
         Ok(self.state.lock().expect("lock").definitions.get(id).cloned())
+    }
+
+    async fn update_definition_spec(&self, id: &str, spec: &str) -> Result<(), RepoError> {
+        if let Some(d) = self.state.lock().expect("lock").definitions.get_mut(id) {
+            d.spec = spec.to_string();
+        }
+        Ok(())
+    }
+
+    async fn update_definition_status(&self, id: &str, status: &str) -> Result<(), RepoError> {
+        if let Some(d) = self.state.lock().expect("lock").definitions.get_mut(id) {
+            if let Some(s) = crate::domain::ApiStatus::parse(status) {
+                d.status = s;
+            }
+        }
+        Ok(())
+    }
+
+    async fn delete_definition(&self, id: &str) -> Result<(), RepoError> {
+        let mut state = self.state.lock().expect("lock");
+        state.definitions.remove(id);
+        // 连带移除其用例(含插入顺序)与 Mock。
+        let case_ids: Vec<String> = state
+            .cases
+            .values()
+            .filter(|c| c.api_definition_id == id)
+            .map(|c| c.id.clone())
+            .collect();
+        for cid in &case_ids {
+            state.cases.remove(cid);
+        }
+        state.case_order.retain(|cid| !case_ids.contains(cid));
+        state.mocks.retain(|_, m| m.api_definition_id != id);
+        Ok(())
+    }
+
+    async fn record_definition_change(
+        &self,
+        definition_id: &str,
+        action: &str,
+        detail: &str,
+        actor: &str,
+    ) -> Result<(), RepoError> {
+        let mut state = self.state.lock().expect("lock");
+        state.seq += 1;
+        let seq = state.seq;
+        state.changes.push(ApiDefinitionChange {
+            id: format!("change-{seq}"),
+            definition_id: definition_id.to_string(),
+            action: action.to_string(),
+            detail: detail.to_string(),
+            actor: actor.to_string(),
+            // 合成单调递增时间串,保证倒序稳定。
+            created_at: format!("{seq:020}"),
+        });
+        Ok(())
+    }
+
+    async fn list_definition_changes(
+        &self,
+        definition_id: &str,
+    ) -> Result<Vec<ApiDefinitionChange>, RepoError> {
+        let state = self.state.lock().expect("lock");
+        // 倒序(最新在前):追加序逆序遍历。
+        Ok(state
+            .changes
+            .iter()
+            .rev()
+            .filter(|c| c.definition_id == definition_id)
+            .cloned()
+            .collect())
     }
 
     async fn list_definitions(
@@ -87,10 +167,47 @@ impl ApiDefinitionRepository for InMemoryApiDefinitionRepository {
             body: c.body.clone(),
             assertions: c.assertions.clone(),
             processors: c.processors.clone(),
+            priority: c.priority.clone(),
+            status: c.status.clone(),
+            tags: c.tags.clone(),
+            headers: c.headers.clone(),
+            query_params: c.query_params.clone(),
+            rest_params: c.rest_params.clone(),
+            auth: c.auth.clone(),
         };
         state.cases.insert(case.id.clone(), case.clone());
         state.case_order.push(case.id.clone());
         Ok(case)
+    }
+
+    async fn update_case(&self, id: &str, c: &NewApiCase) -> Result<bool, RepoError> {
+        let mut state = self.state.lock().expect("lock");
+        let Some(existing) = state.cases.get_mut(id) else { return Ok(false) };
+        existing.name = c.name.clone();
+        existing.method = c.method.clone();
+        existing.url = c.url.clone();
+        existing.body = c.body.clone();
+        existing.assertions = c.assertions.clone();
+        existing.processors = c.processors.clone();
+        existing.priority = c.priority.clone();
+        existing.status = c.status.clone();
+        existing.tags = c.tags.clone();
+        existing.headers = c.headers.clone();
+        existing.query_params = c.query_params.clone();
+        existing.rest_params = c.rest_params.clone();
+        existing.auth = c.auth.clone();
+        Ok(true)
+    }
+
+    async fn delete_case(&self, id: &str) -> Result<bool, RepoError> {
+        let mut state = self.state.lock().expect("lock");
+        let removed = state.cases.remove(id).is_some();
+        state.case_order.retain(|cid| cid != id);
+        Ok(removed)
+    }
+
+    async fn delete_mock(&self, mock_id: &str) -> Result<bool, RepoError> {
+        Ok(self.state.lock().expect("lock").mocks.remove(mock_id).is_some())
     }
 
     async fn list_cases(&self, api_definition_id: &str) -> Result<Vec<ApiCase>, RepoError> {
@@ -141,6 +258,10 @@ impl ApiDefinitionRepository for InMemoryApiDefinitionRepository {
             response_status: m.response_status,
             response_body: m.response_body.clone(),
             enabled: m.enabled,
+            tags: m.tags.clone(),
+            response_headers: m.response_headers.clone(),
+            response_delay_ms: m.response_delay_ms,
+            follow_definition: m.follow_definition,
         };
         state.mocks.insert(mock.id.clone(), mock.clone());
         Ok(mock)
@@ -155,6 +276,31 @@ impl ApiDefinitionRepository for InMemoryApiDefinitionRepository {
             .cloned()
             .collect();
         out.sort_by(|a, b| a.id.cmp(&b.id));
+        Ok(out)
+    }
+
+    async fn list_mocks_by_project(&self, project_id: &str) -> Result<Vec<ProjectMockRow>, RepoError> {
+        let state = self.state.lock().expect("lock");
+        let mut out: Vec<ProjectMockRow> = state
+            .mocks
+            .values()
+            .filter_map(|m| {
+                let d = state.definitions.get(&m.api_definition_id)?;
+                if d.project_id != project_id {
+                    return None;
+                }
+                Some(ProjectMockRow {
+                    mock: m.clone(),
+                    method: d.method.clone(),
+                    path: d.path.clone(),
+                    protocol: d.protocol.as_str().to_string(),
+                    definition_name: d.name.clone(),
+                    operator: String::new(),
+                    updated_at: String::new(),
+                })
+            })
+            .collect();
+        out.sort_by(|a, b| a.mock.id.cmp(&b.mock.id));
         Ok(out)
     }
 
@@ -208,6 +354,40 @@ impl ApiDefinitionRepository for InMemoryApiDefinitionRepository {
         if let Some(d) = state.definitions.get_mut(definition_id) {
             d.module_id = module_id.map(str::to_string);
         }
+        Ok(())
+    }
+
+    async fn insert_view(&self, v: &NewApiView) -> Result<ApiView, RepoError> {
+        let mut state = self.state.lock().expect("lock");
+        state.seq += 1;
+        let view = ApiView {
+            id: format!("apiview-{}", state.seq),
+            project_id: v.project_id.clone(),
+            user_id: v.user_id.clone(),
+            name: v.name.clone(),
+            config: v.config.clone(),
+            shared: v.shared,
+            created_at: format!("{:020}", state.seq),
+        };
+        state.views.push(view.clone());
+        Ok(view)
+    }
+
+    async fn list_views(&self, project_id: &str, user_id: &str) -> Result<Vec<ApiView>, RepoError> {
+        let state = self.state.lock().expect("lock");
+        let mut out: Vec<ApiView> = state
+            .views
+            .iter()
+            .filter(|v| v.project_id == project_id && (v.shared || v.user_id == user_id))
+            .cloned()
+            .collect();
+        out.reverse(); // 创建时间倒序
+        Ok(out)
+    }
+
+    async fn delete_view(&self, id: &str, user_id: &str) -> Result<(), RepoError> {
+        let mut state = self.state.lock().expect("lock");
+        state.views.retain(|v| !(v.id == id && v.user_id == user_id));
         Ok(())
     }
 

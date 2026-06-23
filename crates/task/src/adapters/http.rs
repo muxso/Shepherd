@@ -52,6 +52,8 @@ pub fn router(
         .route("/decomposition/{id}/task", post(add_task))
         .route("/decomposition/{id}/task/{task_id}/dispatch", post(dispatch_task))
         .route("/decomposition/{id}/task/{task_id}/status", post(transition_task))
+        .route("/decomposition/{id}/task/{task_id}/points", post(set_task_points))
+        .route("/decomposition/{id}/task/{task_id}/assignee", post(set_task_assignee))
         .with_state(TaskState { create, breakdown, admin, sessions })
 }
 
@@ -113,11 +115,30 @@ struct AddTaskBody {
     acceptance_criteria: Vec<String>,
     #[serde(default)]
     dependencies: Vec<String>,
+    /// 工作量(task point);缺省 0。
+    #[serde(default)]
+    points: i32,
 }
 
 #[derive(Deserialize, ToSchema)]
 struct StatusBody {
     status: String,
+}
+
+#[derive(Deserialize, ToSchema)]
+struct PointsBody {
+    points: i32,
+}
+
+#[derive(Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+struct AssigneeBody {
+    /// 负责人 id/名;空 = 取消指派。
+    #[serde(default)]
+    assignee: String,
+    /// 负责人类型:HUMAN / AGENT。
+    #[serde(default)]
+    kind: String,
 }
 
 #[derive(Serialize, ToSchema)]
@@ -129,6 +150,9 @@ struct TaskResponse {
     acceptance_criteria: Vec<String>,
     dependencies: Vec<String>,
     status: String,
+    points: i32,
+    assignee: String,
+    assignee_kind: String,
 }
 
 impl From<&Task> for TaskResponse {
@@ -140,6 +164,9 @@ impl From<&Task> for TaskResponse {
             acceptance_criteria: t.acceptance_criteria.clone(),
             dependencies: t.dependencies.clone(),
             status: t.status.as_str().to_string(),
+            points: t.points,
+            assignee: t.assignee.clone(),
+            assignee_kind: t.assignee_kind.clone(),
         }
     }
 }
@@ -236,8 +263,40 @@ async fn add_task(
     if !user.can("TASK", "ADD") {
         return (StatusCode::FORBIDDEN, "permission denied").into_response();
     }
-    match st.admin.add_task(&id, &b.title, &b.description, &b.acceptance_criteria, &b.dependencies).await {
+    match st.admin.add_task(&id, &b.title, &b.description, &b.acceptance_criteria, &b.dependencies, b.points).await {
         Ok(task_id) => (StatusCode::CREATED, Json(TaskCreated { task_id })).into_response(),
+        Err(e) => cmd_err(e),
+    }
+}
+
+#[utoipa::path(post, path = "/decomposition/{id}/task/{task_id}/points", tag = "task", params(("id" = String, Path), ("task_id" = String, Path)), request_body = PointsBody, responses((status = 200, body = DecompositionResponse), (status = 404)), security(("bearer" = [])))]
+async fn set_task_points(
+    user: AuthUser,
+    State(st): State<TaskState>,
+    Path((id, task_id)): Path<(String, String)>,
+    Json(b): Json<PointsBody>,
+) -> Response {
+    if !user.can("TASK", "UPDATE") {
+        return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
+    match st.admin.set_points(&id, &task_id, b.points).await {
+        Ok(d) => (StatusCode::OK, Json(DecompositionResponse::from(&d))).into_response(),
+        Err(e) => cmd_err(e),
+    }
+}
+
+#[utoipa::path(post, path = "/decomposition/{id}/task/{task_id}/assignee", tag = "task", params(("id" = String, Path), ("task_id" = String, Path)), request_body = AssigneeBody, responses((status = 200, body = DecompositionResponse), (status = 404)), security(("bearer" = [])))]
+async fn set_task_assignee(
+    user: AuthUser,
+    State(st): State<TaskState>,
+    Path((id, task_id)): Path<(String, String)>,
+    Json(b): Json<AssigneeBody>,
+) -> Response {
+    if !user.can("TASK", "UPDATE") {
+        return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
+    match st.admin.set_assignee(&id, &task_id, &b.assignee, &b.kind).await {
+        Ok(d) => (StatusCode::OK, Json(DecompositionResponse::from(&d))).into_response(),
         Err(e) => cmd_err(e),
     }
 }
@@ -278,8 +337,8 @@ async fn transition_task(
 
 #[derive(OpenApi)]
 #[openapi(
-    paths(create_decomposition, breakdown_requirement, get_decomposition, ready_tasks, add_task, dispatch_task, transition_task),
-    components(schemas(CreateBody, BreakdownBody, AddTaskBody, StatusBody, TaskResponse, DecompositionResponse, TaskCreated)),
+    paths(create_decomposition, breakdown_requirement, get_decomposition, ready_tasks, add_task, dispatch_task, transition_task, set_task_points, set_task_assignee),
+    components(schemas(CreateBody, BreakdownBody, AddTaskBody, StatusBody, PointsBody, AssigneeBody, TaskResponse, DecompositionResponse, TaskCreated)),
     tags((name = "task", description = "任务拆分 DAG"))
 )]
 struct ApiDoc;

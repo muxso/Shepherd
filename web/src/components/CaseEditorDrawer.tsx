@@ -1,14 +1,34 @@
 import { useEffect, useState } from 'react'
-import { Button, Card, Drawer, Form, Input, Select, Space, Table, Tabs, Tag, Typography, message } from 'antd'
-import { SendOutlined, PlusOutlined, DeleteOutlined } from '@ant-design/icons'
-import { api, ApiError, type ApiDefinition, type DebugResponse } from '../api'
+import { Button, Card, Drawer, Input, Radio, Segmented, Select, Space, Table, Tabs, Tag, Typography } from 'antd'
+import { message } from '../feedback'
+import { SendOutlined } from '@ant-design/icons'
+import { api, ApiError, type ApiBodyType, type ApiDefinition, type DebugResponse } from '../api'
 import { methodColor } from './tags'
 import AssertionEditor, { type Assertion } from './AssertionEditor'
+import KVEditor, { type KVRow } from './KVEditor'
+import ProcessorEditor, { type Processor } from './ProcessorEditor'
+import QueryParamTable, { type QueryParam, emptyQueryParam } from './QueryParamTable'
+import { useI18n } from '../i18n'
 
-const METHODS = ['GET', 'POST', 'PUT', 'DELETE', 'PATCH']
-type HeaderRow = { key: string; value: string }
+const BODY_TYPES: ApiBodyType[] = ['none', 'form-data', 'x-www-form-urlencoded', 'json', 'xml', 'raw', 'binary']
+const PRIORITIES = ['P0', 'P1', 'P2', 'P3']
+const CASE_STATUSES = ['进行中', '已完成', '已废弃']
 
-// MeterSphere 风接口用例工作台:一处完成 组装请求 → 发送调试 → 看响应 → 配断言 → 保存为用例。
+type AuthState = { type: 'none' | 'bearer' | 'basic'; token: string }
+
+/** 尽力格式化 JSON;非法原样返回。 */
+function formatJson(text: string): string {
+  try {
+    return JSON.stringify(JSON.parse(text), null, 2)
+  } catch {
+    return text
+  }
+}
+
+const countKV = (rows: KVRow[]) => rows.filter((r) => r.key.trim()).length
+
+// MeterSphere 风接口用例工作台(对齐参考图 #3):头部信息卡 + 名称/执行行 + 优先级/状态/标签 +
+// 请求参数下划线子标签(请求头/请求体/Query/REST/前置/后置/断言/认证/设置)+ 响应区。
 export default function CaseEditorDrawer({
   open,
   definition,
@@ -20,10 +40,21 @@ export default function CaseEditorDrawer({
   onClose: () => void
   onSaved: () => void
 }) {
+  const { t } = useI18n()
   const [name, setName] = useState('')
   const [method, setMethod] = useState(definition.method || 'GET')
   const [url, setUrl] = useState(definition.path || '')
-  const [headers, setHeaders] = useState<HeaderRow[]>([{ key: '', value: '' }])
+  const [priority, setPriority] = useState('P0')
+  const [status, setStatus] = useState(CASE_STATUSES[0])
+  const [tags, setTags] = useState<string[]>([])
+  const [tagInput, setTagInput] = useState('')
+  const [headers, setHeaders] = useState<KVRow[]>([{ key: '', value: '' }])
+  const [query, setQuery] = useState<QueryParam[]>([emptyQueryParam()])
+  const [rest, setRest] = useState<KVRow[]>([{ key: '', value: '' }])
+  const [auth, setAuth] = useState<AuthState>({ type: 'none', token: '' })
+  const [preProcessors, setPreProcessors] = useState<Processor[]>([])
+  const [postProcessors, setPostProcessors] = useState<Processor[]>([])
+  const [bodyType, setBodyType] = useState<ApiBodyType>('json')
   const [body, setBody] = useState('')
   const [assertions, setAssertions] = useState<Assertion[]>([{ type: 'StatusIs', args: 200 }])
   const [sending, setSending] = useState(false)
@@ -33,53 +64,179 @@ export default function CaseEditorDrawer({
 
   // 每次打开按当前接口定义重置。
   useEffect(() => {
-    if (open) {
-      setName('')
-      setMethod(definition.method || 'GET')
-      setUrl(definition.path || '')
-      setHeaders([{ key: '', value: '' }])
-      setBody('')
-      setAssertions([{ type: 'StatusIs', args: 200 }])
-      setResp(null)
-      setErr('')
-    }
+    if (open) reset()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, definition])
 
-  const setHeader = (i: number, patch: Partial<HeaderRow>) =>
-    setHeaders((hs) => hs.map((h, idx) => (idx === i ? { ...h, ...patch } : h)))
+  const reset = () => {
+    setName('')
+    setMethod(definition.method || 'GET')
+    setUrl(definition.path || '')
+    setPriority('P0')
+    setStatus(CASE_STATUSES[0])
+    setTags([])
+    setTagInput('')
+    setHeaders([{ key: '', value: '' }])
+    setQuery([emptyQueryParam()])
+    setRest([{ key: '', value: '' }])
+    setAuth({ type: 'none', token: '' })
+    setPreProcessors([])
+    setPostProcessors([])
+    setBodyType('json')
+    setBody('')
+    setAssertions([{ type: 'StatusIs', args: 200 }])
+    setResp(null)
+    setErr('')
+  }
 
   const send = async () => {
-    if (!url.trim()) return message.warning('请输入 URL')
+    if (!url.trim()) return message.warning(t('case.urlRequired', '请输入 URL'))
     setSending(true)
     setErr('')
     setResp(null)
     try {
       setResp(await api.debugSend({ method, url, headers: headers.filter((h) => h.key.trim()), body: body.trim() || undefined }))
     } catch (e) {
-      setErr(e instanceof ApiError ? e.message : '发送失败')
+      setErr(e instanceof ApiError ? e.message : t('case.sendFailed', '发送失败'))
     } finally {
       setSending(false)
     }
   }
 
-  const save = async () => {
-    if (!name.trim()) return message.warning('请填用例名')
-    if (!url.trim()) return message.warning('请填 URL')
+  // 前置 + 后置操作合并为 runner 可消费的 processors 数组(Wait 前置/Extract 后置;脚本/SQL 存储待执行引擎)。
+  const buildProcessors = (): unknown[] => [...preProcessors, ...postProcessors]
+
+  const doSave = async (): Promise<boolean> => {
+    if (!name.trim()) {
+      message.warning(t('case.nameRequired', '请填用例名'))
+      return false
+    }
+    if (!url.trim()) {
+      message.warning(t('case.urlRequiredSave', '请填 URL'))
+      return false
+    }
     setSaving(true)
     try {
-      await api.createCase(definition.id, { name: name.trim(), method, url, body: body.trim() || undefined, assertions })
-      message.success('用例已保存')
-      onSaved()
+      await api.createCase(definition.id, {
+        name: name.trim(),
+        method,
+        url,
+        body: body.trim() || undefined,
+        assertions,
+        processors: buildProcessors(),
+        priority,
+        status,
+        tags,
+        headers: headers.filter((h) => h.key.trim()),
+        queryParams: query.filter((h) => h.key.trim()).map((q) => ({ key: q.key.trim(), value: q.value, enabled: q.enabled, type: q.type, minLen: q.minLen, maxLen: q.maxLen, description: q.description })),
+        restParams: rest.filter((h) => h.key.trim()),
+        auth: auth.type === 'none' ? { type: 'none' } : { type: auth.type, token: auth.token },
+      })
+      message.success(t('case.saved', '用例已保存'))
+      return true
     } catch (e) {
-      message.error(e instanceof ApiError ? e.message : '保存失败')
+      message.error(e instanceof ApiError ? e.message : t('case.saveFailed', '保存失败'))
+      return false
     } finally {
       setSaving(false)
     }
   }
 
+  const save = async () => {
+    if (await doSave()) onSaved()
+  }
+  const saveAndContinue = async () => {
+    if (await doSave()) {
+      reset()
+      message.info(t('case.continueHint', '可继续创建下一条用例'))
+    }
+  }
+
+  // 请求参数子标签(下划线风,对齐参考图 #3)。
+  const reqTabs = [
+    {
+      key: 'headers',
+      label: `${t('case.headers', '请求头')}${countKV(headers) ? ` (${countKV(headers)})` : ''}`,
+      children: <KVEditor rows={headers} onChange={setHeaders} />,
+    },
+    {
+      key: 'body',
+      label: `${t('apidef.requestBody', '请求体')}${body.trim() ? ' (1)' : ''}`,
+      children: (
+        <div>
+          <Segmented
+            size="small"
+            value={bodyType}
+            onChange={(v) => setBodyType(v as ApiBodyType)}
+            options={BODY_TYPES.map((x) => ({ label: x, value: x }))}
+            style={{ marginBottom: 10 }}
+          />
+          {bodyType === 'none' ? (
+            <Typography.Text type="secondary">{t('apidef.noBody', '请求没有 Body')}</Typography.Text>
+          ) : (
+            <div>
+              {bodyType === 'json' && (
+                <div style={{ textAlign: 'right', marginBottom: 6 }}>
+                  <Button size="small" onClick={() => setBody(formatJson(body))}>{t('apidef.format', '格式化')}</Button>
+                </div>
+              )}
+              <Input.TextArea rows={8} value={body} onChange={(e) => setBody(e.target.value)} placeholder='{"username":"admin"}' className="ms-mono" />
+            </div>
+          )}
+        </div>
+      ),
+    },
+    {
+      key: 'query',
+      label: `Query${query.filter((q) => q.key.trim()).length ? ` (${query.filter((q) => q.key.trim()).length})` : ''}`,
+      children: <QueryParamTable rows={query} onChange={setQuery} />,
+    },
+    {
+      key: 'rest',
+      label: `REST${countKV(rest) ? ` (${countKV(rest)})` : ''}`,
+      children: <KVEditor rows={rest} onChange={setRest} namePlaceholder="name" valuePlaceholder="value" />,
+    },
+    {
+      key: 'pre',
+      label: `${t('case.preProcess', '前置')}${preProcessors.length ? ` (${preProcessors.length})` : ''}`,
+      children: <ProcessorEditor value={preProcessors} onChange={setPreProcessors} allowed={['wait', 'script', 'sql']} />,
+    },
+    {
+      key: 'post',
+      label: `${t('case.postProcess', '后置')}${postProcessors.length ? ` (${postProcessors.length})` : ''}`,
+      children: <ProcessorEditor value={postProcessors} onChange={setPostProcessors} allowed={['extract', 'wait', 'script', 'sql']} />,
+    },
+    {
+      key: 'assert',
+      label: `${t('case.assertions', '断言')}${assertions.length ? ` (${assertions.length})` : ''}`,
+      children: <AssertionEditor value={assertions} onChange={setAssertions} />,
+    },
+    {
+      key: 'auth',
+      label: t('apidef.auth', '认证'),
+      children: (
+        <Space direction="vertical" size={12} style={{ width: '100%', maxWidth: 520 }}>
+          <Radio.Group value={auth.type} onChange={(e) => setAuth({ ...auth, type: e.target.value })}>
+            <Radio value="none">{t('editor.authNone', '无')}</Radio>
+            <Radio value="bearer">Bearer Token</Radio>
+            <Radio value="basic">Basic (user:pass)</Radio>
+          </Radio.Group>
+          {auth.type !== 'none' && (
+            <Input value={auth.token} onChange={(e) => setAuth({ ...auth, token: e.target.value })} placeholder={auth.type === 'bearer' ? 'token' : 'user:pass'} className="ms-mono" />
+          )}
+        </Space>
+      ),
+    },
+    {
+      key: 'settings',
+      label: t('apidef.settings', '设置'),
+      children: <Typography.Text type="secondary">{t('case.settingsHint', '连接超时 / 重定向等高级设置:暂未接入,使用 runner 默认')}</Typography.Text>,
+    },
+  ]
+
   return (
     <Drawer
-      title={`新建用例 · ${definition.name}`}
+      title={t('case.createTitle', '创建用例')}
       open={open}
       onClose={onClose}
       width="68%"
@@ -87,56 +244,60 @@ export default function CaseEditorDrawer({
       footer={
         <div style={{ textAlign: 'right' }}>
           <Space>
-            <Button onClick={onClose}>取消</Button>
-            <Button type="primary" loading={saving} onClick={save}>保存用例</Button>
+            <Button onClick={onClose}>{t('a.cancel', '取消')}</Button>
+            <Button loading={saving} onClick={saveAndContinue}>{t('case.saveContinue', '保存并继续创建')}</Button>
+            <Button type="primary" loading={saving} onClick={save}>{t('a.create', '创建')}</Button>
           </Space>
         </div>
       }
     >
-      <Form layout="vertical">
-        <Form.Item label="用例名" required style={{ marginBottom: 12 }}>
-          <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="如:登录成功" />
-        </Form.Item>
-      </Form>
+      {/* 头部信息卡:【id】名称 + 请求类型 + 路径(对齐参考图 #3) */}
+      <Card size="small" styles={{ body: { padding: '10px 14px' } }} style={{ marginBottom: 12, background: '#fafbfc' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+          <span style={{ fontWeight: 600 }}>【{definition.num ?? '—'}】{definition.name}</span>
+          <div style={{ flex: 1 }} />
+          <span style={{ color: '#8a9099', fontSize: 12 }}>{t('apidef.reqType', '请求类型')} <Tag color={methodColor(method)} style={{ margin: 0 }}>{method}</Tag></span>
+          <span style={{ color: '#8a9099', fontSize: 12 }}>{t('apidef.colPath', '路径')} <span className="ms-mono" style={{ color: '#5b6470' }}>{url || '—'}</span></span>
+        </div>
+      </Card>
 
-      {/* 请求行 */}
-      <Space.Compact style={{ width: '100%', marginBottom: 12 }}>
-        <Select value={method} onChange={setMethod} style={{ width: 110 }} options={METHODS.map((m) => ({ value: m, label: m }))} />
-        <Input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="http://127.0.0.1:9180/healthz" className="ms-mono" onPressEnter={send} />
-        <Button type="primary" icon={<SendOutlined />} loading={sending} onClick={send}>发送</Button>
+      {/* 名称 + 服务端执行 */}
+      <Space.Compact style={{ width: '100%', marginBottom: 10 }}>
+        <Input
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          placeholder={t('case.namePlaceholder', '请输入用例名称')}
+          maxLength={255}
+          showCount
+        />
+        <Button type="primary" icon={<SendOutlined />} loading={sending} onClick={send}>{t('apidef.serverRun', '服务端执行')}</Button>
       </Space.Compact>
 
-      <Tabs
-        size="small"
-        items={[
-          {
-            key: 'headers',
-            label: 'Headers',
-            children: (
-              <Space direction="vertical" style={{ width: '100%' }}>
-                {headers.map((h, i) => (
-                  <Space.Compact key={i} style={{ width: '100%' }}>
-                    <Input placeholder="名" value={h.key} onChange={(e) => setHeader(i, { key: e.target.value })} style={{ width: 240 }} className="ms-mono" />
-                    <Input placeholder="值" value={h.value} onChange={(e) => setHeader(i, { value: e.target.value })} />
-                    <Button icon={<DeleteOutlined />} onClick={() => setHeaders((hs) => hs.filter((_, idx) => idx !== i))} />
-                  </Space.Compact>
-                ))}
-                <Button icon={<PlusOutlined />} size="small" onClick={() => setHeaders((hs) => [...hs, { key: '', value: '' }])}>加一行</Button>
-              </Space>
-            ),
-          },
-          {
-            key: 'body',
-            label: 'Body',
-            children: <Input.TextArea rows={6} value={body} onChange={(e) => setBody(e.target.value)} placeholder='{"username":"admin"}' className="ms-mono" />,
-          },
-          {
-            key: 'assert',
-            label: `断言 (${assertions.length})`,
-            children: <AssertionEditor value={assertions} onChange={setAssertions} />,
-          },
-        ]}
-      />
+      {/* 优先级 / 状态 / 标签 */}
+      <Space wrap style={{ marginBottom: 14 }}>
+        <Select value={priority} onChange={setPriority} style={{ width: 110 }} options={PRIORITIES.map((p) => ({ value: p, label: p }))} />
+        <Select value={status} onChange={setStatus} style={{ width: 130 }} options={CASE_STATUSES.map((s) => ({ value: s, label: s }))} />
+        <Space size={[4, 4]} wrap>
+          {tags.map((tg) => (
+            <Tag key={tg} closable onClose={() => setTags(tags.filter((x) => x !== tg))}>{tg}</Tag>
+          ))}
+          <Input
+            size="small"
+            style={{ width: 160 }}
+            value={tagInput}
+            onChange={(e) => setTagInput(e.target.value)}
+            onPressEnter={() => {
+              const v = tagInput.trim()
+              if (v && !tags.includes(v)) setTags([...tags, v])
+              setTagInput('')
+            }}
+            placeholder={t('apidef.addTag', '添加标签,回车结束')}
+          />
+        </Space>
+      </Space>
+
+      <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 8 }}>{t('case.requestParams', '请求参数')}</div>
+      <Tabs size="small" items={reqTabs} />
 
       {(resp || err) && (
         <Card
@@ -144,7 +305,7 @@ export default function CaseEditorDrawer({
           style={{ marginTop: 12 }}
           title={
             <Space>
-              响应
+              {t('case.response', '响应')}
               {resp && <Tag color={resp.status < 400 ? 'green' : 'red'}>{resp.status}</Tag>}
               {resp && <Typography.Text type="secondary" style={{ fontSize: 12 }}>{resp.latencyMs} ms</Typography.Text>}
               <Tag color={methodColor(method)}>{method}</Tag>
@@ -159,16 +320,16 @@ export default function CaseEditorDrawer({
               items={[
                 {
                   key: 'rbody',
-                  label: 'Body',
+                  label: t('case.respBody', '响应体'),
                   children: (
                     <pre style={{ background: '#0f1419', color: '#d6deeb', padding: 12, borderRadius: 6, maxHeight: 280, overflow: 'auto', fontSize: 12, whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
-                      {resp?.body || '(空)'}
+                      {resp?.body || t('case.emptyBody', '(空)')}
                     </pre>
                   ),
                 },
                 {
                   key: 'rheaders',
-                  label: `Headers (${resp?.headers.length || 0})`,
+                  label: `${t('case.respHeaders', '响应头')} (${resp?.headers.length || 0})`,
                   children: (
                     <Table
                       size="small"
@@ -176,8 +337,8 @@ export default function CaseEditorDrawer({
                       rowKey={(_, i) => String(i)}
                       dataSource={(resp?.headers || []).map(([k, v]) => ({ k, v }))}
                       columns={[
-                        { title: '名', dataIndex: 'k', width: 220 },
-                        { title: '值', dataIndex: 'v', render: (v: string) => <span className="ms-mono">{v}</span> },
+                        { title: t('case.headerName', '名'), dataIndex: 'k', width: 220 },
+                        { title: t('case.headerValue', '值'), dataIndex: 'v', render: (v: string) => <span className="ms-mono">{v}</span> },
                       ]}
                     />
                   ),

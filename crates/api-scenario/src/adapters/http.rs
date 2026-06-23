@@ -35,6 +35,8 @@ struct ScenarioAppState {
     add_step: AddStepUseCase,
     compile: CompileScenarioUseCase,
     list_executions: ListScenarioExecutionsUseCase,
+    /// 直接用于 PATCH 更新场景基本信息(名称/状态/元信息);其余走用例。
+    repo: Arc<dyn ApiScenarioRepository>,
     sessions: Arc<dyn SessionStore>,
 }
 
@@ -55,15 +57,19 @@ pub fn router(
         get: GetScenarioUseCase::new(repo.clone()),
         add_step: AddStepUseCase::new(repo.clone()),
         compile: CompileScenarioUseCase::new(repo.clone()),
-        list_executions: ListScenarioExecutionsUseCase::new(repo),
+        list_executions: ListScenarioExecutionsUseCase::new(repo.clone()),
+        repo,
         sessions,
     };
     Router::new()
         .route("/api/scenario", post(create_scenario).get(list_scenarios))
-        .route("/api/scenario/{id}", get(get_scenario))
+        .route("/api/scenario/{id}", get(get_scenario).patch(update_scenario).delete(delete_scenario))
         .route("/api/scenario/{id}/step", post(add_step))
+        .route("/api/scenario/{id}/step/{step_id}", axum::routing::delete(delete_step))
+        .route("/api/scenario/{id}/steps/order", axum::routing::patch(reorder_steps))
         .route("/api/scenario/{id}/compile", get(compile_scenario))
         .route("/api/scenario/{id}/executions", get(list_executions))
+        .route("/api/scenario/{id}/changes", get(list_changes))
         .with_state(state)
 }
 
@@ -87,15 +93,38 @@ struct InlineRequestDto {
     #[serde(skip_serializing_if = "Vec::is_empty")]
     #[schema(value_type = Vec<Object>)]
     assertions: Vec<serde_json::Value>,
+    /// 请求头 / Query / REST 参数([{key,value}]);空则省略。
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[schema(value_type = Vec<Object>)]
+    headers: Vec<serde_json::Value>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[schema(value_type = Vec<Object>)]
+    query_params: Vec<serde_json::Value>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[schema(value_type = Vec<Object>)]
+    rest_params: Vec<serde_json::Value>,
+    /// 认证 {type,token};空对象则省略。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(value_type = Object)]
+    auth: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[schema(value_type = Vec<Object>)]
+    processors: Vec<serde_json::Value>,
 }
 
 impl From<&InlineRequest> for InlineRequestDto {
     fn from(r: &InlineRequest) -> Self {
+        let arr = |v: &serde_json::Value| v.as_array().cloned().unwrap_or_default();
         Self {
             method: r.method.clone(),
             url: r.url.clone(),
             body: r.body.clone(),
-            assertions: r.assertions.as_array().cloned().unwrap_or_default(),
+            assertions: arr(&r.assertions),
+            headers: arr(&r.headers),
+            query_params: arr(&r.query_params),
+            rest_params: arr(&r.rest_params),
+            auth: r.auth.as_object().filter(|o| !o.is_empty()).map(|_| r.auth.clone()),
+            processors: arr(&r.processors),
         }
     }
 }
@@ -149,7 +178,16 @@ struct ScenarioResponse {
     project_id: String,
     name: String,
     status: String,
+    /// 元信息(描述/标签/等级/模块/参数);不透明 JSON。
+    meta: serde_json::Value,
+    /// 审计:创建人/创建时间/更新时间(只读;见 0046 迁移)。
+    created_by: Option<String>,
+    created_at: String,
+    updated_at: String,
     steps: Vec<ScenarioStepResponse>,
+    /// 最近一次执行结果状态(SUCCESS/ERROR;列表回填,单查为 null)。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    last_result: Option<String>,
 }
 
 impl From<ApiScenario> for ScenarioResponse {
@@ -159,9 +197,24 @@ impl From<ApiScenario> for ScenarioResponse {
             project_id: s.project_id,
             name: s.name,
             status: s.status.as_str().to_string(),
+            meta: s.meta,
+            created_by: s.created_by,
+            created_at: s.created_at,
+            updated_at: s.updated_at,
             steps: s.steps.iter().map(ScenarioStepResponse::from).collect(),
+            last_result: s.last_result,
         }
     }
+}
+
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+struct ScenarioUpdateBody {
+    name: String,
+    #[serde(default)]
+    status: Option<String>,
+    #[serde(default)]
+    meta: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Deserialize, ToSchema)]
@@ -196,6 +249,22 @@ struct InlineRequestBody {
     #[serde(default)]
     #[schema(value_type = Vec<Object>)]
     assertions: Option<serde_json::Value>,
+    /// 请求头 / Query / REST 参数([{key,value}])/ 认证({type,token})/ 处理器(EXTRACT/WAIT);均可选。
+    #[serde(default)]
+    #[schema(value_type = Vec<Object>)]
+    headers: Option<serde_json::Value>,
+    #[serde(default)]
+    #[schema(value_type = Vec<Object>)]
+    query_params: Option<serde_json::Value>,
+    #[serde(default)]
+    #[schema(value_type = Vec<Object>)]
+    rest_params: Option<serde_json::Value>,
+    #[serde(default)]
+    #[schema(value_type = Object)]
+    auth: Option<serde_json::Value>,
+    #[serde(default)]
+    #[schema(value_type = Vec<Object>)]
+    processors: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -292,8 +361,11 @@ async fn create_scenario(
     if !user.can("API_SCENARIO", "ADD") {
         return (StatusCode::FORBIDDEN, "permission denied").into_response();
     }
-    match st.create.execute(&req.project_id, &req.name).await {
-        Ok(s) => (StatusCode::CREATED, Json(ScenarioResponse::from(s))).into_response(),
+    match st.create.execute(&req.project_id, &req.name, Some(&user.user_id)).await {
+        Ok(s) => {
+            let _ = st.repo.record_change(&s.id, "CREATE", Some(&s.name), Some(&user.user_id)).await;
+            (StatusCode::CREATED, Json(ScenarioResponse::from(s))).into_response()
+        }
         Err(CreateScenarioError::Validation(_)) => {
             (StatusCode::BAD_REQUEST, "invalid scenario payload").into_response()
         }
@@ -327,6 +399,104 @@ async fn get_scenario(State(st): State<ScenarioAppState>, Path(id): Path<String>
     }
 }
 
+#[utoipa::path(patch, path = "/api/scenario/{id}", tag = "api-scenario", params(("id" = String, Path)), request_body = ScenarioUpdateBody, responses((status = 200, body = ScenarioResponse), (status = 400), (status = 404)), security(("bearer" = [])))]
+async fn update_scenario(
+    user: AuthUser,
+    State(st): State<ScenarioAppState>,
+    Path(id): Path<String>,
+    Json(req): Json<ScenarioUpdateBody>,
+) -> Response {
+    if !user.can("API_SCENARIO", "UPDATE") {
+        return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
+    let name = req.name.trim();
+    if name.is_empty() {
+        return (StatusCode::BAD_REQUEST, "name required").into_response();
+    }
+    // 名称为一等列;状态缺省沿用已有(需先取);meta 整体替换(缺省空对象)。
+    let status = match &req.status {
+        Some(s) if !s.trim().is_empty() => s.trim().to_string(),
+        _ => match st.get.execute(&id).await {
+            Ok(Some(s)) => s.status.as_str().to_string(),
+            Ok(None) => return (StatusCode::NOT_FOUND, "scenario not found").into_response(),
+            Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
+        },
+    };
+    let meta = req.meta.clone().unwrap_or_else(|| serde_json::json!({}));
+    match st.repo.update_scenario(&id, name, &status, &meta).await {
+        Ok(Some(s)) => {
+            let _ = st.repo.record_change(&id, "UPDATE", Some("更新基本信息/参数/设置"), Some(&user.user_id)).await;
+            (StatusCode::OK, Json(ScenarioResponse::from(s))).into_response()
+        }
+        Ok(None) => (StatusCode::NOT_FOUND, "scenario not found").into_response(),
+        Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
+    }
+}
+
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+struct ReorderStepsBody {
+    /// 期望顺序的 step_id 列表(从第 1 位起写 step_order)。
+    order: Vec<String>,
+}
+
+#[utoipa::path(patch, path = "/api/scenario/{id}/steps/order", tag = "api-scenario", params(("id" = String, Path)), request_body = ReorderStepsBody, responses((status = 204), (status = 404)), security(("bearer" = [])))]
+async fn reorder_steps(
+    user: AuthUser,
+    State(st): State<ScenarioAppState>,
+    Path(id): Path<String>,
+    Json(req): Json<ReorderStepsBody>,
+) -> Response {
+    if !user.can("API_SCENARIO", "UPDATE") {
+        return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
+    match st.repo.reorder_steps(&id, &req.order).await {
+        Ok(()) => {
+            let _ = st.repo.record_change(&id, "REORDER", Some("调整步骤顺序"), Some(&user.user_id)).await;
+            StatusCode::NO_CONTENT.into_response()
+        }
+        Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
+    }
+}
+
+#[utoipa::path(delete, path = "/api/scenario/{id}/step/{step_id}", tag = "api-scenario", params(("id" = String, Path), ("step_id" = String, Path)), responses((status = 204), (status = 404)), security(("bearer" = [])))]
+async fn delete_step(
+    user: AuthUser,
+    State(st): State<ScenarioAppState>,
+    Path((id, step_id)): Path<(String, String)>,
+) -> Response {
+    if !user.can("API_SCENARIO", "UPDATE") {
+        return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
+    match st.repo.delete_step(&id, &step_id).await {
+        Ok(true) => {
+            let _ = st.repo.record_change(&id, "DELETE_STEP", Some("删除步骤"), Some(&user.user_id)).await;
+            StatusCode::NO_CONTENT.into_response()
+        }
+        Ok(false) => (StatusCode::NOT_FOUND, "step not found").into_response(),
+        Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
+    }
+}
+
+#[utoipa::path(delete, path = "/api/scenario/{id}", tag = "api-scenario", params(("id" = String, Path)), responses((status = 204), (status = 404)), security(("bearer" = [])))]
+async fn delete_scenario(
+    user: AuthUser,
+    State(st): State<ScenarioAppState>,
+    Path(id): Path<String>,
+) -> Response {
+    if !user.can("API_SCENARIO", "UPDATE") {
+        return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
+    match st.repo.delete_scenario(&id).await {
+        Ok(true) => {
+            let _ = st.repo.record_change(&id, "DELETE", Some("删除场景"), Some(&user.user_id)).await;
+            StatusCode::NO_CONTENT.into_response()
+        }
+        Ok(false) => (StatusCode::NOT_FOUND, "scenario not found").into_response(),
+        Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
+    }
+}
+
 #[utoipa::path(post, path = "/api/scenario/{id}/step", tag = "api-scenario", params(("id" = String, Path)), request_body = AddStepBody, responses((status = 201, body = ScenarioStepResponse), (status = 400), (status = 404)), security(("bearer" = [])))]
 async fn add_step(
     user: AuthUser,
@@ -344,10 +514,15 @@ async fn add_step(
             let Some(r) = req.request else {
                 return (StatusCode::BAD_REQUEST, "request payload required").into_response();
             };
+            let empty = || serde_json::Value::Array(vec![]);
             match InlineRequest::new(&r.method, &r.url, r.body) {
                 Ok(req) => StepKind::Request(
-                    req.with_assertions(
-                        r.assertions.unwrap_or_else(|| serde_json::Value::Array(vec![])),
+                    req.with_assertions(r.assertions.unwrap_or_else(empty)).with_spec(
+                        r.headers.unwrap_or_else(empty),
+                        r.query_params.unwrap_or_else(empty),
+                        r.rest_params.unwrap_or_else(empty),
+                        r.auth.unwrap_or_else(|| serde_json::json!({})),
+                        r.processors.unwrap_or_else(empty),
                     ),
                 ),
                 Err(_) => {
@@ -385,6 +560,7 @@ async fn add_step(
 
     match st.add_step.execute(&id, &new_step).await {
         Ok(step) => {
+            let _ = st.repo.record_change(&id, "ADD_STEP", Some(&format!("新增步骤 {}", req.kind)), Some(&user.user_id)).await;
             (StatusCode::CREATED, Json(ScenarioStepResponse::from(&step))).into_response()
         }
         Err(AddStepError::NotFound) => {
@@ -449,9 +625,39 @@ async fn list_executions(
     }
 }
 
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+struct ScenarioChangeDto {
+    id: String,
+    action: String,
+    detail: Option<String>,
+    user_id: Option<String>,
+    created_at: String,
+}
+
+#[utoipa::path(get, path = "/api/scenario/{id}/changes", tag = "api-scenario", params(("id" = String, Path)), responses((status = 200, body = [ScenarioChangeDto])))]
+async fn list_changes(State(st): State<ScenarioAppState>, Path(id): Path<String>) -> Response {
+    match st.repo.list_changes(&id).await {
+        Ok(list) => {
+            let body: Vec<ScenarioChangeDto> = list
+                .into_iter()
+                .map(|c| ScenarioChangeDto {
+                    id: c.id,
+                    action: c.action,
+                    detail: c.detail,
+                    user_id: c.user_id,
+                    created_at: c.created_at,
+                })
+                .collect();
+            (StatusCode::OK, Json(body)).into_response()
+        }
+        Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
+    }
+}
+
 #[derive(OpenApi)]
 #[openapi(
-    paths(create_scenario, list_scenarios, get_scenario, add_step, compile_scenario, list_executions),
+    paths(create_scenario, list_scenarios, get_scenario, delete_scenario, add_step, compile_scenario, list_executions),
     components(schemas(
         ScenarioCreateBody,
         ScenarioResponse,

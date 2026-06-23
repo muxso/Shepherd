@@ -23,7 +23,7 @@ use crate::application::{
 use crate::domain::RoleScope;
 use kernel::page::PageRequest;
 use crate::domain::{AuthError, AuthUser, OidcError};
-use crate::ports::SessionStore;
+use crate::ports::{CredentialRepository, PasswordHasher, SessionStore, UserRoleQuery};
 
 #[derive(Clone)]
 struct AppState {
@@ -31,6 +31,9 @@ struct AppState {
     resolve: ResolveUserNamesUseCase,
     login: LoginUseCase,
     admin: UserService,
+    creds: Arc<dyn CredentialRepository>,
+    hasher: Arc<dyn PasswordHasher>,
+    user_roles: Arc<dyn UserRoleQuery>,
     sessions: Arc<dyn SessionStore>,
 }
 
@@ -41,11 +44,15 @@ impl FromRef<AppState> for Arc<dyn SessionStore> {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn router(
     create: CreateUserUseCase,
     resolve: ResolveUserNamesUseCase,
     login: LoginUseCase,
     admin: UserService,
+    creds: Arc<dyn CredentialRepository>,
+    hasher: Arc<dyn PasswordHasher>,
+    user_roles: Arc<dyn UserRoleQuery>,
     sessions: Arc<dyn SessionStore>,
 ) -> Router {
     Router::new()
@@ -55,7 +62,8 @@ pub fn router(
         .route("/system/user/names", get(resolve_names))
         .route("/system/user", post(create_user).get(list_users))
         .route("/system/user/{id}", get(get_user).put(update_user).delete(delete_user))
-        .with_state(AppState { create, resolve, login, admin, sessions })
+        .route("/system/user/{id}/reset-password", post(reset_password))
+        .with_state(AppState { create, resolve, login, admin, creds, hasher, user_roles, sessions })
 }
 
 // ---- 登录 ----
@@ -110,10 +118,13 @@ struct UserResponse {
     name: String,
     email: String,
     enable: bool,
+    /// 用户组(角色名);列表接口附带,其余接口为空。
+    #[serde(default)]
+    user_groups: Vec<String>,
 }
 impl From<crate::domain::User> for UserResponse {
     fn from(u: crate::domain::User) -> Self {
-        Self { id: u.id, name: u.name, email: u.email.as_str().to_string(), enable: u.enable }
+        Self { id: u.id, name: u.name, email: u.email.as_str().to_string(), enable: u.enable, user_groups: Vec::new() }
     }
 }
 
@@ -147,16 +158,52 @@ async fn list_users(user: AuthUser, State(st): State<AppState>, Query(q): Query<
     };
     match st.admin.list(page).await {
         Ok(p) => {
-            let body = UserPage {
-                total: p.total,
-                current: p.current,
-                page_size: p.page_size,
-                total_pages: p.total_pages(),
-                items: p.items.into_iter().map(UserResponse::from).collect(),
-            };
+            let (total, current, page_size, total_pages) = (p.total, p.current, p.page_size, p.total_pages());
+            // 附带用户组(角色名):批量查 ms_user_role,按 user_id 归集。
+            let ids: Vec<String> = p.items.iter().map(|u| u.id.clone()).collect();
+            let role_rows = st.user_roles.roles_for(&ids).await.unwrap_or_default();
+            let mut groups: BTreeMap<String, Vec<String>> = BTreeMap::new();
+            for (uid, name) in role_rows {
+                groups.entry(uid).or_default().push(name);
+            }
+            let items = p
+                .items
+                .into_iter()
+                .map(|u| {
+                    let g = groups.get(&u.id).cloned().unwrap_or_default();
+                    let mut resp = UserResponse::from(u);
+                    resp.user_groups = g;
+                    resp
+                })
+                .collect();
+            let body = UserPage { total, current, page_size, total_pages, items };
             (StatusCode::OK, Json(body)).into_response()
         }
         Err(e) => user_err_response(e),
+    }
+}
+
+#[derive(Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+struct ResetPwResponse {
+    /// 重置后的新密码(明文,供管理员转交用户)。
+    password: String,
+}
+
+#[utoipa::path(post, path = "/system/user/{id}/reset-password", tag = "user", params(("id" = String, Path)), responses((status = 200, body = ResetPwResponse), (status = 404)), security(("bearer" = [])))]
+async fn reset_password(user: AuthUser, State(st): State<AppState>, Path(id): Path<String>) -> Response {
+    if !user.can("SYSTEM_USER", "UPDATE") {
+        return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
+    let target = match st.admin.get(&id).await {
+        Ok(u) => u,
+        Err(e) => return user_err_response(e),
+    };
+    let new_pw = "Shepherd@123";
+    let hash = st.hasher.hash(new_pw);
+    match st.creds.reset_password(&id, target.email.as_str(), &hash).await {
+        Ok(()) => (StatusCode::OK, Json(ResetPwResponse { password: new_pw.to_string() })).into_response(),
+        Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
     }
 }
 
@@ -667,18 +714,19 @@ mod tests {
         let create = CreateUserUseCase::new(user_repo.clone());
         let admin = UserService::new(user_repo);
         let resolve = ResolveUserNamesUseCase::new(Arc::new(SpyDirectory::new()));
-        let creds = InMemoryCredentialRepository::new()
-            .with_user("admin", "u-admin", "secret", ["SYSTEM_USER:READ+ADD+UPDATE+DELETE"])
-            .with_user("viewer", "u-view", "pw", ["SYSTEM_USER:READ"]); // 只有 READ
+        let creds = Arc::new(
+            InMemoryCredentialRepository::new()
+                .with_user("admin", "u-admin", "secret", ["SYSTEM_USER:READ+ADD+UPDATE+DELETE"])
+                .with_user("viewer", "u-view", "pw", ["SYSTEM_USER:READ"]),
+        ); // 只有 READ
+        let hasher = Arc::new(PlainPasswordHasher);
         let sessions = Arc::new(InMemorySessionStore::new());
         let user_roles = Arc::new(InMemoryUserRoleRepository::new(Arc::new(InMemoryRoleRepository::new())));
-        let login = LoginUseCase::new(
-            Arc::new(creds),
-            Arc::new(PlainPasswordHasher),
-            sessions.clone(),
-            user_roles,
-        );
-        (router(create, resolve, login, admin, sessions.clone()), sessions)
+        let login = LoginUseCase::new(creds.clone(), hasher.clone(), sessions.clone(), user_roles.clone());
+        (
+            router(create, resolve, login, admin, creds, hasher, user_roles, sessions.clone()),
+            sessions,
+        )
     }
 
     fn app() -> Router {
@@ -969,8 +1017,10 @@ mod tests {
         let create = CreateUserUseCase::new(user_repo.clone());
         let admin = UserService::new(user_repo);
         let resolve = ResolveUserNamesUseCase::new(Arc::new(SpyDirectory::new()));
-        let creds =
-            InMemoryCredentialRepository::new().with_user("bob", "u-bob", "pw", Vec::<String>::new());
+        let creds = Arc::new(
+            InMemoryCredentialRepository::new().with_user("bob", "u-bob", "pw", Vec::<String>::new()),
+        );
+        let hasher = Arc::new(PlainPasswordHasher);
         let sessions = Arc::new(InMemorySessionStore::new());
         let roles = Arc::new(InMemoryRoleRepository::new());
         let user_roles = Arc::new(InMemoryUserRoleRepository::new(roles.clone()));
@@ -982,13 +1032,8 @@ mod tests {
             .grant("u-bob", &role.id)
             .await
             .expect("grant");
-        let login = LoginUseCase::new(
-            Arc::new(creds),
-            Arc::new(PlainPasswordHasher),
-            sessions.clone(),
-            user_roles,
-        );
-        let app = router(create, resolve, login, admin, sessions);
+        let login = LoginUseCase::new(creds.clone(), hasher.clone(), sessions.clone(), user_roles.clone());
+        let app = router(create, resolve, login, admin, creds, hasher, user_roles, sessions);
         let tok = token(&app, "bob", "pw").await.expect("token");
         // bob 凭证无权限,但角色授予了 SYSTEM_USER:ADD → 建用户 201
         let r = app.oneshot(post("/system/user", create_body(), Some(&tok))).await.expect("r");

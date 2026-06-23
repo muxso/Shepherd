@@ -15,13 +15,13 @@ use axum::{
     Json, Router,
 };
 use crate::application::{
-    AddApiCaseError, AddApiCaseUseCase, AddApiMockError, AddApiMockUseCase, CreateApiCaseError,
-    CreateApiCaseUseCase, CreateApiDefinitionError, CreateApiDefinitionUseCase,
-    ImportApiDefinitionsUseCase, ImportError, ListApiCasesUseCase, ListApiDefinitionsUseCase,
-    ListApiMocksUseCase, ListProjectCasesUseCase,
+    AddApiCaseError, AddApiCaseUseCase, AddApiMockError, AddApiMockUseCase, ApiCaseMeta,
+    ApiMockExtras, CreateApiCaseError, CreateApiCaseUseCase, CreateApiDefinitionError,
+    CreateApiDefinitionUseCase, ImportApiDefinitionsUseCase, ImportError, ListApiCasesUseCase,
+    ListApiDefinitionsUseCase, ListApiMocksUseCase, ListProjectCasesUseCase,
 };
 use kernel::page::PageRequest;
-use crate::domain::{ApiCase, ApiDefinition, ApiModule, ApiMock, ApiProtocol, NewApiModule};
+use crate::domain::{ApiCase, ApiDefinition, ApiModule, ApiMock, ApiProtocol, ApiView, NewApiCase, NewApiModule, NewApiView};
 use crate::ports::ApiDefinitionRepository;
 use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, OpenApi, ToSchema};
@@ -69,13 +69,21 @@ pub fn router(
     Router::new()
         .route("/api/definition", post(create_definition).get(list_definitions))
         .route("/api/definition/import", post(import_definitions))
-        .route("/api/definition/{id}", axum::routing::get(get_definition))
+        .route("/api/definition/{id}", axum::routing::get(get_definition).delete(delete_definition))
+        .route("/api/definition/{id}/spec", put(update_definition_spec))
+        .route("/api/definition/{id}/changes", axum::routing::get(list_definition_changes))
+        .route("/api/definition/{id}/status", put(update_definition_status))
         .route("/api/definition/{id}/case", post(create_case).get(list_cases))
         .route("/api/case", post(create_standalone_case).get(list_project_cases))
+        .route("/api/case/{id}", put(update_case).delete(delete_case))
         .route("/api/definition/{id}/mock", post(create_mock).get(list_mocks))
+        .route("/api/mock", axum::routing::get(list_project_mocks))
+        .route("/api/mock/{mock_id}", axum::routing::delete(delete_mock))
         .route("/api/module", post(create_module).get(list_modules))
         .route("/api/module/{id}", put(rename_module).delete(delete_module))
         .route("/api/definition/{id}/module", put(move_definition))
+        .route("/api/api-view", post(create_view).get(list_views))
+        .route("/api/api-view/{id}", axum::routing::delete(delete_view))
         .route("/api/task-case", post(link_task_case).get(list_task_cases))
         .route("/api/task-case/unlink", post(unlink_task_case))
         .with_state(state)
@@ -87,6 +95,7 @@ pub fn router(
 #[serde(rename_all = "camelCase")]
 struct ApiDefinitionResponse {
     id: String,
+    num: i64,
     project_id: String,
     name: String,
     protocol: String,
@@ -94,12 +103,18 @@ struct ApiDefinitionResponse {
     path: String,
     status: String,
     module_id: Option<String>,
+    /// 请求/响应规格(不透明 JSON;约定见 0037 迁移)。
+    spec: serde_json::Value,
+    created_by: String,
+    created_at: String,
+    updated_at: String,
 }
 
 impl From<ApiDefinition> for ApiDefinitionResponse {
     fn from(d: ApiDefinition) -> Self {
         Self {
             id: d.id,
+            num: d.num,
             project_id: d.project_id,
             name: d.name,
             protocol: d.protocol.as_str().to_string(),
@@ -107,6 +122,11 @@ impl From<ApiDefinition> for ApiDefinitionResponse {
             path: d.path,
             status: d.status.as_str().to_string(),
             module_id: d.module_id,
+            // spec 以 TEXT 存 JSON 文本;无法解析时回退为 {}。
+            spec: serde_json::from_str(&d.spec).unwrap_or_else(|_| serde_json::json!({})),
+            created_by: d.created_by,
+            created_at: d.created_at,
+            updated_at: d.updated_at,
         }
     }
 }
@@ -180,6 +200,13 @@ struct ApiCaseResponse {
     body: Option<String>,
     assertions: serde_json::Value,
     processors: serde_json::Value,
+    priority: String,
+    status: String,
+    tags: serde_json::Value,
+    headers: serde_json::Value,
+    query_params: serde_json::Value,
+    rest_params: serde_json::Value,
+    auth: serde_json::Value,
 }
 
 impl From<ApiCase> for ApiCaseResponse {
@@ -194,6 +221,13 @@ impl From<ApiCase> for ApiCaseResponse {
             body: c.body,
             assertions: c.assertions,
             processors: c.processors,
+            priority: c.priority,
+            status: c.status,
+            tags: c.tags,
+            headers: c.headers,
+            query_params: c.query_params,
+            rest_params: c.rest_params,
+            auth: c.auth,
         }
     }
 }
@@ -211,6 +245,22 @@ struct ApiCaseCreateBody {
     /// 前后置处理器(EXTRACT/WAIT)数组;缺省空。
     #[serde(default)]
     processors: Option<serde_json::Value>,
+    /// 优先级 / 状态 / 标签 / 请求头(对齐 MeterSphere;均可选,缺省走域默认)。
+    #[serde(default)]
+    priority: Option<String>,
+    #[serde(default)]
+    status: Option<String>,
+    #[serde(default)]
+    tags: Option<serde_json::Value>,
+    #[serde(default)]
+    headers: Option<serde_json::Value>,
+    /// Query / REST 路径参数(数组)/ 认证(对象);均可选。
+    #[serde(default)]
+    query_params: Option<serde_json::Value>,
+    #[serde(default)]
+    rest_params: Option<serde_json::Value>,
+    #[serde(default)]
+    auth: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -223,6 +273,10 @@ struct ApiMockResponse {
     response_status: i32,
     response_body: Option<String>,
     enabled: bool,
+    tags: serde_json::Value,
+    response_headers: serde_json::Value,
+    response_delay_ms: i32,
+    follow_definition: bool,
 }
 
 impl From<ApiMock> for ApiMockResponse {
@@ -235,6 +289,10 @@ impl From<ApiMock> for ApiMockResponse {
             response_status: m.response_status,
             response_body: m.response_body,
             enabled: m.enabled,
+            tags: m.tags,
+            response_headers: m.response_headers,
+            response_delay_ms: m.response_delay_ms,
+            follow_definition: m.follow_definition,
         }
     }
 }
@@ -251,6 +309,15 @@ struct ApiMockCreateBody {
     response_body: Option<String>,
     #[serde(default)]
     enabled: Option<bool>,
+    /// 标签 / 响应头 / 响应延时(ms)/ 跟随定义(对齐 MeterSphere;均可选)。
+    #[serde(default)]
+    tags: Option<serde_json::Value>,
+    #[serde(default)]
+    response_headers: Option<serde_json::Value>,
+    #[serde(default)]
+    response_delay_ms: Option<i32>,
+    #[serde(default)]
+    follow_definition: Option<bool>,
 }
 
 // ---------- 接口定义 handlers ----------
@@ -274,8 +341,15 @@ async fn create_definition(
     };
     let method = req.method.as_deref().unwrap_or_default();
     let path = req.path.as_deref().unwrap_or_default();
-    match st.create_def.execute(&req.project_id, &req.name, protocol, method, path).await {
-        Ok(d) => (StatusCode::CREATED, Json(ApiDefinitionResponse::from(d))).into_response(),
+    match st.create_def.execute(&req.project_id, &req.name, protocol, method, path, &user.user_id).await {
+        Ok(d) => {
+            // 审计:记录创建(best-effort,失败不阻断)。
+            let _ = st
+                .repo
+                .record_definition_change(&d.id, "CREATE", &format!("{} {}", d.method, d.path), &user.user_id)
+                .await;
+            (StatusCode::CREATED, Json(ApiDefinitionResponse::from(d))).into_response()
+        }
         Err(CreateApiDefinitionError::Validation(_)) => {
             (StatusCode::BAD_REQUEST, "invalid api definition payload").into_response()
         }
@@ -313,6 +387,113 @@ async fn get_definition(
     }
 }
 
+#[utoipa::path(
+    delete,
+    path = "/api/definition/{id}",
+    tag = "api-definition",
+    params(("id" = String, Path)),
+    responses((status = 204), (status = 404)),
+    security(("bearer" = []))
+)]
+async fn delete_definition(
+    user: AuthUser,
+    State(st): State<ApiDefinitionState>,
+    Path(id): Path<String>,
+) -> Response {
+    if !user.can("API_DEFINITION", "ADD") {
+        return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
+    match st.repo.get_definition(&id).await {
+        Ok(Some(_)) => {}
+        Ok(None) => return (StatusCode::NOT_FOUND, "api definition not found").into_response(),
+        Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
+    }
+    match st.repo.delete_definition(&id).await {
+        Ok(()) => {
+            let _ = st
+                .repo
+                .record_definition_change(&id, "DELETE", "删除接口定义(连带用例/Mock)", &user.user_id)
+                .await;
+            StatusCode::NO_CONTENT.into_response()
+        }
+        Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
+    }
+}
+
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+struct SpecUpdateBody {
+    /// 完整请求/响应规格(JSON 对象);服务端不透明存取。
+    spec: serde_json::Value,
+}
+
+#[utoipa::path(put, path = "/api/definition/{id}/spec", tag = "api-definition", params(("id" = String, Path)), request_body = SpecUpdateBody, responses((status = 204), (status = 404)), security(("bearer" = [])))]
+async fn update_definition_spec(
+    user: AuthUser,
+    State(st): State<ApiDefinitionState>,
+    Path(id): Path<String>,
+    Json(req): Json<SpecUpdateBody>,
+) -> Response {
+    if !user.can("API_DEFINITION", "ADD") {
+        return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
+    // 先确认存在,避免对幽灵 id 静默写入。
+    match st.repo.get_definition(&id).await {
+        Ok(Some(_)) => {}
+        Ok(None) => return (StatusCode::NOT_FOUND, "api definition not found").into_response(),
+        Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
+    }
+    let spec = req.spec.to_string();
+    match st.repo.update_definition_spec(&id, &spec).await {
+        Ok(()) => {
+            let _ = st
+                .repo
+                .record_definition_change(&id, "UPDATE_SPEC", "更新请求/响应规格", &user.user_id)
+                .await;
+            StatusCode::NO_CONTENT.into_response()
+        }
+        Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
+    }
+}
+
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+struct StatusUpdateBody {
+    /// DRAFT | DEBUGGING | COMPLETED | DEPRECATED
+    status: String,
+}
+
+#[utoipa::path(put, path = "/api/definition/{id}/status", tag = "api-definition", params(("id" = String, Path)), request_body = StatusUpdateBody, responses((status = 204), (status = 400), (status = 404)), security(("bearer" = [])))]
+async fn update_definition_status(
+    user: AuthUser,
+    State(st): State<ApiDefinitionState>,
+    Path(id): Path<String>,
+    Json(req): Json<StatusUpdateBody>,
+) -> Response {
+    if !user.can("API_DEFINITION", "ADD") {
+        return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
+    // 校验状态值合法。
+    let Some(status) = crate::domain::ApiStatus::parse(&req.status) else {
+        return (StatusCode::BAD_REQUEST, "invalid status").into_response();
+    };
+    match st.repo.get_definition(&id).await {
+        Ok(Some(_)) => {}
+        Ok(None) => return (StatusCode::NOT_FOUND, "api definition not found").into_response(),
+        Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
+    }
+    match st.repo.update_definition_status(&id, status.as_str()).await {
+        Ok(()) => {
+            let _ = st
+                .repo
+                .record_definition_change(&id, "STATUS", &format!("状态 → {}", status.as_str()), &user.user_id)
+                .await;
+            StatusCode::NO_CONTENT.into_response()
+        }
+        Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
+    }
+}
+
 // ---------- 用例 handlers ----------
 
 #[utoipa::path(post, path = "/api/definition/{id}/case", tag = "api-definition", params(("id" = String, Path)), request_body = ApiCaseCreateBody, responses((status = 201, body = ApiCaseResponse), (status = 400), (status = 404)), security(("bearer" = [])))]
@@ -327,7 +508,16 @@ async fn create_case(
     }
     let assertions = req.assertions.unwrap_or_else(|| serde_json::json!([]));
     let processors = req.processors.unwrap_or_else(|| serde_json::json!([]));
-    match st.add_case.execute(&id, &req.name, &req.method, &req.url, req.body, assertions, processors).await {
+    let meta = ApiCaseMeta {
+        priority: req.priority.unwrap_or_default(),
+        status: req.status.unwrap_or_default(),
+        tags: req.tags.unwrap_or_else(|| serde_json::json!([])),
+        headers: req.headers.unwrap_or_else(|| serde_json::json!([])),
+        query_params: req.query_params.unwrap_or_else(|| serde_json::json!([])),
+        rest_params: req.rest_params.unwrap_or_else(|| serde_json::json!([])),
+        auth: req.auth.unwrap_or_else(|| serde_json::json!({})),
+    };
+    match st.add_case.execute(&id, &req.name, &req.method, &req.url, req.body, assertions, processors, meta).await {
         Ok(c) => (StatusCode::CREATED, Json(ApiCaseResponse::from(c))).into_response(),
         Err(AddApiCaseError::NotFound) => {
             (StatusCode::NOT_FOUND, "api definition not found").into_response()
@@ -474,9 +664,15 @@ async fn create_mock(
     let match_rule = req.match_rule.unwrap_or_else(|| serde_json::json!({}));
     let response_status = req.response_status.unwrap_or(200);
     let enabled = req.enabled.unwrap_or(true);
+    let extras = ApiMockExtras {
+        tags: req.tags.unwrap_or_else(|| serde_json::json!([])),
+        response_headers: req.response_headers.unwrap_or_else(|| serde_json::json!([])),
+        response_delay_ms: req.response_delay_ms.unwrap_or(0),
+        follow_definition: req.follow_definition.unwrap_or(false),
+    };
     match st
         .add_mock
-        .execute(&id, &req.name, match_rule, response_status, req.response_body, enabled)
+        .execute(&id, &req.name, match_rule, response_status, req.response_body, enabled, extras, &user.user_id)
         .await
     {
         Ok(m) => (StatusCode::CREATED, Json(ApiMockResponse::from(m))).into_response(),
@@ -500,6 +696,114 @@ async fn list_mocks(State(st): State<ApiDefinitionState>, Path(id): Path<String>
                 list.into_iter().map(ApiMockResponse::from).collect();
             (StatusCode::OK, Json(items)).into_response()
         }
+        Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
+    }
+}
+
+/// 项目级 Mock 行(Mock + 所属定义的 方法/路径/协议/名称)。供「MOCK 视图」表格。
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+struct ProjectMockResponse {
+    id: String,
+    api_definition_id: String,
+    name: String,
+    enabled: bool,
+    response_status: i32,
+    #[schema(value_type = Vec<Object>)]
+    tags: serde_json::Value,
+    method: String,
+    path: String,
+    protocol: String,
+    definition_name: String,
+    operator: String,
+    updated_at: String,
+}
+
+#[utoipa::path(get, path = "/api/mock", tag = "api-definition", params(("projectId" = String, Query)), responses((status = 200, body = [ProjectMockResponse])))]
+async fn list_project_mocks(
+    State(st): State<ApiDefinitionState>,
+    Query(q): Query<DefinitionListQuery>,
+) -> Response {
+    match st.repo.list_mocks_by_project(&q.project_id).await {
+        Ok(rows) => {
+            let items: Vec<ProjectMockResponse> = rows
+                .into_iter()
+                .map(|r| ProjectMockResponse {
+                    id: r.mock.id,
+                    api_definition_id: r.mock.api_definition_id,
+                    name: r.mock.name,
+                    enabled: r.mock.enabled,
+                    response_status: r.mock.response_status,
+                    tags: r.mock.tags,
+                    method: r.method,
+                    path: r.path,
+                    protocol: r.protocol,
+                    definition_name: r.definition_name,
+                    operator: r.operator,
+                    updated_at: r.updated_at,
+                })
+                .collect();
+            (StatusCode::OK, Json(items)).into_response()
+        }
+        Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
+    }
+}
+
+#[utoipa::path(put, path = "/api/case/{id}", tag = "api-definition", params(("id" = String, Path)), request_body = ApiCaseCreateBody, responses((status = 204), (status = 400), (status = 404)), security(("bearer" = [])))]
+async fn update_case(
+    user: AuthUser,
+    State(st): State<ApiDefinitionState>,
+    Path(id): Path<String>,
+    Json(req): Json<ApiCaseCreateBody>,
+) -> Response {
+    if !user.can("API_DEFINITION", "ADD") {
+        return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
+    let assertions = req.assertions.unwrap_or_else(|| serde_json::json!([]));
+    // api_definition_id/project_id 在 UPDATE 中不变,用占位空串构造(NewApiCase 仅校验 name/url/method)。
+    let new_case = match NewApiCase::new("_", "_", &req.name, &req.method, &req.url, req.body, assertions) {
+        Ok(c) => c
+            .with_processors(req.processors.unwrap_or_else(|| serde_json::json!([])))
+            .with_meta(
+                &req.priority.unwrap_or_default(),
+                &req.status.unwrap_or_default(),
+                req.tags.unwrap_or_else(|| serde_json::json!([])),
+            )
+            .with_headers(req.headers.unwrap_or_else(|| serde_json::json!([])))
+            .with_request(
+                req.query_params.unwrap_or_else(|| serde_json::json!([])),
+                req.rest_params.unwrap_or_else(|| serde_json::json!([])),
+                req.auth.unwrap_or_else(|| serde_json::json!({})),
+            ),
+        Err(_) => return (StatusCode::BAD_REQUEST, "invalid api case payload").into_response(),
+    };
+    match st.repo.update_case(&id, &new_case).await {
+        Ok(true) => StatusCode::NO_CONTENT.into_response(),
+        Ok(false) => (StatusCode::NOT_FOUND, "api case not found").into_response(),
+        Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
+    }
+}
+
+#[utoipa::path(delete, path = "/api/case/{id}", tag = "api-definition", params(("id" = String, Path)), responses((status = 204), (status = 404)), security(("bearer" = [])))]
+async fn delete_case(user: AuthUser, State(st): State<ApiDefinitionState>, Path(id): Path<String>) -> Response {
+    if !user.can("API_DEFINITION", "ADD") {
+        return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
+    match st.repo.delete_case(&id).await {
+        Ok(true) => StatusCode::NO_CONTENT.into_response(),
+        Ok(false) => (StatusCode::NOT_FOUND, "api case not found").into_response(),
+        Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
+    }
+}
+
+#[utoipa::path(delete, path = "/api/mock/{mock_id}", tag = "api-definition", params(("mock_id" = String, Path)), responses((status = 204), (status = 404)), security(("bearer" = [])))]
+async fn delete_mock(user: AuthUser, State(st): State<ApiDefinitionState>, Path(mock_id): Path<String>) -> Response {
+    if !user.can("API_DEFINITION", "ADD") {
+        return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
+    match st.repo.delete_mock(&mock_id).await {
+        Ok(true) => StatusCode::NO_CONTENT.into_response(),
+        Ok(false) => (StatusCode::NOT_FOUND, "mock not found").into_response(),
         Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
     }
 }
@@ -582,7 +886,52 @@ async fn move_definition(
     }
     let module = req.module_id.as_deref().filter(|s| !s.is_empty());
     match st.repo.set_definition_module(&id, module).await {
-        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Ok(()) => {
+            let detail = match module {
+                Some(m) => format!("移入模块 {m}"),
+                None => "移出到未归类".to_string(),
+            };
+            let _ = st.repo.record_definition_change(&id, "MOVE_MODULE", &detail, &user.user_id).await;
+            StatusCode::NO_CONTENT.into_response()
+        }
+        Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
+    }
+}
+
+// ---------- 变更历史(审计)handler ----------
+
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+struct ApiDefinitionChangeResponse {
+    id: String,
+    definition_id: String,
+    action: String,
+    detail: String,
+    actor: String,
+    created_at: String,
+}
+
+impl From<crate::domain::ApiDefinitionChange> for ApiDefinitionChangeResponse {
+    fn from(c: crate::domain::ApiDefinitionChange) -> Self {
+        Self {
+            id: c.id,
+            definition_id: c.definition_id,
+            action: c.action,
+            detail: c.detail,
+            actor: c.actor,
+            created_at: c.created_at,
+        }
+    }
+}
+
+#[utoipa::path(get, path = "/api/definition/{id}/changes", tag = "api-definition", params(("id" = String, Path)), responses((status = 200, body = [ApiDefinitionChangeResponse])))]
+async fn list_definition_changes(State(st): State<ApiDefinitionState>, Path(id): Path<String>) -> Response {
+    match st.repo.list_definition_changes(&id).await {
+        Ok(list) => {
+            let items: Vec<ApiDefinitionChangeResponse> =
+                list.into_iter().map(ApiDefinitionChangeResponse::from).collect();
+            (StatusCode::OK, Json(items)).into_response()
+        }
         Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
     }
 }
@@ -645,6 +994,85 @@ async fn list_task_cases(
     }
 }
 
+// ---------- 列表视图 handlers ----------
+
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+struct ApiViewResponse {
+    id: String,
+    project_id: String,
+    user_id: String,
+    name: String,
+    config: serde_json::Value,
+    shared: bool,
+    created_at: String,
+}
+
+impl From<ApiView> for ApiViewResponse {
+    fn from(v: ApiView) -> Self {
+        Self {
+            id: v.id,
+            project_id: v.project_id,
+            user_id: v.user_id,
+            name: v.name,
+            config: v.config,
+            shared: v.shared,
+            created_at: v.created_at,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+struct ApiViewCreateBody {
+    project_id: String,
+    name: String,
+    #[serde(default)]
+    config: Option<serde_json::Value>,
+    #[serde(default)]
+    shared: Option<bool>,
+}
+
+async fn create_view(
+    user: AuthUser,
+    State(st): State<ApiDefinitionState>,
+    Json(req): Json<ApiViewCreateBody>,
+) -> Response {
+    let config = req.config.unwrap_or_else(|| serde_json::json!({}));
+    match NewApiView::new(&req.project_id, &user.user_id, &req.name, config, req.shared.unwrap_or(true)) {
+        Ok(nv) => match st.repo.insert_view(&nv).await {
+            Ok(v) => (StatusCode::CREATED, Json(ApiViewResponse::from(v))).into_response(),
+            Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
+        },
+        Err(_) => (StatusCode::BAD_REQUEST, "invalid view payload").into_response(),
+    }
+}
+
+async fn list_views(
+    user: AuthUser,
+    State(st): State<ApiDefinitionState>,
+    Query(q): Query<DefinitionListQuery>,
+) -> Response {
+    match st.repo.list_views(&q.project_id, &user.user_id).await {
+        Ok(list) => {
+            let items: Vec<ApiViewResponse> = list.into_iter().map(ApiViewResponse::from).collect();
+            (StatusCode::OK, Json(items)).into_response()
+        }
+        Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
+    }
+}
+
+async fn delete_view(
+    user: AuthUser,
+    State(st): State<ApiDefinitionState>,
+    Path(id): Path<String>,
+) -> Response {
+    match st.repo.delete_view(&id, &user.user_id).await {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
+    }
+}
+
 // ---------- 导入 handler ----------
 
 #[derive(Debug, Deserialize, ToSchema)]
@@ -653,12 +1081,34 @@ struct ImportBody {
     project_id: String,
     /// OpenAPI 3.x / Swagger 2.0 文档(JSON)。
     content: serde_json::Value,
+    /// 新建定义归入的模块(缺省=未归类);group_by_tag 开启时作为按 tag 自建子模块的父级。
+    #[serde(default)]
+    module_id: Option<String>,
+    /// 按 OpenAPI 首个 tag 自动建/复用子模块并归类(默认开启,对齐 OpenAPI 的 tag 分组)。
+    #[serde(default = "default_group_by_tag")]
+    group_by_tag: bool,
+    /// 导入模式:true=覆盖已存在(默认),false=不覆盖(跳过)。
+    #[serde(default = "default_overwrite")]
+    overwrite: bool,
+    /// 覆盖时是否同步更新已存在接口的所在目录到选定模块。
+    #[serde(default)]
+    sync_module: bool,
+}
+
+fn default_overwrite() -> bool {
+    true
+}
+
+fn default_group_by_tag() -> bool {
+    true
 }
 
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 struct ImportResultResponse {
     created: Vec<ApiDefinitionResponse>,
+    /// 覆盖更新的接口数(同 方法+路径 已存在,导入只刷新其 spec)。
+    updated: usize,
     skipped: usize,
 }
 
@@ -678,11 +1128,25 @@ async fn import_definitions(
     if !user.can("API_DEFINITION", "ADD") {
         return (StatusCode::FORBIDDEN, "permission denied").into_response();
     }
-    match st.import_def.execute(&req.project_id, &req.content).await {
+    match st
+        .import_def
+        .execute(
+            &req.project_id,
+            &req.content,
+            req.module_id.as_deref().filter(|s| !s.is_empty()),
+            req.group_by_tag,
+            req.overwrite,
+            req.sync_module,
+        )
+        .await
+    {
         Ok(out) => {
             let created: Vec<ApiDefinitionResponse> =
                 out.created.into_iter().map(ApiDefinitionResponse::from).collect();
-            (StatusCode::CREATED, Json(ImportResultResponse { created, skipped: out.skipped }))
+            (
+                StatusCode::CREATED,
+                Json(ImportResultResponse { created, updated: out.updated, skipped: out.skipped }),
+            )
                 .into_response()
         }
         Err(ImportError::Parse(_)) => {
@@ -701,6 +1165,10 @@ async fn import_definitions(
         import_definitions,
         list_definitions,
         get_definition,
+        delete_definition,
+        update_definition_spec,
+        update_definition_status,
+        list_definition_changes,
         create_case,
         list_cases,
         create_standalone_case,
@@ -711,6 +1179,9 @@ async fn import_definitions(
     components(schemas(
         ApiDefinitionCreateBody,
         ApiDefinitionResponse,
+        SpecUpdateBody,
+        StatusUpdateBody,
+        ApiDefinitionChangeResponse,
         ApiCaseCreateBody,
         ApiCaseResponse,
         StandaloneCaseBody,

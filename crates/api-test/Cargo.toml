@@ -26,12 +26,18 @@ utoipa = { version = "5", optional = true }
 serde = { version = "1", features = ["derive"], optional = true }
 webauth = { path = "../webauth", optional = true }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"], optional = true }
+# Parquet 报告归档(object_store:本地/内存/S3);与 perf 的 parquet-sink 同版本。
+arrow = { version = "53", optional = true }
+parquet = { version = "53", default-features = false, features = ["arrow"], optional = true }
+object_store = { version = "0.11", optional = true }
 
 [features]
 local = ["dep:api-runner", "dep:futures", "dep:tokio"]
 pg = ["dep:sqlx", "local"]
 http = ["dep:axum", "dep:serde", "dep:utoipa", "dep:webauth", "webauth/http"]
 jmeter = ["dep:reqwest", "dep:serde"]
+# 已完成报告导出 Parquet 冷存储(读模型来自 pg)。
+parquet-archive = ["pg", "dep:arrow", "dep:parquet", "dep:object_store"]
 
 [dev-dependencies]
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "net"] }

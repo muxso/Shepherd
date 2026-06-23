@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex};
 use async_trait::async_trait;
 
 use crate::domain::{NewRole, Role};
-use crate::ports::{RoleRepoError, RoleRepository, UserRoleRepository};
+use crate::ports::{AuthRepoError, RoleRepoError, RoleRepository, UserRoleQuery, UserRoleRepository};
 
 #[derive(Default)]
 struct RoleState {
@@ -112,5 +112,22 @@ impl UserRoleRepository for InMemoryUserRoleRepository {
             }
         }
         Ok(set.into_iter().collect())
+    }
+}
+
+#[async_trait]
+impl UserRoleQuery for InMemoryUserRoleRepository {
+    async fn roles_for(&self, user_ids: &[String]) -> Result<Vec<(String, String)>, AuthRepoError> {
+        let grants: Vec<(String, String)> = {
+            let g = self.grants.lock().expect("lock");
+            g.iter().filter(|(u, _)| user_ids.contains(u)).cloned().collect()
+        };
+        let mut out = Vec::new();
+        for (uid, rid) in grants {
+            if let Ok(Some(role)) = self.roles.get(&rid).await {
+                out.push((uid, role.name));
+            }
+        }
+        Ok(out)
     }
 }

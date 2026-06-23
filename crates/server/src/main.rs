@@ -16,10 +16,14 @@ mod llm;
 mod mcp_tools;
 mod openapi;
 mod orchestration;
+mod case_exec_summary;
 mod perf_run;
 mod plan_run;
 mod plan_scheduler;
+mod project_file;
 mod planner;
+mod references_route;
+mod report_archive_job;
 mod scenario_run;
 
 use std::sync::Arc;
@@ -65,7 +69,7 @@ use system_setting::adapters::auth::Argon2PasswordHasher;
 use system_setting::adapters::oidc::{FeishuProvider, WecomProvider};
 use system_setting::adapters::pg::{
     PgCredentialRepository, PgExternalUserRepository, PgOrgRepository, PgRoleRepository,
-    PgSessionStore, PgUserDirectory, PgUserRepository, PgUserRoleRepository,
+    PgSessionStore, PgUserDirectory, PgUserRepository, PgUserRoleQuery, PgUserRoleRepository,
 };
 use system_setting::application::{
     CreateUserUseCase, LoginUseCase, OidcLoginUseCase, OrganizationService, ResolveUserNamesUseCase,
@@ -186,7 +190,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 "FUNCTIONAL_CASE:READ+ADD".to_string(),
                 "RUNNER:READ+ADD+EDIT+EXECUTE".to_string(),
                 "PERF:READ+EXECUTE".to_string(),
-                "RESOURCE_POOL:READ+ADD".to_string(),
+                "RESOURCE_POOL:READ+ADD+UPDATE+DELETE".to_string(),
                 "REQUIREMENT:READ+ADD+UPDATE+DELETE".to_string(),
                 "TASK:READ+ADD+EXECUTE+UPDATE".to_string(),
                 "DELIVERY:READ+EXECUTE+UPDATE".to_string(),
@@ -206,11 +210,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let login_uc =
         LoginUseCase::new(Arc::new(creds), Arc::new(hasher), sessions.clone(), user_role_repo.clone())
             .with_ttl_secs(ttl_secs);
+    // 用户管理额外依赖:重置密码(凭证仓储 + Argon2)、用户组列(用户→角色查询)。
+    let creds_admin: Arc<dyn system_setting::ports::CredentialRepository> =
+        Arc::new(PgCredentialRepository::new(pool.clone()));
+    let hasher_admin: Arc<dyn system_setting::ports::PasswordHasher> = Arc::new(Argon2PasswordHasher);
+    let user_role_query: Arc<dyn system_setting::ports::UserRoleQuery> =
+        Arc::new(PgUserRoleQuery::new(pool.clone()));
     let user_routes = system_setting::adapters::http::router(
         user_uc,
         resolve_uc,
         login_uc,
         user_admin,
+        creds_admin,
+        hasher_admin,
+        user_role_query,
         sessions.clone(),
     );
 
@@ -329,7 +342,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mcp_delivery = delivery_svc.clone();
     // 多任务并行编排:按依赖图逐层并发派发整张任务 DAG。
     let decomposition_run_routes =
-        decomposition_run::router(task_admin.clone(), delivery_svc.clone(), sessions.clone());
+        decomposition_run::router(task_admin.clone(), delivery_svc.clone(), req_admin.clone(), sessions.clone());
     let delivery_routes = delivery::adapters::http::router(delivery_svc, sessions.clone());
 
     // —— MCP 集成(把全链路暴露为 MCP 工具,POST /mcp,JSON-RPC)——
@@ -366,7 +379,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // —— case 模块 ——
     let review_repo = Arc::new(PgReviewRepository::new(pool.clone()));
     let case_routes =
-        case::adapters::http::router(SubmitReviewUseCase::new(review_repo), sessions.clone());
+        case::adapters::http::router(SubmitReviewUseCase::new(review_repo.clone()), review_repo, sessions.clone());
 
     // —— bug 模块 ——
     let bug_repo = Arc::new(PgBugRepository::new(pool.clone()));
@@ -405,10 +418,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         _ => {
             tracing::info!("api runner: 本地原生 Rust runner(默认)");
-            Arc::new(LocalRunnerDispatcher::new(
-                Arc::new(PgCaseSpecSource::new(pool.clone())),
-                Arc::new(PgCaseResultSink::new(pool.clone())),
-            ))
+            // 注入环境变量回写端口:串行执行时「环境参数」提取结果写回环境。
+            Arc::new(
+                LocalRunnerDispatcher::new(
+                    Arc::new(PgCaseSpecSource::new(pool.clone())),
+                    Arc::new(PgCaseResultSink::new(pool.clone())),
+                )
+                .with_env_writer(Arc::new(api_test::adapters::pg::PgEnvironment::new(pool.clone()))),
+            )
         }
     };
     let api_pools = Arc::new(PgResourcePool::new(pool.clone()));
@@ -420,7 +437,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let api_pool_admin = Arc::new(api_test::adapters::pg::PgResourcePoolAdmin::new(pool.clone()));
     let resource_pool_routes = api_test::adapters::http::resource_pool_router(
         api_test::application::CreateResourcePoolUseCase::new(api_pool_admin.clone()),
-        api_test::application::ListResourcePoolsUseCase::new(api_pool_admin),
+        api_test::application::ListResourcePoolsUseCase::new(api_pool_admin.clone()),
+        api_test::application::EditResourcePoolUseCase::new(api_pool_admin),
         sessions.clone(),
     );
     // 用例执行记录(分页读 ms_api_case_result)。
@@ -432,7 +450,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // —— 接口定义模块(目录 + 用例 + Mock)——
     let apidef_repo = Arc::new(api_definition::adapters::pg::PgApiDefinitionRepository::new(pool.clone()));
-    let apidef_routes = api_definition::adapters::http::router(apidef_repo, sessions.clone());
+    let apidef_routes = api_definition::adapters::http::router(apidef_repo.clone(), sessions.clone());
 
     // —— 环境模块(项目级 base_url + 默认头 + 变量)——
     let env_repo = Arc::new(environment::adapters::pg::PgEnvironmentRepository::new(pool.clone()));
@@ -456,7 +474,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let functional_case_routes = case_management::adapters::http::router(
         case_management::application::CreateCaseUseCase::new(case_repo.clone()),
         case_management::application::ListCasesUseCase::new(case_repo.clone()),
-        case_management::application::ImportCasesUseCase::new(case_repo),
+        case_management::application::ImportCasesUseCase::new(case_repo.clone()),
+        case_repo,
         sessions.clone(),
     );
 
@@ -465,6 +484,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Arc::new(api_scenario::adapters::pg::PgApiScenarioRepository::new(pool.clone()));
     let scenario_routes =
         api_scenario::adapters::http::router(scenario_repo.clone(), sessions.clone());
+    // 接口定义「引用关系」反查:编排 接口用例(apidef)+ 场景步骤(scenario)两仓储。
+    let references_routes = references_route::router(apidef_repo.clone(), scenario_repo.clone());
     // 场景执行走计划树执行器(顺序 + 控制器 + 运行上下文),外层补建报告 + 记录。
     let plan_executor = api_test::adapters::plan::PlanExecutor::new(
         Arc::new(PgCaseSpecSource::new(pool.clone())),
@@ -473,18 +494,34 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let scenario_run_routes = scenario_run::router(
         api_scenario::application::CompileScenarioUseCase::new(scenario_repo.clone()),
         plan_executor,
-        api_envs,
+        api_envs.clone(),
         api_test::adapters::PgBatchReport::new(pool.clone()),
-        api_scenario::application::RecordScenarioExecutionUseCase::new(scenario_repo),
+        api_scenario::application::RecordScenarioExecutionUseCase::new(scenario_repo.clone()),
         sessions.clone(),
     );
 
-    // —— 原生压测(perf):POST /perf/run 后台施压 + GET /perf/report/{id} ——
-    let perf_routes = perf_run::router(pool.clone(), sessions.clone());
+    // —— 原生压测(perf):POST /perf/run(单接口)+ POST /perf/scenario/run(场景链)+ GET /perf/report/{id} ——
+    let perf_routes = perf_run::router(
+        pool.clone(),
+        sessions.clone(),
+        api_scenario::application::CompileScenarioUseCase::new(scenario_repo.clone()),
+        scenario_repo.clone(),
+        Arc::new(PgCaseSpecSource::new(pool.clone())),
+        api_envs,
+    );
     let debug_send_routes = debug_send::router(sessions.clone());
 
     // —— 测试计划定时执行(cron 到点拍统计快照)——
     let plan_scheduler_routes = plan_scheduler::build(pool.clone(), sessions.clone()).await?;
+
+    // —— 报告归档(已完成报告周期性导出 Parquet 冷存储;REPORT_ARCHIVE_DIR 开关)——
+    report_archive_job::spawn(pool.clone());
+
+    // —— 首页:接口用例执行汇总(GET /api/case-exec-summary)——
+    let case_summary_routes = case_exec_summary::router(pool.clone(), sessions.clone());
+
+    // —— 项目文件管理(/api/project-file)——
+    let project_file_routes = project_file::router(pool.clone(), sessions.clone());
 
     // —— 合并为单一应用 + 生产中间件 ——
     let app = user_routes
@@ -512,7 +549,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .merge(functional_case_routes)
         .merge(runner_routes)
         .merge(scenario_routes)
+        .merge(references_routes)
         .merge(scenario_run_routes)
+        .merge(case_summary_routes)
+        .merge(project_file_routes)
         .merge(perf_routes)
         .merge(debug_send_routes)
         .merge(plan_scheduler_routes)

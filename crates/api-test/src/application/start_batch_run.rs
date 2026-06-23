@@ -60,13 +60,16 @@ impl StartBatchRunUseCase {
         }
 
         // 4) 解析运行环境(给定 environmentId 才解析;缺失/查无 → 空环境,不注入)
-        let env = match cmd.config.environment_id.as_deref().filter(|s| !s.trim().is_empty()) {
+        let environment_id =
+            cmd.config.environment_id.as_deref().filter(|s| !s.trim().is_empty()).map(str::to_string);
+        let env = match environment_id.as_deref() {
             Some(id) => self.envs.resolve(id).await?.unwrap_or_default(),
             None => ResolvedEnv::default(),
         };
 
         // 5) 派发
-        let spec = DispatchSpec { case_ids: cmd.case_ids, pool_id, mode: cmd.config.mode, env };
+        let spec =
+            DispatchSpec { case_ids: cmd.case_ids, pool_id, mode: cmd.config.mode, env, environment_id };
         Ok(self.executor.dispatch(&spec).await?)
     }
 }
