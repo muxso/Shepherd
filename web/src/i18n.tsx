@@ -129,6 +129,10 @@ const DICT: Record<string, { zh: string; en: string }> = {
   'user.namePh': { zh: '请输入姓名', en: 'Enter name' },
   'user.emailRequired': { zh: '请输入有效邮箱', en: 'Valid email required' },
   'user.emailPh': { zh: '请输入邮箱', en: 'Enter email' },
+  'user.updateFailed': { zh: '更新失败', en: 'Update failed' },
+  'user.delConfirm': { zh: '确认删除用户?', en: 'Delete this user?' },
+  'user.deleted': { zh: '已删除', en: 'Deleted' },
+  'user.delFailed': { zh: '删除失败', en: 'Delete failed' },
   // 项目管理(项目与权限)
   'proj.permTab': { zh: '项目与权限', en: 'Project & Permissions' },
   'proj.tmplTab': { zh: '模板管理', en: 'Templates' },

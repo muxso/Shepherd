@@ -654,6 +654,9 @@ export const api = {
   createRole: (b: { name: string; permissions?: string[] }) => http.post<Role>('/role', b),
   users: () => http.get<Page<User>>('/system/user?pageSize=100'),
   createUser: (b: { name: string; email: string }) => http.post<User>('/system/user', b),
+  updateUser: (id: string, b: { name: string; email: string; enable: boolean }) =>
+    http.put<User>(`/system/user/${id}`, b),
+  deleteUser: (id: string) => http.del(`/system/user/${id}`),
 
   // 功能用例(项目级)
   functionalCases: (projectId: string) =>
