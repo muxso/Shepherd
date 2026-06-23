@@ -310,6 +310,12 @@ export interface CaseExecSummary {
   passed: number
   executedCases: number
 }
+/** 近 N 天执行趋势的单日数据点(GET /api/exec-trend)。 */
+export interface ExecTrendPoint {
+  date: string // YYYY-MM-DD
+  executions: number
+  passed: number
+}
 
 /** 场景变更历史一条(审计日志)。 */
 export interface ScenarioChange {
@@ -794,6 +800,8 @@ export const api = {
     http.get<ScenarioReportDetail>(`/api/scenario-report/${reportId}`),
   caseExecSummary: (projectId: string) =>
     http.get<CaseExecSummary>(`/api/case-exec-summary?projectId=${encodeURIComponent(projectId)}`),
+  execTrend: (projectId: string, days = 7) =>
+    http.get<ExecTrendPoint[]>(`/api/exec-trend?projectId=${encodeURIComponent(projectId)}&days=${days}`),
   scenarioChanges: (scenarioId: string) =>
     http.get<ScenarioChange[]>(`/api/scenario/${scenarioId}/changes`),
 }

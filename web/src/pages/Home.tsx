@@ -14,7 +14,7 @@ import {
   SafetyCertificateOutlined,
 } from '@ant-design/icons'
 import { useNavigate } from 'react-router-dom'
-import { api, type ApiCase, type ApiDefinition, type CaseExecSummary } from '../api'
+import { api, type ApiCase, type ApiDefinition, type CaseExecSummary, type ExecTrendPoint } from '../api'
 import { useApp } from '../context'
 import { regList } from '../registry'
 import { useI18n } from '../i18n'
@@ -43,13 +43,14 @@ const PROJECT_SERIES = [
 ]
 
 // 卡片清单(完整版「卡片设置」对标 MeterSphere):每张卡可独立显隐 + 自由排序。
-const ALL_CARDS = ['overview', 'projectBars', 'assets', 'apiStats', 'caseStats', 'quality', 'shortcuts'] as const
+const ALL_CARDS = ['overview', 'projectBars', 'assets', 'apiStats', 'caseStats', 'execTrend', 'quality', 'shortcuts'] as const
+const TREND_DAYS = 7
 type CardKey = (typeof ALL_CARDS)[number]
 interface CardPref {
   key: CardKey
   shown: boolean
 }
-const CARDS_KEY = 'shepherd.home.cards.v5'
+const CARDS_KEY = 'shepherd.home.cards.v6'
 
 /** 读持久化偏好。缺省全显示、按 ALL_CARDS 顺序;新增卡默认显示并追加到末尾。 */
 function loadPrefs(): CardPref[] {
@@ -78,6 +79,7 @@ export default function Home() {
   const [cases, setCases] = useState<ApiCase[]>([])
   const [projRows, setProjRows] = useState<BarRow[]>([])
   const [exec, setExec] = useState<CaseExecSummary | null>(null)
+  const [trend, setTrend] = useState<ExecTrendPoint[]>([])
   const [loading, setLoading] = useState(false)
   const [prefs, setPrefs] = useState<CardPref[]>(loadPrefs)
 
@@ -98,9 +100,11 @@ export default function Home() {
     if (!projectId) {
       setC(null)
       setExec(null)
+      setTrend([])
       return
     }
     api.caseExecSummary(projectId).then(setExec).catch(() => setExec(null))
+    api.execTrend(projectId, TREND_DAYS).then((t) => setTrend(Array.isArray(t) ? t : [])).catch(() => setTrend([]))
     setLoading(true)
     Promise.all([
       api.definitions(projectId).catch(() => [] as ApiDefinition[]),
@@ -136,6 +140,22 @@ export default function Home() {
     return defs.filter((d) => ref.has(d.id)).length
   }, [defs, cases])
 
+  // 近 N 天执行趋势:后端只回有执行的日期,这里补全连续日轴(通过/未通过)。
+  const trendRows = useMemo<BarRow[]>(() => {
+    const map = new Map(trend.map((p) => [p.date, p]))
+    const today = new Date()
+    const rows: BarRow[] = []
+    for (let i = TREND_DAYS - 1; i >= 0; i--) {
+      const d = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate() - i))
+      const key = d.toISOString().slice(0, 10)
+      const p = map.get(key)
+      const passed = p?.passed ?? 0
+      const executions = p?.executions ?? 0
+      rows.push({ name: key.slice(5), values: { passed, failed: Math.max(0, executions - passed) } })
+    }
+    return rows
+  }, [trend])
+
   // 项目对比:对每个项目并发拉取四类资产计数(真实数据,与当前选中项目无关)。
   useEffect(() => {
     if (!projects.length) { setProjRows([]); return }
@@ -160,6 +180,7 @@ export default function Home() {
     assets: t('home.assetDist', '测试资产分布'),
     apiStats: t('home.apiStats', '接口数'),
     caseStats: t('home.caseStats', '接口用例数'),
+    execTrend: t('home.execTrend', '执行趋势'),
     quality: t('home.quality', '质量概览'),
     shortcuts: t('home.shortcuts', '快捷入口'),
   }
@@ -380,6 +401,25 @@ export default function Home() {
                 ])}
               </Col>
             </Row>
+          </Card>
+        )
+      }
+      case 'execTrend': {
+        const hasData = trendRows.some((r) => (r.values.passed ?? 0) + (r.values.failed ?? 0) > 0)
+        return (
+          <Card title={<span><ThunderboltOutlined style={{ color: '#fa8c16', marginRight: 6 }} />{cardTitle.execTrend}</span>} extra={<span style={{ fontSize: 12, color: '#8a9099' }}>{t('home.last7d', '近 7 天')}</span>} size="small" style={{ marginBottom: 16 }}>
+            {!hasData ? (
+              <Empty description={t('home.noExec', '近 7 天无执行记录')} />
+            ) : (
+              <GroupedBars
+                height={220}
+                series={[
+                  { key: 'passed', label: t('home.passed', '已通过'), color: '#52c41a' },
+                  { key: 'failed', label: t('home.failedExec', '未通过'), color: '#f5222d' },
+                ]}
+                rows={trendRows}
+              />
+            )}
           </Card>
         )
       }
