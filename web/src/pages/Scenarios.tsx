@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom'
 import { Button, Drawer, Dropdown, Empty, Form, Input, Modal, Radio, Segmented, Select, Space, Switch, Table, Tabs, Tag, Typography, Upload } from 'antd'
 import { message, modal } from '../feedback'
 import { PlayCircleOutlined, PlusOutlined, SaveOutlined, ThunderboltOutlined, DownOutlined, LinkOutlined, SwapOutlined, DeleteOutlined, FullscreenOutlined, CloseOutlined, SearchOutlined, FilterOutlined, ReloadOutlined, MoreOutlined, ImportOutlined, InboxOutlined } from '@ant-design/icons'
-import { api, ApiError, type ApiCase, type ApiDefinition, type ApiModule, type DebugResponse, type Environment, type ReportResultItem, type Scenario, type ScenarioChange, type ScenarioExecution, type ScenarioReportDetail, type ScenarioRunResult, type ScenarioStep } from '../api'
+import { api, ApiError, type ApiCase, type ApiDefinition, type ApiModule, type AssertionResult, type DebugResponse, type Environment, type ReportResultItem, type Scenario, type ScenarioChange, type ScenarioExecution, type ScenarioReportDetail, type ScenarioRunResult, type ScenarioStep } from '../api'
 import type { ColumnsType } from 'antd/es/table'
 import { useApp } from '../context'
 import { methodColor, statusColor, outcomeColor } from '../components/tags'
@@ -1061,9 +1061,15 @@ function ScenarioReportModal({ reportId, nameOf, onClose }: { reportId: string |
 function ReportRow({ idx, r, label, t, open, onToggle }: { idx: number; r: ReportResultItem; label: (id: string) => string; t: TFn; open: boolean; onToggle: () => void }) {
   const ok = r.outcome === 'SUCCESS'
   const hasDetail = r.statusCode != null || r.body != null || (r.headers?.length ?? 0) > 0
+  // 报告仅存 method+url(REQUEST 步骤 caseId = "GET http://…"),据此重建实际请求行,
+  // 让「实际请求 / 控制台 / cURL」不再显示「尚未执行」。CASE 引用无请求行则留空。
+  const m = /^([A-Z]+)\s+(\S+)/.exec(r.caseId)
+  const req: SentRequest | null = m ? { method: m[1], url: m[2], headers: [] } : null
+  // 报告只持久化失败断言;据 failures 合成断言行(失败标红)。通过步骤无逐条数据。
+  const failAsserts: AssertionResult[] = r.failures.map((f) => ({ item: f, condition: '', expected: '', actual: '', passed: false, reason: f }))
   // 用存储的响应明细合成一个 DebugResponse,复用调试的 7 标签面板。
   const resp: DebugResponse | null = hasDetail
-    ? { status: r.statusCode ?? 0, latencyMs: r.latencyMs ?? 0, headers: r.headers ?? [], body: r.body ?? '' }
+    ? { status: r.statusCode ?? 0, latencyMs: r.latencyMs ?? 0, headers: r.headers ?? [], body: r.body ?? '', assertions: failAsserts.length ? failAsserts : undefined }
     : null
   const muted: React.CSSProperties = { color: '#bbb', fontSize: 12 }
   return (
@@ -1084,7 +1090,7 @@ function ReportRow({ idx, r, label, t, open, onToggle }: { idx: number; r: Repor
       )}
       {open && resp && (
         <div style={{ padding: '0 12px 12px' }}>
-          <DebugResultPanel running={false} resp={resp} err="" req={null} isHttp />
+          <DebugResultPanel running={false} resp={resp} err="" req={req} isHttp={!!req} />
         </div>
       )}
     </div>
