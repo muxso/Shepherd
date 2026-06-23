@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from 'react'
-import { Layout, Menu, Select, Button, Space, Tooltip, Drawer, Avatar, Descriptions } from 'antd'
+import { Layout, Menu, Select, Button, Space, Tooltip, Drawer, Avatar, Descriptions, Segmented, Empty } from 'antd'
 import {
   ApiOutlined,
   PartitionOutlined,
@@ -23,6 +23,10 @@ import {
   DashboardOutlined,
   BellOutlined,
   SettingOutlined,
+  FileDoneOutlined,
+  AuditOutlined,
+  RobotOutlined,
+  ExperimentOutlined,
 } from '@ant-design/icons'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { useApp } from '../context'
@@ -43,6 +47,9 @@ interface ModuleDef {
   children: { key: string; icon: ReactNode; label: [string, string] }[]
 }
 
+// IA 主轴 = AI 交付生命周期:工作台 → AI需求 → AI评审 → AI研发 → AI测试,再 项目(支撑)/ 系统(底部)。
+// 需求是产品主线(从原「缺陷」杂物抽屉里提出来);技能/协同/MCP 归入「AI 研发」;
+// 测试资产(用例/接口/场景/计划/性能/缺陷)统一收进「AI 测试」。
 const MODULES: ModuleDef[] = [
   {
     key: '/home',
@@ -50,6 +57,45 @@ const MODULES: ModuleDef[] = [
     icon: <DashboardOutlined />,
     match: ['/home'],
     children: [{ key: '/home', icon: <DashboardOutlined />, label: ['m.home', '工作台'] }],
+  },
+  {
+    key: '/requirement',
+    label: ['nav.req', 'AI 需求'],
+    icon: <FileDoneOutlined />,
+    match: ['/requirement'],
+    children: [{ key: '/requirement', icon: <FileDoneOutlined />, label: ['m.requirement', '需求'] }],
+  },
+  {
+    key: '/review',
+    label: ['nav.review', 'AI 评审'],
+    icon: <AuditOutlined />,
+    match: ['/review'],
+    children: [{ key: '/review', icon: <AuditOutlined />, label: ['m.review', '评审'] }],
+  },
+  {
+    key: '/skill',
+    label: ['nav.dev', 'AI 研发'],
+    icon: <RobotOutlined />,
+    match: ['/skill', '/agents', '/mcp'],
+    children: [
+      { key: '/agents', icon: <DeploymentUnitOutlined />, label: ['m.agents', '人机协同'] },
+      { key: '/skill', icon: <BulbOutlined />, label: ['m.skill', '技能库'] },
+      { key: '/mcp', icon: <ApiOutlined />, label: ['m.mcp', 'MCP 工具'] },
+    ],
+  },
+  {
+    key: '/functional-case',
+    label: ['nav.test', 'AI 测试'],
+    icon: <ExperimentOutlined />,
+    match: ['/functional-case', '/api/', '/test-plan', '/perf', '/bug'],
+    children: [
+      { key: '/functional-case', icon: <ProfileOutlined />, label: ['m.functional', '功能用例'] },
+      { key: '/api/definition', icon: <ApiOutlined />, label: ['m.definition', '接口定义'] },
+      { key: '/api/scenario', icon: <PartitionOutlined />, label: ['m.scenario', '场景用例'] },
+      { key: '/test-plan', icon: <ScheduleOutlined />, label: ['m.plan', '测试计划'] },
+      { key: '/perf', icon: <ThunderboltOutlined />, label: ['m.perf', '性能测试'] },
+      { key: '/bug', icon: <BugOutlined />, label: ['m.bug', '缺陷管理'] },
+    ],
   },
   {
     key: '/project',
@@ -67,48 +113,10 @@ const MODULES: ModuleDef[] = [
     ],
   },
   {
-    key: '/test-plan',
-    label: ['nav.plan', '计划'],
-    icon: <ScheduleOutlined />,
-    match: ['/test-plan', '/perf'],
-    children: [
-      { key: '/test-plan', icon: <ScheduleOutlined />, label: ['m.plan', '测试计划'] },
-      { key: '/perf', icon: <ThunderboltOutlined />, label: ['m.perf', '性能测试'] },
-    ],
-  },
-  {
-    key: '/functional-case',
-    label: ['nav.case', '用例'],
-    icon: <ProfileOutlined />,
-    match: ['/functional-case'],
-    children: [{ key: '/functional-case', icon: <ProfileOutlined />, label: ['m.functional', '功能用例'] }],
-  },
-  {
-    key: '/api/definition',
-    label: ['nav.api', '接口'],
-    icon: <ApiOutlined />,
-    match: ['/api/'],
-    children: [
-      { key: '/api/definition', icon: <ApiOutlined />, label: ['m.definition', '接口定义'] },
-      { key: '/api/scenario', icon: <PartitionOutlined />, label: ['m.scenario', '场景用例'] },
-    ],
-  },
-  {
-    key: '/bug',
-    label: ['nav.bug', '缺陷'],
-    icon: <BugOutlined />,
-    match: ['/bug', '/requirement', '/skill'],
-    children: [
-      { key: '/bug', icon: <BugOutlined />, label: ['m.bug', '缺陷管理'] },
-      { key: '/requirement', icon: <FileTextOutlined />, label: ['m.requirement', '需求'] },
-      { key: '/skill', icon: <BulbOutlined />, label: ['m.skill', '技能'] },
-    ],
-  },
-  {
     key: '/user',
     label: ['nav.sys', '系统'],
     icon: <SettingOutlined />,
-    match: ['/user', '/role', '/organization', '/resource-pool', '/system', '/mcp'],
+    match: ['/user', '/role', '/organization', '/resource-pool', '/system'],
     bottom: true,
     children: [
       { key: '/user', icon: <UserOutlined />, label: ['sys.users', '用户'] },
@@ -130,6 +138,9 @@ export default function AppShell({ children }: { children: ReactNode }) {
   const loc = useLocation()
   const [newProjOpen, setNewProjOpen] = useState(false)
   const [pcOpen, setPcOpen] = useState(false)
+  const [msgOpen, setMsgOpen] = useState(false)
+  const [msgCat, setMsgCat] = useState('all')
+  const [msgTab, setMsgTab] = useState('all')
   const currentProject = projects.find((p) => p.id === projectId)
   const username = localStorage.getItem('shepherd.user') || 'admin'
 
@@ -175,7 +186,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
         {/* 全局图标导航栏(对齐参考图 #40):logo / 导航项 / 底部系统 + 头像 */}
         <div style={{ width: 72, background: '#fff', borderRight: '1px solid #f0f0f0', display: 'flex', flexDirection: 'column', flexShrink: 0 }}>
           <div style={{ height: 48, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            <DeploymentUnitOutlined style={{ color: '#7c3aed', fontSize: 22 }} />
+            <DeploymentUnitOutlined style={{ color: '#06a561', fontSize: 22 }} />
           </div>
           <div style={{ flex: 1, overflowY: 'auto', paddingTop: 4 }}>
             {topModules.map((m) => <RailItem key={m.key} m={m} />)}
@@ -184,7 +195,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
             {sysModule && <RailItem m={sysModule} />}
             <Tooltip title={t('pc.title', '个人中心')} placement="right">
               <div style={{ display: 'flex', justifyContent: 'center', padding: '10px 0', cursor: 'pointer' }} onClick={() => setPcOpen(true)}>
-                <Avatar size={30} style={{ background: '#7c3aed' }}>{username.slice(0, 1).toUpperCase()}</Avatar>
+                <Avatar size={30} style={{ background: '#06a561' }}>{username.slice(0, 1).toUpperCase()}</Avatar>
               </div>
             </Tooltip>
           </div>
@@ -226,7 +237,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
               <Button type="text" size="small" icon={<PlusOutlined />} onClick={() => setNewProjOpen(true)} />
             </Tooltip>
             <Tooltip title={t('top.notifications', '通知')}>
-              <Button type="text" size="small" icon={<BellOutlined />} />
+              <Button type="text" size="small" icon={<BellOutlined />} onClick={() => setMsgOpen(true)} />
             </Tooltip>
             <Tooltip title={t('m.home', '工作台')}>
               <Button type="text" size="small" icon={<AppstoreOutlined />} onClick={() => nav('/home')} />
@@ -251,11 +262,109 @@ export default function AppShell({ children }: { children: ReactNode }) {
       </Layout>
       <NewProjectModal open={newProjOpen} onClose={() => setNewProjOpen(false)} />
 
+      {/* 消息管理(对齐参考图):右侧抽屉,左侧分类列表 + 右侧 全部/@我的/未读/已读 标签。后端暂无站内消息接口,计数为 0、内容空态。 */}
+      <Drawer
+        open={msgOpen}
+        onClose={() => setMsgOpen(false)}
+        width={960}
+        styles={{ body: { padding: 0, display: 'flex', flexDirection: 'column' } }}
+        title={
+          <span>
+            {t('msg.title', '消息管理')}
+            <span style={{ fontSize: 13, fontWeight: 400, color: '#8c8c8c' }}>
+              {t('msg.subtitle', '(仅展示近 3 个月内站内消息)')}
+            </span>
+          </span>
+        }
+      >
+        <div style={{ display: 'flex', flex: 1, minHeight: 0 }}>
+          {/* 左:消息分类(计数徽标右对齐)+ 底部消息设置 */}
+          <div style={{ width: 220, borderRight: '1px solid #f0f0f0', display: 'flex', flexDirection: 'column' }}>
+            <div style={{ flex: 1, overflowY: 'auto', padding: 8 }}>
+              {[
+                ['all', t('msg.cat.all', '全部消息')],
+                ['plan', t('msg.cat.plan', '测试计划')],
+                ['bug', t('msg.cat.bug', '缺陷管理')],
+                ['case', t('msg.cat.case', '测试用例')],
+                ['api', t('msg.cat.api', '接口测试')],
+                ['schedule', t('msg.cat.schedule', '定时任务')],
+                ['git', t('msg.cat.git', 'Git')],
+              ].map(([key, label]) => {
+                const active = key === msgCat
+                return (
+                  <div
+                    key={key}
+                    onClick={() => setMsgCat(key)}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      padding: '10px 12px',
+                      borderRadius: 6,
+                      cursor: 'pointer',
+                      fontSize: 14,
+                      color: active ? '#06a561' : '#1f2329',
+                      background: active ? '#e6f7ef' : 'transparent',
+                    }}
+                  >
+                    <span>{label}</span>
+                    <span
+                      style={{
+                        minWidth: 22,
+                        height: 20,
+                        padding: '0 6px',
+                        borderRadius: 10,
+                        background: active ? '#c6ecda' : '#f0f0f0',
+                        color: active ? '#06a561' : '#8c8c8c',
+                        fontSize: 12,
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                      }}
+                    >
+                      0
+                    </span>
+                  </div>
+                )
+              })}
+            </div>
+            <div
+              style={{ borderTop: '1px solid #f0f0f0', padding: '12px 16px', cursor: 'pointer', color: '#1f2329' }}
+              onClick={() => { setMsgOpen(false); nav('/project/messages') }}
+            >
+              <SettingOutlined style={{ marginRight: 8 }} />
+              {t('msg.settings', '消息设置')}
+            </div>
+          </div>
+          {/* 右:标签筛选 + 全部标为已读 + 内容空态 */}
+          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px' }}>
+              <Segmented
+                value={msgTab}
+                onChange={(v) => setMsgTab(v as string)}
+                options={[
+                  { value: 'all', label: t('msg.tab.all', '全部') },
+                  { value: 'mine', label: t('msg.tab.mine', '@我的') },
+                  { value: 'unread', label: t('msg.tab.unread', '未读') },
+                  { value: 'read', label: t('msg.tab.read', '已读') },
+                ]}
+              />
+              <Button type="link" size="small" icon={<FileDoneOutlined />} style={{ color: '#06a561' }}>
+                {t('msg.markAllRead', '全部标为已读')}
+              </Button>
+            </div>
+            <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('common.empty', '暂无数据')} />
+            </div>
+          </div>
+        </div>
+      </Drawer>
+
       {/* 个人中心(后端暂无 /me,展示登录态可得信息) */}
       <Drawer title={t('pc.title', '个人中心')} open={pcOpen} onClose={() => setPcOpen(false)} width={420}>
         <Space direction="vertical" size={16} style={{ width: '100%' }}>
           <Space align="center" size={12}>
-            <Avatar size={48} style={{ background: '#7c3aed' }}>{username.slice(0, 1).toUpperCase()}</Avatar>
+            <Avatar size={48} style={{ background: '#06a561' }}>{username.slice(0, 1).toUpperCase()}</Avatar>
             <span style={{ fontSize: 16, fontWeight: 600 }}>{username}</span>
           </Space>
           <Descriptions column={1} size="small" bordered>

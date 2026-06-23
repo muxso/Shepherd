@@ -46,7 +46,7 @@ impl PgTaskRepository {
         }
 
         let trows = sqlx::query(
-            "SELECT id, title, description, acceptance_criteria, status FROM ms_task \
+            "SELECT id, title, description, acceptance_criteria, status, points, assignee, assignee_kind FROM ms_task \
              WHERE decomposition_id = $1 ORDER BY seq",
         )
         .bind(&id)
@@ -66,6 +66,9 @@ impl PgTaskRepository {
                 description: t.try_get("description").map_err(map_err)?,
                 acceptance_criteria: criteria,
                 status: TaskStatus::parse(&status_s).unwrap_or(TaskStatus::Pending),
+                points: t.try_get("points").unwrap_or(0),
+                assignee: t.try_get("assignee").unwrap_or_default(),
+                assignee_kind: t.try_get("assignee_kind").unwrap_or_default(),
             });
         }
 
@@ -141,11 +144,12 @@ impl TaskRepository for PgTaskRepository {
         let mut tx = self.pool.begin().await.map_err(map_err)?;
         for t in &decomposition.tasks {
             sqlx::query(
-                "INSERT INTO ms_task (decomposition_id, id, title, description, acceptance_criteria, status) \
-                 VALUES ($1, $2, $3, $4, $5, $6) \
+                "INSERT INTO ms_task (decomposition_id, id, title, description, acceptance_criteria, status, points, assignee, assignee_kind) \
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) \
                  ON CONFLICT (decomposition_id, id) DO UPDATE \
                  SET title = EXCLUDED.title, description = EXCLUDED.description, \
-                     acceptance_criteria = EXCLUDED.acceptance_criteria, status = EXCLUDED.status",
+                     acceptance_criteria = EXCLUDED.acceptance_criteria, status = EXCLUDED.status, \
+                     points = EXCLUDED.points, assignee = EXCLUDED.assignee, assignee_kind = EXCLUDED.assignee_kind",
             )
             .bind(&decomposition.id)
             .bind(&t.id)
@@ -153,6 +157,9 @@ impl TaskRepository for PgTaskRepository {
             .bind(&t.description)
             .bind(&t.acceptance_criteria)
             .bind(t.status.as_str())
+            .bind(t.points)
+            .bind(&t.assignee)
+            .bind(&t.assignee_kind)
             .execute(&mut *tx)
             .await
             .map_err(map_err)?;

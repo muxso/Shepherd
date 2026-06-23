@@ -32,11 +32,11 @@ interface Counts {
 }
 
 // 协议分段配色(轮转)。
-const PROTO_COLORS = ['#7c3aed', '#1677ff', '#13c2c2', '#52c41a', '#fa8c16', '#eb2f96', '#f5222d', '#8a9099']
+const PROTO_COLORS = ['#06a561', '#1677ff', '#13c2c2', '#52c41a', '#fa8c16', '#eb2f96', '#f5222d', '#8a9099']
 
 // 项目对比柱状图的资产系列(配色对齐资产分布环)。
 const PROJECT_SERIES = [
-  { key: 'def', label: '接口定义', color: '#7c3aed' },
+  { key: 'def', label: '接口定义', color: '#06a561' },
   { key: 'scenario', label: '场景用例', color: '#1677ff' },
   { key: 'apiCase', label: '接口用例', color: '#13c2c2' },
   { key: 'funcCase', label: '功能用例', color: '#52c41a' },
@@ -187,7 +187,7 @@ export default function Home() {
 
   const cards = useMemo(
     () => [
-      { key: 'def', label: t('home.def', '接口定义'), value: c?.def ?? 0, icon: <ApiOutlined />, color: '#7c3aed' },
+      { key: 'def', label: t('home.def', '接口定义'), value: c?.def ?? 0, icon: <ApiOutlined />, color: '#06a561' },
       { key: 'scenario', label: t('home.scenario', '场景用例'), value: c?.scenario ?? 0, icon: <PartitionOutlined />, color: '#1677ff' },
       { key: 'apiCase', label: t('home.apiCase', '接口用例'), value: c?.apiCase ?? 0, icon: <ProfileOutlined />, color: '#13c2c2' },
       { key: 'funcCase', label: t('home.funcCase', '功能用例'), value: c?.funcCase ?? 0, icon: <ProfileOutlined />, color: '#52c41a' },
@@ -199,7 +199,7 @@ export default function Home() {
   )
 
   const donutSegs = [
-    { label: t('home.def', '接口定义'), value: c?.def ?? 0, color: '#7c3aed' },
+    { label: t('home.def', '接口定义'), value: c?.def ?? 0, color: '#06a561' },
     { label: t('home.scenario', '场景用例'), value: c?.scenario ?? 0, color: '#1677ff' },
     { label: t('home.apiCase', '接口用例'), value: c?.apiCase ?? 0, color: '#13c2c2' },
     { label: t('home.funcCase', '功能用例'), value: c?.funcCase ?? 0, color: '#52c41a' },
@@ -295,7 +295,7 @@ export default function Home() {
         const uncovered = totalDefs - coveredDefs
         const coverRate = totalDefs ? (coveredDefs * 100) / totalDefs : 0
         return (
-          <Card title={<span><ApiOutlined style={{ color: '#7c3aed', marginRight: 6 }} />{cardTitle.apiStats}</span>} size="small" style={{ marginBottom: 16 }}>
+          <Card title={<span><ApiOutlined style={{ color: '#06a561', marginRight: 6 }} />{cardTitle.apiStats}</span>} size="small" style={{ marginBottom: 16 }}>
             {totalDefs === 0 ? (
               <Empty description={t('common.empty', '暂无数据')} />
             ) : (

@@ -19,6 +19,8 @@ pub struct NewApiMock {
     pub response_delay_ms: i32,
     /// 是否跟随 API 定义返回(开启时忽略 response_body,返回定义示例);默认 false。
     pub follow_definition: bool,
+    /// 创建人 user_id(由应用层注入);默认空。
+    pub created_by: String,
 }
 
 impl NewApiMock {
@@ -55,7 +57,14 @@ impl NewApiMock {
             response_headers: serde_json::Value::Array(Vec::new()),
             response_delay_ms: 0,
             follow_definition: false,
+            created_by: String::new(),
         })
+    }
+
+    /// 设置创建人(链式)。
+    pub fn with_created_by(mut self, user_id: &str) -> Self {
+        self.created_by = user_id.to_string();
+        self
     }
 
     /// 附加 Mock 扩展项:标签 / 响应头 / 响应延时 / 跟随定义(对齐 MeterSphere)。

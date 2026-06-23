@@ -42,6 +42,9 @@ pub trait ApiScenarioRepository: Send + Sync {
         project_id: &str,
     ) -> Result<Vec<ApiScenario>, RepoError>;
 
+    /// 删除整个场景(软删场景 + 硬删其步骤)。返回是否命中删除。
+    async fn delete_scenario(&self, id: &str) -> Result<bool, RepoError>;
+
     /// 为场景追加一个步骤。
     async fn add_step(
         &self,

@@ -37,6 +37,7 @@ impl AddApiMockUseCase {
         response_body: Option<String>,
         enabled: bool,
         extras: ApiMockExtras,
+        created_by: &str,
     ) -> Result<ApiMock, AddApiMockError> {
         // 必须挂在一个真实存在的接口定义上。
         if self.repo.get_definition(api_definition_id).await?.is_none() {
@@ -55,7 +56,8 @@ impl AddApiMockUseCase {
             extras.response_headers,
             extras.response_delay_ms,
             extras.follow_definition,
-        );
+        )
+        .with_created_by(created_by);
         Ok(self.repo.insert_mock(&new_mock).await?)
     }
 }
@@ -85,7 +87,7 @@ mod tests {
             .expect("ok");
         let uc = AddApiMockUseCase::new(repo);
         let m = uc
-            .execute(&def.id, "挡板", serde_json::json!({}), 200, None, true, ApiMockExtras::default())
+            .execute(&def.id, "挡板", serde_json::json!({}), 200, None, true, ApiMockExtras::default(), "")
             .await
             .expect("ok");
         assert_eq!(m.response_status, 200);
@@ -97,7 +99,7 @@ mod tests {
         let repo = Arc::new(InMemoryApiDefinitionRepository::new());
         let uc = AddApiMockUseCase::new(repo);
         let err = uc
-            .execute("ghost", "挡板", serde_json::json!({}), 200, None, true, ApiMockExtras::default())
+            .execute("ghost", "挡板", serde_json::json!({}), 200, None, true, ApiMockExtras::default(), "")
             .await
             .unwrap_err();
         assert_eq!(err, AddApiMockError::NotFound);
@@ -112,7 +114,7 @@ mod tests {
             .expect("ok");
         let uc = AddApiMockUseCase::new(repo);
         let err = uc
-            .execute(&def.id, "挡板", serde_json::json!({}), 700, None, true, ApiMockExtras::default())
+            .execute(&def.id, "挡板", serde_json::json!({}), 700, None, true, ApiMockExtras::default(), "")
             .await
             .unwrap_err();
         assert_eq!(err, AddApiMockError::Validation(ApiDefinitionError::BadResponseStatus(700)));

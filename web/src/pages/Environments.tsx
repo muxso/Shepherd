@@ -211,7 +211,7 @@ export function EnvironmentsPage() {
                   marginBottom: 4,
                   fontSize: 13,
                   background: sel === e.id ? '#f3eaff' : 'transparent',
-                  color: sel === e.id ? '#7c3aed' : undefined,
+                  color: sel === e.id ? '#06a561' : undefined,
                   fontWeight: sel === e.id ? 600 : 400,
                 }}
               >

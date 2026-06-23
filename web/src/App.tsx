@@ -16,14 +16,17 @@ const Bugs = lazy(() => import('./pages/Bugs'))
 const Skills = lazy(() => import('./pages/Skills'))
 const Mcp = lazy(() => import('./pages/Mcp'))
 const FunctionalCases = lazy(() => import('./pages/FunctionalCases'))
-const OrganizationsPage = lazy(() => import('./pages/resources').then((m) => ({ default: m.OrganizationsPage })))
-const RolesPage = lazy(() => import('./pages/resources').then((m) => ({ default: m.RolesPage })))
+const OrganizationsPage = lazy(() => import('./pages/OrgProjects'))
+const RolesPage = lazy(() => import('./pages/UserGroups'))
 const UsersPage = lazy(() => import('./pages/Users'))
 const ProjectAdmin = lazy(() => import('./pages/ProjectAdmin'))
 const FileManagement = lazy(() => import('./pages/FileManagement'))
 const ComingSoon = lazy(() => import('./pages/ComingSoon'))
+const Agents = lazy(() => import('./pages/Agents'))
+const Review = lazy(() => import('./pages/Review'))
 const EnvironmentsPage = lazy(() => import('./pages/Environments').then((m) => ({ default: m.EnvironmentsPage })))
-const ResourcePoolsPage = lazy(() => import('./pages/resources').then((m) => ({ default: m.ResourcePoolsPage })))
+const ResourcePoolsPage = lazy(() => import('./pages/ResourcePoolPage').then((m) => ({ default: m.ResourcePoolsPage })))
+const ResourcePoolForm = lazy(() => import('./pages/ResourcePoolPage').then((m) => ({ default: m.ResourcePoolForm })))
 
 export default function App() {
   const { token } = useApp()
@@ -40,6 +43,8 @@ export default function App() {
           <Route path="/functional-case" element={<FunctionalCases />} />
           <Route path="/environment" element={<EnvironmentsPage />} />
           <Route path="/resource-pool" element={<ResourcePoolsPage />} />
+          <Route path="/resource-pool/new" element={<ResourcePoolForm />} />
+          <Route path="/resource-pool/:id/edit" element={<ResourcePoolForm />} />
           <Route path="/organization" element={<OrganizationsPage />} />
           <Route path="/role" element={<RolesPage />} />
           <Route path="/user" element={<UsersPage />} />
@@ -56,6 +61,8 @@ export default function App() {
           <Route path="/test-plan" element={<TestPlans />} />
           <Route path="/perf" element={<Perf />} />
           <Route path="/requirement" element={<Requirements />} />
+          <Route path="/review" element={<Review />} />
+          <Route path="/agents" element={<Agents />} />
           <Route path="/bug" element={<Bugs />} />
           <Route path="/skill" element={<Skills />} />
           <Route path="/mcp" element={<Mcp />} />

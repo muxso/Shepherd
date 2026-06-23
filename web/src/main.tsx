@@ -23,7 +23,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <LangProvider>
       {(lang) => (
-        <ConfigProvider locale={lang === 'en' ? enUS : zhCN} theme={{ token: { colorPrimary: '#7c3aed' } }}>
+        <ConfigProvider locale={lang === 'en' ? enUS : zhCN} theme={{ token: { colorPrimary: '#06a561' } }}>
           <AntApp component={false}>
             <FeedbackBridge />
             <BrowserRouter>

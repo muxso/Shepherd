@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Descriptions, Empty, Form, Input, Modal, Select, Space, Table, Tabs, Tag, Tree } from 'antd'
+import { Button, Descriptions, Empty, Form, Input, Modal, Select, Space, Table, Tabs, Tag, Tree, Upload } from 'antd'
+import { DownloadOutlined, ImportOutlined } from '@ant-design/icons'
 import { message } from '../feedback'
 import type { ColumnsType } from 'antd/es/table'
-import { api, ApiError, type CaseStep, type FunctionalCase } from '../api'
+import { api, ApiError, type CaseRequirementLink, type CaseStep, type FunctionalCase, type Requirement } from '../api'
 import { useApp } from '../context'
 import { Workspace, WorkList, PaneHeader, useWorkTabs } from '../components/Workspace'
 import StepsEditor from '../components/StepsEditor'
@@ -61,6 +62,32 @@ export default function FunctionalCases() {
     [cases, search, moduleKey, ungrouped],
   )
 
+  // 导出 xlsx(浏览器下载)/ 导入 xlsx(选文件即上传,返回导入条数)。
+  const doExport = async () => {
+    if (!projectId) return
+    try {
+      const blob = await api.exportFunctionalCases(projectId)
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = 'functional-cases.xlsx'
+      a.click()
+      URL.revokeObjectURL(url)
+    } catch (e) {
+      message.error(e instanceof ApiError ? e.message : t('func.exportFailed', '导出失败'))
+    }
+  }
+  const doImport = async (file: File) => {
+    if (!projectId) return
+    try {
+      const r = await api.importFunctionalCases(projectId, file)
+      message.success(`${t('func.imported', '导入成功')}:${r.imported}`)
+      load()
+    } catch (e) {
+      message.error(e instanceof ApiError ? e.message : t('func.importFailed', '导入失败'))
+    }
+  }
+
   if (!projectId)
     return <div style={{ padding: 48 }}><Empty description={t('common.selectProject', '请先在顶部选择项目')} /></div>
 
@@ -99,6 +126,14 @@ export default function FunctionalCases() {
           <WorkList<FunctionalCase>
             onNew={() => setCreateOpen(true)}
             newLabel={t('func.newCase', '新建用例')}
+            extraActions={
+              <>
+                <Upload showUploadList={false} accept=".xlsx" beforeUpload={(f) => { doImport(f as File); return false }}>
+                  <Button icon={<ImportOutlined />}>{t('func.import', '导入')}</Button>
+                </Upload>
+                <Button icon={<DownloadOutlined />} onClick={doExport} disabled={!cases.length}>{t('func.export', '导出')}</Button>
+              </>
+            }
             onSearch={setSearch}
             searchPlaceholder={t('func.searchName', '搜索用例名')}
             onRefresh={load}
@@ -127,6 +162,33 @@ export default function FunctionalCases() {
 function CaseDetail({ c }: { c: FunctionalCase }) {
   const { t } = useI18n()
   const cf = c.customFields || {}
+  const [covReqs, setCovReqs] = useState<CaseRequirementLink[]>([])
+  const loadCov = () => api.caseRequirements(c.id).then(setCovReqs).catch(() => setCovReqs([]))
+  // 主动关联需求:选需求 → 选验收标准 → link。
+  const [linkOpen, setLinkOpen] = useState(false)
+  const [reqs, setReqs] = useState<Requirement[]>([])
+  const [selReq, setSelReq] = useState<Requirement | null>(null)
+  const [selCrit, setSelCrit] = useState<number>()
+  useEffect(() => { loadCov() }, [c.id]) // eslint-disable-line react-hooks/exhaustive-deps
+  const openLink = async () => {
+    setLinkOpen(true); setSelReq(null); setSelCrit(undefined)
+    try { setReqs((await api.requirements(c.projectId)).items) } catch { /* ignore */ }
+  }
+  const critsOf = (r: Requirement) =>
+    r.versions?.find((v) => v.version === r.baselineVersion)?.acceptanceCriteria ?? r.versions?.[r.versions.length - 1]?.acceptanceCriteria ?? r.acceptanceCriteria ?? []
+  const pickReq = async (id: string) => {
+    setSelCrit(undefined)
+    try { setSelReq(await api.getRequirement(id)) } catch { setSelReq(null) }
+  }
+  const doLink = async () => {
+    if (!selReq || selCrit == null) return message.warning(t('func.pickReqCrit', '请选择需求与验收标准'))
+    try {
+      await api.linkRequirementCase({ requirementId: selReq.id, criterionIndex: selCrit, functionalCaseId: c.id, projectId: c.projectId })
+      message.success(t('req.linked', '已关联')); setLinkOpen(false); loadCov()
+    } catch (e) { message.error(e instanceof ApiError ? e.message : t('req.linkFailed', '关联失败')) }
+  }
+  const unlinkReq = (l: CaseRequirementLink) =>
+    api.unlinkRequirementCase({ requirementId: l.requirementId, criterionIndex: l.criterionIndex, functionalCaseId: c.id }).then(loadCov).catch(() => undefined)
   const stepsTable = (
     <Table<CaseStep>
       rowKey={(_, i) => String(i)}
@@ -182,8 +244,46 @@ function CaseDetail({ c }: { c: FunctionalCase }) {
             ),
           },
           { key: 'steps', label: `${t('func.tabStepsExpected', '步骤与预期')} (${c.steps?.length || 0})`, children: stepsTable },
+          {
+            key: 'coverage',
+            label: `${t('func.tabCoversReq', '覆盖需求')} (${covReqs.length})`,
+            children: (
+              <Space direction="vertical" style={{ width: '100%' }}>
+                <Button type="primary" size="small" onClick={openLink}>{t('func.linkReq', '关联需求')}</Button>
+                {covReqs.length ? (
+                  <Table
+                    rowKey={(_, i) => String(i)}
+                    size="small"
+                    pagination={false}
+                    dataSource={covReqs}
+                    columns={[
+                      { title: t('func.coverReq', '需求'), dataIndex: 'requirementTitle', render: (v: string) => v || '—' },
+                      { title: t('func.coverCriterion', '验收标准'), dataIndex: 'criterionIndex', width: 120, render: (i: number) => `${t('req.criterion', '标准')} ${i + 1}` },
+                      { title: t('req.action', '操作'), width: 80, render: (_v, l) => <Button type="link" size="small" danger onClick={() => unlinkReq(l)}>{t('func.unlink', '解除')}</Button> },
+                    ]}
+                  />
+                ) : (
+                  <Empty description={t('func.noCoverReq', '未关联任何需求,点上方「关联需求」')} style={{ marginTop: 16 }} />
+                )}
+              </Space>
+            ),
+          },
         ]}
       />
+      <Modal open={linkOpen} title={t('func.linkReq', '关联需求')} onCancel={() => setLinkOpen(false)} onOk={doLink} okText={t('a.confirm', '确定')} cancelText={t('a.cancel', '取消')} destroyOnHidden>
+        <div style={{ marginBottom: 12 }}>
+          <div style={{ marginBottom: 6 }}>{t('func.pickReq', '需求')}</div>
+          <Select showSearch style={{ width: '100%' }} placeholder={t('func.pickReq', '选择需求')} optionFilterProp="label" onChange={pickReq} options={reqs.map((r) => ({ value: r.id, label: r.title }))} notFoundContent={t('req.empty', '项目暂无需求')} />
+        </div>
+        {selReq && (
+          <div>
+            <div style={{ marginBottom: 6 }}>{t('func.pickCriterion', '验收标准')}</div>
+            <Select style={{ width: '100%' }} value={selCrit} placeholder={t('func.pickCriterion', '选择验收标准')} onChange={setSelCrit}
+              options={critsOf(selReq).map((c2, i) => ({ value: i, label: `${t('req.criterion', '标准')} ${i + 1}: ${c2}` }))}
+              notFoundContent={t('func.noCriteria', '该需求没有验收标准')} />
+          </div>
+        )}
+      </Modal>
     </div>
   )
 }

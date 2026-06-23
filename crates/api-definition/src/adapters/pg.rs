@@ -10,7 +10,7 @@ use crate::domain::{
     ApiCase, ApiDefinition, ApiDefinitionChange, ApiModule, ApiMock, ApiProtocol, ApiStatus,
     ApiView, NewApiCase, NewApiDefinition, NewApiModule, NewApiMock, NewApiView,
 };
-use crate::ports::{ApiDefinitionRepository, RepoError};
+use crate::ports::{ApiDefinitionRepository, ProjectMockRow, RepoError};
 use sqlx::{PgPool, Row};
 
 #[derive(Clone)]
@@ -165,6 +165,26 @@ impl ApiDefinitionRepository for PgApiDefinitionRepository {
         Ok(())
     }
 
+    async fn delete_definition(&self, id: &str) -> Result<(), RepoError> {
+        // 软删定义;连带软删其 Mock;硬删其用例(ms_api_case 无软删列)。
+        sqlx::query("UPDATE ms_api_definition SET deleted = true, updated_at = now() WHERE id = $1")
+            .bind(id)
+            .execute(&self.pool)
+            .await
+            .map_err(map_err)?;
+        sqlx::query("UPDATE ms_api_mock SET deleted = true WHERE api_definition_id = $1")
+            .bind(id)
+            .execute(&self.pool)
+            .await
+            .map_err(map_err)?;
+        sqlx::query("DELETE FROM ms_api_case WHERE api_definition_id = $1")
+            .bind(id)
+            .execute(&self.pool)
+            .await
+            .map_err(map_err)?;
+        Ok(())
+    }
+
     async fn record_definition_change(
         &self,
         definition_id: &str,
@@ -260,6 +280,50 @@ impl ApiDefinitionRepository for PgApiDefinitionRepository {
         row_to_case(&row)
     }
 
+    async fn update_case(&self, id: &str, c: &NewApiCase) -> Result<bool, RepoError> {
+        let res = sqlx::query(
+            "UPDATE ms_api_case SET name=$2, method=$3, url=$4, body=$5, assertions=$6, processors=$7, \
+                    priority=$8, case_status=$9, tags=$10, headers=$11, query_params=$12, rest_params=$13, auth=$14 \
+             WHERE id=$1",
+        )
+        .bind(id)
+        .bind(&c.name)
+        .bind(&c.method)
+        .bind(&c.url)
+        .bind(&c.body)
+        .bind(&c.assertions)
+        .bind(&c.processors)
+        .bind(&c.priority)
+        .bind(&c.status)
+        .bind(&c.tags)
+        .bind(&c.headers)
+        .bind(&c.query_params)
+        .bind(&c.rest_params)
+        .bind(&c.auth)
+        .execute(&self.pool)
+        .await
+        .map_err(map_err)?;
+        Ok(res.rows_affected() > 0)
+    }
+
+    async fn delete_case(&self, id: &str) -> Result<bool, RepoError> {
+        let res = sqlx::query("DELETE FROM ms_api_case WHERE id = $1")
+            .bind(id)
+            .execute(&self.pool)
+            .await
+            .map_err(map_err)?;
+        Ok(res.rows_affected() > 0)
+    }
+
+    async fn delete_mock(&self, mock_id: &str) -> Result<bool, RepoError> {
+        let res = sqlx::query("UPDATE ms_api_mock SET deleted = true WHERE id = $1 AND deleted = false")
+            .bind(mock_id)
+            .execute(&self.pool)
+            .await
+            .map_err(map_err)?;
+        Ok(res.rows_affected() > 0)
+    }
+
     async fn list_cases(&self, api_definition_id: &str) -> Result<Vec<ApiCase>, RepoError> {
         let rows = sqlx::query(
             "SELECT id, api_definition_id, project_id, name, method, url, body, assertions, processors, \
@@ -307,8 +371,8 @@ impl ApiDefinitionRepository for PgApiDefinitionRepository {
         let row = sqlx::query(
             "INSERT INTO ms_api_mock \
                 (api_definition_id, name, match_rule, response_status, response_body, enabled, \
-                 tags, response_headers, response_delay_ms, follow_definition) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) \
+                 tags, response_headers, response_delay_ms, follow_definition, created_by) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) \
              RETURNING id, api_definition_id, name, match_rule, response_status, response_body, enabled, \
                        tags, response_headers, response_delay_ms, follow_definition",
         )
@@ -322,6 +386,7 @@ impl ApiDefinitionRepository for PgApiDefinitionRepository {
         .bind(&m.response_headers)
         .bind(m.response_delay_ms)
         .bind(m.follow_definition)
+        .bind(&m.created_by)
         .fetch_one(&self.pool)
         .await
         .map_err(map_err)?;
@@ -339,6 +404,36 @@ impl ApiDefinitionRepository for PgApiDefinitionRepository {
         .await
         .map_err(map_err)?;
         rows.iter().map(row_to_mock).collect()
+    }
+
+    async fn list_mocks_by_project(&self, project_id: &str) -> Result<Vec<ProjectMockRow>, RepoError> {
+        // JOIN 定义带出 方法/路径/协议/名称;按更新时间倒序(定义 updated_at)。
+        let rows = sqlx::query(
+            "SELECT m.id, m.api_definition_id, m.name, m.match_rule, m.response_status, m.response_body, \
+                    m.enabled, m.tags, m.response_headers, m.response_delay_ms, m.follow_definition, \
+                    m.created_by AS m_operator, m.updated_at::text AS m_updated_at, \
+                    d.method AS d_method, d.path AS d_path, d.protocol AS d_protocol, d.name AS d_name \
+             FROM ms_api_mock m JOIN ms_api_definition d ON d.id = m.api_definition_id \
+             WHERE d.project_id = $1 AND m.deleted = false AND d.deleted = false \
+             ORDER BY m.updated_at DESC",
+        )
+        .bind(project_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(map_err)?;
+        rows.iter()
+            .map(|r| {
+                Ok(ProjectMockRow {
+                    mock: row_to_mock(r)?,
+                    method: r.try_get("d_method").map_err(map_err)?,
+                    path: r.try_get("d_path").map_err(map_err)?,
+                    protocol: r.try_get("d_protocol").map_err(map_err)?,
+                    definition_name: r.try_get("d_name").map_err(map_err)?,
+                    operator: r.try_get("m_operator").unwrap_or_default(),
+                    updated_at: r.try_get("m_updated_at").unwrap_or_default(),
+                })
+            })
+            .collect()
     }
 
     async fn insert_module(&self, m: &NewApiModule) -> Result<ApiModule, RepoError> {

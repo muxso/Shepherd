@@ -151,13 +151,25 @@ pub struct InlineRequest {
     pub url: String,
     pub body: Option<String>,
     pub assertions: serde_json::Value,
+    /// 请求头 / Query / REST 路径参数(中立 JSON 数组 `[{key,value,enabled?}]`,与 ms_api_case 同构)。
+    pub headers: serde_json::Value,
+    pub query_params: serde_json::Value,
+    pub rest_params: serde_json::Value,
+    /// 认证(中立 JSON 对象 `{type,token}`)。
+    pub auth: serde_json::Value,
+    /// 前后置处理器(中立 JSON 数组,EXTRACT/WAIT)。
+    pub processors: serde_json::Value,
 }
 
 const ALLOWED_METHODS: &[&str] =
     &["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"];
 
+fn empty_arr() -> serde_json::Value {
+    serde_json::Value::Array(vec![])
+}
+
 impl InlineRequest {
-    /// 校验构造:method 须在允许集合,url 非空。断言默认空数组(可链式 [`with_assertions`])。
+    /// 校验构造:method 须在允许集合,url 非空。其余规格默认空(可链式附加)。
     pub fn new(
         method: &str,
         url: &str,
@@ -171,14 +183,81 @@ impl InlineRequest {
         if url.is_empty() {
             return Err(ScenarioError::EmptyUrl);
         }
-        Ok(Self { method, url: url.to_string(), body, assertions: serde_json::Value::Array(vec![]) })
+        Ok(Self {
+            method,
+            url: url.to_string(),
+            body,
+            assertions: empty_arr(),
+            headers: empty_arr(),
+            query_params: empty_arr(),
+            rest_params: empty_arr(),
+            auth: serde_json::json!({}),
+            processors: empty_arr(),
+        })
     }
 
     /// 附加断言(中立 JSON 数组)。非数组值归一为空数组,避免下游误判。
     pub fn with_assertions(mut self, assertions: serde_json::Value) -> Self {
-        self.assertions =
-            if assertions.is_array() { assertions } else { serde_json::Value::Array(vec![]) };
+        self.assertions = if assertions.is_array() { assertions } else { empty_arr() };
         self
+    }
+
+    /// 附加完整请求规格:请求头 / Query / REST 参数(数组)/ 认证(对象)/ 处理器(数组)。
+    /// 各字段非期望形态时回落默认,保持存储/执行形态稳定。
+    pub fn with_spec(
+        mut self,
+        headers: serde_json::Value,
+        query_params: serde_json::Value,
+        rest_params: serde_json::Value,
+        auth: serde_json::Value,
+        processors: serde_json::Value,
+    ) -> Self {
+        let arr = |v: serde_json::Value| if v.is_array() { v } else { empty_arr() };
+        self.headers = arr(headers);
+        self.query_params = arr(query_params);
+        self.rest_params = arr(rest_params);
+        self.auth = if auth.is_object() { auth } else { serde_json::json!({}) };
+        self.processors = arr(processors);
+        self
+    }
+
+    /// 从 inline JSON 对象读取并附加规格字段(headers/queryParams/restParams/auth/processors)。
+    pub fn with_spec_json(self, v: &serde_json::Value) -> Self {
+        self.with_spec(
+            v.get("headers").cloned().unwrap_or_else(empty_arr),
+            v.get("queryParams").cloned().unwrap_or_else(empty_arr),
+            v.get("restParams").cloned().unwrap_or_else(empty_arr),
+            v.get("auth").cloned().unwrap_or_else(|| serde_json::json!({})),
+            v.get("processors").cloned().unwrap_or_else(empty_arr),
+        )
+    }
+
+    /// 序列化为 inline JSONB 形态(空字段不落,保持紧凑)。落库与 COPY 快照共用。
+    pub fn to_inline_json(&self) -> serde_json::Value {
+        let mut v = serde_json::json!({ "method": self.method, "url": self.url });
+        if let Some(b) = &self.body {
+            v["body"] = serde_json::Value::String(b.clone());
+        }
+        let nonempty_arr = |x: &serde_json::Value| x.as_array().is_some_and(|a| !a.is_empty());
+        if nonempty_arr(&self.assertions) {
+            v["assertions"] = self.assertions.clone();
+        }
+        if nonempty_arr(&self.headers) {
+            v["headers"] = self.headers.clone();
+        }
+        if nonempty_arr(&self.query_params) {
+            v["queryParams"] = self.query_params.clone();
+        }
+        if nonempty_arr(&self.rest_params) {
+            v["restParams"] = self.rest_params.clone();
+        }
+        if self.auth.as_object().is_some_and(|o| !o.is_empty()) {
+            v["auth"] = self.auth.clone();
+        }
+        if nonempty_arr(&self.processors) {
+            v["processors"] = self.processors.clone();
+        }
+        v
     }
 }
 
@@ -269,7 +348,7 @@ fn parse_plan_step(v: &serde_json::Value, depth: usize) -> Option<PlanStep> {
                 v.get("assertions").cloned().unwrap_or_else(|| serde_json::Value::Array(vec![]));
             InlineRequest::new(method, url, body)
                 .ok()
-                .map(|r| r.with_assertions(assertions))
+                .map(|r| r.with_assertions(assertions).with_spec_json(v))
                 .map(PlanStep::Request)
         }
         other => match ControlKind::parse(other) {
@@ -385,6 +464,8 @@ pub struct ApiScenario {
     pub created_at: String,
     pub updated_at: String,
     pub steps: Vec<ScenarioStep>,
+    /// 最近一次执行结果状态(SUCCESS/ERROR);列表查询回填,单查为 None。
+    pub last_result: Option<String>,
 }
 
 /// 新增步骤的入站值。构造时按规则校验:

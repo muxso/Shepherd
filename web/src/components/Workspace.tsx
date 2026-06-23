@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useState, type ReactNode } from 'react'
+import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { Button, Empty, Input, Space, Table, Tabs } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
@@ -57,10 +57,66 @@ export interface WorkTab {
   children: ReactNode
 }
 
+// 统一的可拖拽左栏(树/筛选面板)。右缘提供 6px 拖拽热区,左右拖拽改宽,
+// 宽度在 [min, max] 内夹取;带 storageKey 时记忆到 localStorage(刷新保留)。
+export function ResizableSider({
+  children,
+  defaultWidth = 252,
+  min = 200,
+  max = 480,
+  storageKey,
+}: {
+  children: ReactNode
+  defaultWidth?: number
+  min?: number
+  max?: number
+  storageKey?: string
+}) {
+  const [width, setWidth] = useState(() => {
+    if (storageKey && typeof localStorage !== 'undefined') {
+      const saved = Number(localStorage.getItem(storageKey))
+      if (saved >= min && saved <= max) return saved
+    }
+    return defaultWidth
+  })
+  const drag = useRef<{ startX: number; startW: number } | null>(null)
+
+  useEffect(() => {
+    const onMove = (e: MouseEvent) => {
+      if (!drag.current) return
+      setWidth(Math.min(max, Math.max(min, drag.current.startW + (e.clientX - drag.current.startX))))
+    }
+    const onUp = () => {
+      if (!drag.current) return
+      drag.current = null
+      document.body.style.cursor = ''
+      document.body.style.userSelect = ''
+      if (storageKey) localStorage.setItem(storageKey, String(width))
+    }
+    window.addEventListener('mousemove', onMove)
+    window.addEventListener('mouseup', onUp)
+    return () => {
+      window.removeEventListener('mousemove', onMove)
+      window.removeEventListener('mouseup', onUp)
+    }
+  }, [width, max, min, storageKey])
+
+  return (
+    <div style={{ position: 'relative', width, flexShrink: 0, background: '#fff', borderRight: '1px solid #f0f0f0', display: 'flex', flexDirection: 'column' }}>
+      {children}
+      <div
+        onMouseDown={(e) => { drag.current = { startX: e.clientX, startW: width }; document.body.style.cursor = 'col-resize'; document.body.style.userSelect = 'none' }}
+        style={{ position: 'absolute', top: 0, right: -3, width: 6, height: '100%', cursor: 'col-resize', zIndex: 10 }}
+      />
+    </div>
+  )
+}
+
 // 统一三栏:左(树/筛选,可选)| 中右合一为多 Tab(列表常驻 + 详情多开)。
 export function Workspace({
   left,
   leftWidth = 220,
+  siderKey,
   listLabel,
   listContent,
   tabs,
@@ -70,6 +126,7 @@ export function Workspace({
 }: {
   left?: ReactNode
   leftWidth?: number
+  siderKey?: string
   listLabel?: string
   listContent: ReactNode
   tabs: WorkTab[]
@@ -88,9 +145,9 @@ export function Workspace({
     <ExtraSlotContext.Provider value={slotEl}>
       <div style={{ display: 'flex', height: '100%' }}>
         {left !== undefined && (
-          <div style={{ width: leftWidth, background: '#fff', borderRight: '1px solid #f0f0f0', display: 'flex', flexDirection: 'column' }}>
+          <ResizableSider defaultWidth={leftWidth} storageKey={siderKey}>
             {left}
-          </div>
+          </ResizableSider>
         )}
         <div style={{ flex: 1, minWidth: 0, background: '#fff' }}>
           <Tabs

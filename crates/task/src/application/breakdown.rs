@@ -60,7 +60,9 @@ impl BreakdownUseCase {
             // 依赖索引 → 已加入任务的本地 id;只保留指向更早任务的依赖(防前向引用)。
             let deps: Vec<String> =
                 pt.dependencies.iter().filter(|&&j| j < i).map(|&j| format!("t{}", j + 1)).collect();
-            let nt = NewTask::new(&pt.title, &pt.description, &pt.acceptance_criteria, &deps)?;
+            // 工作量启发式:按验收标准条数估算(至少 1),供后续人工微调。
+            let points = pt.acceptance_criteria.len().max(1) as i32;
+            let nt = NewTask::new(&pt.title, &pt.description, &pt.acceptance_criteria, &deps)?.with_points(points);
             d.add_task(nt)?;
         }
         self.repo.save(&d).await?;

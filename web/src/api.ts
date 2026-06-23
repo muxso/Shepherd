@@ -75,9 +75,40 @@ async function requestText(path: string): Promise<string> {
   return text
 }
 
+// 原始二进制 GET(用于 xlsx 导出等文件下载)。
+async function requestBlob(path: string): Promise<Blob> {
+  const headers: Record<string, string> = {}
+  const token = tokenStore.get()
+  if (token) headers['authorization'] = `Bearer ${token}`
+  const res = await fetch(path, { headers })
+  if (res.status === 401) {
+    onUnauthorized?.()
+    throw new ApiError(401, '登录已失效,请重新登录')
+  }
+  if (!res.ok) throw new ApiError(res.status, (await res.text()) || `${res.status}`)
+  return res.blob()
+}
+
+// 原始字节 POST(用于 xlsx 导入上传,body 直接是文件)。
+async function requestUpload<T>(path: string, body: Blob): Promise<T> {
+  const headers: Record<string, string> = { 'content-type': 'application/octet-stream' }
+  const token = tokenStore.get()
+  if (token) headers['authorization'] = `Bearer ${token}`
+  const res = await fetch(path, { method: 'POST', headers, body })
+  if (res.status === 401) {
+    onUnauthorized?.()
+    throw new ApiError(401, '登录已失效,请重新登录')
+  }
+  const text = await res.text()
+  if (!res.ok) throw new ApiError(res.status, text || `${res.status}`)
+  return (text ? JSON.parse(text) : undefined) as T
+}
+
 export const http = {
   get: <T>(p: string) => request<T>('GET', p),
   getText: (p: string) => requestText(p),
+  getBlob: (p: string) => requestBlob(p),
+  upload: <T>(p: string, body: Blob) => requestUpload<T>(p, body),
   post: <T>(p: string, b?: unknown) => request<T>('POST', p, b),
   put: <T>(p: string, b?: unknown) => request<T>('PUT', p, b),
   patch: <T>(p: string, b?: unknown) => request<T>('PATCH', p, b),
@@ -97,6 +128,7 @@ export interface Page<T> {
 export interface Organization {
   id: string
   name: string
+  enable?: boolean
 }
 
 export interface Project {
@@ -241,6 +273,23 @@ export interface ApiMock {
   followDefinition?: boolean
 }
 
+/** 项目级 Mock 行(MOCK 视图):Mock + 所属定义的 方法/路径/协议/名称。 */
+export interface ProjectMock {
+  id: string
+  apiDefinitionId: string
+  name: string
+  enabled: boolean
+  responseStatus: number
+  tags?: string[]
+  method: string
+  path: string
+  protocol: string
+  definitionName: string
+  /** 操作人 / 更新时间(0057 后回填)。 */
+  operator?: string
+  updatedAt?: string
+}
+
 export interface CaseExecution {
   reportId: string
   caseId: string
@@ -262,6 +311,8 @@ export interface Scenario {
   updatedAt?: string
   /** 列表接口已返回步骤,用于显示步骤数。 */
   steps?: ScenarioStep[]
+  /** 最近一次执行结果状态(SUCCESS/ERROR;列表回填,单查为 null)。 */
+  lastResult?: string | null
 }
 
 export interface ScenarioStep {
@@ -271,7 +322,18 @@ export interface ScenarioStep {
   refMode: string
   caseId?: string | null
   scenarioId?: string | null
-  request?: { method: string; url: string; body?: string | null; assertions?: unknown } | null
+  request?: {
+    method: string
+    url: string
+    body?: string | null
+    assertions?: unknown
+    /** 完整请求规格(后端 0056 起内联请求支持):请求头/Query/REST/认证/处理器,与用例同构。 */
+    headers?: { key: string; value: string }[]
+    queryParams?: { key: string; value: string }[]
+    restParams?: { key: string; value: string }[]
+    auth?: { type: string; token?: string }
+    processors?: unknown[]
+  } | null
   control?: unknown
   snapshot?: unknown
 }
@@ -302,6 +364,10 @@ export interface ScenarioReportDetail {
   reportId: string
   status: string
   caseCount: number
+  /** 报告起止时间与总耗时(毫秒,wall-clock;0056 后回填,旧报告为 null)。 */
+  startedAt?: string | null
+  finishedAt?: string | null
+  durationMs?: number | null
   results: ReportResultItem[]
 }
 /** 项目级接口用例执行汇总(GET /api/case-exec-summary)。 */
@@ -322,6 +388,7 @@ export interface ProjectFile {
   name: string
   fileFormat: string
   sizeBytes: number
+  moduleId?: string | null
   createdBy?: string | null
   createdAt: string
   updatedAt: string
@@ -346,15 +413,57 @@ export interface ScenarioExecution {
   createdAt: string
 }
 
+export interface PoolNode {
+  ip: string
+  port: string
+  concurrentNumber: number
+  singleTaskConcurrentNumber: number
+}
+
+/** 类型相关配置:Node 用 nodes[];Kubernetes 用 ip/token/namespace/deployName + 并发。 */
+export interface ResourcePoolConfig {
+  nodes?: PoolNode[]
+  ip?: string
+  token?: string
+  namespace?: string
+  deployName?: string
+  concurrentNumber?: number
+  singleTaskConcurrentNumber?: number
+}
+
 export interface ResourcePool {
   id: string
   name: string
   enabled: boolean
+  description: string
+  maxConcurrency: number
+  poolType: string // 'Node' | 'Kubernetes'
+  allOrg: boolean
+  orgIds: string[]
+  serverUrl: string
+  config: ResourcePoolConfig
+  createdAt: string
+  updatedAt: string
+}
+
+/** 创建/更新资源池入参(后端字段缺省值见 ResourcePoolBody)。 */
+export interface ResourcePoolInput {
+  name: string
+  enabled?: boolean
+  description?: string
+  maxConcurrency?: number
+  poolType?: string
+  allOrg?: boolean
+  orgIds?: string[]
+  serverUrl?: string
+  config?: ResourcePoolConfig
 }
 
 export interface Role {
   id: string
   name: string
+  /** SYSTEM | ORGANIZATION | PROJECT。 */
+  scope?: string
   permissions?: string[]
 }
 
@@ -381,6 +490,21 @@ export interface FunctionalCase {
   status?: string
   steps?: CaseStep[]
   customFields?: Record<string, string>
+}
+
+/** 需求覆盖里的一条功能用例(按验收标准下标 criterionIndex)。 */
+export interface CoverageCase {
+  criterionIndex: number
+  caseId: string
+  caseName: string
+  module: string
+  priority: string
+}
+/** 一条功能用例覆盖的需求/标准(反查)。 */
+export interface CaseRequirementLink {
+  requirementId: string
+  requirementTitle: string
+  criterionIndex: number
 }
 
 export interface EnvHeader {
@@ -482,6 +606,12 @@ export interface Task {
   status: string
   acceptanceCriteria?: string[]
   dependencies?: string[]
+  /** 工作量(task point);0 = 未估。 */
+  points?: number
+  /** 负责人 id/名;空 = 未分配。 */
+  assignee?: string
+  /** 负责人类型:HUMAN / AGENT。 */
+  assigneeKind?: string
 }
 
 export interface Decomposition {
@@ -506,10 +636,59 @@ export interface DeliveryEvent {
   detail?: unknown
 }
 
+/** 执行机 / AI agent(Claude Code、Codex 等远程执行者),注册时自报支持协议。 */
+export interface RunnerAgent {
+  id: string
+  name: string
+  baseUrl: string
+  enabled: boolean
+  protocols: string[]
+}
+
+export interface RunnerExecution {
+  id: string
+  agentId: string
+  method: string
+  url: string
+  outcome: string
+  status?: number
+  elapsedMs?: number
+  failures: string[]
+  executedAt: string
+}
+
+/** 验证缺口:某条验收标准未被覆盖(UNCOVERED)或已覆盖但未交付验证(UNVERIFIED)。 */
+export interface VerificationGap {
+  criterionIndex: number
+  text: string
+  kind: string
+}
 export interface VerificationReport {
   satisfied?: number
+  total?: number
   complete?: boolean
+  gaps?: VerificationGap[]
   [k: string]: unknown
+}
+
+/** 用例评审(队列概览):通过规则 + 用例总数/已通过数。 */
+export interface CaseReviewSummary {
+  id: string
+  passRule: string
+  reviewerCount: number
+  total: number
+  passed: number
+  createdAt: string
+}
+export interface CaseReviewCase {
+  caseId: string
+  status: string
+}
+export interface CaseReviewDetail {
+  id: string
+  passRule: string
+  reviewerCount: number
+  cases: CaseReviewCase[]
 }
 
 export interface Bug {
@@ -521,6 +700,16 @@ export interface Bug {
 export interface McpTool {
   name: string
   description?: string
+}
+
+export interface Skill {
+  id: string
+  projectId: string
+  name: string
+  description: string
+  instructions: string
+  includes: string[]
+  enabled: boolean
 }
 
 export interface AssertionResult {
@@ -554,6 +743,9 @@ export const api = {
 
   organizations: () => http.get<Page<Organization>>('/organization?pageSize=100'),
   createOrganization: (name: string) => http.post<Organization>('/organization', { name }),
+  updateOrganization: (id: string, b: { name: string; enable: boolean }) =>
+    http.put<Organization>(`/organization/${id}`, b),
+  deleteOrganization: (id: string) => http.del(`/organization/${id}`),
   projects: (organizationId: string) =>
     organizationId
       ? http.get<Page<Project>>(`/project?organizationId=${encodeURIComponent(organizationId)}&pageSize=100`)
@@ -575,6 +767,7 @@ export const api = {
     http.post<ApiView>('/api/api-view', b),
   deleteView: (id: string) => http.del(`/api/api-view/${id}`),
   getDefinition: (id: string) => http.get<ApiDefinition>(`/api/definition/${id}`),
+  deleteDefinition: (id: string) => http.del(`/api/definition/${id}`),
   updateDefinitionSpec: (id: string, spec: ApiSpec) =>
     http.put(`/api/definition/${id}/spec`, { spec }),
   updateDefinitionStatus: (id: string, status: string) =>
@@ -592,10 +785,14 @@ export const api = {
     method?: string
     path?: string
   }) => http.post<ApiDefinition>('/api/definition', b),
-  importDefinitions: (projectId: string, content: unknown) =>
-    http.post<{ created: ApiDefinition[]; skipped: number }>('/api/definition/import', {
+  importDefinitions: (projectId: string, content: unknown, opts?: { moduleId?: string | null; groupByTag?: boolean; overwrite?: boolean; syncModule?: boolean }) =>
+    http.post<{ created: ApiDefinition[]; updated: number; skipped: number }>('/api/definition/import', {
       projectId,
       content,
+      moduleId: opts?.moduleId || undefined,
+      groupByTag: opts?.groupByTag ?? true,
+      overwrite: opts?.overwrite ?? true,
+      syncModule: opts?.syncModule ?? false,
     }),
 
   // 接口模块(文件夹)
@@ -648,12 +845,20 @@ export const api = {
     }),
 
   resourcePools: () => http.get<ResourcePool[]>('/api/resource-pool'),
-  createResourcePool: (name: string, enabled = true) =>
-    http.post<ResourcePool>('/api/resource-pool', { name, enabled }),
+  getResourcePool: (id: string) => http.get<ResourcePool>(`/api/resource-pool/${id}`),
+  createResourcePool: (body: ResourcePoolInput) =>
+    http.post<ResourcePool>('/api/resource-pool', body),
+  updateResourcePool: (id: string, body: ResourcePoolInput) =>
+    http.put<ResourcePool>(`/api/resource-pool/${id}`, body),
+  deleteResourcePool: (id: string) => http.del<void>(`/api/resource-pool/${id}`),
 
   // 角色 / 用户(平台级)
   roles: () => http.get<Page<Role>>('/role?pageSize=100'),
-  createRole: (b: { name: string; permissions?: string[] }) => http.post<Role>('/role', b),
+  createRole: (b: { name: string; scope?: string; permissions?: string[] }) => http.post<Role>('/role', b),
+  updateRole: (id: string, b: { name: string; permissions?: string[] }) => http.put<Role>(`/role/${id}`, b),
+  deleteRole: (id: string) => http.del(`/role/${id}`),
+  grantUserRole: (userId: string, roleId: string) => http.post('/user-role/grant', { userId, roleId }),
+  revokeUserRole: (userId: string, roleId: string) => http.post('/user-role/revoke', { userId, roleId }),
   users: () => http.get<Page<User>>('/system/user?pageSize=100'),
   createUser: (b: { name: string; email: string }) => http.post<User>('/system/user', b),
   updateUser: (id: string, b: { name: string; email: string; enable: boolean }) =>
@@ -674,12 +879,40 @@ export const api = {
     steps?: CaseStep[]
     customFields?: Record<string, string>
   }) => http.post<FunctionalCase>('/functional-case', b),
+  // 导出 xlsx(二进制下载)/ 导入 xlsx(原始字节上传,返回导入条数)。
+  exportFunctionalCases: (projectId: string) =>
+    http.getBlob(`/functional-case/export?projectId=${encodeURIComponent(projectId)}`),
+  importFunctionalCases: (projectId: string, file: File) =>
+    http.upload<{ imported: number }>(`/functional-case/import?projectId=${encodeURIComponent(projectId)}`, file),
+  // 需求 ↔ 功能用例 覆盖关联。
+  linkRequirementCase: (b: { requirementId: string; criterionIndex: number; functionalCaseId: string; projectId?: string }) =>
+    http.post('/requirement-case/link', b),
+  unlinkRequirementCase: (b: { requirementId: string; criterionIndex: number; functionalCaseId: string }) =>
+    http.post('/requirement-case/unlink', b),
+  requirementCoverage: (requirementId: string) =>
+    http.get<CoverageCase[]>(`/requirement/${requirementId}/functional-coverage`),
+  caseRequirements: (caseId: string) =>
+    http.get<CaseRequirementLink[]>(`/functional-case/${caseId}/requirements`),
 
   // 项目接口用例(供测试计划挂载选择)
   projectCases: (projectId: string) =>
     projectId
       ? http.get<Page<ApiCase>>(`/api/case?projectId=${encodeURIComponent(projectId)}&pageSize=100`)
       : Promise.resolve(emptyPage<ApiCase>()),
+  // 翻页拉全部项目用例(场景步骤 id→名 映射用:用例数 >100 时单页会漏,导致步骤名回落短 id)。
+  projectCasesAll: async (projectId: string): Promise<ApiCase[]> => {
+    if (!projectId) return []
+    const size = 200
+    const out: ApiCase[] = []
+    for (let page = 1; page <= 50; page++) {
+      const p = await http.get<Page<ApiCase>>(
+        `/api/case?projectId=${encodeURIComponent(projectId)}&current=${page}&pageSize=${size}`,
+      )
+      out.push(...(p.items || []))
+      if (out.length >= (p.total || out.length) || !p.items?.length) break
+    }
+    return out
+  },
 
   // 测试计划(无 list 端点 → 列表由前端注册表维护)
   createPlan: (b: { projectId: string; name: string; type?: string }) =>
@@ -700,8 +933,18 @@ export const api = {
     method: string
     url: string
     concurrency: number
-    iterations: number
+    iterations?: number
+    durationMs?: number
   }) => http.post<{ reportId: string; status: string }>('/perf/run', b),
+  // 场景压测:一次施压 = 跑完整条场景链(登录→提取→鉴权调用→…),报告复用 PerfReport。
+  runScenarioPerf: (b: {
+    projectId: string
+    scenarioId: string
+    environmentId?: string
+    concurrency: number
+    iterations?: number
+    durationMs?: number
+  }) => http.post<{ reportId: string; status: string; stepCount: number }>('/perf/scenario/run', b),
   perfReport: (id: string) => http.get<PerfReport>(`/perf/report/${id}`),
 
   // 需求(版本 / 基线 / 拆分)— 无 list 端点,列表用前端注册表
@@ -713,6 +956,13 @@ export const api = {
     http.get<Page<Requirement>>(`/requirement?projectId=${encodeURIComponent(projectId)}&current=1&pageSize=200`),
   addRequirementVersion: (id: string, b: { description: string; acceptanceCriteria: string[] }) =>
     http.post<{ version: number }>(`/requirement/${id}/version`, b),
+  getRequirementVersion: (id: string, n: number) =>
+    http.get<RequirementVersion>(`/requirement/${id}/version/${n}`),
+  renameRequirement: (id: string, title: string) =>
+    http.put<Requirement>(`/requirement/${id}`, { title }),
+  deleteRequirement: (id: string) => http.del(`/requirement/${id}`),
+  archiveRequirement: (id: string) => http.post<Requirement>(`/requirement/${id}/archive`, {}),
+  deliverRequirement: (id: string) => http.post<Requirement>(`/requirement/${id}/deliver`, {}),
   setBaseline: (id: string, version: number) =>
     http.put<Requirement>(`/requirement/${id}/baseline`, { version }),
   breakdown: (id: string) =>
@@ -721,8 +971,12 @@ export const api = {
   // 拆分图 / 任务
   decomposition: (id: string) => http.get<Decomposition>(`/decomposition/${id}`),
   decompositionReady: (id: string) => http.get<Task[]>(`/decomposition/${id}/ready`),
-  addTask: (id: string, b: { title: string; acceptanceCriteria: string[]; dependencies: string[] }) =>
+  addTask: (id: string, b: { title: string; acceptanceCriteria: string[]; dependencies: string[]; points?: number }) =>
     http.post<{ taskId: string }>(`/decomposition/${id}/task`, b),
+  setTaskPoints: (decompId: string, taskId: string, points: number) =>
+    http.post(`/decomposition/${decompId}/task/${taskId}/points`, { points }),
+  setTaskAssignee: (decompId: string, taskId: string, assignee: string, kind: string) =>
+    http.post(`/decomposition/${decompId}/task/${taskId}/assignee`, { assignee, kind }),
   runDecomposition: (id: string) =>
     http.post<{ total: number; verified: number; failed: number; blocked: number; rounds: number }>(
       `/decomposition/${id}/run`,
@@ -738,6 +992,13 @@ export const api = {
     ),
   deliveryEvents: (attemptId: string) => http.get<DeliveryEvent[]>(`/delivery/${attemptId}/events`),
 
+  // 执行机 / AI agent 管理(人机协同的执行者侧)
+  runnerAgents: () => http.get<RunnerAgent[]>('/runner-agent'),
+  registerRunnerAgent: (b: { name: string; baseUrl: string; token?: string; enabled?: boolean }) =>
+    http.post<RunnerAgent>('/runner-agent', b),
+  refreshRunnerAgent: (id: string) => http.post<string[]>(`/runner-agent/${id}/refresh`, {}),
+  runnerExecutions: (id: string) => http.get<RunnerExecution[]>(`/runner-agent/${id}/executions`),
+
   // 验证(覆盖链 / 报告)
   verificationReport: (id: string) => http.get<VerificationReport>(`/verification/${id}/report`),
   verificationLink: (id: string, b: { criterionIndex: number; decompositionId: string; taskId: string }) =>
@@ -745,13 +1006,28 @@ export const api = {
   verificationSync: (id: string, b: { decompositionId: string; taskId: string; satisfied: boolean }) =>
     http.post(`/verification/${id}/sync`, b),
 
+  // 用例评审队列(创建/列表/详情/提交裁决)
+  caseReviews: (projectId: string) =>
+    projectId ? http.get<CaseReviewSummary[]>(`/case-review?projectId=${encodeURIComponent(projectId)}`) : Promise.resolve([] as CaseReviewSummary[]),
+  createCaseReview: (b: { projectId: string; passRule: string; reviewerCount: number; caseIds: string[] }) =>
+    http.post<{ id: string }>('/case-review', b),
+  caseReview: (id: string) => http.get<CaseReviewDetail>(`/case-review/${id}`),
+  submitCaseReview: (reviewId: string, caseId: string, b: { reviewerId: string; status: string; content?: string }) =>
+    http.post<{ status: string }>(`/case-review/${reviewId}/${caseId}`, b),
+
   // 缺陷 — 无 list 端点,列表用前端注册表
   createBug: (b: { projectId: string; title: string; initialStatus: string }) => http.post<Bug>('/bug', b),
   setBugStatus: (id: string, status: string) => http.post<Bug>(`/bug/${id}/status`, { status }),
 
-  // 技能 — 无 list 端点,列表用前端注册表
-  createSkill: (b: { projectId: string; name: string; instructions: string }) =>
-    http.post<{ id: string }>('/skill', b),
+  // 技能 — 列表/详情/更新/删除走后端
+  skills: (projectId: string) =>
+    projectId ? http.get<Skill[]>(`/skill?projectId=${encodeURIComponent(projectId)}`) : Promise.resolve([] as Skill[]),
+  getSkill: (id: string) => http.get<Skill>(`/skill/${id}`),
+  createSkill: (b: { projectId: string; name: string; instructions: string; description?: string; includes?: string[] }) =>
+    http.post<Skill>('/skill', b),
+  updateSkill: (id: string, b: { name: string; description?: string; instructions: string; includes?: string[]; enabled?: boolean }) =>
+    http.put<Skill>(`/skill/${id}`, b),
+  deleteSkill: (id: string) => http.del(`/skill/${id}`),
   composeSkills: (projectId: string, skillIds: string[]) =>
     http.post<{ instructions: string }>('/skill/compose', { projectId, skillIds }),
 
@@ -776,6 +1052,14 @@ export const api = {
     http.get<Page<CaseExecution>>(`/api/case/${caseId}/executions?pageSize=50`),
 
   mocks: (definitionId: string) => http.get<ApiMock[]>(`/api/definition/${definitionId}/mock`),
+  projectMocks: (projectId: string) =>
+    projectId ? http.get<ProjectMock[]>(`/api/mock?projectId=${encodeURIComponent(projectId)}`) : Promise.resolve([] as ProjectMock[]),
+  deleteMock: (mockId: string) => http.del(`/api/mock/${mockId}`),
+  updateCase: (
+    id: string,
+    b: { name: string; method: string; url: string; body?: string | null; assertions?: unknown; processors?: unknown; priority?: string; status?: string; tags?: string[]; headers?: { key: string; value: string }[]; queryParams?: { key: string; value: string }[]; restParams?: { key: string; value: string }[]; auth?: { type: string; token?: string } },
+  ) => http.put(`/api/case/${id}`, b),
+  deleteCase: (id: string) => http.del(`/api/case/${id}`),
   createMock: (
     definitionId: string,
     b: {
@@ -798,6 +1082,7 @@ export const api = {
   getScenario: (id: string) => http.get<Scenario & { steps: ScenarioStep[] }>(`/api/scenario/${id}`),
   createScenario: (projectId: string, name: string) =>
     http.post<Scenario>('/api/scenario', { projectId, name }),
+  deleteScenario: (id: string) => http.del(`/api/scenario/${id}`),
   addStep: (
     scenarioId: string,
     b: { kind: string; order: number; refId?: string; request?: unknown; control?: unknown },
@@ -820,11 +1105,13 @@ export const api = {
     http.get<ExecTrendPoint[]>(`/api/exec-trend?projectId=${encodeURIComponent(projectId)}&days=${days}`),
   projectFiles: (projectId: string) =>
     http.get<ProjectFile[]>(`/api/project-file?projectId=${encodeURIComponent(projectId)}`),
-  uploadProjectFile: (b: { projectId: string; name: string; fileFormat: string; sizeBytes: number; contentBase64: string }) =>
+  uploadProjectFile: (b: { projectId: string; name: string; fileFormat: string; sizeBytes: number; contentBase64: string; moduleId?: string | null }) =>
     http.post<{ id: string }>('/api/project-file', b),
   downloadProjectFile: (id: string) =>
     http.get<{ name: string; contentBase64: string }>(`/api/project-file/${id}/download`),
   deleteProjectFile: (id: string) => http.del(`/api/project-file/${id}`),
+  moveProjectFile: (id: string, moduleId: string | null) =>
+    http.put(`/api/project-file/${id}/module`, { moduleId }),
   scenarioChanges: (scenarioId: string) =>
     http.get<ScenarioChange[]>(`/api/scenario/${scenarioId}/changes`),
 }

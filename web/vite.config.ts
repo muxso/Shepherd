@@ -25,6 +25,7 @@ const proxy = Object.fromEntries(
     '/perf',
     '/runner',
     '/runner-agent',
+    '/case-review',
     '/mcp',
   ].map((p) => [
     p,

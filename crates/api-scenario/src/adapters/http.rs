@@ -63,7 +63,7 @@ pub fn router(
     };
     Router::new()
         .route("/api/scenario", post(create_scenario).get(list_scenarios))
-        .route("/api/scenario/{id}", get(get_scenario).patch(update_scenario))
+        .route("/api/scenario/{id}", get(get_scenario).patch(update_scenario).delete(delete_scenario))
         .route("/api/scenario/{id}/step", post(add_step))
         .route("/api/scenario/{id}/step/{step_id}", axum::routing::delete(delete_step))
         .route("/api/scenario/{id}/steps/order", axum::routing::patch(reorder_steps))
@@ -93,15 +93,38 @@ struct InlineRequestDto {
     #[serde(skip_serializing_if = "Vec::is_empty")]
     #[schema(value_type = Vec<Object>)]
     assertions: Vec<serde_json::Value>,
+    /// 请求头 / Query / REST 参数([{key,value}]);空则省略。
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[schema(value_type = Vec<Object>)]
+    headers: Vec<serde_json::Value>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[schema(value_type = Vec<Object>)]
+    query_params: Vec<serde_json::Value>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[schema(value_type = Vec<Object>)]
+    rest_params: Vec<serde_json::Value>,
+    /// 认证 {type,token};空对象则省略。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(value_type = Object)]
+    auth: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[schema(value_type = Vec<Object>)]
+    processors: Vec<serde_json::Value>,
 }
 
 impl From<&InlineRequest> for InlineRequestDto {
     fn from(r: &InlineRequest) -> Self {
+        let arr = |v: &serde_json::Value| v.as_array().cloned().unwrap_or_default();
         Self {
             method: r.method.clone(),
             url: r.url.clone(),
             body: r.body.clone(),
-            assertions: r.assertions.as_array().cloned().unwrap_or_default(),
+            assertions: arr(&r.assertions),
+            headers: arr(&r.headers),
+            query_params: arr(&r.query_params),
+            rest_params: arr(&r.rest_params),
+            auth: r.auth.as_object().filter(|o| !o.is_empty()).map(|_| r.auth.clone()),
+            processors: arr(&r.processors),
         }
     }
 }
@@ -162,6 +185,9 @@ struct ScenarioResponse {
     created_at: String,
     updated_at: String,
     steps: Vec<ScenarioStepResponse>,
+    /// 最近一次执行结果状态(SUCCESS/ERROR;列表回填,单查为 null)。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    last_result: Option<String>,
 }
 
 impl From<ApiScenario> for ScenarioResponse {
@@ -176,6 +202,7 @@ impl From<ApiScenario> for ScenarioResponse {
             created_at: s.created_at,
             updated_at: s.updated_at,
             steps: s.steps.iter().map(ScenarioStepResponse::from).collect(),
+            last_result: s.last_result,
         }
     }
 }
@@ -222,6 +249,22 @@ struct InlineRequestBody {
     #[serde(default)]
     #[schema(value_type = Vec<Object>)]
     assertions: Option<serde_json::Value>,
+    /// 请求头 / Query / REST 参数([{key,value}])/ 认证({type,token})/ 处理器(EXTRACT/WAIT);均可选。
+    #[serde(default)]
+    #[schema(value_type = Vec<Object>)]
+    headers: Option<serde_json::Value>,
+    #[serde(default)]
+    #[schema(value_type = Vec<Object>)]
+    query_params: Option<serde_json::Value>,
+    #[serde(default)]
+    #[schema(value_type = Vec<Object>)]
+    rest_params: Option<serde_json::Value>,
+    #[serde(default)]
+    #[schema(value_type = Object)]
+    auth: Option<serde_json::Value>,
+    #[serde(default)]
+    #[schema(value_type = Vec<Object>)]
+    processors: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -435,6 +478,25 @@ async fn delete_step(
     }
 }
 
+#[utoipa::path(delete, path = "/api/scenario/{id}", tag = "api-scenario", params(("id" = String, Path)), responses((status = 204), (status = 404)), security(("bearer" = [])))]
+async fn delete_scenario(
+    user: AuthUser,
+    State(st): State<ScenarioAppState>,
+    Path(id): Path<String>,
+) -> Response {
+    if !user.can("API_SCENARIO", "UPDATE") {
+        return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
+    match st.repo.delete_scenario(&id).await {
+        Ok(true) => {
+            let _ = st.repo.record_change(&id, "DELETE", Some("删除场景"), Some(&user.user_id)).await;
+            StatusCode::NO_CONTENT.into_response()
+        }
+        Ok(false) => (StatusCode::NOT_FOUND, "scenario not found").into_response(),
+        Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
+    }
+}
+
 #[utoipa::path(post, path = "/api/scenario/{id}/step", tag = "api-scenario", params(("id" = String, Path)), request_body = AddStepBody, responses((status = 201, body = ScenarioStepResponse), (status = 400), (status = 404)), security(("bearer" = [])))]
 async fn add_step(
     user: AuthUser,
@@ -452,10 +514,15 @@ async fn add_step(
             let Some(r) = req.request else {
                 return (StatusCode::BAD_REQUEST, "request payload required").into_response();
             };
+            let empty = || serde_json::Value::Array(vec![]);
             match InlineRequest::new(&r.method, &r.url, r.body) {
                 Ok(req) => StepKind::Request(
-                    req.with_assertions(
-                        r.assertions.unwrap_or_else(|| serde_json::Value::Array(vec![])),
+                    req.with_assertions(r.assertions.unwrap_or_else(empty)).with_spec(
+                        r.headers.unwrap_or_else(empty),
+                        r.query_params.unwrap_or_else(empty),
+                        r.rest_params.unwrap_or_else(empty),
+                        r.auth.unwrap_or_else(|| serde_json::json!({})),
+                        r.processors.unwrap_or_else(empty),
                     ),
                 ),
                 Err(_) => {
@@ -590,7 +657,7 @@ async fn list_changes(State(st): State<ScenarioAppState>, Path(id): Path<String>
 
 #[derive(OpenApi)]
 #[openapi(
-    paths(create_scenario, list_scenarios, get_scenario, add_step, compile_scenario, list_executions),
+    paths(create_scenario, list_scenarios, get_scenario, delete_scenario, add_step, compile_scenario, list_executions),
     components(schemas(
         ScenarioCreateBody,
         ScenarioResponse,

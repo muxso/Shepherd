@@ -1,30 +1,38 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Button, Card, Drawer, Empty, Input, Segmented, Select, Space, Table, Tag, Upload, message } from 'antd'
-import { InboxOutlined, SearchOutlined, FolderOutlined } from '@ant-design/icons'
+import { Button, Card, Drawer, Dropdown, Empty, Input, Segmented, Select, Space, Table, Tag, Upload, message } from 'antd'
+import { InboxOutlined, SearchOutlined } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
-import { api, ApiError, type ProjectFile } from '../api'
+import { api, ApiError, type ApiModule, type ProjectFile } from '../api'
 import { useApp } from '../context'
 import { useI18n } from '../i18n'
+import { ResizableSider } from '../components/Workspace'
+import { ModuleTreePanel, inSelectedModule } from '../components/ModuleTreePanel'
 
 // 文件管理(项目模块子标签,对齐参考图 #49/#50)。左侧文件树(简化)+ 右侧列表 + 添加文件抽屉。
 export default function FileManagement() {
   const { t } = useI18n()
   const { projectId } = useApp()
   const [files, setFiles] = useState<ProjectFile[]>([])
+  const [modules, setModules] = useState<ApiModule[]>([])
   const [loading, setLoading] = useState(false)
   const [q, setQ] = useState('')
+  const [moduleSearch, setModuleSearch] = useState('')
+  const [selModule, setSelModule] = useState('ALL') // ALL | UNFILED | <moduleId>
   const [fmt, setFmt] = useState('all')
   const [addOpen, setAddOpen] = useState(false)
 
   const load = () => {
-    if (!projectId) { setFiles([]); return }
+    if (!projectId) { setFiles([]); setModules([]); return }
     setLoading(true)
     api.projectFiles(projectId).then((f) => setFiles(Array.isArray(f) ? f : [])).catch(() => setFiles([])).finally(() => setLoading(false))
+    api.modules(projectId).then((m) => setModules(Array.isArray(m) ? m : [])).catch(() => setModules([]))
   }
   useEffect(load, [projectId]) // eslint-disable-line react-hooks/exhaustive-deps
 
+  // 文件归属模块:后端 ProjectFile 暂无 moduleId 字段,统一视为「未规划」。接入字段后改此处即可。
+  const moduleOf = (f: ProjectFile) => f.moduleId || ''
   const formats = useMemo(() => Array.from(new Set(files.map((f) => f.fileFormat).filter(Boolean))), [files])
-  const rows = files.filter((f) => (!q || f.name.toLowerCase().includes(q.toLowerCase())) && (fmt === 'all' || f.fileFormat === fmt))
+  const rows = files.filter((f) => inSelectedModule(modules, selModule, moduleOf(f)) && (!q || f.name.toLowerCase().includes(q.toLowerCase())) && (fmt === 'all' || f.fileFormat === fmt))
 
   const human = (n: number) => (n < 1024 ? `${n} B` : n < 1024 * 1024 ? `${(n / 1024).toFixed(2)} KB` : `${(n / 1024 / 1024).toFixed(2)} MB`)
 
@@ -48,19 +56,43 @@ export default function FileManagement() {
       message.error(e instanceof ApiError ? e.message : t('file.deleteFailed', '删除失败'))
     }
   }
+  const move = async (f: ProjectFile, moduleId: string | null) => {
+    try {
+      await api.moveProjectFile(f.id, moduleId)
+      message.success(t('file.moved', '已移动'))
+      load()
+    } catch (e) {
+      message.error(e instanceof ApiError ? e.message : t('file.moveFailed', '移动失败'))
+    }
+  }
+  // 「移动到模块」菜单:未规划 + 各模块(对齐接口定义的移动范式)。
+  const moveItems = [
+    { key: 'UNFILED', label: t('apidef.moveToUnfiled', '移到「未规划」') },
+    ...modules.map((m) => ({ key: m.id, label: `${t('apidef.moveToPrefix', '移到')}「${m.name}」` })),
+  ]
 
   const cols: ColumnsType<ProjectFile> = [
     { title: t('file.alias', '文件别名'), dataIndex: 'name', render: (v: string) => <span style={{ color: '#06a561' }}>{v}</span> },
     { title: t('file.format', '文件格式'), dataIndex: 'fileFormat', width: 120, render: (v: string) => v || '—' },
     { title: t('file.size', '文件大小'), dataIndex: 'sizeBytes', width: 120, render: (v: number) => human(v) },
     { title: t('file.tags', '标签'), width: 100, render: () => <span style={{ color: '#bbb' }}>—</span> },
+    {
+      title: t('apidef.colModule', '模块'), dataIndex: 'moduleId', width: 130,
+      render: (mid?: string | null) => {
+        const m = modules.find((x) => x.id === mid)
+        return m ? <Tag color="geekblue">{m.name}</Tag> : <span style={{ color: '#bbb' }}>{t('file.unfiled', '未规划文件')}</span>
+      },
+    },
     { title: t('file.creator', '创建人'), dataIndex: 'createdBy', width: 120, render: (v?: string) => v || '—' },
     { title: t('file.createdAt', '创建时间'), dataIndex: 'createdAt', width: 180, render: (v: string) => v?.slice(0, 19) || '—' },
     {
       title: t('apidef.colAction', '操作'),
-      width: 140,
+      width: 180,
       render: (_v, f) => (
         <Space size={4}>
+          <Dropdown trigger={['click']} menu={{ items: moveItems, onClick: ({ key }) => move(f, key === 'UNFILED' ? null : key) }}>
+            <Button type="link" size="small">{t('file.move', '移动')}</Button>
+          </Dropdown>
           <Button type="link" size="small" onClick={() => download(f)}>{t('file.download', '下载')}</Button>
           <Button type="link" size="small" danger onClick={() => remove(f)}>{t('a.delete', '删除')}</Button>
         </Space>
@@ -72,17 +104,38 @@ export default function FileManagement() {
 
   return (
     <div style={{ display: 'flex', height: '100%' }}>
-      {/* 左侧文件树(简化:全部文件 / 未规划文件) */}
-      <div style={{ width: 220, flexShrink: 0, borderRight: '1px solid #f0f0f0', padding: 10, background: '#fff', overflow: 'auto' }}>
-        <div style={{ fontSize: 13, color: '#8a9099', padding: '4px 8px' }}>{t('file.myFiles', '我的文件')} (0)</div>
-        <div style={{ display: 'flex', alignItems: 'center', padding: '7px 10px', borderRadius: 6, background: '#f3eaff', color: '#7c3aed', fontSize: 13 }}>
-          <FolderOutlined style={{ marginRight: 6 }} />{t('file.allFiles', '全部文件')} ({files.length})
-        </div>
-        <Input allowClear prefix={<SearchOutlined style={{ color: '#bbb' }} />} placeholder={t('file.searchName', '输入名称搜索')} style={{ margin: '8px 0' }} value={q} onChange={(e) => setQ(e.target.value)} />
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '7px 10px', fontSize: 13, color: '#5b6470' }}>
-          <span>{t('file.unfiled', '未规划文件')}</span><span style={{ color: '#a8adb5' }}>{files.length}</span>
-        </div>
-      </div>
+      {/* 左侧:复用 ModuleTreePanel(模块树 + 增删改)+ ResizableSider(左右拖拽改宽)。 */}
+      <ResizableSider defaultWidth={240} storageKey="file-sider">
+        <ModuleTreePanel
+          projectId={projectId}
+          modules={modules}
+          items={files}
+          getModuleId={moduleOf}
+          selectedKey={selModule}
+          onSelect={setSelModule}
+          allLabel={t('file.allFiles', '全部文件')}
+          unfiledLabel={t('file.unfiled', '未规划文件')}
+          moduleSearch={moduleSearch}
+          onModuleSearch={setModuleSearch}
+          searchPlaceholder={t('file.searchName', '输入名称搜索')}
+          onModulesChanged={load}
+          deleteModuleContent={t('file.deleteModuleContent', '其下文件将变为未规划(不会删除文件)。')}
+          header={
+            <div style={{ padding: '10px 10px 0' }}>
+              <div style={{ fontSize: 13, color: '#8a9099', padding: '0 4px 8px' }}>{t('file.myFiles', '我的文件')} (0)</div>
+              <Segmented
+                block
+                size="small"
+                value="module"
+                options={[
+                  { value: 'module', label: t('file.module', '模块') },
+                  { value: 'repo', label: t('file.repo', '存储库'), disabled: true },
+                ]}
+              />
+            </div>
+          }
+        />
+      </ResizableSider>
       {/* 右侧列表 */}
       <div style={{ flex: 1, minWidth: 0, overflow: 'auto', padding: 12, background: '#f5f6f8' }}>
         <Card size="small" styles={{ body: { padding: 12 } }}>
@@ -95,14 +148,14 @@ export default function FileManagement() {
           <Table<ProjectFile> rowKey="id" size="middle" loading={loading} dataSource={rows} columns={cols} pagination={{ pageSize: 20, size: 'small', showTotal: (n) => `${t('apidef.totalPrefix', '共')} ${n} ${t('proj.unit', '条')}` }} locale={{ emptyText: <Empty description={t('file.empty', '暂无文件')} /> }} />
         </Card>
       </div>
-      <AddFileDrawer open={addOpen} projectId={projectId} onClose={() => setAddOpen(false)} onUploaded={() => { setAddOpen(false); load() }} t={t} />
+      <AddFileDrawer open={addOpen} projectId={projectId} moduleId={selModule === 'ALL' || selModule === 'UNFILED' ? null : selModule} onClose={() => setAddOpen(false)} onUploaded={() => { setAddOpen(false); load() }} t={t} />
     </div>
   )
 }
 
 type TFn = (k: string, d?: string) => string
 
-function AddFileDrawer({ open, projectId, onClose, onUploaded, t }: { open: boolean; projectId: string; onClose: () => void; onUploaded: () => void; t: TFn }) {
+function AddFileDrawer({ open, projectId, moduleId, onClose, onUploaded, t }: { open: boolean; projectId: string; moduleId: string | null; onClose: () => void; onUploaded: () => void; t: TFn }) {
   const [kind, setKind] = useState('normal')
   const [file, setFile] = useState<File | null>(null)
   const [busy, setBusy] = useState(false)
@@ -123,7 +176,7 @@ function AddFileDrawer({ open, projectId, onClose, onUploaded, t }: { open: bool
       const contentBase64 = await fileToBase64(file)
       const dot = file.name.lastIndexOf('.')
       const fileFormat = dot >= 0 ? file.name.slice(dot + 1).toLowerCase() : ''
-      await api.uploadProjectFile({ projectId, name: file.name, fileFormat, sizeBytes: file.size, contentBase64 })
+      await api.uploadProjectFile({ projectId, name: file.name, fileFormat, sizeBytes: file.size, contentBase64, moduleId })
       message.success(t('file.uploaded', '上传成功'))
       setFile(null)
       onUploaded()
@@ -159,7 +212,7 @@ function AddFileDrawer({ open, projectId, onClose, onUploaded, t }: { open: bool
           beforeUpload={(f) => { setFile(f); return false }}
           onRemove={() => setFile(null)}
         >
-          <p className="ant-upload-drag-icon"><InboxOutlined style={{ color: '#7c3aed' }} /></p>
+          <p className="ant-upload-drag-icon"><InboxOutlined style={{ color: '#06a561' }} /></p>
           <p className="ant-upload-text">{t('file.dropHint', '拖拽或点击此区域选择文件')}</p>
           <p className="ant-upload-hint" style={{ fontSize: 12 }}>{t('file.sizeHint', '支持任意文件类型,当前演示限 ≤1.4MB')}</p>
         </Upload.Dragger>

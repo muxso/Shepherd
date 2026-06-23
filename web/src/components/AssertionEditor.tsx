@@ -155,7 +155,7 @@ export default function AssertionEditor({
                     background: i === sel ? '#f3eefe' : 'transparent',
                   }}
                 >
-                  <span style={{ width: 18, height: 18, borderRadius: '50%', background: '#7c3aed', color: '#fff', fontSize: 11, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>{i + 1}</span>
+                  <span style={{ width: 18, height: 18, borderRadius: '50%', background: '#06a561', color: '#fff', fontSize: 11, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>{i + 1}</span>
                   <span style={{ flex: 1, fontSize: 13 }}>{CAT_LABEL[r.cat]}</span>
                   <Button
                     type="text"

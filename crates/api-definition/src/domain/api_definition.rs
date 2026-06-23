@@ -131,6 +131,14 @@ impl NewApiDefinition {
         self.created_by = user_id.to_string();
         self
     }
+
+    /// 设置请求/响应规格(链式)。`spec` 为 JSON 文本(不透明存取)。
+    /// 空白回落 "{}",保持存储形态稳定。
+    pub fn with_spec(mut self, spec: &str) -> Self {
+        let spec = spec.trim();
+        self.spec = if spec.is_empty() { "{}".to_string() } else { spec.to_string() };
+        self
+    }
 }
 
 /// 接口定义聚合。

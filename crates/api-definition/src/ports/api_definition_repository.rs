@@ -15,6 +15,19 @@ pub enum RepoError {
     Backend(String),
 }
 
+/// 项目级 Mock 读模型:Mock + 其所属接口定义的 方法/路径/协议/名称。
+#[derive(Debug, Clone)]
+pub struct ProjectMockRow {
+    pub mock: ApiMock,
+    pub method: String,
+    pub path: String,
+    pub protocol: String,
+    pub definition_name: String,
+    /// 操作人(created_by)+ 更新时间(文本);0057 后回填。
+    pub operator: String,
+    pub updated_at: String,
+}
+
 #[async_trait]
 pub trait ApiDefinitionRepository: Send + Sync {
     /// 插入接口定义。
@@ -31,6 +44,9 @@ pub trait ApiDefinitionRepository: Send + Sync {
 
     /// 更新接口定义状态(DRAFT/DEBUGGING/COMPLETED/DEPRECATED)。
     async fn update_definition_status(&self, id: &str, status: &str) -> Result<(), RepoError>;
+
+    /// 删除接口定义:软删定义本身,连带软删其 Mock、硬删其用例(用例无软删列)。
+    async fn delete_definition(&self, id: &str) -> Result<(), RepoError>;
 
     /// 列出项目下的接口定义(排除软删除)。
     async fn list_definitions(
@@ -56,6 +72,15 @@ pub trait ApiDefinitionRepository: Send + Sync {
     /// 插入接口用例。
     async fn insert_case(&self, c: &NewApiCase) -> Result<ApiCase, RepoError>;
 
+    /// 更新接口用例的可变字段(不动 api_definition_id/project_id)。返回是否命中。
+    async fn update_case(&self, id: &str, c: &NewApiCase) -> Result<bool, RepoError>;
+
+    /// 删除接口用例(软删/硬删由实现决定)。返回是否命中。
+    async fn delete_case(&self, id: &str) -> Result<bool, RepoError>;
+
+    /// 软删 Mock(按 mock id)。返回是否命中。
+    async fn delete_mock(&self, mock_id: &str) -> Result<bool, RepoError>;
+
     /// 列出某接口定义下的用例。
     async fn list_cases(&self, api_definition_id: &str) -> Result<Vec<ApiCase>, RepoError>;
 
@@ -75,6 +100,9 @@ pub trait ApiDefinitionRepository: Send + Sync {
 
     /// 列出某接口定义下的 Mock(排除软删除)。
     async fn list_mocks(&self, api_definition_id: &str) -> Result<Vec<ApiMock>, RepoError>;
+
+    /// 列出项目下的全部 Mock(JOIN 接口定义带出 方法/路径/协议;排除软删除)。供「MOCK 视图」。
+    async fn list_mocks_by_project(&self, project_id: &str) -> Result<Vec<ProjectMockRow>, RepoError>;
 
     // ---- 模块(文件夹)----
 
