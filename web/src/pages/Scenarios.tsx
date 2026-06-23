@@ -1065,11 +1065,12 @@ function ReportRow({ idx, r, label, t, open, onToggle }: { idx: number; r: Repor
   // 让「实际请求 / 控制台 / cURL」不再显示「尚未执行」。CASE 引用无请求行则留空。
   const m = /^([A-Z]+)\s+(\S+)/.exec(r.caseId)
   const req: SentRequest | null = m ? { method: m[1], url: m[2], headers: [] } : null
-  // 报告只持久化失败断言;据 failures 合成断言行(失败标红)。通过步骤无逐条数据。
+  // 0048 起报告持久化逐条断言(含通过项);旧报告无 → 据 failures 合成失败行兜底。
   const failAsserts: AssertionResult[] = r.failures.map((f) => ({ item: f, condition: '', expected: '', actual: '', passed: false, reason: f }))
+  const asserts = r.assertions?.length ? r.assertions : failAsserts
   // 用存储的响应明细合成一个 DebugResponse,复用调试的 7 标签面板。
   const resp: DebugResponse | null = hasDetail
-    ? { status: r.statusCode ?? 0, latencyMs: r.latencyMs ?? 0, headers: r.headers ?? [], body: r.body ?? '', assertions: failAsserts.length ? failAsserts : undefined }
+    ? { status: r.statusCode ?? 0, latencyMs: r.latencyMs ?? 0, headers: r.headers ?? [], body: r.body ?? '', assertions: asserts.length ? asserts : undefined, extractions: r.extractions?.length ? r.extractions : undefined }
     : null
   const muted: React.CSSProperties = { color: '#bbb', fontSize: 12 }
   return (

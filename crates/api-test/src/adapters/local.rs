@@ -81,8 +81,10 @@ pub trait CaseResultSink: Send + Sync {
         failures: &[String],
     ) -> Result<(), PortError>;
 
-    /// 写出响应明细(状态码/耗时/大小/响应头/响应体);best-effort。默认 no-op,仅持久化实现覆盖。
-    /// 在 [`CaseResultSink::record`] 之后调用(更新同一行)。
+    /// 写出响应明细(状态码/耗时/大小/响应头/响应体 + 逐条断言/提取);best-effort。
+    /// 默认 no-op,仅持久化实现覆盖。在 [`CaseResultSink::record`] 之后调用(更新同一行)。
+    /// `assertions`/`extractions` 为已序列化 JSON 数组(解耦 api-runner 类型)。
+    #[allow(clippy::too_many_arguments)]
     async fn record_detail(
         &self,
         _report_id: &str,
@@ -92,6 +94,8 @@ pub trait CaseResultSink: Send + Sync {
         _resp_size: i64,
         _body: &str,
         _headers: &[(String, String)],
+        _assertions: &serde_json::Value,
+        _extractions: &serde_json::Value,
     ) -> Result<(), PortError> {
         Ok(())
     }

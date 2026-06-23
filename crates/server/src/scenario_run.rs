@@ -107,6 +107,12 @@ struct ReportResultItem {
     resp_size: Option<i64>,
     body: Option<String>,
     headers: Vec<(String, String)>,
+    /// 逐条断言结果 [{item,condition,expected,actual,passed,reason}] + 提取 [[k,v]]
+    /// (0048 后回填;旧报告为空数组)。
+    #[schema(value_type = Vec<Object>)]
+    assertions: serde_json::Value,
+    #[schema(value_type = Vec<Object>)]
+    extractions: serde_json::Value,
 }
 
 #[utoipa::path(get, path = "/api/scenario-report/{report_id}", tag = "api-scenario", params(("report_id" = String, Path)), responses((status = 200, body = ScenarioReportResponse), (status = 404)), security(("bearer" = [])))]
@@ -135,6 +141,8 @@ async fn scenario_report(
                         resp_size: r.resp_size,
                         body: r.body,
                         headers: r.headers,
+                        assertions: r.assertions,
+                        extractions: r.extractions,
                     })
                     .collect(),
             }),
