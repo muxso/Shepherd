@@ -190,11 +190,14 @@ name = "api-test"
 version = "0.0.1"
 dependencies = [
  "api-runner",
+ "arrow",
  "async-trait",
  "axum 0.8.9",
  "futures",
  "kernel",
  "migrate",
+ "object_store",
+ "parquet",
  "reqwest",
  "serde",
  "serde_json",

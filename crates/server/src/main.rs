@@ -21,6 +21,7 @@ mod plan_run;
 mod plan_scheduler;
 mod planner;
 mod references_route;
+mod report_archive_job;
 mod scenario_run;
 
 use std::sync::Arc;
@@ -492,6 +493,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // —— 测试计划定时执行(cron 到点拍统计快照)——
     let plan_scheduler_routes = plan_scheduler::build(pool.clone(), sessions.clone()).await?;
+
+    // —— 报告归档(已完成报告周期性导出 Parquet 冷存储;REPORT_ARCHIVE_DIR 开关)——
+    report_archive_job::spawn(pool.clone());
 
     // —— 合并为单一应用 + 生产中间件 ——
     let app = user_routes

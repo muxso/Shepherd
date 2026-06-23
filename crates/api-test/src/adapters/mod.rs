@@ -12,6 +12,10 @@ pub mod plan;
 pub mod pg;
 #[cfg(feature = "pg")]
 pub use pg::{BatchReportDetail, CaseResultRow, PgBatchReport, PgCaseExecutionQuery, PgEnvironment, PgResourcePoolAdmin};
+#[cfg(feature = "parquet-archive")]
+pub mod report_archive;
+#[cfg(feature = "parquet-archive")]
+pub use report_archive::ReportArchiver;
 #[cfg(feature = "http")]
 pub mod http;
 #[cfg(feature = "jmeter")]
