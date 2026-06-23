@@ -13,7 +13,10 @@ export default function Users() {
   const [users, setUsers] = useState<User[]>([])
   const [loading, setLoading] = useState(false)
   const [q, setQ] = useState('')
-  const [createOpen, setCreateOpen] = useState(false)
+  const [modalOpen, setModalOpen] = useState(false)
+  const [editing, setEditing] = useState<User | null>(null)
+  const openCreate = () => { setEditing(null); setModalOpen(true) }
+  const openEdit = (u: User) => { setEditing(u); setModalOpen(true) }
 
   const load = () => {
     setLoading(true)
@@ -91,7 +94,7 @@ export default function Users() {
       fixed: 'right',
       render: (_v, u) => (
         <Space size={4} onClick={(e) => e.stopPropagation()}>
-          <Button type="link" size="small" onClick={soon}>{t('a.edit', '编辑')}</Button>
+          <Button type="link" size="small" onClick={() => openEdit(u)}>{t('a.edit', '编辑')}</Button>
           <Dropdown
             menu={{
               items: [
@@ -111,7 +114,7 @@ export default function Users() {
   return (
     <div style={{ padding: 12, height: '100%', overflow: 'auto', background: '#f5f6f8' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
-        <Button type="primary" onClick={() => setCreateOpen(true)}>{t('user.create', '创建用户')}</Button>
+        <Button type="primary" onClick={openCreate}>{t('user.create', '创建用户')}</Button>
         <Button onClick={soon}>{t('user.invite', '邮箱邀请')}</Button>
         <Button onClick={soon}>{t('user.import', '导入用户')}</Button>
         <div style={{ flex: 1 }} />
@@ -127,33 +130,42 @@ export default function Users() {
         rowSelection={{ type: 'checkbox' }}
         pagination={{ pageSize: 50, size: 'small', showTotal: (n) => `${t('apidef.totalPrefix', '共')} ${n} ${t('proj.unit', '条')}` }}
       />
-      <CreateUserModal open={createOpen} onClose={() => setCreateOpen(false)} onCreated={() => { setCreateOpen(false); load() }} t={t} />
+      <UserModal open={modalOpen} editing={editing} onClose={() => setModalOpen(false)} onDone={() => { setModalOpen(false); load() }} t={t} />
     </div>
   )
 }
 
 type TFn = (k: string, d?: string) => string
 
-function CreateUserModal({ open, onClose, onCreated, t }: { open: boolean; onClose: () => void; onCreated: () => void; t: TFn }) {
+// 创建/编辑用户:editing 非空为编辑(走 PUT 保留启停),否则创建(POST)。
+function UserModal({ open, editing, onClose, onDone, t }: { open: boolean; editing: User | null; onClose: () => void; onDone: () => void; t: TFn }) {
   const [form] = Form.useForm()
   const [busy, setBusy] = useState(false)
+  useEffect(() => {
+    if (open) form.setFieldsValue({ name: editing?.name ?? '', email: editing?.email ?? '' })
+  }, [open, editing, form])
   const submit = async () => {
     const v = await form.validateFields().catch(() => null)
     if (!v) return
     setBusy(true)
     try {
-      await api.createUser({ name: v.name.trim(), email: v.email.trim() })
-      message.success(t('user.created', '用户已创建'))
+      if (editing) {
+        await api.updateUser(editing.id, { name: v.name.trim(), email: v.email.trim(), enable: editing.enable !== false })
+        message.success(t('user.updated', '已保存'))
+      } else {
+        await api.createUser({ name: v.name.trim(), email: v.email.trim() })
+        message.success(t('user.created', '用户已创建'))
+      }
       form.resetFields()
-      onCreated()
+      onDone()
     } catch (e) {
-      message.error(e instanceof ApiError ? e.message : t('user.createFailed', '创建失败'))
+      message.error(e instanceof ApiError ? e.message : t('user.createFailed', '保存失败'))
     } finally {
       setBusy(false)
     }
   }
   return (
-    <Modal open={open} onCancel={onClose} onOk={submit} confirmLoading={busy} title={t('user.create', '创建用户')} destroyOnHidden>
+    <Modal open={open} onCancel={onClose} onOk={submit} confirmLoading={busy} title={editing ? t('user.edit', '编辑用户') : t('user.create', '创建用户')} destroyOnHidden>
       <Form form={form} layout="vertical" requiredMark={false}>
         <Form.Item name="name" label={t('user.name', '姓名')} rules={[{ required: true, message: t('user.nameRequired', '请输入姓名') }]}>
           <Input placeholder={t('user.namePh', '请输入姓名')} />
