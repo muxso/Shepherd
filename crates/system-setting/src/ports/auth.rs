@@ -19,6 +19,23 @@ pub trait CredentialRepository: Send + Sync {
         &self,
         username: &str,
     ) -> Result<Option<UserCredential>, AuthRepoError>;
+
+    /// 重置密码:按 user_id 改哈希;无凭证则按用户名(邮箱)新建。默认 no-op(内存实现继承)。
+    async fn reset_password(
+        &self,
+        _user_id: &str,
+        _username: &str,
+        _password_hash: &str,
+    ) -> Result<(), AuthRepoError> {
+        Ok(())
+    }
+}
+
+/// 用户→用户组(角色名)只读查询。供用户列表附带「用户组」列。
+#[async_trait]
+pub trait UserRoleQuery: Send + Sync {
+    /// 批量取多个用户的用户组名,返回 (user_id, role_name) 列表。
+    async fn roles_for(&self, user_ids: &[String]) -> Result<Vec<(String, String)>, AuthRepoError>;
 }
 
 /// 密码哈希器(纯计算,同步)。生产实现见 `adapters::auth`(Argon2)。
