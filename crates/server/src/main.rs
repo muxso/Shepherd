@@ -352,6 +352,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         ver_admin.clone(),
         base_delivery.clone(),
         agent,
+        req_admin.clone(),
     );
     let delivery_svc = base_delivery.with_observer(delivery_observer);
     let mcp_delivery = delivery_svc.clone();

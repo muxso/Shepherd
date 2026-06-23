@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { Badge, Button, Card, Col, Descriptions, Drawer, Empty, Form, Input, InputNumber, Modal, Progress, Row, Segmented, Select, Space, Spin, Statistic, Table, Tabs, Tag, Timeline, Typography } from 'antd'
+import { Badge, Button, Card, Col, Descriptions, Drawer, Empty, Form, Input, InputNumber, Modal, Progress, Row, Segmented, Select, Space, Spin, Statistic, Table, Tabs, Tag, Timeline, Tooltip, Typography } from 'antd'
 import { message, modal } from '../feedback'
 import { useNavigate } from 'react-router-dom'
 import { BranchesOutlined, DeleteOutlined, EditOutlined, FlagOutlined, InboxOutlined, PartitionOutlined, PlayCircleOutlined, ProfileOutlined, ReloadOutlined, SendOutlined } from '@ant-design/icons'
@@ -491,8 +491,15 @@ function DecompositionView({ decompId, verificationId, projectId, reqId }: { dec
       setRunning(false)
     }
   }
+  // 依赖门控:任务的依赖须全部 Verified 才能派发(否则提前派发会撞门、卡 PENDING)。
+  const statusOf = (id: string) => tasks.find((x) => x.id === id)?.status
+  const depsReady = (t: Task) => (t.dependencies ?? []).every((d) => statusOf(d) === 'VERIFIED')
   const dispatch = async (task: Task) => {
     if (dispatching.has(task.id)) return // 已在派发中,忽略重复点击
+    if (!depsReady(task)) {
+      message.warning(t('req.depsNotReady', '依赖任务未全部验证完成,暂不能派发'))
+      return
+    }
     setDispatching((s) => new Set(s).add(task.id))
     try {
       await api.createDelivery({ decompositionId: decompId, taskId: task.id, title: task.title, executor: 'CLAUDE_CODE' })
@@ -573,7 +580,9 @@ function DecompositionView({ decompId, verificationId, projectId, reqId }: { dec
               width: 220,
               render: (_, row) => (
                 <Space>
-                  <Button type="link" size="small" icon={<SendOutlined />} loading={dispatching.has(row.id)} disabled={dispatching.has(row.id)} onClick={() => dispatch(row)}>{t('req.dispatch', '派发')}</Button>
+                  <Tooltip title={depsReady(row) ? '' : t('req.depsNotReady', '依赖任务未全部验证完成,暂不能派发')}>
+                    <Button type="link" size="small" icon={<SendOutlined />} loading={dispatching.has(row.id)} disabled={dispatching.has(row.id) || !depsReady(row)} onClick={() => dispatch(row)}>{t('req.dispatch', '派发')}</Button>
+                  </Tooltip>
                   <Button type="link" size="small" onClick={() => setCasesFor(row)}>{t('req.cases', '用例')}</Button>
                   <Button type="link" size="small" icon={<ProfileOutlined />} onClick={() => setEventsFor(row)}>{t('req.execProgress', '执行进度')}</Button>
                 </Space>
@@ -609,7 +618,11 @@ function DecompositionView({ decompId, verificationId, projectId, reqId }: { dec
                             options={assignees}
                             onChange={(v) => assign(tk, v)}
                           />
-                          {tk.status === 'PENDING' && <Button size="small" icon={<SendOutlined />} loading={dispatching.has(tk.id)} disabled={dispatching.has(tk.id)} onClick={() => dispatch(tk)} />}
+                          {tk.status === 'PENDING' && (
+                            <Tooltip title={depsReady(tk) ? '' : t('req.depsNotReady', '依赖任务未全部验证完成,暂不能派发')}>
+                              <Button size="small" icon={<SendOutlined />} loading={dispatching.has(tk.id)} disabled={dispatching.has(tk.id) || !depsReady(tk)} onClick={() => dispatch(tk)} />
+                            </Tooltip>
+                          )}
                           <Button size="small" icon={<ProfileOutlined />} title={t('req.execProgress', '执行进度')} onClick={() => setEventsFor(tk)} />
                         </Space.Compact>
                       </Card>
