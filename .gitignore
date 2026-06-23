@@ -7,3 +7,7 @@
 /*.png
 # 报告归档 Parquet 冷存储(REPORT_ARCHIVE_DIR 默认落点)
 /data/report-archive/
+# Playwright E2E 产物
+/web/test-results/
+/web/playwright-report/
+/web/blob-report/
