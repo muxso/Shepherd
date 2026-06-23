@@ -43,8 +43,10 @@ server 有一道全局 **30s 请求超时**(`TimeoutLayer`)。`claude -p` 跑一
 - **`mock-agent.sh`** —— 同步、确定性演示/验证执行者。不调 AI、不改文件,按协议产出
   审计事件 + `mock://` 交付物。
 - **`claude-agent.sh`** —— 同步桥接 `claude -p`(会被 30s 超时卡死,仅留作参考/极快任务)。
-- **`claude-agent-async.sh`** —— **异步桥接(推荐)**。把 prompt 交给 `claude -p --output-format json`,
-  跑完经 HTTP 回调把交付物 + 审计事件回灌。**会真实改文件、消耗用量**,需 `claude` 已登录。
+- **`claude-agent-async.sh`** + **`stream_events.py`** —— **异步桥接(推荐)**。把 prompt 交给
+  `claude -p --output-format stream-json`,**流式**把每步(编辑哪个文件 / 跑什么命令 / 决策)
+  实时回流成审计事件 —— 执行进度抽屉能看着 AI 干活,而非干等;跑完把**最终结果**作为
+  VERDICT 事件入时间线 + 写进交付物摘要。**会真实改文件、消耗用量**,需 `claude` 已登录。
   交付物 = **真实代码变动**:跑前记 HEAD,跑后用 `git write-tree`/`commit-tree` 把改动快照成
   commit 推到 `shepherd/deliver/<id>` 分支(不切分支、不动工作区),交付物 reference =
   GitHub/GitLab commit URL(点开即看该单 diff)。无改动则标「无代码变动」。

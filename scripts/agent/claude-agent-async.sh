@@ -44,26 +44,21 @@ print(f"https://{host}/{path}{seg}{sha}")
 PY
 }
 
+DIR="$(cd "$(dirname "$0")" && pwd)"
 BEFORE="$(git rev-parse HEAD 2>/dev/null || true)"
-event DECISION "调用 $CLAUDE_BIN 执行任务(headless, async)"
+event DECISION "调用 $CLAUDE_BIN 执行任务(headless, async, 流式)"
 
 err="$(mktemp)"
-out="$(printf '%s' "$prompt" | "$CLAUDE_BIN" -p --output-format json --permission-mode acceptEdits 2>"$err")"
-rc=$?
-# claude 出错时退出码可能仍为 0,但 JSON 里 is_error=true,真正错误在 stdout(result/error)
-# 而非 stderr —— 所以成败要看 stdout 的 is_error,失败要把 stdout 的错误文本回报。
-verdict="$(printf '%s' "$out" | python3 -c '
-import sys,json
-try:
-    d=json.load(sys.stdin)
-    txt=(d.get("result") or d.get("error") or "").replace(chr(10)," ").strip()[:700]
-    print(("OK" if not d.get("is_error") else "ERR")+chr(31)+(d.get("subtype") or "")+chr(31)+txt)
-except Exception:
-    print("RAW"+chr(31)+chr(31))' 2>/dev/null)"
-flag="${verdict%%$'\x1f'*}"; rest="${verdict#*$'\x1f'}"; subtype="${rest%%$'\x1f'*}"; rtext="${rest#*$'\x1f'}"
+# 流式:claude 边跑边吐事件 → stream_events.py 实时把「编辑哪个文件 / 跑什么命令 / 决策」
+# 回流成审计事件(用户能看着 AI 干活,而非干等);末行给出 OK/ERR + 最终结果文本。
+final="$(printf '%s' "$prompt" | "$CLAUDE_BIN" -p --output-format stream-json --verbose --permission-mode acceptEdits 2>"$err" | python3 "$DIR/stream_events.py")"
+rc=${PIPESTATUS[0]} # claude 退出码(非 python 的)
+flag="${final%%$'\x1f'*}"; rtext="${final#*$'\x1f'}"
 if [ "$rc" -eq 0 ] && [ "$flag" = "OK" ]; then
-  summary="$rtext"; [ -n "$summary" ] || summary="$out"
+  summary="$rtext"; [ -n "$summary" ] || summary="(无输出)"
   summary="$(printf '%s' "$summary" | tr '\n' ' ' | cut -c1-700)"
+  # 最终结果也入时间线 —— 让「AI 执行的结果」直接显示出来。
+  event VERDICT "执行结果: $summary"
 
   # —— 交付物:把 Claude 的真实改动快照成 commit 推远端 ——
   ref="claude://$AID"
@@ -102,13 +97,13 @@ if [ "$rc" -eq 0 ] && [ "$flag" = "OK" ]; then
   post "/delivery/$AID/complete" \
     "$(python3 -c 'import json,sys;print(json.dumps({"kind":"DIFF","reference":sys.argv[1],"summary":sys.argv[2]}))' "$ref" "$summary")"
 else
-  # 失败原因优先级:stdout 的 result/error 文本 → stderr → 原始 stdout 截断。
+  # 失败原因:流解析的 result/error 文本 → stderr。
   estderr="$(tr '\n' ' ' <"$err" | cut -c1-300)"
   reason="$rtext"
   [ -n "$reason" ] || reason="$estderr"
-  [ -n "$reason" ] || reason="$(printf '%s' "$out" | tr '\n' ' ' | cut -c1-300)"
   [ -n "$reason" ] || reason="无可读错误(stdout/stderr 皆空)"
+  event LOG "执行失败: $reason"
   post "/delivery/$AID/fail" \
-    "$(python3 -c 'import json,sys;print(json.dumps({"error":sys.argv[1]}))' "claude 失败(exit=$rc${subtype:+, $subtype}): $reason")"
+    "$(python3 -c 'import json,sys;print(json.dumps({"error":sys.argv[1]}))' "claude 失败(exit=$rc): $reason")"
 fi
 rm -f "$err"
