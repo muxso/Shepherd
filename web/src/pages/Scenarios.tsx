@@ -1133,7 +1133,7 @@ function ScenarioDetail({ scenario, active }: { scenario: Scenario; active?: boo
       ),
     },
     { key: 'assert', label: t('apidef.assertions', '断言'), children: <AssertionEditor value={form.assertions as Record<string, unknown>[]} onChange={(v) => patchForm({ assertions: v })} /> },
-    { key: 'exec', label: t('scenario.execHistoryTab', '执行历史'), children: <ScenarioExecutionsTab scenarioId={scenario.id} nameOf={nameOf} t={t} /> },
+    { key: 'exec', label: t('scenario.execHistoryTab', '执行历史'), children: <ScenarioExecutionsTab scenarioId={scenario.id} nameOf={nameOf} caseMap={caseMap} t={t} /> },
     { key: 'change', label: t('apidef.changeHistory', '变更历史'), children: <ScenarioChangesTab scenarioId={scenario.id} t={t} /> },
     { key: 'settings', label: t('apidef.settings', '设置'), children: <ScenarioSettings failureStrategy={failureStrategy} onFailureStrategy={setFailureStrategy} envCookie={form.envCookie} sharedCookie={form.sharedCookie} onCookie={(p) => patchForm(p)} t={t} /> },
   ]
@@ -1190,7 +1190,7 @@ function ScenarioDetail({ scenario, active }: { scenario: Scenario; active?: boo
         onClose={() => setSelStep(null)}
         onDeleted={() => { setSelStep(null); loadSteps() }}
       />
-      <ScenarioReportModal reportId={reportModalId} nameOf={nameOf} onClose={() => setReportModalId(null)} />
+      <ScenarioReportModal reportId={reportModalId} nameOf={nameOf} caseMap={caseMap} onClose={() => setReportModalId(null)} />
     </div>
   )
 }
@@ -1506,7 +1506,7 @@ function ScenarioSettings({ failureStrategy, onFailureStrategy, envCookie, share
 }
 
 // 执行历史标签(对齐参考图 #23):序号 / 状态 / 用例数 / 时间 / 操作(执行结果→报告)。
-function ScenarioExecutionsTab({ scenarioId, nameOf, t }: { scenarioId: string; nameOf: NameOf; t: TFn }) {
+function ScenarioExecutionsTab({ scenarioId, nameOf, caseMap, t }: { scenarioId: string; nameOf: NameOf; caseMap?: Record<string, ApiCase>; t: TFn }) {
   const [rows, setRows] = useState<ScenarioExecution[]>([])
   const [loading, setLoading] = useState(false)
   const [reportId, setReportId] = useState<string | null>(null)
@@ -1531,7 +1531,7 @@ function ScenarioExecutionsTab({ scenarioId, nameOf, t }: { scenarioId: string; 
           { title: t('apidef.colAction', '操作'), width: 100, render: (_v, r) => <Button type="link" size="small" disabled={!r.reportId} onClick={() => setReportId(r.reportId)}>{t('scenario.viewResult', '执行结果')}</Button> },
         ]}
       />
-      <ScenarioReportModal reportId={reportId} nameOf={nameOf} onClose={() => setReportId(null)} />
+      <ScenarioReportModal reportId={reportId} nameOf={nameOf} caseMap={caseMap} onClose={() => setReportId(null)} />
     </>
   )
 }
@@ -1629,7 +1629,7 @@ function DistCard({ title, d, centerLabel, t }: { title: string; d: Dist; center
 // 场景执行报告:从右侧展开的抽屉(对齐 docs/api-coverage.html)。
 // 顶部=报告分析卡(步骤数/通过/失败/通过率)+ 圆环;工具栏=过滤 + 展开/收起全部;
 // 报告明细沿用现有 ReportRow 结构(逐步可展开,复用调试 7 标签面板)。
-function ScenarioReportModal({ reportId, nameOf, onClose }: { reportId: string | null; nameOf: NameOf; onClose: () => void }) {
+function ScenarioReportModal({ reportId, nameOf, caseMap, onClose }: { reportId: string | null; nameOf: NameOf; caseMap?: Record<string, ApiCase>; onClose: () => void }) {
   const { t } = useI18n()
   const [data, setData] = useState<ScenarioReportDetail | null>(null)
   const [loading, setLoading] = useState(false)
@@ -1702,7 +1702,7 @@ function ScenarioReportModal({ reportId, nameOf, onClose }: { reportId: string |
             <Button size="small" onClick={() => setOpenSet(new Set())}>{t('scenario.collapseAll', '收起全部')}</Button>
           </div>
           <div style={{ marginTop: 10 }}>
-            {rows.length === 0 ? <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('scenario.noStepResult', '无步骤结果')} /> : rows.map((r, i) => <ReportRow key={i} idx={i + 1} r={r} label={label} t={t} open={openSet.has(i)} onToggle={() => toggle(i)} />)}
+            {rows.length === 0 ? <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('scenario.noStepResult', '无步骤结果')} /> : rows.map((r, i) => <ReportRow key={i} idx={i + 1} r={r} label={label} t={t} open={openSet.has(i)} onToggle={() => toggle(i)} caseOf={(id) => caseMap?.[id]} />)}
           </div>
         </>
       )}
@@ -1710,13 +1710,28 @@ function ScenarioReportModal({ reportId, nameOf, onClose }: { reportId: string |
   )
 }
 
-function ReportRow({ idx, r, label, t, open, onToggle }: { idx: number; r: ReportResultItem; label: (id: string) => string; t: TFn; open: boolean; onToggle: () => void }) {
+// 据引用用例重建实际请求行(镜像后端 to_node:REST 参数替换 / Query 拼接 / 认证头)。
+// 注:${var} 运行期替换无法在前端还原,这里展示用例模板请求(对无变量用例即实际请求)。
+function caseToSentRequest(c: ApiCase): SentRequest {
+  let url = c.url || ''
+  for (const p of c.restParams ?? []) if (p.key) url = url.split(`{${p.key}}`).join(p.value)
+  const qs = (c.queryParams ?? []).filter((p) => p.key).map((p) => `${p.key}=${p.value}`).join('&')
+  if (qs) url += (url.includes('?') ? '&' : '?') + qs
+  const headers = [...(c.headers ?? [])]
+  if (c.auth?.token && c.auth.type && c.auth.type !== 'none') {
+    headers.push({ key: 'Authorization', value: `${c.auth.type === 'basic' ? 'Basic' : 'Bearer'} ${c.auth.token}` })
+  }
+  return { method: c.method, url, headers, body: c.body ?? undefined }
+}
+
+function ReportRow({ idx, r, label, t, open, onToggle, caseOf }: { idx: number; r: ReportResultItem; label: (id: string) => string; t: TFn; open: boolean; onToggle: () => void; caseOf?: (id: string) => ApiCase | undefined }) {
   const ok = r.outcome === 'SUCCESS'
   const hasDetail = r.statusCode != null || r.body != null || (r.headers?.length ?? 0) > 0
-  // 报告仅存 method+url(REQUEST 步骤 caseId = "GET http://…"),据此重建实际请求行,
-  // 让「实际请求 / 控制台 / cURL」不再显示「尚未执行」。CASE 引用无请求行则留空。
+  // REQUEST 步骤 caseId = "GET http://…"(直接解析);CASE 引用 caseId = 用例 UUID → 据引用用例重建,
+  // 让「实际请求 / 控制台 / cURL」不再显示「尚未执行」。
   const m = /^([A-Z]+)\s+(\S+)/.exec(r.caseId)
-  const req: SentRequest | null = m ? { method: m[1], url: m[2], headers: [] } : null
+  const kase = m ? undefined : caseOf?.(r.caseId)
+  const req: SentRequest | null = m ? { method: m[1], url: m[2], headers: [] } : kase ? caseToSentRequest(kase) : null
   // 0048 起报告持久化逐条断言(含通过项);旧报告无 → 据 failures 合成失败行兜底。
   const failAsserts: AssertionResult[] = r.failures.map((f) => ({ item: f, condition: '', expected: '', actual: '', passed: false, reason: f }))
   const asserts = r.assertions?.length ? r.assertions : failAsserts
