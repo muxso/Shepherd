@@ -14,7 +14,7 @@ import {
   SafetyCertificateOutlined,
 } from '@ant-design/icons'
 import { useNavigate } from 'react-router-dom'
-import { api } from '../api'
+import { api, type ApiCase, type ApiDefinition } from '../api'
 import { useApp } from '../context'
 import { regList } from '../registry'
 import { useI18n } from '../i18n'
@@ -30,32 +30,28 @@ interface Counts {
   bug: number
 }
 
+// 协议分段配色(轮转)。
+const PROTO_COLORS = ['#7c3aed', '#1677ff', '#13c2c2', '#52c41a', '#fa8c16', '#eb2f96', '#f5222d', '#8a9099']
+
 // 卡片清单(完整版「卡片设置」对标 MeterSphere):每张卡可独立显隐 + 自由排序。
-const ALL_CARDS = ['overview', 'assets', 'quality', 'shortcuts'] as const
+const ALL_CARDS = ['overview', 'assets', 'apiStats', 'quality', 'shortcuts'] as const
 type CardKey = (typeof ALL_CARDS)[number]
 interface CardPref {
   key: CardKey
   shown: boolean
 }
-const CARDS_KEY = 'shepherd.home.cards.v2'
+const CARDS_KEY = 'shepherd.home.cards.v3'
 
-/** 读持久化偏好;兼容旧格式(字符串数组=已显示的卡)。缺省全显示、按 ALL_CARDS 顺序。 */
+/** 读持久化偏好。缺省全显示、按 ALL_CARDS 顺序;新增卡默认显示并追加到末尾。 */
 function loadPrefs(): CardPref[] {
   const def = (): CardPref[] => ALL_CARDS.map((k) => ({ key: k, shown: true }))
   try {
     const raw = localStorage.getItem(CARDS_KEY)
     if (raw) {
       const parsed = JSON.parse(raw) as CardPref[]
-      // 校验 + 补齐新卡(向后兼容:新增卡默认显示并追加到末尾)。
       const valid = parsed.filter((p) => (ALL_CARDS as readonly string[]).includes(p.key))
       const missing = ALL_CARDS.filter((k) => !valid.some((p) => p.key === k)).map((k) => ({ key: k, shown: true }))
       return [...valid, ...missing]
-    }
-    // 迁移旧 key:shepherd.home.cards = ["overview","assets"]
-    const old = localStorage.getItem('shepherd.home.cards')
-    if (old) {
-      const arr = JSON.parse(old) as string[]
-      return ALL_CARDS.map((k) => ({ key: k, shown: arr.includes(k) || k === 'quality' || k === 'shortcuts' }))
     }
   } catch {
     /* ignore */
@@ -69,6 +65,8 @@ export default function Home() {
   const { t } = useI18n()
   const navigate = useNavigate()
   const [c, setC] = useState<Counts | null>(null)
+  const [defs, setDefs] = useState<ApiDefinition[]>([])
+  const [cases, setCases] = useState<ApiCase[]>([])
   const [loading, setLoading] = useState(false)
   const [prefs, setPrefs] = useState<CardPref[]>(loadPrefs)
 
@@ -92,28 +90,43 @@ export default function Home() {
     }
     setLoading(true)
     Promise.all([
-      api.definitions(projectId).then((d) => d.length).catch(() => 0),
+      api.definitions(projectId).catch(() => [] as ApiDefinition[]),
       api.scenarios(projectId).then((d) => d.length).catch(() => 0),
-      api.projectCases(projectId).then((p) => p.total ?? p.items.length).catch(() => 0),
+      api.projectCases(projectId).then((p) => ({ total: p.total ?? p.items.length, items: p.items ?? [] })).catch(() => ({ total: 0, items: [] as ApiCase[] })),
       api.functionalCases(projectId).then((d) => d.length).catch(() => 0),
     ])
-      .then(([def, scenario, apiCase, funcCase]) =>
+      .then(([defList, scenario, casePage, funcCase]) => {
+        const dl = Array.isArray(defList) ? defList : []
+        setDefs(dl)
+        setCases(casePage.items)
         setC({
-          def,
+          def: dl.length,
           scenario,
-          apiCase,
+          apiCase: casePage.total,
           funcCase,
           plan: regList('plan', projectId).length,
           req: regList('requirement', projectId).length,
           bug: regList('bug', projectId).length,
-        }),
-      )
+        })
+      })
       .finally(() => setLoading(false))
   }, [projectId])
+
+  // 接口协议分布 + 覆盖率(真实数据:定义按 protocol 分组;有用例引用的定义=已覆盖)。
+  const protocolSegs = useMemo(() => {
+    const m = new Map<string, number>()
+    defs.forEach((d) => { const k = (d.protocol || 'HTTP').toUpperCase(); m.set(k, (m.get(k) ?? 0) + 1) })
+    return [...m.entries()].sort((a, b) => b[1] - a[1]).map(([label, value], i) => ({ label, value, color: PROTO_COLORS[i % PROTO_COLORS.length] }))
+  }, [defs])
+  const coveredDefs = useMemo(() => {
+    const ref = new Set(cases.map((x) => x.apiDefinitionId))
+    return defs.filter((d) => ref.has(d.id)).length
+  }, [defs, cases])
 
   const cardTitle: Record<CardKey, string> = {
     overview: t('home.title', '项目概览'),
     assets: t('home.assetDist', '测试资产分布'),
+    apiStats: t('home.apiStats', '接口数'),
     quality: t('home.quality', '质量概览'),
     shortcuts: t('home.shortcuts', '快捷入口'),
   }
@@ -197,6 +210,65 @@ export default function Home() {
             )}
           </Card>
         )
+      case 'apiStats': {
+        const totalDefs = defs.length
+        const uncovered = totalDefs - coveredDefs
+        const coverRate = totalDefs ? (coveredDefs * 100) / totalDefs : 0
+        return (
+          <Card title={<span><ApiOutlined style={{ color: '#7c3aed', marginRight: 6 }} />{cardTitle.apiStats}</span>} size="small" style={{ marginBottom: 16 }}>
+            {totalDefs === 0 ? (
+              <Empty description={t('common.empty', '暂无数据')} />
+            ) : (
+              <Row gutter={[24, 16]} align="middle">
+                {/* 协议分布:总数环 + 逐协议占比 */}
+                <Col xs={24} lg={14}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 24 }}>
+                    <Donut segments={protocolSegs} size={132} thickness={18} centerLabel={t('home.apiTotal', '接口总数')} />
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      {protocolSegs.map((s) => (
+                        <div key={s.label} style={{ display: 'flex', alignItems: 'center', padding: '5px 0', fontSize: 13 }}>
+                          <span style={{ width: 10, height: 10, borderRadius: 2, background: s.color, marginRight: 8 }} />
+                          <span style={{ flex: 1, color: '#5b6470' }}>{s.label}</span>
+                          <b>{s.value}</b>
+                          <span style={{ width: 56, textAlign: 'right', color: '#8a9099' }}>{((s.value * 100) / totalDefs).toFixed(1)}%</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </Col>
+                {/* 用例覆盖率:已覆盖 / 未覆盖 */}
+                <Col xs={24} lg={10}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 24 }}>
+                    <Donut
+                      segments={[
+                        { label: t('home.covered', '已覆盖'), value: coveredDefs, color: '#52c41a' },
+                        { label: t('home.uncovered', '未覆盖'), value: uncovered, color: '#e8eaed' },
+                      ]}
+                      size={132}
+                      thickness={18}
+                      centerLabel={t('home.coverRate', '覆盖率')}
+                    />
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 22, fontWeight: 700, color: coverRate >= 60 ? '#52c41a' : coverRate >= 30 ? '#fa8c16' : '#f5222d' }}>{coverRate.toFixed(1)}%</div>
+                      <div style={{ color: '#8a9099', fontSize: 12, marginBottom: 10 }}>{t('home.coverRateHint', '有用例引用的接口占比')}</div>
+                      <div style={{ display: 'flex', alignItems: 'center', padding: '5px 0', fontSize: 13 }}>
+                        <span style={{ width: 10, height: 10, borderRadius: 2, background: '#52c41a', marginRight: 8 }} />
+                        <span style={{ flex: 1, color: '#5b6470' }}>{t('home.covered', '已覆盖')}</span>
+                        <b>{coveredDefs}</b>
+                      </div>
+                      <div style={{ display: 'flex', alignItems: 'center', padding: '5px 0', fontSize: 13 }}>
+                        <span style={{ width: 10, height: 10, borderRadius: 2, background: '#d9d9d9', marginRight: 8 }} />
+                        <span style={{ flex: 1, color: '#5b6470' }}>{t('home.uncovered', '未覆盖')}</span>
+                        <b>{uncovered}</b>
+                      </div>
+                    </div>
+                  </div>
+                </Col>
+              </Row>
+            )}
+          </Card>
+        )
+      }
       case 'quality':
         return (
           <Card
