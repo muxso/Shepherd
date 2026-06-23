@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
+import { createPortal } from 'react-dom'
 import { Button, Drawer, Dropdown, Empty, Form, Input, Modal, Radio, Segmented, Select, Space, Switch, Table, Tabs, Tag, Typography, Upload } from 'antd'
 import { message, modal } from '../feedback'
 import { PlayCircleOutlined, PlusOutlined, SaveOutlined, ThunderboltOutlined, DownOutlined, LinkOutlined, SwapOutlined, DeleteOutlined, FullscreenOutlined, CloseOutlined, SearchOutlined, FilterOutlined, ReloadOutlined, MoreOutlined, ImportOutlined, InboxOutlined } from '@ant-design/icons'
@@ -6,7 +7,7 @@ import { api, ApiError, type ApiCase, type ApiDefinition, type ApiModule, type D
 import type { ColumnsType } from 'antd/es/table'
 import { useApp } from '../context'
 import { methodColor, statusColor, outcomeColor } from '../components/tags'
-import { Workspace, useWorkTabs } from '../components/Workspace'
+import { Workspace, useWorkTabs, useWorkspaceExtraSlot } from '../components/Workspace'
 import AssertionEditor from '../components/AssertionEditor'
 import ProcessorEditor from '../components/ProcessorEditor'
 import { DebugResultPanel, type SentRequest } from '../components/ApiSpecPanel'
@@ -164,10 +165,10 @@ export default function Scenarios() {
       return [{
         key: NEW_KEY,
         label: t('scenario.newScenario', '新建场景'),
-        children: <NewScenarioTab projectId={projectId} modules={modules} onCreated={(s) => { tabs.close(NEW_KEY); load().then(() => tabs.open(s.id)) }} />,
+        children: <NewScenarioTab projectId={projectId} modules={modules} active={tabs.activeKey === NEW_KEY} onCreated={(s) => { tabs.close(NEW_KEY); load().then(() => tabs.open(s.id)) }} />,
       }]
     const s = list.find((x) => x.id === id)
-    return s ? [{ key: s.id, label: s.name, children: <ScenarioDetail scenario={s} /> }] : []
+    return s ? [{ key: s.id, label: s.name, children: <ScenarioDetail scenario={s} active={tabs.activeKey === s.id} /> }] : []
   })
 
   return (
@@ -284,10 +285,60 @@ function StepRow({ node, idx, depth, t, result, enabled = true, onToggle, onRun 
 }
 
 // 场景详情:全标签编辑器外壳(对齐参考图 #20-#24:头部 + 基本信息/步骤/参数/前后置/断言/
+// 场景工具栏(环境 + 服务端执行 + 保存):详情页与新建页复用,经 Workspace 插槽
+// 投射到 Tab 栏右侧(对齐参考图 #38 红色区域)。runDisabled 时执行按钮置灰(新建未保存)。
+function ScenarioActionBar({ envs, envId, onEnv, running, onRun, onLocalRun, saving, onSave, runDisabled, envDisabled, runTitle, viewReport, t }: {
+  envs: Environment[]
+  envId: string
+  onEnv: (v: string) => void
+  running?: boolean
+  onRun?: () => void
+  onLocalRun?: () => void
+  saving?: boolean
+  onSave: () => void
+  runDisabled?: boolean
+  envDisabled?: boolean
+  runTitle?: string
+  viewReport?: ReactNode
+  t: TFn
+}) {
+  return (
+    <>
+      {viewReport}
+      <Select
+        size="small"
+        value={envId || undefined}
+        onChange={onEnv}
+        style={{ width: 200 }}
+        disabled={envDisabled}
+        placeholder={t('editor.selectEnv', '选择环境')}
+        allowClear
+        options={envs.map((e) => ({ value: e.id, label: e.baseUrl ? `${e.name} · ${e.baseUrl}` : e.name }))}
+        notFoundContent={t('editor.noEnvConfigured', '未配置环境,去「环境」页新建')}
+      />
+      {runDisabled ? (
+        <Button type="primary" icon={<ThunderboltOutlined />} disabled title={runTitle}>{t('apidef.serverRun', '服务端执行')}</Button>
+      ) : (
+        <Dropdown.Button
+          type="primary"
+          icon={<DownOutlined />}
+          loading={running}
+          onClick={onRun}
+          menu={{ items: [{ key: 'local', label: t('apidef.localRun', '本地执行') }], onClick: () => onLocalRun?.() }}
+        >
+          <ThunderboltOutlined /> {t('apidef.serverRun', '服务端执行')}
+        </Dropdown.Button>
+      )}
+      <Button type="default" icon={<SaveOutlined />} loading={saving} onClick={onSave}>{t('a.save', '保存')}</Button>
+    </>
+  )
+}
+
 // 执行历史/变更历史/设置 + 顶部右侧 环境/服务端执行/保存)。步骤详情抽屉(#25)、可编辑元信息
 // (需后端 updateScenario)、报告(#26)为后续切片。
-function ScenarioDetail({ scenario }: { scenario: Scenario }) {
+function ScenarioDetail({ scenario, active }: { scenario: Scenario; active?: boolean }) {
   const { t } = useI18n()
+  const slot = useWorkspaceExtraSlot()
   const [steps, setSteps] = useState<ScenarioStep[]>([])
   const [running, setRunning] = useState(false)
   const [add, setAdd] = useState<string>('') // 当前打开的添加表单类型
@@ -528,30 +579,22 @@ function ScenarioDetail({ scenario }: { scenario: Scenario }) {
 
   return (
     <div style={{ padding: '12px 16px', height: '100%', overflow: 'auto' }}>
-      {/* 顶部右侧:环境 + 服务端执行 + 保存(对齐参考图 #20)。 */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
-        <div style={{ flex: 1 }} />
-        <Select
-          size="small"
-          value={envId || undefined}
-          onChange={setEnvId}
-          style={{ width: 200 }}
-          placeholder={t('editor.selectEnv', '选择环境')}
-          allowClear
-          options={envs.map((e) => ({ value: e.id, label: e.baseUrl ? `${e.name} · ${e.baseUrl}` : e.name }))}
-          notFoundContent={t('editor.noEnvConfigured', '未配置环境,去「环境」页新建')}
-        />
-        <Dropdown.Button
-          type="primary"
-          icon={<DownOutlined />}
-          loading={running}
-          onClick={run}
-          menu={{ items: [{ key: 'local', label: t('apidef.localRun', '本地执行') }], onClick: () => message.info(t('scenario.localSoon', '本地执行即将接入')) }}
-        >
-          <ThunderboltOutlined /> {t('apidef.serverRun', '服务端执行')}
-        </Dropdown.Button>
-        <Button type="default" icon={<SaveOutlined />} loading={saving} onClick={onSave}>{t('a.save', '保存')}</Button>
-      </div>
+      {/* 工具栏(环境 + 服务端执行 + 保存)投射到 Tab 栏右侧;仅活动 Tab 渲染。 */}
+      {active && slot && createPortal(
+        <ScenarioActionBar
+          envs={envs}
+          envId={envId}
+          onEnv={setEnvId}
+          running={running}
+          onRun={run}
+          onLocalRun={() => message.info(t('scenario.localSoon', '本地执行即将接入'))}
+          saving={saving}
+          onSave={onSave}
+          viewReport={lastRun && <Button type="link" size="small" onClick={() => setReportModalId(lastRun.reportId)}>{t('scenario.viewReport', '查看执行报告')}</Button>}
+          t={t}
+        />,
+        slot,
+      )}
       {/* 头部:状态 / 等级 / [id] / 名称 / 标签 / 描述。 */}
       <div style={{ marginBottom: 14 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, flexWrap: 'wrap' }}>
@@ -561,9 +604,6 @@ function ScenarioDetail({ scenario }: { scenario: Scenario }) {
           <span style={{ fontWeight: 600, fontSize: 15, color: '#1f2329' }}>{form.name}</span>
           {form.tags.map((tg) => <Tag key={tg} style={{ margin: 0 }}>{tg}</Tag>)}
           <LinkOutlined style={{ color: '#bbb' }} />
-          <div style={{ flex: 1 }} />
-          {/* 全部步骤执行完成后显示「查看执行报告」(对齐参考图 #28 红色区域)。 */}
-          {lastRun && <Button type="link" onClick={() => setReportModalId(lastRun.reportId)}>{t('scenario.viewReport', '查看执行报告')}</Button>}
         </div>
       </div>
       <Tabs className="ms-detail-tabs" defaultActiveKey="steps" items={tabs} />
@@ -1322,8 +1362,9 @@ function ImportRequestDrawer({
 }
 
 // 新建场景:全屏 tab(对齐参考图 #38)。左=步骤编辑器占位 + 右=基本信息表单;保存创建场景后转入详情。
-function NewScenarioTab({ projectId, modules, onCreated }: { projectId: string; modules: ApiModule[]; onCreated: (s: Scenario) => void }) {
+function NewScenarioTab({ projectId, modules, onCreated, active }: { projectId: string; modules: ApiModule[]; onCreated: (s: Scenario) => void; active?: boolean }) {
   const { t } = useI18n()
+  const slot = useWorkspaceExtraSlot()
   const [name, setName] = useState('')
   const [moduleId, setModuleId] = useState('')
   const [priority, setPriority] = useState('P0')
@@ -1405,12 +1446,21 @@ function NewScenarioTab({ projectId, modules, onCreated }: { projectId: string; 
   )
   return (
     <div style={{ padding: '12px 16px', height: '100%', overflow: 'auto' }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
-        <div style={{ flex: 1 }} />
-        <Select size="small" disabled placeholder={t('editor.selectEnv', '选择环境')} style={{ width: 180 }} options={[]} />
-        <Button type="primary" icon={<ThunderboltOutlined />} disabled title={t('scenario.saveFirst', '保存场景后可执行')}>{t('apidef.serverRun', '服务端执行')}</Button>
-        <Button type="primary" icon={<SaveOutlined />} loading={saving} onClick={save}>{t('a.save', '保存')}</Button>
-      </div>
+      {/* 工具栏投射到 Tab 栏右侧;未保存场景:环境/执行置灰,仅保存可用。 */}
+      {active && slot && createPortal(
+        <ScenarioActionBar
+          envs={[]}
+          envId=""
+          onEnv={() => undefined}
+          saving={saving}
+          onSave={save}
+          runDisabled
+          envDisabled
+          runTitle={t('scenario.saveFirst', '保存场景后可执行')}
+          t={t}
+        />,
+        slot,
+      )}
       <div style={{ display: 'flex', gap: 16, alignItems: 'flex-start' }}>
         <div style={{ flex: 1, minWidth: 0 }}>
           <Tabs className="ms-detail-tabs" size="small" items={[
