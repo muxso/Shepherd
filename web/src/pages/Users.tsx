@@ -34,6 +34,28 @@ export default function Users() {
       message.error(e instanceof ApiError ? e.message : t('user.updateFailed', '更新失败'))
     }
   }
+  const resetPassword = (u: User) => {
+    modal.confirm({
+      title: t('user.resetConfirm', '重置该用户密码?'),
+      content: `${u.name} (${u.email})`,
+      onOk: async () => {
+        try {
+          const r = await api.resetUserPassword(u.id)
+          modal.success({
+            title: t('user.resetOk', '密码已重置'),
+            content: (
+              <div>
+                {t('user.newPwHint', '新密码(请转交用户):')}
+                <div style={{ marginTop: 8, fontFamily: 'monospace', fontWeight: 700, fontSize: 16 }}>{r.password}</div>
+              </div>
+            ),
+          })
+        } catch (e) {
+          message.error(e instanceof ApiError ? e.message : t('user.resetFailed', '重置失败'))
+        }
+      },
+    })
+  }
   const removeUser = (u: User) => {
     modal.confirm({
       title: t('user.delConfirm', '确认删除用户?'),
@@ -57,7 +79,7 @@ export default function Users() {
     { title: t('user.email', '邮箱'), dataIndex: 'email', ellipsis: true },
     { title: t('user.phone', '手机'), width: 110, render: () => <span style={{ color: '#bbb' }}>—</span> },
     { title: t('user.org', '组织'), width: 140, render: () => <Tag>{t('user.defaultOrg', '默认组织')}</Tag> },
-    { title: t('user.userGroup', '用户组'), width: 160, render: () => <Tag color="green">{t('user.sysMember', '系统成员')}</Tag> },
+    { title: t('user.userGroup', '用户组'), width: 200, render: (_v, u) => (u.userGroups && u.userGroups.length ? u.userGroups.map((g) => <Tag key={g} color="green" style={{ marginBottom: 2 }}>{g}</Tag>) : <Tag color="green">{t('user.sysMember', '系统成员')}</Tag>) },
     {
       title: t('user.status', '状态'),
       width: 90,
@@ -76,7 +98,7 @@ export default function Users() {
                 { key: 'reset', label: t('user.resetPwd', '重置密码') },
                 { key: 'del', label: t('a.delete', '删除'), danger: true },
               ],
-              onClick: ({ key }) => (key === 'del' ? removeUser(u) : soon()),
+              onClick: ({ key }) => (key === 'del' ? removeUser(u) : key === 'reset' ? resetPassword(u) : soon()),
             }}
           >
             <Button type="link" size="small" icon={<MoreOutlined />} />

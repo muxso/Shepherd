@@ -69,7 +69,7 @@ use system_setting::adapters::auth::Argon2PasswordHasher;
 use system_setting::adapters::oidc::{FeishuProvider, WecomProvider};
 use system_setting::adapters::pg::{
     PgCredentialRepository, PgExternalUserRepository, PgOrgRepository, PgRoleRepository,
-    PgSessionStore, PgUserDirectory, PgUserRepository, PgUserRoleRepository,
+    PgSessionStore, PgUserDirectory, PgUserRepository, PgUserRoleQuery, PgUserRoleRepository,
 };
 use system_setting::application::{
     CreateUserUseCase, LoginUseCase, OidcLoginUseCase, OrganizationService, ResolveUserNamesUseCase,
@@ -210,11 +210,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let login_uc =
         LoginUseCase::new(Arc::new(creds), Arc::new(hasher), sessions.clone(), user_role_repo.clone())
             .with_ttl_secs(ttl_secs);
+    // 用户管理额外依赖:重置密码(凭证仓储 + Argon2)、用户组列(用户→角色查询)。
+    let creds_admin: Arc<dyn system_setting::ports::CredentialRepository> =
+        Arc::new(PgCredentialRepository::new(pool.clone()));
+    let hasher_admin: Arc<dyn system_setting::ports::PasswordHasher> = Arc::new(Argon2PasswordHasher);
+    let user_role_query: Arc<dyn system_setting::ports::UserRoleQuery> =
+        Arc::new(PgUserRoleQuery::new(pool.clone()));
     let user_routes = system_setting::adapters::http::router(
         user_uc,
         resolve_uc,
         login_uc,
         user_admin,
+        creds_admin,
+        hasher_admin,
+        user_role_query,
         sessions.clone(),
     );
 

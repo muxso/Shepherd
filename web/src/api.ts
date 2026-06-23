@@ -363,6 +363,8 @@ export interface User {
   name: string
   email: string
   enable?: boolean
+  /** 用户组(角色名);列表接口附带。 */
+  userGroups?: string[]
 }
 
 export interface CaseStep {
@@ -657,6 +659,7 @@ export const api = {
   updateUser: (id: string, b: { name: string; email: string; enable: boolean }) =>
     http.put<User>(`/system/user/${id}`, b),
   deleteUser: (id: string) => http.del(`/system/user/${id}`),
+  resetUserPassword: (id: string) => http.post<{ password: string }>(`/system/user/${id}/reset-password`),
 
   // 功能用例(项目级)
   functionalCases: (projectId: string) =>

@@ -133,6 +133,10 @@ const DICT: Record<string, { zh: string; en: string }> = {
   'user.delConfirm': { zh: '确认删除用户?', en: 'Delete this user?' },
   'user.deleted': { zh: '已删除', en: 'Deleted' },
   'user.delFailed': { zh: '删除失败', en: 'Delete failed' },
+  'user.resetConfirm': { zh: '重置该用户密码?', en: 'Reset this user’s password?' },
+  'user.resetOk': { zh: '密码已重置', en: 'Password reset' },
+  'user.newPwHint': { zh: '新密码(请转交用户):', en: 'New password (share with the user):' },
+  'user.resetFailed': { zh: '重置失败', en: 'Reset failed' },
   // 项目管理(项目与权限)
   'proj.permTab': { zh: '项目与权限', en: 'Project & Permissions' },
   'proj.tmplTab': { zh: '模板管理', en: 'Templates' },
