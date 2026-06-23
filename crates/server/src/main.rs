@@ -292,11 +292,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let ver_repo = Arc::new(PgVerificationRepository::new(pool.clone()));
     let ver_admin = VerificationService::new(ver_repo.clone());
 
-    // —— 服务端复合:据 requirementId 取规格自动拆分,并顺手开验证账本(幂等)——
+    // 功能用例仓储(供拆分时顺手为每条验收标准生成功能用例草稿 + 关联,以及下方 CRUD 复用)。
+    let case_repo = Arc::new(case_management::adapters::pg::PgCaseRepository::new(pool.clone()));
+    // —— 服务端复合:据 requirementId 取规格自动拆分,顺手开验证账本 + 生成功能用例覆盖(均幂等)——
     let breakdown_routes = breakdown_route::router(
         req_admin.clone(),
         BreakdownUseCase::new(task_repo.clone(), task_planner.clone()),
         CreateVerificationUseCase::new(ver_repo.clone()),
+        case_repo.clone(),
         sessions.clone(),
     );
     let verification_routes = verification::adapters::http::router(
@@ -485,8 +488,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
     let runner_routes = runner::adapters::http::router(runner_svc, sessions.clone());
 
-    // —— 功能用例管理(CRUD + 自定义字段 + Excel 导出)——
-    let case_repo = Arc::new(case_management::adapters::pg::PgCaseRepository::new(pool.clone()));
+    // —— 功能用例管理(CRUD + 自定义字段 + Excel 导出)—— case_repo 已在上方构造。
     let functional_case_routes = case_management::adapters::http::router(
         case_management::application::CreateCaseUseCase::new(case_repo.clone()),
         case_management::application::ListCasesUseCase::new(case_repo.clone()),
