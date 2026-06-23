@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from 'react'
+import { createContext, useContext, useEffect, useState, type ReactNode } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { Button, Empty, Input, Space, Table, Tabs } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
@@ -6,6 +6,13 @@ import { PlusOutlined, ReloadOutlined } from '@ant-design/icons'
 import { useI18n } from '../i18n'
 
 const LIST_KEY = '__list__'
+
+// 工作区 Tab 栏右侧的额外内容插槽(DOM 节点)。活动 Tab 可通过 createPortal
+// 把自己的工具栏(如场景的「环境/服务端执行/保存」)投射到 Tab 栏同一行右侧。
+const ExtraSlotContext = createContext<HTMLElement | null>(null)
+export function useWorkspaceExtraSlot() {
+  return useContext(ExtraSlotContext)
+}
 
 // 深链:读取 ?open=<id>,交给调用方打开对应详情 tab,然后清除该参数(避免重复触发)。
 export function useOpenParam(onOpen: (id: string) => void) {
@@ -71,30 +78,35 @@ export function Workspace({
   onClose: (k: string) => void
 }) {
   const { t } = useI18n()
+  // Tab 栏右侧插槽:活动 Tab 通过 useWorkspaceExtraSlot()+createPortal 投射工具栏。
+  const [slotEl, setSlotEl] = useState<HTMLDivElement | null>(null)
   const items = [
     { key: LIST_KEY, label: listLabel ?? t('ws.list', '列表'), closable: false, children: listContent },
     ...tabs.map((tab) => ({ key: tab.key, label: tab.label, children: tab.children })),
   ]
   return (
-    <div style={{ display: 'flex', height: '100%' }}>
-      {left !== undefined && (
-        <div style={{ width: leftWidth, background: '#fff', borderRight: '1px solid #f0f0f0', display: 'flex', flexDirection: 'column' }}>
-          {left}
+    <ExtraSlotContext.Provider value={slotEl}>
+      <div style={{ display: 'flex', height: '100%' }}>
+        {left !== undefined && (
+          <div style={{ width: leftWidth, background: '#fff', borderRight: '1px solid #f0f0f0', display: 'flex', flexDirection: 'column' }}>
+            {left}
+          </div>
+        )}
+        <div style={{ flex: 1, minWidth: 0, background: '#fff' }}>
+          <Tabs
+            type="editable-card"
+            hideAdd
+            activeKey={activeKey}
+            onChange={onChange}
+            onEdit={(key, action) => action === 'remove' && onClose(String(key))}
+            items={items}
+            style={{ height: '100%' }}
+            className="ms-worktabs"
+            tabBarExtraContent={{ right: <div ref={setSlotEl} style={{ display: 'flex', alignItems: 'center', gap: 8, paddingRight: 12 }} /> }}
+          />
         </div>
-      )}
-      <div style={{ flex: 1, minWidth: 0, background: '#fff' }}>
-        <Tabs
-          type="editable-card"
-          hideAdd
-          activeKey={activeKey}
-          onChange={onChange}
-          onEdit={(key, action) => action === 'remove' && onClose(String(key))}
-          items={items}
-          style={{ height: '100%' }}
-          className="ms-worktabs"
-        />
       </div>
-    </div>
+    </ExtraSlotContext.Provider>
   )
 }
 
