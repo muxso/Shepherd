@@ -481,15 +481,23 @@ impl CaseResultSink for PgCaseResultSink {
         headers: &[(String, String)],
         assertions: &serde_json::Value,
         extractions: &serde_json::Value,
+        req_method: &str,
+        req_url: &str,
+        req_headers: &[(String, String)],
+        req_body: Option<&str>,
     ) -> Result<(), PortError> {
-        // 响应体截断到 64KB,避免明细表膨胀。
+        // 响应体/请求体截断到 64KB,避免明细表膨胀。
         let body_trunc: String = body.chars().take(65536).collect();
+        let req_body_trunc: Option<String> = req_body.map(|b| b.chars().take(65536).collect());
         let headers_json = serde_json::to_value(headers)
             .map_err(|e| PortError::Backend(format!("serialize headers: {e}")))?;
+        let req_headers_json = serde_json::to_value(req_headers)
+            .map_err(|e| PortError::Backend(format!("serialize req headers: {e}")))?;
         sqlx::query(
             "UPDATE ms_api_case_result \
                SET status_code = $3, latency_ms = $4, resp_size = $5, body = $6, headers = $7, \
-                   assertions = $8, extractions = $9 \
+                   assertions = $8, extractions = $9, \
+                   req_method = $10, req_url = $11, req_headers = $12, req_body = $13 \
              WHERE report_id = $1 AND case_id = $2",
         )
         .bind(report_id)
@@ -501,6 +509,10 @@ impl CaseResultSink for PgCaseResultSink {
         .bind(headers_json)
         .bind(assertions)
         .bind(extractions)
+        .bind(req_method)
+        .bind(req_url)
+        .bind(req_headers_json)
+        .bind(req_body_trunc)
         .execute(&self.pool)
         .await
         .map_err(map_err)?;
@@ -585,7 +597,8 @@ impl PgBatchReport {
         let Some(h) = header else { return Ok(None) };
         let rows = sqlx::query(
             "SELECT case_id, outcome, failures, executed_at::text AS executed_at, \
-                    status_code, latency_ms, resp_size, body, headers, assertions, extractions \
+                    status_code, latency_ms, resp_size, body, headers, assertions, extractions, \
+                    req_method, req_url, req_headers, req_body \
              FROM ms_api_case_result WHERE report_id = $1 ORDER BY executed_at",
         )
         .bind(report_id)
@@ -603,6 +616,10 @@ impl PgBatchReport {
                     .unwrap_or_default();
                 let headers_v: Option<serde_json::Value> = r.try_get("headers").ok().flatten();
                 let headers = headers_v
+                    .and_then(|v| serde_json::from_value::<Vec<(String, String)>>(v).ok())
+                    .unwrap_or_default();
+                let req_headers_v: Option<serde_json::Value> = r.try_get("req_headers").ok().flatten();
+                let req_headers = req_headers_v
                     .and_then(|v| serde_json::from_value::<Vec<(String, String)>>(v).ok())
                     .unwrap_or_default();
                 // 断言/提取(0048 后回填;旧报告为 null → 空数组)。
@@ -624,6 +641,10 @@ impl PgBatchReport {
                     headers,
                     assertions: json_arr("assertions"),
                     extractions: json_arr("extractions"),
+                    req_method: r.try_get("req_method").ok().flatten(),
+                    req_url: r.try_get("req_url").ok().flatten(),
+                    req_headers,
+                    req_body: r.try_get("req_body").ok().flatten(),
                 })
             })
             .collect::<Result<Vec<_>, PortError>>()?;
@@ -666,6 +687,11 @@ pub struct CaseResultRow {
     /// 逐条断言结果 / 提取变量(0048 后回填;旧报告为空数组)。
     pub assertions: serde_json::Value,
     pub extractions: serde_json::Value,
+    /// 实际发送的请求(0060 后回填;旧报告为 None / 空)。
+    pub req_method: Option<String>,
+    pub req_url: Option<String>,
+    pub req_headers: Vec<(String, String)>,
+    pub req_body: Option<String>,
 }
 
 // ---- 用例执行记录读模型:按 case_id 倒序分页查 ms_api_case_result ----

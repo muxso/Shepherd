@@ -14,6 +14,7 @@ import AssertionEditor from '../components/AssertionEditor'
 import ProcessorEditor from '../components/ProcessorEditor'
 import KVEditor, { type KVRow } from '../components/KVEditor'
 import { DebugResultPanel, type SentRequest } from '../components/ApiSpecPanel'
+import { SelectProjectEmpty } from '../components/Page'
 import { useI18n } from '../i18n'
 
 type TFn = (key: string, fallback?: string) => string
@@ -206,7 +207,7 @@ export default function Scenarios() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [list, search, selModule, modules, advApplied])
 
-  if (!projectId) return <div style={{ padding: 48 }}><Empty description={t('common.selectProject', '请先在顶部选择项目')} /></div>
+  if (!projectId) return <SelectProjectEmpty />
 
   // 左侧:新建/导入(header)+ 复用 ModuleTreePanel(模块搜索 + 层级模块树 + 模块增删改)+ 回收站(footer)。
   const left = (
@@ -1727,11 +1728,13 @@ function caseToSentRequest(c: ApiCase): SentRequest {
 function ReportRow({ idx, r, label, t, open, onToggle, caseOf }: { idx: number; r: ReportResultItem; label: (id: string) => string; t: TFn; open: boolean; onToggle: () => void; caseOf?: (id: string) => ApiCase | undefined }) {
   const ok = r.outcome === 'SUCCESS'
   const hasDetail = r.statusCode != null || r.body != null || (r.headers?.length ?? 0) > 0
-  // REQUEST 步骤 caseId = "GET http://…"(直接解析);CASE 引用 caseId = 用例 UUID → 据引用用例重建,
-  // 让「实际请求 / 控制台 / cURL」不再显示「尚未执行」。
+  // 实际请求优先级:① 报告持久化的实际请求(0060 后,变量/baseUrl/认证已解析,100% 还原)
+  // ② 旧报告回落:REQUEST 步骤从 caseId="GET http://…" 解析;CASE 引用据用例模板重建。
   const m = /^([A-Z]+)\s+(\S+)/.exec(r.caseId)
   const kase = m ? undefined : caseOf?.(r.caseId)
-  const req: SentRequest | null = m ? { method: m[1], url: m[2], headers: [] } : kase ? caseToSentRequest(kase) : null
+  const req: SentRequest | null = r.request
+    ? { method: r.request.method, url: r.request.url, headers: (r.request.headers ?? []).map(([key, value]) => ({ key, value })), body: r.request.body ?? undefined }
+    : m ? { method: m[1], url: m[2], headers: [] } : kase ? caseToSentRequest(kase) : null
   // 0048 起报告持久化逐条断言(含通过项);旧报告无 → 据 failures 合成失败行兜底。
   const failAsserts: AssertionResult[] = r.failures.map((f) => ({ item: f, condition: '', expected: '', actual: '', passed: false, reason: f }))
   const asserts = r.assertions?.length ? r.assertions : failAsserts

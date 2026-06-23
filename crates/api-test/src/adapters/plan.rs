@@ -254,6 +254,11 @@ impl PlanExecutor {
                     &s.headers,
                     &assertions_json,
                     &extractions_json,
+                    // 实际发送的请求(env baseUrl + ${var} + 认证头均已解析,见上方 apply_env_static/substitute_request)。
+                    req.method.as_str(),
+                    &req.url,
+                    &req.headers,
+                    req.body.as_deref(),
                 )
                 .await;
             // EXTRACT 后置:写入上下文供后续节点引用。
