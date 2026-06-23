@@ -44,7 +44,12 @@ server 有一道全局 **30s 请求超时**(`TimeoutLayer`)。`claude -p` 跑一
   审计事件 + `mock://` 交付物。
 - **`claude-agent.sh`** —— 同步桥接 `claude -p`(会被 30s 超时卡死,仅留作参考/极快任务)。
 - **`claude-agent-async.sh`** —— **异步桥接(推荐)**。把 prompt 交给 `claude -p --output-format json`,
-  跑完经 HTTP 回调把 `claude://` 交付物 + 审计事件回灌。**会真实改文件、消耗用量**,需 `claude` 已登录。
+  跑完经 HTTP 回调把交付物 + 审计事件回灌。**会真实改文件、消耗用量**,需 `claude` 已登录。
+  交付物 = **真实代码变动**:跑前记 HEAD,跑后用 `git write-tree`/`commit-tree` 把改动快照成
+  commit 推到 `shepherd/deliver/<id>` 分支(不切分支、不动工作区),交付物 reference =
+  GitHub/GitLab commit URL(点开即看该单 diff)。无改动则标「无代码变动」。
+  > 注:快照取「dev 分支 tip + 当前全部未提交改动」,所以**派单前先把无关改动提交干净**,
+  > deliver commit 才只含 Claude 这一单的产出。并发派单共享一个工作区,仍应避免(见上)。
 
 ## 启用(真实 Claude,异步)
 
