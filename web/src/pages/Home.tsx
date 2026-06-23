@@ -265,8 +265,8 @@ export default function Home() {
           </Card>
         )
       case 'projectBars': {
-        // 资产量降序,仅取前 12,避免项目过多时 x 轴标签重叠。
-        const TOP = 12
+        // 资产量降序;支持横向滚动后放宽到 60(够用且防极端项目数撑爆)。
+        const TOP = 60
         const ranked = projRows
           .map((r) => ({ r, total: Object.values(r.values).reduce((s, v) => s + v, 0) }))
           .filter((x) => x.total > 0)
@@ -275,7 +275,7 @@ export default function Home() {
         return (
           <Card
             title={<span><ApiOutlined style={{ color: '#1677ff', marginRight: 6 }} />{cardTitle.projectBars}</span>}
-            extra={ranked.length > TOP ? <span style={{ fontSize: 12, color: '#8a9099' }}>{t('home.topN', '资产量前 {n}').replace('{n}', String(TOP))}</span> : undefined}
+            extra={ranked.length > TOP ? <span style={{ fontSize: 12, color: '#8a9099' }}>{t('home.topN', '资产量前 {n}').replace('{n}', String(TOP))}</span> : ranked.length > 8 ? <span style={{ fontSize: 12, color: '#8a9099' }}>{t('home.scrollHint', '← 左右滑动 →')}</span> : undefined}
             size="small"
             style={{ marginBottom: 16 }}
           >
