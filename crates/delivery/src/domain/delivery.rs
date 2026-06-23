@@ -81,6 +81,8 @@ pub enum AttemptStatus {
     Delivered,
     /// 执行/交付失败(终态失败)。
     Failed,
+    /// 用户主动停止(终态中止)。
+    Stopped,
 }
 
 impl AttemptStatus {
@@ -90,6 +92,7 @@ impl AttemptStatus {
             Self::Running => "RUNNING",
             Self::Delivered => "DELIVERED",
             Self::Failed => "FAILED",
+            Self::Stopped => "STOPPED",
         }
     }
 
@@ -99,8 +102,14 @@ impl AttemptStatus {
             "RUNNING" => Some(Self::Running),
             "DELIVERED" => Some(Self::Delivered),
             "FAILED" => Some(Self::Failed),
+            "STOPPED" => Some(Self::Stopped),
             _ => None,
         }
+    }
+
+    /// 是否终态(不再流转)。
+    pub fn is_terminal(self) -> bool {
+        matches!(self, Self::Delivered | Self::Failed | Self::Stopped)
     }
 
     pub fn can_transition_to(self, to: AttemptStatus) -> bool {
@@ -110,8 +119,10 @@ impl AttemptStatus {
             (Dispatched, Running)
                 | (Dispatched, Delivered) // 同步执行器一步到位
                 | (Dispatched, Failed)
+                | (Dispatched, Stopped) // 派发后未开跑即被停
                 | (Running, Delivered)
                 | (Running, Failed)
+                | (Running, Stopped) // 运行中被用户停止
         )
     }
 }
@@ -179,6 +190,14 @@ impl DeliveryAttempt {
         self.ensure(AttemptStatus::Failed)?;
         self.status = AttemptStatus::Failed;
         self.error = Some(error.to_string());
+        Ok(())
+    }
+
+    /// 用户主动停止:Dispatched/Running→Stopped,记录原因(终态中止)。
+    pub fn stop(&mut self, reason: &str) -> Result<(), DeliveryError> {
+        self.ensure(AttemptStatus::Stopped)?;
+        self.status = AttemptStatus::Stopped;
+        self.error = Some(reason.to_string());
         Ok(())
     }
 }
@@ -256,8 +275,24 @@ mod tests {
         for k in [DeliverableKind::Diff, DeliverableKind::PullRequest, DeliverableKind::Branch, DeliverableKind::Patch] {
             assert_eq!(DeliverableKind::parse(k.as_str()), Some(k));
         }
-        for s in [AttemptStatus::Dispatched, AttemptStatus::Running, AttemptStatus::Delivered, AttemptStatus::Failed] {
+        for s in [AttemptStatus::Dispatched, AttemptStatus::Running, AttemptStatus::Delivered, AttemptStatus::Failed, AttemptStatus::Stopped] {
             assert_eq!(AttemptStatus::parse(s.as_str()), Some(s));
         }
+    }
+
+    #[test]
+    fn stop_from_dispatched_or_running_then_terminal() {
+        let mut a = attempt();
+        a.stop("用户停止").expect("stop");
+        assert_eq!(a.status, AttemptStatus::Stopped);
+        assert_eq!(a.error.as_deref(), Some("用户停止"));
+        assert!(a.status.is_terminal());
+
+        let mut b = attempt();
+        b.start_running("r").expect("run");
+        assert!(b.stop("中途停止").is_ok());
+
+        // 终态不可再停
+        assert!(a.stop("again").is_err());
     }
 }

@@ -193,7 +193,8 @@ impl DeliveryObserver for OrchestratorObserver {
                 DeliveryProgress::Delivered { deliverable }
             }
             AttemptStatus::Failed => DeliveryProgress::Failed,
-            AttemptStatus::Dispatched => return,
+            // 派发未开跑、用户主动停止:不驱动验证门(stop 也不经由 notify_progress)。
+            AttemptStatus::Dispatched | AttemptStatus::Stopped => return,
         };
         if let Ok(outcome) =
             self.orchestrator.on_progress(&attempt.decomposition_id, &attempt.task_id, progress).await
