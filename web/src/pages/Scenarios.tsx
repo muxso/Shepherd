@@ -961,52 +961,104 @@ function ScenarioChangesTab({ scenarioId, t }: { scenarioId: string; t: TFn }) {
 // 场景报告(对齐参考图 #26):报告头(状态/用例数)+ 报告明细逐步结果(通过/失败 + 失败原因)。
 // 注:响应时间/大小/状态码/响应体当前未持久化(执行器仅记录通过失败 + 失败原因),展示为 — ;
 // 完整明细需扩展执行器落库(后续切片)。
+// 圆环图(通过/失败):参考 docs/api-coverage.html 的 SVG donut。
+function ReportDonut({ pass, fail }: { pass: number; fail: number }) {
+  const total = pass + fail
+  const C = 2 * Math.PI * 42 // 周长 ≈ 263.894
+  const passLen = total ? (pass / total) * C : 0
+  return (
+    <svg width="120" height="120" viewBox="0 0 120 120">
+      <g transform="rotate(-90 60 60)">
+        <circle cx="60" cy="60" r="42" fill="none" stroke="#f0f2f5" strokeWidth="16" />
+        <circle cx="60" cy="60" r="42" fill="none" stroke="#2e7d32" strokeWidth="16" strokeDasharray={`${passLen} ${C - passLen}`} strokeDashoffset="0" />
+        <circle cx="60" cy="60" r="42" fill="none" stroke="#c62828" strokeWidth="16" strokeDasharray={`${C - passLen} ${passLen}`} strokeDashoffset={`-${passLen}`} />
+      </g>
+      <text x="60" y="56" textAnchor="middle" fontSize="20" fontWeight="700" fill="#1f2329">{total}</text>
+      <text x="60" y="74" textAnchor="middle" fontSize="11" fill="#8a9099">步骤</text>
+    </svg>
+  )
+}
+
+// 场景执行报告:从右侧展开的抽屉(对齐 docs/api-coverage.html)。
+// 顶部=报告分析卡(步骤数/通过/失败/通过率)+ 圆环;工具栏=过滤 + 展开/收起全部;
+// 报告明细沿用现有 ReportRow 结构(逐步可展开,复用调试 7 标签面板)。
 function ScenarioReportModal({ reportId, nameOf, onClose }: { reportId: string | null; nameOf: NameOf; onClose: () => void }) {
   const { t } = useI18n()
   const [data, setData] = useState<ScenarioReportDetail | null>(null)
   const [loading, setLoading] = useState(false)
   const [search, setSearch] = useState('')
+  const [openSet, setOpenSet] = useState<Set<number>>(new Set())
   useEffect(() => {
     if (!reportId) { setData(null); return }
+    setOpenSet(new Set())
     setLoading(true)
     api.scenarioReport(reportId).then(setData).catch(() => setData(null)).finally(() => setLoading(false))
   }, [reportId])
-  const passN = data?.results.filter((r) => r.outcome === 'SUCCESS').length ?? 0
-  const rows = (data?.results || []).filter((r) => !search || r.caseId.toLowerCase().includes(search.toLowerCase()))
+  const all = data?.results || []
+  const passN = all.filter((r) => r.outcome === 'SUCCESS').length
+  const failN = all.length - passN
+  const passRate = all.length ? (passN / all.length) * 100 : 0
+  const rows = all.filter((r) => !search || r.caseId.toLowerCase().includes(search.toLowerCase()))
+  const toggle = (i: number) => setOpenSet((prev) => { const n = new Set(prev); if (n.has(i)) n.delete(i); else n.add(i); return n })
   // caseId 多为可读请求行(GET http://...)或用例 UUID;UUID 用 nameOf 解析。
   const label = (id: string) => (/^[0-9a-f]{8}-/.test(id) ? nameOf(id) : id)
+  const stat = (lbl: ReactNode, val: ReactNode, color?: string) => (
+    <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', fontSize: 14 }}><span style={{ color: '#5b6470' }}>{lbl}</span><b style={{ color }}>{val}</b></div>
+  )
   return (
-    <Modal open={!!reportId} onCancel={onClose} footer={null} width="80%" title={t('scenario.report', '场景报告')} destroyOnHidden>
+    <Drawer
+      open={!!reportId}
+      onClose={onClose}
+      width="60%"
+      title={t('scenario.report', '场景报告')}
+      styles={{ body: { background: '#f6f7f9' } }}
+    >
       {loading ? (
         <div style={{ padding: 32, color: '#999' }}>{t('a.loading', '加载中…')}</div>
       ) : !data ? (
         <Empty description={t('scenario.noReport', '暂无报告')} />
       ) : (
         <>
-          {/* 报告头 */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginBottom: 12, flexWrap: 'wrap' }}>
-            <Space><span style={{ color: '#8a9099', fontSize: 12 }}>{t('scenario.execStatus', '执行状态')}</span><Tag color={outcomeColor(data.status)}>{data.status}</Tag></Space>
-            <Space><span style={{ color: '#8a9099', fontSize: 12 }}>{t('scenario.caseUnit', '用例')}</span><span>{passN}/{data.caseCount} {t('scenario.passed', '通过')}</span></Space>
-            <span className="ms-mono" style={{ color: '#bbb', fontSize: 12 }}>{data.reportId.slice(0, 12)}</span>
+          {/* 概览卡:报告分析 + 步骤分布圆环(对齐参考图)。 */}
+          <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', marginBottom: 20 }}>
+            <div style={{ flex: 1, minWidth: 240, border: '1px solid #eceff1', borderRadius: 10, padding: '14px 18px', background: '#fff' }}>
+              <h3 style={{ margin: '0 0 8px', fontSize: 14, color: '#5b6470', display: 'flex', alignItems: 'center', gap: 8 }}>
+                {t('scenario.reportAnalysis', '报告分析')}<Tag color={outcomeColor(data.status)} style={{ margin: 0 }}>{data.status}</Tag>
+              </h3>
+              {stat(t('scenario.stepTotal', '步骤总数'), all.length)}
+              {stat(t('scenario.pass', '通过'), passN, '#2e7d32')}
+              {stat(t('scenario.fail', '失败'), failN, failN ? '#c62828' : undefined)}
+              {stat(t('scenario.passRate', '通过率'), `${passRate.toFixed(1)}%`)}
+            </div>
+            <div style={{ flex: 1, minWidth: 240, border: '1px solid #eceff1', borderRadius: 10, padding: '14px 18px', background: '#fff' }}>
+              <h3 style={{ margin: '0 0 8px', fontSize: 14, color: '#5b6470' }}>{t('scenario.stepDist', '步骤分布')}</h3>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+                <ReportDonut pass={passN} fail={failN} />
+                <div style={{ flex: 1 }}>
+                  {stat(<span style={{ color: '#2e7d32' }}>● {t('scenario.pass', '通过')}</span>, `${passN}　${passRate.toFixed(1)}%`)}
+                  {stat(<span style={{ color: '#c62828' }}>● {t('scenario.fail', '失败')}</span>, failN)}
+                </div>
+              </div>
+            </div>
           </div>
           {/* 报告明细 */}
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
             <Typography.Text strong>{t('scenario.reportDetail', '报告明细')}</Typography.Text>
-            <Segmented size="small" value="flat" options={[{ label: t('scenario.flatView', '平铺展示'), value: 'flat' }, { label: t('scenario.tabView', 'Tab 展示'), value: 'tab' }]} disabled />
             <div style={{ flex: 1 }} />
             <Input size="small" allowClear style={{ width: 220 }} placeholder={t('scenario.searchByName', '通过名称搜索')} value={search} onChange={(e) => setSearch(e.target.value)} />
+            <Button size="small" onClick={() => setOpenSet(new Set(rows.map((_, i) => i)))}>{t('scenario.expandAll', '展开全部')}</Button>
+            <Button size="small" onClick={() => setOpenSet(new Set())}>{t('scenario.collapseAll', '收起全部')}</Button>
           </div>
           <div style={{ marginTop: 10 }}>
-            {rows.length === 0 ? <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('scenario.noStepResult', '无步骤结果')} /> : rows.map((r, i) => <ReportRow key={i} idx={i + 1} r={r} label={label} t={t} />)}
+            {rows.length === 0 ? <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('scenario.noStepResult', '无步骤结果')} /> : rows.map((r, i) => <ReportRow key={i} idx={i + 1} r={r} label={label} t={t} open={openSet.has(i)} onToggle={() => toggle(i)} />)}
           </div>
         </>
       )}
-    </Modal>
+    </Drawer>
   )
 }
 
-function ReportRow({ idx, r, label, t }: { idx: number; r: ReportResultItem; label: (id: string) => string; t: TFn }) {
-  const [open, setOpen] = useState(false)
+function ReportRow({ idx, r, label, t, open, onToggle }: { idx: number; r: ReportResultItem; label: (id: string) => string; t: TFn; open: boolean; onToggle: () => void }) {
   const ok = r.outcome === 'SUCCESS'
   const hasDetail = r.statusCode != null || r.body != null || (r.headers?.length ?? 0) > 0
   // 用存储的响应明细合成一个 DebugResponse,复用调试的 7 标签面板。
@@ -1015,8 +1067,8 @@ function ReportRow({ idx, r, label, t }: { idx: number; r: ReportResultItem; lab
     : null
   const muted: React.CSSProperties = { color: '#bbb', fontSize: 12 }
   return (
-    <div style={{ border: '1px solid #f0f0f0', borderRadius: 6, marginBottom: 6 }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', cursor: hasDetail ? 'pointer' : 'default' }} onClick={() => hasDetail && setOpen((v) => !v)}>
+    <div style={{ border: '1px solid #eceff1', borderRadius: 8, marginBottom: 8, background: '#fff' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', cursor: hasDetail ? 'pointer' : 'default' }} onClick={() => hasDetail && onToggle()}>
         {hasDetail && <span style={{ color: '#bbb', fontSize: 11 }}>{open ? '▾' : '▸'}</span>}
         <span style={{ color: '#9aa0a6', fontSize: 12, minWidth: 18 }}>{idx}</span>
         <span style={{ flex: 1, minWidth: 0 }} className="ms-mono">{label(r.caseId)}</span>
