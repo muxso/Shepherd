@@ -19,7 +19,8 @@ const FunctionalCases = lazy(() => import('./pages/FunctionalCases'))
 const OrganizationsPage = lazy(() => import('./pages/resources').then((m) => ({ default: m.OrganizationsPage })))
 const RolesPage = lazy(() => import('./pages/resources').then((m) => ({ default: m.RolesPage })))
 const UsersPage = lazy(() => import('./pages/resources').then((m) => ({ default: m.UsersPage })))
-const ProjectsPage = lazy(() => import('./pages/resources').then((m) => ({ default: m.ProjectsPage })))
+const ProjectAdmin = lazy(() => import('./pages/ProjectAdmin'))
+const ComingSoon = lazy(() => import('./pages/ComingSoon'))
 const EnvironmentsPage = lazy(() => import('./pages/Environments').then((m) => ({ default: m.EnvironmentsPage })))
 const ResourcePoolsPage = lazy(() => import('./pages/resources').then((m) => ({ default: m.ResourcePoolsPage })))
 
@@ -41,7 +42,12 @@ export default function App() {
           <Route path="/organization" element={<OrganizationsPage />} />
           <Route path="/role" element={<RolesPage />} />
           <Route path="/user" element={<UsersPage />} />
-          <Route path="/project" element={<ProjectsPage />} />
+          <Route path="/project" element={<ProjectAdmin />} />
+          <Route path="/project/templates" element={<ComingSoon title="模板管理" />} />
+          <Route path="/project/files" element={<ComingSoon title="文件管理" />} />
+          <Route path="/project/messages" element={<ComingSoon title="消息管理" />} />
+          <Route path="/project/scripts" element={<ComingSoon title="公共脚本" />} />
+          <Route path="/project/logs" element={<ComingSoon title="日志" />} />
           <Route path="/test-plan" element={<TestPlans />} />
           <Route path="/perf" element={<Perf />} />
           <Route path="/requirement" element={<Requirements />} />
