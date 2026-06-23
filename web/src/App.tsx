@@ -43,6 +43,10 @@ export default function App() {
           <Route path="/organization" element={<OrganizationsPage />} />
           <Route path="/role" element={<RolesPage />} />
           <Route path="/user" element={<UsersPage />} />
+          <Route path="/system/params" element={<ComingSoon title="系统参数" />} />
+          <Route path="/system/tasks" element={<ComingSoon title="任务中心" />} />
+          <Route path="/system/plugins" element={<ComingSoon title="插件" />} />
+          <Route path="/system/logs" element={<ComingSoon title="日志" />} />
           <Route path="/project" element={<ProjectAdmin />} />
           <Route path="/project/templates" element={<ComingSoon title="模板管理" />} />
           <Route path="/project/files" element={<FileManagement />} />
