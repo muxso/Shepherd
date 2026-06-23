@@ -155,6 +155,7 @@ tool_handler!(AddTask, TaskService, |self, args| {
             opt_str(&args, "description"),
             &str_vec(&args, "acceptanceCriteria"),
             &str_vec(&args, "dependencies"),
+            args.get("points").and_then(|v| v.as_i64()).unwrap_or(0) as i32,
         )
         .await
         .map_err(|e| format!("{e:?}"))?;

@@ -53,6 +53,7 @@ pub fn merged() -> utoipa::openapi::OpenApi {
     doc.merge(crate::perf_run::openapi());
     doc.merge(crate::plan_run::openapi());
     doc.merge(crate::decomposition_run::openapi());
+    doc.merge(crate::references_route::openapi());
     doc
 }
 

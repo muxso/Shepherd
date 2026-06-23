@@ -51,7 +51,7 @@ mod tests {
     async fn adds_step_to_existing_scenario() {
         let repo = Arc::new(InMemoryApiScenarioRepository::new());
         let create = CreateScenarioUseCase::new(repo.clone());
-        let s = create.execute("p1", "a").await.expect("a");
+        let s = create.execute("p1", "a", None).await.expect("a");
 
         let uc = AddStepUseCase::new(repo);
         let req = InlineRequest::new("GET", "http://x", None).expect("valid");

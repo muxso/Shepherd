@@ -87,8 +87,10 @@ impl ProtocolPlugin for GrpcPlugin {
 
     async fn run(&self, req: &ProbeRequest) -> RawProbe {
         let method = match req.metadata.get("method") {
-            Some(m) => m.clone(),
-            None => {
+            // gRPC 路径必须以 / 开头;调用方常写 pkg.Service/Method,这里宽容补全。
+            Some(m) if m.starts_with('/') => m.clone(),
+            Some(m) if !m.trim().is_empty() => format!("/{}", m.trim()),
+            _ => {
                 return RawProbe {
                     transport_ok: false,
                     error: Some("grpc requires metadata.method (full path)".into()),

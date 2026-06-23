@@ -44,6 +44,15 @@ impl CreateVerificationUseCase {
         }
         Ok(self.repo.create(&new).await?)
     }
+
+    /// 幂等支持:取某需求版本已存在的验证账本(供 breakdown 幂等回读 verificationId)。
+    pub async fn find_existing(
+        &self,
+        requirement_id: &str,
+        requirement_version: u32,
+    ) -> Result<Option<Verification>, RepoError> {
+        self.repo.find_by_requirement_version(requirement_id, requirement_version).await
+    }
 }
 
 #[cfg(test)]

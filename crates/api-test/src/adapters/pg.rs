@@ -60,7 +60,31 @@ impl ResourcePoolPort for PgResourcePool {
     }
 }
 
-// ---- 资源池管理(创建 / 列出)----
+// ---- 资源池管理(创建 / 列出 / 取单 / 更新 / 删除)----
+
+/// 统一列清单:时间列格式化为 `YYYY-MM-DD HH:MM:SS` 文本,与参考 UI 展示一致。
+const POOL_COLS: &str = "id, name, enabled, description, max_concurrency, pool_type, all_org, org_ids, server_url, config, \
+     to_char(created_at, 'YYYY-MM-DD HH24:MI:SS') AS created_at, \
+     to_char(updated_at, 'YYYY-MM-DD HH24:MI:SS') AS updated_at";
+
+/// 行 → 视图:org_ids/config 走 JSONB(`sqlx::types::Json`)。
+fn map_pool(r: &sqlx::postgres::PgRow) -> Result<ResourcePool, PortError> {
+    Ok(ResourcePool {
+        id: r.try_get("id").map_err(map_err)?,
+        name: r.try_get("name").map_err(map_err)?,
+        enabled: r.try_get("enabled").map_err(map_err)?,
+        description: r.try_get("description").map_err(map_err)?,
+        max_concurrency: r.try_get("max_concurrency").map_err(map_err)?,
+        pool_type: r.try_get("pool_type").map_err(map_err)?,
+        all_org: r.try_get("all_org").map_err(map_err)?,
+        org_ids: r.try_get::<sqlx::types::Json<Vec<String>>, _>("org_ids").map_err(map_err)?.0,
+        server_url: r.try_get("server_url").map_err(map_err)?,
+        config: r.try_get::<sqlx::types::Json<serde_json::Value>, _>("config").map_err(map_err)?.0,
+        created_at: r.try_get("created_at").map_err(map_err)?,
+        updated_at: r.try_get("updated_at").map_err(map_err)?,
+    })
+}
+
 #[derive(Clone)]
 pub struct PgResourcePoolAdmin {
     pool: PgPool,
@@ -76,38 +100,72 @@ impl PgResourcePoolAdmin {
 impl ResourcePoolAdminPort for PgResourcePoolAdmin {
     async fn create(&self, new_pool: &NewResourcePool) -> Result<ResourcePool, PortError> {
         // id 走表默认 gen_random_uuid()::text(见迁移 0025)。
-        let row = sqlx::query(
-            "INSERT INTO ms_resource_pool (name, enabled, deleted) VALUES ($1, $2, false) \
-             RETURNING id, name, enabled",
-        )
-        .bind(&new_pool.name)
-        .bind(new_pool.enabled)
-        .fetch_one(&self.pool)
-        .await
-        .map_err(map_err)?;
-        Ok(ResourcePool {
-            id: row.try_get("id").map_err(map_err)?,
-            name: row.try_get("name").map_err(map_err)?,
-            enabled: row.try_get("enabled").map_err(map_err)?,
-        })
+        let sql = format!(
+            "INSERT INTO ms_resource_pool \
+             (name, enabled, description, max_concurrency, pool_type, all_org, org_ids, server_url, config, deleted) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, false) RETURNING {POOL_COLS}"
+        );
+        let row = sqlx::query(&sql)
+            .bind(&new_pool.name)
+            .bind(new_pool.enabled)
+            .bind(&new_pool.description)
+            .bind(new_pool.max_concurrency)
+            .bind(&new_pool.pool_type)
+            .bind(new_pool.all_org)
+            .bind(sqlx::types::Json(&new_pool.org_ids))
+            .bind(&new_pool.server_url)
+            .bind(sqlx::types::Json(&new_pool.config))
+            .fetch_one(&self.pool)
+            .await
+            .map_err(map_err)?;
+        map_pool(&row)
     }
 
     async fn list(&self) -> Result<Vec<ResourcePool>, PortError> {
-        let rows = sqlx::query(
-            "SELECT id, name, enabled FROM ms_resource_pool WHERE NOT deleted ORDER BY name",
+        let sql = format!("SELECT {POOL_COLS} FROM ms_resource_pool WHERE NOT deleted ORDER BY created_at DESC");
+        let rows = sqlx::query(&sql).fetch_all(&self.pool).await.map_err(map_err)?;
+        rows.iter().map(map_pool).collect()
+    }
+
+    async fn get(&self, id: &str) -> Result<Option<ResourcePool>, PortError> {
+        let sql = format!("SELECT {POOL_COLS} FROM ms_resource_pool WHERE id = $1 AND NOT deleted");
+        let row = sqlx::query(&sql).bind(id).fetch_optional(&self.pool).await.map_err(map_err)?;
+        row.as_ref().map(map_pool).transpose()
+    }
+
+    async fn update(&self, id: &str, new_pool: &NewResourcePool) -> Result<Option<ResourcePool>, PortError> {
+        let sql = format!(
+            "UPDATE ms_resource_pool SET \
+             name = $2, enabled = $3, description = $4, max_concurrency = $5, pool_type = $6, \
+             all_org = $7, org_ids = $8, server_url = $9, config = $10, updated_at = now() \
+             WHERE id = $1 AND NOT deleted RETURNING {POOL_COLS}"
+        );
+        let row = sqlx::query(&sql)
+            .bind(id)
+            .bind(&new_pool.name)
+            .bind(new_pool.enabled)
+            .bind(&new_pool.description)
+            .bind(new_pool.max_concurrency)
+            .bind(&new_pool.pool_type)
+            .bind(new_pool.all_org)
+            .bind(sqlx::types::Json(&new_pool.org_ids))
+            .bind(&new_pool.server_url)
+            .bind(sqlx::types::Json(&new_pool.config))
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(map_err)?;
+        row.as_ref().map(map_pool).transpose()
+    }
+
+    async fn delete(&self, id: &str) -> Result<bool, PortError> {
+        let res = sqlx::query(
+            "UPDATE ms_resource_pool SET deleted = true, updated_at = now() WHERE id = $1 AND NOT deleted",
         )
-        .fetch_all(&self.pool)
+        .bind(id)
+        .execute(&self.pool)
         .await
         .map_err(map_err)?;
-        rows.into_iter()
-            .map(|r| {
-                Ok(ResourcePool {
-                    id: r.try_get("id").map_err(map_err)?,
-                    name: r.try_get("name").map_err(map_err)?,
-                    enabled: r.try_get("enabled").map_err(map_err)?,
-                })
-            })
-            .collect()
+        Ok(res.rows_affected() > 0)
     }
 }
 
@@ -171,6 +229,26 @@ impl EnvironmentPort for PgEnvironment {
     }
 }
 
+#[async_trait]
+impl crate::ports::EnvVarWriter for PgEnvironment {
+    /// 把提取的「环境参数」合并进该环境的 variables(JSONB 对象 `||` 合并;同名覆盖)。
+    async fn set_vars(&self, environment_id: &str, vars: &[(String, String)]) -> Result<(), PortError> {
+        if vars.is_empty() {
+            return Ok(());
+        }
+        let obj = serde_json::Value::Object(
+            vars.iter().map(|(k, v)| (k.clone(), serde_json::Value::String(v.clone()))).collect(),
+        );
+        sqlx::query("UPDATE ms_environment SET variables = variables || $2 WHERE id = $1 AND NOT deleted")
+            .bind(environment_id)
+            .bind(&obj)
+            .execute(&self.pool)
+            .await
+            .map_err(map_err)?;
+        Ok(())
+    }
+}
+
 // ---- 批量执行器:落报告 + 下发执行节点 ----
 #[derive(Clone)]
 pub struct PgBatchReportExecutor {
@@ -217,6 +295,7 @@ impl BatchExecutorPort for PgBatchReportExecutor {
             mode: spec.mode,
             case_ids: spec.case_ids.clone(),
             env: spec.env.clone(),
+            environment_id: spec.environment_id.clone(),
         };
         match self.dispatcher.dispatch_task(&task).await {
             // 3) 据结果更新报告状态
@@ -264,15 +343,63 @@ fn parse_method(s: &str) -> HttpMethod {
     }
 }
 
+/// JSONB `[{key,value,enabled?}]` → `(名, 值)` 列表;非数组/缺名/`enabled:false` 跳过。
+fn parse_kv(v: &serde_json::Value) -> Vec<(String, String)> {
+    v.as_array()
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|it| {
+                    // 显式 enabled:false 视为停用,不参与执行(请求头/Query 共用)。
+                    if it.get("enabled").and_then(|x| x.as_bool()) == Some(false) {
+                        return None;
+                    }
+                    let k = it.get("key")?.as_str()?.trim();
+                    if k.is_empty() {
+                        return None;
+                    }
+                    Some((k.to_string(), it.get("value").and_then(|x| x.as_str()).unwrap_or("").to_string()))
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// 认证对象 `{type,token}` → 一条 Authorization 头(none/空则 None)。
+/// bearer → `Bearer <token>`;basic → `Basic <token>`(token 视为已编码或 user:pass,原样透传)。
+fn auth_header(v: &serde_json::Value) -> Option<(String, String)> {
+    let ty = v.get("type").and_then(|x| x.as_str()).unwrap_or("none");
+    let token = v.get("token").and_then(|x| x.as_str()).unwrap_or("").trim();
+    if token.is_empty() {
+        return None;
+    }
+    match ty {
+        "bearer" => Some(("Authorization".to_string(), format!("Bearer {token}"))),
+        "basic" => Some(("Authorization".to_string(), format!("Basic {token}"))),
+        _ => None,
+    }
+}
+
+/// 把 query 参数拼到 url 上(已带 `?` 则用 `&` 续接;不做 URL 编码,与既有调试链路一致)。
+fn merge_query(url: &str, query: &[(String, String)]) -> String {
+    if query.is_empty() {
+        return url.to_string();
+    }
+    let qs = query.iter().map(|(k, v)| format!("{k}={v}")).collect::<Vec<_>>().join("&");
+    let sep = if url.contains('?') { '&' } else { '?' };
+    format!("{url}{sep}{qs}")
+}
+
 #[async_trait]
 impl CaseSpecSource for PgCaseSpecSource {
     async fn spec_of(&self, case_id: &str) -> Result<Option<CaseRunSpec>, PortError> {
-        let row =
-            sqlx::query("SELECT method, url, body, assertions, processors FROM ms_api_case WHERE id = $1")
-                .bind(case_id)
-                .fetch_optional(&self.pool)
-                .await
-                .map_err(map_err)?;
+        let row = sqlx::query(
+            "SELECT method, url, body, assertions, processors, headers, query_params, auth \
+             FROM ms_api_case WHERE id = $1",
+        )
+        .bind(case_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(map_err)?;
         let Some(r) = row else { return Ok(None) };
 
         let method: String = r.try_get("method").map_err(map_err)?;
@@ -285,8 +412,18 @@ impl CaseSpecSource for PgCaseSpecSource {
         let processors_json: serde_json::Value = r.try_get("processors").map_err(map_err)?;
         let processors: Vec<Processor> = serde_json::from_value(processors_json).unwrap_or_default();
 
+        // 请求头 = 存储的 headers + 认证头;query 合入 URL(宽容解析,脏数据不阻断)。
+        let headers_json: serde_json::Value = r.try_get("headers").unwrap_or_else(|_| serde_json::json!([]));
+        let query_json: serde_json::Value = r.try_get("query_params").unwrap_or_else(|_| serde_json::json!([]));
+        let auth_json: serde_json::Value = r.try_get("auth").unwrap_or_else(|_| serde_json::json!({}));
+        let mut headers = parse_kv(&headers_json);
+        if let Some(a) = auth_header(&auth_json) {
+            headers.push(a);
+        }
+        let url = merge_query(&url, &parse_kv(&query_json));
+
         Ok(Some(CaseRunSpec {
-            request: RequestSpec { method: parse_method(&method), url, headers: vec![], body },
+            request: RequestSpec { method: parse_method(&method), url, headers, body },
             assertions,
             processors,
         }))
@@ -331,6 +468,44 @@ impl CaseResultSink for PgCaseResultSink {
         .map_err(map_err)?;
         Ok(())
     }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn record_detail(
+        &self,
+        report_id: &str,
+        case_id: &str,
+        status_code: i32,
+        latency_ms: i64,
+        resp_size: i64,
+        body: &str,
+        headers: &[(String, String)],
+        assertions: &serde_json::Value,
+        extractions: &serde_json::Value,
+    ) -> Result<(), PortError> {
+        // 响应体截断到 64KB,避免明细表膨胀。
+        let body_trunc: String = body.chars().take(65536).collect();
+        let headers_json = serde_json::to_value(headers)
+            .map_err(|e| PortError::Backend(format!("serialize headers: {e}")))?;
+        sqlx::query(
+            "UPDATE ms_api_case_result \
+               SET status_code = $3, latency_ms = $4, resp_size = $5, body = $6, headers = $7, \
+                   assertions = $8, extractions = $9 \
+             WHERE report_id = $1 AND case_id = $2",
+        )
+        .bind(report_id)
+        .bind(case_id)
+        .bind(status_code)
+        .bind(latency_ms)
+        .bind(resp_size)
+        .bind(body_trunc)
+        .bind(headers_json)
+        .bind(assertions)
+        .bind(extractions)
+        .execute(&self.pool)
+        .await
+        .map_err(map_err)?;
+        Ok(())
+    }
 }
 
 // ---- 批量报告读写:供计划树执行(场景)外层补建报告 + 回写最终状态 ----
@@ -348,8 +523,8 @@ impl PgBatchReport {
     /// 落一行 RUNNING 报告,返回 report_id(用例结果按此 report_id 归组)。
     pub async fn create(&self, run_mode: &str, case_count: i32) -> Result<String, PortError> {
         let row = sqlx::query(
-            "INSERT INTO ms_api_batch_report (pool_id, run_mode, case_count, status) \
-             VALUES ('local', $1, $2, 'RUNNING') RETURNING id",
+            "INSERT INTO ms_api_batch_report (pool_id, run_mode, case_count, status, started_at) \
+             VALUES ('local', $1, $2, 'RUNNING', now()) RETURNING id",
         )
         .bind(run_mode)
         .bind(case_count)
@@ -361,7 +536,8 @@ impl PgBatchReport {
 
     /// 回写报告最终状态(SUCCESS/ERROR)。
     pub async fn set_status(&self, report_id: &str, status: &str) -> Result<(), PortError> {
-        sqlx::query("UPDATE ms_api_batch_report SET status = $2 WHERE id = $1")
+        // 终态时写 finished_at(用于报告总耗时);set_status 在运行结束调用,故直接 now()。
+        sqlx::query("UPDATE ms_api_batch_report SET status = $2, finished_at = now() WHERE id = $1")
             .bind(report_id)
             .bind(status)
             .execute(&self.pool)
@@ -369,6 +545,127 @@ impl PgBatchReport {
             .map_err(map_err)?;
         Ok(())
     }
+
+    /// 已完成(SUCCESS/ERROR)但未归档的报告 id(供 Parquet 归档批量取;部分索引覆盖)。
+    pub async fn list_unarchived(&self, limit: i64) -> Result<Vec<String>, PortError> {
+        let rows = sqlx::query(
+            "SELECT id FROM ms_api_batch_report \
+             WHERE status IN ('SUCCESS', 'ERROR') AND archived_at IS NULL \
+             ORDER BY id LIMIT $1",
+        )
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(map_err)?;
+        rows.iter().map(|r| r.try_get::<String, _>("id").map_err(map_err)).collect()
+    }
+
+    /// 标记报告已归档(写 archived_at = now())。
+    pub async fn mark_archived(&self, report_id: &str) -> Result<(), PortError> {
+        sqlx::query("UPDATE ms_api_batch_report SET archived_at = now() WHERE id = $1")
+            .bind(report_id)
+            .execute(&self.pool)
+            .await
+            .map_err(map_err)?;
+        Ok(())
+    }
+
+    /// 报告明细:报告头(状态/用例数)+ 逐用例结果(case_id/通过失败/失败原因/时间)。
+    /// 不存在返回 None。注:当前未持久化响应时间/状态码/响应体(需执行器扩展)。
+    pub async fn detail(&self, report_id: &str) -> Result<Option<BatchReportDetail>, PortError> {
+        let header = sqlx::query(
+            "SELECT status, case_count, started_at::text AS started_at, finished_at::text AS finished_at, \
+                    (EXTRACT(EPOCH FROM (finished_at - started_at)) * 1000)::bigint AS duration_ms \
+             FROM ms_api_batch_report WHERE id = $1",
+        )
+        .bind(report_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(map_err)?;
+        let Some(h) = header else { return Ok(None) };
+        let rows = sqlx::query(
+            "SELECT case_id, outcome, failures, executed_at::text AS executed_at, \
+                    status_code, latency_ms, resp_size, body, headers, assertions, extractions \
+             FROM ms_api_case_result WHERE report_id = $1 ORDER BY executed_at",
+        )
+        .bind(report_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(map_err)?;
+        let results = rows
+            .iter()
+            .map(|r| {
+                let failures_v: serde_json::Value =
+                    r.try_get("failures").unwrap_or_else(|_| serde_json::Value::Array(vec![]));
+                let failures = failures_v
+                    .as_array()
+                    .map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect())
+                    .unwrap_or_default();
+                let headers_v: Option<serde_json::Value> = r.try_get("headers").ok().flatten();
+                let headers = headers_v
+                    .and_then(|v| serde_json::from_value::<Vec<(String, String)>>(v).ok())
+                    .unwrap_or_default();
+                // 断言/提取(0048 后回填;旧报告为 null → 空数组)。
+                let json_arr = |col: &str| -> serde_json::Value {
+                    r.try_get::<Option<serde_json::Value>, _>(col)
+                        .ok()
+                        .flatten()
+                        .unwrap_or_else(|| serde_json::Value::Array(vec![]))
+                };
+                Ok(CaseResultRow {
+                    case_id: r.try_get("case_id").map_err(map_err)?,
+                    outcome: r.try_get("outcome").map_err(map_err)?,
+                    failures,
+                    executed_at: r.try_get::<String, _>("executed_at").map_err(map_err)?,
+                    status_code: r.try_get("status_code").ok().flatten(),
+                    latency_ms: r.try_get("latency_ms").ok().flatten(),
+                    resp_size: r.try_get("resp_size").ok().flatten(),
+                    body: r.try_get("body").ok().flatten(),
+                    headers,
+                    assertions: json_arr("assertions"),
+                    extractions: json_arr("extractions"),
+                })
+            })
+            .collect::<Result<Vec<_>, PortError>>()?;
+        Ok(Some(BatchReportDetail {
+            status: h.try_get("status").map_err(map_err)?,
+            case_count: h.try_get("case_count").map_err(map_err)?,
+            started_at: h.try_get("started_at").ok().flatten(),
+            finished_at: h.try_get("finished_at").ok().flatten(),
+            duration_ms: h.try_get("duration_ms").ok().flatten(),
+            results,
+        }))
+    }
+}
+
+/// 报告明细读模型(报告头 + 逐用例结果)。供场景报告页渲染。
+#[derive(Debug, Clone)]
+pub struct BatchReportDetail {
+    pub status: String,
+    pub case_count: i32,
+    /// 报告起止时间(0056 后回填;旧报告为 None)与总耗时(毫秒)。
+    pub started_at: Option<String>,
+    pub finished_at: Option<String>,
+    pub duration_ms: Option<i64>,
+    pub results: Vec<CaseResultRow>,
+}
+
+/// 单条用例结果(report 明细行)。
+#[derive(Debug, Clone)]
+pub struct CaseResultRow {
+    pub case_id: String,
+    pub outcome: String,
+    pub failures: Vec<String>,
+    pub executed_at: String,
+    /// 响应明细(0045 后回填;旧行为 None)。
+    pub status_code: Option<i32>,
+    pub latency_ms: Option<i64>,
+    pub resp_size: Option<i64>,
+    pub body: Option<String>,
+    pub headers: Vec<(String, String)>,
+    /// 逐条断言结果 / 提取变量(0048 后回填;旧报告为空数组)。
+    pub assertions: serde_json::Value,
+    pub extractions: serde_json::Value,
 }
 
 // ---- 用例执行记录读模型:按 case_id 倒序分页查 ms_api_case_result ----
@@ -439,6 +736,39 @@ mod tests {
     use crate::adapters::{SpyDispatcher, NoopDispatcher};
     use crate::domain::BatchRunMode;
 
+    #[test]
+    fn parse_kv_skips_blank_disabled_and_reads_values() {
+        let v = serde_json::json!([
+            {"key": "X-A", "value": "1"},
+            {"key": " ", "value": "skip"},
+            {"key": "X-B"},
+            {"key": "X-Off", "value": "x", "enabled": false}
+        ]);
+        assert_eq!(parse_kv(&v), vec![("X-A".into(), "1".into()), ("X-B".into(), "".into())]);
+        assert!(parse_kv(&serde_json::json!({})).is_empty());
+    }
+
+    #[test]
+    fn auth_header_bearer_and_basic_and_none() {
+        assert_eq!(
+            auth_header(&serde_json::json!({"type": "bearer", "token": "t"})),
+            Some(("Authorization".into(), "Bearer t".into()))
+        );
+        assert_eq!(
+            auth_header(&serde_json::json!({"type": "basic", "token": "dXNlcjpwYXNz"})),
+            Some(("Authorization".into(), "Basic dXNlcjpwYXNz".into()))
+        );
+        assert_eq!(auth_header(&serde_json::json!({"type": "none"})), None);
+        assert_eq!(auth_header(&serde_json::json!({"type": "bearer", "token": "  "})), None);
+    }
+
+    #[test]
+    fn merge_query_appends_with_right_separator() {
+        assert_eq!(merge_query("/x", &[("a".into(), "1".into())]), "/x?a=1");
+        assert_eq!(merge_query("/x?p=0", &[("a".into(), "1".into()), ("b".into(), "2".into())]), "/x?p=0&a=1&b=2");
+        assert_eq!(merge_query("/x", &[]), "/x");
+    }
+
     #[tokio::test]
     #[ignore = "需要 DATABASE_URL 指向一个 PostgreSQL 实例"]
     async fn pg_pool_resolution_and_dispatch() {
@@ -472,6 +802,7 @@ mod tests {
             pool_id: "pool1".into(),
             mode: BatchRunMode::Parallel,
             env: ResolvedEnv::default(),
+            environment_id: None,
         };
 
         // 下发成功:报告 RUNNING,且下发器收到带 report_id 的任务

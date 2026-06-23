@@ -45,5 +45,9 @@ pub fn default_registry() -> PluginRegistry {
     {
         reg = reg.with(std::sync::Arc::new(plugins::WebSocketPlugin::new()));
     }
+    #[cfg(feature = "ssh")]
+    {
+        reg = reg.with(std::sync::Arc::new(plugins::SshPlugin::new()));
+    }
     reg
 }

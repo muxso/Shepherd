@@ -6,7 +6,7 @@ pub mod role_repository;
 pub mod user_directory;
 pub mod user_repository;
 
-pub use auth::{AuthRepoError, CredentialRepository, PasswordHasher, SessionStore, UserCredential};
+pub use auth::{AuthRepoError, CredentialRepository, PasswordHasher, SessionStore, UserCredential, UserRoleQuery};
 pub use oidc::{ExternalIdentityProvider, ExternalUserRepository, LinkedUser};
 pub use organization_repository::{OrgRepoError, OrgRepository};
 pub use role_repository::{RoleRepoError, RoleRepository, UserRoleRepository};

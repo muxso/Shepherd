@@ -1,4 +1,6 @@
 // 甜甜圈环形图(纯 SVG,无依赖)。segments 为各分段 {value,color,label};中心显示总数。
+import { useI18n } from '../i18n'
+
 export interface DonutSeg {
   label: string
   value: number
@@ -9,13 +11,15 @@ export default function Donut({
   segments,
   size = 120,
   thickness = 16,
-  centerLabel = '总数',
+  centerLabel,
 }: {
   segments: DonutSeg[]
   size?: number
   thickness?: number
   centerLabel?: string
 }) {
+  const { t } = useI18n()
+  const label = centerLabel ?? t('donut.total', '总数')
   const total = segments.reduce((s, x) => s + x.value, 0)
   const r = (size - thickness) / 2
   const circ = 2 * Math.PI * r
@@ -52,7 +56,7 @@ export default function Donut({
         {total}
       </text>
       <text x={cx} y={cx + 16} textAnchor="middle" fontSize={11} fill="#8a9099">
-        {centerLabel}
+        {label}
       </text>
     </svg>
   )

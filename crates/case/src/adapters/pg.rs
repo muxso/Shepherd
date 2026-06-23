@@ -5,7 +5,7 @@
 
 use async_trait::async_trait;
 use crate::domain::{PassRule, ReviewRecord, ReviewSetting, ReviewStatus};
-use crate::ports::{RepoError, ReviewRepository};
+use crate::ports::{RepoError, ReviewCaseStatus, ReviewDetail, ReviewRepository, ReviewSummary};
 use sqlx::{PgPool, Row};
 
 #[derive(Clone)]
@@ -106,6 +106,105 @@ impl ReviewRepository for PgReviewRepository {
         .await
         .map_err(map_err)?;
         Ok(())
+    }
+
+    async fn create_review(
+        &self,
+        project_id: &str,
+        pass_rule: &str,
+        reviewer_count: usize,
+        case_ids: &[String],
+    ) -> Result<String, RepoError> {
+        // 规范化规则串(非法回落 SINGLE)。
+        let rule = PassRule::parse(pass_rule).unwrap_or(PassRule::Single);
+        let mut tx = self.pool.begin().await.map_err(map_err)?;
+        let id: String = sqlx::query(
+            "INSERT INTO ms_case_review (id, pass_rule, reviewer_count, project_id, case_ids) \
+             VALUES (gen_random_uuid()::text, $1, $2, $3, $4) RETURNING id",
+        )
+        .bind(rule.as_str())
+        .bind(reviewer_count as i32)
+        .bind(project_id)
+        .bind(case_ids.to_vec())
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(map_err)?
+        .try_get("id")
+        .map_err(map_err)?;
+        // 每条用例初始置 UN_REVIEWED。
+        for c in case_ids {
+            sqlx::query(
+                "INSERT INTO ms_case_review_status (review_id, case_id, status) VALUES ($1, $2, 'UN_REVIEWED') \
+                 ON CONFLICT (review_id, case_id) DO NOTHING",
+            )
+            .bind(&id)
+            .bind(c)
+            .execute(&mut *tx)
+            .await
+            .map_err(map_err)?;
+        }
+        tx.commit().await.map_err(map_err)?;
+        Ok(id)
+    }
+
+    async fn list_reviews(&self, project_id: &str) -> Result<Vec<ReviewSummary>, RepoError> {
+        let rows = sqlx::query(
+            "SELECT r.id, r.pass_rule, r.reviewer_count, r.created_at::text AS created_at, \
+                    coalesce(array_length(r.case_ids, 1), 0) AS total, \
+                    (SELECT count(*) FROM ms_case_review_status s WHERE s.review_id = r.id AND s.status = 'PASS') AS passed \
+             FROM ms_case_review r WHERE r.project_id = $1 AND NOT r.deleted ORDER BY r.created_at DESC",
+        )
+        .bind(project_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(map_err)?;
+        rows.iter()
+            .map(|r| {
+                let count: i32 = r.try_get("reviewer_count").map_err(map_err)?;
+                let total: i32 = r.try_get("total").map_err(map_err)?;
+                let passed: i64 = r.try_get("passed").map_err(map_err)?;
+                Ok(ReviewSummary {
+                    id: r.try_get("id").map_err(map_err)?,
+                    pass_rule: r.try_get("pass_rule").map_err(map_err)?,
+                    reviewer_count: count.max(0) as usize,
+                    total: total.max(0) as usize,
+                    passed: passed.max(0) as usize,
+                    created_at: r.try_get("created_at").map_err(map_err)?,
+                })
+            })
+            .collect()
+    }
+
+    async fn get_review(&self, review_id: &str) -> Result<ReviewDetail, RepoError> {
+        let head = sqlx::query("SELECT pass_rule, reviewer_count, case_ids FROM ms_case_review WHERE id = $1 AND NOT deleted")
+            .bind(review_id)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(map_err)?
+            .ok_or(RepoError::NotFound)?;
+        let pass_rule: String = head.try_get("pass_rule").map_err(map_err)?;
+        let count: i32 = head.try_get("reviewer_count").map_err(map_err)?;
+        let case_ids: Vec<String> = head.try_get("case_ids").map_err(map_err)?;
+        // 各用例当前状态(缺失视为 UN_REVIEWED)。
+        let srows = sqlx::query("SELECT case_id, status FROM ms_case_review_status WHERE review_id = $1")
+            .bind(review_id)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(map_err)?;
+        let mut status_of = std::collections::HashMap::new();
+        for r in &srows {
+            let cid: String = r.try_get("case_id").map_err(map_err)?;
+            let st: String = r.try_get("status").map_err(map_err)?;
+            status_of.insert(cid, st);
+        }
+        let cases = case_ids
+            .into_iter()
+            .map(|cid| {
+                let status = status_of.get(&cid).cloned().unwrap_or_else(|| "UN_REVIEWED".to_string());
+                ReviewCaseStatus { case_id: cid, status }
+            })
+            .collect();
+        Ok(ReviewDetail { id: review_id.to_string(), pass_rule, reviewer_count: count.max(0) as usize, cases })
     }
 }
 

@@ -27,6 +27,7 @@ impl AddApiMockUseCase {
         Self { repo }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn execute(
         &self,
         api_definition_id: &str,
@@ -35,6 +36,8 @@ impl AddApiMockUseCase {
         response_status: i32,
         response_body: Option<String>,
         enabled: bool,
+        extras: ApiMockExtras,
+        created_by: &str,
     ) -> Result<ApiMock, AddApiMockError> {
         // 必须挂在一个真实存在的接口定义上。
         if self.repo.get_definition(api_definition_id).await?.is_none() {
@@ -47,9 +50,25 @@ impl AddApiMockUseCase {
             response_status,
             response_body,
             enabled,
-        )?;
+        )?
+        .with_extras(
+            extras.tags,
+            extras.response_headers,
+            extras.response_delay_ms,
+            extras.follow_definition,
+        )
+        .with_created_by(created_by);
         Ok(self.repo.insert_mock(&new_mock).await?)
     }
+}
+
+/// Mock 扩展项(标签 / 响应头 / 响应延时 / 跟随定义),收拢成一个参数。
+#[derive(Debug, Clone, Default)]
+pub struct ApiMockExtras {
+    pub tags: serde_json::Value,
+    pub response_headers: serde_json::Value,
+    pub response_delay_ms: i32,
+    pub follow_definition: bool,
 }
 
 #[cfg(test)]
@@ -63,12 +82,12 @@ mod tests {
     async fn adds_mock() {
         let repo = Arc::new(InMemoryApiDefinitionRepository::new());
         let def = CreateApiDefinitionUseCase::new(repo.clone())
-            .execute("p1", "x", ApiProtocol::Http, "GET", "/x")
+            .execute("p1", "x", ApiProtocol::Http, "GET", "/x", "u1")
             .await
             .expect("ok");
         let uc = AddApiMockUseCase::new(repo);
         let m = uc
-            .execute(&def.id, "挡板", serde_json::json!({}), 200, None, true)
+            .execute(&def.id, "挡板", serde_json::json!({}), 200, None, true, ApiMockExtras::default(), "")
             .await
             .expect("ok");
         assert_eq!(m.response_status, 200);
@@ -80,7 +99,7 @@ mod tests {
         let repo = Arc::new(InMemoryApiDefinitionRepository::new());
         let uc = AddApiMockUseCase::new(repo);
         let err = uc
-            .execute("ghost", "挡板", serde_json::json!({}), 200, None, true)
+            .execute("ghost", "挡板", serde_json::json!({}), 200, None, true, ApiMockExtras::default(), "")
             .await
             .unwrap_err();
         assert_eq!(err, AddApiMockError::NotFound);
@@ -90,12 +109,12 @@ mod tests {
     async fn rejects_status_out_of_range() {
         let repo = Arc::new(InMemoryApiDefinitionRepository::new());
         let def = CreateApiDefinitionUseCase::new(repo.clone())
-            .execute("p1", "x", ApiProtocol::Http, "GET", "/x")
+            .execute("p1", "x", ApiProtocol::Http, "GET", "/x", "u1")
             .await
             .expect("ok");
         let uc = AddApiMockUseCase::new(repo);
         let err = uc
-            .execute(&def.id, "挡板", serde_json::json!({}), 700, None, true)
+            .execute(&def.id, "挡板", serde_json::json!({}), 700, None, true, ApiMockExtras::default(), "")
             .await
             .unwrap_err();
         assert_eq!(err, AddApiMockError::Validation(ApiDefinitionError::BadResponseStatus(700)));

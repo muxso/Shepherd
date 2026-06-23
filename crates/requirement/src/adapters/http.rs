@@ -54,6 +54,7 @@ pub fn router(
         .route("/requirement/{id}/version/{n}", get(get_version))
         .route("/requirement/{id}/baseline", put(set_baseline))
         .route("/requirement/{id}/archive", post(archive_requirement))
+        .route("/requirement/{id}/deliver", post(deliver_requirement))
         .with_state(ReqState { create, list, admin, sessions })
 }
 
@@ -300,6 +301,17 @@ async fn archive_requirement(user: AuthUser, State(st): State<ReqState>, Path(id
     }
 }
 
+#[utoipa::path(post, path = "/requirement/{id}/deliver", tag = "requirement", params(("id" = String, Path)), responses((status = 200, body = RequirementResponse), (status = 404), (status = 409)), security(("bearer" = [])))]
+async fn deliver_requirement(user: AuthUser, State(st): State<ReqState>, Path(id): Path<String>) -> Response {
+    if !user.can("REQUIREMENT", "UPDATE") {
+        return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
+    match st.admin.deliver(&id).await {
+        Ok(r) => (StatusCode::OK, Json(RequirementResponse::from(r))).into_response(),
+        Err(e) => cmd_err(e),
+    }
+}
+
 #[utoipa::path(delete, path = "/requirement/{id}", tag = "requirement", params(("id" = String, Path)), responses((status = 204), (status = 404)), security(("bearer" = [])))]
 async fn delete_requirement(user: AuthUser, State(st): State<ReqState>, Path(id): Path<String>) -> Response {
     if !user.can("REQUIREMENT", "DELETE") {
@@ -316,7 +328,7 @@ async fn delete_requirement(user: AuthUser, State(st): State<ReqState>, Path(id)
 #[openapi(
     paths(
         create_requirement, list_requirements, get_requirement, get_version,
-        revise_requirement, set_baseline, rename_requirement, archive_requirement, delete_requirement
+        revise_requirement, set_baseline, rename_requirement, archive_requirement, deliver_requirement, delete_requirement
     ),
     components(schemas(CreateBody, ReviseBody, SetBaselineBody, RenameBody, VersionResponse, RequirementResponse, RequirementPage, VersionCreated)),
     tags((name = "requirement", description = "需求管理(多版本)"))

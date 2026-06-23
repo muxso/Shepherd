@@ -42,12 +42,12 @@ mod tests {
     async fn lists_cases_for_definition() {
         let repo = Arc::new(InMemoryApiDefinitionRepository::new());
         let def = CreateApiDefinitionUseCase::new(repo.clone())
-            .execute("p1", "x", ApiProtocol::Http, "GET", "/x")
+            .execute("p1", "x", ApiProtocol::Http, "GET", "/x", "u1")
             .await
             .expect("ok");
         let add = AddApiCaseUseCase::new(repo.clone());
-        add.execute(&def.id, "c1", "GET", "/x", None, serde_json::json!([]), serde_json::json!([])).await.expect("ok");
-        add.execute(&def.id, "c2", "GET", "/x", None, serde_json::json!([]), serde_json::json!([])).await.expect("ok");
+        add.execute(&def.id, "c1", "GET", "/x", None, serde_json::json!([]), serde_json::json!([]), crate::application::ApiCaseMeta::default()).await.expect("ok");
+        add.execute(&def.id, "c2", "GET", "/x", None, serde_json::json!([]), serde_json::json!([]), crate::application::ApiCaseMeta::default()).await.expect("ok");
 
         let uc = ListApiCasesUseCase::new(repo);
         assert_eq!(uc.execute(&def.id).await.expect("ok").len(), 2);

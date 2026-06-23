@@ -42,9 +42,9 @@ mod tests {
     async fn lists_definitions_for_project() {
         let repo = Arc::new(InMemoryApiDefinitionRepository::new());
         let create = CreateApiDefinitionUseCase::new(repo.clone());
-        create.execute("p1", "a", ApiProtocol::Http, "GET", "/a").await.expect("ok");
-        create.execute("p1", "b", ApiProtocol::Http, "GET", "/b").await.expect("ok");
-        create.execute("p2", "c", ApiProtocol::Http, "GET", "/c").await.expect("ok");
+        create.execute("p1", "a", ApiProtocol::Http, "GET", "/a", "u1").await.expect("ok");
+        create.execute("p1", "b", ApiProtocol::Http, "GET", "/b", "u1").await.expect("ok");
+        create.execute("p2", "c", ApiProtocol::Http, "GET", "/c", "u1").await.expect("ok");
 
         let uc = ListApiDefinitionsUseCase::new(repo);
         let list = uc.execute("p1").await.expect("ok");

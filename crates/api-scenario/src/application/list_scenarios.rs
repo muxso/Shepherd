@@ -30,9 +30,9 @@ mod tests {
     async fn lists_scenarios_of_project() {
         let repo = Arc::new(InMemoryApiScenarioRepository::new());
         let create = CreateScenarioUseCase::new(repo.clone());
-        create.execute("p1", "a").await.expect("a");
-        create.execute("p1", "b").await.expect("b");
-        create.execute("p2", "c").await.expect("c");
+        create.execute("p1", "a", None).await.expect("a");
+        create.execute("p1", "b", None).await.expect("b");
+        create.execute("p2", "c", None).await.expect("c");
 
         let uc = ListScenariosUseCase::new(repo);
         let list = uc.execute("p1").await.expect("list");

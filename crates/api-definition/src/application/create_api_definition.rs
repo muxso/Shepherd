@@ -32,8 +32,9 @@ impl CreateApiDefinitionUseCase {
         protocol: ApiProtocol,
         method: &str,
         path: &str,
+        created_by: &str,
     ) -> Result<ApiDefinition, CreateApiDefinitionError> {
-        let new_def = NewApiDefinition::new(project_id, name, protocol, method, path)?;
+        let new_def = NewApiDefinition::new(project_id, name, protocol, method, path)?.with_created_by(created_by);
         Ok(self.repo.insert_definition(&new_def).await?)
     }
 }
@@ -47,7 +48,7 @@ mod tests {
     async fn creates_definition() {
         let repo = Arc::new(InMemoryApiDefinitionRepository::new());
         let uc = CreateApiDefinitionUseCase::new(repo);
-        let d = uc.execute("p1", "登录", ApiProtocol::Http, "get", "/login").await.expect("ok");
+        let d = uc.execute("p1", "登录", ApiProtocol::Http, "get", "/login", "u1").await.expect("ok");
         assert_eq!(d.method, "GET");
         assert_eq!(d.protocol, ApiProtocol::Http);
     }
@@ -56,7 +57,7 @@ mod tests {
     async fn rejects_invalid_method() {
         let repo = Arc::new(InMemoryApiDefinitionRepository::new());
         let uc = CreateApiDefinitionUseCase::new(repo);
-        let err = uc.execute("p1", "x", ApiProtocol::Http, "FETCH", "/").await.unwrap_err();
+        let err = uc.execute("p1", "x", ApiProtocol::Http, "FETCH", "/", "u1").await.unwrap_err();
         assert_eq!(
             err,
             CreateApiDefinitionError::Validation(ApiDefinitionError::UnknownMethod("FETCH".into()))

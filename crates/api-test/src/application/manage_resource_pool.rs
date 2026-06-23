@@ -1,13 +1,13 @@
-//! 用例:创建 / 列出资源池。
+//! 用例:创建 / 列出 / 取单 / 更新 / 删除资源池。
 //!
-//! 创建走领域校验(名称非空)→ 管理端口落库;列出直接透传端口。
+//! 写操作走领域校验(`NewResourcePool::new`)→ 管理端口落库;读操作直接透传端口。
 //! 错误区分校验失败(→ 400)与后端错误(→ 500)。
 
 use std::sync::Arc;
 
 use thiserror::Error;
 
-use crate::domain::{NewResourcePool, ResourcePool, ResourcePoolError};
+use crate::domain::{NewResourcePool, ResourcePool, ResourcePoolDraft, ResourcePoolError};
 use crate::ports::{PortError, ResourcePoolAdminPort};
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
@@ -28,12 +28,8 @@ impl CreateResourcePoolUseCase {
         Self { admin }
     }
 
-    pub async fn execute(
-        &self,
-        name: &str,
-        enabled: bool,
-    ) -> Result<ResourcePool, CreateResourcePoolError> {
-        let new_pool = NewResourcePool::new(name, enabled)?;
+    pub async fn execute(&self, draft: ResourcePoolDraft) -> Result<ResourcePool, CreateResourcePoolError> {
+        let new_pool = NewResourcePool::new(draft)?;
         Ok(self.admin.create(&new_pool).await?)
     }
 }
@@ -53,34 +49,98 @@ impl ListResourcePoolsUseCase {
     }
 }
 
+/// 取单 / 更新 / 删除:三者共享同一管理端口,合并在一个用例里避免结构体膨胀。
+#[derive(Clone)]
+pub struct EditResourcePoolUseCase {
+    admin: Arc<dyn ResourcePoolAdminPort>,
+}
+
+impl EditResourcePoolUseCase {
+    pub fn new(admin: Arc<dyn ResourcePoolAdminPort>) -> Self {
+        Self { admin }
+    }
+
+    pub async fn get(&self, id: &str) -> Result<Option<ResourcePool>, PortError> {
+        self.admin.get(id).await
+    }
+
+    /// 全量更新(含启停)。`Ok(None)` 表示目标不存在。
+    pub async fn update(
+        &self,
+        id: &str,
+        draft: ResourcePoolDraft,
+    ) -> Result<Option<ResourcePool>, CreateResourcePoolError> {
+        let new_pool = NewResourcePool::new(draft)?;
+        Ok(self.admin.update(id, &new_pool).await?)
+    }
+
+    pub async fn delete(&self, id: &str) -> Result<bool, PortError> {
+        self.admin.delete(id).await
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use async_trait::async_trait;
     use std::sync::Mutex;
 
-    /// 内存假实现:create 生成确定性 id(p{N}),list 按 name 排序返回。
+    fn draft(name: &str) -> ResourcePoolDraft {
+        ResourcePoolDraft { name: name.to_string(), enabled: true, all_org: true, ..Default::default() }
+    }
+
+    /// 内存假实现:create 生成确定性 id(p{N});get/update/delete 按 id 命中。
     #[derive(Default)]
     struct FakeAdmin {
         pools: Mutex<Vec<ResourcePool>>,
+    }
+
+    fn view(id: String, p: &NewResourcePool) -> ResourcePool {
+        ResourcePool {
+            id,
+            name: p.name.clone(),
+            enabled: p.enabled,
+            description: p.description.clone(),
+            max_concurrency: p.max_concurrency,
+            pool_type: p.pool_type.clone(),
+            all_org: p.all_org,
+            org_ids: p.org_ids.clone(),
+            server_url: p.server_url.clone(),
+            config: p.config.clone(),
+            created_at: "2026-01-01 00:00:00".into(),
+            updated_at: "2026-01-01 00:00:00".into(),
+        }
     }
 
     #[async_trait]
     impl ResourcePoolAdminPort for FakeAdmin {
         async fn create(&self, pool: &NewResourcePool) -> Result<ResourcePool, PortError> {
             let mut pools = self.pools.lock().expect("lock");
-            let view = ResourcePool {
-                id: format!("p{}", pools.len() + 1),
-                name: pool.name.clone(),
-                enabled: pool.enabled,
-            };
-            pools.push(view.clone());
-            Ok(view)
+            let v = view(format!("p{}", pools.len() + 1), pool);
+            pools.push(v.clone());
+            Ok(v)
         }
         async fn list(&self) -> Result<Vec<ResourcePool>, PortError> {
-            let mut out = self.pools.lock().expect("lock").clone();
-            out.sort_by(|a, b| a.name.cmp(&b.name));
-            Ok(out)
+            Ok(self.pools.lock().expect("lock").clone())
+        }
+        async fn get(&self, id: &str) -> Result<Option<ResourcePool>, PortError> {
+            Ok(self.pools.lock().expect("lock").iter().find(|p| p.id == id).cloned())
+        }
+        async fn update(&self, id: &str, pool: &NewResourcePool) -> Result<Option<ResourcePool>, PortError> {
+            let mut pools = self.pools.lock().expect("lock");
+            match pools.iter_mut().find(|p| p.id == id) {
+                Some(slot) => {
+                    *slot = view(id.to_string(), pool);
+                    Ok(Some(slot.clone()))
+                }
+                None => Ok(None),
+            }
+        }
+        async fn delete(&self, id: &str) -> Result<bool, PortError> {
+            let mut pools = self.pools.lock().expect("lock");
+            let before = pools.len();
+            pools.retain(|p| p.id != id);
+            Ok(pools.len() != before)
         }
     }
 
@@ -90,24 +150,45 @@ mod tests {
         let create = CreateResourcePoolUseCase::new(admin.clone());
         let list = ListResourcePoolsUseCase::new(admin);
 
-        let p = create.execute("  本地池 ", true).await.expect("created");
+        let p = create.execute(draft("  本地池 ")).await.expect("created");
         assert_eq!(p.id, "p1");
         assert_eq!(p.name, "本地池"); // 去空白
         assert!(p.enabled);
 
-        create.execute("远端池", true).await.expect("created");
+        create.execute(draft("远端池")).await.expect("created");
         let all = list.execute().await.expect("listed");
         assert_eq!(all.len(), 2);
-        assert_eq!(all[0].name, "本地池"); // 按 name 排序
     }
 
     #[tokio::test]
     async fn rejects_blank_name_before_backend() {
         let admin = Arc::new(FakeAdmin::default());
         let create = CreateResourcePoolUseCase::new(admin.clone());
-        let err = create.execute("   ", true).await.unwrap_err();
+        let err = create.execute(draft("   ")).await.unwrap_err();
         assert_eq!(err, CreateResourcePoolError::Validation(ResourcePoolError::EmptyName));
-        // 校验失败不应落库。
+        assert!(admin.list().await.expect("listed").is_empty());
+    }
+
+    #[tokio::test]
+    async fn updates_and_deletes() {
+        let admin = Arc::new(FakeAdmin::default());
+        let create = CreateResourcePoolUseCase::new(admin.clone());
+        let edit = EditResourcePoolUseCase::new(admin.clone());
+
+        let p = create.execute(draft("池")).await.expect("created");
+        let updated = edit
+            .update(&p.id, ResourcePoolDraft { enabled: false, ..draft("池改名") })
+            .await
+            .expect("ok")
+            .expect("found");
+        assert_eq!(updated.name, "池改名");
+        assert!(!updated.enabled);
+
+        // 不存在的 id:更新返回 None、删除返回 false。
+        assert!(edit.update("nope", draft("x")).await.expect("ok").is_none());
+        assert!(!edit.delete("nope").await.expect("ok"));
+
+        assert!(edit.delete(&p.id).await.expect("ok"));
         assert!(admin.list().await.expect("listed").is_empty());
     }
 }

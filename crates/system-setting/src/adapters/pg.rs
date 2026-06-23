@@ -14,7 +14,7 @@ use crate::domain::{
 use crate::ports::{
     AuthRepoError, CredentialRepository, DirectoryError, ExternalUserRepository, LinkedUser,
     OrgRepoError, OrgRepository, RepoError, RoleRepoError, RoleRepository, SessionStore,
-    UserCredential, UserDirectory, UserRepository, UserRoleRepository,
+    UserCredential, UserDirectory, UserRepository, UserRoleQuery, UserRoleRepository,
 };
 
 fn repo_err(e: sqlx::Error) -> RepoError {
@@ -210,6 +210,40 @@ impl PgCredentialRepository {
     }
 }
 
+/// 用户→用户组(角色名)只读查询,供用户列表附带「用户组」列。
+#[derive(Clone)]
+pub struct PgUserRoleQuery {
+    pool: PgPool,
+}
+
+impl PgUserRoleQuery {
+    pub fn new(pool: PgPool) -> Self {
+        Self { pool }
+    }
+}
+
+#[async_trait]
+impl UserRoleQuery for PgUserRoleQuery {
+    async fn roles_for(&self, user_ids: &[String]) -> Result<Vec<(String, String)>, AuthRepoError> {
+        if user_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let rows = sqlx::query(
+            "SELECT ur.user_id, r.name FROM ms_user_role ur \
+             JOIN ms_role r ON r.id = ur.role_id \
+             WHERE ur.user_id = ANY($1) ORDER BY r.name",
+        )
+        .bind(user_ids)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(auth_err)?;
+        Ok(rows
+            .iter()
+            .map(|r| (r.try_get("user_id").unwrap_or_default(), r.try_get("name").unwrap_or_default()))
+            .collect())
+    }
+}
+
 #[async_trait]
 impl CredentialRepository for PgCredentialRepository {
     async fn find_by_username(
@@ -229,6 +263,37 @@ impl CredentialRepository for PgCredentialRepository {
             password_hash: r.try_get("password_hash").map_err(auth_err)?,
             permissions: r.try_get::<Vec<String>, _>("permissions").map_err(auth_err)?,
         }))
+    }
+
+    /// 重置密码:按 user_id 改哈希;无凭证则按用户名(邮箱)新建并授基础成员(只读)权限。
+    async fn reset_password(
+        &self,
+        user_id: &str,
+        username: &str,
+        password_hash: &str,
+    ) -> Result<(), AuthRepoError> {
+        let res = sqlx::query("UPDATE ms_user_credential SET password_hash = $2 WHERE user_id = $1")
+            .bind(user_id)
+            .bind(password_hash)
+            .execute(&self.pool)
+            .await
+            .map_err(auth_err)?;
+        if res.rows_affected() == 0 {
+            let perms: Vec<String> = [
+                "API_DEFINITION:READ",
+                "API_SCENARIO:READ",
+                "FUNCTIONAL_CASE:READ",
+                "TEST_PLAN:READ",
+                "BUG:READ",
+                "PROJECT:READ",
+                "SYSTEM_USER:READ",
+            ]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+            self.upsert(username, user_id, password_hash, &perms).await?;
+        }
+        Ok(())
     }
 }
 

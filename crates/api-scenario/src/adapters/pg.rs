@@ -12,7 +12,8 @@ use async_trait::async_trait;
 
 use crate::domain::{
     ApiScenario, ControlKind, ExecutionStatus, InlineRequest, NewApiScenario, NewScenarioStep,
-    RefMode, ScenarioExecution, ScenarioStatus, ScenarioStep, StepKind,
+    RefMode, ScenarioChange, ScenarioExecution, ScenarioReference, ScenarioStatus, ScenarioStep,
+    StepKind,
 };
 use crate::ports::{ApiScenarioRepository, RepoError};
 use sqlx::{PgPool, Row};
@@ -35,12 +36,21 @@ fn map_err(e: sqlx::Error) -> RepoError {
 /// 由场景行重建 `ApiScenario`(steps 由调用方另行填充)。
 fn row_to_scenario(row: &sqlx::postgres::PgRow) -> Result<ApiScenario, RepoError> {
     let status: String = row.try_get("status").map_err(map_err)?;
+    // meta 列在 0044 后存在;旧行/缺列回落空对象。
+    let meta: serde_json::Value = row.try_get("meta").unwrap_or_else(|_| serde_json::json!({}));
     Ok(ApiScenario {
         id: row.try_get("id").map_err(map_err)?,
         project_id: row.try_get("project_id").map_err(map_err)?,
         name: row.try_get("name").map_err(map_err)?,
         status: ScenarioStatus::parse(&status),
+        meta,
+        // 审计列在 0046 后存在;缺列回落空串/None。
+        created_by: row.try_get("created_by").ok().flatten(),
+        created_at: row.try_get::<String, _>("created_at").unwrap_or_default(),
+        updated_at: row.try_get::<String, _>("updated_at").unwrap_or_default(),
         steps: Vec::new(),
+        // last_result 仅列表查询带出(子查询);单查无此列 → None。
+        last_result: row.try_get::<Option<String>, _>("last_result").ok().flatten(),
     })
 }
 
@@ -66,7 +76,8 @@ fn row_to_step(row: &sqlx::postgres::PgRow) -> Result<ScenarioStep, RepoError> {
                 v.get("assertions").cloned().unwrap_or_else(|| serde_json::Value::Array(vec![]));
             let req = InlineRequest::new(method, url, body)
                 .map_err(|e| RepoError::Backend(e.to_string()))?
-                .with_assertions(assertions);
+                .with_assertions(assertions)
+                .with_spec_json(&v);
             StepKind::Request(req)
         }
         "CASE" => StepKind::Case {
@@ -138,12 +149,14 @@ impl ApiScenarioRepository for PgApiScenarioRepository {
         s: &NewApiScenario,
     ) -> Result<ApiScenario, RepoError> {
         let row = sqlx::query(
-            "INSERT INTO ms_api_scenario (project_id, name, status) VALUES ($1, $2, $3) \
-             RETURNING id, project_id, name, status, deleted",
+            "INSERT INTO ms_api_scenario (project_id, name, status, created_by) VALUES ($1, $2, $3, $4) \
+             RETURNING id, project_id, name, status, meta, created_by, \
+                       created_at::text AS created_at, updated_at::text AS updated_at, deleted",
         )
         .bind(&s.project_id)
         .bind(&s.name)
         .bind(ScenarioStatus::Draft.as_str())
+        .bind(&s.created_by)
         .fetch_one(&self.pool)
         .await
         .map_err(map_err)?;
@@ -152,10 +165,37 @@ impl ApiScenarioRepository for PgApiScenarioRepository {
 
     async fn get_scenario(&self, id: &str) -> Result<Option<ApiScenario>, RepoError> {
         let row = sqlx::query(
-            "SELECT id, project_id, name, status, deleted FROM ms_api_scenario \
-             WHERE id = $1 AND deleted = false",
+            "SELECT id, project_id, name, status, meta, created_by, \
+                    created_at::text AS created_at, updated_at::text AS updated_at, deleted \
+             FROM ms_api_scenario WHERE id = $1 AND deleted = false",
         )
         .bind(id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(map_err)?;
+        let Some(row) = row else { return Ok(None) };
+        let mut scenario = row_to_scenario(&row)?;
+        scenario.steps = self.load_steps(&scenario.id).await?;
+        Ok(Some(scenario))
+    }
+
+    async fn update_scenario(
+        &self,
+        id: &str,
+        name: &str,
+        status: &str,
+        meta: &serde_json::Value,
+    ) -> Result<Option<ApiScenario>, RepoError> {
+        let row = sqlx::query(
+            "UPDATE ms_api_scenario SET name = $2, status = $3, meta = $4, updated_at = now() \
+             WHERE id = $1 AND deleted = false \
+             RETURNING id, project_id, name, status, meta, created_by, \
+                       created_at::text AS created_at, updated_at::text AS updated_at, deleted",
+        )
+        .bind(id)
+        .bind(name)
+        .bind(status)
+        .bind(meta)
         .fetch_optional(&self.pool)
         .await
         .map_err(map_err)?;
@@ -170,8 +210,11 @@ impl ApiScenarioRepository for PgApiScenarioRepository {
         project_id: &str,
     ) -> Result<Vec<ApiScenario>, RepoError> {
         let rows = sqlx::query(
-            "SELECT id, project_id, name, status, deleted FROM ms_api_scenario \
-             WHERE project_id = $1 AND deleted = false ORDER BY id",
+            "SELECT id, project_id, name, status, meta, created_by, \
+                    created_at::text AS created_at, updated_at::text AS updated_at, deleted, \
+                    (SELECT e.status FROM ms_api_scenario_execution e \
+                       WHERE e.scenario_id = ms_api_scenario.id ORDER BY e.created_at DESC LIMIT 1) AS last_result \
+             FROM ms_api_scenario WHERE project_id = $1 AND deleted = false ORDER BY id",
         )
         .bind(project_id)
         .fetch_all(&self.pool)
@@ -193,17 +236,8 @@ impl ApiScenarioRepository for PgApiScenarioRepository {
     ) -> Result<ScenarioStep, RepoError> {
         // 据步骤类型拆出 ref_id 与 inline 两列。
         let (ref_id, inline): (Option<String>, Option<serde_json::Value>) = match &step.kind {
-            StepKind::Request(req) => {
-                let mut v = serde_json::json!({ "method": req.method, "url": req.url });
-                if let Some(b) = &req.body {
-                    v["body"] = serde_json::Value::String(b.clone());
-                }
-                // 仅当有断言时落库,空数组省略,保持 inline 简洁。
-                if req.assertions.as_array().is_some_and(|a| !a.is_empty()) {
-                    v["assertions"] = req.assertions.clone();
-                }
-                (None, Some(v))
-            }
+            // method/url/body/assertions + 请求头/Query/REST/认证/处理器(空字段省略)。
+            StepKind::Request(req) => (None, Some(req.to_inline_json())),
             StepKind::Case { case_id } => (Some(case_id.clone()), step.snapshot.clone()),
             StepKind::Scenario { scenario_id } => {
                 (Some(scenario_id.clone()), step.snapshot.clone())
@@ -228,6 +262,88 @@ impl ApiScenarioRepository for PgApiScenarioRepository {
         .await
         .map_err(map_err)?;
         row_to_step(&row)
+    }
+
+    async fn delete_step(&self, scenario_id: &str, step_id: &str) -> Result<bool, RepoError> {
+        let res = sqlx::query("DELETE FROM ms_api_scenario_step WHERE scenario_id = $1 AND id = $2")
+            .bind(scenario_id)
+            .bind(step_id)
+            .execute(&self.pool)
+            .await
+            .map_err(map_err)?;
+        Ok(res.rows_affected() > 0)
+    }
+
+    async fn delete_scenario(&self, id: &str) -> Result<bool, RepoError> {
+        // 软删场景;硬删其步骤(步骤表无软删列,且离开场景即无意义)。
+        let res = sqlx::query("UPDATE ms_api_scenario SET deleted = true WHERE id = $1 AND deleted = false")
+            .bind(id)
+            .execute(&self.pool)
+            .await
+            .map_err(map_err)?;
+        sqlx::query("DELETE FROM ms_api_scenario_step WHERE scenario_id = $1")
+            .bind(id)
+            .execute(&self.pool)
+            .await
+            .map_err(map_err)?;
+        Ok(res.rows_affected() > 0)
+    }
+
+    async fn reorder_steps(&self, scenario_id: &str, ordered_ids: &[String]) -> Result<(), RepoError> {
+        for (i, id) in ordered_ids.iter().enumerate() {
+            sqlx::query("UPDATE ms_api_scenario_step SET step_order = $3 WHERE scenario_id = $1 AND id = $2")
+                .bind(scenario_id)
+                .bind(id)
+                .bind((i + 1) as i32)
+                .execute(&self.pool)
+                .await
+                .map_err(map_err)?;
+        }
+        Ok(())
+    }
+
+    async fn record_change(
+        &self,
+        scenario_id: &str,
+        action: &str,
+        detail: Option<&str>,
+        user_id: Option<&str>,
+    ) -> Result<(), RepoError> {
+        sqlx::query(
+            "INSERT INTO ms_api_scenario_change (scenario_id, action, detail, user_id) \
+             VALUES ($1, $2, $3, $4)",
+        )
+        .bind(scenario_id)
+        .bind(action)
+        .bind(detail)
+        .bind(user_id)
+        .execute(&self.pool)
+        .await
+        .map_err(map_err)?;
+        Ok(())
+    }
+
+    async fn list_changes(&self, scenario_id: &str) -> Result<Vec<ScenarioChange>, RepoError> {
+        let rows = sqlx::query(
+            "SELECT id, scenario_id, action, detail, user_id, created_at::text AS created_at \
+             FROM ms_api_scenario_change WHERE scenario_id = $1 ORDER BY created_at DESC",
+        )
+        .bind(scenario_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(map_err)?;
+        rows.iter()
+            .map(|r| {
+                Ok(ScenarioChange {
+                    id: r.try_get("id").map_err(map_err)?,
+                    scenario_id: r.try_get("scenario_id").map_err(map_err)?,
+                    action: r.try_get("action").map_err(map_err)?,
+                    detail: r.try_get("detail").map_err(map_err)?,
+                    user_id: r.try_get("user_id").map_err(map_err)?,
+                    created_at: r.try_get::<String, _>("created_at").map_err(map_err)?,
+                })
+            })
+            .collect()
     }
 
     async fn record_execution(
@@ -287,6 +403,36 @@ impl ApiScenarioRepository for PgApiScenarioRepository {
         .await
         .map_err(map_err)?;
         rows.iter().map(row_to_execution).collect()
+    }
+
+    async fn list_scenarios_referencing_cases(
+        &self,
+        case_ids: &[String],
+    ) -> Result<Vec<ScenarioReference>, RepoError> {
+        if case_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        // 引用 = 步骤 kind='CASE' 且 ref_id ∈ case_ids(REFERENCE/COPY 皆计)。去重到场景级。
+        let rows = sqlx::query(
+            "SELECT DISTINCT s.id, s.project_id, s.name \
+             FROM ms_api_scenario s \
+             JOIN ms_api_scenario_step st ON st.scenario_id = s.id \
+             WHERE st.kind = 'CASE' AND st.ref_id = ANY($1) AND s.deleted = false \
+             ORDER BY s.name",
+        )
+        .bind(case_ids)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(map_err)?;
+        rows.iter()
+            .map(|row| {
+                Ok(ScenarioReference {
+                    id: row.try_get("id").map_err(map_err)?,
+                    project_id: row.try_get("project_id").map_err(map_err)?,
+                    name: row.try_get("name").map_err(map_err)?,
+                })
+            })
+            .collect()
     }
 }
 

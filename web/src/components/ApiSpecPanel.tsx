@@ -1,0 +1,1186 @@
+import { forwardRef, useEffect, useImperativeHandle, useState } from 'react'
+import { Button, Card, Drawer, Empty, Input, InputNumber, Modal, Radio, Segmented, Select, Space, Table, Tabs, Tag, Tooltip, Typography } from 'antd'
+import { CopyOutlined, PlusOutlined, DeleteOutlined, SaveOutlined, UploadOutlined } from '@ant-design/icons'
+import type { ColumnsType } from 'antd/es/table'
+import QueryParamTable from './QueryParamTable'
+import BodySchemaTree, { schemaToJson } from './BodySchemaTree'
+import ProcessorEditor from './ProcessorEditor'
+import AssertionEditor from './AssertionEditor'
+import {
+  api,
+  ApiError,
+  type ApiBodyType,
+  type ApiDefinition,
+  type ApiModule,
+  type ApiSpec,
+  type ApiSpecKV,
+  type ApiSpecResponse,
+  type BodySchemaNode,
+  type DebugResponse,
+  type Environment,
+} from '../api'
+import { message } from '../feedback'
+import { useI18n } from '../i18n'
+
+const API_STATUSES = ['DRAFT', 'DEBUGGING', 'COMPLETED', 'DEPRECATED']
+
+/** 复制文本到剪贴板(带轻提示)。navigator.clipboard 在非安全上下文可能缺失,降级 execCommand。 */
+async function copy(text: string, ok: string) {
+  try {
+    if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(text)
+    else {
+      const ta = document.createElement('textarea')
+      ta.value = text
+      document.body.appendChild(ta)
+      ta.select()
+      document.execCommand('copy')
+      document.body.removeChild(ta)
+    }
+    message.success(ok)
+  } catch {
+    message.error('复制失败')
+  }
+}
+
+const BODY_TYPES: ApiBodyType[] = ['none', 'form-data', 'x-www-form-urlencoded', 'json', 'xml', 'raw', 'binary']
+export const emptySpec = (): ApiSpec => ({
+  requestHeaders: [],
+  requestQuery: [],
+  restParams: [],
+  bodyType: 'none',
+  requestBody: '',
+  formBody: [],
+  auth: { type: 'none' },
+  responses: [],
+  tags: [],
+  preProcessors: [],
+  postProcessors: [],
+  assertions: [],
+})
+
+/** 解析 cURL 命令(method / url / -H 头 / -d 体)。尽力而为,失败返回 null。 */
+export function parseCurl(text: string): { method: string; url: string; headers: ApiSpecKV[]; body: string } | null {
+  const raw = text.trim().replace(/\\\r?\n/g, ' ')
+  if (!/^curl\b/.test(raw)) return null
+  // 词法切分(支持单/双引号)。
+  const toks: string[] = []
+  const re = /"([^"]*)"|'([^']*)'|(\S+)/g
+  let m: RegExpExecArray | null
+  while ((m = re.exec(raw))) toks.push(m[1] ?? m[2] ?? m[3] ?? '')
+  let method = ''
+  let url = ''
+  const headers: ApiSpecKV[] = []
+  let body = ''
+  for (let i = 1; i < toks.length; i++) {
+    const tk = toks[i]
+    if (tk === '-X' || tk === '--request') method = (toks[++i] || '').toUpperCase()
+    else if (tk === '-H' || tk === '--header') {
+      const h = toks[++i] || ''
+      const idx = h.indexOf(':')
+      if (idx > 0) headers.push({ name: h.slice(0, idx).trim(), value: h.slice(idx + 1).trim(), desc: '' })
+    } else if (tk === '-d' || tk === '--data' || tk === '--data-raw' || tk === '--data-binary') body = toks[++i] || ''
+    else if (tk === '-u' || tk === '--user') headers.push({ name: 'Authorization', value: `Basic ${tk}`, desc: '' })
+    else if (!tk.startsWith('-') && !url) url = tk
+  }
+  if (!url) return null
+  if (!method) method = body ? 'POST' : 'GET'
+  return { method, url, headers, body }
+}
+
+/**
+ * 接口「预览」(只读)/「定义」(可编辑)/「新建」(create:受控、无 id)共用面板。
+ * create 模式由父组件托管 spec(value/onChange),不自行加载/保存,保存按钮也交给父级(新建接口 Tab)。
+ */
+export type ExecMode = 'server' | 'local'
+/** 实际发送的请求(用于「实际请求 / 控制台 / cURL」展示)。 */
+export type SentRequest = { method: string; url: string; headers: { key: string; value: string }[]; body?: string }
+export interface ApiSpecPanelHandle {
+  save: () => void
+  /** cURL 导入:把解析结果合并进当前 spec(请求头/请求体),并回填请求行方法/路径。 */
+  applyCurl: (parsed: { method: string; url: string; headers: ApiSpecKV[]; body: string }) => void
+  /** 执行(调试模式):server=服务端代理发起;local=浏览器本地直发。 */
+  execute: (mode?: ExecMode) => void
+  /** 另存为测试用例(调试模式「保存」):用当前请求 + 断言/处理器新建用例。 */
+  saveAsCase: () => void
+}
+
+const ApiSpecPanel = forwardRef<ApiSpecPanelHandle, {
+  definition: ApiDefinition
+  mode: 'preview' | 'define' | 'create' | 'debug'
+  value?: ApiSpec
+  onChange?: (s: ApiSpec) => void
+  /** 隐藏内部「保存」按钮(由父级请求行的保存统一触发,经 ref.save())。 */
+  hideSave?: boolean
+  /** 调试请求行:方法/路径(由父级请求行维护,cURL 导入会回填)。 */
+  reqMethod?: string
+  reqPath?: string
+  /** 当前执行方式(由父级请求行的下拉选择)。 */
+  execMode?: ExecMode
+  /** 选中的环境(由父级顶栏环境选择器提供;调试执行用其 baseUrl/默认头/变量)。 */
+  env?: Environment
+  /** 「保存为新用例」成功后回调(父级据此跳转到「用例」标签并刷新)。 */
+  onCaseSaved?: () => void
+}>(function ApiSpecPanel({ definition, mode, value, onChange, hideSave, reqMethod, reqPath, execMode = 'server', env, onCaseSaved }, ref) {
+  const { t } = useI18n()
+  const create = mode === 'create'
+  const debug = mode === 'debug'
+  const editable = mode === 'define' || create || debug
+  const [innerSpec, setInnerSpec] = useState<ApiSpec>(emptySpec())
+  const [loading, setLoading] = useState(!create)
+  const [saving, setSaving] = useState(false)
+  const [dirty, setDirty] = useState(false)
+  // create 模式用父级受控 spec;否则用内部状态(load/save)。
+  const spec = create ? value ?? emptySpec() : innerSpec
+
+  useEffect(() => {
+    if (create) return
+    let alive = true
+    setLoading(true)
+    api
+      .getDefinition(definition.id)
+      .then((d) => alive && setInnerSpec({ ...emptySpec(), ...(d.spec || {}) }))
+      .catch(() => alive && setInnerSpec(emptySpec()))
+      .finally(() => alive && setLoading(false))
+    return () => {
+      alive = false
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [definition.id, create])
+
+  const patch = (p: Partial<ApiSpec>) => {
+    if (create) {
+      onChange?.({ ...spec, ...p })
+      return
+    }
+    setInnerSpec((s) => ({ ...s, ...p }))
+    setDirty(true)
+  }
+
+  const save = async () => {
+    setSaving(true)
+    try {
+      await api.updateDefinitionSpec(definition.id, spec)
+      message.success(t('apidef.specSaved', '定义已保存'))
+      setDirty(false)
+    } catch (e) {
+      message.error(e instanceof ApiError ? e.message : t('apidef.saveFailed', '保存失败'))
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  // 调试执行响应状态(环境由父级顶栏提供,经 env prop)。
+  const [running, setRunning] = useState(false)
+  const [resp, setResp] = useState<DebugResponse | null>(null)
+  const [runErr, setRunErr] = useState('')
+  // 最近一次实际发送的请求(供「实际请求 / 控制台 / cURL」展示)。
+  const [lastReq, setLastReq] = useState<SentRequest | null>(null)
+
+  // 把当前请求行 + spec 组装成可发送的请求(URL/headers/body)。失败时弹提示并返回 null。
+  const buildRequest = (): { method: string; url: string; headers: { key: string; value: string }[]; body?: string } | null => {
+    const resolveVars = (s: string): string =>
+      env?.variables ? s.replace(/\{\{\s*(\w+)\s*\}\}/g, (whole, k: string) => env.variables?.[k] ?? whole) : s
+    const path = (reqPath ?? definition.path ?? '').trim()
+    if (!path) {
+      message.warning(t('editor.urlRequired', '请输入 URL'))
+      return null
+    }
+    const rawUrl = resolveVars(path)
+    let base = rawUrl
+    if (!/^https?:\/\//i.test(rawUrl)) {
+      const baseUrl = env?.baseUrl?.trim().replace(/\/+$/, '')
+      if (!baseUrl) {
+        message.warning(t('editor.needEnvOrAbs', '相对路径需先选择带 baseUrl 的环境,或填写绝对 URL(http(s)://)'))
+        return null
+      }
+      base = `${baseUrl}${rawUrl.startsWith('/') ? '' : '/'}${rawUrl}`
+    }
+    const qs = (spec.requestQuery || [])
+      .filter((q) => q.name?.trim())
+      .map((q) => `${encodeURIComponent(q.name)}=${encodeURIComponent(resolveVars(q.value || ''))}`)
+      .join('&')
+    const finalUrl = qs ? `${base}${base.includes('?') ? '&' : '?'}${qs}` : base
+    const hs: { key: string; value: string }[] = []
+    for (const eh of env?.headers || []) if (eh.name?.trim()) hs.push({ key: eh.name, value: resolveVars(eh.value || '') })
+    for (const h of spec.requestHeaders || []) if (h.name?.trim()) hs.push({ key: h.name, value: resolveVars(h.value || '') })
+    if (spec.auth?.type === 'bearer' && spec.auth.token) hs.push({ key: 'Authorization', value: `Bearer ${spec.auth.token}` })
+    if (spec.auth?.type === 'basic' && spec.auth.token) hs.push({ key: 'Authorization', value: `Basic ${btoa(spec.auth.token)}` })
+    return { method: reqMethod || definition.method || 'GET', url: finalUrl, headers: hs, body: spec.requestBody?.trim() ? resolveVars(spec.requestBody) : undefined }
+  }
+
+  // 本地执行:浏览器直发(可能受 CORS 限制——这正是「本地」与「服务端代理」的区别)。
+  const localSend = async (req: { method: string; url: string; headers: { key: string; value: string }[]; body?: string }): Promise<DebugResponse> => {
+    const t0 = performance.now()
+    const res = await fetch(req.url, { method: req.method, headers: Object.fromEntries(req.headers.map((h) => [h.key, h.value])), body: req.body })
+    const text = await res.text()
+    const headers: [string, string][] = []
+    res.headers.forEach((v, k) => headers.push([k, v]))
+    return { status: res.status, latencyMs: Math.round(performance.now() - t0), headers, body: text }
+  }
+
+  const execute = async (m: ExecMode = execMode) => {
+    const req = buildRequest()
+    if (!req) return
+    setLastReq(req)
+    setRunning(true)
+    setRunErr('')
+    setResp(null)
+    try {
+      setResp(
+        m === 'local'
+          ? await localSend(req)
+          : await api.debugSend({ ...req, assertions: spec.assertions, processors: spec.postProcessors }),
+      )
+    } catch (e) {
+      setRunErr(e instanceof ApiError ? e.message : e instanceof Error ? e.message : t('editor.sendFail', '发送失败'))
+    } finally {
+      setRunning(false)
+    }
+  }
+
+  // 另存为测试用例:用当前请求 + 断言/处理器/标签新建用例(对齐参考图 #9「保存=另存为用例」)。
+  const [caseModalOpen, setCaseModalOpen] = useState(false)
+  const [caseName, setCaseName] = useState('')
+  const [caseSaving, setCaseSaving] = useState(false)
+  const kvToCase = (rows?: ApiSpecKV[]) => (rows || []).filter((r) => r.name?.trim()).map((r) => ({ key: r.name, value: r.value || '' }))
+  const saveAsCase = () => {
+    setCaseName(`${definition.name} - ${t('apidef.debugCase', '调试用例')}`)
+    setCaseModalOpen(true)
+  }
+  const doSaveCase = async () => {
+    if (!caseName.trim()) {
+      message.warning(t('apidef.caseNameRequired', '请输入用例名称'))
+      return
+    }
+    setCaseSaving(true)
+    try {
+      await api.createCase(definition.id, {
+        name: caseName.trim(),
+        method: reqMethod || definition.method || 'GET',
+        url: reqPath || definition.path || '',
+        body: spec.requestBody || undefined,
+        headers: kvToCase(spec.requestHeaders),
+        queryParams: kvToCase(spec.requestQuery),
+        restParams: kvToCase(spec.restParams),
+        auth: spec.auth?.type && spec.auth.type !== 'none' ? { type: spec.auth.type, token: spec.auth.token } : undefined,
+        assertions: spec.assertions,
+        processors: [...(spec.preProcessors || []), ...(spec.postProcessors || [])],
+        tags: spec.tags,
+      })
+      message.success(t('apidef.caseSaved', '已另存为用例'))
+      setCaseModalOpen(false)
+      onCaseSaved?.()
+    } catch (e) {
+      message.error(e instanceof ApiError ? e.message : t('apidef.saveFailed', '保存失败'))
+    } finally {
+      setCaseSaving(false)
+    }
+  }
+
+  const applyCurl = (parsed: { method: string; url: string; headers: ApiSpecKV[]; body: string }) => {
+    patch({
+      requestHeaders: [...(spec.requestHeaders || []).filter((h) => h.name), ...parsed.headers],
+      ...(parsed.body ? { requestBody: parsed.body, bodyType: 'json' as ApiBodyType } : {}),
+    })
+  }
+
+  // 暴露 save/execute/applyCurl/saveAsCase 给父级(定义页请求行的按钮统一触发)。
+  useImperativeHandle(ref, () => ({ save, execute, applyCurl, saveAsCase }), [save, execute, applyCurl, saveAsCase])
+
+  if (loading) return <div style={{ padding: 24, color: '#999' }}>{t('a.loading', '加载中…')}</div>
+
+  // 预览(只读):平铺各段。
+  if (!editable) {
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
+        <KVSection title={t('apidef.requestHeaders', '请求头')} rows={spec.requestHeaders || []} editable={false} onChange={() => {}} />
+        <KVSection title={t('apidef.requestQuery', 'Query 参数')} rows={spec.requestQuery || []} editable={false} onChange={() => {}} />
+        {(spec.restParams?.length ?? 0) > 0 && (
+          <KVSection title={t('apidef.restParams', 'REST 路径参数')} rows={spec.restParams || []} editable={false} onChange={() => {}} />
+        )}
+        <BodyView spec={spec} />
+        <ResponsesSection responses={spec.responses || []} editable={false} onChange={() => {}} />
+      </div>
+    )
+  }
+
+  // 定义(可编辑):MeterSphere 风子标签。
+  const tabs = [
+    {
+      key: 'basic',
+      label: t('apidef.basicInfo', '基本信息'),
+      children: <BasicInfo definition={definition} spec={spec} patch={patch} create={create} />,
+    },
+    {
+      key: 'headers',
+      label: `${t('apidef.requestHeaders', '请求头')}${spec.requestHeaders?.length ? ` (${spec.requestHeaders.length})` : ''}`,
+      children: <KVSection title={t('apidef.requestHeaders', '请求头')} rows={spec.requestHeaders || []} editable onChange={(rows) => patch({ requestHeaders: rows })} hideTitle />,
+    },
+    {
+      key: 'body',
+      label: t('apidef.requestBody', '请求体'),
+      children: <BodyEditor spec={spec} patch={patch} />,
+    },
+    {
+      key: 'query',
+      label: `Query${spec.requestQuery?.length ? ` (${spec.requestQuery.length})` : ''}`,
+      children: <KVSection title="Query" rows={spec.requestQuery || []} editable onChange={(rows) => patch({ requestQuery: rows })} hideTitle />,
+    },
+    {
+      key: 'rest',
+      label: `REST${spec.restParams?.length ? ` (${spec.restParams.length})` : ''}`,
+      children: <KVSection title={t('apidef.restParams', 'REST 路径参数')} rows={spec.restParams || []} editable onChange={(rows) => patch({ restParams: rows })} hideTitle />,
+    },
+    // 前置/后置/断言:仅「调试」模式(对齐参考图 #9;定义态不含)。
+    ...(debug
+      ? [
+          {
+            key: 'pre',
+            label: t('apidef.preProcessors', '前置'),
+            children: <ProcessorEditor value={spec.preProcessors as Record<string, unknown>[] | undefined} onChange={(v) => patch({ preProcessors: v })} allowed={['script', 'sql', 'wait']} />,
+          },
+          {
+            key: 'post',
+            label: t('apidef.postProcessors', '后置'),
+            children: <ProcessorEditor value={spec.postProcessors as Record<string, unknown>[] | undefined} onChange={(v) => patch({ postProcessors: v })} allowed={['extract', 'script', 'sql', 'wait']} />,
+          },
+          {
+            key: 'assert',
+            label: `${t('apidef.assertions', '断言')}${spec.assertions?.length ? ` (${spec.assertions.length})` : ''}`,
+            children: <AssertionEditor value={spec.assertions as Record<string, unknown>[] | undefined} onChange={(v) => patch({ assertions: v })} />,
+          },
+        ]
+      : []),
+    {
+      key: 'auth',
+      label: t('apidef.auth', '认证'),
+      children: <AuthEditor spec={spec} patch={patch} />,
+    },
+    {
+      key: 'settings',
+      label: t('apidef.settings', '设置'),
+      children: <SettingsTab definition={definition} />,
+    },
+  ]
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      {/* create / hideSave 模式由父级请求行的保存统一提交,这里不再重复。 */}
+      {!create && !hideSave && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <Button type="primary" icon={<SaveOutlined />} loading={saving} disabled={!dirty} onClick={save}>
+            {t('a.save', '保存')}
+          </Button>
+          {dirty && <span style={{ color: '#ef6c00', fontSize: 12 }}>{t('apidef.unsaved', '有未保存修改')}</span>}
+        </div>
+      )}
+      {/* 下划线子标签(对齐 MeterSphere:基本信息/请求头/请求体/…/设置)。 */}
+      <Tabs className="ms-detail-tabs" items={tabs} size="small" />
+      {/* 底部「响应内容」:定义=示例响应(状态码 200/404…);调试=服务端执行结果。 */}
+      {debug ? (
+        <DebugResultPanel
+          running={running}
+          resp={resp}
+          err={runErr}
+          req={lastReq}
+          isHttp={(definition.protocol || 'HTTP').toUpperCase() === 'HTTP'}
+          extractors={spec.postProcessors as Record<string, unknown>[] | undefined}
+          assertions={spec.assertions as Record<string, unknown>[] | undefined}
+        />
+      ) : (
+        <ExampleResponsesPanel responses={spec.responses || []} onChange={(rows) => patch({ responses: rows })} />
+      )}
+      {/* 另存为测试用例:命名后用当前请求新建用例。 */}
+      <Modal
+        title={t('apidef.saveAsCase', '保存为新用例')}
+        open={caseModalOpen}
+        onCancel={() => setCaseModalOpen(false)}
+        onOk={doSaveCase}
+        okButtonProps={{ loading: caseSaving }}
+        okText={t('a.save', '保存')}
+        cancelText={t('a.cancel', '取消')}
+        destroyOnHidden
+      >
+        <div style={{ fontSize: 13, color: '#5b6470', marginBottom: 6 }}>{t('apidef.caseName', '用例名称')}</div>
+        <Input value={caseName} onChange={(e) => setCaseName(e.target.value)} onPressEnter={doSaveCase} placeholder={t('apidef.caseName', '用例名称')} />
+      </Modal>
+    </div>
+  )
+})
+
+/** 定义态底部「响应内容」:示例响应。状态码标签(200/404…)切换 + 添加;每个示例含 响应体/响应头/状态码。 */
+function ExampleResponsesPanel({ responses, onChange }: { responses: ApiSpecResponse[]; onChange: (rows: ApiSpecResponse[]) => void }) {
+  const { t } = useI18n()
+  const [sel, setSel] = useState(0)
+  const [sub, setSub] = useState<'body' | 'headers' | 'status'>('body')
+  const cur = responses[sel]
+  const setCur = (p: Partial<ApiSpecResponse>) => onChange(responses.map((r, i) => (i === sel ? { ...r, ...p } : r)))
+  const add = () => {
+    onChange([...responses, { status: 200, body: '', headers: [] }])
+    setSel(responses.length)
+  }
+  const del = (i: number) => {
+    onChange(responses.filter((_, idx) => idx !== i))
+    setSel((s) => (s >= i && s > 0 ? s - 1 : s))
+  }
+  const sc = (s?: number) => (s == null ? 'default' : s < 300 ? 'green' : s < 400 ? 'gold' : 'red')
+
+  return (
+    <Card size="small" style={{ marginTop: 12 }} styles={{ body: { padding: 12 } }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12, flexWrap: 'wrap' }}>
+        <span style={{ fontWeight: 600, fontSize: 13 }}>{t('apidef.responseContent', '响应内容')}</span>
+        <div style={{ width: 12 }} />
+        {responses.map((r, i) => (
+          <Tag.CheckableTag key={i} checked={i === sel} onChange={() => setSel(i)} style={{ border: '1px solid #eef0f2' }}>
+            <span style={{ color: i === sel ? undefined : undefined }}>
+              <span style={{ color: sc(r.status) === 'green' ? '#52c41a' : sc(r.status) === 'red' ? '#ff4d4f' : '#d48806', fontWeight: 600 }}>●</span> {r.status ?? '—'}
+            </span>
+            {responses.length > 1 && (
+              <DeleteOutlined style={{ marginLeft: 6, fontSize: 11 }} onClick={(e) => { e.stopPropagation(); del(i) }} />
+            )}
+          </Tag.CheckableTag>
+        ))}
+        <Button type="text" size="small" icon={<PlusOutlined />} onClick={add} />
+      </div>
+      {!cur ? (
+        <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('apidef.noExampleResp', '暂无示例响应')} style={{ margin: '8px 0' }} />
+      ) : (
+        <Tabs
+          size="small"
+          activeKey={sub}
+          onChange={(k) => setSub(k as 'body' | 'headers' | 'status')}
+          items={[
+            {
+              key: 'body',
+              label: t('editor.respBody', '响应体'),
+              children: <Input.TextArea rows={6} value={cur.body} onChange={(e) => setCur({ body: e.target.value })} placeholder={t('apidef.responseBody', '响应体')} className="ms-mono" />,
+            },
+            {
+              key: 'headers',
+              label: `${t('editor.respHeaders', '响应头')}${cur.headers?.length ? ` (${cur.headers.length})` : ''}`,
+              children: <KVSection title="" rows={cur.headers || []} editable onChange={(rows) => setCur({ headers: rows })} hideTitle />,
+            },
+            {
+              key: 'status',
+              label: t('apidef.statusCode', '状态码'),
+              children: <InputNumber min={100} max={599} value={cur.status} onChange={(v) => setCur({ status: v ?? undefined })} />,
+            },
+          ]}
+        />
+      )}
+    </Card>
+  )
+}
+
+/** 把实际请求渲染成 cURL 命令。 */
+function reqToCurl(req: SentRequest): string {
+  const parts = [`curl -X ${req.method} '${req.url}'`]
+  for (const h of req.headers) parts.push(`  -H '${h.key}: ${(h.value || '').replace(/'/g, "'\\''")}'`)
+  if (req.body) parts.push(`  -d '${req.body.replace(/'/g, "'\\''")}'`)
+  return parts.join(' \\\n')
+}
+
+const codeBox: React.CSSProperties = { background: '#0f1419', color: '#d6deeb', padding: 12, borderRadius: 6, maxHeight: 360, overflow: 'auto', fontSize: 12, whiteSpace: 'pre-wrap', wordBreak: 'break-all', margin: 0 }
+
+/** 调试结果面板:响应体/响应头/实际请求/控制台/cURL/提取/断言(执行由请求行触发,环境在顶栏选)。 */
+export function DebugResultPanel({
+  running,
+  resp,
+  err,
+  req,
+  isHttp,
+  extractors,
+  assertions,
+}: {
+  running: boolean
+  resp: DebugResponse | null
+  err: string
+  req: SentRequest | null
+  isHttp: boolean
+  extractors?: Record<string, unknown>[]
+  assertions?: Record<string, unknown>[]
+}) {
+  const { t } = useI18n()
+  const [view, setView] = useState<'json' | 'raw'>('json')
+
+  // 提取器(后置处理器里 type=Extract 的 extractors 列表)。
+  const extractRows = (extractors || [])
+    .filter((p) => String(p.type) === 'Extract')
+    .flatMap((p) => ((p.args as { extractors?: { variable?: string; kind?: string; expression?: string }[] })?.extractors || []))
+
+  const items = [
+    {
+      key: 'body',
+      label: t('editor.respBody', '响应体'),
+      children: (
+        <>
+          <Radio.Group size="small" value={view} onChange={(e) => setView(e.target.value)} optionType="button" style={{ marginBottom: 8 }}>
+            <Radio.Button value="json">JSON</Radio.Button>
+            <Radio.Button value="raw">Raw</Radio.Button>
+          </Radio.Group>
+          <pre style={codeBox}>{view === 'json' ? formatJson(resp?.body || '') : resp?.body || t('editor.empty', '(空)')}</pre>
+        </>
+      ),
+    },
+    {
+      key: 'headers',
+      label: `${t('editor.respHeaders', '响应头')}${resp?.headers.length ? ` (${resp.headers.length})` : ''}`,
+      children: (
+        <Table
+          size="small"
+          pagination={false}
+          rowKey={(_, i) => String(i)}
+          dataSource={(resp?.headers || []).map(([k, v]) => ({ k, v }))}
+          columns={[
+            { title: t('editor.colName', '名'), dataIndex: 'k', width: 220 },
+            { title: t('editor.colValue', '值'), dataIndex: 'v', render: (v: string) => <span className="ms-mono">{v}</span> },
+          ]}
+          locale={{ emptyText: t('apidef.none', '无') }}
+        />
+      ),
+    },
+    {
+      key: 'actual',
+      label: t('apidef.actualReq', '实际请求'),
+      children: req ? (
+        <pre style={codeBox}>{`${req.method} ${req.url}\n\n${req.headers.map((h) => `${h.key}: ${h.value}`).join('\n')}${req.body ? `\n\n${req.body}` : ''}`}</pre>
+      ) : (
+        <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('apidef.notRunYet', '尚未执行')} />
+      ),
+    },
+    {
+      key: 'console',
+      label: t('apidef.console', '控制台'),
+      children: (
+        <pre style={codeBox}>
+          {[
+            req ? `→ ${req.method} ${req.url}` : t('apidef.notRunYet', '尚未执行'),
+            err ? `✗ ${err}` : resp ? `← ${resp.status} · ${resp.latencyMs} ms` : running ? '… ' + t('a.loading', '加载中…') : '',
+          ].filter(Boolean).join('\n')}
+        </pre>
+      ),
+    },
+    // cURL 仅 HTTP 协议。
+    ...(isHttp
+      ? [{
+          key: 'curl',
+          label: 'cURL',
+          children: req ? <pre style={codeBox}>{reqToCurl(req)}</pre> : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('apidef.notRunYet', '尚未执行')} />,
+        }]
+      : []),
+    {
+      key: 'extract',
+      label: `${t('apidef.preExtract', '提取')}${resp?.extractions?.length ? ` (${resp.extractions.length})` : extractRows.length ? ` (${extractRows.length})` : ''}`,
+      // 服务端执行回传实际提取值则展示「变量=值」;否则展示已配置的提取器。
+      children: resp?.extractions?.length ? (
+        <Table
+          size="small"
+          pagination={false}
+          rowKey={(_, i) => String(i)}
+          dataSource={resp.extractions.map(([k, v], i) => ({ k, v, _i: i }))}
+          columns={[
+            { title: t('apidef.extractVar', '变量'), dataIndex: 'k', width: 220, render: (v: string) => <span className="ms-mono">{v}</span> },
+            { title: t('apidef.extractVal', '值'), dataIndex: 'v', render: (v: string) => <span className="ms-mono">{v}</span> },
+          ]}
+        />
+      ) : extractRows.length ? (
+        <Table
+          size="small"
+          pagination={false}
+          rowKey={(_, i) => String(i)}
+          dataSource={extractRows.map((e, i) => ({ ...e, _i: i }))}
+          columns={[
+            { title: t('apidef.extractVar', '变量'), dataIndex: 'variable', width: 200, render: (v: string) => <span className="ms-mono">{v || '—'}</span> },
+            { title: t('apidef.extractKind', '方式'), dataIndex: 'kind', width: 120 },
+            { title: t('apidef.extractExpr', '表达式'), dataIndex: 'expression', render: (v: string) => <span className="ms-mono">{v || '—'}</span> },
+          ]}
+        />
+      ) : (
+        <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('apidef.noExtract', '无提取(在「后置」配置)')} />
+      ),
+    },
+    {
+      key: 'assert',
+      label: `${t('apidef.assertions', '断言')}${resp?.assertions?.length ? ` (${resp.assertions.filter((a) => a.passed).length}/${resp.assertions.length})` : assertions?.length ? ` (${assertions.length})` : ''}`,
+      // 服务端执行回传逐条结果(通过/失败);否则展示「已配置、执行后出结果」。
+      children: resp?.assertions?.length ? (
+        <Table
+          size="small"
+          pagination={false}
+          rowKey={(_, i) => String(i)}
+          dataSource={resp.assertions.map((a, i) => ({ ...a, _i: i }))}
+          columns={[
+            { title: '', width: 56, dataIndex: 'passed', render: (p: boolean) => <Tag color={p ? 'green' : 'red'}>{p ? t('apidef.pass', '通过') : t('apidef.fail', '失败')}</Tag> },
+            { title: t('apidef.assertItem', '断言项'), dataIndex: 'item', render: (v: string) => <span className="ms-mono">{v}</span> },
+            { title: t('apidef.assertCond', '条件'), dataIndex: 'condition', width: 90 },
+            { title: t('apidef.assertExpected', '期望'), dataIndex: 'expected', render: (v: string) => <span className="ms-mono">{v || '—'}</span> },
+            { title: t('apidef.assertActual', '实际'), dataIndex: 'actual', render: (v: string, r) => <span className="ms-mono" style={{ color: r.passed ? undefined : '#ff4d4f' }}>{v || '—'}</span> },
+          ]}
+        />
+      ) : assertions?.length ? (
+        <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('apidef.assertConfigured', '已配置断言,点「服务端执行」查看校验结果')} />
+      ) : (
+        <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('apidef.noAssert', '无断言(在「断言」配置)')} />
+      ),
+    },
+  ]
+
+  return (
+    <Card size="small" style={{ marginTop: 12 }} styles={{ body: { padding: 12 } }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+        <span style={{ fontWeight: 600, fontSize: 13 }}>{t('apidef.responseContent', '响应内容')}</span>
+        <Typography.Text type="secondary" style={{ fontSize: 12 }}>{t('apidef.runResult', '执行结果')}</Typography.Text>
+        <div style={{ flex: 1 }} />
+        {running && <Typography.Text type="secondary" style={{ fontSize: 12 }}>{t('a.loading', '加载中…')}</Typography.Text>}
+        {resp && <Tag color={resp.status < 400 ? 'green' : 'red'}>{resp.status}</Tag>}
+        {resp && <Typography.Text type="secondary" style={{ fontSize: 12 }}>{resp.latencyMs} ms</Typography.Text>}
+      </div>
+      <Tabs className="ms-detail-tabs" size="small" items={items} />
+    </Card>
+  )
+}
+
+export default ApiSpecPanel
+
+/** 设置:对齐参考图占位(当前接口元信息只读;状态/模块在「基本信息」维护)。 */
+function SettingsTab({ definition }: { definition: ApiDefinition }) {
+  const { t } = useI18n()
+  return (
+    <Space direction="vertical" size={10} style={{ width: '100%', maxWidth: 520 }}>
+      <Field label={t('apidef.protocol', '协议')}>
+        <Tag color="blue">{definition.protocol}</Tag>
+      </Field>
+      <Field label={t('apidef.colCreatedBy', '创建人')}>
+        <span>{definition.createdBy || '—'}</span>
+      </Field>
+      <Field label="ID">
+        <span className="ms-mono" style={{ fontSize: 12 }}>{definition.id}</span>
+      </Field>
+    </Space>
+  )
+}
+
+/** 基本信息:描述 / 所属模块 / 标签 / 状态。描述/标签存 spec(随保存);模块/状态为定义级,即时写入。 */
+function BasicInfo({ definition, spec, patch, create }: { definition: ApiDefinition; spec: ApiSpec; patch: (p: Partial<ApiSpec>) => void; create?: boolean }) {
+  const { t } = useI18n()
+  const [tagInput, setTagInput] = useState('')
+  const tags = spec.tags || []
+  const [modules, setModules] = useState<ApiModule[]>([])
+  const [moduleId, setModuleId] = useState<string | undefined>(definition.moduleId || undefined)
+  const [status, setStatus] = useState(definition.status)
+
+  useEffect(() => {
+    if (create) return // 新建态:模块/状态保存后再在「定义」里维护。
+    let alive = true
+    api.modules(definition.projectId).then((m) => alive && setModules(Array.isArray(m) ? m : [])).catch(() => undefined)
+    return () => {
+      alive = false
+    }
+  }, [definition.projectId, create])
+
+  // 模块/状态是定义级属性,即时写后端(不走 spec 的「保存」按钮),对齐 MeterSphere。
+  const changeModule = async (mid?: string) => {
+    setModuleId(mid)
+    try {
+      await api.moveDefinition(definition.id, mid || null)
+      message.success(t('apidef.moved', '已移动'))
+    } catch (e) {
+      message.error(e instanceof ApiError ? e.message : t('apidef.saveFailed', '保存失败'))
+    }
+  }
+  const changeStatus = async (s: string) => {
+    setStatus(s)
+    try {
+      await api.updateDefinitionStatus(definition.id, s)
+      message.success(t('apidef.statusUpdated', '状态已更新'))
+    } catch (e) {
+      message.error(e instanceof ApiError ? e.message : t('apidef.saveFailed', '保存失败'))
+    }
+  }
+
+  return (
+    <Space direction="vertical" size={16} style={{ width: '100%', maxWidth: 720 }}>
+      <Field label={t('apidef.descLabel', '描述')}>
+        <Input.TextArea rows={4} value={spec.description || ''} onChange={(e) => patch({ description: e.target.value })} placeholder={t('apidef.descPlaceholder', '接口描述')} />
+      </Field>
+      {!create && (
+        <Field label={t('apidef.ownerModule', '所属模块')}>
+          <Select
+            style={{ width: 280 }}
+            value={moduleId || ''}
+            onChange={changeModule}
+            placeholder={t('apidef.unfiled', '未归类')}
+            // 对齐左侧树:始终含「未归类」选项 + 各模块(项目无模块时也不显示「暂无数据」)。
+            options={[
+              { value: '', label: t('apidef.unfiled', '未归类') },
+              ...modules.map((m) => ({ value: m.id, label: m.name })),
+            ]}
+          />
+        </Field>
+      )}
+      <Field label={t('apidef.tags', '标签')}>
+        <Space size={[6, 6]} wrap>
+          {tags.map((tg) => (
+            <Tag key={tg} closable onClose={() => patch({ tags: tags.filter((x) => x !== tg) })}>{tg}</Tag>
+          ))}
+          <Input
+            size="small"
+            style={{ width: 140 }}
+            value={tagInput}
+            onChange={(e) => setTagInput(e.target.value)}
+            onPressEnter={() => {
+              const v = tagInput.trim()
+              if (v && !tags.includes(v)) patch({ tags: [...tags, v] })
+              setTagInput('')
+            }}
+            placeholder={t('apidef.addTag', '添加标签,回车结束')}
+          />
+        </Space>
+      </Field>
+      {!create && (
+        <Field label={t('apidef.colStatus', '状态')}>
+          <Select
+            style={{ width: 180 }}
+            value={status}
+            onChange={changeStatus}
+            options={API_STATUSES.map((s) => ({ value: s, label: s }))}
+          />
+        </Field>
+      )}
+    </Space>
+  )
+}
+
+function Field({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div>
+      <div style={{ fontSize: 13, color: '#5b6470', marginBottom: 6 }}>{label}</div>
+      {children}
+    </div>
+  )
+}
+
+/** 请求体编辑器:对齐 MeterSphere(none/form-data/urlencoded/json[Schema 树|Json]/xml/raw/binary)。 */
+function BodyEditor({ spec, patch }: { spec: ApiSpec; patch: (p: Partial<ApiSpec>) => void }) {
+  const { t } = useI18n()
+  const bt = spec.bodyType || 'none'
+  const [jsonMode, setJsonMode] = useState<'schema' | 'json'>('schema')
+  const [batchOpen, setBatchOpen] = useState(false)
+
+  return (
+    <div>
+      <Segmented
+        size="small"
+        value={bt}
+        onChange={(v) => patch({ bodyType: v as ApiBodyType })}
+        options={BODY_TYPES.map((x) => ({ label: x, value: x }))}
+        style={{ marginBottom: 12 }}
+      />
+      {bt === 'none' ? (
+        <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('apidef.noBody', '请求没有 Body')} style={{ margin: '12px 0' }} />
+      ) : bt === 'form-data' || bt === 'x-www-form-urlencoded' ? (
+        <>
+          <div style={{ textAlign: 'right', marginBottom: 6 }}>
+            <Button type="link" size="small" onClick={() => setBatchOpen(true)}>{t('body.batchAdd', '批量添加')}</Button>
+          </div>
+          <QueryParamTable rows={(spec.formBody || []).map((r) => ({ enabled: true, key: r.name || '', type: 'string', value: r.value || '', minLen: '', maxLen: '', description: r.desc || '' }))} onChange={(rows) => patch({ formBody: rows.map((r) => ({ name: r.key, value: r.value, desc: r.description })) })} />
+          <BatchAddDrawer open={batchOpen} onClose={() => setBatchOpen(false)} onApply={(rows) => patch({ formBody: [...(spec.formBody || []), ...rows] })} />
+        </>
+      ) : bt === 'binary' ? (
+        <Space.Compact style={{ width: '100%', maxWidth: 640 }}>
+          <Input placeholder={t('apidef.descLabel', '描述')} value={spec.requestBody || ''} onChange={(e) => patch({ requestBody: e.target.value })} />
+          <Button icon={<UploadOutlined />} title={t('body.uploadHint', '本地上传 / 关联文件(暂未接入)')} />
+        </Space.Compact>
+      ) : bt === 'json' ? (
+        <div>
+          <div style={{ display: 'flex', alignItems: 'center', marginBottom: 8 }}>
+            <Segmented size="small" value={jsonMode} onChange={(v) => setJsonMode(v as 'schema' | 'json')} options={[{ label: 'Schema', value: 'schema' }, { label: 'Json', value: 'json' }]} />
+            <div style={{ flex: 1 }} />
+            {jsonMode === 'json' && (
+              <Button size="small" onClick={() => patch({ requestBody: formatJson(spec.requestBody || '') })}>{t('apidef.format', '格式化')}</Button>
+            )}
+          </div>
+          {jsonMode === 'schema' ? (
+            <BodySchemaTree
+              nodes={spec.bodySchema || []}
+              onChange={(nodes) => patch({ bodySchema: nodes, requestBody: JSON.stringify(schemaToJson(nodes), null, 2) })}
+            />
+          ) : (
+            <Input.TextArea rows={8} value={spec.requestBody || ''} onChange={(e) => patch({ requestBody: e.target.value })} placeholder='{"key":"value"}' className="ms-mono" />
+          )}
+        </div>
+      ) : (
+        // xml / raw
+        <div>
+          <div style={{ textAlign: 'right', marginBottom: 6 }}>
+            <Button size="small" onClick={() => patch({ requestBody: formatJson(spec.requestBody || '') })}>{t('apidef.format', '格式化')}</Button>
+          </div>
+          <Input.TextArea rows={8} value={spec.requestBody || ''} onChange={(e) => patch({ requestBody: e.target.value })} placeholder={bt} className="ms-mono" />
+        </div>
+      )}
+    </div>
+  )
+}
+
+/** 批量添加抽屉:每行「参数名,类型,必填,参数值」(对齐 MeterSphere 快捷添加)。 */
+function BatchAddDrawer({ open, onClose, onApply }: { open: boolean; onClose: () => void; onApply: (rows: ApiSpecKV[]) => void }) {
+  const { t } = useI18n()
+  const [text, setText] = useState('')
+  const apply = () => {
+    const rows: ApiSpecKV[] = text
+      .split('\n')
+      .map((l) => l.trim())
+      .filter(Boolean)
+      .map((l) => {
+        const [name, , , value] = l.split(',')
+        return { name: (name || '').trim(), value: (value || '').trim(), desc: '' }
+      })
+      .filter((r) => r.name)
+    onApply(rows)
+    setText('')
+    onClose()
+  }
+  return (
+    <Drawer
+      title={t('body.batchAdd', '批量添加')}
+      open={open}
+      onClose={onClose}
+      width={480}
+      footer={
+        <div style={{ textAlign: 'right' }}>
+          <Space>
+            <Button onClick={onClose}>{t('a.cancel', '取消')}</Button>
+            <Button type="primary" onClick={apply}>{t('a.apply', '应用')}</Button>
+          </Space>
+        </div>
+      }
+    >
+      <div style={{ color: '#8a9099', fontSize: 12, marginBottom: 8 }}>{t('body.batchHint', '书写格式:参数名,类型,必填,参数值;多条记录换行分隔')}</div>
+      <Input.TextArea rows={12} value={text} onChange={(e) => setText(e.target.value)} placeholder={'username,string,true,admin\npassword,string,true,123'} className="ms-mono" />
+    </Drawer>
+  )
+}
+
+/** 尽力格式化 JSON 文本;非法 JSON 原样返回。 */
+function formatJson(text: string): string {
+  try {
+    return JSON.stringify(JSON.parse(text), null, 2)
+  } catch {
+    return text
+  }
+}
+
+/** 认证:none / bearer / basic。 */
+function AuthEditor({ spec, patch }: { spec: ApiSpec; patch: (p: Partial<ApiSpec>) => void }) {
+  const { t } = useI18n()
+  const auth = spec.auth || { type: 'none' }
+  return (
+    <Space direction="vertical" size={12} style={{ width: '100%', maxWidth: 520 }}>
+      <Radio.Group value={auth.type || 'none'} onChange={(e) => patch({ auth: { ...auth, type: e.target.value } })}>
+        <Radio value="none">{t('editor.authNone', '无')}</Radio>
+        <Radio value="bearer">Bearer Token</Radio>
+        <Radio value="basic">Basic (user:pass)</Radio>
+      </Radio.Group>
+      {auth.type && auth.type !== 'none' && (
+        <Input value={auth.token || ''} onChange={(e) => patch({ auth: { ...auth, token: e.target.value } })} placeholder={auth.type === 'bearer' ? 'token' : 'user:pass'} className="ms-mono" />
+      )}
+    </Space>
+  )
+}
+
+function SectionTitle({ children, extra }: { children: React.ReactNode; extra?: React.ReactNode }) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', marginBottom: 8 }}>
+      <span style={{ fontWeight: 600, fontSize: 13 }}>{children}</span>
+      <div style={{ flex: 1 }} />
+      {extra}
+    </div>
+  )
+}
+
+/** 键值对区块(请求头 / Query / REST / form 体):预览=表格+复制,定义=可增删编辑 + Raw 切换。 */
+function KVSection({
+  title,
+  rows,
+  editable,
+  onChange,
+  hideTitle,
+}: {
+  title: string
+  rows: ApiSpecKV[]
+  editable: boolean
+  onChange: (rows: ApiSpecKV[]) => void
+  hideTitle?: boolean
+}) {
+  const { t } = useI18n()
+  const [view, setView] = useState<'table' | 'raw'>('table')
+
+  const setRow = (i: number, p: Partial<ApiSpecKV>) => onChange(rows.map((r, idx) => (idx === i ? { ...r, ...p } : r)))
+  const addRow = () => onChange([...rows, { name: '', value: '', desc: '' }])
+  const delRow = (i: number) => onChange(rows.filter((_, idx) => idx !== i))
+
+  const raw = rows.filter((r) => r.name).map((r) => `${r.name}: ${r.value ?? ''}`).join('\n')
+
+  const cols: ColumnsType<ApiSpecKV & { _k: string }> = [
+    {
+      title: t('apidef.kvName', '名称'),
+      dataIndex: 'name',
+      width: '30%',
+      render: (v: string, _r, i) =>
+        editable ? <Input value={v} placeholder="name" onChange={(e) => setRow(i, { name: e.target.value })} /> : <span className="ms-mono">{v}</span>,
+    },
+    {
+      title: t('apidef.kvValue', '值'),
+      dataIndex: 'value',
+      width: '35%',
+      render: (v: string, _r, i) =>
+        editable ? <Input value={v} placeholder="value" onChange={(e) => setRow(i, { value: e.target.value })} /> : <span className="ms-mono">{v || '—'}</span>,
+    },
+    {
+      title: t('apidef.kvDesc', '描述'),
+      dataIndex: 'desc',
+      render: (v: string, _r, i) =>
+        editable ? <Input value={v} placeholder="desc" onChange={(e) => setRow(i, { desc: e.target.value })} /> : <span style={{ color: '#8a9099' }}>{v || '—'}</span>,
+    },
+    editable
+      ? {
+          title: '',
+          width: 44,
+          render: (_v, _r, i) => <Button type="text" danger size="small" icon={<DeleteOutlined />} onClick={() => delRow(i)} />,
+        }
+      : {
+          title: '',
+          width: 44,
+          render: (_v, r) => (
+            <Tooltip title={t('a.copy', '复制')}>
+              <Button type="text" size="small" icon={<CopyOutlined />} onClick={() => copy(`${r.name}: ${r.value ?? ''}`, t('apidef.copied', '已复制'))} />
+            </Tooltip>
+          ),
+        },
+  ]
+
+  return (
+    <div>
+      {!hideTitle && (
+        <SectionTitle
+          extra={
+            <Space size={8}>
+              {!editable && rows.length > 0 && (
+                <Segmented
+                  size="small"
+                  value={view}
+                  onChange={(v) => setView(v as 'table' | 'raw')}
+                  options={[
+                    { label: 'Table', value: 'table' },
+                    { label: 'Raw', value: 'raw' },
+                  ]}
+                />
+              )}
+              {!editable && raw && (
+                <Button size="small" icon={<CopyOutlined />} onClick={() => copy(raw, t('apidef.copied', '已复制'))}>
+                  {t('a.copy', '复制')}
+                </Button>
+              )}
+            </Space>
+          }
+        >
+          {title} <Tag color="default" style={{ marginLeft: 4 }}>{rows.length}</Tag>
+        </SectionTitle>
+      )}
+      {rows.length === 0 && !editable ? (
+        <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('apidef.none', '无')} style={{ margin: '8px 0' }} />
+      ) : !editable && view === 'raw' ? (
+        <pre className="ms-mono" style={{ background: '#f6f8fa', padding: 12, borderRadius: 6, margin: 0, fontSize: 12 }}>{raw}</pre>
+      ) : (
+        <>
+          <Table size="small" rowKey="_k" pagination={false} columns={cols} dataSource={rows.map((r, i) => ({ ...r, _k: String(i) }))} locale={{ emptyText: t('apidef.none', '无') }} />
+          {editable && (
+            <Button size="small" icon={<PlusOutlined />} onClick={addRow} style={{ marginTop: 8 }}>
+              {t('apidef.addRow', '添加')}
+            </Button>
+          )}
+        </>
+      )}
+    </div>
+  )
+}
+
+// 由一个示例 JSON 值推断 Schema 节点(响应/无 bodySchema 的请求体用);对象/数组递归。
+function jsonNode(name: string, val: unknown): BodySchemaNode {
+  if (Array.isArray(val)) {
+    return { name, type: 'array', children: val.length ? [jsonNode('items', val[0])] : [] }
+  }
+  if (val && typeof val === 'object') {
+    return { name, type: 'object', children: Object.entries(val as Record<string, unknown>).map(([k, v]) => jsonNode(k, v)) }
+  }
+  const type: BodySchemaNode['type'] =
+    typeof val === 'number' ? (Number.isInteger(val) ? 'integer' : 'number') : typeof val === 'boolean' ? 'boolean' : 'string'
+  return { name, type, value: val == null ? '' : String(val) }
+}
+function jsonToSchemaNodes(text: string): BodySchemaNode[] {
+  try {
+    const v = JSON.parse(text)
+    if (Array.isArray(v)) return [jsonNode('[]', v[0])]
+    if (v && typeof v === 'object') return Object.entries(v as Record<string, unknown>).map(([k, val]) => jsonNode(k, val))
+  } catch {
+    /* 非 JSON:无 schema */
+  }
+  return []
+}
+
+/** 只读 Schema 表(参数名称 / 必填 / 类型 / 参数值 / 描述,object/array 可展开)。对齐参考图。 */
+function SchemaTable({ nodes }: { nodes: BodySchemaNode[] }) {
+  const { t } = useI18n()
+  type Row = { key: string; name: string; type: string; value?: string; desc: string; required: string; children?: Row[] }
+  // bodySchema 的 description 形如「必填」/「选填 · 用户名」;拆出必填标记 + 纯描述。
+  const toRows = (ns: BodySchemaNode[], prefix = ''): Row[] =>
+    ns.map((n, i) => {
+      const d = n.description || ''
+      const required = d.startsWith('必填') ? t('apidef.yes', '是') : d.startsWith('选填') ? t('apidef.no', '否') : '-'
+      const desc = d.replace(/^必填( · )?|^选填( · )?/, '')
+      return {
+        key: `${prefix}${i}-${n.name}`,
+        name: n.name,
+        type: n.type,
+        value: n.value,
+        required,
+        desc,
+        children: n.children?.length ? toRows(n.children, `${prefix}${i}-`) : undefined,
+      }
+    })
+  const cols: ColumnsType<Row> = [
+    { title: t('apidef.kvName', '参数名称'), dataIndex: 'name', render: (v: string) => <span className="ms-mono">{v}</span> },
+    { title: t('apidef.required', '必填'), dataIndex: 'required', width: 80 },
+    { title: t('apidef.colType', '类型'), dataIndex: 'type', width: 110 },
+    { title: t('apidef.kvValue', '参数值'), dataIndex: 'value', width: 180, render: (v?: string) => <span className="ms-mono">{v || '—'}</span> },
+    { title: t('apidef.kvDesc', '描述'), dataIndex: 'desc', render: (v: string) => <span style={{ color: '#8a9099' }}>{v || '—'}</span> },
+  ]
+  return <Table size="small" pagination={false} columns={cols} dataSource={toRows(nodes)} locale={{ emptyText: t('apidef.none', '无') }} />
+}
+
+/** Schema/JSON 切换器(预览 请求体/响应 共用)。 */
+function SchemaJsonToggle({ value, onChange }: { value: 'schema' | 'json'; onChange: (v: 'schema' | 'json') => void }) {
+  return (
+    <Segmented size="small" value={value} onChange={(v) => onChange(v as 'schema' | 'json')} options={[{ label: 'Schema', value: 'schema' }, { label: 'JSON', value: 'json' }]} />
+  )
+}
+
+/** 预览模式的请求体只读视图(显示 content-type + 内容)。 */
+function BodyView({ spec }: { spec: ApiSpec }) {
+  const { t } = useI18n()
+  const bt = spec.bodyType || (spec.requestBody ? 'raw' : 'none')
+  const isForm = bt === 'form-data' || bt === 'x-www-form-urlencoded'
+  const isJson = bt === 'json' || bt === 'raw'
+  const [view, setView] = useState<'schema' | 'json'>('schema')
+  // Schema 优先用导入解析的 bodySchema 树;没有则从示例 JSON 推断。
+  const schemaNodes = (spec.bodySchema?.length ? spec.bodySchema : jsonToSchemaNodes(spec.requestBody || '')) as BodySchemaNode[]
+  const hasSchema = isJson && schemaNodes.length > 0
+  return (
+    <div>
+      <SectionTitle
+        extra={
+          spec.requestBody ? (
+            <Space size={8}>
+              {hasSchema && <SchemaJsonToggle value={view} onChange={setView} />}
+              <Button size="small" icon={<CopyOutlined />} onClick={() => copy(spec.requestBody || '', t('apidef.copied', '已复制'))}>
+                {t('a.copy', '复制')}
+              </Button>
+            </Space>
+          ) : undefined
+        }
+      >
+        {t('apidef.requestBody', '请求体')} <Tag color="blue" style={{ marginLeft: 4 }}>{bt}</Tag>
+      </SectionTitle>
+      {bt === 'none' ? (
+        <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('apidef.noBody', '请求没有 Body')} style={{ margin: '8px 0' }} />
+      ) : isForm ? (
+        <KVSection title="" rows={spec.formBody || []} editable={false} onChange={() => {}} hideTitle />
+      ) : hasSchema && view === 'schema' ? (
+        <SchemaTable nodes={schemaNodes} />
+      ) : spec.requestBody ? (
+        <pre className="ms-mono" style={{ background: '#f6f8fa', padding: 12, borderRadius: 6, margin: 0, fontSize: 12, maxHeight: 320, overflow: 'auto' }}>{spec.requestBody}</pre>
+      ) : (
+        <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('apidef.none', '无')} style={{ margin: '8px 0' }} />
+      )}
+    </div>
+  )
+}
+
+function ResponsesSection({
+  responses,
+  editable,
+  onChange,
+}: {
+  responses: ApiSpecResponse[]
+  editable: boolean
+  onChange: (rows: ApiSpecResponse[]) => void
+}) {
+  const { t } = useI18n()
+  const setRow = (i: number, p: Partial<ApiSpecResponse>) => onChange(responses.map((r, idx) => (idx === i ? { ...r, ...p } : r)))
+  const addRow = () => onChange([...responses, { status: 200, body: '' }])
+  const delRow = (i: number) => onChange(responses.filter((_, idx) => idx !== i))
+
+  return (
+    <div>
+      <SectionTitle
+        extra={
+          editable ? (
+            <Button size="small" icon={<PlusOutlined />} onClick={addRow}>
+              {t('apidef.addResponse', '添加响应')}
+            </Button>
+          ) : undefined
+        }
+      >
+        {t('apidef.responses', '响应')} <Tag color="default" style={{ marginLeft: 4 }}>{responses.length}</Tag>
+      </SectionTitle>
+      {responses.length === 0 ? (
+        <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('apidef.none', '无')} style={{ margin: '8px 0' }} />
+      ) : (
+        <Space direction="vertical" size={10} style={{ width: '100%' }}>
+          {responses.map((r, i) =>
+            editable ? (
+              <div key={i} style={{ border: '1px solid #eef0f2', borderRadius: 6, padding: 10 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                  <span style={{ color: '#8a9099', fontSize: 12 }}>{t('apidef.statusCode', '状态码')}</span>
+                  <InputNumber min={100} max={599} value={r.status} onChange={(v) => setRow(i, { status: v ?? undefined })} />
+                  <div style={{ flex: 1 }} />
+                  <Button type="text" danger size="small" icon={<DeleteOutlined />} onClick={() => delRow(i)} />
+                </div>
+                <Input.TextArea rows={4} value={r.body} onChange={(e) => setRow(i, { body: e.target.value })} placeholder={t('apidef.responseBody', '响应体')} className="ms-mono" />
+              </div>
+            ) : (
+              <ReadonlyResponse key={i} r={r} />
+            ),
+          )}
+        </Space>
+      )}
+    </div>
+  )
+}
+
+/** 预览模式的单个响应:状态码 + Schema/JSON 切换 + 复制(对齐参考图 响应体-JSON)。 */
+function ReadonlyResponse({ r }: { r: ApiSpecResponse }) {
+  const { t } = useI18n()
+  const [view, setView] = useState<'schema' | 'json'>('schema')
+  const sc = (s?: number) => (s == null ? 'default' : s < 300 ? 'green' : s < 400 ? 'gold' : 'red')
+  const nodes = jsonToSchemaNodes(r.body || '')
+  const hasSchema = nodes.length > 0
+  return (
+    <div style={{ border: '1px solid #eef0f2', borderRadius: 6, padding: 10 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+        <span style={{ color: '#8a9099', fontSize: 12 }}>{t('apidef.statusCode', '状态码')}</span>
+        <Tag color={sc(r.status)}>{r.status ?? '—'}</Tag>
+        <div style={{ flex: 1 }} />
+        {hasSchema && <SchemaJsonToggle value={view} onChange={setView} />}
+        {r.body && <Button type="text" size="small" icon={<CopyOutlined />} onClick={() => copy(r.body || '', t('apidef.copied', '已复制'))} />}
+      </div>
+      {hasSchema && view === 'schema' ? (
+        <SchemaTable nodes={nodes} />
+      ) : r.body ? (
+        <pre className="ms-mono" style={{ background: '#f6f8fa', padding: 10, borderRadius: 6, margin: 0, fontSize: 12, maxHeight: 240, overflow: 'auto' }}>{r.body}</pre>
+      ) : (
+        <span style={{ color: '#bbb', fontSize: 12 }}>{t('apidef.none', '无')}</span>
+      )}
+    </div>
+  )
+}

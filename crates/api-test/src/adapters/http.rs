@@ -13,10 +13,10 @@ use axum::{
     Json, Router,
 };
 use crate::application::{
-    CreateResourcePoolError, CreateResourcePoolUseCase, ListCaseExecutionsUseCase,
-    ListResourcePoolsUseCase, StartBatchRunUseCase,
+    CreateResourcePoolError, CreateResourcePoolUseCase, EditResourcePoolUseCase,
+    ListCaseExecutionsUseCase, ListResourcePoolsUseCase, StartBatchRunUseCase,
 };
-use crate::domain::{BatchRunError, BatchRunMode, ResourcePool, RunModeConfig};
+use crate::domain::{BatchRunError, BatchRunMode, ResourcePool, ResourcePoolDraft, RunModeConfig};
 use crate::ports::CaseExecutionRecord;
 use kernel::page::PageRequest;
 use serde::{Deserialize, Serialize};
@@ -231,6 +231,7 @@ async fn list_executions(
 struct ResourcePoolState {
     create: CreateResourcePoolUseCase,
     list: ListResourcePoolsUseCase,
+    edit: EditResourcePoolUseCase,
     sessions: Arc<dyn SessionStore>,
 }
 
@@ -243,11 +244,16 @@ impl FromRef<ResourcePoolState> for Arc<dyn SessionStore> {
 pub fn resource_pool_router(
     create: CreateResourcePoolUseCase,
     list: ListResourcePoolsUseCase,
+    edit: EditResourcePoolUseCase,
     sessions: Arc<dyn SessionStore>,
 ) -> Router {
-    let state = ResourcePoolState { create, list, sessions };
+    let state = ResourcePoolState { create, list, edit, sessions };
     Router::new()
         .route("/api/resource-pool", post(create_resource_pool).get(list_resource_pools))
+        .route(
+            "/api/resource-pool/{id}",
+            get(get_resource_pool).put(update_resource_pool).delete(delete_resource_pool),
+        )
         .with_state(state)
 }
 
@@ -257,10 +263,42 @@ struct ResourcePoolBody {
     name: String,
     #[serde(default = "default_true")]
     enabled: bool,
+    #[serde(default)]
+    description: String,
+    #[serde(default)]
+    max_concurrency: i32,
+    /// "Node" | "Kubernetes";缺省 Node。
+    #[serde(default)]
+    pool_type: String,
+    #[serde(default = "default_true")]
+    all_org: bool,
+    #[serde(default)]
+    org_ids: Vec<String>,
+    #[serde(default)]
+    server_url: String,
+    /// 类型相关配置(Node 节点表 / Kubernetes 连接信息),透传 JSON。
+    #[serde(default)]
+    config: serde_json::Value,
 }
 
 fn default_true() -> bool {
     true
+}
+
+impl ResourcePoolBody {
+    fn into_draft(self) -> ResourcePoolDraft {
+        ResourcePoolDraft {
+            name: self.name,
+            enabled: self.enabled,
+            description: self.description,
+            max_concurrency: self.max_concurrency,
+            pool_type: self.pool_type,
+            all_org: self.all_org,
+            org_ids: self.org_ids,
+            server_url: self.server_url,
+            config: self.config,
+        }
+    }
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -269,11 +307,34 @@ struct ResourcePoolResponse {
     id: String,
     name: String,
     enabled: bool,
+    description: String,
+    max_concurrency: i32,
+    pool_type: String,
+    all_org: bool,
+    org_ids: Vec<String>,
+    server_url: String,
+    #[schema(value_type = Object)]
+    config: serde_json::Value,
+    created_at: String,
+    updated_at: String,
 }
 
 impl From<ResourcePool> for ResourcePoolResponse {
     fn from(p: ResourcePool) -> Self {
-        Self { id: p.id, name: p.name, enabled: p.enabled }
+        Self {
+            id: p.id,
+            name: p.name,
+            enabled: p.enabled,
+            description: p.description,
+            max_concurrency: p.max_concurrency,
+            pool_type: p.pool_type,
+            all_org: p.all_org,
+            org_ids: p.org_ids,
+            server_url: p.server_url,
+            config: p.config,
+            created_at: p.created_at,
+            updated_at: p.updated_at,
+        }
     }
 }
 
@@ -286,7 +347,7 @@ async fn create_resource_pool(
     if !user.can("RESOURCE_POOL", "ADD") {
         return (StatusCode::FORBIDDEN, "permission denied").into_response();
     }
-    match st.create.execute(&req.name, req.enabled).await {
+    match st.create.execute(req.into_draft()).await {
         Ok(p) => (StatusCode::CREATED, Json(ResourcePoolResponse::from(p))).into_response(),
         Err(CreateResourcePoolError::Validation(_)) => {
             (StatusCode::BAD_REQUEST, "invalid resource pool payload").into_response()
@@ -309,9 +370,65 @@ async fn list_resource_pools(State(st): State<ResourcePoolState>) -> Response {
     }
 }
 
+#[utoipa::path(get, path = "/api/resource-pool/{id}", tag = "api-test", responses((status = 200, body = ResourcePoolResponse), (status = 404)))]
+async fn get_resource_pool(State(st): State<ResourcePoolState>, Path(id): Path<String>) -> Response {
+    match st.edit.get(&id).await {
+        Ok(Some(p)) => (StatusCode::OK, Json(ResourcePoolResponse::from(p))).into_response(),
+        Ok(None) => (StatusCode::NOT_FOUND, "resource pool not found").into_response(),
+        Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
+    }
+}
+
+#[utoipa::path(put, path = "/api/resource-pool/{id}", tag = "api-test", request_body = ResourcePoolBody, responses((status = 200, body = ResourcePoolResponse), (status = 400), (status = 403), (status = 404)), security(("bearer" = [])))]
+async fn update_resource_pool(
+    user: AuthUser,
+    State(st): State<ResourcePoolState>,
+    Path(id): Path<String>,
+    Json(req): Json<ResourcePoolBody>,
+) -> Response {
+    if !user.can("RESOURCE_POOL", "UPDATE") {
+        return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
+    match st.edit.update(&id, req.into_draft()).await {
+        Ok(Some(p)) => (StatusCode::OK, Json(ResourcePoolResponse::from(p))).into_response(),
+        Ok(None) => (StatusCode::NOT_FOUND, "resource pool not found").into_response(),
+        Err(CreateResourcePoolError::Validation(_)) => {
+            (StatusCode::BAD_REQUEST, "invalid resource pool payload").into_response()
+        }
+        Err(CreateResourcePoolError::Backend(_)) => {
+            (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response()
+        }
+    }
+}
+
+#[utoipa::path(delete, path = "/api/resource-pool/{id}", tag = "api-test", responses((status = 204), (status = 403), (status = 404)), security(("bearer" = [])))]
+async fn delete_resource_pool(
+    user: AuthUser,
+    State(st): State<ResourcePoolState>,
+    Path(id): Path<String>,
+) -> Response {
+    if !user.can("RESOURCE_POOL", "DELETE") {
+        return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
+    match st.edit.delete(&id).await {
+        Ok(true) => StatusCode::NO_CONTENT.into_response(),
+        Ok(false) => (StatusCode::NOT_FOUND, "resource pool not found").into_response(),
+        Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
+    }
+}
+
 #[derive(OpenApi)]
 #[openapi(
-    paths(batch_run, run_case, list_executions, create_resource_pool, list_resource_pools),
+    paths(
+        batch_run,
+        run_case,
+        list_executions,
+        create_resource_pool,
+        list_resource_pools,
+        get_resource_pool,
+        update_resource_pool,
+        delete_resource_pool
+    ),
     components(schemas(
         BatchRunRequest,
         CaseRunRequest,
@@ -527,30 +644,66 @@ mod tests {
         pools: Mutex<Vec<ResourcePool>>,
     }
 
+    fn pool_view(id: String, p: &NewResourcePool) -> ResourcePool {
+        ResourcePool {
+            id,
+            name: p.name.clone(),
+            enabled: p.enabled,
+            description: p.description.clone(),
+            max_concurrency: p.max_concurrency,
+            pool_type: p.pool_type.clone(),
+            all_org: p.all_org,
+            org_ids: p.org_ids.clone(),
+            server_url: p.server_url.clone(),
+            config: p.config.clone(),
+            created_at: "2026-01-01 00:00:00".into(),
+            updated_at: "2026-01-01 00:00:00".into(),
+        }
+    }
+
     #[async_trait]
     impl ResourcePoolAdminPort for FakePoolAdmin {
         async fn create(&self, p: &NewResourcePool) -> Result<ResourcePool, PortError> {
             let mut g = self.pools.lock().expect("lock");
-            let view =
-                ResourcePool { id: format!("p{}", g.len() + 1), name: p.name.clone(), enabled: p.enabled };
+            let view = pool_view(format!("p{}", g.len() + 1), p);
             g.push(view.clone());
             Ok(view)
         }
         async fn list(&self) -> Result<Vec<ResourcePool>, PortError> {
             Ok(self.pools.lock().expect("lock").clone())
         }
+        async fn get(&self, id: &str) -> Result<Option<ResourcePool>, PortError> {
+            Ok(self.pools.lock().expect("lock").iter().find(|p| p.id == id).cloned())
+        }
+        async fn update(&self, id: &str, p: &NewResourcePool) -> Result<Option<ResourcePool>, PortError> {
+            let mut g = self.pools.lock().expect("lock");
+            match g.iter_mut().find(|x| x.id == id) {
+                Some(slot) => {
+                    *slot = pool_view(id.to_string(), p);
+                    Ok(Some(slot.clone()))
+                }
+                None => Ok(None),
+            }
+        }
+        async fn delete(&self, id: &str) -> Result<bool, PortError> {
+            let mut g = self.pools.lock().expect("lock");
+            let before = g.len();
+            g.retain(|x| x.id != id);
+            Ok(g.len() != before)
+        }
     }
 
-    /// 资源池路由 + 一个拥有 `RESOURCE_POOL:READ+ADD` 的令牌。
+    /// 资源池路由 + 一个拥有 `RESOURCE_POOL` 读写全权的令牌。
     async fn pool_app() -> (Router, String) {
         let admin = Arc::new(FakePoolAdmin::default());
         let sessions = Arc::new(InMemorySessionStore::new());
-        let perms =
-            PermissionSet::from_raw(["RESOURCE_POOL:READ+ADD".to_string()]).expect("perms");
+        let perms = PermissionSet::from_raw(["RESOURCE_POOL:READ+ADD+UPDATE+DELETE".to_string()])
+            .expect("perms");
         let token = sessions.create("admin", perms, 3600).await.expect("token");
         let r = resource_pool_router(
             CreateResourcePoolUseCase::new(admin.clone()),
-            ListResourcePoolsUseCase::new(admin),
+            ListResourcePoolsUseCase::new(admin.clone()),
+            EditResourcePoolUseCase::new(admin),
             sessions,
         );
         (r, token)
@@ -595,7 +748,8 @@ mod tests {
         let token = sessions.create("viewer", perms, 3600).await.expect("token");
         let app = resource_pool_router(
             CreateResourcePoolUseCase::new(admin.clone()),
-            ListResourcePoolsUseCase::new(admin),
+            ListResourcePoolsUseCase::new(admin.clone()),
+            EditResourcePoolUseCase::new(admin),
             sessions,
         );
         let resp = app.oneshot(pool_post(r#"{"name":"x"}"#, Some(&token))).await.expect("resp");
@@ -619,5 +773,67 @@ mod tests {
             .await
             .expect("resp");
         assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    async fn json_of(resp: Response) -> serde_json::Value {
+        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.expect("body");
+        serde_json::from_slice(&bytes).expect("json")
+    }
+
+    #[tokio::test]
+    async fn create_carries_extended_fields() {
+        let (app, t) = pool_app().await;
+        let body = r#"{"name":"k8s池","poolType":"Kubernetes","maxConcurrency":10,"description":"d","allOrg":false,"orgIds":["org-1"],"serverUrl":"http://ms","config":{"namespace":"ns"}}"#;
+        let resp = app.oneshot(pool_post(body, Some(&t))).await.expect("resp");
+        assert_eq!(resp.status(), StatusCode::CREATED);
+        let v = json_of(resp).await;
+        assert_eq!(v["poolType"], "Kubernetes");
+        assert_eq!(v["maxConcurrency"], 10);
+        assert_eq!(v["allOrg"], false);
+        assert_eq!(v["orgIds"][0], "org-1");
+        assert_eq!(v["config"]["namespace"], "ns");
+        assert!(v["createdAt"].as_str().expect("createdAt").len() >= 10);
+    }
+
+    #[tokio::test]
+    async fn update_then_delete_roundtrip() {
+        let (app, t) = pool_app().await;
+        let created = json_of(
+            app.clone().oneshot(pool_post(r#"{"name":"池"}"#, Some(&t))).await.expect("resp"),
+        )
+        .await;
+        let id = created["id"].as_str().expect("id").to_string();
+
+        let put = Request::builder()
+            .method("PUT")
+            .uri(format!("/api/resource-pool/{id}"))
+            .header("content-type", "application/json")
+            .header("authorization", format!("Bearer {t}"))
+            .body(Body::from(r#"{"name":"改名","enabled":false}"#))
+            .expect("req");
+        let resp = app.clone().oneshot(put).await.expect("resp");
+        assert_eq!(resp.status(), StatusCode::OK);
+        let v = json_of(resp).await;
+        assert_eq!(v["name"], "改名");
+        assert_eq!(v["enabled"], false);
+
+        let del = Request::builder()
+            .method("DELETE")
+            .uri(format!("/api/resource-pool/{id}"))
+            .header("authorization", format!("Bearer {t}"))
+            .body(Body::empty())
+            .expect("req");
+        let resp = app.clone().oneshot(del).await.expect("resp");
+        assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+
+        // 二次删除 → 404。
+        let del2 = Request::builder()
+            .method("DELETE")
+            .uri(format!("/api/resource-pool/{id}"))
+            .header("authorization", format!("Bearer {t}"))
+            .body(Body::empty())
+            .expect("req");
+        let resp = app.oneshot(del2).await.expect("resp");
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
     }
 }

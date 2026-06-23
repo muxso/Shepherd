@@ -8,4 +8,4 @@ pub use batch_run::{
     RunModeConfig,
 };
 pub use environment::ResolvedEnv;
-pub use resource_pool::{NewResourcePool, ResourcePool, ResourcePoolError};
+pub use resource_pool::{NewResourcePool, ResourcePool, ResourcePoolDraft, ResourcePoolError};

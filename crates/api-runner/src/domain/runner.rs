@@ -176,6 +176,8 @@ pub enum Assertion {
     JsonPath { path: String, condition: MatchCondition, expected: String },
     /// 响应耗时不超过 max_ms 毫秒(RESPONSE_TIME)。
     ResponseTime { max_ms: u64 },
+    /// 运行上下文变量(由前置/后置提取或环境注入)按操作符匹配(VARIABLE)。
+    Variable { name: String, condition: MatchCondition, expected: String },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -202,7 +204,12 @@ impl Assertion {
     /// `json` 是**整批断言共享的一次性解析结果**:存在 JSON 类断言时由 [`evaluate`] 预解析,
     /// `Some(v)` 为解析成功的值,`None` 表示 body 非合法 JSON(JSON 类断言据此直接判失败)。
     /// 非 JSON 断言忽略该参数。
-    fn check(&self, resp: &ResponseSnapshot, json: Option<&serde_json::Value>) -> Option<String> {
+    fn check(
+        &self,
+        resp: &ResponseSnapshot,
+        json: Option<&serde_json::Value>,
+        vars: &std::collections::BTreeMap<String, String>,
+    ) -> Option<String> {
         match self {
             Assertion::StatusIs(want) => (resp.status != *want)
                 .then(|| format!("status: 期望 {want},实际 {}", resp.status)),
@@ -272,6 +279,12 @@ impl Assertion {
             },
             Assertion::ResponseTime { max_ms } => (resp.elapsed_ms > *max_ms)
                 .then(|| format!("耗时: 期望 ≤{max_ms}ms,实际 {}ms", resp.elapsed_ms)),
+            Assertion::Variable { name, condition, expected } => {
+                let actual = vars.get(name).map(String::as_str).unwrap_or("");
+                (!condition.matches(actual, expected)).then(|| {
+                    format!("变量 {name} {condition:?}: 期望 {expected},实际 {actual:?}")
+                })
+            }
         }
     }
 }
@@ -314,8 +327,17 @@ pub fn substitute(template: &str, vars: &std::collections::BTreeMap<String, Stri
     out
 }
 
-/// 对一组断言求值得到用例结果。**纯函数**:同样输入恒得同样结果。
+/// 对一组断言求值得到用例结果(无变量上下文)。**纯函数**。
 pub fn evaluate(assertions: &[Assertion], resp: &ResponseSnapshot) -> CaseReport {
+    evaluate_with_vars(assertions, resp, &std::collections::BTreeMap::new())
+}
+
+/// 同 [`evaluate`],但带运行上下文变量(供 `Variable` 断言读取)。**纯函数**。
+pub fn evaluate_with_vars(
+    assertions: &[Assertion],
+    resp: &ResponseSnapshot,
+    vars: &std::collections::BTreeMap<String, String>,
+) -> CaseReport {
     // 仅当存在 JSON 类断言时才把响应体解析**一次**,所有 JSON 断言共享结果,
     // 避免「每条 JSON 断言各 parse 一遍整个 body」的重复开销。
     let json = assertions
@@ -324,7 +346,7 @@ pub fn evaluate(assertions: &[Assertion], resp: &ResponseSnapshot) -> CaseReport
         .then(|| serde_json::from_str::<serde_json::Value>(&resp.body).ok())
         .flatten();
     let failures: Vec<String> =
-        assertions.iter().filter_map(|a| a.check(resp, json.as_ref())).collect();
+        assertions.iter().filter_map(|a| a.check(resp, json.as_ref(), vars)).collect();
     let outcome = if failures.is_empty() { CaseOutcome::Success } else { CaseOutcome::Error };
     CaseReport { outcome, failures }
 }
@@ -378,6 +400,15 @@ fn truncate(s: &str, n: usize) -> String {
 
 /// 同 [`evaluate`],但逐条返回结构化断言结果(供报告渲染断言表)。**纯函数**。
 pub fn evaluate_detailed(assertions: &[Assertion], resp: &ResponseSnapshot) -> Vec<AssertionReport> {
+    evaluate_detailed_with_vars(assertions, resp, &std::collections::BTreeMap::new())
+}
+
+/// 同 [`evaluate_detailed`],但带运行上下文变量(供 `Variable` 断言)。**纯函数**。
+pub fn evaluate_detailed_with_vars(
+    assertions: &[Assertion],
+    resp: &ResponseSnapshot,
+    vars: &std::collections::BTreeMap<String, String>,
+) -> Vec<AssertionReport> {
     let json = assertions
         .iter()
         .any(Assertion::needs_json)
@@ -396,7 +427,7 @@ pub fn evaluate_detailed(assertions: &[Assertion], resp: &ResponseSnapshot) -> V
     assertions
         .iter()
         .map(|a| {
-            let reason = a.check(resp, json.as_ref());
+            let reason = a.check(resp, json.as_ref(), vars);
             let passed = reason.is_none();
             let (item, condition, expected, actual) = match a {
                 Assertion::StatusIs(n) => {
@@ -432,6 +463,12 @@ pub fn evaluate_detailed(assertions: &[Assertion], resp: &ResponseSnapshot) -> V
                     max_ms.to_string(),
                     resp.elapsed_ms.to_string(),
                 ),
+                Assertion::Variable { name, condition, expected } => (
+                    format!("变量[{name}]"),
+                    cond_label(condition),
+                    expected.clone(),
+                    vars.get(name).cloned().unwrap_or_default(),
+                ),
             };
             AssertionReport { item, condition, expected, actual, passed, reason: reason.unwrap_or_default() }
         })
@@ -448,6 +485,16 @@ pub enum ExtractKind {
     Regex,
 }
 
+/// 提取结果的作用域(对齐前端 类型:临时参数 / 环境参数)。
+/// `Temp` 只写当前运行上下文;`Env` 额外回写环境变量(跨用例/场景持久)。
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum ExtractScope {
+    #[default]
+    Temp,
+    Env,
+}
+
 /// 单条提取规则:从响应取值写入变量 `variable`。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -456,6 +503,9 @@ pub struct Extractor {
     pub kind: ExtractKind,
     /// JSONPath(`$.a.b`/Pointer)或正则(取第 1 捕获组,无组取整体匹配)。
     pub expression: String,
+    /// 作用域:缺省临时参数;环境参数会回写环境。
+    #[serde(default)]
+    pub scope: ExtractScope,
 }
 
 impl Extractor {
@@ -486,6 +536,10 @@ pub enum Processor {
     Wait { ms: u64 },
     /// 参数提取(EXTRACT):把若干提取结果写入运行上下文变量。
     Extract { extractors: Vec<Extractor> },
+    /// 脚本操作(SCRIPT):随用例往返存储;执行引擎(JS)尚未接入,执行器当前忽略。
+    Script { lang: String, code: String },
+    /// SQL 操作(SQL):随用例往返存储;数据源执行尚未接入,执行器当前忽略。
+    Sql { name: String, datasource: String, sql: String },
 }
 
 /// 处理器集合里所有 Wait 的总毫秒数(执行器据此 sleep)。**纯函数**。
@@ -501,10 +555,27 @@ pub fn wait_millis(processors: &[Processor]) -> u64 {
 
 /// 对响应跑所有 Extract 处理器,产出 `(变量名, 值)` 列表(按出现顺序)。**纯函数**。
 pub fn run_extracts(processors: &[Processor], resp: &ResponseSnapshot) -> Vec<(String, String)> {
+    run_extracts_scoped(processors, resp, None)
+}
+
+/// 仅返回作用域为 `Env` 的提取结果(供执行器回写环境变量)。**纯函数**。
+pub fn env_extracts(processors: &[Processor], resp: &ResponseSnapshot) -> Vec<(String, String)> {
+    run_extracts_scoped(processors, resp, Some(ExtractScope::Env))
+}
+
+/// 提取参数;`only` 为 `Some(scope)` 时只取该作用域,`None` 取全部。**纯函数**。
+fn run_extracts_scoped(
+    processors: &[Processor],
+    resp: &ResponseSnapshot,
+    only: Option<ExtractScope>,
+) -> Vec<(String, String)> {
     let mut out = Vec::new();
     for p in processors {
         if let Processor::Extract { extractors } = p {
             for e in extractors {
+                if only.is_some_and(|s| s != e.scope) {
+                    continue;
+                }
                 if let Some(kv) = e.extract(resp) {
                     out.push(kv);
                 }
@@ -525,6 +596,32 @@ mod tests {
             body: body.to_string(),
             elapsed_ms: 0,
         }
+    }
+
+    #[test]
+    fn variable_assertion_reads_run_context_vars() {
+        let r = resp(200, "", &[]);
+        let mut vars = std::collections::BTreeMap::new();
+        vars.insert("token".to_string(), "abc".to_string());
+        let pass = Assertion::Variable {
+            name: "token".into(),
+            condition: MatchCondition::Equals,
+            expected: "abc".into(),
+        };
+        let fail = Assertion::Variable {
+            name: "token".into(),
+            condition: MatchCondition::Equals,
+            expected: "zzz".into(),
+        };
+        assert_eq!(evaluate_with_vars(&[pass], &r, &vars).outcome, CaseOutcome::Success);
+        assert_eq!(evaluate_with_vars(&[fail], &r, &vars).outcome, CaseOutcome::Error);
+        // 无变量上下文时(普通 evaluate)实际为空串,等于非空期望 → 失败。
+        let miss = Assertion::Variable {
+            name: "token".into(),
+            condition: MatchCondition::Equals,
+            expected: "abc".into(),
+        };
+        assert_eq!(evaluate(&[miss], &r).outcome, CaseOutcome::Error);
     }
 
     #[test]
@@ -821,6 +918,7 @@ mod tests {
             variable: "tk".into(),
             kind: ExtractKind::JsonPath,
             expression: "$.data.token".into(),
+            scope: ExtractScope::Temp,
         };
         assert_eq!(jp.extract(&r), Some(("tk".into(), "tok-42".into())));
         // 数字取值转字符串
@@ -828,6 +926,7 @@ mod tests {
             variable: "num".into(),
             kind: ExtractKind::JsonPath,
             expression: "$.data.n".into(),
+            scope: ExtractScope::Temp,
         };
         assert_eq!(jn.extract(&r), Some(("num".into(), "7".into())));
         // 正则取第 1 捕获组
@@ -835,6 +934,7 @@ mod tests {
             variable: "id".into(),
             kind: ExtractKind::Regex,
             expression: r#""token":"(tok-\d+)""#.into(),
+            scope: ExtractScope::Temp,
         };
         assert_eq!(rx.extract(&r), Some(("id".into(), "tok-42".into())));
         // 取不到 → None
@@ -842,6 +942,7 @@ mod tests {
             variable: "x".into(),
             kind: ExtractKind::JsonPath,
             expression: "$.nope".into(),
+            scope: ExtractScope::Temp,
         };
         assert_eq!(miss.extract(&r), None);
     }
@@ -857,6 +958,7 @@ mod tests {
                     variable: "uid".into(),
                     kind: ExtractKind::JsonPath,
                     expression: "$.id".into(),
+                    scope: ExtractScope::Temp,
                 }],
             },
         ];
@@ -871,12 +973,13 @@ mod tests {
                 variable: "v".into(),
                 kind: ExtractKind::JsonPath,
                 expression: "$.a".into(),
+                scope: ExtractScope::Temp,
             }],
         };
         assert_eq!(
             serde_json::to_value(&p).expect("ser"),
             serde_json::json!({"type":"Extract","args":{"extractors":[
-                {"variable":"v","kind":"JSON_PATH","expression":"$.a"}
+                {"variable":"v","kind":"JSON_PATH","expression":"$.a","scope":"TEMP"}
             ]}})
         );
         let w: Processor =

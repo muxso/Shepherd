@@ -26,6 +26,8 @@ pub enum RequirementError {
     NoSuchVersion(u32),
     #[error("cannot revise an archived requirement")]
     Archived,
+    #[error("requirement must be baselined before it can be delivered")]
+    NotBaselined,
 }
 
 /// 一条验收标准(已校验:非空)。后续 task / verification 上下文据此拆分与验收。
@@ -92,6 +94,8 @@ pub enum RequirementStatus {
     Draft,
     /// 已定基线(baseline 指向某个版本)。
     Baselined,
+    /// 已交付(基线后所有验收标准经验证完整性达成)。
+    Delivered,
     /// 已归档(冻结,拒绝再修订)。
     Archived,
 }
@@ -101,6 +105,7 @@ impl RequirementStatus {
         match self {
             Self::Draft => "DRAFT",
             Self::Baselined => "BASELINED",
+            Self::Delivered => "DELIVERED",
             Self::Archived => "ARCHIVED",
         }
     }
@@ -109,6 +114,7 @@ impl RequirementStatus {
         match s {
             "DRAFT" => Some(Self::Draft),
             "BASELINED" => Some(Self::Baselined),
+            "DELIVERED" => Some(Self::Delivered),
             "ARCHIVED" => Some(Self::Archived),
             _ => None,
         }
@@ -201,6 +207,20 @@ impl Requirement {
             self.status = RequirementStatus::Baselined;
         }
         Ok(())
+    }
+
+    /// 标记交付:基线后所有验收标准经验证达成时调用,Baselined → Delivered。
+    /// 幂等(已 Delivered 直接成功);未定基线 → NotBaselined;已归档拒绝。
+    pub fn deliver(&mut self) -> Result<(), RequirementError> {
+        match self.status {
+            RequirementStatus::Delivered => Ok(()),
+            RequirementStatus::Baselined => {
+                self.status = RequirementStatus::Delivered;
+                Ok(())
+            }
+            RequirementStatus::Draft => Err(RequirementError::NotBaselined),
+            RequirementStatus::Archived => Err(RequirementError::Archived),
+        }
     }
 
     pub fn rename(&mut self, title: &str) -> Result<(), RequirementError> {
