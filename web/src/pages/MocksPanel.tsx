@@ -278,12 +278,12 @@ function CreateMockForm({
   return (
     <div>
       {/* 头部信息卡:【id】名称 + 请求类型 + 路径(对齐参考图 #4) */}
-      <Card size="small" styles={{ body: { padding: '10px 14px' } }} style={{ marginBottom: 12, background: '#fafbfc' }}>
+      <Card size="small" styles={{ body: { padding: '10px 14px' } }} style={{ marginBottom: 12, background: 'var(--panel-2)' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
           <span style={{ fontWeight: 600 }}>【{definition.num ?? '—'}】{definition.name}</span>
           <div style={{ flex: 1 }} />
-          <span style={{ color: '#8a9099', fontSize: 12 }}>{t('apidef.reqType', '请求类型')} <Tag color={methodColor(definition.method)} style={{ margin: 0 }}>{definition.method || definition.protocol}</Tag></span>
-          <span style={{ color: '#8a9099', fontSize: 12 }}>{t('apidef.colPath', '路径')} <span className="ms-mono" style={{ color: '#5b6470' }}>{definition.path || '—'}</span></span>
+          <span style={{ color: 'var(--text-3)', fontSize: 12 }}>{t('apidef.reqType', '请求类型')} <Tag color={methodColor(definition.method)} style={{ margin: 0 }}>{definition.method || definition.protocol}</Tag></span>
+          <span style={{ color: 'var(--text-3)', fontSize: 12 }}>{t('apidef.colPath', '路径')} <span className="ms-mono" style={{ color: 'var(--text-2)' }}>{definition.path || '—'}</span></span>
         </div>
       </Card>
 
@@ -311,7 +311,7 @@ function CreateMockForm({
 
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, fontWeight: 600, fontSize: 13, margin: '12px 0 8px' }}>
         {t('mock.respContent', '响应内容')}
-        <span style={{ fontWeight: 400, color: '#8a9099', fontSize: 12 }}>
+        <span style={{ fontWeight: 400, color: 'var(--text-3)', fontSize: 12 }}>
           {t('mock.followDef', '跟随 API 定义')} <Switch size="small" checked={followDef} onChange={setFollowDef} />
         </span>
       </div>

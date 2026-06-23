@@ -1,3 +1,72 @@
+/* —— 设计令牌(单一真源,与 src/theme.ts 同值)。品牌=青绿 teal-green,配深色 slate(默认暗色)。 —— */
+:root {
+  --brand: #13a06c; /* 青绿 teal-green */
+  --brand-hover: #0e8a5c;
+  --brand-soft: #e6f6ef; /* 选中/悬浮的淡品牌底 */
+  --success: #16a34a;
+  --error: #e5616a;
+  --warning: #e0a64b;
+  --bg: transparent; /* 应用画布:透明,让 body 环境光晕透出 */
+  --bg-base: #f6f9f7; /* body 实底,微青冷白 */
+  --panel: #ffffff; /* 卡片/面板 */
+  --panel-2: #f3f7f5; /* 次级面板/表头 */
+  --border: #e4ebe7;
+  --border-soft: #eef2f0;
+  --text: #20272e;
+  --text-2: #5a6570;
+  --text-3: #98a2ad;
+  /* 磨砂玻璃:半透明面板 + 背景模糊,让环境光晕透过外壳 */
+  --glass: rgba(255, 255, 255, 0.7);
+  --glass-blur: blur(16px) saturate(125%);
+  /* 环境光晕:青绿系,克制低饱和,锚定视口底部柔散。 */
+  --spotlight:
+    radial-gradient(ellipse 72% 56% at 10% 100%, rgba(19, 160, 108, 0.08), transparent 66%),
+    radial-gradient(ellipse 60% 50% at 90% 100%, rgba(43, 182, 115, 0.06), transparent 68%),
+    radial-gradient(ellipse 44% 44% at 50% 100%, rgba(60, 196, 135, 0.06), transparent 72%);
+}
+[data-theme='dark'] {
+  --brand: #2bb673; /* 青绿,暗色 slate 上更亮 */
+  --brand-hover: #3cc487;
+  --brand-soft: #16352a; /* 选中行的深青绿底 */
+  --success: #2bb673;
+  --error: #ef6e74;
+  --warning: #e6b15c;
+  --bg: transparent;
+  --bg-base: #171d24; /* 冷 slate 画布 */
+  --panel: #1e252e; /* 行/卡片 */
+  --panel-2: #252e38; /* 表头/悬浮 */
+  --border: #2e3742;
+  --border-soft: #283139;
+  --text: #cdd6e0;
+  --text-2: #9aa6b2;
+  --text-3: #6b7682;
+  --glass: rgba(23, 29, 36, 0.6);
+  --glass-blur: blur(16px) saturate(125%);
+  --spotlight:
+    radial-gradient(ellipse 72% 56% at 10% 100%, rgba(43, 182, 115, 0.14), transparent 66%),
+    radial-gradient(ellipse 60% 50% at 90% 100%, rgba(43, 182, 115, 0.10), transparent 68%),
+    radial-gradient(ellipse 44% 44% at 50% 100%, rgba(60, 196, 135, 0.10), transparent 72%);
+}
+
+/* 闭环门面背景:一道柔和微光从左到右持续流动,呼应"流水线 / 闭环"。
+   用多层 background-position 动画(不引入伪元素 → 无层叠冲突,内容天然在背景之上)。 */
+.ms-loop-hero {
+  background-image:
+    linear-gradient(90deg, transparent 0%, rgba(43, 182, 115, 0.16) 50%, transparent 100%),
+    linear-gradient(135deg, var(--brand-soft) 0%, var(--panel) 62%);
+  background-size: 200% 100%, 100% 100%;
+  background-repeat: no-repeat;
+  background-position: -150% 0, 0 0;
+  animation: ms-loop-sweep 6s linear infinite;
+}
+@keyframes ms-loop-sweep {
+  0% { background-position: -150% 0, 0 0; }
+  100% { background-position: 150% 0, 0 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ms-loop-hero { animation: none; background-position: 0 0, 0 0; }
+}
+
 html,
 body,
 #root {
@@ -5,17 +74,26 @@ body,
   margin: 0;
 }
 body {
-  font-family: -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', system-ui, sans-serif;
+  background: var(--bg-base);
+  color: var(--text);
+}
+/* 环境光晕:固定于视口、置于所有内容之下,不参与布局/交互。 */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background: var(--spotlight);
 }
 .ms-mono {
-  font-family: ui-monospace, Menlo, Consolas, monospace;
+  font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-feature-settings: 'liga' 0;
 }
 /* 选中行高亮(三栏联动) */
 .ms-row-active > td {
-  background: #f3eefe !important;
-}
-.ant-table-tbody > tr:hover > td {
-  background: #f7f3ff;
+  background: var(--brand-soft) !important;
 }
 /* 多 Tab 工作区:内容区铺满可用高度并各自滚动。
    注意:全部选择器都用「> .ant-tabs-nav」直接子级限定,避免样式渗透到
@@ -36,9 +114,9 @@ body {
 }
 /* 工作 Tab(仅顶层):MeterSphere 风浅底浏览器式标签,选中白底 + 紫顶条 */
 .ms-worktabs > .ant-tabs-nav {
-  background: #fafbfc;
+  background: var(--panel-2);
   padding: 6px 10px 0;
-  border-bottom: 1px solid #eef0f2;
+  border-bottom: 1px solid var(--border-soft);
   margin-bottom: 0;
 }
 .ms-worktabs > .ant-tabs-nav::before {
@@ -55,26 +133,26 @@ body {
   transition: background 0.15s, color 0.15s;
 }
 .ms-worktabs > .ant-tabs-nav .ant-tabs-tab .ant-tabs-tab-btn {
-  color: #5b6470 !important;
+  color: var(--text-2) !important;
 }
 .ms-worktabs > .ant-tabs-nav .ant-tabs-tab:hover {
-  background: #f0f1f4 !important;
+  background: var(--border-soft) !important;
 }
 .ms-worktabs > .ant-tabs-nav .ant-tabs-tab-active {
-  background: #fff !important;
-  border-color: #eef0f2 !important;
-  box-shadow: inset 0 2px 0 #06a561;
+  background: var(--panel) !important;
+  border-color: var(--border-soft) !important;
+  box-shadow: inset 0 2px 0 var(--brand);
 }
 .ms-worktabs > .ant-tabs-nav .ant-tabs-tab-active .ant-tabs-tab-btn {
-  color: #1f2329 !important;
+  color: var(--text) !important;
   font-weight: 600;
 }
 .ms-worktabs > .ant-tabs-nav .ant-tabs-tab .ant-tabs-tab-remove {
-  color: #b8bdc4 !important;
+  color: var(--text-3) !important;
   margin-left: 6px;
 }
 .ms-worktabs > .ant-tabs-nav .ant-tabs-tab .ant-tabs-tab-remove:hover {
-  color: #5b6470 !important;
+  color: var(--text-2) !important;
 }
 
 /* 详情内「预览/定义/用例/MOCK」+ 子标签:干净的线性 Tab(扁平 + 紫色墨条/选中字)。 */
@@ -107,20 +185,20 @@ body {
   margin-left: 22px !important;
 }
 .ms-detail-tabs > .ant-tabs-nav .ant-tabs-tab-active .ant-tabs-tab-btn {
-  color: #06a561 !important;
+  color: var(--brand) !important;
   font-weight: 600;
 }
 .ms-detail-tabs > .ant-tabs-nav .ant-tabs-tab:hover .ant-tabs-tab-btn {
-  color: #06a561 !important;
+  color: var(--brand) !important;
 }
 .ms-detail-tabs > .ant-tabs-nav .ant-tabs-ink-bar {
-  background: #06a561;
+  background: var(--brand);
 }
 
 /* 表格观感:表头浅灰、行距更紧 */
 .ant-table-thead > tr > th {
-  background: #fafbfc !important;
-  color: #5b6470 !important;
+  background: var(--panel-2) !important;
+  color: var(--text-2) !important;
   font-weight: 600;
 }
 .ant-table-tbody > tr > td {
@@ -136,7 +214,7 @@ body {
 
 /* 顶栏一级导航选中项:紫色下划线 */
 .ant-menu-horizontal.ant-menu-dark .ant-menu-item-selected {
-  border-bottom: 2px solid #06a561;
+  border-bottom: 2px solid var(--brand);
 }
 
 /* 场景步骤执行进度:整行背景从左到右填充(类似 0→100%),按执行顺序错峰起跑;
@@ -151,7 +229,7 @@ body {
 }
 .ms-step-fillbg.run {
   width: 0;
-  background: rgba(22, 119, 255, 0.13);
+  background: rgba(43, 182, 115, 0.14);
   animation: ms-step-grow 0.7s ease-out forwards;
 }
 .ms-step-fillbg.done {

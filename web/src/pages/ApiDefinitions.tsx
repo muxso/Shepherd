@@ -409,7 +409,7 @@ export default function ApiDefinitions() {
   }
 
   const allColumns: ColumnsType<ApiDefinition> = [
-    { key: 'num', title: 'ID', dataIndex: 'num', width: 90, render: (num: number | undefined, d) => <span className="ms-mono" style={{ color: '#8a9099', fontSize: 12 }} title={d.id}>{num ?? '—'}</span> },
+    { key: 'num', title: 'ID', dataIndex: 'num', width: 90, render: (num: number | undefined, d) => <span className="ms-mono" style={{ color: 'var(--text-3)', fontSize: 12 }} title={d.id}>{num ?? '—'}</span> },
     { key: 'name', title: t('apidef.colName', '名称'), dataIndex: 'name', ellipsis: true, render: (name: string) => <span style={{ fontWeight: 500 }}>{name}</span> },
     {
       key: 'protocol', title: t('apidef.protocol', '协议'), dataIndex: 'protocol', width: 100,
@@ -423,7 +423,7 @@ export default function ApiDefinitions() {
       onFilter: (v, d) => d.method === v,
       render: (m: string) => <Tag color={methodColor(m)} style={{ fontWeight: 600 }}>{m || '—'}</Tag>,
     },
-    { key: 'path', title: t('apidef.colPath', '路径'), dataIndex: 'path', ellipsis: true, render: (p: string) => <span className="ms-mono" style={{ color: '#5b6470' }}>{p || '—'}</span> },
+    { key: 'path', title: t('apidef.colPath', '路径'), dataIndex: 'path', ellipsis: true, render: (p: string) => <span className="ms-mono" style={{ color: 'var(--text-2)' }}>{p || '—'}</span> },
     {
       key: 'status', title: t('apidef.colStatus', '状态'), dataIndex: 'status', width: 100,
       filters: API_STATUSES.map((s) => ({ text: s, value: s })),
@@ -434,19 +434,19 @@ export default function ApiDefinitions() {
       key: 'module', title: t('apidef.colModule', '模块'), dataIndex: 'moduleId', width: 120,
       render: (mid?: string | null) => {
         const m = modules.find((x) => x.id === mid)
-        return m ? <Tag color="geekblue">{m.name}</Tag> : <span style={{ color: '#bbb' }}>{t('apidef.unfiled', '未归类')}</span>
+        return m ? <Tag color="geekblue">{m.name}</Tag> : <span style={{ color: 'var(--text-3)' }}>{t('apidef.unfiled', '未归类')}</span>
       },
     },
     {
       key: 'tags', title: t('apidef.tags', '标签'), dataIndex: 'spec', width: 140,
       render: (spec?: ApiDefinition['spec']) => {
         const tags = spec?.tags || []
-        return tags.length ? <Space size={[2, 2]} wrap>{tags.map((tg) => <Tag key={tg} style={{ margin: 0 }}>{tg}</Tag>)}</Space> : <span style={{ color: '#bbb' }}>—</span>
+        return tags.length ? <Space size={[2, 2]} wrap>{tags.map((tg) => <Tag key={tg} style={{ margin: 0 }}>{tg}</Tag>)}</Space> : <span style={{ color: 'var(--text-3)' }}>—</span>
       },
     },
-    { key: 'createdBy', title: t('apidef.colCreatedBy', '创建人'), dataIndex: 'createdBy', width: 110, ellipsis: true, render: (u?: string) => u ? <span style={{ color: '#5b6470' }}>{u}</span> : <span style={{ color: '#bbb' }}>—</span> },
-    { key: 'createdAt', title: t('apidef.colCreatedAt', '创建时间'), dataIndex: 'createdAt', width: 160, render: (ts?: string) => <span style={{ color: '#8a9099', fontSize: 12 }}>{fmtTs(ts)}</span> },
-    { key: 'updatedAt', title: t('apidef.updatedAt', '更新时间'), dataIndex: 'updatedAt', width: 160, render: (ts?: string) => <span style={{ color: '#8a9099', fontSize: 12 }}>{fmtTs(ts)}</span> },
+    { key: 'createdBy', title: t('apidef.colCreatedBy', '创建人'), dataIndex: 'createdBy', width: 110, ellipsis: true, render: (u?: string) => u ? <span style={{ color: 'var(--text-2)' }}>{u}</span> : <span style={{ color: 'var(--text-3)' }}>—</span> },
+    { key: 'createdAt', title: t('apidef.colCreatedAt', '创建时间'), dataIndex: 'createdAt', width: 160, render: (ts?: string) => <span style={{ color: 'var(--text-3)', fontSize: 12 }}>{fmtTs(ts)}</span> },
+    { key: 'updatedAt', title: t('apidef.updatedAt', '更新时间'), dataIndex: 'updatedAt', width: 160, render: (ts?: string) => <span style={{ color: 'var(--text-3)', fontSize: 12 }}>{fmtTs(ts)}</span> },
     {
       key: 'action', title: t('apidef.colAction', '操作'), width: 150, fixed: 'right',
       render: (_, d) => (
@@ -482,7 +482,7 @@ export default function ApiDefinitions() {
 
   const listTab = (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 12px', borderBottom: '1px solid #f0f0f0' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 12px', borderBottom: '1px solid var(--border-soft)' }}>
         {/* 视图模式切换:API / CASE / MOCK(对齐参考图左上角)。 */}
         <Dropdown
           trigger={['click']}
@@ -490,7 +490,7 @@ export default function ApiDefinitions() {
         >
           <Button>{viewMode} <DownOutlined /></Button>
         </Dropdown>
-        <span style={{ fontWeight: 600, color: '#06a561' }}>
+        <span style={{ fontWeight: 600, color: 'var(--brand)' }}>
           {viewMode === 'API' ? t('apidef.allApis2', '全部接口') : viewMode === 'CASE' ? t('apidef.allCases', '全部用例') : t('apidef.allMocks', '全部 MOCK')}
         </span>
         <div style={{ flex: 1 }} />
@@ -504,12 +504,12 @@ export default function ApiDefinitions() {
           content={
             <div style={{ width: 268 }}>
               {views.length === 0 ? (
-                <div style={{ color: '#8a9099', fontSize: 12, padding: '2px 0 8px' }}>{t('apidef.noViews', '暂无视图,保存当前筛选为视图')}</div>
+                <div style={{ color: 'var(--text-3)', fontSize: 12, padding: '2px 0 8px' }}>{t('apidef.noViews', '暂无视图,保存当前筛选为视图')}</div>
               ) : (
                 <Space direction="vertical" size={2} style={{ width: '100%' }}>
                   {views.map((v) => (
                     <div key={v.id} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                      <a style={{ flex: 1, fontWeight: v.id === activeViewId ? 600 : 400, color: v.id === activeViewId ? '#06a561' : undefined, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} onClick={() => applyView(v)} title={v.name}>
+                      <a style={{ flex: 1, fontWeight: v.id === activeViewId ? 600 : 400, color: v.id === activeViewId ? 'var(--brand)' : undefined, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} onClick={() => applyView(v)} title={v.name}>
                         {v.name}
                       </a>
                       <Tooltip title={t('apidef.shareView', '分享')}>
@@ -543,9 +543,9 @@ export default function ApiDefinitions() {
           title={t('apidef.tableSettings', '表格设置')}
           content={
             <div style={{ width: 240 }}>
-              <div style={{ fontSize: 12, color: '#8a9099', marginBottom: 6 }}>{t('apidef.pageSize', '每页显示数量')}</div>
+              <div style={{ fontSize: 12, color: 'var(--text-3)', marginBottom: 6 }}>{t('apidef.pageSize', '每页显示数量')}</div>
               <Segmented size="small" value={pageSize} onChange={(v) => setPageSize(Number(v))} options={[10, 20, 30, 50].map((n) => ({ label: String(n), value: n }))} style={{ marginBottom: 12 }} />
-              <div style={{ fontSize: 12, color: '#8a9099', marginBottom: 6 }}>{t('apidef.colSettings', '表头设置')}</div>
+              <div style={{ fontSize: 12, color: 'var(--text-3)', marginBottom: 6 }}>{t('apidef.colSettings', '表头设置')}</div>
               <Space direction="vertical" size={6} style={{ width: '100%' }}>
                 {TOGGLE_COLS.map((c) => (
                   <div key={c.key} style={{ display: 'flex', alignItems: 'center' }}>
@@ -608,8 +608,8 @@ export default function ApiDefinitions() {
               { title: t('apidef.colPath', '接口路径'), dataIndex: 'path', ellipsis: true, render: (v: string) => <span className="ms-mono" style={{ fontSize: 12 }}>{v}</span> },
               { title: t('apidef.colTags', '标签'), dataIndex: 'tags', width: 160, render: (tags?: string[]) => (tags?.length ? tags.map((tg) => <Tag key={tg}>{tg}</Tag>) : '—') },
               { title: t('apidef.colStatus', '状态'), dataIndex: 'enabled', width: 90, render: (on: boolean) => <Switch size="small" checked={on} disabled /> },
-              { title: t('apidef.colOperator', '操作人'), dataIndex: 'operator', width: 110, render: (v?: string) => v || <span style={{ color: '#bbb' }}>—</span> },
-              { title: t('apidef.colUpdatedAt', '更新时间'), dataIndex: 'updatedAt', width: 160, render: (v?: string) => <span style={{ color: '#8a9099', fontSize: 12 }}>{v ? v.slice(0, 19) : '—'}</span> },
+              { title: t('apidef.colOperator', '操作人'), dataIndex: 'operator', width: 110, render: (v?: string) => v || <span style={{ color: 'var(--text-3)' }}>—</span> },
+              { title: t('apidef.colUpdatedAt', '更新时间'), dataIndex: 'updatedAt', width: 160, render: (v?: string) => <span style={{ color: 'var(--text-3)', fontSize: 12 }}>{v ? v.slice(0, 19) : '—'}</span> },
               {
                 title: t('apidef.colAction', '操作'),
                 width: 170,
@@ -716,14 +716,14 @@ export default function ApiDefinitions() {
           <Input
             allowClear
             size="small"
-            prefix={<SearchOutlined style={{ color: '#bbb' }} />}
+            prefix={<SearchOutlined style={{ color: 'var(--text-3)' }} />}
             placeholder={t('apidef.moduleSearch', '请输入模块/接口名称')}
             value={moduleSearch}
             onChange={(e) => setModuleSearch(e.target.value)}
           />
         </div>
         {/* 工具条:隐藏空模块 / 树内显示接口 / 收起全部 / 协议过滤 / 新建模块(「全部接口 (N)」由下方树根节点承载,不在此重复)。 */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 2, padding: '0 8px 8px', borderBottom: '1px solid #f5f5f5' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 2, padding: '0 8px 8px', borderBottom: '1px solid var(--border-soft)' }}>
           <div style={{ flex: 1 }} />
           <Tooltip title={hideEmpty ? t('apidef.showEmpty', '显示空模块') : t('apidef.hideEmpty', '隐藏空模块')}>
             <Button size="small" type="text" icon={hideEmpty ? <EyeInvisibleOutlined /> : <EyeOutlined />} onClick={() => setHideEmpty((v) => !v)} />
@@ -751,7 +751,7 @@ export default function ApiDefinitions() {
             }
           >
             <Tooltip title={t('apidef.protoFilter', '协议过滤')}>
-              <Button size="small" type="text" icon={<FilterOutlined />} style={{ color: protoFilter.length ? '#06a561' : undefined }} />
+              <Button size="small" type="text" icon={<FilterOutlined />} style={{ color: protoFilter.length ? 'var(--brand)' : undefined }} />
             </Tooltip>
           </Popover>
           <Tooltip title={t('apidef.newTopModule', '新建顶层模块')}>
@@ -776,7 +776,7 @@ export default function ApiDefinitions() {
         </div>
       </ResizableSider>
 
-      <div style={{ flex: 1, minWidth: 0, background: '#fff' }}>
+      <div style={{ flex: 1, minWidth: 0, background: 'var(--panel)' }}>
         <Tabs
           type="editable-card"
           hideAdd
@@ -807,7 +807,7 @@ export default function ApiDefinitions() {
         }
       >
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
-          <span style={{ color: '#5b6470' }}>{t('apidef.matchCond', '符合以下条件')}</span>
+          <span style={{ color: 'var(--text-2)' }}>{t('apidef.matchCond', '符合以下条件')}</span>
           <Select value={advLogic} onChange={(v) => setAdvLogic(v)} style={{ width: 90 }} options={[{ value: 'all', label: t('apidef.all', '所有') }, { value: 'any', label: t('apidef.any', '任一') }]} />
         </div>
         <Space direction="vertical" style={{ width: '100%' }} size={8}>
@@ -854,9 +854,9 @@ function ModuleTitle({ name, count, onAction }: { name: string; count?: number; 
   const { t } = useI18n()
   return (
     <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, width: '100%', minWidth: 0 }}>
-      <FolderOutlined style={{ color: '#8a9099', flexShrink: 0 }} />
+      <FolderOutlined style={{ color: 'var(--text-3)', flexShrink: 0 }} />
       <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{name}</span>
-      {count != null && <span style={{ color: '#a8adb5', fontSize: 12, flexShrink: 0 }}>{count}</span>}
+      {count != null && <span style={{ color: 'var(--text-3)', fontSize: 12, flexShrink: 0 }}>{count}</span>}
       <Dropdown
         trigger={['click']}
         menu={{
@@ -872,7 +872,7 @@ function ModuleTitle({ name, count, onAction }: { name: string; count?: number; 
           },
         }}
       >
-        <MoreOutlined onClick={(e) => e.stopPropagation()} style={{ padding: '0 4px', color: '#999' }} />
+        <MoreOutlined onClick={(e) => e.stopPropagation()} style={{ padding: '0 4px', color: 'var(--text-3)' }} />
       </Dropdown>
     </span>
   )
@@ -1054,7 +1054,7 @@ function CaseDetailTab({ caseItem, projectId, onClose, onDeleted }: { caseItem: 
         {headers.length === 0 ? (
           <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('apidef.none', '无')} style={{ margin: '8px 0' }} />
         ) : hdrView === 'raw' ? (
-          <pre className="ms-mono" style={{ background: '#f6f8fa', padding: 12, borderRadius: 6, margin: 0, fontSize: 12 }}>{hdrRaw}</pre>
+          <pre className="ms-mono" style={{ background: 'var(--panel-2)', padding: 12, borderRadius: 6, margin: 0, fontSize: 12 }}>{hdrRaw}</pre>
         ) : (
           <Table size="small" rowKey={(_, i) => String(i)} pagination={false} dataSource={headers} columns={[{ title: t('env.varName', '参数名'), dataIndex: 'key', width: '40%' }, { title: t('env.varValue', '参数值'), dataIndex: 'value', render: (v: string) => <span className="ms-mono">{v}</span> }]} />
         )}
@@ -1066,7 +1066,7 @@ function CaseDetailTab({ caseItem, projectId, onClose, onDeleted }: { caseItem: 
           {c.body && <Button size="small" icon={<CopyOutlined />} onClick={() => navigator.clipboard?.writeText(c.body || '')}>{t('a.copy', '复制')}</Button>}
         </div>
         {c.body ? (
-          <pre className="ms-mono" style={{ background: '#f6f8fa', padding: 12, borderRadius: 6, margin: 0, fontSize: 12, maxHeight: 360, overflow: 'auto' }}>{c.body}</pre>
+          <pre className="ms-mono" style={{ background: 'var(--panel-2)', padding: 12, borderRadius: 6, margin: 0, fontSize: 12, maxHeight: 360, overflow: 'auto' }}>{c.body}</pre>
         ) : (
           <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('apidef.noBody', '请求没有 Body')} style={{ margin: '8px 0' }} />
         )}
@@ -1082,7 +1082,7 @@ function CaseDetailTab({ caseItem, projectId, onClose, onDeleted }: { caseItem: 
     <div style={{ padding: '12px 16px', height: '100%', overflow: 'auto' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
         <span style={{ color: '#ff4d4f', fontSize: 12, fontWeight: 600 }}>{c.priority || 'P0'}</span>
-        <span className="ms-mono" style={{ color: '#8a9099', fontSize: 12 }}>[{c.id.slice(0, 8)}]</span>
+        <span className="ms-mono" style={{ color: 'var(--text-3)', fontSize: 12 }}>[{c.id.slice(0, 8)}]</span>
         <span style={{ fontWeight: 600, fontSize: 15 }}>{c.name}</span>
         <div style={{ flex: 1 }} />
         <Select size="small" value={envId || undefined} onChange={setEnvId} allowClear placeholder={t('apidef.selectEnv', '选择环境')} style={{ width: 160 }} options={envs.map((e) => ({ value: e.id, label: e.name }))} />
@@ -1101,9 +1101,9 @@ function CaseDetailTab({ caseItem, projectId, onClose, onDeleted }: { caseItem: 
         <Button onClick={onClose}>{t('a.close', '关闭')}</Button>
       </div>
       <CaseEditDrawer open={editOpen} caseItem={c} onClose={() => setEditOpen(false)} onSaved={(u) => { setC(u); setEditOpen(false); onDeleted?.() }} />
-      <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginBottom: 12, fontSize: 12, color: '#8a9099', flexWrap: 'wrap' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginBottom: 12, fontSize: 12, color: 'var(--text-3)', flexWrap: 'wrap' }}>
         <span>{t('apidef.colMethod', '请求类型')} <Tag color={methodColor(c.method)} style={{ margin: 0 }}>{c.method}</Tag></span>
-        <span>{t('apidef.colPath', '路径')} <span className="ms-mono" style={{ color: '#1f2329' }}>{c.url}</span></span>
+        <span>{t('apidef.colPath', '路径')} <span className="ms-mono" style={{ color: 'var(--text)' }}>{c.url}</span></span>
         {tags.length > 0 && <span>{t('apidef.colTags', '标签')} {tags.map((tg) => <Tag key={tg}>{tg}</Tag>)}</span>}
       </div>
       <Tabs
@@ -1178,8 +1178,8 @@ function ApiDetail({ definition }: { definition: ApiDefinition }) {
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10, flexWrap: 'wrap' }}>
         <Tag color={statusColor(definition.status)} style={{ margin: 0 }}>{definition.status}</Tag>
         <Tag color={methodColor(definition.method)} style={{ margin: 0, fontWeight: 600 }}>{definition.method || definition.protocol}</Tag>
-        <span className="ms-mono" style={{ color: '#8a9099', fontSize: 12 }}>[{definition.num ?? '—'}]</span>
-        <span style={{ fontWeight: 600, fontSize: 15, color: '#1f2329' }}>{definition.name}</span>
+        <span className="ms-mono" style={{ color: 'var(--text-3)', fontSize: 12 }}>[{definition.num ?? '—'}]</span>
+        <span style={{ fontWeight: 600, fontSize: 15, color: 'var(--text)' }}>{definition.name}</span>
       </div>
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px 28px', fontSize: 12 }}>
         <Meta label={t('apidef.colPath', '路径')} value={<span className="ms-mono">{definition.path || '—'}</span>} />
@@ -1358,8 +1358,8 @@ function ApiDetail({ definition }: { definition: ApiDefinition }) {
 /** 元信息条目:标签 + 值(对齐参考图预览头)。 */
 function Meta({ label, value }: { label: string; value: ReactNode }) {
   return (
-    <span style={{ color: '#8a9099' }}>
-      {label} <span style={{ color: '#5b6470' }}>{value}</span>
+    <span style={{ color: 'var(--text-3)' }}>
+      {label} <span style={{ color: 'var(--text-2)' }}>{value}</span>
     </span>
   )
 }
@@ -1428,7 +1428,7 @@ function NewDefinitionTab({
       </div>
       <Input value={name} onChange={(e) => setName(e.target.value)} placeholder={t('apidef.nameInputPlaceholder', '请输入接口名称')} style={{ marginBottom: 12 }} autoFocus />
       {!isHttp ? (
-        <span style={{ color: '#8a9099', fontSize: 12 }}>{t('apidef.nonHttpHint', '该协议当前仅登记/存储,执行能力待接入;保存后可在列表查看。')}</span>
+        <span style={{ color: 'var(--text-3)', fontSize: 12 }}>{t('apidef.nonHttpHint', '该协议当前仅登记/存储,执行能力待接入;保存后可在列表查看。')}</span>
       ) : defMode === 'define' ? (
         <ApiSpecPanel definition={draftDef} mode="create" value={spec} onChange={setSpec} />
       ) : (
@@ -1514,7 +1514,7 @@ function ImportModal({
 
   const Field = ({ label, children }: { label: React.ReactNode; children: React.ReactNode }) => (
     <div style={{ marginBottom: 16 }}>
-      <div style={{ fontSize: 13, color: '#1f2329', marginBottom: 8 }}>{label}</div>
+      <div style={{ fontSize: 13, color: 'var(--text)', marginBottom: 8 }}>{label}</div>
       {children}
     </div>
   )
@@ -1573,11 +1573,11 @@ function ImportModal({
         <Radio.Group value={overwrite ? 'cover' : 'keep'} onChange={(e) => setOverwrite(e.target.value === 'cover')}>
           <Radio value="cover">
             {t('apidef.importCover', '覆盖')}
-            <Tooltip title={t('apidef.importCoverHint', '同 方法+路径 已存在则刷新其规格')}><QuestionCircleOutlined style={{ color: '#bbb', marginLeft: 4 }} /></Tooltip>
+            <Tooltip title={t('apidef.importCoverHint', '同 方法+路径 已存在则刷新其规格')}><QuestionCircleOutlined style={{ color: 'var(--text-3)', marginLeft: 4 }} /></Tooltip>
           </Radio>
           <Radio value="keep">
             {t('apidef.importKeep', '不覆盖')}
-            <Tooltip title={t('apidef.importKeepHint', '同 方法+路径 已存在则跳过')}><QuestionCircleOutlined style={{ color: '#bbb', marginLeft: 4 }} /></Tooltip>
+            <Tooltip title={t('apidef.importKeepHint', '同 方法+路径 已存在则跳过')}><QuestionCircleOutlined style={{ color: 'var(--text-3)', marginLeft: 4 }} /></Tooltip>
           </Radio>
         </Radio.Group>
       </Field>
@@ -1615,19 +1615,19 @@ function ImportModal({
       ) : (
         <>
           <Upload.Dragger accept=".json,.yaml,.yml" beforeUpload={readFile} showUploadList={false} style={{ marginBottom: 10 }}>
-            <p style={{ margin: 0 }}><InboxOutlined style={{ fontSize: 28, color: '#06a561' }} /></p>
+            <p style={{ margin: 0 }}><InboxOutlined style={{ fontSize: 28, color: 'var(--brand)' }} /></p>
             <p style={{ margin: '6px 0 0' }}>{t('apidef.uploadHint2', '拖拽或点击此区域选择文件')}</p>
-            <p style={{ color: '#8a9099', fontSize: 12, margin: '4px 0 0' }}>
+            <p style={{ color: 'var(--text-3)', fontSize: 12, margin: '4px 0 0' }}>
               {t('apidef.uploadHintSub', '支持 Swagger 3.0 版本的 json 文件,')}
               <span style={{ color: '#fa8c16' }}>{t('apidef.uploadHintConvert', '2.0 文件可以在官网一键转换 3.0,')}</span>
               {t('apidef.uploadHintSize', '大小不超过 50M')}
             </p>
-            {fileName && <p style={{ color: '#06a561', margin: '4px 0 0' }}>{t('apidef.selectedFile', '已选:')}{fileName}</p>}
+            {fileName && <p style={{ color: 'var(--brand)', margin: '4px 0 0' }}>{t('apidef.selectedFile', '已选:')}{fileName}</p>}
           </Upload.Dragger>
           <Input.TextArea rows={6} value={text} onChange={(e) => setText(e.target.value)} placeholder={t('apidef.pasteHint', '也可直接粘贴文档内容')} className="ms-mono" />
         </>
       )}
-      <p style={{ color: '#8a9099', fontSize: 12, margin: '10px 0 0' }}>
+      <p style={{ color: 'var(--text-3)', fontSize: 12, margin: '10px 0 0' }}>
         {t('apidef.importAutoHint', '导入将解析请求参数/必填/响应,并为每个接口自动生成带断言的默认用例。')}
       </p>
     </Drawer>

@@ -111,10 +111,10 @@ export function ModuleTreePanel<T>({
     <>
       {header}
       <div style={{ padding: '10px 10px 6px' }}>
-        <Input size="small" allowClear prefix={<SearchOutlined style={{ color: '#bbb' }} />} placeholder={searchPlaceholder ?? t('apidef.moduleSearch', '请输入模块名称搜索')} value={moduleSearch} onChange={(e) => onModuleSearch(e.target.value)} />
+        <Input size="small" allowClear prefix={<SearchOutlined style={{ color: 'var(--text-3)' }} />} placeholder={searchPlaceholder ?? t('apidef.moduleSearch', '请输入模块名称搜索')} value={moduleSearch} onChange={(e) => onModuleSearch(e.target.value)} />
       </div>
       {/* 工具条:收起全部 / 新建顶层模块(「全部 (N)」由下方树根节点承载,不在此重复)。 */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 2, padding: '0 8px 8px', borderBottom: '1px solid #f5f5f5' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 2, padding: '0 8px 8px', borderBottom: '1px solid var(--border-soft)' }}>
         <div style={{ flex: 1 }} />
         <Tooltip title={expanded.length ? t('apidef.collapseAll', '收起全部') : t('apidef.expandAll', '展开全部')}>
           <Button size="small" type="text" icon={<MinusSquareOutlined />} onClick={() => setExpanded(expanded.length ? [] : allExpandableKeys)} />
@@ -145,9 +145,9 @@ function ModuleTitle({ name, count, onAction }: { name: string; count?: number; 
   const { t } = useI18n()
   return (
     <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, width: '100%', minWidth: 0 }}>
-      <FolderOutlined style={{ color: '#8a9099', flexShrink: 0 }} />
+      <FolderOutlined style={{ color: 'var(--text-3)', flexShrink: 0 }} />
       <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{name}</span>
-      {count != null && <span style={{ color: '#a8adb5', fontSize: 12, flexShrink: 0 }}>{count}</span>}
+      {count != null && <span style={{ color: 'var(--text-3)', fontSize: 12, flexShrink: 0 }}>{count}</span>}
       <Dropdown
         trigger={['click']}
         menu={{
@@ -160,7 +160,7 @@ function ModuleTitle({ name, count, onAction }: { name: string; count?: number; 
           onClick: ({ key, domEvent }) => { domEvent.stopPropagation(); onAction(key) },
         }}
       >
-        <MoreOutlined onClick={(e) => e.stopPropagation()} style={{ padding: '0 4px', color: '#999' }} />
+        <MoreOutlined onClick={(e) => e.stopPropagation()} style={{ padding: '0 4px', color: 'var(--text-3)' }} />
       </Dropdown>
     </span>
   )

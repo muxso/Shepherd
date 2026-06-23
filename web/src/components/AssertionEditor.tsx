@@ -137,9 +137,9 @@ export default function AssertionEditor({
       {rows.length === 0 ? (
         <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('assert.emptyHint', '无断言(执行只看传输是否可达)')} />
       ) : (
-        <div style={{ display: 'flex', gap: 12, border: '1px solid #eef0f2', borderRadius: 6 }}>
+        <div style={{ display: 'flex', gap: 12, border: '1px solid var(--border-soft)', borderRadius: 6 }}>
           {/* 左列:断言类别列表 */}
-          <div style={{ width: 160, borderRight: '1px solid #eef0f2', padding: 8 }}>
+          <div style={{ width: 160, borderRight: '1px solid var(--border-soft)', padding: 8 }}>
             <Space direction="vertical" style={{ width: '100%' }} size={4}>
               {rows.map((r, i) => (
                 <div
@@ -152,10 +152,10 @@ export default function AssertionEditor({
                     padding: '6px 8px',
                     borderRadius: 4,
                     cursor: 'pointer',
-                    background: i === sel ? '#f3eefe' : 'transparent',
+                    background: i === sel ? 'var(--brand-soft)' : 'transparent',
                   }}
                 >
-                  <span style={{ width: 18, height: 18, borderRadius: '50%', background: '#06a561', color: '#fff', fontSize: 11, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>{i + 1}</span>
+                  <span style={{ width: 18, height: 18, borderRadius: '50%', background: 'var(--brand)', color: '#fff', fontSize: 11, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>{i + 1}</span>
                   <span style={{ flex: 1, fontSize: 13 }}>{CAT_LABEL[r.cat]}</span>
                   <Button
                     type="text"

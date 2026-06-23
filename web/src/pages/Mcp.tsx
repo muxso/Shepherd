@@ -31,7 +31,7 @@ export default function Mcp() {
 
   return (
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '14px 16px', background: '#fff', borderBottom: '1px solid #f0f0f0' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '14px 16px', background: 'var(--panel)', borderBottom: '1px solid var(--border-soft)' }}>
         <Typography.Text strong style={{ fontSize: 15 }}>
           {t('mcp.title', 'MCP 工具')}
         </Typography.Text>

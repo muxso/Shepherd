@@ -76,7 +76,7 @@ function RequirementReview() {
   ]
   const card = (key: string, title: string, color?: string) => (
     <Col span={6}>
-      <Card size="small" hoverable onClick={() => setFilter(key)} style={{ borderColor: filter === key ? '#06a561' : undefined }}>
+      <Card size="small" hoverable onClick={() => setFilter(key)} style={{ borderColor: filter === key ? 'var(--brand)' : undefined }}>
         <Statistic title={title} value={counts[key] ?? 0} valueStyle={color ? { color } : undefined} />
       </Card>
     </Col>
@@ -128,7 +128,7 @@ function CaseReviewQueue() {
     { title: t('review.rule', '通过规则'), dataIndex: 'passRule', width: 180, render: (r: string) => <Tag color={r === 'MULTIPLE' ? 'purple' : 'blue'}>{t(`review.rule.${r}`, ruleLabel(r))}</Tag> },
     { title: t('review.caseCount', '用例数'), dataIndex: 'total', width: 90 },
     { title: t('review.passed', '已通过'), dataIndex: 'passed', width: 100, render: (p: number, r) => <span style={{ color: p >= r.total && r.total > 0 ? '#2e7d32' : undefined }}>{p} / {r.total}</span> },
-    { title: t('review.createdAt', '创建时间'), dataIndex: 'createdAt', width: 180, render: (v: string) => <span style={{ color: '#8a9099', fontSize: 12 }}>{v?.slice(0, 19) || '—'}</span> },
+    { title: t('review.createdAt', '创建时间'), dataIndex: 'createdAt', width: 180, render: (v: string) => <span style={{ color: 'var(--text-3)', fontSize: 12 }}>{v?.slice(0, 19) || '—'}</span> },
     { title: t('req.action', '操作'), width: 90, render: (_v, r) => <Button type="link" size="small" onClick={() => setDetailId(r.id)}>{t('review.view', '查看')}</Button> },
   ]
 

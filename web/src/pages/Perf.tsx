@@ -33,8 +33,8 @@ export default function Perf() {
 
   return (
     <div style={{ display: 'flex', height: '100%' }}>
-      <div style={{ width: 300, background: '#fff', borderRight: '1px solid #f0f0f0', display: 'flex', flexDirection: 'column' }}>
-        <div style={{ padding: 12, borderBottom: '1px solid #f5f5f5', fontWeight: 600 }}>{t('perf.reports', '压测报告')}</div>
+      <div style={{ width: 300, background: 'var(--panel)', borderRight: '1px solid var(--border-soft)', display: 'flex', flexDirection: 'column' }}>
+        <div style={{ padding: 12, borderBottom: '1px solid var(--border-soft)', fontWeight: 600 }}>{t('perf.reports', '压测报告')}</div>
         <List
           dataSource={reports}
           locale={{ emptyText: <Empty description={t('perf.emptyReports', '暂无报告,右侧发起压测')} /> }}
@@ -44,8 +44,8 @@ export default function Perf() {
               style={{
                 cursor: 'pointer',
                 padding: '10px 14px',
-                background: r.id === selId ? '#f3eefe' : undefined,
-                borderLeft: r.id === selId ? '3px solid #06a561' : '3px solid transparent',
+                background: r.id === selId ? 'var(--brand-soft)' : undefined,
+                borderLeft: r.id === selId ? '3px solid var(--brand)' : '3px solid transparent',
               }}
             >
               <Space direction="vertical" size={2} style={{ width: '100%' }}>
@@ -291,7 +291,7 @@ function ReportView({ reportId }: { reportId: string }) {
     >
       <Row gutter={16} style={{ marginBottom: 16 }}>
         <Col span={6}><Card size="small"><Statistic title={t('perf.totalReq', '总请求')} value={rep.total} /></Card></Col>
-        <Col span={6}><Card size="small"><Statistic title={t('perf.throughput', '吞吐 (req/s)')} value={rep.throughputRps} precision={1} valueStyle={{ color: '#06a561' }} /></Card></Col>
+        <Col span={6}><Card size="small"><Statistic title={t('perf.throughput', '吞吐 (req/s)')} value={rep.throughputRps} precision={1} valueStyle={{ color: 'var(--brand)' }} /></Card></Col>
         <Col span={6}><Card size="small"><Statistic title={t('perf.success', '成功')} value={rep.success} valueStyle={{ color: '#2e7d32' }} /></Card></Col>
         <Col span={6}><Card size="small"><Statistic title={t('perf.errorRate', '失败率')} value={(rep.errorRate * 100).toFixed(1)} suffix="%" valueStyle={{ color: rep.failed ? '#c62828' : undefined }} /></Card></Col>
       </Row>
@@ -317,7 +317,7 @@ function ReportView({ reportId }: { reportId: string }) {
           { title: t('perf.latency', '延迟 (ms)'), dataIndex: 'v' },
         ]}
       />
-      <Space style={{ marginTop: 12, color: '#8a9099', fontSize: 12 }} wrap>
+      <Space style={{ marginTop: 12, color: 'var(--text-3)', fontSize: 12 }} wrap>
         <span>{t('perf.concurrency', '并发')} {rep.concurrency}</span>
         <span>{t('perf.iterations', '迭代')} {rep.iterations || '—'}</span>
         <span>{t('perf.elapsed', '总耗时')} {rep.elapsedMs} ms</span>

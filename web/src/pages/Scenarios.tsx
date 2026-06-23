@@ -232,7 +232,7 @@ export default function Scenarios() {
           </Space.Compact>
         </div>
       }
-      footer={<div style={{ padding: '8px 14px', borderTop: '1px solid #f5f5f5', color: '#8a9099', fontSize: 12 }}>🗑 {t('scenario.recycleBin', '回收站')}</div>}
+      footer={<div style={{ padding: '8px 14px', borderTop: '1px solid var(--border-soft)', color: 'var(--text-3)', fontSize: 12 }}>🗑 {t('scenario.recycleBin', '回收站')}</div>}
     />
   )
 
@@ -264,7 +264,7 @@ export default function Scenarios() {
       },
     })
   }
-  const muted = (v?: string) => <span style={{ color: '#bbb' }}>{v || '—'}</span>
+  const muted = (v?: string) => <span style={{ color: 'var(--text-3)' }}>{v || '—'}</span>
   const richCols: ColumnsType<Scenario> = [
     { key: 'id', title: 'ID', dataIndex: 'id', width: 110, render: (v: string) => <span className="ms-mono" style={{ fontSize: 12 }}>{v.slice(0, 8)}</span> },
     { key: 'name', title: t('scenario.colSceneName', '场景名称'), dataIndex: 'name', ellipsis: true, render: (v: string) => <span style={{ fontWeight: 500 }}>{v}</span> },
@@ -296,9 +296,9 @@ export default function Scenarios() {
 
   const listContent = (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 12px', borderBottom: '1px solid #f0f0f0' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 12px', borderBottom: '1px solid var(--border-soft)' }}>
         <div style={{ flex: 1 }} />
-        <Input allowClear prefix={<SearchOutlined style={{ color: '#bbb' }} />} placeholder={t('scenario.searchByIdNameTag', '通过 ID/名称/标签搜索')} style={{ width: 260 }} value={search} onChange={(e) => setSearch(e.target.value)} />
+        <Input allowClear prefix={<SearchOutlined style={{ color: 'var(--text-3)' }} />} placeholder={t('scenario.searchByIdNameTag', '通过 ID/名称/标签搜索')} style={{ width: 260 }} value={search} onChange={(e) => setSearch(e.target.value)} />
         <Popover
           trigger="click"
           placement="bottomRight"
@@ -308,12 +308,12 @@ export default function Scenarios() {
           content={
             <div style={{ width: 268 }}>
               {views.length === 0 ? (
-                <div style={{ color: '#8a9099', fontSize: 12, padding: '2px 0 8px' }}>{t('apidef.noViews', '暂无视图,保存当前筛选为视图')}</div>
+                <div style={{ color: 'var(--text-3)', fontSize: 12, padding: '2px 0 8px' }}>{t('apidef.noViews', '暂无视图,保存当前筛选为视图')}</div>
               ) : (
                 <Space direction="vertical" size={2} style={{ width: '100%' }}>
                   {views.map((v) => (
                     <div key={v.id} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                      <a style={{ flex: 1, fontWeight: v.id === activeViewId ? 600 : 400, color: v.id === activeViewId ? '#06a561' : undefined, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} onClick={() => applyView(v)} title={v.name}>
+                      <a style={{ flex: 1, fontWeight: v.id === activeViewId ? 600 : 400, color: v.id === activeViewId ? 'var(--brand)' : undefined, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} onClick={() => applyView(v)} title={v.name}>
                         {v.name}
                       </a>
                       <Tooltip title={t('apidef.shareView', '分享')}>
@@ -347,9 +347,9 @@ export default function Scenarios() {
           title={t('apidef.tableSettings', '表格设置')}
           content={
             <div style={{ width: 240 }}>
-              <div style={{ fontSize: 12, color: '#8a9099', marginBottom: 6 }}>{t('apidef.pageSize', '每页显示数量')}</div>
+              <div style={{ fontSize: 12, color: 'var(--text-3)', marginBottom: 6 }}>{t('apidef.pageSize', '每页显示数量')}</div>
               <Segmented size="small" value={pageSize} onChange={(v) => setPageSize(Number(v))} options={[10, 20, 30, 50].map((n) => ({ label: String(n), value: n }))} style={{ marginBottom: 12 }} />
-              <div style={{ fontSize: 12, color: '#8a9099', marginBottom: 6 }}>{t('apidef.colSettings', '表头设置')}</div>
+              <div style={{ fontSize: 12, color: 'var(--text-3)', marginBottom: 6 }}>{t('apidef.colSettings', '表头设置')}</div>
               <Space direction="vertical" size={6} style={{ width: '100%' }}>
                 {TOGGLE_COLS.map((c) => (
                   <div key={c.key} style={{ display: 'flex', alignItems: 'center' }}>
@@ -423,7 +423,7 @@ export default function Scenarios() {
         }
       >
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
-          <span style={{ color: '#5b6470' }}>{t('apidef.matchCond', '符合以下条件')}</span>
+          <span style={{ color: 'var(--text-2)' }}>{t('apidef.matchCond', '符合以下条件')}</span>
           <Select value={advLogic} onChange={(v) => setAdvLogic(v)} style={{ width: 90 }} options={[{ value: 'all', label: t('apidef.all', '所有') }, { value: 'any', label: t('apidef.any', '任一') }]} />
         </div>
         <Space direction="vertical" style={{ width: '100%' }} size={8}>
@@ -515,7 +515,7 @@ function stepToNode(s: ScenarioStep, t: TFn, nameOf: NameOf): Node {
 function StepRow({ node, idx, depth, t, result, running, seq = 0, enabled = true, onToggle, onRun, actions, hovered, respPreview, expandable, expanded, onChildSelect }: { node: Node; idx: number; depth: number; t: TFn; result?: ReportResultItem; running?: boolean; seq?: number; enabled?: boolean; onToggle?: () => void; onRun?: () => void; actions?: React.ReactNode; hovered?: boolean; respPreview?: React.ReactNode; expandable?: boolean; expanded?: boolean; onChildSelect?: (raw: ScenarioStep, idx: number) => void }) {
   const meta = makeStepMeta(t)[node.kind] || { label: node.kind, color: 'default' }
   const ok = result?.outcome === 'SUCCESS'
-  const muted: React.CSSProperties = { color: '#8a9099', fontSize: 12, whiteSpace: 'nowrap' }
+  const muted: React.CSSProperties = { color: 'var(--text-3)', fontSize: 12, whiteSpace: 'nowrap' }
   const leaf = depth === 0
   return (
     <>
@@ -529,10 +529,10 @@ function StepRow({ node, idx, depth, t, result, running, seq = 0, enabled = true
           gap: 8,
           padding: '8px 12px',
           marginLeft: depth * 24,
-          border: '1px solid #f0f0f0',
+          border: '1px solid var(--border-soft)',
           borderRadius: 6,
           marginBottom: 6,
-          background: depth ? '#fafafa' : '#fff',
+          background: depth ? 'var(--panel-2)' : 'var(--panel)',
           opacity: enabled ? 1 : 0.5,
         }}
       >
@@ -544,16 +544,16 @@ function StepRow({ node, idx, depth, t, result, running, seq = 0, enabled = true
         ) : null}
         {/* 可展开(子场景/循环/条件/仅一次):▸/▾ 折叠箭头;叶子步骤留占位对齐。 */}
         {expandable
-          ? <span style={{ color: '#8a9099', fontSize: 11, width: 12, cursor: 'pointer' }}>{expanded ? '▾' : '▸'}</span>
+          ? <span style={{ color: 'var(--text-3)', fontSize: 11, width: 12, cursor: 'pointer' }}>{expanded ? '▾' : '▸'}</span>
           : <span style={{ width: 12 }} />}
-        <span style={{ color: '#c9cdd4', cursor: 'grab' }}>⠿</span>
+        <span style={{ color: 'var(--text-3)', cursor: 'grab' }}>⠿</span>
         {/* 启用/禁用本步骤(禁用则置灰);播放=单步服务端执行。两者均阻止冒泡(不打开抽屉)。 */}
         <Switch size="small" checked={enabled} disabled={!leaf || !onToggle} onChange={() => onToggle?.()} onClick={(_c, e) => e.stopPropagation()} />
         <PlayCircleOutlined
-          style={{ color: leaf && onRun ? '#06a561' : '#c9cdd4', cursor: leaf && onRun ? 'pointer' : 'default' }}
+          style={{ color: leaf && onRun ? 'var(--brand)' : '#c9cdd4', cursor: leaf && onRun ? 'pointer' : 'default' }}
           onClick={(e) => { e.stopPropagation(); if (leaf) onRun?.() }}
         />
-        <span style={{ color: '#9aa0a6', fontSize: 12, minWidth: 18 }}>{idx}</span>
+        <span style={{ color: 'var(--text-3)', fontSize: 12, minWidth: 18 }}>{idx}</span>
         <Tag color={meta.color} style={{ margin: 0 }}>{meta.label}</Tag>
         <span style={{ flex: 1, minWidth: 0 }}>{node.content}</span>
         {/* 执行后逐步结果(对齐参考图 #28):通过/状态码/响应时间/响应大小。
@@ -600,7 +600,7 @@ function StepRespPreview({ r, t }: { r: ReportResultItem; t: TFn }) {
   const ok = r.outcome === 'SUCCESS'
   const items = [
     { key: 'body', label: t('apidef.respBody', '响应体'), children: (
-      <pre className="ms-mono" style={{ margin: 0, maxHeight: 300, overflow: 'auto', fontSize: 12, background: '#f6f8fa', padding: 10, borderRadius: 6 }}>{r.body || '—'}</pre>
+      <pre className="ms-mono" style={{ margin: 0, maxHeight: 300, overflow: 'auto', fontSize: 12, background: 'var(--panel-2)', padding: 10, borderRadius: 6 }}>{r.body || '—'}</pre>
     ) },
     { key: 'headers', label: t('apidef.respHeaders', '响应头'), children: (
       (r.headers?.length ?? 0)
@@ -613,8 +613,8 @@ function StepRespPreview({ r, t }: { r: ReportResultItem; t: TFn }) {
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 8 }}>
         <Tag color={ok ? 'green' : 'red'} style={{ margin: 0 }}>{ok ? t('scenario.pass', '通过') : t('scenario.fail', '失败')}</Tag>
         {r.statusCode != null && <span style={{ fontSize: 13, fontWeight: 600, color: r.statusCode < 400 ? '#52c41a' : '#ff4d4f' }}>{r.statusCode}</span>}
-        <span style={{ fontSize: 12, color: '#8a9099' }}>{r.latencyMs ?? '—'} ms</span>
-        <span style={{ fontSize: 12, color: '#8a9099' }}>{r.respSize ?? '—'} bytes</span>
+        <span style={{ fontSize: 12, color: 'var(--text-3)' }}>{r.latencyMs ?? '—'} ms</span>
+        <span style={{ fontSize: 12, color: 'var(--text-3)' }}>{r.respSize ?? '—'} bytes</span>
       </div>
       <Tabs size="small" items={items} />
     </div>
@@ -948,7 +948,7 @@ function ScenarioDetail({ scenario, active }: { scenario: Scenario; active?: boo
           onClick: ({ key }) => onInsertPick(key),
         }}
       >
-        <Button type="text" size="small" title={t('scenario.insert', '插入步骤')} icon={<PlusOutlined style={{ color: '#06a561' }} />} />
+        <Button type="text" size="small" title={t('scenario.insert', '插入步骤')} icon={<PlusOutlined style={{ color: 'var(--brand)' }} />} />
       </Dropdown>
       <Dropdown
         trigger={['click']}
@@ -1023,13 +1023,13 @@ function ScenarioDetail({ scenario, active }: { scenario: Scenario; active?: boo
           const passN = vals.filter((r) => r.outcome === 'SUCCESS').length
           const failN = vals.length - passN
           return (
-            <Space size={16} style={{ fontSize: 12, color: '#5b6470' }}>
-              {lastRunAt && <span>{t('scenario.execTime', '执行时间')} <span style={{ color: '#1f2329' }}>{lastRunAt}</span></span>}
+            <Space size={16} style={{ fontSize: 12, color: 'var(--text-2)' }}>
+              {lastRunAt && <span>{t('scenario.execTime', '执行时间')} <span style={{ color: 'var(--text)' }}>{lastRunAt}</span></span>}
               <span>
                 {t('scenario.execResult', '执行结果')}
                 <span style={{ color: '#22c55e', marginLeft: 8 }}>{t('scenario.runSuccess', '成功')} {passN}</span>
                 <span style={{ color: failN ? '#ef4444' : '#8a9099', marginLeft: 8 }}>{t('scenario.runError', '失败')} {failN}</span>
-                <span style={{ color: '#8a9099', marginLeft: 8 }}>{t('scenario.falsePos', '误报')} 0</span>
+                <span style={{ color: 'var(--text-3)', marginLeft: 8 }}>{t('scenario.falsePos', '误报')} 0</span>
               </span>
               <Button type="link" size="small" icon={<EyeOutlined />} style={{ padding: 0 }} onClick={() => setReportModalId(lastRun.reportId)}>{t('scenario.viewReport', '查看报告')}</Button>
               <Button type="text" size="small" icon={<ReloadOutlined />} loading={running} onClick={run} title={t('a.refresh', '重新执行')} />
@@ -1160,12 +1160,12 @@ function ScenarioDetail({ scenario, active }: { scenario: Scenario; active?: boo
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, flexWrap: 'wrap' }}>
           <Tag color={statusColor(form.status)} style={{ margin: 0 }}>{scStatusLabel(form.status, t)}</Tag>
           <span style={{ color: priorityColor(form.priority), fontSize: 12, fontWeight: 600 }}>{form.priority}</span>
-          <span className="ms-mono" style={{ color: '#8a9099', fontSize: 12 }}>[{scenario.id.slice(0, 8)}]</span>
-          <span style={{ fontWeight: 600, fontSize: 15, color: '#1f2329' }}>{form.name}</span>
+          <span className="ms-mono" style={{ color: 'var(--text-3)', fontSize: 12 }}>[{scenario.id.slice(0, 8)}]</span>
+          <span style={{ fontWeight: 600, fontSize: 15, color: 'var(--text)' }}>{form.name}</span>
           {form.tags.map((tg) => <Tag key={tg} style={{ margin: 0 }}>{tg}</Tag>)}
           <Tooltip title={t('scenario.copyLink', '复制链接')}>
             <LinkOutlined
-              style={{ color: '#bbb', cursor: 'pointer' }}
+              style={{ color: 'var(--text-3)', cursor: 'pointer' }}
               onClick={async () => {
                 const url = `${window.location.origin}${window.location.pathname}?scenario=${encodeURIComponent(scenario.id)}`
                 try {
@@ -1328,7 +1328,7 @@ function StepDetailDrawer({
 
   const title = (
     <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-      <span style={{ color: '#9aa0a6', fontSize: 12 }}>{sel?.idx}</span>
+      <span style={{ color: 'var(--text-3)', fontSize: 12 }}>{sel?.idx}</span>
       {meta && <Tag color={meta.color} style={{ margin: 0 }}>{meta.label}</Tag>}
       <span style={{ fontWeight: 600 }}>{kase ? kase.name : step?.scenarioId ? nameOf(step.scenarioId) : step?.request?.url || meta?.label}</span>
     </div>
@@ -1346,12 +1346,12 @@ function StepDetailDrawer({
         {
           key: 'body',
           label: t('apidef.requestBody', '请求体'),
-          children: reqInfo.body ? <pre className="ms-mono" style={{ background: '#f6f8fa', padding: 12, borderRadius: 6, margin: 0, fontSize: 12, maxHeight: 240, overflow: 'auto' }}>{reqInfo.body}</pre> : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('apidef.noBody', '请求没有 Body')} />,
+          children: reqInfo.body ? <pre className="ms-mono" style={{ background: 'var(--panel-2)', padding: 12, borderRadius: 6, margin: 0, fontSize: 12, maxHeight: 240, overflow: 'auto' }}>{reqInfo.body}</pre> : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('apidef.noBody', '请求没有 Body')} />,
         },
         {
           key: 'assert',
           label: t('apidef.assertions', '断言'),
-          children: Array.isArray(reqInfo.assertions) && (reqInfo.assertions as unknown[]).length ? <pre className="ms-mono" style={{ background: '#f6f8fa', padding: 12, borderRadius: 6, margin: 0, fontSize: 12 }}>{JSON.stringify(reqInfo.assertions, null, 2)}</pre> : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('apidef.none', '无')} />,
+          children: Array.isArray(reqInfo.assertions) && (reqInfo.assertions as unknown[]).length ? <pre className="ms-mono" style={{ background: 'var(--panel-2)', padding: 12, borderRadius: 6, margin: 0, fontSize: 12 }}>{JSON.stringify(reqInfo.assertions, null, 2)}</pre> : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('apidef.none', '无')} />,
         },
       ]
     : []
@@ -1395,7 +1395,7 @@ function ScenarioBasicInfo({ scenario, stepCount, form, patch, modules }: { scen
   const [tagInput, setTagInput] = useState('')
   const field = (label: string, value: ReactNode, req?: boolean) => (
     <div style={{ marginBottom: 14 }}>
-      <div style={{ fontSize: 13, color: '#5b6470', marginBottom: 6 }}>{req && <span style={{ color: '#ff4d4f', marginRight: 4 }}>*</span>}{label}</div>
+      <div style={{ fontSize: 13, color: 'var(--text-2)', marginBottom: 6 }}>{req && <span style={{ color: '#ff4d4f', marginRight: 4 }}>*</span>}{label}</div>
       {value}
     </div>
   )
@@ -1403,7 +1403,7 @@ function ScenarioBasicInfo({ scenario, stepCount, form, patch, modules }: { scen
     <div style={{ maxWidth: 560 }}>
       {field(t('scenario.name', '场景名称'), <Input value={form.name} onChange={(e) => patch({ name: e.target.value })} placeholder={t('scenario.namePlaceholder', '如:下单主流程')} />, true)}
       {field(t('scenario.ownerModule', '所属模块'), <Select style={{ width: 280 }} value={form.moduleId || ''} onChange={(v) => patch({ moduleId: v || '' })} placeholder={t('scenario.unplanned', '未规划场景')} options={[{ value: '', label: t('scenario.unplanned', '未规划场景') }, ...modules.map((m) => ({ value: m.id, label: m.name }))]} />)}
-      {field(t('scenario.priority', '场景等级'), <Select style={{ width: 200 }} value={form.priority} onChange={(v) => patch({ priority: v })} options={SCENARIO_PRIORITIES.map((p) => ({ value: p, label: <span style={{ color: priorityColor(p) }}>● <span style={{ color: '#1f2329' }}>{p}</span></span> }))} />)}
+      {field(t('scenario.priority', '场景等级'), <Select style={{ width: 200 }} value={form.priority} onChange={(v) => patch({ priority: v })} options={SCENARIO_PRIORITIES.map((p) => ({ value: p, label: <span style={{ color: priorityColor(p) }}>● <span style={{ color: 'var(--text)' }}>{p}</span></span> }))} />)}
       {field(t('scenario.colStatus', '场景状态'), <Select style={{ width: 200 }} value={form.status} onChange={(v) => patch({ status: v })} options={SCENARIO_STATUSES.map((s) => ({ value: s, label: s }))} />)}
       {field(t('scenario.tags', '标签'), (
         <Space size={[6, 6]} wrap>
@@ -1608,16 +1608,16 @@ function DistCard({ title, d, centerLabel, t }: { title: string; d: Dist; center
     { k: 'skip', label: t('scenario.skip', '未执行') },
   ]
   return (
-    <div style={{ flex: 1, minWidth: 300, border: '1px solid #eceff1', borderRadius: 10, padding: '14px 18px', background: '#fff' }}>
-      <h3 style={{ margin: '0 0 10px', fontSize: 14, color: '#5b6470' }}>{title}</h3>
+    <div style={{ flex: 1, minWidth: 300, border: '1px solid var(--border-soft)', borderRadius: 10, padding: '14px 18px', background: 'var(--panel)' }}>
+      <h3 style={{ margin: '0 0 10px', fontSize: 14, color: 'var(--text-2)' }}>{title}</h3>
       <div style={{ display: 'flex', alignItems: 'center', gap: 20 }}>
         <StatRing d={d} centerLabel={centerLabel} />
         <div style={{ flex: 1 }}>
           {rows.map(({ k, label }) => (
             <div key={k} style={{ display: 'grid', gridTemplateColumns: '1fr auto auto', alignItems: 'center', columnGap: 18, padding: '5px 0', fontSize: 13 }}>
-              <span style={{ color: '#5b6470' }}><span style={{ color: DIST_COLORS[k] }}>●</span> {label}</span>
-              <b style={{ color: '#1f2329' }}>{d[k]}</b>
-              <span style={{ color: '#8a9099', minWidth: 56, textAlign: 'right' }}>{pct(d[k])}%</span>
+              <span style={{ color: 'var(--text-2)' }}><span style={{ color: DIST_COLORS[k] }}>●</span> {label}</span>
+              <b style={{ color: 'var(--text)' }}>{d[k]}</b>
+              <span style={{ color: 'var(--text-3)', minWidth: 56, textAlign: 'right' }}>{pct(d[k])}%</span>
             </div>
           ))}
         </div>
@@ -1664,7 +1664,7 @@ function ScenarioReportModal({ reportId, nameOf, onClose }: { reportId: string |
   // caseId 多为可读请求行(GET http://...)或用例 UUID;UUID 用 nameOf 解析。
   const label = (id: string) => (/^[0-9a-f]{8}-/.test(id) ? nameOf(id) : id)
   const stat = (lbl: ReactNode, val: ReactNode, color?: string) => (
-    <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', fontSize: 14 }}><span style={{ color: '#5b6470' }}>{lbl}</span><b style={{ color }}>{val}</b></div>
+    <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', fontSize: 14 }}><span style={{ color: 'var(--text-2)' }}>{lbl}</span><b style={{ color }}>{val}</b></div>
   )
   return (
     <Drawer
@@ -1672,23 +1672,23 @@ function ScenarioReportModal({ reportId, nameOf, onClose }: { reportId: string |
       onClose={onClose}
       width="60%"
       title={t('scenario.report', '场景报告')}
-      styles={{ body: { background: '#f6f7f9' } }}
+      styles={{ body: { background: 'var(--panel-2)' } }}
     >
       {loading ? (
-        <div style={{ padding: 32, color: '#999' }}>{t('a.loading', '加载中…')}</div>
+        <div style={{ padding: 32, color: 'var(--text-3)' }}>{t('a.loading', '加载中…')}</div>
       ) : !data ? (
         <Empty description={t('scenario.noReport', '暂无报告')} />
       ) : (
         <>
           {/* 概览:报告分析 + 步骤分析 + 请求分析(对齐参考报告)。 */}
           <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', marginBottom: 20 }}>
-            <div style={{ flex: 1, minWidth: 260, border: '1px solid #eceff1', borderRadius: 10, padding: '14px 18px', background: '#fff' }}>
-              <h3 style={{ margin: '0 0 10px', fontSize: 14, color: '#5b6470', display: 'flex', alignItems: 'center', gap: 8 }}>
+            <div style={{ flex: 1, minWidth: 260, border: '1px solid var(--border-soft)', borderRadius: 10, padding: '14px 18px', background: 'var(--panel)' }}>
+              <h3 style={{ margin: '0 0 10px', fontSize: 14, color: 'var(--text-2)', display: 'flex', alignItems: 'center', gap: 8 }}>
                 {t('scenario.reportAnalysis', '报告分析')}<Tag color={outcomeColor(data.status)} style={{ margin: 0 }}>{runOutcomeLabel(data.status, t)}</Tag>
               </h3>
-              {stat(t('scenario.reportTotalTime', '报告总耗时'), <>{(reportTotalMs / 1000).toFixed(3)} <span style={{ color: '#8a9099', fontWeight: 400 }}>(sec)</span></>)}
-              {stat(t('scenario.reqTotalTime', '请求总耗时'), <>{reqTotalMs} <span style={{ color: '#8a9099', fontWeight: 400 }}>(ms)</span></>)}
-              {stat(t('scenario.assertPassRate', '断言通过率'), <>{asRate.toFixed(2)} <span style={{ color: '#8a9099', fontWeight: 400 }}>(%)</span></>, asRate >= 100 ? '#22c55e' : undefined)}
+              {stat(t('scenario.reportTotalTime', '报告总耗时'), <>{(reportTotalMs / 1000).toFixed(3)} <span style={{ color: 'var(--text-3)', fontWeight: 400 }}>(sec)</span></>)}
+              {stat(t('scenario.reqTotalTime', '请求总耗时'), <>{reqTotalMs} <span style={{ color: 'var(--text-3)', fontWeight: 400 }}>(ms)</span></>)}
+              {stat(t('scenario.assertPassRate', '断言通过率'), <>{asRate.toFixed(2)} <span style={{ color: 'var(--text-3)', fontWeight: 400 }}>(%)</span></>, asRate >= 100 ? '#22c55e' : undefined)}
             </div>
             <DistCard title={t('scenario.stepAnalysis', '步骤分析')} d={dist} centerLabel={t('scenario.totalCount', '总数(个)')} t={t} />
             <DistCard title={t('scenario.reqAnalysis', '请求分析')} d={dist} centerLabel={t('scenario.totalCount', '总数(个)')} t={t} />
@@ -1724,12 +1724,12 @@ function ReportRow({ idx, r, label, t, open, onToggle }: { idx: number; r: Repor
   const resp: DebugResponse | null = hasDetail
     ? { status: r.statusCode ?? 0, latencyMs: r.latencyMs ?? 0, headers: r.headers ?? [], body: r.body ?? '', assertions: asserts.length ? asserts : undefined, extractions: r.extractions?.length ? r.extractions : undefined }
     : null
-  const muted: React.CSSProperties = { color: '#bbb', fontSize: 12 }
+  const muted: React.CSSProperties = { color: 'var(--text-3)', fontSize: 12 }
   return (
-    <div style={{ border: '1px solid #eceff1', borderRadius: 8, marginBottom: 8, background: '#fff' }}>
+    <div style={{ border: '1px solid var(--border-soft)', borderRadius: 8, marginBottom: 8, background: 'var(--panel)' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', cursor: hasDetail ? 'pointer' : 'default' }} onClick={() => hasDetail && onToggle()}>
-        {hasDetail && <span style={{ color: '#bbb', fontSize: 11 }}>{open ? '▾' : '▸'}</span>}
-        <span style={{ color: '#9aa0a6', fontSize: 12, minWidth: 18 }}>{idx}</span>
+        {hasDetail && <span style={{ color: 'var(--text-3)', fontSize: 11 }}>{open ? '▾' : '▸'}</span>}
+        <span style={{ color: 'var(--text-3)', fontSize: 12, minWidth: 18 }}>{idx}</span>
         <span style={{ flex: 1, minWidth: 0 }} className="ms-mono">{label(r.caseId)}</span>
         <Tag color={ok ? 'green' : 'red'} style={{ margin: 0 }}>{ok ? t('scenario.pass', '通过') : t('scenario.fail', '失败')}</Tag>
         {r.statusCode != null && <span style={muted}>{t('apidef.statusCode', '状态码')} <span style={{ color: r.statusCode < 400 ? '#52c41a' : '#ff4d4f' }}>{r.statusCode}</span></span>}
@@ -1912,7 +1912,7 @@ function CustomRequestDrawer({
       title={<span style={{ fontWeight: 600 }}>{t('scenario.customRequest', '自定义请求')}</span>}
       extra={
         <Space>
-          <span style={{ fontSize: 12, color: '#8a9099' }}>{t('apidef.currentEnv', '当前环境')}: {env?.name || t('apidef.noEnv', '不引用')}</span>
+          <span style={{ fontSize: 12, color: 'var(--text-3)' }}>{t('apidef.currentEnv', '当前环境')}: {env?.name || t('apidef.noEnv', '不引用')}</span>
           <Button type="text" size="small" icon={<FullscreenOutlined />} onClick={() => setFull((v) => !v)} />
           <Button type="text" size="small" icon={<CloseOutlined />} onClick={onClose} />
         </Space>
@@ -2111,10 +2111,10 @@ function ImportRequestDrawer({
     <div
       key={key}
       onClick={() => setSelModule(key)}
-      style={{ display: 'flex', alignItems: 'center', padding: '6px 8px', borderRadius: 6, cursor: 'pointer', fontSize: 13, background: selModule === key ? '#f3eaff' : 'transparent', color: selModule === key ? '#06a561' : undefined }}
+      style={{ display: 'flex', alignItems: 'center', padding: '6px 8px', borderRadius: 6, cursor: 'pointer', fontSize: 13, background: selModule === key ? '#f3eaff' : 'transparent', color: selModule === key ? 'var(--brand)' : undefined }}
     >
       <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{name}</span>
-      <span style={{ color: '#a8adb5', fontSize: 12 }}>{count}</span>
+      <span style={{ color: 'var(--text-3)', fontSize: 12 }}>{count}</span>
     </div>
   )
   const totalLabel = tab === 'api' ? t('apidef.allApis', '全部接口') : tab === 'case' ? t('scenario.allCases', '全部用例') : t('scenario.allScenarios', '全部场景')
@@ -2197,8 +2197,8 @@ function ImportRequestDrawer({
               <Select size="small" value={protocol} onChange={setProtocol} style={{ width: 96 }} options={['HTTP', 'SSH', 'AMQP', 'Redis', 'TCP', 'MongoDB', 'GRPC'].map((p) => ({ value: p, label: p }))} />
             )}
           </Space.Compact>
-          <Input size="small" allowClear prefix={<SearchOutlined style={{ color: '#bbb' }} />} placeholder={t('apidef.moduleSearch', '输入模块名称搜索')} value={moduleSearch} onChange={(e) => setModuleSearch(e.target.value)} style={{ marginBottom: 8 }} />
-          <div style={{ border: '1px solid #f0f0f0', borderRadius: 6, padding: 4, maxHeight: 460, overflow: 'auto' }}>
+          <Input size="small" allowClear prefix={<SearchOutlined style={{ color: 'var(--text-3)' }} />} placeholder={t('apidef.moduleSearch', '输入模块名称搜索')} value={moduleSearch} onChange={(e) => setModuleSearch(e.target.value)} style={{ marginBottom: 8 }} />
+          <div style={{ border: '1px solid var(--border-soft)', borderRadius: 6, padding: 4, maxHeight: 460, overflow: 'auto' }}>
             {moduleRow('ALL', `${totalLabel} (${countFor('ALL')})`, countFor('ALL'))}
             {moduleRow('UNFILED', t('scenario.unfiled', '未规划'), countFor('UNFILED'))}
             {shownModules.map((m) => moduleRow(m.id, m.name, countFor(m.id)))}
@@ -2209,7 +2209,7 @@ function ImportRequestDrawer({
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
             <Typography.Text strong>{totalLabel} ({tab === 'api' ? fDefs.length : tab === 'case' ? fCases.length : fScns.length})</Typography.Text>
             <div style={{ flex: 1 }} />
-            <Input allowClear size="small" style={{ width: 240 }} prefix={<SearchOutlined style={{ color: '#bbb' }} />} placeholder={t('scenario.searchByPathName', '通过路径或名称搜索')} value={search} onChange={(e) => setSearch(e.target.value)} />
+            <Input allowClear size="small" style={{ width: 240 }} prefix={<SearchOutlined style={{ color: 'var(--text-3)' }} />} placeholder={t('scenario.searchByPathName', '通过路径或名称搜索')} value={search} onChange={(e) => setSearch(e.target.value)} />
           </div>
           {tab === 'api' && (
             <Table<ApiDefinition> rowKey="id" size="small" columns={apiCols} dataSource={fDefs} pagination={{ pageSize: 10, size: 'small' }} rowSelection={{ selectedRowKeys: selApi, onChange: (k) => setSelApi(k.map(String)) }} locale={{ emptyText: <Empty description={t('scenario.noImportData', '暂无可引用数据,可切换项目获取数据')} /> }} />
@@ -2260,7 +2260,7 @@ function NewScenarioTab({ projectId, modules, onCreated, active }: { projectId: 
   }
   const field = (label: string, node: ReactNode, req?: boolean) => (
     <div style={{ marginBottom: 14 }}>
-      <div style={{ fontSize: 13, color: '#5b6470', marginBottom: 6 }}>{req && <span style={{ color: '#ff4d4f', marginRight: 4 }}>*</span>}{label}</div>
+      <div style={{ fontSize: 13, color: 'var(--text-2)', marginBottom: 6 }}>{req && <span style={{ color: '#ff4d4f', marginRight: 4 }}>*</span>}{label}</div>
       {node}
     </div>
   )
@@ -2339,10 +2339,10 @@ function NewScenarioTab({ projectId, modules, onCreated, active }: { projectId: 
           ]} />
         </div>
         {/* 右侧基本信息表单(对齐 #38)。 */}
-        <div style={{ width: 320, flexShrink: 0, borderLeft: '1px solid #f0f0f0', paddingLeft: 16 }}>
+        <div style={{ width: 320, flexShrink: 0, borderLeft: '1px solid var(--border-soft)', paddingLeft: 16 }}>
           {field(t('scenario.name', '场景名称'), <Input value={name} onChange={(e) => setName(e.target.value)} placeholder={t('scenario.namePlaceholder2', '请输入场景名称')} />, true)}
           {field(t('scenario.ownerModule', '所属模块'), <Select style={{ width: '100%' }} value={moduleId || ''} onChange={(v) => setModuleId(v || '')} placeholder={t('scenario.unplanned', '未规划场景')} options={[{ value: '', label: t('scenario.unplanned', '未规划场景') }, ...modules.map((m) => ({ value: m.id, label: m.name }))]} />)}
-          {field(t('scenario.priority', '场景等级'), <Select style={{ width: '100%' }} value={priority} onChange={setPriority} options={SCENARIO_PRIORITIES.map((p) => ({ value: p, label: <span style={{ color: priorityColor(p) }}>● <span style={{ color: '#1f2329' }}>{p}</span></span> }))} />)}
+          {field(t('scenario.priority', '场景等级'), <Select style={{ width: '100%' }} value={priority} onChange={setPriority} options={SCENARIO_PRIORITIES.map((p) => ({ value: p, label: <span style={{ color: priorityColor(p) }}>● <span style={{ color: 'var(--text)' }}>{p}</span></span> }))} />)}
           {field(t('scenario.sceneStatus', '场景状态'), <Select style={{ width: '100%' }} value={status} onChange={setStatus} options={SCENARIO_STATUSES.map((s) => ({ value: s, label: s }))} />)}
           {field(t('scenario.tags', '标签'), (
             <Space size={[6, 6]} wrap>
@@ -2384,7 +2384,7 @@ function ImportScenarioDrawer({ open, projectId, modules, onClose, onImported }:
   const [mode, setMode] = useState('skip')
   const [file, setFile] = useState<File | null>(null)
   const [busy, setBusy] = useState(false)
-  const label = (s: string) => <div style={{ fontSize: 13, color: '#5b6470', margin: '14px 0 6px' }}>{s}</div>
+  const label = (s: string) => <div style={{ fontSize: 13, color: 'var(--text-2)', margin: '14px 0 6px' }}>{s}</div>
 
   const doImport = async () => {
     if (fmt !== 'Har') {
@@ -2429,7 +2429,7 @@ function ImportScenarioDrawer({ open, projectId, modules, onClose, onImported }:
       </Radio.Group>
       <div style={{ marginTop: 16 }}>
         <Upload.Dragger maxCount={1} accept=".ms,.json,.jmx,.har" beforeUpload={(f) => { setFile(f); return false }} onRemove={() => setFile(null)}>
-          <p className="ant-upload-drag-icon"><InboxOutlined style={{ color: '#06a561' }} /></p>
+          <p className="ant-upload-drag-icon"><InboxOutlined style={{ color: 'var(--brand)' }} /></p>
           <p className="ant-upload-text">{t('scenario.dropFile', '拖拽或点击此区域选择文件')}</p>
           <p className="ant-upload-hint" style={{ fontSize: 12 }}>{t('scenario.fileHint', 'HAR 直接解析为请求步骤;MeterSphere/Jmeter 解析后续接入')}</p>
         </Upload.Dragger>

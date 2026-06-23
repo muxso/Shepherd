@@ -31,6 +31,7 @@ import {
 import { useLocation, useNavigate } from 'react-router-dom'
 import { useApp } from '../context'
 import { useI18n } from '../i18n'
+import { useThemeMode } from '../themeMode'
 import NewProjectModal from './NewProjectModal'
 
 const { Content } = Layout
@@ -60,21 +61,21 @@ const MODULES: ModuleDef[] = [
   },
   {
     key: '/requirement',
-    label: ['nav.req', 'AI 需求'],
+    label: ['nav.req', '需求'],
     icon: <FileDoneOutlined />,
     match: ['/requirement'],
     children: [{ key: '/requirement', icon: <FileDoneOutlined />, label: ['m.requirement', '需求'] }],
   },
   {
     key: '/review',
-    label: ['nav.review', 'AI 评审'],
+    label: ['nav.review', '评审'],
     icon: <AuditOutlined />,
     match: ['/review'],
     children: [{ key: '/review', icon: <AuditOutlined />, label: ['m.review', '评审'] }],
   },
   {
     key: '/skill',
-    label: ['nav.dev', 'AI 研发'],
+    label: ['nav.dev', '研发'],
     icon: <RobotOutlined />,
     match: ['/skill', '/agents', '/mcp'],
     children: [
@@ -85,7 +86,7 @@ const MODULES: ModuleDef[] = [
   },
   {
     key: '/functional-case',
-    label: ['nav.test', 'AI 测试'],
+    label: ['nav.test', '测试'],
     icon: <ExperimentOutlined />,
     match: ['/functional-case', '/api/', '/test-plan', '/perf', '/bug'],
     children: [
@@ -134,6 +135,7 @@ const MODULES: ModuleDef[] = [
 export default function AppShell({ children }: { children: ReactNode }) {
   const { projects, projectId, setProjectId, logout } = useApp()
   const { t, lang, setLang } = useI18n()
+  const { mode, toggle } = useThemeMode()
   const nav = useNavigate()
   const loc = useLocation()
   const [newProjOpen, setNewProjOpen] = useState(false)
@@ -168,8 +170,8 @@ export default function AppShell({ children }: { children: ReactNode }) {
             cursor: 'pointer',
             fontSize: 12,
             lineHeight: 1.1,
-            color: active ? '#06a561' : '#5b6470',
-            background: active ? '#e6f7ef' : 'transparent',
+            color: active ? 'var(--brand)' : 'var(--text-2)',
+            background: active ? 'var(--brand-soft)' : 'transparent',
           }}
         >
           <span style={{ fontSize: 18 }}>{m.icon}</span>
@@ -183,11 +185,18 @@ export default function AppShell({ children }: { children: ReactNode }) {
     <Layout style={{ height: '100vh' }}>
       {/* hasSider:左侧为自定义 div(非 antd Sider),需显式声明横向布局,否则默认竖排。 */}
       <Layout hasSider>
-        {/* 全局图标导航栏(对齐参考图 #40):logo / 导航项 / 底部系统 + 头像 */}
-        <div style={{ width: 72, background: '#fff', borderRight: '1px solid #f0f0f0', display: 'flex', flexDirection: 'column', flexShrink: 0 }}>
-          <div style={{ height: 48, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            <DeploymentUnitOutlined style={{ color: '#06a561', fontSize: 22 }} />
-          </div>
+        {/* 全局图标导航栏:品牌标 / 导航项 / 底部系统 + 头像。磨砂玻璃,环境光晕透出。 */}
+        <div style={{ width: 72, background: 'var(--glass)', backdropFilter: 'var(--glass-blur)', WebkitBackdropFilter: 'var(--glass-blur)', borderRight: '1px solid var(--border-soft)', display: 'flex', flexDirection: 'column', flexShrink: 0 }}>
+          {/* 品牌:几何标记 + 字标。点击回工作台(顶栏不再放重复的工作台图标)。 */}
+          <Tooltip title={t('m.home', '工作台')} placement="right">
+            <div
+              onClick={() => nav('/home')}
+              style={{ height: 56, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 2, cursor: 'pointer' }}
+            >
+              <DeploymentUnitOutlined style={{ color: 'var(--brand)', fontSize: 22 }} />
+              <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: 0.3, color: 'var(--brand)' }}>Shepherd</span>
+            </div>
+          </Tooltip>
           <div style={{ flex: 1, overflowY: 'auto', paddingTop: 4 }}>
             {topModules.map((m) => <RailItem key={m.key} m={m} />)}
           </div>
@@ -195,14 +204,14 @@ export default function AppShell({ children }: { children: ReactNode }) {
             {sysModule && <RailItem m={sysModule} />}
             <Tooltip title={t('pc.title', '个人中心')} placement="right">
               <div style={{ display: 'flex', justifyContent: 'center', padding: '10px 0', cursor: 'pointer' }} onClick={() => setPcOpen(true)}>
-                <Avatar size={30} style={{ background: '#06a561' }}>{username.slice(0, 1).toUpperCase()}</Avatar>
+                <Avatar size={30} style={{ background: 'var(--brand)' }}>{username.slice(0, 1).toUpperCase()}</Avatar>
               </div>
             </Tooltip>
           </div>
         </div>
 
-        <Layout style={{ background: '#f5f6f8' }}>
-          {/* 顶栏:当前模块的二级菜单(左,横向)+ 右上角图标簇(对齐参考图 #39)。 */}
+        <Layout style={{ background: 'var(--bg)' }}>
+          {/* 顶栏:当前模块的二级菜单(左,横向)+ 右上角图标簇。磨砂玻璃。 */}
           <div
             style={{
               height: 48,
@@ -210,8 +219,10 @@ export default function AppShell({ children }: { children: ReactNode }) {
               alignItems: 'center',
               paddingInline: 16,
               gap: 8,
-              background: '#fff',
-              borderBottom: '1px solid #f0f0f0',
+              background: 'var(--glass)',
+              backdropFilter: 'var(--glass-blur)',
+              WebkitBackdropFilter: 'var(--glass-blur)',
+              borderBottom: '1px solid var(--border-soft)',
               flexShrink: 0,
             }}
           >
@@ -239,8 +250,8 @@ export default function AppShell({ children }: { children: ReactNode }) {
             <Tooltip title={t('top.notifications', '通知')}>
               <Button type="text" size="small" icon={<BellOutlined />} onClick={() => setMsgOpen(true)} />
             </Tooltip>
-            <Tooltip title={t('m.home', '工作台')}>
-              <Button type="text" size="small" icon={<AppstoreOutlined />} onClick={() => nav('/home')} />
+            <Tooltip title={mode === 'dark' ? t('top.lightMode', '浅色模式') : t('top.darkMode', '暗色模式')}>
+              <Button type="text" size="small" icon={<BulbOutlined style={{ color: mode === 'dark' ? 'var(--brand)' : undefined }} />} onClick={toggle} />
             </Tooltip>
             <Select
               size="small"
@@ -271,7 +282,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
         title={
           <span>
             {t('msg.title', '消息管理')}
-            <span style={{ fontSize: 13, fontWeight: 400, color: '#8c8c8c' }}>
+            <span style={{ fontSize: 13, fontWeight: 400, color: 'var(--text-3)' }}>
               {t('msg.subtitle', '(仅展示近 3 个月内站内消息)')}
             </span>
           </span>
@@ -279,7 +290,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
       >
         <div style={{ display: 'flex', flex: 1, minHeight: 0 }}>
           {/* 左:消息分类(计数徽标右对齐)+ 底部消息设置 */}
-          <div style={{ width: 220, borderRight: '1px solid #f0f0f0', display: 'flex', flexDirection: 'column' }}>
+          <div style={{ width: 220, borderRight: '1px solid var(--border-soft)', display: 'flex', flexDirection: 'column' }}>
             <div style={{ flex: 1, overflowY: 'auto', padding: 8 }}>
               {[
                 ['all', t('msg.cat.all', '全部消息')],
@@ -303,8 +314,8 @@ export default function AppShell({ children }: { children: ReactNode }) {
                       borderRadius: 6,
                       cursor: 'pointer',
                       fontSize: 14,
-                      color: active ? '#06a561' : '#1f2329',
-                      background: active ? '#e6f7ef' : 'transparent',
+                      color: active ? 'var(--brand)' : 'var(--text)',
+                      background: active ? 'var(--brand-soft)' : 'transparent',
                     }}
                   >
                     <span>{label}</span>
@@ -314,8 +325,8 @@ export default function AppShell({ children }: { children: ReactNode }) {
                         height: 20,
                         padding: '0 6px',
                         borderRadius: 10,
-                        background: active ? '#c6ecda' : '#f0f0f0',
-                        color: active ? '#06a561' : '#8c8c8c',
+                        background: active ? 'var(--brand-soft)' : 'var(--border-soft)',
+                        color: active ? 'var(--brand)' : 'var(--text-3)',
                         fontSize: 12,
                         display: 'inline-flex',
                         alignItems: 'center',
@@ -329,7 +340,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
               })}
             </div>
             <div
-              style={{ borderTop: '1px solid #f0f0f0', padding: '12px 16px', cursor: 'pointer', color: '#1f2329' }}
+              style={{ borderTop: '1px solid var(--border-soft)', padding: '12px 16px', cursor: 'pointer', color: 'var(--text)' }}
               onClick={() => { setMsgOpen(false); nav('/project/messages') }}
             >
               <SettingOutlined style={{ marginRight: 8 }} />
@@ -349,7 +360,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
                   { value: 'read', label: t('msg.tab.read', '已读') },
                 ]}
               />
-              <Button type="link" size="small" icon={<FileDoneOutlined />} style={{ color: '#06a561' }}>
+              <Button type="link" size="small" icon={<FileDoneOutlined />} style={{ color: 'var(--brand)' }}>
                 {t('msg.markAllRead', '全部标为已读')}
               </Button>
             </div>
@@ -364,7 +375,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
       <Drawer title={t('pc.title', '个人中心')} open={pcOpen} onClose={() => setPcOpen(false)} width={420}>
         <Space direction="vertical" size={16} style={{ width: '100%' }}>
           <Space align="center" size={12}>
-            <Avatar size={48} style={{ background: '#06a561' }}>{username.slice(0, 1).toUpperCase()}</Avatar>
+            <Avatar size={48} style={{ background: 'var(--brand)' }}>{username.slice(0, 1).toUpperCase()}</Avatar>
             <span style={{ fontSize: 16, fontWeight: 600 }}>{username}</span>
           </Space>
           <Descriptions column={1} size="small" bordered>

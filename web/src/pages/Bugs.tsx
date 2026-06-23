@@ -60,7 +60,7 @@ export default function Bugs() {
 
   return (
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '14px 16px', background: '#fff', borderBottom: '1px solid #f0f0f0' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '14px 16px', background: 'var(--panel)', borderBottom: '1px solid var(--border-soft)' }}>
         <Typography.Text strong style={{ fontSize: 15 }}>
           {t('m.bug', '缺陷')}
         </Typography.Text>
@@ -84,7 +84,7 @@ export default function Bugs() {
               width: 130,
               render: (_, r) => <Tag color={bugColor(r.meta?.status || 'NEW')}>{r.meta?.status || 'NEW'}</Tag>,
             },
-            { title: 'ID', dataIndex: 'id', width: 110, render: (v: string) => <Tooltip title={v}><span className="ms-mono" style={{ fontSize: 12, color: '#8a9099' }}>{v?.slice(0, 8)}</span></Tooltip> },
+            { title: 'ID', dataIndex: 'id', width: 110, render: (v: string) => <Tooltip title={v}><span className="ms-mono" style={{ fontSize: 12, color: 'var(--text-3)' }}>{v?.slice(0, 8)}</span></Tooltip> },
             {
               title: t('bug.action', '操作'),
               width: 120,

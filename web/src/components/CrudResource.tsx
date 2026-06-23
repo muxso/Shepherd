@@ -77,8 +77,8 @@ export default function CrudResource<T extends object>({ cfg }: { cfg: CrudConfi
           alignItems: 'center',
           gap: 12,
           padding: '14px 16px',
-          background: '#fff',
-          borderBottom: '1px solid #f0f0f0',
+          background: 'var(--panel)',
+          borderBottom: '1px solid var(--border-soft)',
         }}
       >
         <div>
