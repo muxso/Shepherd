@@ -100,6 +100,14 @@ const DICT: Record<string, { zh: string; en: string }> = {
   'common.selectProject': { zh: '请先在顶部选择项目', en: 'Select a project first' },
   'common.empty': { zh: '暂无数据', en: 'No data' },
   'common.comingSoon': { zh: '即将接入', en: 'Coming soon' },
+  // 系统模块顶部子菜单
+  'sys.users': { zh: '用户', en: 'Users' },
+  'sys.userGroups': { zh: '用户组', en: 'User Groups' },
+  'sys.orgProj': { zh: '组织与项目', en: 'Orgs & Projects' },
+  'sys.params': { zh: '系统参数', en: 'System Params' },
+  'sys.tasks': { zh: '任务中心', en: 'Task Center' },
+  'sys.plugins': { zh: '插件', en: 'Plugins' },
+  'sys.logs': { zh: '日志', en: 'Logs' },
   // 项目管理(项目与权限)
   'proj.permTab': { zh: '项目与权限', en: 'Project & Permissions' },
   'proj.tmplTab': { zh: '模板管理', en: 'Templates' },
