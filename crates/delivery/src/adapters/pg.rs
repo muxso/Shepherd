@@ -4,13 +4,13 @@
 //!   `DATABASE_URL=postgres://... cargo test -p delivery --features pg -- --ignored`
 
 use async_trait::async_trait;
-use sqlx::{PgPool, Row};
+use sqlx::{PgPool, QueryBuilder, Row};
 
 use crate::domain::{
     AttemptStatus, Deliverable, DeliverableKind, DeliveryAttempt, EventKind, ExecutionEvent,
     ExecutorKind, NewExecutionEvent,
 };
-use crate::ports::{DeliveryRepository, RepoError};
+use crate::ports::{DeliveryRepository, RepoError, TaskListFilter, TaskPage, TaskRow};
 
 #[derive(Clone)]
 pub struct PgDeliveryRepository {
@@ -175,6 +175,92 @@ impl DeliveryRepository for PgDeliveryRepository {
             })
             .collect()
     }
+
+    async fn list_tasks(&self, filter: &TaskListFilter) -> Result<TaskPage, RepoError> {
+        // 公共 WHERE 片段:在计数与取页两条查询间复用同一组过滤。
+        fn push_where<'a>(qb: &mut QueryBuilder<'a, sqlx::Postgres>, f: &'a TaskListFilter) {
+            qb.push(" WHERE 1 = 1");
+            if let Some(s) = &f.status {
+                qb.push(" AND a.status = ").push_bind(s.as_str());
+            }
+            if let Some(e) = &f.executor {
+                qb.push(" AND a.executor = ").push_bind(e.as_str());
+            }
+            if f.active_only {
+                qb.push(" AND a.status IN ('DISPATCHED','RUNNING')");
+            }
+            if let Some(q) = &f.query {
+                if !q.trim().is_empty() {
+                    let like = format!("%{}%", q.trim());
+                    qb.push(" AND (t.title ILIKE ")
+                        .push_bind(like.clone())
+                        .push(" OR a.task_id ILIKE ")
+                        .push_bind(like.clone())
+                        .push(" OR a.decomposition_id ILIKE ")
+                        .push_bind(like)
+                        .push(")");
+                }
+            }
+        }
+
+        // 总数。
+        let mut cq = QueryBuilder::<sqlx::Postgres>::new(
+            "SELECT count(*) AS n FROM ms_delivery_attempt a \
+             LEFT JOIN ms_task t ON t.decomposition_id = a.decomposition_id AND t.id = a.task_id",
+        );
+        push_where(&mut cq, filter);
+        let total: i64 = cq
+            .build()
+            .fetch_one(&self.pool)
+            .await
+            .map_err(map_err)?
+            .try_get("n")
+            .map_err(map_err)?;
+
+        // 取页。
+        // 基本信息(描述/所属模块)随任务联表带出:
+        //   描述 = ms_task.description;所属模块 = 任务归属需求标题(拆分图→需求)。
+        let mut pq = QueryBuilder::<sqlx::Postgres>::new(
+            "SELECT a.id, a.decomposition_id, a.task_id, a.executor, a.status, a.run_id, \
+             a.deliverable_kind, a.deliverable_reference, a.deliverable_summary, a.error, \
+             a.created_at, t.title AS task_title, t.description AS task_description, \
+             r.title AS module_title, \
+             (SELECT count(*) FROM ms_delivery_event e WHERE e.attempt_id = a.id) AS event_count \
+             FROM ms_delivery_attempt a \
+             LEFT JOIN ms_task t ON t.decomposition_id = a.decomposition_id AND t.id = a.task_id \
+             LEFT JOIN ms_task_decomposition dc ON dc.id = a.decomposition_id \
+             LEFT JOIN ms_requirement r ON r.id = dc.requirement_id",
+        );
+        push_where(&mut pq, filter);
+        pq.push(" ORDER BY a.created_at DESC, a.seq DESC");
+        pq.push(" LIMIT ").push_bind(filter.limit.max(0));
+        pq.push(" OFFSET ").push_bind(filter.offset.max(0));
+
+        let rows = pq.build().fetch_all(&self.pool).await.map_err(map_err)?;
+        let items = rows
+            .iter()
+            .map(|r| {
+                Ok(TaskRow {
+                    attempt: row_to_attempt(r)?,
+                    title: r.try_get("task_title").map_err(map_err)?,
+                    description: r.try_get("task_description").map_err(map_err)?,
+                    module: r.try_get("module_title").map_err(map_err)?,
+                    created_at: r.try_get("created_at").map_err(map_err)?,
+                    event_count: r.try_get("event_count").map_err(map_err)?,
+                })
+            })
+            .collect::<Result<Vec<_>, RepoError>>()?;
+        Ok(TaskPage { items, total })
+    }
+
+    async fn delete(&self, id: &str) -> Result<bool, RepoError> {
+        let res = sqlx::query("DELETE FROM ms_delivery_attempt WHERE id = $1")
+            .bind(id)
+            .execute(&self.pool)
+            .await
+            .map_err(map_err)?;
+        Ok(res.rows_affected() > 0)
+    }
 }
 
 #[cfg(test)]
@@ -206,5 +292,43 @@ mod tests {
         assert_eq!(got.run_id.as_deref(), Some("run-9"));
         assert_eq!(got.deliverable.expect("d").reference, "pr/42");
         assert_eq!(repo.list_by_task("d1", "t1").await.expect("list").len(), 1);
+    }
+
+    #[tokio::test]
+    #[ignore = "需要 DATABASE_URL 指向一个 PostgreSQL 实例"]
+    async fn pg_list_tasks_carries_basic_info() {
+        let url = std::env::var("DATABASE_URL").expect("set DATABASE_URL");
+        let pool = PgPool::connect(&url).await.expect("connect");
+        migrate::run(&pool).await.expect("migrate");
+        for t in ["ms_delivery_attempt", "ms_task", "ms_task_decomposition", "ms_requirement"] {
+            sqlx::query(&format!("TRUNCATE {t} CASCADE")).execute(&pool).await.expect("truncate");
+        }
+
+        // 需求 → 拆分图 → 任务(带描述),令交付尝试的 (decomposition_id, task_id) 与之匹配。
+        sqlx::query("INSERT INTO ms_requirement (id, project_id, title, status) VALUES ('r1','p1','登录模块','DRAFT')")
+            .execute(&pool).await.expect("req");
+        sqlx::query("INSERT INTO ms_task_decomposition (id, requirement_id, requirement_version) VALUES ('d1','r1',1)")
+            .execute(&pool).await.expect("decomp");
+        sqlx::query("INSERT INTO ms_task (decomposition_id, id, title, description, status) VALUES ('d1','t1','实现登录接口','支持手机号+验证码登录','RUNNING')")
+            .execute(&pool).await.expect("task");
+
+        let repo = PgDeliveryRepository::new(pool.clone());
+        repo.create("d1", "t1", ExecutorKind::ClaudeCode).await.expect("create");
+        // 无关联任务的尝试(描述/模块应为 None)。
+        repo.create("d9", "t9", ExecutorKind::Codex).await.expect("create2");
+
+        let page = repo
+            .list_tasks(&TaskListFilter { limit: 10, ..Default::default() })
+            .await
+            .expect("list_tasks");
+        assert_eq!(page.total, 2);
+        let linked = page.items.iter().find(|r| r.attempt.task_id == "t1").expect("t1 row");
+        assert_eq!(linked.title.as_deref(), Some("实现登录接口"));
+        assert_eq!(linked.description.as_deref(), Some("支持手机号+验证码登录"));
+        assert_eq!(linked.module.as_deref(), Some("登录模块"));
+        let orphan = page.items.iter().find(|r| r.attempt.task_id == "t9").expect("t9 row");
+        assert_eq!(orphan.title, None);
+        assert_eq!(orphan.description, None);
+        assert_eq!(orphan.module, None);
     }
 }

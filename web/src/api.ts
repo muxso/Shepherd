@@ -152,6 +152,41 @@ export interface ApiSpecResponse {
 }
 /** 请求体 content-type(对标 MeterSphere)。 */
 export type ApiBodyType = 'none' | 'form-data' | 'x-www-form-urlencoded' | 'json' | 'xml' | 'raw' | 'binary'
+
+/** body 类型 → 默认 Content-Type;none 无体、raw 不强加(由用户/请求头决定)→ undefined。 */
+export function contentTypeForBodyType(t?: ApiBodyType): string | undefined {
+  switch (t) {
+    case 'json':
+      return 'application/json'
+    case 'xml':
+      return 'application/xml'
+    case 'form-data':
+      // multipart 需 boundary 参数,而编辑器只提供原始文本体;不自动附加(无 boundary 的头反而让服务端解析失败),交由用户在请求头自定义。
+      return undefined
+    case 'x-www-form-urlencoded':
+      return 'application/x-www-form-urlencoded'
+    case 'binary':
+      return 'application/octet-stream'
+    default:
+      // none / raw / 未指定:不自动附加,Content-Type 可选。
+      return undefined
+  }
+}
+
+/**
+ * 按 body 类型为请求头补一个默认 Content-Type —— 但「可选」:
+ * 用户已在请求头里写了 Content-Type(大小写不敏感)时尊重用户的,不覆盖;
+ * body 类型为 none/raw 时不附加。返回新数组,不改入参。
+ */
+export function withBodyContentType<T extends { key: string; value: string }>(
+  headers: T[],
+  bodyType?: ApiBodyType,
+): T[] {
+  const ct = contentTypeForBodyType(bodyType)
+  if (!ct) return headers
+  if (headers.some((h) => h.key.trim().toLowerCase() === 'content-type')) return headers
+  return [...headers, { key: 'Content-Type', value: ct } as T]
+}
 /** 认证模式。 */
 export interface ApiSpecAuth {
   type?: 'none' | 'bearer' | 'basic'
@@ -639,6 +674,48 @@ export interface DeliveryEvent {
   detail?: unknown
 }
 
+/** 任务中心一行:全系统交付尝试的执行状态/方式/结果/完成率聚合视图。 */
+export interface TaskCenterItem {
+  id: string
+  decompositionId: string
+  taskId: string
+  title: string
+  /** 任务描述(基本信息;无关联任务则空串)。 */
+  description: string
+  /** 所属模块(基本信息;任务归属需求标题,无则空串)。 */
+  module: string
+  /** 执行方式(执行者):CLAUDE_CODE / CODEX。 */
+  executor: string
+  /** 执行状态:DISPATCHED / RUNNING / DELIVERED / FAILED / STOPPED。 */
+  status: string
+  /** 执行结果:SUCCESS / FAILED / STOPPED / PENDING。 */
+  result: string
+  /** 完成率 0..100。 */
+  completionRate: number
+  runId?: string
+  error?: string
+  createdAt: number
+  eventCount: number
+}
+
+export interface TaskCenterPage {
+  total: number
+  current: number
+  pageSize: number
+  totalPages: number
+  items: TaskCenterItem[]
+}
+
+export interface TaskCenterQuery {
+  status?: string
+  executor?: string
+  /** 仅实时任务(未终态)。 */
+  active?: boolean
+  q?: string
+  page?: number
+  pageSize?: number
+}
+
 /** 执行机 / AI agent(Claude Code、Codex 等远程执行者),注册时自报支持协议。 */
 export interface RunnerAgent {
   id: string
@@ -994,6 +1071,21 @@ export const api = {
       `/delivery?decompositionId=${encodeURIComponent(decompositionId)}&taskId=${encodeURIComponent(taskId)}`,
     ),
   deliveryEvents: (attemptId: string) => http.get<DeliveryEvent[]>(`/delivery/${attemptId}/events`),
+
+  // 任务中心(系统级:后台任务/即时任务列表 + 执行详情 + 停止/删除)
+  taskCenter: (params: TaskCenterQuery = {}) => {
+    const sp = new URLSearchParams()
+    if (params.status) sp.set('status', params.status)
+    if (params.executor) sp.set('executor', params.executor)
+    if (params.active) sp.set('active', 'true')
+    if (params.q) sp.set('q', params.q)
+    sp.set('page', String(params.page ?? 1))
+    sp.set('pageSize', String(params.pageSize ?? 20))
+    return http.get<TaskCenterPage>(`/delivery/tasks?${sp.toString()}`)
+  },
+  stopTask: (id: string, reason?: string) =>
+    http.post<DeliveryAttempt>(`/delivery/${id}/stop`, { reason }),
+  deleteTask: (id: string) => http.del<void>(`/delivery/${id}`),
 
   // 执行机 / AI agent 管理(人机协同的执行者侧)
   runnerAgents: () => http.get<RunnerAgent[]>('/runner-agent'),

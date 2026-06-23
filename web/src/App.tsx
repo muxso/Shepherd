@@ -23,6 +23,7 @@ const ProjectAdmin = lazy(() => import('./pages/ProjectAdmin'))
 const FileManagement = lazy(() => import('./pages/FileManagement'))
 const ComingSoon = lazy(() => import('./pages/ComingSoon'))
 const Agents = lazy(() => import('./pages/Agents'))
+const TaskCenter = lazy(() => import('./pages/TaskCenter'))
 const Review = lazy(() => import('./pages/Review'))
 const EnvironmentsPage = lazy(() => import('./pages/Environments').then((m) => ({ default: m.EnvironmentsPage })))
 const ResourcePoolsPage = lazy(() => import('./pages/ResourcePoolPage').then((m) => ({ default: m.ResourcePoolsPage })))
@@ -49,7 +50,7 @@ export default function App() {
           <Route path="/role" element={<RolesPage />} />
           <Route path="/user" element={<UsersPage />} />
           <Route path="/system/params" element={<ComingSoon title="系统参数" />} />
-          <Route path="/system/tasks" element={<ComingSoon title="任务中心" />} />
+          <Route path="/system/tasks" element={<TaskCenter />} />
           <Route path="/system/plugins" element={<ComingSoon title="插件" />} />
           <Route path="/system/logs" element={<ComingSoon title="日志" />} />
           <Route path="/project" element={<ProjectAdmin />} />
