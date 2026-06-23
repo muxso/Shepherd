@@ -18,6 +18,8 @@ pub enum ExecError {
 /// 交给执行者的工作规格(由任务派生)。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorkSpec {
+    /// 本次交付尝试 id —— 异步执行者据此回调 `/delivery/{attempt_id}/complete`。
+    pub attempt_id: String,
     pub decomposition_id: String,
     pub task_id: String,
     pub title: String,
