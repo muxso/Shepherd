@@ -487,6 +487,30 @@ impl PgBatchReport {
         Ok(())
     }
 
+    /// 已完成(SUCCESS/ERROR)但未归档的报告 id(供 Parquet 归档批量取;部分索引覆盖)。
+    pub async fn list_unarchived(&self, limit: i64) -> Result<Vec<String>, PortError> {
+        let rows = sqlx::query(
+            "SELECT id FROM ms_api_batch_report \
+             WHERE status IN ('SUCCESS', 'ERROR') AND archived_at IS NULL \
+             ORDER BY id LIMIT $1",
+        )
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(map_err)?;
+        rows.iter().map(|r| r.try_get::<String, _>("id").map_err(map_err)).collect()
+    }
+
+    /// 标记报告已归档(写 archived_at = now())。
+    pub async fn mark_archived(&self, report_id: &str) -> Result<(), PortError> {
+        sqlx::query("UPDATE ms_api_batch_report SET archived_at = now() WHERE id = $1")
+            .bind(report_id)
+            .execute(&self.pool)
+            .await
+            .map_err(map_err)?;
+        Ok(())
+    }
+
     /// 报告明细:报告头(状态/用例数)+ 逐用例结果(case_id/通过失败/失败原因/时间)。
     /// 不存在返回 None。注:当前未持久化响应时间/状态码/响应体(需执行器扩展)。
     pub async fn detail(&self, report_id: &str) -> Result<Option<BatchReportDetail>, PortError> {
@@ -708,6 +732,7 @@ mod tests {
             pool_id: "pool1".into(),
             mode: BatchRunMode::Parallel,
             env: ResolvedEnv::default(),
+            environment_id: None,
         };
 
         // 下发成功:报告 RUNNING,且下发器收到带 report_id 的任务
