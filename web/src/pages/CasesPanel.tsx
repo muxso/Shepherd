@@ -163,7 +163,7 @@ function RunModal({
   const addPool = async () => {
     if (!newPool.trim()) return
     try {
-      const p = await api.createResourcePool(newPool.trim())
+      const p = await api.createResourcePool({ name: newPool.trim() })
       setNewPool('')
       await loadPools()
       setPoolId(p.id)

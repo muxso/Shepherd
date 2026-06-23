@@ -121,7 +121,7 @@ export default function ProcessorEditor({
                   onClick={() => setSel(i)}
                   style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 8px', borderRadius: 4, cursor: 'pointer', background: i === sel ? '#f3eefe' : 'transparent' }}
                 >
-                  <span style={{ width: 18, height: 18, borderRadius: '50%', background: '#7c3aed', color: '#fff', fontSize: 11, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>{i + 1}</span>
+                  <span style={{ width: 18, height: 18, borderRadius: '50%', background: '#06a561', color: '#fff', fontSize: 11, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>{i + 1}</span>
                   <span style={{ flex: 1, fontSize: 13 }}>{LABEL[o.kind]}</span>
                   <Switch size="small" checked={o.enabled} onChange={(c) => update(i, { enabled: c })} onClick={(_, e) => e.stopPropagation()} />
                   <Button type="text" size="small" danger icon={<DeleteOutlined />} onClick={(e) => { e.stopPropagation(); const next = ops.filter((_, idx) => idx !== i); push(next); setSel(Math.max(0, Math.min(sel, next.length - 1))) }} />

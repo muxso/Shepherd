@@ -152,6 +152,9 @@ mod tests {
         let detail = BatchReportDetail {
             status: "ERROR".to_string(),
             case_count: 2,
+            started_at: None,
+            finished_at: None,
+            duration_ms: None,
             results: vec![row("c1", "SUCCESS", Some(200)), row("c2", "ERROR", Some(404))],
         };
 

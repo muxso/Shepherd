@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { Button, Checkbox, Divider, Drawer, Dropdown, Empty, Input, Table, Modal, Popover, Segmented, Select, Space, Switch, Tabs, Tag, Tooltip, Tree, Upload } from 'antd'
+import { Button, Checkbox, Divider, Drawer, Dropdown, Empty, Input, Table, Modal, Popover, Radio, Segmented, Select, Space, Switch, Tabs, Tag, Tooltip, Tree, Upload } from 'antd'
 import { useSearchParams } from 'react-router-dom'
 import { message, modal } from '../feedback'
 import {
@@ -10,6 +10,8 @@ import {
   FolderOutlined,
   MoreOutlined,
   InboxOutlined,
+  CopyOutlined,
+  QuestionCircleOutlined,
   SaveOutlined,
   FilterOutlined,
   SettingOutlined,
@@ -25,17 +27,18 @@ import {
   SearchOutlined,
 } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
-import { api, ApiError, type ApiDefinition, type ApiModule, type ApiSpec, type ApiView, type Environment } from '../api'
+import { api, ApiError, type ApiCase, type ApiDefinition, type ApiModule, type ApiSpec, type ApiView, type DebugResponse, type Environment, type ProjectMock } from '../api'
 import { useApp } from '../context'
 import { methodColor, statusColor } from '../components/tags'
 import CasesPanel from './CasesPanel'
 import MocksPanel from './MocksPanel'
 import RequestEditor from '../components/RequestEditor'
-import ApiSpecPanel, { emptySpec, parseCurl, type ApiSpecPanelHandle, type ExecMode } from '../components/ApiSpecPanel'
+import ApiSpecPanel, { DebugResultPanel, emptySpec, parseCurl, type ApiSpecPanelHandle, type ExecMode, type SentRequest } from '../components/ApiSpecPanel'
+import KVEditor, { type KVRow } from '../components/KVEditor'
+import AssertionEditor from '../components/AssertionEditor'
 import ReferencesPanel from '../components/ReferencesPanel'
 import ChangeHistoryPanel from '../components/ChangeHistoryPanel'
-import { useOpenParam } from '../components/Workspace'
-import { parseOperations, buildCaseUrl } from '../openapi'
+import { useOpenParam, ResizableSider } from '../components/Workspace'
 import { useI18n } from '../i18n'
 
 const METHODS = ['GET', 'POST', 'PUT', 'DELETE', 'PATCH']
@@ -102,8 +105,14 @@ export default function ApiDefinitions() {
   const [moduleKey, setModuleKey] = useState('ALL') // ALL | UNFILED | <moduleId>
   const [creating, setCreating] = useState(false)
   const [importOpen, setImportOpen] = useState(false)
+  // 列表视图模式:API(接口定义)/ CASE(项目用例)/ MOCK(项目 Mock)。
+  const [viewMode, setViewMode] = useState<'API' | 'CASE' | 'MOCK'>('API')
+  const [caseRows, setCaseRows] = useState<ApiCase[]>([])
+  const [mockRows, setMockRows] = useState<ProjectMock[]>([])
+  const [viewLoading, setViewLoading] = useState(false)
   const [moduleForm, setModuleForm] = useState<{ mode: 'create' | 'rename'; id?: string; parentId?: string | null; name?: string } | null>(null)
   const [openIds, setOpenIds] = useState<string[]>([])
+  const [openCases, setOpenCases] = useState<Record<string, ApiCase>>({}) // 打开的用例详情 tab(key=caseId)
   const [activeKey, setActiveKey] = useState(LIST_KEY)
   // 列表:分页大小 / 列显隐 / 高级筛选(全部客户端,对齐 MeterSphere)。
   const [pageSize, setPageSize] = useState(20)
@@ -137,7 +146,8 @@ export default function ApiDefinitions() {
       const [ds, ms, vs] = await Promise.all([api.definitions(projectId), api.modules(projectId), api.views(projectId)])
       setDefs(Array.isArray(ds) ? ds : [])
       setModules(Array.isArray(ms) ? ms : [])
-      setViews(Array.isArray(vs) ? vs : [])
+      // 排除归属其他页面的视图(如场景页 config.kind==='scenario');本页视图无 kind 或为 'apidef'。
+      setViews(Array.isArray(vs) ? vs.filter((v) => (v.config as ViewConfig & { kind?: string })?.kind !== 'scenario') : [])
     } catch (e) {
       message.error(e instanceof ApiError ? e.message : t('apidef.loadFailed', '加载失败'))
     } finally {
@@ -146,8 +156,8 @@ export default function ApiDefinitions() {
   }
 
   // 视图快照:当前筛选/列/分页 → config;反向 applyConfig 把 config 写回各状态。
-  type ViewConfig = { search?: string; moduleKey?: string; pageSize?: number; hiddenCols?: string[]; advLogic?: 'all' | 'any'; advConds?: AdvCond[] }
-  const currentConfig = (): ViewConfig => ({ search, moduleKey, pageSize, hiddenCols, advLogic: advApplied.logic, advConds: advApplied.conds })
+  type ViewConfig = { kind?: string; search?: string; moduleKey?: string; pageSize?: number; hiddenCols?: string[]; advLogic?: 'all' | 'any'; advConds?: AdvCond[] }
+  const currentConfig = (): ViewConfig => ({ kind: 'apidef', search, moduleKey, pageSize, hiddenCols, advLogic: advApplied.logic, advConds: advApplied.conds })
   const applyConfig = (c: ViewConfig) => {
     if (typeof c.search === 'string') setSearch(c.search)
     if (typeof c.moduleKey === 'string') setModuleKey(c.moduleKey)
@@ -199,6 +209,17 @@ export default function ApiDefinitions() {
   }
 
   // 深链 ?view=<id>:视图加载后命中即应用,然后清参数(避免重复)。
+  // 切到 CASE/MOCK 视图时按需加载项目级用例 / Mock。
+  useEffect(() => {
+    if (viewMode === 'API') return
+    let alive = true
+    setViewLoading(true)
+    const p = viewMode === 'CASE' ? api.projectCases(projectId).then((r) => alive && setCaseRows(r.items)) : api.projectMocks(projectId).then((r) => alive && setMockRows(r))
+    p.catch(() => undefined).finally(() => alive && setViewLoading(false))
+    return () => { alive = false }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [viewMode, projectId])
+
   useEffect(() => {
     const vid = searchParams.get('view')
     if (!vid || !views.length) return
@@ -311,11 +332,32 @@ export default function ApiDefinitions() {
     setOpenIds((ids) => (ids.includes(id) ? ids : [...ids, id]))
     setActiveKey(id)
   }
+  // 点击 CASE 行 ID:打开用例详情 tab(对象在打开时捕获,切换视图后仍可见)。
+  const openCase = (c: ApiCase) => {
+    setOpenCases((m) => ({ ...m, [c.id]: c }))
+    setActiveKey(`case:${c.id}`)
+  }
   useOpenParam(openDef) // 支持 ?open=<definitionId> 深链打开
+  // 支持 ?openCase=<caseId> 深链:引用关系图点击用例跳转 → 拉项目用例找到后打开其详情 tab。
+  useEffect(() => {
+    const cid = searchParams.get('openCase')
+    if (!cid || !projectId) return
+    api
+      .projectCasesAll(projectId)
+      .then((cs) => { const c = cs.find((x) => x.id === cid); if (c) openCase(c) })
+      .finally(() => { const next = new URLSearchParams(searchParams); next.delete('openCase'); setSearchParams(next, { replace: true }) })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams, projectId])
   const closeTab = (id: string) => {
     if (id === NEW_KEY) {
       setCreating(false)
       setActiveKey((cur) => (cur === NEW_KEY ? LIST_KEY : cur))
+      return
+    }
+    if (id.startsWith('case:')) {
+      const cid = id.slice(5)
+      setOpenCases((m) => { const n = { ...m }; delete n[cid]; return n })
+      setActiveKey((cur) => (cur === id ? LIST_KEY : cur))
       return
     }
     setOpenIds((ids) => {
@@ -336,6 +378,25 @@ export default function ApiDefinitions() {
   }
 
   // 复制接口:同协议/方法/路径新建一条「<名> copy」,归入同模块。
+  const removeDef = (d: ApiDefinition) => {
+    Modal.confirm({
+      title: t('apidef.deleteConfirmTitle', '删除接口定义?'),
+      content: t('apidef.deleteConfirmBody', '将删除该接口及其用例 / Mock,且不可恢复。'),
+      okType: 'danger',
+      okText: t('a.delete', '删除'),
+      cancelText: t('a.cancel', '取消'),
+      onOk: async () => {
+        try {
+          await api.deleteDefinition(d.id)
+          message.success(t('apidef.deleted', '已删除'))
+          load()
+        } catch (e) {
+          message.error(e instanceof ApiError ? e.message : t('apidef.deleteFailed', '删除失败'))
+        }
+      },
+    })
+  }
+
   const duplicate = async (d: ApiDefinition) => {
     try {
       const c = await api.createDefinition({ projectId, name: `${d.name} copy`, protocol: d.protocol, method: d.method, path: d.path })
@@ -399,8 +460,13 @@ export default function ApiDefinitions() {
               items: [
                 { key: 'UNFILED', label: t('apidef.moveToUnfiled', '移到「未归类」') },
                 ...modules.map((m) => ({ key: m.id, label: `${t('apidef.moveToPrefix', '移到')}「${m.name}」` })),
+                { type: 'divider' as const },
+                { key: '__delete__', danger: true, label: t('a.delete', '删除') },
               ],
-              onClick: ({ key }) => move(d, key === 'UNFILED' ? null : key),
+              onClick: ({ key }) => {
+                if (key === '__delete__') removeDef(d)
+                else move(d, key === 'UNFILED' ? null : key)
+              },
             }}
           >
             <Button type="link" size="small">{t('a.more', '更多')}</Button>
@@ -417,8 +483,16 @@ export default function ApiDefinitions() {
   const listTab = (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 12px', borderBottom: '1px solid #f0f0f0' }}>
-        <Button type="primary" icon={<PlusOutlined />} onClick={() => { setCreating(true); setActiveKey(NEW_KEY) }}>{t('apidef.addApi', '添加接口')}</Button>
-        <Button icon={<ImportOutlined />} onClick={() => setImportOpen(true)}>{t('a.import', '导入')}</Button>
+        {/* 视图模式切换:API / CASE / MOCK(对齐参考图左上角)。 */}
+        <Dropdown
+          trigger={['click']}
+          menu={{ items: (['API', 'CASE', 'MOCK'] as const).map((m) => ({ key: m, label: m })), onClick: ({ key }) => setViewMode(key as 'API' | 'CASE' | 'MOCK') }}
+        >
+          <Button>{viewMode} <DownOutlined /></Button>
+        </Dropdown>
+        <span style={{ fontWeight: 600, color: '#06a561' }}>
+          {viewMode === 'API' ? t('apidef.allApis2', '全部接口') : viewMode === 'CASE' ? t('apidef.allCases', '全部用例') : t('apidef.allMocks', '全部 MOCK')}
+        </span>
         <div style={{ flex: 1 }} />
         <Input.Search placeholder={t('apidef.searchPlaceholder', '搜索 ID/名称/路径')} allowClear style={{ width: 240 }} value={search} onChange={(e) => setSearch(e.target.value)} />
         <Popover
@@ -435,7 +509,7 @@ export default function ApiDefinitions() {
                 <Space direction="vertical" size={2} style={{ width: '100%' }}>
                   {views.map((v) => (
                     <div key={v.id} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                      <a style={{ flex: 1, fontWeight: v.id === activeViewId ? 600 : 400, color: v.id === activeViewId ? '#7c3aed' : undefined, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} onClick={() => applyView(v)} title={v.name}>
+                      <a style={{ flex: 1, fontWeight: v.id === activeViewId ? 600 : 400, color: v.id === activeViewId ? '#06a561' : undefined, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} onClick={() => applyView(v)} title={v.name}>
                         {v.name}
                       </a>
                       <Tooltip title={t('apidef.shareView', '分享')}>
@@ -488,17 +562,90 @@ export default function ApiDefinitions() {
         <Button icon={<ReloadOutlined />} onClick={load} />
       </div>
       <div style={{ flex: 1, overflow: 'auto', padding: 12 }}>
-        <Table<ApiDefinition>
-          rowKey="id"
-          size="middle"
-          loading={loading}
-          dataSource={filtered}
-          columns={columns}
-          scroll={{ x: 'max-content' }}
-          onRow={(d) => ({ onClick: () => openDef(d.id), style: { cursor: 'pointer' } })}
-          pagination={{ pageSize, size: 'small', showSizeChanger: true, pageSizeOptions: ['10', '20', '30', '50'], onShowSizeChange: (_, s) => setPageSize(s), showTotal: (total) => `${t('apidef.totalPrefix', '共')} ${total} ${t('apidef.totalSuffix', '个接口')}` }}
-          locale={{ emptyText: <Empty description={t('apidef.emptyApis', '暂无接口')} /> }}
-        />
+        {viewMode === 'API' ? (
+          <Table<ApiDefinition>
+            rowKey="id"
+            size="middle"
+            loading={loading}
+            dataSource={filtered}
+            columns={columns}
+            scroll={{ x: 'max-content' }}
+            onRow={(d) => ({ onClick: () => openDef(d.id), style: { cursor: 'pointer' } })}
+            pagination={{ pageSize, size: 'small', showSizeChanger: true, pageSizeOptions: ['10', '20', '30', '50'], onShowSizeChange: (_, s) => setPageSize(s), showTotal: (total) => `${t('apidef.totalPrefix', '共')} ${total} ${t('apidef.totalSuffix', '个接口')}` }}
+            locale={{ emptyText: <Empty description={t('apidef.emptyApis', '暂无接口')} /> }}
+          />
+        ) : viewMode === 'CASE' ? (
+          <Table<ApiCase>
+            rowKey="id"
+            size="middle"
+            loading={viewLoading}
+            dataSource={caseRows}
+            scroll={{ x: 'max-content' }}
+            onRow={(c) => ({ onClick: () => openCase(c), style: { cursor: 'pointer' } })}
+            columns={[
+              { title: 'ID', dataIndex: 'id', width: 120, render: (v: string) => <a className="ms-mono" style={{ fontSize: 12 }}>{v.slice(0, 8)}</a> },
+              { title: t('apidef.colName', '名称'), dataIndex: 'name', ellipsis: true },
+              { title: t('apidef.colMethod', '请求类型'), dataIndex: 'method', width: 100, render: (m: string) => <Tag>{m}</Tag> },
+              { title: 'URL', dataIndex: 'url', ellipsis: true, render: (v: string) => <span className="ms-mono" style={{ fontSize: 12 }}>{v}</span> },
+              { title: t('apidef.colPriority', '优先级'), dataIndex: 'priority', width: 90, render: (v?: string) => v || '—' },
+              { title: t('apidef.colStatus', '状态'), dataIndex: 'status', width: 110, render: (v?: string) => v || '—' },
+            ]}
+            pagination={{ pageSize, size: 'small', showTotal: (total) => `${t('apidef.totalPrefix', '共')} ${total} ${t('apidef.caseUnit', '个用例')}` }}
+            locale={{ emptyText: <Empty description={t('apidef.emptyCases', '暂无用例')} /> }}
+          />
+        ) : (
+          <Table<ProjectMock>
+            rowKey="id"
+            size="middle"
+            loading={viewLoading}
+            dataSource={mockRows}
+            scroll={{ x: 'max-content' }}
+            columns={[
+              { title: 'ID', dataIndex: 'id', width: 120, render: (v: string) => <span className="ms-mono" style={{ fontSize: 12 }}>{v.slice(0, 8)}</span> },
+              { title: t('apidef.mockName', '期望名称'), dataIndex: 'name', ellipsis: true },
+              { title: t('apidef.colMethod', '请求类型'), dataIndex: 'method', width: 100, render: (m: string) => <Tag>{m}</Tag> },
+              { title: t('apidef.colProtocol', '协议'), dataIndex: 'protocol', width: 90 },
+              { title: t('apidef.colPath', '接口路径'), dataIndex: 'path', ellipsis: true, render: (v: string) => <span className="ms-mono" style={{ fontSize: 12 }}>{v}</span> },
+              { title: t('apidef.colTags', '标签'), dataIndex: 'tags', width: 160, render: (tags?: string[]) => (tags?.length ? tags.map((tg) => <Tag key={tg}>{tg}</Tag>) : '—') },
+              { title: t('apidef.colStatus', '状态'), dataIndex: 'enabled', width: 90, render: (on: boolean) => <Switch size="small" checked={on} disabled /> },
+              { title: t('apidef.colOperator', '操作人'), dataIndex: 'operator', width: 110, render: (v?: string) => v || <span style={{ color: '#bbb' }}>—</span> },
+              { title: t('apidef.colUpdatedAt', '更新时间'), dataIndex: 'updatedAt', width: 160, render: (v?: string) => <span style={{ color: '#8a9099', fontSize: 12 }}>{v ? v.slice(0, 19) : '—'}</span> },
+              {
+                title: t('apidef.colAction', '操作'),
+                width: 170,
+                fixed: 'right',
+                render: (_v, m: ProjectMock) => (
+                  <Space size={0} onClick={(e) => e.stopPropagation()}>
+                    <Button type="link" size="small" onClick={() => message.info(t('apidef.mockEditSoon', '编辑 Mock:在所属接口的 MOCK 标签维护'))}>{t('a.edit', '编辑')}</Button>
+                    <Dropdown
+                      menu={{
+                        items: [
+                          { key: 'copy', label: t('apidef.copyMockUrl', '复制 Mock 地址') },
+                          { key: 'del', danger: true, label: t('a.delete', '删除') },
+                        ],
+                        onClick: ({ key }) => {
+                          if (key === 'copy') { navigator.clipboard?.writeText(`/mock${m.path}`); message.success(t('apidef.copied', '已复制')) }
+                          else modal.confirm({
+                            title: t('apidef.mockDeleteConfirm', '删除该 Mock?'),
+                            okType: 'danger', okText: t('a.delete', '删除'), cancelText: t('a.cancel', '取消'),
+                            onOk: async () => {
+                              try { await api.deleteMock(m.id); message.success(t('apidef.deleted', '已删除')); setMockRows((rows) => rows.filter((x) => x.id !== m.id)) }
+                              catch (e) { message.error(e instanceof ApiError ? e.message : t('apidef.deleteFailed', '删除失败')) }
+                            },
+                          })
+                        },
+                      }}
+                    >
+                      <Button type="link" size="small">···</Button>
+                    </Dropdown>
+                  </Space>
+                ),
+              },
+            ]}
+            pagination={{ pageSize, size: 'small', showTotal: (total) => `${t('apidef.totalPrefix', '共')} ${total} ${t('apidef.mockUnit', '个 Mock')}` }}
+            locale={{ emptyText: <Empty description={t('apidef.emptyMocks', '暂无 Mock')} /> }}
+          />
+        )}
       </div>
     </div>
   )
@@ -535,6 +682,16 @@ export default function ApiDefinitions() {
         ),
         children: <ApiDetail definition={d} />,
       })),
+    ...Object.values(openCases).map((c) => ({
+      key: `case:${c.id}`,
+      label: (
+        <Space size={4}>
+          <Tag color={methodColor(c.method)} style={{ margin: 0 }}>{c.method}</Tag>
+          <span style={{ maxWidth: 120, display: 'inline-block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', verticalAlign: 'middle' }}>{c.name}</span>
+        </Space>
+      ),
+      children: <CaseDetailTab caseItem={c} projectId={projectId} onClose={() => closeTab(`case:${c.id}`)} onDeleted={() => api.projectCases(projectId).then((r) => setCaseRows(r.items)).catch(() => undefined)} />,
+    })),
   ]
 
   if (!projectId)
@@ -546,7 +703,14 @@ export default function ApiDefinitions() {
 
   return (
     <div style={{ display: 'flex', height: '100%' }}>
-      <div style={{ width: 252, background: '#fff', borderRight: '1px solid #f0f0f0', display: 'flex', flexDirection: 'column' }}>
+      <ResizableSider defaultWidth={252} storageKey="apidef-sider">
+        {/* 顶部:添加接口 / 导入(对齐场景用例左栏头部样式:整宽 Compact 双按钮)。 */}
+        <div style={{ padding: '10px 10px 0' }}>
+          <Space.Compact style={{ width: '100%' }}>
+            <Button type="primary" icon={<PlusOutlined />} style={{ flex: 1 }} disabled={viewMode !== 'API'} onClick={() => { setCreating(true); setActiveKey(NEW_KEY) }}>{t('apidef.addApi', '添加接口')}</Button>
+            <Button icon={<ImportOutlined />} style={{ flex: 1 }} disabled={viewMode !== 'API'} onClick={() => setImportOpen(true)}>{t('a.import', '导入')}</Button>
+          </Space.Compact>
+        </div>
         {/* 搜索:模块 / 接口名称(路径)。 */}
         <div style={{ padding: '10px 10px 6px' }}>
           <Input
@@ -558,11 +722,9 @@ export default function ApiDefinitions() {
             onChange={(e) => setModuleSearch(e.target.value)}
           />
         </div>
-        {/* 工具条:全部接口 (N) + 隐藏空模块 / 树内显示接口 / 收起全部 / 协议过滤 / 新建模块。 */}
+        {/* 工具条:隐藏空模块 / 树内显示接口 / 收起全部 / 协议过滤 / 新建模块(「全部接口 (N)」由下方树根节点承载,不在此重复)。 */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 2, padding: '0 8px 8px', borderBottom: '1px solid #f5f5f5' }}>
-          <span style={{ fontWeight: 600, fontSize: 13, flex: 1, paddingLeft: 4 }}>
-            {t('apidef.allApis', '全部接口')} ({protoFilter.length ? defs.filter((d) => protoFilter.includes(d.protocol)).length : defs.length})
-          </span>
+          <div style={{ flex: 1 }} />
           <Tooltip title={hideEmpty ? t('apidef.showEmpty', '显示空模块') : t('apidef.hideEmpty', '隐藏空模块')}>
             <Button size="small" type="text" icon={hideEmpty ? <EyeInvisibleOutlined /> : <EyeOutlined />} onClick={() => setHideEmpty((v) => !v)} />
           </Tooltip>
@@ -589,7 +751,7 @@ export default function ApiDefinitions() {
             }
           >
             <Tooltip title={t('apidef.protoFilter', '协议过滤')}>
-              <Button size="small" type="text" icon={<FilterOutlined />} style={{ color: protoFilter.length ? '#7c3aed' : undefined }} />
+              <Button size="small" type="text" icon={<FilterOutlined />} style={{ color: protoFilter.length ? '#06a561' : undefined }} />
             </Tooltip>
           </Popover>
           <Tooltip title={t('apidef.newTopModule', '新建顶层模块')}>
@@ -612,7 +774,7 @@ export default function ApiDefinitions() {
             }}
           />
         </div>
-      </div>
+      </ResizableSider>
 
       <div style={{ flex: 1, minWidth: 0, background: '#fff' }}>
         <Tabs
@@ -627,7 +789,7 @@ export default function ApiDefinitions() {
         />
       </div>
 
-      <ImportModal open={importOpen} onClose={() => setImportOpen(false)} projectId={projectId} onDone={() => { setImportOpen(false); load() }} />
+      <ImportModal open={importOpen} onClose={() => setImportOpen(false)} projectId={projectId} modules={modules} onDone={() => { setImportOpen(false); load() }} />
 
       {/* 高级筛选抽屉(对齐 MeterSphere:条件组合 所有/任一 + 字段/操作符/值,客户端过滤)。 */}
       <Drawer
@@ -749,6 +911,215 @@ function ModuleFormModal({
   )
 }
 
+// 用例详情 tab(点击 CASE 行 ID 打开,对齐参考图):头部 + 请求头/请求体-JSON + 响应内容 + 服务端执行。
+// 更新用例抽屉(对齐参考图 #22):名称 + 优先级/状态/标签 + 请求头/请求体/Query/REST/断言/认证 → PUT /api/case/{id}。
+function CaseEditDrawer({ open, caseItem, onClose, onSaved }: { open: boolean; caseItem: ApiCase; onClose: () => void; onSaved: (updated: ApiCase) => void }) {
+  const { t } = useI18n()
+  const blankKv = (): KVRow => ({ key: '', value: '' })
+  const [name, setName] = useState(caseItem.name)
+  const [method, setMethod] = useState(caseItem.method)
+  const [url, setUrl] = useState(caseItem.url)
+  const [priority, setPriority] = useState(caseItem.priority || 'P0')
+  const [status, setStatus] = useState(caseItem.status || '进行中')
+  const [tags, setTags] = useState<string[]>(caseItem.tags || [])
+  const [tagInput, setTagInput] = useState('')
+  const [headers, setHeaders] = useState<KVRow[]>(caseItem.headers?.length ? caseItem.headers : [blankKv()])
+  const [query, setQuery] = useState<KVRow[]>(caseItem.queryParams?.length ? caseItem.queryParams : [blankKv()])
+  const [rest, setRest] = useState<KVRow[]>(caseItem.restParams?.length ? caseItem.restParams : [blankKv()])
+  const [body, setBody] = useState(caseItem.body || '')
+  const [authType, setAuthType] = useState<'none' | 'bearer' | 'basic'>((caseItem.auth?.type as 'none' | 'bearer' | 'basic') || 'none')
+  const [authToken, setAuthToken] = useState(caseItem.auth?.token || '')
+  const [assertions, setAssertions] = useState<unknown[]>((caseItem.assertions as unknown[]) || [])
+  const [saving, setSaving] = useState(false)
+
+  // 重新打开/切换用例时,用最新用例值重置表单。
+  useEffect(() => {
+    if (!open) return
+    setName(caseItem.name); setMethod(caseItem.method); setUrl(caseItem.url)
+    setPriority(caseItem.priority || 'P0'); setStatus(caseItem.status || '进行中'); setTags(caseItem.tags || [])
+    setHeaders(caseItem.headers?.length ? caseItem.headers : [blankKv()])
+    setQuery(caseItem.queryParams?.length ? caseItem.queryParams : [blankKv()])
+    setRest(caseItem.restParams?.length ? caseItem.restParams : [blankKv()])
+    setBody(caseItem.body || ''); setAuthType((caseItem.auth?.type as 'none' | 'bearer' | 'basic') || 'none')
+    setAuthToken(caseItem.auth?.token || ''); setAssertions((caseItem.assertions as unknown[]) || [])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, caseItem])
+
+  const clean = (rows: KVRow[]) => rows.filter((r) => r.key.trim())
+  const save = async () => {
+    if (!name.trim()) return message.warning(t('apidef.caseNameRequired', '请输入用例名称'))
+    if (!url.trim()) return message.warning(t('editor.urlRequired', '请输入 URL'))
+    const auth = authType === 'none' ? { type: 'none' } : { type: authType, token: authToken }
+    const payload = { name, method, url, body: body || null, assertions, processors: caseItem.processors, priority, status, tags, headers: clean(headers), queryParams: clean(query), restParams: clean(rest), auth }
+    setSaving(true)
+    try {
+      await api.updateCase(caseItem.id, payload)
+      message.success(t('apidef.caseUpdated', '用例已更新'))
+      onSaved({ ...caseItem, ...payload, body: body || null, auth })
+    } catch (e) {
+      message.error(e instanceof ApiError ? e.message : t('apidef.saveFailed', '保存失败'))
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const kvTab = (key: string, label: string, rows: KVRow[], set: (r: KVRow[]) => void) => ({ key, label: `${label}${clean(rows).length ? ` (${clean(rows).length})` : ''}`, children: <KVEditor rows={rows} onChange={set} /> })
+  const tabs = [
+    kvTab('headers', t('apidef.requestHeaders', '请求头'), headers, setHeaders),
+    { key: 'body', label: t('apidef.requestBody', '请求体'), children: <Input.TextArea rows={8} value={body} onChange={(e) => setBody(e.target.value)} className="ms-mono" placeholder='{"k":"v"}' /> },
+    kvTab('query', 'Query', query, setQuery),
+    kvTab('rest', 'REST', rest, setRest),
+    { key: 'assert', label: `${t('apidef.assertions', '断言')}${assertions.length ? ` (${assertions.length})` : ''}`, children: <AssertionEditor value={assertions as never} onChange={(v) => setAssertions(v)} /> },
+    { key: 'auth', label: t('apidef.auth', '认证'), children: (
+      <Space direction="vertical" style={{ width: '100%' }}>
+        <Select value={authType} onChange={setAuthType} style={{ width: 200 }} options={[{ value: 'none', label: t('apidef.authNone', '无') }, { value: 'bearer', label: 'Bearer Token' }, { value: 'basic', label: 'Basic Auth' }]} />
+        {authType !== 'none' && <Input value={authToken} onChange={(e) => setAuthToken(e.target.value)} placeholder="token" className="ms-mono" />}
+      </Space>
+    ) },
+  ]
+
+  return (
+    <Drawer
+      open={open}
+      onClose={onClose}
+      width={720}
+      title={t('apidef.updateCase', '更新用例')}
+      footer={<div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}><Button onClick={onClose}>{t('a.cancel', '取消')}</Button><Button type="primary" loading={saving} onClick={save}>{t('a.update', '更新')}</Button></div>}
+    >
+      <Input value={name} onChange={(e) => setName(e.target.value)} maxLength={255} showCount placeholder={t('apidef.caseName', '用例名称')} style={{ marginBottom: 12 }} />
+      <Space style={{ marginBottom: 12 }} wrap>
+        <Select value={priority} onChange={setPriority} style={{ width: 120 }} options={['P0', 'P1', 'P2', 'P3'].map((p) => ({ value: p, label: p }))} />
+        <Select value={status} onChange={setStatus} style={{ width: 140 }} options={['进行中', '已完成', '已废弃'].map((s) => ({ value: s, label: s }))} />
+      </Space>
+      <Space size={[6, 6]} wrap style={{ marginBottom: 12 }}>
+        {tags.map((tg) => <Tag key={tg} closable onClose={() => setTags(tags.filter((x) => x !== tg))}>{tg}</Tag>)}
+        <Input size="small" style={{ width: 120 }} value={tagInput} onChange={(e) => setTagInput(e.target.value)} onPressEnter={() => { const v = tagInput.trim(); if (v && !tags.includes(v)) setTags([...tags, v]); setTagInput('') }} placeholder={t('apidef.addTag', '+ 标签')} />
+      </Space>
+      <Space.Compact style={{ width: '100%', marginBottom: 12 }}>
+        <Select value={method} onChange={setMethod} style={{ width: 110 }} options={['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'HEAD', 'OPTIONS'].map((m) => ({ value: m, label: m }))} />
+        <Input value={url} onChange={(e) => setUrl(e.target.value)} className="ms-mono" placeholder="/api/..." />
+      </Space.Compact>
+      <Tabs className="ms-detail-tabs" size="small" items={tabs} />
+    </Drawer>
+  )
+}
+
+function CaseDetailTab({ caseItem, projectId, onClose, onDeleted }: { caseItem: ApiCase; projectId: string; onClose: () => void; onDeleted?: () => void }) {
+  const { t } = useI18n()
+  const [c, setC] = useState<ApiCase>(caseItem) // 本地副本:编辑后即时反映
+  const [editOpen, setEditOpen] = useState(false)
+  const [envs, setEnvs] = useState<Environment[]>([])
+  const [envId, setEnvId] = useState<string>('')
+  const [hdrView, setHdrView] = useState<'table' | 'raw'>('table')
+  const [running, setRunning] = useState(false)
+  const [resp, setResp] = useState<DebugResponse | null>(null)
+  const [err, setErr] = useState('')
+  const [lastReq, setLastReq] = useState<SentRequest | null>(null)
+
+  useEffect(() => { api.environments(projectId).then(setEnvs).catch(() => undefined) }, [projectId])
+  const env = envs.find((e) => e.id === envId)
+  const headers = c.headers || []
+  const tags = c.tags || []
+
+  const resolveUrl = (u: string) => {
+    if (/^https?:\/\//i.test(u)) return u
+    const b = env?.baseUrl?.trim().replace(/\/+$/, '')
+    return b ? `${b}${u.startsWith('/') ? '' : '/'}${u}` : u
+  }
+  const run = async () => {
+    const url = resolveUrl(c.url)
+    if (!/^https?:\/\//i.test(url)) return message.warning(t('editor.needEnvOrAbs', '相对路径需先选择带 baseUrl 的环境,或填写绝对 URL(http(s)://)'))
+    const hdrs = [...headers]
+    if (c.auth?.token && (c.auth.type === 'bearer' || c.auth.type === 'basic')) hdrs.push({ key: 'Authorization', value: `${c.auth.type === 'bearer' ? 'Bearer' : 'Basic'} ${c.auth.token}` })
+    const req: SentRequest = { method: c.method, url, headers: hdrs, body: c.body || undefined }
+    setLastReq(req); setRunning(true); setErr(''); setResp(null)
+    try {
+      setResp(await api.debugSend({ ...req, assertions: (c.assertions as unknown[]) || [], processors: (c.processors as unknown[]) || [] }))
+    } catch (e) {
+      setErr(e instanceof ApiError ? e.message : t('editor.sendFail', '发送失败'))
+    } finally {
+      setRunning(false)
+    }
+  }
+
+  const hdrRaw = headers.filter((h) => h.key).map((h) => `${h.key}: ${h.value}`).join('\n')
+  const detailTab = (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
+      <div>
+        <div style={{ display: 'flex', alignItems: 'center', marginBottom: 8 }}>
+          <span style={{ fontWeight: 600, fontSize: 13 }}>{t('apidef.requestHeaders', '请求头')} <Tag style={{ marginLeft: 4 }}>{headers.length}</Tag></span>
+          <div style={{ flex: 1 }} />
+          {headers.length > 0 && <Segmented size="small" value={hdrView} onChange={(v) => setHdrView(v as 'table' | 'raw')} options={[{ label: 'Table', value: 'table' }, { label: 'Raw', value: 'raw' }]} />}
+        </div>
+        {headers.length === 0 ? (
+          <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('apidef.none', '无')} style={{ margin: '8px 0' }} />
+        ) : hdrView === 'raw' ? (
+          <pre className="ms-mono" style={{ background: '#f6f8fa', padding: 12, borderRadius: 6, margin: 0, fontSize: 12 }}>{hdrRaw}</pre>
+        ) : (
+          <Table size="small" rowKey={(_, i) => String(i)} pagination={false} dataSource={headers} columns={[{ title: t('env.varName', '参数名'), dataIndex: 'key', width: '40%' }, { title: t('env.varValue', '参数值'), dataIndex: 'value', render: (v: string) => <span className="ms-mono">{v}</span> }]} />
+        )}
+      </div>
+      <div>
+        <div style={{ display: 'flex', alignItems: 'center', marginBottom: 8 }}>
+          <span style={{ fontWeight: 600, fontSize: 13 }}>{t('apidef.requestBodyJson', '请求体-JSON')}</span>
+          <div style={{ flex: 1 }} />
+          {c.body && <Button size="small" icon={<CopyOutlined />} onClick={() => navigator.clipboard?.writeText(c.body || '')}>{t('a.copy', '复制')}</Button>}
+        </div>
+        {c.body ? (
+          <pre className="ms-mono" style={{ background: '#f6f8fa', padding: 12, borderRadius: 6, margin: 0, fontSize: 12, maxHeight: 360, overflow: 'auto' }}>{c.body}</pre>
+        ) : (
+          <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('apidef.noBody', '请求没有 Body')} style={{ margin: '8px 0' }} />
+        )}
+      </div>
+      <div>
+        <span style={{ fontWeight: 600, fontSize: 13 }}>{t('apidef.responseContent', '响应内容')}</span>
+        <DebugResultPanel running={running} resp={resp} err={err} req={lastReq} isHttp assertions={(c.assertions as Record<string, unknown>[]) || undefined} extractors={(c.processors as Record<string, unknown>[]) || undefined} />
+      </div>
+    </div>
+  )
+
+  return (
+    <div style={{ padding: '12px 16px', height: '100%', overflow: 'auto' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+        <span style={{ color: '#ff4d4f', fontSize: 12, fontWeight: 600 }}>{c.priority || 'P0'}</span>
+        <span className="ms-mono" style={{ color: '#8a9099', fontSize: 12 }}>[{c.id.slice(0, 8)}]</span>
+        <span style={{ fontWeight: 600, fontSize: 15 }}>{c.name}</span>
+        <div style={{ flex: 1 }} />
+        <Select size="small" value={envId || undefined} onChange={setEnvId} allowClear placeholder={t('apidef.selectEnv', '选择环境')} style={{ width: 160 }} options={envs.map((e) => ({ value: e.id, label: e.name }))} />
+        <Button
+          danger
+          onClick={() => modal.confirm({
+            title: t('apidef.caseDeleteConfirm', '删除该用例?'), okType: 'danger', okText: t('a.delete', '删除'), cancelText: t('a.cancel', '取消'),
+            onOk: async () => {
+              try { await api.deleteCase(c.id); message.success(t('apidef.deleted', '已删除')); onClose(); onDeleted?.() }
+              catch (e) { message.error(e instanceof ApiError ? e.message : t('apidef.deleteFailed', '删除失败')) }
+            },
+          })}
+        >{t('a.delete', '删除')}</Button>
+        <Button onClick={() => setEditOpen(true)}>{t('a.edit', '编辑')}</Button>
+        <Button type="primary" icon={<ThunderboltOutlined />} loading={running} onClick={run}>{t('apidef.serverRun', '服务端执行')}</Button>
+        <Button onClick={onClose}>{t('a.close', '关闭')}</Button>
+      </div>
+      <CaseEditDrawer open={editOpen} caseItem={c} onClose={() => setEditOpen(false)} onSaved={(u) => { setC(u); setEditOpen(false); onDeleted?.() }} />
+      <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginBottom: 12, fontSize: 12, color: '#8a9099', flexWrap: 'wrap' }}>
+        <span>{t('apidef.colMethod', '请求类型')} <Tag color={methodColor(c.method)} style={{ margin: 0 }}>{c.method}</Tag></span>
+        <span>{t('apidef.colPath', '路径')} <span className="ms-mono" style={{ color: '#1f2329' }}>{c.url}</span></span>
+        {tags.length > 0 && <span>{t('apidef.colTags', '标签')} {tags.map((tg) => <Tag key={tg}>{tg}</Tag>)}</span>}
+      </div>
+      <Tabs
+        className="ms-detail-tabs"
+        defaultActiveKey="detail"
+        items={[
+          { key: 'detail', label: t('apidef.caseDetail', '用例详情'), children: detailTab },
+          { key: 'refs', label: t('apidef.references', '引用关系'), children: <Empty description={t('apidef.refEmpty', '暂无数据')} style={{ marginTop: 40 }} /> },
+          { key: 'exec', label: t('apidef.execHistory', '执行历史'), children: <Empty description={t('apidef.none', '无')} style={{ marginTop: 40 }} /> },
+          { key: 'change', label: t('apidef.changeHistory', '变更历史'), children: <Empty description={t('apidef.none', '无')} style={{ marginTop: 40 }} /> },
+        ]}
+      />
+    </div>
+  )
+}
+
 function ApiDetail({ definition }: { definition: ApiDefinition }) {
   const { t } = useI18n()
   // 顶层标签 + 定义页内的 定义/调试 切换(对标 MeterSphere:调试是定义内的模式)。
@@ -823,19 +1194,21 @@ function ApiDetail({ definition }: { definition: ApiDefinition }) {
   )
 
   // 预览:详情 / 引用关系 / 变更历史(对标参考图 #1,这三者是预览的子标签)。
+  // flex 列填满:头部固定 + 子标签 flex:1,使「引用关系」关系图整套铺满可用高度。
   const previewTab = (
-    <>
+    <div style={{ height: '100%', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
       {previewHeader}
       <Tabs
-        className="ms-detail-tabs"
+        className="ms-detail-tabs ms-fill-tabs"
         size="small"
+        style={{ flex: 1, minHeight: 0 }}
         items={[
           { key: 'detail', label: t('apidef.detail', '详情'), children: <ApiSpecPanel definition={definition} mode="preview" /> },
           { key: 'refs', label: t('apidef.references', '引用关系'), children: <ReferencesPanel definition={definition} /> },
           { key: 'history', label: t('apidef.changeHistory', '变更历史'), children: <ChangeHistoryPanel definition={definition} /> },
         ]}
       />
-    </>
+    </div>
   )
 
   // 定义/调试共用同一编辑器外壳:请求行(协议/方法/路径)+ cURL 导入 + 行内 定义/调试 切换
@@ -1069,67 +1442,68 @@ function ImportModal({
   open,
   onClose,
   projectId,
+  modules,
   onDone,
 }: {
   open: boolean
   onClose: () => void
   projectId: string
+  modules: ApiModule[]
   onDone: () => void
 }) {
   const { t } = useI18n()
+  const [source, setSource] = useState('Swagger')
+  const [importType, setImportType] = useState('file')
+  const [moduleId, setModuleId] = useState<string | undefined>(undefined)
+  const [groupByTag, setGroupByTag] = useState(true) // 按 OpenAPI tag 自动建子模块并归类(默认开)
+  const [overwrite, setOverwrite] = useState(true) // 覆盖/不覆盖(对齐参考:默认覆盖)
+  const [syncModule, setSyncModule] = useState(true) // 同步更新接口所在目录
+  const [way, setWay] = useState('file') // file | url
   const [text, setText] = useState('')
   const [fileName, setFileName] = useState('')
-  const [genCases, setGenCases] = useState(true)
+  const [urlVal, setUrlVal] = useState('')
+  const [token, setToken] = useState('')
+  const [basicAuth, setBasicAuth] = useState(false)
   const [saving, setSaving] = useState(false)
 
   const readFile = (file: File) => {
     const reader = new FileReader()
-    reader.onload = () => {
-      setText(String(reader.result || ''))
-      setFileName(file.name)
-    }
+    reader.onload = () => { setText(String(reader.result || '')); setFileName(file.name) }
     reader.readAsText(file)
-    return false // 阻止 antd 自动上传
+    return false
   }
 
+  // 非 Swagger 来源的解析器尚未接入,先禁用(避免误用)。
+  const lockedSources = ['Postman', 'Har', 'Jmeter', 'MeterSphere']
   const doImport = async () => {
+    let raw = text
+    if (way === 'url') {
+      if (!urlVal.trim()) return message.warning(t('apidef.importUrlRequired', '请输入 SwaggerURL'))
+      try {
+        const headers: Record<string, string> = {}
+        if (token.trim()) headers['Authorization'] = `${basicAuth ? 'Basic' : 'Bearer'} ${token.trim()}`
+        const res = await fetch(urlVal.trim(), { headers })
+        raw = await res.text()
+      } catch {
+        return message.error(t('apidef.importUrlFailed', '拉取 URL 失败(可能跨域,请改用文件/粘贴)'))
+      }
+    }
     let parsed: any
     try {
-      parsed = JSON.parse(text)
+      parsed = JSON.parse(raw)
     } catch {
       message.error(t('apidef.invalidJson', '不是合法 JSON(上传文件或粘贴 OpenAPI/Swagger 文档)'))
       return
     }
     setSaving(true)
     try {
-      const r = await api.importDefinitions(projectId, parsed)
-      let caseCount = 0
-      if (genCases && r.created.length) {
-        // 按 schema 自动为每个导入的接口生成一条用例(必填 query + 示例 body)。
-        const ops = parseOperations(parsed)
-        await Promise.all(
-          r.created.map(async (d) => {
-            const op = ops[`${d.method} ${d.path}`]
-            try {
-              await api.createCase(d.id, {
-                name: op?.summary || d.name,
-                method: d.method,
-                url: buildCaseUrl(d.path, op),
-                body: op?.bodyExample,
-                assertions: [{ type: 'StatusIs', args: 200 }],
-              })
-              caseCount++
-            } catch {
-              /* 单条失败不阻断 */
-            }
-          }),
-        )
-      }
+      const r = await api.importDefinitions(projectId, parsed, { moduleId: moduleId || undefined, groupByTag, overwrite, syncModule })
       message.success(
-        `${t('apidef.importSuccessNew', '导入成功:新增接口')} ${r.created.length}${t('apidef.importSkipped', ',跳过')} ${r.skipped}${genCases ? `${t('apidef.importGenCases', ',生成用例')} ${caseCount}` : ''}`,
+        `${t('apidef.importSuccessNew', '导入成功:新增接口')} ${r.created.length}` +
+          `${t('apidef.importUpdated', ',覆盖更新')} ${r.updated}` +
+          `${t('apidef.importSkipped', ',跳过')} ${r.skipped}`,
       )
-      setText('')
-      setFileName('')
+      setText(''); setFileName(''); setUrlVal('')
       onDone()
     } catch (e) {
       message.error(e instanceof ApiError ? e.message : t('apidef.importFailed', '导入失败'))
@@ -1138,35 +1512,124 @@ function ImportModal({
     }
   }
 
+  const Field = ({ label, children }: { label: React.ReactNode; children: React.ReactNode }) => (
+    <div style={{ marginBottom: 16 }}>
+      <div style={{ fontSize: 13, color: '#1f2329', marginBottom: 8 }}>{label}</div>
+      {children}
+    </div>
+  )
+  const importDisabled = way === 'file' ? !text.trim() : !urlVal.trim()
+
   return (
-    <Modal
-      title={t('apidef.importTitle', '导入接口(OpenAPI 3.x / Swagger 2.0)')}
+    <Drawer
+      title={t('apidef.importTitle2', '导入接口')}
       open={open}
-      onCancel={onClose}
-      confirmLoading={saving}
-      destroyOnHidden
-      width={680}
-      okText={t('a.import', '导入')}
-      okButtonProps={{ disabled: !text.trim() }}
-      onOk={doImport}
+      onClose={onClose}
+      width={640}
+      footer={
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+          <Button onClick={onClose}>{t('a.cancel', '取消')}</Button>
+          <Button type="primary" loading={saving} disabled={importDisabled} onClick={doImport}>{t('a.import', '导入')}</Button>
+        </div>
+      }
     >
-      <Upload.Dragger accept=".json,.yaml,.yml" beforeUpload={readFile} showUploadList={false} style={{ marginBottom: 12 }}>
-        <p style={{ margin: 0 }}>
-          <InboxOutlined style={{ fontSize: 28, color: '#7c3aed' }} />
-        </p>
-        <p style={{ margin: '6px 0 0' }}>{t('apidef.uploadHint', '点击或拖拽 OpenAPI/Swagger JSON 文件到此')}</p>
-        {fileName && <p style={{ color: '#7c3aed', margin: '4px 0 0' }}>{t('apidef.selectedFile', '已选:')}{fileName}</p>}
-      </Upload.Dragger>
-      <Checkbox checked={genCases} onChange={(e) => setGenCases(e.target.checked)} style={{ marginBottom: 8 }}>
-        {t('apidef.genCasesHint', '按 schema 自动生成用例(填充必填参数 + 示例请求体,免手敲)')}
-      </Checkbox>
-      <Input.TextArea
-        rows={8}
-        value={text}
-        onChange={(e) => setText(e.target.value)}
-        placeholder={t('apidef.pasteHint', '也可直接粘贴文档内容')}
-        className="ms-mono"
-      />
-    </Modal>
+      <Field label={t('apidef.importSource', '来源')}>
+        <Segmented
+          value={source}
+          onChange={(v) => setSource(String(v))}
+          options={['Swagger', ...lockedSources].map((s) => ({
+            label: lockedSources.includes(s) ? <Tooltip title={t('apidef.importSoon', '该来源解析暂未接入')}><span>{s}</span></Tooltip> : s,
+            value: s,
+            disabled: lockedSources.includes(s),
+          }))}
+        />
+      </Field>
+      <Field label={t('apidef.importType', '导入类型')}>
+        <Segmented
+          value={importType}
+          onChange={(v) => setImportType(String(v))}
+          options={[
+            { label: t('apidef.importTypeFile', '文件导入'), value: 'file' },
+            { label: <Tooltip title={t('apidef.importSoon', '暂未接入')}><span>{t('apidef.importTypeSchedule', '定时导入')}</span></Tooltip>, value: 'schedule', disabled: true },
+          ]}
+        />
+      </Field>
+      <Field label={t('apidef.importModule', '所属模块')}>
+        <Select
+          style={{ width: '100%' }}
+          value={moduleId || ''}
+          onChange={(v) => setModuleId(v || '')}
+          placeholder={t('apidef.unfiled', '未归类')}
+          // 对齐左侧树:始终含「未归类」+ 各模块。
+          options={[{ value: '', label: t('apidef.unfiled', '未归类') }, ...modules.map((m) => ({ value: m.id, label: m.name }))]}
+        />
+      </Field>
+      <Field label={t('apidef.importGroupByTag', '按标签建模块')}>
+        <Checkbox checked={groupByTag} onChange={(e) => setGroupByTag(e.target.checked)}>
+          {t('apidef.importGroupByTagHint', '按 OpenAPI 标签(tag)自动建/复用子模块并归类(上方「所属模块」作为其父级)')}
+        </Checkbox>
+      </Field>
+      <Field label={t('apidef.importMode', '导入模式')}>
+        <Radio.Group value={overwrite ? 'cover' : 'keep'} onChange={(e) => setOverwrite(e.target.value === 'cover')}>
+          <Radio value="cover">
+            {t('apidef.importCover', '覆盖')}
+            <Tooltip title={t('apidef.importCoverHint', '同 方法+路径 已存在则刷新其规格')}><QuestionCircleOutlined style={{ color: '#bbb', marginLeft: 4 }} /></Tooltip>
+          </Radio>
+          <Radio value="keep">
+            {t('apidef.importKeep', '不覆盖')}
+            <Tooltip title={t('apidef.importKeepHint', '同 方法+路径 已存在则跳过')}><QuestionCircleOutlined style={{ color: '#bbb', marginLeft: 4 }} /></Tooltip>
+          </Radio>
+        </Radio.Group>
+      </Field>
+      {overwrite && (
+        <Field label="">
+          <Space>
+            <Switch checked={syncModule} onChange={setSyncModule} />
+            <span style={{ fontSize: 13 }}>{t('apidef.importSyncModule', '同步更新接口所在目录')}</span>
+          </Space>
+        </Field>
+      )}
+      <Field label={t('apidef.importWay', '导入方式')}>
+        <Segmented
+          value={way}
+          onChange={(v) => setWay(String(v))}
+          options={[
+            { label: t('apidef.importTypeFile', '文件导入'), value: 'file' },
+            { label: t('apidef.importWayUrl', 'URL 导入'), value: 'url' },
+          ]}
+        />
+      </Field>
+      {way === 'url' ? (
+        <>
+          <Field label={<span><span style={{ color: '#ff4d4f', marginRight: 4 }}>*</span>SwaggerURL</span>}>
+            <Input value={urlVal} onChange={(e) => setUrlVal(e.target.value)} className="ms-mono" placeholder={t('apidef.importUrlPlaceholder', '请输入 OpenAPI/URL')} />
+          </Field>
+          <Field label="token">
+            <Input.TextArea rows={2} value={token} onChange={(e) => setToken(e.target.value)} className="ms-mono" placeholder="token" />
+          </Field>
+          <Space>
+            <Switch checked={basicAuth} onChange={setBasicAuth} />
+            <span style={{ fontSize: 13 }}>{t('apidef.basicAuth', 'Basic Auth 认证')}</span>
+          </Space>
+        </>
+      ) : (
+        <>
+          <Upload.Dragger accept=".json,.yaml,.yml" beforeUpload={readFile} showUploadList={false} style={{ marginBottom: 10 }}>
+            <p style={{ margin: 0 }}><InboxOutlined style={{ fontSize: 28, color: '#06a561' }} /></p>
+            <p style={{ margin: '6px 0 0' }}>{t('apidef.uploadHint2', '拖拽或点击此区域选择文件')}</p>
+            <p style={{ color: '#8a9099', fontSize: 12, margin: '4px 0 0' }}>
+              {t('apidef.uploadHintSub', '支持 Swagger 3.0 版本的 json 文件,')}
+              <span style={{ color: '#fa8c16' }}>{t('apidef.uploadHintConvert', '2.0 文件可以在官网一键转换 3.0,')}</span>
+              {t('apidef.uploadHintSize', '大小不超过 50M')}
+            </p>
+            {fileName && <p style={{ color: '#06a561', margin: '4px 0 0' }}>{t('apidef.selectedFile', '已选:')}{fileName}</p>}
+          </Upload.Dragger>
+          <Input.TextArea rows={6} value={text} onChange={(e) => setText(e.target.value)} placeholder={t('apidef.pasteHint', '也可直接粘贴文档内容')} className="ms-mono" />
+        </>
+      )}
+      <p style={{ color: '#8a9099', fontSize: 12, margin: '10px 0 0' }}>
+        {t('apidef.importAutoHint', '导入将解析请求参数/必填/响应,并为每个接口自动生成带断言的默认用例。')}
+      </p>
+    </Drawer>
   )
 }

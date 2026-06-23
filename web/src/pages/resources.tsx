@@ -1,7 +1,7 @@
 import { Empty, Space, Table, Tag, Typography } from 'antd'
 import { ToolOutlined } from '@ant-design/icons'
 import CrudResource, { type CrudConfig } from '../components/CrudResource'
-import { api, type Environment, type FunctionalCase, type Organization, type ResourcePool, type Role, type User } from '../api'
+import { api, type Environment, type FunctionalCase, type Organization, type Role, type User } from '../api'
 import { useApp } from '../context'
 import { useI18n } from '../i18n'
 
@@ -106,23 +106,13 @@ const makeEnvCfg = (t: TFn): CrudConfig<Environment> => ({
   ],
 })
 
-const makePoolCfg = (t: TFn): CrudConfig<ResourcePool> => ({
-  title: t('res.pool', '资源池'),
-  list: () => api.resourcePools(),
-  create: { fields: [{ name: 'name', label: t('res.poolName', '资源池名'), required: true }], submit: (v) => api.createResourcePool(String(v.name)) },
-  columns: [
-    { title: t('res.colName', '名称'), dataIndex: 'name' },
-    { title: t('res.colEnabled', '启用'), dataIndex: 'enabled', width: 90, render: (e: boolean) => (e ? <Tag color="green">{t('res.enabled', '启用')}</Tag> : <Tag>{t('res.disabled', '停用')}</Tag>) },
-    { title: 'ID', dataIndex: 'id', render: mono },
-  ],
-})
+// 资源池列表/表单已迁出至 pages/ResourcePoolPage.tsx(对齐参考图,字段更丰富)。
 
 export const OrganizationsPage = () => { const { t } = useI18n(); return <CrudResource cfg={makeOrgCfg(t)} /> }
 export const RolesPage = () => { const { t } = useI18n(); return <CrudResource cfg={makeRoleCfg(t)} /> }
 export const UsersPage = () => { const { t } = useI18n(); return <CrudResource cfg={makeUserCfg(t)} /> }
 export const FunctionalCasesPage = () => { const { t } = useI18n(); return <CrudResource cfg={makeFuncCaseCfg(t)} /> }
 export const EnvironmentsPage = () => { const { t } = useI18n(); return <CrudResource cfg={makeEnvCfg(t)} /> }
-export const ResourcePoolsPage = () => { const { t } = useI18n(); return <CrudResource cfg={makePoolCfg(t)} /> }
 
 // 项目页:直接用 context 已加载的项目(无全局列表端点)。
 export function ProjectsPage() {

@@ -21,7 +21,7 @@ use crate::application::{
     ListApiDefinitionsUseCase, ListApiMocksUseCase, ListProjectCasesUseCase,
 };
 use kernel::page::PageRequest;
-use crate::domain::{ApiCase, ApiDefinition, ApiModule, ApiMock, ApiProtocol, ApiView, NewApiModule, NewApiView};
+use crate::domain::{ApiCase, ApiDefinition, ApiModule, ApiMock, ApiProtocol, ApiView, NewApiCase, NewApiModule, NewApiView};
 use crate::ports::ApiDefinitionRepository;
 use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, OpenApi, ToSchema};
@@ -69,13 +69,16 @@ pub fn router(
     Router::new()
         .route("/api/definition", post(create_definition).get(list_definitions))
         .route("/api/definition/import", post(import_definitions))
-        .route("/api/definition/{id}", axum::routing::get(get_definition))
+        .route("/api/definition/{id}", axum::routing::get(get_definition).delete(delete_definition))
         .route("/api/definition/{id}/spec", put(update_definition_spec))
         .route("/api/definition/{id}/changes", axum::routing::get(list_definition_changes))
         .route("/api/definition/{id}/status", put(update_definition_status))
         .route("/api/definition/{id}/case", post(create_case).get(list_cases))
         .route("/api/case", post(create_standalone_case).get(list_project_cases))
+        .route("/api/case/{id}", put(update_case).delete(delete_case))
         .route("/api/definition/{id}/mock", post(create_mock).get(list_mocks))
+        .route("/api/mock", axum::routing::get(list_project_mocks))
+        .route("/api/mock/{mock_id}", axum::routing::delete(delete_mock))
         .route("/api/module", post(create_module).get(list_modules))
         .route("/api/module/{id}", put(rename_module).delete(delete_module))
         .route("/api/definition/{id}/module", put(move_definition))
@@ -384,6 +387,39 @@ async fn get_definition(
     }
 }
 
+#[utoipa::path(
+    delete,
+    path = "/api/definition/{id}",
+    tag = "api-definition",
+    params(("id" = String, Path)),
+    responses((status = 204), (status = 404)),
+    security(("bearer" = []))
+)]
+async fn delete_definition(
+    user: AuthUser,
+    State(st): State<ApiDefinitionState>,
+    Path(id): Path<String>,
+) -> Response {
+    if !user.can("API_DEFINITION", "ADD") {
+        return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
+    match st.repo.get_definition(&id).await {
+        Ok(Some(_)) => {}
+        Ok(None) => return (StatusCode::NOT_FOUND, "api definition not found").into_response(),
+        Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
+    }
+    match st.repo.delete_definition(&id).await {
+        Ok(()) => {
+            let _ = st
+                .repo
+                .record_definition_change(&id, "DELETE", "删除接口定义(连带用例/Mock)", &user.user_id)
+                .await;
+            StatusCode::NO_CONTENT.into_response()
+        }
+        Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
+    }
+}
+
 #[derive(Debug, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 struct SpecUpdateBody {
@@ -636,7 +672,7 @@ async fn create_mock(
     };
     match st
         .add_mock
-        .execute(&id, &req.name, match_rule, response_status, req.response_body, enabled, extras)
+        .execute(&id, &req.name, match_rule, response_status, req.response_body, enabled, extras, &user.user_id)
         .await
     {
         Ok(m) => (StatusCode::CREATED, Json(ApiMockResponse::from(m))).into_response(),
@@ -660,6 +696,114 @@ async fn list_mocks(State(st): State<ApiDefinitionState>, Path(id): Path<String>
                 list.into_iter().map(ApiMockResponse::from).collect();
             (StatusCode::OK, Json(items)).into_response()
         }
+        Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
+    }
+}
+
+/// 项目级 Mock 行(Mock + 所属定义的 方法/路径/协议/名称)。供「MOCK 视图」表格。
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+struct ProjectMockResponse {
+    id: String,
+    api_definition_id: String,
+    name: String,
+    enabled: bool,
+    response_status: i32,
+    #[schema(value_type = Vec<Object>)]
+    tags: serde_json::Value,
+    method: String,
+    path: String,
+    protocol: String,
+    definition_name: String,
+    operator: String,
+    updated_at: String,
+}
+
+#[utoipa::path(get, path = "/api/mock", tag = "api-definition", params(("projectId" = String, Query)), responses((status = 200, body = [ProjectMockResponse])))]
+async fn list_project_mocks(
+    State(st): State<ApiDefinitionState>,
+    Query(q): Query<DefinitionListQuery>,
+) -> Response {
+    match st.repo.list_mocks_by_project(&q.project_id).await {
+        Ok(rows) => {
+            let items: Vec<ProjectMockResponse> = rows
+                .into_iter()
+                .map(|r| ProjectMockResponse {
+                    id: r.mock.id,
+                    api_definition_id: r.mock.api_definition_id,
+                    name: r.mock.name,
+                    enabled: r.mock.enabled,
+                    response_status: r.mock.response_status,
+                    tags: r.mock.tags,
+                    method: r.method,
+                    path: r.path,
+                    protocol: r.protocol,
+                    definition_name: r.definition_name,
+                    operator: r.operator,
+                    updated_at: r.updated_at,
+                })
+                .collect();
+            (StatusCode::OK, Json(items)).into_response()
+        }
+        Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
+    }
+}
+
+#[utoipa::path(put, path = "/api/case/{id}", tag = "api-definition", params(("id" = String, Path)), request_body = ApiCaseCreateBody, responses((status = 204), (status = 400), (status = 404)), security(("bearer" = [])))]
+async fn update_case(
+    user: AuthUser,
+    State(st): State<ApiDefinitionState>,
+    Path(id): Path<String>,
+    Json(req): Json<ApiCaseCreateBody>,
+) -> Response {
+    if !user.can("API_DEFINITION", "ADD") {
+        return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
+    let assertions = req.assertions.unwrap_or_else(|| serde_json::json!([]));
+    // api_definition_id/project_id 在 UPDATE 中不变,用占位空串构造(NewApiCase 仅校验 name/url/method)。
+    let new_case = match NewApiCase::new("_", "_", &req.name, &req.method, &req.url, req.body, assertions) {
+        Ok(c) => c
+            .with_processors(req.processors.unwrap_or_else(|| serde_json::json!([])))
+            .with_meta(
+                &req.priority.unwrap_or_default(),
+                &req.status.unwrap_or_default(),
+                req.tags.unwrap_or_else(|| serde_json::json!([])),
+            )
+            .with_headers(req.headers.unwrap_or_else(|| serde_json::json!([])))
+            .with_request(
+                req.query_params.unwrap_or_else(|| serde_json::json!([])),
+                req.rest_params.unwrap_or_else(|| serde_json::json!([])),
+                req.auth.unwrap_or_else(|| serde_json::json!({})),
+            ),
+        Err(_) => return (StatusCode::BAD_REQUEST, "invalid api case payload").into_response(),
+    };
+    match st.repo.update_case(&id, &new_case).await {
+        Ok(true) => StatusCode::NO_CONTENT.into_response(),
+        Ok(false) => (StatusCode::NOT_FOUND, "api case not found").into_response(),
+        Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
+    }
+}
+
+#[utoipa::path(delete, path = "/api/case/{id}", tag = "api-definition", params(("id" = String, Path)), responses((status = 204), (status = 404)), security(("bearer" = [])))]
+async fn delete_case(user: AuthUser, State(st): State<ApiDefinitionState>, Path(id): Path<String>) -> Response {
+    if !user.can("API_DEFINITION", "ADD") {
+        return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
+    match st.repo.delete_case(&id).await {
+        Ok(true) => StatusCode::NO_CONTENT.into_response(),
+        Ok(false) => (StatusCode::NOT_FOUND, "api case not found").into_response(),
+        Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
+    }
+}
+
+#[utoipa::path(delete, path = "/api/mock/{mock_id}", tag = "api-definition", params(("mock_id" = String, Path)), responses((status = 204), (status = 404)), security(("bearer" = [])))]
+async fn delete_mock(user: AuthUser, State(st): State<ApiDefinitionState>, Path(mock_id): Path<String>) -> Response {
+    if !user.can("API_DEFINITION", "ADD") {
+        return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
+    match st.repo.delete_mock(&mock_id).await {
+        Ok(true) => StatusCode::NO_CONTENT.into_response(),
+        Ok(false) => (StatusCode::NOT_FOUND, "mock not found").into_response(),
         Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
     }
 }
@@ -937,12 +1081,34 @@ struct ImportBody {
     project_id: String,
     /// OpenAPI 3.x / Swagger 2.0 文档(JSON)。
     content: serde_json::Value,
+    /// 新建定义归入的模块(缺省=未归类);group_by_tag 开启时作为按 tag 自建子模块的父级。
+    #[serde(default)]
+    module_id: Option<String>,
+    /// 按 OpenAPI 首个 tag 自动建/复用子模块并归类(默认开启,对齐 OpenAPI 的 tag 分组)。
+    #[serde(default = "default_group_by_tag")]
+    group_by_tag: bool,
+    /// 导入模式:true=覆盖已存在(默认),false=不覆盖(跳过)。
+    #[serde(default = "default_overwrite")]
+    overwrite: bool,
+    /// 覆盖时是否同步更新已存在接口的所在目录到选定模块。
+    #[serde(default)]
+    sync_module: bool,
+}
+
+fn default_overwrite() -> bool {
+    true
+}
+
+fn default_group_by_tag() -> bool {
+    true
 }
 
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 struct ImportResultResponse {
     created: Vec<ApiDefinitionResponse>,
+    /// 覆盖更新的接口数(同 方法+路径 已存在,导入只刷新其 spec)。
+    updated: usize,
     skipped: usize,
 }
 
@@ -962,11 +1128,25 @@ async fn import_definitions(
     if !user.can("API_DEFINITION", "ADD") {
         return (StatusCode::FORBIDDEN, "permission denied").into_response();
     }
-    match st.import_def.execute(&req.project_id, &req.content).await {
+    match st
+        .import_def
+        .execute(
+            &req.project_id,
+            &req.content,
+            req.module_id.as_deref().filter(|s| !s.is_empty()),
+            req.group_by_tag,
+            req.overwrite,
+            req.sync_module,
+        )
+        .await
+    {
         Ok(out) => {
             let created: Vec<ApiDefinitionResponse> =
                 out.created.into_iter().map(ApiDefinitionResponse::from).collect();
-            (StatusCode::CREATED, Json(ImportResultResponse { created, skipped: out.skipped }))
+            (
+                StatusCode::CREATED,
+                Json(ImportResultResponse { created, updated: out.updated, skipped: out.skipped }),
+            )
                 .into_response()
         }
         Err(ImportError::Parse(_)) => {
@@ -985,6 +1165,7 @@ async fn import_definitions(
         import_definitions,
         list_definitions,
         get_definition,
+        delete_definition,
         update_definition_spec,
         update_definition_status,
         list_definition_changes,

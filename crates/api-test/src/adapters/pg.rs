@@ -60,7 +60,31 @@ impl ResourcePoolPort for PgResourcePool {
     }
 }
 
-// ---- 资源池管理(创建 / 列出)----
+// ---- 资源池管理(创建 / 列出 / 取单 / 更新 / 删除)----
+
+/// 统一列清单:时间列格式化为 `YYYY-MM-DD HH:MM:SS` 文本,与参考 UI 展示一致。
+const POOL_COLS: &str = "id, name, enabled, description, max_concurrency, pool_type, all_org, org_ids, server_url, config, \
+     to_char(created_at, 'YYYY-MM-DD HH24:MI:SS') AS created_at, \
+     to_char(updated_at, 'YYYY-MM-DD HH24:MI:SS') AS updated_at";
+
+/// 行 → 视图:org_ids/config 走 JSONB(`sqlx::types::Json`)。
+fn map_pool(r: &sqlx::postgres::PgRow) -> Result<ResourcePool, PortError> {
+    Ok(ResourcePool {
+        id: r.try_get("id").map_err(map_err)?,
+        name: r.try_get("name").map_err(map_err)?,
+        enabled: r.try_get("enabled").map_err(map_err)?,
+        description: r.try_get("description").map_err(map_err)?,
+        max_concurrency: r.try_get("max_concurrency").map_err(map_err)?,
+        pool_type: r.try_get("pool_type").map_err(map_err)?,
+        all_org: r.try_get("all_org").map_err(map_err)?,
+        org_ids: r.try_get::<sqlx::types::Json<Vec<String>>, _>("org_ids").map_err(map_err)?.0,
+        server_url: r.try_get("server_url").map_err(map_err)?,
+        config: r.try_get::<sqlx::types::Json<serde_json::Value>, _>("config").map_err(map_err)?.0,
+        created_at: r.try_get("created_at").map_err(map_err)?,
+        updated_at: r.try_get("updated_at").map_err(map_err)?,
+    })
+}
+
 #[derive(Clone)]
 pub struct PgResourcePoolAdmin {
     pool: PgPool,
@@ -76,38 +100,72 @@ impl PgResourcePoolAdmin {
 impl ResourcePoolAdminPort for PgResourcePoolAdmin {
     async fn create(&self, new_pool: &NewResourcePool) -> Result<ResourcePool, PortError> {
         // id 走表默认 gen_random_uuid()::text(见迁移 0025)。
-        let row = sqlx::query(
-            "INSERT INTO ms_resource_pool (name, enabled, deleted) VALUES ($1, $2, false) \
-             RETURNING id, name, enabled",
-        )
-        .bind(&new_pool.name)
-        .bind(new_pool.enabled)
-        .fetch_one(&self.pool)
-        .await
-        .map_err(map_err)?;
-        Ok(ResourcePool {
-            id: row.try_get("id").map_err(map_err)?,
-            name: row.try_get("name").map_err(map_err)?,
-            enabled: row.try_get("enabled").map_err(map_err)?,
-        })
+        let sql = format!(
+            "INSERT INTO ms_resource_pool \
+             (name, enabled, description, max_concurrency, pool_type, all_org, org_ids, server_url, config, deleted) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, false) RETURNING {POOL_COLS}"
+        );
+        let row = sqlx::query(&sql)
+            .bind(&new_pool.name)
+            .bind(new_pool.enabled)
+            .bind(&new_pool.description)
+            .bind(new_pool.max_concurrency)
+            .bind(&new_pool.pool_type)
+            .bind(new_pool.all_org)
+            .bind(sqlx::types::Json(&new_pool.org_ids))
+            .bind(&new_pool.server_url)
+            .bind(sqlx::types::Json(&new_pool.config))
+            .fetch_one(&self.pool)
+            .await
+            .map_err(map_err)?;
+        map_pool(&row)
     }
 
     async fn list(&self) -> Result<Vec<ResourcePool>, PortError> {
-        let rows = sqlx::query(
-            "SELECT id, name, enabled FROM ms_resource_pool WHERE NOT deleted ORDER BY name",
+        let sql = format!("SELECT {POOL_COLS} FROM ms_resource_pool WHERE NOT deleted ORDER BY created_at DESC");
+        let rows = sqlx::query(&sql).fetch_all(&self.pool).await.map_err(map_err)?;
+        rows.iter().map(map_pool).collect()
+    }
+
+    async fn get(&self, id: &str) -> Result<Option<ResourcePool>, PortError> {
+        let sql = format!("SELECT {POOL_COLS} FROM ms_resource_pool WHERE id = $1 AND NOT deleted");
+        let row = sqlx::query(&sql).bind(id).fetch_optional(&self.pool).await.map_err(map_err)?;
+        row.as_ref().map(map_pool).transpose()
+    }
+
+    async fn update(&self, id: &str, new_pool: &NewResourcePool) -> Result<Option<ResourcePool>, PortError> {
+        let sql = format!(
+            "UPDATE ms_resource_pool SET \
+             name = $2, enabled = $3, description = $4, max_concurrency = $5, pool_type = $6, \
+             all_org = $7, org_ids = $8, server_url = $9, config = $10, updated_at = now() \
+             WHERE id = $1 AND NOT deleted RETURNING {POOL_COLS}"
+        );
+        let row = sqlx::query(&sql)
+            .bind(id)
+            .bind(&new_pool.name)
+            .bind(new_pool.enabled)
+            .bind(&new_pool.description)
+            .bind(new_pool.max_concurrency)
+            .bind(&new_pool.pool_type)
+            .bind(new_pool.all_org)
+            .bind(sqlx::types::Json(&new_pool.org_ids))
+            .bind(&new_pool.server_url)
+            .bind(sqlx::types::Json(&new_pool.config))
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(map_err)?;
+        row.as_ref().map(map_pool).transpose()
+    }
+
+    async fn delete(&self, id: &str) -> Result<bool, PortError> {
+        let res = sqlx::query(
+            "UPDATE ms_resource_pool SET deleted = true, updated_at = now() WHERE id = $1 AND NOT deleted",
         )
-        .fetch_all(&self.pool)
+        .bind(id)
+        .execute(&self.pool)
         .await
         .map_err(map_err)?;
-        rows.into_iter()
-            .map(|r| {
-                Ok(ResourcePool {
-                    id: r.try_get("id").map_err(map_err)?,
-                    name: r.try_get("name").map_err(map_err)?,
-                    enabled: r.try_get("enabled").map_err(map_err)?,
-                })
-            })
-            .collect()
+        Ok(res.rows_affected() > 0)
     }
 }
 
@@ -465,8 +523,8 @@ impl PgBatchReport {
     /// 落一行 RUNNING 报告,返回 report_id(用例结果按此 report_id 归组)。
     pub async fn create(&self, run_mode: &str, case_count: i32) -> Result<String, PortError> {
         let row = sqlx::query(
-            "INSERT INTO ms_api_batch_report (pool_id, run_mode, case_count, status) \
-             VALUES ('local', $1, $2, 'RUNNING') RETURNING id",
+            "INSERT INTO ms_api_batch_report (pool_id, run_mode, case_count, status, started_at) \
+             VALUES ('local', $1, $2, 'RUNNING', now()) RETURNING id",
         )
         .bind(run_mode)
         .bind(case_count)
@@ -478,7 +536,8 @@ impl PgBatchReport {
 
     /// 回写报告最终状态(SUCCESS/ERROR)。
     pub async fn set_status(&self, report_id: &str, status: &str) -> Result<(), PortError> {
-        sqlx::query("UPDATE ms_api_batch_report SET status = $2 WHERE id = $1")
+        // 终态时写 finished_at(用于报告总耗时);set_status 在运行结束调用,故直接 now()。
+        sqlx::query("UPDATE ms_api_batch_report SET status = $2, finished_at = now() WHERE id = $1")
             .bind(report_id)
             .bind(status)
             .execute(&self.pool)
@@ -514,11 +573,15 @@ impl PgBatchReport {
     /// 报告明细:报告头(状态/用例数)+ 逐用例结果(case_id/通过失败/失败原因/时间)。
     /// 不存在返回 None。注:当前未持久化响应时间/状态码/响应体(需执行器扩展)。
     pub async fn detail(&self, report_id: &str) -> Result<Option<BatchReportDetail>, PortError> {
-        let header = sqlx::query("SELECT status, case_count FROM ms_api_batch_report WHERE id = $1")
-            .bind(report_id)
-            .fetch_optional(&self.pool)
-            .await
-            .map_err(map_err)?;
+        let header = sqlx::query(
+            "SELECT status, case_count, started_at::text AS started_at, finished_at::text AS finished_at, \
+                    (EXTRACT(EPOCH FROM (finished_at - started_at)) * 1000)::bigint AS duration_ms \
+             FROM ms_api_batch_report WHERE id = $1",
+        )
+        .bind(report_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(map_err)?;
         let Some(h) = header else { return Ok(None) };
         let rows = sqlx::query(
             "SELECT case_id, outcome, failures, executed_at::text AS executed_at, \
@@ -567,6 +630,9 @@ impl PgBatchReport {
         Ok(Some(BatchReportDetail {
             status: h.try_get("status").map_err(map_err)?,
             case_count: h.try_get("case_count").map_err(map_err)?,
+            started_at: h.try_get("started_at").ok().flatten(),
+            finished_at: h.try_get("finished_at").ok().flatten(),
+            duration_ms: h.try_get("duration_ms").ok().flatten(),
             results,
         }))
     }
@@ -577,6 +643,10 @@ impl PgBatchReport {
 pub struct BatchReportDetail {
     pub status: String,
     pub case_count: i32,
+    /// 报告起止时间(0056 后回填;旧报告为 None)与总耗时(毫秒)。
+    pub started_at: Option<String>,
+    pub finished_at: Option<String>,
+    pub duration_ms: Option<i64>,
     pub results: Vec<CaseResultRow>,
 }
 

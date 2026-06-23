@@ -5,6 +5,7 @@ pub mod start_batch_run;
 
 pub use list_case_executions::ListCaseExecutionsUseCase;
 pub use manage_resource_pool::{
-    CreateResourcePoolError, CreateResourcePoolUseCase, ListResourcePoolsUseCase,
+    CreateResourcePoolError, CreateResourcePoolUseCase, EditResourcePoolUseCase,
+    ListResourcePoolsUseCase,
 };
 pub use start_batch_run::StartBatchRunUseCase;

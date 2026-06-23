@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use axum::{
     body::Bytes,
-    extract::{FromRef, Query, State},
+    extract::{FromRef, Path, Query, State},
     http::{header, StatusCode},
     response::{IntoResponse, Response},
     routing::{get, post},
@@ -25,12 +25,14 @@ use crate::application::{
     export_rows, CreateCaseError, CreateCaseUseCase, ImportCasesUseCase, ListCasesUseCase,
 };
 use crate::domain::{CaseStep, FunctionalCase};
+use crate::ports::CaseRepository;
 
 #[derive(Clone)]
 struct CaseState {
     create: CreateCaseUseCase,
     list: ListCasesUseCase,
     import: ImportCasesUseCase,
+    repo: Arc<dyn CaseRepository>,
     sessions: Arc<dyn SessionStore>,
 }
 
@@ -44,13 +46,95 @@ pub fn router(
     create: CreateCaseUseCase,
     list: ListCasesUseCase,
     import: ImportCasesUseCase,
+    repo: Arc<dyn CaseRepository>,
     sessions: Arc<dyn SessionStore>,
 ) -> Router {
     Router::new()
         .route("/functional-case", post(create_case).get(list_cases))
         .route("/functional-case/export", get(export_cases))
         .route("/functional-case/import", post(import_cases))
-        .with_state(CaseState { create, list, import, sessions })
+        // 需求 ↔ 功能用例 覆盖关联。
+        .route("/functional-case/{id}/requirements", get(case_requirements))
+        .route("/requirement-case/link", post(link_req_case))
+        .route("/requirement-case/unlink", post(unlink_req_case))
+        .route("/requirement/{id}/functional-coverage", get(requirement_coverage))
+        .with_state(CaseState { create, list, import, repo, sessions })
+}
+
+// ---------- 需求覆盖关联 handlers ----------
+
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+struct ReqCaseLinkBody {
+    requirement_id: String,
+    criterion_index: i32,
+    functional_case_id: String,
+    #[serde(default)]
+    project_id: String,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+struct CoverageCaseDto {
+    criterion_index: i32,
+    case_id: String,
+    case_name: String,
+    module: String,
+    priority: String,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+struct CaseRequirementDto {
+    requirement_id: String,
+    requirement_title: String,
+    criterion_index: i32,
+}
+
+async fn link_req_case(user: AuthUser, State(st): State<CaseState>, Json(b): Json<ReqCaseLinkBody>) -> Response {
+    if !user.can("FUNCTIONAL_CASE", "ADD") {
+        return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
+    match st.repo.link_requirement_case(&b.requirement_id, b.criterion_index, &b.functional_case_id, &b.project_id).await {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
+    }
+}
+
+async fn unlink_req_case(user: AuthUser, State(st): State<CaseState>, Json(b): Json<ReqCaseLinkBody>) -> Response {
+    if !user.can("FUNCTIONAL_CASE", "ADD") {
+        return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
+    match st.repo.unlink_requirement_case(&b.requirement_id, b.criterion_index, &b.functional_case_id).await {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
+    }
+}
+
+async fn requirement_coverage(State(st): State<CaseState>, Path(id): Path<String>) -> Response {
+    match st.repo.cases_for_requirement(&id).await {
+        Ok(rows) => {
+            let items: Vec<CoverageCaseDto> = rows
+                .into_iter()
+                .map(|r| CoverageCaseDto { criterion_index: r.criterion_index, case_id: r.case_id, case_name: r.case_name, module: r.module, priority: r.priority })
+                .collect();
+            (StatusCode::OK, Json(items)).into_response()
+        }
+        Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
+    }
+}
+
+async fn case_requirements(State(st): State<CaseState>, Path(id): Path<String>) -> Response {
+    match st.repo.requirements_for_case(&id).await {
+        Ok(rows) => {
+            let items: Vec<CaseRequirementDto> = rows
+                .into_iter()
+                .map(|r| CaseRequirementDto { requirement_id: r.requirement_id, requirement_title: r.requirement_title, criterion_index: r.criterion_index })
+                .collect();
+            (StatusCode::OK, Json(items)).into_response()
+        }
+        Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
+    }
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -262,7 +346,8 @@ mod tests {
         let r = router(
             CreateCaseUseCase::new(repo.clone()),
             ListCasesUseCase::new(repo.clone()),
-            ImportCasesUseCase::new(repo),
+            ImportCasesUseCase::new(repo.clone()),
+            repo,
             sessions,
         );
         (r, token)

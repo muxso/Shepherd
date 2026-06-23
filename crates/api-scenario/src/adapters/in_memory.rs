@@ -57,6 +57,7 @@ impl ApiScenarioRepository for InMemoryApiScenarioRepository {
             created_at: String::new(),
             updated_at: String::new(),
             steps: Vec::new(),
+            last_result: None,
         };
         state.scenarios.insert(scenario.id.clone(), Record { scenario: scenario.clone() });
         Ok(scenario)
@@ -132,6 +133,10 @@ impl ApiScenarioRepository for InMemoryApiScenarioRepository {
         let before = rec.scenario.steps.len();
         rec.scenario.steps.retain(|s| s.id != step_id);
         Ok(rec.scenario.steps.len() != before)
+    }
+
+    async fn delete_scenario(&self, id: &str) -> Result<bool, RepoError> {
+        Ok(self.state.lock().expect("lock").scenarios.remove(id).is_some())
     }
 
     async fn reorder_steps(&self, scenario_id: &str, ordered_ids: &[String]) -> Result<(), RepoError> {

@@ -6,7 +6,7 @@ use async_trait::async_trait;
 use sqlx::{PgPool, Row};
 
 use crate::domain::{FunctionalCase, NewFunctionalCase};
-use crate::ports::{CaseRepository, RepoError};
+use crate::ports::{CaseRepository, CaseRequirement, CoverageCase, RepoError};
 
 #[derive(Clone)]
 pub struct PgCaseRepository {
@@ -104,5 +104,91 @@ impl CaseRepository for PgCaseRepository {
         .await
         .map_err(map_err)?;
         row.as_ref().map(row_to_case).transpose()
+    }
+
+    async fn link_requirement_case(
+        &self,
+        requirement_id: &str,
+        criterion_index: i32,
+        functional_case_id: &str,
+        project_id: &str,
+    ) -> Result<(), RepoError> {
+        sqlx::query(
+            "INSERT INTO ms_requirement_case (requirement_id, criterion_index, functional_case_id, project_id) \
+             VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING",
+        )
+        .bind(requirement_id)
+        .bind(criterion_index)
+        .bind(functional_case_id)
+        .bind(project_id)
+        .execute(&self.pool)
+        .await
+        .map_err(map_err)?;
+        Ok(())
+    }
+
+    async fn unlink_requirement_case(
+        &self,
+        requirement_id: &str,
+        criterion_index: i32,
+        functional_case_id: &str,
+    ) -> Result<(), RepoError> {
+        sqlx::query(
+            "DELETE FROM ms_requirement_case \
+             WHERE requirement_id = $1 AND criterion_index = $2 AND functional_case_id = $3",
+        )
+        .bind(requirement_id)
+        .bind(criterion_index)
+        .bind(functional_case_id)
+        .execute(&self.pool)
+        .await
+        .map_err(map_err)?;
+        Ok(())
+    }
+
+    async fn cases_for_requirement(&self, requirement_id: &str) -> Result<Vec<CoverageCase>, RepoError> {
+        let rows = sqlx::query(
+            "SELECT rc.criterion_index, rc.functional_case_id, c.name, c.module, c.priority \
+             FROM ms_requirement_case rc JOIN ms_functional_case c ON c.id = rc.functional_case_id \
+             WHERE rc.requirement_id = $1 AND NOT c.deleted \
+             ORDER BY rc.criterion_index, c.name",
+        )
+        .bind(requirement_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(map_err)?;
+        rows.iter()
+            .map(|r| {
+                Ok(CoverageCase {
+                    criterion_index: r.try_get("criterion_index").map_err(map_err)?,
+                    case_id: r.try_get("functional_case_id").map_err(map_err)?,
+                    case_name: r.try_get("name").map_err(map_err)?,
+                    module: r.try_get("module").map_err(map_err)?,
+                    priority: r.try_get("priority").map_err(map_err)?,
+                })
+            })
+            .collect()
+    }
+
+    async fn requirements_for_case(&self, functional_case_id: &str) -> Result<Vec<CaseRequirement>, RepoError> {
+        let rows = sqlx::query(
+            "SELECT rc.requirement_id, rc.criterion_index, r.title \
+             FROM ms_requirement_case rc JOIN ms_requirement r ON r.id = rc.requirement_id \
+             WHERE rc.functional_case_id = $1 AND NOT r.deleted \
+             ORDER BY r.title, rc.criterion_index",
+        )
+        .bind(functional_case_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(map_err)?;
+        rows.iter()
+            .map(|r| {
+                Ok(CaseRequirement {
+                    requirement_id: r.try_get("requirement_id").map_err(map_err)?,
+                    requirement_title: r.try_get("title").map_err(map_err)?,
+                    criterion_index: r.try_get("criterion_index").map_err(map_err)?,
+                })
+            })
+            .collect()
     }
 }

@@ -19,7 +19,7 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use utoipa::{OpenApi, ToSchema};
 
-use api_runner::{Assertion, HttpMethod, MatchCondition, RequestSpec};
+use api_runner::{Assertion, HttpMethod, MatchCondition, Processor, RequestSpec};
 use api_scenario::application::{
     CompileError, CompileScenarioUseCase, RecordScenarioExecutionUseCase,
 };
@@ -90,6 +90,10 @@ struct ScenarioReportResponse {
     report_id: String,
     status: String,
     case_count: i32,
+    /// 报告起止时间与总耗时(毫秒,wall-clock;0056 后回填,旧报告为 null)。
+    started_at: Option<String>,
+    finished_at: Option<String>,
+    duration_ms: Option<i64>,
     results: Vec<ReportResultItem>,
 }
 
@@ -128,6 +132,9 @@ async fn scenario_report(
                 report_id,
                 status: d.status,
                 case_count: d.case_count,
+                started_at: d.started_at,
+                finished_at: d.finished_at,
+                duration_ms: d.duration_ms,
                 results: d
                     .results
                     .into_iter()
@@ -173,26 +180,78 @@ fn method_of(m: &str) -> HttpMethod {
     serde_json::from_value(serde_json::Value::String(m.to_uppercase())).unwrap_or(HttpMethod::Get)
 }
 
-fn to_nodes(steps: &[PlanStep], once: &mut u32) -> Vec<PlanNode> {
+/// JSONB `[{key,value,enabled?}]` → `(名,值)` 列表;非数组/缺名/`enabled:false` 跳过(同 ms_api_case)。
+fn parse_kv(v: &serde_json::Value) -> Vec<(String, String)> {
+    v.as_array()
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|it| {
+                    if it.get("enabled").and_then(|x| x.as_bool()) == Some(false) {
+                        return None;
+                    }
+                    let k = it.get("key")?.as_str()?.trim();
+                    if k.is_empty() {
+                        return None;
+                    }
+                    Some((k.to_string(), it.get("value").and_then(|x| x.as_str()).unwrap_or("").to_string()))
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// 认证 `{type,token}` → 一条 Authorization 头(none/空 token 则 None)。
+fn auth_header(v: &serde_json::Value) -> Option<(String, String)> {
+    let token = v.get("token").and_then(|x| x.as_str()).unwrap_or("").trim();
+    if token.is_empty() {
+        return None;
+    }
+    match v.get("type").and_then(|x| x.as_str()).unwrap_or("none") {
+        "bearer" => Some(("Authorization".to_string(), format!("Bearer {token}"))),
+        "basic" => Some(("Authorization".to_string(), format!("Basic {token}"))),
+        _ => None,
+    }
+}
+
+/// 把 query 参数拼到 url(已带 `?` 用 `&` 续接)。
+fn merge_query(url: &str, query: &[(String, String)]) -> String {
+    if query.is_empty() {
+        return url.to_string();
+    }
+    let qs = query.iter().map(|(k, v)| format!("{k}={v}")).collect::<Vec<_>>().join("&");
+    let sep = if url.contains('?') { '&' } else { '?' };
+    format!("{url}{sep}{qs}")
+}
+
+pub(crate) fn to_nodes(steps: &[PlanStep], once: &mut u32) -> Vec<PlanNode> {
     steps.iter().map(|s| to_node(s, once)).collect()
 }
 
 fn to_node(step: &PlanStep, once: &mut u32) -> PlanNode {
     match step {
         PlanStep::Case(id) => PlanNode::Leaf(Leaf::Case { case_id: id.clone() }),
-        PlanStep::Request(r) => PlanNode::Leaf(Leaf::Request {
-            label: format!("{} {}", r.method, r.url),
-            request: RequestSpec {
-                method: method_of(&r.method),
-                url: r.url.clone(),
-                headers: vec![],
-                body: r.body.clone(),
-            },
-            // 中立 JSON 断言 → 具体 Assertion(形态不符则回落空,不致命),执行器据此判定。
-            assertions: serde_json::from_value::<Vec<Assertion>>(r.assertions.clone())
-                .unwrap_or_default(),
-            processors: vec![],
-        }),
+        PlanStep::Request(r) => {
+            // 请求头 = 存储头 + 认证头;REST 路径参数替换 {key};Query 拼到 URL。
+            let mut headers = parse_kv(&r.headers);
+            if let Some(a) = auth_header(&r.auth) {
+                headers.push(a);
+            }
+            let mut url = r.url.clone();
+            for (k, v) in parse_kv(&r.rest_params) {
+                url = url.replace(&format!("{{{k}}}"), &v);
+            }
+            url = merge_query(&url, &parse_kv(&r.query_params));
+            PlanNode::Leaf(Leaf::Request {
+                label: format!("{} {}", r.method, url),
+                request: RequestSpec { method: method_of(&r.method), url, headers, body: r.body.clone() },
+                // 中立 JSON 断言 → 具体 Assertion(形态不符则回落空,不致命),执行器据此判定。
+                assertions: serde_json::from_value::<Vec<Assertion>>(r.assertions.clone())
+                    .unwrap_or_default(),
+                // 中立 JSON 处理器 → EXTRACT/WAIT(形态不符回落空)。
+                processors: serde_json::from_value::<Vec<Processor>>(r.processors.clone())
+                    .unwrap_or_default(),
+            })
+        }
         PlanStep::Loop { times, body } => {
             PlanNode::Loop { times: *times, body: to_nodes(body, once) }
         }
@@ -213,7 +272,7 @@ fn to_node(step: &PlanStep, once: &mut u32) -> PlanNode {
 }
 
 /// 静态叶子数(循环体只算一次),作场景执行记录的 case_count。
-fn count_leaves(nodes: &[PlanNode]) -> usize {
+pub(crate) fn count_leaves(nodes: &[PlanNode]) -> usize {
     nodes
         .iter()
         .map(|n| match n {

@@ -63,7 +63,7 @@ body {
 .ms-worktabs > .ant-tabs-nav .ant-tabs-tab-active {
   background: #fff !important;
   border-color: #eef0f2 !important;
-  box-shadow: inset 0 2px 0 #7c3aed;
+  box-shadow: inset 0 2px 0 #06a561;
 }
 .ms-worktabs > .ant-tabs-nav .ant-tabs-tab-active .ant-tabs-tab-btn {
   color: #1f2329 !important;
@@ -81,6 +81,24 @@ body {
 .ms-detail-tabs > .ant-tabs-nav {
   margin-bottom: 12px;
 }
+/* 仅「引用关系」预览子标签用:让内容填满可用高度(关系图整套铺满,而非固定 vh 留白)。
+   作用域到 .ms-fill-tabs,避免影响其它 .ms-detail-tabs 用例。 */
+.ms-fill-tabs {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+.ms-fill-tabs > .ant-tabs-content-holder {
+  flex: 1;
+  min-height: 0;
+}
+.ms-fill-tabs > .ant-tabs-content-holder > .ant-tabs-content {
+  height: 100%;
+}
+.ms-fill-tabs > .ant-tabs-content-holder > .ant-tabs-content > .ant-tabs-tabpane {
+  height: 100%;
+  overflow: auto;
+}
 .ms-detail-tabs > .ant-tabs-nav .ant-tabs-tab {
   padding: 8px 2px !important;
   font-size: 14px;
@@ -89,14 +107,14 @@ body {
   margin-left: 22px !important;
 }
 .ms-detail-tabs > .ant-tabs-nav .ant-tabs-tab-active .ant-tabs-tab-btn {
-  color: #7c3aed !important;
+  color: #06a561 !important;
   font-weight: 600;
 }
 .ms-detail-tabs > .ant-tabs-nav .ant-tabs-tab:hover .ant-tabs-tab-btn {
-  color: #7c3aed !important;
+  color: #06a561 !important;
 }
 .ms-detail-tabs > .ant-tabs-nav .ant-tabs-ink-bar {
-  background: #7c3aed;
+  background: #06a561;
 }
 
 /* 表格观感:表头浅灰、行距更紧 */
@@ -118,5 +136,29 @@ body {
 
 /* 顶栏一级导航选中项:紫色下划线 */
 .ant-menu-horizontal.ant-menu-dark .ant-menu-item-selected {
-  border-bottom: 2px solid #7c3aed;
+  border-bottom: 2px solid #06a561;
+}
+
+/* 场景步骤执行进度:整行背景从左到右填充(类似 0→100%),按执行顺序错峰起跑;
+   执行中蓝色填充,完成后整行变绿(通过)/红(失败)。置于内容之下(z-index:-1),文字可读。子步骤同样适用。 */
+.ms-step-fillbg {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  z-index: -1;
+  pointer-events: none;
+}
+.ms-step-fillbg.run {
+  width: 0;
+  background: rgba(22, 119, 255, 0.13);
+  animation: ms-step-grow 0.7s ease-out forwards;
+}
+.ms-step-fillbg.done {
+  width: 100%;
+  transition: background 0.2s ease;
+}
+@keyframes ms-step-grow {
+  from { width: 0; }
+  to { width: 100%; }
 }

@@ -31,6 +31,7 @@ pub fn router(pool: PgPool, sessions: Arc<dyn SessionStore>) -> Router {
     Router::new()
         .route("/api/project-file", get(list_files).post(upload_file))
         .route("/api/project-file/{id}", axum::routing::delete(delete_file))
+        .route("/api/project-file/{id}/module", axum::routing::put(move_file))
         .route("/api/project-file/{id}/download", get(download_file))
         .with_state(St { pool, sessions })
 }
@@ -48,6 +49,8 @@ struct FileMeta {
     name: String,
     file_format: String,
     size_bytes: i64,
+    /// 归属模块 id;None = 未规划(顶层)。
+    module_id: Option<String>,
     created_by: Option<String>,
     created_at: String,
     updated_at: String,
@@ -55,7 +58,7 @@ struct FileMeta {
 
 async fn list_files(State(st): State<St>, Query(q): Query<ListQuery>) -> Response {
     let rows = sqlx::query(
-        "SELECT id, name, file_format, size_bytes, created_by, \
+        "SELECT id, name, file_format, size_bytes, module_id, created_by, \
                 created_at::text AS created_at, updated_at::text AS updated_at \
          FROM ms_project_file WHERE project_id = $1 ORDER BY created_at DESC",
     )
@@ -71,6 +74,7 @@ async fn list_files(State(st): State<St>, Query(q): Query<ListQuery>) -> Respons
                     name: r.try_get("name").unwrap_or_default(),
                     file_format: r.try_get("file_format").unwrap_or_default(),
                     size_bytes: r.try_get("size_bytes").unwrap_or(0),
+                    module_id: r.try_get("module_id").ok().flatten(),
                     created_by: r.try_get("created_by").ok().flatten(),
                     created_at: r.try_get("created_at").unwrap_or_default(),
                     updated_at: r.try_get("updated_at").unwrap_or_default(),
@@ -91,6 +95,9 @@ struct UploadBody {
     file_format: String,
     #[serde(default)]
     size_bytes: i64,
+    /// 目标模块 id;null/缺省/空 = 未规划。
+    #[serde(default)]
+    module_id: Option<String>,
     /// base64 文件内容(不含 data URI 前缀)。
     content_base64: String,
 }
@@ -99,9 +106,10 @@ async fn upload_file(user: AuthUser, State(st): State<St>, Json(b): Json<UploadB
     if b.name.trim().is_empty() {
         return (StatusCode::BAD_REQUEST, "name required").into_response();
     }
+    let module = b.module_id.as_deref().filter(|s| !s.is_empty());
     let row = sqlx::query(
-        "INSERT INTO ms_project_file (project_id, name, file_format, size_bytes, content_b64, created_by) \
-         VALUES ($1, $2, $3, $4, $5, $6) RETURNING id",
+        "INSERT INTO ms_project_file (project_id, name, file_format, size_bytes, content_b64, created_by, module_id) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id",
     )
     .bind(&b.project_id)
     .bind(b.name.trim())
@@ -109,6 +117,7 @@ async fn upload_file(user: AuthUser, State(st): State<St>, Json(b): Json<UploadB
     .bind(b.size_bytes)
     .bind(&b.content_base64)
     .bind(&user.user_id)
+    .bind(module)
     .fetch_one(&st.pool)
     .await;
     match row {
@@ -148,6 +157,30 @@ async fn delete_file(user: AuthUser, State(st): State<St>, Path(id): Path<String
         return (StatusCode::FORBIDDEN, "permission denied").into_response();
     }
     match sqlx::query("DELETE FROM ms_project_file WHERE id = $1").bind(&id).execute(&st.pool).await {
+        Ok(_) => StatusCode::NO_CONTENT.into_response(),
+        Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
+    }
+}
+
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+struct MoveFileBody {
+    /// 目标模块 id;null/缺省/空 = 移出到未规划。
+    #[serde(default)]
+    module_id: Option<String>,
+}
+
+async fn move_file(user: AuthUser, State(st): State<St>, Path(id): Path<String>, Json(b): Json<MoveFileBody>) -> Response {
+    if !user.can("PROJECT", "ADD") {
+        return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
+    let module = b.module_id.as_deref().filter(|s| !s.is_empty());
+    match sqlx::query("UPDATE ms_project_file SET module_id = $2, updated_at = now() WHERE id = $1")
+        .bind(&id)
+        .bind(module)
+        .execute(&st.pool)
+        .await
+    {
         Ok(_) => StatusCode::NO_CONTENT.into_response(),
         Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
     }

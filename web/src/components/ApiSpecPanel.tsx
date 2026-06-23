@@ -15,6 +15,7 @@ import {
   type ApiSpec,
   type ApiSpecKV,
   type ApiSpecResponse,
+  type BodySchemaNode,
   type DebugResponse,
   type Environment,
 } from '../api'
@@ -706,11 +707,14 @@ function BasicInfo({ definition, spec, patch, create }: { definition: ApiDefinit
         <Field label={t('apidef.ownerModule', '所属模块')}>
           <Select
             style={{ width: 280 }}
-            value={moduleId}
+            value={moduleId || ''}
             onChange={changeModule}
-            allowClear
             placeholder={t('apidef.unfiled', '未归类')}
-            options={modules.map((m) => ({ value: m.id, label: m.name }))}
+            // 对齐左侧树:始终含「未归类」选项 + 各模块(项目无模块时也不显示「暂无数据」)。
+            options={[
+              { value: '', label: t('apidef.unfiled', '未归类') },
+              ...modules.map((m) => ({ value: m.id, label: m.name })),
+            ]}
           />
         </Field>
       )}
@@ -1001,19 +1005,87 @@ function KVSection({
   )
 }
 
+// 由一个示例 JSON 值推断 Schema 节点(响应/无 bodySchema 的请求体用);对象/数组递归。
+function jsonNode(name: string, val: unknown): BodySchemaNode {
+  if (Array.isArray(val)) {
+    return { name, type: 'array', children: val.length ? [jsonNode('items', val[0])] : [] }
+  }
+  if (val && typeof val === 'object') {
+    return { name, type: 'object', children: Object.entries(val as Record<string, unknown>).map(([k, v]) => jsonNode(k, v)) }
+  }
+  const type: BodySchemaNode['type'] =
+    typeof val === 'number' ? (Number.isInteger(val) ? 'integer' : 'number') : typeof val === 'boolean' ? 'boolean' : 'string'
+  return { name, type, value: val == null ? '' : String(val) }
+}
+function jsonToSchemaNodes(text: string): BodySchemaNode[] {
+  try {
+    const v = JSON.parse(text)
+    if (Array.isArray(v)) return [jsonNode('[]', v[0])]
+    if (v && typeof v === 'object') return Object.entries(v as Record<string, unknown>).map(([k, val]) => jsonNode(k, val))
+  } catch {
+    /* 非 JSON:无 schema */
+  }
+  return []
+}
+
+/** 只读 Schema 表(参数名称 / 必填 / 类型 / 参数值 / 描述,object/array 可展开)。对齐参考图。 */
+function SchemaTable({ nodes }: { nodes: BodySchemaNode[] }) {
+  const { t } = useI18n()
+  type Row = { key: string; name: string; type: string; value?: string; desc: string; required: string; children?: Row[] }
+  // bodySchema 的 description 形如「必填」/「选填 · 用户名」;拆出必填标记 + 纯描述。
+  const toRows = (ns: BodySchemaNode[], prefix = ''): Row[] =>
+    ns.map((n, i) => {
+      const d = n.description || ''
+      const required = d.startsWith('必填') ? t('apidef.yes', '是') : d.startsWith('选填') ? t('apidef.no', '否') : '-'
+      const desc = d.replace(/^必填( · )?|^选填( · )?/, '')
+      return {
+        key: `${prefix}${i}-${n.name}`,
+        name: n.name,
+        type: n.type,
+        value: n.value,
+        required,
+        desc,
+        children: n.children?.length ? toRows(n.children, `${prefix}${i}-`) : undefined,
+      }
+    })
+  const cols: ColumnsType<Row> = [
+    { title: t('apidef.kvName', '参数名称'), dataIndex: 'name', render: (v: string) => <span className="ms-mono">{v}</span> },
+    { title: t('apidef.required', '必填'), dataIndex: 'required', width: 80 },
+    { title: t('apidef.colType', '类型'), dataIndex: 'type', width: 110 },
+    { title: t('apidef.kvValue', '参数值'), dataIndex: 'value', width: 180, render: (v?: string) => <span className="ms-mono">{v || '—'}</span> },
+    { title: t('apidef.kvDesc', '描述'), dataIndex: 'desc', render: (v: string) => <span style={{ color: '#8a9099' }}>{v || '—'}</span> },
+  ]
+  return <Table size="small" pagination={false} columns={cols} dataSource={toRows(nodes)} locale={{ emptyText: t('apidef.none', '无') }} />
+}
+
+/** Schema/JSON 切换器(预览 请求体/响应 共用)。 */
+function SchemaJsonToggle({ value, onChange }: { value: 'schema' | 'json'; onChange: (v: 'schema' | 'json') => void }) {
+  return (
+    <Segmented size="small" value={value} onChange={(v) => onChange(v as 'schema' | 'json')} options={[{ label: 'Schema', value: 'schema' }, { label: 'JSON', value: 'json' }]} />
+  )
+}
+
 /** 预览模式的请求体只读视图(显示 content-type + 内容)。 */
 function BodyView({ spec }: { spec: ApiSpec }) {
   const { t } = useI18n()
   const bt = spec.bodyType || (spec.requestBody ? 'raw' : 'none')
   const isForm = bt === 'form-data' || bt === 'x-www-form-urlencoded'
+  const isJson = bt === 'json' || bt === 'raw'
+  const [view, setView] = useState<'schema' | 'json'>('schema')
+  // Schema 优先用导入解析的 bodySchema 树;没有则从示例 JSON 推断。
+  const schemaNodes = (spec.bodySchema?.length ? spec.bodySchema : jsonToSchemaNodes(spec.requestBody || '')) as BodySchemaNode[]
+  const hasSchema = isJson && schemaNodes.length > 0
   return (
     <div>
       <SectionTitle
         extra={
           spec.requestBody ? (
-            <Button size="small" icon={<CopyOutlined />} onClick={() => copy(spec.requestBody || '', t('apidef.copied', '已复制'))}>
-              {t('a.copy', '复制')}
-            </Button>
+            <Space size={8}>
+              {hasSchema && <SchemaJsonToggle value={view} onChange={setView} />}
+              <Button size="small" icon={<CopyOutlined />} onClick={() => copy(spec.requestBody || '', t('apidef.copied', '已复制'))}>
+                {t('a.copy', '复制')}
+              </Button>
+            </Space>
           ) : undefined
         }
       >
@@ -1023,6 +1095,8 @@ function BodyView({ spec }: { spec: ApiSpec }) {
         <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('apidef.noBody', '请求没有 Body')} style={{ margin: '8px 0' }} />
       ) : isForm ? (
         <KVSection title="" rows={spec.formBody || []} editable={false} onChange={() => {}} hideTitle />
+      ) : hasSchema && view === 'schema' ? (
+        <SchemaTable nodes={schemaNodes} />
       ) : spec.requestBody ? (
         <pre className="ms-mono" style={{ background: '#f6f8fa', padding: 12, borderRadius: 6, margin: 0, fontSize: 12, maxHeight: 320, overflow: 'auto' }}>{spec.requestBody}</pre>
       ) : (
@@ -1046,8 +1120,6 @@ function ResponsesSection({
   const addRow = () => onChange([...responses, { status: 200, body: '' }])
   const delRow = (i: number) => onChange(responses.filter((_, idx) => idx !== i))
 
-  const sc = (s?: number) => (s == null ? 'default' : s < 300 ? 'green' : s < 400 ? 'gold' : 'red')
-
   return (
     <div>
       <SectionTitle
@@ -1065,31 +1137,49 @@ function ResponsesSection({
         <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('apidef.none', '无')} style={{ margin: '8px 0' }} />
       ) : (
         <Space direction="vertical" size={10} style={{ width: '100%' }}>
-          {responses.map((r, i) => (
-            <div key={i} style={{ border: '1px solid #eef0f2', borderRadius: 6, padding: 10 }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-                <span style={{ color: '#8a9099', fontSize: 12 }}>{t('apidef.statusCode', '状态码')}</span>
-                {editable ? (
+          {responses.map((r, i) =>
+            editable ? (
+              <div key={i} style={{ border: '1px solid #eef0f2', borderRadius: 6, padding: 10 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                  <span style={{ color: '#8a9099', fontSize: 12 }}>{t('apidef.statusCode', '状态码')}</span>
                   <InputNumber min={100} max={599} value={r.status} onChange={(v) => setRow(i, { status: v ?? undefined })} />
-                ) : (
-                  <Tag color={sc(r.status)}>{r.status ?? '—'}</Tag>
-                )}
-                <div style={{ flex: 1 }} />
-                {!editable && r.body && (
-                  <Button type="text" size="small" icon={<CopyOutlined />} onClick={() => copy(r.body || '', t('apidef.copied', '已复制'))} />
-                )}
-                {editable && <Button type="text" danger size="small" icon={<DeleteOutlined />} onClick={() => delRow(i)} />}
-              </div>
-              {editable ? (
+                  <div style={{ flex: 1 }} />
+                  <Button type="text" danger size="small" icon={<DeleteOutlined />} onClick={() => delRow(i)} />
+                </div>
                 <Input.TextArea rows={4} value={r.body} onChange={(e) => setRow(i, { body: e.target.value })} placeholder={t('apidef.responseBody', '响应体')} className="ms-mono" />
-              ) : r.body ? (
-                <pre className="ms-mono" style={{ background: '#f6f8fa', padding: 10, borderRadius: 6, margin: 0, fontSize: 12, maxHeight: 240, overflow: 'auto' }}>{r.body}</pre>
-              ) : (
-                <span style={{ color: '#bbb', fontSize: 12 }}>{t('apidef.none', '无')}</span>
-              )}
-            </div>
-          ))}
+              </div>
+            ) : (
+              <ReadonlyResponse key={i} r={r} />
+            ),
+          )}
         </Space>
+      )}
+    </div>
+  )
+}
+
+/** 预览模式的单个响应:状态码 + Schema/JSON 切换 + 复制(对齐参考图 响应体-JSON)。 */
+function ReadonlyResponse({ r }: { r: ApiSpecResponse }) {
+  const { t } = useI18n()
+  const [view, setView] = useState<'schema' | 'json'>('schema')
+  const sc = (s?: number) => (s == null ? 'default' : s < 300 ? 'green' : s < 400 ? 'gold' : 'red')
+  const nodes = jsonToSchemaNodes(r.body || '')
+  const hasSchema = nodes.length > 0
+  return (
+    <div style={{ border: '1px solid #eef0f2', borderRadius: 6, padding: 10 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+        <span style={{ color: '#8a9099', fontSize: 12 }}>{t('apidef.statusCode', '状态码')}</span>
+        <Tag color={sc(r.status)}>{r.status ?? '—'}</Tag>
+        <div style={{ flex: 1 }} />
+        {hasSchema && <SchemaJsonToggle value={view} onChange={setView} />}
+        {r.body && <Button type="text" size="small" icon={<CopyOutlined />} onClick={() => copy(r.body || '', t('apidef.copied', '已复制'))} />}
+      </div>
+      {hasSchema && view === 'schema' ? (
+        <SchemaTable nodes={nodes} />
+      ) : r.body ? (
+        <pre className="ms-mono" style={{ background: '#f6f8fa', padding: 10, borderRadius: 6, margin: 0, fontSize: 12, maxHeight: 240, overflow: 'auto' }}>{r.body}</pre>
+      ) : (
+        <span style={{ color: '#bbb', fontSize: 12 }}>{t('apidef.none', '无')}</span>
       )}
     </div>
   )

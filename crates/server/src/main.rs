@@ -190,7 +190,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 "FUNCTIONAL_CASE:READ+ADD".to_string(),
                 "RUNNER:READ+ADD+EDIT+EXECUTE".to_string(),
                 "PERF:READ+EXECUTE".to_string(),
-                "RESOURCE_POOL:READ+ADD".to_string(),
+                "RESOURCE_POOL:READ+ADD+UPDATE+DELETE".to_string(),
                 "REQUIREMENT:READ+ADD+UPDATE+DELETE".to_string(),
                 "TASK:READ+ADD+EXECUTE+UPDATE".to_string(),
                 "DELIVERY:READ+EXECUTE+UPDATE".to_string(),
@@ -379,7 +379,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // —— case 模块 ——
     let review_repo = Arc::new(PgReviewRepository::new(pool.clone()));
     let case_routes =
-        case::adapters::http::router(SubmitReviewUseCase::new(review_repo), sessions.clone());
+        case::adapters::http::router(SubmitReviewUseCase::new(review_repo.clone()), review_repo, sessions.clone());
 
     // —— bug 模块 ——
     let bug_repo = Arc::new(PgBugRepository::new(pool.clone()));
@@ -437,7 +437,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let api_pool_admin = Arc::new(api_test::adapters::pg::PgResourcePoolAdmin::new(pool.clone()));
     let resource_pool_routes = api_test::adapters::http::resource_pool_router(
         api_test::application::CreateResourcePoolUseCase::new(api_pool_admin.clone()),
-        api_test::application::ListResourcePoolsUseCase::new(api_pool_admin),
+        api_test::application::ListResourcePoolsUseCase::new(api_pool_admin.clone()),
+        api_test::application::EditResourcePoolUseCase::new(api_pool_admin),
         sessions.clone(),
     );
     // 用例执行记录(分页读 ms_api_case_result)。
@@ -473,7 +474,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let functional_case_routes = case_management::adapters::http::router(
         case_management::application::CreateCaseUseCase::new(case_repo.clone()),
         case_management::application::ListCasesUseCase::new(case_repo.clone()),
-        case_management::application::ImportCasesUseCase::new(case_repo),
+        case_management::application::ImportCasesUseCase::new(case_repo.clone()),
+        case_repo,
         sessions.clone(),
     );
 
@@ -492,14 +494,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let scenario_run_routes = scenario_run::router(
         api_scenario::application::CompileScenarioUseCase::new(scenario_repo.clone()),
         plan_executor,
-        api_envs,
+        api_envs.clone(),
         api_test::adapters::PgBatchReport::new(pool.clone()),
-        api_scenario::application::RecordScenarioExecutionUseCase::new(scenario_repo),
+        api_scenario::application::RecordScenarioExecutionUseCase::new(scenario_repo.clone()),
         sessions.clone(),
     );
 
-    // —— 原生压测(perf):POST /perf/run 后台施压 + GET /perf/report/{id} ——
-    let perf_routes = perf_run::router(pool.clone(), sessions.clone());
+    // —— 原生压测(perf):POST /perf/run(单接口)+ POST /perf/scenario/run(场景链)+ GET /perf/report/{id} ——
+    let perf_routes = perf_run::router(
+        pool.clone(),
+        sessions.clone(),
+        api_scenario::application::CompileScenarioUseCase::new(scenario_repo.clone()),
+        scenario_repo.clone(),
+        Arc::new(PgCaseSpecSource::new(pool.clone())),
+        api_envs,
+    );
     let debug_send_routes = debug_send::router(sessions.clone());
 
     // —— 测试计划定时执行(cron 到点拍统计快照)——

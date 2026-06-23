@@ -9,7 +9,7 @@ use crate::domain::{
     ApiCase, ApiDefinition, ApiDefinitionChange, ApiModule, ApiMock, ApiView, NewApiCase,
     NewApiDefinition, NewApiModule, NewApiMock, NewApiView,
 };
-use crate::ports::{ApiDefinitionRepository, RepoError};
+use crate::ports::{ApiDefinitionRepository, ProjectMockRow, RepoError};
 
 #[derive(Default)]
 struct State {
@@ -81,6 +81,24 @@ impl ApiDefinitionRepository for InMemoryApiDefinitionRepository {
                 d.status = s;
             }
         }
+        Ok(())
+    }
+
+    async fn delete_definition(&self, id: &str) -> Result<(), RepoError> {
+        let mut state = self.state.lock().expect("lock");
+        state.definitions.remove(id);
+        // 连带移除其用例(含插入顺序)与 Mock。
+        let case_ids: Vec<String> = state
+            .cases
+            .values()
+            .filter(|c| c.api_definition_id == id)
+            .map(|c| c.id.clone())
+            .collect();
+        for cid in &case_ids {
+            state.cases.remove(cid);
+        }
+        state.case_order.retain(|cid| !case_ids.contains(cid));
+        state.mocks.retain(|_, m| m.api_definition_id != id);
         Ok(())
     }
 
@@ -162,6 +180,36 @@ impl ApiDefinitionRepository for InMemoryApiDefinitionRepository {
         Ok(case)
     }
 
+    async fn update_case(&self, id: &str, c: &NewApiCase) -> Result<bool, RepoError> {
+        let mut state = self.state.lock().expect("lock");
+        let Some(existing) = state.cases.get_mut(id) else { return Ok(false) };
+        existing.name = c.name.clone();
+        existing.method = c.method.clone();
+        existing.url = c.url.clone();
+        existing.body = c.body.clone();
+        existing.assertions = c.assertions.clone();
+        existing.processors = c.processors.clone();
+        existing.priority = c.priority.clone();
+        existing.status = c.status.clone();
+        existing.tags = c.tags.clone();
+        existing.headers = c.headers.clone();
+        existing.query_params = c.query_params.clone();
+        existing.rest_params = c.rest_params.clone();
+        existing.auth = c.auth.clone();
+        Ok(true)
+    }
+
+    async fn delete_case(&self, id: &str) -> Result<bool, RepoError> {
+        let mut state = self.state.lock().expect("lock");
+        let removed = state.cases.remove(id).is_some();
+        state.case_order.retain(|cid| cid != id);
+        Ok(removed)
+    }
+
+    async fn delete_mock(&self, mock_id: &str) -> Result<bool, RepoError> {
+        Ok(self.state.lock().expect("lock").mocks.remove(mock_id).is_some())
+    }
+
     async fn list_cases(&self, api_definition_id: &str) -> Result<Vec<ApiCase>, RepoError> {
         let state = self.state.lock().expect("lock");
         let mut out: Vec<ApiCase> = state
@@ -228,6 +276,31 @@ impl ApiDefinitionRepository for InMemoryApiDefinitionRepository {
             .cloned()
             .collect();
         out.sort_by(|a, b| a.id.cmp(&b.id));
+        Ok(out)
+    }
+
+    async fn list_mocks_by_project(&self, project_id: &str) -> Result<Vec<ProjectMockRow>, RepoError> {
+        let state = self.state.lock().expect("lock");
+        let mut out: Vec<ProjectMockRow> = state
+            .mocks
+            .values()
+            .filter_map(|m| {
+                let d = state.definitions.get(&m.api_definition_id)?;
+                if d.project_id != project_id {
+                    return None;
+                }
+                Some(ProjectMockRow {
+                    mock: m.clone(),
+                    method: d.method.clone(),
+                    path: d.path.clone(),
+                    protocol: d.protocol.as_str().to_string(),
+                    definition_name: d.name.clone(),
+                    operator: String::new(),
+                    updated_at: String::new(),
+                })
+            })
+            .collect();
+        out.sort_by(|a, b| a.mock.id.cmp(&b.mock.id));
         Ok(out)
     }
 

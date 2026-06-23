@@ -49,6 +49,8 @@ fn row_to_scenario(row: &sqlx::postgres::PgRow) -> Result<ApiScenario, RepoError
         created_at: row.try_get::<String, _>("created_at").unwrap_or_default(),
         updated_at: row.try_get::<String, _>("updated_at").unwrap_or_default(),
         steps: Vec::new(),
+        // last_result 仅列表查询带出(子查询);单查无此列 → None。
+        last_result: row.try_get::<Option<String>, _>("last_result").ok().flatten(),
     })
 }
 
@@ -74,7 +76,8 @@ fn row_to_step(row: &sqlx::postgres::PgRow) -> Result<ScenarioStep, RepoError> {
                 v.get("assertions").cloned().unwrap_or_else(|| serde_json::Value::Array(vec![]));
             let req = InlineRequest::new(method, url, body)
                 .map_err(|e| RepoError::Backend(e.to_string()))?
-                .with_assertions(assertions);
+                .with_assertions(assertions)
+                .with_spec_json(&v);
             StepKind::Request(req)
         }
         "CASE" => StepKind::Case {
@@ -208,7 +211,9 @@ impl ApiScenarioRepository for PgApiScenarioRepository {
     ) -> Result<Vec<ApiScenario>, RepoError> {
         let rows = sqlx::query(
             "SELECT id, project_id, name, status, meta, created_by, \
-                    created_at::text AS created_at, updated_at::text AS updated_at, deleted \
+                    created_at::text AS created_at, updated_at::text AS updated_at, deleted, \
+                    (SELECT e.status FROM ms_api_scenario_execution e \
+                       WHERE e.scenario_id = ms_api_scenario.id ORDER BY e.created_at DESC LIMIT 1) AS last_result \
              FROM ms_api_scenario WHERE project_id = $1 AND deleted = false ORDER BY id",
         )
         .bind(project_id)
@@ -231,17 +236,8 @@ impl ApiScenarioRepository for PgApiScenarioRepository {
     ) -> Result<ScenarioStep, RepoError> {
         // 据步骤类型拆出 ref_id 与 inline 两列。
         let (ref_id, inline): (Option<String>, Option<serde_json::Value>) = match &step.kind {
-            StepKind::Request(req) => {
-                let mut v = serde_json::json!({ "method": req.method, "url": req.url });
-                if let Some(b) = &req.body {
-                    v["body"] = serde_json::Value::String(b.clone());
-                }
-                // 仅当有断言时落库,空数组省略,保持 inline 简洁。
-                if req.assertions.as_array().is_some_and(|a| !a.is_empty()) {
-                    v["assertions"] = req.assertions.clone();
-                }
-                (None, Some(v))
-            }
+            // method/url/body/assertions + 请求头/Query/REST/认证/处理器(空字段省略)。
+            StepKind::Request(req) => (None, Some(req.to_inline_json())),
             StepKind::Case { case_id } => (Some(case_id.clone()), step.snapshot.clone()),
             StepKind::Scenario { scenario_id } => {
                 (Some(scenario_id.clone()), step.snapshot.clone())
@@ -272,6 +268,21 @@ impl ApiScenarioRepository for PgApiScenarioRepository {
         let res = sqlx::query("DELETE FROM ms_api_scenario_step WHERE scenario_id = $1 AND id = $2")
             .bind(scenario_id)
             .bind(step_id)
+            .execute(&self.pool)
+            .await
+            .map_err(map_err)?;
+        Ok(res.rows_affected() > 0)
+    }
+
+    async fn delete_scenario(&self, id: &str) -> Result<bool, RepoError> {
+        // 软删场景;硬删其步骤(步骤表无软删列,且离开场景即无意义)。
+        let res = sqlx::query("UPDATE ms_api_scenario SET deleted = true WHERE id = $1 AND deleted = false")
+            .bind(id)
+            .execute(&self.pool)
+            .await
+            .map_err(map_err)?;
+        sqlx::query("DELETE FROM ms_api_scenario_step WHERE scenario_id = $1")
+            .bind(id)
             .execute(&self.pool)
             .await
             .map_err(map_err)?;
