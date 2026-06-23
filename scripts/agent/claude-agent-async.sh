@@ -48,11 +48,21 @@ BEFORE="$(git rev-parse HEAD 2>/dev/null || true)"
 event DECISION "调用 $CLAUDE_BIN 执行任务(headless, async)"
 
 err="$(mktemp)"
-if out="$(printf '%s' "$prompt" | "$CLAUDE_BIN" -p --output-format json --permission-mode acceptEdits 2>"$err")"; then
-  summary="$(printf '%s' "$out" | python3 -c 'import sys,json
-try: print(json.load(sys.stdin).get("result",""))
-except Exception: print("")' 2>/dev/null)"
-  [ -n "$summary" ] || summary="$out"
+out="$(printf '%s' "$prompt" | "$CLAUDE_BIN" -p --output-format json --permission-mode acceptEdits 2>"$err")"
+rc=$?
+# claude 出错时退出码可能仍为 0,但 JSON 里 is_error=true,真正错误在 stdout(result/error)
+# 而非 stderr —— 所以成败要看 stdout 的 is_error,失败要把 stdout 的错误文本回报。
+verdict="$(printf '%s' "$out" | python3 -c '
+import sys,json
+try:
+    d=json.load(sys.stdin)
+    txt=(d.get("result") or d.get("error") or "").replace(chr(10)," ").strip()[:700]
+    print(("OK" if not d.get("is_error") else "ERR")+chr(31)+(d.get("subtype") or "")+chr(31)+txt)
+except Exception:
+    print("RAW"+chr(31)+chr(31))' 2>/dev/null)"
+flag="${verdict%%$'\x1f'*}"; rest="${verdict#*$'\x1f'}"; subtype="${rest%%$'\x1f'*}"; rtext="${rest#*$'\x1f'}"
+if [ "$rc" -eq 0 ] && [ "$flag" = "OK" ]; then
+  summary="$rtext"; [ -n "$summary" ] || summary="$out"
   summary="$(printf '%s' "$summary" | tr '\n' ' ' | cut -c1-700)"
 
   # —— 交付物:把 Claude 的真实改动快照成 commit 推远端 ——
@@ -92,8 +102,13 @@ except Exception: print("")' 2>/dev/null)"
   post "/delivery/$AID/complete" \
     "$(python3 -c 'import json,sys;print(json.dumps({"kind":"DIFF","reference":sys.argv[1],"summary":sys.argv[2]}))' "$ref" "$summary")"
 else
-  msg="$(tr '\n' ' ' <"$err" | cut -c1-400)"
-  [ -n "$msg" ] || msg="claude 执行失败(无 stderr)"
-  post "/delivery/$AID/fail" "$(python3 -c 'import json,sys;print(json.dumps({"error":sys.argv[1]}))' "$msg")"
+  # 失败原因优先级:stdout 的 result/error 文本 → stderr → 原始 stdout 截断。
+  estderr="$(tr '\n' ' ' <"$err" | cut -c1-300)"
+  reason="$rtext"
+  [ -n "$reason" ] || reason="$estderr"
+  [ -n "$reason" ] || reason="$(printf '%s' "$out" | tr '\n' ' ' | cut -c1-300)"
+  [ -n "$reason" ] || reason="无可读错误(stdout/stderr 皆空)"
+  post "/delivery/$AID/fail" \
+    "$(python3 -c 'import json,sys;print(json.dumps({"error":sys.argv[1]}))' "claude 失败(exit=$rc${subtype:+, $subtype}): $reason")"
 fi
 rm -f "$err"
