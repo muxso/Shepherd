@@ -1,5 +1,8 @@
 // 分组柱状图(纯 SVG,无依赖)。每个 row 一组,组内每个 series 一根柱。
-// 用 viewBox + width:100% 自适应容器宽度;无数据时由调用方处理。
+// 宽度策略:测量容器宽度,内容自然宽 = 行数 × 每组最小宽。两者取大 →
+//   组少时撑满容器,组多时按自然宽渲染并由外层横向滚动(不再挤压)。
+import { useEffect, useRef, useState } from 'react'
+
 export interface BarSeries {
   key: string
   label: string
@@ -10,13 +13,30 @@ export interface BarRow {
   values: Record<string, number>
 }
 
+const MIN_GROUP_W = 72 // 每组最小宽度(px);组多时据此撑出滚动。
+
 export default function GroupedBars({ series, rows, height = 260 }: { series: BarSeries[]; rows: BarRow[]; height?: number }) {
-  const W = 860
+  const wrapRef = useRef<HTMLDivElement>(null)
+  const [cw, setCw] = useState(800)
+  useEffect(() => {
+    const el = wrapRef.current
+    if (!el) return
+    const ro = new ResizeObserver((entries) => {
+      const w = entries[0]?.contentRect.width
+      if (w && w > 0) setCw(w)
+    })
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [])
+
   const H = height
   const padL = 44
   const padR = 12
   const padT = 12
   const padB = 40
+  // 自然宽 = 左右留白 + 行数 × 最小组宽;与容器宽取大。
+  const naturalW = padL + padR + rows.length * MIN_GROUP_W
+  const W = Math.max(cw, naturalW)
   const plotW = W - padL - padR
   const plotH = H - padT - padB
 
@@ -32,7 +52,7 @@ export default function GroupedBars({ series, rows, height = 260 }: { series: Ba
 
   return (
     <div>
-      {/* 图例 */}
+      {/* 图例(固定,不随横向滚动) */}
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 16, marginBottom: 8 }}>
         {series.map((s) => (
           <span key={s.key} style={{ display: 'inline-flex', alignItems: 'center', fontSize: 12, color: '#5b6470' }}>
@@ -41,40 +61,42 @@ export default function GroupedBars({ series, rows, height = 260 }: { series: Ba
           </span>
         ))}
       </div>
-      <svg width="100%" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="xMidYMid meet">
-        {/* 网格 + y 轴刻度 */}
-        {ticks.map((tk, i) => (
-          <g key={i}>
-            <line x1={padL} y1={yOf(tk)} x2={W - padR} y2={yOf(tk)} stroke="#f0f2f5" />
-            <text x={padL - 8} y={yOf(tk) + 4} textAnchor="end" fontSize="11" fill="#a8adb5">{tk}</text>
-          </g>
-        ))}
-        {/* 分组柱 */}
-        {rows.map((row, ri) => {
-          const gx = padL + ri * groupW
-          const inner = barW * series.length + barGap * (series.length - 1)
-          const startX = gx + (groupW - inner) / 2
-          return (
-            <g key={ri}>
-              {series.map((s, si) => {
-                const v = row.values[s.key] ?? 0
-                const x = startX + si * (barW + barGap)
-                const y = yOf(v)
-                const h = padT + plotH - y
-                return (
-                  <g key={s.key}>
-                    <rect x={x} y={y} width={barW} height={Math.max(0, h)} fill={s.color} rx={2}>
-                      <title>{`${row.name} · ${s.label}: ${v}`}</title>
-                    </rect>
-                    {v > 0 && <text x={x + barW / 2} y={y - 3} textAnchor="middle" fontSize="10" fill="#8a9099">{v}</text>}
-                  </g>
-                )
-              })}
-              <text x={gx + groupW / 2} y={H - padB + 18} textAnchor="middle" fontSize="12" fill="#5b6470">{truncate(row.name, 10)}</text>
+      <div ref={wrapRef} style={{ overflowX: 'auto', overflowY: 'hidden' }}>
+        <svg width={W} height={H} viewBox={`0 0 ${W} ${H}`} style={{ display: 'block' }}>
+          {/* 网格 + y 轴刻度 */}
+          {ticks.map((tk, i) => (
+            <g key={i}>
+              <line x1={padL} y1={yOf(tk)} x2={W - padR} y2={yOf(tk)} stroke="#f0f2f5" />
+              <text x={padL - 8} y={yOf(tk) + 4} textAnchor="end" fontSize="11" fill="#a8adb5">{tk}</text>
             </g>
-          )
-        })}
-      </svg>
+          ))}
+          {/* 分组柱 */}
+          {rows.map((row, ri) => {
+            const gx = padL + ri * groupW
+            const inner = barW * series.length + barGap * (series.length - 1)
+            const startX = gx + (groupW - inner) / 2
+            return (
+              <g key={ri}>
+                {series.map((s, si) => {
+                  const v = row.values[s.key] ?? 0
+                  const x = startX + si * (barW + barGap)
+                  const y = yOf(v)
+                  const h = padT + plotH - y
+                  return (
+                    <g key={s.key}>
+                      <rect x={x} y={y} width={barW} height={Math.max(0, h)} fill={s.color} rx={2}>
+                        <title>{`${row.name} · ${s.label}: ${v}`}</title>
+                      </rect>
+                      {v > 0 && <text x={x + barW / 2} y={y - 3} textAnchor="middle" fontSize="10" fill="#8a9099">{v}</text>}
+                    </g>
+                  )
+                })}
+                <text x={gx + groupW / 2} y={H - padB + 18} textAnchor="middle" fontSize="12" fill="#5b6470">{truncate(row.name, 10)}</text>
+              </g>
+            )
+          })}
+        </svg>
+      </div>
     </div>
   )
 }

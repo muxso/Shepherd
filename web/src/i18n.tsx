@@ -29,6 +29,7 @@ const DICT: Record<string, { zh: string; en: string }> = {
   'home.allHidden': { zh: '所有卡片已隐藏,点击右上角「卡片设置」开启', en: 'All cards hidden — use “Card Settings” (top right) to enable' },
   'home.projectCompare': { zh: '项目资产对比', en: 'Project Asset Comparison' },
   'home.topN': { zh: '资产量前 {n}', en: 'Top {n} by assets' },
+  'home.scrollHint': { zh: '← 左右滑动 →', en: '← scroll →' },
   'home.apiStats': { zh: '接口数', en: 'API Count' },
   'home.apiTotal': { zh: '接口总数', en: 'Total APIs' },
   'home.covered': { zh: '已覆盖', en: 'Covered' },
