@@ -20,6 +20,7 @@ const OrganizationsPage = lazy(() => import('./pages/resources').then((m) => ({ 
 const RolesPage = lazy(() => import('./pages/resources').then((m) => ({ default: m.RolesPage })))
 const UsersPage = lazy(() => import('./pages/resources').then((m) => ({ default: m.UsersPage })))
 const ProjectAdmin = lazy(() => import('./pages/ProjectAdmin'))
+const FileManagement = lazy(() => import('./pages/FileManagement'))
 const ComingSoon = lazy(() => import('./pages/ComingSoon'))
 const EnvironmentsPage = lazy(() => import('./pages/Environments').then((m) => ({ default: m.EnvironmentsPage })))
 const ResourcePoolsPage = lazy(() => import('./pages/resources').then((m) => ({ default: m.ResourcePoolsPage })))
@@ -44,7 +45,7 @@ export default function App() {
           <Route path="/user" element={<UsersPage />} />
           <Route path="/project" element={<ProjectAdmin />} />
           <Route path="/project/templates" element={<ComingSoon title="模板管理" />} />
-          <Route path="/project/files" element={<ComingSoon title="文件管理" />} />
+          <Route path="/project/files" element={<FileManagement />} />
           <Route path="/project/messages" element={<ComingSoon title="消息管理" />} />
           <Route path="/project/scripts" element={<ComingSoon title="公共脚本" />} />
           <Route path="/project/logs" element={<ComingSoon title="日志" />} />

@@ -316,6 +316,16 @@ export interface ExecTrendPoint {
   executions: number
   passed: number
 }
+/** 项目文件(文件管理)。 */
+export interface ProjectFile {
+  id: string
+  name: string
+  fileFormat: string
+  sizeBytes: number
+  createdBy?: string | null
+  createdAt: string
+  updatedAt: string
+}
 
 /** 场景变更历史一条(审计日志)。 */
 export interface ScenarioChange {
@@ -802,6 +812,13 @@ export const api = {
     http.get<CaseExecSummary>(`/api/case-exec-summary?projectId=${encodeURIComponent(projectId)}`),
   execTrend: (projectId: string, days = 7) =>
     http.get<ExecTrendPoint[]>(`/api/exec-trend?projectId=${encodeURIComponent(projectId)}&days=${days}`),
+  projectFiles: (projectId: string) =>
+    http.get<ProjectFile[]>(`/api/project-file?projectId=${encodeURIComponent(projectId)}`),
+  uploadProjectFile: (b: { projectId: string; name: string; fileFormat: string; sizeBytes: number; contentBase64: string }) =>
+    http.post<{ id: string }>('/api/project-file', b),
+  downloadProjectFile: (id: string) =>
+    http.get<{ name: string; contentBase64: string }>(`/api/project-file/${id}/download`),
+  deleteProjectFile: (id: string) => http.del(`/api/project-file/${id}`),
   scenarioChanges: (scenarioId: string) =>
     http.get<ScenarioChange[]>(`/api/scenario/${scenarioId}/changes`),
 }

@@ -20,6 +20,7 @@ mod case_exec_summary;
 mod perf_run;
 mod plan_run;
 mod plan_scheduler;
+mod project_file;
 mod planner;
 mod references_route;
 mod report_archive_job;
@@ -501,6 +502,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // —— 首页:接口用例执行汇总(GET /api/case-exec-summary)——
     let case_summary_routes = case_exec_summary::router(pool.clone(), sessions.clone());
 
+    // —— 项目文件管理(/api/project-file)——
+    let project_file_routes = project_file::router(pool.clone(), sessions.clone());
+
     // —— 合并为单一应用 + 生产中间件 ——
     let app = user_routes
         .merge(oidc_routes)
@@ -530,6 +534,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .merge(references_routes)
         .merge(scenario_run_routes)
         .merge(case_summary_routes)
+        .merge(project_file_routes)
         .merge(perf_routes)
         .merge(debug_send_routes)
         .merge(plan_scheduler_routes)
