@@ -44,8 +44,8 @@ export default function Agents() {
 
   const cols: ColumnsType<RunnerAgent> = [
     { title: t('agent.name', '名称'), dataIndex: 'name', render: (v: string) => <span style={{ fontWeight: 500 }}>{v}</span> },
-    { title: t('agent.baseUrl', '接入地址'), dataIndex: 'baseUrl', render: (v: string) => <span className="ms-mono" style={{ color: '#5b6470' }}>{v}</span> },
-    { title: t('agent.protocols', '支持协议'), dataIndex: 'protocols', render: (ps?: string[]) => (ps?.length ? <Space size={[4, 4]} wrap>{ps.map((p) => <Tag key={p} color="geekblue">{p}</Tag>)}</Space> : <span style={{ color: '#bbb' }}>—</span>) },
+    { title: t('agent.baseUrl', '接入地址'), dataIndex: 'baseUrl', render: (v: string) => <span className="ms-mono" style={{ color: 'var(--text-2)' }}>{v}</span> },
+    { title: t('agent.protocols', '支持协议'), dataIndex: 'protocols', render: (ps?: string[]) => (ps?.length ? <Space size={[4, 4]} wrap>{ps.map((p) => <Tag key={p} color="geekblue">{p}</Tag>)}</Space> : <span style={{ color: 'var(--text-3)' }}>—</span>) },
     { title: t('agent.status', '状态'), dataIndex: 'enabled', width: 90, render: (e: boolean) => <Tag color={e ? 'green' : 'default'}>{e ? t('agent.enabled', '启用') : t('agent.disabled', '停用')}</Tag> },
     {
       title: t('req.action', '操作'),
@@ -63,7 +63,7 @@ export default function Agents() {
 
   return (
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '14px 16px', background: '#fff', borderBottom: '1px solid #f0f0f0' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '14px 16px', background: 'var(--panel)', borderBottom: '1px solid var(--border-soft)' }}>
         <Typography.Text strong style={{ fontSize: 15 }}>{t('agent.title', '人机协同 · 执行机')}</Typography.Text>
         <Typography.Text type="secondary" style={{ fontSize: 12 }}>{t('agent.subtitle', '注册 Claude Code / Codex 等 AI 执行者;任务在「AI 需求」拆分图里派发')}</Typography.Text>
         <div style={{ flex: 1 }} />
@@ -153,7 +153,7 @@ function ExecutionsDrawer({ agent, onClose }: { agent: RunnerAgent | null; onClo
           { title: t('agent.outcome', '结果'), dataIndex: 'outcome', width: 100, render: (v: string) => <Tag color={v === 'SUCCESS' ? 'green' : v === 'ERROR' ? 'red' : 'default'}>{v}</Tag> },
           { title: t('agent.code', '状态码'), dataIndex: 'status', width: 80, render: (v?: number) => v ?? '—' },
           { title: t('agent.elapsed', '耗时'), dataIndex: 'elapsedMs', width: 90, render: (v?: number) => (v != null ? `${v} ms` : '—') },
-          { title: t('agent.executedAt', '时间'), dataIndex: 'executedAt', width: 160, render: (v: string) => <span style={{ color: '#8a9099', fontSize: 12 }}>{v?.slice(0, 19) || '—'}</span> },
+          { title: t('agent.executedAt', '时间'), dataIndex: 'executedAt', width: 160, render: (v: string) => <span style={{ color: 'var(--text-3)', fontSize: 12 }}>{v?.slice(0, 19) || '—'}</span> },
         ]}
       />
     </Drawer>

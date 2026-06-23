@@ -295,7 +295,7 @@ function ReportAnalytics({ stats, cases }: { stats: PlanStats | null; cases: Pla
     { label: t('plan.segError', '失败'), value: error, color: '#c62828' },
     { label: t('plan.segFake', '误报'), value: fake, color: '#ef6c00' },
     { label: t('plan.segBlock', '阻塞'), value: block, color: '#722ed1' },
-    { label: t('plan.segPending', '未执行'), value: pending, color: '#bfbfbf' },
+    { label: t('plan.segPending', '未执行'), value: pending, color: 'var(--text-3)' },
   ]
   return (
     <Row gutter={16}>
@@ -327,10 +327,10 @@ function ReportAnalytics({ stats, cases }: { stats: PlanStats | null; cases: Pla
           {segs.map((s) => (
             <div key={s.label} style={{ display: 'flex', alignItems: 'center', gap: 12, margin: '6px 0' }}>
               <span style={{ width: 48, color: s.color }}>{s.label}</span>
-              <div style={{ flex: 1, background: '#f0f2f5', borderRadius: 4, height: 10, overflow: 'hidden' }}>
+              <div style={{ flex: 1, background: 'var(--bg)', borderRadius: 4, height: 10, overflow: 'hidden' }}>
                 <div style={{ width: `${pct(s.value)}%`, background: s.color, height: '100%' }} />
               </div>
-              <span style={{ width: 90, textAlign: 'right', color: '#5b6470' }}>{s.value}　{pct(s.value)}%</span>
+              <span style={{ width: 90, textAlign: 'right', color: 'var(--text-2)' }}>{s.value}　{pct(s.value)}%</span>
             </div>
           ))}
         </Card>

@@ -7,7 +7,7 @@ import { useI18n } from '../i18n'
 
 type TFn = ReturnType<typeof useI18n>['t']
 
-const mono = (v: string) => <span className="ms-mono" style={{ fontSize: 12, color: '#8a9099' }}>{v}</span>
+const mono = (v: string) => <span className="ms-mono" style={{ fontSize: 12, color: 'var(--text-3)' }}>{v}</span>
 
 // —— 系统管理 ——
 const makeOrgCfg = (t: TFn): CrudConfig<Organization> => ({
@@ -120,7 +120,7 @@ export function ProjectsPage() {
   const { t } = useI18n()
   return (
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
-      <div style={{ padding: '14px 16px', background: '#fff', borderBottom: '1px solid #f0f0f0' }}>
+      <div style={{ padding: '14px 16px', background: 'var(--panel)', borderBottom: '1px solid var(--border-soft)' }}>
         <Typography.Text strong style={{ fontSize: 15 }}>
           {t('res.project', '项目')}
         </Typography.Text>
@@ -152,7 +152,7 @@ export function Placeholder({ name }: { name: string }) {
   return (
     <div style={{ padding: 64, textAlign: 'center' }}>
       <Empty
-        image={<ToolOutlined style={{ fontSize: 48, color: '#c9cdd4' }} />}
+        image={<ToolOutlined style={{ fontSize: 48, color: 'var(--text-3)' }} />}
         description={
           <Space direction="vertical">
             <Typography.Text strong>{name}</Typography.Text>

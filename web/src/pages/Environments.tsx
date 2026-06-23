@@ -187,11 +187,11 @@ export function EnvironmentsPage() {
   return (
     <div style={{ display: 'flex', height: '100%' }}>
       {/* 左:环境列表 + 搜索 */}
-      <div style={{ width: 248, background: '#fff', borderRight: '1px solid #f0f0f0', display: 'flex', flexDirection: 'column' }}>
+      <div style={{ width: 248, background: 'var(--panel)', borderRight: '1px solid var(--border-soft)', display: 'flex', flexDirection: 'column' }}>
         <div style={{ padding: '10px 10px 6px' }}>
-          <Input allowClear size="small" prefix={<SearchOutlined style={{ color: '#bbb' }} />} placeholder={t('env.searchPlaceholder', '请输入环境名称')} value={search} onChange={(e) => setSearch(e.target.value)} />
+          <Input allowClear size="small" prefix={<SearchOutlined style={{ color: 'var(--text-3)' }} />} placeholder={t('env.searchPlaceholder', '请输入环境名称')} value={search} onChange={(e) => setSearch(e.target.value)} />
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '0 10px 8px', borderBottom: '1px solid #f5f5f5' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '0 10px 8px', borderBottom: '1px solid var(--border-soft)' }}>
           <Typography.Text strong style={{ flex: 1 }}>{t('res.env', '环境')}</Typography.Text>
           <Button size="small" type="text" icon={<PlusOutlined />} style={{ color: '#52c41a' }} title={t('a.new', '新建')} onClick={reset} />
           <Button size="small" type="text" icon={<ReloadOutlined />} onClick={load} />
@@ -211,7 +211,7 @@ export function EnvironmentsPage() {
                   marginBottom: 4,
                   fontSize: 13,
                   background: sel === e.id ? '#f3eaff' : 'transparent',
-                  color: sel === e.id ? '#06a561' : undefined,
+                  color: sel === e.id ? 'var(--brand)' : undefined,
                   fontWeight: sel === e.id ? 600 : 400,
                 }}
               >
@@ -238,7 +238,7 @@ export function EnvironmentsPage() {
           <Tabs className="ms-detail-tabs" size="small" items={tabs} />
         </div>
         {/* 底部保存条 */}
-        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, padding: '10px 20px', borderTop: '1px solid #f0f0f0', background: '#fff' }}>
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, padding: '10px 20px', borderTop: '1px solid var(--border-soft)', background: 'var(--panel)' }}>
           <Button onClick={reset}>{t('a.cancel', '取消')}</Button>
           <Button type="primary" icon={<SaveOutlined />} loading={saving} onClick={save}>{t('a.save', '保存')}</Button>
         </div>

@@ -31,11 +31,11 @@ export default function ProjectAdmin() {
   return (
     <div style={{ display: 'flex', height: '100%' }}>
       {/* 左侧二级导航 */}
-      <div style={{ width: 200, flexShrink: 0, borderRight: '1px solid #f0f0f0', padding: '12px 8px', overflow: 'auto', background: '#fff' }}>
+      <div style={{ width: 200, flexShrink: 0, borderRight: '1px solid var(--border-soft)', padding: '12px 8px', overflow: 'auto', background: 'var(--panel)' }}>
         <div style={{ fontWeight: 600, fontSize: 13, padding: '4px 10px 8px' }}>{t('proj.permTitle', '项目与权限')}</div>
         {groups.map((g) => (
           <div key={g.title} style={{ marginBottom: 8 }}>
-            <div style={{ fontSize: 12, color: '#a8adb5', padding: '6px 10px 2px' }}>{g.title}</div>
+            <div style={{ fontSize: 12, color: 'var(--text-3)', padding: '6px 10px 2px' }}>{g.title}</div>
             {g.items.map((it) => (
               <div
                 key={it.key}
@@ -43,7 +43,7 @@ export default function ProjectAdmin() {
                 style={{
                   padding: '8px 12px', borderRadius: 6, cursor: 'pointer', fontSize: 13, margin: '2px 0',
                   background: nav === it.key ? '#e6f7ef' : 'transparent',
-                  color: nav === it.key ? '#06a561' : '#1f2329',
+                  color: nav === it.key ? 'var(--brand)' : '#1f2329',
                 }}
               >
                 {it.label}
@@ -53,7 +53,7 @@ export default function ProjectAdmin() {
         ))}
       </div>
       {/* 右侧内容 */}
-      <div style={{ flex: 1, minWidth: 0, overflow: 'auto', padding: 16, background: '#f5f6f8' }}>
+      <div style={{ flex: 1, minWidth: 0, overflow: 'auto', padding: 16, background: 'var(--bg)' }}>
         {nav === 'basic' && <BasicInfo project={project} t={t} />}
         {nav === 'appSettings' && <AppSettings t={t} />}
         {nav === 'members' && <Members t={t} />}
@@ -74,26 +74,26 @@ function BasicInfo({ project, t }: { project: { id: string; name: string; enable
   }, [project.organizationId])
   const row = (label: string, value: React.ReactNode) => (
     <div style={{ display: 'flex', padding: '8px 0', fontSize: 13 }}>
-      <span style={{ width: 90, color: '#8a9099' }}>{label}</span>
-      <span style={{ color: '#1f2329' }}>{value}</span>
+      <span style={{ width: 90, color: 'var(--text-3)' }}>{label}</span>
+      <span style={{ color: 'var(--text)' }}>{value}</span>
     </div>
   )
   return (
     <Card title={t('proj.basic', '基本信息')} size="small" extra={<Button size="small">{t('a.edit', '编辑')}</Button>}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
-        <FolderOpenOutlined style={{ fontSize: 28, color: '#06a561' }} />
+        <FolderOpenOutlined style={{ fontSize: 28, color: 'var(--brand)' }} />
         <div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <span style={{ fontWeight: 600, fontSize: 15 }}>{project.name}</span>
             <Tag color={project.enable ? 'green' : 'default'}>{project.enable ? t('proj.enabled', '启用') : t('proj.disabled', '禁用')}</Tag>
           </div>
-          <div style={{ color: '#8a9099', fontSize: 12 }}>{t('proj.systemDefault', '系统默认创建的项目')}</div>
+          <div style={{ color: 'var(--text-3)', fontSize: 12 }}>{t('proj.systemDefault', '系统默认创建的项目')}</div>
         </div>
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', columnGap: 48, maxWidth: 800 }}>
         {row(t('proj.creator', '创建人'), 'Administrator')}
         {row(t('proj.org', '所属组织'), <Tag>{orgName || '—'}</Tag>)}
-        {row(t('proj.resourcePool', '资源池'), <span style={{ color: '#bbb' }}>—</span>)}
+        {row(t('proj.resourcePool', '资源池'), <span style={{ color: 'var(--text-3)' }}>—</span>)}
         {row('ID', <span className="ms-mono" style={{ fontSize: 12 }}>{project.id}</span>)}
       </div>
     </Card>
@@ -107,15 +107,15 @@ function AppSettings({ t }: { t: TFn }) {
   const [retention, setRetention] = useState('1')
   const [linkTtl, setLinkTtl] = useState('1')
   const section = (title: string, body: React.ReactNode) => (
-    <div style={{ borderBottom: '1px solid #f0f0f0', padding: '12px 0' }}>
+    <div style={{ borderBottom: '1px solid var(--border-soft)', padding: '12px 0' }}>
       <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 8 }}>{title}</div>
       {body}
     </div>
   )
   const item = (label: string, desc: string, control: React.ReactNode) => (
     <div style={{ display: 'flex', alignItems: 'center', padding: '8px 0', fontSize: 13 }}>
-      <span style={{ width: 130, color: '#1f2329' }}>{label}</span>
-      <span style={{ flex: 1, color: '#8a9099' }}>{desc}</span>
+      <span style={{ width: 130, color: 'var(--text)' }}>{label}</span>
+      <span style={{ flex: 1, color: 'var(--text-3)' }}>{desc}</span>
       {control}
     </div>
   )
@@ -150,7 +150,7 @@ function Members({ t }: { t: TFn }) {
     { title: t('proj.username', '用户名'), dataIndex: 'email', width: 220 },
     { title: t('proj.realname', '姓名'), dataIndex: 'name', width: 160 },
     { title: t('proj.email', '邮箱'), dataIndex: 'email' },
-    { title: t('proj.phone', '手机'), width: 120, render: () => <span style={{ color: '#bbb' }}>—</span> },
+    { title: t('proj.phone', '手机'), width: 120, render: () => <span style={{ color: 'var(--text-3)' }}>—</span> },
     { title: t('proj.userGroup', '用户组'), width: 120, render: () => <Tag color="green">{t('proj.projMember', '项目成员')}</Tag> },
     { title: t('proj.status', '状态'), width: 90, render: (_v, u) => <Tag color={u.enable === false ? 'default' : 'green'}>{u.enable === false ? t('proj.disabled', '禁用') : t('proj.normal', '正常')}</Tag> },
     { title: t('apidef.colAction', '操作'), width: 90, render: () => <Button type="link" size="small" danger>{t('proj.remove', '移除')}</Button> },
@@ -161,7 +161,7 @@ function Members({ t }: { t: TFn }) {
         <Button type="primary">{t('proj.addMember', '添加成员')}</Button>
         <Button>{t('proj.inviteEmail', '邮箱邀请')}</Button>
         <div style={{ flex: 1 }} />
-        <Input allowClear prefix={<SearchOutlined style={{ color: '#bbb' }} />} placeholder={t('proj.searchMember', '通过姓名/邮箱/手机搜索')} style={{ width: 260 }} value={q} onChange={(e) => setQ(e.target.value)} />
+        <Input allowClear prefix={<SearchOutlined style={{ color: 'var(--text-3)' }} />} placeholder={t('proj.searchMember', '通过姓名/邮箱/手机搜索')} style={{ width: 260 }} value={q} onChange={(e) => setQ(e.target.value)} />
       </div>
       <Table<User> rowKey="id" size="middle" loading={loading} dataSource={rows} columns={cols} pagination={{ pageSize: 20, size: 'small', showTotal: (n) => `${t('apidef.totalPrefix', '共')} ${n} ${t('proj.unit', '条')}` }} />
     </Card>
@@ -178,7 +178,7 @@ function UserGroups({ t }: { t: TFn }) {
   }, [])
   const cols: ColumnsType<Role> = [
     { title: t('proj.groupName', '用户组名称'), dataIndex: 'name' },
-    { title: t('proj.memberCount', '成员数'), width: 120, render: () => <span style={{ color: '#06a561' }}>—</span> },
+    { title: t('proj.memberCount', '成员数'), width: 120, render: () => <span style={{ color: 'var(--brand)' }}>—</span> },
     { title: t('apidef.colAction', '操作'), width: 120, render: (_v, r) => <Button type="link" size="small" onClick={() => setSel(r)}>{t('proj.viewPerm', '查看权限')}</Button> },
   ]
   return (

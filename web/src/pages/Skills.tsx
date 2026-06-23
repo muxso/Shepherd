@@ -52,7 +52,7 @@ export default function Skills() {
 
   return (
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '14px 16px', background: '#fff', borderBottom: '1px solid #f0f0f0' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '14px 16px', background: 'var(--panel)', borderBottom: '1px solid var(--border-soft)' }}>
         <Typography.Text strong style={{ fontSize: 15 }}>
           {t('m.skill', '技能')}
         </Typography.Text>
@@ -75,10 +75,10 @@ export default function Skills() {
           locale={{ emptyText: <Empty description={t('skill.empty', '暂无技能')} /> }}
           columns={[
             { title: t('skill.name', '名称'), dataIndex: 'name', render: (v: string) => <span style={{ fontWeight: 500 }}>{v}</span> },
-            { title: t('skill.descLabel', '描述'), dataIndex: 'description', render: (v?: string) => v || <span style={{ color: '#bbb' }}>—</span> },
+            { title: t('skill.descLabel', '描述'), dataIndex: 'description', render: (v?: string) => v || <span style={{ color: 'var(--text-3)' }}>—</span> },
             { title: t('skill.instructionsSummary', '指令摘要'), dataIndex: 'instructions', render: (v?: string) => <Typography.Text type="secondary" ellipsis style={{ maxWidth: 360 }}>{v || '—'}</Typography.Text> },
             { title: t('skill.enabled', '启用'), dataIndex: 'enabled', width: 80, render: (v: boolean) => <Tag color={v ? 'green' : 'default'}>{v ? t('skill.on', '启用') : t('skill.off', '停用')}</Tag> },
-            { title: 'ID', dataIndex: 'id', width: 100, render: (v: string) => <Tooltip title={v}><span className="ms-mono" style={{ fontSize: 12, color: '#8a9099' }}>{v?.slice(0, 8)}</span></Tooltip> },
+            { title: 'ID', dataIndex: 'id', width: 100, render: (v: string) => <Tooltip title={v}><span className="ms-mono" style={{ fontSize: 12, color: 'var(--text-3)' }}>{v?.slice(0, 8)}</span></Tooltip> },
             {
               title: t('req.action', '操作'),
               width: 130,

@@ -6,6 +6,7 @@ import type { ColumnsType } from 'antd/es/table'
 import { api, type ApiDefinition } from '../api'
 import { useApp } from '../context'
 import { useI18n } from '../i18n'
+import { useThemeMode } from '../themeMode'
 
 type RefRow = { id: string; name: string; resType: string; refType: string; kind: 'case' | 'scenario' }
 
@@ -109,8 +110,22 @@ const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v
 /** 引用关系图:中心=本接口,外围=引用它的资源。放射/分组 两布局 + 滚轮缩放 + 拖拽平移 + 点击节点跳转。零依赖纯 SVG。 */
 function ReferenceGraph({ definition, rows, loading }: { definition: ApiDefinition; rows: RefRow[]; loading: boolean }) {
   const { t } = useI18n()
+  const { mode } = useThemeMode()
   const navigate = useNavigate()
   const [hover, setHover] = useState<string | null>(null)
+  // SVG 呈现属性不解析 CSS var(),故按主题模式读取已解析的 token 值供 fill/stroke 用。
+  const C = useMemo(() => {
+    const cs = getComputedStyle(document.documentElement)
+    const g = (n: string, fb: string) => cs.getPropertyValue(n).trim() || fb
+    return {
+      panel: g('--panel', '#ffffff'),
+      border: g('--border-soft', '#e1e4e8'),
+      text: g('--text', '#1c2024'),
+      text2: g('--text-2', '#60646c'),
+      text3: g('--text-3', '#8b8d98'),
+      brand: g('--brand', '#5b5bd6'),
+    }
+  }, [mode])
   const [layout, setLayout] = useState<GLayout>('radial')
   const [view, setView] = useState({ k: 1, tx: 0, ty: 0 })
   const wrapRef = useRef<HTMLDivElement>(null)
@@ -234,13 +249,13 @@ function ReferenceGraph({ definition, rows, loading }: { definition: ApiDefiniti
   }
   const onUp = () => { drag.current = null }
 
-  if (loading) return <div style={{ height: '100%', minHeight: 360, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#bbb' }}>…</div>
+  if (loading) return <div style={{ height: '100%', minHeight: 360, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-3)' }}>…</div>
   if (N === 0) return <Empty description={t('apidef.refEmpty', '暂无数据')} style={{ padding: 48 }} />
 
   const gt = `translate(${VW / 2 + view.tx} ${VH / 2 + view.ty}) scale(${view.k})`
 
   return (
-    <div ref={wrapRef} style={{ position: 'relative', width: '100%', height: '100%', minHeight: 360, overflow: 'hidden', background: 'linear-gradient(0deg,#fafdfb,#fff)', border: '1px solid #f0f0f0', borderRadius: 8 }}>
+    <div ref={wrapRef} style={{ position: 'relative', width: '100%', height: '100%', minHeight: 360, overflow: 'hidden', background: 'var(--panel)', border: '1px solid var(--border-soft)', borderRadius: 8 }}>
       {/* 控件:布局切换 + 缩放/适应 */}
       <div style={{ position: 'absolute', left: 12, top: 12, zIndex: 2 }}>
         <Segmented
@@ -258,7 +273,7 @@ function ReferenceGraph({ definition, rows, loading }: { definition: ApiDefiniti
         <Tooltip title={t('apidef.refZoomOut', '缩小')} placement="left"><Button size="small" icon={<ZoomOutOutlined />} onClick={() => zoomAround(VW / 2, VH / 2, 1 / 1.2)} /></Tooltip>
         <Tooltip title={t('apidef.refFit', '适应')} placement="left"><Button size="small" icon={<ExpandOutlined />} onClick={fit} /></Tooltip>
       </div>
-      <span style={{ position: 'absolute', left: 12, bottom: 8, zIndex: 2, color: '#aab1b9', fontSize: 11, pointerEvents: 'none' }}>
+      <span style={{ position: 'absolute', left: 12, bottom: 8, zIndex: 2, color: 'var(--text-3)', fontSize: 11, pointerEvents: 'none' }}>
         {t('apidef.refPanZoomHint', '滚轮缩放 · 拖拽平移')} · {Math.round(view.k * 100)}%
       </span>
 
@@ -275,7 +290,7 @@ function ReferenceGraph({ definition, rows, loading }: { definition: ApiDefiniti
         <g transform={gt}>
           {/* 连线:中心 → 各资源;hover 高亮 */}
           {nodes.map((n) => (
-            <line key={`e-${n.id}`} x1={center.x} y1={center.y} x2={n.x} y2={n.y} stroke={hover === n.id ? n.color : '#e3e8ee'} strokeWidth={hover === n.id ? 2 : 1} />
+            <line key={`e-${n.id}`} x1={center.x} y1={center.y} x2={n.x} y2={n.y} stroke={hover === n.id ? n.color : C.border} strokeWidth={hover === n.id ? 2 : 1} />
           ))}
           {/* 资源节点 */}
           {nodes.map((n) => {
@@ -289,8 +304,8 @@ function ReferenceGraph({ definition, rows, loading }: { definition: ApiDefiniti
                 style={{ cursor: 'pointer' }}
               >
                 <title>{`${n.resType} · ${n.name}（${n.id.slice(0, 8)}）— ${t('apidef.refClickJump', '点击跳转')}`}</title>
-                <circle cx={n.x} cy={n.y} r={on ? 9 : 6} fill="#fff" stroke={n.color} strokeWidth={on ? 3 : 2} />
-                <text x={n.x} y={n.y - 13} textAnchor="middle" fontSize={12} fill={on ? '#1f2329' : '#5b6470'} fontWeight={on ? 600 : 400} style={{ pointerEvents: 'none', textDecoration: on ? 'underline' : 'none' }}>
+                <circle cx={n.x} cy={n.y} r={on ? 9 : 6} fill={C.panel} stroke={n.color} strokeWidth={on ? 3 : 2} />
+                <text x={n.x} y={n.y - 13} textAnchor="middle" fontSize={12} fill={on ? C.text : C.text2} fontWeight={on ? 600 : 400} style={{ pointerEvents: 'none', textDecoration: on ? 'underline' : 'none' }}>
                   {trim(n.name)}
                 </text>
               </g>
@@ -298,9 +313,9 @@ function ReferenceGraph({ definition, rows, loading }: { definition: ApiDefiniti
           })}
           {/* 中心:本接口 */}
           <g style={{ pointerEvents: 'none' }}>
-            <circle cx={center.x} cy={center.y} r={46} fill="#1f2329" />
+            <circle cx={center.x} cy={center.y} r={46} fill={C.brand} />
             <text x={center.x} y={center.y - 6} textAnchor="middle" fontSize={13} fill="#fff" fontWeight={700}>{definition.method}</text>
-            <text x={center.x} y={center.y + 14} textAnchor="middle" fontSize={11} fill="#c8ccd2">{trim(definition.name, 12)}</text>
+            <text x={center.x} y={center.y + 14} textAnchor="middle" fontSize={11} fill="rgba(255,255,255,0.8)">{trim(definition.name, 12)}</text>
           </g>
         </g>
       </svg>

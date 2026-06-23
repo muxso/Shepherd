@@ -9,6 +9,7 @@ import AssertionEditor from './AssertionEditor'
 import {
   api,
   ApiError,
+  withBodyContentType,
   type ApiBodyType,
   type ApiDefinition,
   type ApiModule,
@@ -205,7 +206,16 @@ const ApiSpecPanel = forwardRef<ApiSpecPanelHandle, {
     for (const h of spec.requestHeaders || []) if (h.name?.trim()) hs.push({ key: h.name, value: resolveVars(h.value || '') })
     if (spec.auth?.type === 'bearer' && spec.auth.token) hs.push({ key: 'Authorization', value: `Bearer ${spec.auth.token}` })
     if (spec.auth?.type === 'basic' && spec.auth.token) hs.push({ key: 'Authorization', value: `Basic ${btoa(spec.auth.token)}` })
-    return { method: reqMethod || definition.method || 'GET', url: finalUrl, headers: hs, body: spec.requestBody?.trim() ? resolveVars(spec.requestBody) : undefined }
+    // 旧规格可能只有 requestBody 文本而无 bodyType:回退 raw(与预览一致),仍发体、不强加 Content-Type。
+    const bt: ApiBodyType = spec.bodyType || (spec.requestBody?.trim() ? 'raw' : 'none')
+    const hasBody = bt !== 'none' && !!spec.requestBody?.trim()
+    return {
+      method: reqMethod || definition.method || 'GET',
+      url: finalUrl,
+      // 按 body 类型补默认 Content-Type(可选:用户/环境已写则不覆盖)。
+      headers: withBodyContentType(hs, hasBody ? bt : 'none'),
+      body: hasBody ? resolveVars(spec.requestBody || '') : undefined,
+    }
   }
 
   // 本地执行:浏览器直发(可能受 CORS 限制——这正是「本地」与「服务端代理」的区别)。
@@ -287,7 +297,7 @@ const ApiSpecPanel = forwardRef<ApiSpecPanelHandle, {
   // 暴露 save/execute/applyCurl/saveAsCase 给父级(定义页请求行的按钮统一触发)。
   useImperativeHandle(ref, () => ({ save, execute, applyCurl, saveAsCase }), [save, execute, applyCurl, saveAsCase])
 
-  if (loading) return <div style={{ padding: 24, color: '#999' }}>{t('a.loading', '加载中…')}</div>
+  if (loading) return <div style={{ padding: 24, color: 'var(--text-3)' }}>{t('a.loading', '加载中…')}</div>
 
   // 预览(只读):平铺各段。
   if (!editable) {
@@ -401,7 +411,7 @@ const ApiSpecPanel = forwardRef<ApiSpecPanelHandle, {
         cancelText={t('a.cancel', '取消')}
         destroyOnHidden
       >
-        <div style={{ fontSize: 13, color: '#5b6470', marginBottom: 6 }}>{t('apidef.caseName', '用例名称')}</div>
+        <div style={{ fontSize: 13, color: 'var(--text-2)', marginBottom: 6 }}>{t('apidef.caseName', '用例名称')}</div>
         <Input value={caseName} onChange={(e) => setCaseName(e.target.value)} onPressEnter={doSaveCase} placeholder={t('apidef.caseName', '用例名称')} />
       </Modal>
     </div>
@@ -431,7 +441,7 @@ function ExampleResponsesPanel({ responses, onChange }: { responses: ApiSpecResp
         <span style={{ fontWeight: 600, fontSize: 13 }}>{t('apidef.responseContent', '响应内容')}</span>
         <div style={{ width: 12 }} />
         {responses.map((r, i) => (
-          <Tag.CheckableTag key={i} checked={i === sel} onChange={() => setSel(i)} style={{ border: '1px solid #eef0f2' }}>
+          <Tag.CheckableTag key={i} checked={i === sel} onChange={() => setSel(i)} style={{ border: '1px solid var(--border-soft)' }}>
             <span style={{ color: i === sel ? undefined : undefined }}>
               <span style={{ color: sc(r.status) === 'green' ? '#52c41a' : sc(r.status) === 'red' ? '#ff4d4f' : '#d48806', fontWeight: 600 }}>●</span> {r.status ?? '—'}
             </span>
@@ -754,7 +764,7 @@ function BasicInfo({ definition, spec, patch, create }: { definition: ApiDefinit
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div>
-      <div style={{ fontSize: 13, color: '#5b6470', marginBottom: 6 }}>{label}</div>
+      <div style={{ fontSize: 13, color: 'var(--text-2)', marginBottom: 6 }}>{label}</div>
       {children}
     </div>
   )
@@ -855,7 +865,7 @@ function BatchAddDrawer({ open, onClose, onApply }: { open: boolean; onClose: ()
         </div>
       }
     >
-      <div style={{ color: '#8a9099', fontSize: 12, marginBottom: 8 }}>{t('body.batchHint', '书写格式:参数名,类型,必填,参数值;多条记录换行分隔')}</div>
+      <div style={{ color: 'var(--text-3)', fontSize: 12, marginBottom: 8 }}>{t('body.batchHint', '书写格式:参数名,类型,必填,参数值;多条记录换行分隔')}</div>
       <Input.TextArea rows={12} value={text} onChange={(e) => setText(e.target.value)} placeholder={'username,string,true,admin\npassword,string,true,123'} className="ms-mono" />
     </Drawer>
   )
@@ -940,7 +950,7 @@ function KVSection({
       title: t('apidef.kvDesc', '描述'),
       dataIndex: 'desc',
       render: (v: string, _r, i) =>
-        editable ? <Input value={v} placeholder="desc" onChange={(e) => setRow(i, { desc: e.target.value })} /> : <span style={{ color: '#8a9099' }}>{v || '—'}</span>,
+        editable ? <Input value={v} placeholder="desc" onChange={(e) => setRow(i, { desc: e.target.value })} /> : <span style={{ color: 'var(--text-3)' }}>{v || '—'}</span>,
     },
     editable
       ? {
@@ -990,7 +1000,7 @@ function KVSection({
       {rows.length === 0 && !editable ? (
         <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('apidef.none', '无')} style={{ margin: '8px 0' }} />
       ) : !editable && view === 'raw' ? (
-        <pre className="ms-mono" style={{ background: '#f6f8fa', padding: 12, borderRadius: 6, margin: 0, fontSize: 12 }}>{raw}</pre>
+        <pre className="ms-mono" style={{ background: 'var(--panel-2)', padding: 12, borderRadius: 6, margin: 0, fontSize: 12 }}>{raw}</pre>
       ) : (
         <>
           <Table size="small" rowKey="_k" pagination={false} columns={cols} dataSource={rows.map((r, i) => ({ ...r, _k: String(i) }))} locale={{ emptyText: t('apidef.none', '无') }} />
@@ -1053,7 +1063,7 @@ function SchemaTable({ nodes }: { nodes: BodySchemaNode[] }) {
     { title: t('apidef.required', '必填'), dataIndex: 'required', width: 80 },
     { title: t('apidef.colType', '类型'), dataIndex: 'type', width: 110 },
     { title: t('apidef.kvValue', '参数值'), dataIndex: 'value', width: 180, render: (v?: string) => <span className="ms-mono">{v || '—'}</span> },
-    { title: t('apidef.kvDesc', '描述'), dataIndex: 'desc', render: (v: string) => <span style={{ color: '#8a9099' }}>{v || '—'}</span> },
+    { title: t('apidef.kvDesc', '描述'), dataIndex: 'desc', render: (v: string) => <span style={{ color: 'var(--text-3)' }}>{v || '—'}</span> },
   ]
   return <Table size="small" pagination={false} columns={cols} dataSource={toRows(nodes)} locale={{ emptyText: t('apidef.none', '无') }} />
 }
@@ -1098,7 +1108,7 @@ function BodyView({ spec }: { spec: ApiSpec }) {
       ) : hasSchema && view === 'schema' ? (
         <SchemaTable nodes={schemaNodes} />
       ) : spec.requestBody ? (
-        <pre className="ms-mono" style={{ background: '#f6f8fa', padding: 12, borderRadius: 6, margin: 0, fontSize: 12, maxHeight: 320, overflow: 'auto' }}>{spec.requestBody}</pre>
+        <pre className="ms-mono" style={{ background: 'var(--panel-2)', padding: 12, borderRadius: 6, margin: 0, fontSize: 12, maxHeight: 320, overflow: 'auto' }}>{spec.requestBody}</pre>
       ) : (
         <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('apidef.none', '无')} style={{ margin: '8px 0' }} />
       )}
@@ -1139,9 +1149,9 @@ function ResponsesSection({
         <Space direction="vertical" size={10} style={{ width: '100%' }}>
           {responses.map((r, i) =>
             editable ? (
-              <div key={i} style={{ border: '1px solid #eef0f2', borderRadius: 6, padding: 10 }}>
+              <div key={i} style={{ border: '1px solid var(--border-soft)', borderRadius: 6, padding: 10 }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-                  <span style={{ color: '#8a9099', fontSize: 12 }}>{t('apidef.statusCode', '状态码')}</span>
+                  <span style={{ color: 'var(--text-3)', fontSize: 12 }}>{t('apidef.statusCode', '状态码')}</span>
                   <InputNumber min={100} max={599} value={r.status} onChange={(v) => setRow(i, { status: v ?? undefined })} />
                   <div style={{ flex: 1 }} />
                   <Button type="text" danger size="small" icon={<DeleteOutlined />} onClick={() => delRow(i)} />
@@ -1166,9 +1176,9 @@ function ReadonlyResponse({ r }: { r: ApiSpecResponse }) {
   const nodes = jsonToSchemaNodes(r.body || '')
   const hasSchema = nodes.length > 0
   return (
-    <div style={{ border: '1px solid #eef0f2', borderRadius: 6, padding: 10 }}>
+    <div style={{ border: '1px solid var(--border-soft)', borderRadius: 6, padding: 10 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-        <span style={{ color: '#8a9099', fontSize: 12 }}>{t('apidef.statusCode', '状态码')}</span>
+        <span style={{ color: 'var(--text-3)', fontSize: 12 }}>{t('apidef.statusCode', '状态码')}</span>
         <Tag color={sc(r.status)}>{r.status ?? '—'}</Tag>
         <div style={{ flex: 1 }} />
         {hasSchema && <SchemaJsonToggle value={view} onChange={setView} />}
@@ -1177,9 +1187,9 @@ function ReadonlyResponse({ r }: { r: ApiSpecResponse }) {
       {hasSchema && view === 'schema' ? (
         <SchemaTable nodes={nodes} />
       ) : r.body ? (
-        <pre className="ms-mono" style={{ background: '#f6f8fa', padding: 10, borderRadius: 6, margin: 0, fontSize: 12, maxHeight: 240, overflow: 'auto' }}>{r.body}</pre>
+        <pre className="ms-mono" style={{ background: 'var(--panel-2)', padding: 10, borderRadius: 6, margin: 0, fontSize: 12, maxHeight: 240, overflow: 'auto' }}>{r.body}</pre>
       ) : (
-        <span style={{ color: '#bbb', fontSize: 12 }}>{t('apidef.none', '无')}</span>
+        <span style={{ color: 'var(--text-3)', fontSize: 12 }}>{t('apidef.none', '无')}</span>
       )}
     </div>
   )

@@ -226,8 +226,8 @@ function CaseDetail({ c }: { c: FunctionalCase }) {
               <Space direction="vertical" style={{ width: '100%' }} size={16}>
                 <div>
                   <div style={{ fontWeight: 600, marginBottom: 6 }}>{t('func.prerequisite', '前置条件')}</div>
-                  <div style={{ background: '#fafafa', border: '1px solid #f0f0f0', borderRadius: 6, padding: 10, minHeight: 40, whiteSpace: 'pre-wrap' }}>
-                    {cf['前置条件'] || <span style={{ color: '#bbb' }}>{t('func.none', '无')}</span>}
+                  <div style={{ background: 'var(--panel-2)', border: '1px solid var(--border-soft)', borderRadius: 6, padding: 10, minHeight: 40, whiteSpace: 'pre-wrap' }}>
+                    {cf['前置条件'] || <span style={{ color: 'var(--text-3)' }}>{t('func.none', '无')}</span>}
                   </div>
                 </div>
                 <div>
@@ -236,8 +236,8 @@ function CaseDetail({ c }: { c: FunctionalCase }) {
                 </div>
                 <div>
                   <div style={{ fontWeight: 600, marginBottom: 6 }}>{t('func.remark', '备注')}</div>
-                  <div style={{ background: '#fafafa', border: '1px solid #f0f0f0', borderRadius: 6, padding: 10, minHeight: 40, whiteSpace: 'pre-wrap' }}>
-                    {cf['备注'] || <span style={{ color: '#bbb' }}>{t('func.none', '无')}</span>}
+                  <div style={{ background: 'var(--panel-2)', border: '1px solid var(--border-soft)', borderRadius: 6, padding: 10, minHeight: 40, whiteSpace: 'pre-wrap' }}>
+                    {cf['备注'] || <span style={{ color: 'var(--text-3)' }}>{t('func.none', '无')}</span>}
                   </div>
                 </div>
               </Space>

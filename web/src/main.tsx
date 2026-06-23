@@ -6,6 +6,8 @@ import enUS from 'antd/locale/en_US'
 import { BrowserRouter } from 'react-router-dom'
 import { AppProvider } from './context'
 import { LangProvider } from './i18n'
+import { ThemeModeProvider } from './themeMode'
+import { themeFor } from './theme'
 import { bindFeedback } from './feedback'
 import App from './App'
 import './index.css'
@@ -21,19 +23,23 @@ function FeedbackBridge() {
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
-    <LangProvider>
-      {(lang) => (
-        <ConfigProvider locale={lang === 'en' ? enUS : zhCN} theme={{ token: { colorPrimary: '#06a561' } }}>
-          <AntApp component={false}>
-            <FeedbackBridge />
-            <BrowserRouter>
-              <AppProvider>
-                <App />
-              </AppProvider>
-            </BrowserRouter>
-          </AntApp>
-        </ConfigProvider>
+    <ThemeModeProvider>
+      {(mode) => (
+        <LangProvider>
+          {(lang) => (
+            <ConfigProvider locale={lang === 'en' ? enUS : zhCN} theme={themeFor(mode)}>
+              <AntApp component={false}>
+                <FeedbackBridge />
+                <BrowserRouter>
+                  <AppProvider>
+                    <App />
+                  </AppProvider>
+                </BrowserRouter>
+              </AntApp>
+            </ConfigProvider>
+          )}
+        </LangProvider>
       )}
-    </LangProvider>
+    </ThemeModeProvider>
   </React.StrictMode>,
 )
