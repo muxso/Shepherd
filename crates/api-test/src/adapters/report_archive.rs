@@ -142,6 +142,10 @@ mod tests {
             headers: vec![],
             assertions: serde_json::json!([{"item": "状态码", "passed": true}]),
             extractions: serde_json::json!([["token", "abc"]]),
+            req_method: Some("GET".to_string()),
+            req_url: Some("http://x/healthz".to_string()),
+            req_headers: vec![],
+            req_body: None,
         }
     }
 

@@ -117,6 +117,18 @@ struct ReportResultItem {
     assertions: serde_json::Value,
     #[schema(value_type = Vec<Object>)]
     extractions: serde_json::Value,
+    /// 实际发送的请求(0060 后回填;旧报告/未回填为 null)。CASE 引用步骤也有。
+    request: Option<ReqInfo>,
+}
+
+/// 实际请求(变量/baseUrl/认证已解析),供报告「实际请求/控制台/cURL」面板。
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+struct ReqInfo {
+    method: String,
+    url: String,
+    headers: Vec<(String, String)>,
+    body: Option<String>,
 }
 
 #[utoipa::path(get, path = "/api/scenario-report/{report_id}", tag = "api-scenario", params(("report_id" = String, Path)), responses((status = 200, body = ScenarioReportResponse), (status = 404)), security(("bearer" = [])))]
@@ -150,6 +162,12 @@ async fn scenario_report(
                         headers: r.headers,
                         assertions: r.assertions,
                         extractions: r.extractions,
+                        request: r.req_method.clone().map(|method| ReqInfo {
+                            method,
+                            url: r.req_url.clone().unwrap_or_default(),
+                            headers: r.req_headers.clone(),
+                            body: r.req_body.clone(),
+                        }),
                     })
                     .collect(),
             }),

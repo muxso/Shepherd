@@ -394,6 +394,8 @@ export interface ReportResultItem {
   /** 逐条断言结果(含通过项)+ 提取变量(0048 后回填;旧报告为空数组)。 */
   assertions?: AssertionResult[]
   extractions?: [string, string][]
+  /** 实际发送的请求(0060 后回填;变量/baseUrl/认证已解析)。CASE 引用步骤也有。 */
+  request?: { method: string; url: string; headers: [string, string][]; body?: string | null } | null
 }
 export interface ScenarioReportDetail {
   reportId: string
