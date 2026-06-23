@@ -411,6 +411,7 @@ impl CaseResultSink for PgCaseResultSink {
         Ok(())
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn record_detail(
         &self,
         report_id: &str,
@@ -420,6 +421,8 @@ impl CaseResultSink for PgCaseResultSink {
         resp_size: i64,
         body: &str,
         headers: &[(String, String)],
+        assertions: &serde_json::Value,
+        extractions: &serde_json::Value,
     ) -> Result<(), PortError> {
         // 响应体截断到 64KB,避免明细表膨胀。
         let body_trunc: String = body.chars().take(65536).collect();
@@ -427,7 +430,8 @@ impl CaseResultSink for PgCaseResultSink {
             .map_err(|e| PortError::Backend(format!("serialize headers: {e}")))?;
         sqlx::query(
             "UPDATE ms_api_case_result \
-               SET status_code = $3, latency_ms = $4, resp_size = $5, body = $6, headers = $7 \
+               SET status_code = $3, latency_ms = $4, resp_size = $5, body = $6, headers = $7, \
+                   assertions = $8, extractions = $9 \
              WHERE report_id = $1 AND case_id = $2",
         )
         .bind(report_id)
@@ -437,6 +441,8 @@ impl CaseResultSink for PgCaseResultSink {
         .bind(resp_size)
         .bind(body_trunc)
         .bind(headers_json)
+        .bind(assertions)
+        .bind(extractions)
         .execute(&self.pool)
         .await
         .map_err(map_err)?;
@@ -492,7 +498,7 @@ impl PgBatchReport {
         let Some(h) = header else { return Ok(None) };
         let rows = sqlx::query(
             "SELECT case_id, outcome, failures, executed_at::text AS executed_at, \
-                    status_code, latency_ms, resp_size, body, headers \
+                    status_code, latency_ms, resp_size, body, headers, assertions, extractions \
              FROM ms_api_case_result WHERE report_id = $1 ORDER BY executed_at",
         )
         .bind(report_id)
@@ -512,6 +518,13 @@ impl PgBatchReport {
                 let headers = headers_v
                     .and_then(|v| serde_json::from_value::<Vec<(String, String)>>(v).ok())
                     .unwrap_or_default();
+                // 断言/提取(0048 后回填;旧报告为 null → 空数组)。
+                let json_arr = |col: &str| -> serde_json::Value {
+                    r.try_get::<Option<serde_json::Value>, _>(col)
+                        .ok()
+                        .flatten()
+                        .unwrap_or_else(|| serde_json::Value::Array(vec![]))
+                };
                 Ok(CaseResultRow {
                     case_id: r.try_get("case_id").map_err(map_err)?,
                     outcome: r.try_get("outcome").map_err(map_err)?,
@@ -522,6 +535,8 @@ impl PgBatchReport {
                     resp_size: r.try_get("resp_size").ok().flatten(),
                     body: r.try_get("body").ok().flatten(),
                     headers,
+                    assertions: json_arr("assertions"),
+                    extractions: json_arr("extractions"),
                 })
             })
             .collect::<Result<Vec<_>, PortError>>()?;
@@ -554,6 +569,9 @@ pub struct CaseResultRow {
     pub resp_size: Option<i64>,
     pub body: Option<String>,
     pub headers: Vec<(String, String)>,
+    /// 逐条断言结果 / 提取变量(0048 后回填;旧报告为空数组)。
+    pub assertions: serde_json::Value,
+    pub extractions: serde_json::Value,
 }
 
 // ---- 用例执行记录读模型:按 case_id 倒序分页查 ms_api_case_result ----

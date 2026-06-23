@@ -294,6 +294,9 @@ export interface ReportResultItem {
   respSize?: number | null
   body?: string | null
   headers?: [string, string][]
+  /** 逐条断言结果(含通过项)+ 提取变量(0048 后回填;旧报告为空数组)。 */
+  assertions?: AssertionResult[]
+  extractions?: [string, string][]
 }
 export interface ScenarioReportDetail {
   reportId: string
