@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from 'react'
-import { Layout, Menu, Select, Button, Space, Tooltip, Breadcrumb, Drawer, Avatar, Descriptions } from 'antd'
+import { Layout, Menu, Select, Button, Space, Tooltip, Drawer, Avatar, Descriptions } from 'antd'
 import {
   ApiOutlined,
   PartitionOutlined,
@@ -30,7 +30,7 @@ import { useApp } from '../context'
 import { useI18n } from '../i18n'
 import NewProjectModal from './NewProjectModal'
 
-const { Sider, Content } = Layout
+const { Content } = Layout
 
 // 一级模块 = 左侧全局图标导航项(对齐参考图:图标在上、文字在下)+ 它专属的二级菜单。
 // 全局栏只切模块,二级栏随选中模块收敛成该模块子项。系统项底部固定。
@@ -180,26 +180,8 @@ export default function AppShell({ children }: { children: ReactNode }) {
           </div>
         </div>
 
-        {/* 二级子菜单 */}
-        <Sider width={184} theme="light" style={{ borderRight: '1px solid #f0f0f0', overflow: 'auto' }}>
-          <Menu
-            mode="inline"
-            selectedKeys={[loc.pathname]}
-            items={[
-              {
-                key: activeModule.key,
-                label: t(...activeModule.label),
-                type: 'group' as const,
-                children: activeModule.children.map((c) => ({ key: c.key, icon: c.icon, label: t(...c.label) })),
-              },
-            ]}
-            onClick={(e) => nav(e.key)}
-            style={{ height: '100%', borderInlineEnd: 'none', paddingTop: 4 }}
-          />
-        </Sider>
-
         <Layout style={{ background: '#f5f6f8' }}>
-          {/* 顶栏:面包屑(左)+ 右上角图标簇(对齐参考图 #39)。 */}
+          {/* 顶栏:当前模块的二级菜单(左,横向)+ 右上角图标簇(对齐参考图 #39)。 */}
           <div
             style={{
               height: 48,
@@ -212,14 +194,13 @@ export default function AppShell({ children }: { children: ReactNode }) {
               flexShrink: 0,
             }}
           >
-            <Breadcrumb
-              items={[
-                { title: <Space size={4}><AppstoreOutlined />{t(...activeModule.label)}</Space> },
-                { title: t(...currentChild.label) },
-                ...(currentProject ? [{ title: <span style={{ color: '#7c3aed' }}>{currentProject.name}</span> }] : []),
-              ]}
+            <Menu
+              mode="horizontal"
+              selectedKeys={[currentChild.key]}
+              items={activeModule.children.map((c) => ({ key: c.key, icon: c.icon, label: t(...c.label) }))}
+              onClick={(e) => nav(e.key)}
+              style={{ flex: 1, minWidth: 0, borderBottom: 'none', background: 'transparent' }}
             />
-            <div style={{ flex: 1 }} />
             <Select
               size="small"
               style={{ width: 200 }}
