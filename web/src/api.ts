@@ -304,6 +304,12 @@ export interface ScenarioReportDetail {
   caseCount: number
   results: ReportResultItem[]
 }
+/** 项目级接口用例执行汇总(GET /api/case-exec-summary)。 */
+export interface CaseExecSummary {
+  executions: number
+  passed: number
+  executedCases: number
+}
 
 /** 场景变更历史一条(审计日志)。 */
 export interface ScenarioChange {
@@ -786,6 +792,8 @@ export const api = {
     http.get<Page<ScenarioExecution>>(`/api/scenario/${scenarioId}/executions`),
   scenarioReport: (reportId: string) =>
     http.get<ScenarioReportDetail>(`/api/scenario-report/${reportId}`),
+  caseExecSummary: (projectId: string) =>
+    http.get<CaseExecSummary>(`/api/case-exec-summary?projectId=${encodeURIComponent(projectId)}`),
   scenarioChanges: (scenarioId: string) =>
     http.get<ScenarioChange[]>(`/api/scenario/${scenarioId}/changes`),
 }

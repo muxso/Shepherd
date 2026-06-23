@@ -14,7 +14,7 @@ import {
   SafetyCertificateOutlined,
 } from '@ant-design/icons'
 import { useNavigate } from 'react-router-dom'
-import { api, type ApiCase, type ApiDefinition } from '../api'
+import { api, type ApiCase, type ApiDefinition, type CaseExecSummary } from '../api'
 import { useApp } from '../context'
 import { regList } from '../registry'
 import { useI18n } from '../i18n'
@@ -43,13 +43,13 @@ const PROJECT_SERIES = [
 ]
 
 // 卡片清单(完整版「卡片设置」对标 MeterSphere):每张卡可独立显隐 + 自由排序。
-const ALL_CARDS = ['overview', 'projectBars', 'assets', 'apiStats', 'quality', 'shortcuts'] as const
+const ALL_CARDS = ['overview', 'projectBars', 'assets', 'apiStats', 'caseStats', 'quality', 'shortcuts'] as const
 type CardKey = (typeof ALL_CARDS)[number]
 interface CardPref {
   key: CardKey
   shown: boolean
 }
-const CARDS_KEY = 'shepherd.home.cards.v4'
+const CARDS_KEY = 'shepherd.home.cards.v5'
 
 /** 读持久化偏好。缺省全显示、按 ALL_CARDS 顺序;新增卡默认显示并追加到末尾。 */
 function loadPrefs(): CardPref[] {
@@ -77,6 +77,7 @@ export default function Home() {
   const [defs, setDefs] = useState<ApiDefinition[]>([])
   const [cases, setCases] = useState<ApiCase[]>([])
   const [projRows, setProjRows] = useState<BarRow[]>([])
+  const [exec, setExec] = useState<CaseExecSummary | null>(null)
   const [loading, setLoading] = useState(false)
   const [prefs, setPrefs] = useState<CardPref[]>(loadPrefs)
 
@@ -96,8 +97,10 @@ export default function Home() {
   useEffect(() => {
     if (!projectId) {
       setC(null)
+      setExec(null)
       return
     }
+    api.caseExecSummary(projectId).then(setExec).catch(() => setExec(null))
     setLoading(true)
     Promise.all([
       api.definitions(projectId).catch(() => [] as ApiDefinition[]),
@@ -156,6 +159,7 @@ export default function Home() {
     projectBars: t('home.projectCompare', '项目资产对比'),
     assets: t('home.assetDist', '测试资产分布'),
     apiStats: t('home.apiStats', '接口数'),
+    caseStats: t('home.caseStats', '接口用例数'),
     quality: t('home.quality', '质量概览'),
     shortcuts: t('home.shortcuts', '快捷入口'),
   }
@@ -321,6 +325,61 @@ export default function Home() {
                 </Col>
               </Row>
             )}
+          </Card>
+        )
+      }
+      case 'caseStats': {
+        const totalCases = c?.apiCase ?? 0
+        const executedCases = exec?.executedCases ?? 0
+        const unexecuted = Math.max(0, totalCases - executedCases)
+        const executions = exec?.executions ?? 0
+        const passed = exec?.passed ?? 0
+        const failed = Math.max(0, executions - passed)
+        const execRate = totalCases ? (executedCases * 100) / totalCases : 0
+        const passRate = executions ? (passed * 100) / executions : 0
+        const metric = (label: string, value: number, color?: string) => (
+          <div style={{ minWidth: 96 }}>
+            <div style={{ color: '#8a9099', fontSize: 12 }}>{label}</div>
+            <div style={{ fontSize: 22, fontWeight: 700, color }}>{value}</div>
+          </div>
+        )
+        const rateBlock = (label: string, rate: number, segs: { label: string; value: number; color: string }[]) => (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+            <Donut segments={segs} size={104} thickness={14} centerLabel={label} />
+            <div>
+              <div style={{ fontSize: 18, fontWeight: 700, color: rate >= 60 ? '#52c41a' : rate >= 30 ? '#fa8c16' : '#f5222d' }}>{rate.toFixed(1)}%</div>
+              {segs.map((s) => (
+                <div key={s.label} style={{ display: 'flex', alignItems: 'center', fontSize: 12, padding: '2px 0' }}>
+                  <span style={{ width: 8, height: 8, borderRadius: 2, background: s.color, marginRight: 6 }} />
+                  <span style={{ color: '#5b6470', marginRight: 8 }}>{s.label}</span>
+                  <b>{s.value}</b>
+                </div>
+              ))}
+            </div>
+          </div>
+        )
+        return (
+          <Card title={<span><ProfileOutlined style={{ color: '#13c2c2', marginRight: 6 }} />{cardTitle.caseStats}</span>} size="small" style={{ marginBottom: 16 }}>
+            <Row gutter={[24, 16]} align="middle">
+              <Col xs={24} md={6}>
+                <div style={{ display: 'flex', gap: 24, flexWrap: 'wrap' }}>
+                  {metric(t('home.caseTotal', '接口用例数'), totalCases, '#13c2c2')}
+                  {metric(t('home.execCount', '执行次数'), executions, '#1677ff')}
+                </div>
+              </Col>
+              <Col xs={24} md={9}>
+                {rateBlock(t('home.execRate', '执行率'), execRate, [
+                  { label: t('home.executed', '已执行'), value: executedCases, color: '#1677ff' },
+                  { label: t('home.unexecuted', '未执行'), value: unexecuted, color: '#e8eaed' },
+                ])}
+              </Col>
+              <Col xs={24} md={9}>
+                {rateBlock(t('home.passRate', '通过率'), passRate, [
+                  { label: t('home.passed', '已通过'), value: passed, color: '#52c41a' },
+                  { label: t('home.failedExec', '未通过'), value: failed, color: '#f5222d' },
+                ])}
+              </Col>
+            </Row>
           </Card>
         )
       }
