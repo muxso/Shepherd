@@ -161,7 +161,8 @@ export default function AppShell({ children }: { children: ReactNode }) {
 
   return (
     <Layout style={{ height: '100vh' }}>
-      <Layout>
+      {/* hasSider:左侧为自定义 div(非 antd Sider),需显式声明横向布局,否则默认竖排。 */}
+      <Layout hasSider>
         {/* 全局图标导航栏(对齐参考图 #40):logo / 导航项 / 底部系统 + 头像 */}
         <div style={{ width: 72, background: '#fff', borderRight: '1px solid #f0f0f0', display: 'flex', flexDirection: 'column', flexShrink: 0 }}>
           <div style={{ height: 48, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
