@@ -20,6 +20,8 @@ use serde::Deserialize;
 use serde_json::json;
 use webauth::{AuthUser, SessionStore};
 
+use case_management::domain::NewFunctionalCase;
+use case_management::ports::CaseRepository;
 use requirement::application::{RequirementCmdError, RequirementService};
 use task::application::{BreakdownError, BreakdownUseCase};
 use task::ports::RequirementSpec;
@@ -30,7 +32,56 @@ struct BreakdownState {
     reqs: RequirementService,
     breakdown: BreakdownUseCase,
     create_verification: CreateVerificationUseCase,
+    cases: Arc<dyn CaseRepository>,
     sessions: Arc<dyn SessionStore>,
+}
+
+/// 拆分后为每条验收标准生成一个功能用例草稿并关联(打通功能用例覆盖)。
+/// 幂等:该需求已有关联功能用例则整体跳过;尽力而为,失败仅日志,不影响拆分结果。
+async fn seed_functional_cases(
+    cases: &Arc<dyn CaseRepository>,
+    requirement_id: &str,
+    project_id: &str,
+    criteria: &[String],
+) {
+    if criteria.is_empty() {
+        return;
+    }
+    match cases.cases_for_requirement(requirement_id).await {
+        Ok(existing) if !existing.is_empty() => return, // 已生成过 → 幂等跳过
+        Ok(_) => {}
+        Err(e) => {
+            tracing::warn!(requirement = %requirement_id, "拆分后查功能用例覆盖失败: {e:?}");
+            return;
+        }
+    }
+    for (idx, text) in criteria.iter().enumerate() {
+        let new = match NewFunctionalCase::new(
+            project_id,
+            text,
+            "需求拆分",
+            "",
+            "",
+            std::collections::BTreeMap::new(),
+            Vec::new(),
+        ) {
+            Ok(n) => n,
+            Err(e) => {
+                tracing::warn!(requirement = %requirement_id, "生成功能用例(标准{idx})失败: {e:?}");
+                continue;
+            }
+        };
+        match cases.insert(&new).await {
+            Ok(c) => {
+                if let Err(e) =
+                    cases.link_requirement_case(requirement_id, idx as i32, &c.id, project_id).await
+                {
+                    tracing::warn!(requirement = %requirement_id, "关联功能用例(标准{idx})失败: {e:?}");
+                }
+            }
+            Err(e) => tracing::warn!(requirement = %requirement_id, "插入功能用例(标准{idx})失败: {e:?}"),
+        }
+    }
 }
 
 impl FromRef<BreakdownState> for Arc<dyn SessionStore> {
@@ -43,11 +94,12 @@ pub fn router(
     reqs: RequirementService,
     breakdown: BreakdownUseCase,
     create_verification: CreateVerificationUseCase,
+    cases: Arc<dyn CaseRepository>,
     sessions: Arc<dyn SessionStore>,
 ) -> Router {
     Router::new()
         .route("/requirement/{id}/breakdown", post(breakdown_handler))
-        .with_state(BreakdownState { reqs, breakdown, create_verification, sessions })
+        .with_state(BreakdownState { reqs, breakdown, create_verification, cases, sessions })
 }
 
 #[derive(Deserialize)]
@@ -104,6 +156,8 @@ async fn breakdown_handler(
                     }
                 }
             };
+            // 顺手为每条验收标准生成功能用例草稿并关联(幂等,尽力而为)。
+            seed_functional_cases(&st.cases, &spec.requirement_id, &req.project_id, &spec.acceptance_criteria).await;
             let body = json!({
                 "id": d.id,
                 "requirementId": d.requirement_id,
@@ -129,6 +183,8 @@ async fn breakdown_handler(
                         .ok()
                         .flatten()
                         .map(|v| v.id);
+                    // 幂等补种:旧拆分(本功能上线前)可能还没功能用例覆盖,这里补上。
+                    seed_functional_cases(&st.cases, &spec.requirement_id, &req.project_id, &spec.acceptance_criteria).await;
                     let body = json!({
                         "id": d.id,
                         "requirementId": d.requirement_id,
