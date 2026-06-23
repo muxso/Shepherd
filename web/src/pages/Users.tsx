@@ -3,6 +3,7 @@ import { Button, Dropdown, Form, Input, Modal, Space, Switch, Table, Tag, messag
 import { MoreOutlined, SearchOutlined } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
 import { api, ApiError, type User } from '../api'
+import { modal } from '../feedback'
 import { useI18n } from '../i18n'
 
 // 系统 / 用户:对齐参考图 #51。创建用户为真实接口;编辑/重置密码/删除/状态切换/
@@ -23,6 +24,33 @@ export default function Users() {
   const soon = () => message.info(t('common.comingSoon', '即将接入'))
   const rows = users.filter((u) => !q || u.name.toLowerCase().includes(q.toLowerCase()) || u.email.toLowerCase().includes(q.toLowerCase()))
 
+  // 启停:乐观更新 + PUT 回写(失败回滚)。
+  const toggleEnable = async (u: User, enable: boolean) => {
+    setUsers((prev) => prev.map((x) => (x.id === u.id ? { ...x, enable } : x)))
+    try {
+      await api.updateUser(u.id, { name: u.name, email: u.email, enable })
+    } catch (e) {
+      setUsers((prev) => prev.map((x) => (x.id === u.id ? { ...x, enable: !enable } : x)))
+      message.error(e instanceof ApiError ? e.message : t('user.updateFailed', '更新失败'))
+    }
+  }
+  const removeUser = (u: User) => {
+    modal.confirm({
+      title: t('user.delConfirm', '确认删除用户?'),
+      content: `${u.name} (${u.email})`,
+      okButtonProps: { danger: true },
+      onOk: async () => {
+        try {
+          await api.deleteUser(u.id)
+          message.success(t('user.deleted', '已删除'))
+          load()
+        } catch (e) {
+          message.error(e instanceof ApiError ? e.message : t('user.delFailed', '删除失败'))
+        }
+      },
+    })
+  }
+
   const cols: ColumnsType<User> = [
     { title: t('user.username', '用户名'), dataIndex: 'email', width: 240, ellipsis: true },
     { title: t('user.name', '姓名'), dataIndex: 'name', width: 160 },
@@ -33,13 +61,13 @@ export default function Users() {
     {
       title: t('user.status', '状态'),
       width: 90,
-      render: (_v, u) => <Switch size="small" checked={u.enable !== false} onChange={soon} />,
+      render: (_v, u) => <Switch size="small" checked={u.enable !== false} onChange={(c) => toggleEnable(u, c)} />,
     },
     {
       title: t('apidef.colAction', '操作'),
       width: 110,
       fixed: 'right',
-      render: () => (
+      render: (_v, u) => (
         <Space size={4} onClick={(e) => e.stopPropagation()}>
           <Button type="link" size="small" onClick={soon}>{t('a.edit', '编辑')}</Button>
           <Dropdown
@@ -48,7 +76,7 @@ export default function Users() {
                 { key: 'reset', label: t('user.resetPwd', '重置密码') },
                 { key: 'del', label: t('a.delete', '删除'), danger: true },
               ],
-              onClick: soon,
+              onClick: ({ key }) => (key === 'del' ? removeUser(u) : soon()),
             }}
           >
             <Button type="link" size="small" icon={<MoreOutlined />} />
