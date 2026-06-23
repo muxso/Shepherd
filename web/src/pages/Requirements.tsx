@@ -434,6 +434,7 @@ function DecompositionView({ decompId, verificationId, projectId, reqId }: { dec
   const [cov, setCov] = useState<CoverageCase[]>([]) // 手工功能用例覆盖(与任务覆盖并看)
   useEffect(() => { if (reqId) api.requirementCoverage(reqId).then(setCov).catch(() => setCov([])) }, [reqId])
   const [running, setRunning] = useState(false)
+  const [dispatching, setDispatching] = useState<Set<string>>(new Set()) // 派发中的任务 id(防重复点击)
   const [summary, setSummary] = useState<{ total: number; verified: number; failed: number; blocked: number; rounds: number } | null>(null)
   const [report, setReport] = useState<VerificationReport | null>(null)
   const [eventsFor, setEventsFor] = useState<Task | null>(null)
@@ -490,12 +491,16 @@ function DecompositionView({ decompId, verificationId, projectId, reqId }: { dec
     }
   }
   const dispatch = async (task: Task) => {
+    if (dispatching.has(task.id)) return // 已在派发中,忽略重复点击
+    setDispatching((s) => new Set(s).add(task.id))
     try {
       await api.createDelivery({ decompositionId: decompId, taskId: task.id, title: task.title, executor: 'CLAUDE_CODE' })
       message.success(`${t('req.dispatched', '已派发')} ${task.id}`)
       load()
     } catch (e) {
       message.error(e instanceof ApiError ? `${t('req.dispatchFailed', '派发失败')}:${e.status}` : t('req.dispatchFailed', '派发失败'))
+    } finally {
+      setDispatching((s) => { const n = new Set(s); n.delete(task.id); return n })
     }
   }
   // 工作量(task point)行内编辑:乐观更新本地后落库,失败回滚重载。
@@ -514,7 +519,7 @@ function DecompositionView({ decompId, verificationId, projectId, reqId }: { dec
     <Space direction="vertical" style={{ width: '100%' }} size={12}>
       <Space>
         <Button type="primary" icon={<PlayCircleOutlined />} size="small" loading={running} onClick={run}>{t('req.runParallel', '并行运行')}</Button>
-        <Typography.Text type="secondary" style={{ fontSize: 13 }}>{t('req.totalPointsLabel', '工作量合计')} <b style={{ color: '#1f2329' }}>{totalPoints}</b> {t('req.pointsUnit', '点')}</Typography.Text>
+        <Typography.Text type="secondary" style={{ fontSize: 13 }}>{t('req.totalPointsLabel', '工作量合计')} <b style={{ color: 'var(--text)' }}>{totalPoints}</b> {t('req.pointsUnit', '点')}</Typography.Text>
         <div style={{ flex: 1 }} />
         <Segmented
           size="small"
@@ -567,7 +572,7 @@ function DecompositionView({ decompId, verificationId, projectId, reqId }: { dec
               width: 150,
               render: (_, row) => (
                 <Space>
-                  <Button type="link" size="small" icon={<SendOutlined />} onClick={() => dispatch(row)}>{t('req.dispatch', '派发')}</Button>
+                  <Button type="link" size="small" icon={<SendOutlined />} loading={dispatching.has(row.id)} disabled={dispatching.has(row.id)} onClick={() => dispatch(row)}>{t('req.dispatch', '派发')}</Button>
                   <Button type="link" size="small" onClick={() => setCasesFor(row)}>{t('req.cases', '用例')}</Button>
                   <Button type="link" size="small" onClick={() => setEventsFor(row)}>{t('req.events', '事件')}</Button>
                 </Space>
@@ -582,7 +587,7 @@ function DecompositionView({ decompId, verificationId, projectId, reqId }: { dec
             const colTasks = tasks.filter((tk) => col.statuses.includes(tk.status))
             return (
               <Col key={col.key} flex="0 0 224px">
-                <div style={{ background: '#f5f6f8', borderRadius: 8, padding: 8, minHeight: 140 }}>
+                <div style={{ background: 'var(--bg)', borderRadius: 8, padding: 8, minHeight: 140 }}>
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '2px 4px 8px', fontWeight: 600, fontSize: 13 }}>
                     <span>{t(col.tkey, col.label)}</span><Tag>{colTasks.length}</Tag>
                   </div>
@@ -603,11 +608,11 @@ function DecompositionView({ decompId, verificationId, projectId, reqId }: { dec
                             options={assignees}
                             onChange={(v) => assign(tk, v)}
                           />
-                          {tk.status === 'PENDING' && <Button size="small" icon={<SendOutlined />} onClick={() => dispatch(tk)} />}
+                          {tk.status === 'PENDING' && <Button size="small" icon={<SendOutlined />} loading={dispatching.has(tk.id)} disabled={dispatching.has(tk.id)} onClick={() => dispatch(tk)} />}
                         </Space.Compact>
                       </Card>
                     ))}
-                    {colTasks.length === 0 && <div style={{ color: '#bbb', fontSize: 12, textAlign: 'center', padding: '12px 0' }}>—</div>}
+                    {colTasks.length === 0 && <div style={{ color: 'var(--text-3)', fontSize: 12, textAlign: 'center', padding: '12px 0' }}>—</div>}
                   </Space>
                 </div>
               </Col>
@@ -736,7 +741,7 @@ function TaskCasesDrawer({ decompId, projectId, task, onClose }: { decompId: str
                 ? (plansOf[c.id] || []).map((p) => (
                     <Tag key={p.planId} color="geekblue" style={{ cursor: 'pointer' }} onClick={() => nav(`/test-plan?open=${p.planId}`)}>{p.name}</Tag>
                   ))
-                : <span style={{ color: '#bbb' }}>—</span>,
+                : <span style={{ color: 'var(--text-3)' }}>—</span>,
           },
           { title: '', width: 50, render: (_, c) => <Button type="link" size="small" danger onClick={() => unlink(c.id)}>{t('req.remove', '移除')}</Button> },
         ]}
