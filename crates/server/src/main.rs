@@ -16,6 +16,7 @@ mod llm;
 mod mcp_tools;
 mod openapi;
 mod orchestration;
+mod case_exec_summary;
 mod perf_run;
 mod plan_run;
 mod plan_scheduler;
@@ -497,6 +498,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // —— 报告归档(已完成报告周期性导出 Parquet 冷存储;REPORT_ARCHIVE_DIR 开关)——
     report_archive_job::spawn(pool.clone());
 
+    // —— 首页:接口用例执行汇总(GET /api/case-exec-summary)——
+    let case_summary_routes = case_exec_summary::router(pool.clone(), sessions.clone());
+
     // —— 合并为单一应用 + 生产中间件 ——
     let app = user_routes
         .merge(oidc_routes)
@@ -525,6 +529,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .merge(scenario_routes)
         .merge(references_routes)
         .merge(scenario_run_routes)
+        .merge(case_summary_routes)
         .merge(perf_routes)
         .merge(debug_send_routes)
         .merge(plan_scheduler_routes)
