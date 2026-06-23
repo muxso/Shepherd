@@ -28,8 +28,33 @@ npx playwright test e2e/requirements.spec.ts   # 单文件
 
 可用环境变量覆盖:`E2E_BASE_URL`(默认 http://localhost:5173)、`E2E_PASSWORD`(默认 s3cret)。
 
+## 结构(Page-Object + flow,新用例靠组合)
+```
+e2e/
+  fixtures.ts        # 扩展 test:auth(API 登录+建隔离项目)、注入页面对象、createReq 助手
+  flows.ts           # 跨页面/接口的业务流(如 decompose = 打开需求→点自动拆分)
+  pages/             # 页面对象(选择器/交互集中,spec 不碰 DOM 细节)
+    LoginPage.ts  RequirementsPage.ts  TaskCenterPage.ts
+  *.spec.ts          # 用例 = 组合 fixtures + flow + page-object 的断言
+```
+
+加新用例示范:
+```ts
+import { test, expect } from './fixtures'
+import { decompose } from './flows'
+
+test('xxx', async ({ requirements, createReq }) => {
+  const { title } = await createReq(['标准A', '标准B'])   // API 建需求(隔离项目)
+  await decompose(requirements, title)                     // flow:打开 + 自动拆分
+  await requirements.openCoverageTab()
+  await requirements.expectCoverage(2, 2)                  // page-object 断言
+})
+```
+加新页面/流程:在 `pages/` 加页面对象、`flows.ts` 加业务流,spec 只管组合 + 断言。
+
 ## 说明
 - 用例经 API 登录 + 注入 localStorage(`shepherd.token` / `shepherd.projectId`)免去重复点登录;
   `login.spec.ts` 例外,专测登录 UI 本身。
-- 冒烟会建少量「E2E-」前缀的测试需求/功能用例(dogfood 库可接受);需要的话自行清理。
+- 每次跑建一个全新隔离项目(fixture `auth`),需求只在该项目里,不被历史数据/分页淹没。
+- 冒烟会建少量「E2E-」前缀的测试需求/功能用例 + E2E 项目(dogfood 库可接受);需要的话自行清理。
 - **不触发真实 Claude 派发**(那会慢且改仓库);派发→执行链路用后端 e2e / 手动验证。

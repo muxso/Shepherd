@@ -1,4 +1,6 @@
 import { test as base, expect, type APIRequestContext } from '@playwright/test'
+import { RequirementsPage } from './pages/RequirementsPage'
+import { TaskCenterPage } from './pages/TaskCenterPage'
 
 // 与 src/api.ts、src/context.tsx 对齐的 localStorage 键。
 const TOKEN_KEY = 'shepherd.token'
@@ -36,8 +38,17 @@ export async function createRequirement(
   return (await r.json()).id
 }
 
+type Fixtures = {
+  auth: { token: string; projectId: string }
+  requirements: RequirementsPage
+  taskCenter: TaskCenterPage
+  /** 经 API 建需求(不拆分),返回 {id, title};标题唯一。 */
+  createReq: (criteria: string[], prefix?: string) => Promise<{ id: string; title: string }>
+}
+
 // authed:API 登录 + 注入 localStorage(token + 选中项目),页面打开即已登录、已选项目。
-export const test = base.extend<{ auth: { token: string; projectId: string } }>({
+// 并注入页面对象(requirements/taskCenter)与 createReq 助手,spec 直接拿来组合。
+export const test = base.extend<Fixtures>({
   auth: async ({ request }, use) => {
     const token = await adminToken(request)
     const projectId = await freshProjectId(request, token)
@@ -52,6 +63,20 @@ export const test = base.extend<{ auth: { token: string; projectId: string } }>(
       [auth.token, auth.projectId] as [string, string],
     )
     await use(page)
+  },
+  requirements: async ({ page }, use) => {
+    await use(new RequirementsPage(page))
+  },
+  taskCenter: async ({ page }, use) => {
+    await use(new TaskCenterPage(page))
+  },
+  createReq: async ({ request, auth }, use) => {
+    let n = 0
+    await use(async (criteria, prefix = 'E2E') => {
+      const title = `${prefix}-${Date.now()}-${n++}`
+      const id = await createRequirement(request, auth.token, auth.projectId, title, criteria)
+      return { id, title }
+    })
   },
 })
 
