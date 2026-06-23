@@ -182,7 +182,7 @@ export default function Scenarios() {
         tabs={detailTabs}
         listContent={listContent}
       />
-      <ImportScenarioDrawer open={importOpen} projectId={projectId} modules={modules} onClose={() => setImportOpen(false)} />
+      <ImportScenarioDrawer open={importOpen} projectId={projectId} modules={modules} onClose={() => setImportOpen(false)} onImported={load} />
     </>
   )
 }
@@ -1441,19 +1441,66 @@ function NewScenarioTab({ projectId, modules, onCreated }: { projectId: string; 
 }
 
 // 导入场景抽屉(对齐参考图 #39):格式标签 + 所属模块 + 导入模式 + 文件拖拽。解析需后端,先占位。
-function ImportScenarioDrawer({ open, modules, onClose }: { open: boolean; projectId: string; modules: ApiModule[]; onClose: () => void }) {
+/** HAR 一个请求条目(只取本平台用得到的字段)。 */
+type HarEntry = { request?: { method?: string; url?: string; postData?: { text?: string } } }
+
+/** 解析 HAR(JSON)的 log.entries → REQUEST 步骤体。无 method/url 的条目跳过。 */
+function parseHarSteps(text: string): StepBody[] {
+  const har = JSON.parse(text) as { log?: { entries?: HarEntry[] } }
+  const entries = har?.log?.entries
+  if (!Array.isArray(entries)) throw new Error('invalid HAR: missing log.entries')
+  const steps: StepBody[] = []
+  entries.forEach((e, i) => {
+    const r = e.request
+    if (!r?.method || !r?.url) return
+    const raw = r.postData?.text
+    const body = typeof raw === 'string' && raw.length > 0 ? raw : undefined
+    steps.push({ kind: 'REQUEST', order: i + 1, request: { method: r.method.toUpperCase(), url: r.url, body } })
+  })
+  return steps
+}
+
+function ImportScenarioDrawer({ open, projectId, modules, onClose, onImported }: { open: boolean; projectId: string; modules: ApiModule[]; onClose: () => void; onImported?: () => void }) {
   const { t } = useI18n()
-  const [fmt, setFmt] = useState('MeterSphere')
+  const [fmt, setFmt] = useState('Har')
   const [moduleId, setModuleId] = useState('')
   const [mode, setMode] = useState('skip')
+  const [file, setFile] = useState<File | null>(null)
+  const [busy, setBusy] = useState(false)
   const label = (s: string) => <div style={{ fontSize: 13, color: '#5b6470', margin: '14px 0 6px' }}>{s}</div>
+
+  const doImport = async () => {
+    if (fmt !== 'Har') {
+      message.info(t('scenario.importParseSoon', '该格式解析需后端支持(MeterSphere/Jmeter),后续接入'))
+      return
+    }
+    if (!file) { message.warning(t('scenario.fileRequired', '请先选择文件')); return }
+    setBusy(true)
+    try {
+      const steps = parseHarSteps(await file.text())
+      if (!steps.length) { message.warning(t('scenario.harEmpty', 'HAR 中未找到可导入的请求')); return }
+      const name = file.name.replace(/\.[^.]+$/, '') || t('scenario.importScenario', '导入场景')
+      const s = await api.createScenario(projectId, name)
+      for (let i = 0; i < steps.length; i++) await api.addStep(s.id, { ...steps[i], order: i + 1 })
+      if (moduleId) await api.updateScenario(s.id, { name, meta: { moduleId } })
+      message.success(t('scenario.importedN', '已导入 {n} 个请求').replace('{n}', String(steps.length)))
+      setFile(null)
+      onImported?.()
+      onClose()
+    } catch (e) {
+      message.error(e instanceof ApiError ? e.message : e instanceof Error ? e.message : t('scenario.importFailed', '导入失败'))
+    } finally {
+      setBusy(false)
+    }
+  }
+
   return (
     <Drawer
       open={open}
       onClose={onClose}
       width={560}
       title={t('scenario.importScenario', '导入场景')}
-      footer={<div style={{ textAlign: 'right' }}><Space><Button onClick={onClose}>{t('a.cancel', '取消')}</Button><Button type="primary" onClick={() => message.info(t('scenario.importParseSoon', '导入解析需后端支持(MeterSphere/Jmeter/Har),后续接入'))}>{t('scenario.doImport', '导入')}</Button></Space></div>}
+      footer={<div style={{ textAlign: 'right' }}><Space><Button onClick={onClose}>{t('a.cancel', '取消')}</Button><Button type="primary" loading={busy} onClick={doImport}>{t('scenario.doImport', '导入')}</Button></Space></div>}
     >
       <Segmented value={fmt} onChange={(v) => setFmt(v as string)} options={[{ label: 'MeterSphere', value: 'MeterSphere' }, { label: 'Jmeter', value: 'Jmeter' }, { label: 'Har', value: 'Har' }]} />
       {label(t('scenario.ownerModule', '所属模块'))}
@@ -1464,10 +1511,10 @@ function ImportScenarioDrawer({ open, modules, onClose }: { open: boolean; proje
         <Radio value="skip">{t('scenario.modeSkip', '不覆盖')}</Radio>
       </Radio.Group>
       <div style={{ marginTop: 16 }}>
-        <Upload.Dragger maxCount={1} beforeUpload={() => false} accept=".ms,.json,.jmx,.har">
+        <Upload.Dragger maxCount={1} accept=".ms,.json,.jmx,.har" beforeUpload={(f) => { setFile(f); return false }} onRemove={() => setFile(null)}>
           <p className="ant-upload-drag-icon"><InboxOutlined style={{ color: '#7c3aed' }} /></p>
           <p className="ant-upload-text">{t('scenario.dropFile', '拖拽或点击此区域选择文件')}</p>
-          <p className="ant-upload-hint" style={{ fontSize: 12 }}>{t('scenario.fileHint', '仅支持 ms 格式文件,单个大小不超过 50 MB')}</p>
+          <p className="ant-upload-hint" style={{ fontSize: 12 }}>{t('scenario.fileHint', 'HAR 直接解析为请求步骤;MeterSphere/Jmeter 解析后续接入')}</p>
         </Upload.Dragger>
       </div>
     </Drawer>
