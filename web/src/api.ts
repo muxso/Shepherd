@@ -627,6 +627,9 @@ export interface DeliveryAttempt {
   taskId?: string
   title?: string
   executor?: string
+  runId?: string | null
+  deliverable?: { kind: string; reference: string; summary: string } | null
+  error?: string | null
 }
 
 export interface DeliveryEvent {

@@ -1,13 +1,14 @@
-import { useEffect, useState } from 'react'
-import { Button, Card, Col, Descriptions, Drawer, Empty, Form, Input, InputNumber, Modal, Progress, Row, Segmented, Select, Space, Statistic, Table, Tabs, Tag, Typography } from 'antd'
+import { useCallback, useEffect, useState } from 'react'
+import { Badge, Button, Card, Col, Descriptions, Drawer, Empty, Form, Input, InputNumber, Modal, Progress, Row, Segmented, Select, Space, Spin, Statistic, Table, Tabs, Tag, Timeline, Typography } from 'antd'
 import { message, modal } from '../feedback'
 import { useNavigate } from 'react-router-dom'
-import { BranchesOutlined, DeleteOutlined, EditOutlined, FlagOutlined, InboxOutlined, PartitionOutlined, PlayCircleOutlined, SendOutlined } from '@ant-design/icons'
+import { BranchesOutlined, DeleteOutlined, EditOutlined, FlagOutlined, InboxOutlined, PartitionOutlined, PlayCircleOutlined, ProfileOutlined, ReloadOutlined, SendOutlined } from '@ant-design/icons'
 import {
   api,
   ApiError,
   type ApiCase,
   type CoverageCase,
+  type DeliveryAttempt,
   type DeliveryEvent,
   type FunctionalCase,
   type Requirement,
@@ -569,12 +570,12 @@ function DecompositionView({ decompId, verificationId, projectId, reqId }: { dec
             { title: t('req.dependencies', '依赖'), dataIndex: 'dependencies', render: (d?: string[]) => (d?.length ? d.join(', ') : '—') },
             {
               title: t('req.action', '操作'),
-              width: 150,
+              width: 220,
               render: (_, row) => (
                 <Space>
                   <Button type="link" size="small" icon={<SendOutlined />} loading={dispatching.has(row.id)} disabled={dispatching.has(row.id)} onClick={() => dispatch(row)}>{t('req.dispatch', '派发')}</Button>
                   <Button type="link" size="small" onClick={() => setCasesFor(row)}>{t('req.cases', '用例')}</Button>
-                  <Button type="link" size="small" onClick={() => setEventsFor(row)}>{t('req.events', '事件')}</Button>
+                  <Button type="link" size="small" icon={<ProfileOutlined />} onClick={() => setEventsFor(row)}>{t('req.execProgress', '执行进度')}</Button>
                 </Space>
               ),
             },
@@ -609,6 +610,7 @@ function DecompositionView({ decompId, verificationId, projectId, reqId }: { dec
                             onChange={(v) => assign(tk, v)}
                           />
                           {tk.status === 'PENDING' && <Button size="small" icon={<SendOutlined />} loading={dispatching.has(tk.id)} disabled={dispatching.has(tk.id)} onClick={() => dispatch(tk)} />}
+                          <Button size="small" icon={<ProfileOutlined />} title={t('req.execProgress', '执行进度')} onClick={() => setEventsFor(tk)} />
                         </Space.Compact>
                       </Card>
                     ))}
@@ -750,38 +752,115 @@ function TaskCasesDrawer({ decompId, projectId, task, onClose }: { decompId: str
   )
 }
 
+// 交付尝试状态 → Badge 状态色。
+const attemptBadge = (s: string): 'processing' | 'success' | 'error' | 'warning' | 'default' =>
+  s === 'RUNNING' ? 'processing' : s === 'DELIVERED' ? 'success' : s === 'FAILED' ? 'error' : s === 'DISPATCHED' ? 'warning' : 'default'
+// 审计事件类型 → 颜色(时间线圆点 / 标签)。
+const eventColor = (k: string): string =>
+  k === 'DECISION' ? 'blue' : k === 'FILE_CHANGE' ? 'gold' : k === 'TEST_RESULT' ? 'green' : k === 'TOOL_CALL' ? 'geekblue' : k === 'VERDICT' ? 'purple' : 'default'
+
+// 执行进度抽屉:某任务的全部交付尝试 + 每个尝试的实时审计轨迹 + 交付物/错误。
+// RUNNING/DISPATCHED 期间每 3s 轮询,直到落终态(派发后能看着 AI 干活)。
 function EventsDrawer({ decompId, task, onClose }: { decompId: string; task: Task | null; onClose: () => void }) {
   const { t } = useI18n()
-  const [events, setEvents] = useState<DeliveryEvent[]>([])
+  const [attempts, setAttempts] = useState<DeliveryAttempt[]>([])
+  const [eventsByAttempt, setEventsByAttempt] = useState<Record<string, DeliveryEvent[]>>({})
+  const [loading, setLoading] = useState(false)
+
+  const load = useCallback(async () => {
+    if (!task) return
+    setLoading(true)
+    try {
+      const atts = await api.deliveries(decompId, task.id).catch(() => [])
+      const ordered = [...atts].reverse() // 最近一次在前(列表按插入序返回)
+      const map: Record<string, DeliveryEvent[]> = {}
+      for (const a of ordered) {
+        const id = a.id || a.attemptId
+        if (id) map[id] = await api.deliveryEvents(id).catch(() => [])
+      }
+      setAttempts(ordered)
+      setEventsByAttempt(map)
+    } finally {
+      setLoading(false)
+    }
+  }, [task, decompId])
+
   useEffect(() => {
     if (!task) return
-    setEvents([])
-    api
-      .deliveries(decompId, task.id)
-      .then(async (atts) => {
-        const all: DeliveryEvent[] = []
-        for (const a of atts) {
-          const id = a.id || a.attemptId
-          if (id) all.push(...(await api.deliveryEvents(id).catch(() => [])))
-        }
-        setEvents(all)
-      })
-      .catch(() => undefined)
-  }, [task, decompId])
+    setAttempts([])
+    setEventsByAttempt({})
+    load()
+  }, [task, load])
+
+  // 有尝试在跑就轮询;全部落终态后停。
+  const live = attempts.some((a) => a.status === 'RUNNING' || a.status === 'DISPATCHED')
+  useEffect(() => {
+    if (!task || !live) return
+    const h = setInterval(load, 3000)
+    return () => clearInterval(h)
+  }, [task, live, load])
+
   return (
-    <Drawer title={task ? `${t('req.deliveryEvents', '交付事件')} · ${task.title}` : ''} open={!!task} onClose={onClose} width={520}>
-      <Table<DeliveryEvent>
-        rowKey={(r) => (r.seq != null ? String(r.seq) : `${r.kind}:${r.message ?? ''}`)}
-        size="small"
-        dataSource={events}
-        pagination={false}
-        locale={{ emptyText: <Empty description={t('req.noEvents', '暂无事件(先派发任务)')} /> }}
-        columns={[
-          { title: '#', dataIndex: 'seq', width: 50, render: (v?: number) => v ?? '—' },
-          { title: t('req.eventType', '类型'), dataIndex: 'kind', width: 100, render: (k: string) => <Tag>{k}</Tag> },
-          { title: t('req.eventMessage', '消息'), dataIndex: 'message', render: (m?: string) => m || '—' },
-        ]}
-      />
+    <Drawer
+      title={
+        <Space>
+          <span>{task ? `${t('req.execProgress', '执行进度')} · ${task.title}` : ''}</span>
+          {live && <Badge status="processing" text={<Typography.Text type="secondary" style={{ fontSize: 12 }}>{t('req.livePolling', '实时刷新中')}</Typography.Text>} />}
+        </Space>
+      }
+      open={!!task}
+      onClose={onClose}
+      width={560}
+      extra={<Button size="small" icon={<ReloadOutlined />} loading={loading} onClick={load}>{t('common.refresh', '刷新')}</Button>}
+    >
+      {attempts.length === 0 ? (
+        <Empty description={t('req.noAttempts', '暂无执行记录(先派发任务)')} />
+      ) : (
+        <Space direction="vertical" size={12} style={{ width: '100%' }}>
+          {attempts.map((a, idx) => {
+            const id = a.id || a.attemptId || String(idx)
+            const evs = eventsByAttempt[id] || []
+            return (
+              <Card key={id} size="small" title={
+                <Space size={8}>
+                  <Badge status={attemptBadge(a.status)} />
+                  <span>{a.status === 'RUNNING' ? t('req.attemptRunning', '执行中') : a.status === 'DELIVERED' ? t('req.attemptDelivered', '已交付') : a.status === 'FAILED' ? t('req.attemptFailed', '失败') : a.status}</span>
+                  {a.executor && <Tag>{a.executor}</Tag>}
+                  {idx === 0 && <Tag color="blue">{t('req.latest', '最近')}</Tag>}
+                </Space>
+              }>
+                {a.status === 'RUNNING' && <div style={{ marginBottom: 8 }}><Spin size="small" /> <Typography.Text type="secondary">{t('req.aiWorking', 'AI 执行者正在工作…')}</Typography.Text></div>}
+                {a.deliverable && (a.deliverable.reference || a.deliverable.summary) && (
+                  <Descriptions size="small" column={1} style={{ marginBottom: 8 }}>
+                    <Descriptions.Item label={t('req.deliverable', '交付物')}>
+                      <Tag color="green">{a.deliverable.kind}</Tag>
+                      <Typography.Text code copyable>{a.deliverable.reference}</Typography.Text>
+                    </Descriptions.Item>
+                    {a.deliverable.summary && <Descriptions.Item label={t('req.summary', '摘要')}>{a.deliverable.summary}</Descriptions.Item>}
+                  </Descriptions>
+                )}
+                {a.error && <Typography.Text type="danger" style={{ display: 'block', marginBottom: 8 }}>{a.error}</Typography.Text>}
+                {evs.length > 0 ? (
+                  <Timeline
+                    items={evs.map((e) => ({
+                      color: eventColor(e.kind),
+                      children: (
+                        <span>
+                          <Tag color={eventColor(e.kind)}>{e.kind}</Tag>
+                          <span>{e.message || '—'}</span>
+                          {typeof e.detail === 'string' && e.detail && <Typography.Text type="secondary" style={{ display: 'block', fontSize: 12 }}>{e.detail}</Typography.Text>}
+                        </span>
+                      ),
+                    }))}
+                  />
+                ) : (
+                  <Typography.Text type="secondary" style={{ fontSize: 12 }}>{t('req.noTrace', '暂无审计轨迹')}</Typography.Text>
+                )}
+              </Card>
+            )
+          })}
+        </Space>
+      )}
     </Drawer>
   )
 }
