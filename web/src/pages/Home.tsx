@@ -19,6 +19,7 @@ import { useApp } from '../context'
 import { regList } from '../registry'
 import { useI18n } from '../i18n'
 import Donut from '../components/Donut'
+import GroupedBars, { type BarRow } from '../components/GroupedBars'
 
 interface Counts {
   def: number
@@ -33,14 +34,22 @@ interface Counts {
 // 协议分段配色(轮转)。
 const PROTO_COLORS = ['#7c3aed', '#1677ff', '#13c2c2', '#52c41a', '#fa8c16', '#eb2f96', '#f5222d', '#8a9099']
 
+// 项目对比柱状图的资产系列(配色对齐资产分布环)。
+const PROJECT_SERIES = [
+  { key: 'def', label: '接口定义', color: '#7c3aed' },
+  { key: 'scenario', label: '场景用例', color: '#1677ff' },
+  { key: 'apiCase', label: '接口用例', color: '#13c2c2' },
+  { key: 'funcCase', label: '功能用例', color: '#52c41a' },
+]
+
 // 卡片清单(完整版「卡片设置」对标 MeterSphere):每张卡可独立显隐 + 自由排序。
-const ALL_CARDS = ['overview', 'assets', 'apiStats', 'quality', 'shortcuts'] as const
+const ALL_CARDS = ['overview', 'projectBars', 'assets', 'apiStats', 'quality', 'shortcuts'] as const
 type CardKey = (typeof ALL_CARDS)[number]
 interface CardPref {
   key: CardKey
   shown: boolean
 }
-const CARDS_KEY = 'shepherd.home.cards.v3'
+const CARDS_KEY = 'shepherd.home.cards.v4'
 
 /** 读持久化偏好。缺省全显示、按 ALL_CARDS 顺序;新增卡默认显示并追加到末尾。 */
 function loadPrefs(): CardPref[] {
@@ -61,12 +70,13 @@ function loadPrefs(): CardPref[] {
 
 // 首页工作台:当前项目测试资产概览。对标 MeterSphere 首页(可自定义卡片显隐与排序)。
 export default function Home() {
-  const { projectId } = useApp()
+  const { projectId, projects } = useApp()
   const { t } = useI18n()
   const navigate = useNavigate()
   const [c, setC] = useState<Counts | null>(null)
   const [defs, setDefs] = useState<ApiDefinition[]>([])
   const [cases, setCases] = useState<ApiCase[]>([])
+  const [projRows, setProjRows] = useState<BarRow[]>([])
   const [loading, setLoading] = useState(false)
   const [prefs, setPrefs] = useState<CardPref[]>(loadPrefs)
 
@@ -123,8 +133,27 @@ export default function Home() {
     return defs.filter((d) => ref.has(d.id)).length
   }, [defs, cases])
 
+  // 项目对比:对每个项目并发拉取四类资产计数(真实数据,与当前选中项目无关)。
+  useEffect(() => {
+    if (!projects.length) { setProjRows([]); return }
+    let alive = true
+    Promise.all(
+      projects.map(async (p) => {
+        const [def, scenario, apiCase, funcCase] = await Promise.all([
+          api.definitions(p.id).then((d) => d.length).catch(() => 0),
+          api.scenarios(p.id).then((d) => d.length).catch(() => 0),
+          api.projectCases(p.id).then((x) => x.total ?? x.items.length).catch(() => 0),
+          api.functionalCases(p.id).then((d) => d.length).catch(() => 0),
+        ])
+        return { name: p.name, values: { def, scenario, apiCase, funcCase } } as BarRow
+      }),
+    ).then((rows) => { if (alive) setProjRows(rows) })
+    return () => { alive = false }
+  }, [projects])
+
   const cardTitle: Record<CardKey, string> = {
     overview: t('home.title', '项目概览'),
+    projectBars: t('home.projectCompare', '项目资产对比'),
     assets: t('home.assetDist', '测试资产分布'),
     apiStats: t('home.apiStats', '接口数'),
     quality: t('home.quality', '质量概览'),
@@ -210,6 +239,32 @@ export default function Home() {
             )}
           </Card>
         )
+      case 'projectBars': {
+        // 资产量降序,仅取前 12,避免项目过多时 x 轴标签重叠。
+        const TOP = 12
+        const ranked = projRows
+          .map((r) => ({ r, total: Object.values(r.values).reduce((s, v) => s + v, 0) }))
+          .filter((x) => x.total > 0)
+          .sort((a, b) => b.total - a.total)
+        const shown = ranked.slice(0, TOP).map((x) => x.r)
+        return (
+          <Card
+            title={<span><ApiOutlined style={{ color: '#1677ff', marginRight: 6 }} />{cardTitle.projectBars}</span>}
+            extra={ranked.length > TOP ? <span style={{ fontSize: 12, color: '#8a9099' }}>{t('home.topN', '资产量前 {n}').replace('{n}', String(TOP))}</span> : undefined}
+            size="small"
+            style={{ marginBottom: 16 }}
+          >
+            {shown.length === 0 ? (
+              <Empty description={t('common.empty', '暂无数据')} />
+            ) : (
+              <GroupedBars
+                series={PROJECT_SERIES.map((s) => ({ ...s, label: t(`home.${s.key}`, s.label) }))}
+                rows={shown}
+              />
+            )}
+          </Card>
+        )
+      }
       case 'apiStats': {
         const totalDefs = defs.length
         const uncovered = totalDefs - coveredDefs
