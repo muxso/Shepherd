@@ -24,25 +24,41 @@ server 把 WorkSpec(任务标题/描述/验收标准)作为 prompt 写到子进�
 - 其它行 → 当作 `LOG` 事件
 - 退出码非 0 → 任务转 Failed(stderr 进错误信息)
 
-## 两个现成脚本
+## 同步 vs 异步(重要)
 
-- **`mock-agent.sh`** —— 确定性演示/验证执行者。不调用 AI、不改文件,只按协议产出
-  审计事件 + `mock://` 交付物。用于证明「派发 → executor」链路是真的、给演示一个稳定结果。
-- **`claude-agent.sh`** —— 真实桥接。把 prompt 交给本机 `claude -p --output-format json`,
-  把 Claude 的最终结果转成 `claude://` 交付物。**会真实改文件、消耗用量**,需 `claude` 已登录。
+server 有一道全局 **30s 请求超时**(`TimeoutLayer`)。`claude -p` 跑一个真实任务
+通常要几十秒~几分钟,**同步执行者会把派发请求卡到 408**。所以真实 Claude 必须走**异步**:
 
-## 启用(真实 Claude)
+- **同步模式**(默认,`SHEPHERD_AGENT_CMD` 不配 `SHEPHERD_AGENT_ASYNC`):
+  server spawn 子进程并**阻塞等它跑完**,按 stdout 协议收尾。只适合**秒级**执行者
+  (如 `mock-agent.sh`、测试桩)。
+- **异步模式**(`SHEPHERD_AGENT_ASYNC=1`):派发**立即返回 Running**,子进程在后台跑,
+  跑完经 HTTP 回调 `/delivery/{id}/complete|fail|events` 自行收尾。server 启动时给子进程
+  铸一枚回调令牌(`DELIVERY:READ+UPDATE`),并经环境变量注入
+  `SHEPHERD_ATTEMPT_ID` / `SHEPHERD_CALLBACK_URL` / `SHEPHERD_CALLBACK_TOKEN`。
+  **真实 Claude 用这个。**
+
+## 三个现成脚本
+
+- **`mock-agent.sh`** —— 同步、确定性演示/验证执行者。不调 AI、不改文件,按协议产出
+  审计事件 + `mock://` 交付物。
+- **`claude-agent.sh`** —— 同步桥接 `claude -p`(会被 30s 超时卡死,仅留作参考/极快任务)。
+- **`claude-agent-async.sh`** —— **异步桥接(推荐)**。把 prompt 交给 `claude -p --output-format json`,
+  跑完经 HTTP 回调把 `claude://` 交付物 + 审计事件回灌。**会真实改文件、消耗用量**,需 `claude` 已登录。
+
+## 启用(真实 Claude,异步)
 
 在期望被改动的仓库根启动 server(Claude 会在 server 的 cwd 改文件):
 
 ```bash
-SHEPHERD_AGENT_CMD="$PWD/scripts/agent/claude-agent.sh" \
+SHEPHERD_AGENT_CMD="$PWD/scripts/agent/claude-agent-async.sh" \
+SHEPHERD_AGENT_ASYNC=1 \
 DATABASE_URL=postgres://msuser:mspass@localhost:55432/mstest \
 MS_BIND=127.0.0.1:9180 MS_ADMIN_PASSWORD=s3cret \
 ./target/debug/server
 ```
 
-然后在需求详情「拆分/交付/验证」里点任务的「派发」即可。
+然后在需求详情「拆分/交付/验证」里点任务的「派发」即可 —— 派发秒回,UI 轮询/刷新看进度。
 
 ## 端到端自测(用 mock,不消耗用量)
 

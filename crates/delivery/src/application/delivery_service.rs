@@ -106,6 +106,7 @@ impl DeliveryService {
 
         let mut attempt = self.repo.create(decomposition_id, task_id, kind).await?;
         let spec = WorkSpec {
+            attempt_id: attempt.id.clone(),
             decomposition_id: decomposition_id.to_string(),
             task_id: task_id.to_string(),
             title: title.trim().to_string(),

@@ -139,6 +139,8 @@ impl Reviser for ExecutorReviser {
         feedback: &str,
     ) -> Result<DeliverableView, OrchError> {
         let spec = WorkSpec {
+            // 修订走同步收尾(LLM/sync executor),不依赖异步回调,attempt_id 暂置空。
+            attempt_id: String::new(),
             decomposition_id: decomposition_id.to_string(),
             task_id: task_id.to_string(),
             title: format!("修订任务 {task_id}"),

@@ -22,11 +22,14 @@ use crate::ports::{AgentExecutor, DispatchOutcome, EventSink, ExecError, WorkSpe
 pub struct LocalCommandAgentExecutor {
     claude_code: Vec<String>,
     codex: Vec<String>,
+    /// 异步自回调配置:(回调基址, 令牌)。设置后 dispatch 立即返回 Accepted,
+    /// 子进程在后台跑完经 `/delivery/{attempt_id}/complete` 自行收尾 —— 避开请求级超时。
+    callback: Option<(String, String)>,
 }
 
 impl LocalCommandAgentExecutor {
     pub fn new(claude_code: Vec<String>, codex: Vec<String>) -> Self {
-        Self { claude_code, codex }
+        Self { claude_code, codex, callback: None }
     }
 
     /// 常见默认:`claude -p`(headless print)与 `codex exec`。
@@ -34,7 +37,15 @@ impl LocalCommandAgentExecutor {
         Self {
             claude_code: vec!["claude".into(), "-p".into()],
             codex: vec!["codex".into(), "exec".into()],
+            callback: None,
         }
+    }
+
+    /// 启用异步自回调:子进程经 HTTP 回调收尾(派发请求秒回,不被 30s 超时切断)。
+    /// 子进程会拿到环境变量 `SHEPHERD_ATTEMPT_ID` / `SHEPHERD_CALLBACK_URL` / `SHEPHERD_CALLBACK_TOKEN`。
+    pub fn with_async_callback(mut self, base: String, token: String) -> Self {
+        self.callback = Some((base, token));
+        self
     }
 
     fn argv(&self, kind: ExecutorKind) -> &[String] {
@@ -100,6 +111,35 @@ impl AgentExecutor for LocalCommandAgentExecutor {
         let argv = self.argv(spec.executor);
         let (program, args) =
             argv.split_first().ok_or_else(|| ExecError::Backend("empty executor command".into()))?;
+
+        // —— 异步自回调模式:子进程后台跑,经 HTTP 回调收尾,派发立即返回 Accepted ——
+        if let Some((base, token)) = &self.callback {
+            let mut child = Command::new(program)
+                .args(args)
+                .env("SHEPHERD_ATTEMPT_ID", &spec.attempt_id)
+                .env("SHEPHERD_CALLBACK_URL", base)
+                .env("SHEPHERD_CALLBACK_TOKEN", token)
+                .env("SHEPHERD_EXECUTOR", spec.executor.as_str())
+                .env("SHEPHERD_TASK_ID", &spec.task_id)
+                .env("SHEPHERD_DECOMP_ID", &spec.decomposition_id)
+                .stdin(Stdio::piped())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn()
+                .map_err(|e| ExecError::Backend(format!("spawn {program}: {e}")))?;
+            if let Some(mut stdin) = child.stdin.take() {
+                stdin
+                    .write_all(spec_to_prompt(spec).as_bytes())
+                    .await
+                    .map_err(|e| ExecError::Backend(e.to_string()))?;
+            }
+            // 后台收割,避免僵尸;不阻塞派发。
+            tokio::spawn(async move {
+                let _ = child.wait().await;
+            });
+            // run_id = attempt_id,便于回调/排障对账。
+            return Ok(DispatchOutcome::Accepted { run_id: spec.attempt_id.clone() });
+        }
 
         let mut child = Command::new(program)
             .args(args)
@@ -174,6 +214,7 @@ mod tests {
 
     fn spec(kind: ExecutorKind) -> WorkSpec {
         WorkSpec {
+            attempt_id: "a1".into(),
             decomposition_id: "d1".into(),
             task_id: "t1".into(),
             title: "build".into(),

@@ -316,12 +316,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // —— delivery 模块(Shepherd 交付执行:任务 → AI 执行者)——
     // 执行者按环境路由:SHEPHERD_AGENT_URL → 远端 Agent API(异步);
-    // SHEPHERD_AGENT_CMD → 本地 spawn(同步);都没配 → Echo 桩(无真实 agent)。
+    // SHEPHERD_AGENT_CMD → 本地 spawn;配 SHEPHERD_AGENT_ASYNC → 子进程后台跑 + HTTP 自回调收尾
+    // (派发秒回,绕开 30s 请求超时);否则同步 spawn;都没配 → Echo 桩(无真实 agent)。
     let agent: Arc<dyn AgentExecutor> = if let Ok(url) = std::env::var("SHEPHERD_AGENT_URL") {
         Arc::new(delivery::adapters::agent_http::HttpAgentExecutor::new(url))
     } else if let Ok(cmd) = std::env::var("SHEPHERD_AGENT_CMD") {
         let argv: Vec<String> = cmd.split_whitespace().map(String::from).collect();
-        Arc::new(delivery::adapters::local::LocalCommandAgentExecutor::new(argv.clone(), argv))
+        let mut ex = delivery::adapters::local::LocalCommandAgentExecutor::new(argv.clone(), argv);
+        if std::env::var("SHEPHERD_AGENT_ASYNC").is_ok() {
+            use webauth::SessionStore as _; // 令 sessions.create 可见
+            // 给子进程铸一枚长期回调令牌(DELIVERY:READ+UPDATE),回调基址由 bind 推出。
+            let cb_host = bind.replace("0.0.0.0", "127.0.0.1");
+            let cb_base = format!("http://{cb_host}");
+            let perms = webauth::PermissionSet::from_raw(["DELIVERY:READ+UPDATE".to_string()])
+                .expect("agent callback perms");
+            let cb_token = sessions
+                .create("agent-callback", perms, 30 * 24 * 3600)
+                .await
+                .expect("mint agent callback token");
+            ex = ex.with_async_callback(cb_base, cb_token);
+        }
+        Arc::new(ex)
     } else if let Some(e) = llm::executor() {
         e // 真实 LLM 执行者(SHEPHERD_LLM_URL)
     } else {
