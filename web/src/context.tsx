@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
-import { api, setUnauthorizedHandler, tokenStore, type Project } from './api'
+import { api, setUnauthorizedHandler, tokenStore, userStore, type Project } from './api'
 
 interface AppState {
   token: string
@@ -21,6 +21,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const logout = () => {
     tokenStore.clear()
+    userStore.clear()
     setToken('')
     setProjects([])
   }

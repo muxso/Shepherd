@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { Card, Form, Input, Button, Typography } from 'antd'
 import { message } from '../feedback'
 import { DeploymentUnitOutlined } from '@ant-design/icons'
-import { api, ApiError } from '../api'
+import { api, ApiError, userStore } from '../api'
 import { useApp } from '../context'
 import { useI18n } from '../i18n'
 
@@ -15,7 +15,7 @@ export default function Login() {
     setLoading(true)
     try {
       const { token } = await api.login(v.username, v.password)
-      localStorage.setItem('shepherd.user', v.username) // 供个人中心展示(后端暂无 /me)
+      userStore.set(v.username) // 供个人中心 / 创建人列展示(后端暂无 /me)
       login(token)
       message.success(t('login.ok', '登录成功'))
     } catch (e) {

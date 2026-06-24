@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react'
-import { Button, Empty, Input, Table, Tag, Typography } from 'antd'
+import { Button, Empty, Input, Table, Tag } from 'antd'
 import { message } from '../feedback'
 import { ReloadOutlined } from '@ant-design/icons'
 import { api, ApiError, type McpTool } from '../api'
 import { useI18n } from '../i18n'
+import { PageBody, PageContainer, PageHeader } from '../components/Page'
 
 // MCP 工具:只读列出 server 暴露的 JSON-RPC 工具(tools/list)。
 export default function Mcp() {
@@ -30,17 +31,19 @@ export default function Mcp() {
   const filtered = tools.filter((t) => t.name.toLowerCase().includes(q.toLowerCase()))
 
   return (
-    <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '14px 16px', background: 'var(--panel)', borderBottom: '1px solid var(--border-soft)' }}>
-        <Typography.Text strong style={{ fontSize: 15 }}>
-          {t('mcp.title', 'MCP 工具')}
-        </Typography.Text>
+    <PageContainer>
+      <PageHeader
+        title={t('mcp.title', 'MCP 工具')}
+        extra={
+          <>
+            <Input.Search placeholder={t('mcp.searchTool', '搜索工具名')} allowClear style={{ width: 240 }} onChange={(e) => setQ(e.target.value)} />
+            <Button icon={<ReloadOutlined />} onClick={load} />
+          </>
+        }
+      >
         <Tag color="blue">{tools.length}</Tag>
-        <div style={{ flex: 1 }} />
-        <Input.Search placeholder={t('mcp.searchTool', '搜索工具名')} allowClear style={{ width: 240 }} onChange={(e) => setQ(e.target.value)} />
-        <Button icon={<ReloadOutlined />} onClick={load} />
-      </div>
-      <div style={{ flex: 1, overflow: 'auto', padding: 16 }}>
+      </PageHeader>
+      <PageBody>
         <Table<McpTool>
           rowKey="name"
           size="middle"
@@ -53,7 +56,7 @@ export default function Mcp() {
             { title: t('mcp.colDesc', '说明'), dataIndex: 'description', render: (d?: string) => d || '—' },
           ]}
         />
-      </div>
-    </div>
+      </PageBody>
+    </PageContainer>
   )
 }

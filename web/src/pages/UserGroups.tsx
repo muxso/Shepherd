@@ -68,13 +68,13 @@ export default function UserGroups() {
   const permRows: PermRow[] = useMemo(() => {
     return (sel?.permissions ?? []).map((p) => {
       const [res, acts] = p.split(':')
-      return { res, resLabel: RES_LABEL[res] || res, actions: (acts ?? '').split('+').filter(Boolean) }
+      return { res, resLabel: t(`ug.res.${res}`, RES_LABEL[res] || res), actions: (acts ?? '').split('+').filter(Boolean) }
     }).sort((a, b) => a.resLabel.localeCompare(b.resLabel))
-  }, [sel])
+  }, [sel, t])
 
   const cols: ColumnsType<PermRow> = [
     { title: t('ug.resource', '资源'), dataIndex: 'resLabel', width: 200, render: (v: string, r) => <Tooltip title={r.res}><span style={{ fontWeight: 600 }}>{v}</span></Tooltip> },
-    { title: t('ug.permission', '权限'), dataIndex: 'actions', render: (a: string[]) => a.map((x) => <Tag key={x} color="green" style={{ marginBottom: 4 }}>{ACT_LABEL[x] || x}</Tag>) },
+    { title: t('ug.permission', '权限'), dataIndex: 'actions', render: (a: string[]) => a.map((x) => <Tag key={x} color="green" style={{ marginBottom: 4 }}>{t(`ug.act.${x}`, ACT_LABEL[x] || x)}</Tag>) },
   ]
 
   const del = (r: Role) => modal.confirm({
@@ -227,7 +227,7 @@ function RoleCreateModal({ scope, onClose, onDone }: { scope: string | null; onC
   const [busy, setBusy] = useState(false)
   useEffect(() => { if (scope) form.resetFields() }, [scope, form])
   return (
-    <Modal title={`${t('ug.newGroup', '新建用户组')}${scope ? ` · ${SCOPE_LABEL[scope] || scope}` : ''}`} open={!!scope} onCancel={onClose} footer={null} destroyOnHidden>
+    <Modal title={`${t('ug.newGroup', '新建用户组')}${scope ? ` · ${t(`ug.scope.${scope}`, SCOPE_LABEL[scope] || scope)}` : ''}`} open={!!scope} onCancel={onClose} footer={null} destroyOnHidden>
       <Form
         form={form}
         layout="vertical"

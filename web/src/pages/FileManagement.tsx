@@ -7,6 +7,7 @@ import { useApp } from '../context'
 import { useI18n } from '../i18n'
 import { ResizableSider } from '../components/Workspace'
 import { ModuleTreePanel, inSelectedModule } from '../components/ModuleTreePanel'
+import { SelectProjectEmpty } from '../components/Page'
 
 // 文件管理(项目模块子标签,对齐参考图 #49/#50)。左侧文件树(简化)+ 右侧列表 + 添加文件抽屉。
 export default function FileManagement() {
@@ -100,7 +101,7 @@ export default function FileManagement() {
     },
   ]
 
-  if (!projectId) return <div style={{ padding: 48 }}><Empty description={t('common.selectProject', '请先在顶部选择项目')} /></div>
+  if (!projectId) return <SelectProjectEmpty />
 
   return (
     <div style={{ display: 'flex', height: '100%' }}>

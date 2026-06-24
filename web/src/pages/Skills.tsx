@@ -5,6 +5,7 @@ import { PlusOutlined, ReloadOutlined, MergeCellsOutlined } from '@ant-design/ic
 import { api, ApiError, type Skill } from '../api'
 import { useApp } from '../context'
 import { useI18n } from '../i18n'
+import { PageBody, PageContainer, PageHeader, SelectProjectEmpty } from '../components/Page'
 
 export default function Skills() {
   const { t } = useI18n()
@@ -43,29 +44,25 @@ export default function Skills() {
     },
   })
 
-  if (!projectId)
-    return (
-      <div style={{ padding: 48 }}>
-        <Empty description={t('common.selectProject', '请先在顶部选择项目')} />
-      </div>
-    )
+  if (!projectId) return <SelectProjectEmpty />
 
   return (
-    <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '14px 16px', background: 'var(--panel)', borderBottom: '1px solid var(--border-soft)' }}>
-        <Typography.Text strong style={{ fontSize: 15 }}>
-          {t('m.skill', '技能')}
-        </Typography.Text>
-        <div style={{ flex: 1 }} />
-        <Button icon={<MergeCellsOutlined />} onClick={() => setComposeOpen(true)} disabled={!items.length}>
-          {t('skill.compose', '组合技能')}
-        </Button>
-        <Button type="primary" icon={<PlusOutlined />} onClick={() => setCreateOpen(true)}>
-          {t('skill.new', '新建技能')}
-        </Button>
-        <Button icon={<ReloadOutlined />} onClick={refresh} />
-      </div>
-      <div style={{ flex: 1, overflow: 'auto', padding: 16 }}>
+    <PageContainer>
+      <PageHeader
+        title={t('m.skill', '技能')}
+        extra={
+          <>
+            <Button icon={<MergeCellsOutlined />} onClick={() => setComposeOpen(true)} disabled={!items.length}>
+              {t('skill.compose', '组合技能')}
+            </Button>
+            <Button type="primary" icon={<PlusOutlined />} onClick={() => setCreateOpen(true)}>
+              {t('skill.new', '新建技能')}
+            </Button>
+            <Button icon={<ReloadOutlined />} onClick={refresh} />
+          </>
+        }
+      />
+      <PageBody>
         <Table<Skill>
           rowKey="id"
           size="middle"
@@ -91,7 +88,7 @@ export default function Skills() {
             },
           ]}
         />
-      </div>
+      </PageBody>
 
       <SkillFormModal
         open={createOpen}
@@ -110,7 +107,7 @@ export default function Skills() {
       />
 
       <ComposeModal open={composeOpen} skills={items} projectId={projectId} onClose={() => setComposeOpen(false)} />
-    </div>
+    </PageContainer>
   )
 }
 

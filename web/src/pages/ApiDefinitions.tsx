@@ -27,7 +27,7 @@ import {
   SearchOutlined,
 } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
-import { api, ApiError, type ApiCase, type ApiDefinition, type ApiModule, type ApiSpec, type ApiView, type DebugResponse, type Environment, type ProjectMock } from '../api'
+import { api, ApiError, type ApiCase, type ApiDefinition, type ApiModule, type ApiSpec, type ApiView, type DebugResponse, type Environment, type ImportFormat, type ImportSchedule, type ProjectMock } from '../api'
 import { useApp } from '../context'
 import { methodColor, statusColor } from '../components/tags'
 import CasesPanel from './CasesPanel'
@@ -50,22 +50,27 @@ const NEW_KEY = '__new__'
 /** 高级筛选条件:字段 + 操作符 + 值(对齐 MeterSphere 筛选抽屉)。 */
 type AdvCond = { field: 'num' | 'name' | 'path' | 'protocol' | 'method' | 'status'; op: 'contains' | 'notContains' | 'equals' | 'notEquals' | 'empty' | 'notEmpty'; value: string }
 
-const ADV_FIELDS: { value: AdvCond['field']; label: string }[] = [
-  { value: 'num', label: 'ID' },
-  { value: 'name', label: '接口名称' },
-  { value: 'path', label: '路径' },
-  { value: 'protocol', label: '协议' },
-  { value: 'method', label: '请求类型' },
-  { value: 'status', label: '状态' },
+// 字段/操作符选项:存 i18n key + 中文回退,渲染时经 t() 解析(模块级常量拿不到 hook)。
+const ADV_FIELDS: { value: AdvCond['field']; key: string; fallback: string }[] = [
+  { value: 'num', key: 'apidef.fieldNum', fallback: 'ID' },
+  { value: 'name', key: 'apidef.fieldName', fallback: '接口名称' },
+  { value: 'path', key: 'apidef.colPath', fallback: '路径' },
+  { value: 'protocol', key: 'apidef.protocol', fallback: '协议' },
+  { value: 'method', key: 'apidef.reqType', fallback: '请求类型' },
+  { value: 'status', key: 'apidef.colStatus', fallback: '状态' },
 ]
-const ADV_OPS: { value: AdvCond['op']; label: string }[] = [
-  { value: 'contains', label: '包含' },
-  { value: 'notContains', label: '不包含' },
-  { value: 'equals', label: '等于' },
-  { value: 'notEquals', label: '不等于' },
-  { value: 'empty', label: '为空' },
-  { value: 'notEmpty', label: '不为空' },
+const ADV_OPS: { value: AdvCond['op']; key: string; fallback: string }[] = [
+  { value: 'contains', key: 'apidef.opContains', fallback: '包含' },
+  { value: 'notContains', key: 'apidef.opNotContains', fallback: '不包含' },
+  { value: 'equals', key: 'apidef.opEquals', fallback: '等于' },
+  { value: 'notEquals', key: 'apidef.opNotEquals', fallback: '不等于' },
+  { value: 'empty', key: 'apidef.opEmpty', fallback: '为空' },
+  { value: 'notEmpty', key: 'apidef.opNotEmpty', fallback: '不为空' },
 ]
+// 用例状态:value 是发往后端的数据(保持中文),label 经 t() 翻译展示。
+const CASE_STATUSES = ['进行中', '已完成', '已废弃']
+const caseStatusKey = (s: string): string =>
+  s === '进行中' ? 'apidef.caseStInProgress' : s === '已完成' ? 'apidef.caseStCompleted' : 'apidef.caseStDeprecated'
 
 function fieldVal(d: ApiDefinition, f: AdvCond['field']): string {
   if (f === 'num') return String(d.num ?? '')
@@ -680,7 +685,7 @@ export default function ApiDefinitions() {
             <span style={{ maxWidth: 120, display: 'inline-block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', verticalAlign: 'middle' }}>{d.name}</span>
           </Space>
         ),
-        children: <ApiDetail definition={d} />,
+        children: <ApiDetail definition={d} onUpdated={load} />,
       })),
     ...Object.values(openCases).map((c) => ({
       key: `case:${c.id}`,
@@ -816,8 +821,8 @@ export default function ApiDefinitions() {
             const noValue = c.op === 'empty' || c.op === 'notEmpty'
             return (
               <Space.Compact key={i} style={{ width: '100%' }}>
-                <Select value={c.field} onChange={(v) => set({ field: v })} style={{ width: 130 }} options={ADV_FIELDS} />
-                <Select value={c.op} onChange={(v) => set({ op: v })} style={{ width: 110 }} options={ADV_OPS} />
+                <Select value={c.field} onChange={(v) => set({ field: v })} style={{ width: 130 }} options={ADV_FIELDS.map((f) => ({ value: f.value, label: t(f.key, f.fallback) }))} />
+                <Select value={c.op} onChange={(v) => set({ op: v })} style={{ width: 110 }} options={ADV_OPS.map((o) => ({ value: o.value, label: t(o.key, o.fallback) }))} />
                 <Input value={c.value} disabled={noValue} onChange={(e) => set({ value: e.target.value })} placeholder={noValue ? '—' : t('apidef.filterValue', '值')} />
                 <Button icon={<MoreOutlined />} onClick={() => setAdvConds((cs) => cs.filter((_, idx) => idx !== i))} danger />
               </Space.Compact>
@@ -989,7 +994,7 @@ function CaseEditDrawer({ open, caseItem, onClose, onSaved }: { open: boolean; c
       <Input value={name} onChange={(e) => setName(e.target.value)} maxLength={255} showCount placeholder={t('apidef.caseName', '用例名称')} style={{ marginBottom: 12 }} />
       <Space style={{ marginBottom: 12 }} wrap>
         <Select value={priority} onChange={setPriority} style={{ width: 120 }} options={['P0', 'P1', 'P2', 'P3'].map((p) => ({ value: p, label: p }))} />
-        <Select value={status} onChange={setStatus} style={{ width: 140 }} options={['进行中', '已完成', '已废弃'].map((s) => ({ value: s, label: s }))} />
+        <Select value={status} onChange={setStatus} style={{ width: 140 }} options={CASE_STATUSES.map((s) => ({ value: s, label: t(caseStatusKey(s), s) }))} />
       </Space>
       <Space size={[6, 6]} wrap style={{ marginBottom: 12 }}>
         {tags.map((tg) => <Tag key={tg} closable onClose={() => setTags(tags.filter((x) => x !== tg))}>{tg}</Tag>)}
@@ -1120,7 +1125,7 @@ function CaseDetailTab({ caseItem, projectId, onClose, onDeleted }: { caseItem: 
   )
 }
 
-function ApiDetail({ definition }: { definition: ApiDefinition }) {
+function ApiDetail({ definition, onUpdated }: { definition: ApiDefinition; onUpdated?: () => void }) {
   const { t } = useI18n()
   // 顶层标签 + 定义页内的 定义/调试 切换(对标 MeterSphere:调试是定义内的模式)。
   const [tab, setTab] = useState('preview')
@@ -1128,9 +1133,11 @@ function ApiDetail({ definition }: { definition: ApiDefinition }) {
   const specRef = useRef<ApiSpecPanelHandle>(null)
   const [modules, setModules] = useState<ApiModule[]>([])
   const [meta, setMeta] = useState<{ tags: string[]; description?: string; spec?: ApiSpec }>({ tags: [] })
-  // 请求行方法/路径(cURL 导入会回填);初值取定义。
+  // 请求行名称/方法/路径(cURL 导入会回填方法/路径);初值取定义,保存时随基础字段落库。
+  const [reqName, setReqName] = useState(definition.name || '')
   const [reqMethod, setReqMethod] = useState(definition.method || 'GET')
   const [reqPath, setReqPath] = useState(definition.path || '')
+  const isHttp = (definition.protocol || 'HTTP').toUpperCase() === 'HTTP'
   const [curlOpen, setCurlOpen] = useState(false)
   const [curlText, setCurlText] = useState('')
   // 调试执行方式:服务端代理(server)/ 浏览器本地直发(local)。
@@ -1230,8 +1237,8 @@ function ApiDetail({ definition }: { definition: ApiDefinition }) {
     <div>
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 12 }}>
         <Tag color="blue" style={{ margin: 0, padding: '4px 10px' }}>{definition.protocol}</Tag>
-        {definition.protocol === 'HTTP' && <Tag color={methodColor(reqMethod)} style={{ margin: 0, padding: '4px 10px', fontWeight: 600 }}>{reqMethod || 'GET'}</Tag>}
-        <Input value={reqPath} onChange={(e) => setReqPath(e.target.value)} readOnly={defMode === 'define'} className="ms-mono" style={{ flex: 1, minWidth: 200 }} placeholder="/api/..." />
+        {isHttp && <Select value={reqMethod} onChange={setReqMethod} style={{ width: 100 }} options={METHODS.map((m) => ({ value: m, label: m }))} />}
+        <Input value={reqPath} onChange={(e) => setReqPath(e.target.value)} className="ms-mono" style={{ flex: 1, minWidth: 200 }} placeholder="/api/..." />
         {/* 右侧动作统一收进 Space(不参与 flex 伸缩,保证路径输入框占满中段)。 */}
         <Space size={8}>
           <Tooltip title={t('apidef.importCurl', '导入 cURL')}>
@@ -1286,12 +1293,21 @@ function ApiDetail({ definition }: { definition: ApiDefinition }) {
           )}
         </Space>
       </div>
+      {/* 接口名称:可编辑,保存时随基础字段(方法/路径)一并落库。 */}
+      <Input
+        value={reqName}
+        onChange={(e) => setReqName(e.target.value)}
+        placeholder={t('apidef.nameInputPlaceholder', '请输入接口名称')}
+        style={{ marginBottom: 12 }}
+      />
       <ApiSpecPanel
         ref={specRef}
         definition={definition}
         mode={defMode === 'define' ? 'define' : 'debug'}
+        reqName={reqName}
         reqMethod={reqMethod}
         reqPath={reqPath}
+        onSaved={onUpdated}
         execMode={execMode}
         env={envs.find((e) => e.id === envId)}
         onCaseSaved={() => { setCasesRefresh((n) => n + 1); setTab('cases') }}
@@ -1452,19 +1468,31 @@ function ImportModal({
   onDone: () => void
 }) {
   const { t } = useI18n()
-  const [source, setSource] = useState('Swagger')
-  const [importType, setImportType] = useState('file')
+  const SOURCES: { label: string; value: ImportFormat }[] = [
+    { label: 'Swagger/OpenAPI', value: 'openapi' },
+    { label: 'Postman', value: 'postman' },
+    { label: 'HAR', value: 'har' },
+    { label: 'JMeter', value: 'jmeter' },
+    { label: 'MeterSphere', value: 'metersphere' },
+  ]
+  const [source, setSource] = useState<ImportFormat>('openapi') // 来源格式
+  const [importType, setImportType] = useState('file') // file=一次性 | schedule=定时导入
   const [moduleId, setModuleId] = useState<string | undefined>(undefined)
-  const [groupByTag, setGroupByTag] = useState(true) // 按 OpenAPI tag 自动建子模块并归类(默认开)
+  const [groupByTag, setGroupByTag] = useState(true) // 按来源标签/分组自动建子模块并归类(默认开)
   const [overwrite, setOverwrite] = useState(true) // 覆盖/不覆盖(对齐参考:默认覆盖)
   const [syncModule, setSyncModule] = useState(true) // 同步更新接口所在目录
-  const [way, setWay] = useState('file') // file | url
+  const [way, setWay] = useState('file') // 一次性导入的方式:file | url
   const [text, setText] = useState('')
   const [fileName, setFileName] = useState('')
   const [urlVal, setUrlVal] = useState('')
   const [token, setToken] = useState('')
   const [basicAuth, setBasicAuth] = useState(false)
   const [saving, setSaving] = useState(false)
+  // 定时导入
+  const [cron, setCron] = useState('0 0 2 * * *') // 默认每天 02:00(6 段)
+  const [scheduleName, setScheduleName] = useState('')
+  const [schedules, setSchedules] = useState<ImportSchedule[]>([])
+  const isJmeter = source === 'jmeter'
 
   const readFile = (file: File) => {
     const reader = new FileReader()
@@ -1473,43 +1501,87 @@ function ImportModal({
     return false
   }
 
-  // 非 Swagger 来源的解析器尚未接入,先禁用(避免误用)。
-  const lockedSources = ['Postman', 'Har', 'Jmeter', 'MeterSphere']
+  const loadSchedules = async () => {
+    try { setSchedules(await api.importSchedules(projectId)) } catch { /* 忽略加载失败 */ }
+  }
+  useEffect(() => {
+    if (open && importType === 'schedule') void loadSchedules()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, importType, projectId])
+
+  const importResultMsg = (r: { created: number; updated: number; skipped: number }) =>
+    `${t('apidef.importSuccessNew', '导入成功:新增接口')} ${r.created}` +
+    `${t('apidef.importUpdated', ',覆盖更新')} ${r.updated}` +
+    `${t('apidef.importSkipped', ',跳过')} ${r.skipped}`
+
   const doImport = async () => {
-    let raw = text
+    const opts = { format: source, moduleId: moduleId || undefined, groupByTag, overwrite, syncModule } as const
+    // URL 导入:服务端拉取(绕开跨域)。
     if (way === 'url') {
-      if (!urlVal.trim()) return message.warning(t('apidef.importUrlRequired', '请输入 SwaggerURL'))
+      if (!urlVal.trim()) return message.warning(t('apidef.importUrlRequired', '请输入来源 URL'))
+      setSaving(true)
       try {
-        const headers: Record<string, string> = {}
-        if (token.trim()) headers['Authorization'] = `${basicAuth ? 'Basic' : 'Bearer'} ${token.trim()}`
-        const res = await fetch(urlVal.trim(), { headers })
-        raw = await res.text()
-      } catch {
-        return message.error(t('apidef.importUrlFailed', '拉取 URL 失败(可能跨域,请改用文件/粘贴)'))
-      }
-    }
-    let parsed: any
-    try {
-      parsed = JSON.parse(raw)
-    } catch {
-      message.error(t('apidef.invalidJson', '不是合法 JSON(上传文件或粘贴 OpenAPI/Swagger 文档)'))
+        const r = await api.importFromUrl(projectId, urlVal.trim(), { ...opts, token: token || undefined, basicAuth })
+        message.success(importResultMsg(r))
+        setUrlVal(''); onDone()
+      } catch (e) {
+        message.error(e instanceof ApiError ? e.message : t('apidef.importFailed', '导入失败'))
+      } finally { setSaving(false) }
       return
+    }
+    // 文件/粘贴导入。
+    if (!text.trim()) return message.warning(t('apidef.importContentRequired', '请上传文件或粘贴文档内容'))
+    let content: unknown = text
+    if (!isJmeter) {
+      // JMeter 为 XML 原文;其余须为合法 JSON。
+      try { content = JSON.parse(text) } catch {
+        return message.error(t('apidef.invalidJson', '不是合法 JSON(上传文件或粘贴文档内容)'))
+      }
     }
     setSaving(true)
     try {
-      const r = await api.importDefinitions(projectId, parsed, { moduleId: moduleId || undefined, groupByTag, overwrite, syncModule })
-      message.success(
-        `${t('apidef.importSuccessNew', '导入成功:新增接口')} ${r.created.length}` +
-          `${t('apidef.importUpdated', ',覆盖更新')} ${r.updated}` +
-          `${t('apidef.importSkipped', ',跳过')} ${r.skipped}`,
-      )
-      setText(''); setFileName(''); setUrlVal('')
-      onDone()
+      const r = await api.importDefinitions(projectId, content, opts)
+      message.success(importResultMsg({ created: r.created.length, updated: r.updated, skipped: r.skipped }))
+      setText(''); setFileName(''); onDone()
     } catch (e) {
       message.error(e instanceof ApiError ? e.message : t('apidef.importFailed', '导入失败'))
-    } finally {
-      setSaving(false)
-    }
+    } finally { setSaving(false) }
+  }
+
+  const doCreateSchedule = async () => {
+    if (!urlVal.trim()) return message.warning(t('apidef.importUrlRequired', '请输入来源 URL'))
+    if (!cron.trim()) return message.warning(t('apidef.importCronRequired', '请输入 cron 表达式'))
+    setSaving(true)
+    try {
+      await api.createImportSchedule({
+        projectId, name: scheduleName || undefined, url: urlVal.trim(), cron: cron.trim(),
+        format: source, token: token || undefined, basicAuth,
+        moduleId: moduleId || undefined, groupByTag, overwrite, syncModule, enabled: true,
+      })
+      message.success(t('apidef.scheduleCreated', '定时导入已创建,将按 cron 自动拉取导入'))
+      setUrlVal(''); setScheduleName(''); void loadSchedules()
+    } catch (e) {
+      message.error(e instanceof ApiError ? e.message : t('apidef.scheduleCreateFailed', '创建定时导入失败'))
+    } finally { setSaving(false) }
+  }
+
+  const toggleSchedule = async (s: ImportSchedule, enabled: boolean) => {
+    try { await api.setImportScheduleEnabled(s.id, enabled); void loadSchedules() }
+    catch (e) { message.error(e instanceof ApiError ? e.message : t('a.failed', '操作失败')) }
+  }
+  const runSchedule = async (s: ImportSchedule) => {
+    try {
+      const r = await api.runImportSchedule(s.id)
+      message.success(`${t('apidef.scheduleRan', '已执行:')}${r.result}`); void loadSchedules()
+    } catch (e) { message.error(e instanceof ApiError ? e.message : t('apidef.importFailed', '导入失败')) }
+  }
+  const removeSchedule = (s: ImportSchedule) => {
+    modal.confirm({
+      title: t('apidef.scheduleDeleteConfirm', '删除该定时导入?'),
+      content: s.sourceUrl,
+      okButtonProps: { danger: true },
+      onOk: async () => { await api.deleteImportSchedule(s.id); void loadSchedules() },
+    })
   }
 
   const Field = ({ label, children }: { label: React.ReactNode; children: React.ReactNode }) => (
@@ -1518,39 +1590,88 @@ function ImportModal({
       {children}
     </div>
   )
-  const importDisabled = way === 'file' ? !text.trim() : !urlVal.trim()
+
+  const isSchedule = importType === 'schedule'
+  // 定时导入必须基于 URL(到点重新拉取);一次性导入可文件或 URL。
+  const showUrlInputs = isSchedule || way === 'url'
+  const importDisabled = isSchedule
+    ? !urlVal.trim() || !cron.trim()
+    : way === 'file' ? !text.trim() : !urlVal.trim()
+
+  const scheduleColumns: ColumnsType<ImportSchedule> = [
+    {
+      title: t('apidef.scheduleName', '名称/来源'),
+      dataIndex: 'name',
+      render: (_: unknown, s: ImportSchedule) => (
+        <div>
+          <div>{s.name || <span style={{ color: 'var(--text-3)' }}>{t('apidef.unnamed', '未命名')}</span>}</div>
+          <div style={{ color: 'var(--text-3)', fontSize: 12, wordBreak: 'break-all' }}>{s.sourceUrl}</div>
+        </div>
+      ),
+    },
+    { title: t('apidef.importSource', '来源'), dataIndex: 'format', width: 90, render: (f: string) => <Tag>{f}</Tag> },
+    { title: 'cron', dataIndex: 'cron', width: 120, render: (c: string) => <span className="ms-mono" style={{ fontSize: 12 }}>{c}</span> },
+    {
+      title: t('apidef.scheduleEnabled', '启用'), dataIndex: 'enabled', width: 70,
+      render: (en: boolean, s: ImportSchedule) => <Switch size="small" checked={en} onChange={(v) => toggleSchedule(s, v)} />,
+    },
+    {
+      title: t('apidef.scheduleLastRun', '最近运行'), dataIndex: 'lastResult', width: 160,
+      render: (r: string, s: ImportSchedule) => (
+        <div style={{ fontSize: 12 }}>
+          <div>{r || <span style={{ color: 'var(--text-3)' }}>{t('apidef.notRun', '尚未运行')}</span>}</div>
+          {s.lastRunAt && <div style={{ color: 'var(--text-3)' }}>{s.lastRunAt}</div>}
+        </div>
+      ),
+    },
+    {
+      // 操作人:最近一次运行的触发者。手动「立即执行」记当前用户;cron 自动运行后端记空串 → 展示「自动」。
+      title: t('apidef.colOperator', '操作人'), dataIndex: 'lastRunBy', width: 100, ellipsis: true,
+      render: (u: string | undefined, s: ImportSchedule) =>
+        u ? <span style={{ color: 'var(--text-2)' }}>{u}</span>
+          : s.lastRunAt ? <Tag color="blue">{t('apidef.autoRun', '自动')}</Tag>
+          : <span style={{ color: 'var(--text-3)' }}>—</span>,
+    },
+    {
+      title: t('apidef.colCreatedBy', '创建人'), dataIndex: 'createdBy', width: 110, ellipsis: true,
+      render: (u?: string) => u ? <span style={{ color: 'var(--text-2)' }}>{u}</span> : <span style={{ color: 'var(--text-3)' }}>—</span>,
+    },
+    {
+      title: t('a.actions', '操作'), width: 110,
+      render: (_: unknown, s: ImportSchedule) => (
+        <Space size={4}>
+          <Button size="small" type="link" onClick={() => runSchedule(s)}>{t('apidef.scheduleRunNow', '立即执行')}</Button>
+          <Button size="small" type="link" danger onClick={() => removeSchedule(s)}>{t('a.delete', '删除')}</Button>
+        </Space>
+      ),
+    },
+  ]
 
   return (
     <Drawer
       title={t('apidef.importTitle2', '导入接口')}
       open={open}
       onClose={onClose}
-      width={640}
+      width={680}
       footer={
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
           <Button onClick={onClose}>{t('a.cancel', '取消')}</Button>
-          <Button type="primary" loading={saving} disabled={importDisabled} onClick={doImport}>{t('a.import', '导入')}</Button>
+          <Button type="primary" loading={saving} disabled={importDisabled} onClick={isSchedule ? doCreateSchedule : doImport}>
+            {isSchedule ? t('apidef.scheduleCreate', '创建定时导入') : t('a.import', '导入')}
+          </Button>
         </div>
       }
     >
       <Field label={t('apidef.importSource', '来源')}>
-        <Segmented
-          value={source}
-          onChange={(v) => setSource(String(v))}
-          options={['Swagger', ...lockedSources].map((s) => ({
-            label: lockedSources.includes(s) ? <Tooltip title={t('apidef.importSoon', '该来源解析暂未接入')}><span>{s}</span></Tooltip> : s,
-            value: s,
-            disabled: lockedSources.includes(s),
-          }))}
-        />
+        <Segmented value={source} onChange={(v) => setSource(v as ImportFormat)} options={SOURCES} />
       </Field>
       <Field label={t('apidef.importType', '导入类型')}>
         <Segmented
           value={importType}
           onChange={(v) => setImportType(String(v))}
           options={[
-            { label: t('apidef.importTypeFile', '文件导入'), value: 'file' },
-            { label: <Tooltip title={t('apidef.importSoon', '暂未接入')}><span>{t('apidef.importTypeSchedule', '定时导入')}</span></Tooltip>, value: 'schedule', disabled: true },
+            { label: t('apidef.importTypeFile', '一次性导入'), value: 'file' },
+            { label: t('apidef.importTypeSchedule', '定时导入'), value: 'schedule' },
           ]}
         />
       </Field>
@@ -1560,13 +1681,12 @@ function ImportModal({
           value={moduleId || ''}
           onChange={(v) => setModuleId(v || '')}
           placeholder={t('apidef.unfiled', '未归类')}
-          // 对齐左侧树:始终含「未归类」+ 各模块。
           options={[{ value: '', label: t('apidef.unfiled', '未归类') }, ...modules.map((m) => ({ value: m.id, label: m.name }))]}
         />
       </Field>
       <Field label={t('apidef.importGroupByTag', '按标签建模块')}>
         <Checkbox checked={groupByTag} onChange={(e) => setGroupByTag(e.target.checked)}>
-          {t('apidef.importGroupByTagHint', '按 OpenAPI 标签(tag)自动建/复用子模块并归类(上方「所属模块」作为其父级)')}
+          {t('apidef.importGroupByTagHint2', '按来源分组(OpenAPI 标签 / Postman 文件夹 / HAR 域名 / MeterSphere 模块)自动建/复用子模块并归类(上方「所属模块」作为其父级)')}
         </Checkbox>
       </Field>
       <Field label={t('apidef.importMode', '导入模式')}>
@@ -1589,23 +1709,38 @@ function ImportModal({
           </Space>
         </Field>
       )}
-      <Field label={t('apidef.importWay', '导入方式')}>
-        <Segmented
-          value={way}
-          onChange={(v) => setWay(String(v))}
-          options={[
-            { label: t('apidef.importTypeFile', '文件导入'), value: 'file' },
-            { label: t('apidef.importWayUrl', 'URL 导入'), value: 'url' },
-          ]}
-        />
-      </Field>
-      {way === 'url' ? (
+      {!isSchedule && (
+        <Field label={t('apidef.importWay', '导入方式')}>
+          <Segmented
+            value={way}
+            onChange={(v) => setWay(String(v))}
+            options={[
+              { label: t('apidef.importTypeFileOnly', '文件/粘贴'), value: 'file' },
+              { label: t('apidef.importWayUrl', 'URL 导入'), value: 'url' },
+            ]}
+          />
+        </Field>
+      )}
+      {isSchedule && (
         <>
-          <Field label={<span><span style={{ color: '#ff4d4f', marginRight: 4 }}>*</span>SwaggerURL</span>}>
-            <Input value={urlVal} onChange={(e) => setUrlVal(e.target.value)} className="ms-mono" placeholder={t('apidef.importUrlPlaceholder', '请输入 OpenAPI/URL')} />
+          <Field label={t('apidef.scheduleName', '名称')}>
+            <Input value={scheduleName} onChange={(e) => setScheduleName(e.target.value)} placeholder={t('apidef.scheduleNamePlaceholder', '可选,如:每日同步用户中心接口')} />
+          </Field>
+          <Field label={<span><span style={{ color: '#ff4d4f', marginRight: 4 }}>*</span>cron</span>}>
+            <Input value={cron} onChange={(e) => setCron(e.target.value)} className="ms-mono" placeholder="0 0 2 * * *" />
+            <p style={{ color: 'var(--text-3)', fontSize: 12, margin: '4px 0 0' }}>
+              {t('apidef.cronHint', '6 段表达式(秒 分 时 日 月 周)。例:0 0 2 * * * = 每天 02:00')}
+            </p>
+          </Field>
+        </>
+      )}
+      {showUrlInputs ? (
+        <>
+          <Field label={<span><span style={{ color: '#ff4d4f', marginRight: 4 }}>*</span>{t('apidef.importSourceUrl', '来源 URL')}</span>}>
+            <Input value={urlVal} onChange={(e) => setUrlVal(e.target.value)} className="ms-mono" placeholder={t('apidef.importUrlPlaceholder', '请输入文档/集合的 URL')} />
           </Field>
           <Field label="token">
-            <Input.TextArea rows={2} value={token} onChange={(e) => setToken(e.target.value)} className="ms-mono" placeholder="token" />
+            <Input.TextArea rows={2} value={token} onChange={(e) => setToken(e.target.value)} className="ms-mono" placeholder={t('apidef.tokenPlaceholder', '可选:作为 Authorization 头(默认 Bearer)')} />
           </Field>
           <Space>
             <Switch checked={basicAuth} onChange={setBasicAuth} />
@@ -1614,13 +1749,13 @@ function ImportModal({
         </>
       ) : (
         <>
-          <Upload.Dragger accept=".json,.yaml,.yml" beforeUpload={readFile} showUploadList={false} style={{ marginBottom: 10 }}>
+          <Upload.Dragger accept=".json,.yaml,.yml,.har,.jmx,.xml" beforeUpload={readFile} showUploadList={false} style={{ marginBottom: 10 }}>
             <p style={{ margin: 0 }}><InboxOutlined style={{ fontSize: 28, color: 'var(--brand)' }} /></p>
             <p style={{ margin: '6px 0 0' }}>{t('apidef.uploadHint2', '拖拽或点击此区域选择文件')}</p>
             <p style={{ color: 'var(--text-3)', fontSize: 12, margin: '4px 0 0' }}>
-              {t('apidef.uploadHintSub', '支持 Swagger 3.0 版本的 json 文件,')}
-              <span style={{ color: '#fa8c16' }}>{t('apidef.uploadHintConvert', '2.0 文件可以在官网一键转换 3.0,')}</span>
-              {t('apidef.uploadHintSize', '大小不超过 50M')}
+              {isJmeter
+                ? t('apidef.uploadHintJmeter', '支持 JMeter .jmx(XML)文件')
+                : t('apidef.uploadHintGeneric', '支持 Swagger/OpenAPI · Postman · HAR · MeterSphere 的 JSON 文件')}
             </p>
             {fileName && <p style={{ color: 'var(--brand)', margin: '4px 0 0' }}>{t('apidef.selectedFile', '已选:')}{fileName}</p>}
           </Upload.Dragger>
@@ -1630,6 +1765,19 @@ function ImportModal({
       <p style={{ color: 'var(--text-3)', fontSize: 12, margin: '10px 0 0' }}>
         {t('apidef.importAutoHint', '导入将解析请求参数/必填/响应,并为每个接口自动生成带断言的默认用例。')}
       </p>
+      {isSchedule && (
+        <>
+          <Divider style={{ margin: '16px 0' }}>{t('apidef.scheduleList', '已配置的定时导入')}</Divider>
+          <Table
+            size="small"
+            rowKey="id"
+            pagination={false}
+            dataSource={schedules}
+            columns={scheduleColumns}
+            locale={{ emptyText: t('apidef.scheduleEmpty', '暂无定时导入') }}
+          />
+        </>
+      )}
     </Drawer>
   )
 }

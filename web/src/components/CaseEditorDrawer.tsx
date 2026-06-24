@@ -12,7 +12,13 @@ import { useI18n } from '../i18n'
 
 const BODY_TYPES: ApiBodyType[] = ['none', 'form-data', 'x-www-form-urlencoded', 'json', 'xml', 'raw', 'binary']
 const PRIORITIES = ['P0', 'P1', 'P2', 'P3']
+// 用例状态值持久化到后端(保留中文值);仅翻译展示标签。
 const CASE_STATUSES = ['进行中', '已完成', '已废弃']
+const CASE_STATUS_LABELS: Record<string, string> = {
+  '进行中': 'case.statusInProgress',
+  '已完成': 'case.statusCompleted',
+  '已废弃': 'case.statusDeprecated',
+}
 
 type AuthState = { type: 'none' | 'bearer' | 'basic'; token: string }
 
@@ -293,7 +299,7 @@ export default function CaseEditorDrawer({
       {/* 优先级 / 状态 / 标签 */}
       <Space wrap style={{ marginBottom: 14 }}>
         <Select value={priority} onChange={setPriority} style={{ width: 110 }} options={PRIORITIES.map((p) => ({ value: p, label: p }))} />
-        <Select value={status} onChange={setStatus} style={{ width: 130 }} options={CASE_STATUSES.map((s) => ({ value: s, label: s }))} />
+        <Select value={status} onChange={setStatus} style={{ width: 130 }} options={CASE_STATUSES.map((s) => ({ value: s, label: t(CASE_STATUS_LABELS[s], s) }))} />
         <Space size={[4, 4]} wrap>
           {tags.map((tg) => (
             <Tag key={tg} closable onClose={() => setTags(tags.filter((x) => x !== tg))}>{tg}</Tag>

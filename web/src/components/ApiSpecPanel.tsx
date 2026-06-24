@@ -26,7 +26,7 @@ import { useI18n } from '../i18n'
 const API_STATUSES = ['DRAFT', 'DEBUGGING', 'COMPLETED', 'DEPRECATED']
 
 /** 复制文本到剪贴板(带轻提示)。navigator.clipboard 在非安全上下文可能缺失,降级 execCommand。 */
-async function copy(text: string, ok: string) {
+async function copy(text: string, ok: string, fail = '复制失败') {
   try {
     if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(text)
     else {
@@ -39,7 +39,7 @@ async function copy(text: string, ok: string) {
     }
     message.success(ok)
   } catch {
-    message.error('复制失败')
+    message.error(fail)
   }
 }
 
@@ -115,13 +115,17 @@ const ApiSpecPanel = forwardRef<ApiSpecPanelHandle, {
   /** 调试请求行:方法/路径(由父级请求行维护,cURL 导入会回填)。 */
   reqMethod?: string
   reqPath?: string
+  /** 接口名称(由父级请求行维护);define/debug 保存时随基础字段一并落库。 */
+  reqName?: string
+  /** 基础字段/spec 保存成功后回调(父级据此刷新列表/详情)。 */
+  onSaved?: () => void
   /** 当前执行方式(由父级请求行的下拉选择)。 */
   execMode?: ExecMode
   /** 选中的环境(由父级顶栏环境选择器提供;调试执行用其 baseUrl/默认头/变量)。 */
   env?: Environment
   /** 「保存为新用例」成功后回调(父级据此跳转到「用例」标签并刷新)。 */
   onCaseSaved?: () => void
-}>(function ApiSpecPanel({ definition, mode, value, onChange, hideSave, reqMethod, reqPath, execMode = 'server', env, onCaseSaved }, ref) {
+}>(function ApiSpecPanel({ definition, mode, value, onChange, hideSave, reqMethod, reqPath, reqName, onSaved, execMode = 'server', env, onCaseSaved }, ref) {
   const { t } = useI18n()
   const create = mode === 'create'
   const debug = mode === 'debug'
@@ -160,9 +164,23 @@ const ApiSpecPanel = forwardRef<ApiSpecPanelHandle, {
   const save = async () => {
     setSaving(true)
     try {
+      // 基础字段(名称/方法/路径)由父级请求行维护;仅在确有变化时随保存一并落库。
+      const isHttp = (definition.protocol || 'HTTP').toUpperCase() === 'HTTP'
+      const nameChanged = reqName !== undefined && reqName.trim() !== '' && reqName.trim() !== definition.name
+      const methodChanged = isHttp && !!reqMethod && reqMethod !== definition.method
+      const pathChanged = reqPath !== undefined && reqPath !== definition.path
+      if (!create && (nameChanged || methodChanged || pathChanged)) {
+        await api.updateDefinition(definition.id, {
+          name: reqName?.trim() || definition.name,
+          protocol: definition.protocol,
+          method: isHttp ? reqMethod || definition.method : '',
+          path: reqPath ?? definition.path,
+        })
+      }
       await api.updateDefinitionSpec(definition.id, spec)
       message.success(t('apidef.specSaved', '定义已保存'))
       setDirty(false)
+      onSaved?.()
     } catch (e) {
       message.error(e instanceof ApiError ? e.message : t('apidef.saveFailed', '保存失败'))
     } finally {
@@ -963,7 +981,7 @@ function KVSection({
           width: 44,
           render: (_v, r) => (
             <Tooltip title={t('a.copy', '复制')}>
-              <Button type="text" size="small" icon={<CopyOutlined />} onClick={() => copy(`${r.name}: ${r.value ?? ''}`, t('apidef.copied', '已复制'))} />
+              <Button type="text" size="small" icon={<CopyOutlined />} onClick={() => copy(`${r.name}: ${r.value ?? ''}`, t('apidef.copied', '已复制'), t('apidef.copyFailed', '复制失败'))} />
             </Tooltip>
           ),
         },
@@ -987,7 +1005,7 @@ function KVSection({
                 />
               )}
               {!editable && raw && (
-                <Button size="small" icon={<CopyOutlined />} onClick={() => copy(raw, t('apidef.copied', '已复制'))}>
+                <Button size="small" icon={<CopyOutlined />} onClick={() => copy(raw, t('apidef.copied', '已复制'), t('apidef.copyFailed', '复制失败'))}>
                   {t('a.copy', '复制')}
                 </Button>
               )}
@@ -1092,7 +1110,7 @@ function BodyView({ spec }: { spec: ApiSpec }) {
           spec.requestBody ? (
             <Space size={8}>
               {hasSchema && <SchemaJsonToggle value={view} onChange={setView} />}
-              <Button size="small" icon={<CopyOutlined />} onClick={() => copy(spec.requestBody || '', t('apidef.copied', '已复制'))}>
+              <Button size="small" icon={<CopyOutlined />} onClick={() => copy(spec.requestBody || '', t('apidef.copied', '已复制'), t('apidef.copyFailed', '复制失败'))}>
                 {t('a.copy', '复制')}
               </Button>
             </Space>
@@ -1182,7 +1200,7 @@ function ReadonlyResponse({ r }: { r: ApiSpecResponse }) {
         <Tag color={sc(r.status)}>{r.status ?? '—'}</Tag>
         <div style={{ flex: 1 }} />
         {hasSchema && <SchemaJsonToggle value={view} onChange={setView} />}
-        {r.body && <Button type="text" size="small" icon={<CopyOutlined />} onClick={() => copy(r.body || '', t('apidef.copied', '已复制'))} />}
+        {r.body && <Button type="text" size="small" icon={<CopyOutlined />} onClick={() => copy(r.body || '', t('apidef.copied', '已复制'), t('apidef.copyFailed', '复制失败'))} />}
       </div>
       {hasSchema && view === 'schema' ? (
         <SchemaTable nodes={nodes} />
