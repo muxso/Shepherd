@@ -1,0 +1,27 @@
+[package]
+name = "agent-runtime"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+
+# Shepherd 执行者 runtime(纯 Rust,替代 scripts/agent/*.sh+py)。
+# 内网部署、无公网入站:出站 register/heartbeat/长轮询认领 → spawn CLI(claude/codex/opencode)
+# → 流式回流事件 → 实现模式 git 快照 commit→/delivery/complete;design 模式 markdown→/proposal/design。
+# 不重写 LLM CLI(子进程 spawn)与 git(git2/子进程),其余编排全 Rust。
+[[bin]]
+name = "agent-runtime"
+path = "src/main.rs"
+
+[dependencies]
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "process", "io-util", "time", "signal"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+async-trait = "0.1"
+anyhow = "1"
+thiserror = "2"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[lints]
+workspace = true
