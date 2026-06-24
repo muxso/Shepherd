@@ -34,6 +34,12 @@ pub trait CaseRepository: Send + Sync {
     /// 插入用例,返回含 id 的视图。
     async fn insert(&self, c: &NewFunctionalCase) -> Result<FunctionalCase, RepoError>;
 
+    /// 全量更新用例(排除软删除);命中返回更新后视图,未命中(不存在/已删)返回 None。
+    async fn update(&self, id: &str, c: &NewFunctionalCase) -> Result<Option<FunctionalCase>, RepoError>;
+
+    /// 软删除用例;命中(存在且未删)返回 true,否则 false。
+    async fn delete(&self, id: &str) -> Result<bool, RepoError>;
+
     /// 列出项目下用例(排除软删除)。
     async fn list_by_project(&self, project_id: &str) -> Result<Vec<FunctionalCase>, RepoError>;
 

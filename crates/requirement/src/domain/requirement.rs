@@ -28,6 +28,12 @@ pub enum RequirementError {
     Archived,
     #[error("requirement must be baselined before it can be delivered")]
     NotBaselined,
+    /// 评审不通过必须填写原因(与用例评审 UN_PASS 须带评论一致)。
+    #[error("review comment is required when rejecting a requirement")]
+    EmptyReviewComment,
+    /// 只能对待评审(草稿)需求做「评审不通过」;已基线/已交付不再走评审。
+    #[error("requirement is not pending review")]
+    NotUnderReview,
 }
 
 /// 一条验收标准(已校验:非空)。后续 task / verification 上下文据此拆分与验收。
@@ -58,6 +64,8 @@ pub struct NewRequirement {
     pub title: String,
     pub description: String,
     pub acceptance_criteria: Vec<AcceptanceCriterion>,
+    /// 创建人 user_id(由应用层从会话注入;无来源时为空串)。见 0063 迁移。
+    pub created_by: String,
 }
 
 impl NewRequirement {
@@ -84,7 +92,14 @@ impl NewRequirement {
             title: title.to_string(),
             description: description.trim().to_string(),
             acceptance_criteria: parse_criteria(criteria)?,
+            created_by: String::new(),
         })
+    }
+
+    /// 链式设置创建人(空白裁剪);应用层在校验后注入会话用户 id。
+    pub fn with_created_by(mut self, user_id: &str) -> Self {
+        self.created_by = user_id.trim().to_string();
+        self
     }
 }
 
@@ -140,6 +155,8 @@ pub struct Requirement {
     pub baseline_version: u32,
     pub versions: Vec<RequirementVersion>,
     pub deleted: bool,
+    /// 最近一次「评审不通过」的原因;评审通过(`set_baseline`)或修订(`revise`)后清空。
+    pub review_comment: Option<String>,
 }
 
 impl Requirement {
@@ -157,6 +174,7 @@ impl Requirement {
                 acceptance_criteria: new.acceptance_criteria.clone(),
             }],
             deleted: false,
+            review_comment: None,
         }
     }
 
@@ -194,7 +212,28 @@ impl Requirement {
             description: description.trim().to_string(),
             acceptance_criteria: criteria,
         });
+        // 修订即针对上一次评审意见的回应:旧的「不通过」原因不再适用。
+        self.review_comment = None;
         Ok(next)
+    }
+
+    /// 评审不通过:记录原因,需求留在 DRAFT(待修订后重新评审)。原因必填(trim 后非空)。
+    /// 仅对待评审的草稿适用;已基线/已交付改用 `revise` 起新版本,已归档冻结。
+    pub fn reject_review(&mut self, reason: &str) -> Result<(), RequirementError> {
+        let reason = reason.trim();
+        if reason.is_empty() {
+            return Err(RequirementError::EmptyReviewComment);
+        }
+        match self.status {
+            RequirementStatus::Draft => {
+                self.review_comment = Some(reason.to_string());
+                Ok(())
+            }
+            RequirementStatus::Archived => Err(RequirementError::Archived),
+            RequirementStatus::Baselined | RequirementStatus::Delivered => {
+                Err(RequirementError::NotUnderReview)
+            }
+        }
     }
 
     /// 把基线指向一个**已存在**的版本;首次定基把 Draft → Baselined。
@@ -206,6 +245,8 @@ impl Requirement {
         if self.status == RequirementStatus::Draft {
             self.status = RequirementStatus::Baselined;
         }
+        // 评审通过即定基线:撤销此前的「评审不通过」原因。
+        self.review_comment = None;
         Ok(())
     }
 
@@ -360,6 +401,49 @@ mod tests {
         r.soft_delete();
         assert!(r.deleted);
         assert!(!r.occupies_title());
+    }
+
+    #[test]
+    fn reject_review_records_reason_and_keeps_draft() {
+        let mut r = Requirement::create("req-1", &new_req());
+        r.reject_review("  验收标准不完整  ").expect("reject");
+        assert_eq!(r.status, RequirementStatus::Draft); // 留在待评审
+        assert_eq!(r.review_comment.as_deref(), Some("验收标准不完整")); // trim 后存入
+    }
+
+    #[test]
+    fn reject_review_requires_reason() {
+        let mut r = Requirement::create("req-1", &new_req());
+        assert_eq!(r.reject_review("   "), Err(RequirementError::EmptyReviewComment));
+        assert!(r.review_comment.is_none());
+    }
+
+    #[test]
+    fn pass_then_baseline_clears_prior_rejection() {
+        let mut r = Requirement::create("req-1", &new_req());
+        r.reject_review("缺少边界场景").expect("reject");
+        // 评审通过(定基线)撤销不通过原因
+        r.set_baseline(1).expect("baseline");
+        assert_eq!(r.status, RequirementStatus::Baselined);
+        assert!(r.review_comment.is_none());
+    }
+
+    #[test]
+    fn revise_clears_prior_rejection() {
+        let mut r = Requirement::create("req-1", &new_req());
+        r.reject_review("缺少边界场景").expect("reject");
+        r.revise("v2", crit(&["补充边界"])).expect("revise");
+        assert!(r.review_comment.is_none()); // 修订即回应评审意见
+    }
+
+    #[test]
+    fn cannot_reject_baselined_or_archived() {
+        let mut r = Requirement::create("req-1", &new_req());
+        r.set_baseline(1).expect("baseline");
+        assert_eq!(r.reject_review("x"), Err(RequirementError::NotUnderReview));
+        let mut a = Requirement::create("req-2", &new_req());
+        a.archive();
+        assert_eq!(a.reject_review("x"), Err(RequirementError::Archived));
     }
 
     #[test]

@@ -36,10 +36,57 @@ impl CreateCaseUseCase {
         status: &str,
         custom_fields: BTreeMap<String, String>,
         steps: Vec<crate::domain::CaseStep>,
+        created_by: Option<&str>,
     ) -> Result<FunctionalCase, CreateCaseError> {
+        let new = NewFunctionalCase::new(project_id, name, module, priority, status, custom_fields, steps)?
+            .with_created_by(created_by);
+        Ok(self.repo.insert(&new).await?)
+    }
+}
+
+/// 全量更新一条用例(复用 `NewFunctionalCase` 的构造校验)。
+/// 命中返回更新后视图,未命中(不存在/已删)返回 `None`。
+#[derive(Clone)]
+pub struct UpdateCaseUseCase {
+    repo: Arc<dyn CaseRepository>,
+}
+
+impl UpdateCaseUseCase {
+    pub fn new(repo: Arc<dyn CaseRepository>) -> Self {
+        Self { repo }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn execute(
+        &self,
+        id: &str,
+        project_id: &str,
+        name: &str,
+        module: &str,
+        priority: &str,
+        status: &str,
+        custom_fields: BTreeMap<String, String>,
+        steps: Vec<crate::domain::CaseStep>,
+    ) -> Result<Option<FunctionalCase>, CreateCaseError> {
         let new =
             NewFunctionalCase::new(project_id, name, module, priority, status, custom_fields, steps)?;
-        Ok(self.repo.insert(&new).await?)
+        Ok(self.repo.update(id, &new).await?)
+    }
+}
+
+/// 软删除一条用例。命中返回 `true`,否则 `false`。
+#[derive(Clone)]
+pub struct DeleteCaseUseCase {
+    repo: Arc<dyn CaseRepository>,
+}
+
+impl DeleteCaseUseCase {
+    pub fn new(repo: Arc<dyn CaseRepository>) -> Self {
+        Self { repo }
+    }
+
+    pub async fn execute(&self, id: &str) -> Result<bool, RepoError> {
+        self.repo.delete(id).await
     }
 }
 
@@ -58,11 +105,12 @@ impl ImportCasesUseCase {
         &self,
         project_id: &str,
         rows: &[Vec<String>],
+        created_by: Option<&str>,
     ) -> Result<usize, RepoError> {
         let news = cases_from_rows(project_id, rows);
         let mut n = 0;
-        for new in &news {
-            self.repo.insert(new).await?;
+        for new in news {
+            self.repo.insert(&new.with_created_by(created_by)).await?;
             n += 1;
         }
         Ok(n)
@@ -182,6 +230,7 @@ mod tests {
             status: "PREPARED".into(),
             custom_fields: fields.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect(),
             steps: Vec::new(),
+            created_by: None,
         }
     }
 
@@ -191,13 +240,14 @@ mod tests {
         let create = CreateCaseUseCase::new(repo.clone());
         let list = ListCasesUseCase::new(repo);
         create
-            .execute("p1", "登录成功", "登录", "P0", "", BTreeMap::new(), Vec::new())
+            .execute("p1", "登录成功", "登录", "P0", "", BTreeMap::new(), Vec::new(), Some("alice"))
             .await
             .expect("created");
         let all = list.execute("p1").await.expect("listed");
         assert_eq!(all.len(), 1);
         assert_eq!(all[0].name, "登录成功");
         assert_eq!(all[0].status, "PREPARED"); // 缺省
+        assert_eq!(all[0].created_by.as_deref(), Some("alice"));
     }
 
     #[test]
@@ -237,11 +287,12 @@ mod tests {
             vec!["登录成功".into(), "P0".into(), "alice".into()],
             vec!["密码错误".into(), "P1".into(), "bob".into()],
         ];
-        assert_eq!(import.execute("p1", &rows).await.expect("import"), 2);
+        assert_eq!(import.execute("p1", &rows, Some("importer")).await.expect("import"), 2);
         let all = list.execute("p1").await.expect("list");
         assert_eq!(all.len(), 2);
         assert_eq!(all[0].priority, "P0");
         assert_eq!(all[0].custom_fields["owner"], "alice");
+        assert_eq!(all[0].created_by.as_deref(), Some("importer"));
     }
 
     #[test]

@@ -39,6 +39,17 @@ pub trait ApiDefinitionRepository: Send + Sync {
     /// 按 id 读接口定义(排除软删除)。
     async fn get_definition(&self, id: &str) -> Result<Option<ApiDefinition>, RepoError>;
 
+    /// 更新接口定义的基础字段(名称/协议/方法/路径)。返回更新后的实体;
+    /// `None` 表示未命中(不存在或已软删)。project_id/状态/模块/spec 不变。
+    async fn update_definition(
+        &self,
+        id: &str,
+        name: &str,
+        protocol: &str,
+        method: &str,
+        path: &str,
+    ) -> Result<Option<ApiDefinition>, RepoError>;
+
     /// 更新接口定义的请求/响应规格(spec,不透明 JSON 文本)。
     async fn update_definition_spec(&self, id: &str, spec: &str) -> Result<(), RepoError>;
 
@@ -77,6 +88,9 @@ pub trait ApiDefinitionRepository: Send + Sync {
 
     /// 删除接口用例(软删/硬删由实现决定)。返回是否命中。
     async fn delete_case(&self, id: &str) -> Result<bool, RepoError>;
+
+    /// 更新 Mock 的可变字段(不动 api_definition_id/created_by;回填 updated_at)。返回是否命中。
+    async fn update_mock(&self, mock_id: &str, m: &NewApiMock) -> Result<bool, RepoError>;
 
     /// 软删 Mock(按 mock id)。返回是否命中。
     async fn delete_mock(&self, mock_id: &str) -> Result<bool, RepoError>;

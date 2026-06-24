@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react'
-import { Button, Drawer, Empty, Form, Input, Modal, Space, Switch, Table, Tag, Tooltip, Typography } from 'antd'
+import { Button, Drawer, Empty, Form, Input, Modal, Space, Switch, Table, Tag, Tooltip } from 'antd'
 import { message } from '../feedback'
 import { PlusOutlined, ReloadOutlined, SyncOutlined, HistoryOutlined } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
-import { api, ApiError, type RunnerAgent, type RunnerExecution } from '../api'
+import { api, ApiError, type RunnerAgent, type RunnerExecution, type FleetRuntime } from '../api'
 import { useI18n } from '../i18n'
+import { PageBody, PageContainer, PageHeader } from '../components/Page'
 
 // 人机协同 · 执行机(AI agent)管理:注册/列出 Claude Code、Codex 等远程执行者,
 // 刷新其自报协议、查看执行历史。任务派发在「AI 需求」拆分图里进行(指定 executor)。
@@ -44,8 +45,8 @@ export default function Agents() {
 
   const cols: ColumnsType<RunnerAgent> = [
     { title: t('agent.name', '名称'), dataIndex: 'name', render: (v: string) => <span style={{ fontWeight: 500 }}>{v}</span> },
-    { title: t('agent.baseUrl', '接入地址'), dataIndex: 'baseUrl', render: (v: string) => <span className="ms-mono" style={{ color: '#5b6470' }}>{v}</span> },
-    { title: t('agent.protocols', '支持协议'), dataIndex: 'protocols', render: (ps?: string[]) => (ps?.length ? <Space size={[4, 4]} wrap>{ps.map((p) => <Tag key={p} color="geekblue">{p}</Tag>)}</Space> : <span style={{ color: '#bbb' }}>—</span>) },
+    { title: t('agent.baseUrl', '接入地址'), dataIndex: 'baseUrl', render: (v: string) => <span className="ms-mono" style={{ color: 'var(--text-2)' }}>{v}</span> },
+    { title: t('agent.protocols', '支持协议'), dataIndex: 'protocols', render: (ps?: string[]) => (ps?.length ? <Space size={[4, 4]} wrap>{ps.map((p) => <Tag key={p} color="geekblue">{p}</Tag>)}</Space> : <span style={{ color: 'var(--text-3)' }}>—</span>) },
     { title: t('agent.status', '状态'), dataIndex: 'enabled', width: 90, render: (e: boolean) => <Tag color={e ? 'green' : 'default'}>{e ? t('agent.enabled', '启用') : t('agent.disabled', '停用')}</Tag> },
     {
       title: t('req.action', '操作'),
@@ -62,15 +63,22 @@ export default function Agents() {
   ]
 
   return (
-    <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '14px 16px', background: '#fff', borderBottom: '1px solid #f0f0f0' }}>
-        <Typography.Text strong style={{ fontSize: 15 }}>{t('agent.title', '人机协同 · 执行机')}</Typography.Text>
-        <Typography.Text type="secondary" style={{ fontSize: 12 }}>{t('agent.subtitle', '注册 Claude Code / Codex 等 AI 执行者;任务在「AI 需求」拆分图里派发')}</Typography.Text>
-        <div style={{ flex: 1 }} />
-        <Button type="primary" icon={<PlusOutlined />} onClick={() => setAddOpen(true)}>{t('agent.register', '注册执行机')}</Button>
-        <Button icon={<ReloadOutlined />} onClick={load} />
-      </div>
-      <div style={{ flex: 1, overflow: 'auto', padding: 16 }}>
+    <PageContainer>
+      <PageHeader
+        title={t('agent.title', '人机协同 · 执行机')}
+        subtitle={t('agent.subtitle', '注册 Claude Code / Codex 等 AI 执行者;任务在「AI 需求」拆分图里派发')}
+        extra={
+          <>
+            <Button type="primary" icon={<PlusOutlined />} onClick={() => setAddOpen(true)}>{t('agent.register', '注册执行机')}</Button>
+            <Button icon={<ReloadOutlined />} onClick={load} />
+          </>
+        }
+      />
+      <PageBody>
+        <FleetSection />
+        <div style={{ marginTop: 24, marginBottom: 8, fontWeight: 600, color: 'var(--text-2)' }}>
+          {t('agent.probeSection', '协议执行机(API / 探测)')}
+        </div>
         <Table<RunnerAgent>
           rowKey="id"
           size="middle"
@@ -80,11 +88,54 @@ export default function Agents() {
           pagination={{ pageSize: 15, size: 'small' }}
           locale={{ emptyText: <Empty description={t('agent.empty', '暂无执行机,点「注册执行机」接入 AI agent')} /> }}
         />
-      </div>
+      </PageBody>
 
       <RegisterAgentModal open={addOpen} onClose={() => setAddOpen(false)} onDone={() => { setAddOpen(false); load() }} />
       <ExecutionsDrawer agent={execFor} onClose={() => setExecFor(null)} />
-    </div>
+    </PageContainer>
+  )
+}
+
+// AI 执行者机群:远程 Claude/Codex runtime(SHEPHERD_AGENT_FLEET 模式)。出站注册/心跳,
+// server 据心跳判活;此处每 5s 轮询在线状态。未启用机群模式则列表为空(隐藏整段)。
+function FleetSection() {
+  const { t } = useI18n()
+  const [rts, setRts] = useState<FleetRuntime[]>([])
+  const [loaded, setLoaded] = useState(false)
+  useEffect(() => {
+    let alive = true
+    const load = () => api.fleetRuntimes()
+      .then((r) => { if (alive) { setRts(Array.isArray(r) ? r : []); setLoaded(true) } })
+      .catch(() => { if (alive) setLoaded(true) })
+    load()
+    const h = setInterval(load, 5000)
+    return () => { alive = false; clearInterval(h) }
+  }, [])
+  // 未启用机群(无 runtime 且首拉已完成)→ 不渲染,避免干扰协议执行机视图。
+  if (loaded && rts.length === 0) return null
+  const now = Date.now()
+  const cols: ColumnsType<FleetRuntime> = [
+    { title: t('fleet.status', '在线'), dataIndex: 'online', width: 80, render: (o: boolean) => <Tag color={o ? 'green' : 'default'}>{o ? t('fleet.online', '在线') : t('fleet.offline', '离线')}</Tag> },
+    { title: t('agent.name', '名称'), dataIndex: 'name', render: (v: string) => <span style={{ fontWeight: 500 }}>{v}</span> },
+    { title: t('fleet.runtimeId', 'Runtime ID'), dataIndex: 'id', width: 120, render: (v: string) => <span className="ms-mono" style={{ color: 'var(--text-3)' }}>{v}</span> },
+    { title: t('fleet.caps', '能力'), dataIndex: 'caps', render: (cs?: string[]) => (cs?.length ? <Space size={[4, 4]} wrap>{cs.map((c) => <Tag key={c} color="geekblue">{c}</Tag>)}</Space> : '—') },
+    { title: t('fleet.maxConc', '并发上限'), dataIndex: 'maxConcurrency', width: 90, align: 'center' as const },
+    { title: t('fleet.lastSeen', '最近心跳'), dataIndex: 'lastSeenMs', width: 110, render: (ms: number) => <span style={{ color: 'var(--text-3)', fontSize: 12 }}>{ms ? `${Math.max(0, Math.round((now - ms) / 1000))}s 前` : '—'}</span> },
+  ]
+  return (
+    <>
+      <div style={{ marginBottom: 8, fontWeight: 600, color: 'var(--text-2)' }}>
+        {t('fleet.section', 'AI 执行者机群（远程 Claude / Codex）')}
+      </div>
+      <Table<FleetRuntime>
+        rowKey="id"
+        size="middle"
+        dataSource={rts}
+        columns={cols}
+        pagination={false}
+        locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('fleet.empty', '暂无在线 runtime')} /> }}
+      />
+    </>
   )
 }
 
@@ -153,7 +204,7 @@ function ExecutionsDrawer({ agent, onClose }: { agent: RunnerAgent | null; onClo
           { title: t('agent.outcome', '结果'), dataIndex: 'outcome', width: 100, render: (v: string) => <Tag color={v === 'SUCCESS' ? 'green' : v === 'ERROR' ? 'red' : 'default'}>{v}</Tag> },
           { title: t('agent.code', '状态码'), dataIndex: 'status', width: 80, render: (v?: number) => v ?? '—' },
           { title: t('agent.elapsed', '耗时'), dataIndex: 'elapsedMs', width: 90, render: (v?: number) => (v != null ? `${v} ms` : '—') },
-          { title: t('agent.executedAt', '时间'), dataIndex: 'executedAt', width: 160, render: (v: string) => <span style={{ color: '#8a9099', fontSize: 12 }}>{v?.slice(0, 19) || '—'}</span> },
+          { title: t('agent.executedAt', '时间'), dataIndex: 'executedAt', width: 160, render: (v: string) => <span style={{ color: 'var(--text-3)', fontSize: 12 }}>{v?.slice(0, 19) || '—'}</span> },
         ]}
       />
     </Drawer>

@@ -6,7 +6,7 @@ use crate::domain::{ReviewRecord, ReviewSetting, ReviewStatus};
 
 use thiserror::Error;
 
-/// 评审列表项(队列概览):规则 + 用例总数 + 已通过数 + 创建时间。
+/// 评审列表项(队列概览):规则 + 用例总数 + 已通过数 + 创建时间 + 整体状态。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReviewSummary {
     pub id: String,
@@ -15,6 +15,8 @@ pub struct ReviewSummary {
     pub total: usize,
     pub passed: usize,
     pub created_at: String,
+    /// 整体生命周期:IN_PROGRESS(进行中)/ COMPLETED(已完成)。
+    pub status: String,
 }
 
 /// 评审里某条用例的聚合状态。

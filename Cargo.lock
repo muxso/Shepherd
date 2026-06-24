@@ -44,6 +44,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "agent-runtime"
+version = "0.0.1"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "ahash"
 version = "0.8.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -138,6 +153,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "anyhow"
+version = "1.0.102"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7f202df86484c868dbad7eaa557ef785d5c66295e41b460ef922eca0723b842c"
+
+[[package]]
 name = "api-definition"
 version = "0.0.1"
 dependencies = [
@@ -145,6 +166,7 @@ dependencies = [
  "axum 0.8.9",
  "kernel",
  "migrate",
+ "quick-xml 0.36.2",
  "serde",
  "serde_json",
  "sqlx",
@@ -733,7 +755,7 @@ dependencies = [
  "codepage",
  "encoding_rs",
  "log",
- "quick-xml",
+ "quick-xml 0.31.0",
  "serde",
  "zip",
 ]
@@ -909,6 +931,24 @@ dependencies = [
  "pin-project-lite",
  "tokio",
  "tokio-util",
+]
+
+[[package]]
+name = "comment"
+version = "0.0.1"
+dependencies = [
+ "async-trait",
+ "axum 0.8.9",
+ "kernel",
+ "migrate",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "thiserror 2.0.18",
+ "tokio",
+ "tower 0.5.3",
+ "utoipa",
+ "webauth",
 ]
 
 [[package]]
@@ -1109,6 +1149,7 @@ dependencies = [
  "axum 0.8.9",
  "kernel",
  "migrate",
+ "redis",
  "reqwest",
  "serde",
  "serde_json",
@@ -1149,6 +1190,20 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ffdd80ce8ce993de27e9f063a444a4d53ce8e8db4c1f00cc03af5ad5a9867a1e"
 dependencies = [
  "cipher",
+]
+
+[[package]]
+name = "design"
+version = "0.0.1"
+dependencies = [
+ "async-trait",
+ "axum 0.8.9",
+ "delivery",
+ "serde",
+ "sqlx",
+ "thiserror 2.0.18",
+ "tokio",
+ "webauth",
 ]
 
 [[package]]
@@ -1394,6 +1449,24 @@ name = "foldhash"
 version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d9c4f5dac5e15c24eb999c26181a6ca40b39fe946cbe4c263c7209467bc83af2"
+
+[[package]]
+name = "follow"
+version = "0.0.1"
+dependencies = [
+ "async-trait",
+ "axum 0.8.9",
+ "kernel",
+ "migrate",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "thiserror 2.0.18",
+ "tokio",
+ "tower 0.5.3",
+ "utoipa",
+ "webauth",
+]
 
 [[package]]
 name = "form_urlencoded"
@@ -2800,6 +2873,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "quick-xml"
+version = "0.36.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f7649a7b4df05aed9ea7ec6f628c67c9953a43869b8bc50929569b2999d443fe"
+dependencies = [
+ "memchr",
+]
+
+[[package]]
 name = "quinn"
 version = "0.11.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3457,8 +3539,11 @@ dependencies = [
  "bug",
  "case",
  "case-management",
+ "comment",
  "delivery",
+ "design",
  "environment",
+ "follow",
  "mcp",
  "migrate",
  "mock-runtime",

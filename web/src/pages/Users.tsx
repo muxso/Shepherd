@@ -80,7 +80,7 @@ export default function Users() {
     { title: t('user.username', '用户名'), dataIndex: 'email', width: 240, ellipsis: true },
     { title: t('user.name', '姓名'), dataIndex: 'name', width: 160 },
     { title: t('user.email', '邮箱'), dataIndex: 'email', ellipsis: true },
-    { title: t('user.phone', '手机'), width: 110, render: () => <span style={{ color: '#bbb' }}>—</span> },
+    { title: t('user.phone', '手机'), width: 110, render: () => <span style={{ color: 'var(--text-3)' }}>—</span> },
     { title: t('user.org', '组织'), width: 140, render: () => <Tag>{t('user.defaultOrg', '默认组织')}</Tag> },
     { title: t('user.userGroup', '用户组'), width: 200, render: (_v, u) => (u.userGroups && u.userGroups.length ? u.userGroups.map((g) => <Tag key={g} color="green" style={{ marginBottom: 2 }}>{g}</Tag>) : <Tag color="green">{t('user.sysMember', '系统成员')}</Tag>) },
     {
@@ -112,13 +112,13 @@ export default function Users() {
   ]
 
   return (
-    <div style={{ padding: 12, height: '100%', overflow: 'auto', background: '#f5f6f8' }}>
+    <div style={{ padding: 12, height: '100%', overflow: 'auto', background: 'var(--bg)' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
         <Button type="primary" onClick={openCreate}>{t('user.create', '创建用户')}</Button>
         <Button onClick={soon}>{t('user.invite', '邮箱邀请')}</Button>
         <Button onClick={soon}>{t('user.import', '导入用户')}</Button>
         <div style={{ flex: 1 }} />
-        <Input allowClear prefix={<SearchOutlined style={{ color: '#bbb' }} />} placeholder={t('user.search', '通过姓名/邮箱/手机搜索')} style={{ width: 280 }} value={q} onChange={(e) => setQ(e.target.value)} />
+        <Input allowClear prefix={<SearchOutlined style={{ color: 'var(--text-3)' }} />} placeholder={t('user.search', '通过姓名/邮箱/手机搜索')} style={{ width: 280 }} value={q} onChange={(e) => setQ(e.target.value)} />
       </div>
       <Table<User>
         rowKey="id"

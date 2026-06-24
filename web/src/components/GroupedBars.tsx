@@ -55,7 +55,7 @@ export default function GroupedBars({ series, rows, height = 260 }: { series: Ba
       {/* 图例(固定,不随横向滚动) */}
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 16, marginBottom: 8 }}>
         {series.map((s) => (
-          <span key={s.key} style={{ display: 'inline-flex', alignItems: 'center', fontSize: 12, color: '#5b6470' }}>
+          <span key={s.key} style={{ display: 'inline-flex', alignItems: 'center', fontSize: 12, color: 'var(--text-2)' }}>
             <span style={{ width: 10, height: 10, borderRadius: 2, background: s.color, marginRight: 6 }} />
             {s.label}
           </span>

@@ -2,12 +2,13 @@ import { useEffect, useState, type CSSProperties } from 'react'
 import { Button, Card, Col, Empty, Form, Input, Modal, Progress, Row, Select, Space, Table, Tag } from 'antd'
 import { message, modal } from '../feedback'
 import { PlayCircleOutlined, FileMarkdownOutlined, LinkOutlined, ClockCircleOutlined } from '@ant-design/icons'
-import { api, ApiError, type ApiCase, type PlanCase, type PlanStats } from '../api'
+import { api, ApiError, userStore, type ApiCase, type PlanCase, type PlanStats } from '../api'
 import { useApp } from '../context'
 import { outcomeColor } from '../components/tags'
 import { regAdd, regList, type RegItem } from '../registry'
 import { Workspace, WorkList, useWorkTabs, useOpenParam } from '../components/Workspace'
 import Donut from '../components/Donut'
+import { SelectProjectEmpty } from '../components/Page'
 import { useI18n } from '../i18n'
 
 export default function TestPlans() {
@@ -48,7 +49,7 @@ export default function TestPlans() {
     }
   }
 
-  if (!projectId) return <div style={{ padding: 48 }}><Empty description={t('common.selectProject', '请先在顶部选择项目')} /></div>
+  if (!projectId) return <SelectProjectEmpty />
 
   const detailTabs = plans
     .filter((p) => tabs.openIds.includes(p.id))
@@ -90,6 +91,7 @@ export default function TestPlans() {
                 },
               },
               { title: t('plan.colCaseCount', '用例数'), width: 80, render: (_, p) => statsMap[p.id]?.total ?? 0 },
+              { title: t('plan.colCreatedBy', '创建人'), width: 110, render: (_, p) => p.meta?.createdBy || '—' },
               { title: t('plan.colCreatedAt', '创建时间'), dataIndex: 'createdAt', width: 180, render: (ts: number) => new Date(ts).toLocaleString() },
               {
                 title: t('plan.colAction', '操作'),
@@ -110,7 +112,7 @@ export default function TestPlans() {
           projectId={projectId}
           onCreated={(id, name) => {
             setCreateOpen(false)
-            setPlans(regAdd('plan', projectId, { id, label: name, createdAt: Date.now() }))
+            setPlans(regAdd('plan', projectId, { id, label: name, createdAt: Date.now(), meta: { createdBy: userStore.get() } }))
             tabs.open(id)
           }}
         />
@@ -151,6 +153,7 @@ function PlanDetail({ planId, name, projectId }: { planId: string; name: string;
   const [loading, setLoading] = useState(false)
   const [linkOpen, setLinkOpen] = useState(false)
   const [running, setRunning] = useState(false)
+  const [marking, setMarking] = useState('')
   const [mdOpen, setMdOpen] = useState(false)
   const [md, setMd] = useState('')
 
@@ -181,6 +184,18 @@ function PlanDetail({ planId, name, projectId }: { planId: string; name: string;
       message.error(e instanceof ApiError ? `${t('plan.runFail', '执行失败')}:${e.status}` : t('plan.runFail', '执行失败'))
     } finally {
       setRunning(false)
+    }
+  }
+  const markResult = async (caseId: string, status: string) => {
+    setMarking(caseId)
+    try {
+      await api.recordPlanCaseResult(planId, caseId, status)
+      message.success(t('plan.markDone', '已登记执行结果'))
+      load()
+    } catch (e) {
+      message.error(e instanceof ApiError ? `${t('plan.markFail', '登记失败')}:${e.status}` : t('plan.markFail', '登记失败'))
+    } finally {
+      setMarking('')
     }
   }
   const openReport = async () => {
@@ -227,9 +242,25 @@ function PlanDetail({ planId, name, projectId }: { planId: string; name: string;
         locale={{ emptyText: <Empty description={t('plan.noLinkedCase', '未挂用例,点「挂用例」')} /> }}
         columns={[
           { title: t('plan.caseName', '用例名'), dataIndex: 'name', ellipsis: true },
-          { title: t('plan.colResult', '结果'), dataIndex: 'status', width: 110, render: (s: string) => <Tag color={outcomeColor(s)}>{s}</Tag> },
+          { title: t('plan.colResult', '结果'), dataIndex: 'status', width: 110, render: (s: string) => <Tag color={outcomeColor(s)}>{caseStatusLabel(s, t)}</Tag> },
           { title: t('plan.colLatency', '耗时(ms)'), dataIndex: 'latencyMs', width: 100, render: (v?: number | null) => v ?? '—' },
           { title: t('plan.colStatusCode', '状态码'), dataIndex: 'statusCode', width: 90, render: (v?: number | null) => v ?? '—' },
+          {
+            title: t('plan.colAction', '操作'),
+            width: 130,
+            render: (_, c) => (
+              <Select
+                size="small"
+                variant="borderless"
+                style={{ width: 110 }}
+                placeholder={t('plan.markResult', '登记结果')}
+                value={undefined}
+                disabled={marking === c.caseId}
+                onChange={(s) => markResult(c.caseId, s)}
+                options={CASE_RESULT_OPTIONS.map((o) => ({ value: o.value, label: t(o.i18nKey, o.fallback) }))}
+              />
+            ),
+          },
         ]}
       />
       <LinkCaseModal open={linkOpen} planId={planId} projectId={projectId} onClose={() => setLinkOpen(false)} onLinked={() => { setLinkOpen(false); load() }} />
@@ -295,7 +326,7 @@ function ReportAnalytics({ stats, cases }: { stats: PlanStats | null; cases: Pla
     { label: t('plan.segError', '失败'), value: error, color: '#c62828' },
     { label: t('plan.segFake', '误报'), value: fake, color: '#ef6c00' },
     { label: t('plan.segBlock', '阻塞'), value: block, color: '#722ed1' },
-    { label: t('plan.segPending', '未执行'), value: pending, color: '#bfbfbf' },
+    { label: t('plan.segPending', '未执行'), value: pending, color: 'var(--text-3)' },
   ]
   return (
     <Row gutter={16}>
@@ -327,10 +358,10 @@ function ReportAnalytics({ stats, cases }: { stats: PlanStats | null; cases: Pla
           {segs.map((s) => (
             <div key={s.label} style={{ display: 'flex', alignItems: 'center', gap: 12, margin: '6px 0' }}>
               <span style={{ width: 48, color: s.color }}>{s.label}</span>
-              <div style={{ flex: 1, background: '#f0f2f5', borderRadius: 4, height: 10, overflow: 'hidden' }}>
+              <div style={{ flex: 1, background: 'var(--bg)', borderRadius: 4, height: 10, overflow: 'hidden' }}>
                 <div style={{ width: `${pct(s.value)}%`, background: s.color, height: '100%' }} />
               </div>
-              <span style={{ width: 90, textAlign: 'right', color: '#5b6470' }}>{s.value}　{pct(s.value)}%</span>
+              <span style={{ width: 90, textAlign: 'right', color: 'var(--text-2)' }}>{s.value}　{pct(s.value)}%</span>
             </div>
           ))}
         </Card>
@@ -340,3 +371,23 @@ function ReportAnalytics({ stats, cases }: { stats: PlanStats | null; cases: Pla
 }
 
 const rowStyle: CSSProperties = { display: 'flex', justifyContent: 'space-between', padding: '6px 0', fontSize: 14 }
+
+// 可手动登记的执行结果(对齐 MeterSphere:通过/不通过/阻塞/误报)。
+const CASE_RESULT_OPTIONS = [
+  { value: 'SUCCESS', i18nKey: 'plan.resPass', fallback: '通过' },
+  { value: 'ERROR', i18nKey: 'plan.resFail', fallback: '不通过' },
+  { value: 'BLOCK', i18nKey: 'plan.resBlock', fallback: '阻塞' },
+  { value: 'FAKE_ERROR', i18nKey: 'plan.resFake', fallback: '误报' },
+]
+
+// 用例状态码 → 本地化标签(未执行/通过/不通过/阻塞/误报)。
+function caseStatusLabel(s: string, t: (k: string, d: string) => string): string {
+  switch ((s || 'PENDING').toUpperCase()) {
+    case 'SUCCESS': return t('plan.resPass', '通过')
+    case 'ERROR': return t('plan.resFail', '不通过')
+    case 'BLOCK': return t('plan.resBlock', '阻塞')
+    case 'FAKE_ERROR': return t('plan.resFake', '误报')
+    case 'PENDING': return t('plan.segPending', '未执行')
+    default: return s
+  }
+}

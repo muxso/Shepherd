@@ -51,9 +51,9 @@ export default function ChangeHistoryPanel({ definition }: { definition: ApiDefi
           <div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
               <Tag color={ACTION_COLOR[c.action] || 'default'} style={{ margin: 0 }}>{actionLabel(c.action)}</Tag>
-              {c.detail && <span style={{ color: '#5b6470' }}>{c.detail}</span>}
+              {c.detail && <span style={{ color: 'var(--text-2)' }}>{c.detail}</span>}
             </div>
-            <div style={{ color: '#8a9099', fontSize: 12, marginTop: 2 }}>
+            <div style={{ color: 'var(--text-3)', fontSize: 12, marginTop: 2 }}>
               {c.actor || '—'} · <span className="ms-mono">{c.createdAt}</span>
             </div>
           </div>

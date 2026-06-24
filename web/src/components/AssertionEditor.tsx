@@ -18,21 +18,22 @@ interface Row {
   expected: string
 }
 
+// value=后端 MatchCondition(数据,不翻译);labelKey/fallback 在 render 时经 t() 解析为双语。
 const NUMERIC_CONDS = [
-  { value: 'EQUALS', label: '等于' },
-  { value: 'NOT_EQUALS', label: '不等于' },
-  { value: 'GT', label: '大于' },
-  { value: 'GT_OR_EQUALS', label: '大于等于' },
-  { value: 'LT', label: '小于' },
-  { value: 'LT_OR_EQUALS', label: '小于等于' },
-  { value: 'UNCHECKED', label: '不校验' },
+  { value: 'EQUALS', labelKey: 'assert.opEquals', fallback: '等于' },
+  { value: 'NOT_EQUALS', labelKey: 'assert.opNotEquals', fallback: '不等于' },
+  { value: 'GT', labelKey: 'assert.opGt', fallback: '大于' },
+  { value: 'GT_OR_EQUALS', labelKey: 'assert.opGte', fallback: '大于等于' },
+  { value: 'LT', labelKey: 'assert.opLt', fallback: '小于' },
+  { value: 'LT_OR_EQUALS', labelKey: 'assert.opLte', fallback: '小于等于' },
+  { value: 'UNCHECKED', labelKey: 'assert.opUnchecked', fallback: '不校验' },
 ]
 const TEXT_CONDS = [
-  { value: 'CONTAINS', label: '包含' },
-  { value: 'NOT_CONTAINS', label: '不包含' },
-  { value: 'EQUALS', label: '等于' },
-  { value: 'NOT_EQUALS', label: '不等于' },
-  { value: 'REGEX', label: '正则' },
+  { value: 'CONTAINS', labelKey: 'assert.opContains', fallback: '包含' },
+  { value: 'NOT_CONTAINS', labelKey: 'assert.opNotContains', fallback: '不包含' },
+  { value: 'EQUALS', labelKey: 'assert.opEquals', fallback: '等于' },
+  { value: 'NOT_EQUALS', labelKey: 'assert.opNotEquals', fallback: '不等于' },
+  { value: 'REGEX', labelKey: 'assert.opRegex', fallback: '正则' },
 ]
 
 const emptyRow = (cat: Cat): Row => ({
@@ -137,9 +138,9 @@ export default function AssertionEditor({
       {rows.length === 0 ? (
         <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('assert.emptyHint', '无断言(执行只看传输是否可达)')} />
       ) : (
-        <div style={{ display: 'flex', gap: 12, border: '1px solid #eef0f2', borderRadius: 6 }}>
+        <div style={{ display: 'flex', gap: 12, border: '1px solid var(--border-soft)', borderRadius: 6 }}>
           {/* 左列:断言类别列表 */}
-          <div style={{ width: 160, borderRight: '1px solid #eef0f2', padding: 8 }}>
+          <div style={{ width: 160, borderRight: '1px solid var(--border-soft)', padding: 8 }}>
             <Space direction="vertical" style={{ width: '100%' }} size={4}>
               {rows.map((r, i) => (
                 <div
@@ -152,10 +153,10 @@ export default function AssertionEditor({
                     padding: '6px 8px',
                     borderRadius: 4,
                     cursor: 'pointer',
-                    background: i === sel ? '#f3eefe' : 'transparent',
+                    background: i === sel ? 'var(--brand-soft)' : 'transparent',
                   }}
                 >
-                  <span style={{ width: 18, height: 18, borderRadius: '50%', background: '#06a561', color: '#fff', fontSize: 11, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>{i + 1}</span>
+                  <span style={{ width: 18, height: 18, borderRadius: '50%', background: 'var(--brand)', color: '#fff', fontSize: 11, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>{i + 1}</span>
                   <span style={{ flex: 1, fontSize: 13 }}>{CAT_LABEL[r.cat]}</span>
                   <Button
                     type="text"
@@ -216,7 +217,7 @@ function RowEditor({ row, onChange, t }: { row: Row; onChange: (p: Partial<Row>)
         {row.cat === 'body' && row.bodyMode === 'jsonpath' && (
           <Input value={row.path} onChange={(e) => onChange({ path: e.target.value })} placeholder="$.data.id" style={{ width: 240 }} className="ms-mono" />
         )}
-        <Select value={row.condition} onChange={(v) => onChange({ condition: v })} options={condOptions} style={{ width: 130 }} />
+        <Select value={row.condition} onChange={(v) => onChange({ condition: v })} options={condOptions.map((o) => ({ value: o.value, label: t(o.labelKey, o.fallback) }))} style={{ width: 130 }} />
         {row.condition !== 'UNCHECKED' && (
           <Input value={row.expected} onChange={(e) => onChange({ expected: e.target.value })} placeholder={t('assert.matchValue', '匹配值')} />
         )}

@@ -68,13 +68,13 @@ export default function UserGroups() {
   const permRows: PermRow[] = useMemo(() => {
     return (sel?.permissions ?? []).map((p) => {
       const [res, acts] = p.split(':')
-      return { res, resLabel: RES_LABEL[res] || res, actions: (acts ?? '').split('+').filter(Boolean) }
+      return { res, resLabel: t(`ug.res.${res}`, RES_LABEL[res] || res), actions: (acts ?? '').split('+').filter(Boolean) }
     }).sort((a, b) => a.resLabel.localeCompare(b.resLabel))
-  }, [sel])
+  }, [sel, t])
 
   const cols: ColumnsType<PermRow> = [
     { title: t('ug.resource', '资源'), dataIndex: 'resLabel', width: 200, render: (v: string, r) => <Tooltip title={r.res}><span style={{ fontWeight: 600 }}>{v}</span></Tooltip> },
-    { title: t('ug.permission', '权限'), dataIndex: 'actions', render: (a: string[]) => a.map((x) => <Tag key={x} color="green" style={{ marginBottom: 4 }}>{ACT_LABEL[x] || x}</Tag>) },
+    { title: t('ug.permission', '权限'), dataIndex: 'actions', render: (a: string[]) => a.map((x) => <Tag key={x} color="green" style={{ marginBottom: 4 }}>{t(`ug.act.${x}`, ACT_LABEL[x] || x)}</Tag>) },
   ]
 
   const del = (r: Role) => modal.confirm({
@@ -120,9 +120,9 @@ export default function UserGroups() {
   return (
     <div style={{ display: 'flex', height: '100%' }}>
       {/* 左侧:按 scope 分组的用户组树 */}
-      <div style={{ width: 240, flexShrink: 0, borderRight: '1px solid #f0f0f0', background: '#fff', display: 'flex', flexDirection: 'column' }}>
+      <div style={{ width: 240, flexShrink: 0, borderRight: '1px solid var(--border-soft)', background: 'var(--panel)', display: 'flex', flexDirection: 'column' }}>
         <div style={{ padding: 10 }}>
-          <Input allowClear prefix={<SearchOutlined style={{ color: '#bbb' }} />} placeholder={t('ug.search', '请输入用户组名称')} value={q} onChange={(e) => setQ(e.target.value)} />
+          <Input allowClear prefix={<SearchOutlined style={{ color: 'var(--text-3)' }} />} placeholder={t('ug.search', '请输入用户组名称')} value={q} onChange={(e) => setQ(e.target.value)} />
         </div>
         <div style={{ flex: 1, overflow: 'auto', padding: '0 6px 10px' }}>
           {/* 没有任何分组时也能新建系统用户组 */}
@@ -133,10 +133,10 @@ export default function UserGroups() {
           )}
           {loading ? null : grouped.map((g) => (
             <div key={g.scope} style={{ marginBottom: 8 }}>
-              <div style={{ display: 'flex', alignItems: 'center', padding: '6px 8px', fontSize: 13, color: '#5b6470' }}>
+              <div style={{ display: 'flex', alignItems: 'center', padding: '6px 8px', fontSize: 13, color: 'var(--text-2)' }}>
                 <span style={{ flex: 1, fontWeight: 600 }}>{g.label}</span>
                 <Tooltip title={t('ug.newGroupIn', '新建用户组')}>
-                  <Button type="text" size="small" icon={<PlusOutlined style={{ color: '#06a561' }} />} onClick={() => setCreateScope(g.scope)} />
+                  <Button type="text" size="small" icon={<PlusOutlined style={{ color: 'var(--brand)' }} />} onClick={() => setCreateScope(g.scope)} />
                 </Tooltip>
               </div>
               {g.roles.map((r) => (
@@ -146,7 +146,7 @@ export default function UserGroups() {
                   style={{
                     padding: '7px 14px', margin: '2px 0', borderRadius: 6, cursor: 'pointer', fontSize: 13,
                     background: selId === r.id ? '#e6f7ef' : 'transparent',
-                    color: selId === r.id ? '#06a561' : '#1f2329',
+                    color: selId === r.id ? 'var(--brand)' : '#1f2329',
                   }}
                 >
                   {r.name}
@@ -157,8 +157,8 @@ export default function UserGroups() {
         </div>
       </div>
       {/* 右侧:权限 / 成员 */}
-      <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', background: '#fff' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 16px', borderBottom: '1px solid #f0f0f0' }}>
+      <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', background: 'var(--panel)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 16px', borderBottom: '1px solid var(--border-soft)' }}>
           <Segmented value={tab} onChange={(v) => setTab(v as string)} options={[{ label: t('ug.perm', '权限'), value: 'perm' }, { label: t('ug.members', '成员'), value: 'members' }]} />
           <div style={{ flex: 1 }} />
           {sel && (
@@ -227,7 +227,7 @@ function RoleCreateModal({ scope, onClose, onDone }: { scope: string | null; onC
   const [busy, setBusy] = useState(false)
   useEffect(() => { if (scope) form.resetFields() }, [scope, form])
   return (
-    <Modal title={`${t('ug.newGroup', '新建用户组')}${scope ? ` · ${SCOPE_LABEL[scope] || scope}` : ''}`} open={!!scope} onCancel={onClose} footer={null} destroyOnHidden>
+    <Modal title={`${t('ug.newGroup', '新建用户组')}${scope ? ` · ${t(`ug.scope.${scope}`, SCOPE_LABEL[scope] || scope)}` : ''}`} open={!!scope} onCancel={onClose} footer={null} destroyOnHidden>
       <Form
         form={form}
         layout="vertical"

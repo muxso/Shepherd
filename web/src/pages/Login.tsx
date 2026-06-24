@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { Card, Form, Input, Button, Typography } from 'antd'
 import { message } from '../feedback'
 import { DeploymentUnitOutlined } from '@ant-design/icons'
-import { api, ApiError } from '../api'
+import { api, ApiError, userStore } from '../api'
 import { useApp } from '../context'
 import { useI18n } from '../i18n'
 
@@ -15,7 +15,7 @@ export default function Login() {
     setLoading(true)
     try {
       const { token } = await api.login(v.username, v.password)
-      localStorage.setItem('shepherd.user', v.username) // 供个人中心展示(后端暂无 /me)
+      userStore.set(v.username) // 供个人中心 / 创建人列展示(后端暂无 /me)
       login(token)
       message.success(t('login.ok', '登录成功'))
     } catch (e) {
@@ -32,12 +32,12 @@ export default function Login() {
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
-        background: 'linear-gradient(135deg,#0b1f3a,#06a56122)',
+        background: 'linear-gradient(135deg,#0b1f3a,var(--brand)22)',
       }}
     >
       <Card style={{ width: 360 }} variant="borderless">
         <div style={{ textAlign: 'center', marginBottom: 24 }}>
-          <DeploymentUnitOutlined style={{ fontSize: 36, color: '#06a561' }} />
+          <DeploymentUnitOutlined style={{ fontSize: 36, color: 'var(--brand)' }} />
           <Typography.Title level={3} style={{ margin: '8px 0 0' }}>
             Shepherd
           </Typography.Title>

@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { Button, Card, Drawer, Input, Radio, Segmented, Select, Space, Table, Tabs, Tag, Typography } from 'antd'
 import { message } from '../feedback'
 import { SendOutlined } from '@ant-design/icons'
-import { api, ApiError, type ApiBodyType, type ApiDefinition, type DebugResponse } from '../api'
+import { api, ApiError, contentTypeForBodyType, withBodyContentType, type ApiBodyType, type ApiDefinition, type DebugResponse } from '../api'
 import { methodColor } from './tags'
 import AssertionEditor, { type Assertion } from './AssertionEditor'
 import KVEditor, { type KVRow } from './KVEditor'
@@ -12,7 +12,13 @@ import { useI18n } from '../i18n'
 
 const BODY_TYPES: ApiBodyType[] = ['none', 'form-data', 'x-www-form-urlencoded', 'json', 'xml', 'raw', 'binary']
 const PRIORITIES = ['P0', 'P1', 'P2', 'P3']
+// 用例状态值持久化到后端(保留中文值);仅翻译展示标签。
 const CASE_STATUSES = ['进行中', '已完成', '已废弃']
+const CASE_STATUS_LABELS: Record<string, string> = {
+  '进行中': 'case.statusInProgress',
+  '已完成': 'case.statusCompleted',
+  '已废弃': 'case.statusDeprecated',
+}
 
 type AuthState = { type: 'none' | 'bearer' | 'basic'; token: string }
 
@@ -95,7 +101,15 @@ export default function CaseEditorDrawer({
     setErr('')
     setResp(null)
     try {
-      setResp(await api.debugSend({ method, url, headers: headers.filter((h) => h.key.trim()), body: body.trim() || undefined }))
+      const hasBody = bodyType !== 'none' && !!body.trim()
+      setResp(
+        await api.debugSend({
+          method,
+          url,
+          headers: withBodyContentType(headers.filter((h) => h.key.trim()), hasBody ? bodyType : 'none'),
+          body: hasBody ? body.trim() : undefined,
+        }),
+      )
     } catch (e) {
       setErr(e instanceof ApiError ? e.message : t('case.sendFailed', '发送失败'))
     } finally {
@@ -116,18 +130,20 @@ export default function CaseEditorDrawer({
       return false
     }
     setSaving(true)
+    const hasBody = bodyType !== 'none' && !!body.trim()
     try {
       await api.createCase(definition.id, {
         name: name.trim(),
         method,
         url,
-        body: body.trim() || undefined,
+        body: hasBody ? body.trim() : undefined,
         assertions,
         processors: buildProcessors(),
         priority,
         status,
         tags,
-        headers: headers.filter((h) => h.key.trim()),
+        // 按 body 类型补默认 Content-Type(可选:用户已写则不覆盖),随用例持久化 → runner 执行时带上。
+        headers: withBodyContentType(headers.filter((h) => h.key.trim()), hasBody ? bodyType : 'none'),
         queryParams: query.filter((h) => h.key.trim()).map((q) => ({ key: q.key.trim(), value: q.value, enabled: q.enabled, type: q.type, minLen: q.minLen, maxLen: q.maxLen, description: q.description })),
         restParams: rest.filter((h) => h.key.trim()),
         auth: auth.type === 'none' ? { type: 'none' } : { type: auth.type, token: auth.token },
@@ -175,6 +191,13 @@ export default function CaseEditorDrawer({
             <Typography.Text type="secondary">{t('apidef.noBody', '请求没有 Body')}</Typography.Text>
           ) : (
             <div>
+              {(() => {
+                const userCt = headers.find((h) => h.key.trim().toLowerCase() === 'content-type' && h.value.trim())
+                const autoCt = contentTypeForBodyType(bodyType)
+                if (userCt) return <Typography.Text type="secondary" style={{ fontSize: 12 }}>Content-Type: <span className="ms-mono">{userCt.value.trim()}</span>({t('case.ctFromHeader', '来自请求头')})</Typography.Text>
+                if (autoCt) return <Typography.Text type="secondary" style={{ fontSize: 12 }}>Content-Type: <span className="ms-mono">{autoCt}</span>({t('case.ctAuto', '自动按 body 类型;在「请求头」中可覆盖')})</Typography.Text>
+                return <Typography.Text type="secondary" style={{ fontSize: 12 }}>{t('case.ctNone', '不发送 Content-Type;如需可在「请求头」中添加')}</Typography.Text>
+              })()}
               {bodyType === 'json' && (
                 <div style={{ textAlign: 'right', marginBottom: 6 }}>
                   <Button size="small" onClick={() => setBody(formatJson(body))}>{t('apidef.format', '格式化')}</Button>
@@ -252,12 +275,12 @@ export default function CaseEditorDrawer({
       }
     >
       {/* 头部信息卡:【id】名称 + 请求类型 + 路径(对齐参考图 #3) */}
-      <Card size="small" styles={{ body: { padding: '10px 14px' } }} style={{ marginBottom: 12, background: '#fafbfc' }}>
+      <Card size="small" styles={{ body: { padding: '10px 14px' } }} style={{ marginBottom: 12, background: 'var(--panel-2)' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
           <span style={{ fontWeight: 600 }}>【{definition.num ?? '—'}】{definition.name}</span>
           <div style={{ flex: 1 }} />
-          <span style={{ color: '#8a9099', fontSize: 12 }}>{t('apidef.reqType', '请求类型')} <Tag color={methodColor(method)} style={{ margin: 0 }}>{method}</Tag></span>
-          <span style={{ color: '#8a9099', fontSize: 12 }}>{t('apidef.colPath', '路径')} <span className="ms-mono" style={{ color: '#5b6470' }}>{url || '—'}</span></span>
+          <span style={{ color: 'var(--text-3)', fontSize: 12 }}>{t('apidef.reqType', '请求类型')} <Tag color={methodColor(method)} style={{ margin: 0 }}>{method}</Tag></span>
+          <span style={{ color: 'var(--text-3)', fontSize: 12 }}>{t('apidef.colPath', '路径')} <span className="ms-mono" style={{ color: 'var(--text-2)' }}>{url || '—'}</span></span>
         </div>
       </Card>
 
@@ -276,7 +299,7 @@ export default function CaseEditorDrawer({
       {/* 优先级 / 状态 / 标签 */}
       <Space wrap style={{ marginBottom: 14 }}>
         <Select value={priority} onChange={setPriority} style={{ width: 110 }} options={PRIORITIES.map((p) => ({ value: p, label: p }))} />
-        <Select value={status} onChange={setStatus} style={{ width: 130 }} options={CASE_STATUSES.map((s) => ({ value: s, label: s }))} />
+        <Select value={status} onChange={setStatus} style={{ width: 130 }} options={CASE_STATUSES.map((s) => ({ value: s, label: t(CASE_STATUS_LABELS[s], s) }))} />
         <Space size={[4, 4]} wrap>
           {tags.map((tg) => (
             <Tag key={tg} closable onClose={() => setTags(tags.filter((x) => x !== tg))}>{tg}</Tag>

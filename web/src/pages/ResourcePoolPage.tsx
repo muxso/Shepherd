@@ -92,7 +92,7 @@ export function ResourcePoolsPage() {
       title: t('res.colName', '名称'),
       dataIndex: 'name',
       render: (v: string, p) => (
-        <a style={{ color: '#06a561' }} onClick={() => nav(`/resource-pool/${p.id}/edit`)}>
+        <a style={{ color: 'var(--brand)' }} onClick={() => nav(`/resource-pool/${p.id}/edit`)}>
           {v}
         </a>
       ),
@@ -143,7 +143,7 @@ export function ResourcePoolsPage() {
   ]
 
   return (
-    <div style={{ height: '100%', overflow: 'auto', padding: 12, background: '#f5f6f8' }}>
+    <div style={{ height: '100%', overflow: 'auto', padding: 12, background: 'var(--bg)' }}>
       <Card size="small" styles={{ body: { padding: 12 } }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
           <Button type="primary" onClick={() => nav('/resource-pool/new')}>
@@ -153,7 +153,7 @@ export function ResourcePoolsPage() {
           <Input
             allowClear
             size="small"
-            prefix={<SearchOutlined style={{ color: '#bbb' }} />}
+            prefix={<SearchOutlined style={{ color: 'var(--text-3)' }} />}
             placeholder={t('pool.searchName', '通过名称搜索')}
             style={{ width: 240 }}
             value={q}
@@ -382,14 +382,14 @@ export function ResourcePoolForm() {
     <span>
       {label}{' '}
       <Tooltip title={help}>
-        <QuestionCircleOutlined style={{ color: '#bbb' }} />
+        <QuestionCircleOutlined style={{ color: 'var(--text-3)' }} />
       </Tooltip>
     </span>
   )
 
   return (
-    <div style={{ height: '100%', display: 'flex', flexDirection: 'column', background: '#f5f6f8' }}>
-      <div style={{ padding: '10px 16px', background: '#fff', borderBottom: '1px solid #f0f0f0' }}>
+    <div style={{ height: '100%', display: 'flex', flexDirection: 'column', background: 'var(--bg)' }}>
+      <div style={{ padding: '10px 16px', background: 'var(--panel)', borderBottom: '1px solid var(--border-soft)' }}>
         <Breadcrumb
           items={[
             { title: <a onClick={() => nav('/resource-pool')}>{t('res.pool', '资源池')}</a> },
@@ -467,7 +467,7 @@ export function ResourcePoolForm() {
         </Card>
       </div>
       {/* 底部操作条 */}
-      <div style={{ padding: '10px 24px', background: '#fff', borderTop: '1px solid #f0f0f0', textAlign: 'right' }}>
+      <div style={{ padding: '10px 24px', background: 'var(--panel)', borderTop: '1px solid var(--border-soft)', textAlign: 'right' }}>
         <Space>
           <Button onClick={() => nav('/resource-pool')}>{t('a.cancel', '取消')}</Button>
           {!isEdit && (
@@ -518,7 +518,7 @@ function NodeSection({
           <Form.List name="nodes">
             {(fields, { add, remove }) => (
               <>
-                <div style={{ display: 'flex', gap: 8, padding: '0 4px 6px', color: '#5b6470', fontSize: 13 }}>
+                <div style={{ display: 'flex', gap: 8, padding: '0 4px 6px', color: 'var(--text-2)', fontSize: 13 }}>
                   <div style={{ flex: 2 }}>
                     IP <span style={{ color: '#f5222d' }}>*</span>
                   </div>

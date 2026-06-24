@@ -12,6 +12,12 @@ import {
   ArrowDownOutlined,
   ThunderboltOutlined,
   SafetyCertificateOutlined,
+  FileDoneOutlined,
+  AuditOutlined,
+  RobotOutlined,
+  ExperimentOutlined,
+  ArrowRightOutlined,
+  SyncOutlined,
 } from '@ant-design/icons'
 import { useNavigate } from 'react-router-dom'
 import { api, type ApiCase, type ApiDefinition, type CaseExecSummary, type ExecTrendPoint } from '../api'
@@ -32,11 +38,11 @@ interface Counts {
 }
 
 // 协议分段配色(轮转)。
-const PROTO_COLORS = ['#06a561', '#1677ff', '#13c2c2', '#52c41a', '#fa8c16', '#eb2f96', '#f5222d', '#8a9099']
+const PROTO_COLORS = ['var(--brand)', '#1677ff', '#13c2c2', '#52c41a', '#fa8c16', '#eb2f96', '#f5222d', '#8a9099']
 
 // 项目对比柱状图的资产系列(配色对齐资产分布环)。
 const PROJECT_SERIES = [
-  { key: 'def', label: '接口定义', color: '#06a561' },
+  { key: 'def', label: '接口定义', color: 'var(--brand)' },
   { key: 'scenario', label: '场景用例', color: '#1677ff' },
   { key: 'apiCase', label: '接口用例', color: '#13c2c2' },
   { key: 'funcCase', label: '功能用例', color: '#52c41a' },
@@ -187,7 +193,7 @@ export default function Home() {
 
   const cards = useMemo(
     () => [
-      { key: 'def', label: t('home.def', '接口定义'), value: c?.def ?? 0, icon: <ApiOutlined />, color: '#06a561' },
+      { key: 'def', label: t('home.def', '接口定义'), value: c?.def ?? 0, icon: <ApiOutlined />, color: 'var(--brand)' },
       { key: 'scenario', label: t('home.scenario', '场景用例'), value: c?.scenario ?? 0, icon: <PartitionOutlined />, color: '#1677ff' },
       { key: 'apiCase', label: t('home.apiCase', '接口用例'), value: c?.apiCase ?? 0, icon: <ProfileOutlined />, color: '#13c2c2' },
       { key: 'funcCase', label: t('home.funcCase', '功能用例'), value: c?.funcCase ?? 0, icon: <ProfileOutlined />, color: '#52c41a' },
@@ -199,7 +205,7 @@ export default function Home() {
   )
 
   const donutSegs = [
-    { label: t('home.def', '接口定义'), value: c?.def ?? 0, color: '#06a561' },
+    { label: t('home.def', '接口定义'), value: c?.def ?? 0, color: 'var(--brand)' },
     { label: t('home.scenario', '场景用例'), value: c?.scenario ?? 0, color: '#1677ff' },
     { label: t('home.apiCase', '接口用例'), value: c?.apiCase ?? 0, color: '#13c2c2' },
     { label: t('home.funcCase', '功能用例'), value: c?.funcCase ?? 0, color: '#52c41a' },
@@ -226,7 +232,7 @@ export default function Home() {
                   <Card size="small" styles={{ body: { padding: '14px 16px' } }}>
                     <Statistic
                       title={
-                        <span style={{ color: '#5b6470' }}>
+                        <span style={{ color: 'var(--text-2)' }}>
                           <span style={{ color: card.color, marginRight: 6 }}>{card.icon}</span>
                           {card.label}
                         </span>
@@ -252,9 +258,9 @@ export default function Home() {
                   {donutSegs.map((s) => (
                     <div key={s.label} style={{ display: 'flex', alignItems: 'center', padding: '6px 0', fontSize: 13 }}>
                       <span style={{ width: 10, height: 10, borderRadius: 2, background: s.color, marginRight: 8 }} />
-                      <span style={{ flex: 1, color: '#5b6470' }}>{s.label}</span>
+                      <span style={{ flex: 1, color: 'var(--text-2)' }}>{s.label}</span>
                       <b>{s.value}</b>
-                      <span style={{ width: 56, textAlign: 'right', color: '#8a9099' }}>
+                      <span style={{ width: 56, textAlign: 'right', color: 'var(--text-3)' }}>
                         {totalAssets ? ((s.value * 100) / totalAssets).toFixed(1) : '0'}%
                       </span>
                     </div>
@@ -275,7 +281,7 @@ export default function Home() {
         return (
           <Card
             title={<span><ApiOutlined style={{ color: '#1677ff', marginRight: 6 }} />{cardTitle.projectBars}</span>}
-            extra={ranked.length > TOP ? <span style={{ fontSize: 12, color: '#8a9099' }}>{t('home.topN', '资产量前 {n}').replace('{n}', String(TOP))}</span> : ranked.length > 8 ? <span style={{ fontSize: 12, color: '#8a9099' }}>{t('home.scrollHint', '← 左右滑动 →')}</span> : undefined}
+            extra={ranked.length > TOP ? <span style={{ fontSize: 12, color: 'var(--text-3)' }}>{t('home.topN', '资产量前 {n}').replace('{n}', String(TOP))}</span> : ranked.length > 8 ? <span style={{ fontSize: 12, color: 'var(--text-3)' }}>{t('home.scrollHint', '← 左右滑动 →')}</span> : undefined}
             size="small"
             style={{ marginBottom: 16 }}
           >
@@ -295,7 +301,7 @@ export default function Home() {
         const uncovered = totalDefs - coveredDefs
         const coverRate = totalDefs ? (coveredDefs * 100) / totalDefs : 0
         return (
-          <Card title={<span><ApiOutlined style={{ color: '#06a561', marginRight: 6 }} />{cardTitle.apiStats}</span>} size="small" style={{ marginBottom: 16 }}>
+          <Card title={<span><ApiOutlined style={{ color: 'var(--brand)', marginRight: 6 }} />{cardTitle.apiStats}</span>} size="small" style={{ marginBottom: 16 }}>
             {totalDefs === 0 ? (
               <Empty description={t('common.empty', '暂无数据')} />
             ) : (
@@ -308,9 +314,9 @@ export default function Home() {
                       {protocolSegs.map((s) => (
                         <div key={s.label} style={{ display: 'flex', alignItems: 'center', padding: '5px 0', fontSize: 13 }}>
                           <span style={{ width: 10, height: 10, borderRadius: 2, background: s.color, marginRight: 8 }} />
-                          <span style={{ flex: 1, color: '#5b6470' }}>{s.label}</span>
+                          <span style={{ flex: 1, color: 'var(--text-2)' }}>{s.label}</span>
                           <b>{s.value}</b>
-                          <span style={{ width: 56, textAlign: 'right', color: '#8a9099' }}>{((s.value * 100) / totalDefs).toFixed(1)}%</span>
+                          <span style={{ width: 56, textAlign: 'right', color: 'var(--text-3)' }}>{((s.value * 100) / totalDefs).toFixed(1)}%</span>
                         </div>
                       ))}
                     </div>
@@ -322,7 +328,7 @@ export default function Home() {
                     <Donut
                       segments={[
                         { label: t('home.covered', '已覆盖'), value: coveredDefs, color: '#52c41a' },
-                        { label: t('home.uncovered', '未覆盖'), value: uncovered, color: '#e8eaed' },
+                        { label: t('home.uncovered', '未覆盖'), value: uncovered, color: 'var(--text-3)' },
                       ]}
                       size={132}
                       thickness={18}
@@ -330,15 +336,15 @@ export default function Home() {
                     />
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <div style={{ fontSize: 22, fontWeight: 700, color: coverRate >= 60 ? '#52c41a' : coverRate >= 30 ? '#fa8c16' : '#f5222d' }}>{coverRate.toFixed(1)}%</div>
-                      <div style={{ color: '#8a9099', fontSize: 12, marginBottom: 10 }}>{t('home.coverRateHint', '有用例引用的接口占比')}</div>
+                      <div style={{ color: 'var(--text-3)', fontSize: 12, marginBottom: 10 }}>{t('home.coverRateHint', '有用例引用的接口占比')}</div>
                       <div style={{ display: 'flex', alignItems: 'center', padding: '5px 0', fontSize: 13 }}>
                         <span style={{ width: 10, height: 10, borderRadius: 2, background: '#52c41a', marginRight: 8 }} />
-                        <span style={{ flex: 1, color: '#5b6470' }}>{t('home.covered', '已覆盖')}</span>
+                        <span style={{ flex: 1, color: 'var(--text-2)' }}>{t('home.covered', '已覆盖')}</span>
                         <b>{coveredDefs}</b>
                       </div>
                       <div style={{ display: 'flex', alignItems: 'center', padding: '5px 0', fontSize: 13 }}>
                         <span style={{ width: 10, height: 10, borderRadius: 2, background: '#d9d9d9', marginRight: 8 }} />
-                        <span style={{ flex: 1, color: '#5b6470' }}>{t('home.uncovered', '未覆盖')}</span>
+                        <span style={{ flex: 1, color: 'var(--text-2)' }}>{t('home.uncovered', '未覆盖')}</span>
                         <b>{uncovered}</b>
                       </div>
                     </div>
@@ -360,7 +366,7 @@ export default function Home() {
         const passRate = executions ? (passed * 100) / executions : 0
         const metric = (label: string, value: number, color?: string) => (
           <div style={{ minWidth: 96 }}>
-            <div style={{ color: '#8a9099', fontSize: 12 }}>{label}</div>
+            <div style={{ color: 'var(--text-3)', fontSize: 12 }}>{label}</div>
             <div style={{ fontSize: 22, fontWeight: 700, color }}>{value}</div>
           </div>
         )
@@ -372,7 +378,7 @@ export default function Home() {
               {segs.map((s) => (
                 <div key={s.label} style={{ display: 'flex', alignItems: 'center', fontSize: 12, padding: '2px 0' }}>
                   <span style={{ width: 8, height: 8, borderRadius: 2, background: s.color, marginRight: 6 }} />
-                  <span style={{ color: '#5b6470', marginRight: 8 }}>{s.label}</span>
+                  <span style={{ color: 'var(--text-2)', marginRight: 8 }}>{s.label}</span>
                   <b>{s.value}</b>
                 </div>
               ))}
@@ -391,7 +397,7 @@ export default function Home() {
               <Col xs={24} md={9}>
                 {rateBlock(t('home.execRate', '执行率'), execRate, [
                   { label: t('home.executed', '已执行'), value: executedCases, color: '#1677ff' },
-                  { label: t('home.unexecuted', '未执行'), value: unexecuted, color: '#e8eaed' },
+                  { label: t('home.unexecuted', '未执行'), value: unexecuted, color: 'var(--text-3)' },
                 ])}
               </Col>
               <Col xs={24} md={9}>
@@ -407,7 +413,7 @@ export default function Home() {
       case 'execTrend': {
         const hasData = trendRows.some((r) => (r.values.passed ?? 0) + (r.values.failed ?? 0) > 0)
         return (
-          <Card title={<span><ThunderboltOutlined style={{ color: '#fa8c16', marginRight: 6 }} />{cardTitle.execTrend}</span>} extra={<span style={{ fontSize: 12, color: '#8a9099' }}>{t('home.last7d', '近 7 天')}</span>} size="small" style={{ marginBottom: 16 }}>
+          <Card title={<span><ThunderboltOutlined style={{ color: '#fa8c16', marginRight: 6 }} />{cardTitle.execTrend}</span>} extra={<span style={{ fontSize: 12, color: 'var(--text-3)' }}>{t('home.last7d', '近 7 天')}</span>} size="small" style={{ marginBottom: 16 }}>
             {!hasData ? (
               <Empty description={t('home.noExec', '近 7 天无执行记录')} />
             ) : (
@@ -484,14 +490,76 @@ export default function Home() {
     }
   }
 
+  // —— 闭环门面:需求 → 评审 → 研发交付 → 测试 → 验证,自动回归需求 ——
+  const passRateHero = exec?.executions ? ((exec.passed ?? 0) * 100) / exec.executions : 0
+  const loopStages = [
+    { key: 'req', name: t('loop.req', '需求'), desc: t('loop.reqDesc', 'MRD 自动转 PRD'), icon: <FileDoneOutlined />, to: '/requirement', metric: c?.req ?? 0, unit: t('home.req', '需求') },
+    { key: 'review', name: t('loop.review', '评审'), desc: t('loop.reviewDesc', 'AI 参与评审 · 版本留痕'), icon: <AuditOutlined />, to: '/review', metric: null, unit: '' },
+    { key: 'dev', name: t('loop.dev', '研发交付'), desc: t('loop.devDesc', '多 Agent 协同研发'), icon: <RobotOutlined />, to: '/agents', metric: null, unit: '' },
+    { key: 'test', name: t('loop.test', '测试'), desc: t('loop.testDesc', 'TDD 驱动 · 自动化测试'), icon: <ExperimentOutlined />, to: '/api/scenario', metric: c?.scenario ?? 0, unit: t('home.scenario', '场景') },
+    { key: 'verify', name: t('loop.verify', '验收质量'), desc: t('loop.verifyDesc', '决策链路可视化 · 回归需求'), icon: <SafetyCertificateOutlined />, to: '/bug', metric: c?.bug ?? 0, unit: t('home.bug', '缺陷') },
+  ]
+  const loopHero = (
+    <div className="ms-loop-hero" style={{ marginBottom: 16, borderRadius: 12, padding: '18px 20px', border: '1px solid var(--border-soft)', overflow: 'hidden' }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16, flexWrap: 'wrap', gap: 8 }}>
+        <div>
+          <div style={{ fontSize: 18, fontWeight: 700, color: 'var(--text)' }}>{t('loop.heroTitle', '从需求到交付的 AI 闭环')}</div>
+          <div style={{ color: 'var(--text-3)', fontSize: 12, marginTop: 3 }}>{t('loop.heroSub', 'MRD 自动转 PRD → AI 参与评审(版本留痕)→ 多 Agent 协同研发 → TDD 测试验收 → 决策链路可视化,结果回归需求')}</div>
+        </div>
+        <div style={{ textAlign: 'right' }}>
+          <div style={{ fontSize: 26, fontWeight: 800, lineHeight: 1.1, color: passRateHero >= 60 ? 'var(--success)' : passRateHero >= 30 ? 'var(--warning)' : 'var(--error)' }}>{passRateHero.toFixed(0)}%</div>
+          <div style={{ fontSize: 11, color: 'var(--text-3)' }}>{t('loop.health', '闭环健康 · 用例通过率')}</div>
+        </div>
+      </div>
+      <div style={{ display: 'flex', alignItems: 'stretch', flexWrap: 'wrap', gap: 0 }}>
+        {loopStages.map((s, i) => (
+          <div key={s.key} style={{ display: 'flex', alignItems: 'center', flex: '1 1 150px', minWidth: 150 }}>
+            <div
+              onClick={() => navigate(s.to)}
+              style={{ flex: 1, cursor: 'pointer', background: 'var(--panel)', border: '1px solid var(--border-soft)', borderRadius: 10, padding: '12px 14px', transition: 'transform .12s, box-shadow .12s' }}
+              onMouseEnter={(e) => { e.currentTarget.style.transform = 'translateY(-2px)'; e.currentTarget.style.boxShadow = '0 6px 18px rgba(91,91,214,.14)' }}
+              onMouseLeave={(e) => { e.currentTarget.style.transform = 'none'; e.currentTarget.style.boxShadow = 'none' }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                <span style={{ width: 28, height: 28, borderRadius: 8, background: 'var(--brand-soft)', color: 'var(--brand)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 15 }}>{s.icon}</span>
+                <span style={{ fontWeight: 600, color: 'var(--text)' }}>{s.name}</span>
+              </div>
+              <div style={{ color: 'var(--text-3)', fontSize: 12, marginBottom: 8 }}>{s.desc}</div>
+              {s.metric != null ? (
+                <div style={{ display: 'flex', alignItems: 'baseline', gap: 4 }}>
+                  <span style={{ fontSize: 20, fontWeight: 700, color: 'var(--text)' }}>{s.metric}</span>
+                  <span style={{ fontSize: 11, color: 'var(--text-3)' }}>{s.unit}</span>
+                </div>
+              ) : (
+                <span style={{ fontSize: 12, color: 'var(--brand)' }}>{t('loop.enter', '进入')} <ArrowRightOutlined style={{ fontSize: 10 }} /></span>
+              )}
+            </div>
+            {i < loopStages.length - 1 && (
+              <ArrowRightOutlined style={{ color: 'var(--text-3)', margin: '0 6px', flex: '0 0 auto' }} />
+            )}
+          </div>
+        ))}
+        {/* 闭环回归标记 */}
+        <div style={{ display: 'flex', alignItems: 'center', flex: '0 0 auto', paddingLeft: 6 }}>
+          <Tooltip title={t('loop.backHint', '验证结果自动回归需求,进入下一轮')}>
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '6px 10px', borderRadius: 20, background: 'var(--brand-soft)', color: 'var(--brand)', fontSize: 12, fontWeight: 600, cursor: 'default' }}>
+              <SyncOutlined /> {t('loop.closed', '闭环')}
+            </span>
+          </Tooltip>
+        </div>
+      </div>
+    </div>
+  )
+
   return (
     <div style={{ padding: 16, height: '100%', overflow: 'auto' }}>
+      {loopHero}
       <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 12 }}>
         <Dropdown
           trigger={['click']}
           popupRender={() => (
             <Card size="small" styles={{ body: { padding: 8 } }} style={{ width: 260, boxShadow: '0 6px 16px rgba(0,0,0,.12)' }}>
-              <div style={{ fontSize: 12, color: '#8a9099', padding: '2px 6px 8px' }}>{t('home.cardSettingsHint', '勾选显示,箭头调整顺序')}</div>
+              <div style={{ fontSize: 12, color: 'var(--text-3)', padding: '2px 6px 8px' }}>{t('home.cardSettingsHint', '勾选显示,箭头调整顺序')}</div>
               {prefs.map((p, i) => (
                 <div key={p.key} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 6px' }}>
                   <Checkbox checked={p.shown} onChange={(e) => toggle(p.key, e.target.checked)} style={{ flex: 1 }}>

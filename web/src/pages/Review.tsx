@@ -76,7 +76,7 @@ function RequirementReview() {
   ]
   const card = (key: string, title: string, color?: string) => (
     <Col span={6}>
-      <Card size="small" hoverable onClick={() => setFilter(key)} style={{ borderColor: filter === key ? '#06a561' : undefined }}>
+      <Card size="small" hoverable onClick={() => setFilter(key)} style={{ borderColor: filter === key ? 'var(--brand)' : undefined }}>
         <Statistic title={title} value={counts[key] ?? 0} valueStyle={color ? { color } : undefined} />
       </Card>
     </Col>
@@ -128,7 +128,7 @@ function CaseReviewQueue() {
     { title: t('review.rule', '通过规则'), dataIndex: 'passRule', width: 180, render: (r: string) => <Tag color={r === 'MULTIPLE' ? 'purple' : 'blue'}>{t(`review.rule.${r}`, ruleLabel(r))}</Tag> },
     { title: t('review.caseCount', '用例数'), dataIndex: 'total', width: 90 },
     { title: t('review.passed', '已通过'), dataIndex: 'passed', width: 100, render: (p: number, r) => <span style={{ color: p >= r.total && r.total > 0 ? '#2e7d32' : undefined }}>{p} / {r.total}</span> },
-    { title: t('review.createdAt', '创建时间'), dataIndex: 'createdAt', width: 180, render: (v: string) => <span style={{ color: '#8a9099', fontSize: 12 }}>{v?.slice(0, 19) || '—'}</span> },
+    { title: t('review.createdAt', '创建时间'), dataIndex: 'createdAt', width: 180, render: (v: string) => <span style={{ color: 'var(--text-3)', fontSize: 12 }}>{v?.slice(0, 19) || '—'}</span> },
     { title: t('req.action', '操作'), width: 90, render: (_v, r) => <Button type="link" size="small" onClick={() => setDetailId(r.id)}>{t('review.view', '查看')}</Button> },
   ]
 
@@ -178,6 +178,7 @@ function ReviewDetailDrawer({ reviewId, caseName, onClose, onChanged }: { review
   const { t } = useI18n()
   const [detail, setDetail] = useState<CaseReviewDetail | null>(null)
   const [loading, setLoading] = useState(false)
+  const [passingAll, setPassingAll] = useState(false)
   const reviewer = localStorage.getItem('shepherd.user') || 'admin'
 
   const load = async () => {
@@ -197,6 +198,29 @@ function ReviewDetailDrawer({ reviewId, caseName, onClose, onChanged }: { review
       message.error(e instanceof ApiError ? e.message : t('review.submitFailed', '提交失败'))
     }
   }
+  // 一键评审通过:对该评审下尚未通过的用例逐个提交 PASS(满足规则后整体即通过)。
+  const passAll = () => {
+    if (!reviewId || !detail) return
+    const pending = detail.cases.filter((c) => c.status !== 'PASS')
+    if (!pending.length) { message.info(t('review.allPassed', '所有用例均已通过')); return }
+    modal.confirm({
+      title: t('review.passAllTitle', '一键评审通过'),
+      content: t('review.passAllConfirm', `将对 ${pending.length} 个未通过用例提交「通过」,确认?`),
+      okButtonProps: { style: { background: '#2e7d32', borderColor: '#2e7d32' } },
+      onOk: async () => {
+        setPassingAll(true)
+        try {
+          for (const c of pending) {
+            await api.submitCaseReview(reviewId, c.caseId, { reviewerId: reviewer, status: 'PASS' })
+          }
+          message.success(t('review.passedAll', '已全部提交通过'))
+          load(); onChanged()
+        } catch (e) {
+          message.error(e instanceof ApiError ? e.message : t('review.submitFailed', '提交失败'))
+        } finally { setPassingAll(false) }
+      },
+    })
+  }
   const reject = (caseId: string) => {
     let reason = ''
     modal.confirm({
@@ -208,8 +232,24 @@ function ReviewDetailDrawer({ reviewId, caseName, onClose, onChanged }: { review
   }
 
   return (
-    <Drawer title={t('review.reviewDetail', '评审详情')} open={!!reviewId} onClose={onClose} width={680}>
-      {detail && <Tag color={detail.passRule === 'MULTIPLE' ? 'purple' : 'blue'} style={{ marginBottom: 12 }}>{ruleLabel(detail.passRule)} · {detail.reviewerCount} {t('review.reviewers', '评审人')}</Tag>}
+    <Drawer
+      title={t('review.reviewDetail', '评审详情')}
+      open={!!reviewId}
+      onClose={onClose}
+      width={680}
+      extra={detail && detail.cases.length > 0 && (
+        <Button
+          type="primary"
+          loading={passingAll}
+          disabled={loading || detail.cases.every((c) => c.status === 'PASS')}
+          style={{ background: '#2e7d32', borderColor: '#2e7d32' }}
+          onClick={passAll}
+        >
+          {t('review.passAll', '一键评审通过')}
+        </Button>
+      )}
+    >
+      {detail && <Tag color={detail.passRule === 'MULTIPLE' ? 'purple' : 'blue'} style={{ marginBottom: 12 }}>{t(`review.rule.${detail.passRule}`, ruleLabel(detail.passRule))} · {detail.reviewerCount} {t('review.reviewers', '评审人')}</Tag>}
       <Table<CaseReviewDetail['cases'][number]>
         rowKey="caseId"
         size="small"

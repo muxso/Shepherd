@@ -2,6 +2,7 @@ import { lazy, Suspense } from 'react'
 import { Navigate, Route, Routes } from 'react-router-dom'
 import { Spin } from 'antd'
 import { useApp } from './context'
+import { useI18n } from './i18n'
 import Login from './pages/Login'
 import AppShell from './components/AppShell'
 
@@ -21,8 +22,10 @@ const RolesPage = lazy(() => import('./pages/UserGroups'))
 const UsersPage = lazy(() => import('./pages/Users'))
 const ProjectAdmin = lazy(() => import('./pages/ProjectAdmin'))
 const FileManagement = lazy(() => import('./pages/FileManagement'))
+const MessageSettings = lazy(() => import('./pages/MessageSettings'))
 const ComingSoon = lazy(() => import('./pages/ComingSoon'))
 const Agents = lazy(() => import('./pages/Agents'))
+const TaskCenter = lazy(() => import('./pages/TaskCenter'))
 const Review = lazy(() => import('./pages/Review'))
 const EnvironmentsPage = lazy(() => import('./pages/Environments').then((m) => ({ default: m.EnvironmentsPage })))
 const ResourcePoolsPage = lazy(() => import('./pages/ResourcePoolPage').then((m) => ({ default: m.ResourcePoolsPage })))
@@ -30,6 +33,7 @@ const ResourcePoolForm = lazy(() => import('./pages/ResourcePoolPage').then((m) 
 
 export default function App() {
   const { token } = useApp()
+  const { t } = useI18n()
   if (!token) return <Login />
 
   return (
@@ -48,16 +52,16 @@ export default function App() {
           <Route path="/organization" element={<OrganizationsPage />} />
           <Route path="/role" element={<RolesPage />} />
           <Route path="/user" element={<UsersPage />} />
-          <Route path="/system/params" element={<ComingSoon title="系统参数" />} />
-          <Route path="/system/tasks" element={<ComingSoon title="任务中心" />} />
-          <Route path="/system/plugins" element={<ComingSoon title="插件" />} />
-          <Route path="/system/logs" element={<ComingSoon title="日志" />} />
+          <Route path="/system/params" element={<ComingSoon title={t('sys.params', '系统参数')} />} />
+          <Route path="/system/tasks" element={<TaskCenter />} />
+          <Route path="/system/plugins" element={<ComingSoon title={t('sys.plugins', '插件')} />} />
+          <Route path="/system/logs" element={<ComingSoon title={t('sys.logs', '日志')} />} />
           <Route path="/project" element={<ProjectAdmin />} />
-          <Route path="/project/templates" element={<ComingSoon title="模板管理" />} />
+          <Route path="/project/templates" element={<ComingSoon title={t('proj.tmplTab', '模板管理')} />} />
           <Route path="/project/files" element={<FileManagement />} />
-          <Route path="/project/messages" element={<ComingSoon title="消息管理" />} />
-          <Route path="/project/scripts" element={<ComingSoon title="公共脚本" />} />
-          <Route path="/project/logs" element={<ComingSoon title="日志" />} />
+          <Route path="/project/messages" element={<MessageSettings />} />
+          <Route path="/project/scripts" element={<ComingSoon title={t('proj.scriptTab', '公共脚本')} />} />
+          <Route path="/project/logs" element={<ComingSoon title={t('proj.logTab', '日志')} />} />
           <Route path="/test-plan" element={<TestPlans />} />
           <Route path="/perf" element={<Perf />} />
           <Route path="/requirement" element={<Requirements />} />

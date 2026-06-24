@@ -102,7 +102,7 @@ export function ResizableSider({
   }, [width, max, min, storageKey])
 
   return (
-    <div style={{ position: 'relative', width, flexShrink: 0, background: '#fff', borderRight: '1px solid #f0f0f0', display: 'flex', flexDirection: 'column' }}>
+    <div style={{ position: 'relative', width, flexShrink: 0, background: 'var(--panel)', borderRight: '1px solid var(--border-soft)', display: 'flex', flexDirection: 'column' }}>
       {children}
       <div
         onMouseDown={(e) => { drag.current = { startX: e.clientX, startW: width }; document.body.style.cursor = 'col-resize'; document.body.style.userSelect = 'none' }}
@@ -149,7 +149,7 @@ export function Workspace({
             {left}
           </ResizableSider>
         )}
-        <div style={{ flex: 1, minWidth: 0, background: '#fff' }}>
+        <div style={{ flex: 1, minWidth: 0, background: 'var(--panel)' }}>
           <Tabs
             type="editable-card"
             hideAdd
@@ -198,7 +198,7 @@ export function WorkList<T extends object>({
   const { t } = useI18n()
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 12px', borderBottom: '1px solid #f0f0f0' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 12px', borderBottom: '1px solid var(--border-soft)' }}>
         {onNew && (
           <Button type="primary" icon={<PlusOutlined />} onClick={onNew}>
             {newLabel ?? t('a.new', '新建')}
@@ -228,7 +228,7 @@ export function WorkList<T extends object>({
 // 左栏统一头部(标题 + 右侧动作)。
 export function PaneHeader({ title, action }: { title: string; action?: ReactNode }) {
   return (
-    <div style={{ display: 'flex', alignItems: 'center', padding: '10px 12px', borderBottom: '1px solid #f5f5f5' }}>
+    <div style={{ display: 'flex', alignItems: 'center', padding: '10px 12px', borderBottom: '1px solid var(--border-soft)' }}>
       <span style={{ fontWeight: 600 }}>{title}</span>
       <div style={{ flex: 1 }} />
       {action}

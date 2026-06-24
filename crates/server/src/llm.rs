@@ -308,6 +308,7 @@ mod tests {
         let url = serve_llm("{\"reference\":\"branch:feat\",\"summary\":\"实现完成\"}").await;
         let e = LlmExecutor::new(LlmClient::new(url, None, "m"));
         let ws = WorkSpec {
+            attempt_id: "a".into(),
             decomposition_id: "d".into(),
             task_id: "t1".into(),
             title: "x".into(),
