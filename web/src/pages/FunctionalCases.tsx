@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Button, Descriptions, Empty, Form, Input, Modal, Select, Space, Table, Tabs, Tag, Tree, Upload } from 'antd'
-import { DownloadOutlined, ImportOutlined } from '@ant-design/icons'
+import { Button, Descriptions, Empty, Form, Input, Modal, Popconfirm, Select, Space, Table, Tabs, Tag, Tree, Upload } from 'antd'
+import { DeleteOutlined, DownloadOutlined, EditOutlined, ImportOutlined } from '@ant-design/icons'
 import { message } from '../feedback'
 import type { ColumnsType } from 'antd/es/table'
 import { api, ApiError, type CaseRequirementLink, type CaseStep, type FunctionalCase, type Requirement } from '../api'
@@ -8,6 +8,7 @@ import { useApp } from '../context'
 import { Workspace, WorkList, PaneHeader, useWorkTabs } from '../components/Workspace'
 import StepsEditor from '../components/StepsEditor'
 import { useI18n } from '../i18n'
+import { SelectProjectEmpty } from '../components/Page'
 
 const PRIORITIES = ['P0', 'P1', 'P2', 'P3']
 const prioColor = (p?: string) => (p === 'P0' ? 'red' : p === 'P1' ? 'orange' : 'blue')
@@ -21,6 +22,7 @@ export default function FunctionalCases() {
   const [search, setSearch] = useState('')
   const [moduleKey, setModuleKey] = useState('ALL')
   const [createOpen, setCreateOpen] = useState(false)
+  const [editing, setEditing] = useState<FunctionalCase | null>(null)
   const tabs = useWorkTabs()
 
   const load = async () => {
@@ -88,8 +90,18 @@ export default function FunctionalCases() {
     }
   }
 
-  if (!projectId)
-    return <div style={{ padding: 48 }}><Empty description={t('common.selectProject', '请先在顶部选择项目')} /></div>
+  const doDelete = async (c: FunctionalCase) => {
+    try {
+      await api.deleteFunctionalCase(c.id)
+      message.success(t('func.deleted', '用例已删除'))
+      tabs.close(c.id)
+      load()
+    } catch (e) {
+      message.error(e instanceof ApiError ? e.message : t('func.deleteFailed', '删除失败'))
+    }
+  }
+
+  if (!projectId) return <SelectProjectEmpty />
 
   const columns: ColumnsType<FunctionalCase> = [
     { title: t('func.colName', '名称'), dataIndex: 'name', ellipsis: true },
@@ -97,6 +109,24 @@ export default function FunctionalCases() {
     { title: t('func.colPriority', '优先级'), dataIndex: 'priority', width: 90, render: (p?: string) => <Tag color={prioColor(p)}>{p || 'P2'}</Tag> },
     { title: t('func.colSteps', '步骤'), dataIndex: 'steps', width: 70, render: (s?: CaseStep[]) => (s?.length || 0) },
     { title: t('func.colStatus', '状态'), dataIndex: 'status', width: 110, render: (s?: string) => <Tag>{s || 'PREPARED'}</Tag> },
+    { title: t('func.colCreatedBy', '创建人'), dataIndex: 'createdBy', width: 110, ellipsis: true, render: (u?: string) => u ? <span style={{ color: 'var(--text-2)' }}>{u}</span> : <span style={{ color: 'var(--text-3)' }}>—</span> },
+    {
+      title: t('req.action', '操作'),
+      width: 110,
+      render: (_v, c) => (
+        <Space size={0} onClick={(e) => e.stopPropagation()}>
+          <Button type="link" size="small" icon={<EditOutlined />} onClick={() => setEditing(c)}>{t('a.edit', '编辑')}</Button>
+          <Popconfirm
+            title={t('func.confirmDelete', '确认删除该用例?')}
+            okText={t('a.confirm', '确定')}
+            cancelText={t('a.cancel', '取消')}
+            onConfirm={() => doDelete(c)}
+          >
+            <Button type="link" size="small" danger icon={<DeleteOutlined />}>{t('a.delete', '删除')}</Button>
+          </Popconfirm>
+        </Space>
+      ),
+    },
   ]
 
   const left = (
@@ -145,13 +175,25 @@ export default function FunctionalCases() {
           />
         }
       />
-      <CreateCaseModal
+      <CaseModal
         open={createOpen}
         projectId={projectId}
+        editing={null}
         defaultModule={moduleKey.startsWith('mod:') ? moduleKey.replace('mod:', '') : ''}
         onClose={() => setCreateOpen(false)}
-        onCreated={() => {
+        onSaved={() => {
           setCreateOpen(false)
+          load()
+        }}
+      />
+      <CaseModal
+        open={!!editing}
+        projectId={projectId}
+        editing={editing}
+        defaultModule=""
+        onClose={() => setEditing(null)}
+        onSaved={() => {
+          setEditing(null)
           load()
         }}
       />
@@ -288,47 +330,88 @@ function CaseDetail({ c }: { c: FunctionalCase }) {
   )
 }
 
-function CreateCaseModal({
+function CaseModal({
   open,
   projectId,
+  editing,
   defaultModule,
   onClose,
-  onCreated,
+  onSaved,
 }: {
   open: boolean
   projectId: string
+  editing: FunctionalCase | null
   defaultModule: string
   onClose: () => void
-  onCreated: () => void
+  onSaved: () => void
 }) {
   const { t } = useI18n()
   const [form] = Form.useForm()
   const [saving, setSaving] = useState(false)
+  const cf = editing?.customFields || {}
+  const initial = editing
+    ? {
+        name: editing.name,
+        module: editing.module || '',
+        priority: editing.priority || 'P2',
+        prerequisite: cf['前置条件'] || '',
+        remark: cf['备注'] || '',
+        steps: editing.steps?.length ? editing.steps : [{ step: '', expected: '' }],
+      }
+    : { priority: 'P1', module: defaultModule, steps: [{ step: '', expected: '' }] }
   return (
-    <Modal title={t('func.createTitle', '新建功能用例')} open={open} onCancel={onClose} onOk={() => form.submit()} confirmLoading={saving} destroyOnHidden width={680}>
+    <Modal
+      title={editing ? t('func.editTitle', '编辑功能用例') : t('func.createTitle', '新建功能用例')}
+      open={open}
+      onCancel={onClose}
+      onOk={() => form.submit()}
+      confirmLoading={saving}
+      destroyOnHidden
+      width={680}
+    >
       <Form
         form={form}
         layout="vertical"
         preserve={false}
-        initialValues={{ priority: 'P1', module: defaultModule, steps: [{ step: '', expected: '' }] }}
+        initialValues={initial}
         onFinish={async (v) => {
           setSaving(true)
           try {
-            const customFields: Record<string, string> = {}
-            if (v.prerequisite?.trim()) customFields['前置条件'] = v.prerequisite.trim()
-            if (v.remark?.trim()) customFields['备注'] = v.remark.trim()
-            await api.createFunctionalCase({
-              projectId,
-              name: v.name,
-              priority: v.priority,
-              module: v.module || undefined,
-              steps: (v.steps || []).filter((s: CaseStep) => s.step.trim() || s.expected.trim()),
-              customFields: Object.keys(customFields).length ? customFields : undefined,
-            })
-            message.success(t('func.created', '用例已创建'))
-            onCreated()
+            // 编辑时保留用例原有的其它自定义字段(只覆盖前置条件/备注)。
+            const customFields: Record<string, string> = { ...(editing?.customFields || {}) }
+            const setOrDel = (k: string, val?: string) => {
+              if (val?.trim()) customFields[k] = val.trim()
+              else delete customFields[k]
+            }
+            setOrDel('前置条件', v.prerequisite)
+            setOrDel('备注', v.remark)
+            const steps = (v.steps || []).filter((s: CaseStep) => s.step.trim() || s.expected.trim())
+            const fields = Object.keys(customFields).length ? customFields : undefined
+            if (editing) {
+              await api.updateFunctionalCase(editing.id, {
+                projectId,
+                name: v.name,
+                priority: v.priority,
+                module: v.module || undefined,
+                status: editing.status, // 保留原状态(由评审流程驱动,编辑不改)
+                steps,
+                customFields: fields,
+              })
+              message.success(t('func.updated', '用例已更新'))
+            } else {
+              await api.createFunctionalCase({
+                projectId,
+                name: v.name,
+                priority: v.priority,
+                module: v.module || undefined,
+                steps,
+                customFields: fields,
+              })
+              message.success(t('func.created', '用例已创建'))
+            }
+            onSaved()
           } catch (e) {
-            message.error(e instanceof ApiError ? e.message : t('func.createFailed', '创建失败'))
+            message.error(e instanceof ApiError ? e.message : t('func.saveFailed', '保存失败'))
           } finally {
             setSaving(false)
           }

@@ -39,20 +39,20 @@ const runOutcomeLabel = (o: string, t: TFn): string => {
 const SC_VIEW_KIND = 'scenario'
 /** 高级筛选条件:字段 + 操作符 + 值。 */
 type ScAdvCond = { field: 'id' | 'name' | 'status' | 'priority' | 'tags'; op: 'contains' | 'notContains' | 'equals' | 'notEquals' | 'empty' | 'notEmpty'; value: string }
-const SC_ADV_FIELDS: { value: ScAdvCond['field']; label: string }[] = [
-  { value: 'id', label: 'ID' },
-  { value: 'name', label: '场景名称' },
-  { value: 'status', label: '状态' },
-  { value: 'priority', label: '场景等级' },
-  { value: 'tags', label: '标签' },
+const SC_ADV_FIELDS: { value: ScAdvCond['field']; tkey: string; fallback: string }[] = [
+  { value: 'id', tkey: 'scenario.filterFieldId', fallback: 'ID' },
+  { value: 'name', tkey: 'scenario.filterFieldName', fallback: '场景名称' },
+  { value: 'status', tkey: 'scenario.status', fallback: '状态' },
+  { value: 'priority', tkey: 'scenario.filterFieldPriority', fallback: '场景等级' },
+  { value: 'tags', tkey: 'scenario.filterFieldTags', fallback: '标签' },
 ]
-const SC_ADV_OPS: { value: ScAdvCond['op']; label: string }[] = [
-  { value: 'contains', label: '包含' },
-  { value: 'notContains', label: '不包含' },
-  { value: 'equals', label: '等于' },
-  { value: 'notEquals', label: '不等于' },
-  { value: 'empty', label: '为空' },
-  { value: 'notEmpty', label: '不为空' },
+const SC_ADV_OPS: { value: ScAdvCond['op']; tkey: string; fallback: string }[] = [
+  { value: 'contains', tkey: 'scenario.opContains', fallback: '包含' },
+  { value: 'notContains', tkey: 'scenario.opNotContains', fallback: '不包含' },
+  { value: 'equals', tkey: 'scenario.opEq', fallback: '等于' },
+  { value: 'notEquals', tkey: 'scenario.opNe', fallback: '不等于' },
+  { value: 'empty', tkey: 'scenario.opEmpty', fallback: '为空' },
+  { value: 'notEmpty', tkey: 'scenario.opNotEmpty', fallback: '不为空' },
 ]
 function scFieldVal(s: Scenario, f: ScAdvCond['field']): string {
   if (f === 'id') return s.id || ''
@@ -433,8 +433,8 @@ export default function Scenarios() {
             const noValue = c.op === 'empty' || c.op === 'notEmpty'
             return (
               <Space.Compact key={i} style={{ width: '100%' }}>
-                <Select value={c.field} onChange={(v) => set({ field: v })} style={{ width: 130 }} options={SC_ADV_FIELDS} />
-                <Select value={c.op} onChange={(v) => set({ op: v })} style={{ width: 110 }} options={SC_ADV_OPS} />
+                <Select value={c.field} onChange={(v) => set({ field: v })} style={{ width: 130 }} options={SC_ADV_FIELDS.map((f) => ({ value: f.value, label: t(f.tkey, f.fallback) }))} />
+                <Select value={c.op} onChange={(v) => set({ op: v })} style={{ width: 110 }} options={SC_ADV_OPS.map((o) => ({ value: o.value, label: t(o.tkey, o.fallback) }))} />
                 <Input value={c.value} disabled={noValue} onChange={(e) => set({ value: e.target.value })} placeholder={noValue ? '—' : t('apidef.filterValue', '值')} />
                 <Button icon={<MoreOutlined />} onClick={() => setAdvConds((cs) => cs.filter((_, idx) => idx !== i))} danger />
               </Space.Compact>
@@ -1538,12 +1538,12 @@ function ScenarioExecutionsTab({ scenarioId, nameOf, caseMap, t }: { scenarioId:
 }
 
 // 变更历史标签(审计日志):操作 / 详情 / 操作人 / 时间。
-const CHANGE_ACTIONS: Record<string, { label: string; color: string }> = {
-  CREATE: { label: '创建', color: 'green' },
-  UPDATE: { label: '更新', color: 'blue' },
-  ADD_STEP: { label: '新增步骤', color: 'geekblue' },
-  DELETE_STEP: { label: '删除步骤', color: 'red' },
-  REORDER: { label: '调整顺序', color: 'purple' },
+const CHANGE_ACTIONS: Record<string, { tkey: string; fallback: string; color: string }> = {
+  CREATE: { tkey: 'scenario.actionCreate', fallback: '创建', color: 'green' },
+  UPDATE: { tkey: 'scenario.actionUpdate', fallback: '更新', color: 'blue' },
+  ADD_STEP: { tkey: 'scenario.actionAddStep', fallback: '新增步骤', color: 'geekblue' },
+  DELETE_STEP: { tkey: 'scenario.actionDeleteStep', fallback: '删除步骤', color: 'red' },
+  REORDER: { tkey: 'scenario.actionReorder', fallback: '调整顺序', color: 'purple' },
 }
 function ScenarioChangesTab({ scenarioId, t }: { scenarioId: string; t: TFn }) {
   const [rows, setRows] = useState<ScenarioChange[]>([])
@@ -1561,7 +1561,7 @@ function ScenarioChangesTab({ scenarioId, t }: { scenarioId: string; t: TFn }) {
       locale={{ emptyText: <Empty description={t('scenario.noChanges', '暂无变更记录')} /> }}
       pagination={{ pageSize: 20, size: 'small' }}
       columns={[
-        { title: t('scenario.changeAction', '操作'), dataIndex: 'action', width: 120, render: (a: string) => { const m = CHANGE_ACTIONS[a] || { label: a, color: 'default' }; return <Tag color={m.color}>{m.label}</Tag> } },
+        { title: t('scenario.changeAction', '操作'), dataIndex: 'action', width: 120, render: (a: string) => { const m = CHANGE_ACTIONS[a]; return <Tag color={m ? m.color : 'default'}>{m ? t(m.tkey, m.fallback) : a}</Tag> } },
         { title: t('scenario.changeDetail', '详情'), dataIndex: 'detail', render: (v?: string) => v || '—' },
         { title: t('scenario.changeUser', '操作人'), dataIndex: 'userId', width: 140, render: (v?: string) => v || '—' },
         { title: t('scenario.execTime', '时间'), dataIndex: 'createdAt', width: 200, render: (v: string) => <span className="ms-mono" style={{ fontSize: 12 }}>{v?.slice(0, 19)}</span> },

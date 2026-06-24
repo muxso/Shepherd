@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
-import { Button, Card, Empty, Input, InputNumber, Modal, Segmented, Space, Switch, Table, Tabs, Tag, Typography } from 'antd'
+import { Button, Card, Empty, Input, InputNumber, Modal, Popconfirm, Segmented, Space, Switch, Table, Tabs, Tag, Typography } from 'antd'
 import { message } from '../feedback'
-import { PlusOutlined, ReloadOutlined } from '@ant-design/icons'
+import { DeleteOutlined, EditOutlined, PlusOutlined, ReloadOutlined } from '@ant-design/icons'
 import { api, ApiError, type ApiBodyType, type ApiDefinition, type ApiMock } from '../api'
 import { methodColor } from '../components/tags'
 import KVEditor, { type KVRow } from '../components/KVEditor'
@@ -25,6 +25,18 @@ export default function MocksPanel({ definition }: { definition: ApiDefinition }
   const [mocks, setMocks] = useState<ApiMock[]>([])
   const [loading, setLoading] = useState(false)
   const [open, setOpen] = useState(false)
+  // 非空 = 编辑该条;null = 新建。
+  const [editing, setEditing] = useState<ApiMock | null>(null)
+
+  const remove = async (mock: ApiMock) => {
+    try {
+      await api.deleteMock(mock.id)
+      message.success(t('mock.deleted', 'Mock 已删除'))
+      load()
+    } catch (e) {
+      message.error(e instanceof ApiError ? e.message : t('mock.deleteFailed', '删除失败'))
+    }
+  }
 
   const load = async () => {
     setLoading(true)
@@ -45,7 +57,7 @@ export default function MocksPanel({ definition }: { definition: ApiDefinition }
   return (
     <>
       <Space style={{ marginBottom: 12 }}>
-        <Button type="primary" icon={<PlusOutlined />} size="small" onClick={() => setOpen(true)}>
+        <Button type="primary" icon={<PlusOutlined />} size="small" onClick={() => { setEditing(null); setOpen(true) }}>
           {t('mock.new', '新建 Mock')}
         </Button>
         <Button icon={<ReloadOutlined />} size="small" onClick={load} />
@@ -77,11 +89,38 @@ export default function MocksPanel({ definition }: { definition: ApiDefinition }
             width: 70,
             render: (e: boolean) => (e ? <Tag color="green">{t('mock.yes', '是')}</Tag> : <Tag>{t('mock.no', '否')}</Tag>),
           },
+          {
+            title: t('mock.colCreatedBy', '创建人'),
+            dataIndex: 'createdBy',
+            width: 110,
+            ellipsis: true,
+            render: (u?: string) => (u ? <span style={{ color: 'var(--text-2)' }}>{u}</span> : <span style={{ color: 'var(--text-3)' }}>—</span>),
+          },
+          {
+            title: t('a.actions', '操作'),
+            key: 'actions',
+            width: 120,
+            render: (_: unknown, m: ApiMock) => (
+              <Space size={4}>
+                <Button type="link" size="small" icon={<EditOutlined />} onClick={() => { setEditing(m); setOpen(true) }}>
+                  {t('a.edit', '编辑')}
+                </Button>
+                <Popconfirm
+                  title={t('mock.deleteConfirm', '确认删除该 Mock?')}
+                  okText={t('a.confirm', '确认')}
+                  cancelText={t('a.cancel', '取消')}
+                  onConfirm={() => remove(m)}
+                >
+                  <Button type="link" size="small" danger icon={<DeleteOutlined />} />
+                </Popconfirm>
+              </Space>
+            ),
+          },
         ]}
       />
 
       <Modal
-        title={t('mock.newTitle', '创建 MOCK')}
+        title={editing ? t('mock.editTitle', '编辑 MOCK') : t('mock.newTitle', '创建 MOCK')}
         open={open}
         onCancel={() => setOpen(false)}
         footer={null}
@@ -90,6 +129,7 @@ export default function MocksPanel({ definition }: { definition: ApiDefinition }
       >
         <CreateMockForm
           definition={definition}
+          mock={editing}
           onClose={() => setOpen(false)}
           onCreated={() => {
             setOpen(false)

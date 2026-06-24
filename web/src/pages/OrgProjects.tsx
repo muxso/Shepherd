@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { Button, Dropdown, Form, Input, Modal, Segmented, Space, Switch, Table, Tag, message } from 'antd'
 import { MoreOutlined, SearchOutlined } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
-import { api, ApiError, type Organization, type Project } from '../api'
+import { api, ApiError, userStore, type Organization, type Project } from '../api'
 import { modal } from '../feedback'
 import { useI18n } from '../i18n'
 
@@ -57,7 +57,7 @@ export default function OrgProjects() {
     { title: t('op.projects', '项目'), width: 90, render: (_v, o) => <span style={{ color: '#1677ff' }}>{projByOrg[o.id]?.length ?? 0}</span> },
     { title: t('op.status', '状态'), width: 80, render: (_v, o) => <Switch size="small" checked={o.enable !== false} onChange={(c) => toggleOrg(o, c)} /> },
     { title: t('op.desc', '描述'), render: () => <span style={{ color: 'var(--text-3)' }}>{t('op.sysDefault', '系统默认创建的组织')}</span> },
-    { title: t('op.creator', '创建人'), width: 120, render: () => 'Administrator' },
+    { title: t('op.creator', '创建人'), width: 120, render: () => userStore.get() },
     {
       title: t('apidef.colAction', '操作'), width: 180, fixed: 'right',
       render: (_v, o) => (

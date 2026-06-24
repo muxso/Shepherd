@@ -2,9 +2,10 @@ import { useEffect, useMemo, useState } from 'react'
 import { Button, Card, Drawer, Empty, Input, Switch, Table, Tag } from 'antd'
 import { FolderOpenOutlined, SearchOutlined } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
-import { api, type Organization, type Role, type User } from '../api'
+import { api, userStore, type Organization, type Role, type User } from '../api'
 import { useApp } from '../context'
 import { useI18n } from '../i18n'
+import { SelectProjectEmpty } from '../components/Page'
 
 // 项目与权限:左侧二级导航(项目 / 成员权限)+ 右侧内容。对齐参考图 #44-#48。
 type NavKey = 'basic' | 'appSettings' | 'members' | 'userGroups'
@@ -15,7 +16,7 @@ export default function ProjectAdmin() {
   const [nav, setNav] = useState<NavKey>('basic')
   const project = projects.find((p) => p.id === projectId)
 
-  if (!projectId || !project) return <div style={{ padding: 48 }}><Empty description={t('common.selectProject', '请先在顶部选择项目')} /></div>
+  if (!projectId || !project) return <SelectProjectEmpty />
 
   const groups: { title: string; items: { key: NavKey; label: string }[] }[] = [
     { title: t('proj.grpProject', '项目'), items: [
@@ -91,7 +92,7 @@ function BasicInfo({ project, t }: { project: { id: string; name: string; enable
         </div>
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', columnGap: 48, maxWidth: 800 }}>
-        {row(t('proj.creator', '创建人'), 'Administrator')}
+        {row(t('proj.creator', '创建人'), userStore.get())}
         {row(t('proj.org', '所属组织'), <Tag>{orgName || '—'}</Tag>)}
         {row(t('proj.resourcePool', '资源池'), <span style={{ color: 'var(--text-3)' }}>—</span>)}
         {row('ID', <span className="ms-mono" style={{ fontSize: 12 }}>{project.id}</span>)}

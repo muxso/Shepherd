@@ -152,7 +152,7 @@ function OpEditor({ op, onChange, t }: { op: Op; onChange: (p: Partial<Op>) => v
         {op.extractors.map((e, i) => (
           <Space.Compact key={i} style={{ width: '100%' }}>
             <Input placeholder={t('case.varName', '变量名')} value={e.variable} onChange={(ev) => setE(i, { variable: ev.target.value })} style={{ width: 160 }} className="ms-mono" />
-            <Select value={e.kind} onChange={(v) => setE(i, { kind: v })} style={{ width: 120 }} options={[{ value: 'JSON_PATH', label: 'JSONPath' }, { value: 'REGEX', label: '正则' }]} />
+            <Select value={e.kind} onChange={(v) => setE(i, { kind: v })} style={{ width: 120 }} options={[{ value: 'JSON_PATH', label: 'JSONPath' }, { value: 'REGEX', label: t('proc.regex', '正则') }]} />
             <Input placeholder={e.kind === 'JSON_PATH' ? '$.data.id' : '"id":\\s*"(\\w+)"'} value={e.expression} onChange={(ev) => setE(i, { expression: ev.target.value })} className="ms-mono" />
             <Button icon={<DeleteOutlined />} onClick={() => onChange({ extractors: op.extractors.filter((_, idx) => idx !== i) })} />
           </Space.Compact>

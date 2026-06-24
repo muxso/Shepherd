@@ -18,6 +18,7 @@ import {
 } from '../api'
 import { useApp } from '../context'
 import { Workspace, WorkList, useWorkTabs } from '../components/Workspace'
+import { SelectProjectEmpty } from '../components/Page'
 import { regAdd, regList, type RegItem } from '../registry'
 import { useI18n } from '../i18n'
 
@@ -79,7 +80,7 @@ export default function Requirements() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId])
 
-  if (!projectId) return <div style={{ padding: 48 }}><Empty description={t('common.selectProject', '请先在顶部选择项目')} /></div>
+  if (!projectId) return <SelectProjectEmpty />
 
   const detailTabs = items
     .filter((r) => tabs.openIds.includes(r.id))
