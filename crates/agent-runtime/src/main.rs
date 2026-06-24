@@ -108,49 +108,49 @@ fn backend_for(executor: &str) -> Arc<dyn CliAgentBackend> {
     }
 }
 
-async fn handle(client: &ServerClient, spec: &WorkSpec, workdir: &str) {
+async fn handle(client: &ServerClient, spec: &WorkSpec, base_workdir: &str) {
     let backend = backend_for(&spec.executor);
     let prompt = spec.to_prompt();
-    tracing::info!(attempt = %spec.attempt_id, executor = %spec.executor,
-        mode = if spec.is_design() { "design" } else { "implement" }, backend = backend.cli_name(),
-        "认领任务");
+    let mode = if spec.is_design() { "design" } else { "implement" };
+    tracing::info!(attempt = %spec.attempt_id, executor = %spec.executor, mode,
+        backend = backend.cli_name(), "认领任务");
 
-    // design 模式提案无事件端点 → NoopSink;实现模式实时回流到 /delivery/{id}/events。
-    let result = if spec.is_design() {
-        backend.execute(&prompt, &NoopSink).await
-    } else {
-        let sink = HttpSink { client, attempt_id: spec.attempt_id.clone() };
-        backend.execute(&prompt, &sink).await
-    };
+    if spec.is_design() {
+        // 设计模式:产文档、不改文件、不提交 → 在 base workdir 跑即可,事件无端点(NoopSink)。
+        match backend.execute(&prompt, base_workdir, &NoopSink).await {
+            Ok(doc) => match client.post_design(&spec.attempt_id, &doc).await {
+                Ok(()) => tracing::info!(proposal = %spec.attempt_id, "设计稿已回填 → 待审"),
+                Err(e) => tracing::warn!("回填设计稿失败: {e}"),
+            },
+            Err(e) => tracing::warn!("设计起草失败: {e}"),
+        }
+        return;
+    }
 
-    match result {
+    // 实现模式:每任务独立 worktree(并发安全、不污染 base);worktree 建失败则回退 base。
+    let wt = git::add_worktree(base_workdir, &spec.attempt_id).await;
+    let run_dir = wt.as_deref().unwrap_or(base_workdir);
+    let sink = HttpSink { client, attempt_id: spec.attempt_id.clone() };
+    match backend.execute(&prompt, run_dir, &sink).await {
         Ok(output) => {
-            if spec.is_design() {
-                match client.post_design(&spec.attempt_id, &output).await {
-                    Ok(()) => tracing::info!(proposal = %spec.attempt_id, "设计稿已回填 → 待审"),
-                    Err(e) => tracing::warn!("回填设计稿失败: {e}"),
-                }
-            } else {
-                // 实现模式:把工作区改动快照成 commit 作交付物;无改动则占位。
-                let summary: String = output.chars().take(700).collect();
-                let (reference, summary) = match git::snapshot(workdir, &spec.attempt_id, &spec.title).await {
+            let summary: String = output.chars().take(700).collect();
+            let (reference, summary) =
+                match git::snapshot(run_dir, &spec.attempt_id, &spec.title).await {
                     Some(s) => {
                         let stat: String = s.stat.replace('\n', ";").chars().take(300).collect();
                         (s.reference, format!("变更:{stat} | {summary}"))
                     }
-                    None => (format!("runtime://{}", spec.attempt_id), format!("(无代码变动){summary}")),
+                    None => {
+                        (format!("runtime://{}", spec.attempt_id), format!("(无代码变动){summary}"))
+                    }
                 };
-                client.complete(&spec.attempt_id, "DIFF", &reference, &summary).await;
-                tracing::info!(attempt = %spec.attempt_id, %reference, "交付完成");
-            }
+            client.complete(&spec.attempt_id, "DIFF", &reference, &summary).await;
+            tracing::info!(attempt = %spec.attempt_id, %reference, "交付完成");
         }
-        Err(e) => {
-            if spec.is_design() {
-                tracing::warn!("设计起草失败: {e}");
-            } else {
-                client.fail(&spec.attempt_id, &e.to_string()).await;
-            }
-        }
+        Err(e) => client.fail(&spec.attempt_id, &e.to_string()).await,
+    }
+    if let Some(p) = wt {
+        git::remove_worktree(base_workdir, &p).await;
     }
 }
 
