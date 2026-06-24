@@ -6,19 +6,19 @@
 //!   SHEPHERD_BASE(默认 http://127.0.0.1:9180)、MS_ADMIN_USER/MS_ADMIN_PASSWORD、
 //!   SHEPHERD_CAPS(默认 CLAUDE_CODE)、RUNTIME_NAME、AGENT_MOCK(=1 用 mock 后端)。
 
-// step 1 骨架:stream-json 解析器、git 相关字段等已实现并单测,但要到 step 2
-// (claude/codex/opencode 真实后端 + git 快照)才被主流程调用。
+// 保留完整 claim 字段(decomposition_id/task_id 暂未被 runtime 用到,留作对账/未来用)。
 #![allow(dead_code)]
 
 mod backend;
 mod client;
 mod events;
+mod git;
 mod models;
 
 use std::sync::Arc;
 use std::time::Duration;
 
-use backend::{CliAgentBackend, MockBackend};
+use backend::{ClaudeBackend, CliAgentBackend, GenericCliBackend, MockBackend};
 use client::{HttpSink, ServerClient};
 use events::NoopSink;
 use models::WorkSpec;
@@ -29,6 +29,8 @@ struct Config {
     pass: String,
     caps: Vec<String>,
     name: String,
+    /// 实现模式下 agent 改文件 + git 快照的工作目录。
+    workdir: String,
 }
 
 impl Config {
@@ -44,16 +46,24 @@ impl Config {
                 .filter(|s| !s.is_empty())
                 .collect(),
             name: env("RUNTIME_NAME", "agent-runtime"),
+            workdir: env("AGENT_WORKDIR", "."),
         }
     }
 }
 
-/// 选择后端。step 1 恒为 Mock;step 2 按 executor 返回 claude/codex/opencode。
-fn backend_for(_executor: &str) -> Arc<dyn CliAgentBackend> {
-    Arc::new(MockBackend::default())
+/// 选择后端:`AGENT_MOCK=1` → mock;否则按 executor 选 claude/codex/opencode。
+fn backend_for(executor: &str) -> Arc<dyn CliAgentBackend> {
+    if std::env::var("AGENT_MOCK").is_ok() {
+        return Arc::new(MockBackend::default());
+    }
+    match executor {
+        "CODEX" => Arc::new(GenericCliBackend::codex()),
+        "OPENCODE" => Arc::new(GenericCliBackend::opencode()),
+        _ => Arc::new(ClaudeBackend::default()),
+    }
 }
 
-async fn handle(client: &ServerClient, spec: &WorkSpec) {
+async fn handle(client: &ServerClient, spec: &WorkSpec, workdir: &str) {
     let backend = backend_for(&spec.executor);
     let prompt = spec.to_prompt();
     tracing::info!(attempt = %spec.attempt_id, executor = %spec.executor,
@@ -76,17 +86,17 @@ async fn handle(client: &ServerClient, spec: &WorkSpec) {
                     Err(e) => tracing::warn!("回填设计稿失败: {e}"),
                 }
             } else {
-                // step 1:无 git 快照,占位交付物;step 2 换成真实 commit。
+                // 实现模式:把工作区改动快照成 commit 作交付物;无改动则占位。
                 let summary: String = output.chars().take(700).collect();
-                client
-                    .complete(
-                        &spec.attempt_id,
-                        "DIFF",
-                        &format!("runtime://{}", spec.attempt_id),
-                        &summary,
-                    )
-                    .await;
-                tracing::info!(attempt = %spec.attempt_id, "交付完成(step1 占位)");
+                let (reference, summary) = match git::snapshot(workdir, &spec.attempt_id, &spec.title).await {
+                    Some(s) => {
+                        let stat: String = s.stat.replace('\n', ";").chars().take(300).collect();
+                        (s.reference, format!("变更:{stat} | {summary}"))
+                    }
+                    None => (format!("runtime://{}", spec.attempt_id), format!("(无代码变动){summary}")),
+                };
+                client.complete(&spec.attempt_id, "DIFF", &reference, &summary).await;
+                tracing::info!(attempt = %spec.attempt_id, %reference, "交付完成");
             }
         }
         Err(e) => {
@@ -121,7 +131,7 @@ async fn main() -> anyhow::Result<()> {
             }
         }
         match client.claim(&cfg.caps, &runtime_id).await {
-            Ok(Some(spec)) => handle(&client, &spec).await,
+            Ok(Some(spec)) => handle(&client, &spec, &cfg.workdir).await,
             Ok(None) => {} // 204:无活,继续长轮询
             Err(e) => {
                 tracing::warn!("认领出错: {e}");

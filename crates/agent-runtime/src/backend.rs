@@ -1,12 +1,16 @@
-//! CLI 执行后端抽象。claude/codex/opencode 各一实现(step 2);step 1 提供 Mock。
+//! CLI 执行后端。claude(流式 stream-json)、codex/opencode(通用,粗粒度)、mock(测试)。
 //!
 //! 后端职责:spawn CLI 跑 prompt,边跑边经 sink 回流进度事件,返回**最终文本输出**。
 //! git 快照 / 回调由 runtime 主流程按模式(implement / design)编排,后端不关心。
 
+use std::process::Stdio;
+
 use async_trait::async_trait;
 use thiserror::Error;
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
+use tokio::process::Command;
 
-use crate::events::{ExecEvent, ProgressSink};
+use crate::events::{parse_claude_line, parse_claude_result, ExecEvent, ProgressSink};
 
 #[derive(Debug, Error)]
 pub enum BackendError {
@@ -16,17 +20,137 @@ pub enum BackendError {
 
 #[async_trait]
 pub trait CliAgentBackend: Send + Sync {
-    /// 标识(claude/codex/opencode/mock)。
     fn cli_name(&self) -> &str;
-    /// 跑 prompt,返回最终文本;运行中经 `sink` 回流事件。
+    async fn execute(&self, prompt: &str, sink: &dyn ProgressSink)
+        -> Result<String, BackendError>;
+}
+
+// ───────────────────────── Claude(流式)─────────────────────────
+
+/// `claude -p --output-format stream-json`:逐行解析,实时回流事件,取 result 文本。
+pub struct ClaudeBackend {
+    pub bin: String,
+}
+
+impl Default for ClaudeBackend {
+    fn default() -> Self {
+        Self { bin: std::env::var("CLAUDE_BIN").unwrap_or_else(|_| "claude".into()) }
+    }
+}
+
+#[async_trait]
+impl CliAgentBackend for ClaudeBackend {
+    fn cli_name(&self) -> &str {
+        "claude"
+    }
+
     async fn execute(
         &self,
         prompt: &str,
         sink: &dyn ProgressSink,
-    ) -> Result<String, BackendError>;
+    ) -> Result<String, BackendError> {
+        let mut child = Command::new(&self.bin)
+            .args([
+                "-p",
+                "--output-format",
+                "stream-json",
+                "--verbose",
+                "--permission-mode",
+                "acceptEdits",
+            ])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|e| BackendError::Run(format!("spawn {}: {e}", self.bin)))?;
+
+        if let Some(mut stdin) = child.stdin.take() {
+            stdin.write_all(prompt.as_bytes()).await.map_err(|e| BackendError::Run(e.to_string()))?;
+            // stdin drop → EOF
+        }
+        let stdout = child.stdout.take().ok_or_else(|| BackendError::Run("no stdout".into()))?;
+        let mut lines = BufReader::new(stdout).lines();
+        let mut result: Option<(bool, String)> = None;
+        while let Some(line) =
+            lines.next_line().await.map_err(|e| BackendError::Run(e.to_string()))?
+        {
+            for ev in parse_claude_line(&line) {
+                sink.emit(ev).await;
+            }
+            if let Some(r) = parse_claude_result(&line) {
+                result = Some(r);
+            }
+        }
+        let status = child.wait().await.map_err(|e| BackendError::Run(e.to_string()))?;
+        if !status.success() {
+            let mut err = String::new();
+            if let Some(mut e) = child.stderr.take() {
+                let _ = e.read_to_string(&mut err).await;
+            }
+            return Err(BackendError::Run(format!("claude exited {status}: {}", err.trim())));
+        }
+        match result {
+            Some((true, text)) => Err(BackendError::Run(format!("claude error: {text}"))),
+            Some((false, text)) => Ok(text),
+            None => Ok(String::new()),
+        }
+    }
 }
 
-/// 测试 / 演示后端:不调真 CLI,回流一条事件并返回固定文本。
+// ───────────────────────── 通用(codex / opencode)─────────────────────────
+
+/// 非流式:跑 `cmd... "<prompt>"`,捕获 stdout 作输出。CLI 命令可经 env 覆盖。
+pub struct GenericCliBackend {
+    pub name: &'static str,
+    pub cmd: Vec<String>,
+}
+
+impl GenericCliBackend {
+    pub fn codex() -> Self {
+        let cmd = std::env::var("CODEX_CMD").unwrap_or_else(|_| "codex exec".into());
+        Self { name: "codex", cmd: cmd.split_whitespace().map(String::from).collect() }
+    }
+    pub fn opencode() -> Self {
+        let cmd = std::env::var("OPENCODE_CMD").unwrap_or_else(|_| "opencode run".into());
+        Self { name: "opencode", cmd: cmd.split_whitespace().map(String::from).collect() }
+    }
+}
+
+#[async_trait]
+impl CliAgentBackend for GenericCliBackend {
+    fn cli_name(&self) -> &str {
+        self.name
+    }
+
+    async fn execute(
+        &self,
+        prompt: &str,
+        sink: &dyn ProgressSink,
+    ) -> Result<String, BackendError> {
+        let (program, args) =
+            self.cmd.split_first().ok_or_else(|| BackendError::Run("empty cmd".into()))?;
+        sink.emit(ExecEvent::new("DECISION", &format!("调用 {} 执行任务", self.name))).await;
+        let out = Command::new(program)
+            .args(args)
+            .arg(prompt)
+            .output()
+            .await
+            .map_err(|e| BackendError::Run(format!("spawn {program}: {e}")))?;
+        if !out.status.success() {
+            let err = String::from_utf8_lossy(&out.stderr);
+            return Err(BackendError::Run(format!(
+                "{} exited {}: {}",
+                self.name,
+                out.status,
+                err.trim()
+            )));
+        }
+        Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
+    }
+}
+
+// ───────────────────────── Mock(测试/演示)─────────────────────────
+
 pub struct MockBackend {
     pub output: String,
 }
@@ -73,9 +197,46 @@ mod tests {
     async fn mock_emits_and_returns() {
         let b = MockBackend { output: "DOC".into() };
         let sink = RecSink::default();
-        let out = b.execute("p", &sink).await.expect("run");
-        assert_eq!(out, "DOC");
+        assert_eq!(b.execute("p", &sink).await.expect("run"), "DOC");
         assert_eq!(sink.events.lock().unwrap().len(), 1);
-        assert_eq!(b.cli_name(), "mock");
+    }
+
+    #[tokio::test]
+    async fn generic_backend_runs_cmd_and_captures_stdout() {
+        // 用 /bin/sh -c 充当 CLI:吃掉 prompt 参数,打印固定输出。
+        let b = GenericCliBackend {
+            name: "codex",
+            cmd: vec!["/bin/sh".into(), "-c".into(), "printf '## codex 设计'".into(), "_".into()],
+        };
+        let sink = RecSink::default();
+        let out = b.execute("the prompt", &sink).await.expect("run");
+        assert_eq!(out, "## codex 设计");
+        assert_eq!(sink.events.lock().unwrap()[0].kind, "DECISION");
+    }
+
+    #[tokio::test]
+    async fn claude_backend_streams_events_and_returns_result() {
+        use std::io::Write;
+        use std::os::unix::fs::PermissionsExt;
+        // 伪 claude 脚本:忽略 -p/--output-format 等参数,吃掉 stdin(prompt),
+        // 吐两行 stream-json(一个 Edit 工具调用 + 一个 result)。
+        let path = std::env::temp_dir().join(format!("ar-fake-claude-{}.sh", std::process::id()));
+        {
+            let mut f = std::fs::File::create(&path).expect("create");
+            writeln!(
+                f,
+                "#!/bin/sh\ncat >/dev/null\nprintf '%s\\n' '{{\"type\":\"assistant\",\"message\":{{\"content\":[{{\"type\":\"tool_use\",\"name\":\"Edit\",\"input\":{{\"file_path\":\"a.rs\"}}}}]}}}}' '{{\"type\":\"result\",\"is_error\":false,\"result\":\"完成\"}}'"
+            )
+            .expect("write");
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+        }
+        let b = ClaudeBackend { bin: path.to_string_lossy().to_string() };
+        let sink = RecSink::default();
+        let out = b.execute("do it", &sink).await.expect("run");
+        assert_eq!(out, "完成");
+        let evs = sink.events.lock().unwrap();
+        assert_eq!(evs.len(), 1);
+        assert_eq!(evs[0], ExecEvent::new("FILE_CHANGE", "Edit a.rs"));
+        let _ = std::fs::remove_file(&path);
     }
 }
