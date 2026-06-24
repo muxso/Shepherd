@@ -12,6 +12,8 @@ use crate::ports::{BugRepository, RepoError};
 struct State {
     flows: HashMap<String, StatusFlowGraph>, // project_id -> 状态流图
     bugs: HashMap<String, Bug>,              // bug_id -> bug
+    order: Vec<String>,                      // 插入顺序的 bug_id(列表倒序展示用)
+    followers: HashMap<String, Vec<String>>, // bug_id -> 关注人 user_id(按关注先后)
     seq: u64,
 }
 
@@ -52,15 +54,32 @@ impl BugRepository for InMemoryBugRepository {
     async fn insert(&self, new_bug: &NewBug, initial_status: &str) -> Result<Bug, RepoError> {
         let mut state = self.state.lock().expect("lock");
         state.seq += 1;
+        let seq = state.seq;
         let bug = Bug {
-            id: format!("bug-{}", state.seq),
+            id: format!("bug-{seq}"),
             project_id: new_bug.project_id.clone(),
             title: new_bug.title.clone(),
             status: initial_status.to_string(),
             deleted: false,
+            created_at: seq as i64, // 单调递增,充当列表倒序的排序键
+            created_by: new_bug.created_by.clone(),
         };
+        state.order.push(bug.id.clone());
         state.bugs.insert(bug.id.clone(), bug.clone());
         Ok(bug)
+    }
+
+    async fn list(&self, project_id: &str) -> Result<Vec<Bug>, RepoError> {
+        let state = self.state.lock().expect("lock");
+        // 按插入顺序倒序(新建在前),只看该项目未删除的缺陷。
+        Ok(state
+            .order
+            .iter()
+            .rev()
+            .filter_map(|id| state.bugs.get(id))
+            .filter(|b| b.project_id == project_id && !b.deleted)
+            .cloned()
+            .collect())
     }
 
     async fn get(&self, id: &str) -> Result<Option<Bug>, RepoError> {
@@ -72,5 +91,26 @@ impl BugRepository for InMemoryBugRepository {
             b.status = status.to_string();
         }
         Ok(())
+    }
+
+    async fn add_follower(&self, bug_id: &str, user_id: &str) -> Result<(), RepoError> {
+        let mut state = self.state.lock().expect("lock");
+        let followers = state.followers.entry(bug_id.to_string()).or_default();
+        if !followers.iter().any(|u| u == user_id) {
+            followers.push(user_id.to_string());
+        }
+        Ok(())
+    }
+
+    async fn remove_follower(&self, bug_id: &str, user_id: &str) -> Result<(), RepoError> {
+        let mut state = self.state.lock().expect("lock");
+        if let Some(followers) = state.followers.get_mut(bug_id) {
+            followers.retain(|u| u != user_id);
+        }
+        Ok(())
+    }
+
+    async fn list_followers(&self, bug_id: &str) -> Result<Vec<String>, RepoError> {
+        Ok(self.state.lock().expect("lock").followers.get(bug_id).cloned().unwrap_or_default())
     }
 }

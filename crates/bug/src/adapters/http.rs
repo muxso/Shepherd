@@ -7,14 +7,15 @@
 use std::sync::Arc;
 
 use axum::{
-    extract::{FromRef, Path, State},
+    extract::{FromRef, Path, Query, State},
     http::StatusCode,
     response::{IntoResponse, Response},
-    routing::post,
+    routing::{delete, post},
     Json, Router,
 };
 use crate::application::{
-    ChangeBugStatusError, ChangeBugStatusUseCase, CreateBugError, CreateBugUseCase,
+    BugFollowerError, BugFollowersUseCase, ChangeBugStatusError, ChangeBugStatusUseCase,
+    CreateBugError, CreateBugUseCase, ListBugsUseCase,
 };
 use crate::domain::{Bug, BugError};
 use serde::{Deserialize, Serialize};
@@ -25,6 +26,8 @@ use webauth::{AuthUser, SessionStore};
 struct BugState {
     create: CreateBugUseCase,
     change: ChangeBugStatusUseCase,
+    list: ListBugsUseCase,
+    followers: BugFollowersUseCase,
     sessions: Arc<dyn SessionStore>,
 }
 
@@ -37,12 +40,16 @@ impl FromRef<BugState> for Arc<dyn SessionStore> {
 pub fn router(
     create: CreateBugUseCase,
     change: ChangeBugStatusUseCase,
+    list: ListBugsUseCase,
+    followers: BugFollowersUseCase,
     sessions: Arc<dyn SessionStore>,
 ) -> Router {
     Router::new()
-        .route("/bug", post(create_bug))
+        .route("/bug", post(create_bug).get(list_bugs))
         .route("/bug/{id}/status", post(change_status))
-        .with_state(BugState { create, change, sessions })
+        .route("/bug/{id}/followers", post(follow_bug).get(list_followers))
+        .route("/bug/{id}/followers/{userId}", delete(unfollow_bug))
+        .with_state(BugState { create, change, list, followers, sessions })
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -52,11 +59,22 @@ struct BugResponse {
     project_id: String,
     title: String,
     status: String,
+    created_at: i64,
+    /// 创建人 user_id(历史行为 null)。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    created_by: Option<String>,
 }
 
 impl From<Bug> for BugResponse {
     fn from(b: Bug) -> Self {
-        Self { id: b.id, project_id: b.project_id, title: b.title, status: b.status }
+        Self {
+            id: b.id,
+            project_id: b.project_id,
+            title: b.title,
+            status: b.status,
+            created_at: b.created_at,
+            created_by: b.created_by,
+        }
     }
 }
 
@@ -77,7 +95,7 @@ async fn create_bug(
     if !user.can("BUG", "ADD") {
         return (StatusCode::FORBIDDEN, "permission denied").into_response();
     }
-    match st.create.execute(&req.project_id, &req.title, &req.initial_status).await {
+    match st.create.execute(&req.project_id, &req.title, &req.initial_status, Some(&user.user_id)).await {
         Ok(b) => (StatusCode::CREATED, Json(BugResponse::from(b))).into_response(),
         Err(CreateBugError::Validation(_)) => {
             (StatusCode::BAD_REQUEST, "invalid bug payload").into_response()
@@ -85,6 +103,35 @@ async fn create_bug(
         Err(CreateBugError::Repo(_)) => {
             (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response()
         }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ListBugsQuery {
+    project_id: String,
+}
+
+#[utoipa::path(
+    get, path = "/bug", tag = "bug",
+    params(("projectId" = String, Query, description = "项目 ID")),
+    responses((status = 200, body = [BugResponse]), (status = 403)),
+    security(("bearer" = []))
+)]
+async fn list_bugs(
+    user: AuthUser,
+    State(st): State<BugState>,
+    Query(q): Query<ListBugsQuery>,
+) -> Response {
+    if !user.can("BUG", "READ") {
+        return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
+    match st.list.execute(&q.project_id).await {
+        Ok(bugs) => {
+            let body: Vec<BugResponse> = bugs.into_iter().map(BugResponse::from).collect();
+            (StatusCode::OK, Json(body)).into_response()
+        }
+        Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
     }
 }
 
@@ -120,8 +167,75 @@ async fn change_status(
     }
 }
 
+// ——— 关注人(关注 / 取消关注 / 列表)———
+
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+struct FollowersResponse {
+    /// 关注人 user_id 列表(按关注先后)。
+    followers: Vec<String>,
+}
+
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+struct FollowRequest {
+    /// 要加入关注的 user_id。
+    user_id: String,
+}
+
+fn map_follower_err(e: BugFollowerError) -> Response {
+    match e {
+        BugFollowerError::BugNotFound => (StatusCode::NOT_FOUND, "bug not found").into_response(),
+        BugFollowerError::Repo(_) => {
+            (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response()
+        }
+    }
+}
+
+#[utoipa::path(get, path = "/bug/{id}/followers", tag = "bug", params(("id" = String, Path)), responses((status = 200, body = FollowersResponse), (status = 404)), security(("bearer" = [])))]
+async fn list_followers(user: AuthUser, State(st): State<BugState>, Path(id): Path<String>) -> Response {
+    if !user.can("BUG", "READ") {
+        return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
+    match st.followers.list(&id).await {
+        Ok(followers) => (StatusCode::OK, Json(FollowersResponse { followers })).into_response(),
+        Err(e) => map_follower_err(e),
+    }
+}
+
+#[utoipa::path(post, path = "/bug/{id}/followers", tag = "bug", params(("id" = String, Path)), request_body = FollowRequest, responses((status = 200, body = FollowersResponse), (status = 404)), security(("bearer" = [])))]
+async fn follow_bug(
+    user: AuthUser,
+    State(st): State<BugState>,
+    Path(id): Path<String>,
+    Json(req): Json<FollowRequest>,
+) -> Response {
+    if !user.can("BUG", "UPDATE") {
+        return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
+    match st.followers.follow(&id, &req.user_id).await {
+        Ok(followers) => (StatusCode::OK, Json(FollowersResponse { followers })).into_response(),
+        Err(e) => map_follower_err(e),
+    }
+}
+
+#[utoipa::path(delete, path = "/bug/{id}/followers/{userId}", tag = "bug", params(("id" = String, Path), ("userId" = String, Path)), responses((status = 200, body = FollowersResponse), (status = 404)), security(("bearer" = [])))]
+async fn unfollow_bug(
+    user: AuthUser,
+    State(st): State<BugState>,
+    Path((id, user_id)): Path<(String, String)>,
+) -> Response {
+    if !user.can("BUG", "UPDATE") {
+        return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
+    match st.followers.unfollow(&id, &user_id).await {
+        Ok(followers) => (StatusCode::OK, Json(FollowersResponse { followers })).into_response(),
+        Err(e) => map_follower_err(e),
+    }
+}
+
 #[derive(OpenApi)]
-#[openapi(paths(create_bug, change_status), components(schemas(CreateBugRequest, ChangeStatusRequest, BugResponse)), tags((name = "bug", description = "缺陷管理")))]
+#[openapi(paths(create_bug, list_bugs, change_status, list_followers, follow_bug, unfollow_bug), components(schemas(CreateBugRequest, ChangeStatusRequest, BugResponse, FollowRequest, FollowersResponse)), tags((name = "bug", description = "缺陷管理")))]
 struct ApiDoc;
 pub fn openapi() -> utoipa::openapi::OpenApi { ApiDoc::openapi() }
 
@@ -144,7 +258,9 @@ mod tests {
         let token = sessions.create("admin", perms, 3600).await.expect("token");
         let r = router(
             CreateBugUseCase::new(repo.clone()),
-            ChangeBugStatusUseCase::new(repo),
+            ChangeBugStatusUseCase::new(repo.clone()),
+            ListBugsUseCase::new(repo.clone()),
+            BugFollowersUseCase::new(repo),
             sessions,
         );
         (r, token)
@@ -156,6 +272,14 @@ mod tests {
             b = b.header("authorization", format!("Bearer {t}"));
         }
         b.body(Body::from(body.to_string())).expect("req")
+    }
+
+    fn get(uri: &str, token: Option<&str>) -> Request<Body> {
+        let mut b = Request::builder().method("GET").uri(uri);
+        if let Some(t) = token {
+            b = b.header("authorization", format!("Bearer {t}"));
+        }
+        b.body(Body::empty()).expect("req")
     }
 
     async fn create_returns_id(app: &Router, t: &str) -> String {
@@ -203,7 +327,9 @@ mod tests {
         let token = sessions.create("u", perms, 3600).await.expect("token");
         let app = router(
             CreateBugUseCase::new(repo.clone()),
-            ChangeBugStatusUseCase::new(repo),
+            ChangeBugStatusUseCase::new(repo.clone()),
+            ListBugsUseCase::new(repo.clone()),
+            BugFollowersUseCase::new(repo),
             sessions,
         );
         let id = create_returns_id(&app, &token).await;
@@ -244,6 +370,45 @@ mod tests {
             .await
             .expect("resp");
         assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn list_returns_created_bugs_newest_first() {
+        let (app, t) = app().await;
+        app.clone()
+            .oneshot(post("/bug", r#"{"projectId":"p1","title":"first","initialStatus":"NEW"}"#, Some(&t)))
+            .await
+            .expect("resp");
+        app.clone()
+            .oneshot(post("/bug", r#"{"projectId":"p1","title":"second","initialStatus":"NEW"}"#, Some(&t)))
+            .await
+            .expect("resp");
+
+        let resp = app.oneshot(get("/bug?projectId=p1", Some(&t))).await.expect("resp");
+        assert_eq!(resp.status(), StatusCode::OK);
+        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.expect("body");
+        let v: serde_json::Value = serde_json::from_slice(&bytes).expect("json");
+        let arr = v.as_array().expect("array");
+        assert_eq!(arr.len(), 2);
+        assert_eq!(arr[0]["title"], "second"); // 新建在前
+        assert_eq!(arr[1]["title"], "first");
+    }
+
+    #[tokio::test]
+    async fn list_without_permission_403() {
+        let repo = Arc::new(InMemoryBugRepository::with_default_flow("p1"));
+        let sessions = Arc::new(InMemorySessionStore::new());
+        // 有 ADD 无 READ
+        let perms = PermissionSet::from_raw(["BUG:ADD".to_string()]).expect("perms");
+        let token = sessions.create("u", perms, 3600).await.expect("token");
+        let app = router(
+            CreateBugUseCase::new(repo.clone()),
+            ChangeBugStatusUseCase::new(repo.clone()),
+            ListBugsUseCase::new(repo),
+            sessions,
+        );
+        let resp = app.oneshot(get("/bug?projectId=p1", Some(&token))).await.expect("resp");
+        assert_eq!(resp.status(), StatusCode::FORBIDDEN);
     }
 
     #[tokio::test]
