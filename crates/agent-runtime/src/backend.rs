@@ -21,8 +21,13 @@ pub enum BackendError {
 #[async_trait]
 pub trait CliAgentBackend: Send + Sync {
     fn cli_name(&self) -> &str;
-    async fn execute(&self, prompt: &str, sink: &dyn ProgressSink)
-        -> Result<String, BackendError>;
+    /// 在 `cwd`(每任务隔离的 worktree)里跑 prompt;运行中经 sink 回流事件,返回最终文本。
+    async fn execute(
+        &self,
+        prompt: &str,
+        cwd: &str,
+        sink: &dyn ProgressSink,
+    ) -> Result<String, BackendError>;
 }
 
 // ───────────────────────── Claude(流式)─────────────────────────
@@ -47,9 +52,11 @@ impl CliAgentBackend for ClaudeBackend {
     async fn execute(
         &self,
         prompt: &str,
+        cwd: &str,
         sink: &dyn ProgressSink,
     ) -> Result<String, BackendError> {
         let mut child = Command::new(&self.bin)
+            .current_dir(cwd)
             .args([
                 "-p",
                 "--output-format",
@@ -125,12 +132,14 @@ impl CliAgentBackend for GenericCliBackend {
     async fn execute(
         &self,
         prompt: &str,
+        cwd: &str,
         sink: &dyn ProgressSink,
     ) -> Result<String, BackendError> {
         let (program, args) =
             self.cmd.split_first().ok_or_else(|| BackendError::Run("empty cmd".into()))?;
         sink.emit(ExecEvent::new("DECISION", &format!("调用 {} 执行任务", self.name))).await;
         let out = Command::new(program)
+            .current_dir(cwd)
             .args(args)
             .arg(prompt)
             .output()
@@ -170,6 +179,7 @@ impl CliAgentBackend for MockBackend {
     async fn execute(
         &self,
         _prompt: &str,
+        _cwd: &str,
         sink: &dyn ProgressSink,
     ) -> Result<String, BackendError> {
         sink.emit(ExecEvent::new("DECISION", "mock backend 运行中")).await;
@@ -197,7 +207,7 @@ mod tests {
     async fn mock_emits_and_returns() {
         let b = MockBackend { output: "DOC".into() };
         let sink = RecSink::default();
-        assert_eq!(b.execute("p", &sink).await.expect("run"), "DOC");
+        assert_eq!(b.execute("p", ".", &sink).await.expect("run"), "DOC");
         assert_eq!(sink.events.lock().unwrap().len(), 1);
     }
 
@@ -209,7 +219,7 @@ mod tests {
             cmd: vec!["/bin/sh".into(), "-c".into(), "printf '## codex 设计'".into(), "_".into()],
         };
         let sink = RecSink::default();
-        let out = b.execute("the prompt", &sink).await.expect("run");
+        let out = b.execute("the prompt", ".", &sink).await.expect("run");
         assert_eq!(out, "## codex 设计");
         assert_eq!(sink.events.lock().unwrap()[0].kind, "DECISION");
     }
@@ -232,7 +242,7 @@ mod tests {
         }
         let b = ClaudeBackend { bin: path.to_string_lossy().to_string() };
         let sink = RecSink::default();
-        let out = b.execute("do it", &sink).await.expect("run");
+        let out = b.execute("do it", ".", &sink).await.expect("run");
         assert_eq!(out, "完成");
         let evs = sink.events.lock().unwrap();
         assert_eq!(evs.len(), 1);

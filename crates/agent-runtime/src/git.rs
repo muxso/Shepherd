@@ -85,6 +85,23 @@ pub async fn snapshot(cwd: &str, attempt_id: &str, title: &str) -> Option<Snapsh
     Some(Snapshot { reference, stat })
 }
 
+/// 为某任务建一个独立 git worktree(从 base HEAD detached 检出),返回其路径。
+/// 隔离:每任务自己的工作副本 → 并发实现互不踩、base 工作区不受影响。失败 → None。
+pub async fn add_worktree(base: &str, attempt_id: &str) -> Option<String> {
+    // 用完整 attempt_id 保证并发唯一(同进程多任务也不撞)。
+    let path = std::env::temp_dir().join(format!("shepherd-wt-{attempt_id}"));
+    let path = path.to_string_lossy().to_string();
+    let _ = git(base, &["worktree", "prune"]).await;
+    remove_worktree(base, &path).await; // 清可能的残留
+    git(base, &["worktree", "add", "--detach", &path, "HEAD"]).await?;
+    Some(path)
+}
+
+/// 移除 worktree(目录 + 登记);分支/commit 在共享对象库里,保留。
+pub async fn remove_worktree(base: &str, path: &str) {
+    let _ = git(base, &["worktree", "remove", "--force", path]).await;
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -115,6 +132,34 @@ mod tests {
         assert!(branch.is_some(), "branch created");
         // 工作区保持改动(未被 reset 丢失)
         assert_eq!(std::fs::read_to_string(dir.join("a.txt")).unwrap(), "v2 changed");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn worktree_isolates_changes_from_base() {
+        let dir = std::env::temp_dir().join(format!("ar-wt-base-{}", std::process::id()));
+        let base = dir.to_string_lossy().to_string();
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("mkdir");
+        run(&base, &["init", "-q"]).await;
+        run(&base, &["config", "user.email", "t@t"]).await;
+        run(&base, &["config", "user.name", "t"]).await;
+        std::fs::write(dir.join("f.txt"), "base").expect("w");
+        run(&base, &["add", "-A"]).await;
+        run(&base, &["commit", "-q", "-m", "init"]).await;
+
+        // 建 worktree,只在 worktree 里改文件 → 快照成 commit。
+        let wt = add_worktree(&base, "att-xyz-9").await.expect("worktree");
+        std::fs::write(std::path::Path::new(&wt).join("f.txt"), "agent edit").expect("w");
+        let snap = snapshot(&wt, "att-xyz-9", "实现").await.expect("snapshot");
+        assert!(snap.reference.starts_with("git://shepherd/deliver/att@"));
+        // base 工作区**未被污染**(仍是 base)。
+        assert_eq!(std::fs::read_to_string(dir.join("f.txt")).unwrap(), "base");
+        // 分支在共享库里可见。
+        assert!(git(&base, &["rev-parse", "shepherd/deliver/att"]).await.is_some());
+
+        remove_worktree(&base, &wt).await;
+        assert!(!std::path::Path::new(&wt).exists(), "worktree dir removed");
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
