@@ -30,8 +30,9 @@ impl CreateBugUseCase {
         project_id: &str,
         title: &str,
         initial_status: &str,
+        created_by: Option<&str>,
     ) -> Result<Bug, CreateBugError> {
-        let new_bug = NewBug::new(project_id, title)?;
+        let new_bug = NewBug::new(project_id, title)?.with_created_by(created_by);
 
         // 初始状态必须存在于项目状态流图(不能用一个图里没有的状态建缺陷)
         let flow = self.repo.status_flow(project_id).await?;
@@ -54,16 +55,17 @@ mod tests {
     async fn creates_bug_with_valid_initial_status() {
         let repo = InMemoryBugRepository::with_default_flow("p1");
         let uc = CreateBugUseCase::new(Arc::new(repo));
-        let bug = uc.execute("p1", "登录崩溃", "NEW").await.expect("ok");
+        let bug = uc.execute("p1", "登录崩溃", "NEW", Some("alice")).await.expect("ok");
         assert_eq!(bug.status, "NEW");
         assert_eq!(bug.title, "登录崩溃");
+        assert_eq!(bug.created_by.as_deref(), Some("alice"));
     }
 
     #[tokio::test]
     async fn rejects_unknown_initial_status() {
         let repo = InMemoryBugRepository::with_default_flow("p1");
         let uc = CreateBugUseCase::new(Arc::new(repo));
-        let err = uc.execute("p1", "x", "GHOST").await.unwrap_err();
+        let err = uc.execute("p1", "x", "GHOST", None).await.unwrap_err();
         assert_eq!(err, CreateBugError::Validation(BugError::UnknownStatus("GHOST".into())));
     }
 
@@ -71,7 +73,7 @@ mod tests {
     async fn rejects_blank_title() {
         let repo = InMemoryBugRepository::with_default_flow("p1");
         let uc = CreateBugUseCase::new(Arc::new(repo));
-        let err = uc.execute("p1", "  ", "NEW").await.unwrap_err();
+        let err = uc.execute("p1", "  ", "NEW", None).await.unwrap_err();
         assert_eq!(err, CreateBugError::Validation(BugError::EmptyTitle));
     }
 }

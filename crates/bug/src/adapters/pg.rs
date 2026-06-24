@@ -30,6 +30,8 @@ fn row_to_bug(row: &sqlx::postgres::PgRow) -> Result<Bug, RepoError> {
         title: row.try_get("title").map_err(map_err)?,
         status: row.try_get("status").map_err(map_err)?,
         deleted: row.try_get("deleted").map_err(map_err)?,
+        created_at: row.try_get("created_at").map_err(map_err)?,
+        created_by: row.try_get("created_by").map_err(map_err)?,
     })
 }
 
@@ -73,21 +75,34 @@ impl BugRepository for PgBugRepository {
 
     async fn insert(&self, new_bug: &NewBug, initial_status: &str) -> Result<Bug, RepoError> {
         let row = sqlx::query(
-            "INSERT INTO ms_bug (project_id, title, status) VALUES ($1, $2, $3) \
-             RETURNING id, project_id, title, status, deleted",
+            "INSERT INTO ms_bug (project_id, title, status, created_by) VALUES ($1, $2, $3, $4) \
+             RETURNING id, project_id, title, status, deleted, created_at, created_by",
         )
         .bind(&new_bug.project_id)
         .bind(&new_bug.title)
         .bind(initial_status)
+        .bind(&new_bug.created_by)
         .fetch_one(&self.pool)
         .await
         .map_err(map_err)?;
         row_to_bug(&row)
     }
 
+    async fn list(&self, project_id: &str) -> Result<Vec<Bug>, RepoError> {
+        let rows = sqlx::query(
+            "SELECT id, project_id, title, status, deleted, created_at, created_by FROM ms_bug \
+             WHERE project_id = $1 AND deleted = false ORDER BY created_at DESC, id DESC",
+        )
+        .bind(project_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(map_err)?;
+        rows.iter().map(row_to_bug).collect()
+    }
+
     async fn get(&self, id: &str) -> Result<Option<Bug>, RepoError> {
         let row = sqlx::query(
-            "SELECT id, project_id, title, status, deleted FROM ms_bug \
+            "SELECT id, project_id, title, status, deleted, created_at, created_by FROM ms_bug \
              WHERE id = $1 AND deleted = false",
         )
         .bind(id)
@@ -105,6 +120,40 @@ impl BugRepository for PgBugRepository {
             .await
             .map_err(map_err)?;
         Ok(())
+    }
+
+    async fn add_follower(&self, bug_id: &str, user_id: &str) -> Result<(), RepoError> {
+        sqlx::query(
+            "INSERT INTO ms_bug_follower (bug_id, user_id) VALUES ($1, $2) \
+             ON CONFLICT (bug_id, user_id) DO NOTHING",
+        )
+        .bind(bug_id)
+        .bind(user_id)
+        .execute(&self.pool)
+        .await
+        .map_err(map_err)?;
+        Ok(())
+    }
+
+    async fn remove_follower(&self, bug_id: &str, user_id: &str) -> Result<(), RepoError> {
+        sqlx::query("DELETE FROM ms_bug_follower WHERE bug_id = $1 AND user_id = $2")
+            .bind(bug_id)
+            .bind(user_id)
+            .execute(&self.pool)
+            .await
+            .map_err(map_err)?;
+        Ok(())
+    }
+
+    async fn list_followers(&self, bug_id: &str) -> Result<Vec<String>, RepoError> {
+        let rows = sqlx::query(
+            "SELECT user_id FROM ms_bug_follower WHERE bug_id = $1 ORDER BY created_at, user_id",
+        )
+        .bind(bug_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(map_err)?;
+        rows.iter().map(|r| r.try_get("user_id").map_err(map_err)).collect()
     }
 }
 
@@ -149,6 +198,13 @@ mod tests {
 
         repo.set_status(&bug.id, "RESOLVED").await.expect("set");
         assert_eq!(repo.get(&bug.id).await.expect("get").expect("some").status, "RESOLVED");
+
+        // 列表:项目下的缺陷可见
+        let listed = repo.list("p1").await.expect("list");
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].id, bug.id);
+        assert_eq!(listed[0].title, "登录崩溃");
+        assert!(repo.list("other").await.expect("list").is_empty());
 
         // 不存在
         assert!(repo.get("ghost").await.expect("get").is_none());
