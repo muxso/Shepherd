@@ -9,6 +9,7 @@
 //!   DATABASE_URL=postgres://msuser:mspass@localhost:55432/mstest cargo run -p server
 
 mod breakdown_route;
+mod design_bridge;
 mod debug_send;
 mod decomposition_run;
 mod judge;
@@ -431,6 +432,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     .with_drafter(Arc::new(design::adapters::DeliveryDesignDrafter::new(
         design_agent,
         delivery::domain::ExecutorKind::ClaudeCode,
+    )))
+    // 审批通过 → 自动拆分该需求(design_bridge 桥接到 BreakdownUseCase)。
+    .with_breakdown_trigger(Arc::new(design_bridge::ServerBreakdownTrigger::new(
+        req_admin.clone(),
+        BreakdownUseCase::new(task_repo.clone(), task_planner.clone()),
     )));
     let design_routes = design::adapters::http::router(proposal_svc, sessions.clone());
     // 机群端点:认领 + register/heartbeat/list(仅 SHEPHERD_AGENT_FLEET 模式挂载)。

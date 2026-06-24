@@ -15,9 +15,12 @@ use crate::domain::Proposal;
 use crate::ports::{DesignDrafter, DraftError};
 
 /// 架构师角色提示(BMAD role,可被更完整的 skill 组合替换)。
+/// 注意:**runtime 负责把你的输出回填提案**,你不要发起任何网络请求/写文件——
+/// 只把设计稿 markdown 作为最终回答正文输出即可。
 const ARCHITECT_ROLE: &str = "你是资深软件架构师。基于给定需求产出一份**可评审的 markdown 设计稿**,\
 覆盖:方案概述、关键接口/数据模型、错误处理、风险与取舍。**不要写实现代码**。\
-完成后把设计稿正文 POST 到 /proposal/{proposal_id}/design 回填(字段 doc)。";
+**直接把设计稿 markdown 作为你的最终回答正文输出**——不要写文件、不要发起网络请求、\
+不要尝试调用任何接口;系统会自动采集你的输出并回填。";
 
 pub struct DeliveryDesignDrafter {
     executor: Arc<dyn AgentExecutor>,
