@@ -35,6 +35,16 @@ impl ProposalStatus {
     pub fn is_terminal(&self) -> bool {
         matches!(self, Self::Approved)
     }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "DRAFTING" => Some(Self::Drafting),
+            "PENDING_REVIEW" => Some(Self::PendingReview),
+            "APPROVED" => Some(Self::Approved),
+            "CHANGES_REQUESTED" => Some(Self::ChangesRequested),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]

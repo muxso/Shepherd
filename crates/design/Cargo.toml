@@ -13,8 +13,10 @@ axum = { version = "0.8", optional = true }
 serde = { version = "1", features = ["derive"], optional = true }
 webauth = { path = "../webauth", optional = true }
 delivery = { path = "../delivery", optional = true }
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "postgres"], optional = true }
 
 [features]
+pg = ["dep:sqlx"]
 http = ["dep:axum", "dep:serde", "dep:webauth", "webauth/http"]
 # agent:经 delivery 的 AgentExecutor 把起草派发给 AI 执行者(机群/本地)。
 agent = ["dep:delivery"]
