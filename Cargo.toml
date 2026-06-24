@@ -18,6 +18,7 @@ members = [
     "crates/requirement",
     "crates/task",
     "crates/delivery",
+    "crates/design",
     "crates/verification",
     "crates/orchestrator",
     "crates/mcp",
