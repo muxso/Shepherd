@@ -37,10 +37,15 @@ impl ServerClient {
     }
 
     /// 注册 runtime,返回 runtimeId。
-    pub async fn register(&self, name: &str, caps: &[String]) -> anyhow::Result<String> {
+    pub async fn register(
+        &self,
+        name: &str,
+        caps: &[String],
+        max_concurrency: u32,
+    ) -> anyhow::Result<String> {
         let resp: serde_json::Value = self
             .auth(self.http.post(format!("{}/agent/runtime", self.base)))
-            .json(&json!({"name": name, "caps": caps, "maxConcurrency": 1}))
+            .json(&json!({"name": name, "caps": caps, "maxConcurrency": max_concurrency}))
             .send()
             .await?
             .error_for_status()?
