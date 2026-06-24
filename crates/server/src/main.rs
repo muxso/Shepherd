@@ -17,6 +17,7 @@ mod mcp_tools;
 mod openapi;
 mod orchestration;
 mod case_exec_summary;
+mod import_scheduler;
 mod perf_run;
 mod plan_run;
 mod plan_scheduler;
@@ -38,8 +39,10 @@ use tower_http::limit::RequestBodyLimitLayer;
 use tower_http::timeout::TimeoutLayer;
 use tower_http::trace::TraceLayer;
 
-use bug::application::{ChangeBugStatusUseCase, CreateBugUseCase};
+use bug::application::{BugFollowersUseCase, ChangeBugStatusUseCase, CreateBugUseCase, ListBugsUseCase};
 use bug::adapters::pg::PgBugRepository;
+use follow::application::FollowService;
+use follow::adapters::pg::PgFollowStore;
 use api_test::application::StartBatchRunUseCase;
 use api_test::adapters::jmeter::HttpTaskDispatcher;
 use api_test::adapters::local::LocalRunnerDispatcher;
@@ -187,7 +190,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 "API_DEFINITION:READ+ADD+UPDATE+DELETE".to_string(),
                 "API_SCENARIO:READ+ADD+UPDATE+DELETE+EXECUTE".to_string(),
                 "ENVIRONMENT:READ+ADD+UPDATE+DELETE".to_string(),
-                "FUNCTIONAL_CASE:READ+ADD".to_string(),
+                "FUNCTIONAL_CASE:READ+ADD+UPDATE+DELETE".to_string(),
                 "RUNNER:READ+ADD+EDIT+EXECUTE".to_string(),
                 "PERF:READ+EXECUTE".to_string(),
                 "RESOURCE_POOL:READ+ADD+UPDATE+DELETE".to_string(),
@@ -321,7 +324,30 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // 执行者按环境路由:SHEPHERD_AGENT_URL → 远端 Agent API(异步);
     // SHEPHERD_AGENT_CMD → 本地 spawn;配 SHEPHERD_AGENT_ASYNC → 子进程后台跑 + HTTP 自回调收尾
     // (派发秒回,绕开 30s 请求超时);否则同步 spawn;都没配 → Echo 桩(无真实 agent)。
-    let agent: Arc<dyn AgentExecutor> = if let Ok(url) = std::env::var("SHEPHERD_AGENT_URL") {
+    // SHEPHERD_AGENT_FLEET → 执行者机群:派发入队,远程 runtime 出站长轮询认领
+    // (agent 无公网入站,服务端有公网;见 docs/remote-agent-runtime-plan.md)。
+    // SHEPHERD_FLEET_REDIS → 分布式 Redis(队列 + 注册表,多副本+多 runtime);否则进程内(单机)。
+    let mut fleet_queue: Option<Arc<dyn delivery::ports::WorkQueue>> = None;
+    let mut fleet_registry: Option<Arc<dyn delivery::ports::FleetRegistry>> = None;
+    let agent: Arc<dyn AgentExecutor> = if std::env::var("SHEPHERD_AGENT_FLEET").is_ok() {
+        let redis_url = std::env::var("SHEPHERD_FLEET_REDIS").ok();
+        let q: Arc<dyn delivery::ports::WorkQueue>;
+        let reg: Arc<dyn delivery::ports::FleetRegistry>;
+        if let Some(url) = &redis_url {
+            q = delivery::adapters::RedisStreamQueue::connect(url, &bind)
+                .await
+                .expect("connect fleet redis");
+            reg = delivery::adapters::RedisFleetRegistry::connect(url)
+                .await
+                .expect("connect fleet registry");
+        } else {
+            q = delivery::adapters::InMemoryWorkQueue::new();
+            reg = delivery::adapters::InMemoryFleetRegistry::new();
+        }
+        fleet_queue = Some(q.clone());
+        fleet_registry = Some(reg);
+        Arc::new(delivery::adapters::QueueAgentExecutor::new(q))
+    } else if let Ok(url) = std::env::var("SHEPHERD_AGENT_URL") {
         Arc::new(delivery::adapters::agent_http::HttpAgentExecutor::new(url))
     } else if let Ok(cmd) = std::env::var("SHEPHERD_AGENT_CMD") {
         let argv: Vec<String> = cmd.split_whitespace().map(String::from).collect();
@@ -357,12 +383,51 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         agent,
         req_admin.clone(),
     );
-    let delivery_svc = base_delivery.with_observer(delivery_observer);
+    let mut delivery_svc = base_delivery.with_observer(delivery_observer);
+    // 机群模式:把队列挂到交付服务,终态(complete/fail/stop)时 ack(Redis 下移出 PEL)。
+    if let Some(q) = &fleet_queue {
+        delivery_svc = delivery_svc.with_queue(q.clone());
+        // 回收任务:周期重投「持有者(runtime)已离线 + 过容忍期」的待处理 pending(心跳判活)。
+        let q = q.clone();
+        let reg = fleet_registry.clone();
+        let interval_s: u64 = std::env::var("SHEPHERD_FLEET_REAP_INTERVAL_S")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(15);
+        let grace_ms: u64 = std::env::var("SHEPHERD_FLEET_RECLAIM_MS")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(30_000);
+        tokio::spawn(async move {
+            let mut tick = tokio::time::interval(std::time::Duration::from_secs(interval_s.max(1)));
+            loop {
+                tick.tick().await;
+                // 在线 runtime id 集合(心跳判定);死 runtime 的 pending 才回收。
+                let live: Vec<String> = match &reg {
+                    Some(r) => {
+                        r.list().await.into_iter().filter(|x| x.online).map(|x| x.id).collect()
+                    }
+                    None => Vec::new(),
+                };
+                let n = q.reclaim_dead(&live, std::time::Duration::from_millis(grace_ms)).await;
+                if n > 0 {
+                    tracing::warn!(requeued = n, "fleet reaper: 重投死 runtime 任务");
+                }
+            }
+        });
+    }
     let mcp_delivery = delivery_svc.clone();
     // 多任务并行编排:按依赖图逐层并发派发整张任务 DAG。
     let decomposition_run_routes =
         decomposition_run::router(task_admin.clone(), delivery_svc.clone(), req_admin.clone(), sessions.clone());
     let delivery_routes = delivery::adapters::http::router(delivery_svc, sessions.clone());
+    // 机群端点:认领 + register/heartbeat/list(仅 SHEPHERD_AGENT_FLEET 模式挂载)。
+    let agent_fleet_routes = match (&fleet_queue, &fleet_registry) {
+        (Some(q), Some(r)) => {
+            delivery::adapters::queue::router(q.clone(), r.clone(), sessions.clone())
+        }
+        _ => axum::Router::new(),
+    };
 
     // —— MCP 集成(把全链路暴露为 MCP 工具,POST /mcp,JSON-RPC)——
     // MCP 也暴露测试计划 / 探测工具(独立实例,指向同一 pool)。
@@ -404,9 +469,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let bug_repo = Arc::new(PgBugRepository::new(pool.clone()));
     let bug_routes = bug::adapters::http::router(
         CreateBugUseCase::new(bug_repo.clone()),
-        ChangeBugStatusUseCase::new(bug_repo),
+        ChangeBugStatusUseCase::new(bug_repo.clone()),
+        ListBugsUseCase::new(bug_repo.clone()),
+        BugFollowersUseCase::new(bug_repo),
         sessions.clone(),
     );
+
+    // —— follow 模块(关注人,跨实体通用) ——
+    let follow_store = Arc::new(PgFollowStore::new(pool.clone()));
+    let follow_routes =
+        follow::adapters::http::router(FollowService::new(follow_store), sessions.clone());
 
     // —— test-plan 模块 ——
     let plan_repo = Arc::new(PgPlanRepository::new(pool.clone()));
@@ -491,6 +563,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // —— 功能用例管理(CRUD + 自定义字段 + Excel 导出)—— case_repo 已在上方构造。
     let functional_case_routes = case_management::adapters::http::router(
         case_management::application::CreateCaseUseCase::new(case_repo.clone()),
+        case_management::application::UpdateCaseUseCase::new(case_repo.clone()),
+        case_management::application::DeleteCaseUseCase::new(case_repo.clone()),
         case_management::application::ListCasesUseCase::new(case_repo.clone()),
         case_management::application::ImportCasesUseCase::new(case_repo.clone()),
         case_repo,
@@ -532,6 +606,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // —— 测试计划定时执行(cron 到点拍统计快照)——
     let plan_scheduler_routes = plan_scheduler::build(pool.clone(), sessions.clone()).await?;
 
+    // —— 接口 URL 导入 + 定时导入(cron 到点拉取来源并导入)——
+    let import_scheduler_routes = import_scheduler::build(pool.clone(), sessions.clone()).await?;
+
     // —— 报告归档(已完成报告周期性导出 Parquet 冷存储;REPORT_ARCHIVE_DIR 开关)——
     report_archive_job::spawn(pool.clone());
 
@@ -550,6 +627,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .merge(requirement_routes)
         .merge(task_routes)
         .merge(delivery_routes)
+        .merge(agent_fleet_routes)
         .merge(decomposition_run_routes)
         .merge(verification_routes)
         .merge(breakdown_routes)
@@ -557,6 +635,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .merge(mcp_routes)
         .merge(case_routes)
         .merge(bug_routes)
+        .merge(follow_routes)
         .merge(plan_routes)
         .merge(plan_run_routes)
         .merge(apitest_routes)
@@ -574,6 +653,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .merge(perf_routes)
         .merge(debug_send_routes)
         .merge(plan_scheduler_routes)
+        .merge(import_scheduler_routes)
         .merge(openapi::routes())
         .merge(health_routes(pool.clone()))
         // 由外到内:请求日志 → 整体超时 → 请求体上限(防超大 body 打爆内存)
