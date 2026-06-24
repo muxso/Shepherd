@@ -10,7 +10,7 @@ use async_trait::async_trait;
 
 use crate::ports::{
     AgentExecutor, DeliveryObserver, DeliveryRepository, DispatchOutcome, EventSink, ExecError,
-    RepoError, TaskListFilter, TaskPage, WorkSpec,
+    RepoError, TaskListFilter, TaskPage, WorkQueue, WorkSpec,
 };
 
 /// 把执行者运行中 emit 的事件落到当前交付尝试(尽力而为)。
@@ -56,17 +56,34 @@ pub struct DeliveryService {
     executor: Arc<dyn AgentExecutor>,
     /// 可选观察者:尝试落终态后通知(组装根桥接到 orchestrator)。
     observer: Option<Arc<dyn DeliveryObserver>>,
+    /// 可选工作队列(机群模式):尝试落终态时 `ack`,使可靠队列移出待处理、不被回收重投。
+    queue: Option<Arc<dyn WorkQueue>>,
 }
 
 impl DeliveryService {
     pub fn new(repo: Arc<dyn DeliveryRepository>, executor: Arc<dyn AgentExecutor>) -> Self {
-        Self { repo, executor, observer: None }
+        Self { repo, executor, observer: None, queue: None }
     }
 
     /// 挂上观察者(终态通知)。
     pub fn with_observer(mut self, observer: Arc<dyn DeliveryObserver>) -> Self {
         self.observer = Some(observer);
         self
+    }
+
+    /// 挂上工作队列(机群模式):终态时 ack,配合 Redis Streams 的「认领→ack→回收」。
+    pub fn with_queue(mut self, queue: Arc<dyn WorkQueue>) -> Self {
+        self.queue = Some(queue);
+        self
+    }
+
+    /// 尝试落终态后 ack 队列(尽力而为;内存队列为 no-op)。
+    async fn ack_if_terminal(&self, attempt: &DeliveryAttempt) {
+        if attempt.status.is_terminal() {
+            if let Some(q) = &self.queue {
+                q.ack(&attempt.id).await;
+            }
+        }
     }
 
     /// 尝试进入 Running/Delivered/Failed 时通知观察者(尽力而为)。
@@ -171,6 +188,7 @@ impl DeliveryService {
             summary: summary.to_string(),
         })?;
         self.repo.save(&a).await?;
+        self.ack_if_terminal(&a).await;
         self.notify_progress(&a).await;
         Ok(a)
     }
@@ -203,6 +221,7 @@ impl DeliveryService {
         let mut a = self.get(id).await?;
         a.fail(error)?;
         self.repo.save(&a).await?;
+        self.ack_if_terminal(&a).await;
         self.notify_progress(&a).await;
         Ok(a)
     }
@@ -219,6 +238,7 @@ impl DeliveryService {
         let reason = if reason.trim().is_empty() { "stopped by user" } else { reason.trim() };
         a.stop(reason)?;
         self.repo.save(&a).await?;
+        self.ack_if_terminal(&a).await;
         Ok(a)
     }
 
