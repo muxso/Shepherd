@@ -43,6 +43,7 @@ async fn seed_functional_cases(
     requirement_id: &str,
     project_id: &str,
     criteria: &[String],
+    created_by: &str,
 ) {
     if criteria.is_empty() {
         return;
@@ -157,7 +158,7 @@ async fn breakdown_handler(
                 }
             };
             // 顺手为每条验收标准生成功能用例草稿并关联(幂等,尽力而为)。
-            seed_functional_cases(&st.cases, &spec.requirement_id, &req.project_id, &spec.acceptance_criteria).await;
+            seed_functional_cases(&st.cases, &spec.requirement_id, &req.project_id, &spec.acceptance_criteria, &user.user_id).await;
             let body = json!({
                 "id": d.id,
                 "requirementId": d.requirement_id,
@@ -184,7 +185,7 @@ async fn breakdown_handler(
                         .flatten()
                         .map(|v| v.id);
                     // 幂等补种:旧拆分(本功能上线前)可能还没功能用例覆盖,这里补上。
-                    seed_functional_cases(&st.cases, &spec.requirement_id, &req.project_id, &spec.acceptance_criteria).await;
+                    seed_functional_cases(&st.cases, &spec.requirement_id, &req.project_id, &spec.acceptance_criteria, &user.user_id).await;
                     let body = json!({
                         "id": d.id,
                         "requirementId": d.requirement_id,
