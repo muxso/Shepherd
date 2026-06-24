@@ -13,6 +13,7 @@ pub enum DeliveryError {
 pub enum ExecutorKind {
     ClaudeCode,
     Codex,
+    OpenCode,
 }
 
 impl ExecutorKind {
@@ -20,6 +21,7 @@ impl ExecutorKind {
         match self {
             Self::ClaudeCode => "CLAUDE_CODE",
             Self::Codex => "CODEX",
+            Self::OpenCode => "OPENCODE",
         }
     }
 
@@ -27,6 +29,7 @@ impl ExecutorKind {
         match s {
             "CLAUDE_CODE" => Some(Self::ClaudeCode),
             "CODEX" => Some(Self::Codex),
+            "OPENCODE" => Some(Self::OpenCode),
             _ => None,
         }
     }
@@ -268,7 +271,7 @@ mod tests {
 
     #[test]
     fn enum_str_roundtrips() {
-        for e in [ExecutorKind::ClaudeCode, ExecutorKind::Codex] {
+        for e in [ExecutorKind::ClaudeCode, ExecutorKind::Codex, ExecutorKind::OpenCode] {
             assert_eq!(ExecutorKind::parse(e.as_str()), Some(e));
         }
         assert_eq!(ExecutorKind::parse("X"), None);

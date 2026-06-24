@@ -18,7 +18,8 @@ utoipa = { version = "5", optional = true }
 serde = { version = "1", features = ["derive"], optional = true }
 serde_json = { version = "1", optional = true }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"], optional = true }
-tokio = { version = "1", features = ["process", "io-util", "macros"], optional = true }
+redis = { version = "0.27", default-features = false, features = ["tokio-comp", "streams"], optional = true }
+tokio = { version = "1", features = ["process", "io-util", "macros", "time"], optional = true }
 webauth = { path = "../webauth", optional = true }
 
 [features]
@@ -27,6 +28,8 @@ http = ["dep:axum", "dep:serde", "dep:webauth", "webauth/http", "dep:utoipa"]
 # 真实执行器适配器(可选):
 exec-http = ["dep:reqwest", "dep:serde", "dep:serde_json"]   # 对接 Agent SDK/API(远端,异步)
 exec-local = ["dep:tokio", "dep:serde", "dep:serde_json"]    # 本地 spawn claude/codex headless(同步)
+exec-queue = ["http", "dep:tokio"]                           # 执行者机群:派发入队 + runtime 长轮询认领(远端 pull)
+exec-queue-redis = ["exec-queue", "dep:redis", "dep:serde_json"]  # 分布式队列:Redis Streams 消费组(多副本+多 runtime)
 
 [dev-dependencies]
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "process", "io-util", "net"] }
