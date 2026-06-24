@@ -54,7 +54,7 @@ while true; do
 import sys, json
 try:
     s = json.load(sys.stdin)
-    print("%s\t%s\t%s" % (s["attemptId"], s.get("taskId",""), s.get("executor","CLAUDE_CODE")))
+    print("%s\t%s\t%s\t%s" % (s["attemptId"], s.get("taskId",""), s.get("executor","CLAUDE_CODE"), s.get("context") or ""))
 except Exception:
     pass
 ')"
@@ -62,7 +62,8 @@ except Exception:
   AID="$(printf '%s' "$hdr" | cut -f1)"
   TASKID="$(printf '%s' "$hdr" | cut -f2)"
   EXECUTOR="$(printf '%s' "$hdr" | cut -f3)"
-  echo "认领任务 attempt=$AID task=$TASKID executor=$EXECUTOR" >&2
+  MODE="$(printf '%s' "$hdr" | cut -f4)"
+  echo "认领任务 attempt=$AID task=$TASKID executor=$EXECUTOR mode=${MODE:-implement}" >&2
 
   # 构造 prompt(对齐 delivery 的 spec_to_prompt:Behavior / # Task / Acceptance / Context)。
   prompt="$(printf '%s' "$body" | python3 -c '
@@ -80,13 +81,17 @@ if s.get("context"):
 sys.stdout.write("".join(out))
 ')"
 
-  # 按 executor 路由到对应 CLI 桥接:claude 用专用(流式),codex/opencode 用通用桥接。
-  case "$EXECUTOR" in
-    CLAUDE_CODE) bridge="$DIR/claude-agent-async.sh" ;;
-    CODEX)       bridge="$DIR/codex-agent-async.sh" ;;
-    OPENCODE)    bridge="$DIR/opencode-agent-async.sh" ;;
-    *)           bridge="$DIR/claude-agent-async.sh" ;;
-  esac
+  # 路由:design 模式(产设计稿→POST /proposal/{id}/design)优先;否则按 executor 选实现 bridge。
+  if [ "$MODE" = "design" ]; then
+    bridge="$DIR/design-draft.sh"
+  else
+    case "$EXECUTOR" in
+      CLAUDE_CODE) bridge="$DIR/claude-agent-async.sh" ;;
+      CODEX)       bridge="$DIR/codex-agent-async.sh" ;;
+      OPENCODE)    bridge="$DIR/opencode-agent-async.sh" ;;
+      *)           bridge="$DIR/claude-agent-async.sh" ;;
+    esac
+  fi
   # 桥接读 stdin(prompt)+ SHEPHERD_* env,跑对应 CLI、快照 commit、回调 complete/fail/events。
   printf '%s' "$prompt" | \
     SHEPHERD_ATTEMPT_ID="$AID" \
