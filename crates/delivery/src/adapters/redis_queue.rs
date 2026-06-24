@@ -42,7 +42,11 @@ fn stream_key(k: ExecutorKind) -> String {
 }
 
 pub struct RedisStreamQueue {
+    /// 共享多路复用连接:enqueue/ack/reclaim 等**非阻塞**命令用。
     conn: MultiplexedConnection,
+    /// 保留 client 以便 `claim` 开**专用连接**跑阻塞 XREADGROUP —— 阻塞命令绝不能跑在共享
+    /// 多路复用连接上(会把同连接上的 XADD/其它 claim 全部卡到超时,实测每次认领要等满 20s)。
+    client: redis::Client,
     /// 缺省消费者名(`claim` 未带 runtime id 时回退)。
     default_consumer: String,
 }
@@ -69,7 +73,7 @@ impl RedisStreamQueue {
                 }
             }
         }
-        Ok(Arc::new(Self { conn, default_consumer: default_consumer.to_string() }))
+        Ok(Arc::new(Self { conn, client, default_consumer: default_consumer.to_string() }))
     }
 }
 
@@ -100,7 +104,8 @@ impl WorkQueue for RedisStreamQueue {
             .block(wait.as_millis() as usize)
             .count(1);
 
-        let mut conn = self.conn.clone();
+        // 专用连接跑阻塞 XREADGROUP(勿用共享 self.conn,否则卡死 enqueue/并发 claim)。
+        let mut conn = self.client.get_multiplexed_async_connection().await.ok()?;
         let reply: StreamReadReply = conn.xread_options(&keys, &ids, &opts).await.ok()?;
         for skey in reply.keys {
             for entry in skey.ids {
