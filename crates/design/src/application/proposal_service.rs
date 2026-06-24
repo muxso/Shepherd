@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use crate::domain::{Proposal, ProposalError};
-use crate::ports::{DesignDrafter, ProposalRepository, RepoError};
+use crate::ports::{BreakdownTrigger, DesignDrafter, ProposalRepository, RepoError};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ProposalCmdError {
@@ -37,16 +37,24 @@ pub struct ProposalService {
     repo: Arc<dyn ProposalRepository>,
     /// 可选起草执行者(AI agent):配置后 `create` 即派发起草,跑完经 submit_design 回填。
     drafter: Option<Arc<dyn DesignDrafter>>,
+    /// 可选拆分触发器:`approve` 通过后放行任务拆分(Design 阶段 → 拆分)。
+    breakdown: Option<Arc<dyn BreakdownTrigger>>,
 }
 
 impl ProposalService {
     pub fn new(repo: Arc<dyn ProposalRepository>) -> Self {
-        Self { repo, drafter: None }
+        Self { repo, drafter: None, breakdown: None }
     }
 
     /// 挂上起草执行者(人机协同):新建提案即自动派发 agent 起草设计稿。
     pub fn with_drafter(mut self, drafter: Arc<dyn DesignDrafter>) -> Self {
         self.drafter = Some(drafter);
+        self
+    }
+
+    /// 挂上拆分触发器:设计稿审批通过即放行该需求的任务拆分。
+    pub fn with_breakdown_trigger(mut self, breakdown: Arc<dyn BreakdownTrigger>) -> Self {
+        self.breakdown = Some(breakdown);
         self
     }
 
@@ -78,11 +86,14 @@ impl ProposalService {
         Ok(p)
     }
 
-    /// 审批通过(门)→ 放行拆分。
+    /// 审批通过(门)→ 放行拆分。配了触发器则顺手开拆(尽力而为,失败不回滚审批)。
     pub async fn approve(&self, id: &str) -> Result<Proposal, ProposalCmdError> {
         let mut p = self.get(id).await?;
         p.approve()?;
         self.repo.save(&p).await?;
+        if let Some(b) = &self.breakdown {
+            let _ = b.on_design_approved(&p).await;
+        }
         Ok(p)
     }
 
@@ -186,6 +197,41 @@ mod tests {
         let p = s.submit_design(&p.id, "## 架构\n拆分支付域").await.expect("callback");
         assert_eq!(p.status, ProposalStatus::PendingReview);
         assert_eq!(p.design_doc.as_deref(), Some("## 架构\n拆分支付域"));
+    }
+
+    #[tokio::test]
+    async fn approve_fires_breakdown_trigger_once() {
+        use crate::domain::Proposal;
+        use crate::ports::{BreakdownTrigger, TriggerError};
+        use async_trait::async_trait;
+        use std::sync::Mutex;
+
+        #[derive(Default)]
+        struct RecordingTrigger {
+            fired: Mutex<Vec<String>>,
+        }
+        #[async_trait]
+        impl BreakdownTrigger for RecordingTrigger {
+            async fn on_design_approved(&self, p: &Proposal) -> Result<(), TriggerError> {
+                self.fired.lock().unwrap().push(p.requirement_id.clone());
+                Ok(())
+            }
+        }
+
+        let trig = Arc::new(RecordingTrigger::default());
+        let s = ProposalService::new(Arc::new(InMemoryProposalRepository::new()))
+            .with_breakdown_trigger(trig.clone());
+        let p = s.create("req-7", "设计").await.expect("create");
+        s.submit_design(&p.id, "doc").await.expect("submit");
+
+        // 非法 approve(此处状态合法,先验证驳回不触发拆分)。
+        // 批准 → 触发拆分一次,携带 requirement_id。
+        s.approve(&p.id).await.expect("approve");
+        assert_eq!(trig.fired.lock().unwrap().as_slice(), &["req-7".to_string()]);
+
+        // 二次 approve 冲突(终态)→ 不再触发。
+        assert!(s.approve(&p.id).await.is_err());
+        assert_eq!(trig.fired.lock().unwrap().len(), 1);
     }
 
     #[tokio::test]
