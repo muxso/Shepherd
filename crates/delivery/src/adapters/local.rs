@@ -53,7 +53,7 @@ impl LocalCommandAgentExecutor {
             ExecutorKind::ClaudeCode => &self.claude_code,
             ExecutorKind::Codex => &self.codex,
             // 本地(非机群)路径只配两套 argv;OpenCode 回退 claude argv。
-            // 真正的多 CLI(claude/codex/opencode)路由在机群 runtime(scripts/agent/fleet-runtime.sh)。
+            // 真正的多 CLI(claude/codex/opencode)路由在机群 runtime(crates/agent-runtime)。
             ExecutorKind::OpenCode => &self.claude_code,
         }
     }
