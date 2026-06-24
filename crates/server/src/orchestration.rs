@@ -16,6 +16,7 @@ use orchestrator::application::{DeliveryFeedbackOrchestrator, DeliveryProgress};
 use orchestrator::ports::{
     DeliverableView, OrchError, Reviser, TaskGateway, TaskTarget, VerificationGateway,
 };
+use requirement::application::RequirementService;
 use task::application::{TaskCmdError, TaskService};
 use task::domain::TaskStatus;
 use verification::application::{VerificationCmdError, VerificationService};
@@ -139,6 +140,8 @@ impl Reviser for ExecutorReviser {
         feedback: &str,
     ) -> Result<DeliverableView, OrchError> {
         let spec = WorkSpec {
+            // 修订走同步收尾(LLM/sync executor),不依赖异步回调,attempt_id 暂置空。
+            attempt_id: String::new(),
             decomposition_id: decomposition_id.to_string(),
             task_id: task_id.to_string(),
             title: format!("修订任务 {task_id}"),
@@ -164,9 +167,28 @@ impl Reviser for ExecutorReviser {
 
 /// delivery 观察者 → 编排器:交付进度推进时驱动任务 + 验证门 +(终态)回灌验证;
 /// 并把验证门裁决记入该尝试的审计事件(`recorder` 为无观察者的 DeliveryService,避免 Arc 环)。
+/// `task`/`requirements` 用于"全部任务验证 → 自动交付需求":让单任务派发路径也能交付需求
+/// (此前只有「并行运行」末尾交付),覆盖同步/异步、派发/并行运行所有路径。
 struct OrchestratorObserver {
     orchestrator: Arc<DeliveryFeedbackOrchestrator>,
     recorder: DeliveryService,
+    task: TaskService,
+    requirements: RequirementService,
+}
+
+impl OrchestratorObserver {
+    /// 某次交付落 Delivered 后:若该拆分**全部任务已 Verified**,自动把需求标记交付(幂等,
+    /// best-effort —— 未定基线/已归档由领域层拒,仅记日志)。
+    async fn try_deliver_requirement(&self, decomposition_id: &str) {
+        let Ok(dec) = self.task.get(decomposition_id).await else { return };
+        if dec.tasks.is_empty() || !dec.tasks.iter().all(|t| t.status == TaskStatus::Verified) {
+            return;
+        }
+        match self.requirements.deliver(&dec.requirement_id).await {
+            Ok(_) => tracing::info!(requirement = %dec.requirement_id, "全部任务验证 → 需求自动交付(DELIVERED)"),
+            Err(e) => tracing::warn!(requirement = %dec.requirement_id, "需求自动交付失败(可能未定基线): {e:?}"),
+        }
+    }
 }
 
 #[async_trait]
@@ -191,7 +213,8 @@ impl DeliveryObserver for OrchestratorObserver {
                 DeliveryProgress::Delivered { deliverable }
             }
             AttemptStatus::Failed => DeliveryProgress::Failed,
-            AttemptStatus::Dispatched => return,
+            // 派发未开跑、用户主动停止:不驱动验证门(stop 也不经由 notify_progress)。
+            AttemptStatus::Dispatched | AttemptStatus::Stopped => return,
         };
         if let Ok(outcome) =
             self.orchestrator.on_progress(&attempt.decomposition_id, &attempt.task_id, progress).await
@@ -204,6 +227,10 @@ impl DeliveryObserver for OrchestratorObserver {
                     format!("验证门未通过: {}", v.reason)
                 };
                 let _ = self.recorder.record_event(&attempt.id, "VERDICT", &msg, None).await;
+            }
+            // 该交付成功落地(任务可能转 Verified)→ 检查拆分是否全验证完,是则自动交付需求。
+            if matches!(attempt.status, AttemptStatus::Delivered) {
+                self.try_deliver_requirement(&attempt.decomposition_id).await;
             }
         }
     }
@@ -218,9 +245,10 @@ pub fn delivery_observer(
     verification: VerificationService,
     recorder: DeliveryService,
     executor: Arc<dyn AgentExecutor>,
+    requirements: RequirementService,
 ) -> Arc<dyn DeliveryObserver> {
     let mut orchestrator = DeliveryFeedbackOrchestrator::new(
-        Arc::new(TaskServiceGateway { svc: task }),
+        Arc::new(TaskServiceGateway { svc: task.clone() }),
         Arc::new(VerificationServiceGateway { svc: verification }),
         judge::build_judge(),
     );
@@ -232,5 +260,10 @@ pub fn delivery_observer(
         orchestrator =
             orchestrator.with_revision(Arc::new(ExecutorReviser { executor }), max_revisions);
     }
-    Arc::new(OrchestratorObserver { orchestrator: Arc::new(orchestrator), recorder })
+    Arc::new(OrchestratorObserver {
+        orchestrator: Arc::new(orchestrator),
+        recorder,
+        task,
+        requirements,
+    })
 }

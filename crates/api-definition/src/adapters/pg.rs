@@ -103,6 +103,7 @@ fn row_to_mock(row: &sqlx::postgres::PgRow) -> Result<ApiMock, RepoError> {
         response_headers: row.try_get("response_headers").unwrap_or_else(|_| serde_json::json!([])),
         response_delay_ms: row.try_get::<i32, _>("response_delay_ms").unwrap_or(0),
         follow_definition: row.try_get::<bool, _>("follow_definition").unwrap_or(false),
+        created_by: row.try_get::<String, _>("created_by").unwrap_or_default(),
     })
 }
 
@@ -139,6 +140,32 @@ impl ApiDefinitionRepository for PgApiDefinitionRepository {
              FROM ms_api_definition WHERE id = $1 AND deleted = false",
         )
         .bind(id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(map_err)?;
+        row.as_ref().map(row_to_definition).transpose()
+    }
+
+    async fn update_definition(
+        &self,
+        id: &str,
+        name: &str,
+        protocol: &str,
+        method: &str,
+        path: &str,
+    ) -> Result<Option<ApiDefinition>, RepoError> {
+        let row = sqlx::query(
+            "UPDATE ms_api_definition \
+             SET name = $2, protocol = $3, method = $4, path = $5, updated_at = now() \
+             WHERE id = $1 AND deleted = false \
+             RETURNING id, num, project_id, name, protocol, method, path, status, module_id, spec, \
+                       created_by, created_at::text AS created_at, updated_at::text AS updated_at",
+        )
+        .bind(id)
+        .bind(name)
+        .bind(protocol)
+        .bind(method)
+        .bind(path)
         .fetch_optional(&self.pool)
         .await
         .map_err(map_err)?;
@@ -315,6 +342,30 @@ impl ApiDefinitionRepository for PgApiDefinitionRepository {
         Ok(res.rows_affected() > 0)
     }
 
+    async fn update_mock(&self, mock_id: &str, m: &NewApiMock) -> Result<bool, RepoError> {
+        // api_definition_id / created_by 不变;回填 updated_at 供「MOCK 视图」排序。
+        let res = sqlx::query(
+            "UPDATE ms_api_mock SET name=$2, match_rule=$3, response_status=$4, response_body=$5, \
+                    enabled=$6, tags=$7, response_headers=$8, response_delay_ms=$9, \
+                    follow_definition=$10, updated_at=now() \
+             WHERE id=$1 AND deleted = false",
+        )
+        .bind(mock_id)
+        .bind(&m.name)
+        .bind(&m.match_rule)
+        .bind(m.response_status)
+        .bind(&m.response_body)
+        .bind(m.enabled)
+        .bind(&m.tags)
+        .bind(&m.response_headers)
+        .bind(m.response_delay_ms)
+        .bind(m.follow_definition)
+        .execute(&self.pool)
+        .await
+        .map_err(map_err)?;
+        Ok(res.rows_affected() > 0)
+    }
+
     async fn delete_mock(&self, mock_id: &str) -> Result<bool, RepoError> {
         let res = sqlx::query("UPDATE ms_api_mock SET deleted = true WHERE id = $1 AND deleted = false")
             .bind(mock_id)
@@ -374,7 +425,7 @@ impl ApiDefinitionRepository for PgApiDefinitionRepository {
                  tags, response_headers, response_delay_ms, follow_definition, created_by) \
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) \
              RETURNING id, api_definition_id, name, match_rule, response_status, response_body, enabled, \
-                       tags, response_headers, response_delay_ms, follow_definition",
+                       tags, response_headers, response_delay_ms, follow_definition, created_by",
         )
         .bind(&m.api_definition_id)
         .bind(&m.name)
@@ -396,7 +447,7 @@ impl ApiDefinitionRepository for PgApiDefinitionRepository {
     async fn list_mocks(&self, api_definition_id: &str) -> Result<Vec<ApiMock>, RepoError> {
         let rows = sqlx::query(
             "SELECT id, api_definition_id, name, match_rule, response_status, response_body, enabled, \
-                    tags, response_headers, response_delay_ms, follow_definition \
+                    tags, response_headers, response_delay_ms, follow_definition, created_by \
              FROM ms_api_mock WHERE api_definition_id = $1 AND deleted = false",
         )
         .bind(api_definition_id)
@@ -411,7 +462,7 @@ impl ApiDefinitionRepository for PgApiDefinitionRepository {
         let rows = sqlx::query(
             "SELECT m.id, m.api_definition_id, m.name, m.match_rule, m.response_status, m.response_body, \
                     m.enabled, m.tags, m.response_headers, m.response_delay_ms, m.follow_definition, \
-                    m.created_by AS m_operator, m.updated_at::text AS m_updated_at, \
+                    m.created_by, m.created_by AS m_operator, m.updated_at::text AS m_updated_at, \
                     d.method AS d_method, d.path AS d_path, d.protocol AS d_protocol, d.name AS d_name \
              FROM ms_api_mock m JOIN ms_api_definition d ON d.id = m.api_definition_id \
              WHERE d.project_id = $1 AND m.deleted = false AND d.deleted = false \
@@ -677,5 +728,24 @@ mod tests {
         let mocks = repo.list_mocks(&def.id).await.expect("list mocks");
         assert_eq!(mocks.len(), 1);
         assert_eq!(mocks[0].match_rule, serde_json::json!({"path": "/login"}));
+
+        // Mock 更新:覆盖可变字段;api_definition_id 不变;未命中返回 false。
+        let nm2 = NewApiMock::new(
+            &def.id,
+            "改名挡板",
+            serde_json::json!({"path": "/logout"}),
+            404,
+            Some("nope".into()),
+            false,
+        )
+        .expect("valid");
+        assert!(repo.update_mock(&mock.id, &nm2).await.expect("update mock"));
+        let mocks = repo.list_mocks(&def.id).await.expect("list mocks");
+        assert_eq!(mocks.len(), 1);
+        assert_eq!(mocks[0].name, "改名挡板");
+        assert_eq!(mocks[0].response_status, 404);
+        assert!(!mocks[0].enabled);
+        assert_eq!(mocks[0].match_rule, serde_json::json!({"path": "/logout"}));
+        assert!(!repo.update_mock("ghost", &nm2).await.expect("update missing"));
     }
 }

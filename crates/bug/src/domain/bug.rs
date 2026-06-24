@@ -21,6 +21,8 @@ pub enum BugError {
 pub struct NewBug {
     pub project_id: String,
     pub title: String,
+    /// 创建人 user_id(组装根/HTTP 层传入;无则 None)。
+    pub created_by: Option<String>,
 }
 
 impl NewBug {
@@ -29,7 +31,13 @@ impl NewBug {
         if title.is_empty() {
             return Err(BugError::EmptyTitle);
         }
-        Ok(Self { project_id: project_id.to_string(), title: title.to_string() })
+        Ok(Self { project_id: project_id.to_string(), title: title.to_string(), created_by: None })
+    }
+
+    /// 设置创建人(链式)。
+    pub fn with_created_by(mut self, user_id: Option<&str>) -> Self {
+        self.created_by = user_id.map(|s| s.to_string());
+        self
     }
 }
 
@@ -40,6 +48,10 @@ pub struct Bug {
     pub title: String,
     pub status: String,
     pub deleted: bool,
+    /// 创建时间(epoch 毫秒),列表按其倒序展示。
+    pub created_at: i64,
+    /// 创建人 user_id(创建时由 HTTP 层从会话注入;历史行为 None)。
+    pub created_by: Option<String>,
 }
 
 impl Bug {
@@ -82,12 +94,22 @@ mod tests {
             title: "boom".into(),
             status: status.into(),
             deleted: false,
+            created_at: 0,
+            created_by: None,
         }
     }
 
     #[test]
     fn new_bug_rejects_blank_title() {
         assert_eq!(NewBug::new("p1", "  "), Err(BugError::EmptyTitle));
+    }
+
+    #[test]
+    fn new_bug_carries_created_by() {
+        let nb = NewBug::new("p1", "boom").expect("valid").with_created_by(Some("alice"));
+        assert_eq!(nb.created_by.as_deref(), Some("alice"));
+        // 默认无创建人
+        assert_eq!(NewBug::new("p1", "boom").expect("valid").created_by, None);
     }
 
     #[test]

@@ -33,6 +33,8 @@ pub struct FunctionalCase {
     pub custom_fields: BTreeMap<String, String>,
     /// 手工测试步骤(步骤 + 预期结果)。
     pub steps: Vec<CaseStep>,
+    /// 创建人 user_id(0063 迁移;旧行为 None)。
+    pub created_by: Option<String>,
 }
 
 /// 待创建用例(构造即校验:项目/名称非空;module/priority/status 缺省给默认)。
@@ -45,6 +47,8 @@ pub struct NewFunctionalCase {
     pub status: String,
     pub custom_fields: BTreeMap<String, String>,
     pub steps: Vec<CaseStep>,
+    /// 创建人 user_id(组装根传入;缺省 None)。
+    pub created_by: Option<String>,
 }
 
 impl NewFunctionalCase {
@@ -77,7 +81,14 @@ impl NewFunctionalCase {
             status: with_default(status, "PREPARED"),
             custom_fields,
             steps,
+            created_by: None,
         })
+    }
+
+    /// 设置创建人(空串视作未知 → None)。
+    pub fn with_created_by(mut self, user_id: Option<&str>) -> Self {
+        self.created_by = user_id.map(str::trim).filter(|s| !s.is_empty()).map(str::to_string);
+        self
     }
 }
 

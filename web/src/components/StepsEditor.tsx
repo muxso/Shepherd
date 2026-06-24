@@ -31,7 +31,7 @@ export default function StepsEditor({
       {rows.map((r, i) => (
         <Space.Compact key={i} style={{ width: '100%' }} block>
           <Input
-            style={{ width: 36, textAlign: 'center', background: '#fafafa', color: '#999' }}
+            style={{ width: 36, textAlign: 'center', background: 'var(--panel-2)', color: 'var(--text-3)' }}
             value={String(i + 1)}
             disabled
           />

@@ -53,6 +53,7 @@ pub fn router(
         .route("/requirement/{id}/version", post(revise_requirement))
         .route("/requirement/{id}/version/{n}", get(get_version))
         .route("/requirement/{id}/baseline", put(set_baseline))
+        .route("/requirement/{id}/review/reject", post(reject_review))
         .route("/requirement/{id}/archive", post(archive_requirement))
         .route("/requirement/{id}/deliver", post(deliver_requirement))
         .with_state(ReqState { create, list, admin, sessions })
@@ -84,6 +85,12 @@ struct ReviseBody {
 #[derive(Deserialize, ToSchema)]
 struct SetBaselineBody {
     version: u32,
+}
+
+#[derive(Deserialize, ToSchema)]
+struct RejectReviewBody {
+    /// 评审不通过原因(必填)。
+    comment: String,
 }
 
 #[derive(Deserialize, ToSchema)]
@@ -119,6 +126,9 @@ struct RequirementResponse {
     baseline_version: u32,
     latest_version: u32,
     versions: Vec<VersionResponse>,
+    /// 最近一次「评审不通过」原因;评审通过或修订后为 null。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    review_comment: Option<String>,
 }
 
 impl From<Requirement> for RequirementResponse {
@@ -133,6 +143,7 @@ impl From<Requirement> for RequirementResponse {
             baseline_version: r.baseline_version,
             latest_version,
             versions,
+            review_comment: r.review_comment,
         }
     }
 }
@@ -172,6 +183,7 @@ fn cmd_err(e: RequirementCmdError) -> Response {
         RequirementCmdError::NotFound => (StatusCode::NOT_FOUND, "requirement not found").into_response(),
         RequirementCmdError::NoSuchVersion(_) => (StatusCode::NOT_FOUND, "version not found").into_response(),
         RequirementCmdError::Archived => (StatusCode::CONFLICT, "requirement is archived").into_response(),
+        RequirementCmdError::NotUnderReview => (StatusCode::CONFLICT, "requirement is not pending review").into_response(),
         RequirementCmdError::Repo(_) => (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
     }
 }
@@ -274,6 +286,22 @@ async fn set_baseline(
     }
 }
 
+#[utoipa::path(post, path = "/requirement/{id}/review/reject", tag = "requirement", params(("id" = String, Path)), request_body = RejectReviewBody, responses((status = 200, body = RequirementResponse), (status = 400), (status = 404), (status = 409)), security(("bearer" = [])))]
+async fn reject_review(
+    user: AuthUser,
+    State(st): State<ReqState>,
+    Path(id): Path<String>,
+    Json(b): Json<RejectReviewBody>,
+) -> Response {
+    if !user.can("REQUIREMENT", "UPDATE") {
+        return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
+    match st.admin.reject_review(&id, &b.comment).await {
+        Ok(r) => (StatusCode::OK, Json(RequirementResponse::from(r))).into_response(),
+        Err(e) => cmd_err(e),
+    }
+}
+
 #[utoipa::path(put, path = "/requirement/{id}", tag = "requirement", params(("id" = String, Path)), request_body = RenameBody, responses((status = 200, body = RequirementResponse), (status = 404), (status = 409)), security(("bearer" = [])))]
 async fn rename_requirement(
     user: AuthUser,
@@ -328,9 +356,9 @@ async fn delete_requirement(user: AuthUser, State(st): State<ReqState>, Path(id)
 #[openapi(
     paths(
         create_requirement, list_requirements, get_requirement, get_version,
-        revise_requirement, set_baseline, rename_requirement, archive_requirement, deliver_requirement, delete_requirement
+        revise_requirement, set_baseline, reject_review, rename_requirement, archive_requirement, deliver_requirement, delete_requirement
     ),
-    components(schemas(CreateBody, ReviseBody, SetBaselineBody, RenameBody, VersionResponse, RequirementResponse, RequirementPage, VersionCreated)),
+    components(schemas(CreateBody, ReviseBody, SetBaselineBody, RejectReviewBody, RenameBody, VersionResponse, RequirementResponse, RequirementPage, VersionCreated)),
     tags((name = "requirement", description = "需求管理(多版本)"))
 )]
 struct ApiDoc;
@@ -451,6 +479,102 @@ mod tests {
         assert_eq!(
             app.oneshot(req("GET", &format!("/requirement/{id}"), "", Some(&t))).await.expect("r").status(),
             StatusCode::NOT_FOUND
+        );
+    }
+
+    /// 详情必须把验收标准放在「基线版本」那条 `versions[]` 里(camelCase),
+    /// 这正是前端 `versions.find(v => v.version === baselineVersion).acceptanceCriteria` 读取的契约。
+    /// 覆盖两点:新建即可见(基线=v1);改基线后详情随基线版本切换。
+    #[tokio::test]
+    async fn detail_exposes_acceptance_criteria_at_baseline_version() {
+        let (app, t) = app_with("REQUIREMENT:READ+ADD+UPDATE").await;
+        // 新建带验收标准
+        let r = app
+            .clone()
+            .oneshot(req("POST", "/requirement", r#"{"projectId":"p1","title":"登录","acceptanceCriteria":["登录成功跳转首页","错误密码拒绝并提示"]}"#, Some(&t)))
+            .await
+            .expect("r");
+        assert_eq!(r.status(), StatusCode::CREATED);
+        let id = body_json(r).await["id"].as_str().expect("id").to_string();
+
+        // 模拟前端取基线版本的验收标准
+        let crits_at_baseline = |v: &serde_json::Value| -> Vec<String> {
+            let base = v["baselineVersion"].as_u64().expect("baselineVersion");
+            v["versions"]
+                .as_array()
+                .expect("versions")
+                .iter()
+                .find(|ver| ver["version"].as_u64() == Some(base))
+                .expect("baseline version present")["acceptanceCriteria"]
+                .as_array()
+                .expect("acceptanceCriteria")
+                .iter()
+                .map(|c| c.as_str().expect("str").to_string())
+                .collect()
+        };
+
+        // 详情:基线 = v1,验收标准随之可见
+        let d = body_json(app.clone().oneshot(req("GET", &format!("/requirement/{id}"), "", Some(&t))).await.expect("r")).await;
+        assert_eq!(d["baselineVersion"], 1);
+        assert_eq!(crits_at_baseline(&d), vec!["登录成功跳转首页".to_string(), "错误密码拒绝并提示".to_string()]);
+
+        // 追加 v2(不同标准)并改基线 → 详情按基线版本切换
+        app.clone()
+            .oneshot(req("POST", &format!("/requirement/{id}/version"), r#"{"description":"v2","acceptanceCriteria":["新增验收点"]}"#, Some(&t)))
+            .await
+            .expect("r");
+        app.clone()
+            .oneshot(req("PUT", &format!("/requirement/{id}/baseline"), r#"{"version":2}"#, Some(&t)))
+            .await
+            .expect("r");
+        let d2 = body_json(app.oneshot(req("GET", &format!("/requirement/{id}"), "", Some(&t))).await.expect("r")).await;
+        assert_eq!(d2["baselineVersion"], 2);
+        assert_eq!(crits_at_baseline(&d2), vec!["新增验收点".to_string()]);
+    }
+
+    /// 评审不通过:原因必填(空 → 400);带原因 → 200 且 reviewComment 暴露给前端;
+    /// 评审通过(定基线)后 reviewComment 清空且不再出现在响应里。
+    #[tokio::test]
+    async fn reject_review_flow() {
+        let (app, t) = app_with("REQUIREMENT:READ+ADD+UPDATE").await;
+        let r = app
+            .clone()
+            .oneshot(req("POST", "/requirement", r#"{"projectId":"p1","title":"登录","acceptanceCriteria":["c1"]}"#, Some(&t)))
+            .await
+            .expect("r");
+        let id = body_json(r).await["id"].as_str().expect("id").to_string();
+
+        // 空原因 → 400
+        assert_eq!(
+            app.clone().oneshot(req("POST", &format!("/requirement/{id}/review/reject"), r#"{"comment":"   "}"#, Some(&t))).await.expect("r").status(),
+            StatusCode::BAD_REQUEST
+        );
+
+        // 带原因 → 200,状态仍 DRAFT,reviewComment 可见
+        let rj = app
+            .clone()
+            .oneshot(req("POST", &format!("/requirement/{id}/review/reject"), r#"{"comment":"验收标准不完整"}"#, Some(&t)))
+            .await
+            .expect("r");
+        assert_eq!(rj.status(), StatusCode::OK);
+        let v = body_json(rj).await;
+        assert_eq!(v["status"], "DRAFT");
+        assert_eq!(v["reviewComment"], "验收标准不完整");
+
+        // 评审通过(定基线 v1)→ reviewComment 清空(字段被省略)
+        let sb = app
+            .clone()
+            .oneshot(req("PUT", &format!("/requirement/{id}/baseline"), r#"{"version":1}"#, Some(&t)))
+            .await
+            .expect("r");
+        let v2 = body_json(sb).await;
+        assert_eq!(v2["status"], "BASELINED");
+        assert!(v2.get("reviewComment").is_none());
+
+        // 已基线再评不通过 → 409
+        assert_eq!(
+            app.oneshot(req("POST", &format!("/requirement/{id}/review/reject"), r#"{"comment":"x"}"#, Some(&t))).await.expect("r").status(),
+            StatusCode::CONFLICT
         );
     }
 

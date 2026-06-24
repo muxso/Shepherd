@@ -1,0 +1,28 @@
+[package]
+name = "design"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+
+# Shepherd 设计/提案上下文(OpenSpec/BMAD 风格):在「拆分」前插一道人审批门 ——
+# agent 产出设计稿 → 人批准/驳回(带反馈→修订循环)→ 批准后方可拆分实现。
+[dependencies]
+async-trait = "0.1"
+thiserror = "2"
+axum = { version = "0.8", optional = true }
+serde = { version = "1", features = ["derive"], optional = true }
+webauth = { path = "../webauth", optional = true }
+delivery = { path = "../delivery", optional = true }
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "postgres"], optional = true }
+
+[features]
+pg = ["dep:sqlx"]
+http = ["dep:axum", "dep:serde", "dep:webauth", "webauth/http"]
+# agent:经 delivery 的 AgentExecutor 把起草派发给 AI 执行者(机群/本地)。
+agent = ["dep:delivery"]
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+
+[lints]
+workspace = true

@@ -15,6 +15,13 @@ import { methodColor, outcomeColor } from '../components/tags'
 import CaseEditorDrawer from '../components/CaseEditorDrawer'
 import { useI18n } from '../i18n'
 
+// 用例状态展示映射(状态值为后端持久化中文,仅翻译标签)。
+const CASE_STATUS_LABELS: Record<string, string> = {
+  '进行中': 'case.statusInProgress',
+  '已完成': 'case.statusCompleted',
+  '已废弃': 'case.statusDeprecated',
+}
+
 export default function CasesPanel({ definition, refreshToken }: { definition: ApiDefinition; refreshToken?: number }) {
   const { t } = useI18n()
   const [cases, setCases] = useState<ApiCase[]>([])
@@ -66,7 +73,10 @@ export default function CasesPanel({ definition, refreshToken }: { definition: A
             title: t('case.colStatus', '状态'),
             dataIndex: 'status',
             width: 90,
-            render: (s?: string) => <Tag>{s || '进行中'}</Tag>,
+            render: (s?: string) => {
+              const v = s || '进行中'
+              return <Tag>{t(CASE_STATUS_LABELS[v] ?? '', v)}</Tag>
+            },
           },
           {
             title: t('case.colMethod', '方法'),

@@ -34,17 +34,19 @@ fn row_to_plan(row: &sqlx::postgres::PgRow) -> Result<Plan, RepoError> {
         plan_type,
         group_id: row.try_get("group_id").map_err(map_err)?,
         archived: row.try_get("archived").map_err(map_err)?,
+        created_at_ms: row.try_get("created_at_ms").map_err(map_err)?,
     })
 }
 
-const PLAN_COLS: &str = "id, project_id, name, plan_type, group_id, archived";
+const PLAN_COLS: &str =
+    "id, project_id, name, plan_type, group_id, archived, (extract(epoch from created_at)*1000)::bigint AS created_at_ms";
 
 #[async_trait]
 impl PlanRepository for PgPlanRepository {
     async fn insert(&self, new_plan: &NewPlan) -> Result<Plan, RepoError> {
         let row = sqlx::query(
             "INSERT INTO ms_test_plan (project_id, name, plan_type, group_id) \
-             VALUES ($1, $2, $3, $4) RETURNING id, project_id, name, plan_type, group_id, archived",
+             VALUES ($1, $2, $3, $4) RETURNING id, project_id, name, plan_type, group_id, archived, (extract(epoch from created_at)*1000)::bigint AS created_at_ms",
         )
         .bind(&new_plan.project_id)
         .bind(&new_plan.name)
@@ -170,6 +172,42 @@ impl PlanRepository for PgPlanRepository {
                 })
             })
             .collect()
+    }
+
+    async fn list(&self, project_id: &str) -> Result<Vec<Plan>, RepoError> {
+        let rows = sqlx::query(&format!(
+            "SELECT {PLAN_COLS} FROM ms_test_plan WHERE project_id = $1 AND NOT archived ORDER BY name, id"
+        ))
+        .bind(project_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(map_err)?;
+        rows.iter().map(row_to_plan).collect()
+    }
+
+    async fn rename(&self, id: &str, name: &str) -> Result<bool, RepoError> {
+        let res = sqlx::query("UPDATE ms_test_plan SET name = $2 WHERE id = $1")
+            .bind(id)
+            .bind(name)
+            .execute(&self.pool)
+            .await
+            .map_err(map_err)?;
+        Ok(res.rows_affected() > 0)
+    }
+
+    async fn delete(&self, id: &str) -> Result<bool, RepoError> {
+        // 无 FK 级联:先删挂入用例,再删计划本体。
+        sqlx::query("DELETE FROM ms_test_plan_case WHERE plan_id = $1")
+            .bind(id)
+            .execute(&self.pool)
+            .await
+            .map_err(map_err)?;
+        let res = sqlx::query("DELETE FROM ms_test_plan WHERE id = $1")
+            .bind(id)
+            .execute(&self.pool)
+            .await
+            .map_err(map_err)?;
+        Ok(res.rows_affected() > 0)
     }
 }
 

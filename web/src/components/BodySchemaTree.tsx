@@ -69,7 +69,7 @@ export default function BodySchemaTree({ nodes, onChange }: { nodes: BodySchemaN
     },
     {
       title: t('query.colValue', '参数值'), dataIndex: 'value', width: 200,
-      render: (v: string, r) => branch(r.type) ? <span style={{ color: '#bbb' }}>—</span> : <Input size="small" value={v} onChange={(e) => set(r._path, { value: e.target.value })} />,
+      render: (v: string, r) => branch(r.type) ? <span style={{ color: 'var(--text-3)' }}>—</span> : <Input size="small" value={v} onChange={(e) => set(r._path, { value: e.target.value })} />,
     },
     {
       title: t('query.colDesc', '描述'), dataIndex: 'description',

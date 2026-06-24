@@ -163,13 +163,19 @@ impl ReviewRepository for PgReviewRepository {
                 let count: i32 = r.try_get("reviewer_count").map_err(map_err)?;
                 let total: i32 = r.try_get("total").map_err(map_err)?;
                 let passed: i64 = r.try_get("passed").map_err(map_err)?;
+                let total = total.max(0) as usize;
+                let passed = passed.max(0) as usize;
+                // 整体生命周期:全部用例已通过 → COMPLETED,否则 IN_PROGRESS。
+                let status =
+                    if total > 0 && passed >= total { "COMPLETED" } else { "IN_PROGRESS" };
                 Ok(ReviewSummary {
                     id: r.try_get("id").map_err(map_err)?,
                     pass_rule: r.try_get("pass_rule").map_err(map_err)?,
                     reviewer_count: count.max(0) as usize,
-                    total: total.max(0) as usize,
-                    passed: passed.max(0) as usize,
+                    total,
+                    passed,
                     created_at: r.try_get("created_at").map_err(map_err)?,
+                    status: status.to_string(),
                 })
             })
             .collect()

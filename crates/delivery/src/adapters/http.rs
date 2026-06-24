@@ -18,7 +18,8 @@ use webauth::{AuthUser, SessionStore};
 use utoipa::{IntoParams, OpenApi, ToSchema};
 
 use crate::application::{DeliveryCmdError, DeliveryService};
-use crate::domain::{DeliveryAttempt, ExecutionEvent};
+use crate::domain::{AttemptStatus, DeliveryAttempt, ExecutionEvent, ExecutorKind};
+use crate::ports::{TaskListFilter, TaskRow};
 
 #[derive(Clone)]
 struct DelState {
@@ -35,10 +36,13 @@ impl FromRef<DelState> for Arc<dyn SessionStore> {
 pub fn router(svc: DeliveryService, sessions: Arc<dyn SessionStore>) -> Router {
     Router::new()
         .route("/delivery", post(dispatch).get(list_by_task))
-        .route("/delivery/{id}", get(get_attempt))
+        // 任务中心:全系统交付尝试分页列表(静态段优先于 /delivery/{id})。
+        .route("/delivery/tasks", get(list_tasks))
+        .route("/delivery/{id}", get(get_attempt).delete(delete_attempt))
         .route("/delivery/{id}/running", post(report_running))
         .route("/delivery/{id}/complete", post(complete))
         .route("/delivery/{id}/fail", post(fail))
+        .route("/delivery/{id}/stop", post(stop))
         .route("/delivery/{id}/events", post(record_event).get(list_events))
         .with_state(DelState { svc, sessions })
 }
@@ -154,6 +158,103 @@ impl From<&DeliveryAttempt> for AttemptResponse {
             error: a.error.clone(),
         }
     }
+}
+
+// ---- 任务中心 DTO ----
+
+#[derive(Deserialize, IntoParams)]
+#[serde(rename_all = "camelCase")]
+struct TaskQuery {
+    /// 执行状态过滤:DISPATCHED/RUNNING/DELIVERED/FAILED/STOPPED。
+    status: Option<String>,
+    /// 执行者过滤:CLAUDE_CODE/CODEX。
+    executor: Option<String>,
+    /// 仅实时任务(未终态:DISPATCHED/RUNNING)。
+    #[serde(default)]
+    active: bool,
+    /// 模糊匹配标题 / taskId / decompositionId。
+    q: Option<String>,
+    /// 页码(从 1 起)。
+    page: Option<i64>,
+    page_size: Option<i64>,
+}
+
+#[derive(Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+struct TaskItemResponse {
+    id: String,
+    decomposition_id: String,
+    task_id: String,
+    /// 任务标题(关联 ms_task;无则回落 taskId)。
+    title: String,
+    /// 任务描述(基本信息;无关联任务则空串)。
+    description: String,
+    /// 所属模块(基本信息;任务归属需求标题,无则空串)。
+    module: String,
+    /// 执行方式(执行者种类):CLAUDE_CODE / CODEX。
+    executor: String,
+    /// 执行状态。
+    status: String,
+    /// 执行结果:SUCCESS / FAILED / STOPPED / PENDING。
+    result: String,
+    /// 完成率 0..100。
+    completion_rate: i32,
+    run_id: Option<String>,
+    error: Option<String>,
+    created_at: i64,
+    event_count: i64,
+}
+
+impl From<&TaskRow> for TaskItemResponse {
+    fn from(r: &TaskRow) -> Self {
+        let a = &r.attempt;
+        let (result, completion_rate) = match a.status {
+            AttemptStatus::Dispatched => ("PENDING", 0),
+            AttemptStatus::Running => ("PENDING", 50),
+            AttemptStatus::Delivered => ("SUCCESS", 100),
+            AttemptStatus::Failed => ("FAILED", 100),
+            AttemptStatus::Stopped => ("STOPPED", 100),
+        };
+        let title = r
+            .title
+            .clone()
+            .filter(|t| !t.trim().is_empty())
+            .unwrap_or_else(|| a.task_id.clone());
+        let trimmed = |s: &Option<String>| s.clone().filter(|v| !v.trim().is_empty()).unwrap_or_default();
+        Self {
+            id: a.id.clone(),
+            decomposition_id: a.decomposition_id.clone(),
+            task_id: a.task_id.clone(),
+            title,
+            description: trimmed(&r.description),
+            module: trimmed(&r.module),
+            executor: a.executor.as_str().to_string(),
+            status: a.status.as_str().to_string(),
+            result: result.to_string(),
+            completion_rate,
+            run_id: a.run_id.clone(),
+            error: a.error.clone(),
+            created_at: r.created_at,
+            event_count: r.event_count,
+        }
+    }
+}
+
+#[derive(Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+struct TaskPageResponse {
+    total: i64,
+    current: i64,
+    page_size: i64,
+    total_pages: i64,
+    items: Vec<TaskItemResponse>,
+}
+
+#[derive(Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+struct StopBody {
+    #[serde(default)]
+    reason: Option<String>,
 }
 
 fn cmd_err(e: DeliveryCmdError) -> Response {
@@ -285,10 +386,75 @@ async fn list_events(State(st): State<DelState>, Path(id): Path<String>) -> Resp
     }
 }
 
+#[utoipa::path(
+    get, path = "/delivery/tasks", tag = "delivery", params(TaskQuery),
+    responses((status = 200, body = TaskPageResponse))
+)]
+async fn list_tasks(State(st): State<DelState>, Query(q): Query<TaskQuery>) -> Response {
+    let page = q.page.unwrap_or(1).max(1);
+    let page_size = q.page_size.unwrap_or(20).clamp(1, 200);
+    let filter = TaskListFilter {
+        status: q.status.as_deref().and_then(AttemptStatus::parse),
+        executor: q.executor.as_deref().and_then(ExecutorKind::parse),
+        active_only: q.active,
+        query: q.q,
+        limit: page_size,
+        offset: (page - 1) * page_size,
+    };
+    match st.svc.list_tasks(&filter).await {
+        Ok(p) => {
+            let total_pages = if p.total == 0 { 0 } else { (p.total + page_size - 1) / page_size };
+            let body = TaskPageResponse {
+                total: p.total,
+                current: page,
+                page_size,
+                total_pages,
+                items: p.items.iter().map(TaskItemResponse::from).collect(),
+            };
+            (StatusCode::OK, Json(body)).into_response()
+        }
+        Err(e) => cmd_err(e),
+    }
+}
+
+#[utoipa::path(
+    post, path = "/delivery/{id}/stop", tag = "delivery", params(("id" = String, Path)),
+    request_body = StopBody, responses((status = 200, body = AttemptResponse), (status = 404), (status = 409)),
+    security(("bearer" = []))
+)]
+async fn stop(
+    user: AuthUser,
+    State(st): State<DelState>,
+    Path(id): Path<String>,
+    Json(b): Json<StopBody>,
+) -> Response {
+    if !user.can("DELIVERY", "UPDATE") {
+        return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
+    match st.svc.stop(&id, b.reason.as_deref().unwrap_or("")).await {
+        Ok(a) => (StatusCode::OK, Json(AttemptResponse::from(&a))).into_response(),
+        Err(e) => cmd_err(e),
+    }
+}
+
+#[utoipa::path(
+    delete, path = "/delivery/{id}", tag = "delivery", params(("id" = String, Path)),
+    responses((status = 204), (status = 404), (status = 409)), security(("bearer" = []))
+)]
+async fn delete_attempt(user: AuthUser, State(st): State<DelState>, Path(id): Path<String>) -> Response {
+    if !user.can("DELIVERY", "UPDATE") {
+        return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
+    match st.svc.delete(&id).await {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(e) => cmd_err(e),
+    }
+}
+
 #[derive(OpenApi)]
 #[openapi(
-    paths(dispatch, list_by_task, get_attempt, report_running, complete, fail, record_event, list_events),
-    components(schemas(DispatchBody, RunningBody, CompleteBody, FailBody, EventBody, EventResponse, DeliverableResponse, AttemptResponse)),
+    paths(dispatch, list_by_task, get_attempt, report_running, complete, fail, record_event, list_events, list_tasks, stop, delete_attempt),
+    components(schemas(DispatchBody, RunningBody, CompleteBody, FailBody, EventBody, EventResponse, DeliverableResponse, AttemptResponse, TaskItemResponse, TaskPageResponse, StopBody)),
     tags((name = "delivery", description = "交付执行(AI 执行者)"))
 )]
 struct ApiDoc;
@@ -438,6 +604,65 @@ mod tests {
         assert_eq!(
             app.oneshot(req("POST", "/delivery", r#"{"decompositionId":"d1","taskId":"t1","title":"x","executor":"GPT"}"#, Some(&t))).await.expect("r").status(),
             StatusCode::BAD_REQUEST
+        );
+    }
+
+    #[tokio::test]
+    async fn task_center_list_stop_and_delete_flow() {
+        let (app, t) = app_with("DELIVERY:READ+EXECUTE+UPDATE", StubBehavior::Accept { run_id: "r".into() }).await;
+        // 起两条任务(异步接单 → RUNNING)。
+        for tid in ["t1", "t2"] {
+            app.clone()
+                .oneshot(req("POST", "/delivery", &format!(r#"{{"decompositionId":"d1","taskId":"{tid}","title":"build {tid}","executor":"CODEX"}}"#), Some(&t)))
+                .await
+                .expect("r");
+        }
+
+        // 任务中心列表(读端开放,无需令牌)。
+        let l = app.clone().oneshot(req("GET", "/delivery/tasks?page=1&pageSize=10", "", None)).await.expect("r");
+        assert_eq!(l.status(), StatusCode::OK);
+        let v = json(l).await;
+        assert_eq!(v["total"], 2);
+        assert_eq!(v["items"].as_array().expect("arr").len(), 2);
+        let item = &v["items"][0];
+        assert_eq!(item["status"], "RUNNING");
+        assert_eq!(item["result"], "PENDING");
+        assert_eq!(item["completionRate"], 50);
+        let id = item["id"].as_str().expect("id").to_string();
+
+        // 实时任务过滤:active=true 仍 2 条。
+        let act = app.clone().oneshot(req("GET", "/delivery/tasks?active=true", "", None)).await.expect("r");
+        assert_eq!(json(act).await["total"], 2);
+
+        // 停止需 UPDATE 权限。
+        let stop = app.clone().oneshot(req("POST", &format!("/delivery/{id}/stop"), r#"{"reason":"手动停止"}"#, Some(&t))).await.expect("r");
+        assert_eq!(stop.status(), StatusCode::OK);
+        assert_eq!(json(stop).await["status"], "STOPPED");
+
+        // 停止后:active 仅剩 1 条。
+        assert_eq!(json(app.clone().oneshot(req("GET", "/delivery/tasks?active=true", "", None)).await.expect("r")).await["total"], 1);
+
+        // 删除终态尝试 → 204。
+        let del = app.clone().oneshot(req("DELETE", &format!("/delivery/{id}"), "", Some(&t))).await.expect("r");
+        assert_eq!(del.status(), StatusCode::NO_CONTENT);
+        assert_eq!(json(app.clone().oneshot(req("GET", "/delivery/tasks", "", None)).await.expect("r")).await["total"], 1);
+    }
+
+    #[tokio::test]
+    async fn delete_running_conflicts_and_rbac() {
+        let (app, t) = app_with("DELIVERY:READ+EXECUTE+UPDATE", StubBehavior::Accept { run_id: "r".into() }).await;
+        let r = app.clone().oneshot(req("POST", "/delivery", r#"{"decompositionId":"d1","taskId":"t1","title":"x","executor":"CODEX"}"#, Some(&t))).await.expect("r");
+        let id = json(r).await["id"].as_str().expect("id").to_string();
+        // 进行中删除 → 409。
+        assert_eq!(
+            app.clone().oneshot(req("DELETE", &format!("/delivery/{id}"), "", Some(&t))).await.expect("r").status(),
+            StatusCode::CONFLICT
+        );
+        // 只读令牌停止 → 403。
+        let (app2, ro) = app_with("DELIVERY:READ", StubBehavior::Accept { run_id: "r".into() }).await;
+        assert_eq!(
+            app2.oneshot(req("POST", "/delivery/whatever/stop", r#"{}"#, Some(&ro))).await.expect("r").status(),
+            StatusCode::FORBIDDEN
         );
     }
 }

@@ -33,9 +33,29 @@ impl CaseRepository for InMemoryCaseRepository {
             status: c.status.clone(),
             custom_fields: c.custom_fields.clone(),
             steps: c.steps.clone(),
+            created_by: c.created_by.clone(),
         };
         g.push(view.clone());
         Ok(view)
+    }
+
+    async fn update(&self, id: &str, c: &NewFunctionalCase) -> Result<Option<FunctionalCase>, RepoError> {
+        let mut g = self.cases.lock().map_err(|e| RepoError::Backend(e.to_string()))?;
+        let Some(existing) = g.iter_mut().find(|x| x.id == id) else { return Ok(None) };
+        existing.name = c.name.clone();
+        existing.module = c.module.clone();
+        existing.priority = c.priority.clone();
+        existing.status = c.status.clone();
+        existing.custom_fields = c.custom_fields.clone();
+        existing.steps = c.steps.clone();
+        Ok(Some(existing.clone()))
+    }
+
+    async fn delete(&self, id: &str) -> Result<bool, RepoError> {
+        let mut g = self.cases.lock().map_err(|e| RepoError::Backend(e.to_string()))?;
+        let before = g.len();
+        g.retain(|c| c.id != id);
+        Ok(g.len() != before)
     }
 
     async fn list_by_project(&self, project_id: &str) -> Result<Vec<FunctionalCase>, RepoError> {

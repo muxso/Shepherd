@@ -10,7 +10,7 @@ use async_trait::async_trait;
 
 use crate::ports::{
     AgentExecutor, DeliveryObserver, DeliveryRepository, DispatchOutcome, EventSink, ExecError,
-    RepoError, WorkSpec,
+    RepoError, TaskListFilter, TaskPage, WorkQueue, WorkSpec,
 };
 
 /// 把执行者运行中 emit 的事件落到当前交付尝试(尽力而为)。
@@ -56,17 +56,34 @@ pub struct DeliveryService {
     executor: Arc<dyn AgentExecutor>,
     /// 可选观察者:尝试落终态后通知(组装根桥接到 orchestrator)。
     observer: Option<Arc<dyn DeliveryObserver>>,
+    /// 可选工作队列(机群模式):尝试落终态时 `ack`,使可靠队列移出待处理、不被回收重投。
+    queue: Option<Arc<dyn WorkQueue>>,
 }
 
 impl DeliveryService {
     pub fn new(repo: Arc<dyn DeliveryRepository>, executor: Arc<dyn AgentExecutor>) -> Self {
-        Self { repo, executor, observer: None }
+        Self { repo, executor, observer: None, queue: None }
     }
 
     /// 挂上观察者(终态通知)。
     pub fn with_observer(mut self, observer: Arc<dyn DeliveryObserver>) -> Self {
         self.observer = Some(observer);
         self
+    }
+
+    /// 挂上工作队列(机群模式):终态时 ack,配合 Redis Streams 的「认领→ack→回收」。
+    pub fn with_queue(mut self, queue: Arc<dyn WorkQueue>) -> Self {
+        self.queue = Some(queue);
+        self
+    }
+
+    /// 尝试落终态后 ack 队列(尽力而为;内存队列为 no-op)。
+    async fn ack_if_terminal(&self, attempt: &DeliveryAttempt) {
+        if attempt.status.is_terminal() {
+            if let Some(q) = &self.queue {
+                q.ack(&attempt.id).await;
+            }
+        }
     }
 
     /// 尝试进入 Running/Delivered/Failed 时通知观察者(尽力而为)。
@@ -106,6 +123,7 @@ impl DeliveryService {
 
         let mut attempt = self.repo.create(decomposition_id, task_id, kind).await?;
         let spec = WorkSpec {
+            attempt_id: attempt.id.clone(),
             decomposition_id: decomposition_id.to_string(),
             task_id: task_id.to_string(),
             title: title.trim().to_string(),
@@ -170,6 +188,7 @@ impl DeliveryService {
             summary: summary.to_string(),
         })?;
         self.repo.save(&a).await?;
+        self.ack_if_terminal(&a).await;
         self.notify_progress(&a).await;
         Ok(a)
     }
@@ -202,8 +221,40 @@ impl DeliveryService {
         let mut a = self.get(id).await?;
         a.fail(error)?;
         self.repo.save(&a).await?;
+        self.ack_if_terminal(&a).await;
         self.notify_progress(&a).await;
         Ok(a)
+    }
+
+    /// 任务中心:全系统交付尝试分页列表(执行状态/方式/结果/完成率聚合视图)。
+    pub async fn list_tasks(&self, filter: &TaskListFilter) -> Result<TaskPage, DeliveryCmdError> {
+        Ok(self.repo.list_tasks(filter).await?)
+    }
+
+    /// 用户主动停止一次进行中的交付尝试(Dispatched/Running→Stopped)。
+    /// 已是终态则冲突(409)。
+    pub async fn stop(&self, id: &str, reason: &str) -> Result<DeliveryAttempt, DeliveryCmdError> {
+        let mut a = self.get(id).await?;
+        let reason = if reason.trim().is_empty() { "stopped by user" } else { reason.trim() };
+        a.stop(reason)?;
+        self.repo.save(&a).await?;
+        self.ack_if_terminal(&a).await;
+        Ok(a)
+    }
+
+    /// 删除一次交付尝试(连同其执行事件)。仅允许删除终态尝试,进行中需先停止。
+    pub async fn delete(&self, id: &str) -> Result<(), DeliveryCmdError> {
+        let a = self.get(id).await?;
+        if !a.status.is_terminal() {
+            return Err(DeliveryCmdError::Conflict(DeliveryError::TransitionNotAllowed {
+                from: a.status.as_str(),
+                to: "DELETED",
+            }));
+        }
+        if !self.repo.delete(id).await? {
+            return Err(DeliveryCmdError::NotFound);
+        }
+        Ok(())
     }
 }
 
@@ -392,5 +443,52 @@ mod tests {
         s.dispatch("d1", "t1", "y", "", &[], "CODEX", None, None).await.expect("d");
         assert_eq!(s.list_by_task("d1", "t1").await.expect("list").len(), 2);
         assert_eq!(s.get("ghost").await.unwrap_err(), DeliveryCmdError::NotFound);
+    }
+
+    #[tokio::test]
+    async fn task_center_list_filters_and_paginates() {
+        use crate::ports::TaskListFilter;
+        let s = svc(StubBehavior::Accept { run_id: "r".into() });
+        // 两条 Running(异步接单),一条停止。
+        s.dispatch("d1", "t1", "a", "", &[], "CODEX", None, None).await.expect("d");
+        s.dispatch("d1", "t2", "b", "", &[], "CLAUDE_CODE", None, None).await.expect("d");
+        let c = s.dispatch("d1", "t3", "c", "", &[], "CODEX", None, None).await.expect("d");
+        s.stop(&c.id, "manual").await.expect("stop");
+
+        // 全量:3 条,新在前(c 最新)。
+        let all = s.list_tasks(&TaskListFilter { limit: 10, ..Default::default() }).await.expect("all");
+        assert_eq!(all.total, 3);
+        assert_eq!(all.items.len(), 3);
+        assert_eq!(all.items[0].attempt.task_id, "t3");
+
+        // 实时(未终态):剩 a、b 两条。
+        let active = s
+            .list_tasks(&TaskListFilter { active_only: true, limit: 10, ..Default::default() })
+            .await
+            .expect("active");
+        assert_eq!(active.total, 2);
+
+        // 分页:limit=1,offset=1。
+        let pg = s.list_tasks(&TaskListFilter { limit: 1, offset: 1, ..Default::default() }).await.expect("pg");
+        assert_eq!(pg.total, 3);
+        assert_eq!(pg.items.len(), 1);
+        assert_eq!(pg.items[0].attempt.task_id, "t2");
+    }
+
+    #[tokio::test]
+    async fn stop_then_delete_terminal_only() {
+        let s = svc(StubBehavior::Accept { run_id: "r".into() });
+        let a = s.dispatch("d1", "t1", "x", "", &[], "CODEX", None, None).await.expect("d");
+        // 进行中不可删除。
+        assert!(matches!(s.delete(&a.id).await.unwrap_err(), DeliveryCmdError::Conflict(_)));
+        // 停止 → 终态。
+        let stopped = s.stop(&a.id, "").await.expect("stop");
+        assert_eq!(stopped.status, AttemptStatus::Stopped);
+        assert_eq!(stopped.error.as_deref(), Some("stopped by user"));
+        // 再停止冲突。
+        assert!(matches!(s.stop(&a.id, "x").await.unwrap_err(), DeliveryCmdError::Conflict(_)));
+        // 终态可删除。
+        s.delete(&a.id).await.expect("delete");
+        assert_eq!(s.get(&a.id).await.unwrap_err(), DeliveryCmdError::NotFound);
     }
 }

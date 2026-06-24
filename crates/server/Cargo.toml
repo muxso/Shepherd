@@ -12,10 +12,13 @@ system-setting = { path = "../system-setting", features = ["pg", "http", "auth",
 project = { path = "../project", features = ["pg", "http"] }
 case = { path = "../case", features = ["pg", "http"] }
 bug = { path = "../bug", features = ["pg", "http"] }
+comment = { path = "../comment", features = ["pg", "http"] }
+follow = { path = "../follow", features = ["pg", "http"] }
 test-plan = { path = "../test-plan", features = ["pg", "http"] }
 requirement = { path = "../requirement", features = ["pg", "http"] }
 task = { path = "../task", features = ["pg", "http"] }
-delivery = { path = "../delivery", features = ["pg", "http", "exec-http", "exec-local"] }
+delivery = { path = "../delivery", features = ["pg", "http", "exec-http", "exec-local", "exec-queue", "exec-queue-redis"] }
+design = { path = "../design", features = ["pg", "http", "agent"] }
 verification = { path = "../verification", features = ["pg", "http"] }
 skill = { path = "../skill", features = ["pg", "http"] }
 orchestrator = { path = "../orchestrator" }

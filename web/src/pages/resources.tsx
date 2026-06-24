@@ -1,13 +1,14 @@
 import { Empty, Space, Table, Tag, Typography } from 'antd'
 import { ToolOutlined } from '@ant-design/icons'
 import CrudResource, { type CrudConfig } from '../components/CrudResource'
+import { PageBody, PageContainer, PageHeader } from '../components/Page'
 import { api, type Environment, type FunctionalCase, type Organization, type Role, type User } from '../api'
 import { useApp } from '../context'
 import { useI18n } from '../i18n'
 
 type TFn = ReturnType<typeof useI18n>['t']
 
-const mono = (v: string) => <span className="ms-mono" style={{ fontSize: 12, color: '#8a9099' }}>{v}</span>
+const mono = (v: string) => <span className="ms-mono" style={{ fontSize: 12, color: 'var(--text-3)' }}>{v}</span>
 
 // —— 系统管理 ——
 const makeOrgCfg = (t: TFn): CrudConfig<Organization> => ({
@@ -119,16 +120,9 @@ export function ProjectsPage() {
   const { projects } = useApp()
   const { t } = useI18n()
   return (
-    <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
-      <div style={{ padding: '14px 16px', background: '#fff', borderBottom: '1px solid #f0f0f0' }}>
-        <Typography.Text strong style={{ fontSize: 15 }}>
-          {t('res.project', '项目')}
-        </Typography.Text>
-        <Typography.Text type="secondary" style={{ marginLeft: 8, fontSize: 12 }}>
-          {t('res.newProjectHint', '新建项目在右上角「+」')}
-        </Typography.Text>
-      </div>
-      <div style={{ flex: 1, overflow: 'auto', padding: 16 }}>
+    <PageContainer>
+      <PageHeader title={t('res.project', '项目')} subtitle={t('res.newProjectHint', '新建项目在右上角「+」')} />
+      <PageBody>
         <Table
           rowKey="id"
           size="middle"
@@ -141,8 +135,8 @@ export function ProjectsPage() {
             { title: t('res.colEnabled', '启用'), dataIndex: 'enable', width: 90, render: (e: boolean) => (e ? <Tag color="green">{t('res.enabled', '启用')}</Tag> : <Tag>{t('res.disabled', '停用')}</Tag>) },
           ]}
         />
-      </div>
-    </div>
+      </PageBody>
+    </PageContainer>
   )
 }
 
@@ -152,7 +146,7 @@ export function Placeholder({ name }: { name: string }) {
   return (
     <div style={{ padding: 64, textAlign: 'center' }}>
       <Empty
-        image={<ToolOutlined style={{ fontSize: 48, color: '#c9cdd4' }} />}
+        image={<ToolOutlined style={{ fontSize: 48, color: 'var(--text-3)' }} />}
         description={
           <Space direction="vertical">
             <Typography.Text strong>{name}</Typography.Text>

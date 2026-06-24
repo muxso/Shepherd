@@ -60,6 +60,11 @@ impl ReportArchiver {
             Field::new("failures", DataType::Utf8, false),    // JSON 数组串
             Field::new("assertions", DataType::Utf8, false),  // JSON
             Field::new("extractions", DataType::Utf8, false), // JSON
+            // 实际请求(0060;冷存储也 100% 还原)。req_headers 为 JSON 串。
+            Field::new("req_method", DataType::Utf8, true),
+            Field::new("req_url", DataType::Utf8, true),
+            Field::new("req_headers", DataType::Utf8, false),
+            Field::new("req_body", DataType::Utf8, true),
         ]));
         let n = d.results.len();
         let report_ids = StringArray::from(vec![report_id; n]);
@@ -76,6 +81,12 @@ impl ReportArchiver {
         );
         let assertions = StringArray::from(d.results.iter().map(|r| r.assertions.to_string()).collect::<Vec<_>>());
         let extractions = StringArray::from(d.results.iter().map(|r| r.extractions.to_string()).collect::<Vec<_>>());
+        let req_method = StringArray::from(d.results.iter().map(|r| r.req_method.as_deref()).collect::<Vec<_>>());
+        let req_url = StringArray::from(d.results.iter().map(|r| r.req_url.as_deref()).collect::<Vec<_>>());
+        let req_headers = StringArray::from(
+            d.results.iter().map(|r| serde_json::json!(r.req_headers).to_string()).collect::<Vec<_>>(),
+        );
+        let req_body = StringArray::from(d.results.iter().map(|r| r.req_body.as_deref()).collect::<Vec<_>>());
         let batch = RecordBatch::try_new(
             schema.clone(),
             vec![
@@ -91,6 +102,10 @@ impl ReportArchiver {
                 Arc::new(failures),
                 Arc::new(assertions),
                 Arc::new(extractions),
+                Arc::new(req_method),
+                Arc::new(req_url),
+                Arc::new(req_headers),
+                Arc::new(req_body),
             ],
         )
         .map_err(be)?;
@@ -142,6 +157,10 @@ mod tests {
             headers: vec![],
             assertions: serde_json::json!([{"item": "状态码", "passed": true}]),
             extractions: serde_json::json!([["token", "abc"]]),
+            req_method: Some("GET".to_string()),
+            req_url: Some("http://x/healthz".to_string()),
+            req_headers: vec![],
+            req_body: None,
         }
     }
 
@@ -177,10 +196,14 @@ mod tests {
             rows += batch.num_rows();
             let outcome =
                 batch.column(4).as_any().downcast_ref::<StringArray>().expect("outcome col");
+            // 实际请求列(0060)随归档落盘:req_method 在 extractions 之后(索引 12)。
+            let req_method =
+                batch.column(12).as_any().downcast_ref::<StringArray>().expect("req_method col");
             for i in 0..batch.num_rows() {
                 if outcome.value(i) == "ERROR" {
                     errors += 1;
                 }
+                assert_eq!(req_method.value(i), "GET"); // row() 固定 req_method=GET
             }
         }
         assert_eq!(rows, 2);

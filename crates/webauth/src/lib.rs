@@ -2,8 +2,10 @@
 //! 以及(feature=http)从 `Authorization: Bearer` 还原 `AuthUser` 的 axum 提取器。
 
 use async_trait::async_trait;
-use kernel::permission::PermissionSet;
 use thiserror::Error;
+
+// 便于下游(如 server)铸造服务令牌而无需直接依赖 kernel;同时供本 crate 内部使用。
+pub use kernel::permission::PermissionSet;
 
 /// 已认证用户(从会话还原后注入请求)。
 #[derive(Debug, Clone)]

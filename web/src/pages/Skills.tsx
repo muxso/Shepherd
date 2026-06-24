@@ -5,6 +5,7 @@ import { PlusOutlined, ReloadOutlined, MergeCellsOutlined } from '@ant-design/ic
 import { api, ApiError, type Skill } from '../api'
 import { useApp } from '../context'
 import { useI18n } from '../i18n'
+import { PageBody, PageContainer, PageHeader, SelectProjectEmpty } from '../components/Page'
 
 export default function Skills() {
   const { t } = useI18n()
@@ -43,29 +44,25 @@ export default function Skills() {
     },
   })
 
-  if (!projectId)
-    return (
-      <div style={{ padding: 48 }}>
-        <Empty description={t('common.selectProject', '请先在顶部选择项目')} />
-      </div>
-    )
+  if (!projectId) return <SelectProjectEmpty />
 
   return (
-    <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '14px 16px', background: '#fff', borderBottom: '1px solid #f0f0f0' }}>
-        <Typography.Text strong style={{ fontSize: 15 }}>
-          {t('m.skill', '技能')}
-        </Typography.Text>
-        <div style={{ flex: 1 }} />
-        <Button icon={<MergeCellsOutlined />} onClick={() => setComposeOpen(true)} disabled={!items.length}>
-          {t('skill.compose', '组合技能')}
-        </Button>
-        <Button type="primary" icon={<PlusOutlined />} onClick={() => setCreateOpen(true)}>
-          {t('skill.new', '新建技能')}
-        </Button>
-        <Button icon={<ReloadOutlined />} onClick={refresh} />
-      </div>
-      <div style={{ flex: 1, overflow: 'auto', padding: 16 }}>
+    <PageContainer>
+      <PageHeader
+        title={t('m.skill', '技能')}
+        extra={
+          <>
+            <Button icon={<MergeCellsOutlined />} onClick={() => setComposeOpen(true)} disabled={!items.length}>
+              {t('skill.compose', '组合技能')}
+            </Button>
+            <Button type="primary" icon={<PlusOutlined />} onClick={() => setCreateOpen(true)}>
+              {t('skill.new', '新建技能')}
+            </Button>
+            <Button icon={<ReloadOutlined />} onClick={refresh} />
+          </>
+        }
+      />
+      <PageBody>
         <Table<Skill>
           rowKey="id"
           size="middle"
@@ -75,10 +72,10 @@ export default function Skills() {
           locale={{ emptyText: <Empty description={t('skill.empty', '暂无技能')} /> }}
           columns={[
             { title: t('skill.name', '名称'), dataIndex: 'name', render: (v: string) => <span style={{ fontWeight: 500 }}>{v}</span> },
-            { title: t('skill.descLabel', '描述'), dataIndex: 'description', render: (v?: string) => v || <span style={{ color: '#bbb' }}>—</span> },
+            { title: t('skill.descLabel', '描述'), dataIndex: 'description', render: (v?: string) => v || <span style={{ color: 'var(--text-3)' }}>—</span> },
             { title: t('skill.instructionsSummary', '指令摘要'), dataIndex: 'instructions', render: (v?: string) => <Typography.Text type="secondary" ellipsis style={{ maxWidth: 360 }}>{v || '—'}</Typography.Text> },
             { title: t('skill.enabled', '启用'), dataIndex: 'enabled', width: 80, render: (v: boolean) => <Tag color={v ? 'green' : 'default'}>{v ? t('skill.on', '启用') : t('skill.off', '停用')}</Tag> },
-            { title: 'ID', dataIndex: 'id', width: 100, render: (v: string) => <Tooltip title={v}><span className="ms-mono" style={{ fontSize: 12, color: '#8a9099' }}>{v?.slice(0, 8)}</span></Tooltip> },
+            { title: 'ID', dataIndex: 'id', width: 100, render: (v: string) => <Tooltip title={v}><span className="ms-mono" style={{ fontSize: 12, color: 'var(--text-3)' }}>{v?.slice(0, 8)}</span></Tooltip> },
             {
               title: t('req.action', '操作'),
               width: 130,
@@ -91,7 +88,7 @@ export default function Skills() {
             },
           ]}
         />
-      </div>
+      </PageBody>
 
       <SkillFormModal
         open={createOpen}
@@ -110,7 +107,7 @@ export default function Skills() {
       />
 
       <ComposeModal open={composeOpen} skills={items} projectId={projectId} onClose={() => setComposeOpen(false)} />
-    </div>
+    </PageContainer>
   )
 }
 

@@ -2,11 +2,20 @@
 // 所有请求带 Bearer token;401 触发登出回调。dev 经 Vite proxy → :9180。
 
 const TOKEN_KEY = 'shepherd.token'
+const USER_KEY = 'shepherd.user'
 
 export const tokenStore = {
   get: () => localStorage.getItem(TOKEN_KEY) || '',
   set: (t: string) => localStorage.setItem(TOKEN_KEY, t),
   clear: () => localStorage.removeItem(TOKEN_KEY),
+}
+
+// 当前登录用户名:登录时写入,供个人中心 / 创建人列等展示(后端暂无 /me)。
+// 单一来源,避免各页对 localStorage key 与兜底值各写一份导致漂移。
+export const userStore = {
+  get: () => localStorage.getItem(USER_KEY) || 'admin',
+  set: (u: string) => localStorage.setItem(USER_KEY, u),
+  clear: () => localStorage.removeItem(USER_KEY),
 }
 
 let onUnauthorized: (() => void) | null = null
@@ -152,6 +161,41 @@ export interface ApiSpecResponse {
 }
 /** 请求体 content-type(对标 MeterSphere)。 */
 export type ApiBodyType = 'none' | 'form-data' | 'x-www-form-urlencoded' | 'json' | 'xml' | 'raw' | 'binary'
+
+/** body 类型 → 默认 Content-Type;none 无体、raw 不强加(由用户/请求头决定)→ undefined。 */
+export function contentTypeForBodyType(t?: ApiBodyType): string | undefined {
+  switch (t) {
+    case 'json':
+      return 'application/json'
+    case 'xml':
+      return 'application/xml'
+    case 'form-data':
+      // multipart 需 boundary 参数,而编辑器只提供原始文本体;不自动附加(无 boundary 的头反而让服务端解析失败),交由用户在请求头自定义。
+      return undefined
+    case 'x-www-form-urlencoded':
+      return 'application/x-www-form-urlencoded'
+    case 'binary':
+      return 'application/octet-stream'
+    default:
+      // none / raw / 未指定:不自动附加,Content-Type 可选。
+      return undefined
+  }
+}
+
+/**
+ * 按 body 类型为请求头补一个默认 Content-Type —— 但「可选」:
+ * 用户已在请求头里写了 Content-Type(大小写不敏感)时尊重用户的,不覆盖;
+ * body 类型为 none/raw 时不附加。返回新数组,不改入参。
+ */
+export function withBodyContentType<T extends { key: string; value: string }>(
+  headers: T[],
+  bodyType?: ApiBodyType,
+): T[] {
+  const ct = contentTypeForBodyType(bodyType)
+  if (!ct) return headers
+  if (headers.some((h) => h.key.trim().toLowerCase() === 'content-type')) return headers
+  return [...headers, { key: 'Content-Type', value: ct } as T]
+}
 /** 认证模式。 */
 export interface ApiSpecAuth {
   type?: 'none' | 'bearer' | 'basic'
@@ -228,6 +272,43 @@ export interface ApiModule {
   name: string
 }
 
+/** 支持的导入来源格式。 */
+export type ImportFormat = 'openapi' | 'postman' | 'har' | 'jmeter' | 'metersphere'
+
+/** 定时导入计划(后端不回吐 token)。 */
+export interface ImportSchedule {
+  id: string
+  projectId: string
+  name: string
+  format: ImportFormat
+  sourceUrl: string
+  basicAuth: boolean
+  moduleId?: string | null
+  groupByTag: boolean
+  overwrite: boolean
+  syncModule: boolean
+  cron: string
+  enabled: boolean
+  lastRunAt?: string | null
+  lastResult: string
+  /** 最近一次运行的操作人(手动「立即执行」记触发用户;cron 自动运行为空 → 前端展示「自动」;见 0062 迁移)。 */
+  lastRunBy?: string
+  /** 创建人 user_id(后端审计列;见 0061 迁移)。 */
+  createdBy: string
+  createdAt: string
+}
+
+/** URL 导入 / 定时导入共用的导入选项。 */
+export interface ImportOpts {
+  format?: ImportFormat
+  moduleId?: string | null
+  groupByTag?: boolean
+  overwrite?: boolean
+  syncModule?: boolean
+  token?: string
+  basicAuth?: boolean
+}
+
 /** 接口定义变更历史一条(审计)。 */
 export interface ApiDefinitionChange {
   id: string
@@ -266,6 +347,8 @@ export interface ApiMock {
   responseStatus: number
   responseBody: string | null
   enabled: boolean
+  /** 创建人 user_id(审计列;见 0057 迁移)。 */
+  createdBy?: string
   /** MeterSphere 对齐:标签 / 响应头 / 响应延时(ms)/ 跟随定义(见 0040 迁移)。 */
   tags?: string[]
   responseHeaders?: { key: string; value: string }[]
@@ -359,6 +442,8 @@ export interface ReportResultItem {
   /** 逐条断言结果(含通过项)+ 提取变量(0048 后回填;旧报告为空数组)。 */
   assertions?: AssertionResult[]
   extractions?: [string, string][]
+  /** 实际发送的请求(0060 后回填;变量/baseUrl/认证已解析)。CASE 引用步骤也有。 */
+  request?: { method: string; url: string; headers: [string, string][]; body?: string | null } | null
 }
 export interface ScenarioReportDetail {
   reportId: string
@@ -490,6 +575,8 @@ export interface FunctionalCase {
   status?: string
   steps?: CaseStep[]
   customFields?: Record<string, string>
+  /** 创建人 user_id(见 0063 迁移)。 */
+  createdBy?: string
 }
 
 /** 需求覆盖里的一条功能用例(按验收标准下标 criterionIndex)。 */
@@ -627,6 +714,9 @@ export interface DeliveryAttempt {
   taskId?: string
   title?: string
   executor?: string
+  runId?: string | null
+  deliverable?: { kind: string; reference: string; summary: string } | null
+  error?: string | null
 }
 
 export interface DeliveryEvent {
@@ -636,6 +726,48 @@ export interface DeliveryEvent {
   detail?: unknown
 }
 
+/** 任务中心一行:全系统交付尝试的执行状态/方式/结果/完成率聚合视图。 */
+export interface TaskCenterItem {
+  id: string
+  decompositionId: string
+  taskId: string
+  title: string
+  /** 任务描述(基本信息;无关联任务则空串)。 */
+  description: string
+  /** 所属模块(基本信息;任务归属需求标题,无则空串)。 */
+  module: string
+  /** 执行方式(执行者):CLAUDE_CODE / CODEX。 */
+  executor: string
+  /** 执行状态:DISPATCHED / RUNNING / DELIVERED / FAILED / STOPPED。 */
+  status: string
+  /** 执行结果:SUCCESS / FAILED / STOPPED / PENDING。 */
+  result: string
+  /** 完成率 0..100。 */
+  completionRate: number
+  runId?: string
+  error?: string
+  createdAt: number
+  eventCount: number
+}
+
+export interface TaskCenterPage {
+  total: number
+  current: number
+  pageSize: number
+  totalPages: number
+  items: TaskCenterItem[]
+}
+
+export interface TaskCenterQuery {
+  status?: string
+  executor?: string
+  /** 仅实时任务(未终态)。 */
+  active?: boolean
+  q?: string
+  page?: number
+  pageSize?: number
+}
+
 /** 执行机 / AI agent(Claude Code、Codex 等远程执行者),注册时自报支持协议。 */
 export interface RunnerAgent {
   id: string
@@ -643,6 +775,16 @@ export interface RunnerAgent {
   baseUrl: string
   enabled: boolean
   protocols: string[]
+}
+
+// AI 执行者机群:远程 Claude/Codex runtime,出站 register/heartbeat,server 据心跳判活。
+export interface FleetRuntime {
+  id: string
+  name: string
+  caps: string[]
+  maxConcurrency: number
+  lastSeenMs: number
+  online: boolean
 }
 
 export interface RunnerExecution {
@@ -693,8 +835,19 @@ export interface CaseReviewDetail {
 
 export interface Bug {
   id: string
+  projectId?: string
   title?: string
   status: string
+  createdAt?: number
+}
+
+/** 关注状态:某对象的关注人列表 + 当前用户是否在关注(后端 /follow 回读)。 */
+export interface FollowStatus {
+  entityType: string
+  entityId: string
+  following: boolean
+  followers: string[]
+  followerCount: number
 }
 
 export interface McpTool {
@@ -767,6 +920,11 @@ export const api = {
     http.post<ApiView>('/api/api-view', b),
   deleteView: (id: string) => http.del(`/api/api-view/${id}`),
   getDefinition: (id: string) => http.get<ApiDefinition>(`/api/definition/${id}`),
+  // 更新接口定义基础字段(名称/协议/方法/路径);缺省字段后端保持原值,返回更新后的定义。
+  updateDefinition: (
+    id: string,
+    b: { name?: string; protocol?: string; method?: string; path?: string },
+  ) => http.put<ApiDefinition>(`/api/definition/${id}`, b),
   deleteDefinition: (id: string) => http.del(`/api/definition/${id}`),
   updateDefinitionSpec: (id: string, spec: ApiSpec) =>
     http.put(`/api/definition/${id}/spec`, { spec }),
@@ -785,15 +943,55 @@ export const api = {
     method?: string
     path?: string
   }) => http.post<ApiDefinition>('/api/definition', b),
-  importDefinitions: (projectId: string, content: unknown, opts?: { moduleId?: string | null; groupByTag?: boolean; overwrite?: boolean; syncModule?: boolean }) =>
+  // 文件/粘贴导入:OpenAPI/Postman/HAR/MeterSphere 传 JSON 对象;JMeter(.jmx XML)传原始文本字符串。
+  importDefinitions: (projectId: string, content: unknown, opts?: ImportOpts) =>
     http.post<{ created: ApiDefinition[]; updated: number; skipped: number }>('/api/definition/import', {
       projectId,
       content,
+      format: opts?.format ?? 'openapi',
       moduleId: opts?.moduleId || undefined,
       groupByTag: opts?.groupByTag ?? true,
       overwrite: opts?.overwrite ?? true,
       syncModule: opts?.syncModule ?? false,
     }),
+  // URL 导入:服务端拉取来源 URL(绕开浏览器跨域)并按格式导入,返回新增/覆盖/跳过计数。
+  importFromUrl: (projectId: string, url: string, opts?: ImportOpts) =>
+    http.post<{ created: number; updated: number; skipped: number }>('/api/definition/import-url', {
+      projectId,
+      url,
+      format: opts?.format ?? 'openapi',
+      token: opts?.token || undefined,
+      basicAuth: opts?.basicAuth ?? false,
+      moduleId: opts?.moduleId || undefined,
+      groupByTag: opts?.groupByTag ?? true,
+      overwrite: opts?.overwrite ?? true,
+      syncModule: opts?.syncModule ?? false,
+    }),
+
+  // 定时导入计划
+  importSchedules: (projectId: string) =>
+    projectId
+      ? http.get<ImportSchedule[]>(`/api/import-schedule?projectId=${encodeURIComponent(projectId)}`)
+      : Promise.resolve([] as ImportSchedule[]),
+  createImportSchedule: (b: {
+    projectId: string
+    name?: string
+    url: string
+    cron: string
+    format?: ImportFormat
+    token?: string
+    basicAuth?: boolean
+    moduleId?: string | null
+    groupByTag?: boolean
+    overwrite?: boolean
+    syncModule?: boolean
+    enabled?: boolean
+  }) => http.post<ImportSchedule>('/api/import-schedule', b),
+  setImportScheduleEnabled: (id: string, enabled: boolean) =>
+    http.put(`/api/import-schedule/${id}/enabled`, { enabled }),
+  runImportSchedule: (id: string) =>
+    http.post<{ result: string }>(`/api/import-schedule/${id}/run`),
+  deleteImportSchedule: (id: string) => http.del(`/api/import-schedule/${id}`),
 
   // 接口模块(文件夹)
   modules: (projectId: string) =>
@@ -879,6 +1077,20 @@ export const api = {
     steps?: CaseStep[]
     customFields?: Record<string, string>
   }) => http.post<FunctionalCase>('/functional-case', b),
+  // 全量更新一条功能用例(PUT 语义:未传字段会被覆盖为缺省,调用方需带齐字段)。
+  updateFunctionalCase: (
+    id: string,
+    b: {
+      projectId: string
+      name: string
+      priority?: string
+      status?: string
+      module?: string
+      steps?: CaseStep[]
+      customFields?: Record<string, string>
+    },
+  ) => http.put<FunctionalCase>(`/functional-case/${id}`, b),
+  deleteFunctionalCase: (id: string) => http.del<void>(`/functional-case/${id}`),
   // 导出 xlsx(二进制下载)/ 导入 xlsx(原始字节上传,返回导入条数)。
   exportFunctionalCases: (projectId: string) =>
     http.getBlob(`/functional-case/export?projectId=${encodeURIComponent(projectId)}`),
@@ -921,6 +1133,9 @@ export const api = {
   planCases: (id: string) => http.get<PlanCase[] | Page<PlanCase>>(`/test-plan/${id}/cases`),
   linkPlanCase: (id: string, caseId: string, name: string) =>
     http.post(`/test-plan/${id}/cases`, { caseId, name }),
+  // 手动登记一条用例的执行结果(通过/不通过/阻塞/误报);status: SUCCESS|ERROR|BLOCK|FAKE_ERROR|PENDING
+  recordPlanCaseResult: (id: string, caseId: string, status: string) =>
+    http.post(`/test-plan/${id}/cases/${caseId}/result`, { status }),
   runPlan: (id: string, environmentId?: string) =>
     http.post<{ status?: string; total: number; executed: number }>(`/test-plan/${id}/run`, { environmentId }),
   planSchedule: (id: string, cron: string) => http.post(`/test-plan/${id}/schedule`, { cron }),
@@ -992,7 +1207,24 @@ export const api = {
     ),
   deliveryEvents: (attemptId: string) => http.get<DeliveryEvent[]>(`/delivery/${attemptId}/events`),
 
+  // 任务中心(系统级:后台任务/即时任务列表 + 执行详情 + 停止/删除)
+  taskCenter: (params: TaskCenterQuery = {}) => {
+    const sp = new URLSearchParams()
+    if (params.status) sp.set('status', params.status)
+    if (params.executor) sp.set('executor', params.executor)
+    if (params.active) sp.set('active', 'true')
+    if (params.q) sp.set('q', params.q)
+    sp.set('page', String(params.page ?? 1))
+    sp.set('pageSize', String(params.pageSize ?? 20))
+    return http.get<TaskCenterPage>(`/delivery/tasks?${sp.toString()}`)
+  },
+  stopTask: (id: string, reason?: string) =>
+    http.post<DeliveryAttempt>(`/delivery/${id}/stop`, { reason }),
+  deleteTask: (id: string) => http.del<void>(`/delivery/${id}`),
+
   // 执行机 / AI agent 管理(人机协同的执行者侧)
+  // AI 执行者机群(SHEPHERD_AGENT_FLEET 模式):列出远程 runtime + 在线状态。
+  fleetRuntimes: () => http.get<FleetRuntime[]>('/agent/runtime'),
   runnerAgents: () => http.get<RunnerAgent[]>('/runner-agent'),
   registerRunnerAgent: (b: { name: string; baseUrl: string; token?: string; enabled?: boolean }) =>
     http.post<RunnerAgent>('/runner-agent', b),
@@ -1015,9 +1247,25 @@ export const api = {
   submitCaseReview: (reviewId: string, caseId: string, b: { reviewerId: string; status: string; content?: string }) =>
     http.post<{ status: string }>(`/case-review/${reviewId}/${caseId}`, b),
 
-  // 缺陷 — 无 list 端点,列表用前端注册表
+  // 缺陷 — 列表/创建/状态流转全走后端(按项目隔离,按创建时间倒序)
+  bugs: (projectId: string) =>
+    projectId ? http.get<Bug[]>(`/bug?projectId=${encodeURIComponent(projectId)}`) : Promise.resolve([] as Bug[]),
   createBug: (b: { projectId: string; title: string; initialStatus: string }) => http.post<Bug>('/bug', b),
   setBugStatus: (id: string, status: string) => http.post<Bug>(`/bug/${id}/status`, { status }),
+
+  // 关注人(通用):任意对象按 (projectId, entityType, entityId) 关注/取消/查询。
+  follow: (b: { projectId: string; entityType: string; entityId: string }) =>
+    http.post<FollowStatus>('/follow', b),
+  unfollow: (b: { projectId: string; entityType: string; entityId: string }) =>
+    http.del<FollowStatus>('/follow', b),
+  followStatus: (projectId: string, entityType: string, entityId: string) =>
+    http.get<FollowStatus>(
+      `/follow?projectId=${encodeURIComponent(projectId)}&entityType=${encodeURIComponent(entityType)}&entityId=${encodeURIComponent(entityId)}`,
+    ),
+  myFollows: (projectId: string, entityType?: string) =>
+    http.get<{ entityIds: string[] }>(
+      `/follow/mine?projectId=${encodeURIComponent(projectId)}${entityType ? `&entityType=${encodeURIComponent(entityType)}` : ''}`,
+    ),
 
   // 技能 — 列表/详情/更新/删除走后端
   skills: (projectId: string) =>
@@ -1074,6 +1322,20 @@ export const api = {
       followDefinition?: boolean
     },
   ) => http.post<ApiMock>(`/api/definition/${definitionId}/mock`, b),
+  updateMock: (
+    mockId: string,
+    b: {
+      name: string
+      matchRule?: unknown
+      responseStatus?: number
+      responseBody?: string
+      enabled?: boolean
+      tags?: string[]
+      responseHeaders?: { key: string; value: string }[]
+      responseDelayMs?: number
+      followDefinition?: boolean
+    },
+  ) => http.put(`/api/mock/${mockId}`, b),
 
   scenarios: (projectId: string) =>
     projectId

@@ -151,6 +151,7 @@ mod tests {
 
     fn spec() -> WorkSpec {
         WorkSpec {
+            attempt_id: "a1".into(),
             decomposition_id: "d1".into(),
             task_id: "t1".into(),
             title: "build".into(),

@@ -21,7 +21,11 @@ interface ProtoSpec {
   proto: string // 后端协议名(用于按可用列表过滤)
   label: string
   urlPlaceholder: string // url 字段语义随协议而变(连接串/host:port/ws URL…)
+  // 含中文的占位符走 i18n:phKey/phFallback 在 render 时经 t() 解析(覆盖 urlPlaceholder)。
+  urlPhKey?: string
   bodyPlaceholder?: string // body=载荷(命令/SQL/发送文本…)
+  bodyPhKey?: string // body 占位符的 i18n key(含中文时)
+  bodyPhFallback?: string
   meta?: MetaField[] // 额外参数 → debug/send.meta(如 ssh user/password、grpc method)
   httpMethod?: boolean // 仅 HTTP 显示方法下拉
 }
@@ -33,7 +37,10 @@ const PROTOCOLS: ProtoSpec[] = [
     proto: 'ssh',
     label: 'SSH',
     urlPlaceholder: 'host:port(默认 22)',
+    urlPhKey: 'editor.sshUrlPlaceholder',
     bodyPlaceholder: '要执行的命令',
+    bodyPhKey: 'editor.sshBodyPlaceholder',
+    bodyPhFallback: '要执行的命令',
     meta: [
       { key: 'user', labelKey: 'editor.sshUser', fallback: '用户名' },
       { key: 'password', labelKey: 'editor.sshPass', fallback: '密码', secret: true },
@@ -41,13 +48,15 @@ const PROTOCOLS: ProtoSpec[] = [
   },
   { value: 'SQL', proto: 'sql', label: 'SQL(PG)', urlPlaceholder: 'postgres://user:pass@host:port/db', bodyPlaceholder: 'SELECT 1' },
   { value: 'MYSQL', proto: 'mysql', label: 'MySQL', urlPlaceholder: 'mysql://user:pass@host:port/db', bodyPlaceholder: 'SELECT 1' },
-  { value: 'WEBSOCKET', proto: 'websocket', label: 'WebSocket', urlPlaceholder: 'ws://host:port/path', bodyPlaceholder: '(可选)发送文本' },
+  { value: 'WEBSOCKET', proto: 'websocket', label: 'WebSocket', urlPlaceholder: 'ws://host:port/path', bodyPlaceholder: '(可选)发送文本', bodyPhKey: 'editor.wsBodyPlaceholder', bodyPhFallback: '(可选)发送文本' },
   {
     value: 'GRPC',
     proto: 'grpc',
     label: 'gRPC',
     urlPlaceholder: 'http://host:port',
     bodyPlaceholder: '(请求字节,可空)',
+    bodyPhKey: 'editor.grpcBodyPlaceholder',
+    bodyPhFallback: '(请求字节,可空)',
     meta: [{ key: 'method', labelKey: 'editor.grpcMethod', fallback: '完整方法路径,如 pkg.Service/Method' }],
   },
 ]
@@ -234,7 +243,7 @@ export default function RequestEditor({
                     </Radio.Group>
                   </Space>
                   <pre style={{ background: '#0f1419', color: '#d6deeb', padding: 12, borderRadius: 6, maxHeight: 360, overflow: 'auto', fontSize: 12, whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
-                    {respView === 'json' ? pretty(resp?.body || '') : resp?.body || t('editor.empty', '(空)')}
+                    {respView === 'json' ? pretty(resp?.body || '', t('editor.empty', '(空)')) : resp?.body || t('editor.empty', '(空)')}
                   </pre>
                 </>
               ),
@@ -286,7 +295,7 @@ export default function RequestEditor({
             notFoundContent={t('editor.noEnvConfigured', '未配置环境,去「环境」页新建')}
           />
         )}
-        <Input value={url} onChange={(e) => setUrl(e.target.value)} placeholder={spec.httpMethod ? t('editor.urlPlaceholder', '/apis/... 或 http://...') : spec.urlPlaceholder} className="ms-mono" onPressEnter={send} />
+        <Input value={url} onChange={(e) => setUrl(e.target.value)} placeholder={spec.httpMethod ? t('editor.urlPlaceholder', '/apis/... 或 http://...') : spec.urlPhKey ? t(spec.urlPhKey, spec.urlPlaceholder) : spec.urlPlaceholder} className="ms-mono" onPressEnter={send} />
         <Button type="primary" icon={<SendOutlined />} loading={sending} onClick={send}>{t('a.send', '发送')}</Button>
       </Space.Compact>
       {spec.httpMethod && env?.baseUrl && (
@@ -316,7 +325,7 @@ export default function RequestEditor({
         items={[
           { key: 'query', label: `Query${queryCount ? ` (${queryCount})` : ''}`, children: <KvTable rows={query} setRows={setQuery} mock /> },
           { key: 'headers', label: `${t('editor.reqHeaders', '请求头')}${headerCount ? ` (${headerCount})` : ''}`, children: <KvTable rows={headers} setRows={setHeaders} mock /> },
-          { key: 'body', label: t('editor.reqBody', '请求体'), children: <Input.TextArea rows={8} value={body} onChange={(e) => setBody(e.target.value)} placeholder={spec.bodyPlaceholder || '{"username":"admin"}'} className="ms-mono" /> },
+          { key: 'body', label: t('editor.reqBody', '请求体'), children: <Input.TextArea rows={8} value={body} onChange={(e) => setBody(e.target.value)} placeholder={(spec.bodyPhKey ? t(spec.bodyPhKey, spec.bodyPhFallback) : spec.bodyPlaceholder) || '{"username":"admin"}'} className="ms-mono" /> },
           {
             key: 'auth',
             label: t('editor.auth', '认证'),
@@ -362,11 +371,11 @@ export default function RequestEditor({
   )
 }
 
-function pretty(s: string): string {
+function pretty(s: string, empty = '(空)'): string {
   try {
     return JSON.stringify(JSON.parse(s), null, 2)
   } catch {
-    return s || '(空)'
+    return s || empty
   }
 }
 

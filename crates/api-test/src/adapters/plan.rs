@@ -217,7 +217,10 @@ impl PlanExecutor {
         if wait > 0 {
             tokio::time::sleep(Duration::from_millis(wait)).await;
         }
-        let (report, snap) = self.runner.run_case_with_snapshot(&req, &assertions).await;
+        // 用运行上下文变量计算结果,使 Variable 断言可读取已提取/环境变量。
+        // 否则 outcome 用空 vars 算(误报),而下方 detailed 用 state.vars 算,两者矛盾。
+        let (report, snap) =
+            self.runner.run_case_with_snapshot_vars(&req, &assertions, &state.vars).await;
         let (outcome, failures): (&str, Vec<String>) = match report.outcome {
             CaseOutcome::Success => ("SUCCESS", Vec::new()),
             CaseOutcome::Error => ("ERROR", report.failures),
@@ -254,6 +257,11 @@ impl PlanExecutor {
                     &s.headers,
                     &assertions_json,
                     &extractions_json,
+                    // 实际发送的请求(env baseUrl + ${var} + 认证头均已解析,见上方 apply_env_static/substitute_request)。
+                    req.method.as_str(),
+                    &req.url,
+                    &req.headers,
+                    req.body.as_deref(),
                 )
                 .await;
             // EXTRACT 后置:写入上下文供后续节点引用。
@@ -481,5 +489,48 @@ mod tests {
             .await
             .expect("ok");
         assert!(ok); // b 用到了 a 提取的 ${tk}
+    }
+
+    // 回归:Leaf::Case 的 Variable 断言必须用运行上下文变量算结果(否则 outcome 用空 vars
+    // → 误报 ERROR,而详情表却用 state.vars 显示 PASSED,两者矛盾)。
+    #[tokio::test]
+    async fn case_variable_assertion_uses_context_vars_not_misreport() {
+        let base = spawn().await;
+        let extract = vec![Processor::Extract {
+            extractors: vec![api_runner::Extractor {
+                variable: "tk".into(),
+                kind: api_runner::ExtractKind::JsonPath,
+                expression: "$.token".into(),
+                scope: api_runner::ExtractScope::Temp,
+            }],
+        }];
+        let specs = InMemorySpecs::default()
+            .with("a", get_case(format!("{base}/token"), vec![Assertion::StatusIs(200)], extract))
+            .with(
+                "b",
+                get_case(
+                    format!("{base}/ok"),
+                    // 断言读取 a 提取的 ${tk};修复前 outcome 用空 vars 算 → 误报 ERROR。
+                    vec![Assertion::Variable {
+                        name: "tk".into(),
+                        condition: MatchCondition::Equals,
+                        expected: "T-1".into(),
+                    }],
+                    vec![],
+                ),
+            );
+        let sink = SpySink::default();
+        let plan = vec![
+            PlanNode::Leaf(Leaf::Case { case_id: "a".into() }),
+            PlanNode::Leaf(Leaf::Case { case_id: "b".into() }),
+        ];
+        let ok = exec(specs, sink.clone())
+            .run("r1", &plan, &ResolvedEnv::default(), false)
+            .await
+            .expect("ok");
+        assert!(ok);
+        let rows = sink.rows.lock().expect("lock");
+        let b = rows.iter().find(|(id, _)| id == "b").expect("b recorded");
+        assert_eq!(b.1, "SUCCESS"); // Variable 断言用 ${tk}=T-1 通过,不再误报
     }
 }

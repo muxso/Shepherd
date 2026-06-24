@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { Button, Dropdown, Form, Input, Modal, Segmented, Space, Switch, Table, Tag, message } from 'antd'
 import { MoreOutlined, SearchOutlined } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
-import { api, ApiError, type Organization, type Project } from '../api'
+import { api, ApiError, userStore, type Organization, type Project } from '../api'
 import { modal } from '../feedback'
 import { useI18n } from '../i18n'
 
@@ -53,11 +53,11 @@ export default function OrgProjects() {
   const orgCols: ColumnsType<Organization> = [
     { title: 'ID', dataIndex: 'id', width: 130, ellipsis: true, render: (v: string) => <span className="ms-mono" style={{ fontSize: 12 }}>{v.slice(0, 12)}</span> },
     { title: t('op.name', '名称'), dataIndex: 'name', width: 160, render: (v: string) => <span style={{ fontWeight: 600 }}>{v}</span> },
-    { title: t('op.members', '成员'), width: 90, render: () => <span style={{ color: '#06a561' }}>{userCount}</span> },
+    { title: t('op.members', '成员'), width: 90, render: () => <span style={{ color: 'var(--brand)' }}>{userCount}</span> },
     { title: t('op.projects', '项目'), width: 90, render: (_v, o) => <span style={{ color: '#1677ff' }}>{projByOrg[o.id]?.length ?? 0}</span> },
     { title: t('op.status', '状态'), width: 80, render: (_v, o) => <Switch size="small" checked={o.enable !== false} onChange={(c) => toggleOrg(o, c)} /> },
-    { title: t('op.desc', '描述'), render: () => <span style={{ color: '#8a9099' }}>{t('op.sysDefault', '系统默认创建的组织')}</span> },
-    { title: t('op.creator', '创建人'), width: 120, render: () => 'Administrator' },
+    { title: t('op.desc', '描述'), render: () => <span style={{ color: 'var(--text-3)' }}>{t('op.sysDefault', '系统默认创建的组织')}</span> },
+    { title: t('op.creator', '创建人'), width: 120, render: () => userStore.get() },
     {
       title: t('apidef.colAction', '操作'), width: 180, fixed: 'right',
       render: (_v, o) => (
@@ -79,12 +79,12 @@ export default function OrgProjects() {
   ]
 
   return (
-    <div style={{ padding: 12, height: '100%', overflow: 'auto', background: '#f5f6f8' }}>
+    <div style={{ padding: 12, height: '100%', overflow: 'auto', background: 'var(--bg)' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
         <Segmented value={tab} onChange={(v) => setTab(v as string)} options={[{ label: `${t('op.orgs', '组织')}(${orgs.length})`, value: 'org' }, { label: `${t('op.projTab', '项目')}(${allProjects.length})`, value: 'proj' }]} />
         <Button type="primary" onClick={() => setCreateOpen(true)}>{t('op.createOrg', '创建组织')}</Button>
         <div style={{ flex: 1 }} />
-        <Input allowClear prefix={<SearchOutlined style={{ color: '#bbb' }} />} placeholder={t('op.search', '通过 ID/名称搜索')} style={{ width: 260 }} value={q} onChange={(e) => setQ(e.target.value)} />
+        <Input allowClear prefix={<SearchOutlined style={{ color: 'var(--text-3)' }} />} placeholder={t('op.search', '通过 ID/名称搜索')} style={{ width: 260 }} value={q} onChange={(e) => setQ(e.target.value)} />
       </div>
       {tab === 'org' ? (
         <Table<Organization> rowKey="id" size="middle" loading={loading} dataSource={orgRows} columns={orgCols} scroll={{ x: 'max-content' }} pagination={{ pageSize: 50, size: 'small', showTotal: (n) => `${t('apidef.totalPrefix', '共')} ${n} ${t('proj.unit', '条')}` }} />

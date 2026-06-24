@@ -1,11 +1,12 @@
 import { useEffect, useState } from 'react'
-import { Button, Empty, Form, Input, InputNumber, Modal, Select, Table, Typography } from 'antd'
+import { Button, Empty, Form, Input, InputNumber, Modal, Select, Table } from 'antd'
 import { message } from '../feedback'
 import type { ColumnsType } from 'antd/es/table'
 import { PlusOutlined, ReloadOutlined } from '@ant-design/icons'
 import { ApiError } from '../api'
 import { useApp } from '../context'
 import { useI18n } from '../i18n'
+import { PageBody, PageContainer, PageHeader, SelectProjectEmpty } from './Page'
 
 export interface FieldDef {
   name: string
@@ -62,45 +63,26 @@ export default function CrudResource<T extends object>({ cfg }: { cfg: CrudConfi
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId])
 
-  if (cfg.needsProject && !projectId)
-    return (
-      <div style={{ padding: 48 }}>
-        <Empty description={t('common.selectProject', '请先在顶部选择项目')} />
-      </div>
-    )
+  if (cfg.needsProject && !projectId) return <SelectProjectEmpty />
 
   return (
-    <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
-      <div
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: 12,
-          padding: '14px 16px',
-          background: '#fff',
-          borderBottom: '1px solid #f0f0f0',
-        }}
-      >
-        <div>
-          <Typography.Text strong style={{ fontSize: 15 }}>
-            {cfg.title}
-          </Typography.Text>
-          {cfg.subtitle && (
-            <Typography.Text type="secondary" style={{ marginLeft: 8, fontSize: 12 }}>
-              {cfg.subtitle}
-            </Typography.Text>
-          )}
-        </div>
-        <div style={{ flex: 1 }} />
-        <Input.Search allowClear placeholder={t('a.search', '搜索')} style={{ width: 220 }} onChange={(e) => setQ(e.target.value)} />
-        {cfg.create && (
-          <Button type="primary" icon={<PlusOutlined />} onClick={() => setOpen(true)}>
-            {t('a.new', '新建')}
-          </Button>
-        )}
-        <Button icon={<ReloadOutlined />} onClick={load} />
-      </div>
-      <div style={{ flex: 1, overflow: 'auto', padding: 16 }}>
+    <PageContainer>
+      <PageHeader
+        title={cfg.title}
+        subtitle={cfg.subtitle}
+        extra={
+          <>
+            <Input.Search allowClear placeholder={t('a.search', '搜索')} style={{ width: 220 }} onChange={(e) => setQ(e.target.value)} />
+            {cfg.create && (
+              <Button type="primary" icon={<PlusOutlined />} onClick={() => setOpen(true)}>
+                {t('a.new', '新建')}
+              </Button>
+            )}
+            <Button icon={<ReloadOutlined />} onClick={load} />
+          </>
+        }
+      />
+      <PageBody>
         <Table<T>
           rowKey={(cfg.rowKey || 'id') as string}
           size="middle"
@@ -110,7 +92,7 @@ export default function CrudResource<T extends object>({ cfg }: { cfg: CrudConfi
           pagination={{ pageSize: 15, size: 'small', showTotal: (n) => t('crud.total', '共 {n} 条').replace('{n}', String(n)) }}
           locale={{ emptyText: <Empty description={t('common.empty', '暂无数据')} /> }}
         />
-      </div>
+      </PageBody>
 
       {cfg.create && (
         <CreateModal
@@ -126,7 +108,7 @@ export default function CrudResource<T extends object>({ cfg }: { cfg: CrudConfi
           }}
         />
       )}
-    </div>
+    </PageContainer>
   )
 }
 

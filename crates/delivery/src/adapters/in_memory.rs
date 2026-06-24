@@ -5,7 +5,7 @@ use std::sync::{Arc, Mutex};
 use async_trait::async_trait;
 
 use crate::domain::{DeliveryAttempt, ExecutionEvent, ExecutorKind, NewExecutionEvent};
-use crate::ports::{DeliveryRepository, RepoError};
+use crate::ports::{DeliveryRepository, RepoError, TaskListFilter, TaskPage, TaskRow};
 
 #[derive(Default)]
 struct State {
@@ -13,6 +13,7 @@ struct State {
     seq: u64,
     event_seq: i64,
     events: Vec<(String, ExecutionEvent)>, // (attempt_id, event)
+    created_at: Vec<(String, i64)>,        // (attempt_id, 创建序号充当时间戳)
 }
 
 #[derive(Clone, Default)]
@@ -42,6 +43,8 @@ impl DeliveryRepository for InMemoryDeliveryRepository {
             task_id,
             executor,
         );
+        let created = st.seq as i64;
+        st.created_at.push((a.id.clone(), created));
         st.attempts.push(a.clone());
         Ok(a)
     }
@@ -103,5 +106,67 @@ impl DeliveryRepository for InMemoryDeliveryRepository {
             .collect();
         events.sort_by_key(|e| e.seq);
         Ok(events)
+    }
+
+    async fn list_tasks(&self, filter: &TaskListFilter) -> Result<TaskPage, RepoError> {
+        let st = self.state.lock().expect("lock");
+        let created_of = |id: &str| -> i64 {
+            st.created_at.iter().find(|(aid, _)| aid == id).map(|(_, c)| *c).unwrap_or(0)
+        };
+        let event_count_of = |id: &str| -> i64 {
+            st.events.iter().filter(|(aid, _)| aid == id).count() as i64
+        };
+
+        let mut matched: Vec<TaskRow> = st
+            .attempts
+            .iter()
+            .filter(|a| match filter.status {
+                Some(s) => a.status == s,
+                None => true,
+            })
+            .filter(|a| match filter.executor {
+                Some(e) => a.executor == e,
+                None => true,
+            })
+            .filter(|a| !filter.active_only || !a.status.is_terminal())
+            .filter(|a| match &filter.query {
+                Some(q) if !q.trim().is_empty() => {
+                    let q = q.trim().to_lowercase();
+                    a.task_id.to_lowercase().contains(&q)
+                        || a.decomposition_id.to_lowercase().contains(&q)
+                }
+                _ => true,
+            })
+            .map(|a| TaskRow {
+                attempt: a.clone(),
+                title: None,
+                description: None,
+                module: None,
+                created_at: created_of(&a.id),
+                event_count: event_count_of(&a.id),
+            })
+            .collect();
+
+        // 创建时间倒序(新在前)。
+        matched.sort_by(|x, y| y.created_at.cmp(&x.created_at));
+        let total = matched.len() as i64;
+        let items = matched
+            .into_iter()
+            .skip(filter.offset.max(0) as usize)
+            .take(filter.limit.max(0) as usize)
+            .collect();
+        Ok(TaskPage { items, total })
+    }
+
+    async fn delete(&self, id: &str) -> Result<bool, RepoError> {
+        let mut st = self.state.lock().expect("lock");
+        let before = st.attempts.len();
+        st.attempts.retain(|a| a.id != id);
+        let removed = st.attempts.len() != before;
+        if removed {
+            st.events.retain(|(aid, _)| aid != id);
+            st.created_at.retain(|(aid, _)| aid != id);
+        }
+        Ok(removed)
     }
 }
