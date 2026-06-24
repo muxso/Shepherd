@@ -15,8 +15,10 @@ mod events;
 mod git;
 mod models;
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
+
+use tokio::sync::{watch, Semaphore};
 
 use backend::{ClaudeBackend, CliAgentBackend, GenericCliBackend, MockBackend};
 use client::{HttpSink, ServerClient};
@@ -31,6 +33,8 @@ struct Config {
     name: String,
     /// 实现模式下 agent 改文件 + git 快照的工作目录。
     workdir: String,
+    /// 并发认领上限:同时在飞的任务数(信号量)。
+    concurrency: usize,
 }
 
 impl Config {
@@ -47,6 +51,47 @@ impl Config {
                 .collect(),
             name: env("RUNTIME_NAME", "agent-runtime"),
             workdir: env("AGENT_WORKDIR", "."),
+            concurrency: env("AGENT_CONCURRENCY", "1").parse().unwrap_or(1).max(1),
+        }
+    }
+}
+
+/// 安装关停信号(SIGINT/SIGTERM)监听,返回一个 watch 接收端:值变 true 即应退出。
+fn install_shutdown() -> watch::Receiver<bool> {
+    let (tx, rx) = watch::channel(false);
+    tokio::spawn(async move {
+        #[cfg(unix)]
+        {
+            use tokio::signal::unix::{signal, SignalKind};
+            match signal(SignalKind::terminate()) {
+                Ok(mut term) => {
+                    tokio::select! {
+                        _ = tokio::signal::ctrl_c() => {}
+                        _ = term.recv() => {}
+                    }
+                }
+                Err(_) => {
+                    let _ = tokio::signal::ctrl_c().await;
+                }
+            }
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = tokio::signal::ctrl_c().await;
+        }
+        let _ = tx.send(true);
+    });
+    rx
+}
+
+/// 等待关停(值变 true);select 中败者被取消,不会误吞信号。
+async fn wait_shutdown(rx: &mut watch::Receiver<bool>) {
+    loop {
+        if *rx.borrow_and_update() {
+            return;
+        }
+        if rx.changed().await.is_err() {
+            return; // 发送端已 drop
         }
     }
 }
@@ -119,24 +164,71 @@ async fn main() -> anyhow::Result<()> {
         .init();
 
     let cfg = Config::from_env();
-    let client = ServerClient::login(&cfg.base, &cfg.user, &cfg.pass).await?;
-    let mut runtime_id = client.register(&cfg.name, &cfg.caps).await?;
-    tracing::info!(base = %cfg.base, caps = ?cfg.caps, %runtime_id, "agent-runtime 上线");
+    let client = Arc::new(ServerClient::login(&cfg.base, &cfg.user, &cfg.pass).await?);
+    let mc = cfg.concurrency as u32;
+    let id0 = client.register(&cfg.name, &cfg.caps, mc).await?;
+    let runtime_id = Arc::new(Mutex::new(id0.clone()));
+    tracing::info!(base = %cfg.base, caps = ?cfg.caps, concurrency = cfg.concurrency, runtime_id = %id0,
+        "agent-runtime 上线");
+
+    // 心跳后台任务(与认领解耦,长任务不饿死心跳);404 重注册并更新共享 id。
+    let hb = {
+        let (client, rid, name, caps) =
+            (client.clone(), runtime_id.clone(), cfg.name.clone(), cfg.caps.clone());
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(Duration::from_secs(10)).await;
+                let cur = rid.lock().unwrap().clone();
+                if !client.heartbeat(&cur).await.unwrap_or(false) {
+                    if let Ok(new) = client.register(&name, &caps, mc).await {
+                        *rid.lock().unwrap() = new;
+                    }
+                }
+            }
+        })
+    };
+
+    // 并发认领:信号量限同时在飞任务数;每认领一个 spawn 一个 handler(完成释放槽)。
+    let sem = Arc::new(Semaphore::new(cfg.concurrency));
+    let mut sd = install_shutdown();
 
     loop {
-        if !client.heartbeat(&runtime_id).await.unwrap_or(false) {
-            // 心跳 404 → 重新注册。
-            if let Ok(id) = client.register(&cfg.name, &cfg.caps).await {
-                runtime_id = id;
-            }
+        if *sd.borrow_and_update() {
+            break;
         }
-        match client.claim(&cfg.caps, &runtime_id).await {
-            Ok(Some(spec)) => handle(&client, &spec, &cfg.workdir).await,
-            Ok(None) => {} // 204:无活,继续长轮询
+        // 等空闲槽(达上限则阻塞)或关停。
+        let permit = tokio::select! {
+            _ = wait_shutdown(&mut sd) => break,
+            p = sem.clone().acquire_owned() => p.expect("semaphore closed"),
+        };
+        let rid_now = runtime_id.lock().unwrap().clone();
+        // 长轮询认领或关停(关停时释放槽并退出)。
+        let claimed = tokio::select! {
+            _ = wait_shutdown(&mut sd) => { drop(permit); break; }
+            r = client.claim(&cfg.caps, &rid_now) => r,
+        };
+        match claimed {
+            Ok(Some(spec)) => {
+                let (client, wd) = (client.clone(), cfg.workdir.clone());
+                tokio::spawn(async move {
+                    handle(&client, &spec, &wd).await;
+                    drop(permit); // 完成释放并发槽
+                });
+            }
+            Ok(None) => drop(permit), // 204:无活
             Err(e) => {
                 tracing::warn!("认领出错: {e}");
+                drop(permit);
                 tokio::time::sleep(Duration::from_secs(2)).await;
             }
         }
     }
+
+    // 优雅退出:停心跳,等所有在飞任务收尾(获满全部许可 = 无在飞)。
+    hb.abort();
+    let inflight = cfg.concurrency - sem.available_permits();
+    tracing::info!(inflight, "收到关停信号,等待在飞任务收尾…");
+    let _ = sem.acquire_many(cfg.concurrency as u32).await;
+    tracing::info!("agent-runtime 优雅退出");
+    Ok(())
 }
