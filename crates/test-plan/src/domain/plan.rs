@@ -83,6 +83,8 @@ pub struct Plan {
     pub plan_type: PlanType,
     pub group_id: String,
     pub archived: bool,
+    /// 创建时间(Unix 毫秒)。供列表按时间倒序与前端展示「创建时间」列。
+    pub created_at_ms: i64,
 }
 
 #[cfg(test)]

@@ -20,6 +20,8 @@ pub enum RequirementCmdError {
     NoSuchVersion(u32),
     /// 对已归档需求修订 → 409。
     Archived,
+    /// 对非「待评审」需求做评审不通过(已基线/已交付)→ 409。
+    NotUnderReview,
     /// 存储错误 → 500。
     Repo(RepoError),
 }
@@ -36,6 +38,7 @@ impl From<RequirementError> for RequirementCmdError {
         match e {
             RequirementError::NoSuchVersion(n) => Self::NoSuchVersion(n),
             RequirementError::Archived => Self::Archived,
+            RequirementError::NotUnderReview => Self::NotUnderReview,
             other => Self::Validation(other),
         }
     }
@@ -96,6 +99,18 @@ impl RequirementService {
         Ok(req)
     }
 
+    /// 评审不通过:记录原因,需求留在 DRAFT(待修订重评)。原因必填。
+    pub async fn reject_review(
+        &self,
+        id: &str,
+        reason: &str,
+    ) -> Result<Requirement, RequirementCmdError> {
+        let mut req = self.get(id).await?;
+        req.reject_review(reason)?;
+        self.repo.save(&req).await?;
+        Ok(req)
+    }
+
     /// 标记交付:Baselined → Delivered(幂等)。验证完整性达成后由编排层调用。
     pub async fn deliver(&self, id: &str) -> Result<Requirement, RequirementCmdError> {
         let mut req = self.get(id).await?;
@@ -146,6 +161,37 @@ mod tests {
         let r = svc.set_baseline(&id, 2).await.expect("baseline");
         assert_eq!(r.baseline_version, 2);
         assert_eq!(svc.get(&id).await.expect("get").baseline_version, 2);
+    }
+
+    #[tokio::test]
+    async fn reject_review_persists_reason_and_baseline_clears_it() {
+        let (svc, id) = seeded().await;
+        let r = svc.reject_review(&id, "  缺少异常路径  ").await.expect("reject");
+        assert_eq!(r.review_comment.as_deref(), Some("缺少异常路径"));
+        // 重新加载确认已落库
+        assert_eq!(svc.get(&id).await.expect("get").review_comment.as_deref(), Some("缺少异常路径"));
+        // 评审通过(定基线)清空原因
+        let p = svc.set_baseline(&id, 1).await.expect("baseline");
+        assert!(p.review_comment.is_none());
+    }
+
+    #[tokio::test]
+    async fn reject_review_empty_reason_is_validation() {
+        let (svc, id) = seeded().await;
+        assert_eq!(
+            svc.reject_review(&id, "   ").await.unwrap_err(),
+            RequirementCmdError::Validation(crate::domain::RequirementError::EmptyReviewComment)
+        );
+    }
+
+    #[tokio::test]
+    async fn reject_review_on_baselined_is_conflict() {
+        let (svc, id) = seeded().await;
+        svc.set_baseline(&id, 1).await.expect("baseline");
+        assert_eq!(
+            svc.reject_review(&id, "x").await.unwrap_err(),
+            RequirementCmdError::NotUnderReview
+        );
     }
 
     #[tokio::test]

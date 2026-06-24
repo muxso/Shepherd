@@ -63,6 +63,7 @@ impl PgRequirementRepository {
             baseline_version: baseline_i as u32,
             versions,
             deleted: meta.try_get("deleted").map_err(map_err)?,
+            review_comment: meta.try_get("review_comment").map_err(map_err)?,
         })
     }
 }
@@ -75,7 +76,7 @@ fn criteria_to_vec(v: &RequirementVersion) -> Vec<String> {
     v.acceptance_criteria.iter().map(|c| c.text.clone()).collect()
 }
 
-const META_COLS: &str = "id, project_id, title, status, baseline_version, deleted";
+const META_COLS: &str = "id, project_id, title, status, baseline_version, deleted, review_comment";
 
 #[async_trait]
 impl RequirementRepository for PgRequirementRepository {
@@ -181,7 +182,7 @@ impl RequirementRepository for PgRequirementRepository {
     async fn save(&self, requirement: &Requirement) -> Result<(), RepoError> {
         let mut tx = self.pool.begin().await.map_err(map_err)?;
         sqlx::query(
-            "UPDATE ms_requirement SET title = $2, status = $3, baseline_version = $4, deleted = $5 \
+            "UPDATE ms_requirement SET title = $2, status = $3, baseline_version = $4, deleted = $5, review_comment = $6 \
              WHERE id = $1",
         )
         .bind(&requirement.id)
@@ -189,6 +190,7 @@ impl RequirementRepository for PgRequirementRepository {
         .bind(requirement.status.as_str())
         .bind(requirement.baseline_version as i32)
         .bind(requirement.deleted)
+        .bind(&requirement.review_comment)
         .execute(&mut *tx)
         .await
         .map_err(map_err)?;

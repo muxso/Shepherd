@@ -37,6 +37,8 @@ impl InMemoryPlanRepository {
             plan_type: new_plan.plan_type,
             group_id: new_plan.group_id.clone(),
             archived: false,
+            // 内存版无真实时钟:用单调递增的 seq 当创建时间,保证列表倒序稳定。
+            created_at_ms: state.seq as i64,
         };
         state.plans.insert(plan.id.clone(), plan.clone());
         plan
@@ -141,6 +143,37 @@ impl PlanRepository for InMemoryPlanRepository {
 
     async fn list_cases(&self, plan_id: &str) -> Result<Vec<PlanCase>, RepoError> {
         Ok(self.state.lock().expect("lock").cases.get(plan_id).cloned().unwrap_or_default())
+    }
+
+    async fn list(&self, project_id: &str) -> Result<Vec<Plan>, RepoError> {
+        let mut plans: Vec<Plan> = self
+            .state
+            .lock()
+            .expect("lock")
+            .plans
+            .values()
+            .filter(|p| p.project_id == project_id && !p.archived)
+            .cloned()
+            .collect();
+        plans.sort_by(|a, b| a.name.cmp(&b.name).then(a.id.cmp(&b.id)));
+        Ok(plans)
+    }
+
+    async fn rename(&self, id: &str, name: &str) -> Result<bool, RepoError> {
+        let mut state = self.state.lock().expect("lock");
+        match state.plans.get_mut(id) {
+            Some(p) => {
+                p.name = name.to_string();
+                Ok(true)
+            }
+            None => Ok(false),
+        }
+    }
+
+    async fn delete(&self, id: &str) -> Result<bool, RepoError> {
+        let mut state = self.state.lock().expect("lock");
+        state.cases.remove(id);
+        Ok(state.plans.remove(id).is_some())
     }
 }
 

@@ -12,7 +12,7 @@ use axum::{
     extract::{FromRef, Path, Query, State},
     http::{header, StatusCode},
     response::{IntoResponse, Response},
-    routing::{get, post},
+    routing::{delete, get, post, put},
     Json, Router,
 };
 use calamine::{Reader, Xlsx};
@@ -22,7 +22,8 @@ use utoipa::{IntoParams, OpenApi, ToSchema};
 use webauth::{AuthUser, SessionStore};
 
 use crate::application::{
-    export_rows, CreateCaseError, CreateCaseUseCase, ImportCasesUseCase, ListCasesUseCase,
+    export_rows, CreateCaseError, CreateCaseUseCase, DeleteCaseUseCase, ImportCasesUseCase,
+    ListCasesUseCase, UpdateCaseUseCase,
 };
 use crate::domain::{CaseStep, FunctionalCase};
 use crate::ports::CaseRepository;
@@ -30,6 +31,8 @@ use crate::ports::CaseRepository;
 #[derive(Clone)]
 struct CaseState {
     create: CreateCaseUseCase,
+    update: UpdateCaseUseCase,
+    delete: DeleteCaseUseCase,
     list: ListCasesUseCase,
     import: ImportCasesUseCase,
     repo: Arc<dyn CaseRepository>,
@@ -42,8 +45,11 @@ impl FromRef<CaseState> for Arc<dyn SessionStore> {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn router(
     create: CreateCaseUseCase,
+    update: UpdateCaseUseCase,
+    delete: DeleteCaseUseCase,
     list: ListCasesUseCase,
     import: ImportCasesUseCase,
     repo: Arc<dyn CaseRepository>,
@@ -53,12 +59,13 @@ pub fn router(
         .route("/functional-case", post(create_case).get(list_cases))
         .route("/functional-case/export", get(export_cases))
         .route("/functional-case/import", post(import_cases))
+        .route("/functional-case/{id}", put(update_case).delete(delete_case))
         // 需求 ↔ 功能用例 覆盖关联。
         .route("/functional-case/{id}/requirements", get(case_requirements))
         .route("/requirement-case/link", post(link_req_case))
         .route("/requirement-case/unlink", post(unlink_req_case))
         .route("/requirement/{id}/functional-coverage", get(requirement_coverage))
-        .with_state(CaseState { create, list, import, repo, sessions })
+        .with_state(CaseState { create, update, delete, list, import, repo, sessions })
 }
 
 // ---------- 需求覆盖关联 handlers ----------
@@ -148,6 +155,8 @@ struct CaseResponse {
     status: String,
     custom_fields: BTreeMap<String, String>,
     steps: Vec<CaseStepDto>,
+    /// 创建人 user_id(0063 迁移;旧用例为 null)。
+    created_by: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
@@ -180,6 +189,7 @@ impl From<FunctionalCase> for CaseResponse {
             status: c.status,
             custom_fields: c.custom_fields,
             steps: c.steps.into_iter().map(CaseStepDto::from).collect(),
+            created_by: c.created_by,
         }
     }
 }
@@ -215,7 +225,7 @@ async fn create_case(user: AuthUser, State(st): State<CaseState>, Json(b): Json<
     let steps: Vec<CaseStep> = b.steps.into_iter().map(CaseStep::from).collect();
     match st
         .create
-        .execute(&b.project_id, &b.name, &b.module, &b.priority, &b.status, b.custom_fields, steps)
+        .execute(&b.project_id, &b.name, &b.module, &b.priority, &b.status, b.custom_fields, steps, Some(user.user_id.as_str()))
         .await
     {
         Ok(c) => (StatusCode::CREATED, Json(CaseResponse::from(c))).into_response(),
@@ -225,6 +235,40 @@ async fn create_case(user: AuthUser, State(st): State<CaseState>, Json(b): Json<
         Err(CreateCaseError::Repo(_)) => {
             (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response()
         }
+    }
+}
+
+#[utoipa::path(put, path = "/functional-case/{id}", tag = "functional-case", request_body = CaseBody, responses((status = 200, body = CaseResponse), (status = 400), (status = 403), (status = 404)), security(("bearer" = [])))]
+async fn update_case(user: AuthUser, State(st): State<CaseState>, Path(id): Path<String>, Json(b): Json<CaseBody>) -> Response {
+    if !user.can("FUNCTIONAL_CASE", "UPDATE") {
+        return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
+    let steps: Vec<CaseStep> = b.steps.into_iter().map(CaseStep::from).collect();
+    match st
+        .update
+        .execute(&id, &b.project_id, &b.name, &b.module, &b.priority, &b.status, b.custom_fields, steps)
+        .await
+    {
+        Ok(Some(c)) => (StatusCode::OK, Json(CaseResponse::from(c))).into_response(),
+        Ok(None) => (StatusCode::NOT_FOUND, "case not found").into_response(),
+        Err(CreateCaseError::Validation(_)) => {
+            (StatusCode::BAD_REQUEST, "invalid case payload").into_response()
+        }
+        Err(CreateCaseError::Repo(_)) => {
+            (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response()
+        }
+    }
+}
+
+#[utoipa::path(delete, path = "/functional-case/{id}", tag = "functional-case", responses((status = 204), (status = 403), (status = 404)), security(("bearer" = [])))]
+async fn delete_case(user: AuthUser, State(st): State<CaseState>, Path(id): Path<String>) -> Response {
+    if !user.can("FUNCTIONAL_CASE", "DELETE") {
+        return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
+    match st.delete.execute(&id).await {
+        Ok(true) => StatusCode::NO_CONTENT.into_response(),
+        Ok(false) => (StatusCode::NOT_FOUND, "case not found").into_response(),
+        Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
     }
 }
 
@@ -279,7 +323,7 @@ async fn import_cases(
         Ok(r) => r,
         Err(_) => return (StatusCode::BAD_REQUEST, "invalid xlsx").into_response(),
     };
-    match st.import.execute(&q.project_id, &rows).await {
+    match st.import.execute(&q.project_id, &rows, Some(user.user_id.as_str())).await {
         Ok(n) => (StatusCode::OK, Json(ImportResult { imported: n })).into_response(),
         Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
     }
@@ -318,7 +362,7 @@ fn rows_to_xlsx(rows: &[Vec<String>]) -> Result<Vec<u8>, rust_xlsxwriter::XlsxEr
 
 #[derive(OpenApi)]
 #[openapi(
-    paths(create_case, list_cases, export_cases, import_cases),
+    paths(create_case, update_case, delete_case, list_cases, export_cases, import_cases),
     components(schemas(CaseBody, CaseResponse, ImportResult)),
     tags((name = "functional-case", description = "功能用例"))
 )]
@@ -345,6 +389,8 @@ mod tests {
         let token = sessions.create("u", set, 3600).await.expect("token");
         let r = router(
             CreateCaseUseCase::new(repo.clone()),
+            UpdateCaseUseCase::new(repo.clone()),
+            DeleteCaseUseCase::new(repo.clone()),
             ListCasesUseCase::new(repo.clone()),
             ImportCasesUseCase::new(repo.clone()),
             repo,
@@ -429,6 +475,82 @@ mod tests {
         let list: serde_json::Value = serde_json::from_slice(&b).expect("json");
         assert_eq!(list.as_array().expect("arr").len(), 2);
         assert_eq!(list[0]["customFields"]["owner"], "alice");
+    }
+
+    #[tokio::test]
+    async fn update_and_delete_round_trip() {
+        let (app, t) = app("FUNCTIONAL_CASE:READ+ADD+UPDATE+DELETE").await;
+        // 建一条用例,拿到 id。
+        let resp = app
+            .clone()
+            .oneshot(post("/functional-case", r#"{"projectId":"p1","name":"登录成功"}"#, Some(&t)))
+            .await
+            .expect("resp");
+        assert_eq!(resp.status(), StatusCode::CREATED);
+        let created: serde_json::Value = {
+            let b = axum::body::to_bytes(resp.into_body(), usize::MAX).await.expect("body");
+            serde_json::from_slice(&b).expect("json")
+        };
+        let id = created["id"].as_str().expect("id").to_string();
+
+        // 改名 + 改优先级。
+        let put = Request::builder()
+            .method("PUT")
+            .uri(format!("/functional-case/{id}"))
+            .header("content-type", "application/json")
+            .header("authorization", format!("Bearer {t}"))
+            .body(Body::from(r#"{"projectId":"p1","name":"登录失败","priority":"P0"}"#.to_string()))
+            .expect("req");
+        let resp = app.clone().oneshot(put).await.expect("resp");
+        assert_eq!(resp.status(), StatusCode::OK);
+        let updated: serde_json::Value = {
+            let b = axum::body::to_bytes(resp.into_body(), usize::MAX).await.expect("body");
+            serde_json::from_slice(&b).expect("json")
+        };
+        assert_eq!(updated["name"], "登录失败");
+        assert_eq!(updated["priority"], "P0");
+
+        // 删除 → 204,列表清空。
+        let del = Request::builder()
+            .method("DELETE")
+            .uri(format!("/functional-case/{id}"))
+            .header("authorization", format!("Bearer {t}"))
+            .body(Body::empty())
+            .expect("req");
+        assert_eq!(app.clone().oneshot(del).await.expect("resp").status(), StatusCode::NO_CONTENT);
+
+        let resp = app
+            .oneshot(Request::builder().uri("/functional-case?projectId=p1").body(Body::empty()).expect("req"))
+            .await
+            .expect("resp");
+        let b = axum::body::to_bytes(resp.into_body(), usize::MAX).await.expect("body");
+        let list: serde_json::Value = serde_json::from_slice(&b).expect("json");
+        assert_eq!(list.as_array().expect("arr").len(), 0);
+    }
+
+    #[tokio::test]
+    async fn update_requires_update_permission() {
+        let (app, t) = app("FUNCTIONAL_CASE:READ+ADD").await;
+        let put = Request::builder()
+            .method("PUT")
+            .uri("/functional-case/whatever")
+            .header("content-type", "application/json")
+            .header("authorization", format!("Bearer {t}"))
+            .body(Body::from(r#"{"projectId":"p1","name":"x"}"#.to_string()))
+            .expect("req");
+        assert_eq!(app.oneshot(put).await.expect("resp").status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn delete_requires_delete_permission() {
+        let (app, t) = app("FUNCTIONAL_CASE:READ+ADD").await;
+        let del = Request::builder()
+            .method("DELETE")
+            .uri("/functional-case/whatever")
+            .header("authorization", format!("Bearer {t}"))
+            .body(Body::empty())
+            .expect("req");
+        assert_eq!(app.oneshot(del).await.expect("resp").status(), StatusCode::FORBIDDEN);
     }
 
     #[tokio::test]
