@@ -47,7 +47,7 @@ fn json_to_fields(v: &serde_json::Value) -> BTreeMap<String, String> {
         .unwrap_or_default()
 }
 
-const COLS: &str = "id, project_id, name, module, priority, status, custom_fields, steps";
+const COLS: &str = "id, project_id, name, module, priority, status, custom_fields, steps, created_by";
 
 fn row_to_case(r: &sqlx::postgres::PgRow) -> Result<FunctionalCase, RepoError> {
     let custom: serde_json::Value = r.try_get("custom_fields").map_err(map_err)?;
@@ -61,6 +61,7 @@ fn row_to_case(r: &sqlx::postgres::PgRow) -> Result<FunctionalCase, RepoError> {
         status: r.try_get("status").map_err(map_err)?,
         custom_fields: json_to_fields(&custom),
         steps: serde_json::from_value(steps_json).unwrap_or_default(),
+        created_by: r.try_get("created_by").ok().flatten(),
     })
 }
 
@@ -68,8 +69,8 @@ fn row_to_case(r: &sqlx::postgres::PgRow) -> Result<FunctionalCase, RepoError> {
 impl CaseRepository for PgCaseRepository {
     async fn insert(&self, c: &NewFunctionalCase) -> Result<FunctionalCase, RepoError> {
         let row = sqlx::query(&format!(
-            "INSERT INTO ms_functional_case (project_id, name, module, priority, status, custom_fields, steps) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING {COLS}"
+            "INSERT INTO ms_functional_case (project_id, name, module, priority, status, custom_fields, steps, created_by) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING {COLS}"
         ))
         .bind(&c.project_id)
         .bind(&c.name)
@@ -78,10 +79,40 @@ impl CaseRepository for PgCaseRepository {
         .bind(&c.status)
         .bind(fields_to_json(&c.custom_fields))
         .bind(serde_json::to_value(&c.steps).unwrap_or_else(|_| serde_json::json!([])))
+        .bind(&c.created_by)
         .fetch_one(&self.pool)
         .await
         .map_err(map_err)?;
         row_to_case(&row)
+    }
+
+    async fn update(&self, id: &str, c: &NewFunctionalCase) -> Result<Option<FunctionalCase>, RepoError> {
+        // project_id 不可改(用例不跨项目搬移),只更新可编辑字段。
+        let row = sqlx::query(&format!(
+            "UPDATE ms_functional_case \
+             SET name = $2, module = $3, priority = $4, status = $5, custom_fields = $6, steps = $7 \
+             WHERE id = $1 AND NOT deleted RETURNING {COLS}"
+        ))
+        .bind(id)
+        .bind(&c.name)
+        .bind(&c.module)
+        .bind(&c.priority)
+        .bind(&c.status)
+        .bind(fields_to_json(&c.custom_fields))
+        .bind(serde_json::to_value(&c.steps).unwrap_or_else(|_| serde_json::json!([])))
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(map_err)?;
+        row.as_ref().map(row_to_case).transpose()
+    }
+
+    async fn delete(&self, id: &str) -> Result<bool, RepoError> {
+        let res = sqlx::query("UPDATE ms_functional_case SET deleted = true WHERE id = $1 AND NOT deleted")
+            .bind(id)
+            .execute(&self.pool)
+            .await
+            .map_err(map_err)?;
+        Ok(res.rows_affected() > 0)
     }
 
     async fn list_by_project(&self, project_id: &str) -> Result<Vec<FunctionalCase>, RepoError> {

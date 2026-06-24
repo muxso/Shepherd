@@ -41,4 +41,13 @@ pub trait PlanRepository: Send + Sync {
 
     /// 列出计划内的用例(含状态与执行明细),供报告逐条渲染。
     async fn list_cases(&self, plan_id: &str) -> Result<Vec<PlanCase>, RepoError>;
+
+    /// 列出某项目下未归档的全部计划(供列表页;后端权威来源)。
+    async fn list(&self, project_id: &str) -> Result<Vec<Plan>, RepoError>;
+
+    /// 重命名计划。返回是否命中。
+    async fn rename(&self, id: &str, name: &str) -> Result<bool, RepoError>;
+
+    /// 删除计划及其挂入的用例。返回是否命中。
+    async fn delete(&self, id: &str) -> Result<bool, RepoError>;
 }

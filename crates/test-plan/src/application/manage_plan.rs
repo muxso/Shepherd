@@ -1,0 +1,117 @@
+//! 用例:测试计划的列表 / 重命名 / 删除。
+//!
+//! 列表为列表页提供后端权威来源(取代纯前端注册表);重命名/删除为基本管理操作。
+//! 校验:重命名后的名称不得为空白。
+
+use std::sync::Arc;
+
+use crate::domain::Plan;
+use crate::ports::{PlanRepository, RepoError};
+
+use thiserror::Error;
+
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+pub enum ManagePlanError {
+    #[error("plan name must not be empty")]
+    EmptyName,
+    #[error("plan not found")]
+    NotFound,
+    #[error(transparent)]
+    Repo(#[from] RepoError),
+}
+
+#[derive(Clone)]
+pub struct ManagePlanUseCase {
+    repo: Arc<dyn PlanRepository>,
+}
+
+impl ManagePlanUseCase {
+    pub fn new(repo: Arc<dyn PlanRepository>) -> Self {
+        Self { repo }
+    }
+
+    /// 列出某项目下的全部计划。
+    pub async fn list(&self, project_id: &str) -> Result<Vec<Plan>, ManagePlanError> {
+        Ok(self.repo.list(project_id).await?)
+    }
+
+    /// 重命名计划。空白名拒绝;计划不存在 → NotFound。
+    pub async fn rename(&self, id: &str, name: &str) -> Result<(), ManagePlanError> {
+        let name = name.trim();
+        if name.is_empty() {
+            return Err(ManagePlanError::EmptyName);
+        }
+        if self.repo.rename(id, name).await? {
+            Ok(())
+        } else {
+            Err(ManagePlanError::NotFound)
+        }
+    }
+
+    /// 删除计划(连带挂入用例)。计划不存在 → NotFound。
+    pub async fn delete(&self, id: &str) -> Result<(), ManagePlanError> {
+        if self.repo.delete(id).await? {
+            Ok(())
+        } else {
+            Err(ManagePlanError::NotFound)
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::adapters::InMemoryPlanRepository;
+    use crate::domain::{NewPlan, PlanType, ROOT_GROUP};
+
+    async fn seed(repo: &InMemoryPlanRepository, project: &str, name: &str) -> Plan {
+        repo.seed(NewPlan::new(project, name, PlanType::Plan, ROOT_GROUP).expect("v")).await
+    }
+
+    #[tokio::test]
+    async fn list_scoped_to_project() {
+        let repo = Arc::new(InMemoryPlanRepository::new());
+        seed(&repo, "p1", "冒烟").await;
+        seed(&repo, "p1", "回归").await;
+        seed(&repo, "p2", "别的项目").await;
+        let uc = ManagePlanUseCase::new(repo);
+        let list = uc.list("p1").await.expect("list");
+        assert_eq!(list.len(), 2);
+        // 按名排序:回归 在 冒烟 前(笔画/码点序无所谓,只要稳定)
+        assert!(list.iter().all(|p| p.project_id == "p1"));
+    }
+
+    #[tokio::test]
+    async fn rename_then_list_reflects() {
+        let repo = Arc::new(InMemoryPlanRepository::new());
+        let p = seed(&repo, "p1", "旧名").await;
+        let uc = ManagePlanUseCase::new(repo);
+        uc.rename(&p.id, "新名").await.expect("rename");
+        let list = uc.list("p1").await.expect("list");
+        assert_eq!(list[0].name, "新名");
+    }
+
+    #[tokio::test]
+    async fn rename_blank_rejected() {
+        let repo = Arc::new(InMemoryPlanRepository::new());
+        let p = seed(&repo, "p1", "x").await;
+        let uc = ManagePlanUseCase::new(repo);
+        assert_eq!(uc.rename(&p.id, "  ").await.unwrap_err(), ManagePlanError::EmptyName);
+    }
+
+    #[tokio::test]
+    async fn rename_missing_not_found() {
+        let uc = ManagePlanUseCase::new(Arc::new(InMemoryPlanRepository::new()));
+        assert_eq!(uc.rename("ghost", "x").await.unwrap_err(), ManagePlanError::NotFound);
+    }
+
+    #[tokio::test]
+    async fn delete_removes_from_list() {
+        let repo = Arc::new(InMemoryPlanRepository::new());
+        let p = seed(&repo, "p1", "待删").await;
+        let uc = ManagePlanUseCase::new(repo);
+        uc.delete(&p.id).await.expect("delete");
+        assert!(uc.list("p1").await.expect("list").is_empty());
+        assert_eq!(uc.delete(&p.id).await.unwrap_err(), ManagePlanError::NotFound);
+    }
+}

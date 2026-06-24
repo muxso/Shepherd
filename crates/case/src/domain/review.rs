@@ -157,6 +157,16 @@ pub fn aggregate_status(setting: ReviewSetting, history: &[ReviewRecord]) -> Rev
     }
 }
 
+/// 整个评审是否「已完成」:用例非空,且每条用例都已得出终态结论(PASS 或 UN_PASS)。
+/// 只要还有 未评审 / 评审中 的用例,评审就未完成。终态判定与单条用例的聚合状态一致,
+/// 因此「评审完成」可由各用例状态纯函数推导,无需额外时间或人工标记。
+pub fn review_completed(statuses: &[ReviewStatus]) -> bool {
+    !statuses.is_empty()
+        && statuses
+            .iter()
+            .all(|s| matches!(s, ReviewStatus::Pass | ReviewStatus::UnPass))
+}
+
 #[cfg(test)]
 mod tests {
     use super::ReviewStatus::*;
@@ -285,5 +295,25 @@ mod tests {
         // system 的 Pass 不计票:真实评审人 2 人只到 1 人 → 评审中
         let h = [rec(SYSTEM_USER, Pass), rec("u1", Pass)];
         assert_eq!(aggregate_status(multiple(2), &h), UnderReviewed);
+    }
+
+    // ---- 评审完成 ----
+    #[test]
+    fn empty_review_is_not_completed() {
+        assert!(!review_completed(&[]));
+    }
+
+    #[test]
+    fn all_terminal_verdicts_complete_the_review() {
+        assert!(review_completed(&[Pass, Pass]));
+        assert!(review_completed(&[Pass, UnPass])); // 含不通过也算「评审完成」
+        assert!(review_completed(&[UnPass]));
+    }
+
+    #[test]
+    fn pending_case_blocks_completion() {
+        assert!(!review_completed(&[Pass, UnReviewed]));
+        assert!(!review_completed(&[Pass, UnderReviewed]));
+        assert!(!review_completed(&[ReReviewed, Pass])); // 重新评审 = 重新打开
     }
 }
