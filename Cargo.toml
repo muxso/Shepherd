@@ -20,6 +20,7 @@ members = [
     "crates/task",
     "crates/delivery",
     "crates/design",
+    "crates/agent-runtime",
     "crates/verification",
     "crates/orchestrator",
     "crates/mcp",
