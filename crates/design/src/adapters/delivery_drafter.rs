@@ -48,7 +48,9 @@ impl DesignDrafter for DeliveryDesignDrafter {
                 "覆盖方案/接口/数据模型/错误处理/风险".to_string(),
             ],
             executor: self.kind,
-            context: None,
+            // 标记为设计模式:runtime 据此路由到 design bridge(产文档→POST /proposal/{id}/design),
+            // 而非默认实现 bridge(改代码→commit→/delivery/{id}/complete)。
+            context: Some("design".to_string()),
             instructions: Some(ARCHITECT_ROLE.replace("{proposal_id}", &proposal.id)),
         };
         self.executor
