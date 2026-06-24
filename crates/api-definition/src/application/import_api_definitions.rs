@@ -7,8 +7,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::domain::{
-    parse_openapi, ApiDefinition, ApiDefinitionError, ApiProtocol, NewApiCase, NewApiDefinition,
-    NewApiModule,
+    parse_import, ApiDefinition, ApiDefinitionError, ApiProtocol, ImportFormat, NewApiCase,
+    NewApiDefinition, NewApiModule,
 };
 use crate::ports::{ApiDefinitionRepository, RepoError};
 
@@ -41,20 +41,22 @@ impl ImportApiDefinitionsUseCase {
         Self { repo }
     }
 
-    /// `doc` 为解析后的 JSON 文档。先解析(失败整体报错),再逐条建定义。
+    /// `doc` 为解析后的 JSON 文档(JMeter 为含原始 .jmx 文本的 JSON 字符串)。先按 `format` 解析
+    /// (失败整体报错),再逐条建定义。
     /// `module_id`:新建定义归入的模块(None=未归类);`group_by_tag` 开启时它作为按 tag 自建模块的**父级**。
-    /// `group_by_tag`:按 OpenAPI 首个 tag 自动建/复用子模块并归类(无 tag 回落 `module_id`)。
+    /// `group_by_tag`:按来源的标签/分组(OpenAPI tag、Postman 文件夹、HAR host、MS 模块)自动建/复用子模块并归类(无标签回落 `module_id`)。
     /// `overwrite`:同 方法+路径 已存在时 true=覆盖其 spec(默认),false=不覆盖(跳过,计入 skipped)。
     pub async fn execute(
         &self,
         project_id: &str,
+        format: ImportFormat,
         doc: &serde_json::Value,
         module_id: Option<&str>,
         group_by_tag: bool,
         overwrite: bool,
         sync_module: bool,
     ) -> Result<ImportOutcome, ImportError> {
-        let apis = parse_openapi(doc)?;
+        let apis = parse_import(format, doc)?;
 
         // 幂等导入:按「方法 + 路径」识别项目内已存在的定义。命中则覆盖其 spec(保留用户已编辑的用例),
         // 未命中则新建定义 + 默认用例。避免重复导入同一份 OpenAPI 堆出重复接口。
@@ -197,7 +199,8 @@ mod tests {
                 "/users": { "get": { "operationId": "listUsers" } }
             }
         });
-        let out = uc.execute("p1", &doc, None, false, true, false).await.expect("imported");
+        let out =
+            uc.execute("p1", ImportFormat::Openapi, &doc, None, false, true, false).await.expect("imported");
         assert_eq!(out.created.len(), 2);
         assert_eq!(out.skipped, 0);
         assert_eq!(repo.list_definitions("p1").await.unwrap().len(), 2);
@@ -216,7 +219,8 @@ mod tests {
                 "/ping": { "get": { "summary": "ping" } }
             }
         });
-        let out = uc.execute("p1", &doc, None, true, true, false).await.expect("imported");
+        let out =
+            uc.execute("p1", ImportFormat::Openapi, &doc, None, true, true, false).await.expect("imported");
         assert_eq!(out.created.len(), 4);
         // 两个 tag → 两个模块(auth 复用,不重复建)
         let mods = repo.list_modules("p1").await.unwrap();
@@ -236,7 +240,10 @@ mod tests {
     async fn unparseable_doc_errors() {
         let repo = Arc::new(InMemoryApiDefinitionRepository::new());
         let uc = ImportApiDefinitionsUseCase::new(repo);
-        let err = uc.execute("p1", &json!({"foo": 1}), None, false, true, false).await.unwrap_err();
+        let err = uc
+            .execute("p1", ImportFormat::Openapi, &json!({"foo": 1}), None, false, true, false)
+            .await
+            .unwrap_err();
         assert!(matches!(err, ImportError::Parse(ApiDefinitionError::BadImport(_))));
     }
 }

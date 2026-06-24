@@ -68,6 +68,31 @@ impl ApiDefinitionRepository for InMemoryApiDefinitionRepository {
         Ok(self.state.lock().expect("lock").definitions.get(id).cloned())
     }
 
+    async fn update_definition(
+        &self,
+        id: &str,
+        name: &str,
+        protocol: &str,
+        method: &str,
+        path: &str,
+    ) -> Result<Option<ApiDefinition>, RepoError> {
+        let mut state = self.state.lock().expect("lock");
+        state.seq += 1;
+        let seq = state.seq;
+        let Some(d) = state.definitions.get_mut(id) else {
+            return Ok(None);
+        };
+        d.name = name.to_string();
+        if let Some(p) = crate::domain::ApiProtocol::parse(protocol) {
+            d.protocol = p;
+        }
+        d.method = method.to_string();
+        d.path = path.to_string();
+        // 合成单调递增的更新时间串(与 insert/spec 保持同形态)。
+        d.updated_at = format!("{seq:020}");
+        Ok(Some(d.clone()))
+    }
+
     async fn update_definition_spec(&self, id: &str, spec: &str) -> Result<(), RepoError> {
         if let Some(d) = self.state.lock().expect("lock").definitions.get_mut(id) {
             d.spec = spec.to_string();
@@ -206,6 +231,22 @@ impl ApiDefinitionRepository for InMemoryApiDefinitionRepository {
         Ok(removed)
     }
 
+    async fn update_mock(&self, mock_id: &str, m: &NewApiMock) -> Result<bool, RepoError> {
+        let mut state = self.state.lock().expect("lock");
+        let Some(existing) = state.mocks.get_mut(mock_id) else { return Ok(false) };
+        // api_definition_id / created_by 不变;其余可变字段整体覆盖。
+        existing.name = m.name.clone();
+        existing.match_rule = m.match_rule.clone();
+        existing.response_status = m.response_status;
+        existing.response_body = m.response_body.clone();
+        existing.enabled = m.enabled;
+        existing.tags = m.tags.clone();
+        existing.response_headers = m.response_headers.clone();
+        existing.response_delay_ms = m.response_delay_ms;
+        existing.follow_definition = m.follow_definition;
+        Ok(true)
+    }
+
     async fn delete_mock(&self, mock_id: &str) -> Result<bool, RepoError> {
         Ok(self.state.lock().expect("lock").mocks.remove(mock_id).is_some())
     }
@@ -262,6 +303,7 @@ impl ApiDefinitionRepository for InMemoryApiDefinitionRepository {
             response_headers: m.response_headers.clone(),
             response_delay_ms: m.response_delay_ms,
             follow_definition: m.follow_definition,
+            created_by: m.created_by.clone(),
         };
         state.mocks.insert(mock.id.clone(), mock.clone());
         Ok(mock)

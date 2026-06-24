@@ -15,8 +15,9 @@ use axum::{
 };
 use kernel::page::PageRequest;
 use crate::application::{
-    AddStepError, AddStepUseCase, CompileError, CompileScenarioUseCase, CreateScenarioError,
-    CreateScenarioUseCase, GetScenarioUseCase, ListScenarioExecutionsUseCase, ListScenariosUseCase,
+    AddStepError, AddStepUseCase, CompileError, CompileScenarioUseCase, CopyScenarioError,
+    CopyScenarioUseCase, CreateScenarioError, CreateScenarioUseCase, GetScenarioUseCase,
+    ListScenarioExecutionsUseCase, ListScenariosUseCase,
 };
 use crate::domain::{
     ApiScenario, ControlKind, InlineRequest, NewScenarioStep, RefMode, RunnableStep,
@@ -30,6 +31,7 @@ use webauth::{AuthUser, SessionStore};
 #[derive(Clone)]
 struct ScenarioAppState {
     create: CreateScenarioUseCase,
+    copy: CopyScenarioUseCase,
     list: ListScenariosUseCase,
     get: GetScenarioUseCase,
     add_step: AddStepUseCase,
@@ -53,6 +55,7 @@ pub fn router(
 ) -> Router {
     let state = ScenarioAppState {
         create: CreateScenarioUseCase::new(repo.clone()),
+        copy: CopyScenarioUseCase::new(repo.clone()),
         list: ListScenariosUseCase::new(repo.clone()),
         get: GetScenarioUseCase::new(repo.clone()),
         add_step: AddStepUseCase::new(repo.clone()),
@@ -64,6 +67,7 @@ pub fn router(
     Router::new()
         .route("/api/scenario", post(create_scenario).get(list_scenarios))
         .route("/api/scenario/{id}", get(get_scenario).patch(update_scenario).delete(delete_scenario))
+        .route("/api/scenario/{id}/copy", post(copy_scenario))
         .route("/api/scenario/{id}/step", post(add_step))
         .route("/api/scenario/{id}/step/{step_id}", axum::routing::delete(delete_step))
         .route("/api/scenario/{id}/steps/order", axum::routing::patch(reorder_steps))
@@ -80,6 +84,14 @@ pub fn router(
 struct ScenarioCreateBody {
     project_id: String,
     name: String,
+}
+
+#[derive(Debug, Default, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+struct ScenarioCopyBody {
+    /// 副本名称;缺省/空则派生 `{源名}_copy`。
+    #[serde(default)]
+    name: Option<String>,
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -375,6 +387,33 @@ async fn create_scenario(
     }
 }
 
+#[utoipa::path(post, path = "/api/scenario/{id}/copy", tag = "api-scenario", params(("id" = String, Path)), request_body = ScenarioCopyBody, responses((status = 201, body = ScenarioResponse), (status = 404)), security(("bearer" = [])))]
+async fn copy_scenario(
+    user: AuthUser,
+    State(st): State<ScenarioAppState>,
+    Path(id): Path<String>,
+    Json(req): Json<ScenarioCopyBody>,
+) -> Response {
+    if !user.can("API_SCENARIO", "ADD") {
+        return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
+    match st.copy.execute(&id, req.name.as_deref(), Some(&user.user_id)).await {
+        Ok(s) => {
+            let _ = st.repo.record_change(&s.id, "CREATE", Some(&format!("复制自 {id}")), Some(&user.user_id)).await;
+            (StatusCode::CREATED, Json(ScenarioResponse::from(s))).into_response()
+        }
+        Err(CopyScenarioError::NotFound) => {
+            (StatusCode::NOT_FOUND, "scenario not found").into_response()
+        }
+        Err(CopyScenarioError::Validation(_)) => {
+            (StatusCode::BAD_REQUEST, "invalid scenario payload").into_response()
+        }
+        Err(CopyScenarioError::Repo(_)) => {
+            (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response()
+        }
+    }
+}
+
 #[utoipa::path(get, path = "/api/scenario", tag = "api-scenario", params(ScenarioListQuery), responses((status = 200, body = [ScenarioResponse])))]
 async fn list_scenarios(
     State(st): State<ScenarioAppState>,
@@ -657,9 +696,10 @@ async fn list_changes(State(st): State<ScenarioAppState>, Path(id): Path<String>
 
 #[derive(OpenApi)]
 #[openapi(
-    paths(create_scenario, list_scenarios, get_scenario, delete_scenario, add_step, compile_scenario, list_executions),
+    paths(create_scenario, copy_scenario, list_scenarios, get_scenario, delete_scenario, add_step, compile_scenario, list_executions),
     components(schemas(
         ScenarioCreateBody,
+        ScenarioCopyBody,
         ScenarioResponse,
         ScenarioStepResponse,
         AddStepBody,
@@ -869,6 +909,54 @@ mod tests {
             .await
             .expect("resp");
         assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn copy_scenario_clones_steps_201() {
+        let (app, t) = app().await;
+        let id = create_scenario_id(&app, &t).await;
+        app.clone()
+            .oneshot(post(
+                &format!("/api/scenario/{id}/step"),
+                r#"{"kind":"CASE","order":0,"refId":"case-7"}"#,
+                Some(&t),
+            ))
+            .await
+            .expect("resp");
+        let resp = app
+            .oneshot(post(&format!("/api/scenario/{id}/copy"), "{}", Some(&t)))
+            .await
+            .expect("resp");
+        assert_eq!(resp.status(), StatusCode::CREATED);
+        let v = json_body(resp).await;
+        assert_ne!(v["id"].as_str().expect("id"), id); // 新 id
+        assert_eq!(v["name"], "下单_copy"); // 默认派生名
+        assert_eq!(v["steps"][0]["kind"], "CASE");
+        assert_eq!(v["steps"][0]["caseId"], "case-7");
+    }
+
+    #[tokio::test]
+    async fn copy_missing_scenario_404() {
+        let (app, t) = app().await;
+        let resp = app
+            .oneshot(post("/api/scenario/ghost/copy", "{}", Some(&t)))
+            .await
+            .expect("resp");
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn copy_without_permission_403() {
+        let repo = Arc::new(InMemoryApiScenarioRepository::new());
+        let sessions = Arc::new(InMemorySessionStore::new());
+        let perms = PermissionSet::from_raw(["API_SCENARIO:READ".to_string()]).expect("perms");
+        let token = sessions.create("u", perms, 3600).await.expect("token");
+        let app = router(repo, sessions);
+        let resp = app
+            .oneshot(post("/api/scenario/any/copy", "{}", Some(&token)))
+            .await
+            .expect("resp");
+        assert_eq!(resp.status(), StatusCode::FORBIDDEN);
     }
 
     #[tokio::test]

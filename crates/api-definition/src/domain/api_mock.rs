@@ -102,6 +102,8 @@ pub struct ApiMock {
     pub response_headers: serde_json::Value,
     pub response_delay_ms: i32,
     pub follow_definition: bool,
+    /// 创建人 user_id(审计列;见 0057 迁移)。读侧回填,创建时由应用层注入。
+    pub created_by: String,
 }
 
 #[cfg(test)]

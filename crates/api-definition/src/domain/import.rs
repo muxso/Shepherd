@@ -30,6 +30,135 @@ pub struct ImportedApi {
 const HTTP_METHODS: &[&str] = &["get", "post", "put", "delete", "patch", "head", "options"];
 const MAX_DEPTH: u8 = 8;
 
+/// 支持的导入来源格式。`from_str` 不区分大小写,未知值回落 OpenAPI(向后兼容)。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ImportFormat {
+    /// OpenAPI 3.x / Swagger 2.0(JSON 文档)。
+    Openapi,
+    /// Postman Collection v2.x(JSON)。
+    Postman,
+    /// HAR 1.2 抓包(JSON)。
+    Har,
+    /// JMeter 测试计划(.jmx,XML 文本)。
+    Jmeter,
+    /// MeterSphere 接口导出(JSON)。
+    Metersphere,
+}
+
+impl ImportFormat {
+    /// 解析来源字符串(前端来料);未知/空 → OpenAPI。
+    pub fn from_str(s: &str) -> Self {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "postman" => Self::Postman,
+            "har" => Self::Har,
+            "jmeter" | "jmx" => Self::Jmeter,
+            "metersphere" | "ms" => Self::Metersphere,
+            _ => Self::Openapi,
+        }
+    }
+
+    /// 规范化的来源串(落库/回显用)。
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Openapi => "openapi",
+            Self::Postman => "postman",
+            Self::Har => "har",
+            Self::Jmeter => "jmeter",
+            Self::Metersphere => "metersphere",
+        }
+    }
+}
+
+/// 按格式分派到对应解析器。JMeter 为 XML:`doc` 须为 JSON 字符串(原始 .jmx 文本)。
+pub fn parse_import(format: ImportFormat, doc: &Value) -> Result<Vec<ImportedApi>, ApiDefinitionError> {
+    match format {
+        ImportFormat::Openapi => parse_openapi(doc),
+        ImportFormat::Postman => super::import_postman::parse_postman(doc),
+        ImportFormat::Har => super::import_har::parse_har(doc),
+        ImportFormat::Jmeter => {
+            let xml = doc
+                .as_str()
+                .ok_or_else(|| ApiDefinitionError::BadImport("jmeter 导入需原始 .jmx 文本".into()))?;
+            super::import_jmeter::parse_jmeter(xml)
+        }
+        ImportFormat::Metersphere => super::import_metersphere::parse_metersphere(doc),
+    }
+}
+
+/// 组装前端约定的 ApiSpec(供非 OpenAPI 来源复用)。各 kv 形如 `{name,value,desc}`。
+/// `body_type`:`json`/`raw`/`form`/`none`;`responses` 形如 `[{status,body}]`。
+pub(crate) fn simple_spec(
+    description: &str,
+    headers: Vec<Value>,
+    query: Vec<Value>,
+    rest: Vec<Value>,
+    body_type: &str,
+    request_body: &str,
+    responses: Vec<Value>,
+) -> Value {
+    json!({
+        "description": description,
+        "tags": [],
+        "requestHeaders": headers,
+        "requestQuery": query,
+        "restParams": rest,
+        "bodyType": body_type,
+        "requestBody": request_body,
+        "bodySchema": [],
+        "responses": responses,
+        "auth": { "type": "none" },
+    })
+}
+
+/// 单条 kv 项(请求头/查询参数)。
+pub(crate) fn kv(name: &str, value: &str, desc: &str) -> Value {
+    json!({ "name": name, "value": value, "desc": desc })
+}
+
+/// 默认用例断言:仅状态码断言(非 OpenAPI 来源无响应 schema 可派生业务断言)。
+pub(crate) fn status_assertions(status: u16) -> Value {
+    json!([{ "type": "StatusIs", "args": status }])
+}
+
+/// `bodyType` 启发:能解析为 JSON → `json`,否则 `raw`。
+pub(crate) fn body_type_of(raw: &str) -> &'static str {
+    if raw.trim().is_empty() {
+        "none"
+    } else if serde_json::from_str::<Value>(raw).is_ok() {
+        "json"
+    } else {
+        "raw"
+    }
+}
+
+/// 从完整/相对 URL 拆出 `(路径, 查询参数)`。去掉协议+host,保留以 `/` 开头的路径;
+/// `?` 后按 `&`/`=` 拆查询(值做最小 percent-decode 的 `+`→空格,不做完整解码,保留原样可读)。
+pub(crate) fn path_and_query(url: &str) -> (String, Vec<(String, String)>) {
+    let url = url.trim();
+    // 去协议 + host:有 "://" 时取第一个 '/' 起的部分;否则原样(已是相对路径)。
+    let after_host = match url.find("://") {
+        Some(i) => {
+            let rest = &url[i + 3..];
+            match rest.find('/') {
+                Some(j) => &rest[j..],
+                None => "/",
+            }
+        }
+        None => url,
+    };
+    let (path, qs) = match after_host.split_once('?') {
+        Some((p, q)) => (p, q),
+        None => (after_host, ""),
+    };
+    let path = if path.is_empty() { "/".to_string() } else { path.to_string() };
+    let mut query = Vec::new();
+    for pair in qs.split('&').filter(|s| !s.is_empty()) {
+        let (k, v) = pair.split_once('=').unwrap_or((pair, ""));
+        query.push((k.replace('+', " "), v.replace('+', " ")));
+    }
+    (path, query)
+}
+
 /// 解析 OpenAPI 3.x / Swagger 2.0 文档。无法识别或 `paths` 缺失/为空时报 `BadImport`。
 /// 返回按「路径、方法」稳定排序的接口列表(便于幂等与可预期的导入结果)。
 pub fn parse_openapi(doc: &Value) -> Result<Vec<ImportedApi>, ApiDefinitionError> {

@@ -9,6 +9,7 @@ kernel = { path = "../kernel" }
 async-trait = "0.1"
 thiserror = "2"
 serde_json = "1"
+quick-xml = "0.36"
 sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "postgres"], optional = true }
 axum = { version = "0.8", optional = true }
 utoipa = { version = "5", optional = true }
