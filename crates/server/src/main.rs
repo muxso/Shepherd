@@ -371,6 +371,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     } else {
         Arc::new(delivery::adapters::EchoAgentExecutor::new())
     };
+    // design(OpenSpec/BMAD Design 阶段)起草执行者:复用同一 agent,在 agent 被移入观察者前留一份克隆。
+    let design_agent = agent.clone();
     // 基础 DeliveryService(无观察者),既作交付主体也作编排器记审计的 recorder(避免 Arc 环)。
     let base_delivery =
         DeliveryService::new(Arc::new(PgDeliveryRepository::new(pool.clone())), agent.clone());
@@ -421,6 +423,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let decomposition_run_routes =
         decomposition_run::router(task_admin.clone(), delivery_svc.clone(), req_admin.clone(), sessions.clone());
     let delivery_routes = delivery::adapters::http::router(delivery_svc, sessions.clone());
+    // —— design 模块(OpenSpec/BMAD Design 阶段:需求 → 设计稿 → 人审批门 → 放行拆分)——
+    // create 即派发「架构师角色」agent 起草(经机群/本地执行者),跑完回调 /proposal/{id}/design。
+    let proposal_svc = design::application::ProposalService::new(Arc::new(
+        design::adapters::pg::PgProposalRepository::new(pool.clone()),
+    ))
+    .with_drafter(Arc::new(design::adapters::DeliveryDesignDrafter::new(
+        design_agent,
+        delivery::domain::ExecutorKind::ClaudeCode,
+    )));
+    let design_routes = design::adapters::http::router(proposal_svc, sessions.clone());
     // 机群端点:认领 + register/heartbeat/list(仅 SHEPHERD_AGENT_FLEET 模式挂载)。
     let agent_fleet_routes = match (&fleet_queue, &fleet_registry) {
         (Some(q), Some(r)) => {
@@ -628,6 +640,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .merge(task_routes)
         .merge(delivery_routes)
         .merge(agent_fleet_routes)
+        .merge(design_routes)
         .merge(decomposition_run_routes)
         .merge(verification_routes)
         .merge(breakdown_routes)
