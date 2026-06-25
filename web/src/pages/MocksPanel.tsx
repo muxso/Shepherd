@@ -147,6 +147,8 @@ function CreateMockForm({
   onCreated,
 }: {
   definition: ApiDefinition
+  // 编辑态传入的现有 Mock(接受 prop 使调用处类型通过;表单预填为后续 WIP)。
+  mock?: ApiMock | null
   onClose: () => void
   onCreated: () => void
 }) {

@@ -1580,17 +1580,6 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::FORBIDDEN);
     }
 
-    fn put(uri: &str, body: &str, token: Option<&str>) -> Request<Body> {
-        let mut b = Request::builder()
-            .method("PUT")
-            .uri(uri)
-            .header("content-type", "application/json");
-        if let Some(t) = token {
-            b = b.header("authorization", format!("Bearer {t}"));
-        }
-        b.body(Body::from(body.to_string())).expect("req")
-    }
-
     #[tokio::test]
     async fn update_definition_200_changes_fields() {
         let (app, t) = app().await;

@@ -37,7 +37,7 @@ impl InMemoryFleetRegistry {
 impl FleetRegistry for InMemoryFleetRegistry {
     async fn register(&self, name: &str, caps: &[String], max_concurrency: u32) -> String {
         let id = format!("rt-{}", self.seq.fetch_add(1, Ordering::Relaxed) + 1);
-        self.rts.lock().unwrap().insert(
+        self.rts.lock().expect("lock").insert(
             id.clone(),
             Entry {
                 name: name.to_string(),
@@ -50,7 +50,7 @@ impl FleetRegistry for InMemoryFleetRegistry {
     }
 
     async fn heartbeat(&self, id: &str) -> bool {
-        match self.rts.lock().unwrap().get_mut(id) {
+        match self.rts.lock().expect("lock").get_mut(id) {
             Some(e) => {
                 e.last_seen_ms = now_ms();
                 true
@@ -64,7 +64,7 @@ impl FleetRegistry for InMemoryFleetRegistry {
         let mut out: Vec<RuntimeInfo> = self
             .rts
             .lock()
-            .unwrap()
+            .expect("lock")
             .iter()
             .map(|(id, e)| RuntimeInfo {
                 id: id.clone(),

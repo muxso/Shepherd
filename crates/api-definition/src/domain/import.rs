@@ -47,6 +47,7 @@ pub enum ImportFormat {
 
 impl ImportFormat {
     /// 解析来源字符串(前端来料);未知/空 → OpenAPI。
+    #[allow(clippy::should_implement_trait)]
     pub fn from_str(s: &str) -> Self {
         match s.trim().to_ascii_lowercase().as_str() {
             "postman" => Self::Postman,
