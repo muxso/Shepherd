@@ -3,7 +3,7 @@ import { Button, Drawer, Empty, Form, Input, Modal, Space, Switch, Table, Tag, T
 import { message } from '../feedback'
 import { PlusOutlined, ReloadOutlined, SyncOutlined, HistoryOutlined } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
-import { api, ApiError, type RunnerAgent, type RunnerExecution, type FleetRuntime } from '../api'
+import { api, ApiError, type RunnerAgent, type RunnerExecution, type FleetRuntime, type FleetStat } from '../api'
 import { useI18n } from '../i18n'
 import { PageBody, PageContainer, PageHeader } from '../components/Page'
 
@@ -101,12 +101,17 @@ export default function Agents() {
 function FleetSection() {
   const { t } = useI18n()
   const [rts, setRts] = useState<FleetRuntime[]>([])
+  const [stats, setStats] = useState<FleetStat[]>([])
   const [loaded, setLoaded] = useState(false)
   useEffect(() => {
     let alive = true
-    const load = () => api.fleetRuntimes()
-      .then((r) => { if (alive) { setRts(Array.isArray(r) ? r : []); setLoaded(true) } })
-      .catch(() => { if (alive) setLoaded(true) })
+    const load = () => {
+      api.fleetRuntimes()
+        .then((r) => { if (alive) { setRts(Array.isArray(r) ? r : []); setLoaded(true) } })
+        .catch(() => { if (alive) setLoaded(true) })
+      // 队列计数与 runtime 列表同频刷新;失败静默(机群未启用时端点为空路由)。
+      api.fleetStats().then((s) => { if (alive) setStats(Array.isArray(s) ? s : []) }).catch(() => {})
+    }
     load()
     const h = setInterval(load, 5000)
     return () => { alive = false; clearInterval(h) }
@@ -114,6 +119,8 @@ function FleetSection() {
   // 未启用机群(无 runtime 且首拉已完成)→ 不渲染,避免干扰协议执行机视图。
   if (loaded && rts.length === 0) return null
   const now = Date.now()
+  // 仅展示有积压/在飞的能力,避免一排全 0 噪声。
+  const busy = stats.filter((s) => s.ready > 0 || s.inFlight > 0)
   const cols: ColumnsType<FleetRuntime> = [
     { title: t('fleet.status', '在线'), dataIndex: 'online', width: 80, render: (o: boolean) => <Tag color={o ? 'green' : 'default'}>{o ? t('fleet.online', '在线') : t('fleet.offline', '离线')}</Tag> },
     { title: t('agent.name', '名称'), dataIndex: 'name', render: (v: string) => <span style={{ fontWeight: 500 }}>{v}</span> },
@@ -127,6 +134,22 @@ function FleetSection() {
       <div style={{ marginBottom: 8, fontWeight: 600, color: 'var(--text-2)' }}>
         {t('fleet.section', 'AI 执行者机群（远程 Claude / Codex）')}
       </div>
+      {busy.length > 0 && (
+        <Space size={[8, 8]} wrap style={{ marginBottom: 12 }}>
+          {busy.map((s) => (
+            <Tag key={s.executor} color="geekblue" style={{ padding: '2px 10px' }}>
+              <span style={{ fontWeight: 600 }}>{s.executor}</span>
+              {' · '}{t('fleet.ready', '积压')} {s.ready}
+              {' · '}{t('fleet.inFlight', '在飞')} {s.inFlight}
+              {s.oldestInFlightMs > 0 && (
+                <span style={{ color: s.oldestInFlightMs > 60000 ? 'var(--error)' : 'var(--text-3)' }}>
+                  {' · '}{t('fleet.oldest', '最久')} {Math.round(s.oldestInFlightMs / 1000)}s
+                </span>
+              )}
+            </Tag>
+          ))}
+        </Space>
+      )}
       <Table<FleetRuntime>
         rowKey="id"
         size="middle"

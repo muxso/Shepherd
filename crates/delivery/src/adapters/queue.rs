@@ -26,9 +26,13 @@ use webauth::{AuthUser, SessionStore};
 
 use crate::domain::ExecutorKind;
 use crate::ports::{
-    AgentExecutor, Claimed, DispatchOutcome, EventSink, ExecError, FleetRegistry, RuntimeInfo,
-    WorkQueue, WorkSpec,
+    AgentExecutor, Claimed, DispatchOutcome, EventSink, ExecError, FleetRegistry, QueueStat,
+    RuntimeInfo, WorkQueue, WorkSpec,
 };
+
+/// 已知执行者能力(统计时即便计数为 0 也列出,机群视图可见全貌)。
+const KNOWN_CAPS: [ExecutorKind; 3] =
+    [ExecutorKind::ClaudeCode, ExecutorKind::Codex, ExecutorKind::OpenCode];
 
 /// 进程内工作队列(单机/测试):`enqueue` 入队,runtime 长轮询认领。
 /// 分布式请用 `RedisStreamQueue`(同一 `WorkQueue` 端口)。
@@ -84,6 +88,20 @@ impl WorkQueue for InMemoryWorkQueue {
     async fn ack(&self, _attempt_id: &str) {
         // 内存队列认领即移除,无待处理列表,no-op。
     }
+
+    /// 进程内队列:`ready` = 当前各能力排队数;认领即移除故无 PEL,`in_flight`/`oldest` 恒 0。
+    async fn stats(&self) -> Vec<QueueStat> {
+        let q = self.inner.lock().expect("lock");
+        KNOWN_CAPS
+            .into_iter()
+            .map(|k| QueueStat {
+                executor: k,
+                ready: q.iter().filter(|s| s.executor == k).count() as u64,
+                in_flight: 0,
+                oldest_in_flight_ms: 0,
+            })
+            .collect()
+    }
 }
 
 /// 把任务入队、立即返回 `Accepted`(run_id = attempt_id);真正执行由某台 runtime
@@ -134,6 +152,7 @@ pub fn router(
 ) -> Router {
     Router::new()
         .route("/agent/work/claim", get(claim))
+        .route("/agent/work/stats", get(stats))
         .route("/agent/runtime", post(register).get(list_runtimes))
         .route("/agent/runtime/{id}/heartbeat", post(heartbeat))
         .with_state(FleetState { queue, registry, sessions })
@@ -207,6 +226,35 @@ async fn claim(
         Some(c) => (StatusCode::OK, Json(WorkSpecDto::from(c.spec))).into_response(),
         None => StatusCode::NO_CONTENT.into_response(),
     }
+}
+
+// ---- HTTP:队列计数(机群可观测) ----
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct QueueStatDto {
+    executor: String,
+    ready: u64,
+    in_flight: u64,
+    oldest_in_flight_ms: u64,
+}
+
+impl From<QueueStat> for QueueStatDto {
+    fn from(s: QueueStat) -> Self {
+        Self {
+            executor: s.executor.as_str().to_string(),
+            ready: s.ready,
+            in_flight: s.in_flight,
+            oldest_in_flight_ms: s.oldest_in_flight_ms,
+        }
+    }
+}
+
+/// 队列计数视图:各能力的积压 / 在飞 / 最久在飞空闲。读端点开放(与 list_runtimes 同级)。
+async fn stats(State(st): State<FleetState>) -> Response {
+    let stats: Vec<QueueStatDto> =
+        st.queue.stats().await.into_iter().map(QueueStatDto::from).collect();
+    (StatusCode::OK, Json(stats)).into_response()
 }
 
 // ---- HTTP:runtime 注册 / 心跳 / 列表(机群视图) ----
@@ -333,6 +381,28 @@ mod tests {
         let got = q.claim(&[ExecutorKind::Codex], Duration::from_millis(50), "rt-1").await.expect("claim");
         assert_eq!(got.spec.attempt_id, "a1");
         assert!(q.is_empty());
+    }
+
+    #[tokio::test]
+    async fn stats_count_ready_per_capability() {
+        let q = InMemoryWorkQueue::new();
+        q.enqueue(&spec("a1", ExecutorKind::ClaudeCode)).await;
+        q.enqueue(&spec("a2", ExecutorKind::ClaudeCode)).await;
+        q.enqueue(&spec("b1", ExecutorKind::Codex)).await;
+        let stats = q.stats().await;
+        let by = |k: ExecutorKind| stats.iter().find(|s| s.executor == k).expect("cap present");
+        assert_eq!(by(ExecutorKind::ClaudeCode).ready, 2);
+        assert_eq!(by(ExecutorKind::Codex).ready, 1);
+        assert_eq!(by(ExecutorKind::OpenCode).ready, 0); // 全能力都列出,空也是 0
+        // 进程内队列无 PEL:在飞恒 0。
+        assert!(stats.iter().all(|s| s.in_flight == 0 && s.oldest_in_flight_ms == 0));
+        // 认领一条后 ready 减少。
+        q.claim(&[ExecutorKind::ClaudeCode], Duration::from_millis(50), "rt-1").await.expect("claim");
+        assert_eq!(by_cap(&q.stats().await, ExecutorKind::ClaudeCode).ready, 1);
+    }
+
+    fn by_cap(stats: &[QueueStat], k: ExecutorKind) -> QueueStat {
+        stats.iter().find(|s| s.executor == k).expect("cap present").clone()
     }
 
     #[test]

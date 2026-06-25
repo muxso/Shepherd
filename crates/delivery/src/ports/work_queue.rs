@@ -16,6 +16,20 @@ pub struct Claimed {
     pub spec: WorkSpec,
 }
 
+/// 单条能力流的队列计数(机群可观测:积压 / 在飞 / 滞留)。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct QueueStat {
+    /// 该计数对应的执行者能力。
+    pub executor: ExecutorKind,
+    /// 待认领:已入队、尚未投递给任何 runtime(积压 backlog)。
+    pub ready: u64,
+    /// 在飞:已认领未 ack(正在执行,或 runtime 崩了滞留 PEL 待回收)。
+    pub in_flight: u64,
+    /// 最久一条在飞任务自上次投递起的空闲毫秒(stuck 探测信号;无在飞 = 0)。
+    /// 由队列后端自身时钟计(Redis 下为 XPENDING idle),不跨进程比时钟。
+    pub oldest_in_flight_ms: u64,
+}
+
 #[async_trait]
 pub trait WorkQueue: Send + Sync {
     /// 入队一个待执行任务(dispatch 调用)。
@@ -32,5 +46,10 @@ pub trait WorkQueue: Send + Sync {
     /// 返回重投条数。`live` = 在线 runtime id 集合(由注册表心跳判定)。内存队列默认 no-op。
     async fn reclaim_dead(&self, _live: &[String], _grace: Duration) -> usize {
         0
+    }
+
+    /// 各能力流的队列计数(机群视图 / 排障)。默认空(不支持的实现,如纯桩)。
+    async fn stats(&self) -> Vec<QueueStat> {
+        Vec::new()
     }
 }
