@@ -23,5 +23,13 @@ thiserror = "2"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
+# Unix 进程组信号:超时/关停时连同子 CLI 派生的子进程一起回收,避免孤儿。
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[dev-dependencies]
+# test-util:`#[tokio::test(start_paused = true)]` 让退避重试的 sleep 走虚拟时钟,测试不真等。
+tokio = { version = "1", features = ["test-util"] }
+
 [lints]
 workspace = true

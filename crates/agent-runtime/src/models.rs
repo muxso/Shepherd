@@ -6,9 +6,12 @@ use serde::Deserialize;
 #[serde(rename_all = "camelCase")]
 pub struct WorkSpec {
     pub attempt_id: String,
+    // 保留完整 claim 字段:runtime 暂不用,留作对账 / 未来用。
     #[serde(default)]
+    #[allow(dead_code)]
     pub decomposition_id: String,
     #[serde(default)]
+    #[allow(dead_code)]
     pub task_id: String,
     #[serde(default)]
     pub title: String,

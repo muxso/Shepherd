@@ -49,6 +49,7 @@ version = "0.0.1"
 dependencies = [
  "anyhow",
  "async-trait",
+ "libc",
  "reqwest",
  "serde",
  "serde_json",
