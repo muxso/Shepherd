@@ -1,6 +1,6 @@
 //! 测试计划领域模型 + 计划组规则。
 
-/// 根分组 id(MeterSphere 用 "NONE" 表示"不属于任何计划组")。
+/// 根分组 id(用 "NONE" 表示"不属于任何计划组")。
 pub const ROOT_GROUP: &str = "NONE";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

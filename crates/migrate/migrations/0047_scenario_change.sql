@@ -1,4 +1,4 @@
--- 场景变更历史(审计日志):记录创建/更新/加步骤/删步骤/重排等操作(对齐 MeterSphere 变更历史)。
+-- 场景变更历史(审计日志):记录创建/更新/加步骤/删步骤/重排等操作。
 -- 由组装根在各变更操作成功后 best-effort 落一行;action 为操作类型,detail 为可读摘要。
 CREATE TABLE ms_api_scenario_change (
     id          TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,

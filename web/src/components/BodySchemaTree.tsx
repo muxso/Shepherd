@@ -52,7 +52,7 @@ function toRows(nodes: BodySchemaNode[], parent: number[] = []): Row[] {
   })
 }
 
-/** JSON 请求体 Schema 树编辑器(对齐 MeterSphere:参数名称/类型/参数值/描述 + 嵌套 + 增删)。 */
+/** JSON 请求体 Schema 树编辑器:参数名称/类型/参数值/描述 + 嵌套 + 增删。 */
 export default function BodySchemaTree({ nodes, onChange }: { nodes: BodySchemaNode[]; onChange: (n: BodySchemaNode[]) => void }) {
   const { t } = useI18n()
   const set = (path: number[], p: Partial<BodySchemaNode>) => onChange(updateAt(nodes, path, (n) => ({ ...n, ...p })))

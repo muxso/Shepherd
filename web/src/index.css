@@ -112,7 +112,7 @@ body::before {
 .ms-worktabs > .ant-tabs-content-holder > .ant-tabs-content > .ant-tabs-tabpane {
   height: 100%;
 }
-/* 工作 Tab(仅顶层):MeterSphere 风浅底浏览器式标签,选中白底 + 紫顶条 */
+/* 工作 Tab(仅顶层):浅底浏览器式标签,选中白底 + 紫顶条 */
 .ms-worktabs > .ant-tabs-nav {
   background: var(--panel-2);
   padding: 6px 10px 0;
