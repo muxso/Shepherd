@@ -9,7 +9,7 @@ const PASSWORD = process.env.E2E_PASSWORD || 's3cret'
 
 export async function adminToken(request: APIRequestContext): Promise<string> {
   const r = await request.post('/auth/login', { data: { username: 'admin', password: PASSWORD } })
-  expect(r.ok(), 'login 失败:server :9180 起了吗?MS_ADMIN_PASSWORD 对吗?').toBeTruthy()
+  expect(r.ok(), 'login 失败:server :9180 起了吗?SHEPHERD_ADMIN_PASSWORD 对吗?').toBeTruthy()
   return (await r.json()).token
 }
 

@@ -1,4 +1,4 @@
--- 接口定义增人类可读编号 num(对齐 MeterSphere 列表/详情的【101093】式 ID),由序列分配。
+-- 接口定义增人类可读编号 num(列表/详情的【101093】式 ID),由序列分配。
 CREATE SEQUENCE IF NOT EXISTS ms_api_definition_num_seq START 100001;
 ALTER TABLE ms_api_definition ADD COLUMN IF NOT EXISTS num BIGINT;
 

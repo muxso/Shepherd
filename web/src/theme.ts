@@ -1,5 +1,5 @@
-// Shepherd 设计基线:与 MeterSphere 区隔的视觉身份。
-// 关键决策:品牌色 = 靛蓝(indigo),把 MeterSphere 的绿色降级为「成功」语义色(brand ≠ success,消歧)。
+// Shepherd 设计基线:独立的视觉身份。
+// 关键决策:品牌色 = 靛蓝(indigo);绿色仅用作「成功」语义色(brand ≠ success,消歧)。
 // AntD 主题 token 一处改、全局生效;非 AntD 的自定义样式走 index.css 里的 CSS 变量(同一套值)。
 import { theme as antdTheme, type ThemeConfig } from 'antd'
 

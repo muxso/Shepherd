@@ -295,7 +295,7 @@ function downloadText(name: string, text: string) {
 const ROLE_YAML = `apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
-  name: metersphere-role
+  name: shepherd-role
 rules:
   - apiGroups: ["", "apps"]
     resources: ["pods", "deployments", "daemonsets"]

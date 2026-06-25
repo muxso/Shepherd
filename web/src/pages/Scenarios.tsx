@@ -449,7 +449,7 @@ export default function Scenarios() {
   )
 }
 
-// 步骤类型 → 标签文案 + 颜色(对齐 MeterSphere)。
+// 步骤类型 → 标签文案 + 颜色。
 function makeStepMeta(t: TFn): Record<string, { label: string; color: string }> {
   return {
     REQUEST: { label: t('scenario.stepRequest', '请求'), color: 'blue' },
@@ -1802,7 +1802,7 @@ function ChildrenBuilder({ value, onChange, projectCases }: { value: Child[]; on
 
 // 按类型分发的添加步骤弹窗:CASE/REQUEST/SCENARIO 叶子 + LOOP/IF/ONCE/TIMER 控制器(含子步骤)。
 type StepBody = { kind: string; order: number; refId?: string; request?: unknown; control?: unknown }
-// 自定义请求抽屉(对齐 MeterSphere):请求行 + 请求头/请求体/Query/REST/前置/后置/断言/认证
+// 自定义请求抽屉:请求行 + 请求头/请求体/Query/REST/前置/后置/断言/认证
 // + 服务端执行 + 响应内容 + 取消/保存并继续添加/确认。后端内联请求已支持完整规格。
 function CustomRequestDrawer({
   open,

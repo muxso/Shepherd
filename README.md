@@ -57,7 +57,7 @@ docker run -d --name shep-pg \
 
 # 2) Start the server (the root sets default-members, so plain `cargo run` works)
 DATABASE_URL=postgres://msuser:mspass@localhost:55432/mstest \
-MS_ADMIN_PASSWORD=s3cret \
+SHEPHERD_ADMIN_PASSWORD=s3cret \
 cargo run                       # → http://localhost:8088
 ```
 
@@ -82,7 +82,7 @@ SHEPHERD_BASE=http://<server>:8088 SHEPHERD_CAPS=CLAUDE_CODE cargo run -p agent-
 
 Each business module is its own crate, laid out hexagonally: `domain` / `ports` / `application` are pure logic with no IO by default, while the database and HTTP live in `adapters` behind feature flags. `tests/architecture.rs` scans the source and fails the build if a pure layer ever imports an IO crate like sqlx or axum — that keeps the layering from quietly eroding over time.
 
-Working today: auth / RBAC / OIDC (Feishu, WeCom), projects, versioned requirements, the task DAG, the design approval gate, fleet dispatch and reclaim, MCP tools (`POST /mcp`), Skill orchestration, plus a test-management suite refactored from MeterSphere (cases / bugs / plans / API and scenario tests / Mock).
+Working today: auth / RBAC / OIDC (Feishu, WeCom), projects, versioned requirements, the task DAG, the design approval gate, fleet dispatch and reclaim, MCP tools (`POST /mcp`), Skill orchestration, plus a test-management suite (cases / bugs / plans / API and scenario tests / Mock).
 
 Not done yet: the verification gate is still heavier to use than I'd like; `shepherd-cli` is half-built; finer fleet metrics (e.g. claim-latency distribution) aren't there; and more executor backends (such as wiring OpenHands in as one) are on the list.
 
@@ -100,7 +100,7 @@ crates/
   agent-runtime/   pure-Rust executor (CLI spawn + event streaming + worktree isolation)
   verification/    integrity verification + verification gate
   mcp/  skill/     MCP tools + Skill orchestration
-  case/ bug/ test-plan/ api-test/ api-scenario/   test management (refactored from MeterSphere)
+  case/ bug/ test-plan/ api-test/ api-scenario/   test management
   api-definition/ api-runner/ runner/ probe/ perf/ comment/ follow/ environment/ mock-runtime/ …
   migrate/         versioned migrations (sqlx migrate! + uniqueness guard)
   server/          composition root = the single binary (typed config + domain-grouped routes)
@@ -117,11 +117,11 @@ Server (consolidated into a typed `ServerConfig`):
 | Variable | Default | Meaning |
 |---|---|---|
 | `DATABASE_URL` | local mstest | PG connection string |
-| `MS_BIND` | `0.0.0.0:8088` | main API listen address |
-| `MS_ADMIN_PASSWORD` | `admin` | admin password upserted idempotently on boot |
+| `SHEPHERD_BIND` | `0.0.0.0:8088` | main API listen address |
+| `SHEPHERD_ADMIN_PASSWORD` | `admin` | admin password upserted idempotently on boot |
 | `SHEPHERD_AGENT_FLEET` | — | set to enable fleet mode |
 | `SHEPHERD_FLEET_REDIS` | — | set to use a Redis distributed queue / registry |
-| `MS_FEISHU_*` / `MS_WECOM_*` | — | OIDC third-party login |
+| `SHEPHERD_FEISHU_*` / `SHEPHERD_WECOM_*` | — | OIDC third-party login |
 
 Executor `agent-runtime`:
 

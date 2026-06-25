@@ -25,7 +25,7 @@ A 20-second story: **file a requirement → AI drafts a design → you approve �
      -p 55432:5432 postgres:16-alpine
 
    DATABASE_URL=postgres://msuser:mspass@localhost:55432/mstest \
-   MS_ADMIN_PASSWORD=s3cret SHEPHERD_AGENT_FLEET=1 cargo run        # server :8088
+   SHEPHERD_ADMIN_PASSWORD=s3cret SHEPHERD_AGENT_FLEET=1 cargo run        # server :8088
 
    AGENT_MOCK=1 SHEPHERD_BASE=http://127.0.0.1:8088 \
    SHEPHERD_CAPS=CLAUDE_CODE cargo run -p agent-runtime             # mock executor

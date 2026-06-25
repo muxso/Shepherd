@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.0.1",
   "type": "module",
-  "description": "Shepherd 前端:接口测试管理(参考 MeterSphere 布局)",
+  "description": "Shepherd 前端:接口测试管理",
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",

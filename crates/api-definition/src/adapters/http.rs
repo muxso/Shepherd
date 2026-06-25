@@ -250,7 +250,7 @@ struct ApiCaseCreateBody {
     /// 前后置处理器(EXTRACT/WAIT)数组;缺省空。
     #[serde(default)]
     processors: Option<serde_json::Value>,
-    /// 优先级 / 状态 / 标签 / 请求头(对齐 MeterSphere;均可选,缺省走域默认)。
+    /// 优先级 / 状态 / 标签 / 请求头(均可选,缺省走域默认)。
     #[serde(default)]
     priority: Option<String>,
     #[serde(default)]
@@ -317,7 +317,7 @@ struct ApiMockCreateBody {
     response_body: Option<String>,
     #[serde(default)]
     enabled: Option<bool>,
-    /// 标签 / 响应头 / 响应延时(ms)/ 跟随定义(对齐 MeterSphere;均可选)。
+    /// 标签 / 响应头 / 响应延时(ms)/ 跟随定义(均可选)。
     #[serde(default)]
     tags: Option<serde_json::Value>,
     #[serde(default)]

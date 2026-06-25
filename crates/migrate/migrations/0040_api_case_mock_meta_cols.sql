@@ -1,4 +1,4 @@
--- 接口用例 / Mock 增 MeterSphere 对齐属性列。均可空带默认,既有 runner 读取链路不受影响。
+-- 接口用例 / Mock 增属性列。均可空带默认,既有 runner 读取链路不受影响。
 
 -- 用例:优先级 / 状态 / 标签 / 请求头。
 -- case_status 单独命名避免与 ms_api_definition.status 在联表时歧义;仓储以 `case_status AS status` 读出。

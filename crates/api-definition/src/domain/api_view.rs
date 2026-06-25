@@ -1,4 +1,4 @@
-//! 接口列表「视图」:保存筛选条件 + 列设置 + 页大小(对齐 MeterSphere 视图保存/分享)。
+//! 接口列表「视图」:保存筛选条件 + 列设置 + 页大小(支持视图保存/分享)。
 //! `config` 为不透明 JSON(前端约定形态),领域层只保证 name 非空、config 为对象。
 
 use crate::domain::error::ApiDefinitionError;

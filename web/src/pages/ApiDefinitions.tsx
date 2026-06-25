@@ -47,7 +47,7 @@ const API_STATUSES = ['DRAFT', 'DEBUGGING', 'COMPLETED', 'DEPRECATED']
 const LIST_KEY = '__list__'
 const NEW_KEY = '__new__'
 
-/** 高级筛选条件:字段 + 操作符 + 值(对齐 MeterSphere 筛选抽屉)。 */
+/** 高级筛选条件:字段 + 操作符 + 值(筛选抽屉)。 */
 type AdvCond = { field: 'num' | 'name' | 'path' | 'protocol' | 'method' | 'status'; op: 'contains' | 'notContains' | 'equals' | 'notEquals' | 'empty' | 'notEmpty'; value: string }
 
 // 字段/操作符选项:存 i18n key + 中文回退,渲染时经 t() 解析(模块级常量拿不到 hook)。
@@ -119,7 +119,7 @@ export default function ApiDefinitions() {
   const [openIds, setOpenIds] = useState<string[]>([])
   const [openCases, setOpenCases] = useState<Record<string, ApiCase>>({}) // 打开的用例详情 tab(key=caseId)
   const [activeKey, setActiveKey] = useState(LIST_KEY)
-  // 列表:分页大小 / 列显隐 / 高级筛选(全部客户端,对齐 MeterSphere)。
+  // 列表:分页大小 / 列显隐 / 高级筛选(全部客户端)。
   const [pageSize, setPageSize] = useState(20)
   const [hiddenCols, setHiddenCols] = useState<string[]>([])
   const [advOpen, setAdvOpen] = useState(false)
@@ -796,7 +796,7 @@ export default function ApiDefinitions() {
 
       <ImportModal open={importOpen} onClose={() => setImportOpen(false)} projectId={projectId} modules={modules} onDone={() => { setImportOpen(false); load() }} />
 
-      {/* 高级筛选抽屉(对齐 MeterSphere:条件组合 所有/任一 + 字段/操作符/值,客户端过滤)。 */}
+      {/* 高级筛选抽屉:条件组合 所有/任一 + 字段/操作符/值,客户端过滤。 */}
       <Drawer
         title={t('apidef.filter', '筛选')}
         open={advOpen}
@@ -1127,7 +1127,7 @@ function CaseDetailTab({ caseItem, projectId, onClose, onDeleted }: { caseItem: 
 
 function ApiDetail({ definition, onUpdated }: { definition: ApiDefinition; onUpdated?: () => void }) {
   const { t } = useI18n()
-  // 顶层标签 + 定义页内的 定义/调试 切换(对标 MeterSphere:调试是定义内的模式)。
+  // 顶层标签 + 定义页内的 定义/调试 切换(调试是定义内的模式)。
   const [tab, setTab] = useState('preview')
   const [defMode, setDefMode] = useState<'define' | 'debug'>('define')
   const specRef = useRef<ApiSpecPanelHandle>(null)
@@ -1355,7 +1355,7 @@ function ApiDetail({ definition, onUpdated }: { definition: ApiDefinition; onUpd
               <Button type="primary" size="small" onClick={() => { setTab('define'); setDefMode('debug') }}>{t('apidef.serverRun', '服务端执行')}</Button>
             </Space>
           ) : tab === 'define' && defMode === 'debug' ? (
-            // 调试态:环境选择器与 预览/定义/用例/MOCK 同一行(右上,对齐 MeterSphere)。
+            // 调试态:环境选择器与 预览/定义/用例/MOCK 同一行(右上)。
             <Select
               size="small"
               value={envId || undefined}

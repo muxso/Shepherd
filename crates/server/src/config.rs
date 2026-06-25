@@ -41,23 +41,23 @@ pub struct AgentConfig {
 pub struct ServerConfig {
     /// `DATABASE_URL`:PG 连接串(默认本地 mstest)。
     pub db_url: String,
-    /// `MS_BIND`:主 API 监听地址(默认 `0.0.0.0:8088`,与 shepherd CLI 默认端口对齐)。
+    /// `SHEPHERD_BIND`:主 API 监听地址(默认 `0.0.0.0:8088`,与 shepherd CLI 默认端口对齐)。
     pub bind: String,
     /// `MOCK_BIND`:Mock 服务独立监听;仅在配置且非空白时启用。
     pub mock_bind: Option<String>,
-    /// `MS_ADMIN_PASSWORD`:启动时幂等 upsert 的 admin 密码(默认 `admin`)。
+    /// `SHEPHERD_ADMIN_PASSWORD`:启动时幂等 upsert 的 admin 密码(默认 `admin`)。
     pub admin_pw: String,
-    /// `MS_SESSION_TTL_SECS`:会话有效期秒(默认 8 小时)。
+    /// `SHEPHERD_SESSION_TTL_SECS`:会话有效期秒(默认 8 小时)。
     pub session_ttl_secs: i64,
-    /// 飞书 OIDC(`MS_FEISHU_APP_ID` / `_APP_SECRET` / `_REDIRECT`)。
+    /// 飞书 OIDC(`SHEPHERD_FEISHU_APP_ID` / `_APP_SECRET` / `_REDIRECT`)。
     pub feishu: Option<OidcProviderConfig>,
-    /// 企业微信 OIDC(`MS_WECOM_CORP_ID` / `_SECRET` / `_REDIRECT`)。
+    /// 企业微信 OIDC(`SHEPHERD_WECOM_CORP_ID` / `_SECRET` / `_REDIRECT`)。
     pub wecom: Option<OidcProviderConfig>,
     /// agent 执行者 / 机群开关。
     pub agent: AgentConfig,
-    /// `MS_EXECUTOR_URL`:api-test 远端 JMeter 派发地址;仅在配置且非空时启用。
+    /// `SHEPHERD_EXECUTOR_URL`:api-test 远端 JMeter 派发地址;仅在配置且非空时启用。
     pub executor_url: Option<String>,
-    /// `MS_RUNNER == "noop"`:显式声明本地无执行器(批量运行恒 RUNNING,仅供演示)。
+    /// `SHEPHERD_RUNNER == "noop"`:显式声明本地无执行器(批量运行恒 RUNNING,仅供演示)。
     pub runner_noop: bool,
 }
 
@@ -91,12 +91,12 @@ impl ServerConfig {
         ServerConfig {
             db_url: lookup("DATABASE_URL")
                 .unwrap_or_else(|| "postgres://msuser:mspass@localhost:55432/mstest".to_string()),
-            bind: lookup("MS_BIND").unwrap_or_else(|| "0.0.0.0:8088".to_string()),
+            bind: lookup("SHEPHERD_BIND").unwrap_or_else(|| "0.0.0.0:8088".to_string()),
             mock_bind: lookup("MOCK_BIND").filter(|v| !v.trim().is_empty()),
-            admin_pw: lookup("MS_ADMIN_PASSWORD").unwrap_or_else(|| "admin".to_string()),
-            session_ttl_secs: parse_or("MS_SESSION_TTL_SECS", 8 * 3600),
-            feishu: oidc("MS_FEISHU_APP_ID", "MS_FEISHU_APP_SECRET", "MS_FEISHU_REDIRECT"),
-            wecom: oidc("MS_WECOM_CORP_ID", "MS_WECOM_SECRET", "MS_WECOM_REDIRECT"),
+            admin_pw: lookup("SHEPHERD_ADMIN_PASSWORD").unwrap_or_else(|| "admin".to_string()),
+            session_ttl_secs: parse_or("SHEPHERD_SESSION_TTL_SECS", 8 * 3600),
+            feishu: oidc("SHEPHERD_FEISHU_APP_ID", "SHEPHERD_FEISHU_APP_SECRET", "SHEPHERD_FEISHU_REDIRECT"),
+            wecom: oidc("SHEPHERD_WECOM_CORP_ID", "SHEPHERD_WECOM_SECRET", "SHEPHERD_WECOM_REDIRECT"),
             agent: AgentConfig {
                 fleet: present("SHEPHERD_AGENT_FLEET"),
                 fleet_redis: lookup("SHEPHERD_FLEET_REDIS"),
@@ -106,8 +106,8 @@ impl ServerConfig {
                 cmd: lookup("SHEPHERD_AGENT_CMD"),
                 async_callback: present("SHEPHERD_AGENT_ASYNC"),
             },
-            executor_url: lookup("MS_EXECUTOR_URL").filter(|v| !v.is_empty()),
-            runner_noop: lookup("MS_RUNNER").as_deref() == Some("noop"),
+            executor_url: lookup("SHEPHERD_EXECUTOR_URL").filter(|v| !v.is_empty()),
+            runner_noop: lookup("SHEPHERD_RUNNER").as_deref() == Some("noop"),
         }
     }
 }
@@ -141,8 +141,8 @@ mod tests {
 
     #[test]
     fn blank_values_are_treated_as_unset_where_it_matters() {
-        // MOCK_BIND / MS_EXECUTOR_URL 空白视为未启用(沿用原逻辑)。
-        let cfg = from(&[("MOCK_BIND", "  "), ("MS_EXECUTOR_URL", "")]);
+        // MOCK_BIND / SHEPHERD_EXECUTOR_URL 空白视为未启用(沿用原逻辑)。
+        let cfg = from(&[("MOCK_BIND", "  "), ("SHEPHERD_EXECUTOR_URL", "")]);
         assert_eq!(cfg.mock_bind, None);
         assert_eq!(cfg.executor_url, None);
     }
@@ -150,10 +150,10 @@ mod tests {
     #[test]
     fn oidc_needs_both_id_and_secret() {
         // 只配 id、缺 secret → 不构造 provider。
-        let cfg = from(&[("MS_FEISHU_APP_ID", "x")]);
+        let cfg = from(&[("SHEPHERD_FEISHU_APP_ID", "x")]);
         assert_eq!(cfg.feishu, None);
         // id + secret 齐 → 构造;redirect 缺省空串。
-        let cfg = from(&[("MS_FEISHU_APP_ID", "x"), ("MS_FEISHU_APP_SECRET", "y")]);
+        let cfg = from(&[("SHEPHERD_FEISHU_APP_ID", "x"), ("SHEPHERD_FEISHU_APP_SECRET", "y")]);
         assert_eq!(
             cfg.feishu,
             Some(OidcProviderConfig { app_id: "x".into(), app_secret: "y".into(), redirect: String::new() })
@@ -167,8 +167,8 @@ mod tests {
             ("SHEPHERD_FLEET_REDIS", "redis://h:6379"),
             ("SHEPHERD_FLEET_REAP_INTERVAL_S", "5"),
             ("SHEPHERD_FLEET_RECLAIM_MS", "9000"),
-            ("MS_RUNNER", "noop"),
-            ("MS_SESSION_TTL_SECS", "abc"), // 解析失败 → 回落默认
+            ("SHEPHERD_RUNNER", "noop"),
+            ("SHEPHERD_SESSION_TTL_SECS", "abc"), // 解析失败 → 回落默认
         ]);
         assert!(cfg.agent.fleet);
         assert_eq!(cfg.agent.fleet_redis.as_deref(), Some("redis://h:6379"));
