@@ -46,6 +46,7 @@ impl ImportApiDefinitionsUseCase {
     /// `module_id`:新建定义归入的模块(None=未归类);`group_by_tag` 开启时它作为按 tag 自建模块的**父级**。
     /// `group_by_tag`:按来源的标签/分组(OpenAPI tag、Postman 文件夹、HAR host、MS 模块)自动建/复用子模块并归类(无标签回落 `module_id`)。
     /// `overwrite`:同 方法+路径 已存在时 true=覆盖其 spec(默认),false=不覆盖(跳过,计入 skipped)。
+    #[allow(clippy::too_many_arguments)]
     pub async fn execute(
         &self,
         project_id: &str,

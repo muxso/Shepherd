@@ -27,16 +27,16 @@ impl ProposalRepository for InMemoryProposalRepository {
         let id = format!("prop-{}", self.seq.fetch_add(1, Ordering::Relaxed) + 1);
         let p = Proposal::new(&id, requirement_id, title)
             .map_err(|e| RepoError::Backend(e.to_string()))?;
-        self.by_id.lock().unwrap().insert(id, p.clone());
+        self.by_id.lock().expect("lock").insert(id, p.clone());
         Ok(p)
     }
 
     async fn get(&self, id: &str) -> Result<Option<Proposal>, RepoError> {
-        Ok(self.by_id.lock().unwrap().get(id).cloned())
+        Ok(self.by_id.lock().expect("lock").get(id).cloned())
     }
 
     async fn save(&self, proposal: &Proposal) -> Result<(), RepoError> {
-        self.by_id.lock().unwrap().insert(proposal.id.clone(), proposal.clone());
+        self.by_id.lock().expect("lock").insert(proposal.id.clone(), proposal.clone());
         Ok(())
     }
 
@@ -44,7 +44,7 @@ impl ProposalRepository for InMemoryProposalRepository {
         let mut out: Vec<Proposal> = self
             .by_id
             .lock()
-            .unwrap()
+            .expect("lock")
             .values()
             .filter(|p| p.requirement_id == requirement_id)
             .cloned()

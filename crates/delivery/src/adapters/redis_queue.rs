@@ -107,19 +107,16 @@ impl WorkQueue for RedisStreamQueue {
         // 专用连接跑阻塞 XREADGROUP(勿用共享 self.conn,否则卡死 enqueue/并发 claim)。
         let mut conn = self.client.get_multiplexed_async_connection().await.ok()?;
         let reply: StreamReadReply = conn.xread_options(&keys, &ids, &opts).await.ok()?;
-        for skey in reply.keys {
-            for entry in skey.ids {
-                let json: String = entry.get("spec")?;
-                let wire: WireSpec = serde_json::from_str(&json).ok()?;
-                let spec: WorkSpec = wire.into();
-                // 记 ack 映射:attempt_id → "<streamkey>\x1f<entryid>",供终态 XACK。
-                let val = format!("{}{}{}", skey.key, SEP, entry.id);
-                let _: redis::RedisResult<()> =
-                    conn.hset(ACKMAP, &spec.attempt_id, val).await;
-                return Some(Claimed { spec });
-            }
-        }
-        None
+        // 取首个非空流的首条消息(COUNT 1;多流时任取其一)。
+        let (key, entry) =
+            reply.keys.into_iter().find_map(|k| k.ids.into_iter().next().map(|e| (k.key, e)))?;
+        let json: String = entry.get("spec")?;
+        let wire: WireSpec = serde_json::from_str(&json).ok()?;
+        let spec: WorkSpec = wire.into();
+        // 记 ack 映射:attempt_id → "<streamkey>\x1f<entryid>",供终态 XACK。
+        let val = format!("{}{}{}", key, SEP, entry.id);
+        let _: redis::RedisResult<()> = conn.hset(ACKMAP, &spec.attempt_id, val).await;
+        Some(Claimed { spec })
     }
 
     async fn ack(&self, attempt_id: &str) {

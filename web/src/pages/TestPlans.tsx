@@ -256,7 +256,7 @@ function PlanDetail({ planId, name, projectId }: { planId: string; name: string;
                 placeholder={t('plan.markResult', '登记结果')}
                 value={undefined}
                 disabled={marking === c.caseId}
-                onChange={(s) => markResult(c.caseId, s)}
+                onChange={(s) => s && markResult(c.caseId, s)}
                 options={CASE_RESULT_OPTIONS.map((o) => ({ value: o.value, label: t(o.i18nKey, o.fallback) }))}
               />
             ),
