@@ -30,7 +30,7 @@ pub struct ImportedApi {
 const HTTP_METHODS: &[&str] = &["get", "post", "put", "delete", "patch", "head", "options"];
 const MAX_DEPTH: u8 = 8;
 
-/// 支持的导入来源格式。`from_str` 不区分大小写,未知值回落 OpenAPI(向后兼容)。
+/// 支持的导入来源格式。`from_source` 不区分大小写,未知值回落 OpenAPI(向后兼容)。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ImportFormat {
     /// OpenAPI 3.x / Swagger 2.0(JSON 文档)。
@@ -47,8 +47,8 @@ pub enum ImportFormat {
 
 impl ImportFormat {
     /// 解析来源字符串(前端来料);未知/空 → OpenAPI。
-    #[allow(clippy::should_implement_trait)]
-    pub fn from_str(s: &str) -> Self {
+    /// (刻意不实现 `FromStr`:此处「未知→默认」是宽松解析,非标准 parse 语义。)
+    pub fn from_source(s: &str) -> Self {
         match s.trim().to_ascii_lowercase().as_str() {
             "postman" => Self::Postman,
             "har" => Self::Har,
