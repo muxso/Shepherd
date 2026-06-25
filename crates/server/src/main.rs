@@ -12,6 +12,7 @@
 #![allow(clippy::doc_lazy_continuation)]
 
 mod breakdown_route;
+mod config;
 mod design_bridge;
 mod debug_send;
 mod decomposition_run;
@@ -134,13 +135,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         )
         .init();
 
-    let db_url = std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| "postgres://msuser:mspass@localhost:55432/mstest".to_string());
-    // 默认端口与 shepherd CLI 默认连接端口(8088)对齐,开箱即用免配 --url。
-    let bind = std::env::var("MS_BIND").unwrap_or_else(|_| "0.0.0.0:8088".to_string());
+    // 启动期配置单一真源:所有 env 开关在 config.rs 一处声明/定型(默认端口 8088 与 shepherd CLI 对齐)。
+    let cfg = config::ServerConfig::from_env();
+    let bind = cfg.bind.clone();
 
     // —— 一个连接池,多个模块共享;版本化迁移建/演进全部表(单一真源) ——
-    let pool = migrate::connect(&db_url).await?;
+    let pool = migrate::connect(&cfg.db_url).await?;
     migrate::run(&pool).await?;
 
     // `--migrate-only`:只建表/演进 schema 然后退出(供数据迁移流程在 pgloader 前调用)。
@@ -152,18 +152,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // —— Mock 服务(可选,独立端口)——
     // 设了 MOCK_BIND 才起:catch-all 路由,据 ms_api_mock+ms_api_definition 匹配并回放响应。
     // 跑在独立监听上(被测系统把 base_url 指向它),不与主 API 路由冲突。
-    if let Ok(mock_bind) = std::env::var("MOCK_BIND") {
-        if !mock_bind.trim().is_empty() {
-            let source = Arc::new(mock_runtime::adapters::PgMockRuleSource::new(pool.clone()));
-            let mock_app = mock_runtime::adapters::http::router(source);
-            let listener = tokio::net::TcpListener::bind(&mock_bind).await?;
-            tracing::info!(%mock_bind, "mock server listening");
-            tokio::spawn(async move {
-                if let Err(e) = axum::serve(listener, mock_app).await {
-                    tracing::error!("mock server error: {e}");
-                }
-            });
-        }
+    if let Some(mock_bind) = cfg.mock_bind.clone() {
+        let source = Arc::new(mock_runtime::adapters::PgMockRuleSource::new(pool.clone()));
+        let mock_app = mock_runtime::adapters::http::router(source);
+        let listener = tokio::net::TcpListener::bind(&mock_bind).await?;
+        tracing::info!(%mock_bind, "mock server listening");
+        tokio::spawn(async move {
+            if let Err(e) = axum::serve(listener, mock_app).await {
+                tracing::error!("mock server error: {e}");
+            }
+        });
     }
 
     // —— system-setting 模块 ——
@@ -176,13 +174,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // 鉴权:PG 凭证表 + 持久会话(跨重启存活)。启动时用 Argon2 幂等 upsert 一个 admin
     //(密码取 MS_ADMIN_PASSWORD,默认 "admin")。OIDC/LDAP/令牌过期见 ROADMAP B1。
     let hasher = Argon2PasswordHasher;
-    let admin_pw = std::env::var("MS_ADMIN_PASSWORD").unwrap_or_else(|_| "admin".to_string());
     let creds = PgCredentialRepository::new(pool.clone());
     creds
         .upsert(
             "admin",
             "u-admin",
-            &hasher.hash(&admin_pw),
+            &hasher.hash(&cfg.admin_pw),
             &[
                 "SYSTEM_USER:READ+ADD+UPDATE+DELETE".to_string(),
                 "PROJECT:READ+ADD".to_string(),
@@ -207,10 +204,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         )
         .await?;
     let sessions = Arc::new(PgSessionStore::new(pool.clone()));
-    let ttl_secs = std::env::var("MS_SESSION_TTL_SECS")
-        .ok()
-        .and_then(|v| v.parse::<i64>().ok())
-        .unwrap_or(8 * 3600);
+    let ttl_secs = cfg.session_ttl_secs;
     // 角色仓储:登录算有效权限(凭证 ∪ 角色)+ 角色 CRUD/授权共用。
     let role_repo = Arc::new(PgRoleRepository::new(pool.clone()));
     let user_role_repo = Arc::new(PgUserRoleRepository::new(pool.clone()));
@@ -238,18 +232,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let ext_users =
         Arc::new(PgExternalUserRepository::new(pool.clone(), vec!["PROJECT:READ".to_string()]));
     let mut oidc_uc = OidcLoginUseCase::new(ext_users, sessions.clone()).with_ttl_secs(ttl_secs);
-    if let (Ok(id), Ok(secret)) =
-        (std::env::var("MS_FEISHU_APP_ID"), std::env::var("MS_FEISHU_APP_SECRET"))
-    {
-        let redirect = std::env::var("MS_FEISHU_REDIRECT").unwrap_or_default();
-        oidc_uc = oidc_uc.register(Arc::new(FeishuProvider::new(&id, &secret, &redirect)));
+    if let Some(p) = &cfg.feishu {
+        oidc_uc = oidc_uc.register(Arc::new(FeishuProvider::new(&p.app_id, &p.app_secret, &p.redirect)));
         tracing::info!("registered OIDC provider: feishu");
     }
-    if let (Ok(id), Ok(secret)) =
-        (std::env::var("MS_WECOM_CORP_ID"), std::env::var("MS_WECOM_SECRET"))
-    {
-        let redirect = std::env::var("MS_WECOM_REDIRECT").unwrap_or_default();
-        oidc_uc = oidc_uc.register(Arc::new(WecomProvider::new(&id, &secret, &redirect)));
+    if let Some(p) = &cfg.wecom {
+        oidc_uc = oidc_uc.register(Arc::new(WecomProvider::new(&p.app_id, &p.app_secret, &p.redirect)));
         tracing::info!("registered OIDC provider: wecom");
     }
     let oidc_routes = system_setting::adapters::http::oidc_router(oidc_uc);
@@ -333,8 +321,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // SHEPHERD_FLEET_REDIS → 分布式 Redis(队列 + 注册表,多副本+多 runtime);否则进程内(单机)。
     let mut fleet_queue: Option<Arc<dyn delivery::ports::WorkQueue>> = None;
     let mut fleet_registry: Option<Arc<dyn delivery::ports::FleetRegistry>> = None;
-    let agent: Arc<dyn AgentExecutor> = if std::env::var("SHEPHERD_AGENT_FLEET").is_ok() {
-        let redis_url = std::env::var("SHEPHERD_FLEET_REDIS").ok();
+    let agent: Arc<dyn AgentExecutor> = if cfg.agent.fleet {
+        let redis_url = cfg.agent.fleet_redis.clone();
         let q: Arc<dyn delivery::ports::WorkQueue>;
         let reg: Arc<dyn delivery::ports::FleetRegistry>;
         if let Some(url) = &redis_url {
@@ -351,12 +339,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         fleet_queue = Some(q.clone());
         fleet_registry = Some(reg);
         Arc::new(delivery::adapters::QueueAgentExecutor::new(q))
-    } else if let Ok(url) = std::env::var("SHEPHERD_AGENT_URL") {
+    } else if let Some(url) = cfg.agent.url.clone() {
         Arc::new(delivery::adapters::agent_http::HttpAgentExecutor::new(url))
-    } else if let Ok(cmd) = std::env::var("SHEPHERD_AGENT_CMD") {
+    } else if let Some(cmd) = cfg.agent.cmd.clone() {
         let argv: Vec<String> = cmd.split_whitespace().map(String::from).collect();
         let mut ex = delivery::adapters::local::LocalCommandAgentExecutor::new(argv.clone(), argv);
-        if std::env::var("SHEPHERD_AGENT_ASYNC").is_ok() {
+        if cfg.agent.async_callback {
             use webauth::SessionStore as _; // 令 sessions.create 可见
             // 给子进程铸一枚长期回调令牌(DELIVERY:READ+UPDATE),回调基址由 bind 推出。
             let cb_host = bind.replace("0.0.0.0", "127.0.0.1");
@@ -396,14 +384,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // 回收任务:周期重投「持有者(runtime)已离线 + 过容忍期」的待处理 pending(心跳判活)。
         let q = q.clone();
         let reg = fleet_registry.clone();
-        let interval_s: u64 = std::env::var("SHEPHERD_FLEET_REAP_INTERVAL_S")
-            .ok()
-            .and_then(|s| s.parse().ok())
-            .unwrap_or(15);
-        let grace_ms: u64 = std::env::var("SHEPHERD_FLEET_RECLAIM_MS")
-            .ok()
-            .and_then(|s| s.parse().ok())
-            .unwrap_or(30_000);
+        let interval_s: u64 = cfg.agent.fleet_reap_interval_s;
+        let grace_ms: u64 = cfg.agent.fleet_reclaim_ms;
         tokio::spawn(async move {
             let mut tick = tokio::time::interval(std::time::Duration::from_secs(interval_s.max(1)));
             loop {
@@ -518,13 +500,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     //   MS_RUNNER=noop       → Noop 占位(显式声明本地无执行器:批量运行恒 RUNNING,仅供演示)
     //   默认                  → 原生 Rust runner(reqwest 就地跑 ms_api_case,无 JMeter)
     // 注:默认选 local 而非 Noop —— 否则 `api batch-run` 会静默停在 RUNNING 且无结果。
-    let dispatcher: Arc<dyn api_test::ports::TaskDispatcher> = match std::env::var("MS_EXECUTOR_URL")
-    {
-        Ok(url) if !url.is_empty() => {
+    let dispatcher: Arc<dyn api_test::ports::TaskDispatcher> = match &cfg.executor_url {
+        Some(url) => {
             tracing::info!("api runner: HTTP dispatcher (JMeter) → {url}");
-            Arc::new(HttpTaskDispatcher::new(url))
+            Arc::new(HttpTaskDispatcher::new(url.clone()))
         }
-        _ if std::env::var("MS_RUNNER").as_deref() == Ok("noop") => {
+        _ if cfg.runner_noop => {
             tracing::warn!("api runner: Noop(MS_RUNNER=noop)—— 批量运行不会产出结果");
             Arc::new(api_test::adapters::NoopDispatcher)
         }
