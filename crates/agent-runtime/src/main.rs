@@ -178,10 +178,10 @@ async fn main() -> anyhow::Result<()> {
         tokio::spawn(async move {
             loop {
                 tokio::time::sleep(Duration::from_secs(10)).await;
-                let cur = rid.lock().unwrap().clone();
+                let cur = rid.lock().expect("lock").clone();
                 if !client.heartbeat(&cur).await.unwrap_or(false) {
                     if let Ok(new) = client.register(&name, &caps, mc).await {
-                        *rid.lock().unwrap() = new;
+                        *rid.lock().expect("lock") = new;
                     }
                 }
             }
@@ -201,7 +201,7 @@ async fn main() -> anyhow::Result<()> {
             _ = wait_shutdown(&mut sd) => break,
             p = sem.clone().acquire_owned() => p.expect("semaphore closed"),
         };
-        let rid_now = runtime_id.lock().unwrap().clone();
+        let rid_now = runtime_id.lock().expect("lock").clone();
         // 长轮询认领或关停(关停时释放槽并退出)。
         let claimed = tokio::select! {
             _ = wait_shutdown(&mut sd) => { drop(permit); break; }
