@@ -4,11 +4,12 @@
 //! git 快照 / 回调由 runtime 主流程按模式(implement / design)编排,后端不关心。
 
 use std::process::Stdio;
+use std::time::Duration;
 
 use async_trait::async_trait;
 use thiserror::Error;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
-use tokio::process::Command;
+use tokio::process::{Child, Command};
 
 use crate::events::{parse_claude_line, parse_claude_result, ExecEvent, ProgressSink};
 
@@ -16,6 +17,21 @@ use crate::events::{parse_claude_line, parse_claude_result, ExecEvent, ProgressS
 pub enum BackendError {
     #[error("backend error: {0}")]
     Run(String),
+}
+
+/// 刚写出的可执行文件偶发 `ETXTBSY`(os error 26):多线程进程里另一线程在
+/// fork→exec 的窗口内继承了该文件的写句柄,内核认为它仍可写而拒绝 exec。
+/// 短退避重试即可消除(测试里现写现跑会触发;fleet runtime 现写包装脚本同理)。
+async fn spawn_retrying_etxtbsy(cmd: &mut Command) -> std::io::Result<Child> {
+    for _ in 0..4 {
+        match cmd.spawn() {
+            Err(e) if e.raw_os_error() == Some(26) => {
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+            other => return other,
+        }
+    }
+    cmd.spawn() // 末次:无论成败都透传
 }
 
 #[async_trait]
@@ -55,8 +71,8 @@ impl CliAgentBackend for ClaudeBackend {
         cwd: &str,
         sink: &dyn ProgressSink,
     ) -> Result<String, BackendError> {
-        let mut child = Command::new(&self.bin)
-            .current_dir(cwd)
+        let mut cmd = Command::new(&self.bin);
+        cmd.current_dir(cwd)
             .args([
                 "-p",
                 "--output-format",
@@ -67,8 +83,9 @@ impl CliAgentBackend for ClaudeBackend {
             ])
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
+            .stderr(Stdio::piped());
+        let mut child = spawn_retrying_etxtbsy(&mut cmd)
+            .await
             .map_err(|e| BackendError::Run(format!("spawn {}: {e}", self.bin)))?;
 
         if let Some(mut stdin) = child.stdin.take() {
