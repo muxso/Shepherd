@@ -2,7 +2,7 @@
 //!
 //! - 普通计划:直接由自身用例计数推导。
 //! - 计划组:聚合各子计划计数;**状态由子计划状态推导**(而非由汇总计数推导),
-//!   与 MeterSphere `calculateStatusByChildren` 一致。
+//!   由子计划状态推导。
 
 use std::sync::Arc;
 

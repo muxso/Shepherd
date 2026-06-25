@@ -145,7 +145,7 @@ impl NewApiDefinition {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ApiDefinition {
     pub id: String,
-    /// 人类可读编号(对齐 MeterSphere 的【101093】式 ID;由序列分配,内存实现合成)。
+    /// 人类可读编号(【101093】式 ID;由序列分配,内存实现合成)。
     pub num: i64,
     pub project_id: String,
     pub name: String,

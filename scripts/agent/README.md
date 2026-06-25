@@ -13,7 +13,7 @@ SHEPHERD_BASE=https://<有公网的 server>   \
 SHEPHERD_CAPS=CLAUDE_CODE                 \
 RUNTIME_NAME=$(hostname)                  \
 AGENT_WORKDIR=/path/to/被改动的仓库        \
-MS_ADMIN_PASSWORD=s3cret                  \
+SHEPHERD_ADMIN_PASSWORD=s3cret                  \
   ./target/release/agent-runtime
 ```
 
@@ -25,7 +25,7 @@ runtime 出站(无需公网入站):登录 → 注册 → 心跳 → 长轮询认
   → `POST /proposal/{id}/design` → 提案进入待审。
 
 环境变量:`SHEPHERD_BASE` / `SHEPHERD_CAPS` / `RUNTIME_NAME` / `AGENT_WORKDIR` /
-`MS_ADMIN_USER`+`MS_ADMIN_PASSWORD`;`AGENT_MOCK=1` 用 mock 后端(自测,不调真 CLI、不耗用量);
+`SHEPHERD_ADMIN_USER`+`SHEPHERD_ADMIN_PASSWORD`;`AGENT_MOCK=1` 用 mock 后端(自测,不调真 CLI、不耗用量);
 `CODEX_CMD` / `OPENCODE_CMD` 覆盖 CLI 命令;`CLAUDE_BIN` 覆盖 claude 路径。
 
 server 侧用 `SHEPHERD_AGENT_FLEET=1`(+ 可选 `SHEPHERD_FLEET_REDIS` 做分布式队列)启用机群。

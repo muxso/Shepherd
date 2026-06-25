@@ -147,7 +147,7 @@ export interface Project {
   enable: boolean
 }
 
-/** 请求/响应规格(对标 MeterSphere 的「定义」标签):请求头/Query/Body + 响应样例。 */
+/** 请求/响应规格(「定义」标签):请求头/Query/Body + 响应样例。 */
 export interface ApiSpecKV {
   name: string
   value?: string
@@ -159,7 +159,7 @@ export interface ApiSpecResponse {
   /** 示例响应头(「响应内容」里「响应头」标签)。 */
   headers?: ApiSpecKV[]
 }
-/** 请求体 content-type(对标 MeterSphere)。 */
+/** 请求体 content-type。 */
 export type ApiBodyType = 'none' | 'form-data' | 'x-www-form-urlencoded' | 'json' | 'xml' | 'raw' | 'binary'
 
 /** body 类型 → 默认 Content-Type;none 无体、raw 不强加(由用户/请求头决定)→ undefined。 */
@@ -201,7 +201,7 @@ export interface ApiSpecAuth {
   type?: 'none' | 'bearer' | 'basic'
   token?: string
 }
-/** JSON 请求体 Schema 树节点(对齐 MeterSphere 的 Schema 表格)。 */
+/** JSON 请求体 Schema 树节点(Schema 表格)。 */
 export interface BodySchemaNode {
   name: string
   type: 'string' | 'integer' | 'number' | 'boolean' | 'object' | 'array'
@@ -329,7 +329,7 @@ export interface ApiCase {
   body: string | null
   assertions: unknown
   processors: unknown
-  /** MeterSphere 对齐:优先级 / 状态 / 标签 / 请求头(见 0040 迁移)。 */
+  /** 优先级 / 状态 / 标签 / 请求头(见 0040 迁移)。 */
   priority?: string
   status?: string
   tags?: string[]
@@ -349,7 +349,7 @@ export interface ApiMock {
   enabled: boolean
   /** 创建人 user_id(审计列;见 0057 迁移)。 */
   createdBy?: string
-  /** MeterSphere 对齐:标签 / 响应头 / 响应延时(ms)/ 跟随定义(见 0040 迁移)。 */
+  /** 标签 / 响应头 / 响应延时(ms)/ 跟随定义(见 0040 迁移)。 */
   tags?: string[]
   responseHeaders?: { key: string; value: string }[]
   responseDelayMs?: number

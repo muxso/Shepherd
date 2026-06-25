@@ -170,7 +170,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let resolve_uc = ResolveUserNamesUseCase::new(Arc::new(PgUserDirectory::new(pool.clone())));
 
     // 鉴权:PG 凭证表 + 持久会话(跨重启存活)。启动时用 Argon2 幂等 upsert 一个 admin
-    //(密码取 MS_ADMIN_PASSWORD,默认 "admin")。OIDC/LDAP/令牌过期见 ROADMAP B1。
+    //(密码取 SHEPHERD_ADMIN_PASSWORD,默认 "admin")。OIDC/LDAP/令牌过期见 ROADMAP B1。
     let hasher = Argon2PasswordHasher;
     let creds = PgCredentialRepository::new(pool.clone());
     creds
@@ -494,8 +494,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // —— api-test 批量运行模块 ——
     // 执行器(端口背后的适配器,domain/application 不感知),优先级从高到低:
-    //   MS_EXECUTOR_URL 非空 → HTTP 下发 JMeter 节点(异步,远端执行)
-    //   MS_RUNNER=noop       → Noop 占位(显式声明本地无执行器:批量运行恒 RUNNING,仅供演示)
+    //   SHEPHERD_EXECUTOR_URL 非空 → HTTP 下发 JMeter 节点(异步,远端执行)
+    //   SHEPHERD_RUNNER=noop       → Noop 占位(显式声明本地无执行器:批量运行恒 RUNNING,仅供演示)
     //   默认                  → 原生 Rust runner(reqwest 就地跑 ms_api_case,无 JMeter)
     // 注:默认选 local 而非 Noop —— 否则 `api batch-run` 会静默停在 RUNNING 且无结果。
     let dispatcher: Arc<dyn api_test::ports::TaskDispatcher> = match &cfg.executor_url {
@@ -504,7 +504,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             Arc::new(HttpTaskDispatcher::new(url.clone()))
         }
         _ if cfg.runner_noop => {
-            tracing::warn!("api runner: Noop(MS_RUNNER=noop)—— 批量运行不会产出结果");
+            tracing::warn!("api runner: Noop(SHEPHERD_RUNNER=noop)—— 批量运行不会产出结果");
             Arc::new(api_test::adapters::NoopDispatcher)
         }
         _ => {

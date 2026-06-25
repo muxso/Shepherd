@@ -62,7 +62,7 @@ const PROTOCOLS: ProtoSpec[] = [
 ]
 type KV = { on: boolean; key: string; value: string; desc?: string }
 
-// MeterSphere @mock 变量(选取常用),发送前解析为随机值。
+// @mock 变量(选取常用),发送前解析为随机值。
 function makeMockVars(t: (key: string, fallback?: string) => string) {
   return [
     { value: '@natural', label: t('editor.mockNatural', '@natural — 随机自然数') },
@@ -98,7 +98,7 @@ function resolveMock(s: string): string {
   })
 }
 
-// MeterSphere 风请求编辑器:请求行 + Query/请求头/请求体/认证 子 Tab(参数值带 @mock)+ 响应多视图。
+// 请求编辑器:请求行 + Query/请求头/请求体/认证 子 Tab(参数值带 @mock)+ 响应多视图。
 export default function RequestEditor({
   initialMethod = 'GET',
   initialUrl = '',

@@ -64,7 +64,7 @@ function serialize(ops: Op[]): Processor[] {
 }
 
 /**
- * 前置/后置操作编辑器(对齐 MeterSphere:+操作 下拉 + 左列操作 + 右侧编辑)。
+ * 前置/后置操作编辑器:+操作 下拉 + 左列操作 + 右侧编辑。
  * 等待/提取真实接入执行器;脚本/SQL 仅存储(执行引擎待接入,明确标注)。
  */
 export default function ProcessorEditor({

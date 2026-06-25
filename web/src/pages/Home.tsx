@@ -48,7 +48,7 @@ const PROJECT_SERIES = [
   { key: 'funcCase', label: '功能用例', color: '#52c41a' },
 ]
 
-// 卡片清单(完整版「卡片设置」对标 MeterSphere):每张卡可独立显隐 + 自由排序。
+// 卡片清单(完整版「卡片设置」):每张卡可独立显隐 + 自由排序。
 const ALL_CARDS = ['overview', 'projectBars', 'assets', 'apiStats', 'caseStats', 'execTrend', 'quality', 'shortcuts'] as const
 const TREND_DAYS = 7
 type CardKey = (typeof ALL_CARDS)[number]
@@ -75,7 +75,7 @@ function loadPrefs(): CardPref[] {
   return def()
 }
 
-// 首页工作台:当前项目测试资产概览。对标 MeterSphere 首页(可自定义卡片显隐与排序)。
+// 首页工作台:当前项目测试资产概览(可自定义卡片显隐与排序)。
 export default function Home() {
   const { projectId, projects } = useApp()
   const { t } = useI18n()

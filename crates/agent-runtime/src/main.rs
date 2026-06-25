@@ -3,7 +3,7 @@
 //! step 1:骨架 + Mock 后端(可编译、可跑、单测绿)。step 2 接 claude/codex/opencode + git 快照。
 //!
 //! 环境变量:
-//!   SHEPHERD_BASE(默认 http://127.0.0.1:9180)、MS_ADMIN_USER/MS_ADMIN_PASSWORD、
+//!   SHEPHERD_BASE(默认 http://127.0.0.1:9180)、SHEPHERD_ADMIN_USER/SHEPHERD_ADMIN_PASSWORD、
 //!   SHEPHERD_CAPS(默认 CLAUDE_CODE)、RUNTIME_NAME、AGENT_MOCK(=1 用 mock 后端)。
 
 // 保留完整 claim 字段(decomposition_id/task_id 暂未被 runtime 用到,留作对账/未来用)。
@@ -42,8 +42,8 @@ impl Config {
         let env = |k: &str, d: &str| std::env::var(k).unwrap_or_else(|_| d.to_string());
         Self {
             base: env("SHEPHERD_BASE", "http://127.0.0.1:9180"),
-            user: env("MS_ADMIN_USER", "admin"),
-            pass: env("MS_ADMIN_PASSWORD", "s3cret"),
+            user: env("SHEPHERD_ADMIN_USER", "admin"),
+            pass: env("SHEPHERD_ADMIN_PASSWORD", "s3cret"),
             caps: env("SHEPHERD_CAPS", "CLAUDE_CODE")
                 .split(',')
                 .map(|s| s.trim().to_string())

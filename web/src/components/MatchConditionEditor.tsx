@@ -8,7 +8,7 @@ export type MatchCond = { logic: 'AND' | 'OR'; name: string; op: 'equals' | 'con
 export const emptyCond = (): MatchCond => ({ logic: 'AND', name: '', op: 'equals', value: '' })
 
 /**
- * Mock 匹配条件编辑器(对齐 MeterSphere:AND/OR + 参数名称 + 等于/包含/正则 + 值)。
+ * Mock 匹配条件编辑器:AND/OR + 参数名称 + 等于/包含/正则 + 值。
  * 注:匹配引擎当前按 AND 组合全部条件;AND/OR 选择器先做展示,OR 分组待引擎支持(故置灰提示)。
  */
 export default function MatchConditionEditor({

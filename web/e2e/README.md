@@ -7,7 +7,7 @@
 1. **后端 server 跑在 `:9180`**(带数据库,admin 可登录)。例:
    ```bash
    DATABASE_URL=postgres://msuser:mspass@localhost:55432/mstest \
-   MS_BIND=127.0.0.1:9180 MS_ADMIN_PASSWORD=s3cret ./target/debug/server
+   SHEPHERD_BIND=127.0.0.1:9180 SHEPHERD_ADMIN_PASSWORD=s3cret ./target/debug/server
    ```
 2. 至少有 1 个组织 + 1 个项目(冒烟用例需要选中项目)。
 3. vite 会由 Playwright 的 `webServer` 自动起(已在 :5173 跑则复用)。
