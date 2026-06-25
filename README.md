@@ -1,154 +1,165 @@
-# Shepherd 🐑✨
+# Shepherd 🐑
 
-> **AI 研发监督者 —— 让 AI Agent 为你工作,你来确保需求完整实现**
+Let AI write the code; you stay in charge of what ships.
 
-Shepherd 是一个用 **Rust** 构建的下一代研发管理平台。它不仅提供项目管理、需求拆解与任务分配能力,更核心的定位是:**成为你与 AI 编程助手(Claude Code、Codex 等)之间的监管与验证层**。
+[![Rust](https://img.shields.io/badge/Rust-2021-orange.svg)](https://www.rust-lang.org/)
+[![License](https://img.shields.io/badge/License-GPL--2.0-blue.svg)](LICENSE)
+[![status](https://img.shields.io/badge/status-experimental-yellow.svg)](#status)
+&nbsp; · &nbsp; [简体中文](README.zh-CN.md) | English
 
-## 🎯 核心理念
+Shepherd is an early-stage platform for supervising AI-driven development. The idea is simple: AI can write code now, but it won't judge whether it actually finished the requirement, and it won't be accountable for the result. So instead of building yet another "smarter agent," Shepherd is the layer *around* the agent — it breaks requirements down for AI executors to work on, then puts a human approval step at two points (design and verification), and keeps a record of the whole thing.
 
-AI 很擅长写代码,但它不会自己判断"是否完成了需求"。Shepherd 充当 **牧羊人** 的角色:
+> **Status:** `v0.0.1`, experimental, and something we currently dogfood ourselves. The full loop works, but it's not production-ready and there's no public benchmark. Don't treat it as a finished tool.
 
-- **引领**:将需求拆解为 AI 可执行的任务
-- **监管**:通过 MCP 协议与 AI Skill 追踪 AI Agent 的一举一动
-- **验证**:自动检查需求与实现之间的完整性缺口
+<!-- demo GIF pending: see docs/assets/. Uncomment the next line once it exists. -->
+<!-- ![demo](docs/assets/demo.gif) -->
 
-## ✨ 核心功能
+## How it works
 
-| 模块 | 能力 |
-|------|------|
-| **项目管理** | 项目/组织/成员管理,支持多项目并行 |
-| **需求管理** | 需求拆解、依赖关系、优先级排序、**多版本(线性快照 + baseline)** |
-| **任务拆分** | 自动/手动将需求拆分为可分配给 AI 的**可独立交付**的任务 DAG |
-| **AI Agent 监管** | 对接 Claude Code、Codex,追踪执行过程、代码变更、决策日志 |
-| **完整性验证** | 需求 ←→ 任务 ←→ 代码实现 的双向追溯与缺口检测 |
-| **MCP 集成** | 支持 Model Context Protocol,让 AI 与你定义的上下文工具交互 |
-| **AI Skill 编排** | 定义、复用和组合 AI Skill,规范 AI 行为 |
-
-## 🧱 技术特点
-
-- **🚀 Rust 原生**:高性能、低内存占用、安全可靠
-- **🔌 开放架构**:`AgentExecutor` 端口背后支持多种 AI Agent(Claude Code、Codex…),本地子进程与远端 Agent API 双适配器,按环境/任务路由
-- **📊 可观测性**:完整的 AI 执行日志与审计追踪
-- **🔗 API First**:RESTful API + Webhook 回调,便于集成到现有 DevOps 流程
-- **🧪 TDD 驱动**:六边形架构 + 1 crate = 1 限界上下文;`domain/ports/application` 纯层零 IO 依赖(编译期屏障 + 架构守卫),业务规则全程真库验证
-
-## 🎯 典型使用场景
-
-1. **PM/技术负责人**:在 Shepherd 中编写需求 → 拆解任务 → 分发给 AI Agent
-2. **AI 执行**:Claude Code / Codex 接管任务,生成代码
-3. **Shepherd 监管**:实时记录 AI 的每一步决策、文件变更、测试结果
-4. **自动验证**:对比"需求描述"与"AI 产出",给出完整性报告
-5. **人工补全**:标记缺口,手动补充或重新指派 AI
+A requirement roughly travels like this:
 
 ```
-需求(多版本) ──拆分──▶ 任务 DAG(可独立交付) ──派发──▶ AI 执行者(Claude Code/Codex)
-     ▲                                                              │
-     └────────────── 完整性验证(需求 ←→ 实现 缺口检测)◀── 交付物(diff/PR)
+you file a requirement → AI drafts a design →(you approve)→ split into a task DAG → internal executors claim and work
+                                                                                              │
+you sign off ←(verification gate)← adjudication ← deliverable (diff / PR) ←────────────────────┘
 ```
 
----
+The design gate and the verification gate are hard steps in the flow, not optional prompts. However fast the AI runs, nothing reaches your main branch until it clears a gate. That's basically the problem Shepherd is trying to solve: letting you put AI to work at scale *because* the output is reviewable and accountable.
 
-## 🏗️ 快速开始
+## Why the fleet pulls instead of being pushed to
 
-### 现在就能跑(REST 服务)
+This is the part of the project I find most interesting.
 
-唯一二进制入口是组装根 `crates/server`(已设 `default-members`):
+The AI tools in a company (Claude Code, Codex, and friends) usually run on internal dev machines or CI — boxes with no public inbound. The server, on the other hand, has a public address. So the server can't push work to an executor; it has to be the other way around: **executors reach out and long-poll to claim work.** Plenty of orchestration frameworks assume they can reach the agent, and that assumption falls apart on a real internal network.
+
+- Single host: an in-process queue is enough, no external dependencies.
+- Multiple hosts: set `SHEPHERD_FLEET_REDIS` to switch to Redis Streams consumer groups — exactly-once claim, ack on terminal state, and timeout-based reclaim when an executor dies.
+
+The executor itself (`agent-runtime`) is plain Rust: concurrency is bounded by a semaphore, it drains in-flight tasks on shutdown, and each task runs in its own git worktree so they don't step on each other. `GET /agent/work/stats` shows per-capability backlog, in-flight, and oldest-stuck. Adding a new kind of executor means implementing one `CliAgentBackend` (a single `execute(prompt, cwd, sink)` method) and registering an enum variant.
+
+```
+        (public)                            (internal, no inbound)
+ ┌────────────┐  enqueue ┌──────────────┐  ←claim─ ┌──────────────────┐
+ │  Shepherd  │─────────▶│  WorkQueue   │          │  agent-runtime   │
+ │   server   │          │ in-mem/Redis │  ─spec→  │  spawn claude /  │
+ │ (dispatch/ │◀─────────│  Streams grp │          │  codex / opencode│
+ │   gates)   │ callback └──────────────┘ register/└──────────────────┘
+ └────────────┘                           heartbeat per-task worktree isolation
+```
+
+## Running it
 
 ```bash
-# 启动服务(需要一个 PostgreSQL;迁移在启动时自动施加)
-DATABASE_URL=postgres://user:pass@localhost:5432/shepherd \
-MS_ADMIN_PASSWORD=changeme \
-cargo run
+# 1) A Postgres; migrations are applied automatically on startup
+docker run -d --name shep-pg \
+  -e POSTGRES_USER=msuser -e POSTGRES_PASSWORD=mspass -e POSTGRES_DB=mstest \
+  -p 55432:5432 postgres:16-alpine
 
-cargo run -- --migrate-only      # 只建表退出
+# 2) Start the server (the root sets default-members, so plain `cargo run` works)
+DATABASE_URL=postgres://msuser:mspass@localhost:55432/mstest \
+MS_ADMIN_PASSWORD=s3cret \
+cargo run                       # → http://localhost:8088
 ```
 
 ```bash
-# 登录拿令牌
-curl -s localhost:3000/auth/login -H 'content-type: application/json' \
-  -d '{"username":"admin","password":"changeme"}'      # → {"token":"..."}
-
-# 需求(多版本)→ 拆分任务 DAG → 派发给 Claude Code
-curl ... -X POST /requirement              -d '{"projectId":"p1","title":"用户登录","acceptanceCriteria":["正确凭证登录"]}'
-curl ... -X POST /decomposition            -d '{"requirementId":"<rid>","requirementVersion":1}'
-curl ... -X POST /decomposition/<did>/task -d '{"title":"实现登录API","dependencies":[]}'
-curl ... -X POST /delivery                 -d '{"decompositionId":"<did>","taskId":"t1","title":"实现登录API","executor":"CLAUDE_CODE"}'
+# Log in for a token
+curl -s localhost:8088/auth/login -H 'content-type: application/json' \
+  -d '{"username":"admin","password":"s3cret"}'
 ```
 
-执行者按环境变量路由(同一 `AgentExecutor` 端口背后切换):
-
-| 环境变量 | 执行者适配器 | 语义 |
-|---|---|---|
-| `SHEPHERD_AGENT_URL` | 远端 Agent SDK/API(`exec-http`) | 异步,`Accepted{runId}` → 回调收尾 |
-| `SHEPHERD_AGENT_CMD` | 本地 spawn `claude`/`codex`(`exec-local`) | 同步,headless 跑完返回交付物 |
-| (都不设) | `EchoAgentExecutor` 桩 | 无真实 agent,回显(本地/演示) |
-
-### 规划中的 CLI(目标体验)
+The web console, and starting an executor on an internal machine:
 
 ```bash
-cargo install shepherd-cli
-shepherd init my-project
-shepherd req add "实现用户登录功能"
-shepherd req breakdown --ai
-shepherd agent connect --type claude-code
-shepherd task run --task-id xxx --assign-to claude-code
-shepherd verify --req-id xxx
+cd web && npm install && npm run dev          # Vite console
+
+SHEPHERD_AGENT_FLEET=1 cargo run              # server in fleet mode
+SHEPHERD_BASE=http://<server>:8088 SHEPHERD_CAPS=CLAUDE_CODE cargo run -p agent-runtime
 ```
 
-> `shepherd-cli` 与 `verify` / `--ai 自动拆分` 为路线图项,见下方实现现状。
+<!-- console screenshot pending: see docs/assets/. -->
 
----
+## What's in here
 
-## 📍 实现现状
+Each business module is its own crate, laid out hexagonally: `domain` / `ports` / `application` are pure logic with no IO by default, while the database and HTTP live in `adapters` behind feature flags. `tests/architecture.rs` scans the source and fails the build if a pure layer ever imports an IO crate like sqlx or axum — that keeps the layering from quietly eroding over time.
 
-诚实对照愿景与已落地代码(每个上下文都走完 domain→ports→application→PG→HTTP→组装根,真库 e2e 验证;**316 个测试**):
+Working today: auth / RBAC / OIDC (Feishu, WeCom), projects, versioned requirements, the task DAG, the design approval gate, fleet dispatch and reclaim, MCP tools (`POST /mcp`), Skill orchestration, plus a test-management suite refactored from MeterSphere (cases / bugs / plans / API and scenario tests / Mock).
 
-| 能力 | crate | 状态 |
-|---|---|---|
-| 鉴权 / 会话 / RBAC(本地 + OIDC 飞书·企业微信) | `system-setting` + `webauth` | ✅ |
-| 项目 / 组织 / 角色 / 用户管理(全 CRUD + RBAC) | `system-setting` `project` | ✅ |
-| 需求管理(多版本:线性快照 + baseline + 验收标准) | `requirement` | ✅ |
-| 任务拆分(DAG、依赖、就绪门控、可独立交付) | `task` | ✅ |
-| AI Agent 派发与交付记录(Claude Code/Codex,本地+远端双适配器) | `delivery` | ✅ |
-| **完整性验证(需求 ←→ 任务 ←→ 实现 缺口检测)** | `verification` | ⬜ 规划中 |
-| **MCP 集成 / AI Skill 编排 / 执行决策日志审计** | — | ⬜ 规划中 |
-| **shepherd-cli** | — | ⬜ 规划中 |
+Not done yet: the verification gate is still heavier to use than I'd like; `shepherd-cli` is half-built; finer fleet metrics (e.g. claim-latency distribution) aren't there; and more executor backends (such as wiring OpenHands in as one) are on the list.
 
-> 测试管理域(`case`/`bug`/`test-plan`/`api-test`,源自 MeterSphere 重构)与上述上下文并存于同一 workspace,可作为质量/回归能力复用。
-> **整体架构 · TDD 方法论 · 演进路线见 [ARCHITECTURE.md](ARCHITECTURE.md)**;剩余工作量与风险清单见 [ROADMAP.md](ROADMAP.md)。
-
-## 🗂️ 结构(14 个 crate)
+<details>
+<summary>Full crate tree</summary>
 
 ```
 crates/
-  kernel/          共享内核(分页 / 权限 PermissionSet)
-  webauth/         共享鉴权基元(AuthUser / SessionStore + axum 提取器)
-  system-setting/  用户·组织·角色·鉴权(本地 + OIDC)  ┐
-  project/         项目                                │ 每个 = 1 限界上下文:
-  requirement/     需求(多版本)                       │ src/{domain,ports,application,adapters}
-  task/            任务拆分 DAG                         │ adapters::pg(feature=pg)/http(feature=http)
-  delivery/        AI 执行者派发与交付                  │ tests/architecture.rs 守卫纯层不碰 IO
-  case/            用例评审                             │
-  bug/             缺陷                                 │ (delivery 另含 exec-local / exec-http
-  test-plan/       测试计划                             │  两个执行者适配器,端口后切换)
-  api-test/        接口批量执行                         ┘
-  api-runner/      原生 HTTP 执行器 + 纯函数断言引擎(可复用库)
-  migrate/         版本化迁移(sqlx migrate!)
-  server/          ★ 组装根 = 唯一 bin 入口
+  kernel/          shared kernel (pagination / PermissionSet)
+  webauth/         shared auth primitives (AuthUser / SessionStore + axum extractors)
+  system-setting/  users · orgs · roles · auth (local + OIDC)
+  project/  requirement/  task/  orchestrator/    project · requirements (versioned) · task DAG · orchestration
+  design/          design stage (OpenSpec/BMAD, human approval gate)
+  delivery/        AI executor dispatch & delivery + fleet queue
+  agent-runtime/   pure-Rust executor (CLI spawn + event streaming + worktree isolation)
+  verification/    integrity verification + verification gate
+  mcp/  skill/     MCP tools + Skill orchestration
+  case/ bug/ test-plan/ api-test/ api-scenario/   test management (refactored from MeterSphere)
+  api-definition/ api-runner/ runner/ probe/ perf/ comment/ follow/ environment/ mock-runtime/ …
+  migrate/         versioned migrations (sqlx migrate! + uniqueness guard)
+  server/          composition root = the single binary (typed config + domain-grouped routes)
+  shepherd-cli/    CLI (still being built)
+web/               React + antd frontend
 ```
+</details>
 
-每个上下文 crate:`domain`/`ports`/`application` 为纯模块(默认 build 无 IO 依赖,编译期屏障);
-`adapters::pg`/`http` 等是 feature 门控模块;`tests/architecture.rs` 源码扫描兜底禁止纯层引用 IO crate。
-错误类型一律 `thiserror` 派生 `Error`+`Display`。
+<details>
+<summary>Main environment variables</summary>
 
-## 🔌 程序入口
+Server (consolidated into a typed `ServerConfig`):
 
-根目录无 `src/main.rs`(Cargo 工作区);唯一 bin 入口是组装根 **`crates/server/src/main.rs`**
-(产出 `server` 可执行文件)。`cargo run` 即启动(已设 default-members)。
+| Variable | Default | Meaning |
+|---|---|---|
+| `DATABASE_URL` | local mstest | PG connection string |
+| `MS_BIND` | `0.0.0.0:8088` | main API listen address |
+| `MS_ADMIN_PASSWORD` | `admin` | admin password upserted idempotently on boot |
+| `SHEPHERD_AGENT_FLEET` | — | set to enable fleet mode |
+| `SHEPHERD_FLEET_REDIS` | — | set to use a Redis distributed queue / registry |
+| `MS_FEISHU_*` / `MS_WECOM_*` | — | OIDC third-party login |
+
+Executor `agent-runtime`:
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `SHEPHERD_BASE` | `http://127.0.0.1:9180` | server address |
+| `SHEPHERD_CAPS` | `CLAUDE_CODE` | comma-separated capabilities (which tasks to claim) |
+| `AGENT_CONCURRENCY` | `1` | max concurrent tasks |
+| `CLAUDE_BIN` / `CODEX_CMD` / `OPENCODE_CMD` | `claude` / `codex exec` / `opencode run` | each CLI invocation |
+| `AGENT_MOCK` | — | set to use the mock backend (no real CLI) |
+</details>
+
+## How it compares
+
+If you're looking at AutoGen, CrewAI, or OpenHands: most of them take the autonomy route — let the agent loop until it's done, and compete mainly on benchmarks. Shepherd's focus is governance instead. Approval and verification are steps you can't route around, not something you interrupt in a chat, and the deployment model is built around a central server plus internal executors that pull work outbound.
+
+There's also a more fundamental difference: those frameworks *are* the agent. Shepherd isn't — it's the supervisor sitting above agents, and what you plug in underneath is swappable. So something like OpenHands is, to Shepherd, just another executor you could hang on the fleet rather than a competitor.
+
+## Tests
 
 ```bash
-cargo run                      # 根目录直接启动入口
-cargo run -- --migrate-only    # 只建表退出
-cargo test --workspace         # 全量测试(非集成测试秒级)
-DATABASE_URL=... cargo test --workspace -- --ignored   # 真库集成测试
+cargo test --workspace                      # everything; non-integration runs in seconds
+cargo test --workspace -- --ignored         # real-database integration tests
 ```
+
+866 tests; the integration ones run against a real server + PG / Redis / MySQL. Besides the architecture guard there's a migration-uniqueness guard: a duplicate migration version number fails CI (sqlx silently drops duplicates — we hit that once and it cost us a missing-column 500).
+
+More background in [ARCHITECTURE.md](ARCHITECTURE.md), [ROADMAP.md](ROADMAP.md), and the [fleet design notes](docs/remote-agent-runtime-plan.md).
+
+## Contributing
+
+Issues and PRs welcome. A few conventions:
+
+- Follow the hexagonal layering: business logic in `domain` / `application`, IO in `adapters`, and no IO crates in the pure layers (`tests/architecture.rs` will catch it).
+- Include tests; `cargo test --workspace` and `cargo clippy --workspace` (`-D warnings`) need to be green.
+- New migrations use a unique, increasing version number: `NNNN_description.sql`.
+- Write commit messages that explain *why*, not just what changed.
+
+## License
+
+GPL-2.0, see [LICENSE](LICENSE).
