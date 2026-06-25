@@ -2,6 +2,12 @@
 //!
 //! 后端职责:spawn CLI 跑 prompt,边跑边经 sink 回流进度事件,返回**最终文本输出**。
 //! git 快照 / 回调由 runtime 主流程按模式(implement / design)编排,后端不关心。
+//!
+//! 健壮性(对齐 CI runner 对子进程的处理):
+//! - **每任务超时**:卡死的 CLI 不能一直占着并发槽 —— 到点连同其派生子进程整组 SIGKILL。
+//! - **进程组隔离**:`process_group(0)` 起新组,杀的是整组,claude 再 spawn 的 bash 等不留孤儿。
+//! - **stderr 并发抽干**:流式读 stdout 的同时必须持续读 stderr,否则 stderr 写满 64KB
+//!   管道缓冲 → 子进程阻塞 → 死锁。`kill_on_drop` 兜底进程在 future 被丢弃时也回收。
 
 use std::process::Stdio;
 use std::time::Duration;
@@ -12,6 +18,9 @@ use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, Command};
 
 use crate::events::{parse_claude_line, parse_claude_result, ExecEvent, ProgressSink};
+
+/// 单条 stderr 保留上限(只留头部用于报错;超出部分照常读出丢弃以免写端阻塞)。
+const STDERR_CAP: usize = 64 * 1024;
 
 #[derive(Debug, Error)]
 pub enum BackendError {
@@ -34,6 +43,48 @@ async fn spawn_retrying_etxtbsy(cmd: &mut Command) -> std::io::Result<Child> {
     cmd.spawn() // 末次:无论成败都透传
 }
 
+/// 让子进程成为新进程组组长(pgid == pid),便于超时/关停时整组回收。
+fn in_own_process_group(cmd: &mut Command) {
+    #[cfg(unix)]
+    {
+        cmd.process_group(0);
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = cmd;
+    }
+}
+
+/// 给整组发 SIGKILL(以 `process_group(0)` 起组,故 pgid == pid;负号即整组)。
+fn kill_process_group(pid: u32) {
+    #[cfg(unix)]
+    unsafe {
+        libc::kill(-(pid as i32), libc::SIGKILL);
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = pid;
+    }
+}
+
+/// 持续读完 `r`(避免管道写端阻塞),但只保留前 `cap` 字节作报错用。
+async fn drain_capped<R: AsyncReadExt + Unpin>(mut r: R, cap: usize) -> String {
+    let mut buf = Vec::new();
+    let mut chunk = [0u8; 8192];
+    loop {
+        match r.read(&mut chunk).await {
+            Ok(0) | Err(_) => break,
+            Ok(n) => {
+                if buf.len() < cap {
+                    let take = n.min(cap - buf.len());
+                    buf.extend_from_slice(&chunk[..take]);
+                }
+            }
+        }
+    }
+    String::from_utf8_lossy(&buf).trim().to_string()
+}
+
 #[async_trait]
 pub trait CliAgentBackend: Send + Sync {
     fn cli_name(&self) -> &str;
@@ -51,11 +102,12 @@ pub trait CliAgentBackend: Send + Sync {
 /// `claude -p --output-format stream-json`:逐行解析,实时回流事件,取 result 文本。
 pub struct ClaudeBackend {
     pub bin: String,
+    pub timeout: Duration,
 }
 
-impl Default for ClaudeBackend {
-    fn default() -> Self {
-        Self { bin: std::env::var("CLAUDE_BIN").unwrap_or_else(|_| "claude".into()) }
+impl ClaudeBackend {
+    pub fn new(timeout: Duration) -> Self {
+        Self { bin: std::env::var("CLAUDE_BIN").unwrap_or_else(|_| "claude".into()), timeout }
     }
 }
 
@@ -83,35 +135,70 @@ impl CliAgentBackend for ClaudeBackend {
             ])
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
+            .stderr(Stdio::piped())
+            .kill_on_drop(true);
+        in_own_process_group(&mut cmd);
         let mut child = spawn_retrying_etxtbsy(&mut cmd)
             .await
             .map_err(|e| BackendError::Run(format!("spawn {}: {e}", self.bin)))?;
+        let pid = child.id();
 
+        // stdin:并发写,免得大 prompt 写入与 stdout 读取相互阻塞。
         if let Some(mut stdin) = child.stdin.take() {
-            stdin.write_all(prompt.as_bytes()).await.map_err(|e| BackendError::Run(e.to_string()))?;
-            // stdin drop → EOF
+            let bytes = prompt.as_bytes().to_vec();
+            tokio::spawn(async move {
+                let _ = stdin.write_all(&bytes).await; // drop → EOF
+            });
         }
+        // stderr:并发抽干(封顶),防止写满管道缓冲拖死 stdout 流。
+        let stderr_task = child
+            .stderr
+            .take()
+            .map(|e| tokio::spawn(async move { drain_capped(e, STDERR_CAP).await }));
         let stdout = child.stdout.take().ok_or_else(|| BackendError::Run("no stdout".into()))?;
-        let mut lines = BufReader::new(stdout).lines();
-        let mut result: Option<(bool, String)> = None;
-        while let Some(line) =
-            lines.next_line().await.map_err(|e| BackendError::Run(e.to_string()))?
-        {
-            for ev in parse_claude_line(&line) {
-                sink.emit(ev).await;
+
+        // 读流 + 等退出,整体加超时。
+        let run = async {
+            let mut lines = BufReader::new(stdout).lines();
+            let mut result: Option<(bool, String)> = None;
+            while let Some(line) =
+                lines.next_line().await.map_err(|e| BackendError::Run(e.to_string()))?
+            {
+                for ev in parse_claude_line(&line) {
+                    sink.emit(ev).await;
+                }
+                if let Some(r) = parse_claude_result(&line) {
+                    result = Some(r);
+                }
             }
-            if let Some(r) = parse_claude_result(&line) {
-                result = Some(r);
+            let status = child.wait().await.map_err(|e| BackendError::Run(e.to_string()))?;
+            Ok::<_, BackendError>((result, status))
+        };
+
+        let (result, status) = match tokio::time::timeout(self.timeout, run).await {
+            Ok(r) => r?,
+            Err(_) => {
+                if let Some(pid) = pid {
+                    kill_process_group(pid);
+                }
+                sink.emit(ExecEvent::new(
+                    "TIMEOUT",
+                    &format!("超时 {}s,已终止", self.timeout.as_secs()),
+                ))
+                .await;
+                return Err(BackendError::Run(format!(
+                    "claude timeout after {}s",
+                    self.timeout.as_secs()
+                )));
             }
-        }
-        let status = child.wait().await.map_err(|e| BackendError::Run(e.to_string()))?;
+        };
+
+        let err = match stderr_task {
+            Some(t) => t.await.unwrap_or_default(),
+            None => String::new(),
+        };
         if !status.success() {
-            let mut err = String::new();
-            if let Some(mut e) = child.stderr.take() {
-                let _ = e.read_to_string(&mut err).await;
-            }
-            return Err(BackendError::Run(format!("claude exited {status}: {}", err.trim())));
+            return Err(BackendError::Run(format!("claude exited {status}: {err}")));
         }
         match result {
             Some((true, text)) => Err(BackendError::Run(format!("claude error: {text}"))),
@@ -127,16 +214,17 @@ impl CliAgentBackend for ClaudeBackend {
 pub struct GenericCliBackend {
     pub name: &'static str,
     pub cmd: Vec<String>,
+    pub timeout: Duration,
 }
 
 impl GenericCliBackend {
-    pub fn codex() -> Self {
+    pub fn codex(timeout: Duration) -> Self {
         let cmd = std::env::var("CODEX_CMD").unwrap_or_else(|_| "codex exec".into());
-        Self { name: "codex", cmd: cmd.split_whitespace().map(String::from).collect() }
+        Self { name: "codex", cmd: cmd.split_whitespace().map(String::from).collect(), timeout }
     }
-    pub fn opencode() -> Self {
+    pub fn opencode(timeout: Duration) -> Self {
         let cmd = std::env::var("OPENCODE_CMD").unwrap_or_else(|_| "opencode run".into());
-        Self { name: "opencode", cmd: cmd.split_whitespace().map(String::from).collect() }
+        Self { name: "opencode", cmd: cmd.split_whitespace().map(String::from).collect(), timeout }
     }
 }
 
@@ -155,13 +243,30 @@ impl CliAgentBackend for GenericCliBackend {
         let (program, args) =
             self.cmd.split_first().ok_or_else(|| BackendError::Run("empty cmd".into()))?;
         sink.emit(ExecEvent::new("DECISION", &format!("调用 {} 执行任务", self.name))).await;
-        let out = Command::new(program)
-            .current_dir(cwd)
+        let mut cmd = Command::new(program);
+        cmd.current_dir(cwd)
             .args(args)
             .arg(prompt)
-            .output()
-            .await
-            .map_err(|e| BackendError::Run(format!("spawn {program}: {e}")))?;
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .kill_on_drop(true);
+        in_own_process_group(&mut cmd);
+        let child = cmd.spawn().map_err(|e| BackendError::Run(format!("spawn {program}: {e}")))?;
+        let pid = child.id();
+        let out = match tokio::time::timeout(self.timeout, child.wait_with_output()).await {
+            Ok(r) => r.map_err(|e| BackendError::Run(e.to_string()))?,
+            Err(_) => {
+                if let Some(pid) = pid {
+                    kill_process_group(pid);
+                }
+                return Err(BackendError::Run(format!(
+                    "{} timeout after {}s",
+                    self.name,
+                    self.timeout.as_secs()
+                )));
+            }
+        };
         if !out.status.success() {
             let err = String::from_utf8_lossy(&out.stderr);
             return Err(BackendError::Run(format!(
@@ -209,6 +314,8 @@ mod tests {
     use super::*;
     use std::sync::Mutex;
 
+    const TEST_TIMEOUT: Duration = Duration::from_secs(30);
+
     #[derive(Default)]
     struct RecSink {
         events: Mutex<Vec<ExecEvent>>,
@@ -218,6 +325,17 @@ mod tests {
         async fn emit(&self, ev: ExecEvent) {
             self.events.lock().unwrap().push(ev);
         }
+    }
+
+    /// 写一个可执行的伪 CLI 脚本到临时文件,返回路径。
+    fn write_script(tag: &str, body: &str) -> std::path::PathBuf {
+        use std::io::Write;
+        use std::os::unix::fs::PermissionsExt;
+        let path = std::env::temp_dir().join(format!("ar-fake-{tag}-{}.sh", std::process::id()));
+        let mut f = std::fs::File::create(&path).expect("create");
+        write!(f, "{body}").expect("write");
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+        path
     }
 
     #[tokio::test]
@@ -234,6 +352,7 @@ mod tests {
         let b = GenericCliBackend {
             name: "codex",
             cmd: vec!["/bin/sh".into(), "-c".into(), "printf '## codex 设计'".into(), "_".into()],
+            timeout: TEST_TIMEOUT,
         };
         let sink = RecSink::default();
         let out = b.execute("the prompt", ".", &sink).await.expect("run");
@@ -243,27 +362,49 @@ mod tests {
 
     #[tokio::test]
     async fn claude_backend_streams_events_and_returns_result() {
-        use std::io::Write;
-        use std::os::unix::fs::PermissionsExt;
-        // 伪 claude 脚本:忽略 -p/--output-format 等参数,吃掉 stdin(prompt),
-        // 吐两行 stream-json(一个 Edit 工具调用 + 一个 result)。
-        let path = std::env::temp_dir().join(format!("ar-fake-claude-{}.sh", std::process::id()));
-        {
-            let mut f = std::fs::File::create(&path).expect("create");
-            writeln!(
-                f,
-                "#!/bin/sh\ncat >/dev/null\nprintf '%s\\n' '{{\"type\":\"assistant\",\"message\":{{\"content\":[{{\"type\":\"tool_use\",\"name\":\"Edit\",\"input\":{{\"file_path\":\"a.rs\"}}}}]}}}}' '{{\"type\":\"result\",\"is_error\":false,\"result\":\"完成\"}}'"
-            )
-            .expect("write");
-            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).expect("chmod");
-        }
-        let b = ClaudeBackend { bin: path.to_string_lossy().to_string() };
+        // 伪 claude 脚本:忽略参数,吃掉 stdin,吐两行 stream-json(Edit 工具调用 + result)。
+        let path = write_script(
+            "claude",
+            "#!/bin/sh\ncat >/dev/null\nprintf '%s\\n' '{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"tool_use\",\"name\":\"Edit\",\"input\":{\"file_path\":\"a.rs\"}}]}}' '{\"type\":\"result\",\"is_error\":false,\"result\":\"完成\"}'\n",
+        );
+        let b = ClaudeBackend { bin: path.to_string_lossy().to_string(), timeout: TEST_TIMEOUT };
         let sink = RecSink::default();
         let out = b.execute("do it", ".", &sink).await.expect("run");
         assert_eq!(out, "完成");
         let evs = sink.events.lock().unwrap();
         assert_eq!(evs.len(), 1);
         assert_eq!(evs[0], ExecEvent::new("FILE_CHANGE", "Edit a.rs"));
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// 回归:claude 先吐 ~100KB stderr 再吐 stdout result —— 若 stderr 不并发抽干,
+    /// 子进程会在写满管道缓冲(64KB)处阻塞,而我们在等 stdout → 死锁。
+    #[tokio::test]
+    async fn claude_backend_drains_large_stderr_without_deadlock() {
+        let path = write_script(
+            "claude-stderr",
+            "#!/bin/sh\ncat >/dev/null\ni=0\nwhile [ $i -lt 1200 ]; do printf 'noise-%04d-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\\n' $i >&2; i=$((i+1)); done\nprintf '%s\\n' '{\"type\":\"result\",\"is_error\":false,\"result\":\"ok\"}'\n",
+        );
+        let b = ClaudeBackend { bin: path.to_string_lossy().to_string(), timeout: TEST_TIMEOUT };
+        let sink = RecSink::default();
+        let out = b.execute("do it", ".", &sink).await.expect("must not deadlock");
+        assert_eq!(out, "ok");
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// 超时即终止:卡住的 CLI 不该一直占槽 —— 应在 ~timeout 内返回 Err。
+    #[tokio::test]
+    async fn claude_backend_times_out_and_kills() {
+        let path = write_script("claude-hang", "#!/bin/sh\ncat >/dev/null\nsleep 30\n");
+        let b = ClaudeBackend {
+            bin: path.to_string_lossy().to_string(),
+            timeout: Duration::from_millis(500),
+        };
+        let sink = RecSink::default();
+        let start = std::time::Instant::now();
+        let err = b.execute("do it", ".", &sink).await.expect_err("should time out");
+        assert!(err.to_string().contains("timeout"), "got: {err}");
+        assert!(start.elapsed() < Duration::from_secs(10), "returned promptly on timeout");
         let _ = std::fs::remove_file(&path);
     }
 }
