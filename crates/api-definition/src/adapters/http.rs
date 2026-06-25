@@ -1452,7 +1452,7 @@ mod tests {
         let resp = app
             .oneshot(post(
                 "/api/definition",
-                r#"{"projectId":"p1","name":"x","protocol":"grpc","method":"GET"}"#,
+                r#"{"projectId":"p1","name":"x","protocol":"ftp","method":"GET"}"#,
                 Some(&t),
             ))
             .await
@@ -1543,7 +1543,8 @@ mod tests {
         let resp = app.oneshot(get("/api/case?projectId=p1")).await.expect("resp");
         assert_eq!(resp.status(), StatusCode::OK);
         let v = json_body(resp).await;
-        assert_eq!(v.as_array().expect("arr").len(), 0);
+        // /api/case 现为分页响应 {total, items, ...};级联删除后应 0 条。
+        assert_eq!(v["total"].as_u64().expect("total"), 0);
     }
 
     #[tokio::test]
