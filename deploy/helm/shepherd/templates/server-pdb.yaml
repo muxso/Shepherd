@@ -1,0 +1,20 @@
+{{- /* Keep at least one server pod available during voluntary disruptions when running >1 replica. */ -}}
+{{- $component := "server" -}}
+{{- $ctx := dict "root" . "component" $component -}}
+{{- $minReplicas := .Values.server.replicas -}}
+{{- if .Values.server.autoscaling.enabled }}
+{{- $minReplicas = .Values.server.autoscaling.minReplicas -}}
+{{- end }}
+{{- if gt (int $minReplicas) 1 }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "shepherd.componentName" $ctx }}
+  labels:
+    {{- include "shepherd.componentLabels" $ctx | nindent 4 }}
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      {{- include "shepherd.componentSelectorLabels" $ctx | nindent 6 }}
+{{- end }}

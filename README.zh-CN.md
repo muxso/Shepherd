@@ -78,6 +78,8 @@ SHEPHERD_BASE=http://<server>:8088 SHEPHERD_CAPS=CLAUDE_CODE cargo run -p agent-
 
 <!-- 控制台截图待补:见 docs/assets/。 -->
 
+想一条命令起全栈?`docker compose -f deploy/docker/docker-compose.yml up --build` 会拉起整套服务(server + agent-runtime + web + Postgres + Redis)——详见[使用指南](docs/USAGE.zh-CN.md)与[部署指南](docs/DEPLOYMENT.zh-CN.md)。
+
 ## 里面有什么
 
 每个业务模块是一个独立 crate,按六边形分层:`domain` / `ports` / `application` 是纯逻辑、默认不碰 IO,数据库和 HTTP 都在 `adapters` 里用 feature 开关。`tests/architecture.rs` 会扫源码,纯层一旦引了 sqlx / axum 这类 IO crate 就让构建挂掉——免得分层写着写着被写穿。
@@ -133,6 +135,12 @@ web/               React + antd 前端
 | `CLAUDE_BIN` / `CODEX_CMD` / `OPENCODE_CMD` | `claude` / `codex exec` / `opencode run` | 各 CLI 调用 |
 | `AGENT_MOCK` | — | 设置即用 mock 后端(免真实 CLI) |
 </details>
+
+## 文档
+
+- **[使用指南](docs/USAGE.zh-CN.md)**([English](docs/USAGE.md))—— 概念、快速上手、完整配置参考、Web 控制台、机群与执行机配置、HTTP API。
+- **[部署与运维](docs/DEPLOYMENT.zh-CN.md)**([English](docs/DEPLOYMENT.md))—— Docker Compose、Kubernetes(Helm,`deploy/helm/shepherd`)、多云 Terraform(`deploy/terraform/{aws,gcp,azure}`)、CI/CD 自动部署。
+- **[架构](ARCHITECTURE.md)** · **[路线图](ROADMAP.md)** · **[机群设计笔记](docs/remote-agent-runtime-plan.md)**
 
 ## 和别的方案比
 

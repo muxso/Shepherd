@@ -1,0 +1,66 @@
+{{- $component := "agent-runtime" -}}
+{{- $ctx := dict "root" . "component" $component -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "shepherd.componentName" $ctx }}
+  labels:
+    {{- include "shepherd.componentLabels" $ctx | nindent 4 }}
+spec:
+  {{- if not .Values.agentRuntime.autoscaling.enabled }}
+  replicas: {{ .Values.agentRuntime.replicas }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "shepherd.componentSelectorLabels" $ctx | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "shepherd.componentLabels" $ctx | nindent 8 }}
+      annotations:
+        checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      serviceAccountName: {{ include "shepherd.serviceAccountName" . }}
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: agent-runtime
+          image: {{ include "shepherd.image" (dict "root" . "repo" "shepherd-agent-runtime") }}
+          imagePullPolicy: {{ include "shepherd.imagePullPolicy" . }}
+          env:
+            - name: SHEPHERD_BASE
+              value: {{ printf "http://%s:%v" (include "shepherd.serverServiceName" .) .Values.server.service.port | quote }}
+            - name: SHEPHERD_ADMIN_USER
+              value: "admin"
+            - name: SHEPHERD_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "shepherd.secretName" . }}
+                  key: SHEPHERD_ADMIN_PASSWORD
+            {{- if .Values.agentRuntime.mock }}
+            - name: AGENT_MOCK
+              value: "1"
+            {{- end }}
+            {{- range $k, $v := .Values.agentRuntime.env }}
+            - name: {{ $k }}
+              value: {{ $v | quote }}
+            {{- end }}
+          resources:
+            {{- toYaml .Values.agentRuntime.resources | nindent 12 }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

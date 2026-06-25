@@ -1,0 +1,141 @@
+# Default values for the Shepherd Helm chart.
+# Every key here is part of the deploy contract — override per environment via
+# values-dev.yaml / values-prod.yaml or --set.
+
+global:
+  image:
+    registry: ghcr.io/muxso
+    tag: latest
+    pullPolicy: IfNotPresent
+  # List of secret names for pulling images from a private registry.
+  imagePullSecrets: []
+
+# ---------------------------------------------------------------------------
+# shepherd-server — public-facing Rust API. Runs DB migrations on startup.
+# ---------------------------------------------------------------------------
+server:
+  replicas: 2
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: "1"
+      memory: 512Mi
+  service:
+    type: ClusterIP
+    port: 8088
+  ingress:
+    enabled: false
+    className: ""
+    host: shepherd.example.com
+    tls: false
+    annotations: {}
+  autoscaling:
+    enabled: false
+    minReplicas: 2
+    maxReplicas: 6
+    targetCPUUtilizationPercentage: 70
+  # Extra environment variables (map of name -> value) merged into the server pod.
+  env: {}
+
+# ---------------------------------------------------------------------------
+# shepherd-agent-runtime — outbound-only worker fleet. No inbound ports/Service.
+# ---------------------------------------------------------------------------
+agentRuntime:
+  replicas: 3
+  # When true, sets AGENT_MOCK=1 so the runtime executes without real agent CLIs.
+  mock: false
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: "2"
+      memory: 1Gi
+  autoscaling:
+    enabled: true
+    minReplicas: 1
+    maxReplicas: 10
+    targetCPUUtilizationPercentage: 70
+  env: {}
+
+# ---------------------------------------------------------------------------
+# shepherd-web — static SPA served by nginx, reverse-proxying the API.
+# ---------------------------------------------------------------------------
+web:
+  replicas: 2
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+  service:
+    type: ClusterIP
+    port: 80
+  ingress:
+    enabled: true
+    className: ""
+    host: shepherd.example.com
+    tls: false
+    annotations: {}
+
+# ---------------------------------------------------------------------------
+# Shared application configuration.
+# ---------------------------------------------------------------------------
+config:
+  # SHEPHERD_ADMIN_PASSWORD — REQUIRED. Never commit a real value; set via --set
+  # or a sealed/external secret in production.
+  adminPassword: ""
+  # SHEPHERD_SESSION_TTL_SECS
+  sessionTtlSecs: 28800
+  fleet:
+    # When enabled, the server runs in multi-host fleet mode (SHEPHERD_AGENT_FLEET).
+    enabled: true
+    # SHEPHERD_FLEET_REDIS — required for multi-replica fleet coordination.
+    redisUrl: ""
+    # Fleet tunables (optional; defaults match the server defaults).
+    reapIntervalSecs: 15
+    reclaimMs: 30000
+  oidc:
+    feishu:
+      appId: ""
+      appSecret: ""
+      redirect: ""
+    wecom:
+      corpId: ""
+      secret: ""
+      redirect: ""
+
+database:
+  # DATABASE_URL=postgres://USER:PASS@HOST:5432/DB
+  # Required unless postgresql.enabled=true (then an in-cluster URL is derived).
+  url: ""
+
+# In-cluster datastores (Bitnami subcharts) — dev/demo ONLY.
+postgresql:
+  enabled: false
+  # When enabled, these are used to derive DATABASE_URL and seed the subchart.
+  auth:
+    username: shepherd
+    password: shepherd
+    database: shepherd
+redis:
+  enabled: false
+  # Bitnami redis with auth disabled keeps the derived URL simple for dev.
+  architecture: standalone
+  auth:
+    enabled: false
+
+serviceAccount:
+  create: true
+  # If name is empty, a name is generated from the fullname.
+  name: ""
+
+# Optional pod scheduling controls applied to all workloads.
+nodeSelector: {}
+tolerations: []
+affinity: {}
+podAnnotations: {}

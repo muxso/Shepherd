@@ -1,0 +1,31 @@
+# syntax=docker/dockerfile:1
+# Build context = repo root. Build: docker build -f deploy/docker/Dockerfile.agent-runtime .
+
+# ---- build stage ----
+FROM rust:1.86-bookworm AS build
+WORKDIR /app
+
+COPY Cargo.toml Cargo.lock ./
+COPY crates ./crates
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/app/target \
+    cargo build --release -p agent-runtime && \
+    cp target/release/agent-runtime /usr/local/bin/agent-runtime
+
+# ---- runtime stage ----
+FROM debian:bookworm-slim AS runtime
+# git is required for real (non-mock) agent backends that clone/operate on repos.
+# NOTE: real Claude/Codex/OpenCode CLIs are NOT bundled here. For non-mock use,
+# install or bind-mount them onto PATH (or set CLAUDE_BIN/CODEX_CMD/OPENCODE_CMD).
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends ca-certificates libssl3 git && \
+    rm -rf /var/lib/apt/lists/*
+
+# Non-root user.
+RUN useradd --system --uid 10001 --create-home shepherd
+USER shepherd
+
+COPY --from=build /usr/local/bin/agent-runtime /usr/local/bin/agent-runtime
+
+# No inbound ports: agent-runtime long-polls the server outbound.
+ENTRYPOINT ["/usr/local/bin/agent-runtime"]
