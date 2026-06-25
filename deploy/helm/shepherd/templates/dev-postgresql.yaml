@@ -1,0 +1,79 @@
+{{- if .Values.postgresql.enabled -}}
+{{- /*
+Minimal in-cluster PostgreSQL for dev/demo ONLY. Single replica, no HA, no backups.
+Production must use an external managed database (database.url) and keep this disabled.
+*/ -}}
+{{- $component := "postgresql" -}}
+{{- $ctx := dict "root" . "component" $component -}}
+{{- $name := include "shepherd.pgServiceName" . -}}
+{{- $auth := .Values.postgresql.auth -}}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "shepherd.componentLabels" $ctx | nindent 4 }}
+spec:
+  type: ClusterIP
+  ports:
+    - name: postgresql
+      port: 5432
+      targetPort: postgresql
+  selector:
+    {{- include "shepherd.componentSelectorLabels" $ctx | nindent 4 }}
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "shepherd.componentLabels" $ctx | nindent 4 }}
+spec:
+  serviceName: {{ $name }}
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "shepherd.componentSelectorLabels" $ctx | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "shepherd.componentLabels" $ctx | nindent 8 }}
+    spec:
+      containers:
+        - name: postgresql
+          image: postgres:16-alpine
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: postgresql
+              containerPort: 5432
+          env:
+            - name: POSTGRES_USER
+              value: {{ $auth.username | quote }}
+            - name: POSTGRES_PASSWORD
+              value: {{ $auth.password | quote }}
+            - name: POSTGRES_DB
+              value: {{ $auth.database | quote }}
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", {{ $auth.username | quote }}, "-d", {{ $auth.database | quote }}]
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            exec:
+              command: ["pg_isready", "-U", {{ $auth.username | quote }}, "-d", {{ $auth.database | quote }}]
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 8Gi
+{{- end }}

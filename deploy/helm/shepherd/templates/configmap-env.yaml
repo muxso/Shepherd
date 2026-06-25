@@ -1,0 +1,16 @@
+{{- /* Non-secret server environment. */ -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "shepherd.envConfigMapName" . }}
+  labels:
+    {{- include "shepherd.labels" . | nindent 4 }}
+data:
+  SHEPHERD_BIND: "0.0.0.0:{{ .Values.server.service.port }}"
+  SHEPHERD_SESSION_TTL_SECS: {{ .Values.config.sessionTtlSecs | quote }}
+  {{- if .Values.config.fleet.enabled }}
+  # Presence of this var switches the server into multi-host fleet mode.
+  SHEPHERD_AGENT_FLEET: "1"
+  SHEPHERD_FLEET_REAP_INTERVAL_S: {{ .Values.config.fleet.reapIntervalSecs | quote }}
+  SHEPHERD_FLEET_RECLAIM_MS: {{ .Values.config.fleet.reclaimMs | quote }}
+  {{- end }}
