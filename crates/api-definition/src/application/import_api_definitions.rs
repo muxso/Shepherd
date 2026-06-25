@@ -23,6 +23,19 @@ pub enum ImportError {
     Repo(#[from] RepoError),
 }
 
+/// 导入选项(原 execute 的若干 bool/可选参数收拢成一个入参,避免参数过多)。
+#[derive(Debug, Clone, Default)]
+pub struct ImportOptions {
+    /// 新建定义归入的模块(None=未归类);`group_by_tag` 时作按 tag 自建模块的父级。
+    pub module_id: Option<String>,
+    /// 按来源标签/分组自动建/复用子模块并归类(无标签回落 `module_id`)。
+    pub group_by_tag: bool,
+    /// 同 方法+路径 已存在时:true=覆盖 spec(默认),false=跳过。
+    pub overwrite: bool,
+    /// 覆盖时是否把已存在接口移动到目标模块。
+    pub sync_module: bool,
+}
+
 /// 导入结果:新建的定义 + 覆盖更新的条数 + 跳过条数(校验失败但不阻断整体的)。
 #[derive(Debug)]
 pub struct ImportOutcome {
@@ -46,17 +59,17 @@ impl ImportApiDefinitionsUseCase {
     /// `module_id`:新建定义归入的模块(None=未归类);`group_by_tag` 开启时它作为按 tag 自建模块的**父级**。
     /// `group_by_tag`:按来源的标签/分组(OpenAPI tag、Postman 文件夹、HAR host、MS 模块)自动建/复用子模块并归类(无标签回落 `module_id`)。
     /// `overwrite`:同 方法+路径 已存在时 true=覆盖其 spec(默认),false=不覆盖(跳过,计入 skipped)。
-    #[allow(clippy::too_many_arguments)]
     pub async fn execute(
         &self,
         project_id: &str,
         format: ImportFormat,
         doc: &serde_json::Value,
-        module_id: Option<&str>,
-        group_by_tag: bool,
-        overwrite: bool,
-        sync_module: bool,
+        opts: ImportOptions,
     ) -> Result<ImportOutcome, ImportError> {
+        let module_id = opts.module_id.as_deref();
+        let group_by_tag = opts.group_by_tag;
+        let overwrite = opts.overwrite;
+        let sync_module = opts.sync_module;
         let apis = parse_import(format, doc)?;
 
         // 幂等导入:按「方法 + 路径」识别项目内已存在的定义。命中则覆盖其 spec(保留用户已编辑的用例),
@@ -201,7 +214,7 @@ mod tests {
             }
         });
         let out =
-            uc.execute("p1", ImportFormat::Openapi, &doc, None, false, true, false).await.expect("imported");
+            uc.execute("p1", ImportFormat::Openapi, &doc, ImportOptions { overwrite: true, ..Default::default() }).await.expect("imported");
         assert_eq!(out.created.len(), 2);
         assert_eq!(out.skipped, 0);
         assert_eq!(repo.list_definitions("p1").await.unwrap().len(), 2);
@@ -221,7 +234,7 @@ mod tests {
             }
         });
         let out =
-            uc.execute("p1", ImportFormat::Openapi, &doc, None, true, true, false).await.expect("imported");
+            uc.execute("p1", ImportFormat::Openapi, &doc, ImportOptions { group_by_tag: true, overwrite: true, ..Default::default() }).await.expect("imported");
         assert_eq!(out.created.len(), 4);
         // 两个 tag → 两个模块(auth 复用,不重复建)
         let mods = repo.list_modules("p1").await.unwrap();
@@ -242,7 +255,7 @@ mod tests {
         let repo = Arc::new(InMemoryApiDefinitionRepository::new());
         let uc = ImportApiDefinitionsUseCase::new(repo);
         let err = uc
-            .execute("p1", ImportFormat::Openapi, &json!({"foo": 1}), None, false, true, false)
+            .execute("p1", ImportFormat::Openapi, &json!({"foo": 1}), ImportOptions { overwrite: true, ..Default::default() })
             .await
             .unwrap_err();
         assert!(matches!(err, ImportError::Parse(ApiDefinitionError::BadImport(_))));

@@ -79,7 +79,7 @@ impl NewImportSchedule {
         if self.cron.is_empty() {
             return Err(ImportScheduleError::EmptyCron);
         }
-        self.format = ImportFormat::from_str(&self.format).as_str().to_string();
+        self.format = ImportFormat::from_source(&self.format).as_str().to_string();
         self.name = self.name.trim().to_string();
         self.module_id = self.module_id.map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
         Ok(self)

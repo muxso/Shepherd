@@ -94,7 +94,7 @@ async fn run_import(
     client: &reqwest::Client,
     s: &ImportSchedule,
 ) -> String {
-    let format = ImportFormat::from_str(&s.format);
+    let format = ImportFormat::from_source(&s.format);
     let doc = match fetch_doc(client, &s.source_url, &s.auth_token, s.basic_auth, format).await {
         Ok(d) => d,
         Err(e) => return format!("拉取失败:{e}"),
@@ -104,10 +104,12 @@ async fn run_import(
             &s.project_id,
             format,
             &doc,
-            s.module_id.as_deref(),
-            s.group_by_tag,
-            s.overwrite,
-            s.sync_module,
+            api_definition::application::ImportOptions {
+                module_id: s.module_id.clone(),
+                group_by_tag: s.group_by_tag,
+                overwrite: s.overwrite,
+                sync_module: s.sync_module,
+            },
         )
         .await
     {
@@ -214,7 +216,7 @@ async fn import_url(
     if !user.can("API_DEFINITION", "ADD") {
         return (StatusCode::FORBIDDEN, "permission denied").into_response();
     }
-    let format = ImportFormat::from_str(b.format.as_deref().unwrap_or("openapi"));
+    let format = ImportFormat::from_source(b.format.as_deref().unwrap_or("openapi"));
     let doc = match fetch_doc(&st.client, &b.url, b.token.as_deref().unwrap_or(""), b.basic_auth, format).await {
         Ok(d) => d,
         Err(e) => return (StatusCode::BAD_GATEWAY, e).into_response(),
@@ -225,10 +227,12 @@ async fn import_url(
             &b.project_id,
             format,
             &doc,
-            b.module_id.as_deref().filter(|s| !s.is_empty()),
-            b.group_by_tag,
-            b.overwrite,
-            b.sync_module,
+            api_definition::application::ImportOptions {
+                module_id: b.module_id.as_deref().filter(|s| !s.is_empty()).map(String::from),
+                group_by_tag: b.group_by_tag,
+                overwrite: b.overwrite,
+                sync_module: b.sync_module,
+            },
         )
         .await
     {
