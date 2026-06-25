@@ -106,6 +106,7 @@ mod tests {
                 status: 200,
                 headers: vec![("content-type".into(), "text/plain".into())],
                 body: Some("pong".into()),
+                delay_ms: 0,
             },
         }
     }
@@ -150,6 +151,7 @@ mod tests {
                 status: 200,
                 headers: vec![],
                 body: Some(r#"{"path":"{{ path }}","status":"{{ query.status }}"}"#.into()),
+                delay_ms: 0,
             },
         };
         let app = router(Arc::new(InMemoryRuleSource::new(vec![rule])));

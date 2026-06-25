@@ -44,7 +44,7 @@ impl InMemoryWorkQueue {
 
     /// 当前队列深度(排障/测试用)。
     pub fn len(&self) -> usize {
-        self.inner.lock().unwrap().len()
+        self.inner.lock().expect("lock").len()
     }
 
     pub fn is_empty(&self) -> bool {
@@ -53,7 +53,7 @@ impl InMemoryWorkQueue {
 
     /// 弹出第一个能力匹配的任务(无则 None)。
     fn try_claim(&self, caps: &[ExecutorKind]) -> Option<WorkSpec> {
-        let mut q = self.inner.lock().unwrap();
+        let mut q = self.inner.lock().expect("lock");
         let pos = q.iter().position(|s| caps.contains(&s.executor))?;
         q.remove(pos)
     }
@@ -62,7 +62,7 @@ impl InMemoryWorkQueue {
 #[async_trait]
 impl WorkQueue for InMemoryWorkQueue {
     async fn enqueue(&self, spec: &WorkSpec) {
-        self.inner.lock().unwrap().push_back(spec.clone());
+        self.inner.lock().expect("lock").push_back(spec.clone());
     }
 
     /// 轮询直到 `wait` 超时(长轮询语义)。认领即移除,故 `ack`/回收均无需操作(`consumer` 忽略)。

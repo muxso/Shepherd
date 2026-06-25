@@ -8,6 +8,9 @@
 //!     -e POSTGRES_DB=mstest -p 55432:5432 postgres:16-alpine
 //!   DATABASE_URL=postgres://msuser:mspass@localhost:55432/mstest cargo run -p server
 
+// 文档列表延续行的 pedantic 风格 lint;文档渲染正常,统一在组装根放行。
+#![allow(clippy::doc_lazy_continuation)]
+
 mod breakdown_route;
 mod design_bridge;
 mod debug_send;

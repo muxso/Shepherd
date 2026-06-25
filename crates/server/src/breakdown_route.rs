@@ -66,7 +66,7 @@ async fn seed_functional_cases(
             std::collections::BTreeMap::new(),
             Vec::new(),
         ) {
-            Ok(n) => n,
+            Ok(n) => n.with_created_by(Some(created_by)),
             Err(e) => {
                 tracing::warn!(requirement = %requirement_id, "生成功能用例(标准{idx})失败: {e:?}");
                 continue;

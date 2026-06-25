@@ -404,7 +404,8 @@ mod tests {
         let app = router(
             CreateBugUseCase::new(repo.clone()),
             ChangeBugStatusUseCase::new(repo.clone()),
-            ListBugsUseCase::new(repo),
+            ListBugsUseCase::new(repo.clone()),
+            BugFollowersUseCase::new(repo),
             sessions,
         );
         let resp = app.oneshot(get("/bug?projectId=p1", Some(&token))).await.expect("resp");

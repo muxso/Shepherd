@@ -9,6 +9,9 @@
 //! domain 层,做成零 IO 的纯函数,用例可逐条单测——Java 版这套逻辑散落在 Service +
 //! MyBatis 里,几乎无法单测。
 
+// 导入解析模块的文档含多级列表;放行 pedantic 的延续行缩进 lint(渲染正常)。
+#![allow(clippy::doc_lazy_continuation)]
+
 pub mod adapters;
 pub mod application;
 pub mod domain;
