@@ -787,6 +787,14 @@ export interface FleetRuntime {
   online: boolean
 }
 
+// 队列计数(机群可观测):各能力的积压 / 在飞 / 最久在飞空闲。
+export interface FleetStat {
+  executor: string
+  ready: number
+  inFlight: number
+  oldestInFlightMs: number
+}
+
 export interface RunnerExecution {
   id: string
   agentId: string
@@ -1225,6 +1233,8 @@ export const api = {
   // 执行机 / AI agent 管理(人机协同的执行者侧)
   // AI 执行者机群(SHEPHERD_AGENT_FLEET 模式):列出远程 runtime + 在线状态。
   fleetRuntimes: () => http.get<FleetRuntime[]>('/agent/runtime'),
+  // 机群队列计数:各能力积压/在飞(机群可观测),供机群视图 backlog 概览。
+  fleetStats: () => http.get<FleetStat[]>('/agent/work/stats'),
   runnerAgents: () => http.get<RunnerAgent[]>('/runner-agent'),
   registerRunnerAgent: (b: { name: string; baseUrl: string; token?: string; enabled?: boolean }) =>
     http.post<RunnerAgent>('/runner-agent', b),

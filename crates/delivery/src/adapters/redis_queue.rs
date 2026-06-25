@@ -18,7 +18,8 @@ use std::time::Duration;
 
 use redis::aio::MultiplexedConnection;
 use redis::streams::{
-    StreamMaxlen, StreamPendingCountReply, StreamRangeReply, StreamReadOptions, StreamReadReply,
+    StreamInfoGroupsReply, StreamMaxlen, StreamPendingCountReply, StreamRangeReply,
+    StreamReadOptions, StreamReadReply,
 };
 use redis::AsyncCommands;
 
@@ -26,7 +27,7 @@ use redis::AsyncCommands;
 const STREAM_MAXLEN: usize = 10_000;
 
 use crate::domain::ExecutorKind;
-use crate::ports::{Claimed, WorkQueue, WorkSpec};
+use crate::ports::{Claimed, QueueStat, WorkQueue, WorkSpec};
 
 const GROUP: &str = "fleet";
 const ACKMAP: &str = "fleet:ackmap";
@@ -172,6 +173,41 @@ impl WorkQueue for RedisStreamQueue {
             }
         }
         requeued
+    }
+
+    /// 各能力流计数:`XINFO GROUPS` 取消费组 `fleet` 的 `lag`(待投递=ready)与 `pending`(在飞);
+    /// 在飞 > 0 时再 `XPENDING` 取最久一条的空闲时长(stuck 信号,Redis 自身时钟所计)。
+    /// 取不到(流不存在/旧版无 lag)→ 该项计 0,不阻断其余能力。
+    async fn stats(&self) -> Vec<QueueStat> {
+        let mut conn = self.conn.clone();
+        let mut out = Vec::with_capacity(known_caps().len());
+        for cap in known_caps() {
+            let key = stream_key(cap);
+            let groups: StreamInfoGroupsReply = match conn.xinfo_groups(&key).await {
+                Ok(g) => g,
+                // 流尚未建(无任何 XADD/组)→ 全 0。
+                Err(_) => {
+                    out.push(QueueStat { executor: cap, ready: 0, in_flight: 0, oldest_in_flight_ms: 0 });
+                    continue;
+                }
+            };
+            let g = groups.groups.iter().find(|g| g.name == GROUP);
+            let ready = g.and_then(|g| g.lag).unwrap_or(0) as u64;
+            let in_flight = g.map(|g| g.pending).unwrap_or(0) as u64;
+            // 仅在有在飞任务时多打一次 XPENDING,取最久空闲(oldest pending 在区间起点)。
+            let oldest_in_flight_ms = if in_flight > 0 {
+                let pending: redis::RedisResult<StreamPendingCountReply> =
+                    conn.xpending_count(&key, GROUP, "-", "+", 1usize).await;
+                match pending {
+                    Ok(p) => p.ids.first().map(|x| x.last_delivered_ms as u64).unwrap_or(0),
+                    Err(_) => 0,
+                }
+            } else {
+                0
+            };
+            out.push(QueueStat { executor: cap, ready, in_flight, oldest_in_flight_ms });
+        }
+        out
     }
 }
 
