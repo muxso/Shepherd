@@ -1238,17 +1238,19 @@ async fn import_definitions(
     if !user.can("API_DEFINITION", "ADD") {
         return (StatusCode::FORBIDDEN, "permission denied").into_response();
     }
-    let format = ImportFormat::from_str(req.format.as_deref().unwrap_or("openapi"));
+    let format = ImportFormat::from_source(req.format.as_deref().unwrap_or("openapi"));
     match st
         .import_def
         .execute(
             &req.project_id,
             format,
             &req.content,
-            req.module_id.as_deref().filter(|s| !s.is_empty()),
-            req.group_by_tag,
-            req.overwrite,
-            req.sync_module,
+            crate::application::ImportOptions {
+                module_id: req.module_id.as_deref().filter(|s| !s.is_empty()).map(String::from),
+                group_by_tag: req.group_by_tag,
+                overwrite: req.overwrite,
+                sync_module: req.sync_module,
+            },
         )
         .await
     {

@@ -16,7 +16,9 @@ pub use add_api_case::{AddApiCaseError, AddApiCaseUseCase, ApiCaseMeta};
 pub use add_api_mock::{AddApiMockError, AddApiMockUseCase, ApiMockExtras};
 pub use create_api_case::{CreateApiCaseError, CreateApiCaseUseCase};
 pub use create_api_definition::{CreateApiDefinitionError, CreateApiDefinitionUseCase};
-pub use import_api_definitions::{ImportApiDefinitionsUseCase, ImportError, ImportOutcome};
+pub use import_api_definitions::{
+    ImportApiDefinitionsUseCase, ImportError, ImportOptions, ImportOutcome,
+};
 pub use import_schedule::{CreateImportScheduleError, ImportScheduleUseCase};
 pub use list_api_cases::{ListApiCasesError, ListApiCasesUseCase};
 pub use list_project_cases::{ListProjectCasesError, ListProjectCasesUseCase};
