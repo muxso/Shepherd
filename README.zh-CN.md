@@ -82,7 +82,7 @@ SHEPHERD_BASE=http://<server>:8088 SHEPHERD_CAPS=CLAUDE_CODE cargo run -p agent-
 
 每个业务模块是一个独立 crate,按六边形分层:`domain` / `ports` / `application` 是纯逻辑、默认不碰 IO,数据库和 HTTP 都在 `adapters` 里用 feature 开关。`tests/architecture.rs` 会扫源码,纯层一旦引了 sqlx / axum 这类 IO crate 就让构建挂掉——免得分层写着写着被写穿。
 
-已经能用的:鉴权 / RBAC / OIDC(飞书、企业微信)、项目、多版本需求、任务 DAG、设计审批门、机群派发与回收、MCP 工具(`POST /mcp`)、Skill 编排,还有一套测试管理套件(用例 / 缺陷 / 计划 / 接口与场景测试 / Mock)。
+已经能用的:鉴权 / RBAC / OIDC(飞书、企业微信)、项目、多版本需求、任务 DAG、设计审批门、机群派发与回收、MCP 工具(`POST /mcp`)、Skill 编排,还有一套测试管理(用例 / 缺陷 / 计划 / 接口与场景测试 / Mock)。
 
 还没做好的:验证门现在用起来偏重,想让它更省事;`shepherd-cli` 还在搭;更细的机群指标(比如认领延迟分布)还没加;更多执行机后端(比如把 OpenHands 接成一台)也在清单上。
 
