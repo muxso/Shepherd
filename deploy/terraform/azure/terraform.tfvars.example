@@ -1,0 +1,32 @@
+# Copy to terraform.tfvars and fill in.
+
+location            = "eastus"
+name_prefix         = "shepherd"
+resource_group_name = "shepherd-rg"
+
+# AKS
+kubernetes_version = "" # empty = AKS default
+node_vm_size       = "Standard_D4s_v5"
+node_count         = 3
+node_min_count     = 2
+node_max_count     = 6
+
+# PostgreSQL Flexible Server
+db_name       = "shepherd"
+db_username   = "shepherd"
+db_password   = "" # leave empty to auto-generate
+db_sku_name   = "GP_Standard_D2s_v3"
+db_storage_mb = 32768
+
+# Azure Cache for Redis
+redis_capacity = 1
+redis_sku_name = "Standard"
+redis_family   = "C"
+
+# Shepherd app
+admin_password  = "change-me-in-prod"
+image_tag       = "latest"
+server_host     = "shepherd.example.com"
+web_host        = "shepherd.example.com"
+server_replicas = 2
+agent_replicas  = 3

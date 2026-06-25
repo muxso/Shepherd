@@ -1,0 +1,48 @@
+# Dev / demo values — single-node friendly, in-cluster Postgres + Redis, mocked agents.
+# Usage:
+#   helm dependency build deploy/helm/shepherd
+#   helm install shepherd deploy/helm/shepherd -f deploy/helm/shepherd/values-dev.yaml \
+#     --set config.adminPassword=devsecret
+
+server:
+  replicas: 1
+  ingress:
+    enabled: false
+  autoscaling:
+    enabled: false
+
+agentRuntime:
+  replicas: 1
+  mock: true
+  autoscaling:
+    enabled: false
+
+web:
+  replicas: 1
+  ingress:
+    enabled: false
+
+config:
+  # Override at install time; left blank here so no secret is committed.
+  adminPassword: ""
+  fleet:
+    enabled: true
+    # redisUrl is derived from the in-cluster redis subchart below.
+    redisUrl: ""
+
+# database.url is derived from the in-cluster postgresql subchart.
+database:
+  url: ""
+
+postgresql:
+  enabled: true
+  auth:
+    username: shepherd
+    password: shepherd
+    database: shepherd
+
+redis:
+  enabled: true
+  architecture: standalone
+  auth:
+    enabled: false

@@ -1,0 +1,29 @@
+# Copy to terraform.tfvars and fill in.
+
+project_id  = "my-gcp-project"
+region      = "us-central1"
+name_prefix = "shepherd"
+
+# GKE
+kubernetes_version = "" # empty = REGULAR channel default
+node_machine_type  = "e2-standard-4"
+node_count         = 1
+node_min_count     = 1
+node_max_count     = 3
+
+# Cloud SQL
+db_name     = "shepherd"
+db_username = "shepherd"
+db_password = "" # leave empty to auto-generate
+db_tier     = "db-custom-2-7680"
+
+# Memorystore
+redis_memory_size_gb = 1
+
+# Shepherd app
+admin_password  = "change-me-in-prod"
+image_tag       = "latest"
+server_host     = "shepherd.example.com"
+web_host        = "shepherd.example.com"
+server_replicas = 2
+agent_replicas  = 3

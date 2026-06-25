@@ -1,0 +1,64 @@
+{{- $component := "web" -}}
+{{- $ctx := dict "root" . "component" $component -}}
+{{- $server := printf "http://%s:%v" (include "shepherd.serverServiceName" .) .Values.server.service.port -}}
+{{- $prefixes := list "/api" "/auth" "/project" "/organization" "/system" "/role" "/user-role" "/requirement" "/decomposition" "/delivery" "/verification" "/skill" "/bug" "/functional-case" "/test-plan" "/perf" "/runner" "/runner-agent" "/case-review" "/mcp" -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "shepherd.componentName" $ctx }}-nginx
+  labels:
+    {{- include "shepherd.componentLabels" $ctx | nindent 4 }}
+data:
+  nginx.conf: |
+    worker_processes auto;
+    error_log /dev/stderr warn;
+    pid /tmp/nginx.pid;
+
+    events { worker_connections 1024; }
+
+    http {
+      include       /etc/nginx/mime.types;
+      default_type  application/octet-stream;
+      access_log    /dev/stdout;
+      sendfile      on;
+      keepalive_timeout 65;
+      server_tokens off;
+      gzip on;
+      gzip_types text/plain text/css application/json application/javascript text/xml application/xml image/svg+xml;
+
+      upstream shepherd_server {
+        server {{ include "shepherd.serverServiceName" . }}:{{ .Values.server.service.port }};
+      }
+
+      server {
+        listen {{ .Values.web.service.port }};
+        server_name _;
+        root /usr/share/nginx/html;
+        index index.html;
+
+        # Backend prefixes are disambiguated by the Accept header:
+        #   Accept: text/html  -> serve the SPA (deep-link / browser navigation)
+        #   otherwise          -> reverse-proxy to shepherd-server (API / XHR / fetch)
+        {{- range $prefixes }}
+        location {{ . }} {
+          if ($http_accept ~* "text/html") {
+            rewrite ^ /index.html last;
+          }
+          proxy_pass http://shepherd_server;
+          proxy_http_version 1.1;
+          proxy_set_header Host $host;
+          proxy_set_header X-Real-IP $remote_addr;
+          proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+          proxy_set_header X-Forwarded-Proto $scheme;
+          proxy_set_header Upgrade $http_upgrade;
+          proxy_set_header Connection "upgrade";
+          proxy_read_timeout 300s;
+        }
+        {{- end }}
+
+        # SPA fallback.
+        location / {
+          try_files $uri /index.html;
+        }
+      }
+    }

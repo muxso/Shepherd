@@ -1,0 +1,16 @@
+# Keep the build context small. The Rust build needs crates/ + Cargo.*;
+# the web build needs web/ (minus node_modules/dist).
+.git
+.github
+target
+**/target
+web/node_modules
+web/dist
+web/test-results
+web/playwright-report
+**/node_modules
+deploy/terraform/**/.terraform
+*.log
+.DS_Store
+.env
+.env.*

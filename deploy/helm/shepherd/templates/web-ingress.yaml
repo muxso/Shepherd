@@ -1,0 +1,36 @@
+{{- if .Values.web.ingress.enabled -}}
+{{- $component := "web" -}}
+{{- $ctx := dict "root" . "component" $component -}}
+{{- $ing := .Values.web.ingress -}}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "shepherd.componentName" $ctx }}
+  labels:
+    {{- include "shepherd.componentLabels" $ctx | nindent 4 }}
+  {{- with $ing.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- if $ing.className }}
+  ingressClassName: {{ $ing.className }}
+  {{- end }}
+  {{- if $ing.tls }}
+  tls:
+    - hosts:
+        - {{ $ing.host | quote }}
+      secretName: {{ include "shepherd.componentName" $ctx }}-tls
+  {{- end }}
+  rules:
+    - host: {{ $ing.host | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "shepherd.componentName" $ctx }}
+                port:
+                  number: {{ .Values.web.service.port }}
+{{- end }}

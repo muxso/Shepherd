@@ -1,0 +1,37 @@
+Shepherd {{ .Chart.AppVersion }} has been deployed as release "{{ .Release.Name }}" in namespace "{{ .Release.Namespace }}".
+
+Components:
+  - server         ({{ .Values.server.replicas }} replica(s){{ if .Values.server.autoscaling.enabled }}, HPA {{ .Values.server.autoscaling.minReplicas }}-{{ .Values.server.autoscaling.maxReplicas }}{{ end }}) — Service {{ include "shepherd.serverServiceName" . }}:{{ .Values.server.service.port }}
+  - agent-runtime  ({{ .Values.agentRuntime.replicas }} replica(s){{ if .Values.agentRuntime.autoscaling.enabled }}, HPA {{ .Values.agentRuntime.autoscaling.minReplicas }}-{{ .Values.agentRuntime.autoscaling.maxReplicas }}{{ end }}){{ if .Values.agentRuntime.mock }} [AGENT_MOCK=1]{{ end }}
+  - web            ({{ .Values.web.replicas }} replica(s)) — nginx SPA + API proxy
+
+{{- if not (include "shepherd.databaseUrl" .) }}
+
+WARNING: No DATABASE_URL is configured. Set database.url=postgres://... or enable
+the in-cluster Postgres subchart (postgresql.enabled=true) for dev/demo.
+{{- end }}
+{{- if not .Values.config.adminPassword }}
+
+WARNING: config.adminPassword is empty. The server falls back to the default admin
+password. Set it for any non-throwaway deployment:
+    helm upgrade {{ .Release.Name }} ... --set config.adminPassword=<secret>
+{{- end }}
+{{- if and .Values.config.fleet.enabled (not (include "shepherd.redisUrl" .)) }}
+
+NOTE: Fleet mode is enabled but no Redis URL is set. Multi-replica fleet coordination
+requires config.fleet.redisUrl (or redis.enabled=true for dev). A single server replica
+can run with the in-process queue.
+{{- end }}
+
+Access the web UI:
+{{- if .Values.web.ingress.enabled }}
+  http{{ if .Values.web.ingress.tls }}s{{ end }}://{{ .Values.web.ingress.host }}/
+{{- else }}
+  kubectl --namespace {{ .Release.Namespace }} port-forward svc/{{ include "shepherd.componentName" (dict "root" . "component" "web") }} 8080:{{ .Values.web.service.port }}
+  # then open http://localhost:8080  (login: admin / <SHEPHERD_ADMIN_PASSWORD>)
+{{- end }}
+
+Health checks (server):
+  kubectl --namespace {{ .Release.Namespace }} port-forward svc/{{ include "shepherd.serverServiceName" . }} 8088:{{ .Values.server.service.port }}
+  curl localhost:8088/healthz   # liveness
+  curl localhost:8088/readyz    # readiness (200 when Postgres reachable)

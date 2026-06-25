@@ -1,0 +1,95 @@
+# Production values example — external managed Postgres + Redis, ingress + TLS, real replicas.
+# Secrets (config.adminPassword, database.url, config.fleet.redisUrl, OIDC) MUST be
+# supplied via --set or an external/sealed secret, NEVER committed here.
+#
+# Usage:
+#   helm upgrade --install shepherd deploy/helm/shepherd \
+#     -f deploy/helm/shepherd/values-prod.yaml \
+#     --set global.image.tag=v1.2.3 \
+#     --set config.adminPassword="$ADMIN_PASSWORD" \
+#     --set database.url="$DATABASE_URL" \
+#     --set config.fleet.redisUrl="$REDIS_URL"
+
+global:
+  image:
+    registry: ghcr.io/muxso
+    tag: latest
+    pullPolicy: IfNotPresent
+  imagePullSecrets: []
+
+server:
+  replicas: 3
+  resources:
+    requests:
+      cpu: 250m
+      memory: 256Mi
+    limits:
+      cpu: "2"
+      memory: 1Gi
+  ingress:
+    enabled: true
+    className: nginx
+    host: shepherd.example.com
+    tls: true
+    annotations:
+      cert-manager.io/cluster-issuer: letsencrypt-prod
+  autoscaling:
+    enabled: true
+    minReplicas: 3
+    maxReplicas: 10
+    targetCPUUtilizationPercentage: 70
+
+agentRuntime:
+  replicas: 5
+  mock: false
+  resources:
+    requests:
+      cpu: 250m
+      memory: 256Mi
+    limits:
+      cpu: "2"
+      memory: 2Gi
+  autoscaling:
+    enabled: true
+    minReplicas: 3
+    maxReplicas: 20
+    targetCPUUtilizationPercentage: 70
+
+web:
+  replicas: 3
+  ingress:
+    enabled: true
+    className: nginx
+    host: shepherd.example.com
+    tls: true
+    annotations:
+      cert-manager.io/cluster-issuer: letsencrypt-prod
+
+config:
+  adminPassword: ""          # REQUIRED — provide via --set / secret manager
+  sessionTtlSecs: 28800
+  fleet:
+    enabled: true
+    redisUrl: ""             # rediss://... — provide via --set / secret manager
+  oidc:
+    feishu:
+      appId: ""
+      appSecret: ""
+      redirect: ""
+    wecom:
+      corpId: ""
+      secret: ""
+      redirect: ""
+
+database:
+  url: ""                    # postgres://... — provide via --set / secret manager
+
+# External datastores — keep in-cluster subcharts disabled in production.
+postgresql:
+  enabled: false
+redis:
+  enabled: false
+
+serviceAccount:
+  create: true
+  name: ""
