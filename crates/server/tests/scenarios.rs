@@ -46,8 +46,8 @@ impl TestServer {
         let port = free_port();
         let mut cmd = Command::new(env!("CARGO_BIN_EXE_server"));
         cmd.env("DATABASE_URL", db_url())
-            .env("MS_BIND", format!("127.0.0.1:{port}"))
-            .env("MS_ADMIN_PASSWORD", "s3cret")
+            .env("SHEPHERD_BIND", format!("127.0.0.1:{port}"))
+            .env("SHEPHERD_ADMIN_PASSWORD", "s3cret")
             .env("RUST_LOG", "warn");
         for (k, v) in extra {
             cmd.env(k, v);

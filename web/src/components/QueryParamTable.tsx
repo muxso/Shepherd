@@ -27,7 +27,7 @@ export const emptyQueryParam = (): QueryParam => ({
 const TYPES = ['string', 'integer', 'number', 'boolean', 'array', 'file']
 
 /**
- * Query 参数结构化表格(对齐 MeterSphere:启用 / 参数名称 / 类型 / 参数值 / 长度区间 / 描述)。
+ * Query 参数结构化表格:启用 / 参数名称 / 类型 / 参数值 / 长度区间 / 描述。
  * 执行只取 key=value(且 enabled);其余列为文档/约束元信息,随用例往返存储。
  */
 export default function QueryParamTable({

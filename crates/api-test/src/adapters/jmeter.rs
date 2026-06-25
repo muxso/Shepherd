@@ -1,7 +1,6 @@
 //! JMeter 下发适配器:实现 `TaskDispatcher`,经 HTTP 把运行任务 POST 给执行节点。
 //!
-//! 对应 Java 的 `MsHttpClient.batchRunApi(endpoint, subTaskRequest)`——MeterSphere 正是
-//! 用 HTTP 把任务发到资源池节点(ip:port)。这里用 reqwest 复刻该传输。
+//! 用 HTTP 把任务发到资源池节点(ip:port),用 reqwest 实现该传输。
 //!
 //! 节点选择(从池里挑哪个节点)在真实环境由资源池服务给出;本适配器以一个**基地址**
 //! (执行器入口,如 task-runner)收敛之,POST `{base}/jmeter/batch-run`。

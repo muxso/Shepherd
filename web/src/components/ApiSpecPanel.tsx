@@ -332,7 +332,7 @@ const ApiSpecPanel = forwardRef<ApiSpecPanelHandle, {
     )
   }
 
-  // 定义(可编辑):MeterSphere 风子标签。
+  // 定义(可编辑):子标签。
   const tabs = [
     {
       key: 'basic',
@@ -402,7 +402,7 @@ const ApiSpecPanel = forwardRef<ApiSpecPanelHandle, {
           {dirty && <span style={{ color: '#ef6c00', fontSize: 12 }}>{t('apidef.unsaved', '有未保存修改')}</span>}
         </div>
       )}
-      {/* 下划线子标签(对齐 MeterSphere:基本信息/请求头/请求体/…/设置)。 */}
+      {/* 下划线子标签:基本信息/请求头/请求体/…/设置。 */}
       <Tabs className="ms-detail-tabs" items={tabs} size="small" />
       {/* 底部「响应内容」:定义=示例响应(状态码 200/404…);调试=服务端执行结果。 */}
       {debug ? (
@@ -706,7 +706,7 @@ function BasicInfo({ definition, spec, patch, create }: { definition: ApiDefinit
     }
   }, [definition.projectId, create])
 
-  // 模块/状态是定义级属性,即时写后端(不走 spec 的「保存」按钮),对齐 MeterSphere。
+  // 模块/状态是定义级属性,即时写后端(不走 spec 的「保存」按钮)。
   const changeModule = async (mid?: string) => {
     setModuleId(mid)
     try {
@@ -788,7 +788,7 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
   )
 }
 
-/** 请求体编辑器:对齐 MeterSphere(none/form-data/urlencoded/json[Schema 树|Json]/xml/raw/binary)。 */
+/** 请求体编辑器:none/form-data/urlencoded/json[Schema 树|Json]/xml/raw/binary。 */
 function BodyEditor({ spec, patch }: { spec: ApiSpec; patch: (p: Partial<ApiSpec>) => void }) {
   const { t } = useI18n()
   const bt = spec.bodyType || 'none'
@@ -850,7 +850,7 @@ function BodyEditor({ spec, patch }: { spec: ApiSpec; patch: (p: Partial<ApiSpec
   )
 }
 
-/** 批量添加抽屉:每行「参数名,类型,必填,参数值」(对齐 MeterSphere 快捷添加)。 */
+/** 批量添加抽屉:每行「参数名,类型,必填,参数值」快捷添加。 */
 function BatchAddDrawer({ open, onClose, onApply }: { open: boolean; onClose: () => void; onApply: (rows: ApiSpecKV[]) => void }) {
   const { t } = useI18n()
   const [text, setText] = useState('')

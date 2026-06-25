@@ -8,7 +8,7 @@ import { useI18n } from '../i18n'
 import { message, modal } from '../feedback'
 import { SelectProjectEmpty } from '../components/Page'
 
-// 消息设置:对齐 MeterSphere「项目 → 消息设置」。左侧二级导航(机器人 + 各业务事件分类),
+// 消息设置:「项目 → 消息设置」。左侧二级导航(机器人 + 各业务事件分类),
 // 右侧为该分类下的通知规则表(通知场景 → 接收人 → 接收方式 → 模板 → 启用)。
 // 设置按项目持久化到 localStorage(与「应用设置」一致:后端通知服务接入前的本地态)。
 

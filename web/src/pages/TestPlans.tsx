@@ -309,7 +309,7 @@ function LinkCaseModal({ open, planId, projectId, onClose, onLinked }: { open: b
   )
 }
 
-// 计划报告多卡分析(对齐 MeterSphere):报告分析 + 执行分析甜甜圈 + 用例状态条形。
+// 计划报告多卡分析:报告分析 + 执行分析甜甜圈 + 用例状态条形。
 // 状态分布从 planCases 客户端聚合(SUCCESS/ERROR/FAKE_ERROR/BLOCK/PENDING)。
 function ReportAnalytics({ stats, cases }: { stats: PlanStats | null; cases: PlanCase[] }) {
   const { t } = useI18n()
@@ -372,7 +372,7 @@ function ReportAnalytics({ stats, cases }: { stats: PlanStats | null; cases: Pla
 
 const rowStyle: CSSProperties = { display: 'flex', justifyContent: 'space-between', padding: '6px 0', fontSize: 14 }
 
-// 可手动登记的执行结果(对齐 MeterSphere:通过/不通过/阻塞/误报)。
+// 可手动登记的执行结果:通过/不通过/阻塞/误报。
 const CASE_RESULT_OPTIONS = [
   { value: 'SUCCESS', i18nKey: 'plan.resPass', fallback: '通过' },
   { value: 'ERROR', i18nKey: 'plan.resFail', fallback: '不通过' },

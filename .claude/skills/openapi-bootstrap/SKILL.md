@@ -33,7 +33,7 @@ python3 .claude/skills/openapi-bootstrap/scenarios_all.py
 | 环境变量 | 默认 | 说明 |
 |------|------|------|
 | `SHEPHERD_BASE` | `http://127.0.0.1:9180` | 后端地址 |
-| `SHEPHERD_USER` / `SHEPHERD_PASS` | `admin` / `s3cret` | 登录凭据(`MS_ADMIN_PASSWORD`) |
+| `SHEPHERD_USER` / `SHEPHERD_PASS` | `admin` / `s3cret` | 登录凭据(`SHEPHERD_ADMIN_PASSWORD`) |
 | `SHEPHERD_PROJECT_ID` | 自动解析 | 指定项目;缺省取第一个组织的第一个项目,没有则创建 |
 
 脚本与环境/定义/用例/场景均按名字「建或复用」,可重复运行不堆积。

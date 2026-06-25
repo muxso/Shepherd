@@ -153,7 +153,7 @@ fn json_value_to_string(v: &serde_json::Value) -> String {
 /// 断言种类(对应 JMeter 的 Response Assertion / JSON Assertion)。
 /// 邻接标签(tag+content)以支持基元 newtype 变体如 `StatusIs(u16)`:
 /// `{"type":"StatusIs","args":200}` / `{"type":"JsonFieldEquals","args":{"pointer":..,"expected":..}}`。
-/// 带操作符的新变体(对齐前端 MeterSphere 断言矩阵):
+/// 带操作符的新变体(对应前端断言矩阵):
 /// `{"type":"ResponseBody","args":{"condition":"CONTAINS","expected":"ok"}}`。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", content = "args")]

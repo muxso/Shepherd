@@ -14,7 +14,7 @@ pub struct NewApiCase {
     pub assertions: serde_json::Value,
     /// 前后置处理器(EXTRACT/WAIT)JSON 数组;默认空。runner 透传,不在此校验形态。
     pub processors: serde_json::Value,
-    /// 优先级(P0/P1/P2/P3);默认 P0。对齐 MeterSphere 用例属性。
+    /// 优先级(P0/P1/P2/P3);默认 P0。
     pub priority: String,
     /// 用例状态(进行中/已完成/已废弃 等 UI 文本);默认「进行中」。
     pub status: String,
@@ -84,7 +84,7 @@ impl NewApiCase {
         self
     }
 
-    /// 附加用例元信息:优先级 / 状态 / 标签(对齐 MeterSphere)。
+    /// 附加用例元信息:优先级 / 状态 / 标签。
     /// 空白优先级/状态回落默认值;tags 非数组回落空数组。
     pub fn with_meta(mut self, priority: &str, status: &str, tags: serde_json::Value) -> Self {
         if !priority.trim().is_empty() {

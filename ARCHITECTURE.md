@@ -1,6 +1,6 @@
 # Shepherd:整体架构 · TDD 方法论 · 演进路线
 
-> **Shepherd** 是一个用 Rust 构建的 **AI 研发监督平台**,由 MeterSphere 测试管理后端的六边形重构
+> **Shepherd** 是一个用 Rust 构建的 **AI 研发监督平台**,以六边形架构重构的测试管理后端
 > **演进而来**:先用 TDD + 六边形把测试管理域翻正(§一~§四,讲"为什么这样设计"),再在同一骨架上
 > 长出 Shepherd 的核心链路——**需求(多版本)→ 任务拆分(DAG)→ 派发给 AI 执行者 → 完整性验证**,
 > 并以编排器把这条链自动联动(§五)。操作说明见 `README.md`。
@@ -64,7 +64,7 @@
 | **共享** | | |
 | `kernel` | 共享内核(分页、权限 `PermissionSet`) | 零依赖 |
 | `webauth` | 共享鉴权基元(`AuthUser` / `Session` / `SessionStore` 端口 + axum 提取器) | 仅依赖 kernel;`http` feature 门控提取器,`test-util` 内存会话 |
-| **测试管理域**(MeterSphere 重构) | | |
+| **测试管理域** | | |
 | `system-setting` | 用户·组织·角色·鉴权(本地 + OIDC) | 一个限界上下文,下同 |
 | `project` `case` `bug` `test-plan` | 项目 / 用例评审 / 缺陷 / 测试计划 | `src/{domain,ports,application,adapters}` |
 | `api-test` `api-runner` | 接口批量执行(池解析 quirk)/ 原生 HTTP 执行器 + 断言引擎 | `local`/`jmeter` feature |
@@ -320,7 +320,7 @@ JSON,`extract_json` 容忍散文/围栏。**领域/应用对"是否用 AI、用�
 - **不一定要 JMeter,且已走通**:原生 Rust runner `api-runner`(reqwest + 纯函数断言引擎
   StatusIs/BodyContains/HeaderEquals/JsonFieldEquals)经 `api-test` 的 local 适配器
   接成 `TaskDispatcher`:取 `ms_api_case`(`PgCaseSpecSource`,断言存 JSONB)→ reqwest 就地跑 → 聚合 →
-  `DispatchOutcome::Completed{status}`(同步跑完,报告直接最终态)。组装根**默认**选它(`MS_EXECUTOR_URL` 配则走 JMeter,`MS_RUNNER=noop` 才显式占位),
+  `DispatchOutcome::Completed{status}`(同步跑完,报告直接最终态)。组装根**默认**选它(`SHEPHERD_EXECUTOR_URL` 配则走 JMeter,`SHEPHERD_RUNNER=noop` 才显式占位),
   真库 + stub 目标端到端验证:全过→SUCCESS、含失败→ERROR。`TaskDispatcher` 用 `DispatchOutcome` 区分
   **异步 JMeter(Accepted→RUNNING)** 与 **同步原生(Completed)**,两者并存按需路由;压测留给 JMeter/Goose。
   - **per-case 明细**:每个用例结果(SUCCESS/ERROR + 失败原因)经 `CaseResultSink` 写入 `ms_api_case_result`(JSONB)。

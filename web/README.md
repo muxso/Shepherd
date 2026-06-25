@@ -1,6 +1,6 @@
 # Shepherd Web · 全平台前端
 
-React + TypeScript + Vite + Ant Design 实现,参考 MeterSphere「顶栏 + 分组侧栏 + 列表/详情」布局,覆盖 Shepherd Rust server 的全部业务域。
+React + TypeScript + Vite + Ant Design 实现,采用「顶栏 + 分组侧栏 + 列表/详情」布局,覆盖 Shepherd Rust server 的全部业务域。
 
 ## 启动(必须前后端同时跑)
 
@@ -8,7 +8,7 @@ React + TypeScript + Vite + Ant Design 实现,参考 MeterSphere「顶栏 + 分�
 ```bash
 cd /Users/zhiyi/Code/rust/Shepherd
 DATABASE_URL=postgres://msuser:mspass@127.0.0.1:55432/mstest \
-MS_BIND=127.0.0.1:9180 MS_ADMIN_PASSWORD=s3cret RUST_LOG=error \
+SHEPHERD_BIND=127.0.0.1:9180 SHEPHERD_ADMIN_PASSWORD=s3cret RUST_LOG=error \
 ./target/debug/server
 ```
 前端(终端 2):

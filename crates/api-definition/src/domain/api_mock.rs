@@ -67,7 +67,7 @@ impl NewApiMock {
         self
     }
 
-    /// 附加 Mock 扩展项:标签 / 响应头 / 响应延时 / 跟随定义(对齐 MeterSphere)。
+    /// 附加 Mock 扩展项:标签 / 响应头 / 响应延时 / 跟随定义。
     /// tags、response_headers 非数组回落空数组;延时取 max(0, ms)。
     pub fn with_extras(
         mut self,

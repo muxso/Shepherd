@@ -33,7 +33,7 @@ function formatJson(text: string): string {
 
 const countKV = (rows: KVRow[]) => rows.filter((r) => r.key.trim()).length
 
-// MeterSphere 风接口用例工作台(对齐参考图 #3):头部信息卡 + 名称/执行行 + 优先级/状态/标签 +
+// 接口用例工作台:头部信息卡 + 名称/执行行 + 优先级/状态/标签 +
 // 请求参数下划线子标签(请求头/请求体/Query/REST/前置/后置/断言/认证/设置)+ 响应区。
 export default function CaseEditorDrawer({
   open,

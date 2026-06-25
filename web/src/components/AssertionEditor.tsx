@@ -92,7 +92,7 @@ function fromAssertion(a: Assertion): Row {
   }
 }
 
-// 受控:value 为后端断言数组,onChange 回传同结构。对齐 MeterSphere 断言矩阵(左列类别 + 右侧编辑)。
+// 受控:value 为后端断言数组,onChange 回传同结构。断言矩阵(左列类别 + 右侧编辑)。
 export default function AssertionEditor({
   value,
   onChange,

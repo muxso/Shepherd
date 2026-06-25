@@ -4,7 +4,7 @@
 //! 嵌套 if + AtomicInteger 计数的会签/或签聚合逻辑,提炼成零 IO 的纯函数,
 //! 用穷举式用例钉死每条分支——这正是 TDD 最该发力、Java 版最难测的地方。
 //!
-//! 规则(忠实还原 MeterSphere):
+//! 规则:
 //! - 单用例评审状态:UnReviewed / UnderReviewed / Pass / UnPass / ReReviewed
 //! - 通过规则 PassRule:Single(或签)/ Multiple(会签)
 //! - 每个评审人取「最新的非『建议(UnderReviewed)』结论」;SYSTEM 用户不计票

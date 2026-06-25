@@ -5,7 +5,7 @@
 
 use thiserror::Error;
 
-/// MeterSphere 项目名长度上限(与 DB 列一致)。
+/// 项目名长度上限(与 DB 列一致)。
 pub const MAX_NAME_LEN: usize = 255;
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
