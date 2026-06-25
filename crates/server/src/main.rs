@@ -30,6 +30,7 @@ mod project_file;
 mod planner;
 mod references_route;
 mod report_archive_job;
+mod routes;
 mod scenario_run;
 
 use std::sync::Arc;
@@ -40,9 +41,6 @@ use axum::http::StatusCode;
 use axum::routing::get;
 use axum::Router;
 use migrate::PgPool;
-use tower_http::limit::RequestBodyLimitLayer;
-use tower_http::timeout::TimeoutLayer;
-use tower_http::trace::TraceLayer;
 
 use bug::application::{BugFollowersUseCase, ChangeBugStatusUseCase, CreateBugUseCase, ListBugsUseCase};
 use bug::adapters::pg::PgBugRepository;
@@ -621,48 +619,55 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let project_file_routes = project_file::router(pool.clone(), sessions.clone());
 
     // —— 合并为单一应用 + 生产中间件 ——
-    let app = user_routes
-        .merge(oidc_routes)
-        .merge(org_routes)
-        .merge(role_routes)
-        .merge(project_routes)
-        .merge(requirement_routes)
-        .merge(task_routes)
-        .merge(delivery_routes)
-        .merge(agent_fleet_routes)
-        .merge(design_routes)
-        .merge(decomposition_run_routes)
-        .merge(verification_routes)
-        .merge(breakdown_routes)
-        .merge(skill_routes)
-        .merge(mcp_routes)
-        .merge(case_routes)
-        .merge(bug_routes)
-        .merge(follow_routes)
-        .merge(plan_routes)
-        .merge(plan_run_routes)
-        .merge(apitest_routes)
-        .merge(resource_pool_routes)
-        .merge(case_exec_routes)
-        .merge(apidef_routes)
-        .merge(environment_routes)
-        .merge(functional_case_routes)
-        .merge(runner_routes)
-        .merge(scenario_routes)
-        .merge(references_routes)
-        .merge(scenario_run_routes)
-        .merge(case_summary_routes)
-        .merge(project_file_routes)
-        .merge(perf_routes)
-        .merge(debug_send_routes)
-        .merge(plan_scheduler_routes)
-        .merge(import_scheduler_routes)
-        .merge(openapi::routes())
-        .merge(health_routes(pool.clone()))
-        // 由外到内:请求日志 → 整体超时 → 请求体上限(防超大 body 打爆内存)
-        .layer(TraceLayer::new_for_http())
-        .layer(TimeoutLayer::with_status_code(StatusCode::REQUEST_TIMEOUT, Duration::from_secs(30)))
-        .layer(RequestBodyLimitLayer::new(2 * 1024 * 1024));
+    // 按领域分组登记;新增路由 append 到所属分组即可(降合并冲突面)。中间件统一在 routes::assemble。
+    let app = routes::assemble(vec![
+        // 鉴权 / 用户 / 组织 / 角色(system-setting)
+        routes::group("system", user_routes.merge(oidc_routes).merge(org_routes).merge(role_routes)),
+        // 项目 + 项目文件 + 引用
+        routes::group("project", project_routes.merge(project_file_routes).merge(references_routes)),
+        // 需求
+        routes::group("requirement", requirement_routes),
+        // 任务派发 / 交付 / 执行机群 / 设计稿 / 拆解 / 验证 / breakdown
+        routes::group(
+            "delivery",
+            task_routes
+                .merge(delivery_routes)
+                .merge(agent_fleet_routes)
+                .merge(design_routes)
+                .merge(decomposition_run_routes)
+                .merge(verification_routes)
+                .merge(breakdown_routes),
+        ),
+        // 技能 + MCP 工具
+        routes::group("skill", skill_routes.merge(mcp_routes)),
+        // 功能用例 / 评审 / 执行 / 执行汇总
+        routes::group(
+            "test-case",
+            case_routes.merge(case_exec_routes).merge(case_summary_routes).merge(functional_case_routes),
+        ),
+        // 缺陷 + 关注
+        routes::group("bug", bug_routes.merge(follow_routes)),
+        // 测试计划 + 运行 + 调度
+        routes::group("test-plan", plan_routes.merge(plan_run_routes).merge(plan_scheduler_routes)),
+        // 接口测试:批量运行 / 资源池 / 接口定义 / 环境 / runner / 场景 / 导入调度
+        routes::group(
+            "api-test",
+            apitest_routes
+                .merge(resource_pool_routes)
+                .merge(apidef_routes)
+                .merge(environment_routes)
+                .merge(runner_routes)
+                .merge(scenario_routes)
+                .merge(scenario_run_routes)
+                .merge(import_scheduler_routes),
+        ),
+        // 性能测试
+        routes::group("perf", perf_routes),
+        // 调试发送
+        routes::group("debug", debug_send_routes),
+        // 元信息:OpenAPI 文档 + 健康检查
+        routes::group("meta", openapi::routes().merge(health_routes(pool.clone()))),
+    ]);
 
     let listener = tokio::net::TcpListener::bind(&bind).await?;
     tracing::info!(%bind, "server listening");
