@@ -143,11 +143,12 @@ export default function MocksPanel({ definition }: { definition: ApiDefinition }
 
 function CreateMockForm({
   definition,
+  mock,
   onClose,
   onCreated,
 }: {
   definition: ApiDefinition
-  // 编辑态传入的现有 Mock(接受 prop 使调用处类型通过;表单预填为后续 WIP)。
+  // 编辑态传入的现有 Mock;为 null/undefined 时是「新建」。
   mock?: ApiMock | null
   onClose: () => void
   onCreated: () => void
@@ -168,6 +169,42 @@ function CreateMockForm({
   const [respDelay, setRespDelay] = useState<number | null>(null)
   const [saving, setSaving] = useState(false)
 
+  // 编辑态:用现有 mock 预填表单(matchRule 反解 headers/query/body 条件)。
+  useEffect(() => {
+    if (!mock) return
+    const condsFrom = (v: unknown): MatchCond[] => {
+      const rows = (Array.isArray(v) ? v : []).map((e) => {
+        const [n, cond] = e as [string, { op?: string; value?: string }]
+        return {
+          logic: 'AND' as const,
+          name: n ?? '',
+          op: (cond?.op ?? 'equals') as MatchCond['op'],
+          value: cond?.value ?? '',
+        }
+      })
+      return rows.length ? rows : [emptyCond()]
+    }
+    const mr = (mock.matchRule ?? {}) as {
+      headers?: unknown
+      query?: unknown
+      body?: Array<{ value?: string }>
+    }
+    setName(mock.name)
+    setTags(mock.tags ?? [])
+    setMatchHeaders(condsFrom(mr.headers))
+    setMatchQuery(condsFrom(mr.query))
+    setMatchBody(mr.body?.[0]?.value ?? '')
+    setFollowDef(mock.followDefinition ?? false)
+    setRespBody(mock.responseBody ?? '')
+    setRespStatus(mock.responseStatus)
+    setRespHeaders(
+      mock.responseHeaders?.length
+        ? mock.responseHeaders
+        : [{ key: 'Content-Type', value: 'application/json' }],
+    )
+    setRespDelay(mock.responseDelayMs ?? null)
+  }, [mock])
+
   const doSave = async (): Promise<boolean> => {
     if (!name.trim()) {
       message.warning(t('mock.nameRequired', '请输入期望名称'))
@@ -181,23 +218,29 @@ function CreateMockForm({
     if (mh.length) matchRule.headers = mh
     if (mq.length) matchRule.query = mq
     if (matchBody.trim()) matchRule.body = [{ kind: 'contains', value: matchBody.trim() }]
+    const body = {
+      name: name.trim(),
+      matchRule,
+      responseStatus: respStatus,
+      responseBody: followDef ? undefined : respBody || undefined,
+      enabled: mock ? mock.enabled : true,
+      tags,
+      followDefinition: followDef,
+      responseHeaders: respHeaders.filter((h) => h.key.trim()),
+      responseDelayMs: respDelay ?? 0,
+    }
     setSaving(true)
     try {
-      await api.createMock(definition.id, {
-        name: name.trim(),
-        matchRule,
-        responseStatus: respStatus,
-        responseBody: followDef ? undefined : respBody || undefined,
-        enabled: true,
-        tags,
-        followDefinition: followDef,
-        responseHeaders: respHeaders.filter((h) => h.key.trim()),
-        responseDelayMs: respDelay ?? 0,
-      })
-      message.success(t('mock.created', 'Mock 已创建'))
+      if (mock) {
+        await api.updateMock(mock.id, body)
+        message.success(t('mock.updated', 'Mock 已更新'))
+      } else {
+        await api.createMock(definition.id, body)
+        message.success(t('mock.created', 'Mock 已创建'))
+      }
       return true
     } catch (e) {
-      message.error(e instanceof ApiError ? e.message : t('mock.createFailed', '创建失败'))
+      message.error(e instanceof ApiError ? e.message : t('mock.saveFailed', '保存失败'))
       return false
     } finally {
       setSaving(false)
@@ -362,8 +405,12 @@ function CreateMockForm({
       <div style={{ textAlign: 'right', marginTop: 16 }}>
         <Space>
           <Button onClick={onClose}>{t('a.cancel', '取消')}</Button>
-          <Button loading={saving} onClick={saveAndContinue}>{t('case.saveContinue', '保存并继续创建')}</Button>
-          <Button type="primary" loading={saving} onClick={save}>{t('a.create', '创建')}</Button>
+          {!mock && (
+            <Button loading={saving} onClick={saveAndContinue}>{t('case.saveContinue', '保存并继续创建')}</Button>
+          )}
+          <Button type="primary" loading={saving} onClick={save}>
+            {mock ? t('a.save', '保存') : t('a.create', '创建')}
+          </Button>
         </Space>
       </div>
     </div>
