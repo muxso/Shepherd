@@ -1235,6 +1235,11 @@ function ApiDetail({ definition, onUpdated }: { definition: ApiDefinition; onUpd
   }
   const defineTab = (
     <div>
+      {!isHttp && (
+        <div style={{ marginBottom: 8, color: 'var(--text-3)', fontSize: 12 }}>
+          {t('apidef.nonHttpDetailHint', '该协议当前仅登记/存储,不支持执行/调试;此处仅查看与编辑定义。')}
+        </div>
+      )}
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 12 }}>
         <Tag color="blue" style={{ margin: 0, padding: '4px 10px' }}>{definition.protocol}</Tag>
         {isHttp && <Select value={reqMethod} onChange={setReqMethod} style={{ width: 100 }} options={METHODS.map((m) => ({ value: m, label: m }))} />}
@@ -1244,14 +1249,17 @@ function ApiDetail({ definition, onUpdated }: { definition: ApiDefinition; onUpd
           <Tooltip title={t('apidef.importCurl', '导入 cURL')}>
             <Button icon={<CodeOutlined />} onClick={() => setCurlOpen(true)} />
           </Tooltip>
-          <Segmented
-            value={defMode}
-            onChange={(v) => setDefMode(v as 'define' | 'debug')}
-            options={[
-              { label: t('apidef.define', '定义'), value: 'define' },
-              { label: t('apidef.debug', '调试'), value: 'debug' },
-            ]}
-          />
+          {/* 非 HTTP 协议暂不支持执行 → 不提供「调试」切换,仅保留「定义」。 */}
+          {isHttp && (
+            <Segmented
+              value={defMode}
+              onChange={(v) => setDefMode(v as 'define' | 'debug')}
+              options={[
+                { label: t('apidef.define', '定义'), value: 'define' },
+                { label: t('apidef.debug', '调试'), value: 'debug' },
+              ]}
+            />
+          )}
           {defMode === 'debug' ? (
             <>
               {/* 执行:主键跑当前方式;下拉切「服务端执行 / 本地执行」并立即执行。 */}
