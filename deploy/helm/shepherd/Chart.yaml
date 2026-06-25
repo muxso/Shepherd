@@ -1,0 +1,32 @@
+apiVersion: v2
+name: shepherd
+description: Shepherd — requirement-driven AI agent fleet orchestration (server + agent-runtime + web SPA).
+type: application
+# Chart version. Bump on any chart change.
+version: 0.1.0
+# Version of the Shepherd application shipped by default (overridable via global.image.tag).
+appVersion: "0.0.1"
+home: https://github.com/muxso/shepherd
+sources:
+  - https://github.com/muxso/shepherd
+maintainers:
+  - name: Shepherd maintainers
+
+# Optional in-cluster datastores for dev/demo are shipped as minimal in-chart
+# StatefulSets gated by postgresql.enabled / redis.enabled (see templates/dev-*.yaml).
+# Production should point at managed PostgreSQL/Redis via database.url /
+# config.fleet.redisUrl and keep both disabled.
+#
+# To use the Bitnami subcharts instead, uncomment the block below and run
+# `helm dependency build deploy/helm/shepherd` (requires network access), then
+# delete templates/dev-postgresql.yaml and templates/dev-redis.yaml.
+#
+# dependencies:
+#   - name: postgresql
+#     version: "15.x.x"
+#     repository: https://charts.bitnami.com/bitnami
+#     condition: postgresql.enabled
+#   - name: redis
+#     version: "19.x.x"
+#     repository: https://charts.bitnami.com/bitnami
+#     condition: redis.enabled

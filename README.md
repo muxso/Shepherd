@@ -78,6 +78,8 @@ SHEPHERD_BASE=http://<server>:8088 SHEPHERD_CAPS=CLAUDE_CODE cargo run -p agent-
 
 <!-- console screenshot pending: see docs/assets/. -->
 
+Prefer one command? `docker compose -f deploy/docker/docker-compose.yml up --build` brings up the whole stack (server + agent-runtime + web + Postgres + Redis) — see the [usage guide](docs/USAGE.md) and [deployment guide](docs/DEPLOYMENT.md).
+
 ## What's in here
 
 Each business module is its own crate, laid out hexagonally: `domain` / `ports` / `application` are pure logic with no IO by default, while the database and HTTP live in `adapters` behind feature flags. `tests/architecture.rs` scans the source and fails the build if a pure layer ever imports an IO crate like sqlx or axum — that keeps the layering from quietly eroding over time.
@@ -133,6 +135,12 @@ Executor `agent-runtime`:
 | `CLAUDE_BIN` / `CODEX_CMD` / `OPENCODE_CMD` | `claude` / `codex exec` / `opencode run` | each CLI invocation |
 | `AGENT_MOCK` | — | set to use the mock backend (no real CLI) |
 </details>
+
+## Documentation
+
+- **[Usage guide](docs/USAGE.md)** ([中文](docs/USAGE.zh-CN.md)) — concepts, quick start, the full configuration reference, the web console, fleet & executor setup, and the HTTP API.
+- **[Deployment & ops](docs/DEPLOYMENT.md)** ([中文](docs/DEPLOYMENT.zh-CN.md)) — Docker Compose, Kubernetes via Helm (`deploy/helm/shepherd`), multi-cloud Terraform (`deploy/terraform/{aws,gcp,azure}`), and CI/CD auto-deploy.
+- **[Architecture](ARCHITECTURE.md)** · **[Roadmap](ROADMAP.md)** · **[fleet design notes](docs/remote-agent-runtime-plan.md)**
 
 ## How it compares
 

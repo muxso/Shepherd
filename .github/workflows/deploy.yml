@@ -1,0 +1,137 @@
+# Deploy Shepherd to a Kubernetes cluster via Helm on a chosen cloud.
+#
+# ──────────────────────────────────────────────────────────────────────────────
+# Required GitHub secrets / variables
+# ──────────────────────────────────────────────────────────────────────────────
+# Cloud auth uses OIDC (no long-lived cloud keys). Configure the secrets for
+# whichever cloud(s) you target:
+#
+#   AWS (cloud=aws):
+#     AWS_ROLE_ARN    — IAM role to assume via OIDC
+#     AWS_REGION      — e.g. us-east-1
+#     EKS_CLUSTER     — EKS cluster name
+#
+#   GCP (cloud=gcp):
+#     GCP_WORKLOAD_IDENTITY_PROVIDER — full WIF provider resource name
+#     GCP_SA          — service account email to impersonate
+#     GKE_CLUSTER     — GKE cluster name
+#     GKE_ZONE        — cluster location (zone or region)
+#     GCP_PROJECT     — GCP project id
+#
+#   Azure (cloud=azure):
+#     AZURE_CLIENT_ID       — app registration client id (federated credential)
+#     AZURE_TENANT_ID       — tenant id
+#     AZURE_SUBSCRIPTION_ID — subscription id
+#     AKS_CLUSTER           — AKS cluster name
+#     AKS_RG                — AKS resource group
+#
+#   Application (all clouds):
+#     SHEPHERD_ADMIN_PASSWORD — admin password (overrides chart default)
+#     DATABASE_URL            — postgres://USER:PASS@HOST:5432/DB
+#     REDIS_URL               — redis://HOST:6379 (fleet queue)
+#
+# NOTE: Production deploys are GATED by the GitHub Environment manual approval
+# below and are NOT auto-triggered on every push. They run only on a published
+# release or an explicit manual workflow_dispatch.
+# ──────────────────────────────────────────────────────────────────────────────
+name: deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      cloud:
+        description: Target cloud provider
+        type: choice
+        options:
+          - aws
+          - gcp
+          - azure
+        required: true
+      environment:
+        description: GitHub Environment to deploy to (gated by approval)
+        type: string
+        required: true
+        default: production
+      image_tag:
+        description: Image tag to deploy (e.g. v0.0.1 or a sha)
+        type: string
+        required: true
+        default: latest
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  deploy:
+    name: helm deploy
+    runs-on: ubuntu-latest
+    # Manual-approval gate. For dispatch use the chosen input; for a release,
+    # default to 'production'.
+    environment: ${{ inputs.environment || 'production' }}
+    env:
+      CLOUD: ${{ inputs.cloud || 'aws' }}
+      IMAGE_TAG: ${{ inputs.image_tag || github.event.release.tag_name }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+
+      - name: Set up kubectl
+        uses: azure/setup-kubectl@v4
+
+      # ── AWS ────────────────────────────────────────────────────────────────
+      - name: Configure AWS credentials (OIDC)
+        if: ${{ env.CLOUD == 'aws' }}
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Get EKS kubeconfig
+        if: ${{ env.CLOUD == 'aws' }}
+        run: aws eks update-kubeconfig --name "${{ secrets.EKS_CLUSTER }}" --region "${{ secrets.AWS_REGION }}"
+
+      # ── GCP ────────────────────────────────────────────────────────────────
+      - name: Authenticate to Google Cloud (OIDC)
+        if: ${{ env.CLOUD == 'gcp' }}
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SA }}
+
+      - name: Get GKE kubeconfig
+        if: ${{ env.CLOUD == 'gcp' }}
+        uses: google-github-actions/get-gke-credentials@v2
+        with:
+          cluster_name: ${{ secrets.GKE_CLUSTER }}
+          location: ${{ secrets.GKE_ZONE }}
+          project_id: ${{ secrets.GCP_PROJECT }}
+
+      # ── Azure ──────────────────────────────────────────────────────────────
+      - name: Azure login (OIDC)
+        if: ${{ env.CLOUD == 'azure' }}
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Get AKS kubeconfig
+        if: ${{ env.CLOUD == 'azure' }}
+        run: az aks get-credentials --name "${{ secrets.AKS_CLUSTER }}" --resource-group "${{ secrets.AKS_RG }}" --overwrite-existing
+
+      # ── Deploy ─────────────────────────────────────────────────────────────
+      - name: Helm upgrade --install
+        run: |
+          helm upgrade --install shepherd deploy/helm/shepherd \
+            -f deploy/helm/shepherd/values-prod.yaml \
+            --set global.image.tag="${IMAGE_TAG}" \
+            --set config.adminPassword="${{ secrets.SHEPHERD_ADMIN_PASSWORD }}" \
+            --set database.url="${{ secrets.DATABASE_URL }}" \
+            --set config.fleet.redisUrl="${{ secrets.REDIS_URL }}" \
+            --namespace shepherd --create-namespace

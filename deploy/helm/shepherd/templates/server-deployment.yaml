@@ -1,0 +1,82 @@
+{{- $component := "server" -}}
+{{- $ctx := dict "root" . "component" $component -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "shepherd.componentName" $ctx }}
+  labels:
+    {{- include "shepherd.componentLabels" $ctx | nindent 4 }}
+spec:
+  {{- if not .Values.server.autoscaling.enabled }}
+  replicas: {{ .Values.server.replicas }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "shepherd.componentSelectorLabels" $ctx | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "shepherd.componentLabels" $ctx | nindent 8 }}
+      annotations:
+        # Roll pods when secret/config change.
+        checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+        checksum/config: {{ include (print $.Template.BasePath "/configmap-env.yaml") . | sha256sum }}
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      serviceAccountName: {{ include "shepherd.serviceAccountName" . }}
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: server
+          image: {{ include "shepherd.image" (dict "root" . "repo" "shepherd-server") }}
+          imagePullPolicy: {{ include "shepherd.imagePullPolicy" . }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.server.service.port }}
+              protocol: TCP
+          envFrom:
+            - configMapRef:
+                name: {{ include "shepherd.envConfigMapName" . }}
+            - secretRef:
+                name: {{ include "shepherd.secretName" . }}
+          {{- with .Values.server.env }}
+          env:
+            {{- range $k, $v := . }}
+            - name: {{ $k }}
+              value: {{ $v | quote }}
+            {{- end }}
+          {{- end }}
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          resources:
+            {{- toYaml .Values.server.resources | nindent 12 }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

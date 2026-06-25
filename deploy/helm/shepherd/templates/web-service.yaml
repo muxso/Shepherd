@@ -1,0 +1,17 @@
+{{- $component := "web" -}}
+{{- $ctx := dict "root" . "component" $component -}}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "shepherd.componentName" $ctx }}
+  labels:
+    {{- include "shepherd.componentLabels" $ctx | nindent 4 }}
+spec:
+  type: {{ .Values.web.service.type }}
+  ports:
+    - name: http
+      port: {{ .Values.web.service.port }}
+      targetPort: http
+      protocol: TCP
+  selector:
+    {{- include "shepherd.componentSelectorLabels" $ctx | nindent 4 }}
