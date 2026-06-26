@@ -1,14 +1,3 @@
-//! 组装根:把多个模块的具体实现接起来,合并路由,启动单一服务。
-//!
-//! 全工程只有这个文件 `use` 到了 `PgUserRepository` / `PgProjectRepository` 这类具体类型。
-//! 多个业务模块共享同一个 PG 连接池;各自的 `router()` 在此 `merge` 成一个 axum 应用。
-//!
-//! 运行:
-//!   docker run -d --name ms-pg -e POSTGRES_USER=msuser -e POSTGRES_PASSWORD=mspass \
-//!     -e POSTGRES_DB=mstest -p 55432:5432 postgres:16-alpine
-//!   DATABASE_URL=postgres://msuser:mspass@localhost:55432/mstest cargo run -p server
-
-// 文档列表延续行的 pedantic 风格 lint;文档渲染正常,统一在组装根放行。
 #![allow(clippy::doc_lazy_continuation)]
 
 mod breakdown_route;
@@ -83,13 +72,11 @@ use system_setting::application::{
 };
 use system_setting::ports::PasswordHasher as _;
 
-/// 存活探针:进程在跑即 200(不查依赖)。
 async fn healthz() -> &'static str {
     "ok"
 }
 
-/// 就绪探针:能连通 PG 才 200,否则 503(供 k8s readinessProbe / LB 摘流)。
-/// 给 ping 套 2s 短超时:PG 宕机时**快速** 503,而不是卡到连接池 acquire 超时。
+// 2s 短超时:PG 宕机时快速 503,不卡到连接池 acquire 超时。
 async fn readyz(State(pool): State<PgPool>) -> StatusCode {
     match tokio::time::timeout(Duration::from_secs(2), migrate::ping(&pool)).await {
         Ok(true) => StatusCode::OK,
@@ -101,7 +88,6 @@ fn health_routes(pool: PgPool) -> Router {
     Router::new().route("/healthz", get(healthz)).route("/readyz", get(readyz)).with_state(pool)
 }
 
-/// 等待 Ctrl-C 或 SIGTERM,用于优雅关闭。
 async fn shutdown_signal() {
     let ctrl_c = async {
         tokio::signal::ctrl_c().await.expect("install Ctrl-C handler");
@@ -125,7 +111,6 @@ async fn shutdown_signal() {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // 结构化日志:RUST_LOG 控制级别,默认 info(含 tower_http 请求日志)。
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
@@ -133,23 +118,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         )
         .init();
 
-    // 启动期配置单一真源:所有 env 开关在 config.rs 一处声明/定型(默认端口 8088 与 shepherd CLI 对齐)。
     let cfg = config::ServerConfig::from_env();
     let bind = cfg.bind.clone();
 
-    // —— 一个连接池,多个模块共享;版本化迁移建/演进全部表(单一真源) ——
     let pool = migrate::connect(&cfg.db_url).await?;
     migrate::run(&pool).await?;
 
-    // `--migrate-only`:只建表/演进 schema 然后退出(供数据迁移流程在 pgloader 前调用)。
     if std::env::args().any(|a| a == "--migrate-only") {
         tracing::info!("migrations applied; exiting (--migrate-only)");
         return Ok(());
     }
 
-    // —— Mock 服务(可选,独立端口)——
-    // 设了 MOCK_BIND 才起:catch-all 路由,据 ms_api_mock+ms_api_definition 匹配并回放响应。
-    // 跑在独立监听上(被测系统把 base_url 指向它),不与主 API 路由冲突。
     if let Some(mock_bind) = cfg.mock_bind.clone() {
         let source = Arc::new(mock_runtime::adapters::PgMockRuleSource::new(pool.clone()));
         let mock_app = mock_runtime::adapters::http::router(source);
@@ -162,15 +141,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         });
     }
 
-    // —— system-setting 模块 ——
     let user_repo = Arc::new(PgUserRepository::new(pool.clone()));
     let user_uc = CreateUserUseCase::new(user_repo.clone());
     let user_admin = UserService::new(user_repo);
-    // 展示名解析走真实 PgUserDirectory(直查 ms_user,绕开任何拦截 —— OIDC quirk 的修复)
+    // 展示名解析直查 ms_user,绕开任何拦截(OIDC quirk 的修复)。
     let resolve_uc = ResolveUserNamesUseCase::new(Arc::new(PgUserDirectory::new(pool.clone())));
 
-    // 鉴权:PG 凭证表 + 持久会话(跨重启存活)。启动时用 Argon2 幂等 upsert 一个 admin
-    //(密码取 SHEPHERD_ADMIN_PASSWORD,默认 "admin")。OIDC/LDAP/令牌过期见 ROADMAP B1。
     let hasher = Argon2PasswordHasher;
     let creds = PgCredentialRepository::new(pool.clone());
     creds
@@ -203,13 +179,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .await?;
     let sessions = Arc::new(PgSessionStore::new(pool.clone()));
     let ttl_secs = cfg.session_ttl_secs;
-    // 角色仓储:登录算有效权限(凭证 ∪ 角色)+ 角色 CRUD/授权共用。
     let role_repo = Arc::new(PgRoleRepository::new(pool.clone()));
     let user_role_repo = Arc::new(PgUserRoleRepository::new(pool.clone()));
     let login_uc =
         LoginUseCase::new(Arc::new(creds), Arc::new(hasher), sessions.clone(), user_role_repo.clone())
             .with_ttl_secs(ttl_secs);
-    // 用户管理额外依赖:重置密码(凭证仓储 + Argon2)、用户组列(用户→角色查询)。
     let creds_admin: Arc<dyn system_setting::ports::CredentialRepository> =
         Arc::new(PgCredentialRepository::new(pool.clone()));
     let hasher_admin: Arc<dyn system_setting::ports::PasswordHasher> = Arc::new(Argon2PasswordHasher);
@@ -226,7 +200,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         sessions.clone(),
     );
 
-    // 第三方登录:按 env 注册飞书 / 企业微信(未配置则无该 provider,对应端点 404)。
     let ext_users =
         Arc::new(PgExternalUserRepository::new(pool.clone(), vec!["PROJECT:READ".to_string()]));
     let mut oidc_uc = OidcLoginUseCase::new(ext_users, sessions.clone()).with_ttl_secs(ttl_secs);
@@ -240,18 +213,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     let oidc_routes = system_setting::adapters::http::oidc_router(oidc_uc);
 
-    // 组织 CRUD(RBAC)
     let org_svc = OrganizationService::new(Arc::new(PgOrgRepository::new(pool.clone())));
     let org_routes = system_setting::adapters::http::org_router(org_svc, sessions.clone());
 
-    // 角色 CRUD + 用户-角色授权(RBAC)
     let role_routes = system_setting::adapters::http::role_router(
         RoleService::new(role_repo.clone()),
         UserRoleService::new(role_repo, user_role_repo),
         sessions.clone(),
     );
 
-    // —— project 模块 ——
     let project_repo = Arc::new(PgProjectRepository::new(pool.clone()));
     let project_routes = project::adapters::http::router(
         CreateProjectUseCase::new(project_repo.clone()),
@@ -259,7 +229,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         sessions.clone(),
     );
 
-    // —— requirement 模块(Shepherd 需求管理,多版本)——
     let req_repo = Arc::new(PgRequirementRepository::new(pool.clone()));
     let req_admin = RequirementService::new(req_repo.clone());
     let requirement_routes = requirement::adapters::http::router(
@@ -269,10 +238,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         sessions.clone(),
     );
 
-    // —— task 模块(Shepherd 任务拆分 DAG)——
     let task_repo = Arc::new(PgTaskRepository::new(pool.clone()));
     let task_admin = TaskService::new(task_repo.clone());
-    // 规划器:默认启发式;设 SHEPHERD_PLANNER_URL 用远端 LLM 规划器。
     let task_planner = planner::build_planner();
     let task_routes = task::adapters::http::router(
         CreateDecompositionUseCase::new(task_repo.clone()),
@@ -281,13 +248,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         sessions.clone(),
     );
 
-    // —— verification 模块(Shepherd 完整性验证:需求↔任务↔实现 追溯 + 缺口检测)——
     let ver_repo = Arc::new(PgVerificationRepository::new(pool.clone()));
     let ver_admin = VerificationService::new(ver_repo.clone());
 
-    // 功能用例仓储(供拆分时顺手为每条验收标准生成功能用例草稿 + 关联,以及下方 CRUD 复用)。
     let case_repo = Arc::new(case_management::adapters::pg::PgCaseRepository::new(pool.clone()));
-    // —— 服务端复合:据 requirementId 取规格自动拆分,顺手开验证账本 + 生成功能用例覆盖(均幂等)——
     let breakdown_routes = breakdown_route::router(
         req_admin.clone(),
         BreakdownUseCase::new(task_repo.clone(), task_planner.clone()),
@@ -301,7 +265,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         sessions.clone(),
     );
 
-    // —— skill 模块(Shepherd AI Skill 编排:定义/复用/组合)——
     let skill_repo = Arc::new(PgSkillRepository::new(pool.clone()));
     let skill_admin = SkillService::new(skill_repo.clone());
     let skill_routes = skill::adapters::http::router(
@@ -310,13 +273,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         sessions.clone(),
     );
 
-    // —— delivery 模块(Shepherd 交付执行:任务 → AI 执行者)——
-    // 执行者按环境路由:SHEPHERD_AGENT_URL → 远端 Agent API(异步);
-    // SHEPHERD_AGENT_CMD → 本地 spawn;配 SHEPHERD_AGENT_ASYNC → 子进程后台跑 + HTTP 自回调收尾
-    // (派发秒回,绕开 30s 请求超时);否则同步 spawn;都没配 → Echo 桩(无真实 agent)。
-    // SHEPHERD_AGENT_FLEET → 执行者机群:派发入队,远程 runtime 出站长轮询认领
-    // (agent 无公网入站,服务端有公网;见 docs/remote-agent-runtime-plan.md)。
-    // SHEPHERD_FLEET_REDIS → 分布式 Redis(队列 + 注册表,多副本+多 runtime);否则进程内(单机)。
+    // SHEPHERD_AGENT_ASYNC:子进程后台跑 + HTTP 自回调收尾(派发秒回,绕开 30s 请求超时)。
     let mut fleet_queue: Option<Arc<dyn delivery::ports::WorkQueue>> = None;
     let mut fleet_registry: Option<Arc<dyn delivery::ports::FleetRegistry>> = None;
     let agent: Arc<dyn AgentExecutor> = if cfg.agent.fleet {
@@ -344,7 +301,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let mut ex = delivery::adapters::local::LocalCommandAgentExecutor::new(argv.clone(), argv);
         if cfg.agent.async_callback {
             use webauth::SessionStore as _; // 令 sessions.create 可见
-            // 给子进程铸一枚长期回调令牌(DELIVERY:READ+UPDATE),回调基址由 bind 推出。
             let cb_host = bind.replace("0.0.0.0", "127.0.0.1");
             let cb_base = format!("http://{cb_host}");
             let perms = webauth::PermissionSet::from_raw(["DELIVERY:READ+UPDATE".to_string()])
@@ -357,17 +313,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         Arc::new(ex)
     } else if let Some(e) = llm::executor() {
-        e // 真实 LLM 执行者(SHEPHERD_LLM_URL)
+        e
     } else {
         Arc::new(delivery::adapters::EchoAgentExecutor::new())
     };
-    // design(OpenSpec/BMAD Design 阶段)起草执行者:复用同一 agent,在 agent 被移入观察者前留一份克隆。
+    // 在 agent 被移入观察者前留一份克隆给 design 起草执行者。
     let design_agent = agent.clone();
-    // 基础 DeliveryService(无观察者),既作交付主体也作编排器记审计的 recorder(避免 Arc 环)。
     let base_delivery =
         DeliveryService::new(Arc::new(PgDeliveryRepository::new(pool.clone())), agent.clone());
-    // 交付落终态 → 编排器驱动任务 + 验证门 + 回灌验证 + 裁决记审计;
-    // executor(=agent)供自纠正迭代(SHEPHERD_MAX_REVISIONS>0 时据反馈重做)。
     let delivery_observer = orchestration::delivery_observer(
         task_admin.clone(),
         ver_admin.clone(),
@@ -376,10 +329,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         req_admin.clone(),
     );
     let mut delivery_svc = base_delivery.with_observer(delivery_observer);
-    // 机群模式:把队列挂到交付服务,终态(complete/fail/stop)时 ack(Redis 下移出 PEL)。
     if let Some(q) = &fleet_queue {
         delivery_svc = delivery_svc.with_queue(q.clone());
-        // 回收任务:周期重投「持有者(runtime)已离线 + 过容忍期」的待处理 pending(心跳判活)。
+        // 回收任务:周期重投「持有者 runtime 已离线 + 过容忍期」的 pending(心跳判活)。
         let q = q.clone();
         let reg = fleet_registry.clone();
         let interval_s: u64 = cfg.agent.fleet_reap_interval_s;
@@ -388,7 +340,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let mut tick = tokio::time::interval(std::time::Duration::from_secs(interval_s.max(1)));
             loop {
                 tick.tick().await;
-                // 在线 runtime id 集合(心跳判定);死 runtime 的 pending 才回收。
                 let live: Vec<String> = match &reg {
                     Some(r) => {
                         r.list().await.into_iter().filter(|x| x.online).map(|x| x.id).collect()
@@ -403,12 +354,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         });
     }
     let mcp_delivery = delivery_svc.clone();
-    // 多任务并行编排:按依赖图逐层并发派发整张任务 DAG。
     let decomposition_run_routes =
         decomposition_run::router(task_admin.clone(), delivery_svc.clone(), req_admin.clone(), sessions.clone());
     let delivery_routes = delivery::adapters::http::router(delivery_svc, sessions.clone());
-    // —— design 模块(OpenSpec/BMAD Design 阶段:需求 → 设计稿 → 人审批门 → 放行拆分)——
-    // create 即派发「架构师角色」agent 起草(经机群/本地执行者),跑完回调 /proposal/{id}/design。
     let proposal_svc = design::application::ProposalService::new(Arc::new(
         design::adapters::pg::PgProposalRepository::new(pool.clone()),
     ))
@@ -416,13 +364,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         design_agent,
         delivery::domain::ExecutorKind::ClaudeCode,
     )))
-    // 审批通过 → 自动拆分该需求(design_bridge 桥接到 BreakdownUseCase)。
     .with_breakdown_trigger(Arc::new(design_bridge::ServerBreakdownTrigger::new(
         req_admin.clone(),
         BreakdownUseCase::new(task_repo.clone(), task_planner.clone()),
     )));
     let design_routes = design::adapters::http::router(proposal_svc, sessions.clone());
-    // 机群端点:认领 + register/heartbeat/list(仅 SHEPHERD_AGENT_FLEET 模式挂载)。
     let agent_fleet_routes = match (&fleet_queue, &fleet_registry) {
         (Some(q), Some(r)) => {
             delivery::adapters::queue::router(q.clone(), r.clone(), sessions.clone())
@@ -430,8 +376,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         _ => axum::Router::new(),
     };
 
-    // —— MCP 集成(把全链路暴露为 MCP 工具,POST /mcp,JSON-RPC)——
-    // MCP 也暴露测试计划 / 探测工具(独立实例,指向同一 pool)。
     let mcp_plan_repo = Arc::new(PgPlanRepository::new(pool.clone()));
     let mcp_remote_probe = Arc::new(runner::adapters::ReqwestRemoteProbe::new());
     let mcp_runner_svc = runner::application::RunnerService::new(
@@ -461,12 +405,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         sessions.clone(),
     );
 
-    // —— case 模块 ——
     let review_repo = Arc::new(PgReviewRepository::new(pool.clone()));
     let case_routes =
         case::adapters::http::router(SubmitReviewUseCase::new(review_repo.clone()), review_repo, sessions.clone());
 
-    // —— bug 模块 ——
     let bug_repo = Arc::new(PgBugRepository::new(pool.clone()));
     let bug_routes = bug::adapters::http::router(
         CreateBugUseCase::new(bug_repo.clone()),
@@ -476,12 +418,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         sessions.clone(),
     );
 
-    // —— follow 模块(关注人,跨实体通用) ——
     let follow_store = Arc::new(PgFollowStore::new(pool.clone()));
     let follow_routes =
         follow::adapters::http::router(FollowService::new(follow_store), sessions.clone());
 
-    // —— test-plan 模块 ——
     let plan_repo = Arc::new(PgPlanRepository::new(pool.clone()));
     let plan_routes = test_plan::adapters::http::router(
         CreatePlanUseCase::new(plan_repo.clone()),
@@ -489,15 +429,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         test_plan::application::PlanCaseUseCase::new(plan_repo),
         sessions.clone(),
     );
-    // 计划执行(跑挂入用例 + 自动回写结果)。
     let plan_run_routes = plan_run::router(pool.clone(), sessions.clone());
 
-    // —— api-test 批量运行模块 ——
-    // 执行器(端口背后的适配器,domain/application 不感知),优先级从高到低:
-    //   SHEPHERD_EXECUTOR_URL 非空 → HTTP 下发 JMeter 节点(异步,远端执行)
-    //   SHEPHERD_RUNNER=noop       → Noop 占位(显式声明本地无执行器:批量运行恒 RUNNING,仅供演示)
-    //   默认                  → 原生 Rust runner(reqwest 就地跑 ms_api_case,无 JMeter)
-    // 注:默认选 local 而非 Noop —— 否则 `api batch-run` 会静默停在 RUNNING 且无结果。
+    // 默认选 local 而非 Noop:否则 `api batch-run` 会静默停在 RUNNING 且无结果。
     let dispatcher: Arc<dyn api_test::ports::TaskDispatcher> = match &cfg.executor_url {
         Some(url) => {
             tracing::info!("api runner: HTTP dispatcher (JMeter) → {url}");
@@ -509,7 +443,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         _ => {
             tracing::info!("api runner: 本地原生 Rust runner(默认)");
-            // 注入环境变量回写端口:串行执行时「环境参数」提取结果写回环境。
             Arc::new(
                 LocalRunnerDispatcher::new(
                     Arc::new(PgCaseSpecSource::new(pool.clone())),
@@ -524,7 +457,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let api_envs = Arc::new(api_test::adapters::pg::PgEnvironment::new(pool.clone()));
     let batch_run_uc = StartBatchRunUseCase::new(api_pools, api_executor, api_envs.clone());
     let apitest_routes = api_test::adapters::http::router(batch_run_uc.clone());
-    // 资源池管理(创建/列出):补上 batch-run 所需池的入口,免手工 INSERT。
     let api_pool_admin = Arc::new(api_test::adapters::pg::PgResourcePoolAdmin::new(pool.clone()));
     let resource_pool_routes = api_test::adapters::http::resource_pool_router(
         api_test::application::CreateResourcePoolUseCase::new(api_pool_admin.clone()),
@@ -532,23 +464,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         api_test::application::EditResourcePoolUseCase::new(api_pool_admin),
         sessions.clone(),
     );
-    // 用例执行记录(分页读 ms_api_case_result)。
     let case_exec_routes = api_test::adapters::http::executions_router(
         api_test::application::ListCaseExecutionsUseCase::new(Arc::new(
             api_test::adapters::PgCaseExecutionQuery::new(pool.clone()),
         )),
     );
 
-    // —— 接口定义模块(目录 + 用例 + Mock)——
     let apidef_repo = Arc::new(api_definition::adapters::pg::PgApiDefinitionRepository::new(pool.clone()));
     let apidef_routes = api_definition::adapters::http::router(apidef_repo.clone(), sessions.clone());
 
-    // —— 环境模块(项目级 base_url + 默认头 + 变量)——
     let env_repo = Arc::new(environment::adapters::pg::PgEnvironmentRepository::new(pool.clone()));
     let environment_routes = environment::adapters::http::router(env_repo, sessions.clone());
 
-    // —— runner 闭环(按环境注册 agent + 把用例派给 agent 就地执行)——
-    // ReqwestRemoteProbe 同时承担「派发 /probe」与「探测 agent /protocols 能力」。
     let remote_probe = Arc::new(runner::adapters::ReqwestRemoteProbe::new());
     let runner_svc = runner::application::RunnerService::new(
         Arc::new(runner::adapters::pg::PgRunnerAgentStore::new(pool.clone())),
@@ -560,7 +487,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
     let runner_routes = runner::adapters::http::router(runner_svc, sessions.clone());
 
-    // —— 功能用例管理(CRUD + 自定义字段 + Excel 导出)—— case_repo 已在上方构造。
     let functional_case_routes = case_management::adapters::http::router(
         case_management::application::CreateCaseUseCase::new(case_repo.clone()),
         case_management::application::UpdateCaseUseCase::new(case_repo.clone()),
@@ -571,14 +497,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         sessions.clone(),
     );
 
-    // —— 场景模块 + 组装根执行桥(编译 → 批量运行)——
     let scenario_repo =
         Arc::new(api_scenario::adapters::pg::PgApiScenarioRepository::new(pool.clone()));
     let scenario_routes =
         api_scenario::adapters::http::router(scenario_repo.clone(), sessions.clone());
-    // 接口定义「引用关系」反查:编排 接口用例(apidef)+ 场景步骤(scenario)两仓储。
     let references_routes = references_route::router(apidef_repo.clone(), scenario_repo.clone());
-    // 场景执行走计划树执行器(顺序 + 控制器 + 运行上下文),外层补建报告 + 记录。
     let plan_executor = api_test::adapters::plan::PlanExecutor::new(
         Arc::new(PgCaseSpecSource::new(pool.clone())),
         Arc::new(PgCaseResultSink::new(pool.clone())),
@@ -592,7 +515,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         sessions.clone(),
     );
 
-    // —— 原生压测(perf):POST /perf/run(单接口)+ POST /perf/scenario/run(场景链)+ GET /perf/report/{id} ——
     let perf_routes = perf_run::router(
         pool.clone(),
         sessions.clone(),
@@ -603,31 +525,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
     let debug_send_routes = debug_send::router(sessions.clone());
 
-    // —— 测试计划定时执行(cron 到点拍统计快照)——
     let plan_scheduler_routes = plan_scheduler::build(pool.clone(), sessions.clone()).await?;
 
-    // —— 接口 URL 导入 + 定时导入(cron 到点拉取来源并导入)——
     let import_scheduler_routes = import_scheduler::build(pool.clone(), sessions.clone()).await?;
 
-    // —— 报告归档(已完成报告周期性导出 Parquet 冷存储;REPORT_ARCHIVE_DIR 开关)——
     report_archive_job::spawn(pool.clone());
 
-    // —— 首页:接口用例执行汇总(GET /api/case-exec-summary)——
     let case_summary_routes = case_exec_summary::router(pool.clone(), sessions.clone());
 
-    // —— 项目文件管理(/api/project-file)——
     let project_file_routes = project_file::router(pool.clone(), sessions.clone());
 
-    // —— 合并为单一应用 + 生产中间件 ——
-    // 按领域分组登记;新增路由 append 到所属分组即可(降合并冲突面)。中间件统一在 routes::assemble。
     let app = routes::assemble(vec![
-        // 鉴权 / 用户 / 组织 / 角色(system-setting)
         routes::group("system", user_routes.merge(oidc_routes).merge(org_routes).merge(role_routes)),
-        // 项目 + 项目文件 + 引用
         routes::group("project", project_routes.merge(project_file_routes).merge(references_routes)),
-        // 需求
         routes::group("requirement", requirement_routes),
-        // 任务派发 / 交付 / 执行机群 / 设计稿 / 拆解 / 验证 / breakdown
         routes::group(
             "delivery",
             task_routes
@@ -638,18 +549,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .merge(verification_routes)
                 .merge(breakdown_routes),
         ),
-        // 技能 + MCP 工具
         routes::group("skill", skill_routes.merge(mcp_routes)),
-        // 功能用例 / 评审 / 执行 / 执行汇总
         routes::group(
             "test-case",
             case_routes.merge(case_exec_routes).merge(case_summary_routes).merge(functional_case_routes),
         ),
-        // 缺陷 + 关注
         routes::group("bug", bug_routes.merge(follow_routes)),
-        // 测试计划 + 运行 + 调度
         routes::group("test-plan", plan_routes.merge(plan_run_routes).merge(plan_scheduler_routes)),
-        // 接口测试:批量运行 / 资源池 / 接口定义 / 环境 / runner / 场景 / 导入调度
         routes::group(
             "api-test",
             apitest_routes
@@ -661,11 +567,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .merge(scenario_run_routes)
                 .merge(import_scheduler_routes),
         ),
-        // 性能测试
         routes::group("perf", perf_routes),
-        // 调试发送
         routes::group("debug", debug_send_routes),
-        // 元信息:OpenAPI 文档 + 健康检查
         routes::group("meta", openapi::routes().merge(health_routes(pool.clone()))),
     ]);
 
@@ -674,7 +577,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing::info!(
         "routes: /healthz /readyz | /system/user | /project | /case-review | /bug | /test-plan | /api/batch-run"
     );
-    // 优雅关闭:收到 Ctrl-C/SIGTERM 后停止收新连接、放完在途请求再退出。
     axum::serve(listener, app).with_graceful_shutdown(shutdown_signal()).await?;
     Ok(())
 }

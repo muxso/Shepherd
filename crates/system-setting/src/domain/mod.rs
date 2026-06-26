@@ -1,4 +1,3 @@
-//! 领域层:纯业务规则,零 IO,零框架。
 pub mod auth;
 pub mod oidc;
 pub mod organization;

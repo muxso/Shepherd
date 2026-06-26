@@ -1,5 +1,3 @@
-//! 内存版缺陷仓储。可按项目配置状态流图(测试用 `with_default_flow` 注入典型缺陷流)。
-
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
@@ -10,10 +8,10 @@ use crate::ports::{BugRepository, RepoError};
 
 #[derive(Default)]
 struct State {
-    flows: HashMap<String, StatusFlowGraph>, // project_id -> 状态流图
-    bugs: HashMap<String, Bug>,              // bug_id -> bug
-    order: Vec<String>,                      // 插入顺序的 bug_id(列表倒序展示用)
-    followers: HashMap<String, Vec<String>>, // bug_id -> 关注人 user_id(按关注先后)
+    flows: HashMap<String, StatusFlowGraph>,
+    bugs: HashMap<String, Bug>,
+    order: Vec<String>,
+    followers: HashMap<String, Vec<String>>,
     seq: u64,
 }
 
@@ -27,19 +25,16 @@ impl InMemoryBugRepository {
         Self::default()
     }
 
-    /// 为某项目配置状态流图。
     pub fn set_flow(&self, project_id: &str, flow: StatusFlowGraph) {
         self.state.lock().expect("lock").flows.insert(project_id.to_string(), flow);
     }
 
-    /// 便捷构造:为项目装上默认缺陷流(种子,复用领域 `default_bug_flow`)。
     pub fn with_default_flow(project_id: &str) -> Self {
         let repo = Self::new();
         repo.set_flow(project_id, StatusFlowGraph::default_bug_flow());
         repo
     }
 
-    /// 测试辅助:读缺陷当前状态。
     pub fn status_of(&self, bug_id: &str) -> Option<String> {
         self.state.lock().expect("lock").bugs.get(bug_id).map(|b| b.status.clone())
     }
@@ -61,7 +56,7 @@ impl BugRepository for InMemoryBugRepository {
             title: new_bug.title.clone(),
             status: initial_status.to_string(),
             deleted: false,
-            created_at: seq as i64, // 单调递增,充当列表倒序的排序键
+            created_at: seq as i64,
             created_by: new_bug.created_by.clone(),
         };
         state.order.push(bug.id.clone());
@@ -71,7 +66,6 @@ impl BugRepository for InMemoryBugRepository {
 
     async fn list(&self, project_id: &str) -> Result<Vec<Bug>, RepoError> {
         let state = self.state.lock().expect("lock");
-        // 按插入顺序倒序(新建在前),只看该项目未删除的缺陷。
         Ok(state
             .order
             .iter()

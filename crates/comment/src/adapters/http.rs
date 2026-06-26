@@ -1,11 +1,3 @@
-//! 评论的 HTTP 适配器:
-//!   `POST   /comment`              发表(作者取自会话,前端无法伪造)
-//!   `GET    /comment?targetType&targetId`  列出某目标下的评论(时间升序)
-//!   `DELETE /comment/{id}`         软删
-//!
-//! 校验在 domain/application;本层只做 DTO 翻译 + 错误码映射。
-//! 三个端点经 `webauth::AuthUser` 做 RBAC:读需 `COMMENT:READ`,发表需 `COMMENT:ADD`,删需 `COMMENT:DELETE`。
-
 use std::sync::Arc;
 
 use axum::{
@@ -165,7 +157,6 @@ mod tests {
     use tower::ServiceExt;
     use webauth::testing::InMemorySessionStore;
 
-    /// app + 一个拥有 `COMMENT:READ+ADD+DELETE` 的令牌(用户名 alice)。
     async fn app() -> (Router, String) {
         let repo = Arc::new(InMemoryCommentRepository::new());
         let sessions = Arc::new(InMemorySessionStore::new());
@@ -216,7 +207,6 @@ mod tests {
             .expect("resp");
         assert_eq!(resp.status(), StatusCode::CREATED);
         let v = json(resp).await;
-        // 作者来自会话,而非请求体
         assert_eq!(v["author"], "alice");
         v["id"].as_str().expect("id").to_string()
     }

@@ -1,5 +1,3 @@
-//! 用例:删除评论(软删)。不存在 → NotFound。
-
 use std::sync::Arc;
 
 use crate::ports::{CommentRepository, RepoError};

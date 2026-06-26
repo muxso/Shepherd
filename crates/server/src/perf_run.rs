@@ -1,10 +1,3 @@
-//! 组装根桥:`POST /perf/run` + `GET /perf/report/{id}`。
-//!
-//! 把 `perf` 原生压测引擎接进服务:校验负载计划 → 落 RUNNING 报告 → **后台并发施压**
-//! (perf::run_load + ApiRunnerExecutor,复用 reqwest,不经 JMeter)→ 跑完回写聚合指标。
-//! 与 batch-run 一样属"接口测试"邻域;施压是写动作,RBAC 资源键 `PERF:EXECUTE`,读开放。
-//! SQL 收敛在 perf 的 PG 适配器(PgPerfReportStore),组装根不碰裸 sqlx。
-
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -38,10 +31,8 @@ use crate::scenario_run::{count_leaves, to_nodes};
 #[derive(Clone)]
 struct PerfState {
     store: PgPerfReportStore,
-    /// 原始样本下沉(Parquet+对象存储);未配置 PERF_SAMPLES_PATH 则为 None,仅存聚合。
     sink: Option<Arc<dyn SampleSink>>,
     sessions: Arc<dyn SessionStore>,
-    // —— 场景压测依赖(编译场景成计划树 + 取用例规格 + 解析环境)——
     compile: CompileScenarioUseCase,
     scenario_repo: Arc<dyn ApiScenarioRepository>,
     case_specs: Arc<dyn CaseSpecSource>,
@@ -64,8 +55,6 @@ pub fn router(
     envs: Arc<dyn EnvironmentPort>,
 ) -> Router {
     let store = PgPerfReportStore::new(pool);
-    // 配置了 PERF_SAMPLES_PATH 才下沉原始样本(本地 object_store 后端;生产可换 S3)。
-    // 构造失败则降级为不下沉(仅聚合),不影响压测可用。
     let sink: Option<Arc<dyn SampleSink>> = std::env::var("PERF_SAMPLES_PATH")
         .ok()
         .filter(|p| !p.trim().is_empty())
@@ -104,31 +93,22 @@ struct RunPerfBody {
     concurrency: usize,
     #[serde(default = "default_iterations")]
     iterations: usize,
-    /// 时长模式:给定则持续压测该毫秒数(忽略 iterations);省略则按 iterations 固定次数。
     #[serde(default)]
     duration_ms: Option<u64>,
-    /// 期望状态码:给定 → StatusIs 断言(HTTP=状态码;其它协议 OK 时 status=0)。
     #[serde(default)]
     expect_status: Option<u16>,
-    /// 断言:输出包含子串(OutputContains)。
     #[serde(default)]
     expect_contains: Option<String>,
-    /// 断言:输出等于(OutputEquals)。
     #[serde(default)]
     expect_equals: Option<String>,
-    /// 断言:单次延迟不超过该毫秒数(LatencyUnderMs)。
     #[serde(default)]
     latency_under_ms: Option<u64>,
-    /// 协议(经 probe 注册表):HTTP(默认)| SQL | GRPC | REDIS | MYSQL | WEBSOCKET | …(取决于启用的插件)。
-    /// 非 HTTP 时 url 为目标(连接串/端点),query 为载荷(SQL=语句、GRPC=方法路径、REDIS=命令、WS=消息)。
     #[serde(default = "default_protocol")]
     protocol: String,
-    /// 协议载荷:SQL=语句(默认 SELECT 1)、GRPC=方法路径、REDIS=命令(默认 PING)、WS=消息。
     #[serde(default)]
     query: Option<String>,
 }
 
-/// 把请求里的断言字段统一映射成 probe 断言(对**任意协议**生效)。
 fn build_assertions(req: &RunPerfBody) -> Vec<ProbeAssertion> {
     let mut a = Vec::new();
     if let Some(c) = req.expect_status {
@@ -180,7 +160,6 @@ async fn run_perf(user: AuthUser, State(st): State<PerfState>, Json(req): Json<R
     if req.url.trim().is_empty() {
         return (StatusCode::BAD_REQUEST, "url required").into_response();
     }
-    // 时长模式优先;否则固定次数。
     let plan = match req.duration_ms {
         Some(ms) => LoadPlan::duration_ms(req.concurrency, ms),
         None => LoadPlan::new(req.concurrency, req.iterations),
@@ -189,14 +168,9 @@ async fn run_perf(user: AuthUser, State(st): State<PerfState>, Json(req): Json<R
         Ok(p) => p,
         Err(e) => return (StatusCode::BAD_REQUEST, format!("invalid load plan: {e}")).into_response(),
     };
-    // 报告里记录的 iterations:时长模式记 0(实际完成数见 total)。
+    // 时长模式记 0(实际完成数见 total),否则按 iterations。
     let planned_iterations = if req.duration_ms.is_some() { 0 } else { req.iterations as i32 };
 
-    // 1) 据协议构建**统一执行器**:协议无关的 ProbeRequest → ProbeExecutor(经 probe 注册表分发)。
-    //    加协议 = 加 probe 插件,这里无需再改。报告记录:HTTP 记 method+url;
-    //    SQL 记 method=SQL、url=语句(不存连接串,避免泄漏口令);GRPC 记 method=GRPC、url=方法路径。
-    //    连接惰性建立并由插件按 target 缓存(压测复用连接);grpc 缺方法路径是纯校验,提前 400。
-    //    断言(expect_status/contains/equals/latency)对**任意协议**统一生效。
     let assertions = build_assertions(&req);
     let proto = req.protocol.to_lowercase();
     let (probe_req, report_method, report_url): (ProbeRequest, String, String) = if proto == "sql" {
@@ -235,7 +209,6 @@ async fn run_perf(user: AuthUser, State(st): State<PerfState>, Json(req): Json<R
     } else if proto == "http" {
         let mut metadata = std::collections::BTreeMap::new();
         metadata.insert("method".to_string(), req.method.to_uppercase());
-        // 无断言时:成功=HTTP 可达(传输成功);有 expect_* 则按断言判定。
         (
             ProbeRequest {
                 protocol: "http".to_string(),
@@ -248,8 +221,6 @@ async fn run_perf(user: AuthUser, State(st): State<PerfState>, Json(req): Json<R
             req.url.clone(),
         )
     } else {
-        // 通用协议(redis/mysql/websocket 及未来插件):url=目标,query=载荷。
-        // 加协议无需改这里 —— 只要 probe 有对应插件即可;断言同样生效。
         let payload = req.query.clone();
         (
             ProbeRequest {
@@ -263,11 +234,9 @@ async fn run_perf(user: AuthUser, State(st): State<PerfState>, Json(req): Json<R
             payload.unwrap_or_else(|| req.url.clone()),
         )
     };
-    // 整轮压测共享一个注册表实例:插件内部按 target 缓存连接,worker 间复用;本轮结束随之释放。
     let registry = Arc::new(probe::default_registry());
     let executor: Arc<dyn RequestExecutor> = Arc::new(ProbeExecutor::new(registry, probe_req));
 
-    // 2) 落 RUNNING 报告
     let report_id = match st
         .store
         .create(&req.project_id, &report_method, &report_url, req.concurrency as i32, planned_iterations)
@@ -277,14 +246,11 @@ async fn run_perf(user: AuthUser, State(st): State<PerfState>, Json(req): Json<R
         Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "create report error").into_response(),
     };
 
-    // 3) 后台并发施压,跑完回写聚合指标(不阻塞响应)
     let store = st.store.clone();
     let sink = st.sink.clone();
     let id = report_id.clone();
     tokio::spawn(async move {
-        // run_collect 同时拿到聚合报告与原始逐请求样本。
         let (report, samples) = run_collect(&plan, executor).await;
-        // 原始样本下沉对象存储(配置了 sink 才做);成功则把存储键随报告落库。
         let samples_key: Option<String> = match &sink {
             Some(s) => match s.write(&id, &samples).await {
                 Ok(key) => Some(key),
@@ -314,34 +280,22 @@ async fn get_report(State(st): State<PerfState>, Path(id): Path<String>) -> Resp
     }
 }
 
-// ============================ 场景压测 ============================
-//
-// 与单接口压测共用同一台引擎(perf::run_collect)与报告表(ms_perf_report),区别只在
-// 「一次施压 = 跑完整条场景链」:把场景编译成计划树,每个虚拟用户每轮迭代顺序跑整棵树
-// (登录 → 提取 token → 鉴权调用 → …),墙钟测端到端延迟,全部步通过才记成功。
-// 报告 method=SCENARIO、url=场景名,前端复用既有 PerfReport 视图。
-
 #[derive(Debug, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 struct RunScenarioPerfBody {
     #[serde(default)]
     project_id: String,
-    /// 被压测的场景 id。
     scenario_id: String,
-    /// 运行环境 id(注入 base_url/默认头/变量种子);缺省则空环境。
     #[serde(default)]
     environment_id: Option<String>,
     #[serde(default = "default_concurrency")]
     concurrency: usize,
     #[serde(default = "default_iterations")]
     iterations: usize,
-    /// 时长模式:给定则持续压测该毫秒数(忽略 iterations)。
     #[serde(default)]
     duration_ms: Option<u64>,
 }
 
-/// 计划树结果汇:压测里不落库(每轮迭代都会跑一遍,逐步明细无意义且会拖垮 DB)。
-/// 全部方法 no-op;成功/失败由 `PlanExecutor::run` 的返回值决定。
 struct NoopSink;
 
 #[async_trait]
@@ -357,8 +311,7 @@ impl CaseResultSink for NoopSink {
     }
 }
 
-/// 用例规格缓存:同一轮压测里每个 case 只查一次 DB,之后命中内存。
-/// 关键 —— 否则高并发 × 高迭代会把「被测目标的压测」变成「自家 PG 的压测」,延迟全是查规格的开销。
+/// 每个 case 只查一次 DB,否则高并发×高迭代会把压测变成自家 PG 的压测。
 struct CachingSpecSource {
     inner: Arc<dyn CaseSpecSource>,
     cache: RwLock<HashMap<String, Option<CaseRunSpec>>>,
@@ -382,10 +335,6 @@ impl CaseSpecSource for CachingSpecSource {
     }
 }
 
-/// 把「跑一整棵计划树」接成 perf 引擎的单次施压单元:每次 `execute` 顺序走完整条场景链,
-/// 引擎用墙钟测端到端延迟。失败策略不停(`stop_on_failure=false`)→ 跑满所有步;
-/// 成功 = 全部叶子通过。`report_id` 占位(NoopSink 不落库)。变量种子每轮都从环境复制,
-/// 各虚拟用户互不串扰(`PlanExecutor::run` 内部各持一份 RunState)。
 struct ScenarioExecutor {
     exec: PlanExecutor,
     nodes: Vec<PlanNode>,
@@ -404,7 +353,6 @@ impl RequestExecutor for ScenarioExecutor {
 struct RunScenarioPerfResponse {
     report_id: String,
     status: String,
-    /// 场景静态叶子数(供前端提示「每轮 N 步」)。
     step_count: usize,
 }
 
@@ -426,7 +374,6 @@ async fn run_scenario_perf(
         return (StatusCode::BAD_REQUEST, "scenarioId required").into_response();
     }
 
-    // 1) 编译场景为计划树(复用场景串行执行那套中立树 → 执行器节点转换)
     let plan = match st.compile.compile_plan(&req.scenario_id).await {
         Ok(p) => p,
         Err(CompileError::NotFound(_)) => {
@@ -446,7 +393,6 @@ async fn run_scenario_perf(
         return (StatusCode::BAD_REQUEST, "scenario has no runnable steps").into_response();
     }
 
-    // 2) 负载计划(时长模式优先)
     let plan_spec = match req.duration_ms {
         Some(ms) => LoadPlan::duration_ms(req.concurrency, ms),
         None => LoadPlan::new(req.concurrency, req.iterations),
@@ -459,7 +405,6 @@ async fn run_scenario_perf(
     };
     let planned_iterations = if req.duration_ms.is_some() { 0 } else { req.iterations as i32 };
 
-    // 3) 解析运行环境(给定 environmentId 才注入)
     let env = match req.environment_id.as_deref().filter(|s| !s.trim().is_empty()) {
         Some(eid) => match st.envs.resolve(eid).await {
             Ok(e) => e.unwrap_or_default(),
@@ -470,13 +415,11 @@ async fn run_scenario_perf(
         None => ResolvedEnv::default(),
     };
 
-    // 4) 报告标识:method=SCENARIO、url=场景名(取不到回落 id)
     let scenario_name = match st.scenario_repo.get_scenario(&req.scenario_id).await {
         Ok(Some(s)) => s.name,
         _ => req.scenario_id.clone(),
     };
 
-    // 5) 组装执行器:计划树执行器配 NoopSink(不落逐步明细)+ 规格缓存(每 case 只查一次)
     let plan_exec = PlanExecutor::new(
         Arc::new(CachingSpecSource::new(st.case_specs.clone())),
         Arc::new(NoopSink),
@@ -484,7 +427,6 @@ async fn run_scenario_perf(
     let executor: Arc<dyn RequestExecutor> =
         Arc::new(ScenarioExecutor { exec: plan_exec, nodes, env });
 
-    // 6) 落 RUNNING 报告
     let report_id = match st
         .store
         .create(&req.project_id, "SCENARIO", &scenario_name, req.concurrency as i32, planned_iterations)
@@ -494,7 +436,6 @@ async fn run_scenario_perf(
         Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "create report error").into_response(),
     };
 
-    // 7) 后台并发施压,跑完回写聚合指标(与单接口压测同路径)
     let store = st.store.clone();
     let sink = st.sink.clone();
     let id = report_id.clone();
@@ -543,7 +484,6 @@ mod tests {
 
     #[test]
     fn no_assertion_fields_yields_empty() {
-        // 无 expect_* → 空断言(成功=传输可达)。
         assert!(build_assertions(&body(json!({"url": "http://x"}))).is_empty());
     }
 
@@ -565,7 +505,6 @@ mod tests {
 
     #[test]
     fn maps_subset() {
-        // 只给 contains → 只产出 OutputContains(redis/ws/mysql 压测带断言的常见用法)。
         let a = build_assertions(&body(json!({"url": "redis://x", "expectContains": "hello"})));
         assert_eq!(a, vec![ProbeAssertion::OutputContains("hello".into())]);
     }

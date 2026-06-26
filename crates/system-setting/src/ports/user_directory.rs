@@ -1,5 +1,3 @@
-//! 用户目录端口。两条查询路径还原 OIDC quirk:校验路径(受 CFT 拦截)与直查旁路。
-
 use std::collections::BTreeMap;
 
 use async_trait::async_trait;
@@ -15,13 +13,13 @@ pub enum DirectoryError {
 
 #[async_trait]
 pub trait UserDirectory: Send + Sync {
-    /// 受 CFT/Liber SDK 拦截的查询路径。对 OIDC/外部用户会 `ProvenanceCheckFailed`。
+    /// 受拦截的校验路径,对 OIDC 用户会 `ProvenanceCheckFailed`
     async fn names_validated(
         &self,
         ids: &[String],
     ) -> Result<BTreeMap<String, String>, DirectoryError>;
 
-    /// 直查用户表的旁路:provenance 无关,解析所有用户。
+    /// 直查旁路,不受 provenance 限制
     async fn names_direct(
         &self,
         ids: &[String],

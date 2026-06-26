@@ -1,11 +1,3 @@
-//! PostgreSQL 实现的 `VerificationRepository`。
-//!
-//! 三张表:`ms_verification`(元信息)+ `ms_verification_criterion`(标准快照)+
-//! `ms_verification_link`(覆盖链,带 satisfied)。`save` 对覆盖链 upsert(追加 + 更新 satisfied)。
-//!
-//! 集成测试 `#[ignore]`,需 DATABASE_URL:
-//!   `DATABASE_URL=postgres://... cargo test -p verification --features pg -- --ignored`
-
 use std::collections::HashMap;
 
 use async_trait::async_trait;
@@ -28,7 +20,6 @@ impl PgVerificationRepository {
         let id: String = meta.try_get("id").map_err(map_err)?;
         let version_i: i32 = meta.try_get("requirement_version").map_err(map_err)?;
 
-        // 覆盖链:criterion_idx -> [CoverageLink]
         let lrows = sqlx::query(
             "SELECT criterion_idx, decomposition_id, task_id, satisfied \
              FROM ms_verification_link WHERE verification_id = $1",
@@ -189,7 +180,6 @@ mod tests {
         let v = repo.create(&new).await.expect("create");
         assert_eq!(repo.get(&v.id).await.expect("g").expect("s").criteria.len(), 2);
 
-        // 覆盖 + 验证一条,另一条留缺口
         let mut v = repo.get(&v.id).await.expect("g").expect("s");
         v.link(0, "d1", "t1").expect("link");
         v.link(1, "d1", "t2").expect("link");
@@ -203,7 +193,6 @@ mod tests {
         assert_eq!(report.gaps.len(), 1);
         assert_eq!(report.gaps[0].criterion_index, 1);
 
-        // 补齐 → complete
         let mut v2 = reloaded;
         v2.sync_task("d1", "t2", true);
         repo.save(&v2).await.expect("save");

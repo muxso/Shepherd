@@ -1,5 +1,3 @@
-//! 内存版任务拆分仓储(test double 兼本地存储)。
-
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
@@ -71,7 +69,7 @@ impl TaskRepository for InMemoryTaskRepository {
         task_id: &str,
         status: TaskStatus,
     ) -> Result<(), RepoError> {
-        // 锁内只改目标任务这一行,等价于 pg 的行级更新 → 并发推进无丢更新。
+        // Touch only the target task's row (mirrors pg) so concurrent advances don't lose updates.
         let mut st = self.state.lock().expect("lock");
         if let Some(d) = st.decompositions.iter_mut().find(|d| d.id == decomposition_id) {
             if let Some(t) = d.tasks.iter_mut().find(|t| t.id == task_id) {

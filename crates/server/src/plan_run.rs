@@ -1,10 +1,3 @@
-//! 组装根桥:`POST /test-plan/{id}/run` —— 执行计划内挂入的用例/场景并**自动回写结果**。
-//!
-//! - 普通用例(ms_api_case):解析规格 → `ReqwestRunner` 执行 → 断言表 + 响应头 + 实际请求。
-//! - 场景(ms_api_scenario):编译成计划树 → 逐叶执行 → 组成嵌套步骤树。
-//!
-//! 结果回写 `ms_test_plan_case`,报告即真实数据。RBAC 资源键 `TEST_PLAN:EXECUTE`。
-
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -32,7 +25,6 @@ use api_test::ports::EnvironmentPort;
 use test_plan::application::PlanCaseUseCase;
 use test_plan::domain::{AssertionResult, CaseResult, CaseStatus, RequestInfo, StepResult};
 
-/// 计划执行器:跑计划内挂入的用例/场景并回写结果。HTTP 端点与定时调度共用。
 #[derive(Clone)]
 pub struct PlanRunner {
     cases: PlanCaseUseCase,
@@ -42,7 +34,6 @@ pub struct PlanRunner {
     envs: Arc<PgEnvironment>,
 }
 
-/// 一次计划执行的汇总。
 pub struct RunSummary {
     pub total: usize,
     pub executed: usize,
@@ -64,8 +55,6 @@ impl PlanRunner {
         }
     }
 
-    /// 执行计划:逐条跑挂入的用例/场景并回写结果。
-    /// `env_id` 给定则解析环境(base_url + 默认头如 Authorization)并注入每个请求 —— 据此可自测带鉴权的接口。
     pub async fn run(&self, plan_id: &str, env_id: Option<&str>) -> Result<RunSummary, ()> {
         let env: Option<ResolvedEnv> = match env_id.filter(|s| !s.trim().is_empty()) {
             Some(id) => self.envs.resolve(id).await.ok().flatten(),
@@ -76,7 +65,6 @@ impl PlanRunner {
         let total = cases.len();
         let (mut executed, mut success, mut failed) = (0usize, 0usize, 0usize);
         for pc in &cases {
-            // 1) 普通用例(ms_api_case)。
             if let Ok(Some(spec)) = self.specs.spec_of(&pc.case_id).await {
                 let (status, result) =
                     run_request(&self.runner, &spec.request, &spec.assertions, env).await;
@@ -88,7 +76,6 @@ impl PlanRunner {
                 let _ = self.cases.record(plan_id, &pc.case_id, status, Some(result)).await;
                 continue;
             }
-            // 2) 场景(ms_api_scenario):编译树 → 逐叶执行 → 嵌套步骤。
             if let Ok(steps_plan) = self.compile.compile_plan(&pc.case_id).await {
                 let steps = run_steps(&steps_plan, &self.runner, &self.specs, env).await;
                 let ok = !steps.is_empty() && steps.iter().all(|s| s.status == CaseStatus::Success);
@@ -107,7 +94,6 @@ impl PlanRunner {
                 let _ = self.cases.record(plan_id, &pc.case_id, status, Some(result)).await;
                 continue;
             }
-            // 3) 既非用例也非场景:无法执行,记 BLOCK。
             let _ = self
                 .cases
                 .record(
@@ -141,7 +127,6 @@ impl FromRef<RunState> for Arc<dyn SessionStore> {
 pub fn router(pool: PgPool, sessions: Arc<dyn SessionStore>) -> Router {
     Router::new()
         .route("/test-plan/{id}/run", post(run_plan))
-        // 用例 → 计划 反查:某用例被哪些计划挂入(打通 用例→计划 跳转)。
         .route("/test-plan/by-case/{caseId}", get(plans_by_case))
         .with_state(RunState { plan_runner: PlanRunner::new(pool.clone()), pool, sessions })
 }
@@ -208,8 +193,6 @@ fn map_assertions(reps: Vec<api_runner::AssertionReport>) -> Vec<AssertionResult
         .collect()
 }
 
-/// 执行一个请求叶子,产出执行明细(状态/耗时/状态码/断言/响应头/响应体/实际请求)。
-/// `env` 给定则先注入(base_url + 默认头),实际请求记录注入后的形态。
 async fn run_request(
     runner: &ReqwestRunner,
     request: &RequestSpec,
@@ -252,7 +235,6 @@ async fn run_request(
     (status, result)
 }
 
-/// 递归执行场景计划树,产出嵌套步骤结果。
 fn run_steps<'a>(
     steps: &'a [PlanStep],
     runner: &'a ReqwestRunner,
@@ -274,7 +256,6 @@ async fn run_step(
     specs: &PgCaseSpecSource,
     env: Option<&ResolvedEnv>,
 ) -> StepResult {
-    // 控制器节点:聚合子步骤状态。
     let control = |name: String, kind: &str, children: Vec<StepResult>| {
         let ok = children.iter().all(|c| c.status == CaseStatus::Success);
         let latency = children.iter().map(|c| c.latency_ms).sum();
@@ -358,7 +339,6 @@ async fn run_step(
 #[derive(Debug, Default, serde::Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 struct RunPlanBody {
-    /// 可选环境:注入 base_url + 默认头(如 Authorization),据此可自测带鉴权接口。
     #[serde(default)]
     environment_id: Option<String>,
 }

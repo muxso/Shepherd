@@ -1,15 +1,3 @@
-//! runner-agent —— 独立可部署的接口执行 agent。
-//!
-//! 中央 Shepherd 把**自包含**的执行请求(完整 RequestSpec + 断言)POST 给本 agent,
-//! agent 用 `api-runner` 就地执行(它部署在目标环境内,能连到该环境的被测服务),回传结果。
-//! 不依赖中央数据库/会话 —— 因此验证某个隔离环境时,只需在那个环境部署这个小二进制。
-//!
-//! 端点:
-//!   GET  /healthz        存活探针
-//!   POST /run            执行一条用例,返回 {outcome,status,elapsedMs,failures}
-//! 鉴权:设了 `RUNNER_TOKEN` 则 `/run` 需 `Authorization: Bearer <token>`。
-//! 绑定:`RUNNER_BIND`(默认 0.0.0.0:9100)。
-
 use std::sync::Arc;
 
 use axum::{
@@ -27,17 +15,13 @@ use probe::{PluginRegistry, ProbeRequest};
 #[derive(Clone)]
 struct AgentState {
     runner: Arc<ReqwestRunner>,
-    /// 协议插件注册表(本 agent 构建启用的协议)。
     registry: Arc<PluginRegistry>,
-    /// 设了则要求 Bearer 鉴权。
     token: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
 struct RunBody {
-    /// 自包含请求规格(method/url/headers/body)。
     request: RequestSpec,
-    /// 断言列表(可空 = 仅看传输是否成功)。
     #[serde(default)]
     assertions: Vec<Assertion>,
 }
@@ -56,7 +40,6 @@ async fn healthz() -> &'static str {
 }
 
 async fn run(State(st): State<AgentState>, headers: HeaderMap, Json(body): Json<RunBody>) -> Response {
-    // 鉴权(配置了 token 才校验)。
     if let Some(expected) = &st.token {
         let ok = headers
             .get("authorization")
@@ -84,7 +67,6 @@ async fn run(State(st): State<AgentState>, headers: HeaderMap, Json(body): Json<
     .into_response()
 }
 
-/// Bearer 鉴权(设了 token 才校验)。
 fn authorized(token: &Option<String>, headers: &HeaderMap) -> bool {
     match token {
         None => true,
@@ -97,8 +79,6 @@ fn authorized(token: &Option<String>, headers: &HeaderMap) -> bool {
     }
 }
 
-/// 多协议探测:据 protocol 经插件执行(http 默认;grpc/sql 等按本 agent 启用的 feature),
-/// 输出由通用断言判定。这就是「一个 runner 动态支持多种系统」。
 async fn probe(State(st): State<AgentState>, headers: HeaderMap, Json(req): Json<ProbeRequest>) -> Response {
     if !authorized(&st.token, &headers) {
         return (StatusCode::UNAUTHORIZED, "missing or bad token").into_response();
@@ -106,7 +86,6 @@ async fn probe(State(st): State<AgentState>, headers: HeaderMap, Json(req): Json
     Json(st.registry.dispatch(&req).await).into_response()
 }
 
-/// 自报本 agent 支持的协议(供中央按能力选 agent)。
 async fn protocols(State(st): State<AgentState>) -> Response {
     Json(st.registry.protocols()).into_response()
 }
@@ -132,7 +111,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let bind = std::env::var("RUNNER_BIND").unwrap_or_else(|_| "0.0.0.0:9100".to_string());
     let token = std::env::var("RUNNER_TOKEN").ok().filter(|t| !t.trim().is_empty());
     let registry = Arc::new(probe::default_registry());
-    // no_proxy:直连目标环境的被测主机,不被全局代理劫持。
     let state = AgentState { runner: Arc::new(ReqwestRunner::no_proxy()), registry, token };
 
     let listener = tokio::net::TcpListener::bind(&bind).await?;
@@ -171,7 +149,6 @@ mod tests {
 
     #[tokio::test]
     async fn transport_failure_is_error_outcome() {
-        // 连不上的目标 → ERROR(传输失败),验证 agent 就地执行并如实回传。
         let resp = app(state(None))
             .oneshot(run_req(
                 r#"{"request":{"method":"GET","url":"http://127.0.0.1:1/nope","headers":[],"body":null},"assertions":[{"type":"StatusIs","args":200}]}"#,
@@ -193,7 +170,6 @@ mod tests {
         let v = json(resp).await;
         let names: Vec<String> =
             v.as_array().expect("arr").iter().map(|s| s.as_str().unwrap_or("").to_string()).collect();
-        // 本 agent 构建启用了 http/grpc/sql 插件。
         assert!(names.contains(&"http".to_string()));
         assert!(names.contains(&"grpc".to_string()));
         assert!(names.contains(&"sql".to_string()));
@@ -201,7 +177,6 @@ mod tests {
 
     #[tokio::test]
     async fn probe_http_transport_failure() {
-        // 多协议 /probe:http 探测不可达目标 → success=false(传输失败)。
         let body = r#"{"protocol":"http","target":"http://127.0.0.1:1/nope","assertions":[{"type":"success"}]}"#;
         let req = Request::builder()
             .method("POST")
@@ -233,11 +208,9 @@ mod tests {
     #[tokio::test]
     async fn auth_required_when_token_set() {
         let body = r#"{"request":{"method":"GET","url":"http://127.0.0.1:1/x","headers":[],"body":null}}"#;
-        // 无 token → 401
         let resp =
             app(state(Some("secret"))).oneshot(run_req(body, None)).await.expect("resp");
         assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
-        // 带正确 token → 放行(执行,传输失败但非 401)
         let resp = app(state(Some("secret")))
             .oneshot(run_req(body, Some("secret")))
             .await

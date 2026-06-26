@@ -1,25 +1,18 @@
-//! 环境聚合 + 入站校验。
-
 use std::collections::BTreeMap;
 
 use crate::domain::error::EnvironmentError;
 
-/// 创建/更新环境的入站请求(已校验)。`project_id` 在更新时不可变,仅创建时使用。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NewEnvironment {
     pub project_id: String,
     pub name: String,
     pub base_url: String,
-    /// 默认请求头(有序,允许重名,如多个 Set-Cookie 语义)。
     pub headers: Vec<(String, String)>,
-    /// `${name}` 变量表。
     pub variables: BTreeMap<String, String>,
     pub enabled: bool,
 }
 
 impl NewEnvironment {
-    /// 校验:project_id / name 非空(trim);base_url 空或须以 http(s):// 开头;表头名非空。
-    /// base_url 末尾斜杠规整去掉(执行器拼接时统一加)。
     pub fn new(
         project_id: &str,
         name: &str,
@@ -61,7 +54,6 @@ impl NewEnvironment {
     }
 }
 
-/// 环境聚合。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Environment {
     pub id: String,

@@ -1,8 +1,3 @@
-//! 用例:导入接口定义(OpenAPI 3.x / Swagger 2.0)。
-//!
-//! 解析文档为一批接口(纯函数 [`parse_openapi`]),逐条建为接口定义。整体「尽力而为」:
-//! 单条建失败不阻断其余,返回成功建出的定义 + 跳过的条数,便于前端反馈导入结果。
-
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -16,27 +11,20 @@ use thiserror::Error;
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum ImportError {
-    /// 文档无法解析为 OpenAPI/Swagger。
     #[error(transparent)]
     Parse(#[from] ApiDefinitionError),
     #[error(transparent)]
     Repo(#[from] RepoError),
 }
 
-/// 导入选项(原 execute 的若干 bool/可选参数收拢成一个入参,避免参数过多)。
 #[derive(Debug, Clone, Default)]
 pub struct ImportOptions {
-    /// 新建定义归入的模块(None=未归类);`group_by_tag` 时作按 tag 自建模块的父级。
     pub module_id: Option<String>,
-    /// 按来源标签/分组自动建/复用子模块并归类(无标签回落 `module_id`)。
     pub group_by_tag: bool,
-    /// 同 方法+路径 已存在时:true=覆盖 spec(默认),false=跳过。
     pub overwrite: bool,
-    /// 覆盖时是否把已存在接口移动到目标模块。
     pub sync_module: bool,
 }
 
-/// 导入结果:新建的定义 + 覆盖更新的条数 + 跳过条数(校验失败但不阻断整体的)。
 #[derive(Debug)]
 pub struct ImportOutcome {
     pub created: Vec<ApiDefinition>,
@@ -54,11 +42,6 @@ impl ImportApiDefinitionsUseCase {
         Self { repo }
     }
 
-    /// `doc` 为解析后的 JSON 文档(JMeter 为含原始 .jmx 文本的 JSON 字符串)。先按 `format` 解析
-    /// (失败整体报错),再逐条建定义。
-    /// `module_id`:新建定义归入的模块(None=未归类);`group_by_tag` 开启时它作为按 tag 自建模块的**父级**。
-    /// `group_by_tag`:按来源的标签/分组(OpenAPI tag、Postman 文件夹、HAR host、MS 模块)自动建/复用子模块并归类(无标签回落 `module_id`)。
-    /// `overwrite`:同 方法+路径 已存在时 true=覆盖其 spec(默认),false=不覆盖(跳过,计入 skipped)。
     pub async fn execute(
         &self,
         project_id: &str,
@@ -72,15 +55,12 @@ impl ImportApiDefinitionsUseCase {
         let sync_module = opts.sync_module;
         let apis = parse_import(format, doc)?;
 
-        // 幂等导入:按「方法 + 路径」识别项目内已存在的定义。命中则覆盖其 spec(保留用户已编辑的用例),
-        // 未命中则新建定义 + 默认用例。避免重复导入同一份 OpenAPI 堆出重复接口。
         let existing = self.repo.list_definitions(project_id).await?;
         let index: HashMap<(String, String), String> = existing
             .into_iter()
             .map(|d| ((d.method.to_uppercase(), d.path.clone()), d.id))
             .collect();
 
-        // 按 tag 自动归类:预载选定父级下的现有子模块(name→id),供「建或复用」,幂等不堆重复模块。
         let mut module_by_tag: HashMap<String, String> = HashMap::new();
         if group_by_tag {
             let parent = module_id.map(str::to_string);
@@ -100,16 +80,13 @@ impl ImportApiDefinitionsUseCase {
                 {
                     Ok(d) => d.with_spec(&api.spec.to_string()),
                     Err(_) => {
-                        skipped += 1; // 单条校验失败:跳过,不阻断整体
+                        skipped += 1;
                         continue;
                     }
                 };
 
-            // 该接口的目标模块:group_by_tag → 按首个 tag 建/复用子模块(父级=module_id;无 tag 回落 module_id);
-            // 否则用 module_id。延迟到需要落库时再解析,避免覆盖且不同步时建出空模块。
             let api_module = api.module.clone();
 
-            // 已存在同 方法+路径:覆盖模式刷新 spec(不动既有用例);不覆盖模式跳过。
             if let Some(id) = index.get(&(new_def.method.to_uppercase(), new_def.path.clone())) {
                 if !overwrite {
                     skipped += 1;
@@ -120,7 +97,6 @@ impl ImportApiDefinitionsUseCase {
                         .repo
                         .record_definition_change(id, "UPDATE_SPEC", "OpenAPI 导入覆盖规格", "")
                         .await;
-                    // 同步更新接口所在目录:把已存在接口移到目标模块(按 tag 或选定模块)。
                     if sync_module {
                         let mid = self
                             .resolve_module(project_id, module_id, group_by_tag, api_module.as_deref(), &mut module_by_tag)
@@ -136,10 +112,7 @@ impl ImportApiDefinitionsUseCase {
                 continue;
             }
 
-            // 新接口:建定义 + 默认用例。URL 取相对路径(执行时由环境 baseUrl 拼接),
-            // 断言含状态码 + 基础业务断言(由 OpenAPI 成功响应派生)。建用例尽力而为,失败不阻断导入。
             let mut def = self.repo.insert_definition(&new_def).await?;
-            // 归入目标模块(尽力而为);回写返回对象的 module_id,使响应与落库一致。
             let mid = self
                 .resolve_module(project_id, module_id, group_by_tag, api_module.as_deref(), &mut module_by_tag)
                 .await;
@@ -165,8 +138,6 @@ impl ImportApiDefinitionsUseCase {
         Ok(ImportOutcome { created, updated, skipped })
     }
 
-    /// 解析某接口的目标模块 id。`group_by_tag` 关闭或无 tag → 回落 `parent`(选定模块/未归类)。
-    /// 有 tag → 缓存命中复用,否则在 `parent` 下建子模块并缓存(建失败回落 `parent`)。
     async fn resolve_module(
         &self,
         project_id: &str,
@@ -236,12 +207,10 @@ mod tests {
         let out =
             uc.execute("p1", ImportFormat::Openapi, &doc, ImportOptions { group_by_tag: true, overwrite: true, ..Default::default() }).await.expect("imported");
         assert_eq!(out.created.len(), 4);
-        // 两个 tag → 两个模块(auth 复用,不重复建)
         let mods = repo.list_modules("p1").await.unwrap();
         assert_eq!(mods.len(), 2);
         let by_name: HashMap<_, _> = mods.iter().map(|m| (m.name.clone(), m.id.clone())).collect();
         assert!(by_name.contains_key("auth") && by_name.contains_key("user"));
-        // 定义归入对应模块;无 tag 的 ping 仍未归类
         let defs = repo.list_definitions("p1").await.unwrap();
         let mid_of = |path: &str| defs.iter().find(|d| d.path == path).unwrap().module_id.clone();
         assert_eq!(mid_of("/login"), Some(by_name["auth"].clone()));

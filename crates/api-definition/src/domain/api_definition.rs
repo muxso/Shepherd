@@ -1,8 +1,5 @@
-//! 接口定义聚合 + 协议/状态枚举。
-
 use crate::domain::error::{normalize_http_method, ApiDefinitionError};
 
-/// 接口协议。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ApiProtocol {
     #[default]
@@ -10,7 +7,6 @@ pub enum ApiProtocol {
     Tcp,
     Sql,
     Dubbo,
-    /// 仅 HTTP 走原生执行器;以下协议当前仅登记/存储(对齐前端可选项,避免「unknown protocol」)。
     Grpc,
     Redis,
     WebSocket,
@@ -29,7 +25,6 @@ impl ApiProtocol {
         }
     }
 
-    /// 大小写不敏感解析。
     pub fn parse(s: &str) -> Option<Self> {
         match s.trim().to_uppercase().as_str() {
             "HTTP" => Some(ApiProtocol::Http),
@@ -44,7 +39,6 @@ impl ApiProtocol {
     }
 }
 
-/// 接口定义状态。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ApiStatus {
     #[default]
@@ -64,7 +58,6 @@ impl ApiStatus {
         }
     }
 
-    /// 大小写不敏感解析。
     pub fn parse(s: &str) -> Option<Self> {
         match s.trim().to_uppercase().as_str() {
             "DRAFT" => Some(ApiStatus::Draft),
@@ -76,7 +69,6 @@ impl ApiStatus {
     }
 }
 
-/// 创建接口定义的入站请求。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NewApiDefinition {
     pub project_id: String,
@@ -85,15 +77,11 @@ pub struct NewApiDefinition {
     pub method: String,
     pub path: String,
     pub status: ApiStatus,
-    /// 请求/响应规格(不透明 JSON 文本;默认 "{}")。
     pub spec: String,
-    /// 创建人 user_id(可空串;由应用层注入)。
     pub created_by: String,
 }
 
 impl NewApiDefinition {
-    /// 校验:project_id 非空、name 非空(trim)。HTTP 协议下 method 必须在白名单内并规整为大写;
-    /// 非 HTTP 协议忽略 method(允许为空)。状态默认 Draft。
     pub fn new(
         project_id: &str,
         name: &str,
@@ -108,7 +96,6 @@ impl NewApiDefinition {
         if name.is_empty() {
             return Err(ApiDefinitionError::EmptyName);
         }
-        // 仅 HTTP 协议校验方法白名单;其余协议方法语义不同,放行(留空或忽略)。
         let method = if protocol == ApiProtocol::Http {
             normalize_http_method(method)?
         } else {
@@ -126,14 +113,11 @@ impl NewApiDefinition {
         })
     }
 
-    /// 设置创建人(链式)。
     pub fn with_created_by(mut self, user_id: &str) -> Self {
         self.created_by = user_id.to_string();
         self
     }
 
-    /// 设置请求/响应规格(链式)。`spec` 为 JSON 文本(不透明存取)。
-    /// 空白回落 "{}",保持存储形态稳定。
     pub fn with_spec(mut self, spec: &str) -> Self {
         let spec = spec.trim();
         self.spec = if spec.is_empty() { "{}".to_string() } else { spec.to_string() };
@@ -141,11 +125,9 @@ impl NewApiDefinition {
     }
 }
 
-/// 接口定义聚合。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ApiDefinition {
     pub id: String,
-    /// 人类可读编号(【101093】式 ID;由序列分配,内存实现合成)。
     pub num: i64,
     pub project_id: String,
     pub name: String,
@@ -153,29 +135,20 @@ pub struct ApiDefinition {
     pub method: String,
     pub path: String,
     pub status: ApiStatus,
-    /// 归属模块 id;None 表示未归类(顶层)。
     pub module_id: Option<String>,
-    /// 请求/响应规格(不透明 JSON 文本)。
     pub spec: String,
-    /// 创建人 user_id。
     pub created_by: String,
-    /// 创建/更新时间(文本承载,避免引入时间库依赖;内存实现可为空串)。
     pub created_at: String,
     pub updated_at: String,
 }
 
-/// 接口定义变更历史一条(审计)。追加写;由仓储补 id/created_at。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ApiDefinitionChange {
     pub id: String,
     pub definition_id: String,
-    /// 动作:CREATE | UPDATE_SPEC | MOVE_MODULE | RENAME | …
     pub action: String,
-    /// 简短描述(可空串)。
     pub detail: String,
-    /// 操作者 user_id。
     pub actor: String,
-    /// 创建时间(以文本承载,避免引入时间库依赖)。
     pub created_at: String,
 }
 

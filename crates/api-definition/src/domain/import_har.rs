@@ -1,9 +1,3 @@
-//! HAR 1.2 抓包导入:把 `log.entries` 摊平成一批待建接口。
-//!
-//! 纯函数、零 IO。每条 entry 取其 `request`(method/url/headers/queryString/postData)摊平为
-//! [`ImportedApi`],响应状态码用作默认用例断言。HAR 常含同一接口的多次调用:按「方法+路径」去重
-//! (保留首次)。host 作为模块名,便于 group_by_tag 按域名归类。
-
 use std::collections::HashSet;
 
 use serde_json::Value;
@@ -13,7 +7,6 @@ use crate::domain::import::{
     body_type_of, kv, path_and_query, simple_spec, status_assertions, ImportedApi,
 };
 
-/// 解析 HAR 文档。无 `log.entries` 或其中无任何请求时报 `BadImport`。
 pub fn parse_har(doc: &Value) -> Result<Vec<ImportedApi>, ApiDefinitionError> {
     let entries = doc
         .get("log")
@@ -42,7 +35,6 @@ fn entry_to_api(entry: &Value) -> Option<ImportedApi> {
     let (path, url_query) = path_and_query(raw_url);
     let host = host_of(raw_url);
 
-    // 请求头:过滤伪头(:authority 等)。
     let mut headers = Vec::new();
     if let Some(hs) = req.get("headers").and_then(|v| v.as_array()) {
         for h in hs {
@@ -53,13 +45,12 @@ fn entry_to_api(entry: &Value) -> Option<ImportedApi> {
                 continue;
             };
             if k.starts_with(':') {
-                continue; // HTTP/2 伪头
+                continue;
             }
             headers.push(kv(k, v, ""));
         }
     }
 
-    // 查询:优先结构化 queryString,回落 URL 解析结果。
     let query: Vec<Value> = match req.get("queryString").and_then(|v| v.as_array()) {
         Some(qs) if !qs.is_empty() => qs
             .iter()
@@ -72,7 +63,6 @@ fn entry_to_api(entry: &Value) -> Option<ImportedApi> {
         _ => url_query.iter().map(|(k, v)| kv(k, v, "")).collect(),
     };
 
-    // 请求体:postData.text。
     let body_text = req
         .get("postData")
         .and_then(|p| p.get("text"))
@@ -106,11 +96,10 @@ fn entry_to_api(entry: &Value) -> Option<ImportedApi> {
     })
 }
 
-/// 从完整 URL 取 host(用作模块名);无协议/host 时为 None。
 fn host_of(url: &str) -> Option<String> {
     let after = url.split("://").nth(1)?;
     let host = after.split(['/', '?', '#']).next()?;
-    let host = host.split('@').next_back()?; // 去掉可能的 user:pass@
+    let host = host.split('@').next_back()?;
     if host.is_empty() {
         None
     } else {
@@ -145,12 +134,10 @@ mod tests {
             ] }
         });
         let apis = parse_har(&doc).expect("parsed");
-        // /users GET 去重为 1 条 + /login POST = 2
         assert_eq!(apis.len(), 2);
         let users = apis.iter().find(|a| a.path == "/users").expect("users");
         assert_eq!(users.module.as_deref(), Some("api.example.com"));
         assert_eq!(users.spec["requestQuery"][0]["name"], "page");
-        // 伪头被过滤,仅保留 Accept
         let hs = users.spec["requestHeaders"].as_array().unwrap();
         assert_eq!(hs.len(), 1);
         assert_eq!(hs[0]["name"], "Accept");
@@ -158,7 +145,7 @@ mod tests {
         let login = apis.iter().find(|a| a.path == "/login").expect("login");
         assert_eq!(login.method, "POST");
         assert_eq!(login.spec["bodyType"], "json");
-        assert_eq!(login.case_assertions[0]["args"], 201); // 响应状态码
+        assert_eq!(login.case_assertions[0]["args"], 201);
         assert!(login.case_body.is_some());
     }
 

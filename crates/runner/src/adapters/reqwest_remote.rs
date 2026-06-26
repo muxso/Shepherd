@@ -1,5 +1,3 @@
-//! reqwest 远程派发:把 `{request, assertions}` POST 给 agent 的 `/run`(带 token),回传结果。
-
 use async_trait::async_trait;
 use serde::Serialize;
 
@@ -28,7 +26,7 @@ impl Default for ReqwestRemoteRunner {
 
 impl ReqwestRemoteRunner {
     pub fn new() -> Self {
-        // no_proxy:中央直连 agent(通常内网),不被全局代理劫持。
+        // no_proxy:中央直连内网 agent,勿被全局代理劫持。
         Self { client: reqwest::Client::builder().no_proxy().build().unwrap_or_default() }
     }
 }
@@ -54,8 +52,6 @@ impl RemoteRunner for ReqwestRemoteRunner {
     }
 }
 
-/// reqwest 远程多协议探测:把 `ProbeRequest` POST 给 agent 的 `/probe`(带 token),回传判定结果。
-/// 同时实现「探测 agent 能力」(GET /protocols),供中央注册/刷新时拉取。
 #[derive(Clone)]
 pub struct ReqwestRemoteProbe {
     client: reqwest::Client,

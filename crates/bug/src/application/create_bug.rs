@@ -1,5 +1,3 @@
-//! 用例:创建缺陷。初始状态必须是该项目状态流图里的合法状态。
-
 use std::sync::Arc;
 
 use crate::domain::{Bug, BugError, NewBug};
@@ -34,7 +32,6 @@ impl CreateBugUseCase {
     ) -> Result<Bug, CreateBugError> {
         let new_bug = NewBug::new(project_id, title)?.with_created_by(created_by);
 
-        // 初始状态必须存在于项目状态流图(不能用一个图里没有的状态建缺陷)
         let flow = self.repo.status_flow(project_id).await?;
         if !flow.contains(initial_status) {
             return Err(CreateBugError::Validation(BugError::UnknownStatus(

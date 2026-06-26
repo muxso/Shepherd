@@ -1,7 +1,4 @@
-//! 用例:解析用户展示名(id → name)。固化 OIDC 绕过 CFT 的契约。
-//!
-//! 规则:① 只读解析**只走旁路**(`names_direct`),绝不触碰校验路径 → OIDC 用户不会 500;
-//! ② 旁路出错也降级为空,不上抛;③ 空输入短路。返回类型不可失败。
+//! 解析名只走 `names_direct`,绝不走校验路径,否则 OIDC 用户会 500;出错降级为空。
 
 use std::collections::BTreeMap;
 use std::sync::Arc;

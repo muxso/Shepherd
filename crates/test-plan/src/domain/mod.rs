@@ -1,4 +1,3 @@
-//! 领域层:计划 + 执行统计 + 定时调度,零 IO。
 pub mod plan;
 pub mod schedule;
 pub mod statistics;

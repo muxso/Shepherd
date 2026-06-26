@@ -1,7 +1,3 @@
-//! HTTP 协议插件(默认):复用 api-runner 的 reqwest 执行器。
-//!
-//! target=URL;metadata["method"]=方法(默认 GET);payload=body。输出=响应体,status=HTTP 码。
-
 use async_trait::async_trait;
 
 use api_runner::{HttpMethod, ReqwestRunner, RequestSpec};

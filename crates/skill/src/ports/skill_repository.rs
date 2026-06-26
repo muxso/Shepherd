@@ -1,5 +1,3 @@
-//! skill 仓储端口。active 语义(忽略软删除)固化进契约。
-
 use async_trait::async_trait;
 use thiserror::Error;
 
@@ -23,7 +21,6 @@ pub trait SkillRepository: Send + Sync {
 
     async fn get(&self, id: &str) -> Result<Option<Skill>, RepoError>;
 
-    /// 项目内全部**未删除** skill(组合时用作 SkillLibrary)。
     async fn list_active(&self, project_id: &str) -> Result<Vec<Skill>, RepoError>;
 
     async fn save(&self, skill: &Skill) -> Result<(), RepoError>;

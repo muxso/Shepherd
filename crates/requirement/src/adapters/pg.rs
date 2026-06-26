@@ -1,9 +1,3 @@
-//! PostgreSQL 实现的 `RequirementRepository`。
-//!
-//! 聚合落在两张表:`ms_requirement`(元信息)+ `ms_requirement_version`(不可变版本快照,
-//! `acceptance_criteria` 用 `text[]`)。"项目内未删除标题唯一"由部分唯一索引在 DB 层兜底;
-//! `save` 对版本用 `ON CONFLICT DO NOTHING`(版本不可变,只追加不改写)。
-//!
 //! 集成测试 `#[ignore]`,需 DATABASE_URL:
 //!   `DATABASE_URL=postgres://... cargo test -p requirement --features pg -- --ignored`
 
@@ -25,7 +19,6 @@ impl PgRequirementRepository {
         Self { pool }
     }
 
-    /// 由元信息行 + 加载版本快照组装完整聚合。
     async fn assemble(&self, meta: &sqlx::postgres::PgRow) -> Result<Requirement, RepoError> {
         let id: String = meta.try_get("id").map_err(map_err)?;
         let baseline_i: i32 = meta.try_get("baseline_version").map_err(map_err)?;
@@ -114,7 +107,7 @@ impl RequirementRepository for PgRequirementRepository {
         .map_err(map_err)?;
 
         let req = Requirement::create(&id, new);
-        let v1 = req.latest(); // 版本 1
+        let v1 = req.latest();
         sqlx::query(
             "INSERT INTO ms_requirement_version (requirement_id, version, description, acceptance_criteria) \
              VALUES ($1, $2, $3, $4)",
@@ -195,7 +188,7 @@ impl RequirementRepository for PgRequirementRepository {
         .await
         .map_err(map_err)?;
 
-        // 版本不可变:只追加尚未落库的版本,已存在的不改写。
+        // 版本不可变:ON CONFLICT DO NOTHING 只追加新版本,已存在的不改写。
         for v in &requirement.versions {
             sqlx::query(
                 "INSERT INTO ms_requirement_version (requirement_id, version, description, acceptance_criteria) \
@@ -234,29 +227,24 @@ mod tests {
         let nu = NewRequirement::new("p1", "登录", "用邮箱登录", &["正确凭证登录".to_string()])
             .expect("valid");
 
-        // insert → v1 / baseline 1
         let r = repo.insert(&nu).await.expect("insert");
         let mut got = repo.get(&r.id).await.expect("get").expect("some");
         assert_eq!(got.latest_version(), 1);
         assert_eq!(got.baseline_version, 1);
         assert_eq!(got.baseline().acceptance_criteria[0].text, "正确凭证登录");
 
-        // revise → v2,baseline 仍 1
         got.revise("v2 描述", vec![AcceptanceCriterion { text: "新增标准".into() }]).expect("revise");
         repo.save(&got).await.expect("save");
         let reloaded = repo.get(&r.id).await.expect("get").expect("some");
         assert_eq!(reloaded.latest_version(), 2);
         assert_eq!(reloaded.baseline_version, 1);
-        // v1 未被改写
         assert_eq!(reloaded.version(1).expect("v1").acceptance_criteria[0].text, "正确凭证登录");
 
-        // set baseline → 2
         let mut r2 = reloaded;
         r2.set_baseline(2).expect("baseline");
         repo.save(&r2).await.expect("save");
         assert_eq!(repo.get(&r.id).await.expect("g").expect("s").baseline_version, 2);
 
-        // soft delete 释放标题 → 可重建同名
         assert!(repo.find_active_by_title("p1", "登录").await.expect("q").is_some());
         r2.soft_delete();
         repo.save(&r2).await.expect("save");

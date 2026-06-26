@@ -1,8 +1,3 @@
-//! PostgreSQL 实现的 `DeliveryRepository`。表 `ms_delivery_attempt`(交付物字段平铺、可空)。
-//!
-//! 集成测试 `#[ignore]`,需 DATABASE_URL:
-//!   `DATABASE_URL=postgres://... cargo test -p delivery --features pg -- --ignored`
-
 use async_trait::async_trait;
 use sqlx::{PgPool, QueryBuilder, Row};
 
@@ -177,7 +172,6 @@ impl DeliveryRepository for PgDeliveryRepository {
     }
 
     async fn list_tasks(&self, filter: &TaskListFilter) -> Result<TaskPage, RepoError> {
-        // 公共 WHERE 片段:在计数与取页两条查询间复用同一组过滤。
         fn push_where<'a>(qb: &mut QueryBuilder<'a, sqlx::Postgres>, f: &'a TaskListFilter) {
             qb.push(" WHERE 1 = 1");
             if let Some(s) = &f.status {
@@ -203,7 +197,6 @@ impl DeliveryRepository for PgDeliveryRepository {
             }
         }
 
-        // 总数。
         let mut cq = QueryBuilder::<sqlx::Postgres>::new(
             "SELECT count(*) AS n FROM ms_delivery_attempt a \
              LEFT JOIN ms_task t ON t.decomposition_id = a.decomposition_id AND t.id = a.task_id",
@@ -217,9 +210,6 @@ impl DeliveryRepository for PgDeliveryRepository {
             .try_get("n")
             .map_err(map_err)?;
 
-        // 取页。
-        // 基本信息(描述/所属模块)随任务联表带出:
-        //   描述 = ms_task.description;所属模块 = 任务归属需求标题(拆分图→需求)。
         let mut pq = QueryBuilder::<sqlx::Postgres>::new(
             "SELECT a.id, a.decomposition_id, a.task_id, a.executor, a.status, a.run_id, \
              a.deliverable_kind, a.deliverable_reference, a.deliverable_summary, a.error, \
@@ -304,7 +294,6 @@ mod tests {
             sqlx::query(&format!("TRUNCATE {t} CASCADE")).execute(&pool).await.expect("truncate");
         }
 
-        // 需求 → 拆分图 → 任务(带描述),令交付尝试的 (decomposition_id, task_id) 与之匹配。
         sqlx::query("INSERT INTO ms_requirement (id, project_id, title, status) VALUES ('r1','p1','登录模块','DRAFT')")
             .execute(&pool).await.expect("req");
         sqlx::query("INSERT INTO ms_task_decomposition (id, requirement_id, requirement_version) VALUES ('d1','r1',1)")
@@ -314,7 +303,6 @@ mod tests {
 
         let repo = PgDeliveryRepository::new(pool.clone());
         repo.create("d1", "t1", ExecutorKind::ClaudeCode).await.expect("create");
-        // 无关联任务的尝试(描述/模块应为 None)。
         repo.create("d9", "t9", ExecutorKind::Codex).await.expect("create2");
 
         let page = repo

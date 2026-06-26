@@ -1,9 +1,3 @@
-//! 组装根桥:测试计划定时执行(tokio-cron-scheduler)。
-//!
-//! 给计划配 cron;后台调度器到点为计划**拍一份统计快照**(PlanRun)存档,可看通过率/执行率趋势。
-//! 端点:POST /test-plan/{id}/schedule(登记 + 立即挂上 live cron)、GET /test-plan/{id}/runs(历史快照)。
-//! 启动时加载所有启用计划并注册;新建的计划立即挂上,无需重启。
-
 use std::sync::Arc;
 
 use axum::{
@@ -38,8 +32,6 @@ impl FromRef<SchedState> for Arc<dyn SessionStore> {
     }
 }
 
-/// 注册一个 cron job:到点先**真跑计划**(执行用例/场景 + 回写结果),再拍统计快照。
-/// 尽力而为,出错只记日志。
 async fn register_job(
     sched: &JobScheduler,
     run_uc: &ScheduledRunUseCase,
@@ -55,12 +47,10 @@ async fn register_job(
         let runner = runner.clone();
         let pid = pid.clone();
         Box::pin(async move {
-            // 1) 真跑计划(执行 + 回写每条用例结果)。
             match runner.run(&pid, None).await {
                 Ok(s) => tracing::info!(plan = %pid, executed = s.executed, success = s.success, failed = s.failed, "scheduled plan executed"),
                 Err(()) => tracing::warn!(plan = %pid, "scheduled plan execute failed"),
             }
-            // 2) 拍统计快照(趋势)。
             match uc.execute(&pid).await {
                 Ok(run) => tracing::info!(plan = %pid, status = %run.status, "scheduled plan run snapshot"),
                 Err(e) => tracing::warn!(plan = %pid, "scheduled snapshot failed: {e:?}"),
@@ -77,7 +67,6 @@ async fn register_job(
     }
 }
 
-/// 构建调度器路由:创建并启动 JobScheduler,加载已启用计划注册其 job,返回 axum 路由。
 pub async fn build(
     pool: PgPool,
     sessions: Arc<dyn SessionStore>,
@@ -89,7 +78,6 @@ pub async fn build(
     let plan_runner = crate::plan_run::PlanRunner::new(pool.clone());
 
     let sched = JobScheduler::new().await?;
-    // 启动时加载已启用计划。
     if let Ok(schedules) = create.list_enabled().await {
         for s in schedules {
             register_job(&sched, &run_uc, &plan_runner, &s.plan_id, &s.cron).await;
@@ -130,7 +118,6 @@ async fn create_schedule(
     }
     match st.create.execute(&id, &b.cron, true).await {
         Ok(s) => {
-            // 立即挂上 live cron(无需重启)。
             register_job(&st.sched, &st.run_uc, &st.plan_runner, &s.plan_id, &s.cron).await;
             (
                 StatusCode::CREATED,

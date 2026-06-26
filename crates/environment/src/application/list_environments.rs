@@ -1,5 +1,3 @@
-//! 用例:列出项目下的环境。
-
 use std::sync::Arc;
 
 use crate::domain::Environment;

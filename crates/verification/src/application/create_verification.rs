@@ -1,5 +1,3 @@
-//! 用例:为一个需求版本开启完整性验证(每版本至多一个;验收标准为快照传入)。
-
 use std::sync::Arc;
 
 use thiserror::Error;
@@ -45,7 +43,6 @@ impl CreateVerificationUseCase {
         Ok(self.repo.create(&new).await?)
     }
 
-    /// 幂等支持:取某需求版本已存在的验证账本(供 breakdown 幂等回读 verificationId)。
     pub async fn find_existing(
         &self,
         requirement_id: &str,
@@ -68,7 +65,7 @@ mod tests {
     async fn creates_with_criteria_snapshot() {
         let v = uc().execute("req1", 1, &["c1".into(), "c2".into()]).await.expect("ok");
         assert_eq!(v.criteria.len(), 2);
-        assert!(!v.is_complete()); // 尚无覆盖
+        assert!(!v.is_complete());
     }
 
     #[tokio::test]

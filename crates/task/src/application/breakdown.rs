@@ -1,8 +1,3 @@
-//! 用例:自动拆分(`req breakdown --ai`)—— 据需求规格用规划器生成任务拆分图。
-//!
-//! 规划器返回拓扑序任务(依赖用索引引用更早任务),本用例据此建拆分图并逐个加任务
-//! (索引 → 本地 id `t{i+1}`)。每需求版本至多一张拆分图。
-
 use std::sync::Arc;
 
 use crate::domain::{Decomposition, NewTask, TaskError};
@@ -57,10 +52,9 @@ impl BreakdownUseCase {
         let mut d =
             self.repo.create_decomposition(&spec.requirement_id, spec.requirement_version).await?;
         for (i, pt) in planned.iter().enumerate() {
-            // 依赖索引 → 已加入任务的本地 id;只保留指向更早任务的依赖(防前向引用)。
+            // Keep only back-references (j < i); a planner forward-reference would break the topological insert.
             let deps: Vec<String> =
                 pt.dependencies.iter().filter(|&&j| j < i).map(|&j| format!("t{}", j + 1)).collect();
-            // 工作量启发式:按验收标准条数估算(至少 1),供后续人工微调。
             let points = pt.acceptance_criteria.len().max(1) as i32;
             let nt = NewTask::new(&pt.title, &pt.description, &pt.acceptance_criteria, &deps)?.with_points(points);
             d.add_task(nt)?;
@@ -69,7 +63,6 @@ impl BreakdownUseCase {
         Ok(d)
     }
 
-    /// 幂等支持:取某需求版本已存在的拆分图(供 breakdown 命中 AlreadyExists 时回读)。
     pub async fn find_existing(
         &self,
         requirement_id: &str,
@@ -102,10 +95,8 @@ mod tests {
     #[tokio::test]
     async fn breakdown_builds_dag_from_plan() {
         let d = uc().execute(&spec(&["登录成功", "错误密码拒绝"])).await.expect("breakdown");
-        assert_eq!(d.tasks.len(), 3); // 2 标准 + 集成
-        // 集成任务依赖前两个
+        assert_eq!(d.tasks.len(), 3);
         assert_eq!(d.task("t3").expect("t3").dependencies, vec!["t1".to_string(), "t2".to_string()]);
-        // 初始就绪只有无依赖的 t1、t2
         let ready: Vec<_> = d.ready_tasks().iter().map(|t| t.id.clone()).collect();
         assert_eq!(ready, vec!["t1".to_string(), "t2".to_string()]);
         assert!(d.tasks.iter().all(|t| t.status == TaskStatus::Pending));

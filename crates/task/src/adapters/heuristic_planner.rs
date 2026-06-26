@@ -1,5 +1,4 @@
-//! 启发式规划器(默认,无需 LLM):每条验收标准拆成一个任务;多于一条时追加一个
-//! 依赖全部前置的"集成验证"任务。确定性、可测;LLM 规划器由组装根以 HTTP 适配器接入。
+//! Default LLM-free planner: one task per acceptance criterion, plus an integration task depending on all of them when there's more than one.
 
 use async_trait::async_trait;
 
@@ -65,7 +64,7 @@ mod tests {
     #[tokio::test]
     async fn one_task_per_criterion_plus_integration() {
         let plan = HeuristicPlanner.plan(&spec(&["登录成功", "错误密码拒绝"])).await.expect("plan");
-        assert_eq!(plan.len(), 3); // 2 标准 + 集成
+        assert_eq!(plan.len(), 3);
         assert_eq!(plan[2].dependencies, vec![0, 1]);
         assert_eq!(plan[0].acceptance_criteria, vec!["登录成功".to_string()]);
     }

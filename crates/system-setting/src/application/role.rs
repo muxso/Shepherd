@@ -1,5 +1,3 @@
-//! 角色 CRUD + 用户-角色授权用例。
-
 use std::sync::Arc;
 
 use kernel::page::{Page, PageRequest};
@@ -48,7 +46,6 @@ impl RoleService {
         self.repo.get(id).await?.ok_or(RoleCmdError::NotFound)
     }
 
-    /// 改名 + 改权限。
     pub async fn update(
         &self,
         id: &str,
@@ -63,13 +60,12 @@ impl RoleService {
     }
 
     pub async fn delete(&self, id: &str) -> Result<(), RoleCmdError> {
-        self.get(id).await?; // 不存在 → NotFound
+        self.get(id).await?;
         self.repo.delete(id).await?;
         Ok(())
     }
 }
 
-/// 用户-角色授权。
 #[derive(Clone)]
 pub struct UserRoleService {
     roles: Arc<dyn RoleRepository>,
@@ -84,7 +80,6 @@ impl UserRoleService {
         Self { roles, user_roles }
     }
 
-    /// 授予角色(角色须存在)。
     pub async fn grant(&self, user_id: &str, role_id: &str) -> Result<(), RoleCmdError> {
         if self.roles.get(role_id).await?.is_none() {
             return Err(RoleCmdError::NotFound);

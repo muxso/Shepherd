@@ -1,4 +1,3 @@
-//! 应用层:skill 用例编排。
 pub mod create_skill;
 pub mod skill_admin;
 

@@ -144,9 +144,11 @@ Executor `agent-runtime`:
 
 ## How it compares
 
-If you're looking at AutoGen, CrewAI, or OpenHands: most of them take the autonomy route — let the agent loop until it's done, and compete mainly on benchmarks. Shepherd's focus is governance instead. Approval and verification are steps you can't route around, not something you interrupt in a chat, and the deployment model is built around a central server plus internal executors that pull work outbound.
+**vs. agent harnesses — Claude Code, Codex, OpenCode, OpenHands, Aider.** A harness wraps an LLM and runs the agentic loop (tools, context, turn by turn) to get one task done well. Shepherd is the layer *above* that: it doesn't run the loop — it decides what the tasks are, dispatches them, gates them on human approval, and verifies they were actually done. The harness is a swappable executor: `agent-runtime` literally shells out to `claude` / `codex` / `opencode` and streams their events back. So OpenCode isn't a competitor — it's one of the executors you hang on Shepherd's fleet (`OPENCODE_CMD=opencode run`).
 
-There's also a more fundamental difference: those frameworks *are* the agent. Shepherd isn't — it's the supervisor sitting above agents, and what you plug in underneath is swappable. So something like OpenHands is, to Shepherd, just another executor you could hang on the fleet rather than a competitor.
+**vs. multi-agent frameworks — AutoGen, CrewAI.** Most take the autonomy route: let agents loop until done, compete on benchmarks. Shepherd's focus is governance — approval and verification are steps you can't route around, not prompts you interrupt in a chat, and the deployment model is a central server plus internal executors that pull work outbound. Those frameworks *are* the agent; Shepherd is the supervisor above swappable agents.
+
+One concrete boundary: Shepherd speaks MCP as a *server* (it exposes `shepherd_*` tools so an agent can drive the requirement→verify lifecycle), while coding agents like OpenCode speak MCP as a *client*. They compose in both directions rather than overlap.
 
 ## Tests
 

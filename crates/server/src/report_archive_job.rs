@@ -1,18 +1,9 @@
-//! 报告归档后台扫描:周期性把已完成(SUCCESS/ERROR)且未归档的报告导出为 Parquet 冷存储。
-//!
-//! 与热路径解耦——只读 PG 报告读模型,写到 object_store(本地目录/S3)。开关:
-//!   `REPORT_ARCHIVE_DIR`          —— 归档根目录(未设则不启用,直接返回)。
-//!   `REPORT_ARCHIVE_INTERVAL_SECS`—— 扫描间隔秒(默认 60)。
-//!   `REPORT_ARCHIVE_BATCH`        —— 单轮最多归档数(默认 100)。
-//! 查询用 DuckDB 直接扫目录,见 [`api_test::adapters::report_archive`]。
-
 use std::time::Duration;
 
 use api_test::adapters::pg::PgBatchReport;
 use api_test::adapters::ReportArchiver;
 use sqlx::PgPool;
 
-/// 若配置了 `REPORT_ARCHIVE_DIR` 则 spawn 后台扫描任务;否则记一行 info 后返回。
 pub fn spawn(pool: PgPool) {
     let Ok(dir) = std::env::var("REPORT_ARCHIVE_DIR") else {
         tracing::info!("report archive disabled (set REPORT_ARCHIVE_DIR to enable)");
@@ -26,7 +17,7 @@ pub fn spawn(pool: PgPool) {
     let interval = env_u64("REPORT_ARCHIVE_INTERVAL_SECS", 60).max(5);
     let batch = env_u64("REPORT_ARCHIVE_BATCH", 100).clamp(1, 1000) as i64;
 
-    // 目录需先存在(LocalFileSystem 要求)。建不出来就放弃启用,不影响主流程。
+    // 目录需先存在(LocalFileSystem 要求)。
     if let Err(e) = std::fs::create_dir_all(&dir) {
         tracing::warn!(%dir, error = %e, "report archive: cannot create dir, disabled");
         return;
@@ -61,7 +52,7 @@ pub fn spawn(pool: PgPool) {
                                 }
                                 Err(e) => tracing::warn!(report = %id, error = %e, "report archive: write failed"),
                             },
-                            // 报告无明细(理论不该出现):直接打标,避免反复扫描。
+                            // 报告无明细:直接打标,避免反复扫描。
                             Ok(None) => {
                                 let _ = reports.mark_archived(id).await;
                             }
@@ -72,7 +63,7 @@ pub fn spawn(pool: PgPool) {
                         tracing::info!(archived = ok, total = ids.len(), "report archive: batch done");
                     }
                 }
-                Ok(_) => {} // 无待归档
+                Ok(_) => {}
                 Err(e) => tracing::warn!(error = %e, "report archive: scan failed"),
             }
         }

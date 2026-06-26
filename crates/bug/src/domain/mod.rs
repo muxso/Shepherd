@@ -1,4 +1,3 @@
-//! 领域层:缺陷 + 状态流图,零 IO。
 pub mod bug;
 pub mod status_flow;
 

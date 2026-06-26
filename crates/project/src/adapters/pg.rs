@@ -1,10 +1,4 @@
-//! PostgreSQL 实现的 `ProjectRepository`。
-//!
-//! 端口的 "active" 语义在 SQL 里落为 `WHERE deleted = false`;
-//! "同组织未删除项目名唯一"则交给部分唯一索引(见 schema.sql)在 DB 层兜底。
-//!
-//! 集成测试 `#[ignore]`,需 DATABASE_URL:
-//!   `DATABASE_URL=postgres://... cargo test -p project-pg -- --ignored`
+//! 同组织未删除项目名唯一由 schema.sql 的部分唯一索引在 DB 层兜底。
 
 use async_trait::async_trait;
 use crate::domain::{NewProject, Project};
@@ -120,7 +114,6 @@ mod tests {
         assert!(repo.find_active_by_name("org1", "Demo").await.expect("q").is_some());
         assert_eq!(repo.count_active("org1").await.expect("c"), 1);
 
-        // 软删除(模拟删除用例)→ 名字释放
         sqlx::query("UPDATE ms_project SET deleted = true WHERE id = $1")
             .bind(&p.id)
             .execute(&pool)
@@ -129,7 +122,6 @@ mod tests {
         assert!(repo.find_active_by_name("org1", "Demo").await.expect("q").is_none());
         assert_eq!(repo.count_active("org1").await.expect("c"), 0);
 
-        // 部分唯一索引允许重建同名(旧行 deleted=true 不计入约束)
         let again = repo.insert(&nu).await.expect("recreate same name");
         assert_ne!(again.id, p.id);
         assert_eq!(repo.count_active("org1").await.expect("c"), 1);

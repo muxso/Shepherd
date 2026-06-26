@@ -1,7 +1,3 @@
-//! 中央侧 runner 闭环 HTTP 适配器:注册/列出 agent + 把用例派给 agent 执行。
-//!
-//! RBAC 资源串 `RUNNER`:注册需 ADD、派发执行需 EXECUTE;列出开放。
-
 use std::sync::Arc;
 
 use axum::{
@@ -42,7 +38,6 @@ pub fn router(svc: RunnerService, sessions: Arc<dyn SessionStore>) -> Router {
         .route("/runner-agent/{id}/run-case", post(run_case))
         .route("/runner-agent/{id}/refresh", post(refresh))
         .route("/runner-agent/{id}/executions", get(executions))
-        // 按协议选 agent:用户只给协议,中央路由到支持该协议的 agent 就地执行。
         .route("/runner/probe", post(run_probe))
         .with_state(RunnerState { svc, sessions })
 }
@@ -69,7 +64,6 @@ struct AgentResponse {
     name: String,
     base_url: String,
     enabled: bool,
-    /// 该 agent 支持的协议(注册时从其 /protocols 拉取)。
     protocols: Vec<String>,
 }
 
@@ -88,10 +82,8 @@ impl From<RunnerAgent> for AgentResponse {
 #[derive(Debug, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 struct RunViaBody {
-    /// 自包含请求规格(api-runner RequestSpec;OpenAPI 视为不透明对象)。
     #[schema(value_type = Object)]
     request: RequestSpec,
-    /// 断言列表(api-runner Assertion)。
     #[serde(default)]
     #[schema(value_type = Vec<Object>)]
     assertions: Vec<Assertion>,
@@ -216,7 +208,6 @@ async fn executions(State(st): State<RunnerState>, Path(id): Path<String>) -> Re
     }
 }
 
-/// 重拉某 agent 的 /protocols 并写回能力快照(agent 换 feature/重建后用)。
 #[utoipa::path(post, path = "/runner-agent/{id}/refresh", tag = "runner", params(("id" = String, Path)), responses((status = 200), (status = 404), (status = 502)), security(("bearer" = [])))]
 async fn refresh(user: AuthUser, State(st): State<RunnerState>, Path(id): Path<String>) -> Response {
     if !user.can("RUNNER", "EDIT") {
@@ -233,21 +224,16 @@ async fn refresh(user: AuthUser, State(st): State<RunnerState>, Path(id): Path<S
     }
 }
 
-/// 按协议派发请求体:协议无关的自包含探测(中央据 protocol 选 agent)。
 #[derive(Debug, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 struct ProbeBody {
-    /// 协议名(http/grpc/sql/…),据此选支持它的 agent。
     protocol: String,
-    /// 目标(URL / gRPC 端点 / 连接串)。
     target: String,
     #[serde(default)]
     payload: Option<String>,
-    /// 协议附加参数(HTTP method/headers、gRPC 方法路径 等)。
     #[serde(default)]
     #[schema(value_type = Object)]
     metadata: std::collections::BTreeMap<String, String>,
-    /// 通用断言(probe ProbeAssertion)。
     #[serde(default)]
     #[schema(value_type = Vec<Object>)]
     assertions: Vec<ProbeAssertion>,
@@ -256,10 +242,8 @@ struct ProbeBody {
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 struct ProbeReportResponse {
-    /// 中央选中的 agent。
     agent_id: String,
     agent_name: String,
-    /// 探测判定结果(probe ProbeOutcome)。
     #[schema(value_type = Object)]
     outcome: probe::ProbeOutcome,
 }
@@ -379,7 +363,6 @@ mod tests {
         assert_eq!(r.status(), StatusCode::CREATED);
         let id = json(r).await["id"].as_str().expect("id").to_string();
 
-        // 派用例给该 agent(桩远程 → SUCCESS)
         let r = app
             .clone()
             .oneshot(post(
@@ -392,7 +375,6 @@ mod tests {
         assert_eq!(r.status(), StatusCode::OK);
         assert_eq!(json(r).await["outcome"], "SUCCESS");
 
-        // 执行历史:刚那次派发应入档。
         let r = app
             .oneshot(
                 Request::builder()
@@ -429,7 +411,6 @@ mod tests {
             .expect("r");
         let id = json(r).await["id"].as_str().expect("id").to_string();
 
-        // 派"已存储用例"给 agent
         let r = app
             .oneshot(post(&format!("/runner-agent/{id}/run-case"), r#"{"caseId":"case1"}"#, Some(&t)))
             .await
@@ -467,7 +448,6 @@ mod tests {
     #[tokio::test]
     async fn probe_routes_by_protocol_to_matching_agent() {
         let (app, t, caps, _c) = app_with_caps("RUNNER:READ+ADD+EXECUTE").await;
-        // 两个环境的 agent 自报不同能力。
         caps.set("http://grpc-env:9100", &["http", "grpc"]);
         caps.set("http://sql-env:9100", &["http", "sql"]);
         for (name, url) in [("gRPC环境", "http://grpc-env:9100"), ("SQL环境", "http://sql-env:9100")] {
@@ -481,7 +461,6 @@ mod tests {
                 .expect("reg");
         }
 
-        // 只给协议 → 中央路由到支持 grpc 的那个 agent。
         let r = app
             .clone()
             .oneshot(post(
@@ -496,7 +475,6 @@ mod tests {
         assert_eq!(v["agentName"], "gRPC环境");
         assert_eq!(v["outcome"]["success"], true);
 
-        // 协议 sql → 落到 SQL环境。
         let r = app
             .clone()
             .oneshot(post("/runner/probe", r#"{"protocol":"sql","target":"x"}"#, Some(&t)))
@@ -504,7 +482,6 @@ mod tests {
             .expect("r");
         assert_eq!(json(r).await["agentName"], "SQL环境");
 
-        // 没有 agent 支持 redis → 404。
         let r = app
             .oneshot(post("/runner/probe", r#"{"protocol":"redis","target":"x"}"#, Some(&t)))
             .await

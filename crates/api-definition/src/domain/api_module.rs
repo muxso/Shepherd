@@ -1,8 +1,5 @@
-//! 接口模块(文件夹)聚合。项目内嵌套分组接口定义,零 IO。
-
 use crate::domain::error::ApiDefinitionError;
 
-/// 创建接口模块的入站请求。parent_id 为空串视作顶层(None)。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NewApiModule {
     pub project_id: String,
@@ -11,7 +8,6 @@ pub struct NewApiModule {
 }
 
 impl NewApiModule {
-    /// 校验:project_id 非空、name 非空(trim);空 parent_id 归一为 None。
     pub fn new(
         project_id: &str,
         parent_id: Option<&str>,
@@ -32,7 +28,6 @@ impl NewApiModule {
     }
 }
 
-/// 接口模块聚合。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ApiModule {
     pub id: String,

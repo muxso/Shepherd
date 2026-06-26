@@ -1,5 +1,3 @@
-//! 生产密码哈希器(feature = "auth"):Argon2id。
-
 use argon2::password_hash::rand_core::OsRng;
 use argon2::password_hash::{PasswordHash, PasswordHasher as _, PasswordVerifier as _, SaltString};
 use argon2::Argon2;
@@ -34,7 +32,7 @@ mod tests {
     fn hash_then_verify_roundtrip() {
         let h = Argon2PasswordHasher;
         let hash = h.hash("correct horse");
-        assert!(hash.starts_with("$argon2")); // PHC 格式
+        assert!(hash.starts_with("$argon2"));
         assert!(h.verify("correct horse", &hash));
         assert!(!h.verify("wrong", &hash));
     }

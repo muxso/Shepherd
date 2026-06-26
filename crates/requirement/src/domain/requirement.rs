@@ -1,15 +1,6 @@
-//! 需求领域模型:聚合 + 不可变版本快照 + baseline 指针。
-//!
-//! 设计取舍(线性快照 + baseline):
-//! - **标题(title)是稳定身份**:在项目内唯一(忽略软删除),可 `rename`;
-//! - **版本快照承载演进内容**:`description` + `acceptance_criteria` 随每次 `revise` 冻结为
-//!   一个新版本,历史版本不可改写(make illegal states unrepresentable);
-//! - **baseline 是显式决策**:`revise` 只追加版本、**不动基线**;`set_baseline` 才移动指针。
-//!   这正是"多版本"的价值——稳定基线对外可见,新版本可在后台并行起草。
-
 use thiserror::Error;
 
-/// 需求标题长度上限(与 DB 列一致)。
+/// 与 DB 列一致。
 pub const MAX_TITLE_LEN: usize = 255;
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
@@ -28,15 +19,12 @@ pub enum RequirementError {
     Archived,
     #[error("requirement must be baselined before it can be delivered")]
     NotBaselined,
-    /// 评审不通过必须填写原因(与用例评审 UN_PASS 须带评论一致)。
     #[error("review comment is required when rejecting a requirement")]
     EmptyReviewComment,
-    /// 只能对待评审(草稿)需求做「评审不通过」;已基线/已交付不再走评审。
     #[error("requirement is not pending review")]
     NotUnderReview,
 }
 
-/// 一条验收标准(已校验:非空)。后续 task / verification 上下文据此拆分与验收。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AcceptanceCriterion {
     pub text: String,
@@ -52,19 +40,16 @@ impl AcceptanceCriterion {
     }
 }
 
-/// 把一组原始字符串解析成已校验的验收标准(任一为空即整体失败)。
 pub fn parse_criteria(raw: &[String]) -> Result<Vec<AcceptanceCriterion>, RequirementError> {
     raw.iter().map(|c| AcceptanceCriterion::parse(c)).collect()
 }
 
-/// 创建需求的入站请求(尚无 id)。构造即校验。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NewRequirement {
     pub project_id: String,
     pub title: String,
     pub description: String,
     pub acceptance_criteria: Vec<AcceptanceCriterion>,
-    /// 创建人 user_id(由应用层从会话注入;无来源时为空串)。见 0063 迁移。
     pub created_by: String,
 }
 
@@ -96,7 +81,6 @@ impl NewRequirement {
         })
     }
 
-    /// 链式设置创建人(空白裁剪);应用层在校验后注入会话用户 id。
     pub fn with_created_by(mut self, user_id: &str) -> Self {
         self.created_by = user_id.trim().to_string();
         self
@@ -105,13 +89,9 @@ impl NewRequirement {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RequirementStatus {
-    /// 起草中(尚未定基线)。
     Draft,
-    /// 已定基线(baseline 指向某个版本)。
     Baselined,
-    /// 已交付(基线后所有验收标准经验证完整性达成)。
     Delivered,
-    /// 已归档(冻结,拒绝再修订)。
     Archived,
 }
 
@@ -136,7 +116,7 @@ impl RequirementStatus {
     }
 }
 
-/// 不可变版本快照。一旦创建,内容永不改写;修订只追加新版本。
+/// 不可变快照:一旦创建,内容永不改写;修订只追加新版本。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RequirementVersion {
     pub version: u32,
@@ -144,8 +124,6 @@ pub struct RequirementVersion {
     pub acceptance_criteria: Vec<AcceptanceCriterion>,
 }
 
-/// 需求聚合。`title` 是稳定身份;`versions` 是单调递增的不可变快照序列;
-/// `baseline_version` 指向当前生效版本。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Requirement {
     pub id: String,
@@ -155,12 +133,10 @@ pub struct Requirement {
     pub baseline_version: u32,
     pub versions: Vec<RequirementVersion>,
     pub deleted: bool,
-    /// 最近一次「评审不通过」的原因;评审通过(`set_baseline`)或修订(`revise`)后清空。
     pub review_comment: Option<String>,
 }
 
 impl Requirement {
-    /// 由 `NewRequirement` 建初版:version 1、baseline=1、Draft、未删除。
     pub fn create(id: &str, new: &NewRequirement) -> Self {
         Self {
             id: id.to_string(),
@@ -186,18 +162,15 @@ impl Requirement {
         self.versions.iter().find(|v| v.version == n)
     }
 
-    /// 当前基线版本(不变量:始终存在)。
     pub fn baseline(&self) -> &RequirementVersion {
         self.version(self.baseline_version).expect("baseline always points to an existing version")
     }
 
-    /// 最新(版本号最大)版本。
     pub fn latest(&self) -> &RequirementVersion {
         self.versions.last().expect("a requirement always has at least version 1")
     }
 
-    /// 修订:追加一个新的不可变版本(version = latest+1),返回新版本号。
-    /// **不移动 baseline**;归档后拒绝修订。
+    /// 追加新版本但不移动 baseline;归档后拒绝修订。
     pub fn revise(
         &mut self,
         description: &str,
@@ -212,13 +185,11 @@ impl Requirement {
             description: description.trim().to_string(),
             acceptance_criteria: criteria,
         });
-        // 修订即针对上一次评审意见的回应:旧的「不通过」原因不再适用。
         self.review_comment = None;
         Ok(next)
     }
 
-    /// 评审不通过:记录原因,需求留在 DRAFT(待修订后重新评审)。原因必填(trim 后非空)。
-    /// 仅对待评审的草稿适用;已基线/已交付改用 `revise` 起新版本,已归档冻结。
+    /// 评审不通过:记录原因,需求留在 DRAFT 待重评;仅对待评审草稿适用。
     pub fn reject_review(&mut self, reason: &str) -> Result<(), RequirementError> {
         let reason = reason.trim();
         if reason.is_empty() {
@@ -236,7 +207,7 @@ impl Requirement {
         }
     }
 
-    /// 把基线指向一个**已存在**的版本;首次定基把 Draft → Baselined。
+    /// 首次定基把 Draft → Baselined。
     pub fn set_baseline(&mut self, version: u32) -> Result<(), RequirementError> {
         if self.version(version).is_none() {
             return Err(RequirementError::NoSuchVersion(version));
@@ -245,13 +216,11 @@ impl Requirement {
         if self.status == RequirementStatus::Draft {
             self.status = RequirementStatus::Baselined;
         }
-        // 评审通过即定基线:撤销此前的「评审不通过」原因。
         self.review_comment = None;
         Ok(())
     }
 
-    /// 标记交付:基线后所有验收标准经验证达成时调用,Baselined → Delivered。
-    /// 幂等(已 Delivered 直接成功);未定基线 → NotBaselined;已归档拒绝。
+    /// Baselined → Delivered,幂等;未定基线 → NotBaselined。
     pub fn deliver(&mut self) -> Result<(), RequirementError> {
         match self.status {
             RequirementStatus::Delivered => Ok(()),
@@ -280,12 +249,12 @@ impl Requirement {
         self.status = RequirementStatus::Archived;
     }
 
-    /// 软删除:置 deleted,不物理移除。删除后标题被释放(可重建同名)。
+    /// 软删除后标题被释放(可重建同名)。
     pub fn soft_delete(&mut self) {
         self.deleted = true;
     }
 
-    /// 是否参与"标题唯一性"判定:仅未删除的需求算数。
+    /// 仅未删除的需求参与标题唯一性判定。
     pub fn occupies_title(&self) -> bool {
         !self.deleted
     }
@@ -345,7 +314,6 @@ mod tests {
         let n = r.revise("v2 描述", crit(&["新标准A"])).expect("revise");
         assert_eq!(n, 2);
         assert_eq!(r.latest_version(), 2);
-        // 历史版本未被改写
         assert_eq!(r.version(1).expect("v1").acceptance_criteria, v1_criteria);
         assert_eq!(r.version(2).expect("v2").description, "v2 描述");
 
@@ -357,7 +325,6 @@ mod tests {
     fn revise_does_not_move_baseline() {
         let mut r = Requirement::create("req-1", &new_req());
         r.revise("v2", crit(&["X"])).expect("revise");
-        // 基线仍钉在 v1,直到显式移动
         assert_eq!(r.baseline_version, 1);
         assert_eq!(r.baseline().version, 1);
     }
@@ -375,7 +342,7 @@ mod tests {
     fn set_baseline_to_unknown_version_errors() {
         let mut r = Requirement::create("req-1", &new_req());
         assert_eq!(r.set_baseline(9), Err(RequirementError::NoSuchVersion(9)));
-        assert_eq!(r.baseline_version, 1); // 不变
+        assert_eq!(r.baseline_version, 1);
     }
 
     #[test]
@@ -384,7 +351,7 @@ mod tests {
         r.archive();
         assert_eq!(r.status, RequirementStatus::Archived);
         assert_eq!(r.revise("v2", crit(&["X"])), Err(RequirementError::Archived));
-        assert_eq!(r.latest_version(), 1); // 未追加
+        assert_eq!(r.latest_version(), 1);
     }
 
     #[test]
@@ -407,8 +374,8 @@ mod tests {
     fn reject_review_records_reason_and_keeps_draft() {
         let mut r = Requirement::create("req-1", &new_req());
         r.reject_review("  验收标准不完整  ").expect("reject");
-        assert_eq!(r.status, RequirementStatus::Draft); // 留在待评审
-        assert_eq!(r.review_comment.as_deref(), Some("验收标准不完整")); // trim 后存入
+        assert_eq!(r.status, RequirementStatus::Draft);
+        assert_eq!(r.review_comment.as_deref(), Some("验收标准不完整"));
     }
 
     #[test]
@@ -422,7 +389,6 @@ mod tests {
     fn pass_then_baseline_clears_prior_rejection() {
         let mut r = Requirement::create("req-1", &new_req());
         r.reject_review("缺少边界场景").expect("reject");
-        // 评审通过(定基线)撤销不通过原因
         r.set_baseline(1).expect("baseline");
         assert_eq!(r.status, RequirementStatus::Baselined);
         assert!(r.review_comment.is_none());
@@ -433,7 +399,7 @@ mod tests {
         let mut r = Requirement::create("req-1", &new_req());
         r.reject_review("缺少边界场景").expect("reject");
         r.revise("v2", crit(&["补充边界"])).expect("revise");
-        assert!(r.review_comment.is_none()); // 修订即回应评审意见
+        assert!(r.review_comment.is_none());
     }
 
     #[test]

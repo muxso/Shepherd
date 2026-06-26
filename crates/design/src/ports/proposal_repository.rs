@@ -1,5 +1,3 @@
-//! 提案仓储出站端口。
-
 use async_trait::async_trait;
 use thiserror::Error;
 
@@ -13,7 +11,6 @@ pub enum RepoError {
 
 #[async_trait]
 pub trait ProposalRepository: Send + Sync {
-    /// 新建一份提案(分配 id),起始 `Drafting`。
     async fn create(&self, requirement_id: &str, title: &str) -> Result<Proposal, RepoError>;
     async fn get(&self, id: &str) -> Result<Option<Proposal>, RepoError>;
     async fn save(&self, proposal: &Proposal) -> Result<(), RepoError>;

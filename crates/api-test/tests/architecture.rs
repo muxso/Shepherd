@@ -1,4 +1,3 @@
-//! 架构守卫:domain/ports/application 不得引用任何 IO crate。
 use std::fs;
 use std::path::Path;
 const FORBIDDEN: &[&str] = &["sqlx", "axum", "reqwest", "tower_http", "api_runner"];

@@ -1,8 +1,3 @@
-//! 用例:记录一次场景执行(分发运行后由服务端 run bridge 调用)。
-//!
-//! 纯编排:把状态字符串与计数转交仓储落库,返回持久化后的执行记录。
-//! 状态字符串的合法性由仓储/领域 `ExecutionStatus::parse` 把关(未知回落 Pending)。
-
 use std::sync::Arc;
 
 use crate::domain::ScenarioExecution;

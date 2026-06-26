@@ -1,10 +1,3 @@
-//! PostgreSQL 规则来源:从 `ms_api_mock` JOIN `ms_api_definition` 读启用的 Mock 规则。
-//!
-//! 匹配维度:接口定义的 method + path,叠加 mock 的 `match_rule` jsonb(header/query/body/优先级)。
-//! 响应取自 mock(status + body)。直读 api-definition 上下文的邻域表(与 api-test 直读
-//! ms_environment 同构:跨上下文只读、不引 crate 依赖)。
-//! OpenAPI 风格路径参数 `{id}` 翻成匹配引擎的单段通配 `*`,使 `/users/{id}` 命中 `/users/42`。
-
 use async_trait::async_trait;
 use sqlx::{PgPool, Row};
 
@@ -22,7 +15,6 @@ impl PgMockRuleSource {
     }
 }
 
-/// 解析 mock 的 `response_headers` jsonb([{key,value}])为 (名, 值) 列表;非数组/缺字段宽容跳过。
 fn parse_response_headers(v: &serde_json::Value) -> Vec<(String, String)> {
     v.as_array()
         .map(|arr| {
@@ -76,12 +68,11 @@ impl MockRuleSource for PgMockRuleSource {
             let match_rule: serde_json::Value = r.try_get("match_rule").map_err(map)?;
             let status: i32 = r.try_get("response_status").map_err(map)?;
             let body: Option<String> = r.try_get("response_body").map_err(map)?;
-            // 自定义响应头 jsonb([{key,value}])→ (名, 值) 列表;形态不符回落空。
             let resp_headers: serde_json::Value =
                 r.try_get("response_headers").unwrap_or_else(|_| serde_json::json!([]));
             let headers = parse_response_headers(&resp_headers);
             let delay_ms: i32 = r.try_get("response_delay_ms").unwrap_or(0);
-            // match_rule jsonb → 额外条件;形态不符(如默认 {})则宽容回落空条件。
+            // 形态不符(如默认 {})宽容回落空条件,不报错。
             let extra: ExtraConditions = serde_json::from_value(match_rule).unwrap_or_default();
             rules.push(MockRule {
                 id,

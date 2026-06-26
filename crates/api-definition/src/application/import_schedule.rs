@@ -1,8 +1,3 @@
-//! 用例:定时导入计划的增删查与启停 + 运行结果回写。
-//!
-//! 真正「到点拉取 URL 并导入」的动作含 HTTP IO,放在 server 调度器里(复用
-//! [`super::ImportApiDefinitionsUseCase`]);本层只管计划注册表的编排,零 IO。
-
 use std::sync::Arc;
 
 use thiserror::Error;
@@ -28,7 +23,6 @@ impl ImportScheduleUseCase {
         Self { store }
     }
 
-    /// 登记一条计划(构造的 `new` 在此校验)。
     pub async fn create(
         &self,
         new: NewImportSchedule,
@@ -57,7 +51,6 @@ impl ImportScheduleUseCase {
         self.store.delete(id).await
     }
 
-    /// 回写一次运行(`operator` 为触发者;cron 自动运行传空串)。
     pub async fn record_run(&self, id: &str, result: &str, operator: &str) -> Result<(), RepoError> {
         self.store.record_run(id, result, operator).await
     }
@@ -95,13 +88,13 @@ mod tests {
         assert_eq!(uc.list_enabled().await.unwrap().len(), 1);
 
         uc.set_enabled(&s.id, false).await.expect("disable");
-        assert_eq!(uc.list_enabled().await.unwrap().len(), 0); // 停用后不在启用列表
-        assert_eq!(uc.list_by_project("p1").await.unwrap().len(), 1); // 但仍在项目列表
+        assert_eq!(uc.list_enabled().await.unwrap().len(), 0);
+        assert_eq!(uc.list_by_project("p1").await.unwrap().len(), 1);
 
         uc.record_run(&s.id, "新增 3 / 覆盖 1 / 跳过 0", "alice").await.expect("record");
         let got = uc.get(&s.id).await.unwrap().unwrap();
         assert_eq!(got.last_result, "新增 3 / 覆盖 1 / 跳过 0");
-        assert_eq!(got.last_run_by, "alice"); // 操作人回写
+        assert_eq!(got.last_run_by, "alice");
 
         uc.delete(&s.id).await.expect("delete");
         assert_eq!(uc.list_by_project("p1").await.unwrap().len(), 0);

@@ -1,5 +1,3 @@
-//! 内存 agent 注册表 + 桩远程派发(测试用)。
-
 use std::sync::Mutex;
 
 use async_trait::async_trait;
@@ -96,7 +94,6 @@ impl RunnerAgentStore for InMemoryAgentStore {
     }
 }
 
-/// 桩协议能力探测:按 base_url 预置该 agent 自报的协议(测试路由用)。
 #[derive(Default)]
 pub struct StubCapabilities {
     by_url: Mutex<Vec<(String, Vec<String>)>>,
@@ -106,7 +103,6 @@ impl StubCapabilities {
     pub fn new() -> Self {
         Self::default()
     }
-    /// 预置:某 base_url 的 agent 自报支持这些协议。
     pub fn set(&self, base_url: &str, protocols: &[&str]) {
         self.by_url
             .lock()
@@ -129,7 +125,6 @@ impl AgentCapabilities for StubCapabilities {
     }
 }
 
-/// 桩远程探测:不发网络,据本地空注册表合成结果(回报传输成功 + 断言判定)。
 pub struct StubRemoteProbe;
 
 #[async_trait]
@@ -139,7 +134,6 @@ impl RemoteProbe for StubRemoteProbe {
         _target: &DispatchTarget,
         req: &ProbeRequest,
     ) -> Result<ProbeOutcome, PortError> {
-        // 模拟 agent 就地执行成功:transport_ok + 回显 protocol 作输出。
         let raw = RawProbe {
             transport_ok: true,
             status: Some(200),
@@ -151,7 +145,6 @@ impl RemoteProbe for StubRemoteProbe {
     }
 }
 
-/// 内存执行历史(测试)。
 #[derive(Default)]
 pub struct InMemoryExecutionStore {
     records: Mutex<Vec<ExecutionRecord>>,
@@ -203,7 +196,6 @@ impl ExecutionStore for InMemoryExecutionStore {
     }
 }
 
-/// 内存用例规格来源(测试)。`seed` 预置 case_id → 规格。
 #[derive(Default)]
 pub struct InMemoryCaseSpecSource {
     specs: Mutex<Vec<(String, CaseSpec)>>,
@@ -231,7 +223,6 @@ impl CaseSpecSource for InMemoryCaseSpecSource {
     }
 }
 
-/// 桩远程派发:不发网络,直接回固定结果(测试 RunnerService 编排用)。
 pub struct StubRemoteRunner {
     result: RemoteResult,
 }

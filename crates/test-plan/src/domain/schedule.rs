@@ -1,7 +1,3 @@
-//! 计划定时调度 + 定时运行快照(零 IO)。
-//!
-//! 一个计划可配 cron;到点由调度器为计划**拍一份统计快照**(PlanRun)存档,从而看通过率/执行率随时间的趋势。
-
 use thiserror::Error;
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
@@ -12,7 +8,7 @@ pub enum ScheduleError {
     EmptyCron,
 }
 
-/// 已登记的定时计划。`cron` 为 6 段(秒 分 时 日 月 周)表达式。
+/// `cron` 为 6 段(秒 分 时 日 月 周)表达式。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Schedule {
     pub id: String,
@@ -21,7 +17,6 @@ pub struct Schedule {
     pub enabled: bool,
 }
 
-/// 待登记的定时计划(构造即校验:计划/cron 非空)。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NewSchedule {
     pub plan_id: String,
@@ -43,7 +38,6 @@ impl NewSchedule {
     }
 }
 
-/// 一次定时运行的统计快照。
 #[derive(Debug, Clone, PartialEq)]
 pub struct PlanRun {
     pub id: String,

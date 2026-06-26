@@ -1,5 +1,3 @@
-//! 交付领域模型:执行者种类、交付物、交付尝试状态机。
-
 use thiserror::Error;
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
@@ -8,7 +6,6 @@ pub enum DeliveryError {
     TransitionNotAllowed { from: &'static str, to: &'static str },
 }
 
-/// 执行者种类(决定路由到哪种 agent)。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ExecutorKind {
     ClaudeCode,
@@ -35,7 +32,6 @@ impl ExecutorKind {
     }
 }
 
-/// 交付物的形态。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DeliverableKind {
     Diff,
@@ -65,7 +61,6 @@ impl DeliverableKind {
     }
 }
 
-/// 执行者产出的交付物:形态 + 引用(URL/分支/补丁)+ 摘要。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Deliverable {
     pub kind: DeliverableKind,
@@ -73,18 +68,12 @@ pub struct Deliverable {
     pub summary: String,
 }
 
-/// 交付尝试状态机。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AttemptStatus {
-    /// 已派发给执行者,尚未确认开跑。
     Dispatched,
-    /// 执行者已接单、运行中(异步)。
     Running,
-    /// 已产出交付物(终态成功)。
     Delivered,
-    /// 执行/交付失败(终态失败)。
     Failed,
-    /// 用户主动停止(终态中止)。
     Stopped,
 }
 
@@ -110,7 +99,6 @@ impl AttemptStatus {
         }
     }
 
-    /// 是否终态(不再流转)。
     pub fn is_terminal(self) -> bool {
         matches!(self, Self::Delivered | Self::Failed | Self::Stopped)
     }
@@ -120,17 +108,16 @@ impl AttemptStatus {
         matches!(
             (self, to),
             (Dispatched, Running)
-                | (Dispatched, Delivered) // 同步执行器一步到位
+                | (Dispatched, Delivered)
                 | (Dispatched, Failed)
-                | (Dispatched, Stopped) // 派发后未开跑即被停
+                | (Dispatched, Stopped)
                 | (Running, Delivered)
                 | (Running, Failed)
-                | (Running, Stopped) // 运行中被用户停止
+                | (Running, Stopped)
         )
     }
 }
 
-/// 一次把某任务交给某执行者的交付尝试。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DeliveryAttempt {
     pub id: String,
@@ -138,14 +125,12 @@ pub struct DeliveryAttempt {
     pub task_id: String,
     pub executor: ExecutorKind,
     pub status: AttemptStatus,
-    /// 异步执行器返回的运行 id(用于回调关联)。
     pub run_id: Option<String>,
     pub deliverable: Option<Deliverable>,
     pub error: Option<String>,
 }
 
 impl DeliveryAttempt {
-    /// 新建一次尝试,初始 Dispatched。
     pub fn dispatched(
         id: &str,
         decomposition_id: &str,
@@ -172,7 +157,6 @@ impl DeliveryAttempt {
         }
     }
 
-    /// 异步执行者已接单开跑:Dispatched→Running,记录 run_id。
     pub fn start_running(&mut self, run_id: &str) -> Result<(), DeliveryError> {
         self.ensure(AttemptStatus::Running)?;
         self.status = AttemptStatus::Running;
@@ -180,7 +164,6 @@ impl DeliveryAttempt {
         Ok(())
     }
 
-    /// 交付完成:Dispatched/Running→Delivered,带上交付物。
     pub fn deliver(&mut self, deliverable: Deliverable) -> Result<(), DeliveryError> {
         self.ensure(AttemptStatus::Delivered)?;
         self.status = AttemptStatus::Delivered;
@@ -188,7 +171,6 @@ impl DeliveryAttempt {
         Ok(())
     }
 
-    /// 失败:Dispatched/Running→Failed,记录原因。
     pub fn fail(&mut self, error: &str) -> Result<(), DeliveryError> {
         self.ensure(AttemptStatus::Failed)?;
         self.status = AttemptStatus::Failed;
@@ -196,7 +178,6 @@ impl DeliveryAttempt {
         Ok(())
     }
 
-    /// 用户主动停止:Dispatched/Running→Stopped,记录原因(终态中止)。
     pub fn stop(&mut self, reason: &str) -> Result<(), DeliveryError> {
         self.ensure(AttemptStatus::Stopped)?;
         self.status = AttemptStatus::Stopped;
@@ -295,7 +276,6 @@ mod tests {
         b.start_running("r").expect("run");
         assert!(b.stop("中途停止").is_ok());
 
-        // 终态不可再停
         assert!(a.stop("again").is_err());
     }
 }

@@ -1,8 +1,3 @@
-//! 功能用例 HTTP 适配器:CRUD + Excel 导入/导出。
-//!
-//! RBAC 资源串 `FUNCTIONAL_CASE`:创建/导入需 ADD;读(列出/导出)开放。
-//! 导出用 rust_xlsxwriter 编 .xlsx;导入用 calamine 解 .xlsx 成纯行后交 application 解析。
-
 use std::collections::BTreeMap;
 use std::io::Cursor;
 use std::sync::Arc;
@@ -60,15 +55,12 @@ pub fn router(
         .route("/functional-case/export", get(export_cases))
         .route("/functional-case/import", post(import_cases))
         .route("/functional-case/{id}", put(update_case).delete(delete_case))
-        // 需求 ↔ 功能用例 覆盖关联。
         .route("/functional-case/{id}/requirements", get(case_requirements))
         .route("/requirement-case/link", post(link_req_case))
         .route("/requirement-case/unlink", post(unlink_req_case))
         .route("/requirement/{id}/functional-coverage", get(requirement_coverage))
         .with_state(CaseState { create, update, delete, list, import, repo, sessions })
 }
-
-// ---------- 需求覆盖关联 handlers ----------
 
 #[derive(Debug, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
@@ -155,7 +147,6 @@ struct CaseResponse {
     status: String,
     custom_fields: BTreeMap<String, String>,
     steps: Vec<CaseStepDto>,
-    /// 创建人 user_id(0063 迁移;旧用例为 null)。
     created_by: Option<String>,
 }
 
@@ -329,7 +320,6 @@ async fn import_cases(
     }
 }
 
-/// xlsx 字节 → 纯行(首个工作表;每格转字符串)。
 fn xlsx_to_rows(bytes: &[u8]) -> Result<Vec<Vec<String>>, String> {
     let mut wb: Xlsx<Cursor<Vec<u8>>> = calamine::open_workbook_from_rs(Cursor::new(bytes.to_vec()))
         .map_err(|e: calamine::XlsxError| e.to_string())?;
@@ -343,7 +333,6 @@ fn xlsx_to_rows(bytes: &[u8]) -> Result<Vec<Vec<String>>, String> {
         .collect())
 }
 
-/// 纯行(表头 + 数据行)→ xlsx 字节(首行加粗作表头)。
 fn rows_to_xlsx(rows: &[Vec<String>]) -> Result<Vec<u8>, rust_xlsxwriter::XlsxError> {
     let mut wb = Workbook::new();
     let sheet = wb.add_worksheet();
@@ -421,7 +410,6 @@ mod tests {
             .expect("resp");
         assert_eq!(resp.status(), StatusCode::CREATED);
 
-        // 导出 xlsx:验证返回的是合法 xlsx(zip 魔数 PK)。
         let resp = app
             .oneshot(
                 Request::builder()
@@ -434,13 +422,12 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::OK);
         let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.expect("body");
         assert!(bytes.len() > 100);
-        assert_eq!(&bytes[0..2], b"PK"); // xlsx = zip
+        assert_eq!(&bytes[0..2], b"PK");
     }
 
     #[tokio::test]
     async fn import_xlsx_round_trip() {
         let (app, t) = app("FUNCTIONAL_CASE:READ+ADD").await;
-        // 构造一个 xlsx(表头 + 2 行)上传。
         let rows = vec![
             vec!["名称".to_string(), "优先级".to_string(), "owner".to_string()],
             vec!["登录成功".into(), "P0".into(), "alice".into()],
@@ -461,7 +448,6 @@ mod tests {
         };
         assert_eq!(v["imported"], 2);
 
-        // 导入的用例可列出。
         let resp = app
             .oneshot(
                 Request::builder()
@@ -480,7 +466,6 @@ mod tests {
     #[tokio::test]
     async fn update_and_delete_round_trip() {
         let (app, t) = app("FUNCTIONAL_CASE:READ+ADD+UPDATE+DELETE").await;
-        // 建一条用例,拿到 id。
         let resp = app
             .clone()
             .oneshot(post("/functional-case", r#"{"projectId":"p1","name":"登录成功"}"#, Some(&t)))
@@ -493,7 +478,6 @@ mod tests {
         };
         let id = created["id"].as_str().expect("id").to_string();
 
-        // 改名 + 改优先级。
         let put = Request::builder()
             .method("PUT")
             .uri(format!("/functional-case/{id}"))
@@ -510,7 +494,6 @@ mod tests {
         assert_eq!(updated["name"], "登录失败");
         assert_eq!(updated["priority"], "P0");
 
-        // 删除 → 204,列表清空。
         let del = Request::builder()
             .method("DELETE")
             .uri(format!("/functional-case/{id}"))

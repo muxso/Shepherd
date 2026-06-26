@@ -1,4 +1,3 @@
-//! 适配器层。in_memory 始终编译;pg/client/http feature 门控。
 pub mod in_memory;
 pub use in_memory::{
     InMemoryAgentStore, InMemoryCaseSpecSource, InMemoryExecutionStore, StubCapabilities,

@@ -1,5 +1,3 @@
-//! 用例:创建用户。注入假仓储即可测,无需数据库。
-
 use std::sync::Arc;
 
 use thiserror::Error;

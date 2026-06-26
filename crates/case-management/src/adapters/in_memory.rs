@@ -1,5 +1,3 @@
-//! 内存用例仓储(测试)。
-
 use std::sync::Mutex;
 
 use async_trait::async_trait;
@@ -10,7 +8,6 @@ use crate::ports::{CaseRepository, CaseRequirement, CoverageCase, RepoError};
 #[derive(Default)]
 pub struct InMemoryCaseRepository {
     cases: Mutex<Vec<FunctionalCase>>,
-    /// (requirement_id, criterion_index, functional_case_id, project_id)
     links: Mutex<Vec<(String, i32, String, String)>>,
 }
 

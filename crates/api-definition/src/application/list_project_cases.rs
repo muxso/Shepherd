@@ -1,5 +1,3 @@
-//! 用例:分页列出项目下的全部用例(含独立用例)。count + list 组装成一页。
-
 use std::sync::Arc;
 
 use crate::domain::ApiCase;
@@ -54,7 +52,6 @@ mod tests {
                 .await
                 .expect("ok");
         }
-        // 另一个项目的用例不应计入
         create
             .execute("p2", None, "other", "GET", "/x", None, serde_json::json!([]), serde_json::json!([]))
             .await

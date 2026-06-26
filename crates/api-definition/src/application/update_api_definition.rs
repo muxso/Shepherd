@@ -1,8 +1,3 @@
-//! 用例:更新接口定义的基础字段(名称/协议/方法/路径)。
-//!
-//! 校验复用 `NewApiDefinition`(名称非空、HTTP 方法白名单并规整为大写);
-//! project_id/状态/模块/spec 不在本用例职责内,保持不变。
-
 use std::sync::Arc;
 
 use crate::domain::{ApiDefinition, ApiDefinitionError, ApiProtocol, NewApiDefinition};
@@ -38,8 +33,6 @@ impl UpdateApiDefinitionUseCase {
         method: &str,
         path: &str,
     ) -> Result<ApiDefinition, UpdateApiDefinitionError> {
-        // 复用建模校验:占位 project 仅为通过非空校验(本用例不改 project_id)。
-        // 校验通过后取其规整后的 name/method(HTTP 大写)。
         let validated = NewApiDefinition::new("_", name, protocol, method, path)?;
         self.repo
             .update_definition(id, &validated.name, protocol.as_str(), &validated.method, path)
@@ -74,7 +67,6 @@ mod tests {
         assert_eq!(d.name, "登录v2");
         assert_eq!(d.method, "POST");
         assert_eq!(d.path, "/v2/login");
-        // project_id 不变。
         assert_eq!(d.project_id, "p1");
     }
 

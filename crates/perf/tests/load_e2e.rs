@@ -1,5 +1,3 @@
-//! 端到端:用原生 reqwest 执行器对一个本地 axum 服务跑一轮压测,产出真实报告。
-//! 需要 `engine` + `api-runner-exec` feature。
 #![cfg(all(feature = "engine", feature = "api-runner-exec"))]
 
 use std::sync::Arc;
@@ -12,7 +10,6 @@ use perf::domain::LoadPlan;
 use tokio::net::TcpListener;
 
 async fn spawn_server() -> String {
-    // 计数器:前若干次返回 500,其余 200 —— 验证报告能区分成败。
     let hits = Arc::new(AtomicUsize::new(0));
     let app = Router::new().route(
         "/ping",
@@ -46,7 +43,6 @@ async fn native_load_run_produces_report() {
         headers: vec![],
         body: None,
     };
-    // 成功 = HTTP 200(StatusIs(200) 断言)。
     let exec = Arc::new(ApiRunnerExecutor::new(spec, vec![Assertion::StatusIs(200)]));
     let plan = LoadPlan::new(5, 30).expect("plan");
 
@@ -56,7 +52,6 @@ async fn native_load_run_produces_report() {
     assert_eq!(report.success + report.failed, 30);
     assert!(report.failed >= 1, "每 10 次一个 500,应有失败: {report:?}");
     assert!(report.throughput_rps > 0.0);
-    // 延迟分位应是合理的非降序。
     assert!(report.latency.p50 <= report.latency.p95);
     assert!(report.latency.p95 <= report.latency.max);
 }

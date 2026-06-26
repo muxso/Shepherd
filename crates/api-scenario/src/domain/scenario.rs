@@ -1,12 +1,3 @@
-//! 场景领域模型 + 步骤编排 + 单层打通(flatten)。
-//!
-//! 场景(scenario)= 一组有序步骤的编排。每个步骤引用三者之一:
-//! 内联请求(REQUEST)/ 接口用例(CASE,按 id)/ 子场景(SCENARIO,可嵌套)。
-//! 每步有引用模式 ref_mode:引用(REFERENCE,活链接)或复制(COPY,内联快照)。
-//! "打通执行"= compile:递归展开子场景,得到一串可运行步骤(各自携带
-//! case_id 交给既有 runner,或一个内联请求)。子场景递归需仓储查找,放在应用层;
-//! 本文件只做零 IO 的领域规则与单层展开。
-
 use thiserror::Error;
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
@@ -15,33 +6,24 @@ pub enum ScenarioError {
     EmptyName,
     #[error("scenario project_id must not be empty")]
     EmptyProjectId,
-    /// 内联请求的 HTTP 方法不在允许集合内。
     #[error("invalid http method: {0}")]
     InvalidMethod(String),
-    /// 内联请求 url 为空。
     #[error("request url must not be empty")]
     EmptyUrl,
-    /// CASE 步骤缺少 case_id。
     #[error("case step requires a non-empty case_id")]
     EmptyCaseId,
-    /// SCENARIO 步骤缺少 scenario_id。
     #[error("scenario step requires a non-empty scenario_id")]
     EmptyScenarioId,
-    /// COPY 模式必须携带快照。
     #[error("copy ref_mode requires a snapshot")]
     MissingSnapshot,
-    /// 控制器载荷不是 JSON 对象。
     #[error("control step payload must be a json object")]
     InvalidControl,
-    /// 编译时检测到子场景递归成环。
     #[error("cycle detected at scenario: {0}")]
     CycleDetected(String),
-    /// 编译递归深度超过上限。
     #[error("max recursion depth exceeded: {0}")]
     MaxDepthExceeded(usize),
 }
 
-/// 场景状态。默认 Draft(草稿)。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ScenarioStatus {
     #[default]
@@ -61,7 +43,6 @@ impl ScenarioStatus {
         }
     }
 
-    /// 解析状态字符串;未知值回落到 Draft。
     pub fn parse(s: &str) -> ScenarioStatus {
         match s {
             "DEBUGGING" => ScenarioStatus::Debugging,
@@ -72,7 +53,6 @@ impl ScenarioStatus {
     }
 }
 
-/// 场景执行状态。默认 Pending(待执行)。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ExecutionStatus {
     #[default]
@@ -92,7 +72,6 @@ impl ExecutionStatus {
         }
     }
 
-    /// 解析状态字符串;未知值返回 None(与 ScenarioStatus 的回落不同,执行状态需精确)。
     pub fn parse(s: &str) -> Option<ExecutionStatus> {
         match s {
             "PENDING" => Some(ExecutionStatus::Pending),
@@ -104,8 +83,6 @@ impl ExecutionStatus {
     }
 }
 
-/// 场景执行记录。每次场景运行落一条:记录状态、用例数与报告 id。
-/// created_at 为 RFC3339 字符串(纯领域不引入时间库依赖)。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ScenarioExecution {
     pub id: String,
@@ -117,7 +94,6 @@ pub struct ScenarioExecution {
     pub created_at: String,
 }
 
-/// 步骤引用模式。默认 Reference(引用)。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum RefMode {
     #[default]
@@ -133,7 +109,6 @@ impl RefMode {
         }
     }
 
-    /// 解析引用模式字符串;未知值回落到 Reference。
     pub fn parse(s: &str) -> RefMode {
         match s {
             "COPY" => RefMode::Copy,
@@ -142,22 +117,16 @@ impl RefMode {
     }
 }
 
-/// 内联请求。method 必须在允许集合内,url 非空。
-/// `assertions` 为**中立 JSON 数组**(api-runner Assertion 的序列化形式),组装根执行时再解析为
-/// 具体断言——与 ms_api_case 的 assertions 同构,保持 api-scenario 与 api-runner 解耦。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InlineRequest {
     pub method: String,
     pub url: String,
     pub body: Option<String>,
     pub assertions: serde_json::Value,
-    /// 请求头 / Query / REST 路径参数(中立 JSON 数组 `[{key,value,enabled?}]`,与 ms_api_case 同构)。
     pub headers: serde_json::Value,
     pub query_params: serde_json::Value,
     pub rest_params: serde_json::Value,
-    /// 认证(中立 JSON 对象 `{type,token}`)。
     pub auth: serde_json::Value,
-    /// 前后置处理器(中立 JSON 数组,EXTRACT/WAIT)。
     pub processors: serde_json::Value,
 }
 
@@ -169,7 +138,6 @@ fn empty_arr() -> serde_json::Value {
 }
 
 impl InlineRequest {
-    /// 校验构造:method 须在允许集合,url 非空。其余规格默认空(可链式附加)。
     pub fn new(
         method: &str,
         url: &str,
@@ -196,14 +164,11 @@ impl InlineRequest {
         })
     }
 
-    /// 附加断言(中立 JSON 数组)。非数组值归一为空数组,避免下游误判。
     pub fn with_assertions(mut self, assertions: serde_json::Value) -> Self {
         self.assertions = if assertions.is_array() { assertions } else { empty_arr() };
         self
     }
 
-    /// 附加完整请求规格:请求头 / Query / REST 参数(数组)/ 认证(对象)/ 处理器(数组)。
-    /// 各字段非期望形态时回落默认,保持存储/执行形态稳定。
     pub fn with_spec(
         mut self,
         headers: serde_json::Value,
@@ -221,7 +186,6 @@ impl InlineRequest {
         self
     }
 
-    /// 从 inline JSON 对象读取并附加规格字段(headers/queryParams/restParams/auth/processors)。
     pub fn with_spec_json(self, v: &serde_json::Value) -> Self {
         self.with_spec(
             v.get("headers").cloned().unwrap_or_else(empty_arr),
@@ -232,7 +196,6 @@ impl InlineRequest {
         )
     }
 
-    /// 序列化为 inline JSONB 形态(空字段不落,保持紧凑)。落库与 COPY 快照共用。
     pub fn to_inline_json(&self) -> serde_json::Value {
         let mut v = serde_json::json!({ "method": self.method, "url": self.url });
         if let Some(b) = &self.body {
@@ -261,16 +224,11 @@ impl InlineRequest {
     }
 }
 
-/// 逻辑控制器类型(对应前端 ScenarioStepType 的控制器子集)。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ControlKind {
-    /// 循环控制器(定次)。
     Loop,
-    /// 条件控制器。
     If,
-    /// 仅一次控制器。
     Once,
-    /// 等待控制器。
     Timer,
 }
 
@@ -295,21 +253,15 @@ impl ControlKind {
     }
 }
 
-/// 步骤类型:内联请求 / 引用接口用例 / 引用子场景 / 逻辑控制器。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StepKind {
-    /// 内联请求。
     Request(InlineRequest),
-    /// 引用接口用例。
     Case { case_id: String },
-    /// 引用子场景(可嵌套)。
     Scenario { scenario_id: String },
-    /// 逻辑控制器:类型 + 自包含 JSON 载荷(含子步骤)。落库 kind=控制器类型,inline=载荷。
     Control { control: ControlKind, payload: serde_json::Value },
 }
 
 impl StepKind {
-    /// 步骤类型字符串(对应落库 kind 列)。
     pub fn kind_str(&self) -> &'static str {
         match self {
             StepKind::Request(_) => "REQUEST",
@@ -320,8 +272,6 @@ impl StepKind {
     }
 }
 
-/// 编译产物的计划树节点(中立表示,组装根再转成执行器节点)。
-/// 控制器子步骤本版仅支持叶子(CASE/REQUEST),不嵌套控制器。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PlanStep {
     Case(String),
@@ -332,11 +282,9 @@ pub enum PlanStep {
     Timer { ms: u64 },
 }
 
-/// 控制器嵌套深度上限,防止病态深载荷耗尽栈。
+/// 嵌套深度上限,防止病态深载荷耗尽栈。
 const MAX_CONTROL_DEPTH: usize = 10;
 
-/// 把一个子步骤解析为 PlanStep:叶子(CASE/REQUEST)或**嵌套控制器**(LOOP/IF/ONCE/TIMER)。
-/// 超过深度上限或无法识别 → None(被跳过)。
 fn parse_plan_step(v: &serde_json::Value, depth: usize) -> Option<PlanStep> {
     match v.get("kind").and_then(|k| k.as_str())?.to_uppercase().as_str() {
         "CASE" => Some(PlanStep::Case(v.get("refId")?.as_str()?.to_string())),
@@ -352,7 +300,7 @@ fn parse_plan_step(v: &serde_json::Value, depth: usize) -> Option<PlanStep> {
                 .map(PlanStep::Request)
         }
         other => match ControlKind::parse(other) {
-            // 子步骤本身是控制器:同一对象既带 kind 又是其载荷,递归(深度受限)。
+            // 子步骤本身是控制器:同一对象既带 kind 又是其载荷,递归。
             Some(ck) if depth < MAX_CONTROL_DEPTH => Some(parse_control_inner(ck, v, depth + 1)),
             _ => None,
         },
@@ -385,12 +333,10 @@ fn parse_control_inner(control: ControlKind, payload: &serde_json::Value, depth:
     }
 }
 
-/// 把控制器(类型 + 载荷)解析为 PlanStep。子步骤可为叶子或嵌套控制器;解析失败的子步骤被跳过。
 pub fn parse_control(control: ControlKind, payload: &serde_json::Value) -> PlanStep {
     parse_control_inner(control, payload, 1)
 }
 
-/// 已持久化的场景步骤。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ScenarioStep {
     pub id: String,
@@ -400,12 +346,10 @@ pub struct ScenarioStep {
     pub snapshot: Option<serde_json::Value>,
 }
 
-/// 创建场景的入站请求。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NewApiScenario {
     pub project_id: String,
     pub name: String,
-    /// 创建人 user_id(组装根传入;无则 None)。
     pub created_by: Option<String>,
 }
 
@@ -422,14 +366,12 @@ impl NewApiScenario {
         Ok(Self { project_id: project_id.to_string(), name: name.to_string(), created_by: None })
     }
 
-    /// 设置创建人(链式)。
     pub fn with_created_by(mut self, user_id: Option<&str>) -> Self {
         self.created_by = user_id.map(|s| s.to_string());
         self
     }
 }
 
-/// 场景变更历史一条记录(审计日志)。created_at 文本承载。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ScenarioChange {
     pub id: String,
@@ -440,8 +382,6 @@ pub struct ScenarioChange {
     pub created_at: String,
 }
 
-/// 场景对某资源(接口用例)的引用引用记录。用于「引用关系」反查:
-/// 给定一组用例 id,返回引用了它们的场景(去重后)。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ScenarioReference {
     pub id: String,
@@ -449,28 +389,21 @@ pub struct ScenarioReference {
     pub name: String,
 }
 
-/// 场景聚合根。steps 按 order 升序。
-/// 注:`meta` 为不透明 JSON(描述/标签/等级/模块/参数),故不派生 `Eq`(serde_json::Value 无 Eq)。
+/// `meta` 为不透明 JSON,故不派生 `Eq`(serde_json::Value 无 Eq)。
 #[derive(Debug, Clone, PartialEq)]
 pub struct ApiScenario {
     pub id: String,
     pub project_id: String,
     pub name: String,
     pub status: ScenarioStatus,
-    /// 元信息(前端约定形状:{description, tags, priority, moduleId, params, csvParams})。
     pub meta: serde_json::Value,
-    /// 审计:创建人 user_id / 创建时间 / 更新时间(文本承载,见 0046 迁移)。
     pub created_by: Option<String>,
     pub created_at: String,
     pub updated_at: String,
     pub steps: Vec<ScenarioStep>,
-    /// 最近一次执行结果状态(SUCCESS/ERROR);列表查询回填,单查为 None。
     pub last_result: Option<String>,
 }
 
-/// 新增步骤的入站值。构造时按规则校验:
-/// REQUEST 需合法 InlineRequest;CASE 需非空 case_id;SCENARIO 需非空 scenario_id;
-/// COPY 模式必须携带快照(REFERENCE 可不带)。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NewScenarioStep {
     pub order: i32,
@@ -487,7 +420,7 @@ impl NewScenarioStep {
         snapshot: Option<serde_json::Value>,
     ) -> Result<Self, ScenarioError> {
         match &kind {
-            StepKind::Request(_) => {} // InlineRequest 已在自身构造时校验
+            StepKind::Request(_) => {}
             StepKind::Case { case_id } => {
                 if case_id.trim().is_empty() {
                     return Err(ScenarioError::EmptyCaseId);
@@ -498,14 +431,12 @@ impl NewScenarioStep {
                     return Err(ScenarioError::EmptyScenarioId);
                 }
             }
-            // 控制器载荷必须是 JSON 对象(具体字段在编译期宽容解析)。
             StepKind::Control { payload, .. } => {
                 if !payload.is_object() {
                     return Err(ScenarioError::InvalidControl);
                 }
             }
         }
-        // COPY 模式必须有快照,REFERENCE 可为空。
         if ref_mode == RefMode::Copy && snapshot.is_none() {
             return Err(ScenarioError::MissingSnapshot);
         }
@@ -513,7 +444,6 @@ impl NewScenarioStep {
     }
 }
 
-/// 编译产物:可运行步骤。case_id / request 恰有一个为 Some。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RunnableStep {
     pub case_id: Option<String>,
@@ -521,25 +451,19 @@ pub struct RunnableStep {
 }
 
 impl RunnableStep {
-    /// 由 case_id 构造一个可运行步骤。
     pub fn from_case(case_id: String) -> Self {
         Self { case_id: Some(case_id), request: None }
     }
 
-    /// 由内联请求构造一个可运行步骤。
     pub fn from_request(request: InlineRequest) -> Self {
         Self { case_id: None, request: Some(request) }
     }
 }
 
-/// 纯领域:单层展开一个步骤。
-/// REQUEST → RunnableStep{request};CASE → RunnableStep{case_id};
-/// SCENARIO 不在此展开(需仓储查子场景,由应用层递归),返回 None。
 pub fn flatten_step(step: &ScenarioStep) -> Option<RunnableStep> {
     match &step.kind {
         StepKind::Request(req) => Some(RunnableStep::from_request(req.clone())),
         StepKind::Case { case_id } => Some(RunnableStep::from_case(case_id.clone())),
-        // SCENARIO 需仓储递归;CONTROL 需树形编译——都不在单层展开里。
         StepKind::Scenario { .. } | StepKind::Control { .. } => None,
     }
 }
@@ -550,7 +474,6 @@ mod tests {
 
     #[test]
     fn parse_control_nests_controllers() {
-        // LOOP ×2 内含 IF(make==yes)→ CASE c1
         let payload = serde_json::json!({
             "times": 2,
             "children": [
@@ -579,12 +502,10 @@ mod tests {
 
     #[test]
     fn parse_control_caps_nesting_depth() {
-        // 构造超深嵌套 LOOP 链,应在上限处停止(不 panic/不爆栈)
         let mut node = serde_json::json!({ "kind": "CASE", "refId": "leaf" });
         for _ in 0..50 {
             node = serde_json::json!({ "kind": "LOOP", "times": 1, "children": [node] });
         }
-        // 顶层再包一层解析;只要返回且不 panic 即可
         let plan = parse_control(ControlKind::Loop, &serde_json::json!({"times":1,"children":[node]}));
         assert!(matches!(plan, PlanStep::Loop { .. }));
     }
@@ -600,7 +521,7 @@ mod tests {
             assert_eq!(ScenarioStatus::parse(s.as_str()), s);
         }
         assert_eq!(ScenarioStatus::default(), ScenarioStatus::Draft);
-        assert_eq!(ScenarioStatus::parse("???"), ScenarioStatus::Draft); // 未知回落
+        assert_eq!(ScenarioStatus::parse("???"), ScenarioStatus::Draft);
     }
 
     #[test]
@@ -614,7 +535,7 @@ mod tests {
             assert_eq!(ExecutionStatus::parse(s.as_str()), Some(s));
         }
         assert_eq!(ExecutionStatus::default(), ExecutionStatus::Pending);
-        assert_eq!(ExecutionStatus::parse("???"), None); // 未知 → None
+        assert_eq!(ExecutionStatus::parse("???"), None);
     }
 
     #[test]
@@ -623,14 +544,14 @@ mod tests {
         assert_eq!(RefMode::Copy.as_str(), "COPY");
         assert_eq!(RefMode::parse("COPY"), RefMode::Copy);
         assert_eq!(RefMode::parse("REFERENCE"), RefMode::Reference);
-        assert_eq!(RefMode::parse("???"), RefMode::Reference); // 未知回落
+        assert_eq!(RefMode::parse("???"), RefMode::Reference);
         assert_eq!(RefMode::default(), RefMode::Reference);
     }
 
     #[test]
     fn inline_request_validates_method_and_url() {
         let r = InlineRequest::new("get", "http://x", None).expect("ok");
-        assert_eq!(r.method, "GET"); // 大写归一
+        assert_eq!(r.method, "GET");
         assert_eq!(
             InlineRequest::new("FETCH", "http://x", None),
             Err(ScenarioError::InvalidMethod("FETCH".into()))
@@ -682,7 +603,6 @@ mod tests {
             NewScenarioStep::new(0, kind.clone(), RefMode::Copy, None),
             Err(ScenarioError::MissingSnapshot)
         );
-        // COPY + 快照 OK
         assert!(NewScenarioStep::new(
             0,
             kind.clone(),
@@ -690,7 +610,6 @@ mod tests {
             Some(serde_json::json!({"a":1}))
         )
         .is_ok());
-        // REFERENCE 可无快照
         assert!(NewScenarioStep::new(0, kind, RefMode::Reference, None).is_ok());
     }
 
@@ -714,12 +633,10 @@ mod tests {
             .expect("valid")
             .with_assertions(a.clone());
         assert_eq!(req.assertions, a);
-        // 默认空数组。
         assert_eq!(
             InlineRequest::new("GET", "http://x", None).expect("valid").assertions,
             serde_json::json!([])
         );
-        // 非数组归一为空数组。
         let coerced = InlineRequest::new("GET", "http://x", None)
             .expect("valid")
             .with_assertions(serde_json::json!({"bad": 1}));
@@ -728,7 +645,6 @@ mod tests {
 
     #[test]
     fn control_child_request_parses_assertions() {
-        // 控制器子步骤里的内联请求也应带断言(parse_plan_step REQUEST 分支)。
         let v = serde_json::json!({
             "kind": "REQUEST", "method": "GET", "url": "http://x",
             "assertions": [{"type": "StatusIs", "args": 201}]
@@ -753,6 +669,6 @@ mod tests {
     #[test]
     fn flatten_scenario_is_none_here() {
         let s = step("s1", 0, StepKind::Scenario { scenario_id: "scn-2".into() });
-        assert!(flatten_step(&s).is_none()); // 子场景递归交给应用层
+        assert!(flatten_step(&s).is_none());
     }
 }

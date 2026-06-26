@@ -1,15 +1,7 @@
-//! JMeter 下发适配器:实现 `TaskDispatcher`,经 HTTP 把运行任务 POST 给执行节点。
-//!
-//! 用 HTTP 把任务发到资源池节点(ip:port),用 reqwest 实现该传输。
-//!
-//! 节点选择(从池里挑哪个节点)在真实环境由资源池服务给出;本适配器以一个**基地址**
-//! (执行器入口,如 task-runner)收敛之,POST `{base}/jmeter/batch-run`。
-
 use async_trait::async_trait;
 use crate::ports::{DispatchOutcome, PortError, RunTask, TaskDispatcher};
 use serde::Serialize;
 
-/// 下发到执行节点的 JSON 负载。
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct TaskPayload<'a> {
@@ -19,7 +11,6 @@ struct TaskPayload<'a> {
     case_ids: &'a [String],
 }
 
-/// HTTP 任务下发器。`base_url` 指向执行器入口(task-runner / JMeter 节点网关)。
 #[derive(Clone)]
 pub struct HttpTaskDispatcher {
     client: reqwest::Client,
@@ -31,7 +22,6 @@ impl HttpTaskDispatcher {
         Self { client: reqwest::Client::new(), base_url: base_url.into() }
     }
 
-    /// 注入自定义 client(超时/连接池/代理等)。
     pub fn with_client(client: reqwest::Client, base_url: impl Into<String>) -> Self {
         Self { client, base_url: base_url.into() }
     }
@@ -55,14 +45,12 @@ impl TaskDispatcher for HttpTaskDispatcher {
             .await
             .map_err(|e| PortError::Backend(format!("dispatch to executor failed: {e}")))?;
 
-        // 执行节点须返回 2xx 接受任务;否则视为下发失败。
         if !resp.status().is_success() {
             return Err(PortError::Backend(format!(
                 "executor rejected task: HTTP {}",
                 resp.status()
             )));
         }
-        // 远端异步运行,报告由执行节点稍后回调更新。
         Ok(DispatchOutcome::Accepted)
     }
 }
@@ -75,7 +63,6 @@ mod tests {
     use std::sync::{Arc, Mutex};
     use tokio::net::TcpListener;
 
-    // 进程内 stub 执行节点:记录收到的负载,返回可配置状态码。
     #[derive(Clone)]
     struct Stub {
         received: Arc<Mutex<Vec<serde_json::Value>>>,
@@ -139,7 +126,6 @@ mod tests {
 
     #[tokio::test]
     async fn unreachable_node_is_a_dispatch_error() {
-        // 指向一个没人监听的端口
         let dispatcher = HttpTaskDispatcher::new("http://127.0.0.1:1");
         let err = dispatcher.dispatch_task(&task()).await;
         assert!(matches!(err, Err(PortError::Backend(_))));

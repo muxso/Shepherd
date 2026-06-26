@@ -1,5 +1,3 @@
-//! 用例:变更缺陷状态。加载缺陷 + 项目状态流图,用领域规则校验流转后回写。
-
 use std::sync::Arc;
 
 use crate::domain::{Bug, BugError};
@@ -27,12 +25,10 @@ impl ChangeBugStatusUseCase {
         Self { repo }
     }
 
-    /// 返回流转后的缺陷。
     pub async fn execute(&self, bug_id: &str, to: &str) -> Result<Bug, ChangeBugStatusError> {
         let mut bug = self.repo.get(bug_id).await?.ok_or(ChangeBugStatusError::BugNotFound)?;
         let flow = self.repo.status_flow(&bug.project_id).await?;
 
-        // 领域校验流转(非法则 bug.status 不变,且不会落库)
         bug.change_status(to, &flow)?;
 
         self.repo.set_status(&bug.id, &bug.status).await?;
@@ -59,7 +55,7 @@ mod tests {
 
         let bug = uc.execute(&id, "RESOLVED").await.expect("ok");
         assert_eq!(bug.status, "RESOLVED");
-        assert_eq!(repo.status_of(&id), Some("RESOLVED".to_string())); // 已落库
+        assert_eq!(repo.status_of(&id), Some("RESOLVED".to_string()));
     }
 
     #[tokio::test]
@@ -68,7 +64,7 @@ mod tests {
         let id = seed_bug(&repo).await;
         let uc = ChangeBugStatusUseCase::new(Arc::new(repo.clone()));
 
-        let err = uc.execute(&id, "CLOSED").await.unwrap_err(); // NEW 不能直达 CLOSED
+        let err = uc.execute(&id, "CLOSED").await.unwrap_err();
         assert_eq!(
             err,
             ChangeBugStatusError::Domain(BugError::TransitionNotAllowed {
@@ -76,7 +72,7 @@ mod tests {
                 to: "CLOSED".into()
             })
         );
-        assert_eq!(repo.status_of(&id), Some("NEW".to_string())); // 未变
+        assert_eq!(repo.status_of(&id), Some("NEW".to_string()));
     }
 
     #[tokio::test]

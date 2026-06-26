@@ -1,5 +1,3 @@
-//! PostgreSQL agent 注册表(表 ms_runner_agent)。token 落库供派发,不入视图。
-
 use async_trait::async_trait;
 use sqlx::{PgPool, Row};
 
@@ -97,7 +95,6 @@ impl RunnerAgentStore for PgRunnerAgentStore {
         &self,
         protocol: &str,
     ) -> Result<Vec<AgentTarget>, PortError> {
-        // protocols 是 text[];`$1 = ANY(protocols)` 选出支持该协议的 enabled agent。
         let rows = sqlx::query(
             "SELECT id, name, base_url, token FROM ms_runner_agent \
              WHERE enabled AND NOT deleted AND $1 = ANY(protocols) ORDER BY name",
@@ -133,7 +130,6 @@ impl RunnerAgentStore for PgRunnerAgentStore {
     }
 }
 
-/// PostgreSQL 执行历史(表 ms_runner_execution)。failures 存 jsonb 数组。
 #[derive(Clone)]
 pub struct PgExecutionStore {
     pool: PgPool,
@@ -213,8 +209,6 @@ impl ExecutionStore for PgExecutionStore {
     }
 }
 
-/// PostgreSQL 用例规格来源:从 `ms_api_case` 取 method/url/body/assertions,
-/// 组装成可派发的 CaseSpec(跨上下文只读邻域表,与 mock/env 同构)。
 #[derive(Clone)]
 pub struct PgCaseSpecSource {
     pool: PgPool,
@@ -243,7 +237,6 @@ impl CaseSpecSource for PgCaseSpecSource {
         let url: String = r.try_get("url").map_err(map_err)?;
         let body: Option<String> = r.try_get("body").map_err(map_err)?;
         let assertions_json: serde_json::Value = r.try_get("assertions").map_err(map_err)?;
-        // assertions jsonb 数组 → Vec<Assertion>(形态不符则回落空,不致命)。
         let assertions: Vec<Assertion> = serde_json::from_value(assertions_json).unwrap_or_default();
         Ok(Some(CaseSpec {
             request: RequestSpec { method: method_of(&method), url, headers: vec![], body },

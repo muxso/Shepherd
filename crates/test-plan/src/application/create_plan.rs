@@ -1,8 +1,3 @@
-//! 用例:创建测试计划。
-//!
-//! 编排规则:除领域校验(名称、计划组不可嵌套)外,若计划归属某组,
-//! 该组必须存在且确实是 GROUP 类型——否则不能把计划塞进一个不存在/非组的父节点。
-
 use std::sync::Arc;
 
 use crate::domain::{NewPlan, Plan, PlanError, PlanType};
@@ -14,7 +9,6 @@ use thiserror::Error;
 pub enum CreatePlanError {
     #[error(transparent)]
     Validation(#[from] PlanError),
-    /// groupId 指向的父节点不存在,或不是计划组。
     #[error("group not found or not a group")]
     InvalidGroup,
     #[error(transparent)]
@@ -40,7 +34,6 @@ impl CreatePlanUseCase {
     ) -> Result<Plan, CreatePlanError> {
         let new_plan = NewPlan::new(project_id, name, plan_type, group_id)?;
 
-        // 归属某组时,校验父组存在且为 GROUP 类型
         if new_plan.belongs_to_group() {
             match self.repo.get(&new_plan.group_id).await? {
                 Some(parent) if parent.plan_type == PlanType::Group => {}
@@ -94,7 +87,6 @@ mod tests {
     async fn plan_parented_to_a_non_group_rejected() {
         let repo = InMemoryPlanRepository::new();
         let uc = CreatePlanUseCase::new(Arc::new(repo.clone()));
-        // 父节点是普通计划,不是组
         let plain = uc.execute("proj1", "普通", PlanType::Plan, ROOT_GROUP).await.expect("plan");
         let err = uc.execute("proj1", "子", PlanType::Plan, &plain.id).await.unwrap_err();
         assert_eq!(err, CreatePlanError::InvalidGroup);

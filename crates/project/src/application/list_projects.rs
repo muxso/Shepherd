@@ -1,9 +1,3 @@
-//! 用例:分页列出组织内的项目。
-//!
-//! 复用 `kernel` 的 `PageRequest`/`Page`(阶段 0 已用例钉死分页数学),
-//! 本用例只负责把校验过的分页参数翻译成 repo 的 offset/limit,并组装结果页。
-//! 体现"共享内核被业务模块复用"。
-
 use std::sync::Arc;
 
 use kernel::page::{Page, PageRequest};
@@ -60,7 +54,7 @@ mod tests {
             .expect("ok");
         assert_eq!(page.total, 25);
         assert_eq!(page.items.len(), 10);
-        assert_eq!(page.total_pages(), 3); // ceil(25/10)
+        assert_eq!(page.total_pages(), 3);
         assert_eq!(page.items[0].name, "P1");
     }
 
@@ -74,7 +68,7 @@ mod tests {
             .execute("org1", PageRequest::new(3, 10).expect("valid"))
             .await
             .expect("ok");
-        assert_eq!(page.items.len(), 5); // 21..=25
+        assert_eq!(page.items.len(), 5);
         assert_eq!(page.items[0].name, "P21");
     }
 
@@ -82,8 +76,7 @@ mod tests {
     async fn list_excludes_soft_deleted_and_other_orgs() {
         let repo = InMemoryProjectRepository::new();
         seed(&repo, "org1", 3).await;
-        seed(&repo, "org2", 2).await; // 另一组织,不应计入 org1
-        // 软删除 org1 的一个
+        seed(&repo, "org2", 2).await;
         let create = CreateProjectUseCase::new(Arc::new(repo.clone()));
         let extra = create.execute("org1", "Doomed").await.expect("ok");
         repo.soft_delete(&extra.id);
@@ -93,7 +86,7 @@ mod tests {
             .execute("org1", PageRequest::new(1, 50).expect("valid"))
             .await
             .expect("ok");
-        assert_eq!(page.total, 3); // 3 个活的,排除其他组织 + 已删除
+        assert_eq!(page.total, 3);
         assert_eq!(page.items.len(), 3);
         assert!(page.items.iter().all(|p| !p.deleted && p.organization_id == "org1"));
     }
