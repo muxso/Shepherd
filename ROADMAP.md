@@ -33,7 +33,7 @@
 
 | # | 项 | 内容 | 估时 |
 |---|---|---|---|
-| A1 | **可观测性** | metrics(Prometheus)+ 分布式追踪(OpenTelemetry);现仅 `tracing` 日志 | ~2–3 周 |
+| A1 | **可观测性** | ✅ Prometheus metrics(`/metrics`:请求计数 + 时延直方图,按 method/status;零新依赖)+ 中间件;待补:OpenTelemetry 分布式追踪、业务指标(机群/LLM) | (HTTP 指标已交付) |
 | A2 | **AI 执行深化审计** | 现记 attempt + 执行事件 + judge 裁决;补 agent 逐步决策/文件变更/测试结果的更细轨迹与回放 | ~1–2 周 |
 | A3 | **MCP 服务端推送** | SSE 现仅 ready+心跳;加会话级广播,把任务/交付/验证事件主动推给订阅的 AI | ~1–2 周 |
 | A4 | **真实 LLM 产线化** | ✅ Anthropic 原生 Messages API 适配(与 OpenAI 兼容并存,`SHEPHERD_LLM_WIRE`)、每调用超时 + 对 429/5xx 退避重试(尊重 `Retry-After`)、prompt 版本化、延迟/令牌观测;待补:成本核算价表、流式 | (核心已交付) |
