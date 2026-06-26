@@ -44,7 +44,7 @@ migrate = { path = "../migrate" }
 sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "postgres"] }
 axum = "0.8"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "signal", "time"] }
-tokio-stream = { version = "0.1", features = ["time"] }
+tokio-stream = { version = "0.1", features = ["time", "sync"] }
 tokio-cron-scheduler = "0.13"
 tower = "0.5"
 tower-http = { version = "0.6", features = ["trace", "timeout", "limit"] }

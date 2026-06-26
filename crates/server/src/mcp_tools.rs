@@ -17,7 +17,10 @@ use tokio_stream::wrappers::IntervalStream;
 use tokio_stream::StreamExt;
 
 use mcp::{CapabilityChecker, McpServer, Tool, ToolHandler};
+use tokio_stream::wrappers::BroadcastStream;
 use webauth::{AuthUser, SessionStore};
+
+use crate::mcp_bus::McpBus;
 
 struct UserCaps<'a>(&'a AuthUser);
 impl CapabilityChecker for UserCaps<'_> {
@@ -292,6 +295,7 @@ struct McpState {
     server: Arc<McpServer>,
     sessions: Arc<dyn SessionStore>,
     mcp_sessions: Arc<McpSessions>,
+    bus: McpBus,
 }
 
 impl FromRef<McpState> for Arc<dyn SessionStore> {
@@ -396,6 +400,7 @@ pub fn router(
     plan_runner: PlanRunner,
     runner_svc: RunnerService,
     sessions: Arc<dyn SessionStore>,
+    bus: McpBus,
 ) -> Router {
     let server = McpServer::new("shepherd", env!("CARGO_PKG_VERSION"))
         .tool(Tool::new(
@@ -605,6 +610,7 @@ pub fn router(
             server: Arc::new(server),
             sessions,
             mcp_sessions: Arc::new(McpSessions::default()),
+            bus,
         })
 }
 
@@ -670,9 +676,21 @@ async fn mcp_sse(
     let ready = tokio_stream::once(Ok::<Event, Infallible>(
         Event::default().event("ready").data(json!({ "server": "shepherd" }).to_string()),
     ));
+    // 服务端推送:订阅事件总线,把任务/交付/验证事件转成 SSE notification;lagged 跳过。
+    let notifications = BroadcastStream::new(st.bus.subscribe()).filter_map(|r| {
+        r.ok().map(|ev| {
+            Ok::<Event, Infallible>(
+                Event::default()
+                    .event("notification")
+                    .data(serde_json::to_string(&ev).unwrap_or_default()),
+            )
+        })
+    });
     let beats = IntervalStream::new(tokio::time::interval(Duration::from_secs(15)))
         .map(|_| Ok::<Event, Infallible>(Event::default().event("heartbeat").data("ping")));
-    Sse::new(ready.chain(beats)).keep_alive(KeepAlive::default()).into_response()
+    Sse::new(ready.chain(notifications.merge(beats)))
+        .keep_alive(KeepAlive::default())
+        .into_response()
 }
 
 async fn mcp_delete(

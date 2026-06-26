@@ -17,6 +17,7 @@ use task::domain::TaskStatus;
 use verification::application::{VerificationCmdError, VerificationService};
 
 use crate::judge;
+use crate::mcp_bus::{McpBus, McpEvent};
 
 struct TaskServiceGateway {
     svc: TaskService,
@@ -163,6 +164,7 @@ struct OrchestratorObserver {
     recorder: DeliveryService,
     task: TaskService,
     requirements: RequirementService,
+    bus: McpBus,
 }
 
 impl OrchestratorObserver {
@@ -172,7 +174,16 @@ impl OrchestratorObserver {
             return;
         }
         match self.requirements.deliver(&dec.requirement_id).await {
-            Ok(_) => tracing::info!(requirement = %dec.requirement_id, "全部任务验证 → 需求自动交付(DELIVERED)"),
+            Ok(_) => {
+                tracing::info!(requirement = %dec.requirement_id, "全部任务验证 → 需求自动交付(DELIVERED)");
+                self.bus.publish(McpEvent {
+                    kind: "requirement",
+                    status: "delivered".into(),
+                    attempt_id: String::new(),
+                    task_id: String::new(),
+                    message: format!("需求 {} 已交付", dec.requirement_id),
+                });
+            }
             Err(e) => tracing::warn!(requirement = %dec.requirement_id, "需求自动交付失败(可能未定基线): {e:?}"),
         }
     }
@@ -203,6 +214,18 @@ impl DeliveryObserver for OrchestratorObserver {
             // 派发未开跑 / 主动停止:不驱动验证门。
             AttemptStatus::Dispatched | AttemptStatus::Stopped => return,
         };
+        let dstatus = match attempt.status {
+            AttemptStatus::Running => "running",
+            AttemptStatus::Delivered => "delivered",
+            _ => "failed",
+        };
+        self.bus.publish(McpEvent {
+            kind: "delivery",
+            status: dstatus.into(),
+            attempt_id: attempt.id.clone(),
+            task_id: attempt.task_id.clone(),
+            message: String::new(),
+        });
         if let Ok(outcome) =
             self.orchestrator.on_progress(&attempt.decomposition_id, &attempt.task_id, progress).await
         {
@@ -213,6 +236,13 @@ impl DeliveryObserver for OrchestratorObserver {
                     format!("验证门未通过: {}", v.reason)
                 };
                 let _ = self.recorder.record_event(&attempt.id, "VERDICT", &msg, None).await;
+                self.bus.publish(McpEvent {
+                    kind: "verification",
+                    status: if v.passed { "passed" } else { "failed" }.into(),
+                    attempt_id: attempt.id.clone(),
+                    task_id: attempt.task_id.clone(),
+                    message: v.reason.clone(),
+                });
             }
             if matches!(attempt.status, AttemptStatus::Delivered) {
                 self.try_deliver_requirement(&attempt.decomposition_id).await;
@@ -228,6 +258,7 @@ pub fn delivery_observer(
     recorder: DeliveryService,
     executor: Arc<dyn AgentExecutor>,
     requirements: RequirementService,
+    bus: McpBus,
 ) -> Arc<dyn DeliveryObserver> {
     let mut orchestrator = DeliveryFeedbackOrchestrator::new(
         Arc::new(TaskServiceGateway { svc: task.clone() }),
@@ -247,5 +278,6 @@ pub fn delivery_observer(
         recorder,
         task,
         requirements,
+        bus,
     })
 }
