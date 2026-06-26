@@ -144,9 +144,11 @@ web/               React + antd 前端
 
 ## 和别的方案比
 
-如果你在看 AutoGen、CrewAI、OpenHands 这类:它们大多走"自治"路线,让 agent 自己循环到完成,主要拼 benchmark。Shepherd 的重点在治理——人工审批和验证是流程里绕不过去的节点,而不是聊天里随手打断;部署上也是按"中心服务端 + 内网执行机出站拉取"来设计的。
+**对比 agent harness —— Claude Code、Codex、OpenCode、OpenHands、Aider。** harness 是包在 LLM 外面、跑 agentic loop(工具、上下文、逐 turn)的脚手架,目标是把一个任务干好。Shepherd 在它*上面*一层:不跑 loop,而是决定有哪些任务、派发、卡人工审批门、验证有没有真做到。harness 是可换的执行者——`agent-runtime` 就是 `spawn` 出 `claude` / `codex` / `opencode` 并把它们的事件流回传。所以 OpenCode 不是竞品,而是能挂到 Shepherd 机群上的执行者之一(`OPENCODE_CMD=opencode run`)。
 
-还有个本质区别:那些框架本身就是 agent;Shepherd 不是,它是 agent 上面的监工,底下挂什么 agent 可以换。所以像 OpenHands,对 Shepherd 来说更像是"又一台能挂上来的执行机",而不是竞品。
+**对比多 agent 框架 —— AutoGen、CrewAI。** 它们大多走自治路线:让 agent 循环到完成、拼 benchmark。Shepherd 的重点在治理——审批和验证是绕不过去的节点,而不是聊天里随手打断;部署上是"中心服务端 + 内网执行机出站拉取"。那些框架本身就是 agent;Shepherd 是 agent 之上的监工,底下挂什么可以换。
+
+一个具体边界:Shepherd 作为 MCP **服务端**(暴露 `shepherd_*` 工具,让 agent 来驱动需求→验证的全生命周期),而 OpenCode 这类编码 agent 是 MCP **客户端**。两者是双向组合,而不是重叠。
 
 ## 测试
 
