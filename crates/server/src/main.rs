@@ -7,6 +7,7 @@ mod debug_send;
 mod decomposition_run;
 mod judge;
 mod llm;
+mod mcp_bus;
 mod mcp_tools;
 mod metrics;
 mod openapi;
@@ -322,12 +323,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let design_agent = agent.clone();
     let base_delivery =
         DeliveryService::new(Arc::new(PgDeliveryRepository::new(pool.clone())), agent.clone());
+    let mcp_bus = mcp_bus::McpBus::default();
     let delivery_observer = orchestration::delivery_observer(
         task_admin.clone(),
         ver_admin.clone(),
         base_delivery.clone(),
         agent,
         req_admin.clone(),
+        mcp_bus.clone(),
     );
     let mut delivery_svc = base_delivery.with_observer(delivery_observer);
     if let Some(q) = &fleet_queue {
@@ -404,6 +407,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         plan_run::PlanRunner::new(pool.clone()),
         mcp_runner_svc,
         sessions.clone(),
+        mcp_bus,
     );
 
     let review_repo = Arc::new(PgReviewRepository::new(pool.clone()));
