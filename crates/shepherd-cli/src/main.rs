@@ -30,6 +30,13 @@ enum Cmd {
         #[arg(long)]
         password: String,
     },
+    /// 生成上手脚手架(需求模板 + 快速上手),离线、不联网。
+    Init {
+        #[arg(long, default_value = ".")]
+        dir: String,
+        #[arg(long)]
+        force: bool,
+    },
     /// 需求管理。
     Req {
         #[command(subcommand)]
@@ -1320,9 +1327,63 @@ fn parse_vars(items: &[String]) -> R<Value> {
     Ok(Value::Object(map))
 }
 
+const TPL_REQUIREMENT: &str = "# 需求模板
+
+标题: 用户登录
+描述: 支持邮箱 + 密码登录,签发会话令牌。
+
+验收标准:
+- 正确凭证返回 token
+- 错误凭证返回 401
+- 令牌过期后需重新登录
+
+改好后录入(需先 `shepherd login`):
+
+    shepherd req add --project <projectId> \\
+      --title \"用户登录\" \\
+      --description \"支持邮箱 + 密码登录,签发会话令牌。\" \\
+      --criteria \"正确凭证返回 token,错误凭证返回 401,令牌过期后需重新登录\"
+";
+
+const TPL_GETTING_STARTED: &str = "# Shepherd 上手
+
+前置:一个运行中的 server(默认 http://localhost:8088)。
+
+1. 登录:`shepherd login --url http://localhost:8088 --user admin --password <pw>`
+2. 录入需求:见 `requirements/example.md`
+3. 拆分任务:`shepherd decompose --req <requirementId> --version 1`
+4. 派发执行:`shepherd dispatch --decomp <decompositionId> --task <taskId> --executor CLAUDE_CODE`
+5. 验证 / 复查:`shepherd verify --help`、`shepherd decomposition --help`
+
+各命令的完整参数见 `shepherd <命令> --help`。
+";
+
+/// 脚手架文件清单(相对路径 → 内容)。纯函数,便于测试。
+fn scaffold_files() -> Vec<(&'static str, &'static str)> {
+    vec![
+        ("requirements/example.md", TPL_REQUIREMENT),
+        ("shepherd.getting-started.md", TPL_GETTING_STARTED),
+    ]
+}
+
 fn run(cli: Cli) -> R<()> {
     JSON_OUTPUT.store(cli.json, std::sync::atomic::Ordering::Relaxed);
     match cli.cmd {
+        Cmd::Init { dir, force } => {
+            let root = std::path::Path::new(&dir);
+            for (rel, contents) in scaffold_files() {
+                let path = root.join(rel);
+                if path.exists() && !force {
+                    return Err(format!("已存在 {}(加 --force 覆盖)", path.display()).into());
+                }
+                if let Some(parent) = path.parent() {
+                    std::fs::create_dir_all(parent)?;
+                }
+                std::fs::write(&path, contents)?;
+                println!("写入 {}", path.display());
+            }
+            println!("下一步:编辑 requirements/example.md,然后 `shepherd login` 并按其中命令录入需求。");
+        }
         Cmd::Login {
             url,
             user,
@@ -2079,5 +2140,31 @@ mod tests {
             agent: None,
         };
         assert!(c.url.is_empty());
+    }
+
+    #[test]
+    fn scaffold_templates_carry_real_commands() {
+        let files = scaffold_files();
+        assert_eq!(files.len(), 2);
+        let req = files.iter().find(|(p, _)| *p == "requirements/example.md").unwrap().1;
+        assert!(req.contains("shepherd req add"));
+        assert!(req.contains("--criteria"));
+    }
+
+    #[test]
+    fn init_writes_scaffold_and_refuses_overwrite() {
+        let dir = std::env::temp_dir().join(format!("shep-init-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let init = |force: bool| {
+            run(Cli { json: false, cmd: Cmd::Init { dir: dir.to_string_lossy().into(), force } })
+        };
+        init(false).expect("first init writes");
+        assert!(dir.join("requirements/example.md").is_file());
+        assert!(dir.join("shepherd.getting-started.md").is_file());
+        // 二次无 --force:拒绝覆盖。
+        assert!(init(false).is_err());
+        // --force:覆盖成功。
+        init(true).expect("force overwrites");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
