@@ -34,7 +34,7 @@
 | # | 项 | 内容 | 估时 |
 |---|---|---|---|
 | A1 | **可观测性** | ✅ Prometheus metrics(`/metrics`:请求计数 + 时延直方图,按 method/status;零新依赖)+ 中间件;待补:OpenTelemetry 分布式追踪、业务指标(机群/LLM) | (HTTP 指标已交付) |
-| A2 | **AI 执行深化审计** | 现记 attempt + 执行事件 + judge 裁决;补 agent 逐步决策/文件变更/测试结果的更细轨迹与回放 | ~1–2 周 |
+| A2 | **AI 执行深化审计** | ✅ agent-runtime 现额外捕获测试事件:测试命令 → `TEST_RESULT`,并从 tool_result 抽真实通过/失败汇总(cargo/pytest/jest…);经既有 seq 有序事件流回放(`GET /delivery/{id}/events`)。待补:逐 token 决策、文件 diff 内容 | (测试轨迹已交付) |
 | A3 | **MCP 服务端推送** | ✅ 事件总线(broadcast)+ `GET /mcp` SSE 订阅:交付(running/delivered/failed)、验证门裁决、需求自动交付事件主动推送(`event: notification`);零新依赖 | (核心已交付) |
 | A4 | **真实 LLM 产线化** | ✅ Anthropic 原生 Messages API 适配(与 OpenAI 兼容并存,`SHEPHERD_LLM_WIRE`)、每调用超时 + 对 429/5xx 退避重试(尊重 `Retry-After`)、prompt 版本化、延迟/令牌观测;待补:成本核算价表、流式 | (核心已交付) |
 | A5 | **`shepherd init`** | ✅ 离线脚手架命令:生成需求模板 + 快速上手文档(`--dir`/`--force`);待补:从模板文件直接 `req add` 导入 | (核心已交付) |
