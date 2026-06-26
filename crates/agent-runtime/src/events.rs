@@ -36,9 +36,14 @@ pub fn parse_claude_line(line: &str) -> Vec<ExecEvent> {
     let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else {
         return vec![];
     };
-    if v.get("type").and_then(|t| t.as_str()) != Some("assistant") {
-        return vec![];
+    match v.get("type").and_then(|t| t.as_str()) {
+        Some("assistant") => parse_assistant(&v),
+        Some("user") => parse_tool_results(&v),
+        _ => vec![],
     }
+}
+
+fn parse_assistant(v: &serde_json::Value) -> Vec<ExecEvent> {
     let Some(content) = v.get("message").and_then(|m| m.get("content")).and_then(|c| c.as_array())
     else {
         return vec![];
@@ -62,7 +67,11 @@ pub fn parse_claude_line(line: &str) -> Vec<ExecEvent> {
                             .and_then(|i| i.get("command"))
                             .and_then(|x| x.as_str())
                             .unwrap_or("");
-                        ExecEvent::new("TOOL_CALL", &format!("$ {}", clip(cmd, 120)))
+                        if is_test_command(cmd) {
+                            ExecEvent::new("TEST_RESULT", &format!("运行测试: {}", clip(cmd, 120)))
+                        } else {
+                            ExecEvent::new("TOOL_CALL", &format!("$ {}", clip(cmd, 120)))
+                        }
                     }
                     "Grep" | "Glob" | "Read" => continue,
                     other => ExecEvent::new("TOOL_CALL", other),
@@ -79,6 +88,64 @@ pub fn parse_claude_line(line: &str) -> Vec<ExecEvent> {
         }
     }
     out
+}
+
+/// 从 tool_result(stream-json 的 user 消息)里抽测试汇总,捕获真实通过/失败。
+fn parse_tool_results(v: &serde_json::Value) -> Vec<ExecEvent> {
+    let Some(content) = v.get("message").and_then(|m| m.get("content")).and_then(|c| c.as_array())
+    else {
+        return vec![];
+    };
+    let mut out = Vec::new();
+    for b in content {
+        if b.get("type").and_then(|t| t.as_str()) != Some("tool_result") {
+            continue;
+        }
+        if let Some(summary) = test_summary(&tool_result_text(b.get("content"))) {
+            out.push(ExecEvent::new("TEST_RESULT", &summary));
+        }
+    }
+    out
+}
+
+/// tool_result.content 可能是字符串,或 `[{type:text,text}]` 块数组。
+fn tool_result_text(content: Option<&serde_json::Value>) -> String {
+    match content {
+        Some(serde_json::Value::String(s)) => s.clone(),
+        Some(serde_json::Value::Array(blocks)) => blocks
+            .iter()
+            .filter_map(|b| b.get("text").and_then(|t| t.as_str()))
+            .collect::<Vec<_>>()
+            .join("\n"),
+        _ => String::new(),
+    }
+}
+
+fn is_test_command(cmd: &str) -> bool {
+    let c = cmd.to_lowercase();
+    [
+        "cargo test", "cargo nextest", "npm test", "npm run test", "pnpm test", "yarn test",
+        "pytest", "go test", "jest", "vitest", "mvn test", "gradle test", "phpunit",
+    ]
+    .iter()
+    .any(|p| c.contains(p))
+}
+
+/// best-effort:多 runner 的测试汇总行(cargo / pytest / jest / mocha…)。
+fn test_summary(out: &str) -> Option<String> {
+    for line in out.lines() {
+        let l = line.trim();
+        let low = l.to_lowercase();
+        let hit = low.starts_with("test result:")
+            || low.starts_with("tests:")
+            || (low.contains("passed") && (low.contains("failed") || low.contains("error")))
+            || low.contains(" passing")
+            || low.contains(" failing");
+        if hit {
+            return Some(clip(l, 200));
+        }
+    }
+    None
 }
 
 pub fn parse_claude_result(line: &str) -> Option<(bool, String)> {
@@ -105,11 +172,39 @@ mod tests {
         let edit = r#"{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Edit","input":{"file_path":"src/auth.rs"}}]}}"#;
         assert_eq!(parse_claude_line(edit), vec![ExecEvent::new("FILE_CHANGE", "Edit src/auth.rs")]);
 
-        let bash = r#"{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash","input":{"command":"cargo test"}}]}}"#;
-        assert_eq!(parse_claude_line(bash), vec![ExecEvent::new("TOOL_CALL", "$ cargo test")]);
+        let bash = r#"{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash","input":{"command":"ls -la"}}]}}"#;
+        assert_eq!(parse_claude_line(bash), vec![ExecEvent::new("TOOL_CALL", "$ ls -la")]);
 
         let text = r#"{"type":"assistant","message":{"content":[{"type":"text","text":"用 argon2 哈希"}]}}"#;
         assert_eq!(parse_claude_line(text), vec![ExecEvent::new("DECISION", "用 argon2 哈希")]);
+    }
+
+    #[test]
+    fn test_command_is_classified_as_test_result() {
+        let bash = r#"{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash","input":{"command":"cargo test -p auth"}}]}}"#;
+        assert_eq!(
+            parse_claude_line(bash),
+            vec![ExecEvent::new("TEST_RESULT", "运行测试: cargo test -p auth")]
+        );
+    }
+
+    #[test]
+    fn tool_result_test_summary_becomes_test_result() {
+        // content 为字符串(cargo 汇总在多行输出里)。
+        let cargo = r#"{"type":"user","message":{"content":[{"type":"tool_result","content":"running 3 tests\n...\ntest result: ok. 3 passed; 0 failed; 0 ignored"}]}}"#;
+        assert_eq!(
+            parse_claude_line(cargo),
+            vec![ExecEvent::new("TEST_RESULT", "test result: ok. 3 passed; 0 failed; 0 ignored")]
+        );
+        // content 为块数组(pytest 风格)。
+        let pytest = r#"{"type":"user","message":{"content":[{"type":"tool_result","content":[{"type":"text","text":"=== 2 passed, 1 failed in 0.3s ==="}]}]}}"#;
+        let evs = parse_claude_line(pytest);
+        assert_eq!(evs.len(), 1);
+        assert_eq!(evs[0].kind, "TEST_RESULT");
+        assert!(evs[0].message.contains("2 passed, 1 failed"));
+        // 非测试输出 → 无事件。
+        let noise = r#"{"type":"user","message":{"content":[{"type":"tool_result","content":"hello world"}]}}"#;
+        assert!(parse_claude_line(noise).is_empty());
     }
 
     #[test]
