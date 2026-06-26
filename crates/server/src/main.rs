@@ -8,6 +8,7 @@ mod decomposition_run;
 mod judge;
 mod llm;
 mod mcp_tools;
+mod metrics;
 mod openapi;
 mod orchestration;
 mod case_exec_summary;
