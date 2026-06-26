@@ -1,11 +1,3 @@
-//! 提案 HTTP 适配器。DTO ↔ 用例,命令错误映射 HTTP 码。
-//!
-//! RBAC(复用 `REQUIREMENT`):开提案需 `REQUIREMENT:ADD`;提交设计稿/审批/驳回需 `REQUIREMENT:UPDATE`;
-//! 读端点开放。错误码:校验→400,非法流转→409,提案不存在→404。
-//!
-//! 人机协同:`POST /proposal/{id}/design` 既可人填,也可由 fleet runtime 的 agent 回调
-//! (同 delivery 的回调模式),实现「agent 产出设计稿 → 人审批门」。
-
 use std::sync::Arc;
 
 use axum::{
@@ -42,8 +34,6 @@ pub fn router(svc: ProposalService, sessions: Arc<dyn SessionStore>) -> Router {
         .route("/proposal/{id}/request-changes", post(request_changes))
         .with_state(DesignState { svc, sessions })
 }
-
-// ---- DTO ----
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -110,8 +100,6 @@ fn cmd_err(e: ProposalCmdError) -> Response {
 fn ok(p: &Proposal, code: StatusCode) -> Response {
     (code, Json(ProposalResponse::from(p))).into_response()
 }
-
-// ---- 处理器 ----
 
 async fn create(user: AuthUser, State(st): State<DesignState>, Json(b): Json<CreateBody>) -> Response {
     if !user.can("REQUIREMENT", "ADD") {

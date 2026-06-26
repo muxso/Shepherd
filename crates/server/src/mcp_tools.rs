@@ -1,8 +1,3 @@
-//! MCP 工具桥接:把 Shepherd 各上下文服务注册成 MCP 工具,暴露 `POST /mcp`(JSON-RPC)。
-//! 让 AI(Claude 等)经 Model Context Protocol 直接驱动「需求→拆任务→派发→验证」全链路。
-//!
-//! `/mcp` 需有效会话(`AuthUser`,无令牌→401);细粒度按工具 RBAC 留作后续。
-
 use std::collections::HashSet;
 use std::convert::Infallible;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -25,7 +20,6 @@ use tokio_stream::StreamExt;
 use mcp::{CapabilityChecker, McpServer, Tool, ToolHandler};
 use webauth::{AuthUser, SessionStore};
 
-/// 用会话权限实现 MCP 能力检查(按工具 RBAC)。
 struct UserCaps<'a>(&'a AuthUser);
 impl CapabilityChecker for UserCaps<'_> {
     fn allows(&self, resource: &str, action: &str) -> bool {
@@ -33,7 +27,6 @@ impl CapabilityChecker for UserCaps<'_> {
     }
 }
 
-/// 提取器:客户端是否要求 SSE(`Accept: text/event-stream`)。
 struct WantsSse(bool);
 
 impl<S: Send + Sync> FromRequestParts<S> for WantsSse {
@@ -51,8 +44,7 @@ impl<S: Send + Sync> FromRequestParts<S> for WantsSse {
 
 const SESSION_HEADER: &str = "mcp-session-id";
 
-/// MCP 会话登记表(Streamable HTTP):initialize 时签发会话 id,后续请求校验,DELETE 终止。
-/// id 用进程内自增计数(/mcp 已由 Bearer 鉴权,会话 id 非鉴权边界)。
+// 会话 id 用进程内自增计数:/mcp 已由 Bearer 鉴权,会话 id 非鉴权边界。
 #[derive(Default)]
 struct McpSessions {
     active: Mutex<HashSet<String>>,
@@ -74,7 +66,6 @@ impl McpSessions {
     }
 }
 
-/// 提取器:`Mcp-Session-Id` 请求头(可选)。
 struct SessionHeader(Option<String>);
 
 impl<S: Send + Sync> FromRequestParts<S> for SessionHeader {
@@ -99,7 +90,6 @@ use runner::application::RunnerService;
 use test_plan::application::{CreatePlanUseCase, PlanCaseUseCase, PlanStatisticsUseCase};
 use test_plan::domain::{PlanType, ROOT_GROUP};
 
-// —— 取参助手 ——
 fn req_str<'a>(v: &'a Value, k: &str) -> Result<&'a str, String> {
     v.get(k).and_then(|x| x.as_str()).ok_or_else(|| format!("'{k}' (string) is required"))
 }
@@ -162,7 +152,6 @@ tool_handler!(AddTask, TaskService, |self, args| {
     Ok(json!({ "taskId": id }))
 });
 
-/// 派发工具:可直接传 `skillIds`(+`projectId`)→ 自动 compose 成行为规范注入(无需先调 compose)。
 struct DispatchDelivery {
     delivery: DeliveryService,
     skills: SkillService,
@@ -174,7 +163,6 @@ impl ToolHandler for DispatchDelivery {
         let mut instructions = args.get("instructions").and_then(|x| x.as_str()).map(String::from);
         let skill_ids = str_vec(&args, "skillIds");
         if !skill_ids.is_empty() {
-            // 直接按 skillIds 自动组合行为规范(可与显式 instructions 合并)。
             let project = req_str(&args, "projectId")?;
             let comp = self.skills.compose(project, &skill_ids).await.map_err(|e| format!("{e:?}"))?;
             instructions = Some(match instructions {
@@ -204,7 +192,6 @@ impl ToolHandler for DispatchDelivery {
     }
 }
 
-/// 自动拆分工具:仅需 requirementId(+可选 version),**服务端取规格**后拆分。
 struct Breakdown {
     requirements: RequirementService,
     breakdown: BreakdownUseCase,
@@ -309,8 +296,6 @@ impl FromRef<McpState> for Arc<dyn SessionStore> {
     }
 }
 
-// —— 测试计划 / 探测 MCP 工具 ——
-
 tool_handler!(CreateTestPlan, CreatePlanUseCase, |self, args| {
     let pt = PlanType::parse(args.get("type").and_then(|x| x.as_str()).unwrap_or("TEST_PLAN"))
         .unwrap_or(PlanType::Plan);
@@ -338,7 +323,6 @@ tool_handler!(TestPlanStats, PlanStatisticsUseCase, |self, args| {
     }))
 });
 
-/// 执行计划:跑挂入的用例/场景并自动回写结果(复用 HTTP 端点同一 PlanRunner)。
 struct RunTestPlan {
     runner: PlanRunner,
 }
@@ -356,7 +340,6 @@ impl ToolHandler for RunTestPlan {
     }
 }
 
-/// 按协议探测:中央据 protocol 选支持它的 runner-agent 就地执行(带断言)。
 struct ProbeTool {
     runner: RunnerService,
 }
@@ -621,14 +604,10 @@ pub fn router(
         })
 }
 
-/// 判断 JSON-RPC 消息是否为 initialize。
 fn is_initialize(body: &Value) -> bool {
     body.get("method").and_then(|m| m.as_str()) == Some("initialize")
 }
 
-/// JSON-RPC 入口(POST)。需有效会话(Bearer);按工具 RBAC。
-/// - `initialize` 签发 `Mcp-Session-Id`(响应头);后续请求若带该头则校验(未知 → 404)。
-/// - `Accept: text/event-stream` → 单条 SSE 事件返回(Streamable HTTP)。
 async fn mcp_handler(
     user: AuthUser,
     WantsSse(wants_sse): WantsSse,
@@ -666,7 +645,6 @@ async fn mcp_handler(
     response
 }
 
-/// 长连接 SSE(GET):服务端 → 客户端的消息流。先发 `ready`,再周期心跳保活。
 async fn mcp_sse(
     _user: AuthUser,
     SessionHeader(sid): SessionHeader,
@@ -685,7 +663,6 @@ async fn mcp_sse(
     Sse::new(ready.chain(beats)).keep_alive(KeepAlive::default()).into_response()
 }
 
-/// 终止会话(DELETE)。
 async fn mcp_delete(
     _user: AuthUser,
     SessionHeader(sid): SessionHeader,

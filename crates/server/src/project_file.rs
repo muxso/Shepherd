@@ -1,8 +1,3 @@
-//! 项目文件管理:`/api/project-file`(列表/上传/下载/删除)。
-//!
-//! 内容以 base64 文本落 PG(小文件;受全局 2MB 请求体上限约束)。列表不回内容,
-//! 下载单取一条回 {name, contentBase64}。上传/删除需登录,列表只读。
-
 use axum::{
     extract::{FromRef, Path, Query, State},
     http::StatusCode,
@@ -49,7 +44,6 @@ struct FileMeta {
     name: String,
     file_format: String,
     size_bytes: i64,
-    /// 归属模块 id;None = 未规划(顶层)。
     module_id: Option<String>,
     created_by: Option<String>,
     created_at: String,
@@ -95,10 +89,8 @@ struct UploadBody {
     file_format: String,
     #[serde(default)]
     size_bytes: i64,
-    /// 目标模块 id;null/缺省/空 = 未规划。
     #[serde(default)]
     module_id: Option<String>,
-    /// base64 文件内容(不含 data URI 前缀)。
     content_base64: String,
 }
 
@@ -165,7 +157,6 @@ async fn delete_file(user: AuthUser, State(st): State<St>, Path(id): Path<String
 #[derive(Debug, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 struct MoveFileBody {
-    /// 目标模块 id;null/缺省/空 = 移出到未规划。
     #[serde(default)]
     module_id: Option<String>,
 }

@@ -1,5 +1,3 @@
-//! 内存版环境仓储。Mutex 套 HashMap,id 自增,测试用。
-
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 

@@ -1,14 +1,9 @@
-//! 架构守卫:迁移文件命名 + 版本号唯一性。
-//!
-//! 背景:sqlx 的 `migrate!` 按文件名首段数字作版本号。**同版本号多文件会被静默去重**
-//! (只留一个、其余消失),曾导致丢迁移 → 缺列 → 运行期 500(见 `0062_*` 重号事故)。
-//! 这里在 CI 的 unit-tests 阶段把它挡在合并前。
+//! sqlx `migrate!` 按文件名首段数字作版本号,同版本号多文件会被静默去重(丢迁移 → 缺列 → 运行期 500)。
 
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 
-/// 从迁移文件名取版本号(首段 `_` 前的数字)。命名不合规 → None。
 fn version_of(name: &str) -> Option<u64> {
     if !name.ends_with(".sql") {
         return None;
@@ -53,7 +48,6 @@ fn migration_names_well_formed() {
     assert!(bad.is_empty(), "迁移文件名应为 `NNNN_描述.sql`:{bad:?}");
 }
 
-// 检测逻辑自测(不依赖真实目录),保证守卫本身可靠。
 #[test]
 fn version_parsing() {
     assert_eq!(version_of("0073_bug_created_by.sql"), Some(73));

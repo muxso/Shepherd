@@ -1,9 +1,3 @@
-//! 交付的 HTTP 适配器。DTO ↔ 用例,命令错误映射 HTTP 码。
-//!
-//! RBAC(资源键 `DELIVERY`):派发任务给执行者需 `DELIVERY:EXECUTE`;
-//! 异步回调(开跑/交付/失败)需 `DELIVERY:UPDATE`;读端点开放。
-//! 错误码:校验→400,非法流转→409,尝试不存在→404。
-
 use std::sync::Arc;
 
 use axum::{
@@ -36,7 +30,7 @@ impl FromRef<DelState> for Arc<dyn SessionStore> {
 pub fn router(svc: DeliveryService, sessions: Arc<dyn SessionStore>) -> Router {
     Router::new()
         .route("/delivery", post(dispatch).get(list_by_task))
-        // 任务中心:全系统交付尝试分页列表(静态段优先于 /delivery/{id})。
+        // 静态段 /delivery/tasks 必须先于 /delivery/{id} 注册,否则被通配吞掉。
         .route("/delivery/tasks", get(list_tasks))
         .route("/delivery/{id}", get(get_attempt).delete(delete_attempt))
         .route("/delivery/{id}/running", post(report_running))
@@ -46,8 +40,6 @@ pub fn router(svc: DeliveryService, sessions: Arc<dyn SessionStore>) -> Router {
         .route("/delivery/{id}/events", post(record_event).get(list_events))
         .with_state(DelState { svc, sessions })
 }
-
-// ---- DTO ----
 
 #[derive(Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
@@ -160,21 +152,14 @@ impl From<&DeliveryAttempt> for AttemptResponse {
     }
 }
 
-// ---- 任务中心 DTO ----
-
 #[derive(Deserialize, IntoParams)]
 #[serde(rename_all = "camelCase")]
 struct TaskQuery {
-    /// 执行状态过滤:DISPATCHED/RUNNING/DELIVERED/FAILED/STOPPED。
     status: Option<String>,
-    /// 执行者过滤:CLAUDE_CODE/CODEX。
     executor: Option<String>,
-    /// 仅实时任务(未终态:DISPATCHED/RUNNING)。
     #[serde(default)]
     active: bool,
-    /// 模糊匹配标题 / taskId / decompositionId。
     q: Option<String>,
-    /// 页码(从 1 起)。
     page: Option<i64>,
     page_size: Option<i64>,
 }
@@ -185,19 +170,12 @@ struct TaskItemResponse {
     id: String,
     decomposition_id: String,
     task_id: String,
-    /// 任务标题(关联 ms_task;无则回落 taskId)。
     title: String,
-    /// 任务描述(基本信息;无关联任务则空串)。
     description: String,
-    /// 所属模块(基本信息;任务归属需求标题,无则空串)。
     module: String,
-    /// 执行方式(执行者种类):CLAUDE_CODE / CODEX。
     executor: String,
-    /// 执行状态。
     status: String,
-    /// 执行结果:SUCCESS / FAILED / STOPPED / PENDING。
     result: String,
-    /// 完成率 0..100。
     completion_rate: i32,
     run_id: Option<String>,
     error: Option<String>,
@@ -265,8 +243,6 @@ fn cmd_err(e: DeliveryCmdError) -> Response {
         DeliveryCmdError::Repo(_) => (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
     }
 }
-
-// ---- 处理器 ----
 
 #[utoipa::path(post, path = "/delivery", tag = "delivery", request_body = DispatchBody, responses((status = 201, body = AttemptResponse)), security(("bearer" = [])))]
 async fn dispatch(user: AuthUser, State(st): State<DelState>, Json(b): Json<DispatchBody>) -> Response {
@@ -509,7 +485,6 @@ mod tests {
         assert_eq!(v["runId"], "run-3");
         let id = v["id"].as_str().expect("id").to_string();
 
-        // 回调交付
         let c = app
             .clone()
             .oneshot(req("POST", &format!("/delivery/{id}/complete"), r#"{"kind":"PULL_REQUEST","reference":"pr/7","summary":"ok"}"#, Some(&t)))
@@ -518,7 +493,6 @@ mod tests {
         assert_eq!(c.status(), StatusCode::OK);
         assert_eq!(json(c).await["status"], "DELIVERED");
 
-        // list by task
         let l = app.oneshot(req("GET", "/delivery?decompositionId=d1&taskId=t1", "", Some(&t))).await.expect("r");
         assert_eq!(l.status(), StatusCode::OK);
         assert_eq!(json(l).await.as_array().expect("arr").len(), 1);
@@ -540,13 +514,11 @@ mod tests {
 
     #[tokio::test]
     async fn rbac_dispatch_requires_execute() {
-        // 无令牌 → 401
         let (app, _t) = app_with("DELIVERY:READ", StubBehavior::Accept { run_id: "r".into() }).await;
         assert_eq!(
             app.oneshot(req("POST", "/delivery", r#"{"decompositionId":"d1","taskId":"t1","title":"x","executor":"CODEX"}"#, None)).await.expect("r").status(),
             StatusCode::UNAUTHORIZED
         );
-        // 只读令牌 → 403
         let (app, t) = app_with("DELIVERY:READ", StubBehavior::Accept { run_id: "r".into() }).await;
         assert_eq!(
             app.oneshot(req("POST", "/delivery", r#"{"decompositionId":"d1","taskId":"t1","title":"x","executor":"CODEX"}"#, Some(&t))).await.expect("r").status(),
@@ -564,7 +536,6 @@ mod tests {
             .expect("r");
         let id = json(r).await["id"].as_str().expect("id").to_string();
 
-        // 上报执行事件
         let e = app
             .clone()
             .oneshot(req("POST", &format!("/delivery/{id}/events"), r#"{"kind":"DECISION","message":"选用 argon2","detail":"PHC"}"#, Some(&t)))
@@ -574,14 +545,12 @@ mod tests {
         assert_eq!(json(e).await["kind"], "DECISION");
         app.clone().oneshot(req("POST", &format!("/delivery/{id}/events"), r#"{"kind":"FILE_CHANGE","message":"edit auth.rs"}"#, Some(&t))).await.expect("r");
 
-        // 审计读取
         let list = app.clone().oneshot(req("GET", &format!("/delivery/{id}/events"), "", Some(&t))).await.expect("r");
         assert_eq!(list.status(), StatusCode::OK);
         let arr = json(list).await;
         assert_eq!(arr.as_array().expect("a").len(), 2);
         assert_eq!(arr[0]["message"], "选用 argon2");
 
-        // 未知 kind → 400
         assert_eq!(
             app.oneshot(req("POST", &format!("/delivery/{id}/events"), r#"{"kind":"X","message":"m"}"#, Some(&t))).await.expect("r").status(),
             StatusCode::BAD_REQUEST
@@ -591,7 +560,6 @@ mod tests {
     #[tokio::test]
     async fn record_event_requires_update_permission() {
         let (app, t) = app_with("DELIVERY:READ", StubBehavior::Accept { run_id: "r".into() }).await;
-        // 只读令牌不能上报事件 → 403(尝试不存在也会先过 RBAC)
         assert_eq!(
             app.oneshot(req("POST", "/delivery/whatever/events", r#"{"kind":"LOG","message":"m"}"#, Some(&t))).await.expect("r").status(),
             StatusCode::FORBIDDEN
@@ -610,7 +578,6 @@ mod tests {
     #[tokio::test]
     async fn task_center_list_stop_and_delete_flow() {
         let (app, t) = app_with("DELIVERY:READ+EXECUTE+UPDATE", StubBehavior::Accept { run_id: "r".into() }).await;
-        // 起两条任务(异步接单 → RUNNING)。
         for tid in ["t1", "t2"] {
             app.clone()
                 .oneshot(req("POST", "/delivery", &format!(r#"{{"decompositionId":"d1","taskId":"{tid}","title":"build {tid}","executor":"CODEX"}}"#), Some(&t)))
@@ -618,7 +585,6 @@ mod tests {
                 .expect("r");
         }
 
-        // 任务中心列表(读端开放,无需令牌)。
         let l = app.clone().oneshot(req("GET", "/delivery/tasks?page=1&pageSize=10", "", None)).await.expect("r");
         assert_eq!(l.status(), StatusCode::OK);
         let v = json(l).await;
@@ -630,19 +596,15 @@ mod tests {
         assert_eq!(item["completionRate"], 50);
         let id = item["id"].as_str().expect("id").to_string();
 
-        // 实时任务过滤:active=true 仍 2 条。
         let act = app.clone().oneshot(req("GET", "/delivery/tasks?active=true", "", None)).await.expect("r");
         assert_eq!(json(act).await["total"], 2);
 
-        // 停止需 UPDATE 权限。
         let stop = app.clone().oneshot(req("POST", &format!("/delivery/{id}/stop"), r#"{"reason":"手动停止"}"#, Some(&t))).await.expect("r");
         assert_eq!(stop.status(), StatusCode::OK);
         assert_eq!(json(stop).await["status"], "STOPPED");
 
-        // 停止后:active 仅剩 1 条。
         assert_eq!(json(app.clone().oneshot(req("GET", "/delivery/tasks?active=true", "", None)).await.expect("r")).await["total"], 1);
 
-        // 删除终态尝试 → 204。
         let del = app.clone().oneshot(req("DELETE", &format!("/delivery/{id}"), "", Some(&t))).await.expect("r");
         assert_eq!(del.status(), StatusCode::NO_CONTENT);
         assert_eq!(json(app.clone().oneshot(req("GET", "/delivery/tasks", "", None)).await.expect("r")).await["total"], 1);
@@ -653,12 +615,10 @@ mod tests {
         let (app, t) = app_with("DELIVERY:READ+EXECUTE+UPDATE", StubBehavior::Accept { run_id: "r".into() }).await;
         let r = app.clone().oneshot(req("POST", "/delivery", r#"{"decompositionId":"d1","taskId":"t1","title":"x","executor":"CODEX"}"#, Some(&t))).await.expect("r");
         let id = json(r).await["id"].as_str().expect("id").to_string();
-        // 进行中删除 → 409。
         assert_eq!(
             app.clone().oneshot(req("DELETE", &format!("/delivery/{id}"), "", Some(&t))).await.expect("r").status(),
             StatusCode::CONFLICT
         );
-        // 只读令牌停止 → 403。
         let (app2, ro) = app_with("DELIVERY:READ", StubBehavior::Accept { run_id: "r".into() }).await;
         assert_eq!(
             app2.oneshot(req("POST", "/delivery/whatever/stop", r#"{}"#, Some(&ro))).await.expect("r").status(),

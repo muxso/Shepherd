@@ -1,5 +1,3 @@
-//! 用户管理用例:list/get/update/delete(create 见 `CreateUserUseCase`)。
-
 use std::sync::Arc;
 
 use kernel::page::{Page, PageRequest};
@@ -40,7 +38,6 @@ impl UserService {
         self.repo.get(id).await?.filter(|u| !u.deleted).ok_or(UserCmdError::NotFound)
     }
 
-    /// 改名 + 改邮箱(唯一性,忽略软删除)+ 启停。
     pub async fn update(
         &self,
         id: &str,
@@ -49,7 +46,6 @@ impl UserService {
         enable: bool,
     ) -> Result<User, UserCmdError> {
         let mut user = self.get(id).await?;
-        // 邮箱变更需保证未删除用户内唯一
         let new_email = Email::parse(email)?;
         if new_email != user.email {
             if let Some(existing) = self.repo.find_by_email(&new_email).await? {
@@ -121,7 +117,6 @@ mod tests {
         let (svc, repo, id) = seeded().await;
         svc.delete(&id).await.expect("del");
         assert_eq!(svc.get(&id).await.unwrap_err(), UserCmdError::NotFound);
-        // 软删除后邮箱可被复用(create 不再撞重复)
         assert!(CreateUserUseCase::new(repo).execute("A2", "alice@example.com").await.is_ok());
     }
 }

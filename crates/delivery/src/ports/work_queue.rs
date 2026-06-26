@@ -1,54 +1,38 @@
-//! 工作队列出站端口:把 WorkSpec 交给某种队列,远程 runtime 出站认领。
-//!
-//! 单机:进程内队列(`InMemoryWorkQueue`)。
-//! 分布式(多 server 副本 + 多 runtime):需外部化、可靠的队列(`RedisStreamQueue`),
-//! 满足「恰好一台 runtime 认领(一次性)+ 终态 ack + 死 runtime 超时回收」。
-
 use async_trait::async_trait;
 use std::time::Duration;
 
 use crate::domain::ExecutorKind;
 use crate::ports::WorkSpec;
 
-/// 一次认领的结果:工作规格 + 不透明 ack 句柄(Redis 下为 stream entry id;内存下为空)。
 #[derive(Debug, Clone)]
 pub struct Claimed {
     pub spec: WorkSpec,
 }
 
-/// 单条能力流的队列计数(机群可观测:积压 / 在飞 / 滞留)。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct QueueStat {
-    /// 该计数对应的执行者能力。
     pub executor: ExecutorKind,
-    /// 待认领:已入队、尚未投递给任何 runtime(积压 backlog)。
     pub ready: u64,
-    /// 在飞:已认领未 ack(正在执行,或 runtime 崩了滞留 PEL 待回收)。
     pub in_flight: u64,
-    /// 最久一条在飞任务自上次投递起的空闲毫秒(stuck 探测信号;无在飞 = 0)。
-    /// 由队列后端自身时钟计(Redis 下为 XPENDING idle),不跨进程比时钟。
+    // 后端自身时钟所计(Redis 下为 XPENDING idle),不可跨进程比较。
     pub oldest_in_flight_ms: u64,
 }
 
 #[async_trait]
 pub trait WorkQueue: Send + Sync {
-    /// 入队一个待执行任务(dispatch 调用)。
     async fn enqueue(&self, spec: &WorkSpec);
 
-    /// 认领一个匹配 `caps` 的任务;无则阻塞到 `wait` 超时(长轮询)。
-    /// `consumer` = 认领方身份(= runtime id),用于 PEL 归属与死 runtime 回收。
+    // 阻塞到 wait 超时的长轮询;consumer = runtime id,用于 PEL 归属与死 runtime 回收。
     async fn claim(&self, caps: &[ExecutorKind], wait: Duration, consumer: &str) -> Option<Claimed>;
 
-    /// 任务落终态时确认(移出待处理,避免被回收重投)。内存实现为 no-op。
+    // 终态时调用,把消息移出 PEL,避免被 reclaim_dead 重投。内存实现为 no-op。
     async fn ack(&self, attempt_id: &str);
 
-    /// 回收「持有者已不在 `live`(死 runtime)且空闲超 `grace`」的待处理任务,重新入队。
-    /// 返回重投条数。`live` = 在线 runtime id 集合(由注册表心跳判定)。内存队列默认 no-op。
+    // 重投持有者已不在 live 且空闲超 grace 的待处理任务;live 由注册表心跳判定。
     async fn reclaim_dead(&self, _live: &[String], _grace: Duration) -> usize {
         0
     }
 
-    /// 各能力流的队列计数(机群视图 / 排障)。默认空(不支持的实现,如纯桩)。
     async fn stats(&self) -> Vec<QueueStat> {
         Vec::new()
     }

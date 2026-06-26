@@ -1,7 +1,3 @@
-//! SSH 协议插件:target=连接目标(host:port,缺省端口 22),payload=要执行的命令。
-//! 认证用 metadata 里的 user/password(键 `user`/`password`)。输出=stdout+stderr,
-//! status=远端退出码。纯 Rust(russh,无 C 依赖),与 redis/websocket 插件一致。
-
 use async_trait::async_trait;
 use std::sync::Arc;
 use std::time::Instant;
@@ -34,7 +30,6 @@ impl Handler for AcceptAll {
 }
 
 async fn run_ssh(target: &str, command: &str, user: &str, password: &str) -> Result<(String, i64), String> {
-    // host:port(缺省 22)
     let (host, port) = match target.rsplit_once(':') {
         Some((h, p)) => (h.to_string(), p.parse::<u16>().map_err(|_| "端口非法".to_string())?),
         None => (target.to_string(), 22u16),

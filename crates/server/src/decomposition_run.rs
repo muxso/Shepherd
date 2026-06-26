@@ -1,9 +1,3 @@
-//! 组装根桥:`POST /decomposition/{id}/run` —— 按依赖图**并行**编排整张任务 DAG。
-//!
-//! 逐层推进:每轮挑出「依赖全部 Verified 的 Pending 任务」,**并发派发**(信号量限流);
-//! 每个派发经交付观察者驱动 验证门 + 自纠正 + 推进任务。无新就绪任务即停。
-//! 依赖未达成(上游 Failed)的任务留在 Pending = blocked。RBAC 资源键 `TASK:EXECUTE`。
-
 use std::collections::HashSet;
 use std::sync::Arc;
 
@@ -53,10 +47,8 @@ pub fn router(
 #[derive(Debug, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 struct RunBody {
-    /// 执行者:CLAUDE_CODE(默认)| CODEX。
     #[serde(default = "default_executor")]
     executor: String,
-    /// 并发上限(默认 4,至少 1)。
     #[serde(default = "default_concurrency")]
     max_concurrency: usize,
 }
@@ -75,9 +67,7 @@ struct RunResponse {
     total: usize,
     verified: usize,
     failed: usize,
-    /// 依赖未达成、始终未就绪的任务数(上游失败 → 阻塞)。
     blocked: usize,
-    /// 调度轮数(DAG 层级数)。
     rounds: u32,
 }
 
@@ -97,7 +87,6 @@ async fn run_decomposition(
     if !user.can("TASK", "EXECUTE") {
         return (StatusCode::FORBIDDEN, "permission denied").into_response();
     }
-    // 先确认存在。
     let dec = match st.tasks.get(&id).await {
         Ok(d) => d,
         Err(TaskCmdError::DecompositionNotFound) => {
@@ -111,7 +100,7 @@ async fn run_decomposition(
     let executor = body.executor;
 
     let mut rounds = 0u32;
-    // 上限 = 任务数 + 1,防病态(无进展)死循环。
+    // 上限 = 任务数 + 1,防无进展死循环。
     let guard = total as u32 + 1;
     loop {
         let dec = match st.tasks.get(&id).await {
@@ -124,7 +113,6 @@ async fn run_decomposition(
             .filter(|t| t.status == TaskStatus::Verified)
             .map(|t| t.id.as_str())
             .collect();
-        // 就绪:自身 Pending 且依赖全部 Verified。
         let ready: Vec<_> = dec
             .tasks
             .iter()
@@ -139,7 +127,6 @@ async fn run_decomposition(
         }
         rounds += 1;
 
-        // 本层并发派发(信号量限流)。每次派发经观察者驱动验证门 + 自纠正 + 推进任务。
         let mut set: JoinSet<()> = JoinSet::new();
         for t in ready {
             let delivery = st.delivery.clone();
@@ -156,14 +143,11 @@ async fn run_decomposition(
         while set.join_next().await.is_some() {}
     }
 
-    // 终态统计。
     let final_dec = st.tasks.get(&id).await.unwrap_or(dec);
     let verified = final_dec.tasks.iter().filter(|t| t.status == TaskStatus::Verified).count();
     let failed = final_dec.tasks.iter().filter(|t| t.status == TaskStatus::Failed).count();
     let blocked = total - verified - failed;
 
-    // 全部任务验证通过 = 该需求验收完整性达成 → 自动把需求标记交付(Baselined→Delivered)。
-    // best-effort:未定基线/已归档会被领域层拒绝,这里仅记日志不影响运行结果。
     if total > 0 && verified == total {
         if let Err(e) = st.requirements.deliver(&final_dec.requirement_id).await {
             tracing::warn!(requirement = %final_dec.requirement_id, "自动标记交付失败(可能未定基线): {e:?}");

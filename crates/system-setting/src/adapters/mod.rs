@@ -1,6 +1,3 @@
-//! 适配器层。
-//! - `in_memory` / `directory`:纯 test double(无 IO),始终编译,供用例单测复用。
-//! - `pg`(feature=pg)、`http`(feature=http):真实 IO 适配器,仅在对应 feature 下编译。
 pub mod directory;
 pub mod in_memory;
 pub mod in_memory_auth;

@@ -1,4 +1,3 @@
-//! 端口层:用例所需的抽象接口。
 pub mod auth;
 pub mod oidc;
 pub mod organization_repository;

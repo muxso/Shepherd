@@ -1,5 +1,3 @@
-//! AI Skill 领域模型 + 组合(compose):传递展开 includes,有序去重防环。
-
 use std::collections::HashSet;
 
 use thiserror::Error;
@@ -14,15 +12,12 @@ pub enum SkillError {
     NameTooLong,
     #[error("skill instructions must not be empty")]
     EmptyInstructions,
-    /// include 指向了不存在(或已删除)的 skill。
     #[error("unknown included skill: {0}")]
     UnknownInclude(String),
-    /// includes 成环。
     #[error("cyclic skill composition at: {0}")]
     Cycle(String),
 }
 
-/// 创建 skill 的入站请求(尚无 id)。构造即校验:name / instructions 非空。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NewSkill {
     pub project_id: String,
@@ -61,7 +56,6 @@ impl NewSkill {
     }
 }
 
-/// 一个可复用的 AI 行为规范。`includes` 指向同项目内其它 skill 的 id。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Skill {
     pub id: String,
@@ -130,14 +124,12 @@ impl Skill {
     }
 }
 
-/// 组合结果:解析出的有序 skill id(依赖在前)+ 拼接后的指令集。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Composition {
     pub skill_ids: Vec<String>,
     pub instructions: String,
 }
 
-/// 一组 skill 的只读快照,用于纯函数式组合。
 pub struct SkillLibrary {
     skills: Vec<Skill>,
 }
@@ -151,7 +143,6 @@ impl SkillLibrary {
         self.skills.iter().find(|s| s.id == id)
     }
 
-    /// 把 `roots` 经 includes 传递展开成有序(依赖在前)、去重、防环的组合。
     pub fn compose(&self, roots: &[String]) -> Result<Composition, SkillError> {
         let mut order: Vec<String> = Vec::new();
         let mut visited: HashSet<String> = HashSet::new();
@@ -234,7 +225,6 @@ mod tests {
 
     #[test]
     fn compose_expands_includes_dependencies_first() {
-        // B includes A → 组合顺序 A 在前
         let lib = SkillLibrary::new(vec![skill("s1", "A", &[]), skill("s2", "B", &["s1"])]);
         let c = lib.compose(&["s2".into()]).expect("compose");
         assert_eq!(c.skill_ids, vec!["s1", "s2"]);
@@ -244,7 +234,6 @@ mod tests {
 
     #[test]
     fn compose_dedups_diamond() {
-        // D→{B,C}→A:A 只出现一次,顺序为拓扑序
         let lib = SkillLibrary::new(vec![
             skill("a", "A", &[]),
             skill("b", "B", &["a"]),
@@ -268,7 +257,6 @@ mod tests {
             lib.compose(&["a".into()]).unwrap_err(),
             SkillError::UnknownInclude("ghost".into())
         );
-        // 未知根同样报错
         assert_eq!(
             lib.compose(&["nope".into()]).unwrap_err(),
             SkillError::UnknownInclude("nope".into())
@@ -283,6 +271,6 @@ mod tests {
             skill("c", "C", &["a"]),
         ]);
         let comp = lib.compose(&["b".into(), "c".into()]).expect("compose");
-        assert_eq!(comp.skill_ids, vec!["a", "b", "c"]); // a 不重复
+        assert_eq!(comp.skill_ids, vec!["a", "b", "c"]);
     }
 }

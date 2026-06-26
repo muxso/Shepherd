@@ -1,9 +1,3 @@
-//! 压测领域模型(零 IO 纯函数):负载计划 + 样本 → 统计聚合。
-//!
-//! 把"延迟分位/吞吐/错误率"的算法和并发执行解耦:这里只对一批已采集的样本做确定性聚合,
-//! 可用合成数据穷举单测;真正的并发跑在 `adapters::engine`(tokio)。
-//! (海量样本可把采集端换成 hdrhistogram 流式直方图,聚合契约不变。)
-
 use serde::Serialize;
 use thiserror::Error;
 
@@ -17,16 +11,12 @@ pub enum LoadError {
     ZeroDuration,
 }
 
-/// 施压模式:固定总次数,或持续固定时长。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LoadMode {
-    /// 合计执行 `n` 次请求。
     Iterations(usize),
-    /// 持续施压 `ms` 毫秒(每个并发 worker 各跑满整段时长)。
     DurationMs(u64),
 }
 
-/// 负载计划:`concurrency` 个并发"虚拟用户",按 `mode` 施压。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LoadPlan {
     pub concurrency: usize,
@@ -34,7 +24,6 @@ pub struct LoadPlan {
 }
 
 impl LoadPlan {
-    /// 固定次数模式。构造即校验:并发与总次数都必须 > 0。
     pub fn new(concurrency: usize, iterations: usize) -> Result<Self, LoadError> {
         if concurrency == 0 {
             return Err(LoadError::ZeroConcurrency);
@@ -45,7 +34,6 @@ impl LoadPlan {
         Ok(Self { concurrency, mode: LoadMode::Iterations(iterations) })
     }
 
-    /// 时长模式。构造即校验:并发与时长都必须 > 0。
     pub fn duration_ms(concurrency: usize, duration_ms: u64) -> Result<Self, LoadError> {
         if concurrency == 0 {
             return Err(LoadError::ZeroConcurrency);
@@ -57,7 +45,6 @@ impl LoadPlan {
     }
 }
 
-/// 单次请求的采样:延迟(毫秒)+ 是否成功。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Sample {
     pub latency_ms: u64,
@@ -70,7 +57,6 @@ impl Sample {
     }
 }
 
-/// 延迟分位统计(毫秒)。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LatencyStats {
@@ -83,22 +69,19 @@ pub struct LatencyStats {
     pub max: u64,
 }
 
-/// 压测报告:计数 + 错误率 + 吞吐 + 延迟分位。
 #[derive(Debug, Clone, Copy, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LoadReport {
     pub total: usize,
     pub success: usize,
     pub failed: usize,
-    /// 失败占比 [0,1]。
     pub error_rate: f64,
     pub elapsed_ms: u64,
-    /// 吞吐(请求/秒)= total / 总耗时。
     pub throughput_rps: f64,
     pub latency: LatencyStats,
 }
 
-/// 最近秩(nearest-rank)分位:`p ∈ (0,100]`,对已排序切片取 `ceil(p/100*n)` 名(1 基)。
+// nearest-rank 分位:取 ceil(p/100*n) 名(1 基),非插值。
 fn percentile(sorted: &[u64], p: f64) -> u64 {
     if sorted.is_empty() {
         return 0;
@@ -109,8 +92,7 @@ fn percentile(sorted: &[u64], p: f64) -> u64 {
     sorted[idx]
 }
 
-/// 把样本聚合成报告。`elapsed_ms` 为整轮压测的墙钟耗时(算吞吐用)。
-/// 延迟分位对**全部**样本计算(含失败)——失败往往是慢/超时,纳入更能反映真实尾延迟。
+// 延迟分位对全部样本计算(含失败):失败多为慢/超时,纳入才反映真实尾延迟。
 pub fn aggregate(samples: &[Sample], elapsed_ms: u64) -> LoadReport {
     let total = samples.len();
     let success = samples.iter().filter(|s| s.success).count();
@@ -160,8 +142,8 @@ mod tests {
 
     #[test]
     fn percentile_nearest_rank() {
-        let v: Vec<u64> = (1..=10).collect(); // 1..10
-        assert_eq!(percentile(&v, 50.0), 5); // ceil(5)=5 → idx4
+        let v: Vec<u64> = (1..=10).collect();
+        assert_eq!(percentile(&v, 50.0), 5);
         assert_eq!(percentile(&v, 90.0), 9);
         assert_eq!(percentile(&v, 99.0), 10);
         assert_eq!(percentile(&v, 100.0), 10);
@@ -177,7 +159,7 @@ mod tests {
             Sample::new(30, false),
             Sample::new(40, true),
         ];
-        let r = aggregate(&samples, 1000); // 4 次 / 1s = 4 rps
+        let r = aggregate(&samples, 1000);
         assert_eq!(r.total, 4);
         assert_eq!(r.success, 3);
         assert_eq!(r.failed, 1);
@@ -185,12 +167,11 @@ mod tests {
         assert!((r.throughput_rps - 4.0).abs() < 1e-9);
         assert_eq!(r.latency.min, 10);
         assert_eq!(r.latency.max, 40);
-        assert_eq!(r.latency.mean, 25); // (10+20+30+40)/4
+        assert_eq!(r.latency.mean, 25);
     }
 
     #[test]
     fn aggregate_latency_includes_failures() {
-        // 失败样本延迟最大,应进入尾分位
         let samples = vec![Sample::new(5, true), Sample::new(5, true), Sample::new(900, false)];
         let r = aggregate(&samples, 1000);
         assert_eq!(r.latency.max, 900);

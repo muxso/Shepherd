@@ -1,5 +1,3 @@
-//! 用例:按 id 取场景(steps 已加载,按 order 升序)。
-
 use std::sync::Arc;
 
 use crate::domain::ApiScenario;

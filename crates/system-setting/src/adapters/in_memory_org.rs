@@ -1,5 +1,3 @@
-//! 内存版组织仓储(test double 兼本地)。
-
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;

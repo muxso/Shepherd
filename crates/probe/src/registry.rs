@@ -1,5 +1,3 @@
-//! 插件注册表:按协议名分发探测;执行后据断言合成结果。
-
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -16,20 +14,17 @@ impl PluginRegistry {
         Self::default()
     }
 
-    /// 注册一个插件(按其 `protocol()` 名)。链式调用便于组装。
     pub fn with(mut self, plugin: Arc<dyn ProtocolPlugin>) -> Self {
         self.plugins.insert(plugin.protocol().to_string(), plugin);
         self
     }
 
-    /// 已支持的协议名(供 runner 自报能力)。
     pub fn protocols(&self) -> Vec<String> {
         let mut v: Vec<String> = self.plugins.keys().cloned().collect();
         v.sort();
         v
     }
 
-    /// 分发探测:找到协议插件 → 执行 → 据断言合成结果。未知协议 → 失败结果。
     pub async fn dispatch(&self, req: &ProbeRequest) -> ProbeOutcome {
         match self.plugins.get(&req.protocol) {
             Some(plugin) => {

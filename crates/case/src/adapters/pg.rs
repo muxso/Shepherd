@@ -1,8 +1,3 @@
-//! PostgreSQL 实现的 `ReviewRepository`。
-//!
-//! 状态/规则在 DB 里以规范字符串存储,借领域的 `as_str`/`parse` 双向映射;
-//! 历史按 `seq` 升序读出,正好满足聚合算法"时间升序"的输入约定。
-
 use async_trait::async_trait;
 use crate::domain::{PassRule, ReviewRecord, ReviewSetting, ReviewStatus};
 use crate::ports::{RepoError, ReviewCaseStatus, ReviewDetail, ReviewRepository, ReviewSummary};
@@ -94,7 +89,6 @@ impl ReviewRepository for PgReviewRepository {
         case_id: &str,
         status: ReviewStatus,
     ) -> Result<(), RepoError> {
-        // 回写:存在则更新(UPSERT)
         sqlx::query(
             "INSERT INTO ms_case_review_status (review_id, case_id, status) VALUES ($1, $2, $3) \
              ON CONFLICT (review_id, case_id) DO UPDATE SET status = EXCLUDED.status",
@@ -115,7 +109,6 @@ impl ReviewRepository for PgReviewRepository {
         reviewer_count: usize,
         case_ids: &[String],
     ) -> Result<String, RepoError> {
-        // 规范化规则串(非法回落 SINGLE)。
         let rule = PassRule::parse(pass_rule).unwrap_or(PassRule::Single);
         let mut tx = self.pool.begin().await.map_err(map_err)?;
         let id: String = sqlx::query(
@@ -131,7 +124,6 @@ impl ReviewRepository for PgReviewRepository {
         .map_err(map_err)?
         .try_get("id")
         .map_err(map_err)?;
-        // 每条用例初始置 UN_REVIEWED。
         for c in case_ids {
             sqlx::query(
                 "INSERT INTO ms_case_review_status (review_id, case_id, status) VALUES ($1, $2, 'UN_REVIEWED') \
@@ -165,7 +157,6 @@ impl ReviewRepository for PgReviewRepository {
                 let passed: i64 = r.try_get("passed").map_err(map_err)?;
                 let total = total.max(0) as usize;
                 let passed = passed.max(0) as usize;
-                // 整体生命周期:全部用例已通过 → COMPLETED,否则 IN_PROGRESS。
                 let status =
                     if total > 0 && passed >= total { "COMPLETED" } else { "IN_PROGRESS" };
                 Ok(ReviewSummary {
@@ -191,7 +182,6 @@ impl ReviewRepository for PgReviewRepository {
         let pass_rule: String = head.try_get("pass_rule").map_err(map_err)?;
         let count: i32 = head.try_get("reviewer_count").map_err(map_err)?;
         let case_ids: Vec<String> = head.try_get("case_ids").map_err(map_err)?;
-        // 各用例当前状态(缺失视为 UN_REVIEWED)。
         let srows = sqlx::query("SELECT case_id, status FROM ms_case_review_status WHERE review_id = $1")
             .bind(review_id)
             .fetch_all(&self.pool)
@@ -231,7 +221,6 @@ mod tests {
         .await
         .expect("truncate");
 
-        // 评审配置:会签,2 人
         sqlx::query("INSERT INTO ms_case_review (id, pass_rule, reviewer_count) VALUES ('rev1','MULTIPLE',2)")
             .execute(&pool)
             .await
@@ -239,13 +228,11 @@ mod tests {
 
         let repo = PgReviewRepository::new(pool.clone());
 
-        // setting 往返
         let setting = repo.review_setting("rev1").await.expect("setting");
         assert_eq!(setting.rule, PassRule::Multiple);
         assert_eq!(setting.reviewer_count, 2);
         assert_eq!(repo.review_setting("nope").await, Err(RepoError::NotFound));
 
-        // 追加历史并验证时间升序
         repo.append_history("rev1", "c1", &ReviewRecord { reviewer_id: "u1".into(), status: ReviewStatus::UnPass })
             .await
             .expect("h1");
@@ -254,10 +241,9 @@ mod tests {
             .expect("h2");
         let hist = repo.history_of("rev1", "c1").await.expect("hist");
         assert_eq!(hist.len(), 2);
-        assert_eq!(hist[0].status, ReviewStatus::UnPass); // 先
-        assert_eq!(hist[1].status, ReviewStatus::Pass); // 后
+        assert_eq!(hist[0].status, ReviewStatus::UnPass);
+        assert_eq!(hist[1].status, ReviewStatus::Pass);
 
-        // 状态 UPSERT:两次,第二次覆盖
         repo.set_case_status("rev1", "c1", ReviewStatus::UnderReviewed).await.expect("s1");
         repo.set_case_status("rev1", "c1", ReviewStatus::Pass).await.expect("s2");
         let row = sqlx::query("SELECT status FROM ms_case_review_status WHERE review_id='rev1' AND case_id='c1'")

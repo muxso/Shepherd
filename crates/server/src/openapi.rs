@@ -1,14 +1,9 @@
-//! OpenAPI 文档聚合 + Swagger UI。
-//! 各 http 适配器各自 `#[derive(OpenApi)]` 导出 `openapi()`,这里合并成一份总文档,
-//! 注入 bearer 安全方案,挂 `/api-docs/openapi.json` 与 `/swagger-ui`(CDN 资产,无需打包)。
-
 use axum::response::Html;
 use axum::routing::get;
 use axum::{Json, Router};
 use utoipa::openapi::security::{HttpAuthScheme, HttpBuilder, SecurityScheme};
 use utoipa::{Modify, OpenApi};
 
-/// 总文档骨架:标题/版本 + bearer 安全方案。
 #[derive(OpenApi)]
 #[openapi(
     info(title = "Shepherd API", version = env!("CARGO_PKG_VERSION"), description = "AI 研发监督平台 REST API"),
@@ -30,7 +25,6 @@ impl Modify for BearerAddon {
     }
 }
 
-/// 合并所有上下文的 OpenAPI(逐 crate 接入;未注解的暂不并入)。
 pub fn merged() -> utoipa::openapi::OpenApi {
     let mut doc = Base::openapi();
     doc.merge(requirement::adapters::http::openapi());

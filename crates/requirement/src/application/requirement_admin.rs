@@ -1,8 +1,3 @@
-//! 用例:需求生命周期管理 —— get / revise(修订)/ set_baseline(定基)/ rename / archive / delete。
-//!
-//! 领域不变量在 `Requirement` 聚合里;本服务负责加载-变更-落库,并把领域错误翻译成带语义的
-//! 命令错误(供 HTTP 层映射到 404/409/400)。
-
 use std::sync::Arc;
 
 use crate::domain::{parse_criteria, Requirement, RequirementError};
@@ -10,19 +5,12 @@ use crate::ports::{RepoError, RequirementRepository};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RequirementCmdError {
-    /// 入参/领域校验失败 → 400。
     Validation(RequirementError),
-    /// 标题已被同项目内另一需求占用 → 409。
     TitleExists,
-    /// 需求不存在(或已软删除)→ 404。
     NotFound,
-    /// 指定版本不存在 → 404。
     NoSuchVersion(u32),
-    /// 对已归档需求修订 → 409。
     Archived,
-    /// 对非「待评审」需求做评审不通过(已基线/已交付)→ 409。
     NotUnderReview,
-    /// 存储错误 → 500。
     Repo(RepoError),
 }
 
@@ -32,7 +20,6 @@ impl From<RepoError> for RequirementCmdError {
     }
 }
 
-// 领域错误 → 命令错误的确定性映射(版本/归档区分出来,其余归为校验)。
 impl From<RequirementError> for RequirementCmdError {
     fn from(e: RequirementError) -> Self {
         match e {
@@ -54,12 +41,11 @@ impl RequirementService {
         Self { repo }
     }
 
-    /// 取回完整聚合(软删除视为不存在)。
+    /// 软删除视为不存在。
     pub async fn get(&self, id: &str) -> Result<Requirement, RequirementCmdError> {
         self.repo.get(id).await?.filter(|r| !r.deleted).ok_or(RequirementCmdError::NotFound)
     }
 
-    /// 修订:追加新版本,返回新版本号。
     pub async fn revise(
         &self,
         id: &str,
@@ -73,7 +59,6 @@ impl RequirementService {
         Ok(version)
     }
 
-    /// 定基线:把基线指向某个已存在版本。
     pub async fn set_baseline(
         &self,
         id: &str,
@@ -85,7 +70,7 @@ impl RequirementService {
         Ok(req)
     }
 
-    /// 重命名:项目内标题唯一(忽略软删除,排除自身)。
+    /// 标题唯一性忽略软删除并排除自身。
     pub async fn rename(&self, id: &str, title: &str) -> Result<Requirement, RequirementCmdError> {
         let mut req = self.get(id).await?;
         let trimmed = title.trim();
@@ -99,7 +84,6 @@ impl RequirementService {
         Ok(req)
     }
 
-    /// 评审不通过:记录原因,需求留在 DRAFT(待修订重评)。原因必填。
     pub async fn reject_review(
         &self,
         id: &str,
@@ -111,7 +95,6 @@ impl RequirementService {
         Ok(req)
     }
 
-    /// 标记交付:Baselined → Delivered(幂等)。验证完整性达成后由编排层调用。
     pub async fn deliver(&self, id: &str) -> Result<Requirement, RequirementCmdError> {
         let mut req = self.get(id).await?;
         req.deliver()?;
@@ -155,9 +138,7 @@ mod tests {
         let (svc, id) = seeded().await;
         let v = svc.revise(&id, "v2", &["c2".to_string()]).await.expect("revise");
         assert_eq!(v, 2);
-        // 修订后基线仍是 1
         assert_eq!(svc.get(&id).await.expect("get").baseline_version, 1);
-        // 定基到 2
         let r = svc.set_baseline(&id, 2).await.expect("baseline");
         assert_eq!(r.baseline_version, 2);
         assert_eq!(svc.get(&id).await.expect("get").baseline_version, 2);
@@ -168,9 +149,7 @@ mod tests {
         let (svc, id) = seeded().await;
         let r = svc.reject_review(&id, "  缺少异常路径  ").await.expect("reject");
         assert_eq!(r.review_comment.as_deref(), Some("缺少异常路径"));
-        // 重新加载确认已落库
         assert_eq!(svc.get(&id).await.expect("get").review_comment.as_deref(), Some("缺少异常路径"));
-        // 评审通过(定基线)清空原因
         let p = svc.set_baseline(&id, 1).await.expect("baseline");
         assert!(p.review_comment.is_none());
     }
@@ -218,7 +197,6 @@ mod tests {
         create.execute("p1", "注册", "d", &[]).await.expect("b");
         let svc = RequirementService::new(repo);
         assert_eq!(svc.rename(&a, "注册").await.unwrap_err(), RequirementCmdError::TitleExists);
-        // 改成全新标题可以
         assert!(svc.rename(&a, "登入").await.is_ok());
     }
 

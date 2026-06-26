@@ -1,11 +1,3 @@
-//! 远端 Agent HTTP 执行者(feature = "exec-http"):POST 工作规格给 Agent SDK/API 服务。
-//!
-//! 服务响应约定:
-//! - `{"status":"accepted","runId":"..."}`            → 异步接单 → `DispatchOutcome::Accepted`;
-//! - `{"status":"completed","deliverable":{...}}`     → 同步完成 → `DispatchOutcome::Completed`。
-//!
-//! client 默认 `no_proxy`(agent 端点通常内网/本地,避免被全局代理劫持)。
-
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
@@ -28,7 +20,6 @@ impl HttpAgentExecutor {
     }
 }
 
-// 端口类型保持 serde-free;此处用本地 DTO 序列化(camelCase 对接外部服务)。
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct WorkSpecDto<'a> {
@@ -66,7 +57,6 @@ struct DispatchResponse {
     run_id: Option<String>,
     #[serde(default)]
     deliverable: Option<DeliverableDto>,
-    /// 远端可一并回带运行中产生的事件,这里逐条回流给 sink(审计)。
     #[serde(default)]
     events: Vec<EventDto>,
 }
@@ -102,7 +92,6 @@ impl AgentExecutor for HttpAgentExecutor {
         let body: DispatchResponse =
             resp.json().await.map_err(|e| ExecError::Backend(e.to_string()))?;
 
-        // 回流远端带回的执行事件(审计轨迹)。
         for ev in &body.events {
             let kind = EventKind::parse(&ev.kind).unwrap_or(EventKind::Log);
             if let Ok(e) = NewExecutionEvent::new(kind, &ev.message, ev.detail.as_deref()) {

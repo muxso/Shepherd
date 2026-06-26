@@ -1,13 +1,3 @@
-//! 用例:发起批量运行。
-//!
-//! 编排顺序(把 quirk 前移为入口校验):
-//!  1. 校验命令(用例非空、重试配置合法)
-//!  2. 解析有效池:客户端 poolId 优先,否则回退项目默认池;皆空 → ResourcePoolNotConfigured
-//!  3. 校验池可用;不可用 → ResourcePoolUnavailable
-//!  4. 派发执行,返回报告 id
-//!
-//! 对比 Java 版:第 2/3 步的失败原本要等任务下发后深在执行链里 500;这里在入口就明确失败。
-
 use std::sync::Arc;
 
 use crate::domain::{resolve_effective_pool, BatchRunCommand, BatchRunError, ResolvedEnv, RunModeConfig};
@@ -39,27 +29,22 @@ impl StartBatchRunUseCase {
         Self { pools, executor, envs }
     }
 
-    /// 返回派发后的报告 id。
     pub async fn execute(
         &self,
         project_id: &str,
         case_ids: Vec<String>,
         config: RunModeConfig,
     ) -> Result<DispatchReport, BatchRunError> {
-        // 1) 命令校验
         let cmd = BatchRunCommand::new(case_ids, config)?;
 
-        // 2) 解析有效池(客户端优先,回退项目默认)
         let default_pool = self.pools.default_pool_id(project_id).await?;
         let pool_id =
             resolve_effective_pool(cmd.config.pool_id.as_deref(), default_pool.as_deref())?;
 
-        // 3) 池必须可用
         if !self.pools.is_pool_available(&pool_id).await? {
             return Err(BatchRunError::ResourcePoolUnavailable { pool_id });
         }
 
-        // 4) 解析运行环境(给定 environmentId 才解析;缺失/查无 → 空环境,不注入)
         let environment_id =
             cmd.config.environment_id.as_deref().filter(|s| !s.trim().is_empty()).map(str::to_string);
         let env = match environment_id.as_deref() {
@@ -67,7 +52,6 @@ impl StartBatchRunUseCase {
             None => ResolvedEnv::default(),
         };
 
-        // 5) 派发
         let spec =
             DispatchSpec { case_ids: cmd.case_ids, pool_id, mode: cmd.config.mode, env, environment_id };
         Ok(self.executor.dispatch(&spec).await?)
@@ -95,12 +79,11 @@ mod tests {
 
     #[tokio::test]
     async fn no_pool_anywhere_is_explicit_error_not_dispatched() {
-        // 项目无默认池 + 客户端未传 → 入口明确失败(对应 Java 的 500 场景)
         let exec = SpyExecutor::new();
         let uc = uc(FakeResourcePool::new(), exec.clone());
         let err = uc.execute("proj1", vec!["c1".into()], config(None)).await.unwrap_err();
         assert_eq!(err, BatchRunError::ResourcePoolNotConfigured);
-        assert_eq!(exec.dispatch_count(), 0); // 没有派发
+        assert_eq!(exec.dispatch_count(), 0);
     }
 
     #[tokio::test]
@@ -124,13 +107,12 @@ mod tests {
             .await
             .expect("ok");
         assert_eq!(exec.last_pool(), Some("client-pool".to_string()));
-        assert_eq!(exec.last_case_count(), Some(2)); // 全部用例透传
+        assert_eq!(exec.last_case_count(), Some(2));
     }
 
     #[tokio::test]
     async fn resolved_pool_unavailable_is_rejected() {
         let exec = SpyExecutor::new();
-        // 池已解析(客户端传了)但不在可用集合里
         let uc = uc(FakeResourcePool::new(), exec.clone());
         let err = uc.execute("proj1", vec!["c1".into()], config(Some("dead-pool"))).await.unwrap_err();
         assert_eq!(err, BatchRunError::ResourcePoolUnavailable { pool_id: "dead-pool".into() });
@@ -152,7 +134,7 @@ mod tests {
         let mut cfg = config(Some("client-pool"));
         cfg.environment_id = Some("e1".into());
         uc.execute("proj1", vec!["c1".into()], cfg).await.expect("ok");
-        assert_eq!(exec.last_env(), Some(env)); // 环境解析并透传到派发规格
+        assert_eq!(exec.last_env(), Some(env));
     }
 
     #[tokio::test]

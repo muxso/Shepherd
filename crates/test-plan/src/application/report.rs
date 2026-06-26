@@ -1,12 +1,6 @@
-//! 测试计划报告渲染(纯函数,零 IO):由统计 + 逐用例明细生成自包含 HTML。
-//!
-//! 报告含三段:概览(总数/执行率/通过率/报告总耗时/断言通过率)、状态分布、
-//! 逐用例明细(可展开看断言表 + 响应体)。渲染与 IO 解耦,可穷举单测。
-
 use crate::application::PlanStatistics;
 use crate::domain::{AssertionResult, CaseStatus, PlanCase, StepResult};
 
-/// HTML 转义(防内容里的特殊字符破坏页面)。
 fn escape(s: &str) -> String {
     s.replace('&', "&amp;")
         .replace('<', "&lt;")
@@ -14,7 +8,6 @@ fn escape(s: &str) -> String {
         .replace('"', "&quot;")
 }
 
-/// 状态 → (中文标签, 文字色, 底色)。
 fn badge(status: CaseStatus) -> (&'static str, &'static str, &'static str) {
     match status {
         CaseStatus::Success => ("通过", "#2e7d32", "#e8f5e9"),
@@ -25,7 +18,6 @@ fn badge(status: CaseStatus) -> (&'static str, &'static str, &'static str) {
     }
 }
 
-/// 断言表(无断言返回空)。
 fn assertion_table(a: &[AssertionResult]) -> String {
     if a.is_empty() {
         return String::new();
@@ -46,7 +38,6 @@ fn assertion_table(a: &[AssertionResult]) -> String {
     )
 }
 
-/// 头部键值表(响应头/请求头)。
 fn headers_table(title: &str, h: &[(String, String)]) -> String {
     if h.is_empty() {
         return String::new();
@@ -58,7 +49,6 @@ fn headers_table(title: &str, h: &[(String, String)]) -> String {
     format!("<div class=\"sec\">{}</div><table class=\"assert\"><tr><th>名称</th><th>值</th></tr>{rows}</table>", escape(title))
 }
 
-/// 递归渲染一个场景步骤(及其子步骤)。
 fn render_step(s: &StepResult) -> String {
     let (label, color, bg) = badge(s.status);
     let code = s.status_code.map(|c| format!("状态码 {c}　")).unwrap_or_default();
@@ -79,7 +69,6 @@ fn render_step(s: &StepResult) -> String {
     )
 }
 
-/// 渲染单条用例(summary 行 + 可展开明细)。
 fn render_case(idx: usize, c: &PlanCase) -> String {
     let (label, color, bg) = badge(c.status);
     let name = escape(&c.name);
@@ -93,7 +82,6 @@ fn render_case(idx: usize, c: &PlanCase) -> String {
         })
         .unwrap_or_default();
 
-    // 步骤树(场景用例)/ 断言表 / 响应头 / 响应体 / 实际请求
     let (steps_html, assertions_html, headers_html, body_html, request_html) = match c.result.as_ref()
     {
         None => (String::new(), String::new(), String::new(), String::new(), String::new()),
@@ -149,7 +137,6 @@ fn render_case(idx: usize, c: &PlanCase) -> String {
         format!("{steps_html}{assertions_html}{body_html}{headers_html}{request_html}")
     };
 
-    // data-name / data-status:供报告明细的搜索 + 状态过滤(纯前端 inline JS)。
     format!(
         r#"<details class="case" data-name="{name}" data-status="{status}">
  <summary><span class="idx">{idx}</span><span class="cname">{name}</span>
@@ -161,7 +148,6 @@ fn render_case(idx: usize, c: &PlanCase) -> String {
     )
 }
 
-/// 纯 SVG 环形图(无 JS):各段按占比画弧,中心显示总数。
 fn donut_svg(segments: &[(u64, &str)], total: u64, center: &str) -> String {
     let r = 42.0_f64;
     let circ = 2.0 * std::f64::consts::PI * r;
@@ -171,7 +157,6 @@ fn donut_svg(segments: &[(u64, &str)], total: u64, center: &str) -> String {
             "<circle cx=\"60\" cy=\"60\" r=\"42\" fill=\"none\" stroke=\"#eceff1\" stroke-width=\"16\"/>",
         );
     } else {
-        // 底环 + 逐段弧(rotate -90 使 0 点在顶部)。
         arcs.push_str("<circle cx=\"60\" cy=\"60\" r=\"42\" fill=\"none\" stroke=\"#f0f2f5\" stroke-width=\"16\"/>");
         let mut offset = 0.0_f64;
         for (n, color) in segments {
@@ -196,7 +181,6 @@ fn donut_svg(segments: &[(u64, &str)], total: u64, center: &str) -> String {
     )
 }
 
-/// 由计划名 + 统计 + 逐用例明细生成自包含 HTML 报告。
 pub fn report_html(name: &str, stats: &PlanStatistics, cases: &[PlanCase]) -> String {
     let name = escape(name);
     let pass_pct = stats.pass_rate * 100.0;
@@ -204,7 +188,6 @@ pub fn report_html(name: &str, stats: &PlanStatistics, cases: &[PlanCase]) -> St
     let (verdict, vcolor) =
         if stats.is_pass { ("通过", "#2e7d32") } else { ("未通过", "#c62828") };
 
-    // 逐用例聚合:报告总耗时 + 断言通过率 + 各状态计数。
     let total_latency: u64 = cases.iter().filter_map(|c| c.result.as_ref()).map(|r| r.latency_ms).sum();
     let (mut assert_total, mut assert_pass) = (0u64, 0u64);
     let (mut n_succ, mut n_err, mut n_fake, mut n_block, mut n_pend) = (0u64, 0u64, 0u64, 0u64, 0u64);
@@ -224,7 +207,6 @@ pub fn report_html(name: &str, stats: &PlanStatistics, cases: &[PlanCase]) -> St
     let assert_pct = if assert_total == 0 { 100.0 } else { assert_pass as f64 / assert_total as f64 * 100.0 };
     let pct = |n: u64| if stats.total == 0 { 0.0 } else { n as f64 / stats.total as f64 * 100.0 };
 
-    // 用例状态环形图(纯 SVG)。
     let status_donut = donut_svg(
         &[
             (n_succ, "#2e7d32"),
@@ -366,8 +348,6 @@ pub fn report_html(name: &str, stats: &PlanStatistics, cases: &[PlanCase]) -> St
     )
 }
 
-// ===== Markdown 导出(纯文本、可 diff/可嵌入;不依赖 PDF) =====
-
 /// markdown 表格单元转义:竖线与换行会破坏表格。
 fn md_cell(s: &str) -> String {
     s.replace('|', "\\|").replace('\n', " ")
@@ -417,13 +397,12 @@ fn md_steps(out: &mut String, steps: &[StepResult], depth: usize) {
     }
 }
 
-/// 由计划名 + 统计 + 逐用例明细生成 Markdown 报告(与 HTML 报告同源数据)。
 pub fn report_markdown(name: &str, stats: &PlanStatistics, cases: &[PlanCase]) -> String {
     let verdict = if stats.is_pass { "通过" } else { "未通过" };
     let total_latency: u64 =
         cases.iter().filter_map(|c| c.result.as_ref()).map(|r| r.latency_ms).sum();
     let (mut at, mut ap) = (0u64, 0u64);
-    let mut cnt = [0u64; 5]; // succ,err,fake,block,pend
+    let mut cnt = [0u64; 5];
     for c in cases {
         match c.status {
             CaseStatus::Success => cnt[0] += 1,
@@ -597,10 +576,10 @@ mod tests {
         assert!(md.contains("## 报告分析"));
         assert!(md.contains("## 报告明细"));
         assert!(md.contains("健康检查"));
-        assert!(md.contains("| 断言项 |")); // 断言表
+        assert!(md.contains("| 断言项 |"));
         assert!(md.contains("期望 500,实际 200"));
-        assert!(md.contains("20 ms")); // 报告总耗时 12+8
-        assert!(!md.contains("<svg")); // 纯 markdown,无 HTML
+        assert!(md.contains("20 ms"));
+        assert!(!md.contains("<svg"));
     }
 
     #[test]
@@ -608,7 +587,7 @@ mod tests {
         let md = report_markdown("场景", &stats(), &[scenario_case()]);
         assert!(md.contains("**步骤**"));
         assert!(md.contains("登录"));
-        assert!(md.contains("创建订单")); // 嵌套子步骤
+        assert!(md.contains("创建订单"));
     }
 
     #[test]
@@ -616,7 +595,7 @@ mod tests {
         let html = report_html("环形", &stats(), &cases());
         assert!(html.contains("<svg"));
         assert!(html.contains("总数"));
-        assert!(html.contains("stroke-dasharray")); // 至少一段弧
+        assert!(html.contains("stroke-dasharray"));
     }
 
     #[test]
@@ -625,7 +604,7 @@ mod tests {
         assert!(html.contains("步骤"));
         assert!(html.contains("登录"));
         assert!(html.contains("循环控制器"));
-        assert!(html.contains("创建订单")); // 嵌套子步骤
+        assert!(html.contains("创建订单"));
         assert!(html.contains("接口用例"));
     }
 
@@ -654,17 +633,12 @@ mod tests {
         let html = report_html("冒烟", &stats(), &cases());
         assert!(html.contains("冒烟"));
         assert!(html.contains("报告明细"));
-        // 逐用例
         assert!(html.contains("健康检查"));
         assert!(html.contains("失败用例"));
-        // 断言表项
         assert!(html.contains("断言项"));
         assert!(html.contains("期望 500,实际 200"));
-        // 报告总耗时 = 12+8
         assert!(html.contains("20 ms"));
-        // 断言通过率 1/2
         assert!(html.contains("(1/2)"));
-        // 结论未通过
         assert!(html.contains("未通过"));
     }
 
@@ -677,7 +651,7 @@ mod tests {
     #[test]
     fn escapes_content() {
         let mut cs = cases();
-        // 用例名里的 XSS 载荷必须被转义(注意报告自身含 <script> 工具栏,故用 <img> 载荷避免误判)。
+        // 报告自身含 <script> 工具栏,故用 <img> 载荷验证转义,避免误判。
         cs[0].name = "<img src=x onerror=alert(1)>".into();
         let html = report_html("<x>", &stats(), &cs);
         assert!(!html.contains("<img src=x"));

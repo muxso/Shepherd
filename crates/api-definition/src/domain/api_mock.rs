@@ -1,8 +1,5 @@
-//! Mock 聚合。对某接口定义的挡板配置:匹配规则(JSON)+ 响应。
-
 use crate::domain::error::ApiDefinitionError;
 
-/// 创建 Mock 的入站请求。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NewApiMock {
     pub api_definition_id: String,
@@ -11,20 +8,14 @@ pub struct NewApiMock {
     pub response_status: i32,
     pub response_body: Option<String>,
     pub enabled: bool,
-    /// 标签 JSON 数组;默认空。
     pub tags: serde_json::Value,
-    /// 自定义响应头 JSON 数组([{key,value}]);默认空。
     pub response_headers: serde_json::Value,
-    /// 响应延时(毫秒);默认 0。负值回落 0。
     pub response_delay_ms: i32,
-    /// 是否跟随 API 定义返回(开启时忽略 response_body,返回定义示例);默认 false。
     pub follow_definition: bool,
-    /// 创建人 user_id(由应用层注入);默认空。
     pub created_by: String,
 }
 
 impl NewApiMock {
-    /// 校验:name 非空(trim);response_status 在 100..=599;match_rule 缺省为 `{}`。
     pub fn new(
         api_definition_id: &str,
         name: &str,
@@ -40,7 +31,6 @@ impl NewApiMock {
         if !(100..=599).contains(&response_status) {
             return Err(ApiDefinitionError::BadResponseStatus(response_status));
         }
-        // 匹配规则缺省给一个空对象,保证下游可直接当对象处理。
         let match_rule = if match_rule.is_null() {
             serde_json::json!({})
         } else {
@@ -61,14 +51,11 @@ impl NewApiMock {
         })
     }
 
-    /// 设置创建人(链式)。
     pub fn with_created_by(mut self, user_id: &str) -> Self {
         self.created_by = user_id.to_string();
         self
     }
 
-    /// 附加 Mock 扩展项:标签 / 响应头 / 响应延时 / 跟随定义。
-    /// tags、response_headers 非数组回落空数组;延时取 max(0, ms)。
     pub fn with_extras(
         mut self,
         tags: serde_json::Value,
@@ -88,7 +75,6 @@ impl NewApiMock {
     }
 }
 
-/// Mock 聚合。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ApiMock {
     pub id: String,
@@ -102,7 +88,6 @@ pub struct ApiMock {
     pub response_headers: serde_json::Value,
     pub response_delay_ms: i32,
     pub follow_definition: bool,
-    /// 创建人 user_id(审计列;见 0057 迁移)。读侧回填,创建时由应用层注入。
     pub created_by: String,
 }
 

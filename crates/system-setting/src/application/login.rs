@@ -1,6 +1,4 @@
-//! 用例:登录。校验凭证 → 建会话 → 返回令牌。注入假实现即可测,无需密码学库。
-//!
-//! 安全要点:未知用户与密码错误返回**同一** `InvalidCredentials`(防账号枚举)。
+//! 未知用户与密码错误返回同一 `InvalidCredentials`,防账号枚举。
 
 use std::sync::Arc;
 
@@ -28,13 +26,11 @@ impl LoginUseCase {
         Self { creds, hasher, sessions, user_roles, session_ttl_secs: 8 * 3600 }
     }
 
-    /// 设置会话有效期(秒)。默认 8 小时。
     pub fn with_ttl_secs(mut self, secs: i64) -> Self {
         self.session_ttl_secs = secs;
         self
     }
 
-    /// 成功返回令牌。
     pub async fn execute(&self, username: &str, password: &str) -> Result<String, AuthError> {
         let cred = self
             .creds
@@ -47,7 +43,7 @@ impl LoginUseCase {
             return Err(AuthError::InvalidCredentials);
         }
 
-        // 有效权限 = 凭证自带 ∪ 用户所有角色的权限并集(RBAC 闭环)
+        // 有效权限 = 凭证自带 ∪ 用户所有角色权限的并集
         let mut raw = cred.permissions.clone();
         raw.extend(
             self.user_roles
@@ -90,7 +86,7 @@ mod tests {
         InMemoryCredentialRepository::new().with_user(
             "admin",
             "u-admin",
-            "secret", // PlainPasswordHasher:hash == 明文
+            "secret",
             ["SYSTEM_USER:READ+ADD"],
         )
     }
@@ -100,7 +96,6 @@ mod tests {
         let (uc, sessions) = uc(repo_with_admin());
         let token = uc.execute("admin", "secret").await.expect("login ok");
         assert!(!token.is_empty());
-        // 会话可按令牌取回,且带权限
         let session = sessions.get(&token).await.expect("ok").expect("session");
         assert!(session.permissions.allows("SYSTEM_USER", "ADD"));
     }
@@ -114,7 +109,6 @@ mod tests {
     #[tokio::test]
     async fn unknown_user_is_same_error_no_enumeration() {
         let (uc, _) = uc(repo_with_admin());
-        // 与密码错误返回同一错误,无法据此判断用户是否存在
         assert_eq!(uc.execute("ghost", "secret").await, Err(AuthError::InvalidCredentials));
     }
 }

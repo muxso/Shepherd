@@ -1,5 +1,3 @@
-//! 用例:删除环境(软删)。
-
 use std::sync::Arc;
 
 use crate::ports::{EnvironmentRepository, RepoError};

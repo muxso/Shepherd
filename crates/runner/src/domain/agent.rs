@@ -1,5 +1,3 @@
-//! runner agent 注册与执行结果(零 IO)。
-
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -11,18 +9,15 @@ pub enum AgentError {
     EmptyBaseUrl,
 }
 
-/// 已注册的 agent 视图(不含 token)。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RunnerAgent {
     pub id: String,
     pub name: String,
     pub base_url: String,
     pub enabled: bool,
-    /// 该 agent 自报支持的协议(注册时从其 `/protocols` 拉取并落库)。
     pub protocols: Vec<String>,
 }
 
-/// 待注册 agent(构造即校验:名称/地址非空)。`token` 为可选共享密钥。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NewRunnerAgent {
     pub name: String,
@@ -51,14 +46,12 @@ impl NewRunnerAgent {
     }
 }
 
-/// 派发目标(内部用:含 token,不入视图)。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DispatchTarget {
     pub base_url: String,
     pub token: Option<String>,
 }
 
-/// 「按协议选 agent」的候选:含 id/name(供回报选中的是谁)+ 派发目标(含 token)。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AgentTarget {
     pub id: String,
@@ -66,7 +59,6 @@ pub struct AgentTarget {
     pub target: DispatchTarget,
 }
 
-/// agent 回传的执行结果(对应 runner-agent 的 RunResult)。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RemoteResult {
@@ -86,7 +78,7 @@ mod tests {
         let a = NewRunnerAgent::new(" 测试环境 ", "http://10.0.0.5:9100/", Some("t".into()), true)
             .expect("ok");
         assert_eq!(a.name, "测试环境");
-        assert_eq!(a.base_url, "http://10.0.0.5:9100"); // 去尾斜杠
+        assert_eq!(a.base_url, "http://10.0.0.5:9100");
         assert_eq!(a.token.as_deref(), Some("t"));
     }
 

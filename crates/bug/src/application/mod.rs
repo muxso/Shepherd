@@ -1,4 +1,3 @@
-//! 应用层:缺陷用例编排。
 pub mod change_status;
 pub mod create_bug;
 pub mod followers;

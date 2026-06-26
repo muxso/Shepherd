@@ -1,5 +1,3 @@
-//! 用例:更新某条 Mock 的可变字段。Mock 不存在(或已软删)则 NotFound。
-
 use std::sync::Arc;
 
 use crate::application::ApiMockExtras;
@@ -39,7 +37,6 @@ impl UpdateApiMockUseCase {
         enabled: bool,
         extras: ApiMockExtras,
     ) -> Result<(), UpdateApiMockError> {
-        // api_definition_id 在更新中不变;用占位空串构造(NewApiMock 仅校验 name/status/match_rule)。
         let updated = NewApiMock::new("_", name, match_rule, response_status, response_body, enabled)?
             .with_extras(
                 extras.tags,

@@ -1,8 +1,5 @@
-//! 用户领域模型。把"什么是合法用户"收敛进领域类型本身,非法状态造不出来。
-
 use thiserror::Error;
 
-/// 经过校验的邮箱。`Email` 一旦存在就保证合法,下游无需重复校验。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Email(String);
 
@@ -29,7 +26,6 @@ impl Email {
     }
 }
 
-/// 创建用户的入站请求(尚无 id)。构造即校验。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NewUser {
     pub name: String,
@@ -46,7 +42,6 @@ impl NewUser {
     }
 }
 
-/// 已持久化的用户。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct User {
     pub id: String,
@@ -79,7 +74,7 @@ impl User {
         self.deleted = true;
     }
 
-    /// 是否参与邮箱唯一性判定(仅未删除)。
+    /// 仅未删除用户占用邮箱唯一性,软删除后邮箱可复用
     pub fn occupies_email(&self) -> bool {
         !self.deleted
     }

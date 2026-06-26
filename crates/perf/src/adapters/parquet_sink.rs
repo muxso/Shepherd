@@ -1,9 +1,4 @@
-//! Parquet + 对象存储样本下沉:把逐请求样本写成一个 Parquet 对象。
-//!
-//! schema:`latency_ms: u64, success: bool`(后续可加 ts_offset_ms / status_code)。
-//! 后端经 `object_store` 抽象:内存(测试)、本地文件系统(开发/单机)、S3/GCS/Azure(生产,
-//! 加对应 feature)。键形如 `{prefix}/run_id=<id>/part-0.parquet`,便于按 run 分区与跨 run 扫描。
-//! 写 UNCOMPRESSED(纯 Rust,无 C 压缩依赖);量大可改 row-group 分块流式 + 压缩编码。
+// 写 UNCOMPRESSED:避免引入 C 压缩依赖,保持纯 Rust。
 
 use std::sync::Arc;
 
@@ -29,12 +24,10 @@ pub struct ParquetObjectStoreSink {
 }
 
 impl ParquetObjectStoreSink {
-    /// 用任意 object_store 后端构造(测试用 `InMemory`,生产用 S3 等)。
     pub fn new(store: Arc<dyn ObjectStore>, prefix: impl Into<String>) -> Self {
         Self { store, prefix: prefix.into() }
     }
 
-    /// 本地文件系统后端(开发/单机);`root` 须为已存在目录。
     pub fn new_local(
         root: impl AsRef<std::path::Path>,
         prefix: impl Into<String>,
@@ -43,7 +36,6 @@ impl ParquetObjectStoreSink {
         Ok(Self::new(Arc::new(fs), prefix))
     }
 
-    /// 样本 → Parquet 字节(Arrow RecordBatch → ArrowWriter)。
     fn encode(samples: &[Sample]) -> Result<Vec<u8>, SinkError> {
         let schema = Arc::new(Schema::new(vec![
             Field::new("latency_ms", DataType::UInt64, false),
@@ -97,7 +89,6 @@ mod tests {
         let key = sink.write("run-1", &samples).await.expect("write");
         assert_eq!(key, "perf/run_id=run-1/part-0.parquet");
 
-        // 从对象存储取回字节,用 parquet reader 解析,验证行数与列值。
         let bytes = store
             .get(&ObjPath::from(key))
             .await

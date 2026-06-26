@@ -1,5 +1,3 @@
-//! 用例:为某接口定义新增 Mock。接口定义不存在则 NotFound。
-
 use std::sync::Arc;
 
 use crate::domain::{ApiDefinitionError, ApiMock, NewApiMock};
@@ -39,7 +37,6 @@ impl AddApiMockUseCase {
         extras: ApiMockExtras,
         created_by: &str,
     ) -> Result<ApiMock, AddApiMockError> {
-        // 必须挂在一个真实存在的接口定义上。
         if self.repo.get_definition(api_definition_id).await?.is_none() {
             return Err(AddApiMockError::NotFound);
         }
@@ -62,7 +59,6 @@ impl AddApiMockUseCase {
     }
 }
 
-/// Mock 扩展项(标签 / 响应头 / 响应延时 / 跟随定义),收拢成一个参数。
 #[derive(Debug, Clone, Default)]
 pub struct ApiMockExtras {
     pub tags: serde_json::Value,

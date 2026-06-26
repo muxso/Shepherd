@@ -1,5 +1,3 @@
-//! 用例:创建环境。
-
 use std::sync::Arc;
 
 use crate::application::EnvironmentInput;

@@ -1,5 +1,3 @@
-//! 用例:登记定时计划 + 定时运行(为计划拍统计快照)。
-
 use std::sync::Arc;
 
 use thiserror::Error;
@@ -49,7 +47,6 @@ pub enum ScheduledRunError {
     Repo(#[from] RepoError),
 }
 
-/// 定时运行:计算计划当前统计 → 落一条运行快照。调度器到点调用。
 #[derive(Clone)]
 pub struct ScheduledRunUseCase {
     stats: PlanStatisticsUseCase,
@@ -101,7 +98,6 @@ mod tests {
         let run = run_uc.execute(&plan.id).await.expect("run");
         assert_eq!(run.total, 4);
         assert!(run.pass_rate > 0.0);
-        // 再跑一次 → 历史累积 2 条
         run_uc.execute(&plan.id).await.expect("run2");
         assert_eq!(run_uc.list_runs(&plan.id, 10).await.expect("list").len(), 2);
     }

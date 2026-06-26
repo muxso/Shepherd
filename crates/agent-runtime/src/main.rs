@@ -1,14 +1,3 @@
-//! Shepherd 执行者 runtime(纯 Rust)。出站认领 → CLI 后端执行 → 按模式回调。
-//!
-//! step 1:骨架 + Mock 后端(可编译、可跑、单测绿)。step 2 接 claude/codex/opencode + git 快照。
-//!
-//! 环境变量:
-//!   SHEPHERD_BASE(默认 http://127.0.0.1:9180)、SHEPHERD_ADMIN_USER/SHEPHERD_ADMIN_PASSWORD、
-//!   SHEPHERD_CAPS(默认 CLAUDE_CODE)、RUNTIME_NAME、AGENT_MOCK(=1 用 mock 后端)、
-//!   AGENT_CONCURRENCY(并发槽,默认 1)、AGENT_WORKDIR、
-//!   AGENT_TASK_TIMEOUT_SECS(单任务超时,默认 1800)、AGENT_HEARTBEAT_SECS(默认 10)、
-//!   AGENT_DRAIN_TIMEOUT_SECS(关停排空上限,默认 60)。
-
 mod backend;
 mod client;
 mod events;
@@ -31,15 +20,10 @@ struct Config {
     pass: String,
     caps: Vec<String>,
     name: String,
-    /// 实现模式下 agent 改文件 + git 快照的工作目录。
     workdir: String,
-    /// 并发认领上限:同时在飞的任务数(信号量)。
     concurrency: usize,
-    /// 单任务执行超时:卡死的 CLI 到点连同子进程组一起杀。
     task_timeout: Duration,
-    /// 心跳间隔。
     heartbeat: Duration,
-    /// 关停时等待在飞任务收尾的上限;超过则强退(server 侧 reclaim 兜底)。
     drain_timeout: Duration,
 }
 
@@ -68,7 +52,6 @@ impl Config {
     }
 }
 
-/// 安装关停信号(SIGINT/SIGTERM)监听,返回一个 watch 接收端:值变 true 即应退出。
 fn install_shutdown() -> watch::Receiver<bool> {
     let (tx, rx) = watch::channel(false);
     tokio::spawn(async move {
@@ -96,19 +79,17 @@ fn install_shutdown() -> watch::Receiver<bool> {
     rx
 }
 
-/// 等待关停(值变 true);select 中败者被取消,不会误吞信号。
 async fn wait_shutdown(rx: &mut watch::Receiver<bool>) {
     loop {
         if *rx.borrow_and_update() {
             return;
         }
         if rx.changed().await.is_err() {
-            return; // 发送端已 drop
+            return;
         }
     }
 }
 
-/// 选择后端:`AGENT_MOCK=1` → mock;否则按 executor 选 claude/codex/opencode。
 fn backend_for(executor: &str, task_timeout: Duration) -> Arc<dyn CliAgentBackend> {
     if std::env::var("AGENT_MOCK").is_ok() {
         return Arc::new(MockBackend::default());
@@ -128,7 +109,6 @@ async fn handle(client: &ServerClient, spec: &WorkSpec, base_workdir: &str, task
         backend = backend.cli_name(), "认领任务");
 
     if spec.is_design() {
-        // 设计模式:产文档、不改文件、不提交 → 在 base workdir 跑即可,事件无端点(NoopSink)。
         match backend.execute(&prompt, base_workdir, &NoopSink).await {
             Ok(doc) => match client.post_design(&spec.attempt_id, &doc).await {
                 Ok(()) => tracing::info!(proposal = %spec.attempt_id, "设计稿已回填 → 待审"),
@@ -139,7 +119,6 @@ async fn handle(client: &ServerClient, spec: &WorkSpec, base_workdir: &str, task
         return;
     }
 
-    // 实现模式:每任务独立 worktree(并发安全、不污染 base);worktree 建失败则回退 base。
     let wt = git::add_worktree(base_workdir, &spec.attempt_id).await;
     let run_dir = wt.as_deref().unwrap_or(base_workdir);
     let sink = HttpSink { client, attempt_id: spec.attempt_id.clone() };
@@ -173,7 +152,6 @@ async fn handle(client: &ServerClient, spec: &WorkSpec, base_workdir: &str, task
     }
 }
 
-/// 登录 + 注册;任一步失败整体返回 Err(由启动重试循环退避重试)。
 async fn connect(cfg: &Config) -> anyhow::Result<(Arc<ServerClient>, String)> {
     let client = Arc::new(ServerClient::login(&cfg.base, &cfg.user, &cfg.pass).await?);
     let id = client.register(&cfg.name, &cfg.caps, cfg.concurrency as u32).await?;
@@ -193,7 +171,6 @@ async fn main() -> anyhow::Result<()> {
     let mc = cfg.concurrency as u32;
     let mut sd = install_shutdown();
 
-    // 启动连接重试:server 可能晚于 agent 起来 —— 退避重试到登录+注册成功或收到关停。
     let (client, id0) = loop {
         if *sd.borrow_and_update() {
             return Ok(());
@@ -213,7 +190,6 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!(base = %cfg.base, caps = ?cfg.caps, concurrency = cfg.concurrency, runtime_id = %id0,
         "agent-runtime 上线");
 
-    // 心跳后台任务(与认领解耦,长任务不饿死心跳);404 重注册并更新共享 id。
     let hb = {
         let (client, rid, name, caps, every) =
             (client.clone(), runtime_id.clone(), cfg.name.clone(), cfg.caps.clone(), cfg.heartbeat);
@@ -230,20 +206,17 @@ async fn main() -> anyhow::Result<()> {
         })
     };
 
-    // 并发认领:信号量限同时在飞任务数;每认领一个 spawn 一个 handler(完成释放槽)。
     let sem = Arc::new(Semaphore::new(cfg.concurrency));
 
     loop {
         if *sd.borrow_and_update() {
             break;
         }
-        // 等空闲槽(达上限则阻塞)或关停。
         let permit = tokio::select! {
             _ = wait_shutdown(&mut sd) => break,
             p = sem.clone().acquire_owned() => p.expect("semaphore closed"),
         };
         let rid_now = runtime_id.lock().expect("lock").clone();
-        // 长轮询认领或关停(关停时释放槽并退出)。
         let claimed = tokio::select! {
             _ = wait_shutdown(&mut sd) => { drop(permit); break; }
             r = client.claim(&cfg.caps, &rid_now) => r,
@@ -253,10 +226,10 @@ async fn main() -> anyhow::Result<()> {
                 let (client, wd, tt) = (client.clone(), cfg.workdir.clone(), cfg.task_timeout);
                 tokio::spawn(async move {
                     handle(&client, &spec, &wd, tt).await;
-                    drop(permit); // 完成释放并发槽
+                    drop(permit);
                 });
             }
-            Ok(None) => drop(permit), // 204:无活
+            Ok(None) => drop(permit),
             Err(e) => {
                 tracing::warn!("认领出错: {e}");
                 drop(permit);
@@ -265,7 +238,6 @@ async fn main() -> anyhow::Result<()> {
         }
     }
 
-    // 优雅退出:停心跳,等所有在飞任务收尾(获满全部许可 = 无在飞),但封顶 drain_timeout。
     hb.abort();
     let inflight = cfg.concurrency - sem.available_permits();
     if inflight > 0 {

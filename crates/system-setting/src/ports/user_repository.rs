@@ -1,5 +1,3 @@
-//! 用户仓储端口。
-
 use async_trait::async_trait;
 use thiserror::Error;
 
@@ -18,6 +16,5 @@ pub trait UserRepository: Send + Sync {
     async fn get(&self, id: &str) -> Result<Option<User>, RepoError>;
     async fn count_active(&self) -> Result<u64, RepoError>;
     async fn list_active(&self, offset: u64, limit: u32) -> Result<Vec<User>, RepoError>;
-    /// 保存(改名/改邮箱/启停/软删除标记)。
     async fn save(&self, user: &User) -> Result<(), RepoError>;
 }

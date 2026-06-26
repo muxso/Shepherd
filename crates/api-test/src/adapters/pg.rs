@@ -1,10 +1,3 @@
-//! PostgreSQL 适配器:资源池信息源 + 批量执行器。
-//!
-//! - `PgResourcePool` 实现 `ResourcePoolPort`:查项目默认池 + 池可用性。
-//! - `PgBatchReportExecutor` 实现 `BatchExecutorPort`:**落 PENDING 报告 → 经 `TaskDispatcher`
-//!   下发执行节点 → 据结果置 RUNNING / DISPATCH_FAILED**。下发的真实传输由注入的
-//!   `TaskDispatcher` 决定(生产用 `api-test-jmeter` 的 HTTP 下发,测试用 Spy)。
-
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -19,7 +12,6 @@ fn map_err(e: sqlx::Error) -> PortError {
     PortError::Backend(e.to_string())
 }
 
-// ---- 资源池信息源 ----
 #[derive(Clone)]
 pub struct PgResourcePool {
     pool: PgPool,
@@ -40,7 +32,6 @@ impl ResourcePoolPort for PgResourcePool {
                 .fetch_optional(&self.pool)
                 .await
                 .map_err(map_err)?;
-        // 无配置行 → None;有行但列为 NULL → 也是 None
         match row {
             Some(r) => Ok(r.try_get::<Option<String>, _>("default_pool_id").map_err(map_err)?),
             None => Ok(None),
@@ -60,14 +51,10 @@ impl ResourcePoolPort for PgResourcePool {
     }
 }
 
-// ---- 资源池管理(创建 / 列出 / 取单 / 更新 / 删除)----
-
-/// 统一列清单:时间列格式化为 `YYYY-MM-DD HH:MM:SS` 文本,与参考 UI 展示一致。
 const POOL_COLS: &str = "id, name, enabled, description, max_concurrency, pool_type, all_org, org_ids, server_url, config, \
      to_char(created_at, 'YYYY-MM-DD HH24:MI:SS') AS created_at, \
      to_char(updated_at, 'YYYY-MM-DD HH24:MI:SS') AS updated_at";
 
-/// 行 → 视图:org_ids/config 走 JSONB(`sqlx::types::Json`)。
 fn map_pool(r: &sqlx::postgres::PgRow) -> Result<ResourcePool, PortError> {
     Ok(ResourcePool {
         id: r.try_get("id").map_err(map_err)?,
@@ -99,7 +86,7 @@ impl PgResourcePoolAdmin {
 #[async_trait]
 impl ResourcePoolAdminPort for PgResourcePoolAdmin {
     async fn create(&self, new_pool: &NewResourcePool) -> Result<ResourcePool, PortError> {
-        // id 走表默认 gen_random_uuid()::text(见迁移 0025)。
+        // id 走表默认 gen_random_uuid()::text,故不 bind。
         let sql = format!(
             "INSERT INTO ms_resource_pool \
              (name, enabled, description, max_concurrency, pool_type, all_org, org_ids, server_url, config, deleted) \
@@ -169,9 +156,6 @@ impl ResourcePoolAdminPort for PgResourcePoolAdmin {
     }
 }
 
-// ---- 运行环境信息源 ----
-// 直读 environment 上下文的 ms_environment 表(与 PgResourcePool 直读 ms_resource_pool 同构:
-// 跨上下文只读邻域表,不引入 crate 依赖)。headers JSONB 数组、variables JSONB 对象。
 #[derive(Clone)]
 pub struct PgEnvironment {
     pool: PgPool,
@@ -231,7 +215,6 @@ impl EnvironmentPort for PgEnvironment {
 
 #[async_trait]
 impl crate::ports::EnvVarWriter for PgEnvironment {
-    /// 把提取的「环境参数」合并进该环境的 variables(JSONB 对象 `||` 合并;同名覆盖)。
     async fn set_vars(&self, environment_id: &str, vars: &[(String, String)]) -> Result<(), PortError> {
         if vars.is_empty() {
             return Ok(());
@@ -249,7 +232,6 @@ impl crate::ports::EnvVarWriter for PgEnvironment {
     }
 }
 
-// ---- 批量执行器:落报告 + 下发执行节点 ----
 #[derive(Clone)]
 pub struct PgBatchReportExecutor {
     pool: PgPool,
@@ -275,7 +257,6 @@ impl PgBatchReportExecutor {
 #[async_trait]
 impl BatchExecutorPort for PgBatchReportExecutor {
     async fn dispatch(&self, spec: &DispatchSpec) -> Result<DispatchReport, PortError> {
-        // 1) 落 PENDING 报告
         let row = sqlx::query(
             "INSERT INTO ms_api_batch_report (pool_id, run_mode, case_count) \
              VALUES ($1, $2, $3) RETURNING id",
@@ -288,7 +269,6 @@ impl BatchExecutorPort for PgBatchReportExecutor {
         .map_err(map_err)?;
         let report_id: String = row.try_get("id").map_err(map_err)?;
 
-        // 2) 下发执行节点(HTTP → JMeter)
         let task = RunTask {
             report_id: report_id.clone(),
             pool_id: spec.pool_id.clone(),
@@ -298,19 +278,16 @@ impl BatchExecutorPort for PgBatchReportExecutor {
             environment_id: spec.environment_id.clone(),
         };
         match self.dispatcher.dispatch_task(&task).await {
-            // 3) 据结果更新报告状态
             Ok(DispatchOutcome::Accepted) => {
-                // 异步执行器(JMeter):已接受,远端运行中
                 self.set_status(&report_id, "RUNNING").await?;
                 Ok(DispatchReport { report_id, status: "RUNNING".to_string() })
             }
             Ok(DispatchOutcome::Completed { status }) => {
-                // 同步执行器(原生 runner):就地跑完,写最终状态
                 self.set_status(&report_id, &status).await?;
                 Ok(DispatchReport { report_id, status })
             }
             Err(e) => {
-                // 下发失败:报告标记 DISPATCH_FAILED 并向上报错(不让任务"卡在 PENDING")
+                // 标记 DISPATCH_FAILED 避免任务卡在 PENDING。
                 let _ = self.set_status(&report_id, "DISPATCH_FAILED").await;
                 Err(e)
             }
@@ -318,7 +295,6 @@ impl BatchExecutorPort for PgBatchReportExecutor {
     }
 }
 
-// ---- 用例规格源:供原生 runner 取 ms_api_case 的请求+断言 ----
 use crate::adapters::local::{CaseResultSink, CaseRunSpec, CaseSpecSource};
 use api_runner::{Assertion, HttpMethod, Processor, RequestSpec};
 
@@ -343,13 +319,11 @@ fn parse_method(s: &str) -> HttpMethod {
     }
 }
 
-/// JSONB `[{key,value,enabled?}]` → `(名, 值)` 列表;非数组/缺名/`enabled:false` 跳过。
 fn parse_kv(v: &serde_json::Value) -> Vec<(String, String)> {
     v.as_array()
         .map(|arr| {
             arr.iter()
                 .filter_map(|it| {
-                    // 显式 enabled:false 视为停用,不参与执行(请求头/Query 共用)。
                     if it.get("enabled").and_then(|x| x.as_bool()) == Some(false) {
                         return None;
                     }
@@ -364,8 +338,6 @@ fn parse_kv(v: &serde_json::Value) -> Vec<(String, String)> {
         .unwrap_or_default()
 }
 
-/// 认证对象 `{type,token}` → 一条 Authorization 头(none/空则 None)。
-/// bearer → `Bearer <token>`;basic → `Basic <token>`(token 视为已编码或 user:pass,原样透传)。
 fn auth_header(v: &serde_json::Value) -> Option<(String, String)> {
     let ty = v.get("type").and_then(|x| x.as_str()).unwrap_or("none");
     let token = v.get("token").and_then(|x| x.as_str()).unwrap_or("").trim();
@@ -379,7 +351,7 @@ fn auth_header(v: &serde_json::Value) -> Option<(String, String)> {
     }
 }
 
-/// 把 query 参数拼到 url 上(已带 `?` 则用 `&` 续接;不做 URL 编码,与既有调试链路一致)。
+// 不做 URL 编码,与既有调试链路一致。
 fn merge_query(url: &str, query: &[(String, String)]) -> String {
     if query.is_empty() {
         return url.to_string();
@@ -408,11 +380,9 @@ impl CaseSpecSource for PgCaseSpecSource {
         let assertions_json: serde_json::Value = r.try_get("assertions").map_err(map_err)?;
         let assertions: Vec<Assertion> = serde_json::from_value(assertions_json)
             .map_err(|e| PortError::Backend(format!("bad assertions json: {e}")))?;
-        // 处理器宽容解析:脏数据回落空,不阻断执行。
         let processors_json: serde_json::Value = r.try_get("processors").map_err(map_err)?;
         let processors: Vec<Processor> = serde_json::from_value(processors_json).unwrap_or_default();
 
-        // 请求头 = 存储的 headers + 认证头;query 合入 URL(宽容解析,脏数据不阻断)。
         let headers_json: serde_json::Value = r.try_get("headers").unwrap_or_else(|_| serde_json::json!([]));
         let query_json: serde_json::Value = r.try_get("query_params").unwrap_or_else(|_| serde_json::json!([]));
         let auth_json: serde_json::Value = r.try_get("auth").unwrap_or_else(|_| serde_json::json!({}));
@@ -430,7 +400,6 @@ impl CaseSpecSource for PgCaseSpecSource {
     }
 }
 
-// ---- 结果汇:把 per-case 明细 UPSERT 进 ms_api_case_result ----
 #[derive(Clone)]
 pub struct PgCaseResultSink {
     pool: PgPool,
@@ -486,7 +455,7 @@ impl CaseResultSink for PgCaseResultSink {
         req_headers: &[(String, String)],
         req_body: Option<&str>,
     ) -> Result<(), PortError> {
-        // 响应体/请求体截断到 64KB,避免明细表膨胀。
+        // 截断到 64KB,避免明细表膨胀。
         let body_trunc: String = body.chars().take(65536).collect();
         let req_body_trunc: Option<String> = req_body.map(|b| b.chars().take(65536).collect());
         let headers_json = serde_json::to_value(headers)
@@ -520,7 +489,6 @@ impl CaseResultSink for PgCaseResultSink {
     }
 }
 
-// ---- 批量报告读写:供计划树执行(场景)外层补建报告 + 回写最终状态 ----
 // 计划树执行不经资源池(本地 runner 就地跑),pool_id 落占位 'local'。
 #[derive(Clone)]
 pub struct PgBatchReport {
@@ -532,7 +500,6 @@ impl PgBatchReport {
         Self { pool }
     }
 
-    /// 落一行 RUNNING 报告,返回 report_id(用例结果按此 report_id 归组)。
     pub async fn create(&self, run_mode: &str, case_count: i32) -> Result<String, PortError> {
         let row = sqlx::query(
             "INSERT INTO ms_api_batch_report (pool_id, run_mode, case_count, status, started_at) \
@@ -546,9 +513,7 @@ impl PgBatchReport {
         row.try_get("id").map_err(map_err)
     }
 
-    /// 回写报告最终状态(SUCCESS/ERROR)。
     pub async fn set_status(&self, report_id: &str, status: &str) -> Result<(), PortError> {
-        // 终态时写 finished_at(用于报告总耗时);set_status 在运行结束调用,故直接 now()。
         sqlx::query("UPDATE ms_api_batch_report SET status = $2, finished_at = now() WHERE id = $1")
             .bind(report_id)
             .bind(status)
@@ -558,7 +523,6 @@ impl PgBatchReport {
         Ok(())
     }
 
-    /// 已完成(SUCCESS/ERROR)但未归档的报告 id(供 Parquet 归档批量取;部分索引覆盖)。
     pub async fn list_unarchived(&self, limit: i64) -> Result<Vec<String>, PortError> {
         let rows = sqlx::query(
             "SELECT id FROM ms_api_batch_report \
@@ -572,7 +536,6 @@ impl PgBatchReport {
         rows.iter().map(|r| r.try_get::<String, _>("id").map_err(map_err)).collect()
     }
 
-    /// 标记报告已归档(写 archived_at = now())。
     pub async fn mark_archived(&self, report_id: &str) -> Result<(), PortError> {
         sqlx::query("UPDATE ms_api_batch_report SET archived_at = now() WHERE id = $1")
             .bind(report_id)
@@ -582,8 +545,6 @@ impl PgBatchReport {
         Ok(())
     }
 
-    /// 报告明细:报告头(状态/用例数)+ 逐用例结果(case_id/通过失败/失败原因/时间)。
-    /// 不存在返回 None。注:当前未持久化响应时间/状态码/响应体(需执行器扩展)。
     pub async fn detail(&self, report_id: &str) -> Result<Option<BatchReportDetail>, PortError> {
         let header = sqlx::query(
             "SELECT status, case_count, started_at::text AS started_at, finished_at::text AS finished_at, \
@@ -622,7 +583,6 @@ impl PgBatchReport {
                 let req_headers = req_headers_v
                     .and_then(|v| serde_json::from_value::<Vec<(String, String)>>(v).ok())
                     .unwrap_or_default();
-                // 断言/提取(0048 后回填;旧报告为 null → 空数组)。
                 let json_arr = |col: &str| -> serde_json::Value {
                     r.try_get::<Option<serde_json::Value>, _>(col)
                         .ok()
@@ -659,42 +619,35 @@ impl PgBatchReport {
     }
 }
 
-/// 报告明细读模型(报告头 + 逐用例结果)。供场景报告页渲染。
 #[derive(Debug, Clone)]
 pub struct BatchReportDetail {
     pub status: String,
     pub case_count: i32,
-    /// 报告起止时间(0056 后回填;旧报告为 None)与总耗时(毫秒)。
     pub started_at: Option<String>,
     pub finished_at: Option<String>,
     pub duration_ms: Option<i64>,
     pub results: Vec<CaseResultRow>,
 }
 
-/// 单条用例结果(report 明细行)。
 #[derive(Debug, Clone)]
 pub struct CaseResultRow {
     pub case_id: String,
     pub outcome: String,
     pub failures: Vec<String>,
     pub executed_at: String,
-    /// 响应明细(0045 后回填;旧行为 None)。
     pub status_code: Option<i32>,
     pub latency_ms: Option<i64>,
     pub resp_size: Option<i64>,
     pub body: Option<String>,
     pub headers: Vec<(String, String)>,
-    /// 逐条断言结果 / 提取变量(0048 后回填;旧报告为空数组)。
     pub assertions: serde_json::Value,
     pub extractions: serde_json::Value,
-    /// 实际发送的请求(0060 后回填;旧报告为 None / 空)。
     pub req_method: Option<String>,
     pub req_url: Option<String>,
     pub req_headers: Vec<(String, String)>,
     pub req_body: Option<String>,
 }
 
-// ---- 用例执行记录读模型:按 case_id 倒序分页查 ms_api_case_result ----
 use crate::ports::{CaseExecutionQueryPort, CaseExecutionRecord};
 
 #[derive(Clone)]
@@ -726,7 +679,7 @@ impl CaseExecutionQueryPort for PgCaseExecutionQuery {
         offset: u64,
         limit: u32,
     ) -> Result<Vec<CaseExecutionRecord>, PortError> {
-        // sqlx 未启用 chrono/time feature,故在 SQL 内用 to_char 把 TIMESTAMPTZ 归一为 RFC3339 字符串。
+        // sqlx 未启用 chrono/time feature,故在 SQL 内用 to_char 把 TIMESTAMPTZ 归一为 RFC3339。
         let rows = sqlx::query(
             "SELECT report_id, case_id, outcome, failures, \
                     to_char(executed_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"') AS executed_at \
@@ -817,11 +770,11 @@ mod tests {
 
         let rp = PgResourcePool::new(pool.clone());
         assert_eq!(rp.default_pool_id("proj1").await.expect("d"), Some("pool1".into()));
-        assert_eq!(rp.default_pool_id("proj2").await.expect("d"), None); // 列为 NULL
-        assert_eq!(rp.default_pool_id("ghost").await.expect("d"), None); // 无配置行
+        assert_eq!(rp.default_pool_id("proj2").await.expect("d"), None);
+        assert_eq!(rp.default_pool_id("ghost").await.expect("d"), None);
         assert!(rp.is_pool_available("pool1").await.expect("a"));
-        assert!(!rp.is_pool_available("pool2").await.expect("a")); // 禁用
-        assert!(!rp.is_pool_available("nope").await.expect("a")); // 不存在
+        assert!(!rp.is_pool_available("pool2").await.expect("a"));
+        assert!(!rp.is_pool_available("nope").await.expect("a"));
 
         let spec = DispatchSpec {
             case_ids: vec!["c1".into(), "c2".into()],
@@ -831,11 +784,10 @@ mod tests {
             environment_id: None,
         };
 
-        // 下发成功:报告 RUNNING,且下发器收到带 report_id 的任务
         let spy = SpyDispatcher::new();
         let exec = PgBatchReportExecutor::new(pool.clone(), Arc::new(spy.clone()));
         let rep = exec.dispatch(&spec).await.expect("dispatch");
-        assert_eq!(rep.status, "RUNNING"); // 回传状态与报告一致
+        assert_eq!(rep.status, "RUNNING");
         let row = sqlx::query("SELECT case_count, status FROM ms_api_batch_report WHERE id = $1")
             .bind(&rep.report_id)
             .fetch_one(&pool)
@@ -844,10 +796,9 @@ mod tests {
         assert_eq!(row.try_get::<i32, _>("case_count").expect("cc"), 2);
         assert_eq!(row.try_get::<String, _>("status").expect("st"), "RUNNING");
         let task = spy.last().expect("dispatched");
-        assert_eq!(task.report_id, rep.report_id); // report_id 透传给执行节点
+        assert_eq!(task.report_id, rep.report_id);
         assert_eq!(task.case_ids.len(), 2);
 
-        // 下发失败:报告 DISPATCH_FAILED,且 dispatch 向上报错
         let exec_fail = PgBatchReportExecutor::new(pool.clone(), Arc::new(SpyDispatcher::failing()));
         let err = exec_fail.dispatch(&spec).await;
         assert!(err.is_err());
@@ -859,7 +810,6 @@ mod tests {
         .expect("q");
         assert!(failed.is_some());
 
-        // NoopDispatcher 也能用(本地无执行节点)
         let _ = PgBatchReportExecutor::new(pool.clone(), Arc::new(NoopDispatcher));
     }
 
@@ -870,7 +820,6 @@ mod tests {
         let pool = PgPool::connect(&url).await.expect("connect");
         migrate::run(&pool).await.expect("migrate");
         sqlx::raw_sql("TRUNCATE ms_api_case_result").execute(&pool).await.expect("truncate");
-        // 三条记录,executed_at 递增 → 倒序后 r3、r2、r1
         sqlx::raw_sql(
             "INSERT INTO ms_api_case_result (report_id, case_id, outcome, failures, executed_at) VALUES \
                 ('r1','c1','SUCCESS','[]'::jsonb,        '2026-05-31T00:00:01Z'), \
@@ -886,16 +835,14 @@ mod tests {
         assert_eq!(q.count_by_case("c1").await.expect("count"), 3);
         assert_eq!(q.count_by_case("c2").await.expect("count"), 1);
 
-        // 第 1 页 2 条:倒序 → r3, r2
         let page1 = q.list_by_case("c1", 0, 2).await.expect("page1");
         assert_eq!(page1.len(), 2);
         assert_eq!(page1[0].report_id, "r3");
         assert_eq!(page1[1].report_id, "r2");
         assert_eq!(page1[0].outcome, "SUCCESS");
         assert_eq!(page1[1].failures, serde_json::json!(["boom"]));
-        assert_eq!(page1[0].executed_at, "2026-05-31T00:00:03Z"); // RFC3339 归一
+        assert_eq!(page1[0].executed_at, "2026-05-31T00:00:03Z");
 
-        // 第 2 页(offset=2)剩 r1
         let page2 = q.list_by_case("c1", 2, 2).await.expect("page2");
         assert_eq!(page2.len(), 1);
         assert_eq!(page2[0].report_id, "r1");

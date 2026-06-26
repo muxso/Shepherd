@@ -1,4 +1,3 @@
-//! 应用层:用例编排。依赖 `ports` trait,不碰具体 IO。
 pub mod create_user;
 pub mod login;
 pub mod oidc_login;

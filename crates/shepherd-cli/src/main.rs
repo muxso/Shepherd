@@ -1,8 +1,3 @@
-//! Shepherd CLI(`shepherd`):封装 REST API 驱动全链路。
-//!
-//! `shepherd login` 存会话(URL + 令牌)到 `~/.shepherd/config.json`(或用 SHEPHERD_URL /
-//! SHEPHERD_TOKEN 环境变量覆盖)。其余命令读取它带上 Bearer 调用 Shepherd 服务。
-
 use std::error::Error;
 use std::path::PathBuf;
 
@@ -22,7 +17,6 @@ struct Cli {
     cmd: Cmd,
 }
 
-/// 全局输出模式:true=原始 JSON,false=人类可读。由 --json 设置。
 static JSON_OUTPUT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 #[derive(Subcommand)]
@@ -244,7 +238,6 @@ enum AgentCmd {
     Disconnect,
 }
 
-/// 把 `--type` 归一为执行者枚举串。
 fn normalize_agent(t: &str) -> R<String> {
     match t.to_ascii_lowercase().replace('-', "_").as_str() {
         "claude_code" => Ok("CLAUDE_CODE".into()),
@@ -1074,7 +1067,6 @@ enum EnvCmd {
 struct Config {
     url: String,
     token: String,
-    /// 已连接的 AI 执行者(dispatch 默认 executor)。
     #[serde(default)]
     agent: Option<String>,
 }
@@ -1086,7 +1078,6 @@ fn config_path() -> PathBuf {
 
 impl Config {
     fn load() -> Config {
-        // 环境变量优先,否则读配置文件。
         let mut c: Config = std::fs::read_to_string(config_path())
             .ok()
             .and_then(|s| serde_json::from_str(&s).ok())
@@ -1151,7 +1142,6 @@ impl Client {
     fn get(&self, path: &str, auth: bool) -> R<Value> {
         self.send(self.http.get(self.url(path)), auth)
     }
-    /// POST 原始字节(用于上传 xlsx 等二进制),返回 JSON。
     fn post_bytes(&self, path: &str, bytes: Vec<u8>, auth: bool) -> R<Value> {
         self.send(
             self.http
@@ -1161,7 +1151,6 @@ impl Client {
             auth,
         )
     }
-    /// GET 返回原始字节(用于 xlsx 等二进制响应)。
     fn get_bytes(&self, path: &str, auth: bool) -> R<Vec<u8>> {
         let mut rb = self.http.get(self.url(path));
         if auth {
@@ -1177,7 +1166,6 @@ impl Client {
         }
         Ok(resp.bytes()?.to_vec())
     }
-    /// GET 返回原始文本(用于 HTML 报告等非 JSON 响应)。
     fn get_text(&self, path: &str, auth: bool) -> R<String> {
         let mut rb = self.http.get(self.url(path));
         if auth {
@@ -1197,7 +1185,6 @@ impl Client {
     fn put(&self, path: &str, body: Value, auth: bool) -> R<Value> {
         self.send(self.http.put(self.url(path)).json(&body), auth)
     }
-    /// 拉取任意 URL 的文本(用于 import --url 读取远程 OpenAPI 文档)。
     fn fetch_text(&self, url: &str) -> R<String> {
         let resp = self.http.get(url).send()?;
         if !resp.status().is_success() {
@@ -1210,7 +1197,6 @@ impl Client {
     }
 }
 
-/// 统一输出:--json → 原始 JSON;否则人类可读(分页/数组渲染表格,对象渲染键值)。
 fn pretty(v: &Value) {
     if JSON_OUTPUT.load(std::sync::atomic::Ordering::Relaxed) {
         println!("{}", serde_json::to_string_pretty(v).unwrap_or_default());
@@ -1219,7 +1205,6 @@ fn pretty(v: &Value) {
     render_human(v);
 }
 
-/// 标量值渲染成单元格文本;嵌套对象/数组压缩成摘要(避免撑爆表格)。
 fn cell(v: &Value) -> String {
     match v {
         Value::Null => "—".to_string(),
@@ -1231,9 +1216,7 @@ fn cell(v: &Value) -> String {
     }
 }
 
-/// 人类可读渲染:分页 {items,...} / 数组 → 表格;对象 → 键值;标量 → 原样。
 fn render_human(v: &Value) {
-    // 分页结构:渲染 items 表格 + 末尾分页摘要。
     if let Some(items) = v.get("items").and_then(|x| x.as_array()) {
         render_table(items);
         let total = v.get("total").map(cell).unwrap_or_default();
@@ -1251,13 +1234,11 @@ fn render_human(v: &Value) {
     }
 }
 
-/// 对象数组 → 对齐表格。列 = 各行键的并集(保序);标量列优先,过宽值截断。
 fn render_table(items: &[Value]) {
     if items.is_empty() {
         println!("(空)");
         return;
     }
-    // 收集列(按首次出现顺序)。非对象元素回退为单列 value。
     let mut cols: Vec<String> = Vec::new();
     for it in items {
         if let Some(o) = it.as_object() {
@@ -1274,7 +1255,6 @@ fn render_table(items: &[Value]) {
         }
         return;
     }
-    // 每列宽度 = max(表头, 各单元格),上限 40。
     let trunc = |s: String| if s.chars().count() > 40 { format!("{}…", s.chars().take(39).collect::<String>()) } else { s };
     let mut widths: Vec<usize> = cols.iter().map(|c| c.chars().count()).collect();
     let rows: Vec<Vec<String>> = items
@@ -1303,7 +1283,6 @@ fn render_table(items: &[Value]) {
     }
 }
 
-/// 对象 → 键值对齐输出。
 fn render_kv(v: &Value) {
     if let Some(o) = v.as_object() {
         let w = o.keys().map(|k| k.chars().count()).max().unwrap_or(0);
@@ -1314,8 +1293,6 @@ fn render_kv(v: &Value) {
     }
 }
 
-/// 把期望状态码翻成 runner 认得的断言数组(`[{"type":"StatusIs","args":N}]`);
-/// 省略 → 空断言(无失败项 → 恒判 Success)。
 fn status_assertions(expect_status: Option<u16>) -> Value {
     match expect_status {
         Some(code) => json!([{ "type": "StatusIs", "args": code }]),
@@ -1323,7 +1300,6 @@ fn status_assertions(expect_status: Option<u16>) -> Value {
     }
 }
 
-/// `--header "Name: value"` 列表 → JSON 数组 `[{"name","value"}]`(按首个冒号切分)。
 fn parse_headers(items: &[String]) -> R<Value> {
     let mut arr = Vec::with_capacity(items.len());
     for it in items {
@@ -1335,7 +1311,6 @@ fn parse_headers(items: &[String]) -> R<Value> {
     Ok(Value::Array(arr))
 }
 
-/// `--var key=value` 列表 → JSON 对象 `{k:v}`(按首个等号切分)。
 fn parse_vars(items: &[String]) -> R<Value> {
     let mut map = serde_json::Map::with_capacity(items.len());
     for it in items {
@@ -1353,7 +1328,7 @@ fn run(cli: Cli) -> R<()> {
             user,
             password,
         } => {
-            let mut cfg = Config::load(); // 保留已连接的 agent
+            let mut cfg = Config::load();
             cfg.url = url;
             let client = Client::new(cfg.clone())?;
             let v = client.post(
@@ -1425,7 +1400,6 @@ fn run(cli: Cli) -> R<()> {
                     true,
                 )?),
                 ReqCmd::Breakdown { req, version, ai: _ } => {
-                    // 服务端据 requirementId 取规格并拆分。
                     let path = match version {
                         Some(v) => format!("/requirement/{req}/breakdown?version={v}"),
                         None => format!("/requirement/{req}/breakdown"),
@@ -1482,12 +1456,10 @@ fn run(cli: Cli) -> R<()> {
             skills,
         } => {
             let cfg = Config::load();
-            // 执行者:显式 --executor 优先,否则用已连接 agent,再否则默认。
             let exec = executor
                 .or_else(|| cfg.agent.clone())
                 .unwrap_or_else(|| "CLAUDE_CODE".into());
             let c = Client::new(cfg)?;
-            // 若给了 --skills,先 compose 成行为规范(与 --instructions 合并)。
             let mut instr = instructions;
             if !skills.is_empty() {
                 let project = project.ok_or("--skills 需配合 --project")?;
@@ -1547,7 +1519,6 @@ fn run(cli: Cli) -> R<()> {
         Cmd::Logout => {
             let mut cfg = Config::load();
             let c = Client::new(cfg.clone())?;
-            // 服务端撤销当前令牌(忽略未登录/已失效)。
             let _ = c.post("/auth/logout", json!({}), true);
             cfg.token.clear();
             cfg.save()?;
@@ -1737,7 +1708,6 @@ fn run(cli: Cli) -> R<()> {
                     true,
                 )?),
                 ApidefCmd::Import { project, file, url } => {
-                    // --url 远程拉取 / --file 本地读取(二选一,url 优先)。
                     let raw = match (url, file) {
                         (Some(u), _) => c.fetch_text(&u)?,
                         (None, Some(f)) => std::fs::read_to_string(&f)?,
@@ -1812,7 +1782,6 @@ fn run(cli: Cli) -> R<()> {
                         step["refId"] = json!(r);
                     }
                     if let Some(m) = method {
-                        // 断言:--assertions-json 优先,否则 --expect-status → StatusIs。
                         let assertions = match assertions_json {
                             Some(aj) => serde_json::from_str(&aj)
                                 .map_err(|e| format!("--assertions-json 不是合法 JSON: {e}"))?,
@@ -1980,14 +1949,6 @@ fn run(cli: Cli) -> R<()> {
     Ok(())
 }
 
-/// 为项目内每个接口定义生成「成功 + 失败」两条用例,并(默认)各建一条场景串联两者。
-///
-/// 设计:
-///  - 成功用例:断言文档化成功码(POST→201,其余→200),代表正常路径预期。
-///  - 失败用例:断言 401(未授权),代表负向路径预期。
-///
-/// 实际执行时(无凭证)受保护接口多返回 401,会如实回写各自 SUCCESS/ERROR,演示执行闭环。
-/// 配上带 `Authorization` 的环境(`env create --header`)再跑,正向用例即转绿。
 fn gen_suite(c: &Client, project: &str, base: &str, no_scenario: bool) -> R<()> {
     let defs = c.get(&format!("/api/definition?projectId={project}"), true)?;
     let list = defs.as_array().ok_or("接口定义列表不是数组")?;
@@ -2003,7 +1964,6 @@ fn gen_suite(c: &Client, project: &str, base: &str, no_scenario: bool) -> R<()> 
         let url = format!("{base}{path}");
         let success_code = if method == "POST" { 201 } else { 200 };
 
-        // 成功 + 失败两条用例(挂到定义下,可被批量/场景运行)。
         let mk_case = |label: &str, code: u16| {
             c.post(
                 "/api/case",
@@ -2044,7 +2004,6 @@ fn gen_suite(c: &Client, project: &str, base: &str, no_scenario: bool) -> R<()> 
         if no_scenario {
             continue;
         }
-        // 每个接口一条场景:顺序串联「成功 → 失败」两步(引用模式)。
         let sc = match c.post(
             "/api/scenario",
             json!({"projectId": project, "name": format!("{name} 场景")}),
@@ -2114,7 +2073,6 @@ mod tests {
 
     #[test]
     fn config_defaults_url_when_empty() {
-        // 不依赖文件/环境:空配置应回落默认 URL(此处直接验证逻辑)
         let c = Config {
             url: String::new(),
             token: String::new(),

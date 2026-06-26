@@ -1,5 +1,3 @@
-//! 内存版验证仓储(test double 兼本地存储)。
-
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;

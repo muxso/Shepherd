@@ -1,8 +1,3 @@
-//! 用例:测试计划的列表 / 重命名 / 删除。
-//!
-//! 列表为列表页提供后端权威来源(取代纯前端注册表);重命名/删除为基本管理操作。
-//! 校验:重命名后的名称不得为空白。
-
 use std::sync::Arc;
 
 use crate::domain::Plan;
@@ -30,12 +25,10 @@ impl ManagePlanUseCase {
         Self { repo }
     }
 
-    /// 列出某项目下的全部计划。
     pub async fn list(&self, project_id: &str) -> Result<Vec<Plan>, ManagePlanError> {
         Ok(self.repo.list(project_id).await?)
     }
 
-    /// 重命名计划。空白名拒绝;计划不存在 → NotFound。
     pub async fn rename(&self, id: &str, name: &str) -> Result<(), ManagePlanError> {
         let name = name.trim();
         if name.is_empty() {
@@ -48,7 +41,6 @@ impl ManagePlanUseCase {
         }
     }
 
-    /// 删除计划(连带挂入用例)。计划不存在 → NotFound。
     pub async fn delete(&self, id: &str) -> Result<(), ManagePlanError> {
         if self.repo.delete(id).await? {
             Ok(())
@@ -77,7 +69,6 @@ mod tests {
         let uc = ManagePlanUseCase::new(repo);
         let list = uc.list("p1").await.expect("list");
         assert_eq!(list.len(), 2);
-        // 按名排序:回归 在 冒烟 前(笔画/码点序无所谓,只要稳定)
         assert!(list.iter().all(|p| p.project_id == "p1"));
     }
 

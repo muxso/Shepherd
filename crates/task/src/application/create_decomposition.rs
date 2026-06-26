@@ -1,4 +1,4 @@
-//! 用例:为一个需求版本开启任务拆分(每版本至多一张拆分图)。
+//! At most one decomposition per requirement version.
 
 use std::sync::Arc;
 
@@ -75,7 +75,6 @@ mod tests {
         let uc = uc();
         uc.execute("req1", 1).await.expect("first");
         assert_eq!(uc.execute("req1", 1).await.unwrap_err(), CreateDecompositionError::AlreadyExists);
-        // 不同版本可以各有一张
         assert!(uc.execute("req1", 2).await.is_ok());
     }
 }

@@ -1,6 +1,3 @@
-//! 用例:为场景追加步骤。先确认场景存在(否则 NotFound),步骤经
-//! `NewScenarioStep` 校验后落库。order 由调用方给定(追加后由仓储维护顺序)。
-
 use std::sync::Arc;
 
 use crate::domain::{NewScenarioStep, ScenarioStep};
@@ -26,13 +23,11 @@ impl AddStepUseCase {
         Self { repo }
     }
 
-    /// `step` 已是校验过的 `NewScenarioStep`(REQUEST/CASE/SCENARIO + COPY 快照规则)。
     pub async fn execute(
         &self,
         scenario_id: &str,
         step: &NewScenarioStep,
     ) -> Result<ScenarioStep, AddStepError> {
-        // 场景必须存在,否则 404。
         if self.repo.get_scenario(scenario_id).await?.is_none() {
             return Err(AddStepError::NotFound);
         }

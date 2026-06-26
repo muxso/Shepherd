@@ -1,8 +1,3 @@
-//! PostgreSQL 实现的 `SkillRepository`。`includes` 用 `text[]`;名唯一由部分唯一索引兜底。
-//!
-//! 集成测试 `#[ignore]`,需 DATABASE_URL:
-//!   `DATABASE_URL=postgres://... cargo test -p skill --features pg -- --ignored`
-
 use async_trait::async_trait;
 use sqlx::{PgPool, Row};
 
@@ -134,7 +129,7 @@ mod tests {
 
         let lib = SkillLibrary::new(repo.list_active("p1").await.expect("list"));
         let comp = lib.compose(&[_b.id.clone()]).expect("compose");
-        assert_eq!(comp.skill_ids[0], a.id); // 依赖在前
+        assert_eq!(comp.skill_ids[0], a.id);
         assert!(comp.instructions.contains("遵循六边形") && comp.instructions.contains("用 thiserror"));
     }
 }

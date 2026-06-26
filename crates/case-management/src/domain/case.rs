@@ -1,11 +1,8 @@
-//! 功能用例领域模型(零 IO)。自定义字段以字符串映射承载,适配各团队模板差异。
-
 use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-/// 功能用例的一个测试步骤:步骤描述 + 预期结果(手工用例)。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CaseStep {
@@ -21,7 +18,6 @@ pub enum CaseError {
     EmptyName,
 }
 
-/// 一条功能用例。`custom_fields` 为 `{字段名:值}`,落 jsonb。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FunctionalCase {
     pub id: String,
@@ -31,13 +27,10 @@ pub struct FunctionalCase {
     pub priority: String,
     pub status: String,
     pub custom_fields: BTreeMap<String, String>,
-    /// 手工测试步骤(步骤 + 预期结果)。
     pub steps: Vec<CaseStep>,
-    /// 创建人 user_id(0063 迁移;旧行为 None)。
     pub created_by: Option<String>,
 }
 
-/// 待创建用例(构造即校验:项目/名称非空;module/priority/status 缺省给默认)。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NewFunctionalCase {
     pub project_id: String,
@@ -47,7 +40,6 @@ pub struct NewFunctionalCase {
     pub status: String,
     pub custom_fields: BTreeMap<String, String>,
     pub steps: Vec<CaseStep>,
-    /// 创建人 user_id(组装根传入;缺省 None)。
     pub created_by: Option<String>,
 }
 
@@ -85,7 +77,6 @@ impl NewFunctionalCase {
         })
     }
 
-    /// 设置创建人(空串视作未知 → None)。
     pub fn with_created_by(mut self, user_id: Option<&str>) -> Self {
         self.created_by = user_id.map(str::trim).filter(|s| !s.is_empty()).map(str::to_string);
         self

@@ -1,10 +1,3 @@
-//! 接口定义上下文的 HTTP 适配器。
-//!
-//! 路由覆盖接口定义 / 用例 / Mock 三聚合的增查。本层只做 DTO 翻译 + 错误码映射,
-//! 校验规则全在 domain/application。RBAC 资源串为 `API_DEFINITION`:写端点需
-//! `API_DEFINITION:ADD`(无令牌→401,缺权限→403),读端点开放。
-//! 错误映射:校验失败→400,接口定义不存在→404,仓储错误→500。
-
 use std::sync::Arc;
 
 use axum::{
@@ -51,7 +44,6 @@ impl FromRef<ApiDefinitionState> for Arc<dyn SessionStore> {
     }
 }
 
-/// 装配接口定义上下文的全部路由。内部从仓储构建各用例。
 pub fn router(
     repo: Arc<dyn ApiDefinitionRepository>,
     sessions: Arc<dyn SessionStore>,
@@ -94,8 +86,6 @@ pub fn router(
         .with_state(state)
 }
 
-// ---------- DTO ----------
-
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 struct ApiDefinitionResponse {
@@ -108,7 +98,6 @@ struct ApiDefinitionResponse {
     path: String,
     status: String,
     module_id: Option<String>,
-    /// 请求/响应规格(不透明 JSON;约定见 0037 迁移)。
     spec: serde_json::Value,
     created_by: String,
     created_at: String,
@@ -127,7 +116,6 @@ impl From<ApiDefinition> for ApiDefinitionResponse {
             path: d.path,
             status: d.status.as_str().to_string(),
             module_id: d.module_id,
-            // spec 以 TEXT 存 JSON 文本;无法解析时回退为 {}。
             spec: serde_json::from_str(&d.spec).unwrap_or_else(|_| serde_json::json!({})),
             created_by: d.created_by,
             created_at: d.created_at,
@@ -169,7 +157,6 @@ struct ModuleRenameBody {
 #[derive(Debug, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 struct MoveDefinitionBody {
-    /// 目标模块 id;null/缺省 = 移出到未归类。
     #[serde(default)]
     module_id: Option<String>,
 }
@@ -247,10 +234,8 @@ struct ApiCaseCreateBody {
     body: Option<String>,
     #[serde(default)]
     assertions: Option<serde_json::Value>,
-    /// 前后置处理器(EXTRACT/WAIT)数组;缺省空。
     #[serde(default)]
     processors: Option<serde_json::Value>,
-    /// 优先级 / 状态 / 标签 / 请求头(均可选,缺省走域默认)。
     #[serde(default)]
     priority: Option<String>,
     #[serde(default)]
@@ -259,7 +244,6 @@ struct ApiCaseCreateBody {
     tags: Option<serde_json::Value>,
     #[serde(default)]
     headers: Option<serde_json::Value>,
-    /// Query / REST 路径参数(数组)/ 认证(对象);均可选。
     #[serde(default)]
     query_params: Option<serde_json::Value>,
     #[serde(default)]
@@ -282,7 +266,6 @@ struct ApiMockResponse {
     response_headers: serde_json::Value,
     response_delay_ms: i32,
     follow_definition: bool,
-    /// 创建人 user_id(审计列;见 0057 迁移)。
     created_by: String,
 }
 
@@ -317,7 +300,6 @@ struct ApiMockCreateBody {
     response_body: Option<String>,
     #[serde(default)]
     enabled: Option<bool>,
-    /// 标签 / 响应头 / 响应延时(ms)/ 跟随定义(均可选)。
     #[serde(default)]
     tags: Option<serde_json::Value>,
     #[serde(default)]
@@ -328,8 +310,6 @@ struct ApiMockCreateBody {
     follow_definition: Option<bool>,
 }
 
-// ---------- 接口定义 handlers ----------
-
 #[utoipa::path(post, path = "/api/definition", tag = "api-definition", request_body = ApiDefinitionCreateBody, responses((status = 201, body = ApiDefinitionResponse), (status = 400)), security(("bearer" = [])))]
 async fn create_definition(
     user: AuthUser,
@@ -339,7 +319,6 @@ async fn create_definition(
     if !user.can("API_DEFINITION", "ADD") {
         return (StatusCode::FORBIDDEN, "permission denied").into_response();
     }
-    // 协议缺省 HTTP;非法协议串直接 400(不落到用例)。
     let protocol = match req.protocol.as_deref() {
         None => ApiProtocol::Http,
         Some(s) => match ApiProtocol::parse(s) {
@@ -351,7 +330,6 @@ async fn create_definition(
     let path = req.path.as_deref().unwrap_or_default();
     match st.create_def.execute(&req.project_id, &req.name, protocol, method, path, &user.user_id).await {
         Ok(d) => {
-            // 审计:记录创建(best-effort,失败不阻断)。
             let _ = st
                 .repo
                 .record_definition_change(&d.id, "CREATE", &format!("{} {}", d.method, d.path), &user.user_id)
@@ -387,7 +365,6 @@ async fn get_definition(
     State(st): State<ApiDefinitionState>,
     Path(id): Path<String>,
 ) -> Response {
-    // 单条按 id 读取直查仓储(读端点,无需用例编排)。
     match st.repo.get_definition(&id).await {
         Ok(Some(d)) => (StatusCode::OK, Json(ApiDefinitionResponse::from(d))).into_response(),
         Ok(None) => (StatusCode::NOT_FOUND, "api definition not found").into_response(),
@@ -431,16 +408,12 @@ async fn delete_definition(
 #[derive(Debug, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 struct ApiDefinitionUpdateBody {
-    /// 名称;缺省=保持原值(校验后非空)。
     #[serde(default)]
     name: Option<String>,
-    /// 协议;缺省=保持原值。非法协议串 → 400。
     #[serde(default)]
     protocol: Option<String>,
-    /// 方法;缺省=保持原值(HTTP 校验白名单并规整大写)。
     #[serde(default)]
     method: Option<String>,
-    /// 路径;缺省=保持原值。
     #[serde(default)]
     path: Option<String>,
 }
@@ -455,13 +428,11 @@ async fn update_definition(
     if !user.can("API_DEFINITION", "ADD") {
         return (StatusCode::FORBIDDEN, "permission denied").into_response();
     }
-    // 先读现有定义:缺省字段回落原值,顺带做 404 判定。
     let existing = match st.repo.get_definition(&id).await {
         Ok(Some(d)) => d,
         Ok(None) => return (StatusCode::NOT_FOUND, "api definition not found").into_response(),
         Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
     };
-    // 协议缺省沿用原值;非法协议串直接 400(不落到用例)。
     let protocol = match req.protocol.as_deref() {
         None => existing.protocol,
         Some(s) => match ApiProtocol::parse(s) {
@@ -495,7 +466,6 @@ async fn update_definition(
 #[derive(Debug, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 struct SpecUpdateBody {
-    /// 完整请求/响应规格(JSON 对象);服务端不透明存取。
     spec: serde_json::Value,
 }
 
@@ -509,7 +479,6 @@ async fn update_definition_spec(
     if !user.can("API_DEFINITION", "ADD") {
         return (StatusCode::FORBIDDEN, "permission denied").into_response();
     }
-    // 先确认存在,避免对幽灵 id 静默写入。
     match st.repo.get_definition(&id).await {
         Ok(Some(_)) => {}
         Ok(None) => return (StatusCode::NOT_FOUND, "api definition not found").into_response(),
@@ -531,7 +500,6 @@ async fn update_definition_spec(
 #[derive(Debug, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 struct StatusUpdateBody {
-    /// DRAFT | DEBUGGING | COMPLETED | DEPRECATED
     status: String,
 }
 
@@ -545,7 +513,6 @@ async fn update_definition_status(
     if !user.can("API_DEFINITION", "ADD") {
         return (StatusCode::FORBIDDEN, "permission denied").into_response();
     }
-    // 校验状态值合法。
     let Some(status) = crate::domain::ApiStatus::parse(&req.status) else {
         return (StatusCode::BAD_REQUEST, "invalid status").into_response();
     };
@@ -565,8 +532,6 @@ async fn update_definition_status(
         Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
     }
 }
-
-// ---------- 用例 handlers ----------
 
 #[utoipa::path(post, path = "/api/definition/{id}/case", tag = "api-definition", params(("id" = String, Path)), request_body = ApiCaseCreateBody, responses((status = 201, body = ApiCaseResponse), (status = 400), (status = 404)), security(("bearer" = [])))]
 async fn create_case(
@@ -615,8 +580,6 @@ async fn list_cases(State(st): State<ApiDefinitionState>, Path(id): Path<String>
     }
 }
 
-// ---------- 项目级(独立)用例 handlers ----------
-
 #[derive(Debug, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 struct StandaloneCaseBody {
@@ -630,7 +593,6 @@ struct StandaloneCaseBody {
     body: Option<String>,
     #[serde(default)]
     assertions: Option<serde_json::Value>,
-    /// 前后置处理器(EXTRACT/WAIT)数组;缺省空。
     #[serde(default)]
     processors: Option<serde_json::Value>,
 }
@@ -721,8 +683,6 @@ async fn list_project_cases(
     }
 }
 
-// ---------- Mock handlers ----------
-
 #[utoipa::path(post, path = "/api/definition/{id}/mock", tag = "api-definition", params(("id" = String, Path)), request_body = ApiMockCreateBody, responses((status = 201, body = ApiMockResponse), (status = 400), (status = 404)), security(("bearer" = [])))]
 async fn create_mock(
     user: AuthUser,
@@ -772,7 +732,6 @@ async fn list_mocks(State(st): State<ApiDefinitionState>, Path(id): Path<String>
     }
 }
 
-/// 项目级 Mock 行(Mock + 所属定义的 方法/路径/协议/名称)。供「MOCK 视图」表格。
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 struct ProjectMockResponse {
@@ -832,7 +791,7 @@ async fn update_case(
         return (StatusCode::FORBIDDEN, "permission denied").into_response();
     }
     let assertions = req.assertions.unwrap_or_else(|| serde_json::json!([]));
-    // api_definition_id/project_id 在 UPDATE 中不变,用占位空串构造(NewApiCase 仅校验 name/url/method)。
+    // "_" 占位:UPDATE 不改 api_definition_id/project_id,NewApiCase 仅校验 name/url/method。
     let new_case = match NewApiCase::new("_", "_", &req.name, &req.method, &req.url, req.body, assertions) {
         Ok(c) => c
             .with_processors(req.processors.unwrap_or_else(|| serde_json::json!([])))
@@ -914,8 +873,6 @@ async fn delete_mock(user: AuthUser, State(st): State<ApiDefinitionState>, Path(
         Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
     }
 }
-
-// ---------- 模块(文件夹)handlers ----------
 
 async fn create_module(
     user: AuthUser,
@@ -1005,8 +962,6 @@ async fn move_definition(
     }
 }
 
-// ---------- 变更历史(审计)handler ----------
-
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 struct ApiDefinitionChangeResponse {
@@ -1042,8 +997,6 @@ async fn list_definition_changes(State(st): State<ApiDefinitionState>, Path(id):
         Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
     }
 }
-
-// ---------- 任务 ↔ 用例 关联 handlers ----------
 
 #[derive(Debug, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
@@ -1100,8 +1053,6 @@ async fn list_task_cases(
         Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
     }
 }
-
-// ---------- 列表视图 handlers ----------
 
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
@@ -1180,27 +1131,19 @@ async fn delete_view(
     }
 }
 
-// ---------- 导入 handler ----------
-
 #[derive(Debug, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 struct ImportBody {
     project_id: String,
-    /// 来源格式:`openapi`(默认)/`postman`/`har`/`jmeter`/`metersphere`(不区分大小写)。
     #[serde(default)]
     format: Option<String>,
-    /// 接口文档:OpenAPI/Postman/HAR/MeterSphere 为 JSON 对象;JMeter 为含原始 .jmx 文本的 JSON 字符串。
     content: serde_json::Value,
-    /// 新建定义归入的模块(缺省=未归类);group_by_tag 开启时作为按 tag 自建子模块的父级。
     #[serde(default)]
     module_id: Option<String>,
-    /// 按 OpenAPI 首个 tag 自动建/复用子模块并归类(默认开启,对齐 OpenAPI 的 tag 分组)。
     #[serde(default = "default_group_by_tag")]
     group_by_tag: bool,
-    /// 导入模式:true=覆盖已存在(默认),false=不覆盖(跳过)。
     #[serde(default = "default_overwrite")]
     overwrite: bool,
-    /// 覆盖时是否同步更新已存在接口的所在目录到选定模块。
     #[serde(default)]
     sync_module: bool,
 }
@@ -1217,7 +1160,6 @@ fn default_group_by_tag() -> bool {
 #[serde(rename_all = "camelCase")]
 struct ImportResultResponse {
     created: Vec<ApiDefinitionResponse>,
-    /// 覆盖更新的接口数(同 方法+路径 已存在,导入只刷新其 spec)。
     updated: usize,
     skipped: usize,
 }
@@ -1326,7 +1268,6 @@ mod tests {
     use tower::ServiceExt;
     use webauth::testing::InMemorySessionStore;
 
-    /// app + 一个拥有 `API_DEFINITION:READ+ADD` 的令牌。
     async fn app() -> (Router, String) {
         let repo = Arc::new(InMemoryApiDefinitionRepository::new());
         let sessions = Arc::new(InMemorySessionStore::new());
@@ -1467,13 +1408,11 @@ mod tests {
         let (app, t) = app().await;
         let id = create_definition_returns_id(&app, &t).await;
 
-        // 列表为读端点,无需令牌
         let resp = app.clone().oneshot(get("/api/definition?projectId=p1")).await.expect("resp");
         assert_eq!(resp.status(), StatusCode::OK);
         let v = json_body(resp).await;
         assert_eq!(v.as_array().expect("arr").len(), 1);
 
-        // 按 id 取
         let resp = app
             .clone()
             .oneshot(get(&format!("/api/definition/{id}")))
@@ -1481,7 +1420,6 @@ mod tests {
             .expect("resp");
         assert_eq!(resp.status(), StatusCode::OK);
 
-        // 不存在 404
         let resp = app.oneshot(get("/api/definition/ghost")).await.expect("resp");
         assert_eq!(resp.status(), StatusCode::NOT_FOUND);
     }
@@ -1506,7 +1444,6 @@ mod tests {
             .expect("resp");
         assert_eq!(resp.status(), StatusCode::NO_CONTENT);
 
-        // 删除后按 id 取应 404,列表也应为空。
         let resp = app
             .clone()
             .oneshot(get(&format!("/api/definition/{id}")))
@@ -1522,7 +1459,6 @@ mod tests {
     async fn delete_definition_cascades_cases() {
         let (app, t) = app().await;
         let id = create_definition_returns_id(&app, &t).await;
-        // 在定义下挂一个用例。
         let resp = app
             .clone()
             .oneshot(post(
@@ -1534,7 +1470,6 @@ mod tests {
             .expect("resp");
         assert_eq!(resp.status(), StatusCode::CREATED);
 
-        // 删除定义应连带删除其用例。
         let resp = app
             .clone()
             .oneshot(del(&format!("/api/definition/{id}"), Some(&t)))
@@ -1545,7 +1480,6 @@ mod tests {
         let resp = app.oneshot(get("/api/case?projectId=p1")).await.expect("resp");
         assert_eq!(resp.status(), StatusCode::OK);
         let v = json_body(resp).await;
-        // /api/case 现为分页响应 {total, items, ...};级联删除后应 0 条。
         assert_eq!(v["total"].as_u64().expect("total"), 0);
     }
 
@@ -1602,7 +1536,6 @@ mod tests {
         assert_eq!(v["method"], "PUT");
         assert_eq!(v["path"], "/v2/login");
 
-        // 持久化:再读应反映新值。
         let resp = app.oneshot(get(&format!("/api/definition/{id}"))).await.expect("resp");
         let v = json_body(resp).await;
         assert_eq!(v["name"], "登录v2");
@@ -1613,7 +1546,6 @@ mod tests {
     async fn update_definition_partial_keeps_existing() {
         let (app, t) = app().await;
         let id = create_definition_returns_id(&app, &t).await;
-        // 仅改路径:名称/方法保持原值。
         let resp = app
             .oneshot(put(&format!("/api/definition/{id}"), r#"{"path":"/login2"}"#, Some(&t)))
             .await
@@ -1714,7 +1646,6 @@ mod tests {
     async fn add_case_bad_payload_400() {
         let (app, t) = app().await;
         let id = create_definition_returns_id(&app, &t).await;
-        // assertions 不是数组
         let resp = app
             .oneshot(post(
                 &format!("/api/definition/{id}/case"),
@@ -1825,7 +1756,6 @@ mod tests {
                 .expect("seed");
         }
 
-        // 读端点,无需令牌
         let resp = app
             .oneshot(get("/api/case?projectId=p1&current=1&pageSize=2"))
             .await
@@ -1833,7 +1763,7 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::OK);
         let v = json_body(resp).await;
         assert_eq!(v["total"], 3);
-        assert_eq!(v["totalPages"], 2); // ceil(3/2)
+        assert_eq!(v["totalPages"], 2);
         assert_eq!(v["items"].as_array().expect("arr").len(), 2);
     }
 

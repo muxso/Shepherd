@@ -1,5 +1,3 @@
-//! 用例:列出某接口定义下的用例。
-
 use std::sync::Arc;
 
 use crate::domain::ApiCase;

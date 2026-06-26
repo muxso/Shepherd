@@ -1,13 +1,3 @@
-//! 本地子进程执行者(feature = "exec-local"):spawn `claude`/`codex` headless,**流式**读取
-//! 其 stdout 并实时回流执行事件,**同步**跑完。
-//!
-//! 约定(子进程或其 wrapper 按行输出 JSON):
-//! - 事件行 `{"event":"DECISION","message":"...","detail":"..."}` → 经 sink 实时回流(审计轨迹);
-//! - 结果行 `{"reference":"...","summary":"..."}` → 作为交付物;
-//! - 其它行 → 作为 LOG 事件回流。
-//!
-//! 非零退出 → `ExecError`;同步完成 → `DispatchOutcome::Completed`。
-
 use std::process::Stdio;
 
 use async_trait::async_trait;
@@ -17,13 +7,10 @@ use tokio::process::Command;
 use crate::domain::{Deliverable, DeliverableKind, EventKind, ExecutorKind, NewExecutionEvent};
 use crate::ports::{AgentExecutor, DispatchOutcome, EventSink, ExecError, WorkSpec};
 
-/// 按执行者种类路由到不同的 argv(程序 + 参数)。
 #[derive(Clone)]
 pub struct LocalCommandAgentExecutor {
     claude_code: Vec<String>,
     codex: Vec<String>,
-    /// 异步自回调配置:(回调基址, 令牌)。设置后 dispatch 立即返回 Accepted,
-    /// 子进程在后台跑完经 `/delivery/{attempt_id}/complete` 自行收尾 —— 避开请求级超时。
     callback: Option<(String, String)>,
 }
 
@@ -32,7 +19,6 @@ impl LocalCommandAgentExecutor {
         Self { claude_code, codex, callback: None }
     }
 
-    /// 常见默认:`claude -p`(headless print)与 `codex exec`。
     pub fn with_defaults() -> Self {
         Self {
             claude_code: vec!["claude".into(), "-p".into()],
@@ -41,8 +27,6 @@ impl LocalCommandAgentExecutor {
         }
     }
 
-    /// 启用异步自回调:子进程经 HTTP 回调收尾(派发请求秒回,不被 30s 超时切断)。
-    /// 子进程会拿到环境变量 `SHEPHERD_ATTEMPT_ID` / `SHEPHERD_CALLBACK_URL` / `SHEPHERD_CALLBACK_TOKEN`。
     pub fn with_async_callback(mut self, base: String, token: String) -> Self {
         self.callback = Some((base, token));
         self
@@ -52,8 +36,7 @@ impl LocalCommandAgentExecutor {
         match kind {
             ExecutorKind::ClaudeCode => &self.claude_code,
             ExecutorKind::Codex => &self.codex,
-            // 本地(非机群)路径只配两套 argv;OpenCode 回退 claude argv。
-            // 真正的多 CLI(claude/codex/opencode)路由在机群 runtime(crates/agent-runtime)。
+            // 本地路径只配两套 argv;OpenCode 故意回退 claude argv(真正路由在 crates/agent-runtime)。
             ExecutorKind::OpenCode => &self.claude_code,
         }
     }
@@ -77,7 +60,6 @@ fn spec_to_prompt(spec: &WorkSpec) -> String {
     p
 }
 
-/// 一行 stdout 的分类。
 enum Line {
     Event(NewExecutionEvent),
     Result { reference: String, summary: String },
@@ -115,7 +97,6 @@ impl AgentExecutor for LocalCommandAgentExecutor {
         let (program, args) =
             argv.split_first().ok_or_else(|| ExecError::Backend("empty executor command".into()))?;
 
-        // —— 异步自回调模式:子进程后台跑,经 HTTP 回调收尾,派发立即返回 Accepted ——
         if let Some((base, token)) = &self.callback {
             let mut child = Command::new(program)
                 .args(args)
@@ -136,11 +117,10 @@ impl AgentExecutor for LocalCommandAgentExecutor {
                     .await
                     .map_err(|e| ExecError::Backend(e.to_string()))?;
             }
-            // 后台收割,避免僵尸;不阻塞派发。
+            // 后台 wait() 必须保留:不收割子进程会留下僵尸。
             tokio::spawn(async move {
                 let _ = child.wait().await;
             });
-            // run_id = attempt_id,便于回调/排障对账。
             return Ok(DispatchOutcome::Accepted { run_id: spec.attempt_id.clone() });
         }
 
@@ -157,7 +137,7 @@ impl AgentExecutor for LocalCommandAgentExecutor {
                 .write_all(spec_to_prompt(spec).as_bytes())
                 .await
                 .map_err(|e| ExecError::Backend(e.to_string()))?;
-            // stdin 在此 drop → 向子进程发送 EOF
+            // stdin 在此 drop → 向子进程发送 EOF(否则按行读取会永远阻塞)
         }
 
         let stdout = child.stdout.take().ok_or_else(|| ExecError::Backend("no stdout".into()))?;
@@ -231,7 +211,6 @@ mod tests {
 
     #[tokio::test]
     async fn streams_events_then_completes_with_result() {
-        // 子进程吞掉 stdin 后,先输出两条事件行,再输出结果行
         let script = r#"cat >/dev/null; printf '{"event":"DECISION","message":"用 argon2"}\n{"event":"FILE_CHANGE","message":"edit auth.rs"}\n{"reference":"branch:x","summary":"done"}\n'"#;
         let exec = LocalCommandAgentExecutor::new(
             vec!["/bin/sh".into(), "-c".into(), script.into()],

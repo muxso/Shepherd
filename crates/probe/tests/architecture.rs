@@ -1,4 +1,3 @@
-//! 架构守卫:domain/ports 不得引用任何 IO crate(插件实现在 plugins,IO 在那)。
 use std::fs;
 use std::path::Path;
 const FORBIDDEN: &[&str] =

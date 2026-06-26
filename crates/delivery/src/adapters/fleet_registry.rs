@@ -1,5 +1,3 @@
-//! 机群注册表适配器。`InMemoryFleetRegistry`(单机)始终编译;Redis 版见 `redis_registry`。
-
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -20,7 +18,6 @@ struct Entry {
     last_seen_ms: u64,
 }
 
-/// 进程内注册表(单机/测试)。多副本请用 `RedisFleetRegistry`。
 #[derive(Default)]
 pub struct InMemoryFleetRegistry {
     seq: AtomicU64,
@@ -93,7 +90,7 @@ mod tests {
         let list = r.list().await;
         assert_eq!(list.len(), 1);
         assert_eq!(list[0].name, "box-1");
-        assert!(list[0].online); // 刚心跳过
+        assert!(list[0].online);
         assert_eq!(list[0].caps, vec!["CLAUDE_CODE".to_string()]);
     }
 }

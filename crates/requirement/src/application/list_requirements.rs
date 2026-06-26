@@ -1,5 +1,3 @@
-//! 用例:分页列出项目内的需求。复用 `kernel` 的 `PageRequest`/`Page`。
-
 use std::sync::Arc;
 
 use kernel::page::{Page, PageRequest};

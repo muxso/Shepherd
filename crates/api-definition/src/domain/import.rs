@@ -1,53 +1,30 @@
-//! 接口定义导入:把 OpenAPI 3.x / Swagger 2.0 文档解析成一批待建的接口。
-//!
-//! 纯函数、零 IO:把文档 `paths` 下的每个 `路径 × HTTP 方法` 摊平成一条 [`ImportedApi`],
-//! 由应用层逐条建为 [`super::NewApiDefinition`] + 默认用例。除名称/方法/路径外,还解析:
-//!   - `parameters`(query/header/path,含 required + description)→ spec 请求头/查询/REST 参数
-//!   - `requestBody`(application/json schema)→ spec.bodyType/requestBody 示例/bodySchema 树
-//!   - `responses`(状态码 + json schema)→ spec.responses 示例
-//! 并据成功响应派生默认用例断言:状态码断言 + 基础业务断言(响应必含顶层字段)。
-//! `$ref` 会按 `components` 解析(带深度上限,防环)。
-
 use crate::domain::error::ApiDefinitionError;
 use serde_json::{json, Map, Value};
 
-/// 从导入文档摊平出的一条接口(协议固定 HTTP——OpenAPI/Swagger 描述的是 HTTP)。
 #[derive(Debug, Clone)]
 pub struct ImportedApi {
     pub name: String,
     pub method: String,
     pub path: String,
-    /// 完整 ApiSpec(前端约定形态)JSON 对象;落库为 definition.spec。
     pub spec: Value,
-    /// 默认用例断言(中立 JSON 数组):状态码断言 + 可选基础业务断言。
     pub case_assertions: Value,
-    /// 默认用例请求体示例(由 requestBody schema 生成);仅 POST/PUT/PATCH 且有 json body 时为 Some。
     pub case_body: Option<String>,
-    /// OpenAPI 首个 tag(用于按标签自动归入子模块);无 tag 为 None。
     pub module: Option<String>,
 }
 
 const HTTP_METHODS: &[&str] = &["get", "post", "put", "delete", "patch", "head", "options"];
 const MAX_DEPTH: u8 = 8;
 
-/// 支持的导入来源格式。`from_source` 不区分大小写,未知值回落 OpenAPI(向后兼容)。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ImportFormat {
-    /// OpenAPI 3.x / Swagger 2.0(JSON 文档)。
     Openapi,
-    /// Postman Collection v2.x(JSON)。
     Postman,
-    /// HAR 1.2 抓包(JSON)。
     Har,
-    /// JMeter 测试计划(.jmx,XML 文本)。
     Jmeter,
-    /// MeterSphere 接口导出(JSON)。
     Metersphere,
 }
 
 impl ImportFormat {
-    /// 解析来源字符串(前端来料);未知/空 → OpenAPI。
-    /// (刻意不实现 `FromStr`:此处「未知→默认」是宽松解析,非标准 parse 语义。)
     pub fn from_source(s: &str) -> Self {
         match s.trim().to_ascii_lowercase().as_str() {
             "postman" => Self::Postman,
@@ -58,7 +35,6 @@ impl ImportFormat {
         }
     }
 
-    /// 规范化的来源串(落库/回显用)。
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Openapi => "openapi",
@@ -70,7 +46,6 @@ impl ImportFormat {
     }
 }
 
-/// 按格式分派到对应解析器。JMeter 为 XML:`doc` 须为 JSON 字符串(原始 .jmx 文本)。
 pub fn parse_import(format: ImportFormat, doc: &Value) -> Result<Vec<ImportedApi>, ApiDefinitionError> {
     match format {
         ImportFormat::Openapi => parse_openapi(doc),
@@ -86,8 +61,6 @@ pub fn parse_import(format: ImportFormat, doc: &Value) -> Result<Vec<ImportedApi
     }
 }
 
-/// 组装前端约定的 ApiSpec(供非 OpenAPI 来源复用)。各 kv 形如 `{name,value,desc}`。
-/// `body_type`:`json`/`raw`/`form`/`none`;`responses` 形如 `[{status,body}]`。
 pub(crate) fn simple_spec(
     description: &str,
     headers: Vec<Value>,
@@ -111,17 +84,14 @@ pub(crate) fn simple_spec(
     })
 }
 
-/// 单条 kv 项(请求头/查询参数)。
 pub(crate) fn kv(name: &str, value: &str, desc: &str) -> Value {
     json!({ "name": name, "value": value, "desc": desc })
 }
 
-/// 默认用例断言:仅状态码断言(非 OpenAPI 来源无响应 schema 可派生业务断言)。
 pub(crate) fn status_assertions(status: u16) -> Value {
     json!([{ "type": "StatusIs", "args": status }])
 }
 
-/// `bodyType` 启发:能解析为 JSON → `json`,否则 `raw`。
 pub(crate) fn body_type_of(raw: &str) -> &'static str {
     if raw.trim().is_empty() {
         "none"
@@ -132,11 +102,8 @@ pub(crate) fn body_type_of(raw: &str) -> &'static str {
     }
 }
 
-/// 从完整/相对 URL 拆出 `(路径, 查询参数)`。去掉协议+host,保留以 `/` 开头的路径;
-/// `?` 后按 `&`/`=` 拆查询(值做最小 percent-decode 的 `+`→空格,不做完整解码,保留原样可读)。
 pub(crate) fn path_and_query(url: &str) -> (String, Vec<(String, String)>) {
     let url = url.trim();
-    // 去协议 + host:有 "://" 时取第一个 '/' 起的部分;否则原样(已是相对路径)。
     let after_host = match url.find("://") {
         Some(i) => {
             let rest = &url[i + 3..];
@@ -160,8 +127,6 @@ pub(crate) fn path_and_query(url: &str) -> (String, Vec<(String, String)>) {
     (path, query)
 }
 
-/// 解析 OpenAPI 3.x / Swagger 2.0 文档。无法识别或 `paths` 缺失/为空时报 `BadImport`。
-/// 返回按「路径、方法」稳定排序的接口列表(便于幂等与可预期的导入结果)。
 pub fn parse_openapi(doc: &Value) -> Result<Vec<ImportedApi>, ApiDefinitionError> {
     let base_path = doc
         .get("basePath")
@@ -206,7 +171,6 @@ pub fn parse_openapi(doc: &Value) -> Result<Vec<ImportedApi>, ApiDefinitionError
                 None
             };
 
-            // 首个 tag → 子模块名(按 OpenAPI 标签自动归类)。
             let module = op
                 .get("tags")
                 .and_then(|v| v.as_array())
@@ -233,9 +197,6 @@ pub fn parse_openapi(doc: &Value) -> Result<Vec<ImportedApi>, ApiDefinitionError
     Ok(out)
 }
 
-// ---- spec 组装 ----
-
-/// 把一个 operation 对象组装成前端约定的 ApiSpec JSON。
 fn build_spec(doc: &Value, op: &Value) -> Value {
     let mut headers = Vec::new();
     let mut query = Vec::new();
@@ -277,7 +238,6 @@ fn build_spec(doc: &Value, op: &Value) -> Value {
     })
 }
 
-/// 把一条 parameter 解析为 `(in, {name,value,desc})`;desc 编码「必填/选填 · 类型 · 描述」。
 fn kv_from_param(doc: &Value, p: &Value) -> Option<(String, Value)> {
     let p = resolve(doc, p, 0);
     let name = p.get("name")?.as_str()?.to_string();
@@ -297,7 +257,6 @@ fn kv_from_param(doc: &Value, p: &Value) -> Option<(String, Value)> {
     Some((loc, json!({ "name": name, "value": "", "desc": desc })))
 }
 
-/// requestBody(application/json)→ (bodyType, 请求体示例文本, bodySchema 节点数组)。
 fn request_body(doc: &Value, op: &Value) -> (String, String, Vec<Value>) {
     let schema = op
         .get("requestBody")
@@ -313,7 +272,6 @@ fn request_body(doc: &Value, op: &Value) -> (String, String, Vec<Value>) {
     }
 }
 
-/// responses → [{status, body}],body 为 json schema 示例文本(无 schema 时取响应描述)。
 fn responses_spec(doc: &Value, op: &Value) -> Vec<Value> {
     let mut out = Vec::new();
     let Some(resps) = op.get("responses").and_then(|v| v.as_object()) else { return out };
@@ -335,7 +293,6 @@ fn responses_spec(doc: &Value, op: &Value) -> Vec<Value> {
     out
 }
 
-/// 派生默认用例:成功状态码(最小 2xx,缺省 200)+ 业务断言字段(成功响应 schema 首个/必含顶层字段)。
 fn success_case(doc: &Value, op: &Value) -> (u16, Option<String>) {
     let Some(resps) = op.get("responses").and_then(|v| v.as_object()) else { return (200, None) };
     let mut codes: Vec<u16> = resps
@@ -364,9 +321,6 @@ fn success_case(doc: &Value, op: &Value) -> (u16, Option<String>) {
     (status, field)
 }
 
-// ---- schema 工具(解析 $ref / allOf,取类型,生成示例与节点树)----
-
-/// 解析 `$ref`(指向 `components`)与合并 `allOf`,返回内联后的 schema(克隆,带深度上限防环)。
 fn resolve(doc: &Value, schema: &Value, depth: u8) -> Value {
     if depth > MAX_DEPTH {
         return schema.clone();
@@ -396,7 +350,6 @@ fn resolve(doc: &Value, schema: &Value, depth: u8) -> Value {
     schema.clone()
 }
 
-/// 解析 JSON Pointer 形态的 `$ref`(`#/components/schemas/Name`)。
 fn resolve_pointer(doc: &Value, r: &str) -> Option<Value> {
     let p = r.strip_prefix("#/")?;
     let mut cur = doc;
@@ -407,7 +360,6 @@ fn resolve_pointer(doc: &Value, r: &str) -> Option<Value> {
     Some(cur.clone())
 }
 
-/// schema 类型(OpenAPI 3.1 `type` 可为字符串或数组,取首个非 null;无 type 时按是否有 properties 推断)。
 fn schema_type(schema: &Value) -> String {
     match schema.get("type") {
         Some(Value::String(s)) => s.clone(),
@@ -422,7 +374,6 @@ fn schema_type(schema: &Value) -> String {
     }
 }
 
-/// 归一为 BodySchemaNode 允许的类型字面量。
 fn node_type(t: &str) -> &'static str {
     match t {
         "integer" => "integer",
@@ -434,7 +385,6 @@ fn node_type(t: &str) -> &'static str {
     }
 }
 
-/// 由 schema 生成一个示例值(对象/数组递归,标量给类型默认值)。
 fn example(doc: &Value, schema: &Value, depth: u8) -> Value {
     if depth > MAX_DEPTH {
         return Value::Null;
@@ -466,7 +416,6 @@ fn example(doc: &Value, schema: &Value, depth: u8) -> Value {
     }
 }
 
-/// 由 object schema 生成 BodySchemaNode 数组(name/type/value/description[/children]);desc 编码必填。
 fn schema_nodes(doc: &Value, schema: &Value, depth: u8) -> Vec<Value> {
     if depth > MAX_DEPTH {
         return Vec::new();
@@ -531,11 +480,10 @@ mod tests {
         });
         let apis = parse_openapi(&doc).expect("parsed");
         assert_eq!(apis.len(), 3);
-        // 稳定排序:/login 在 /users 前;同路径按方法白名单序(get 在 post 前)
         assert_eq!((apis[0].name.as_str(), apis[0].method.as_str(), apis[0].path.as_str()), ("登录", "POST", "/login"));
-        assert_eq!(apis[1].name, "listUsers"); // operationId 兜底
+        assert_eq!(apis[1].name, "listUsers");
         assert_eq!(apis[1].method, "GET");
-        assert_eq!(apis[2].name, "POST /users"); // 无 summary/operationId → METHOD path
+        assert_eq!(apis[2].name, "POST /users");
     }
 
     #[test]
@@ -547,8 +495,8 @@ mod tests {
             }
         });
         let apis = parse_openapi(&doc).expect("parsed");
-        assert_eq!(apis[0].module.as_deref(), Some("auth")); // 取首个 tag
-        assert_eq!(apis[1].module, None); // 无 tag → 未归类
+        assert_eq!(apis[0].module.as_deref(), Some("auth"));
+        assert_eq!(apis[1].module, None);
     }
 
     #[test]
@@ -623,9 +571,7 @@ mod tests {
         let nodes = api.spec["bodySchema"].as_array().unwrap();
         let names: Vec<&str> = nodes.iter().map(|n| n["name"].as_str().unwrap()).collect();
         assert!(names.contains(&"username") && names.contains(&"remember"));
-        // POST 默认用例带请求体示例
         assert!(api.case_body.as_deref().unwrap().contains("username"));
-        // 断言:状态码 200 + 业务断言 BodyContains "token"(成功响应必含字段)
         let asserts = api.case_assertions.as_array().unwrap();
         assert_eq!(asserts[0], json!({"type": "StatusIs", "args": 200}));
         assert_eq!(asserts[1], json!({"type": "BodyContains", "args": "token"}));

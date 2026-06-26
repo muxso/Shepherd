@@ -1,13 +1,3 @@
-//! 关注人的 HTTP 适配器。
-//!
-//! - `POST   /follow`        当前用户关注某对象(幂等)
-//! - `DELETE /follow`        当前用户取消关注(幂等)
-//! - `GET    /follow`        某对象的关注人列表 + 当前用户是否在关注
-//! - `GET    /follow/mine`   当前用户在某项目下关注的对象 id(可按类型过滤)
-//!
-//! 关注是**个人动作**:只要求已认证(`AuthUser` 提取器,无令牌 → 401),不做 RBAC 资源校验。
-//! 关注人 = 当前会话用户(`AuthUser.user_id`),客户端不能替别人关注。
-
 use std::sync::Arc;
 
 use axum::{
@@ -42,8 +32,6 @@ pub fn router(svc: FollowService, sessions: Arc<dyn SessionStore>) -> Router {
         .with_state(FollowState { svc, sessions })
 }
 
-// ---- DTO ----
-
 #[derive(Debug, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 struct FollowBody {
@@ -57,9 +45,7 @@ struct FollowBody {
 struct FollowStatus {
     entity_type: String,
     entity_id: String,
-    /// 当前用户是否关注。
     following: bool,
-    /// 关注人(user_id,按关注时间升序)。
     followers: Vec<String>,
     follower_count: usize,
 }
@@ -76,7 +62,6 @@ struct StatusQuery {
 #[serde(rename_all = "camelCase")]
 struct MineQuery {
     project_id: String,
-    /// 可选:仅返回该类型的对象;省略则返回全部类型。
     entity_type: Option<String>,
 }
 
@@ -86,8 +71,6 @@ struct MineResponse {
     entity_ids: Vec<String>,
 }
 
-// ---- 错误映射 ----
-
 fn svc_err(e: FollowServiceError) -> Response {
     match e {
         FollowServiceError::Validation(_) => (StatusCode::BAD_REQUEST, "invalid follow payload").into_response(),
@@ -95,7 +78,6 @@ fn svc_err(e: FollowServiceError) -> Response {
     }
 }
 
-/// 关注/取消后统一回读「关注人列表 + 当前用户是否在关注」,前端一次拿到最终态。
 async fn status_payload(
     st: &FollowState,
     user_id: &str,
@@ -113,8 +95,6 @@ async fn status_payload(
         followers,
     })
 }
-
-// ---- 处理器 ----
 
 #[utoipa::path(post, path = "/follow", tag = "follow", request_body = FollowBody, responses((status = 200, body = FollowStatus), (status = 400), (status = 401)), security(("bearer" = [])))]
 async fn follow(user: AuthUser, State(st): State<FollowState>, Json(b): Json<FollowBody>) -> Response {
@@ -178,7 +158,6 @@ mod tests {
     async fn app() -> (Router, String) {
         let store = Arc::new(InMemoryFollowStore::new());
         let sessions = Arc::new(InMemorySessionStore::new());
-        // 关注不挂资源权限,任意已认证用户即可;给个空权限集足矣。
         let perms = PermissionSet::from_raw(["FOLLOW:READ".to_string()]).expect("perms");
         let token = sessions.create("alice", perms, 3600).await.expect("token");
         let r = router(FollowService::new(store), sessions);
@@ -203,7 +182,6 @@ mod tests {
         let (app, t) = app().await;
         let payload = r#"{"projectId":"p1","entityType":"bug","entityId":"b1"}"#;
 
-        // 关注 → following=true, count=1
         let r = app.clone().oneshot(req("POST", "/follow", payload, Some(&t))).await.expect("r");
         assert_eq!(r.status(), StatusCode::OK);
         let v = body_json(r).await;
@@ -211,7 +189,6 @@ mod tests {
         assert_eq!(v["followerCount"], 1);
         assert_eq!(v["followers"][0], "alice");
 
-        // mine 含 b1
         let m = app
             .clone()
             .oneshot(req("GET", "/follow/mine?projectId=p1&entityType=bug", "", Some(&t)))
@@ -219,7 +196,6 @@ mod tests {
             .expect("r");
         assert_eq!(body_json(m).await["entityIds"][0], "b1");
 
-        // status 反映 following=true
         let s = app
             .clone()
             .oneshot(req("GET", "/follow?projectId=p1&entityType=bug&entityId=b1", "", Some(&t)))
@@ -227,7 +203,6 @@ mod tests {
             .expect("r");
         assert_eq!(body_json(s).await["following"], true);
 
-        // 取消 → following=false, count=0
         let d = app.clone().oneshot(req("DELETE", "/follow", payload, Some(&t))).await.expect("r");
         let dv = body_json(d).await;
         assert_eq!(dv["following"], false);

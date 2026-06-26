@@ -1,8 +1,5 @@
-//! 接口用例聚合。挂在接口定义之下,带断言(JSON 数组)。
-
 use crate::domain::error::{normalize_http_method, ApiDefinitionError};
 
-/// 创建接口用例的入站请求。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NewApiCase {
     pub api_definition_id: String,
@@ -12,31 +9,20 @@ pub struct NewApiCase {
     pub url: String,
     pub body: Option<String>,
     pub assertions: serde_json::Value,
-    /// 前后置处理器(EXTRACT/WAIT)JSON 数组;默认空。runner 透传,不在此校验形态。
     pub processors: serde_json::Value,
-    /// 优先级(P0/P1/P2/P3);默认 P0。
     pub priority: String,
-    /// 用例状态(进行中/已完成/已废弃 等 UI 文本);默认「进行中」。
     pub status: String,
-    /// 标签 JSON 数组;默认空。
     pub tags: serde_json::Value,
-    /// 请求头 JSON 数组([{key,value}]);默认空。runner 暂不消费,仅随用例往返存储。
     pub headers: serde_json::Value,
-    /// Query 参数 JSON 数组([{key,value}]);默认空。
     pub query_params: serde_json::Value,
-    /// REST 路径参数 JSON 数组([{key,value}]);默认空。
     pub rest_params: serde_json::Value,
-    /// 认证配置 JSON 对象({type,token});默认空对象。
     pub auth: serde_json::Value,
 }
 
-/// 用例默认优先级 / 状态(与前端 select 缺省保持一致)。
 const DEFAULT_PRIORITY: &str = "P0";
 const DEFAULT_STATUS: &str = "进行中";
 
 impl NewApiCase {
-    /// 校验:name/url 非空(trim);method 在 HTTP 方法白名单内并规整大写;
-    /// assertions 必须是 JSON 数组。processors 默认空数组(见 [`with_processors`](Self::with_processors))。
     pub fn new(
         api_definition_id: &str,
         project_id: &str,
@@ -77,15 +63,12 @@ impl NewApiCase {
         })
     }
 
-    /// 附加前后置处理器(非数组则回落空数组,保持存储形态稳定)。
     pub fn with_processors(mut self, processors: serde_json::Value) -> Self {
         self.processors =
             if processors.is_array() { processors } else { serde_json::Value::Array(Vec::new()) };
         self
     }
 
-    /// 附加用例元信息:优先级 / 状态 / 标签。
-    /// 空白优先级/状态回落默认值;tags 非数组回落空数组。
     pub fn with_meta(mut self, priority: &str, status: &str, tags: serde_json::Value) -> Self {
         if !priority.trim().is_empty() {
             self.priority = priority.trim().to_string();
@@ -97,14 +80,12 @@ impl NewApiCase {
         self
     }
 
-    /// 附加请求头(非数组则回落空数组)。
     pub fn with_headers(mut self, headers: serde_json::Value) -> Self {
         self.headers =
             if headers.is_array() { headers } else { serde_json::Value::Array(Vec::new()) };
         self
     }
 
-    /// 附加请求规格:Query / REST 路径参数(数组)/ 认证(对象)。非期望形态各自回落默认。
     pub fn with_request(
         mut self,
         query_params: serde_json::Value,
@@ -120,7 +101,6 @@ impl NewApiCase {
     }
 }
 
-/// 接口用例聚合。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ApiCase {
     pub id: String,
@@ -164,7 +144,6 @@ mod tests {
 
     #[test]
     fn with_meta_trims_and_defaults() {
-        // 空白优先级/状态回落默认;tags 透传数组。
         let c = NewApiCase::new("d", "p", "n", "GET", "/x", None, serde_json::json!([]))
             .expect("ok")
             .with_meta("  P1 ", "  ", serde_json::json!(["smoke"]));

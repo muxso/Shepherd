@@ -1,11 +1,3 @@
-//! 权限。对应 Java 版散落在切面 + `PermissionConstants` + `@RequiresPermissions` 的隐式逻辑。
-//!
-//! Java 版的权限判断埋在 AOP 拦截器里,不开 Spring 容器根本测不了。
-//! 这里把"一个权限串怎么解析""一组权限是否覆盖某个目标"抽成纯函数,
-//! 让权限规则变成**显式、可回归**的测试用例。
-//!
-//! 权限串形如 `SYSTEM_USER:READ` 或 `PROJECT_API:READ+ADD+DELETE`(冒号左边资源,右边动作集合)。
-
 use std::collections::BTreeSet;
 
 #[derive(Debug, Clone, PartialEq, Eq)]

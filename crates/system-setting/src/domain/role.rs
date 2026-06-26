@@ -1,5 +1,3 @@
-//! 角色领域模型。角色 = 名称 + 作用域 + 一组权限串(交给 kernel 校验)。
-
 use kernel::permission::PermissionSet;
 use thiserror::Error;
 
@@ -36,7 +34,6 @@ pub enum RoleError {
     BadPermission(String),
 }
 
-/// 校验权限串都能被 kernel 解析。
 fn validate_perms(perms: &[String]) -> Result<(), RoleError> {
     for p in perms {
         PermissionSet::from_raw([p]).map_err(|_| RoleError::BadPermission(p.clone()))?;

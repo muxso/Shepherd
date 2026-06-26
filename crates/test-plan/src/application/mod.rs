@@ -1,4 +1,3 @@
-//! 应用层:计划用例编排。
 pub mod create_plan;
 pub mod plan_cases;
 pub mod plan_statistics;

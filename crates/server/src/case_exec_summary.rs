@@ -1,9 +1,3 @@
-//! 项目级接口用例执行汇总:`GET /api/case-exec-summary?projectId=X`。
-//!
-//! 据 `ms_api_case_result`(执行明细)JOIN `ms_api_case`(接口用例,带 project_id)聚合,
-//! 给首页「接口用例数」面板用:执行次数 / 通过数 / 已执行用例数。用例总数前端已有。
-//! 只读端点,需登录。
-
 use axum::{
     extract::{FromRef, Query, State},
     http::StatusCode,
@@ -45,11 +39,8 @@ struct SummaryQuery {
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 struct CaseExecSummary {
-    /// 执行明细总条数。
     executions: i64,
-    /// 其中通过(outcome=SUCCESS)条数。
     passed: i64,
-    /// 至少执行过一次的不同接口用例数。
     executed_cases: i64,
 }
 
@@ -67,13 +58,11 @@ fn default_days() -> i32 {
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 struct TrendPoint {
-    /// 日期 YYYY-MM-DD(UTC)。
     date: String,
     executions: i64,
     passed: i64,
 }
 
-/// 近 N 天接口用例执行趋势:按 executed_at 日期分桶(只含有执行的日期,前端补全空日)。
 async fn exec_trend(_user: AuthUser, State(st): State<St>, Query(q): Query<TrendQuery>) -> Response {
     let days = q.days.clamp(1, 90);
     let sql = "SELECT to_char(r.executed_at::date, 'YYYY-MM-DD') AS d, \

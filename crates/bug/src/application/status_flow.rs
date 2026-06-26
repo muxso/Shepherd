@@ -1,5 +1,3 @@
-//! 用例:读取项目的缺陷状态流图(状态项 + 允许的流转),供前端按真实配置渲染选项。
-
 use std::sync::Arc;
 
 use crate::domain::StatusFlowGraph;

@@ -1,5 +1,3 @@
-//! 组织 CRUD 用例。名称唯一性忽略软删除;列表复用 kernel 分页。
-
 use std::sync::Arc;
 
 use kernel::page::{Page, PageRequest};
@@ -48,7 +46,6 @@ impl OrganizationService {
         self.repo.get(id).await?.filter(|o| !o.deleted).ok_or(OrgCmdError::NotFound)
     }
 
-    /// 改名 + 启停。改名时仍要保证未删除组织内唯一。
     pub async fn update(
         &self,
         id: &str,
@@ -99,7 +96,7 @@ mod tests {
         let o = s.create("Acme").await.expect("ok");
         assert_eq!(s.create("Acme").await.unwrap_err(), OrgCmdError::NameExists);
         s.delete(&o.id).await.expect("del");
-        assert!(s.create("Acme").await.is_ok()); // 软删除后名字释放
+        assert!(s.create("Acme").await.is_ok());
     }
 
     #[tokio::test]

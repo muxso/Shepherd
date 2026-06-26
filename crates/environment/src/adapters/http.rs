@@ -1,9 +1,3 @@
-//! 环境上下文的 HTTP 适配器。
-//!
-//! 路由覆盖环境 CRUD。本层只做 DTO 翻译 + 错误码映射,校验在 domain/application。
-//! RBAC 资源串 `ENVIRONMENT`:写端点需对应动作(ADD/UPDATE/DELETE,无令牌→401,缺权限→403),
-//! 读端点开放。错误映射:校验失败→400,环境不存在→404,仓储错误→500。
-
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
@@ -42,7 +36,6 @@ impl FromRef<EnvironmentState> for Arc<dyn SessionStore> {
     }
 }
 
-/// 装配环境上下文的全部路由。
 pub fn router(repo: Arc<dyn EnvironmentRepository>, sessions: Arc<dyn SessionStore>) -> Router {
     let state = EnvironmentState {
         create: CreateEnvironmentUseCase::new(repo.clone()),
@@ -60,8 +53,6 @@ pub fn router(repo: Arc<dyn EnvironmentRepository>, sessions: Arc<dyn SessionSto
         )
         .with_state(state)
 }
-
-// ---------- DTO ----------
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 struct HeaderDto {
@@ -133,8 +124,6 @@ impl From<EnvironmentBody> for EnvironmentInput {
 struct EnvironmentListQuery {
     project_id: String,
 }
-
-// ---------- handlers ----------
 
 #[utoipa::path(post, path = "/api/environment", tag = "environment", request_body = EnvironmentBody, responses((status = 201, body = EnvironmentResponse), (status = 400)), security(("bearer" = [])))]
 async fn create_environment(

@@ -1,9 +1,3 @@
-//! PostgreSQL 压测报告存储(表 `ms_perf_report`)。
-//!
-//! `create` 落 RUNNING 行并返回 id;`finish` 跑完回写聚合指标(延迟分位存 jsonb);
-//! `get_json` 读出整行为 camelCase JSON(供 HTTP 读端点直接返回)。SQL 收敛在此适配器,
-//! 组装根不碰裸 sqlx(与本仓约定一致)。
-
 use serde_json::{json, Value};
 use sqlx::{PgPool, Row};
 
@@ -19,7 +13,6 @@ impl PgPerfReportStore {
         Self { pool }
     }
 
-    /// 落 RUNNING 报告,返回生成的 id。
     pub async fn create(
         &self,
         project_id: &str,
@@ -42,8 +35,6 @@ impl PgPerfReportStore {
         row.try_get("id")
     }
 
-    /// 跑完回写:状态置 COMPLETED + 聚合指标(error_rate 表征质量,延迟分位存 jsonb)。
-    /// `samples_key` 为原始样本下沉对象存储后的键(无则置空)。
     pub async fn finish(
         &self,
         id: &str,
@@ -69,7 +60,6 @@ impl PgPerfReportStore {
         Ok(())
     }
 
-    /// 读整行为 camelCase JSON;不存在返回 None。
     pub async fn get_json(&self, id: &str) -> Result<Option<Value>, sqlx::Error> {
         let row = sqlx::query(
             "SELECT id, project_id, method, url, concurrency, iterations, status, total, success, \

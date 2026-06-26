@@ -1,4 +1,3 @@
-//! 应用层:完整性验证用例编排。依赖 `ports` trait,不碰具体 IO。
 pub mod create_verification;
 pub mod verification_admin;
 
