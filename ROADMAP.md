@@ -36,7 +36,7 @@
 | A1 | **可观测性** | metrics(Prometheus)+ 分布式追踪(OpenTelemetry);现仅 `tracing` 日志 | ~2–3 周 |
 | A2 | **AI 执行深化审计** | 现记 attempt + 执行事件 + judge 裁决;补 agent 逐步决策/文件变更/测试结果的更细轨迹与回放 | ~1–2 周 |
 | A3 | **MCP 服务端推送** | SSE 现仅 ready+心跳;加会话级广播,把任务/交付/验证事件主动推给订阅的 AI | ~1–2 周 |
-| A4 | **真实 LLM 产线化** | Anthropic 原生 Messages API 适配(现 OpenAI 兼容)、重试/超时/限流、prompt 版本化、成本/延迟观测 | ~2–3 周 |
+| A4 | **真实 LLM 产线化** | ✅ Anthropic 原生 Messages API 适配(与 OpenAI 兼容并存,`SHEPHERD_LLM_WIRE`)、每调用超时 + 对 429/5xx 退避重试(尊重 `Retry-After`)、prompt 版本化、延迟/令牌观测;待补:成本核算价表、流式 | (核心已交付) |
 | A5 | **`shepherd init`** | CLI 脚手架(README 列出);项目/需求模板 | ~1 周 |
 | A6 | **需求/任务广度** | 需求评论/附件/排序、任务重指派/批量、依赖图可视化数据、project 成员管理 | ~3–5 周 |
 | A7 | **MCP 安全** | 会话 id 不可猜化、按工具更细 scope、审计 MCP 调用 | ~1 周 |
