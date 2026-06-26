@@ -71,7 +71,7 @@
 | C3 | **插件系统** | 动态加载第三方扩展;Rust 需重新设计(WASM?进程隔离?) | ~4–8 周 + 设计 | 高(架构未定) |
 | C4 | **报告 / 通知 / 定时 / i18n** | 报告聚合分享、消息机器人、cron、多语言(web 中英双语已做) | 各 ~2–4 周 | 中 |
 | C5 | **生产化收尾** | 限流 / CORS / 统一错误体(problem+json)、分环境配置;**容器 / Helm / 多云 Terraform / CI-CD 自动部署已交付(见 `docs/DEPLOYMENT`);metrics / 追踪见 A1** | ~2–4 周 | 中 |
-| C6 | **鉴权收尾** | OIDC state CSRF 校验、令牌刷新、LDAP | ~1–3 周 | 高(安全) |
+| C6 | **鉴权收尾** | ✅ OIDC state CSRF 校验(authorize 下发不可猜 state 进 HttpOnly cookie,callback 核对);待补:令牌刷新、LDAP | ~1–2 周 | 高(安全) |
 
 ---
 

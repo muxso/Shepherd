@@ -3,7 +3,10 @@ use std::sync::Arc;
 
 use axum::{
     extract::{FromRef, Path, Query, State},
-    http::{header::AUTHORIZATION, HeaderMap, StatusCode},
+    http::{
+        header::{AUTHORIZATION, COOKIE, SET_COOKIE},
+        HeaderMap, HeaderValue, StatusCode,
+    },
     response::{IntoResponse, Redirect, Response},
     routing::{get, post},
     Json, Router,
@@ -296,20 +299,38 @@ pub fn oidc_router(oidc: OidcLoginUseCase) -> Router {
         .with_state(oidc)
 }
 
-#[derive(Deserialize, IntoParams)]
-struct AuthorizeQuery {
-    #[serde(default)]
-    state: String,
+const STATE_COOKIE: &str = "oidc_state";
+
+fn cookie_lookup(headers: &HeaderMap, name: &str) -> Option<String> {
+    let raw = headers.get(COOKIE)?.to_str().ok()?;
+    raw.split(';')
+        .filter_map(|kv| kv.split_once('='))
+        .find(|(k, _)| k.trim() == name)
+        .map(|(_, v)| v.trim().to_string())
 }
 
-#[utoipa::path(get, path = "/auth/oidc/{provider}/authorize", tag = "auth", params(("provider" = String, Path), AuthorizeQuery), responses((status = 302), (status = 404)))]
+fn set_cookie(resp: &mut Response, value: &str) {
+    if let Ok(v) = HeaderValue::from_str(value) {
+        resp.headers_mut().insert(SET_COOKIE, v);
+    }
+}
+
+#[utoipa::path(get, path = "/auth/oidc/{provider}/authorize", tag = "auth", params(("provider" = String, Path)), responses((status = 302), (status = 404)))]
 async fn oidc_authorize(
     State(uc): State<OidcLoginUseCase>,
     Path(provider): Path<String>,
-    Query(q): Query<AuthorizeQuery>,
 ) -> Response {
-    match uc.authorize_url(&provider, &q.state) {
-        Ok(url) => Redirect::to(&url).into_response(),
+    // 服务端生成不可猜的 state,经 HttpOnly cookie 跨重定向带回,回调时核对(防 CSRF)。
+    let state = uuid::Uuid::new_v4().simple().to_string();
+    match uc.authorize_url(&provider, &state) {
+        Ok(url) => {
+            let mut resp = Redirect::to(&url).into_response();
+            set_cookie(
+                &mut resp,
+                &format!("{STATE_COOKIE}={state}; HttpOnly; SameSite=Lax; Path=/auth/oidc; Max-Age=600"),
+            );
+            resp
+        }
         Err(_) => (StatusCode::NOT_FOUND, "unknown provider").into_response(),
     }
 }
@@ -318,18 +339,21 @@ async fn oidc_authorize(
 struct CallbackQuery {
     code: String,
     #[serde(default)]
-    #[allow(dead_code)]
     state: String,
 }
 
-#[utoipa::path(get, path = "/auth/oidc/{provider}/callback", tag = "auth", params(("provider" = String, Path), CallbackQuery), responses((status = 200), (status = 401)))]
+#[utoipa::path(get, path = "/auth/oidc/{provider}/callback", tag = "auth", params(("provider" = String, Path), CallbackQuery), responses((status = 200), (status = 400), (status = 401)))]
 async fn oidc_callback(
     State(uc): State<OidcLoginUseCase>,
     Path(provider): Path<String>,
     Query(q): Query<CallbackQuery>,
+    headers: HeaderMap,
 ) -> Response {
-    // FIXME: 未校验 state(CSRF)
-    match uc.complete(&provider, &q.code).await {
+    // CSRF:回调 state 必须与 authorize 下发的 cookie 一致且非空。
+    if q.state.is_empty() || cookie_lookup(&headers, STATE_COOKIE).as_deref() != Some(q.state.as_str()) {
+        return (StatusCode::BAD_REQUEST, "invalid or missing state").into_response();
+    }
+    let mut resp = match uc.complete(&provider, &q.code).await {
         Ok(token) => (StatusCode::OK, Json(LoginResponse { token })).into_response(),
         Err(OidcError::UnknownProvider(_)) => {
             (StatusCode::NOT_FOUND, "unknown provider").into_response()
@@ -340,7 +364,10 @@ async fn oidc_callback(
         Err(OidcError::Backend(_)) => {
             (StatusCode::INTERNAL_SERVER_ERROR, "auth error").into_response()
         }
-    }
+    };
+    // 一次性 state:用后即清。
+    set_cookie(&mut resp, &format!("{STATE_COOKIE}=; Max-Age=0; Path=/auth/oidc"));
+    resp
 }
 
 #[derive(Clone)]
@@ -828,12 +855,29 @@ mod tests {
         Request::builder().uri(uri).body(Body::empty()).expect("req")
     }
 
+    fn state_cookie(resp: &Response) -> String {
+        let c = resp.headers().get("set-cookie").expect("set-cookie").to_str().expect("s");
+        c.strip_prefix("oidc_state=").expect("prefix").split(';').next().expect("v").to_string()
+    }
+
+    fn cb_req(code: &str, q_state: &str, cookie: Option<&str>) -> Request<Body> {
+        let mut b = Request::builder()
+            .uri(format!("/auth/oidc/feishu/callback?code={code}&state={q_state}"));
+        if let Some(c) = cookie {
+            b = b.header("cookie", format!("oidc_state={c}"));
+        }
+        b.body(Body::empty()).expect("req")
+    }
+
     #[tokio::test]
-    async fn oidc_authorize_redirects() {
-        let resp = oidc_app().oneshot(get_req("/auth/oidc/feishu/authorize?state=s1")).await.expect("r");
+    async fn oidc_authorize_mints_state_cookie_and_redirects() {
+        let resp = oidc_app().oneshot(get_req("/auth/oidc/feishu/authorize")).await.expect("r");
         assert!(resp.status().is_redirection());
-        let loc = resp.headers().get("location").expect("loc").to_str().expect("s");
-        assert!(loc.contains("fake.example") && loc.contains("state=s1"));
+        let loc = resp.headers().get("location").expect("loc").to_str().expect("s").to_string();
+        let cookie = resp.headers().get("set-cookie").expect("cookie").to_str().expect("s");
+        assert!(cookie.starts_with("oidc_state=") && cookie.contains("HttpOnly"), "{cookie}");
+        let state = state_cookie(&resp);
+        assert!(loc.contains("fake.example") && loc.contains(&format!("state={state}")), "{loc}");
     }
 
     #[tokio::test]
@@ -843,8 +887,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn oidc_callback_good_code_returns_token() {
-        let resp = oidc_app().oneshot(get_req("/auth/oidc/feishu/callback?code=ok&state=s")).await.expect("r");
+    async fn oidc_callback_good_code_with_matching_state_returns_token() {
+        let app = oidc_app();
+        let auth = app.clone().oneshot(get_req("/auth/oidc/feishu/authorize")).await.expect("r");
+        let state = state_cookie(&auth);
+        let resp = app.oneshot(cb_req("ok", &state, Some(&state))).await.expect("r");
         assert_eq!(resp.status(), StatusCode::OK);
         let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.expect("body");
         let v: serde_json::Value = serde_json::from_slice(&bytes).expect("json");
@@ -852,8 +899,21 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn oidc_callback_bad_code_401() {
-        let resp = oidc_app().oneshot(get_req("/auth/oidc/feishu/callback?code=bad")).await.expect("r");
+    async fn oidc_callback_rejects_state_mismatch_or_missing_cookie() {
+        // cookie 与 query state 不一致 → 400(CSRF)。
+        let r1 = oidc_app().oneshot(cb_req("ok", "attacker", Some("real"))).await.expect("r");
+        assert_eq!(r1.status(), StatusCode::BAD_REQUEST);
+        // 无 cookie → 400。
+        let r2 = oidc_app().oneshot(cb_req("ok", "s", None)).await.expect("r");
+        assert_eq!(r2.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn oidc_callback_bad_code_401_with_valid_state() {
+        let app = oidc_app();
+        let auth = app.clone().oneshot(get_req("/auth/oidc/feishu/authorize")).await.expect("r");
+        let state = state_cookie(&auth);
+        let resp = app.oneshot(cb_req("bad", &state, Some(&state))).await.expect("r");
         assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
     }
 
