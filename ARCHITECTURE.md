@@ -4,7 +4,7 @@ Shepherd 是一个用 Rust 构建的 AI 研发监督平台。核心链路是:需
 
 操作说明见 [README.md](README.md);路线图见 [ROADMAP.md](ROADMAP.md)。
 
-规模:32 个 crate、866 个测试(单元 / 用例 / e2e + 集成),clippy `-D warnings` 零告警,业务规则全程真库(PostgreSQL 16)验证。
+规模:32 个 crate、866 个测试(单元 / 用例 / e2e + 集成),clippy `-D warnings` 零告警,业务规则全程用真实 PostgreSQL 16 验证。
 
 ## 1. 六边形分层
 

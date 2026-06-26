@@ -154,7 +154,7 @@ web/               React + antd 前端
 
 ```bash
 cargo test --workspace                      # 全量,非集成秒级
-cargo test --workspace -- --ignored         # 真库集成测试
+cargo test --workspace -- --ignored         # 真实数据库集成测试
 ```
 
 866 个测试,集成测试连真实 server + PG / Redis / MySQL。除架构守卫外,还有一条迁移唯一性守卫:迁移版本号重号会让 CI 挂(sqlx 对重号会静默丢迁移,我们踩过一次,缺列导致 500)。
