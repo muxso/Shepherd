@@ -155,7 +155,7 @@ cargo run -p agent-runtime
 
 ```bash
 cargo test --workspace                 # 全部;非集成测试数秒跑完
-cargo test --workspace -- --ignored    # 真库集成测试
+cargo test --workspace -- --ignored    # 真实数据库集成测试
 cargo clippy --workspace -- -D warnings
 ```
 
