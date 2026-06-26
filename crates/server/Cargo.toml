@@ -47,7 +47,7 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "signal
 tokio-stream = { version = "0.1", features = ["time", "sync"] }
 tokio-cron-scheduler = "0.13"
 tower = "0.5"
-tower-http = { version = "0.6", features = ["trace", "timeout", "limit"] }
+tower-http = { version = "0.6", features = ["trace", "timeout", "limit", "cors"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 uuid = { version = "1", features = ["v4"] }
