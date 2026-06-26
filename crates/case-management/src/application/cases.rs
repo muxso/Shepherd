@@ -1,5 +1,3 @@
-//! 用例:创建 / 列出功能用例 + 导出行(纯函数)。
-
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
@@ -44,8 +42,6 @@ impl CreateCaseUseCase {
     }
 }
 
-/// 全量更新一条用例(复用 `NewFunctionalCase` 的构造校验)。
-/// 命中返回更新后视图,未命中(不存在/已删)返回 `None`。
 #[derive(Clone)]
 pub struct UpdateCaseUseCase {
     repo: Arc<dyn CaseRepository>,
@@ -74,7 +70,6 @@ impl UpdateCaseUseCase {
     }
 }
 
-/// 软删除一条用例。命中返回 `true`,否则 `false`。
 #[derive(Clone)]
 pub struct DeleteCaseUseCase {
     repo: Arc<dyn CaseRepository>,
@@ -90,7 +85,6 @@ impl DeleteCaseUseCase {
     }
 }
 
-/// 批量导入:解析行 → 逐条创建。返回成功导入条数。
 #[derive(Clone)]
 pub struct ImportCasesUseCase {
     repo: Arc<dyn CaseRepository>,
@@ -132,9 +126,6 @@ impl ListCasesUseCase {
     }
 }
 
-/// 从表格行(纯函数)解析出待创建用例:`export_rows` 的逆。
-/// 表头按列名识别固定列(ID 列忽略;名称/模块/优先级/状态),其余列名 = 自定义字段。
-/// 名称为空的行跳过(校验失败即丢弃,容忍脏数据)。
 pub fn cases_from_rows(project_id: &str, rows: &[Vec<String>]) -> Vec<NewFunctionalCase> {
     let Some(header) = rows.first() else { return Vec::new() };
     let (mut name_i, mut module_i, mut prio_i, mut status_i) = (None, None, None, None);
@@ -173,15 +164,11 @@ pub fn cases_from_rows(project_id: &str, rows: &[Vec<String>]) -> Vec<NewFunctio
         .collect()
 }
 
-/// 取行中某列(下标缺失/越界回落空串)。
 fn cell(row: &[String], idx: Option<usize>) -> &str {
     idx.and_then(|i| row.get(i)).map(|s| s.as_str()).unwrap_or("")
 }
 
-/// 导出表格行(纯函数):表头 + 每用例一行。自定义字段列由所有用例字段名并集决定,
-/// 列顺序确定(固定列在前、自定义字段名按字典序),便于 Excel/CSV 编码。
 pub fn export_rows(cases: &[FunctionalCase]) -> Vec<Vec<String>> {
-    // 收集所有出现过的自定义字段名(并集、去重、排序)。
     let mut field_names: Vec<String> = cases
         .iter()
         .flat_map(|c| c.custom_fields.keys().cloned())
@@ -246,7 +233,7 @@ mod tests {
         let all = list.execute("p1").await.expect("listed");
         assert_eq!(all.len(), 1);
         assert_eq!(all[0].name, "登录成功");
-        assert_eq!(all[0].status, "PREPARED"); // 缺省
+        assert_eq!(all[0].status, "PREPARED");
         assert_eq!(all[0].created_by.as_deref(), Some("alice"));
     }
 
@@ -269,7 +256,7 @@ mod tests {
     fn cases_from_rows_skips_empty_name() {
         let rows = vec![
             vec!["名称".into(), "模块".into()],
-            vec!["".into(), "登录".into()], // 空名 → 跳过
+            vec!["".into(), "登录".into()],
             vec!["有效用例".into(), "登录".into()],
         ];
         let news = cases_from_rows("p1", &rows);
@@ -302,11 +289,8 @@ mod tests {
             case("c2", "用例2", &[("sprint", "S1")]),
         ];
         let rows = export_rows(&cases);
-        // 表头:5 固定列 + 自定义字段并集(owner, sprint 按字典序)
         assert_eq!(rows[0], vec!["ID", "名称", "模块", "优先级", "状态", "owner", "sprint"]);
-        // c1 有 owner 无 sprint
         assert_eq!(rows[1], vec!["c1", "用例1", "登录", "P2", "PREPARED", "alice", ""]);
-        // c2 无 owner 有 sprint
         assert_eq!(rows[2], vec!["c2", "用例2", "登录", "P2", "PREPARED", "", "S1"]);
     }
 }

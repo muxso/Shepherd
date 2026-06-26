@@ -1,5 +1,3 @@
-//! 内存版计划仓储。可注入用例计数与通过阈值,供统计用例测试。
-
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
@@ -37,15 +35,13 @@ impl InMemoryPlanRepository {
             plan_type: new_plan.plan_type,
             group_id: new_plan.group_id.clone(),
             archived: false,
-            // 内存版无真实时钟:用单调递增的 seq 当创建时间,保证列表倒序稳定。
+            // 无真实时钟:用单调递增的 seq 当创建时间,保证列表排序稳定。
             created_at_ms: state.seq as i64,
         };
         state.plans.insert(plan.id.clone(), plan.clone());
         plan
     }
 
-    // ---- 测试辅助 ----
-    /// 直接落库一个计划(绕过用例校验,用于搭场景)。
     pub async fn seed(&self, new_plan: NewPlan) -> Plan {
         self.insert_internal(&new_plan)
     }
@@ -85,7 +81,6 @@ impl PlanRepository for InMemoryPlanRepository {
 
     async fn case_counts(&self, plan_id: &str) -> Result<CaseCounts, RepoError> {
         let state = self.state.lock().expect("lock");
-        // 挂入了用例 → 按状态聚合;否则回落到 set_counts 注入值(兼容既有统计测试)。
         match state.cases.get(plan_id) {
             Some(cases) if !cases.is_empty() => {
                 let mut c = CaseCounts::default();
@@ -177,7 +172,6 @@ impl PlanRepository for InMemoryPlanRepository {
     }
 }
 
-/// 内存定时调度 + 运行快照(测试)。同时实现 ScheduleStore 与 PlanRunStore。
 #[derive(Default)]
 pub struct InMemoryScheduleStore {
     schedules: Mutex<Vec<crate::domain::Schedule>>,

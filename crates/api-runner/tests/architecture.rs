@@ -1,8 +1,5 @@
-//! 架构守卫:domain 层不得引用任何 IO crate(断言判定是纯函数,HTTP 只在 adapters)。
-//!
-//! 本 crate 比其它上下文更需要这道源码扫描:`reqwest` 在 `[dependencies]` 里**无条件**引入
-//! (非 feature 门控),默认 build 也在依赖图内 —— §2.1 的「默认 build 不启用 IO feature」
-//! 编译期屏障对它不成立,纯层不碰 IO 的保证全靠这道兜底扫描。
+//! `reqwest` 在 `[dependencies]` 里无条件引入,编译期 feature 屏障对它不成立 —— domain
+//! 层不碰 IO 的保证全靠这道源码扫描兜底。
 use std::fs;
 use std::path::Path;
 

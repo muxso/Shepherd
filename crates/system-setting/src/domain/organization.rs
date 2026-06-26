@@ -1,5 +1,3 @@
-//! 组织领域模型。名称同 project 一样:非空、按字符计长、软删除唯一性忽略已删除。
-
 use thiserror::Error;
 
 pub const MAX_NAME_LEN: usize = 255;
@@ -47,7 +45,6 @@ impl Organization {
         Self { id: id.to_string(), name: name.to_string(), enable: true, deleted: false }
     }
 
-    /// 改名(校验)。
     pub fn rename(&mut self, name: &str) -> Result<(), OrgError> {
         self.name = validate_name(name)?;
         Ok(())
@@ -61,7 +58,7 @@ impl Organization {
         self.deleted = true;
     }
 
-    /// 是否参与名称唯一性判定(仅未删除)。
+    /// 软删除后名称可复用,故仅未删除时占用唯一性
     pub fn occupies_name(&self) -> bool {
         !self.deleted
     }

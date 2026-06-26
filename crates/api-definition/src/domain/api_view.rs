@@ -1,9 +1,5 @@
-//! 接口列表「视图」:保存筛选条件 + 列设置 + 页大小(支持视图保存/分享)。
-//! `config` 为不透明 JSON(前端约定形态),领域层只保证 name 非空、config 为对象。
-
 use crate::domain::error::ApiDefinitionError;
 
-/// 创建视图的入站请求。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NewApiView {
     pub project_id: String,
@@ -14,7 +10,6 @@ pub struct NewApiView {
 }
 
 impl NewApiView {
-    /// 校验:name 非空(trim);config 非对象时回落空对象。
     pub fn new(
         project_id: &str,
         user_id: &str,
@@ -37,7 +32,6 @@ impl NewApiView {
     }
 }
 
-/// 视图聚合。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ApiView {
     pub id: String,

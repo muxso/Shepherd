@@ -1,5 +1,3 @@
-//! 内存样本下沉(测试 / 默认占位)。记录每次写入,便于断言。
-
 use std::sync::Mutex;
 
 use async_trait::async_trait;
@@ -17,7 +15,6 @@ impl InMemorySampleSink {
         Self::default()
     }
 
-    /// 已记录的 (run_id, samples) 写入,用于测试断言。
     pub fn writes(&self) -> Vec<(String, Vec<Sample>)> {
         self.writes.lock().map(|g| g.clone()).unwrap_or_default()
     }

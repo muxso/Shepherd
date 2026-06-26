@@ -1,5 +1,3 @@
-//! 用例:列出项目下的缺陷(按创建时间倒序)。
-
 use std::sync::Arc;
 
 use crate::domain::Bug;
@@ -43,7 +41,7 @@ mod tests {
         let uc = ListBugsUseCase::new(repo);
         let bugs = uc.execute("p1").await.expect("list");
         assert_eq!(bugs.len(), 2);
-        assert_eq!(bugs[0].title, "second"); // 新建在前
+        assert_eq!(bugs[0].title, "second");
         assert_eq!(bugs[1].title, "first");
     }
 

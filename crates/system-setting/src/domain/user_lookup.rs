@@ -1,6 +1,3 @@
-//! 用户来源(创建途径)。配套 OIDC 绕过 CFT 的规则见 `application::resolve_user_names`:
-//! 展示名解析与用户来源无关,绝不应被创建途径校验拦截。
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UserSource {
     Local,
@@ -26,7 +23,6 @@ impl UserSource {
         }
     }
 
-    /// 是否为外部来源(非本地)。CFT/Liber 的创建途径校验正是对这类用户报异常。
     pub fn is_external(&self) -> bool {
         !matches!(self, UserSource::Local)
     }

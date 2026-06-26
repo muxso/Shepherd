@@ -1,7 +1,3 @@
-//! 用例:第三方身份登录。授权码 → 外部身份 → 找/开通本地用户 → 发会话。
-//!
-//! provider 差异(飞书/企业微信端点)藏在 `ExternalIdentityProvider` 适配器后,本用例不感知。
-
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -23,7 +19,6 @@ impl OidcLoginUseCase {
         Self { providers: HashMap::new(), users, sessions, ttl_secs: 8 * 3600 }
     }
 
-    /// 注册一个提供方(飞书/企业微信)。
     pub fn register(mut self, provider: Arc<dyn ExternalIdentityProvider>) -> Self {
         self.providers.insert(provider.key().to_string(), provider);
         self
@@ -34,14 +29,12 @@ impl OidcLoginUseCase {
         self
     }
 
-    /// 已注册的提供方 key 列表(供 HTTP 层路由/展示)。
     pub fn provider_keys(&self) -> Vec<String> {
         let mut v: Vec<String> = self.providers.keys().cloned().collect();
         v.sort();
         v
     }
 
-    /// 授权页跳转 URL。
     pub fn authorize_url(&self, provider: &str, state: &str) -> Result<String, OidcError> {
         self.providers
             .get(provider)
@@ -49,7 +42,6 @@ impl OidcLoginUseCase {
             .ok_or_else(|| OidcError::UnknownProvider(provider.to_string()))
     }
 
-    /// 回调:用 code 完成登录,返回会话令牌。
     pub async fn complete(&self, provider: &str, code: &str) -> Result<String, OidcError> {
         let p = self
             .providers
@@ -121,10 +113,9 @@ mod tests {
 
     #[tokio::test]
     async fn relogin_maps_to_same_local_user() {
-        // 同一外部身份重复登录 → 同一本地 user_id(不重复开通)
         let (uc, _sessions, users) = uc();
         uc.complete("feishu", "c1").await.expect("first");
         uc.complete("feishu", "c2").await.expect("second");
-        assert_eq!(users.provisioned_count(), 1); // 只开通一次
+        assert_eq!(users.provisioned_count(), 1);
     }
 }

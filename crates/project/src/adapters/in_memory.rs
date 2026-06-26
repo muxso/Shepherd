@@ -1,8 +1,3 @@
-//! 内存版项目仓储。`Arc<Mutex>` 共享状态、Send+Sync,可被 axum 共享。
-//!
-//! `active` 语义统一在此实现:`find_active_by_name` / `count_active` / `list_active`
-//! 一律过滤 `deleted == true`。`soft_delete` 是测试辅助,模拟"删除用例"的副作用。
-
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
@@ -26,7 +21,6 @@ impl InMemoryProjectRepository {
         Self::default()
     }
 
-    /// 测试辅助:软删除指定项目(模拟删除用例的落库效果)。
     pub fn soft_delete(&self, id: &str) {
         let mut state = self.state.lock().expect("lock poisoned");
         if let Some(p) = state.projects.iter_mut().find(|p| p.id == id) {

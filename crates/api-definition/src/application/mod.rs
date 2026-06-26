@@ -1,4 +1,3 @@
-//! 应用层:接口定义 / 用例 / Mock 用例编排。
 pub mod add_api_case;
 pub mod add_api_mock;
 pub mod create_api_case;

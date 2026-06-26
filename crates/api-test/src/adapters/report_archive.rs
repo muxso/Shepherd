@@ -1,15 +1,3 @@
-//! 报告归档:把**已完成**的批量/场景报告导出为 Parquet 冷存储(分析/长期留存)。
-//!
-//! 与热路径解耦——读 PG 的报告读模型([`BatchReportDetail`]),编码为一个 Parquet 对象写出。
-//! 一行 = 一条用例结果(展开报告头字段便于跨报告扫描)。后端经 `object_store` 抽象:
-//! 本地文件系统(开发/单机)/ 内存(测试)/ S3 等(加 feature)。键形如
-//! `dt=<YYYY-MM-DD>/report_id=<id>/part-0.parquet`,便于按日期分区裁剪 + 按报告定位。
-//! 写 UNCOMPRESSED(纯 Rust,无 C 压缩依赖)。
-//!
-//! 查询:用 DuckDB/Arrow 直接扫目录,例如
-//!   `SELECT report_id, count(*) FILTER (WHERE outcome='ERROR') AS fails
-//!      FROM '<archive>/**/*.parquet' GROUP BY 1;`
-
 use std::sync::Arc;
 
 use arrow::array::{Int32Array, Int64Array, StringArray};
@@ -27,25 +15,21 @@ fn be<E: std::fmt::Display>(e: E) -> PortError {
     PortError::Backend(e.to_string())
 }
 
-/// 报告 → Parquet 对象存储。本地/内存/S3 由注入的 `ObjectStore` 决定。
 pub struct ReportArchiver {
     store: Arc<dyn ObjectStore>,
     prefix: String,
 }
 
 impl ReportArchiver {
-    /// 用任意 object_store 后端构造(测试用 `InMemory`,生产用 S3 等)。
     pub fn new(store: Arc<dyn ObjectStore>, prefix: impl Into<String>) -> Self {
         Self { store, prefix: prefix.into() }
     }
 
-    /// 本地文件系统后端(开发/单机);`root` 须为已存在目录。
     pub fn new_local(root: impl AsRef<std::path::Path>, prefix: impl Into<String>) -> Result<Self, PortError> {
         let fs = LocalFileSystem::new_with_prefix(root).map_err(be)?;
         Ok(Self::new(Arc::new(fs), prefix))
     }
 
-    /// 报告明细 → Parquet 字节(一行一条用例结果,展开报告头字段)。
     fn encode(report_id: &str, d: &BatchReportDetail) -> Result<Vec<u8>, PortError> {
         let schema = Arc::new(Schema::new(vec![
             Field::new("report_id", DataType::Utf8, false),
@@ -57,10 +41,9 @@ impl ReportArchiver {
             Field::new("latency_ms", DataType::Int64, true),
             Field::new("resp_size", DataType::Int64, true),
             Field::new("executed_at", DataType::Utf8, false),
-            Field::new("failures", DataType::Utf8, false),    // JSON 数组串
-            Field::new("assertions", DataType::Utf8, false),  // JSON
-            Field::new("extractions", DataType::Utf8, false), // JSON
-            // 实际请求(0060;冷存储也 100% 还原)。req_headers 为 JSON 串。
+            Field::new("failures", DataType::Utf8, false),
+            Field::new("assertions", DataType::Utf8, false),
+            Field::new("extractions", DataType::Utf8, false),
             Field::new("req_method", DataType::Utf8, true),
             Field::new("req_url", DataType::Utf8, true),
             Field::new("req_headers", DataType::Utf8, false),
@@ -117,7 +100,6 @@ impl ReportArchiver {
         Ok(buf)
     }
 
-    /// 日期分区(取首行 executed_at 的 YYYY-MM-DD;无结果则 unknown)。
     fn object_key(&self, report_id: &str, d: &BatchReportDetail) -> String {
         let dt = d
             .results
@@ -128,7 +110,6 @@ impl ReportArchiver {
         format!("{}/dt={dt}/report_id={report_id}/part-0.parquet", self.prefix.trim_end_matches('/'))
     }
 
-    /// 导出一份报告;返回写入的对象键。
     pub async fn archive(&self, report_id: &str, d: &BatchReportDetail) -> Result<String, PortError> {
         let bytes = Self::encode(report_id, d)?;
         let key = self.object_key(report_id, d);
@@ -196,14 +177,13 @@ mod tests {
             rows += batch.num_rows();
             let outcome =
                 batch.column(4).as_any().downcast_ref::<StringArray>().expect("outcome col");
-            // 实际请求列(0060)随归档落盘:req_method 在 extractions 之后(索引 12)。
             let req_method =
                 batch.column(12).as_any().downcast_ref::<StringArray>().expect("req_method col");
             for i in 0..batch.num_rows() {
                 if outcome.value(i) == "ERROR" {
                     errors += 1;
                 }
-                assert_eq!(req_method.value(i), "GET"); // row() 固定 req_method=GET
+                assert_eq!(req_method.value(i), "GET");
             }
         }
         assert_eq!(rows, 2);

@@ -1,6 +1,3 @@
-//! skill 的 HTTP 适配器。CRUD + compose。RBAC 资源键 `SKILL`。
-//! 错误码:校验→400,名冲突→409,不存在→404,组合错误(未知 include/成环)→409。
-
 use std::sync::Arc;
 
 use axum::{
@@ -251,7 +248,6 @@ mod tests {
         let b = app.clone().oneshot(req("POST", "/skill", &format!(r#"{{"projectId":"p1","name":"Rust","instructions":"用 thiserror","includes":["{aid}"]}}"#), Some(&t))).await.expect("r");
         let bid = json(b).await["id"].as_str().expect("id").to_string();
 
-        // compose B → 展开出 A 在前
         let c = app.clone().oneshot(req("POST", "/skill/compose", &format!(r#"{{"projectId":"p1","skillIds":["{bid}"]}}"#), Some(&t))).await.expect("r");
         assert_eq!(c.status(), StatusCode::OK);
         let cv = json(c).await;
@@ -259,7 +255,6 @@ mod tests {
         assert!(cv["instructions"].as_str().expect("s").contains("遵循六边形"));
         assert!(cv["instructions"].as_str().expect("s").contains("用 thiserror"));
 
-        // list / delete
         assert_eq!(app.clone().oneshot(req("GET", "/skill?projectId=p1", "", Some(&t))).await.expect("r").status(), StatusCode::OK);
         assert_eq!(app.oneshot(req("DELETE", &format!("/skill/{aid}"), "", Some(&t))).await.expect("r").status(), StatusCode::NO_CONTENT);
     }
@@ -267,7 +262,6 @@ mod tests {
     #[tokio::test]
     async fn compose_cycle_is_conflict() {
         let (app, t) = app_with("SKILL:READ+ADD+UPDATE").await;
-        // 建 A、B 后把它们互相 include 形成环
         let a = json(app.clone().oneshot(req("POST", "/skill", r#"{"projectId":"p1","name":"A","instructions":"a"}"#, Some(&t))).await.expect("r")).await["id"].as_str().unwrap().to_string();
         let b = json(app.clone().oneshot(req("POST", "/skill", r#"{"projectId":"p1","name":"B","instructions":"b"}"#, Some(&t))).await.expect("r")).await["id"].as_str().unwrap().to_string();
         app.clone().oneshot(req("PUT", &format!("/skill/{a}"), &format!(r#"{{"name":"A","instructions":"a","includes":["{b}"]}}"#), Some(&t))).await.expect("r");

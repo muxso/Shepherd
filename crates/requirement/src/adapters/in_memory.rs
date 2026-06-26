@@ -1,5 +1,3 @@
-//! 内存版需求仓储(test double 兼本地存储)。`active` 语义在此统一过滤 `deleted`。
-
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
@@ -23,7 +21,6 @@ impl InMemoryRequirementRepository {
         Self::default()
     }
 
-    /// 测试辅助:软删除指定需求(模拟删除用例的落库效果)。
     pub fn soft_delete(&self, id: &str) {
         let mut st = self.state.lock().expect("lock poisoned");
         if let Some(r) = st.requirements.iter_mut().find(|r| r.id == id) {

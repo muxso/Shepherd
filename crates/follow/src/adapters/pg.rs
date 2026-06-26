@@ -1,8 +1,3 @@
-//! PostgreSQL 实现的 `FollowStore`(表 `ms_follow`,主键即四元组)。
-//!
-//! 幂等靠主键:关注用 `ON CONFLICT DO NOTHING`,`rows_affected` 区分新建/已存在;
-//! 取消用 `DELETE`,`rows_affected` 区分真移除/本无关注。
-
 use async_trait::async_trait;
 use sqlx::{PgPool, Row};
 
@@ -88,7 +83,6 @@ impl FollowStore for PgFollowStore {
         user_id: &str,
         entity_type: Option<&str>,
     ) -> Result<Vec<String>, RepoError> {
-        // 用 `$3 IS NULL OR entity_type = $3` 统一有/无类型过滤两种查询。
         let rows = sqlx::query(
             "SELECT entity_id FROM ms_follow \
              WHERE project_id = $1 AND user_id = $2 AND ($3::text IS NULL OR entity_type = $3) \
@@ -119,8 +113,8 @@ mod tests {
         let store = PgFollowStore::new(pool.clone());
         let f = Follow::new("p1", "bug", "b1", "alice").expect("valid");
 
-        assert!(store.follow(&f).await.expect("follow")); // 新建
-        assert!(!store.follow(&f).await.expect("follow")); // 幂等
+        assert!(store.follow(&f).await.expect("follow"));
+        assert!(!store.follow(&f).await.expect("follow"));
         assert_eq!(store.followers("p1", "bug", "b1").await.expect("ls"), vec!["alice".to_string()]);
         assert_eq!(
             store.following_ids("p1", "alice", Some("bug")).await.expect("mine"),

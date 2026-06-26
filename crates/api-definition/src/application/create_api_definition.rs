@@ -1,5 +1,3 @@
-//! 用例:创建接口定义。
-
 use std::sync::Arc;
 
 use crate::domain::{ApiDefinition, ApiDefinitionError, ApiProtocol, NewApiDefinition};

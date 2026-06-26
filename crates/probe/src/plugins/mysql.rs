@@ -1,9 +1,3 @@
-//! MySQL 协议插件:target=连接串(mysql://user:pass@host:port/db),payload=语句。
-//! 输出=受影响行数,status=0(OK)/None(失败)。
-//!
-//! 按连接串缓存连接池:一次性探测与高并发压测都复用同一池(压测时不每请求重连,
-//! 测的是目标库吞吐而非连接开销)。与 sql(postgres)插件同构,仅驱动不同。
-
 use async_trait::async_trait;
 use std::collections::HashMap;
 use std::sync::Mutex;
@@ -16,7 +10,6 @@ use crate::ports::ProtocolPlugin;
 
 #[derive(Default)]
 pub struct MysqlPlugin {
-    /// 连接串 → 池(复用,避免每次探测/压测重连)。
     pools: Mutex<HashMap<String, MySqlPool>>,
 }
 
@@ -25,7 +18,6 @@ impl MysqlPlugin {
         Self::default()
     }
 
-    /// 取目标的连接池(已有则复用;否则新建并缓存)。连接在锁外建立。
     async fn pool_for(&self, target: &str) -> Result<MySqlPool, String> {
         if let Some(p) = self.pools.lock().expect("pools lock").get(target).cloned() {
             return Ok(p);
@@ -85,7 +77,6 @@ mod tests {
 
     #[tokio::test]
     async fn unreachable_target_is_transport_failure() {
-        // 连不上的目标 → transport_ok=false(就地执行、如实回传)。
         let plugin = MysqlPlugin::new();
         let req = ProbeRequest {
             protocol: "mysql".into(),

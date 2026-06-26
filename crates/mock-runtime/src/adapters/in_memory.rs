@@ -1,5 +1,3 @@
-//! 内存规则来源(测试 / 本地起 Mock 服务)。
-
 use async_trait::async_trait;
 
 use crate::domain::MockRule;

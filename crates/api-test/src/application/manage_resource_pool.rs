@@ -1,8 +1,3 @@
-//! 用例:创建 / 列出 / 取单 / 更新 / 删除资源池。
-//!
-//! 写操作走领域校验(`NewResourcePool::new`)→ 管理端口落库;读操作直接透传端口。
-//! 错误区分校验失败(→ 400)与后端错误(→ 500)。
-
 use std::sync::Arc;
 
 use thiserror::Error;
@@ -49,7 +44,6 @@ impl ListResourcePoolsUseCase {
     }
 }
 
-/// 取单 / 更新 / 删除:三者共享同一管理端口,合并在一个用例里避免结构体膨胀。
 #[derive(Clone)]
 pub struct EditResourcePoolUseCase {
     admin: Arc<dyn ResourcePoolAdminPort>,
@@ -64,7 +58,6 @@ impl EditResourcePoolUseCase {
         self.admin.get(id).await
     }
 
-    /// 全量更新(含启停)。`Ok(None)` 表示目标不存在。
     pub async fn update(
         &self,
         id: &str,
@@ -89,7 +82,6 @@ mod tests {
         ResourcePoolDraft { name: name.to_string(), enabled: true, all_org: true, ..Default::default() }
     }
 
-    /// 内存假实现:create 生成确定性 id(p{N});get/update/delete 按 id 命中。
     #[derive(Default)]
     struct FakeAdmin {
         pools: Mutex<Vec<ResourcePool>>,
@@ -152,7 +144,7 @@ mod tests {
 
         let p = create.execute(draft("  本地池 ")).await.expect("created");
         assert_eq!(p.id, "p1");
-        assert_eq!(p.name, "本地池"); // 去空白
+        assert_eq!(p.name, "本地池");
         assert!(p.enabled);
 
         create.execute(draft("远端池")).await.expect("created");
@@ -184,7 +176,6 @@ mod tests {
         assert_eq!(updated.name, "池改名");
         assert!(!updated.enabled);
 
-        // 不存在的 id:更新返回 None、删除返回 false。
         assert!(edit.update("nope", draft("x")).await.expect("ok").is_none());
         assert!(!edit.delete("nope").await.expect("ok"));
 

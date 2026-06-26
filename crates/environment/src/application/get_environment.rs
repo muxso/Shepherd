@@ -1,5 +1,3 @@
-//! 用例:按 id 读取环境。
-
 use std::sync::Arc;
 
 use crate::domain::Environment;
@@ -23,7 +21,6 @@ impl GetEnvironmentUseCase {
         Self { repo }
     }
 
-    /// 不存在返回 `Ok(None)`。
     pub async fn execute(&self, id: &str) -> Result<Option<Environment>, GetEnvironmentError> {
         Ok(self.repo.get(id).await?)
     }

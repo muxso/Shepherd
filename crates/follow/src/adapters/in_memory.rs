@@ -1,5 +1,3 @@
-//! 内存版关注存储。插入顺序即「关注时间」顺序(关注人列表据此稳定升序)。
-
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
@@ -9,7 +7,7 @@ use crate::ports::{FollowStore, RepoError};
 
 #[derive(Clone, Default)]
 pub struct InMemoryFollowStore {
-    // 按插入顺序保留,既是「关注时间」语义,也让列表输出稳定可测。
+    // Insertion order = follow-time order, which followers() relies on for a stable list.
     rows: Arc<Mutex<Vec<Follow>>>,
 }
 

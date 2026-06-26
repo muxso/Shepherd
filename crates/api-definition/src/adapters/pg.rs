@@ -1,9 +1,3 @@
-//! PostgreSQL 实现的 `ApiDefinitionRepository`。
-//!
-//! 三张表对应三聚合:ms_api_definition / ms_api_case / ms_api_mock。
-//! 协议与状态在表里以文本存储(HTTP/DRAFT 等),读出时回落到领域枚举的默认值
-//! 以兜住脏数据;断言/匹配规则为 JSONB,以 `serde_json::Value` 绑定与读取。
-
 use async_trait::async_trait;
 
 use crate::domain::{
@@ -193,7 +187,7 @@ impl ApiDefinitionRepository for PgApiDefinitionRepository {
     }
 
     async fn delete_definition(&self, id: &str) -> Result<(), RepoError> {
-        // 软删定义;连带软删其 Mock;硬删其用例(ms_api_case 无软删列)。
+        // 用例为硬删:ms_api_case 无 deleted 列,不能软删。
         sqlx::query("UPDATE ms_api_definition SET deleted = true, updated_at = now() WHERE id = $1")
             .bind(id)
             .execute(&self.pool)
@@ -343,7 +337,6 @@ impl ApiDefinitionRepository for PgApiDefinitionRepository {
     }
 
     async fn update_mock(&self, mock_id: &str, m: &NewApiMock) -> Result<bool, RepoError> {
-        // api_definition_id / created_by 不变;回填 updated_at 供「MOCK 视图」排序。
         let res = sqlx::query(
             "UPDATE ms_api_mock SET name=$2, match_rule=$3, response_status=$4, response_body=$5, \
                     enabled=$6, tags=$7, response_headers=$8, response_delay_ms=$9, \
@@ -458,7 +451,6 @@ impl ApiDefinitionRepository for PgApiDefinitionRepository {
     }
 
     async fn list_mocks_by_project(&self, project_id: &str) -> Result<Vec<ProjectMockRow>, RepoError> {
-        // JOIN 定义带出 方法/路径/协议/名称;按更新时间倒序(定义 updated_at)。
         let rows = sqlx::query(
             "SELECT m.id, m.api_definition_id, m.name, m.match_rule, m.response_status, m.response_body, \
                     m.enabled, m.tags, m.response_headers, m.response_delay_ms, m.follow_definition, \
@@ -524,7 +516,6 @@ impl ApiDefinitionRepository for PgApiDefinitionRepository {
     }
 
     async fn delete_module(&self, id: &str) -> Result<(), RepoError> {
-        // 软删模块,并把其下定义改为未归类(避免悬挂的 module_id)。
         sqlx::query("UPDATE ms_api_module SET deleted = true WHERE id = $1")
             .bind(id)
             .execute(&self.pool)
@@ -669,7 +660,6 @@ mod tests {
 
         let repo = PgApiDefinitionRepository::new(pool.clone());
 
-        // 接口定义往返
         let nd = NewApiDefinition::new("p1", "登录", ApiProtocol::Http, "POST", "/login")
             .expect("valid");
         let def = repo.insert_definition(&nd).await.expect("insert def");
@@ -678,7 +668,6 @@ mod tests {
         assert_eq!(repo.list_definitions("p1").await.expect("list").len(), 1);
         assert!(repo.get_definition("ghost").await.expect("get").is_none());
 
-        // 用例往返
         let nc = NewApiCase::new(
             &def.id,
             "p1",
@@ -695,7 +684,6 @@ mod tests {
         assert_eq!(cases.len(), 1);
         assert!(cases[0].assertions.is_array());
 
-        // 项目级用例分页(含上面这条 def 用例 + 一条独立用例)
         let standalone = NewApiCase::new(
             "",
             "p1",
@@ -713,7 +701,6 @@ mod tests {
         let page2 = repo.list_cases_by_project("p1", 1, 10).await.expect("page");
         assert_eq!(page2.len(), 1);
 
-        // Mock 往返
         let nm = NewApiMock::new(
             &def.id,
             "挡板",
@@ -729,7 +716,6 @@ mod tests {
         assert_eq!(mocks.len(), 1);
         assert_eq!(mocks[0].match_rule, serde_json::json!({"path": "/login"}));
 
-        // Mock 更新:覆盖可变字段;api_definition_id 不变;未命中返回 false。
         let nm2 = NewApiMock::new(
             &def.id,
             "改名挡板",

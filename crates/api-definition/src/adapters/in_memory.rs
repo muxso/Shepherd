@@ -1,5 +1,3 @@
-//! 内存版接口定义仓储。Mutex 套 HashMap,id 由自增计数器确定性生成,测试用。
-
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
@@ -13,14 +11,14 @@ use crate::ports::{ApiDefinitionRepository, ProjectMockRow, RepoError};
 
 #[derive(Default)]
 struct State {
-    definitions: HashMap<String, ApiDefinition>, // id -> 接口定义
-    cases: HashMap<String, ApiCase>,             // id -> 用例
-    case_order: Vec<String>,                     // 用例插入顺序(项目级分页按此)
-    mocks: HashMap<String, ApiMock>,             // id -> Mock
-    modules: HashMap<String, ApiModule>,         // id -> 模块
-    task_cases: Vec<(String, String, String)>,   // (decomposition_id, task_id, case_id)
-    changes: Vec<ApiDefinitionChange>,           // 变更历史(追加序)
-    views: Vec<ApiView>,                         // 列表视图(保存的筛选/列设置)
+    definitions: HashMap<String, ApiDefinition>,
+    cases: HashMap<String, ApiCase>,
+    case_order: Vec<String>,
+    mocks: HashMap<String, ApiMock>,
+    modules: HashMap<String, ApiModule>,
+    task_cases: Vec<(String, String, String)>,
+    changes: Vec<ApiDefinitionChange>,
+    views: Vec<ApiView>,
     seq: u64,
 }
 
@@ -45,7 +43,7 @@ impl ApiDefinitionRepository for InMemoryApiDefinitionRepository {
         state.seq += 1;
         let def = ApiDefinition {
             id: format!("apidef-{}", state.seq),
-            // 内存实现合成编号(对齐 pg 序列起点 100001)。
+            // 100000+ 对齐 pg num 序列起点(100001)。
             num: 100000 + state.seq as i64,
             project_id: d.project_id.clone(),
             name: d.name.clone(),
@@ -56,7 +54,6 @@ impl ApiDefinitionRepository for InMemoryApiDefinitionRepository {
             module_id: None,
             spec: d.spec.clone(),
             created_by: d.created_by.clone(),
-            // 内存实现无真实时钟,用序号合成单调时间串。
             created_at: format!("{:020}", state.seq),
             updated_at: format!("{:020}", state.seq),
         };
@@ -88,7 +85,6 @@ impl ApiDefinitionRepository for InMemoryApiDefinitionRepository {
         }
         d.method = method.to_string();
         d.path = path.to_string();
-        // 合成单调递增的更新时间串(与 insert/spec 保持同形态)。
         d.updated_at = format!("{seq:020}");
         Ok(Some(d.clone()))
     }
@@ -112,7 +108,6 @@ impl ApiDefinitionRepository for InMemoryApiDefinitionRepository {
     async fn delete_definition(&self, id: &str) -> Result<(), RepoError> {
         let mut state = self.state.lock().expect("lock");
         state.definitions.remove(id);
-        // 连带移除其用例(含插入顺序)与 Mock。
         let case_ids: Vec<String> = state
             .cases
             .values()
@@ -143,7 +138,6 @@ impl ApiDefinitionRepository for InMemoryApiDefinitionRepository {
             action: action.to_string(),
             detail: detail.to_string(),
             actor: actor.to_string(),
-            // 合成单调递增时间串,保证倒序稳定。
             created_at: format!("{seq:020}"),
         });
         Ok(())
@@ -154,7 +148,6 @@ impl ApiDefinitionRepository for InMemoryApiDefinitionRepository {
         definition_id: &str,
     ) -> Result<Vec<ApiDefinitionChange>, RepoError> {
         let state = self.state.lock().expect("lock");
-        // 倒序(最新在前):追加序逆序遍历。
         Ok(state
             .changes
             .iter()
@@ -234,7 +227,6 @@ impl ApiDefinitionRepository for InMemoryApiDefinitionRepository {
     async fn update_mock(&self, mock_id: &str, m: &NewApiMock) -> Result<bool, RepoError> {
         let mut state = self.state.lock().expect("lock");
         let Some(existing) = state.mocks.get_mut(mock_id) else { return Ok(false) };
-        // api_definition_id / created_by 不变;其余可变字段整体覆盖。
         existing.name = m.name.clone();
         existing.match_rule = m.match_rule.clone();
         existing.response_status = m.response_status;
@@ -275,7 +267,6 @@ impl ApiDefinitionRepository for InMemoryApiDefinitionRepository {
         limit: u32,
     ) -> Result<Vec<ApiCase>, RepoError> {
         let state = self.state.lock().expect("lock");
-        // 按插入顺序遍历,过滤出项目用例,再做 offset/limit 切片。
         let out: Vec<ApiCase> = state
             .case_order
             .iter()
@@ -378,7 +369,6 @@ impl ApiDefinitionRepository for InMemoryApiDefinitionRepository {
     async fn delete_module(&self, id: &str) -> Result<(), RepoError> {
         let mut state = self.state.lock().expect("lock");
         state.modules.remove(id);
-        // 其下定义改为未归类
         for d in state.definitions.values_mut() {
             if d.module_id.as_deref() == Some(id) {
                 d.module_id = None;
@@ -423,7 +413,7 @@ impl ApiDefinitionRepository for InMemoryApiDefinitionRepository {
             .filter(|v| v.project_id == project_id && (v.shared || v.user_id == user_id))
             .cloned()
             .collect();
-        out.reverse(); // 创建时间倒序
+        out.reverse();
         Ok(out)
     }
 

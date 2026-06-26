@@ -1,9 +1,3 @@
-//! 用例:创建项目。
-//!
-//! 核心编排规则(本用例负责):同组织内项目名唯一,但**忽略已软删除**的项目。
-//! 这条规则在 Java 版埋在 Service 的一段 `selectByExample + if` 里,且容易漏掉
-//! `deleted = false` 条件;这里把它升级为显式、可回归的用例测试。
-
 use std::sync::Arc;
 
 use thiserror::Error;
@@ -38,7 +32,6 @@ impl CreateProjectUseCase {
     ) -> Result<Project, CreateProjectError> {
         let new_project = NewProject::new(organization_id, name)?;
 
-        // 唯一性只针对未删除项目(端口的 find_active_by_name 已固化此语义)
         if self
             .repo
             .find_active_by_name(&new_project.organization_id, &new_project.name)
@@ -78,7 +71,6 @@ mod tests {
     async fn allows_same_name_in_different_org() {
         let uc = CreateProjectUseCase::new(Arc::new(InMemoryProjectRepository::new()));
         uc.execute("org1", "Demo").await.expect("ok");
-        // 另一个组织可以重名
         assert!(uc.execute("org2", "Demo").await.is_ok());
     }
 
@@ -88,7 +80,6 @@ mod tests {
         let uc = CreateProjectUseCase::new(Arc::new(repo.clone()));
         let p = uc.execute("org1", "Demo").await.expect("ok");
 
-        // 软删除该项目后,名字应被释放,可重建同名
         repo.soft_delete(&p.id);
         assert!(uc.execute("org1", "Demo").await.is_ok());
     }

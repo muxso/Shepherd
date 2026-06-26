@@ -1,8 +1,3 @@
-//! PostgreSQL 实现的 `EnvironmentRepository`(表 ms_environment)。
-//!
-//! headers 以 JSONB 数组存 `[{"name":..,"value":..}]`,variables 以 JSONB 对象存 `{k:v}`。
-//! 读出时对脏数据宽容(解析失败回落空)。
-
 use std::collections::BTreeMap;
 
 use async_trait::async_trait;
@@ -26,7 +21,6 @@ fn map_err(e: sqlx::Error) -> RepoError {
     RepoError::Backend(e.to_string())
 }
 
-/// headers: Vec<(name,value)> → JSONB 数组。
 fn headers_to_json(headers: &[(String, String)]) -> serde_json::Value {
     serde_json::Value::Array(
         headers
@@ -36,7 +30,6 @@ fn headers_to_json(headers: &[(String, String)]) -> serde_json::Value {
     )
 }
 
-/// variables: BTreeMap → JSONB 对象。
 fn vars_to_json(vars: &BTreeMap<String, String>) -> serde_json::Value {
     serde_json::Value::Object(
         vars.iter()
@@ -133,7 +126,7 @@ impl EnvironmentRepository for PgEnvironmentRepository {
     }
 
     async fn update(&self, id: &str, e: &NewEnvironment) -> Result<Option<Environment>, RepoError> {
-        // project_id 不可变:不在 SET 里,以 id + 未删除定位。
+        // project_id 不可变:故意不在 SET 里。
         let row = sqlx::query(&format!(
             "UPDATE ms_environment SET name = $2, base_url = $3, headers = $4, variables = $5, enabled = $6 \
              WHERE id = $1 AND deleted = false RETURNING {COLS}"

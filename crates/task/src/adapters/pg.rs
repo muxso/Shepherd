@@ -1,12 +1,3 @@
-//! PostgreSQL 实现的 `TaskRepository`。
-//!
-//! 聚合落三张表:`ms_task_decomposition`(元信息)+ `ms_task`(任务,`acceptance_criteria` 用
-//! `text[]`)+ `ms_task_dependency`(依赖边)。`save` 对任务 upsert(更新状态),对依赖边
-//! `ON CONFLICT DO NOTHING`(依赖在加入时确定,只追加)。
-//!
-//! 集成测试 `#[ignore]`,需 DATABASE_URL:
-//!   `DATABASE_URL=postgres://... cargo test -p task --features pg -- --ignored`
-
 use std::collections::HashMap;
 
 use async_trait::async_trait;
@@ -25,12 +16,10 @@ impl PgTaskRepository {
         Self { pool }
     }
 
-    /// 由元信息行加载任务与依赖边,组装完整聚合。
     async fn assemble(&self, meta: &sqlx::postgres::PgRow) -> Result<Decomposition, RepoError> {
         let id: String = meta.try_get("id").map_err(map_err)?;
         let version_i: i32 = meta.try_get("requirement_version").map_err(map_err)?;
 
-        // 依赖边:task_id -> [depends_on]
         let drows = sqlx::query(
             "SELECT task_id, depends_on FROM ms_task_dependency WHERE decomposition_id = $1",
         )
@@ -187,7 +176,7 @@ impl TaskRepository for PgTaskRepository {
         task_id: &str,
         status: TaskStatus,
     ) -> Result<(), RepoError> {
-        // 行级原子更新:只写目标任务这一行,不触碰兄弟任务 → 并发推进无丢更新。
+        // Single-row update so concurrent sibling advances don't lose updates.
         sqlx::query("UPDATE ms_task SET status = $3 WHERE decomposition_id = $1 AND id = $2")
             .bind(decomposition_id)
             .bind(task_id)
@@ -217,17 +206,15 @@ mod tests {
 
         let repo = PgTaskRepository::new(pool.clone());
         let mut d = repo.create_decomposition("req1", 1).await.expect("create");
-        d.add_task(NewTask::new("A", "", &["验收A".into()], &[]).expect("v")).expect("a"); // t1
-        d.add_task(NewTask::new("B", "", &[], &["t1".into()]).expect("v")).expect("b"); // t2
+        d.add_task(NewTask::new("A", "", &["验收A".into()], &[]).expect("v")).expect("a");
+        d.add_task(NewTask::new("B", "", &[], &["t1".into()]).expect("v")).expect("b");
         repo.save(&d).await.expect("save");
 
-        // 重新加载,依赖与就绪保持
         let mut got = repo.get(&d.id).await.expect("get").expect("some");
         assert_eq!(got.tasks.len(), 2);
         assert_eq!(got.task("t2").expect("t2").dependencies, vec!["t1".to_string()]);
         assert_eq!(got.ready_tasks().iter().map(|t| t.id.clone()).collect::<Vec<_>>(), vec!["t1"]);
 
-        // 驱动 t1 到 Verified → 落库 → 重新加载后 t2 就绪
         got.dispatch("t1").expect("dispatch");
         got.transition("t1", TaskStatus::Running).expect("run");
         got.transition("t1", TaskStatus::Delivered).expect("deliver");
@@ -238,7 +225,6 @@ mod tests {
         assert_eq!(reloaded.task("t1").expect("t1").status, TaskStatus::Verified);
         assert_eq!(reloaded.ready_tasks().iter().map(|t| t.id.clone()).collect::<Vec<_>>(), vec!["t2"]);
 
-        // 唯一性:同需求版本已存在
         assert!(repo.find_by_requirement_version("req1", 1).await.expect("f").is_some());
     }
 }

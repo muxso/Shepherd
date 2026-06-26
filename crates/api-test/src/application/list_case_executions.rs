@@ -1,9 +1,3 @@
-//! 用例:分页查询某用例的执行记录(用例执行记录)。
-//!
-//! 编排极薄:复用 `kernel::page` 把 `PageRequest`(已构造即校验)转为 `(offset, limit)`,
-//! 计数 + 取窗口两步走,组装成 `kernel::page::Page<CaseExecutionRecord>`。
-//! IO 全在注入的端口背后,本层零数据库依赖。
-
 use std::sync::Arc;
 
 use kernel::page::{Page, PageRequest};
@@ -20,7 +14,6 @@ impl ListCaseExecutionsUseCase {
         Self { query }
     }
 
-    /// 返回该用例第 `page.current` 页(每页 `page.page_size` 条)的执行记录,倒序。
     pub async fn execute(
         &self,
         case_id: &str,
@@ -38,7 +31,6 @@ mod tests {
     use async_trait::async_trait;
     use std::sync::Mutex;
 
-    /// 内存桩:固定一批记录,验证编排(计数透传 + offset/limit 切窗 + 组装)。
     struct FakeQuery {
         records: Vec<CaseExecutionRecord>,
         last_window: Mutex<Option<(u64, u32)>>,
@@ -89,9 +81,9 @@ mod tests {
         let result = uc.execute("c1", page).await.expect("ok");
         assert_eq!(result.total, 7);
         assert_eq!(result.current, 2);
-        assert_eq!(result.total_pages(), 3); // ceil(7/3)
-        assert_eq!(result.items.len(), 3); // 第 2 页满 3 条
-        assert_eq!(*fake.last_window.lock().expect("lock"), Some((3, 3))); // offset=(2-1)*3
+        assert_eq!(result.total_pages(), 3);
+        assert_eq!(result.items.len(), 3);
+        assert_eq!(*fake.last_window.lock().expect("lock"), Some((3, 3)));
     }
 
     #[tokio::test]
@@ -100,6 +92,6 @@ mod tests {
         let uc = ListCaseExecutionsUseCase::new(fake);
         let page = PageRequest::new(3, 3).expect("valid");
         let result = uc.execute("c1", page).await.expect("ok");
-        assert_eq!(result.items.len(), 1); // 7 - 6
+        assert_eq!(result.items.len(), 1);
     }
 }

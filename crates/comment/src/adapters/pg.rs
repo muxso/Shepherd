@@ -1,7 +1,4 @@
-//! PostgreSQL 实现的 `CommentRepository`。
-//!
-//! `created_at` 以 `created_at::text` 取 String,避免引入 chrono/time 依赖
-//!(与 api-definition / api-scenario 等模块一致)。
+// `created_at` is read as `created_at::text` (String) to avoid a chrono/time dependency.
 
 use async_trait::async_trait;
 

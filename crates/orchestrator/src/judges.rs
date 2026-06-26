@@ -1,11 +1,7 @@
-//! 内置 judge:`AcceptAllJudge`(默认,保持"交付即通过")与 `RuleJudge`(规则门:
-//! 交付物须有非空 reference + summary,否则判不通过)。LLM judge 由组装根以 HTTP 适配器接入。
-
 use async_trait::async_trait;
 
 use crate::ports::{DeliverableView, Judge, Verdict};
 
-/// 一律通过(默认,等价于"交付即 Verified")。
 pub struct AcceptAllJudge;
 
 #[async_trait]
@@ -15,7 +11,6 @@ impl Judge for AcceptAllJudge {
     }
 }
 
-/// 规则门:要求交付物有非空 reference 与 summary(证明执行者确有产出)。
 pub struct RuleJudge;
 
 #[async_trait]

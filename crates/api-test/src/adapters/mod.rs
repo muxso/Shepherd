@@ -1,4 +1,3 @@
-//! 适配器层。test_doubles 始终编译;各执行器 feature 门控。
 pub mod test_doubles;
 pub use test_doubles::{
     FakeEnvironment, FakeResourcePool, NoopDispatcher, SpyDispatcher, SpyExecutor,

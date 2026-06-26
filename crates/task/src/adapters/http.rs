@@ -1,8 +1,4 @@
-//! 任务拆分的 HTTP 适配器。DTO ↔ 用例,命令错误映射 HTTP 码。
-//!
-//! RBAC(资源键 `TASK`):新建拆分/加任务需 `TASK:ADD`,派发(交给执行者)需 `TASK:EXECUTE`,
-//! 状态流转需 `TASK:UPDATE`;读端点开放。错误码:校验→400,依赖未满足/非法流转→409,
-//! 拆分/任务不存在→404。
+//! RBAC for resource `TASK`: add needs `TASK:ADD`, dispatch needs `TASK:EXECUTE`, transition needs `TASK:UPDATE`; reads are open.
 
 use std::sync::Arc;
 
@@ -56,8 +52,6 @@ pub fn router(
         .route("/decomposition/{id}/task/{task_id}/assignee", post(set_task_assignee))
         .with_state(TaskState { create, breakdown, admin, sessions })
 }
-
-// ---- DTO ----
 
 #[derive(Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
@@ -115,7 +109,6 @@ struct AddTaskBody {
     acceptance_criteria: Vec<String>,
     #[serde(default)]
     dependencies: Vec<String>,
-    /// 工作量(task point);缺省 0。
     #[serde(default)]
     points: i32,
 }
@@ -133,10 +126,8 @@ struct PointsBody {
 #[derive(Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 struct AssigneeBody {
-    /// 负责人 id/名;空 = 取消指派。
     #[serde(default)]
     assignee: String,
-    /// 负责人类型:HUMAN / AGENT。
     #[serde(default)]
     kind: String,
 }
@@ -201,8 +192,6 @@ struct TaskCreated {
     task_id: String,
 }
 
-// ---- 错误映射 ----
-
 fn cmd_err(e: TaskCmdError) -> Response {
     match e {
         TaskCmdError::DecompositionNotFound => (StatusCode::NOT_FOUND, "decomposition not found").into_response(),
@@ -212,8 +201,6 @@ fn cmd_err(e: TaskCmdError) -> Response {
         TaskCmdError::Repo(_) => (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
     }
 }
-
-// ---- 处理器 ----
 
 #[utoipa::path(post, path = "/decomposition", tag = "task", request_body = CreateBody, responses((status = 201, body = DecompositionResponse), (status = 409)), security(("bearer" = [])))]
 async fn create_decomposition(user: AuthUser, State(st): State<TaskState>, Json(b): Json<CreateBody>) -> Response {
@@ -390,7 +377,6 @@ mod tests {
     #[tokio::test]
     async fn dag_flow_create_add_dispatch_unlock() {
         let (app, t) = app_with("TASK:READ+ADD+EXECUTE+UPDATE").await;
-        // 建拆分
         let r = app
             .clone()
             .oneshot(req("POST", "/decomposition", r#"{"requirementId":"req1","requirementVersion":1}"#, Some(&t)))
@@ -399,26 +385,22 @@ mod tests {
         assert_eq!(r.status(), StatusCode::CREATED);
         let did = json(r).await["id"].as_str().expect("id").to_string();
 
-        // 加 A、B(B 依赖 A)
         let ra = app.clone().oneshot(req("POST", &format!("/decomposition/{did}/task"), r#"{"title":"A","acceptanceCriteria":["a1"]}"#, Some(&t))).await.expect("r");
         assert_eq!(ra.status(), StatusCode::CREATED);
         assert_eq!(json(ra).await["taskId"], "t1");
         let rb = app.clone().oneshot(req("POST", &format!("/decomposition/{did}/task"), r#"{"title":"B","dependencies":["t1"]}"#, Some(&t))).await.expect("r");
         assert_eq!(json(rb).await["taskId"], "t2");
 
-        // ready 仅 t1
         let ready = app.clone().oneshot(req("GET", &format!("/decomposition/{did}/ready"), "", Some(&t))).await.expect("r");
         let arr = json(ready).await;
         assert_eq!(arr.as_array().expect("arr").len(), 1);
         assert_eq!(arr[0]["id"], "t1");
 
-        // 派发 t2 → 依赖未满足 409
         assert_eq!(
             app.clone().oneshot(req("POST", &format!("/decomposition/{did}/task/t2/dispatch"), "", Some(&t))).await.expect("r").status(),
             StatusCode::CONFLICT
         );
 
-        // 驱动 t1 → Verified
         for (uri, st) in [("dispatch", None), ("status", Some("RUNNING")), ("status", Some("DELIVERED")), ("status", Some("VERIFIED"))] {
             let (path, body) = match st {
                 None => (format!("/decomposition/{did}/task/t1/dispatch"), String::new()),
@@ -429,7 +411,6 @@ mod tests {
             assert_eq!(resp.status(), StatusCode::OK);
         }
 
-        // 现在 t2 可派发
         let resp = app.oneshot(req("POST", &format!("/decomposition/{did}/task/t2/dispatch"), "", Some(&t))).await.expect("r");
         assert_eq!(resp.status(), StatusCode::OK);
         let v = json(resp).await;
@@ -438,13 +419,11 @@ mod tests {
 
     #[tokio::test]
     async fn rbac_create_requires_add_dispatch_requires_execute() {
-        // 无令牌 → 401
         let (app, _t) = app_with("TASK:READ").await;
         assert_eq!(
             app.oneshot(req("POST", "/decomposition", r#"{"requirementId":"req1","requirementVersion":1}"#, None)).await.expect("r").status(),
             StatusCode::UNAUTHORIZED
         );
-        // 只有 ADD,可建拆分但派发应 403
         let (app, t) = app_with("TASK:READ+ADD").await;
         let r = app.clone().oneshot(req("POST", "/decomposition", r#"{"requirementId":"req1","requirementVersion":1}"#, Some(&t))).await.expect("r");
         let did = json(r).await["id"].as_str().expect("id").to_string();
@@ -465,7 +444,6 @@ mod tests {
             .expect("r");
         assert_eq!(r.status(), StatusCode::CREATED);
         let v = json(r).await;
-        // 启发式:2 标准 + 集成验证 = 3 任务,集成依赖前两个
         assert_eq!(v["tasks"].as_array().expect("a").len(), 3);
         assert_eq!(v["tasks"][2]["dependencies"], serde_json::json!(["t1", "t2"]));
         assert_eq!(v["readyTaskIds"], serde_json::json!(["t1", "t2"]));

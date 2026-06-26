@@ -1,8 +1,3 @@
-//! 测试替身:可配置资源池(Fake)+ 记录派发的执行器(Spy)。
-//!
-//! 这正是六边形架构的回报:批量运行的核心规则无需真起 JMeter/K8s/资源池服务,
-//! 用可信替身就能把"池解析优先级、不可用拒绝、不派发"等断言钉死。
-
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
@@ -14,7 +9,6 @@ use crate::ports::{
     ResourcePoolPort, RunTask, TaskDispatcher,
 };
 
-/// 可配置的资源池替身:项目默认池映射 + 可用池集合。
 #[derive(Clone, Default)]
 pub struct FakeResourcePool {
     defaults: HashMap<String, String>,
@@ -48,7 +42,6 @@ impl ResourcePoolPort for FakeResourcePool {
     }
 }
 
-/// 记录每次派发的执行器替身,便于断言"用哪个池、派发了几条、派发了几次"。
 #[derive(Clone, Default)]
 pub struct SpyExecutor {
     dispatches: Arc<Mutex<Vec<DispatchSpec>>>,
@@ -85,7 +78,6 @@ impl BatchExecutorPort for SpyExecutor {
     }
 }
 
-/// 记录下发任务的 `TaskDispatcher` 替身;可配置为失败,验证报告状态置 DISPATCH_FAILED。
 #[derive(Clone, Default)]
 pub struct SpyDispatcher {
     tasks: Arc<Mutex<Vec<RunTask>>>,
@@ -97,7 +89,6 @@ impl SpyDispatcher {
         Self::default()
     }
 
-    /// 让下发失败(模拟执行节点不可达)。
     pub fn failing() -> Self {
         Self { fail: true, ..Self::default() }
     }
@@ -122,7 +113,6 @@ impl TaskDispatcher for SpyDispatcher {
     }
 }
 
-/// 可配置的运行环境替身:environmentId → ResolvedEnv 映射,查无返回 None。
 #[derive(Clone, Default)]
 pub struct FakeEnvironment {
     envs: HashMap<String, ResolvedEnv>,
@@ -146,7 +136,6 @@ impl EnvironmentPort for FakeEnvironment {
     }
 }
 
-/// 什么都不做的下发器(本地起服务、无执行节点时占位):接受并异步化(RUNNING)。
 #[derive(Clone, Default)]
 pub struct NoopDispatcher;
 

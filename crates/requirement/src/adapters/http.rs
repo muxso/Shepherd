@@ -1,9 +1,3 @@
-//! 需求管理的 HTTP 适配器。DTO ↔ 用例,领域/命令错误映射 HTTP 码。
-//!
-//! 写端点经 `webauth::AuthUser` 做 RBAC:创建需 `REQUIREMENT:ADD`,
-//! 修订/定基/重命名/归档需 `REQUIREMENT:UPDATE`,删除需 `REQUIREMENT:DELETE`;读端点开放。
-//! 错误码:校验→400,标题冲突/归档冲突→409,需求/版本不存在→404。
-
 use std::sync::Arc;
 
 use axum::{
@@ -59,8 +53,6 @@ pub fn router(
         .with_state(ReqState { create, list, admin, sessions })
 }
 
-// ---- DTO ----
-
 #[derive(Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 #[schema(as = RequirementCreateBody)]
@@ -89,7 +81,6 @@ struct SetBaselineBody {
 
 #[derive(Deserialize, ToSchema)]
 struct RejectReviewBody {
-    /// 评审不通过原因(必填)。
     comment: String,
 }
 
@@ -126,7 +117,6 @@ struct RequirementResponse {
     baseline_version: u32,
     latest_version: u32,
     versions: Vec<VersionResponse>,
-    /// 最近一次「评审不通过」原因;评审通过或修订后为 null。
     #[serde(skip_serializing_if = "Option::is_none")]
     review_comment: Option<String>,
 }
@@ -174,8 +164,6 @@ fn ten() -> u32 {
     10
 }
 
-// ---- 错误映射 ----
-
 fn cmd_err(e: RequirementCmdError) -> Response {
     match e {
         RequirementCmdError::Validation(_) => (StatusCode::BAD_REQUEST, "invalid requirement").into_response(),
@@ -195,8 +183,6 @@ fn create_err(e: CreateRequirementError) -> Response {
         CreateRequirementError::Repo(_) => (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
     }
 }
-
-// ---- 处理器 ----
 
 #[utoipa::path(post, path = "/requirement", tag = "requirement", request_body = CreateBody, responses((status = 201, body = RequirementResponse), (status = 401), (status = 403), (status = 409)), security(("bearer" = [])))]
 async fn create_requirement(user: AuthUser, State(st): State<ReqState>, Json(b): Json<CreateBody>) -> Response {
@@ -351,7 +337,6 @@ async fn delete_requirement(user: AuthUser, State(st): State<ReqState>, Path(id)
     }
 }
 
-/// 本上下文的 OpenAPI 文档(组装根合并)。
 #[derive(OpenApi)]
 #[openapi(
     paths(
@@ -407,7 +392,6 @@ mod tests {
     #[tokio::test]
     async fn full_versioning_crud_flow() {
         let (app, t) = app_with("REQUIREMENT:READ+ADD+UPDATE+DELETE").await;
-        // create
         let r = app
             .clone()
             .oneshot(req("POST", "/requirement", r#"{"projectId":"p1","title":"登录","description":"d","acceptanceCriteria":["c1"]}"#, Some(&t)))
@@ -416,7 +400,6 @@ mod tests {
         assert_eq!(r.status(), StatusCode::CREATED);
         let id = body_json(r).await["id"].as_str().expect("id").to_string();
 
-        // list / get
         assert_eq!(
             app.clone().oneshot(req("GET", "/requirement?projectId=p1&current=1&pageSize=10", "", Some(&t))).await.expect("r").status(),
             StatusCode::OK
@@ -426,7 +409,6 @@ mod tests {
             StatusCode::OK
         );
 
-        // revise → v2
         let rv = app
             .clone()
             .oneshot(req("POST", &format!("/requirement/{id}/version"), r#"{"description":"v2","acceptanceCriteria":["c2"]}"#, Some(&t)))
@@ -435,18 +417,15 @@ mod tests {
         assert_eq!(rv.status(), StatusCode::CREATED);
         assert_eq!(body_json(rv).await["version"], 2);
 
-        // get version 2
         assert_eq!(
             app.clone().oneshot(req("GET", &format!("/requirement/{id}/version/2"), "", Some(&t))).await.expect("r").status(),
             StatusCode::OK
         );
-        // unknown version → 404
         assert_eq!(
             app.clone().oneshot(req("GET", &format!("/requirement/{id}/version/9"), "", Some(&t))).await.expect("r").status(),
             StatusCode::NOT_FOUND
         );
 
-        // set baseline → 2
         let sb = app
             .clone()
             .oneshot(req("PUT", &format!("/requirement/{id}/baseline"), r#"{"version":2}"#, Some(&t)))
@@ -457,12 +436,10 @@ mod tests {
         assert_eq!(v["baselineVersion"], 2);
         assert_eq!(v["status"], "BASELINED");
 
-        // rename
         assert_eq!(
             app.clone().oneshot(req("PUT", &format!("/requirement/{id}"), r#"{"title":"登入"}"#, Some(&t))).await.expect("r").status(),
             StatusCode::OK
         );
-        // archive then revise → 409
         assert_eq!(
             app.clone().oneshot(req("POST", &format!("/requirement/{id}/archive"), "", Some(&t))).await.expect("r").status(),
             StatusCode::OK
@@ -471,7 +448,6 @@ mod tests {
             app.clone().oneshot(req("POST", &format!("/requirement/{id}/version"), r#"{"description":"v3"}"#, Some(&t))).await.expect("r").status(),
             StatusCode::CONFLICT
         );
-        // delete → 204 then get 404
         assert_eq!(
             app.clone().oneshot(req("DELETE", &format!("/requirement/{id}"), "", Some(&t))).await.expect("r").status(),
             StatusCode::NO_CONTENT
@@ -482,13 +458,10 @@ mod tests {
         );
     }
 
-    /// 详情必须把验收标准放在「基线版本」那条 `versions[]` 里(camelCase),
-    /// 这正是前端 `versions.find(v => v.version === baselineVersion).acceptanceCriteria` 读取的契约。
-    /// 覆盖两点:新建即可见(基线=v1);改基线后详情随基线版本切换。
+    /// 验收标准必须放在「基线版本」那条 `versions[]` 里(前端按 baselineVersion 检索)。
     #[tokio::test]
     async fn detail_exposes_acceptance_criteria_at_baseline_version() {
         let (app, t) = app_with("REQUIREMENT:READ+ADD+UPDATE").await;
-        // 新建带验收标准
         let r = app
             .clone()
             .oneshot(req("POST", "/requirement", r#"{"projectId":"p1","title":"登录","acceptanceCriteria":["登录成功跳转首页","错误密码拒绝并提示"]}"#, Some(&t)))
@@ -497,7 +470,6 @@ mod tests {
         assert_eq!(r.status(), StatusCode::CREATED);
         let id = body_json(r).await["id"].as_str().expect("id").to_string();
 
-        // 模拟前端取基线版本的验收标准
         let crits_at_baseline = |v: &serde_json::Value| -> Vec<String> {
             let base = v["baselineVersion"].as_u64().expect("baselineVersion");
             v["versions"]
@@ -513,12 +485,10 @@ mod tests {
                 .collect()
         };
 
-        // 详情:基线 = v1,验收标准随之可见
         let d = body_json(app.clone().oneshot(req("GET", &format!("/requirement/{id}"), "", Some(&t))).await.expect("r")).await;
         assert_eq!(d["baselineVersion"], 1);
         assert_eq!(crits_at_baseline(&d), vec!["登录成功跳转首页".to_string(), "错误密码拒绝并提示".to_string()]);
 
-        // 追加 v2(不同标准)并改基线 → 详情按基线版本切换
         app.clone()
             .oneshot(req("POST", &format!("/requirement/{id}/version"), r#"{"description":"v2","acceptanceCriteria":["新增验收点"]}"#, Some(&t)))
             .await
@@ -532,8 +502,6 @@ mod tests {
         assert_eq!(crits_at_baseline(&d2), vec!["新增验收点".to_string()]);
     }
 
-    /// 评审不通过:原因必填(空 → 400);带原因 → 200 且 reviewComment 暴露给前端;
-    /// 评审通过(定基线)后 reviewComment 清空且不再出现在响应里。
     #[tokio::test]
     async fn reject_review_flow() {
         let (app, t) = app_with("REQUIREMENT:READ+ADD+UPDATE").await;
@@ -544,13 +512,11 @@ mod tests {
             .expect("r");
         let id = body_json(r).await["id"].as_str().expect("id").to_string();
 
-        // 空原因 → 400
         assert_eq!(
             app.clone().oneshot(req("POST", &format!("/requirement/{id}/review/reject"), r#"{"comment":"   "}"#, Some(&t))).await.expect("r").status(),
             StatusCode::BAD_REQUEST
         );
 
-        // 带原因 → 200,状态仍 DRAFT,reviewComment 可见
         let rj = app
             .clone()
             .oneshot(req("POST", &format!("/requirement/{id}/review/reject"), r#"{"comment":"验收标准不完整"}"#, Some(&t)))
@@ -561,7 +527,6 @@ mod tests {
         assert_eq!(v["status"], "DRAFT");
         assert_eq!(v["reviewComment"], "验收标准不完整");
 
-        // 评审通过(定基线 v1)→ reviewComment 清空(字段被省略)
         let sb = app
             .clone()
             .oneshot(req("PUT", &format!("/requirement/{id}/baseline"), r#"{"version":1}"#, Some(&t)))
@@ -571,7 +536,6 @@ mod tests {
         assert_eq!(v2["status"], "BASELINED");
         assert!(v2.get("reviewComment").is_none());
 
-        // 已基线再评不通过 → 409
         assert_eq!(
             app.oneshot(req("POST", &format!("/requirement/{id}/review/reject"), r#"{"comment":"x"}"#, Some(&t))).await.expect("r").status(),
             StatusCode::CONFLICT
@@ -580,13 +544,11 @@ mod tests {
 
     #[tokio::test]
     async fn create_requires_token_and_permission() {
-        let (app, _t) = app_with("REQUIREMENT:READ").await; // 只读
-        // 无令牌 → 401
+        let (app, _t) = app_with("REQUIREMENT:READ").await;
         assert_eq!(
             app.clone().oneshot(req("POST", "/requirement", r#"{"projectId":"p1","title":"x"}"#, None)).await.expect("r").status(),
             StatusCode::UNAUTHORIZED
         );
-        // 有令牌但无 ADD → 403
         let (app2, t2) = app_with("REQUIREMENT:READ").await;
         assert_eq!(
             app2.oneshot(req("POST", "/requirement", r#"{"projectId":"p1","title":"x"}"#, Some(&t2))).await.expect("r").status(),

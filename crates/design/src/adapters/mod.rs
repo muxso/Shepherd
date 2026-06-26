@@ -1,4 +1,3 @@
-//! 适配器层。`in_memory` 始终编译;`http`/`pg`/`agent` feature 门控。
 pub mod in_memory;
 pub use in_memory::InMemoryProposalRepository;
 

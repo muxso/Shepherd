@@ -1,12 +1,3 @@
-//! 服务端复合路由 `POST /requirement/{id}/breakdown?version=N`:据 requirementId **服务端取规格**
-//! (从需求基线/指定版本读出 title/description/验收标准)再交 task 的 BreakdownUseCase 拆分。
-//!
-//! 这是 requirement → task 的跨上下文协调,放在组装根;task / requirement 彼此不依赖。
-//!
-//! 拆分成功后**顺手开完整性验证账本**(同一份验收标准快照,幂等:已存在则跳过)。
-//! 配合编排器在交付终态按标准文本自动建覆盖链 + 回灌,`breakdown → dispatch` 即可让
-//! 完整性报告自动收敛,无需手工 `verify create` / `verify link`。
-
 use std::sync::Arc;
 
 use axum::{
@@ -36,8 +27,6 @@ struct BreakdownState {
     sessions: Arc<dyn SessionStore>,
 }
 
-/// 拆分后为每条验收标准生成一个功能用例草稿并关联(打通功能用例覆盖)。
-/// 幂等:该需求已有关联功能用例则整体跳过;尽力而为,失败仅日志,不影响拆分结果。
 async fn seed_functional_cases(
     cases: &Arc<dyn CaseRepository>,
     requirement_id: &str,
@@ -49,7 +38,7 @@ async fn seed_functional_cases(
         return;
     }
     match cases.cases_for_requirement(requirement_id).await {
-        Ok(existing) if !existing.is_empty() => return, // 已生成过 → 幂等跳过
+        Ok(existing) if !existing.is_empty() => return,
         Ok(_) => {}
         Err(e) => {
             tracing::warn!(requirement = %requirement_id, "拆分后查功能用例覆盖失败: {e:?}");
@@ -117,7 +106,6 @@ async fn breakdown_handler(
     if !user.can("TASK", "ADD") {
         return (StatusCode::FORBIDDEN, "permission denied").into_response();
     }
-    // 服务端取需求规格(默认基线版本)。
     let req = match st.reqs.get(&id).await {
         Ok(r) => r,
         Err(RequirementCmdError::NotFound) => {
@@ -139,8 +127,6 @@ async fn breakdown_handler(
 
     match st.breakdown.execute(&spec).await {
         Ok(d) => {
-            // 顺手开验证账本(同一份验收标准快照)。幂等:已存在则跳过;有标准才开。
-            // 尽力而为——拆分已落库,开账本失败不应让整个 breakdown 失败(仅日志告警)。
             let verification_id = if spec.acceptance_criteria.is_empty() {
                 None
             } else {
@@ -157,7 +143,6 @@ async fn breakdown_handler(
                     }
                 }
             };
-            // 顺手为每条验收标准生成功能用例草稿并关联(幂等,尽力而为)。
             seed_functional_cases(&st.cases, &spec.requirement_id, &req.project_id, &spec.acceptance_criteria, &user.user_id).await;
             let body = json!({
                 "id": d.id,
@@ -173,8 +158,6 @@ async fn breakdown_handler(
             (StatusCode::CREATED, Json(body)).into_response()
         }
         Err(BreakdownError::AlreadyExists) => {
-            // 幂等:已拆分则回读现有拆分图(含现有验证账本 id)并返回 200,
-            // 让前端「自动拆分」可重入(原先重复点击会 409)。
             match st.breakdown.find_existing(&spec.requirement_id, version).await {
                 Ok(Some(d)) => {
                     let verification_id = st
@@ -184,7 +167,6 @@ async fn breakdown_handler(
                         .ok()
                         .flatten()
                         .map(|v| v.id);
-                    // 幂等补种:旧拆分(本功能上线前)可能还没功能用例覆盖,这里补上。
                     seed_functional_cases(&st.cases, &spec.requirement_id, &req.project_id, &spec.acceptance_criteria, &user.user_id).await;
                     let body = json!({
                         "id": d.id,

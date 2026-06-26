@@ -1,6 +1,3 @@
-//! 内存版评论仓储(test double)。插入顺序即时间序;`created_at` 用单调序号造一个
-//! 可排序的占位时间戳(测试无需真实墙钟)。
-
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
@@ -37,7 +34,7 @@ impl CommentRepository for InMemoryCommentRepository {
             target_id: new_comment.target_id.clone(),
             content: new_comment.content.clone(),
             author: new_comment.author.clone(),
-            // 零填充保证字典序 == 插入序(列出时按此排序)。
+            // Zero-pad so lexical order == insertion order (list sorts on this).
             created_at: format!("seq-{:020}", state.seq),
             deleted: false,
         };

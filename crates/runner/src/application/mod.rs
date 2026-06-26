@@ -1,5 +1,3 @@
-//! 应用层:注册/列出 agent + 把用例派给指定 agent 执行。
-
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
@@ -49,7 +47,6 @@ impl From<RunViaAgentError> for RunCaseError {
     }
 }
 
-/// 把协议无关的 ProbeOutcome 映射到执行历史用的 RemoteResult(复用同一张表)。
 fn probe_to_remote(o: &ProbeOutcome) -> RemoteResult {
     RemoteResult {
         outcome: if o.success { "SUCCESS".to_string() } else { "ERROR".to_string() },
@@ -67,7 +64,6 @@ pub enum RunProbeError {
     Backend(#[from] PortError),
 }
 
-/// 「按协议选 agent 派发」的结果:选中的 agent + 探测判定。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProbeReport {
     pub agent_id: String,
@@ -83,7 +79,6 @@ pub struct RunnerService {
     capabilities: Arc<dyn AgentCapabilities>,
     executions: Arc<dyn ExecutionStore>,
     cases: Arc<dyn CaseSpecSource>,
-    /// 多候选时的轮询游标(简单负载分摊)。
     rr: Arc<AtomicUsize>,
 }
 
@@ -108,7 +103,6 @@ impl RunnerService {
         }
     }
 
-    /// 注册 agent:先拉一次它的 `/protocols` 作能力快照(拉不到则空,不阻断注册),再落库。
     pub async fn register(
         &self,
         name: &str,
@@ -125,7 +119,6 @@ impl RunnerService {
         Ok(self.store.insert(&new, &protocols).await?)
     }
 
-    /// 重新探测某 agent 的协议能力并写回(agent 换了 feature/重建后用)。
     pub async fn refresh_capabilities(
         &self,
         agent_id: &str,
@@ -137,8 +130,6 @@ impl RunnerService {
         Ok(protocols)
     }
 
-    /// 按协议选一个支持该协议的 agent(多候选轮询),把 ProbeRequest 派给它的 `/probe` 执行。
-    /// 这就是「中央按协议选 agent」:用户只说协议,中央据各 agent 能力路由到合适环境。
     pub async fn run_probe(&self, req: &ProbeRequest) -> Result<ProbeReport, RunProbeError> {
         let candidates = self.store.agents_for_protocol(&req.protocol).await?;
         if candidates.is_empty() {
@@ -147,7 +138,6 @@ impl RunnerService {
         let idx = self.rr.fetch_add(1, Ordering::Relaxed) % candidates.len();
         let chosen = &candidates[idx];
         let outcome = self.probe.probe(&chosen.target, req).await?;
-        // 复用执行历史表:protocol 入 method 列,target 入 url 列。
         let _ = self
             .executions
             .record(&chosen.id, &req.protocol, &req.target, &probe_to_remote(&outcome))
@@ -163,7 +153,6 @@ impl RunnerService {
         self.store.list().await
     }
 
-    /// 把自包含用例派给某 agent 就地执行,回传结果。结果同时存档(尽力而为,不影响返回)。
     pub async fn run_via(
         &self,
         agent_id: &str,
@@ -180,7 +169,6 @@ impl RunnerService {
         Ok(result)
     }
 
-    /// 把**已存储的用例**(case_id)解析为请求+断言,派给某 agent 就地执行(并存档)。
     pub async fn run_case(
         &self,
         agent_id: &str,
@@ -190,7 +178,6 @@ impl RunnerService {
         Ok(self.run_via(agent_id, &spec.request, &spec.assertions).await?)
     }
 
-    /// 某 agent 的最近执行历史。
     pub async fn executions(
         &self,
         agent_id: &str,
@@ -250,7 +237,6 @@ mod tests {
         let res = svc.run_via(&a.id, &spec(), &[Assertion::StatusIs(200)]).await.expect("run");
         assert_eq!(res.outcome, "SUCCESS");
 
-        // 派发后应有一条执行历史。
         let execs = svc.executions(&a.id, 10).await.expect("execs");
         assert_eq!(execs.len(), 1);
         assert_eq!(execs[0].outcome, "SUCCESS");
@@ -284,7 +270,6 @@ mod tests {
 
         let res = svc.run_case(&a.id, "case1").await.expect("run case");
         assert_eq!(res.outcome, "SUCCESS");
-        // 派发后入档
         assert_eq!(svc.executions(&a.id, 10).await.expect("e").len(), 1);
     }
 
@@ -298,14 +283,12 @@ mod tests {
     #[tokio::test]
     async fn register_snapshots_protocols_and_routes_by_protocol() {
         let (svc, _s, _c, caps) = svc_full();
-        // 注册时拉到的能力被快照入库。
         caps.set("http://grpc-env:9100", &["http", "grpc"]);
         caps.set("http://sql-env:9100", &["http", "sql"]);
         let g = svc.register("gRPC环境", "http://grpc-env:9100", None, true).await.expect("reg");
         assert_eq!(g.protocols, vec!["http".to_string(), "grpc".to_string()]);
         svc.register("SQL环境", "http://sql-env:9100", None, true).await.expect("reg");
 
-        // 只给协议 → 选支持该协议的 agent。
         let rep = svc.run_probe(&probe_req("grpc")).await.expect("probe");
         assert_eq!(rep.agent_name, "gRPC环境");
         assert!(rep.outcome.success);
@@ -313,10 +296,8 @@ mod tests {
         let rep = svc.run_probe(&probe_req("sql")).await.expect("probe");
         assert_eq!(rep.agent_name, "SQL环境");
 
-        // 派发后入执行历史(protocol 记在 method 列)。
         assert_eq!(svc.executions(&rep.agent_id, 10).await.expect("e")[0].method, "sql");
 
-        // 无 agent 支持 redis。
         assert_eq!(
             svc.run_probe(&probe_req("redis")).await.unwrap_err(),
             RunProbeError::NoAgent("redis".to_string())
@@ -330,7 +311,6 @@ mod tests {
         caps.set("http://b:9100", &["grpc"]);
         svc.register("A", "http://a:9100", None, true).await.expect("reg");
         svc.register("B", "http://b:9100", None, true).await.expect("reg");
-        // 两个都支持 grpc;连续派发应轮询命中两个不同 agent。
         let first = svc.run_probe(&probe_req("grpc")).await.expect("p").agent_name;
         let second = svc.run_probe(&probe_req("grpc")).await.expect("p").agent_name;
         assert_ne!(first, second);

@@ -1,4 +1,4 @@
-//! 用户目录的可配置替身:演示被 CFT 拦截的现实,并记录两路径调用次数供断言。
+//! 替身:`names_validated` 对外部用户故意报 `ProvenanceCheckFailed`,复现拦截行为。
 
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};

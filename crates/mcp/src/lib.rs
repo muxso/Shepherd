@@ -1,35 +1,19 @@
-//! mcp —— Model Context Protocol 服务端引擎(协议层)
-//!
-//! 处理 JSON-RPC 2.0 消息与 MCP 方法(`initialize` / `tools/list` / `tools/call` / `ping`),
-//! 维护一个**通用工具注册表**(name + description + JSON Schema + 异步处理器)。本 crate
-//! 不认识任何业务概念;Shepherd 的工具由组装根注册,桥接到各上下文服务。
-//!
-//! 约定:
-//! - 协议级错误(未知方法、缺参、未知工具)→ JSON-RPC `error`;
-//! - 工具执行错误 → 成功的 `result` 但 `isError: true`(MCP 惯例,让模型看见错误内容);
-//! - 通知(无 `id`)→ 不产生响应(返回 None)。
-
 use std::sync::Arc;
 
 use async_trait::async_trait;
 use serde_json::{json, Value};
 
-/// MCP 支持的协议版本(客户端未声明时的默认值)。
 const DEFAULT_PROTOCOL_VERSION: &str = "2024-11-05";
 
-/// 工具处理器:接收 JSON 参数,返回 JSON 结果或错误信息(错误会以 isError 结果回给模型)。
 #[async_trait]
 pub trait ToolHandler: Send + Sync {
     async fn call(&self, args: Value) -> Result<Value, String>;
 }
 
-/// 调用方能力检查(由组装根用会话权限实现)。协议层不认识具体 RBAC 语义,只问"是否允许"。
-/// `Send + Sync`:`&dyn CapabilityChecker` 需可跨 `.await` 传递(handler future 须 Send)。
 pub trait CapabilityChecker: Send + Sync {
     fn allows(&self, resource: &str, action: &str) -> bool;
 }
 
-/// 放行一切(无鉴权场景/测试)。
 pub struct AllowAll;
 impl CapabilityChecker for AllowAll {
     fn allows(&self, _resource: &str, _action: &str) -> bool {
@@ -37,14 +21,11 @@ impl CapabilityChecker for AllowAll {
     }
 }
 
-/// 一个已注册的工具。
 pub struct Tool {
     pub name: String,
     pub description: String,
-    /// 入参的 JSON Schema。
     pub input_schema: Value,
     pub handler: Arc<dyn ToolHandler>,
-    /// 调用所需能力 (resource, action);None 表示无需特定权限。
     pub required: Option<(String, String)>,
 }
 
@@ -64,7 +45,6 @@ impl Tool {
         }
     }
 
-    /// 声明调用此工具所需能力(resource:action)。
     pub fn requires(mut self, resource: impl Into<String>, action: impl Into<String>) -> Self {
         self.required = Some((resource.into(), action.into()));
         self
@@ -78,7 +58,6 @@ impl Tool {
     }
 }
 
-/// MCP 服务端:工具注册表 + JSON-RPC 分发。
 pub struct McpServer {
     server_name: String,
     server_version: String,
@@ -95,7 +74,6 @@ impl McpServer {
         self
     }
 
-    /// 处理一个 JSON-RPC 消息(`checker` 决定哪些工具可见/可调)。通知(无 `id`)返回 `None`。
     pub async fn dispatch(&self, message: Value, checker: &dyn CapabilityChecker) -> Option<Value> {
         let id = message.get("id").cloned();
         let method = message.get("method").and_then(|m| m.as_str()).unwrap_or("").to_string();
@@ -116,7 +94,6 @@ impl McpServer {
             _ => Err((-32601, format!("method not found: {method}"))),
         };
 
-        // 通知不回响应。
         let id = id?;
         Some(match result {
             Ok(r) => json!({ "jsonrpc": "2.0", "id": id, "result": r }),
@@ -135,7 +112,6 @@ impl McpServer {
     }
 
     fn tools_list(&self, checker: &dyn CapabilityChecker) -> Value {
-        // 只列出调用方有权调用的工具(模型只看见能用的)。
         let tools: Vec<Value> = self
             .tools
             .iter()
@@ -163,12 +139,10 @@ impl McpServer {
             .find(|t| t.name == name)
             .ok_or((-32602, format!("unknown tool: {name}")))?;
 
-        // 按工具 RBAC:权限不足 → JSON-RPC 错误(-32003)。
         if !tool.allowed_by(checker) {
             return Err((-32003, format!("permission denied for tool: {name}")));
         }
 
-        // 工具执行错误以 isError 结果回给模型(非 JSON-RPC error)。
         Ok(match tool.handler.call(args).await {
             Ok(v) => json!({
                 "content": [{ "type": "text", "text": serde_json::to_string(&v).unwrap_or_default() }],
@@ -257,7 +231,7 @@ mod tests {
         assert!(resp.is_none());
     }
 
-    struct Denies(&'static str); // 拒绝某 resource
+    struct Denies(&'static str);
     impl CapabilityChecker for Denies {
         fn allows(&self, resource: &str, _action: &str) -> bool {
             resource != self.0
@@ -276,7 +250,7 @@ mod tests {
         let allowed = guarded_server().dispatch(json!({"jsonrpc":"2.0","id":1,"method":"tools/list"}), &AllowAll).await.expect("r");
         assert_eq!(allowed["result"]["tools"].as_array().expect("a").len(), 1);
         let denied = guarded_server().dispatch(json!({"jsonrpc":"2.0","id":1,"method":"tools/list"}), &Denies("SECRET")).await.expect("r");
-        assert_eq!(denied["result"]["tools"].as_array().expect("a").len(), 0); // 被过滤
+        assert_eq!(denied["result"]["tools"].as_array().expect("a").len(), 0);
     }
 
     #[tokio::test]

@@ -1,16 +1,3 @@
-//! 计划树执行器:带运行上下文顺序走「控制器 + 叶子」树。
-//!
-//! 这是场景「逻辑控制」的执行核心——把扁平串行执行升级为可嵌套的树:
-//!  - `Loop`   循环控制器(定次 LOOP_COUNT)
-//!  - `If`     条件控制器(按上下文变量 + 操作符判定是否进入分支)
-//!  - `Once`   仅一次控制器(全程只进一次,即便被外层循环包裹)
-//!  - `Timer`  等待控制器(sleep)
-//!  - `Leaf`   叶子:引用用例(CASE)或内联请求(REQUEST)
-//!
-//! 复用 [`super::local`] 的环境注入 / 变量替换 / 结果汇:叶子执行 = 环境静态注入 →
-//! `${var}` 替换(用 live 上下文)→ WAIT 前置 → 执行判定 → 写明细 → EXTRACT 后置写变量。
-//! `failureStrategy`:`stop_on_failure=true` 时,任一叶子失败即停止后续(对应场景 SETTING 的 STOP)。
-
 use std::collections::{BTreeMap, HashSet};
 use std::pin::Pin;
 use std::sync::Arc;
@@ -26,12 +13,9 @@ use super::local::{apply_env_static, substitute_request, CaseResultSink, CaseSpe
 use crate::domain::ResolvedEnv;
 use crate::ports::PortError;
 
-/// 叶子:执行一次请求。引用既有用例(取规格 + 断言 + 处理器),或内联请求。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Leaf {
-    /// 引用接口用例(规格从 `CaseSpecSource` 取)。
     Case { case_id: String },
-    /// 内联请求(自定义请求步骤)。`label` 仅用于结果明细的标识。
     Request {
         label: String,
         request: RequestSpec,
@@ -40,7 +24,6 @@ pub enum Leaf {
     },
 }
 
-/// 条件控制器的判定式:取上下文变量,用操作符与期望值比较(对齐前端 IfController)。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Condition {
     pub variable: String,
@@ -49,35 +32,28 @@ pub struct Condition {
 }
 
 impl Condition {
-    /// 变量缺失按空串参与比较。
     pub fn eval(&self, vars: &BTreeMap<String, String>) -> bool {
         let actual = vars.get(&self.variable).map(String::as_str).unwrap_or("");
         self.condition.matches(actual, &self.value)
     }
 }
 
-/// 计划树节点。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PlanNode {
     Leaf(Leaf),
-    /// 定次循环:body 重复 times 次。
     Loop { times: u32, body: Vec<PlanNode> },
-    /// 条件分支:condition 成立才执行 body。
     If { condition: Condition, body: Vec<PlanNode> },
-    /// 仅一次:同一 id 全程只进一次(被外层循环包裹也只跑首次)。
+    /// 同一 id 全程只进一次(被外层循环包裹也只跑首次)。
     Once { id: u32, body: Vec<PlanNode> },
-    /// 等待:sleep 毫秒。
     Timer { ms: u64 },
 }
 
-/// 走树时的可变状态:上下文变量 + 是否已停 + 已执行的 Once id 集合。
 struct RunState {
     vars: BTreeMap<String, String>,
     stopped: bool,
     once_done: HashSet<u32>,
 }
 
-/// 计划树执行器。
 #[derive(Clone)]
 pub struct PlanExecutor {
     specs: Arc<dyn CaseSpecSource>,
@@ -95,8 +71,6 @@ impl PlanExecutor {
         self
     }
 
-    /// 执行整棵计划。`stop_on_failure` 对应失败策略 STOP;上下文变量以环境变量为种子。
-    /// 返回是否全部通过(任一叶子 ERROR 即 false)。
     pub async fn run(
         &self,
         report_id: &str,
@@ -109,7 +83,6 @@ impl PlanExecutor {
         self.exec_seq(report_id, env, &mut state, plan, stop_on_failure).await
     }
 
-    /// 顺序执行一串节点。遇停止标记则中断剩余。
     fn exec_seq<'a>(
         &'a self,
         report_id: &'a str,
@@ -165,7 +138,6 @@ impl PlanExecutor {
                     }
                 }
                 PlanNode::Once { id, body } => {
-                    // insert 返回 true 表示首次见到该 id。
                     if state.once_done.insert(*id) {
                         self.exec_seq(report_id, env, state, body, stop_on_failure).await
                     } else {
@@ -187,7 +159,6 @@ impl PlanExecutor {
         leaf: &Leaf,
         stop_on_failure: bool,
     ) -> Result<bool, PortError> {
-        // 取规格:CASE 从仓储取;REQUEST 用内联。取不到 → 记 ERROR。
         let (case_id, mut req, assertions, processors) = match leaf {
             Leaf::Case { case_id } => match self.specs.spec_of(case_id).await? {
                 Some(spec) => (case_id.clone(), spec.request, spec.assertions, spec.processors),
@@ -217,8 +188,7 @@ impl PlanExecutor {
         if wait > 0 {
             tokio::time::sleep(Duration::from_millis(wait)).await;
         }
-        // 用运行上下文变量计算结果,使 Variable 断言可读取已提取/环境变量。
-        // 否则 outcome 用空 vars 算(误报),而下方 detailed 用 state.vars 算,两者矛盾。
+        // 必须传 state.vars:否则 outcome 用空 vars 算 Variable 断言会误报,与下方 detailed 矛盾。
         let (report, snap) =
             self.runner.run_case_with_snapshot_vars(&req, &assertions, &state.vars).await;
         let (outcome, failures): (&str, Vec<String>) = match report.outcome {
@@ -226,8 +196,7 @@ impl PlanExecutor {
             CaseOutcome::Error => ("ERROR", report.failures),
         };
         self.sink.record(report_id, &case_id, outcome, &failures).await?;
-        // 响应明细回填(best-effort,失败不影响执行);供报告逐步展开响应体/头/状态码/耗时/
-        // 大小 + 逐条断言(含通过项)+ 提取变量。提取只算一次,既落库又写上下文。
+        // best-effort:回填失败不影响执行。提取只算一次,既落库又写上下文。
         if let Some(s) = &snap {
             let detailed = evaluate_detailed_with_vars(&assertions, s, &state.vars);
             let assertions_json = serde_json::Value::Array(
@@ -257,14 +226,12 @@ impl PlanExecutor {
                     &s.headers,
                     &assertions_json,
                     &extractions_json,
-                    // 实际发送的请求(env baseUrl + ${var} + 认证头均已解析,见上方 apply_env_static/substitute_request)。
                     req.method.as_str(),
                     &req.url,
                     &req.headers,
                     req.body.as_deref(),
                 )
                 .await;
-            // EXTRACT 后置:写入上下文供后续节点引用。
             for (k, v) in extracts {
                 state.vars.insert(k, v);
             }
@@ -288,7 +255,6 @@ mod tests {
     use std::sync::Mutex;
     use tokio::net::TcpListener;
 
-    // ---- 测试替身 ----
     #[derive(Default)]
     struct InMemorySpecs {
         map: HashMap<String, CaseRunSpec>,
@@ -308,7 +274,7 @@ mod tests {
 
     #[derive(Clone, Default)]
     struct SpySink {
-        rows: Arc<Mutex<Vec<(String, String)>>>, // (case_id, outcome)
+        rows: Arc<Mutex<Vec<(String, String)>>>,
     }
     #[async_trait]
     impl CaseResultSink for SpySink {
@@ -362,7 +328,6 @@ mod tests {
             value: "admin".into(),
         };
         assert!(c.eval(&vars));
-        // 缺失变量按空串
         let miss = Condition {
             variable: "ghost".into(),
             condition: MatchCondition::NotEmpty,
@@ -386,7 +351,7 @@ mod tests {
             .await
             .expect("ok");
         assert!(ok);
-        assert_eq!(sink.rows.lock().expect("lock").len(), 3); // 循环 3 次
+        assert_eq!(sink.rows.lock().expect("lock").len(), 3);
     }
 
     #[tokio::test]
@@ -400,7 +365,6 @@ mod tests {
             headers: vec![],
             variables: [("go".to_string(), "yes".to_string())].into_iter().collect(),
         };
-        // 条件成立 → 跑;不成立的分支不跑
         let plan = vec![
             PlanNode::If {
                 condition: Condition { variable: "go".into(), condition: MatchCondition::Equals, value: "yes".into() },
@@ -412,7 +376,7 @@ mod tests {
             },
         ];
         exec(specs, sink.clone()).run("r1", &plan, &env, false).await.expect("ok");
-        assert_eq!(sink.rows.lock().expect("lock").len(), 1); // 只跑了成立的那条
+        assert_eq!(sink.rows.lock().expect("lock").len(), 1);
     }
 
     #[tokio::test]
@@ -422,7 +386,6 @@ mod tests {
             .with("body", get_case(format!("{base}/ok"), vec![Assertion::StatusIs(200)], vec![]))
             .with("once", get_case(format!("{base}/ok"), vec![Assertion::StatusIs(200)], vec![]));
         let sink = SpySink::default();
-        // 循环 3 次:每次跑 body,但 once 全程只跑 1 次
         let plan = vec![PlanNode::Loop {
             times: 3,
             body: vec![
@@ -433,14 +396,13 @@ mod tests {
         exec(specs, sink.clone()).run("r1", &plan, &ResolvedEnv::default(), false).await.expect("ok");
         let rows = sink.rows.lock().expect("lock");
         assert_eq!(rows.iter().filter(|(id, _)| id == "body").count(), 3);
-        assert_eq!(rows.iter().filter(|(id, _)| id == "once").count(), 1); // 仅一次
+        assert_eq!(rows.iter().filter(|(id, _)| id == "once").count(), 1);
     }
 
     #[tokio::test]
     async fn stop_on_failure_halts_remaining() {
         let base = spawn().await;
         let specs = InMemorySpecs::default()
-            // 第一个用例断言失败(期望 500,实际 200)
             .with("bad", get_case(format!("{base}/ok"), vec![Assertion::StatusIs(500)], vec![]))
             .with("after", get_case(format!("{base}/ok"), vec![Assertion::StatusIs(200)], vec![]));
         let sink = SpySink::default();
@@ -454,7 +416,7 @@ mod tests {
             .expect("ok");
         assert!(!ok);
         let rows = sink.rows.lock().expect("lock");
-        assert_eq!(rows.len(), 1); // STOP:第一个失败后不再跑 after
+        assert_eq!(rows.len(), 1);
         assert_eq!(rows[0], ("bad".to_string(), "ERROR".to_string()));
     }
 
@@ -488,11 +450,9 @@ mod tests {
             .run("r1", &plan, &ResolvedEnv::default(), false)
             .await
             .expect("ok");
-        assert!(ok); // b 用到了 a 提取的 ${tk}
+        assert!(ok);
     }
 
-    // 回归:Leaf::Case 的 Variable 断言必须用运行上下文变量算结果(否则 outcome 用空 vars
-    // → 误报 ERROR,而详情表却用 state.vars 显示 PASSED,两者矛盾)。
     #[tokio::test]
     async fn case_variable_assertion_uses_context_vars_not_misreport() {
         let base = spawn().await;
@@ -510,7 +470,6 @@ mod tests {
                 "b",
                 get_case(
                     format!("{base}/ok"),
-                    // 断言读取 a 提取的 ${tk};修复前 outcome 用空 vars 算 → 误报 ERROR。
                     vec![Assertion::Variable {
                         name: "tk".into(),
                         condition: MatchCondition::Equals,
@@ -531,6 +490,6 @@ mod tests {
         assert!(ok);
         let rows = sink.rows.lock().expect("lock");
         let b = rows.iter().find(|(id, _)| id == "b").expect("b recorded");
-        assert_eq!(b.1, "SUCCESS"); // Variable 断言用 ${tk}=T-1 通过,不再误报
+        assert_eq!(b.1, "SUCCESS");
     }
 }

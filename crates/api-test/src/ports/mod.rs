@@ -1,4 +1,3 @@
-//! 端口层:资源池(读/管理)与批量执行器抽象 + 用例执行记录读端口。
 pub mod batch_run_ports;
 pub mod case_execution_ports;
 pub mod resource_pool_admin;
