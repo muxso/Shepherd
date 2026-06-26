@@ -1,6 +1,5 @@
-use std::collections::HashSet;
+use std::collections::HashMap;
 use std::convert::Infallible;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -44,25 +43,30 @@ impl<S: Send + Sync> FromRequestParts<S> for WantsSse {
 
 const SESSION_HEADER: &str = "mcp-session-id";
 
-// 会话 id 用进程内自增计数:/mcp 已由 Bearer 鉴权,会话 id 非鉴权边界。
+// 会话与认证用户绑定:id 随机不可猜,且仅其属主(同一 Bearer 用户)可复用/删除——
+// 防止已认证用户 A 凭可猜 id 操作 B 的会话(纵深防御,/mcp 本就有 Bearer 鉴权)。
 #[derive(Default)]
 struct McpSessions {
-    active: Mutex<HashSet<String>>,
-    counter: AtomicU64,
+    owners: Mutex<HashMap<String, String>>,
 }
 
 impl McpSessions {
-    fn mint(&self) -> String {
-        let n = self.counter.fetch_add(1, Ordering::Relaxed);
-        let id = format!("mcp-sess-{n}");
-        self.active.lock().expect("lock").insert(id.clone());
+    fn mint(&self, owner: &str) -> String {
+        let id = format!("mcp-{}", uuid::Uuid::new_v4().simple());
+        self.owners.lock().expect("lock").insert(id.clone(), owner.to_string());
         id
     }
-    fn contains(&self, id: &str) -> bool {
-        self.active.lock().expect("lock").contains(id)
+    fn owns(&self, id: &str, owner: &str) -> bool {
+        self.owners.lock().expect("lock").get(id).map(|o| o == owner).unwrap_or(false)
     }
-    fn remove(&self, id: &str) -> bool {
-        self.active.lock().expect("lock").remove(id)
+    fn remove(&self, id: &str, owner: &str) -> bool {
+        let mut g = self.owners.lock().expect("lock");
+        if g.get(id).map(|o| o == owner).unwrap_or(false) {
+            g.remove(id);
+            true
+        } else {
+            false
+        }
     }
 }
 
@@ -616,13 +620,21 @@ async fn mcp_handler(
     Json(body): Json<Value>,
 ) -> Response {
     if let Some(id) = &sid {
-        if !st.mcp_sessions.contains(id) {
+        if !st.mcp_sessions.owns(id, &user.user_id) {
             return (StatusCode::NOT_FOUND, "unknown session").into_response();
         }
     }
+    let method = body.get("method").and_then(|m| m.as_str()).unwrap_or("").to_string();
+    let tool = if method == "tools/call" {
+        body.pointer("/params/name").and_then(|n| n.as_str()).unwrap_or("").to_string()
+    } else {
+        String::new()
+    };
     let mint = is_initialize(&body);
     let resp = st.server.dispatch(body, &UserCaps(&user)).await;
-    let new_sid = if mint { Some(st.mcp_sessions.mint()) } else { None };
+    let errored = resp.as_ref().map(|r| r.get("error").is_some()).unwrap_or(false);
+    tracing::info!(target: "mcp_audit", user = %user.user_id, method, tool, ok = !errored, "MCP 调用");
+    let new_sid = if mint { Some(st.mcp_sessions.mint(&user.user_id)) } else { None };
 
     let mut response = match resp {
         None => StatusCode::ACCEPTED.into_response(),
@@ -646,12 +658,12 @@ async fn mcp_handler(
 }
 
 async fn mcp_sse(
-    _user: AuthUser,
+    user: AuthUser,
     SessionHeader(sid): SessionHeader,
     State(st): State<McpState>,
 ) -> Response {
     if let Some(id) = &sid {
-        if !st.mcp_sessions.contains(id) {
+        if !st.mcp_sessions.owns(id, &user.user_id) {
             return (StatusCode::NOT_FOUND, "unknown session").into_response();
         }
     }
@@ -664,13 +676,40 @@ async fn mcp_sse(
 }
 
 async fn mcp_delete(
-    _user: AuthUser,
+    user: AuthUser,
     SessionHeader(sid): SessionHeader,
     State(st): State<McpState>,
 ) -> Response {
     match sid {
-        Some(id) if st.mcp_sessions.remove(&id) => StatusCode::NO_CONTENT.into_response(),
+        Some(id) if st.mcp_sessions.remove(&id, &user.user_id) => {
+            StatusCode::NO_CONTENT.into_response()
+        }
         Some(_) => (StatusCode::NOT_FOUND, "unknown session").into_response(),
         None => (StatusCode::BAD_REQUEST, "missing Mcp-Session-Id").into_response(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::McpSessions;
+
+    #[test]
+    fn sessions_are_unguessable_and_owner_scoped() {
+        let s = McpSessions::default();
+        let a = s.mint("alice");
+        let b = s.mint("bob");
+        assert_ne!(a, b);
+        assert!(a.starts_with("mcp-") && a.len() >= 36, "random id, not a counter: {a}");
+
+        assert!(s.owns(&a, "alice"));
+        assert!(!s.owns(&a, "bob"), "another user must not see alice's session");
+        assert!(!s.owns("mcp-guessed", "alice"));
+
+        assert!(!s.remove(&a, "bob"), "cross-user delete must be refused");
+        assert!(s.owns(&a, "alice"), "refused delete must not touch the session");
+        assert!(s.remove(&a, "alice"));
+        assert!(!s.owns(&a, "alice"));
+
+        assert!(s.owns(&b, "bob"), "bob's session untouched throughout");
     }
 }
