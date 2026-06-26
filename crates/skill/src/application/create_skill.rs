@@ -1,5 +1,3 @@
-//! 用例:创建 skill(同项目内名唯一,忽略软删除)。
-
 use std::sync::Arc;
 
 use thiserror::Error;
@@ -60,7 +58,7 @@ mod tests {
             uc.execute("p1", "Rust", "", "x", &[]).await.unwrap_err(),
             CreateSkillError::NameAlreadyExists
         );
-        assert!(uc.execute("p2", "Rust", "", "x", &[]).await.is_ok()); // 别的项目可同名
+        assert!(uc.execute("p2", "Rust", "", "x", &[]).await.is_ok());
     }
 
     #[tokio::test]

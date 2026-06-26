@@ -1,4 +1,3 @@
-//! 领域层:交付尝试的业务规则,零 IO。
 pub mod delivery;
 pub mod event;
 

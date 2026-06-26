@@ -1,5 +1,3 @@
-//! PostgreSQL 实现的 `PlanRepository`。
-
 use async_trait::async_trait;
 use crate::domain::{
     AssertionResult, CaseCounts, CaseResult, CaseStatus, NewPlan, Plan, PlanCase, PlanType,
@@ -78,7 +76,6 @@ impl PlanRepository for PgPlanRepository {
     }
 
     async fn case_counts(&self, plan_id: &str) -> Result<CaseCounts, RepoError> {
-        // 由挂入用例的 status 聚合(取代手填计数表)。
         let rows = sqlx::query(
             "SELECT status, count(*)::bigint AS n FROM ms_test_plan_case \
              WHERE plan_id = $1 GROUP BY status",
@@ -196,7 +193,7 @@ impl PlanRepository for PgPlanRepository {
     }
 
     async fn delete(&self, id: &str) -> Result<bool, RepoError> {
-        // 无 FK 级联:先删挂入用例,再删计划本体。
+        // 无 FK 级联:必须先删挂入用例,再删计划本体。
         sqlx::query("DELETE FROM ms_test_plan_case WHERE plan_id = $1")
             .bind(id)
             .execute(&self.pool)
@@ -237,7 +234,6 @@ fn step_to_json(s: &StepResult) -> serde_json::Value {
     })
 }
 
-/// CaseResult → jsonb(明细落库)。
 fn result_to_json(r: &CaseResult) -> serde_json::Value {
     let request = r.request.as_ref().map(|req| {
         serde_json::json!({
@@ -309,7 +305,6 @@ fn step_from_json(v: &serde_json::Value) -> StepResult {
     }
 }
 
-/// jsonb → CaseResult(形态不符的字段安全回落)。
 fn result_from_json(v: &serde_json::Value) -> CaseResult {
     let opt_str = |k: &str| {
         let s = v.get(k).and_then(|x| x.as_str()).unwrap_or_default().to_string();
@@ -340,7 +335,6 @@ fn result_from_json(v: &serde_json::Value) -> CaseResult {
     }
 }
 
-/// PostgreSQL 定时调度 + 运行快照(表 ms_test_plan_schedule / ms_test_plan_run)。
 #[derive(Clone)]
 pub struct PgScheduleStore {
     pool: PgPool,
@@ -480,22 +474,18 @@ mod tests {
             .await
             .expect("child");
 
-        // get 往返 + 类型解析
         let got = repo.get(&child.id).await.expect("get").expect("some");
         assert_eq!(got.plan_type, PlanType::Plan);
         assert_eq!(got.group_id, group.id);
 
-        // children
         let kids = repo.children(&group.id).await.expect("children");
         assert_eq!(kids.len(), 1);
         assert_eq!(kids[0].id, child.id);
 
-        // case_counts:无挂入用例默认 0;挂入 + 回写后按 status 聚合
         assert_eq!(repo.case_counts(&child.id).await.expect("c"), CaseCounts::default());
         repo.link_case(&child.id, "ca", "用例A").await.expect("link a");
         repo.link_case(&child.id, "cb", "用例B").await.expect("link b");
         repo.link_case(&child.id, "cc", "用例C").await.expect("link c");
-        // link 幂等
         repo.link_case(&child.id, "ca", "用例A").await.expect("link a again");
         let res = CaseResult {
             latency_ms: 12,
@@ -514,7 +504,6 @@ mod tests {
         };
         assert!(repo.record_result(&child.id, "ca", CaseStatus::Success, Some(&res)).await.expect("rec a"));
         assert!(repo.record_result(&child.id, "cb", CaseStatus::Success, None).await.expect("rec b"));
-        // cc 留 PENDING
         assert!(!repo.record_result(&child.id, "ghost", CaseStatus::Success, None).await.expect("rec ghost"));
 
         let c = repo.case_counts(&child.id).await.expect("c");
@@ -522,7 +511,6 @@ mod tests {
         assert_eq!(c.pending, 1);
         assert_eq!(c.total(), 3);
 
-        // list_cases 含明细往返
         let cases = repo.list_cases(&child.id).await.expect("list");
         assert_eq!(cases.len(), 3);
         let ca = cases.iter().find(|x| x.case_id == "ca").expect("ca");
@@ -535,7 +523,6 @@ mod tests {
         assert!(r.assertions[0].passed);
         assert_eq!(r.body.as_deref(), Some("ok"));
 
-        // pass_threshold 默认 1.0
         assert_eq!(repo.pass_threshold(&child.id).await.expect("t"), 1.0);
     }
 }

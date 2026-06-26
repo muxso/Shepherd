@@ -1,5 +1,3 @@
-//! 内存版角色仓储 + 用户-角色授权(test double 兼本地)。
-
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 
@@ -75,11 +73,10 @@ impl RoleRepository for InMemoryRoleRepository {
     }
 }
 
-/// 内存用户-角色授权。持有角色仓储以计算有效权限并集。
 #[derive(Clone)]
 pub struct InMemoryUserRoleRepository {
     roles: Arc<dyn RoleRepository>,
-    grants: Arc<Mutex<HashSet<(String, String)>>>, // (user_id, role_id)
+    grants: Arc<Mutex<HashSet<(String, String)>>>,
 }
 
 impl InMemoryUserRoleRepository {

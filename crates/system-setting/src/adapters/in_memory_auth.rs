@@ -1,6 +1,3 @@
-//! 内存版鉴权适配器(test double 兼本地/演示用)。
-//! 注:`PlainPasswordHasher` 仅供测试/本地——生产用 `adapters::auth::Argon2PasswordHasher`(feature=auth)。
-
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -13,7 +10,6 @@ use crate::ports::{
     AuthRepoError, CredentialRepository, PasswordHasher, SessionStore, UserCredential,
 };
 
-// ---- 凭证仓储 ----
 #[derive(Clone, Default)]
 pub struct InMemoryCredentialRepository {
     users: HashMap<String, UserCredential>,
@@ -51,7 +47,6 @@ impl CredentialRepository for InMemoryCredentialRepository {
     }
 }
 
-// ---- 会话存储 ----
 #[derive(Default)]
 struct SessionState {
     sessions: HashMap<String, Session>,
@@ -72,7 +67,6 @@ impl InMemorySessionStore {
         Self::default()
     }
 
-    /// 测试辅助:塞一个**已过期**会话,验证过期被拒。
     pub fn insert_expired(&self, token: &str, user_id: &str) {
         self.state.lock().expect("lock").sessions.insert(
             token.to_string(),
@@ -113,7 +107,7 @@ impl SessionStore for InMemorySessionStore {
         let st = self.state.lock().expect("lock");
         Ok(match st.sessions.get(token) {
             Some(s) if s.expires_at_ms > now_ms() => Some(s.clone()),
-            _ => None, // 不存在或已过期
+            _ => None,
         })
     }
 
@@ -123,8 +117,7 @@ impl SessionStore for InMemorySessionStore {
     }
 }
 
-// ---- 明文哈希器(仅测试/本地!) ----
-/// **不安全**:`hash` 原样返回明文,`verify` 直接比较。仅用于测试与本地演示。
+/// 仅测试/本地:hash 原样返回明文;生产用 `Argon2PasswordHasher`(feature=auth)。
 #[derive(Clone, Default)]
 pub struct PlainPasswordHasher;
 

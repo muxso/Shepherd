@@ -1,9 +1,3 @@
-//! 用例评审的 HTTP 适配器:`POST /case-review/{reviewId}/{caseId}` 提交一次评审。
-//!
-//! 只做翻译:解析状态串/DTO → 构造已校验的 `Verdict` → 调用例 → 映射错误码。
-//! 聚合与状态机规则都在 domain/application,本层不碰。
-//! 写端点(提交评审)经 `webauth::AuthUser` 做 RBAC:需 `CASE_REVIEW:REVIEW`。
-
 use std::sync::Arc;
 
 use axum::{
@@ -52,7 +46,6 @@ fn repo_err(e: RepoError) -> Response {
 #[serde(rename_all = "camelCase")]
 struct CreateReviewRequest {
     project_id: String,
-    /// SINGLE(或签)/ MULTIPLE(会签)。
     #[serde(default)]
     pass_rule: String,
     #[serde(default = "one")]
@@ -175,18 +168,15 @@ async fn submit_review(
     if !user.can("CASE_REVIEW", "REVIEW") {
         return (StatusCode::FORBIDDEN, "permission denied").into_response();
     }
-    // 1) 解析状态串
     let Some(status) = ReviewStatus::parse(&req.status) else {
         return (StatusCode::BAD_REQUEST, "unknown review status").into_response();
     };
-    // 2) 构造已校验的 Verdict(UnPass 须带评论)
     let verdict = match Verdict::new(&req.reviewer_id, status, req.content.as_deref()) {
         Ok(v) => v,
         Err(ReviewError::ContentRequiredForUnPass) => {
             return (StatusCode::BAD_REQUEST, "content required for UN_PASS").into_response();
         }
     };
-    // 3) 调用例,映射结果
     match st.use_case.execute(&review_id, &case_id, verdict).await {
         Ok(aggregated) => {
             (StatusCode::OK, Json(SubmitResponse { status: aggregated.as_str().to_string() }))
@@ -221,7 +211,6 @@ mod tests {
     use tower::ServiceExt;
     use webauth::testing::InMemorySessionStore;
 
-    /// app + 拥有 `CASE_REVIEW:READ+REVIEW` 的令牌。
     async fn app_with(rule: PassRule, reviewer_count: usize) -> (Router, String) {
         let repo = Arc::new(InMemoryReviewRepository::new());
         repo.set_setting("rev1", ReviewSetting { rule, reviewer_count });

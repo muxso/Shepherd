@@ -1,13 +1,3 @@
-//! PostgreSQL 实现的 `ApiScenarioRepository`。
-//!
-//! 表结构(已迁移):
-//! - `ms_api_scenario(id, project_id, name, status, deleted)`
-//! - `ms_api_scenario_step(id, scenario_id, step_order, kind, ref_mode, ref_id NULL, inline JSONB NULL)`
-//!
-//! 步骤落库:REQUEST → kind='REQUEST',InlineRequest JSON 存 inline;
-//! CASE → kind='CASE',ref_id=case_id;SCENARIO → kind='SCENARIO',ref_id=scenario_id;
-//! COPY 快照存 inline。get_scenario 按 step_order 加载,并据 kind+ref_id+inline 重建 StepKind。
-
 use async_trait::async_trait;
 
 use crate::domain::{
@@ -33,10 +23,8 @@ fn map_err(e: sqlx::Error) -> RepoError {
     RepoError::Backend(e.to_string())
 }
 
-/// 由场景行重建 `ApiScenario`(steps 由调用方另行填充)。
 fn row_to_scenario(row: &sqlx::postgres::PgRow) -> Result<ApiScenario, RepoError> {
     let status: String = row.try_get("status").map_err(map_err)?;
-    // meta 列在 0044 后存在;旧行/缺列回落空对象。
     let meta: serde_json::Value = row.try_get("meta").unwrap_or_else(|_| serde_json::json!({}));
     Ok(ApiScenario {
         id: row.try_get("id").map_err(map_err)?,
@@ -44,17 +32,14 @@ fn row_to_scenario(row: &sqlx::postgres::PgRow) -> Result<ApiScenario, RepoError
         name: row.try_get("name").map_err(map_err)?,
         status: ScenarioStatus::parse(&status),
         meta,
-        // 审计列在 0046 后存在;缺列回落空串/None。
         created_by: row.try_get("created_by").ok().flatten(),
         created_at: row.try_get::<String, _>("created_at").unwrap_or_default(),
         updated_at: row.try_get::<String, _>("updated_at").unwrap_or_default(),
         steps: Vec::new(),
-        // last_result 仅列表查询带出(子查询);单查无此列 → None。
         last_result: row.try_get::<Option<String>, _>("last_result").ok().flatten(),
     })
 }
 
-/// 由步骤行(kind + ref_id + inline)重建 `ScenarioStep`。
 fn row_to_step(row: &sqlx::postgres::PgRow) -> Result<ScenarioStep, RepoError> {
     let id: String = row.try_get("id").map_err(map_err)?;
     let order: i32 = row.try_get("step_order").map_err(map_err)?;
@@ -65,7 +50,6 @@ fn row_to_step(row: &sqlx::postgres::PgRow) -> Result<ScenarioStep, RepoError> {
 
     let kind = match kind_s.as_str() {
         "REQUEST" => {
-            // inline 即 InlineRequest 的 JSON。
             let v = inline.clone().ok_or_else(|| {
                 RepoError::Backend("REQUEST step missing inline payload".into())
             })?;
@@ -90,7 +74,6 @@ fn row_to_step(row: &sqlx::postgres::PgRow) -> Result<ScenarioStep, RepoError> {
                 RepoError::Backend("SCENARIO step missing ref_id".into())
             })?,
         },
-        // 控制器:inline 即载荷(含子步骤)。
         "LOOP" | "IF" | "ONCE" | "TIMER" => {
             let control = ControlKind::parse(&kind_s)
                 .ok_or_else(|| RepoError::Backend(format!("bad control kind: {kind_s}")))?;
@@ -102,7 +85,6 @@ fn row_to_step(row: &sqlx::postgres::PgRow) -> Result<ScenarioStep, RepoError> {
         other => return Err(RepoError::Backend(format!("unknown step kind: {other}"))),
     };
 
-    // COPY 模式的快照即 inline(REQUEST/CONTROL 已把 inline 消费,这里对其余保留)。
     let snapshot = match &kind {
         StepKind::Request(_) | StepKind::Control { .. } => None,
         _ => inline,
@@ -111,15 +93,12 @@ fn row_to_step(row: &sqlx::postgres::PgRow) -> Result<ScenarioStep, RepoError> {
     Ok(ScenarioStep { id, order, kind, ref_mode: RefMode::parse(&ref_mode_s), snapshot })
 }
 
-/// 由执行记录行重建 `ScenarioExecution`。created_at 以 `created_at::text` 取 String,
-/// 避免引入 chrono/time 依赖。
 fn row_to_execution(row: &sqlx::postgres::PgRow) -> Result<ScenarioExecution, RepoError> {
     let status_s: String = row.try_get("status").map_err(map_err)?;
     Ok(ScenarioExecution {
         id: row.try_get("id").map_err(map_err)?,
         scenario_id: row.try_get("scenario_id").map_err(map_err)?,
         project_id: row.try_get("project_id").map_err(map_err)?,
-        // 未知状态回落到 Pending(库里理应只存合法值)。
         status: ExecutionStatus::parse(&status_s).unwrap_or_default(),
         case_count: row.try_get("case_count").map_err(map_err)?,
         report_id: row.try_get("report_id").map_err(map_err)?,
@@ -128,7 +107,6 @@ fn row_to_execution(row: &sqlx::postgres::PgRow) -> Result<ScenarioExecution, Re
 }
 
 impl PgApiScenarioRepository {
-    /// 加载某场景的步骤,按 step_order 升序。
     async fn load_steps(&self, scenario_id: &str) -> Result<Vec<ScenarioStep>, RepoError> {
         let rows = sqlx::query(
             "SELECT id, step_order, kind, ref_mode, ref_id, inline \
@@ -234,15 +212,12 @@ impl ApiScenarioRepository for PgApiScenarioRepository {
         scenario_id: &str,
         step: &NewScenarioStep,
     ) -> Result<ScenarioStep, RepoError> {
-        // 据步骤类型拆出 ref_id 与 inline 两列。
         let (ref_id, inline): (Option<String>, Option<serde_json::Value>) = match &step.kind {
-            // method/url/body/assertions + 请求头/Query/REST/认证/处理器(空字段省略)。
             StepKind::Request(req) => (None, Some(req.to_inline_json())),
             StepKind::Case { case_id } => (Some(case_id.clone()), step.snapshot.clone()),
             StepKind::Scenario { scenario_id } => {
                 (Some(scenario_id.clone()), step.snapshot.clone())
             }
-            // 控制器:载荷整体存 inline,ref_id 留空。
             StepKind::Control { payload, .. } => (None, Some(payload.clone())),
         };
 
@@ -275,7 +250,7 @@ impl ApiScenarioRepository for PgApiScenarioRepository {
     }
 
     async fn delete_scenario(&self, id: &str) -> Result<bool, RepoError> {
-        // 软删场景;硬删其步骤(步骤表无软删列,且离开场景即无意义)。
+        // 场景软删,步骤硬删(步骤表无软删列)。
         let res = sqlx::query("UPDATE ms_api_scenario SET deleted = true WHERE id = $1 AND deleted = false")
             .bind(id)
             .execute(&self.pool)
@@ -412,7 +387,6 @@ impl ApiScenarioRepository for PgApiScenarioRepository {
         if case_ids.is_empty() {
             return Ok(Vec::new());
         }
-        // 引用 = 步骤 kind='CASE' 且 ref_id ∈ case_ids(REFERENCE/COPY 皆计)。去重到场景级。
         let rows = sqlx::query(
             "SELECT DISTINCT s.id, s.project_id, s.name \
              FROM ms_api_scenario s \
@@ -459,7 +433,6 @@ mod tests {
             .expect("insert");
         assert_eq!(scenario.status, ScenarioStatus::Draft);
 
-        // 三类步骤各加一个(顺序故意打乱)。
         let req = InlineRequest::new("POST", "http://x/order", Some("{}".into())).expect("valid");
         repo.add_step(
             &scenario.id,
@@ -493,7 +466,6 @@ mod tests {
         .expect("scenario step");
 
         let loaded = repo.get_scenario(&scenario.id).await.expect("get").expect("some");
-        // 按 order 升序:CASE(0) → SCENARIO(1) → REQUEST(2)
         let kinds: Vec<_> = loaded.steps.iter().map(|s| s.kind.kind_str()).collect();
         assert_eq!(kinds, vec!["CASE", "SCENARIO", "REQUEST"]);
         assert_eq!(loaded.steps[0].order, 0);
@@ -506,7 +478,6 @@ mod tests {
             other => panic!("expected REQUEST, got {other:?}"),
         }
 
-        // 列表与 get 一致。
         let list = repo.list_scenarios("p1").await.expect("list");
         assert_eq!(list.len(), 1);
         assert_eq!(list[0].steps.len(), 3);
@@ -537,7 +508,6 @@ mod tests {
         repo.record_execution("scn-1", "p1", "SUCCESS", 5, Some("rep-9"))
             .await
             .expect("rec2");
-        // 另一场景不应混入。
         repo.record_execution("scn-2", "p1", "ERROR", 1, None).await.expect("rec3");
 
         let total = repo.count_executions("scn-1").await.expect("count");
@@ -545,7 +515,6 @@ mod tests {
 
         let page = repo.list_executions("scn-1", 0, 10).await.expect("list");
         assert_eq!(page.len(), 2);
-        // created_at DESC:最新(SUCCESS, rep-9)在前。
         assert_eq!(page[0].status, ExecutionStatus::Success);
         assert_eq!(page[0].report_id.as_deref(), Some("rep-9"));
     }

@@ -1,5 +1,3 @@
-//! 内存版场景仓储。Mutex 守护;id 形如 `scn-{n}` / `step-{n}`。
-
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
@@ -11,7 +9,6 @@ use crate::domain::{
 };
 use crate::ports::{ApiScenarioRepository, RepoError};
 
-/// 内部记录:场景元信息 + 其步骤列表。
 #[derive(Clone)]
 struct Record {
     scenario: ApiScenario,
@@ -19,12 +16,12 @@ struct Record {
 
 #[derive(Default)]
 struct State {
-    scenarios: HashMap<String, Record>, // scenario_id -> 记录
+    scenarios: HashMap<String, Record>,
     scn_seq: u64,
     step_seq: u64,
-    executions: Vec<ScenarioExecution>, // 追加序;created_at 为合成递增串
+    executions: Vec<ScenarioExecution>,
     exec_seq: u64,
-    changes: Vec<ScenarioChange>, // 变更历史(追加序)
+    changes: Vec<ScenarioChange>,
     change_seq: u64,
 }
 
@@ -83,7 +80,7 @@ impl ApiScenarioRepository for InMemoryApiScenarioRepository {
     async fn get_scenario(&self, id: &str) -> Result<Option<ApiScenario>, RepoError> {
         Ok(self.state.lock().expect("lock").scenarios.get(id).map(|r| {
             let mut s = r.scenario.clone();
-            s.steps.sort_by_key(|st| st.order); // 按 order 升序
+            s.steps.sort_by_key(|st| st.order);
             s
         }))
     }
@@ -103,7 +100,7 @@ impl ApiScenarioRepository for InMemoryApiScenarioRepository {
                 s
             })
             .collect();
-        out.sort_by(|a, b| a.id.cmp(&b.id)); // 稳定顺序
+        out.sort_by(|a, b| a.id.cmp(&b.id));
         Ok(out)
     }
 
@@ -175,7 +172,7 @@ impl ApiScenarioRepository for InMemoryApiScenarioRepository {
         let state = self.state.lock().expect("lock");
         let mut out: Vec<ScenarioChange> =
             state.changes.iter().filter(|c| c.scenario_id == scenario_id).cloned().collect();
-        out.reverse(); // 最新在前
+        out.reverse();
         Ok(out)
     }
 
@@ -190,7 +187,6 @@ impl ApiScenarioRepository for InMemoryApiScenarioRepository {
         let mut state = self.state.lock().expect("lock");
         state.exec_seq += 1;
         let n = state.exec_seq;
-        // 未知状态回落到 Pending,保持落库可解析。
         let status = ExecutionStatus::parse(status).unwrap_or_default();
         let exec = ScenarioExecution {
             id: format!("exec-{n}"),
@@ -199,7 +195,6 @@ impl ApiScenarioRepository for InMemoryApiScenarioRepository {
             status,
             case_count,
             report_id: report_id.map(|s| s.to_string()),
-            // 合成递增的时间串,保证测试确定性且降序排序可用。
             created_at: format!("exec-{n}"),
         };
         state.executions.push(exec.clone());
@@ -218,7 +213,6 @@ impl ApiScenarioRepository for InMemoryApiScenarioRepository {
         limit: u32,
     ) -> Result<Vec<ScenarioExecution>, RepoError> {
         let state = self.state.lock().expect("lock");
-        // created_at 降序(最新在前):exec_seq 递增,逆序遍历即可。
         let out: Vec<ScenarioExecution> = state
             .executions
             .iter()

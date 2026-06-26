@@ -1,9 +1,3 @@
-//! 用例:计算测试计划统计(状态 / 通过率 / 执行率 / 是否通过)。
-//!
-//! - 普通计划:直接由自身用例计数推导。
-//! - 计划组:聚合各子计划计数;**状态由子计划状态推导**(而非由汇总计数推导),
-//!   由子计划状态推导。
-
 use std::sync::Arc;
 
 use crate::domain::{status_by_children, CaseCounts, ExecStatus, PlanType};
@@ -56,7 +50,7 @@ impl PlanStatisticsUseCase {
                     child_statuses.push(c.derive_status(child.archived));
                     total = total.add(&c);
                 }
-                // 组状态由子状态推导;通过率/执行率仍由汇总计数算
+                // 组状态须由子状态推导,而非由汇总计数推导。
                 let status = if plan.archived {
                     ExecStatus::Archived
                 } else {
@@ -67,7 +61,6 @@ impl PlanStatisticsUseCase {
         }
     }
 
-    /// 同 [`execute`](Self::execute),并附带计划名(供报告渲染)。
     pub async fn with_name(
         &self,
         plan_id: &str,
@@ -113,7 +106,7 @@ mod tests {
         assert_eq!(s.total, 4);
         assert!(approx(s.pass_rate, 0.5));
         assert!(approx(s.execute_rate, 0.75));
-        assert!(s.is_pass); // 0.5 >= 0.5
+        assert!(s.is_pass);
     }
 
     #[tokio::test]
@@ -122,7 +115,6 @@ mod tests {
         let group = repo
             .seed(NewPlan::new("proj1", "组", PlanType::Group, ROOT_GROUP).expect("v"))
             .await;
-        // 子A:全部完成(2 成功);子B:还有 pending → 进行中
         let a = repo
             .seed(NewPlan::new("proj1", "A", PlanType::Plan, &group.id).expect("v"))
             .await;
@@ -135,10 +127,9 @@ mod tests {
 
         let uc = PlanStatisticsUseCase::new(Arc::new(repo));
         let s = uc.execute(&group.id).await.expect("ok");
-        // 子状态:A=Completed, B=Underway → 组=Underway
         assert_eq!(s.status, Underway);
-        assert_eq!(s.total, 4); // 2 + 2
-        assert!(approx(s.pass_rate, 0.75)); // 3 成功 / 4
+        assert_eq!(s.total, 4);
+        assert!(approx(s.pass_rate, 0.75));
     }
 
     #[tokio::test]

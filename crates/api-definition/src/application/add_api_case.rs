@@ -1,5 +1,3 @@
-//! 用例:为某接口定义新增用例。接口定义不存在则 NotFound;project_id 取自接口定义。
-
 use std::sync::Arc;
 
 use crate::domain::{ApiCase, ApiDefinitionError, NewApiCase};
@@ -39,7 +37,6 @@ impl AddApiCaseUseCase {
         processors: serde_json::Value,
         meta: ApiCaseMeta,
     ) -> Result<ApiCase, AddApiCaseError> {
-        // 用例的归属项目以接口定义为准,不由调用方指定,避免错配。
         let def = self
             .repo
             .get_definition(api_definition_id)
@@ -62,7 +59,6 @@ impl AddApiCaseUseCase {
     }
 }
 
-/// 用例元信息(优先级 / 状态 / 标签 / 请求头 / Query / REST / 认证),收拢成一个参数,避免 execute 形参爆炸。
 #[derive(Debug, Clone, Default)]
 pub struct ApiCaseMeta {
     pub priority: String,

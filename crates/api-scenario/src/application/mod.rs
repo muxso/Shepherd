@@ -1,4 +1,3 @@
-//! 应用层:场景用例编排。
 pub mod add_step;
 pub mod compile_scenario;
 pub mod copy_scenario;

@@ -1,5 +1,3 @@
-//! 用例:创建场景。校验入参后落库,返回 steps 为空的新场景。
-
 use std::sync::Arc;
 
 use crate::domain::{ApiScenario, NewApiScenario, ScenarioError};

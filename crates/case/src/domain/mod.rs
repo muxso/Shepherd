@@ -1,4 +1,3 @@
-//! 领域层:评审状态机,零 IO。
 pub mod review;
 
 pub use review::{

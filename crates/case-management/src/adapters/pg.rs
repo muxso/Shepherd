@@ -1,5 +1,3 @@
-//! PostgreSQL 功能用例仓储(表 ms_functional_case)。custom_fields 存 jsonb 对象。
-
 use std::collections::BTreeMap;
 
 use async_trait::async_trait;
@@ -23,14 +21,12 @@ fn map_err(e: sqlx::Error) -> RepoError {
     RepoError::Backend(e.to_string())
 }
 
-/// BTreeMap → jsonb 对象(全字符串值)。
 fn fields_to_json(f: &BTreeMap<String, String>) -> serde_json::Value {
     serde_json::Value::Object(
         f.iter().map(|(k, v)| (k.clone(), serde_json::Value::String(v.clone()))).collect(),
     )
 }
 
-/// jsonb 对象 → BTreeMap(非字符串值用紧凑 JSON 串表示;非对象回落空)。
 fn json_to_fields(v: &serde_json::Value) -> BTreeMap<String, String> {
     v.as_object()
         .map(|obj| {
@@ -87,7 +83,6 @@ impl CaseRepository for PgCaseRepository {
     }
 
     async fn update(&self, id: &str, c: &NewFunctionalCase) -> Result<Option<FunctionalCase>, RepoError> {
-        // project_id 不可改(用例不跨项目搬移),只更新可编辑字段。
         let row = sqlx::query(&format!(
             "UPDATE ms_functional_case \
              SET name = $2, module = $3, priority = $4, status = $5, custom_fields = $6, steps = $7 \

@@ -1,14 +1,3 @@
-//! CLI 执行后端。claude(流式 stream-json)、codex/opencode(通用,粗粒度)、mock(测试)。
-//!
-//! 后端职责:spawn CLI 跑 prompt,边跑边经 sink 回流进度事件,返回**最终文本输出**。
-//! git 快照 / 回调由 runtime 主流程按模式(implement / design)编排,后端不关心。
-//!
-//! 健壮性(对齐 CI runner 对子进程的处理):
-//! - **每任务超时**:卡死的 CLI 不能一直占着并发槽 —— 到点连同其派生子进程整组 SIGKILL。
-//! - **进程组隔离**:`process_group(0)` 起新组,杀的是整组,claude 再 spawn 的 bash 等不留孤儿。
-//! - **stderr 并发抽干**:流式读 stdout 的同时必须持续读 stderr,否则 stderr 写满 64KB
-//!   管道缓冲 → 子进程阻塞 → 死锁。`kill_on_drop` 兜底进程在 future 被丢弃时也回收。
-
 use std::process::Stdio;
 use std::time::Duration;
 
@@ -19,7 +8,6 @@ use tokio::process::{Child, Command};
 
 use crate::events::{parse_claude_line, parse_claude_result, ExecEvent, ProgressSink};
 
-/// 单条 stderr 保留上限(只留头部用于报错;超出部分照常读出丢弃以免写端阻塞)。
 const STDERR_CAP: usize = 64 * 1024;
 
 #[derive(Debug, Error)]
@@ -28,9 +16,8 @@ pub enum BackendError {
     Run(String),
 }
 
-/// 刚写出的可执行文件偶发 `ETXTBSY`(os error 26):多线程进程里另一线程在
-/// fork→exec 的窗口内继承了该文件的写句柄,内核认为它仍可写而拒绝 exec。
-/// 短退避重试即可消除(测试里现写现跑会触发;fleet runtime 现写包装脚本同理)。
+// ETXTBSY (os error 26): a just-written executable can be transiently busy when
+// another thread inherited its write handle across fork→exec; short backoff-retry clears it.
 async fn spawn_retrying_etxtbsy(cmd: &mut Command) -> std::io::Result<Child> {
     for _ in 0..4 {
         match cmd.spawn() {
@@ -40,10 +27,9 @@ async fn spawn_retrying_etxtbsy(cmd: &mut Command) -> std::io::Result<Child> {
             other => return other,
         }
     }
-    cmd.spawn() // 末次:无论成败都透传
+    cmd.spawn()
 }
 
-/// 让子进程成为新进程组组长(pgid == pid),便于超时/关停时整组回收。
 fn in_own_process_group(cmd: &mut Command) {
     #[cfg(unix)]
     {
@@ -55,7 +41,8 @@ fn in_own_process_group(cmd: &mut Command) {
     }
 }
 
-/// 给整组发 SIGKILL(以 `process_group(0)` 起组,故 pgid == pid;负号即整组)。
+// Kill the whole process group (pgid == pid via process_group(0); negative pid = group)
+// so a spawned CLI that forks children leaves no orphans on timeout/shutdown.
 fn kill_process_group(pid: u32) {
     #[cfg(unix)]
     unsafe {
@@ -67,7 +54,6 @@ fn kill_process_group(pid: u32) {
     }
 }
 
-/// 持续读完 `r`(避免管道写端阻塞),但只保留前 `cap` 字节作报错用。
 async fn drain_capped<R: AsyncReadExt + Unpin>(mut r: R, cap: usize) -> String {
     let mut buf = Vec::new();
     let mut chunk = [0u8; 8192];
@@ -88,7 +74,6 @@ async fn drain_capped<R: AsyncReadExt + Unpin>(mut r: R, cap: usize) -> String {
 #[async_trait]
 pub trait CliAgentBackend: Send + Sync {
     fn cli_name(&self) -> &str;
-    /// 在 `cwd`(每任务隔离的 worktree)里跑 prompt;运行中经 sink 回流事件,返回最终文本。
     async fn execute(
         &self,
         prompt: &str,
@@ -97,9 +82,6 @@ pub trait CliAgentBackend: Send + Sync {
     ) -> Result<String, BackendError>;
 }
 
-// ───────────────────────── Claude(流式)─────────────────────────
-
-/// `claude -p --output-format stream-json`:逐行解析,实时回流事件,取 result 文本。
 pub struct ClaudeBackend {
     pub bin: String,
     pub timeout: Duration,
@@ -143,21 +125,20 @@ impl CliAgentBackend for ClaudeBackend {
             .map_err(|e| BackendError::Run(format!("spawn {}: {e}", self.bin)))?;
         let pid = child.id();
 
-        // stdin:并发写,免得大 prompt 写入与 stdout 读取相互阻塞。
         if let Some(mut stdin) = child.stdin.take() {
             let bytes = prompt.as_bytes().to_vec();
             tokio::spawn(async move {
-                let _ = stdin.write_all(&bytes).await; // drop → EOF
+                let _ = stdin.write_all(&bytes).await;
             });
         }
-        // stderr:并发抽干(封顶),防止写满管道缓冲拖死 stdout 流。
+        // Drain stderr concurrently: if it fills the 64KB pipe buffer while we're
+        // blocked reading stdout, the child stalls on write → deadlock.
         let stderr_task = child
             .stderr
             .take()
             .map(|e| tokio::spawn(async move { drain_capped(e, STDERR_CAP).await }));
         let stdout = child.stdout.take().ok_or_else(|| BackendError::Run("no stdout".into()))?;
 
-        // 读流 + 等退出,整体加超时。
         let run = async {
             let mut lines = BufReader::new(stdout).lines();
             let mut result: Option<(bool, String)> = None;
@@ -208,9 +189,6 @@ impl CliAgentBackend for ClaudeBackend {
     }
 }
 
-// ───────────────────────── 通用(codex / opencode)─────────────────────────
-
-/// 非流式:跑 `cmd... "<prompt>"`,捕获 stdout 作输出。CLI 命令可经 env 覆盖。
 pub struct GenericCliBackend {
     pub name: &'static str,
     pub cmd: Vec<String>,
@@ -280,8 +258,6 @@ impl CliAgentBackend for GenericCliBackend {
     }
 }
 
-// ───────────────────────── Mock(测试/演示)─────────────────────────
-
 pub struct MockBackend {
     pub output: String,
 }
@@ -327,7 +303,6 @@ mod tests {
         }
     }
 
-    /// 写一个可执行的伪 CLI 脚本到临时文件,返回路径。
     fn write_script(tag: &str, body: &str) -> std::path::PathBuf {
         use std::io::Write;
         use std::os::unix::fs::PermissionsExt;
@@ -348,7 +323,6 @@ mod tests {
 
     #[tokio::test]
     async fn generic_backend_runs_cmd_and_captures_stdout() {
-        // 用 /bin/sh -c 充当 CLI:吃掉 prompt 参数,打印固定输出。
         let b = GenericCliBackend {
             name: "codex",
             cmd: vec!["/bin/sh".into(), "-c".into(), "printf '## codex 设计'".into(), "_".into()],
@@ -362,7 +336,6 @@ mod tests {
 
     #[tokio::test]
     async fn claude_backend_streams_events_and_returns_result() {
-        // 伪 claude 脚本:忽略参数,吃掉 stdin,吐两行 stream-json(Edit 工具调用 + result)。
         let path = write_script(
             "claude",
             "#!/bin/sh\ncat >/dev/null\nprintf '%s\\n' '{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"tool_use\",\"name\":\"Edit\",\"input\":{\"file_path\":\"a.rs\"}}]}}' '{\"type\":\"result\",\"is_error\":false,\"result\":\"完成\"}'\n",
@@ -377,8 +350,7 @@ mod tests {
         let _ = std::fs::remove_file(&path);
     }
 
-    /// 回归:claude 先吐 ~100KB stderr 再吐 stdout result —— 若 stderr 不并发抽干,
-    /// 子进程会在写满管道缓冲(64KB)处阻塞,而我们在等 stdout → 死锁。
+    // Regression: large stderr before stdout result must not deadlock (stderr drain).
     #[tokio::test]
     async fn claude_backend_drains_large_stderr_without_deadlock() {
         let path = write_script(
@@ -392,7 +364,6 @@ mod tests {
         let _ = std::fs::remove_file(&path);
     }
 
-    /// 超时即终止:卡住的 CLI 不该一直占槽 —— 应在 ~timeout 内返回 Err。
     #[tokio::test]
     async fn claude_backend_times_out_and_kills() {
         let path = write_script("claude-hang", "#!/bin/sh\ncat >/dev/null\nsleep 30\n");

@@ -1,6 +1,3 @@
-//! 组装根桥接:design 的 `BreakdownTrigger` → task 的 `BreakdownUseCase`。
-//! 设计稿审批通过 → 取该需求规格(基线版本)→ 自动拆分成任务 DAG(幂等)。
-
 use async_trait::async_trait;
 
 use design::domain::Proposal;

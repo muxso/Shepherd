@@ -1,5 +1,3 @@
-//! 用例:发表评论。校验(内容/目标非空)在领域 `NewComment::new` 里。
-
 use std::sync::Arc;
 
 use crate::domain::{Comment, CommentError, NewComment};

@@ -1,8 +1,4 @@
-//! 真实第三方身份提供方(feature = "oidc"):飞书、企业微信。
-//!
-//! ⚠️ 飞书/企业微信是 **OAuth2**(非标准 OIDC),都要多步换取用户信息。下面的端点路径/字段名
-//! 按各自公开文档常见形态实现,**生产前务必对照当前官方文档核对**(厂商常调整)。
-//! `base_url` 可覆盖,便于用本地 stub 做请求构造/解析的集成测试。
+//! 飞书/企业微信是 OAuth2(非标准 OIDC),多步换取用户信息;端点路径按厂商文档实现,可能随厂商调整。
 
 use async_trait::async_trait;
 use serde::Deserialize;
@@ -14,7 +10,6 @@ fn ex(e: impl std::fmt::Display) -> OidcError {
     OidcError::Exchange(e.to_string())
 }
 
-// ============ 飞书 ============
 #[derive(Clone)]
 pub struct FeishuProvider {
     client: reqwest::Client,
@@ -35,7 +30,6 @@ impl FeishuProvider {
         }
     }
 
-    /// 覆盖基地址(测试指向本地 stub)。
     pub fn with_base_url(mut self, base: &str) -> Self {
         self.base_url = base.trim_end_matches('/').to_string();
         self
@@ -56,7 +50,6 @@ impl ExternalIdentityProvider for FeishuProvider {
     }
 
     async fn exchange(&self, code: &str) -> Result<ExternalIdentity, OidcError> {
-        // 1) app_access_token
         #[derive(Deserialize)]
         struct AppTok {
             code: i64,
@@ -77,7 +70,6 @@ impl ExternalIdentityProvider for FeishuProvider {
         }
         let app_token = at.app_access_token.ok_or_else(|| ex("missing app_access_token"))?;
 
-        // 2) code → 用户身份
         #[derive(Deserialize)]
         struct Data {
             open_id: String,
@@ -107,15 +99,14 @@ impl ExternalIdentityProvider for FeishuProvider {
     }
 }
 
-// ============ 企业微信 ============
 #[derive(Clone)]
 pub struct WecomProvider {
     client: reqwest::Client,
     corp_id: String,
     corp_secret: String,
     redirect_uri: String,
-    base_url: String,         // qyapi.weixin.qq.com
-    authorize_base: String,   // open.weixin.qq.com
+    base_url: String,
+    authorize_base: String,
 }
 
 impl WecomProvider {
@@ -130,7 +121,6 @@ impl WecomProvider {
         }
     }
 
-    /// 覆盖 API 基地址(测试指向本地 stub)。授权页基址也一并指向它。
     pub fn with_base_url(mut self, base: &str) -> Self {
         let b = base.trim_end_matches('/').to_string();
         self.base_url = b.clone();
@@ -153,7 +143,6 @@ impl ExternalIdentityProvider for WecomProvider {
     }
 
     async fn exchange(&self, code: &str) -> Result<ExternalIdentity, OidcError> {
-        // 1) access_token
         #[derive(Deserialize)]
         struct Tok {
             errcode: i64,
@@ -176,7 +165,6 @@ impl ExternalIdentityProvider for WecomProvider {
         }
         let token = t.access_token.ok_or_else(|| ex("missing access_token"))?;
 
-        // 2) code → userid
         #[derive(Deserialize)]
         struct UInfo {
             errcode: i64,
@@ -196,7 +184,6 @@ impl ExternalIdentityProvider for WecomProvider {
         }
         let userid = ui.userid.ok_or_else(|| ex("missing userid"))?;
 
-        // 3) userid → 姓名
         #[derive(Deserialize)]
         struct UDetail {
             errcode: i64,
@@ -222,7 +209,6 @@ mod tests {
     use axum::{routing::{get, post}, Json, Router};
     use tokio::net::TcpListener;
 
-    // 飞书 stub:app_access_token + access_token
     async fn spawn_feishu() -> String {
         let app = Router::new()
             .route(
@@ -238,7 +224,6 @@ mod tests {
         serve(app).await
     }
 
-    // 企业微信 stub:gettoken + getuserinfo + user/get
     async fn spawn_wecom() -> String {
         let app = Router::new()
             .route("/cgi-bin/gettoken", get(|| async { Json(serde_json::json!({"errcode":0,"access_token":"qy-tok"})) }))

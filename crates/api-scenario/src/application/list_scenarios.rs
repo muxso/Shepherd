@@ -1,5 +1,3 @@
-//! 用例:列出某项目的场景(排除已删除,steps 已加载)。
-
 use std::sync::Arc;
 
 use crate::domain::ApiScenario;

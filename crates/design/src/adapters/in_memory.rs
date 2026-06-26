@@ -1,5 +1,3 @@
-//! 内存版提案仓储(测试 / 单机)。
-
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;

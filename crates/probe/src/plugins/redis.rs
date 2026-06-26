@@ -1,9 +1,3 @@
-//! Redis 协议插件:target=连接串(redis://host:port/db),payload=命令行(默认 PING)。
-//! 输出=回复文本,status=0(OK)/None(失败)。命令按空白切分(暂不支持带引号的参数)。
-//!
-//! 按连接串缓存多路复用连接(MultiplexedConnection 克隆共享底层连接):
-//! 一次性探测与高并发压测都复用连接,不每请求重连。
-
 use async_trait::async_trait;
 use std::collections::HashMap;
 use std::sync::Mutex;
@@ -17,7 +11,6 @@ use crate::ports::ProtocolPlugin;
 
 #[derive(Default)]
 pub struct RedisPlugin {
-    /// 连接串 → 多路复用连接(克隆复用,避免每次探测/压测重连)。
     conns: Mutex<HashMap<String, MultiplexedConnection>>,
 }
 
@@ -26,7 +19,6 @@ impl RedisPlugin {
         Self::default()
     }
 
-    /// 取目标的多路复用连接(已有则复用;否则新建并缓存)。连接在锁外建立。
     async fn conn_for(&self, target: &str) -> Result<MultiplexedConnection, String> {
         if let Some(c) = self.conns.lock().expect("conns lock").get(target).cloned() {
             return Ok(c);
@@ -44,7 +36,6 @@ impl RedisPlugin {
     }
 }
 
-/// 把 Redis 回复格式化成可读/可断言的字符串。
 fn format_value(v: &Value) -> String {
     match v {
         Value::Nil => "nil".to_string(),
@@ -126,7 +117,6 @@ mod tests {
 
     #[tokio::test]
     async fn unreachable_target_is_transport_failure() {
-        // 连不上的目标 → transport_ok=false(就地执行、如实回传)。
         let plugin = RedisPlugin::new();
         let req = ProbeRequest {
             protocol: "redis".into(),

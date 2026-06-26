@@ -1,8 +1,3 @@
-//! 接口测试批量运行的 HTTP 适配器:`POST /api/batch-run`。
-//!
-//! 错误码映射体现 quirk 的两种失败:**未配置池 → 400**(客户端该传/项目该配),
-//! **池不可用 → 409**(引用了但不可用)。两者都在入口返回,而非下游 500。
-
 use std::sync::Arc;
 
 use axum::{
@@ -30,8 +25,6 @@ pub fn router(use_case: StartBatchRunUseCase) -> Router {
         .with_state(use_case)
 }
 
-/// 用例执行记录(用例执行记录)分页查询的只读路由——开放(无鉴权)。
-/// 不改动 `router(StartBatchRunUseCase)` 的既有签名,单独挂一条 GET。
 pub fn executions_router(uc: ListCaseExecutionsUseCase) -> Router {
     Router::new()
         .route("/api/case/{caseId}/executions", get(list_executions))
@@ -46,7 +39,6 @@ struct BatchRunRequest {
     run_mode: String,
     #[serde(default)]
     pool_id: Option<String>,
-    /// 运行所用环境 id(注入 base_url/默认头/变量);缺省不注入。
     #[serde(default)]
     environment_id: Option<String>,
 }
@@ -72,8 +64,6 @@ async fn batch_run(
     dispatch_to_response(uc.execute(&req.project_id, req.case_ids, config).await)
 }
 
-/// 把派发结果映射为 HTTP 响应(batch-run 与单例 case run 共用)。
-/// 错误码:未配置池 → 400,池不可用 → 409,其余入口校验 → 400,后端 → 500。
 fn dispatch_to_response(
     result: Result<crate::ports::DispatchReport, BatchRunError>,
 ) -> Response {
@@ -100,7 +90,6 @@ fn dispatch_to_response(
     }
 }
 
-/// 单条用例执行入参(路径带 caseId)。
 #[derive(Debug, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 struct CaseRunRequest {
@@ -109,7 +98,6 @@ struct CaseRunRequest {
     run_mode: String,
     #[serde(default)]
     pool_id: Option<String>,
-    /// 运行所用环境 id(注入 base_url/默认头/变量);缺省不注入。
     #[serde(default)]
     environment_id: Option<String>,
 }
@@ -118,8 +106,6 @@ fn default_serial() -> String {
     "SERIAL".to_string()
 }
 
-/// 单条接口用例执行:复用批量运行链路(单元素用例集),返回报告 id + 状态。
-/// 明细仍由 `GET /api/case/{caseId}/executions` 查询。
 #[utoipa::path(
     post,
     path = "/api/case/{id}/run",
@@ -140,8 +126,6 @@ async fn run_case(
         RunModeConfig { mode, pool_id: req.pool_id, retry: None, environment_id: req.environment_id };
     dispatch_to_response(uc.execute(&req.project_id, vec![id], config).await)
 }
-
-// ---- 用例执行记录分页查询(只读) ----
 
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
@@ -203,7 +187,6 @@ async fn list_executions(
     Path(case_id): Path<String>,
     Query(q): Query<CaseExecutionQuery>,
 ) -> Response {
-    // 分页参数校验复用 kernel:非法参数 → 400(而非打到 DB 才炸)
     let page = match PageRequest::new(q.current, q.page_size) {
         Ok(p) => p,
         Err(_) => return (StatusCode::BAD_REQUEST, "invalid page params").into_response(),
@@ -223,10 +206,6 @@ async fn list_executions(
     }
 }
 
-// ---------- 资源池管理(创建 / 列出)----------
-
-/// 资源池管理路由。写端点(创建)走 RBAC 资源串 `RESOURCE_POOL`,读端点(列出)开放。
-/// 自带 state(含 sessions),不影响 batch-run 既有路由。
 #[derive(Clone)]
 struct ResourcePoolState {
     create: CreateResourcePoolUseCase,
@@ -267,7 +246,6 @@ struct ResourcePoolBody {
     description: String,
     #[serde(default)]
     max_concurrency: i32,
-    /// "Node" | "Kubernetes";缺省 Node。
     #[serde(default)]
     pool_type: String,
     #[serde(default = "default_true")]
@@ -276,7 +254,6 @@ struct ResourcePoolBody {
     org_ids: Vec<String>,
     #[serde(default)]
     server_url: String,
-    /// 类型相关配置(Node 节点表 / Kubernetes 连接信息),透传 JSON。
     #[serde(default)]
     config: serde_json::Value,
 }
@@ -485,7 +462,6 @@ mod tests {
 
     #[tokio::test]
     async fn no_pool_configured_returns_400() {
-        // 项目无默认池 + 客户端未传:原 500 场景 → 这里 400
         let resp = app(FakeResourcePool::new())
             .oneshot(post(r#"{"projectId":"p1","caseIds":["c1"],"runMode":"PARALLEL"}"#))
             .await
@@ -538,7 +514,6 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
     }
 
-    // ---- 用例执行记录分页路由 ----
     use crate::ports::{CaseExecutionQueryPort, CaseExecutionRecord, PortError};
     use async_trait::async_trait;
 
@@ -591,7 +566,7 @@ mod tests {
         assert_eq!(v["total"], 3);
         assert_eq!(v["current"], 1);
         assert_eq!(v["pageSize"], 2);
-        assert_eq!(v["totalPages"], 2); // ceil(3/2)
+        assert_eq!(v["totalPages"], 2);
         let items = v["items"].as_array().expect("arr");
         assert_eq!(items.len(), 2);
         assert_eq!(items[0]["reportId"], "r0");
@@ -614,8 +589,8 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::OK);
         let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.expect("body");
         let v: serde_json::Value = serde_json::from_slice(&bytes).expect("json");
-        assert_eq!(v["current"], 1); // 默认
-        assert_eq!(v["pageSize"], 10); // 默认
+        assert_eq!(v["current"], 1);
+        assert_eq!(v["pageSize"], 10);
     }
 
     #[tokio::test]
@@ -632,7 +607,6 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
     }
 
-    // ---- 资源池管理路由(RBAC) ----
     use crate::domain::{NewResourcePool, ResourcePool};
     use crate::ports::ResourcePoolAdminPort;
     use kernel::permission::PermissionSet;
@@ -693,7 +667,6 @@ mod tests {
         }
     }
 
-    /// 资源池路由 + 一个拥有 `RESOURCE_POOL` 读写全权的令牌。
     async fn pool_app() -> (Router, String) {
         let admin = Arc::new(FakePoolAdmin::default());
         let sessions = Arc::new(InMemorySessionStore::new());
@@ -743,7 +716,6 @@ mod tests {
     async fn create_pool_without_permission_403() {
         let admin = Arc::new(FakePoolAdmin::default());
         let sessions = Arc::new(InMemorySessionStore::new());
-        // 仅有读权限,无 ADD。
         let perms = PermissionSet::from_raw(["RESOURCE_POOL:READ".to_string()]).expect("perms");
         let token = sessions.create("viewer", perms, 3600).await.expect("token");
         let app = resource_pool_router(
@@ -826,7 +798,6 @@ mod tests {
         let resp = app.clone().oneshot(del).await.expect("resp");
         assert_eq!(resp.status(), StatusCode::NO_CONTENT);
 
-        // 二次删除 → 404。
         let del2 = Request::builder()
             .method("DELETE")
             .uri(format!("/api/resource-pool/{id}"))

@@ -1,10 +1,3 @@
-//! MeterSphere 接口导出导入:把 MS 导出的接口列表摊平成一批待建接口。
-//!
-//! 纯函数、零 IO。MeterSphere 跨版本导出形态不一,这里尽力兼容常见结构:接口列表可能在
-//! `data` / `apiDefinitions` / `apis` 字段下,或文档本身即数组。每条取 name/method/path 与
-//! `request`(可为对象或 JSON 字符串)中的 headers / query(arguments) / body。模块取 `modulePath`
-//! 首段或 `moduleName`,便于 group_by_tag 归类。
-
 use serde_json::Value;
 
 use crate::domain::error::ApiDefinitionError;
@@ -12,7 +5,6 @@ use crate::domain::import::{
     body_type_of, kv, path_and_query, simple_spec, status_assertions, ImportedApi,
 };
 
-/// 解析 MeterSphere 导出文档。无法定位接口列表或其中无有效接口时报 `BadImport`。
 pub fn parse_metersphere(doc: &Value) -> Result<Vec<ImportedApi>, ApiDefinitionError> {
     let list = locate_list(doc)
         .ok_or_else(|| ApiDefinitionError::BadImport("metersphere: 未找到接口列表".into()))?;
@@ -29,7 +21,6 @@ pub fn parse_metersphere(doc: &Value) -> Result<Vec<ImportedApi>, ApiDefinitionE
     Ok(out)
 }
 
-/// 定位接口数组:常见字段或文档本身即数组。
 fn locate_list(doc: &Value) -> Option<&Vec<Value>> {
     if let Some(arr) = doc.as_array() {
         return Some(arr);
@@ -44,7 +35,6 @@ fn locate_list(doc: &Value) -> Option<&Vec<Value>> {
 
 fn item_to_api(item: &Value) -> Option<ImportedApi> {
     let method = item.get("method").and_then(|v| v.as_str()).unwrap_or("GET").to_uppercase();
-    // 路径:path 优先,回落 url/uri。
     let raw_path = item
         .get("path")
         .or_else(|| item.get("url"))
@@ -52,7 +42,6 @@ fn item_to_api(item: &Value) -> Option<ImportedApi> {
         .and_then(|v| v.as_str())?;
     let (path, url_query) = path_and_query(raw_path);
 
-    // request 可能是对象,或字符串化的 JSON(MS 常把 request 存为字符串)。
     let request = item.get("request").map(resolve_request);
     let request = request.as_ref();
 
@@ -61,7 +50,6 @@ fn item_to_api(item: &Value) -> Option<ImportedApi> {
     let mut body_text = String::new();
 
     if let Some(req) = request {
-        // headers: [{name/key, value, description, enable}]
         if let Some(hs) = req.get("headers").and_then(|v| v.as_array()) {
             for h in hs {
                 if !enabled(h) {
@@ -74,7 +62,6 @@ fn item_to_api(item: &Value) -> Option<ImportedApi> {
                 }
             }
         }
-        // query: arguments / query / rest 均按 kv 收集到查询位。
         for field in ["arguments", "query", "queryString"] {
             if let Some(qs) = req.get(field).and_then(|v| v.as_array()) {
                 for q in qs {
@@ -88,7 +75,6 @@ fn item_to_api(item: &Value) -> Option<ImportedApi> {
                 }
             }
         }
-        // body: { raw } / { json } / 字符串。
         body_text = body_of(req.get("body"));
     }
 
@@ -119,7 +105,6 @@ fn item_to_api(item: &Value) -> Option<ImportedApi> {
     })
 }
 
-/// request 可为对象或 JSON 字符串;字符串则解析,失败回落空对象。
 fn resolve_request(req: &Value) -> Value {
     match req {
         Value::String(s) => serde_json::from_str(s).unwrap_or_else(|_| Value::Object(Default::default())),
@@ -127,7 +112,6 @@ fn resolve_request(req: &Value) -> Value {
     }
 }
 
-/// body 提取:对象取 raw/json/text 字段;字符串直接用;对象则序列化。
 fn body_of(body: Option<&Value>) -> String {
     let Some(body) = body else { return String::new() };
     match body {
@@ -138,7 +122,6 @@ fn body_of(body: Option<&Value>) -> String {
                     return s.to_string();
                 }
             }
-            // 有内嵌 json 对象 → 序列化为示例文本。
             if let Some(j) = body.get("json").filter(|v| v.is_object() || v.is_array()) {
                 return serde_json::to_string_pretty(j).unwrap_or_default();
             }
@@ -148,7 +131,6 @@ fn body_of(body: Option<&Value>) -> String {
     }
 }
 
-/// 模块名:modulePath 首段(去前导 `/`)或 moduleName。
 fn module_of(item: &Value) -> Option<String> {
     if let Some(p) = item.get("modulePath").and_then(|v| v.as_str()) {
         let seg = p.trim_start_matches('/').split('/').next().unwrap_or("").trim();
@@ -163,7 +145,6 @@ fn module_of(item: &Value) -> Option<String> {
         .map(str::to_string)
 }
 
-/// MS 项常带 enable/enabled 开关,缺省视为启用。
 fn enabled(v: &Value) -> bool {
     v.get("enable")
         .or_else(|| v.get("enabled"))
@@ -200,7 +181,7 @@ mod tests {
         assert_eq!(apis.len(), 2);
         let login = apis.iter().find(|a| a.path == "/login").expect("login");
         assert_eq!(login.method, "POST");
-        assert_eq!(login.module.as_deref(), Some("认证")); // modulePath 首段
+        assert_eq!(login.module.as_deref(), Some("认证"));
         assert_eq!(login.spec["requestHeaders"][0]["name"], "X-Token");
         assert_eq!(login.spec["requestQuery"][0]["name"], "from");
         assert_eq!(login.spec["bodyType"], "json");
@@ -208,7 +189,7 @@ mod tests {
 
         let users = apis.iter().find(|a| a.path == "/users").expect("users");
         assert_eq!(users.module.as_deref(), Some("用户"));
-        assert_eq!(users.spec["requestQuery"][0]["name"], "page"); // 来自 URL 查询
+        assert_eq!(users.spec["requestQuery"][0]["name"], "page");
     }
 
     #[test]

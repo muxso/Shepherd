@@ -1,6 +1,4 @@
-//! 测试计划领域模型 + 计划组规则。
-
-/// 根分组 id(用 "NONE" 表示"不属于任何计划组")。
+/// "NONE" 表示不属于任何计划组。
 pub const ROOT_GROUP: &str = "NONE";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -32,7 +30,6 @@ use thiserror::Error;
 pub enum PlanError {
     #[error("plan name must not be empty")]
     EmptyName,
-    /// 计划组不能再嵌进别的组(GROUP 的 groupId 必须是根)。
     #[error("a plan group cannot be nested in another group")]
     GroupCannotBeNested,
 }
@@ -57,7 +54,6 @@ impl NewPlan {
             return Err(PlanError::EmptyName);
         }
         let group_id = group_id.trim();
-        // 计划组只能在根:GROUP 类型若指定了非根 groupId,非法。
         if plan_type == PlanType::Group && group_id != ROOT_GROUP {
             return Err(PlanError::GroupCannotBeNested);
         }
@@ -69,7 +65,6 @@ impl NewPlan {
         })
     }
 
-    /// 是否归属某个计划组(而非挂在根下)。
     pub fn belongs_to_group(&self) -> bool {
         self.group_id != ROOT_GROUP
     }
@@ -83,7 +78,7 @@ pub struct Plan {
     pub plan_type: PlanType,
     pub group_id: String,
     pub archived: bool,
-    /// 创建时间(Unix 毫秒)。供列表按时间倒序与前端展示「创建时间」列。
+    /// Unix 毫秒。
     pub created_at_ms: i64,
 }
 

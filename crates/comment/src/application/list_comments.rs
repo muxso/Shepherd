@@ -1,5 +1,3 @@
-//! 用例:列出某目标下的评论(按时间升序)。
-
 use std::sync::Arc;
 
 use crate::domain::Comment;

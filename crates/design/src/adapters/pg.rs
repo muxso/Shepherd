@@ -1,8 +1,3 @@
-//! PostgreSQL 实现的 `ProposalRepository`。表 `ms_design_proposal`。
-//!
-//! 集成测试 `#[ignore]`,需 DATABASE_URL:
-//!   `DATABASE_URL=postgres://... cargo test -p design --features pg -- --ignored`
-
 use async_trait::async_trait;
 use sqlx::{PgPool, Row};
 
@@ -118,7 +113,6 @@ mod tests {
         let mut p = repo.create("req-1", "登录改造设计").await.expect("create");
         assert_eq!(p.status, ProposalStatus::Drafting);
 
-        // 提交设计稿 → 待审 → 驳回(修订)→ 再提交 → 批准,逐步落库再读回。
         p.submit_design("## 方案 v1").expect("submit");
         repo.save(&p).await.expect("save1");
         p.request_changes("补充错误码").expect("reject");

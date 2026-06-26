@@ -1,11 +1,3 @@
-//! 组装根桥:`GET /api/definition/{id}/references` —— 接口定义的「引用关系」反查。
-//!
-//! 跨两聚合:接口用例(api-definition 拥有 ms_api_case)与场景步骤(api-scenario 拥有
-//! ms_api_scenario_step)。按约定组装根不碰裸 sqlx —— 仅编排两个 crate 的仓储:
-//!   1) apidef_repo.list_cases(id) → 该定义下的用例;
-//!   2) scenario_repo.list_scenarios_referencing_cases(case_ids) → 引用了这些用例的场景(去重)。
-//! 读端点,开放(与接口定义其它读端点一致)。
-
 use std::sync::Arc;
 
 use axum::{
@@ -46,9 +38,7 @@ struct RefItem {
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 struct ReferencesResponse {
-    /// 该定义下的接口用例。
     cases: Vec<RefItem>,
-    /// 引用了上述任一用例的场景(去重)。
     scenarios: Vec<RefItem>,
 }
 

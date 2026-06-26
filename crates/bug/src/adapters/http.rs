@@ -1,9 +1,3 @@
-//! 缺陷管理的 HTTP 适配器:`POST /bug`(创建)、`POST /bug/{id}/status`(变更状态)。
-//!
-//! 状态机规则全在 domain/application;本层只做 DTO 翻译 + 错误码映射。
-//! 注意映射:非法流转 → 409 Conflict(状态冲突),未知状态 → 400,缺陷不存在 → 404。
-//! 两个写端点经 `webauth::AuthUser` 做 RBAC:创建需 `BUG:ADD`,改状态需 `BUG:UPDATE`。
-
 use std::sync::Arc;
 
 use axum::{
@@ -60,7 +54,6 @@ struct BugResponse {
     title: String,
     status: String,
     created_at: i64,
-    /// 创建人 user_id(历史行为 null)。
     #[serde(skip_serializing_if = "Option::is_none")]
     created_by: Option<String>,
 }
@@ -167,19 +160,15 @@ async fn change_status(
     }
 }
 
-// ——— 关注人(关注 / 取消关注 / 列表)———
-
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 struct FollowersResponse {
-    /// 关注人 user_id 列表(按关注先后)。
     followers: Vec<String>,
 }
 
 #[derive(Debug, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 struct FollowRequest {
-    /// 要加入关注的 user_id。
     user_id: String,
 }
 
@@ -250,7 +239,6 @@ mod tests {
     use tower::ServiceExt;
     use webauth::testing::InMemorySessionStore;
 
-    /// app + 一个拥有 `BUG:READ+ADD+UPDATE` 的令牌。
     async fn app() -> (Router, String) {
         let repo = Arc::new(InMemoryBugRepository::with_default_flow("p1"));
         let sessions = Arc::new(InMemorySessionStore::new());
@@ -322,7 +310,6 @@ mod tests {
     async fn change_status_without_permission_403() {
         let repo = Arc::new(InMemoryBugRepository::with_default_flow("p1"));
         let sessions = Arc::new(InMemorySessionStore::new());
-        // 有 ADD 无 UPDATE
         let perms = PermissionSet::from_raw(["BUG:READ+ADD".to_string()]).expect("perms");
         let token = sessions.create("u", perms, 3600).await.expect("token");
         let app = router(
@@ -354,7 +341,6 @@ mod tests {
     async fn disallowed_transition_409() {
         let (app, t) = app().await;
         let id = create_returns_id(&app, &t).await;
-        // NEW 不能直达 CLOSED
         let resp = app
             .oneshot(post(&format!("/bug/{id}/status"), r#"{"status":"CLOSED"}"#, Some(&t)))
             .await
@@ -390,7 +376,7 @@ mod tests {
         let v: serde_json::Value = serde_json::from_slice(&bytes).expect("json");
         let arr = v.as_array().expect("array");
         assert_eq!(arr.len(), 2);
-        assert_eq!(arr[0]["title"], "second"); // 新建在前
+        assert_eq!(arr[0]["title"], "second");
         assert_eq!(arr[1]["title"], "first");
     }
 
@@ -398,7 +384,6 @@ mod tests {
     async fn list_without_permission_403() {
         let repo = Arc::new(InMemoryBugRepository::with_default_flow("p1"));
         let sessions = Arc::new(InMemorySessionStore::new());
-        // 有 ADD 无 READ
         let perms = PermissionSet::from_raw(["BUG:ADD".to_string()]).expect("perms");
         let token = sessions.create("u", perms, 3600).await.expect("token");
         let app = router(

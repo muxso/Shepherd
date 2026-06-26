@@ -1,9 +1,3 @@
-//! gRPC 协议插件:target=端点,metadata["method"]=全方法路径,payload=请求字节(可空)。
-//! 字节透传 codec(不依赖 .proto);status=0(OK),output=响应字节长度摘要。
-//!
-//! 按端点缓存 Channel:压测时复用同一 HTTP/2 连接(Channel 克隆共享底层连接),
-//! 不会每请求重连,测的是目标服务吞吐而非建连开销。
-
 use async_trait::async_trait;
 use bytes::{Buf, BufMut, Bytes};
 use http::uri::PathAndQuery;
@@ -53,7 +47,6 @@ impl Codec for BytesCodec {
 
 #[derive(Default)]
 pub struct GrpcPlugin {
-    /// 端点 → Channel(克隆复用同一 HTTP/2 连接)。
     channels: Mutex<HashMap<String, Channel>>,
 }
 
@@ -62,7 +55,6 @@ impl GrpcPlugin {
         Self::default()
     }
 
-    /// 取目标端点的 Channel(已有则复用)。连接在锁外建立。
     async fn channel_for(&self, target: &str) -> Result<Channel, String> {
         if let Some(c) = self.channels.lock().expect("channels lock").get(target).cloned() {
             return Ok(c);

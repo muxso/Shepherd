@@ -1,12 +1,3 @@
-//! WebSocket 协议插件:target=ws URL(ws://host:port/path),payload=要发送的文本(可空)。
-//!
-//! 有 payload:连接 → 发送 → 读一条回复(5s 超时)→ 关闭,output=回复文本。
-//! 无 payload:仅验证能否握手连上,output="connected"。status=0(OK)/None(失败)。
-//!
-//! WebSocket 是有状态的双向流,不像 http/redis/grpc 那样可多路复用共享,故**不缓存连接**:
-//! 每次探测/压测都走完整 连接→交互→关闭 生命周期(这也是真实 ws 客户端的行为)。
-//! 纯 Rust(tokio-tungstenite,默认无 TLS);wss(TLS)留作后续。
-
 use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
@@ -25,7 +16,6 @@ impl WebSocketPlugin {
     }
 }
 
-/// 一条 WebSocket 消息转成可断言字符串。
 fn message_to_string(msg: &Message) -> String {
     match msg {
         Message::Text(t) => t.to_string(),
@@ -57,7 +47,6 @@ impl ProtocolPlugin for WebSocketPlugin {
             }
         };
 
-        // 无 payload:仅验证握手成功。
         let Some(payload) = req.payload.clone() else {
             let _ = ws.close(None).await;
             return RawProbe {
@@ -78,7 +67,6 @@ impl ProtocolPlugin for WebSocketPlugin {
             };
         }
 
-        // 读一条回复(5s 超时,避免服务端不回时挂死)。
         let output = match tokio::time::timeout(Duration::from_secs(5), ws.next()).await {
             Ok(Some(Ok(msg))) => Some(message_to_string(&msg)),
             Ok(Some(Err(e))) => {

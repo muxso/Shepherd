@@ -1,11 +1,3 @@
-//! JMeter 测试计划(.jmx)导入:把 HTTP 取样器(`HTTPSamplerProxy`)摊平成一批待建接口。
-//!
-//! 纯函数、零 IO。.jmx 为 XML,这里用 quick-xml 流式扫描,逐个取样器收集:
-//!   - `HTTPSampler.method` / `.path` / `.domain` / `.protocol` / `.port`
-//!   - `HTTPsampler.Arguments` 下的 `HTTPArgument`:`Argument.name` / `Argument.value`
-//!   - `HTTPSampler.postBodyRaw`:为真时单个无名参数的值即原始请求体,否则参数作查询/表单
-//! 取样器 `testname` 作接口名。URL 取相对路径(执行时由环境 baseUrl 拼接),默认用例带状态码断言。
-
 use quick_xml::events::{BytesStart, Event};
 use quick_xml::reader::Reader;
 
@@ -14,18 +6,17 @@ use crate::domain::import::{
     body_type_of, kv, path_and_query, simple_spec, status_assertions, ImportedApi,
 };
 
-/// 解析 JMeter .jmx 文本。XML 非法或无任何 HTTP 取样器时报 `BadImport`。
 pub fn parse_jmeter(xml: &str) -> Result<Vec<ImportedApi>, ApiDefinitionError> {
     let mut reader = Reader::from_str(xml);
     reader.config_mut().trim_text(true);
 
     let mut out = Vec::new();
     let mut cur: Option<Sampler> = None;
-    let mut cur_prop: Option<String> = None; // 当前 stringProp/boolProp 的 name
-    let mut in_arg = false; // 是否在 HTTPArgument elementProp 内
+    let mut cur_prop: Option<String> = None;
+    let mut in_arg = false;
     let mut arg_name: Option<String> = None;
     let mut arg_value: Option<String> = None;
-    let mut arg_fallback: Option<String> = None; // elementProp 的 name 属性(Argument.name 缺省时兜底)
+    let mut arg_fallback: Option<String> = None;
     let mut buf = Vec::new();
 
     loop {
@@ -119,7 +110,6 @@ struct Sampler {
 
 impl Sampler {
     fn into_api(self) -> Option<ImportedApi> {
-        // 无路径也无域名 → 非有效 HTTP 取样器,跳过。
         if self.path.trim().is_empty() && self.domain.trim().is_empty() {
             return None;
         }
@@ -136,7 +126,6 @@ impl Sampler {
         };
         let (path, url_query) = path_and_query(&normalized);
 
-        // postBodyRaw:无名参数的值即原始请求体;否则参数作查询/表单。
         let body_method = matches!(method.as_str(), "POST" | "PUT" | "PATCH");
         let (body_text, query): (String, Vec<(String, String)>) = if self.post_body_raw && body_method {
             let body = self
@@ -177,7 +166,6 @@ impl Sampler {
     }
 }
 
-/// 读取 BytesStart 上指定名字的属性值(unescape);不存在为 None。
 fn attr(e: &BytesStart, name: &[u8]) -> Option<String> {
     e.attributes()
         .flatten()
@@ -233,7 +221,6 @@ mod tests {
         assert_eq!(login.name, "登录");
         assert_eq!(login.spec["bodyType"], "json");
         assert!(login.case_body.as_deref().unwrap().contains("admin"));
-        // postBodyRaw → 无查询参数
         assert_eq!(login.spec["requestQuery"].as_array().unwrap().len(), 0);
 
         let users = apis.iter().find(|a| a.path == "/users").expect("users");

@@ -1,7 +1,3 @@
-//! HTTP 适配器(feature = "http")。DTO ↔ 用例,领域错误映射 HTTP 码。
-//! 含鉴权:`POST /auth/login` 发令牌;`AuthUser` 提取器从 Bearer 令牌还原用户+权限;
-//! 写操作用 `kernel` 权限做 RBAC(无令牌→401,权限不足→403)。
-
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
@@ -37,7 +33,6 @@ struct AppState {
     sessions: Arc<dyn SessionStore>,
 }
 
-// 让 AuthUser 提取器能从 AppState 取到 SessionStore
 impl FromRef<AppState> for Arc<dyn SessionStore> {
     fn from_ref(s: &AppState) -> Self {
         s.sessions.clone()
@@ -56,9 +51,9 @@ pub fn router(
     sessions: Arc<dyn SessionStore>,
 ) -> Router {
     Router::new()
-        .route("/auth/login", post(login_handler)) // 公开
-        .route("/auth/logout", post(logout_handler)) // 撤销当前令牌
-        // 静态段 /names 在 axum 中优先于 /{id}
+        .route("/auth/login", post(login_handler))
+        .route("/auth/logout", post(logout_handler))
+        // 静态段 /names 必须先于 /{id} 注册,否则被通配吞掉
         .route("/system/user/names", get(resolve_names))
         .route("/system/user", post(create_user).get(list_users))
         .route("/system/user/{id}", get(get_user).put(update_user).delete(delete_user))
@@ -66,7 +61,6 @@ pub fn router(
         .with_state(AppState { create, resolve, login, admin, creds, hasher, user_roles, sessions })
 }
 
-// ---- 登录 ----
 #[derive(Deserialize, ToSchema)]
 struct LoginRequest {
     username: String,
@@ -91,7 +85,6 @@ async fn login_handler(State(st): State<AppState>, Json(req): Json<LoginRequest>
     }
 }
 
-/// 登出:撤销 Authorization 头里的令牌。幂等,总返回 204。
 #[utoipa::path(post, path = "/auth/logout", tag = "auth", responses((status = 204)), security(("bearer" = [])))]
 async fn logout_handler(State(st): State<AppState>, headers: HeaderMap) -> Response {
     if let Some(token) = headers
@@ -104,7 +97,6 @@ async fn logout_handler(State(st): State<AppState>, headers: HeaderMap) -> Respo
     StatusCode::NO_CONTENT.into_response()
 }
 
-// ---- 建用户(受保护) ----
 #[derive(Deserialize, ToSchema)]
 struct CreateUserRequest {
     name: String,
@@ -118,7 +110,7 @@ struct UserResponse {
     name: String,
     email: String,
     enable: bool,
-    /// 用户组(角色名);列表接口附带,其余接口为空。
+    /// 仅列表接口填充,其余接口恒为空
     #[serde(default)]
     user_groups: Vec<String>,
 }
@@ -159,7 +151,6 @@ async fn list_users(user: AuthUser, State(st): State<AppState>, Query(q): Query<
     match st.admin.list(page).await {
         Ok(p) => {
             let (total, current, page_size, total_pages) = (p.total, p.current, p.page_size, p.total_pages());
-            // 附带用户组(角色名):批量查 ms_user_role,按 user_id 归集。
             let ids: Vec<String> = p.items.iter().map(|u| u.id.clone()).collect();
             let role_rows = st.user_roles.roles_for(&ids).await.unwrap_or_default();
             let mut groups: BTreeMap<String, Vec<String>> = BTreeMap::new();
@@ -186,7 +177,6 @@ async fn list_users(user: AuthUser, State(st): State<AppState>, Query(q): Query<
 #[derive(Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 struct ResetPwResponse {
-    /// 重置后的新密码(明文,供管理员转交用户)。
     password: String,
 }
 
@@ -259,11 +249,10 @@ async fn delete_user(user: AuthUser, State(st): State<AppState>, Path(id): Path<
 
 #[utoipa::path(post, path = "/system/user", tag = "user", request_body = CreateUserRequest, responses((status = 201, body = UserResponse), (status = 409)), security(("bearer" = [])))]
 async fn create_user(
-    user: AuthUser, // 401 if missing/invalid token(提取器保证)
+    user: AuthUser,
     State(st): State<AppState>,
     Json(req): Json<CreateUserRequest>,
 ) -> Response {
-    // RBAC:需要 SYSTEM_USER:ADD
     if !user.can("SYSTEM_USER", "ADD") {
         return (StatusCode::FORBIDDEN, "permission denied: SYSTEM_USER:ADD").into_response();
     }
@@ -300,7 +289,6 @@ async fn resolve_names(State(st): State<AppState>, Query(q): Query<NamesQuery>) 
     (StatusCode::OK, Json(names)).into_response()
 }
 
-// ---- 第三方登录路由(飞书/企业微信);独立 router,组装根 merge 进来 ----
 pub fn oidc_router(oidc: OidcLoginUseCase) -> Router {
     Router::new()
         .route("/auth/oidc/{provider}/authorize", get(oidc_authorize))
@@ -340,7 +328,7 @@ async fn oidc_callback(
     Path(provider): Path<String>,
     Query(q): Query<CallbackQuery>,
 ) -> Response {
-    // 生产应校验 state(CSRF),此处从略。
+    // FIXME: 未校验 state(CSRF)
     match uc.complete(&provider, &q.code).await {
         Ok(token) => (StatusCode::OK, Json(LoginResponse { token })).into_response(),
         Err(OidcError::UnknownProvider(_)) => {
@@ -355,7 +343,6 @@ async fn oidc_callback(
     }
 }
 
-// ---- 组织 CRUD 路由(RBAC:ORGANIZATION:READ/ADD/UPDATE/DELETE)----
 #[derive(Clone)]
 struct OrgState {
     svc: OrganizationService,
@@ -505,7 +492,6 @@ async fn delete_org(user: AuthUser, State(st): State<OrgState>, Path(id): Path<S
     }
 }
 
-// ---- 角色 CRUD + 用户-角色授权路由(RBAC:USER_ROLE:READ/ADD/UPDATE/DELETE)----
 #[derive(Clone)]
 struct RoleState {
     roles: RoleService,
@@ -718,7 +704,7 @@ mod tests {
             InMemoryCredentialRepository::new()
                 .with_user("admin", "u-admin", "secret", ["SYSTEM_USER:READ+ADD+UPDATE+DELETE"])
                 .with_user("viewer", "u-view", "pw", ["SYSTEM_USER:READ"]),
-        ); // 只有 READ
+        );
         let hasher = Arc::new(PlainPasswordHasher);
         let sessions = Arc::new(InMemorySessionStore::new());
         let user_roles = Arc::new(InMemoryUserRoleRepository::new(Arc::new(InMemoryRoleRepository::new())));
@@ -763,7 +749,7 @@ mod tests {
     async fn login_ok_returns_token_wrong_401() {
         let app = app();
         assert!(token(&app, "admin", "secret").await.is_some());
-        assert!(token(&app, "admin", "WRONG").await.is_none()); // 401
+        assert!(token(&app, "admin", "WRONG").await.is_none());
     }
 
     #[tokio::test]
@@ -783,7 +769,7 @@ mod tests {
     #[tokio::test]
     async fn create_user_with_insufficient_permission_is_403() {
         let app = app();
-        let t = token(&app, "viewer", "pw").await.expect("token"); // 只有 READ
+        let t = token(&app, "viewer", "pw").await.expect("token");
         let resp = app.oneshot(post("/system/user", create_body(), Some(&t))).await.expect("resp");
         assert_eq!(resp.status(), StatusCode::FORBIDDEN);
     }
@@ -801,15 +787,12 @@ mod tests {
     async fn logout_revokes_token() {
         let app = app();
         let t = token(&app, "admin", "secret").await.expect("token");
-        // 登出前可用
         assert_eq!(
             app.clone().oneshot(post("/system/user", create_body(), Some(&t))).await.expect("r").status(),
             StatusCode::CREATED
         );
-        // 登出
         let lo = app.clone().oneshot(post("/auth/logout", "", Some(&t))).await.expect("r");
         assert_eq!(lo.status(), StatusCode::NO_CONTENT);
-        // 登出后令牌失效 → 401
         assert_eq!(
             app.oneshot(post("/system/user", create_body(), Some(&t))).await.expect("r").status(),
             StatusCode::UNAUTHORIZED
@@ -819,7 +802,7 @@ mod tests {
     #[tokio::test]
     async fn expired_session_is_401() {
         let (app, store) = app_store();
-        store.insert_expired("expired-tok", "u-admin"); // 注入一个已过期会话
+        store.insert_expired("expired-tok", "u-admin");
         let resp = app
             .oneshot(post("/system/user", create_body(), Some("expired-tok")))
             .await
@@ -874,7 +857,6 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
     }
 
-    // ---- 组织 CRUD ----
     fn req(method: &str, uri: &str, body: &str, bearer: Option<&str>) -> Request<Body> {
         let mut b =
             Request::builder().method(method).uri(uri).header("content-type", "application/json");
@@ -919,7 +901,7 @@ mod tests {
             .oneshot(req("POST", "/organization", r#"{"name":"Acme"}"#, Some(&viewer)))
             .await
             .expect("r");
-        assert_eq!(r.status(), StatusCode::FORBIDDEN); // 只有 READ,无 ADD
+        assert_eq!(r.status(), StatusCode::FORBIDDEN);
     }
 
     #[tokio::test]
@@ -951,7 +933,6 @@ mod tests {
         );
     }
 
-    // ---- 角色 CRUD + 授权 ----
     async fn role_app() -> (Router, String) {
         let roles = Arc::new(InMemoryRoleRepository::new());
         let user_roles = Arc::new(InMemoryUserRoleRepository::new(roles.clone()));
@@ -975,7 +956,6 @@ mod tests {
     #[tokio::test]
     async fn role_crud_and_grant_flow() {
         let (app, t) = role_app().await;
-        // create
         let r = app
             .clone()
             .oneshot(req("POST", "/role", r#"{"name":"auditor","scope":"SYSTEM","permissions":["SYSTEM_USER:READ"]}"#, Some(&t)))
@@ -987,15 +967,11 @@ mod tests {
             .as_str()
             .expect("id")
             .to_string();
-        // list / get / update
         assert_eq!(app.clone().oneshot(req("GET", "/role?current=1&pageSize=10", "", Some(&t))).await.expect("r").status(), StatusCode::OK);
         assert_eq!(app.clone().oneshot(req("GET", &format!("/role/{id}"), "", Some(&t))).await.expect("r").status(), StatusCode::OK);
         assert_eq!(app.clone().oneshot(req("PUT", &format!("/role/{id}"), r#"{"name":"auditor2","permissions":["SYSTEM_USER:READ+ADD"]}"#, Some(&t))).await.expect("r").status(), StatusCode::OK);
-        // grant 已存在角色 → 204
         assert_eq!(app.clone().oneshot(req("POST", "/user-role/grant", &format!(r#"{{"userId":"u-x","roleId":"{id}"}}"#), Some(&t))).await.expect("r").status(), StatusCode::NO_CONTENT);
-        // grant 不存在角色 → 404
         assert_eq!(app.clone().oneshot(req("POST", "/user-role/grant", r#"{"userId":"u-x","roleId":"ghost"}"#, Some(&t))).await.expect("r").status(), StatusCode::NOT_FOUND);
-        // delete
         assert_eq!(app.oneshot(req("DELETE", &format!("/role/{id}"), "", Some(&t))).await.expect("r").status(), StatusCode::NO_CONTENT);
     }
 
@@ -1010,7 +986,6 @@ mod tests {
         assert_eq!(r.status(), StatusCode::FORBIDDEN);
     }
 
-    // 闭环:用户凭证本身无权限,靠被授予的角色拿到 SYSTEM_USER:ADD,登录后即可建用户。
     #[tokio::test]
     async fn permissions_flow_from_granted_role_to_session() {
         let user_repo = Arc::new(InMemoryUserRepository::new());
@@ -1035,7 +1010,6 @@ mod tests {
         let login = LoginUseCase::new(creds.clone(), hasher.clone(), sessions.clone(), user_roles.clone());
         let app = router(create, resolve, login, admin, creds, hasher, user_roles, sessions);
         let tok = token(&app, "bob", "pw").await.expect("token");
-        // bob 凭证无权限,但角色授予了 SYSTEM_USER:ADD → 建用户 201
         let r = app.oneshot(post("/system/user", create_body(), Some(&tok))).await.expect("r");
         assert_eq!(r.status(), StatusCode::CREATED);
     }
@@ -1043,13 +1017,11 @@ mod tests {
     #[tokio::test]
     async fn user_admin_crud_flow() {
         let (app, _store) = app_store();
-        let t = token(&app, "admin", "secret").await.expect("token"); // admin 有 READ+ADD+UPDATE+DELETE
-        // create
+        let t = token(&app, "admin", "secret").await.expect("token");
         let r = app.clone().oneshot(post("/system/user", r#"{"name":"Alice","email":"al@x.com"}"#, Some(&t))).await.expect("r");
         assert_eq!(r.status(), StatusCode::CREATED);
         let bytes = axum::body::to_bytes(r.into_body(), usize::MAX).await.expect("b");
         let id = serde_json::from_slice::<serde_json::Value>(&bytes).expect("j")["id"].as_str().expect("id").to_string();
-        // list / get / update / delete / get-404
         assert_eq!(app.clone().oneshot(req("GET", "/system/user?current=1&pageSize=10", "", Some(&t))).await.expect("r").status(), StatusCode::OK);
         assert_eq!(app.clone().oneshot(req("GET", &format!("/system/user/{id}"), "", Some(&t))).await.expect("r").status(), StatusCode::OK);
         assert_eq!(app.clone().oneshot(req("PUT", &format!("/system/user/{id}"), r#"{"name":"Alice2","email":"al2@x.com","enable":false}"#, Some(&t))).await.expect("r").status(), StatusCode::OK);
@@ -1060,10 +1032,8 @@ mod tests {
     #[tokio::test]
     async fn list_users_requires_permission() {
         let (app, _s) = app_store();
-        let t = token(&app, "viewer", "pw").await.expect("token"); // 只有 READ
-        // READ 可列表
+        let t = token(&app, "viewer", "pw").await.expect("token");
         assert_eq!(app.clone().oneshot(req("GET", "/system/user?current=1&pageSize=10", "", Some(&t))).await.expect("r").status(), StatusCode::OK);
-        // 但无 DELETE 权限 → 403
         assert_eq!(app.oneshot(req("DELETE", "/system/user/whatever", "", Some(&t))).await.expect("r").status(), StatusCode::FORBIDDEN);
     }
 }

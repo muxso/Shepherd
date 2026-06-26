@@ -1,6 +1,4 @@
-//! 架构守卫:静态扫描,确保 domain/ports/application **不引用任何 IO crate**。
-//! feature 开启(pg/http)后 sqlx/axum 在依赖图里可见,纯编译屏障失效——本测试兜底。
-//! 默认 `cargo test` 即跑(不依赖 feature)。
+//! 纯层禁止引用 IO crate;feature 开启后编译屏障失效,本测试兜底。
 
 use std::fs;
 use std::path::Path;

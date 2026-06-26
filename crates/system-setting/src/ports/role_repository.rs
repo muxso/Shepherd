@@ -1,5 +1,3 @@
-//! 角色仓储 + 用户-角色授权端口。
-
 use async_trait::async_trait;
 use thiserror::Error;
 
@@ -21,11 +19,9 @@ pub trait RoleRepository: Send + Sync {
     async fn delete(&self, id: &str) -> Result<(), RoleRepoError>;
 }
 
-/// 用户 ↔ 角色授权。`effective_permissions` 是登录时算用户有效权限的来源。
 #[async_trait]
 pub trait UserRoleRepository: Send + Sync {
     async fn grant(&self, user_id: &str, role_id: &str) -> Result<(), RoleRepoError>;
     async fn revoke(&self, user_id: &str, role_id: &str) -> Result<(), RoleRepoError>;
-    /// 用户被授予的所有角色的权限并集(原始权限串)。
     async fn effective_permissions(&self, user_id: &str) -> Result<Vec<String>, RoleRepoError>;
 }

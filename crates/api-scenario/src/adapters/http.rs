@@ -1,9 +1,3 @@
-//! 场景管理的 HTTP 适配器。
-//!
-//! 编排/编译规则全在 domain/application;本层只做 DTO 翻译 + 错误码映射。
-//! RBAC 资源 `API_SCENARIO`:写操作需 `API_SCENARIO:ADD`,读操作开放。
-//! 错误映射:场景/子场景不存在 → 404,校验失败 → 400,编译成环 → 409。
-
 use std::sync::Arc;
 
 use axum::{
@@ -37,7 +31,6 @@ struct ScenarioAppState {
     add_step: AddStepUseCase,
     compile: CompileScenarioUseCase,
     list_executions: ListScenarioExecutionsUseCase,
-    /// 直接用于 PATCH 更新场景基本信息(名称/状态/元信息);其余走用例。
     repo: Arc<dyn ApiScenarioRepository>,
     sessions: Arc<dyn SessionStore>,
 }
@@ -48,7 +41,6 @@ impl FromRef<ScenarioAppState> for Arc<dyn SessionStore> {
     }
 }
 
-/// 由仓储 + 会话存储装配路由,内部构建各用例。
 pub fn router(
     repo: Arc<dyn ApiScenarioRepository>,
     sessions: Arc<dyn SessionStore>,
@@ -77,8 +69,6 @@ pub fn router(
         .with_state(state)
 }
 
-// ---------------- DTO ----------------
-
 #[derive(Debug, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 struct ScenarioCreateBody {
@@ -89,7 +79,6 @@ struct ScenarioCreateBody {
 #[derive(Debug, Default, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 struct ScenarioCopyBody {
-    /// 副本名称;缺省/空则派生 `{源名}_copy`。
     #[serde(default)]
     name: Option<String>,
 }
@@ -101,11 +90,9 @@ struct InlineRequestDto {
     url: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     body: Option<String>,
-    /// 断言数组(api-runner Assertion 的序列化形式);空则省略。
     #[serde(skip_serializing_if = "Vec::is_empty")]
     #[schema(value_type = Vec<Object>)]
     assertions: Vec<serde_json::Value>,
-    /// 请求头 / Query / REST 参数([{key,value}]);空则省略。
     #[serde(skip_serializing_if = "Vec::is_empty")]
     #[schema(value_type = Vec<Object>)]
     headers: Vec<serde_json::Value>,
@@ -115,7 +102,6 @@ struct InlineRequestDto {
     #[serde(skip_serializing_if = "Vec::is_empty")]
     #[schema(value_type = Vec<Object>)]
     rest_params: Vec<serde_json::Value>,
-    /// 认证 {type,token};空对象则省略。
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schema(value_type = Object)]
     auth: Option<serde_json::Value>,
@@ -154,7 +140,6 @@ struct ScenarioStepResponse {
     scenario_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     request: Option<InlineRequestDto>,
-    /// 控制器载荷(LOOP/IF/ONCE/TIMER 步骤)。
     #[serde(skip_serializing_if = "Option::is_none")]
     control: Option<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -190,14 +175,11 @@ struct ScenarioResponse {
     project_id: String,
     name: String,
     status: String,
-    /// 元信息(描述/标签/等级/模块/参数);不透明 JSON。
     meta: serde_json::Value,
-    /// 审计:创建人/创建时间/更新时间(只读;见 0046 迁移)。
     created_by: Option<String>,
     created_at: String,
     updated_at: String,
     steps: Vec<ScenarioStepResponse>,
-    /// 最近一次执行结果状态(SUCCESS/ERROR;列表回填,单查为 null)。
     #[serde(skip_serializing_if = "Option::is_none")]
     last_result: Option<String>,
 }
@@ -232,9 +214,7 @@ struct ScenarioUpdateBody {
 #[derive(Debug, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 struct AddStepBody {
-    /// "REQUEST" | "CASE" | "SCENARIO" | "LOOP" | "IF" | "ONCE" | "TIMER"
     kind: String,
-    /// "REFERENCE" | "COPY",缺省 REFERENCE。
     #[serde(default)]
     ref_mode: Option<String>,
     order: i32,
@@ -242,8 +222,6 @@ struct AddStepBody {
     request: Option<InlineRequestBody>,
     #[serde(default)]
     ref_id: Option<String>,
-    /// 控制器载荷(kind 为 LOOP/IF/ONCE/TIMER 时必填),如
-    /// `{"times":3,"children":[{"kind":"CASE","refId":"c1"}]}`。
     #[serde(default)]
     control: Option<serde_json::Value>,
     #[serde(default)]
@@ -257,11 +235,9 @@ struct InlineRequestBody {
     url: String,
     #[serde(default)]
     body: Option<String>,
-    /// 断言数组(api-runner Assertion 形式,如 `[{"type":"StatusIs","args":200}]`);默认空。
     #[serde(default)]
     #[schema(value_type = Vec<Object>)]
     assertions: Option<serde_json::Value>,
-    /// 请求头 / Query / REST 参数([{key,value}])/ 认证({type,token})/ 处理器(EXTRACT/WAIT);均可选。
     #[serde(default)]
     #[schema(value_type = Vec<Object>)]
     headers: Option<serde_json::Value>,
@@ -362,8 +338,6 @@ struct ScenarioExecutionPageResponse {
     items: Vec<ScenarioExecutionDto>,
 }
 
-// ---------------- handlers ----------------
-
 #[utoipa::path(post, path = "/api/scenario", tag = "api-scenario", request_body = ScenarioCreateBody, responses((status = 201, body = ScenarioResponse), (status = 400)), security(("bearer" = [])))]
 async fn create_scenario(
     user: AuthUser,
@@ -452,7 +426,6 @@ async fn update_scenario(
     if name.is_empty() {
         return (StatusCode::BAD_REQUEST, "name required").into_response();
     }
-    // 名称为一等列;状态缺省沿用已有(需先取);meta 整体替换(缺省空对象)。
     let status = match &req.status {
         Some(s) if !s.trim().is_empty() => s.trim().to_string(),
         _ => match st.get.execute(&id).await {
@@ -475,7 +448,6 @@ async fn update_scenario(
 #[derive(Debug, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 struct ReorderStepsBody {
-    /// 期望顺序的 step_id 列表(从第 1 位起写 step_order)。
     order: Vec<String>,
 }
 
@@ -547,7 +519,6 @@ async fn add_step(
         return (StatusCode::FORBIDDEN, "permission denied").into_response();
     }
 
-    // 据 kind 组装领域 StepKind(任何字段缺失/非法即 400)。
     let kind = match req.kind.as_str() {
         "REQUEST" => {
             let Some(r) = req.request else {
@@ -644,7 +615,6 @@ async fn list_executions(
     Path(id): Path<String>,
     Query(q): Query<ExecutionListQuery>,
 ) -> Response {
-    // 分页参数校验复用 kernel:非法参数 → 400(而不是打到存储才炸)。
     let page = match PageRequest::new(q.current, q.page_size) {
         Ok(p) => p,
         Err(_) => return (StatusCode::BAD_REQUEST, "invalid page params").into_response(),
@@ -728,7 +698,6 @@ mod tests {
     use tower::ServiceExt;
     use webauth::testing::InMemorySessionStore;
 
-    /// app + 一个拥有 `API_SCENARIO:READ+ADD` 的令牌。
     async fn app() -> (Router, String) {
         let repo = Arc::new(InMemoryApiScenarioRepository::new());
         let sessions = Arc::new(InMemorySessionStore::new());
@@ -929,8 +898,8 @@ mod tests {
             .expect("resp");
         assert_eq!(resp.status(), StatusCode::CREATED);
         let v = json_body(resp).await;
-        assert_ne!(v["id"].as_str().expect("id"), id); // 新 id
-        assert_eq!(v["name"], "下单_copy"); // 默认派生名
+        assert_ne!(v["id"].as_str().expect("id"), id);
+        assert_eq!(v["name"], "下单_copy");
         assert_eq!(v["steps"][0]["kind"], "CASE");
         assert_eq!(v["steps"][0]["caseId"], "case-7");
     }
@@ -984,7 +953,6 @@ mod tests {
     async fn compile_cycle_409() {
         let (app, t) = app().await;
         let id = create_scenario_id(&app, &t).await;
-        // 自引用 → 成环
         app.clone()
             .oneshot(post(
                 &format!("/api/scenario/{id}/step"),
@@ -1028,7 +996,6 @@ mod tests {
         }
     }
 
-    /// 构造 app 并交出底层仓储,便于直接记录执行(HTTP 无写执行端点)。
     async fn app_with_repo() -> (Router, Arc<InMemoryApiScenarioRepository>) {
         let repo = Arc::new(InMemoryApiScenarioRepository::new());
         let sessions = Arc::new(InMemorySessionStore::new());
@@ -1040,14 +1007,12 @@ mod tests {
     async fn list_executions_returns_paginated_body() {
         use crate::ports::ApiScenarioRepository;
         let (app, repo) = app_with_repo().await;
-        // 记录 3 条执行(状态各异),另一场景 1 条不应混入。
         for i in 0..3 {
             let status = if i == 2 { "SUCCESS" } else { "PENDING" };
             repo.record_execution("scn-1", "p1", status, i, None).await.expect("rec");
         }
         repo.record_execution("scn-2", "p1", "ERROR", 0, None).await.expect("rec");
 
-        // 读端点,无需令牌。
         let resp = app
             .oneshot(get_req("/api/scenario/scn-1/executions?current=1&pageSize=2"))
             .await
@@ -1055,9 +1020,8 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::OK);
         let v = json_body(resp).await;
         assert_eq!(v["total"], 3);
-        assert_eq!(v["totalPages"], 2); // ceil(3/2)
+        assert_eq!(v["totalPages"], 2);
         assert_eq!(v["items"].as_array().expect("arr").len(), 2);
-        // 最新(SUCCESS)在前;status 字段存在并往返。
         assert_eq!(v["items"][0]["status"], "SUCCESS");
         assert_eq!(v["items"][0]["scenarioId"], "scn-1");
     }

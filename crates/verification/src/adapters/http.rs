@@ -1,8 +1,3 @@
-//! 完整性验证的 HTTP 适配器。DTO ↔ 用例,命令错误映射 HTTP 码。
-//!
-//! RBAC(资源键 `VERIFICATION`):建验证需 `VERIFICATION:ADD`,建覆盖/同步需 `VERIFICATION:UPDATE`;
-//! 读(取验证 / 完整性报告)开放。错误码:校验→400,标准/验证不存在→404。
-
 use std::sync::Arc;
 
 use axum::{
@@ -47,8 +42,6 @@ pub fn router(
         .route("/verification/{id}/sync", post(sync_task))
         .with_state(VerState { create, admin, sessions })
 }
-
-// ---- DTO ----
 
 #[derive(Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
@@ -177,8 +170,6 @@ fn cmd_err(e: VerificationCmdError) -> Response {
     }
 }
 
-// ---- 处理器 ----
-
 #[utoipa::path(post, path = "/verification", tag = "verification", request_body = CreateBody, responses((status = 201, body = VerificationResponse), (status = 409)), security(("bearer" = [])))]
 async fn create_verification(user: AuthUser, State(st): State<VerState>, Json(b): Json<CreateBody>) -> Response {
     if !user.can("VERIFICATION", "ADD") {
@@ -294,7 +285,6 @@ mod tests {
     #[tokio::test]
     async fn full_traceability_flow_to_complete() {
         let (app, t) = app_with("VERIFICATION:READ+ADD+UPDATE").await;
-        // create with 2 criteria
         let r = app
             .clone()
             .oneshot(req("POST", "/verification", r#"{"requirementId":"req1","requirementVersion":1,"criteria":["登录成功","错误密码拒绝"]}"#, Some(&t)))
@@ -303,21 +293,17 @@ mod tests {
         assert_eq!(r.status(), StatusCode::CREATED);
         let id = json(r).await["id"].as_str().expect("id").to_string();
 
-        // report: 2 uncovered gaps
         let rep = app.clone().oneshot(req("GET", &format!("/verification/{id}/report"), "", Some(&t))).await.expect("r");
         let v = json(rep).await;
         assert_eq!(v["complete"], false);
         assert_eq!(v["gaps"].as_array().expect("a").len(), 2);
         assert_eq!(v["gaps"][0]["kind"], "UNCOVERED");
 
-        // link both criteria
         app.clone().oneshot(req("POST", &format!("/verification/{id}/link"), r#"{"criterionIndex":0,"decompositionId":"d1","taskId":"t1"}"#, Some(&t))).await.expect("r");
         app.clone().oneshot(req("POST", &format!("/verification/{id}/link"), r#"{"criterionIndex":1,"decompositionId":"d1","taskId":"t2"}"#, Some(&t))).await.expect("r");
-        // now gaps are UNVERIFIED
         let rep = app.clone().oneshot(req("GET", &format!("/verification/{id}/report"), "", Some(&t))).await.expect("r");
         assert_eq!(json(rep).await["gaps"][0]["kind"], "UNVERIFIED");
 
-        // sync both verified
         app.clone().oneshot(req("POST", &format!("/verification/{id}/sync"), r#"{"decompositionId":"d1","taskId":"t1","satisfied":true}"#, Some(&t))).await.expect("r");
         let last = app.clone().oneshot(req("POST", &format!("/verification/{id}/sync"), r#"{"decompositionId":"d1","taskId":"t2","satisfied":true}"#, Some(&t))).await.expect("r");
         assert_eq!(json(last).await["complete"], true);
@@ -331,13 +317,11 @@ mod tests {
 
     #[tokio::test]
     async fn rbac_create_and_link() {
-        // 无令牌 → 401
         let (app, _t) = app_with("VERIFICATION:READ").await;
         assert_eq!(
             app.oneshot(req("POST", "/verification", r#"{"requirementId":"r","requirementVersion":1,"criteria":["c"]}"#, None)).await.expect("r").status(),
             StatusCode::UNAUTHORIZED
         );
-        // 只读 → 403
         let (app, t) = app_with("VERIFICATION:READ").await;
         assert_eq!(
             app.oneshot(req("POST", "/verification", r#"{"requirementId":"r","requirementVersion":1,"criteria":["c"]}"#, Some(&t))).await.expect("r").status(),

@@ -1,8 +1,3 @@
-//! 项目领域模型。
-//!
-//! 对应 Java 版 `Project` 实体(贫血 + 散落校验)。这里把"合法项目"和
-//! "软删除/启停"这些状态变迁收进领域类型,用类型与方法表达,而非散落各 Service。
-
 use thiserror::Error;
 
 /// 项目名长度上限(与 DB 列一致)。
@@ -18,7 +13,6 @@ pub enum ProjectError {
     EmptyOrganization,
 }
 
-/// 创建项目的入站请求(尚无 id)。构造即校验。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NewProject {
     pub organization_id: String,
@@ -43,7 +37,6 @@ impl NewProject {
     }
 }
 
-/// 已持久化的项目。`enable`(启停)与 `deleted`(软删除)是两个独立维度。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Project {
     pub id: String,
@@ -54,7 +47,6 @@ pub struct Project {
 }
 
 impl Project {
-    /// 新建项目默认启用、未删除。
     pub fn active(id: &str, organization_id: &str, name: &str) -> Self {
         Self {
             id: id.to_string(),
@@ -73,12 +65,11 @@ impl Project {
         self.enable = false;
     }
 
-    /// 软删除:置 deleted,不从存储物理移除。删除后其名字即被释放(可重建同名)。
     pub fn soft_delete(&mut self) {
         self.deleted = true;
     }
 
-    /// 是否参与"名字唯一性"判定:仅未删除的项目算数。
+    /// 仅未删除的项目占用其名字(软删除后名字可被重建复用)。
     pub fn occupies_name(&self) -> bool {
         !self.deleted
     }
@@ -113,7 +104,7 @@ mod tests {
 
     #[test]
     fn accepts_255_chars_including_cjk() {
-        let cjk = "项".repeat(MAX_NAME_LEN); // 255 个汉字应通过(按字符计)
+        let cjk = "项".repeat(MAX_NAME_LEN);
         assert!(NewProject::new("org1", &cjk).is_ok());
     }
 
@@ -139,6 +130,6 @@ mod tests {
         let mut p = Project::active("p1", "org1", "Demo");
         p.soft_delete();
         assert!(p.deleted);
-        assert!(!p.occupies_name()); // 删除后名字不再占用
+        assert!(!p.occupies_name());
     }
 }

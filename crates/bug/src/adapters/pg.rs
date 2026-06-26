@@ -1,8 +1,3 @@
-//! PostgreSQL 实现的 `BugRepository`。
-//!
-//! `status_flow(project)` 把 ms_status_item(节点)+ ms_status_flow(边)两表
-//! 组装成领域 `StatusFlowGraph` —— 数据驱动状态机的"配置加载"落在这里。
-
 use async_trait::async_trait;
 use crate::domain::{Bug, NewBug, StatusFlowGraph, StatusItem};
 use crate::ports::{BugRepository, RepoError};
@@ -172,7 +167,6 @@ mod tests {
             .await
             .expect("truncate");
 
-        // 种状态项 + 边:NEW→RESOLVED→CLOSED
         sqlx::raw_sql(
             "INSERT INTO ms_status_item (id, project_id, name, internal) VALUES \
                 ('NEW','p1','新建',true),('RESOLVED','p1','已解决',true),('CLOSED','p1','已关闭',true); \
@@ -185,13 +179,11 @@ mod tests {
 
         let repo = PgBugRepository::new(pool.clone());
 
-        // 图组装正确
         let g = repo.status_flow("p1").await.expect("flow");
         assert!(g.can_transition("NEW", "RESOLVED"));
         assert!(!g.can_transition("NEW", "CLOSED"));
         assert_eq!(g.targets("RESOLVED"), vec!["CLOSED"]);
 
-        // 缺陷往返
         let nb = NewBug::new("p1", "登录崩溃").expect("valid");
         let bug = repo.insert(&nb, "NEW").await.expect("insert");
         assert_eq!(repo.get(&bug.id).await.expect("get").expect("some").status, "NEW");
@@ -199,14 +191,12 @@ mod tests {
         repo.set_status(&bug.id, "RESOLVED").await.expect("set");
         assert_eq!(repo.get(&bug.id).await.expect("get").expect("some").status, "RESOLVED");
 
-        // 列表:项目下的缺陷可见
         let listed = repo.list("p1").await.expect("list");
         assert_eq!(listed.len(), 1);
         assert_eq!(listed[0].id, bug.id);
         assert_eq!(listed[0].title, "登录崩溃");
         assert!(repo.list("other").await.expect("list").is_empty());
 
-        // 不存在
         assert!(repo.get("ghost").await.expect("get").is_none());
     }
 }

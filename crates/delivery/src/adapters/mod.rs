@@ -1,4 +1,3 @@
-//! 适配器层。`in_memory` 仓储与 `stub` 执行者始终编译;其余 feature 门控。
 pub mod in_memory;
 pub mod stub;
 

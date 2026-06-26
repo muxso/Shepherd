@@ -1,7 +1,3 @@
-//! 拆分规划器选择与 HTTP/LLM 适配器。
-//! 默认 `HeuristicPlanner`(规则拆分);设 `SHEPHERD_PLANNER_URL` 则用 `HttpPlanner`
-//! (把需求规格 POST 给规划服务,可由 LLM 背书生成任务草案)。不可达/出错 → PlanError。
-
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -62,10 +58,9 @@ impl Planner for HttpPlanner {
     }
 }
 
-/// 按环境选择规划器。
 pub fn build_planner() -> Arc<dyn Planner> {
     if let Some(p) = crate::llm::planner() {
-        return p; // 真实 LLM 规划器(SHEPHERD_LLM_URL)
+        return p;
     }
     match std::env::var("SHEPHERD_PLANNER_URL") {
         Ok(url) if !url.trim().is_empty() => {

@@ -1,5 +1,3 @@
-//! 用例:提案的 Design 阶段编排 —— 起草 / 提交设计稿 / 审批门 / 驳回修订。
-
 use std::sync::Arc;
 
 use crate::domain::{Proposal, ProposalError};
@@ -7,13 +5,9 @@ use crate::ports::{BreakdownTrigger, DesignDrafter, ProposalRepository, RepoErro
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ProposalCmdError {
-    /// 提案不存在 → 404。
     NotFound,
-    /// 入参非法 → 400。
     Validation(String),
-    /// 非法状态流转 → 409。
     Conflict(ProposalError),
-    /// 存储错误 → 500。
     Repo(RepoError),
 }
 
@@ -35,9 +29,7 @@ impl From<ProposalError> for ProposalCmdError {
 #[derive(Clone)]
 pub struct ProposalService {
     repo: Arc<dyn ProposalRepository>,
-    /// 可选起草执行者(AI agent):配置后 `create` 即派发起草,跑完经 submit_design 回填。
     drafter: Option<Arc<dyn DesignDrafter>>,
-    /// 可选拆分触发器:`approve` 通过后放行任务拆分(Design 阶段 → 拆分)。
     breakdown: Option<Arc<dyn BreakdownTrigger>>,
 }
 
@@ -46,19 +38,16 @@ impl ProposalService {
         Self { repo, drafter: None, breakdown: None }
     }
 
-    /// 挂上起草执行者(人机协同):新建提案即自动派发 agent 起草设计稿。
     pub fn with_drafter(mut self, drafter: Arc<dyn DesignDrafter>) -> Self {
         self.drafter = Some(drafter);
         self
     }
 
-    /// 挂上拆分触发器:设计稿审批通过即放行该需求的任务拆分。
     pub fn with_breakdown_trigger(mut self, breakdown: Arc<dyn BreakdownTrigger>) -> Self {
         self.breakdown = Some(breakdown);
         self
     }
 
-    /// 为某需求开一份设计提案(起草态)。配了 drafter 则顺手派发 agent 起草(尽力而为)。
     pub async fn create(
         &self,
         requirement_id: &str,
@@ -71,14 +60,12 @@ impl ProposalService {
             return Err(ProposalCmdError::Validation("title required".into()));
         }
         let p = self.repo.create(requirement_id.trim(), title.trim()).await?;
-        // 派发起草:失败不阻断建单(提案保持 Drafting,人仍可手填设计稿)。
         if let Some(d) = &self.drafter {
             let _ = d.request_draft(&p).await;
         }
         Ok(p)
     }
 
-    /// 提交设计稿(agent 产出 / 人填写)→ 进入待审。
     pub async fn submit_design(&self, id: &str, doc: &str) -> Result<Proposal, ProposalCmdError> {
         let mut p = self.get(id).await?;
         p.submit_design(doc)?;
@@ -86,7 +73,6 @@ impl ProposalService {
         Ok(p)
     }
 
-    /// 审批通过(门)→ 放行拆分。配了触发器则顺手开拆(尽力而为,失败不回滚审批)。
     pub async fn approve(&self, id: &str) -> Result<Proposal, ProposalCmdError> {
         let mut p = self.get(id).await?;
         p.approve()?;
@@ -97,7 +83,6 @@ impl ProposalService {
         Ok(p)
     }
 
-    /// 驳回带反馈 → 进入修订(下一轮 submit_design 会带着该意见重做)。
     pub async fn request_changes(
         &self,
         id: &str,
@@ -137,16 +122,13 @@ mod tests {
         let p = s.create("req-1", "登录改造").await.expect("create");
         assert_eq!(p.status, ProposalStatus::Drafting);
 
-        // agent 提交 v1 → 待审
         let p = s.submit_design(&p.id, "v1").await.expect("submit");
         assert_eq!(p.status, ProposalStatus::PendingReview);
 
-        // 人驳回 → 修订
         let p = s.request_changes(&p.id, "补充失败分支").await.expect("reject");
         assert_eq!(p.status, ProposalStatus::ChangesRequested);
         assert_eq!(p.revision, 1);
 
-        // agent 据反馈提交 v2 → 待审 → 批准
         let p = s.submit_design(&p.id, "v2").await.expect("submit2");
         assert_eq!(p.status, ProposalStatus::PendingReview);
         let p = s.approve(&p.id).await.expect("approve");
@@ -158,9 +140,7 @@ mod tests {
         let s = svc();
         assert!(matches!(s.create("", "t").await, Err(ProposalCmdError::Validation(_))));
         let p = s.create("r", "t").await.expect("create");
-        // 起草态批准 → 冲突(非法流转)
         assert!(matches!(s.approve(&p.id).await, Err(ProposalCmdError::Conflict(_))));
-        // 不存在 → 404
         assert_eq!(s.get("ghost").await.unwrap_err(), ProposalCmdError::NotFound);
     }
 
@@ -171,7 +151,6 @@ mod tests {
         use async_trait::async_trait;
         use std::sync::Mutex;
 
-        // 记录被派发起草的提案(模拟 AI agent 受理)。
         #[derive(Default)]
         struct RecordingDrafter {
             drafted: Mutex<Vec<String>>,
@@ -188,12 +167,10 @@ mod tests {
         let s = ProposalService::new(Arc::new(InMemoryProposalRepository::new()))
             .with_drafter(drafter.clone());
 
-        // 建单即派发 agent 起草。
         let p = s.create("req-9", "支付重构").await.expect("create");
         assert_eq!(drafter.drafted.lock().unwrap().as_slice(), &[p.id.clone()]);
-        assert_eq!(p.status, ProposalStatus::Drafting); // 仍待 agent 回填
+        assert_eq!(p.status, ProposalStatus::Drafting);
 
-        // 模拟 agent 跑完回调 /proposal/{id}/design → 进入待审。
         let p = s.submit_design(&p.id, "## 架构\n拆分支付域").await.expect("callback");
         assert_eq!(p.status, ProposalStatus::PendingReview);
         assert_eq!(p.design_doc.as_deref(), Some("## 架构\n拆分支付域"));
@@ -224,12 +201,9 @@ mod tests {
         let p = s.create("req-7", "设计").await.expect("create");
         s.submit_design(&p.id, "doc").await.expect("submit");
 
-        // 非法 approve(此处状态合法,先验证驳回不触发拆分)。
-        // 批准 → 触发拆分一次,携带 requirement_id。
         s.approve(&p.id).await.expect("approve");
         assert_eq!(trig.fired.lock().unwrap().as_slice(), &["req-7".to_string()]);
 
-        // 二次 approve 冲突(终态)→ 不再触发。
         assert!(s.approve(&p.id).await.is_err());
         assert_eq!(trig.fired.lock().unwrap().len(), 1);
     }

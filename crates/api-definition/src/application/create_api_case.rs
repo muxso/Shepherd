@@ -1,6 +1,3 @@
-//! 用例:在项目级创建接口用例。用例可独立存在(不挂接口定义),
-//! 此时 `api_definition_id` 为空串。project_id 由调用方直接给定。
-
 use std::sync::Arc;
 
 use crate::domain::{ApiCase, ApiDefinitionError, NewApiCase};
@@ -38,7 +35,6 @@ impl CreateApiCaseUseCase {
         assertions: serde_json::Value,
         processors: serde_json::Value,
     ) -> Result<ApiCase, CreateApiCaseError> {
-        // 独立用例:api_definition_id 缺省为空串(领域允许)。
         let def_id = api_definition_id.unwrap_or_default();
         let new_case = NewApiCase::new(def_id, project_id, name, method, url, body, assertions)?
             .with_processors(processors);

@@ -1,8 +1,3 @@
-//! 用例:创建需求。
-//!
-//! 编排规则:同项目内标题唯一,但**忽略已软删除**的需求(端口的 `find_active_by_title`
-//! 已固化此语义)。创建即生成版本 1、baseline=1、状态 Draft。
-
 use std::sync::Arc;
 
 use thiserror::Error;

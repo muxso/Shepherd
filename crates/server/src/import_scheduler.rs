@@ -1,11 +1,3 @@
-//! 组装根桥:接口定义的「URL 导入」与「定时导入」(tokio-cron-scheduler)。
-//!
-//! - URL 导入(POST /api/definition/import-url):服务端用 reqwest 拉取来源 URL,按格式解析并导入,
-//!   绕开浏览器跨域;支持 Bearer/Basic token。
-//! - 定时导入(/api/import-schedule):给一个 URL 来源配 cron,后台调度器到点拉取并导入;支持
-//!   覆盖/不覆盖、按标签建模块、同步目录等(与一次性导入同一套选项)。
-//! 启动时加载所有启用计划并注册;新建/启停立即生效,无需重启。
-
 use std::sync::Arc;
 
 use axum::{
@@ -43,7 +35,6 @@ impl FromRef<ImportSchedState> for Arc<dyn SessionStore> {
     }
 }
 
-/// 拉取来源 URL → 解析为可导入文档(JMeter 为原始文本字符串,其余为 JSON)。
 async fn fetch_doc(
     client: &reqwest::Client,
     url: &str,
@@ -63,13 +54,11 @@ async fn fetch_doc(
     }
     let text = resp.text().await.map_err(|e| format!("读取响应失败:{e}"))?;
     match format {
-        // JMeter 为 XML:整段文本作为 JSON 字符串交给解析器。
         ImportFormat::Jmeter => Ok(Value::String(text)),
         _ => serde_json::from_str(&text).map_err(|e| format!("来源非法 JSON:{e}")),
     }
 }
 
-/// 跑一次定时导入:重载计划(取最新选项,容忍中途被停用/删除)→ 拉取 → 导入 → 回写结果摘要。
 async fn run_schedule(
     import_uc: &ImportApiDefinitionsUseCase,
     schedules: &ImportScheduleUseCase,
@@ -78,17 +67,15 @@ async fn run_schedule(
 ) {
     let Some(s) = schedules.get(id).await.ok().flatten() else { return };
     if !s.enabled {
-        return; // 已停用:跳过(live job 可能仍在,double-check)
+        return;
     }
     let summary = run_import(import_uc, client, &s).await;
-    // cron 自动触发:操作人为空串(前端展示为「自动」)。
     if let Err(e) = schedules.record_run(id, &summary, "").await {
         tracing::warn!(schedule = %id, "record import run failed: {e:?}");
     }
     tracing::info!(schedule = %id, %summary, "scheduled import done");
 }
 
-/// 按计划拉取并导入,返回结果摘要(成功/失败均为人类可读串)。
 async fn run_import(
     import_uc: &ImportApiDefinitionsUseCase,
     client: &reqwest::Client,
@@ -119,7 +106,6 @@ async fn run_import(
     }
 }
 
-/// 注册一个 cron job:到点跑 [`run_schedule`]。尽力而为,出错只记日志。
 async fn register_job(
     sched: &JobScheduler,
     import_uc: &ImportApiDefinitionsUseCase,
@@ -151,7 +137,6 @@ async fn register_job(
     }
 }
 
-/// 构建路由:创建并启动 JobScheduler,加载已启用计划注册其 job,返回 axum 路由。
 pub async fn build(
     pool: PgPool,
     sessions: Arc<dyn SessionStore>,
@@ -180,9 +165,6 @@ pub async fn build(
         .with_state(ImportSchedState { import_uc, schedules, client, sched, sessions }))
 }
 
-// ---------- DTO ----------
-
-/// URL 导入与定时导入共用的导入选项。
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct ImportUrlBody {
@@ -298,7 +280,7 @@ struct ScheduleResponse {
 
 impl From<ImportSchedule> for ScheduleResponse {
     fn from(s: ImportSchedule) -> Self {
-        // 注意:不回吐 auth_token(敏感)。
+        // 不回吐 auth_token(敏感)。
         Self {
             id: s.id,
             project_id: s.project_id,
@@ -346,7 +328,6 @@ async fn create_schedule(
     };
     match st.schedules.create(new).await {
         Ok(s) => {
-            // 启用的计划立即挂上 live cron(无需重启)。
             if s.enabled {
                 register_job(&st.sched, &st.import_uc, &st.schedules, &st.client, &s.id, &s.cron).await;
             }
@@ -386,7 +367,7 @@ async fn delete_schedule(
         return (StatusCode::FORBIDDEN, "permission denied").into_response();
     }
     match st.schedules.delete(&id).await {
-        // 注:live cron job 在下次重启前仍可能触发,但 run_schedule 重载时取不到(已软删)即跳过。
+        // live cron 仍可能触发,但 run_schedule 重载取不到(已软删)即跳过。
         Ok(()) => StatusCode::NO_CONTENT.into_response(),
         Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
     }
@@ -410,7 +391,7 @@ async fn set_enabled(
     if st.schedules.set_enabled(&id, b.enabled).await.is_err() {
         return (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response();
     }
-    // 启用:立即挂上 live cron(重复挂上仅多一个 job,run_schedule 会 double-check enabled)。
+    // 重复挂上仅多一个 job,run_schedule 会 double-check enabled。
     if b.enabled {
         if let Ok(Some(s)) = st.schedules.get(&id).await {
             register_job(&st.sched, &st.import_uc, &st.schedules, &st.client, &s.id, &s.cron).await;
@@ -431,7 +412,6 @@ async fn run_now(
         return (StatusCode::NOT_FOUND, "schedule not found").into_response();
     };
     let summary = run_import(&st.import_uc, &st.client, &s).await;
-    // 手动「立即执行」:记录触发的当前用户为操作人。
     let _ = st.schedules.record_run(&id, &summary, &user.user_id).await;
     (StatusCode::OK, Json(json!({ "result": summary }))).into_response()
 }

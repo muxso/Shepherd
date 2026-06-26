@@ -1,13 +1,8 @@
-//! 桩执行者:
-//! - `EchoAgentExecutor`:无真实 agent 时的默认实现,同步"完成"并回显任务(供本地/演示)。
-//! - `StubAgentExecutor`:按预设行为返回 Accepted/Completed/错误,供测试驱动各分支。
-
 use async_trait::async_trait;
 
 use crate::domain::{Deliverable, DeliverableKind, EventKind, NewExecutionEvent};
 use crate::ports::{AgentExecutor, DispatchOutcome, EventSink, ExecError, WorkSpec};
 
-/// 默认桩:同步完成,交付物回显任务标题(reference 指向一个占位)。
 #[derive(Clone, Default)]
 pub struct EchoAgentExecutor;
 
@@ -41,7 +36,6 @@ impl AgentExecutor for EchoAgentExecutor {
     }
 }
 
-/// 测试用可配置桩。
 #[derive(Clone)]
 pub enum StubBehavior {
     Accept { run_id: String },

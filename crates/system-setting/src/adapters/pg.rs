@@ -1,6 +1,3 @@
-//! PostgreSQL 适配器(feature = "pg")。实现 `UserRepository` 与 `UserDirectory`。
-//! `PgUserDirectory.names_direct` 直查 ms_user 表,不经任何拦截 —— OIDC quirk 的修复本质。
-
 use std::collections::{BTreeMap, HashSet};
 
 use async_trait::async_trait;
@@ -117,7 +114,7 @@ impl UserRepository for PgUserRepository {
     }
 }
 
-/// 直查用户表的目录实现。重写里无 CFT 拦截器,故 `names_validated` 亦安全直查。
+/// 无拦截器,故 `names_validated` 与 `names_direct` 都直查 ms_user。
 #[derive(Clone)]
 pub struct PgUserDirectory {
     pool: PgPool,
@@ -173,7 +170,6 @@ fn now_ms() -> i64 {
         .unwrap_or(0)
 }
 
-// ---- 凭证仓储(ms_user_credential)----
 #[derive(Clone)]
 pub struct PgCredentialRepository {
     pool: PgPool,
@@ -184,7 +180,6 @@ impl PgCredentialRepository {
         Self { pool }
     }
 
-    /// 幂等 upsert 一条凭证(供启动时种 admin)。
     pub async fn upsert(
         &self,
         username: &str,
@@ -210,7 +205,6 @@ impl PgCredentialRepository {
     }
 }
 
-/// 用户→用户组(角色名)只读查询,供用户列表附带「用户组」列。
 #[derive(Clone)]
 pub struct PgUserRoleQuery {
     pool: PgPool,
@@ -265,7 +259,7 @@ impl CredentialRepository for PgCredentialRepository {
         }))
     }
 
-    /// 重置密码:按 user_id 改哈希;无凭证则按用户名(邮箱)新建并授基础成员(只读)权限。
+    /// 无凭证时按用户名新建并授只读权限
     async fn reset_password(
         &self,
         user_id: &str,
@@ -297,7 +291,6 @@ impl CredentialRepository for PgCredentialRepository {
     }
 }
 
-// ---- 会话存储(ms_session)----
 #[derive(Clone)]
 pub struct PgSessionStore {
     pool: PgPool,
@@ -343,7 +336,7 @@ impl SessionStore for PgSessionStore {
         let Some(r) = row else { return Ok(None) };
         let expires_at_ms: i64 = r.try_get("expires_at").map_err(auth_err)?;
         if expires_at_ms <= now_ms() {
-            return Ok(None); // 已过期
+            return Ok(None);
         }
         let user_id: String = r.try_get("user_id").map_err(auth_err)?;
         let raw: Vec<String> = r.try_get("permissions").map_err(auth_err)?;
@@ -362,7 +355,6 @@ impl SessionStore for PgSessionStore {
     }
 }
 
-// ---- 第三方身份 ↔ 本地用户映射(ms_external_user_link)----
 #[derive(Clone)]
 pub struct PgExternalUserRepository {
     pool: PgPool,
@@ -381,7 +373,7 @@ impl ExternalUserRepository for PgExternalUserRepository {
         &self,
         identity: &ExternalIdentity,
     ) -> Result<LinkedUser, OidcError> {
-        // 首次:按 default_perms 开通;已存在:只刷新 display_name,保留既有 user_id/permissions。
+        // 已存在时只刷新 display_name,保留既有 user_id/permissions
         let row = sqlx::query(
             "INSERT INTO ms_external_user_link (provider, open_id, display_name, permissions) \
              VALUES ($1, $2, $3, $4) \
@@ -417,7 +409,6 @@ fn row_to_org(row: &sqlx::postgres::PgRow) -> Result<Organization, OrgRepoError>
     })
 }
 
-// ---- 组织仓储(ms_organization)----
 #[derive(Clone)]
 pub struct PgOrgRepository {
     pool: PgPool,
@@ -667,7 +658,6 @@ mod tests {
         assert_eq!(got.name, "AcmeCorp");
         assert!(!got.enable);
 
-        // 软删除后名字释放、不计入 active
         let mut d = got;
         d.soft_delete();
         repo.save(&d).await.expect("save");
@@ -687,7 +677,6 @@ mod tests {
             .upsert("admin", "u-admin", "argon2-hash", &["SYSTEM_USER:READ+ADD".to_string()])
             .await
             .expect("upsert");
-        // upsert 幂等:再来一次只更新
         creds
             .upsert("admin", "u-admin", "argon2-hash-2", &["SYSTEM_USER:READ".to_string()])
             .await
@@ -697,7 +686,6 @@ mod tests {
         assert_eq!(c.permissions, vec!["SYSTEM_USER:READ".to_string()]);
         assert!(creds.find_by_username("ghost").await.expect("q").is_none());
 
-        // 会话:建 → 按令牌取回,权限往返
         let sessions = PgSessionStore::new(pool);
         let perms = PermissionSet::from_raw(["SYSTEM_USER:READ+ADD"]).expect("perm");
         let token = sessions.create("u-admin", perms, 3600).await.expect("create");

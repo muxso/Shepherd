@@ -1,9 +1,3 @@
-//! 项目管理的 HTTP 适配器:`POST /project`(创建)与 `GET /project`(分页列表)。
-//!
-//! 同样只做翻译:DTO ↔ 用例,分页参数交给 `kernel::PageRequest` 校验。
-//! 业务规则(唯一性、软删除)都在 application/domain,本层一概不碰。
-//! 写端点(创建)经 `webauth::AuthUser` 做 RBAC:无令牌→401,缺 `PROJECT:ADD`→403。
-
 use std::sync::Arc;
 
 use axum::{
@@ -116,7 +110,6 @@ struct PageResponse {
 
 #[utoipa::path(get, path = "/project", tag = "project", params(ListQuery), responses((status = 200, body = PageResponse)))]
 async fn list_projects(State(st): State<ProjectState>, Query(q): Query<ListQuery>) -> Response {
-    // 分页参数校验复用 kernel:非法参数 → 400(而不是打到 DB 才炸)
     let page = match PageRequest::new(q.current, q.page_size) {
         Ok(p) => p,
         Err(_) => return (StatusCode::BAD_REQUEST, "invalid page params").into_response(),
@@ -152,7 +145,6 @@ mod tests {
     use tower::ServiceExt;
     use webauth::testing::InMemorySessionStore;
 
-    /// 构造 app + 一个拥有 `PROJECT:READ+ADD` 的令牌。
     async fn app() -> (Router, String) {
         let repo = Arc::new(InMemoryProjectRepository::new());
         let sessions = Arc::new(InMemorySessionStore::new());
@@ -207,7 +199,6 @@ mod tests {
     async fn create_without_permission_403() {
         let repo = Arc::new(InMemoryProjectRepository::new());
         let sessions = Arc::new(InMemorySessionStore::new());
-        // 只有 READ,无 ADD
         let perms = PermissionSet::from_raw(["PROJECT:READ".to_string()]).expect("perms");
         let token = sessions.create("viewer", perms, 3600).await.expect("token");
         let app = router(
@@ -243,7 +234,6 @@ mod tests {
                 .expect("seed");
         }
 
-        // 列表为读端点,无需令牌
         let resp = app
             .oneshot(
                 Request::builder()
@@ -257,7 +247,7 @@ mod tests {
         let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.expect("body");
         let v: serde_json::Value = serde_json::from_slice(&bytes).expect("json");
         assert_eq!(v["total"], 3);
-        assert_eq!(v["totalPages"], 2); // ceil(3/2)
+        assert_eq!(v["totalPages"], 2);
         assert_eq!(v["items"].as_array().expect("arr").len(), 2);
     }
 

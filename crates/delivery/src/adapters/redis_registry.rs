@@ -1,7 +1,4 @@
-//! 机群注册表的 Redis 实现(feature = "exec-queue-redis"):多副本共享。
-//!
-//! 每台 runtime 一个 hash `fleet:rt:<id>`(name/caps/max/last_seen),id 汇总在 set `fleet:rt:ids`。
-//! 在线状态由心跳新鲜度在 `list` 时算出(server 不反向探活)。
+//! 在线状态由心跳新鲜度在 list 时算出,server 不反向探活。
 
 use std::sync::Arc;
 
@@ -71,7 +68,7 @@ impl FleetRegistry for RedisFleetRegistry {
                     Err(_) => continue,
                 };
             if map.is_empty() {
-                continue; // 已被清理
+                continue;
             }
             let last_seen_ms = map.get("last_seen").and_then(|s| s.parse().ok()).unwrap_or(0);
             out.push(RuntimeInfo {

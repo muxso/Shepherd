@@ -1,8 +1,5 @@
-//! 执行事件 + 进度回流 sink + claude `stream-json` 解析(stream_events.py 的纯 Rust 移植)。
-
 use async_trait::async_trait;
 
-/// 一条执行事件(审计轨迹)。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExecEvent {
     pub kind: String,
@@ -15,13 +12,11 @@ impl ExecEvent {
     }
 }
 
-/// 进度回流端口:实现 bridge 回 `/delivery/{id}/events`;design / 测试可用 no-op / 记录。
 #[async_trait]
 pub trait ProgressSink: Send + Sync {
     async fn emit(&self, ev: ExecEvent);
 }
 
-/// 丢弃所有事件(design 模式:提案无事件端点)。
 pub struct NoopSink;
 
 #[async_trait]
@@ -33,8 +28,6 @@ fn clip(s: &str, n: usize) -> String {
     s.chars().take(n).collect()
 }
 
-/// 把一行 `claude -p --output-format stream-json` 解析成执行事件(可能 0..N 条)。
-/// 噪声工具(Grep/Glob/Read)跳过;编辑→FILE_CHANGE,Bash→TOOL_CALL,文本→DECISION。
 pub fn parse_claude_line(line: &str) -> Vec<ExecEvent> {
     let line = line.trim();
     if line.is_empty() {
@@ -71,7 +64,7 @@ pub fn parse_claude_line(line: &str) -> Vec<ExecEvent> {
                             .unwrap_or("");
                         ExecEvent::new("TOOL_CALL", &format!("$ {}", clip(cmd, 120)))
                     }
-                    "Grep" | "Glob" | "Read" => continue, // 噪声
+                    "Grep" | "Glob" | "Read" => continue,
                     other => ExecEvent::new("TOOL_CALL", other),
                 };
                 out.push(ev);
@@ -88,7 +81,6 @@ pub fn parse_claude_line(line: &str) -> Vec<ExecEvent> {
     out
 }
 
-/// 从 `type=result` 行取最终结果文本与是否出错。
 pub fn parse_claude_result(line: &str) -> Option<(bool, String)> {
     let v: serde_json::Value = serde_json::from_str(line.trim()).ok()?;
     if v.get("type").and_then(|t| t.as_str()) != Some("result") {

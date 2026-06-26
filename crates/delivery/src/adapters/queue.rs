@@ -1,13 +1,4 @@
-//! 执行者机群(PoC):进程内工作队列 + 长轮询认领端点。
-//!
-//! 远程 AI 执行者(Claude Code / Codex / OpenCode)跑在内网、**无公网入站**,
-//! 因此派发不能 server→runtime 推,而是 runtime **出站**长轮询认领:
-//! - `QueueAgentExecutor::dispatch` 把 WorkSpec 入队,立即返回 `Accepted`(尝试置 Running);
-//! - runtime 经 `GET /agent/work/claim?caps=CLAUDE_CODE` 长轮询拿到 WorkSpec,本地跑 claude,
-//!   再经现成的 `/delivery/{id}/events|complete|fail` 回调收尾。
-//!
-//! PoC 边界:单进程内存队列,**无持久化 / 无注册 / 无心跳 / 无超时回收**
-//! (见 `docs/remote-agent-runtime-plan.md` 阶段 2)。
+//! runtime 无公网入站,故派发是 runtime 出站长轮询认领(pull),不是 server→runtime 推。
 
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
@@ -30,12 +21,9 @@ use crate::ports::{
     RuntimeInfo, WorkQueue, WorkSpec,
 };
 
-/// 已知执行者能力(统计时即便计数为 0 也列出,机群视图可见全貌)。
 const KNOWN_CAPS: [ExecutorKind; 3] =
     [ExecutorKind::ClaudeCode, ExecutorKind::Codex, ExecutorKind::OpenCode];
 
-/// 进程内工作队列(单机/测试):`enqueue` 入队,runtime 长轮询认领。
-/// 分布式请用 `RedisStreamQueue`(同一 `WorkQueue` 端口)。
 #[derive(Default)]
 pub struct InMemoryWorkQueue {
     inner: Mutex<VecDeque<WorkSpec>>,
@@ -46,7 +34,6 @@ impl InMemoryWorkQueue {
         Arc::new(Self::default())
     }
 
-    /// 当前队列深度(排障/测试用)。
     pub fn len(&self) -> usize {
         self.inner.lock().expect("lock").len()
     }
@@ -55,7 +42,6 @@ impl InMemoryWorkQueue {
         self.len() == 0
     }
 
-    /// 弹出第一个能力匹配的任务(无则 None)。
     fn try_claim(&self, caps: &[ExecutorKind]) -> Option<WorkSpec> {
         let mut q = self.inner.lock().expect("lock");
         let pos = q.iter().position(|s| caps.contains(&s.executor))?;
@@ -69,7 +55,7 @@ impl WorkQueue for InMemoryWorkQueue {
         self.inner.lock().expect("lock").push_back(spec.clone());
     }
 
-    /// 轮询直到 `wait` 超时(长轮询语义)。认领即移除,故 `ack`/回收均无需操作(`consumer` 忽略)。
+    // 认领即从队列移除,故无 PEL:ack 与超时回收都无需操作,consumer 被忽略。
     async fn claim(&self, caps: &[ExecutorKind], wait: Duration, _consumer: &str) -> Option<Claimed> {
         let step = Duration::from_millis(300);
         let mut waited = Duration::ZERO;
@@ -86,10 +72,10 @@ impl WorkQueue for InMemoryWorkQueue {
     }
 
     async fn ack(&self, _attempt_id: &str) {
-        // 内存队列认领即移除,无待处理列表,no-op。
+        // 认领即移除,无待处理列表,no-op。
     }
 
-    /// 进程内队列:`ready` = 当前各能力排队数;认领即移除故无 PEL,`in_flight`/`oldest` 恒 0。
+    // 无 PEL,故 in_flight / oldest 恒 0;ready = 各能力排队数。
     async fn stats(&self) -> Vec<QueueStat> {
         let q = self.inner.lock().expect("lock");
         KNOWN_CAPS
@@ -104,8 +90,6 @@ impl WorkQueue for InMemoryWorkQueue {
     }
 }
 
-/// 把任务入队、立即返回 `Accepted`(run_id = attempt_id);真正执行由某台 runtime
-/// 认领后异步回调 `/delivery/{id}/complete` 收尾。
 pub struct QueueAgentExecutor {
     queue: Arc<dyn WorkQueue>,
 }
@@ -123,13 +107,11 @@ impl AgentExecutor for QueueAgentExecutor {
         spec: &WorkSpec,
         _sink: &dyn EventSink,
     ) -> Result<DispatchOutcome, ExecError> {
-        // 仅入队,不在此执行;事件经 runtime 的 HTTP 回调回流,而非这里的 sink。
+        // 仅入队,不在此执行;事件经 runtime 的 HTTP 回调回流,sink 在此用不到。
         self.queue.enqueue(spec).await;
         Ok(DispatchOutcome::Accepted { run_id: spec.attempt_id.clone() })
     }
 }
-
-// ---- HTTP:runtime 长轮询认领 ----
 
 #[derive(Clone)]
 struct FleetState {
@@ -144,7 +126,7 @@ impl FromRef<FleetState> for Arc<dyn SessionStore> {
     }
 }
 
-/// 挂载机群端点。`queue` 须与 `QueueAgentExecutor` 共享同一实例。
+/// `queue` 必须与 `QueueAgentExecutor` 共享同一实例,否则认领端点拿不到入队任务。
 pub fn router(
     queue: Arc<dyn WorkQueue>,
     registry: Arc<dyn FleetRegistry>,
@@ -160,10 +142,8 @@ pub fn router(
 
 #[derive(Deserialize)]
 struct ClaimQuery {
-    /// 逗号分隔的能力,如 `CLAUDE_CODE,CODEX`;缺省 = 全部已知执行者。
     #[serde(default)]
     caps: Option<String>,
-    /// 认领方 runtime id(用于 PEL 归属 + 死 runtime 回收);缺省回退匿名。
     #[serde(default)]
     runtime: Option<String>,
 }
@@ -207,8 +187,6 @@ fn parse_caps(raw: &Option<String>) -> Vec<ExecutorKind> {
     }
 }
 
-/// 长轮询认领一个任务。有 → 200 WorkSpec;无(超时)→ 204。
-/// 鉴权:与回调同级,需 `DELIVERY:UPDATE`。
 async fn claim(
     user: AuthUser,
     State(st): State<FleetState>,
@@ -227,8 +205,6 @@ async fn claim(
         None => StatusCode::NO_CONTENT.into_response(),
     }
 }
-
-// ---- HTTP:队列计数(机群可观测) ----
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -250,14 +226,11 @@ impl From<QueueStat> for QueueStatDto {
     }
 }
 
-/// 队列计数视图:各能力的积压 / 在飞 / 最久在飞空闲。读端点开放(与 list_runtimes 同级)。
 async fn stats(State(st): State<FleetState>) -> Response {
     let stats: Vec<QueueStatDto> =
         st.queue.stats().await.into_iter().map(QueueStatDto::from).collect();
     (StatusCode::OK, Json(stats)).into_response()
 }
-
-// ---- HTTP:runtime 注册 / 心跳 / 列表(机群视图) ----
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -299,7 +272,6 @@ impl From<RuntimeInfo> for RuntimeResponse {
     }
 }
 
-/// 登记一台 runtime(出站 register)。需 `DELIVERY:UPDATE`。
 async fn register(
     user: AuthUser,
     State(st): State<FleetState>,
@@ -315,7 +287,7 @@ async fn register(
     (StatusCode::CREATED, Json(RegisteredResponse { runtime_id: id })).into_response()
 }
 
-/// 心跳续约(出站 heartbeat)。未知 id → 404(runtime 据此重新 register)。
+// 未知 id 返回 404,runtime 据此触发重新 register(回收后的重新上线路径)。
 async fn heartbeat(
     user: AuthUser,
     State(st): State<FleetState>,
@@ -331,7 +303,6 @@ async fn heartbeat(
     }
 }
 
-/// 机群视图:列出全部 runtime(含在线判定)。读端点开放。
 async fn list_runtimes(State(st): State<FleetState>) -> Response {
     let list: Vec<RuntimeResponse> =
         st.registry.list().await.into_iter().map(RuntimeResponse::from).collect();
@@ -375,9 +346,7 @@ mod tests {
     async fn claim_pops_matching_capability_only() {
         let q = InMemoryWorkQueue::new();
         q.enqueue(&spec("a1", ExecutorKind::Codex)).await;
-        // 只认领 CLAUDE_CODE → 跳过 Codex 任务,短超时返回 None。
         assert!(q.claim(&[ExecutorKind::ClaudeCode], Duration::from_millis(50), "rt-1").await.is_none());
-        // 认领 Codex → 拿到,队列清空。
         let got = q.claim(&[ExecutorKind::Codex], Duration::from_millis(50), "rt-1").await.expect("claim");
         assert_eq!(got.spec.attempt_id, "a1");
         assert!(q.is_empty());
@@ -393,10 +362,8 @@ mod tests {
         let by = |k: ExecutorKind| stats.iter().find(|s| s.executor == k).expect("cap present");
         assert_eq!(by(ExecutorKind::ClaudeCode).ready, 2);
         assert_eq!(by(ExecutorKind::Codex).ready, 1);
-        assert_eq!(by(ExecutorKind::OpenCode).ready, 0); // 全能力都列出,空也是 0
-        // 进程内队列无 PEL:在飞恒 0。
+        assert_eq!(by(ExecutorKind::OpenCode).ready, 0);
         assert!(stats.iter().all(|s| s.in_flight == 0 && s.oldest_in_flight_ms == 0));
-        // 认领一条后 ready 减少。
         q.claim(&[ExecutorKind::ClaudeCode], Duration::from_millis(50), "rt-1").await.expect("claim");
         assert_eq!(by_cap(&q.stats().await, ExecutorKind::ClaudeCode).ready, 1);
     }

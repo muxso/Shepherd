@@ -1,5 +1,3 @@
-//! 内存版定时导入计划注册表。Mutex 套 Vec,id 自增确定性生成,测试用。
-
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
@@ -57,7 +55,7 @@ impl ImportScheduleStore for InMemoryImportScheduleStore {
         let st = self.state.lock().expect("lock");
         let mut out: Vec<ImportSchedule> =
             st.schedules.iter().filter(|s| s.project_id == project_id).cloned().collect();
-        out.reverse(); // 时间倒序
+        out.reverse();
         Ok(out)
     }
 

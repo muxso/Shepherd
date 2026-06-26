@@ -1,7 +1,3 @@
-//! 验证门(judge)选择与 HTTP/LLM 适配器。
-//! 默认 `AcceptAllJudge`(保持"交付即通过");设 `SHEPHERD_JUDGE_URL` 则用 `HttpJudge`
-//! (把验收标准 + 交付物 POST 给 judge 服务,可由 LLM 背书)。judge 不可达/出错 → **不通过**(fail-closed)。
-
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -11,7 +7,6 @@ use serde_json::json;
 use orchestrator::judges::AcceptAllJudge;
 use orchestrator::ports::{DeliverableView, Judge, Verdict};
 
-/// 远端 judge(LLM 背书):POST {criteria, deliverable} → {passed, reason}。
 struct HttpJudge {
     client: reqwest::Client,
     url: String,
@@ -42,10 +37,9 @@ impl Judge for HttpJudge {
     }
 }
 
-/// 按环境选择验证门。
 pub fn build_judge() -> Arc<dyn Judge> {
     if let Some(j) = crate::llm::judge() {
-        return j; // 真实 LLM 验证门(SHEPHERD_LLM_URL)
+        return j;
     }
     match std::env::var("SHEPHERD_JUDGE_URL") {
         Ok(url) if !url.trim().is_empty() => {

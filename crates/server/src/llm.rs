@@ -1,9 +1,3 @@
-//! 真实 LLM 接入(OpenAI 兼容 chat completions):一个 `LlmClient` + planner/judge/executor 三个适配器。
-//! 各适配器构造任务专属提示,调 LLM,解析其 JSON 输出为对应端口类型。
-//!
-//! 环境:`SHEPHERD_LLM_URL`(如 .../v1/chat/completions)、`SHEPHERD_LLM_API_KEY`(可选)、
-//! `SHEPHERD_LLM_MODEL`(默认 gpt-4o-mini)。client 用 no_proxy(与本仓其它 HTTP 适配器一致)。
-
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -15,7 +9,7 @@ use delivery::ports::{AgentExecutor, DispatchOutcome, EventSink, ExecError, Work
 use orchestrator::ports::{DeliverableView, Judge, Verdict};
 use task::ports::{PlanError, PlannedTask, Planner, RequirementSpec};
 
-/// 从 LLM 文本里抠出第一个 JSON 块(容忍模型外裹的散文/``` 围栏)。
+// 抠出第一个 JSON 块,容忍模型外裹的散文/围栏。
 fn extract_json(s: &str) -> &str {
     let start = s.find(['{', '[']);
     let end = s.rfind(['}', ']']);
@@ -56,7 +50,6 @@ impl LlmClient {
         Self { client, url: url.into(), api_key, model: model.into() }
     }
 
-    /// 从环境构造(未设 SHEPHERD_LLM_URL → None)。
     pub fn from_env() -> Option<Self> {
         let url = std::env::var("SHEPHERD_LLM_URL").ok().filter(|u| !u.trim().is_empty())?;
         let api_key = std::env::var("SHEPHERD_LLM_API_KEY").ok().filter(|k| !k.trim().is_empty());
@@ -93,8 +86,6 @@ impl LlmClient {
             .ok_or_else(|| "LLM 无 choices".to_string())
     }
 }
-
-// ===== Planner =====
 
 const PLANNER_SYSTEM: &str = "你是软件任务规划器。把需求拆成可独立交付的任务,按拓扑序输出。\
 只输出 JSON 数组,每项 {\"title\":string,\"description\":string,\"acceptanceCriteria\":[string],\"dependencies\":[int]};\
@@ -145,8 +136,6 @@ impl Planner for LlmPlanner {
     }
 }
 
-// ===== Judge =====
-
 const JUDGE_SYSTEM: &str = "你是严格的验收评审。依据验收标准评判交付物是否达标。\
 只输出 JSON {\"passed\":bool,\"reason\":string}。不要输出 JSON 以外的任何内容。";
 
@@ -186,8 +175,6 @@ impl Judge for LlmJudge {
         }
     }
 }
-
-// ===== Executor =====
 
 const EXECUTOR_SYSTEM: &str = "你是编码执行者。依据任务(及行为规范)产出变更摘要与一个引用(分支/PR)。\
 只输出 JSON {\"reference\":string,\"summary\":string}。不要输出 JSON 以外的任何内容。";
@@ -241,8 +228,6 @@ impl AgentExecutor for LlmExecutor {
     }
 }
 
-// ===== 按环境组装(SHEPHERD_LLM_URL 在,才返回 Some) =====
-
 pub fn planner() -> Option<Arc<dyn Planner>> {
     LlmClient::from_env().map(|c| Arc::new(LlmPlanner::new(c)) as Arc<dyn Planner>)
 }
@@ -260,7 +245,6 @@ mod tests {
     use delivery::domain::ExecutorKind;
     use delivery::ports::NoopEventSink;
 
-    // 启一个 OpenAI 兼容桩:把固定 content 包进 choices[0].message.content。
     async fn serve_llm(content: &'static str) -> String {
         let app = Router::new().route(
             "/v1/chat/completions",
@@ -286,7 +270,6 @@ mod tests {
 
     #[tokio::test]
     async fn llm_planner_parses_tasks_even_with_prose() {
-        // 模型外裹散文 + ``` 围栏,extract_json 仍能抠出数组
         let url = serve_llm("好的,这是计划:\n```json\n[{\"title\":\"实现登录\",\"acceptanceCriteria\":[\"登录成功\"],\"dependencies\":[]}]\n```").await;
         let p = LlmPlanner::new(LlmClient::new(url, None, "m"));
         let tasks = p.plan(&spec()).await.expect("plan");
@@ -332,6 +315,6 @@ mod tests {
         let url = serve_llm("not json at all").await;
         let j = LlmJudge::new(LlmClient::new(url, None, "m"));
         let v = j.judge(&[], &DeliverableView { kind: "DIFF".into(), reference: "b".into(), summary: "s".into() }).await;
-        assert!(!v.passed); // 解析失败 → 不通过
+        assert!(!v.passed);
     }
 }

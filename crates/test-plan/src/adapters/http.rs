@@ -1,7 +1,3 @@
-//! 测试计划的 HTTP 适配器:`POST /test-plan`(创建)、`GET /test-plan/{id}/statistics`(统计)。
-//!
-//! 写端点(创建)经 `webauth::AuthUser` 做 RBAC:需 `TEST_PLAN:ADD`;统计为读端点,不设限。
-
 use std::sync::Arc;
 
 use axum::{
@@ -151,7 +147,6 @@ async fn statistics(State(st): State<PlanState>, Path(id): Path<String>) -> Resp
 async fn report(State(st): State<PlanState>, Path(id): Path<String>) -> Response {
     match st.stats.with_name(&id).await {
         Ok((name, s)) => {
-            // 逐用例明细;取不到则按空列表渲染(报告仍可出,只是无明细)。
             let cases = st.cases.list(&id).await.unwrap_or_default();
             (
                 StatusCode::OK,
@@ -190,8 +185,6 @@ async fn report_md(State(st): State<PlanState>, Path(id): Path<String>) -> Respo
     }
 }
 
-// ---- 计划用例:挂入 / 回写结果 / 列出 ----
-
 #[derive(Debug, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 struct LinkCaseRequest {
@@ -226,7 +219,6 @@ struct AssertionResultDto {
 #[derive(Debug, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 struct RecordResultRequest {
-    /// PENDING/SUCCESS/ERROR/FAKE_ERROR/BLOCK。
     status: String,
     #[serde(default)]
     latency_ms: u64,
@@ -321,7 +313,6 @@ mod tests {
     use tower::ServiceExt;
     use webauth::testing::InMemorySessionStore;
 
-    /// app + 拥有 `TEST_PLAN:READ+ADD+EXECUTE` 的令牌。
     async fn app_with(repo: InMemoryPlanRepository) -> (Router, String) {
         let repo = Arc::new(repo);
         let sessions = Arc::new(InMemorySessionStore::new());
@@ -413,14 +404,12 @@ mod tests {
             (r, token)
         };
         let pid = &plan.id;
-        // 挂入用例
         let r = app
             .clone()
             .oneshot(post(&format!("/test-plan/{pid}/cases"), r#"{"caseId":"c1","name":"健康检查"}"#, Some(&t)))
             .await
             .expect("link");
         assert_eq!(r.status(), StatusCode::CREATED);
-        // 回写结果(成功 + 断言)
         let body = r#"{"status":"SUCCESS","latencyMs":12,"responseSize":3,"statusCode":200,"body":"ok","assertions":[{"item":"状态码","actual":"200","condition":"等于","expected":"200","passed":true}]}"#;
         let r = app
             .clone()
@@ -428,7 +417,6 @@ mod tests {
             .await
             .expect("record");
         assert_eq!(r.status(), StatusCode::OK);
-        // 报告含逐用例明细
         let r = app
             .oneshot(
                 Request::builder().uri(format!("/test-plan/{pid}/report")).body(Body::empty()).expect("req"),
@@ -453,7 +441,6 @@ mod tests {
             .seed(NewPlan::new("p1", "x", crate::domain::PlanType::Plan, ROOT_GROUP).expect("v"))
             .await;
         let (app, t) = app_with(InMemoryPlanRepository::new()).await;
-        // 用一个未挂入的 case → 404(注意:app_with 的 repo 与 plan 不同实例,这里仅验证 404 路径)
         let _ = plan;
         let r = app
             .oneshot(post("/test-plan/ghost/cases/c9/result", r#"{"status":"SUCCESS"}"#, Some(&t)))
@@ -496,7 +483,6 @@ mod tests {
         repo.set_threshold(&plan.id, 0.5);
 
         let (app, _t) = app_with(repo).await;
-        // 读端点,无需令牌
         let resp = app
             .oneshot(
                 Request::builder()

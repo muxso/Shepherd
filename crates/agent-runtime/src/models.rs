@@ -1,12 +1,10 @@
-//! 认领到的工作规格(对应 server `/agent/work/claim` 的 WorkSpecDto,camelCase)。
-
 use serde::Deserialize;
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WorkSpec {
     pub attempt_id: String,
-    // 保留完整 claim 字段:runtime 暂不用,留作对账 / 未来用。
+    // Kept to match the claim wire shape even though unused by the runtime.
     #[serde(default)]
     #[allow(dead_code)]
     pub decomposition_id: String,
@@ -28,12 +26,10 @@ pub struct WorkSpec {
 }
 
 impl WorkSpec {
-    /// design 模式(产设计稿→/proposal/{id}/design)由 drafter 经 context 标记。
     pub fn is_design(&self) -> bool {
         self.context.as_deref() == Some("design")
     }
 
-    /// 组装交给 CLI 的 prompt(对齐 delivery 的 spec_to_prompt)。
     pub fn to_prompt(&self) -> String {
         let mut p = String::new();
         if let Some(instr) = &self.instructions {
@@ -71,7 +67,7 @@ mod tests {
         let p = s.to_prompt();
         assert!(p.contains("# Task: 登录"));
         assert!(p.contains("- c1"));
-        assert!(!p.contains("Context: design")); // design 标记不进 prompt
+        assert!(!p.contains("Context: design"));
     }
 
     #[test]

@@ -1,5 +1,3 @@
-//! 内存版评审仓储。历史按追加顺序保存(= 时间升序),契合聚合算法的输入约定。
-
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
@@ -10,9 +8,9 @@ use crate::ports::{RepoError, ReviewRepository};
 
 #[derive(Default)]
 struct State {
-    settings: HashMap<String, ReviewSetting>, // review_id -> setting
-    histories: HashMap<(String, String), Vec<ReviewRecord>>, // (review,case) -> 历史(升序)
-    case_status: HashMap<(String, String), ReviewStatus>, // (review,case) -> 回写状态
+    settings: HashMap<String, ReviewSetting>,
+    histories: HashMap<(String, String), Vec<ReviewRecord>>,
+    case_status: HashMap<(String, String), ReviewStatus>,
 }
 
 #[derive(Clone, Default)]
@@ -25,7 +23,6 @@ impl InMemoryReviewRepository {
         Self::default()
     }
 
-    // ---- 测试辅助 ----
     pub fn set_setting(&self, review_id: &str, setting: ReviewSetting) {
         self.state.lock().expect("lock").settings.insert(review_id.to_string(), setting);
     }

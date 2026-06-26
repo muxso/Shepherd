@@ -1,6 +1,3 @@
-//! 第三方登录的测试替身:可控提供方 + 内存外部用户映射。
-//! 让 `OidcLoginUseCase` 的编排能脱离真实飞书/企业微信被穷举测试。
-
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
@@ -9,7 +6,7 @@ use async_trait::async_trait;
 use crate::domain::{ExternalIdentity, OidcError};
 use crate::ports::{ExternalIdentityProvider, ExternalUserRepository, LinkedUser};
 
-/// 可控提供方:`exchange` 对约定的 code "bad" 报错,其余返回预置身份。
+/// `exchange` 对 code "bad" 报错,其余返回预置身份
 #[derive(Clone)]
 pub struct FakeIdentityProvider {
     key: String,
@@ -40,7 +37,6 @@ impl ExternalIdentityProvider for FakeIdentityProvider {
     }
 }
 
-/// 内存外部用户映射:首次见到 (provider, open_id) 开通一个本地用户,之后复用。
 #[derive(Clone)]
 pub struct InMemoryExternalUserRepository {
     default_perms: Vec<String>,
@@ -61,7 +57,6 @@ impl InMemoryExternalUserRepository {
         }
     }
 
-    /// 测试辅助:累计开通过几个新用户。
     pub fn provisioned_count(&self) -> usize {
         *self.provisioned.lock().expect("lock")
     }

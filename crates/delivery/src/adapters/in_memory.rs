@@ -1,5 +1,3 @@
-//! 内存版交付仓储(test double 兼本地存储)。
-
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
@@ -12,8 +10,8 @@ struct State {
     attempts: Vec<DeliveryAttempt>,
     seq: u64,
     event_seq: i64,
-    events: Vec<(String, ExecutionEvent)>, // (attempt_id, event)
-    created_at: Vec<(String, i64)>,        // (attempt_id, 创建序号充当时间戳)
+    events: Vec<(String, ExecutionEvent)>,
+    created_at: Vec<(String, i64)>,
 }
 
 #[derive(Clone, Default)]
@@ -147,7 +145,6 @@ impl DeliveryRepository for InMemoryDeliveryRepository {
             })
             .collect();
 
-        // 创建时间倒序(新在前)。
         matched.sort_by(|x, y| y.created_at.cmp(&x.created_at));
         let total = matched.len() as i64;
         let items = matched

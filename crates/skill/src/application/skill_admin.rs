@@ -1,5 +1,3 @@
-//! 用例:skill 管理(get/list/update/delete)+ compose(组合指令集)。
-
 use std::sync::Arc;
 
 use crate::domain::{Composition, Skill, SkillError, SkillLibrary};
@@ -10,7 +8,6 @@ pub enum SkillCmdError {
     NotFound,
     NameExists,
     Validation(SkillError),
-    /// 组合错误(未知 include / 成环)→ 409。
     Compose(SkillError),
     Repo(RepoError),
 }
@@ -44,7 +41,6 @@ impl SkillService {
         Ok(self.repo.list_active(project_id).await?)
     }
 
-    /// 更新名/描述/指令/includes/启停(名唯一,排除自身)。
     #[allow(clippy::too_many_arguments)]
     pub async fn update(
         &self,
@@ -80,7 +76,6 @@ impl SkillService {
         Ok(())
     }
 
-    /// 组合:把 `skill_ids` 经 includes 展开成有序去重防环的指令集(项目内活跃 skill 为库)。
     pub async fn compose(
         &self,
         project_id: &str,

@@ -1,5 +1,3 @@
-//! PostgreSQL 实现的定时导入计划注册表(ms_api_import_schedule)。
-
 use async_trait::async_trait;
 
 use crate::domain::{ImportSchedule, NewImportSchedule};

@@ -1,16 +1,6 @@
-//! 资源池领域模型(零 IO)。
-//!
-//! 资源池是批量/场景执行的执行节点归属。管理面支持创建/更新/删除,字段对齐参考 UI:
-//! 名称、描述、最大并发数、类型(Node/Kubernetes)、应用组织(全部/指定)、工作节点 URL、
-//! 类型相关节点配置(config,JSONB)。领域只做与 IO 无关的校验。
-
 use serde_json::Value;
 use thiserror::Error;
 
-/// 资源池视图(读模型 / 创建·更新返回)。
-///
-/// `config` 为类型相关配置(Node 的节点表 / Kubernetes 的连接信息),作为不透明 JSON 透传;
-/// `created_at` / `updated_at` 为已格式化的时间字符串(`YYYY-MM-DD HH:MM:SS`)。
 #[derive(Debug, Clone, PartialEq)]
 pub struct ResourcePool {
     pub id: String,
@@ -27,7 +17,6 @@ pub struct ResourcePool {
     pub updated_at: String,
 }
 
-/// 资源池创建/更新校验错误。
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum ResourcePoolError {
     #[error("resource pool name must not be empty")]
@@ -40,7 +29,6 @@ pub enum ResourcePoolError {
     EmptyOrgScope,
 }
 
-/// 创建/更新资源池的原始入参(未校验)。
 #[derive(Debug, Clone, Default)]
 pub struct ResourcePoolDraft {
     pub name: String,
@@ -54,7 +42,6 @@ pub struct ResourcePoolDraft {
     pub config: Value,
 }
 
-/// 已校验的待落库资源池。
 #[derive(Debug, Clone, PartialEq)]
 pub struct NewResourcePool {
     pub name: String,
@@ -69,8 +56,6 @@ pub struct NewResourcePool {
 }
 
 impl NewResourcePool {
-    /// 校验入参:名称去空白且非空;类型限 Node/Kubernetes(空兜底 Node);并发非负;
-    /// 指定组织时至少一个组织;org_ids 去空白去重空项;描述/URL 去首尾空白。
     pub fn new(draft: ResourcePoolDraft) -> Result<Self, ResourcePoolError> {
         let name = draft.name.trim().to_string();
         if name.is_empty() {
@@ -120,7 +105,7 @@ mod tests {
         let p = NewResourcePool::new(draft("  本地池 ")).expect("ok");
         assert_eq!(p.name, "本地池");
         assert!(p.enabled);
-        assert_eq!(p.pool_type, "Node"); // 空类型兜底 Node
+        assert_eq!(p.pool_type, "Node");
     }
 
     #[test]
