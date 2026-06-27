@@ -34,6 +34,7 @@ struct AppState {
     hasher: Arc<dyn PasswordHasher>,
     user_roles: Arc<dyn UserRoleQuery>,
     sessions: Arc<dyn SessionStore>,
+    ttl_secs: i64,
 }
 
 impl FromRef<AppState> for Arc<dyn SessionStore> {
@@ -52,16 +53,32 @@ pub fn router(
     hasher: Arc<dyn PasswordHasher>,
     user_roles: Arc<dyn UserRoleQuery>,
     sessions: Arc<dyn SessionStore>,
+    ttl_secs: i64,
 ) -> Router {
     Router::new()
         .route("/auth/login", post(login_handler))
         .route("/auth/logout", post(logout_handler))
+        .route("/auth/refresh", post(refresh_handler))
         // 静态段 /names 必须先于 /{id} 注册,否则被通配吞掉
         .route("/system/user/names", get(resolve_names))
         .route("/system/user", post(create_user).get(list_users))
         .route("/system/user/{id}", get(get_user).put(update_user).delete(delete_user))
         .route("/system/user/{id}/reset-password", post(reset_password))
-        .with_state(AppState { create, resolve, login, admin, creds, hasher, user_roles, sessions })
+        .with_state(AppState {
+            create,
+            resolve,
+            login,
+            admin,
+            creds,
+            hasher,
+            user_roles,
+            sessions,
+            ttl_secs,
+        })
+}
+
+fn bearer(headers: &HeaderMap) -> Option<&str> {
+    headers.get(AUTHORIZATION).and_then(|v| v.to_str().ok()).and_then(|s| s.strip_prefix("Bearer "))
 }
 
 #[derive(Deserialize, ToSchema)]
@@ -90,14 +107,31 @@ async fn login_handler(State(st): State<AppState>, Json(req): Json<LoginRequest>
 
 #[utoipa::path(post, path = "/auth/logout", tag = "auth", responses((status = 204)), security(("bearer" = [])))]
 async fn logout_handler(State(st): State<AppState>, headers: HeaderMap) -> Response {
-    if let Some(token) = headers
-        .get(AUTHORIZATION)
-        .and_then(|v| v.to_str().ok())
-        .and_then(|s| s.strip_prefix("Bearer "))
-    {
+    if let Some(token) = bearer(&headers) {
         let _ = st.sessions.revoke(token).await;
     }
     StatusCode::NO_CONTENT.into_response()
+}
+
+// 滑动会话:用当前有效令牌换一枚新令牌(全新 TTL),旧令牌即时失效。
+#[utoipa::path(post, path = "/auth/refresh", tag = "auth", responses((status = 200, body = LoginResponse), (status = 401)), security(("bearer" = [])))]
+async fn refresh_handler(State(st): State<AppState>, headers: HeaderMap) -> Response {
+    let Some(token) = bearer(&headers) else {
+        return (StatusCode::UNAUTHORIZED, "missing bearer token").into_response();
+    };
+    match st.sessions.get(token).await {
+        Ok(Some(session)) => {
+            match st.sessions.create(&session.user_id, session.permissions, st.ttl_secs).await {
+                Ok(fresh) => {
+                    let _ = st.sessions.revoke(token).await;
+                    (StatusCode::OK, Json(LoginResponse { token: fresh })).into_response()
+                }
+                Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "auth error").into_response(),
+            }
+        }
+        Ok(None) => (StatusCode::UNAUTHORIZED, "invalid or expired token").into_response(),
+        Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "auth error").into_response(),
+    }
 }
 
 #[derive(Deserialize, ToSchema)]
@@ -694,7 +728,7 @@ async fn revoke_role(user: AuthUser, State(st): State<RoleState>, Json(req): Jso
 #[derive(OpenApi)]
 #[openapi(
     paths(
-        login_handler, logout_handler, resolve_names, oidc_authorize, oidc_callback,
+        login_handler, logout_handler, refresh_handler, resolve_names, oidc_authorize, oidc_callback,
         create_user, list_users, get_user, update_user, delete_user,
         create_org, list_orgs, get_org, update_org, delete_org,
         create_role, list_roles, get_role, update_role, delete_role, grant_role, revoke_role
@@ -737,7 +771,7 @@ mod tests {
         let user_roles = Arc::new(InMemoryUserRoleRepository::new(Arc::new(InMemoryRoleRepository::new())));
         let login = LoginUseCase::new(creds.clone(), hasher.clone(), sessions.clone(), user_roles.clone());
         (
-            router(create, resolve, login, admin, creds, hasher, user_roles, sessions.clone()),
+            router(create, resolve, login, admin, creds, hasher, user_roles, sessions.clone(), 3600),
             sessions,
         )
     }
@@ -777,6 +811,28 @@ mod tests {
         let app = app();
         assert!(token(&app, "admin", "secret").await.is_some());
         assert!(token(&app, "admin", "WRONG").await.is_none());
+    }
+
+    #[tokio::test]
+    async fn refresh_rotates_token_and_revokes_old() {
+        let (app, sessions) = app_store();
+        let old = token(&app, "admin", "secret").await.expect("login");
+
+        let resp = app.clone().oneshot(post("/auth/refresh", "", Some(&old))).await.expect("resp");
+        assert_eq!(resp.status(), StatusCode::OK);
+        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.expect("body");
+        let new = serde_json::from_slice::<serde_json::Value>(&bytes).expect("json")["token"]
+            .as_str()
+            .expect("token")
+            .to_string();
+        assert_ne!(new, old);
+        // 新令牌有效;旧令牌已撤销。
+        assert!(sessions.get(&new).await.expect("ok").is_some());
+        assert!(sessions.get(&old).await.expect("ok").is_none());
+
+        // 无令牌刷新 → 401。
+        let no_tok = app.oneshot(post("/auth/refresh", "", None)).await.expect("resp");
+        assert_eq!(no_tok.status(), StatusCode::UNAUTHORIZED);
     }
 
     #[tokio::test]
@@ -1068,7 +1124,7 @@ mod tests {
             .await
             .expect("grant");
         let login = LoginUseCase::new(creds.clone(), hasher.clone(), sessions.clone(), user_roles.clone());
-        let app = router(create, resolve, login, admin, creds, hasher, user_roles, sessions);
+        let app = router(create, resolve, login, admin, creds, hasher, user_roles, sessions, 3600);
         let tok = token(&app, "bob", "pw").await.expect("token");
         let r = app.oneshot(post("/system/user", create_body(), Some(&tok))).await.expect("r");
         assert_eq!(r.status(), StatusCode::CREATED);
