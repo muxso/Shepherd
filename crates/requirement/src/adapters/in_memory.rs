@@ -2,7 +2,7 @@ use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 
-use crate::domain::{NewRequirement, Requirement};
+use crate::domain::{NewRequirement, Requirement, StatusCounts};
 use crate::ports::{RepoError, RequirementRepository};
 
 #[derive(Default)]
@@ -111,6 +111,15 @@ impl RequirementRepository for InMemoryRequirementRepository {
         }
         Ok(())
     }
+
+    async fn status_counts(&self, project_id: &str) -> Result<StatusCounts, RepoError> {
+        let st = self.state.lock().expect("lock");
+        let mut counts = StatusCounts::default();
+        for r in st.requirements.iter().filter(|r| r.occupies_title() && r.project_id == project_id) {
+            counts.add(r.status);
+        }
+        Ok(counts)
+    }
 }
 
 #[cfg(test)]
@@ -160,6 +169,28 @@ mod tests {
         let listed = repo.list_active("p1", 0, 10).await.expect("list");
         assert_eq!(listed.len(), 1);
         assert_eq!(listed[0].title, "A");
+    }
+
+    #[tokio::test]
+    async fn status_counts_tallies_active_by_status() {
+        let repo = InMemoryRequirementRepository::new();
+        // 两条 DRAFT + 一条改成 DELETED(soft delete 不计) + 另一项目一条(不计)。
+        let a = repo.insert(&NewRequirement::new("p1", "A", "d", &[]).expect("v")).await.expect("i");
+        repo.insert(&NewRequirement::new("p1", "B", "d", &[]).expect("v")).await.expect("i");
+        let c = repo.insert(&NewRequirement::new("p1", "C", "d", &[]).expect("v")).await.expect("i");
+        repo.insert(&NewRequirement::new("p2", "X", "d", &[]).expect("v")).await.expect("i");
+        repo.soft_delete(&c.id);
+        // 把 A 推进到 BASELINED。
+        let mut ra = repo.get(&a.id).await.expect("g").expect("s");
+        ra.set_baseline(1).expect("baseline");
+        repo.save(&ra).await.expect("save");
+
+        let counts = repo.status_counts("p1").await.expect("counts");
+        assert_eq!(counts.draft, 1); // B
+        assert_eq!(counts.baselined, 1); // A
+        assert_eq!(counts.delivered, 0);
+        assert_eq!(counts.archived, 0);
+        assert_eq!(counts.total(), 2); // C 已软删,p2 不属本项目
     }
 
     #[tokio::test]

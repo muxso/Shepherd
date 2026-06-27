@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use crate::domain::{parse_criteria, Requirement, RequirementError};
+use crate::domain::{parse_criteria, Requirement, RequirementError, StatusCounts};
 use crate::ports::{RepoError, RequirementRepository};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -54,6 +54,14 @@ impl RequirementService {
     ) -> Result<(), RequirementCmdError> {
         self.repo.set_order(project_id, ordered_ids).await?;
         Ok(())
+    }
+
+    /// 项目内需求按状态聚合(仪表盘)。
+    pub async fn status_summary(
+        &self,
+        project_id: &str,
+    ) -> Result<StatusCounts, RequirementCmdError> {
+        Ok(self.repo.status_counts(project_id).await?)
     }
 
     pub async fn revise(

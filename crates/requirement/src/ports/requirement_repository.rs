@@ -3,7 +3,7 @@
 use async_trait::async_trait;
 use thiserror::Error;
 
-use crate::domain::{NewRequirement, Requirement};
+use crate::domain::{NewRequirement, Requirement, StatusCounts};
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum RepoError {
@@ -37,4 +37,7 @@ pub trait RequirementRepository: Send + Sync {
 
     /// 手工排序:按给定顺序为这些需求写入显式秩(1..N);未列出的保持原秩。
     async fn set_order(&self, project_id: &str, ordered_ids: &[String]) -> Result<(), RepoError>;
+
+    /// 项目内未删除需求按状态聚合(仪表盘)。
+    async fn status_counts(&self, project_id: &str) -> Result<StatusCounts, RepoError>;
 }
