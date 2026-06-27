@@ -19,6 +19,7 @@ mod plan_run;
 mod plan_scheduler;
 mod project_file;
 mod planner;
+mod problem;
 mod ratelimit;
 mod references_route;
 mod report_archive_job;
