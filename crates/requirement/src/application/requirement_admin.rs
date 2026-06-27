@@ -46,6 +46,16 @@ impl RequirementService {
         self.repo.get(id).await?.filter(|r| !r.deleted).ok_or(RequirementCmdError::NotFound)
     }
 
+    /// 手工排序:按给定顺序为项目内这些需求写入显式秩。
+    pub async fn reorder(
+        &self,
+        project_id: &str,
+        ordered_ids: &[String],
+    ) -> Result<(), RequirementCmdError> {
+        self.repo.set_order(project_id, ordered_ids).await?;
+        Ok(())
+    }
+
     pub async fn revise(
         &self,
         id: &str,

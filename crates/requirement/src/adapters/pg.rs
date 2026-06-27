@@ -156,7 +156,7 @@ impl RequirementRepository for PgRequirementRepository {
     ) -> Result<Vec<Requirement>, RepoError> {
         let rows = sqlx::query(&format!(
             "SELECT {META_COLS} FROM ms_requirement \
-             WHERE project_id = $1 AND deleted = false ORDER BY seq LIMIT $2 OFFSET $3"
+             WHERE project_id = $1 AND deleted = false ORDER BY sort_order, seq LIMIT $2 OFFSET $3"
         ))
         .bind(project_id)
         .bind(limit as i64)
@@ -203,6 +203,23 @@ impl RequirementRepository for PgRequirementRepository {
             .map_err(map_err)?;
         }
 
+        tx.commit().await.map_err(map_err)?;
+        Ok(())
+    }
+
+    async fn set_order(&self, project_id: &str, ordered_ids: &[String]) -> Result<(), RepoError> {
+        let mut tx = self.pool.begin().await.map_err(map_err)?;
+        for (i, id) in ordered_ids.iter().enumerate() {
+            sqlx::query(
+                "UPDATE ms_requirement SET sort_order = $1 WHERE id = $2 AND project_id = $3",
+            )
+            .bind(i as i64 + 1)
+            .bind(id)
+            .bind(project_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(map_err)?;
+        }
         tx.commit().await.map_err(map_err)?;
         Ok(())
     }
