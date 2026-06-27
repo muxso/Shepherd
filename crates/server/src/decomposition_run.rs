@@ -5,7 +5,7 @@ use axum::{
     extract::{FromRef, Path, State},
     http::StatusCode,
     response::{IntoResponse, Response},
-    routing::post,
+    routing::{get, post},
     Json, Router,
 };
 use serde::{Deserialize, Serialize};
@@ -41,6 +41,7 @@ pub fn router(
 ) -> Router {
     Router::new()
         .route("/decomposition/{id}/run", post(run_decomposition))
+        .route("/decomposition/{id}/graph", get(graph_handler))
         .with_state(RunState { tasks, delivery, requirements, sessions })
 }
 
@@ -163,8 +164,83 @@ async fn run_decomposition(
         .into_response()
 }
 
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+struct GraphNodeDto {
+    id: String,
+    title: String,
+    status: String,
+    assignee: String,
+    points: i32,
+    layer: u32,
+    ready: bool,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+struct GraphEdgeDto {
+    from: String,
+    to: String,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+struct GraphResponse {
+    decomposition_id: String,
+    layers: u32,
+    nodes: Vec<GraphNodeDto>,
+    edges: Vec<GraphEdgeDto>,
+}
+
+/// 依赖图可视化数据:节点(含拓扑层与就绪态)+ 有向边(依赖 → 被依赖任务)。
+#[utoipa::path(
+    get, path = "/decomposition/{id}/graph", tag = "task",
+    params(("id" = String, Path)),
+    responses((status = 200, body = GraphResponse), (status = 403), (status = 404)),
+    security(("bearer" = []))
+)]
+async fn graph_handler(
+    user: AuthUser,
+    State(st): State<RunState>,
+    Path(id): Path<String>,
+) -> Response {
+    if !user.can("TASK", "READ") {
+        return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
+    let dec = match st.tasks.get(&id).await {
+        Ok(d) => d,
+        Err(TaskCmdError::DecompositionNotFound) => {
+            return (StatusCode::NOT_FOUND, "decomposition not found").into_response()
+        }
+        Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
+    };
+    let g = dec.graph_view();
+    let nodes = g
+        .nodes
+        .into_iter()
+        .map(|n| GraphNodeDto {
+            id: n.id,
+            title: n.title,
+            status: n.status.to_string(),
+            assignee: n.assignee,
+            points: n.points,
+            layer: n.layer,
+            ready: n.ready,
+        })
+        .collect();
+    let edges = g.edges.into_iter().map(|e| GraphEdgeDto { from: e.from, to: e.to }).collect();
+    (
+        StatusCode::OK,
+        Json(GraphResponse { decomposition_id: id, layers: g.layers, nodes, edges }),
+    )
+        .into_response()
+}
+
 #[derive(OpenApi)]
-#[openapi(paths(run_decomposition), components(schemas(RunBody, RunResponse)), tags((name = "task", description = "任务编排")))]
+#[openapi(
+    paths(run_decomposition, graph_handler),
+    components(schemas(RunBody, RunResponse, GraphResponse, GraphNodeDto, GraphEdgeDto)),
+    tags((name = "task", description = "任务编排"))
+)]
 struct ApiDoc;
 
 pub fn openapi() -> utoipa::openapi::OpenApi {
