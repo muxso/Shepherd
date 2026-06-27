@@ -6,6 +6,7 @@ use sqlx::{PgPool, Row};
 
 use crate::domain::{
     AcceptanceCriterion, NewRequirement, Requirement, RequirementStatus, RequirementVersion,
+    StatusCounts,
 };
 use crate::ports::{RepoError, RequirementRepository};
 
@@ -222,6 +223,31 @@ impl RequirementRepository for PgRequirementRepository {
         }
         tx.commit().await.map_err(map_err)?;
         Ok(())
+    }
+
+    async fn status_counts(&self, project_id: &str) -> Result<StatusCounts, RepoError> {
+        let rows = sqlx::query(
+            "SELECT status, count(*) AS n FROM ms_requirement \
+             WHERE project_id = $1 AND deleted = false GROUP BY status",
+        )
+        .bind(project_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(map_err)?;
+        let mut counts = StatusCounts::default();
+        for row in &rows {
+            let status: String = row.try_get("status").map_err(map_err)?;
+            let n = row.try_get::<i64, _>("n").map_err(map_err)?.max(0) as u64;
+            // 未知状态(理论不该出现)忽略,不污染计数。
+            match RequirementStatus::parse(&status) {
+                Some(RequirementStatus::Draft) => counts.draft += n,
+                Some(RequirementStatus::Baselined) => counts.baselined += n,
+                Some(RequirementStatus::Delivered) => counts.delivered += n,
+                Some(RequirementStatus::Archived) => counts.archived += n,
+                None => {}
+            }
+        }
+        Ok(counts)
     }
 }
 
