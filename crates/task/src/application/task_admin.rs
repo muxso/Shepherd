@@ -86,6 +86,22 @@ impl TaskService {
         Ok(d)
     }
 
+    /// 批量重指派,返回(最新分解, 改动数)。无改动则不落库。
+    pub async fn reassign(
+        &self,
+        decomposition_id: &str,
+        from: &str,
+        to: &str,
+        kind: &str,
+    ) -> Result<(Decomposition, usize), TaskCmdError> {
+        let mut d = self.get(decomposition_id).await?;
+        let changed = d.reassign(from, to, kind);
+        if changed > 0 {
+            self.repo.save(&d).await?;
+        }
+        Ok((d, changed))
+    }
+
     pub async fn dispatch(
         &self,
         decomposition_id: &str,
