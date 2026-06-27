@@ -40,6 +40,7 @@ pub fn router(
 ) -> Router {
     Router::new()
         .route("/requirement", post(create_requirement).get(list_requirements))
+        .route("/requirement/order", put(reorder_requirements))
         .route(
             "/requirement/{id}",
             get(get_requirement).put(rename_requirement).delete(delete_requirement),
@@ -337,13 +338,36 @@ async fn delete_requirement(user: AuthUser, State(st): State<ReqState>, Path(id)
     }
 }
 
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+struct ReorderBody {
+    project_id: String,
+    ordered_ids: Vec<String>,
+}
+
+/// 手工排序:按 `orderedIds` 顺序为项目内这些需求写入显式秩;列表按该秩展示。
+#[utoipa::path(put, path = "/requirement/order", tag = "requirement", request_body = ReorderBody, responses((status = 204), (status = 403)), security(("bearer" = [])))]
+async fn reorder_requirements(
+    user: AuthUser,
+    State(st): State<ReqState>,
+    Json(b): Json<ReorderBody>,
+) -> Response {
+    if !user.can("REQUIREMENT", "UPDATE") {
+        return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
+    match st.admin.reorder(&b.project_id, &b.ordered_ids).await {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(e) => cmd_err(e),
+    }
+}
+
 #[derive(OpenApi)]
 #[openapi(
     paths(
         create_requirement, list_requirements, get_requirement, get_version,
-        revise_requirement, set_baseline, reject_review, rename_requirement, archive_requirement, deliver_requirement, delete_requirement
+        revise_requirement, set_baseline, reject_review, rename_requirement, archive_requirement, deliver_requirement, delete_requirement, reorder_requirements
     ),
-    components(schemas(CreateBody, ReviseBody, SetBaselineBody, RejectReviewBody, RenameBody, VersionResponse, RequirementResponse, RequirementPage, VersionCreated)),
+    components(schemas(CreateBody, ReviseBody, SetBaselineBody, RejectReviewBody, RenameBody, ReorderBody, VersionResponse, RequirementResponse, RequirementPage, VersionCreated)),
     tags((name = "requirement", description = "需求管理(多版本)"))
 )]
 struct ApiDoc;
@@ -387,6 +411,55 @@ mod tests {
     async fn body_json(resp: Response) -> serde_json::Value {
         let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.expect("body");
         serde_json::from_slice(&bytes).expect("json")
+    }
+
+    async fn create_req(app: &Router, t: &str, title: &str) -> String {
+        let r = app
+            .clone()
+            .oneshot(req(
+                "POST",
+                "/requirement",
+                &format!(r#"{{"projectId":"p1","title":"{title}","description":"d","acceptanceCriteria":[]}}"#),
+                Some(t),
+            ))
+            .await
+            .expect("r");
+        assert_eq!(r.status(), StatusCode::CREATED);
+        body_json(r).await["id"].as_str().expect("id").to_string()
+    }
+
+    #[tokio::test]
+    async fn reorder_changes_list_order_not_caught_by_id_route() {
+        let (app, t) = app_with("REQUIREMENT:READ+ADD+UPDATE").await;
+        let a = create_req(&app, &t, "A").await;
+        let b = create_req(&app, &t, "B").await;
+
+        // PUT /requirement/order 命中 reorder(204),而非 /requirement/{id} 改名。
+        let body = format!(r#"{{"projectId":"p1","orderedIds":["{b}","{a}"]}}"#);
+        let r = app
+            .clone()
+            .oneshot(req("PUT", "/requirement/order", &body, Some(&t)))
+            .await
+            .expect("r");
+        assert_eq!(r.status(), StatusCode::NO_CONTENT);
+
+        let r = app
+            .oneshot(req("GET", "/requirement?projectId=p1&current=1&pageSize=10", "", Some(&t)))
+            .await
+            .expect("r");
+        let v = body_json(r).await;
+        assert_eq!(v["items"][0]["title"], "B");
+        assert_eq!(v["items"][1]["title"], "A");
+    }
+
+    #[tokio::test]
+    async fn reorder_without_update_perm_403() {
+        let (app, t) = app_with("REQUIREMENT:READ").await;
+        let r = app
+            .oneshot(req("PUT", "/requirement/order", r#"{"projectId":"p1","orderedIds":[]}"#, Some(&t)))
+            .await
+            .expect("r");
+        assert_eq!(r.status(), StatusCode::FORBIDDEN);
     }
 
     #[tokio::test]
