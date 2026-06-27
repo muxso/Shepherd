@@ -20,3 +20,5 @@ pub mod http;
 pub mod auth;
 #[cfg(feature = "oidc")]
 pub mod oidc;
+#[cfg(feature = "ldap")]
+pub mod ldap;
