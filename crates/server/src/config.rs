@@ -30,9 +30,60 @@ pub struct ServerConfig {
     pub runner_noop: bool,
 }
 
+/// 解析 `KEY=VALUE` 风格的环境文件:忽略空行与 `#` 注释,trim 键值,
+/// 可选 `export ` 前缀,去掉值两端成对引号。不做变量插值。
+fn parse_env_file(contents: &str) -> std::collections::HashMap<String, String> {
+    let mut out = std::collections::HashMap::new();
+    for line in contents.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let line = line.strip_prefix("export ").unwrap_or(line);
+        let Some((k, v)) = line.split_once('=') else { continue };
+        let k = k.trim();
+        if k.is_empty() {
+            continue;
+        }
+        let v = v.trim();
+        let v = v
+            .strip_prefix('"')
+            .and_then(|s| s.strip_suffix('"'))
+            .or_else(|| v.strip_prefix('\'').and_then(|s| s.strip_suffix('\'')))
+            .unwrap_or(v);
+        out.insert(k.to_string(), v.to_string());
+    }
+    out
+}
+
+/// 分层查找:进程环境优先,其后按优先级从高到低落到各文件层。
+/// 进程环境始终胜出,既有部署(只用环境变量)行为不变。
+fn layered_lookup(
+    env: impl Fn(&str) -> Option<String>,
+    files: Vec<std::collections::HashMap<String, String>>,
+) -> impl Fn(&str) -> Option<String> {
+    move |key| env(key).or_else(|| files.iter().find_map(|m| m.get(key).cloned()))
+}
+
 impl ServerConfig {
+    /// 加载顺序(前者优先):进程环境 → `shepherd.${SHEPHERD_ENV}.env`(profile)
+    /// → `shepherd.env`(共享默认)。文件目录由 `SHEPHERD_CONFIG_DIR` 指定,缺省当前目录。
     pub fn from_env() -> Self {
-        Self::resolve(|key| std::env::var(key).ok())
+        let dir = std::env::var("SHEPHERD_CONFIG_DIR").unwrap_or_else(|_| ".".to_string());
+        let read = |path: String| std::fs::read_to_string(path).ok().map(|c| parse_env_file(&c));
+        let mut files = Vec::new();
+        if let Ok(name) = std::env::var("SHEPHERD_ENV") {
+            let name = name.trim();
+            if !name.is_empty() {
+                if let Some(m) = read(format!("{dir}/shepherd.{name}.env")) {
+                    files.push(m);
+                }
+            }
+        }
+        if let Some(m) = read(format!("{dir}/shepherd.env")) {
+            files.push(m);
+        }
+        Self::resolve(layered_lookup(|key| std::env::var(key).ok(), files))
     }
 
     pub fn resolve(lookup: impl Fn(&str) -> Option<String>) -> Self {
@@ -121,6 +172,46 @@ mod tests {
             cfg.feishu,
             Some(OidcProviderConfig { app_id: "x".into(), app_secret: "y".into(), redirect: String::new() })
         );
+    }
+
+    #[test]
+    fn env_file_parsing() {
+        let m = parse_env_file(
+            "# comment\n\nSHEPHERD_BIND=127.0.0.1:9180\nexport SHEPHERD_ENV=prod\nQUOTED=\"a b\"\nSQ='x'\nDATABASE_URL=postgres://u:p@h/db?x=1\n=skip\n  PAD = 3 \n",
+        );
+        assert_eq!(m.get("SHEPHERD_BIND").unwrap(), "127.0.0.1:9180");
+        assert_eq!(m.get("SHEPHERD_ENV").unwrap(), "prod"); // export 前缀
+        assert_eq!(m.get("QUOTED").unwrap(), "a b"); // 去引号
+        assert_eq!(m.get("SQ").unwrap(), "x");
+        assert_eq!(m.get("DATABASE_URL").unwrap(), "postgres://u:p@h/db?x=1"); // 值内 '=' 保留
+        assert_eq!(m.get("PAD").unwrap(), "3"); // 键值各自 trim
+        assert!(!m.contains_key("")); // 空键跳过
+    }
+
+    #[test]
+    fn process_env_wins_over_files_then_profile_over_base() {
+        let mut base = HashMap::new();
+        base.insert("SHEPHERD_BIND".to_string(), "base:1".to_string());
+        base.insert("SHEPHERD_ADMIN_PASSWORD".to_string(), "frombase".to_string());
+        let mut profile = HashMap::new();
+        profile.insert("SHEPHERD_BIND".to_string(), "profile:2".to_string());
+        // 优先级:进程环境 > profile > base。
+        let env: HashMap<String, String> =
+            [("SHEPHERD_BIND".to_string(), "env:3".to_string())].into_iter().collect();
+        let lookup = layered_lookup(move |k| env.get(k).cloned(), vec![profile, base]);
+        let cfg = ServerConfig::resolve(lookup);
+        assert_eq!(cfg.bind, "env:3"); // 进程环境胜出
+        assert_eq!(cfg.admin_pw, "frombase"); // 仅 base 提供 → 回落到 base
+    }
+
+    #[test]
+    fn profile_layer_overrides_base_when_env_absent() {
+        let base: HashMap<String, String> =
+            [("SHEPHERD_BIND".to_string(), "base:1".to_string())].into_iter().collect();
+        let profile: HashMap<String, String> =
+            [("SHEPHERD_BIND".to_string(), "profile:2".to_string())].into_iter().collect();
+        let lookup = layered_lookup(|_| None, vec![profile, base]);
+        assert_eq!(ServerConfig::resolve(lookup).bind, "profile:2");
     }
 
     #[test]
