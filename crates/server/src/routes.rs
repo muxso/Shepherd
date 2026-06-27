@@ -59,6 +59,8 @@ pub fn assemble(groups: Vec<RouteGroup>) -> Router {
         tracing::info!("限流已启用(每客户端令牌桶)");
         app = app.layer(axum::middleware::from_fn_with_state(rl, ratelimit::layer));
     }
+    // 统一错误体:把纯文本 4xx/5xx 归一成 problem+json(含框架 404、超时/限流/体积层)。
+    app = app.layer(axum::middleware::from_fn(crate::problem::normalize));
     // 最外层:记录最终状态(含超时/限流/CORS 转换)。
     app.layer(axum::middleware::from_fn_with_state(metrics, metrics::track))
 }
