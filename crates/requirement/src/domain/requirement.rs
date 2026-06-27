@@ -87,6 +87,31 @@ impl NewRequirement {
     }
 }
 
+/// 按状态聚合的需求计数(项目仪表盘用)。
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct StatusCounts {
+    pub draft: u64,
+    pub baselined: u64,
+    pub delivered: u64,
+    pub archived: u64,
+}
+
+impl StatusCounts {
+    pub fn total(&self) -> u64 {
+        self.draft + self.baselined + self.delivered + self.archived
+    }
+
+    /// 把一个状态计入对应桶。
+    pub fn add(&mut self, status: RequirementStatus) {
+        match status {
+            RequirementStatus::Draft => self.draft += 1,
+            RequirementStatus::Baselined => self.baselined += 1,
+            RequirementStatus::Delivered => self.delivered += 1,
+            RequirementStatus::Archived => self.archived += 1,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RequirementStatus {
     Draft,
