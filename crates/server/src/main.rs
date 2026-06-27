@@ -201,6 +201,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         hasher_admin,
         user_role_query,
         sessions.clone(),
+        ttl_secs,
     );
 
     let ext_users =
