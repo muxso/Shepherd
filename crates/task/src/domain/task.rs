@@ -140,6 +140,33 @@ pub struct Task {
     pub assignee_kind: String,
 }
 
+/// 依赖图节点:任务 + 拓扑层 + 当前是否就绪(可派发)。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GraphNode {
+    pub id: String,
+    pub title: String,
+    pub status: &'static str,
+    pub assignee: String,
+    pub points: i32,
+    pub layer: u32,
+    pub ready: bool,
+}
+
+/// 有向边:`from`(依赖/前驱)→ `to`(被依赖的任务/后继)。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GraphEdge {
+    pub from: String,
+    pub to: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GraphView {
+    pub nodes: Vec<GraphNode>,
+    pub edges: Vec<GraphEdge>,
+    /// 总层数 = 最长链长度;空图为 0。
+    pub layers: u32,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Decomposition {
     pub id: String,
@@ -263,6 +290,54 @@ impl Decomposition {
         }
     }
 
+    /// 依赖图只读视图(可视化用):节点(含拓扑层与就绪态)+ 边(依赖 → 被依赖任务)。
+    /// 层 = 最长依赖链深度(根为 0);松弛求解,不依赖任务行序,DAG 保证收敛。
+    pub fn graph_view(&self) -> GraphView {
+        let mut layer: std::collections::HashMap<&str, u32> =
+            self.tasks.iter().map(|t| (t.id.as_str(), 0u32)).collect();
+        for _ in 0..self.tasks.len() {
+            let mut changed = false;
+            for t in &self.tasks {
+                let want = t
+                    .dependencies
+                    .iter()
+                    .filter_map(|d| layer.get(d.as_str()).copied())
+                    .map(|m| m + 1)
+                    .max()
+                    .unwrap_or(0);
+                if layer.get(t.id.as_str()).copied().unwrap_or(0) != want {
+                    layer.insert(t.id.as_str(), want);
+                    changed = true;
+                }
+            }
+            if !changed {
+                break;
+            }
+        }
+        let nodes = self
+            .tasks
+            .iter()
+            .map(|t| GraphNode {
+                id: t.id.clone(),
+                title: t.title.clone(),
+                status: t.status.as_str(),
+                assignee: t.assignee.clone(),
+                points: t.points,
+                layer: layer.get(t.id.as_str()).copied().unwrap_or(0),
+                ready: t.status == TaskStatus::Pending && self.dependencies_satisfied(&t.id),
+            })
+            .collect();
+        let edges = self
+            .tasks
+            .iter()
+            .flat_map(|t| {
+                t.dependencies.iter().map(move |d| GraphEdge { from: d.clone(), to: t.id.clone() })
+            })
+            .collect();
+        let layers = layer.values().copied().max().map(|m| m + 1).unwrap_or(0);
+        GraphView { nodes, edges, layers }
+    }
+
     /// Use `dispatch` rather than this for Pending→Dispatched so the dependency gate applies.
     pub fn transition(&mut self, id: &str, to: TaskStatus) -> Result<(), TaskError> {
         let satisfied = to != TaskStatus::Dispatched || self.dependencies_satisfied(id);
@@ -335,6 +410,56 @@ mod tests {
         assert_eq!(t.title, "build");
         assert_eq!(t.description, "do it");
         assert_eq!(t.acceptance_criteria, vec!["c1".to_string()]);
+    }
+
+    #[test]
+    fn graph_view_layers_edges_and_ready() {
+        // 菱形:t1 → {t2, t3} → t4。
+        let mut d = Decomposition::new("d1", "req1", 1);
+        d.add_task(nt("A", &[])).expect("a");
+        d.add_task(nt("B", &["t1"])).expect("b");
+        d.add_task(nt("C", &["t1"])).expect("c");
+        d.add_task(nt("D", &["t2", "t3"])).expect("d");
+
+        let g = d.graph_view();
+        assert_eq!(g.layers, 3); // t1=0, t2/t3=1, t4=2 → 3 层
+        let layer = |id: &str| g.nodes.iter().find(|n| n.id == id).expect("node").layer;
+        assert_eq!(layer("t1"), 0);
+        assert_eq!(layer("t2"), 1);
+        assert_eq!(layer("t3"), 1);
+        assert_eq!(layer("t4"), 2);
+
+        // 边:每条依赖一条 from(前驱)→ to(后继)。
+        assert_eq!(g.edges.len(), 4);
+        assert!(g.edges.contains(&GraphEdge { from: "t1".into(), to: "t2".into() }));
+        assert!(g.edges.contains(&GraphEdge { from: "t2".into(), to: "t4".into() }));
+
+        // 仅无依赖的 t1 此刻就绪;有未验证依赖的不就绪。
+        let ready = |id: &str| g.nodes.iter().find(|n| n.id == id).expect("node").ready;
+        assert!(ready("t1"));
+        assert!(!ready("t2"));
+        assert!(!ready("t4"));
+    }
+
+    #[test]
+    fn graph_view_ready_follows_verified_dependencies() {
+        let mut d = Decomposition::new("d1", "req1", 1);
+        d.add_task(nt("A", &[])).expect("a");
+        d.add_task(nt("B", &["t1"])).expect("b");
+        drive_to_verified(&mut d, "t1");
+
+        let g = d.graph_view();
+        // t1 已验证 → 不再 Pending,不就绪;t2 依赖满足 → 就绪。
+        assert!(!g.nodes.iter().find(|n| n.id == "t1").expect("t1").ready);
+        assert!(g.nodes.iter().find(|n| n.id == "t2").expect("t2").ready);
+    }
+
+    #[test]
+    fn graph_view_of_empty_decomposition_is_empty() {
+        let g = Decomposition::new("d1", "req1", 1).graph_view();
+        assert!(g.nodes.is_empty());
+        assert!(g.edges.is_empty());
+        assert_eq!(g.layers, 0);
     }
 
     #[test]
