@@ -178,6 +178,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 "DELIVERY:READ+EXECUTE+UPDATE".to_string(),
                 "VERIFICATION:READ+ADD+UPDATE".to_string(),
                 "SKILL:READ+ADD+UPDATE+DELETE".to_string(),
+                "COMMENT:READ+ADD+DELETE".to_string(),
             ],
         )
         .await?;
@@ -247,6 +248,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         CreateRequirementUseCase::new(req_repo.clone()),
         ListRequirementsUseCase::new(req_repo.clone()),
         req_admin.clone(),
+        sessions.clone(),
+    );
+
+    // 通用评论(多态挂任意实体:REQUIREMENT / BUG / FUNCTIONAL_CASE …)。
+    let comment_repo = Arc::new(comment::adapters::pg::PgCommentRepository::new(pool.clone()));
+    let comment_routes = comment::adapters::http::router(
+        comment::application::AddCommentUseCase::new(comment_repo.clone()),
+        comment::application::ListCommentsUseCase::new(comment_repo.clone()),
+        comment::application::DeleteCommentUseCase::new(comment_repo),
         sessions.clone(),
     );
 
@@ -553,7 +563,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let app = routes::assemble(vec![
         routes::group("system", user_routes.merge(oidc_routes).merge(org_routes).merge(role_routes)),
         routes::group("project", project_routes.merge(project_file_routes).merge(references_routes)),
-        routes::group("requirement", requirement_routes),
+        routes::group("requirement", requirement_routes.merge(comment_routes)),
         routes::group(
             "delivery",
             task_routes
