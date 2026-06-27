@@ -8,7 +8,7 @@ license.workspace = true
 # 唯一允许同时认识具体存储(PG)、HTTP(axum)、各模块用例的地方:
 # 把它们 new 出来、合并路由、启动。其余各层永远只认抽象。
 [dependencies]
-system-setting = { path = "../system-setting", features = ["pg", "http", "auth", "oidc"] }
+system-setting = { path = "../system-setting", features = ["pg", "http", "auth", "oidc", "ldap"] }
 project = { path = "../project", features = ["pg", "http"] }
 case = { path = "../case", features = ["pg", "http"] }
 bug = { path = "../bug", features = ["pg", "http"] }
