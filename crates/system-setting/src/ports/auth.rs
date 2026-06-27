@@ -37,3 +37,11 @@ pub trait PasswordHasher: Send + Sync {
     fn verify(&self, plain: &str, hash: &str) -> bool;
 }
 
+/// 外部目录认证(LDAP 等):仅验证「用户名 + 密码」能否绑定成功。
+/// 授权仍走本地角色/权限(**本地授权 + 外部认证**),用户须已在本地存在。
+/// `Ok(true)` 绑定成功;`Ok(false)` 凭证被拒;`Err` 为目录后端不可用(区别于密码错)。
+#[async_trait]
+pub trait DirectoryAuthenticator: Send + Sync {
+    async fn authenticate(&self, username: &str, password: &str) -> Result<bool, AuthRepoError>;
+}
+

@@ -185,9 +185,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let ttl_secs = cfg.session_ttl_secs;
     let role_repo = Arc::new(PgRoleRepository::new(pool.clone()));
     let user_role_repo = Arc::new(PgUserRoleRepository::new(pool.clone()));
-    let login_uc =
+    let mut login_uc =
         LoginUseCase::new(Arc::new(creds), Arc::new(hasher), sessions.clone(), user_role_repo.clone())
             .with_ttl_secs(ttl_secs);
+    // 可选 LDAP 目录认证(本地授权 + 外部认证):仅当 SHEPHERD_LDAP_* 配齐才启用。
+    if let Some(ldap) =
+        system_setting::adapters::ldap::LdapAuthenticator::from_env(|k| std::env::var(k).ok())
+    {
+        login_uc = login_uc.with_directory(Arc::new(ldap));
+        tracing::info!("registered directory authenticator: ldap");
+    }
     let creds_admin: Arc<dyn system_setting::ports::CredentialRepository> =
         Arc::new(PgCredentialRepository::new(pool.clone()));
     let hasher_admin: Arc<dyn system_setting::ports::PasswordHasher> = Arc::new(Argon2PasswordHasher);
