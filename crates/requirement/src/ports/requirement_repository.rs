@@ -34,4 +34,7 @@ pub trait RequirementRepository: Send + Sync {
 
     /// 版本不可变:save 只追加尚未落库的版本,不改写已存在的。
     async fn save(&self, requirement: &Requirement) -> Result<(), RepoError>;
+
+    /// 手工排序:按给定顺序为这些需求写入显式秩(1..N);未列出的保持原秩。
+    async fn set_order(&self, project_id: &str, ordered_ids: &[String]) -> Result<(), RepoError>;
 }

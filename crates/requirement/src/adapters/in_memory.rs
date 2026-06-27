@@ -9,6 +9,8 @@ use crate::ports::{RepoError, RequirementRepository};
 struct State {
     requirements: Vec<Requirement>,
     seq: u64,
+    /// 需求 id → 显式秩(reorder 写入);未排序的回落到插入序。
+    order: std::collections::HashMap<String, i64>,
 }
 
 #[derive(Clone, Default)]
@@ -75,16 +77,20 @@ impl RequirementRepository for InMemoryRequirementRepository {
         offset: u64,
         limit: u32,
     ) -> Result<Vec<Requirement>, RepoError> {
-        Ok(self
-            .state
-            .lock()
-            .expect("lock")
+        let st = self.state.lock().expect("lock");
+        // (显式秩, 插入序) 排序:未排序的秩为 0 → 按插入序;与历史行为一致。
+        let mut items: Vec<(usize, &Requirement)> = st
             .requirements
             .iter()
-            .filter(|r| r.occupies_title() && r.project_id == project_id)
+            .enumerate()
+            .filter(|(_, r)| r.occupies_title() && r.project_id == project_id)
+            .collect();
+        items.sort_by_key(|(idx, r)| (st.order.get(&r.id).copied().unwrap_or(0), *idx));
+        Ok(items
+            .into_iter()
             .skip(offset as usize)
             .take(limit as usize)
-            .cloned()
+            .map(|(_, r)| r.clone())
             .collect())
     }
 
@@ -92,6 +98,16 @@ impl RequirementRepository for InMemoryRequirementRepository {
         let mut st = self.state.lock().expect("lock");
         if let Some(slot) = st.requirements.iter_mut().find(|r| r.id == requirement.id) {
             *slot = requirement.clone();
+        }
+        Ok(())
+    }
+
+    async fn set_order(&self, project_id: &str, ordered_ids: &[String]) -> Result<(), RepoError> {
+        let mut st = self.state.lock().expect("lock");
+        for (i, id) in ordered_ids.iter().enumerate() {
+            if st.requirements.iter().any(|r| r.id == *id && r.project_id == project_id) {
+                st.order.insert(id.clone(), i as i64 + 1);
+            }
         }
         Ok(())
     }
@@ -112,6 +128,38 @@ mod tests {
         repo.save(&r).await.expect("save");
         let got = repo.get(&r.id).await.expect("get").expect("some");
         assert_eq!(got.latest_version(), 2);
+    }
+
+    #[tokio::test]
+    async fn list_defaults_to_insertion_order_then_honors_set_order() {
+        let repo = InMemoryRequirementRepository::new();
+        let mut ids = Vec::new();
+        for t in ["A", "B", "C"] {
+            let nu = NewRequirement::new("p1", t, "d", &[]).expect("v");
+            ids.push(repo.insert(&nu).await.expect("insert").id);
+        }
+        // 默认:插入序 A,B,C。
+        let titles = |rs: &[Requirement]| rs.iter().map(|r| r.title.clone()).collect::<Vec<_>>();
+        let listed = repo.list_active("p1", 0, 10).await.expect("list");
+        assert_eq!(titles(&listed), ["A", "B", "C"]);
+
+        // 排序:C,A,B。
+        repo.set_order("p1", &[ids[2].clone(), ids[0].clone(), ids[1].clone()]).await.expect("order");
+        let listed = repo.list_active("p1", 0, 10).await.expect("list");
+        assert_eq!(titles(&listed), ["C", "A", "B"]);
+    }
+
+    #[tokio::test]
+    async fn set_order_ignores_other_projects_ids() {
+        let repo = InMemoryRequirementRepository::new();
+        let a = repo.insert(&NewRequirement::new("p1", "A", "d", &[]).expect("v")).await.expect("i");
+        let _other =
+            repo.insert(&NewRequirement::new("p2", "X", "d", &[]).expect("v")).await.expect("i");
+        // 传入跨项目 id 不应影响 p1 的排序写入(仅本项目存在的 id 生效)。
+        repo.set_order("p1", &["nope".to_string(), a.id.clone()]).await.expect("order");
+        let listed = repo.list_active("p1", 0, 10).await.expect("list");
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].title, "A");
     }
 
     #[tokio::test]
