@@ -160,7 +160,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             &hasher.hash(&cfg.admin_pw),
             &[
                 "SYSTEM_USER:READ+ADD+UPDATE+DELETE".to_string(),
-                "PROJECT:READ+ADD".to_string(),
+                "PROJECT:READ+ADD+UPDATE+DELETE".to_string(),
                 "ORGANIZATION:READ+ADD+UPDATE+DELETE".to_string(),
                 "USER_ROLE:READ+ADD+UPDATE+DELETE".to_string(),
                 "BUG:READ+ADD+UPDATE".to_string(),
@@ -239,6 +239,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let project_routes = project::adapters::http::router(
         CreateProjectUseCase::new(project_repo.clone()),
         ListProjectsUseCase::new(project_repo),
+        sessions.clone(),
+    );
+    let project_member_routes = project::adapters::member_http::router(
+        project::application::ProjectMemberService::new(Arc::new(
+            project::adapters::pg_member::PgProjectMemberRepository::new(pool.clone()),
+        )),
         sessions.clone(),
     );
 
@@ -562,7 +568,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let app = routes::assemble(vec![
         routes::group("system", user_routes.merge(oidc_routes).merge(org_routes).merge(role_routes)),
-        routes::group("project", project_routes.merge(project_file_routes).merge(references_routes)),
+        routes::group(
+            "project",
+            project_routes
+                .merge(project_member_routes)
+                .merge(project_file_routes)
+                .merge(references_routes),
+        ),
         routes::group("requirement", requirement_routes.merge(comment_routes)),
         routes::group(
             "delivery",

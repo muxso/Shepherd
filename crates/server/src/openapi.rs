@@ -34,6 +34,7 @@ pub fn merged() -> utoipa::openapi::OpenApi {
     doc.merge(skill::adapters::http::openapi());
     doc.merge(system_setting::adapters::http::openapi());
     doc.merge(project::adapters::http::openapi());
+    doc.merge(project::adapters::member_http::openapi());
     doc.merge(case::adapters::http::openapi());
     doc.merge(bug::adapters::http::openapi());
     doc.merge(comment::adapters::http::openapi());
