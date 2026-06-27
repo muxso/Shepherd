@@ -41,6 +41,7 @@ pub fn router(
     Router::new()
         .route("/requirement", post(create_requirement).get(list_requirements))
         .route("/requirement/order", put(reorder_requirements))
+        .route("/requirement/summary", get(requirement_summary))
         .route(
             "/requirement/{id}",
             get(get_requirement).put(rename_requirement).delete(delete_requirement),
@@ -361,13 +362,55 @@ async fn reorder_requirements(
     }
 }
 
+#[derive(Debug, Deserialize, IntoParams)]
+#[serde(rename_all = "camelCase")]
+struct SummaryQuery {
+    project_id: String,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+struct SummaryResponse {
+    total: u64,
+    draft: u64,
+    baselined: u64,
+    delivered: u64,
+    archived: u64,
+}
+
+/// 项目需求按状态聚合(仪表盘):总数 + 各状态计数。
+#[utoipa::path(get, path = "/requirement/summary", tag = "requirement", params(SummaryQuery), responses((status = 200, body = SummaryResponse), (status = 403)), security(("bearer" = [])))]
+async fn requirement_summary(
+    user: AuthUser,
+    State(st): State<ReqState>,
+    Query(q): Query<SummaryQuery>,
+) -> Response {
+    if !user.can("REQUIREMENT", "READ") {
+        return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
+    match st.admin.status_summary(&q.project_id).await {
+        Ok(c) => (
+            StatusCode::OK,
+            Json(SummaryResponse {
+                total: c.total(),
+                draft: c.draft,
+                baselined: c.baselined,
+                delivered: c.delivered,
+                archived: c.archived,
+            }),
+        )
+            .into_response(),
+        Err(e) => cmd_err(e),
+    }
+}
+
 #[derive(OpenApi)]
 #[openapi(
     paths(
         create_requirement, list_requirements, get_requirement, get_version,
-        revise_requirement, set_baseline, reject_review, rename_requirement, archive_requirement, deliver_requirement, delete_requirement, reorder_requirements
+        revise_requirement, set_baseline, reject_review, rename_requirement, archive_requirement, deliver_requirement, delete_requirement, reorder_requirements, requirement_summary
     ),
-    components(schemas(CreateBody, ReviseBody, SetBaselineBody, RejectReviewBody, RenameBody, ReorderBody, VersionResponse, RequirementResponse, RequirementPage, VersionCreated)),
+    components(schemas(CreateBody, ReviseBody, SetBaselineBody, RejectReviewBody, RenameBody, ReorderBody, SummaryResponse, VersionResponse, RequirementResponse, RequirementPage, VersionCreated)),
     tags((name = "requirement", description = "需求管理(多版本)"))
 )]
 struct ApiDoc;
@@ -450,6 +493,50 @@ mod tests {
         let v = body_json(r).await;
         assert_eq!(v["items"][0]["title"], "B");
         assert_eq!(v["items"][1]["title"], "A");
+    }
+
+    #[tokio::test]
+    async fn summary_aggregates_by_status() {
+        let (app, t) = app_with("REQUIREMENT:READ+ADD+UPDATE").await;
+        create_req(&app, &t, "A").await;
+        let b = create_req(&app, &t, "B").await;
+        // B → baselined。
+        let r = app
+            .clone()
+            .oneshot(req("PUT", &format!("/requirement/{b}/baseline"), r#"{"version":1}"#, Some(&t)))
+            .await
+            .expect("r");
+        assert_eq!(r.status(), StatusCode::OK);
+
+        let r = app
+            .oneshot(req("GET", "/requirement/summary?projectId=p1", "", Some(&t)))
+            .await
+            .expect("r");
+        assert_eq!(r.status(), StatusCode::OK);
+        let v = body_json(r).await;
+        assert_eq!(v["total"], 2);
+        assert_eq!(v["draft"], 1);
+        assert_eq!(v["baselined"], 1);
+    }
+
+    #[tokio::test]
+    async fn summary_without_read_perm_403() {
+        // 无任何权限的会话。
+        let repo = Arc::new(InMemoryRequirementRepository::new());
+        let sessions = Arc::new(InMemorySessionStore::new());
+        let set = PermissionSet::from_raw(["BUG:READ".to_string()]).expect("perms");
+        let token = sessions.create("u", set, 3600).await.expect("token");
+        let app = router(
+            CreateRequirementUseCase::new(repo.clone()),
+            ListRequirementsUseCase::new(repo.clone()),
+            RequirementService::new(repo),
+            sessions,
+        );
+        let r = app
+            .oneshot(req("GET", "/requirement/summary?projectId=p1", "", Some(&token)))
+            .await
+            .expect("r");
+        assert_eq!(r.status(), StatusCode::FORBIDDEN);
     }
 
     #[tokio::test]
