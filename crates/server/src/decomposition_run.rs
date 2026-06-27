@@ -42,6 +42,7 @@ pub fn router(
     Router::new()
         .route("/decomposition/{id}/run", post(run_decomposition))
         .route("/decomposition/{id}/graph", get(graph_handler))
+        .route("/decomposition/{id}/summary", get(summary_handler))
         .route("/decomposition/{id}/reassign", post(reassign_handler))
         .with_state(RunState { tasks, delivery, requirements, sessions })
 }
@@ -236,6 +237,58 @@ async fn graph_handler(
         .into_response()
 }
 
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+struct SummaryResponse {
+    decomposition_id: String,
+    total: u64,
+    pending: u64,
+    dispatched: u64,
+    running: u64,
+    delivered: u64,
+    verified: u64,
+    failed: u64,
+}
+
+/// 任务按状态聚合(分解仪表盘):总数 + 各状态计数。
+#[utoipa::path(
+    get, path = "/decomposition/{id}/summary", tag = "task",
+    params(("id" = String, Path)),
+    responses((status = 200, body = SummaryResponse), (status = 403), (status = 404)),
+    security(("bearer" = []))
+)]
+async fn summary_handler(
+    user: AuthUser,
+    State(st): State<RunState>,
+    Path(id): Path<String>,
+) -> Response {
+    if !user.can("TASK", "READ") {
+        return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
+    let dec = match st.tasks.get(&id).await {
+        Ok(d) => d,
+        Err(TaskCmdError::DecompositionNotFound) => {
+            return (StatusCode::NOT_FOUND, "decomposition not found").into_response()
+        }
+        Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
+    };
+    let c = dec.status_summary();
+    (
+        StatusCode::OK,
+        Json(SummaryResponse {
+            decomposition_id: id,
+            total: c.total(),
+            pending: c.pending,
+            dispatched: c.dispatched,
+            running: c.running,
+            delivered: c.delivered,
+            verified: c.verified,
+            failed: c.failed,
+        }),
+    )
+        .into_response()
+}
+
 #[derive(Debug, Deserialize, ToSchema)]
 struct ReassignBody {
     /// 当前归属(空串匹配未指派任务)。
@@ -290,10 +343,10 @@ async fn reassign_handler(
 
 #[derive(OpenApi)]
 #[openapi(
-    paths(run_decomposition, graph_handler, reassign_handler),
+    paths(run_decomposition, graph_handler, summary_handler, reassign_handler),
     components(schemas(
-        RunBody, RunResponse, GraphResponse, GraphNodeDto, GraphEdgeDto, ReassignBody,
-        ReassignResponse
+        RunBody, RunResponse, GraphResponse, GraphNodeDto, GraphEdgeDto, SummaryResponse,
+        ReassignBody, ReassignResponse
     )),
     tags((name = "task", description = "任务编排"))
 )]
