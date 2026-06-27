@@ -290,6 +290,27 @@ impl Decomposition {
         }
     }
 
+    /// 批量重指派:把当前归属 `from` 的**未完成**任务(跳过 Verified/Failed,避免误改已完成工作的归属)
+    /// 改派给 `to`,返回改动数量。`from`/`to` 按 trim 后精确匹配(`from` 为空串匹配未指派任务);
+    /// `to` 为空表示清空指派(同时清 kind)。典型用途:某执行者掉线,把它的活整体转给另一个。
+    pub fn reassign(&mut self, from: &str, to: &str, kind: &str) -> usize {
+        let from = from.trim();
+        let to = to.trim();
+        let kind = if to.is_empty() { "" } else { kind.trim() };
+        let mut changed = 0;
+        for t in &mut self.tasks {
+            if matches!(t.status, TaskStatus::Verified | TaskStatus::Failed) {
+                continue;
+            }
+            if t.assignee == from {
+                t.assignee = to.to_string();
+                t.assignee_kind = kind.to_string();
+                changed += 1;
+            }
+        }
+        changed
+    }
+
     /// 依赖图只读视图(可视化用):节点(含拓扑层与就绪态)+ 边(依赖 → 被依赖任务)。
     /// 层 = 最长依赖链深度(根为 0);松弛求解,不依赖任务行序,DAG 保证收敛。
     pub fn graph_view(&self) -> GraphView {
@@ -452,6 +473,58 @@ mod tests {
         // t1 已验证 → 不再 Pending,不就绪;t2 依赖满足 → 就绪。
         assert!(!g.nodes.iter().find(|n| n.id == "t1").expect("t1").ready);
         assert!(g.nodes.iter().find(|n| n.id == "t2").expect("t2").ready);
+    }
+
+    #[test]
+    fn reassign_moves_matching_tasks_and_sets_kind() {
+        let mut d = Decomposition::new("d1", "req1", 1);
+        d.add_task(nt("A", &[])).expect("a");
+        d.add_task(nt("B", &[])).expect("b");
+        d.add_task(nt("C", &[])).expect("c");
+        d.set_assignee("t1", "agent-x", "AGENT").expect("a1");
+        d.set_assignee("t2", "agent-x", "AGENT").expect("a2");
+        d.set_assignee("t3", "agent-y", "AGENT").expect("a3");
+
+        let n = d.reassign("agent-x", "agent-z", "AGENT");
+        assert_eq!(n, 2);
+        assert_eq!(d.task("t1").expect("t1").assignee, "agent-z");
+        assert_eq!(d.task("t2").expect("t2").assignee, "agent-z");
+        assert_eq!(d.task("t2").expect("t2").assignee_kind, "AGENT");
+        assert_eq!(d.task("t3").expect("t3").assignee, "agent-y"); // 未匹配,不动
+    }
+
+    #[test]
+    fn reassign_skips_terminal_tasks() {
+        let mut d = Decomposition::new("d1", "req1", 1);
+        d.add_task(nt("A", &[])).expect("a");
+        d.add_task(nt("B", &[])).expect("b");
+        d.set_assignee("t1", "agent-x", "AGENT").expect("a1");
+        d.set_assignee("t2", "agent-x", "AGENT").expect("a2");
+        drive_to_verified(&mut d, "t1"); // t1 → Verified
+
+        let n = d.reassign("agent-x", "agent-z", "AGENT");
+        assert_eq!(n, 1); // 仅未完成的 t2
+        assert_eq!(d.task("t1").expect("t1").assignee, "agent-x"); // 已验证,归属保留
+        assert_eq!(d.task("t2").expect("t2").assignee, "agent-z");
+    }
+
+    #[test]
+    fn reassign_to_empty_clears_assignment_and_kind() {
+        let mut d = Decomposition::new("d1", "req1", 1);
+        d.add_task(nt("A", &[])).expect("a");
+        d.set_assignee("t1", "agent-x", "AGENT").expect("a1");
+        assert_eq!(d.reassign("agent-x", "  ", "AGENT"), 1);
+        assert_eq!(d.task("t1").expect("t1").assignee, "");
+        assert_eq!(d.task("t1").expect("t1").assignee_kind, "");
+    }
+
+    #[test]
+    fn reassign_no_match_changes_nothing() {
+        let mut d = Decomposition::new("d1", "req1", 1);
+        d.add_task(nt("A", &[])).expect("a");
+        d.set_assignee("t1", "agent-x", "AGENT").expect("a1");
+        assert_eq!(d.reassign("ghost", "agent-z", "AGENT"), 0);
+        assert_eq!(d.task("t1").expect("t1").assignee, "agent-x");
     }
 
     #[test]
