@@ -42,6 +42,7 @@ pub fn router(
     Router::new()
         .route("/decomposition/{id}/run", post(run_decomposition))
         .route("/decomposition/{id}/graph", get(graph_handler))
+        .route("/decomposition/{id}/reassign", post(reassign_handler))
         .with_state(RunState { tasks, delivery, requirements, sessions })
 }
 
@@ -235,10 +236,65 @@ async fn graph_handler(
         .into_response()
 }
 
+#[derive(Debug, Deserialize, ToSchema)]
+struct ReassignBody {
+    /// 当前归属(空串匹配未指派任务)。
+    from: String,
+    /// 新归属(空串表示清空指派)。
+    to: String,
+    /// 归属类型,如 AGENT / USER;`to` 为空时忽略。
+    #[serde(default = "default_kind")]
+    kind: String,
+}
+
+fn default_kind() -> String {
+    "AGENT".to_string()
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+struct ReassignResponse {
+    decomposition_id: String,
+    reassigned: usize,
+}
+
+/// 批量重指派:把某执行者的未完成任务整体转给另一个(跳过已完成),返回改动数。
+#[utoipa::path(
+    post, path = "/decomposition/{id}/reassign", tag = "task",
+    params(("id" = String, Path)),
+    request_body = ReassignBody,
+    responses((status = 200, body = ReassignResponse), (status = 403), (status = 404)),
+    security(("bearer" = []))
+)]
+async fn reassign_handler(
+    user: AuthUser,
+    State(st): State<RunState>,
+    Path(id): Path<String>,
+    Json(body): Json<ReassignBody>,
+) -> Response {
+    if !user.can("TASK", "UPDATE") {
+        return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
+    match st.tasks.reassign(&id, &body.from, &body.to, &body.kind).await {
+        Ok((_, reassigned)) => (
+            StatusCode::OK,
+            Json(ReassignResponse { decomposition_id: id, reassigned }),
+        )
+            .into_response(),
+        Err(TaskCmdError::DecompositionNotFound) => {
+            (StatusCode::NOT_FOUND, "decomposition not found").into_response()
+        }
+        Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
+    }
+}
+
 #[derive(OpenApi)]
 #[openapi(
-    paths(run_decomposition, graph_handler),
-    components(schemas(RunBody, RunResponse, GraphResponse, GraphNodeDto, GraphEdgeDto)),
+    paths(run_decomposition, graph_handler, reassign_handler),
+    components(schemas(
+        RunBody, RunResponse, GraphResponse, GraphNodeDto, GraphEdgeDto, ReassignBody,
+        ReassignResponse
+    )),
     tags((name = "task", description = "任务编排"))
 )]
 struct ApiDoc;

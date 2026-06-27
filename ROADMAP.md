@@ -38,7 +38,7 @@
 | A3 | **MCP 服务端推送** | ✅ 事件总线(broadcast)+ `GET /mcp` SSE 订阅:交付(running/delivered/failed)、验证门裁决、需求自动交付事件主动推送(`event: notification`);零新依赖 | (核心已交付) |
 | A4 | **真实 LLM 产线化** | ✅ Anthropic 原生 Messages API 适配(与 OpenAI 兼容并存,`SHEPHERD_LLM_WIRE`)、每调用超时 + 对 429/5xx 退避重试(尊重 `Retry-After`)、prompt 版本化、延迟/令牌观测;待补:成本核算价表、流式 | (核心已交付) |
 | A5 | **`shepherd init`** | ✅ 离线脚手架命令:生成需求模板 + 快速上手文档(`--dir`/`--force`);待补:从模板文件直接 `req add` 导入 | (核心已交付) |
-| A6 | **需求/任务广度** | ✅ 依赖图可视化数据(`GET /decomposition/{id}/graph`:节点含拓扑层/就绪态 + 有向边,松弛求层不依赖行序);待补:需求评论/附件/排序、任务重指派/批量、project 成员管理 | ~3–4 周 |
+| A6 | **需求/任务广度** | ✅ 依赖图可视化数据(`GET /decomposition/{id}/graph`:节点含拓扑层/就绪态 + 有向边,松弛求层不依赖行序) + ✅ 任务批量重指派(`POST /decomposition/{id}/reassign`:把某执行者的未完成任务整体转给另一个,跳过已完成);待补:需求评论/附件/排序、project 成员管理 | ~3 周 |
 | A7 | **MCP 安全** | ✅ 会话 id 随机不可猜(UUID,替代自增)+ 按属主隔离(跨用户复用/删除拒绝)+ MCP 调用审计日志(用户/方法/工具/成败);待补:按工具更细粒度 scope | (核心已交付) |
 | | **小计** | | **~11–17 人周** |
 
