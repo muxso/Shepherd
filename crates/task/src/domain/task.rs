@@ -140,6 +140,23 @@ pub struct Task {
     pub assignee_kind: String,
 }
 
+/// 任务按状态聚合(分解仪表盘)。
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct TaskStatusCounts {
+    pub pending: u64,
+    pub dispatched: u64,
+    pub running: u64,
+    pub delivered: u64,
+    pub verified: u64,
+    pub failed: u64,
+}
+
+impl TaskStatusCounts {
+    pub fn total(&self) -> u64 {
+        self.pending + self.dispatched + self.running + self.delivered + self.verified + self.failed
+    }
+}
+
 /// 依赖图节点:任务 + 拓扑层 + 当前是否就绪(可派发)。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GraphNode {
@@ -288,6 +305,22 @@ impl Decomposition {
                 self.transition(id, next)?;
             }
         }
+    }
+
+    /// 任务按状态聚合(分解仪表盘)。
+    pub fn status_summary(&self) -> TaskStatusCounts {
+        let mut c = TaskStatusCounts::default();
+        for t in &self.tasks {
+            match t.status {
+                TaskStatus::Pending => c.pending += 1,
+                TaskStatus::Dispatched => c.dispatched += 1,
+                TaskStatus::Running => c.running += 1,
+                TaskStatus::Delivered => c.delivered += 1,
+                TaskStatus::Verified => c.verified += 1,
+                TaskStatus::Failed => c.failed += 1,
+            }
+        }
+        c
     }
 
     /// 批量重指派:把当前归属 `from` 的**未完成**任务(跳过 Verified/Failed,避免误改已完成工作的归属)
@@ -525,6 +558,30 @@ mod tests {
         d.set_assignee("t1", "agent-x", "AGENT").expect("a1");
         assert_eq!(d.reassign("ghost", "agent-z", "AGENT"), 0);
         assert_eq!(d.task("t1").expect("t1").assignee, "agent-x");
+    }
+
+    #[test]
+    fn status_summary_tallies_by_status() {
+        let mut d = Decomposition::new("d1", "req1", 1);
+        d.add_task(nt("A", &[])).expect("a");
+        d.add_task(nt("B", &[])).expect("b");
+        d.add_task(nt("C", &[])).expect("c");
+        // A → Verified, B → Dispatched, C 留 Pending。
+        drive_to_verified(&mut d, "t1");
+        d.dispatch("t2").expect("dispatch");
+
+        let s = d.status_summary();
+        assert_eq!(s.verified, 1);
+        assert_eq!(s.dispatched, 1);
+        assert_eq!(s.pending, 1);
+        assert_eq!(s.running, 0);
+        assert_eq!(s.total(), 3);
+    }
+
+    #[test]
+    fn status_summary_of_empty_is_zero() {
+        let s = Decomposition::new("d1", "req1", 1).status_summary();
+        assert_eq!(s.total(), 0);
     }
 
     #[test]
