@@ -20,7 +20,7 @@ you file a requirement
         │                        │ dispatch
         ▼                        ▼
                           FLEET DISPATCH ──► agent-runtime executor
-                          (pull / long-poll)   (claude / codex / opencode)
+                          (pull / long-poll)   (claude / codex / opencode / codebuddy)
                                  │ runs in a git worktree
                                  ▼
                           deliverable (diff / PR)
@@ -59,7 +59,7 @@ Company AI tools (Claude Code, Codex, …) run on internal dev machines or CI �
 | Quick start (Docker) | Docker + Docker Compose v2 |
 | From-source dev | Rust (stable, edition 2021; CI uses `rust:1.86`), Node.js 18+, a PostgreSQL 16 instance |
 | Multi-host fleet | Redis 7 |
-| Real AI executors | `git` plus the agent CLIs on `PATH` (`claude` / `codex` / `opencode`) |
+| Real AI executors | `git` plus the agent CLIs on `PATH` (`claude` / `codex` / `opencode` / `codebuddy`) |
 
 PostgreSQL is required; the server **auto-applies migrations on startup**. Redis is required **only** for the multi-host fleet.
 
@@ -200,6 +200,7 @@ Advanced/lazy-read switches also exist for the pluggable AI touchpoints — `SHE
 | `CLAUDE_BIN` | `claude` | Claude CLI binary |
 | `CODEX_CMD` | `codex exec` | Codex CLI invocation |
 | `OPENCODE_CMD` | `opencode run` | OpenCode CLI invocation |
+| `CODEBUDDY_CMD` | `codebuddy -p --permission-mode acceptEdits` | CodeBuddy CLI invocation |
 
 ---
 
@@ -253,9 +254,10 @@ The runtime picks a backend per task by its `executor` kind, unless `AGENT_MOCK=
 | `CLAUDE_CODE` | Claude (streaming `stream-json`) | `claude` (`CLAUDE_BIN`) |
 | `CODEX` | generic CLI | `codex exec` (`CODEX_CMD`) |
 | `OPENCODE` | generic CLI | `opencode run` (`OPENCODE_CMD`) |
+| `CODEBUDDY` | generic CLI | `codebuddy -p --permission-mode acceptEdits` (`CODEBUDDY_CMD`) |
 | any (with `AGENT_MOCK=1`) | mock — returns canned output | none |
 
-Real backends need `git` and the CLI on `PATH` (or pointed at via the override env). Adding a new backend means implementing one `CliAgentBackend` (`async fn execute(prompt, cwd, sink)`) and registering an enum variant — see `crates/agent-runtime/src/backend.rs`.
+Real backends need `git` and the CLI on `PATH` (or pointed at via the override env). Per-executor run recipes (login, permission modes, dispatch examples) are in [EXECUTORS.md](./EXECUTORS.md). Adding a new backend means implementing one `CliAgentBackend` (`async fn execute(prompt, cwd, sink)`) and registering an enum variant — see `crates/agent-runtime/src/backend.rs`.
 
 ### 7.3 Observability
 
@@ -318,7 +320,7 @@ Both honour `SHEPHERD_BASE` (default `http://127.0.0.1:9180`) and `SHEPHERD_USER
 | Web console shows blank / API 404 in dev | Vite proxy target mismatch. The dev proxy points at `:9180`; bind the server there or set `SHEPHERD_API` to your server URL. |
 | Tasks never get claimed | Server not in fleet mode (`SHEPHERD_AGENT_FLEET=1`), no runtime online, or capability mismatch — check `SHEPHERD_CAPS` vs the task's executor kind, and `GET /agent/work/stats`. |
 | Multi-host runtimes can't share work | `SHEPHERD_FLEET_REDIS` not set (or not the same Redis) on all server replicas → each falls back to its own in-process queue. |
-| Real agent does nothing / errors spawning | CLI not on `PATH`; set `CLAUDE_BIN` / `CODEX_CMD` / `OPENCODE_CMD`, or run with `AGENT_MOCK=1` to confirm the loop. |
+| Real agent does nothing / errors spawning | CLI not on `PATH`; set `CLAUDE_BIN` / `CODEX_CMD` / `OPENCODE_CMD` / `CODEBUDDY_CMD`, or run with `AGENT_MOCK=1` to confirm the loop. |
 | API batch-run stuck `RUNNING` with no results | `SHEPHERD_RUNNER=noop` is set (demo placeholder). Unset it to use the native runner. |
 | New migration not applied | Restart the server — migrations run on boot; a new migration file needs a rebuild. |
 | OIDC endpoint 404 | The provider is only registered when **both** id and secret env vars are set. |

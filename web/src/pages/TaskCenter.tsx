@@ -41,6 +41,8 @@ const RESULT_COLOR: Record<string, string> = {
 const EXECUTOR_LABEL: Record<string, string> = {
   CLAUDE_CODE: 'Claude Code',
   CODEX: 'Codex',
+  OPENCODE: 'OpenCode',
+  CODEBUDDY: 'CodeBuddy',
 }
 const TERMINAL = new Set(['DELIVERED', 'FAILED', 'STOPPED'])
 

@@ -234,7 +234,7 @@ enum PoolCmd {
 
 #[derive(Subcommand)]
 enum AgentCmd {
-    /// 连接一个 AI 执行者(claude-code | codex),保存为 dispatch 默认。
+    /// 连接一个 AI 执行者(claude-code | codex | opencode | codebuddy),保存为 dispatch 默认。
     Connect {
         #[arg(long = "type")]
         kind: String,
@@ -249,7 +249,12 @@ fn normalize_agent(t: &str) -> R<String> {
     match t.to_ascii_lowercase().replace('-', "_").as_str() {
         "claude_code" => Ok("CLAUDE_CODE".into()),
         "codex" => Ok("CODEX".into()),
-        other => Err(format!("未知 agent 类型: {other}(支持 claude-code | codex)").into()),
+        "opencode" => Ok("OPENCODE".into()),
+        // 品牌是一个词,但 claude-code 的写法会诱导 code-buddy,一并接受。
+        "codebuddy" | "code_buddy" => Ok("CODEBUDDY".into()),
+        other => Err(
+            format!("未知 agent 类型: {other}(支持 claude-code | codex | opencode | codebuddy)").into()
+        ),
     }
 }
 
@@ -2118,6 +2123,9 @@ mod tests {
     fn normalize_agent_maps_kinds() {
         assert_eq!(normalize_agent("claude-code").unwrap(), "CLAUDE_CODE");
         assert_eq!(normalize_agent("CODEX").unwrap(), "CODEX");
+        assert_eq!(normalize_agent("opencode").unwrap(), "OPENCODE");
+        assert_eq!(normalize_agent("CodeBuddy").unwrap(), "CODEBUDDY");
+        assert_eq!(normalize_agent("code-buddy").unwrap(), "CODEBUDDY");
         assert!(normalize_agent("gpt").is_err());
     }
 

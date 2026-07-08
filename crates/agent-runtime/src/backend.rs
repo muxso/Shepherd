@@ -196,13 +196,24 @@ pub struct GenericCliBackend {
 }
 
 impl GenericCliBackend {
+    fn from_env(name: &'static str, env_key: &str, default_cmd: &str, timeout: Duration) -> Self {
+        let cmd = std::env::var(env_key).unwrap_or_else(|_| default_cmd.into());
+        Self { name, cmd: cmd.split_whitespace().map(String::from).collect(), timeout }
+    }
     pub fn codex(timeout: Duration) -> Self {
-        let cmd = std::env::var("CODEX_CMD").unwrap_or_else(|_| "codex exec".into());
-        Self { name: "codex", cmd: cmd.split_whitespace().map(String::from).collect(), timeout }
+        Self::from_env("codex", "CODEX_CMD", "codex exec", timeout)
     }
     pub fn opencode(timeout: Duration) -> Self {
-        let cmd = std::env::var("OPENCODE_CMD").unwrap_or_else(|_| "opencode run".into());
-        Self { name: "opencode", cmd: cmd.split_whitespace().map(String::from).collect(), timeout }
+        Self::from_env("opencode", "OPENCODE_CMD", "opencode run", timeout)
+    }
+    pub fn codebuddy(timeout: Duration) -> Self {
+        // 缺省对齐 ClaudeBackend 的权限策略:非交互下允许编辑,否则 CLI 会拒绝写文件。
+        Self::from_env(
+            "codebuddy",
+            "CODEBUDDY_CMD",
+            "codebuddy -p --permission-mode acceptEdits",
+            timeout,
+        )
     }
 }
 

@@ -11,14 +11,20 @@ pub enum ExecutorKind {
     ClaudeCode,
     Codex,
     OpenCode,
+    CodeBuddy,
 }
 
 impl ExecutorKind {
+    /// 全部执行者类型的唯一权威清单;队列适配器与测试都从这里取,新增变体只改本文件。
+    pub const ALL: [ExecutorKind; 4] =
+        [Self::ClaudeCode, Self::Codex, Self::OpenCode, Self::CodeBuddy];
+
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::ClaudeCode => "CLAUDE_CODE",
             Self::Codex => "CODEX",
             Self::OpenCode => "OPENCODE",
+            Self::CodeBuddy => "CODEBUDDY",
         }
     }
 
@@ -27,6 +33,7 @@ impl ExecutorKind {
             "CLAUDE_CODE" => Some(Self::ClaudeCode),
             "CODEX" => Some(Self::Codex),
             "OPENCODE" => Some(Self::OpenCode),
+            "CODEBUDDY" => Some(Self::CodeBuddy),
             _ => None,
         }
     }
@@ -252,7 +259,7 @@ mod tests {
 
     #[test]
     fn enum_str_roundtrips() {
-        for e in [ExecutorKind::ClaudeCode, ExecutorKind::Codex, ExecutorKind::OpenCode] {
+        for e in ExecutorKind::ALL {
             assert_eq!(ExecutorKind::parse(e.as_str()), Some(e));
         }
         assert_eq!(ExecutorKind::parse("X"), None);

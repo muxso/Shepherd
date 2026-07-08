@@ -36,8 +36,8 @@ impl LocalCommandAgentExecutor {
         match kind {
             ExecutorKind::ClaudeCode => &self.claude_code,
             ExecutorKind::Codex => &self.codex,
-            // 本地路径只配两套 argv;OpenCode 故意回退 claude argv(真正路由在 crates/agent-runtime)。
-            ExecutorKind::OpenCode => &self.claude_code,
+            // 本地路径只配两套 argv;OpenCode/CodeBuddy 故意回退 claude argv(真正路由在 crates/agent-runtime)。
+            ExecutorKind::OpenCode | ExecutorKind::CodeBuddy => &self.claude_code,
         }
     }
 }

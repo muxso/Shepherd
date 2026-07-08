@@ -6,7 +6,7 @@
 
 ## 用法
 
-在内网机器(装好 `git` + 对应 CLI:`claude` / `codex` / `opencode`)运行:
+在内网机器(装好 `git` + 对应 CLI:`claude` / `codex` / `opencode` / `codebuddy`)运行:
 
 ```bash
 SHEPHERD_BASE=https://<有公网的 server>   \
@@ -18,7 +18,7 @@ SHEPHERD_ADMIN_PASSWORD=s3cret                  \
 ```
 
 runtime 出站(无需公网入站):登录 → 注册 → 心跳 → 长轮询认领 →
-按 `executor` 选后端(claude 流式 / codex / opencode)→ 按模式回调:
+按 `executor` 选后端(claude 流式 / codex / opencode / codebuddy)→ 按模式回调:
 
 - **implement**:工作区改动 `git` 快照成 commit → `POST /delivery/{id}/complete`(交付物 = commit)。
 - **design**(OpenSpec/BMAD,由 `ProposalService` 经 `context=design` 标记):产 markdown 设计稿
@@ -26,7 +26,7 @@ runtime 出站(无需公网入站):登录 → 注册 → 心跳 → 长轮询认
 
 环境变量:`SHEPHERD_BASE` / `SHEPHERD_CAPS` / `RUNTIME_NAME` / `AGENT_WORKDIR` /
 `SHEPHERD_ADMIN_USER`+`SHEPHERD_ADMIN_PASSWORD`;`AGENT_MOCK=1` 用 mock 后端(自测,不调真 CLI、不耗用量);
-`CODEX_CMD` / `OPENCODE_CMD` 覆盖 CLI 命令;`CLAUDE_BIN` 覆盖 claude 路径。
+`CODEX_CMD` / `OPENCODE_CMD` / `CODEBUDDY_CMD` 覆盖 CLI 命令;`CLAUDE_BIN` 覆盖 claude 路径。
 
 server 侧用 `SHEPHERD_AGENT_FLEET=1`(+ 可选 `SHEPHERD_FLEET_REDIS` 做分布式队列)启用机群。
 

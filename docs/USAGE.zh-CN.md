@@ -20,7 +20,7 @@ Shepherd 是一个 AI 研发**监督**平台:AI 写代码,你掌控交付什么�
         │                  │ 派发
         ▼                  ▼
                     机群派发 ──► agent-runtime 执行者
-                   (拉取 / 长轮询)   (claude / codex / opencode)
+                   (拉取 / 长轮询)   (claude / codex / opencode / codebuddy)
                           │ 在独立 git worktree 中运行
                           ▼
                     交付物(diff / PR)
@@ -59,7 +59,7 @@ Shepherd 是一个 AI 研发**监督**平台:AI 写代码,你掌控交付什么�
 | 快速开始(Docker) | Docker + Docker Compose v2 |
 | 源码开发 | Rust(stable,edition 2021;CI 用 `rust:1.86`)、Node.js 18+、一个 PostgreSQL 16 实例 |
 | 多机机群 | Redis 7 |
-| 真实 AI 执行者 | `git` + agent CLI 在 `PATH` 上(`claude` / `codex` / `opencode`) |
+| 真实 AI 执行者 | `git` + agent CLI 在 `PATH` 上(`claude` / `codex` / `opencode` / `codebuddy`) |
 
 PostgreSQL 必需;服务端**启动时自动跑迁移**。Redis 仅在多机机群时必需。
 
@@ -200,6 +200,7 @@ cargo clippy --workspace -- -D warnings
 | `CLAUDE_BIN` | `claude` | Claude CLI 可执行文件 |
 | `CODEX_CMD` | `codex exec` | Codex CLI 调用 |
 | `OPENCODE_CMD` | `opencode run` | OpenCode CLI 调用 |
+| `CODEBUDDY_CMD` | `codebuddy -p --permission-mode acceptEdits` | CodeBuddy CLI 调用 |
 
 ---
 
@@ -253,9 +254,10 @@ runtime 按任务的 `executor` 类型选后端,除非 `AGENT_MOCK=1` 强制走 
 | `CLAUDE_CODE` | Claude(流式 `stream-json`) | `claude`(`CLAUDE_BIN`) |
 | `CODEX` | 通用 CLI | `codex exec`(`CODEX_CMD`) |
 | `OPENCODE` | 通用 CLI | `opencode run`(`OPENCODE_CMD`) |
+| `CODEBUDDY` | 通用 CLI | `codebuddy -p --permission-mode acceptEdits`(`CODEBUDDY_CMD`) |
 | 任意(配 `AGENT_MOCK=1`) | mock——返回固定输出 | 无 |
 
-真实后端需 `git` 与 CLI 在 `PATH`(或经覆盖 env 指定)。新增后端只需实现一个 `CliAgentBackend`(`async fn execute(prompt, cwd, sink)`)并注册一个枚举变体——见 `crates/agent-runtime/src/backend.rs`。
+真实后端需 `git` 与 CLI 在 `PATH`(或经覆盖 env 指定)。各执行者的运行指南(登录、权限模式、派发示例)见 [EXECUTORS.zh-CN.md](./EXECUTORS.zh-CN.md)。新增后端只需实现一个 `CliAgentBackend`(`async fn execute(prompt, cwd, sink)`)并注册一个枚举变体——见 `crates/agent-runtime/src/backend.rs`。
 
 ### 7.3 可观测性
 
@@ -318,7 +320,7 @@ python3 .claude/skills/openapi-bootstrap/scenarios_all.py
 | dev 下控制台空白 / API 404 | Vite 代理目标不匹配。dev 代理指向 `:9180`;把服务端绑到那里,或设 `SHEPHERD_API` 为你的服务端 URL。 |
 | 任务始终无人认领 | 服务端未开机群模式(`SHEPHERD_AGENT_FLEET=1`)、无 runtime 在线,或能力不匹配——核对 `SHEPHERD_CAPS` 与任务 executor 类型,以及 `GET /agent/work/stats`。 |
 | 多机 runtime 无法共享任务 | 各服务端副本未设(或非同一个)`SHEPHERD_FLEET_REDIS` → 各自回落到自己的进程内队列。 |
-| 真实 agent 不动作 / spawn 报错 | CLI 不在 `PATH`;设 `CLAUDE_BIN` / `CODEX_CMD` / `OPENCODE_CMD`,或先用 `AGENT_MOCK=1` 验证链路。 |
+| 真实 agent 不动作 / spawn 报错 | CLI 不在 `PATH`;设 `CLAUDE_BIN` / `CODEX_CMD` / `OPENCODE_CMD` / `CODEBUDDY_CMD`,或先用 `AGENT_MOCK=1` 验证链路。 |
 | 接口批量运行卡在 `RUNNING` 无结果 | 设了 `SHEPHERD_RUNNER=noop`(演示占位)。取消它以走原生 runner。 |
 | 新迁移未生效 | 重启服务端——迁移在启动时跑;新迁移文件需重新构建。 |
 | OIDC 端点 404 | provider 仅在 id 与 secret 两个 env **都**设置时才注册。 |

@@ -21,8 +21,7 @@ use crate::ports::{
     RuntimeInfo, WorkQueue, WorkSpec,
 };
 
-const KNOWN_CAPS: [ExecutorKind; 3] =
-    [ExecutorKind::ClaudeCode, ExecutorKind::Codex, ExecutorKind::OpenCode];
+const KNOWN_CAPS: [ExecutorKind; 4] = ExecutorKind::ALL;
 
 #[derive(Default)]
 pub struct InMemoryWorkQueue {
@@ -183,7 +182,7 @@ fn parse_caps(raw: &Option<String>) -> Vec<ExecutorKind> {
         Some(s) if !s.trim().is_empty() => {
             s.split(',').filter_map(|c| ExecutorKind::parse(c.trim())).collect()
         }
-        _ => vec![ExecutorKind::ClaudeCode, ExecutorKind::Codex, ExecutorKind::OpenCode],
+        _ => KNOWN_CAPS.to_vec(),
     }
 }
 
@@ -374,10 +373,7 @@ mod tests {
 
     #[test]
     fn parse_caps_defaults_to_all_known() {
-        assert_eq!(
-            parse_caps(&None),
-            vec![ExecutorKind::ClaudeCode, ExecutorKind::Codex, ExecutorKind::OpenCode]
-        );
+        assert_eq!(parse_caps(&None), KNOWN_CAPS.to_vec());
         assert_eq!(parse_caps(&Some("CLAUDE_CODE".into())), vec![ExecutorKind::ClaudeCode]);
         assert_eq!(parse_caps(&Some("  CODEX , bogus ".into())), vec![ExecutorKind::Codex]);
     }

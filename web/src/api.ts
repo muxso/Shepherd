@@ -736,7 +736,7 @@ export interface TaskCenterItem {
   description: string
   /** 所属模块(基本信息;任务归属需求标题,无则空串)。 */
   module: string
-  /** 执行方式(执行者):CLAUDE_CODE / CODEX。 */
+  /** 执行方式(执行者):CLAUDE_CODE / CODEX / OPENCODE / CODEBUDDY。 */
   executor: string
   /** 执行状态:DISPATCHED / RUNNING / DELIVERED / FAILED / STOPPED。 */
   status: string

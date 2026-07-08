@@ -20,8 +20,8 @@ const GROUP: &str = "fleet";
 const ACKMAP: &str = "fleet:ackmap";
 const SEP: char = '\u{1f}';
 
-fn known_caps() -> [ExecutorKind; 3] {
-    [ExecutorKind::ClaudeCode, ExecutorKind::Codex, ExecutorKind::OpenCode]
+fn known_caps() -> [ExecutorKind; 4] {
+    ExecutorKind::ALL
 }
 
 fn stream_key(k: ExecutorKind) -> String {
