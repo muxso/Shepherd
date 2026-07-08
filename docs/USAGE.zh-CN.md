@@ -195,6 +195,7 @@ cargo clippy --workspace -- -D warnings
 | `SHEPHERD_CAPS` | `CLAUDE_CODE` | 逗号分隔能力——本 runtime 认领哪类任务(如 `CLAUDE_CODE,CODEX`) |
 | `AGENT_CONCURRENCY` | `1` | 最大在飞并发(信号量上限) |
 | `AGENT_WORKDIR` | `.` | 基础工作目录;每个任务在其下的独立 git worktree 里运行 |
+| `AGENT_BASE_REF` | *(仓库 HEAD)* | 任务基点 ref(如 `origin/main`);与开发者共用检出时用它钉住基点 |
 | `RUNTIME_NAME` | `agent-runtime` | 机群注册表中的显示名 |
 | `AGENT_MOCK` | — | 存在 → mock 后端(无真实 CLI) |
 | `CLAUDE_BIN` | `claude` | Claude CLI 可执行文件 |

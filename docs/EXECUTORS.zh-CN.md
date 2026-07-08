@@ -12,6 +12,9 @@ CodeBuddy)。机群架构与服务端配置见 [USAGE.zh-CN.md §7](./USAGE.zh-C
 - [CodeBuddy](#codebuddy)
 - [一个 runtime 承接多种执行者](#一个-runtime-承接多种执行者)
 - [mock 执行者(无需 CLI)](#mock-执行者无需-cli)
+- [Windows](#windows)
+- [Docker 与宿主机 CLI](#docker-与宿主机-cli)
+- [共用检出、不同分支](#共用检出不同分支)
 - [指定执行者派发](#指定执行者派发)
 - [排障](#排障)
 
@@ -48,6 +51,7 @@ AGENT_WORKDIR=/path/to/target/repo \
 | `SHEPHERD_CAPS` | `CLAUDE_CODE` | 本 runtime 认领的执行者类型,逗号分隔 |
 | `RUNTIME_NAME` | `agent-runtime` | 机群注册表中的显示名 |
 | `AGENT_WORKDIR` | `.` | 任务操作的 git 仓库 |
+| `AGENT_BASE_REF` | *(仓库 HEAD)* | 任务基点 ref(如 `origin/main`) |
 | `AGENT_CONCURRENCY` | `1` | 最大并发任务数 |
 | `AGENT_TASK_TIMEOUT_SECS` | `1800` | 单任务 CLI 超时 |
 
@@ -126,6 +130,57 @@ CLI——适合在装 CLI 之前先冒烟验证派发链路。
 ```bash
 AGENT_MOCK=1 SHEPHERD_CAPS=CLAUDE_CODE,CODEX,OPENCODE,CODEBUDDY … ./agent-runtime
 ```
+
+## Windows
+
+runtime 可在 Windows 原生运行(MSVC 工具链:`cargo build --release -p agent-runtime`)。
+两个平台差异:
+
+- npm 装的 CLI(`claude` / `codebuddy` / `opencode`)在 Windows 上是 `<name>.cmd`
+  垫片。裸程序名在 `PATH` 里找不到 `<name>.exe` 时,runtime 会自动解析到垫片
+  (`codex.exe` 这类原生二进制优先);`CLAUDE_BIN` / `*_CMD` 里写的显式路径原样使用。
+- 任务超时只会终止 CLI 直接进程——Windows 没有进程组语义,CLI 再往下派生的
+  子进程可能残留。
+
+## Docker 与宿主机 CLI
+
+Linux 容器**执行不了宿主机的 Windows(或 macOS)CLI 二进制**——把
+`claude.cmd` / `codebuddy.exe` 挂载进容器是行不通的。可行的做法反过来拆:
+
+- 镜像里装 **Linux 版** CLI;
+- 只把宿主机的 CLI **凭据/配置目录**挂进去,登录态在镜像重建后仍然有效。
+
+```dockerfile
+FROM shepherd-agent-runtime
+USER root
+RUN apt-get update && apt-get install -y --no-install-recommends nodejs npm \
+ && npm install -g @anthropic-ai/claude-code @tencent-ai/codebuddy-code \
+ && rm -rf /var/lib/apt/lists/*
+USER shepherd
+```
+
+```yaml
+  agent-runtime:
+    volumes:
+      - ~/.claude:/home/shepherd/.claude          # CLI 登录态
+      - ~/.codebuddy:/home/shepherd/.codebuddy
+      - /path/to/repo:/work                       # AGENT_WORKDIR=/work
+```
+
+Windows 宿主机同理——Docker Desktop 能把 `C:\Users\me\.claude` 挂进 Linux
+容器;必须是 Linux 构建的是 CLI *二进制*,配置目录没有这个限制。
+
+## 共用检出、不同分支
+
+每个任务都在**分离(detached)git worktree** 里运行:基仓库的已检出分支不会被
+切走,工作区也不会被碰——runtime(原生或容器)可以安全地和开发者共用同一份
+clone,即便各自在不同分支上。两点须知:
+
+- 默认任务基点是共用 clone 当前检出的 `HEAD`——会跟着开发者切分支而变。设
+  `AGENT_BASE_REF=origin/main`(或分支/tag/SHA)可把基点钉死。remote-tracking
+  ref 解析到上次 fetch 的位置,要前移先 fetch。
+- worktree 建在 runtime 的临时目录下。runtime 在容器里时,记录的是容器内路径,
+  宿主机 `git worktree list` 可能看到失效条目——无害,runtime 每次任务前会 prune。
 
 ## 指定执行者派发
 

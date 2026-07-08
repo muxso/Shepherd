@@ -195,6 +195,7 @@ Advanced/lazy-read switches also exist for the pluggable AI touchpoints — `SHE
 | `SHEPHERD_CAPS` | `CLAUDE_CODE` | Comma-separated capabilities — which task kinds this runtime claims (e.g. `CLAUDE_CODE,CODEX`) |
 | `AGENT_CONCURRENCY` | `1` | Max concurrent in-flight tasks (semaphore-bounded) |
 | `AGENT_WORKDIR` | `.` | Base working directory; each task runs in its own git worktree under it |
+| `AGENT_BASE_REF` | *(repo HEAD)* | Git ref tasks branch from (e.g. `origin/main`); pin it when the checkout is shared with a developer |
 | `RUNTIME_NAME` | `agent-runtime` | Display name in the fleet registry |
 | `AGENT_MOCK` | — | Presence → mock backend (no real CLI) |
 | `CLAUDE_BIN` | `claude` | Claude CLI binary |

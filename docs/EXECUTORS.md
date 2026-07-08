@@ -12,6 +12,9 @@ behind `agent-runtime`. For fleet architecture and server-side setup see
 - [CodeBuddy](#codebuddy)
 - [One runtime, multiple executors](#one-runtime-multiple-executors)
 - [Mock executor (no CLI)](#mock-executor-no-cli)
+- [Windows](#windows)
+- [Docker and host CLIs](#docker-and-host-clis)
+- [Shared checkout, different branches](#shared-checkout-different-branches)
 - [Dispatching to a specific executor](#dispatching-to-a-specific-executor)
 - [Troubleshooting](#troubleshooting)
 
@@ -50,6 +53,7 @@ AGENT_WORKDIR=/path/to/target/repo \
 | `SHEPHERD_CAPS` | `CLAUDE_CODE` | Comma-separated executor kinds this runtime claims |
 | `RUNTIME_NAME` | `agent-runtime` | Display name in the fleet registry |
 | `AGENT_WORKDIR` | `.` | Git repo the tasks operate on |
+| `AGENT_BASE_REF` | *(repo HEAD)* | Git ref tasks branch from (e.g. `origin/main`) |
 | `AGENT_CONCURRENCY` | `1` | Max tasks in flight |
 | `AGENT_TASK_TIMEOUT_SECS` | `1800` | Per-task CLI timeout |
 
@@ -135,6 +139,67 @@ before installing real CLIs.
 ```bash
 AGENT_MOCK=1 SHEPHERD_CAPS=CLAUDE_CODE,CODEX,OPENCODE,CODEBUDDY … ./agent-runtime
 ```
+
+## Windows
+
+The runtime runs natively on Windows (build with the MSVC toolchain:
+`cargo build --release -p agent-runtime`). Two platform notes:
+
+- npm-installed CLIs (`claude` / `codebuddy` / `opencode`) are `<name>.cmd`
+  shims on Windows. The runtime resolves a bare program name to the shim
+  automatically when no `<name>.exe` is found on `PATH` (native binaries like
+  `codex.exe` take precedence); explicit paths via `CLAUDE_BIN` / `*_CMD` are
+  used as-is.
+- On task timeout only the direct CLI process is terminated — Windows has no
+  process groups, so children the CLI spawned may linger.
+
+## Docker and host CLIs
+
+A Linux container **cannot execute the host's Windows (or macOS) CLI
+binaries** — mounting `claude.cmd` / `codebuddy.exe` into the container does
+not work. The workable pattern is the reverse split:
+
+- bake the **Linux** CLIs into the image, and
+- mount only the host's CLI **credential/config directories**, so logins
+  survive image rebuilds.
+
+```dockerfile
+FROM shepherd-agent-runtime
+USER root
+RUN apt-get update && apt-get install -y --no-install-recommends nodejs npm \
+ && npm install -g @anthropic-ai/claude-code @tencent-ai/codebuddy-code \
+ && rm -rf /var/lib/apt/lists/*
+USER shepherd
+```
+
+```yaml
+  agent-runtime:
+    volumes:
+      - ~/.claude:/home/shepherd/.claude          # CLI login state
+      - ~/.codebuddy:/home/shepherd/.codebuddy
+      - /path/to/repo:/work                       # AGENT_WORKDIR=/work
+```
+
+This works the same from a Windows host — Docker Desktop mounts Windows paths
+(`C:\Users\me\.claude`) into Linux containers; it is the CLI *binary* that
+must be the Linux build, not the config.
+
+## Shared checkout, different branches
+
+Each task runs in a **detached git worktree**, so the base repo's checked-out
+branch is never switched and its working tree is never touched — a runtime
+(native or containerized) can safely share the same clone a developer works
+in, even on a different branch. Two things to know:
+
+- By default the task base is whatever `HEAD` the shared clone currently has
+  checked out — it follows the developer's branch switches. Pin
+  `AGENT_BASE_REF=origin/main` (or a branch/tag/SHA) to make task bases
+  deterministic. Remote-tracking refs resolve to their last-fetched position;
+  fetch to move them.
+- Worktrees live under the runtime's temp dir. When the runtime is a
+  container, the recorded paths are container paths, so `git worktree list`
+  on the host may show stale entries — harmless; the runtime prunes them
+  before each task.
 
 ## Dispatching to a specific executor
 
