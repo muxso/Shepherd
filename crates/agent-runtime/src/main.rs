@@ -21,6 +21,9 @@ struct Config {
     caps: Vec<String>,
     name: String,
     workdir: String,
+    /// 任务基点 ref(如 origin/main);不设则用仓库当前 HEAD。
+    /// 宿主机与容器共用一个检出、各在不同分支时,用它把任务基点钉住。
+    base_ref: Option<String>,
     concurrency: usize,
     task_timeout: Duration,
     heartbeat: Duration,
@@ -44,6 +47,7 @@ impl Config {
                 .collect(),
             name: env("RUNTIME_NAME", "agent-runtime"),
             workdir: env("AGENT_WORKDIR", "."),
+            base_ref: std::env::var("AGENT_BASE_REF").ok().filter(|s| !s.trim().is_empty()),
             concurrency: env("AGENT_CONCURRENCY", "1").parse().unwrap_or(1).max(1),
             task_timeout: secs("AGENT_TASK_TIMEOUT_SECS", 1800),
             heartbeat: secs("AGENT_HEARTBEAT_SECS", 10),
@@ -102,7 +106,13 @@ fn backend_for(executor: &str, task_timeout: Duration) -> Arc<dyn CliAgentBacken
     }
 }
 
-async fn handle(client: &ServerClient, spec: &WorkSpec, base_workdir: &str, task_timeout: Duration) {
+async fn handle(
+    client: &ServerClient,
+    spec: &WorkSpec,
+    base_workdir: &str,
+    base_ref: Option<&str>,
+    task_timeout: Duration,
+) {
     let backend = backend_for(&spec.executor, task_timeout);
     let prompt = spec.to_prompt();
     let mode = if spec.is_design() { "design" } else { "implement" };
@@ -120,7 +130,7 @@ async fn handle(client: &ServerClient, spec: &WorkSpec, base_workdir: &str, task
         return;
     }
 
-    let wt = git::add_worktree(base_workdir, &spec.attempt_id).await;
+    let wt = git::add_worktree(base_workdir, &spec.attempt_id, base_ref).await;
     let run_dir = wt.as_deref().unwrap_or(base_workdir);
     let sink = HttpSink { client, attempt_id: spec.attempt_id.clone() };
     match backend.execute(&prompt, run_dir, &sink).await {
@@ -224,9 +234,10 @@ async fn main() -> anyhow::Result<()> {
         };
         match claimed {
             Ok(Some(spec)) => {
-                let (client, wd, tt) = (client.clone(), cfg.workdir.clone(), cfg.task_timeout);
+                let (client, wd, br, tt) =
+                    (client.clone(), cfg.workdir.clone(), cfg.base_ref.clone(), cfg.task_timeout);
                 tokio::spawn(async move {
-                    handle(&client, &spec, &wd, tt).await;
+                    handle(&client, &spec, &wd, br.as_deref(), tt).await;
                     drop(permit);
                 });
             }
