@@ -19,7 +19,7 @@ import {
 import type { ColumnsType } from 'antd/es/table'
 import { ReloadOutlined, SearchOutlined } from '@ant-design/icons'
 import { message, modal } from '../feedback'
-import { api, ApiError, type DeliveryEvent, type TaskCenterItem } from '../api'
+import { api, ApiError, EXECUTOR_LABEL, type DeliveryEvent, type TaskCenterItem } from '../api'
 import { useI18n } from '../i18n'
 
 // 执行状态 → Tag 颜色。
@@ -36,13 +36,6 @@ const RESULT_COLOR: Record<string, string> = {
   FAILED: 'error',
   STOPPED: 'warning',
   PENDING: 'blue',
-}
-// 执行者 → 展示名(执行方式)。
-const EXECUTOR_LABEL: Record<string, string> = {
-  CLAUDE_CODE: 'Claude Code',
-  CODEX: 'Codex',
-  OPENCODE: 'OpenCode',
-  CODEBUDDY: 'CodeBuddy',
 }
 const TERMINAL = new Set(['DELIVERED', 'FAILED', 'STOPPED'])
 

@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useState } from 'react'
-import { Badge, Button, Card, Col, Descriptions, Drawer, Empty, Form, Input, InputNumber, Modal, Progress, Row, Segmented, Select, Space, Spin, Statistic, Table, Tabs, Tag, Timeline, Tooltip, Typography } from 'antd'
+import { Badge, Button, Card, Col, Descriptions, Drawer, Dropdown, Empty, Form, Input, InputNumber, Modal, Progress, Row, Segmented, Select, Space, Spin, Statistic, Table, Tabs, Tag, Timeline, Tooltip, Typography } from 'antd'
 import { message, modal } from '../feedback'
 import { useNavigate } from 'react-router-dom'
 import { BranchesOutlined, DeleteOutlined, EditOutlined, FlagOutlined, InboxOutlined, PartitionOutlined, PlayCircleOutlined, ProfileOutlined, ReloadOutlined, SendOutlined } from '@ant-design/icons'
 import {
   api,
   ApiError,
+  EXECUTOR_LABEL,
   type ApiCase,
   type CoverageCase,
   type DeliveryAttempt,
@@ -495,7 +496,7 @@ function DecompositionView({ decompId, verificationId, projectId, reqId }: { dec
   // 依赖门控:任务的依赖须全部 Verified 才能派发(否则提前派发会撞门、卡 PENDING)。
   const statusOf = (id: string) => tasks.find((x) => x.id === id)?.status
   const depsReady = (t: Task) => (t.dependencies ?? []).every((d) => statusOf(d) === 'VERIFIED')
-  const dispatch = async (task: Task) => {
+  const dispatch = async (task: Task, executor: string) => {
     if (dispatching.has(task.id)) return // 已在派发中,忽略重复点击
     if (!depsReady(task)) {
       message.warning(t('req.depsNotReady', '依赖任务未全部验证完成,暂不能派发'))
@@ -503,7 +504,7 @@ function DecompositionView({ decompId, verificationId, projectId, reqId }: { dec
     }
     setDispatching((s) => new Set(s).add(task.id))
     try {
-      await api.createDelivery({ decompositionId: decompId, taskId: task.id, title: task.title, executor: 'CLAUDE_CODE' })
+      await api.createDelivery({ decompositionId: decompId, taskId: task.id, title: task.title, executor })
       message.success(`${t('req.dispatched', '已派发')} ${task.id}`)
       load()
     } catch (e) {
@@ -512,6 +513,11 @@ function DecompositionView({ decompId, verificationId, projectId, reqId }: { dec
       setDispatching((s) => { const n = new Set(s); n.delete(task.id); return n })
     }
   }
+  // 派发按钮 = 执行者选择菜单:点开选 Claude Code / Codex / OpenCode / CodeBuddy。
+  const executorMenu = (task: Task) => ({
+    items: Object.entries(EXECUTOR_LABEL).map(([key, label]) => ({ key, label })),
+    onClick: ({ key }: { key: string }) => dispatch(task, key),
+  })
   // 工作量(task point)行内编辑:乐观更新本地后落库,失败回滚重载。
   const setPoints = async (task: Task, points: number) => {
     setTasks((ts) => ts.map((x) => (x.id === task.id ? { ...x, points } : x)))
@@ -582,7 +588,9 @@ function DecompositionView({ decompId, verificationId, projectId, reqId }: { dec
               render: (_, row) => (
                 <Space>
                   <Tooltip title={depsReady(row) ? '' : t('req.depsNotReady', '依赖任务未全部验证完成,暂不能派发')}>
-                    <Button type="link" size="small" icon={<SendOutlined />} loading={dispatching.has(row.id)} disabled={dispatching.has(row.id) || !depsReady(row)} onClick={() => dispatch(row)}>{t('req.dispatch', '派发')}</Button>
+                    <Dropdown trigger={['click']} disabled={dispatching.has(row.id) || !depsReady(row)} menu={executorMenu(row)}>
+                      <Button type="link" size="small" icon={<SendOutlined />} loading={dispatching.has(row.id)} disabled={dispatching.has(row.id) || !depsReady(row)}>{t('req.dispatch', '派发')}</Button>
+                    </Dropdown>
                   </Tooltip>
                   <Button type="link" size="small" onClick={() => setCasesFor(row)}>{t('req.cases', '用例')}</Button>
                   <Button type="link" size="small" icon={<ProfileOutlined />} onClick={() => setEventsFor(row)}>{t('req.execProgress', '执行进度')}</Button>
@@ -621,7 +629,9 @@ function DecompositionView({ decompId, verificationId, projectId, reqId }: { dec
                           />
                           {tk.status === 'PENDING' && (
                             <Tooltip title={depsReady(tk) ? '' : t('req.depsNotReady', '依赖任务未全部验证完成,暂不能派发')}>
-                              <Button size="small" icon={<SendOutlined />} loading={dispatching.has(tk.id)} disabled={dispatching.has(tk.id) || !depsReady(tk)} onClick={() => dispatch(tk)} />
+                              <Dropdown trigger={['click']} disabled={dispatching.has(tk.id) || !depsReady(tk)} menu={executorMenu(tk)}>
+                                <Button size="small" icon={<SendOutlined />} loading={dispatching.has(tk.id)} disabled={dispatching.has(tk.id) || !depsReady(tk)} />
+                              </Dropdown>
                             </Tooltip>
                           )}
                           <Button size="small" icon={<ProfileOutlined />} title={t('req.execProgress', '执行进度')} onClick={() => setEventsFor(tk)} />

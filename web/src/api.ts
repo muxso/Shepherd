@@ -726,6 +726,14 @@ export interface DeliveryEvent {
   detail?: unknown
 }
 
+/** 可派发的执行者类型 → 展示名(任务中心筛选与派发选择共用)。 */
+export const EXECUTOR_LABEL: Record<string, string> = {
+  CLAUDE_CODE: 'Claude Code',
+  CODEX: 'Codex',
+  OPENCODE: 'OpenCode',
+  CODEBUDDY: 'CodeBuddy',
+}
+
 /** 任务中心一行:全系统交付尝试的执行状态/方式/结果/完成率聚合视图。 */
 export interface TaskCenterItem {
   id: string
