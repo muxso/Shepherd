@@ -30,6 +30,32 @@ async fn spawn_retrying_etxtbsy(cmd: &mut Command) -> std::io::Result<Child> {
     cmd.spawn()
 }
 
+// Windows 上 npm 装的 CLI(claude/codebuddy/opencode)是 `<name>.cmd` 垫片,
+// 而 std 只按 `.exe` 解析裸名 → spawn 直接 NotFound。裸名解析不到 exe、但 PATH
+// 里有同名 .cmd 时,改用垫片全路径(std 对 .cmd 会经 cmd.exe 执行)。
+// codex 等原生 .exe、以及带路径/扩展名的显式配置(CLAUDE_BIN 等)不受影响。
+fn resolve_cli_program(name: &str) -> String {
+    if !cfg!(windows) || name.contains(['.', '/', '\\']) {
+        return name.to_string();
+    }
+    find_cmd_shim(name, std::env::var_os("PATH").as_deref()).unwrap_or_else(|| name.to_string())
+}
+
+// 按 PATH 顺序找第一个提供 `<name>.exe` 或 `<name>.cmd` 的目录:
+// exe 命中 → None(交给 std 正常解析);cmd 命中 → Some(垫片全路径)。
+fn find_cmd_shim(name: &str, path: Option<&std::ffi::OsStr>) -> Option<String> {
+    for dir in std::env::split_paths(path?) {
+        if dir.join(format!("{name}.exe")).is_file() {
+            return None;
+        }
+        let shim = dir.join(format!("{name}.cmd"));
+        if shim.is_file() {
+            return Some(shim.to_string_lossy().to_string());
+        }
+    }
+    None
+}
+
 fn in_own_process_group(cmd: &mut Command) {
     #[cfg(unix)]
     {
@@ -43,6 +69,8 @@ fn in_own_process_group(cmd: &mut Command) {
 
 // Kill the whole process group (pgid == pid via process_group(0); negative pid = group)
 // so a spawned CLI that forks children leaves no orphans on timeout/shutdown.
+// Windows 无进程组语义:直接子进程由 kill_on_drop(TerminateProcess)兜底,
+// 但孙进程可能存活(未用 Job Object)。
 fn kill_process_group(pid: u32) {
     #[cfg(unix)]
     unsafe {
@@ -89,7 +117,8 @@ pub struct ClaudeBackend {
 
 impl ClaudeBackend {
     pub fn new(timeout: Duration) -> Self {
-        Self { bin: std::env::var("CLAUDE_BIN").unwrap_or_else(|_| "claude".into()), timeout }
+        let bin = std::env::var("CLAUDE_BIN").unwrap_or_else(|_| "claude".into());
+        Self { bin: resolve_cli_program(&bin), timeout }
     }
 }
 
@@ -198,7 +227,11 @@ pub struct GenericCliBackend {
 impl GenericCliBackend {
     fn from_env(name: &'static str, env_key: &str, default_cmd: &str, timeout: Duration) -> Self {
         let cmd = std::env::var(env_key).unwrap_or_else(|_| default_cmd.into());
-        Self { name, cmd: cmd.split_whitespace().map(String::from).collect(), timeout }
+        let mut cmd: Vec<String> = cmd.split_whitespace().map(String::from).collect();
+        if let Some(program) = cmd.first_mut() {
+            *program = resolve_cli_program(program);
+        }
+        Self { name, cmd, timeout }
     }
     pub fn codex(timeout: Duration) -> Self {
         Self::from_env("codex", "CODEX_CMD", "codex exec", timeout)
@@ -322,6 +355,27 @@ mod tests {
         write!(f, "{body}").expect("write");
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).expect("chmod");
         path
+    }
+
+    #[test]
+    fn cmd_shim_lookup_prefers_exe_and_falls_back_to_cmd() {
+        let root = std::env::temp_dir().join(format!("ar-shim-{}", std::process::id()));
+        let (d1, d2) = (root.join("one"), root.join("two"));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&d1).expect("mkdir");
+        std::fs::create_dir_all(&d2).expect("mkdir");
+        std::fs::write(d1.join("tool.cmd"), "").expect("w");
+        std::fs::write(d1.join("native.exe"), "").expect("w");
+        std::fs::write(d2.join("native.cmd"), "").expect("w");
+        let path = std::env::join_paths([&d1, &d2]).expect("join");
+
+        let shim = find_cmd_shim("tool", Some(&path)).expect("shim");
+        assert!(shim.ends_with(if cfg!(windows) { "one\\tool.cmd" } else { "one/tool.cmd" }));
+        // 同目录有 exe → 交给 std 正常解析,后续目录的 .cmd 不再考虑。
+        assert!(find_cmd_shim("native", Some(&path)).is_none());
+        assert!(find_cmd_shim("missing", Some(&path)).is_none());
+        assert!(find_cmd_shim("tool", None).is_none());
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[tokio::test]
