@@ -149,7 +149,14 @@ The runtime runs natively on Windows (build with the MSVC toolchain:
   shims on Windows. The runtime resolves a bare program name to the shim
   automatically when no `<name>.exe` is found on `PATH` (native binaries like
   `codex.exe` take precedence); explicit paths via `CLAUDE_BIN` / `*_CMD` are
-  used as-is.
+  used as-is. `CLAUDE_BIN=D:\nvm4w\nodejs\claude.cmd` works: the Claude
+  backend feeds the prompt over stdin, so the cmd.exe hop is harmless.
+- **Generic backends (codebuddy/codex/opencode) cannot go through a `.cmd`
+  shim**: they pass the prompt as an argv, prompts contain newlines, and Rust
+  refuses newline arguments to batch files (cmd.exe cannot carry them safely).
+  Bypass cmd.exe by invoking node directly — read the shim (`type
+  codebuddy.cmd`) to find the real entry, then e.g.
+  `CODEBUDDY_CMD=node D:\nvm4w\nodejs\node_modules\@tencent-ai\codebuddy-code\cli.js -p --permission-mode acceptEdits`.
 - On task timeout only the direct CLI process is terminated — Windows has no
   process groups, so children the CLI spawned may linger.
 

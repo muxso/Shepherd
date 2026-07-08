@@ -139,6 +139,13 @@ runtime 可在 Windows 原生运行(MSVC 工具链:`cargo build --release -p age
 - npm 装的 CLI(`claude` / `codebuddy` / `opencode`)在 Windows 上是 `<name>.cmd`
   垫片。裸程序名在 `PATH` 里找不到 `<name>.exe` 时,runtime 会自动解析到垫片
   (`codex.exe` 这类原生二进制优先);`CLAUDE_BIN` / `*_CMD` 里写的显式路径原样使用。
+  `CLAUDE_BIN=D:\nvm4w\nodejs\claude.cmd` 没问题:Claude 后端的 prompt 走 stdin,
+  经 cmd.exe 一跳无害。
+- **通用后端(codebuddy/codex/opencode)不能走 `.cmd` 垫片**:它们把 prompt 作为
+  命令行参数传,prompt 必含换行,而 Rust 拒绝给批处理文件传含换行的参数
+  (cmd.exe 无法安全携带)。绕开 cmd.exe,直接用 node 调包入口——先
+  `type codebuddy.cmd` 看垫片真正调用什么,然后照抄,如
+  `CODEBUDDY_CMD=node D:\nvm4w\nodejs\node_modules\@tencent-ai\codebuddy-code\cli.js -p --permission-mode acceptEdits`。
 - 任务超时只会终止 CLI 直接进程——Windows 没有进程组语义,CLI 再往下派生的
   子进程可能残留。
 
