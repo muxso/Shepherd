@@ -13,7 +13,7 @@ name: shepherd
 
 services:
   postgres:
-    image: postgres:16
+    image: postgres:latest
     environment:
       POSTGRES_USER: shepherd
       POSTGRES_PASSWORD: shepherd
@@ -28,7 +28,7 @@ services:
     restart: unless-stopped
 
   redis:
-    image: redis:7
+    image: redis:latest
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
