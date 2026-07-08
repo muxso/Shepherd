@@ -11,3 +11,5 @@
 /web/test-results/
 /web/playwright-report/
 /web/blob-report/
+# compose 密钥(deploy/docker/.env.example 为模板)
+deploy/docker/.env

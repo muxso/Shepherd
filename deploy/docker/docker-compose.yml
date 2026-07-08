@@ -1,22 +1,28 @@
 # Shepherd single-host dev/demo stack.
 #
 # Usage:
+#   cp deploy/docker/.env.example deploy/docker/.env   # then edit the secrets
 #   docker compose -f deploy/docker/docker-compose.yml up --build
 #
-# URLs:    web  http://localhost:8080    api  http://localhost:8088
-# Login:   admin / change-me-please   (SHEPHERD_ADMIN_PASSWORD below)
+# Secrets live in deploy/docker/.env (gitignored); compose interpolates them
+# at the ${VAR:?} references below and fails fast when the file is missing.
+# With legacy docker-compose v1, run from deploy/docker/ (it reads .env from
+# the current directory) or pass --project-directory deploy/docker.
 #
-# This is NOT a production deployment — secrets are inline and PG/Redis run
-# locally. For prod, use deploy/helm or deploy/terraform.
+# URLs:    web  http://localhost:8082    api  http://localhost:8182
+# Login:   admin / $SHEPHERD_ADMIN_PASSWORD
+#
+# This is NOT a production deployment — PG/Redis run locally. For prod, use
+# deploy/helm or deploy/terraform.
 
 name: shepherd
 
 services:
   postgres:
-    image: postgres:latest
+    image: postgres:16-alpine
     environment:
       POSTGRES_USER: shepherd
-      POSTGRES_PASSWORD: shepherd
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set in deploy/docker/.env}
       POSTGRES_DB: shepherd
     volumes:
       - pgdata:/var/lib/postgresql/data
@@ -28,12 +34,15 @@ services:
     restart: unless-stopped
 
   redis:
-    image: redis:latest
+    image: redis:7-alpine
+    command: ["redis-server", "--requirepass", "${REDIS_PASSWORD:?set in deploy/docker/.env}"]
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD-SHELL", "redis-cli -a \"$$REDIS_PASSWORD\" ping | grep PONG"]
       interval: 5s
       timeout: 3s
       retries: 10
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?set in deploy/docker/.env}
     restart: unless-stopped
 
   server:
@@ -41,13 +50,13 @@ services:
       context: ../..
       dockerfile: deploy/docker/Dockerfile.server
     environment:
-      DATABASE_URL: postgres://shepherd:shepherd@postgres:5432/shepherd
+      DATABASE_URL: postgres://shepherd:${POSTGRES_PASSWORD:?set in deploy/docker/.env}@postgres:5432/shepherd
       SHEPHERD_BIND: 0.0.0.0:8088
-      SHEPHERD_ADMIN_PASSWORD: change-me-please
+      SHEPHERD_ADMIN_PASSWORD: ${SHEPHERD_ADMIN_PASSWORD:?set in deploy/docker/.env}
       SHEPHERD_AGENT_FLEET: "1"
-      SHEPHERD_FLEET_REDIS: redis://redis:6379
+      SHEPHERD_FLEET_REDIS: redis://:${REDIS_PASSWORD}@redis:6379
     ports:
-      - "8088:8088"
+      - "8182:8088"
     networks:
       default:
         # nginx (web) and the Helm chart both address the server as `shepherd-server`.
@@ -73,7 +82,7 @@ services:
     environment:
       SHEPHERD_BASE: http://server:8088
       SHEPHERD_ADMIN_USER: admin
-      SHEPHERD_ADMIN_PASSWORD: change-me-please
+      SHEPHERD_ADMIN_PASSWORD: ${SHEPHERD_ADMIN_PASSWORD:?set in deploy/docker/.env}
       AGENT_MOCK: "1"
     depends_on:
       server:
@@ -85,7 +94,8 @@ services:
       context: ../..
       dockerfile: deploy/docker/Dockerfile.web
     ports:
-      - "8080:80"
+      # nginx in the image listens on 80.
+      - "8082:80"
     depends_on:
       - server
     restart: unless-stopped
