@@ -31,10 +31,13 @@ const EnvironmentsPage = lazy(() => import('./pages/Environments').then((m) => (
 const ResourcePoolsPage = lazy(() => import('./pages/ResourcePoolPage').then((m) => ({ default: m.ResourcePoolsPage })))
 const ResourcePoolForm = lazy(() => import('./pages/ResourcePoolPage').then((m) => ({ default: m.ResourcePoolForm })))
 
+// 纯看 UI 不该被登录挡住:VITE_SKIP_LOGIN=1 时跳过登录门(仅 dev 构建生效,生产不受影响)。
+const SKIP_LOGIN = import.meta.env.DEV && import.meta.env.VITE_SKIP_LOGIN === '1'
+
 export default function App() {
   const { token } = useApp()
   const { t } = useI18n()
-  if (!token) return <Login />
+  if (!token && !SKIP_LOGIN) return <Login />
 
   return (
     <AppShell>
