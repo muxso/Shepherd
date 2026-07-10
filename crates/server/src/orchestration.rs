@@ -145,6 +145,7 @@ impl Reviser for ExecutorReviser {
             instructions: Some(format!(
                 "上一轮交付未通过验证门,请据反馈修正后重做。\n反馈: {feedback}"
             )),
+            target_runtime: None,
         };
         match self.executor.dispatch(&spec, &NoopEventSink).await {
             Ok(DispatchOutcome::Completed { deliverable }) => Ok(DeliverableView {

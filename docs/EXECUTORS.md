@@ -224,6 +224,23 @@ shepherd dispatch --decomp d1 --task t1 --executor CODEBUDDY
 
 The MCP tool `shepherd_dispatch_delivery` accepts the same four kinds.
 
+### Pinning a task to one runtime
+
+Beyond the kind, a task can be pinned to a specific registered runtime
+(`targetRuntime` = the runtime's registered name, i.e. its `RUNTIME_NAME`;
+names are stable across reconnects, runtime ids change on every register):
+
+```bash
+curl -X POST $BASE/delivery -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"decompositionId":"d1","taskId":"t1","title":"…","executor":"CLAUDE_CODE","targetRuntime":"box-1"}'
+```
+
+A pinned task is only claimable by a runtime with that name (on Redis it goes through a
+dedicated `fleet:rt:<name>` stream). If the target is offline the task waits for it —
+other runtimes never steal it. In the web UI, pick the concrete runtime from the dispatch
+menu on the decomposition graph; offline ones are greyed out. Multiple instances sharing a
+name share that stream — give each box a unique name for strict one-to-one pinning.
+
 ## Troubleshooting
 
 | Symptom | Check |

@@ -32,6 +32,7 @@ impl DeliveryRepository for InMemoryDeliveryRepository {
         decomposition_id: &str,
         task_id: &str,
         executor: ExecutorKind,
+        target_runtime: Option<&str>,
     ) -> Result<DeliveryAttempt, RepoError> {
         let mut st = self.state.lock().expect("lock poisoned");
         st.seq += 1;
@@ -40,6 +41,7 @@ impl DeliveryRepository for InMemoryDeliveryRepository {
             decomposition_id,
             task_id,
             executor,
+            target_runtime,
         );
         let created = st.seq as i64;
         st.created_at.push((a.id.clone(), created));

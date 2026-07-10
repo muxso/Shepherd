@@ -18,6 +18,8 @@ use crate::ports::{Claimed, QueueStat, WorkQueue, WorkSpec};
 
 const GROUP: &str = "fleet";
 const ACKMAP: &str = "fleet:ackmap";
+// 出现过定向流的 runtime name 索引,reclaim_dead 据此遍历定向流。
+const RT_INDEX: &str = "fleet:rt:index";
 const SEP: char = '\u{1f}';
 
 fn known_caps() -> [ExecutorKind; 4] {
@@ -26,6 +28,26 @@ fn known_caps() -> [ExecutorKind; 4] {
 
 fn stream_key(k: ExecutorKind) -> String {
     format!("fleet:s:{}", k.as_str())
+}
+
+// 定向流:按 runtime name 一流一名,只有该 name 的 runtime 会读它。
+fn rt_stream_key(name: &str) -> String {
+    format!("fleet:rt:{name}")
+}
+
+// XREADGROUP 碰到无组的 key 会整体 NOGROUP 报错,故读/写定向流前都要确保组存在(幂等)。
+async fn ensure_group(conn: &mut MultiplexedConnection, key: &str) {
+    let res: redis::RedisResult<()> = redis::cmd("XGROUP")
+        .arg("CREATE")
+        .arg(key)
+        .arg(GROUP)
+        .arg("$")
+        .arg("MKSTREAM")
+        .query_async(conn)
+        .await;
+    if let Err(e) = res {
+        debug_assert!(e.to_string().contains("BUSYGROUP"), "unexpected xgroup error: {e}");
+    }
 }
 
 pub struct RedisStreamQueue {
@@ -64,23 +86,45 @@ impl RedisStreamQueue {
 #[async_trait]
 impl WorkQueue for RedisStreamQueue {
     async fn enqueue(&self, spec: &WorkSpec) {
-        let key = stream_key(spec.executor);
+        // 定向任务进该 runtime 专属流,其余进能力流。
+        let key = match &spec.target_runtime {
+            Some(name) => rt_stream_key(name),
+            None => stream_key(spec.executor),
+        };
         let json = match serde_json::to_string(&WireSpec::from(spec)) {
             Ok(j) => j,
             Err(_) => return,
         };
         let mut conn = self.conn.clone();
+        if let Some(name) = &spec.target_runtime {
+            ensure_group(&mut conn, &key).await;
+            let _: redis::RedisResult<()> = conn.sadd(RT_INDEX, name).await;
+        }
         let _: redis::RedisResult<String> = conn
             .xadd_maxlen(&key, StreamMaxlen::Approx(STREAM_MAXLEN), "*", &[("spec", json.as_str())])
             .await;
     }
 
-    async fn claim(&self, caps: &[ExecutorKind], wait: Duration, consumer: &str) -> Option<Claimed> {
+    async fn claim(
+        &self,
+        caps: &[ExecutorKind],
+        wait: Duration,
+        consumer: &str,
+        consumer_name: &str,
+    ) -> Option<Claimed> {
         if caps.is_empty() {
             return None;
         }
         let consumer = if consumer.is_empty() { self.default_consumer.as_str() } else { consumer };
-        let keys: Vec<String> = caps.iter().copied().map(stream_key).collect();
+        let mut keys: Vec<String> = Vec::with_capacity(caps.len() + 1);
+        // 自己名下的定向流排最前,优先于公共能力流被读到。
+        if !consumer_name.is_empty() {
+            let rt_key = rt_stream_key(consumer_name);
+            let mut conn = self.conn.clone();
+            ensure_group(&mut conn, &rt_key).await;
+            keys.push(rt_key);
+        }
+        keys.extend(caps.iter().copied().map(stream_key));
         let ids: Vec<&str> = keys.iter().map(|_| ">").collect();
         let opts = StreamReadOptions::default()
             .group(GROUP, consumer)
@@ -112,12 +156,16 @@ impl WorkQueue for RedisStreamQueue {
 
     // 只回收持有者已死(∉ live)且空闲超 grace 的 PEL 条目:重新 XADD + XACK 旧条目。
     // 持有者仍在线则跳过(长任务也算在线),避免重投正在跑的任务。
+    // 定向流同样回收(重投回原定向流):runtime 掉线重连后拿新 id,旧 id 的 PEL 条目
+    // 不回收就永远没人能再领到。
     async fn reclaim_dead(&self, live: &[String], grace: Duration) -> usize {
         let grace_ms = grace.as_millis() as usize;
         let mut conn = self.conn.clone();
         let mut requeued = 0usize;
-        for cap in known_caps() {
-            let key = stream_key(cap);
+        let mut keys: Vec<String> = known_caps().into_iter().map(stream_key).collect();
+        let rt_names: Vec<String> = conn.smembers(RT_INDEX).await.unwrap_or_default();
+        keys.extend(rt_names.iter().map(|n| rt_stream_key(n)));
+        for key in keys {
             let pending: StreamPendingCountReply =
                 match conn.xpending_count(&key, GROUP, "-", "+", 100usize).await {
                     Ok(p) => p,
@@ -198,6 +246,9 @@ struct WireSpec {
     executor: String,
     context: Option<String>,
     instructions: Option<String>,
+    // default:兼容升级前已入队的旧条目(无此字段)。
+    #[serde(default)]
+    target_runtime: Option<String>,
 }
 
 impl From<&WorkSpec> for WireSpec {
@@ -212,6 +263,7 @@ impl From<&WorkSpec> for WireSpec {
             executor: s.executor.as_str().to_string(),
             context: s.context.clone(),
             instructions: s.instructions.clone(),
+            target_runtime: s.target_runtime.clone(),
         }
     }
 }
@@ -228,6 +280,7 @@ impl From<WireSpec> for WorkSpec {
             executor: ExecutorKind::parse(&w.executor).unwrap_or(ExecutorKind::ClaudeCode),
             context: w.context,
             instructions: w.instructions,
+            target_runtime: w.target_runtime,
         }
     }
 }

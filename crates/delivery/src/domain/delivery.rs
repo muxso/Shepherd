@@ -131,6 +131,8 @@ pub struct DeliveryAttempt {
     pub decomposition_id: String,
     pub task_id: String,
     pub executor: ExecutorKind,
+    /// 定向派发的目标 runtime name;None = 任意同能力 runtime。
+    pub target_runtime: Option<String>,
     pub status: AttemptStatus,
     pub run_id: Option<String>,
     pub deliverable: Option<Deliverable>,
@@ -143,12 +145,14 @@ impl DeliveryAttempt {
         decomposition_id: &str,
         task_id: &str,
         executor: ExecutorKind,
+        target_runtime: Option<&str>,
     ) -> Self {
         Self {
             id: id.to_string(),
             decomposition_id: decomposition_id.to_string(),
             task_id: task_id.to_string(),
             executor,
+            target_runtime: target_runtime.map(|s| s.to_string()),
             status: AttemptStatus::Dispatched,
             run_id: None,
             deliverable: None,
@@ -206,7 +210,7 @@ mod tests {
     }
 
     fn attempt() -> DeliveryAttempt {
-        DeliveryAttempt::dispatched("a1", "d1", "t1", ExecutorKind::ClaudeCode)
+        DeliveryAttempt::dispatched("a1", "d1", "t1", ExecutorKind::ClaudeCode, None)
     }
 
     #[test]

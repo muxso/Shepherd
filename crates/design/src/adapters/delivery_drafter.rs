@@ -43,6 +43,7 @@ impl DesignDrafter for DeliveryDesignDrafter {
             // "design" 路由 runtime 到 design bridge(回填 /proposal/{id}/design),而非默认实现 bridge。
             context: Some("design".to_string()),
             instructions: Some(ARCHITECT_ROLE.replace("{proposal_id}", &proposal.id)),
+            target_runtime: None,
         };
         self.executor
             .dispatch(&spec, &NoopEventSink)

@@ -56,6 +56,9 @@ struct DispatchBody {
     context: Option<String>,
     #[serde(default)]
     instructions: Option<String>,
+    /// 定向到某个注册 runtime 的 name;缺省 = 任意同能力 runtime。
+    #[serde(default)]
+    target_runtime: Option<String>,
 }
 
 #[derive(Deserialize, IntoParams)]
@@ -127,6 +130,7 @@ struct AttemptResponse {
     decomposition_id: String,
     task_id: String,
     executor: String,
+    target_runtime: Option<String>,
     status: String,
     run_id: Option<String>,
     deliverable: Option<DeliverableResponse>,
@@ -140,6 +144,7 @@ impl From<&DeliveryAttempt> for AttemptResponse {
             decomposition_id: a.decomposition_id.clone(),
             task_id: a.task_id.clone(),
             executor: a.executor.as_str().to_string(),
+            target_runtime: a.target_runtime.clone(),
             status: a.status.as_str().to_string(),
             run_id: a.run_id.clone(),
             deliverable: a.deliverable.as_ref().map(|d| DeliverableResponse {
@@ -174,6 +179,7 @@ struct TaskItemResponse {
     description: String,
     module: String,
     executor: String,
+    target_runtime: Option<String>,
     status: String,
     result: String,
     completion_rate: i32,
@@ -207,6 +213,7 @@ impl From<&TaskRow> for TaskItemResponse {
             description: trimmed(&r.description),
             module: trimmed(&r.module),
             executor: a.executor.as_str().to_string(),
+            target_runtime: a.target_runtime.clone(),
             status: a.status.as_str().to_string(),
             result: result.to_string(),
             completion_rate,
@@ -260,6 +267,7 @@ async fn dispatch(user: AuthUser, State(st): State<DelState>, Json(b): Json<Disp
             &b.executor,
             b.context,
             b.instructions,
+            b.target_runtime,
         )
         .await
     {

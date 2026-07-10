@@ -22,8 +22,15 @@ pub struct QueueStat {
 pub trait WorkQueue: Send + Sync {
     async fn enqueue(&self, spec: &WorkSpec);
 
-    // 阻塞到 wait 超时的长轮询;consumer = runtime id,用于 PEL 归属与死 runtime 回收。
-    async fn claim(&self, caps: &[ExecutorKind], wait: Duration, consumer: &str) -> Option<Claimed>;
+    // 阻塞到 wait 超时的长轮询;consumer = runtime id(PEL 归属与死 runtime 回收),
+    // consumer_name = runtime 注册名(定向任务匹配:只有 name 相符的 runtime 能认领)。
+    async fn claim(
+        &self,
+        caps: &[ExecutorKind],
+        wait: Duration,
+        consumer: &str,
+        consumer_name: &str,
+    ) -> Option<Claimed>;
 
     // 终态时调用,把消息移出 PEL,避免被 reclaim_dead 重投。内存实现为 no-op。
     async fn ack(&self, attempt_id: &str);

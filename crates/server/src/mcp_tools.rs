@@ -188,6 +188,7 @@ impl ToolHandler for DispatchDelivery {
                 req_str(&args, "executor")?,
                 None,
                 instructions,
+                None,
             )
             .await
             .map_err(|e| format!("{e:?}"))?;

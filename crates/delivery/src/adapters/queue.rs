@@ -41,9 +41,13 @@ impl InMemoryWorkQueue {
         self.len() == 0
     }
 
-    fn try_claim(&self, caps: &[ExecutorKind]) -> Option<WorkSpec> {
+    fn try_claim(&self, caps: &[ExecutorKind], consumer_name: &str) -> Option<WorkSpec> {
         let mut q = self.inner.lock().expect("lock");
-        let pos = q.iter().position(|s| caps.contains(&s.executor))?;
+        // 定向任务只允许 name 相符的 runtime 认领;未定向任务人人可领。
+        let pos = q.iter().position(|s| {
+            caps.contains(&s.executor)
+                && s.target_runtime.as_deref().is_none_or(|t| t == consumer_name)
+        })?;
         q.remove(pos)
     }
 }
@@ -54,12 +58,18 @@ impl WorkQueue for InMemoryWorkQueue {
         self.inner.lock().expect("lock").push_back(spec.clone());
     }
 
-    // 认领即从队列移除,故无 PEL:ack 与超时回收都无需操作,consumer 被忽略。
-    async fn claim(&self, caps: &[ExecutorKind], wait: Duration, _consumer: &str) -> Option<Claimed> {
+    // 认领即从队列移除,故无 PEL:ack 与超时回收都无需操作,consumer(id)被忽略。
+    async fn claim(
+        &self,
+        caps: &[ExecutorKind],
+        wait: Duration,
+        _consumer: &str,
+        consumer_name: &str,
+    ) -> Option<Claimed> {
         let step = Duration::from_millis(300);
         let mut waited = Duration::ZERO;
         loop {
-            if let Some(spec) = self.try_claim(caps) {
+            if let Some(spec) = self.try_claim(caps, consumer_name) {
                 return Some(Claimed { spec });
             }
             if waited >= wait {
@@ -199,7 +209,16 @@ async fn claim(
         return (StatusCode::BAD_REQUEST, "no known caps").into_response();
     }
     let consumer = q.runtime.as_deref().filter(|s| !s.is_empty()).unwrap_or("anon");
-    match st.queue.claim(&caps, Duration::from_secs(20), consumer).await {
+    // runtime id → 注册名:定向任务按 name 匹配(name 跨重连稳定,id 每次注册都变)。
+    let consumer_name = st
+        .registry
+        .list()
+        .await
+        .into_iter()
+        .find(|r| r.id == consumer)
+        .map(|r| r.name)
+        .unwrap_or_default();
+    match st.queue.claim(&caps, Duration::from_secs(20), consumer, &consumer_name).await {
         Some(c) => (StatusCode::OK, Json(WorkSpecDto::from(c.spec))).into_response(),
         None => StatusCode::NO_CONTENT.into_response(),
     }
@@ -323,7 +342,12 @@ mod tests {
             executor: kind,
             context: None,
             instructions: None,
+            target_runtime: None,
         }
+    }
+
+    fn targeted(id: &str, kind: ExecutorKind, name: &str) -> WorkSpec {
+        WorkSpec { target_runtime: Some(name.into()), ..spec(id, kind) }
     }
 
     struct NoopSink;
@@ -345,10 +369,40 @@ mod tests {
     async fn claim_pops_matching_capability_only() {
         let q = InMemoryWorkQueue::new();
         q.enqueue(&spec("a1", ExecutorKind::Codex)).await;
-        assert!(q.claim(&[ExecutorKind::ClaudeCode], Duration::from_millis(50), "rt-1").await.is_none());
-        let got = q.claim(&[ExecutorKind::Codex], Duration::from_millis(50), "rt-1").await.expect("claim");
+        assert!(q
+            .claim(&[ExecutorKind::ClaudeCode], Duration::from_millis(50), "rt-1", "box-1")
+            .await
+            .is_none());
+        let got = q
+            .claim(&[ExecutorKind::Codex], Duration::from_millis(50), "rt-1", "box-1")
+            .await
+            .expect("claim");
         assert_eq!(got.spec.attempt_id, "a1");
         assert!(q.is_empty());
+    }
+
+    #[tokio::test]
+    async fn targeted_spec_only_claimed_by_named_runtime() {
+        let q = InMemoryWorkQueue::new();
+        q.enqueue(&targeted("a1", ExecutorKind::Codex, "box-2")).await;
+        // 能力匹配但名字不符 → 领不到。
+        assert!(q
+            .claim(&[ExecutorKind::Codex], Duration::from_millis(50), "rt-1", "box-1")
+            .await
+            .is_none());
+        let got = q
+            .claim(&[ExecutorKind::Codex], Duration::from_millis(50), "rt-9", "box-2")
+            .await
+            .expect("claim");
+        assert_eq!(got.spec.attempt_id, "a1");
+        // 定向任务不阻塞后续未定向任务。
+        q.enqueue(&targeted("a2", ExecutorKind::Codex, "box-2")).await;
+        q.enqueue(&spec("a3", ExecutorKind::Codex)).await;
+        let got = q
+            .claim(&[ExecutorKind::Codex], Duration::from_millis(50), "rt-1", "box-1")
+            .await
+            .expect("claim untargeted");
+        assert_eq!(got.spec.attempt_id, "a3");
     }
 
     #[tokio::test]
@@ -363,7 +417,9 @@ mod tests {
         assert_eq!(by(ExecutorKind::Codex).ready, 1);
         assert_eq!(by(ExecutorKind::OpenCode).ready, 0);
         assert!(stats.iter().all(|s| s.in_flight == 0 && s.oldest_in_flight_ms == 0));
-        q.claim(&[ExecutorKind::ClaudeCode], Duration::from_millis(50), "rt-1").await.expect("claim");
+        q.claim(&[ExecutorKind::ClaudeCode], Duration::from_millis(50), "rt-1", "box-1")
+            .await
+            .expect("claim");
         assert_eq!(by_cap(&q.stats().await, ExecutorKind::ClaudeCode).ready, 1);
     }
 

@@ -510,6 +510,7 @@ mod tests {
             executor: ExecutorKind::ClaudeCode,
             context: None,
             instructions: None,
+            target_runtime: None,
         };
         match e.dispatch(&ws, &NoopEventSink).await.expect("dispatch") {
             DispatchOutcome::Completed { deliverable } => {

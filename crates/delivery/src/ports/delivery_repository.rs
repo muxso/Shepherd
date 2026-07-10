@@ -44,6 +44,7 @@ pub trait DeliveryRepository: Send + Sync {
         decomposition_id: &str,
         task_id: &str,
         executor: ExecutorKind,
+        target_runtime: Option<&str>,
     ) -> Result<DeliveryAttempt, RepoError>;
 
     async fn get(&self, id: &str) -> Result<Option<DeliveryAttempt>, RepoError>;

@@ -139,7 +139,7 @@ async fn run_decomposition(
             set.spawn(async move {
                 let _permit = sem.acquire_owned().await;
                 let _ = delivery
-                    .dispatch(&did, &t.id, &t.title, &t.description, &t.acceptance_criteria, &exec, None, None)
+                    .dispatch(&did, &t.id, &t.title, &t.description, &t.acceptance_criteria, &exec, None, None, None)
                     .await;
             });
         }

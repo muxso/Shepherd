@@ -22,7 +22,7 @@ fn map_err(e: sqlx::Error) -> RepoError {
     RepoError::Backend(e.to_string())
 }
 
-const COLS: &str = "id, decomposition_id, task_id, executor, status, run_id, \
+const COLS: &str = "id, decomposition_id, task_id, executor, target_runtime, status, run_id, \
                     deliverable_kind, deliverable_reference, deliverable_summary, error";
 
 fn row_to_attempt(row: &sqlx::postgres::PgRow) -> Result<DeliveryAttempt, RepoError> {
@@ -44,6 +44,7 @@ fn row_to_attempt(row: &sqlx::postgres::PgRow) -> Result<DeliveryAttempt, RepoEr
         decomposition_id: row.try_get("decomposition_id").map_err(map_err)?,
         task_id: row.try_get("task_id").map_err(map_err)?,
         executor: ExecutorKind::parse(&executor_s).unwrap_or(ExecutorKind::ClaudeCode),
+        target_runtime: row.try_get("target_runtime").map_err(map_err)?,
         status: AttemptStatus::parse(&status_s).unwrap_or(AttemptStatus::Dispatched),
         run_id: row.try_get("run_id").map_err(map_err)?,
         deliverable,
@@ -58,20 +59,22 @@ impl DeliveryRepository for PgDeliveryRepository {
         decomposition_id: &str,
         task_id: &str,
         executor: ExecutorKind,
+        target_runtime: Option<&str>,
     ) -> Result<DeliveryAttempt, RepoError> {
         let id: String = sqlx::query(
-            "INSERT INTO ms_delivery_attempt (decomposition_id, task_id, executor, status) \
-             VALUES ($1, $2, $3, 'DISPATCHED') RETURNING id",
+            "INSERT INTO ms_delivery_attempt (decomposition_id, task_id, executor, target_runtime, status) \
+             VALUES ($1, $2, $3, $4, 'DISPATCHED') RETURNING id",
         )
         .bind(decomposition_id)
         .bind(task_id)
         .bind(executor.as_str())
+        .bind(target_runtime)
         .fetch_one(&self.pool)
         .await
         .map_err(map_err)?
         .try_get("id")
         .map_err(map_err)?;
-        Ok(DeliveryAttempt::dispatched(&id, decomposition_id, task_id, executor))
+        Ok(DeliveryAttempt::dispatched(&id, decomposition_id, task_id, executor, target_runtime))
     }
 
     async fn get(&self, id: &str) -> Result<Option<DeliveryAttempt>, RepoError> {
@@ -211,7 +214,7 @@ impl DeliveryRepository for PgDeliveryRepository {
             .map_err(map_err)?;
 
         let mut pq = QueryBuilder::<sqlx::Postgres>::new(
-            "SELECT a.id, a.decomposition_id, a.task_id, a.executor, a.status, a.run_id, \
+            "SELECT a.id, a.decomposition_id, a.task_id, a.executor, a.target_runtime, a.status, a.run_id, \
              a.deliverable_kind, a.deliverable_reference, a.deliverable_summary, a.error, \
              a.created_at, t.title AS task_title, t.description AS task_description, \
              r.title AS module_title, \

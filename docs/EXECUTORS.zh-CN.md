@@ -205,6 +205,20 @@ shepherd dispatch --decomp d1 --task t1 --executor CODEBUDDY
 
 MCP 工具 `shepherd_dispatch_delivery` 同样接受这四种类型。
 
+### 定向到具体某台 runtime
+
+除了按类型,还可以把任务钉给某个注册上来的 runtime(`targetRuntime` = 注册名,
+即该 runtime 的 `RUNTIME_NAME`;名字跨重连稳定,runtime id 每次注册会变):
+
+```bash
+curl -X POST $BASE/delivery -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"decompositionId":"d1","taskId":"t1","title":"…","executor":"CLAUDE_CODE","targetRuntime":"box-1"}'
+```
+
+定向任务只会被同名 runtime 认领(Redis 下走 `fleet:rt:<name>` 专属流);目标离线时任务留队等它回来,
+不会被其它 runtime 抢走。Web 端在拆分图的派发菜单里选具体执行者即可,离线的会置灰。
+同名多实例会共享这条定向流——需要一对一就给每台起唯一的名字。
+
 ## 排障
 
 | 现象 | 排查 |
