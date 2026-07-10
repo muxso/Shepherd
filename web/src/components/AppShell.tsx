@@ -210,7 +210,8 @@ export default function AppShell({ children }: { children: ReactNode }) {
           }}
         >
           <span style={{ fontSize: 18 }}>{m.icon}</span>
-          <span>{t(...m.label)}</span>
+          {/* 英文标签可能超过窄栏宽度:超出省略,完整名在 Tooltip 里 */}
+          <span style={{ maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t(...m.label)}</span>
         </div>
       </Tooltip>
     )
