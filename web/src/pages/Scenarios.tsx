@@ -1627,7 +1627,7 @@ function DistCard({ title, d, centerLabel, t }: { title: string; d: Dist; center
   )
 }
 
-// 场景执行报告:从右侧展开的抽屉(对齐 docs/api-coverage.html)。
+// 场景执行报告:从右侧展开的抽屉。
 // 顶部=报告分析卡(步骤数/通过/失败/通过率)+ 圆环;工具栏=过滤 + 展开/收起全部;
 // 报告明细沿用现有 ReportRow 结构(逐步可展开,复用调试 7 标签面板)。
 function ScenarioReportModal({ reportId, nameOf, caseMap, onClose }: { reportId: string | null; nameOf: NameOf; caseMap?: Record<string, ApiCase>; onClose: () => void }) {

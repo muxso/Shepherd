@@ -140,7 +140,7 @@ web/               React + antd 前端
 
 - **[使用指南](docs/USAGE.zh-CN.md)**([English](docs/USAGE.md))—— 概念、快速上手、完整配置参考、Web 控制台、机群与执行机配置、HTTP API。
 - **[部署与运维](docs/DEPLOYMENT.zh-CN.md)**([English](docs/DEPLOYMENT.md))—— Docker Compose、Kubernetes(Helm,`deploy/helm/shepherd`)、多云 Terraform(`deploy/terraform/{aws,gcp,azure}`)、CI/CD 自动部署。
-- **[架构](ARCHITECTURE.md)** · **[路线图](ROADMAP.md)** · **[机群设计笔记](docs/remote-agent-runtime-plan.md)**
+- **[AI 执行者运行指南](docs/EXECUTORS.zh-CN.md)**([English](docs/EXECUTORS.md))—— 在 `agent-runtime` 下运行 Claude Code / Codex / OpenCode / CodeBuddy。
 
 ## 和别的方案比
 
@@ -158,8 +158,6 @@ cargo test --workspace -- --ignored         # 真实数据库集成测试
 ```
 
 866 个测试,集成测试连真实 server + PG / Redis / MySQL。除架构守卫外,还有一条迁移唯一性守卫:迁移版本号重号会让 CI 挂(sqlx 对重号会静默丢迁移,我们踩过一次,缺列导致 500)。
-
-更多背景见 [ARCHITECTURE.md](ARCHITECTURE.md)、[ROADMAP.md](ROADMAP.md)、[机群设计](docs/remote-agent-runtime-plan.md)。
 
 ## 贡献
 
