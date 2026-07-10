@@ -1,8 +1,8 @@
-import { useCallback, useEffect, useState } from 'react'
-import { Button, Empty, Form, Input, Modal, Select, Table, Tag, Tooltip } from 'antd'
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import { Button, Drawer, Empty, Form, Input, Modal, Select, Space, Table, Tag, Tooltip } from 'antd'
 import { message, modal } from '../feedback'
-import { PlusOutlined, ReloadOutlined } from '@ant-design/icons'
-import { api, ApiError, type Bug } from '../api'
+import { LinkOutlined, PlusOutlined, ReloadOutlined } from '@ant-design/icons'
+import { api, ApiError, type Bug, type BugRelation } from '../api'
 import { useApp } from '../context'
 import { useI18n } from '../i18n'
 import { PageBody, PageContainer, PageHeader, SelectProjectEmpty } from '../components/Page'
@@ -24,6 +24,7 @@ export default function Bugs() {
   const [items, setItems] = useState<Bug[]>([])
   const [loading, setLoading] = useState(false)
   const [createOpen, setCreateOpen] = useState(false)
+  const [relBug, setRelBug] = useState<Bug | null>(null)
 
   const refresh = useCallback(() => {
     if (!projectId) return
@@ -94,11 +95,16 @@ export default function Bugs() {
             { title: 'ID', dataIndex: 'id', width: 110, render: (v: string) => <Tooltip title={v}><span className="ms-mono" style={{ fontSize: 12, color: 'var(--text-3)' }}>{v?.slice(0, 8)}</span></Tooltip> },
             {
               title: t('bug.action', '操作'),
-              width: 120,
+              width: 190,
               render: (_, r) => (
-                <Button type="link" size="small" onClick={() => changeStatus(r)}>
-                  {t('bug.changeStatusBtn', '变更状态')}
-                </Button>
+                <>
+                  <Button type="link" size="small" onClick={() => changeStatus(r)}>
+                    {t('bug.changeStatusBtn', '变更状态')}
+                  </Button>
+                  <Button type="link" size="small" icon={<LinkOutlined />} onClick={() => setRelBug(r)}>
+                    {t('bug.relations', '关联')}
+                  </Button>
+                </>
               ),
             },
           ]}
@@ -131,6 +137,122 @@ export default function Bugs() {
           </Button>
         </Form>
       </Modal>
+
+      <RelationsDrawer bug={relBug} projectId={projectId} onClose={() => setRelBug(null)} />
     </PageContainer>
+  )
+}
+
+// 缺陷 ↔ 资产关联抽屉:回溯缺陷来自哪条需求/场景用例/功能用例。
+// 目标名称从各自列表接口解析;已关联的目标在候选里隐藏。
+const REL_KINDS = ['REQUIREMENT', 'SCENARIO', 'FUNCTIONAL_CASE'] as const
+
+function RelationsDrawer({ bug, projectId, onClose }: { bug: Bug | null; projectId: string; onClose: () => void }) {
+  const { t } = useI18n()
+  const [relations, setRelations] = useState<BugRelation[]>([])
+  const [names, setNames] = useState<Record<string, Map<string, string>>>({})
+  const [kind, setKind] = useState<string>('REQUIREMENT')
+  const [targetId, setTargetId] = useState<string | undefined>()
+  const [busy, setBusy] = useState(false)
+
+  const kindLabel: Record<string, string> = {
+    REQUIREMENT: t('bug.kindRequirement', '需求'),
+    SCENARIO: t('bug.kindScenario', '场景用例'),
+    FUNCTIONAL_CASE: t('bug.kindFunctional', '功能用例'),
+  }
+  const kindColor: Record<string, string> = { REQUIREMENT: 'geekblue', SCENARIO: 'purple', FUNCTIONAL_CASE: 'cyan' }
+
+  useEffect(() => {
+    if (!bug) return
+    setKind('REQUIREMENT')
+    setTargetId(undefined)
+    api.bugRelations(bug.id).then((p) => setRelations(p.relations ?? [])).catch(() => setRelations([]))
+    // 三类资产各拉一次,构建 id → 名称 映射(候选下拉 + 已关联行共用)。
+    Promise.all([
+      api.requirements(projectId).then((p) => p.items ?? []).catch(() => []),
+      api.scenarios(projectId).catch(() => []),
+      api.functionalCases(projectId).catch(() => []),
+    ]).then(([reqs, scns, cases]) => {
+      setNames({
+        REQUIREMENT: new Map(reqs.map((r) => [r.id, r.title])),
+        SCENARIO: new Map(scns.map((s) => [s.id, s.name])),
+        FUNCTIONAL_CASE: new Map(cases.map((c) => [c.id, c.name])),
+      })
+    })
+  }, [bug, projectId])
+
+  const linkedKeys = useMemo(() => new Set(relations.map((r) => `${r.kind}:${r.targetId}`)), [relations])
+  const candidates = [...(names[kind]?.entries() ?? [])]
+    .filter(([id]) => !linkedKeys.has(`${kind}:${id}`))
+    .map(([id, name]) => ({ value: id, label: name }))
+
+  const link = async () => {
+    if (!bug || !targetId) return
+    setBusy(true)
+    try {
+      const p = await api.linkBugRelation(bug.id, { kind, targetId })
+      setRelations(p.relations ?? [])
+      setTargetId(undefined)
+      message.success(t('bug.linked', '已关联'))
+    } catch (e) {
+      message.error(e instanceof ApiError ? e.message : t('bug.linkFailed', '关联失败'))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const unlink = async (r: BugRelation) => {
+    if (!bug) return
+    try {
+      const p = await api.unlinkBugRelation(bug.id, r.kind, r.targetId)
+      setRelations(p.relations ?? [])
+    } catch (e) {
+      message.error(e instanceof ApiError ? e.message : t('bug.unlinkFailed', '取消关联失败'))
+    }
+  }
+
+  return (
+    <Drawer open={!!bug} onClose={onClose} width={520} title={`${t('bug.relTitle', '关联资产')} · ${bug?.title || bug?.id || ''}`}>
+      <Space.Compact style={{ width: '100%', marginBottom: 16 }}>
+        <Select
+          value={kind}
+          onChange={(v) => { setKind(v); setTargetId(undefined) }}
+          style={{ width: 130 }}
+          options={REL_KINDS.map((k) => ({ value: k, label: kindLabel[k] }))}
+        />
+        <Select
+          showSearch
+          optionFilterProp="label"
+          placeholder={t('bug.relTarget', '选择要关联的目标')}
+          value={targetId}
+          onChange={setTargetId}
+          style={{ flex: 1 }}
+          options={candidates}
+          notFoundContent={t('common.empty', '暂无数据')}
+        />
+        <Button type="primary" loading={busy} disabled={!targetId} onClick={link}>
+          {t('bug.linkBtn', '关联')}
+        </Button>
+      </Space.Compact>
+      {relations.length === 0 ? (
+        <Empty description={t('bug.relEmpty', '暂无关联,从上方选择需求/用例建立追溯')} />
+      ) : (
+        relations.map((r) => (
+          <div
+            key={`${r.kind}:${r.targetId}`}
+            style={{
+              display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px', marginBottom: 6,
+              background: 'var(--panel-2)', border: '1px solid var(--border-soft)', borderRadius: 8,
+            }}
+          >
+            <Tag color={kindColor[r.kind] || 'default'} style={{ marginRight: 0 }}>{kindLabel[r.kind] || r.kind}</Tag>
+            <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {names[r.kind]?.get(r.targetId) || <span className="ms-mono" style={{ fontSize: 12, color: 'var(--text-3)' }}>{r.targetId}</span>}
+            </span>
+            <Button type="link" size="small" danger onClick={() => unlink(r)}>{t('bug.unlink', '取消关联')}</Button>
+          </div>
+        ))
+      )}
+    </Drawer>
   )
 }
