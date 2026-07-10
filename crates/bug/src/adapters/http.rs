@@ -8,10 +8,11 @@ use axum::{
     Json, Router,
 };
 use crate::application::{
-    BugFollowerError, BugFollowersUseCase, ChangeBugStatusError, ChangeBugStatusUseCase,
-    CreateBugError, CreateBugUseCase, ListBugsUseCase,
+    BugFollowerError, BugFollowersUseCase, BugRelationError, BugRelationsUseCase,
+    ChangeBugStatusError, ChangeBugStatusUseCase, CreateBugError, CreateBugUseCase,
+    ListBugsUseCase,
 };
-use crate::domain::{Bug, BugError};
+use crate::domain::{Bug, BugError, BugRelation};
 use serde::{Deserialize, Serialize};
 use utoipa::{OpenApi, ToSchema};
 use webauth::{AuthUser, SessionStore};
@@ -22,6 +23,7 @@ struct BugState {
     change: ChangeBugStatusUseCase,
     list: ListBugsUseCase,
     followers: BugFollowersUseCase,
+    relations: BugRelationsUseCase,
     sessions: Arc<dyn SessionStore>,
 }
 
@@ -36,6 +38,7 @@ pub fn router(
     change: ChangeBugStatusUseCase,
     list: ListBugsUseCase,
     followers: BugFollowersUseCase,
+    relations: BugRelationsUseCase,
     sessions: Arc<dyn SessionStore>,
 ) -> Router {
     Router::new()
@@ -43,7 +46,9 @@ pub fn router(
         .route("/bug/{id}/status", post(change_status))
         .route("/bug/{id}/followers", post(follow_bug).get(list_followers))
         .route("/bug/{id}/followers/{userId}", delete(unfollow_bug))
-        .with_state(BugState { create, change, list, followers, sessions })
+        .route("/bug/{id}/relation", post(link_relation).get(list_relations))
+        .route("/bug/{id}/relation/{kind}/{targetId}", delete(unlink_relation))
+        .with_state(BugState { create, change, list, followers, relations, sessions })
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -223,8 +228,94 @@ async fn unfollow_bug(
     }
 }
 
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+struct RelationItem {
+    /// REQUIREMENT | SCENARIO | FUNCTIONAL_CASE。
+    kind: String,
+    target_id: String,
+}
+
+impl From<BugRelation> for RelationItem {
+    fn from(r: BugRelation) -> Self {
+        Self { kind: r.kind.as_str().to_string(), target_id: r.target_id }
+    }
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+struct RelationsResponse {
+    relations: Vec<RelationItem>,
+}
+
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+struct LinkRelationRequest {
+    /// REQUIREMENT | SCENARIO | FUNCTIONAL_CASE。
+    kind: String,
+    target_id: String,
+}
+
+fn relations_body(rels: Vec<BugRelation>) -> Json<RelationsResponse> {
+    Json(RelationsResponse { relations: rels.into_iter().map(RelationItem::from).collect() })
+}
+
+fn map_relation_err(e: BugRelationError) -> Response {
+    match e {
+        BugRelationError::BugNotFound => (StatusCode::NOT_FOUND, "bug not found").into_response(),
+        BugRelationError::Domain(_) => {
+            (StatusCode::BAD_REQUEST, "invalid relation payload").into_response()
+        }
+        BugRelationError::Repo(_) => {
+            (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response()
+        }
+    }
+}
+
+#[utoipa::path(get, path = "/bug/{id}/relation", tag = "bug", params(("id" = String, Path)), responses((status = 200, body = RelationsResponse), (status = 404)), security(("bearer" = [])))]
+async fn list_relations(user: AuthUser, State(st): State<BugState>, Path(id): Path<String>) -> Response {
+    if !user.can("BUG", "READ") {
+        return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
+    match st.relations.list(&id).await {
+        Ok(rels) => (StatusCode::OK, relations_body(rels)).into_response(),
+        Err(e) => map_relation_err(e),
+    }
+}
+
+#[utoipa::path(post, path = "/bug/{id}/relation", tag = "bug", params(("id" = String, Path)), request_body = LinkRelationRequest, responses((status = 200, body = RelationsResponse), (status = 400), (status = 404)), security(("bearer" = [])))]
+async fn link_relation(
+    user: AuthUser,
+    State(st): State<BugState>,
+    Path(id): Path<String>,
+    Json(req): Json<LinkRelationRequest>,
+) -> Response {
+    if !user.can("BUG", "UPDATE") {
+        return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
+    match st.relations.link(&id, &req.kind, &req.target_id).await {
+        Ok(rels) => (StatusCode::OK, relations_body(rels)).into_response(),
+        Err(e) => map_relation_err(e),
+    }
+}
+
+#[utoipa::path(delete, path = "/bug/{id}/relation/{kind}/{targetId}", tag = "bug", params(("id" = String, Path), ("kind" = String, Path), ("targetId" = String, Path)), responses((status = 200, body = RelationsResponse), (status = 400), (status = 404)), security(("bearer" = [])))]
+async fn unlink_relation(
+    user: AuthUser,
+    State(st): State<BugState>,
+    Path((id, kind, target_id)): Path<(String, String, String)>,
+) -> Response {
+    if !user.can("BUG", "UPDATE") {
+        return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
+    match st.relations.unlink(&id, &kind, &target_id).await {
+        Ok(rels) => (StatusCode::OK, relations_body(rels)).into_response(),
+        Err(e) => map_relation_err(e),
+    }
+}
+
 #[derive(OpenApi)]
-#[openapi(paths(create_bug, list_bugs, change_status, list_followers, follow_bug, unfollow_bug), components(schemas(CreateBugRequest, ChangeStatusRequest, BugResponse, FollowRequest, FollowersResponse)), tags((name = "bug", description = "缺陷管理")))]
+#[openapi(paths(create_bug, list_bugs, change_status, list_followers, follow_bug, unfollow_bug, list_relations, link_relation, unlink_relation), components(schemas(CreateBugRequest, ChangeStatusRequest, BugResponse, FollowRequest, FollowersResponse, LinkRelationRequest, RelationItem, RelationsResponse)), tags((name = "bug", description = "缺陷管理")))]
 struct ApiDoc;
 pub fn openapi() -> utoipa::openapi::OpenApi { ApiDoc::openapi() }
 
@@ -248,7 +339,8 @@ mod tests {
             CreateBugUseCase::new(repo.clone()),
             ChangeBugStatusUseCase::new(repo.clone()),
             ListBugsUseCase::new(repo.clone()),
-            BugFollowersUseCase::new(repo),
+            BugFollowersUseCase::new(repo.clone()),
+            BugRelationsUseCase::new(repo),
             sessions,
         );
         (r, token)
@@ -316,7 +408,8 @@ mod tests {
             CreateBugUseCase::new(repo.clone()),
             ChangeBugStatusUseCase::new(repo.clone()),
             ListBugsUseCase::new(repo.clone()),
-            BugFollowersUseCase::new(repo),
+            BugFollowersUseCase::new(repo.clone()),
+            BugRelationsUseCase::new(repo),
             sessions,
         );
         let id = create_returns_id(&app, &token).await;
@@ -390,11 +483,73 @@ mod tests {
             CreateBugUseCase::new(repo.clone()),
             ChangeBugStatusUseCase::new(repo.clone()),
             ListBugsUseCase::new(repo.clone()),
-            BugFollowersUseCase::new(repo),
+            BugFollowersUseCase::new(repo.clone()),
+            BugRelationsUseCase::new(repo),
             sessions,
         );
         let resp = app.oneshot(get("/bug?projectId=p1", Some(&token))).await.expect("resp");
         assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+    }
+
+    fn del(uri: &str, token: Option<&str>) -> Request<Body> {
+        let mut b = Request::builder().method("DELETE").uri(uri);
+        if let Some(t) = token {
+            b = b.header("authorization", format!("Bearer {t}"));
+        }
+        b.body(Body::empty()).expect("req")
+    }
+
+    #[tokio::test]
+    async fn link_list_unlink_relation_roundtrip() {
+        let (app, t) = app().await;
+        let id = create_returns_id(&app, &t).await;
+
+        let resp = app
+            .clone()
+            .oneshot(post(&format!("/bug/{id}/relation"), r#"{"kind":"REQUIREMENT","targetId":"r1"}"#, Some(&t)))
+            .await
+            .expect("resp");
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        let resp = app
+            .clone()
+            .oneshot(post(&format!("/bug/{id}/relation"), r#"{"kind":"SCENARIO","targetId":"s1"}"#, Some(&t)))
+            .await
+            .expect("resp");
+        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.expect("body");
+        let v: serde_json::Value = serde_json::from_slice(&bytes).expect("json");
+        assert_eq!(v["relations"].as_array().expect("arr").len(), 2);
+
+        let resp = app
+            .clone()
+            .oneshot(del(&format!("/bug/{id}/relation/REQUIREMENT/r1"), Some(&t)))
+            .await
+            .expect("resp");
+        assert_eq!(resp.status(), StatusCode::OK);
+        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.expect("body");
+        let v: serde_json::Value = serde_json::from_slice(&bytes).expect("json");
+        let rels = v["relations"].as_array().expect("arr");
+        assert_eq!(rels.len(), 1);
+        assert_eq!(rels[0]["kind"], "SCENARIO");
+        assert_eq!(rels[0]["targetId"], "s1");
+    }
+
+    #[tokio::test]
+    async fn link_relation_invalid_kind_400_and_missing_bug_404() {
+        let (app, t) = app().await;
+        let id = create_returns_id(&app, &t).await;
+        let resp = app
+            .clone()
+            .oneshot(post(&format!("/bug/{id}/relation"), r#"{"kind":"king","targetId":"r1"}"#, Some(&t)))
+            .await
+            .expect("resp");
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+
+        let resp = app
+            .oneshot(post("/bug/ghost/relation", r#"{"kind":"REQUIREMENT","targetId":"r1"}"#, Some(&t)))
+            .await
+            .expect("resp");
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
     }
 
     #[tokio::test]

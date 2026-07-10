@@ -35,7 +35,7 @@ use axum::routing::get;
 use axum::Router;
 use migrate::PgPool;
 
-use bug::application::{BugFollowersUseCase, ChangeBugStatusUseCase, CreateBugUseCase, ListBugsUseCase};
+use bug::application::{BugFollowersUseCase, BugRelationsUseCase, ChangeBugStatusUseCase, CreateBugUseCase, ListBugsUseCase};
 use bug::adapters::pg::PgBugRepository;
 use follow::application::FollowService;
 use follow::adapters::pg::PgFollowStore;
@@ -445,7 +445,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         CreateBugUseCase::new(bug_repo.clone()),
         ChangeBugStatusUseCase::new(bug_repo.clone()),
         ListBugsUseCase::new(bug_repo.clone()),
-        BugFollowersUseCase::new(bug_repo),
+        BugFollowersUseCase::new(bug_repo.clone()),
+        BugRelationsUseCase::new(bug_repo),
         sessions.clone(),
     );
 

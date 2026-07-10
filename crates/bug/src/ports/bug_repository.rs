@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 
-use crate::domain::{Bug, NewBug, StatusFlowGraph};
+use crate::domain::{Bug, BugRelation, NewBug, StatusFlowGraph};
 
 use thiserror::Error;
 
@@ -27,4 +27,10 @@ pub trait BugRepository: Send + Sync {
     async fn remove_follower(&self, bug_id: &str, user_id: &str) -> Result<(), RepoError>;
 
     async fn list_followers(&self, bug_id: &str) -> Result<Vec<String>, RepoError>;
+
+    async fn add_relation(&self, rel: &BugRelation) -> Result<(), RepoError>;
+
+    async fn remove_relation(&self, rel: &BugRelation) -> Result<(), RepoError>;
+
+    async fn list_relations(&self, bug_id: &str) -> Result<Vec<BugRelation>, RepoError>;
 }

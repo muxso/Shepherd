@@ -3,7 +3,7 @@ use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 
-use crate::domain::{Bug, NewBug, StatusFlowGraph};
+use crate::domain::{Bug, BugRelation, NewBug, StatusFlowGraph};
 use crate::ports::{BugRepository, RepoError};
 
 #[derive(Default)]
@@ -12,6 +12,7 @@ struct State {
     bugs: HashMap<String, Bug>,
     order: Vec<String>,
     followers: HashMap<String, Vec<String>>,
+    relations: HashMap<String, Vec<BugRelation>>,
     seq: u64,
 }
 
@@ -106,5 +107,26 @@ impl BugRepository for InMemoryBugRepository {
 
     async fn list_followers(&self, bug_id: &str) -> Result<Vec<String>, RepoError> {
         Ok(self.state.lock().expect("lock").followers.get(bug_id).cloned().unwrap_or_default())
+    }
+
+    async fn add_relation(&self, rel: &BugRelation) -> Result<(), RepoError> {
+        let mut state = self.state.lock().expect("lock");
+        let rels = state.relations.entry(rel.bug_id.clone()).or_default();
+        if !rels.iter().any(|r| r.kind == rel.kind && r.target_id == rel.target_id) {
+            rels.push(rel.clone());
+        }
+        Ok(())
+    }
+
+    async fn remove_relation(&self, rel: &BugRelation) -> Result<(), RepoError> {
+        let mut state = self.state.lock().expect("lock");
+        if let Some(rels) = state.relations.get_mut(&rel.bug_id) {
+            rels.retain(|r| !(r.kind == rel.kind && r.target_id == rel.target_id));
+        }
+        Ok(())
+    }
+
+    async fn list_relations(&self, bug_id: &str) -> Result<Vec<BugRelation>, RepoError> {
+        Ok(self.state.lock().expect("lock").relations.get(bug_id).cloned().unwrap_or_default())
     }
 }

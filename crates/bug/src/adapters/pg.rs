@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use crate::domain::{Bug, NewBug, StatusFlowGraph, StatusItem};
+use crate::domain::{Bug, BugRelation, NewBug, StatusFlowGraph, StatusItem};
 use crate::ports::{BugRepository, RepoError};
 use sqlx::{PgPool, Row};
 
@@ -149,6 +149,51 @@ impl BugRepository for PgBugRepository {
         .await
         .map_err(map_err)?;
         rows.iter().map(|r| r.try_get("user_id").map_err(map_err)).collect()
+    }
+
+    async fn add_relation(&self, rel: &BugRelation) -> Result<(), RepoError> {
+        sqlx::query(
+            "INSERT INTO ms_bug_relation (bug_id, kind, target_id) VALUES ($1, $2, $3) \
+             ON CONFLICT (bug_id, kind, target_id) DO NOTHING",
+        )
+        .bind(&rel.bug_id)
+        .bind(rel.kind.as_str())
+        .bind(&rel.target_id)
+        .execute(&self.pool)
+        .await
+        .map_err(map_err)?;
+        Ok(())
+    }
+
+    async fn remove_relation(&self, rel: &BugRelation) -> Result<(), RepoError> {
+        sqlx::query("DELETE FROM ms_bug_relation WHERE bug_id = $1 AND kind = $2 AND target_id = $3")
+            .bind(&rel.bug_id)
+            .bind(rel.kind.as_str())
+            .bind(&rel.target_id)
+            .execute(&self.pool)
+            .await
+            .map_err(map_err)?;
+        Ok(())
+    }
+
+    async fn list_relations(&self, bug_id: &str) -> Result<Vec<BugRelation>, RepoError> {
+        let rows = sqlx::query(
+            "SELECT bug_id, kind, target_id FROM ms_bug_relation WHERE bug_id = $1 \
+             ORDER BY created_at, kind, target_id",
+        )
+        .bind(bug_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(map_err)?;
+        rows.iter()
+            .map(|r| {
+                let bug_id: String = r.try_get("bug_id").map_err(map_err)?;
+                let kind: String = r.try_get("kind").map_err(map_err)?;
+                let target_id: String = r.try_get("target_id").map_err(map_err)?;
+                BugRelation::new(&bug_id, &kind, &target_id)
+                    .map_err(|e| RepoError::Backend(e.to_string()))
+            })
+            .collect()
     }
 }
 
