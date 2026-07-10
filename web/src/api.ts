@@ -561,6 +561,14 @@ export interface User {
   userGroups?: string[]
 }
 
+export interface ProjectMember {
+  projectId: string
+  userId: string
+  /** OWNER | MEMBER。 */
+  role: string
+  addedAt: string
+}
+
 export interface CaseStep {
   step: string
   expected: string
@@ -714,6 +722,8 @@ export interface DeliveryAttempt {
   taskId?: string
   title?: string
   executor?: string
+  /** 定向派发的目标 runtime name;空 = 任意同能力 runtime。 */
+  targetRuntime?: string | null
   runId?: string | null
   deliverable?: { kind: string; reference: string; summary: string } | null
   error?: string | null
@@ -746,6 +756,8 @@ export interface TaskCenterItem {
   module: string
   /** 执行方式(执行者):CLAUDE_CODE / CODEX / OPENCODE / CODEBUDDY。 */
   executor: string
+  /** 定向派发的目标 runtime name;空 = 任意同能力 runtime。 */
+  targetRuntime?: string | null
   /** 执行状态:DISPATCHED / RUNNING / DELIVERED / FAILED / STOPPED。 */
   status: string
   /** 执行结果:SUCCESS / FAILED / STOPPED / PENDING。 */
@@ -855,6 +867,12 @@ export interface Bug {
   title?: string
   status: string
   createdAt?: number
+}
+
+export interface BugRelation {
+  /** REQUIREMENT | SCENARIO | FUNCTIONAL_CASE。 */
+  kind: string
+  targetId: string
 }
 
 /** 关注状态:某对象的关注人列表 + 当前用户是否在关注(后端 /follow 回读)。 */
@@ -1066,6 +1084,14 @@ export const api = {
     http.put<ResourcePool>(`/api/resource-pool/${id}`, body),
   deleteResourcePool: (id: string) => http.del<void>(`/api/resource-pool/${id}`),
 
+  // 项目成员
+  projectMembers: (projectId: string) =>
+    http.get<ProjectMember[]>(`/project/${encodeURIComponent(projectId)}/member`),
+  addProjectMember: (projectId: string, b: { userId: string; role?: string }) =>
+    http.post<ProjectMember>(`/project/${encodeURIComponent(projectId)}/member`, b),
+  removeProjectMember: (projectId: string, userId: string) =>
+    http.del(`/project/${encodeURIComponent(projectId)}/member/${encodeURIComponent(userId)}`),
+
   // 角色 / 用户(平台级)
   roles: () => http.get<Page<Role>>('/role?pageSize=100'),
   createRole: (b: { name: string; scope?: string; permissions?: string[] }) => http.post<Role>('/role', b),
@@ -1215,7 +1241,7 @@ export const api = {
     ),
 
   // 交付
-  createDelivery: (b: { decompositionId: string; taskId: string; title: string; executor: string }) =>
+  createDelivery: (b: { decompositionId: string; taskId: string; title: string; executor: string; targetRuntime?: string }) =>
     http.post<DeliveryAttempt>('/delivery', b),
   deliveries: (decompositionId: string, taskId: string) =>
     http.get<DeliveryAttempt[]>(
@@ -1270,6 +1296,15 @@ export const api = {
     projectId ? http.get<Bug[]>(`/bug?projectId=${encodeURIComponent(projectId)}`) : Promise.resolve([] as Bug[]),
   createBug: (b: { projectId: string; title: string; initialStatus: string }) => http.post<Bug>('/bug', b),
   setBugStatus: (id: string, status: string) => http.post<Bug>(`/bug/${id}/status`, { status }),
+  // 缺陷 ↔ 资产关联(需求/场景用例/功能用例)
+  bugRelations: (id: string) =>
+    http.get<{ relations: BugRelation[] }>(`/bug/${encodeURIComponent(id)}/relation`),
+  linkBugRelation: (id: string, b: { kind: string; targetId: string }) =>
+    http.post<{ relations: BugRelation[] }>(`/bug/${encodeURIComponent(id)}/relation`, b),
+  unlinkBugRelation: (id: string, kind: string, targetId: string) =>
+    http.del<{ relations: BugRelation[] }>(
+      `/bug/${encodeURIComponent(id)}/relation/${encodeURIComponent(kind)}/${encodeURIComponent(targetId)}`,
+    ),
 
   // 关注人(通用):任意对象按 (projectId, entityType, entityId) 关注/取消/查询。
   follow: (b: { projectId: string; entityType: string; entityId: string }) =>

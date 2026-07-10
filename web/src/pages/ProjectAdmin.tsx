@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useState } from 'react'
-import { Button, Card, Drawer, Empty, Input, Switch, Table, Tag } from 'antd'
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import { Button, Card, Drawer, Empty, Form, Input, Modal, Popconfirm, Select, Switch, Table, Tag } from 'antd'
 import { FolderOpenOutlined, SearchOutlined } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
-import { api, userStore, type Organization, type Role, type User } from '../api'
+import { message } from '../feedback'
+import { api, ApiError, userStore, type Organization, type ProjectMember, type Role, type User } from '../api'
 import { useApp } from '../context'
 import { useI18n } from '../i18n'
 import { SelectProjectEmpty } from '../components/Page'
@@ -57,7 +58,7 @@ export default function ProjectAdmin() {
       <div style={{ flex: 1, minWidth: 0, overflow: 'auto', padding: 16, background: 'var(--bg)' }}>
         {nav === 'basic' && <BasicInfo project={project} t={t} />}
         {nav === 'appSettings' && <AppSettings t={t} />}
-        {nav === 'members' && <Members t={t} />}
+        {nav === 'members' && <Members t={t} projectId={projectId} />}
         {nav === 'userGroups' && <UserGroups t={t} />}
       </div>
     </div>
@@ -138,34 +139,125 @@ function AppSettings({ t }: { t: TFn }) {
   )
 }
 
-function Members({ t }: { t: TFn }) {
+// 项目成员:真实成员列表(/project/{id}/member),关联平台用户表补齐姓名/邮箱。
+type MemberRow = ProjectMember & { user?: User }
+
+function Members({ t, projectId }: { t: TFn; projectId: string }) {
+  const [members, setMembers] = useState<ProjectMember[]>([])
   const [users, setUsers] = useState<User[]>([])
   const [q, setQ] = useState('')
   const [loading, setLoading] = useState(false)
-  useEffect(() => {
+  const [addOpen, setAddOpen] = useState(false)
+  const load = useCallback(() => {
     setLoading(true)
-    api.users().then((p) => setUsers(p.items ?? [])).catch(() => setUsers([])).finally(() => setLoading(false))
-  }, [])
-  const rows = users.filter((u) => !q || u.name.toLowerCase().includes(q.toLowerCase()) || u.email.toLowerCase().includes(q.toLowerCase()))
-  const cols: ColumnsType<User> = [
-    { title: t('proj.username', '用户名'), dataIndex: 'email', width: 220 },
-    { title: t('proj.realname', '姓名'), dataIndex: 'name', width: 160 },
-    { title: t('proj.email', '邮箱'), dataIndex: 'email' },
-    { title: t('proj.phone', '手机'), width: 120, render: () => <span style={{ color: 'var(--text-3)' }}>—</span> },
-    { title: t('proj.userGroup', '用户组'), width: 120, render: () => <Tag color="green">{t('proj.projMember', '项目成员')}</Tag> },
-    { title: t('proj.status', '状态'), width: 90, render: (_v, u) => <Tag color={u.enable === false ? 'default' : 'green'}>{u.enable === false ? t('proj.disabled', '禁用') : t('proj.normal', '正常')}</Tag> },
-    { title: t('apidef.colAction', '操作'), width: 90, render: () => <Button type="link" size="small" danger>{t('proj.remove', '移除')}</Button> },
+    Promise.all([api.projectMembers(projectId), api.users()])
+      .then(([ms, up]) => { setMembers(ms ?? []); setUsers(up.items ?? []) })
+      .catch(() => { setMembers([]); setUsers([]) })
+      .finally(() => setLoading(false))
+  }, [projectId])
+  useEffect(load, [load])
+  const byId = useMemo(() => new Map(users.map((u) => [u.id, u])), [users])
+  const rows: MemberRow[] = members
+    .map((m) => ({ ...m, user: byId.get(m.userId) }))
+    .filter((m) => {
+      if (!q) return true
+      const s = q.toLowerCase()
+      return (m.user?.name ?? '').toLowerCase().includes(s) || (m.user?.email ?? m.userId).toLowerCase().includes(s)
+    })
+  const remove = async (m: MemberRow) => {
+    try {
+      await api.removeProjectMember(projectId, m.userId)
+      message.success(t('proj.removed', '已移除'))
+      load()
+    } catch (e) {
+      message.error(e instanceof ApiError ? e.message : t('proj.removeFailed', '移除失败'))
+    }
+  }
+  const cols: ColumnsType<MemberRow> = [
+    { title: t('proj.username', '用户名'), width: 220, render: (_v, m) => m.user?.email ?? <span className="ms-mono" style={{ fontSize: 12 }}>{m.userId}</span> },
+    { title: t('proj.realname', '姓名'), width: 160, render: (_v, m) => m.user?.name ?? '—' },
+    { title: t('proj.email', '邮箱'), render: (_v, m) => m.user?.email ?? '—' },
+    { title: t('proj.role', '角色'), width: 120, render: (_v, m) => m.role === 'OWNER' ? <Tag color="gold">{t('proj.roleOwner', '拥有者')}</Tag> : <Tag color="green">{t('proj.projMember', '项目成员')}</Tag> },
+    { title: t('proj.status', '状态'), width: 90, render: (_v, m) => <Tag color={m.user?.enable === false ? 'default' : 'green'}>{m.user?.enable === false ? t('proj.disabled', '禁用') : t('proj.normal', '正常')}</Tag> },
+    {
+      title: t('apidef.colAction', '操作'), width: 90,
+      render: (_v, m) => (
+        <Popconfirm title={t('proj.removeConfirm', '确认将该成员移出项目?')} onConfirm={() => remove(m)}>
+          <Button type="link" size="small" danger>{t('proj.remove', '移除')}</Button>
+        </Popconfirm>
+      ),
+    },
   ]
   return (
     <Card size="small" styles={{ body: { padding: 12 } }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
-        <Button type="primary">{t('proj.addMember', '添加成员')}</Button>
-        <Button>{t('proj.inviteEmail', '邮箱邀请')}</Button>
+        <Button type="primary" onClick={() => setAddOpen(true)}>{t('proj.addMember', '添加成员')}</Button>
         <div style={{ flex: 1 }} />
-        <Input allowClear prefix={<SearchOutlined style={{ color: 'var(--text-3)' }} />} placeholder={t('proj.searchMember', '通过姓名/邮箱/手机搜索')} style={{ width: 260 }} value={q} onChange={(e) => setQ(e.target.value)} />
+        <Input allowClear prefix={<SearchOutlined style={{ color: 'var(--text-3)' }} />} placeholder={t('proj.searchMember', '通过姓名/邮箱搜索')} style={{ width: 260 }} value={q} onChange={(e) => setQ(e.target.value)} />
       </div>
-      <Table<User> rowKey="id" size="middle" loading={loading} dataSource={rows} columns={cols} pagination={{ pageSize: 20, size: 'small', showTotal: (n) => `${t('apidef.totalPrefix', '共')} ${n} ${t('proj.unit', '条')}` }} />
+      <Table<MemberRow> rowKey="userId" size="middle" loading={loading} dataSource={rows} columns={cols} pagination={{ pageSize: 20, size: 'small', showTotal: (n) => `${t('apidef.totalPrefix', '共')} ${n} ${t('proj.unit', '条')}` }} />
+      <AddMemberModal
+        open={addOpen}
+        projectId={projectId}
+        candidates={users.filter((u) => u.enable !== false && !members.some((m) => m.userId === u.id))}
+        onClose={() => setAddOpen(false)}
+        onDone={() => { setAddOpen(false); load() }}
+        t={t}
+      />
     </Card>
+  )
+}
+
+function AddMemberModal({ open, projectId, candidates, onClose, onDone, t }: {
+  open: boolean
+  projectId: string
+  candidates: User[]
+  onClose: () => void
+  onDone: () => void
+  t: TFn
+}) {
+  const [form] = Form.useForm<{ userId: string; role: string }>()
+  const [busy, setBusy] = useState(false)
+  useEffect(() => { if (open) form.resetFields() }, [open, form])
+  return (
+    <Modal title={t('proj.addMember', '添加成员')} open={open} onCancel={onClose} footer={null} destroyOnHidden>
+      <Form
+        form={form}
+        layout="vertical"
+        initialValues={{ role: 'MEMBER' }}
+        onFinish={async (v) => {
+          setBusy(true)
+          try {
+            await api.addProjectMember(projectId, { userId: v.userId, role: v.role })
+            message.success(t('proj.added', '已添加'))
+            onDone()
+          } catch (e) {
+            message.error(e instanceof ApiError ? e.message : t('proj.addFailed', '添加失败'))
+          } finally {
+            setBusy(false)
+          }
+        }}
+      >
+        <Form.Item name="userId" label={t('proj.selectUser', '选择用户')} rules={[{ required: true }]}>
+          <Select
+            showSearch
+            optionFilterProp="label"
+            placeholder={t('proj.searchMember', '通过姓名/邮箱搜索')}
+            options={candidates.map((u) => ({ value: u.id, label: `${u.name} (${u.email})` }))}
+            notFoundContent={t('common.empty', '暂无数据')}
+          />
+        </Form.Item>
+        <Form.Item name="role" label={t('proj.role', '角色')}>
+          <Select
+            options={[
+              { value: 'MEMBER', label: t('proj.projMember', '项目成员') },
+              { value: 'OWNER', label: t('proj.roleOwner', '拥有者') },
+            ]}
+          />
+        </Form.Item>
+        <Button type="primary" htmlType="submit" block loading={busy}>{t('proj.addMember', '添加成员')}</Button>
+      </Form>
+    </Modal>
   )
 }
 
@@ -173,10 +265,12 @@ function UserGroups({ t }: { t: TFn }) {
   const [roles, setRoles] = useState<Role[]>([])
   const [loading, setLoading] = useState(false)
   const [sel, setSel] = useState<Role | null>(null)
-  useEffect(() => {
+  const [createOpen, setCreateOpen] = useState(false)
+  const load = useCallback(() => {
     setLoading(true)
     api.roles().then((p) => setRoles(p.items ?? [])).catch(() => setRoles([])).finally(() => setLoading(false))
   }, [])
+  useEffect(load, [load])
   const cols: ColumnsType<Role> = [
     { title: t('proj.groupName', '用户组名称'), dataIndex: 'name' },
     { title: t('proj.memberCount', '成员数'), width: 120, render: () => <span style={{ color: 'var(--brand)' }}>—</span> },
@@ -184,10 +278,43 @@ function UserGroups({ t }: { t: TFn }) {
   ]
   return (
     <Card size="small" styles={{ body: { padding: 12 } }}>
-      <div style={{ marginBottom: 12 }}><Button type="primary">{t('proj.addGroup', '添加用户组')}</Button></div>
+      <div style={{ marginBottom: 12 }}><Button type="primary" onClick={() => setCreateOpen(true)}>{t('proj.addGroup', '添加用户组')}</Button></div>
       <Table<Role> rowKey="id" size="middle" loading={loading} dataSource={roles} columns={cols} pagination={false} />
       <PermissionDrawer role={sel} onClose={() => setSel(null)} t={t} />
+      <AddGroupModal open={createOpen} onClose={() => setCreateOpen(false)} onDone={() => { setCreateOpen(false); load() }} t={t} />
     </Card>
+  )
+}
+
+// 项目内新建用户组:固定 PROJECT 作用域;权限矩阵在「系统/用户组」里编辑。
+function AddGroupModal({ open, onClose, onDone, t }: { open: boolean; onClose: () => void; onDone: () => void; t: TFn }) {
+  const [form] = Form.useForm<{ name: string }>()
+  const [busy, setBusy] = useState(false)
+  useEffect(() => { if (open) form.resetFields() }, [open, form])
+  return (
+    <Modal title={t('proj.addGroup', '添加用户组')} open={open} onCancel={onClose} footer={null} destroyOnHidden>
+      <Form
+        form={form}
+        layout="vertical"
+        onFinish={async (v) => {
+          setBusy(true)
+          try {
+            await api.createRole({ name: v.name.trim(), scope: 'PROJECT', permissions: [] })
+            message.success(t('ug.created', '用户组已创建'))
+            onDone()
+          } catch (e) {
+            message.error(e instanceof ApiError ? e.message : t('ug.createFailed', '创建失败'))
+          } finally {
+            setBusy(false)
+          }
+        }}
+      >
+        <Form.Item name="name" label={t('proj.groupName', '用户组名称')} rules={[{ required: true }]}>
+          <Input placeholder={t('ug.groupNamePlaceholder', '如:接口测试工程师')} autoFocus />
+        </Form.Item>
+        <Button type="primary" htmlType="submit" block loading={busy}>{t('a.create', '创建')}</Button>
+      </Form>
+    </Modal>
   )
 }
 
