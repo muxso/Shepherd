@@ -516,10 +516,14 @@ export default function Home() {
           <div key={s.key} style={{ display: 'flex', alignItems: 'center', flex: '1 1 150px', minWidth: 150 }}>
             <div
               onClick={() => navigate(s.to)}
-              style={{ flex: 1, cursor: 'pointer', background: 'var(--panel)', border: '1px solid var(--border-soft)', borderRadius: 10, padding: '12px 14px', transition: 'transform .12s, box-shadow .12s' }}
-              onMouseEnter={(e) => { e.currentTarget.style.transform = 'translateY(-2px)'; e.currentTarget.style.boxShadow = '0 6px 18px rgba(91,91,214,.14)' }}
+              style={{ flex: 1, position: 'relative', overflow: 'hidden', cursor: 'pointer', background: 'linear-gradient(135deg, var(--brand-soft) 0%, var(--panel) 55%)', border: '1px solid var(--border-soft)', borderRadius: 10, padding: '12px 14px', transition: 'transform .12s, box-shadow .12s' }}
+              onMouseEnter={(e) => { e.currentTarget.style.transform = 'translateY(-2px)'; e.currentTarget.style.boxShadow = '0 6px 18px rgba(22,100,255,.10)' }}
               onMouseLeave={(e) => { e.currentTarget.style.transform = 'none'; e.currentTarget.style.boxShadow = 'none' }}
             >
+              {/* 幽灵步骤序号,右上角淡蓝斜体 */}
+              <span style={{ position: 'absolute', top: 6, right: 12, fontStyle: 'italic', fontWeight: 800, fontSize: 22, lineHeight: 1, color: 'var(--brand)', opacity: 0.16, pointerEvents: 'none' }}>
+                <span style={{ fontSize: 12, fontWeight: 600, marginRight: 2 }}>step</span>{i + 1}
+              </span>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
                 <span style={{ width: 28, height: 28, borderRadius: 8, background: 'var(--brand-soft)', color: 'var(--brand)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 15 }}>{s.icon}</span>
                 <span style={{ fontWeight: 600, color: 'var(--text)' }}>{s.name}</span>

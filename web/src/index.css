@@ -1,58 +1,60 @@
-/* —— 设计令牌(单一真源,与 src/theme.ts 同值)。品牌=青绿 teal-green,配深色 slate(默认暗色)。 —— */
+/* —— 设计令牌(单一真源,与 src/theme.ts 同值)。简约小清新(参考火山引擎控制台/Arco):
+   品牌=标准蓝,浅色=纯白面板 + 中性灰文字 + 极淡边框,大量留白;点缀用极淡的蓝白渐变。
+   绿色只留给「成功」语义,品牌与 pass/fail 状态色分离,列表页扫一眼就能区分。 —— */
 :root {
-  --brand: #13a06c; /* 青绿 teal-green */
-  --brand-hover: #0e8a5c;
-  --brand-soft: #e6f6ef; /* 选中/悬浮的淡品牌底 */
-  --success: #16a34a;
-  --error: #e5616a;
-  --warning: #e0a64b;
+  --brand: #1664ff; /* 标准蓝 */
+  --brand-hover: #4086ff;
+  --brand-soft: #eaf2ff; /* 选中/悬浮的淡品牌底 */
+  --accent: #6ad2ff; /* 辅助青蓝,图表/装饰用 */
+  --success: #00b42a;
+  --error: #f53f3f;
+  --warning: #ff7d00;
   --bg: transparent; /* 应用画布:透明,让 body 环境光晕透出 */
-  --bg-base: #f6f9f7; /* body 实底,微青冷白 */
+  --bg-base: #f7f8fa; /* body 实底,中性浅灰 */
   --panel: #ffffff; /* 卡片/面板 */
-  --panel-2: #f3f7f5; /* 次级面板/表头 */
-  --border: #e4ebe7;
-  --border-soft: #eef2f0;
-  --text: #20272e;
-  --text-2: #5a6570;
-  --text-3: #98a2ad;
-  /* 磨砂玻璃:半透明面板 + 背景模糊,让环境光晕透过外壳 */
-  --glass: rgba(255, 255, 255, 0.7);
+  --panel-2: #f7f8fa; /* 次级面板/表头 */
+  --border: #e5e6eb;
+  --border-soft: #f2f3f5;
+  --text: #1d2129;
+  --text-2: #4e5969;
+  --text-3: #86909c;
+  /* 磨砂玻璃:半透明面板 + 背景模糊 */
+  --glass: rgba(255, 255, 255, 0.8);
   --glass-blur: blur(16px) saturate(125%);
-  /* 环境光晕:青绿系,克制低饱和,锚定视口底部柔散。 */
+  /* 环境光晕:极淡的蓝,近乎不可见,只留一点空气感。 */
   --spotlight:
-    radial-gradient(ellipse 72% 56% at 10% 100%, rgba(19, 160, 108, 0.08), transparent 66%),
-    radial-gradient(ellipse 60% 50% at 90% 100%, rgba(43, 182, 115, 0.06), transparent 68%),
-    radial-gradient(ellipse 44% 44% at 50% 100%, rgba(60, 196, 135, 0.06), transparent 72%);
+    radial-gradient(ellipse 72% 56% at 10% 100%, rgba(22, 100, 255, 0.04), transparent 66%),
+    radial-gradient(ellipse 60% 50% at 90% 100%, rgba(106, 210, 255, 0.04), transparent 68%);
 }
 [data-theme='dark'] {
-  --brand: #2bb673; /* 青绿,暗色 slate 上更亮 */
-  --brand-hover: #3cc487;
-  --brand-soft: #16352a; /* 选中行的深青绿底 */
-  --success: #2bb673;
-  --error: #ef6e74;
-  --warning: #e6b15c;
+  --brand: #4086ff; /* 标准蓝,深灰底上取亮值 */
+  --brand-hover: #5b9aff;
+  --brand-soft: #1c2b4a; /* 选中行的深蓝底 */
+  --accent: #6ad2ff;
+  --success: #27c346;
+  --error: #f76965;
+  --warning: #ff9a2e;
   --bg: transparent;
-  --bg-base: #171d24; /* 冷 slate 画布 */
-  --panel: #1e252e; /* 行/卡片 */
-  --panel-2: #252e38; /* 表头/悬浮 */
-  --border: #2e3742;
-  --border-soft: #283139;
-  --text: #cdd6e0;
-  --text-2: #9aa6b2;
-  --text-3: #6b7682;
-  --glass: rgba(23, 29, 36, 0.6);
+  --bg-base: #161719; /* 中性深灰画布 */
+  --panel: #1d1f25; /* 行/卡片 */
+  --panel-2: #24262e; /* 表头/悬浮 */
+  --border: #2f333b;
+  --border-soft: #272b32;
+  --text: #e2e5ec;
+  --text-2: #a3aab6;
+  --text-3: #6e7681;
+  --glass: rgba(22, 23, 26, 0.65);
   --glass-blur: blur(16px) saturate(125%);
   --spotlight:
-    radial-gradient(ellipse 72% 56% at 10% 100%, rgba(43, 182, 115, 0.14), transparent 66%),
-    radial-gradient(ellipse 60% 50% at 90% 100%, rgba(43, 182, 115, 0.10), transparent 68%),
-    radial-gradient(ellipse 44% 44% at 50% 100%, rgba(60, 196, 135, 0.10), transparent 72%);
+    radial-gradient(ellipse 72% 56% at 10% 100%, rgba(64, 134, 255, 0.10), transparent 66%),
+    radial-gradient(ellipse 60% 50% at 90% 100%, rgba(106, 210, 255, 0.05), transparent 68%);
 }
 
 /* 闭环门面背景:一道柔和微光从左到右持续流动,呼应"流水线 / 闭环"。
    用多层 background-position 动画(不引入伪元素 → 无层叠冲突,内容天然在背景之上)。 */
 .ms-loop-hero {
   background-image:
-    linear-gradient(90deg, transparent 0%, rgba(43, 182, 115, 0.16) 50%, transparent 100%),
+    linear-gradient(90deg, transparent 0%, rgba(22, 100, 255, 0.10) 50%, transparent 100%),
     linear-gradient(135deg, var(--brand-soft) 0%, var(--panel) 62%);
   background-size: 200% 100%, 100% 100%;
   background-repeat: no-repeat;
@@ -229,7 +231,7 @@ body::before {
 }
 .ms-step-fillbg.run {
   width: 0;
-  background: rgba(43, 182, 115, 0.14);
+  background: rgba(22, 100, 255, 0.12);
   animation: ms-step-grow 0.7s ease-out forwards;
 }
 .ms-step-fillbg.done {
