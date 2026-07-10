@@ -11,6 +11,7 @@ import {
   type CoverageCase,
   type DeliveryAttempt,
   type DeliveryEvent,
+  type FleetRuntime,
   type FunctionalCase,
   type Requirement,
   type RequirementVersion,
@@ -446,6 +447,9 @@ function DecompositionView({ decompId, verificationId, projectId, reqId }: { dec
   // 负责人候选:人(项目用户)+ AI 执行机(runner-agent)。
   const [assignees, setAssignees] = useState<{ value: string; label: string; kind: string; id: string }[]>([])
   const nameOfAssignee = (a?: string, kind?: string) => assignees.find((o) => o.kind === kind && o.id === a)?.label || a || ''
+  // 注册上来的远程 runtime 机群:派发菜单里可定向到具体某台。
+  const [fleet, setFleet] = useState<FleetRuntime[]>([])
+  const loadFleet = () => api.fleetRuntimes().then(setFleet).catch(() => setFleet([]))
 
   const load = async () => {
     try {
@@ -458,6 +462,7 @@ function DecompositionView({ decompId, verificationId, projectId, reqId }: { dec
   }
   useEffect(() => {
     load()
+    loadFleet()
     // 负责人候选:人 + AI agent(失败静默,看板/列仍可用)。
     Promise.all([api.users().then((p) => p.items).catch(() => []), api.runnerAgents().catch(() => [])]).then(([us, ag]) => {
       setAssignees([
@@ -496,7 +501,7 @@ function DecompositionView({ decompId, verificationId, projectId, reqId }: { dec
   // 依赖门控:任务的依赖须全部 Verified 才能派发(否则提前派发会撞门、卡 PENDING)。
   const statusOf = (id: string) => tasks.find((x) => x.id === id)?.status
   const depsReady = (t: Task) => (t.dependencies ?? []).every((d) => statusOf(d) === 'VERIFIED')
-  const dispatch = async (task: Task, executor: string) => {
+  const dispatch = async (task: Task, executor: string, targetRuntime?: string) => {
     if (dispatching.has(task.id)) return // 已在派发中,忽略重复点击
     if (!depsReady(task)) {
       message.warning(t('req.depsNotReady', '依赖任务未全部验证完成,暂不能派发'))
@@ -504,8 +509,8 @@ function DecompositionView({ decompId, verificationId, projectId, reqId }: { dec
     }
     setDispatching((s) => new Set(s).add(task.id))
     try {
-      await api.createDelivery({ decompositionId: decompId, taskId: task.id, title: task.title, executor })
-      message.success(`${t('req.dispatched', '已派发')} ${task.id}`)
+      await api.createDelivery({ decompositionId: decompId, taskId: task.id, title: task.title, executor, targetRuntime })
+      message.success(`${t('req.dispatched', '已派发')} ${task.id}${targetRuntime ? ` → ${targetRuntime}` : ''}`)
       load()
     } catch (e) {
       message.error(e instanceof ApiError ? `${t('req.dispatchFailed', '派发失败')}:${e.status}` : t('req.dispatchFailed', '派发失败'))
@@ -513,10 +518,42 @@ function DecompositionView({ decompId, verificationId, projectId, reqId }: { dec
       setDispatching((s) => { const n = new Set(s); n.delete(task.id); return n })
     }
   }
-  // 派发按钮 = 执行者选择菜单:点开选 Claude Code / Codex / OpenCode / CodeBuddy。
+  // 同名 runtime 只留一条(重连会产生新 id 的重复记录):在线优先,再取最近心跳。
+  const fleetByName = (() => {
+    const m = new Map<string, FleetRuntime>()
+    for (const r of fleet) {
+      const prev = m.get(r.name)
+      if (!prev || (!prev.online && r.online) || (prev.online === r.online && r.lastSeenMs > prev.lastSeenMs)) m.set(r.name, r)
+    }
+    return [...m.values()]
+  })()
+  // 派发按钮 = 执行者选择菜单:每种执行者一组,组内「任意在线执行者」或定向到具体注册 runtime。
+  // 定向按 runtime name(跨重连稳定);离线的列出但禁用,避免误派给回不来的机器。
   const executorMenu = (task: Task) => ({
-    items: Object.entries(EXECUTOR_LABEL).map(([key, label]) => ({ key, label })),
-    onClick: ({ key }: { key: string }) => dispatch(task, key),
+    items: Object.entries(EXECUTOR_LABEL).map(([key, label]) => ({
+      type: 'group' as const,
+      key,
+      label,
+      children: [
+        { key, label: t('req.anyRuntime', '任意在线执行者') },
+        ...fleetByName
+          .filter((r) => r.caps.includes(key))
+          .map((r) => ({
+            key: `${key}@@${r.name}`,
+            disabled: !r.online,
+            label: (
+              <span>
+                <Badge status={r.online ? 'success' : 'default'} /> {r.name}
+                {!r.online && <span style={{ color: 'var(--text-3)', marginLeft: 6, fontSize: 12 }}>{t('req.rtOffline', '离线')}</span>}
+              </span>
+            ),
+          })),
+      ],
+    })),
+    onClick: ({ key }: { key: string }) => {
+      const [executor, target] = key.split('@@')
+      dispatch(task, executor, target)
+    },
   })
   // 工作量(task point)行内编辑:乐观更新本地后落库,失败回滚重载。
   const setPoints = async (task: Task, points: number) => {
@@ -588,7 +625,7 @@ function DecompositionView({ decompId, verificationId, projectId, reqId }: { dec
               render: (_, row) => (
                 <Space>
                   <Tooltip title={depsReady(row) ? '' : t('req.depsNotReady', '依赖任务未全部验证完成,暂不能派发')}>
-                    <Dropdown trigger={['click']} disabled={dispatching.has(row.id) || !depsReady(row)} menu={executorMenu(row)}>
+                    <Dropdown trigger={['click']} disabled={dispatching.has(row.id) || !depsReady(row)} menu={executorMenu(row)} onOpenChange={(o) => { if (o) loadFleet() }}>
                       <Button type="link" size="small" icon={<SendOutlined />} loading={dispatching.has(row.id)} disabled={dispatching.has(row.id) || !depsReady(row)}>{t('req.dispatch', '派发')}</Button>
                     </Dropdown>
                   </Tooltip>
@@ -629,7 +666,7 @@ function DecompositionView({ decompId, verificationId, projectId, reqId }: { dec
                           />
                           {tk.status === 'PENDING' && (
                             <Tooltip title={depsReady(tk) ? '' : t('req.depsNotReady', '依赖任务未全部验证完成,暂不能派发')}>
-                              <Dropdown trigger={['click']} disabled={dispatching.has(tk.id) || !depsReady(tk)} menu={executorMenu(tk)}>
+                              <Dropdown trigger={['click']} disabled={dispatching.has(tk.id) || !depsReady(tk)} menu={executorMenu(tk)} onOpenChange={(o) => { if (o) loadFleet() }}>
                                 <Button size="small" icon={<SendOutlined />} loading={dispatching.has(tk.id)} disabled={dispatching.has(tk.id) || !depsReady(tk)} />
                               </Dropdown>
                             </Tooltip>
@@ -850,6 +887,7 @@ function EventsDrawer({ decompId, task, onClose }: { decompId: string; task: Tas
                   <Badge status={attemptBadge(a.status)} />
                   <span>{a.status === 'RUNNING' ? t('req.attemptRunning', '执行中') : a.status === 'DELIVERED' ? t('req.attemptDelivered', '已交付') : a.status === 'FAILED' ? t('req.attemptFailed', '失败') : a.status}</span>
                   {a.executor && <Tag>{a.executor}</Tag>}
+                  {a.targetRuntime && <Tag color="geekblue">@{a.targetRuntime}</Tag>}
                   {idx === 0 && <Tag color="blue">{t('req.latest', '最近')}</Tag>}
                 </Space>
               }>

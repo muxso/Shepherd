@@ -152,8 +152,17 @@ export default function TaskCenter() {
     {
       title: t('tc.colExecutor', '执行方式'),
       dataIndex: 'executor',
-      width: 130,
-      render: (v: string) => <Tag>{EXECUTOR_LABEL[v] || v}</Tag>,
+      width: 170,
+      render: (v: string, r) => (
+        <>
+          <Tag>{EXECUTOR_LABEL[v] || v}</Tag>
+          {r.targetRuntime && (
+            <Tooltip title={t('tc.targetRuntime', '定向到指定执行者')}>
+              <Tag color="geekblue">@{r.targetRuntime}</Tag>
+            </Tooltip>
+          )}
+        </>
+      ),
     },
     {
       title: t('tc.colStatus', '执行状态'),
