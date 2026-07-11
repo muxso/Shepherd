@@ -5,7 +5,7 @@
 // 页面只管把 rows/columns 喂给自己的 Table;页面私有状态(模块选中/分页等)可经 extra 挂进视图快照。
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { Button, Checkbox, Dropdown, Input, Popover, Segmented, Select, Space, Switch, Tag } from 'antd'
-import { DeleteOutlined, DownOutlined, FilterOutlined, LinkOutlined, MinusOutlined, PlusOutlined, RightOutlined, SettingOutlined, EyeOutlined } from '@ant-design/icons'
+import { DeleteOutlined, DownOutlined, FilterOutlined, LinkOutlined, MinusOutlined, PlusOutlined, RightOutlined, SettingOutlined, EyeOutlined, SearchOutlined } from '@ant-design/icons'
 import type { ColumnType } from 'antd/es/table'
 import { message } from '../feedback'
 import { api, ApiError, type ApiView } from '../api'
@@ -46,6 +46,35 @@ const ADV_OPS: { value: AdvCond['op']; key: string; fallback: string }[] = [
   { value: 'empty', key: 'lv.opEmpty', fallback: '为空' },
   { value: 'notEmpty', key: 'lv.opNotEmpty', fallback: '不为空' },
 ]
+
+/** 列头文本搜索(antd filterDropdown):给任意文本列加漏斗搜索,与工具栏筛选叠加生效。
+    用法:{ ...columnSearch((r) => r.name, t), ...其余列属性 } */
+export function columnSearch<T>(
+  get: (row: T) => string,
+  t: (k: string, d?: string) => string,
+): Pick<ColumnType<T>, 'filterDropdown' | 'filterIcon' | 'onFilter'> {
+  return {
+    filterDropdown: ({ selectedKeys, setSelectedKeys, confirm, clearFilters }) => (
+      <div style={{ padding: 8 }} onKeyDown={(e) => e.stopPropagation()}>
+        <Input
+          size="small"
+          autoFocus
+          placeholder={t('lv.colSearchPh', '输入关键字')}
+          value={(selectedKeys[0] as string) || ''}
+          onChange={(e) => setSelectedKeys(e.target.value ? [e.target.value] : [])}
+          onPressEnter={() => confirm()}
+          style={{ width: 180, marginBottom: 8, display: 'block' }}
+        />
+        <Space>
+          <Button size="small" type="primary" onClick={() => confirm()}>{t('lv.filter', '筛选')}</Button>
+          <Button size="small" onClick={() => { clearFilters?.(); confirm() }}>{t('lv.reset', '重置')}</Button>
+        </Space>
+      </div>
+    ),
+    filterIcon: (filtered) => <SearchOutlined style={{ color: filtered ? 'var(--brand)' : undefined }} />,
+    onFilter: (value, record) => get(record).toLowerCase().includes(String(value).toLowerCase()),
+  }
+}
 
 interface ViewConfig {
   kind?: string

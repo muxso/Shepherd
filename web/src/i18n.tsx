@@ -813,6 +813,8 @@ const DICT: Record<string, { zh: string; en: string }> = {
   "lv.nameRequired": { zh: "请输入视图名称", en: "View name required" },
   "lv.linkCopied": { zh: "分享链接已复制", en: "Share link copied" },
   "lv.clearFilters": { zh: "清空筛选", en: "Clear filters" },
+  "lv.colSearchPh": { zh: "输入关键字", en: "Keyword" },
+  "lv.reset": { zh: "重置", en: "Reset" },
   "lv.searchPh": { zh: "搜索", en: "Search" },
   "lv.advCond": { zh: "高级条件", en: "Advanced conditions" },
   "lv.addCond": { zh: "添加条件", en: "Add condition" },

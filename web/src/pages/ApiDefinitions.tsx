@@ -25,7 +25,7 @@ import {
 } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
 import { api, ApiError, type ApiCase, type ApiDefinition, type ApiModule, type ApiSpec, type DebugResponse, type Environment, type ImportFormat, type ImportSchedule, type ProjectMock } from '../api'
-import { useListView, type ListColumn } from '../components/ListView'
+import { columnSearch, useListView, type ListColumn } from '../components/ListView'
 import { useApp } from '../context'
 import { methodColor, statusColor } from '../components/tags'
 import CasesPanel from './CasesPanel'
@@ -275,8 +275,8 @@ export default function ApiDefinitions() {
   }
 
   const allColumns: ListColumn<ApiDefinition>[] = [
-    { key: 'num', label: 'ID', title: 'ID', dataIndex: 'num', width: 90, render: (num: number | undefined, d) => <span className="ms-mono" style={{ color: 'var(--text-3)', fontSize: 12 }} title={d.id}>{num ?? '—'}</span> },
-    { key: 'name', label: t('apidef.colName', '名称'), title: t('apidef.colName', '名称'), dataIndex: 'name', ellipsis: true, render: (name: string) => <span style={{ fontWeight: 500 }}>{name}</span> },
+    { key: 'num', label: 'ID', title: 'ID', dataIndex: 'num', width: 90, ...columnSearch<ApiDefinition>((d) => `${d.num ?? ''} ${d.id}`, t), render: (num: number | undefined, d) => <span className="ms-mono" style={{ color: 'var(--text-3)', fontSize: 12 }} title={d.id}>{num ?? '—'}</span> },
+    { key: 'name', label: t('apidef.colName', '名称'), title: t('apidef.colName', '名称'), dataIndex: 'name', ellipsis: true, ...columnSearch<ApiDefinition>((d) => d.name, t), render: (name: string) => <span style={{ fontWeight: 500 }}>{name}</span> },
     {
       key: 'protocol', label: t('apidef.protocol', '协议'), title: t('apidef.protocol', '协议'), dataIndex: 'protocol', width: 100,
       filters: PROTOCOLS.map((p) => ({ text: p, value: p })),
@@ -289,7 +289,7 @@ export default function ApiDefinitions() {
       onFilter: (v, d) => d.method === v,
       render: (m: string) => <Tag color={methodColor(m)} style={{ fontWeight: 600 }}>{m || '—'}</Tag>,
     },
-    { key: 'path', label: t('apidef.colPath', '路径'), title: t('apidef.colPath', '路径'), dataIndex: 'path', ellipsis: true, render: (p: string) => <span className="ms-mono" style={{ color: 'var(--text-2)' }}>{p || '—'}</span> },
+    { key: 'path', label: t('apidef.colPath', '路径'), title: t('apidef.colPath', '路径'), dataIndex: 'path', ellipsis: true, ...columnSearch<ApiDefinition>((d) => d.path || '', t), render: (p: string) => <span className="ms-mono" style={{ color: 'var(--text-2)' }}>{p || '—'}</span> },
     {
       key: 'status', label: t('apidef.colStatus', '状态'), title: t('apidef.colStatus', '状态'), dataIndex: 'status', width: 100,
       filters: API_STATUSES.map((s) => ({ text: s, value: s })),
@@ -298,6 +298,8 @@ export default function ApiDefinitions() {
     },
     {
       key: 'module', label: t('apidef.colModule', '模块'), title: t('apidef.colModule', '模块'), dataIndex: 'moduleId', width: 120,
+      filters: [{ text: t('apidef.unfiled', '未归类'), value: '__unfiled__' }, ...modules.map((m) => ({ text: m.name, value: m.id }))],
+      onFilter: (v, d) => (v === '__unfiled__' ? !d.moduleId : d.moduleId === v),
       render: (mid?: string | null) => {
         const m = modules.find((x) => x.id === mid)
         return m ? <Tag color="geekblue">{m.name}</Tag> : <span style={{ color: 'var(--text-3)' }}>{t('apidef.unfiled', '未归类')}</span>
@@ -305,12 +307,14 @@ export default function ApiDefinitions() {
     },
     {
       key: 'tags', label: t('apidef.tags', '标签'), title: t('apidef.tags', '标签'), dataIndex: 'spec', width: 140,
+      filters: [...new Set(defs.flatMap((d) => d.spec?.tags || []))].map((tg) => ({ text: tg, value: tg })),
+      onFilter: (v, d) => (d.spec?.tags || []).includes(v as string),
       render: (spec?: ApiDefinition['spec']) => {
         const tags = spec?.tags || []
         return tags.length ? <Space size={[2, 2]} wrap>{tags.map((tg) => <Tag key={tg} style={{ margin: 0 }}>{tg}</Tag>)}</Space> : <span style={{ color: 'var(--text-3)' }}>—</span>
       },
     },
-    { key: 'createdBy', label: t('apidef.colCreatedBy', '创建人'), title: t('apidef.colCreatedBy', '创建人'), dataIndex: 'createdBy', width: 110, ellipsis: true, render: (u?: string) => u ? <span style={{ color: 'var(--text-2)' }}>{u}</span> : <span style={{ color: 'var(--text-3)' }}>—</span> },
+    { key: 'createdBy', label: t('apidef.colCreatedBy', '创建人'), title: t('apidef.colCreatedBy', '创建人'), dataIndex: 'createdBy', width: 110, ellipsis: true, ...columnSearch<ApiDefinition>((d) => d.createdBy || '', t), render: (u?: string) => u ? <span style={{ color: 'var(--text-2)' }}>{u}</span> : <span style={{ color: 'var(--text-3)' }}>—</span> },
     { key: 'createdAt', label: t('apidef.colCreatedAt', '创建时间'), title: t('apidef.colCreatedAt', '创建时间'), dataIndex: 'createdAt', width: 160, render: (ts?: string) => <span style={{ color: 'var(--text-3)', fontSize: 12 }}>{fmtTs(ts)}</span> },
     { key: 'updatedAt', label: t('apidef.updatedAt', '更新时间'), title: t('apidef.updatedAt', '更新时间'), dataIndex: 'updatedAt', width: 160, render: (ts?: string) => <span style={{ color: 'var(--text-3)', fontSize: 12 }}>{fmtTs(ts)}</span> },
     {
