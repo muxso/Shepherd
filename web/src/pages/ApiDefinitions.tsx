@@ -14,12 +14,9 @@ import {
   QuestionCircleOutlined,
   SaveOutlined,
   FilterOutlined,
-  SettingOutlined,
   ThunderboltOutlined,
   CodeOutlined,
   DownOutlined,
-  ShareAltOutlined,
-  DeleteOutlined,
   EyeOutlined,
   EyeInvisibleOutlined,
   UnorderedListOutlined,
@@ -27,7 +24,8 @@ import {
   SearchOutlined,
 } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
-import { api, ApiError, type ApiCase, type ApiDefinition, type ApiModule, type ApiSpec, type ApiView, type DebugResponse, type Environment, type ImportFormat, type ImportSchedule, type ProjectMock } from '../api'
+import { api, ApiError, type ApiCase, type ApiDefinition, type ApiModule, type ApiSpec, type DebugResponse, type Environment, type ImportFormat, type ImportSchedule, type ProjectMock } from '../api'
+import { useListView, type ListColumn } from '../components/ListView'
 import { useApp } from '../context'
 import { methodColor, statusColor } from '../components/tags'
 import CasesPanel from './CasesPanel'
@@ -47,51 +45,10 @@ const API_STATUSES = ['DRAFT', 'DEBUGGING', 'COMPLETED', 'DEPRECATED']
 const LIST_KEY = '__list__'
 const NEW_KEY = '__new__'
 
-/** 高级筛选条件:字段 + 操作符 + 值(筛选抽屉)。 */
-type AdvCond = { field: 'num' | 'name' | 'path' | 'protocol' | 'method' | 'status'; op: 'contains' | 'notContains' | 'equals' | 'notEquals' | 'empty' | 'notEmpty'; value: string }
-
-// 字段/操作符选项:存 i18n key + 中文回退,渲染时经 t() 解析(模块级常量拿不到 hook)。
-const ADV_FIELDS: { value: AdvCond['field']; key: string; fallback: string }[] = [
-  { value: 'num', key: 'apidef.fieldNum', fallback: 'ID' },
-  { value: 'name', key: 'apidef.fieldName', fallback: '接口名称' },
-  { value: 'path', key: 'apidef.colPath', fallback: '路径' },
-  { value: 'protocol', key: 'apidef.protocol', fallback: '协议' },
-  { value: 'method', key: 'apidef.reqType', fallback: '请求类型' },
-  { value: 'status', key: 'apidef.colStatus', fallback: '状态' },
-]
-const ADV_OPS: { value: AdvCond['op']; key: string; fallback: string }[] = [
-  { value: 'contains', key: 'apidef.opContains', fallback: '包含' },
-  { value: 'notContains', key: 'apidef.opNotContains', fallback: '不包含' },
-  { value: 'equals', key: 'apidef.opEquals', fallback: '等于' },
-  { value: 'notEquals', key: 'apidef.opNotEquals', fallback: '不等于' },
-  { value: 'empty', key: 'apidef.opEmpty', fallback: '为空' },
-  { value: 'notEmpty', key: 'apidef.opNotEmpty', fallback: '不为空' },
-]
 // 用例状态:value 是发往后端的数据(保持中文),label 经 t() 翻译展示。
 const CASE_STATUSES = ['进行中', '已完成', '已废弃']
 const caseStatusKey = (s: string): string =>
   s === '进行中' ? 'apidef.caseStInProgress' : s === '已完成' ? 'apidef.caseStCompleted' : 'apidef.caseStDeprecated'
-
-function fieldVal(d: ApiDefinition, f: AdvCond['field']): string {
-  if (f === 'num') return String(d.num ?? '')
-  if (f === 'name') return d.name || ''
-  if (f === 'path') return d.path || ''
-  if (f === 'protocol') return d.protocol || ''
-  if (f === 'method') return d.method || ''
-  return d.status || ''
-}
-function condMatch(d: ApiDefinition, c: AdvCond): boolean {
-  const a = fieldVal(d, c.field).toLowerCase()
-  const v = c.value.trim().toLowerCase()
-  switch (c.op) {
-    case 'contains': return a.includes(v)
-    case 'notContains': return !a.includes(v)
-    case 'equals': return a === v
-    case 'notEquals': return a !== v
-    case 'empty': return a === ''
-    case 'notEmpty': return a !== ''
-  }
-}
 
 /** 把服务端时间文本("2026-06-21 12:34:56.78+00")渲染为 "2026-06-21 12:34:56";空/解析失败回退 "—"。 */
 function fmtTs(ts?: string): string {
@@ -106,7 +63,6 @@ export default function ApiDefinitions() {
   const [defs, setDefs] = useState<ApiDefinition[]>([])
   const [modules, setModules] = useState<ApiModule[]>([])
   const [loading, setLoading] = useState(false)
-  const [search, setSearch] = useState('')
   const [moduleKey, setModuleKey] = useState('ALL') // ALL | UNFILED | <moduleId>
   const [creating, setCreating] = useState(false)
   const [importOpen, setImportOpen] = useState(false)
@@ -119,18 +75,8 @@ export default function ApiDefinitions() {
   const [openIds, setOpenIds] = useState<string[]>([])
   const [openCases, setOpenCases] = useState<Record<string, ApiCase>>({}) // 打开的用例详情 tab(key=caseId)
   const [activeKey, setActiveKey] = useState(LIST_KEY)
-  // 列表:分页大小 / 列显隐 / 高级筛选(全部客户端)。
+  // 分页大小(三个视图模式共用;随视图 extra 存取)。搜索/筛选/列显隐/视图 由 useListView 承载。
   const [pageSize, setPageSize] = useState(20)
-  const [hiddenCols, setHiddenCols] = useState<string[]>([])
-  const [advOpen, setAdvOpen] = useState(false)
-  const [advLogic, setAdvLogic] = useState<'all' | 'any'>('all')
-  const [advConds, setAdvConds] = useState<AdvCond[]>([])
-  const [advApplied, setAdvApplied] = useState<{ logic: 'all' | 'any'; conds: AdvCond[] }>({ logic: 'all', conds: [] })
-  // 列表视图(保存的筛选/列/分页快照)。
-  const [views, setViews] = useState<ApiView[]>([])
-  const [activeViewId, setActiveViewId] = useState<string | null>(null)
-  const [viewName, setViewName] = useState('')
-  const [viewPopOpen, setViewPopOpen] = useState(false)
   const [searchParams, setSearchParams] = useSearchParams()
   // 模块树:搜索 / 树内展示接口 / 隐藏空模块 / 协议过滤 / 受控展开(收起全部)。
   const [moduleSearch, setModuleSearch] = useState('')
@@ -143,16 +89,13 @@ export default function ApiDefinitions() {
     if (!projectId) {
       setDefs([])
       setModules([])
-      setViews([])
       return
     }
     setLoading(true)
     try {
-      const [ds, ms, vs] = await Promise.all([api.definitions(projectId), api.modules(projectId), api.views(projectId)])
+      const [ds, ms] = await Promise.all([api.definitions(projectId), api.modules(projectId)])
       setDefs(Array.isArray(ds) ? ds : [])
       setModules(Array.isArray(ms) ? ms : [])
-      // 排除归属其他页面的视图(如场景页 config.kind==='scenario');本页视图无 kind 或为 'apidef'。
-      setViews(Array.isArray(vs) ? vs.filter((v) => (v.config as ViewConfig & { kind?: string })?.kind !== 'scenario') : [])
     } catch (e) {
       message.error(e instanceof ApiError ? e.message : t('apidef.loadFailed', '加载失败'))
     } finally {
@@ -160,60 +103,6 @@ export default function ApiDefinitions() {
     }
   }
 
-  // 视图快照:当前筛选/列/分页 → config;反向 applyConfig 把 config 写回各状态。
-  type ViewConfig = { kind?: string; search?: string; moduleKey?: string; pageSize?: number; hiddenCols?: string[]; advLogic?: 'all' | 'any'; advConds?: AdvCond[] }
-  const currentConfig = (): ViewConfig => ({ kind: 'apidef', search, moduleKey, pageSize, hiddenCols, advLogic: advApplied.logic, advConds: advApplied.conds })
-  const applyConfig = (c: ViewConfig) => {
-    if (typeof c.search === 'string') setSearch(c.search)
-    if (typeof c.moduleKey === 'string') setModuleKey(c.moduleKey)
-    if (typeof c.pageSize === 'number') setPageSize(c.pageSize)
-    if (Array.isArray(c.hiddenCols)) setHiddenCols(c.hiddenCols)
-    const logic = c.advLogic ?? 'all'
-    const conds = Array.isArray(c.advConds) ? c.advConds : []
-    setAdvApplied({ logic, conds })
-    setAdvLogic(logic)
-    setAdvConds(conds)
-  }
-  const applyView = (v: ApiView) => {
-    applyConfig(v.config as ViewConfig)
-    setActiveViewId(v.id)
-    setViewPopOpen(false)
-    message.success(t('apidef.viewApplied', '已应用视图') + `「${v.name}」`)
-  }
-  const saveView = async () => {
-    const name = viewName.trim()
-    if (!name) return message.warning(t('apidef.viewNameRequired', '请输入视图名称'))
-    try {
-      const v = await api.createView({ projectId, name, config: currentConfig(), shared: true })
-      setViews((vs) => [v, ...vs])
-      setActiveViewId(v.id)
-      setViewName('')
-      message.success(t('apidef.viewSaved', '视图已保存'))
-    } catch (e) {
-      message.error(e instanceof ApiError ? e.message : t('apidef.saveFailed', '保存失败'))
-    }
-  }
-  const shareView = async (v: ApiView) => {
-    const url = `${window.location.origin}${window.location.pathname}?view=${encodeURIComponent(v.id)}`
-    try {
-      await navigator.clipboard?.writeText(url)
-      message.success(t('apidef.viewLinkCopied', '分享链接已复制'))
-    } catch {
-      message.info(url)
-    }
-  }
-  const removeView = async (v: ApiView) => {
-    try {
-      await api.deleteView(v.id)
-      setViews((vs) => vs.filter((x) => x.id !== v.id))
-      if (activeViewId === v.id) setActiveViewId(null)
-      message.success(t('apidef.viewDeleted', '视图已删除'))
-    } catch (e) {
-      message.error(e instanceof ApiError ? e.message : t('apidef.deleteFailed', '删除失败'))
-    }
-  }
-
-  // 深链 ?view=<id>:视图加载后命中即应用,然后清参数(避免重复)。
   // 切到 CASE/MOCK 视图时按需加载项目级用例 / Mock。
   useEffect(() => {
     if (viewMode === 'API') return
@@ -225,16 +114,7 @@ export default function ApiDefinitions() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [viewMode, projectId])
 
-  useEffect(() => {
-    const vid = searchParams.get('view')
-    if (!vid || !views.length) return
-    const v = views.find((x) => x.id === vid)
-    if (v) applyView(v)
-    const next = new URLSearchParams(searchParams)
-    next.delete('view')
-    setSearchParams(next, { replace: true })
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [views])
+  // 深链 ?view=<id> 由 useListView 统一处理(应用后清参数),页面不再自行解析,避免二次应用。
 
   useEffect(() => {
     load()
@@ -313,25 +193,6 @@ export default function ApiDefinitions() {
         },
       })
   }
-
-  const filtered = useMemo(() => {
-    const conds = advApplied.conds.filter((c) => c.op === 'empty' || c.op === 'notEmpty' || c.value.trim())
-    return defs.filter((d) => {
-      const mod =
-        moduleKey === 'ALL' ? true : moduleKey === 'UNFILED' ? !d.moduleId : d.moduleId === moduleKey
-      const q =
-        d.name.toLowerCase().includes(search.toLowerCase()) ||
-        d.path.toLowerCase().includes(search.toLowerCase())
-      // 高级筛选:所有=全部命中(AND);任一=任一命中(OR)。
-      const adv =
-        conds.length === 0
-          ? true
-          : advApplied.logic === 'all'
-            ? conds.every((c) => condMatch(d, c))
-            : conds.some((c) => condMatch(d, c))
-      return mod && q && adv
-    })
-  }, [defs, search, moduleKey, advApplied])
 
   const openDef = (id: string) => {
     setOpenIds((ids) => (ids.includes(id) ? ids : [...ids, id]))
@@ -413,47 +274,47 @@ export default function ApiDefinitions() {
     }
   }
 
-  const allColumns: ColumnsType<ApiDefinition> = [
-    { key: 'num', title: 'ID', dataIndex: 'num', width: 90, render: (num: number | undefined, d) => <span className="ms-mono" style={{ color: 'var(--text-3)', fontSize: 12 }} title={d.id}>{num ?? '—'}</span> },
-    { key: 'name', title: t('apidef.colName', '名称'), dataIndex: 'name', ellipsis: true, render: (name: string) => <span style={{ fontWeight: 500 }}>{name}</span> },
+  const allColumns: ListColumn<ApiDefinition>[] = [
+    { key: 'num', label: 'ID', title: 'ID', dataIndex: 'num', width: 90, render: (num: number | undefined, d) => <span className="ms-mono" style={{ color: 'var(--text-3)', fontSize: 12 }} title={d.id}>{num ?? '—'}</span> },
+    { key: 'name', label: t('apidef.colName', '名称'), title: t('apidef.colName', '名称'), dataIndex: 'name', ellipsis: true, render: (name: string) => <span style={{ fontWeight: 500 }}>{name}</span> },
     {
-      key: 'protocol', title: t('apidef.protocol', '协议'), dataIndex: 'protocol', width: 100,
+      key: 'protocol', label: t('apidef.protocol', '协议'), title: t('apidef.protocol', '协议'), dataIndex: 'protocol', width: 100,
       filters: PROTOCOLS.map((p) => ({ text: p, value: p })),
       onFilter: (v, d) => d.protocol === v,
       render: (p: string) => <Tag>{p}</Tag>,
     },
     {
-      key: 'method', title: t('apidef.reqType', '请求类型'), dataIndex: 'method', width: 110,
+      key: 'method', label: t('apidef.reqType', '请求类型'), title: t('apidef.reqType', '请求类型'), dataIndex: 'method', width: 110,
       filters: METHODS.map((m) => ({ text: m, value: m })),
       onFilter: (v, d) => d.method === v,
       render: (m: string) => <Tag color={methodColor(m)} style={{ fontWeight: 600 }}>{m || '—'}</Tag>,
     },
-    { key: 'path', title: t('apidef.colPath', '路径'), dataIndex: 'path', ellipsis: true, render: (p: string) => <span className="ms-mono" style={{ color: 'var(--text-2)' }}>{p || '—'}</span> },
+    { key: 'path', label: t('apidef.colPath', '路径'), title: t('apidef.colPath', '路径'), dataIndex: 'path', ellipsis: true, render: (p: string) => <span className="ms-mono" style={{ color: 'var(--text-2)' }}>{p || '—'}</span> },
     {
-      key: 'status', title: t('apidef.colStatus', '状态'), dataIndex: 'status', width: 100,
+      key: 'status', label: t('apidef.colStatus', '状态'), title: t('apidef.colStatus', '状态'), dataIndex: 'status', width: 100,
       filters: API_STATUSES.map((s) => ({ text: s, value: s })),
       onFilter: (v, d) => d.status === v,
       render: (s: string) => <Tag color={statusColor(s)}>{s}</Tag>,
     },
     {
-      key: 'module', title: t('apidef.colModule', '模块'), dataIndex: 'moduleId', width: 120,
+      key: 'module', label: t('apidef.colModule', '模块'), title: t('apidef.colModule', '模块'), dataIndex: 'moduleId', width: 120,
       render: (mid?: string | null) => {
         const m = modules.find((x) => x.id === mid)
         return m ? <Tag color="geekblue">{m.name}</Tag> : <span style={{ color: 'var(--text-3)' }}>{t('apidef.unfiled', '未归类')}</span>
       },
     },
     {
-      key: 'tags', title: t('apidef.tags', '标签'), dataIndex: 'spec', width: 140,
+      key: 'tags', label: t('apidef.tags', '标签'), title: t('apidef.tags', '标签'), dataIndex: 'spec', width: 140,
       render: (spec?: ApiDefinition['spec']) => {
         const tags = spec?.tags || []
         return tags.length ? <Space size={[2, 2]} wrap>{tags.map((tg) => <Tag key={tg} style={{ margin: 0 }}>{tg}</Tag>)}</Space> : <span style={{ color: 'var(--text-3)' }}>—</span>
       },
     },
-    { key: 'createdBy', title: t('apidef.colCreatedBy', '创建人'), dataIndex: 'createdBy', width: 110, ellipsis: true, render: (u?: string) => u ? <span style={{ color: 'var(--text-2)' }}>{u}</span> : <span style={{ color: 'var(--text-3)' }}>—</span> },
-    { key: 'createdAt', title: t('apidef.colCreatedAt', '创建时间'), dataIndex: 'createdAt', width: 160, render: (ts?: string) => <span style={{ color: 'var(--text-3)', fontSize: 12 }}>{fmtTs(ts)}</span> },
-    { key: 'updatedAt', title: t('apidef.updatedAt', '更新时间'), dataIndex: 'updatedAt', width: 160, render: (ts?: string) => <span style={{ color: 'var(--text-3)', fontSize: 12 }}>{fmtTs(ts)}</span> },
+    { key: 'createdBy', label: t('apidef.colCreatedBy', '创建人'), title: t('apidef.colCreatedBy', '创建人'), dataIndex: 'createdBy', width: 110, ellipsis: true, render: (u?: string) => u ? <span style={{ color: 'var(--text-2)' }}>{u}</span> : <span style={{ color: 'var(--text-3)' }}>—</span> },
+    { key: 'createdAt', label: t('apidef.colCreatedAt', '创建时间'), title: t('apidef.colCreatedAt', '创建时间'), dataIndex: 'createdAt', width: 160, render: (ts?: string) => <span style={{ color: 'var(--text-3)', fontSize: 12 }}>{fmtTs(ts)}</span> },
+    { key: 'updatedAt', label: t('apidef.updatedAt', '更新时间'), title: t('apidef.updatedAt', '更新时间'), dataIndex: 'updatedAt', width: 160, render: (ts?: string) => <span style={{ color: 'var(--text-3)', fontSize: 12 }}>{fmtTs(ts)}</span> },
     {
-      key: 'action', title: t('apidef.colAction', '操作'), width: 150, fixed: 'right',
+      key: 'action', label: t('apidef.colAction', '操作'), title: t('apidef.colAction', '操作'), width: 150, fixed: 'right',
       render: (_, d) => (
         <Space size={0} onClick={(e) => e.stopPropagation()}>
           <Button type="link" size="small" onClick={() => openDef(d.id)}>{t('a.edit', '编辑')}</Button>
@@ -480,10 +341,35 @@ export default function ApiDefinitions() {
       ),
     },
   ]
-  // 列显隐:ID/名称/操作 固定;其余可在「表格设置」开关。
-  const columns = allColumns.filter((c) => !hiddenCols.includes(String(c.key)))
-  // 可切换显隐的列(对齐参考图「表格设置」,ID/名称固定不可关、操作不在列表)。
-  const TOGGLE_COLS = allColumns.filter((c) => !['num', 'name', 'action'].includes(String(c.key))).map((c) => ({ key: String(c.key), label: String(c.title) }))
+  // 列表三件套(视图/筛选/列设置/高级条件)交给 useListView;moduleKey/pageSize 作为页面私有状态随 extra 存入视图。
+  const lv = useListView<ApiDefinition>({
+    kind: 'apidef',
+    projectId,
+    searchLabel: t('apidef.searchPlaceholder', '搜索名称 / 路径'),
+    searchOf: (d) => `${d.num ?? ''} ${d.name} ${d.path}`,
+    // 老视图(本页早期实现)config 无 kind:也归属本页;场景页视图 kind==='scenario' 自然被排除。
+    matchKind: (k) => k === 'apidef' || k === undefined,
+    fields: [
+      { key: 'protocol', label: t('apidef.protocol', '协议'), type: 'enum', options: PROTOCOLS.map((p) => ({ value: p, label: p })), get: (d) => d.protocol },
+      { key: 'method', label: t('apidef.reqType', '请求类型'), type: 'enum', options: METHODS.map((m) => ({ value: m, label: m })), get: (d) => d.method },
+      { key: 'status', label: t('apidef.colStatus', '状态'), type: 'enum', options: API_STATUSES.map((s) => ({ value: s, label: s })), get: (d) => d.status },
+      // 以下仅供「高级条件」选择(与搜索框/列筛选重复,不在声明式筛选区渲染)。
+      { key: 'num', label: 'ID', type: 'text', advOnly: true, get: (d) => String(d.num ?? '') },
+      { key: 'name', label: t('apidef.colName', '名称'), type: 'text', advOnly: true, get: (d) => d.name },
+      { key: 'path', label: t('apidef.colPath', '路径'), type: 'text', advOnly: true, get: (d) => d.path },
+    ],
+    columns: allColumns,
+    rows: defs,
+    extra: {
+      get: () => ({ moduleKey, pageSize }),
+      apply: (v) => {
+        if (typeof v.moduleKey === 'string') setModuleKey(v.moduleKey)
+        if (typeof v.pageSize === 'number') setPageSize(v.pageSize)
+      },
+    },
+  })
+  // 模块树选中的过滤叠加在三件套筛选之后(选中某模块时只看该模块)。
+  const visible = lv.rows.filter((d) => (moduleKey === 'ALL' ? true : moduleKey === 'UNFILED' ? !d.moduleId : d.moduleId === moduleKey))
 
   const listTab = (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
@@ -499,71 +385,8 @@ export default function ApiDefinitions() {
           {viewMode === 'API' ? t('apidef.allApis2', '全部接口') : viewMode === 'CASE' ? t('apidef.allCases', '全部用例') : t('apidef.allMocks', '全部 MOCK')}
         </span>
         <div style={{ flex: 1 }} />
-        <Input.Search placeholder={t('apidef.searchPlaceholder', '搜索 ID/名称/路径')} allowClear style={{ width: 240 }} value={search} onChange={(e) => setSearch(e.target.value)} />
-        <Popover
-          trigger="click"
-          placement="bottomRight"
-          open={viewPopOpen}
-          onOpenChange={setViewPopOpen}
-          title={t('apidef.views', '视图')}
-          content={
-            <div style={{ width: 268 }}>
-              {views.length === 0 ? (
-                <div style={{ color: 'var(--text-3)', fontSize: 12, padding: '2px 0 8px' }}>{t('apidef.noViews', '暂无视图,保存当前筛选为视图')}</div>
-              ) : (
-                <Space direction="vertical" size={2} style={{ width: '100%' }}>
-                  {views.map((v) => (
-                    <div key={v.id} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                      <a style={{ flex: 1, fontWeight: v.id === activeViewId ? 600 : 400, color: v.id === activeViewId ? 'var(--brand)' : undefined, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} onClick={() => applyView(v)} title={v.name}>
-                        {v.name}
-                      </a>
-                      <Tooltip title={t('apidef.shareView', '分享')}>
-                        <Button type="text" size="small" icon={<ShareAltOutlined />} onClick={() => shareView(v)} />
-                      </Tooltip>
-                      <Tooltip title={t('a.delete', '删除')}>
-                        <Button type="text" size="small" danger icon={<DeleteOutlined />} onClick={() => removeView(v)} />
-                      </Tooltip>
-                    </div>
-                  ))}
-                </Space>
-              )}
-              <Divider style={{ margin: '8px 0' }} />
-              <Space.Compact style={{ width: '100%' }}>
-                <Input size="small" placeholder={t('apidef.viewName', '视图名称')} value={viewName} onChange={(e) => setViewName(e.target.value)} onPressEnter={saveView} />
-                <Button size="small" type="primary" onClick={saveView}>{t('apidef.saveCurrent', '保存当前')}</Button>
-              </Space.Compact>
-            </div>
-          }
-        >
-          <Button icon={<EyeOutlined />}>
-            {t('apidef.views', '视图')}{activeViewId ? `: ${views.find((v) => v.id === activeViewId)?.name ?? ''}` : ''}
-          </Button>
-        </Popover>
-        <Button icon={<FilterOutlined />} onClick={() => { setAdvLogic(advApplied.logic); setAdvConds(advApplied.conds.length ? advApplied.conds : [{ field: 'name', op: 'contains', value: '' }]); setAdvOpen(true) }}>
-          {t('apidef.filter', '筛选')}{advApplied.conds.length ? ` (${advApplied.conds.length})` : ''}
-        </Button>
-        <Popover
-          trigger="click"
-          placement="bottomRight"
-          title={t('apidef.tableSettings', '表格设置')}
-          content={
-            <div style={{ width: 240 }}>
-              <div style={{ fontSize: 12, color: 'var(--text-3)', marginBottom: 6 }}>{t('apidef.pageSize', '每页显示数量')}</div>
-              <Segmented size="small" value={pageSize} onChange={(v) => setPageSize(Number(v))} options={[10, 20, 30, 50].map((n) => ({ label: String(n), value: n }))} style={{ marginBottom: 12 }} />
-              <div style={{ fontSize: 12, color: 'var(--text-3)', marginBottom: 6 }}>{t('apidef.colSettings', '表头设置')}</div>
-              <Space direction="vertical" size={6} style={{ width: '100%' }}>
-                {TOGGLE_COLS.map((c) => (
-                  <div key={c.key} style={{ display: 'flex', alignItems: 'center' }}>
-                    <span style={{ flex: 1, fontSize: 13 }}>{c.label}</span>
-                    <Switch size="small" checked={!hiddenCols.includes(c.key)} onChange={(on) => setHiddenCols((h) => (on ? h.filter((x) => x !== c.key) : [...h, c.key]))} />
-                  </div>
-                ))}
-              </Space>
-            </div>
-          }
-        >
-          <Button icon={<SettingOutlined />} />
-        </Popover>
+        {/* 三件套工具条(搜索/视图/筛选/列)只在 API 模式渲染;CASE/MOCK 本就没有搜索/筛选。 */}
+        {viewMode === 'API' && lv.toolbar}
         <Button icon={<ReloadOutlined />} onClick={load} />
       </div>
       <div style={{ flex: 1, overflow: 'auto', padding: 12 }}>
@@ -572,8 +395,8 @@ export default function ApiDefinitions() {
             rowKey="id"
             size="middle"
             loading={loading}
-            dataSource={filtered}
-            columns={columns}
+            dataSource={visible}
+            columns={lv.columns}
             scroll={{ x: 'max-content' }}
             onRow={(d) => ({ onClick: () => openDef(d.id), style: { cursor: 'pointer' } })}
             pagination={{ pageSize, size: 'small', showSizeChanger: true, pageSizeOptions: ['10', '20', '30', '50'], onShowSizeChange: (_, s) => setPageSize(s), showTotal: (total) => `${t('apidef.totalPrefix', '共')} ${total} ${t('apidef.totalSuffix', '个接口')}` }}
@@ -595,7 +418,7 @@ export default function ApiDefinitions() {
               { title: t('apidef.colPriority', '优先级'), dataIndex: 'priority', width: 90, render: (v?: string) => v || '—' },
               { title: t('apidef.colStatus', '状态'), dataIndex: 'status', width: 110, render: (v?: string) => v || '—' },
             ]}
-            pagination={{ pageSize, size: 'small', showTotal: (total) => `${t('apidef.totalPrefix', '共')} ${total} ${t('apidef.caseUnit', '个用例')}` }}
+            pagination={{ pageSize, size: 'small', showSizeChanger: true, pageSizeOptions: ['10', '20', '30', '50'], onShowSizeChange: (_, s) => setPageSize(s), showTotal: (total) => `${t('apidef.totalPrefix', '共')} ${total} ${t('apidef.caseUnit', '个用例')}` }}
             locale={{ emptyText: <Empty description={t('apidef.emptyCases', '暂无用例')} /> }}
           />
         ) : (
@@ -647,7 +470,7 @@ export default function ApiDefinitions() {
                 ),
               },
             ]}
-            pagination={{ pageSize, size: 'small', showTotal: (total) => `${t('apidef.totalPrefix', '共')} ${total} ${t('apidef.mockUnit', '个 Mock')}` }}
+            pagination={{ pageSize, size: 'small', showSizeChanger: true, pageSizeOptions: ['10', '20', '30', '50'], onShowSizeChange: (_, s) => setPageSize(s), showTotal: (total) => `${t('apidef.totalPrefix', '共')} ${total} ${t('apidef.mockUnit', '个 Mock')}` }}
             locale={{ emptyText: <Empty description={t('apidef.emptyMocks', '暂无 Mock')} /> }}
           />
         )}
@@ -796,43 +619,6 @@ export default function ApiDefinitions() {
 
       <ImportModal open={importOpen} onClose={() => setImportOpen(false)} projectId={projectId} modules={modules} onDone={() => { setImportOpen(false); load() }} />
 
-      {/* 高级筛选抽屉:条件组合 所有/任一 + 字段/操作符/值,客户端过滤。 */}
-      <Drawer
-        title={t('apidef.filter', '筛选')}
-        open={advOpen}
-        onClose={() => setAdvOpen(false)}
-        width={460}
-        footer={
-          <div style={{ textAlign: 'right' }}>
-            <Space>
-              <Button onClick={() => { setAdvConds([]); setAdvApplied({ logic: advLogic, conds: [] }); }}>{t('a.reset', '重置')}</Button>
-              <Button type="primary" onClick={() => { setAdvApplied({ logic: advLogic, conds: advConds }); setAdvOpen(false) }}>{t('apidef.applyFilter', '保存并筛选')}</Button>
-            </Space>
-          </div>
-        }
-      >
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
-          <span style={{ color: 'var(--text-2)' }}>{t('apidef.matchCond', '符合以下条件')}</span>
-          <Select value={advLogic} onChange={(v) => setAdvLogic(v)} style={{ width: 90 }} options={[{ value: 'all', label: t('apidef.all', '所有') }, { value: 'any', label: t('apidef.any', '任一') }]} />
-        </div>
-        <Space direction="vertical" style={{ width: '100%' }} size={8}>
-          {advConds.map((c, i) => {
-            const set = (p: Partial<AdvCond>) => setAdvConds((cs) => cs.map((x, idx) => (idx === i ? { ...x, ...p } : x)))
-            const noValue = c.op === 'empty' || c.op === 'notEmpty'
-            return (
-              <Space.Compact key={i} style={{ width: '100%' }}>
-                <Select value={c.field} onChange={(v) => set({ field: v })} style={{ width: 130 }} options={ADV_FIELDS.map((f) => ({ value: f.value, label: t(f.key, f.fallback) }))} />
-                <Select value={c.op} onChange={(v) => set({ op: v })} style={{ width: 110 }} options={ADV_OPS.map((o) => ({ value: o.value, label: t(o.key, o.fallback) }))} />
-                <Input value={c.value} disabled={noValue} onChange={(e) => set({ value: e.target.value })} placeholder={noValue ? '—' : t('apidef.filterValue', '值')} />
-                <Button icon={<MoreOutlined />} onClick={() => setAdvConds((cs) => cs.filter((_, idx) => idx !== i))} danger />
-              </Space.Compact>
-            )
-          })}
-          <Button type="link" icon={<PlusOutlined />} onClick={() => setAdvConds((cs) => [...cs, { field: 'name', op: 'contains', value: '' }])} style={{ paddingLeft: 0 }}>
-            {t('apidef.addCond', '添加条件')}
-          </Button>
-        </Space>
-      </Drawer>
       <ModuleFormModal
         state={moduleForm}
         projectId={projectId}
