@@ -774,6 +774,8 @@ export interface Requirement {
   stages?: RequirementStage[]
   /** 字段模板的自定义字段值(key → 字符串值;多选逗号拼接)。 */
   customFields?: Record<string, string>
+  /** 所属模块 id(共享项目模块树);空串/缺省 = 未规划。 */
+  moduleId?: string
 }
 
 /** 字段模板的字段类型(创建表单控件)。 */
@@ -1385,7 +1387,7 @@ export const api = {
   perfReport: (id: string) => http.get<PerfReport>(`/perf/report/${id}`),
 
   // 需求(版本 / 基线 / 拆分)— 无 list 端点,列表用前端注册表
-  createRequirement: (b: { projectId: string; title: string; description?: string; acceptanceCriteria: string[]; priority?: string; reqType?: string; tags?: string[]; dueDate?: string; parentId?: string; customFields?: Record<string, string> }) =>
+  createRequirement: (b: { projectId: string; title: string; description?: string; acceptanceCriteria: string[]; priority?: string; reqType?: string; tags?: string[]; dueDate?: string; parentId?: string; customFields?: Record<string, string>; moduleId?: string }) =>
     http.post<Requirement>('/requirement', b),
   /** MRD/原始素材 → 结构化需求草稿(配置 LLM 由 AI 起草,否则启发式)。 */
   draftRequirement: (raw: string) =>
@@ -1399,7 +1401,7 @@ export const api = {
   getRequirementVersion: (id: string, n: number) =>
     http.get<RequirementVersion>(`/requirement/${id}/version/${n}`),
   /** 编辑需求基本信息:标题必填;其余可选,不传不动;dueDate 传空串清除;customFields 整体替换。 */
-  updateRequirement: (id: string, b: { title: string; priority?: string; reqType?: string; tags?: string[]; dueDate?: string; customFields?: Record<string, string> }) =>
+  updateRequirement: (id: string, b: { title: string; priority?: string; reqType?: string; tags?: string[]; dueDate?: string; customFields?: Record<string, string>; moduleId?: string }) =>
     http.put<Requirement>(`/requirement/${id}`, b),
   renameRequirement: (id: string, title: string) =>
     http.put<Requirement>(`/requirement/${id}`, { title }),

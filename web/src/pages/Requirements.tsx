@@ -9,6 +9,7 @@ import {
   ApiError,
   EXECUTOR_LABEL,
   type ApiCase,
+  type ApiModule,
   type CollabStats,
   type CoverageCase,
   type DeliveryAttempt,
@@ -25,6 +26,7 @@ import {
 } from '../api'
 import { useApp } from '../context'
 import { Workspace, WorkList, useWorkTabs } from '../components/Workspace'
+import { ModuleTreePanel, inSelectedModule } from '../components/ModuleTreePanel'
 import { SelectProjectEmpty } from '../components/Page'
 import { regAdd, regList, type RegItem } from '../registry'
 import ContributionGrid from '../components/ContributionGrid'
@@ -89,9 +91,17 @@ type ReqRow = Omit<RegItem, 'label'> & {
 
 
 // 列表列(带 key/label 供「列设置」面板);label 是带覆盖徽标的节点,搜索用 titleText。
-function reqColumns(t: (k: string, d?: string) => string): ListColumn<ReqRow>[] {
+// 「所属模块」列 id → 名称;key 与筛选字段同为 module,列头漏斗由 ListView.withHeaderFilter 自动挂上。
+function reqColumns(t: (k: string, d?: string) => string, modules: ApiModule[], moduleOf: (r: ReqRow) => string): ListColumn<ReqRow>[] {
   return [
     { key: 'title', label: t('req.title', '标题'), title: t('req.title', '标题'), dataIndex: 'label' },
+    {
+      key: 'module', label: t('req.module', '所属模块'), title: t('req.module', '所属模块'), width: 130,
+      render: (_v: unknown, row: ReqRow) => {
+        const m = moduleOf(row)
+        return m ? (modules.find((x) => x.id === m)?.name ?? m) : <span style={{ color: 'var(--text-3)' }}>{t('req.moduleUnfiled', '未规划')}</span>
+      },
+    },
     { key: 'reqType', label: t('req.reqType', '类型'), title: t('req.reqType', '类型'), dataIndex: 'reqType', width: 80, render: (v?: string) => (v ? <Tag>{t(`req.type.${v}`, v)}</Tag> : '—') },
     { key: 'priority', label: t('req.priority', '优先级'), title: t('req.priority', '优先级'), dataIndex: 'priority', width: 70, render: (p?: string) => (p ? <Tag color={prioColor(p)}>{p}</Tag> : '—') },
     {
@@ -126,9 +136,23 @@ export default function Requirements() {
   const { t } = useI18n()
   const { projectId } = useApp()
   const [items, setItems] = useState<ReqRow[]>([])
+  // 共享项目模块树(与场景/用例同一棵):左栏模块面板 + 「所属模块」列/筛选。
+  const [modules, setModules] = useState<ApiModule[]>([])
+  const [selModule, setSelModule] = useState('ALL') // ALL | UNFILED | <moduleId>
+  const [moduleSearch, setModuleSearch] = useState('')
   const tabs = useWorkTabs()
   // 需求字段模板:行内预览解析自定义字段的显示名。
   const { fields: reqTplFields } = useFieldTemplate('requirement')
+
+  const loadModules = () => {
+    if (!projectId) { setModules([]); return }
+    api.modules(projectId).then((mm) => setModules(Array.isArray(mm) ? mm : [])).catch(() => setModules([]))
+  }
+  // 行的所属模块:取后端 moduleId,且须仍存在于模块树(模块被删后回落未规划)。
+  const moduleOf = (r: ReqRow) => {
+    const m = r.raw?.moduleId || ''
+    return modules.some((x) => x.id === m) ? m : ''
+  }
 
   // 列表以后端为准(含 CLI/API 建的需求),叠加本地注册表的 meta(拆分/验证链接)。
   // 携带后端 status,让列表直观看到 DRAFT/BASELINED/DELIVERED。
@@ -156,6 +180,8 @@ export default function Requirements() {
   }
   useEffect(() => {
     loadList()
+    loadModules()
+    setSelModule('ALL')
     tabs.reset()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId])
@@ -191,6 +217,11 @@ export default function Requirements() {
         options: allTags.map((v) => ({ value: v, label: v })),
         get: (r) => r.tags ?? [],
       },
+      {
+        key: 'module', label: t('req.module', '所属模块'), type: 'enum',
+        options: [{ value: '', label: t('req.moduleUnfiled', '未规划') }, ...modules.map((m) => ({ value: m.id, label: m.name }))],
+        get: (r) => moduleOf(r),
+      },
       { key: 'overdue', label: t('req.overdueOnly', '仅看延期'), type: 'bool', get: (r) => r.overdue === true },
       // 以下仅供条件选择(与搜索框/列展示重复,不渲染在声明式筛选区)。
       { key: 'title', label: t('req.colTitle', '标题'), type: 'text', advOnly: true, get: (r) => r.titleText },
@@ -201,8 +232,9 @@ export default function Requirements() {
       },
       { key: 'createdBy', label: t('lv.createdBy', '创建人'), type: 'text', advOnly: true, get: (r) => r.raw?.createdBy || '' },
     ],
-    columns: reqColumns(t),
-    rows: items,
+    columns: reqColumns(t, modules, moduleOf),
+    // 左树过滤(选父含子)先于视图/筛选生效;模块树计数用全量 items,与列表口径一致。
+    rows: items.filter((r) => inSelectedModule(modules, selModule, moduleOf(r))),
   })
 
   // 行内展开预览:不离开列表就能看关键信息;深入编辑再进 Tab。
@@ -275,6 +307,27 @@ export default function Requirements() {
 
   if (!projectId) return <SelectProjectEmpty />
 
+  // 左栏:共享项目模块树(与场景页同款 ModuleTreePanel;Workspace 内部用 ResizableSider 包裹)。
+  const left = (
+    <ModuleTreePanel
+      projectId={projectId}
+      modules={modules}
+      items={items}
+      getModuleId={moduleOf}
+      selectedKey={selModule}
+      onSelect={setSelModule}
+      allLabel={t('req.allRequirements', '全部需求')}
+      unfiledLabel={t('req.moduleUnfiled', '未规划')}
+      moduleSearch={moduleSearch}
+      onModuleSearch={setModuleSearch}
+      searchPlaceholder={t('req.moduleSearchPh', '请输入模块名称进行搜索')}
+      onModulesChanged={loadModules}
+      deleteModuleContent={t('req.deleteModuleContent', '其下需求将变为未规划(不会删除需求)。')}
+    />
+  )
+  // 新建默认带入左树当前选中的模块(ALL/UNFILED 视为未规划)。
+  const defaultModuleId = selModule !== 'ALL' && selModule !== 'UNFILED' ? selModule : ''
+
   // 新建走工作区 Tab(与场景页一致,不弹窗):创建成功关闭新建页并进入详情。
   const detailTabs = [
     ...(tabs.openIds.includes(NEW_REQ_KEY)
@@ -285,6 +338,8 @@ export default function Requirements() {
             <div style={{ maxWidth: 720, padding: 16, overflow: 'auto', height: '100%' }}>
               <CreateRequirementForm
                 projectId={projectId}
+                modules={modules}
+                defaultModuleId={defaultModuleId}
                 onDone={(r, title) => {
                   regAdd('requirement', projectId, { id: r.id, label: title, createdAt: Date.now() })
                   loadList()
@@ -301,12 +356,15 @@ export default function Requirements() {
       .map((r) => ({
         key: r.id,
         label: r.label,
-        children: <RequirementDetail key={r.id} reqId={r.id} projectId={projectId} onChanged={loadList} onDeleted={() => { tabs.close(r.id); loadList() }} onOpen={(id) => tabs.open(id)} />,
+        children: <RequirementDetail key={r.id} reqId={r.id} projectId={projectId} modules={modules} onChanged={loadList} onDeleted={() => { tabs.close(r.id); loadList() }} onOpen={(id) => tabs.open(id)} />,
       })),
   ]
 
   return (
     <Workspace
+      left={left}
+      leftWidth={240}
+      siderKey="requirement-sider"
       listLabel={t('req.allRequirements', '全部需求')}
       activeKey={tabs.activeKey}
       onChange={tabs.setActiveKey}
@@ -333,7 +391,7 @@ export default function Requirements() {
 const REQ_TYPES = ['FEATURE', 'ENHANCEMENT', 'TECH_DEBT', 'BUGFIX'] as const
 const PRIORITIES = ['P0', 'P1', 'P2', 'P3'] as const
 
-function CreateRequirementForm({ projectId, onDone }: { projectId: string; onDone: (r: Requirement, title: string) => void }) {
+function CreateRequirementForm({ projectId, modules, defaultModuleId, onDone }: { projectId: string; modules: ApiModule[]; defaultModuleId?: string; onDone: (r: Requirement, title: string) => void }) {
   const { t } = useI18n()
   const [form] = Form.useForm()
   const [raw, setRaw] = useState('')
@@ -469,8 +527,8 @@ function CreateRequirementForm({ projectId, onDone }: { projectId: string; onDon
       <Form
         form={form}
         layout="vertical"
-        initialValues={{ reqType: 'FEATURE', priority: 'P2', criteria: [''] }}
-        onFinish={async (v: { title: string; description?: string; reqType?: string; priority?: string; criteria?: string[]; tags?: string[]; dueDate?: Dayjs; parentId?: string; [CF_GROUP]?: Record<string, unknown> }) => {
+        initialValues={{ reqType: 'FEATURE', priority: 'P2', criteria: [''], moduleId: defaultModuleId ?? '' }}
+        onFinish={async (v: { title: string; description?: string; reqType?: string; priority?: string; criteria?: string[]; tags?: string[]; dueDate?: Dayjs; parentId?: string; moduleId?: string; [CF_GROUP]?: Record<string, unknown> }) => {
           const acceptanceCriteria = (v.criteria || []).map((c) => (c || '').trim()).filter(Boolean)
           const critField = tplFields.find((f) => f.key === 'criteria')
           if (critField?.enabled && critField.required && !acceptanceCriteria.length) {
@@ -490,6 +548,7 @@ function CreateRequirementForm({ projectId, onDone }: { projectId: string; onDon
               dueDate: v.dueDate ? v.dueDate.format('YYYY-MM-DD') : undefined,
               parentId: v.parentId || undefined,
               customFields: Object.keys(customFields).length ? customFields : undefined,
+              moduleId: v.moduleId || undefined,
             })
             message.success(t('req.created', '需求已创建'))
             onDone(r, v.title)
@@ -498,6 +557,14 @@ function CreateRequirementForm({ projectId, onDone }: { projectId: string; onDon
           }
         }}
       >
+        {/* 所属模块:共享项目模块树;新建默认带入左树选中模块,未规划 = 空串。 */}
+        <Form.Item name="moduleId" label={t('req.module', '所属模块')}>
+          <Select
+            showSearch
+            optionFilterProp="label"
+            options={[{ value: '', label: t('req.moduleUnfiled', '未规划') }, ...modules.map((m) => ({ value: m.id, label: m.name }))]}
+          />
+        </Form.Item>
         {/* 按字段模板的数组序渲染:系统字段走各自渲染器,自定义字段按类型渲染;隐藏字段跳过。 */}
         {tplFields.filter((f) => f.enabled).map((f) =>
           f.system ? sysItem(f) : <CustomFieldItem key={f.key} kind="requirement" field={f} />
@@ -650,7 +717,7 @@ function StagePipeline({ req, onAction }: { req: Requirement; onAction: (stage: 
   )
 }
 
-function RequirementDetail({ reqId, projectId, onChanged, onDeleted, onOpen }: { reqId: string; projectId: string; onChanged: () => void; onDeleted: () => void; onOpen?: (id: string) => void }) {
+function RequirementDetail({ reqId, projectId, modules, onChanged, onDeleted, onOpen }: { reqId: string; projectId: string; modules: ApiModule[]; onChanged: () => void; onDeleted: () => void; onOpen?: (id: string) => void }) {
   const { t } = useI18n()
   const [req, setReq] = useState<Requirement | null>(null)
   // 字段模板:编辑弹窗渲染自定义字段(回填现值,提交整体替换)。
@@ -948,9 +1015,11 @@ function RequirementDetail({ reqId, projectId, onChanged, onDeleted, onOpen }: {
             priority: req?.priority || 'P2',
             tags: req?.tags || [],
             dueDate: req?.dueDate ? dayjs(req.dueDate) : undefined,
+            // 所属模块:回落未规划(模块已删/无值时)。
+            moduleId: req?.moduleId && modules.some((m) => m.id === req.moduleId) ? req.moduleId : '',
             [CF_GROUP]: customFormValues(tplFields, req?.customFields),
           }}
-          onFinish={async (v: { title: string; reqType: string; priority: string; tags: string[]; dueDate?: ReturnType<typeof dayjs>; [CF_GROUP]?: Record<string, unknown> }) => {
+          onFinish={async (v: { title: string; reqType: string; priority: string; tags: string[]; dueDate?: ReturnType<typeof dayjs>; moduleId?: string; [CF_GROUP]?: Record<string, unknown> }) => {
             try {
               await api.updateRequirement(reqId, {
                 title: v.title.trim(),
@@ -961,6 +1030,8 @@ function RequirementDetail({ reqId, projectId, onChanged, onDeleted, onOpen }: {
                 dueDate: v.dueDate ? v.dueDate.format('YYYY-MM-DD') : '',
                 // 自定义字段整体替换(删掉值 = 从 map 移除)
                 customFields: collectCustomValues(tplFields, v[CF_GROUP]),
+                // 所属模块:空串 = 摘回未规划(缺省不动,这里始终随表单提交)
+                moduleId: v.moduleId ?? '',
               })
               message.success(t('req.updated', '已保存'))
               setEditOpen(false)
@@ -987,6 +1058,13 @@ function RequirementDetail({ reqId, projectId, onChanged, onDeleted, onOpen }: {
           </Row>
           <Form.Item name="tags" label={t('req.tags', '标签')}>
             <Select mode="tags" maxCount={10} tokenSeparators={[',', ' ']} open={false} suffixIcon={null} placeholder={t('req.tagsPh', '输入后回车,最多 10 个')} />
+          </Form.Item>
+          <Form.Item name="moduleId" label={t('req.module', '所属模块')}>
+            <Select
+              showSearch
+              optionFilterProp="label"
+              options={[{ value: '', label: t('req.moduleUnfiled', '未规划') }, ...modules.map((m) => ({ value: m.id, label: m.name }))]}
+            />
           </Form.Item>
           <Form.Item name="dueDate" label={t('req.dueDate', '截止日期')}>
             <DatePicker style={{ width: '100%' }} allowClear />
