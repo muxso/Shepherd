@@ -37,6 +37,11 @@ jobs:
         run: cargo clippy --workspace --all-targets --locked -- -D warnings -A clippy::unwrap-used
       - name: build
         run: cargo build --workspace --locked
+      # rustdoc 零告警(坏链接/孤儿文档),保证 cargo doc 可用。
+      - name: doc
+        run: cargo doc --workspace --no-deps --locked
+        env:
+          RUSTDOCFLAGS: -D warnings
 
   # —— 供应链:依赖漏洞扫描(RustSec 通告库)——
   audit:
