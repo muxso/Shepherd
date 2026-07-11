@@ -1,6 +1,6 @@
-use async_trait::async_trait;
 use crate::domain::{Bug, BugRelation, NewBug, StatusFlowGraph, StatusItem};
 use crate::ports::{BugRepository, RepoError};
+use async_trait::async_trait;
 use sqlx::{PgPool, Row};
 
 #[derive(Clone)]
@@ -166,13 +166,15 @@ impl BugRepository for PgBugRepository {
     }
 
     async fn remove_relation(&self, rel: &BugRelation) -> Result<(), RepoError> {
-        sqlx::query("DELETE FROM ms_bug_relation WHERE bug_id = $1 AND kind = $2 AND target_id = $3")
-            .bind(&rel.bug_id)
-            .bind(rel.kind.as_str())
-            .bind(&rel.target_id)
-            .execute(&self.pool)
-            .await
-            .map_err(map_err)?;
+        sqlx::query(
+            "DELETE FROM ms_bug_relation WHERE bug_id = $1 AND kind = $2 AND target_id = $3",
+        )
+        .bind(&rel.bug_id)
+        .bind(rel.kind.as_str())
+        .bind(&rel.target_id)
+        .execute(&self.pool)
+        .await
+        .map_err(map_err)?;
         Ok(())
     }
 

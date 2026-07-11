@@ -19,8 +19,6 @@ pub struct LinkedUser {
 
 #[async_trait]
 pub trait ExternalUserRepository: Send + Sync {
-    async fn find_or_provision(
-        &self,
-        identity: &ExternalIdentity,
-    ) -> Result<LinkedUser, OidcError>;
+    async fn find_or_provision(&self, identity: &ExternalIdentity)
+        -> Result<LinkedUser, OidcError>;
 }

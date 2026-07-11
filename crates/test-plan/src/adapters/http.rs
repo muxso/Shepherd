@@ -1,5 +1,10 @@
 use std::sync::Arc;
 
+use crate::application::{
+    report_html, report_markdown, CreatePlanError, CreatePlanUseCase, PlanCaseUseCase,
+    PlanStatisticsError, PlanStatisticsUseCase,
+};
+use crate::domain::{AssertionResult, CaseResult, CaseStatus, Plan, PlanType, ROOT_GROUP};
 use axum::{
     extract::{FromRef, Path, State},
     http::StatusCode,
@@ -7,11 +12,6 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
-use crate::application::{
-    report_html, report_markdown, CreatePlanError, CreatePlanUseCase, PlanCaseUseCase,
-    PlanStatisticsError, PlanStatisticsUseCase,
-};
-use crate::domain::{AssertionResult, CaseResult, CaseStatus, Plan, PlanType, ROOT_GROUP};
 use serde::{Deserialize, Serialize};
 use utoipa::{OpenApi, ToSchema};
 use webauth::{AuthUser, SessionStore};
@@ -194,7 +194,12 @@ struct LinkCaseRequest {
 }
 
 #[utoipa::path(post, path = "/test-plan/{id}/cases", tag = "test-plan", params(("id" = String, Path)), request_body = LinkCaseRequest, responses((status = 201), (status = 403)), security(("bearer" = [])))]
-async fn link_case(user: AuthUser, State(st): State<PlanState>, Path(id): Path<String>, Json(b): Json<LinkCaseRequest>) -> Response {
+async fn link_case(
+    user: AuthUser,
+    State(st): State<PlanState>,
+    Path(id): Path<String>,
+    Json(b): Json<LinkCaseRequest>,
+) -> Response {
     if !user.can("TEST_PLAN", "ADD") {
         return (StatusCode::FORBIDDEN, "permission denied").into_response();
     }
@@ -233,7 +238,12 @@ struct RecordResultRequest {
 }
 
 #[utoipa::path(post, path = "/test-plan/{id}/cases/{caseId}/result", tag = "test-plan", params(("id" = String, Path), ("caseId" = String, Path)), request_body = RecordResultRequest, responses((status = 200), (status = 404), (status = 403)), security(("bearer" = [])))]
-async fn record_result(user: AuthUser, State(st): State<PlanState>, Path((id, case_id)): Path<(String, String)>, Json(b): Json<RecordResultRequest>) -> Response {
+async fn record_result(
+    user: AuthUser,
+    State(st): State<PlanState>,
+    Path((id, case_id)): Path<(String, String)>,
+    Json(b): Json<RecordResultRequest>,
+) -> Response {
     if !user.can("TEST_PLAN", "EXECUTE") {
         return (StatusCode::FORBIDDEN, "permission denied").into_response();
     }
@@ -299,15 +309,17 @@ async fn list_cases(State(st): State<PlanState>, Path(id): Path<String>) -> Resp
 #[derive(OpenApi)]
 #[openapi(paths(create_plan, statistics, report, report_md, link_case, record_result, list_cases), components(schemas(CreatePlanRequest, PlanResponse, StatisticsResponse, LinkCaseRequest, RecordResultRequest, AssertionResultDto, PlanCaseResponse)), tags((name = "test-plan", description = "测试计划")))]
 struct ApiDoc;
-pub fn openapi() -> utoipa::openapi::OpenApi { ApiDoc::openapi() }
+pub fn openapi() -> utoipa::openapi::OpenApi {
+    ApiDoc::openapi()
+}
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use axum::body::Body;
-    use axum::http::Request;
     use crate::adapters::InMemoryPlanRepository;
     use crate::domain::{CaseCounts, NewPlan};
+    use axum::body::Body;
+    use axum::http::Request;
     use kernel::permission::PermissionSet;
     use std::sync::Arc;
     use tower::ServiceExt;
@@ -329,7 +341,8 @@ mod tests {
     }
 
     fn post(uri: &str, body: &str, token: Option<&str>) -> Request<Body> {
-        let mut b = Request::builder().method("POST").uri(uri).header("content-type", "application/json");
+        let mut b =
+            Request::builder().method("POST").uri(uri).header("content-type", "application/json");
         if let Some(t) = token {
             b = b.header("authorization", format!("Bearer {t}"));
         }
@@ -354,7 +367,11 @@ mod tests {
     async fn create_without_token_401() {
         let (app, _t) = app_with(InMemoryPlanRepository::new()).await;
         let resp = app
-            .oneshot(post("/test-plan", r#"{"projectId":"p1","name":"x","type":"TEST_PLAN"}"#, None))
+            .oneshot(post(
+                "/test-plan",
+                r#"{"projectId":"p1","name":"x","type":"TEST_PLAN"}"#,
+                None,
+            ))
             .await
             .expect("resp");
         assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
@@ -406,7 +423,11 @@ mod tests {
         let pid = &plan.id;
         let r = app
             .clone()
-            .oneshot(post(&format!("/test-plan/{pid}/cases"), r#"{"caseId":"c1","name":"健康检查"}"#, Some(&t)))
+            .oneshot(post(
+                &format!("/test-plan/{pid}/cases"),
+                r#"{"caseId":"c1","name":"健康检查"}"#,
+                Some(&t),
+            ))
             .await
             .expect("link");
         assert_eq!(r.status(), StatusCode::CREATED);
@@ -419,7 +440,10 @@ mod tests {
         assert_eq!(r.status(), StatusCode::OK);
         let r = app
             .oneshot(
-                Request::builder().uri(format!("/test-plan/{pid}/report")).body(Body::empty()).expect("req"),
+                Request::builder()
+                    .uri(format!("/test-plan/{pid}/report"))
+                    .body(Body::empty())
+                    .expect("req"),
             )
             .await
             .expect("report");
@@ -476,10 +500,12 @@ mod tests {
     #[tokio::test]
     async fn statistics_returns_rates() {
         let repo = InMemoryPlanRepository::new();
-        let plan = repo
-            .seed(NewPlan::new("p1", "冒烟", PlanType::Plan, ROOT_GROUP).expect("v"))
-            .await;
-        repo.set_counts(&plan.id, CaseCounts { pending: 1, success: 2, error: 1, ..Default::default() });
+        let plan =
+            repo.seed(NewPlan::new("p1", "冒烟", PlanType::Plan, ROOT_GROUP).expect("v")).await;
+        repo.set_counts(
+            &plan.id,
+            CaseCounts { pending: 1, success: 2, error: 1, ..Default::default() },
+        );
         repo.set_threshold(&plan.id, 0.5);
 
         let (app, _t) = app_with(repo).await;

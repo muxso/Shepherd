@@ -172,7 +172,10 @@ impl ExternalIdentityProvider for WecomProvider {
         }
         let ui: UInfo = self
             .client
-            .get(format!("{}/cgi-bin/auth/getuserinfo?access_token={token}&code={code}", self.base_url))
+            .get(format!(
+                "{}/cgi-bin/auth/getuserinfo?access_token={token}&code={code}",
+                self.base_url
+            ))
             .send()
             .await
             .map_err(ex)?
@@ -206,7 +209,10 @@ impl ExternalIdentityProvider for WecomProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use axum::{routing::{get, post}, Json, Router};
+    use axum::{
+        routing::{get, post},
+        Json, Router,
+    };
     use tokio::net::TcpListener;
 
     async fn spawn_feishu() -> String {
@@ -226,9 +232,18 @@ mod tests {
 
     async fn spawn_wecom() -> String {
         let app = Router::new()
-            .route("/cgi-bin/gettoken", get(|| async { Json(serde_json::json!({"errcode":0,"access_token":"qy-tok"})) }))
-            .route("/cgi-bin/auth/getuserinfo", get(|| async { Json(serde_json::json!({"errcode":0,"userid":"zhangsan"})) }))
-            .route("/cgi-bin/user/get", get(|| async { Json(serde_json::json!({"errcode":0,"name":"张三"})) }));
+            .route(
+                "/cgi-bin/gettoken",
+                get(|| async { Json(serde_json::json!({"errcode":0,"access_token":"qy-tok"})) }),
+            )
+            .route(
+                "/cgi-bin/auth/getuserinfo",
+                get(|| async { Json(serde_json::json!({"errcode":0,"userid":"zhangsan"})) }),
+            )
+            .route(
+                "/cgi-bin/user/get",
+                get(|| async { Json(serde_json::json!({"errcode":0,"name":"张三"})) }),
+            );
         serve(app).await
     }
 
@@ -260,7 +275,11 @@ mod tests {
     async fn wecom_authorize_url_well_formed() {
         let p = WecomProvider::new("corp1", "sec", "https://ms/cb");
         let url = p.authorize_url("st2");
-        assert!(url.contains("appid=corp1") && url.contains("state=st2") && url.contains("#wechat_redirect"));
+        assert!(
+            url.contains("appid=corp1")
+                && url.contains("state=st2")
+                && url.contains("#wechat_redirect")
+        );
     }
 
     #[tokio::test]

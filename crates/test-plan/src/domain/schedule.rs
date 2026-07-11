@@ -62,7 +62,10 @@ mod tests {
 
     #[test]
     fn rejects_empty() {
-        assert_eq!(NewSchedule::new(" ", "* * * * * *", true).unwrap_err(), ScheduleError::EmptyPlan);
+        assert_eq!(
+            NewSchedule::new(" ", "* * * * * *", true).unwrap_err(),
+            ScheduleError::EmptyPlan
+        );
         assert_eq!(NewSchedule::new("p1", "  ", true).unwrap_err(), ScheduleError::EmptyCron);
     }
 }

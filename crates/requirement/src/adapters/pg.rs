@@ -276,7 +276,8 @@ mod tests {
         assert_eq!(got.baseline_version, 1);
         assert_eq!(got.baseline().acceptance_criteria[0].text, "正确凭证登录");
 
-        got.revise("v2 描述", vec![AcceptanceCriterion { text: "新增标准".into() }]).expect("revise");
+        got.revise("v2 描述", vec![AcceptanceCriterion { text: "新增标准".into() }])
+            .expect("revise");
         repo.save(&got).await.expect("save");
         let reloaded = repo.get(&r.id).await.expect("get").expect("some");
         assert_eq!(reloaded.latest_version(), 2);

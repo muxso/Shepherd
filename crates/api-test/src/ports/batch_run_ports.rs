@@ -24,7 +24,11 @@ pub trait EnvironmentPort: Send + Sync {
 
 #[async_trait]
 pub trait EnvVarWriter: Send + Sync {
-    async fn set_vars(&self, environment_id: &str, vars: &[(String, String)]) -> Result<(), PortError>;
+    async fn set_vars(
+        &self,
+        environment_id: &str,
+        vars: &[(String, String)],
+    ) -> Result<(), PortError>;
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -59,7 +59,10 @@ pub struct RedisStreamQueue {
 }
 
 impl RedisStreamQueue {
-    pub async fn connect(url: &str, default_consumer: &str) -> Result<Arc<Self>, redis::RedisError> {
+    pub async fn connect(
+        url: &str,
+        default_consumer: &str,
+    ) -> Result<Arc<Self>, redis::RedisError> {
         let client = redis::Client::open(url)?;
         let mut conn = client.get_multiplexed_async_connection().await?;
         for cap in known_caps() {
@@ -211,7 +214,12 @@ impl WorkQueue for RedisStreamQueue {
             let groups: StreamInfoGroupsReply = match conn.xinfo_groups(&key).await {
                 Ok(g) => g,
                 Err(_) => {
-                    out.push(QueueStat { executor: cap, ready: 0, in_flight: 0, oldest_in_flight_ms: 0 });
+                    out.push(QueueStat {
+                        executor: cap,
+                        ready: 0,
+                        in_flight: 0,
+                        oldest_in_flight_ms: 0,
+                    });
                     continue;
                 }
             };

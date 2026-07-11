@@ -40,7 +40,8 @@ impl CopyScenarioUseCase {
             _ => format!("{}_copy", source.name),
         };
 
-        let created = NewApiScenario::new(&source.project_id, &new_name)?.with_created_by(created_by);
+        let created =
+            NewApiScenario::new(&source.project_id, &new_name)?.with_created_by(created_by);
         let fresh = self.repo.insert_scenario(&created).await?;
         self.repo
             .update_scenario(&fresh.id, &new_name, source.status.as_str(), &source.meta)
@@ -56,10 +57,7 @@ impl CopyScenarioUseCase {
             self.repo.add_step(&fresh.id, &cloned).await?;
         }
 
-        self.repo
-            .get_scenario(&fresh.id)
-            .await?
-            .ok_or(CopyScenarioError::NotFound)
+        self.repo.get_scenario(&fresh.id).await?.ok_or(CopyScenarioError::NotFound)
     }
 }
 
@@ -82,8 +80,13 @@ mod tests {
         .await
         .expect("meta");
         let add = AddStepUseCase::new(repo.clone());
-        let case = NewScenarioStep::new(0, StepKind::Case { case_id: "c1".into() }, RefMode::Reference, None)
-            .expect("case step");
+        let case = NewScenarioStep::new(
+            0,
+            StepKind::Case { case_id: "c1".into() },
+            RefMode::Reference,
+            None,
+        )
+        .expect("case step");
         add.execute(&s.id, &case).await.expect("add case");
         let req = InlineRequest::new("POST", "http://x/order", Some("{}".into())).expect("req");
         let request = NewScenarioStep::new(1, StepKind::Request(req), RefMode::Reference, None)

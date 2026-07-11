@@ -88,10 +88,7 @@ mod tests {
 
     #[test]
     fn rejects_blank_name() {
-        assert_eq!(
-            NewPlan::new("p1", "  ", PlanType::Plan, ROOT_GROUP),
-            Err(PlanError::EmptyName)
-        );
+        assert_eq!(NewPlan::new("p1", "  ", PlanType::Plan, ROOT_GROUP), Err(PlanError::EmptyName));
     }
 
     #[test]

@@ -1,5 +1,11 @@
 use std::sync::Arc;
 
+use crate::application::{
+    CreateResourcePoolError, CreateResourcePoolUseCase, EditResourcePoolUseCase,
+    ListCaseExecutionsUseCase, ListResourcePoolsUseCase, StartBatchRunUseCase,
+};
+use crate::domain::{BatchRunError, BatchRunMode, ResourcePool, ResourcePoolDraft, RunModeConfig};
+use crate::ports::CaseExecutionRecord;
 use axum::{
     extract::{FromRef, Path, Query, State},
     http::StatusCode,
@@ -7,12 +13,6 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
-use crate::application::{
-    CreateResourcePoolError, CreateResourcePoolUseCase, EditResourcePoolUseCase,
-    ListCaseExecutionsUseCase, ListResourcePoolsUseCase, StartBatchRunUseCase,
-};
-use crate::domain::{BatchRunError, BatchRunMode, ResourcePool, ResourcePoolDraft, RunModeConfig};
-use crate::ports::CaseExecutionRecord;
 use kernel::page::PageRequest;
 use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, OpenApi, ToSchema};
@@ -26,9 +26,7 @@ pub fn router(use_case: StartBatchRunUseCase) -> Router {
 }
 
 pub fn executions_router(uc: ListCaseExecutionsUseCase) -> Router {
-    Router::new()
-        .route("/api/case/{caseId}/executions", get(list_executions))
-        .with_state(uc)
+    Router::new().route("/api/case/{caseId}/executions", get(list_executions)).with_state(uc)
 }
 
 #[derive(Debug, Deserialize, ToSchema)]
@@ -58,15 +56,17 @@ async fn batch_run(
     let Some(mode) = BatchRunMode::parse(&req.run_mode) else {
         return (StatusCode::BAD_REQUEST, "unknown run mode").into_response();
     };
-    let config =
-        RunModeConfig { mode, pool_id: req.pool_id, retry: None, environment_id: req.environment_id };
+    let config = RunModeConfig {
+        mode,
+        pool_id: req.pool_id,
+        retry: None,
+        environment_id: req.environment_id,
+    };
 
     dispatch_to_response(uc.execute(&req.project_id, req.case_ids, config).await)
 }
 
-fn dispatch_to_response(
-    result: Result<crate::ports::DispatchReport, BatchRunError>,
-) -> Response {
+fn dispatch_to_response(result: Result<crate::ports::DispatchReport, BatchRunError>) -> Response {
     match result {
         Ok(rep) => (
             StatusCode::OK,
@@ -77,10 +77,11 @@ fn dispatch_to_response(
         Err(BatchRunError::InvalidRetryConfig) => {
             (StatusCode::BAD_REQUEST, "invalid retry config").into_response()
         }
-        Err(BatchRunError::ResourcePoolNotConfigured) => {
-            (StatusCode::BAD_REQUEST, "resource pool not configured (supply poolId or set project default)")
-                .into_response()
-        }
+        Err(BatchRunError::ResourcePoolNotConfigured) => (
+            StatusCode::BAD_REQUEST,
+            "resource pool not configured (supply poolId or set project default)",
+        )
+            .into_response(),
         Err(BatchRunError::ResourcePoolUnavailable { pool_id }) => {
             (StatusCode::CONFLICT, format!("resource pool unavailable: {pool_id}")).into_response()
         }
@@ -122,8 +123,12 @@ async fn run_case(
     let Some(mode) = BatchRunMode::parse(&req.run_mode) else {
         return (StatusCode::BAD_REQUEST, "unknown run mode").into_response();
     };
-    let config =
-        RunModeConfig { mode, pool_id: req.pool_id, retry: None, environment_id: req.environment_id };
+    let config = RunModeConfig {
+        mode,
+        pool_id: req.pool_id,
+        retry: None,
+        environment_id: req.environment_id,
+    };
     dispatch_to_response(uc.execute(&req.project_id, vec![id], config).await)
 }
 
@@ -348,7 +353,10 @@ async fn list_resource_pools(State(st): State<ResourcePoolState>) -> Response {
 }
 
 #[utoipa::path(get, path = "/api/resource-pool/{id}", tag = "api-test", responses((status = 200, body = ResourcePoolResponse), (status = 404)))]
-async fn get_resource_pool(State(st): State<ResourcePoolState>, Path(id): Path<String>) -> Response {
+async fn get_resource_pool(
+    State(st): State<ResourcePoolState>,
+    Path(id): Path<String>,
+) -> Response {
     match st.edit.get(&id).await {
         Ok(Some(p)) => (StatusCode::OK, Json(ResourcePoolResponse::from(p))).into_response(),
         Ok(None) => (StatusCode::NOT_FOUND, "resource pool not found").into_response(),
@@ -418,14 +426,16 @@ async fn delete_resource_pool(
     tags((name = "api-test", description = "接口批量执行"))
 )]
 struct ApiDoc;
-pub fn openapi() -> utoipa::openapi::OpenApi { ApiDoc::openapi() }
+pub fn openapi() -> utoipa::openapi::OpenApi {
+    ApiDoc::openapi()
+}
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::adapters::{FakeEnvironment, FakeResourcePool, SpyExecutor};
     use axum::body::Body;
     use axum::http::Request;
-    use crate::adapters::{FakeEnvironment, FakeResourcePool, SpyExecutor};
     use std::sync::Arc;
     use tower::ServiceExt;
 
@@ -451,7 +461,9 @@ mod tests {
     async fn client_pool_available_returns_200_with_report() {
         let pools = FakeResourcePool::new().with_available("pool1");
         let resp = app(pools)
-            .oneshot(post(r#"{"projectId":"p1","caseIds":["c1"],"runMode":"PARALLEL","poolId":"pool1"}"#))
+            .oneshot(post(
+                r#"{"projectId":"p1","caseIds":["c1"],"runMode":"PARALLEL","poolId":"pool1"}"#,
+            ))
             .await
             .expect("resp");
         assert_eq!(resp.status(), StatusCode::OK);
@@ -472,7 +484,9 @@ mod tests {
     #[tokio::test]
     async fn unavailable_pool_returns_409() {
         let resp = app(FakeResourcePool::new())
-            .oneshot(post(r#"{"projectId":"p1","caseIds":["c1"],"runMode":"PARALLEL","poolId":"dead"}"#))
+            .oneshot(post(
+                r#"{"projectId":"p1","caseIds":["c1"],"runMode":"PARALLEL","poolId":"dead"}"#,
+            ))
             .await
             .expect("resp");
         assert_eq!(resp.status(), StatusCode::CONFLICT);
@@ -482,7 +496,9 @@ mod tests {
     async fn empty_cases_returns_400() {
         let pools = FakeResourcePool::new().with_available("pool1");
         let resp = app(pools)
-            .oneshot(post(r#"{"projectId":"p1","caseIds":[],"runMode":"PARALLEL","poolId":"pool1"}"#))
+            .oneshot(post(
+                r#"{"projectId":"p1","caseIds":[],"runMode":"PARALLEL","poolId":"pool1"}"#,
+            ))
             .await
             .expect("resp");
         assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
@@ -508,7 +524,9 @@ mod tests {
     async fn unknown_run_mode_returns_400() {
         let pools = FakeResourcePool::new().with_available("pool1");
         let resp = app(pools)
-            .oneshot(post(r#"{"projectId":"p1","caseIds":["c1"],"runMode":"WAT","poolId":"pool1"}"#))
+            .oneshot(post(
+                r#"{"projectId":"p1","caseIds":["c1"],"runMode":"WAT","poolId":"pool1"}"#,
+            ))
             .await
             .expect("resp");
         assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
@@ -579,10 +597,7 @@ mod tests {
     async fn executions_defaults_apply_without_query() {
         let resp = exec_app(0)
             .oneshot(
-                Request::builder()
-                    .uri("/api/case/c1/executions")
-                    .body(Body::empty())
-                    .expect("req"),
+                Request::builder().uri("/api/case/c1/executions").body(Body::empty()).expect("req"),
             )
             .await
             .expect("resp");
@@ -647,9 +662,19 @@ mod tests {
             Ok(self.pools.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clone())
         }
         async fn get(&self, id: &str) -> Result<Option<ResourcePool>, PortError> {
-            Ok(self.pools.lock().unwrap_or_else(std::sync::PoisonError::into_inner).iter().find(|p| p.id == id).cloned())
+            Ok(self
+                .pools
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .iter()
+                .find(|p| p.id == id)
+                .cloned())
         }
-        async fn update(&self, id: &str, p: &NewResourcePool) -> Result<Option<ResourcePool>, PortError> {
+        async fn update(
+            &self,
+            id: &str,
+            p: &NewResourcePool,
+        ) -> Result<Option<ResourcePool>, PortError> {
             let mut g = self.pools.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
             match g.iter_mut().find(|x| x.id == id) {
                 Some(slot) => {
@@ -739,9 +764,7 @@ mod tests {
     async fn list_pools_is_open_200() {
         let (app, _t) = pool_app().await;
         let resp = app
-            .oneshot(
-                Request::builder().uri("/api/resource-pool").body(Body::empty()).expect("req"),
-            )
+            .oneshot(Request::builder().uri("/api/resource-pool").body(Body::empty()).expect("req"))
             .await
             .expect("resp");
         assert_eq!(resp.status(), StatusCode::OK);

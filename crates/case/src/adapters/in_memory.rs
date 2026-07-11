@@ -24,7 +24,11 @@ impl InMemoryReviewRepository {
     }
 
     pub fn set_setting(&self, review_id: &str, setting: ReviewSetting) {
-        self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner).settings.insert(review_id.to_string(), setting);
+        self.state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .settings
+            .insert(review_id.to_string(), setting);
     }
 
     pub fn case_status(&self, review_id: &str, case_id: &str) -> Option<ReviewStatus> {

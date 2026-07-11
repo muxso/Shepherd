@@ -142,11 +142,7 @@ impl RunnerService {
             .executions
             .record(&chosen.id, &req.protocol, &req.target, &probe_to_remote(&outcome))
             .await;
-        Ok(ProbeReport {
-            agent_id: chosen.id.clone(),
-            agent_name: chosen.name.clone(),
-            outcome,
-        })
+        Ok(ProbeReport { agent_id: chosen.id.clone(), agent_name: chosen.name.clone(), outcome })
     }
 
     pub async fn list(&self) -> Result<Vec<RunnerAgent>, PortError> {
@@ -162,10 +158,8 @@ impl RunnerService {
         let target =
             self.store.dispatch_target(agent_id).await?.ok_or(RunViaAgentError::AgentNotFound)?;
         let result = self.remote.run(&target, request, assertions).await?;
-        let _ = self
-            .executions
-            .record(agent_id, request.method.as_str(), &request.url, &result)
-            .await;
+        let _ =
+            self.executions.record(agent_id, request.method.as_str(), &request.url, &result).await;
         Ok(result)
     }
 
@@ -201,37 +195,36 @@ mod tests {
         (svc, store, cases)
     }
 
-    fn svc_full() -> (
-        RunnerService,
-        Arc<InMemoryAgentStore>,
-        Arc<InMemoryCaseSpecSource>,
-        Arc<StubCapabilities>,
-    ) {
+    fn svc_full(
+    ) -> (RunnerService, Arc<InMemoryAgentStore>, Arc<InMemoryCaseSpecSource>, Arc<StubCapabilities>)
+    {
         let store = Arc::new(InMemoryAgentStore::new());
         let remote = Arc::new(StubRemoteRunner::success());
         let probe = Arc::new(StubRemoteProbe);
         let caps = Arc::new(StubCapabilities::new());
         let execs = Arc::new(InMemoryExecutionStore::new());
         let cases = Arc::new(InMemoryCaseSpecSource::new());
-        let svc = RunnerService::new(
-            store.clone(),
-            remote,
-            probe,
-            caps.clone(),
-            execs,
-            cases.clone(),
-        );
+        let svc =
+            RunnerService::new(store.clone(), remote, probe, caps.clone(), execs, cases.clone());
         (svc, store, cases, caps)
     }
 
     fn spec() -> RequestSpec {
-        RequestSpec { method: HttpMethod::Get, url: "http://t/x".into(), headers: vec![], body: None }
+        RequestSpec {
+            method: HttpMethod::Get,
+            url: "http://t/x".into(),
+            headers: vec![],
+            body: None,
+        }
     }
 
     #[tokio::test]
     async fn register_list_and_run_via() {
         let (svc, _store, _cases) = svc();
-        let a = svc.register("测试环境", "http://10.0.0.5:9100", Some("t".into()), true).await.expect("reg");
+        let a = svc
+            .register("测试环境", "http://10.0.0.5:9100", Some("t".into()), true)
+            .await
+            .expect("reg");
         assert_eq!(svc.list().await.expect("list").len(), 1);
 
         let res = svc.run_via(&a.id, &spec(), &[Assertion::StatusIs(200)]).await.expect("run");

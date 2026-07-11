@@ -23,7 +23,10 @@ impl CreateResourcePoolUseCase {
         Self { admin }
     }
 
-    pub async fn execute(&self, draft: ResourcePoolDraft) -> Result<ResourcePool, CreateResourcePoolError> {
+    pub async fn execute(
+        &self,
+        draft: ResourcePoolDraft,
+    ) -> Result<ResourcePool, CreateResourcePoolError> {
         let new_pool = NewResourcePool::new(draft)?;
         Ok(self.admin.create(&new_pool).await?)
     }
@@ -79,7 +82,12 @@ mod tests {
     use std::sync::Mutex;
 
     fn draft(name: &str) -> ResourcePoolDraft {
-        ResourcePoolDraft { name: name.to_string(), enabled: true, all_org: true, ..Default::default() }
+        ResourcePoolDraft {
+            name: name.to_string(),
+            enabled: true,
+            all_org: true,
+            ..Default::default()
+        }
     }
 
     #[derive(Default)]
@@ -116,9 +124,19 @@ mod tests {
             Ok(self.pools.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clone())
         }
         async fn get(&self, id: &str) -> Result<Option<ResourcePool>, PortError> {
-            Ok(self.pools.lock().unwrap_or_else(std::sync::PoisonError::into_inner).iter().find(|p| p.id == id).cloned())
+            Ok(self
+                .pools
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .iter()
+                .find(|p| p.id == id)
+                .cloned())
         }
-        async fn update(&self, id: &str, pool: &NewResourcePool) -> Result<Option<ResourcePool>, PortError> {
+        async fn update(
+            &self,
+            id: &str,
+            pool: &NewResourcePool,
+        ) -> Result<Option<ResourcePool>, PortError> {
             let mut pools = self.pools.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
             match pools.iter_mut().find(|p| p.id == id) {
                 Some(slot) => {

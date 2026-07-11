@@ -87,19 +87,14 @@ mod tests {
             &req(),
         )
         .expect("ok");
-        assert_eq!(
-            out,
-            r#"{"path":"/users/42","status":"paid","name":"Alice","trace":"t-1"}"#
-        );
+        assert_eq!(out, r#"{"path":"/users/42","status":"paid","name":"Alice","trace":"t-1"}"#);
     }
 
     #[test]
     fn supports_control_flow() {
-        let out = render_body(
-            "{% if query.status == 'paid' %}PAID{% else %}OTHER{% endif %}",
-            &req(),
-        )
-        .expect("ok");
+        let out =
+            render_body("{% if query.status == 'paid' %}PAID{% else %}OTHER{% endif %}", &req())
+                .expect("ok");
         assert_eq!(out, "PAID");
     }
 

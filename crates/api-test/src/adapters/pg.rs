@@ -1,11 +1,11 @@
 use std::sync::Arc;
 
-use async_trait::async_trait;
 use crate::domain::{NewResourcePool, ResolvedEnv, ResourcePool};
 use crate::ports::{
     BatchExecutorPort, DispatchOutcome, DispatchReport, DispatchSpec, EnvironmentPort, PortError,
     ResourcePoolAdminPort, ResourcePoolPort, RunTask, TaskDispatcher,
 };
+use async_trait::async_trait;
 use sqlx::{PgPool, Row};
 
 fn map_err(e: sqlx::Error) -> PortError {
@@ -109,7 +109,9 @@ impl ResourcePoolAdminPort for PgResourcePoolAdmin {
     }
 
     async fn list(&self) -> Result<Vec<ResourcePool>, PortError> {
-        let sql = format!("SELECT {POOL_COLS} FROM ms_resource_pool WHERE NOT deleted ORDER BY created_at DESC");
+        let sql = format!(
+            "SELECT {POOL_COLS} FROM ms_resource_pool WHERE NOT deleted ORDER BY created_at DESC"
+        );
         let rows = sqlx::query(&sql).fetch_all(&self.pool).await.map_err(map_err)?;
         rows.iter().map(map_pool).collect()
     }
@@ -120,7 +122,11 @@ impl ResourcePoolAdminPort for PgResourcePoolAdmin {
         row.as_ref().map(map_pool).transpose()
     }
 
-    async fn update(&self, id: &str, new_pool: &NewResourcePool) -> Result<Option<ResourcePool>, PortError> {
+    async fn update(
+        &self,
+        id: &str,
+        new_pool: &NewResourcePool,
+    ) -> Result<Option<ResourcePool>, PortError> {
         let sql = format!(
             "UPDATE ms_resource_pool SET \
              name = $2, enabled = $3, description = $4, max_concurrency = $5, pool_type = $6, \
@@ -215,19 +221,25 @@ impl EnvironmentPort for PgEnvironment {
 
 #[async_trait]
 impl crate::ports::EnvVarWriter for PgEnvironment {
-    async fn set_vars(&self, environment_id: &str, vars: &[(String, String)]) -> Result<(), PortError> {
+    async fn set_vars(
+        &self,
+        environment_id: &str,
+        vars: &[(String, String)],
+    ) -> Result<(), PortError> {
         if vars.is_empty() {
             return Ok(());
         }
         let obj = serde_json::Value::Object(
             vars.iter().map(|(k, v)| (k.clone(), serde_json::Value::String(v.clone()))).collect(),
         );
-        sqlx::query("UPDATE ms_environment SET variables = variables || $2 WHERE id = $1 AND NOT deleted")
-            .bind(environment_id)
-            .bind(&obj)
-            .execute(&self.pool)
-            .await
-            .map_err(map_err)?;
+        sqlx::query(
+            "UPDATE ms_environment SET variables = variables || $2 WHERE id = $1 AND NOT deleted",
+        )
+        .bind(environment_id)
+        .bind(&obj)
+        .execute(&self.pool)
+        .await
+        .map_err(map_err)?;
         Ok(())
     }
 }
@@ -331,7 +343,10 @@ fn parse_kv(v: &serde_json::Value) -> Vec<(String, String)> {
                     if k.is_empty() {
                         return None;
                     }
-                    Some((k.to_string(), it.get("value").and_then(|x| x.as_str()).unwrap_or("").to_string()))
+                    Some((
+                        k.to_string(),
+                        it.get("value").and_then(|x| x.as_str()).unwrap_or("").to_string(),
+                    ))
                 })
                 .collect()
         })
@@ -381,11 +396,15 @@ impl CaseSpecSource for PgCaseSpecSource {
         let assertions: Vec<Assertion> = serde_json::from_value(assertions_json)
             .map_err(|e| PortError::Backend(format!("bad assertions json: {e}")))?;
         let processors_json: serde_json::Value = r.try_get("processors").map_err(map_err)?;
-        let processors: Vec<Processor> = serde_json::from_value(processors_json).unwrap_or_default();
+        let processors: Vec<Processor> =
+            serde_json::from_value(processors_json).unwrap_or_default();
 
-        let headers_json: serde_json::Value = r.try_get("headers").unwrap_or_else(|_| serde_json::json!([]));
-        let query_json: serde_json::Value = r.try_get("query_params").unwrap_or_else(|_| serde_json::json!([]));
-        let auth_json: serde_json::Value = r.try_get("auth").unwrap_or_else(|_| serde_json::json!({}));
+        let headers_json: serde_json::Value =
+            r.try_get("headers").unwrap_or_else(|_| serde_json::json!([]));
+        let query_json: serde_json::Value =
+            r.try_get("query_params").unwrap_or_else(|_| serde_json::json!([]));
+        let auth_json: serde_json::Value =
+            r.try_get("auth").unwrap_or_else(|_| serde_json::json!({}));
         let mut headers = parse_kv(&headers_json);
         if let Some(a) = auth_header(&auth_json) {
             headers.push(a);
@@ -514,12 +533,14 @@ impl PgBatchReport {
     }
 
     pub async fn set_status(&self, report_id: &str, status: &str) -> Result<(), PortError> {
-        sqlx::query("UPDATE ms_api_batch_report SET status = $2, finished_at = now() WHERE id = $1")
-            .bind(report_id)
-            .bind(status)
-            .execute(&self.pool)
-            .await
-            .map_err(map_err)?;
+        sqlx::query(
+            "UPDATE ms_api_batch_report SET status = $2, finished_at = now() WHERE id = $1",
+        )
+        .bind(report_id)
+        .bind(status)
+        .execute(&self.pool)
+        .await
+        .map_err(map_err)?;
         Ok(())
     }
 
@@ -579,7 +600,8 @@ impl PgBatchReport {
                 let headers = headers_v
                     .and_then(|v| serde_json::from_value::<Vec<(String, String)>>(v).ok())
                     .unwrap_or_default();
-                let req_headers_v: Option<serde_json::Value> = r.try_get("req_headers").ok().flatten();
+                let req_headers_v: Option<serde_json::Value> =
+                    r.try_get("req_headers").ok().flatten();
                 let req_headers = req_headers_v
                     .and_then(|v| serde_json::from_value::<Vec<(String, String)>>(v).ok())
                     .unwrap_or_default();
@@ -712,7 +734,7 @@ impl CaseExecutionQueryPort for PgCaseExecutionQuery {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::adapters::{SpyDispatcher, NoopDispatcher};
+    use crate::adapters::{NoopDispatcher, SpyDispatcher};
     use crate::domain::BatchRunMode;
 
     #[test]
@@ -744,7 +766,10 @@ mod tests {
     #[test]
     fn merge_query_appends_with_right_separator() {
         assert_eq!(merge_query("/x", &[("a".into(), "1".into())]), "/x?a=1");
-        assert_eq!(merge_query("/x?p=0", &[("a".into(), "1".into()), ("b".into(), "2".into())]), "/x?p=0&a=1&b=2");
+        assert_eq!(
+            merge_query("/x?p=0", &[("a".into(), "1".into()), ("b".into(), "2".into())]),
+            "/x?p=0&a=1&b=2"
+        );
         assert_eq!(merge_query("/x", &[]), "/x");
     }
 
@@ -799,15 +824,15 @@ mod tests {
         assert_eq!(task.report_id, rep.report_id);
         assert_eq!(task.case_ids.len(), 2);
 
-        let exec_fail = PgBatchReportExecutor::new(pool.clone(), Arc::new(SpyDispatcher::failing()));
+        let exec_fail =
+            PgBatchReportExecutor::new(pool.clone(), Arc::new(SpyDispatcher::failing()));
         let err = exec_fail.dispatch(&spec).await;
         assert!(err.is_err());
-        let failed = sqlx::query(
-            "SELECT status FROM ms_api_batch_report WHERE status = 'DISPATCH_FAILED'",
-        )
-        .fetch_optional(&pool)
-        .await
-        .expect("q");
+        let failed =
+            sqlx::query("SELECT status FROM ms_api_batch_report WHERE status = 'DISPATCH_FAILED'")
+                .fetch_optional(&pool)
+                .await
+                .expect("q");
         assert!(failed.is_some());
 
         let _ = PgBatchReportExecutor::new(pool.clone(), Arc::new(NoopDispatcher));

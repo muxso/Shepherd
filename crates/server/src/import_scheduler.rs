@@ -199,10 +199,13 @@ async fn import_url(
         return (StatusCode::FORBIDDEN, "permission denied").into_response();
     }
     let format = ImportFormat::from_source(b.format.as_deref().unwrap_or("openapi"));
-    let doc = match fetch_doc(&st.client, &b.url, b.token.as_deref().unwrap_or(""), b.basic_auth, format).await {
-        Ok(d) => d,
-        Err(e) => return (StatusCode::BAD_GATEWAY, e).into_response(),
-    };
+    let doc =
+        match fetch_doc(&st.client, &b.url, b.token.as_deref().unwrap_or(""), b.basic_auth, format)
+            .await
+        {
+            Ok(d) => d,
+            Err(e) => return (StatusCode::BAD_GATEWAY, e).into_response(),
+        };
     match st
         .import_uc
         .execute(
@@ -223,10 +226,10 @@ async fn import_url(
             Json(json!({ "created": o.created.len(), "updated": o.updated, "skipped": o.skipped })),
         )
             .into_response(),
-        Err(ImportError::Parse(_)) => {
-            (StatusCode::BAD_REQUEST, "来源文档无法解析").into_response()
+        Err(ImportError::Parse(_)) => (StatusCode::BAD_REQUEST, "来源文档无法解析").into_response(),
+        Err(ImportError::Repo(_)) => {
+            (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response()
         }
-        Err(ImportError::Repo(_)) => (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
     }
 }
 
@@ -329,7 +332,8 @@ async fn create_schedule(
     match st.schedules.create(new).await {
         Ok(s) => {
             if s.enabled {
-                register_job(&st.sched, &st.import_uc, &st.schedules, &st.client, &s.id, &s.cron).await;
+                register_job(&st.sched, &st.import_uc, &st.schedules, &st.client, &s.id, &s.cron)
+                    .await;
             }
             (StatusCode::CREATED, Json(ScheduleResponse::from(s))).into_response()
         }
@@ -348,10 +352,14 @@ struct ListQuery {
     project_id: String,
 }
 
-async fn list_schedules(State(st): State<ImportSchedState>, Query(q): Query<ListQuery>) -> Response {
+async fn list_schedules(
+    State(st): State<ImportSchedState>,
+    Query(q): Query<ListQuery>,
+) -> Response {
     match st.schedules.list_by_project(&q.project_id).await {
         Ok(list) => {
-            let items: Vec<ScheduleResponse> = list.into_iter().map(ScheduleResponse::from).collect();
+            let items: Vec<ScheduleResponse> =
+                list.into_iter().map(ScheduleResponse::from).collect();
             (StatusCode::OK, Json(items)).into_response()
         }
         Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),

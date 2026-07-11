@@ -55,7 +55,10 @@ impl InMemoryWorkQueue {
 #[async_trait]
 impl WorkQueue for InMemoryWorkQueue {
     async fn enqueue(&self, spec: &WorkSpec) {
-        self.inner.lock().unwrap_or_else(std::sync::PoisonError::into_inner).push_back(spec.clone());
+        self.inner
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .push_back(spec.clone());
     }
 
     // 认领即从队列移除,故无 PEL:ack 与超时回收都无需操作,consumer(id)被忽略。
@@ -360,7 +363,8 @@ mod tests {
     async fn dispatch_enqueues_and_accepts() {
         let q = InMemoryWorkQueue::new();
         let ex = QueueAgentExecutor::new(q.clone());
-        let out = ex.dispatch(&spec("a1", ExecutorKind::ClaudeCode), &NoopSink).await.expect("dispatch");
+        let out =
+            ex.dispatch(&spec("a1", ExecutorKind::ClaudeCode), &NoopSink).await.expect("dispatch");
         assert_eq!(out, DispatchOutcome::Accepted { run_id: "a1".into() });
         assert_eq!(q.len(), 1);
     }

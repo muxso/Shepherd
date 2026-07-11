@@ -24,7 +24,10 @@ impl CreateEnvironmentUseCase {
         Self { repo }
     }
 
-    pub async fn execute(&self, input: EnvironmentInput) -> Result<Environment, CreateEnvironmentError> {
+    pub async fn execute(
+        &self,
+        input: EnvironmentInput,
+    ) -> Result<Environment, CreateEnvironmentError> {
         let new_env = NewEnvironment::new(
             &input.project_id,
             &input.name,

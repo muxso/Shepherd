@@ -43,7 +43,8 @@ fn json_to_fields(v: &serde_json::Value) -> BTreeMap<String, String> {
         .unwrap_or_default()
 }
 
-const COLS: &str = "id, project_id, name, module, priority, status, custom_fields, steps, created_by";
+const COLS: &str =
+    "id, project_id, name, module, priority, status, custom_fields, steps, created_by";
 
 fn row_to_case(r: &sqlx::postgres::PgRow) -> Result<FunctionalCase, RepoError> {
     let custom: serde_json::Value = r.try_get("custom_fields").map_err(map_err)?;
@@ -82,7 +83,11 @@ impl CaseRepository for PgCaseRepository {
         row_to_case(&row)
     }
 
-    async fn update(&self, id: &str, c: &NewFunctionalCase) -> Result<Option<FunctionalCase>, RepoError> {
+    async fn update(
+        &self,
+        id: &str,
+        c: &NewFunctionalCase,
+    ) -> Result<Option<FunctionalCase>, RepoError> {
         let row = sqlx::query(&format!(
             "UPDATE ms_functional_case \
              SET name = $2, module = $3, priority = $4, status = $5, custom_fields = $6, steps = $7 \
@@ -102,11 +107,13 @@ impl CaseRepository for PgCaseRepository {
     }
 
     async fn delete(&self, id: &str) -> Result<bool, RepoError> {
-        let res = sqlx::query("UPDATE ms_functional_case SET deleted = true WHERE id = $1 AND NOT deleted")
-            .bind(id)
-            .execute(&self.pool)
-            .await
-            .map_err(map_err)?;
+        let res = sqlx::query(
+            "UPDATE ms_functional_case SET deleted = true WHERE id = $1 AND NOT deleted",
+        )
+        .bind(id)
+        .execute(&self.pool)
+        .await
+        .map_err(map_err)?;
         Ok(res.rows_affected() > 0)
     }
 
@@ -172,7 +179,10 @@ impl CaseRepository for PgCaseRepository {
         Ok(())
     }
 
-    async fn cases_for_requirement(&self, requirement_id: &str) -> Result<Vec<CoverageCase>, RepoError> {
+    async fn cases_for_requirement(
+        &self,
+        requirement_id: &str,
+    ) -> Result<Vec<CoverageCase>, RepoError> {
         let rows = sqlx::query(
             "SELECT rc.criterion_index, rc.functional_case_id, c.name, c.module, c.priority \
              FROM ms_requirement_case rc JOIN ms_functional_case c ON c.id = rc.functional_case_id \
@@ -196,7 +206,10 @@ impl CaseRepository for PgCaseRepository {
             .collect()
     }
 
-    async fn requirements_for_case(&self, functional_case_id: &str) -> Result<Vec<CaseRequirement>, RepoError> {
+    async fn requirements_for_case(
+        &self,
+        functional_case_id: &str,
+    ) -> Result<Vec<CaseRequirement>, RepoError> {
         let rows = sqlx::query(
             "SELECT rc.requirement_id, rc.criterion_index, r.title \
              FROM ms_requirement_case rc JOIN ms_requirement r ON r.id = rc.requirement_id \

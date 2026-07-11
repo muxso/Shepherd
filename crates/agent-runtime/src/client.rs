@@ -89,7 +89,11 @@ impl ServerClient {
         Ok(code != reqwest::StatusCode::NOT_FOUND)
     }
 
-    pub async fn claim(&self, caps: &[String], runtime_id: &str) -> anyhow::Result<Option<WorkSpec>> {
+    pub async fn claim(
+        &self,
+        caps: &[String],
+        runtime_id: &str,
+    ) -> anyhow::Result<Option<WorkSpec>> {
         let caps_csv = caps.join(",");
         let resp = self
             .auth(self.http.get(format!(

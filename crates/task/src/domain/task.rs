@@ -397,7 +397,10 @@ impl Decomposition {
         let satisfied = to != TaskStatus::Dispatched || self.dependencies_satisfied(id);
         let task = self.task_mut(id).ok_or_else(|| TaskError::NoSuchTask(id.to_string()))?;
         if !task.status.can_transition_to(to) {
-            return Err(TaskError::TransitionNotAllowed { from: task.status.as_str(), to: to.as_str() });
+            return Err(TaskError::TransitionNotAllowed {
+                from: task.status.as_str(),
+                to: to.as_str(),
+            });
         }
         if !satisfied {
             return Err(TaskError::DependenciesNotSatisfied);

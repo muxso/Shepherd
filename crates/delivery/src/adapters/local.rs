@@ -94,8 +94,9 @@ impl AgentExecutor for LocalCommandAgentExecutor {
         sink: &dyn EventSink,
     ) -> Result<DispatchOutcome, ExecError> {
         let argv = self.argv(spec.executor);
-        let (program, args) =
-            argv.split_first().ok_or_else(|| ExecError::Backend("empty executor command".into()))?;
+        let (program, args) = argv
+            .split_first()
+            .ok_or_else(|| ExecError::Backend("empty executor command".into()))?;
 
         if let Some((base, token)) = &self.callback {
             let mut child = Command::new(program)
@@ -143,7 +144,9 @@ impl AgentExecutor for LocalCommandAgentExecutor {
         let stdout = child.stdout.take().ok_or_else(|| ExecError::Backend("no stdout".into()))?;
         let mut lines = BufReader::new(stdout).lines();
         let mut result: Option<(String, String)> = None;
-        while let Some(line) = lines.next_line().await.map_err(|e| ExecError::Backend(e.to_string()))? {
+        while let Some(line) =
+            lines.next_line().await.map_err(|e| ExecError::Backend(e.to_string()))?
+        {
             let line = line.trim();
             if line.is_empty() {
                 continue;
@@ -191,7 +194,10 @@ mod tests {
     #[async_trait]
     impl EventSink for RecordingSink {
         async fn emit(&self, e: NewExecutionEvent) {
-            self.events.lock().unwrap_or_else(std::sync::PoisonError::into_inner).push((e.kind, e.message));
+            self.events
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .push((e.kind, e.message));
         }
     }
 
@@ -241,7 +247,9 @@ mod tests {
         let sink = RecordingSink::default();
         let out = exec.dispatch(&spec(ExecutorKind::ClaudeCode), &sink).await.expect("dispatch");
         match out {
-            DispatchOutcome::Completed { deliverable } => assert_eq!(deliverable.reference, "local://t1"),
+            DispatchOutcome::Completed { deliverable } => {
+                assert_eq!(deliverable.reference, "local://t1")
+            }
             other => panic!("expected Completed, got {other:?}"),
         }
         let events = sink.events.lock().unwrap_or_else(std::sync::PoisonError::into_inner);

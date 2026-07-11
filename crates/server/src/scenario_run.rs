@@ -47,14 +47,7 @@ pub fn router(
     Router::new()
         .route("/api/scenario/{id}/run", post(run_scenario))
         .route("/api/scenario-report/{report_id}", get(scenario_report))
-        .with_state(RunState {
-        compile,
-        executor,
-        envs,
-        reports,
-        recorder,
-        sessions,
-    })
+        .with_state(RunState { compile, executor, envs, reports, recorder, sessions })
 }
 
 #[derive(Debug, Deserialize, ToSchema)]
@@ -187,7 +180,10 @@ fn parse_kv(v: &serde_json::Value) -> Vec<(String, String)> {
                     if k.is_empty() {
                         return None;
                     }
-                    Some((k.to_string(), it.get("value").and_then(|x| x.as_str()).unwrap_or("").to_string()))
+                    Some((
+                        k.to_string(),
+                        it.get("value").and_then(|x| x.as_str()).unwrap_or("").to_string(),
+                    ))
                 })
                 .collect()
         })
@@ -234,7 +230,12 @@ fn to_node(step: &PlanStep, once: &mut u32) -> PlanNode {
             url = merge_query(&url, &parse_kv(&r.query_params));
             PlanNode::Leaf(Leaf::Request {
                 label: format!("{} {}", r.method, url),
-                request: RequestSpec { method: method_of(&r.method), url, headers, body: r.body.clone() },
+                request: RequestSpec {
+                    method: method_of(&r.method),
+                    url,
+                    headers,
+                    body: r.body.clone(),
+                },
                 assertions: serde_json::from_value::<Vec<Assertion>>(r.assertions.clone())
                     .unwrap_or_default(),
                 processors: serde_json::from_value::<Vec<Processor>>(r.processors.clone())
@@ -318,7 +319,9 @@ async fn run_scenario(
     let env = match req.environment_id.as_deref().filter(|s| !s.trim().is_empty()) {
         Some(eid) => match st.envs.resolve(eid).await {
             Ok(e) => e.unwrap_or_default(),
-            Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "env resolve error").into_response(),
+            Err(_) => {
+                return (StatusCode::INTERNAL_SERVER_ERROR, "env resolve error").into_response()
+            }
         },
         None => Default::default(),
     };
@@ -326,7 +329,9 @@ async fn run_scenario(
 
     let report_id = match st.reports.create("SERIAL", count as i32).await {
         Ok(r) => r,
-        Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "create report error").into_response(),
+        Err(_) => {
+            return (StatusCode::INTERNAL_SERVER_ERROR, "create report error").into_response()
+        }
     };
 
     let all_pass = match st.executor.run(&report_id, &nodes, &env, stop_on_failure).await {
@@ -339,18 +344,11 @@ async fn run_scenario(
     let status = if all_pass { "SUCCESS" } else { "ERROR" };
 
     let _ = st.reports.set_status(&report_id, status).await;
-    let _ = st
-        .recorder
-        .execute(&id, &req.project_id, status, count as i32, Some(&report_id))
-        .await;
+    let _ = st.recorder.execute(&id, &req.project_id, status, count as i32, Some(&report_id)).await;
 
     (
         StatusCode::OK,
-        Json(RunScenarioResponse {
-            report_id,
-            status: status.to_string(),
-            case_count: count,
-        }),
+        Json(RunScenarioResponse { report_id, status: status.to_string(), case_count: count }),
     )
         .into_response()
 }
@@ -374,12 +372,12 @@ mod tests {
 
     #[test]
     fn inline_request_assertions_flow_into_leaf() {
-        let req = InlineRequest::new("GET", "http://x/ok", None)
-            .expect("valid")
-            .with_assertions(serde_json::json!([
+        let req = InlineRequest::new("GET", "http://x/ok", None).expect("valid").with_assertions(
+            serde_json::json!([
                 {"type": "StatusIs", "args": 200},
                 {"type": "BodyContains", "args": "ok"}
-            ]));
+            ]),
+        );
         let mut once = 0;
         match to_node(&PlanStep::Request(req), &mut once) {
             PlanNode::Leaf(Leaf::Request { assertions, .. }) => {

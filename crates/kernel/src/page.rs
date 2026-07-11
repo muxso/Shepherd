@@ -68,18 +68,12 @@ mod tests {
 
     #[test]
     fn rejects_zero_page_size() {
-        assert_eq!(
-            PageRequest::new(1, 0),
-            Err(PageError::PageSizeOutOfRange { max: 500 })
-        );
+        assert_eq!(PageRequest::new(1, 0), Err(PageError::PageSizeOutOfRange { max: 500 }));
     }
 
     #[test]
     fn rejects_oversized_page_size() {
-        assert_eq!(
-            PageRequest::new(1, 501),
-            Err(PageError::PageSizeOutOfRange { max: 500 })
-        );
+        assert_eq!(PageRequest::new(1, 501), Err(PageError::PageSizeOutOfRange { max: 500 }));
     }
 
     #[test]

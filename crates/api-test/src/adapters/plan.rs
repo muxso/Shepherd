@@ -5,8 +5,7 @@ use std::time::Duration;
 
 use api_runner::{
     evaluate_detailed_with_vars, run_extracts, wait_millis, Assertion, CaseOutcome, MatchCondition,
-    Processor, ReqwestRunner,
-    RequestSpec,
+    Processor, RequestSpec, ReqwestRunner,
 };
 
 use super::local::{apply_env_static, substitute_request, CaseResultSink, CaseSpecSource};
@@ -15,7 +14,9 @@ use crate::ports::PortError;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Leaf {
-    Case { case_id: String },
+    Case {
+        case_id: String,
+    },
     Request {
         label: String,
         request: RequestSpec,
@@ -41,11 +42,22 @@ impl Condition {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PlanNode {
     Leaf(Leaf),
-    Loop { times: u32, body: Vec<PlanNode> },
-    If { condition: Condition, body: Vec<PlanNode> },
+    Loop {
+        times: u32,
+        body: Vec<PlanNode>,
+    },
+    If {
+        condition: Condition,
+        body: Vec<PlanNode>,
+    },
     /// 同一 id 全程只进一次(被外层循环包裹也只跑首次)。
-    Once { id: u32, body: Vec<PlanNode> },
-    Timer { ms: u64 },
+    Once {
+        id: u32,
+        body: Vec<PlanNode>,
+    },
+    Timer {
+        ms: u64,
+    },
 }
 
 struct RunState {
@@ -285,7 +297,10 @@ mod tests {
             outcome: &str,
             _failures: &[String],
         ) -> Result<(), PortError> {
-            self.rows.lock().unwrap_or_else(std::sync::PoisonError::into_inner).push((case_id.to_string(), outcome.to_string()));
+            self.rows
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .push((case_id.to_string(), outcome.to_string()));
             Ok(())
         }
     }
@@ -306,7 +321,11 @@ mod tests {
         format!("http://{addr}")
     }
 
-    fn get_case(url: String, assertions: Vec<Assertion>, processors: Vec<Processor>) -> CaseRunSpec {
+    fn get_case(
+        url: String,
+        assertions: Vec<Assertion>,
+        processors: Vec<Processor>,
+    ) -> CaseRunSpec {
         CaseRunSpec {
             request: RequestSpec { method: HttpMethod::Get, url, headers: vec![], body: None },
             assertions,
@@ -339,8 +358,8 @@ mod tests {
     #[tokio::test]
     async fn loop_repeats_body_n_times() {
         let base = spawn().await;
-        let specs =
-            InMemorySpecs::default().with("c", get_case(format!("{base}/ok"), vec![Assertion::StatusIs(200)], vec![]));
+        let specs = InMemorySpecs::default()
+            .with("c", get_case(format!("{base}/ok"), vec![Assertion::StatusIs(200)], vec![]));
         let sink = SpySink::default();
         let plan = vec![PlanNode::Loop {
             times: 3,
@@ -357,8 +376,8 @@ mod tests {
     #[tokio::test]
     async fn if_true_runs_else_skips() {
         let base = spawn().await;
-        let specs =
-            InMemorySpecs::default().with("c", get_case(format!("{base}/ok"), vec![Assertion::StatusIs(200)], vec![]));
+        let specs = InMemorySpecs::default()
+            .with("c", get_case(format!("{base}/ok"), vec![Assertion::StatusIs(200)], vec![]));
         let sink = SpySink::default();
         let env = ResolvedEnv {
             base_url: String::new(),
@@ -367,11 +386,19 @@ mod tests {
         };
         let plan = vec![
             PlanNode::If {
-                condition: Condition { variable: "go".into(), condition: MatchCondition::Equals, value: "yes".into() },
+                condition: Condition {
+                    variable: "go".into(),
+                    condition: MatchCondition::Equals,
+                    value: "yes".into(),
+                },
                 body: vec![PlanNode::Leaf(Leaf::Case { case_id: "c".into() })],
             },
             PlanNode::If {
-                condition: Condition { variable: "go".into(), condition: MatchCondition::Equals, value: "no".into() },
+                condition: Condition {
+                    variable: "go".into(),
+                    condition: MatchCondition::Equals,
+                    value: "no".into(),
+                },
                 body: vec![PlanNode::Leaf(Leaf::Case { case_id: "c".into() })],
             },
         ];
@@ -390,10 +417,16 @@ mod tests {
             times: 3,
             body: vec![
                 PlanNode::Leaf(Leaf::Case { case_id: "body".into() }),
-                PlanNode::Once { id: 1, body: vec![PlanNode::Leaf(Leaf::Case { case_id: "once".into() })] },
+                PlanNode::Once {
+                    id: 1,
+                    body: vec![PlanNode::Leaf(Leaf::Case { case_id: "once".into() })],
+                },
             ],
         }];
-        exec(specs, sink.clone()).run("r1", &plan, &ResolvedEnv::default(), false).await.expect("ok");
+        exec(specs, sink.clone())
+            .run("r1", &plan, &ResolvedEnv::default(), false)
+            .await
+            .expect("ok");
         let rows = sink.rows.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         assert_eq!(rows.iter().filter(|(id, _)| id == "body").count(), 3);
         assert_eq!(rows.iter().filter(|(id, _)| id == "once").count(), 1);
@@ -437,7 +470,10 @@ mod tests {
                 "b",
                 get_case(
                     format!("{base}/echo?id=${{tk}}"),
-                    vec![Assertion::ResponseBody { condition: MatchCondition::Equals, expected: "T-1".into() }],
+                    vec![Assertion::ResponseBody {
+                        condition: MatchCondition::Equals,
+                        expected: "T-1".into(),
+                    }],
                     vec![],
                 ),
             );

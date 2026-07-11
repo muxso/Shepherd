@@ -68,7 +68,8 @@ fn item_to_api(item: &Value) -> Option<ImportedApi> {
                     if !enabled(q) {
                         continue;
                     }
-                    if let Some(k) = q.get("name").or_else(|| q.get("key")).and_then(|v| v.as_str()) {
+                    if let Some(k) = q.get("name").or_else(|| q.get("key")).and_then(|v| v.as_str())
+                    {
                         let v = q.get("value").and_then(|v| v.as_str()).unwrap_or("");
                         query.push(kv(k, v, ""));
                     }
@@ -88,7 +89,8 @@ fn item_to_api(item: &Value) -> Option<ImportedApi> {
     let description = item.get("description").and_then(|v| v.as_str()).unwrap_or("");
     let module = module_of(item);
 
-    let case_body = if matches!(method.as_str(), "POST" | "PUT" | "PATCH") && !body_text.is_empty() {
+    let case_body = if matches!(method.as_str(), "POST" | "PUT" | "PATCH") && !body_text.is_empty()
+    {
         Some(body_text.clone())
     } else {
         None
@@ -98,7 +100,15 @@ fn item_to_api(item: &Value) -> Option<ImportedApi> {
         name,
         method,
         path,
-        spec: simple_spec(description, headers, query, Vec::new(), &body_type, &body_text, Vec::new()),
+        spec: simple_spec(
+            description,
+            headers,
+            query,
+            Vec::new(),
+            &body_type,
+            &body_text,
+            Vec::new(),
+        ),
         case_assertions: status_assertions(200),
         case_body,
         module,
@@ -107,7 +117,9 @@ fn item_to_api(item: &Value) -> Option<ImportedApi> {
 
 fn resolve_request(req: &Value) -> Value {
     match req {
-        Value::String(s) => serde_json::from_str(s).unwrap_or_else(|_| Value::Object(Default::default())),
+        Value::String(s) => {
+            serde_json::from_str(s).unwrap_or_else(|_| Value::Object(Default::default()))
+        }
         other => other.clone(),
     }
 }
@@ -146,10 +158,7 @@ fn module_of(item: &Value) -> Option<String> {
 }
 
 fn enabled(v: &Value) -> bool {
-    v.get("enable")
-        .or_else(|| v.get("enabled"))
-        .and_then(|x| x.as_bool())
-        .unwrap_or(true)
+    v.get("enable").or_else(|| v.get("enabled")).and_then(|x| x.as_bool()).unwrap_or(true)
 }
 
 #[cfg(test)]

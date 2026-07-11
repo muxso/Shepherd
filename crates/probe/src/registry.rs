@@ -56,7 +56,13 @@ mod tests {
             "fake"
         }
         async fn run(&self, _req: &ProbeRequest) -> RawProbe {
-            RawProbe { transport_ok: true, status: Some(200), latency_ms: 1, output: Some("pong".into()), error: None }
+            RawProbe {
+                transport_ok: true,
+                status: Some(200),
+                latency_ms: 1,
+                output: Some("pong".into()),
+                error: None,
+            }
         }
     }
 
@@ -74,7 +80,12 @@ mod tests {
     async fn dispatches_to_plugin_and_evaluates() {
         let reg = PluginRegistry::new().with(Arc::new(FakePlugin));
         assert_eq!(reg.protocols(), vec!["fake"]);
-        let out = reg.dispatch(&req("fake", vec![ProbeAssertion::StatusIs(200), ProbeAssertion::OutputContains("pong".into())])).await;
+        let out = reg
+            .dispatch(&req(
+                "fake",
+                vec![ProbeAssertion::StatusIs(200), ProbeAssertion::OutputContains("pong".into())],
+            ))
+            .await;
         assert!(out.success);
         let bad = reg.dispatch(&req("fake", vec![ProbeAssertion::StatusIs(500)])).await;
         assert!(!bad.success);

@@ -1,5 +1,5 @@
-use async_trait::async_trait;
 use crate::ports::{DispatchOutcome, PortError, RunTask, TaskDispatcher};
+use async_trait::async_trait;
 use serde::Serialize;
 
 #[derive(Debug, Serialize)]
@@ -58,8 +58,8 @@ impl TaskDispatcher for HttpTaskDispatcher {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use axum::{extract::State, http::StatusCode, routing::post, Json, Router};
     use crate::domain::BatchRunMode;
+    use axum::{extract::State, http::StatusCode, routing::post, Json, Router};
     use std::sync::{Arc, Mutex};
     use tokio::net::TcpListener;
 
@@ -69,10 +69,7 @@ mod tests {
         status: StatusCode,
     }
 
-    async fn handler(
-        State(stub): State<Stub>,
-        Json(body): Json<serde_json::Value>,
-    ) -> StatusCode {
+    async fn handler(State(stub): State<Stub>, Json(body): Json<serde_json::Value>) -> StatusCode {
         stub.received.lock().unwrap_or_else(std::sync::PoisonError::into_inner).push(body);
         stub.status
     }

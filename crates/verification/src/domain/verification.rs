@@ -135,7 +135,11 @@ impl Verification {
             .criteria
             .iter()
             .enumerate()
-            .map(|(i, text)| VerifiedCriterion { index: i as u32, text: text.clone(), links: Vec::new() })
+            .map(|(i, text)| VerifiedCriterion {
+                index: i as u32,
+                text: text.clone(),
+                links: Vec::new(),
+            })
             .collect();
         Self {
             id: id.to_string(),
@@ -151,7 +155,10 @@ impl Verification {
         requirement_version: u32,
         criteria_texts: &[String],
     ) -> Result<Self, VerificationError> {
-        Ok(Self::from_new(id, &NewVerification::new(requirement_id, requirement_version, criteria_texts)?))
+        Ok(Self::from_new(
+            id,
+            &NewVerification::new(requirement_id, requirement_version, criteria_texts)?,
+        ))
     }
 
     pub fn criterion(&self, index: u32) -> Option<&VerifiedCriterion> {
@@ -169,10 +176,8 @@ impl Verification {
             .iter_mut()
             .find(|c| c.index == criterion_index)
             .ok_or(VerificationError::NoSuchCriterion(criterion_index))?;
-        let dup = c
-            .links
-            .iter()
-            .any(|l| l.decomposition_id == decomposition_id && l.task_id == task_id);
+        let dup =
+            c.links.iter().any(|l| l.decomposition_id == decomposition_id && l.task_id == task_id);
         if !dup {
             c.links.push(CoverageLink {
                 decomposition_id: decomposition_id.to_string(),

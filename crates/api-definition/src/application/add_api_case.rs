@@ -37,11 +37,8 @@ impl AddApiCaseUseCase {
         processors: serde_json::Value,
         meta: ApiCaseMeta,
     ) -> Result<ApiCase, AddApiCaseError> {
-        let def = self
-            .repo
-            .get_definition(api_definition_id)
-            .await?
-            .ok_or(AddApiCaseError::NotFound)?;
+        let def =
+            self.repo.get_definition(api_definition_id).await?.ok_or(AddApiCaseError::NotFound)?;
         let new_case = NewApiCase::new(
             api_definition_id,
             &def.project_id,
@@ -86,7 +83,16 @@ mod tests {
             .expect("ok");
         let uc = AddApiCaseUseCase::new(repo);
         let c = uc
-            .execute(&def.id, "用例", "POST", "/login", None, serde_json::json!([]), serde_json::json!([]), ApiCaseMeta::default())
+            .execute(
+                &def.id,
+                "用例",
+                "POST",
+                "/login",
+                None,
+                serde_json::json!([]),
+                serde_json::json!([]),
+                ApiCaseMeta::default(),
+            )
             .await
             .expect("ok");
         assert_eq!(c.project_id, "p1");
@@ -98,7 +104,16 @@ mod tests {
         let repo = Arc::new(InMemoryApiDefinitionRepository::new());
         let uc = AddApiCaseUseCase::new(repo);
         let err = uc
-            .execute("ghost", "用例", "GET", "/x", None, serde_json::json!([]), serde_json::json!([]), ApiCaseMeta::default())
+            .execute(
+                "ghost",
+                "用例",
+                "GET",
+                "/x",
+                None,
+                serde_json::json!([]),
+                serde_json::json!([]),
+                ApiCaseMeta::default(),
+            )
             .await
             .unwrap_err();
         assert_eq!(err, AddApiCaseError::NotFound);
@@ -113,7 +128,16 @@ mod tests {
             .expect("ok");
         let uc = AddApiCaseUseCase::new(repo);
         let err = uc
-            .execute(&def.id, "用例", "GET", "/x", None, serde_json::json!({}), serde_json::json!([]), ApiCaseMeta::default())
+            .execute(
+                &def.id,
+                "用例",
+                "GET",
+                "/x",
+                None,
+                serde_json::json!({}),
+                serde_json::json!([]),
+                ApiCaseMeta::default(),
+            )
             .await
             .unwrap_err();
         assert_eq!(err, AddApiCaseError::Validation(ApiDefinitionError::BadAssertions));

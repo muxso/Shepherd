@@ -44,8 +44,10 @@ impl Planner for HttpPlanner {
         if !resp.status().is_success() {
             return Err(PlanError::Backend(format!("planner HTTP {}", resp.status())));
         }
-        let dtos: Vec<PlannedTaskDto> =
-            resp.json().await.map_err(|e| PlanError::Backend(format!("planner 响应解析失败: {e}")))?;
+        let dtos: Vec<PlannedTaskDto> = resp
+            .json()
+            .await
+            .map_err(|e| PlanError::Backend(format!("planner 响应解析失败: {e}")))?;
         Ok(dtos
             .into_iter()
             .map(|d| PlannedTask {

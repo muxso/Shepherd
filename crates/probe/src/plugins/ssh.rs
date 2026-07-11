@@ -29,7 +29,12 @@ impl Handler for AcceptAll {
     }
 }
 
-async fn run_ssh(target: &str, command: &str, user: &str, password: &str) -> Result<(String, i64), String> {
+async fn run_ssh(
+    target: &str,
+    command: &str,
+    user: &str,
+    password: &str,
+) -> Result<(String, i64), String> {
     let (host, port) = match target.rsplit_once(':') {
         Some((h, p)) => (h.to_string(), p.parse::<u16>().map_err(|_| "端口非法".to_string())?),
         None => (target.to_string(), 22u16),
@@ -43,7 +48,8 @@ async fn run_ssh(target: &str, command: &str, user: &str, password: &str) -> Res
     if !authed {
         return Err("认证失败(用户名/密码)".to_string());
     }
-    let mut channel = handle.channel_open_session().await.map_err(|e| format!("开通道失败: {e}"))?;
+    let mut channel =
+        handle.channel_open_session().await.map_err(|e| format!("开通道失败: {e}"))?;
     channel.exec(true, command).await.map_err(|e| format!("执行失败: {e}"))?;
 
     let mut out: Vec<u8> = Vec::new();

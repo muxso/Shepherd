@@ -8,8 +8,8 @@ use axum::{
     Json, Router,
 };
 use serde::{Deserialize, Serialize};
-use webauth::{AuthUser, SessionStore};
 use utoipa::{OpenApi, ToSchema};
+use webauth::{AuthUser, SessionStore};
 
 use crate::application::{
     CreateVerificationError, CreateVerificationUseCase, VerificationCmdError, VerificationService,
@@ -163,15 +163,27 @@ impl From<CompletenessReport> for ReportResponse {
 
 fn cmd_err(e: VerificationCmdError) -> Response {
     match e {
-        VerificationCmdError::NotFound => (StatusCode::NOT_FOUND, "verification not found").into_response(),
-        VerificationCmdError::NoSuchCriterion(_) => (StatusCode::NOT_FOUND, "criterion not found").into_response(),
-        VerificationCmdError::Validation(_) => (StatusCode::BAD_REQUEST, "invalid payload").into_response(),
-        VerificationCmdError::Repo(_) => (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
+        VerificationCmdError::NotFound => {
+            (StatusCode::NOT_FOUND, "verification not found").into_response()
+        }
+        VerificationCmdError::NoSuchCriterion(_) => {
+            (StatusCode::NOT_FOUND, "criterion not found").into_response()
+        }
+        VerificationCmdError::Validation(_) => {
+            (StatusCode::BAD_REQUEST, "invalid payload").into_response()
+        }
+        VerificationCmdError::Repo(_) => {
+            (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response()
+        }
     }
 }
 
 #[utoipa::path(post, path = "/verification", tag = "verification", request_body = CreateBody, responses((status = 201, body = VerificationResponse), (status = 409)), security(("bearer" = [])))]
-async fn create_verification(user: AuthUser, State(st): State<VerState>, Json(b): Json<CreateBody>) -> Response {
+async fn create_verification(
+    user: AuthUser,
+    State(st): State<VerState>,
+    Json(b): Json<CreateBody>,
+) -> Response {
     if !user.can("VERIFICATION", "ADD") {
         return (StatusCode::FORBIDDEN, "permission denied").into_response();
     }
@@ -244,14 +256,16 @@ async fn sync_task(
     tags((name = "verification", description = "完整性验证"))
 )]
 struct ApiDoc;
-pub fn openapi() -> utoipa::openapi::OpenApi { ApiDoc::openapi() }
+pub fn openapi() -> utoipa::openapi::OpenApi {
+    ApiDoc::openapi()
+}
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::adapters::InMemoryVerificationRepository;
     use axum::body::Body;
     use axum::http::Request;
-    use crate::adapters::InMemoryVerificationRepository;
     use kernel::permission::PermissionSet;
     use tower::ServiceExt;
     use webauth::testing::InMemorySessionStore;
@@ -270,7 +284,8 @@ mod tests {
     }
 
     fn req(method: &str, uri: &str, body: &str, token: Option<&str>) -> Request<Body> {
-        let mut b = Request::builder().method(method).uri(uri).header("content-type", "application/json");
+        let mut b =
+            Request::builder().method(method).uri(uri).header("content-type", "application/json");
         if let Some(t) = token {
             b = b.header("authorization", format!("Bearer {t}"));
         }
@@ -293,22 +308,66 @@ mod tests {
         assert_eq!(r.status(), StatusCode::CREATED);
         let id = json(r).await["id"].as_str().expect("id").to_string();
 
-        let rep = app.clone().oneshot(req("GET", &format!("/verification/{id}/report"), "", Some(&t))).await.expect("r");
+        let rep = app
+            .clone()
+            .oneshot(req("GET", &format!("/verification/{id}/report"), "", Some(&t)))
+            .await
+            .expect("r");
         let v = json(rep).await;
         assert_eq!(v["complete"], false);
         assert_eq!(v["gaps"].as_array().expect("a").len(), 2);
         assert_eq!(v["gaps"][0]["kind"], "UNCOVERED");
 
-        app.clone().oneshot(req("POST", &format!("/verification/{id}/link"), r#"{"criterionIndex":0,"decompositionId":"d1","taskId":"t1"}"#, Some(&t))).await.expect("r");
-        app.clone().oneshot(req("POST", &format!("/verification/{id}/link"), r#"{"criterionIndex":1,"decompositionId":"d1","taskId":"t2"}"#, Some(&t))).await.expect("r");
-        let rep = app.clone().oneshot(req("GET", &format!("/verification/{id}/report"), "", Some(&t))).await.expect("r");
+        app.clone()
+            .oneshot(req(
+                "POST",
+                &format!("/verification/{id}/link"),
+                r#"{"criterionIndex":0,"decompositionId":"d1","taskId":"t1"}"#,
+                Some(&t),
+            ))
+            .await
+            .expect("r");
+        app.clone()
+            .oneshot(req(
+                "POST",
+                &format!("/verification/{id}/link"),
+                r#"{"criterionIndex":1,"decompositionId":"d1","taskId":"t2"}"#,
+                Some(&t),
+            ))
+            .await
+            .expect("r");
+        let rep = app
+            .clone()
+            .oneshot(req("GET", &format!("/verification/{id}/report"), "", Some(&t)))
+            .await
+            .expect("r");
         assert_eq!(json(rep).await["gaps"][0]["kind"], "UNVERIFIED");
 
-        app.clone().oneshot(req("POST", &format!("/verification/{id}/sync"), r#"{"decompositionId":"d1","taskId":"t1","satisfied":true}"#, Some(&t))).await.expect("r");
-        let last = app.clone().oneshot(req("POST", &format!("/verification/{id}/sync"), r#"{"decompositionId":"d1","taskId":"t2","satisfied":true}"#, Some(&t))).await.expect("r");
+        app.clone()
+            .oneshot(req(
+                "POST",
+                &format!("/verification/{id}/sync"),
+                r#"{"decompositionId":"d1","taskId":"t1","satisfied":true}"#,
+                Some(&t),
+            ))
+            .await
+            .expect("r");
+        let last = app
+            .clone()
+            .oneshot(req(
+                "POST",
+                &format!("/verification/{id}/sync"),
+                r#"{"decompositionId":"d1","taskId":"t2","satisfied":true}"#,
+                Some(&t),
+            ))
+            .await
+            .expect("r");
         assert_eq!(json(last).await["complete"], true);
 
-        let rep = app.oneshot(req("GET", &format!("/verification/{id}/report"), "", Some(&t))).await.expect("r");
+        let rep = app
+            .oneshot(req("GET", &format!("/verification/{id}/report"), "", Some(&t)))
+            .await
+            .expect("r");
         let v = json(rep).await;
         assert_eq!(v["complete"], true);
         assert_eq!(v["satisfied"], 2);
@@ -319,12 +378,28 @@ mod tests {
     async fn rbac_create_and_link() {
         let (app, _t) = app_with("VERIFICATION:READ").await;
         assert_eq!(
-            app.oneshot(req("POST", "/verification", r#"{"requirementId":"r","requirementVersion":1,"criteria":["c"]}"#, None)).await.expect("r").status(),
+            app.oneshot(req(
+                "POST",
+                "/verification",
+                r#"{"requirementId":"r","requirementVersion":1,"criteria":["c"]}"#,
+                None
+            ))
+            .await
+            .expect("r")
+            .status(),
             StatusCode::UNAUTHORIZED
         );
         let (app, t) = app_with("VERIFICATION:READ").await;
         assert_eq!(
-            app.oneshot(req("POST", "/verification", r#"{"requirementId":"r","requirementVersion":1,"criteria":["c"]}"#, Some(&t))).await.expect("r").status(),
+            app.oneshot(req(
+                "POST",
+                "/verification",
+                r#"{"requirementId":"r","requirementVersion":1,"criteria":["c"]}"#,
+                Some(&t)
+            ))
+            .await
+            .expect("r")
+            .status(),
             StatusCode::FORBIDDEN
         );
     }
@@ -332,10 +407,27 @@ mod tests {
     #[tokio::test]
     async fn link_unknown_criterion_404() {
         let (app, t) = app_with("VERIFICATION:READ+ADD+UPDATE").await;
-        let r = app.clone().oneshot(req("POST", "/verification", r#"{"requirementId":"r","requirementVersion":1,"criteria":["c"]}"#, Some(&t))).await.expect("r");
+        let r = app
+            .clone()
+            .oneshot(req(
+                "POST",
+                "/verification",
+                r#"{"requirementId":"r","requirementVersion":1,"criteria":["c"]}"#,
+                Some(&t),
+            ))
+            .await
+            .expect("r");
         let id = json(r).await["id"].as_str().expect("id").to_string();
         assert_eq!(
-            app.oneshot(req("POST", &format!("/verification/{id}/link"), r#"{"criterionIndex":9,"decompositionId":"d","taskId":"t"}"#, Some(&t))).await.expect("r").status(),
+            app.oneshot(req(
+                "POST",
+                &format!("/verification/{id}/link"),
+                r#"{"criterionIndex":9,"decompositionId":"d","taskId":"t"}"#,
+                Some(&t)
+            ))
+            .await
+            .expect("r")
+            .status(),
             StatusCode::NOT_FOUND
         );
     }

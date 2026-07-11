@@ -20,12 +20,17 @@ impl RedisPlugin {
     }
 
     async fn conn_for(&self, target: &str) -> Result<MultiplexedConnection, String> {
-        if let Some(c) = self.conns.lock().unwrap_or_else(std::sync::PoisonError::into_inner).get(target).cloned() {
+        if let Some(c) = self
+            .conns
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(target)
+            .cloned()
+        {
             return Ok(c);
         }
         let client = redis::Client::open(target).map_err(|e| e.to_string())?;
-        let conn =
-            client.get_multiplexed_async_connection().await.map_err(|e| e.to_string())?;
+        let conn = client.get_multiplexed_async_connection().await.map_err(|e| e.to_string())?;
         Ok(self
             .conns
             .lock()

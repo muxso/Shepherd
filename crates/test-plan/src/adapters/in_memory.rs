@@ -47,11 +47,19 @@ impl InMemoryPlanRepository {
     }
 
     pub fn set_counts(&self, plan_id: &str, counts: CaseCounts) {
-        self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner).counts.insert(plan_id.to_string(), counts);
+        self.state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .counts
+            .insert(plan_id.to_string(), counts);
     }
 
     pub fn set_threshold(&self, plan_id: &str, threshold: f64) {
-        self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner).thresholds.insert(plan_id.to_string(), threshold);
+        self.state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .thresholds
+            .insert(plan_id.to_string(), threshold);
     }
 }
 
@@ -62,7 +70,13 @@ impl PlanRepository for InMemoryPlanRepository {
     }
 
     async fn get(&self, id: &str) -> Result<Option<Plan>, RepoError> {
-        Ok(self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner).plans.get(id).cloned())
+        Ok(self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .plans
+            .get(id)
+            .cloned())
     }
 
     async fn children(&self, group_id: &str) -> Result<Vec<Plan>, RepoError> {
@@ -100,7 +114,14 @@ impl PlanRepository for InMemoryPlanRepository {
     }
 
     async fn pass_threshold(&self, plan_id: &str) -> Result<f64, RepoError> {
-        Ok(self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner).thresholds.get(plan_id).copied().unwrap_or(0.0))
+        Ok(self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .thresholds
+            .get(plan_id)
+            .copied()
+            .unwrap_or(0.0))
     }
 
     async fn link_case(&self, plan_id: &str, case_id: &str, name: &str) -> Result<(), RepoError> {
@@ -137,7 +158,14 @@ impl PlanRepository for InMemoryPlanRepository {
     }
 
     async fn list_cases(&self, plan_id: &str) -> Result<Vec<PlanCase>, RepoError> {
-        Ok(self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner).cases.get(plan_id).cloned().unwrap_or_default())
+        Ok(self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .cases
+            .get(plan_id)
+            .cloned()
+            .unwrap_or_default())
     }
 
     async fn list(&self, project_id: &str) -> Result<Vec<Plan>, RepoError> {

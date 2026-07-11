@@ -35,13 +35,15 @@ fn parse_response_headers(v: &serde_json::Value) -> Vec<(String, String)> {
 /// `/users/{id}/orders` → `/users/*/orders`(OpenAPI 路径参数 → 单段通配)。
 fn path_to_glob(path: &str) -> String {
     path.split('/')
-        .map(|seg| {
-            if seg.starts_with('{') && seg.ends_with('}') && seg.len() >= 2 {
-                "*"
-            } else {
-                seg
-            }
-        })
+        .map(
+            |seg| {
+                if seg.starts_with('{') && seg.ends_with('}') && seg.len() >= 2 {
+                    "*"
+                } else {
+                    seg
+                }
+            },
+        )
         .collect::<Vec<_>>()
         .join("/")
 }

@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use crate::application::{CreateProjectError, CreateProjectUseCase, ListProjectsUseCase};
 use axum::{
     extract::{FromRef, Query, State},
     http::StatusCode,
@@ -8,7 +9,6 @@ use axum::{
     Json, Router,
 };
 use kernel::page::PageRequest;
-use crate::application::{CreateProjectError, CreateProjectUseCase, ListProjectsUseCase};
 use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, OpenApi, ToSchema};
 use webauth::{AuthUser, SessionStore};
@@ -132,14 +132,16 @@ async fn list_projects(State(st): State<ProjectState>, Query(q): Query<ListQuery
 #[derive(OpenApi)]
 #[openapi(paths(create_project, list_projects), components(schemas(CreateProjectRequest, ProjectResponse, PageResponse)), tags((name = "project", description = "项目管理")))]
 struct ApiDoc;
-pub fn openapi() -> utoipa::openapi::OpenApi { ApiDoc::openapi() }
+pub fn openapi() -> utoipa::openapi::OpenApi {
+    ApiDoc::openapi()
+}
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::adapters::InMemoryProjectRepository;
     use axum::body::Body;
     use axum::http::Request;
-    use crate::adapters::InMemoryProjectRepository;
     use kernel::permission::PermissionSet;
     use std::sync::Arc;
     use tower::ServiceExt;

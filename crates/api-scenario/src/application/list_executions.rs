@@ -21,10 +21,7 @@ impl ListScenarioExecutionsUseCase {
         page: PageRequest,
     ) -> Result<Page<ScenarioExecution>, RepoError> {
         let total = self.repo.count_executions(scenario_id).await?;
-        let items = self
-            .repo
-            .list_executions(scenario_id, page.offset(), page.page_size())
-            .await?;
+        let items = self.repo.list_executions(scenario_id, page.offset(), page.page_size()).await?;
         Ok(Page::of(page, total, items))
     }
 }

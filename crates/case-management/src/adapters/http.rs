@@ -90,21 +90,42 @@ struct CaseRequirementDto {
     criterion_index: i32,
 }
 
-async fn link_req_case(user: AuthUser, State(st): State<CaseState>, Json(b): Json<ReqCaseLinkBody>) -> Response {
+async fn link_req_case(
+    user: AuthUser,
+    State(st): State<CaseState>,
+    Json(b): Json<ReqCaseLinkBody>,
+) -> Response {
     if !user.can("FUNCTIONAL_CASE", "ADD") {
         return (StatusCode::FORBIDDEN, "permission denied").into_response();
     }
-    match st.repo.link_requirement_case(&b.requirement_id, b.criterion_index, &b.functional_case_id, &b.project_id).await {
+    match st
+        .repo
+        .link_requirement_case(
+            &b.requirement_id,
+            b.criterion_index,
+            &b.functional_case_id,
+            &b.project_id,
+        )
+        .await
+    {
         Ok(()) => StatusCode::NO_CONTENT.into_response(),
         Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
     }
 }
 
-async fn unlink_req_case(user: AuthUser, State(st): State<CaseState>, Json(b): Json<ReqCaseLinkBody>) -> Response {
+async fn unlink_req_case(
+    user: AuthUser,
+    State(st): State<CaseState>,
+    Json(b): Json<ReqCaseLinkBody>,
+) -> Response {
     if !user.can("FUNCTIONAL_CASE", "ADD") {
         return (StatusCode::FORBIDDEN, "permission denied").into_response();
     }
-    match st.repo.unlink_requirement_case(&b.requirement_id, b.criterion_index, &b.functional_case_id).await {
+    match st
+        .repo
+        .unlink_requirement_case(&b.requirement_id, b.criterion_index, &b.functional_case_id)
+        .await
+    {
         Ok(()) => StatusCode::NO_CONTENT.into_response(),
         Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
     }
@@ -115,7 +136,13 @@ async fn requirement_coverage(State(st): State<CaseState>, Path(id): Path<String
         Ok(rows) => {
             let items: Vec<CoverageCaseDto> = rows
                 .into_iter()
-                .map(|r| CoverageCaseDto { criterion_index: r.criterion_index, case_id: r.case_id, case_name: r.case_name, module: r.module, priority: r.priority })
+                .map(|r| CoverageCaseDto {
+                    criterion_index: r.criterion_index,
+                    case_id: r.case_id,
+                    case_name: r.case_name,
+                    module: r.module,
+                    priority: r.priority,
+                })
                 .collect();
             (StatusCode::OK, Json(items)).into_response()
         }
@@ -128,7 +155,11 @@ async fn case_requirements(State(st): State<CaseState>, Path(id): Path<String>) 
         Ok(rows) => {
             let items: Vec<CaseRequirementDto> = rows
                 .into_iter()
-                .map(|r| CaseRequirementDto { requirement_id: r.requirement_id, requirement_title: r.requirement_title, criterion_index: r.criterion_index })
+                .map(|r| CaseRequirementDto {
+                    requirement_id: r.requirement_id,
+                    requirement_title: r.requirement_title,
+                    criterion_index: r.criterion_index,
+                })
                 .collect();
             (StatusCode::OK, Json(items)).into_response()
         }
@@ -209,14 +240,27 @@ struct ProjectQuery {
 }
 
 #[utoipa::path(post, path = "/functional-case", tag = "functional-case", request_body = CaseBody, responses((status = 201, body = CaseResponse), (status = 400), (status = 403)), security(("bearer" = [])))]
-async fn create_case(user: AuthUser, State(st): State<CaseState>, Json(b): Json<CaseBody>) -> Response {
+async fn create_case(
+    user: AuthUser,
+    State(st): State<CaseState>,
+    Json(b): Json<CaseBody>,
+) -> Response {
     if !user.can("FUNCTIONAL_CASE", "ADD") {
         return (StatusCode::FORBIDDEN, "permission denied").into_response();
     }
     let steps: Vec<CaseStep> = b.steps.into_iter().map(CaseStep::from).collect();
     match st
         .create
-        .execute(&b.project_id, &b.name, &b.module, &b.priority, &b.status, b.custom_fields, steps, Some(user.user_id.as_str()))
+        .execute(
+            &b.project_id,
+            &b.name,
+            &b.module,
+            &b.priority,
+            &b.status,
+            b.custom_fields,
+            steps,
+            Some(user.user_id.as_str()),
+        )
         .await
     {
         Ok(c) => (StatusCode::CREATED, Json(CaseResponse::from(c))).into_response(),
@@ -230,14 +274,28 @@ async fn create_case(user: AuthUser, State(st): State<CaseState>, Json(b): Json<
 }
 
 #[utoipa::path(put, path = "/functional-case/{id}", tag = "functional-case", request_body = CaseBody, responses((status = 200, body = CaseResponse), (status = 400), (status = 403), (status = 404)), security(("bearer" = [])))]
-async fn update_case(user: AuthUser, State(st): State<CaseState>, Path(id): Path<String>, Json(b): Json<CaseBody>) -> Response {
+async fn update_case(
+    user: AuthUser,
+    State(st): State<CaseState>,
+    Path(id): Path<String>,
+    Json(b): Json<CaseBody>,
+) -> Response {
     if !user.can("FUNCTIONAL_CASE", "UPDATE") {
         return (StatusCode::FORBIDDEN, "permission denied").into_response();
     }
     let steps: Vec<CaseStep> = b.steps.into_iter().map(CaseStep::from).collect();
     match st
         .update
-        .execute(&id, &b.project_id, &b.name, &b.module, &b.priority, &b.status, b.custom_fields, steps)
+        .execute(
+            &id,
+            &b.project_id,
+            &b.name,
+            &b.module,
+            &b.priority,
+            &b.status,
+            b.custom_fields,
+            steps,
+        )
         .await
     {
         Ok(Some(c)) => (StatusCode::OK, Json(CaseResponse::from(c))).into_response(),
@@ -252,7 +310,11 @@ async fn update_case(user: AuthUser, State(st): State<CaseState>, Path(id): Path
 }
 
 #[utoipa::path(delete, path = "/functional-case/{id}", tag = "functional-case", responses((status = 204), (status = 403), (status = 404)), security(("bearer" = [])))]
-async fn delete_case(user: AuthUser, State(st): State<CaseState>, Path(id): Path<String>) -> Response {
+async fn delete_case(
+    user: AuthUser,
+    State(st): State<CaseState>,
+    Path(id): Path<String>,
+) -> Response {
     if !user.can("FUNCTIONAL_CASE", "DELETE") {
         return (StatusCode::FORBIDDEN, "permission denied").into_response();
     }
@@ -284,7 +346,10 @@ async fn export_cases(State(st): State<CaseState>, Query(q): Query<ProjectQuery>
         Ok(bytes) => (
             StatusCode::OK,
             [
-                (header::CONTENT_TYPE, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"),
+                (
+                    header::CONTENT_TYPE,
+                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                ),
                 (header::CONTENT_DISPOSITION, "attachment; filename=\"cases.xlsx\""),
             ],
             bytes,
@@ -321,16 +386,14 @@ async fn import_cases(
 }
 
 fn xlsx_to_rows(bytes: &[u8]) -> Result<Vec<Vec<String>>, String> {
-    let mut wb: Xlsx<Cursor<Vec<u8>>> = calamine::open_workbook_from_rs(Cursor::new(bytes.to_vec()))
-        .map_err(|e: calamine::XlsxError| e.to_string())?;
+    let mut wb: Xlsx<Cursor<Vec<u8>>> =
+        calamine::open_workbook_from_rs(Cursor::new(bytes.to_vec()))
+            .map_err(|e: calamine::XlsxError| e.to_string())?;
     let range = wb
         .worksheet_range_at(0)
         .ok_or_else(|| "no worksheet".to_string())?
         .map_err(|e: calamine::XlsxError| e.to_string())?;
-    Ok(range
-        .rows()
-        .map(|r| r.iter().map(|c| c.to_string()).collect())
-        .collect())
+    Ok(range.rows().map(|r| r.iter().map(|c| c.to_string()).collect()).collect())
 }
 
 fn rows_to_xlsx(rows: &[Vec<String>]) -> Result<Vec<u8>, rust_xlsxwriter::XlsxError> {
@@ -389,7 +452,8 @@ mod tests {
     }
 
     fn post(uri: &str, body: &str, token: Option<&str>) -> Request<Body> {
-        let mut b = Request::builder().method("POST").uri(uri).header("content-type", "application/json");
+        let mut b =
+            Request::builder().method("POST").uri(uri).header("content-type", "application/json");
         if let Some(t) = token {
             b = b.header("authorization", format!("Bearer {t}"));
         }
@@ -503,7 +567,12 @@ mod tests {
         assert_eq!(app.clone().oneshot(del).await.expect("resp").status(), StatusCode::NO_CONTENT);
 
         let resp = app
-            .oneshot(Request::builder().uri("/functional-case?projectId=p1").body(Body::empty()).expect("req"))
+            .oneshot(
+                Request::builder()
+                    .uri("/functional-case?projectId=p1")
+                    .body(Body::empty())
+                    .expect("req"),
+            )
             .await
             .expect("resp");
         let b = axum::body::to_bytes(resp.into_body(), usize::MAX).await.expect("body");

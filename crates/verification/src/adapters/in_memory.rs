@@ -43,12 +43,21 @@ impl VerificationRepository for InMemoryVerificationRepository {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .verifications
             .iter()
-            .find(|v| v.requirement_id == requirement_id && v.requirement_version == requirement_version)
+            .find(|v| {
+                v.requirement_id == requirement_id && v.requirement_version == requirement_version
+            })
             .cloned())
     }
 
     async fn get(&self, id: &str) -> Result<Option<Verification>, RepoError> {
-        Ok(self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner).verifications.iter().find(|v| v.id == id).cloned())
+        Ok(self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .verifications
+            .iter()
+            .find(|v| v.id == id)
+            .cloned())
     }
 
     async fn save(&self, verification: &Verification) -> Result<(), RepoError> {

@@ -230,7 +230,11 @@ mod tests {
     }
 
     fn rule(id: &str, m: MatchRule, status: u16) -> MockRule {
-        MockRule { id: id.into(), rule: m, response: MockResponse { status, headers: vec![], body: None, delay_ms: 0 } }
+        MockRule {
+            id: id.into(),
+            rule: m,
+            response: MockResponse { status, headers: vec![], body: None, delay_ms: 0 },
+        }
     }
 
     #[test]
@@ -260,7 +264,11 @@ mod tests {
 
     #[test]
     fn method_mismatch_fails() {
-        let m = MatchRule { method: Some("post".into()), path: "/users/**".into(), ..Default::default() };
+        let m = MatchRule {
+            method: Some("post".into()),
+            path: "/users/**".into(),
+            ..Default::default()
+        };
         assert!(!m.matches(&req()));
     }
 
@@ -333,8 +341,16 @@ mod tests {
     #[test]
     fn match_request_picks_highest_priority() {
         let rules = vec![
-            rule("low", MatchRule { path: "/users/**".into(), priority: 1, ..Default::default() }, 200),
-            rule("high", MatchRule { path: "/users/*/orders".into(), priority: 10, ..Default::default() }, 201),
+            rule(
+                "low",
+                MatchRule { path: "/users/**".into(), priority: 1, ..Default::default() },
+                200,
+            ),
+            rule(
+                "high",
+                MatchRule { path: "/users/*/orders".into(), priority: 10, ..Default::default() },
+                201,
+            ),
         ];
         assert_eq!(match_request(&req(), &rules).expect("hit").id, "high");
     }
@@ -342,8 +358,16 @@ mod tests {
     #[test]
     fn match_request_tie_keeps_first() {
         let rules = vec![
-            rule("first", MatchRule { path: "/users/**".into(), priority: 5, ..Default::default() }, 200),
-            rule("second", MatchRule { path: "/users/*/orders".into(), priority: 5, ..Default::default() }, 201),
+            rule(
+                "first",
+                MatchRule { path: "/users/**".into(), priority: 5, ..Default::default() },
+                200,
+            ),
+            rule(
+                "second",
+                MatchRule { path: "/users/*/orders".into(), priority: 5, ..Default::default() },
+                201,
+            ),
         ];
         assert_eq!(match_request(&req(), &rules).expect("hit").id, "first");
     }
@@ -352,7 +376,11 @@ mod tests {
     fn match_request_none_when_no_rule_hits() {
         let rules = vec![rule(
             "x",
-            MatchRule { method: Some("DELETE".into()), path: "/users/**".into(), ..Default::default() },
+            MatchRule {
+                method: Some("DELETE".into()),
+                path: "/users/**".into(),
+                ..Default::default()
+            },
             204,
         )];
         assert!(match_request(&req(), &rules).is_none());

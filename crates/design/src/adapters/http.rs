@@ -101,7 +101,11 @@ fn ok(p: &Proposal, code: StatusCode) -> Response {
     (code, Json(ProposalResponse::from(p))).into_response()
 }
 
-async fn create(user: AuthUser, State(st): State<DesignState>, Json(b): Json<CreateBody>) -> Response {
+async fn create(
+    user: AuthUser,
+    State(st): State<DesignState>,
+    Json(b): Json<CreateBody>,
+) -> Response {
     if !user.can("REQUIREMENT", "ADD") {
         return (StatusCode::FORBIDDEN, "permission denied").into_response();
     }
@@ -111,7 +115,10 @@ async fn create(user: AuthUser, State(st): State<DesignState>, Json(b): Json<Cre
     }
 }
 
-async fn list_by_requirement(State(st): State<DesignState>, Query(q): Query<ListQuery>) -> Response {
+async fn list_by_requirement(
+    State(st): State<DesignState>,
+    Query(q): Query<ListQuery>,
+) -> Response {
     match st.svc.list_by_requirement(&q.requirement_id).await {
         Ok(list) => {
             let body: Vec<ProposalResponse> = list.iter().map(ProposalResponse::from).collect();
@@ -143,7 +150,11 @@ async fn submit_design(
     }
 }
 
-async fn approve(user: AuthUser, State(st): State<DesignState>, Path(id): Path<String>) -> Response {
+async fn approve(
+    user: AuthUser,
+    State(st): State<DesignState>,
+    Path(id): Path<String>,
+) -> Response {
     if !user.can("REQUIREMENT", "UPDATE") {
         return (StatusCode::FORBIDDEN, "permission denied").into_response();
     }

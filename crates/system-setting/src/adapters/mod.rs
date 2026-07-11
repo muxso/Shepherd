@@ -12,13 +12,13 @@ pub use in_memory_org::InMemoryOrgRepository;
 pub use in_memory_role::{InMemoryRoleRepository, InMemoryUserRoleRepository};
 pub use oidc_fakes::{FakeIdentityProvider, InMemoryExternalUserRepository};
 
-#[cfg(feature = "pg")]
-pub mod pg;
-#[cfg(feature = "http")]
-pub mod http;
 #[cfg(feature = "auth")]
 pub mod auth;
-#[cfg(feature = "oidc")]
-pub mod oidc;
+#[cfg(feature = "http")]
+pub mod http;
 #[cfg(feature = "ldap")]
 pub mod ldap;
+#[cfg(feature = "oidc")]
+pub mod oidc;
+#[cfg(feature = "pg")]
+pub mod pg;

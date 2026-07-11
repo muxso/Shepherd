@@ -69,7 +69,9 @@ async fn seed_functional_cases(
                     tracing::warn!(requirement = %requirement_id, "关联功能用例(标准{idx})失败: {e:?}");
                 }
             }
-            Err(e) => tracing::warn!(requirement = %requirement_id, "插入功能用例(标准{idx})失败: {e:?}"),
+            Err(e) => {
+                tracing::warn!(requirement = %requirement_id, "插入功能用例(标准{idx})失败: {e:?}")
+            }
         }
     }
 }
@@ -143,7 +145,14 @@ async fn breakdown_handler(
                     }
                 }
             };
-            seed_functional_cases(&st.cases, &spec.requirement_id, &req.project_id, &spec.acceptance_criteria, &user.user_id).await;
+            seed_functional_cases(
+                &st.cases,
+                &spec.requirement_id,
+                &req.project_id,
+                &spec.acceptance_criteria,
+                &user.user_id,
+            )
+            .await;
             let body = json!({
                 "id": d.id,
                 "requirementId": d.requirement_id,
@@ -167,7 +176,14 @@ async fn breakdown_handler(
                         .ok()
                         .flatten()
                         .map(|v| v.id);
-                    seed_functional_cases(&st.cases, &spec.requirement_id, &req.project_id, &spec.acceptance_criteria, &user.user_id).await;
+                    seed_functional_cases(
+                        &st.cases,
+                        &spec.requirement_id,
+                        &req.project_id,
+                        &spec.acceptance_criteria,
+                        &user.user_id,
+                    )
+                    .await;
                     let body = json!({
                         "id": d.id,
                         "requirementId": d.requirement_id,
@@ -184,9 +200,15 @@ async fn breakdown_handler(
                 _ => (StatusCode::CONFLICT, "decomposition already exists").into_response(),
             }
         }
-        Err(BreakdownError::EmptyRequirement) => (StatusCode::BAD_REQUEST, "requirement id required").into_response(),
-        Err(BreakdownError::Validation(_)) => (StatusCode::BAD_REQUEST, "invalid planned task").into_response(),
+        Err(BreakdownError::EmptyRequirement) => {
+            (StatusCode::BAD_REQUEST, "requirement id required").into_response()
+        }
+        Err(BreakdownError::Validation(_)) => {
+            (StatusCode::BAD_REQUEST, "invalid planned task").into_response()
+        }
         Err(BreakdownError::Plan(_)) => (StatusCode::BAD_GATEWAY, "planner error").into_response(),
-        Err(BreakdownError::Repo(_)) => (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
+        Err(BreakdownError::Repo(_)) => {
+            (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response()
+        }
     }
 }

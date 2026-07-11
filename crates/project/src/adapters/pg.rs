@@ -1,8 +1,8 @@
 //! 同组织未删除项目名唯一由 schema.sql 的部分唯一索引在 DB 层兜底。
 
-use async_trait::async_trait;
 use crate::domain::{NewProject, Project};
 use crate::ports::{ProjectRepository, RepoError};
+use async_trait::async_trait;
 use sqlx::{PgPool, Row};
 
 #[derive(Clone)]

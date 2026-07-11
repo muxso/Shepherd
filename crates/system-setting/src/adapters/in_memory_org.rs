@@ -44,14 +44,32 @@ impl OrgRepository for InMemoryOrgRepository {
     }
 
     async fn get(&self, id: &str) -> Result<Option<Organization>, OrgRepoError> {
-        Ok(self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner).orgs.iter().find(|o| o.id == id).cloned())
+        Ok(self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .orgs
+            .iter()
+            .find(|o| o.id == id)
+            .cloned())
     }
 
     async fn count_active(&self) -> Result<u64, OrgRepoError> {
-        Ok(self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner).orgs.iter().filter(|o| o.occupies_name()).count() as u64)
+        Ok(self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .orgs
+            .iter()
+            .filter(|o| o.occupies_name())
+            .count() as u64)
     }
 
-    async fn list_active(&self, offset: u64, limit: u32) -> Result<Vec<Organization>, OrgRepoError> {
+    async fn list_active(
+        &self,
+        offset: u64,
+        limit: u32,
+    ) -> Result<Vec<Organization>, OrgRepoError> {
         Ok(self
             .state
             .lock()

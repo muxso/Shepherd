@@ -4,16 +4,16 @@ pub mod stub;
 pub use in_memory::InMemoryDeliveryRepository;
 pub use stub::{EchoAgentExecutor, StubAgentExecutor, StubBehavior};
 
-#[cfg(feature = "pg")]
-pub mod pg;
-#[cfg(feature = "http")]
-pub mod http;
-#[cfg(feature = "exec-local")]
-pub mod local;
 #[cfg(feature = "exec-http")]
 pub mod agent_http;
 #[cfg(feature = "exec-queue")]
 pub mod fleet_registry;
+#[cfg(feature = "http")]
+pub mod http;
+#[cfg(feature = "exec-local")]
+pub mod local;
+#[cfg(feature = "pg")]
+pub mod pg;
 #[cfg(feature = "exec-queue")]
 pub mod queue;
 #[cfg(feature = "exec-queue-redis")]

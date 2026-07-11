@@ -122,8 +122,11 @@ mod tests {
         // 3ms ≤ le=5(累计 1);3ms,7ms ≤ le=10(累计 2)。
         assert!(out.contains("method=\"GET\",status=\"200\",le=\"5\"} 1"));
         assert!(out.contains("method=\"GET\",status=\"200\",le=\"10\"} 2"));
-        assert!(out.contains("shepherd_http_request_duration_ms_sum{method=\"GET\",status=\"200\"} 10"));
-        assert!(out.contains("shepherd_http_request_duration_ms_count{method=\"GET\",status=\"200\"} 2"));
+        assert!(
+            out.contains("shepherd_http_request_duration_ms_sum{method=\"GET\",status=\"200\"} 10")
+        );
+        assert!(out
+            .contains("shepherd_http_request_duration_ms_count{method=\"GET\",status=\"200\"} 2"));
         // 600ms 落入 le=1000;+Inf 与 count 都为 1。
         assert!(out.contains("method=\"POST\",status=\"500\",le=\"1000\"} 1"));
         assert!(out.contains("method=\"POST\",status=\"500\",le=\"+Inf\"} 1"));

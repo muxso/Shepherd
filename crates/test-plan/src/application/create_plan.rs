@@ -70,7 +70,8 @@ mod tests {
     async fn plan_in_existing_group_ok() {
         let repo = InMemoryPlanRepository::new();
         let uc = CreatePlanUseCase::new(Arc::new(repo.clone()));
-        let group = uc.execute("proj1", "回归组", PlanType::Group, ROOT_GROUP).await.expect("group");
+        let group =
+            uc.execute("proj1", "回归组", PlanType::Group, ROOT_GROUP).await.expect("group");
 
         let child = uc.execute("proj1", "子计划", PlanType::Plan, &group.id).await.expect("child");
         assert_eq!(child.group_id, group.id);

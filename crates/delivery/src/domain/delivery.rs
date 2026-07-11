@@ -267,10 +267,21 @@ mod tests {
             assert_eq!(ExecutorKind::parse(e.as_str()), Some(e));
         }
         assert_eq!(ExecutorKind::parse("X"), None);
-        for k in [DeliverableKind::Diff, DeliverableKind::PullRequest, DeliverableKind::Branch, DeliverableKind::Patch] {
+        for k in [
+            DeliverableKind::Diff,
+            DeliverableKind::PullRequest,
+            DeliverableKind::Branch,
+            DeliverableKind::Patch,
+        ] {
             assert_eq!(DeliverableKind::parse(k.as_str()), Some(k));
         }
-        for s in [AttemptStatus::Dispatched, AttemptStatus::Running, AttemptStatus::Delivered, AttemptStatus::Failed, AttemptStatus::Stopped] {
+        for s in [
+            AttemptStatus::Dispatched,
+            AttemptStatus::Running,
+            AttemptStatus::Delivered,
+            AttemptStatus::Failed,
+            AttemptStatus::Stopped,
+        ] {
             assert_eq!(AttemptStatus::parse(s.as_str()), Some(s));
         }
     }

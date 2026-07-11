@@ -20,7 +20,13 @@ impl InMemoryCredentialRepository {
         Self::default()
     }
 
-    pub fn with_user<I, S>(mut self, username: &str, user_id: &str, password_hash: &str, perms: I) -> Self
+    pub fn with_user<I, S>(
+        mut self,
+        username: &str,
+        user_id: &str,
+        password_hash: &str,
+        perms: I,
+    ) -> Self
     where
         I: IntoIterator<Item = S>,
         S: Into<String>,

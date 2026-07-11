@@ -19,7 +19,13 @@ impl SqlPlugin {
     }
 
     async fn pool_for(&self, target: &str) -> Result<PgPool, String> {
-        if let Some(p) = self.pools.lock().unwrap_or_else(std::sync::PoisonError::into_inner).get(target).cloned() {
+        if let Some(p) = self
+            .pools
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(target)
+            .cloned()
+        {
             return Ok(p);
         }
         let pool = sqlx::postgres::PgPoolOptions::new()
@@ -49,11 +55,7 @@ impl ProtocolPlugin for SqlPlugin {
         let pool = match self.pool_for(&req.target).await {
             Ok(p) => p,
             Err(e) => {
-                return RawProbe {
-                    transport_ok: false,
-                    error: Some(e),
-                    ..Default::default()
-                }
+                return RawProbe { transport_ok: false, error: Some(e), ..Default::default() }
             }
         };
         let t = Instant::now();

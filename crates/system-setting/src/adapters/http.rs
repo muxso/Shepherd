@@ -20,9 +20,9 @@ use crate::application::{
     UserRoleService, UserService,
 };
 use crate::domain::RoleScope;
-use kernel::page::PageRequest;
 use crate::domain::{AuthError, AuthUser, OidcError};
 use crate::ports::{CredentialRepository, PasswordHasher, SessionStore, UserRoleQuery};
+use kernel::page::PageRequest;
 
 #[derive(Clone)]
 struct AppState {
@@ -153,7 +153,13 @@ struct UserResponse {
 }
 impl From<crate::domain::User> for UserResponse {
     fn from(u: crate::domain::User) -> Self {
-        Self { id: u.id, name: u.name, email: u.email.as_str().to_string(), enable: u.enable, user_groups: Vec::new() }
+        Self {
+            id: u.id,
+            name: u.name,
+            email: u.email.as_str().to_string(),
+            enable: u.enable,
+            user_groups: Vec::new(),
+        }
     }
 }
 
@@ -162,7 +168,9 @@ fn user_err_response(e: UserCmdError) -> Response {
         UserCmdError::Validation(_) => (StatusCode::BAD_REQUEST, "invalid user").into_response(),
         UserCmdError::EmailExists => (StatusCode::CONFLICT, "email already exists").into_response(),
         UserCmdError::NotFound => (StatusCode::NOT_FOUND, "user not found").into_response(),
-        UserCmdError::Repo(_) => (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
+        UserCmdError::Repo(_) => {
+            (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response()
+        }
     }
 }
 
@@ -177,7 +185,11 @@ struct UserPage {
 }
 
 #[utoipa::path(get, path = "/system/user", tag = "user", params(OrgListQuery), responses((status = 200, body = UserPage)), security(("bearer" = [])))]
-async fn list_users(user: AuthUser, State(st): State<AppState>, Query(q): Query<OrgListQuery>) -> Response {
+async fn list_users(
+    user: AuthUser,
+    State(st): State<AppState>,
+    Query(q): Query<OrgListQuery>,
+) -> Response {
     if !user.can("SYSTEM_USER", "READ") {
         return (StatusCode::FORBIDDEN, "permission denied").into_response();
     }
@@ -187,7 +199,8 @@ async fn list_users(user: AuthUser, State(st): State<AppState>, Query(q): Query<
     };
     match st.admin.list(page).await {
         Ok(p) => {
-            let (total, current, page_size, total_pages) = (p.total, p.current, p.page_size, p.total_pages());
+            let (total, current, page_size, total_pages) =
+                (p.total, p.current, p.page_size, p.total_pages());
             let ids: Vec<String> = p.items.iter().map(|u| u.id.clone()).collect();
             let role_rows = st.user_roles.roles_for(&ids).await.unwrap_or_default();
             let mut groups: BTreeMap<String, Vec<String>> = BTreeMap::new();
@@ -218,7 +231,11 @@ struct ResetPwResponse {
 }
 
 #[utoipa::path(post, path = "/system/user/{id}/reset-password", tag = "user", params(("id" = String, Path)), responses((status = 200, body = ResetPwResponse), (status = 404)), security(("bearer" = [])))]
-async fn reset_password(user: AuthUser, State(st): State<AppState>, Path(id): Path<String>) -> Response {
+async fn reset_password(
+    user: AuthUser,
+    State(st): State<AppState>,
+    Path(id): Path<String>,
+) -> Response {
     if !user.can("SYSTEM_USER", "UPDATE") {
         return (StatusCode::FORBIDDEN, "permission denied").into_response();
     }
@@ -229,7 +246,9 @@ async fn reset_password(user: AuthUser, State(st): State<AppState>, Path(id): Pa
     let new_pw = "Shepherd@123";
     let hash = st.hasher.hash(new_pw);
     match st.creds.reset_password(&id, target.email.as_str(), &hash).await {
-        Ok(()) => (StatusCode::OK, Json(ResetPwResponse { password: new_pw.to_string() })).into_response(),
+        Ok(()) => {
+            (StatusCode::OK, Json(ResetPwResponse { password: new_pw.to_string() })).into_response()
+        }
         Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
     }
 }
@@ -274,7 +293,11 @@ async fn update_user(
 }
 
 #[utoipa::path(delete, path = "/system/user/{id}", tag = "user", params(("id" = String, Path)), responses((status = 204), (status = 404)), security(("bearer" = [])))]
-async fn delete_user(user: AuthUser, State(st): State<AppState>, Path(id): Path<String>) -> Response {
+async fn delete_user(
+    user: AuthUser,
+    State(st): State<AppState>,
+    Path(id): Path<String>,
+) -> Response {
     if !user.can("SYSTEM_USER", "DELETE") {
         return (StatusCode::FORBIDDEN, "permission denied").into_response();
     }
@@ -315,13 +338,8 @@ struct NamesQuery {
 
 #[utoipa::path(get, path = "/system/user/names", tag = "user", params(NamesQuery), responses((status = 200)))]
 async fn resolve_names(State(st): State<AppState>, Query(q): Query<NamesQuery>) -> Response {
-    let ids: Vec<String> = q
-        .ids
-        .split(',')
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .map(str::to_string)
-        .collect();
+    let ids: Vec<String> =
+        q.ids.split(',').map(str::trim).filter(|s| !s.is_empty()).map(str::to_string).collect();
     let names: BTreeMap<String, String> = st.resolve.execute(&ids).await;
     (StatusCode::OK, Json(names)).into_response()
 }
@@ -361,7 +379,9 @@ async fn oidc_authorize(
             let mut resp = Redirect::to(&url).into_response();
             set_cookie(
                 &mut resp,
-                &format!("{STATE_COOKIE}={state}; HttpOnly; SameSite=Lax; Path=/auth/oidc; Max-Age=600"),
+                &format!(
+                    "{STATE_COOKIE}={state}; HttpOnly; SameSite=Lax; Path=/auth/oidc; Max-Age=600"
+                ),
             );
             resp
         }
@@ -384,7 +404,9 @@ async fn oidc_callback(
     headers: HeaderMap,
 ) -> Response {
     // CSRF:回调 state 必须与 authorize 下发的 cookie 一致且非空。
-    if q.state.is_empty() || cookie_lookup(&headers, STATE_COOKIE).as_deref() != Some(q.state.as_str()) {
+    if q.state.is_empty()
+        || cookie_lookup(&headers, STATE_COOKIE).as_deref() != Some(q.state.as_str())
+    {
         return (StatusCode::BAD_REQUEST, "invalid or missing state").into_response();
     }
     let mut resp = match uc.complete(&provider, &q.code).await {
@@ -437,10 +459,14 @@ impl From<crate::domain::Organization> for OrgResponse {
 
 fn org_err_response(e: OrgCmdError) -> Response {
     match e {
-        OrgCmdError::Validation(_) => (StatusCode::BAD_REQUEST, "invalid organization").into_response(),
+        OrgCmdError::Validation(_) => {
+            (StatusCode::BAD_REQUEST, "invalid organization").into_response()
+        }
         OrgCmdError::NameExists => (StatusCode::CONFLICT, "name already exists").into_response(),
         OrgCmdError::NotFound => (StatusCode::NOT_FOUND, "organization not found").into_response(),
-        OrgCmdError::Repo(_) => (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
+        OrgCmdError::Repo(_) => {
+            (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response()
+        }
     }
 }
 
@@ -455,7 +481,11 @@ fn default_true() -> bool {
 }
 
 #[utoipa::path(post, path = "/organization", tag = "organization", request_body = OrgBody, responses((status = 201, body = OrgResponse), (status = 409)), security(("bearer" = [])))]
-async fn create_org(user: AuthUser, State(st): State<OrgState>, Json(req): Json<OrgBody>) -> Response {
+async fn create_org(
+    user: AuthUser,
+    State(st): State<OrgState>,
+    Json(req): Json<OrgBody>,
+) -> Response {
     if !user.can("ORGANIZATION", "ADD") {
         return (StatusCode::FORBIDDEN, "permission denied").into_response();
     }
@@ -491,7 +521,11 @@ struct OrgPage {
 }
 
 #[utoipa::path(get, path = "/organization", tag = "organization", params(OrgListQuery), responses((status = 200, body = OrgPage)), security(("bearer" = [])))]
-async fn list_orgs(user: AuthUser, State(st): State<OrgState>, Query(q): Query<OrgListQuery>) -> Response {
+async fn list_orgs(
+    user: AuthUser,
+    State(st): State<OrgState>,
+    Query(q): Query<OrgListQuery>,
+) -> Response {
     if !user.can("ORGANIZATION", "READ") {
         return (StatusCode::FORBIDDEN, "permission denied").into_response();
     }
@@ -543,7 +577,11 @@ async fn update_org(
 }
 
 #[utoipa::path(delete, path = "/organization/{id}", tag = "organization", params(("id" = String, Path)), responses((status = 204), (status = 404)), security(("bearer" = [])))]
-async fn delete_org(user: AuthUser, State(st): State<OrgState>, Path(id): Path<String>) -> Response {
+async fn delete_org(
+    user: AuthUser,
+    State(st): State<OrgState>,
+    Path(id): Path<String>,
+) -> Response {
     if !user.can("ORGANIZATION", "DELETE") {
         return (StatusCode::FORBIDDEN, "permission denied").into_response();
     }
@@ -588,7 +626,12 @@ struct RoleResponse {
 }
 impl From<crate::domain::Role> for RoleResponse {
     fn from(r: crate::domain::Role) -> Self {
-        Self { id: r.id, name: r.name, scope: r.scope.as_str().to_string(), permissions: r.permissions }
+        Self {
+            id: r.id,
+            name: r.name,
+            scope: r.scope.as_str().to_string(),
+            permissions: r.permissions,
+        }
     }
 }
 
@@ -596,7 +639,9 @@ fn role_err_response(e: RoleCmdError) -> Response {
     match e {
         RoleCmdError::Validation(_) => (StatusCode::BAD_REQUEST, "invalid role").into_response(),
         RoleCmdError::NotFound => (StatusCode::NOT_FOUND, "role not found").into_response(),
-        RoleCmdError::Repo(_) => (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
+        RoleCmdError::Repo(_) => {
+            (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response()
+        }
     }
 }
 
@@ -610,7 +655,11 @@ struct RoleBody {
 }
 
 #[utoipa::path(post, path = "/role", tag = "role", request_body = RoleBody, responses((status = 201, body = RoleResponse), (status = 409)), security(("bearer" = [])))]
-async fn create_role(user: AuthUser, State(st): State<RoleState>, Json(req): Json<RoleBody>) -> Response {
+async fn create_role(
+    user: AuthUser,
+    State(st): State<RoleState>,
+    Json(req): Json<RoleBody>,
+) -> Response {
     if !user.can("USER_ROLE", "ADD") {
         return (StatusCode::FORBIDDEN, "permission denied").into_response();
     }
@@ -635,7 +684,11 @@ struct RolePage {
 }
 
 #[utoipa::path(get, path = "/role", tag = "role", params(OrgListQuery), responses((status = 200, body = RolePage)), security(("bearer" = [])))]
-async fn list_roles(user: AuthUser, State(st): State<RoleState>, Query(q): Query<OrgListQuery>) -> Response {
+async fn list_roles(
+    user: AuthUser,
+    State(st): State<RoleState>,
+    Query(q): Query<OrgListQuery>,
+) -> Response {
     if !user.can("USER_ROLE", "READ") {
         return (StatusCode::FORBIDDEN, "permission denied").into_response();
     }
@@ -686,7 +739,11 @@ async fn update_role(
 }
 
 #[utoipa::path(delete, path = "/role/{id}", tag = "role", params(("id" = String, Path)), responses((status = 204), (status = 404)), security(("bearer" = [])))]
-async fn delete_role(user: AuthUser, State(st): State<RoleState>, Path(id): Path<String>) -> Response {
+async fn delete_role(
+    user: AuthUser,
+    State(st): State<RoleState>,
+    Path(id): Path<String>,
+) -> Response {
     if !user.can("USER_ROLE", "DELETE") {
         return (StatusCode::FORBIDDEN, "permission denied").into_response();
     }
@@ -704,7 +761,11 @@ struct GrantBody {
 }
 
 #[utoipa::path(post, path = "/user-role/grant", tag = "role", request_body = GrantBody, responses((status = 200)), security(("bearer" = [])))]
-async fn grant_role(user: AuthUser, State(st): State<RoleState>, Json(req): Json<GrantBody>) -> Response {
+async fn grant_role(
+    user: AuthUser,
+    State(st): State<RoleState>,
+    Json(req): Json<GrantBody>,
+) -> Response {
     if !user.can("USER_ROLE", "UPDATE") {
         return (StatusCode::FORBIDDEN, "permission denied").into_response();
     }
@@ -715,7 +776,11 @@ async fn grant_role(user: AuthUser, State(st): State<RoleState>, Json(req): Json
 }
 
 #[utoipa::path(post, path = "/user-role/revoke", tag = "role", request_body = GrantBody, responses((status = 200)), security(("bearer" = [])))]
-async fn revoke_role(user: AuthUser, State(st): State<RoleState>, Json(req): Json<GrantBody>) -> Response {
+async fn revoke_role(
+    user: AuthUser,
+    State(st): State<RoleState>,
+    Json(req): Json<GrantBody>,
+) -> Response {
     if !user.can("USER_ROLE", "UPDATE") {
         return (StatusCode::FORBIDDEN, "permission denied").into_response();
     }
@@ -747,13 +812,13 @@ mod tests {
     use super::*;
     use crate::adapters::{
         FakeIdentityProvider, InMemoryCredentialRepository, InMemoryExternalUserRepository,
-        InMemoryOrgRepository, InMemoryRoleRepository, InMemorySessionStore, InMemoryUserRepository,
-        InMemoryUserRoleRepository, PlainPasswordHasher, SpyDirectory,
+        InMemoryOrgRepository, InMemoryRoleRepository, InMemorySessionStore,
+        InMemoryUserRepository, InMemoryUserRoleRepository, PlainPasswordHasher, SpyDirectory,
     };
     use crate::domain::ExternalIdentity;
-    use kernel::permission::PermissionSet;
     use axum::body::Body;
     use axum::http::Request;
+    use kernel::permission::PermissionSet;
     use tower::ServiceExt;
 
     fn app_store() -> (Router, Arc<InMemorySessionStore>) {
@@ -768,10 +833,22 @@ mod tests {
         );
         let hasher = Arc::new(PlainPasswordHasher);
         let sessions = Arc::new(InMemorySessionStore::new());
-        let user_roles = Arc::new(InMemoryUserRoleRepository::new(Arc::new(InMemoryRoleRepository::new())));
-        let login = LoginUseCase::new(creds.clone(), hasher.clone(), sessions.clone(), user_roles.clone());
+        let user_roles =
+            Arc::new(InMemoryUserRoleRepository::new(Arc::new(InMemoryRoleRepository::new())));
+        let login =
+            LoginUseCase::new(creds.clone(), hasher.clone(), sessions.clone(), user_roles.clone());
         (
-            router(create, resolve, login, admin, creds, hasher, user_roles, sessions.clone(), 3600),
+            router(
+                create,
+                resolve,
+                login,
+                admin,
+                creds,
+                hasher,
+                user_roles,
+                sessions.clone(),
+                3600,
+            ),
             sessions,
         )
     }
@@ -781,7 +858,8 @@ mod tests {
     }
 
     fn post(uri: &str, body: &str, bearer: Option<&str>) -> Request<Body> {
-        let mut b = Request::builder().method("POST").uri(uri).header("content-type", "application/json");
+        let mut b =
+            Request::builder().method("POST").uri(uri).header("content-type", "application/json");
         if let Some(t) = bearer {
             b = b.header("authorization", format!("Bearer {t}"));
         }
@@ -791,7 +869,11 @@ mod tests {
     async fn token(app: &Router, user: &str, pass: &str) -> Option<String> {
         let resp = app
             .clone()
-            .oneshot(post("/auth/login", &format!(r#"{{"username":"{user}","password":"{pass}"}}"#), None))
+            .oneshot(post(
+                "/auth/login",
+                &format!(r#"{{"username":"{user}","password":"{pass}"}}"#),
+                None,
+            ))
             .await
             .expect("resp");
         if resp.status() != StatusCode::OK {
@@ -871,7 +953,11 @@ mod tests {
         let app = app();
         let t = token(&app, "admin", "secret").await.expect("token");
         assert_eq!(
-            app.clone().oneshot(post("/system/user", create_body(), Some(&t))).await.expect("r").status(),
+            app.clone()
+                .oneshot(post("/system/user", create_body(), Some(&t)))
+                .await
+                .expect("r")
+                .status(),
             StatusCode::CREATED
         );
         let lo = app.clone().oneshot(post("/auth/logout", "", Some(&t))).await.expect("r");
@@ -1000,7 +1086,8 @@ mod tests {
     #[tokio::test]
     async fn org_create_requires_auth() {
         let (app, _) = org_app().await;
-        let r = app.oneshot(req("POST", "/organization", r#"{"name":"Acme"}"#, None)).await.expect("r");
+        let r =
+            app.oneshot(req("POST", "/organization", r#"{"name":"Acme"}"#, None)).await.expect("r");
         assert_eq!(r.status(), StatusCode::UNAUTHORIZED);
     }
 
@@ -1023,7 +1110,11 @@ mod tests {
     #[tokio::test]
     async fn org_full_crud_flow() {
         let (app, t) = org_app().await;
-        let r = app.clone().oneshot(req("POST", "/organization", r#"{"name":"Acme"}"#, Some(&t))).await.expect("r");
+        let r = app
+            .clone()
+            .oneshot(req("POST", "/organization", r#"{"name":"Acme"}"#, Some(&t)))
+            .await
+            .expect("r");
         assert_eq!(r.status(), StatusCode::CREATED);
         let bytes = axum::body::to_bytes(r.into_body(), usize::MAX).await.expect("b");
         let id = serde_json::from_slice::<serde_json::Value>(&bytes).expect("j")["id"]
@@ -1032,19 +1123,39 @@ mod tests {
             .to_string();
 
         assert_eq!(
-            app.clone().oneshot(req("GET", "/organization?current=1&pageSize=10", "", Some(&t))).await.expect("r").status(),
+            app.clone()
+                .oneshot(req("GET", "/organization?current=1&pageSize=10", "", Some(&t)))
+                .await
+                .expect("r")
+                .status(),
             StatusCode::OK
         );
         assert_eq!(
-            app.clone().oneshot(req("PUT", &format!("/organization/{id}"), r#"{"name":"AcmeCorp","enable":false}"#, Some(&t))).await.expect("r").status(),
+            app.clone()
+                .oneshot(req(
+                    "PUT",
+                    &format!("/organization/{id}"),
+                    r#"{"name":"AcmeCorp","enable":false}"#,
+                    Some(&t)
+                ))
+                .await
+                .expect("r")
+                .status(),
             StatusCode::OK
         );
         assert_eq!(
-            app.clone().oneshot(req("DELETE", &format!("/organization/{id}"), "", Some(&t))).await.expect("r").status(),
+            app.clone()
+                .oneshot(req("DELETE", &format!("/organization/{id}"), "", Some(&t)))
+                .await
+                .expect("r")
+                .status(),
             StatusCode::NO_CONTENT
         );
         assert_eq!(
-            app.oneshot(req("GET", &format!("/organization/{id}"), "", Some(&t))).await.expect("r").status(),
+            app.oneshot(req("GET", &format!("/organization/{id}"), "", Some(&t)))
+                .await
+                .expect("r")
+                .status(),
             StatusCode::NOT_FOUND
         );
     }
@@ -1074,7 +1185,12 @@ mod tests {
         let (app, t) = role_app().await;
         let r = app
             .clone()
-            .oneshot(req("POST", "/role", r#"{"name":"auditor","scope":"SYSTEM","permissions":["SYSTEM_USER:READ"]}"#, Some(&t)))
+            .oneshot(req(
+                "POST",
+                "/role",
+                r#"{"name":"auditor","scope":"SYSTEM","permissions":["SYSTEM_USER:READ"]}"#,
+                Some(&t),
+            ))
             .await
             .expect("r");
         assert_eq!(r.status(), StatusCode::CREATED);
@@ -1083,12 +1199,68 @@ mod tests {
             .as_str()
             .expect("id")
             .to_string();
-        assert_eq!(app.clone().oneshot(req("GET", "/role?current=1&pageSize=10", "", Some(&t))).await.expect("r").status(), StatusCode::OK);
-        assert_eq!(app.clone().oneshot(req("GET", &format!("/role/{id}"), "", Some(&t))).await.expect("r").status(), StatusCode::OK);
-        assert_eq!(app.clone().oneshot(req("PUT", &format!("/role/{id}"), r#"{"name":"auditor2","permissions":["SYSTEM_USER:READ+ADD"]}"#, Some(&t))).await.expect("r").status(), StatusCode::OK);
-        assert_eq!(app.clone().oneshot(req("POST", "/user-role/grant", &format!(r#"{{"userId":"u-x","roleId":"{id}"}}"#), Some(&t))).await.expect("r").status(), StatusCode::NO_CONTENT);
-        assert_eq!(app.clone().oneshot(req("POST", "/user-role/grant", r#"{"userId":"u-x","roleId":"ghost"}"#, Some(&t))).await.expect("r").status(), StatusCode::NOT_FOUND);
-        assert_eq!(app.oneshot(req("DELETE", &format!("/role/{id}"), "", Some(&t))).await.expect("r").status(), StatusCode::NO_CONTENT);
+        assert_eq!(
+            app.clone()
+                .oneshot(req("GET", "/role?current=1&pageSize=10", "", Some(&t)))
+                .await
+                .expect("r")
+                .status(),
+            StatusCode::OK
+        );
+        assert_eq!(
+            app.clone()
+                .oneshot(req("GET", &format!("/role/{id}"), "", Some(&t)))
+                .await
+                .expect("r")
+                .status(),
+            StatusCode::OK
+        );
+        assert_eq!(
+            app.clone()
+                .oneshot(req(
+                    "PUT",
+                    &format!("/role/{id}"),
+                    r#"{"name":"auditor2","permissions":["SYSTEM_USER:READ+ADD"]}"#,
+                    Some(&t)
+                ))
+                .await
+                .expect("r")
+                .status(),
+            StatusCode::OK
+        );
+        assert_eq!(
+            app.clone()
+                .oneshot(req(
+                    "POST",
+                    "/user-role/grant",
+                    &format!(r#"{{"userId":"u-x","roleId":"{id}"}}"#),
+                    Some(&t)
+                ))
+                .await
+                .expect("r")
+                .status(),
+            StatusCode::NO_CONTENT
+        );
+        assert_eq!(
+            app.clone()
+                .oneshot(req(
+                    "POST",
+                    "/user-role/grant",
+                    r#"{"userId":"u-x","roleId":"ghost"}"#,
+                    Some(&t)
+                ))
+                .await
+                .expect("r")
+                .status(),
+            StatusCode::NOT_FOUND
+        );
+        assert_eq!(
+            app.oneshot(req("DELETE", &format!("/role/{id}"), "", Some(&t)))
+                .await
+                .expect("r")
+                .status(),
+            StatusCode::NO_CONTENT
+        );
     }
 
     #[tokio::test]
@@ -1096,9 +1268,24 @@ mod tests {
         let roles = Arc::new(InMemoryRoleRepository::new());
         let user_roles = Arc::new(InMemoryUserRoleRepository::new(roles.clone()));
         let sessions = Arc::new(InMemorySessionStore::new());
-        let app = role_router(RoleService::new(roles.clone()), UserRoleService::new(roles, user_roles), sessions.clone());
-        let viewer = sessions.create("u", PermissionSet::from_raw(["USER_ROLE:READ"]).expect("p"), 3600).await.expect("s");
-        let r = app.oneshot(req("POST", "/role", r#"{"name":"x","scope":"SYSTEM","permissions":[]}"#, Some(&viewer))).await.expect("r");
+        let app = role_router(
+            RoleService::new(roles.clone()),
+            UserRoleService::new(roles, user_roles),
+            sessions.clone(),
+        );
+        let viewer = sessions
+            .create("u", PermissionSet::from_raw(["USER_ROLE:READ"]).expect("p"), 3600)
+            .await
+            .expect("s");
+        let r = app
+            .oneshot(req(
+                "POST",
+                "/role",
+                r#"{"name":"x","scope":"SYSTEM","permissions":[]}"#,
+                Some(&viewer),
+            ))
+            .await
+            .expect("r");
         assert_eq!(r.status(), StatusCode::FORBIDDEN);
     }
 
@@ -1108,9 +1295,12 @@ mod tests {
         let create = CreateUserUseCase::new(user_repo.clone());
         let admin = UserService::new(user_repo);
         let resolve = ResolveUserNamesUseCase::new(Arc::new(SpyDirectory::new()));
-        let creds = Arc::new(
-            InMemoryCredentialRepository::new().with_user("bob", "u-bob", "pw", Vec::<String>::new()),
-        );
+        let creds = Arc::new(InMemoryCredentialRepository::new().with_user(
+            "bob",
+            "u-bob",
+            "pw",
+            Vec::<String>::new(),
+        ));
         let hasher = Arc::new(PlainPasswordHasher);
         let sessions = Arc::new(InMemorySessionStore::new());
         let roles = Arc::new(InMemoryRoleRepository::new());
@@ -1123,7 +1313,8 @@ mod tests {
             .grant("u-bob", &role.id)
             .await
             .expect("grant");
-        let login = LoginUseCase::new(creds.clone(), hasher.clone(), sessions.clone(), user_roles.clone());
+        let login =
+            LoginUseCase::new(creds.clone(), hasher.clone(), sessions.clone(), user_roles.clone());
         let app = router(create, resolve, login, admin, creds, hasher, user_roles, sessions, 3600);
         let tok = token(&app, "bob", "pw").await.expect("token");
         let r = app.oneshot(post("/system/user", create_body(), Some(&tok))).await.expect("r");
@@ -1134,22 +1325,81 @@ mod tests {
     async fn user_admin_crud_flow() {
         let (app, _store) = app_store();
         let t = token(&app, "admin", "secret").await.expect("token");
-        let r = app.clone().oneshot(post("/system/user", r#"{"name":"Alice","email":"al@x.com"}"#, Some(&t))).await.expect("r");
+        let r = app
+            .clone()
+            .oneshot(post("/system/user", r#"{"name":"Alice","email":"al@x.com"}"#, Some(&t)))
+            .await
+            .expect("r");
         assert_eq!(r.status(), StatusCode::CREATED);
         let bytes = axum::body::to_bytes(r.into_body(), usize::MAX).await.expect("b");
-        let id = serde_json::from_slice::<serde_json::Value>(&bytes).expect("j")["id"].as_str().expect("id").to_string();
-        assert_eq!(app.clone().oneshot(req("GET", "/system/user?current=1&pageSize=10", "", Some(&t))).await.expect("r").status(), StatusCode::OK);
-        assert_eq!(app.clone().oneshot(req("GET", &format!("/system/user/{id}"), "", Some(&t))).await.expect("r").status(), StatusCode::OK);
-        assert_eq!(app.clone().oneshot(req("PUT", &format!("/system/user/{id}"), r#"{"name":"Alice2","email":"al2@x.com","enable":false}"#, Some(&t))).await.expect("r").status(), StatusCode::OK);
-        assert_eq!(app.clone().oneshot(req("DELETE", &format!("/system/user/{id}"), "", Some(&t))).await.expect("r").status(), StatusCode::NO_CONTENT);
-        assert_eq!(app.oneshot(req("GET", &format!("/system/user/{id}"), "", Some(&t))).await.expect("r").status(), StatusCode::NOT_FOUND);
+        let id = serde_json::from_slice::<serde_json::Value>(&bytes).expect("j")["id"]
+            .as_str()
+            .expect("id")
+            .to_string();
+        assert_eq!(
+            app.clone()
+                .oneshot(req("GET", "/system/user?current=1&pageSize=10", "", Some(&t)))
+                .await
+                .expect("r")
+                .status(),
+            StatusCode::OK
+        );
+        assert_eq!(
+            app.clone()
+                .oneshot(req("GET", &format!("/system/user/{id}"), "", Some(&t)))
+                .await
+                .expect("r")
+                .status(),
+            StatusCode::OK
+        );
+        assert_eq!(
+            app.clone()
+                .oneshot(req(
+                    "PUT",
+                    &format!("/system/user/{id}"),
+                    r#"{"name":"Alice2","email":"al2@x.com","enable":false}"#,
+                    Some(&t)
+                ))
+                .await
+                .expect("r")
+                .status(),
+            StatusCode::OK
+        );
+        assert_eq!(
+            app.clone()
+                .oneshot(req("DELETE", &format!("/system/user/{id}"), "", Some(&t)))
+                .await
+                .expect("r")
+                .status(),
+            StatusCode::NO_CONTENT
+        );
+        assert_eq!(
+            app.oneshot(req("GET", &format!("/system/user/{id}"), "", Some(&t)))
+                .await
+                .expect("r")
+                .status(),
+            StatusCode::NOT_FOUND
+        );
     }
 
     #[tokio::test]
     async fn list_users_requires_permission() {
         let (app, _s) = app_store();
         let t = token(&app, "viewer", "pw").await.expect("token");
-        assert_eq!(app.clone().oneshot(req("GET", "/system/user?current=1&pageSize=10", "", Some(&t))).await.expect("r").status(), StatusCode::OK);
-        assert_eq!(app.oneshot(req("DELETE", "/system/user/whatever", "", Some(&t))).await.expect("r").status(), StatusCode::FORBIDDEN);
+        assert_eq!(
+            app.clone()
+                .oneshot(req("GET", "/system/user?current=1&pageSize=10", "", Some(&t)))
+                .await
+                .expect("r")
+                .status(),
+            StatusCode::OK
+        );
+        assert_eq!(
+            app.oneshot(req("DELETE", "/system/user/whatever", "", Some(&t)))
+                .await
+                .expect("r")
+                .status(),
+            StatusCode::FORBIDDEN
+        );
     }
 }

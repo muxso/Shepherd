@@ -9,8 +9,8 @@ use axum::{
 };
 use kernel::page::PageRequest;
 use serde::{Deserialize, Serialize};
-use webauth::{AuthUser, SessionStore};
 use utoipa::{IntoParams, OpenApi, ToSchema};
+use webauth::{AuthUser, SessionStore};
 
 use crate::application::{
     CreateRequirementError, CreateRequirementUseCase, ListRequirementsUseCase, RequirementCmdError,
@@ -168,26 +168,50 @@ fn ten() -> u32 {
 
 fn cmd_err(e: RequirementCmdError) -> Response {
     match e {
-        RequirementCmdError::Validation(_) => (StatusCode::BAD_REQUEST, "invalid requirement").into_response(),
-        RequirementCmdError::TitleExists => (StatusCode::CONFLICT, "title already exists").into_response(),
-        RequirementCmdError::NotFound => (StatusCode::NOT_FOUND, "requirement not found").into_response(),
-        RequirementCmdError::NoSuchVersion(_) => (StatusCode::NOT_FOUND, "version not found").into_response(),
-        RequirementCmdError::Archived => (StatusCode::CONFLICT, "requirement is archived").into_response(),
-        RequirementCmdError::NotUnderReview => (StatusCode::CONFLICT, "requirement is not pending review").into_response(),
-        RequirementCmdError::Repo(_) => (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
+        RequirementCmdError::Validation(_) => {
+            (StatusCode::BAD_REQUEST, "invalid requirement").into_response()
+        }
+        RequirementCmdError::TitleExists => {
+            (StatusCode::CONFLICT, "title already exists").into_response()
+        }
+        RequirementCmdError::NotFound => {
+            (StatusCode::NOT_FOUND, "requirement not found").into_response()
+        }
+        RequirementCmdError::NoSuchVersion(_) => {
+            (StatusCode::NOT_FOUND, "version not found").into_response()
+        }
+        RequirementCmdError::Archived => {
+            (StatusCode::CONFLICT, "requirement is archived").into_response()
+        }
+        RequirementCmdError::NotUnderReview => {
+            (StatusCode::CONFLICT, "requirement is not pending review").into_response()
+        }
+        RequirementCmdError::Repo(_) => {
+            (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response()
+        }
     }
 }
 
 fn create_err(e: CreateRequirementError) -> Response {
     match e {
-        CreateRequirementError::Validation(_) => (StatusCode::BAD_REQUEST, "invalid requirement").into_response(),
-        CreateRequirementError::TitleAlreadyExists => (StatusCode::CONFLICT, "title already exists").into_response(),
-        CreateRequirementError::Repo(_) => (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
+        CreateRequirementError::Validation(_) => {
+            (StatusCode::BAD_REQUEST, "invalid requirement").into_response()
+        }
+        CreateRequirementError::TitleAlreadyExists => {
+            (StatusCode::CONFLICT, "title already exists").into_response()
+        }
+        CreateRequirementError::Repo(_) => {
+            (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response()
+        }
     }
 }
 
 #[utoipa::path(post, path = "/requirement", tag = "requirement", request_body = CreateBody, responses((status = 201, body = RequirementResponse), (status = 401), (status = 403), (status = 409)), security(("bearer" = [])))]
-async fn create_requirement(user: AuthUser, State(st): State<ReqState>, Json(b): Json<CreateBody>) -> Response {
+async fn create_requirement(
+    user: AuthUser,
+    State(st): State<ReqState>,
+    Json(b): Json<CreateBody>,
+) -> Response {
     if !user.can("REQUIREMENT", "ADD") {
         return (StatusCode::FORBIDDEN, "permission denied").into_response();
     }
@@ -307,7 +331,11 @@ async fn rename_requirement(
 }
 
 #[utoipa::path(post, path = "/requirement/{id}/archive", tag = "requirement", params(("id" = String, Path)), responses((status = 200, body = RequirementResponse), (status = 404)), security(("bearer" = [])))]
-async fn archive_requirement(user: AuthUser, State(st): State<ReqState>, Path(id): Path<String>) -> Response {
+async fn archive_requirement(
+    user: AuthUser,
+    State(st): State<ReqState>,
+    Path(id): Path<String>,
+) -> Response {
     if !user.can("REQUIREMENT", "UPDATE") {
         return (StatusCode::FORBIDDEN, "permission denied").into_response();
     }
@@ -318,7 +346,11 @@ async fn archive_requirement(user: AuthUser, State(st): State<ReqState>, Path(id
 }
 
 #[utoipa::path(post, path = "/requirement/{id}/deliver", tag = "requirement", params(("id" = String, Path)), responses((status = 200, body = RequirementResponse), (status = 404), (status = 409)), security(("bearer" = [])))]
-async fn deliver_requirement(user: AuthUser, State(st): State<ReqState>, Path(id): Path<String>) -> Response {
+async fn deliver_requirement(
+    user: AuthUser,
+    State(st): State<ReqState>,
+    Path(id): Path<String>,
+) -> Response {
     if !user.can("REQUIREMENT", "UPDATE") {
         return (StatusCode::FORBIDDEN, "permission denied").into_response();
     }
@@ -329,7 +361,11 @@ async fn deliver_requirement(user: AuthUser, State(st): State<ReqState>, Path(id
 }
 
 #[utoipa::path(delete, path = "/requirement/{id}", tag = "requirement", params(("id" = String, Path)), responses((status = 204), (status = 404)), security(("bearer" = [])))]
-async fn delete_requirement(user: AuthUser, State(st): State<ReqState>, Path(id): Path<String>) -> Response {
+async fn delete_requirement(
+    user: AuthUser,
+    State(st): State<ReqState>,
+    Path(id): Path<String>,
+) -> Response {
     if !user.can("REQUIREMENT", "DELETE") {
         return (StatusCode::FORBIDDEN, "permission denied").into_response();
     }
@@ -422,9 +458,9 @@ pub fn openapi() -> utoipa::openapi::OpenApi {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::adapters::InMemoryRequirementRepository;
     use axum::body::Body;
     use axum::http::Request;
-    use crate::adapters::InMemoryRequirementRepository;
     use kernel::permission::PermissionSet;
     use tower::ServiceExt;
     use webauth::testing::InMemorySessionStore;
@@ -444,7 +480,8 @@ mod tests {
     }
 
     fn req(method: &str, uri: &str, body: &str, token: Option<&str>) -> Request<Body> {
-        let mut b = Request::builder().method(method).uri(uri).header("content-type", "application/json");
+        let mut b =
+            Request::builder().method(method).uri(uri).header("content-type", "application/json");
         if let Some(t) = token {
             b = b.header("authorization", format!("Bearer {t}"));
         }
@@ -503,7 +540,12 @@ mod tests {
         // B → baselined。
         let r = app
             .clone()
-            .oneshot(req("PUT", &format!("/requirement/{b}/baseline"), r#"{"version":1}"#, Some(&t)))
+            .oneshot(req(
+                "PUT",
+                &format!("/requirement/{b}/baseline"),
+                r#"{"version":1}"#,
+                Some(&t),
+            ))
             .await
             .expect("r");
         assert_eq!(r.status(), StatusCode::OK);
@@ -543,7 +585,12 @@ mod tests {
     async fn reorder_without_update_perm_403() {
         let (app, t) = app_with("REQUIREMENT:READ").await;
         let r = app
-            .oneshot(req("PUT", "/requirement/order", r#"{"projectId":"p1","orderedIds":[]}"#, Some(&t)))
+            .oneshot(req(
+                "PUT",
+                "/requirement/order",
+                r#"{"projectId":"p1","orderedIds":[]}"#,
+                Some(&t),
+            ))
             .await
             .expect("r");
         assert_eq!(r.status(), StatusCode::FORBIDDEN);
@@ -561,34 +608,65 @@ mod tests {
         let id = body_json(r).await["id"].as_str().expect("id").to_string();
 
         assert_eq!(
-            app.clone().oneshot(req("GET", "/requirement?projectId=p1&current=1&pageSize=10", "", Some(&t))).await.expect("r").status(),
+            app.clone()
+                .oneshot(req(
+                    "GET",
+                    "/requirement?projectId=p1&current=1&pageSize=10",
+                    "",
+                    Some(&t)
+                ))
+                .await
+                .expect("r")
+                .status(),
             StatusCode::OK
         );
         assert_eq!(
-            app.clone().oneshot(req("GET", &format!("/requirement/{id}"), "", Some(&t))).await.expect("r").status(),
+            app.clone()
+                .oneshot(req("GET", &format!("/requirement/{id}"), "", Some(&t)))
+                .await
+                .expect("r")
+                .status(),
             StatusCode::OK
         );
 
         let rv = app
             .clone()
-            .oneshot(req("POST", &format!("/requirement/{id}/version"), r#"{"description":"v2","acceptanceCriteria":["c2"]}"#, Some(&t)))
+            .oneshot(req(
+                "POST",
+                &format!("/requirement/{id}/version"),
+                r#"{"description":"v2","acceptanceCriteria":["c2"]}"#,
+                Some(&t),
+            ))
             .await
             .expect("r");
         assert_eq!(rv.status(), StatusCode::CREATED);
         assert_eq!(body_json(rv).await["version"], 2);
 
         assert_eq!(
-            app.clone().oneshot(req("GET", &format!("/requirement/{id}/version/2"), "", Some(&t))).await.expect("r").status(),
+            app.clone()
+                .oneshot(req("GET", &format!("/requirement/{id}/version/2"), "", Some(&t)))
+                .await
+                .expect("r")
+                .status(),
             StatusCode::OK
         );
         assert_eq!(
-            app.clone().oneshot(req("GET", &format!("/requirement/{id}/version/9"), "", Some(&t))).await.expect("r").status(),
+            app.clone()
+                .oneshot(req("GET", &format!("/requirement/{id}/version/9"), "", Some(&t)))
+                .await
+                .expect("r")
+                .status(),
             StatusCode::NOT_FOUND
         );
 
         let sb = app
             .clone()
-            .oneshot(req("PUT", &format!("/requirement/{id}/baseline"), r#"{"version":2}"#, Some(&t)))
+            .oneshot(req(
+                "PUT",
+                &format!("/requirement/{id}/baseline"),
+                r#"{"version":2}"#,
+                Some(&t),
+            ))
             .await
             .expect("r");
         assert_eq!(sb.status(), StatusCode::OK);
@@ -597,23 +675,47 @@ mod tests {
         assert_eq!(v["status"], "BASELINED");
 
         assert_eq!(
-            app.clone().oneshot(req("PUT", &format!("/requirement/{id}"), r#"{"title":"登入"}"#, Some(&t))).await.expect("r").status(),
+            app.clone()
+                .oneshot(req("PUT", &format!("/requirement/{id}"), r#"{"title":"登入"}"#, Some(&t)))
+                .await
+                .expect("r")
+                .status(),
             StatusCode::OK
         );
         assert_eq!(
-            app.clone().oneshot(req("POST", &format!("/requirement/{id}/archive"), "", Some(&t))).await.expect("r").status(),
+            app.clone()
+                .oneshot(req("POST", &format!("/requirement/{id}/archive"), "", Some(&t)))
+                .await
+                .expect("r")
+                .status(),
             StatusCode::OK
         );
         assert_eq!(
-            app.clone().oneshot(req("POST", &format!("/requirement/{id}/version"), r#"{"description":"v3"}"#, Some(&t))).await.expect("r").status(),
+            app.clone()
+                .oneshot(req(
+                    "POST",
+                    &format!("/requirement/{id}/version"),
+                    r#"{"description":"v3"}"#,
+                    Some(&t)
+                ))
+                .await
+                .expect("r")
+                .status(),
             StatusCode::CONFLICT
         );
         assert_eq!(
-            app.clone().oneshot(req("DELETE", &format!("/requirement/{id}"), "", Some(&t))).await.expect("r").status(),
+            app.clone()
+                .oneshot(req("DELETE", &format!("/requirement/{id}"), "", Some(&t)))
+                .await
+                .expect("r")
+                .status(),
             StatusCode::NO_CONTENT
         );
         assert_eq!(
-            app.oneshot(req("GET", &format!("/requirement/{id}"), "", Some(&t))).await.expect("r").status(),
+            app.oneshot(req("GET", &format!("/requirement/{id}"), "", Some(&t)))
+                .await
+                .expect("r")
+                .status(),
             StatusCode::NOT_FOUND
         );
     }
@@ -645,19 +747,41 @@ mod tests {
                 .collect()
         };
 
-        let d = body_json(app.clone().oneshot(req("GET", &format!("/requirement/{id}"), "", Some(&t))).await.expect("r")).await;
+        let d = body_json(
+            app.clone()
+                .oneshot(req("GET", &format!("/requirement/{id}"), "", Some(&t)))
+                .await
+                .expect("r"),
+        )
+        .await;
         assert_eq!(d["baselineVersion"], 1);
-        assert_eq!(crits_at_baseline(&d), vec!["登录成功跳转首页".to_string(), "错误密码拒绝并提示".to_string()]);
+        assert_eq!(
+            crits_at_baseline(&d),
+            vec!["登录成功跳转首页".to_string(), "错误密码拒绝并提示".to_string()]
+        );
 
         app.clone()
-            .oneshot(req("POST", &format!("/requirement/{id}/version"), r#"{"description":"v2","acceptanceCriteria":["新增验收点"]}"#, Some(&t)))
+            .oneshot(req(
+                "POST",
+                &format!("/requirement/{id}/version"),
+                r#"{"description":"v2","acceptanceCriteria":["新增验收点"]}"#,
+                Some(&t),
+            ))
             .await
             .expect("r");
         app.clone()
-            .oneshot(req("PUT", &format!("/requirement/{id}/baseline"), r#"{"version":2}"#, Some(&t)))
+            .oneshot(req(
+                "PUT",
+                &format!("/requirement/{id}/baseline"),
+                r#"{"version":2}"#,
+                Some(&t),
+            ))
             .await
             .expect("r");
-        let d2 = body_json(app.oneshot(req("GET", &format!("/requirement/{id}"), "", Some(&t))).await.expect("r")).await;
+        let d2 = body_json(
+            app.oneshot(req("GET", &format!("/requirement/{id}"), "", Some(&t))).await.expect("r"),
+        )
+        .await;
         assert_eq!(d2["baselineVersion"], 2);
         assert_eq!(crits_at_baseline(&d2), vec!["新增验收点".to_string()]);
     }
@@ -667,19 +791,38 @@ mod tests {
         let (app, t) = app_with("REQUIREMENT:READ+ADD+UPDATE").await;
         let r = app
             .clone()
-            .oneshot(req("POST", "/requirement", r#"{"projectId":"p1","title":"登录","acceptanceCriteria":["c1"]}"#, Some(&t)))
+            .oneshot(req(
+                "POST",
+                "/requirement",
+                r#"{"projectId":"p1","title":"登录","acceptanceCriteria":["c1"]}"#,
+                Some(&t),
+            ))
             .await
             .expect("r");
         let id = body_json(r).await["id"].as_str().expect("id").to_string();
 
         assert_eq!(
-            app.clone().oneshot(req("POST", &format!("/requirement/{id}/review/reject"), r#"{"comment":"   "}"#, Some(&t))).await.expect("r").status(),
+            app.clone()
+                .oneshot(req(
+                    "POST",
+                    &format!("/requirement/{id}/review/reject"),
+                    r#"{"comment":"   "}"#,
+                    Some(&t)
+                ))
+                .await
+                .expect("r")
+                .status(),
             StatusCode::BAD_REQUEST
         );
 
         let rj = app
             .clone()
-            .oneshot(req("POST", &format!("/requirement/{id}/review/reject"), r#"{"comment":"验收标准不完整"}"#, Some(&t)))
+            .oneshot(req(
+                "POST",
+                &format!("/requirement/{id}/review/reject"),
+                r#"{"comment":"验收标准不完整"}"#,
+                Some(&t),
+            ))
             .await
             .expect("r");
         assert_eq!(rj.status(), StatusCode::OK);
@@ -689,7 +832,12 @@ mod tests {
 
         let sb = app
             .clone()
-            .oneshot(req("PUT", &format!("/requirement/{id}/baseline"), r#"{"version":1}"#, Some(&t)))
+            .oneshot(req(
+                "PUT",
+                &format!("/requirement/{id}/baseline"),
+                r#"{"version":1}"#,
+                Some(&t),
+            ))
             .await
             .expect("r");
         let v2 = body_json(sb).await;
@@ -697,7 +845,15 @@ mod tests {
         assert!(v2.get("reviewComment").is_none());
 
         assert_eq!(
-            app.oneshot(req("POST", &format!("/requirement/{id}/review/reject"), r#"{"comment":"x"}"#, Some(&t))).await.expect("r").status(),
+            app.oneshot(req(
+                "POST",
+                &format!("/requirement/{id}/review/reject"),
+                r#"{"comment":"x"}"#,
+                Some(&t)
+            ))
+            .await
+            .expect("r")
+            .status(),
             StatusCode::CONFLICT
         );
     }
@@ -706,12 +862,24 @@ mod tests {
     async fn create_requires_token_and_permission() {
         let (app, _t) = app_with("REQUIREMENT:READ").await;
         assert_eq!(
-            app.clone().oneshot(req("POST", "/requirement", r#"{"projectId":"p1","title":"x"}"#, None)).await.expect("r").status(),
+            app.clone()
+                .oneshot(req("POST", "/requirement", r#"{"projectId":"p1","title":"x"}"#, None))
+                .await
+                .expect("r")
+                .status(),
             StatusCode::UNAUTHORIZED
         );
         let (app2, t2) = app_with("REQUIREMENT:READ").await;
         assert_eq!(
-            app2.oneshot(req("POST", "/requirement", r#"{"projectId":"p1","title":"x"}"#, Some(&t2))).await.expect("r").status(),
+            app2.oneshot(req(
+                "POST",
+                "/requirement",
+                r#"{"projectId":"p1","title":"x"}"#,
+                Some(&t2)
+            ))
+            .await
+            .expect("r")
+            .status(),
             StatusCode::FORBIDDEN
         );
         let _ = app;
@@ -722,7 +890,11 @@ mod tests {
         let (app, t) = app_with("REQUIREMENT:READ+ADD").await;
         let body = r#"{"projectId":"p1","title":"唯一"}"#;
         assert_eq!(
-            app.clone().oneshot(req("POST", "/requirement", body, Some(&t))).await.expect("r").status(),
+            app.clone()
+                .oneshot(req("POST", "/requirement", body, Some(&t)))
+                .await
+                .expect("r")
+                .status(),
             StatusCode::CREATED
         );
         assert_eq!(

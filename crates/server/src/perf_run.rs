@@ -55,10 +55,8 @@ pub fn router(
     envs: Arc<dyn EnvironmentPort>,
 ) -> Router {
     let store = PgPerfReportStore::new(pool);
-    let sink: Option<Arc<dyn SampleSink>> = std::env::var("PERF_SAMPLES_PATH")
-        .ok()
-        .filter(|p| !p.trim().is_empty())
-        .and_then(|root| {
+    let sink: Option<Arc<dyn SampleSink>> =
+        std::env::var("PERF_SAMPLES_PATH").ok().filter(|p| !p.trim().is_empty()).and_then(|root| {
             if let Err(e) = std::fs::create_dir_all(&root) {
                 tracing::warn!("PERF_SAMPLES_PATH 不可建({root}): {e};样本下沉关闭");
                 return None;
@@ -153,7 +151,11 @@ struct RunPerfResponse {
     responses((status = 200, body = RunPerfResponse), (status = 400), (status = 403)),
     security(("bearer" = []))
 )]
-async fn run_perf(user: AuthUser, State(st): State<PerfState>, Json(req): Json<RunPerfBody>) -> Response {
+async fn run_perf(
+    user: AuthUser,
+    State(st): State<PerfState>,
+    Json(req): Json<RunPerfBody>,
+) -> Response {
     if !user.can("PERF", "EXECUTE") {
         return (StatusCode::FORBIDDEN, "permission denied").into_response();
     }
@@ -166,7 +168,9 @@ async fn run_perf(user: AuthUser, State(st): State<PerfState>, Json(req): Json<R
     };
     let plan = match plan {
         Ok(p) => p,
-        Err(e) => return (StatusCode::BAD_REQUEST, format!("invalid load plan: {e}")).into_response(),
+        Err(e) => {
+            return (StatusCode::BAD_REQUEST, format!("invalid load plan: {e}")).into_response()
+        }
     };
     // 时长模式记 0(实际完成数见 total),否则按 iterations。
     let planned_iterations = if req.duration_ms.is_some() { 0 } else { req.iterations as i32 };
@@ -239,11 +243,19 @@ async fn run_perf(user: AuthUser, State(st): State<PerfState>, Json(req): Json<R
 
     let report_id = match st
         .store
-        .create(&req.project_id, &report_method, &report_url, req.concurrency as i32, planned_iterations)
+        .create(
+            &req.project_id,
+            &report_method,
+            &report_url,
+            req.concurrency as i32,
+            planned_iterations,
+        )
         .await
     {
         Ok(id) => id,
-        Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "create report error").into_response(),
+        Err(_) => {
+            return (StatusCode::INTERNAL_SERVER_ERROR, "create report error").into_response()
+        }
     };
 
     let store = st.store.clone();
@@ -264,7 +276,8 @@ async fn run_perf(user: AuthUser, State(st): State<PerfState>, Json(req): Json<R
         let _ = store.finish(&id, &report, samples_key.as_deref()).await;
     });
 
-    (StatusCode::OK, Json(RunPerfResponse { report_id, status: "RUNNING".to_string() })).into_response()
+    (StatusCode::OK, Json(RunPerfResponse { report_id, status: "RUNNING".to_string() }))
+        .into_response()
 }
 
 #[utoipa::path(
@@ -429,11 +442,19 @@ async fn run_scenario_perf(
 
     let report_id = match st
         .store
-        .create(&req.project_id, "SCENARIO", &scenario_name, req.concurrency as i32, planned_iterations)
+        .create(
+            &req.project_id,
+            "SCENARIO",
+            &scenario_name,
+            req.concurrency as i32,
+            planned_iterations,
+        )
         .await
     {
         Ok(id) => id,
-        Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "create report error").into_response(),
+        Err(_) => {
+            return (StatusCode::INTERNAL_SERVER_ERROR, "create report error").into_response()
+        }
     };
 
     let store = st.store.clone();

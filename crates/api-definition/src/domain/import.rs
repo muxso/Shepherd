@@ -46,15 +46,18 @@ impl ImportFormat {
     }
 }
 
-pub fn parse_import(format: ImportFormat, doc: &Value) -> Result<Vec<ImportedApi>, ApiDefinitionError> {
+pub fn parse_import(
+    format: ImportFormat,
+    doc: &Value,
+) -> Result<Vec<ImportedApi>, ApiDefinitionError> {
     match format {
         ImportFormat::Openapi => parse_openapi(doc),
         ImportFormat::Postman => super::import_postman::parse_postman(doc),
         ImportFormat::Har => super::import_har::parse_har(doc),
         ImportFormat::Jmeter => {
-            let xml = doc
-                .as_str()
-                .ok_or_else(|| ApiDefinitionError::BadImport("jmeter 导入需原始 .jmx 文本".into()))?;
+            let xml = doc.as_str().ok_or_else(|| {
+                ApiDefinitionError::BadImport("jmeter 导入需原始 .jmx 文本".into())
+            })?;
             super::import_jmeter::parse_jmeter(xml)
         }
         ImportFormat::Metersphere => super::import_metersphere::parse_metersphere(doc),
@@ -249,11 +252,8 @@ fn kv_from_param(doc: &Value, p: &Value) -> Option<(String, Value)> {
         .unwrap_or_else(|| "string".to_string());
     let d = p.get("description").and_then(|v| v.as_str()).unwrap_or("");
     let prefix = if required { "必填" } else { "选填" };
-    let desc = if d.is_empty() {
-        format!("{prefix} · {ty}")
-    } else {
-        format!("{prefix} · {ty} · {d}")
-    };
+    let desc =
+        if d.is_empty() { format!("{prefix} · {ty}") } else { format!("{prefix} · {ty} · {d}") };
     Some((loc, json!({ "name": name, "value": "", "desc": desc })))
 }
 
@@ -480,7 +480,10 @@ mod tests {
         });
         let apis = parse_openapi(&doc).expect("parsed");
         assert_eq!(apis.len(), 3);
-        assert_eq!((apis[0].name.as_str(), apis[0].method.as_str(), apis[0].path.as_str()), ("登录", "POST", "/login"));
+        assert_eq!(
+            (apis[0].name.as_str(), apis[0].method.as_str(), apis[0].path.as_str()),
+            ("登录", "POST", "/login")
+        );
         assert_eq!(apis[1].name, "listUsers");
         assert_eq!(apis[1].method, "GET");
         assert_eq!(apis[2].name, "POST /users");

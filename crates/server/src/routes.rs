@@ -45,7 +45,8 @@ pub fn assemble(groups: Vec<RouteGroup>) -> Router {
         tracing::info!(domain = g.label, "mounted route group");
         app = app.merge(g.router);
     }
-    let metrics_route = Router::new().route("/metrics", get(metrics::handler)).with_state(metrics.clone());
+    let metrics_route =
+        Router::new().route("/metrics", get(metrics::handler)).with_state(metrics.clone());
     let mut app = app
         .merge(metrics_route)
         .layer(TraceLayer::new_for_http())

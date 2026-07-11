@@ -35,9 +35,11 @@ mod tests {
 
     #[tokio::test]
     async fn resolves_oidc_user_names() {
-        let dir = SpyDirectory::new()
-            .with_user("u1", "Alice", UserSource::Oidc)
-            .with_user("u2", "Bob", UserSource::Local);
+        let dir = SpyDirectory::new().with_user("u1", "Alice", UserSource::Oidc).with_user(
+            "u2",
+            "Bob",
+            UserSource::Local,
+        );
         let uc = ResolveUserNamesUseCase::new(Arc::new(dir));
         let names = uc.execute(&ids(&["u1", "u2"])).await;
         assert_eq!(names.get("u1"), Some(&"Alice".to_string()));

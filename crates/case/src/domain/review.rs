@@ -139,9 +139,7 @@ pub fn aggregate_status(setting: ReviewSetting, history: &[ReviewRecord]) -> Rev
 
 pub fn review_completed(statuses: &[ReviewStatus]) -> bool {
     !statuses.is_empty()
-        && statuses
-            .iter()
-            .all(|s| matches!(s, ReviewStatus::Pass | ReviewStatus::UnPass))
+        && statuses.iter().all(|s| matches!(s, ReviewStatus::Pass | ReviewStatus::UnPass))
 }
 
 #[cfg(test)]
@@ -177,10 +175,7 @@ mod tests {
 
     #[test]
     fn un_pass_requires_content() {
-        assert_eq!(
-            Verdict::new("u1", UnPass, None),
-            Err(ReviewError::ContentRequiredForUnPass)
-        );
+        assert_eq!(Verdict::new("u1", UnPass, None), Err(ReviewError::ContentRequiredForUnPass));
         assert_eq!(
             Verdict::new("u1", UnPass, Some("   ")),
             Err(ReviewError::ContentRequiredForUnPass)

@@ -43,8 +43,9 @@ impl ParquetObjectStoreSink {
         ]));
         let latency = UInt64Array::from(samples.iter().map(|s| s.latency_ms).collect::<Vec<_>>());
         let success = BooleanArray::from(samples.iter().map(|s| s.success).collect::<Vec<_>>());
-        let batch = RecordBatch::try_new(schema.clone(), vec![Arc::new(latency), Arc::new(success)])
-            .map_err(be)?;
+        let batch =
+            RecordBatch::try_new(schema.clone(), vec![Arc::new(latency), Arc::new(success)])
+                .map_err(be)?;
 
         let mut buf: Vec<u8> = Vec::new();
         let mut writer = ArrowWriter::try_new(&mut buf, schema, None).map_err(be)?;
@@ -89,13 +90,8 @@ mod tests {
         let key = sink.write("run-1", &samples).await.expect("write");
         assert_eq!(key, "perf/run_id=run-1/part-0.parquet");
 
-        let bytes = store
-            .get(&ObjPath::from(key))
-            .await
-            .expect("get")
-            .bytes()
-            .await
-            .expect("bytes");
+        let bytes =
+            store.get(&ObjPath::from(key)).await.expect("get").bytes().await.expect("bytes");
         let reader = ParquetRecordBatchReaderBuilder::try_new(bytes)
             .expect("builder")
             .build()
@@ -107,16 +103,8 @@ mod tests {
         for batch in reader {
             let batch = batch.expect("batch");
             rows += batch.num_rows();
-            let lat = batch
-                .column(0)
-                .as_any()
-                .downcast_ref::<UInt64Array>()
-                .expect("u64 col");
-            let suc = batch
-                .column(1)
-                .as_any()
-                .downcast_ref::<BooleanArray>()
-                .expect("bool col");
+            let lat = batch.column(0).as_any().downcast_ref::<UInt64Array>().expect("u64 col");
+            let suc = batch.column(1).as_any().downcast_ref::<BooleanArray>().expect("bool col");
             for i in 0..batch.num_rows() {
                 max_latency = max_latency.max(lat.value(i));
                 if !suc.value(i) {

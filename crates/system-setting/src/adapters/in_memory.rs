@@ -54,12 +54,25 @@ impl UserRepository for InMemoryUserRepository {
     }
 
     async fn get(&self, id: &str) -> Result<Option<User>, RepoError> {
-        Ok(self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner).users.iter().find(|u| u.id == id).cloned())
+        Ok(self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .users
+            .iter()
+            .find(|u| u.id == id)
+            .cloned())
     }
 
     async fn count_active(&self) -> Result<u64, RepoError> {
-        Ok(self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner).users.iter().filter(|u| u.occupies_email()).count()
-            as u64)
+        Ok(self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .users
+            .iter()
+            .filter(|u| u.occupies_email())
+            .count() as u64)
     }
 
     async fn list_active(&self, offset: u64, limit: u32) -> Result<Vec<User>, RepoError> {

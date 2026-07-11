@@ -178,6 +178,9 @@ mod tests {
         p.submit_design("d").expect("submit");
         assert!(matches!(p.request_changes(""), Err(ProposalError::CommentRequired)));
         p.approve().expect("approve");
-        assert!(matches!(p.submit_design("d2"), Err(ProposalError::Transition { from: "APPROVED", .. })));
+        assert!(matches!(
+            p.submit_design("d2"),
+            Err(ProposalError::Transition { from: "APPROVED", .. })
+        ));
     }
 }

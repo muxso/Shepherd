@@ -23,18 +23,13 @@ fn map_err(e: sqlx::Error) -> RepoError {
 
 fn headers_to_json(headers: &[(String, String)]) -> serde_json::Value {
     serde_json::Value::Array(
-        headers
-            .iter()
-            .map(|(n, v)| serde_json::json!({"name": n, "value": v}))
-            .collect(),
+        headers.iter().map(|(n, v)| serde_json::json!({"name": n, "value": v})).collect(),
     )
 }
 
 fn vars_to_json(vars: &BTreeMap<String, String>) -> serde_json::Value {
     serde_json::Value::Object(
-        vars.iter()
-            .map(|(k, v)| (k.clone(), serde_json::Value::String(v.clone())))
-            .collect(),
+        vars.iter().map(|(k, v)| (k.clone(), serde_json::Value::String(v.clone()))).collect(),
     )
 }
 
@@ -144,11 +139,13 @@ impl EnvironmentRepository for PgEnvironmentRepository {
     }
 
     async fn delete(&self, id: &str) -> Result<bool, RepoError> {
-        let res = sqlx::query("UPDATE ms_environment SET deleted = true WHERE id = $1 AND deleted = false")
-            .bind(id)
-            .execute(&self.pool)
-            .await
-            .map_err(map_err)?;
+        let res = sqlx::query(
+            "UPDATE ms_environment SET deleted = true WHERE id = $1 AND deleted = false",
+        )
+        .bind(id)
+        .execute(&self.pool)
+        .await
+        .map_err(map_err)?;
         Ok(res.rows_affected() > 0)
     }
 }

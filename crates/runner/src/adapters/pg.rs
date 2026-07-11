@@ -91,10 +91,7 @@ impl RunnerAgentStore for PgRunnerAgentStore {
         }
     }
 
-    async fn agents_for_protocol(
-        &self,
-        protocol: &str,
-    ) -> Result<Vec<AgentTarget>, PortError> {
+    async fn agents_for_protocol(&self, protocol: &str) -> Result<Vec<AgentTarget>, PortError> {
         let rows = sqlx::query(
             "SELECT id, name, base_url, token FROM ms_runner_agent \
              WHERE enabled AND NOT deleted AND $1 = ANY(protocols) ORDER BY name",
@@ -118,14 +115,13 @@ impl RunnerAgentStore for PgRunnerAgentStore {
     }
 
     async fn set_protocols(&self, id: &str, protocols: &[String]) -> Result<bool, PortError> {
-        let res = sqlx::query(
-            "UPDATE ms_runner_agent SET protocols = $2 WHERE id = $1 AND NOT deleted",
-        )
-        .bind(id)
-        .bind(protocols)
-        .execute(&self.pool)
-        .await
-        .map_err(map_err)?;
+        let res =
+            sqlx::query("UPDATE ms_runner_agent SET protocols = $2 WHERE id = $1 AND NOT deleted")
+                .bind(id)
+                .bind(protocols)
+                .execute(&self.pool)
+                .await
+                .map_err(map_err)?;
         Ok(res.rows_affected() > 0)
     }
 }
@@ -199,8 +195,14 @@ impl ExecutionStore for PgExecutionStore {
                     method: r.try_get("method").map_err(map_err)?,
                     url: r.try_get("url").map_err(map_err)?,
                     outcome: r.try_get("outcome").map_err(map_err)?,
-                    status: r.try_get::<Option<i32>, _>("status").map_err(map_err)?.map(|s| s as u16),
-                    elapsed_ms: r.try_get::<Option<i64>, _>("elapsed_ms").map_err(map_err)?.map(|e| e as u64),
+                    status: r
+                        .try_get::<Option<i32>, _>("status")
+                        .map_err(map_err)?
+                        .map(|s| s as u16),
+                    elapsed_ms: r
+                        .try_get::<Option<i64>, _>("elapsed_ms")
+                        .map_err(map_err)?
+                        .map(|e| e as u64),
                     failures,
                     executed_at: r.try_get("executed_at").map_err(map_err)?,
                 })
@@ -227,17 +229,19 @@ fn method_of(m: &str) -> HttpMethod {
 #[async_trait]
 impl CaseSpecSource for PgCaseSpecSource {
     async fn spec_of(&self, case_id: &str) -> Result<Option<CaseSpec>, PortError> {
-        let row = sqlx::query("SELECT method, url, body, assertions FROM ms_api_case WHERE id = $1")
-            .bind(case_id)
-            .fetch_optional(&self.pool)
-            .await
-            .map_err(map_err)?;
+        let row =
+            sqlx::query("SELECT method, url, body, assertions FROM ms_api_case WHERE id = $1")
+                .bind(case_id)
+                .fetch_optional(&self.pool)
+                .await
+                .map_err(map_err)?;
         let Some(r) = row else { return Ok(None) };
         let method: String = r.try_get("method").map_err(map_err)?;
         let url: String = r.try_get("url").map_err(map_err)?;
         let body: Option<String> = r.try_get("body").map_err(map_err)?;
         let assertions_json: serde_json::Value = r.try_get("assertions").map_err(map_err)?;
-        let assertions: Vec<Assertion> = serde_json::from_value(assertions_json).unwrap_or_default();
+        let assertions: Vec<Assertion> =
+            serde_json::from_value(assertions_json).unwrap_or_default();
         Ok(Some(CaseSpec {
             request: RequestSpec { method: method_of(&method), url, headers: vec![], body },
             assertions,

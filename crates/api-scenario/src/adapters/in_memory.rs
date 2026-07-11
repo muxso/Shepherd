@@ -38,10 +38,7 @@ impl InMemoryApiScenarioRepository {
 
 #[async_trait]
 impl ApiScenarioRepository for InMemoryApiScenarioRepository {
-    async fn insert_scenario(
-        &self,
-        s: &NewApiScenario,
-    ) -> Result<ApiScenario, RepoError> {
+    async fn insert_scenario(&self, s: &NewApiScenario) -> Result<ApiScenario, RepoError> {
         let mut state = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         state.scn_seq += 1;
         let scenario = ApiScenario {
@@ -78,17 +75,20 @@ impl ApiScenarioRepository for InMemoryApiScenarioRepository {
     }
 
     async fn get_scenario(&self, id: &str) -> Result<Option<ApiScenario>, RepoError> {
-        Ok(self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner).scenarios.get(id).map(|r| {
-            let mut s = r.scenario.clone();
-            s.steps.sort_by_key(|st| st.order);
-            s
-        }))
+        Ok(self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .scenarios
+            .get(id)
+            .map(|r| {
+                let mut s = r.scenario.clone();
+                s.steps.sort_by_key(|st| st.order);
+                s
+            }))
     }
 
-    async fn list_scenarios(
-        &self,
-        project_id: &str,
-    ) -> Result<Vec<ApiScenario>, RepoError> {
+    async fn list_scenarios(&self, project_id: &str) -> Result<Vec<ApiScenario>, RepoError> {
         let state = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let mut out: Vec<ApiScenario> = state
             .scenarios
@@ -133,10 +133,20 @@ impl ApiScenarioRepository for InMemoryApiScenarioRepository {
     }
 
     async fn delete_scenario(&self, id: &str) -> Result<bool, RepoError> {
-        Ok(self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner).scenarios.remove(id).is_some())
+        Ok(self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .scenarios
+            .remove(id)
+            .is_some())
     }
 
-    async fn reorder_steps(&self, scenario_id: &str, ordered_ids: &[String]) -> Result<(), RepoError> {
+    async fn reorder_steps(
+        &self,
+        scenario_id: &str,
+        ordered_ids: &[String],
+    ) -> Result<(), RepoError> {
         let mut state = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let Some(rec) = state.scenarios.get_mut(scenario_id) else { return Ok(()) };
         for (i, id) in ordered_ids.iter().enumerate() {

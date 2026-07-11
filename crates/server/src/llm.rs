@@ -123,7 +123,12 @@ impl LlmClient {
         ))
     }
 
-    async fn complete(&self, prompt_version: &str, system: &str, user: &str) -> Result<String, String> {
+    async fn complete(
+        &self,
+        prompt_version: &str,
+        system: &str,
+        user: &str,
+    ) -> Result<String, String> {
         let started = Instant::now();
         let mut delay = Duration::from_millis(200);
         let mut last = String::new();
@@ -227,8 +232,14 @@ impl LlmClient {
                     .to_string();
                 let u = val.get("usage");
                 let usage = Usage {
-                    input: u.and_then(|u| u.get("prompt_tokens")).and_then(|v| v.as_u64()).unwrap_or(0),
-                    output: u.and_then(|u| u.get("completion_tokens")).and_then(|v| v.as_u64()).unwrap_or(0),
+                    input: u
+                        .and_then(|u| u.get("prompt_tokens"))
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(0),
+                    output: u
+                        .and_then(|u| u.get("completion_tokens"))
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(0),
                 };
                 Ok((text, usage))
             }
@@ -253,8 +264,14 @@ impl LlmClient {
                 }
                 let u = val.get("usage");
                 let usage = Usage {
-                    input: u.and_then(|u| u.get("input_tokens")).and_then(|v| v.as_u64()).unwrap_or(0),
-                    output: u.and_then(|u| u.get("output_tokens")).and_then(|v| v.as_u64()).unwrap_or(0),
+                    input: u
+                        .and_then(|u| u.get("input_tokens"))
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(0),
+                    output: u
+                        .and_then(|u| u.get("output_tokens"))
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(0),
                 };
                 Ok((text, usage))
             }
@@ -295,7 +312,11 @@ impl Planner for LlmPlanner {
             "需求标题: {}\n描述: {}\n验收标准:\n{}",
             spec.title,
             spec.description,
-            spec.acceptance_criteria.iter().map(|c| format!("- {c}")).collect::<Vec<_>>().join("\n")
+            spec.acceptance_criteria
+                .iter()
+                .map(|c| format!("- {c}"))
+                .collect::<Vec<_>>()
+                .join("\n")
         );
         let text = self
             .client
@@ -358,7 +379,8 @@ impl Judge for LlmJudge {
 }
 
 const EXECUTOR_PROMPT_V: &str = "executor-v1";
-const EXECUTOR_SYSTEM: &str = "你是编码执行者。依据任务(及行为规范)产出变更摘要与一个引用(分支/PR)。\
+const EXECUTOR_SYSTEM: &str =
+    "你是编码执行者。依据任务(及行为规范)产出变更摘要与一个引用(分支/PR)。\
 只输出 JSON {\"reference\":string,\"summary\":string}。不要输出 JSON 以外的任何内容。";
 
 #[derive(Deserialize)]
@@ -405,7 +427,9 @@ impl AgentExecutor for LlmExecutor {
             .map_err(|e| ExecError::Backend(format!("交付物解析失败: {e}")))?;
         let reference =
             if d.reference.is_empty() { format!("llm://{}", spec.task_id) } else { d.reference };
-        if let Ok(ev) = NewExecutionEvent::new(EventKind::Decision, "LLM 执行者产出交付物", Some(&d.summary)) {
+        if let Ok(ev) =
+            NewExecutionEvent::new(EventKind::Decision, "LLM 执行者产出交付物", Some(&d.summary))
+        {
             sink.emit(ev).await;
         }
         Ok(DispatchOutcome::Completed {
@@ -491,7 +515,16 @@ mod tests {
     async fn llm_judge_parses_verdict() {
         let url = serve_openai("{\"passed\": false, \"reason\": \"缺测试\"}").await;
         let j = LlmJudge::new(LlmClient::new(url, None, "m"));
-        let v = j.judge(&["登录成功".into()], &DeliverableView { kind: "DIFF".into(), reference: "b".into(), summary: "s".into() }).await;
+        let v = j
+            .judge(
+                &["登录成功".into()],
+                &DeliverableView {
+                    kind: "DIFF".into(),
+                    reference: "b".into(),
+                    summary: "s".into(),
+                },
+            )
+            .await;
         assert!(!v.passed);
         assert_eq!(v.reason, "缺测试");
     }
@@ -525,14 +558,28 @@ mod tests {
     async fn llm_judge_fail_closed_on_bad_json() {
         let url = serve_openai("not json at all").await;
         let j = LlmJudge::new(LlmClient::new(url, None, "m"));
-        let v = j.judge(&[], &DeliverableView { kind: "DIFF".into(), reference: "b".into(), summary: "s".into() }).await;
+        let v = j
+            .judge(
+                &[],
+                &DeliverableView {
+                    kind: "DIFF".into(),
+                    reference: "b".into(),
+                    summary: "s".into(),
+                },
+            )
+            .await;
         assert!(!v.passed);
     }
 
     #[tokio::test]
     async fn anthropic_wire_parses_content_blocks() {
-        let url = serve_anthropic("[{\"title\":\"实现登录\",\"acceptanceCriteria\":[],\"dependencies\":[]}]").await;
-        let p = LlmPlanner::new(LlmClient::new(url, Some("k".into()), "claude-opus-4-8").with_wire(Wire::Anthropic));
+        let url = serve_anthropic(
+            "[{\"title\":\"实现登录\",\"acceptanceCriteria\":[],\"dependencies\":[]}]",
+        )
+        .await;
+        let p = LlmPlanner::new(
+            LlmClient::new(url, Some("k".into()), "claude-opus-4-8").with_wire(Wire::Anthropic),
+        );
         let tasks = p.plan(&spec()).await.expect("plan");
         assert_eq!(tasks[0].title, "实现登录");
     }
@@ -541,13 +588,22 @@ mod tests {
     async fn anthropic_refusal_is_fail_closed() {
         let app = Router::new().route(
             "/v1/messages",
-            post(|| async {
-                Json(json!({ "content": [], "stop_reason": "refusal" }))
-            }),
+            post(|| async { Json(json!({ "content": [], "stop_reason": "refusal" })) }),
         );
         let url = spawn(app, "/v1/messages").await;
-        let j = LlmJudge::new(LlmClient::new(url, Some("k".into()), "claude-opus-4-8").with_wire(Wire::Anthropic));
-        let v = j.judge(&[], &DeliverableView { kind: "DIFF".into(), reference: "b".into(), summary: "s".into() }).await;
+        let j = LlmJudge::new(
+            LlmClient::new(url, Some("k".into()), "claude-opus-4-8").with_wire(Wire::Anthropic),
+        );
+        let v = j
+            .judge(
+                &[],
+                &DeliverableView {
+                    kind: "DIFF".into(),
+                    reference: "b".into(),
+                    summary: "s".into(),
+                },
+            )
+            .await;
         assert!(!v.passed);
         assert!(v.reason.contains("refusal"), "got: {}", v.reason);
     }
@@ -571,7 +627,16 @@ mod tests {
         );
         let url = spawn(app, "/v1/chat/completions").await;
         let j = LlmJudge::new(LlmClient::new(url, None, "m"));
-        let v = j.judge(&[], &DeliverableView { kind: "DIFF".into(), reference: "b".into(), summary: "s".into() }).await;
+        let v = j
+            .judge(
+                &[],
+                &DeliverableView {
+                    kind: "DIFF".into(),
+                    reference: "b".into(),
+                    summary: "s".into(),
+                },
+            )
+            .await;
         assert!(v.passed, "should have retried past the 503: {}", v.reason);
         assert_eq!(calls.load(Ordering::SeqCst), 2, "one failure + one success");
     }

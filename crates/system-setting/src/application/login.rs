@@ -43,7 +43,12 @@ impl LoginUseCase {
 
     /// 本地口令优先;不符且配置了外部目录时回退到目录绑定。
     /// 未知用户一律 `InvalidCredentials`,既不枚举也不自动开户。
-    async fn authenticated(&self, username: &str, password: &str, cred: &UserCredential) -> Result<bool, AuthError> {
+    async fn authenticated(
+        &self,
+        username: &str,
+        password: &str,
+        cred: &UserCredential,
+    ) -> Result<bool, AuthError> {
         if self.hasher.verify(password, &cred.password_hash) {
             return Ok(true);
         }
@@ -182,8 +187,10 @@ mod tests {
 
     #[tokio::test]
     async fn directory_backend_error_is_distinct_from_bad_password() {
-        let (uc, _) =
-            uc_with_dir(repo_with_admin(), StubDirectory(Err(AuthRepoError::Backend("ldap down".into()))));
+        let (uc, _) = uc_with_dir(
+            repo_with_admin(),
+            StubDirectory(Err(AuthRepoError::Backend("ldap down".into()))),
+        );
         assert!(matches!(uc.execute("admin", "x").await, Err(AuthError::Backend(_))));
     }
 

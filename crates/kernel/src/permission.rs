@@ -60,9 +60,7 @@ impl PermissionSet {
     pub fn allows(&self, resource: &str, action: &str) -> bool {
         let resource = resource.to_uppercase();
         let action = action.to_uppercase();
-        self.granted
-            .iter()
-            .any(|p| p.resource == resource && p.actions.contains(&action))
+        self.granted.iter().any(|p| p.resource == resource && p.actions.contains(&action))
     }
 
     /// 序列化回原始权限串(`RESOURCE:A+B`),用于持久化会话权限快照。

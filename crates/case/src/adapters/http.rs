@@ -1,5 +1,8 @@
 use std::sync::Arc;
 
+use crate::application::{SubmitReviewError, SubmitReviewUseCase};
+use crate::domain::{ReviewError, ReviewStatus, Verdict};
+use crate::ports::{RepoError, ReviewRepository};
 use axum::{
     extract::{FromRef, Path, Query, State},
     http::StatusCode,
@@ -7,9 +10,6 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
-use crate::application::{SubmitReviewError, SubmitReviewUseCase};
-use crate::domain::{ReviewError, ReviewStatus, Verdict};
-use crate::ports::{RepoError, ReviewRepository};
 use serde::{Deserialize, Serialize};
 use utoipa::{OpenApi, ToSchema};
 use webauth::{AuthUser, SessionStore};
@@ -27,7 +27,11 @@ impl FromRef<ReviewState> for Arc<dyn SessionStore> {
     }
 }
 
-pub fn router(use_case: SubmitReviewUseCase, repo: Arc<dyn ReviewRepository>, sessions: Arc<dyn SessionStore>) -> Router {
+pub fn router(
+    use_case: SubmitReviewUseCase,
+    repo: Arc<dyn ReviewRepository>,
+    sessions: Arc<dyn SessionStore>,
+) -> Router {
     Router::new()
         .route("/case-review", post(create_review).get(list_reviews))
         .route("/case-review/{review_id}", get(get_review))
@@ -38,7 +42,9 @@ pub fn router(use_case: SubmitReviewUseCase, repo: Arc<dyn ReviewRepository>, se
 fn repo_err(e: RepoError) -> Response {
     match e {
         RepoError::NotFound => (StatusCode::NOT_FOUND, "review not found").into_response(),
-        RepoError::Backend(_) => (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
+        RepoError::Backend(_) => {
+            (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response()
+        }
     }
 }
 
@@ -53,7 +59,9 @@ struct CreateReviewRequest {
     #[serde(default)]
     case_ids: Vec<String>,
 }
-fn one() -> usize { 1 }
+fn one() -> usize {
+    1
+}
 
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
@@ -95,12 +103,20 @@ struct ProjectQuery {
 }
 
 #[utoipa::path(post, path = "/case-review", tag = "case", request_body = CreateReviewRequest, responses((status = 201, body = CreatedReview)), security(("bearer" = [])))]
-async fn create_review(user: AuthUser, State(st): State<ReviewState>, Json(req): Json<CreateReviewRequest>) -> Response {
+async fn create_review(
+    user: AuthUser,
+    State(st): State<ReviewState>,
+    Json(req): Json<CreateReviewRequest>,
+) -> Response {
     if !user.can("CASE_REVIEW", "REVIEW") {
         return (StatusCode::FORBIDDEN, "permission denied").into_response();
     }
     let rule = if req.pass_rule.trim().is_empty() { "SINGLE" } else { req.pass_rule.trim() };
-    match st.repo.create_review(&req.project_id, rule, req.reviewer_count.max(1), &req.case_ids).await {
+    match st
+        .repo
+        .create_review(&req.project_id, rule, req.reviewer_count.max(1), &req.case_ids)
+        .await
+    {
         Ok(id) => (StatusCode::CREATED, Json(CreatedReview { id })).into_response(),
         Err(e) => repo_err(e),
     }
@@ -136,7 +152,11 @@ async fn get_review(State(st): State<ReviewState>, Path(review_id): Path<String>
                 id: d.id,
                 pass_rule: d.pass_rule,
                 reviewer_count: d.reviewer_count,
-                cases: d.cases.into_iter().map(|c| ReviewCaseStatusResponse { case_id: c.case_id, status: c.status }).collect(),
+                cases: d
+                    .cases
+                    .into_iter()
+                    .map(|c| ReviewCaseStatusResponse { case_id: c.case_id, status: c.status })
+                    .collect(),
             }),
         )
             .into_response(),
@@ -197,15 +217,17 @@ async fn submit_review(
 #[derive(OpenApi)]
 #[openapi(paths(submit_review, create_review, list_reviews, get_review), components(schemas(SubmitRequest, SubmitResponse, CreateReviewRequest, CreatedReview, ReviewSummaryResponse, ReviewCaseStatusResponse, ReviewDetailResponse)), tags((name = "case", description = "用例评审")))]
 struct ApiDoc;
-pub fn openapi() -> utoipa::openapi::OpenApi { ApiDoc::openapi() }
+pub fn openapi() -> utoipa::openapi::OpenApi {
+    ApiDoc::openapi()
+}
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use axum::body::Body;
-    use axum::http::Request;
     use crate::adapters::InMemoryReviewRepository;
     use crate::domain::{PassRule, ReviewSetting};
+    use axum::body::Body;
+    use axum::http::Request;
     use kernel::permission::PermissionSet;
     use std::sync::Arc;
     use tower::ServiceExt;
@@ -215,7 +237,8 @@ mod tests {
         let repo = Arc::new(InMemoryReviewRepository::new());
         repo.set_setting("rev1", ReviewSetting { rule, reviewer_count });
         let sessions = Arc::new(InMemorySessionStore::new());
-        let perms = PermissionSet::from_raw(["CASE_REVIEW:READ+REVIEW".to_string()]).expect("perms");
+        let perms =
+            PermissionSet::from_raw(["CASE_REVIEW:READ+REVIEW".to_string()]).expect("perms");
         let token = sessions.create("admin", perms, 3600).await.expect("token");
         let uc = SubmitReviewUseCase::new(repo.clone());
         (router(uc, repo, sessions), token)

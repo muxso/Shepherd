@@ -52,7 +52,16 @@ mod tests {
         let repo = Arc::new(InMemoryApiDefinitionRepository::new());
         let uc = CreateApiCaseUseCase::new(repo);
         let c = uc
-            .execute("p1", None, "用例", "post", "/login", None, serde_json::json!([]), serde_json::json!([]))
+            .execute(
+                "p1",
+                None,
+                "用例",
+                "post",
+                "/login",
+                None,
+                serde_json::json!([]),
+                serde_json::json!([]),
+            )
             .await
             .expect("ok");
         assert_eq!(c.project_id, "p1");
@@ -65,7 +74,16 @@ mod tests {
         let repo = Arc::new(InMemoryApiDefinitionRepository::new());
         let uc = CreateApiCaseUseCase::new(repo);
         let c = uc
-            .execute("p1", Some("def-1"), "用例", "GET", "/x", None, serde_json::json!([]), serde_json::json!([]))
+            .execute(
+                "p1",
+                Some("def-1"),
+                "用例",
+                "GET",
+                "/x",
+                None,
+                serde_json::json!([]),
+                serde_json::json!([]),
+            )
             .await
             .expect("ok");
         assert_eq!(c.api_definition_id, "def-1");
@@ -76,7 +94,16 @@ mod tests {
         let repo = Arc::new(InMemoryApiDefinitionRepository::new());
         let uc = CreateApiCaseUseCase::new(repo);
         let err = uc
-            .execute("p1", None, "用例", "GET", "/x", None, serde_json::json!({}), serde_json::json!([]))
+            .execute(
+                "p1",
+                None,
+                "用例",
+                "GET",
+                "/x",
+                None,
+                serde_json::json!({}),
+                serde_json::json!([]),
+            )
             .await
             .unwrap_err();
         assert_eq!(err, CreateApiCaseError::Validation(ApiDefinitionError::BadAssertions));

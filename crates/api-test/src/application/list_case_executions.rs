@@ -62,14 +62,9 @@ mod tests {
             offset: u64,
             limit: u32,
         ) -> Result<Vec<CaseExecutionRecord>, PortError> {
-            *self.last_window.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = Some((offset, limit));
-            Ok(self
-                .records
-                .iter()
-                .skip(offset as usize)
-                .take(limit as usize)
-                .cloned()
-                .collect())
+            *self.last_window.lock().unwrap_or_else(std::sync::PoisonError::into_inner) =
+                Some((offset, limit));
+            Ok(self.records.iter().skip(offset as usize).take(limit as usize).cloned().collect())
         }
     }
 
@@ -83,7 +78,10 @@ mod tests {
         assert_eq!(result.current, 2);
         assert_eq!(result.total_pages(), 3);
         assert_eq!(result.items.len(), 3);
-        assert_eq!(*fake.last_window.lock().unwrap_or_else(std::sync::PoisonError::into_inner), Some((3, 3)));
+        assert_eq!(
+            *fake.last_window.lock().unwrap_or_else(std::sync::PoisonError::into_inner),
+            Some((3, 3))
+        );
     }
 
     #[tokio::test]

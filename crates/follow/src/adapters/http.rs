@@ -73,8 +73,12 @@ struct MineResponse {
 
 fn svc_err(e: FollowServiceError) -> Response {
     match e {
-        FollowServiceError::Validation(_) => (StatusCode::BAD_REQUEST, "invalid follow payload").into_response(),
-        FollowServiceError::Repo(_) => (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
+        FollowServiceError::Validation(_) => {
+            (StatusCode::BAD_REQUEST, "invalid follow payload").into_response()
+        }
+        FollowServiceError::Repo(_) => {
+            (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response()
+        }
     }
 }
 
@@ -97,8 +101,13 @@ async fn status_payload(
 }
 
 #[utoipa::path(post, path = "/follow", tag = "follow", request_body = FollowBody, responses((status = 200, body = FollowStatus), (status = 400), (status = 401)), security(("bearer" = [])))]
-async fn follow(user: AuthUser, State(st): State<FollowState>, Json(b): Json<FollowBody>) -> Response {
-    if let Err(e) = st.svc.follow(&b.project_id, &b.entity_type, &b.entity_id, &user.user_id).await {
+async fn follow(
+    user: AuthUser,
+    State(st): State<FollowState>,
+    Json(b): Json<FollowBody>,
+) -> Response {
+    if let Err(e) = st.svc.follow(&b.project_id, &b.entity_type, &b.entity_id, &user.user_id).await
+    {
         return svc_err(e);
     }
     match status_payload(&st, &user.user_id, &b.project_id, &b.entity_type, &b.entity_id).await {
@@ -108,8 +117,14 @@ async fn follow(user: AuthUser, State(st): State<FollowState>, Json(b): Json<Fol
 }
 
 #[utoipa::path(delete, path = "/follow", tag = "follow", request_body = FollowBody, responses((status = 200, body = FollowStatus), (status = 400), (status = 401)), security(("bearer" = [])))]
-async fn unfollow(user: AuthUser, State(st): State<FollowState>, Json(b): Json<FollowBody>) -> Response {
-    if let Err(e) = st.svc.unfollow(&b.project_id, &b.entity_type, &b.entity_id, &user.user_id).await {
+async fn unfollow(
+    user: AuthUser,
+    State(st): State<FollowState>,
+    Json(b): Json<FollowBody>,
+) -> Response {
+    if let Err(e) =
+        st.svc.unfollow(&b.project_id, &b.entity_type, &b.entity_id, &user.user_id).await
+    {
         return svc_err(e);
     }
     match status_payload(&st, &user.user_id, &b.project_id, &b.entity_type, &b.entity_id).await {
@@ -119,7 +134,11 @@ async fn unfollow(user: AuthUser, State(st): State<FollowState>, Json(b): Json<F
 }
 
 #[utoipa::path(get, path = "/follow", tag = "follow", params(StatusQuery), responses((status = 200, body = FollowStatus), (status = 400), (status = 401)), security(("bearer" = [])))]
-async fn status(user: AuthUser, State(st): State<FollowState>, Query(q): Query<StatusQuery>) -> Response {
+async fn status(
+    user: AuthUser,
+    State(st): State<FollowState>,
+    Query(q): Query<StatusQuery>,
+) -> Response {
     match status_payload(&st, &user.user_id, &q.project_id, &q.entity_type, &q.entity_id).await {
         Ok(s) => (StatusCode::OK, Json(s)).into_response(),
         Err(e) => svc_err(e),
@@ -127,7 +146,11 @@ async fn status(user: AuthUser, State(st): State<FollowState>, Query(q): Query<S
 }
 
 #[utoipa::path(get, path = "/follow/mine", tag = "follow", params(MineQuery), responses((status = 200, body = MineResponse), (status = 400), (status = 401)), security(("bearer" = [])))]
-async fn mine(user: AuthUser, State(st): State<FollowState>, Query(q): Query<MineQuery>) -> Response {
+async fn mine(
+    user: AuthUser,
+    State(st): State<FollowState>,
+    Query(q): Query<MineQuery>,
+) -> Response {
     match st.svc.following_ids(&q.project_id, &user.user_id, q.entity_type.as_deref()).await {
         Ok(entity_ids) => (StatusCode::OK, Json(MineResponse { entity_ids })).into_response(),
         Err(e) => svc_err(e),
@@ -165,7 +188,8 @@ mod tests {
     }
 
     fn req(method: &str, uri: &str, body: &str, token: Option<&str>) -> Request<Body> {
-        let mut b = Request::builder().method(method).uri(uri).header("content-type", "application/json");
+        let mut b =
+            Request::builder().method(method).uri(uri).header("content-type", "application/json");
         if let Some(t) = token {
             b = b.header("authorization", format!("Bearer {t}"));
         }
@@ -213,7 +237,12 @@ mod tests {
     async fn follow_without_token_401() {
         let (app, _t) = app().await;
         let r = app
-            .oneshot(req("POST", "/follow", r#"{"projectId":"p1","entityType":"bug","entityId":"b1"}"#, None))
+            .oneshot(req(
+                "POST",
+                "/follow",
+                r#"{"projectId":"p1","entityType":"bug","entityId":"b1"}"#,
+                None,
+            ))
             .await
             .expect("r");
         assert_eq!(r.status(), StatusCode::UNAUTHORIZED);
@@ -223,7 +252,12 @@ mod tests {
     async fn follow_blank_entity_400() {
         let (app, t) = app().await;
         let r = app
-            .oneshot(req("POST", "/follow", r#"{"projectId":"p1","entityType":"bug","entityId":""}"#, Some(&t)))
+            .oneshot(req(
+                "POST",
+                "/follow",
+                r#"{"projectId":"p1","entityType":"bug","entityId":""}"#,
+                Some(&t),
+            ))
             .await
             .expect("r");
         assert_eq!(r.status(), StatusCode::BAD_REQUEST);

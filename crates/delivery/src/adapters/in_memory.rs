@@ -50,7 +50,14 @@ impl DeliveryRepository for InMemoryDeliveryRepository {
     }
 
     async fn get(&self, id: &str) -> Result<Option<DeliveryAttempt>, RepoError> {
-        Ok(self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner).attempts.iter().find(|a| a.id == id).cloned())
+        Ok(self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .attempts
+            .iter()
+            .find(|a| a.id == id)
+            .cloned())
     }
 
     async fn list_by_task(
@@ -113,9 +120,8 @@ impl DeliveryRepository for InMemoryDeliveryRepository {
         let created_of = |id: &str| -> i64 {
             st.created_at.iter().find(|(aid, _)| aid == id).map(|(_, c)| *c).unwrap_or(0)
         };
-        let event_count_of = |id: &str| -> i64 {
-            st.events.iter().filter(|(aid, _)| aid == id).count() as i64
-        };
+        let event_count_of =
+            |id: &str| -> i64 { st.events.iter().filter(|(aid, _)| aid == id).count() as i64 };
 
         let mut matched: Vec<TaskRow> = st
             .attempts

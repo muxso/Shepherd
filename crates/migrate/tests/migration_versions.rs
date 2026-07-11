@@ -25,8 +25,8 @@ fn sql_files() -> Vec<String> {
 fn migration_versions_are_unique() {
     let mut by_version: HashMap<u64, Vec<String>> = HashMap::new();
     for name in sql_files() {
-        let v = version_of(&name)
-            .unwrap_or_else(|| panic!("迁移文件缺少数字版本前缀(NNNN_…):{name}"));
+        let v =
+            version_of(&name).unwrap_or_else(|| panic!("迁移文件缺少数字版本前缀(NNNN_…):{name}"));
         by_version.entry(v).or_default().push(name);
     }
     let mut dups: Vec<_> = by_version

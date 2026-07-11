@@ -44,4 +44,3 @@ pub trait PasswordHasher: Send + Sync {
 pub trait DirectoryAuthenticator: Send + Sync {
     async fn authenticate(&self, username: &str, password: &str) -> Result<bool, AuthRepoError>;
 }
-

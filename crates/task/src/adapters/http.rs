@@ -10,8 +10,8 @@ use axum::{
     Json, Router,
 };
 use serde::{Deserialize, Serialize};
-use webauth::{AuthUser, SessionStore};
 use utoipa::{OpenApi, ToSchema};
+use webauth::{AuthUser, SessionStore};
 
 use crate::application::{
     BreakdownError, BreakdownUseCase, CreateDecompositionError, CreateDecompositionUseCase,
@@ -91,11 +91,19 @@ async fn breakdown_requirement(
     };
     match st.breakdown.execute(&spec).await {
         Ok(d) => (StatusCode::CREATED, Json(DecompositionResponse::from(&d))).into_response(),
-        Err(BreakdownError::EmptyRequirement) => (StatusCode::BAD_REQUEST, "requirement id required").into_response(),
-        Err(BreakdownError::AlreadyExists) => (StatusCode::CONFLICT, "decomposition already exists").into_response(),
-        Err(BreakdownError::Validation(_)) => (StatusCode::BAD_REQUEST, "invalid planned task").into_response(),
+        Err(BreakdownError::EmptyRequirement) => {
+            (StatusCode::BAD_REQUEST, "requirement id required").into_response()
+        }
+        Err(BreakdownError::AlreadyExists) => {
+            (StatusCode::CONFLICT, "decomposition already exists").into_response()
+        }
+        Err(BreakdownError::Validation(_)) => {
+            (StatusCode::BAD_REQUEST, "invalid planned task").into_response()
+        }
         Err(BreakdownError::Plan(_)) => (StatusCode::BAD_GATEWAY, "planner error").into_response(),
-        Err(BreakdownError::Repo(_)) => (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
+        Err(BreakdownError::Repo(_)) => {
+            (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response()
+        }
     }
 }
 
@@ -194,16 +202,26 @@ struct TaskCreated {
 
 fn cmd_err(e: TaskCmdError) -> Response {
     match e {
-        TaskCmdError::DecompositionNotFound => (StatusCode::NOT_FOUND, "decomposition not found").into_response(),
+        TaskCmdError::DecompositionNotFound => {
+            (StatusCode::NOT_FOUND, "decomposition not found").into_response()
+        }
         TaskCmdError::TaskNotFound => (StatusCode::NOT_FOUND, "task not found").into_response(),
-        TaskCmdError::Validation(_) => (StatusCode::BAD_REQUEST, "invalid task payload").into_response(),
+        TaskCmdError::Validation(_) => {
+            (StatusCode::BAD_REQUEST, "invalid task payload").into_response()
+        }
         TaskCmdError::Conflict(_) => (StatusCode::CONFLICT, "task state conflict").into_response(),
-        TaskCmdError::Repo(_) => (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
+        TaskCmdError::Repo(_) => {
+            (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response()
+        }
     }
 }
 
 #[utoipa::path(post, path = "/decomposition", tag = "task", request_body = CreateBody, responses((status = 201, body = DecompositionResponse), (status = 409)), security(("bearer" = [])))]
-async fn create_decomposition(user: AuthUser, State(st): State<TaskState>, Json(b): Json<CreateBody>) -> Response {
+async fn create_decomposition(
+    user: AuthUser,
+    State(st): State<TaskState>,
+    Json(b): Json<CreateBody>,
+) -> Response {
     if !user.can("TASK", "ADD") {
         return (StatusCode::FORBIDDEN, "permission denied").into_response();
     }
@@ -233,7 +251,8 @@ async fn get_decomposition(State(st): State<TaskState>, Path(id): Path<String>) 
 async fn ready_tasks(State(st): State<TaskState>, Path(id): Path<String>) -> Response {
     match st.admin.get(&id).await {
         Ok(d) => {
-            let ready: Vec<TaskResponse> = d.ready_tasks().into_iter().map(TaskResponse::from).collect();
+            let ready: Vec<TaskResponse> =
+                d.ready_tasks().into_iter().map(TaskResponse::from).collect();
             (StatusCode::OK, Json(ready)).into_response()
         }
         Err(e) => cmd_err(e),
@@ -250,7 +269,11 @@ async fn add_task(
     if !user.can("TASK", "ADD") {
         return (StatusCode::FORBIDDEN, "permission denied").into_response();
     }
-    match st.admin.add_task(&id, &b.title, &b.description, &b.acceptance_criteria, &b.dependencies, b.points).await {
+    match st
+        .admin
+        .add_task(&id, &b.title, &b.description, &b.acceptance_criteria, &b.dependencies, b.points)
+        .await
+    {
         Ok(task_id) => (StatusCode::CREATED, Json(TaskCreated { task_id })).into_response(),
         Err(e) => cmd_err(e),
     }
@@ -337,9 +360,9 @@ pub fn openapi() -> utoipa::openapi::OpenApi {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::adapters::InMemoryTaskRepository;
     use axum::body::Body;
     use axum::http::Request;
-    use crate::adapters::InMemoryTaskRepository;
     use kernel::permission::PermissionSet;
     use tower::ServiceExt;
     use webauth::testing::InMemorySessionStore;
@@ -362,7 +385,8 @@ mod tests {
     }
 
     fn req(method: &str, uri: &str, body: &str, token: Option<&str>) -> Request<Body> {
-        let mut b = Request::builder().method(method).uri(uri).header("content-type", "application/json");
+        let mut b =
+            Request::builder().method(method).uri(uri).header("content-type", "application/json");
         if let Some(t) = token {
             b = b.header("authorization", format!("Bearer {t}"));
         }
@@ -379,39 +403,86 @@ mod tests {
         let (app, t) = app_with("TASK:READ+ADD+EXECUTE+UPDATE").await;
         let r = app
             .clone()
-            .oneshot(req("POST", "/decomposition", r#"{"requirementId":"req1","requirementVersion":1}"#, Some(&t)))
+            .oneshot(req(
+                "POST",
+                "/decomposition",
+                r#"{"requirementId":"req1","requirementVersion":1}"#,
+                Some(&t),
+            ))
             .await
             .expect("r");
         assert_eq!(r.status(), StatusCode::CREATED);
         let did = json(r).await["id"].as_str().expect("id").to_string();
 
-        let ra = app.clone().oneshot(req("POST", &format!("/decomposition/{did}/task"), r#"{"title":"A","acceptanceCriteria":["a1"]}"#, Some(&t))).await.expect("r");
+        let ra = app
+            .clone()
+            .oneshot(req(
+                "POST",
+                &format!("/decomposition/{did}/task"),
+                r#"{"title":"A","acceptanceCriteria":["a1"]}"#,
+                Some(&t),
+            ))
+            .await
+            .expect("r");
         assert_eq!(ra.status(), StatusCode::CREATED);
         assert_eq!(json(ra).await["taskId"], "t1");
-        let rb = app.clone().oneshot(req("POST", &format!("/decomposition/{did}/task"), r#"{"title":"B","dependencies":["t1"]}"#, Some(&t))).await.expect("r");
+        let rb = app
+            .clone()
+            .oneshot(req(
+                "POST",
+                &format!("/decomposition/{did}/task"),
+                r#"{"title":"B","dependencies":["t1"]}"#,
+                Some(&t),
+            ))
+            .await
+            .expect("r");
         assert_eq!(json(rb).await["taskId"], "t2");
 
-        let ready = app.clone().oneshot(req("GET", &format!("/decomposition/{did}/ready"), "", Some(&t))).await.expect("r");
+        let ready = app
+            .clone()
+            .oneshot(req("GET", &format!("/decomposition/{did}/ready"), "", Some(&t)))
+            .await
+            .expect("r");
         let arr = json(ready).await;
         assert_eq!(arr.as_array().expect("arr").len(), 1);
         assert_eq!(arr[0]["id"], "t1");
 
         assert_eq!(
-            app.clone().oneshot(req("POST", &format!("/decomposition/{did}/task/t2/dispatch"), "", Some(&t))).await.expect("r").status(),
+            app.clone()
+                .oneshot(req(
+                    "POST",
+                    &format!("/decomposition/{did}/task/t2/dispatch"),
+                    "",
+                    Some(&t)
+                ))
+                .await
+                .expect("r")
+                .status(),
             StatusCode::CONFLICT
         );
 
-        for (uri, st) in [("dispatch", None), ("status", Some("RUNNING")), ("status", Some("DELIVERED")), ("status", Some("VERIFIED"))] {
+        for (uri, st) in [
+            ("dispatch", None),
+            ("status", Some("RUNNING")),
+            ("status", Some("DELIVERED")),
+            ("status", Some("VERIFIED")),
+        ] {
             let (path, body) = match st {
                 None => (format!("/decomposition/{did}/task/t1/dispatch"), String::new()),
-                Some(s) => (format!("/decomposition/{did}/task/t1/status"), format!(r#"{{"status":"{s}"}}"#)),
+                Some(s) => (
+                    format!("/decomposition/{did}/task/t1/status"),
+                    format!(r#"{{"status":"{s}"}}"#),
+                ),
             };
             let _ = uri;
             let resp = app.clone().oneshot(req("POST", &path, &body, Some(&t))).await.expect("r");
             assert_eq!(resp.status(), StatusCode::OK);
         }
 
-        let resp = app.oneshot(req("POST", &format!("/decomposition/{did}/task/t2/dispatch"), "", Some(&t))).await.expect("r");
+        let resp = app
+            .oneshot(req("POST", &format!("/decomposition/{did}/task/t2/dispatch"), "", Some(&t)))
+            .await
+            .expect("r");
         assert_eq!(resp.status(), StatusCode::OK);
         let v = json(resp).await;
         assert_eq!(v["tasks"][1]["status"], "DISPATCHED");
@@ -421,15 +492,48 @@ mod tests {
     async fn rbac_create_requires_add_dispatch_requires_execute() {
         let (app, _t) = app_with("TASK:READ").await;
         assert_eq!(
-            app.oneshot(req("POST", "/decomposition", r#"{"requirementId":"req1","requirementVersion":1}"#, None)).await.expect("r").status(),
+            app.oneshot(req(
+                "POST",
+                "/decomposition",
+                r#"{"requirementId":"req1","requirementVersion":1}"#,
+                None
+            ))
+            .await
+            .expect("r")
+            .status(),
             StatusCode::UNAUTHORIZED
         );
         let (app, t) = app_with("TASK:READ+ADD").await;
-        let r = app.clone().oneshot(req("POST", "/decomposition", r#"{"requirementId":"req1","requirementVersion":1}"#, Some(&t))).await.expect("r");
+        let r = app
+            .clone()
+            .oneshot(req(
+                "POST",
+                "/decomposition",
+                r#"{"requirementId":"req1","requirementVersion":1}"#,
+                Some(&t),
+            ))
+            .await
+            .expect("r");
         let did = json(r).await["id"].as_str().expect("id").to_string();
-        app.clone().oneshot(req("POST", &format!("/decomposition/{did}/task"), r#"{"title":"A"}"#, Some(&t))).await.expect("r");
+        app.clone()
+            .oneshot(req(
+                "POST",
+                &format!("/decomposition/{did}/task"),
+                r#"{"title":"A"}"#,
+                Some(&t),
+            ))
+            .await
+            .expect("r");
         assert_eq!(
-            app.oneshot(req("POST", &format!("/decomposition/{did}/task/t1/dispatch"), "", Some(&t))).await.expect("r").status(),
+            app.oneshot(req(
+                "POST",
+                &format!("/decomposition/{did}/task/t1/dispatch"),
+                "",
+                Some(&t)
+            ))
+            .await
+            .expect("r")
+            .status(),
             StatusCode::FORBIDDEN
         );
     }
@@ -453,7 +557,15 @@ mod tests {
     async fn breakdown_requires_add_permission() {
         let (app, t) = app_with("TASK:READ").await;
         assert_eq!(
-            app.oneshot(req("POST", "/decomposition/breakdown", r#"{"requirementId":"req1","requirementVersion":1,"title":"x"}"#, Some(&t))).await.expect("r").status(),
+            app.oneshot(req(
+                "POST",
+                "/decomposition/breakdown",
+                r#"{"requirementId":"req1","requirementVersion":1,"title":"x"}"#,
+                Some(&t)
+            ))
+            .await
+            .expect("r")
+            .status(),
             StatusCode::FORBIDDEN
         );
     }
@@ -463,7 +575,11 @@ mod tests {
         let (app, t) = app_with("TASK:READ+ADD").await;
         let body = r#"{"requirementId":"req1","requirementVersion":1}"#;
         assert_eq!(
-            app.clone().oneshot(req("POST", "/decomposition", body, Some(&t))).await.expect("r").status(),
+            app.clone()
+                .oneshot(req("POST", "/decomposition", body, Some(&t)))
+                .await
+                .expect("r")
+                .status(),
             StatusCode::CREATED
         );
         assert_eq!(

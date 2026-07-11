@@ -101,15 +101,17 @@ impl UserRepository for PgUserRepository {
     }
 
     async fn save(&self, user: &User) -> Result<(), RepoError> {
-        sqlx::query("UPDATE ms_user SET name = $2, email = $3, enable = $4, deleted = $5 WHERE id = $1")
-            .bind(&user.id)
-            .bind(&user.name)
-            .bind(user.email.as_str())
-            .bind(user.enable)
-            .bind(user.deleted)
-            .execute(&self.pool)
-            .await
-            .map_err(repo_err)?;
+        sqlx::query(
+            "UPDATE ms_user SET name = $2, email = $3, enable = $4, deleted = $5 WHERE id = $1",
+        )
+        .bind(&user.id)
+        .bind(&user.name)
+        .bind(user.email.as_str())
+        .bind(user.enable)
+        .bind(user.deleted)
+        .execute(&self.pool)
+        .await
+        .map_err(repo_err)?;
         Ok(())
     }
 }
@@ -125,7 +127,10 @@ impl PgUserDirectory {
         Self { pool }
     }
 
-    async fn query_names(&self, ids: &[String]) -> Result<BTreeMap<String, String>, DirectoryError> {
+    async fn query_names(
+        &self,
+        ids: &[String],
+    ) -> Result<BTreeMap<String, String>, DirectoryError> {
         let rows = sqlx::query("SELECT id, name FROM ms_user WHERE id = ANY($1)")
             .bind(ids)
             .fetch_all(&self.pool)
@@ -233,7 +238,9 @@ impl UserRoleQuery for PgUserRoleQuery {
         .map_err(auth_err)?;
         Ok(rows
             .iter()
-            .map(|r| (r.try_get("user_id").unwrap_or_default(), r.try_get("name").unwrap_or_default()))
+            .map(|r| {
+                (r.try_get("user_id").unwrap_or_default(), r.try_get("name").unwrap_or_default())
+            })
             .collect())
     }
 }
@@ -266,12 +273,13 @@ impl CredentialRepository for PgCredentialRepository {
         username: &str,
         password_hash: &str,
     ) -> Result<(), AuthRepoError> {
-        let res = sqlx::query("UPDATE ms_user_credential SET password_hash = $2 WHERE user_id = $1")
-            .bind(user_id)
-            .bind(password_hash)
-            .execute(&self.pool)
-            .await
-            .map_err(auth_err)?;
+        let res =
+            sqlx::query("UPDATE ms_user_credential SET password_hash = $2 WHERE user_id = $1")
+                .bind(user_id)
+                .bind(password_hash)
+                .execute(&self.pool)
+                .await
+                .map_err(auth_err)?;
         if res.rows_affected() == 0 {
             let perms: Vec<String> = [
                 "API_DEFINITION:READ",
@@ -326,13 +334,12 @@ impl SessionStore for PgSessionStore {
     }
 
     async fn get(&self, token: &str) -> Result<Option<Session>, AuthRepoError> {
-        let row = sqlx::query(
-            "SELECT user_id, permissions, expires_at FROM ms_session WHERE token = $1",
-        )
-        .bind(token)
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(auth_err)?;
+        let row =
+            sqlx::query("SELECT user_id, permissions, expires_at FROM ms_session WHERE token = $1")
+                .bind(token)
+                .fetch_optional(&self.pool)
+                .await
+                .map_err(auth_err)?;
         let Some(r) = row else { return Ok(None) };
         let expires_at_ms: i64 = r.try_get("expires_at").map_err(auth_err)?;
         if expires_at_ms <= now_ms() {
@@ -445,11 +452,12 @@ impl OrgRepository for PgOrgRepository {
     }
 
     async fn get(&self, id: &str) -> Result<Option<Organization>, OrgRepoError> {
-        let row = sqlx::query("SELECT id, name, enable, deleted FROM ms_organization WHERE id = $1")
-            .bind(id)
-            .fetch_optional(&self.pool)
-            .await
-            .map_err(org_err)?;
+        let row =
+            sqlx::query("SELECT id, name, enable, deleted FROM ms_organization WHERE id = $1")
+                .bind(id)
+                .fetch_optional(&self.pool)
+                .await
+                .map_err(org_err)?;
         row.as_ref().map(row_to_org).transpose()
     }
 
@@ -461,7 +469,11 @@ impl OrgRepository for PgOrgRepository {
         Ok(row.try_get::<i64, _>("n").map_err(org_err)?.max(0) as u64)
     }
 
-    async fn list_active(&self, offset: u64, limit: u32) -> Result<Vec<Organization>, OrgRepoError> {
+    async fn list_active(
+        &self,
+        offset: u64,
+        limit: u32,
+    ) -> Result<Vec<Organization>, OrgRepoError> {
         let rows = sqlx::query(
             "SELECT id, name, enable, deleted FROM ms_organization WHERE deleted = false \
              ORDER BY seq LIMIT $1 OFFSET $2",
@@ -475,14 +487,16 @@ impl OrgRepository for PgOrgRepository {
     }
 
     async fn save(&self, org: &Organization) -> Result<(), OrgRepoError> {
-        sqlx::query("UPDATE ms_organization SET name = $2, enable = $3, deleted = $4 WHERE id = $1")
-            .bind(&org.id)
-            .bind(&org.name)
-            .bind(org.enable)
-            .bind(org.deleted)
-            .execute(&self.pool)
-            .await
-            .map_err(org_err)?;
+        sqlx::query(
+            "UPDATE ms_organization SET name = $2, enable = $3, deleted = $4 WHERE id = $1",
+        )
+        .bind(&org.id)
+        .bind(&org.name)
+        .bind(org.enable)
+        .bind(org.deleted)
+        .execute(&self.pool)
+        .await
+        .map_err(org_err)?;
         Ok(())
     }
 }
@@ -643,7 +657,10 @@ mod tests {
         let url = std::env::var("DATABASE_URL").expect("set DATABASE_URL");
         let pool = PgPool::connect(&url).await.expect("connect");
         migrate::run(&pool).await.expect("migrate");
-        sqlx::raw_sql("TRUNCATE ms_organization RESTART IDENTITY").execute(&pool).await.expect("trunc");
+        sqlx::raw_sql("TRUNCATE ms_organization RESTART IDENTITY")
+            .execute(&pool)
+            .await
+            .expect("trunc");
 
         let repo = PgOrgRepository::new(pool);
         let o = repo.insert(&NewOrganization::new("Acme").expect("v")).await.expect("insert");

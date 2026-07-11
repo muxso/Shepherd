@@ -252,9 +252,10 @@ fn normalize_agent(t: &str) -> R<String> {
         "opencode" => Ok("OPENCODE".into()),
         // 品牌是一个词,但 claude-code 的写法会诱导 code-buddy,一并接受。
         "codebuddy" | "code_buddy" => Ok("CODEBUDDY".into()),
-        other => Err(
-            format!("未知 agent 类型: {other}(支持 claude-code | codex | opencode | codebuddy)").into()
-        ),
+        other => Err(format!(
+            "未知 agent 类型: {other}(支持 claude-code | codex | opencode | codebuddy)"
+        )
+        .into()),
     }
 }
 
@@ -1267,7 +1268,13 @@ fn render_table(items: &[Value]) {
         }
         return;
     }
-    let trunc = |s: String| if s.chars().count() > 40 { format!("{}…", s.chars().take(39).collect::<String>()) } else { s };
+    let trunc = |s: String| {
+        if s.chars().count() > 40 {
+            format!("{}…", s.chars().take(39).collect::<String>())
+        } else {
+            s
+        }
+    };
     let mut widths: Vec<usize> = cols.iter().map(|c| c.chars().count()).collect();
     let rows: Vec<Vec<String>> = items
         .iter()
@@ -1315,9 +1322,8 @@ fn status_assertions(expect_status: Option<u16>) -> Value {
 fn parse_headers(items: &[String]) -> R<Value> {
     let mut arr = Vec::with_capacity(items.len());
     for it in items {
-        let (name, value) = it
-            .split_once(':')
-            .ok_or_else(|| format!("--header 需 'Name: value' 格式:{it}"))?;
+        let (name, value) =
+            it.split_once(':').ok_or_else(|| format!("--header 需 'Name: value' 格式:{it}"))?;
         arr.push(json!({"name": name.trim(), "value": value.trim()}));
     }
     Ok(Value::Array(arr))
@@ -1387,13 +1393,11 @@ fn run(cli: Cli) -> R<()> {
                 std::fs::write(&path, contents)?;
                 println!("写入 {}", path.display());
             }
-            println!("下一步:编辑 requirements/example.md,然后 `shepherd login` 并按其中命令录入需求。");
+            println!(
+                "下一步:编辑 requirements/example.md,然后 `shepherd login` 并按其中命令录入需求。"
+            );
         }
-        Cmd::Login {
-            url,
-            user,
-            password,
-        } => {
+        Cmd::Login { url, user, password } => {
             let mut cfg = Config::load();
             cfg.url = url;
             let client = Client::new(cfg.clone())?;
@@ -1405,11 +1409,7 @@ fn run(cli: Cli) -> R<()> {
             let token = v["token"].as_str().ok_or("登录响应缺少 token")?;
             cfg.token = token.to_string();
             cfg.save()?;
-            println!(
-                "✅ 已登录 {} → 会话存于 {}",
-                cfg.url,
-                config_path().display()
-            );
+            println!("✅ 已登录 {} → 会话存于 {}", cfg.url, config_path().display());
         }
         Cmd::Agent { cmd } => match cmd {
             AgentCmd::Connect { kind } => {
@@ -1421,29 +1421,15 @@ fn run(cli: Cli) -> R<()> {
                 println!(
                     "✅ 已连接 agent: {executor}  服务 {} {}",
                     cfg.url,
-                    if healthy {
-                        "(可达)"
-                    } else {
-                        "(暂不可达)"
-                    }
+                    if healthy { "(可达)" } else { "(暂不可达)" }
                 );
             }
             AgentCmd::Status => {
                 let cfg = Config::load();
                 let healthy = Client::new(cfg.clone())?.get("/healthz", false).is_ok();
                 println!("服务  : {}", cfg.url);
-                println!(
-                    "登录  : {}",
-                    if cfg.token.is_empty() {
-                        "未登录"
-                    } else {
-                        "已登录"
-                    }
-                );
-                println!(
-                    "agent : {}",
-                    cfg.agent.as_deref().unwrap_or("(未连接,默认 CLAUDE_CODE)")
-                );
+                println!("登录  : {}", if cfg.token.is_empty() { "未登录" } else { "已登录" });
+                println!("agent : {}", cfg.agent.as_deref().unwrap_or("(未连接,默认 CLAUDE_CODE)"));
                 println!("健康  : {}", if healthy { "可达" } else { "不可达" });
             }
             AgentCmd::Disconnect => {
@@ -1501,30 +1487,17 @@ fn run(cli: Cli) -> R<()> {
         Cmd::Task { cmd } => {
             let c = Client::new(Config::load())?;
             match cmd {
-                TaskCmd::Add {
-                    decomp,
-                    title,
-                    deps,
-                } => pretty(&c.post(
+                TaskCmd::Add { decomp, title, deps } => pretty(&c.post(
                     &format!("/decomposition/{decomp}/task"),
                     json!({"title": title, "dependencies": deps}),
                     true,
                 )?),
             }
         }
-        Cmd::Dispatch {
-            decomp,
-            task,
-            title,
-            executor,
-            instructions,
-            project,
-            skills,
-        } => {
+        Cmd::Dispatch { decomp, task, title, executor, instructions, project, skills } => {
             let cfg = Config::load();
-            let exec = executor
-                .or_else(|| cfg.agent.clone())
-                .unwrap_or_else(|| "CLAUDE_CODE".into());
+            let exec =
+                executor.or_else(|| cfg.agent.clone()).unwrap_or_else(|| "CLAUDE_CODE".into());
             let c = Client::new(cfg)?;
             let mut instr = instructions;
             if !skills.is_empty() {
@@ -1599,7 +1572,9 @@ fn run(cli: Cli) -> R<()> {
                     true,
                 )?),
                 ProjectCmd::List { org, current, page_size } => pretty(&c.get(
-                    &format!("/project?organizationId={org}&current={current}&pageSize={page_size}"),
+                    &format!(
+                        "/project?organizationId={org}&current={current}&pageSize={page_size}"
+                    ),
                     true,
                 )?),
             }
@@ -1653,15 +1628,21 @@ fn run(cli: Cli) -> R<()> {
                     json!({"cron": cron}),
                     true,
                 )?),
-                PlanCmd::Runs { id } => {
-                    pretty(&c.get(&format!("/test-plan/{id}/runs"), true)?)
-                }
+                PlanCmd::Runs { id } => pretty(&c.get(&format!("/test-plan/{id}/runs"), true)?),
                 PlanCmd::LinkCase { id, case, name } => pretty(&c.post(
                     &format!("/test-plan/{id}/cases"),
                     json!({"caseId": case, "name": name}),
                     true,
                 )?),
-                PlanCmd::Result { id, case, status, latency_ms, status_code, body, assertions_json } => {
+                PlanCmd::Result {
+                    id,
+                    case,
+                    status,
+                    latency_ms,
+                    status_code,
+                    body,
+                    assertions_json,
+                } => {
                     let assertions: Value = match assertions_json {
                         Some(aj) => serde_json::from_str(&aj)
                             .map_err(|e| format!("--assertions-json 不是合法 JSON: {e}"))?,
@@ -1696,10 +1677,9 @@ fn run(cli: Cli) -> R<()> {
                 UserCmd::Create { name, email } => {
                     pretty(&c.post("/system/user", json!({"name": name, "email": email}), true)?)
                 }
-                UserCmd::List { current, page_size } => pretty(&c.get(
-                    &format!("/system/user?current={current}&pageSize={page_size}"),
-                    true,
-                )?),
+                UserCmd::List { current, page_size } => pretty(
+                    &c.get(&format!("/system/user?current={current}&pageSize={page_size}"), true)?,
+                ),
                 UserCmd::Get { id } => pretty(&c.get(&format!("/system/user/{id}"), true)?),
                 UserCmd::Update { id, name, email, disable } => pretty(&c.put(
                     &format!("/system/user/{id}"),
@@ -1707,10 +1687,9 @@ fn run(cli: Cli) -> R<()> {
                     true,
                 )?),
                 UserCmd::Delete { id } => pretty(&c.delete(&format!("/system/user/{id}"), true)?),
-                UserCmd::Names { ids } => pretty(&c.get(
-                    &format!("/system/user/names?ids={}", ids.join(",")),
-                    true,
-                )?),
+                UserCmd::Names { ids } => {
+                    pretty(&c.get(&format!("/system/user/names?ids={}", ids.join(",")), true)?)
+                }
             }
         }
         Cmd::Org { cmd } => {
@@ -1721,10 +1700,9 @@ fn run(cli: Cli) -> R<()> {
                     json!({"name": name, "enable": !disable}),
                     true,
                 )?),
-                OrgCmd::List { current, page_size } => pretty(&c.get(
-                    &format!("/organization?current={current}&pageSize={page_size}"),
-                    true,
-                )?),
+                OrgCmd::List { current, page_size } => pretty(
+                    &c.get(&format!("/organization?current={current}&pageSize={page_size}"), true)?,
+                ),
                 OrgCmd::Get { id } => pretty(&c.get(&format!("/organization/{id}"), true)?),
                 OrgCmd::Update { id, name, disable } => pretty(&c.put(
                     &format!("/organization/{id}"),
@@ -1742,10 +1720,9 @@ fn run(cli: Cli) -> R<()> {
                     json!({"name": name, "scope": scope, "permissions": permissions}),
                     true,
                 )?),
-                RoleCmd::List { current, page_size } => pretty(&c.get(
-                    &format!("/role?current={current}&pageSize={page_size}"),
-                    true,
-                )?),
+                RoleCmd::List { current, page_size } => {
+                    pretty(&c.get(&format!("/role?current={current}&pageSize={page_size}"), true)?)
+                }
                 RoleCmd::Get { id } => pretty(&c.get(&format!("/role/{id}"), true)?),
                 RoleCmd::Update { id, name, scope, permissions } => pretty(&c.put(
                     &format!("/role/{id}"),
@@ -1894,7 +1871,9 @@ fn run(cli: Cli) -> R<()> {
                            "headers": parse_headers(&headers)?, "variables": parse_vars(&vars)?}),
                     true,
                 )?),
-                EnvCmd::Delete { id } => pretty(&c.delete(&format!("/api/environment/{id}"), true)?),
+                EnvCmd::Delete { id } => {
+                    pretty(&c.delete(&format!("/api/environment/{id}"), true)?)
+                }
             }
         }
         Cmd::Fcase { cmd } => {
@@ -1985,18 +1964,29 @@ fn run(cli: Cli) -> R<()> {
         Cmd::Perf { cmd } => {
             let c = Client::new(Config::load())?;
             match cmd {
-                PerfCmd::Run { url, method, concurrency, iterations, duration_ms, expect_status, contains, equals, latency_under, protocol, query, project } => {
-                    pretty(&c.post(
-                        "/perf/run",
-                        json!({"url": url, "method": method, "concurrency": concurrency,
+                PerfCmd::Run {
+                    url,
+                    method,
+                    concurrency,
+                    iterations,
+                    duration_ms,
+                    expect_status,
+                    contains,
+                    equals,
+                    latency_under,
+                    protocol,
+                    query,
+                    project,
+                } => pretty(&c.post(
+                    "/perf/run",
+                    json!({"url": url, "method": method, "concurrency": concurrency,
                                "iterations": iterations, "durationMs": duration_ms,
                                "expectStatus": expect_status, "expectContains": contains,
                                "expectEquals": equals, "latencyUnderMs": latency_under,
                                "protocol": protocol, "query": query,
                                "projectId": project}),
-                        true,
-                    )?)
-                }
+                    true,
+                )?),
                 PerfCmd::Report { id } => pretty(&c.get(&format!("/perf/report/{id}"), true)?),
             }
         }
@@ -2131,22 +2121,14 @@ mod tests {
 
     #[test]
     fn url_join_trims_slash() {
-        let c = Client::new(Config {
-            url: "http://h:1/".into(),
-            token: "t".into(),
-            agent: None,
-        })
-        .expect("client");
+        let c = Client::new(Config { url: "http://h:1/".into(), token: "t".into(), agent: None })
+            .expect("client");
         assert_eq!(c.url("/x"), "http://h:1/x");
     }
 
     #[test]
     fn config_defaults_url_when_empty() {
-        let c = Config {
-            url: String::new(),
-            token: String::new(),
-            agent: None,
-        };
+        let c = Config { url: String::new(), token: String::new(), agent: None };
         assert!(c.url.is_empty());
     }
 

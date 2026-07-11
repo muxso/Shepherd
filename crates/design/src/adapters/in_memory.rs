@@ -34,7 +34,10 @@ impl ProposalRepository for InMemoryProposalRepository {
     }
 
     async fn save(&self, proposal: &Proposal) -> Result<(), RepoError> {
-        self.by_id.lock().unwrap_or_else(std::sync::PoisonError::into_inner).insert(proposal.id.clone(), proposal.clone());
+        self.by_id
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(proposal.id.clone(), proposal.clone());
         Ok(())
     }
 

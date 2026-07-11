@@ -167,7 +167,10 @@ mod tests {
         let (svc, id) = seeded().await;
         let r = svc.reject_review(&id, "  缺少异常路径  ").await.expect("reject");
         assert_eq!(r.review_comment.as_deref(), Some("缺少异常路径"));
-        assert_eq!(svc.get(&id).await.expect("get").review_comment.as_deref(), Some("缺少异常路径"));
+        assert_eq!(
+            svc.get(&id).await.expect("get").review_comment.as_deref(),
+            Some("缺少异常路径")
+        );
         let p = svc.set_baseline(&id, 1).await.expect("baseline");
         assert!(p.review_comment.is_none());
     }
@@ -194,17 +197,17 @@ mod tests {
     #[tokio::test]
     async fn set_baseline_unknown_version_404() {
         let (svc, id) = seeded().await;
-        assert_eq!(svc.set_baseline(&id, 9).await.unwrap_err(), RequirementCmdError::NoSuchVersion(9));
+        assert_eq!(
+            svc.set_baseline(&id, 9).await.unwrap_err(),
+            RequirementCmdError::NoSuchVersion(9)
+        );
     }
 
     #[tokio::test]
     async fn revise_archived_is_conflict() {
         let (svc, id) = seeded().await;
         svc.archive(&id).await.expect("archive");
-        assert_eq!(
-            svc.revise(&id, "v2", &[]).await.unwrap_err(),
-            RequirementCmdError::Archived
-        );
+        assert_eq!(svc.revise(&id, "v2", &[]).await.unwrap_err(), RequirementCmdError::Archived);
     }
 
     #[tokio::test]

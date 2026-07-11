@@ -83,7 +83,16 @@ mod tests {
             .expect("ok");
         let uc = AddApiMockUseCase::new(repo);
         let m = uc
-            .execute(&def.id, "挡板", serde_json::json!({}), 200, None, true, ApiMockExtras::default(), "")
+            .execute(
+                &def.id,
+                "挡板",
+                serde_json::json!({}),
+                200,
+                None,
+                true,
+                ApiMockExtras::default(),
+                "",
+            )
             .await
             .expect("ok");
         assert_eq!(m.response_status, 200);
@@ -95,7 +104,16 @@ mod tests {
         let repo = Arc::new(InMemoryApiDefinitionRepository::new());
         let uc = AddApiMockUseCase::new(repo);
         let err = uc
-            .execute("ghost", "挡板", serde_json::json!({}), 200, None, true, ApiMockExtras::default(), "")
+            .execute(
+                "ghost",
+                "挡板",
+                serde_json::json!({}),
+                200,
+                None,
+                true,
+                ApiMockExtras::default(),
+                "",
+            )
             .await
             .unwrap_err();
         assert_eq!(err, AddApiMockError::NotFound);
@@ -110,7 +128,16 @@ mod tests {
             .expect("ok");
         let uc = AddApiMockUseCase::new(repo);
         let err = uc
-            .execute(&def.id, "挡板", serde_json::json!({}), 700, None, true, ApiMockExtras::default(), "")
+            .execute(
+                &def.id,
+                "挡板",
+                serde_json::json!({}),
+                700,
+                None,
+                true,
+                ApiMockExtras::default(),
+                "",
+            )
             .await
             .unwrap_err();
         assert_eq!(err, AddApiMockError::Validation(ApiDefinitionError::BadResponseStatus(700)));

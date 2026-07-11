@@ -34,12 +34,7 @@ impl CreateRequirementUseCase {
     ) -> Result<Requirement, CreateRequirementError> {
         let new = NewRequirement::new(project_id, title, description, criteria)?;
 
-        if self
-            .repo
-            .find_active_by_title(&new.project_id, &new.title)
-            .await?
-            .is_some()
-        {
+        if self.repo.find_active_by_title(&new.project_id, &new.title).await?.is_some() {
             return Err(CreateRequirementError::TitleAlreadyExists);
         }
 

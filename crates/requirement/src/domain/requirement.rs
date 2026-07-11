@@ -439,7 +439,9 @@ mod tests {
 
     #[test]
     fn status_str_roundtrip() {
-        for s in [RequirementStatus::Draft, RequirementStatus::Baselined, RequirementStatus::Archived] {
+        for s in
+            [RequirementStatus::Draft, RequirementStatus::Baselined, RequirementStatus::Archived]
+        {
             assert_eq!(RequirementStatus::parse(s.as_str()), Some(s));
         }
         assert_eq!(RequirementStatus::parse("WAT"), None);

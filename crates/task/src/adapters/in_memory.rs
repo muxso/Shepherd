@@ -31,7 +31,8 @@ impl TaskRepository for InMemoryTaskRepository {
     ) -> Result<Decomposition, RepoError> {
         let mut st = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         st.seq += 1;
-        let d = Decomposition::new(&format!("decomp-{}", st.seq), requirement_id, requirement_version);
+        let d =
+            Decomposition::new(&format!("decomp-{}", st.seq), requirement_id, requirement_version);
         st.decompositions.push(d.clone());
         Ok(d)
     }
@@ -47,12 +48,21 @@ impl TaskRepository for InMemoryTaskRepository {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .decompositions
             .iter()
-            .find(|d| d.requirement_id == requirement_id && d.requirement_version == requirement_version)
+            .find(|d| {
+                d.requirement_id == requirement_id && d.requirement_version == requirement_version
+            })
             .cloned())
     }
 
     async fn get(&self, id: &str) -> Result<Option<Decomposition>, RepoError> {
-        Ok(self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner).decompositions.iter().find(|d| d.id == id).cloned())
+        Ok(self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .decompositions
+            .iter()
+            .find(|d| d.id == id)
+            .cloned())
     }
 
     async fn save(&self, decomposition: &Decomposition) -> Result<(), RepoError> {

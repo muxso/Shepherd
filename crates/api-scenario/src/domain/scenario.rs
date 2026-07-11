@@ -130,19 +130,14 @@ pub struct InlineRequest {
     pub processors: serde_json::Value,
 }
 
-const ALLOWED_METHODS: &[&str] =
-    &["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"];
+const ALLOWED_METHODS: &[&str] = &["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"];
 
 fn empty_arr() -> serde_json::Value {
     serde_json::Value::Array(vec![])
 }
 
 impl InlineRequest {
-    pub fn new(
-        method: &str,
-        url: &str,
-        body: Option<String>,
-    ) -> Result<Self, ScenarioError> {
+    pub fn new(method: &str, url: &str, body: Option<String>) -> Result<Self, ScenarioError> {
         let method = method.trim().to_uppercase();
         if !ALLOWED_METHODS.contains(&method.as_str()) {
             return Err(ScenarioError::InvalidMethod(method));
@@ -307,7 +302,11 @@ fn parse_plan_step(v: &serde_json::Value, depth: usize) -> Option<PlanStep> {
     }
 }
 
-fn parse_control_inner(control: ControlKind, payload: &serde_json::Value, depth: usize) -> PlanStep {
+fn parse_control_inner(
+    control: ControlKind,
+    payload: &serde_json::Value,
+    depth: usize,
+) -> PlanStep {
     let body = || -> Vec<PlanStep> {
         payload
             .get("children")
@@ -321,8 +320,16 @@ fn parse_control_inner(control: ControlKind, payload: &serde_json::Value, depth:
             body: body(),
         },
         ControlKind::If => PlanStep::If {
-            variable: payload.get("variable").and_then(|v| v.as_str()).unwrap_or_default().to_string(),
-            operator: payload.get("operator").and_then(|v| v.as_str()).unwrap_or("EQUALS").to_string(),
+            variable: payload
+                .get("variable")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_string(),
+            operator: payload
+                .get("operator")
+                .and_then(|v| v.as_str())
+                .unwrap_or("EQUALS")
+                .to_string(),
             value: payload.get("value").and_then(|v| v.as_str()).unwrap_or_default().to_string(),
             body: body(),
         },
@@ -506,7 +513,8 @@ mod tests {
         for _ in 0..50 {
             node = serde_json::json!({ "kind": "LOOP", "times": 1, "children": [node] });
         }
-        let plan = parse_control(ControlKind::Loop, &serde_json::json!({"times":1,"children":[node]}));
+        let plan =
+            parse_control(ControlKind::Loop, &serde_json::json!({"times":1,"children":[node]}));
         assert!(matches!(plan, PlanStep::Loop { .. }));
     }
 
@@ -556,10 +564,7 @@ mod tests {
             InlineRequest::new("FETCH", "http://x", None),
             Err(ScenarioError::InvalidMethod("FETCH".into()))
         );
-        assert_eq!(
-            InlineRequest::new("GET", "  ", None),
-            Err(ScenarioError::EmptyUrl)
-        );
+        assert_eq!(InlineRequest::new("GET", "  ", None), Err(ScenarioError::EmptyUrl));
     }
 
     #[test]
@@ -582,7 +587,12 @@ mod tests {
     #[test]
     fn new_step_validates_case_and_scenario_ids() {
         assert_eq!(
-            NewScenarioStep::new(0, StepKind::Case { case_id: " ".into() }, RefMode::Reference, None),
+            NewScenarioStep::new(
+                0,
+                StepKind::Case { case_id: " ".into() },
+                RefMode::Reference,
+                None
+            ),
             Err(ScenarioError::EmptyCaseId)
         );
         assert_eq!(
@@ -629,9 +639,8 @@ mod tests {
     #[test]
     fn inline_request_carries_assertions() {
         let a = serde_json::json!([{"type": "StatusIs", "args": 200}]);
-        let req = InlineRequest::new("GET", "http://x", None)
-            .expect("valid")
-            .with_assertions(a.clone());
+        let req =
+            InlineRequest::new("GET", "http://x", None).expect("valid").with_assertions(a.clone());
         assert_eq!(req.assertions, a);
         assert_eq!(
             InlineRequest::new("GET", "http://x", None).expect("valid").assertions,

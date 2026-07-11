@@ -56,7 +56,13 @@ impl GrpcPlugin {
     }
 
     async fn channel_for(&self, target: &str) -> Result<Channel, String> {
-        if let Some(c) = self.channels.lock().unwrap_or_else(std::sync::PoisonError::into_inner).get(target).cloned() {
+        if let Some(c) = self
+            .channels
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(target)
+            .cloned()
+        {
             return Ok(c);
         }
         let endpoint = Channel::from_shared(target.to_string()).map_err(|e| e.to_string())?;
@@ -93,7 +99,11 @@ impl ProtocolPlugin for GrpcPlugin {
         let path = match PathAndQuery::try_from(method) {
             Ok(p) => p,
             Err(e) => {
-                return RawProbe { transport_ok: false, error: Some(e.to_string()), ..Default::default() }
+                return RawProbe {
+                    transport_ok: false,
+                    error: Some(e.to_string()),
+                    ..Default::default()
+                }
             }
         };
         let channel = match self.channel_for(&req.target).await {

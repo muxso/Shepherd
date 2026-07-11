@@ -122,7 +122,8 @@ mod tests {
     #[tokio::test]
     async fn update_and_delete() {
         let (svc, repo) = seeded().await;
-        let id = CreateSkillUseCase::new(repo).execute("p1", "n", "", "i", &[]).await.expect("c").id;
+        let id =
+            CreateSkillUseCase::new(repo).execute("p1", "n", "", "i", &[]).await.expect("c").id;
         let u = svc.update(&id, "n2", "d", "i2", vec![], false).await.expect("u");
         assert_eq!(u.name, "n2");
         assert!(!u.enabled);

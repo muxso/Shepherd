@@ -46,17 +46,19 @@ impl EnvironmentRepository for InMemoryEnvironmentRepository {
     }
 
     async fn get(&self, id: &str) -> Result<Option<Environment>, RepoError> {
-        Ok(self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner).envs.get(id).cloned())
+        Ok(self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .envs
+            .get(id)
+            .cloned())
     }
 
     async fn list_by_project(&self, project_id: &str) -> Result<Vec<Environment>, RepoError> {
         let state = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-        let mut out: Vec<Environment> = state
-            .envs
-            .values()
-            .filter(|e| e.project_id == project_id)
-            .cloned()
-            .collect();
+        let mut out: Vec<Environment> =
+            state.envs.values().filter(|e| e.project_id == project_id).cloned().collect();
         out.sort_by(|a, b| a.id.cmp(&b.id));
         Ok(out)
     }
@@ -75,6 +77,12 @@ impl EnvironmentRepository for InMemoryEnvironmentRepository {
     }
 
     async fn delete(&self, id: &str) -> Result<bool, RepoError> {
-        Ok(self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner).envs.remove(id).is_some())
+        Ok(self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .envs
+            .remove(id)
+            .is_some())
     }
 }

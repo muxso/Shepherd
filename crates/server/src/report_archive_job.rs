@@ -50,17 +50,25 @@ pub fn spawn(pool: PgPool) {
                                         ok += 1;
                                     }
                                 }
-                                Err(e) => tracing::warn!(report = %id, error = %e, "report archive: write failed"),
+                                Err(e) => {
+                                    tracing::warn!(report = %id, error = %e, "report archive: write failed")
+                                }
                             },
                             // 报告无明细:直接打标,避免反复扫描。
                             Ok(None) => {
                                 let _ = reports.mark_archived(id).await;
                             }
-                            Err(e) => tracing::warn!(report = %id, error = %e, "report archive: read failed"),
+                            Err(e) => {
+                                tracing::warn!(report = %id, error = %e, "report archive: read failed")
+                            }
                         }
                     }
                     if ok > 0 {
-                        tracing::info!(archived = ok, total = ids.len(), "report archive: batch done");
+                        tracing::info!(
+                            archived = ok,
+                            total = ids.len(),
+                            "report archive: batch done"
+                        );
                     }
                 }
                 Ok(_) => {}

@@ -1,13 +1,5 @@
 use std::sync::Arc;
 
-use axum::{
-    extract::{FromRef, Path, Query, State},
-    http::StatusCode,
-    response::{IntoResponse, Response},
-    routing::{get, post},
-    Json, Router,
-};
-use kernel::page::PageRequest;
 use crate::application::{
     AddStepError, AddStepUseCase, CompileError, CompileScenarioUseCase, CopyScenarioError,
     CopyScenarioUseCase, CreateScenarioError, CreateScenarioUseCase, GetScenarioUseCase,
@@ -18,6 +10,14 @@ use crate::domain::{
     ScenarioExecution, ScenarioStep, StepKind,
 };
 use crate::ports::ApiScenarioRepository;
+use axum::{
+    extract::{FromRef, Path, Query, State},
+    http::StatusCode,
+    response::{IntoResponse, Response},
+    routing::{get, post},
+    Json, Router,
+};
+use kernel::page::PageRequest;
 use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, OpenApi, ToSchema};
 use webauth::{AuthUser, SessionStore};
@@ -41,10 +41,7 @@ impl FromRef<ScenarioAppState> for Arc<dyn SessionStore> {
     }
 }
 
-pub fn router(
-    repo: Arc<dyn ApiScenarioRepository>,
-    sessions: Arc<dyn SessionStore>,
-) -> Router {
+pub fn router(repo: Arc<dyn ApiScenarioRepository>, sessions: Arc<dyn SessionStore>) -> Router {
     let state = ScenarioAppState {
         create: CreateScenarioUseCase::new(repo.clone()),
         copy: CopyScenarioUseCase::new(repo.clone()),
@@ -58,7 +55,10 @@ pub fn router(
     };
     Router::new()
         .route("/api/scenario", post(create_scenario).get(list_scenarios))
-        .route("/api/scenario/{id}", get(get_scenario).patch(update_scenario).delete(delete_scenario))
+        .route(
+            "/api/scenario/{id}",
+            get(get_scenario).patch(update_scenario).delete(delete_scenario),
+        )
         .route("/api/scenario/{id}/copy", post(copy_scenario))
         .route("/api/scenario/{id}/step", post(add_step))
         .route("/api/scenario/{id}/step/{step_id}", axum::routing::delete(delete_step))
@@ -266,10 +266,7 @@ struct CompiledStepDto {
 
 impl From<&RunnableStep> for CompiledStepDto {
     fn from(r: &RunnableStep) -> Self {
-        Self {
-            case_id: r.case_id.clone(),
-            request: r.request.as_ref().map(InlineRequestDto::from),
-        }
+        Self { case_id: r.case_id.clone(), request: r.request.as_ref().map(InlineRequestDto::from) }
     }
 }
 
@@ -349,7 +346,8 @@ async fn create_scenario(
     }
     match st.create.execute(&req.project_id, &req.name, Some(&user.user_id)).await {
         Ok(s) => {
-            let _ = st.repo.record_change(&s.id, "CREATE", Some(&s.name), Some(&user.user_id)).await;
+            let _ =
+                st.repo.record_change(&s.id, "CREATE", Some(&s.name), Some(&user.user_id)).await;
             (StatusCode::CREATED, Json(ScenarioResponse::from(s))).into_response()
         }
         Err(CreateScenarioError::Validation(_)) => {
@@ -373,7 +371,10 @@ async fn copy_scenario(
     }
     match st.copy.execute(&id, req.name.as_deref(), Some(&user.user_id)).await {
         Ok(s) => {
-            let _ = st.repo.record_change(&s.id, "CREATE", Some(&format!("复制自 {id}")), Some(&user.user_id)).await;
+            let _ = st
+                .repo
+                .record_change(&s.id, "CREATE", Some(&format!("复制自 {id}")), Some(&user.user_id))
+                .await;
             (StatusCode::CREATED, Json(ScenarioResponse::from(s))).into_response()
         }
         Err(CopyScenarioError::NotFound) => {
@@ -437,7 +438,10 @@ async fn update_scenario(
     let meta = req.meta.clone().unwrap_or_else(|| serde_json::json!({}));
     match st.repo.update_scenario(&id, name, &status, &meta).await {
         Ok(Some(s)) => {
-            let _ = st.repo.record_change(&id, "UPDATE", Some("更新基本信息/参数/设置"), Some(&user.user_id)).await;
+            let _ = st
+                .repo
+                .record_change(&id, "UPDATE", Some("更新基本信息/参数/设置"), Some(&user.user_id))
+                .await;
             (StatusCode::OK, Json(ScenarioResponse::from(s))).into_response()
         }
         Ok(None) => (StatusCode::NOT_FOUND, "scenario not found").into_response(),
@@ -463,7 +467,10 @@ async fn reorder_steps(
     }
     match st.repo.reorder_steps(&id, &req.order).await {
         Ok(()) => {
-            let _ = st.repo.record_change(&id, "REORDER", Some("调整步骤顺序"), Some(&user.user_id)).await;
+            let _ = st
+                .repo
+                .record_change(&id, "REORDER", Some("调整步骤顺序"), Some(&user.user_id))
+                .await;
             StatusCode::NO_CONTENT.into_response()
         }
         Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
@@ -481,7 +488,10 @@ async fn delete_step(
     }
     match st.repo.delete_step(&id, &step_id).await {
         Ok(true) => {
-            let _ = st.repo.record_change(&id, "DELETE_STEP", Some("删除步骤"), Some(&user.user_id)).await;
+            let _ = st
+                .repo
+                .record_change(&id, "DELETE_STEP", Some("删除步骤"), Some(&user.user_id))
+                .await;
             StatusCode::NO_CONTENT.into_response()
         }
         Ok(false) => (StatusCode::NOT_FOUND, "step not found").into_response(),
@@ -500,7 +510,8 @@ async fn delete_scenario(
     }
     match st.repo.delete_scenario(&id).await {
         Ok(true) => {
-            let _ = st.repo.record_change(&id, "DELETE", Some("删除场景"), Some(&user.user_id)).await;
+            let _ =
+                st.repo.record_change(&id, "DELETE", Some("删除场景"), Some(&user.user_id)).await;
             StatusCode::NO_CONTENT.into_response()
         }
         Ok(false) => (StatusCode::NOT_FOUND, "scenario not found").into_response(),
@@ -570,7 +581,15 @@ async fn add_step(
 
     match st.add_step.execute(&id, &new_step).await {
         Ok(step) => {
-            let _ = st.repo.record_change(&id, "ADD_STEP", Some(&format!("新增步骤 {}", req.kind)), Some(&user.user_id)).await;
+            let _ = st
+                .repo
+                .record_change(
+                    &id,
+                    "ADD_STEP",
+                    Some(&format!("新增步骤 {}", req.kind)),
+                    Some(&user.user_id),
+                )
+                .await;
             (StatusCode::CREATED, Json(ScenarioStepResponse::from(&step))).into_response()
         }
         Err(AddStepError::NotFound) => {
@@ -583,15 +602,11 @@ async fn add_step(
 }
 
 #[utoipa::path(get, path = "/api/scenario/{id}/compile", tag = "api-scenario", params(("id" = String, Path)), responses((status = 200, body = CompileResultDto), (status = 404), (status = 409)))]
-async fn compile_scenario(
-    State(st): State<ScenarioAppState>,
-    Path(id): Path<String>,
-) -> Response {
+async fn compile_scenario(State(st): State<ScenarioAppState>, Path(id): Path<String>) -> Response {
     match st.compile.execute(&id).await {
         Ok(steps) => {
-            let body = CompileResultDto {
-                steps: steps.iter().map(CompiledStepDto::from).collect(),
-            };
+            let body =
+                CompileResultDto { steps: steps.iter().map(CompiledStepDto::from).collect() };
             (StatusCode::OK, Json(body)).into_response()
         }
         Err(CompileError::NotFound(_)) => {
@@ -690,9 +705,9 @@ pub fn openapi() -> utoipa::openapi::OpenApi {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::adapters::InMemoryApiScenarioRepository;
     use axum::body::Body;
     use axum::http::Request;
-    use crate::adapters::InMemoryApiScenarioRepository;
     use kernel::permission::PermissionSet;
     use std::sync::Arc;
     use tower::ServiceExt;
@@ -701,18 +716,15 @@ mod tests {
     async fn app() -> (Router, String) {
         let repo = Arc::new(InMemoryApiScenarioRepository::new());
         let sessions = Arc::new(InMemorySessionStore::new());
-        let perms =
-            PermissionSet::from_raw(["API_SCENARIO:READ+ADD".to_string()]).expect("perms");
+        let perms = PermissionSet::from_raw(["API_SCENARIO:READ+ADD".to_string()]).expect("perms");
         let token = sessions.create("admin", perms, 3600).await.expect("token");
         let r = router(repo, sessions);
         (r, token)
     }
 
     fn post(uri: &str, body: &str, token: Option<&str>) -> Request<Body> {
-        let mut b = Request::builder()
-            .method("POST")
-            .uri(uri)
-            .header("content-type", "application/json");
+        let mut b =
+            Request::builder().method("POST").uri(uri).header("content-type", "application/json");
         if let Some(t) = token {
             b = b.header("authorization", format!("Bearer {t}"));
         }
@@ -784,8 +796,7 @@ mod tests {
     async fn list_scenarios_open_200() {
         let (app, t) = app().await;
         create_scenario_id(&app, &t).await;
-        let resp =
-            app.oneshot(get_req("/api/scenario?projectId=p1")).await.expect("resp");
+        let resp = app.oneshot(get_req("/api/scenario?projectId=p1")).await.expect("resp");
         assert_eq!(resp.status(), StatusCode::OK);
         let v = json_body(resp).await;
         assert_eq!(v.as_array().expect("array").len(), 1);
@@ -803,8 +814,7 @@ mod tests {
             ))
             .await
             .expect("resp");
-        let resp =
-            app.oneshot(get_req(&format!("/api/scenario/{id}"))).await.expect("resp");
+        let resp = app.oneshot(get_req(&format!("/api/scenario/{id}"))).await.expect("resp");
         assert_eq!(resp.status(), StatusCode::OK);
         let v = json_body(resp).await;
         assert_eq!(v["steps"][0]["kind"], "CASE");
@@ -907,10 +917,8 @@ mod tests {
     #[tokio::test]
     async fn copy_missing_scenario_404() {
         let (app, t) = app().await;
-        let resp = app
-            .oneshot(post("/api/scenario/ghost/copy", "{}", Some(&t)))
-            .await
-            .expect("resp");
+        let resp =
+            app.oneshot(post("/api/scenario/ghost/copy", "{}", Some(&t))).await.expect("resp");
         assert_eq!(resp.status(), StatusCode::NOT_FOUND);
     }
 
@@ -921,10 +929,8 @@ mod tests {
         let perms = PermissionSet::from_raw(["API_SCENARIO:READ".to_string()]).expect("perms");
         let token = sessions.create("u", perms, 3600).await.expect("token");
         let app = router(repo, sessions);
-        let resp = app
-            .oneshot(post("/api/scenario/any/copy", "{}", Some(&token)))
-            .await
-            .expect("resp");
+        let resp =
+            app.oneshot(post("/api/scenario/any/copy", "{}", Some(&token))).await.expect("resp");
         assert_eq!(resp.status(), StatusCode::FORBIDDEN);
     }
 
@@ -940,10 +946,8 @@ mod tests {
             ))
             .await
             .expect("resp");
-        let resp = app
-            .oneshot(get_req(&format!("/api/scenario/{id}/compile")))
-            .await
-            .expect("resp");
+        let resp =
+            app.oneshot(get_req(&format!("/api/scenario/{id}/compile"))).await.expect("resp");
         assert_eq!(resp.status(), StatusCode::OK);
         let v = json_body(resp).await;
         assert_eq!(v["steps"][0]["caseId"], "case-1");
@@ -961,18 +965,15 @@ mod tests {
             ))
             .await
             .expect("resp");
-        let resp = app
-            .oneshot(get_req(&format!("/api/scenario/{id}/compile")))
-            .await
-            .expect("resp");
+        let resp =
+            app.oneshot(get_req(&format!("/api/scenario/{id}/compile"))).await.expect("resp");
         assert_eq!(resp.status(), StatusCode::CONFLICT);
     }
 
     #[tokio::test]
     async fn compile_missing_scenario_404() {
         let (app, _t) = app().await;
-        let resp =
-            app.oneshot(get_req("/api/scenario/ghost/compile")).await.expect("resp");
+        let resp = app.oneshot(get_req("/api/scenario/ghost/compile")).await.expect("resp");
         assert_eq!(resp.status(), StatusCode::NOT_FOUND);
     }
 
@@ -1029,10 +1030,7 @@ mod tests {
     #[tokio::test]
     async fn list_executions_empty_ok() {
         let (app, _repo) = app_with_repo().await;
-        let resp = app
-            .oneshot(get_req("/api/scenario/scn-x/executions"))
-            .await
-            .expect("resp");
+        let resp = app.oneshot(get_req("/api/scenario/scn-x/executions")).await.expect("resp");
         assert_eq!(resp.status(), StatusCode::OK);
         let v = json_body(resp).await;
         assert_eq!(v["total"], 0);

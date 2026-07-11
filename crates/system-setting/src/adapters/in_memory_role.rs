@@ -4,7 +4,9 @@ use std::sync::{Arc, Mutex};
 use async_trait::async_trait;
 
 use crate::domain::{NewRole, Role};
-use crate::ports::{AuthRepoError, RoleRepoError, RoleRepository, UserRoleQuery, UserRoleRepository};
+use crate::ports::{
+    AuthRepoError, RoleRepoError, RoleRepository, UserRoleQuery, UserRoleRepository,
+};
 
 #[derive(Default)]
 struct RoleState {
@@ -39,7 +41,14 @@ impl RoleRepository for InMemoryRoleRepository {
     }
 
     async fn get(&self, id: &str) -> Result<Option<Role>, RoleRepoError> {
-        Ok(self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner).roles.iter().find(|r| r.id == id).cloned())
+        Ok(self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .roles
+            .iter()
+            .find(|r| r.id == id)
+            .cloned())
     }
 
     async fn count(&self) -> Result<u64, RoleRepoError> {
@@ -68,7 +77,11 @@ impl RoleRepository for InMemoryRoleRepository {
     }
 
     async fn delete(&self, id: &str) -> Result<(), RoleRepoError> {
-        self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner).roles.retain(|r| r.id != id);
+        self.state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .roles
+            .retain(|r| r.id != id);
         Ok(())
     }
 }
@@ -88,12 +101,18 @@ impl InMemoryUserRoleRepository {
 #[async_trait]
 impl UserRoleRepository for InMemoryUserRoleRepository {
     async fn grant(&self, user_id: &str, role_id: &str) -> Result<(), RoleRepoError> {
-        self.grants.lock().unwrap_or_else(std::sync::PoisonError::into_inner).insert((user_id.to_string(), role_id.to_string()));
+        self.grants
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert((user_id.to_string(), role_id.to_string()));
         Ok(())
     }
 
     async fn revoke(&self, user_id: &str, role_id: &str) -> Result<(), RoleRepoError> {
-        self.grants.lock().unwrap_or_else(std::sync::PoisonError::into_inner).remove(&(user_id.to_string(), role_id.to_string()));
+        self.grants
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .remove(&(user_id.to_string(), role_id.to_string()));
         Ok(())
     }
 

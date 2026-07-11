@@ -1,9 +1,7 @@
 use std::collections::HashSet;
 use std::sync::Arc;
 
-use crate::domain::{
-    flatten_step, parse_control, PlanStep, RunnableStep, ScenarioError, StepKind,
-};
+use crate::domain::{flatten_step, parse_control, PlanStep, RunnableStep, ScenarioError, StepKind};
 use crate::ports::{ApiScenarioRepository, RepoError};
 
 use thiserror::Error;
@@ -33,10 +31,7 @@ impl CompileScenarioUseCase {
         Self { repo }
     }
 
-    pub async fn execute(
-        &self,
-        scenario_id: &str,
-    ) -> Result<Vec<RunnableStep>, CompileError> {
+    pub async fn execute(&self, scenario_id: &str) -> Result<Vec<RunnableStep>, CompileError> {
         let mut visited = HashSet::new();
         self.compile_inner(scenario_id, &mut visited, 0).await
     }

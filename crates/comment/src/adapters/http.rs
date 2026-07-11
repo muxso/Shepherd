@@ -160,7 +160,8 @@ mod tests {
     async fn app() -> (Router, String) {
         let repo = Arc::new(InMemoryCommentRepository::new());
         let sessions = Arc::new(InMemorySessionStore::new());
-        let perms = PermissionSet::from_raw(["COMMENT:READ+ADD+DELETE".to_string()]).expect("perms");
+        let perms =
+            PermissionSet::from_raw(["COMMENT:READ+ADD+DELETE".to_string()]).expect("perms");
         let token = sessions.create("alice", perms, 3600).await.expect("token");
         let r = router(
             AddCommentUseCase::new(repo.clone()),
@@ -172,10 +173,8 @@ mod tests {
     }
 
     fn post(uri: &str, body: &str, token: Option<&str>) -> Request<Body> {
-        let mut b = Request::builder()
-            .method("POST")
-            .uri(uri)
-            .header("content-type", "application/json");
+        let mut b =
+            Request::builder().method("POST").uri(uri).header("content-type", "application/json");
         if let Some(t) = token {
             b = b.header("authorization", format!("Bearer {t}"));
         }
@@ -297,10 +296,7 @@ mod tests {
     #[tokio::test]
     async fn delete_missing_404() {
         let (app, t) = app().await;
-        let resp = app
-            .oneshot(req("DELETE", "/comment/ghost", Some(&t)))
-            .await
-            .expect("resp");
+        let resp = app.oneshot(req("DELETE", "/comment/ghost", Some(&t))).await.expect("resp");
         assert_eq!(resp.status(), StatusCode::NOT_FOUND);
     }
 }

@@ -119,7 +119,13 @@ pub mod testing {
             Ok(token)
         }
         async fn get(&self, token: &str) -> Result<Option<Session>, AuthRepoError> {
-            Ok(self.inner.lock().unwrap_or_else(std::sync::PoisonError::into_inner).1.get(token).cloned())
+            Ok(self
+                .inner
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .1
+                .get(token)
+                .cloned())
         }
         async fn revoke(&self, token: &str) -> Result<(), AuthRepoError> {
             self.inner.lock().unwrap_or_else(std::sync::PoisonError::into_inner).1.remove(token);

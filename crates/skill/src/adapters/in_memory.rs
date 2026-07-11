@@ -48,7 +48,14 @@ impl SkillRepository for InMemorySkillRepository {
     }
 
     async fn get(&self, id: &str) -> Result<Option<Skill>, RepoError> {
-        Ok(self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner).skills.iter().find(|s| s.id == id).cloned())
+        Ok(self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .skills
+            .iter()
+            .find(|s| s.id == id)
+            .cloned())
     }
 
     async fn list_active(&self, project_id: &str) -> Result<Vec<Skill>, RepoError> {

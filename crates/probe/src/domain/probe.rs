@@ -141,7 +141,8 @@ mod tests {
 
     #[test]
     fn transport_failure_fails_success_assertion() {
-        let raw = RawProbe { transport_ok: false, error: Some("refused".into()), ..Default::default() };
+        let raw =
+            RawProbe { transport_ok: false, error: Some("refused".into()), ..Default::default() };
         let f = evaluate(&[ProbeAssertion::Success], &raw);
         assert_eq!(f.len(), 1);
         assert!(f[0].contains("传输失败"));

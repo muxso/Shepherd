@@ -1,5 +1,11 @@
 use std::sync::Arc;
 
+use crate::application::{
+    BugFollowerError, BugFollowersUseCase, BugRelationError, BugRelationsUseCase,
+    ChangeBugStatusError, ChangeBugStatusUseCase, CreateBugError, CreateBugUseCase,
+    ListBugsUseCase,
+};
+use crate::domain::{Bug, BugError, BugRelation};
 use axum::{
     extract::{FromRef, Path, Query, State},
     http::StatusCode,
@@ -7,12 +13,6 @@ use axum::{
     routing::{delete, post},
     Json, Router,
 };
-use crate::application::{
-    BugFollowerError, BugFollowersUseCase, BugRelationError, BugRelationsUseCase,
-    ChangeBugStatusError, ChangeBugStatusUseCase, CreateBugError, CreateBugUseCase,
-    ListBugsUseCase,
-};
-use crate::domain::{Bug, BugError, BugRelation};
 use serde::{Deserialize, Serialize};
 use utoipa::{OpenApi, ToSchema};
 use webauth::{AuthUser, SessionStore};
@@ -93,7 +93,11 @@ async fn create_bug(
     if !user.can("BUG", "ADD") {
         return (StatusCode::FORBIDDEN, "permission denied").into_response();
     }
-    match st.create.execute(&req.project_id, &req.title, &req.initial_status, Some(&user.user_id)).await {
+    match st
+        .create
+        .execute(&req.project_id, &req.title, &req.initial_status, Some(&user.user_id))
+        .await
+    {
         Ok(b) => (StatusCode::CREATED, Json(BugResponse::from(b))).into_response(),
         Err(CreateBugError::Validation(_)) => {
             (StatusCode::BAD_REQUEST, "invalid bug payload").into_response()
@@ -187,7 +191,11 @@ fn map_follower_err(e: BugFollowerError) -> Response {
 }
 
 #[utoipa::path(get, path = "/bug/{id}/followers", tag = "bug", params(("id" = String, Path)), responses((status = 200, body = FollowersResponse), (status = 404)), security(("bearer" = [])))]
-async fn list_followers(user: AuthUser, State(st): State<BugState>, Path(id): Path<String>) -> Response {
+async fn list_followers(
+    user: AuthUser,
+    State(st): State<BugState>,
+    Path(id): Path<String>,
+) -> Response {
     if !user.can("BUG", "READ") {
         return (StatusCode::FORBIDDEN, "permission denied").into_response();
     }
@@ -273,7 +281,11 @@ fn map_relation_err(e: BugRelationError) -> Response {
 }
 
 #[utoipa::path(get, path = "/bug/{id}/relation", tag = "bug", params(("id" = String, Path)), responses((status = 200, body = RelationsResponse), (status = 404)), security(("bearer" = [])))]
-async fn list_relations(user: AuthUser, State(st): State<BugState>, Path(id): Path<String>) -> Response {
+async fn list_relations(
+    user: AuthUser,
+    State(st): State<BugState>,
+    Path(id): Path<String>,
+) -> Response {
     if !user.can("BUG", "READ") {
         return (StatusCode::FORBIDDEN, "permission denied").into_response();
     }
@@ -317,14 +329,16 @@ async fn unlink_relation(
 #[derive(OpenApi)]
 #[openapi(paths(create_bug, list_bugs, change_status, list_followers, follow_bug, unfollow_bug, list_relations, link_relation, unlink_relation), components(schemas(CreateBugRequest, ChangeStatusRequest, BugResponse, FollowRequest, FollowersResponse, LinkRelationRequest, RelationItem, RelationsResponse)), tags((name = "bug", description = "缺陷管理")))]
 struct ApiDoc;
-pub fn openapi() -> utoipa::openapi::OpenApi { ApiDoc::openapi() }
+pub fn openapi() -> utoipa::openapi::OpenApi {
+    ApiDoc::openapi()
+}
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::adapters::InMemoryBugRepository;
     use axum::body::Body;
     use axum::http::Request;
-    use crate::adapters::InMemoryBugRepository;
     use kernel::permission::PermissionSet;
     use std::sync::Arc;
     use tower::ServiceExt;
@@ -347,7 +361,8 @@ mod tests {
     }
 
     fn post(uri: &str, body: &str, token: Option<&str>) -> Request<Body> {
-        let mut b = Request::builder().method("POST").uri(uri).header("content-type", "application/json");
+        let mut b =
+            Request::builder().method("POST").uri(uri).header("content-type", "application/json");
         if let Some(t) = token {
             b = b.header("authorization", format!("Bearer {t}"));
         }
@@ -365,7 +380,11 @@ mod tests {
     async fn create_returns_id(app: &Router, t: &str) -> String {
         let resp = app
             .clone()
-            .oneshot(post("/bug", r#"{"projectId":"p1","title":"boom","initialStatus":"NEW"}"#, Some(t)))
+            .oneshot(post(
+                "/bug",
+                r#"{"projectId":"p1","title":"boom","initialStatus":"NEW"}"#,
+                Some(t),
+            ))
             .await
             .expect("resp");
         assert_eq!(resp.status(), StatusCode::CREATED);
@@ -424,7 +443,11 @@ mod tests {
     async fn create_with_unknown_initial_status_400() {
         let (app, t) = app().await;
         let resp = app
-            .oneshot(post("/bug", r#"{"projectId":"p1","title":"x","initialStatus":"GHOST"}"#, Some(&t)))
+            .oneshot(post(
+                "/bug",
+                r#"{"projectId":"p1","title":"x","initialStatus":"GHOST"}"#,
+                Some(&t),
+            ))
             .await
             .expect("resp");
         assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
@@ -455,11 +478,19 @@ mod tests {
     async fn list_returns_created_bugs_newest_first() {
         let (app, t) = app().await;
         app.clone()
-            .oneshot(post("/bug", r#"{"projectId":"p1","title":"first","initialStatus":"NEW"}"#, Some(&t)))
+            .oneshot(post(
+                "/bug",
+                r#"{"projectId":"p1","title":"first","initialStatus":"NEW"}"#,
+                Some(&t),
+            ))
             .await
             .expect("resp");
         app.clone()
-            .oneshot(post("/bug", r#"{"projectId":"p1","title":"second","initialStatus":"NEW"}"#, Some(&t)))
+            .oneshot(post(
+                "/bug",
+                r#"{"projectId":"p1","title":"second","initialStatus":"NEW"}"#,
+                Some(&t),
+            ))
             .await
             .expect("resp");
 
@@ -506,14 +537,22 @@ mod tests {
 
         let resp = app
             .clone()
-            .oneshot(post(&format!("/bug/{id}/relation"), r#"{"kind":"REQUIREMENT","targetId":"r1"}"#, Some(&t)))
+            .oneshot(post(
+                &format!("/bug/{id}/relation"),
+                r#"{"kind":"REQUIREMENT","targetId":"r1"}"#,
+                Some(&t),
+            ))
             .await
             .expect("resp");
         assert_eq!(resp.status(), StatusCode::OK);
 
         let resp = app
             .clone()
-            .oneshot(post(&format!("/bug/{id}/relation"), r#"{"kind":"SCENARIO","targetId":"s1"}"#, Some(&t)))
+            .oneshot(post(
+                &format!("/bug/{id}/relation"),
+                r#"{"kind":"SCENARIO","targetId":"s1"}"#,
+                Some(&t),
+            ))
             .await
             .expect("resp");
         let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.expect("body");
@@ -540,13 +579,21 @@ mod tests {
         let id = create_returns_id(&app, &t).await;
         let resp = app
             .clone()
-            .oneshot(post(&format!("/bug/{id}/relation"), r#"{"kind":"king","targetId":"r1"}"#, Some(&t)))
+            .oneshot(post(
+                &format!("/bug/{id}/relation"),
+                r#"{"kind":"king","targetId":"r1"}"#,
+                Some(&t),
+            ))
             .await
             .expect("resp");
         assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
 
         let resp = app
-            .oneshot(post("/bug/ghost/relation", r#"{"kind":"REQUIREMENT","targetId":"r1"}"#, Some(&t)))
+            .oneshot(post(
+                "/bug/ghost/relation",
+                r#"{"kind":"REQUIREMENT","targetId":"r1"}"#,
+                Some(&t),
+            ))
             .await
             .expect("resp");
         assert_eq!(resp.status(), StatusCode::NOT_FOUND);

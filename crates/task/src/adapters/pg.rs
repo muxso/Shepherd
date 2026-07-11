@@ -118,11 +118,12 @@ impl TaskRepository for PgTaskRepository {
     }
 
     async fn get(&self, id: &str) -> Result<Option<Decomposition>, RepoError> {
-        let row = sqlx::query(&format!("SELECT {META_COLS} FROM ms_task_decomposition WHERE id = $1"))
-            .bind(id)
-            .fetch_optional(&self.pool)
-            .await
-            .map_err(map_err)?;
+        let row =
+            sqlx::query(&format!("SELECT {META_COLS} FROM ms_task_decomposition WHERE id = $1"))
+                .bind(id)
+                .fetch_optional(&self.pool)
+                .await
+                .map_err(map_err)?;
         match row {
             Some(r) => Ok(Some(self.assemble(&r).await?)),
             None => Ok(None),
@@ -223,7 +224,10 @@ mod tests {
 
         let reloaded = repo.get(&d.id).await.expect("get").expect("some");
         assert_eq!(reloaded.task("t1").expect("t1").status, TaskStatus::Verified);
-        assert_eq!(reloaded.ready_tasks().iter().map(|t| t.id.clone()).collect::<Vec<_>>(), vec!["t2"]);
+        assert_eq!(
+            reloaded.ready_tasks().iter().map(|t| t.id.clone()).collect::<Vec<_>>(),
+            vec!["t2"]
+        );
 
         assert!(repo.find_by_requirement_version("req1", 1).await.expect("f").is_some());
     }

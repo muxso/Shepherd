@@ -67,7 +67,11 @@ mod tests {
     use crate::domain::RelationKind;
 
     async fn seed_bug(repo: &InMemoryBugRepository) -> String {
-        CreateBugUseCase::new(Arc::new(repo.clone())).execute("p1", "boom", "NEW", None).await.expect("seed").id
+        CreateBugUseCase::new(Arc::new(repo.clone()))
+            .execute("p1", "boom", "NEW", None)
+            .await
+            .expect("seed")
+            .id
     }
 
     #[tokio::test]
@@ -119,6 +123,9 @@ mod tests {
         let uc = BugRelationsUseCase::new(Arc::new(repo));
         assert_eq!(uc.list("ghost").await, Err(BugRelationError::BugNotFound));
         assert_eq!(uc.link("ghost", "REQUIREMENT", "r1").await, Err(BugRelationError::BugNotFound));
-        assert_eq!(uc.unlink("ghost", "REQUIREMENT", "r1").await, Err(BugRelationError::BugNotFound));
+        assert_eq!(
+            uc.unlink("ghost", "REQUIREMENT", "r1").await,
+            Err(BugRelationError::BugNotFound)
+        );
     }
 }

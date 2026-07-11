@@ -139,7 +139,17 @@ async fn run_decomposition(
             set.spawn(async move {
                 let _permit = sem.acquire_owned().await;
                 let _ = delivery
-                    .dispatch(&did, &t.id, &t.title, &t.description, &t.acceptance_criteria, &exec, None, None, None)
+                    .dispatch(
+                        &did,
+                        &t.id,
+                        &t.title,
+                        &t.description,
+                        &t.acceptance_criteria,
+                        &exec,
+                        None,
+                        None,
+                        None,
+                    )
                     .await;
             });
         }
@@ -230,10 +240,7 @@ async fn graph_handler(
         })
         .collect();
     let edges = g.edges.into_iter().map(|e| GraphEdgeDto { from: e.from, to: e.to }).collect();
-    (
-        StatusCode::OK,
-        Json(GraphResponse { decomposition_id: id, layers: g.layers, nodes, edges }),
-    )
+    (StatusCode::OK, Json(GraphResponse { decomposition_id: id, layers: g.layers, nodes, edges }))
         .into_response()
 }
 
@@ -329,11 +336,10 @@ async fn reassign_handler(
         return (StatusCode::FORBIDDEN, "permission denied").into_response();
     }
     match st.tasks.reassign(&id, &body.from, &body.to, &body.kind).await {
-        Ok((_, reassigned)) => (
-            StatusCode::OK,
-            Json(ReassignResponse { decomposition_id: id, reassigned }),
-        )
-            .into_response(),
+        Ok((_, reassigned)) => {
+            (StatusCode::OK, Json(ReassignResponse { decomposition_id: id, reassigned }))
+                .into_response()
+        }
         Err(TaskCmdError::DecompositionNotFound) => {
             (StatusCode::NOT_FOUND, "decomposition not found").into_response()
         }

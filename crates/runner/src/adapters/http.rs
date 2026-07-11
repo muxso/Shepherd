@@ -90,7 +90,11 @@ struct RunViaBody {
 }
 
 #[utoipa::path(post, path = "/runner-agent", tag = "runner", request_body = RegisterBody, responses((status = 201, body = AgentResponse), (status = 400), (status = 403)), security(("bearer" = [])))]
-async fn register(user: AuthUser, State(st): State<RunnerState>, Json(b): Json<RegisterBody>) -> Response {
+async fn register(
+    user: AuthUser,
+    State(st): State<RunnerState>,
+    Json(b): Json<RegisterBody>,
+) -> Response {
     if !user.can("RUNNER", "ADD") {
         return (StatusCode::FORBIDDEN, "permission denied").into_response();
     }
@@ -159,7 +163,9 @@ async fn run_case(
         Err(RunCaseError::AgentNotFound) => {
             (StatusCode::NOT_FOUND, "agent not found or disabled").into_response()
         }
-        Err(RunCaseError::CaseNotFound) => (StatusCode::NOT_FOUND, "case not found").into_response(),
+        Err(RunCaseError::CaseNotFound) => {
+            (StatusCode::NOT_FOUND, "case not found").into_response()
+        }
         Err(RunCaseError::Backend(_)) => {
             (StatusCode::BAD_GATEWAY, "agent dispatch failed").into_response()
         }
@@ -209,7 +215,11 @@ async fn executions(State(st): State<RunnerState>, Path(id): Path<String>) -> Re
 }
 
 #[utoipa::path(post, path = "/runner-agent/{id}/refresh", tag = "runner", params(("id" = String, Path)), responses((status = 200), (status = 404), (status = 502)), security(("bearer" = [])))]
-async fn refresh(user: AuthUser, State(st): State<RunnerState>, Path(id): Path<String>) -> Response {
+async fn refresh(
+    user: AuthUser,
+    State(st): State<RunnerState>,
+    Path(id): Path<String>,
+) -> Response {
     if !user.can("RUNNER", "EDIT") {
         return (StatusCode::FORBIDDEN, "permission denied").into_response();
     }
@@ -249,7 +259,11 @@ struct ProbeReportResponse {
 }
 
 #[utoipa::path(post, path = "/runner/probe", tag = "runner", request_body = ProbeBody, responses((status = 200, body = ProbeReportResponse), (status = 404), (status = 502)), security(("bearer" = [])))]
-async fn run_probe(user: AuthUser, State(st): State<RunnerState>, Json(b): Json<ProbeBody>) -> Response {
+async fn run_probe(
+    user: AuthUser,
+    State(st): State<RunnerState>,
+    Json(b): Json<ProbeBody>,
+) -> Response {
     if !user.can("RUNNER", "EXECUTE") {
         return (StatusCode::FORBIDDEN, "permission denied").into_response();
     }
@@ -325,8 +339,7 @@ mod tests {
         let sessions = Arc::new(InMemorySessionStore::new());
         let set = PermissionSet::from_raw([perms.to_string()]).expect("perms");
         let token = sessions.create("u", set, 3600).await.expect("token");
-        let svc =
-            RunnerService::new(store, remote, probe, caps.clone(), execs, cases.clone());
+        let svc = RunnerService::new(store, remote, probe, caps.clone(), execs, cases.clone());
         (router(svc, sessions), token, caps, cases)
     }
 
@@ -336,7 +349,8 @@ mod tests {
     }
 
     fn post(uri: &str, body: &str, token: Option<&str>) -> Request<Body> {
-        let mut b = Request::builder().method("POST").uri(uri).header("content-type", "application/json");
+        let mut b =
+            Request::builder().method("POST").uri(uri).header("content-type", "application/json");
         if let Some(t) = token {
             b = b.header("authorization", format!("Bearer {t}"));
         }
@@ -397,7 +411,12 @@ mod tests {
         let (app, t, cases) = app_full("RUNNER:READ+ADD+EXECUTE").await;
         cases.seed(
             "case1",
-            RequestSpec { method: HttpMethod::Get, url: "http://t/x".into(), headers: vec![], body: None },
+            RequestSpec {
+                method: HttpMethod::Get,
+                url: "http://t/x".into(),
+                headers: vec![],
+                body: None,
+            },
             vec![Assertion::StatusIs(200)],
         );
         let r = app
@@ -412,7 +431,11 @@ mod tests {
         let id = json(r).await["id"].as_str().expect("id").to_string();
 
         let r = app
-            .oneshot(post(&format!("/runner-agent/{id}/run-case"), r#"{"caseId":"case1"}"#, Some(&t)))
+            .oneshot(post(
+                &format!("/runner-agent/{id}/run-case"),
+                r#"{"caseId":"case1"}"#,
+                Some(&t),
+            ))
             .await
             .expect("r");
         assert_eq!(r.status(), StatusCode::OK);
@@ -429,7 +452,11 @@ mod tests {
             .expect("r");
         let id = json(r).await["id"].as_str().expect("id").to_string();
         let r = app
-            .oneshot(post(&format!("/runner-agent/{id}/run-case"), r#"{"caseId":"ghost"}"#, Some(&t)))
+            .oneshot(post(
+                &format!("/runner-agent/{id}/run-case"),
+                r#"{"caseId":"ghost"}"#,
+                Some(&t),
+            ))
             .await
             .expect("r");
         assert_eq!(r.status(), StatusCode::NOT_FOUND);
@@ -450,7 +477,9 @@ mod tests {
         let (app, t, caps, _c) = app_with_caps("RUNNER:READ+ADD+EXECUTE").await;
         caps.set("http://grpc-env:9100", &["http", "grpc"]);
         caps.set("http://sql-env:9100", &["http", "sql"]);
-        for (name, url) in [("gRPC环境", "http://grpc-env:9100"), ("SQL环境", "http://sql-env:9100")] {
+        for (name, url) in
+            [("gRPC环境", "http://grpc-env:9100"), ("SQL环境", "http://sql-env:9100")]
+        {
             app.clone()
                 .oneshot(post(
                     "/runner-agent",

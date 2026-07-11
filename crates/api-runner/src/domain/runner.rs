@@ -170,10 +170,12 @@ impl Assertion {
         vars: &std::collections::BTreeMap<String, String>,
     ) -> Option<String> {
         match self {
-            Assertion::StatusIs(want) => (resp.status != *want)
-                .then(|| format!("status: 期望 {want},实际 {}", resp.status)),
-            Assertion::BodyContains(needle) => (!resp.body.contains(needle))
-                .then(|| format!("body 不含子串: {needle}")),
+            Assertion::StatusIs(want) => {
+                (resp.status != *want).then(|| format!("status: 期望 {want},实际 {}", resp.status))
+            }
+            Assertion::BodyContains(needle) => {
+                (!resp.body.contains(needle)).then(|| format!("body 不含子串: {needle}"))
+            }
             Assertion::HeaderEquals { name, value } => {
                 let got = resp
                     .headers
@@ -199,9 +201,8 @@ impl Assertion {
             },
             Assertion::ResponseCode { condition, expected } => {
                 let actual = resp.status.to_string();
-                (!condition.matches(&actual, expected)).then(|| {
-                    format!("status {condition:?}: 期望 {expected},实际 {actual}")
-                })
+                (!condition.matches(&actual, expected))
+                    .then(|| format!("status {condition:?}: 期望 {expected},实际 {actual}"))
             }
             Assertion::ResponseHeader { name, condition, expected } => {
                 let got = resp
@@ -210,15 +211,12 @@ impl Assertion {
                     .find(|(k, _)| k.eq_ignore_ascii_case(name))
                     .map(|(_, v)| v.as_str())
                     .unwrap_or("");
-                (!condition.matches(got, expected)).then(|| {
-                    format!("header {name} {condition:?}: 期望 {expected},实际 {got:?}")
-                })
+                (!condition.matches(got, expected))
+                    .then(|| format!("header {name} {condition:?}: 期望 {expected},实际 {got:?}"))
             }
-            Assertion::ResponseBody { condition, expected } => {
-                (!condition.matches(&resp.body, expected)).then(|| {
-                    format!("body {condition:?}: 期望 {expected}")
-                })
-            }
+            Assertion::ResponseBody { condition, expected } => (!condition
+                .matches(&resp.body, expected))
+            .then(|| format!("body {condition:?}: 期望 {expected}")),
             Assertion::JsonPath { path, condition, expected } => match json {
                 None => Some("body 不是合法 JSON".to_string()),
                 Some(v) => {
@@ -238,9 +236,8 @@ impl Assertion {
                 .then(|| format!("耗时: 期望 ≤{max_ms}ms,实际 {}ms", resp.elapsed_ms)),
             Assertion::Variable { name, condition, expected } => {
                 let actual = vars.get(name).map(String::as_str).unwrap_or("");
-                (!condition.matches(actual, expected)).then(|| {
-                    format!("变量 {name} {condition:?}: 期望 {expected},实际 {actual:?}")
-                })
+                (!condition.matches(actual, expected))
+                    .then(|| format!("变量 {name} {condition:?}: 期望 {expected},实际 {actual:?}"))
             }
         }
     }
@@ -345,7 +342,10 @@ fn truncate(s: &str, n: usize) -> String {
     }
 }
 
-pub fn evaluate_detailed(assertions: &[Assertion], resp: &ResponseSnapshot) -> Vec<AssertionReport> {
+pub fn evaluate_detailed(
+    assertions: &[Assertion],
+    resp: &ResponseSnapshot,
+) -> Vec<AssertionReport> {
     evaluate_detailed_with_vars(assertions, resp, &std::collections::BTreeMap::new())
 }
 
@@ -375,27 +375,42 @@ pub fn evaluate_detailed_with_vars(
             let reason = a.check(resp, json.as_ref(), vars);
             let passed = reason.is_none();
             let (item, condition, expected, actual) = match a {
-                Assertion::StatusIs(n) => {
-                    ("状态码".to_string(), "等于".to_string(), n.to_string(), resp.status.to_string())
-                }
+                Assertion::StatusIs(n) => (
+                    "状态码".to_string(),
+                    "等于".to_string(),
+                    n.to_string(),
+                    resp.status.to_string(),
+                ),
                 Assertion::BodyContains(s) => {
                     ("响应体".to_string(), "包含".to_string(), s.clone(), truncate(&resp.body, 60))
                 }
                 Assertion::HeaderEquals { name, value } => {
                     (format!("响应头[{name}]"), "等于".to_string(), value.clone(), header(name))
                 }
-                Assertion::JsonFieldEquals { pointer, expected } => {
-                    (format!("JSON {pointer}"), "等于".to_string(), expected.clone(), json_at(pointer))
-                }
-                Assertion::ResponseCode { condition, expected } => {
-                    ("状态码".to_string(), cond_label(condition), expected.clone(), resp.status.to_string())
-                }
-                Assertion::ResponseHeader { name, condition, expected } => {
-                    (format!("响应头[{name}]"), cond_label(condition), expected.clone(), header(name))
-                }
-                Assertion::ResponseBody { condition, expected } => {
-                    ("响应体".to_string(), cond_label(condition), expected.clone(), truncate(&resp.body, 60))
-                }
+                Assertion::JsonFieldEquals { pointer, expected } => (
+                    format!("JSON {pointer}"),
+                    "等于".to_string(),
+                    expected.clone(),
+                    json_at(pointer),
+                ),
+                Assertion::ResponseCode { condition, expected } => (
+                    "状态码".to_string(),
+                    cond_label(condition),
+                    expected.clone(),
+                    resp.status.to_string(),
+                ),
+                Assertion::ResponseHeader { name, condition, expected } => (
+                    format!("响应头[{name}]"),
+                    cond_label(condition),
+                    expected.clone(),
+                    header(name),
+                ),
+                Assertion::ResponseBody { condition, expected } => (
+                    "响应体".to_string(),
+                    cond_label(condition),
+                    expected.clone(),
+                    truncate(&resp.body, 60),
+                ),
                 Assertion::JsonPath { path, condition, expected } => (
                     format!("JSONPath {path}"),
                     cond_label(condition),
@@ -415,7 +430,14 @@ pub fn evaluate_detailed_with_vars(
                     vars.get(name).cloned().unwrap_or_default(),
                 ),
             };
-            AssertionReport { item, condition, expected, actual, passed, reason: reason.unwrap_or_default() }
+            AssertionReport {
+                item,
+                condition,
+                expected,
+                actual,
+                passed,
+                reason: reason.unwrap_or_default(),
+            }
         })
         .collect()
 }
@@ -466,12 +488,23 @@ impl Extractor {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", content = "args")]
 pub enum Processor {
-    Wait { ms: u64 },
-    Extract { extractors: Vec<Extractor> },
+    Wait {
+        ms: u64,
+    },
+    Extract {
+        extractors: Vec<Extractor>,
+    },
     /// 随用例往返存储;执行引擎尚未接入,执行器当前忽略。
-    Script { lang: String, code: String },
+    Script {
+        lang: String,
+        code: String,
+    },
     /// 随用例往返存储;数据源执行尚未接入,执行器当前忽略。
-    Sql { name: String, datasource: String, sql: String },
+    Sql {
+        name: String,
+        datasource: String,
+        sql: String,
+    },
 }
 
 pub fn wait_millis(processors: &[Processor]) -> u64 {
@@ -645,14 +678,18 @@ mod tests {
     fn assertion_json_format_is_stable() {
         // 锁定 JSONB 存储格式(PG 种子/读取依赖)
         let a = Assertion::StatusIs(200);
-        assert_eq!(serde_json::to_value(&a).expect("ser"), serde_json::json!({"type":"StatusIs","args":200}));
+        assert_eq!(
+            serde_json::to_value(&a).expect("ser"),
+            serde_json::json!({"type":"StatusIs","args":200})
+        );
         let j = Assertion::JsonFieldEquals { pointer: "/x".into(), expected: "1".into() };
         assert_eq!(
             serde_json::to_value(&j).expect("ser"),
             serde_json::json!({"type":"JsonFieldEquals","args":{"pointer":"/x","expected":"1"}})
         );
         let arr: Vec<Assertion> =
-            serde_json::from_value(serde_json::json!([{"type":"StatusIs","args":201}])).expect("de");
+            serde_json::from_value(serde_json::json!([{"type":"StatusIs","args":201}]))
+                .expect("de");
         assert_eq!(arr, vec![Assertion::StatusIs(201)]);
     }
 
@@ -812,10 +849,8 @@ mod tests {
         ]))
         .expect("de");
         assert_eq!(arr.len(), 2);
-        let a = Assertion::ResponseBody {
-            condition: MatchCondition::Contains,
-            expected: "ok".into(),
-        };
+        let a =
+            Assertion::ResponseBody { condition: MatchCondition::Contains, expected: "ok".into() };
         assert_eq!(
             serde_json::to_value(&a).expect("ser"),
             serde_json::json!({"type":"ResponseBody","args":{"condition":"CONTAINS","expected":"ok"}})
@@ -891,7 +926,8 @@ mod tests {
             ]}})
         );
         let w: Processor =
-            serde_json::from_value(serde_json::json!({"type":"Wait","args":{"ms":250}})).expect("de");
+            serde_json::from_value(serde_json::json!({"type":"Wait","args":{"ms":250}}))
+                .expect("de");
         assert_eq!(w, Processor::Wait { ms: 250 });
     }
 

@@ -56,11 +56,19 @@ struct McpSessions {
 impl McpSessions {
     fn mint(&self, owner: &str) -> String {
         let id = format!("mcp-{}", uuid::Uuid::new_v4().simple());
-        self.owners.lock().unwrap_or_else(std::sync::PoisonError::into_inner).insert(id.clone(), owner.to_string());
+        self.owners
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(id.clone(), owner.to_string());
         id
     }
     fn owns(&self, id: &str, owner: &str) -> bool {
-        self.owners.lock().unwrap_or_else(std::sync::PoisonError::into_inner).get(id).map(|o| o == owner).unwrap_or(false)
+        self.owners
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(id)
+            .map(|o| o == owner)
+            .unwrap_or(false)
     }
     fn remove(&self, id: &str, owner: &str) -> bool {
         let mut g = self.owners.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -104,7 +112,10 @@ fn opt_str<'a>(v: &'a Value, k: &str) -> &'a str {
     v.get(k).and_then(|x| x.as_str()).unwrap_or("")
 }
 fn req_u32(v: &Value, k: &str) -> Result<u32, String> {
-    v.get(k).and_then(|x| x.as_u64()).map(|n| n as u32).ok_or_else(|| format!("'{k}' (number) is required"))
+    v.get(k)
+        .and_then(|x| x.as_u64())
+        .map(|n| n as u32)
+        .ok_or_else(|| format!("'{k}' (number) is required"))
 }
 fn str_vec(v: &Value, k: &str) -> Vec<String> {
     v.get(k)
@@ -128,10 +139,17 @@ macro_rules! tool_handler {
 tool_handler!(CreateRequirement, CreateRequirementUseCase, |self, args| {
     let r = self
         .svc
-        .execute(req_str(&args, "projectId")?, req_str(&args, "title")?, opt_str(&args, "description"), &str_vec(&args, "acceptanceCriteria"))
+        .execute(
+            req_str(&args, "projectId")?,
+            req_str(&args, "title")?,
+            opt_str(&args, "description"),
+            &str_vec(&args, "acceptanceCriteria"),
+        )
         .await
         .map_err(|e| format!("{e:?}"))?;
-    Ok(json!({ "id": r.id, "title": r.title, "baselineVersion": r.baseline_version, "latestVersion": r.latest_version() }))
+    Ok(
+        json!({ "id": r.id, "title": r.title, "baselineVersion": r.baseline_version, "latestVersion": r.latest_version() }),
+    )
 });
 
 tool_handler!(Decompose, CreateDecompositionUseCase, |self, args| {
@@ -140,7 +158,9 @@ tool_handler!(Decompose, CreateDecompositionUseCase, |self, args| {
         .execute(req_str(&args, "requirementId")?, req_u32(&args, "requirementVersion")?)
         .await
         .map_err(|e| format!("{e:?}"))?;
-    Ok(json!({ "decompositionId": d.id, "requirementId": d.requirement_id, "requirementVersion": d.requirement_version }))
+    Ok(
+        json!({ "decompositionId": d.id, "requirementId": d.requirement_id, "requirementVersion": d.requirement_version }),
+    )
 });
 
 tool_handler!(AddTask, TaskService, |self, args| {
@@ -171,9 +191,12 @@ impl ToolHandler for DispatchDelivery {
         let skill_ids = str_vec(&args, "skillIds");
         if !skill_ids.is_empty() {
             let project = req_str(&args, "projectId")?;
-            let comp = self.skills.compose(project, &skill_ids).await.map_err(|e| format!("{e:?}"))?;
+            let comp =
+                self.skills.compose(project, &skill_ids).await.map_err(|e| format!("{e:?}"))?;
             instructions = Some(match instructions {
-                Some(extra) if !extra.trim().is_empty() => format!("{}\n\n{}", comp.instructions, extra),
+                Some(extra) if !extra.trim().is_empty() => {
+                    format!("{}\n\n{}", comp.instructions, extra)
+                }
                 _ => comp.instructions,
             });
         }
@@ -214,7 +237,11 @@ impl ToolHandler for Breakdown {
             Err(RequirementCmdError::NotFound) => return Err("requirement not found".into()),
             Err(e) => return Err(format!("{e:?}")),
         };
-        let version = args.get("requirementVersion").and_then(|v| v.as_u64()).map(|n| n as u32).unwrap_or(req.baseline_version);
+        let version = args
+            .get("requirementVersion")
+            .and_then(|v| v.as_u64())
+            .map(|n| n as u32)
+            .unwrap_or(req.baseline_version);
         let ver = req.version(version).ok_or("requirement version not found")?;
         let spec = RequirementSpec {
             requirement_id: req.id.clone(),
@@ -234,7 +261,11 @@ impl ToolHandler for Breakdown {
 tool_handler!(CreateVerification, CreateVerificationUseCase, |self, args| {
     let v = self
         .svc
-        .execute(req_str(&args, "requirementId")?, req_u32(&args, "requirementVersion")?, &str_vec(&args, "criteria"))
+        .execute(
+            req_str(&args, "requirementId")?,
+            req_u32(&args, "requirementVersion")?,
+            &str_vec(&args, "criteria"),
+        )
         .await
         .map_err(|e| format!("{e:?}"))?;
     Ok(json!({ "verificationId": v.id }))
@@ -278,7 +309,8 @@ tool_handler!(ComposeSkills, SkillService, |self, args| {
 });
 
 tool_handler!(CompletenessReport, VerificationService, |self, args| {
-    let r = self.svc.report(req_str(&args, "verificationId")?).await.map_err(|e| format!("{e:?}"))?;
+    let r =
+        self.svc.report(req_str(&args, "verificationId")?).await.map_err(|e| format!("{e:?}"))?;
     Ok(json!({
         "complete": r.complete,
         "satisfied": r.satisfied,
@@ -605,14 +637,14 @@ pub fn router(
         )
         .requires("RUNNER", "EXECUTE"));
 
-    Router::new()
-        .route("/mcp", post(mcp_handler).get(mcp_sse).delete(mcp_delete))
-        .with_state(McpState {
+    Router::new().route("/mcp", post(mcp_handler).get(mcp_sse).delete(mcp_delete)).with_state(
+        McpState {
             server: Arc::new(server),
             sessions,
             mcp_sessions: Arc::new(McpSessions::default()),
             bus,
-        })
+        },
+    )
 }
 
 fn is_initialize(body: &Value) -> bool {
@@ -646,7 +678,10 @@ async fn mcp_handler(
     let mut response = match resp {
         None => StatusCode::ACCEPTED.into_response(),
         Some(resp) if wants_sse => {
-            let body = format!("event: message\ndata: {}\n\n", serde_json::to_string(&resp).unwrap_or_default());
+            let body = format!(
+                "event: message\ndata: {}\n\n",
+                serde_json::to_string(&resp).unwrap_or_default()
+            );
             Response::builder()
                 .status(StatusCode::OK)
                 .header(axum::http::header::CONTENT_TYPE, "text/event-stream")

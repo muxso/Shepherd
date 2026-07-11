@@ -15,10 +15,7 @@ pub enum RepoError {
 
 #[async_trait]
 pub trait ApiScenarioRepository: Send + Sync {
-    async fn insert_scenario(
-        &self,
-        s: &NewApiScenario,
-    ) -> Result<ApiScenario, RepoError>;
+    async fn insert_scenario(&self, s: &NewApiScenario) -> Result<ApiScenario, RepoError>;
 
     async fn get_scenario(&self, id: &str) -> Result<Option<ApiScenario>, RepoError>;
 
@@ -30,10 +27,7 @@ pub trait ApiScenarioRepository: Send + Sync {
         meta: &serde_json::Value,
     ) -> Result<Option<ApiScenario>, RepoError>;
 
-    async fn list_scenarios(
-        &self,
-        project_id: &str,
-    ) -> Result<Vec<ApiScenario>, RepoError>;
+    async fn list_scenarios(&self, project_id: &str) -> Result<Vec<ApiScenario>, RepoError>;
 
     async fn delete_scenario(&self, id: &str) -> Result<bool, RepoError>;
 
@@ -45,7 +39,11 @@ pub trait ApiScenarioRepository: Send + Sync {
 
     async fn delete_step(&self, scenario_id: &str, step_id: &str) -> Result<bool, RepoError>;
 
-    async fn reorder_steps(&self, scenario_id: &str, ordered_ids: &[String]) -> Result<(), RepoError>;
+    async fn reorder_steps(
+        &self,
+        scenario_id: &str,
+        ordered_ids: &[String],
+    ) -> Result<(), RepoError>;
 
     async fn record_change(
         &self,

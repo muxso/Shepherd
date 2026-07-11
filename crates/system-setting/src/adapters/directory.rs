@@ -27,7 +27,11 @@ impl SpyDirectory {
     }
 
     pub fn with_user(self, id: &str, name: &str, source: UserSource) -> Self {
-        self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner).users.insert(id.to_string(), (name.to_string(), source));
+        self.state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .users
+            .insert(id.to_string(), (name.to_string(), source));
         self
     }
 
@@ -78,9 +82,7 @@ fn collect(
     users: &BTreeMap<String, (String, UserSource)>,
     ids: &[String],
 ) -> BTreeMap<String, String> {
-    ids.iter()
-        .filter_map(|id| users.get(id).map(|(name, _)| (id.clone(), name.clone())))
-        .collect()
+    ids.iter().filter_map(|id| users.get(id).map(|(name, _)| (id.clone(), name.clone()))).collect()
 }
 
 #[cfg(test)]

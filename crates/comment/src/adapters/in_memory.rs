@@ -60,7 +60,13 @@ impl CommentRepository for InMemoryCommentRepository {
     }
 
     async fn soft_delete(&self, id: &str) -> Result<(), RepoError> {
-        if let Some(c) = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner).comments.get_mut(id) {
+        if let Some(c) = self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .comments
+            .get_mut(id)
+        {
             c.deleted = true;
         }
         Ok(())

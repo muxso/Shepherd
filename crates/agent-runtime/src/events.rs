@@ -124,8 +124,19 @@ fn tool_result_text(content: Option<&serde_json::Value>) -> String {
 fn is_test_command(cmd: &str) -> bool {
     let c = cmd.to_lowercase();
     [
-        "cargo test", "cargo nextest", "npm test", "npm run test", "pnpm test", "yarn test",
-        "pytest", "go test", "jest", "vitest", "mvn test", "gradle test", "phpunit",
+        "cargo test",
+        "cargo nextest",
+        "npm test",
+        "npm run test",
+        "pnpm test",
+        "yarn test",
+        "pytest",
+        "go test",
+        "jest",
+        "vitest",
+        "mvn test",
+        "gradle test",
+        "phpunit",
     ]
     .iter()
     .any(|p| c.contains(p))
@@ -170,7 +181,10 @@ mod tests {
     #[test]
     fn parses_tool_use_and_text() {
         let edit = r#"{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Edit","input":{"file_path":"src/auth.rs"}}]}}"#;
-        assert_eq!(parse_claude_line(edit), vec![ExecEvent::new("FILE_CHANGE", "Edit src/auth.rs")]);
+        assert_eq!(
+            parse_claude_line(edit),
+            vec![ExecEvent::new("FILE_CHANGE", "Edit src/auth.rs")]
+        );
 
         let bash = r#"{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash","input":{"command":"ls -la"}}]}}"#;
         assert_eq!(parse_claude_line(bash), vec![ExecEvent::new("TOOL_CALL", "$ ls -la")]);

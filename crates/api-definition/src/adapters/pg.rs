@@ -1,8 +1,8 @@
 use async_trait::async_trait;
 
 use crate::domain::{
-    ApiCase, ApiDefinition, ApiDefinitionChange, ApiModule, ApiMock, ApiProtocol, ApiStatus,
-    ApiView, NewApiCase, NewApiDefinition, NewApiModule, NewApiMock, NewApiView,
+    ApiCase, ApiDefinition, ApiDefinitionChange, ApiMock, ApiModule, ApiProtocol, ApiStatus,
+    ApiView, NewApiCase, NewApiDefinition, NewApiMock, NewApiModule, NewApiView,
 };
 use crate::ports::{ApiDefinitionRepository, ProjectMockRow, RepoError};
 use sqlx::{PgPool, Row};
@@ -103,10 +103,7 @@ fn row_to_mock(row: &sqlx::postgres::PgRow) -> Result<ApiMock, RepoError> {
 
 #[async_trait]
 impl ApiDefinitionRepository for PgApiDefinitionRepository {
-    async fn insert_definition(
-        &self,
-        d: &NewApiDefinition,
-    ) -> Result<ApiDefinition, RepoError> {
+    async fn insert_definition(&self, d: &NewApiDefinition) -> Result<ApiDefinition, RepoError> {
         let row = sqlx::query(
             "INSERT INTO ms_api_definition (project_id, name, protocol, method, path, status, spec, created_by) \
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8) \
@@ -188,11 +185,13 @@ impl ApiDefinitionRepository for PgApiDefinitionRepository {
 
     async fn delete_definition(&self, id: &str) -> Result<(), RepoError> {
         // 用例为硬删:ms_api_case 无 deleted 列,不能软删。
-        sqlx::query("UPDATE ms_api_definition SET deleted = true, updated_at = now() WHERE id = $1")
-            .bind(id)
-            .execute(&self.pool)
-            .await
-            .map_err(map_err)?;
+        sqlx::query(
+            "UPDATE ms_api_definition SET deleted = true, updated_at = now() WHERE id = $1",
+        )
+        .bind(id)
+        .execute(&self.pool)
+        .await
+        .map_err(map_err)?;
         sqlx::query("UPDATE ms_api_mock SET deleted = true WHERE api_definition_id = $1")
             .bind(id)
             .execute(&self.pool)
@@ -254,10 +253,7 @@ impl ApiDefinitionRepository for PgApiDefinitionRepository {
             .collect()
     }
 
-    async fn list_definitions(
-        &self,
-        project_id: &str,
-    ) -> Result<Vec<ApiDefinition>, RepoError> {
+    async fn list_definitions(&self, project_id: &str) -> Result<Vec<ApiDefinition>, RepoError> {
         let rows = sqlx::query(
             "SELECT id, num, project_id, name, protocol, method, path, status, module_id, spec, \
                     created_by, created_at::text AS created_at, updated_at::text AS updated_at \
@@ -360,11 +356,12 @@ impl ApiDefinitionRepository for PgApiDefinitionRepository {
     }
 
     async fn delete_mock(&self, mock_id: &str) -> Result<bool, RepoError> {
-        let res = sqlx::query("UPDATE ms_api_mock SET deleted = true WHERE id = $1 AND deleted = false")
-            .bind(mock_id)
-            .execute(&self.pool)
-            .await
-            .map_err(map_err)?;
+        let res =
+            sqlx::query("UPDATE ms_api_mock SET deleted = true WHERE id = $1 AND deleted = false")
+                .bind(mock_id)
+                .execute(&self.pool)
+                .await
+                .map_err(map_err)?;
         Ok(res.rows_affected() > 0)
     }
 
@@ -450,7 +447,10 @@ impl ApiDefinitionRepository for PgApiDefinitionRepository {
         rows.iter().map(row_to_mock).collect()
     }
 
-    async fn list_mocks_by_project(&self, project_id: &str) -> Result<Vec<ProjectMockRow>, RepoError> {
+    async fn list_mocks_by_project(
+        &self,
+        project_id: &str,
+    ) -> Result<Vec<ProjectMockRow>, RepoError> {
         let rows = sqlx::query(
             "SELECT m.id, m.api_definition_id, m.name, m.match_rule, m.response_status, m.response_body, \
                     m.enabled, m.tags, m.response_headers, m.response_delay_ms, m.follow_definition, \
@@ -534,12 +534,14 @@ impl ApiDefinitionRepository for PgApiDefinitionRepository {
         definition_id: &str,
         module_id: Option<&str>,
     ) -> Result<(), RepoError> {
-        sqlx::query("UPDATE ms_api_definition SET module_id = $2, updated_at = now() WHERE id = $1")
-            .bind(definition_id)
-            .bind(module_id)
-            .execute(&self.pool)
-            .await
-            .map_err(map_err)?;
+        sqlx::query(
+            "UPDATE ms_api_definition SET module_id = $2, updated_at = now() WHERE id = $1",
+        )
+        .bind(definition_id)
+        .bind(module_id)
+        .execute(&self.pool)
+        .await
+        .map_err(map_err)?;
         Ok(())
     }
 
@@ -684,16 +686,9 @@ mod tests {
         assert_eq!(cases.len(), 1);
         assert!(cases[0].assertions.is_array());
 
-        let standalone = NewApiCase::new(
-            "",
-            "p1",
-            "独立用例",
-            "GET",
-            "/ping",
-            None,
-            serde_json::json!([]),
-        )
-        .expect("valid");
+        let standalone =
+            NewApiCase::new("", "p1", "独立用例", "GET", "/ping", None, serde_json::json!([]))
+                .expect("valid");
         repo.insert_case(&standalone).await.expect("insert standalone");
         assert_eq!(repo.count_cases_by_project("p1").await.expect("count"), 2);
         let page = repo.list_cases_by_project("p1", 0, 1).await.expect("page");

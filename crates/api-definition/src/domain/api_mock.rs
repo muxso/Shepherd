@@ -31,11 +31,7 @@ impl NewApiMock {
         if !(100..=599).contains(&response_status) {
             return Err(ApiDefinitionError::BadResponseStatus(response_status));
         }
-        let match_rule = if match_rule.is_null() {
-            serde_json::json!({})
-        } else {
-            match_rule
-        };
+        let match_rule = if match_rule.is_null() { serde_json::json!({}) } else { match_rule };
         Ok(Self {
             api_definition_id: api_definition_id.to_string(),
             name: name.to_string(),
@@ -124,8 +120,7 @@ mod tests {
 
     #[test]
     fn new_mock_defaults_match_rule_to_object() {
-        let m = NewApiMock::new("d", "n", serde_json::Value::Null, 404, None, false)
-            .expect("ok");
+        let m = NewApiMock::new("d", "n", serde_json::Value::Null, 404, None, false).expect("ok");
         assert_eq!(m.match_rule, serde_json::json!({}));
     }
 

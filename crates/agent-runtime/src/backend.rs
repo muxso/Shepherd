@@ -396,7 +396,10 @@ mod tests {
         let sink = RecSink::default();
         let out = b.execute("the prompt", ".", &sink).await.expect("run");
         assert_eq!(out, "## codex 设计");
-        assert_eq!(sink.events.lock().unwrap_or_else(std::sync::PoisonError::into_inner)[0].kind, "DECISION");
+        assert_eq!(
+            sink.events.lock().unwrap_or_else(std::sync::PoisonError::into_inner)[0].kind,
+            "DECISION"
+        );
     }
 
     #[tokio::test]

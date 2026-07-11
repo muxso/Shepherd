@@ -94,15 +94,16 @@ impl ServerConfig {
         let parse_u64 = |key: &str, default: u64| -> u64 {
             lookup(key).and_then(|v| v.parse().ok()).unwrap_or(default)
         };
-        let oidc = |id_key: &str, secret_key: &str, redirect_key: &str| {
-            match (lookup(id_key), lookup(secret_key)) {
-                (Some(app_id), Some(app_secret)) => Some(OidcProviderConfig {
-                    app_id,
-                    app_secret,
-                    redirect: lookup(redirect_key).unwrap_or_default(),
-                }),
-                _ => None,
-            }
+        let oidc = |id_key: &str, secret_key: &str, redirect_key: &str| match (
+            lookup(id_key),
+            lookup(secret_key),
+        ) {
+            (Some(app_id), Some(app_secret)) => Some(OidcProviderConfig {
+                app_id,
+                app_secret,
+                redirect: lookup(redirect_key).unwrap_or_default(),
+            }),
+            _ => None,
         };
 
         ServerConfig {
@@ -112,8 +113,16 @@ impl ServerConfig {
             mock_bind: lookup("MOCK_BIND").filter(|v| !v.trim().is_empty()),
             admin_pw: lookup("SHEPHERD_ADMIN_PASSWORD").unwrap_or_else(|| "admin".to_string()),
             session_ttl_secs: parse_or("SHEPHERD_SESSION_TTL_SECS", 8 * 3600),
-            feishu: oidc("SHEPHERD_FEISHU_APP_ID", "SHEPHERD_FEISHU_APP_SECRET", "SHEPHERD_FEISHU_REDIRECT"),
-            wecom: oidc("SHEPHERD_WECOM_CORP_ID", "SHEPHERD_WECOM_SECRET", "SHEPHERD_WECOM_REDIRECT"),
+            feishu: oidc(
+                "SHEPHERD_FEISHU_APP_ID",
+                "SHEPHERD_FEISHU_APP_SECRET",
+                "SHEPHERD_FEISHU_REDIRECT",
+            ),
+            wecom: oidc(
+                "SHEPHERD_WECOM_CORP_ID",
+                "SHEPHERD_WECOM_SECRET",
+                "SHEPHERD_WECOM_REDIRECT",
+            ),
             agent: AgentConfig {
                 fleet: present("SHEPHERD_AGENT_FLEET"),
                 fleet_redis: lookup("SHEPHERD_FLEET_REDIS"),
@@ -170,7 +179,11 @@ mod tests {
         let cfg = from(&[("SHEPHERD_FEISHU_APP_ID", "x"), ("SHEPHERD_FEISHU_APP_SECRET", "y")]);
         assert_eq!(
             cfg.feishu,
-            Some(OidcProviderConfig { app_id: "x".into(), app_secret: "y".into(), redirect: String::new() })
+            Some(OidcProviderConfig {
+                app_id: "x".into(),
+                app_secret: "y".into(),
+                redirect: String::new()
+            })
         );
     }
 

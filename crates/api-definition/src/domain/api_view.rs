@@ -49,7 +49,8 @@ mod tests {
 
     #[test]
     fn new_view_ok_and_defaults_config() {
-        let v = NewApiView::new("p1", "u1", " 我的视图 ", serde_json::json!("bad"), true).expect("ok");
+        let v =
+            NewApiView::new("p1", "u1", " 我的视图 ", serde_json::json!("bad"), true).expect("ok");
         assert_eq!(v.name, "我的视图");
         assert_eq!(v.config, serde_json::json!({}));
         assert!(v.shared);

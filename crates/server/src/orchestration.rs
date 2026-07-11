@@ -4,9 +4,7 @@ use async_trait::async_trait;
 
 use delivery::application::DeliveryService;
 use delivery::domain::{AttemptStatus, DeliveryAttempt, ExecutorKind};
-use delivery::ports::{
-    AgentExecutor, DeliveryObserver, DispatchOutcome, NoopEventSink, WorkSpec,
-};
+use delivery::ports::{AgentExecutor, DeliveryObserver, DispatchOutcome, NoopEventSink, WorkSpec};
 use orchestrator::application::{DeliveryFeedbackOrchestrator, DeliveryProgress};
 use orchestrator::ports::{
     DeliverableView, OrchError, Reviser, TaskGateway, TaskTarget, VerificationGateway,
@@ -58,10 +56,7 @@ impl TaskGateway for TaskServiceGateway {
         task_id: &str,
     ) -> Result<Vec<String>, OrchError> {
         match self.svc.get(decomposition_id).await {
-            Ok(d) => Ok(d
-                .task(task_id)
-                .map(|t| t.acceptance_criteria.clone())
-                .unwrap_or_default()),
+            Ok(d) => Ok(d.task(task_id).map(|t| t.acceptance_criteria.clone()).unwrap_or_default()),
             Err(TaskCmdError::DecompositionNotFound) => Ok(Vec::new()),
             Err(e) => Err(OrchError::Gateway(format!("{e:?}"))),
         }
@@ -185,7 +180,9 @@ impl OrchestratorObserver {
                     message: format!("需求 {} 已交付", dec.requirement_id),
                 });
             }
-            Err(e) => tracing::warn!(requirement = %dec.requirement_id, "需求自动交付失败(可能未定基线): {e:?}"),
+            Err(e) => {
+                tracing::warn!(requirement = %dec.requirement_id, "需求自动交付失败(可能未定基线): {e:?}")
+            }
         }
     }
 }
@@ -227,8 +224,10 @@ impl DeliveryObserver for OrchestratorObserver {
             task_id: attempt.task_id.clone(),
             message: String::new(),
         });
-        if let Ok(outcome) =
-            self.orchestrator.on_progress(&attempt.decomposition_id, &attempt.task_id, progress).await
+        if let Ok(outcome) = self
+            .orchestrator
+            .on_progress(&attempt.decomposition_id, &attempt.task_id, progress)
+            .await
         {
             if let Some(v) = outcome.verdict {
                 let msg = if v.passed {

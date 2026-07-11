@@ -57,15 +57,27 @@ impl SpyExecutor {
     }
 
     pub fn last_pool(&self) -> Option<String> {
-        self.dispatches.lock().unwrap_or_else(std::sync::PoisonError::into_inner).last().map(|d| d.pool_id.clone())
+        self.dispatches
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .last()
+            .map(|d| d.pool_id.clone())
     }
 
     pub fn last_case_count(&self) -> Option<usize> {
-        self.dispatches.lock().unwrap_or_else(std::sync::PoisonError::into_inner).last().map(|d| d.case_ids.len())
+        self.dispatches
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .last()
+            .map(|d| d.case_ids.len())
     }
 
     pub fn last_env(&self) -> Option<ResolvedEnv> {
-        self.dispatches.lock().unwrap_or_else(std::sync::PoisonError::into_inner).last().map(|d| d.env.clone())
+        self.dispatches
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .last()
+            .map(|d| d.env.clone())
     }
 }
 
@@ -74,7 +86,10 @@ impl BatchExecutorPort for SpyExecutor {
     async fn dispatch(&self, spec: &DispatchSpec) -> Result<DispatchReport, PortError> {
         let mut d = self.dispatches.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         d.push(spec.clone());
-        Ok(DispatchReport { report_id: format!("report-{}", d.len()), status: "SUCCESS".to_string() })
+        Ok(DispatchReport {
+            report_id: format!("report-{}", d.len()),
+            status: "SUCCESS".to_string(),
+        })
     }
 }
 

@@ -19,7 +19,13 @@ impl MysqlPlugin {
     }
 
     async fn pool_for(&self, target: &str) -> Result<MySqlPool, String> {
-        if let Some(p) = self.pools.lock().unwrap_or_else(std::sync::PoisonError::into_inner).get(target).cloned() {
+        if let Some(p) = self
+            .pools
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(target)
+            .cloned()
+        {
             return Ok(p);
         }
         let pool = sqlx::mysql::MySqlPoolOptions::new()

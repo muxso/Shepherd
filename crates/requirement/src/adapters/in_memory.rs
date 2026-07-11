@@ -57,7 +57,14 @@ impl RequirementRepository for InMemoryRequirementRepository {
     }
 
     async fn get(&self, id: &str) -> Result<Option<Requirement>, RepoError> {
-        Ok(self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner).requirements.iter().find(|r| r.id == id).cloned())
+        Ok(self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .requirements
+            .iter()
+            .find(|r| r.id == id)
+            .cloned())
     }
 
     async fn count_active(&self, project_id: &str) -> Result<u64, RepoError> {
@@ -115,7 +122,8 @@ impl RequirementRepository for InMemoryRequirementRepository {
     async fn status_counts(&self, project_id: &str) -> Result<StatusCounts, RepoError> {
         let st = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let mut counts = StatusCounts::default();
-        for r in st.requirements.iter().filter(|r| r.occupies_title() && r.project_id == project_id) {
+        for r in st.requirements.iter().filter(|r| r.occupies_title() && r.project_id == project_id)
+        {
             counts.add(r.status);
         }
         Ok(counts)
@@ -153,7 +161,9 @@ mod tests {
         assert_eq!(titles(&listed), ["A", "B", "C"]);
 
         // 排序:C,A,B。
-        repo.set_order("p1", &[ids[2].clone(), ids[0].clone(), ids[1].clone()]).await.expect("order");
+        repo.set_order("p1", &[ids[2].clone(), ids[0].clone(), ids[1].clone()])
+            .await
+            .expect("order");
         let listed = repo.list_active("p1", 0, 10).await.expect("list");
         assert_eq!(titles(&listed), ["C", "A", "B"]);
     }
@@ -161,7 +171,8 @@ mod tests {
     #[tokio::test]
     async fn set_order_ignores_other_projects_ids() {
         let repo = InMemoryRequirementRepository::new();
-        let a = repo.insert(&NewRequirement::new("p1", "A", "d", &[]).expect("v")).await.expect("i");
+        let a =
+            repo.insert(&NewRequirement::new("p1", "A", "d", &[]).expect("v")).await.expect("i");
         let _other =
             repo.insert(&NewRequirement::new("p2", "X", "d", &[]).expect("v")).await.expect("i");
         // 传入跨项目 id 不应影响 p1 的排序写入(仅本项目存在的 id 生效)。
@@ -175,9 +186,11 @@ mod tests {
     async fn status_counts_tallies_active_by_status() {
         let repo = InMemoryRequirementRepository::new();
         // 两条 DRAFT + 一条改成 DELETED(soft delete 不计) + 另一项目一条(不计)。
-        let a = repo.insert(&NewRequirement::new("p1", "A", "d", &[]).expect("v")).await.expect("i");
+        let a =
+            repo.insert(&NewRequirement::new("p1", "A", "d", &[]).expect("v")).await.expect("i");
         repo.insert(&NewRequirement::new("p1", "B", "d", &[]).expect("v")).await.expect("i");
-        let c = repo.insert(&NewRequirement::new("p1", "C", "d", &[]).expect("v")).await.expect("i");
+        let c =
+            repo.insert(&NewRequirement::new("p1", "C", "d", &[]).expect("v")).await.expect("i");
         repo.insert(&NewRequirement::new("p2", "X", "d", &[]).expect("v")).await.expect("i");
         repo.soft_delete(&c.id);
         // 把 A 推进到 BASELINED。

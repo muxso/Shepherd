@@ -2,10 +2,7 @@ use crate::application::PlanStatistics;
 use crate::domain::{AssertionResult, CaseStatus, PlanCase, StepResult};
 
 fn escape(s: &str) -> String {
-    s.replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('"', "&quot;")
+    s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;")
 }
 
 fn badge(status: CaseStatus) -> (&'static str, &'static str, &'static str) {
@@ -82,49 +79,49 @@ fn render_case(idx: usize, c: &PlanCase) -> String {
         })
         .unwrap_or_default();
 
-    let (steps_html, assertions_html, headers_html, body_html, request_html) = match c.result.as_ref()
-    {
-        None => (String::new(), String::new(), String::new(), String::new(), String::new()),
-        Some(r) => {
-            let steps = if r.steps.is_empty() {
-                String::new()
-            } else {
-                let inner: String = r.steps.iter().map(render_step).collect();
-                format!("<div class=\"sec\">步骤</div>{inner}")
-            };
-            let body = r
-                .body
-                .as_ref()
-                .filter(|b| !b.is_empty())
-                .map(|b| format!("<div class=\"sec\">响应体</div><pre>{}</pre>", escape(b)))
-                .unwrap_or_default();
-            let request = r
-                .request
-                .as_ref()
-                .map(|req| {
-                    let hdr = headers_table("请求头", &req.headers);
-                    let b = req
-                        .body
-                        .as_ref()
-                        .filter(|x| !x.is_empty())
-                        .map(|x| format!("<pre>{}</pre>", escape(x)))
-                        .unwrap_or_default();
-                    format!(
-                        "<div class=\"sec\">实际请求</div><pre>{} {}</pre>{hdr}{b}",
-                        escape(&req.method),
-                        escape(&req.url),
-                    )
-                })
-                .unwrap_or_default();
-            (
-                steps,
-                assertion_table(&r.assertions),
-                headers_table("响应头", &r.response_headers),
-                body,
-                request,
-            )
-        }
-    };
+    let (steps_html, assertions_html, headers_html, body_html, request_html) =
+        match c.result.as_ref() {
+            None => (String::new(), String::new(), String::new(), String::new(), String::new()),
+            Some(r) => {
+                let steps = if r.steps.is_empty() {
+                    String::new()
+                } else {
+                    let inner: String = r.steps.iter().map(render_step).collect();
+                    format!("<div class=\"sec\">步骤</div>{inner}")
+                };
+                let body = r
+                    .body
+                    .as_ref()
+                    .filter(|b| !b.is_empty())
+                    .map(|b| format!("<div class=\"sec\">响应体</div><pre>{}</pre>", escape(b)))
+                    .unwrap_or_default();
+                let request = r
+                    .request
+                    .as_ref()
+                    .map(|req| {
+                        let hdr = headers_table("请求头", &req.headers);
+                        let b = req
+                            .body
+                            .as_ref()
+                            .filter(|x| !x.is_empty())
+                            .map(|x| format!("<pre>{}</pre>", escape(x)))
+                            .unwrap_or_default();
+                        format!(
+                            "<div class=\"sec\">实际请求</div><pre>{} {}</pre>{hdr}{b}",
+                            escape(&req.method),
+                            escape(&req.url),
+                        )
+                    })
+                    .unwrap_or_default();
+                (
+                    steps,
+                    assertion_table(&r.assertions),
+                    headers_table("响应头", &r.response_headers),
+                    body,
+                    request,
+                )
+            }
+        };
 
     let detail = if steps_html.is_empty()
         && assertions_html.is_empty()
@@ -188,9 +185,11 @@ pub fn report_html(name: &str, stats: &PlanStatistics, cases: &[PlanCase]) -> St
     let (verdict, vcolor) =
         if stats.is_pass { ("通过", "#2e7d32") } else { ("未通过", "#c62828") };
 
-    let total_latency: u64 = cases.iter().filter_map(|c| c.result.as_ref()).map(|r| r.latency_ms).sum();
+    let total_latency: u64 =
+        cases.iter().filter_map(|c| c.result.as_ref()).map(|r| r.latency_ms).sum();
     let (mut assert_total, mut assert_pass) = (0u64, 0u64);
-    let (mut n_succ, mut n_err, mut n_fake, mut n_block, mut n_pend) = (0u64, 0u64, 0u64, 0u64, 0u64);
+    let (mut n_succ, mut n_err, mut n_fake, mut n_block, mut n_pend) =
+        (0u64, 0u64, 0u64, 0u64, 0u64);
     for c in cases {
         match c.status {
             CaseStatus::Success => n_succ += 1,
@@ -204,7 +203,8 @@ pub fn report_html(name: &str, stats: &PlanStatistics, cases: &[PlanCase]) -> St
             assert_pass += r.assertions.iter().filter(|a| a.passed).count() as u64;
         }
     }
-    let assert_pct = if assert_total == 0 { 100.0 } else { assert_pass as f64 / assert_total as f64 * 100.0 };
+    let assert_pct =
+        if assert_total == 0 { 100.0 } else { assert_pass as f64 / assert_total as f64 * 100.0 };
     let pct = |n: u64| if stats.total == 0 { 0.0 } else { n as f64 / stats.total as f64 * 100.0 };
 
     let status_donut = donut_svg(
@@ -219,8 +219,7 @@ pub fn report_html(name: &str, stats: &PlanStatistics, cases: &[PlanCase]) -> St
         &stats.total.to_string(),
     );
 
-    let cases_html: String =
-        cases.iter().enumerate().map(|(i, c)| render_case(i + 1, c)).collect();
+    let cases_html: String = cases.iter().enumerate().map(|(i, c)| render_case(i + 1, c)).collect();
     let detail_section = if cases.is_empty() {
         "<div class=\"empty\">该计划暂无挂入的用例</div>".to_string()
     } else {
@@ -338,11 +337,16 @@ pub fn report_html(name: &str, stats: &PlanStatistics, cases: &[PlanCase]) -> St
         assert_pct = assert_pct,
         assert_pass = assert_pass,
         assert_total = assert_total,
-        n_succ = n_succ, p_succ = pct(n_succ),
-        n_err = n_err, p_err = pct(n_err),
-        n_fake = n_fake, p_fake = pct(n_fake),
-        n_block = n_block, p_block = pct(n_block),
-        n_pend = n_pend, p_pend = pct(n_pend),
+        n_succ = n_succ,
+        p_succ = pct(n_succ),
+        n_err = n_err,
+        p_err = pct(n_err),
+        n_fake = n_fake,
+        p_fake = pct(n_fake),
+        n_block = n_block,
+        p_block = pct(n_block),
+        n_pend = n_pend,
+        p_pend = pct(n_pend),
         status_donut = status_donut,
         detail_section = detail_section,
     )
@@ -444,10 +448,18 @@ pub fn report_markdown(name: &str, stats: &PlanStatistics, cases: &[PlanCase]) -
             .as_ref()
             .map(|r| {
                 let code = r.status_code.map(|s| format!("状态码 {s} · ")).unwrap_or_default();
-                format!(" — {code}响应时间 {} ms · 响应大小 {} bytes", r.latency_ms, r.response_size)
+                format!(
+                    " — {code}响应时间 {} ms · 响应大小 {} bytes",
+                    r.latency_ms, r.response_size
+                )
             })
             .unwrap_or_default();
-        o.push_str(&format!("\n### {}. {} `[{}]`{meta}\n", i + 1, md_cell(&c.name), md_status(c.status)));
+        o.push_str(&format!(
+            "\n### {}. {} `[{}]`{meta}\n",
+            i + 1,
+            md_cell(&c.name),
+            md_status(c.status)
+        ));
         if let Some(r) = &c.result {
             if !r.steps.is_empty() {
                 o.push_str("\n**步骤**\n\n");
