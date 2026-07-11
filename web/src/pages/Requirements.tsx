@@ -71,6 +71,9 @@ const fmtShort = (ms?: number | null) => (ms ? dayjs(ms).format('MM-DD HH:mm') :
 const fmtPlan = (d?: string | null) => (d ? dayjs(d).format('MM-DD') : '—')
 
 // 列表行 = 本地注册表项 + 后端需求状态/类型/优先级/标签/延期。
+// 新建需求的工作区 Tab key(与场景页 NEW_KEY 同模式,不弹窗)。
+const NEW_REQ_KEY = '__new_requirement__'
+
 type ReqRow = Omit<RegItem, 'label'> & {
   status?: string
   label: React.ReactNode
@@ -123,7 +126,6 @@ export default function Requirements() {
   const { t } = useI18n()
   const { projectId } = useApp()
   const [items, setItems] = useState<ReqRow[]>([])
-  const [createOpen, setCreateOpen] = useState(false)
   const tabs = useWorkTabs()
   // 需求字段模板:行内预览解析自定义字段的显示名。
   const { fields: reqTplFields } = useFieldTemplate('requirement')
@@ -273,47 +275,56 @@ export default function Requirements() {
 
   if (!projectId) return <SelectProjectEmpty />
 
-  const detailTabs = items
-    .filter((r) => tabs.openIds.includes(r.id))
-    .map((r) => ({
-      key: r.id,
-      label: r.label,
-      children: <RequirementDetail key={r.id} reqId={r.id} projectId={projectId} onChanged={loadList} onDeleted={() => { tabs.close(r.id); loadList() }} onOpen={(id) => tabs.open(id)} />,
-    }))
+  // 新建走工作区 Tab(与场景页一致,不弹窗):创建成功关闭新建页并进入详情。
+  const detailTabs = [
+    ...(tabs.openIds.includes(NEW_REQ_KEY)
+      ? [{
+          key: NEW_REQ_KEY,
+          label: t('req.new', '新建需求'),
+          children: (
+            <div style={{ maxWidth: 720, padding: 16, overflow: 'auto', height: '100%' }}>
+              <CreateRequirementForm
+                projectId={projectId}
+                onDone={(r, title) => {
+                  regAdd('requirement', projectId, { id: r.id, label: title, createdAt: Date.now() })
+                  loadList()
+                  tabs.close(NEW_REQ_KEY)
+                  tabs.open(r.id)
+                }}
+              />
+            </div>
+          ),
+        }]
+      : []),
+    ...items
+      .filter((r) => tabs.openIds.includes(r.id))
+      .map((r) => ({
+        key: r.id,
+        label: r.label,
+        children: <RequirementDetail key={r.id} reqId={r.id} projectId={projectId} onChanged={loadList} onDeleted={() => { tabs.close(r.id); loadList() }} onOpen={(id) => tabs.open(id)} />,
+      })),
+  ]
 
   return (
-    <>
-      <Workspace
-        listLabel={t('req.allRequirements', '全部需求')}
-        activeKey={tabs.activeKey}
-        onChange={tabs.setActiveKey}
-        onClose={tabs.close}
-        tabs={detailTabs}
-        listContent={
-          <WorkList<ReqRow>
-            onNew={() => setCreateOpen(true)}
-            newLabel={t('req.new', '新建需求')}
-            extraActions={lv.toolbar}
-            data={lv.rows}
-            onRowClick={(r) => tabs.open(r.id)}
-            emptyText={t('req.empty', '暂无需求')}
-            columns={lv.columns}
-            expandable={{ expandedRowRender: rowPreview, rowExpandable: (r) => !!r.raw }}
-          />
-        }
-      />
-      <Modal title={t('req.new', '新建需求')} open={createOpen} onCancel={() => setCreateOpen(false)} footer={null} width={680} destroyOnHidden>
-        <CreateRequirementForm
-          projectId={projectId}
-          onDone={(r, title) => {
-            regAdd('requirement', projectId, { id: r.id, label: title, createdAt: Date.now() })
-            loadList()
-            setCreateOpen(false)
-            tabs.open(r.id)
-          }}
+    <Workspace
+      listLabel={t('req.allRequirements', '全部需求')}
+      activeKey={tabs.activeKey}
+      onChange={tabs.setActiveKey}
+      onClose={tabs.close}
+      tabs={detailTabs}
+      listContent={
+        <WorkList<ReqRow>
+          onNew={() => tabs.open(NEW_REQ_KEY)}
+          newLabel={t('req.new', '新建需求')}
+          extraActions={lv.toolbar}
+          data={lv.rows}
+          onRowClick={(r) => tabs.open(r.id)}
+          emptyText={t('req.empty', '暂无需求')}
+          columns={lv.columns}
+          expandable={{ expandedRowRender: rowPreview, rowExpandable: (r) => !!r.raw }}
         />
-      </Modal>
-    </>
+      }
+    />
   )
 }
 
