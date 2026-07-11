@@ -120,8 +120,15 @@ struct StatisticsResponse {
     is_pass: bool,
 }
 
-#[utoipa::path(get, path = "/test-plan/{id}/statistics", tag = "test-plan", params(("id" = String, Path)), responses((status = 200, body = StatisticsResponse), (status = 404)))]
-async fn statistics(State(st): State<PlanState>, Path(id): Path<String>) -> Response {
+#[utoipa::path(get, path = "/test-plan/{id}/statistics", tag = "test-plan", params(("id" = String, Path)), responses((status = 200, body = StatisticsResponse), (status = 403), (status = 404)), security(("bearer" = [])))]
+async fn statistics(
+    user: AuthUser,
+    State(st): State<PlanState>,
+    Path(id): Path<String>,
+) -> Response {
+    if !user.can("TEST_PLAN", "READ") {
+        return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
     match st.stats.execute(&id).await {
         Ok(s) => (
             StatusCode::OK,
@@ -143,8 +150,11 @@ async fn statistics(State(st): State<PlanState>, Path(id): Path<String>) -> Resp
     }
 }
 
-#[utoipa::path(get, path = "/test-plan/{id}/report", tag = "test-plan", params(("id" = String, Path)), responses((status = 200, description = "HTML 报告"), (status = 404)))]
-async fn report(State(st): State<PlanState>, Path(id): Path<String>) -> Response {
+#[utoipa::path(get, path = "/test-plan/{id}/report", tag = "test-plan", params(("id" = String, Path)), responses((status = 200, description = "HTML 报告"), (status = 403), (status = 404)), security(("bearer" = [])))]
+async fn report(user: AuthUser, State(st): State<PlanState>, Path(id): Path<String>) -> Response {
+    if !user.can("TEST_PLAN", "READ") {
+        return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
     match st.stats.with_name(&id).await {
         Ok((name, s)) => {
             let cases = st.cases.list(&id).await.unwrap_or_default();
@@ -164,8 +174,15 @@ async fn report(State(st): State<PlanState>, Path(id): Path<String>) -> Response
     }
 }
 
-#[utoipa::path(get, path = "/test-plan/{id}/report.md", tag = "test-plan", params(("id" = String, Path)), responses((status = 200, description = "Markdown 报告"), (status = 404)))]
-async fn report_md(State(st): State<PlanState>, Path(id): Path<String>) -> Response {
+#[utoipa::path(get, path = "/test-plan/{id}/report.md", tag = "test-plan", params(("id" = String, Path)), responses((status = 200, description = "Markdown 报告"), (status = 403), (status = 404)), security(("bearer" = [])))]
+async fn report_md(
+    user: AuthUser,
+    State(st): State<PlanState>,
+    Path(id): Path<String>,
+) -> Response {
+    if !user.can("TEST_PLAN", "READ") {
+        return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
     match st.stats.with_name(&id).await {
         Ok((name, s)) => {
             let cases = st.cases.list(&id).await.unwrap_or_default();
@@ -286,8 +303,15 @@ struct PlanCaseResponse {
     status_code: Option<i64>,
 }
 
-#[utoipa::path(get, path = "/test-plan/{id}/cases", tag = "test-plan", params(("id" = String, Path)), responses((status = 200, body = [PlanCaseResponse])))]
-async fn list_cases(State(st): State<PlanState>, Path(id): Path<String>) -> Response {
+#[utoipa::path(get, path = "/test-plan/{id}/cases", tag = "test-plan", params(("id" = String, Path)), responses((status = 200, body = [PlanCaseResponse]), (status = 403)), security(("bearer" = [])))]
+async fn list_cases(
+    user: AuthUser,
+    State(st): State<PlanState>,
+    Path(id): Path<String>,
+) -> Response {
+    if !user.can("TEST_PLAN", "READ") {
+        return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
     match st.cases.list(&id).await {
         Ok(cases) => {
             let items: Vec<PlanCaseResponse> = cases
@@ -442,6 +466,7 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .uri(format!("/test-plan/{pid}/report"))
+                    .header("authorization", format!("Bearer {t}"))
                     .body(Body::empty())
                     .expect("req"),
             )
@@ -508,11 +533,12 @@ mod tests {
         );
         repo.set_threshold(&plan.id, 0.5);
 
-        let (app, _t) = app_with(repo).await;
+        let (app, t) = app_with(repo).await;
         let resp = app
             .oneshot(
                 Request::builder()
                     .uri(format!("/test-plan/{}/statistics", plan.id))
+                    .header("authorization", format!("Bearer {t}"))
                     .body(Body::empty())
                     .expect("req"),
             )
@@ -528,11 +554,12 @@ mod tests {
 
     #[tokio::test]
     async fn statistics_missing_plan_404() {
-        let (app, _t) = app_with(InMemoryPlanRepository::new()).await;
+        let (app, t) = app_with(InMemoryPlanRepository::new()).await;
         let resp = app
             .oneshot(
                 Request::builder()
                     .uri("/test-plan/ghost/statistics")
+                    .header("authorization", format!("Bearer {t}"))
                     .body(Body::empty())
                     .expect("req"),
             )

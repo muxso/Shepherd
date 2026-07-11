@@ -109,8 +109,11 @@ async fn register(
     }
 }
 
-#[utoipa::path(get, path = "/runner-agent", tag = "runner", responses((status = 200, body = [AgentResponse])))]
-async fn list(State(st): State<RunnerState>) -> Response {
+#[utoipa::path(get, path = "/runner-agent", tag = "runner", responses((status = 200, body = [AgentResponse]), (status = 403)), security(("bearer" = [])))]
+async fn list(user: AuthUser, State(st): State<RunnerState>) -> Response {
+    if !user.can("RUNNER", "READ") {
+        return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
     match st.svc.list().await {
         Ok(list) => {
             let items: Vec<AgentResponse> = list.into_iter().map(AgentResponse::from).collect();
@@ -202,8 +205,15 @@ impl From<ExecutionRecord> for ExecutionResponse {
     }
 }
 
-#[utoipa::path(get, path = "/runner-agent/{id}/executions", tag = "runner", params(("id" = String, Path)), responses((status = 200, body = [ExecutionResponse])))]
-async fn executions(State(st): State<RunnerState>, Path(id): Path<String>) -> Response {
+#[utoipa::path(get, path = "/runner-agent/{id}/executions", tag = "runner", params(("id" = String, Path)), responses((status = 200, body = [ExecutionResponse]), (status = 403)), security(("bearer" = [])))]
+async fn executions(
+    user: AuthUser,
+    State(st): State<RunnerState>,
+    Path(id): Path<String>,
+) -> Response {
+    if !user.can("RUNNER", "READ") {
+        return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
     match st.svc.executions(&id, 50).await {
         Ok(list) => {
             let items: Vec<ExecutionResponse> =
@@ -393,6 +403,7 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .uri(format!("/runner-agent/{id}/executions"))
+                    .header("authorization", format!("Bearer {t}"))
                     .body(Body::empty())
                     .expect("req"),
             )

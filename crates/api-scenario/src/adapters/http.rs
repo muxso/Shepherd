@@ -389,11 +389,15 @@ async fn copy_scenario(
     }
 }
 
-#[utoipa::path(get, path = "/api/scenario", tag = "api-scenario", params(ScenarioListQuery), responses((status = 200, body = [ScenarioResponse])))]
+#[utoipa::path(get, path = "/api/scenario", tag = "api-scenario", params(ScenarioListQuery), responses((status = 200, body = [ScenarioResponse])), security(("bearer" = [])))]
 async fn list_scenarios(
+    user: AuthUser,
     State(st): State<ScenarioAppState>,
     Query(q): Query<ScenarioListQuery>,
 ) -> Response {
+    if !user.can("API_SCENARIO", "READ") {
+        return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
     match st.list.execute(&q.project_id).await {
         Ok(list) => {
             let body: Vec<ScenarioResponse> =
@@ -404,8 +408,15 @@ async fn list_scenarios(
     }
 }
 
-#[utoipa::path(get, path = "/api/scenario/{id}", tag = "api-scenario", params(("id" = String, Path)), responses((status = 200, body = ScenarioResponse), (status = 404)))]
-async fn get_scenario(State(st): State<ScenarioAppState>, Path(id): Path<String>) -> Response {
+#[utoipa::path(get, path = "/api/scenario/{id}", tag = "api-scenario", params(("id" = String, Path)), responses((status = 200, body = ScenarioResponse), (status = 404)), security(("bearer" = [])))]
+async fn get_scenario(
+    user: AuthUser,
+    State(st): State<ScenarioAppState>,
+    Path(id): Path<String>,
+) -> Response {
+    if !user.can("API_SCENARIO", "READ") {
+        return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
     match st.get.execute(&id).await {
         Ok(Some(s)) => (StatusCode::OK, Json(ScenarioResponse::from(s))).into_response(),
         Ok(None) => (StatusCode::NOT_FOUND, "scenario not found").into_response(),
@@ -601,8 +612,15 @@ async fn add_step(
     }
 }
 
-#[utoipa::path(get, path = "/api/scenario/{id}/compile", tag = "api-scenario", params(("id" = String, Path)), responses((status = 200, body = CompileResultDto), (status = 404), (status = 409)))]
-async fn compile_scenario(State(st): State<ScenarioAppState>, Path(id): Path<String>) -> Response {
+#[utoipa::path(get, path = "/api/scenario/{id}/compile", tag = "api-scenario", params(("id" = String, Path)), responses((status = 200, body = CompileResultDto), (status = 404), (status = 409)), security(("bearer" = [])))]
+async fn compile_scenario(
+    user: AuthUser,
+    State(st): State<ScenarioAppState>,
+    Path(id): Path<String>,
+) -> Response {
+    if !user.can("API_SCENARIO", "READ") {
+        return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
     match st.compile.execute(&id).await {
         Ok(steps) => {
             let body =
@@ -624,12 +642,16 @@ async fn compile_scenario(State(st): State<ScenarioAppState>, Path(id): Path<Str
     }
 }
 
-#[utoipa::path(get, path = "/api/scenario/{id}/executions", tag = "api-scenario", params(("id" = String, Path), ExecutionListQuery), responses((status = 200, body = ScenarioExecutionPageResponse), (status = 400)))]
+#[utoipa::path(get, path = "/api/scenario/{id}/executions", tag = "api-scenario", params(("id" = String, Path), ExecutionListQuery), responses((status = 200, body = ScenarioExecutionPageResponse), (status = 400)), security(("bearer" = [])))]
 async fn list_executions(
+    user: AuthUser,
     State(st): State<ScenarioAppState>,
     Path(id): Path<String>,
     Query(q): Query<ExecutionListQuery>,
 ) -> Response {
+    if !user.can("API_SCENARIO", "READ") {
+        return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
     let page = match PageRequest::new(q.current, q.page_size) {
         Ok(p) => p,
         Err(_) => return (StatusCode::BAD_REQUEST, "invalid page params").into_response(),
@@ -659,8 +681,15 @@ struct ScenarioChangeDto {
     created_at: String,
 }
 
-#[utoipa::path(get, path = "/api/scenario/{id}/changes", tag = "api-scenario", params(("id" = String, Path)), responses((status = 200, body = [ScenarioChangeDto])))]
-async fn list_changes(State(st): State<ScenarioAppState>, Path(id): Path<String>) -> Response {
+#[utoipa::path(get, path = "/api/scenario/{id}/changes", tag = "api-scenario", params(("id" = String, Path)), responses((status = 200, body = [ScenarioChangeDto])), security(("bearer" = [])))]
+async fn list_changes(
+    user: AuthUser,
+    State(st): State<ScenarioAppState>,
+    Path(id): Path<String>,
+) -> Response {
+    if !user.can("API_SCENARIO", "READ") {
+        return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
     match st.repo.list_changes(&id).await {
         Ok(list) => {
             let body: Vec<ScenarioChangeDto> = list
@@ -731,8 +760,12 @@ mod tests {
         b.body(Body::from(body.to_string())).expect("req")
     }
 
-    fn get_req(uri: &str) -> Request<Body> {
-        Request::builder().method("GET").uri(uri).body(Body::empty()).expect("req")
+    fn get_req(uri: &str, token: Option<&str>) -> Request<Body> {
+        let mut b = Request::builder().method("GET").uri(uri);
+        if let Some(t) = token {
+            b = b.header("authorization", format!("Bearer {t}"));
+        }
+        b.body(Body::empty()).expect("req")
     }
 
     async fn json_body(resp: Response) -> serde_json::Value {
@@ -796,7 +829,8 @@ mod tests {
     async fn list_scenarios_open_200() {
         let (app, t) = app().await;
         create_scenario_id(&app, &t).await;
-        let resp = app.oneshot(get_req("/api/scenario?projectId=p1")).await.expect("resp");
+        let resp =
+            app.oneshot(get_req("/api/scenario?projectId=p1", Some(&t))).await.expect("resp");
         assert_eq!(resp.status(), StatusCode::OK);
         let v = json_body(resp).await;
         assert_eq!(v.as_array().expect("array").len(), 1);
@@ -814,7 +848,8 @@ mod tests {
             ))
             .await
             .expect("resp");
-        let resp = app.oneshot(get_req(&format!("/api/scenario/{id}"))).await.expect("resp");
+        let resp =
+            app.oneshot(get_req(&format!("/api/scenario/{id}"), Some(&t))).await.expect("resp");
         assert_eq!(resp.status(), StatusCode::OK);
         let v = json_body(resp).await;
         assert_eq!(v["steps"][0]["kind"], "CASE");
@@ -823,8 +858,8 @@ mod tests {
 
     #[tokio::test]
     async fn get_missing_scenario_404() {
-        let (app, _t) = app().await;
-        let resp = app.oneshot(get_req("/api/scenario/ghost")).await.expect("resp");
+        let (app, t) = app().await;
+        let resp = app.oneshot(get_req("/api/scenario/ghost", Some(&t))).await.expect("resp");
         assert_eq!(resp.status(), StatusCode::NOT_FOUND);
     }
 
@@ -946,8 +981,10 @@ mod tests {
             ))
             .await
             .expect("resp");
-        let resp =
-            app.oneshot(get_req(&format!("/api/scenario/{id}/compile"))).await.expect("resp");
+        let resp = app
+            .oneshot(get_req(&format!("/api/scenario/{id}/compile"), Some(&t)))
+            .await
+            .expect("resp");
         assert_eq!(resp.status(), StatusCode::OK);
         let v = json_body(resp).await;
         assert_eq!(v["steps"][0]["caseId"], "case-1");
@@ -965,15 +1002,18 @@ mod tests {
             ))
             .await
             .expect("resp");
-        let resp =
-            app.oneshot(get_req(&format!("/api/scenario/{id}/compile"))).await.expect("resp");
+        let resp = app
+            .oneshot(get_req(&format!("/api/scenario/{id}/compile"), Some(&t)))
+            .await
+            .expect("resp");
         assert_eq!(resp.status(), StatusCode::CONFLICT);
     }
 
     #[tokio::test]
     async fn compile_missing_scenario_404() {
-        let (app, _t) = app().await;
-        let resp = app.oneshot(get_req("/api/scenario/ghost/compile")).await.expect("resp");
+        let (app, t) = app().await;
+        let resp =
+            app.oneshot(get_req("/api/scenario/ghost/compile", Some(&t))).await.expect("resp");
         assert_eq!(resp.status(), StatusCode::NOT_FOUND);
     }
 
@@ -997,17 +1037,19 @@ mod tests {
         }
     }
 
-    async fn app_with_repo() -> (Router, Arc<InMemoryApiScenarioRepository>) {
+    async fn app_with_repo() -> (Router, Arc<InMemoryApiScenarioRepository>, String) {
         let repo = Arc::new(InMemoryApiScenarioRepository::new());
         let sessions = Arc::new(InMemorySessionStore::new());
+        let perms = PermissionSet::from_raw(["API_SCENARIO:READ+ADD".to_string()]).expect("perms");
+        let token = sessions.create("admin", perms, 3600).await.expect("token");
         let r = router(repo.clone(), sessions);
-        (r, repo)
+        (r, repo, token)
     }
 
     #[tokio::test]
     async fn list_executions_returns_paginated_body() {
         use crate::ports::ApiScenarioRepository;
-        let (app, repo) = app_with_repo().await;
+        let (app, repo, t) = app_with_repo().await;
         for i in 0..3 {
             let status = if i == 2 { "SUCCESS" } else { "PENDING" };
             repo.record_execution("scn-1", "p1", status, i, None).await.expect("rec");
@@ -1015,7 +1057,7 @@ mod tests {
         repo.record_execution("scn-2", "p1", "ERROR", 0, None).await.expect("rec");
 
         let resp = app
-            .oneshot(get_req("/api/scenario/scn-1/executions?current=1&pageSize=2"))
+            .oneshot(get_req("/api/scenario/scn-1/executions?current=1&pageSize=2", Some(&t)))
             .await
             .expect("resp");
         assert_eq!(resp.status(), StatusCode::OK);
@@ -1029,8 +1071,9 @@ mod tests {
 
     #[tokio::test]
     async fn list_executions_empty_ok() {
-        let (app, _repo) = app_with_repo().await;
-        let resp = app.oneshot(get_req("/api/scenario/scn-x/executions")).await.expect("resp");
+        let (app, _repo, t) = app_with_repo().await;
+        let resp =
+            app.oneshot(get_req("/api/scenario/scn-x/executions", Some(&t))).await.expect("resp");
         assert_eq!(resp.status(), StatusCode::OK);
         let v = json_body(resp).await;
         assert_eq!(v["total"], 0);
@@ -1040,9 +1083,9 @@ mod tests {
 
     #[tokio::test]
     async fn list_executions_bad_page_params_400() {
-        let (app, _repo) = app_with_repo().await;
+        let (app, _repo, t) = app_with_repo().await;
         let resp = app
-            .oneshot(get_req("/api/scenario/scn-1/executions?current=0&pageSize=10"))
+            .oneshot(get_req("/api/scenario/scn-1/executions?current=0&pageSize=10", Some(&t)))
             .await
             .expect("resp");
         assert_eq!(resp.status(), StatusCode::BAD_REQUEST);

@@ -122,8 +122,15 @@ async fn create_review(
     }
 }
 
-#[utoipa::path(get, path = "/case-review", tag = "case", params(("projectId" = String, Query)), responses((status = 200, body = [ReviewSummaryResponse])))]
-async fn list_reviews(State(st): State<ReviewState>, Query(q): Query<ProjectQuery>) -> Response {
+#[utoipa::path(get, path = "/case-review", tag = "case", params(("projectId" = String, Query)), responses((status = 200, body = [ReviewSummaryResponse])), security(("bearer" = [])))]
+async fn list_reviews(
+    user: AuthUser,
+    State(st): State<ReviewState>,
+    Query(q): Query<ProjectQuery>,
+) -> Response {
+    if !user.can("CASE_REVIEW", "READ") {
+        return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
     match st.repo.list_reviews(&q.project_id).await {
         Ok(rs) => {
             let items: Vec<ReviewSummaryResponse> = rs
@@ -143,8 +150,15 @@ async fn list_reviews(State(st): State<ReviewState>, Query(q): Query<ProjectQuer
     }
 }
 
-#[utoipa::path(get, path = "/case-review/{review_id}", tag = "case", params(("review_id" = String, Path)), responses((status = 200, body = ReviewDetailResponse), (status = 404)))]
-async fn get_review(State(st): State<ReviewState>, Path(review_id): Path<String>) -> Response {
+#[utoipa::path(get, path = "/case-review/{review_id}", tag = "case", params(("review_id" = String, Path)), responses((status = 200, body = ReviewDetailResponse), (status = 404)), security(("bearer" = [])))]
+async fn get_review(
+    user: AuthUser,
+    State(st): State<ReviewState>,
+    Path(review_id): Path<String>,
+) -> Response {
+    if !user.can("CASE_REVIEW", "READ") {
+        return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
     match st.repo.get_review(&review_id).await {
         Ok(d) => (
             StatusCode::OK,

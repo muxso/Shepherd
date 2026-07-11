@@ -221,8 +221,15 @@ async fn create_requirement(
     }
 }
 
-#[utoipa::path(get, path = "/requirement", tag = "requirement", params(ListQuery), responses((status = 200, body = RequirementPage)))]
-async fn list_requirements(State(st): State<ReqState>, Query(q): Query<ListQuery>) -> Response {
+#[utoipa::path(get, path = "/requirement", tag = "requirement", params(ListQuery), responses((status = 200, body = RequirementPage), (status = 403)), security(("bearer" = [])))]
+async fn list_requirements(
+    user: AuthUser,
+    State(st): State<ReqState>,
+    Query(q): Query<ListQuery>,
+) -> Response {
+    if !user.can("REQUIREMENT", "READ") {
+        return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
     let page = match PageRequest::new(q.current, q.page_size) {
         Ok(p) => p,
         Err(_) => return (StatusCode::BAD_REQUEST, "invalid page params").into_response(),
@@ -242,16 +249,30 @@ async fn list_requirements(State(st): State<ReqState>, Query(q): Query<ListQuery
     }
 }
 
-#[utoipa::path(get, path = "/requirement/{id}", tag = "requirement", params(("id" = String, Path, description = "需求 id")), responses((status = 200, body = RequirementResponse), (status = 404)))]
-async fn get_requirement(State(st): State<ReqState>, Path(id): Path<String>) -> Response {
+#[utoipa::path(get, path = "/requirement/{id}", tag = "requirement", params(("id" = String, Path, description = "需求 id")), responses((status = 200, body = RequirementResponse), (status = 403), (status = 404)), security(("bearer" = [])))]
+async fn get_requirement(
+    user: AuthUser,
+    State(st): State<ReqState>,
+    Path(id): Path<String>,
+) -> Response {
+    if !user.can("REQUIREMENT", "READ") {
+        return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
     match st.admin.get(&id).await {
         Ok(r) => (StatusCode::OK, Json(RequirementResponse::from(r))).into_response(),
         Err(e) => cmd_err(e),
     }
 }
 
-#[utoipa::path(get, path = "/requirement/{id}/version/{n}", tag = "requirement", params(("id" = String, Path, description = "需求 id"), ("n" = u32, Path, description = "版本号")), responses((status = 200, body = VersionResponse), (status = 404)))]
-async fn get_version(State(st): State<ReqState>, Path((id, n)): Path<(String, u32)>) -> Response {
+#[utoipa::path(get, path = "/requirement/{id}/version/{n}", tag = "requirement", params(("id" = String, Path, description = "需求 id"), ("n" = u32, Path, description = "版本号")), responses((status = 200, body = VersionResponse), (status = 403), (status = 404)), security(("bearer" = [])))]
+async fn get_version(
+    user: AuthUser,
+    State(st): State<ReqState>,
+    Path((id, n)): Path<(String, u32)>,
+) -> Response {
+    if !user.can("REQUIREMENT", "READ") {
+        return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
     match st.admin.get(&id).await {
         Ok(r) => match r.version(n) {
             Some(v) => (StatusCode::OK, Json(VersionResponse::from(v))).into_response(),

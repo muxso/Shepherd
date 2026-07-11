@@ -108,8 +108,15 @@ struct PageResponse {
     items: Vec<ProjectResponse>,
 }
 
-#[utoipa::path(get, path = "/project", tag = "project", params(ListQuery), responses((status = 200, body = PageResponse)))]
-async fn list_projects(State(st): State<ProjectState>, Query(q): Query<ListQuery>) -> Response {
+#[utoipa::path(get, path = "/project", tag = "project", params(ListQuery), responses((status = 200, body = PageResponse), (status = 401), (status = 403)), security(("bearer" = [])))]
+async fn list_projects(
+    user: AuthUser,
+    State(st): State<ProjectState>,
+    Query(q): Query<ListQuery>,
+) -> Response {
+    if !user.can("PROJECT", "READ") {
+        return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
     let page = match PageRequest::new(q.current, q.page_size) {
         Ok(p) => p,
         Err(_) => return (StatusCode::BAD_REQUEST, "invalid page params").into_response(),
@@ -240,6 +247,7 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .uri("/project?organizationId=org1&current=1&pageSize=2")
+                    .header("authorization", format!("Bearer {t}"))
                     .body(Body::empty())
                     .expect("req"),
             )
@@ -255,11 +263,12 @@ mod tests {
 
     #[tokio::test]
     async fn list_with_bad_page_params_returns_400() {
-        let (app, _t) = app().await;
+        let (app, t) = app().await;
         let resp = app
             .oneshot(
                 Request::builder()
                     .uri("/project?organizationId=org1&current=0&pageSize=10")
+                    .header("authorization", format!("Bearer {t}"))
                     .body(Body::empty())
                     .expect("req"),
             )

@@ -357,11 +357,15 @@ async fn create_definition(
     }
 }
 
-#[utoipa::path(get, path = "/api/definition", tag = "api-definition", params(DefinitionListQuery), responses((status = 200, body = [ApiDefinitionResponse])))]
+#[utoipa::path(get, path = "/api/definition", tag = "api-definition", params(DefinitionListQuery), responses((status = 200, body = [ApiDefinitionResponse])), security(("bearer" = [])))]
 async fn list_definitions(
+    user: AuthUser,
     State(st): State<ApiDefinitionState>,
     Query(q): Query<DefinitionListQuery>,
 ) -> Response {
+    if !user.can("API_DEFINITION", "READ") {
+        return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
     match st.list_def.execute(&q.project_id).await {
         Ok(list) => {
             let items: Vec<ApiDefinitionResponse> =
@@ -372,8 +376,15 @@ async fn list_definitions(
     }
 }
 
-#[utoipa::path(get, path = "/api/definition/{id}", tag = "api-definition", params(("id" = String, Path)), responses((status = 200, body = ApiDefinitionResponse), (status = 404)))]
-async fn get_definition(State(st): State<ApiDefinitionState>, Path(id): Path<String>) -> Response {
+#[utoipa::path(get, path = "/api/definition/{id}", tag = "api-definition", params(("id" = String, Path)), responses((status = 200, body = ApiDefinitionResponse), (status = 404)), security(("bearer" = [])))]
+async fn get_definition(
+    user: AuthUser,
+    State(st): State<ApiDefinitionState>,
+    Path(id): Path<String>,
+) -> Response {
+    if !user.can("API_DEFINITION", "READ") {
+        return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
     match st.repo.get_definition(&id).await {
         Ok(Some(d)) => (StatusCode::OK, Json(ApiDefinitionResponse::from(d))).into_response(),
         Ok(None) => (StatusCode::NOT_FOUND, "api definition not found").into_response(),
@@ -596,8 +607,15 @@ async fn create_case(
     }
 }
 
-#[utoipa::path(get, path = "/api/definition/{id}/case", tag = "api-definition", params(("id" = String, Path)), responses((status = 200, body = [ApiCaseResponse])))]
-async fn list_cases(State(st): State<ApiDefinitionState>, Path(id): Path<String>) -> Response {
+#[utoipa::path(get, path = "/api/definition/{id}/case", tag = "api-definition", params(("id" = String, Path)), responses((status = 200, body = [ApiCaseResponse])), security(("bearer" = [])))]
+async fn list_cases(
+    user: AuthUser,
+    State(st): State<ApiDefinitionState>,
+    Path(id): Path<String>,
+) -> Response {
+    if !user.can("API_DEFINITION", "READ") {
+        return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
     match st.list_case.execute(&id).await {
         Ok(list) => {
             let items: Vec<ApiCaseResponse> = list.into_iter().map(ApiCaseResponse::from).collect();
@@ -686,11 +704,15 @@ async fn create_standalone_case(
     }
 }
 
-#[utoipa::path(get, path = "/api/case", tag = "api-definition", params(CaseListQuery), responses((status = 200, body = ApiCasePageResponse), (status = 400)))]
+#[utoipa::path(get, path = "/api/case", tag = "api-definition", params(CaseListQuery), responses((status = 200, body = ApiCasePageResponse), (status = 400)), security(("bearer" = [])))]
 async fn list_project_cases(
+    user: AuthUser,
     State(st): State<ApiDefinitionState>,
     Query(q): Query<CaseListQuery>,
 ) -> Response {
+    if !user.can("API_DEFINITION", "READ") {
+        return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
     let page = match PageRequest::new(q.current, q.page_size) {
         Ok(p) => p,
         Err(_) => return (StatusCode::BAD_REQUEST, "invalid page params").into_response(),
@@ -756,8 +778,15 @@ async fn create_mock(
     }
 }
 
-#[utoipa::path(get, path = "/api/definition/{id}/mock", tag = "api-definition", params(("id" = String, Path)), responses((status = 200, body = [ApiMockResponse])))]
-async fn list_mocks(State(st): State<ApiDefinitionState>, Path(id): Path<String>) -> Response {
+#[utoipa::path(get, path = "/api/definition/{id}/mock", tag = "api-definition", params(("id" = String, Path)), responses((status = 200, body = [ApiMockResponse])), security(("bearer" = [])))]
+async fn list_mocks(
+    user: AuthUser,
+    State(st): State<ApiDefinitionState>,
+    Path(id): Path<String>,
+) -> Response {
+    if !user.can("API_DEFINITION", "READ") {
+        return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
     match st.list_mock.execute(&id).await {
         Ok(list) => {
             let items: Vec<ApiMockResponse> = list.into_iter().map(ApiMockResponse::from).collect();
@@ -785,11 +814,15 @@ struct ProjectMockResponse {
     updated_at: String,
 }
 
-#[utoipa::path(get, path = "/api/mock", tag = "api-definition", params(("projectId" = String, Query)), responses((status = 200, body = [ProjectMockResponse])))]
+#[utoipa::path(get, path = "/api/mock", tag = "api-definition", params(("projectId" = String, Query)), responses((status = 200, body = [ProjectMockResponse])), security(("bearer" = [])))]
 async fn list_project_mocks(
+    user: AuthUser,
     State(st): State<ApiDefinitionState>,
     Query(q): Query<DefinitionListQuery>,
 ) -> Response {
+    if !user.can("API_DEFINITION", "READ") {
+        return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
     match st.repo.list_mocks_by_project(&q.project_id).await {
         Ok(rows) => {
             let items: Vec<ProjectMockResponse> = rows
@@ -947,9 +980,13 @@ async fn create_module(
 }
 
 async fn list_modules(
+    user: AuthUser,
     State(st): State<ApiDefinitionState>,
     Query(q): Query<DefinitionListQuery>,
 ) -> Response {
+    if !user.can("API_DEFINITION", "READ") {
+        return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
     match st.repo.list_modules(&q.project_id).await {
         Ok(list) => {
             let items: Vec<ApiModuleResponse> =
@@ -1041,11 +1078,15 @@ impl From<crate::domain::ApiDefinitionChange> for ApiDefinitionChangeResponse {
     }
 }
 
-#[utoipa::path(get, path = "/api/definition/{id}/changes", tag = "api-definition", params(("id" = String, Path)), responses((status = 200, body = [ApiDefinitionChangeResponse])))]
+#[utoipa::path(get, path = "/api/definition/{id}/changes", tag = "api-definition", params(("id" = String, Path)), responses((status = 200, body = [ApiDefinitionChangeResponse])), security(("bearer" = [])))]
 async fn list_definition_changes(
+    user: AuthUser,
     State(st): State<ApiDefinitionState>,
     Path(id): Path<String>,
 ) -> Response {
+    if !user.can("API_DEFINITION", "READ") {
+        return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
     match st.repo.list_definition_changes(&id).await {
         Ok(list) => {
             let items: Vec<ApiDefinitionChangeResponse> =
@@ -1100,9 +1141,13 @@ async fn unlink_task_case(
 }
 
 async fn list_task_cases(
+    user: AuthUser,
     State(st): State<ApiDefinitionState>,
     Query(q): Query<TaskCaseQuery>,
 ) -> Response {
+    if !user.can("API_DEFINITION", "READ") {
+        return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
     match st.repo.list_cases_for_task(&q.decomposition_id, &q.task_id).await {
         Ok(list) => {
             let items: Vec<ApiCaseResponse> = list.into_iter().map(ApiCaseResponse::from).collect();
@@ -1360,8 +1405,12 @@ mod tests {
         b.body(Body::from(body.to_string())).expect("req")
     }
 
-    fn get(uri: &str) -> Request<Body> {
-        Request::builder().uri(uri).body(Body::empty()).expect("req")
+    fn get(uri: &str, token: Option<&str>) -> Request<Body> {
+        let mut b = Request::builder().uri(uri);
+        if let Some(t) = token {
+            b = b.header("authorization", format!("Bearer {t}"));
+        }
+        b.body(Body::empty()).expect("req")
     }
 
     async fn json_body(resp: Response) -> serde_json::Value {
@@ -1464,15 +1513,20 @@ mod tests {
         let (app, t) = app().await;
         let id = create_definition_returns_id(&app, &t).await;
 
-        let resp = app.clone().oneshot(get("/api/definition?projectId=p1")).await.expect("resp");
+        let resp =
+            app.clone().oneshot(get("/api/definition?projectId=p1", Some(&t))).await.expect("resp");
         assert_eq!(resp.status(), StatusCode::OK);
         let v = json_body(resp).await;
         assert_eq!(v.as_array().expect("arr").len(), 1);
 
-        let resp = app.clone().oneshot(get(&format!("/api/definition/{id}"))).await.expect("resp");
+        let resp = app
+            .clone()
+            .oneshot(get(&format!("/api/definition/{id}"), Some(&t)))
+            .await
+            .expect("resp");
         assert_eq!(resp.status(), StatusCode::OK);
 
-        let resp = app.oneshot(get("/api/definition/ghost")).await.expect("resp");
+        let resp = app.oneshot(get("/api/definition/ghost", Some(&t))).await.expect("resp");
         assert_eq!(resp.status(), StatusCode::NOT_FOUND);
     }
 
@@ -1496,9 +1550,13 @@ mod tests {
             .expect("resp");
         assert_eq!(resp.status(), StatusCode::NO_CONTENT);
 
-        let resp = app.clone().oneshot(get(&format!("/api/definition/{id}"))).await.expect("resp");
+        let resp = app
+            .clone()
+            .oneshot(get(&format!("/api/definition/{id}"), Some(&t)))
+            .await
+            .expect("resp");
         assert_eq!(resp.status(), StatusCode::NOT_FOUND);
-        let resp = app.oneshot(get("/api/definition?projectId=p1")).await.expect("resp");
+        let resp = app.oneshot(get("/api/definition?projectId=p1", Some(&t))).await.expect("resp");
         let v = json_body(resp).await;
         assert_eq!(v.as_array().expect("arr").len(), 0);
     }
@@ -1525,7 +1583,7 @@ mod tests {
             .expect("resp");
         assert_eq!(resp.status(), StatusCode::NO_CONTENT);
 
-        let resp = app.oneshot(get("/api/case?projectId=p1")).await.expect("resp");
+        let resp = app.oneshot(get("/api/case?projectId=p1", Some(&t))).await.expect("resp");
         assert_eq!(resp.status(), StatusCode::OK);
         let v = json_body(resp).await;
         assert_eq!(v["total"].as_u64().expect("total"), 0);
@@ -1575,7 +1633,8 @@ mod tests {
         assert_eq!(v["method"], "PUT");
         assert_eq!(v["path"], "/v2/login");
 
-        let resp = app.oneshot(get(&format!("/api/definition/{id}"))).await.expect("resp");
+        let resp =
+            app.oneshot(get(&format!("/api/definition/{id}"), Some(&t))).await.expect("resp");
         let v = json_body(resp).await;
         assert_eq!(v["name"], "登录v2");
         assert_eq!(v["path"], "/v2/login");
@@ -1658,7 +1717,8 @@ mod tests {
         let v = json_body(resp).await;
         assert_eq!(v["projectId"], "p1");
 
-        let resp = app.oneshot(get(&format!("/api/definition/{id}/case"))).await.expect("resp");
+        let resp =
+            app.oneshot(get(&format!("/api/definition/{id}/case"), Some(&t))).await.expect("resp");
         assert_eq!(resp.status(), StatusCode::OK);
         let v = json_body(resp).await;
         assert_eq!(v.as_array().expect("arr").len(), 1);
@@ -1790,8 +1850,10 @@ mod tests {
                 .expect("seed");
         }
 
-        let resp =
-            app.oneshot(get("/api/case?projectId=p1&current=1&pageSize=2")).await.expect("resp");
+        let resp = app
+            .oneshot(get("/api/case?projectId=p1&current=1&pageSize=2", Some(&t)))
+            .await
+            .expect("resp");
         assert_eq!(resp.status(), StatusCode::OK);
         let v = json_body(resp).await;
         assert_eq!(v["total"], 3);
@@ -1801,9 +1863,11 @@ mod tests {
 
     #[tokio::test]
     async fn list_project_cases_bad_page_params_400() {
-        let (app, _t) = app().await;
-        let resp =
-            app.oneshot(get("/api/case?projectId=p1&current=0&pageSize=10")).await.expect("resp");
+        let (app, t) = app().await;
+        let resp = app
+            .oneshot(get("/api/case?projectId=p1&current=0&pageSize=10", Some(&t)))
+            .await
+            .expect("resp");
         assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
     }
 
@@ -1826,7 +1890,8 @@ mod tests {
         assert_eq!(v["enabled"], false);
         assert_eq!(v["matchRule"], serde_json::json!({}));
 
-        let resp = app.oneshot(get(&format!("/api/definition/{id}/mock"))).await.expect("resp");
+        let resp =
+            app.oneshot(get(&format!("/api/definition/{id}/mock"), Some(&t))).await.expect("resp");
         assert_eq!(resp.status(), StatusCode::OK);
         let v = json_body(resp).await;
         assert_eq!(v.as_array().expect("arr").len(), 1);
@@ -1879,7 +1944,8 @@ mod tests {
             .expect("resp");
         assert_eq!(resp.status(), StatusCode::NO_CONTENT);
 
-        let resp = app.oneshot(get(&format!("/api/definition/{id}/mock"))).await.expect("resp");
+        let resp =
+            app.oneshot(get(&format!("/api/definition/{id}/mock"), Some(&t))).await.expect("resp");
         let v = json_body(resp).await;
         assert_eq!(v[0]["name"], "改名");
         assert_eq!(v[0]["responseStatus"], 500);

@@ -145,11 +145,15 @@ async fn create_environment(
     }
 }
 
-#[utoipa::path(get, path = "/api/environment", tag = "environment", params(EnvironmentListQuery), responses((status = 200, body = [EnvironmentResponse])))]
+#[utoipa::path(get, path = "/api/environment", tag = "environment", params(EnvironmentListQuery), responses((status = 200, body = [EnvironmentResponse])), security(("bearer" = [])))]
 async fn list_environments(
+    user: AuthUser,
     State(st): State<EnvironmentState>,
     Query(q): Query<EnvironmentListQuery>,
 ) -> Response {
+    if !user.can("ENVIRONMENT", "READ") {
+        return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
     match st.list.execute(&q.project_id).await {
         Ok(list) => {
             let items: Vec<EnvironmentResponse> =
@@ -160,8 +164,15 @@ async fn list_environments(
     }
 }
 
-#[utoipa::path(get, path = "/api/environment/{id}", tag = "environment", params(("id" = String, Path)), responses((status = 200, body = EnvironmentResponse), (status = 404)))]
-async fn get_environment(State(st): State<EnvironmentState>, Path(id): Path<String>) -> Response {
+#[utoipa::path(get, path = "/api/environment/{id}", tag = "environment", params(("id" = String, Path)), responses((status = 200, body = EnvironmentResponse), (status = 404)), security(("bearer" = [])))]
+async fn get_environment(
+    user: AuthUser,
+    State(st): State<EnvironmentState>,
+    Path(id): Path<String>,
+) -> Response {
+    if !user.can("ENVIRONMENT", "READ") {
+        return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
     match st.get.execute(&id).await {
         Ok(Some(e)) => (StatusCode::OK, Json(EnvironmentResponse::from(e))).into_response(),
         Ok(None) => (StatusCode::NOT_FOUND, "environment not found").into_response(),

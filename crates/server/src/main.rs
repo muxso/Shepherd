@@ -177,7 +177,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 "BUG:READ+ADD+UPDATE".to_string(),
                 "TEST_PLAN:READ+ADD+EXECUTE".to_string(),
                 "CASE_REVIEW:READ+REVIEW".to_string(),
-                "API_DEFINITION:READ+ADD+UPDATE+DELETE".to_string(),
+                "API_DEFINITION:READ+ADD+UPDATE+DELETE+EXECUTE".to_string(),
                 "API_SCENARIO:READ+ADD+UPDATE+DELETE+EXECUTE".to_string(),
                 "ENVIRONMENT:READ+ADD+UPDATE+DELETE".to_string(),
                 "FUNCTIONAL_CASE:READ+ADD+UPDATE+DELETE".to_string(),
@@ -515,7 +515,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let api_executor = Arc::new(PgBatchReportExecutor::new(pool.clone(), dispatcher));
     let api_envs = Arc::new(api_test::adapters::pg::PgEnvironment::new(pool.clone()));
     let batch_run_uc = StartBatchRunUseCase::new(api_pools, api_executor, api_envs.clone());
-    let apitest_routes = api_test::adapters::http::router(batch_run_uc.clone());
+    let apitest_routes = api_test::adapters::http::router(batch_run_uc.clone(), sessions.clone());
     let api_pool_admin = Arc::new(api_test::adapters::pg::PgResourcePoolAdmin::new(pool.clone()));
     let resource_pool_routes = api_test::adapters::http::resource_pool_router(
         api_test::application::CreateResourcePoolUseCase::new(api_pool_admin.clone()),
@@ -527,6 +527,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         api_test::application::ListCaseExecutionsUseCase::new(Arc::new(
             api_test::adapters::PgCaseExecutionQuery::new(pool.clone()),
         )),
+        sessions.clone(),
     );
 
     let apidef_repo =

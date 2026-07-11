@@ -156,8 +156,15 @@ async fn create_skill(
     }
 }
 
-#[utoipa::path(get, path = "/skill", tag = "skill", params(ListQuery), responses((status = 200, body = [SkillResponse])))]
-async fn list_skills(State(st): State<SkillState>, Query(q): Query<ListQuery>) -> Response {
+#[utoipa::path(get, path = "/skill", tag = "skill", params(ListQuery), responses((status = 200, body = [SkillResponse])), security(("bearer" = [])))]
+async fn list_skills(
+    user: AuthUser,
+    State(st): State<SkillState>,
+    Query(q): Query<ListQuery>,
+) -> Response {
+    if !user.can("SKILL", "READ") {
+        return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
     match st.admin.list(&q.project_id).await {
         Ok(items) => {
             let body: Vec<SkillResponse> = items.iter().map(SkillResponse::from).collect();
@@ -167,8 +174,15 @@ async fn list_skills(State(st): State<SkillState>, Query(q): Query<ListQuery>) -
     }
 }
 
-#[utoipa::path(get, path = "/skill/{id}", tag = "skill", params(("id" = String, Path)), responses((status = 200, body = SkillResponse), (status = 404)))]
-async fn get_skill(State(st): State<SkillState>, Path(id): Path<String>) -> Response {
+#[utoipa::path(get, path = "/skill/{id}", tag = "skill", params(("id" = String, Path)), responses((status = 200, body = SkillResponse), (status = 404)), security(("bearer" = [])))]
+async fn get_skill(
+    user: AuthUser,
+    State(st): State<SkillState>,
+    Path(id): Path<String>,
+) -> Response {
+    if !user.can("SKILL", "READ") {
+        return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
     match st.admin.get(&id).await {
         Ok(s) => (StatusCode::OK, Json(SkillResponse::from(&s))).into_response(),
         Err(e) => cmd_err(e),

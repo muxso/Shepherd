@@ -201,16 +201,30 @@ async fn create_verification(
     }
 }
 
-#[utoipa::path(get, path = "/verification/{id}", tag = "verification", params(("id" = String, Path)), responses((status = 200, body = VerificationResponse), (status = 404)))]
-async fn get_verification(State(st): State<VerState>, Path(id): Path<String>) -> Response {
+#[utoipa::path(get, path = "/verification/{id}", tag = "verification", params(("id" = String, Path)), responses((status = 200, body = VerificationResponse), (status = 404)), security(("bearer" = [])))]
+async fn get_verification(
+    user: AuthUser,
+    State(st): State<VerState>,
+    Path(id): Path<String>,
+) -> Response {
+    if !user.can("VERIFICATION", "READ") {
+        return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
     match st.admin.get(&id).await {
         Ok(v) => (StatusCode::OK, Json(VerificationResponse::from(&v))).into_response(),
         Err(e) => cmd_err(e),
     }
 }
 
-#[utoipa::path(get, path = "/verification/{id}/report", tag = "verification", params(("id" = String, Path)), responses((status = 200, body = ReportResponse), (status = 404)))]
-async fn get_report(State(st): State<VerState>, Path(id): Path<String>) -> Response {
+#[utoipa::path(get, path = "/verification/{id}/report", tag = "verification", params(("id" = String, Path)), responses((status = 200, body = ReportResponse), (status = 404)), security(("bearer" = [])))]
+async fn get_report(
+    user: AuthUser,
+    State(st): State<VerState>,
+    Path(id): Path<String>,
+) -> Response {
+    if !user.can("VERIFICATION", "READ") {
+        return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
     match st.admin.report(&id).await {
         Ok(r) => (StatusCode::OK, Json(ReportResponse::from(r))).into_response(),
         Err(e) => cmd_err(e),

@@ -1,4 +1,4 @@
-//! RBAC for resource `TASK`: add needs `TASK:ADD`, dispatch needs `TASK:EXECUTE`, transition needs `TASK:UPDATE`; reads are open.
+//! RBAC for resource `TASK`: add needs `TASK:ADD`, dispatch needs `TASK:EXECUTE`, transition needs `TASK:UPDATE`, reads need `TASK:READ`.
 
 use std::sync::Arc;
 
@@ -239,16 +239,30 @@ async fn create_decomposition(
     }
 }
 
-#[utoipa::path(get, path = "/decomposition/{id}", tag = "task", params(("id" = String, Path)), responses((status = 200, body = DecompositionResponse), (status = 404)))]
-async fn get_decomposition(State(st): State<TaskState>, Path(id): Path<String>) -> Response {
+#[utoipa::path(get, path = "/decomposition/{id}", tag = "task", params(("id" = String, Path)), responses((status = 200, body = DecompositionResponse), (status = 404)), security(("bearer" = [])))]
+async fn get_decomposition(
+    user: AuthUser,
+    State(st): State<TaskState>,
+    Path(id): Path<String>,
+) -> Response {
+    if !user.can("TASK", "READ") {
+        return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
     match st.admin.get(&id).await {
         Ok(d) => (StatusCode::OK, Json(DecompositionResponse::from(&d))).into_response(),
         Err(e) => cmd_err(e),
     }
 }
 
-#[utoipa::path(get, path = "/decomposition/{id}/ready", tag = "task", params(("id" = String, Path)), responses((status = 200, body = [TaskResponse]), (status = 404)))]
-async fn ready_tasks(State(st): State<TaskState>, Path(id): Path<String>) -> Response {
+#[utoipa::path(get, path = "/decomposition/{id}/ready", tag = "task", params(("id" = String, Path)), responses((status = 200, body = [TaskResponse]), (status = 404)), security(("bearer" = [])))]
+async fn ready_tasks(
+    user: AuthUser,
+    State(st): State<TaskState>,
+    Path(id): Path<String>,
+) -> Response {
+    if !user.can("TASK", "READ") {
+        return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
     match st.admin.get(&id).await {
         Ok(d) => {
             let ready: Vec<TaskResponse> =

@@ -282,8 +282,15 @@ async fn dispatch(
     }
 }
 
-#[utoipa::path(get, path = "/delivery", tag = "delivery", params(ListQuery), responses((status = 200, body = [AttemptResponse])))]
-async fn list_by_task(State(st): State<DelState>, Query(q): Query<ListQuery>) -> Response {
+#[utoipa::path(get, path = "/delivery", tag = "delivery", params(ListQuery), responses((status = 200, body = [AttemptResponse])), security(("bearer" = [])))]
+async fn list_by_task(
+    user: AuthUser,
+    State(st): State<DelState>,
+    Query(q): Query<ListQuery>,
+) -> Response {
+    if !user.can("DELIVERY", "READ") {
+        return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
     match st.svc.list_by_task(&q.decomposition_id, &q.task_id).await {
         Ok(list) => {
             let body: Vec<AttemptResponse> = list.iter().map(AttemptResponse::from).collect();
@@ -293,8 +300,15 @@ async fn list_by_task(State(st): State<DelState>, Query(q): Query<ListQuery>) ->
     }
 }
 
-#[utoipa::path(get, path = "/delivery/{id}", tag = "delivery", params(("id" = String, Path)), responses((status = 200, body = AttemptResponse), (status = 404)))]
-async fn get_attempt(State(st): State<DelState>, Path(id): Path<String>) -> Response {
+#[utoipa::path(get, path = "/delivery/{id}", tag = "delivery", params(("id" = String, Path)), responses((status = 200, body = AttemptResponse), (status = 404)), security(("bearer" = [])))]
+async fn get_attempt(
+    user: AuthUser,
+    State(st): State<DelState>,
+    Path(id): Path<String>,
+) -> Response {
+    if !user.can("DELIVERY", "READ") {
+        return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
     match st.svc.get(&id).await {
         Ok(a) => (StatusCode::OK, Json(AttemptResponse::from(&a))).into_response(),
         Err(e) => cmd_err(e),
@@ -365,8 +379,15 @@ async fn record_event(
     }
 }
 
-#[utoipa::path(get, path = "/delivery/{id}/events", tag = "delivery", params(("id" = String, Path)), responses((status = 200, body = [EventResponse])))]
-async fn list_events(State(st): State<DelState>, Path(id): Path<String>) -> Response {
+#[utoipa::path(get, path = "/delivery/{id}/events", tag = "delivery", params(("id" = String, Path)), responses((status = 200, body = [EventResponse])), security(("bearer" = [])))]
+async fn list_events(
+    user: AuthUser,
+    State(st): State<DelState>,
+    Path(id): Path<String>,
+) -> Response {
+    if !user.can("DELIVERY", "READ") {
+        return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
     match st.svc.events(&id).await {
         Ok(list) => {
             let body: Vec<EventResponse> = list.iter().map(EventResponse::from).collect();
@@ -378,9 +399,16 @@ async fn list_events(State(st): State<DelState>, Path(id): Path<String>) -> Resp
 
 #[utoipa::path(
     get, path = "/delivery/tasks", tag = "delivery", params(TaskQuery),
-    responses((status = 200, body = TaskPageResponse))
+    responses((status = 200, body = TaskPageResponse)), security(("bearer" = []))
 )]
-async fn list_tasks(State(st): State<DelState>, Query(q): Query<TaskQuery>) -> Response {
+async fn list_tasks(
+    user: AuthUser,
+    State(st): State<DelState>,
+    Query(q): Query<TaskQuery>,
+) -> Response {
+    if !user.can("DELIVERY", "READ") {
+        return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
     let page = q.page.unwrap_or(1).max(1);
     let page_size = q.page_size.unwrap_or(20).clamp(1, 200);
     let filter = TaskListFilter {
@@ -698,7 +726,7 @@ mod tests {
 
         let l = app
             .clone()
-            .oneshot(req("GET", "/delivery/tasks?page=1&pageSize=10", "", None))
+            .oneshot(req("GET", "/delivery/tasks?page=1&pageSize=10", "", Some(&t)))
             .await
             .expect("r");
         assert_eq!(l.status(), StatusCode::OK);
@@ -713,7 +741,7 @@ mod tests {
 
         let act = app
             .clone()
-            .oneshot(req("GET", "/delivery/tasks?active=true", "", None))
+            .oneshot(req("GET", "/delivery/tasks?active=true", "", Some(&t)))
             .await
             .expect("r");
         assert_eq!(json(act).await["total"], 2);
@@ -734,7 +762,7 @@ mod tests {
         assert_eq!(
             json(
                 app.clone()
-                    .oneshot(req("GET", "/delivery/tasks?active=true", "", None))
+                    .oneshot(req("GET", "/delivery/tasks?active=true", "", Some(&t)))
                     .await
                     .expect("r")
             )
@@ -749,8 +777,10 @@ mod tests {
             .expect("r");
         assert_eq!(del.status(), StatusCode::NO_CONTENT);
         assert_eq!(
-            json(app.clone().oneshot(req("GET", "/delivery/tasks", "", None)).await.expect("r"))
-                .await["total"],
+            json(
+                app.clone().oneshot(req("GET", "/delivery/tasks", "", Some(&t))).await.expect("r")
+            )
+            .await["total"],
             1
         );
     }

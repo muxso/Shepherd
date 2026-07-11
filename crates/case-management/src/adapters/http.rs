@@ -131,7 +131,14 @@ async fn unlink_req_case(
     }
 }
 
-async fn requirement_coverage(State(st): State<CaseState>, Path(id): Path<String>) -> Response {
+async fn requirement_coverage(
+    user: AuthUser,
+    State(st): State<CaseState>,
+    Path(id): Path<String>,
+) -> Response {
+    if !user.can("FUNCTIONAL_CASE", "READ") {
+        return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
     match st.repo.cases_for_requirement(&id).await {
         Ok(rows) => {
             let items: Vec<CoverageCaseDto> = rows
@@ -150,7 +157,14 @@ async fn requirement_coverage(State(st): State<CaseState>, Path(id): Path<String
     }
 }
 
-async fn case_requirements(State(st): State<CaseState>, Path(id): Path<String>) -> Response {
+async fn case_requirements(
+    user: AuthUser,
+    State(st): State<CaseState>,
+    Path(id): Path<String>,
+) -> Response {
+    if !user.can("FUNCTIONAL_CASE", "READ") {
+        return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
     match st.repo.requirements_for_case(&id).await {
         Ok(rows) => {
             let items: Vec<CaseRequirementDto> = rows
@@ -325,8 +339,15 @@ async fn delete_case(
     }
 }
 
-#[utoipa::path(get, path = "/functional-case", tag = "functional-case", params(ProjectQuery), responses((status = 200, body = [CaseResponse])))]
-async fn list_cases(State(st): State<CaseState>, Query(q): Query<ProjectQuery>) -> Response {
+#[utoipa::path(get, path = "/functional-case", tag = "functional-case", params(ProjectQuery), responses((status = 200, body = [CaseResponse]), (status = 403)), security(("bearer" = [])))]
+async fn list_cases(
+    user: AuthUser,
+    State(st): State<CaseState>,
+    Query(q): Query<ProjectQuery>,
+) -> Response {
+    if !user.can("FUNCTIONAL_CASE", "READ") {
+        return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
     match st.list.execute(&q.project_id).await {
         Ok(list) => {
             let items: Vec<CaseResponse> = list.into_iter().map(CaseResponse::from).collect();
@@ -336,8 +357,15 @@ async fn list_cases(State(st): State<CaseState>, Query(q): Query<ProjectQuery>) 
     }
 }
 
-#[utoipa::path(get, path = "/functional-case/export", tag = "functional-case", params(ProjectQuery), responses((status = 200, description = "xlsx 文件")))]
-async fn export_cases(State(st): State<CaseState>, Query(q): Query<ProjectQuery>) -> Response {
+#[utoipa::path(get, path = "/functional-case/export", tag = "functional-case", params(ProjectQuery), responses((status = 200, description = "xlsx 文件"), (status = 403)), security(("bearer" = [])))]
+async fn export_cases(
+    user: AuthUser,
+    State(st): State<CaseState>,
+    Query(q): Query<ProjectQuery>,
+) -> Response {
+    if !user.can("FUNCTIONAL_CASE", "READ") {
+        return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
     let cases = match st.list.execute(&q.project_id).await {
         Ok(c) => c,
         Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
@@ -478,6 +506,7 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .uri("/functional-case/export?projectId=p1")
+                    .header("authorization", format!("Bearer {t}"))
                     .body(Body::empty())
                     .expect("req"),
             )
@@ -516,6 +545,7 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .uri("/functional-case?projectId=p1")
+                    .header("authorization", format!("Bearer {t}"))
                     .body(Body::empty())
                     .expect("req"),
             )
@@ -570,6 +600,7 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .uri("/functional-case?projectId=p1")
+                    .header("authorization", format!("Bearer {t}"))
                     .body(Body::empty())
                     .expect("req"),
             )
