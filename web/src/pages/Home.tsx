@@ -51,7 +51,7 @@ const PROJECT_SERIES = [
 ]
 
 // 卡片清单(完整版「卡片设置」):每张卡可独立显隐 + 自由排序。
-const ALL_CARDS = ['overview', 'collab', 'projectBars', 'assets', 'apiStats', 'caseStats', 'execTrend', 'quality', 'shortcuts'] as const
+const ALL_CARDS = ['collab', 'projectBars', 'assets', 'apiStats', 'caseStats', 'execTrend', 'quality', 'shortcuts'] as const
 const TREND_DAYS = 7
 type CardKey = (typeof ALL_CARDS)[number]
 interface CardPref {
@@ -187,7 +187,6 @@ export default function Home() {
   }, [projects])
 
   const cardTitle: Record<CardKey, string> = {
-    overview: t('home.title', '项目概览'),
     collab: t('home.collab', '人机协同人效'),
     projectBars: t('home.projectCompare', '项目资产对比'),
     assets: t('home.assetDist', '测试资产分布'),
@@ -200,13 +199,13 @@ export default function Home() {
 
   const cards = useMemo(
     () => [
-      { key: 'def', label: t('home.def', '接口定义'), value: c?.def ?? 0, icon: <ApiOutlined />, color: 'var(--brand)' },
-      { key: 'scenario', label: t('home.scenario', '场景用例'), value: c?.scenario ?? 0, icon: <PartitionOutlined />, color: '#1677ff' },
-      { key: 'apiCase', label: t('home.apiCase', '接口用例'), value: c?.apiCase ?? 0, icon: <ProfileOutlined />, color: '#13c2c2' },
-      { key: 'funcCase', label: t('home.funcCase', '功能用例'), value: c?.funcCase ?? 0, icon: <ProfileOutlined />, color: '#52c41a' },
-      { key: 'plan', label: t('home.plan', '测试计划'), value: c?.plan ?? 0, icon: <ScheduleOutlined />, color: '#fa8c16' },
-      { key: 'req', label: t('home.req', '需求'), value: c?.req ?? 0, icon: <FileTextOutlined />, color: '#eb2f96' },
-      { key: 'bug', label: t('home.bug', '缺陷'), value: c?.bug ?? 0, icon: <BugOutlined />, color: '#f5222d' },
+      { key: 'def', label: t('home.def', '接口定义'), value: c?.def ?? 0, icon: <ApiOutlined />, color: 'var(--brand)', to: '/api/definition' },
+      { key: 'scenario', label: t('home.scenario', '场景用例'), value: c?.scenario ?? 0, icon: <PartitionOutlined />, color: '#1677ff', to: '/api/scenario' },
+      { key: 'apiCase', label: t('home.apiCase', '接口用例'), value: c?.apiCase ?? 0, icon: <ProfileOutlined />, color: '#13c2c2', to: '/api/definition' },
+      { key: 'funcCase', label: t('home.funcCase', '功能用例'), value: c?.funcCase ?? 0, icon: <ProfileOutlined />, color: '#52c41a', to: '/functional-case' },
+      { key: 'plan', label: t('home.plan', '测试计划'), value: c?.plan ?? 0, icon: <ScheduleOutlined />, color: '#fa8c16', to: '/test-plan' },
+      { key: 'req', label: t('home.req', '需求'), value: c?.req ?? 0, icon: <FileTextOutlined />, color: '#eb2f96', to: '/requirement' },
+      { key: 'bug', label: t('home.bug', '缺陷'), value: c?.bug ?? 0, icon: <BugOutlined />, color: '#f5222d', to: '/bug' },
     ],
     [c, t],
   )
@@ -230,29 +229,6 @@ export default function Home() {
 
   const renderCard = (key: CardKey): React.ReactNode => {
     switch (key) {
-      case 'overview':
-        return (
-          <Card title={cardTitle.overview} size="small" style={{ marginBottom: 16 }}>
-            <Row gutter={[16, 16]}>
-              {cards.map((card) => (
-                <Col key={card.key} xs={12} sm={8} md={6} lg={6} xl={3}>
-                  <Card size="small" styles={{ body: { padding: '14px 16px' } }}>
-                    <Statistic
-                      title={
-                        <span style={{ color: 'var(--text-2)' }}>
-                          <span style={{ color: card.color, marginRight: 6 }}>{card.icon}</span>
-                          {card.label}
-                        </span>
-                      }
-                      value={card.value}
-                      valueStyle={{ color: card.color, fontWeight: 700 }}
-                    />
-                  </Card>
-                </Col>
-              ))}
-            </Row>
-          </Card>
-        )
       case 'assets':
         return (
           <Card title={cardTitle.assets} size="small" style={{ marginBottom: 16 }}>
@@ -600,11 +576,11 @@ export default function Home() {
   // —— 闭环门面:需求 → 评审 → 研发交付 → 测试 → 验证,自动回归需求 ——
   const passRateHero = exec?.executions ? ((exec.passed ?? 0) * 100) / exec.executions : 0
   const loopStages = [
-    { key: 'req', name: t('loop.req', '需求'), desc: t('loop.reqDesc', 'MRD 自动转 PRD'), icon: <FileDoneOutlined />, to: '/requirement', metric: c?.req ?? 0, unit: t('home.req', '需求') },
+    { key: 'req', name: t('loop.req', '需求'), desc: t('loop.reqDesc', 'MRD 自动转 PRD'), icon: <FileDoneOutlined />, to: '/requirement', metric: null, unit: '' },
     { key: 'review', name: t('loop.review', '评审'), desc: t('loop.reviewDesc', 'AI 参与评审 · 版本留痕'), icon: <AuditOutlined />, to: '/review', metric: null, unit: '' },
     { key: 'dev', name: t('loop.dev', '研发交付'), desc: t('loop.devDesc', '多 Agent 协同研发'), icon: <RobotOutlined />, to: '/agents', metric: null, unit: '' },
-    { key: 'test', name: t('loop.test', '测试'), desc: t('loop.testDesc', 'TDD 驱动 · 自动化测试'), icon: <ExperimentOutlined />, to: '/api/scenario', metric: c?.scenario ?? 0, unit: t('home.scenario', '场景') },
-    { key: 'verify', name: t('loop.verify', '验收质量'), desc: t('loop.verifyDesc', '决策链路可视化 · 回归需求'), icon: <SafetyCertificateOutlined />, to: '/bug', metric: c?.bug ?? 0, unit: t('home.bug', '缺陷') },
+    { key: 'test', name: t('loop.test', '测试'), desc: t('loop.testDesc', 'TDD 驱动 · 自动化测试'), icon: <ExperimentOutlined />, to: '/api/scenario', metric: null, unit: '' },
+    { key: 'verify', name: t('loop.verify', '验收质量'), desc: t('loop.verifyDesc', '决策链路可视化 · 回归需求'), icon: <SafetyCertificateOutlined />, to: '/bug', metric: null, unit: '' },
   ]
   const loopHero = (
     <div className="ms-loop-hero" style={{ marginBottom: 16, borderRadius: 12, padding: '18px 20px', border: '1px solid var(--border-soft)', overflow: 'hidden' }}>
@@ -657,6 +633,21 @@ export default function Home() {
             </span>
           </Tooltip>
         </div>
+      </div>
+      {/* 项目资产一览:并入闭环卡(原「项目概览」独立卡与此重复,已移除);逐项可点击进入对应模块。 */}
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 14, paddingTop: 12, borderTop: '1px solid var(--border-soft)' }}>
+        {cards.map((card) => (
+          <div
+            key={card.key}
+            className="ms-hover-card"
+            onClick={() => navigate(card.to)}
+            style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 14px', borderRadius: 8, cursor: 'pointer', background: 'var(--panel)', border: '1px solid var(--border-soft)' }}
+          >
+            <span style={{ color: card.color }}>{card.icon}</span>
+            <span style={{ fontSize: 13, color: 'var(--text-2)' }}>{card.label}</span>
+            <b style={{ fontSize: 16, color: card.color }}>{card.value}</b>
+          </div>
+        ))}
       </div>
     </div>
   )
