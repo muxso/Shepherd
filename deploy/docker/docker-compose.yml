@@ -94,7 +94,6 @@ services:
       context: ../..
       dockerfile: deploy/docker/Dockerfile.web
     ports:
-      # nginx in the image listens on 80.
       - "8082:80"
     depends_on:
       - server
