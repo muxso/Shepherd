@@ -1,18 +1,19 @@
 import { useEffect, useState } from 'react'
 import { Button, Dropdown, Form, Input, Modal, Space, Switch, Table, Tag, message } from 'antd'
-import { MoreOutlined, SearchOutlined } from '@ant-design/icons'
-import type { ColumnsType } from 'antd/es/table'
+import { MoreOutlined } from '@ant-design/icons'
 import { api, ApiError, type User } from '../api'
 import { modal } from '../feedback'
+import { useApp } from '../context'
 import { useI18n } from '../i18n'
+import { useListView, type ListColumn } from '../components/ListView'
 
 // 系统 / 用户:对齐参考图 #51。创建用户为真实接口;编辑/重置密码/删除/状态切换/
 // 邮箱邀请/导入用户 后端暂未提供,占位提示。组织/用户组列以系统默认值呈现。
 export default function Users() {
   const { t } = useI18n()
+  const { projectId } = useApp()
   const [users, setUsers] = useState<User[]>([])
   const [loading, setLoading] = useState(false)
-  const [q, setQ] = useState('')
   const [modalOpen, setModalOpen] = useState(false)
   const [editing, setEditing] = useState<User | null>(null)
   const openCreate = () => { setEditing(null); setModalOpen(true) }
@@ -25,7 +26,6 @@ export default function Users() {
   useEffect(load, [])
 
   const soon = () => message.info(t('common.comingSoon', '即将接入'))
-  const rows = users.filter((u) => !q || u.name.toLowerCase().includes(q.toLowerCase()) || u.email.toLowerCase().includes(q.toLowerCase()))
 
   // 启停:乐观更新 + PUT 回写(失败回滚)。
   const toggleEnable = async (u: User, enable: boolean) => {
@@ -76,19 +76,23 @@ export default function Users() {
     })
   }
 
-  const cols: ColumnsType<User> = [
-    { title: t('user.username', '用户名'), dataIndex: 'email', width: 240, ellipsis: true },
-    { title: t('user.name', '姓名'), dataIndex: 'name', width: 160 },
-    { title: t('user.email', '邮箱'), dataIndex: 'email', ellipsis: true },
-    { title: t('user.phone', '手机'), width: 110, render: () => <span style={{ color: 'var(--text-3)' }}>—</span> },
-    { title: t('user.org', '组织'), width: 140, render: () => <Tag>{t('user.defaultOrg', '默认组织')}</Tag> },
-    { title: t('user.userGroup', '用户组'), width: 200, render: (_v, u) => (u.userGroups && u.userGroups.length ? u.userGroups.map((g) => <Tag key={g} color="green" style={{ marginBottom: 2 }}>{g}</Tag>) : <Tag color="green">{t('user.sysMember', '系统成员')}</Tag>) },
+  const cols: ListColumn<User>[] = [
+    { key: 'username', label: t('user.username', '用户名'), title: t('user.username', '用户名'), dataIndex: 'email', width: 240, ellipsis: true },
+    { key: 'name', label: t('user.name', '姓名'), title: t('user.name', '姓名'), dataIndex: 'name', width: 160 },
+    { key: 'email', label: t('user.email', '邮箱'), title: t('user.email', '邮箱'), dataIndex: 'email', ellipsis: true },
+    { key: 'phone', label: t('user.phone', '手机'), title: t('user.phone', '手机'), width: 110, render: () => <span style={{ color: 'var(--text-3)' }}>—</span> },
+    { key: 'org', label: t('user.org', '组织'), title: t('user.org', '组织'), width: 140, render: () => <Tag>{t('user.defaultOrg', '默认组织')}</Tag> },
+    { key: 'userGroup', label: t('user.userGroup', '用户组'), title: t('user.userGroup', '用户组'), width: 200, render: (_v, u) => (u.userGroups && u.userGroups.length ? u.userGroups.map((g) => <Tag key={g} color="green" style={{ marginBottom: 2 }}>{g}</Tag>) : <Tag color="green">{t('user.sysMember', '系统成员')}</Tag>) },
     {
+      key: 'status',
+      label: t('user.status', '状态'),
       title: t('user.status', '状态'),
       width: 90,
       render: (_v, u) => <Switch size="small" checked={u.enable !== false} onChange={(c) => toggleEnable(u, c)} />,
     },
     {
+      key: 'action',
+      label: t('apidef.colAction', '操作'),
       title: t('apidef.colAction', '操作'),
       width: 110,
       fixed: 'right',
@@ -111,6 +115,28 @@ export default function Users() {
     },
   ]
 
+  // 列表三件套(视图/筛选/列设置):系统页无 PageHeader,工具条右对齐放在表格上方。
+  const lv = useListView<User>({
+    kind: 'user',
+    projectId,
+    searchOf: (u) => `${u.name} ${u.email}`,
+    searchLabel: t('user.searchPh', '搜索姓名/邮箱'),
+    fields: [
+      {
+        key: 'status',
+        label: t('user.status', '状态'),
+        type: 'enum',
+        options: [
+          { value: 'enabled', label: t('user.stEnabled', '启用') },
+          { value: 'disabled', label: t('user.stDisabled', '禁用') },
+        ],
+        get: (u) => (u.enable !== false ? 'enabled' : 'disabled'),
+      },
+    ],
+    columns: cols,
+    rows: users,
+  })
+
   return (
     <div style={{ padding: 12, height: '100%', overflow: 'auto', background: 'var(--bg)' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
@@ -118,14 +144,14 @@ export default function Users() {
         <Button onClick={soon}>{t('user.invite', '邮箱邀请')}</Button>
         <Button onClick={soon}>{t('user.import', '导入用户')}</Button>
         <div style={{ flex: 1 }} />
-        <Input allowClear prefix={<SearchOutlined style={{ color: 'var(--text-3)' }} />} placeholder={t('user.search', '通过姓名/邮箱/手机搜索')} style={{ width: 280 }} value={q} onChange={(e) => setQ(e.target.value)} />
+        {lv.toolbar}
       </div>
       <Table<User>
         rowKey="id"
         size="middle"
         loading={loading}
-        dataSource={rows}
-        columns={cols}
+        dataSource={lv.rows}
+        columns={lv.columns}
         scroll={{ x: 'max-content' }}
         rowSelection={{ type: 'checkbox' }}
         pagination={{ pageSize: 50, size: 'small', showTotal: (n) => `${t('apidef.totalPrefix', '共')} ${n} ${t('proj.unit', '条')}` }}

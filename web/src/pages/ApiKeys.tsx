@@ -1,16 +1,18 @@
 import { useEffect, useState } from 'react'
 import { Alert, Button, Form, Input, Modal, Popconfirm, Segmented, Select, Table, Tag, Typography } from 'antd'
 import { PlusOutlined, ReloadOutlined } from '@ant-design/icons'
-import type { ColumnsType } from 'antd/es/table'
 import { api, ApiError, type ApiKey } from '../api'
 import { message } from '../feedback'
+import { useApp } from '../context'
 import { useI18n } from '../i18n'
+import { useListView, type ListColumn } from '../components/ListView'
 
 // 系统 / API 密钥:签发给执行机(agent runner)等外部调用方的长期凭证。
 // 明文 key(sak_…)只在创建响应里出现一次,这里用不可误关的弹窗强制用户保存;
 // 列表只展示元信息,吊销(DELETE)后行保留并标记「已吊销」。
 export default function ApiKeys() {
   const { t } = useI18n()
+  const { projectId } = useApp()
   const [items, setItems] = useState<ApiKey[]>([])
   const [loading, setLoading] = useState(false)
   const [createOpen, setCreateOpen] = useState(false)
@@ -39,9 +41,11 @@ export default function ApiKeys() {
     }
   }
 
-  const cols: ColumnsType<ApiKey> = [
-    { title: t('ak.colName', '名称'), dataIndex: 'name', width: 220, ellipsis: true },
+  const cols: ListColumn<ApiKey>[] = [
+    { key: 'name', label: t('ak.colName', '名称'), title: t('ak.colName', '名称'), dataIndex: 'name', width: 220, ellipsis: true },
     {
+      key: 'perms',
+      label: t('ak.colPerms', '权限'),
       title: t('ak.colPerms', '权限'),
       dataIndex: 'permissions',
       render: (perms: string[]) =>
@@ -50,12 +54,16 @@ export default function ApiKeys() {
           : <span style={{ color: 'var(--text-3)' }}>—</span>,
     },
     {
+      key: 'created',
+      label: t('ak.colCreated', '创建时间'),
       title: t('ak.colCreated', '创建时间'),
       dataIndex: 'createdAt',
       width: 180,
       render: (v: string) => <span style={{ color: 'var(--text-2)' }}>{v ? new Date(v).toLocaleString() : '—'}</span>,
     },
     {
+      key: 'status',
+      label: t('ak.colStatus', '状态'),
       title: t('ak.colStatus', '状态'),
       dataIndex: 'revoked',
       width: 100,
@@ -63,6 +71,8 @@ export default function ApiKeys() {
         revoked ? <Tag>{t('ak.revoked', '已吊销')}</Tag> : <Tag color="green">{t('ak.active', '正常')}</Tag>,
     },
     {
+      key: 'action',
+      label: t('ak.colAction', '操作'),
       title: t('ak.colAction', '操作'),
       width: 90,
       fixed: 'right',
@@ -82,19 +92,42 @@ export default function ApiKeys() {
     },
   ]
 
+  // 列表三件套(视图/筛选/列设置):系统页无 PageHeader,工具条右对齐放在表格上方。
+  const lv = useListView<ApiKey>({
+    kind: 'apikey',
+    projectId,
+    searchOf: (k) => k.name,
+    searchLabel: t('ak.searchPh', '搜索名称'),
+    fields: [
+      {
+        key: 'status',
+        label: t('ak.colStatus', '状态'),
+        type: 'enum',
+        options: [
+          { value: 'active', label: t('ak.active', '正常') },
+          { value: 'revoked', label: t('ak.revoked', '已吊销') },
+        ],
+        get: (k) => (k.revoked ? 'revoked' : 'active'),
+      },
+    ],
+    columns: cols,
+    rows: items,
+  })
+
   return (
     <div style={{ padding: 12, height: '100%', overflow: 'auto', background: 'var(--bg)' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
         <Button type="primary" icon={<PlusOutlined />} onClick={() => setCreateOpen(true)}>{t('ak.create', '新建密钥')}</Button>
         <div style={{ flex: 1 }} />
+        {lv.toolbar}
         <Button icon={<ReloadOutlined />} onClick={load}>{t('a.refresh', '刷新')}</Button>
       </div>
       <Table<ApiKey>
         rowKey="id"
         size="middle"
         loading={loading}
-        dataSource={items}
-        columns={cols}
+        dataSource={lv.rows}
+        columns={lv.columns}
         scroll={{ x: 'max-content' }}
         pagination={{ pageSize: 50, size: 'small', showTotal: (n) => `${t('apidef.totalPrefix', '共')} ${n} ${t('proj.unit', '条')}` }}
       />

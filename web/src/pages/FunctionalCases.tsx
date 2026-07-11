@@ -2,13 +2,13 @@ import { useEffect, useMemo, useState } from 'react'
 import { Button, Descriptions, Empty, Form, Input, Modal, Popconfirm, Select, Space, Table, Tabs, Tag, Tree, Upload } from 'antd'
 import { DeleteOutlined, DownloadOutlined, EditOutlined, ImportOutlined } from '@ant-design/icons'
 import { message } from '../feedback'
-import type { ColumnsType } from 'antd/es/table'
 import { api, ApiError, type CaseRequirementLink, type CaseStep, type FunctionalCase, type Requirement } from '../api'
 import { useApp } from '../context'
 import { Workspace, WorkList, PaneHeader, useWorkTabs } from '../components/Workspace'
 import StepsEditor from '../components/StepsEditor'
 import { useI18n } from '../i18n'
 import { SelectProjectEmpty } from '../components/Page'
+import { useListView, type ListColumn } from '../components/ListView'
 
 const PRIORITIES = ['P0', 'P1', 'P2', 'P3']
 const prioColor = (p?: string) => (p === 'P0' ? 'red' : p === 'P1' ? 'orange' : 'blue')
@@ -19,7 +19,6 @@ export default function FunctionalCases() {
   const ungrouped = t('func.ungrouped', '未分组')
   const [cases, setCases] = useState<FunctionalCase[]>([])
   const [loading, setLoading] = useState(false)
-  const [search, setSearch] = useState('')
   const [moduleKey, setModuleKey] = useState('ALL')
   const [createOpen, setCreateOpen] = useState(false)
   const [editing, setEditing] = useState<FunctionalCase | null>(null)
@@ -54,15 +53,6 @@ export default function FunctionalCases() {
       },
     ]
   }, [cases, ungrouped, t])
-
-  const filtered = useMemo(
-    () =>
-      cases.filter((c) => {
-        const mod = moduleKey === 'ALL' || (c.module || ungrouped) === moduleKey.replace('mod:', '')
-        return mod && c.name.toLowerCase().includes(search.toLowerCase())
-      }),
-    [cases, search, moduleKey, ungrouped],
-  )
 
   // 导出 xlsx(浏览器下载)/ 导入 xlsx(选文件即上传,返回导入条数)。
   const doExport = async () => {
@@ -101,16 +91,17 @@ export default function FunctionalCases() {
     }
   }
 
-  if (!projectId) return <SelectProjectEmpty />
-
-  const columns: ColumnsType<FunctionalCase> = [
-    { title: t('func.colName', '名称'), dataIndex: 'name', ellipsis: true },
-    { title: t('func.colModule', '模块'), dataIndex: 'module', width: 140, render: (m?: string) => m || ungrouped },
-    { title: t('func.colPriority', '优先级'), dataIndex: 'priority', width: 90, render: (p?: string) => <Tag color={prioColor(p)}>{p || 'P2'}</Tag> },
-    { title: t('func.colSteps', '步骤'), dataIndex: 'steps', width: 70, render: (s?: CaseStep[]) => (s?.length || 0) },
-    { title: t('func.colStatus', '状态'), dataIndex: 'status', width: 110, render: (s?: string) => <Tag>{s || 'PREPARED'}</Tag> },
-    { title: t('func.colCreatedBy', '创建人'), dataIndex: 'createdBy', width: 110, ellipsis: true, render: (u?: string) => u ? <span style={{ color: 'var(--text-2)' }}>{u}</span> : <span style={{ color: 'var(--text-3)' }}>—</span> },
+  // 列表三件套(视图/筛选/列设置):useListView 必须在条件 return 之前调用。
+  const allColumns: ListColumn<FunctionalCase>[] = [
+    { key: 'name', label: t('func.colName', '名称'), title: t('func.colName', '名称'), dataIndex: 'name', ellipsis: true },
+    { key: 'module', label: t('func.colModule', '模块'), title: t('func.colModule', '模块'), dataIndex: 'module', width: 140, render: (m?: string) => m || ungrouped },
+    { key: 'priority', label: t('func.colPriority', '优先级'), title: t('func.colPriority', '优先级'), dataIndex: 'priority', width: 90, render: (p?: string) => <Tag color={prioColor(p)}>{p || 'P2'}</Tag> },
+    { key: 'steps', label: t('func.colSteps', '步骤'), title: t('func.colSteps', '步骤'), dataIndex: 'steps', width: 70, render: (s?: CaseStep[]) => (s?.length || 0) },
+    { key: 'status', label: t('func.colStatus', '状态'), title: t('func.colStatus', '状态'), dataIndex: 'status', width: 110, render: (s?: string) => <Tag>{s || 'PREPARED'}</Tag> },
+    { key: 'createdBy', label: t('func.colCreatedBy', '创建人'), title: t('func.colCreatedBy', '创建人'), dataIndex: 'createdBy', width: 110, ellipsis: true, render: (u?: string) => u ? <span style={{ color: 'var(--text-2)' }}>{u}</span> : <span style={{ color: 'var(--text-3)' }}>—</span> },
     {
+      key: 'action',
+      label: t('req.action', '操作'),
       title: t('req.action', '操作'),
       width: 110,
       render: (_v, c) => (
@@ -128,6 +119,36 @@ export default function FunctionalCases() {
       ),
     },
   ]
+  const lv = useListView<FunctionalCase>({
+    kind: 'functional-case',
+    projectId,
+    searchOf: (c) => c.name,
+    searchLabel: t('func.searchName', '搜索用例名'),
+    fields: [
+      {
+        key: 'priority', label: t('func.colPriority', '优先级'), type: 'enum',
+        options: PRIORITIES.map((p) => ({ value: p, label: p })),
+        get: (c) => c.priority || 'P2',
+      },
+      {
+        key: 'module', label: t('func.colModule', '模块'), type: 'enum',
+        options: [...new Set(cases.map((c) => c.module || ungrouped))].map((m) => ({ value: m, label: m })),
+        get: (c) => c.module || ungrouped,
+      },
+      {
+        key: 'status', label: t('func.colStatus', '状态'), type: 'enum',
+        options: [...new Set(cases.map((c) => c.status || 'PREPARED'))].map((s) => ({ value: s, label: s })),
+        get: (c) => c.status || 'PREPARED',
+      },
+    ],
+    columns: allColumns,
+    rows: cases,
+  })
+
+  if (!projectId) return <SelectProjectEmpty />
+
+  // 左侧模块树的筛选叠加在三件套筛选之上(树选中某模块时只看该模块)。
+  const visible = lv.rows.filter((c) => moduleKey === 'ALL' || (c.module || ungrouped) === moduleKey.replace('mod:', ''))
 
   const left = (
     <>
@@ -158,17 +179,16 @@ export default function FunctionalCases() {
             newLabel={t('func.newCase', '新建用例')}
             extraActions={
               <>
+                {lv.toolbar}
                 <Upload showUploadList={false} accept=".xlsx" beforeUpload={(f) => { doImport(f as File); return false }}>
                   <Button icon={<ImportOutlined />}>{t('func.import', '导入')}</Button>
                 </Upload>
                 <Button icon={<DownloadOutlined />} onClick={doExport} disabled={!cases.length}>{t('func.export', '导出')}</Button>
               </>
             }
-            onSearch={setSearch}
-            searchPlaceholder={t('func.searchName', '搜索用例名')}
             onRefresh={load}
-            columns={columns}
-            data={filtered}
+            columns={lv.columns}
+            data={visible}
             loading={loading}
             onRowClick={(c) => tabs.open(c.id)}
             emptyText={t('func.emptyCase', '暂无用例')}

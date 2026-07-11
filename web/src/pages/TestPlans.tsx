@@ -10,6 +10,7 @@ import { Workspace, WorkList, useWorkTabs, useOpenParam } from '../components/Wo
 import Donut from '../components/Donut'
 import { SelectProjectEmpty } from '../components/Page'
 import { useI18n } from '../i18n'
+import { useListView, type ListColumn } from '../components/ListView'
 
 export default function TestPlans() {
   const { t } = useI18n()
@@ -49,6 +50,75 @@ export default function TestPlans() {
     }
   }
 
+  // 计划状态归一(未开始/进行中/已完成):列渲染与筛选共用;无统计数据的计划返回 undefined。
+  const planStatusOf = (p: RegItem): string | undefined => {
+    const s = statsMap[p.id]
+    if (!s) return undefined
+    return s.executeRate > 0 ? (s.isPass ? 'DONE' : 'RUNNING') : 'NOT_STARTED'
+  }
+  const statusLabel: Record<string, string> = {
+    DONE: t('plan.statusDone', '已完成'),
+    RUNNING: t('plan.statusRunning', '进行中'),
+    NOT_STARTED: t('plan.statusNotStarted', '未开始'),
+  }
+
+  // 列表三件套(视图/筛选/列设置):useListView 必须在条件 return 之前调用。
+  const allColumns: ListColumn<RegItem>[] = [
+    { key: 'name', label: t('plan.colName', '计划名'), title: t('plan.colName', '计划名'), dataIndex: 'label', ellipsis: true },
+    {
+      key: 'status',
+      label: t('plan.colStatus', '状态'),
+      title: t('plan.colStatus', '状态'),
+      width: 100,
+      render: (_, p) => {
+        const st = planStatusOf(p)
+        const s = statsMap[p.id]
+        return st && s ? <Tag color={s.isPass ? 'green' : s.executeRate > 0 ? 'blue' : 'default'}>{statusLabel[st]}</Tag> : <Tag>—</Tag>
+      },
+    },
+    {
+      key: 'passRate',
+      label: t('plan.colPassRate', '通过率'),
+      title: t('plan.colPassRate', '通过率'),
+      width: 160,
+      render: (_, p) => {
+        const s = statsMap[p.id]
+        const pr = Math.round((s?.passRate ?? 0) * 100)
+        return <Progress percent={pr} size="small" status={pr === 100 ? 'success' : 'active'} />
+      },
+    },
+    { key: 'caseCount', label: t('plan.colCaseCount', '用例数'), title: t('plan.colCaseCount', '用例数'), width: 80, render: (_, p) => statsMap[p.id]?.total ?? 0 },
+    { key: 'createdBy', label: t('plan.colCreatedBy', '创建人'), title: t('plan.colCreatedBy', '创建人'), width: 110, render: (_, p) => p.meta?.createdBy || '—' },
+    { key: 'createdAt', label: t('plan.colCreatedAt', '创建时间'), title: t('plan.colCreatedAt', '创建时间'), dataIndex: 'createdAt', width: 180, render: (ts: number) => new Date(ts).toLocaleString() },
+    {
+      key: 'action',
+      label: t('plan.colAction', '操作'),
+      title: t('plan.colAction', '操作'),
+      width: 140,
+      render: (_, p) => (
+        <Space size={0} onClick={(e) => e.stopPropagation()}>
+          <Button type="link" size="small" loading={runningId === p.id} onClick={() => runPlan(p.id)}>{t('plan.exec', '执行')}</Button>
+          <Button type="link" size="small" onClick={() => tabs.open(p.id)}>{t('plan.report', '报告')}</Button>
+        </Space>
+      ),
+    },
+  ]
+  const lv = useListView<RegItem>({
+    kind: 'test-plan',
+    projectId,
+    searchOf: (p) => p.label,
+    searchLabel: t('plan.searchPh', '搜索计划名'),
+    fields: [
+      {
+        key: 'status', label: t('plan.colStatus', '状态'), type: 'enum',
+        options: ['NOT_STARTED', 'RUNNING', 'DONE'].map((v) => ({ value: v, label: statusLabel[v] })),
+        get: (p) => planStatusOf(p),
+      },
+    ],
+    columns: allColumns,
+    rows: plans,
+  })
+
   if (!projectId) return <SelectProjectEmpty />
 
   const detailTabs = plans
@@ -67,43 +137,16 @@ export default function TestPlans() {
           <WorkList<RegItem>
             onNew={() => setCreateOpen(true)}
             newLabel={t('plan.newPlan', '新建测试计划')}
-            extraActions={<Button size="middle" onClick={() => loadStats(plans)}>{t('plan.refreshStats', '刷新统计')}</Button>}
-            data={plans}
+            extraActions={
+              <>
+                {lv.toolbar}
+                <Button size="middle" onClick={() => loadStats(plans)}>{t('plan.refreshStats', '刷新统计')}</Button>
+              </>
+            }
+            data={lv.rows}
             onRowClick={(p) => tabs.open(p.id)}
             emptyText={t('plan.emptyPlans', '暂无计划')}
-            columns={[
-              { title: t('plan.colName', '计划名'), dataIndex: 'label', ellipsis: true },
-              {
-                title: t('plan.colStatus', '状态'),
-                width: 100,
-                render: (_, p) => {
-                  const s = statsMap[p.id]
-                  return s ? <Tag color={s.isPass ? 'green' : s.executeRate > 0 ? 'blue' : 'default'}>{s.executeRate > 0 ? (s.isPass ? t('plan.statusDone', '已完成') : t('plan.statusRunning', '进行中')) : t('plan.statusNotStarted', '未开始')}</Tag> : <Tag>—</Tag>
-                },
-              },
-              {
-                title: t('plan.colPassRate', '通过率'),
-                width: 160,
-                render: (_, p) => {
-                  const s = statsMap[p.id]
-                  const pr = Math.round((s?.passRate ?? 0) * 100)
-                  return <Progress percent={pr} size="small" status={pr === 100 ? 'success' : 'active'} />
-                },
-              },
-              { title: t('plan.colCaseCount', '用例数'), width: 80, render: (_, p) => statsMap[p.id]?.total ?? 0 },
-              { title: t('plan.colCreatedBy', '创建人'), width: 110, render: (_, p) => p.meta?.createdBy || '—' },
-              { title: t('plan.colCreatedAt', '创建时间'), dataIndex: 'createdAt', width: 180, render: (ts: number) => new Date(ts).toLocaleString() },
-              {
-                title: t('plan.colAction', '操作'),
-                width: 140,
-                render: (_, p) => (
-                  <Space size={0} onClick={(e) => e.stopPropagation()}>
-                    <Button type="link" size="small" loading={runningId === p.id} onClick={() => runPlan(p.id)}>{t('plan.exec', '执行')}</Button>
-                    <Button type="link" size="small" onClick={() => tabs.open(p.id)}>{t('plan.report', '报告')}</Button>
-                  </Space>
-                ),
-              },
-            ]}
+            columns={lv.columns}
           />
         }
       />
