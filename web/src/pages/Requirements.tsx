@@ -27,6 +27,7 @@ import { Workspace, WorkList, useWorkTabs } from '../components/Workspace'
 import { SelectProjectEmpty } from '../components/Page'
 import { regAdd, regList, type RegItem } from '../registry'
 import ContributionGrid from '../components/ContributionGrid'
+import { useListView, type ListColumn } from '../components/ListView'
 import { useI18n } from '../i18n'
 
 const toLines = (s: string) => s.split('\n').map((x) => x.trim()).filter(Boolean)
@@ -58,10 +59,42 @@ const fmtShort = (ms?: number | null) => (ms ? dayjs(ms).format('MM-DD HH:mm') :
 type ReqRow = Omit<RegItem, 'label'> & {
   status?: string
   label: React.ReactNode
+  /** 纯文本标题(搜索/筛选用;label 已是带徽标的节点)。 */
+  titleText: string
   reqType?: string
   priority?: string
   tags?: string[]
   overdue?: boolean
+}
+
+
+// 列表列(带 key/label 供「列设置」面板);label 是带覆盖徽标的节点,搜索用 titleText。
+function reqColumns(t: (k: string, d?: string) => string): ListColumn<ReqRow>[] {
+  return [
+    { key: 'title', label: t('req.title', '标题'), title: t('req.title', '标题'), dataIndex: 'label' },
+    { key: 'reqType', label: t('req.reqType', '类型'), title: t('req.reqType', '类型'), dataIndex: 'reqType', width: 80, render: (v?: string) => (v ? <Tag>{t(`req.type.${v}`, v)}</Tag> : '—') },
+    { key: 'priority', label: t('req.priority', '优先级'), title: t('req.priority', '优先级'), dataIndex: 'priority', width: 70, render: (p?: string) => (p ? <Tag color={prioColor(p)}>{p}</Tag> : '—') },
+    {
+      key: 'tags', label: t('req.tags', '标签'), title: t('req.tags', '标签'), dataIndex: 'tags',
+      render: (tags?: string[]) =>
+        tags?.length ? (
+          <>
+            {tags.slice(0, 2).map((tg) => <Tag key={tg} style={{ marginRight: 4 }}>{tg}</Tag>)}
+            {tags.length > 2 && <Tag style={{ marginRight: 0 }}>+{tags.length - 2}</Tag>}
+          </>
+        ) : '—',
+    },
+    {
+      key: 'status', label: t('req.status', '状态'), title: t('req.status', '状态'), dataIndex: 'status', width: 120,
+      render: (s: string | undefined, row: ReqRow) => (
+        <>
+          <Tag color={reqStatusColor(s)}>{s ? t(`req.status.${s}`, s) : '—'}</Tag>
+          {row.overdue && <Tag color="red" style={{ marginRight: 0 }}>{t('req.overdue', '延期')}</Tag>}
+        </>
+      ),
+    },
+    { key: 'decomposed', label: t('req.decomposed', '已拆分'), title: t('req.decomposed', '已拆分'), dataIndex: 'meta', width: 90, render: (m?: Record<string, string>) => (m?.decompositionId ? <Tag color="geekblue">{t('req.yes', '是')}</Tag> : '—') },
+  ]
 }
 
 // 需求与编排合一:需求列表 → 详情 Tab(需求信息/版本/基线/拆分 → 拆分图任务+运行+交付+验证)。
@@ -90,10 +123,10 @@ export default function Requirements() {
         const label = (
           <span>{r.title}{crits.length ? <Tag color={pct === 100 ? 'green' : pct > 0 ? 'gold' : 'default'} style={{ marginLeft: 6 }}>{pct}%</Tag> : null}</span>
         )
-        return { ...base, status: r.status, reqType: r.reqType, priority: r.priority, tags: r.tags, overdue: r.overdue, label }
+        return { ...base, status: r.status, reqType: r.reqType, priority: r.priority, tags: r.tags, overdue: r.overdue, label, titleText: r.title }
       }))
     } catch {
-      setItems(local) // 后端不可用时回落本地
+      setItems(local.map((r) => ({ ...r, titleText: String(r.label) }))) // 后端不可用时回落本地
     }
   }
   useEffect(() => {
@@ -101,6 +134,40 @@ export default function Requirements() {
     tabs.reset()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId])
+
+  // 列表三件套:视图/筛选/列设置(useListView 必须在条件 return 之前调用)。
+  const allTags = [...new Set(items.flatMap((r) => r.tags ?? []))]
+  const lv = useListView<ReqRow>({
+    kind: 'requirement',
+    projectId,
+    searchOf: (r) => r.titleText,
+    searchLabel: t('req.searchPh', '搜索标题'),
+    fields: [
+      {
+        key: 'status', label: t('req.status', '状态'), type: 'enum',
+        options: ['DRAFT', 'BASELINED', 'DELIVERED', 'ARCHIVED'].map((v) => ({ value: v, label: t(`req.status.${v}`, v) })),
+        get: (r) => r.status,
+      },
+      {
+        key: 'reqType', label: t('req.reqType', '类型'), type: 'enum',
+        options: ['FEATURE', 'ENHANCEMENT', 'TECH_DEBT', 'BUGFIX'].map((v) => ({ value: v, label: t(`req.type.${v}`, v) })),
+        get: (r) => r.reqType,
+      },
+      {
+        key: 'priority', label: t('req.priority', '优先级'), type: 'enum',
+        options: ['P0', 'P1', 'P2', 'P3'].map((v) => ({ value: v, label: v })),
+        get: (r) => r.priority,
+      },
+      {
+        key: 'tags', label: t('req.tags', '标签'), type: 'tags',
+        options: allTags.map((v) => ({ value: v, label: v })),
+        get: (r) => r.tags ?? [],
+      },
+      { key: 'overdue', label: t('req.overdueOnly', '仅看延期'), type: 'bool', get: (r) => r.overdue === true },
+    ],
+    columns: reqColumns(t),
+    rows: items,
+  })
 
   if (!projectId) return <SelectProjectEmpty />
 
@@ -124,34 +191,11 @@ export default function Requirements() {
           <WorkList<ReqRow>
             onNew={() => setCreateOpen(true)}
             newLabel={t('req.new', '新建需求')}
-            data={items}
+            extraActions={lv.toolbar}
+            data={lv.rows}
             onRowClick={(r) => tabs.open(r.id)}
             emptyText={t('req.empty', '暂无需求')}
-            columns={[
-              { title: t('req.title', '标题'), dataIndex: 'label' },
-              { title: t('req.reqType', '类型'), dataIndex: 'reqType', width: 80, render: (v?: string) => (v ? <Tag>{t(`req.type.${v}`, v)}</Tag> : '—') },
-              { title: t('req.priority', '优先级'), dataIndex: 'priority', width: 70, render: (p?: string) => (p ? <Tag color={prioColor(p)}>{p}</Tag> : '—') },
-              {
-                title: t('req.tags', '标签'), dataIndex: 'tags',
-                render: (tags?: string[]) =>
-                  tags?.length ? (
-                    <>
-                      {tags.slice(0, 2).map((tg) => <Tag key={tg} style={{ marginRight: 4 }}>{tg}</Tag>)}
-                      {tags.length > 2 && <Tag style={{ marginRight: 0 }}>+{tags.length - 2}</Tag>}
-                    </>
-                  ) : '—',
-              },
-              {
-                title: t('req.status', '状态'), dataIndex: 'status', width: 120,
-                render: (s: string | undefined, row) => (
-                  <>
-                    <Tag color={reqStatusColor(s)}>{s ? t(`req.status.${s}`, s) : '—'}</Tag>
-                    {row.overdue && <Tag color="red" style={{ marginRight: 0 }}>{t('req.overdue', '延期')}</Tag>}
-                  </>
-                ),
-              },
-              { title: t('req.decomposed', '已拆分'), dataIndex: 'meta', width: 90, render: (m?: Record<string, string>) => (m?.decompositionId ? <Tag color="geekblue">{t('req.yes', '是')}</Tag> : '—') },
-            ]}
+            columns={lv.columns}
           />
         }
       />
