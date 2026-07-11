@@ -216,8 +216,12 @@ impl DeliveryService {
         Ok(self.repo.list_tasks(filter).await?)
     }
 
-    pub async fn collab_stats(&self, project_id: &str) -> Result<CollabStats, DeliveryCmdError> {
-        Ok(self.repo.collab_stats(project_id).await?)
+    pub async fn collab_stats(
+        &self,
+        project_id: &str,
+        requirement_id: Option<&str>,
+    ) -> Result<CollabStats, DeliveryCmdError> {
+        Ok(self.repo.collab_stats(project_id, requirement_id).await?)
     }
 
     pub async fn stop(&self, id: &str, reason: &str) -> Result<DeliveryAttempt, DeliveryCmdError> {

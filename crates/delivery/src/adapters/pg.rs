@@ -250,29 +250,53 @@ impl DeliveryRepository for PgDeliveryRepository {
     }
 
     // 人机协同人效:VERIFIED 任务按「是否存在 DELIVERED 交付记录」拆成 AI/人工,
-    // 需求维度聚合数量与工作量;周趋势按 verified_at(周一)聚合,历史空值不计。
-    async fn collab_stats(&self, project_id: &str) -> Result<CollabStats, RepoError> {
+    // 需求维度聚合数量与工作量 + 交付质量(尝试成功率/一次通过);requirement_id 给定时只看该需求。
+    async fn collab_stats(
+        &self,
+        project_id: &str,
+        requirement_id: Option<&str>,
+    ) -> Result<CollabStats, RepoError> {
+        // attempt_cnt 供「一次通过」判定;质量指标(尝试维度)单独聚合后在 SQL 里 LEFT JOIN。
         const VERIFIED_SPLIT: &str = "SELECT t.points, t.verified_at, dc.requirement_id, \
+                (SELECT count(*) FROM ms_delivery_attempt a \
+                 WHERE a.decomposition_id = t.decomposition_id AND a.task_id = t.id) AS attempt_cnt, \
                 EXISTS(SELECT 1 FROM ms_delivery_attempt a \
                        WHERE a.decomposition_id = t.decomposition_id AND a.task_id = t.id \
                          AND a.status = 'DELIVERED') AS ai \
              FROM ms_task t \
              JOIN ms_task_decomposition dc ON dc.id = t.decomposition_id \
              WHERE t.status = 'VERIFIED'";
+        // 尝试维度(不限于已验收任务):某需求下全部交付尝试的 总数/成功/失败。
+        const ATTEMPT_AGG: &str = "SELECT dc.requirement_id, \
+                count(*) AS ai_attempts, \
+                count(*) FILTER (WHERE a.status = 'DELIVERED') AS ai_delivered, \
+                count(*) FILTER (WHERE a.status = 'FAILED') AS ai_failed \
+             FROM ms_delivery_attempt a \
+             JOIN ms_task_decomposition dc ON dc.id = a.decomposition_id \
+             GROUP BY dc.requirement_id";
+        // requirement_id 过滤:$2 为空串 = 不过滤(避免动态拼 SQL)。
+        let req_filter = requirement_id.unwrap_or("");
 
         let rows = sqlx::query(&format!(
             "SELECT r.id, r.title, \
-                count(*) FILTER (WHERE x.ai) AS ai_tasks, \
-                count(*) FILTER (WHERE NOT x.ai) AS human_tasks, \
+                count(x.requirement_id) FILTER (WHERE x.ai) AS ai_tasks, \
+                count(x.requirement_id) FILTER (WHERE NOT x.ai) AS human_tasks, \
                 COALESCE(sum(x.points) FILTER (WHERE x.ai), 0)::BIGINT AS ai_points, \
-                COALESCE(sum(x.points) FILTER (WHERE NOT x.ai), 0)::BIGINT AS human_points \
-             FROM ({VERIFIED_SPLIT}) x \
-             JOIN ms_requirement r ON r.id = x.requirement_id \
-             WHERE r.project_id = $1 \
+                COALESCE(sum(x.points) FILTER (WHERE NOT x.ai), 0)::BIGINT AS human_points, \
+                count(x.requirement_id) FILTER (WHERE x.ai AND x.attempt_cnt = 1) AS ai_first_pass, \
+                COALESCE(max(att.ai_attempts), 0) AS ai_attempts, \
+                COALESCE(max(att.ai_delivered), 0) AS ai_delivered, \
+                COALESCE(max(att.ai_failed), 0) AS ai_failed \
+             FROM ms_requirement r \
+             LEFT JOIN ({VERIFIED_SPLIT}) x ON x.requirement_id = r.id \
+             LEFT JOIN ({ATTEMPT_AGG}) att ON att.requirement_id = r.id \
+             WHERE r.project_id = $1 AND ($2 = '' OR r.id = $2) \
              GROUP BY r.id, r.title \
-             ORDER BY count(*) DESC, r.id"
+             HAVING count(x.requirement_id) > 0 OR COALESCE(max(att.ai_attempts), 0) > 0 \
+             ORDER BY count(x.requirement_id) DESC, r.id"
         ))
         .bind(project_id)
+        .bind(req_filter)
         .fetch_all(&self.pool)
         .await
         .map_err(map_err)?;
@@ -286,6 +310,10 @@ impl DeliveryRepository for PgDeliveryRepository {
                     human_tasks: r.try_get("human_tasks").map_err(map_err)?,
                     ai_points: r.try_get("ai_points").map_err(map_err)?,
                     human_points: r.try_get("human_points").map_err(map_err)?,
+                    ai_attempts: r.try_get("ai_attempts").map_err(map_err)?,
+                    ai_delivered: r.try_get("ai_delivered").map_err(map_err)?,
+                    ai_failed: r.try_get("ai_failed").map_err(map_err)?,
+                    ai_first_pass: r.try_get("ai_first_pass").map_err(map_err)?,
                 })
             })
             .collect::<Result<Vec<_>, RepoError>>()?;
@@ -297,10 +325,12 @@ impl DeliveryRepository for PgDeliveryRepository {
                 count(*) FILTER (WHERE NOT x.ai) AS human \
              FROM ({VERIFIED_SPLIT}) x \
              JOIN ms_requirement r ON r.id = x.requirement_id \
-             WHERE r.project_id = $1 AND x.verified_at >= now() - interval '370 days' \
+             WHERE r.project_id = $1 AND ($2 = '' OR r.id = $2) \
+               AND x.verified_at >= now() - interval '370 days' \
              GROUP BY d ORDER BY d"
         ))
         .bind(project_id)
+        .bind(req_filter)
         .fetch_all(&self.pool)
         .await
         .map_err(map_err)?;

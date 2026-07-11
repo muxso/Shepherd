@@ -440,6 +440,9 @@ async fn list_tasks(
 #[serde(rename_all = "camelCase")]
 struct CollabQuery {
     project_id: String,
+    /// 给定时只统计该需求(需求详情的单独视图)。
+    #[serde(default)]
+    requirement_id: Option<String>,
 }
 
 #[derive(Serialize, ToSchema)]
@@ -451,6 +454,10 @@ struct CollabRequirementItem {
     human_tasks: i64,
     ai_points: i64,
     human_points: i64,
+    ai_attempts: i64,
+    ai_delivered: i64,
+    ai_failed: i64,
+    ai_first_pass: i64,
 }
 
 #[derive(Serialize, ToSchema)]
@@ -481,7 +488,7 @@ async fn collab_stats(
     if !user.can("DELIVERY", "READ") {
         return (StatusCode::FORBIDDEN, "permission denied").into_response();
     }
-    match st.svc.collab_stats(&q.project_id).await {
+    match st.svc.collab_stats(&q.project_id, q.requirement_id.as_deref()).await {
         Ok(cs) => {
             let body = CollabStatsResponse {
                 items: cs
@@ -494,6 +501,10 @@ async fn collab_stats(
                         human_tasks: r.human_tasks,
                         ai_points: r.ai_points,
                         human_points: r.human_points,
+                        ai_attempts: r.ai_attempts,
+                        ai_delivered: r.ai_delivered,
+                        ai_failed: r.ai_failed,
+                        ai_first_pass: r.ai_first_pass,
                     })
                     .collect(),
                 daily: cs

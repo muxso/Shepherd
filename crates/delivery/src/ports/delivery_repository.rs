@@ -47,6 +47,12 @@ pub struct CollabRequirementRow {
     pub human_tasks: i64,
     pub ai_points: i64,
     pub human_points: i64,
+    /// 交付质量(尝试维度,不限于已验收任务):总尝试/成功/失败。
+    pub ai_attempts: i64,
+    pub ai_delivered: i64,
+    pub ai_failed: i64,
+    /// 一次交付即验收通过的 AI 任务数(质量口径:attempt 数 = 1 且 VERIFIED)。
+    pub ai_first_pass: i64,
 }
 
 /// 按日的验收通过任务数拆分(近一年,GitHub 贡献格子的数据源);
@@ -95,8 +101,13 @@ pub trait DeliveryRepository: Send + Sync {
     async fn list_tasks(&self, filter: &TaskListFilter) -> Result<TaskPage, RepoError>;
 
     /// 人机协同人效统计(跨上下文 SQL 聚合;内存实现返回空,仅 pg 有意义)。
-    async fn collab_stats(&self, project_id: &str) -> Result<CollabStats, RepoError> {
-        let _ = project_id;
+    /// requirement_id 给定时只统计该需求(需求详情的单独视图)。
+    async fn collab_stats(
+        &self,
+        project_id: &str,
+        requirement_id: Option<&str>,
+    ) -> Result<CollabStats, RepoError> {
+        let _ = (project_id, requirement_id);
         Ok(CollabStats::default())
     }
 
