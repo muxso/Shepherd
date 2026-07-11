@@ -1516,6 +1516,8 @@ const DICT: Record<string, { zh: string; en: string }> = {
   "editor.paramValue": { zh: "参数值", en: "Parameter value" },
   "editor.desc": { zh: "描述", en: "Description" },
   "editor.addRow": { zh: "加一行", en: "Add row" },
+  // 缺陷工作区(列表常驻 tab + 新建缺陷 tab)
+  'bug.allBugs': { zh: '全部缺陷', en: 'All Bugs' },
 }
 
 interface Ctx {

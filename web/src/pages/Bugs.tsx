@@ -1,15 +1,19 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Button, Drawer, Empty, Form, Input, Modal, Select, Space, Table, Tag, Tooltip } from 'antd'
+import { Button, Drawer, Empty, Form, Input, Select, Space, Tag, Tooltip } from 'antd'
 import { message, modal } from '../feedback'
-import { LinkOutlined, PlusOutlined, ReloadOutlined } from '@ant-design/icons'
+import { LinkOutlined } from '@ant-design/icons'
 import { api, ApiError, userIdStore, type Bug, type BugRelation } from '../api'
 import { useApp } from '../context'
 import { useI18n } from '../i18n'
-import { PageBody, PageContainer, PageHeader, SelectProjectEmpty } from '../components/Page'
+import { SelectProjectEmpty } from '../components/Page'
+import { Workspace, WorkList, useWorkTabs } from '../components/Workspace'
 import { useListView, type ListColumn } from '../components/ListView'
 import { CF_GROUP, CustomFieldItems, collectCustomValues, useFieldTemplate } from '../components/TemplateFields'
 
 const STATUSES = ['NEW', 'RESOLVED', 'CLOSED', 'REOPENED', 'REJECTED']
+
+// 工作区常驻「新建缺陷」tab 的 key(缺陷暂无详情 tab,tab 池里只有列表 + 新建)。
+const NEW_KEY = '__new_bug__'
 
 const bugColor = (s: string) => {
   const v = s.toUpperCase()
@@ -33,8 +37,8 @@ export default function Bugs() {
   const { projectId } = useApp()
   const [items, setItems] = useState<Bug[]>([])
   const [loading, setLoading] = useState(false)
-  const [createOpen, setCreateOpen] = useState(false)
   const [relBug, setRelBug] = useState<Bug | null>(null)
+  const tabs = useWorkTabs()
 
   const refresh = useCallback(() => {
     if (!projectId) return
@@ -47,6 +51,10 @@ export default function Bugs() {
   }, [projectId, t])
 
   useEffect(refresh, [refresh])
+  useEffect(() => {
+    tabs.reset()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectId])
 
   if (!projectId) return <SelectProjectEmpty />
 
@@ -74,25 +82,22 @@ export default function Bugs() {
     })
   }
 
-  return <BugsList items={items} loading={loading} projectId={projectId} refresh={refresh} createOpen={createOpen} setCreateOpen={setCreateOpen} setItems={setItems} relBug={relBug} setRelBug={setRelBug} changeStatus={changeStatus} t={t} />
+  return <BugsList items={items} loading={loading} projectId={projectId} refresh={refresh} setItems={setItems} relBug={relBug} setRelBug={setRelBug} changeStatus={changeStatus} tabs={tabs} t={t} />
 }
 
 // 列表 + 三件套(视图/筛选/列设置):useListView 是 hook,拆成子组件避免主组件条件返回后调用 hook。
-function BugsList({ items, loading, projectId, refresh, createOpen, setCreateOpen, setItems, relBug, setRelBug, changeStatus, t }: {
+function BugsList({ items, loading, projectId, refresh, setItems, relBug, setRelBug, changeStatus, tabs, t }: {
   items: Bug[]
   loading: boolean
   projectId: string
   refresh: () => void
-  createOpen: boolean
-  setCreateOpen: (v: boolean) => void
   setItems: React.Dispatch<React.SetStateAction<Bug[]>>
   relBug: Bug | null
   setRelBug: (b: Bug | null) => void
   changeStatus: (b: Bug) => void
+  tabs: ReturnType<typeof useWorkTabs>
   t: (k: string, d?: string) => string
 }) {
-  // 缺陷字段模板:title 之外的字段全靠自定义,创建弹窗按模板渲染。
-  const { fields: tplFields } = useFieldTemplate('bug')
   const allColumns: ListColumn<Bug>[] = [
     { key: 'title', label: t('bug.title', '标题'), title: t('bug.title', '标题'), dataIndex: 'title' },
     {
@@ -145,66 +150,94 @@ function BugsList({ items, loading, projectId, refresh, createOpen, setCreateOpe
     rows: items,
   })
 
+  // 工作区「新建缺陷」tab:标题 + 模板自定义字段平铺;成功 → 关 tab、列表刷新。
+  const detailTabs = tabs.openIds.flatMap((id) =>
+    id === NEW_KEY
+      ? [{
+          key: NEW_KEY,
+          label: t('bug.new', '新建缺陷'),
+          children: (
+            <NewBugTab
+              projectId={projectId}
+              onCancel={() => tabs.close(NEW_KEY)}
+              onCreated={(b) => {
+                tabs.close(NEW_KEY)
+                setItems((prev) => [b, ...prev.filter((x) => x.id !== b.id)])
+              }}
+            />
+          ),
+        }]
+      : [],
+  )
+
   return (
-    <PageContainer>
-      <PageHeader
-        title={t('m.bug', '缺陷')}
-        extra={
-          <>
-            {lv.toolbar}
-            <Button type="primary" icon={<PlusOutlined />} onClick={() => setCreateOpen(true)}>
-              {t('bug.new', '新建缺陷')}
-            </Button>
-            <Button icon={<ReloadOutlined />} onClick={refresh} />
-          </>
+    <>
+      <Workspace
+        listLabel={t('bug.allBugs', '全部缺陷')}
+        activeKey={tabs.activeKey}
+        onChange={tabs.setActiveKey}
+        onClose={tabs.close}
+        tabs={detailTabs}
+        listContent={
+          <WorkList<Bug>
+            onNew={() => tabs.open(NEW_KEY)}
+            newLabel={t('bug.new', '新建缺陷')}
+            extraActions={lv.toolbar}
+            onRefresh={refresh}
+            columns={lv.columns}
+            data={lv.rows}
+            loading={loading}
+            emptyText={t('bug.empty', '暂无缺陷')}
+          />
         }
       />
-      <PageBody>
-        <Table<Bug>
-          rowKey="id"
-          size="middle"
-          loading={loading}
-          dataSource={lv.rows}
-          pagination={{ pageSize: 15, size: 'small' }}
-          locale={{ emptyText: <Empty description={t('bug.empty', '暂无缺陷')} /> }}
-          columns={lv.columns}
-        />
-      </PageBody>
-
-      <Modal title={t('bug.new', '新建缺陷')} open={createOpen} onCancel={() => setCreateOpen(false)} footer={null} destroyOnHidden>
-        {/* 新建缺陷一律从「新建」状态开始;导入历史缺陷带其它状态走 API 的 initialStatus。 */}
-        <Form
-          layout="vertical"
-          onFinish={async (v: { title: string; [CF_GROUP]?: Record<string, unknown> }) => {
-            const customFields = collectCustomValues(tplFields, v[CF_GROUP])
-            try {
-              const b = await api.createBug({
-                projectId,
-                title: v.title,
-                initialStatus: 'NEW',
-                customFields: Object.keys(customFields).length ? customFields : undefined,
-              })
-              message.success(t('bug.created', '缺陷已创建'))
-              setItems((prev) => [b, ...prev.filter((x) => x.id !== b.id)])
-              setCreateOpen(false)
-            } catch (e) {
-              message.error(e instanceof ApiError ? e.message : t('bug.createFailed', '创建失败'))
-            }
-          }}
-        >
-          <Form.Item name="title" label={t('bug.title', '标题')} rules={[{ required: true }]}>
-            <Input placeholder={t('bug.titlePlaceholder', '如:登录按钮无响应')} autoFocus />
-          </Form.Item>
-          {/* 自定义字段(字段模板):按模板配置动态渲染。 */}
-          <CustomFieldItems kind="bug" fields={tplFields} />
-          <Button type="primary" htmlType="submit" block>
-            {t('a.create', '创建')}
-          </Button>
-        </Form>
-      </Modal>
-
       <RelationsDrawer bug={relBug} projectId={projectId} onClose={() => setRelBug(null)} />
-    </PageContainer>
+    </>
+  )
+}
+
+// 工作区「新建缺陷」Tab:标题 + 模板自定义字段,底部 创建/取消。
+// 新建缺陷一律从「新建」状态开始;导入历史缺陷带其它状态走 API 的 initialStatus。
+function NewBugTab({ projectId, onCreated, onCancel }: { projectId: string; onCreated: (b: Bug) => void; onCancel: () => void }) {
+  const { t } = useI18n()
+  // 缺陷字段模板:title 之外的字段全靠自定义,按模板渲染。
+  const { fields: tplFields } = useFieldTemplate('bug')
+  const [saving, setSaving] = useState(false)
+  return (
+    <div style={{ padding: '16px 24px', height: '100%', overflow: 'auto' }}>
+      <Form
+        layout="vertical"
+        style={{ maxWidth: 560 }}
+        onFinish={async (v: { title: string; [CF_GROUP]?: Record<string, unknown> }) => {
+          const customFields = collectCustomValues(tplFields, v[CF_GROUP])
+          setSaving(true)
+          try {
+            const b = await api.createBug({
+              projectId,
+              title: v.title,
+              initialStatus: 'NEW',
+              customFields: Object.keys(customFields).length ? customFields : undefined,
+            })
+            message.success(t('bug.created', '缺陷已创建'))
+            onCreated(b)
+          } catch (e) {
+            message.error(e instanceof ApiError ? e.message : t('bug.createFailed', '创建失败'))
+          } finally {
+            setSaving(false)
+          }
+        }}
+      >
+        <Form.Item name="title" label={t('bug.title', '标题')} rules={[{ required: true }]}>
+          <Input placeholder={t('bug.titlePlaceholder', '如:登录按钮无响应')} autoFocus />
+        </Form.Item>
+        {/* 自定义字段(字段模板):按模板配置动态渲染。 */}
+        <CustomFieldItems kind="bug" fields={tplFields} />
+        <Space>
+          <Button type="primary" htmlType="submit" loading={saving}>{t('a.create', '创建')}</Button>
+          <Button onClick={onCancel}>{t('a.cancel', '取消')}</Button>
+        </Space>
+      </Form>
+    </div>
   )
 }
 

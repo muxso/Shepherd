@@ -10,7 +10,7 @@ import { SelectProjectEmpty } from '../components/Page'
 import { useI18n } from '../i18n'
 import { useListView, type ListColumn } from '../components/ListView'
 import PlanModuleTree from '../components/plan/PlanModuleTree'
-import PlanFormModal from '../components/plan/PlanFormModal'
+import PlanFormModal, { PlanForm } from '../components/plan/PlanFormModal'
 import PlanDetail, { ReportMdModal } from '../components/plan/PlanDetail'
 import {
   groupIdOf,
@@ -24,6 +24,10 @@ import {
   type PlanModule,
 } from '../components/plan/planLocal'
 
+// 工作区常驻「新建测试计划 / 新建计划组」tab 的 key(与计划详情 tab 共用同一 tab 池)。
+const NEW_PLAN_KEY = '__new_plan__'
+const NEW_GROUP_KEY = '__new_group__'
+
 // 测试计划页(照 MeterSphere 布局):顶部「计划 / 报告」线性 tab;
 // 计划 tab = 左模块树 + 右(全部/计划/计划组 Segmented + 列表工具栏 + 表格 + 详情多开);
 // 报告 tab = 各计划的 Markdown 报告入口。模块/分组/标签为本地 meta(见 planLocal.ts)。
@@ -35,7 +39,8 @@ export default function TestPlans() {
   const [statsMap, setStatsMap] = useState<Record<string, PlanStats>>({})
   const [moduleKey, setModuleKey] = useState('ALL')
   const [seg, setSeg] = useState<'all' | 'plan' | 'group'>('all')
-  const [form, setForm] = useState<{ mode: 'plan' | 'group'; editing?: RegItem } | null>(null)
+  // 编辑弹窗(新建改为工作区 Tab,editing 必填)。
+  const [form, setForm] = useState<{ mode: 'plan' | 'group'; editing: RegItem } | null>(null)
   const [runningId, setRunningId] = useState('')
   const [expandedKeys, setExpandedKeys] = useState<string[]>([])
   const [report, setReport] = useState<{ name: string; md: string } | null>(null)
@@ -291,9 +296,9 @@ export default function TestPlans() {
       description={
         <span style={{ color: 'var(--text-3)' }}>
           {t('common.empty', '暂无数据')}{' '}
-          <a style={{ color: 'var(--brand)' }} onClick={() => setForm({ mode: 'plan' })}>{t('plan.newPlan', '新建测试计划')}</a>
+          <a style={{ color: 'var(--brand)' }} onClick={() => tabs.open(NEW_PLAN_KEY)}>{t('plan.newPlan', '新建测试计划')}</a>
           {' '}{t('plan.or', '或')}{' '}
-          <a style={{ color: 'var(--brand)' }} onClick={() => setForm({ mode: 'group' })}>{t('plan.newGroup', '新建计划组')}</a>
+          <a style={{ color: 'var(--brand)' }} onClick={() => tabs.open(NEW_GROUP_KEY)}>{t('plan.newGroup', '新建计划组')}</a>
         </span>
       }
     />
@@ -344,9 +349,37 @@ export default function TestPlans() {
     </div>
   )
 
-  const detailTabs = plans
-    .filter((p) => !isGroup(p) && tabs.openIds.includes(p.id))
-    .map((p) => ({ key: p.id, label: p.label, children: <PlanDetail planId={p.id} name={p.label} projectId={projectId} /> }))
+  // 工作区「新建测试计划 / 新建计划组」tab:PlanForm 平铺;创建成功 → 关 tab、
+  // 刷新列表,计划再打开详情(计划组无详情,只刷新)。
+  const newFormTab = (key: string, mode: 'plan' | 'group') => ({
+    key,
+    label: mode === 'group' ? t('plan.newGroup', '新建计划组') : t('plan.newPlan', '新建测试计划'),
+    children: (
+      <div style={{ padding: '16px 24px', height: '100%', overflow: 'auto' }}>
+        <div style={{ maxWidth: 520 }}>
+          <PlanForm
+            mode={mode}
+            projectId={projectId}
+            modules={modules}
+            groups={plans}
+            onCancel={() => tabs.close(key)}
+            onSaved={(list, created) => {
+              tabs.close(key)
+              setPlans(list)
+              loadStats(list)
+              if (created) tabs.open(created.id)
+            }}
+          />
+        </div>
+      </div>
+    ),
+  })
+  const detailTabs = tabs.openIds.flatMap((id) => {
+    if (id === NEW_PLAN_KEY) return [newFormTab(NEW_PLAN_KEY, 'plan')]
+    if (id === NEW_GROUP_KEY) return [newFormTab(NEW_GROUP_KEY, 'group')]
+    const p = plans.find((x) => x.id === id && !isGroup(x))
+    return p ? [{ key: p.id, label: p.label, children: <PlanDetail planId={p.id} name={p.label} projectId={projectId} /> }] : []
+  })
 
   // 计划 tab:左模块树 + 右列表(含详情多开 workspace)。
   const plansTab = (
@@ -358,8 +391,8 @@ export default function TestPlans() {
           modules={modules}
           selectedKey={moduleKey}
           onSelect={setModuleKey}
-          onNewPlan={() => setForm({ mode: 'plan' })}
-          onNewGroup={() => setForm({ mode: 'group' })}
+          onNewPlan={() => tabs.open(NEW_PLAN_KEY)}
+          onNewGroup={() => tabs.open(NEW_GROUP_KEY)}
           onModulesChanged={onModulesChanged}
         />
       }
@@ -417,7 +450,7 @@ export default function TestPlans() {
         ]}
       />
       <PlanFormModal
-        key={form ? `${form.mode}:${form.editing?.id || 'new'}` : 'closed'}
+        key={form ? `${form.mode}:${form.editing.id}` : 'closed'}
         open={!!form}
         mode={form?.mode || 'plan'}
         editing={form?.editing}
@@ -425,11 +458,10 @@ export default function TestPlans() {
         modules={modules}
         groups={plans}
         onClose={() => setForm(null)}
-        onSaved={(list, created) => {
+        onSaved={(list) => {
           setForm(null)
           setPlans(list)
           loadStats(list)
-          if (created) tabs.open(created.id)
         }}
       />
       <ReportMdModal open={!!report} name={report?.name || ''} md={report?.md || ''} onClose={() => setReport(null)} />

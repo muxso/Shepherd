@@ -1,25 +1,24 @@
 import { useState } from 'react'
-import { Button, Form, Input, Modal, Select } from 'antd'
+import { Button, Form, Input, Modal, Select, Space } from 'antd'
 import { message } from '../../feedback'
 import { api, ApiError, userStore } from '../../api'
 import { useI18n } from '../../i18n'
 import { regAdd, type RegItem } from '../../registry'
 import { groupIdOf, isGroup, joinTags, moduleOf, planRegUpdate, tagsOf, type PlanModule } from './planLocal'
 
-// 新建 / 编辑 测试计划 或 计划组。
+// 测试计划 / 计划组 表单(名称/所属模块/所属计划组/标签)。
 // 新建:api.createPlan(计划组带 type='GROUP')+ regAdd 落本地注册表;
 // 编辑:后端无更新端点,只改本地 label/meta(模块/分组/标签),保持列表原顺序。
-export default function PlanFormModal({
-  open,
+// 新建走工作区 Tab 平铺(传 onCancel 显示「取消」);编辑仍走下方的 PlanFormModal 弹窗。
+export function PlanForm({
   mode,
   editing,
   projectId,
   modules,
   groups,
-  onClose,
   onSaved,
+  onCancel,
 }: {
-  open: boolean
   /** plan=测试计划;group=计划组(无 所属计划组 字段)。 */
   mode: 'plan' | 'group'
   /** 传入则为编辑,否则新建。 */
@@ -27,9 +26,10 @@ export default function PlanFormModal({
   projectId: string
   modules: PlanModule[]
   groups: RegItem[]
-  onClose: () => void
   /** list=更新后的注册表;created=新建成功的计划(计划组不回传,用于打开详情)。 */
   onSaved: (list: RegItem[], created?: { id: string; name: string }) => void
+  /** 传入则在提交按钮旁显示「取消」(Tab 平铺模式);弹窗模式不传,保持整宽按钮。 */
+  onCancel?: () => void
 }) {
   const { t } = useI18n()
   const [saving, setSaving] = useState(false)
@@ -75,43 +75,76 @@ export default function PlanFormModal({
     }
   }
 
+  const submitLabel = editing ? t('lv.save', '保存') : t('a.create', '创建')
+
+  return (
+    <Form
+      layout="vertical"
+      onFinish={submit}
+      initialValues={
+        editing
+          ? { name: editing.label, module: moduleOf(editing) || undefined, groupId: groupIdOf(editing) || undefined, tags: tagsOf(editing) }
+          : { tags: [] }
+      }
+    >
+      <Form.Item name="name" label={t('plan.colName', '测试计划名称')} rules={[{ required: true }]}>
+        <Input placeholder={t('plan.namePlaceholder', '如:回归冒烟')} autoFocus />
+      </Form.Item>
+      <Form.Item name="module" label={t('plan.belongModule', '所属模块')}>
+        <Select allowClear placeholder={t('plan.moduleUnfiled', '未规划')} options={moduleOptions} />
+      </Form.Item>
+      {mode === 'plan' && (
+        <Form.Item name="groupId" label={t('plan.belongGroup', '所属计划组')}>
+          <Select
+            allowClear
+            placeholder={t('plan.noGroup', '不归属计划组')}
+            options={groups.filter(isGroup).map((g) => ({ value: g.id, label: g.label }))}
+          />
+        </Form.Item>
+      )}
+      <Form.Item name="tags" label={t('plan.tags', '标签')}>
+        <Select mode="tags" placeholder={t('plan.tagsPh', '输入后回车添加标签')} open={false} suffixIcon={null} />
+      </Form.Item>
+      {onCancel ? (
+        <Space>
+          <Button type="primary" htmlType="submit" loading={saving}>{submitLabel}</Button>
+          <Button onClick={onCancel}>{t('a.cancel', '取消')}</Button>
+        </Space>
+      ) : (
+        <Button type="primary" htmlType="submit" loading={saving} block>{submitLabel}</Button>
+      )}
+    </Form>
+  )
+}
+
+// 编辑 测试计划 / 计划组 弹窗(新建改为工作区 Tab,见 TestPlans 的 PlanForm 用法)。
+export default function PlanFormModal({
+  open,
+  mode,
+  editing,
+  projectId,
+  modules,
+  groups,
+  onClose,
+  onSaved,
+}: {
+  open: boolean
+  mode: 'plan' | 'group'
+  editing?: RegItem | null
+  projectId: string
+  modules: PlanModule[]
+  groups: RegItem[]
+  onClose: () => void
+  onSaved: (list: RegItem[], created?: { id: string; name: string }) => void
+}) {
+  const { t } = useI18n()
   const title = editing
     ? mode === 'group' ? t('plan.editGroup', '编辑计划组') : t('plan.editPlan', '编辑测试计划')
     : mode === 'group' ? t('plan.newGroup', '新建计划组') : t('plan.newPlan', '新建测试计划')
 
   return (
     <Modal title={title} open={open} onCancel={onClose} footer={null} destroyOnHidden>
-      <Form
-        layout="vertical"
-        onFinish={submit}
-        initialValues={
-          editing
-            ? { name: editing.label, module: moduleOf(editing) || undefined, groupId: groupIdOf(editing) || undefined, tags: tagsOf(editing) }
-            : { tags: [] }
-        }
-      >
-        <Form.Item name="name" label={t('plan.colName', '测试计划名称')} rules={[{ required: true }]}>
-          <Input placeholder={t('plan.namePlaceholder', '如:回归冒烟')} autoFocus />
-        </Form.Item>
-        <Form.Item name="module" label={t('plan.belongModule', '所属模块')}>
-          <Select allowClear placeholder={t('plan.moduleUnfiled', '未规划')} options={moduleOptions} />
-        </Form.Item>
-        {mode === 'plan' && (
-          <Form.Item name="groupId" label={t('plan.belongGroup', '所属计划组')}>
-            <Select
-              allowClear
-              placeholder={t('plan.noGroup', '不归属计划组')}
-              options={groups.filter(isGroup).map((g) => ({ value: g.id, label: g.label }))}
-            />
-          </Form.Item>
-        )}
-        <Form.Item name="tags" label={t('plan.tags', '标签')}>
-          <Select mode="tags" placeholder={t('plan.tagsPh', '输入后回车添加标签')} open={false} suffixIcon={null} />
-        </Form.Item>
-        <Button type="primary" htmlType="submit" loading={saving} block>
-          {editing ? t('lv.save', '保存') : t('a.create', '创建')}
-        </Button>
-      </Form>
+      <PlanForm mode={mode} editing={editing} projectId={projectId} modules={modules} groups={groups} onSaved={onSaved} />
     </Modal>
   )
 }

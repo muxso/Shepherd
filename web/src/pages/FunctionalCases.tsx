@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Button, Descriptions, Empty, Form, Input, Modal, Popconfirm, Select, Space, Table, Tabs, Tag, Tree, Upload } from 'antd'
+import type { FormInstance } from 'antd'
 import { DeleteOutlined, DownloadOutlined, EditOutlined, ImportOutlined } from '@ant-design/icons'
 import { message } from '../feedback'
 import { api, ApiError, userIdStore, type CaseRequirementLink, type CaseStep, type FunctionalCase, type Requirement, type TemplateField } from '../api'
@@ -14,6 +15,9 @@ import { useListView, type ListColumn } from '../components/ListView'
 const PRIORITIES = ['P0', 'P1', 'P2', 'P3']
 const prioColor = (p?: string) => (p === 'P0' ? 'red' : p === 'P1' ? 'orange' : 'blue')
 
+// 工作区常驻「新建用例」tab 的 key(与详情 tab 的用例 id 共用同一 tab 池)。
+const NEW_KEY = '__new_case__'
+
 export default function FunctionalCases() {
   const { t } = useI18n()
   const { projectId } = useApp()
@@ -21,7 +25,6 @@ export default function FunctionalCases() {
   const [cases, setCases] = useState<FunctionalCase[]>([])
   const [loading, setLoading] = useState(false)
   const [moduleKey, setModuleKey] = useState('ALL')
-  const [createOpen, setCreateOpen] = useState(false)
   const [editing, setEditing] = useState<FunctionalCase | null>(null)
   const tabs = useWorkTabs()
 
@@ -167,10 +170,23 @@ export default function FunctionalCases() {
     </>
   )
 
-  const detailTabs = tabs.openIds
-    .map((id) => cases.find((c) => c.id === id))
-    .filter((c): c is FunctionalCase => !!c)
-    .map((c) => ({ key: c.id, label: c.name, children: <CaseDetail c={c} /> }))
+  const detailTabs = tabs.openIds.flatMap((id) => {
+    if (id === NEW_KEY)
+      return [{
+        key: NEW_KEY,
+        label: t('func.newCase', '新建用例'),
+        children: (
+          <NewCaseTab
+            projectId={projectId}
+            defaultModule={moduleKey.startsWith('mod:') ? moduleKey.replace('mod:', '') : ''}
+            onCancel={() => tabs.close(NEW_KEY)}
+            onCreated={(c) => { tabs.close(NEW_KEY); load().then(() => tabs.open(c.id)) }}
+          />
+        ),
+      }]
+    const c = cases.find((x) => x.id === id)
+    return c ? [{ key: c.id, label: c.name, children: <CaseDetail c={c} /> }] : []
+  })
 
   return (
     <>
@@ -183,7 +199,7 @@ export default function FunctionalCases() {
         tabs={detailTabs}
         listContent={
           <WorkList<FunctionalCase>
-            onNew={() => setCreateOpen(true)}
+            onNew={() => tabs.open(NEW_KEY)}
             newLabel={t('func.newCase', '新建用例')}
             extraActions={
               <>
@@ -203,22 +219,9 @@ export default function FunctionalCases() {
           />
         }
       />
-      <CaseModal
-        open={createOpen}
-        projectId={projectId}
-        editing={null}
-        defaultModule={moduleKey.startsWith('mod:') ? moduleKey.replace('mod:', '') : ''}
-        onClose={() => setCreateOpen(false)}
-        onSaved={() => {
-          setCreateOpen(false)
-          load()
-        }}
-      />
-      <CaseModal
-        open={!!editing}
+      <CaseEditModal
         projectId={projectId}
         editing={editing}
-        defaultModule=""
         onClose={() => setEditing(null)}
         onSaved={() => {
           setEditing(null)
@@ -358,26 +361,27 @@ function CaseDetail({ c }: { c: FunctionalCase }) {
   )
 }
 
-function CaseModal({
-  open,
+// 用例表单主体(模板驱动的系统字段顺序/必填/显隐 + StepsEditor + 自定义字段)。
+// 新建 Tab 与编辑弹窗共用;form 实例由外层持有(外层触发 form.submit())。
+function CaseForm({
+  form,
   projectId,
   editing,
-  defaultModule,
-  onClose,
+  defaultModule = '',
+  tplFields,
+  onSavingChange,
   onSaved,
 }: {
-  open: boolean
+  form: FormInstance
   projectId: string
   editing: FunctionalCase | null
-  defaultModule: string
-  onClose: () => void
-  onSaved: () => void
+  defaultModule?: string
+  /** 字段模板:系统字段的顺序/必填/显隐 + 自定义字段渲染(name 永远在)。 */
+  tplFields: TemplateField[]
+  onSavingChange: (v: boolean) => void
+  onSaved: (c: FunctionalCase) => void
 }) {
   const { t } = useI18n()
-  const [form] = Form.useForm()
-  const [saving, setSaving] = useState(false)
-  // 字段模板:系统字段的顺序/必填/显隐 + 自定义字段渲染(name 永远在)。
-  const { fields: tplFields } = useFieldTemplate('functional-case')
   const fieldOf = (k: string) => tplFields.find((f) => f.key === k)
   const enabled = (k: string) => fieldOf(k)?.enabled !== false
   const cf = editing?.customFields || {}
@@ -438,21 +442,12 @@ function CaseModal({
     }
   }
   return (
-    <Modal
-      title={editing ? t('func.editTitle', '编辑功能用例') : t('func.createTitle', '新建功能用例')}
-      open={open}
-      onCancel={onClose}
-      onOk={() => form.submit()}
-      confirmLoading={saving}
-      destroyOnHidden
-      width={680}
-    >
-      <Form
-        form={form}
-        layout="vertical"
-        preserve={false}
-        initialValues={initial}
-        onFinish={async (v) => {
+    <Form
+      form={form}
+      layout="vertical"
+      preserve={false}
+      initialValues={initial}
+      onFinish={async (v) => {
           // steps 隐藏时不动已有步骤(编辑),新建则为空。
           const steps = enabled('steps')
             ? (v.steps || []).filter((s: CaseStep) => s.step.trim() || s.expected.trim())
@@ -462,7 +457,7 @@ function CaseModal({
             message.warning(t('func.stepsRequired', '请至少填写一条测试步骤'))
             return
           }
-          setSaving(true)
+          onSavingChange(true)
           try {
             // 编辑时保留用例原有的其它自定义字段;前置条件/备注沿用既有的中文 key 映射。
             const customFields: Record<string, string> = { ...(editing?.customFields || {}) }
@@ -483,8 +478,9 @@ function CaseModal({
             const fields = Object.keys(customFields).length ? customFields : undefined
             const module = enabled('module') ? v.module || undefined : editing?.module || undefined
             const priority = enabled('priority') ? v.priority : editing?.priority
+            let saved: FunctionalCase
             if (editing) {
-              await api.updateFunctionalCase(editing.id, {
+              saved = await api.updateFunctionalCase(editing.id, {
                 projectId,
                 name: v.name,
                 priority,
@@ -495,7 +491,7 @@ function CaseModal({
               })
               message.success(t('func.updated', '用例已更新'))
             } else {
-              await api.createFunctionalCase({
+              saved = await api.createFunctionalCase({
                 projectId,
                 name: v.name,
                 priority,
@@ -505,19 +501,94 @@ function CaseModal({
               })
               message.success(t('func.created', '用例已创建'))
             }
-            onSaved()
+            onSaved(saved)
           } catch (e) {
             message.error(e instanceof ApiError ? e.message : t('func.saveFailed', '保存失败'))
           } finally {
-            setSaving(false)
+            onSavingChange(false)
           }
         }}
       >
-        {/* 按字段模板的数组序渲染:系统字段走各自渲染器,自定义字段按类型渲染;隐藏字段跳过。 */}
-        {tplFields.filter((f) => f.enabled).map((f) =>
-          f.system ? sysItem(f) : <CustomFieldItem key={f.key} kind="functional-case" field={f} />
-        )}
-      </Form>
+      {/* 按字段模板的数组序渲染:系统字段走各自渲染器,自定义字段按类型渲染;隐藏字段跳过。 */}
+      {tplFields.filter((f) => f.enabled).map((f) =>
+        f.system ? sysItem(f) : <CustomFieldItem key={f.key} kind="functional-case" field={f} />
+      )}
+    </Form>
+  )
+}
+
+// 编辑功能用例弹窗(创建已改为工作区「新建用例」Tab,见 NewCaseTab)。
+function CaseEditModal({
+  projectId,
+  editing,
+  onClose,
+  onSaved,
+}: {
+  projectId: string
+  editing: FunctionalCase | null
+  onClose: () => void
+  onSaved: () => void
+}) {
+  const { t } = useI18n()
+  const [form] = Form.useForm()
+  const [saving, setSaving] = useState(false)
+  // 模板常驻加载(弹窗打开时字段配置已就绪,编辑回填不缺自定义字段)。
+  const { fields: tplFields } = useFieldTemplate('functional-case')
+  return (
+    <Modal
+      title={t('func.editTitle', '编辑功能用例')}
+      open={!!editing}
+      onCancel={onClose}
+      onOk={() => form.submit()}
+      confirmLoading={saving}
+      destroyOnHidden
+      width={680}
+    >
+      <CaseForm
+        form={form}
+        projectId={projectId}
+        editing={editing}
+        tplFields={tplFields}
+        onSavingChange={setSaving}
+        onSaved={onSaved}
+      />
     </Modal>
+  )
+}
+
+// 工作区「新建用例」Tab:CaseForm 平铺 + 底部 创建/取消。
+function NewCaseTab({
+  projectId,
+  defaultModule,
+  onCreated,
+  onCancel,
+}: {
+  projectId: string
+  defaultModule: string
+  onCreated: (c: FunctionalCase) => void
+  onCancel: () => void
+}) {
+  const { t } = useI18n()
+  const [form] = Form.useForm()
+  const [saving, setSaving] = useState(false)
+  const { fields: tplFields } = useFieldTemplate('functional-case')
+  return (
+    <div style={{ padding: '16px 24px', height: '100%', overflow: 'auto' }}>
+      <div style={{ maxWidth: 680 }}>
+        <CaseForm
+          form={form}
+          projectId={projectId}
+          editing={null}
+          defaultModule={defaultModule}
+          tplFields={tplFields}
+          onSavingChange={setSaving}
+          onSaved={onCreated}
+        />
+        <Space style={{ marginTop: 8 }}>
+          <Button type="primary" loading={saving} onClick={() => form.submit()}>{t('a.create', '创建')}</Button>
+          <Button onClick={onCancel}>{t('a.cancel', '取消')}</Button>
+        </Space>
+      </div>
+    </div>
   )
 }
