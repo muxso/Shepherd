@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Button, Card, Col, Empty, Row, Spin, Statistic, Tooltip, Segmented } from 'antd'
+import { Button, Card, Col, Empty, Progress, Row, Select, Spin, Statistic, Table, Tag, Tooltip, Segmented } from 'antd'
 import {
   ApiOutlined,
   PartitionOutlined,
@@ -16,11 +16,13 @@ import {
   ExperimentOutlined,
   ArrowRightOutlined,
   SyncOutlined,
+  HistoryOutlined,
 } from '@ant-design/icons'
 import { useNavigate } from 'react-router-dom'
-import { api, type ApiCase, type ApiDefinition, type CaseExecSummary, type ExecTrendPoint } from '../api'
+import { api, type ApiCase, type ApiDefinition, type Bug, type CaseExecSummary, type ExecTrendPoint, type PlanStats } from '../api'
 import { useApp } from '../context'
 import { regList } from '../registry'
+import { isGroup } from '../components/plan/planLocal'
 import { useI18n } from '../i18n'
 import Donut from '../components/Donut'
 import type { CollabStats } from '../api'
@@ -63,7 +65,9 @@ const PROJECT_SERIES = [
 ]
 
 // 卡片清单(「卡片设置」编辑器可拖拽增删排序):布局数组序 = 展示序,不在数组 = 隐藏。
-const ALL_CARDS = ['collab', 'projectBars', 'assets', 'apiStats', 'caseStats', 'execTrend', 'quality', 'shortcuts'] as const
+const ALL_CARDS = ['collab', 'projectBars', 'assets', 'apiStats', 'caseStats', 'execTrend', 'quality', 'shortcuts', 'planOverview', 'apiChanges'] as const
+// 新增卡默认不进布局(v7 语义:不在数组 = 隐藏),用户从「卡片设置」库手动拖入。
+const DEFAULT_HIDDEN: readonly string[] = ['planOverview', 'apiChanges']
 const TREND_DAYS = 7
 type CardKey = (typeof ALL_CARDS)[number]
 interface CardLayout {
@@ -96,14 +100,14 @@ function loadLayout(): CardLayout[] {
       const parsed = JSON.parse(legacy) as { key?: unknown; shown?: unknown }[]
       if (Array.isArray(parsed)) {
         const kept = parsed.filter((p) => p?.shown === true && isKey(p.key)).map((p) => p.key as CardKey)
-        const missing = ALL_CARDS.filter((k) => !parsed.some((p) => p?.key === k))
+        const missing = ALL_CARDS.filter((k) => !DEFAULT_HIDDEN.includes(k) && !parsed.some((p) => p?.key === k))
         return [...kept, ...missing].map((k) => withSize(k))
       }
     }
   } catch {
     /* ignore */
   }
-  return ALL_CARDS.map((k) => withSize(k))
+  return ALL_CARDS.filter((k) => !DEFAULT_HIDDEN.includes(k)).map((k) => withSize(k))
 }
 
 // 首页工作台:当前项目测试资产概览(可自定义卡片显隐与排序)。
@@ -122,6 +126,17 @@ export default function Home() {
   const [loading, setLoading] = useState(false)
   const [layout, setLayout] = useState<CardLayout[]>(loadLayout)
   const [editing, setEditing] = useState(false)
+  // —— 测试计划概览卡:选中计划 + 其统计/关联用例数 + 项目缺陷(仅卡片在布局时拉取)——
+  const [planId, setPlanId] = useState('')
+  const [planStat, setPlanStat] = useState<PlanStats | null>(null)
+  const [planCaseCount, setPlanCaseCount] = useState(0)
+  const [bugs, setBugs] = useState<Bug[]>([])
+  // —— 接口变更卡:最近接口的引用计数(用例/场景)——
+  const [refCounts, setRefCounts] = useState<Record<string, { cases: number; scenarios: number }>>({})
+
+  const hasPlanCard = layout.some((p) => p.key === 'planOverview')
+  const hasApiChangesCard = layout.some((p) => p.key === 'apiChanges')
+  const planSelKey = `shepherd.home.planOverview.${projectId}`
 
   const saveLayout = (next: CardLayout[]) => {
     setLayout(next)
@@ -208,6 +223,50 @@ export default function Home() {
     return () => { alive = false }
   }, [projects])
 
+  // —— 测试计划概览:计划列表(排除计划组)、选中项持久化、统计与关联用例、项目缺陷 ——
+  const planList = useMemo(() => (projectId ? regList('plan', projectId).filter((p) => !isGroup(p)) : []), [projectId])
+  useEffect(() => {
+    if (!projectId || !planList.length) { setPlanId(''); return }
+    const saved = localStorage.getItem(planSelKey)
+    setPlanId(saved && planList.some((p) => p.id === saved) ? saved : planList[0].id)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectId, planList])
+  useEffect(() => {
+    if (!hasPlanCard || !planId) { setPlanStat(null); setPlanCaseCount(0); return }
+    let alive = true
+    api.planStats(planId).then((s) => { if (alive) setPlanStat(s) }).catch(() => { if (alive) setPlanStat(null) })
+    api.planCases(planId)
+      .then((r) => { if (alive) setPlanCaseCount(Array.isArray(r) ? r.length : r.total ?? r.items.length) })
+      .catch(() => { if (alive) setPlanCaseCount(0) })
+    return () => { alive = false }
+  }, [planId, hasPlanCard])
+  useEffect(() => {
+    if (!projectId || !hasPlanCard) { setBugs([]); return }
+    let alive = true
+    api.bugs(projectId).then((b) => { if (alive) setBugs(Array.isArray(b) ? b : []) }).catch(() => { if (alive) setBugs([]) })
+    return () => { alive = false }
+  }, [projectId, hasPlanCard])
+
+  // —— 接口变更:按更新时间(缺失则创建时间)倒序取最近 10 条,再拉各自引用计数 ——
+  const recentDefs = useMemo(
+    () => [...defs].sort((a, b) => (b.updatedAt ?? b.createdAt ?? '').localeCompare(a.updatedAt ?? a.createdAt ?? '')).slice(0, 10),
+    [defs],
+  )
+  useEffect(() => {
+    if (!hasApiChangesCard || !recentDefs.length) { setRefCounts({}); return }
+    let alive = true
+    Promise.all(
+      recentDefs.map((d) =>
+        api.definitionReferences(d.id)
+          .then((r) => [d.id, { cases: r.cases?.length ?? 0, scenarios: r.scenarios?.length ?? 0 }] as const)
+          .catch(() => null),
+      ),
+    ).then((es) => {
+      if (alive) setRefCounts(Object.fromEntries(es.filter(Boolean) as [string, { cases: number; scenarios: number }][]))
+    })
+    return () => { alive = false }
+  }, [recentDefs, hasApiChangesCard])
+
   const cardTitle: Record<CardKey, string> = {
     collab: t('home.collab', '人机协同人效'),
     projectBars: t('home.projectCompare', '项目资产对比'),
@@ -217,6 +276,8 @@ export default function Home() {
     execTrend: t('home.execTrend', '执行趋势'),
     quality: t('home.quality', '质量概览'),
     shortcuts: t('home.shortcuts', '快捷入口'),
+    planOverview: t('home.planOverview', '测试计划概览'),
+    apiChanges: t('home.apiChanges', '接口变更'),
   }
 
   const cards = useMemo(
@@ -592,6 +653,137 @@ export default function Home() {
             </div>
           </Card>
         )
+      case 'planOverview': {
+        // 口径:执行数/状态来自 planStats(exec = executeRate×total,同测试计划页);
+        // 「接口 CASE」= 计划关联用例数(planCases,PlanCase 无类型字段拆不动);
+        // 功能用例/接口场景/缺陷数为项目维度计数(与顶部资产统计同源)。
+        const selPlan = planList.find((p) => p.id === planId)
+        const total = planStat?.total ?? 0
+        const exec = planStat ? Math.round(planStat.executeRate * planStat.total) : 0
+        const execRate = total ? (exec * 100) / total : 0
+        const status: 'NOT_STARTED' | 'RUNNING' | 'DONE' = !planStat || total === 0 || exec <= 0 ? 'NOT_STARTED' : exec >= total ? 'DONE' : 'RUNNING'
+        const statusMeta: Record<string, { label: string; color: string }> = {
+          NOT_STARTED: { label: t('home.planStatusNotStarted', '未开始'), color: 'default' },
+          RUNNING: { label: t('home.planStatusRunning', '进行中'), color: 'processing' },
+          DONE: { label: t('home.planStatusDone', '已完成'), color: 'success' },
+        }
+        const closedBugs = bugs.filter((b) => (b.status || '').toUpperCase() === 'CLOSED').length
+        const statBlock = (icon: React.ReactNode, color: string, label: string, value: number) => (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 130 }}>
+            <span style={{ width: 34, height: 34, borderRadius: 8, background: 'var(--brand-soft)', color, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 16, flex: '0 0 auto' }}>{icon}</span>
+            <div>
+              <div style={{ fontSize: 12, color: 'var(--text-3)' }}>{label}</div>
+              <div style={{ fontSize: 20, fontWeight: 700, lineHeight: 1.2 }}>{value}</div>
+            </div>
+          </div>
+        )
+        // 小环形:执行率 n%(纯 SVG)。
+        const R = 34
+        const CIRC = 2 * Math.PI * R
+        const ring = (
+          <svg width={88} height={88} viewBox="0 0 88 88" style={{ flex: '0 0 auto' }}>
+            <circle cx={44} cy={44} r={R} fill="none" stroke="var(--border-soft)" strokeWidth={10} />
+            <circle cx={44} cy={44} r={R} fill="none" stroke="var(--brand)" strokeWidth={10} strokeLinecap="round" strokeDasharray={`${(CIRC * execRate) / 100} ${CIRC}`} transform="rotate(-90 44 44)" />
+            <text x={44} y={42} textAnchor="middle" fontSize={14} fontWeight={700} fill="var(--text)">{execRate.toFixed(0)}%</text>
+            <text x={44} y={58} textAnchor="middle" fontSize={10} fill="var(--text-3)">{t('home.execRate', '执行率')}</text>
+          </svg>
+        )
+        return (
+          <Card
+            title={<span><ScheduleOutlined style={{ color: C.orange, marginRight: 6 }} />{cardTitle.planOverview}</span>}
+            extra={planList.length > 0 ? (
+              <Select
+                size="small"
+                style={{ width: 200 }}
+                value={planId || undefined}
+                options={planList.map((p) => ({ value: p.id, label: p.label }))}
+                onChange={(v) => { setPlanId(v); localStorage.setItem(planSelKey, v) }}
+              />
+            ) : undefined}
+            size="small"
+            style={{ marginBottom: 16 }}
+          >
+            {!selPlan ? (
+              <Empty description={t('home.noPlan', '暂无测试计划,请先在测试计划页创建')} />
+            ) : (
+              <>
+                <Row gutter={[24, 16]} align="middle">
+                  <Col xs={24} lg={12}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+                      <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={selPlan.label}>{selPlan.label}</span>
+                      <Tag color={statusMeta[status].color} style={{ flex: '0 0 auto' }}>{statusMeta[status].label}</Tag>
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                          <Progress percent={Number(execRate.toFixed(1))} size="small" style={{ flex: 1, margin: 0 }} />
+                          <span style={{ flex: '0 0 auto', fontSize: 12, color: 'var(--text-3)' }}>{t('home.passThreshold', '通过阈值 100%')}</span>
+                        </div>
+                        <div style={{ fontSize: 12, color: 'var(--text-3)', marginTop: 6 }}>
+                          {t('home.planExecuted', '已执行')} {exec} / {total}
+                        </div>
+                      </div>
+                      {ring}
+                    </div>
+                  </Col>
+                  <Col xs={24} lg={12}>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(130px, 1fr))', gap: '14px 16px' }}>
+                      {statBlock(<ProfileOutlined />, C.green, t('home.funcCase', '功能用例'), c?.funcCase ?? 0)}
+                      {statBlock(<ApiOutlined />, C.cyan, t('home.apiCaseShort', '接口 CASE'), planCaseCount)}
+                      {statBlock(<PartitionOutlined />, C.skyblue, t('home.apiScenario', '接口场景'), c?.scenario ?? 0)}
+                      {statBlock(<BugOutlined />, C.red, t('home.bugCount', '缺陷数'), bugs.length)}
+                    </div>
+                  </Col>
+                </Row>
+                {/* 处理人维度(计划用例暂无处理人概念,单桶「未分配」):分配/完成/提交缺陷/关闭缺陷 */}
+                <div style={{ marginTop: 16 }}>
+                  <GroupedBars
+                    height={200}
+                    series={[
+                      { key: 'assigned', label: t('home.assignedCases', '分配用例'), color: C.blue },
+                      { key: 'done', label: t('home.doneCases', '完成用例'), color: C.green },
+                      { key: 'submitted', label: t('home.submittedBugs', '提交缺陷'), color: C.orange },
+                      { key: 'closed', label: t('home.closedBugs', '关闭缺陷'), color: C.red },
+                    ]}
+                    rows={[{ name: t('home.unassigned', '未分配'), values: { assigned: planCaseCount, done: exec, submitted: bugs.length, closed: closedBugs } }]}
+                  />
+                </div>
+              </>
+            )}
+          </Card>
+        )
+      }
+      case 'apiChanges': {
+        const fmtTime = (d: ApiDefinition) => (d.updatedAt ?? d.createdAt ?? '').slice(0, 16) || '—'
+        return (
+          <Card
+            title={<span><HistoryOutlined style={{ color: C.skyblue, marginRight: 6 }} />{cardTitle.apiChanges}</span>}
+            extra={<span style={{ fontSize: 12, color: 'var(--text-3)' }}>{t('home.recent10', '最近 10 条')}</span>}
+            size="small"
+            style={{ marginBottom: 16 }}
+          >
+            {recentDefs.length === 0 ? (
+              <Empty description={t('common.empty', '暂无数据')} />
+            ) : (
+              <Table<ApiDefinition>
+                size="small"
+                rowKey="id"
+                pagination={false}
+                dataSource={recentDefs}
+                onRow={(d) => ({ onClick: () => navigate(`/api/definition?open=${d.id}`), style: { cursor: 'pointer' } })}
+                columns={[
+                  { title: t('home.colId', 'ID'), width: 90, render: (_, d) => (d.num != null ? String(d.num) : '—') },
+                  { title: t('home.colApiName', '接口名称'), dataIndex: 'name', ellipsis: true },
+                  { title: t('home.colPath', '路径'), dataIndex: 'path', ellipsis: true },
+                  { title: t('home.colLinkedCases', '关联CASE'), width: 100, render: (_, d) => refCounts[d.id]?.cases ?? '—' },
+                  { title: t('home.colLinkedScenarios', '关联场景'), width: 100, render: (_, d) => refCounts[d.id]?.scenarios ?? '—' },
+                  { title: t('home.colUpdatedAt', '更新时间'), width: 160, render: (_, d) => fmtTime(d) },
+                ]}
+              />
+            )}
+          </Card>
+        )
+      }
     }
   }
 

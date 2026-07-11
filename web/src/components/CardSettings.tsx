@@ -19,6 +19,8 @@ export const CARD_DEFAULT_SIZE: Record<string, CardSize> = {
   caseStats: 'half',
   quality: 'half',
   shortcuts: 'half',
+  planOverview: 'full',
+  apiChanges: 'full',
 }
 
 type ThumbKind = 'donut' | 'bars' | 'trend' | 'grid' | 'stat' | 'list'
@@ -149,12 +151,16 @@ export default function CardSettings({ layout, onSave, onExit }: Props) {
           { key: 'apiStats', title: t('home.apiStats', '接口数'), desc: t('home.cs.desc.apiStats', '接口协议分布与用例覆盖率'), thumb: 'donut' },
           { key: 'caseStats', title: t('home.caseStats', '接口用例数'), desc: t('home.cs.desc.caseStats', '接口用例的执行率与通过率'), thumb: 'stat' },
           { key: 'execTrend', title: t('home.execTrend', '执行趋势'), desc: t('home.cs.desc.execTrend', '近 7 天用例执行与通过情况'), thumb: 'trend' },
+          { key: 'apiChanges', title: t('home.apiChanges', '接口变更'), desc: t('home.cs.desc.apiChanges', '最近更新的接口及其关联用例与场景'), thumb: 'list' },
         ] as CardMeta[],
       },
       {
         key: 'quality',
         title: t('home.cs.group.quality', '质量'),
-        cards: [{ key: 'quality', title: t('home.quality', '质量概览'), desc: t('home.cs.desc.quality', '需求、缺陷与测试计划概况'), thumb: 'stat' }] as CardMeta[],
+        cards: [
+          { key: 'quality', title: t('home.quality', '质量概览'), desc: t('home.cs.desc.quality', '需求、缺陷与测试计划概况'), thumb: 'stat' },
+          { key: 'planOverview', title: t('home.planOverview', '测试计划概览'), desc: t('home.cs.desc.planOverview', '单个测试计划的执行进度与关联资产'), thumb: 'bars' },
+        ] as CardMeta[],
       },
       {
         key: 'collab',
