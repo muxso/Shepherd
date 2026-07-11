@@ -102,6 +102,10 @@ impl RequirementService {
         Ok(req)
     }
 
+    // TODO(评审 AI 化): 在人工通过/驳回之外引入 AI 评审意见 —— 检索该需求关联的
+    // 测试用例(功能用例覆盖链)与产品 PRD 语料(RAG),让模型给出「通过/驳回 + 依据」
+    // 作为评审决策输入。落点:第五个 LLM 触点(见 server/llm.rs 前四个:拆分/执行/
+    // 验证/用例起草),评审门仍由人最终拍板,AI 结论作为附签意见展示在评审页。
     pub async fn reject_review(
         &self,
         id: &str,
