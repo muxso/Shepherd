@@ -61,6 +61,8 @@ type ReqRow = Omit<RegItem, 'label'> & {
   label: React.ReactNode
   /** 纯文本标题(搜索/筛选用;label 已是带徽标的节点)。 */
   titleText: string
+  /** 原始需求(行内展开预览用)。 */
+  raw?: Requirement
   reqType?: string
   priority?: string
   tags?: string[]
@@ -123,7 +125,7 @@ export default function Requirements() {
         const label = (
           <span>{r.title}{crits.length ? <Tag color={pct === 100 ? 'green' : pct > 0 ? 'gold' : 'default'} style={{ marginLeft: 6 }}>{pct}%</Tag> : null}</span>
         )
-        return { ...base, status: r.status, reqType: r.reqType, priority: r.priority, tags: r.tags, overdue: r.overdue, label, titleText: r.title }
+        return { ...base, status: r.status, reqType: r.reqType, priority: r.priority, tags: r.tags, overdue: r.overdue, label, titleText: r.title, raw: r }
       }))
     } catch {
       setItems(local.map((r) => ({ ...r, titleText: String(r.label) }))) // 后端不可用时回落本地
@@ -169,6 +171,49 @@ export default function Requirements() {
     rows: items,
   })
 
+  // 行内展开预览:不离开列表就能看关键信息;深入编辑再进 Tab。
+  const wsTag = (ws?: string) => (
+    <Tag color={ws === 'DONE' ? 'success' : ws === 'IN_PROGRESS' ? 'processing' : 'default'} style={{ marginRight: 0 }}>
+      {t(`req.ws.${ws || 'NOT_STARTED'}`, ws === 'DONE' ? '已完成' : ws === 'IN_PROGRESS' ? '进行中' : '未开始')}
+    </Tag>
+  )
+  const rowPreview = (row: ReqRow) => {
+    const r = row.raw
+    if (!r) return null
+    const crits = critsOf(r)
+    return (
+      <div style={{ padding: '4px 8px', display: 'flex', gap: 32, flexWrap: 'wrap' }}>
+        <div style={{ flex: '2 1 320px', minWidth: 280 }}>
+          <div style={{ fontSize: 12, color: 'var(--text-3)', marginBottom: 4 }}>{t('req.description', '需求描述')}</div>
+          <div style={{ fontSize: 13, color: 'var(--text-2)', whiteSpace: 'pre-wrap' }}>
+            {r.versions?.find((v) => v.version === r.baselineVersion)?.description || r.versions?.[r.versions.length - 1]?.description || '—'}
+          </div>
+          <div style={{ fontSize: 12, color: 'var(--text-3)', margin: '10px 0 4px' }}>{t('req.criteriaPlain', '验收标准')}</div>
+          {crits.length ? (
+            <ol style={{ margin: 0, paddingLeft: 18, fontSize: 13, color: 'var(--text-2)' }}>
+              {crits.map((c, i) => <li key={i}>{c}</li>)}
+            </ol>
+          ) : '—'}
+        </div>
+        <div style={{ flex: '1 1 220px', minWidth: 200 }}>
+          <div style={{ fontSize: 12, color: 'var(--text-3)', marginBottom: 4 }}>{t('req.progress', '研发进度')}</div>
+          <div style={{ display: 'flex', gap: 12, alignItems: 'center', fontSize: 13, marginBottom: 8 }}>
+            <span>{t('req.devStatus', '开发')} {wsTag(r.devStatus)}</span>
+            <span>{t('req.testStatus', '测试')} {wsTag(r.testStatus)}</span>
+          </div>
+          <div style={{ fontSize: 12, color: 'var(--text-3)', lineHeight: 1.9 }}>
+            {r.dueDate && <div>{t('req.dueDate', '截止日期')}:{r.dueDate}{r.overdue && <Tag color="red" style={{ marginLeft: 6 }}>{t('req.overdue', '延期')}</Tag>}</div>}
+            {r.createdAt ? <div>{t('req.createdAt', '创建时间')}:{new Date(r.createdAt).toLocaleString()}</div> : null}
+            {r.updatedAt ? <div>{t('req.updatedAt', '更新时间')}:{new Date(r.updatedAt).toLocaleString()}</div> : null}
+          </div>
+          <Button size="small" type="primary" ghost style={{ marginTop: 8 }} onClick={() => tabs.open(row.id)}>
+            {t('req.openDetail', '打开完整详情')}
+          </Button>
+        </div>
+      </div>
+    )
+  }
+
   if (!projectId) return <SelectProjectEmpty />
 
   const detailTabs = items
@@ -196,6 +241,7 @@ export default function Requirements() {
             onRowClick={(r) => tabs.open(r.id)}
             emptyText={t('req.empty', '暂无需求')}
             columns={lv.columns}
+            expandable={{ expandedRowRender: rowPreview, rowExpandable: (r) => !!r.raw }}
           />
         }
       />

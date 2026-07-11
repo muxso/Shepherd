@@ -1,7 +1,7 @@
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { Button, Empty, Input, Space, Table, Tabs } from 'antd'
-import type { ColumnsType } from 'antd/es/table'
+import type { ColumnsType, TableProps } from 'antd/es/table'
 import { PlusOutlined, ReloadOutlined } from '@ant-design/icons'
 import { useI18n } from '../i18n'
 
@@ -181,6 +181,7 @@ export function WorkList<T extends object>({
   rowKey = 'id',
   onRowClick,
   emptyText,
+  expandable,
 }: {
   onNew?: () => void
   newLabel?: string
@@ -194,6 +195,8 @@ export function WorkList<T extends object>({
   rowKey?: string
   onRowClick?: (record: T) => void
   emptyText?: string
+  /** 行内展开预览(antd expandable 透传);展开图标的点击不触发行点击。 */
+  expandable?: TableProps<T>['expandable']
 }) {
   const { t } = useI18n()
   return (
@@ -217,7 +220,15 @@ export function WorkList<T extends object>({
           loading={loading}
           dataSource={data}
           columns={columns}
-          onRow={onRowClick ? (r) => ({ onClick: () => onRowClick(r), style: { cursor: 'pointer' } }) : undefined}
+          expandable={expandable}
+          onRow={onRowClick ? (r) => ({
+            onClick: (e) => {
+              // 展开图标的点击只做展开,不进详情。
+              if ((e.target as Element).closest?.('.ant-table-row-expand-icon')) return
+              onRowClick(r)
+            },
+            style: { cursor: 'pointer' },
+          }) : undefined}
           pagination={{ pageSize: 15, size: 'small', showTotal: (n) => t('ws.total', '共 {n} 条').replace('{n}', String(n)) }}
           locale={{ emptyText: <Empty description={emptyText ?? t('common.empty', '暂无数据')} /> }}
         />
