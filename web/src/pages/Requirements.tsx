@@ -527,18 +527,20 @@ function DecompositionView({ decompId, verificationId, projectId, reqId }: { dec
     }
     return [...m.values()]
   })()
-  // 派发按钮 = 执行者选择菜单:每种执行者一组,组内「任意在线执行者」或定向到具体注册 runtime。
-  // 定向按 runtime name(跨重连稳定);离线的列出但禁用,避免误派给回不来的机器。
+  // 派发按钮 = 执行者选择菜单:每种执行者一组,组内优先列具体注册 runtime(在线优先、
+  // 离线禁用),「任意在线执行者(排队)」放最后作兜底;一台都没注册时给明确提示,
+  // 避免只剩「任意」让人误以为选不了具体机器。定向按 runtime name(跨重连稳定)。
   const executorMenu = (task: Task) => ({
-    items: Object.entries(EXECUTOR_LABEL).map(([key, label]) => ({
-      type: 'group' as const,
-      key,
-      label,
-      children: [
-        { key, label: t('req.anyRuntime', '任意在线执行者') },
-        ...fleetByName
-          .filter((r) => r.caps.includes(key))
-          .map((r) => ({
+    items: Object.entries(EXECUTOR_LABEL).map(([key, label]) => {
+      const runtimes = fleetByName
+        .filter((r) => r.caps.includes(key))
+        .sort((a, b) => Number(b.online) - Number(a.online) || a.name.localeCompare(b.name))
+      return {
+        type: 'group' as const,
+        key,
+        label,
+        children: [
+          ...runtimes.map((r) => ({
             key: `${key}@@${r.name}`,
             disabled: !r.online,
             label: (
@@ -548,8 +550,20 @@ function DecompositionView({ decompId, verificationId, projectId, reqId }: { dec
               </span>
             ),
           })),
-      ],
-    })),
+          ...(runtimes.length === 0
+            ? [{
+                key: `${key}##none`,
+                disabled: true,
+                label: <span style={{ color: 'var(--text-3)', fontSize: 12 }}>{t('req.noRuntime', '无已注册执行者')}</span>,
+              }]
+            : []),
+          {
+            key,
+            label: <span style={{ color: 'var(--text-2)' }}>{t('req.anyRuntime', '任意在线执行者(排队)')}</span>,
+          },
+        ],
+      }
+    }),
     onClick: ({ key }: { key: string }) => {
       const [executor, target] = key.split('@@')
       dispatch(task, executor, target)
