@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from 'react'
-import { Layout, Menu, Select, Button, Space, Tooltip, Drawer, Avatar, Descriptions, Segmented, Empty, Dropdown, Breadcrumb } from 'antd'
+import { Layout, Menu, Select, Button, Space, Tooltip, Drawer, Avatar, Descriptions, Segmented, Empty, Dropdown } from 'antd'
 import {
   ApiOutlined,
   PartitionOutlined,
@@ -334,38 +334,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
               </Tooltip>
             </Dropdown>
           </div>
-          {/* 面包屑:沿用左栏/顶栏推断出的层级,显式呈现「模块 ›  当前页」。
-              单子项模块(模块名 == 子项名,如「需求」)去重,避免出现「需求 / 需求」。
-              模块项可点回模块主页;当前页为末项(纯文本,不可点)。 */}
-          {(() => {
-            const moduleLabel = t(...activeModule.label)
-            const childLabel = t(...currentChild.label)
-            const items = [
-              {
-                title: (
-                  <span style={{ cursor: 'pointer' }} onClick={() => nav(activeModule.key)}>
-                    {moduleLabel}
-                  </span>
-                ),
-              },
-              ...(moduleLabel !== childLabel ? [{ title: childLabel }] : []),
-            ]
-            return (
-              <div
-                style={{
-                  height: 36,
-                  display: 'flex',
-                  alignItems: 'center',
-                  paddingInline: 16,
-                  background: 'var(--bg)',
-                  borderBottom: '1px solid var(--border-soft)',
-                  flexShrink: 0,
-                }}
-              >
-                <Breadcrumb items={items} />
-              </div>
-            )
-          })()}
+          {/* 不放面包屑:层级已由左栏模块高亮 + 顶栏选中标签完整表达,再来一行是纯重复。 */}
           <Content style={{ overflow: 'hidden' }}>{children}</Content>
         </Layout>
       </Layout>
