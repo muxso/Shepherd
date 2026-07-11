@@ -199,6 +199,38 @@ body::before {
   background: var(--brand);
 }
 
+/* 左侧模块树(接口/场景/用例/计划/文件等):行高统一 28px,与项目页左导航一致;
+   图标/标题/行内工具按钮全部垂直居中,标题不换行。 */
+.ant-tree .ant-tree-treenode {
+  align-items: center;
+  padding-bottom: 2px;
+}
+.ant-tree .ant-tree-node-content-wrapper {
+  display: flex;
+  align-items: center;
+  min-height: 28px;
+  line-height: 28px;
+  min-width: 0;
+}
+.ant-tree .ant-tree-node-content-wrapper .ant-tree-title {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+}
+.ant-tree .ant-tree-switcher,
+.ant-tree .ant-tree-iconEle {
+  line-height: 28px;
+  align-self: center;
+}
+/* 选中/悬浮态与项目页左导航一致:品牌淡底 + 品牌色字 / 次级灰底 */
+.ant-tree .ant-tree-node-content-wrapper:hover {
+  background: var(--panel-2);
+}
+.ant-tree .ant-tree-node-content-wrapper.ant-tree-node-selected {
+  background: var(--brand-soft);
+  color: var(--brand);
+}
+
 /* 表格观感:表头浅灰、行距更紧 */
 .ant-table-thead > tr > th {
   background: var(--panel-2) !important;
