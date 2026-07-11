@@ -7,6 +7,7 @@ import { useApp } from '../context'
 import { useI18n } from '../i18n'
 import { PageBody, PageContainer, PageHeader, SelectProjectEmpty } from '../components/Page'
 import { useListView, type ListColumn } from '../components/ListView'
+import { CF_GROUP, CustomFieldItems, collectCustomValues, useFieldTemplate } from '../components/TemplateFields'
 
 const STATUSES = ['NEW', 'RESOLVED', 'CLOSED', 'REOPENED', 'REJECTED']
 
@@ -90,6 +91,8 @@ function BugsList({ items, loading, projectId, refresh, createOpen, setCreateOpe
   changeStatus: (b: Bug) => void
   t: (k: string, d?: string) => string
 }) {
+  // 缺陷字段模板:title 之外的字段全靠自定义,创建弹窗按模板渲染。
+  const { fields: tplFields } = useFieldTemplate('bug')
   const allColumns: ListColumn<Bug>[] = [
     { key: 'title', label: t('bug.title', '标题'), title: t('bug.title', '标题'), dataIndex: 'title' },
     {
@@ -165,9 +168,15 @@ function BugsList({ items, loading, projectId, refresh, createOpen, setCreateOpe
         {/* 新建缺陷一律从「新建」状态开始;导入历史缺陷带其它状态走 API 的 initialStatus。 */}
         <Form
           layout="vertical"
-          onFinish={async (v: { title: string }) => {
+          onFinish={async (v: { title: string; [CF_GROUP]?: Record<string, unknown> }) => {
+            const customFields = collectCustomValues(tplFields, v[CF_GROUP])
             try {
-              const b = await api.createBug({ projectId, title: v.title, initialStatus: 'NEW' })
+              const b = await api.createBug({
+                projectId,
+                title: v.title,
+                initialStatus: 'NEW',
+                customFields: Object.keys(customFields).length ? customFields : undefined,
+              })
               message.success(t('bug.created', '缺陷已创建'))
               setItems((prev) => [b, ...prev.filter((x) => x.id !== b.id)])
               setCreateOpen(false)
@@ -179,6 +188,8 @@ function BugsList({ items, loading, projectId, refresh, createOpen, setCreateOpe
           <Form.Item name="title" label={t('bug.title', '标题')} rules={[{ required: true }]}>
             <Input placeholder={t('bug.titlePlaceholder', '如:登录按钮无响应')} autoFocus />
           </Form.Item>
+          {/* 自定义字段(字段模板):按模板配置动态渲染。 */}
+          <CustomFieldItems kind="bug" fields={tplFields} />
           <Button type="primary" htmlType="submit" block>
             {t('a.create', '创建')}
           </Button>

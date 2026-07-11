@@ -694,8 +694,24 @@ export interface RequirementVersion {
   acceptanceCriteria?: string[]
 }
 
-/** 需求研发/测试进度状态。 */
-export type RequirementWorkStatus = 'NOT_STARTED' | 'IN_PROGRESS' | 'DONE'
+/** 需求流水线阶段(固定 7 段,顺序:创建→审核→评审→开发→测试→验收→交付)。 */
+export type RequirementStageKey = 'CREATED' | 'AUDIT' | 'REVIEW' | 'DEV' | 'TEST' | 'ACCEPTANCE' | 'DELIVERY'
+/** 阶段状态。 */
+export type RequirementStageStatus = 'PENDING' | 'IN_PROGRESS' | 'DONE' | 'SKIPPED'
+
+/** 需求阶段明细(后端每需求固定返回 7 段,按流水线顺序)。 */
+export interface RequirementStage {
+  stage: RequirementStageKey
+  status: RequirementStageStatus
+  /** 计划起止(YYYY-MM-DD);null = 未排期。 */
+  plannedStart: string | null
+  plannedEnd: string | null
+  /** 实际起止(epoch 毫秒);null = 未发生。 */
+  startedAt: number | null
+  finishedAt: number | null
+  /** 计划已过而阶段未完成 → 延期。 */
+  overdue: boolean
+}
 
 export interface Requirement {
   id: string
@@ -717,19 +733,51 @@ export interface Requirement {
   parentId?: string | null
   /** 截止日期(YYYY-MM-DD);null = 未设置。 */
   dueDate?: string | null
-  /** 已过截止日期且未交付 → 延期。 */
+  /** 任一阶段延期或总截止已过 → 延期。 */
   overdue?: boolean
   /** 创建/更新时间(epoch 毫秒)。 */
   createdAt?: number
   updatedAt?: number
-  /** 开发/测试进度状态。 */
-  devStatus?: RequirementWorkStatus
-  testStatus?: RequirementWorkStatus
-  /** 进度起止时间(epoch 毫秒);null = 未发生。 */
-  devStartedAt?: number | null
-  devFinishedAt?: number | null
-  testStartedAt?: number | null
-  testFinishedAt?: number | null
+  /** 当前所处阶段。 */
+  currentStage?: RequirementStageKey
+  /** 7 段阶段明细(创建→审核→评审→开发→测试→验收→交付)。 */
+  stages?: RequirementStage[]
+  /** 字段模板的自定义字段值(key → 字符串值;多选逗号拼接)。 */
+  customFields?: Record<string, string>
+}
+
+/** 字段模板的字段类型(创建表单控件)。 */
+export type TemplateFieldType = 'text' | 'textarea' | 'select' | 'multiselect' | 'date' | 'number'
+
+/** 字段模板里的一个字段(系统字段固定 key;自定义字段 key 为 c_ 前缀短 id)。 */
+export interface TemplateField {
+  key: string
+  /** 自定义字段的显示名;系统字段留空,渲染时用 i18n。 */
+  label: string
+  type: TemplateFieldType
+  required: boolean
+  /** false = 创建表单里隐藏。 */
+  enabled: boolean
+  system: boolean
+  /** select/multiselect 的候选项。 */
+  options?: string[]
+}
+
+/** 字段模板 config:后端按不透明 JSON 存;数组序 = 表单顺序。 */
+export interface FieldTemplateConfig {
+  fields: TemplateField[]
+}
+
+/** 项目级模板:kind 区分模块(requirement / functional-case / bug),config 形状按 kind 约定。 */
+export interface ProjectTemplate {
+  id: string
+  projectId: string
+  kind: string
+  name: string
+  config: FieldTemplateConfig
+  createdBy: string
+  createdAt: number
+  updatedAt: number
 }
 
 /** 需求字段变更记录(变更时间/人/字段/前后值)。 */
@@ -1163,6 +1211,15 @@ export const api = {
   removeProjectMember: (projectId: string, userId: string) =>
     http.del(`/project/${encodeURIComponent(projectId)}/member/${encodeURIComponent(userId)}`),
 
+  // 项目模板(kind 区分用途,当前仅 requirement;同项目同 kind 下名称唯一,重名 409)
+  projectTemplates: (projectId: string, kind: string) =>
+    http.get<{ items: ProjectTemplate[] }>(`/project/${encodeURIComponent(projectId)}/template?kind=${encodeURIComponent(kind)}`),
+  createProjectTemplate: (projectId: string, b: { kind: string; name: string; config: FieldTemplateConfig }) =>
+    http.post<ProjectTemplate>(`/project/${encodeURIComponent(projectId)}/template`, b),
+  updateProjectTemplate: (id: string, b: { name?: string; config?: FieldTemplateConfig }) =>
+    http.put<ProjectTemplate>(`/template/${encodeURIComponent(id)}`, b),
+  deleteProjectTemplate: (id: string) => http.del(`/template/${encodeURIComponent(id)}`),
+
   // 角色 / 用户(平台级)
   roles: () => http.get<Page<Role>>('/role?pageSize=100'),
   createRole: (b: { name: string; scope?: string; permissions?: string[] }) => http.post<Role>('/role', b),
@@ -1281,7 +1338,7 @@ export const api = {
   perfReport: (id: string) => http.get<PerfReport>(`/perf/report/${id}`),
 
   // 需求(版本 / 基线 / 拆分)— 无 list 端点,列表用前端注册表
-  createRequirement: (b: { projectId: string; title: string; description?: string; acceptanceCriteria: string[]; priority?: string; reqType?: string; tags?: string[]; dueDate?: string; parentId?: string }) =>
+  createRequirement: (b: { projectId: string; title: string; description?: string; acceptanceCriteria: string[]; priority?: string; reqType?: string; tags?: string[]; dueDate?: string; parentId?: string; customFields?: Record<string, string> }) =>
     http.post<Requirement>('/requirement', b),
   /** MRD/原始素材 → 结构化需求草稿(配置 LLM 由 AI 起草,否则启发式)。 */
   draftRequirement: (raw: string) =>
@@ -1294,8 +1351,8 @@ export const api = {
     http.post<{ version: number }>(`/requirement/${id}/version`, b),
   getRequirementVersion: (id: string, n: number) =>
     http.get<RequirementVersion>(`/requirement/${id}/version/${n}`),
-  /** 编辑需求基本信息:标题必填;其余可选,不传不动;dueDate 传空串清除。 */
-  updateRequirement: (id: string, b: { title: string; priority?: string; reqType?: string; tags?: string[]; dueDate?: string }) =>
+  /** 编辑需求基本信息:标题必填;其余可选,不传不动;dueDate 传空串清除;customFields 整体替换。 */
+  updateRequirement: (id: string, b: { title: string; priority?: string; reqType?: string; tags?: string[]; dueDate?: string; customFields?: Record<string, string> }) =>
     http.put<Requirement>(`/requirement/${id}`, b),
   renameRequirement: (id: string, title: string) =>
     http.put<Requirement>(`/requirement/${id}`, { title }),
@@ -1306,12 +1363,9 @@ export const api = {
     http.put<Requirement>(`/requirement/${id}/baseline`, { version }),
   breakdown: (id: string) =>
     http.post<{ id: string; verificationId: string; tasks: Task[] }>(`/requirement/${id}/breakdown`, {}),
-  /** 开发进度流转(未开始/进行中/已完成),返回最新需求。 */
-  setRequirementDevStatus: (id: string, status: RequirementWorkStatus) =>
-    http.post<Requirement>(`/requirement/${id}/dev-status`, { status }),
-  /** 测试进度流转,同上。 */
-  setRequirementTestStatus: (id: string, status: RequirementWorkStatus) =>
-    http.post<Requirement>(`/requirement/${id}/test-status`, { status }),
+  /** 阶段流转/排期:status 流转(IN_PROGRESS/DONE/SKIPPED),plannedStart/plannedEnd 排期(传空串清除),返回最新需求。 */
+  setRequirementStage: (id: string, stage: string, b: { status?: string; plannedStart?: string; plannedEnd?: string }) =>
+    http.put<Requirement>(`/requirement/${id}/stage/${stage}`, b),
   /** 设置/解除父需求(parentId=null 解除)。 */
   setRequirementParent: (id: string, parentId: string | null) =>
     http.put<Requirement>(`/requirement/${id}/parent`, { parentId }),
@@ -1391,7 +1445,7 @@ export const api = {
   // 缺陷 — 列表/创建/状态流转全走后端(按项目隔离,按创建时间倒序)
   bugs: (projectId: string) =>
     projectId ? http.get<Bug[]>(`/bug?projectId=${encodeURIComponent(projectId)}`) : Promise.resolve([] as Bug[]),
-  createBug: (b: { projectId: string; title: string; initialStatus: string }) => http.post<Bug>('/bug', b),
+  createBug: (b: { projectId: string; title: string; initialStatus: string; customFields?: Record<string, string> }) => http.post<Bug>('/bug', b),
   setBugStatus: (id: string, status: string) => http.post<Bug>(`/bug/${id}/status`, { status }),
   // 人机协同人效(需求维度 AI/人工 拆分 + 周趋势)
   collabStats: (projectId: string, requirementId?: string) =>

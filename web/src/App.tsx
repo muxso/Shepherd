@@ -22,6 +22,7 @@ const RolesPage = lazy(() => import('./pages/UserGroups'))
 const UsersPage = lazy(() => import('./pages/Users'))
 const ApiKeysPage = lazy(() => import('./pages/ApiKeys'))
 const ProjectAdmin = lazy(() => import('./pages/ProjectAdmin'))
+const ProjectTemplates = lazy(() => import('./pages/ProjectTemplates'))
 const FileManagement = lazy(() => import('./pages/FileManagement'))
 const MessageSettings = lazy(() => import('./pages/MessageSettings'))
 const ComingSoon = lazy(() => import('./pages/ComingSoon'))
@@ -62,7 +63,7 @@ export default function App() {
           <Route path="/system/plugins" element={<ComingSoon title={t('sys.plugins', '插件')} />} />
           <Route path="/system/logs" element={<ComingSoon title={t('sys.logs', '日志')} />} />
           <Route path="/project" element={<ProjectAdmin />} />
-          <Route path="/project/templates" element={<ComingSoon title={t('proj.tmplTab', '模板管理')} />} />
+          <Route path="/project/templates" element={<ProjectTemplates />} />
           <Route path="/project/files" element={<FileManagement />} />
           <Route path="/project/messages" element={<MessageSettings />} />
           <Route path="/project/scripts" element={<ComingSoon title={t('proj.scriptTab', '公共脚本')} />} />

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { Badge, Button, Card, Col, DatePicker, Descriptions, Drawer, Dropdown, Empty, Form, Input, InputNumber, Modal, Progress, Row, Segmented, Select, Space, Spin, Statistic, Table, Tabs, Tag, Timeline, Tooltip, Typography } from 'antd'
+import { Badge, Button, Card, Col, DatePicker, Descriptions, Drawer, Dropdown, Empty, Form, Input, InputNumber, Modal, Popover, Progress, Row, Segmented, Select, Space, Spin, Statistic, Table, Tabs, Tag, Timeline, Tooltip, Typography } from 'antd'
 import dayjs, { type Dayjs } from 'dayjs'
 import { message, modal } from '../feedback'
 import { useNavigate } from 'react-router-dom'
@@ -17,8 +17,9 @@ import {
   type FunctionalCase,
   type Requirement,
   type RequirementChange,
+  type RequirementStage,
+  type RequirementStageKey,
   type RequirementVersion,
-  type RequirementWorkStatus,
   type Task,
   type VerificationReport,
 } from '../api'
@@ -28,6 +29,9 @@ import { SelectProjectEmpty } from '../components/Page'
 import { regAdd, regList, type RegItem } from '../registry'
 import ContributionGrid from '../components/ContributionGrid'
 import { useListView, type ListColumn } from '../components/ListView'
+import { CF_GROUP, CustomFieldItem, CustomFieldItems, collectCustomValues, customFormValues, useFieldTemplate } from '../components/TemplateFields'
+import { fieldLabel } from '../fieldTemplates'
+import type { TemplateField } from '../api'
 import { useI18n } from '../i18n'
 
 const toLines = (s: string) => s.split('\n').map((x) => x.trim()).filter(Boolean)
@@ -48,12 +52,23 @@ const reqStatusColor = (s?: string) =>
   s === 'DELIVERED' ? 'green' : s === 'BASELINED' ? 'blue' : s === 'ARCHIVED' ? 'default' : 'default'
 // 优先级色:P0 红 / P1 橙 / P2 蓝 / P3 灰。
 const prioColor = (p?: string) => (p === 'P0' ? 'red' : p === 'P1' ? 'orange' : p === 'P2' ? 'blue' : 'default')
-// 研发/测试进度状态 → Tag 状态色(未开始 灰 / 进行中 蓝 / 已完成 绿)。
-const workTagColor = (s?: string): 'default' | 'processing' | 'success' =>
+// 阶段状态 → Tag 状态色(未开始/跳过 灰 / 进行中 蓝 / 已完成 绿)。
+const stageTagColor = (s?: string): 'default' | 'processing' | 'success' =>
   s === 'DONE' ? 'success' : s === 'IN_PROGRESS' ? 'processing' : 'default'
-const WORK_STATUSES: RequirementWorkStatus[] = ['NOT_STARTED', 'IN_PROGRESS', 'DONE']
-// 进度起止时间的短格式(MM-DD HH:mm)。
+// 7 段需求流水线固定顺序:创建→审核→评审→开发→测试→验收→交付。
+const STAGE_ORDER: RequirementStageKey[] = ['CREATED', 'AUDIT', 'REVIEW', 'DEV', 'TEST', 'ACCEPTANCE', 'DELIVERY']
+// 补齐阶段列表:后端固定返回 7 段,这里按固定顺序兜底,防缺段/乱序。
+const stagesOf = (r?: Requirement | null): RequirementStage[] => {
+  const by = new Map((r?.stages ?? []).map((s) => [s.stage, s]))
+  return STAGE_ORDER.map((k) => by.get(k) ?? { stage: k, status: 'PENDING', plannedStart: null, plannedEnd: null, startedAt: null, finishedAt: null, overdue: false })
+}
+// 阶段 → 行内小圆点色(延期 红 / 完成 绿 / 进行中 品牌蓝 / 未开始 灰 / 跳过 弱化)。
+const stageDotColor = (s: RequirementStage) =>
+  s.overdue ? 'var(--error)' : s.status === 'DONE' ? 'var(--success)' : s.status === 'IN_PROGRESS' ? 'var(--brand)' : s.status === 'SKIPPED' ? 'var(--border)' : 'var(--text-3)'
+// 实际起止时间的短格式(MM-DD HH:mm)。
 const fmtShort = (ms?: number | null) => (ms ? dayjs(ms).format('MM-DD HH:mm') : '')
+// 计划日期短格式(MM-DD;缺省 —)。
+const fmtPlan = (d?: string | null) => (d ? dayjs(d).format('MM-DD') : '—')
 
 // 列表行 = 本地注册表项 + 后端需求状态/类型/优先级/标签/延期。
 type ReqRow = Omit<RegItem, 'label'> & {
@@ -87,10 +102,14 @@ function reqColumns(t: (k: string, d?: string) => string): ListColumn<ReqRow>[] 
         ) : '—',
     },
     {
-      key: 'status', label: t('req.status', '状态'), title: t('req.status', '状态'), dataIndex: 'status', width: 120,
+      key: 'status', label: t('req.status', '状态'), title: t('req.status', '状态'), dataIndex: 'status', width: 160,
       render: (s: string | undefined, row: ReqRow) => (
         <>
           <Tag color={reqStatusColor(s)}>{s ? t(`req.status.${s}`, s) : '—'}</Tag>
+          {/* 当前流水线阶段:门禁状态(DRAFT/基线/交付)旁并列展示 */}
+          {row.raw?.currentStage && (
+            <span style={{ fontSize: 12, color: 'var(--brand)', marginRight: 6 }}>{t(`req.stage.${row.raw.currentStage}`, row.raw.currentStage)}</span>
+          )}
           {row.overdue && <Tag color="red" style={{ marginRight: 0 }}>{t('req.overdue', '延期')}</Tag>}
         </>
       ),
@@ -106,6 +125,8 @@ export default function Requirements() {
   const [items, setItems] = useState<ReqRow[]>([])
   const [createOpen, setCreateOpen] = useState(false)
   const tabs = useWorkTabs()
+  // 需求字段模板:行内预览解析自定义字段的显示名。
+  const { fields: reqTplFields } = useFieldTemplate('requirement')
 
   // 列表以后端为准(含 CLI/API 建的需求),叠加本地注册表的 meta(拆分/验证链接)。
   // 携带后端 status,让列表直观看到 DRAFT/BASELINED/DELIVERED。
@@ -172,10 +193,29 @@ export default function Requirements() {
   })
 
   // 行内展开预览:不离开列表就能看关键信息;深入编辑再进 Tab。
-  const wsTag = (ws?: string) => (
-    <Tag color={ws === 'DONE' ? 'success' : ws === 'IN_PROGRESS' ? 'processing' : 'default'} style={{ marginRight: 0 }}>
-      {t(`req.ws.${ws || 'NOT_STARTED'}`, ws === 'DONE' ? '已完成' : ws === 'IN_PROGRESS' ? '进行中' : '未开始')}
-    </Tag>
+  // 紧凑阶段条:7 个圆点按状态着色,当前阶段带名称高亮,延期阶段标红。
+  const stageStrip = (r: Requirement) => (
+    <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap', marginBottom: 8 }}>
+      {stagesOf(r).map((s) => {
+        const cur = s.stage === r.currentStage
+        return (
+          <span
+            key={s.stage}
+            title={`${t(`req.stage.${s.stage}`, s.stage)} · ${t(`req.ss.${s.status}`, s.status)}`}
+            style={{
+              display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 12, lineHeight: '18px',
+              padding: cur ? '0 8px' : 0, borderRadius: 10,
+              border: cur ? '1px solid var(--brand)' : 'none',
+              background: cur ? 'var(--brand-soft)' : 'transparent',
+              color: s.overdue ? 'var(--error)' : 'var(--brand)',
+            }}
+          >
+            <span style={{ width: 8, height: 8, borderRadius: '50%', background: stageDotColor(s), display: 'inline-block' }} />
+            {cur && <span>{t(`req.stage.${s.stage}`, s.stage)}</span>}
+          </span>
+        )
+      })}
+    </div>
   )
   const rowPreview = (row: ReqRow) => {
     const r = row.raw
@@ -196,16 +236,22 @@ export default function Requirements() {
           ) : '—'}
         </div>
         <div style={{ flex: '1 1 220px', minWidth: 200 }}>
-          <div style={{ fontSize: 12, color: 'var(--text-3)', marginBottom: 4 }}>{t('req.progress', '研发进度')}</div>
-          <div style={{ display: 'flex', gap: 12, alignItems: 'center', fontSize: 13, marginBottom: 8 }}>
-            <span>{t('req.devStatus', '开发')} {wsTag(r.devStatus)}</span>
-            <span>{t('req.testStatus', '测试')} {wsTag(r.testStatus)}</span>
-          </div>
+          <div style={{ fontSize: 12, color: 'var(--text-3)', marginBottom: 4 }}>{t('req.stagePanel', '阶段进度')}</div>
+          {stageStrip(r)}
           <div style={{ fontSize: 12, color: 'var(--text-3)', lineHeight: 1.9 }}>
             {r.dueDate && <div>{t('req.dueDate', '截止日期')}:{r.dueDate}{r.overdue && <Tag color="red" style={{ marginLeft: 6 }}>{t('req.overdue', '延期')}</Tag>}</div>}
             {r.createdAt ? <div>{t('req.createdAt', '创建时间')}:{new Date(r.createdAt).toLocaleString()}</div> : null}
             {r.updatedAt ? <div>{t('req.updatedAt', '更新时间')}:{new Date(r.updatedAt).toLocaleString()}</div> : null}
           </div>
+          {/* 自定义字段(字段模板):字段名从模板解析,解析不到显示 key。 */}
+          {r.customFields && Object.keys(r.customFields).length > 0 && (
+            <div style={{ fontSize: 12, color: 'var(--text-3)', lineHeight: 1.9, marginTop: 6 }}>
+              {Object.entries(r.customFields).map(([k, v]) => {
+                const f = reqTplFields.find((x) => !x.system && x.key === k)
+                return <div key={k}>{f ? fieldLabel(t, 'requirement', f) : k}:<span style={{ color: 'var(--text-2)', marginLeft: 4 }}>{v}</span></div>
+              })}
+            </div>
+          )}
           <Button size="small" type="primary" ghost style={{ marginTop: 8 }} onClick={() => tabs.open(row.id)}>
             {t('req.openDetail', '打开完整详情')}
           </Button>
@@ -260,8 +306,8 @@ export default function Requirements() {
   )
 }
 
-// 新建需求:AI 起草(MRD/素材 → 结构化草稿回填)+ 结构化字段(类型/优先级/描述)
-// + 验收标准逐条录入 —— 验收标准是拆分/验证/用例起草的全链路锚点,逐条引导比裸文本框可控。
+// 新建需求:AI 起草(MRD/素材 → 结构化草稿回填)+ 按字段模板动态渲染的表单
+// —— 系统字段的顺序/必填/显隐由「项目→模板管理」的需求字段模板决定,自定义字段动态追加。
 const REQ_TYPES = ['FEATURE', 'ENHANCEMENT', 'TECH_DEBT', 'BUGFIX'] as const
 const PRIORITIES = ['P0', 'P1', 'P2', 'P3'] as const
 
@@ -270,6 +316,8 @@ function CreateRequirementForm({ projectId, onDone }: { projectId: string; onDon
   const [form] = Form.useForm()
   const [raw, setRaw] = useState('')
   const [drafting, setDrafting] = useState(false)
+  // 字段模板:决定表单里系统字段的顺序/必填/显隐,自定义字段按类型渲染。
+  const { fields: tplFields } = useFieldTemplate('requirement')
   // 父需求候选:项目下已有需求(失败静默,下拉为空即可)。
   const [parents, setParents] = useState<Requirement[]>([])
   useEffect(() => {
@@ -299,6 +347,85 @@ function CreateRequirementForm({ projectId, onDone }: { projectId: string; onDon
       setDrafting(false)
     }
   }
+  // 系统字段渲染器:key → 表单项;必填按模板配置(title 锁定必填)。
+  const sysItem = (f: TemplateField) => {
+    const rules = f.required ? [{ required: true }] : undefined
+    switch (f.key) {
+      case 'title':
+        return (
+          <Form.Item key="title" name="title" label={t('req.title', '标题')} rules={[{ required: true }]}>
+            <Input placeholder={t('req.titlePlaceholder', '如:用户登录')} />
+          </Form.Item>
+        )
+      case 'reqType':
+        return (
+          <Form.Item key="reqType" name="reqType" label={t('req.reqType', '类型')} rules={rules}>
+            <Select options={REQ_TYPES.map((k) => ({ value: k, label: typeLabel[k] }))} />
+          </Form.Item>
+        )
+      case 'priority':
+        return (
+          <Form.Item key="priority" name="priority" label={t('req.priority', '优先级')} rules={rules}>
+            <Select options={PRIORITIES.map((p) => ({ value: p, label: p }))} />
+          </Form.Item>
+        )
+      case 'tags':
+        return (
+          <Form.Item key="tags" name="tags" label={t('req.tags', '标签')} rules={rules}>
+            <Select mode="tags" maxCount={10} tokenSeparators={[',', ' ']} open={false} suffixIcon={null} placeholder={t('req.tagsPh', '回车添加,最多 10 个')} />
+          </Form.Item>
+        )
+      case 'dueDate':
+        return (
+          <Form.Item key="dueDate" name="dueDate" label={t('req.dueDate', '截止日期')} rules={rules}>
+            <DatePicker format="YYYY-MM-DD" style={{ width: '100%' }} />
+          </Form.Item>
+        )
+      case 'parentId':
+        return (
+          <Form.Item key="parentId" name="parentId" label={t('req.parentReq', '父需求')} rules={rules}>
+            <Select
+              allowClear
+              showSearch
+              optionFilterProp="label"
+              placeholder={t('req.parentPh', '可选:挂到某个已有需求下')}
+              options={parents.map((p) => ({ value: p.id, label: p.title }))}
+            />
+          </Form.Item>
+        )
+      case 'description':
+        return (
+          <Form.Item key="description" name="description" label={t('req.description', '需求描述')} rules={rules}>
+            <Input.TextArea rows={4} placeholder={t('req.descriptionPh', '背景:为什么做\n目标:做成什么样\n范围:边界与不做什么')} />
+          </Form.Item>
+        )
+      case 'criteria':
+        // 验收标准列表:特殊渲染(逐条录入),必填在 onFinish 里校验至少一条。
+        return (
+          <Form.List key="criteria" name="criteria">
+            {(fields, { add, remove }) => (
+              <Form.Item label={t('req.criteriaList', '验收标准(逐条,可判定)')} required={f.required}>
+                {fields.map(({ key, ...field }) => (
+                  <div key={key} style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+                    <Form.Item {...field} noStyle>
+                      <Input placeholder={t('req.criterionPh', '一条可判定的验收条件,如:错误密码提示明确')} />
+                    </Form.Item>
+                    {fields.length > 1 && (
+                      <Button type="text" icon={<DeleteOutlined />} onClick={() => remove(field.name)} />
+                    )}
+                  </div>
+                ))}
+                <Button type="dashed" block onClick={() => add('')}>
+                  + {t('req.addCriterion', '添加验收标准')}
+                </Button>
+              </Form.Item>
+            )}
+          </Form.List>
+        )
+      default:
+        return null
+    }
+  }
   return (
     <>
       {/* AI 起草:落地「MRD 自动转 PRD」——粘贴素材,起草结果回填下方表单,可再编辑 */}
@@ -321,8 +448,14 @@ function CreateRequirementForm({ projectId, onDone }: { projectId: string; onDon
         form={form}
         layout="vertical"
         initialValues={{ reqType: 'FEATURE', priority: 'P2', criteria: [''] }}
-        onFinish={async (v: { title: string; description?: string; reqType: string; priority: string; criteria: string[]; tags?: string[]; dueDate?: Dayjs; parentId?: string }) => {
+        onFinish={async (v: { title: string; description?: string; reqType?: string; priority?: string; criteria?: string[]; tags?: string[]; dueDate?: Dayjs; parentId?: string; [CF_GROUP]?: Record<string, unknown> }) => {
           const acceptanceCriteria = (v.criteria || []).map((c) => (c || '').trim()).filter(Boolean)
+          const critField = tplFields.find((f) => f.key === 'criteria')
+          if (critField?.enabled && critField.required && !acceptanceCriteria.length) {
+            message.warning(t('req.criteriaRequired', '请至少填写一条验收标准'))
+            return
+          }
+          const customFields = collectCustomValues(tplFields, v[CF_GROUP])
           try {
             const r = await api.createRequirement({
               projectId,
@@ -334,6 +467,7 @@ function CreateRequirementForm({ projectId, onDone }: { projectId: string; onDon
               tags: v.tags?.length ? v.tags : undefined,
               dueDate: v.dueDate ? v.dueDate.format('YYYY-MM-DD') : undefined,
               parentId: v.parentId || undefined,
+              customFields: Object.keys(customFields).length ? customFields : undefined,
             })
             message.success(t('req.created', '需求已创建'))
             onDone(r, v.title)
@@ -342,64 +476,10 @@ function CreateRequirementForm({ projectId, onDone }: { projectId: string; onDon
           }
         }}
       >
-        <Form.Item name="title" label={t('req.title', '标题')} rules={[{ required: true }]}>
-          <Input placeholder={t('req.titlePlaceholder', '如:用户登录')} />
-        </Form.Item>
-        <Row gutter={12}>
-          <Col span={12}>
-            <Form.Item name="reqType" label={t('req.reqType', '类型')}>
-              <Select options={REQ_TYPES.map((k) => ({ value: k, label: typeLabel[k] }))} />
-            </Form.Item>
-          </Col>
-          <Col span={12}>
-            <Form.Item name="priority" label={t('req.priority', '优先级')}>
-              <Select options={PRIORITIES.map((p) => ({ value: p, label: p }))} />
-            </Form.Item>
-          </Col>
-        </Row>
-        <Row gutter={12}>
-          <Col span={12}>
-            <Form.Item name="tags" label={t('req.tags', '标签')}>
-              <Select mode="tags" maxCount={10} tokenSeparators={[',', ' ']} open={false} suffixIcon={null} placeholder={t('req.tagsPh', '回车添加,最多 10 个')} />
-            </Form.Item>
-          </Col>
-          <Col span={12}>
-            <Form.Item name="dueDate" label={t('req.dueDate', '截止日期')}>
-              <DatePicker format="YYYY-MM-DD" style={{ width: '100%' }} />
-            </Form.Item>
-          </Col>
-        </Row>
-        <Form.Item name="parentId" label={t('req.parentReq', '父需求')}>
-          <Select
-            allowClear
-            showSearch
-            optionFilterProp="label"
-            placeholder={t('req.parentPh', '可选:挂到某个已有需求下')}
-            options={parents.map((p) => ({ value: p.id, label: p.title }))}
-          />
-        </Form.Item>
-        <Form.Item name="description" label={t('req.description', '需求描述')}>
-          <Input.TextArea rows={4} placeholder={t('req.descriptionPh', '背景:为什么做\n目标:做成什么样\n范围:边界与不做什么')} />
-        </Form.Item>
-        <Form.List name="criteria">
-          {(fields, { add, remove }) => (
-            <Form.Item label={t('req.criteriaList', '验收标准(逐条,可判定)')} required>
-              {fields.map((field) => (
-                <div key={field.key} style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
-                  <Form.Item {...field} noStyle>
-                    <Input placeholder={t('req.criterionPh', '一条可判定的验收条件,如:错误密码提示明确')} />
-                  </Form.Item>
-                  {fields.length > 1 && (
-                    <Button type="text" icon={<DeleteOutlined />} onClick={() => remove(field.name)} />
-                  )}
-                </div>
-              ))}
-              <Button type="dashed" block onClick={() => add('')}>
-                + {t('req.addCriterion', '添加验收标准')}
-              </Button>
-            </Form.Item>
-          )}
-        </Form.List>
+        {/* 按字段模板的数组序渲染:系统字段走各自渲染器,自定义字段按类型渲染;隐藏字段跳过。 */}
+        {tplFields.filter((f) => f.enabled).map((f) =>
+          f.system ? sysItem(f) : <CustomFieldItem key={f.key} kind="requirement" field={f} />
+        )}
         <Button type="primary" htmlType="submit" block>
           {t('a.create', '创建')}
         </Button>
@@ -471,9 +551,88 @@ function RequirementCoveragePanel({ reqId, projectId, criteria }: { reqId: strin
   )
 }
 
+// 阶段流水线面板:7 段卡片横排,当前阶段高亮(品牌色边框+淡底)。
+// 每段展示 状态 / 计划窗口 / 实际起止 / 延期;点卡片弹出流转(开始/完成/跳过)+ 排期(计划起止,清空传 "")。
+// CREATED 由系统管理只读;评审/验收/交付由基线/交付动作自动驱动,但保留手动覆盖入口。
+function StagePipeline({ req, onAction }: { req: Requirement; onAction: (stage: string, b: { status?: string; plannedStart?: string; plannedEnd?: string }) => void }) {
+  const { t } = useI18n()
+  return (
+    <div style={{ marginTop: 12 }}>
+      <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>{t('req.stagePanel', '阶段进度')}</div>
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+        {stagesOf(req).map((s) => {
+          const cur = s.stage === req.currentStage
+          const editable = s.stage !== 'CREATED' // 创建段:系统落状态与时间,只读
+          const card = (
+            <div
+              style={{
+                flex: '1 1 128px', minWidth: 128, padding: '8px 10px', borderRadius: 8,
+                border: `1px solid ${cur ? 'var(--brand)' : 'var(--border-soft)'}`,
+                background: cur ? 'var(--brand-soft)' : 'var(--panel)',
+                cursor: editable ? 'pointer' : 'default',
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
+                {s.overdue && <span style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--error)', display: 'inline-block' }} />}
+                <span style={{ fontWeight: 600, fontSize: 13, color: cur ? 'var(--brand)' : 'var(--text)' }}>{t(`req.stage.${s.stage}`, s.stage)}</span>
+              </div>
+              <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginBottom: 6 }}>
+                <Tag color={stageTagColor(s.status)} style={{ marginRight: 0 }}>{t(`req.ss.${s.status}`, s.status)}</Tag>
+                {s.overdue && <Tag color="red" style={{ marginRight: 0 }}>{t('req.overdue', '延期')}</Tag>}
+              </div>
+              <div style={{ fontSize: 12, color: 'var(--text-3)' }}>
+                {t('req.plannedWindow', '计划窗口')}:{s.plannedStart || s.plannedEnd ? `${fmtPlan(s.plannedStart)} ~ ${fmtPlan(s.plannedEnd)}` : '—'}
+              </div>
+              {(s.startedAt || s.finishedAt) && (
+                <div style={{ fontSize: 12, color: 'var(--text-3)' }}>
+                  {t('req.actualWindow', '实际起止')}:{fmtShort(s.startedAt) || '—'} ~ {fmtShort(s.finishedAt) || '—'}
+                </div>
+              )}
+            </div>
+          )
+          if (!editable) {
+            return <Tooltip key={s.stage} title={t('req.stageSystem', '系统管理:创建需求时自动完成')}>{card}</Tooltip>
+          }
+          return (
+            <Popover
+              key={s.stage}
+              trigger="click"
+              title={t(`req.stage.${s.stage}`, s.stage)}
+              content={
+                <Space direction="vertical" size={8}>
+                  <Space size={6}>
+                    <Button size="small" disabled={s.status === 'IN_PROGRESS'} onClick={() => onAction(s.stage, { status: 'IN_PROGRESS' })}>{t('req.stageStart', '开始')}</Button>
+                    <Button size="small" type="primary" ghost disabled={s.status === 'DONE'} onClick={() => onAction(s.stage, { status: 'DONE' })}>{t('req.stageDone', '完成')}</Button>
+                    <Button size="small" disabled={s.status === 'SKIPPED'} onClick={() => onAction(s.stage, { status: 'SKIPPED' })}>{t('req.stageSkip', '跳过')}</Button>
+                  </Space>
+                  {/* 计划排期:清空即传 "" 让后端清除 */}
+                  <DatePicker
+                    size="small" style={{ width: 190 }} allowClear placeholder={t('req.plannedStart', '计划开始')}
+                    value={s.plannedStart ? dayjs(s.plannedStart) : null}
+                    onChange={(d) => onAction(s.stage, { plannedStart: d ? d.format('YYYY-MM-DD') : '' })}
+                  />
+                  <DatePicker
+                    size="small" style={{ width: 190 }} allowClear placeholder={t('req.plannedEnd', '计划结束')}
+                    value={s.plannedEnd ? dayjs(s.plannedEnd) : null}
+                    onChange={(d) => onAction(s.stage, { plannedEnd: d ? d.format('YYYY-MM-DD') : '' })}
+                  />
+                </Space>
+              }
+            >
+              {card}
+            </Popover>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
 function RequirementDetail({ reqId, projectId, onChanged, onDeleted, onOpen }: { reqId: string; projectId: string; onChanged: () => void; onDeleted: () => void; onOpen?: (id: string) => void }) {
   const { t } = useI18n()
   const [req, setReq] = useState<Requirement | null>(null)
+  // 字段模板:编辑弹窗渲染自定义字段(回填现值,提交整体替换)。
+  const { fields: tplFields } = useFieldTemplate('requirement')
   const [cov, setCov] = useState<CoverageCase[]>([])
   const [verOpen, setVerOpen] = useState(false)
   const [verView, setVerView] = useState<RequirementVersion | null>(null) // 查看的历史版本明细
@@ -503,14 +662,14 @@ function RequirementDetail({ reqId, projectId, onChanged, onDeleted, onOpen }: {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [reqId])
 
-  // 研发/测试进度流转:落库后刷详情(起止时间由后端记)。
-  const setWork = async (kind: 'dev' | 'test', status: RequirementWorkStatus) => {
+  // 阶段流转/排期:PUT /requirement/:id/stage/:stage,落库后刷详情+列表(实际起止由后端记)。
+  const setStage = async (stage: string, b: { status?: string; plannedStart?: string; plannedEnd?: string }) => {
     try {
-      if (kind === 'dev') await api.setRequirementDevStatus(reqId, status)
-      else await api.setRequirementTestStatus(reqId, status)
+      await api.setRequirementStage(reqId, stage, b)
       load()
+      onChanged()
     } catch (e) {
-      message.error(e instanceof ApiError ? e.message : t('req.setWorkFailed', '进度更新失败'))
+      message.error(e instanceof ApiError ? e.message : t('req.setStageFailed', '阶段更新失败'))
     }
   }
   // 关联/解除子需求:改的是子需求的 parentId。
@@ -675,33 +834,9 @@ function RequirementDetail({ reqId, projectId, onChanged, onDeleted, onOpen }: {
                     ) : '—'}
                   </Descriptions.Item>
                 </Descriptions>
-                {/* 研发进度:开发/测试状态各一行,Segmented 直接流转,起止时间由后端记录。 */}
-                <Descriptions column={1} size="small" bordered style={{ marginTop: 12 }}>
-                  {(['dev', 'test'] as const).map((kind) => {
-                    const status = kind === 'dev' ? req?.devStatus : req?.testStatus
-                    const startedAt = kind === 'dev' ? req?.devStartedAt : req?.testStartedAt
-                    const finishedAt = kind === 'dev' ? req?.devFinishedAt : req?.testFinishedAt
-                    return (
-                      <Descriptions.Item key={kind} label={kind === 'dev' ? t('req.devStatus', '开发状态') : t('req.testStatus', '测试状态')}>
-                        <Space size={8} wrap>
-                          <Tag color={workTagColor(status)}>{t(`req.ws.${status ?? 'NOT_STARTED'}`, status ?? 'NOT_STARTED')}</Tag>
-                          <Segmented
-                            size="small"
-                            value={status ?? 'NOT_STARTED'}
-                            onChange={(v) => setWork(kind, v as RequirementWorkStatus)}
-                            options={WORK_STATUSES.map((s) => ({ value: s, label: t(`req.ws.${s}`, s) }))}
-                          />
-                          {(startedAt || finishedAt) && (
-                            <span style={{ color: 'var(--text-3)', fontSize: 12 }}>
-                              {startedAt ? `${t('req.startedAt', '开始')} ${fmtShort(startedAt)}` : ''}
-                              {finishedAt ? ` · ${t('req.finishedAt', '完成')} ${fmtShort(finishedAt)}` : ''}
-                            </span>
-                          )}
-                        </Space>
-                      </Descriptions.Item>
-                    )
-                  })}
-                </Descriptions>
+                {/* 阶段进度:7 段流水线卡片(创建→审核→评审→开发→测试→验收→交付),
+                    当前阶段高亮;点卡片流转(开始/完成/跳过)+ 排期(计划起止)。 */}
+                {req && <StagePipeline req={req} onAction={setStage} />}
                 {/* 子需求:列出挂在本需求下的需求(可打开/解除),并可把其他需求关联进来。 */}
                 <Card size="small" title={`${t('req.children', '子需求')} (${children.length})`} style={{ marginTop: 12 }}>
                   <Space.Compact style={{ width: '100%', marginBottom: children.length ? 10 : 0 }}>
@@ -791,8 +926,9 @@ function RequirementDetail({ reqId, projectId, onChanged, onDeleted, onOpen }: {
             priority: req?.priority || 'P2',
             tags: req?.tags || [],
             dueDate: req?.dueDate ? dayjs(req.dueDate) : undefined,
+            [CF_GROUP]: customFormValues(tplFields, req?.customFields),
           }}
-          onFinish={async (v: { title: string; reqType: string; priority: string; tags: string[]; dueDate?: ReturnType<typeof dayjs> }) => {
+          onFinish={async (v: { title: string; reqType: string; priority: string; tags: string[]; dueDate?: ReturnType<typeof dayjs>; [CF_GROUP]?: Record<string, unknown> }) => {
             try {
               await api.updateRequirement(reqId, {
                 title: v.title.trim(),
@@ -801,6 +937,8 @@ function RequirementDetail({ reqId, projectId, onChanged, onDeleted, onOpen }: {
                 tags: v.tags,
                 // 空串 = 清除截止日期(后端约定)
                 dueDate: v.dueDate ? v.dueDate.format('YYYY-MM-DD') : '',
+                // 自定义字段整体替换(删掉值 = 从 map 移除)
+                customFields: collectCustomValues(tplFields, v[CF_GROUP]),
               })
               message.success(t('req.updated', '已保存'))
               setEditOpen(false)
@@ -831,6 +969,8 @@ function RequirementDetail({ reqId, projectId, onChanged, onDeleted, onOpen }: {
           <Form.Item name="dueDate" label={t('req.dueDate', '截止日期')}>
             <DatePicker style={{ width: '100%' }} allowClear />
           </Form.Item>
+          {/* 自定义字段(字段模板):回填现值,保存时整体替换。 */}
+          <CustomFieldItems kind="requirement" fields={tplFields} />
           <Button type="primary" htmlType="submit" block>{t('a.save', '保存')}</Button>
         </Form>
       </Modal>

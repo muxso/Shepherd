@@ -2,10 +2,11 @@ import { useEffect, useMemo, useState } from 'react'
 import { Button, Descriptions, Empty, Form, Input, Modal, Popconfirm, Select, Space, Table, Tabs, Tag, Tree, Upload } from 'antd'
 import { DeleteOutlined, DownloadOutlined, EditOutlined, ImportOutlined } from '@ant-design/icons'
 import { message } from '../feedback'
-import { api, ApiError, type CaseRequirementLink, type CaseStep, type FunctionalCase, type Requirement } from '../api'
+import { api, ApiError, type CaseRequirementLink, type CaseStep, type FunctionalCase, type Requirement, type TemplateField } from '../api'
 import { useApp } from '../context'
 import { Workspace, WorkList, PaneHeader, useWorkTabs } from '../components/Workspace'
 import StepsEditor from '../components/StepsEditor'
+import { CF_GROUP, CustomFieldItem, collectCustomValues, customFormValues, useFieldTemplate } from '../components/TemplateFields'
 import { useI18n } from '../i18n'
 import { SelectProjectEmpty } from '../components/Page'
 import { useListView, type ListColumn } from '../components/ListView'
@@ -368,6 +369,10 @@ function CaseModal({
   const { t } = useI18n()
   const [form] = Form.useForm()
   const [saving, setSaving] = useState(false)
+  // 字段模板:系统字段的顺序/必填/显隐 + 自定义字段渲染(name 永远在)。
+  const { fields: tplFields } = useFieldTemplate('functional-case')
+  const fieldOf = (k: string) => tplFields.find((f) => f.key === k)
+  const enabled = (k: string) => fieldOf(k)?.enabled !== false
   const cf = editing?.customFields || {}
   const initial = editing
     ? {
@@ -377,8 +382,54 @@ function CaseModal({
         prerequisite: cf['前置条件'] || '',
         remark: cf['备注'] || '',
         steps: editing.steps?.length ? editing.steps : [{ step: '', expected: '' }],
+        [CF_GROUP]: customFormValues(tplFields, editing.customFields),
       }
     : { priority: 'P1', module: defaultModule, steps: [{ step: '', expected: '' }] }
+  // 系统字段渲染器:key → 表单项;顺序按模板数组序,必填按配置(name 锁定必填)。
+  const sysItem = (f: TemplateField) => {
+    const rules = f.required ? [{ required: true }] : undefined
+    switch (f.key) {
+      case 'name':
+        return (
+          <Form.Item key="name" name="name" label={t('func.caseName', '用例名')} rules={[{ required: true }]}>
+            <Input placeholder={t('func.namePlaceholder', '如:登录成功')} />
+          </Form.Item>
+        )
+      case 'module':
+        return (
+          <Form.Item key="module" name="module" label={t('func.colModule', '模块')} rules={rules}>
+            <Input placeholder={t('func.modulePlaceholder', '如:登录')} />
+          </Form.Item>
+        )
+      case 'priority':
+        return (
+          <Form.Item key="priority" name="priority" label={t('func.colPriority', '优先级')} rules={rules}>
+            <Select options={PRIORITIES.map((p) => ({ value: p, label: p }))} />
+          </Form.Item>
+        )
+      case 'prerequisite':
+        return (
+          <Form.Item key="prerequisite" name="prerequisite" label={t('func.prerequisite', '前置条件')} rules={rules}>
+            <Input.TextArea rows={2} placeholder={t('func.prerequisitePlaceholder', '如:进入管理登录页 https://...')} />
+          </Form.Item>
+        )
+      case 'steps':
+        // 步骤(步骤+预期):保持 StepsEditor 渲染,必填在提交时校验至少一条。
+        return (
+          <Form.Item key="steps" name="steps" label={t('func.testSteps', '测试步骤(步骤 + 预期结果)')} required={f.required}>
+            <StepsEditor />
+          </Form.Item>
+        )
+      case 'remark':
+        return (
+          <Form.Item key="remark" name="remark" label={t('func.remark', '备注')} rules={rules}>
+            <Input.TextArea rows={2} />
+          </Form.Item>
+        )
+      default:
+        return null
+    }
+  }
   return (
     <Modal
       title={editing ? t('func.editTitle', '编辑功能用例') : t('func.createTitle', '新建功能用例')}
@@ -395,24 +446,42 @@ function CaseModal({
         preserve={false}
         initialValues={initial}
         onFinish={async (v) => {
+          // steps 隐藏时不动已有步骤(编辑),新建则为空。
+          const steps = enabled('steps')
+            ? (v.steps || []).filter((s: CaseStep) => s.step.trim() || s.expected.trim())
+            : editing?.steps || []
+          const stepsField = fieldOf('steps')
+          if (stepsField?.enabled && stepsField.required && !steps.length) {
+            message.warning(t('func.stepsRequired', '请至少填写一条测试步骤'))
+            return
+          }
           setSaving(true)
           try {
-            // 编辑时保留用例原有的其它自定义字段(只覆盖前置条件/备注)。
+            // 编辑时保留用例原有的其它自定义字段;前置条件/备注沿用既有的中文 key 映射。
             const customFields: Record<string, string> = { ...(editing?.customFields || {}) }
             const setOrDel = (k: string, val?: string) => {
               if (val?.trim()) customFields[k] = val.trim()
               else delete customFields[k]
             }
-            setOrDel('前置条件', v.prerequisite)
-            setOrDel('备注', v.remark)
-            const steps = (v.steps || []).filter((s: CaseStep) => s.step.trim() || s.expected.trim())
+            // 隐藏的字段不动已有值(表单里没渲染,提交值为 undefined)。
+            if (enabled('prerequisite')) setOrDel('前置条件', v.prerequisite)
+            if (enabled('remark')) setOrDel('备注', v.remark)
+            // 模板自定义字段:值并入 customFields map(键用字段 key)。
+            const custom = collectCustomValues(tplFields, v[CF_GROUP])
+            for (const f of tplFields) {
+              if (f.system || !f.enabled) continue
+              if (custom[f.key] !== undefined) customFields[f.key] = custom[f.key]
+              else delete customFields[f.key]
+            }
             const fields = Object.keys(customFields).length ? customFields : undefined
+            const module = enabled('module') ? v.module || undefined : editing?.module || undefined
+            const priority = enabled('priority') ? v.priority : editing?.priority
             if (editing) {
               await api.updateFunctionalCase(editing.id, {
                 projectId,
                 name: v.name,
-                priority: v.priority,
-                module: v.module || undefined,
+                priority,
+                module,
                 status: editing.status, // 保留原状态(由评审流程驱动,编辑不改)
                 steps,
                 customFields: fields,
@@ -422,8 +491,8 @@ function CaseModal({
               await api.createFunctionalCase({
                 projectId,
                 name: v.name,
-                priority: v.priority,
-                module: v.module || undefined,
+                priority,
+                module,
                 steps,
                 customFields: fields,
               })
@@ -437,26 +506,10 @@ function CaseModal({
           }
         }}
       >
-        <Form.Item name="name" label={t('func.caseName', '用例名')} rules={[{ required: true }]}>
-          <Input placeholder={t('func.namePlaceholder', '如:登录成功')} />
-        </Form.Item>
-        <Space.Compact style={{ width: '100%' }}>
-          <Form.Item name="module" label={t('func.colModule', '模块')} style={{ flex: 1 }}>
-            <Input placeholder={t('func.modulePlaceholder', '如:登录')} />
-          </Form.Item>
-          <Form.Item name="priority" label={t('func.colPriority', '优先级')} style={{ width: 120 }}>
-            <Select options={PRIORITIES.map((p) => ({ value: p, label: p }))} />
-          </Form.Item>
-        </Space.Compact>
-        <Form.Item name="prerequisite" label={t('func.prerequisite', '前置条件')}>
-          <Input.TextArea rows={2} placeholder={t('func.prerequisitePlaceholder', '如:进入管理登录页 https://...')} />
-        </Form.Item>
-        <Form.Item name="steps" label={t('func.testSteps', '测试步骤(步骤 + 预期结果)')}>
-          <StepsEditor />
-        </Form.Item>
-        <Form.Item name="remark" label={t('func.remark', '备注')}>
-          <Input.TextArea rows={2} />
-        </Form.Item>
+        {/* 按字段模板的数组序渲染:系统字段走各自渲染器,自定义字段按类型渲染;隐藏字段跳过。 */}
+        {tplFields.filter((f) => f.enabled).map((f) =>
+          f.system ? sysItem(f) : <CustomFieldItem key={f.key} kind="functional-case" field={f} />
+        )}
       </Form>
     </Modal>
   )
