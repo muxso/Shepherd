@@ -24,13 +24,13 @@ impl InMemoryReviewRepository {
     }
 
     pub fn set_setting(&self, review_id: &str, setting: ReviewSetting) {
-        self.state.lock().expect("lock").settings.insert(review_id.to_string(), setting);
+        self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner).settings.insert(review_id.to_string(), setting);
     }
 
     pub fn case_status(&self, review_id: &str, case_id: &str) -> Option<ReviewStatus> {
         self.state
             .lock()
-            .expect("lock")
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .case_status
             .get(&(review_id.to_string(), case_id.to_string()))
             .copied()
@@ -39,7 +39,7 @@ impl InMemoryReviewRepository {
     pub fn history_of_sync(&self, review_id: &str, case_id: &str) -> Vec<ReviewRecord> {
         self.state
             .lock()
-            .expect("lock")
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .histories
             .get(&(review_id.to_string(), case_id.to_string()))
             .cloned()
@@ -52,7 +52,7 @@ impl ReviewRepository for InMemoryReviewRepository {
     async fn review_setting(&self, review_id: &str) -> Result<ReviewSetting, RepoError> {
         self.state
             .lock()
-            .expect("lock")
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .settings
             .get(review_id)
             .copied()
@@ -75,7 +75,7 @@ impl ReviewRepository for InMemoryReviewRepository {
     ) -> Result<(), RepoError> {
         self.state
             .lock()
-            .expect("lock")
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .histories
             .entry((review_id.to_string(), case_id.to_string()))
             .or_default()
@@ -91,7 +91,7 @@ impl ReviewRepository for InMemoryReviewRepository {
     ) -> Result<(), RepoError> {
         self.state
             .lock()
-            .expect("lock")
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .case_status
             .insert((review_id.to_string(), case_id.to_string()), status);
         Ok(())

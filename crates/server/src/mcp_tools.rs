@@ -56,14 +56,14 @@ struct McpSessions {
 impl McpSessions {
     fn mint(&self, owner: &str) -> String {
         let id = format!("mcp-{}", uuid::Uuid::new_v4().simple());
-        self.owners.lock().expect("lock").insert(id.clone(), owner.to_string());
+        self.owners.lock().unwrap_or_else(std::sync::PoisonError::into_inner).insert(id.clone(), owner.to_string());
         id
     }
     fn owns(&self, id: &str, owner: &str) -> bool {
-        self.owners.lock().expect("lock").get(id).map(|o| o == owner).unwrap_or(false)
+        self.owners.lock().unwrap_or_else(std::sync::PoisonError::into_inner).get(id).map(|o| o == owner).unwrap_or(false)
     }
     fn remove(&self, id: &str, owner: &str) -> bool {
-        let mut g = self.owners.lock().expect("lock");
+        let mut g = self.owners.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         if g.get(id).map(|o| o == owner).unwrap_or(false) {
             g.remove(id);
             true

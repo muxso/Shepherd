@@ -39,7 +39,7 @@ impl RateLimiter {
 
     /// 放行返回 Ok;拒绝返回建议等待秒(≥1)。
     fn check(&self, key: &str, now: Instant) -> Result<(), u64> {
-        let mut g = self.buckets.lock().expect("lock");
+        let mut g = self.buckets.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let b = g.entry(key.to_string()).or_insert(Bucket { tokens: self.burst, last: now });
         let elapsed = now.saturating_duration_since(b.last).as_secs_f64();
         b.tokens = (b.tokens + elapsed * self.rps).min(self.burst);

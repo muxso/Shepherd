@@ -38,7 +38,7 @@ fn to_env(id: String, e: &NewEnvironment) -> Environment {
 #[async_trait]
 impl EnvironmentRepository for InMemoryEnvironmentRepository {
     async fn insert(&self, e: &NewEnvironment) -> Result<Environment, RepoError> {
-        let mut state = self.state.lock().expect("lock");
+        let mut state = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         state.seq += 1;
         let env = to_env(format!("env-{}", state.seq), e);
         state.envs.insert(env.id.clone(), env.clone());
@@ -46,11 +46,11 @@ impl EnvironmentRepository for InMemoryEnvironmentRepository {
     }
 
     async fn get(&self, id: &str) -> Result<Option<Environment>, RepoError> {
-        Ok(self.state.lock().expect("lock").envs.get(id).cloned())
+        Ok(self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner).envs.get(id).cloned())
     }
 
     async fn list_by_project(&self, project_id: &str) -> Result<Vec<Environment>, RepoError> {
-        let state = self.state.lock().expect("lock");
+        let state = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let mut out: Vec<Environment> = state
             .envs
             .values()
@@ -62,7 +62,7 @@ impl EnvironmentRepository for InMemoryEnvironmentRepository {
     }
 
     async fn update(&self, id: &str, e: &NewEnvironment) -> Result<Option<Environment>, RepoError> {
-        let mut state = self.state.lock().expect("lock");
+        let mut state = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         if !state.envs.contains_key(id) {
             return Ok(None);
         }
@@ -75,6 +75,6 @@ impl EnvironmentRepository for InMemoryEnvironmentRepository {
     }
 
     async fn delete(&self, id: &str) -> Result<bool, RepoError> {
-        Ok(self.state.lock().expect("lock").envs.remove(id).is_some())
+        Ok(self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner).envs.remove(id).is_some())
     }
 }

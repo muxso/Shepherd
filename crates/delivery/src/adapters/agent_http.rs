@@ -134,7 +134,7 @@ mod tests {
     #[async_trait]
     impl EventSink for RecordingSink {
         async fn emit(&self, e: NewExecutionEvent) {
-            self.kinds.lock().unwrap().push(e.kind.as_str().to_string());
+            self.kinds.lock().unwrap_or_else(std::sync::PoisonError::into_inner).push(e.kind.as_str().to_string());
         }
     }
 
@@ -215,7 +215,7 @@ mod tests {
         let sink = RecordingSink::default();
         let out = HttpAgentExecutor::new(url).dispatch(&spec(), &sink).await.expect("dispatch");
         assert!(matches!(out, DispatchOutcome::Completed { .. }));
-        assert_eq!(sink.kinds.lock().unwrap().as_slice(), &["DECISION".to_string(), "TEST_RESULT".to_string()]);
+        assert_eq!(sink.kinds.lock().unwrap_or_else(std::sync::PoisonError::into_inner).as_slice(), &["DECISION".to_string(), "TEST_RESULT".to_string()]);
     }
 
     #[tokio::test]

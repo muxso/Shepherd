@@ -343,7 +343,7 @@ mod tests {
     #[async_trait]
     impl ProgressSink for RecSink {
         async fn emit(&self, ev: ExecEvent) {
-            self.events.lock().unwrap().push(ev);
+            self.events.lock().unwrap_or_else(std::sync::PoisonError::into_inner).push(ev);
         }
     }
 
@@ -383,7 +383,7 @@ mod tests {
         let b = MockBackend { output: "DOC".into() };
         let sink = RecSink::default();
         assert_eq!(b.execute("p", ".", &sink).await.expect("run"), "DOC");
-        assert_eq!(sink.events.lock().unwrap().len(), 1);
+        assert_eq!(sink.events.lock().unwrap_or_else(std::sync::PoisonError::into_inner).len(), 1);
     }
 
     #[tokio::test]
@@ -396,7 +396,7 @@ mod tests {
         let sink = RecSink::default();
         let out = b.execute("the prompt", ".", &sink).await.expect("run");
         assert_eq!(out, "## codex 设计");
-        assert_eq!(sink.events.lock().unwrap()[0].kind, "DECISION");
+        assert_eq!(sink.events.lock().unwrap_or_else(std::sync::PoisonError::into_inner)[0].kind, "DECISION");
     }
 
     #[tokio::test]
@@ -409,7 +409,7 @@ mod tests {
         let sink = RecSink::default();
         let out = b.execute("do it", ".", &sink).await.expect("run");
         assert_eq!(out, "完成");
-        let evs = sink.events.lock().unwrap();
+        let evs = sink.events.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         assert_eq!(evs.len(), 1);
         assert_eq!(evs[0], ExecEvent::new("FILE_CHANGE", "Edit a.rs"));
         let _ = std::fs::remove_file(&path);

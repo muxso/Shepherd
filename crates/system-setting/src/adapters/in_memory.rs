@@ -22,7 +22,7 @@ impl InMemoryUserRepository {
     }
 
     pub fn count(&self) -> usize {
-        self.state.lock().expect("lock poisoned").users.len()
+        self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner).users.len()
     }
 }
 
@@ -32,7 +32,7 @@ impl UserRepository for InMemoryUserRepository {
         Ok(self
             .state
             .lock()
-            .expect("lock poisoned")
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .users
             .iter()
             .find(|u| u.occupies_email() && u.email == *email)
@@ -40,7 +40,7 @@ impl UserRepository for InMemoryUserRepository {
     }
 
     async fn insert(&self, new_user: &NewUser) -> Result<User, RepoError> {
-        let mut state = self.state.lock().expect("lock poisoned");
+        let mut state = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         state.seq += 1;
         let user = User {
             id: format!("user-{}", state.seq),
@@ -54,11 +54,11 @@ impl UserRepository for InMemoryUserRepository {
     }
 
     async fn get(&self, id: &str) -> Result<Option<User>, RepoError> {
-        Ok(self.state.lock().expect("lock").users.iter().find(|u| u.id == id).cloned())
+        Ok(self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner).users.iter().find(|u| u.id == id).cloned())
     }
 
     async fn count_active(&self) -> Result<u64, RepoError> {
-        Ok(self.state.lock().expect("lock").users.iter().filter(|u| u.occupies_email()).count()
+        Ok(self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner).users.iter().filter(|u| u.occupies_email()).count()
             as u64)
     }
 
@@ -66,7 +66,7 @@ impl UserRepository for InMemoryUserRepository {
         Ok(self
             .state
             .lock()
-            .expect("lock")
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .users
             .iter()
             .filter(|u| u.occupies_email())
@@ -77,7 +77,7 @@ impl UserRepository for InMemoryUserRepository {
     }
 
     async fn save(&self, user: &User) -> Result<(), RepoError> {
-        let mut st = self.state.lock().expect("lock");
+        let mut st = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         if let Some(slot) = st.users.iter_mut().find(|u| u.id == user.id) {
             *slot = user.clone();
         }

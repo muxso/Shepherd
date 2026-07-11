@@ -73,7 +73,7 @@ mod tests {
         State(stub): State<Stub>,
         Json(body): Json<serde_json::Value>,
     ) -> StatusCode {
-        stub.received.lock().expect("lock").push(body);
+        stub.received.lock().unwrap_or_else(std::sync::PoisonError::into_inner).push(body);
         stub.status
     }
 
@@ -107,7 +107,7 @@ mod tests {
 
         dispatcher.dispatch_task(&task()).await.expect("dispatch ok");
 
-        let got = received.lock().expect("lock");
+        let got = received.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         assert_eq!(got.len(), 1);
         let body = &got[0];
         assert_eq!(body["reportId"], "report-1");

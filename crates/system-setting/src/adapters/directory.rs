@@ -27,21 +27,21 @@ impl SpyDirectory {
     }
 
     pub fn with_user(self, id: &str, name: &str, source: UserSource) -> Self {
-        self.state.lock().expect("lock").users.insert(id.to_string(), (name.to_string(), source));
+        self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner).users.insert(id.to_string(), (name.to_string(), source));
         self
     }
 
     pub fn failing_direct(self) -> Self {
-        self.state.lock().expect("lock").fail_direct = true;
+        self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner).fail_direct = true;
         self
     }
 
     pub fn validated_calls(&self) -> usize {
-        self.state.lock().expect("lock").validated_calls
+        self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner).validated_calls
     }
 
     pub fn direct_calls(&self) -> usize {
-        self.state.lock().expect("lock").direct_calls
+        self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner).direct_calls
     }
 }
 
@@ -51,7 +51,7 @@ impl UserDirectory for SpyDirectory {
         &self,
         ids: &[String],
     ) -> Result<BTreeMap<String, String>, DirectoryError> {
-        let mut state = self.state.lock().expect("lock");
+        let mut state = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         state.validated_calls += 1;
         let has_external =
             ids.iter().any(|id| state.users.get(id).map(|(_, s)| s.is_external()).unwrap_or(false));
@@ -65,7 +65,7 @@ impl UserDirectory for SpyDirectory {
         &self,
         ids: &[String],
     ) -> Result<BTreeMap<String, String>, DirectoryError> {
-        let mut state = self.state.lock().expect("lock");
+        let mut state = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         state.direct_calls += 1;
         if state.fail_direct {
             return Err(DirectoryError::Backend("db down".into()));

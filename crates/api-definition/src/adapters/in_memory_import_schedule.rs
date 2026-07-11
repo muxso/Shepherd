@@ -25,7 +25,7 @@ impl InMemoryImportScheduleStore {
 #[async_trait]
 impl ImportScheduleStore for InMemoryImportScheduleStore {
     async fn insert(&self, s: &NewImportSchedule) -> Result<ImportSchedule, RepoError> {
-        let mut st = self.state.lock().expect("lock");
+        let mut st = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         st.seq += 1;
         let sched = ImportSchedule {
             id: format!("import-sched-{}", st.seq),
@@ -52,7 +52,7 @@ impl ImportScheduleStore for InMemoryImportScheduleStore {
     }
 
     async fn list_by_project(&self, project_id: &str) -> Result<Vec<ImportSchedule>, RepoError> {
-        let st = self.state.lock().expect("lock");
+        let st = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let mut out: Vec<ImportSchedule> =
             st.schedules.iter().filter(|s| s.project_id == project_id).cloned().collect();
         out.reverse();
@@ -60,17 +60,17 @@ impl ImportScheduleStore for InMemoryImportScheduleStore {
     }
 
     async fn list_enabled(&self) -> Result<Vec<ImportSchedule>, RepoError> {
-        let st = self.state.lock().expect("lock");
+        let st = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         Ok(st.schedules.iter().filter(|s| s.enabled).cloned().collect())
     }
 
     async fn get(&self, id: &str) -> Result<Option<ImportSchedule>, RepoError> {
-        let st = self.state.lock().expect("lock");
+        let st = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         Ok(st.schedules.iter().find(|s| s.id == id).cloned())
     }
 
     async fn set_enabled(&self, id: &str, enabled: bool) -> Result<(), RepoError> {
-        let mut st = self.state.lock().expect("lock");
+        let mut st = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         if let Some(s) = st.schedules.iter_mut().find(|s| s.id == id) {
             s.enabled = enabled;
         }
@@ -78,13 +78,13 @@ impl ImportScheduleStore for InMemoryImportScheduleStore {
     }
 
     async fn delete(&self, id: &str) -> Result<(), RepoError> {
-        let mut st = self.state.lock().expect("lock");
+        let mut st = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         st.schedules.retain(|s| s.id != id);
         Ok(())
     }
 
     async fn record_run(&self, id: &str, result: &str, operator: &str) -> Result<(), RepoError> {
-        let mut st = self.state.lock().expect("lock");
+        let mut st = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let stamp = format!("run-{}", result.len());
         if let Some(s) = st.schedules.iter_mut().find(|s| s.id == id) {
             s.last_run_at = Some(stamp);

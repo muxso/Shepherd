@@ -207,10 +207,10 @@ async fn main() -> anyhow::Result<()> {
         tokio::spawn(async move {
             loop {
                 tokio::time::sleep(every).await;
-                let cur = rid.lock().expect("lock").clone();
+                let cur = rid.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clone();
                 if !client.heartbeat(&cur).await.unwrap_or(false) {
                     if let Ok(new) = client.register(&name, &caps, mc).await {
-                        *rid.lock().expect("lock") = new;
+                        *rid.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = new;
                     }
                 }
             }
@@ -227,7 +227,7 @@ async fn main() -> anyhow::Result<()> {
             _ = wait_shutdown(&mut sd) => break,
             p = sem.clone().acquire_owned() => p.expect("semaphore closed"),
         };
-        let rid_now = runtime_id.lock().expect("lock").clone();
+        let rid_now = runtime_id.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clone();
         let claimed = tokio::select! {
             _ = wait_shutdown(&mut sd) => { drop(permit); break; }
             r = client.claim(&cfg.caps, &rid_now) => r,

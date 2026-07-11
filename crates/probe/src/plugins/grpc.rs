@@ -56,7 +56,7 @@ impl GrpcPlugin {
     }
 
     async fn channel_for(&self, target: &str) -> Result<Channel, String> {
-        if let Some(c) = self.channels.lock().expect("channels lock").get(target).cloned() {
+        if let Some(c) = self.channels.lock().unwrap_or_else(std::sync::PoisonError::into_inner).get(target).cloned() {
             return Ok(c);
         }
         let endpoint = Channel::from_shared(target.to_string()).map_err(|e| e.to_string())?;
@@ -64,7 +64,7 @@ impl GrpcPlugin {
         Ok(self
             .channels
             .lock()
-            .expect("channels lock")
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .entry(target.to_string())
             .or_insert(channel)
             .clone())

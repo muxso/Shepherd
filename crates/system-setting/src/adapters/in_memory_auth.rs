@@ -68,7 +68,7 @@ impl InMemorySessionStore {
     }
 
     pub fn insert_expired(&self, token: &str, user_id: &str) {
-        self.state.lock().expect("lock").sessions.insert(
+        self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner).sessions.insert(
             token.to_string(),
             Session {
                 token: token.to_string(),
@@ -88,7 +88,7 @@ impl SessionStore for InMemorySessionStore {
         permissions: PermissionSet,
         ttl_secs: i64,
     ) -> Result<String, AuthRepoError> {
-        let mut st = self.state.lock().expect("lock");
+        let mut st = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         st.seq += 1;
         let token = format!("sess-{}", st.seq);
         st.sessions.insert(
@@ -104,7 +104,7 @@ impl SessionStore for InMemorySessionStore {
     }
 
     async fn get(&self, token: &str) -> Result<Option<Session>, AuthRepoError> {
-        let st = self.state.lock().expect("lock");
+        let st = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         Ok(match st.sessions.get(token) {
             Some(s) if s.expires_at_ms > now_ms() => Some(s.clone()),
             _ => None,
@@ -112,7 +112,7 @@ impl SessionStore for InMemorySessionStore {
     }
 
     async fn revoke(&self, token: &str) -> Result<(), AuthRepoError> {
-        self.state.lock().expect("lock").sessions.remove(token);
+        self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner).sessions.remove(token);
         Ok(())
     }
 }

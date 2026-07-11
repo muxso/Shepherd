@@ -327,7 +327,7 @@ mod tests {
         #[async_trait]
         impl DeliveryObserver for Spy {
             async fn on_progress(&self, a: &DeliveryAttempt) {
-                self.settled.lock().unwrap().push((a.task_id.clone(), a.status.as_str().to_string()));
+                self.settled.lock().unwrap_or_else(std::sync::PoisonError::into_inner).push((a.task_id.clone(), a.status.as_str().to_string()));
             }
         }
 
@@ -339,7 +339,7 @@ mod tests {
         .with_observer(spy.clone());
 
         svc.dispatch("d1", "t1", "x", "", &[], "CLAUDE_CODE", None, None, None).await.expect("dispatch");
-        assert_eq!(spy.settled.lock().unwrap().as_slice(), &[("t1".into(), "DELIVERED".into())]);
+        assert_eq!(spy.settled.lock().unwrap_or_else(std::sync::PoisonError::into_inner).as_slice(), &[("t1".into(), "DELIVERED".into())]);
     }
 
     #[tokio::test]
@@ -355,7 +355,7 @@ mod tests {
         #[async_trait]
         impl DeliveryObserver for Spy {
             async fn on_progress(&self, _a: &DeliveryAttempt) {
-                *self.n.lock().unwrap() += 1;
+                *self.n.lock().unwrap_or_else(std::sync::PoisonError::into_inner) += 1;
             }
         }
 
@@ -367,7 +367,7 @@ mod tests {
         .with_observer(spy.clone());
 
         svc.dispatch("d1", "t1", "x", "", &[], "CODEX", None, None, None).await.expect("dispatch");
-        assert_eq!(*spy.n.lock().unwrap(), 1);
+        assert_eq!(*spy.n.lock().unwrap_or_else(std::sync::PoisonError::into_inner), 1);
     }
 
     #[tokio::test]

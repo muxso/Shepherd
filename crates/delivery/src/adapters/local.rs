@@ -191,7 +191,7 @@ mod tests {
     #[async_trait]
     impl EventSink for RecordingSink {
         async fn emit(&self, e: NewExecutionEvent) {
-            self.events.lock().unwrap().push((e.kind, e.message));
+            self.events.lock().unwrap_or_else(std::sync::PoisonError::into_inner).push((e.kind, e.message));
         }
     }
 
@@ -226,7 +226,7 @@ mod tests {
             }
             other => panic!("expected Completed, got {other:?}"),
         }
-        let events = sink.events.lock().unwrap();
+        let events = sink.events.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         assert_eq!(events.len(), 2);
         assert_eq!(events[0], (EventKind::Decision, "用 argon2".to_string()));
         assert_eq!(events[1].0, EventKind::FileChange);
@@ -244,7 +244,7 @@ mod tests {
             DispatchOutcome::Completed { deliverable } => assert_eq!(deliverable.reference, "local://t1"),
             other => panic!("expected Completed, got {other:?}"),
         }
-        let events = sink.events.lock().unwrap();
+        let events = sink.events.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         assert_eq!(events.len(), 1);
         assert_eq!(events[0], (EventKind::Log, "just text".to_string()));
     }

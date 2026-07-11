@@ -34,7 +34,7 @@ impl InMemoryWorkQueue {
     }
 
     pub fn len(&self) -> usize {
-        self.inner.lock().expect("lock").len()
+        self.inner.lock().unwrap_or_else(std::sync::PoisonError::into_inner).len()
     }
 
     pub fn is_empty(&self) -> bool {
@@ -42,7 +42,7 @@ impl InMemoryWorkQueue {
     }
 
     fn try_claim(&self, caps: &[ExecutorKind], consumer_name: &str) -> Option<WorkSpec> {
-        let mut q = self.inner.lock().expect("lock");
+        let mut q = self.inner.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         // 定向任务只允许 name 相符的 runtime 认领;未定向任务人人可领。
         let pos = q.iter().position(|s| {
             caps.contains(&s.executor)
@@ -55,7 +55,7 @@ impl InMemoryWorkQueue {
 #[async_trait]
 impl WorkQueue for InMemoryWorkQueue {
     async fn enqueue(&self, spec: &WorkSpec) {
-        self.inner.lock().expect("lock").push_back(spec.clone());
+        self.inner.lock().unwrap_or_else(std::sync::PoisonError::into_inner).push_back(spec.clone());
     }
 
     // 认领即从队列移除,故无 PEL:ack 与超时回收都无需操作,consumer(id)被忽略。
@@ -86,7 +86,7 @@ impl WorkQueue for InMemoryWorkQueue {
 
     // 无 PEL,故 in_flight / oldest 恒 0;ready = 各能力排队数。
     async fn stats(&self) -> Vec<QueueStat> {
-        let q = self.inner.lock().expect("lock");
+        let q = self.inner.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         KNOWN_CAPS
             .into_iter()
             .map(|k| QueueStat {

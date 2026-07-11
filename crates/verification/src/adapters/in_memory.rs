@@ -25,7 +25,7 @@ impl InMemoryVerificationRepository {
 #[async_trait]
 impl VerificationRepository for InMemoryVerificationRepository {
     async fn create(&self, new: &NewVerification) -> Result<Verification, RepoError> {
-        let mut st = self.state.lock().expect("lock poisoned");
+        let mut st = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         st.seq += 1;
         let v = Verification::from_new(&format!("verification-{}", st.seq), new);
         st.verifications.push(v.clone());
@@ -40,7 +40,7 @@ impl VerificationRepository for InMemoryVerificationRepository {
         Ok(self
             .state
             .lock()
-            .expect("lock")
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .verifications
             .iter()
             .find(|v| v.requirement_id == requirement_id && v.requirement_version == requirement_version)
@@ -48,11 +48,11 @@ impl VerificationRepository for InMemoryVerificationRepository {
     }
 
     async fn get(&self, id: &str) -> Result<Option<Verification>, RepoError> {
-        Ok(self.state.lock().expect("lock").verifications.iter().find(|v| v.id == id).cloned())
+        Ok(self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner).verifications.iter().find(|v| v.id == id).cloned())
     }
 
     async fn save(&self, verification: &Verification) -> Result<(), RepoError> {
-        let mut st = self.state.lock().expect("lock");
+        let mut st = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         if let Some(slot) = st.verifications.iter_mut().find(|v| v.id == verification.id) {
             *slot = verification.clone();
         }

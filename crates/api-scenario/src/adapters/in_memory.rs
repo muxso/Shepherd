@@ -42,7 +42,7 @@ impl ApiScenarioRepository for InMemoryApiScenarioRepository {
         &self,
         s: &NewApiScenario,
     ) -> Result<ApiScenario, RepoError> {
-        let mut state = self.state.lock().expect("lock");
+        let mut state = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         state.scn_seq += 1;
         let scenario = ApiScenario {
             id: format!("scn-{}", state.scn_seq),
@@ -67,7 +67,7 @@ impl ApiScenarioRepository for InMemoryApiScenarioRepository {
         status: &str,
         meta: &serde_json::Value,
     ) -> Result<Option<ApiScenario>, RepoError> {
-        let mut state = self.state.lock().expect("lock");
+        let mut state = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let Some(rec) = state.scenarios.get_mut(id) else { return Ok(None) };
         rec.scenario.name = name.to_string();
         rec.scenario.status = ScenarioStatus::parse(status);
@@ -78,7 +78,7 @@ impl ApiScenarioRepository for InMemoryApiScenarioRepository {
     }
 
     async fn get_scenario(&self, id: &str) -> Result<Option<ApiScenario>, RepoError> {
-        Ok(self.state.lock().expect("lock").scenarios.get(id).map(|r| {
+        Ok(self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner).scenarios.get(id).map(|r| {
             let mut s = r.scenario.clone();
             s.steps.sort_by_key(|st| st.order);
             s
@@ -89,7 +89,7 @@ impl ApiScenarioRepository for InMemoryApiScenarioRepository {
         &self,
         project_id: &str,
     ) -> Result<Vec<ApiScenario>, RepoError> {
-        let state = self.state.lock().expect("lock");
+        let state = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let mut out: Vec<ApiScenario> = state
             .scenarios
             .values()
@@ -109,7 +109,7 @@ impl ApiScenarioRepository for InMemoryApiScenarioRepository {
         scenario_id: &str,
         step: &NewScenarioStep,
     ) -> Result<ScenarioStep, RepoError> {
-        let mut state = self.state.lock().expect("lock");
+        let mut state = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         state.step_seq += 1;
         let stored = ScenarioStep {
             id: format!("step-{}", state.step_seq),
@@ -125,7 +125,7 @@ impl ApiScenarioRepository for InMemoryApiScenarioRepository {
     }
 
     async fn delete_step(&self, scenario_id: &str, step_id: &str) -> Result<bool, RepoError> {
-        let mut state = self.state.lock().expect("lock");
+        let mut state = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let Some(rec) = state.scenarios.get_mut(scenario_id) else { return Ok(false) };
         let before = rec.scenario.steps.len();
         rec.scenario.steps.retain(|s| s.id != step_id);
@@ -133,11 +133,11 @@ impl ApiScenarioRepository for InMemoryApiScenarioRepository {
     }
 
     async fn delete_scenario(&self, id: &str) -> Result<bool, RepoError> {
-        Ok(self.state.lock().expect("lock").scenarios.remove(id).is_some())
+        Ok(self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner).scenarios.remove(id).is_some())
     }
 
     async fn reorder_steps(&self, scenario_id: &str, ordered_ids: &[String]) -> Result<(), RepoError> {
-        let mut state = self.state.lock().expect("lock");
+        let mut state = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let Some(rec) = state.scenarios.get_mut(scenario_id) else { return Ok(()) };
         for (i, id) in ordered_ids.iter().enumerate() {
             if let Some(st) = rec.scenario.steps.iter_mut().find(|s| &s.id == id) {
@@ -154,7 +154,7 @@ impl ApiScenarioRepository for InMemoryApiScenarioRepository {
         detail: Option<&str>,
         user_id: Option<&str>,
     ) -> Result<(), RepoError> {
-        let mut state = self.state.lock().expect("lock");
+        let mut state = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         state.change_seq += 1;
         let seq = state.change_seq;
         state.changes.push(ScenarioChange {
@@ -169,7 +169,7 @@ impl ApiScenarioRepository for InMemoryApiScenarioRepository {
     }
 
     async fn list_changes(&self, scenario_id: &str) -> Result<Vec<ScenarioChange>, RepoError> {
-        let state = self.state.lock().expect("lock");
+        let state = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let mut out: Vec<ScenarioChange> =
             state.changes.iter().filter(|c| c.scenario_id == scenario_id).cloned().collect();
         out.reverse();
@@ -184,7 +184,7 @@ impl ApiScenarioRepository for InMemoryApiScenarioRepository {
         case_count: i32,
         report_id: Option<&str>,
     ) -> Result<ScenarioExecution, RepoError> {
-        let mut state = self.state.lock().expect("lock");
+        let mut state = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         state.exec_seq += 1;
         let n = state.exec_seq;
         let status = ExecutionStatus::parse(status).unwrap_or_default();
@@ -202,7 +202,7 @@ impl ApiScenarioRepository for InMemoryApiScenarioRepository {
     }
 
     async fn count_executions(&self, scenario_id: &str) -> Result<u64, RepoError> {
-        let state = self.state.lock().expect("lock");
+        let state = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         Ok(state.executions.iter().filter(|e| e.scenario_id == scenario_id).count() as u64)
     }
 
@@ -212,7 +212,7 @@ impl ApiScenarioRepository for InMemoryApiScenarioRepository {
         offset: u64,
         limit: u32,
     ) -> Result<Vec<ScenarioExecution>, RepoError> {
-        let state = self.state.lock().expect("lock");
+        let state = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let out: Vec<ScenarioExecution> = state
             .executions
             .iter()
@@ -232,7 +232,7 @@ impl ApiScenarioRepository for InMemoryApiScenarioRepository {
         if case_ids.is_empty() {
             return Ok(Vec::new());
         }
-        let state = self.state.lock().expect("lock");
+        let state = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let mut out: Vec<ScenarioReference> = state
             .scenarios
             .values()

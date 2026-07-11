@@ -20,7 +20,7 @@ impl RedisPlugin {
     }
 
     async fn conn_for(&self, target: &str) -> Result<MultiplexedConnection, String> {
-        if let Some(c) = self.conns.lock().expect("conns lock").get(target).cloned() {
+        if let Some(c) = self.conns.lock().unwrap_or_else(std::sync::PoisonError::into_inner).get(target).cloned() {
             return Ok(c);
         }
         let client = redis::Client::open(target).map_err(|e| e.to_string())?;
@@ -29,7 +29,7 @@ impl RedisPlugin {
         Ok(self
             .conns
             .lock()
-            .expect("conns lock")
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .entry(target.to_string())
             .or_insert(conn)
             .clone())

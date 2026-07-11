@@ -104,7 +104,7 @@ pub mod testing {
             permissions: PermissionSet,
             _ttl_secs: i64,
         ) -> Result<String, AuthRepoError> {
-            let mut g = self.inner.lock().expect("lock");
+            let mut g = self.inner.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
             g.0 += 1;
             let token = format!("test-token-{}", g.0);
             g.1.insert(
@@ -119,10 +119,10 @@ pub mod testing {
             Ok(token)
         }
         async fn get(&self, token: &str) -> Result<Option<Session>, AuthRepoError> {
-            Ok(self.inner.lock().expect("lock").1.get(token).cloned())
+            Ok(self.inner.lock().unwrap_or_else(std::sync::PoisonError::into_inner).1.get(token).cloned())
         }
         async fn revoke(&self, token: &str) -> Result<(), AuthRepoError> {
-            self.inner.lock().expect("lock").1.remove(token);
+            self.inner.lock().unwrap_or_else(std::sync::PoisonError::into_inner).1.remove(token);
             Ok(())
         }
     }

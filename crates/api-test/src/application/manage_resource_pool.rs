@@ -107,19 +107,19 @@ mod tests {
     #[async_trait]
     impl ResourcePoolAdminPort for FakeAdmin {
         async fn create(&self, pool: &NewResourcePool) -> Result<ResourcePool, PortError> {
-            let mut pools = self.pools.lock().expect("lock");
+            let mut pools = self.pools.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
             let v = view(format!("p{}", pools.len() + 1), pool);
             pools.push(v.clone());
             Ok(v)
         }
         async fn list(&self) -> Result<Vec<ResourcePool>, PortError> {
-            Ok(self.pools.lock().expect("lock").clone())
+            Ok(self.pools.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clone())
         }
         async fn get(&self, id: &str) -> Result<Option<ResourcePool>, PortError> {
-            Ok(self.pools.lock().expect("lock").iter().find(|p| p.id == id).cloned())
+            Ok(self.pools.lock().unwrap_or_else(std::sync::PoisonError::into_inner).iter().find(|p| p.id == id).cloned())
         }
         async fn update(&self, id: &str, pool: &NewResourcePool) -> Result<Option<ResourcePool>, PortError> {
-            let mut pools = self.pools.lock().expect("lock");
+            let mut pools = self.pools.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
             match pools.iter_mut().find(|p| p.id == id) {
                 Some(slot) => {
                     *slot = view(id.to_string(), pool);
@@ -129,7 +129,7 @@ mod tests {
             }
         }
         async fn delete(&self, id: &str) -> Result<bool, PortError> {
-            let mut pools = self.pools.lock().expect("lock");
+            let mut pools = self.pools.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
             let before = pools.len();
             pools.retain(|p| p.id != id);
             Ok(pools.len() != before)

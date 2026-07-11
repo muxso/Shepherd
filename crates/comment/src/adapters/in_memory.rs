@@ -26,7 +26,7 @@ impl InMemoryCommentRepository {
 #[async_trait]
 impl CommentRepository for InMemoryCommentRepository {
     async fn insert(&self, new_comment: &NewComment) -> Result<Comment, RepoError> {
-        let mut state = self.state.lock().expect("lock");
+        let mut state = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         state.seq += 1;
         let comment = Comment {
             id: format!("comment-{}", state.seq),
@@ -43,7 +43,7 @@ impl CommentRepository for InMemoryCommentRepository {
     }
 
     async fn list(&self, target_type: &str, target_id: &str) -> Result<Vec<Comment>, RepoError> {
-        let state = self.state.lock().expect("lock");
+        let state = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let mut out: Vec<Comment> = state
             .comments
             .values()
@@ -55,12 +55,12 @@ impl CommentRepository for InMemoryCommentRepository {
     }
 
     async fn get(&self, id: &str) -> Result<Option<Comment>, RepoError> {
-        let state = self.state.lock().expect("lock");
+        let state = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         Ok(state.comments.get(id).filter(|c| !c.deleted).cloned())
     }
 
     async fn soft_delete(&self, id: &str) -> Result<(), RepoError> {
-        if let Some(c) = self.state.lock().expect("lock").comments.get_mut(id) {
+        if let Some(c) = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner).comments.get_mut(id) {
             c.deleted = true;
         }
         Ok(())

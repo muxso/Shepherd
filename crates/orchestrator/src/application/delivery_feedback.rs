@@ -150,7 +150,7 @@ mod tests {
             Ok(self.map.iter().find(|(d, _, _)| d == id).map(|(_, r, v)| (r.clone(), *v)))
         }
         async fn advance_task(&self, _d: &str, t: &str, target: TaskTarget) -> Result<(), OrchError> {
-            self.advanced.lock().unwrap().push((t.into(), target));
+            self.advanced.lock().unwrap_or_else(std::sync::PoisonError::into_inner).push((t.into(), target));
             Ok(())
         }
         async fn task_criteria(&self, _d: &str, _t: &str) -> Result<Vec<String>, OrchError> {
@@ -170,11 +170,11 @@ mod tests {
             Ok(self.found.as_ref().filter(|(r, v, _)| r == req && *v == ver).map(|(_, _, id)| id.clone()))
         }
         async fn link(&self, vid: &str, _d: &str, t: &str, texts: &[String]) -> Result<(), OrchError> {
-            self.linked.lock().unwrap().push((format!("{vid}/{t}"), texts.to_vec()));
+            self.linked.lock().unwrap_or_else(std::sync::PoisonError::into_inner).push((format!("{vid}/{t}"), texts.to_vec()));
             Ok(())
         }
         async fn sync(&self, vid: &str, _d: &str, _t: &str, s: bool) -> Result<(), OrchError> {
-            self.synced.lock().unwrap().push((vid.into(), s));
+            self.synced.lock().unwrap_or_else(std::sync::PoisonError::into_inner).push((vid.into(), s));
             Ok(())
         }
     }
@@ -194,8 +194,8 @@ mod tests {
             .await
             .expect("ok");
         assert!(out.verdict.as_ref().unwrap().passed);
-        assert_eq!(task.advanced.lock().unwrap().last().unwrap().1, TaskTarget::Verified);
-        assert_eq!(verif.synced.lock().unwrap()[0].1, true);
+        assert_eq!(task.advanced.lock().unwrap_or_else(std::sync::PoisonError::into_inner).last().unwrap().1, TaskTarget::Verified);
+        assert_eq!(verif.synced.lock().unwrap_or_else(std::sync::PoisonError::into_inner)[0].1, true);
     }
 
     #[tokio::test]
@@ -211,10 +211,10 @@ mod tests {
         orch.on_progress("d1", "t1", DeliveryProgress::Delivered { deliverable: dv("b", "d") })
             .await
             .expect("ok");
-        let linked = verif.linked.lock().unwrap();
+        let linked = verif.linked.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         assert_eq!(linked.len(), 1);
         assert_eq!(linked[0], ("v1/t1".to_string(), vec!["登录成功".to_string()]));
-        assert_eq!(verif.synced.lock().unwrap()[0].1, true);
+        assert_eq!(verif.synced.lock().unwrap_or_else(std::sync::PoisonError::into_inner)[0].1, true);
     }
 
     #[tokio::test]
@@ -228,8 +228,8 @@ mod tests {
             .await
             .expect("ok");
         assert!(!out.verdict.as_ref().unwrap().passed);
-        assert_eq!(task.advanced.lock().unwrap().last().unwrap().1, TaskTarget::Failed);
-        assert_eq!(verif.synced.lock().unwrap()[0].1, false);
+        assert_eq!(task.advanced.lock().unwrap_or_else(std::sync::PoisonError::into_inner).last().unwrap().1, TaskTarget::Failed);
+        assert_eq!(verif.synced.lock().unwrap_or_else(std::sync::PoisonError::into_inner)[0].1, false);
     }
 
     #[tokio::test]
@@ -242,7 +242,7 @@ mod tests {
             .await
             .expect("ok");
         assert!(out.verdict.unwrap().passed);
-        assert_eq!(task.advanced.lock().unwrap().last().unwrap().1, TaskTarget::Verified);
+        assert_eq!(task.advanced.lock().unwrap_or_else(std::sync::PoisonError::into_inner).last().unwrap().1, TaskTarget::Verified);
     }
 
     struct FakeReviser {
@@ -259,7 +259,7 @@ mod tests {
             _prev: &DeliverableView,
             _feedback: &str,
         ) -> Result<DeliverableView, OrchError> {
-            let mut n = self.calls.lock().unwrap();
+            let mut n = self.calls.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
             *n += 1;
             if *n >= self.fix_after {
                 Ok(dv("branch:fixed", "已据反馈补齐"))
@@ -282,8 +282,8 @@ mod tests {
             .expect("ok");
         assert!(out.verdict.as_ref().unwrap().passed);
         assert_eq!(out.revisions, 1);
-        assert_eq!(task.advanced.lock().unwrap().last().unwrap().1, TaskTarget::Verified);
-        assert_eq!(verif.synced.lock().unwrap().last().unwrap().1, true);
+        assert_eq!(task.advanced.lock().unwrap_or_else(std::sync::PoisonError::into_inner).last().unwrap().1, TaskTarget::Verified);
+        assert_eq!(verif.synced.lock().unwrap_or_else(std::sync::PoisonError::into_inner).last().unwrap().1, true);
     }
 
     #[tokio::test]
@@ -299,7 +299,7 @@ mod tests {
             .expect("ok");
         assert!(!out.verdict.as_ref().unwrap().passed);
         assert_eq!(out.revisions, 2);
-        assert_eq!(task.advanced.lock().unwrap().last().unwrap().1, TaskTarget::Failed);
+        assert_eq!(task.advanced.lock().unwrap_or_else(std::sync::PoisonError::into_inner).last().unwrap().1, TaskTarget::Failed);
     }
 
     #[tokio::test]
@@ -309,6 +309,6 @@ mod tests {
         let out = orch.on_progress("d1", "t1", DeliveryProgress::Running).await.expect("ok");
         assert_eq!(out.verification, VerificationSync::NotApplicable);
         assert!(out.verdict.is_none());
-        assert_eq!(task.advanced.lock().unwrap()[0].1, TaskTarget::Running);
+        assert_eq!(task.advanced.lock().unwrap_or_else(std::sync::PoisonError::into_inner)[0].1, TaskTarget::Running);
     }
 }

@@ -285,7 +285,7 @@ mod tests {
             outcome: &str,
             _failures: &[String],
         ) -> Result<(), PortError> {
-            self.rows.lock().expect("lock").push((case_id.to_string(), outcome.to_string()));
+            self.rows.lock().unwrap_or_else(std::sync::PoisonError::into_inner).push((case_id.to_string(), outcome.to_string()));
             Ok(())
         }
     }
@@ -351,7 +351,7 @@ mod tests {
             .await
             .expect("ok");
         assert!(ok);
-        assert_eq!(sink.rows.lock().expect("lock").len(), 3);
+        assert_eq!(sink.rows.lock().unwrap_or_else(std::sync::PoisonError::into_inner).len(), 3);
     }
 
     #[tokio::test]
@@ -376,7 +376,7 @@ mod tests {
             },
         ];
         exec(specs, sink.clone()).run("r1", &plan, &env, false).await.expect("ok");
-        assert_eq!(sink.rows.lock().expect("lock").len(), 1);
+        assert_eq!(sink.rows.lock().unwrap_or_else(std::sync::PoisonError::into_inner).len(), 1);
     }
 
     #[tokio::test]
@@ -394,7 +394,7 @@ mod tests {
             ],
         }];
         exec(specs, sink.clone()).run("r1", &plan, &ResolvedEnv::default(), false).await.expect("ok");
-        let rows = sink.rows.lock().expect("lock");
+        let rows = sink.rows.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         assert_eq!(rows.iter().filter(|(id, _)| id == "body").count(), 3);
         assert_eq!(rows.iter().filter(|(id, _)| id == "once").count(), 1);
     }
@@ -415,7 +415,7 @@ mod tests {
             .await
             .expect("ok");
         assert!(!ok);
-        let rows = sink.rows.lock().expect("lock");
+        let rows = sink.rows.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0], ("bad".to_string(), "ERROR".to_string()));
     }
@@ -488,7 +488,7 @@ mod tests {
             .await
             .expect("ok");
         assert!(ok);
-        let rows = sink.rows.lock().expect("lock");
+        let rows = sink.rows.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let b = rows.iter().find(|(id, _)| id == "b").expect("b recorded");
         assert_eq!(b.1, "SUCCESS");
     }

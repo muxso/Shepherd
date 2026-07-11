@@ -41,7 +41,7 @@ pub struct Metrics {
 impl Metrics {
     pub fn observe_http(&self, method: &str, status: u16, ms: u64) {
         let series = {
-            let mut g = self.http.lock().expect("lock");
+            let mut g = self.http.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
             g.entry((method.to_string(), status)).or_default().clone()
         };
         series.observe(ms);
@@ -49,7 +49,7 @@ impl Metrics {
 
     pub fn render(&self) -> String {
         let snapshot: Vec<((String, u16), Arc<Series>)> = {
-            let g = self.http.lock().expect("lock");
+            let g = self.http.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
             g.iter().map(|(k, v)| (k.clone(), v.clone())).collect()
         };
         let mut out = String::new();

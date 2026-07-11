@@ -24,7 +24,7 @@ impl InMemoryRequirementRepository {
     }
 
     pub fn soft_delete(&self, id: &str) {
-        let mut st = self.state.lock().expect("lock poisoned");
+        let mut st = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         if let Some(r) = st.requirements.iter_mut().find(|r| r.id == id) {
             r.soft_delete();
         }
@@ -41,7 +41,7 @@ impl RequirementRepository for InMemoryRequirementRepository {
         Ok(self
             .state
             .lock()
-            .expect("lock poisoned")
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .requirements
             .iter()
             .find(|r| r.occupies_title() && r.project_id == project_id && r.title == title)
@@ -49,7 +49,7 @@ impl RequirementRepository for InMemoryRequirementRepository {
     }
 
     async fn insert(&self, new: &NewRequirement) -> Result<Requirement, RepoError> {
-        let mut st = self.state.lock().expect("lock poisoned");
+        let mut st = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         st.seq += 1;
         let req = Requirement::create(&format!("requirement-{}", st.seq), new);
         st.requirements.push(req.clone());
@@ -57,14 +57,14 @@ impl RequirementRepository for InMemoryRequirementRepository {
     }
 
     async fn get(&self, id: &str) -> Result<Option<Requirement>, RepoError> {
-        Ok(self.state.lock().expect("lock").requirements.iter().find(|r| r.id == id).cloned())
+        Ok(self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner).requirements.iter().find(|r| r.id == id).cloned())
     }
 
     async fn count_active(&self, project_id: &str) -> Result<u64, RepoError> {
         Ok(self
             .state
             .lock()
-            .expect("lock")
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .requirements
             .iter()
             .filter(|r| r.occupies_title() && r.project_id == project_id)
@@ -77,7 +77,7 @@ impl RequirementRepository for InMemoryRequirementRepository {
         offset: u64,
         limit: u32,
     ) -> Result<Vec<Requirement>, RepoError> {
-        let st = self.state.lock().expect("lock");
+        let st = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         // (显式秩, 插入序) 排序:未排序的秩为 0 → 按插入序;与历史行为一致。
         let mut items: Vec<(usize, &Requirement)> = st
             .requirements
@@ -95,7 +95,7 @@ impl RequirementRepository for InMemoryRequirementRepository {
     }
 
     async fn save(&self, requirement: &Requirement) -> Result<(), RepoError> {
-        let mut st = self.state.lock().expect("lock");
+        let mut st = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         if let Some(slot) = st.requirements.iter_mut().find(|r| r.id == requirement.id) {
             *slot = requirement.clone();
         }
@@ -103,7 +103,7 @@ impl RequirementRepository for InMemoryRequirementRepository {
     }
 
     async fn set_order(&self, project_id: &str, ordered_ids: &[String]) -> Result<(), RepoError> {
-        let mut st = self.state.lock().expect("lock");
+        let mut st = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         for (i, id) in ordered_ids.iter().enumerate() {
             if st.requirements.iter().any(|r| r.id == *id && r.project_id == project_id) {
                 st.order.insert(id.clone(), i as i64 + 1);
@@ -113,7 +113,7 @@ impl RequirementRepository for InMemoryRequirementRepository {
     }
 
     async fn status_counts(&self, project_id: &str) -> Result<StatusCounts, RepoError> {
-        let st = self.state.lock().expect("lock");
+        let st = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let mut counts = StatusCounts::default();
         for r in st.requirements.iter().filter(|r| r.occupies_title() && r.project_id == project_id) {
             counts.add(r.status);

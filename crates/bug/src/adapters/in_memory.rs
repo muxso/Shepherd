@@ -27,7 +27,7 @@ impl InMemoryBugRepository {
     }
 
     pub fn set_flow(&self, project_id: &str, flow: StatusFlowGraph) {
-        self.state.lock().expect("lock").flows.insert(project_id.to_string(), flow);
+        self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner).flows.insert(project_id.to_string(), flow);
     }
 
     pub fn with_default_flow(project_id: &str) -> Self {
@@ -37,18 +37,18 @@ impl InMemoryBugRepository {
     }
 
     pub fn status_of(&self, bug_id: &str) -> Option<String> {
-        self.state.lock().expect("lock").bugs.get(bug_id).map(|b| b.status.clone())
+        self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner).bugs.get(bug_id).map(|b| b.status.clone())
     }
 }
 
 #[async_trait]
 impl BugRepository for InMemoryBugRepository {
     async fn status_flow(&self, project_id: &str) -> Result<StatusFlowGraph, RepoError> {
-        Ok(self.state.lock().expect("lock").flows.get(project_id).cloned().unwrap_or_default())
+        Ok(self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner).flows.get(project_id).cloned().unwrap_or_default())
     }
 
     async fn insert(&self, new_bug: &NewBug, initial_status: &str) -> Result<Bug, RepoError> {
-        let mut state = self.state.lock().expect("lock");
+        let mut state = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         state.seq += 1;
         let seq = state.seq;
         let bug = Bug {
@@ -66,7 +66,7 @@ impl BugRepository for InMemoryBugRepository {
     }
 
     async fn list(&self, project_id: &str) -> Result<Vec<Bug>, RepoError> {
-        let state = self.state.lock().expect("lock");
+        let state = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         Ok(state
             .order
             .iter()
@@ -78,18 +78,18 @@ impl BugRepository for InMemoryBugRepository {
     }
 
     async fn get(&self, id: &str) -> Result<Option<Bug>, RepoError> {
-        Ok(self.state.lock().expect("lock").bugs.get(id).cloned())
+        Ok(self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner).bugs.get(id).cloned())
     }
 
     async fn set_status(&self, id: &str, status: &str) -> Result<(), RepoError> {
-        if let Some(b) = self.state.lock().expect("lock").bugs.get_mut(id) {
+        if let Some(b) = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner).bugs.get_mut(id) {
             b.status = status.to_string();
         }
         Ok(())
     }
 
     async fn add_follower(&self, bug_id: &str, user_id: &str) -> Result<(), RepoError> {
-        let mut state = self.state.lock().expect("lock");
+        let mut state = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let followers = state.followers.entry(bug_id.to_string()).or_default();
         if !followers.iter().any(|u| u == user_id) {
             followers.push(user_id.to_string());
@@ -98,7 +98,7 @@ impl BugRepository for InMemoryBugRepository {
     }
 
     async fn remove_follower(&self, bug_id: &str, user_id: &str) -> Result<(), RepoError> {
-        let mut state = self.state.lock().expect("lock");
+        let mut state = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         if let Some(followers) = state.followers.get_mut(bug_id) {
             followers.retain(|u| u != user_id);
         }
@@ -106,11 +106,11 @@ impl BugRepository for InMemoryBugRepository {
     }
 
     async fn list_followers(&self, bug_id: &str) -> Result<Vec<String>, RepoError> {
-        Ok(self.state.lock().expect("lock").followers.get(bug_id).cloned().unwrap_or_default())
+        Ok(self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner).followers.get(bug_id).cloned().unwrap_or_default())
     }
 
     async fn add_relation(&self, rel: &BugRelation) -> Result<(), RepoError> {
-        let mut state = self.state.lock().expect("lock");
+        let mut state = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let rels = state.relations.entry(rel.bug_id.clone()).or_default();
         if !rels.iter().any(|r| r.kind == rel.kind && r.target_id == rel.target_id) {
             rels.push(rel.clone());
@@ -119,7 +119,7 @@ impl BugRepository for InMemoryBugRepository {
     }
 
     async fn remove_relation(&self, rel: &BugRelation) -> Result<(), RepoError> {
-        let mut state = self.state.lock().expect("lock");
+        let mut state = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         if let Some(rels) = state.relations.get_mut(&rel.bug_id) {
             rels.retain(|r| !(r.kind == rel.kind && r.target_id == rel.target_id));
         }
@@ -127,6 +127,6 @@ impl BugRepository for InMemoryBugRepository {
     }
 
     async fn list_relations(&self, bug_id: &str) -> Result<Vec<BugRelation>, RepoError> {
-        Ok(self.state.lock().expect("lock").relations.get(bug_id).cloned().unwrap_or_default())
+        Ok(self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner).relations.get(bug_id).cloned().unwrap_or_default())
     }
 }
