@@ -812,7 +812,9 @@ async fn revoke_role(
 struct ApiDoc;
 
 pub fn openapi() -> utoipa::openapi::OpenApi {
-    ApiDoc::openapi()
+    let mut doc = ApiDoc::openapi();
+    doc.merge(super::apikey_http::openapi());
+    doc
 }
 
 #[cfg(test)]

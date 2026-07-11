@@ -1,3 +1,4 @@
+pub mod apikey;
 pub mod auth;
 pub mod oidc;
 pub mod organization_repository;
@@ -5,6 +6,7 @@ pub mod role_repository;
 pub mod user_directory;
 pub mod user_repository;
 
+pub use apikey::{ApiKeyRecord, ApiKeyRepoError, ApiKeyRepository};
 pub use auth::{
     AuthRepoError, CredentialRepository, DirectoryAuthenticator, PasswordHasher, SessionStore,
     UserCredential, UserRoleQuery,

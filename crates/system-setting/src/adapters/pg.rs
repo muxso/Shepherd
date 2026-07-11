@@ -9,9 +9,10 @@ use crate::domain::{
     RoleScope, Session, User,
 };
 use crate::ports::{
-    AuthRepoError, CredentialRepository, DirectoryError, ExternalUserRepository, LinkedUser,
-    OrgRepoError, OrgRepository, RepoError, RoleRepoError, RoleRepository, SessionStore,
-    UserCredential, UserDirectory, UserRepository, UserRoleQuery, UserRoleRepository,
+    ApiKeyRecord, ApiKeyRepoError, ApiKeyRepository, AuthRepoError, CredentialRepository,
+    DirectoryError, ExternalUserRepository, LinkedUser, OrgRepoError, OrgRepository, RepoError,
+    RoleRepoError, RoleRepository, SessionStore, UserCredential, UserDirectory, UserRepository,
+    UserRoleQuery, UserRoleRepository,
 };
 
 fn repo_err(e: sqlx::Error) -> RepoError {
@@ -596,6 +597,94 @@ impl RoleRepository for PgRoleRepository {
     }
 }
 
+fn apikey_err(e: sqlx::Error) -> ApiKeyRepoError {
+    if e.as_database_error().is_some_and(|d| d.is_unique_violation()) {
+        return ApiKeyRepoError::NameExists;
+    }
+    ApiKeyRepoError::Backend(e.to_string())
+}
+
+fn row_to_apikey(row: &sqlx::postgres::PgRow) -> Result<ApiKeyRecord, ApiKeyRepoError> {
+    let err = |e: sqlx::Error| ApiKeyRepoError::Backend(e.to_string());
+    Ok(ApiKeyRecord {
+        id: row.try_get("id").map_err(err)?,
+        name: row.try_get("name").map_err(err)?,
+        secret_hash: row.try_get("secret_hash").map_err(err)?,
+        permissions: row.try_get::<Vec<String>, _>("permissions").map_err(err)?,
+        created_at_ms: row.try_get("created_at_ms").map_err(err)?,
+        revoked: row.try_get("revoked").map_err(err)?,
+    })
+}
+
+// created_at 是 TIMESTAMPTZ,这里统一转 epoch 毫秒,与全库 created_at(BIGINT ms)口径一致。
+const APIKEY_COLS: &str = "id, name, secret_hash, permissions, \
+     (extract(epoch from created_at) * 1000)::bigint AS created_at_ms, revoked";
+
+#[derive(Clone)]
+pub struct PgApiKeyRepository {
+    pool: PgPool,
+}
+
+impl PgApiKeyRepository {
+    pub fn new(pool: PgPool) -> Self {
+        Self { pool }
+    }
+}
+
+#[async_trait]
+impl ApiKeyRepository for PgApiKeyRepository {
+    async fn insert(
+        &self,
+        id: &str,
+        name: &str,
+        secret_hash: &str,
+        permissions: &[String],
+    ) -> Result<ApiKeyRecord, ApiKeyRepoError> {
+        let row = sqlx::query(&format!(
+            "INSERT INTO ms_apikey (id, name, secret_hash, permissions) \
+             VALUES ($1, $2, $3, $4) RETURNING {APIKEY_COLS}"
+        ))
+        .bind(id)
+        .bind(name)
+        .bind(secret_hash)
+        .bind(permissions)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(apikey_err)?;
+        row_to_apikey(&row)
+    }
+
+    async fn list(&self) -> Result<Vec<ApiKeyRecord>, ApiKeyRepoError> {
+        let rows =
+            sqlx::query(&format!("SELECT {APIKEY_COLS} FROM ms_apikey ORDER BY created_at, id"))
+                .fetch_all(&self.pool)
+                .await
+                .map_err(apikey_err)?;
+        rows.iter().map(row_to_apikey).collect()
+    }
+
+    async fn find_active(&self, id: &str) -> Result<Option<ApiKeyRecord>, ApiKeyRepoError> {
+        let row = sqlx::query(&format!(
+            "SELECT {APIKEY_COLS} FROM ms_apikey WHERE id = $1 AND revoked = false"
+        ))
+        .bind(id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(apikey_err)?;
+        row.as_ref().map(row_to_apikey).transpose()
+    }
+
+    async fn revoke(&self, id: &str) -> Result<bool, ApiKeyRepoError> {
+        let res =
+            sqlx::query("UPDATE ms_apikey SET revoked = true WHERE id = $1 AND revoked = false")
+                .bind(id)
+                .execute(&self.pool)
+                .await
+                .map_err(apikey_err)?;
+        Ok(res.rows_affected() > 0)
+    }
+}
+
 #[derive(Clone)]
 pub struct PgUserRoleRepository {
     pool: PgPool,
@@ -710,6 +799,38 @@ mod tests {
         assert_eq!(s.user_id, "u-admin");
         assert!(s.permissions.allows("SYSTEM_USER", "ADD"));
         assert!(sessions.get("no-such-token").await.expect("get").is_none());
+    }
+
+    #[tokio::test]
+    #[ignore = "需要 DATABASE_URL 指向一个 PostgreSQL 实例"]
+    async fn pg_apikey_crud_roundtrip() {
+        let url = std::env::var("DATABASE_URL").expect("set DATABASE_URL");
+        let pool = PgPool::connect(&url).await.expect("connect");
+        migrate::run(&pool).await.expect("migrate");
+        sqlx::raw_sql("TRUNCATE ms_apikey").execute(&pool).await.expect("trunc");
+
+        let repo = PgApiKeyRepository::new(pool);
+        let rec = repo
+            .insert("0123456789abcdef", "runner-1", "$argon2$fake", &["DELIVERY:READ".to_string()])
+            .await
+            .expect("insert");
+        assert_eq!(rec.name, "runner-1");
+        assert!(rec.created_at_ms > 0);
+        assert!(!rec.revoked);
+
+        // 重名 → NameExists
+        let dup = repo.insert("fedcba9876543210", "runner-1", "h", &[]).await;
+        assert!(matches!(dup, Err(ApiKeyRepoError::NameExists)));
+
+        let active = repo.find_active(&rec.id).await.expect("q").expect("some");
+        assert_eq!(active.secret_hash, "$argon2$fake");
+        assert_eq!(repo.list().await.expect("list").len(), 1);
+
+        assert!(repo.revoke(&rec.id).await.expect("revoke"));
+        assert!(repo.find_active(&rec.id).await.expect("q").is_none());
+        // 已吊销后再吊销 → false;列表仍保留审计记录
+        assert!(!repo.revoke(&rec.id).await.expect("revoke2"));
+        assert!(repo.list().await.expect("list")[0].revoked);
     }
 
     #[tokio::test]

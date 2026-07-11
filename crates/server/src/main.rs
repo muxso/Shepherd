@@ -64,9 +64,11 @@ use skill::application::{CreateSkillUseCase, SkillService};
 use system_setting::adapters::auth::Argon2PasswordHasher;
 use system_setting::adapters::oidc::{FeishuProvider, WecomProvider};
 use system_setting::adapters::pg::{
-    PgCredentialRepository, PgExternalUserRepository, PgOrgRepository, PgRoleRepository,
-    PgSessionStore, PgUserDirectory, PgUserRepository, PgUserRoleQuery, PgUserRoleRepository,
+    PgApiKeyRepository, PgCredentialRepository, PgExternalUserRepository, PgOrgRepository,
+    PgRoleRepository, PgSessionStore, PgUserDirectory, PgUserRepository, PgUserRoleQuery,
+    PgUserRoleRepository,
 };
+use system_setting::adapters::ApiKeySessionStore;
 use system_setting::application::{
     CreateUserUseCase, LoginUseCase, OidcLoginUseCase, OrganizationService,
     ResolveUserNamesUseCase, RoleService, UserRoleService, UserService,
@@ -190,10 +192,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 "VERIFICATION:READ+ADD+UPDATE".to_string(),
                 "SKILL:READ+ADD+UPDATE+DELETE".to_string(),
                 "COMMENT:READ+ADD+DELETE".to_string(),
+                "APIKEY:READ+ADD+DELETE".to_string(),
             ],
         )
         .await?;
-    let sessions = Arc::new(PgSessionStore::new(pool.clone()));
+    // 组合存储:sak_ 前缀走 API Key 校验(agent 派发凭证),其余仍是 PG 会话;路由零改动。
+    let apikeys = Arc::new(PgApiKeyRepository::new(pool.clone()));
+    let sessions: Arc<dyn webauth::SessionStore> = Arc::new(ApiKeySessionStore::new(
+        Arc::new(PgSessionStore::new(pool.clone())),
+        apikeys.clone(),
+        Arc::new(Argon2PasswordHasher),
+    ));
     let ttl_secs = cfg.session_ttl_secs;
     let role_repo = Arc::new(PgRoleRepository::new(pool.clone()));
     let user_role_repo = Arc::new(PgUserRoleRepository::new(pool.clone()));
@@ -250,6 +259,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let role_routes = system_setting::adapters::http::role_router(
         RoleService::new(role_repo.clone()),
         UserRoleService::new(role_repo, user_role_repo),
+        sessions.clone(),
+    );
+
+    let apikey_routes = system_setting::adapters::apikey_http::router(
+        apikeys.clone(),
+        Arc::new(Argon2PasswordHasher),
         sessions.clone(),
     );
 
@@ -346,7 +361,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let argv: Vec<String> = cmd.split_whitespace().map(String::from).collect();
         let mut ex = delivery::adapters::local::LocalCommandAgentExecutor::new(argv.clone(), argv);
         if cfg.agent.async_callback {
-            use webauth::SessionStore as _; // 令 sessions.create 可见
             let cb_host = bind.replace("0.0.0.0", "127.0.0.1");
             let cb_base = format!("http://{cb_host}");
             let perms = webauth::PermissionSet::from_raw(["DELIVERY:READ+UPDATE".to_string()])
@@ -600,7 +614,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let app = routes::assemble(vec![
         routes::group(
             "system",
-            user_routes.merge(oidc_routes).merge(org_routes).merge(role_routes),
+            user_routes
+                .merge(oidc_routes)
+                .merge(org_routes)
+                .merge(role_routes)
+                .merge(apikey_routes),
         ),
         routes::group(
             "project",
