@@ -698,6 +698,10 @@ export interface Requirement {
   id: string
   projectId?: string
   title: string
+  /** P0-P3。 */
+  priority?: string
+  /** FEATURE | ENHANCEMENT | TECH_DEBT | BUGFIX。 */
+  reqType?: string
   baselineVersion: number
   latestVersion?: number
   status: string
@@ -1246,8 +1250,11 @@ export const api = {
   perfReport: (id: string) => http.get<PerfReport>(`/perf/report/${id}`),
 
   // 需求(版本 / 基线 / 拆分)— 无 list 端点,列表用前端注册表
-  createRequirement: (b: { projectId: string; title: string; acceptanceCriteria: string[] }) =>
+  createRequirement: (b: { projectId: string; title: string; description?: string; acceptanceCriteria: string[]; priority?: string; reqType?: string }) =>
     http.post<Requirement>('/requirement', b),
+  /** MRD/原始素材 → 结构化需求草稿(配置 LLM 由 AI 起草,否则启发式)。 */
+  draftRequirement: (raw: string) =>
+    http.post<{ title: string; description: string; acceptanceCriteria: string[]; priority: string; source: 'llm' | 'heuristic' }>('/requirement/draft', { raw }),
   getRequirement: (id: string) => http.get<Requirement>(`/requirement/${id}`),
   // 列表走后端(分页),pageSize 取大值一次拉全 —— 让 CLI/API 建的需求也在 UI 可见。
   requirements: (projectId: string) =>

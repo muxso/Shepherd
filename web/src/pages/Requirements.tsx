@@ -117,27 +117,136 @@ export default function Requirements() {
           />
         }
       />
-      <Modal title={t('req.new', '新建需求')} open={createOpen} onCancel={() => setCreateOpen(false)} footer={null} destroyOnHidden>
-        <Form
-          layout="vertical"
-          onFinish={async (v: { title: string; criteria: string }) => {
-            try {
-              const r = await api.createRequirement({ projectId, title: v.title, acceptanceCriteria: toLines(v.criteria || '') })
-              message.success(t('req.created', '需求已创建'))
-              regAdd('requirement', projectId, { id: r.id, label: v.title, createdAt: Date.now() })
-              loadList()
-              setCreateOpen(false)
-              tabs.open(r.id)
-            } catch (e) {
-              message.error(e instanceof ApiError ? e.message : t('req.createFailed', '创建失败'))
-            }
+      <Modal title={t('req.new', '新建需求')} open={createOpen} onCancel={() => setCreateOpen(false)} footer={null} width={680} destroyOnHidden>
+        <CreateRequirementForm
+          projectId={projectId}
+          onDone={(r, title) => {
+            regAdd('requirement', projectId, { id: r.id, label: title, createdAt: Date.now() })
+            loadList()
+            setCreateOpen(false)
+            tabs.open(r.id)
           }}
-        >
-          <Form.Item name="title" label={t('req.title', '标题')} rules={[{ required: true }]}><Input placeholder={t('req.titlePlaceholder', '如:用户登录')} autoFocus /></Form.Item>
-          <Form.Item name="criteria" label={t('req.criteria', '验收标准(每行一条)')}><Input.TextArea rows={4} placeholder={t('req.criteriaPlaceholder', '登录成功\n错误密码拒绝')} /></Form.Item>
-          <Button type="primary" htmlType="submit" block>{t('a.create', '创建')}</Button>
-        </Form>
+        />
       </Modal>
+    </>
+  )
+}
+
+// 新建需求:AI 起草(MRD/素材 → 结构化草稿回填)+ 结构化字段(类型/优先级/描述)
+// + 验收标准逐条录入 —— 验收标准是拆分/验证/用例起草的全链路锚点,逐条引导比裸文本框可控。
+const REQ_TYPES = ['FEATURE', 'ENHANCEMENT', 'TECH_DEBT', 'BUGFIX'] as const
+const PRIORITIES = ['P0', 'P1', 'P2', 'P3'] as const
+
+function CreateRequirementForm({ projectId, onDone }: { projectId: string; onDone: (r: Requirement, title: string) => void }) {
+  const { t } = useI18n()
+  const [form] = Form.useForm()
+  const [raw, setRaw] = useState('')
+  const [drafting, setDrafting] = useState(false)
+  const typeLabel: Record<string, string> = {
+    FEATURE: t('req.type.FEATURE', '功能'),
+    ENHANCEMENT: t('req.type.ENHANCEMENT', '优化'),
+    TECH_DEBT: t('req.type.TECH_DEBT', '技术债'),
+    BUGFIX: t('req.type.BUGFIX', '缺陷修复'),
+  }
+  const draft = async () => {
+    if (!raw.trim()) return
+    setDrafting(true)
+    try {
+      const d = await api.draftRequirement(raw)
+      form.setFieldsValue({
+        title: d.title,
+        description: d.description,
+        priority: d.priority,
+        criteria: d.acceptanceCriteria.length ? d.acceptanceCriteria : [''],
+      })
+      message.success(d.source === 'llm' ? t('req.draftedByAi', 'AI 已起草,请复核修改') : t('req.draftedHeuristic', '已按格式整理(未配置 LLM),请补充'))
+    } catch (e) {
+      message.error(e instanceof ApiError ? e.message : t('req.draftFailed', '起草失败'))
+    } finally {
+      setDrafting(false)
+    }
+  }
+  return (
+    <>
+      {/* AI 起草:落地「MRD 自动转 PRD」——粘贴素材,起草结果回填下方表单,可再编辑 */}
+      <div style={{ background: 'var(--panel-2)', border: '1px solid var(--border-soft)', borderRadius: 8, padding: 12, marginBottom: 16 }}>
+        <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>{t('req.aiDraft', 'AI 起草(MRD 自动转 PRD)')}</div>
+        <Input.TextArea
+          rows={3}
+          value={raw}
+          onChange={(e) => setRaw(e.target.value)}
+          placeholder={t('req.aiDraftPh', '粘贴 MRD/会议纪要/原始想法,AI 整理为标题、描述与逐条验收标准')}
+        />
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 8 }}>
+          <span style={{ fontSize: 12, color: 'var(--text-3)' }}>{t('req.aiDraftHint', '结果回填下方表单,创建前可修改')}</span>
+          <Button size="small" type="primary" ghost loading={drafting} disabled={!raw.trim()} onClick={draft}>
+            {t('req.aiDraftBtn', '起草')}
+          </Button>
+        </div>
+      </div>
+      <Form
+        form={form}
+        layout="vertical"
+        initialValues={{ reqType: 'FEATURE', priority: 'P2', criteria: [''] }}
+        onFinish={async (v: { title: string; description?: string; reqType: string; priority: string; criteria: string[] }) => {
+          const acceptanceCriteria = (v.criteria || []).map((c) => (c || '').trim()).filter(Boolean)
+          try {
+            const r = await api.createRequirement({
+              projectId,
+              title: v.title,
+              description: v.description?.trim() || undefined,
+              acceptanceCriteria,
+              priority: v.priority,
+              reqType: v.reqType,
+            })
+            message.success(t('req.created', '需求已创建'))
+            onDone(r, v.title)
+          } catch (e) {
+            message.error(e instanceof ApiError ? e.message : t('req.createFailed', '创建失败'))
+          }
+        }}
+      >
+        <Form.Item name="title" label={t('req.title', '标题')} rules={[{ required: true }]}>
+          <Input placeholder={t('req.titlePlaceholder', '如:用户登录')} />
+        </Form.Item>
+        <Row gutter={12}>
+          <Col span={12}>
+            <Form.Item name="reqType" label={t('req.reqType', '类型')}>
+              <Select options={REQ_TYPES.map((k) => ({ value: k, label: typeLabel[k] }))} />
+            </Form.Item>
+          </Col>
+          <Col span={12}>
+            <Form.Item name="priority" label={t('req.priority', '优先级')}>
+              <Select options={PRIORITIES.map((p) => ({ value: p, label: p }))} />
+            </Form.Item>
+          </Col>
+        </Row>
+        <Form.Item name="description" label={t('req.description', '需求描述')}>
+          <Input.TextArea rows={4} placeholder={t('req.descriptionPh', '背景:为什么做\n目标:做成什么样\n范围:边界与不做什么')} />
+        </Form.Item>
+        <Form.List name="criteria">
+          {(fields, { add, remove }) => (
+            <Form.Item label={t('req.criteriaList', '验收标准(逐条,可判定)')} required>
+              {fields.map((field) => (
+                <div key={field.key} style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+                  <Form.Item {...field} noStyle>
+                    <Input placeholder={t('req.criterionPh', '一条可判定的验收条件,如:错误密码提示明确')} />
+                  </Form.Item>
+                  {fields.length > 1 && (
+                    <Button type="text" icon={<DeleteOutlined />} onClick={() => remove(field.name)} />
+                  )}
+                </div>
+              ))}
+              <Button type="dashed" block onClick={() => add('')}>
+                + {t('req.addCriterion', '添加验收标准')}
+              </Button>
+            </Form.Item>
+          )}
+        </Form.List>
+        <Button type="primary" htmlType="submit" block>
+          {t('a.create', '创建')}
+        </Button>
+      </Form>
     </>
   )
 }
