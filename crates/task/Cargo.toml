@@ -4,30 +4,31 @@ edition.workspace = true
 version.workspace = true
 license.workspace = true
 publish.workspace = true
+rust-version.workspace = true
 
 # Shepherd 任务上下文:把需求(某版本)拆分成可独立交付的任务 DAG。
 # 一致性边界是 Decomposition 聚合(一个需求版本一张任务图):校验依赖存在、无环(增量构造保证)、
 # 就绪判定(依赖全部 Verified 才可派发)、状态机流转。执行者(Claude Code/Codex)归 delivery 上下文。
 [dependencies]
-kernel = { path = "../kernel" }
-async-trait = "0.1"
-thiserror = "2"
-sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "postgres"], optional = true }
-axum = { version = "0.8", optional = true }
-utoipa = { version = "5", optional = true }
-serde = { version = "1", features = ["derive"], optional = true }
-webauth = { path = "../webauth", optional = true }
+kernel = { workspace = true }
+async-trait = { workspace = true }
+thiserror = { workspace = true }
+sqlx = { workspace = true, features = ["runtime-tokio", "postgres"], optional = true }
+axum = { workspace = true, optional = true }
+utoipa = { workspace = true, optional = true }
+serde = { workspace = true, optional = true }
+webauth = { workspace = true, optional = true }
 
 [features]
 pg = ["dep:sqlx"]
 http = ["dep:axum", "dep:serde", "dep:webauth", "webauth/http", "dep:utoipa"]
 
 [dev-dependencies]
-tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
-tower = { version = "0.5", features = ["util"] }
-serde_json = "1"
-migrate = { path = "../migrate" }
-webauth = { path = "../webauth", features = ["http", "test-util"] }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+tower = { workspace = true, features = ["util"] }
+serde_json = { workspace = true }
+migrate = { workspace = true }
+webauth = { workspace = true, features = ["http", "test-util"] }
 
 [lints]
 workspace = true

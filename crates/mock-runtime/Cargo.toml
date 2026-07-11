@@ -4,21 +4,22 @@ edition.workspace = true
 version.workspace = true
 license.workspace = true
 publish.workspace = true
+rust-version.workspace = true
 
 # Mock 运行时:把 api-definition 里登记的 Mock 规则变成"可被真实请求命中的服务"。
 # 核心是零 IO 的匹配引擎(domain):给定一个请求视图 + 一组规则,确定性地选出命中的响应。
 # axum 兜底路由(http feature)只做 DTO 翻译,匹配/优先级全在 domain。
 [dependencies]
-thiserror = "2"
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-regex = "1"
-async-trait = "0.1"
-axum = { version = "0.8", optional = true }
-tokio = { version = "1", features = ["time"], optional = true }
-sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "postgres"], optional = true }
+thiserror = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+regex = { workspace = true }
+async-trait = { workspace = true }
+axum = { workspace = true, optional = true }
+tokio = { workspace = true, features = ["time"], optional = true }
+sqlx = { workspace = true, features = ["runtime-tokio", "postgres"], optional = true }
 minijinja = { version = "2", optional = true }
-uuid = { version = "1", features = ["v4"], optional = true }
+uuid = { workspace = true, optional = true }
 fake = { version = "2", optional = true }
 
 [features]
@@ -28,9 +29,9 @@ pg = ["dep:sqlx"]
 template = ["dep:minijinja", "dep:uuid", "dep:fake"]
 
 [dev-dependencies]
-tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
-tower = { version = "0.5", features = ["util"] }
-axum = "0.8"
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+tower = { workspace = true, features = ["util"] }
+axum = { workspace = true }
 
 [lints]
 workspace = true

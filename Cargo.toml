@@ -43,8 +43,41 @@ members = [
 edition = "2021"
 version = "0.0.1"
 license = "GPL-2.0"
+# CI 钉在 1.86.0;各成员 crate 用 rust-version.workspace = true 继承。
+rust-version = "1.86"
 # crate 名(bug/task/case/delivery…)是通用词,与 crates.io 现有包冲突;整个 workspace 不发布。
 publish = false
+
+# 依赖版本的单一来源:被 2+ 个成员 crate 使用的依赖集中在这里,成员用 `dep = { workspace = true }` 继承。
+# features 只在所有使用方完全一致时写在这里,否则由成员各自补 `features = [...]`。
+[workspace.dependencies]
+# —— 内部 path 依赖(2+ 处使用)——
+kernel = { path = "crates/kernel" }
+webauth = { path = "crates/webauth" }
+migrate = { path = "crates/migrate" }
+api-runner = { path = "crates/api-runner" }
+delivery = { path = "crates/delivery" }
+# probe 多数使用方关默认插件(perf/runner/runner-agent 只要类型);server 自行开 default-features = true。
+probe = { path = "crates/probe", default-features = false }
+# —— 外部依赖 ——
+async-trait = "0.1"
+thiserror = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = "1"
+sqlx = { version = "0.8", default-features = false }
+axum = "0.8"
+utoipa = "5"
+reqwest = { version = "0.12", default-features = false }
+redis = { version = "0.27", default-features = false }
+tower = "0.5"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+uuid = { version = "1", features = ["v4"] }
+regex = "1"
+arrow = "53"
+parquet = { version = "53", default-features = false, features = ["arrow"] }
+object_store = "0.11"
 
 [workspace.lints.clippy]
 # 领域层禁止 panic/unwrap,逼迫用 Result 表达边界(TDD 友好)

@@ -4,19 +4,20 @@ edition.workspace = true
 version.workspace = true
 license.workspace = true
 publish.workspace = true
+rust-version.workspace = true
 
 # 功能用例管理:用例 CRUD + 自定义字段(jsonb)+ Excel 导出。
 # domain/ports/application 纯净;sqlx/axum/xlsx 只在 adapters,feature 门控。
 [dependencies]
-kernel = { path = "../kernel" }
-async-trait = "0.1"
-thiserror = "2"
-serde_json = "1"
-sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "postgres", "json"], optional = true }
-axum = { version = "0.8", optional = true }
-utoipa = { version = "5", optional = true }
-webauth = { path = "../webauth", optional = true }
-serde = { version = "1", features = ["derive"], optional = true }
+kernel = { workspace = true }
+async-trait = { workspace = true }
+thiserror = { workspace = true }
+serde_json = { workspace = true }
+sqlx = { workspace = true, features = ["runtime-tokio", "postgres", "json"], optional = true }
+axum = { workspace = true, optional = true }
+utoipa = { workspace = true, optional = true }
+webauth = { workspace = true, optional = true }
+serde = { workspace = true, optional = true }
 rust_xlsxwriter = { version = "0.79", optional = true }
 calamine = { version = "0.26", optional = true }
 
@@ -25,11 +26,11 @@ pg = ["dep:sqlx"]
 http = ["dep:axum", "dep:serde", "dep:webauth", "webauth/http", "dep:utoipa", "dep:rust_xlsxwriter", "dep:calamine"]
 
 [dev-dependencies]
-tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
-tower = { version = "0.5", features = ["util"] }
-serde_json = "1"
-migrate = { path = "../migrate" }
-webauth = { path = "../webauth", features = ["http", "test-util"] }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+tower = { workspace = true, features = ["util"] }
+serde_json = { workspace = true }
+migrate = { workspace = true }
+webauth = { workspace = true, features = ["http", "test-util"] }
 
 [lints]
 workspace = true

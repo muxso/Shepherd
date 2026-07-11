@@ -4,6 +4,7 @@ edition.workspace = true
 version.workspace = true
 license.workspace = true
 publish.workspace = true
+rust-version.workspace = true
 
 # 接口测试上下文。核心(domain/ports/application)纯净;多种执行器适配器 feature 门控:
 #   local  —— 原生 Rust runner(api-runner)就地跑
@@ -11,26 +12,26 @@ publish.workspace = true
 #   pg     —— PG 资源池/报告/用例规格(含 per-case 结果),依赖 local 的 trait
 #   http   —— axum 入口
 [dependencies]
-async-trait = "0.1"
-thiserror = "2"
+async-trait = { workspace = true }
+thiserror = { workspace = true }
 # kernel/serde_json 属核心:用例执行记录读模型(CaseExecutionRecord)的分页与 failures(JSONB)
 # 都落在纯核心层(ports/application),故非 feature 门控。serde_json::Value 不属 IO,架构守卫放行。
-kernel = { path = "../kernel" }
-serde_json = "1"
-api-runner = { path = "../api-runner", optional = true }
+kernel = { workspace = true }
+serde_json = { workspace = true }
+api-runner = { workspace = true, optional = true }
 futures = { version = "0.3", optional = true }
 # 串行执行 WAIT 处理器需要 sleep;只在 local 执行器启用。
-tokio = { version = "1", features = ["time"], optional = true }
-sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "postgres", "json"], optional = true }
-axum = { version = "0.8", optional = true }
-utoipa = { version = "5", optional = true }
-serde = { version = "1", features = ["derive"], optional = true }
-webauth = { path = "../webauth", optional = true }
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"], optional = true }
+tokio = { workspace = true, features = ["time"], optional = true }
+sqlx = { workspace = true, features = ["runtime-tokio", "postgres", "json"], optional = true }
+axum = { workspace = true, optional = true }
+utoipa = { workspace = true, optional = true }
+serde = { workspace = true, optional = true }
+webauth = { workspace = true, optional = true }
+reqwest = { workspace = true, features = ["json", "rustls-tls"], optional = true }
 # Parquet 报告归档(object_store:本地/内存/S3);与 perf 的 parquet-sink 同版本。
-arrow = { version = "53", optional = true }
-parquet = { version = "53", default-features = false, features = ["arrow"], optional = true }
-object_store = { version = "0.11", optional = true }
+arrow = { workspace = true, optional = true }
+parquet = { workspace = true, optional = true }
+object_store = { workspace = true, optional = true }
 
 [features]
 local = ["dep:api-runner", "dep:futures", "dep:tokio"]
@@ -41,12 +42,12 @@ jmeter = ["dep:reqwest", "dep:serde"]
 parquet-archive = ["pg", "dep:arrow", "dep:parquet", "dep:object_store"]
 
 [dev-dependencies]
-tokio = { version = "1", features = ["macros", "rt-multi-thread", "net"] }
-axum = "0.8"
-tower = { version = "0.5", features = ["util"] }
-serde_json = "1"
-migrate = { path = "../migrate" }
-webauth = { path = "../webauth", features = ["http", "test-util"] }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "net"] }
+axum = { workspace = true }
+tower = { workspace = true, features = ["util"] }
+serde_json = { workspace = true }
+migrate = { workspace = true }
+webauth = { workspace = true, features = ["http", "test-util"] }
 
 [lints]
 workspace = true

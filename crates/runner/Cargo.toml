@@ -4,24 +4,25 @@ edition.workspace = true
 version.workspace = true
 license.workspace = true
 publish.workspace = true
+rust-version.workspace = true
 
 # 中央侧 runner 闭环(对应 runner-agent 二进制):
 # 按环境注册多个 agent → 把自包含用例派给选定 agent 就地执行 → 回传结果。
 # domain/ports/application 纯净;sqlx(注册表)/reqwest(派发)/axum(入口)在 adapters,feature 门控。
 [dependencies]
-kernel = { path = "../kernel" }
-api-runner = { path = "../api-runner" }
+kernel = { workspace = true }
+api-runner = { workspace = true }
 # 只取协议无关的探测类型(ProbeRequest/ProbeOutcome/ProbeAssertion),不带任何协议插件(无 IO)。
-probe = { path = "../probe", default-features = false }
-async-trait = "0.1"
-thiserror = "2"
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "postgres"], optional = true }
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"], optional = true }
-axum = { version = "0.8", optional = true }
-utoipa = { version = "5", optional = true }
-webauth = { path = "../webauth", optional = true }
+probe = { workspace = true }
+async-trait = { workspace = true }
+thiserror = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sqlx = { workspace = true, features = ["runtime-tokio", "postgres"], optional = true }
+reqwest = { workspace = true, features = ["json", "rustls-tls"], optional = true }
+axum = { workspace = true, optional = true }
+utoipa = { workspace = true, optional = true }
+webauth = { workspace = true, optional = true }
 
 [features]
 pg = ["dep:sqlx"]
@@ -29,11 +30,11 @@ client = ["dep:reqwest"]
 http = ["dep:axum", "dep:utoipa", "dep:webauth", "webauth/http", "client"]
 
 [dev-dependencies]
-tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
-tower = { version = "0.5", features = ["util"] }
-migrate = { path = "../migrate" }
-sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "postgres"] }
-webauth = { path = "../webauth", features = ["http", "test-util"] }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+tower = { workspace = true, features = ["util"] }
+migrate = { workspace = true }
+sqlx = { workspace = true, features = ["runtime-tokio", "postgres"] }
+webauth = { workspace = true, features = ["http", "test-util"] }
 
 [lints]
 workspace = true

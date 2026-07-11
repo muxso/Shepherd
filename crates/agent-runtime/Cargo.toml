@@ -4,6 +4,7 @@ edition.workspace = true
 version.workspace = true
 license.workspace = true
 publish.workspace = true
+rust-version.workspace = true
 
 # Shepherd 执行者 runtime(纯 Rust,替代 scripts/agent/*.sh+py)。
 # 内网部署、无公网入站:出站 register/heartbeat/长轮询认领 → spawn CLI(claude/codex/opencode)
@@ -14,15 +15,15 @@ name = "agent-runtime"
 path = "src/main.rs"
 
 [dependencies]
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "process", "io-util", "time", "signal", "sync"] }
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-async-trait = "0.1"
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "process", "io-util", "time", "signal", "sync"] }
+reqwest = { workspace = true, features = ["json", "rustls-tls"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+async-trait = { workspace = true }
 anyhow = "1"
-thiserror = "2"
-tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
 
 # Unix 进程组信号:超时/关停时连同子 CLI 派生的子进程一起回收,避免孤儿。
 [target.'cfg(unix)'.dependencies]
@@ -30,7 +31,7 @@ libc = "0.2"
 
 [dev-dependencies]
 # test-util:`#[tokio::test(start_paused = true)]` 让退避重试的 sleep 走虚拟时钟,测试不真等。
-tokio = { version = "1", features = ["test-util"] }
+tokio = { workspace = true, features = ["test-util"] }
 
 [lints]
 workspace = true

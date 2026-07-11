@@ -4,19 +4,20 @@ edition.workspace = true
 version.workspace = true
 license.workspace = true
 publish.workspace = true
+rust-version.workspace = true
 
 # 原生 Rust 接口测试 runner —— JMeter 的替代:发 HTTP 请求 + 断言响应,无 JVM。
 # 断言判定是纯函数(domain,TDD 主场);执行用 reqwest(adapter)。
 [dependencies]
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+reqwest = { workspace = true, features = ["rustls-tls"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
 # 断言操作符 REGEX / 正则体断言用;纯库,无 IO,domain 可用。
-regex = "1"
+regex = { workspace = true }
 
 [dev-dependencies]
-tokio = { version = "1", features = ["macros", "rt-multi-thread", "net"] }
-axum = "0.8"
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "net"] }
+axum = { workspace = true }
 
 [lints]
 workspace = true

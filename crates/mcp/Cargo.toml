@@ -4,16 +4,17 @@ edition.workspace = true
 version.workspace = true
 license.workspace = true
 publish.workspace = true
+rust-version.workspace = true
 
 # Model Context Protocol 服务端引擎(协议层,零业务知识):JSON-RPC 2.0 + initialize/tools.list/
 # tools.call + 通用工具注册表。业务工具由组装根注册(桥接到各上下文服务)。
 [dependencies]
-async-trait = "0.1"
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+async-trait = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
 
 [dev-dependencies]
-tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 
 [lints]
 workspace = true
