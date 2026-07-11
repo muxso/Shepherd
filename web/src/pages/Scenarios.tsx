@@ -228,9 +228,12 @@ export default function Scenarios() {
       deleteModuleContent={t('scenario.deleteModuleContent', '其下场景将变为未规划(不会删除场景)。')}
       header={
         <div style={{ padding: '10px 10px 0' }}>
+          {/* 导入收成图标钮:英文文案更长,双文字钮会撑出左栏。 */}
           <Space.Compact style={{ width: '100%' }}>
-            <Button type="primary" icon={<PlusOutlined />} style={{ flex: 1 }} onClick={() => tabs.open(NEW_KEY)}>{t('scenario.newScenario', '新建场景')}</Button>
-            <Button icon={<ImportOutlined />} style={{ flex: 1 }} onClick={() => setImportOpen(true)}>{t('scenario.importScenario', '导入场景')}</Button>
+            <Button type="primary" icon={<PlusOutlined />} style={{ flex: 1, minWidth: 0 }} onClick={() => tabs.open(NEW_KEY)}>{t('scenario.newScenario', '新建场景')}</Button>
+            <Tooltip title={t('scenario.importScenario', '导入场景')}>
+              <Button icon={<ImportOutlined />} style={{ flex: '0 0 40px' }} onClick={() => setImportOpen(true)} />
+            </Tooltip>
           </Space.Compact>
         </div>
       }

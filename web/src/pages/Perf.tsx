@@ -211,9 +211,16 @@ function RunForm({
               <InputNumber min={1} max={1000} style={{ width: '100%' }} />
             </Form.Item>
           </Col>
-          <Col flex="200px">
+          {/* flex=none:随文案自适应宽度,英文较长时不折行堆叠。 */}
+          <Col flex="none">
             <Form.Item label={t('perf.loadMode', '施压方式')}>
-              <Radio.Group value={mode} onChange={(e) => setMode(e.target.value)} optionType="button" buttonStyle="solid">
+              <Radio.Group
+                value={mode}
+                onChange={(e) => setMode(e.target.value)}
+                optionType="button"
+                buttonStyle="solid"
+                style={{ whiteSpace: 'nowrap' }}
+              >
                 <Radio.Button value="iterations">{t('perf.byIterations', '按次数')}</Radio.Button>
                 <Radio.Button value="duration">{t('perf.byDuration', '按时长')}</Radio.Button>
               </Radio.Group>

@@ -261,6 +261,7 @@ const DICT: Record<string, { zh: string; en: string }> = {
   'm.pool': { zh: '资源池', en: 'Resource Pools' },
   'm.requirement': { zh: '需求与编排', en: 'Requirements' },
   'm.review': { zh: '评审', en: 'Review' },
+  'm.agents': { zh: '人机协同', en: 'Runners' },
   'm.bug': { zh: '缺陷', en: 'Bugs' },
   'm.skill': { zh: '技能', en: 'Skills' },
   'm.org': { zh: '组织', en: 'Organizations' },

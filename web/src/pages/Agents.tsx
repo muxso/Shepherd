@@ -91,7 +91,6 @@ export default function Agents() {
         subtitle={t('agent.subtitle', '注册 Claude Code / Codex 等 AI 执行者;任务在「AI 需求」拆分图里派发')}
         extra={
           <>
-            {lv.toolbar}
             <Button type="primary" icon={<PlusOutlined />} onClick={() => setAddOpen(true)}>{t('agent.register', '注册执行机')}</Button>
             <Button icon={<ReloadOutlined />} onClick={load} />
           </>
@@ -99,8 +98,13 @@ export default function Agents() {
       />
       <PageBody>
         <FleetSection />
-        <div style={{ marginTop: 24, marginBottom: 8, fontWeight: 600, color: 'var(--text-2)' }}>
-          {t('agent.probeSection', '协议执行机(API / 探测)')}
+        {/* 三件套放到协议执行机小节行右侧:页头挤不下(英文更长),这里也贴它筛选的表。 */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 24, marginBottom: 8 }}>
+          <span style={{ fontWeight: 600, color: 'var(--text-2)' }}>
+            {t('agent.probeSection', '协议执行机(API / 探测)')}
+          </span>
+          <div style={{ flex: 1 }} />
+          {lv.toolbar}
         </div>
         <Table<RunnerAgent>
           rowKey="id"
