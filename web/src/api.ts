@@ -694,6 +694,9 @@ export interface RequirementVersion {
   acceptanceCriteria?: string[]
 }
 
+/** 需求研发/测试进度状态。 */
+export type RequirementWorkStatus = 'NOT_STARTED' | 'IN_PROGRESS' | 'DONE'
+
 export interface Requirement {
   id: string
   projectId?: string
@@ -708,6 +711,34 @@ export interface Requirement {
   // 兼容两种返回:顶层 acceptanceCriteria(旧)或 versions[].acceptanceCriteria(现)。
   acceptanceCriteria?: string[]
   versions?: RequirementVersion[]
+  /** 标签(最多 10 个)。 */
+  tags?: string[]
+  /** 父需求 id;null = 顶层需求。 */
+  parentId?: string | null
+  /** 截止日期(YYYY-MM-DD);null = 未设置。 */
+  dueDate?: string | null
+  /** 已过截止日期且未交付 → 延期。 */
+  overdue?: boolean
+  /** 创建/更新时间(epoch 毫秒)。 */
+  createdAt?: number
+  updatedAt?: number
+  /** 开发/测试进度状态。 */
+  devStatus?: RequirementWorkStatus
+  testStatus?: RequirementWorkStatus
+  /** 进度起止时间(epoch 毫秒);null = 未发生。 */
+  devStartedAt?: number | null
+  devFinishedAt?: number | null
+  testStartedAt?: number | null
+  testFinishedAt?: number | null
+}
+
+/** 需求字段变更记录(变更时间/人/字段/前后值)。 */
+export interface RequirementChange {
+  changedAt: number
+  changedBy: string
+  field: string
+  oldValue: string
+  newValue: string
 }
 
 export interface Task {
@@ -1250,7 +1281,7 @@ export const api = {
   perfReport: (id: string) => http.get<PerfReport>(`/perf/report/${id}`),
 
   // 需求(版本 / 基线 / 拆分)— 无 list 端点,列表用前端注册表
-  createRequirement: (b: { projectId: string; title: string; description?: string; acceptanceCriteria: string[]; priority?: string; reqType?: string }) =>
+  createRequirement: (b: { projectId: string; title: string; description?: string; acceptanceCriteria: string[]; priority?: string; reqType?: string; tags?: string[]; dueDate?: string; parentId?: string }) =>
     http.post<Requirement>('/requirement', b),
   /** MRD/原始素材 → 结构化需求草稿(配置 LLM 由 AI 起草,否则启发式)。 */
   draftRequirement: (raw: string) =>
@@ -1272,6 +1303,21 @@ export const api = {
     http.put<Requirement>(`/requirement/${id}/baseline`, { version }),
   breakdown: (id: string) =>
     http.post<{ id: string; verificationId: string; tasks: Task[] }>(`/requirement/${id}/breakdown`, {}),
+  /** 开发进度流转(未开始/进行中/已完成),返回最新需求。 */
+  setRequirementDevStatus: (id: string, status: RequirementWorkStatus) =>
+    http.post<Requirement>(`/requirement/${id}/dev-status`, { status }),
+  /** 测试进度流转,同上。 */
+  setRequirementTestStatus: (id: string, status: RequirementWorkStatus) =>
+    http.post<Requirement>(`/requirement/${id}/test-status`, { status }),
+  /** 设置/解除父需求(parentId=null 解除)。 */
+  setRequirementParent: (id: string, parentId: string | null) =>
+    http.put<Requirement>(`/requirement/${id}/parent`, { parentId }),
+  /** 子需求列表。 */
+  requirementChildren: (id: string) =>
+    http.get<{ items: Requirement[] }>(`/requirement/${id}/children`),
+  /** 字段变更记录(按时间倒序/正序由后端定)。 */
+  requirementChanges: (id: string) =>
+    http.get<{ items: RequirementChange[] }>(`/requirement/${id}/changes`),
 
   // 拆分图 / 任务
   decomposition: (id: string) => http.get<Decomposition>(`/decomposition/${id}`),

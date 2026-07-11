@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useState } from 'react'
-import { Badge, Button, Card, Col, Descriptions, Drawer, Dropdown, Empty, Form, Input, InputNumber, Modal, Progress, Row, Segmented, Select, Space, Spin, Statistic, Table, Tabs, Tag, Timeline, Tooltip, Typography } from 'antd'
+import { Badge, Button, Card, Col, DatePicker, Descriptions, Drawer, Dropdown, Empty, Form, Input, InputNumber, Modal, Progress, Row, Segmented, Select, Space, Spin, Statistic, Table, Tabs, Tag, Timeline, Tooltip, Typography } from 'antd'
+import dayjs, { type Dayjs } from 'dayjs'
 import { message, modal } from '../feedback'
 import { useNavigate } from 'react-router-dom'
-import { BranchesOutlined, DeleteOutlined, EditOutlined, FlagOutlined, InboxOutlined, PartitionOutlined, PlayCircleOutlined, ProfileOutlined, ReloadOutlined, SendOutlined } from '@ant-design/icons'
+import { BranchesOutlined, DeleteOutlined, EditOutlined, FlagOutlined, HistoryOutlined, InboxOutlined, PartitionOutlined, PlayCircleOutlined, ProfileOutlined, ReloadOutlined, SendOutlined } from '@ant-design/icons'
 import {
   api,
   ApiError,
@@ -15,7 +16,9 @@ import {
   type FleetRuntime,
   type FunctionalCase,
   type Requirement,
+  type RequirementChange,
   type RequirementVersion,
+  type RequirementWorkStatus,
   type Task,
   type VerificationReport,
 } from '../api'
@@ -42,9 +45,24 @@ const BOARD_COLS: { key: string; tkey: string; label: string; statuses: string[]
 // 需求状态色:DRAFT 灰 / BASELINED 蓝 / DELIVERED 绿 / ARCHIVED 灰。
 const reqStatusColor = (s?: string) =>
   s === 'DELIVERED' ? 'green' : s === 'BASELINED' ? 'blue' : s === 'ARCHIVED' ? 'default' : 'default'
+// 优先级色:P0 红 / P1 橙 / P2 蓝 / P3 灰。
+const prioColor = (p?: string) => (p === 'P0' ? 'red' : p === 'P1' ? 'orange' : p === 'P2' ? 'blue' : 'default')
+// 研发/测试进度状态 → Tag 状态色(未开始 灰 / 进行中 蓝 / 已完成 绿)。
+const workTagColor = (s?: string): 'default' | 'processing' | 'success' =>
+  s === 'DONE' ? 'success' : s === 'IN_PROGRESS' ? 'processing' : 'default'
+const WORK_STATUSES: RequirementWorkStatus[] = ['NOT_STARTED', 'IN_PROGRESS', 'DONE']
+// 进度起止时间的短格式(MM-DD HH:mm)。
+const fmtShort = (ms?: number | null) => (ms ? dayjs(ms).format('MM-DD HH:mm') : '')
 
-// 列表行 = 本地注册表项 + 后端需求状态。
-type ReqRow = Omit<RegItem, 'label'> & { status?: string; label: React.ReactNode }
+// 列表行 = 本地注册表项 + 后端需求状态/类型/优先级/标签/延期。
+type ReqRow = Omit<RegItem, 'label'> & {
+  status?: string
+  label: React.ReactNode
+  reqType?: string
+  priority?: string
+  tags?: string[]
+  overdue?: boolean
+}
 
 // 需求与编排合一:需求列表 → 详情 Tab(需求信息/版本/基线/拆分 → 拆分图任务+运行+交付+验证)。
 export default function Requirements() {
@@ -72,7 +90,7 @@ export default function Requirements() {
         const label = (
           <span>{r.title}{crits.length ? <Tag color={pct === 100 ? 'green' : pct > 0 ? 'gold' : 'default'} style={{ marginLeft: 6 }}>{pct}%</Tag> : null}</span>
         )
-        return { ...base, status: r.status, label }
+        return { ...base, status: r.status, reqType: r.reqType, priority: r.priority, tags: r.tags, overdue: r.overdue, label }
       }))
     } catch {
       setItems(local) // 后端不可用时回落本地
@@ -91,7 +109,7 @@ export default function Requirements() {
     .map((r) => ({
       key: r.id,
       label: r.label,
-      children: <RequirementDetail key={r.id} reqId={r.id} projectId={projectId} onChanged={loadList} onDeleted={() => { tabs.close(r.id); loadList() }} />,
+      children: <RequirementDetail key={r.id} reqId={r.id} projectId={projectId} onChanged={loadList} onDeleted={() => { tabs.close(r.id); loadList() }} onOpen={(id) => tabs.open(id)} />,
     }))
 
   return (
@@ -111,8 +129,28 @@ export default function Requirements() {
             emptyText={t('req.empty', '暂无需求')}
             columns={[
               { title: t('req.title', '标题'), dataIndex: 'label' },
-              { title: t('req.status', '状态'), dataIndex: 'status', width: 120, render: (s?: string) => <Tag color={reqStatusColor(s)}>{s ? t(`req.status.${s}`, s) : '—'}</Tag> },
-              { title: t('req.decomposed', '已拆分'), dataIndex: 'meta', width: 100, render: (m?: Record<string, string>) => (m?.decompositionId ? <Tag color="geekblue">{t('req.yes', '是')}</Tag> : '—') },
+              { title: t('req.reqType', '类型'), dataIndex: 'reqType', width: 80, render: (v?: string) => (v ? <Tag>{t(`req.type.${v}`, v)}</Tag> : '—') },
+              { title: t('req.priority', '优先级'), dataIndex: 'priority', width: 70, render: (p?: string) => (p ? <Tag color={prioColor(p)}>{p}</Tag> : '—') },
+              {
+                title: t('req.tags', '标签'), dataIndex: 'tags',
+                render: (tags?: string[]) =>
+                  tags?.length ? (
+                    <>
+                      {tags.slice(0, 2).map((tg) => <Tag key={tg} style={{ marginRight: 4 }}>{tg}</Tag>)}
+                      {tags.length > 2 && <Tag style={{ marginRight: 0 }}>+{tags.length - 2}</Tag>}
+                    </>
+                  ) : '—',
+              },
+              {
+                title: t('req.status', '状态'), dataIndex: 'status', width: 120,
+                render: (s: string | undefined, row) => (
+                  <>
+                    <Tag color={reqStatusColor(s)}>{s ? t(`req.status.${s}`, s) : '—'}</Tag>
+                    {row.overdue && <Tag color="red" style={{ marginRight: 0 }}>{t('req.overdue', '延期')}</Tag>}
+                  </>
+                ),
+              },
+              { title: t('req.decomposed', '已拆分'), dataIndex: 'meta', width: 90, render: (m?: Record<string, string>) => (m?.decompositionId ? <Tag color="geekblue">{t('req.yes', '是')}</Tag> : '—') },
             ]}
           />
         }
@@ -142,6 +180,11 @@ function CreateRequirementForm({ projectId, onDone }: { projectId: string; onDon
   const [form] = Form.useForm()
   const [raw, setRaw] = useState('')
   const [drafting, setDrafting] = useState(false)
+  // 父需求候选:项目下已有需求(失败静默,下拉为空即可)。
+  const [parents, setParents] = useState<Requirement[]>([])
+  useEffect(() => {
+    api.requirements(projectId).then((p) => setParents(p.items)).catch(() => setParents([]))
+  }, [projectId])
   const typeLabel: Record<string, string> = {
     FEATURE: t('req.type.FEATURE', '功能'),
     ENHANCEMENT: t('req.type.ENHANCEMENT', '优化'),
@@ -188,7 +231,7 @@ function CreateRequirementForm({ projectId, onDone }: { projectId: string; onDon
         form={form}
         layout="vertical"
         initialValues={{ reqType: 'FEATURE', priority: 'P2', criteria: [''] }}
-        onFinish={async (v: { title: string; description?: string; reqType: string; priority: string; criteria: string[] }) => {
+        onFinish={async (v: { title: string; description?: string; reqType: string; priority: string; criteria: string[]; tags?: string[]; dueDate?: Dayjs; parentId?: string }) => {
           const acceptanceCriteria = (v.criteria || []).map((c) => (c || '').trim()).filter(Boolean)
           try {
             const r = await api.createRequirement({
@@ -198,6 +241,9 @@ function CreateRequirementForm({ projectId, onDone }: { projectId: string; onDon
               acceptanceCriteria,
               priority: v.priority,
               reqType: v.reqType,
+              tags: v.tags?.length ? v.tags : undefined,
+              dueDate: v.dueDate ? v.dueDate.format('YYYY-MM-DD') : undefined,
+              parentId: v.parentId || undefined,
             })
             message.success(t('req.created', '需求已创建'))
             onDone(r, v.title)
@@ -221,6 +267,27 @@ function CreateRequirementForm({ projectId, onDone }: { projectId: string; onDon
             </Form.Item>
           </Col>
         </Row>
+        <Row gutter={12}>
+          <Col span={12}>
+            <Form.Item name="tags" label={t('req.tags', '标签')}>
+              <Select mode="tags" maxCount={10} tokenSeparators={[',', ' ']} open={false} suffixIcon={null} placeholder={t('req.tagsPh', '回车添加,最多 10 个')} />
+            </Form.Item>
+          </Col>
+          <Col span={12}>
+            <Form.Item name="dueDate" label={t('req.dueDate', '截止日期')}>
+              <DatePicker format="YYYY-MM-DD" style={{ width: '100%' }} />
+            </Form.Item>
+          </Col>
+        </Row>
+        <Form.Item name="parentId" label={t('req.parentReq', '父需求')}>
+          <Select
+            allowClear
+            showSearch
+            optionFilterProp="label"
+            placeholder={t('req.parentPh', '可选:挂到某个已有需求下')}
+            options={parents.map((p) => ({ value: p.id, label: p.title }))}
+          />
+        </Form.Item>
         <Form.Item name="description" label={t('req.description', '需求描述')}>
           <Input.TextArea rows={4} placeholder={t('req.descriptionPh', '背景:为什么做\n目标:做成什么样\n范围:边界与不做什么')} />
         </Form.Item>
@@ -314,28 +381,72 @@ function RequirementCoveragePanel({ reqId, projectId, criteria }: { reqId: strin
   )
 }
 
-function RequirementDetail({ reqId, projectId, onChanged, onDeleted }: { reqId: string; projectId: string; onChanged: () => void; onDeleted: () => void }) {
+function RequirementDetail({ reqId, projectId, onChanged, onDeleted, onOpen }: { reqId: string; projectId: string; onChanged: () => void; onDeleted: () => void; onOpen?: (id: string) => void }) {
   const { t } = useI18n()
   const [req, setReq] = useState<Requirement | null>(null)
   const [cov, setCov] = useState<CoverageCase[]>([])
   const [verOpen, setVerOpen] = useState(false)
   const [verView, setVerView] = useState<RequirementVersion | null>(null) // 查看的历史版本明细
+  // 子需求 / 关联候选(项目全部需求)/ 变更记录抽屉。
+  const [children, setChildren] = useState<Requirement[]>([])
+  const [allReqs, setAllReqs] = useState<Requirement[]>([])
+  const [childPick, setChildPick] = useState<string>()
+  const [changesOpen, setChangesOpen] = useState(false)
+  const [changes, setChanges] = useState<RequirementChange[]>([])
   const reg = regList('requirement', projectId).find((r) => r.id === reqId)
   const [decompId, setDecompId] = useState<string | undefined>(reg?.meta?.decompositionId)
   const [verId, setVerId] = useState<string | undefined>(reg?.meta?.verificationId)
 
+  const loadChildren = () => api.requirementChildren(reqId).then((r) => setChildren(r.items)).catch(() => setChildren([]))
   const load = async () => {
     try {
       setReq(await api.getRequirement(reqId))
       api.requirementCoverage(reqId).then(setCov).catch(() => setCov([]))
+      loadChildren()
     } catch (e) {
       message.error(e instanceof ApiError ? e.message : t('req.loadFailed', '加载需求失败'))
     }
   }
   useEffect(() => {
     load()
+    api.requirements(projectId).then((p) => setAllReqs(p.items)).catch(() => setAllReqs([]))
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [reqId])
+
+  // 研发/测试进度流转:落库后刷详情(起止时间由后端记)。
+  const setWork = async (kind: 'dev' | 'test', status: RequirementWorkStatus) => {
+    try {
+      if (kind === 'dev') await api.setRequirementDevStatus(reqId, status)
+      else await api.setRequirementTestStatus(reqId, status)
+      load()
+    } catch (e) {
+      message.error(e instanceof ApiError ? e.message : t('req.setWorkFailed', '进度更新失败'))
+    }
+  }
+  // 关联/解除子需求:改的是子需求的 parentId。
+  const linkChild = async () => {
+    if (!childPick) return
+    try {
+      await api.setRequirementParent(childPick, reqId)
+      setChildPick(undefined)
+      message.success(t('req.linked', '已关联'))
+      loadChildren()
+    } catch (e) {
+      message.error(e instanceof ApiError ? e.message : t('req.linkFailed', '关联失败'))
+    }
+  }
+  const unlinkChild = async (childId: string) => {
+    try {
+      await api.setRequirementParent(childId, null)
+      loadChildren()
+    } catch (e) {
+      message.error(e instanceof ApiError ? e.message : t('req.unlinkFailed', '解除失败'))
+    }
+  }
+  const openChanges = () => {
+    setChangesOpen(true)
+    api.requirementChanges(reqId).then((r) => setChanges(r.items)).catch(() => setChanges([]))
+  }
 
   const setBaseline = () => {
     let v = String(req?.baselineVersion ?? 1)
@@ -458,6 +569,7 @@ function RequirementDetail({ reqId, projectId, onChanged, onDeleted }: { reqId: 
                   <Button icon={<SendOutlined />} size="small" disabled={!(req?.status === 'BASELINED' || req?.status === 'DELIVERED')} onClick={deliver}>{t('req.deliver', '交付')}</Button>
                   <Button icon={<InboxOutlined />} size="small" disabled={req?.status === 'ARCHIVED'} onClick={archive}>{t('req.archive', '归档')}</Button>
                   <Button danger icon={<DeleteOutlined />} size="small" onClick={del}>{t('a.delete', '删除')}</Button>
+                  <Button icon={<HistoryOutlined />} size="small" onClick={openChanges}>{t('req.changes', '变更记录')}</Button>
                   {(() => {
                     const n = baselineCriteria.filter((_, i) => cov.some((c) => c.criterionIndex === i)).length
                     const pct = baselineCriteria.length ? Math.round((n / baselineCriteria.length) * 100) : 0
@@ -468,12 +580,81 @@ function RequirementDetail({ reqId, projectId, onChanged, onDeleted }: { reqId: 
                   <Descriptions.Item label={t('req.title', '标题')}>{req?.title}</Descriptions.Item>
                   <Descriptions.Item label={t('req.baselineVersion', '基线版本')}>v{req?.baselineVersion}</Descriptions.Item>
                   <Descriptions.Item label={t('req.status', '状态')}>{req?.status ? <Tag color={reqStatusColor(req.status)}>{t(`req.status.${req.status}`, req.status)}</Tag> : '—'}</Descriptions.Item>
+                  <Descriptions.Item label={t('req.reqType', '类型')}>{req?.reqType ? <Tag>{t(`req.type.${req.reqType}`, req.reqType)}</Tag> : '—'}</Descriptions.Item>
+                  <Descriptions.Item label={t('req.priority', '优先级')}>{req?.priority ? <Tag color={prioColor(req.priority)}>{req.priority}</Tag> : '—'}</Descriptions.Item>
+                  <Descriptions.Item label={t('req.tags', '标签')}>
+                    {req?.tags?.length ? req.tags.map((tg) => <Tag key={tg}>{tg}</Tag>) : '—'}
+                  </Descriptions.Item>
+                  <Descriptions.Item label={t('req.dueDate', '截止日期')}>
+                    {req?.dueDate ? (
+                      <span>
+                        {req.dueDate}
+                        {req.overdue && <Tag color="red" style={{ marginLeft: 6 }}>{t('req.overdue', '延期')}</Tag>}
+                      </span>
+                    ) : '—'}
+                  </Descriptions.Item>
+                  <Descriptions.Item label={t('req.createdAt', '创建时间')}>{req?.createdAt ? new Date(req.createdAt).toLocaleString() : '—'}</Descriptions.Item>
+                  <Descriptions.Item label={t('req.updatedAt', '更新时间')}>{req?.updatedAt ? new Date(req.updatedAt).toLocaleString() : '—'}</Descriptions.Item>
                   <Descriptions.Item label={t('req.acceptanceCriteria', '验收标准')}>
                     {baselineCriteria.length ? (
                       <ul style={{ margin: 0, paddingLeft: 18 }}>{baselineCriteria.map((c, i) => <li key={i}>{c}</li>)}</ul>
                     ) : '—'}
                   </Descriptions.Item>
                 </Descriptions>
+                {/* 研发进度:开发/测试状态各一行,Segmented 直接流转,起止时间由后端记录。 */}
+                <Descriptions column={1} size="small" bordered style={{ marginTop: 12 }}>
+                  {(['dev', 'test'] as const).map((kind) => {
+                    const status = kind === 'dev' ? req?.devStatus : req?.testStatus
+                    const startedAt = kind === 'dev' ? req?.devStartedAt : req?.testStartedAt
+                    const finishedAt = kind === 'dev' ? req?.devFinishedAt : req?.testFinishedAt
+                    return (
+                      <Descriptions.Item key={kind} label={kind === 'dev' ? t('req.devStatus', '开发状态') : t('req.testStatus', '测试状态')}>
+                        <Space size={8} wrap>
+                          <Tag color={workTagColor(status)}>{t(`req.ws.${status ?? 'NOT_STARTED'}`, status ?? 'NOT_STARTED')}</Tag>
+                          <Segmented
+                            size="small"
+                            value={status ?? 'NOT_STARTED'}
+                            onChange={(v) => setWork(kind, v as RequirementWorkStatus)}
+                            options={WORK_STATUSES.map((s) => ({ value: s, label: t(`req.ws.${s}`, s) }))}
+                          />
+                          {(startedAt || finishedAt) && (
+                            <span style={{ color: 'var(--text-3)', fontSize: 12 }}>
+                              {startedAt ? `${t('req.startedAt', '开始')} ${fmtShort(startedAt)}` : ''}
+                              {finishedAt ? ` · ${t('req.finishedAt', '完成')} ${fmtShort(finishedAt)}` : ''}
+                            </span>
+                          )}
+                        </Space>
+                      </Descriptions.Item>
+                    )
+                  })}
+                </Descriptions>
+                {/* 子需求:列出挂在本需求下的需求(可打开/解除),并可把其他需求关联进来。 */}
+                <Card size="small" title={`${t('req.children', '子需求')} (${children.length})`} style={{ marginTop: 12 }}>
+                  <Space.Compact style={{ width: '100%', marginBottom: children.length ? 10 : 0 }}>
+                    <Select
+                      size="small"
+                      style={{ flex: 1 }}
+                      allowClear
+                      showSearch
+                      optionFilterProp="label"
+                      placeholder={t('req.linkChildPh', '选择需求挂到本需求下')}
+                      value={childPick}
+                      onChange={setChildPick}
+                      options={allReqs
+                        .filter((r) => r.id !== reqId && !children.some((c) => c.id === r.id))
+                        .map((r) => ({ value: r.id, label: r.title }))}
+                    />
+                    <Button size="small" type="primary" disabled={!childPick} onClick={linkChild}>{t('req.linkChild', '关联子需求')}</Button>
+                  </Space.Compact>
+                  {children.map((c) => (
+                    <div key={c.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 0', borderTop: '1px solid var(--border-soft)' }}>
+                      <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.title}</span>
+                      <Tag color={reqStatusColor(c.status)} style={{ marginRight: 0 }}>{t(`req.status.${c.status}`, c.status)}</Tag>
+                      {onOpen && <Button type="link" size="small" onClick={() => onOpen(c.id)}>{t('req.open', '打开')}</Button>}
+                      <Button type="link" size="small" danger onClick={() => unlinkChild(c.id)}>{t('req.unlink', '解除')}</Button>
+                    </div>
+                  ))}
+                </Card>
                 {/* 版本历史:点「查看」走 GET /requirement/:id/version/:n 取该版本明细。 */}
                 {!!req?.versions?.length && (
                   <Table<RequirementVersion>
@@ -527,6 +708,31 @@ function RequirementDetail({ reqId, projectId, onChanged, onDeleted }: { reqId: 
           <Button type="primary" htmlType="submit" block>{t('req.createVersion', '创建版本')}</Button>
         </Form>
       </Modal>
+      {/* 变更记录:字段级流水(时间 / 操作人 / 字段: 旧值 → 新值)。 */}
+      <Drawer title={t('req.changes', '变更记录')} open={changesOpen} onClose={() => setChangesOpen(false)} width={480}>
+        {changes.length ? (
+          <Timeline
+            items={changes.map((c, i) => ({
+              key: i,
+              children: (
+                <div>
+                  <div style={{ color: 'var(--text-3)', fontSize: 12 }}>
+                    {new Date(c.changedAt).toLocaleString()} · {c.changedBy}
+                  </div>
+                  <div>
+                    <Tag style={{ marginRight: 6 }}>{t(`req.chg.${c.field}`, c.field)}</Tag>
+                    <span style={{ color: 'var(--text-2)' }}>{c.oldValue || '—'}</span>
+                    <span style={{ color: 'var(--text-3)', margin: '0 6px' }}>→</span>
+                    <span>{c.newValue || '—'}</span>
+                  </div>
+                </div>
+              ),
+            }))}
+          />
+        ) : (
+          <Empty description={t('req.noChanges', '暂无变更记录')} />
+        )}
+      </Drawer>
       <Modal title={verView ? `${t('req.versionDetail', '版本明细')} · v${verView.version}` : ''} open={!!verView} onCancel={() => setVerView(null)} footer={null} destroyOnHidden>
         {verView && (
           <Descriptions column={1} size="small" bordered>
