@@ -1,3 +1,7 @@
+//! Web 认证共享件:Session/AuthUser 模型与 SessionStore 端口(内置 InMemorySessionStore),
+//! http feature 下提供 axum 提取器,从 Bearer token 解析出携带 PermissionSet 的 AuthUser,
+//! 供各上下文的 http 适配器统一做鉴权。
+
 use async_trait::async_trait;
 use thiserror::Error;
 
@@ -74,6 +78,82 @@ mod extractor {
                 .ok_or((StatusCode::UNAUTHORIZED, "invalid or expired token"))?;
             Ok(AuthUser { user_id: session.user_id, permissions: session.permissions })
         }
+    }
+}
+
+#[cfg(all(test, feature = "http"))]
+mod extractor_tests {
+    use super::{AuthUser, SessionStore};
+    use axum::body::Body;
+    use axum::extract::FromRef;
+    use axum::http::{Request, StatusCode};
+    use axum::routing::get;
+    use axum::Router;
+    use std::sync::Arc;
+    use tower::ServiceExt;
+
+    #[derive(Clone)]
+    struct St {
+        sessions: Arc<dyn SessionStore>,
+    }
+    impl FromRef<St> for Arc<dyn SessionStore> {
+        fn from_ref(s: &St) -> Self {
+            s.sessions.clone()
+        }
+    }
+
+    async fn whoami(user: AuthUser) -> String {
+        format!("{}:{}", user.user_id, user.can("BUG", "READ"))
+    }
+
+    fn app(sessions: Arc<dyn SessionStore>) -> Router {
+        Router::new().route("/whoami", get(whoami)).with_state(St { sessions })
+    }
+
+    fn req(auth: Option<&str>) -> Request<Body> {
+        let mut b = Request::builder().uri("/whoami");
+        if let Some(a) = auth {
+            b = b.header("authorization", a);
+        }
+        b.body(Body::empty()).expect("req")
+    }
+
+    #[tokio::test]
+    async fn valid_token_yields_user_with_permissions() {
+        let store = Arc::new(super::testing::InMemorySessionStore::new());
+        let perms = super::PermissionSet::from_raw(["BUG:READ".to_string()]).expect("perms");
+        let token = store.create("u1", perms, 3600).await.expect("token");
+        let resp = app(store).oneshot(req(Some(&format!("Bearer {token}")))).await.expect("resp");
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX).await.expect("body");
+        assert_eq!(&body[..], b"u1:true");
+    }
+
+    #[tokio::test]
+    async fn missing_header_is_401() {
+        let store = Arc::new(super::testing::InMemorySessionStore::new());
+        let resp = app(store).oneshot(req(None)).await.expect("resp");
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn non_bearer_scheme_is_401() {
+        let store = Arc::new(super::testing::InMemorySessionStore::new());
+        let resp = app(store).oneshot(req(Some("Basic dXNlcjpwdw=="))).await.expect("resp");
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn unknown_and_revoked_tokens_are_401() {
+        let store = Arc::new(super::testing::InMemorySessionStore::new());
+        let resp = app(store.clone()).oneshot(req(Some("Bearer ghost"))).await.expect("resp");
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+
+        let perms = super::PermissionSet::from_raw(["BUG:READ".to_string()]).expect("perms");
+        let token = store.create("u1", perms, 3600).await.expect("token");
+        store.revoke(&token).await.expect("revoke");
+        let resp = app(store).oneshot(req(Some(&format!("Bearer {token}")))).await.expect("resp");
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
     }
 }
 
