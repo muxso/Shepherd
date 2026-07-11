@@ -92,12 +92,15 @@ struct LoginResponse {
     token: String,
 }
 
-#[utoipa::path(post, path = "/auth/login", tag = "auth", request_body = LoginRequest, responses((status = 200, body = LoginResponse), (status = 401)))]
+#[utoipa::path(post, path = "/auth/login", tag = "auth", request_body = LoginRequest, responses((status = 200, body = LoginResponse), (status = 401), (status = 429)))]
 async fn login_handler(State(st): State<AppState>, Json(req): Json<LoginRequest>) -> Response {
     match st.login.execute(&req.username, &req.password).await {
         Ok(token) => (StatusCode::OK, Json(LoginResponse { token })).into_response(),
         Err(AuthError::InvalidCredentials) => {
             (StatusCode::UNAUTHORIZED, "invalid credentials").into_response()
+        }
+        Err(AuthError::LockedOut) => {
+            (StatusCode::TOO_MANY_REQUESTS, "too many failed attempts, try later").into_response()
         }
         Err(AuthError::Backend(_)) => {
             (StatusCode::INTERNAL_SERVER_ERROR, "auth error").into_response()
@@ -336,8 +339,13 @@ struct NamesQuery {
     ids: String,
 }
 
-#[utoipa::path(get, path = "/system/user/names", tag = "user", params(NamesQuery), responses((status = 200)))]
-async fn resolve_names(State(st): State<AppState>, Query(q): Query<NamesQuery>) -> Response {
+// 任意有效会话即可(展示名是所有登录页面的公共需求),但不再匿名开放。
+#[utoipa::path(get, path = "/system/user/names", tag = "user", params(NamesQuery), responses((status = 200), (status = 401)), security(("bearer" = [])))]
+async fn resolve_names(
+    _user: AuthUser,
+    State(st): State<AppState>,
+    Query(q): Query<NamesQuery>,
+) -> Response {
     let ids: Vec<String> =
         q.ids.split(',').map(str::trim).filter(|s| !s.is_empty()).map(str::to_string).collect();
     let names: BTreeMap<String, String> = st.resolve.execute(&ids).await;
@@ -893,6 +901,40 @@ mod tests {
         let app = app();
         assert!(token(&app, "admin", "secret").await.is_some());
         assert!(token(&app, "admin", "WRONG").await.is_none());
+    }
+
+    #[tokio::test]
+    async fn login_lockout_maps_to_429() {
+        let app = app();
+        let body = r#"{"username":"admin","password":"WRONG"}"#;
+        for _ in 0..crate::application::login::MAX_LOGIN_FAILURES {
+            let r = app.clone().oneshot(post("/auth/login", body, None)).await.expect("r");
+            assert_eq!(r.status(), StatusCode::UNAUTHORIZED);
+        }
+        // 锁定后即使口令正确也是 429。
+        let locked = app
+            .oneshot(post("/auth/login", r#"{"username":"admin","password":"secret"}"#, None))
+            .await
+            .expect("r");
+        assert_eq!(locked.status(), StatusCode::TOO_MANY_REQUESTS);
+    }
+
+    #[tokio::test]
+    async fn resolve_names_requires_session_but_no_permission() {
+        let app = app();
+        let anon = app
+            .clone()
+            .oneshot(req("GET", "/system/user/names?ids=u-admin", "", None))
+            .await
+            .expect("r");
+        assert_eq!(anon.status(), StatusCode::UNAUTHORIZED);
+        // viewer 只有 READ 权限,但任意有效会话即可解析展示名。
+        let t = token(&app, "viewer", "pw").await.expect("token");
+        let ok = app
+            .oneshot(req("GET", "/system/user/names?ids=u-admin", "", Some(&t)))
+            .await
+            .expect("r");
+        assert_eq!(ok.status(), StatusCode::OK);
     }
 
     #[tokio::test]

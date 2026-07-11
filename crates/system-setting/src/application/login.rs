@@ -1,6 +1,8 @@
 //! 未知用户与密码错误返回同一 `InvalidCredentials`,防账号枚举。
 
-use std::sync::Arc;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use kernel::permission::PermissionSet;
 
@@ -10,6 +12,47 @@ use crate::ports::{
     UserRoleRepository,
 };
 
+/// 同一用户名连续失败达到该次数即触发锁定。
+pub const MAX_LOGIN_FAILURES: u32 = 5;
+/// 锁定时长;期满后计数清零。
+pub const LOCKOUT_WINDOW: Duration = Duration::from_secs(15 * 60);
+
+/// 按用户名统计连续失败(内存态,进程重启即清)。
+/// 未知用户名同样计数,锁定行为对已存在/不存在的账号一致,不泄露枚举信号。
+#[derive(Default)]
+struct FailureTracker {
+    entries: Mutex<HashMap<String, (u32, Instant)>>,
+}
+
+impl FailureTracker {
+    /// 是否处于锁定期;期满则顺手清零计数。
+    fn is_locked(&self, username: &str, now: Instant) -> bool {
+        let mut g = self.entries.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        match g.get(username) {
+            Some(&(fails, last)) if fails >= MAX_LOGIN_FAILURES => {
+                if now.duration_since(last) < LOCKOUT_WINDOW {
+                    true
+                } else {
+                    g.remove(username);
+                    false
+                }
+            }
+            _ => false,
+        }
+    }
+
+    fn record_failure(&self, username: &str, now: Instant) {
+        let mut g = self.entries.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let e = g.entry(username.to_string()).or_insert((0, now));
+        e.0 += 1;
+        e.1 = now;
+    }
+
+    fn reset(&self, username: &str) {
+        self.entries.lock().unwrap_or_else(std::sync::PoisonError::into_inner).remove(username);
+    }
+}
+
 #[derive(Clone)]
 pub struct LoginUseCase {
     creds: Arc<dyn CredentialRepository>,
@@ -18,6 +61,9 @@ pub struct LoginUseCase {
     user_roles: Arc<dyn UserRoleRepository>,
     directory: Option<Arc<dyn DirectoryAuthenticator>>,
     session_ttl_secs: i64,
+    // Arc:axum 每请求克隆 state,计数必须跨克隆共享。
+    failures: Arc<FailureTracker>,
+    clock: Arc<dyn Fn() -> Instant + Send + Sync>,
 }
 
 impl LoginUseCase {
@@ -27,11 +73,27 @@ impl LoginUseCase {
         sessions: Arc<dyn SessionStore>,
         user_roles: Arc<dyn UserRoleRepository>,
     ) -> Self {
-        Self { creds, hasher, sessions, user_roles, directory: None, session_ttl_secs: 8 * 3600 }
+        Self {
+            creds,
+            hasher,
+            sessions,
+            user_roles,
+            directory: None,
+            session_ttl_secs: 8 * 3600,
+            failures: Arc::new(FailureTracker::default()),
+            clock: Arc::new(Instant::now),
+        }
     }
 
     pub fn with_ttl_secs(mut self, secs: i64) -> Self {
         self.session_ttl_secs = secs;
+        self
+    }
+
+    /// 测试用:注入可拨动的时钟,免于真实等待锁定期。
+    #[cfg(test)]
+    fn with_clock(mut self, clock: Arc<dyn Fn() -> Instant + Send + Sync>) -> Self {
+        self.clock = clock;
         self
     }
 
@@ -62,6 +124,22 @@ impl LoginUseCase {
     }
 
     pub async fn execute(&self, username: &str, password: &str) -> Result<String, AuthError> {
+        let now = (self.clock)();
+        // 锁定期内先于口令校验拒绝:正确口令也进不来。
+        if self.failures.is_locked(username, now) {
+            return Err(AuthError::LockedOut);
+        }
+        let result = self.attempt(username, password).await;
+        match &result {
+            Ok(_) => self.failures.reset(username),
+            Err(AuthError::InvalidCredentials) => self.failures.record_failure(username, now),
+            // 后端故障不算用户失败
+            Err(_) => {}
+        }
+        result
+    }
+
+    async fn attempt(&self, username: &str, password: &str) -> Result<String, AuthError> {
         let cred = self
             .creds
             .find_by_username(username)
@@ -199,5 +277,67 @@ mod tests {
         // 目录会接受任何人,但本地无此用户 → 不开户、不枚举。
         let (uc, _) = uc_with_dir(repo_with_admin(), StubDirectory(Ok(true)));
         assert_eq!(uc.execute("ghost", "any").await, Err(AuthError::InvalidCredentials));
+    }
+
+    /// 可拨动的时钟:测试无需真实等待锁定期。
+    fn mock_clock() -> (Arc<Mutex<Instant>>, Arc<dyn Fn() -> Instant + Send + Sync>) {
+        let now = Arc::new(Mutex::new(Instant::now()));
+        let handle = now.clone();
+        let clock: Arc<dyn Fn() -> Instant + Send + Sync> =
+            Arc::new(move || *handle.lock().unwrap_or_else(std::sync::PoisonError::into_inner));
+        (now, clock)
+    }
+
+    async fn fail_n(uc: &LoginUseCase, user: &str, n: u32) {
+        for _ in 0..n {
+            assert_eq!(uc.execute(user, "wrong").await, Err(AuthError::InvalidCredentials));
+        }
+    }
+
+    #[tokio::test]
+    async fn lockout_after_max_failures() {
+        let (uc, _) = uc(repo_with_admin());
+        fail_n(&uc, "admin", MAX_LOGIN_FAILURES).await;
+        // 第 6 次起不再报口令错,而是锁定。
+        assert_eq!(uc.execute("admin", "wrong").await, Err(AuthError::LockedOut));
+    }
+
+    #[tokio::test]
+    async fn correct_password_rejected_during_lockout() {
+        let (uc, _) = uc(repo_with_admin());
+        fail_n(&uc, "admin", MAX_LOGIN_FAILURES).await;
+        assert_eq!(uc.execute("admin", "secret").await, Err(AuthError::LockedOut));
+    }
+
+    #[tokio::test]
+    async fn success_resets_failure_counter() {
+        let (uc, _) = uc(repo_with_admin());
+        fail_n(&uc, "admin", MAX_LOGIN_FAILURES - 1).await;
+        assert!(uc.execute("admin", "secret").await.is_ok());
+        // 计数已清零:再失败一次仍是口令错,而非累计到锁定。
+        fail_n(&uc, "admin", 1).await;
+        assert!(uc.execute("admin", "secret").await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn lockout_expires_after_window() {
+        let (now, clock) = mock_clock();
+        let (uc, _) = uc(repo_with_admin());
+        let uc = uc.with_clock(clock);
+        fail_n(&uc, "admin", MAX_LOGIN_FAILURES).await;
+        assert_eq!(uc.execute("admin", "secret").await, Err(AuthError::LockedOut));
+        // 拨过锁定期 → 计数清零,正确口令恢复可登录。
+        *now.lock().unwrap_or_else(std::sync::PoisonError::into_inner) +=
+            LOCKOUT_WINDOW + Duration::from_secs(1);
+        assert!(uc.execute("admin", "secret").await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn lockout_is_per_username() {
+        let (uc, _) = uc(repo_with_admin().with_user("bob", "u-bob", "pw", ["SYSTEM_USER:READ"]));
+        fail_n(&uc, "admin", MAX_LOGIN_FAILURES).await;
+        assert_eq!(uc.execute("admin", "secret").await, Err(AuthError::LockedOut));
+        // 其他用户不受影响。
+        assert!(uc.execute("bob", "pw").await.is_ok());
     }
 }
