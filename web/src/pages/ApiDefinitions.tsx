@@ -389,7 +389,7 @@ export default function ApiDefinitions() {
           <Button>{viewMode} <DownOutlined /></Button>
         </Dropdown>
         <span style={{ fontWeight: 600, color: 'var(--brand)' }}>
-          {viewMode === 'API' ? t('apidef.allApis2', '全部接口') : viewMode === 'CASE' ? t('apidef.allCases', '全部用例') : t('apidef.allMocks', '全部 MOCK')}
+          {viewMode === 'API' ? t('apidef.allApis2', '全部') : viewMode === 'CASE' ? t('apidef.allCases', '全部用例') : t('apidef.allMocks', '全部 MOCK')}
         </span>
         <div style={{ flex: 1 }} />
         {/* 三件套工具条(搜索/视图/筛选/列)只在 API 模式渲染;CASE/MOCK 本就没有搜索/筛选。 */}
