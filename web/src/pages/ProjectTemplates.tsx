@@ -28,7 +28,7 @@ export default function ProjectTemplates() {
   if (!projectId) return <SelectProjectEmpty />
   return (
     <PageContainer>
-      <PageHeader title={t('tmpl.title', '模板管理')} subtitle={t('tmpl.subtitle', '定义各模块创建表单的字段、顺序与必填')} />
+      <PageHeader title={t('tmpl.title', '模板管理')} />
       <PageBody>
         <Tabs
           items={[
@@ -152,8 +152,7 @@ function FieldTemplateEditor({ kind, projectId }: { kind: TemplateKind; projectI
 
   return (
     <div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-        <span style={{ fontSize: 12, color: 'var(--text-3)' }}>{t('tmpl.editorHint', '顺序即创建表单里的字段顺序;隐藏的字段不出现在表单中')}</span>
+      <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', marginBottom: 12 }}>
         <Space>
           <Button icon={<PlusOutlined />} onClick={() => setAddOpen(true)}>{t('tmpl.addField', '添加字段')}</Button>
           <Button type="primary" loading={saving} disabled={!dirty} onClick={save}>{t('a.save', '保存')}</Button>
