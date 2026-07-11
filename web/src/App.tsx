@@ -8,6 +8,8 @@ import AppShell from './components/AppShell'
 
 // 路由级懒加载:按页拆分 bundle,首屏只下登录/外壳,其余进入时按需加载。
 const Home = lazy(() => import('./pages/Home'))
+const Todos = lazy(() => import('./pages/Todos'))
+const Follows = lazy(() => import('./pages/Follows'))
 const ApiDefinitions = lazy(() => import('./pages/ApiDefinitions'))
 const Scenarios = lazy(() => import('./pages/Scenarios'))
 const TestPlans = lazy(() => import('./pages/TestPlans'))
@@ -47,6 +49,8 @@ export default function App() {
         <Routes>
           <Route path="/" element={<Navigate to="/home" replace />} />
           <Route path="/home" element={<Home />} />
+          <Route path="/todo" element={<Todos />} />
+          <Route path="/follow" element={<Follows />} />
           <Route path="/api/definition" element={<ApiDefinitions />} />
           <Route path="/api/scenario" element={<Scenarios />} />
           <Route path="/functional-case" element={<FunctionalCases />} />

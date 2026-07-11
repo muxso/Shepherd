@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { Layout, Menu, Select, Button, Space, Tooltip, Drawer, Avatar, Descriptions, Segmented, Empty, Dropdown } from 'antd'
+import { Layout, Menu, Select, Button, Space, Tooltip, Drawer, Avatar, Segmented, Empty, Dropdown } from 'antd'
 import {
   ApiOutlined,
   PartitionOutlined,
@@ -31,6 +31,8 @@ import {
   FullscreenOutlined,
   FullscreenExitOutlined,
   KeyOutlined,
+  CarryOutOutlined,
+  StarOutlined,
 } from '@ant-design/icons'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { userStore } from '../api'
@@ -38,6 +40,7 @@ import { useApp } from '../context'
 import { useI18n } from '../i18n'
 import { useThemeMode } from '../themeMode'
 import NewProjectModal from './NewProjectModal'
+import PersonalCenter from './PersonalCenter'
 
 const { Content } = Layout
 
@@ -64,11 +67,16 @@ interface ModuleDef {
 // 测试资产(用例/接口/场景/计划/性能/缺陷)统一收进「AI 测试」。
 const MODULES: ModuleDef[] = [
   {
+    // 首页 = 个人视角入口:工作台(总览)+ 待办(等我处理)+ 关注(我盯的资产)。
     key: '/home',
     label: ['nav.home', '首页'],
     icon: <DashboardOutlined />,
-    match: ['/home'],
-    children: [{ key: '/home', icon: <DashboardOutlined />, label: ['m.home', '工作台'] }],
+    match: ['/home', '/todo', '/follow'],
+    children: [
+      { key: '/home', icon: <DashboardOutlined />, label: ['m.home', '工作台'] },
+      { key: '/todo', icon: <CarryOutOutlined />, label: ['home.todo.nav', '待办'] },
+      { key: '/follow', icon: <StarOutlined />, label: ['home.follow.nav', '关注'] },
+    ],
   },
   {
     // 需求与评审同属需求域:一级栏一个入口,顶栏二级菜单切换(对齐「测试」模块的样式)。
@@ -181,7 +189,6 @@ export default function AppShell({ children }: { children: ReactNode }) {
     return () => document.removeEventListener('scroll', onScroll, true)
   }, [])
 
-  const currentProject = projects.find((p) => p.id === projectId)
   const username = userStore.get()
 
   // 当前所在模块由路由推断;二级栏与面包屑都跟着它走。
@@ -251,11 +258,22 @@ export default function AppShell({ children }: { children: ReactNode }) {
           </div>
           <div style={{ paddingBottom: 6 }}>
             {sysModule && <RailItem m={sysModule} />}
-            <Tooltip title={t('pc.title', '个人中心')} placement="right">
-              <div style={{ display: 'flex', justifyContent: 'center', padding: '10px 0', cursor: 'pointer' }} onClick={() => setPcOpen(true)}>
+            {/* 头像:下拉菜单(个人中心 / 退出登录);个人中心是全屏抽屉 */}
+            <Dropdown
+              trigger={['click']}
+              placement="topRight"
+              menu={{
+                items: [
+                  { key: 'pc', icon: <UserOutlined />, label: t('pc.title', '个人中心'), onClick: () => setPcOpen(true) },
+                  { type: 'divider' },
+                  { key: 'logout', icon: <LogoutOutlined />, danger: true, label: t('top.logout', '退出登录'), onClick: logout },
+                ],
+              }}
+            >
+              <div style={{ display: 'flex', justifyContent: 'center', padding: '10px 0', cursor: 'pointer' }}>
                 <Avatar size={30} style={{ background: 'var(--brand)' }}>{username.slice(0, 1).toUpperCase()}</Avatar>
               </div>
-            </Tooltip>
+            </Dropdown>
           </div>
         </div>
 
@@ -448,30 +466,8 @@ export default function AppShell({ children }: { children: ReactNode }) {
         </div>
       </Drawer>
 
-      {/* 个人中心(后端暂无 /me,展示登录态可得信息) */}
-      <Drawer title={t('pc.title', '个人中心')} open={pcOpen} onClose={() => setPcOpen(false)} width={420}>
-        <Space direction="vertical" size={16} style={{ width: '100%' }}>
-          <Space align="center" size={12}>
-            <Avatar size={48} style={{ background: 'var(--brand)' }}>{username.slice(0, 1).toUpperCase()}</Avatar>
-            <span style={{ fontSize: 16, fontWeight: 600 }}>{username}</span>
-          </Space>
-          <Descriptions column={1} size="small" bordered>
-            <Descriptions.Item label={t('pc.username', '用户名')}>{username}</Descriptions.Item>
-            <Descriptions.Item label={t('pc.project', '当前项目')}>{currentProject?.name || '—'}</Descriptions.Item>
-            <Descriptions.Item label={t('pc.projectCount', '可见项目数')}>{projects.length}</Descriptions.Item>
-            <Descriptions.Item label={t('pc.lang', '语言')}>
-              {/* 设置面板内有富余空间:用分段切换一眼可见全部选项与当前态,无需展开下拉。 */}
-              <Segmented
-                size="small"
-                value={lang}
-                onChange={(v) => setLang(v as 'zh' | 'en')}
-                options={LANG_OPTIONS}
-              />
-            </Descriptions.Item>
-          </Descriptions>
-          <Button danger icon={<LogoutOutlined />} onClick={logout}>{t('top.logout', '退出登录')}</Button>
-        </Space>
-      </Drawer>
+      {/* 个人中心:全屏抽屉(基本信息 / 密码设置 / API KEY / 模型设置) */}
+      <PersonalCenter open={pcOpen} onClose={() => setPcOpen(false)} />
     </Layout>
   )
 }
