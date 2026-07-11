@@ -10,6 +10,16 @@ import { useI18n } from '../i18n'
 
 const METHODS = ['GET', 'POST', 'PUT', 'DELETE']
 type TargetType = 'url' | 'scenario'
+
+// SCENARIO 是场景压测的伪 method,展示为「场景」;真 HTTP 方法(GET/POST…)是专有名词,原样。
+const kindLabel = (t: (k: string, d?: string) => string, m: string) =>
+  m === 'SCENARIO' ? t('perf.kindScenario', '场景') : m
+
+// 报告状态码 → 展示文案;未登记的原样兜底。
+const statusLabel = (t: (k: string, d?: string) => string, s: string) => {
+  const zh: Record<string, string> = { COMPLETED: '已完成', RUNNING: '压测中', ERROR: '失败' }
+  return zh[s] ? t(`perf.st.${s}`, zh[s]) : s
+}
 type LoadMode = 'iterations' | 'duration'
 
 export default function Perf() {
@@ -51,7 +61,7 @@ export default function Perf() {
               <Space direction="vertical" size={2} style={{ width: '100%' }}>
                 <Space size={4}>
                   <Tag color={methodColor(r.meta?.method || 'GET')} style={{ margin: 0 }}>
-                    {r.meta?.method || 'GET'}
+                    {kindLabel(t, r.meta?.method || 'GET')}
                   </Tag>
                   <Typography.Text ellipsis style={{ maxWidth: 200 }} className="ms-mono">
                     {r.label}
@@ -280,10 +290,10 @@ function ReportView({ reportId }: { reportId: string }) {
       loading={loading}
       title={
         <Space>
-          <Tag color={methodColor(rep.method)}>{rep.method}</Tag>
+          <Tag color={methodColor(rep.method)}>{kindLabel(t, rep.method)}</Tag>
           <span className="ms-mono">{rep.url}</span>
           <Tag color={rep.status === 'COMPLETED' ? 'green' : running ? 'processing' : 'blue'}>
-            {running ? `${rep.status}…` : rep.status}
+            {running ? `${statusLabel(t, rep.status)}…` : statusLabel(t, rep.status)}
           </Tag>
         </Space>
       }
