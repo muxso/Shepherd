@@ -1,3 +1,6 @@
+//! Shepherd 命令行客户端:经 REST API 操作服务端(需求/任务/交付等),
+//! 默认渲染人类可读输出,--json 输出原始 JSON 便于脚本消费。
+
 use std::error::Error;
 use std::path::PathBuf;
 

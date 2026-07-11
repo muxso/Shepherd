@@ -1,3 +1,6 @@
+//! 远程测试执行节点:HTTP 服务封装 api-runner(接口用例)与 probe(多协议探测),
+//! 接收 RequestSpec/ProbeRequest 执行并返回结果,由 runner 上下文注册与派发。
+
 use std::sync::Arc;
 
 use axum::{

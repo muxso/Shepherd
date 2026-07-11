@@ -1,3 +1,7 @@
+//! 多协议探测:ProbeRequest 经 ProtocolPlugin 执行得 RawProbe,再按 ProbeAssertion 求值出 ProbeOutcome。
+//! 内置 http/grpc/sql/mysql/redis/websocket/ssh 插件,按 feature 注册进 PluginRegistry(见 default_registry)。
+//! domain 求值为纯计算;协议 IO 全部在插件内。
+
 pub mod domain;
 pub mod plugins;
 pub mod ports;

@@ -1,3 +1,6 @@
+//! 数据库迁移:嵌入本 crate 下 migrations/ 的 sqlx 迁移并按序执行,
+//! 另提供 PgPool 连接与 ping。新增迁移后需 touch 本文件重编译才会被嵌入。
+
 use sqlx::migrate::MigrateError;
 pub use sqlx::PgPool; // 重导出:组装根可命名 PgPool 而不直接依赖 sqlx
 

@@ -1,3 +1,6 @@
+//! 远程执行者运行时:以 pull 模式向 server 注册并心跳,长轮询领取 WorkSpec,
+//! 调用 Claude/通用 CLI 等后端在 git 工作区内执行任务,回传事件与交付结果。
+
 mod backend;
 mod client;
 mod events;

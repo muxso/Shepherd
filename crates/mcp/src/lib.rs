@@ -1,3 +1,7 @@
+//! MCP(Model Context Protocol)服务端最小实现:注册 Tool,分发 initialize / tools/list / tools/call,
+//! CapabilityChecker 按 resource+action 过滤工具可见性并校验调用授权。
+//! 只做 JSON-RPC 消息处理,不含传输层;由组装根挂到 HTTP 等通道上。
+
 use std::sync::Arc;
 
 use async_trait::async_trait;

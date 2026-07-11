@@ -1,3 +1,6 @@
+//! Shepherd HTTP 服务组装根:装配各上下文的 pg 适配器与 http 路由,
+//! 暴露 REST API、OpenAPI 文档与 MCP 工具入口。
+
 #![allow(clippy::doc_lazy_continuation)]
 
 mod breakdown_route;
