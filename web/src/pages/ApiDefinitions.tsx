@@ -1035,7 +1035,7 @@ function ApiDetail({ definition, onUpdated }: { definition: ApiDefinition; onUpd
       )}
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 12 }}>
         <Tag color="blue" style={{ margin: 0, padding: '4px 10px' }}>{definition.protocol}</Tag>
-        {isHttp && <Select value={reqMethod} onChange={setReqMethod} style={{ width: 100 }} options={METHODS.map((m) => ({ value: m, label: m }))} />}
+        {isHttp && <Select value={reqMethod} onChange={setReqMethod} style={{ width: 100 }} popupMatchSelectWidth={false} options={METHODS.map((m) => ({ value: m, label: m }))} />}
         <Input value={reqPath} onChange={(e) => setReqPath(e.target.value)} className="ms-mono" style={{ flex: 1, minWidth: 200 }} placeholder="/api/..." />
         {/* 右侧动作统一收进 Space(不参与 flex 伸缩,保证路径输入框占满中段)。 */}
         <Space size={8}>
@@ -1228,7 +1228,7 @@ function NewDefinitionTab({
       {/* 请求行:协议 + 方法 + 路径 + 定义/调试 + 保存(对齐参考图 #6/#7) */}
       <div style={{ display: 'flex', gap: 8, marginBottom: 12, alignItems: 'center' }}>
         <Select value={protocol} onChange={setProtocol} style={{ width: 120 }} options={PROTOCOLS.map((p) => ({ value: p, label: p }))} />
-        {isHttp && <Select value={method} onChange={setMethod} style={{ width: 100 }} options={METHODS.map((m) => ({ value: m, label: m }))} />}
+        {isHttp && <Select value={method} onChange={setMethod} style={{ width: 100 }} popupMatchSelectWidth={false} options={METHODS.map((m) => ({ value: m, label: m }))} />}
         <Input value={path} onChange={(e) => setPath(e.target.value)} placeholder={isHttp ? '/api/login' : t('apidef.pathOrTarget', '路径 / 目标')} className="ms-mono" style={{ flex: 1 }} />
         {isHttp && (
           <Segmented

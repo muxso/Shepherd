@@ -146,6 +146,12 @@ export default function RequestEditor({
   const spec = PROTOCOLS.find((p) => p.value === protocol) || PROTOCOLS[0]
   const protoOptions = PROTOCOLS.filter((p) => availProtos.includes(p.proto)).map((p) => ({ value: p.value, label: p.label }))
   const [url, setUrl] = useState(initialUrl)
+  // 嵌入接口定义调试时:方法/路径以定义行为准,定义改了这里跟着变(独立调试台不受影响)。
+  useEffect(() => {
+    if (!lockedProtocol) return
+    setMethod(initialMethod || 'GET')
+    setUrl(initialUrl)
+  }, [lockedProtocol, initialMethod, initialUrl])
   const [query, setQuery] = useState<KV[]>([{ on: true, key: '', value: '', desc: '' }])
   const [headers, setHeaders] = useState<KV[]>([{ on: true, key: '', value: '', desc: '' }])
   const [body, setBody] = useState('')
@@ -281,7 +287,7 @@ export default function RequestEditor({
           <Select value={protocol} onChange={setProtocol} style={{ width: 120 }} options={protoOptions} />
         )}
         {spec.httpMethod && (
-          <Select value={method} onChange={setMethod} style={{ width: 100 }} options={METHODS.map((m) => ({ value: m, label: m }))} />
+          <Select value={method} onChange={setMethod} style={{ width: 100 }} popupMatchSelectWidth={false} options={METHODS.map((m) => ({ value: m, label: m }))} />
         )}
         {/* 环境选择器:HTTP 下提供 baseUrl + 默认头 + {{变量}}。空=无环境(需填绝对 URL)。 */}
         {spec.httpMethod && (
