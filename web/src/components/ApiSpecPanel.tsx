@@ -130,15 +130,16 @@ const ApiSpecPanel = forwardRef<ApiSpecPanelHandle, {
   const create = mode === 'create'
   const debug = mode === 'debug'
   const editable = mode === 'define' || create || debug
+  // 受控 = create 模式,或无 id 的草稿(新建接口的调试):spec 由父级持有,不走 load/save。
+  const controlled = create || !definition.id
   const [innerSpec, setInnerSpec] = useState<ApiSpec>(emptySpec())
-  const [loading, setLoading] = useState(!create)
+  const [loading, setLoading] = useState(!controlled)
   const [saving, setSaving] = useState(false)
   const [dirty, setDirty] = useState(false)
-  // create 模式用父级受控 spec;否则用内部状态(load/save)。
-  const spec = create ? value ?? emptySpec() : innerSpec
+  const spec = controlled ? value ?? emptySpec() : innerSpec
 
   useEffect(() => {
-    if (create) return
+    if (controlled) return
     let alive = true
     setLoading(true)
     api
@@ -150,10 +151,10 @@ const ApiSpecPanel = forwardRef<ApiSpecPanelHandle, {
       alive = false
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [definition.id, create])
+  }, [definition.id, controlled])
 
   const patch = (p: Partial<ApiSpec>) => {
-    if (create) {
+    if (controlled) {
       onChange?.({ ...spec, ...p })
       return
     }
@@ -162,6 +163,7 @@ const ApiSpecPanel = forwardRef<ApiSpecPanelHandle, {
   }
 
   const save = async () => {
+    if (!definition.id) return // 草稿:spec 由父级「保存」随创建一并落库。
     setSaving(true)
     try {
       // 基础字段(名称/方法/路径)由父级请求行维护;仅在确有变化时随保存一并落库。

@@ -22,6 +22,7 @@ import {
   UnorderedListOutlined,
   MinusSquareOutlined,
   SearchOutlined,
+  SendOutlined,
 } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
 import { api, ApiError, userIdStore, type ApiCase, type ApiDefinition, type ApiModule, type ApiSpec, type DebugResponse, type Environment, type ImportFormat, type ImportSchedule, type ProjectMock } from '../api'
@@ -30,7 +31,6 @@ import { useApp } from '../context'
 import { methodColor, statusColor } from '../components/tags'
 import CasesPanel from './CasesPanel'
 import MocksPanel from './MocksPanel'
-import RequestEditor from '../components/RequestEditor'
 import ApiSpecPanel, { DebugResultPanel, emptySpec, parseCurl, type ApiSpecPanelHandle, type ExecMode, type SentRequest } from '../components/ApiSpecPanel'
 import KVEditor, { type KVRow } from '../components/KVEditor'
 import AssertionEditor from '../components/AssertionEditor'
@@ -1202,6 +1202,18 @@ function NewDefinitionTab({
   const [defMode, setDefMode] = useState<'define' | 'debug'>('define')
   const [saving, setSaving] = useState(false)
   const isHttp = protocol === 'HTTP'
+  // 调试:与详情页同一套 ApiSpecPanel(草稿受控,无 id 不落库);环境进入调试时懒加载。
+  const panelRef = useRef<ApiSpecPanelHandle>(null)
+  const [envs, setEnvs] = useState<Environment[]>([])
+  const [envId, setEnvId] = useState('')
+  useEffect(() => {
+    if (defMode !== 'debug' || envs.length) return
+    api.environments(projectId).then((list) => {
+      const arr = Array.isArray(list) ? list : []
+      setEnvs(arr)
+      setEnvId((cur) => cur || arr.find((e) => e.enabled !== false)?.id || '')
+    }).catch(() => setEnvs([]))
+  }, [defMode, projectId, envs.length])
 
   const save = async () => {
     if (!name.trim()) return message.warning(t('apidef.nameRequired', '请填接口名称'))
@@ -1240,6 +1252,21 @@ function NewDefinitionTab({
             ]}
           />
         )}
+        {/* 调试态:环境 + 发送(服务端执行);方法/路径/参数与定义共用同一份草稿。 */}
+        {isHttp && defMode === 'debug' && (
+          <>
+            <Select
+              value={envId || undefined}
+              onChange={setEnvId}
+              style={{ width: 200 }}
+              placeholder={t('editor.selectEnv', '选择环境')}
+              allowClear
+              options={envs.map((e) => ({ value: e.id, label: e.baseUrl ? `${e.name} · ${e.baseUrl}` : e.name }))}
+              notFoundContent={t('editor.noEnvConfigured', '未配置环境,去「环境」页新建')}
+            />
+            <Button type="primary" icon={<SendOutlined />} onClick={() => panelRef.current?.execute()}>{t('a.send', '发送')}</Button>
+          </>
+        )}
         <Button onClick={onCancel}>{t('a.cancel', '取消')}</Button>
         <Button type="primary" loading={saving} icon={<SaveOutlined />} onClick={save}>{t('a.save', '保存')}</Button>
       </div>
@@ -1249,7 +1276,18 @@ function NewDefinitionTab({
       ) : defMode === 'define' ? (
         <ApiSpecPanel definition={draftDef} mode="create" value={spec} onChange={setSpec} />
       ) : (
-        <RequestEditor initialMethod={method} initialUrl={path} lockedProtocol={protocol} embedded />
+        <ApiSpecPanel
+          ref={panelRef}
+          definition={draftDef}
+          mode="debug"
+          value={spec}
+          onChange={setSpec}
+          hideSave
+          reqMethod={method}
+          reqPath={path}
+          reqName={name}
+          env={envs.find((e) => e.id === envId)}
+        />
       )}
     </div>
   )
