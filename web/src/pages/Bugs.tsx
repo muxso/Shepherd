@@ -17,6 +17,14 @@ const bugColor = (s: string) => {
   return 'blue'
 }
 
+// 状态码 → 展示文案(i18n key 兜底中文);未登记的自定义状态原样显示。
+const statusLabel = (t: (k: string, d?: string) => string, s: string) => {
+  const zh: Record<string, string> = {
+    NEW: '新建', RESOLVED: '已解决', CLOSED: '已关闭', REOPENED: '重新打开', REJECTED: '已拒绝',
+  }
+  return zh[s] ? t(`bug.st.${s}`, zh[s]) : s
+}
+
 // 缺陷列表/创建/状态流转全走后端(GET /bug、POST /bug、POST /bug/{id}/status)。
 export default function Bugs() {
   const { t } = useI18n()
@@ -49,13 +57,13 @@ export default function Bugs() {
           defaultValue={status}
           style={{ width: '100%', marginTop: 8 }}
           onChange={(v) => (status = v)}
-          options={STATUSES.map((s) => ({ value: s, label: s }))}
+          options={STATUSES.filter((s) => s !== item.status).map((s) => ({ value: s, label: statusLabel(t, s) }))}
         />
       ),
       onOk: async () => {
         try {
           const b = await api.setBugStatus(item.id, status)
-          message.success(`${t('bug.changedTo', '已变更为')} ${b.status}`)
+          message.success(`${t('bug.changedTo', '已变更为')} ${statusLabel(t, b.status)}`)
           setItems((prev) => prev.map((x) => (x.id === item.id ? { ...x, status: b.status } : x)))
         } catch (e) {
           message.error(e instanceof ApiError ? `${t('bug.changeFailedStatus', '变更失败')}:${e.status}${t('bug.illegalTransition', '(非法流转?)')}` : t('bug.changeFailed', '变更失败'))
@@ -90,7 +98,7 @@ export default function Bugs() {
             {
               title: t('bug.status', '状态'),
               width: 130,
-              render: (_, r) => <Tag color={bugColor(r.status || 'NEW')}>{r.status || 'NEW'}</Tag>,
+              render: (_, r) => <Tag color={bugColor(r.status || 'NEW')}>{statusLabel(t, r.status || 'NEW')}</Tag>,
             },
             { title: 'ID', dataIndex: 'id', width: 110, render: (v: string) => <Tooltip title={v}><span className="ms-mono" style={{ fontSize: 12, color: 'var(--text-3)' }}>{v?.slice(0, 8)}</span></Tooltip> },
             {
@@ -112,12 +120,12 @@ export default function Bugs() {
       </PageBody>
 
       <Modal title={t('bug.new', '新建缺陷')} open={createOpen} onCancel={() => setCreateOpen(false)} footer={null} destroyOnHidden>
+        {/* 新建缺陷一律从「新建」状态开始;导入历史缺陷带其它状态走 API 的 initialStatus。 */}
         <Form
           layout="vertical"
-          initialValues={{ initialStatus: 'NEW' }}
-          onFinish={async (v: { title: string; initialStatus: string }) => {
+          onFinish={async (v: { title: string }) => {
             try {
-              const b = await api.createBug({ projectId, title: v.title, initialStatus: v.initialStatus })
+              const b = await api.createBug({ projectId, title: v.title, initialStatus: 'NEW' })
               message.success(t('bug.created', '缺陷已创建'))
               setItems((prev) => [b, ...prev.filter((x) => x.id !== b.id)])
               setCreateOpen(false)
@@ -128,9 +136,6 @@ export default function Bugs() {
         >
           <Form.Item name="title" label={t('bug.title', '标题')} rules={[{ required: true }]}>
             <Input placeholder={t('bug.titlePlaceholder', '如:登录按钮无响应')} autoFocus />
-          </Form.Item>
-          <Form.Item name="initialStatus" label={t('bug.initialStatus', '初始状态')}>
-            <Select options={STATUSES.map((s) => ({ value: s, label: s }))} />
           </Form.Item>
           <Button type="primary" htmlType="submit" block>
             {t('a.create', '创建')}
