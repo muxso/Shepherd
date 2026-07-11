@@ -258,17 +258,17 @@ export function useListView<T>({
         value={search}
         onChange={(e) => setSearch(e.target.value)}
       />
-      <Popover content={filterPanel} trigger="click" placement="bottomLeft">
+      <Dropdown menu={viewMenu} trigger={['click']}>
+        <Button size="small" icon={<EyeOutlined />}>{t('lv.views', '视图')}{views.length > 0 ? ` (${views.length})` : ''}</Button>
+      </Dropdown>
+      <Popover content={filterPanel} trigger="click" placement="bottomRight">
         <Button size="small" icon={<FilterOutlined />}>
           {t('lv.filter', '筛选')}{activeFilterCount > 0 ? ` (${activeFilterCount})` : ''}
         </Button>
       </Popover>
-      <Popover content={columnPanel} trigger="click" placement="bottomLeft">
-        <Button size="small" icon={<SettingOutlined />}>{t('lv.columns', '列')}</Button>
+      <Popover content={columnPanel} trigger="click" placement="bottomRight">
+        <Button size="small" icon={<SettingOutlined />} />
       </Popover>
-      <Dropdown menu={viewMenu} trigger={['click']}>
-        <Button size="small" icon={<EyeOutlined />}>{t('lv.views', '视图')}{views.length > 0 ? ` (${views.length})` : ''}</Button>
-      </Dropdown>
     </Space>
   )
 

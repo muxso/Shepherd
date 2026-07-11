@@ -204,9 +204,10 @@ export function WorkList<T extends object>({
             {newLabel ?? t('a.new', '新建')}
           </Button>
         )}
-        {extraActions}
         <div style={{ flex: 1 }} />
         {onSearch && <Input.Search placeholder={searchPlaceholder ?? t('a.search', '搜索')} allowClear style={{ width: 240 }} onChange={(e) => onSearch(e.target.value)} />}
+        {/* 工具类操作(搜索/视图/筛选/列)统一靠右,对齐场景页布局 */}
+        {extraActions}
         {onRefresh && <Button icon={<ReloadOutlined />} onClick={onRefresh} />}
       </div>
       <div style={{ flex: 1, overflow: 'auto', padding: 12 }}>

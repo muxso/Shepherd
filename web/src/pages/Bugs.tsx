@@ -141,6 +141,7 @@ function BugsList({ items, loading, projectId, refresh, createOpen, setCreateOpe
         title={t('m.bug', '缺陷')}
         extra={
           <>
+            {lv.toolbar}
             <Button type="primary" icon={<PlusOutlined />} onClick={() => setCreateOpen(true)}>
               {t('bug.new', '新建缺陷')}
             </Button>
@@ -149,7 +150,6 @@ function BugsList({ items, loading, projectId, refresh, createOpen, setCreateOpe
         }
       />
       <PageBody>
-        <div style={{ marginBottom: 12 }}>{lv.toolbar}</div>
         <Table<Bug>
           rowKey="id"
           size="middle"
