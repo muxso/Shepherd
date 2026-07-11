@@ -3,6 +3,7 @@ name = "webauth"
 edition.workspace = true
 version.workspace = true
 license.workspace = true
+publish.workspace = true
 
 # 跨模块共享的鉴权基元:会话端口 + AuthUser + axum 提取器(http feature)。
 # 各业务模块的 http 适配器复用它做 RBAC;组装根注入同一个 SessionStore 实例。

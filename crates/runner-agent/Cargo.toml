@@ -3,6 +3,7 @@ name = "runner-agent"
 edition.workspace = true
 version.workspace = true
 license.workspace = true
+publish.workspace = true
 
 # 独立可部署的执行 agent:接收**自包含**的请求规格(method/url/headers/body/断言),
 # 就地执行并回传结果。部署在目标环境内(它能连到该环境的被测服务),不依赖中央 DB。

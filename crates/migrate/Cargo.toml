@@ -3,6 +3,7 @@ name = "migrate"
 edition.workspace = true
 version.workspace = true
 license.workspace = true
+publish.workspace = true
 
 # 版本化数据库迁移:全工程共享一个 PG 库,所有表的 schema 在此集中、按版本演进。
 # 这是 schema 的**唯一生产真源**,取代各 -pg crate 里的零散 CREATE TABLE。

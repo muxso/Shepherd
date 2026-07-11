@@ -3,6 +3,7 @@ name = "skill"
 edition.workspace = true
 version.workspace = true
 license.workspace = true
+publish.workspace = true
 
 # Shepherd AI Skill 编排上下文:定义、复用、组合 AI Skill(规范 AI 行为)。
 # 核心是 compose —— 把若干 skill 经 includes 传递展开成一份有序、去重、防环的指令集,

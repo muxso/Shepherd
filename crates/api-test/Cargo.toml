@@ -3,6 +3,7 @@ name = "api-test"
 edition.workspace = true
 version.workspace = true
 license.workspace = true
+publish.workspace = true
 
 # 接口测试上下文。核心(domain/ports/application)纯净;多种执行器适配器 feature 门控:
 #   local  —— 原生 Rust runner(api-runner)就地跑

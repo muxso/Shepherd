@@ -3,6 +3,7 @@ name = "case-management"
 edition.workspace = true
 version.workspace = true
 license.workspace = true
+publish.workspace = true
 
 # 功能用例管理:用例 CRUD + 自定义字段(jsonb)+ Excel 导出。
 # domain/ports/application 纯净;sqlx/axum/xlsx 只在 adapters,feature 门控。

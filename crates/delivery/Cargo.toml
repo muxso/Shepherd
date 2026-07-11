@@ -3,6 +3,7 @@ name = "delivery"
 edition.workspace = true
 version.workspace = true
 license.workspace = true
+publish.workspace = true
 
 # Shepherd 交付上下文:把任务派发给 AI 执行者(Claude Code / Codex)并记录交付尝试。
 # 复用 api-test 的"出站端口 + DispatchOutcome(异步 Accepted / 同步 Completed)"模式:

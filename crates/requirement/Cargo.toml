@@ -3,6 +3,7 @@ name = "requirement"
 edition.workspace = true
 version.workspace = true
 license.workspace = true
+publish.workspace = true
 
 # Shepherd 需求管理上下文:需求聚合 + 线性多版本快照 + baseline 指针。
 # 沿用六边形分层(domain/ports/application/adapters)+ feature 门控的 IO 适配器(pg/http)。

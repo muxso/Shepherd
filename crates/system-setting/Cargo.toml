@@ -3,6 +3,7 @@ name = "system-setting"
 edition.workspace = true
 version.workspace = true
 license.workspace = true
+publish.workspace = true
 
 # 限界上下文 = 一个 crate。domain/ports/application 为模块;IO 适配器(pg/http)是
 # **feature 门控**的模块,可选依赖只在对应 feature 开启时拉入。

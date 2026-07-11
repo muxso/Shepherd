@@ -43,6 +43,8 @@ members = [
 edition = "2021"
 version = "0.0.1"
 license = "GPL-2.0"
+# crate 名(bug/task/case/delivery…)是通用词,与 crates.io 现有包冲突;整个 workspace 不发布。
+publish = false
 
 [workspace.lints.clippy]
 # 领域层禁止 panic/unwrap,逼迫用 Result 表达边界(TDD 友好)

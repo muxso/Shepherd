@@ -3,6 +3,7 @@ name = "task"
 edition.workspace = true
 version.workspace = true
 license.workspace = true
+publish.workspace = true
 
 # Shepherd 任务上下文:把需求(某版本)拆分成可独立交付的任务 DAG。
 # 一致性边界是 Decomposition 聚合(一个需求版本一张任务图):校验依赖存在、无环(增量构造保证)、

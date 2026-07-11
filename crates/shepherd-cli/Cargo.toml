@@ -3,6 +3,7 @@ name = "shepherd-cli"
 edition.workspace = true
 version.workspace = true
 license.workspace = true
+publish.workspace = true
 
 # Shepherd CLI:封装 REST API 的命令行,驱动「需求→拆分→派发→验证」与 skill 编排。
 [[bin]]

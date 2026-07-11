@@ -3,6 +3,7 @@ name = "probe"
 edition.workspace = true
 version.workspace = true
 license.workspace = true
+publish.workspace = true
 
 # 协议探测插件系统:协议无关的请求/结果/断言(domain,纯函数)+ ProtocolPlugin 端口 + 注册表。
 # 每种协议是一个 feature 门控的插件(http 默认;grpc/sql 等按需);

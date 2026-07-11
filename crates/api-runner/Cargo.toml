@@ -3,6 +3,7 @@ name = "api-runner"
 edition.workspace = true
 version.workspace = true
 license.workspace = true
+publish.workspace = true
 
 # 原生 Rust 接口测试 runner —— JMeter 的替代:发 HTTP 请求 + 断言响应,无 JVM。
 # 断言判定是纯函数(domain,TDD 主场);执行用 reqwest(adapter)。

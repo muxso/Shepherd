@@ -3,6 +3,7 @@ name = "runner"
 edition.workspace = true
 version.workspace = true
 license.workspace = true
+publish.workspace = true
 
 # 中央侧 runner 闭环(对应 runner-agent 二进制):
 # 按环境注册多个 agent → 把自包含用例派给选定 agent 就地执行 → 回传结果。

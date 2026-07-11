@@ -3,6 +3,7 @@ name = "mock-runtime"
 edition.workspace = true
 version.workspace = true
 license.workspace = true
+publish.workspace = true
 
 # Mock 运行时:把 api-definition 里登记的 Mock 规则变成"可被真实请求命中的服务"。
 # 核心是零 IO 的匹配引擎(domain):给定一个请求视图 + 一组规则,确定性地选出命中的响应。

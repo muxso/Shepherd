@@ -3,6 +3,7 @@ name = "agent-runtime"
 edition.workspace = true
 version.workspace = true
 license.workspace = true
+publish.workspace = true
 
 # Shepherd 执行者 runtime(纯 Rust,替代 scripts/agent/*.sh+py)。
 # 内网部署、无公网入站:出站 register/heartbeat/长轮询认领 → spawn CLI(claude/codex/opencode)

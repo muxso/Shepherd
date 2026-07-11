@@ -3,6 +3,7 @@ name = "server"
 edition.workspace = true
 version.workspace = true
 license.workspace = true
+publish.workspace = true
 
 # 组装根(composition root)= Java 版 backend/app。
 # 唯一允许同时认识具体存储(PG)、HTTP(axum)、各模块用例的地方:

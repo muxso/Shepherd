@@ -3,6 +3,7 @@ name = "verification"
 edition.workspace = true
 version.workspace = true
 license.workspace = true
+publish.workspace = true
 
 # Shepherd 完整性验证上下文:需求 ←→ 任务 ←→ 实现 双向追溯 + 缺口检测。
 # 一个需求版本一个 Verification 聚合,持有验收标准 + 覆盖链(criterion ↔ task)。
