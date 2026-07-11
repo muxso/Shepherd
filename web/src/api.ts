@@ -888,6 +888,11 @@ export interface CollabRequirementItem {
   humanTasks: number
   aiPoints: number
   humanPoints: number
+  /** 交付质量(尝试维度):总尝试/成功/失败;一次交付即验收的任务数。 */
+  aiAttempts: number
+  aiDelivered: number
+  aiFailed: number
+  aiFirstPass: number
 }
 export interface CollabDayItem {
   /** 日期 YYYY-MM-DD。 */
@@ -1333,8 +1338,10 @@ export const api = {
   createBug: (b: { projectId: string; title: string; initialStatus: string }) => http.post<Bug>('/bug', b),
   setBugStatus: (id: string, status: string) => http.post<Bug>(`/bug/${id}/status`, { status }),
   // 人机协同人效(需求维度 AI/人工 拆分 + 周趋势)
-  collabStats: (projectId: string) =>
-    http.get<CollabStats>(`/delivery/collab-stats?projectId=${encodeURIComponent(projectId)}`),
+  collabStats: (projectId: string, requirementId?: string) =>
+    http.get<CollabStats>(
+      `/delivery/collab-stats?projectId=${encodeURIComponent(projectId)}${requirementId ? `&requirementId=${encodeURIComponent(requirementId)}` : ''}`,
+    ),
 
   // 缺陷 ↔ 资产关联(需求/场景用例/功能用例)
   bugRelations: (id: string) =>

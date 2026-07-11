@@ -8,6 +8,7 @@ import {
   ApiError,
   EXECUTOR_LABEL,
   type ApiCase,
+  type CollabStats,
   type CoverageCase,
   type DeliveryAttempt,
   type DeliveryEvent,
@@ -22,6 +23,7 @@ import { useApp } from '../context'
 import { Workspace, WorkList, useWorkTabs } from '../components/Workspace'
 import { SelectProjectEmpty } from '../components/Page'
 import { regAdd, regList, type RegItem } from '../registry'
+import ContributionGrid from '../components/ContributionGrid'
 import { useI18n } from '../i18n'
 
 const toLines = (s: string) => s.split('\n').map((x) => x.trim()).filter(Boolean)
@@ -432,6 +434,54 @@ function RequirementDetail({ reqId, projectId, onChanged, onDeleted }: { reqId: 
   )
 }
 
+// 需求级人机协同:该需求下 AI/人工 交付对比 + AI 参与度/交付质量 + 验收日历格。
+// 口径与首页一致:任务验收通过且有 DELIVERED 交付记录 = AI 交付。
+function CollabPanel({ projectId, reqId, refreshKey }: { projectId: string; reqId: string; refreshKey?: unknown }) {
+  const { t } = useI18n()
+  const [stats, setStats] = useState<CollabStats | null>(null)
+  useEffect(() => {
+    api.collabStats(projectId, reqId).then(setStats).catch(() => setStats(null))
+    // refreshKey(任务列表)变化 = 可能有新的验收结果,重拉。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectId, reqId, refreshKey])
+  const row = stats?.items?.[0]
+  if (!row || (row.aiTasks + row.humanTasks === 0 && row.aiAttempts === 0)) return null
+  const totalPts = row.aiPoints + row.humanPoints
+  const aiShare = totalPts > 0 ? (row.aiPoints * 100) / totalPts : row.aiTasks + row.humanTasks > 0 ? (row.aiTasks * 100) / (row.aiTasks + row.humanTasks) : 0
+  const firstPassRate = row.aiTasks > 0 ? (row.aiFirstPass * 100) / row.aiTasks : 0
+  return (
+    <Card size="small" title={t('req.collabTitle', '人机协同')}>
+      <Row gutter={[16, 12]} align="middle">
+        <Col xs={12} lg={4}><Statistic title={t('req.aiShare', 'AI 参与度(工作量)')} value={aiShare.toFixed(0)} suffix="%" /></Col>
+        <Col xs={12} lg={4}>
+          <Statistic
+            title={t('req.deliverSplit', '交付任务(AI / 人)')}
+            value={row.aiTasks}
+            suffix={` / ${row.humanTasks}`}
+          />
+        </Col>
+        <Col xs={12} lg={4}>
+          <Statistic
+            title={t('req.attemptsStat', '交付尝试(成功 / 失败)')}
+            value={row.aiDelivered}
+            suffix={` / ${row.aiFailed}`}
+          />
+        </Col>
+        <Col xs={12} lg={4}>
+          <Statistic
+            title={t('req.firstPass', '一次交付通过率')}
+            value={row.aiTasks > 0 ? firstPassRate.toFixed(0) : '—'}
+            suffix={row.aiTasks > 0 ? '%' : ''}
+          />
+        </Col>
+        <Col xs={24} lg={8}>
+          <ContributionGrid days={stats?.daily ?? []} metric="total" />
+        </Col>
+      </Row>
+    </Card>
+  )
+}
+
 function DecompositionView({ decompId, verificationId, projectId, reqId }: { decompId: string; verificationId?: string; projectId: string; reqId?: string }) {
   const { t } = useI18n()
   const [tasks, setTasks] = useState<Task[]>([])
@@ -603,6 +653,7 @@ function DecompositionView({ decompId, verificationId, projectId, reqId }: { dec
           <Col span={4}><Card size="small"><Statistic title={t('req.rounds', '轮次')} value={summary.rounds} /></Card></Col>
         </Row>
       )}
+      {reqId && <CollabPanel projectId={projectId} reqId={reqId} refreshKey={tasks} />}
       {view === 'table' ? (
         <Table<Task>
           rowKey="id"
