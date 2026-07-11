@@ -515,10 +515,9 @@ export default function Home() {
         {loopStages.map((s, i) => (
           <div key={s.key} style={{ display: 'flex', alignItems: 'center', flex: '1 1 150px', minWidth: 150 }}>
             <div
+              className="ms-hover-card"
               onClick={() => navigate(s.to)}
-              style={{ flex: 1, position: 'relative', overflow: 'hidden', cursor: 'pointer', background: 'linear-gradient(135deg, var(--brand-soft) 0%, var(--panel) 55%)', border: '1px solid var(--border-soft)', borderRadius: 10, padding: '12px 14px', transition: 'transform .12s, box-shadow .12s' }}
-              onMouseEnter={(e) => { e.currentTarget.style.transform = 'translateY(-2px)'; e.currentTarget.style.boxShadow = '0 6px 18px rgba(22,100,255,.10)' }}
-              onMouseLeave={(e) => { e.currentTarget.style.transform = 'none'; e.currentTarget.style.boxShadow = 'none' }}
+              style={{ flex: 1, position: 'relative', overflow: 'hidden', cursor: 'pointer', background: 'linear-gradient(135deg, var(--brand-soft) 0%, var(--panel) 55%)', border: '1px solid var(--border-soft)', borderRadius: 10, padding: '12px 14px' }}
             >
               {/* 幽灵步骤序号,右上角淡蓝斜体 */}
               <span style={{ position: 'absolute', top: 6, right: 12, fontStyle: 'italic', fontWeight: 800, fontSize: 22, lineHeight: 1, color: 'var(--brand)', opacity: 0.16, pointerEvents: 'none' }}>

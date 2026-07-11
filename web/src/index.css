@@ -242,3 +242,20 @@ body::before {
   from { width: 0; }
   to { width: 100%; }
 }
+
+/* 统一的卡片悬浮语言:轻抬 + 品牌色淡影。自定义卡片挂 .ms-hover-card,
+   antd 的 hoverable 卡片经选择器一并对齐,全站只有这一种悬浮效果。 */
+.ms-hover-card,
+.ant-card-hoverable {
+  transition: transform 0.12s ease, box-shadow 0.12s ease;
+}
+.ms-hover-card:hover,
+.ant-card-hoverable:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 18px rgba(22, 100, 255, 0.10);
+}
+/* 深底上蓝色淡影不可见,暗色改用黑影表达同样的抬升。 */
+[data-theme='dark'] .ms-hover-card:hover,
+[data-theme='dark'] .ant-card-hoverable:hover {
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+}
