@@ -575,12 +575,15 @@ export default function Home() {
 
   // —— 闭环门面:需求 → 评审 → 研发交付 → 测试 → 验证,自动回归需求 ——
   const passRateHero = exec?.executions ? ((exec.passed ?? 0) * 100) / exec.executions : 0
+  // 各阶段的关联资产计数(可点击,按类型归属:需求→需求;测试→测试资产;验收→缺陷)。
+  const chip = (key: string) => cards.find((x) => x.key === key)
+  const asset = (keys: string[]) => keys.map(chip).filter(Boolean) as typeof cards
   const loopStages = [
-    { key: 'req', name: t('loop.req', '需求'), desc: t('loop.reqDesc', 'MRD 自动转 PRD'), icon: <FileDoneOutlined />, to: '/requirement', metric: null, unit: '' },
-    { key: 'review', name: t('loop.review', '评审'), desc: t('loop.reviewDesc', 'AI 参与评审 · 版本留痕'), icon: <AuditOutlined />, to: '/review', metric: null, unit: '' },
-    { key: 'dev', name: t('loop.dev', '研发交付'), desc: t('loop.devDesc', '多 Agent 协同研发'), icon: <RobotOutlined />, to: '/agents', metric: null, unit: '' },
-    { key: 'test', name: t('loop.test', '测试'), desc: t('loop.testDesc', 'TDD 驱动 · 自动化测试'), icon: <ExperimentOutlined />, to: '/api/scenario', metric: null, unit: '' },
-    { key: 'verify', name: t('loop.verify', '验收质量'), desc: t('loop.verifyDesc', '决策链路可视化 · 回归需求'), icon: <SafetyCertificateOutlined />, to: '/bug', metric: null, unit: '' },
+    { key: 'req', name: t('loop.req', '需求'), desc: t('loop.reqDesc', 'MRD 自动转 PRD'), icon: <FileDoneOutlined />, to: '/requirement', assets: asset(['req']) },
+    { key: 'review', name: t('loop.review', '评审'), desc: t('loop.reviewDesc', 'AI 参与评审 · 版本留痕'), icon: <AuditOutlined />, to: '/review', assets: [] as typeof cards },
+    { key: 'dev', name: t('loop.dev', '研发交付'), desc: t('loop.devDesc', '多 Agent 协同研发'), icon: <RobotOutlined />, to: '/agents', assets: [] as typeof cards },
+    { key: 'test', name: t('loop.test', '测试'), desc: t('loop.testDesc', 'TDD 驱动 · 自动化测试'), icon: <ExperimentOutlined />, to: '/api/scenario', assets: asset(['def', 'scenario', 'apiCase', 'funcCase', 'plan']) },
+    { key: 'verify', name: t('loop.verify', '验收质量'), desc: t('loop.verifyDesc', '决策链路可视化 · 回归需求'), icon: <SafetyCertificateOutlined />, to: '/bug', assets: asset(['bug']) },
   ]
   const loopHero = (
     <div className="ms-loop-hero" style={{ marginBottom: 16, borderRadius: 12, padding: '18px 20px', border: '1px solid var(--border-soft)', overflow: 'hidden' }}>
@@ -611,10 +614,19 @@ export default function Home() {
                 <span style={{ fontWeight: 600, color: 'var(--text)' }}>{s.name}</span>
               </div>
               <div style={{ color: 'var(--text-3)', fontSize: 12, marginBottom: 8 }}>{s.desc}</div>
-              {s.metric != null ? (
-                <div style={{ display: 'flex', alignItems: 'baseline', gap: 4 }}>
-                  <span style={{ fontSize: 20, fontWeight: 700, color: 'var(--text)' }}>{s.metric}</span>
-                  <span style={{ fontSize: 11, color: 'var(--text-3)' }}>{s.unit}</span>
+              {s.assets.length > 0 ? (
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '2px 12px' }}>
+                  {s.assets.map((a) => (
+                    <span
+                      key={a.key}
+                      onClick={(e) => { e.stopPropagation(); navigate(a.to) }}
+                      style={{ fontSize: 12, color: 'var(--text-2)', cursor: 'pointer' }}
+                      onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--brand)' }}
+                      onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--text-2)' }}
+                    >
+                      {a.label} <b style={{ color: a.color, fontSize: 14 }}>{a.value}</b>
+                    </span>
+                  ))}
                 </div>
               ) : (
                 <span style={{ fontSize: 12, color: 'var(--brand)' }}>{t('loop.enter', '进入')} <ArrowRightOutlined style={{ fontSize: 10 }} /></span>
@@ -633,21 +645,6 @@ export default function Home() {
             </span>
           </Tooltip>
         </div>
-      </div>
-      {/* 项目资产一览:并入闭环卡(原「项目概览」独立卡与此重复,已移除);逐项可点击进入对应模块。 */}
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 14, paddingTop: 12, borderTop: '1px solid var(--border-soft)' }}>
-        {cards.map((card) => (
-          <div
-            key={card.key}
-            className="ms-hover-card"
-            onClick={() => navigate(card.to)}
-            style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 14px', borderRadius: 8, cursor: 'pointer', background: 'var(--panel)', border: '1px solid var(--border-soft)' }}
-          >
-            <span style={{ color: card.color }}>{card.icon}</span>
-            <span style={{ fontSize: 13, color: 'var(--text-2)' }}>{card.label}</span>
-            <b style={{ fontSize: 16, color: card.color }}>{card.value}</b>
-          </div>
-        ))}
       </div>
     </div>
   )
