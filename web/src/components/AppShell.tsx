@@ -71,18 +71,15 @@ const MODULES: ModuleDef[] = [
     children: [{ key: '/home', icon: <DashboardOutlined />, label: ['m.home', '工作台'] }],
   },
   {
+    // 需求与评审同属需求域:一级栏一个入口,顶栏二级菜单切换(对齐「测试」模块的样式)。
     key: '/requirement',
     label: ['nav.req', '需求'],
     icon: <FileDoneOutlined />,
-    match: ['/requirement'],
-    children: [{ key: '/requirement', icon: <FileDoneOutlined />, label: ['m.requirement', '需求'] }],
-  },
-  {
-    key: '/review',
-    label: ['nav.review', '评审'],
-    icon: <AuditOutlined />,
-    match: ['/review'],
-    children: [{ key: '/review', icon: <AuditOutlined />, label: ['m.review', '评审'] }],
+    match: ['/requirement', '/review'],
+    children: [
+      { key: '/requirement', icon: <FileDoneOutlined />, label: ['m.requirement', '需求'] },
+      { key: '/review', icon: <AuditOutlined />, label: ['m.review', '评审'] },
+    ],
   },
   {
     key: '/skill',
