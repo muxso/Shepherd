@@ -145,3 +145,10 @@ jobs:
         run: cargo build -p server --locked
       - name: full API self-test (scripts/api-coverage.sh)
         run: bash scripts/api-coverage.sh
+      # 前后端契约对账:api.ts 引用的路径必须在 OpenAPI 里(历史缺口走基线,只挡新增漂移)。
+      - name: web/API contract drift (scripts/ts-drift.sh)
+        run: |
+          SHEPHERD_BIND=127.0.0.1:9280 ./target/debug/server & SRV=$!
+          for i in $(seq 1 60); do curl -sf http://127.0.0.1:9280/healthz >/dev/null && break; sleep 1; done
+          BASE=http://127.0.0.1:9280 bash scripts/ts-drift.sh
+          kill $SRV
