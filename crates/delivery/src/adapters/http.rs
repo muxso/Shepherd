@@ -32,6 +32,7 @@ pub fn router(svc: DeliveryService, sessions: Arc<dyn SessionStore>) -> Router {
         .route("/delivery", post(dispatch).get(list_by_task))
         // 静态段 /delivery/tasks 必须先于 /delivery/{id} 注册,否则被通配吞掉。
         .route("/delivery/tasks", get(list_tasks))
+        .route("/delivery/collab-stats", get(collab_stats))
         .route("/delivery/{id}", get(get_attempt).delete(delete_attempt))
         .route("/delivery/{id}/running", post(report_running))
         .route("/delivery/{id}/complete", post(complete))
@@ -435,6 +436,78 @@ async fn list_tasks(
     }
 }
 
+#[derive(Deserialize, IntoParams)]
+#[serde(rename_all = "camelCase")]
+struct CollabQuery {
+    project_id: String,
+}
+
+#[derive(Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+struct CollabRequirementItem {
+    requirement_id: String,
+    title: String,
+    ai_tasks: i64,
+    human_tasks: i64,
+    ai_points: i64,
+    human_points: i64,
+}
+
+#[derive(Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+struct CollabWeekItem {
+    week: String,
+    ai: i64,
+    human: i64,
+}
+
+#[derive(Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+struct CollabStatsResponse {
+    items: Vec<CollabRequirementItem>,
+    weekly: Vec<CollabWeekItem>,
+}
+
+// 人机协同人效:口径 = 任务 VERIFIED 且有 DELIVERED 交付记录算 AI,否则算人工。
+#[utoipa::path(
+    get, path = "/delivery/collab-stats", tag = "delivery", params(CollabQuery),
+    responses((status = 200, body = CollabStatsResponse), (status = 403)), security(("bearer" = []))
+)]
+async fn collab_stats(
+    user: AuthUser,
+    State(st): State<DelState>,
+    Query(q): Query<CollabQuery>,
+) -> Response {
+    if !user.can("DELIVERY", "READ") {
+        return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
+    match st.svc.collab_stats(&q.project_id).await {
+        Ok(cs) => {
+            let body = CollabStatsResponse {
+                items: cs
+                    .items
+                    .into_iter()
+                    .map(|r| CollabRequirementItem {
+                        requirement_id: r.requirement_id,
+                        title: r.title,
+                        ai_tasks: r.ai_tasks,
+                        human_tasks: r.human_tasks,
+                        ai_points: r.ai_points,
+                        human_points: r.human_points,
+                    })
+                    .collect(),
+                weekly: cs
+                    .weekly
+                    .into_iter()
+                    .map(|w| CollabWeekItem { week: w.week, ai: w.ai, human: w.human })
+                    .collect(),
+            };
+            (StatusCode::OK, Json(body)).into_response()
+        }
+        Err(e) => cmd_err(e),
+    }
+}
+
 #[utoipa::path(
     post, path = "/delivery/{id}/stop", tag = "delivery", params(("id" = String, Path)),
     request_body = StopBody, responses((status = 200, body = AttemptResponse), (status = 404), (status = 409)),
@@ -475,8 +548,8 @@ async fn delete_attempt(
 
 #[derive(OpenApi)]
 #[openapi(
-    paths(dispatch, list_by_task, get_attempt, report_running, complete, fail, record_event, list_events, list_tasks, stop, delete_attempt),
-    components(schemas(DispatchBody, RunningBody, CompleteBody, FailBody, EventBody, EventResponse, DeliverableResponse, AttemptResponse, TaskItemResponse, TaskPageResponse, StopBody)),
+    paths(dispatch, list_by_task, get_attempt, report_running, complete, fail, record_event, list_events, list_tasks, collab_stats, stop, delete_attempt),
+    components(schemas(DispatchBody, RunningBody, CompleteBody, FailBody, EventBody, EventResponse, DeliverableResponse, AttemptResponse, TaskItemResponse, TaskPageResponse, CollabRequirementItem, CollabWeekItem, CollabStatsResponse, StopBody)),
     tags((name = "delivery", description = "交付执行(AI 执行者)"))
 )]
 struct ApiDoc;

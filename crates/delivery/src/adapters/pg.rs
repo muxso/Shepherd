@@ -5,7 +5,10 @@ use crate::domain::{
     AttemptStatus, Deliverable, DeliverableKind, DeliveryAttempt, EventKind, ExecutionEvent,
     ExecutorKind, NewExecutionEvent,
 };
-use crate::ports::{DeliveryRepository, RepoError, TaskListFilter, TaskPage, TaskRow};
+use crate::ports::{
+    CollabRequirementRow, CollabStats, CollabWeek, DeliveryRepository, RepoError, TaskListFilter,
+    TaskPage, TaskRow,
+};
 
 #[derive(Clone)]
 pub struct PgDeliveryRepository {
@@ -244,6 +247,76 @@ impl DeliveryRepository for PgDeliveryRepository {
             })
             .collect::<Result<Vec<_>, RepoError>>()?;
         Ok(TaskPage { items, total })
+    }
+
+    // 人机协同人效:VERIFIED 任务按「是否存在 DELIVERED 交付记录」拆成 AI/人工,
+    // 需求维度聚合数量与工作量;周趋势按 verified_at(周一)聚合,历史空值不计。
+    async fn collab_stats(&self, project_id: &str) -> Result<CollabStats, RepoError> {
+        const VERIFIED_SPLIT: &str = "SELECT t.points, t.verified_at, dc.requirement_id, \
+                EXISTS(SELECT 1 FROM ms_delivery_attempt a \
+                       WHERE a.decomposition_id = t.decomposition_id AND a.task_id = t.id \
+                         AND a.status = 'DELIVERED') AS ai \
+             FROM ms_task t \
+             JOIN ms_task_decomposition dc ON dc.id = t.decomposition_id \
+             WHERE t.status = 'VERIFIED'";
+
+        let rows = sqlx::query(&format!(
+            "SELECT r.id, r.title, \
+                count(*) FILTER (WHERE x.ai) AS ai_tasks, \
+                count(*) FILTER (WHERE NOT x.ai) AS human_tasks, \
+                COALESCE(sum(x.points) FILTER (WHERE x.ai), 0)::BIGINT AS ai_points, \
+                COALESCE(sum(x.points) FILTER (WHERE NOT x.ai), 0)::BIGINT AS human_points \
+             FROM ({VERIFIED_SPLIT}) x \
+             JOIN ms_requirement r ON r.id = x.requirement_id \
+             WHERE r.project_id = $1 \
+             GROUP BY r.id, r.title \
+             ORDER BY count(*) DESC, r.id"
+        ))
+        .bind(project_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(map_err)?;
+        let items = rows
+            .iter()
+            .map(|r| {
+                Ok(CollabRequirementRow {
+                    requirement_id: r.try_get("id").map_err(map_err)?,
+                    title: r.try_get("title").map_err(map_err)?,
+                    ai_tasks: r.try_get("ai_tasks").map_err(map_err)?,
+                    human_tasks: r.try_get("human_tasks").map_err(map_err)?,
+                    ai_points: r.try_get("ai_points").map_err(map_err)?,
+                    human_points: r.try_get("human_points").map_err(map_err)?,
+                })
+            })
+            .collect::<Result<Vec<_>, RepoError>>()?;
+
+        // 最近 12 周;倒序取最近再翻正,趋势图从旧到新。
+        let rows = sqlx::query(&format!(
+            "SELECT to_char(date_trunc('week', x.verified_at), 'YYYY-MM-DD') AS wk, \
+                count(*) FILTER (WHERE x.ai) AS ai, \
+                count(*) FILTER (WHERE NOT x.ai) AS human \
+             FROM ({VERIFIED_SPLIT}) x \
+             JOIN ms_requirement r ON r.id = x.requirement_id \
+             WHERE r.project_id = $1 AND x.verified_at IS NOT NULL \
+             GROUP BY wk ORDER BY wk DESC LIMIT 12"
+        ))
+        .bind(project_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(map_err)?;
+        let mut weekly = rows
+            .iter()
+            .map(|r| {
+                Ok(CollabWeek {
+                    week: r.try_get("wk").map_err(map_err)?,
+                    ai: r.try_get("ai").map_err(map_err)?,
+                    human: r.try_get("human").map_err(map_err)?,
+                })
+            })
+            .collect::<Result<Vec<_>, RepoError>>()?;
+        weekly.reverse();
+
+        Ok(CollabStats { items, weekly })
     }
 
     async fn delete(&self, id: &str) -> Result<bool, RepoError> {

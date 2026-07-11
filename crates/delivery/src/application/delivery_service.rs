@@ -7,8 +7,8 @@ use crate::domain::{
 use async_trait::async_trait;
 
 use crate::ports::{
-    AgentExecutor, DeliveryObserver, DeliveryRepository, DispatchOutcome, EventSink, ExecError,
-    RepoError, TaskListFilter, TaskPage, WorkQueue, WorkSpec,
+    AgentExecutor, CollabStats, DeliveryObserver, DeliveryRepository, DispatchOutcome, EventSink,
+    ExecError, RepoError, TaskListFilter, TaskPage, WorkQueue, WorkSpec,
 };
 
 struct RepoEventSink {
@@ -214,6 +214,10 @@ impl DeliveryService {
 
     pub async fn list_tasks(&self, filter: &TaskListFilter) -> Result<TaskPage, DeliveryCmdError> {
         Ok(self.repo.list_tasks(filter).await?)
+    }
+
+    pub async fn collab_stats(&self, project_id: &str) -> Result<CollabStats, DeliveryCmdError> {
+        Ok(self.repo.collab_stats(project_id).await?)
     }
 
     pub async fn stop(&self, id: &str, reason: &str) -> Result<DeliveryAttempt, DeliveryCmdError> {
