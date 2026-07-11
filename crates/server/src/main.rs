@@ -4,6 +4,7 @@
 #![allow(clippy::doc_lazy_continuation)]
 
 mod breakdown_route;
+mod case_drafter;
 mod case_exec_summary;
 mod config;
 mod debug_send;
@@ -321,6 +322,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         BreakdownUseCase::new(task_repo.clone(), task_planner.clone()),
         CreateVerificationUseCase::new(ver_repo.clone()),
         case_repo.clone(),
+        llm::case_drafter(),
         sessions.clone(),
     );
     let verification_routes = verification::adapters::http::router(

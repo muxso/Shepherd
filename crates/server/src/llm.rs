@@ -337,6 +337,61 @@ impl Planner for LlmPlanner {
     }
 }
 
+const CASES_PROMPT_V: &str = "cases-v1";
+const CASES_SYSTEM: &str = "你是资深测试工程师,基于需求与拆分任务设计功能测试用例。\
+只输出 JSON 数组,每项 {\"name\":string,\"criterionIndexes\":number[],\"steps\":[{\"step\":string,\"expected\":string}]}。\
+criterionIndexes 引用需求验收标准下标(0 起);每个任务至少 1 条用例;步骤要可执行、预期可判定;\
+不要输出 JSON 以外的任何内容。";
+
+pub struct LlmCaseDrafter {
+    client: LlmClient,
+}
+impl LlmCaseDrafter {
+    pub fn new(client: LlmClient) -> Self {
+        Self { client }
+    }
+}
+
+#[async_trait]
+impl crate::case_drafter::CaseDrafter for LlmCaseDrafter {
+    async fn draft(
+        &self,
+        spec: &RequirementSpec,
+        tasks: &[task::domain::Task],
+    ) -> Result<Vec<crate::case_drafter::DraftedCase>, String> {
+        let criteria = spec
+            .acceptance_criteria
+            .iter()
+            .enumerate()
+            .map(|(i, c)| format!("[{i}] {c}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let task_list = tasks
+            .iter()
+            .enumerate()
+            .map(|(i, t)| {
+                format!(
+                    "[{i}] {}\n  描述: {}\n  任务验收: {}",
+                    t.title,
+                    t.description,
+                    t.acceptance_criteria.join("; ")
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        let user = format!(
+            "需求标题: {}\n描述: {}\n需求验收标准:\n{}\n\n拆分任务:\n{}",
+            spec.title, spec.description, criteria, task_list
+        );
+        let text = self.client.complete(CASES_PROMPT_V, CASES_SYSTEM, &user).await?;
+        crate::case_drafter::parse_drafted(
+            extract_json(&text),
+            tasks.len(),
+            spec.acceptance_criteria.len(),
+        )
+    }
+}
+
 const JUDGE_PROMPT_V: &str = "judge-v1";
 const JUDGE_SYSTEM: &str = "你是严格的验收评审。依据验收标准评判交付物是否达标。\
 只输出 JSON {\"passed\":bool,\"reason\":string}。不要输出 JSON 以外的任何内容。";
@@ -441,6 +496,11 @@ impl AgentExecutor for LlmExecutor {
 pub fn planner() -> Option<Arc<dyn Planner>> {
     LlmClient::from_env().map(|c| Arc::new(LlmPlanner::new(c)) as Arc<dyn Planner>)
 }
+pub fn case_drafter() -> Option<Arc<dyn crate::case_drafter::CaseDrafter>> {
+    LlmClient::from_env()
+        .map(|c| Arc::new(LlmCaseDrafter::new(c)) as Arc<dyn crate::case_drafter::CaseDrafter>)
+}
+
 pub fn judge() -> Option<Arc<dyn Judge>> {
     LlmClient::from_env().map(|c| Arc::new(LlmJudge::new(c)) as Arc<dyn Judge>)
 }
