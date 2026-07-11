@@ -3,7 +3,7 @@
 use async_trait::async_trait;
 use thiserror::Error;
 
-use crate::domain::{NewRequirement, Requirement, StatusCounts};
+use crate::domain::{ChangeEntry, NewChange, NewRequirement, Requirement, StatusCounts};
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum RepoError {
@@ -40,4 +40,21 @@ pub trait RequirementRepository: Send + Sync {
 
     /// 项目内未删除需求按状态聚合(仪表盘)。
     async fn status_counts(&self, project_id: &str) -> Result<StatusCounts, RepoError>;
+
+    /// 直属子需求(未软删除),按展示序返回。
+    async fn children(&self, parent_id: &str) -> Result<Vec<Requirement>, RepoError>;
+
+    /// 追加一批变更日志(只增不改;时间由存储层盖章)。
+    async fn append_change(
+        &self,
+        requirement_id: &str,
+        changes: &[NewChange],
+    ) -> Result<(), RepoError>;
+
+    /// 变更日志,最新在前,最多 `limit` 条。
+    async fn list_changes(
+        &self,
+        requirement_id: &str,
+        limit: u32,
+    ) -> Result<Vec<ChangeEntry>, RepoError>;
 }

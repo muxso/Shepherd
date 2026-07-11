@@ -3,6 +3,11 @@ use thiserror::Error;
 /// 与 DB 列一致。
 pub const MAX_TITLE_LEN: usize = 255;
 
+/// 单条需求最多挂的标签数。
+pub const MAX_TAGS: usize = 10;
+/// 单个标签最大长度(按字符数,避免中文被误判)。
+pub const MAX_TAG_LEN: usize = 32;
+
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum RequirementError {
     #[error("requirement title must not be empty")]
@@ -27,6 +32,14 @@ pub enum RequirementError {
     InvalidPriority(String),
     #[error("invalid requirement type: {0}")]
     InvalidReqType(String),
+    #[error("too many tags (max {MAX_TAGS})")]
+    TooManyTags,
+    #[error("tag too long: {0}")]
+    TagTooLong(String),
+    #[error("invalid due date (expect YYYY-MM-DD): {0}")]
+    InvalidDueDate(String),
+    #[error("invalid work status: {0}")]
+    InvalidWorkStatus(String),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -57,6 +70,12 @@ pub struct NewRequirement {
     pub created_by: String,
     pub priority: RequirementPriority,
     pub req_type: RequirementType,
+    /// 已清洗的标签(见 `normalize_tags`)。
+    pub tags: Vec<String>,
+    /// 已校验的截止日期 `YYYY-MM-DD`。
+    pub due_date: Option<String>,
+    /// 父需求 id;存在性/同项目校验在应用层做(需要仓储)。
+    pub parent_id: Option<String>,
 }
 
 impl NewRequirement {
@@ -86,6 +105,9 @@ impl NewRequirement {
             created_by: String::new(),
             priority: RequirementPriority::default(),
             req_type: RequirementType::default(),
+            tags: Vec::new(),
+            due_date: None,
+            parent_id: None,
         })
     }
 
@@ -101,6 +123,24 @@ impl NewRequirement {
 
     pub fn with_req_type(mut self, req_type: RequirementType) -> Self {
         self.req_type = req_type;
+        self
+    }
+
+    /// 携带已清洗的标签(调用方先过 `normalize_tags`)。
+    pub fn with_tags(mut self, tags: Vec<String>) -> Self {
+        self.tags = tags;
+        self
+    }
+
+    /// 携带已校验的截止日期(调用方先过 `parse_due_date`)。
+    pub fn with_due_date(mut self, due_date: Option<String>) -> Self {
+        self.due_date = due_date;
+        self
+    }
+
+    /// 携带父需求 id(应用层已校验存在性/同项目)。
+    pub fn with_parent(mut self, parent_id: Option<String>) -> Self {
+        self.parent_id = parent_id;
         self
     }
 }
@@ -234,6 +274,135 @@ pub fn parse_req_type(s: &str) -> Result<RequirementType, RequirementError> {
     RequirementType::parse(s).ok_or_else(|| RequirementError::InvalidReqType(s.trim().to_string()))
 }
 
+/// 工作推进状态(开发/测试共用);缺省未开始。
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum WorkStatus {
+    #[default]
+    NotStarted,
+    InProgress,
+    Done,
+}
+
+impl WorkStatus {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::NotStarted => "NOT_STARTED",
+            Self::InProgress => "IN_PROGRESS",
+            Self::Done => "DONE",
+        }
+    }
+
+    /// 归一化(trim + 大写)后匹配;非法值 → None。
+    pub fn parse(s: &str) -> Option<Self> {
+        match s.trim().to_ascii_uppercase().as_str() {
+            "NOT_STARTED" => Some(Self::NotStarted),
+            "IN_PROGRESS" => Some(Self::InProgress),
+            "DONE" => Some(Self::Done),
+            _ => None,
+        }
+    }
+}
+
+/// 解析工作状态;非法值报校验错(HTTP 层映射为 400)。
+pub fn parse_work_status(s: &str) -> Result<WorkStatus, RequirementError> {
+    WorkStatus::parse(s).ok_or_else(|| RequirementError::InvalidWorkStatus(s.trim().to_string()))
+}
+
+/// 标签清洗:trim、去空、按首现顺序去重;超过 `MAX_TAGS` 个或单个超 `MAX_TAG_LEN` 报校验错。
+pub fn normalize_tags(raw: &[String]) -> Result<Vec<String>, RequirementError> {
+    let mut out: Vec<String> = Vec::new();
+    for t in raw {
+        let t = t.trim();
+        if t.is_empty() {
+            continue;
+        }
+        if t.chars().count() > MAX_TAG_LEN {
+            return Err(RequirementError::TagTooLong(t.to_string()));
+        }
+        if out.iter().any(|e| e == t) {
+            continue;
+        }
+        out.push(t.to_string());
+    }
+    if out.len() > MAX_TAGS {
+        return Err(RequirementError::TooManyTags);
+    }
+    Ok(out)
+}
+
+/// 校验截止日期串:严格 `YYYY-MM-DD`,月日范围合法(含闰年判定)。
+pub fn parse_due_date(s: &str) -> Result<String, RequirementError> {
+    let s = s.trim();
+    let bad = || RequirementError::InvalidDueDate(s.to_string());
+    let bytes = s.as_bytes();
+    if bytes.len() != 10 || bytes[4] != b'-' || bytes[7] != b'-' {
+        return Err(bad());
+    }
+    let digits = |r: std::ops::Range<usize>| -> Result<u32, RequirementError> {
+        let part = &s[r];
+        if !part.bytes().all(|b| b.is_ascii_digit()) {
+            return Err(bad());
+        }
+        part.parse().map_err(|_| bad())
+    };
+    let year = digits(0..4)?;
+    let month = digits(5..7)?;
+    let day = digits(8..10)?;
+    if !(1..=12).contains(&month) || day < 1 || day > days_in_month(year, month) {
+        return Err(bad());
+    }
+    Ok(s.to_string())
+}
+
+fn days_in_month(year: u32, month: u32) -> u32 {
+    match month {
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        4 | 6 | 9 | 11 => 30,
+        _ => {
+            let leap = (year % 4 == 0 && year % 100 != 0) || year % 400 == 0;
+            if leap {
+                29
+            } else {
+                28
+            }
+        }
+    }
+}
+
+/// epoch 毫秒 → UTC 日期串 `YYYY-MM-DD`(civil-from-days 算法,纯函数便于测试)。
+pub fn date_from_epoch_ms(ms: i64) -> String {
+    let days = ms.div_euclid(86_400_000);
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z - era * 146_097; // [0, 146096]
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365; // [0, 399]
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100); // [0, 365]
+    let mp = (5 * doy + 2) / 153; // [0, 11]
+    let d = doy - (153 * mp + 2) / 5 + 1; // [1, 31]
+    let m = if mp < 10 { mp + 3 } else { mp - 9 }; // [1, 12]
+    let y = yoe + era * 400 + i64::from(m <= 2);
+    format!("{y:04}-{m:02}-{d:02}")
+}
+
+/// 变更日志:待追加的一条字段级变更(时间由存储层盖章)。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NewChange {
+    pub changed_by: String,
+    pub field: String,
+    pub old_value: String,
+    pub new_value: String,
+}
+
+/// 变更日志:已落库的一条记录(读侧)。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ChangeEntry {
+    pub changed_at_ms: i64,
+    pub changed_by: String,
+    pub field: String,
+    pub old_value: String,
+    pub new_value: String,
+}
+
 /// 不可变快照:一旦创建,内容永不改写;修订只追加新版本。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RequirementVersion {
@@ -254,6 +423,19 @@ pub struct Requirement {
     pub review_comment: Option<String>,
     pub priority: RequirementPriority,
     pub req_type: RequirementType,
+    pub tags: Vec<String>,
+    pub parent_id: Option<String>,
+    /// 截止日期 `YYYY-MM-DD`;是否逾期由 `is_overdue` 实时计算,不落库。
+    pub due_date: Option<String>,
+    /// 创建/更新时间(epoch 毫秒,全库口径);由存储层盖章,内存值 0 表示尚未落库。
+    pub created_at_ms: i64,
+    pub updated_at_ms: i64,
+    pub dev_status: WorkStatus,
+    pub test_status: WorkStatus,
+    pub dev_started_at_ms: Option<i64>,
+    pub dev_finished_at_ms: Option<i64>,
+    pub test_started_at_ms: Option<i64>,
+    pub test_finished_at_ms: Option<i64>,
 }
 
 impl Requirement {
@@ -273,6 +455,17 @@ impl Requirement {
             review_comment: None,
             priority: new.priority,
             req_type: new.req_type,
+            tags: new.tags.clone(),
+            parent_id: new.parent_id.clone(),
+            due_date: new.due_date.clone(),
+            created_at_ms: 0,
+            updated_at_ms: 0,
+            dev_status: WorkStatus::NotStarted,
+            test_status: WorkStatus::NotStarted,
+            dev_started_at_ms: None,
+            dev_finished_at_ms: None,
+            test_started_at_ms: None,
+            test_finished_at_ms: None,
         }
     }
 
@@ -379,6 +572,42 @@ impl Requirement {
     /// 仅未删除的需求参与标题唯一性判定。
     pub fn occupies_title(&self) -> bool {
         !self.deleted
+    }
+
+    /// 逾期判定(实时计算,不落库):设了截止日期、已过 `today`(`YYYY-MM-DD` 字典序比较),
+    /// 且尚未交付/归档。
+    pub fn is_overdue(&self, today: &str) -> bool {
+        match (&self.due_date, self.status) {
+            (_, RequirementStatus::Delivered | RequirementStatus::Archived) => false,
+            (Some(due), _) => due.as_str() < today,
+            (None, _) => false,
+        }
+    }
+
+    /// 推进开发状态并盖章:首次进 IN_PROGRESS 记开始时间;进 DONE 记完成时间
+    /// (若开始时间尚缺一并补上);重复推进不覆盖已有时间戳。
+    pub fn set_dev_status(&mut self, status: WorkStatus, now_ms: i64) {
+        self.dev_status = status;
+        stamp(status, now_ms, &mut self.dev_started_at_ms, &mut self.dev_finished_at_ms);
+    }
+
+    /// 推进测试状态并盖章;规则同 `set_dev_status`。
+    pub fn set_test_status(&mut self, status: WorkStatus, now_ms: i64) {
+        self.test_status = status;
+        stamp(status, now_ms, &mut self.test_started_at_ms, &mut self.test_finished_at_ms);
+    }
+}
+
+fn stamp(status: WorkStatus, now_ms: i64, started: &mut Option<i64>, finished: &mut Option<i64>) {
+    match status {
+        WorkStatus::NotStarted => {}
+        WorkStatus::InProgress => {
+            started.get_or_insert(now_ms);
+        }
+        WorkStatus::Done => {
+            started.get_or_insert(now_ms);
+            finished.get_or_insert(now_ms);
+        }
     }
 }
 
@@ -581,6 +810,120 @@ mod tests {
         assert_eq!(RequirementType::parse("EPIC"), None);
         assert_eq!(parse_req_type("bugfix"), Ok(RequirementType::Bugfix));
         assert_eq!(parse_req_type(" EPIC "), Err(RequirementError::InvalidReqType("EPIC".into())));
+    }
+
+    #[test]
+    fn work_status_str_roundtrip_and_normalization() {
+        for s in [WorkStatus::NotStarted, WorkStatus::InProgress, WorkStatus::Done] {
+            assert_eq!(WorkStatus::parse(s.as_str()), Some(s));
+        }
+        assert_eq!(WorkStatus::parse(" in_progress "), Some(WorkStatus::InProgress));
+        assert_eq!(WorkStatus::parse("PAUSED"), None);
+        assert_eq!(parse_work_status("done"), Ok(WorkStatus::Done));
+        assert_eq!(
+            parse_work_status(" WAT "),
+            Err(RequirementError::InvalidWorkStatus("WAT".into()))
+        );
+    }
+
+    #[test]
+    fn normalize_tags_trims_dedupes_preserving_order() {
+        let raw = vec!["  api ".to_string(), "".to_string(), "web".to_string(), "api".to_string()];
+        assert_eq!(normalize_tags(&raw), Ok(vec!["api".to_string(), "web".to_string()]));
+        assert_eq!(normalize_tags(&[]), Ok(vec![]));
+    }
+
+    #[test]
+    fn normalize_tags_rejects_too_many_or_too_long() {
+        let many: Vec<String> = (0..11).map(|i| format!("t{i}")).collect();
+        assert_eq!(normalize_tags(&many), Err(RequirementError::TooManyTags));
+        // 去重后 10 个恰好合法。
+        let ten: Vec<String> = (0..10).map(|i| format!("t{i}")).collect();
+        assert_eq!(normalize_tags(&ten).expect("ok").len(), 10);
+        let long = "标".repeat(33);
+        assert_eq!(normalize_tags(&[long.clone()]), Err(RequirementError::TagTooLong(long)));
+        // 32 个字符(含中文)合法。
+        assert!(normalize_tags(&["标".repeat(32)]).is_ok());
+    }
+
+    #[test]
+    fn parse_due_date_validates_format_and_ranges() {
+        assert_eq!(parse_due_date(" 2026-07-11 "), Ok("2026-07-11".to_string()));
+        assert_eq!(parse_due_date("2024-02-29"), Ok("2024-02-29".to_string())); // 闰年
+        for bad in [
+            "2026/07/11",
+            "2026-13-01",
+            "2026-00-10",
+            "2026-02-30",
+            "26-07-11",
+            "abcd-ef-gh",
+            "2023-02-29",
+        ] {
+            assert_eq!(parse_due_date(bad), Err(RequirementError::InvalidDueDate(bad.into())));
+        }
+    }
+
+    #[test]
+    fn date_from_epoch_ms_converts_utc() {
+        assert_eq!(date_from_epoch_ms(0), "1970-01-01");
+        // 2026-07-11 00:00:00 UTC = 1783728000s。
+        assert_eq!(date_from_epoch_ms(1_783_728_000_000), "2026-07-11");
+        // 前一毫秒仍是 7 月 10 日。
+        assert_eq!(date_from_epoch_ms(1_783_727_999_999), "2026-07-10");
+        // 闰日:2024-02-29 12:00 UTC。
+        assert_eq!(date_from_epoch_ms(1_709_208_000_000), "2024-02-29");
+    }
+
+    #[test]
+    fn overdue_requires_past_due_date_and_open_status() {
+        let mut r = Requirement::create("req-1", &new_req());
+        assert!(!r.is_overdue("2026-07-11")); // 无截止日期
+        r.due_date = Some("2026-07-10".to_string());
+        assert!(r.is_overdue("2026-07-11")); // 已过期
+        assert!(!r.is_overdue("2026-07-10")); // 当天不算逾期
+        assert!(!r.is_overdue("2026-07-09")); // 未到期
+        r.status = RequirementStatus::Delivered;
+        assert!(!r.is_overdue("2026-07-11")); // 已交付不再逾期
+        r.status = RequirementStatus::Archived;
+        assert!(!r.is_overdue("2026-07-11")); // 已归档不再逾期
+    }
+
+    #[test]
+    fn dev_status_stamps_started_and_finished_once() {
+        let mut r = Requirement::create("req-1", &new_req());
+        assert_eq!(r.dev_status, WorkStatus::NotStarted);
+        r.set_dev_status(WorkStatus::InProgress, 100);
+        assert_eq!(r.dev_started_at_ms, Some(100));
+        assert_eq!(r.dev_finished_at_ms, None);
+        // 重复推进不覆盖。
+        r.set_dev_status(WorkStatus::InProgress, 200);
+        assert_eq!(r.dev_started_at_ms, Some(100));
+        r.set_dev_status(WorkStatus::Done, 300);
+        assert_eq!(r.dev_started_at_ms, Some(100));
+        assert_eq!(r.dev_finished_at_ms, Some(300));
+        r.set_dev_status(WorkStatus::Done, 400);
+        assert_eq!(r.dev_finished_at_ms, Some(300));
+    }
+
+    #[test]
+    fn test_status_done_backfills_started_when_missing() {
+        let mut r = Requirement::create("req-1", &new_req());
+        r.set_test_status(WorkStatus::Done, 500);
+        assert_eq!(r.test_status, WorkStatus::Done);
+        assert_eq!(r.test_started_at_ms, Some(500));
+        assert_eq!(r.test_finished_at_ms, Some(500));
+    }
+
+    #[test]
+    fn create_carries_tags_due_date_and_parent() {
+        let n = new_req()
+            .with_tags(vec!["api".to_string()])
+            .with_due_date(Some("2026-08-01".to_string()))
+            .with_parent(Some("req-0".to_string()));
+        let r = Requirement::create("req-1", &n);
+        assert_eq!(r.tags, vec!["api".to_string()]);
+        assert_eq!(r.due_date.as_deref(), Some("2026-08-01"));
+        assert_eq!(r.parent_id.as_deref(), Some("req-0"));
     }
 
     #[test]

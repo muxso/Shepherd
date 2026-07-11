@@ -169,7 +169,7 @@ impl OrchestratorObserver {
         if dec.tasks.is_empty() || !dec.tasks.iter().all(|t| t.status == TaskStatus::Verified) {
             return;
         }
-        match self.requirements.deliver(&dec.requirement_id).await {
+        match self.requirements.deliver(&dec.requirement_id, "orchestrator").await {
             Ok(_) => {
                 tracing::info!(requirement = %dec.requirement_id, "全部任务验证 → 需求自动交付(DELIVERED)");
                 self.bus.publish(McpEvent {

@@ -2,7 +2,7 @@ use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 
-use crate::domain::{NewRequirement, Requirement, StatusCounts};
+use crate::domain::{ChangeEntry, NewChange, NewRequirement, Requirement, StatusCounts};
 use crate::ports::{RepoError, RequirementRepository};
 
 #[derive(Default)]
@@ -11,6 +11,17 @@ struct State {
     seq: u64,
     /// 需求 id → 显式秩(reorder 写入);未排序的回落到插入序。
     order: std::collections::HashMap<String, i64>,
+    /// 变更日志:按追加序保存,读时倒序(最新在前)。
+    changes: std::collections::HashMap<String, Vec<ChangeEntry>>,
+    /// 逻辑时钟:每次写操作 +1,保证 created/updated/changed 时间戳单调且可测。
+    clock: i64,
+}
+
+impl State {
+    fn tick(&mut self) -> i64 {
+        self.clock += 1;
+        self.clock
+    }
 }
 
 #[derive(Clone, Default)]
@@ -51,7 +62,11 @@ impl RequirementRepository for InMemoryRequirementRepository {
     async fn insert(&self, new: &NewRequirement) -> Result<Requirement, RepoError> {
         let mut st = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         st.seq += 1;
-        let req = Requirement::create(&format!("requirement-{}", st.seq), new);
+        let id = format!("requirement-{}", st.seq);
+        let now = st.tick();
+        let mut req = Requirement::create(&id, new);
+        req.created_at_ms = now;
+        req.updated_at_ms = now;
         st.requirements.push(req.clone());
         Ok(req)
     }
@@ -103,8 +118,11 @@ impl RequirementRepository for InMemoryRequirementRepository {
 
     async fn save(&self, requirement: &Requirement) -> Result<(), RepoError> {
         let mut st = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let now = st.tick();
         if let Some(slot) = st.requirements.iter_mut().find(|r| r.id == requirement.id) {
             *slot = requirement.clone();
+            // 与 pg 侧 `updated_at = now()` 对齐:每次 save 盖更新时间。
+            slot.updated_at_ms = now;
         }
         Ok(())
     }
@@ -127,6 +145,52 @@ impl RequirementRepository for InMemoryRequirementRepository {
             counts.add(r.status);
         }
         Ok(counts)
+    }
+
+    async fn children(&self, parent_id: &str) -> Result<Vec<Requirement>, RepoError> {
+        Ok(self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .requirements
+            .iter()
+            .filter(|r| r.occupies_title() && r.parent_id.as_deref() == Some(parent_id))
+            .cloned()
+            .collect())
+    }
+
+    async fn append_change(
+        &self,
+        requirement_id: &str,
+        changes: &[NewChange],
+    ) -> Result<(), RepoError> {
+        let mut st = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        for c in changes {
+            let now = st.tick();
+            st.changes.entry(requirement_id.to_string()).or_default().push(ChangeEntry {
+                changed_at_ms: now,
+                changed_by: c.changed_by.clone(),
+                field: c.field.clone(),
+                old_value: c.old_value.clone(),
+                new_value: c.new_value.clone(),
+            });
+        }
+        Ok(())
+    }
+
+    async fn list_changes(
+        &self,
+        requirement_id: &str,
+        limit: u32,
+    ) -> Result<Vec<ChangeEntry>, RepoError> {
+        Ok(self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .changes
+            .get(requirement_id)
+            .map(|v| v.iter().rev().take(limit as usize).cloned().collect())
+            .unwrap_or_default())
     }
 }
 

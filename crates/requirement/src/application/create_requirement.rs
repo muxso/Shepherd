@@ -3,7 +3,8 @@ use std::sync::Arc;
 use thiserror::Error;
 
 use crate::domain::{
-    parse_priority, parse_req_type, NewRequirement, Requirement, RequirementError,
+    normalize_tags, parse_due_date, parse_priority, parse_req_type, NewRequirement, Requirement,
+    RequirementError,
 };
 use crate::ports::{RepoError, RequirementRepository};
 
@@ -13,6 +14,10 @@ pub enum CreateRequirementError {
     Validation(#[from] RequirementError),
     #[error("requirement title already exists")]
     TitleAlreadyExists,
+    #[error("parent requirement not found")]
+    ParentNotFound,
+    #[error("parent requirement belongs to another project")]
+    CrossProjectParent,
     #[error(transparent)]
     Repo(#[from] RepoError),
 }
@@ -34,10 +39,13 @@ impl CreateRequirementUseCase {
         description: &str,
         criteria: &[String],
     ) -> Result<Requirement, CreateRequirementError> {
-        self.execute_with(project_id, title, description, criteria, None, None).await
+        self.execute_with(project_id, title, description, criteria, None, None, &[], None, None)
+            .await
     }
 
-    /// 同 `execute`,另接收可选优先级/需求类型原始串:缺省取默认值,非法值报校验错。
+    /// 同 `execute`,另接收可选优先级/需求类型/标签/截止日期/父需求:
+    /// 缺省取默认值,非法值报校验错;父需求须存在(未软删)且同项目。
+    #[allow(clippy::too_many_arguments)]
     pub async fn execute_with(
         &self,
         project_id: &str,
@@ -46,12 +54,34 @@ impl CreateRequirementUseCase {
         criteria: &[String],
         priority: Option<&str>,
         req_type: Option<&str>,
+        tags: &[String],
+        due_date: Option<&str>,
+        parent_id: Option<&str>,
     ) -> Result<Requirement, CreateRequirementError> {
         let priority = priority.map(parse_priority).transpose()?.unwrap_or_default();
         let req_type = req_type.map(parse_req_type).transpose()?.unwrap_or_default();
-        let new = NewRequirement::new(project_id, title, description, criteria)?
+        let tags = normalize_tags(tags)?;
+        // 空串等同未填,不视为非法日期。
+        let due_date =
+            due_date.map(str::trim).filter(|d| !d.is_empty()).map(parse_due_date).transpose()?;
+        let mut new = NewRequirement::new(project_id, title, description, criteria)?
             .with_priority(priority)
-            .with_req_type(req_type);
+            .with_req_type(req_type)
+            .with_tags(tags)
+            .with_due_date(due_date);
+
+        if let Some(pid) = parent_id.map(str::trim).filter(|p| !p.is_empty()) {
+            let parent = self
+                .repo
+                .get(pid)
+                .await?
+                .filter(|p| !p.deleted)
+                .ok_or(CreateRequirementError::ParentNotFound)?;
+            if parent.project_id != new.project_id {
+                return Err(CreateRequirementError::CrossProjectParent);
+            }
+            new = new.with_parent(Some(pid.to_string()));
+        }
 
         if self.repo.find_active_by_title(&new.project_id, &new.title).await?.is_some() {
             return Err(CreateRequirementError::TitleAlreadyExists);
@@ -116,7 +146,7 @@ mod tests {
     async fn creates_with_explicit_priority_and_type_normalized() {
         use crate::domain::{RequirementPriority, RequirementType};
         let r = uc()
-            .execute_with("p1", "登录", "d", &[], Some(" p0 "), Some("tech_debt"))
+            .execute_with("p1", "登录", "d", &[], Some(" p0 "), Some("tech_debt"), &[], None, None)
             .await
             .expect("ok");
         assert_eq!(r.priority, RequirementPriority::P0);
@@ -126,12 +156,93 @@ mod tests {
     #[tokio::test]
     async fn rejects_invalid_priority_and_type() {
         assert_eq!(
-            uc().execute_with("p1", "登录", "d", &[], Some("P9"), None).await.unwrap_err(),
+            uc().execute_with("p1", "登录", "d", &[], Some("P9"), None, &[], None, None)
+                .await
+                .unwrap_err(),
             CreateRequirementError::Validation(RequirementError::InvalidPriority("P9".into()))
         );
         assert_eq!(
-            uc().execute_with("p1", "登录", "d", &[], None, Some("EPIC")).await.unwrap_err(),
+            uc().execute_with("p1", "登录", "d", &[], None, Some("EPIC"), &[], None, None)
+                .await
+                .unwrap_err(),
             CreateRequirementError::Validation(RequirementError::InvalidReqType("EPIC".into()))
+        );
+    }
+
+    #[tokio::test]
+    async fn creates_with_tags_due_date_and_parent() {
+        let repo = Arc::new(InMemoryRequirementRepository::new());
+        let uc = CreateRequirementUseCase::new(repo.clone());
+        let parent = uc.execute("p1", "父需求", "d", &[]).await.expect("parent");
+        let r = uc
+            .execute_with(
+                "p1",
+                "子需求",
+                "d",
+                &[],
+                None,
+                None,
+                &[" api ".to_string(), "api".to_string(), "web".to_string()],
+                Some("2026-12-31"),
+                Some(&parent.id),
+            )
+            .await
+            .expect("ok");
+        assert_eq!(r.tags, vec!["api".to_string(), "web".to_string()]);
+        assert_eq!(r.due_date.as_deref(), Some("2026-12-31"));
+        assert_eq!(r.parent_id.as_deref(), Some(parent.id.as_str()));
+        // 空串日期等同未填。
+        let r2 = uc
+            .execute_with("p1", "另一条", "d", &[], None, None, &[], Some("  "), None)
+            .await
+            .expect("ok");
+        assert!(r2.due_date.is_none());
+    }
+
+    #[tokio::test]
+    async fn rejects_missing_or_cross_project_parent() {
+        let repo = Arc::new(InMemoryRequirementRepository::new());
+        let uc = CreateRequirementUseCase::new(repo.clone());
+        let other = uc.execute("p2", "别家", "d", &[]).await.expect("other");
+        assert_eq!(
+            uc.execute_with("p1", "子", "d", &[], None, None, &[], None, Some("ghost"))
+                .await
+                .unwrap_err(),
+            CreateRequirementError::ParentNotFound
+        );
+        assert_eq!(
+            uc.execute_with("p1", "子", "d", &[], None, None, &[], None, Some(&other.id))
+                .await
+                .unwrap_err(),
+            CreateRequirementError::CrossProjectParent
+        );
+        // 软删除的父视为不存在。
+        let doomed = uc.execute("p1", "亡父", "d", &[]).await.expect("p");
+        repo.soft_delete(&doomed.id);
+        assert_eq!(
+            uc.execute_with("p1", "子", "d", &[], None, None, &[], None, Some(&doomed.id))
+                .await
+                .unwrap_err(),
+            CreateRequirementError::ParentNotFound
+        );
+    }
+
+    #[tokio::test]
+    async fn rejects_invalid_due_date_and_tags() {
+        assert_eq!(
+            uc().execute_with("p1", "登录", "d", &[], None, None, &[], Some("2026-13-01"), None)
+                .await
+                .unwrap_err(),
+            CreateRequirementError::Validation(RequirementError::InvalidDueDate(
+                "2026-13-01".into()
+            ))
+        );
+        let many: Vec<String> = (0..11).map(|i| format!("t{i}")).collect();
+        assert_eq!(
+            uc().execute_with("p1", "登录", "d", &[], None, None, &many, None, None)
+                .await
+                .unwrap_err(),
+            CreateRequirementError::Validation(RequirementError::TooManyTags)
         );
     }
 

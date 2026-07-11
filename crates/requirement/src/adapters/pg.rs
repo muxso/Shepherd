@@ -5,8 +5,8 @@ use async_trait::async_trait;
 use sqlx::{PgPool, Row};
 
 use crate::domain::{
-    AcceptanceCriterion, NewRequirement, Requirement, RequirementPriority, RequirementStatus,
-    RequirementType, RequirementVersion, StatusCounts,
+    AcceptanceCriterion, ChangeEntry, NewChange, NewRequirement, Requirement, RequirementPriority,
+    RequirementStatus, RequirementType, RequirementVersion, StatusCounts, WorkStatus,
 };
 use crate::ports::{RepoError, RequirementRepository};
 
@@ -26,6 +26,8 @@ impl PgRequirementRepository {
         let status_s: String = meta.try_get("status").map_err(map_err)?;
         let priority_s: String = meta.try_get("priority").map_err(map_err)?;
         let req_type_s: String = meta.try_get("req_type").map_err(map_err)?;
+        let dev_status_s: String = meta.try_get("dev_status").map_err(map_err)?;
+        let test_status_s: String = meta.try_get("test_status").map_err(map_err)?;
 
         let vrows = sqlx::query(
             "SELECT version, description, acceptance_criteria FROM ms_requirement_version \
@@ -62,6 +64,17 @@ impl PgRequirementRepository {
             review_comment: meta.try_get("review_comment").map_err(map_err)?,
             priority: RequirementPriority::parse(&priority_s).unwrap_or_default(),
             req_type: RequirementType::parse(&req_type_s).unwrap_or_default(),
+            tags: meta.try_get("tags").map_err(map_err)?,
+            parent_id: meta.try_get("parent_id").map_err(map_err)?,
+            due_date: meta.try_get("due_date").map_err(map_err)?,
+            created_at_ms: meta.try_get("created_at_ms").map_err(map_err)?,
+            updated_at_ms: meta.try_get("updated_at_ms").map_err(map_err)?,
+            dev_status: WorkStatus::parse(&dev_status_s).unwrap_or_default(),
+            test_status: WorkStatus::parse(&test_status_s).unwrap_or_default(),
+            dev_started_at_ms: meta.try_get("dev_started_at_ms").map_err(map_err)?,
+            dev_finished_at_ms: meta.try_get("dev_finished_at_ms").map_err(map_err)?,
+            test_started_at_ms: meta.try_get("test_started_at_ms").map_err(map_err)?,
+            test_finished_at_ms: meta.try_get("test_finished_at_ms").map_err(map_err)?,
         })
     }
 }
@@ -74,8 +87,16 @@ fn criteria_to_vec(v: &RequirementVersion) -> Vec<String> {
     v.acceptance_criteria.iter().map(|c| c.text.clone()).collect()
 }
 
-const META_COLS: &str =
-    "id, project_id, title, status, baseline_version, deleted, review_comment, priority, req_type";
+// 时间列统一转 epoch 毫秒(与全库口径一致);due_date 以 `YYYY-MM-DD` 文本进出。
+const META_COLS: &str = "id, project_id, title, status, baseline_version, deleted, review_comment, priority, req_type, \
+     tags, parent_id, due_date::text AS due_date, \
+     (extract(epoch from created_at) * 1000)::bigint AS created_at_ms, \
+     (extract(epoch from updated_at) * 1000)::bigint AS updated_at_ms, \
+     dev_status, test_status, \
+     (extract(epoch from dev_started_at) * 1000)::bigint AS dev_started_at_ms, \
+     (extract(epoch from dev_finished_at) * 1000)::bigint AS dev_finished_at_ms, \
+     (extract(epoch from test_started_at) * 1000)::bigint AS test_started_at_ms, \
+     (extract(epoch from test_finished_at) * 1000)::bigint AS test_finished_at_ms";
 
 #[async_trait]
 impl RequirementRepository for PgRequirementRepository {
@@ -101,21 +122,27 @@ impl RequirementRepository for PgRequirementRepository {
 
     async fn insert(&self, new: &NewRequirement) -> Result<Requirement, RepoError> {
         let mut tx = self.pool.begin().await.map_err(map_err)?;
-        let id: String = sqlx::query(
-            "INSERT INTO ms_requirement (project_id, title, priority, req_type) \
-             VALUES ($1, $2, $3, $4) RETURNING id",
+        let row = sqlx::query(
+            "INSERT INTO ms_requirement (project_id, title, priority, req_type, tags, parent_id, due_date) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7::date) \
+             RETURNING id, (extract(epoch from created_at) * 1000)::bigint AS created_at_ms, \
+                       (extract(epoch from updated_at) * 1000)::bigint AS updated_at_ms",
         )
         .bind(&new.project_id)
         .bind(&new.title)
         .bind(new.priority.as_str())
         .bind(new.req_type.as_str())
+        .bind(&new.tags)
+        .bind(&new.parent_id)
+        .bind(&new.due_date)
         .fetch_one(&mut *tx)
         .await
-        .map_err(map_err)?
-        .try_get("id")
         .map_err(map_err)?;
+        let id: String = row.try_get("id").map_err(map_err)?;
 
-        let req = Requirement::create(&id, new);
+        let mut req = Requirement::create(&id, new);
+        req.created_at_ms = row.try_get("created_at_ms").map_err(map_err)?;
+        req.updated_at_ms = row.try_get("updated_at_ms").map_err(map_err)?;
         let v1 = req.latest();
         sqlx::query(
             "INSERT INTO ms_requirement_version (requirement_id, version, description, acceptance_criteria) \
@@ -183,9 +210,16 @@ impl RequirementRepository for PgRequirementRepository {
 
     async fn save(&self, requirement: &Requirement) -> Result<(), RepoError> {
         let mut tx = self.pool.begin().await.map_err(map_err)?;
+        // 每次 save 盖更新时间;开发/测试起止毫秒转 timestamptz 落库。
         sqlx::query(
             "UPDATE ms_requirement SET title = $2, status = $3, baseline_version = $4, deleted = $5, review_comment = $6, \
-             priority = $7, req_type = $8 WHERE id = $1",
+             priority = $7, req_type = $8, tags = $9, parent_id = $10, due_date = $11::date, \
+             dev_status = $12, test_status = $13, \
+             dev_started_at = to_timestamp($14::double precision / 1000.0), \
+             dev_finished_at = to_timestamp($15::double precision / 1000.0), \
+             test_started_at = to_timestamp($16::double precision / 1000.0), \
+             test_finished_at = to_timestamp($17::double precision / 1000.0), \
+             updated_at = now() WHERE id = $1",
         )
         .bind(&requirement.id)
         .bind(&requirement.title)
@@ -195,6 +229,15 @@ impl RequirementRepository for PgRequirementRepository {
         .bind(&requirement.review_comment)
         .bind(requirement.priority.as_str())
         .bind(requirement.req_type.as_str())
+        .bind(&requirement.tags)
+        .bind(&requirement.parent_id)
+        .bind(&requirement.due_date)
+        .bind(requirement.dev_status.as_str())
+        .bind(requirement.test_status.as_str())
+        .bind(requirement.dev_started_at_ms)
+        .bind(requirement.dev_finished_at_ms)
+        .bind(requirement.test_started_at_ms)
+        .bind(requirement.test_finished_at_ms)
         .execute(&mut *tx)
         .await
         .map_err(map_err)?;
@@ -259,6 +302,74 @@ impl RequirementRepository for PgRequirementRepository {
         }
         Ok(counts)
     }
+
+    async fn children(&self, parent_id: &str) -> Result<Vec<Requirement>, RepoError> {
+        let rows = sqlx::query(&format!(
+            "SELECT {META_COLS} FROM ms_requirement \
+             WHERE parent_id = $1 AND deleted = false ORDER BY sort_order, seq"
+        ))
+        .bind(parent_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(map_err)?;
+        let mut out = Vec::with_capacity(rows.len());
+        for r in &rows {
+            out.push(self.assemble(r).await?);
+        }
+        Ok(out)
+    }
+
+    async fn append_change(
+        &self,
+        requirement_id: &str,
+        changes: &[NewChange],
+    ) -> Result<(), RepoError> {
+        let mut tx = self.pool.begin().await.map_err(map_err)?;
+        for c in changes {
+            sqlx::query(
+                "INSERT INTO ms_requirement_change (requirement_id, changed_by, field, old_value, new_value) \
+                 VALUES ($1, $2, $3, $4, $5)",
+            )
+            .bind(requirement_id)
+            .bind(&c.changed_by)
+            .bind(&c.field)
+            .bind(&c.old_value)
+            .bind(&c.new_value)
+            .execute(&mut *tx)
+            .await
+            .map_err(map_err)?;
+        }
+        tx.commit().await.map_err(map_err)?;
+        Ok(())
+    }
+
+    async fn list_changes(
+        &self,
+        requirement_id: &str,
+        limit: u32,
+    ) -> Result<Vec<ChangeEntry>, RepoError> {
+        let rows = sqlx::query(
+            "SELECT (extract(epoch from changed_at) * 1000)::bigint AS changed_at_ms, \
+                    changed_by, field, old_value, new_value \
+             FROM ms_requirement_change WHERE requirement_id = $1 ORDER BY seq DESC LIMIT $2",
+        )
+        .bind(requirement_id)
+        .bind(limit as i64)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(map_err)?;
+        let mut out = Vec::with_capacity(rows.len());
+        for r in &rows {
+            out.push(ChangeEntry {
+                changed_at_ms: r.try_get("changed_at_ms").map_err(map_err)?,
+                changed_by: r.try_get("changed_by").map_err(map_err)?,
+                field: r.try_get("field").map_err(map_err)?,
+                old_value: r.try_get("old_value").map_err(map_err)?,
+                new_value: r.try_get("new_value").map_err(map_err)?,
+            });
+        }
+        Ok(out)
+    }
 }
 
 #[cfg(test)]
@@ -271,7 +382,7 @@ mod tests {
         let url = std::env::var("DATABASE_URL").expect("set DATABASE_URL");
         let pool = PgPool::connect(&url).await.expect("connect");
         migrate::run(&pool).await.expect("migrate");
-        sqlx::query("TRUNCATE ms_requirement, ms_requirement_version")
+        sqlx::query("TRUNCATE ms_requirement, ms_requirement_version, ms_requirement_change")
             .execute(&pool)
             .await
             .expect("truncate");
@@ -312,5 +423,81 @@ mod tests {
         repo.save(&r2).await.expect("save");
         assert!(repo.find_active_by_title("p1", "登录").await.expect("q").is_none());
         assert!(repo.insert(&nu).await.is_ok());
+    }
+
+    #[tokio::test]
+    #[ignore = "需要 DATABASE_URL 指向一个 PostgreSQL 实例"]
+    async fn pg_lifecycle_fields_children_and_change_log_roundtrip() {
+        let url = std::env::var("DATABASE_URL").expect("set DATABASE_URL");
+        let pool = PgPool::connect(&url).await.expect("connect");
+        migrate::run(&pool).await.expect("migrate");
+        sqlx::query("TRUNCATE ms_requirement, ms_requirement_version, ms_requirement_change")
+            .execute(&pool)
+            .await
+            .expect("truncate");
+
+        let repo = PgRequirementRepository::new(pool.clone());
+        let parent = repo
+            .insert(&NewRequirement::new("p1", "父需求", "d", &[]).expect("valid"))
+            .await
+            .expect("insert parent");
+        let child_new = NewRequirement::new("p1", "子需求", "d", &[])
+            .expect("valid")
+            .with_tags(vec!["api".to_string(), "web".to_string()])
+            .with_due_date(Some("2026-12-31".to_string()))
+            .with_parent(Some(parent.id.clone()));
+        let child = repo.insert(&child_new).await.expect("insert child");
+        assert!(child.created_at_ms > 0);
+        assert_eq!(child.created_at_ms, child.updated_at_ms);
+
+        // 生命周期字段落库并可读回。
+        let mut got = repo.get(&child.id).await.expect("get").expect("some");
+        assert_eq!(got.tags, vec!["api".to_string(), "web".to_string()]);
+        assert_eq!(got.due_date.as_deref(), Some("2026-12-31"));
+        assert_eq!(got.parent_id.as_deref(), Some(parent.id.as_str()));
+        assert_eq!(got.dev_status, WorkStatus::NotStarted);
+
+        got.set_dev_status(WorkStatus::InProgress, 1_700_000_000_000);
+        got.set_test_status(WorkStatus::Done, 1_700_000_100_000);
+        got.due_date = None;
+        repo.save(&got).await.expect("save");
+        let reloaded = repo.get(&child.id).await.expect("get").expect("some");
+        assert_eq!(reloaded.dev_status, WorkStatus::InProgress);
+        assert_eq!(reloaded.dev_started_at_ms, Some(1_700_000_000_000));
+        assert_eq!(reloaded.test_status, WorkStatus::Done);
+        assert_eq!(reloaded.test_started_at_ms, Some(1_700_000_100_000));
+        assert_eq!(reloaded.test_finished_at_ms, Some(1_700_000_100_000));
+        assert!(reloaded.due_date.is_none());
+        // save 盖了更新时间。
+        assert!(reloaded.updated_at_ms >= reloaded.created_at_ms);
+
+        // 子需求列表。
+        let kids = repo.children(&parent.id).await.expect("children");
+        assert_eq!(kids.len(), 1);
+        assert_eq!(kids[0].id, child.id);
+
+        // 变更日志:追加后倒序读回,limit 生效。
+        let mk = |field: &str, old: &str, new: &str| NewChange {
+            changed_by: "u1".to_string(),
+            field: field.to_string(),
+            old_value: old.to_string(),
+            new_value: new.to_string(),
+        };
+        repo.append_change(
+            &child.id,
+            &[
+                mk("devStatus", "NOT_STARTED", "IN_PROGRESS"),
+                mk("testStatus", "NOT_STARTED", "DONE"),
+            ],
+        )
+        .await
+        .expect("append");
+        let log = repo.list_changes(&child.id, 200).await.expect("changes");
+        assert_eq!(log.len(), 2);
+        assert_eq!(log[0].field, "testStatus");
+        assert_eq!(log[1].field, "devStatus");
+        assert_eq!(log[0].changed_by, "u1");
+        assert!(log[0].changed_at_ms > 0);
+        assert_eq!(repo.list_changes(&child.id, 1).await.expect("changes").len(), 1);
     }
 }

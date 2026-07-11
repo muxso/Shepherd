@@ -12,11 +12,12 @@ use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, OpenApi, ToSchema};
 use webauth::{AuthUser, SessionStore};
 
+use crate::application::requirement_admin::now_ms;
 use crate::application::{
     CreateRequirementError, CreateRequirementUseCase, ListRequirementsUseCase, RequirementCmdError,
     RequirementService,
 };
-use crate::domain::Requirement;
+use crate::domain::{date_from_epoch_ms, ChangeEntry, Requirement};
 
 #[derive(Clone)]
 struct ReqState {
@@ -52,6 +53,11 @@ pub fn router(
         .route("/requirement/{id}/review/reject", post(reject_review))
         .route("/requirement/{id}/archive", post(archive_requirement))
         .route("/requirement/{id}/deliver", post(deliver_requirement))
+        .route("/requirement/{id}/dev-status", post(set_dev_status))
+        .route("/requirement/{id}/test-status", post(set_test_status))
+        .route("/requirement/{id}/parent", put(set_parent))
+        .route("/requirement/{id}/children", get(get_children))
+        .route("/requirement/{id}/changes", get(get_changes))
         .with_state(ReqState { create, list, admin, sessions })
 }
 
@@ -71,6 +77,15 @@ struct CreateBody {
     /// 需求类型 FEATURE/ENHANCEMENT/TECH_DEBT/BUGFIX(不区分大小写),缺省 FEATURE。
     #[serde(default)]
     req_type: Option<String>,
+    /// 标签(最多 10 个,单个 ≤ 32 字符;自动 trim + 去重)。
+    #[serde(default)]
+    tags: Vec<String>,
+    /// 截止日期 YYYY-MM-DD;空串等同未填。
+    #[serde(default)]
+    due_date: Option<String>,
+    /// 父需求 id(须同项目且未删除)。
+    #[serde(default)]
+    parent_id: Option<String>,
 }
 
 #[derive(Deserialize, ToSchema)]
@@ -102,6 +117,28 @@ struct RenameBody {
     /// 可选:更新需求类型,缺省不动。
     #[serde(default)]
     req_type: Option<String>,
+    /// 可选:整组替换标签,缺省不动。
+    #[serde(default)]
+    tags: Option<Vec<String>>,
+    /// 可选:更新截止日期 YYYY-MM-DD;空串清除,缺省不动。
+    #[serde(default)]
+    due_date: Option<String>,
+}
+
+#[derive(Deserialize, ToSchema)]
+#[schema(as = RequirementWorkStatusBody)]
+struct WorkStatusBody {
+    /// NOT_STARTED / IN_PROGRESS / DONE(不区分大小写)。
+    status: String,
+}
+
+#[derive(Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+#[schema(as = RequirementSetParentBody)]
+struct SetParentBody {
+    /// 目标父需求 id;null 或空串表示摘除父需求。
+    #[serde(default)]
+    parent_id: Option<String>,
 }
 
 #[derive(Serialize, ToSchema)]
@@ -136,12 +173,28 @@ struct RequirementResponse {
     review_comment: Option<String>,
     priority: String,
     req_type: String,
+    tags: Vec<String>,
+    parent_id: Option<String>,
+    /// 截止日期 YYYY-MM-DD;null 表示未设置。
+    due_date: Option<String>,
+    /// 是否逾期(实时计算:设了截止日期、已过今天且未交付/归档)。
+    overdue: bool,
+    /// 时间戳一律为 epoch 毫秒。
+    created_at: i64,
+    updated_at: i64,
+    dev_status: String,
+    test_status: String,
+    dev_started_at: Option<i64>,
+    dev_finished_at: Option<i64>,
+    test_started_at: Option<i64>,
+    test_finished_at: Option<i64>,
 }
 
 impl From<Requirement> for RequirementResponse {
     fn from(r: Requirement) -> Self {
         let latest_version = r.latest_version();
         let versions = r.versions.iter().map(VersionResponse::from).collect();
+        let overdue = r.is_overdue(&date_from_epoch_ms(now_ms()));
         Self {
             id: r.id,
             project_id: r.project_id,
@@ -153,8 +206,56 @@ impl From<Requirement> for RequirementResponse {
             review_comment: r.review_comment,
             priority: r.priority.as_str().to_string(),
             req_type: r.req_type.as_str().to_string(),
+            tags: r.tags,
+            parent_id: r.parent_id,
+            due_date: r.due_date,
+            overdue,
+            created_at: r.created_at_ms,
+            updated_at: r.updated_at_ms,
+            dev_status: r.dev_status.as_str().to_string(),
+            test_status: r.test_status.as_str().to_string(),
+            dev_started_at: r.dev_started_at_ms,
+            dev_finished_at: r.dev_finished_at_ms,
+            test_started_at: r.test_started_at_ms,
+            test_finished_at: r.test_finished_at_ms,
         }
     }
+}
+
+#[derive(Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+#[schema(as = RequirementChangeResponse)]
+struct ChangeResponse {
+    /// epoch 毫秒。
+    changed_at: i64,
+    changed_by: String,
+    field: String,
+    old_value: String,
+    new_value: String,
+}
+
+impl From<ChangeEntry> for ChangeResponse {
+    fn from(c: ChangeEntry) -> Self {
+        Self {
+            changed_at: c.changed_at_ms,
+            changed_by: c.changed_by,
+            field: c.field,
+            old_value: c.old_value,
+            new_value: c.new_value,
+        }
+    }
+}
+
+#[derive(Serialize, ToSchema)]
+#[schema(as = RequirementChildrenResponse)]
+struct ChildrenResponse {
+    items: Vec<RequirementResponse>,
+}
+
+#[derive(Serialize, ToSchema)]
+#[schema(as = RequirementChangesResponse)]
+struct ChangesResponse {
+    items: Vec<ChangeResponse>,
 }
 
 #[derive(Serialize, ToSchema)]
@@ -203,6 +304,19 @@ fn cmd_err(e: RequirementCmdError) -> Response {
         RequirementCmdError::NotUnderReview => {
             (StatusCode::CONFLICT, "requirement is not pending review").into_response()
         }
+        RequirementCmdError::ParentNotFound => {
+            (StatusCode::BAD_REQUEST, "parent requirement not found").into_response()
+        }
+        RequirementCmdError::SelfParent => {
+            (StatusCode::BAD_REQUEST, "requirement cannot be its own parent").into_response()
+        }
+        RequirementCmdError::CrossProjectParent => {
+            (StatusCode::BAD_REQUEST, "parent requirement belongs to another project")
+                .into_response()
+        }
+        RequirementCmdError::ParentCycle => {
+            (StatusCode::BAD_REQUEST, "parent link would create a cycle").into_response()
+        }
         RequirementCmdError::Repo(_) => {
             (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response()
         }
@@ -216,6 +330,13 @@ fn create_err(e: CreateRequirementError) -> Response {
         }
         CreateRequirementError::TitleAlreadyExists => {
             (StatusCode::CONFLICT, "title already exists").into_response()
+        }
+        CreateRequirementError::ParentNotFound => {
+            (StatusCode::BAD_REQUEST, "parent requirement not found").into_response()
+        }
+        CreateRequirementError::CrossProjectParent => {
+            (StatusCode::BAD_REQUEST, "parent requirement belongs to another project")
+                .into_response()
         }
         CreateRequirementError::Repo(_) => {
             (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response()
@@ -241,6 +362,9 @@ async fn create_requirement(
             &b.acceptance_criteria,
             b.priority.as_deref(),
             b.req_type.as_deref(),
+            &b.tags,
+            b.due_date.as_deref(),
+            b.parent_id.as_deref(),
         )
         .await
     {
@@ -325,7 +449,7 @@ async fn revise_requirement(
     if !user.can("REQUIREMENT", "UPDATE") {
         return (StatusCode::FORBIDDEN, "permission denied").into_response();
     }
-    match st.admin.revise(&id, &b.description, &b.acceptance_criteria).await {
+    match st.admin.revise(&id, &b.description, &b.acceptance_criteria, &user.user_id).await {
         Ok(version) => (StatusCode::CREATED, Json(VersionCreated { version })).into_response(),
         Err(e) => cmd_err(e),
     }
@@ -341,7 +465,7 @@ async fn set_baseline(
     if !user.can("REQUIREMENT", "UPDATE") {
         return (StatusCode::FORBIDDEN, "permission denied").into_response();
     }
-    match st.admin.set_baseline(&id, b.version).await {
+    match st.admin.set_baseline(&id, b.version, &user.user_id).await {
         Ok(r) => (StatusCode::OK, Json(RequirementResponse::from(r))).into_response(),
         Err(e) => cmd_err(e),
     }
@@ -357,7 +481,7 @@ async fn reject_review(
     if !user.can("REQUIREMENT", "UPDATE") {
         return (StatusCode::FORBIDDEN, "permission denied").into_response();
     }
-    match st.admin.reject_review(&id, &b.comment).await {
+    match st.admin.reject_review(&id, &b.comment, &user.user_id).await {
         Ok(r) => (StatusCode::OK, Json(RequirementResponse::from(r))).into_response(),
         Err(e) => cmd_err(e),
     }
@@ -373,7 +497,21 @@ async fn rename_requirement(
     if !user.can("REQUIREMENT", "UPDATE") {
         return (StatusCode::FORBIDDEN, "permission denied").into_response();
     }
-    match st.admin.update(&id, &b.title, b.priority.as_deref(), b.req_type.as_deref()).await {
+    // dueDate:缺省不动;空串清除;非空设为该日期。
+    let due_date = b.due_date.as_deref().map(|d| Some(d.trim()).filter(|t| !t.is_empty()));
+    match st
+        .admin
+        .update(
+            &id,
+            &b.title,
+            b.priority.as_deref(),
+            b.req_type.as_deref(),
+            b.tags.as_deref(),
+            due_date,
+            &user.user_id,
+        )
+        .await
+    {
         Ok(r) => (StatusCode::OK, Json(RequirementResponse::from(r))).into_response(),
         Err(e) => cmd_err(e),
     }
@@ -388,7 +526,7 @@ async fn archive_requirement(
     if !user.can("REQUIREMENT", "UPDATE") {
         return (StatusCode::FORBIDDEN, "permission denied").into_response();
     }
-    match st.admin.archive(&id).await {
+    match st.admin.archive(&id, &user.user_id).await {
         Ok(r) => (StatusCode::OK, Json(RequirementResponse::from(r))).into_response(),
         Err(e) => cmd_err(e),
     }
@@ -403,8 +541,101 @@ async fn deliver_requirement(
     if !user.can("REQUIREMENT", "UPDATE") {
         return (StatusCode::FORBIDDEN, "permission denied").into_response();
     }
-    match st.admin.deliver(&id).await {
+    match st.admin.deliver(&id, &user.user_id).await {
         Ok(r) => (StatusCode::OK, Json(RequirementResponse::from(r))).into_response(),
+        Err(e) => cmd_err(e),
+    }
+}
+
+/// 推进开发状态:首次进 IN_PROGRESS/DONE 盖对应时间戳,重复推进不覆盖。
+#[utoipa::path(post, path = "/requirement/{id}/dev-status", tag = "requirement", params(("id" = String, Path)), request_body = WorkStatusBody, responses((status = 200, body = RequirementResponse), (status = 400), (status = 403), (status = 404)), security(("bearer" = [])))]
+async fn set_dev_status(
+    user: AuthUser,
+    State(st): State<ReqState>,
+    Path(id): Path<String>,
+    Json(b): Json<WorkStatusBody>,
+) -> Response {
+    if !user.can("REQUIREMENT", "UPDATE") {
+        return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
+    match st.admin.set_dev_status(&id, &b.status, &user.user_id).await {
+        Ok(r) => (StatusCode::OK, Json(RequirementResponse::from(r))).into_response(),
+        Err(e) => cmd_err(e),
+    }
+}
+
+/// 推进测试状态;规则同开发状态。
+#[utoipa::path(post, path = "/requirement/{id}/test-status", tag = "requirement", params(("id" = String, Path)), request_body = WorkStatusBody, responses((status = 200, body = RequirementResponse), (status = 400), (status = 403), (status = 404)), security(("bearer" = [])))]
+async fn set_test_status(
+    user: AuthUser,
+    State(st): State<ReqState>,
+    Path(id): Path<String>,
+    Json(b): Json<WorkStatusBody>,
+) -> Response {
+    if !user.can("REQUIREMENT", "UPDATE") {
+        return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
+    match st.admin.set_test_status(&id, &b.status, &user.user_id).await {
+        Ok(r) => (StatusCode::OK, Json(RequirementResponse::from(r))).into_response(),
+        Err(e) => cmd_err(e),
+    }
+}
+
+/// 挂/摘父需求:父须同项目、未删除、非自身且不构成环(违规 → 400)。
+#[utoipa::path(put, path = "/requirement/{id}/parent", tag = "requirement", params(("id" = String, Path)), request_body = SetParentBody, responses((status = 200, body = RequirementResponse), (status = 400), (status = 403), (status = 404)), security(("bearer" = [])))]
+async fn set_parent(
+    user: AuthUser,
+    State(st): State<ReqState>,
+    Path(id): Path<String>,
+    Json(b): Json<SetParentBody>,
+) -> Response {
+    if !user.can("REQUIREMENT", "UPDATE") {
+        return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
+    match st.admin.set_parent(&id, b.parent_id.as_deref(), &user.user_id).await {
+        Ok(r) => (StatusCode::OK, Json(RequirementResponse::from(r))).into_response(),
+        Err(e) => cmd_err(e),
+    }
+}
+
+/// 直属子需求(未删除)。
+#[utoipa::path(get, path = "/requirement/{id}/children", tag = "requirement", params(("id" = String, Path)), responses((status = 200, body = ChildrenResponse), (status = 403), (status = 404)), security(("bearer" = [])))]
+async fn get_children(
+    user: AuthUser,
+    State(st): State<ReqState>,
+    Path(id): Path<String>,
+) -> Response {
+    if !user.can("REQUIREMENT", "READ") {
+        return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
+    match st.admin.children(&id).await {
+        Ok(items) => (
+            StatusCode::OK,
+            Json(ChildrenResponse {
+                items: items.into_iter().map(RequirementResponse::from).collect(),
+            }),
+        )
+            .into_response(),
+        Err(e) => cmd_err(e),
+    }
+}
+
+/// 变更日志,最新在前(最多 200 条)。
+#[utoipa::path(get, path = "/requirement/{id}/changes", tag = "requirement", params(("id" = String, Path)), responses((status = 200, body = ChangesResponse), (status = 403), (status = 404)), security(("bearer" = [])))]
+async fn get_changes(
+    user: AuthUser,
+    State(st): State<ReqState>,
+    Path(id): Path<String>,
+) -> Response {
+    if !user.can("REQUIREMENT", "READ") {
+        return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
+    match st.admin.changes(&id).await {
+        Ok(items) => (
+            StatusCode::OK,
+            Json(ChangesResponse { items: items.into_iter().map(ChangeResponse::from).collect() }),
+        )
+            .into_response(),
         Err(e) => cmd_err(e),
     }
 }
@@ -493,9 +724,10 @@ async fn requirement_summary(
 #[openapi(
     paths(
         create_requirement, list_requirements, get_requirement, get_version,
-        revise_requirement, set_baseline, reject_review, rename_requirement, archive_requirement, deliver_requirement, delete_requirement, reorder_requirements, requirement_summary
+        revise_requirement, set_baseline, reject_review, rename_requirement, archive_requirement, deliver_requirement, delete_requirement, reorder_requirements, requirement_summary,
+        set_dev_status, set_test_status, set_parent, get_children, get_changes
     ),
-    components(schemas(CreateBody, ReviseBody, SetBaselineBody, RejectReviewBody, RenameBody, ReorderBody, SummaryResponse, VersionResponse, RequirementResponse, RequirementPage, VersionCreated)),
+    components(schemas(CreateBody, ReviseBody, SetBaselineBody, RejectReviewBody, RenameBody, WorkStatusBody, SetParentBody, ReorderBody, SummaryResponse, VersionResponse, RequirementResponse, RequirementPage, VersionCreated, ChangeResponse, ChildrenResponse, ChangesResponse)),
     tags((name = "requirement", description = "需求管理(多版本)"))
 )]
 struct ApiDoc;
@@ -1067,6 +1299,347 @@ mod tests {
         assert_eq!(
             app.oneshot(req("POST", "/requirement", body, Some(&t))).await.expect("r").status(),
             StatusCode::CONFLICT
+        );
+    }
+
+    #[tokio::test]
+    async fn create_with_tags_due_date_and_parent_exposes_lifecycle_fields() {
+        let (app, t) = app_with("REQUIREMENT:READ+ADD").await;
+        let parent = create_req(&app, &t, "父需求").await;
+        let r = app
+            .clone()
+            .oneshot(req(
+                "POST",
+                "/requirement",
+                &format!(
+                    r#"{{"projectId":"p1","title":"子需求","tags":[" api ","api","web"],"dueDate":"2999-12-31","parentId":"{parent}"}}"#
+                ),
+                Some(&t),
+            ))
+            .await
+            .expect("r");
+        assert_eq!(r.status(), StatusCode::CREATED);
+        let v = body_json(r).await;
+        assert_eq!(v["tags"], serde_json::json!(["api", "web"]));
+        assert_eq!(v["dueDate"], "2999-12-31");
+        assert_eq!(v["parentId"], parent);
+        assert_eq!(v["overdue"], false);
+        assert_eq!(v["devStatus"], "NOT_STARTED");
+        assert_eq!(v["testStatus"], "NOT_STARTED");
+        assert!(v["createdAt"].as_i64().expect("createdAt") > 0);
+        assert!(v["updatedAt"].as_i64().expect("updatedAt") > 0);
+        assert!(v["devStartedAt"].is_null());
+    }
+
+    #[tokio::test]
+    async fn overdue_is_computed_from_past_due_date() {
+        let (app, t) = app_with("REQUIREMENT:READ+ADD").await;
+        let r = app
+            .clone()
+            .oneshot(req(
+                "POST",
+                "/requirement",
+                r#"{"projectId":"p1","title":"逾期需求","dueDate":"2000-01-01"}"#,
+                Some(&t),
+            ))
+            .await
+            .expect("r");
+        assert_eq!(r.status(), StatusCode::CREATED);
+        assert_eq!(body_json(r).await["overdue"], true);
+    }
+
+    #[tokio::test]
+    async fn create_with_bad_parent_or_due_date_400() {
+        let (app, t) = app_with("REQUIREMENT:READ+ADD").await;
+        assert_eq!(
+            app.clone()
+                .oneshot(req(
+                    "POST",
+                    "/requirement",
+                    r#"{"projectId":"p1","title":"孤儿","parentId":"ghost"}"#,
+                    Some(&t)
+                ))
+                .await
+                .expect("r")
+                .status(),
+            StatusCode::BAD_REQUEST
+        );
+        assert_eq!(
+            app.oneshot(req(
+                "POST",
+                "/requirement",
+                r#"{"projectId":"p1","title":"坏日期","dueDate":"2026-13-01"}"#,
+                Some(&t)
+            ))
+            .await
+            .expect("r")
+            .status(),
+            StatusCode::BAD_REQUEST
+        );
+    }
+
+    #[tokio::test]
+    async fn dev_status_transition_stamps_and_rejects_invalid() {
+        let (app, t) = app_with("REQUIREMENT:READ+ADD+UPDATE").await;
+        let id = create_req(&app, &t, "开发中").await;
+        let r = app
+            .clone()
+            .oneshot(req(
+                "POST",
+                &format!("/requirement/{id}/dev-status"),
+                r#"{"status":"in_progress"}"#,
+                Some(&t),
+            ))
+            .await
+            .expect("r");
+        assert_eq!(r.status(), StatusCode::OK);
+        let v = body_json(r).await;
+        assert_eq!(v["devStatus"], "IN_PROGRESS");
+        assert!(v["devStartedAt"].as_i64().is_some());
+        assert!(v["devFinishedAt"].is_null());
+
+        let r2 = app
+            .clone()
+            .oneshot(req(
+                "POST",
+                &format!("/requirement/{id}/test-status"),
+                r#"{"status":"DONE"}"#,
+                Some(&t),
+            ))
+            .await
+            .expect("r");
+        assert_eq!(r2.status(), StatusCode::OK);
+        let v2 = body_json(r2).await;
+        assert_eq!(v2["testStatus"], "DONE");
+        assert!(v2["testStartedAt"].as_i64().is_some());
+        assert!(v2["testFinishedAt"].as_i64().is_some());
+
+        assert_eq!(
+            app.oneshot(req(
+                "POST",
+                &format!("/requirement/{id}/dev-status"),
+                r#"{"status":"PAUSED"}"#,
+                Some(&t)
+            ))
+            .await
+            .expect("r")
+            .status(),
+            StatusCode::BAD_REQUEST
+        );
+    }
+
+    #[tokio::test]
+    async fn parent_link_children_and_cycle_400() {
+        let (app, t) = app_with("REQUIREMENT:READ+ADD+UPDATE").await;
+        let a = create_req(&app, &t, "A").await;
+        let b = create_req(&app, &t, "B").await;
+
+        let r = app
+            .clone()
+            .oneshot(req(
+                "PUT",
+                &format!("/requirement/{b}/parent"),
+                &format!(r#"{{"parentId":"{a}"}}"#),
+                Some(&t),
+            ))
+            .await
+            .expect("r");
+        assert_eq!(r.status(), StatusCode::OK);
+        assert_eq!(body_json(r).await["parentId"], a);
+
+        // 环:A 再挂到 B 下 → 400;自挂 → 400。
+        assert_eq!(
+            app.clone()
+                .oneshot(req(
+                    "PUT",
+                    &format!("/requirement/{a}/parent"),
+                    &format!(r#"{{"parentId":"{b}"}}"#),
+                    Some(&t)
+                ))
+                .await
+                .expect("r")
+                .status(),
+            StatusCode::BAD_REQUEST
+        );
+        assert_eq!(
+            app.clone()
+                .oneshot(req(
+                    "PUT",
+                    &format!("/requirement/{a}/parent"),
+                    &format!(r#"{{"parentId":"{a}"}}"#),
+                    Some(&t)
+                ))
+                .await
+                .expect("r")
+                .status(),
+            StatusCode::BAD_REQUEST
+        );
+
+        let r = app
+            .clone()
+            .oneshot(req("GET", &format!("/requirement/{a}/children"), "", Some(&t)))
+            .await
+            .expect("r");
+        assert_eq!(r.status(), StatusCode::OK);
+        let v = body_json(r).await;
+        assert_eq!(v["items"].as_array().expect("items").len(), 1);
+        assert_eq!(v["items"][0]["id"], b);
+
+        // 摘除后子列表为空。
+        let r = app
+            .clone()
+            .oneshot(req(
+                "PUT",
+                &format!("/requirement/{b}/parent"),
+                r#"{"parentId":null}"#,
+                Some(&t),
+            ))
+            .await
+            .expect("r");
+        assert_eq!(r.status(), StatusCode::OK);
+        let v = body_json(
+            app.oneshot(req("GET", &format!("/requirement/{a}/children"), "", Some(&t)))
+                .await
+                .expect("r"),
+        )
+        .await;
+        assert!(v["items"].as_array().expect("items").is_empty());
+    }
+
+    #[tokio::test]
+    async fn put_updates_tags_and_due_date_empty_string_clears() {
+        let (app, t) = app_with("REQUIREMENT:READ+ADD+UPDATE").await;
+        let id = create_req(&app, &t, "登录").await;
+        let r = app
+            .clone()
+            .oneshot(req(
+                "PUT",
+                &format!("/requirement/{id}"),
+                r#"{"title":"登录","tags":["web","api"],"dueDate":"2999-06-01"}"#,
+                Some(&t),
+            ))
+            .await
+            .expect("r");
+        assert_eq!(r.status(), StatusCode::OK);
+        let v = body_json(r).await;
+        assert_eq!(v["tags"], serde_json::json!(["web", "api"]));
+        assert_eq!(v["dueDate"], "2999-06-01");
+
+        // 缺省不动。
+        let r2 = app
+            .clone()
+            .oneshot(req("PUT", &format!("/requirement/{id}"), r#"{"title":"登录"}"#, Some(&t)))
+            .await
+            .expect("r");
+        let v2 = body_json(r2).await;
+        assert_eq!(v2["tags"], serde_json::json!(["web", "api"]));
+        assert_eq!(v2["dueDate"], "2999-06-01");
+
+        // 空串清除截止日期。
+        let r3 = app
+            .oneshot(req(
+                "PUT",
+                &format!("/requirement/{id}"),
+                r#"{"title":"登录","dueDate":""}"#,
+                Some(&t),
+            ))
+            .await
+            .expect("r");
+        let v3 = body_json(r3).await;
+        assert!(v3["dueDate"].is_null());
+    }
+
+    #[tokio::test]
+    async fn changes_endpoint_lists_newest_first() {
+        let (app, t) = app_with("REQUIREMENT:READ+ADD+UPDATE").await;
+        let id = create_req(&app, &t, "登录").await;
+        app.clone()
+            .oneshot(req(
+                "PUT",
+                &format!("/requirement/{id}"),
+                r#"{"title":"登入","priority":"P0"}"#,
+                Some(&t),
+            ))
+            .await
+            .expect("r");
+        app.clone()
+            .oneshot(req(
+                "POST",
+                &format!("/requirement/{id}/dev-status"),
+                r#"{"status":"IN_PROGRESS"}"#,
+                Some(&t),
+            ))
+            .await
+            .expect("r");
+
+        let r = app
+            .oneshot(req("GET", &format!("/requirement/{id}/changes"), "", Some(&t)))
+            .await
+            .expect("r");
+        assert_eq!(r.status(), StatusCode::OK);
+        let v = body_json(r).await;
+        let items = v["items"].as_array().expect("items");
+        assert_eq!(items.len(), 3);
+        assert_eq!(items[0]["field"], "devStatus");
+        assert_eq!(items[0]["oldValue"], "NOT_STARTED");
+        assert_eq!(items[0]["newValue"], "IN_PROGRESS");
+        assert_eq!(items[0]["changedBy"], "u");
+        assert!(items[0]["changedAt"].as_i64().is_some());
+        assert_eq!(items[1]["field"], "priority");
+        assert_eq!(items[2]["field"], "title");
+        assert_eq!(items[2]["oldValue"], "登录");
+        assert_eq!(items[2]["newValue"], "登入");
+    }
+
+    #[tokio::test]
+    async fn lifecycle_endpoints_enforce_guards() {
+        // 只有 READ:改状态/挂父 → 403。
+        let (app, t) = app_with("REQUIREMENT:READ").await;
+        assert_eq!(
+            app.clone()
+                .oneshot(req("POST", "/requirement/x/dev-status", r#"{"status":"DONE"}"#, Some(&t)))
+                .await
+                .expect("r")
+                .status(),
+            StatusCode::FORBIDDEN
+        );
+        assert_eq!(
+            app.clone()
+                .oneshot(req(
+                    "POST",
+                    "/requirement/x/test-status",
+                    r#"{"status":"DONE"}"#,
+                    Some(&t)
+                ))
+                .await
+                .expect("r")
+                .status(),
+            StatusCode::FORBIDDEN
+        );
+        assert_eq!(
+            app.oneshot(req("PUT", "/requirement/x/parent", r#"{"parentId":null}"#, Some(&t)))
+                .await
+                .expect("r")
+                .status(),
+            StatusCode::FORBIDDEN
+        );
+
+        // 只有 ADD+UPDATE(无 READ):children/changes → 403。
+        let (app2, t2) = app_with("REQUIREMENT:ADD+UPDATE").await;
+        assert_eq!(
+            app2.clone()
+                .oneshot(req("GET", "/requirement/x/children", "", Some(&t2)))
+                .await
+                .expect("r")
+                .status(),
+            StatusCode::FORBIDDEN
+        );
+        assert_eq!(
+            app2.oneshot(req("GET", "/requirement/x/changes", "", Some(&t2)))
+                .await
+                .expect("r")
+                .status(),
+            StatusCode::FORBIDDEN
         );
     }
 }

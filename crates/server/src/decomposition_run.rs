@@ -162,7 +162,7 @@ async fn run_decomposition(
     let blocked = total - verified - failed;
 
     if total > 0 && verified == total {
-        if let Err(e) = st.requirements.deliver(&final_dec.requirement_id).await {
+        if let Err(e) = st.requirements.deliver(&final_dec.requirement_id, "orchestrator").await {
             tracing::warn!(requirement = %final_dec.requirement_id, "自动标记交付失败(可能未定基线): {e:?}");
         } else {
             tracing::info!(requirement = %final_dec.requirement_id, "需求已自动标记交付(DELIVERED)");
