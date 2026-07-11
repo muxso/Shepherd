@@ -695,18 +695,18 @@ export function useListView<T>({
     </Modal>
   )
 
+  // 工具栏控件用默认尺寸(32px),与页面主按钮(新建等)同高。
   const toolbar = (
     <Space size={8} wrap>
       <Input.Search
         allowClear
-        size="small"
         style={{ width: 220 }}
         placeholder={searchLabel || t('lv.searchPh', '搜索')}
         value={search}
         onChange={(e) => setSearch(e.target.value)}
       />
       <Dropdown menu={viewMenu} trigger={['click']}>
-        <Button size="small">
+        <Button>
           <span style={{ color: 'var(--text-3)' }}>{t('lv.views', '视图')}</span>
           {activeName}
           <DownOutlined style={{ fontSize: 10 }} />
@@ -714,12 +714,12 @@ export function useListView<T>({
       </Dropdown>
       {editorModal}
       <Popover content={filterPanel} trigger="click" placement="bottomRight">
-        <Button size="small" icon={<FilterOutlined />}>
+        <Button icon={<FilterOutlined />}>
           {t('lv.filter', '筛选')}{activeFilterCount > 0 ? ` (${activeFilterCount})` : ''}
         </Button>
       </Popover>
       <Popover content={columnPanel} trigger="click" placement="bottomRight">
-        <Button size="small" icon={<SettingOutlined />} />
+        <Button icon={<SettingOutlined />} />
       </Popover>
     </Space>
   )

@@ -461,7 +461,7 @@ function ExampleResponsesPanel({ responses, onChange }: { responses: ApiSpecResp
         {responses.map((r, i) => (
           <Tag.CheckableTag key={i} checked={i === sel} onChange={() => setSel(i)} style={{ border: '1px solid var(--border-soft)' }}>
             <span style={{ color: i === sel ? undefined : undefined }}>
-              <span style={{ color: sc(r.status) === 'green' ? '#52c41a' : sc(r.status) === 'red' ? '#ff4d4f' : '#d48806', fontWeight: 600 }}>●</span> {r.status ?? '—'}
+              <span style={{ color: sc(r.status) === 'green' ? 'var(--success)' : sc(r.status) === 'red' ? 'var(--error)' : '#d48806', fontWeight: 600 }}>●</span> {r.status ?? '—'}
             </span>
             {responses.length > 1 && (
               <DeleteOutlined style={{ marginLeft: 6, fontSize: 11 }} onClick={(e) => { e.stopPropagation(); del(i) }} />
@@ -642,7 +642,7 @@ export function DebugResultPanel({
             { title: t('apidef.assertItem', '断言项'), dataIndex: 'item', render: (v: string) => <span className="ms-mono">{v}</span> },
             { title: t('apidef.assertCond', '条件'), dataIndex: 'condition', width: 90 },
             { title: t('apidef.assertExpected', '期望'), dataIndex: 'expected', render: (v: string) => <span className="ms-mono">{v || '—'}</span> },
-            { title: t('apidef.assertActual', '实际'), dataIndex: 'actual', render: (v: string, r) => <span className="ms-mono" style={{ color: r.passed ? undefined : '#ff4d4f' }}>{v || '—'}</span> },
+            { title: t('apidef.assertActual', '实际'), dataIndex: 'actual', render: (v: string, r) => <span className="ms-mono" style={{ color: r.passed ? undefined : 'var(--error)' }}>{v || '—'}</span> },
           ]}
         />
       ) : assertions?.length ? (

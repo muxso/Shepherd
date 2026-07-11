@@ -95,33 +95,48 @@ export function ModuleTreePanel<T>({
       return { key: m.id, title: <ModuleTitle name={m.name} count={subtreeCount(m.id)} onAction={(a) => onModuleAction(a, m)} />, children: subs.length ? subs : undefined }
     }
     const roots = childModulesOf(null).map(moduleNode).filter(Boolean)
+    // 根节点行内嵌 收起全部/新建顶层模块 图标(与「全部 (N)」同一行,不再单独占一行)。
+    // 注意:根节点不用 Tree 的 icon 槽(独立 icon 元素 + 100% 宽标题会把标题挤到下一行),
+    // 文件夹图标并进标题,保证「图标 + 名称 + 工具按钮」恒为一行。
     return [{
       key: 'ALL',
-      icon: <FolderOutlined />,
-      title: `${allLabel} (${items.length})`,
+      title: (
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, width: '100%', minWidth: 0 }}>
+          <FolderOutlined style={{ color: 'var(--text-3)', flexShrink: 0 }} />
+          <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{`${allLabel} (${items.length})`}</span>
+          <Tooltip title={expanded.length ? t('apidef.collapseAll', '收起全部') : t('apidef.expandAll', '展开全部')}>
+            <Button
+              size="small"
+              type="text"
+              style={{ width: 22, minWidth: 22, padding: 0, flexShrink: 0 }}
+              icon={<MinusSquareOutlined />}
+              onClick={(e) => { e.stopPropagation(); setExpanded(expanded.length ? [] : allExpandableKeys) }}
+            />
+          </Tooltip>
+          <Tooltip title={t('apidef.newTopModule', '新建顶层模块')}>
+            <Button
+              size="small"
+              type="text"
+              style={{ color: 'var(--success)', width: 22, minWidth: 22, padding: 0, flexShrink: 0 }}
+              icon={<PlusOutlined />}
+              onClick={(e) => { e.stopPropagation(); setForm({ mode: 'create', parentId: null }) }}
+            />
+          </Tooltip>
+        </span>
+      ),
       children: [
         { key: 'UNFILED', icon: <InboxOutlined />, title: `${unfiledLabel} (${unfiledCount})` },
         ...roots,
       ],
     }]
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [modules, items, moduleSearch, allLabel, unfiledLabel])
+  }, [modules, items, moduleSearch, allLabel, unfiledLabel, expanded, allExpandableKeys])
 
   return (
     <>
       {header}
       <div style={{ padding: '10px 10px 6px' }}>
         <Input size="small" allowClear prefix={<SearchOutlined style={{ color: 'var(--text-3)' }} />} placeholder={searchPlaceholder ?? t('apidef.moduleSearch', '请输入模块名称搜索')} value={moduleSearch} onChange={(e) => onModuleSearch(e.target.value)} />
-      </div>
-      {/* 工具条:收起全部 / 新建顶层模块(「全部 (N)」由下方树根节点承载,不在此重复)。 */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 2, padding: '0 8px 8px', borderBottom: '1px solid var(--border-soft)' }}>
-        <div style={{ flex: 1 }} />
-        <Tooltip title={expanded.length ? t('apidef.collapseAll', '收起全部') : t('apidef.expandAll', '展开全部')}>
-          <Button size="small" type="text" icon={<MinusSquareOutlined />} onClick={() => setExpanded(expanded.length ? [] : allExpandableKeys)} />
-        </Tooltip>
-        <Tooltip title={t('apidef.newTopModule', '新建顶层模块')}>
-          <Button size="small" type="text" icon={<PlusOutlined />} style={{ color: '#52c41a' }} onClick={() => setForm({ mode: 'create', parentId: null })} />
-        </Tooltip>
       </div>
       <div style={{ flex: 1, overflow: 'auto', padding: 8 }}>
         <Tree

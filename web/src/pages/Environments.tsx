@@ -6,7 +6,6 @@ import { message } from '../feedback'
 import { api, ApiError, type Environment } from '../api'
 import { useApp } from '../context'
 import { useI18n } from '../i18n'
-import { useListView, type ListColumn } from '../components/ListView'
 
 type Row = { k: string; v: string }
 /** 环境变量行(参数名称/类型/参数值/标签/描述)。仅 名称→值 持久化(后端 variables 为扁平 map)。 */
@@ -133,32 +132,9 @@ export function EnvironmentsPage() {
     }
   }
 
-  // 列表三件套(视图/筛选):主区域是编辑器而非表格,只接管左侧环境列表;
-  // 列声明仅为工具条的列面板兜底(无表格,显隐不生效)。hook 必须在下方条件返回之前调用。
-  const envColumns: ListColumn<Environment>[] = [
-    { key: 'name', label: t('env.name', '环境名称'), dataIndex: 'name' },
-  ]
-  const lv = useListView<Environment>({
-    kind: 'environment',
-    projectId,
-    searchOf: (e) => e.name,
-    searchLabel: t('env.searchPlaceholder', '请输入环境名称'),
-    fields: [
-      {
-        key: 'enabled',
-        label: t('env.enabled', '启用'),
-        type: 'enum',
-        options: [
-          { value: 'enabled', label: t('env.stEnabled', '启用') },
-          { value: 'disabled', label: t('env.stDisabled', '停用') },
-        ],
-        get: (e) => ((e.enabled ?? true) ? 'enabled' : 'disabled'),
-      },
-    ],
-    columns: envColumns,
-    rows: list,
-  })
-  const shown = lv.rows
+  // 左侧只是环境名列表,按名称过滤就够了(不上视图/筛选三件套)。
+  const [search, setSearch] = useState('')
+  const shown = list.filter((e) => e.name.toLowerCase().includes(search.trim().toLowerCase()))
 
   if (!projectId)
     return (
@@ -213,12 +189,17 @@ export function EnvironmentsPage() {
     <div style={{ display: 'flex', height: '100%' }}>
       {/* 左:环境列表 + 搜索 */}
       <div style={{ width: 248, background: 'var(--panel)', borderRight: '1px solid var(--border-soft)', display: 'flex', flexDirection: 'column' }}>
-        <div style={{ display: 'flex', justifyContent: 'flex-end', padding: '10px 10px 6px' }}>
-          {lv.toolbar}
+        <div style={{ padding: '10px 10px 6px' }}>
+          <Input.Search
+            allowClear
+            placeholder={t('env.searchPlaceholder', '请输入环境名称')}
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+          />
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '0 10px 8px', borderBottom: '1px solid var(--border-soft)' }}>
           <Typography.Text strong style={{ flex: 1 }}>{t('res.env', '环境')}</Typography.Text>
-          <Button size="small" type="text" icon={<PlusOutlined />} style={{ color: '#52c41a' }} title={t('a.new', '新建')} onClick={reset} />
+          <Button size="small" type="text" icon={<PlusOutlined />} style={{ color: 'var(--success)' }} title={t('a.new', '新建')} onClick={reset} />
           <Button size="small" type="text" icon={<ReloadOutlined />} onClick={load} />
         </div>
         <div style={{ flex: 1, overflow: 'auto', padding: 8 }}>
@@ -235,7 +216,7 @@ export function EnvironmentsPage() {
                   cursor: 'pointer',
                   marginBottom: 4,
                   fontSize: 13,
-                  background: sel === e.id ? '#f3eaff' : 'transparent',
+                  background: sel === e.id ? 'var(--brand-soft)' : 'transparent',
                   color: sel === e.id ? 'var(--brand)' : undefined,
                   fontWeight: sel === e.id ? 600 : 400,
                 }}
@@ -252,7 +233,7 @@ export function EnvironmentsPage() {
         <div style={{ flex: 1, overflow: 'auto', padding: 20 }}>
           <div style={{ marginBottom: 14, maxWidth: 980 }}>
             <div style={{ fontWeight: 600, marginBottom: 6 }}>
-              <span style={{ color: '#ff4d4f', marginRight: 4 }}>*</span>{t('env.name', '环境名称')}
+              <span style={{ color: 'var(--error)', marginRight: 4 }}>*</span>{t('env.name', '环境名称')}
             </div>
             <Input value={name} onChange={(e) => setName(e.target.value)} placeholder={t('env.namePlaceholder', '如:测试环境')} />
           </div>

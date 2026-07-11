@@ -564,7 +564,7 @@ export default function ApiDefinitions() {
             <Button size="small" type="text" icon={hideEmpty ? <EyeInvisibleOutlined /> : <EyeOutlined />} onClick={() => setHideEmpty((v) => !v)} />
           </Tooltip>
           <Tooltip title={showInterfaces ? t('apidef.hideIfaces', '隐藏接口') : t('apidef.showIfaces', '树内显示接口')}>
-            <Button size="small" type="text" icon={<UnorderedListOutlined />} style={{ color: showInterfaces ? '#52c41a' : undefined }} onClick={() => setShowInterfaces((v) => !v)} />
+            <Button size="small" type="text" icon={<UnorderedListOutlined />} style={{ color: showInterfaces ? 'var(--success)' : undefined }} onClick={() => setShowInterfaces((v) => !v)} />
           </Tooltip>
           <Tooltip title={treeExpanded.length ? t('apidef.collapseAll', '收起全部') : t('apidef.expandAll', '展开全部')}>
             <Button size="small" type="text" icon={<MinusSquareOutlined />} onClick={() => setTreeExpanded(treeExpanded.length ? [] : allExpandableKeys)} />
@@ -590,7 +590,7 @@ export default function ApiDefinitions() {
             </Tooltip>
           </Popover>
           <Tooltip title={t('apidef.newTopModule', '新建顶层模块')}>
-            <Button size="small" type="text" icon={<PlusOutlined />} style={{ color: '#52c41a' }} onClick={() => setModuleForm({ mode: 'create', parentId: null })} />
+            <Button size="small" type="text" icon={<PlusOutlined />} style={{ color: 'var(--success)' }} onClick={() => setModuleForm({ mode: 'create', parentId: null })} />
           </Tooltip>
         </div>
         <div style={{ flex: 1, overflow: 'auto', padding: 8 }}>
@@ -879,7 +879,7 @@ function CaseDetailTab({ caseItem, projectId, onClose, onDeleted }: { caseItem: 
   return (
     <div style={{ padding: '12px 16px', height: '100%', overflow: 'auto' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
-        <span style={{ color: '#ff4d4f', fontSize: 12, fontWeight: 600 }}>{c.priority || 'P0'}</span>
+        <span style={{ color: 'var(--error)', fontSize: 12, fontWeight: 600 }}>{c.priority || 'P0'}</span>
         <span className="ms-mono" style={{ color: 'var(--text-3)', fontSize: 12 }}>[{c.id.slice(0, 8)}]</span>
         <span style={{ fontWeight: 600, fontSize: 15 }}>{c.name}</span>
         <div style={{ flex: 1 }} />
@@ -1527,7 +1527,7 @@ function ImportModal({
           <Field label={t('apidef.scheduleName', '名称')}>
             <Input value={scheduleName} onChange={(e) => setScheduleName(e.target.value)} placeholder={t('apidef.scheduleNamePlaceholder', '可选,如:每日同步用户中心接口')} />
           </Field>
-          <Field label={<span><span style={{ color: '#ff4d4f', marginRight: 4 }}>*</span>cron</span>}>
+          <Field label={<span><span style={{ color: 'var(--error)', marginRight: 4 }}>*</span>cron</span>}>
             <Input value={cron} onChange={(e) => setCron(e.target.value)} className="ms-mono" placeholder="0 0 2 * * *" />
             <p style={{ color: 'var(--text-3)', fontSize: 12, margin: '4px 0 0' }}>
               {t('apidef.cronHint', '6 段表达式(秒 分 时 日 月 周)。例:0 0 2 * * * = 每天 02:00')}
@@ -1537,7 +1537,7 @@ function ImportModal({
       )}
       {showUrlInputs ? (
         <>
-          <Field label={<span><span style={{ color: '#ff4d4f', marginRight: 4 }}>*</span>{t('apidef.importSourceUrl', '来源 URL')}</span>}>
+          <Field label={<span><span style={{ color: 'var(--error)', marginRight: 4 }}>*</span>{t('apidef.importSourceUrl', '来源 URL')}</span>}>
             <Input value={urlVal} onChange={(e) => setUrlVal(e.target.value)} className="ms-mono" placeholder={t('apidef.importUrlPlaceholder', '请输入文档/集合的 URL')} />
           </Field>
           <Field label="token">

@@ -22,9 +22,10 @@ const shared: ThemeConfig['token'] = {
   colorWarning: '#ff7d00',
   colorError: '#f53f3f',
   colorLink: BRAND,
-  borderRadius: 8,
-  borderRadiusSM: 6,
-  borderRadiusLG: 10,
+  // 扁平圆角:按钮/输入等控件 4px,小控件 2px;大容器(卡片/弹窗)另配。
+  borderRadius: 4,
+  borderRadiusSM: 2,
+  borderRadiusLG: 6,
   fontFamily,
   fontFamilyCode,
   fontSize: 14,
@@ -49,7 +50,7 @@ export const lightTheme: ThemeConfig = {
     Menu: { itemSelectedColor: BRAND, itemSelectedBg: 'transparent' },
     Table: { headerBg: '#f7f8fa', headerColor: '#4e5969', rowHoverBg: '#f7f8fa' },
     Tabs: { inkBarColor: BRAND, itemSelectedColor: BRAND },
-    Card: { borderRadiusLG: 12 },
+    Card: { borderRadiusLG: 8 },
     Segmented: { itemSelectedBg: '#ffffff', trackBg: '#f2f3f5' },
   },
 }
@@ -78,6 +79,7 @@ export const darkTheme: ThemeConfig = {
     Menu: { itemSelectedColor: '#5b9aff', itemSelectedBg: 'transparent' },
     Table: { headerBg: '#24262e', headerColor: '#a3aab6', rowHoverBg: '#24262e' },
     Tabs: { inkBarColor: '#4086ff', itemSelectedColor: '#5b9aff' },
+    Card: { borderRadiusLG: 8 },
     Segmented: { itemSelectedBg: '#24262e', trackBg: '#161719' },
   },
 }

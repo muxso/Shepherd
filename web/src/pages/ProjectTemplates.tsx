@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Button, Form, Input, Modal, Popconfirm, Select, Space, Switch, Table, Tabs, Tag } from 'antd'
-import { ArrowDownOutlined, ArrowUpOutlined, DeleteOutlined, PlusOutlined } from '@ant-design/icons'
+import { DeleteOutlined, HolderOutlined, PlusOutlined } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
 import { message } from '../feedback'
 import { api, ApiError, type TemplateField, type TemplateFieldType } from '../api'
@@ -74,15 +74,16 @@ function FieldTemplateEditor({ kind, projectId }: { kind: TemplateKind; projectI
 
   const dirty = useMemo(() => JSON.stringify(fields) !== snapshot, [fields, snapshot])
 
-  const move = (idx: number, dir: -1 | 1) => {
+  // 行拖拽排序(原生 HTML5 DnD):把手起拖,悬停行按上下半区显示插入指示线。
+  const dragFrom = useRef<number | null>(null)
+  const [dragOver, setDragOver] = useState<{ idx: number; after: boolean } | null>(null)
+  const reorder = (from: number, to: number) =>
     setFields((fs) => {
-      const j = idx + dir
-      if (j < 0 || j >= fs.length) return fs
       const next = [...fs]
-      ;[next[idx], next[j]] = [next[j], next[idx]]
+      const [x] = next.splice(from, 1)
+      next.splice(to, 0, x)
       return next
     })
-  }
   const patch = (key: string, p: Partial<TemplateField>) =>
     setFields((fs) => fs.map((f) => (f.key === key ? { ...f, ...p } : f)))
   const removeField = (key: string) => setFields((fs) => fs.filter((f) => f.key !== key))
@@ -110,13 +111,8 @@ function FieldTemplateEditor({ kind, projectId }: { kind: TemplateKind; projectI
 
   const cols: ColumnsType<TemplateField> = [
     {
-      title: t('tmpl.colOrder', '顺序'), width: 90,
-      render: (_v, _r, i) => (
-        <Space size={0}>
-          <Button type="text" size="small" icon={<ArrowUpOutlined />} disabled={i === 0} onClick={() => move(i, -1)} />
-          <Button type="text" size="small" icon={<ArrowDownOutlined />} disabled={i === fields.length - 1} onClick={() => move(i, 1)} />
-        </Space>
-      ),
+      title: t('tmpl.colOrder', '顺序'), width: 56,
+      render: () => <HolderOutlined style={{ cursor: 'grab', color: 'var(--text-3)' }} />,
     },
     {
       title: t('tmpl.colField', '字段名'), ellipsis: true,
@@ -170,6 +166,36 @@ function FieldTemplateEditor({ kind, projectId }: { kind: TemplateKind; projectI
         dataSource={fields}
         columns={cols}
         pagination={false}
+        onRow={(_r, index) => ({
+          draggable: true,
+          onDragStart: (e) => {
+            dragFrom.current = index ?? null
+            e.dataTransfer.effectAllowed = 'move'
+          },
+          onDragOver: (e) => {
+            e.preventDefault()
+            const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
+            setDragOver({ idx: index ?? 0, after: e.clientY > rect.top + rect.height / 2 })
+          },
+          onDrop: (e) => {
+            e.preventDefault()
+            const from = dragFrom.current
+            if (from == null || dragOver == null) return
+            let to = dragOver.idx + (dragOver.after ? 1 : 0)
+            if (from < to) to--
+            if (to !== from) reorder(from, to)
+            dragFrom.current = null
+            setDragOver(null)
+          },
+          onDragEnd: () => {
+            dragFrom.current = null
+            setDragOver(null)
+          },
+          style:
+            dragOver != null && dragOver.idx === index
+              ? { boxShadow: dragOver.after ? 'inset 0 -2px 0 var(--brand)' : 'inset 0 2px 0 var(--brand)' }
+              : undefined,
+        })}
       />
       <AddFieldModal
         open={addOpen}

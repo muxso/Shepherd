@@ -563,7 +563,7 @@ function StepRow({ node, idx, depth, t, result, running, seq = 0, enabled = true
           const cluster = (
             <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }} onClick={(e) => e.stopPropagation()}>
               <Tag color={ok ? 'green' : 'red'} style={{ margin: 0 }}>{ok ? t('scenario.pass', '通过') : t('scenario.fail', '失败')}</Tag>
-              {result.statusCode != null && <span style={muted}>{t('apidef.statusCode', '状态码')} <span style={{ color: result.statusCode < 400 ? '#52c41a' : '#ff4d4f' }}>{result.statusCode}</span></span>}
+              {result.statusCode != null && <span style={muted}>{t('apidef.statusCode', '状态码')} <span style={{ color: result.statusCode < 400 ? 'var(--success)' : 'var(--error)' }}>{result.statusCode}</span></span>}
               <span style={muted}>{t('scenario.respTime', '响应时间')} {result.latencyMs != null ? `${result.latencyMs} ms` : '—'}</span>
               <span style={muted}>{t('scenario.respSize', '响应大小')} {result.respSize != null ? `${result.respSize} bytes` : '—'}</span>
             </span>
@@ -613,7 +613,7 @@ function StepRespPreview({ r, t }: { r: ReportResultItem; t: TFn }) {
     <div style={{ width: 560 }} onClick={(e) => e.stopPropagation()}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 8 }}>
         <Tag color={ok ? 'green' : 'red'} style={{ margin: 0 }}>{ok ? t('scenario.pass', '通过') : t('scenario.fail', '失败')}</Tag>
-        {r.statusCode != null && <span style={{ fontSize: 13, fontWeight: 600, color: r.statusCode < 400 ? '#52c41a' : '#ff4d4f' }}>{r.statusCode}</span>}
+        {r.statusCode != null && <span style={{ fontSize: 13, fontWeight: 600, color: r.statusCode < 400 ? 'var(--success)' : 'var(--error)' }}>{r.statusCode}</span>}
         <span style={{ fontSize: 12, color: 'var(--text-3)' }}>{r.latencyMs ?? '—'} ms</span>
         <span style={{ fontSize: 12, color: 'var(--text-3)' }}>{r.respSize ?? '—'} bytes</span>
       </div>
@@ -1396,7 +1396,7 @@ function ScenarioBasicInfo({ scenario, stepCount, form, patch, modules }: { scen
   const [tagInput, setTagInput] = useState('')
   const field = (label: string, value: ReactNode, req?: boolean) => (
     <div style={{ marginBottom: 14 }}>
-      <div style={{ fontSize: 13, color: 'var(--text-2)', marginBottom: 6 }}>{req && <span style={{ color: '#ff4d4f', marginRight: 4 }}>*</span>}{label}</div>
+      <div style={{ fontSize: 13, color: 'var(--text-2)', marginBottom: 6 }}>{req && <span style={{ color: 'var(--error)', marginRight: 4 }}>*</span>}{label}</div>
       {value}
     </div>
   )
@@ -1750,13 +1750,13 @@ function ReportRow({ idx, r, label, t, open, onToggle, caseOf }: { idx: number; 
         <span style={{ color: 'var(--text-3)', fontSize: 12, minWidth: 18 }}>{idx}</span>
         <span style={{ flex: 1, minWidth: 0 }} className="ms-mono">{label(r.caseId)}</span>
         <Tag color={ok ? 'green' : 'red'} style={{ margin: 0 }}>{ok ? t('scenario.pass', '通过') : t('scenario.fail', '失败')}</Tag>
-        {r.statusCode != null && <span style={muted}>{t('apidef.statusCode', '状态码')} <span style={{ color: r.statusCode < 400 ? '#52c41a' : '#ff4d4f' }}>{r.statusCode}</span></span>}
+        {r.statusCode != null && <span style={muted}>{t('apidef.statusCode', '状态码')} <span style={{ color: r.statusCode < 400 ? 'var(--success)' : 'var(--error)' }}>{r.statusCode}</span></span>}
         <span style={muted}>{t('scenario.respTime', '响应时间')} {r.latencyMs != null ? `${r.latencyMs} ms` : '—'}</span>
         <span style={muted}>{t('scenario.respSize', '响应大小')} {r.respSize != null ? `${r.respSize} bytes` : '—'}</span>
       </div>
       {r.failures.length > 0 && (
         <div style={{ padding: '0 12px 8px 40px' }}>
-          {r.failures.map((f, j) => <div key={j} style={{ color: '#ff4d4f', fontSize: 12 }} className="ms-mono">✗ {f}</div>)}
+          {r.failures.map((f, j) => <div key={j} style={{ color: 'var(--error)', fontSize: 12 }} className="ms-mono">✗ {f}</div>)}
         </div>
       )}
       {open && resp && (
@@ -2129,7 +2129,7 @@ function ImportRequestDrawer({
     <div
       key={key}
       onClick={() => setSelModule(key)}
-      style={{ display: 'flex', alignItems: 'center', padding: '6px 8px', borderRadius: 6, cursor: 'pointer', fontSize: 13, background: selModule === key ? '#f3eaff' : 'transparent', color: selModule === key ? 'var(--brand)' : undefined }}
+      style={{ display: 'flex', alignItems: 'center', padding: '6px 8px', borderRadius: 6, cursor: 'pointer', fontSize: 13, background: selModule === key ? 'var(--brand-soft)' : 'transparent', color: selModule === key ? 'var(--brand)' : undefined }}
     >
       <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{name}</span>
       <span style={{ color: 'var(--text-3)', fontSize: 12 }}>{count}</span>
@@ -2278,7 +2278,7 @@ function NewScenarioTab({ projectId, modules, onCreated, active }: { projectId: 
   }
   const field = (label: string, node: ReactNode, req?: boolean) => (
     <div style={{ marginBottom: 14 }}>
-      <div style={{ fontSize: 13, color: 'var(--text-2)', marginBottom: 6 }}>{req && <span style={{ color: '#ff4d4f', marginRight: 4 }}>*</span>}{label}</div>
+      <div style={{ fontSize: 13, color: 'var(--text-2)', marginBottom: 6 }}>{req && <span style={{ color: 'var(--error)', marginRight: 4 }}>*</span>}{label}</div>
       {node}
     </div>
   )
