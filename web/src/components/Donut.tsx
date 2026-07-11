@@ -1,5 +1,5 @@
 // 甜甜圈环形图(纯 SVG,无依赖)。segments 为各分段 {value,color,label};中心显示总数。
-// 悬浮分段:该段加粗、其余变淡,中心切换为该段「数值 + 名称 + 占比」。
+// 悬浮分段:其余变淡(形状不变,避免加粗溢出画布变形),中心切换为该段「数值 + 名称 + 占比」。
 import { useState } from 'react'
 import { useI18n } from '../i18n'
 
@@ -49,16 +49,14 @@ export default function Donut({
                 r={r}
                 fill="none"
                 stroke={s.color}
-                strokeWidth={active ? thickness + 4 : thickness}
+                strokeWidth={thickness}
                 strokeDasharray={`${len} ${circ - len}`}
                 strokeDashoffset={-offset}
                 opacity={hover == null || active ? 1 : 0.3}
-                style={{ transition: 'stroke-width 0.12s, opacity 0.12s', cursor: 'default' }}
+                style={{ transition: 'opacity 0.12s', cursor: 'default' }}
                 onMouseEnter={() => setHover(s.i)}
                 onMouseLeave={() => setHover(null)}
-              >
-                <title>{`${s.label}: ${s.value}${total > 0 ? ` (${((s.value * 100) / total).toFixed(0)}%)` : ''}`}</title>
-              </circle>
+              />
             )
             offset += len
             return seg
