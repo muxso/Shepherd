@@ -555,24 +555,8 @@ function RequirementDetail({ reqId, projectId, onChanged, onDeleted, onOpen }: {
     })
   }
 
-  // 生命周期操作:重命名 / 交付 / 归档 / 删除(后端 PUT/POST/DELETE,带状态守卫,失败回显)。
-  const rename = () => {
-    let title = req?.title || ''
-    modal.confirm({
-      title: t('req.renameTitle', '重命名需求'),
-      content: <Input defaultValue={title} onChange={(e) => (title = e.target.value)} style={{ marginTop: 8 }} />,
-      onOk: async () => {
-        if (!title.trim()) return
-        try {
-          await api.renameRequirement(reqId, title.trim())
-          message.success(t('req.renamed', '已重命名'))
-          load(); onChanged()
-        } catch (e) {
-          message.error(e instanceof ApiError ? e.message : t('req.renameFailed', '重命名失败'))
-        }
-      },
-    })
-  }
+  // 生命周期操作:编辑基本信息 / 交付 / 归档 / 删除(后端 PUT/POST/DELETE,带状态守卫,失败回显)。
+  const [editOpen, setEditOpen] = useState(false)
   const deliver = () => modal.confirm({
     title: t('req.deliverConfirm', '确认交付该需求?'),
     content: t('req.deliverHint', '需先定基线(BASELINED)才能交付。'),
@@ -652,7 +636,7 @@ function RequirementDetail({ reqId, projectId, onChanged, onDeleted, onOpen }: {
             children: (
               <>
                 <Space style={{ marginBottom: 12 }} wrap>
-                  <Button icon={<EditOutlined />} size="small" onClick={rename}>{t('req.rename', '重命名')}</Button>
+                  <Button icon={<EditOutlined />} size="small" onClick={() => setEditOpen(true)}>{t('a.edit', '编辑')}</Button>
                   <Button icon={<BranchesOutlined />} size="small" disabled={req?.status === 'ARCHIVED'} onClick={() => setVerOpen(true)}>{t('req.addVersion', '新增版本')}</Button>
                   <Button icon={<FlagOutlined />} size="small" disabled={req?.status === 'ARCHIVED'} onClick={setBaseline}>{t('req.setBaseline', '定基线')}</Button>
                   <Button type="primary" icon={<PartitionOutlined />} size="small" onClick={doBreakdown}>{t('req.autoDecompose', '自动拆分')}</Button>
@@ -796,6 +780,58 @@ function RequirementDetail({ reqId, projectId, onChanged, onDeleted, onOpen }: {
           <Form.Item name="description" label={t('req.versionDesc', '版本说明')} rules={[{ required: true }]}><Input placeholder={t('req.versionDescPlaceholder', '如:支持飞书登录')} autoFocus /></Form.Item>
           <Form.Item name="criteria" label={t('req.criteria', '验收标准(每行一条)')}><Input.TextArea rows={4} /></Form.Item>
           <Button type="primary" htmlType="submit" block>{t('req.createVersion', '创建版本')}</Button>
+        </Form>
+      </Modal>
+      <Modal title={t('req.editInfo', '编辑需求信息')} open={editOpen} onCancel={() => setEditOpen(false)} footer={null} destroyOnHidden>
+        <Form
+          layout="vertical"
+          initialValues={{
+            title: req?.title,
+            reqType: req?.reqType || 'FEATURE',
+            priority: req?.priority || 'P2',
+            tags: req?.tags || [],
+            dueDate: req?.dueDate ? dayjs(req.dueDate) : undefined,
+          }}
+          onFinish={async (v: { title: string; reqType: string; priority: string; tags: string[]; dueDate?: ReturnType<typeof dayjs> }) => {
+            try {
+              await api.updateRequirement(reqId, {
+                title: v.title.trim(),
+                reqType: v.reqType,
+                priority: v.priority,
+                tags: v.tags,
+                // 空串 = 清除截止日期(后端约定)
+                dueDate: v.dueDate ? v.dueDate.format('YYYY-MM-DD') : '',
+              })
+              message.success(t('req.updated', '已保存'))
+              setEditOpen(false)
+              load(); onChanged()
+            } catch (e) {
+              message.error(e instanceof ApiError ? e.message : t('req.updateFailed', '保存失败'))
+            }
+          }}
+        >
+          <Form.Item name="title" label={t('req.title', '标题')} rules={[{ required: true }]}>
+            <Input />
+          </Form.Item>
+          <Row gutter={12}>
+            <Col span={12}>
+              <Form.Item name="reqType" label={t('req.reqType', '类型')}>
+                <Select options={['FEATURE', 'ENHANCEMENT', 'TECH_DEBT', 'BUGFIX'].map((k) => ({ value: k, label: t(`req.type.${k}`, k) }))} />
+              </Form.Item>
+            </Col>
+            <Col span={12}>
+              <Form.Item name="priority" label={t('req.priority', '优先级')}>
+                <Select options={['P0', 'P1', 'P2', 'P3'].map((p) => ({ value: p, label: p }))} />
+              </Form.Item>
+            </Col>
+          </Row>
+          <Form.Item name="tags" label={t('req.tags', '标签')}>
+            <Select mode="tags" maxCount={10} tokenSeparators={[',', ' ']} open={false} suffixIcon={null} placeholder={t('req.tagsPh', '输入后回车,最多 10 个')} />
+          </Form.Item>
+          <Form.Item name="dueDate" label={t('req.dueDate', '截止日期')}>
+            <DatePicker style={{ width: '100%' }} allowClear />
+          </Form.Item>
+          <Button type="primary" htmlType="submit" block>{t('a.save', '保存')}</Button>
         </Form>
       </Modal>
       {/* 变更记录:字段级流水(时间 / 操作人 / 字段: 旧值 → 新值)。 */}

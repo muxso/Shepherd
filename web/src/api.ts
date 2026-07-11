@@ -1294,6 +1294,9 @@ export const api = {
     http.post<{ version: number }>(`/requirement/${id}/version`, b),
   getRequirementVersion: (id: string, n: number) =>
     http.get<RequirementVersion>(`/requirement/${id}/version/${n}`),
+  /** 编辑需求基本信息:标题必填;其余可选,不传不动;dueDate 传空串清除。 */
+  updateRequirement: (id: string, b: { title: string; priority?: string; reqType?: string; tags?: string[]; dueDate?: string }) =>
+    http.put<Requirement>(`/requirement/${id}`, b),
   renameRequirement: (id: string, title: string) =>
     http.put<Requirement>(`/requirement/${id}`, { title }),
   deleteRequirement: (id: string) => http.del(`/requirement/${id}`),
