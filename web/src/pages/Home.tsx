@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Button, Card, Checkbox, Col, Dropdown, Empty, Row, Spin, Statistic, Tooltip, Segmented } from 'antd'
+import { Button, Card, Col, Empty, Row, Spin, Statistic, Tooltip, Segmented } from 'antd'
 import {
   ApiOutlined,
   PartitionOutlined,
@@ -8,8 +8,6 @@ import {
   FileTextOutlined,
   BugOutlined,
   SettingOutlined,
-  ArrowUpOutlined,
-  ArrowDownOutlined,
   ThunderboltOutlined,
   SafetyCertificateOutlined,
   FileDoneOutlined,
@@ -28,6 +26,7 @@ import Donut from '../components/Donut'
 import type { CollabStats } from '../api'
 import ContributionGrid from '../components/ContributionGrid'
 import GroupedBars, { type BarRow } from '../components/GroupedBars'
+import CardSettings, { CARD_DEFAULT_SIZE, type CardSize } from '../components/CardSettings'
 
 interface Counts {
   def: number
@@ -63,31 +62,48 @@ const PROJECT_SERIES = [
   { key: 'funcCase', label: '功能用例', color: C.green },
 ]
 
-// 卡片清单(完整版「卡片设置」):每张卡可独立显隐 + 自由排序。
+// 卡片清单(「卡片设置」编辑器可拖拽增删排序):布局数组序 = 展示序,不在数组 = 隐藏。
 const ALL_CARDS = ['collab', 'projectBars', 'assets', 'apiStats', 'caseStats', 'execTrend', 'quality', 'shortcuts'] as const
 const TREND_DAYS = 7
 type CardKey = (typeof ALL_CARDS)[number]
-interface CardPref {
+interface CardLayout {
   key: CardKey
-  shown: boolean
+  size: CardSize
 }
-const CARDS_KEY = 'shepherd.home.cards.v6'
+const CARDS_KEY = 'shepherd.home.cards.v7'
+const LEGACY_CARDS_KEY = 'shepherd.home.cards.v6'
 
-/** 读持久化偏好。缺省全显示、按 ALL_CARDS 顺序;新增卡默认显示并追加到末尾。 */
-function loadPrefs(): CardPref[] {
-  const def = (): CardPref[] => ALL_CARDS.map((k) => ({ key: k, shown: true }))
+/** 读持久化布局。v7 = {key,size}[];读到旧 v6({key,shown}[])时迁移:shown 保留、尺寸取默认。 */
+function loadLayout(): CardLayout[] {
+  const isKey = (k: unknown): k is CardKey => (ALL_CARDS as readonly string[]).includes(k as string)
+  const withSize = (k: CardKey, size?: unknown): CardLayout => ({
+    key: k,
+    size: size === 'half' || size === 'full' ? size : CARD_DEFAULT_SIZE[k] ?? 'half',
+  })
   try {
     const raw = localStorage.getItem(CARDS_KEY)
     if (raw) {
-      const parsed = JSON.parse(raw) as CardPref[]
-      const valid = parsed.filter((p) => (ALL_CARDS as readonly string[]).includes(p.key))
-      const missing = ALL_CARDS.filter((k) => !valid.some((p) => p.key === k)).map((k) => ({ key: k, shown: true }))
-      return [...valid, ...missing]
+      const parsed = JSON.parse(raw) as { key?: unknown; size?: unknown }[]
+      if (Array.isArray(parsed)) {
+        const seen = new Set<string>()
+        return parsed
+          .filter((p): p is { key: CardKey; size?: unknown } => isKey(p?.key) && !seen.has(p.key as string) && (seen.add(p.key as string), true))
+          .map((p) => withSize(p.key, p.size))
+      }
+    }
+    const legacy = localStorage.getItem(LEGACY_CARDS_KEY)
+    if (legacy) {
+      const parsed = JSON.parse(legacy) as { key?: unknown; shown?: unknown }[]
+      if (Array.isArray(parsed)) {
+        const kept = parsed.filter((p) => p?.shown === true && isKey(p.key)).map((p) => p.key as CardKey)
+        const missing = ALL_CARDS.filter((k) => !parsed.some((p) => p?.key === k))
+        return [...kept, ...missing].map((k) => withSize(k))
+      }
     }
   } catch {
     /* ignore */
   }
-  return def()
+  return ALL_CARDS.map((k) => withSize(k))
 }
 
 // 首页工作台:当前项目测试资产概览(可自定义卡片显隐与排序)。
@@ -104,19 +120,12 @@ export default function Home() {
   const [collab, setCollab] = useState<CollabStats | null>(null)
   const [collabMetric, setCollabMetric] = useState<'total' | 'ai' | 'human'>('total')
   const [loading, setLoading] = useState(false)
-  const [prefs, setPrefs] = useState<CardPref[]>(loadPrefs)
+  const [layout, setLayout] = useState<CardLayout[]>(loadLayout)
+  const [editing, setEditing] = useState(false)
 
-  const savePrefs = (next: CardPref[]) => {
-    setPrefs(next)
+  const saveLayout = (next: CardLayout[]) => {
+    setLayout(next)
     localStorage.setItem(CARDS_KEY, JSON.stringify(next))
-  }
-  const toggle = (key: CardKey, shown: boolean) => savePrefs(prefs.map((p) => (p.key === key ? { ...p, shown } : p)))
-  const move = (idx: number, dir: -1 | 1) => {
-    const j = idx + dir
-    if (j < 0 || j >= prefs.length) return
-    const next = [...prefs]
-    ;[next[idx], next[j]] = [next[j], next[idx]]
-    savePrefs(next)
   }
 
   useEffect(() => {
@@ -612,7 +621,7 @@ export default function Home() {
       </div>
       <div style={{ display: 'flex', alignItems: 'stretch', flexWrap: 'wrap', gap: 0 }}>
         {loopStages.map((s, i) => (
-          <div key={s.key} style={{ display: 'flex', alignItems: 'center', flex: '1 1 150px', minWidth: 150 }}>
+          <div key={s.key} style={{ display: 'flex', alignItems: 'stretch', flex: '1 1 150px', minWidth: 150 }}>
             <div
               className="ms-hover-card"
               onClick={() => navigate(s.to)}
@@ -646,7 +655,7 @@ export default function Home() {
               )}
             </div>
             {i < loopStages.length - 1 && (
-              <ArrowRightOutlined style={{ color: 'var(--text-3)', margin: '0 6px', flex: '0 0 auto' }} />
+              <ArrowRightOutlined style={{ color: 'var(--text-3)', margin: '0 6px', flex: '0 0 auto', alignSelf: 'center' }} />
             )}
           </div>
         ))}
@@ -666,30 +675,31 @@ export default function Home() {
     <div style={{ padding: 16, height: '100%', overflow: 'auto' }}>
       {loopHero}
       <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 12 }}>
-        <Dropdown
-          trigger={['click']}
-          popupRender={() => (
-            <Card size="small" styles={{ body: { padding: 8 } }} style={{ width: 260, boxShadow: '0 6px 16px rgba(0,0,0,.12)' }}>
-              <div style={{ fontSize: 12, color: 'var(--text-3)', padding: '2px 6px 8px' }}>{t('home.cardSettingsHint', '勾选显示,箭头调整顺序')}</div>
-              {prefs.map((p, i) => (
-                <div key={p.key} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 6px' }}>
-                  <Checkbox checked={p.shown} onChange={(e) => toggle(p.key, e.target.checked)} style={{ flex: 1 }}>
-                    {cardTitle[p.key]}
-                  </Checkbox>
-                  <Button type="text" size="small" icon={<ArrowUpOutlined />} disabled={i === 0} onClick={() => move(i, -1)} />
-                  <Button type="text" size="small" icon={<ArrowDownOutlined />} disabled={i === prefs.length - 1} onClick={() => move(i, 1)} />
-                </div>
-              ))}
-            </Card>
-          )}
-        >
-          <Button size="small" icon={<SettingOutlined />}>{t('home.cardSettings', '卡片设置')}</Button>
-        </Dropdown>
+        <Button size="small" icon={<SettingOutlined />} onClick={() => setEditing(true)}>{t('home.cs.edit', '编辑')}</Button>
       </div>
       <Spin spinning={loading}>
-        {prefs.filter((p) => p.shown).map((p) => <div key={p.key}>{renderCard(p.key)}</div>)}
-        {prefs.every((p) => !p.shown) && <Empty description={t('home.allHidden', '所有卡片已隐藏,点击右上角「卡片设置」开启')} />}
+        {layout.length === 0 ? (
+          <Empty description={t('home.cs.empty', '暂无卡片,点击右上角「编辑」添加')} />
+        ) : (
+          <Row gutter={16}>
+            {layout.map((p) => (
+              <Col key={p.key} span={p.size === 'full' ? 24 : 12}>
+                {renderCard(p.key)}
+              </Col>
+            ))}
+          </Row>
+        )}
       </Spin>
+      {editing && (
+        <CardSettings
+          layout={layout}
+          onExit={() => setEditing(false)}
+          onSave={(next) => {
+            saveLayout(next.filter((x): x is CardLayout => (ALL_CARDS as readonly string[]).includes(x.key)))
+            setEditing(false)
+          }}
+        />
+      )}
     </div>
   )
 }
