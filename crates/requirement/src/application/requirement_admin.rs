@@ -1,8 +1,9 @@
 use std::sync::Arc;
 
 use crate::domain::{
-    normalize_tags, parse_criteria, parse_due_date, parse_priority, parse_req_type,
-    parse_work_status, ChangeEntry, NewChange, Requirement, RequirementError, StatusCounts,
+    normalize_tags, parse_criteria, parse_due_date, parse_priority, parse_req_type, parse_stage,
+    parse_stage_status, ChangeEntry, NewChange, Requirement, RequirementError, Stage, StageStatus,
+    StatusCounts,
 };
 use crate::ports::{RepoError, RequirementRepository};
 
@@ -40,6 +41,15 @@ pub(crate) fn now_ms() -> i64 {
 /// 可选值统一转字符串入变更日志(None → 空串)。
 fn opt_str(v: Option<&str>) -> String {
     v.unwrap_or_default().to_string()
+}
+
+/// 计划日期入参:外层 None 不动;`Some(None)` 清除;`Some(Some(d))` 须为 YYYY-MM-DD。
+fn parse_planned(v: Option<Option<&str>>) -> Result<Option<Option<String>>, RequirementError> {
+    match v {
+        None => Ok(None),
+        Some(None) => Ok(Some(None)),
+        Some(Some(d)) => Ok(Some(Some(parse_due_date(d)?))),
+    }
 }
 
 fn change(by: &str, field: &str, old: impl Into<String>, new: impl Into<String>) -> NewChange {
@@ -134,6 +144,8 @@ impl RequirementService {
                 .append_change(id, &[change(by, "status", old.as_str(), req.status.as_str())])
                 .await?;
         }
+        // 定基线即评审通过。
+        self.stage_hook(&mut req, Stage::Review, StageStatus::Done, by).await;
         Ok(req)
     }
 
@@ -216,44 +228,88 @@ impl RequirementService {
         Ok(req)
     }
 
-    /// 推进开发状态;首次进行/完成会盖时间戳,重复推进不覆盖。
-    pub async fn set_dev_status(
+    /// 推进流水线阶段:可选改状态(盖章规则见 `StageRow::set_status`)、可选设/清计划起止日期
+    /// (外层 None 不动;`Some(None)` 清除;`Some(Some(d))` 设为 d,须为 YYYY-MM-DD)。
+    pub async fn set_stage(
         &self,
         id: &str,
-        status: &str,
+        stage: &str,
+        status: Option<&str>,
+        planned_start: Option<Option<&str>>,
+        planned_end: Option<Option<&str>>,
         by: &str,
     ) -> Result<Requirement, RequirementCmdError> {
-        let status = parse_work_status(status)?;
+        let stage = parse_stage(stage)?;
+        let status = status.map(parse_stage_status).transpose()?;
+        let planned_start = parse_planned(planned_start)?;
+        let planned_end = parse_planned(planned_end)?;
+
         let mut req = self.get(id).await?;
-        let old = req.dev_status;
-        req.set_dev_status(status, now_ms());
-        self.repo.save(&req).await?;
-        if old != status {
-            self.repo
-                .append_change(id, &[change(by, "devStatus", old.as_str(), status.as_str())])
-                .await?;
+        let field = format!("stage.{}", stage.as_str());
+        let mut log = Vec::new();
+        {
+            let row = req
+                .stage_row_mut(stage)
+                .expect("stages always contain all pipeline stages after repo fill");
+            if let Some(s) = status {
+                if s != row.status {
+                    log.push(change(by, &field, row.status.as_str(), s.as_str()));
+                }
+                row.set_status(s, now_ms());
+            }
+            if let Some(d) = planned_start {
+                if d != row.planned_start {
+                    log.push(change(
+                        by,
+                        &format!("{field}.plannedStart"),
+                        opt_str(row.planned_start.as_deref()),
+                        opt_str(d.as_deref()),
+                    ));
+                }
+                row.planned_start = d;
+            }
+            if let Some(d) = planned_end {
+                if d != row.planned_end {
+                    log.push(change(
+                        by,
+                        &format!("{field}.plannedEnd"),
+                        opt_str(row.planned_end.as_deref()),
+                        opt_str(d.as_deref()),
+                    ));
+                }
+                row.planned_end = d;
+            }
+        }
+        let row =
+            req.stage_row(stage).expect("stage row just mutated must still be present").clone();
+        self.repo.upsert_stage(id, &row).await?;
+        if !log.is_empty() {
+            self.repo.append_change(id, &log).await?;
         }
         Ok(req)
     }
 
-    /// 推进测试状态;规则同 `set_dev_status`。
-    pub async fn set_test_status(
-        &self,
-        id: &str,
-        status: &str,
-        by: &str,
-    ) -> Result<Requirement, RequirementCmdError> {
-        let status = parse_work_status(status)?;
-        let mut req = self.get(id).await?;
-        let old = req.test_status;
-        req.set_test_status(status, now_ms());
-        self.repo.save(&req).await?;
-        if old != status {
-            self.repo
-                .append_change(id, &[change(by, "testStatus", old.as_str(), status.as_str())])
-                .await?;
+    /// 阶段自动钩子:业务动作成功后同步对应阶段行;已是目标状态则跳过。
+    /// 阶段写失败不拖垮主操作,仅告警(读侧回落 `fill_stages` 默认行)。
+    async fn stage_hook(&self, req: &mut Requirement, stage: Stage, status: StageStatus, by: &str) {
+        let Some(row) = req.stage_row(stage) else { return };
+        let old = row.status;
+        if old == status {
+            return;
         }
-        Ok(req)
+        let mut updated = row.clone();
+        updated.set_status(status, now_ms());
+        if let Err(e) = self.repo.upsert_stage(&req.id, &updated).await {
+            tracing::warn!(requirement = %req.id, stage = stage.as_str(), error = %e, "阶段钩子写入失败");
+            return;
+        }
+        if let Some(slot) = req.stage_row_mut(stage) {
+            *slot = updated;
+        }
+        let entry = change(by, &format!("stage.{}", stage.as_str()), old.as_str(), status.as_str());
+        if let Err(e) = self.repo.append_change(&req.id, &[entry]).await {
+            tracing::warn!(requirement = %req.id, stage = stage.as_str(), error = %e, "阶段变更日志写入失败");
+        }
     }
 
     /// 挂/摘父需求:父须存在(未软删)、同项目、非自身,且不得构成环。
@@ -345,6 +401,8 @@ impl RequirementService {
         self.repo
             .append_change(id, &[change(by, "status", old.as_str(), req.status.as_str())])
             .await?;
+        // 驳回意味着评审仍在进行中。
+        self.stage_hook(&mut req, Stage::Review, StageStatus::InProgress, by).await;
         Ok(req)
     }
 
@@ -358,6 +416,9 @@ impl RequirementService {
                 .append_change(id, &[change(by, "status", old.as_str(), req.status.as_str())])
                 .await?;
         }
+        // 交付即验收完成(若尚未)+ 交付完成。
+        self.stage_hook(&mut req, Stage::Acceptance, StageStatus::Done, by).await;
+        self.stage_hook(&mut req, Stage::Delivery, StageStatus::Done, by).await;
         Ok(req)
     }
 
@@ -509,42 +570,161 @@ mod tests {
         assert_eq!(svc.get("ghost").await.unwrap_err(), RequirementCmdError::NotFound);
     }
 
+    fn stage_of(r: &Requirement, stage: Stage) -> crate::domain::StageRow {
+        r.stage_row(stage).expect("stages always filled").clone()
+    }
+
     #[tokio::test]
-    async fn dev_status_first_transition_stamps_and_repeat_keeps_stamp() {
-        use crate::domain::WorkStatus;
+    async fn create_hook_completes_created_stage_with_created_at_stamps() {
         let (svc, id) = seeded().await;
-        let r = svc.set_dev_status(&id, " in_progress ", "u1").await.expect("dev");
-        assert_eq!(r.dev_status, WorkStatus::InProgress);
-        let started = r.dev_started_at_ms.expect("started stamped");
-        assert!(r.dev_finished_at_ms.is_none());
+        let r = svc.get(&id).await.expect("get");
+        let created = stage_of(&r, Stage::Created);
+        assert_eq!(created.status, StageStatus::Done);
+        assert_eq!(created.started_at_ms, Some(r.created_at_ms));
+        assert_eq!(created.finished_at_ms, Some(r.created_at_ms));
+        assert_eq!(r.current_stage(), Stage::Audit);
+        // 钩子记了变更日志。
+        let log = svc.changes(&id).await.expect("changes");
+        assert_eq!(log.len(), 1);
+        assert_eq!(log[0].field, "stage.CREATED");
+        assert_eq!(log[0].old_value, "PENDING");
+        assert_eq!(log[0].new_value, "DONE");
+    }
+
+    #[tokio::test]
+    async fn set_stage_transitions_stamp_first_write_wins_and_persist() {
+        let (svc, id) = seeded().await;
+        let r = svc
+            .set_stage(&id, " dev ", Some(" in_progress "), None, None, "u1")
+            .await
+            .expect("stage");
+        let dev = stage_of(&r, Stage::Dev);
+        assert_eq!(dev.status, StageStatus::InProgress);
+        let started = dev.started_at_ms.expect("started stamped");
+        assert!(dev.finished_at_ms.is_none());
         // 重复推进不覆盖开始时间。
-        let r2 = svc.set_dev_status(&id, "IN_PROGRESS", "u1").await.expect("dev");
-        assert_eq!(r2.dev_started_at_ms, Some(started));
-        let r3 = svc.set_dev_status(&id, "DONE", "u1").await.expect("dev");
-        assert_eq!(r3.dev_started_at_ms, Some(started));
-        assert!(r3.dev_finished_at_ms.is_some());
-        let finished = r3.dev_finished_at_ms;
-        let r4 = svc.set_dev_status(&id, "DONE", "u1").await.expect("dev");
-        assert_eq!(r4.dev_finished_at_ms, finished);
-        // 非法状态报校验错。
+        let r2 =
+            svc.set_stage(&id, "DEV", Some("IN_PROGRESS"), None, None, "u1").await.expect("stage");
+        assert_eq!(stage_of(&r2, Stage::Dev).started_at_ms, Some(started));
+        let r3 = svc.set_stage(&id, "DEV", Some("DONE"), None, None, "u1").await.expect("stage");
+        let dev3 = stage_of(&r3, Stage::Dev);
+        assert_eq!(dev3.started_at_ms, Some(started));
+        let finished = dev3.finished_at_ms.expect("finished stamped");
+        let r4 = svc.set_stage(&id, "DEV", Some("DONE"), None, None, "u1").await.expect("stage");
+        assert_eq!(stage_of(&r4, Stage::Dev).finished_at_ms, Some(finished));
+        // 持久化了(重取仍在);直接 DONE 补齐开始时间。
+        let got = svc.get(&id).await.expect("get");
+        assert_eq!(stage_of(&got, Stage::Dev).status, StageStatus::Done);
+        let r5 = svc.set_stage(&id, "TEST", Some("done"), None, None, "u1").await.expect("stage");
+        let test = stage_of(&r5, Stage::Test);
+        assert!(test.started_at_ms.is_some());
+        assert!(test.finished_at_ms.is_some());
+        // 非法阶段/状态报校验错。
         assert_eq!(
-            svc.set_dev_status(&id, "PAUSED", "u1").await.unwrap_err(),
-            RequirementCmdError::Validation(RequirementError::InvalidWorkStatus("PAUSED".into()))
+            svc.set_stage(&id, "DESIGN", Some("DONE"), None, None, "u1").await.unwrap_err(),
+            RequirementCmdError::Validation(RequirementError::InvalidStage("DESIGN".into()))
+        );
+        assert_eq!(
+            svc.set_stage(&id, "DEV", Some("PAUSED"), None, None, "u1").await.unwrap_err(),
+            RequirementCmdError::Validation(RequirementError::InvalidStageStatus("PAUSED".into()))
         );
     }
 
     #[tokio::test]
-    async fn test_status_done_directly_stamps_both() {
-        use crate::domain::WorkStatus;
+    async fn set_stage_planned_dates_set_clear_and_log() {
         let (svc, id) = seeded().await;
-        let r = svc.set_test_status(&id, "done", "u1").await.expect("test");
-        assert_eq!(r.test_status, WorkStatus::Done);
-        assert!(r.test_started_at_ms.is_some());
-        assert!(r.test_finished_at_ms.is_some());
-        // 持久化了(重取仍在)。
+        let r = svc
+            .set_stage(&id, "DEV", None, Some(Some("2026-07-01")), Some(Some("2026-07-31")), "u1")
+            .await
+            .expect("stage");
+        let dev = stage_of(&r, Stage::Dev);
+        assert_eq!(dev.planned_start.as_deref(), Some("2026-07-01"));
+        assert_eq!(dev.planned_end.as_deref(), Some("2026-07-31"));
+        assert_eq!(dev.status, StageStatus::Pending); // 只改计划不动状态
+                                                      // 外层 None 不动。
+        let r2 = svc.set_stage(&id, "DEV", None, None, None, "u1").await.expect("stage");
+        assert_eq!(stage_of(&r2, Stage::Dev).planned_end.as_deref(), Some("2026-07-31"));
+        // Some(None) 清除。
+        let r3 = svc.set_stage(&id, "DEV", None, None, Some(None), "u1").await.expect("stage");
+        assert!(stage_of(&r3, Stage::Dev).planned_end.is_none());
+        assert_eq!(stage_of(&r3, Stage::Dev).planned_start.as_deref(), Some("2026-07-01"));
+        // 非法日期报校验错。
+        assert_eq!(
+            svc.set_stage(&id, "DEV", None, None, Some(Some("2026/07/31")), "u1")
+                .await
+                .unwrap_err(),
+            RequirementCmdError::Validation(RequirementError::InvalidDueDate("2026/07/31".into()))
+        );
+        // 变更日志:最新在前 = 清除 plannedEnd → 设 plannedEnd → 设 plannedStart → 建档。
+        let log = svc.changes(&id).await.expect("changes");
+        let fields: Vec<&str> = log.iter().map(|c| c.field.as_str()).collect();
+        assert_eq!(
+            fields,
+            [
+                "stage.DEV.plannedEnd",
+                "stage.DEV.plannedEnd",
+                "stage.DEV.plannedStart",
+                "stage.CREATED"
+            ]
+        );
+        assert_eq!(log[0].old_value, "2026-07-31");
+        assert_eq!(log[0].new_value, "");
+    }
+
+    #[tokio::test]
+    async fn baseline_and_reject_hooks_drive_review_stage() {
+        let (svc, id) = seeded().await;
+        // 驳回 → 评审进行中。
+        let r = svc.reject_review(&id, "缺少异常路径", "u1").await.expect("reject");
+        assert_eq!(stage_of(&r, Stage::Review).status, StageStatus::InProgress);
+        // 定基线 → 评审通过。
+        let r2 = svc.set_baseline(&id, 1, "u1").await.expect("baseline");
+        assert_eq!(stage_of(&r2, Stage::Review).status, StageStatus::Done);
+        // 持久化 + 变更日志。
         let got = svc.get(&id).await.expect("get");
-        assert_eq!(got.test_status, WorkStatus::Done);
-        assert!(got.test_finished_at_ms.is_some());
+        assert_eq!(stage_of(&got, Stage::Review).status, StageStatus::Done);
+        let fields: Vec<String> =
+            svc.changes(&id).await.expect("changes").iter().map(|c| c.field.clone()).collect();
+        assert_eq!(fields, ["stage.REVIEW", "status", "stage.REVIEW", "status", "stage.CREATED"]);
+    }
+
+    #[tokio::test]
+    async fn deliver_hook_completes_acceptance_and_delivery() {
+        let (svc, id) = seeded().await;
+        svc.set_baseline(&id, 1, "u1").await.expect("baseline");
+        let r = svc.deliver(&id, "u1").await.expect("deliver");
+        assert_eq!(stage_of(&r, Stage::Acceptance).status, StageStatus::Done);
+        assert_eq!(stage_of(&r, Stage::Delivery).status, StageStatus::Done);
+        // 重复交付幂等:不再追加阶段日志。
+        let n = svc.changes(&id).await.expect("changes").len();
+        svc.deliver(&id, "u1").await.expect("deliver again");
+        assert_eq!(svc.changes(&id).await.expect("changes").len(), n);
+    }
+
+    #[tokio::test]
+    async fn deliver_hook_skips_acceptance_already_done() {
+        let (svc, id) = seeded().await;
+        svc.set_baseline(&id, 1, "u1").await.expect("baseline");
+        svc.set_stage(&id, "ACCEPTANCE", Some("DONE"), None, None, "u1").await.expect("stage");
+        let finished =
+            stage_of(&svc.get(&id).await.expect("get"), Stage::Acceptance).finished_at_ms;
+        svc.deliver(&id, "u1").await.expect("deliver");
+        // 已完成的验收不被钩子改写(时间戳保持),且只为 DELIVERY 记日志。
+        let got = svc.get(&id).await.expect("get");
+        assert_eq!(stage_of(&got, Stage::Acceptance).finished_at_ms, finished);
+        let fields: Vec<String> =
+            svc.changes(&id).await.expect("changes").iter().map(|c| c.field.clone()).collect();
+        assert_eq!(
+            fields,
+            [
+                "stage.DELIVERY",
+                "status",
+                "stage.ACCEPTANCE",
+                "stage.REVIEW",
+                "status",
+                "stage.CREATED"
+            ]
+        );
     }
 
     async fn seeded_many(titles: &[&str]) -> (RequirementService, Vec<String>) {
@@ -639,22 +819,37 @@ mod tests {
         svc.update(&id, "登入", Some("P0"), None, None, None, "alice").await.expect("update");
         svc.revise(&id, "v2", &[], "bob").await.expect("revise");
         svc.set_baseline(&id, 2, "carol").await.expect("baseline");
-        svc.set_dev_status(&id, "IN_PROGRESS", "dave").await.expect("dev");
+        svc.set_stage(&id, "DEV", Some("IN_PROGRESS"), None, None, "dave").await.expect("stage");
         svc.deliver(&id, "erin").await.expect("deliver");
 
         let log = svc.changes(&id).await.expect("changes");
         let fields: Vec<&str> = log.iter().map(|c| c.field.as_str()).collect();
-        // 最新在前:deliver → devStatus → baseline → revise → update(title, priority)。
-        assert_eq!(fields, ["status", "devStatus", "status", "version", "priority", "title"]);
+        // 最新在前:deliver(status + 验收/交付钩子) → set_stage(DEV) →
+        // baseline(status + 评审钩子) → revise → update(title, priority) → 建档钩子。
+        assert_eq!(
+            fields,
+            [
+                "stage.DELIVERY",
+                "stage.ACCEPTANCE",
+                "status",
+                "stage.DEV",
+                "stage.REVIEW",
+                "status",
+                "version",
+                "priority",
+                "title",
+                "stage.CREATED",
+            ]
+        );
         assert_eq!(log[0].changed_by, "erin");
-        assert_eq!(log[0].old_value, "BASELINED");
-        assert_eq!(log[0].new_value, "DELIVERED");
-        assert_eq!(log[1].old_value, "NOT_STARTED");
-        assert_eq!(log[1].new_value, "IN_PROGRESS");
-        assert_eq!(log[3].field, "version");
-        assert_eq!(log[3].new_value, "2");
-        assert_eq!(log[5].old_value, "登录");
-        assert_eq!(log[5].new_value, "登入");
+        assert_eq!(log[2].old_value, "BASELINED");
+        assert_eq!(log[2].new_value, "DELIVERED");
+        assert_eq!(log[3].old_value, "PENDING");
+        assert_eq!(log[3].new_value, "IN_PROGRESS");
+        assert_eq!(log[6].field, "version");
+        assert_eq!(log[6].new_value, "2");
+        assert_eq!(log[8].old_value, "登录");
+        assert_eq!(log[8].new_value, "登入");
         // 时间戳单调(倒序)。
         assert!(log.windows(2).all(|w| w[0].changed_at_ms >= w[1].changed_at_ms));
     }
@@ -662,11 +857,13 @@ mod tests {
     #[tokio::test]
     async fn unchanged_update_and_repeat_status_record_nothing() {
         let (svc, id) = seeded().await;
-        svc.update(&id, "登录", None, None, None, None, "u1").await.expect("update");
-        assert!(svc.changes(&id).await.expect("changes").is_empty());
-        svc.set_dev_status(&id, "IN_PROGRESS", "u1").await.expect("dev");
-        svc.set_dev_status(&id, "IN_PROGRESS", "u1").await.expect("dev");
+        // 种子只有建档钩子那一条。
         assert_eq!(svc.changes(&id).await.expect("changes").len(), 1);
+        svc.update(&id, "登录", None, None, None, None, "u1").await.expect("update");
+        assert_eq!(svc.changes(&id).await.expect("changes").len(), 1);
+        svc.set_stage(&id, "DEV", Some("IN_PROGRESS"), None, None, "u1").await.expect("stage");
+        svc.set_stage(&id, "DEV", Some("IN_PROGRESS"), None, None, "u1").await.expect("stage");
+        assert_eq!(svc.changes(&id).await.expect("changes").len(), 2);
     }
 
     #[tokio::test]

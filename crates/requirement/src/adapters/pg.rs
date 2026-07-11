@@ -5,8 +5,9 @@ use async_trait::async_trait;
 use sqlx::{PgPool, Row};
 
 use crate::domain::{
-    AcceptanceCriterion, ChangeEntry, NewChange, NewRequirement, Requirement, RequirementPriority,
-    RequirementStatus, RequirementType, RequirementVersion, StatusCounts, WorkStatus,
+    fill_stages, AcceptanceCriterion, ChangeEntry, NewChange, NewRequirement, Requirement,
+    RequirementPriority, RequirementStatus, RequirementType, RequirementVersion, Stage, StageRow,
+    StageStatus, StatusCounts, WorkStatus,
 };
 use crate::ports::{RepoError, RequirementRepository};
 
@@ -53,6 +54,8 @@ impl PgRequirementRepository {
             });
         }
 
+        let stages = self.load_stages(&id).await?;
+
         Ok(Requirement {
             id,
             project_id: meta.try_get("project_id").map_err(map_err)?,
@@ -75,7 +78,36 @@ impl PgRequirementRepository {
             dev_finished_at_ms: meta.try_get("dev_finished_at_ms").map_err(map_err)?,
             test_started_at_ms: meta.try_get("test_started_at_ms").map_err(map_err)?,
             test_finished_at_ms: meta.try_get("test_finished_at_ms").map_err(map_err)?,
+            stages,
         })
+    }
+
+    /// 读阶段表并补齐成固定 7 行(未回填的旧数据得到 PENDING 默认行)。
+    async fn load_stages(&self, requirement_id: &str) -> Result<Vec<StageRow>, RepoError> {
+        let rows = sqlx::query(&format!(
+            "SELECT {STAGE_COLS} FROM ms_requirement_stage WHERE requirement_id = $1"
+        ))
+        .bind(requirement_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(map_err)?;
+
+        let mut out = Vec::with_capacity(rows.len());
+        for r in &rows {
+            let stage_s: String = r.try_get("stage").map_err(map_err)?;
+            // 未知阶段(理论不该出现)忽略,不污染流水线。
+            let Some(stage) = Stage::parse(&stage_s) else { continue };
+            let status_s: String = r.try_get("status").map_err(map_err)?;
+            out.push(StageRow {
+                stage,
+                status: StageStatus::parse(&status_s).unwrap_or_default(),
+                planned_start: r.try_get("planned_start").map_err(map_err)?,
+                planned_end: r.try_get("planned_end").map_err(map_err)?,
+                started_at_ms: r.try_get("started_at_ms").map_err(map_err)?,
+                finished_at_ms: r.try_get("finished_at_ms").map_err(map_err)?,
+            });
+        }
+        Ok(fill_stages(&out))
     }
 }
 
@@ -97,6 +129,12 @@ const META_COLS: &str = "id, project_id, title, status, baseline_version, delete
      (extract(epoch from dev_finished_at) * 1000)::bigint AS dev_finished_at_ms, \
      (extract(epoch from test_started_at) * 1000)::bigint AS test_started_at_ms, \
      (extract(epoch from test_finished_at) * 1000)::bigint AS test_finished_at_ms";
+
+// 阶段行:计划日期以 `YYYY-MM-DD` 文本进出,实际起止转 epoch 毫秒。
+const STAGE_COLS: &str =
+    "stage, status, planned_start::text AS planned_start, planned_end::text AS planned_end, \
+     (extract(epoch from started_at) * 1000)::bigint AS started_at_ms, \
+     (extract(epoch from finished_at) * 1000)::bigint AS finished_at_ms";
 
 #[async_trait]
 impl RequirementRepository for PgRequirementRepository {
@@ -319,6 +357,35 @@ impl RequirementRepository for PgRequirementRepository {
         Ok(out)
     }
 
+    async fn upsert_stage(&self, requirement_id: &str, row: &StageRow) -> Result<(), RepoError> {
+        sqlx::query(
+            "INSERT INTO ms_requirement_stage \
+             (requirement_id, stage, status, planned_start, planned_end, started_at, finished_at) \
+             VALUES ($1, $2, $3, $4::date, $5::date, \
+                     to_timestamp($6::double precision / 1000.0), \
+                     to_timestamp($7::double precision / 1000.0)) \
+             ON CONFLICT (requirement_id, stage) DO UPDATE SET \
+             status = EXCLUDED.status, planned_start = EXCLUDED.planned_start, \
+             planned_end = EXCLUDED.planned_end, started_at = EXCLUDED.started_at, \
+             finished_at = EXCLUDED.finished_at",
+        )
+        .bind(requirement_id)
+        .bind(row.stage.as_str())
+        .bind(row.status.as_str())
+        .bind(&row.planned_start)
+        .bind(&row.planned_end)
+        .bind(row.started_at_ms)
+        .bind(row.finished_at_ms)
+        .execute(&self.pool)
+        .await
+        .map_err(map_err)?;
+        Ok(())
+    }
+
+    async fn stages(&self, requirement_id: &str) -> Result<Vec<StageRow>, RepoError> {
+        self.load_stages(requirement_id).await
+    }
+
     async fn append_change(
         &self,
         requirement_id: &str,
@@ -382,7 +449,7 @@ mod tests {
         let url = std::env::var("DATABASE_URL").expect("set DATABASE_URL");
         let pool = PgPool::connect(&url).await.expect("connect");
         migrate::run(&pool).await.expect("migrate");
-        sqlx::query("TRUNCATE ms_requirement, ms_requirement_version, ms_requirement_change")
+        sqlx::query("TRUNCATE ms_requirement, ms_requirement_version, ms_requirement_change, ms_requirement_stage")
             .execute(&pool)
             .await
             .expect("truncate");
@@ -431,7 +498,7 @@ mod tests {
         let url = std::env::var("DATABASE_URL").expect("set DATABASE_URL");
         let pool = PgPool::connect(&url).await.expect("connect");
         migrate::run(&pool).await.expect("migrate");
-        sqlx::query("TRUNCATE ms_requirement, ms_requirement_version, ms_requirement_change")
+        sqlx::query("TRUNCATE ms_requirement, ms_requirement_version, ms_requirement_change, ms_requirement_stage")
             .execute(&pool)
             .await
             .expect("truncate");
@@ -499,5 +566,92 @@ mod tests {
         assert_eq!(log[0].changed_by, "u1");
         assert!(log[0].changed_at_ms > 0);
         assert_eq!(repo.list_changes(&child.id, 1).await.expect("changes").len(), 1);
+    }
+
+    #[tokio::test]
+    #[ignore = "需要 DATABASE_URL 指向一个 PostgreSQL 实例"]
+    async fn pg_stage_upsert_roundtrip_and_backfill_from_old_shape_row() {
+        let url = std::env::var("DATABASE_URL").expect("set DATABASE_URL");
+        let pool = PgPool::connect(&url).await.expect("connect");
+        migrate::run(&pool).await.expect("migrate");
+        sqlx::query("TRUNCATE ms_requirement, ms_requirement_version, ms_requirement_change, ms_requirement_stage")
+            .execute(&pool)
+            .await
+            .expect("truncate");
+
+        let repo = PgRequirementRepository::new(pool.clone());
+
+        // —— upsert/读回 ——:未写行的需求读回 7 行 PENDING 默认。
+        let r = repo
+            .insert(&NewRequirement::new("p1", "阶段需求", "d", &[]).expect("valid"))
+            .await
+            .expect("insert");
+        let rows = repo.stages(&r.id).await.expect("stages");
+        assert_eq!(rows.len(), 7);
+        assert!(rows.iter().all(|s| s.status == StageStatus::Pending));
+
+        let mut dev = StageRow::pending(Stage::Dev);
+        dev.planned_start = Some("2026-07-01".to_string());
+        dev.planned_end = Some("2026-07-31".to_string());
+        dev.set_status(StageStatus::InProgress, 1_700_000_000_000);
+        repo.upsert_stage(&r.id, &dev).await.expect("upsert");
+        // 幂等覆盖同一行。
+        dev.set_status(StageStatus::Done, 1_700_000_100_000);
+        repo.upsert_stage(&r.id, &dev).await.expect("upsert");
+
+        let rows = repo.stages(&r.id).await.expect("stages");
+        assert_eq!(rows[3], dev);
+        let got = repo.get(&r.id).await.expect("get").expect("some");
+        assert_eq!(got.stages, rows);
+
+        // —— 回填 ——:直接 SQL 造一条「旧形态」需求(只有 dev_/test_ 列,无阶段行),
+        // 重放迁移文件(幂等)后应得到按旧列推导的 7 行。
+        let old_row = sqlx::query(
+            "INSERT INTO ms_requirement \
+             (project_id, title, status, dev_status, test_status, dev_started_at, dev_finished_at, \
+              test_started_at, test_finished_at) \
+             VALUES ('p1', '旧需求', 'BASELINED', 'IN_PROGRESS', 'DONE', \
+                     to_timestamp(1700000000), NULL, to_timestamp(1700000100), to_timestamp(1700000200)) \
+             RETURNING id, (extract(epoch from created_at) * 1000)::bigint AS created_at_ms",
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("seed old-shape row");
+        let old_id: String = old_row.try_get("id").expect("id");
+        let old_created_ms: i64 = old_row.try_get("created_at_ms").expect("created_at_ms");
+
+        sqlx::raw_sql(include_str!("../../../migrate/migrations/0084_requirement_stage.sql"))
+            .execute(&pool)
+            .await
+            .expect("replay backfill");
+
+        let stages = repo.stages(&old_id).await.expect("stages");
+        assert_eq!(stages.iter().map(|s| s.stage).collect::<Vec<_>>(), Stage::ALL.to_vec());
+        // CREATED:完成,起止 = created_at。
+        assert_eq!(stages[0].status, StageStatus::Done);
+        assert_eq!(stages[0].started_at_ms, Some(old_created_ms));
+        assert_eq!(stages[0].finished_at_ms, Some(old_created_ms));
+        // AUDIT:新阶段,待处理。
+        assert_eq!(stages[1].status, StageStatus::Pending);
+        // REVIEW:BASELINED → 视为评审通过。
+        assert_eq!(stages[2].status, StageStatus::Done);
+        // DEV:沿用旧状态与起止时间。
+        assert_eq!(stages[3].status, StageStatus::InProgress);
+        assert_eq!(stages[3].started_at_ms, Some(1_700_000_000_000));
+        assert_eq!(stages[3].finished_at_ms, None);
+        // TEST:同上。
+        assert_eq!(stages[4].status, StageStatus::Done);
+        assert_eq!(stages[4].started_at_ms, Some(1_700_000_100_000));
+        assert_eq!(stages[4].finished_at_ms, Some(1_700_000_200_000));
+        // ACCEPTANCE/DELIVERY:未交付 → 待处理。
+        assert_eq!(stages[5].status, StageStatus::Pending);
+        assert_eq!(stages[6].status, StageStatus::Pending);
+
+        // 回填幂等:已有行(含前面 upsert 的 DEV 行)不被改写。
+        sqlx::raw_sql(include_str!("../../../migrate/migrations/0084_requirement_stage.sql"))
+            .execute(&pool)
+            .await
+            .expect("replay again");
+        assert_eq!(repo.stages(&r.id).await.expect("stages")[3], dev);
     }
 }

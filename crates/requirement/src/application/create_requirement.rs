@@ -3,8 +3,8 @@ use std::sync::Arc;
 use thiserror::Error;
 
 use crate::domain::{
-    normalize_tags, parse_due_date, parse_priority, parse_req_type, NewRequirement, Requirement,
-    RequirementError,
+    normalize_tags, parse_due_date, parse_priority, parse_req_type, NewChange, NewRequirement,
+    Requirement, RequirementError, Stage, StageRow, StageStatus,
 };
 use crate::ports::{RepoError, RequirementRepository};
 
@@ -87,7 +87,32 @@ impl CreateRequirementUseCase {
             return Err(CreateRequirementError::TitleAlreadyExists);
         }
 
-        Ok(self.repo.insert(&new).await?)
+        let mut req = self.repo.insert(&new).await?;
+        self.stamp_created_stage(&mut req, &new.created_by).await;
+        Ok(req)
+    }
+
+    /// 创建即完成 CREATED 阶段(起止 = created_at)并记变更日志;
+    /// 写失败不影响创建本身,仅告警(读侧回落 PENDING 默认行)。
+    async fn stamp_created_stage(&self, req: &mut Requirement, by: &str) {
+        let mut row = StageRow::pending(Stage::Created);
+        row.set_status(StageStatus::Done, req.created_at_ms);
+        if let Err(e) = self.repo.upsert_stage(&req.id, &row).await {
+            tracing::warn!(requirement = %req.id, error = %e, "CREATED 阶段写入失败");
+            return;
+        }
+        if let Some(slot) = req.stage_row_mut(Stage::Created) {
+            *slot = row;
+        }
+        let entry = NewChange {
+            changed_by: by.to_string(),
+            field: "stage.CREATED".to_string(),
+            old_value: StageStatus::Pending.as_str().to_string(),
+            new_value: StageStatus::Done.as_str().to_string(),
+        };
+        if let Err(e) = self.repo.append_change(&req.id, &[entry]).await {
+            tracing::warn!(requirement = %req.id, error = %e, "CREATED 阶段变更日志写入失败");
+        }
     }
 }
 

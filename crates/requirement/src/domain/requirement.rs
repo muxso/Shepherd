@@ -40,6 +40,10 @@ pub enum RequirementError {
     InvalidDueDate(String),
     #[error("invalid work status: {0}")]
     InvalidWorkStatus(String),
+    #[error("invalid stage: {0}")]
+    InvalidStage(String),
+    #[error("invalid stage status: {0}")]
+    InvalidStageStatus(String),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -308,6 +312,164 @@ pub fn parse_work_status(s: &str) -> Result<WorkStatus, RequirementError> {
     WorkStatus::parse(s).ok_or_else(|| RequirementError::InvalidWorkStatus(s.trim().to_string()))
 }
 
+/// 需求流水线阶段,顺序固定:创建 → 审核 → 评审 → 开发 → 测试 → 验收 → 交付。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Stage {
+    Created,
+    Audit,
+    Review,
+    Dev,
+    Test,
+    Acceptance,
+    Delivery,
+}
+
+impl Stage {
+    /// 全部阶段,按流水线顺序。
+    pub const ALL: [Stage; 7] = [
+        Self::Created,
+        Self::Audit,
+        Self::Review,
+        Self::Dev,
+        Self::Test,
+        Self::Acceptance,
+        Self::Delivery,
+    ];
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Created => "CREATED",
+            Self::Audit => "AUDIT",
+            Self::Review => "REVIEW",
+            Self::Dev => "DEV",
+            Self::Test => "TEST",
+            Self::Acceptance => "ACCEPTANCE",
+            Self::Delivery => "DELIVERY",
+        }
+    }
+
+    /// 归一化(trim + 大写)后匹配;非法值 → None。
+    pub fn parse(s: &str) -> Option<Self> {
+        match s.trim().to_ascii_uppercase().as_str() {
+            "CREATED" => Some(Self::Created),
+            "AUDIT" => Some(Self::Audit),
+            "REVIEW" => Some(Self::Review),
+            "DEV" => Some(Self::Dev),
+            "TEST" => Some(Self::Test),
+            "ACCEPTANCE" => Some(Self::Acceptance),
+            "DELIVERY" => Some(Self::Delivery),
+            _ => None,
+        }
+    }
+}
+
+/// 解析阶段;非法值报校验错(HTTP 层映射为 400)。
+pub fn parse_stage(s: &str) -> Result<Stage, RequirementError> {
+    Stage::parse(s).ok_or_else(|| RequirementError::InvalidStage(s.trim().to_string()))
+}
+
+/// 阶段推进状态;缺省待处理。
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum StageStatus {
+    #[default]
+    Pending,
+    InProgress,
+    Done,
+    Skipped,
+}
+
+impl StageStatus {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Pending => "PENDING",
+            Self::InProgress => "IN_PROGRESS",
+            Self::Done => "DONE",
+            Self::Skipped => "SKIPPED",
+        }
+    }
+
+    /// 归一化(trim + 大写)后匹配;非法值 → None。
+    pub fn parse(s: &str) -> Option<Self> {
+        match s.trim().to_ascii_uppercase().as_str() {
+            "PENDING" => Some(Self::Pending),
+            "IN_PROGRESS" => Some(Self::InProgress),
+            "DONE" => Some(Self::Done),
+            "SKIPPED" => Some(Self::Skipped),
+            _ => None,
+        }
+    }
+}
+
+/// 解析阶段状态;非法值报校验错(HTTP 层映射为 400)。
+pub fn parse_stage_status(s: &str) -> Result<StageStatus, RequirementError> {
+    StageStatus::parse(s).ok_or_else(|| RequirementError::InvalidStageStatus(s.trim().to_string()))
+}
+
+/// 一条阶段行:状态 + 计划起止日期(`YYYY-MM-DD`)+ 实际起止时间(epoch 毫秒)。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StageRow {
+    pub stage: Stage,
+    pub status: StageStatus,
+    pub planned_start: Option<String>,
+    pub planned_end: Option<String>,
+    pub started_at_ms: Option<i64>,
+    pub finished_at_ms: Option<i64>,
+}
+
+impl StageRow {
+    /// 该阶段的默认行:PENDING、无计划、无时间戳。
+    pub fn pending(stage: Stage) -> Self {
+        Self {
+            stage,
+            status: StageStatus::Pending,
+            planned_start: None,
+            planned_end: None,
+            started_at_ms: None,
+            finished_at_ms: None,
+        }
+    }
+
+    /// 推进状态并盖章:进 IN_PROGRESS 记开始时间;进 DONE 补齐开始/完成时间。
+    /// 时间戳先写先得,重复推进不覆盖;回 PENDING 不清空;SKIPPED 任意状态可进,不盖章。
+    pub fn set_status(&mut self, status: StageStatus, now_ms: i64) {
+        self.status = status;
+        match status {
+            StageStatus::Pending | StageStatus::Skipped => {}
+            StageStatus::InProgress => {
+                self.started_at_ms.get_or_insert(now_ms);
+            }
+            StageStatus::Done => {
+                self.started_at_ms.get_or_insert(now_ms);
+                self.finished_at_ms.get_or_insert(now_ms);
+            }
+        }
+    }
+}
+
+/// 把稀疏的阶段行归一成固定 7 行(按流水线顺序,缺失的补 PENDING 默认行);
+/// 旧数据没回填也能得到完整流水线。
+pub fn fill_stages(rows: &[StageRow]) -> Vec<StageRow> {
+    Stage::ALL
+        .iter()
+        .map(|s| {
+            rows.iter().find(|r| r.stage == *s).cloned().unwrap_or_else(|| StageRow::pending(*s))
+        })
+        .collect()
+}
+
+/// 阶段逾期判定(实时计算,不落库):设了计划结束日且未跳过——
+/// 已完成的看完成日期是否晚于计划;未完成的看今天是否已过计划(当天不算)。
+pub fn stage_overdue(row: &StageRow, today: &str) -> bool {
+    let Some(end) = row.planned_end.as_deref() else { return false };
+    if row.status == StageStatus::Skipped {
+        return false;
+    }
+    match row.finished_at_ms {
+        Some(ms) => date_from_epoch_ms(ms).as_str() > end,
+        None => row.status != StageStatus::Done && today > end,
+    }
+}
+
 /// 标签清洗:trim、去空、按首现顺序去重;超过 `MAX_TAGS` 个或单个超 `MAX_TAG_LEN` 报校验错。
 pub fn normalize_tags(raw: &[String]) -> Result<Vec<String>, RequirementError> {
     let mut out: Vec<String> = Vec::new();
@@ -436,6 +598,8 @@ pub struct Requirement {
     pub dev_finished_at_ms: Option<i64>,
     pub test_started_at_ms: Option<i64>,
     pub test_finished_at_ms: Option<i64>,
+    /// 7 阶段流水线,恒为全部阶段、按顺序(仓储层用 `fill_stages` 补齐缺行)。
+    pub stages: Vec<StageRow>,
 }
 
 impl Requirement {
@@ -466,6 +630,7 @@ impl Requirement {
             dev_finished_at_ms: None,
             test_started_at_ms: None,
             test_finished_at_ms: None,
+            stages: fill_stages(&[]),
         }
     }
 
@@ -574,13 +739,38 @@ impl Requirement {
         !self.deleted
     }
 
-    /// 逾期判定(实时计算,不落库):设了截止日期、已过 `today`(`YYYY-MM-DD` 字典序比较),
-    /// 且尚未交付/归档。
+    /// 逾期判定(实时计算,不落库):截止日期规则(设了截止日期、已过 `today`
+    /// 且尚未交付/归档)或任一阶段逾期(见 `stage_overdue`)。
     pub fn is_overdue(&self, today: &str) -> bool {
-        match (&self.due_date, self.status) {
+        let due_overdue = match (&self.due_date, self.status) {
             (_, RequirementStatus::Delivered | RequirementStatus::Archived) => false,
             (Some(due), _) => due.as_str() < today,
             (None, _) => false,
+        };
+        due_overdue || self.stages.iter().any(|row| stage_overdue(row, today))
+    }
+
+    /// 当前所处阶段:按顺序第一个既未完成也未跳过的;全部完成 → 交付。
+    pub fn current_stage(&self) -> Stage {
+        self.stages
+            .iter()
+            .find(|r| !matches!(r.status, StageStatus::Done | StageStatus::Skipped))
+            .map(|r| r.stage)
+            .unwrap_or(Stage::Delivery)
+    }
+
+    pub fn stage_row(&self, stage: Stage) -> Option<&StageRow> {
+        self.stages.iter().find(|r| r.stage == stage)
+    }
+
+    pub fn stage_row_mut(&mut self, stage: Stage) -> Option<&mut StageRow> {
+        self.stages.iter_mut().find(|r| r.stage == stage)
+    }
+
+    /// 推进某阶段状态并盖章;规则见 `StageRow::set_status`。
+    pub fn set_stage(&mut self, stage: Stage, status: StageStatus, now_ms: i64) {
+        if let Some(row) = self.stage_row_mut(stage) {
+            row.set_status(status, now_ms);
         }
     }
 
@@ -934,5 +1124,155 @@ mod tests {
             assert_eq!(RequirementStatus::parse(s.as_str()), Some(s));
         }
         assert_eq!(RequirementStatus::parse("WAT"), None);
+    }
+
+    #[test]
+    fn stage_and_stage_status_roundtrip_and_normalization() {
+        for s in Stage::ALL {
+            assert_eq!(Stage::parse(s.as_str()), Some(s));
+        }
+        assert_eq!(Stage::parse(" dev "), Some(Stage::Dev));
+        assert_eq!(Stage::parse("DESIGN"), None);
+        assert_eq!(parse_stage("review"), Ok(Stage::Review));
+        assert_eq!(parse_stage(" 上线 "), Err(RequirementError::InvalidStage("上线".into())));
+
+        for s in
+            [StageStatus::Pending, StageStatus::InProgress, StageStatus::Done, StageStatus::Skipped]
+        {
+            assert_eq!(StageStatus::parse(s.as_str()), Some(s));
+        }
+        assert_eq!(StageStatus::parse(" skipped "), Some(StageStatus::Skipped));
+        assert_eq!(StageStatus::parse("PAUSED"), None);
+        assert_eq!(parse_stage_status("done"), Ok(StageStatus::Done));
+        assert_eq!(
+            parse_stage_status(" WAT "),
+            Err(RequirementError::InvalidStageStatus("WAT".into()))
+        );
+    }
+
+    #[test]
+    fn fill_stages_completes_and_orders_all_seven() {
+        // 空输入 → 7 行 PENDING,按流水线顺序。
+        let filled = fill_stages(&[]);
+        assert_eq!(filled.len(), 7);
+        assert_eq!(filled.iter().map(|r| r.stage).collect::<Vec<_>>(), Stage::ALL);
+        assert!(filled.iter().all(|r| r.status == StageStatus::Pending));
+
+        // 乱序稀疏输入:已有行保留,缺行补默认。
+        let mut dev = StageRow::pending(Stage::Dev);
+        dev.set_status(StageStatus::InProgress, 100);
+        let mut created = StageRow::pending(Stage::Created);
+        created.set_status(StageStatus::Done, 50);
+        let filled = fill_stages(&[dev.clone(), created.clone()]);
+        assert_eq!(filled.iter().map(|r| r.stage).collect::<Vec<_>>(), Stage::ALL);
+        assert_eq!(filled[0], created);
+        assert_eq!(filled[3], dev);
+        assert_eq!(filled[1], StageRow::pending(Stage::Audit));
+    }
+
+    // 2026-07-11 00:00:00 UTC = 1_783_728_000_000 毫秒(见 date_from_epoch_ms 测试)。
+    const JUL_11_MS: i64 = 1_783_728_000_000;
+
+    #[test]
+    fn stage_overdue_matrix() {
+        let today = "2026-07-11";
+        let mut row = StageRow::pending(Stage::Dev);
+        // 无计划结束日 → 不逾期。
+        assert!(!stage_overdue(&row, today));
+
+        // 未完成且今天已过计划(当天不算)。
+        row.planned_end = Some("2026-07-10".to_string());
+        assert!(stage_overdue(&row, today));
+        assert!(!stage_overdue(&row, "2026-07-10"));
+        assert!(!stage_overdue(&row, "2026-07-09"));
+
+        // 跳过的阶段不算逾期。
+        row.set_status(StageStatus::Skipped, JUL_11_MS);
+        assert!(stage_overdue(&StageRow { status: StageStatus::InProgress, ..row.clone() }, today));
+        assert!(!stage_overdue(&row, today));
+
+        // 按时完成:完成日 ≤ 计划 → 不逾期,哪怕今天已过计划。
+        let mut done = StageRow::pending(Stage::Test);
+        done.planned_end = Some("2026-07-10".to_string());
+        done.set_status(StageStatus::Done, JUL_11_MS - 86_400_000); // 完成于 07-10
+        assert!(!stage_overdue(&done, "2026-08-01"));
+
+        // 迟完成:完成日 > 计划 → 永久逾期(与 today 无关)。
+        let mut late = StageRow::pending(Stage::Test);
+        late.planned_end = Some("2026-07-10".to_string());
+        late.set_status(StageStatus::Done, JUL_11_MS); // 完成于 07-11
+        assert!(stage_overdue(&late, "2026-07-01"));
+
+        // 状态 DONE 但完成时间缺失(理论不该出现)→ 不按「未完成」误判。
+        let odd = StageRow {
+            status: StageStatus::Done,
+            finished_at_ms: None,
+            ..StageRow::pending(Stage::Dev)
+        };
+        let odd = StageRow { planned_end: Some("2026-07-01".to_string()), ..odd };
+        assert!(!stage_overdue(&odd, today));
+    }
+
+    #[test]
+    fn requirement_overdue_combines_due_date_and_stage_rules() {
+        let mut r = Requirement::create("req-1", &new_req());
+        assert!(!r.is_overdue("2026-07-11"));
+        // 仅阶段逾期(无截止日期)也算需求逾期。
+        r.stage_row_mut(Stage::Dev).expect("dev row").planned_end = Some("2026-07-01".to_string());
+        assert!(r.is_overdue("2026-07-11"));
+        // 已交付豁免截止日期规则,但阶段迟完成仍算逾期。
+        r.status = RequirementStatus::Delivered;
+        assert!(r.is_overdue("2026-07-11"));
+        // 阶段按时完成后不再逾期。
+        r.set_stage(Stage::Dev, StageStatus::Done, 1_751_328_000_000); // 完成于 2025-07-01,早于计划
+        assert!(!r.is_overdue("2026-07-11"));
+    }
+
+    #[test]
+    fn current_stage_walks_pipeline_in_order() {
+        let mut r = Requirement::create("req-1", &new_req());
+        assert_eq!(r.current_stage(), Stage::Created);
+        r.set_stage(Stage::Created, StageStatus::Done, 1);
+        assert_eq!(r.current_stage(), Stage::Audit);
+        // SKIPPED 视同越过。
+        r.set_stage(Stage::Audit, StageStatus::Skipped, 2);
+        assert_eq!(r.current_stage(), Stage::Review);
+        // IN_PROGRESS 仍停在当前阶段。
+        r.set_stage(Stage::Review, StageStatus::InProgress, 3);
+        assert_eq!(r.current_stage(), Stage::Review);
+        for s in Stage::ALL {
+            r.set_stage(s, StageStatus::Done, 4);
+        }
+        assert_eq!(r.current_stage(), Stage::Delivery);
+    }
+
+    #[test]
+    fn stage_stamps_are_first_write_wins() {
+        let mut r = Requirement::create("req-1", &new_req());
+        r.set_stage(Stage::Dev, StageStatus::InProgress, 100);
+        let dev = |r: &Requirement| r.stage_row(Stage::Dev).expect("dev row").clone();
+        assert_eq!(dev(&r).started_at_ms, Some(100));
+        assert_eq!(dev(&r).finished_at_ms, None);
+        // 重复推进不覆盖。
+        r.set_stage(Stage::Dev, StageStatus::InProgress, 200);
+        assert_eq!(dev(&r).started_at_ms, Some(100));
+        // 回 PENDING 不清空时间戳。
+        r.set_stage(Stage::Dev, StageStatus::Pending, 300);
+        assert_eq!(dev(&r).status, StageStatus::Pending);
+        assert_eq!(dev(&r).started_at_ms, Some(100));
+        r.set_stage(Stage::Dev, StageStatus::Done, 400);
+        assert_eq!(dev(&r).started_at_ms, Some(100));
+        assert_eq!(dev(&r).finished_at_ms, Some(400));
+        r.set_stage(Stage::Dev, StageStatus::Done, 500);
+        assert_eq!(dev(&r).finished_at_ms, Some(400));
+        // DONE 后仍可 SKIPPED(任意状态可进),时间戳保留。
+        r.set_stage(Stage::Dev, StageStatus::Skipped, 600);
+        assert_eq!(dev(&r).status, StageStatus::Skipped);
+        assert_eq!(dev(&r).finished_at_ms, Some(400));
+        // 直接 DONE 补齐开始时间。
+        r.set_stage(Stage::Test, StageStatus::Done, 700);
+        let test = r.stage_row(Stage::Test).expect("test row");
+        assert_eq!(test.started_at_ms, Some(700));
+        assert_eq!(test.finished_at_ms, Some(700));
     }
 }

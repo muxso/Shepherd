@@ -2,7 +2,9 @@ use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 
-use crate::domain::{ChangeEntry, NewChange, NewRequirement, Requirement, StatusCounts};
+use crate::domain::{
+    fill_stages, ChangeEntry, NewChange, NewRequirement, Requirement, StageRow, StatusCounts,
+};
 use crate::ports::{RepoError, RequirementRepository};
 
 #[derive(Default)]
@@ -13,6 +15,8 @@ struct State {
     order: std::collections::HashMap<String, i64>,
     /// 变更日志:按追加序保存,读时倒序(最新在前)。
     changes: std::collections::HashMap<String, Vec<ChangeEntry>>,
+    /// 阶段行(稀疏,只存 upsert 过的);读侧经 `fill_stages` 补齐,与 pg 侧独立成表对齐。
+    stages: std::collections::HashMap<String, Vec<StageRow>>,
     /// 逻辑时钟:每次写操作 +1,保证 created/updated/changed 时间戳单调且可测。
     clock: i64,
 }
@@ -21,6 +25,13 @@ impl State {
     fn tick(&mut self) -> i64 {
         self.clock += 1;
         self.clock
+    }
+
+    /// 读侧统一从阶段表填充 `stages`(缺行补 PENDING 默认),与 pg 侧行为对齐。
+    fn with_stages(&self, r: &Requirement) -> Requirement {
+        let mut r = r.clone();
+        r.stages = fill_stages(self.stages.get(&r.id).map(Vec::as_slice).unwrap_or(&[]));
+        r
     }
 }
 
@@ -49,14 +60,12 @@ impl RequirementRepository for InMemoryRequirementRepository {
         project_id: &str,
         title: &str,
     ) -> Result<Option<Requirement>, RepoError> {
-        Ok(self
-            .state
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
+        let st = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        Ok(st
             .requirements
             .iter()
             .find(|r| r.occupies_title() && r.project_id == project_id && r.title == title)
-            .cloned())
+            .map(|r| st.with_stages(r)))
     }
 
     async fn insert(&self, new: &NewRequirement) -> Result<Requirement, RepoError> {
@@ -72,14 +81,8 @@ impl RequirementRepository for InMemoryRequirementRepository {
     }
 
     async fn get(&self, id: &str) -> Result<Option<Requirement>, RepoError> {
-        Ok(self
-            .state
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .requirements
-            .iter()
-            .find(|r| r.id == id)
-            .cloned())
+        let st = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        Ok(st.requirements.iter().find(|r| r.id == id).map(|r| st.with_stages(r)))
     }
 
     async fn count_active(&self, project_id: &str) -> Result<u64, RepoError> {
@@ -112,7 +115,7 @@ impl RequirementRepository for InMemoryRequirementRepository {
             .into_iter()
             .skip(offset as usize)
             .take(limit as usize)
-            .map(|(_, r)| r.clone())
+            .map(|(_, r)| st.with_stages(r))
             .collect())
     }
 
@@ -148,15 +151,28 @@ impl RequirementRepository for InMemoryRequirementRepository {
     }
 
     async fn children(&self, parent_id: &str) -> Result<Vec<Requirement>, RepoError> {
-        Ok(self
-            .state
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
+        let st = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        Ok(st
             .requirements
             .iter()
             .filter(|r| r.occupies_title() && r.parent_id.as_deref() == Some(parent_id))
-            .cloned()
+            .map(|r| st.with_stages(r))
             .collect())
+    }
+
+    async fn upsert_stage(&self, requirement_id: &str, row: &StageRow) -> Result<(), RepoError> {
+        let mut st = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let rows = st.stages.entry(requirement_id.to_string()).or_default();
+        match rows.iter_mut().find(|r| r.stage == row.stage) {
+            Some(slot) => *slot = row.clone(),
+            None => rows.push(row.clone()),
+        }
+        Ok(())
+    }
+
+    async fn stages(&self, requirement_id: &str) -> Result<Vec<StageRow>, RepoError> {
+        let st = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        Ok(fill_stages(st.stages.get(requirement_id).map(Vec::as_slice).unwrap_or(&[])))
     }
 
     async fn append_change(
@@ -268,6 +284,36 @@ mod tests {
         assert_eq!(counts.delivered, 0);
         assert_eq!(counts.archived, 0);
         assert_eq!(counts.total(), 2); // C 已软删,p2 不属本项目
+    }
+
+    #[tokio::test]
+    async fn stage_upsert_read_and_get_fill_roundtrip() {
+        use crate::domain::{Stage, StageRow, StageStatus};
+        let repo = InMemoryRequirementRepository::new();
+        let r = repo
+            .insert(&NewRequirement::new("p1", "登录", "d", &[]).expect("v"))
+            .await
+            .expect("insert");
+
+        // 未 upsert 前:7 行 PENDING 默认。
+        let rows = repo.stages(&r.id).await.expect("stages");
+        assert_eq!(rows.len(), 7);
+        assert!(rows.iter().all(|s| s.status == StageStatus::Pending));
+
+        // upsert 一行后:该行更新,其余仍补默认;重复 upsert 覆盖同一行。
+        let mut dev = StageRow::pending(Stage::Dev);
+        dev.planned_end = Some("2026-12-31".to_string());
+        dev.set_status(StageStatus::InProgress, 100);
+        repo.upsert_stage(&r.id, &dev).await.expect("upsert");
+        dev.set_status(StageStatus::Done, 200);
+        repo.upsert_stage(&r.id, &dev).await.expect("upsert");
+
+        let rows = repo.stages(&r.id).await.expect("stages");
+        assert_eq!(rows.len(), 7);
+        assert_eq!(rows[3], dev);
+        // get 读回的需求带填充后的 stages。
+        let got = repo.get(&r.id).await.expect("get").expect("some");
+        assert_eq!(got.stages, rows);
     }
 
     #[tokio::test]

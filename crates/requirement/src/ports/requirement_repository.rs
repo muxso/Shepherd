@@ -3,7 +3,7 @@
 use async_trait::async_trait;
 use thiserror::Error;
 
-use crate::domain::{ChangeEntry, NewChange, NewRequirement, Requirement, StatusCounts};
+use crate::domain::{ChangeEntry, NewChange, NewRequirement, Requirement, StageRow, StatusCounts};
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum RepoError {
@@ -43,6 +43,12 @@ pub trait RequirementRepository: Send + Sync {
 
     /// 直属子需求(未软删除),按展示序返回。
     async fn children(&self, parent_id: &str) -> Result<Vec<Requirement>, RepoError>;
+
+    /// 写入/覆盖一条阶段行(按 (需求, 阶段) 幂等 upsert)。
+    async fn upsert_stage(&self, requirement_id: &str, row: &StageRow) -> Result<(), RepoError>;
+
+    /// 该需求的 7 阶段流水线,恒为全部阶段、按顺序(缺行补 PENDING 默认)。
+    async fn stages(&self, requirement_id: &str) -> Result<Vec<StageRow>, RepoError>;
 
     /// 追加一批变更日志(只增不改;时间由存储层盖章)。
     async fn append_change(

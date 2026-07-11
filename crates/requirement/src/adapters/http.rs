@@ -17,7 +17,7 @@ use crate::application::{
     CreateRequirementError, CreateRequirementUseCase, ListRequirementsUseCase, RequirementCmdError,
     RequirementService,
 };
-use crate::domain::{date_from_epoch_ms, ChangeEntry, Requirement};
+use crate::domain::{date_from_epoch_ms, stage_overdue, ChangeEntry, Requirement, StageRow};
 
 #[derive(Clone)]
 struct ReqState {
@@ -53,8 +53,7 @@ pub fn router(
         .route("/requirement/{id}/review/reject", post(reject_review))
         .route("/requirement/{id}/archive", post(archive_requirement))
         .route("/requirement/{id}/deliver", post(deliver_requirement))
-        .route("/requirement/{id}/dev-status", post(set_dev_status))
-        .route("/requirement/{id}/test-status", post(set_test_status))
+        .route("/requirement/{id}/stage/{stage}", put(set_stage_route))
         .route("/requirement/{id}/parent", put(set_parent))
         .route("/requirement/{id}/children", get(get_children))
         .route("/requirement/{id}/changes", get(get_changes))
@@ -126,10 +125,18 @@ struct RenameBody {
 }
 
 #[derive(Deserialize, ToSchema)]
-#[schema(as = RequirementWorkStatusBody)]
-struct WorkStatusBody {
-    /// NOT_STARTED / IN_PROGRESS / DONE(不区分大小写)。
-    status: String,
+#[serde(rename_all = "camelCase")]
+#[schema(as = RequirementStageBody)]
+struct StageBody {
+    /// PENDING / IN_PROGRESS / DONE / SKIPPED(不区分大小写);缺省不动。
+    #[serde(default)]
+    status: Option<String>,
+    /// 计划开始日期 YYYY-MM-DD;空串清除,缺省不动。
+    #[serde(default)]
+    planned_start: Option<String>,
+    /// 计划结束日期 YYYY-MM-DD;空串清除,缺省不动。
+    #[serde(default)]
+    planned_end: Option<String>,
 }
 
 #[derive(Deserialize, ToSchema)]
@@ -161,6 +168,39 @@ impl From<&crate::domain::RequirementVersion> for VersionResponse {
 
 #[derive(Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(as = RequirementStageResponse)]
+struct StageResponse {
+    /// CREATED / AUDIT / REVIEW / DEV / TEST / ACCEPTANCE / DELIVERY。
+    stage: String,
+    /// PENDING / IN_PROGRESS / DONE / SKIPPED。
+    status: String,
+    /// 计划开始日期 YYYY-MM-DD;null 表示未设置。
+    planned_start: Option<String>,
+    /// 计划结束日期 YYYY-MM-DD;null 表示未设置。
+    planned_end: Option<String>,
+    /// 实际起止时间(epoch 毫秒)。
+    started_at: Option<i64>,
+    finished_at: Option<i64>,
+    /// 该阶段是否逾期(实时计算,见 stage_overdue 规则)。
+    overdue: bool,
+}
+
+impl StageResponse {
+    fn build(row: &StageRow, today: &str) -> Self {
+        Self {
+            stage: row.stage.as_str().to_string(),
+            status: row.status.as_str().to_string(),
+            planned_start: row.planned_start.clone(),
+            planned_end: row.planned_end.clone(),
+            started_at: row.started_at_ms,
+            finished_at: row.finished_at_ms,
+            overdue: stage_overdue(row, today),
+        }
+    }
+}
+
+#[derive(Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
 struct RequirementResponse {
     id: String,
     project_id: String,
@@ -177,24 +217,25 @@ struct RequirementResponse {
     parent_id: Option<String>,
     /// 截止日期 YYYY-MM-DD;null 表示未设置。
     due_date: Option<String>,
-    /// 是否逾期(实时计算:设了截止日期、已过今天且未交付/归档)。
+    /// 是否逾期(实时计算:截止日期规则或任一阶段逾期)。
     overdue: bool,
     /// 时间戳一律为 epoch 毫秒。
     created_at: i64,
     updated_at: i64,
-    dev_status: String,
-    test_status: String,
-    dev_started_at: Option<i64>,
-    dev_finished_at: Option<i64>,
-    test_started_at: Option<i64>,
-    test_finished_at: Option<i64>,
+    /// 7 阶段流水线,恒为全部阶段、按顺序。
+    stages: Vec<StageResponse>,
+    /// 当前所处阶段:第一个既未完成也未跳过的;全部完成 → DELIVERY。
+    current_stage: String,
 }
 
 impl From<Requirement> for RequirementResponse {
     fn from(r: Requirement) -> Self {
         let latest_version = r.latest_version();
         let versions = r.versions.iter().map(VersionResponse::from).collect();
-        let overdue = r.is_overdue(&date_from_epoch_ms(now_ms()));
+        let today = date_from_epoch_ms(now_ms());
+        let overdue = r.is_overdue(&today);
+        let stages = r.stages.iter().map(|row| StageResponse::build(row, &today)).collect();
+        let current_stage = r.current_stage().as_str().to_string();
         Self {
             id: r.id,
             project_id: r.project_id,
@@ -212,12 +253,8 @@ impl From<Requirement> for RequirementResponse {
             overdue,
             created_at: r.created_at_ms,
             updated_at: r.updated_at_ms,
-            dev_status: r.dev_status.as_str().to_string(),
-            test_status: r.test_status.as_str().to_string(),
-            dev_started_at: r.dev_started_at_ms,
-            dev_finished_at: r.dev_finished_at_ms,
-            test_started_at: r.test_started_at_ms,
-            test_finished_at: r.test_finished_at_ms,
+            stages,
+            current_stage,
         }
     }
 }
@@ -547,35 +584,34 @@ async fn deliver_requirement(
     }
 }
 
-/// 推进开发状态:首次进 IN_PROGRESS/DONE 盖对应时间戳,重复推进不覆盖。
-#[utoipa::path(post, path = "/requirement/{id}/dev-status", tag = "requirement", params(("id" = String, Path)), request_body = WorkStatusBody, responses((status = 200, body = RequirementResponse), (status = 400), (status = 403), (status = 404)), security(("bearer" = [])))]
-async fn set_dev_status(
+/// 推进流水线阶段:可选改状态(首次进 IN_PROGRESS/DONE 盖时间戳,重复推进不覆盖)、
+/// 可选设/清计划起止日期(空串清除);未知阶段/状态 → 400。
+#[utoipa::path(put, path = "/requirement/{id}/stage/{stage}", tag = "requirement", params(("id" = String, Path, description = "需求 id"), ("stage" = String, Path, description = "阶段:CREATED/AUDIT/REVIEW/DEV/TEST/ACCEPTANCE/DELIVERY")), request_body = StageBody, responses((status = 200, body = RequirementResponse), (status = 400), (status = 403), (status = 404)), security(("bearer" = [])))]
+async fn set_stage_route(
     user: AuthUser,
     State(st): State<ReqState>,
-    Path(id): Path<String>,
-    Json(b): Json<WorkStatusBody>,
+    Path((id, stage)): Path<(String, String)>,
+    Json(b): Json<StageBody>,
 ) -> Response {
     if !user.can("REQUIREMENT", "UPDATE") {
         return (StatusCode::FORBIDDEN, "permission denied").into_response();
     }
-    match st.admin.set_dev_status(&id, &b.status, &user.user_id).await {
-        Ok(r) => (StatusCode::OK, Json(RequirementResponse::from(r))).into_response(),
-        Err(e) => cmd_err(e),
+    // 计划日期:缺省不动;空串清除;非空设为该日期。
+    fn planned(v: Option<&str>) -> Option<Option<&str>> {
+        v.map(|d| Some(d.trim()).filter(|t| !t.is_empty()))
     }
-}
-
-/// 推进测试状态;规则同开发状态。
-#[utoipa::path(post, path = "/requirement/{id}/test-status", tag = "requirement", params(("id" = String, Path)), request_body = WorkStatusBody, responses((status = 200, body = RequirementResponse), (status = 400), (status = 403), (status = 404)), security(("bearer" = [])))]
-async fn set_test_status(
-    user: AuthUser,
-    State(st): State<ReqState>,
-    Path(id): Path<String>,
-    Json(b): Json<WorkStatusBody>,
-) -> Response {
-    if !user.can("REQUIREMENT", "UPDATE") {
-        return (StatusCode::FORBIDDEN, "permission denied").into_response();
-    }
-    match st.admin.set_test_status(&id, &b.status, &user.user_id).await {
+    match st
+        .admin
+        .set_stage(
+            &id,
+            &stage,
+            b.status.as_deref(),
+            planned(b.planned_start.as_deref()),
+            planned(b.planned_end.as_deref()),
+            &user.user_id,
+        )
+        .await
+    {
         Ok(r) => (StatusCode::OK, Json(RequirementResponse::from(r))).into_response(),
         Err(e) => cmd_err(e),
     }
@@ -725,9 +761,9 @@ async fn requirement_summary(
     paths(
         create_requirement, list_requirements, get_requirement, get_version,
         revise_requirement, set_baseline, reject_review, rename_requirement, archive_requirement, deliver_requirement, delete_requirement, reorder_requirements, requirement_summary,
-        set_dev_status, set_test_status, set_parent, get_children, get_changes
+        set_stage_route, set_parent, get_children, get_changes
     ),
-    components(schemas(CreateBody, ReviseBody, SetBaselineBody, RejectReviewBody, RenameBody, WorkStatusBody, SetParentBody, ReorderBody, SummaryResponse, VersionResponse, RequirementResponse, RequirementPage, VersionCreated, ChangeResponse, ChildrenResponse, ChangesResponse)),
+    components(schemas(CreateBody, ReviseBody, SetBaselineBody, RejectReviewBody, RenameBody, StageBody, SetParentBody, ReorderBody, SummaryResponse, VersionResponse, StageResponse, RequirementResponse, RequirementPage, VersionCreated, ChangeResponse, ChildrenResponse, ChangesResponse)),
     tags((name = "requirement", description = "需求管理(多版本)"))
 )]
 struct ApiDoc;
@@ -1324,11 +1360,22 @@ mod tests {
         assert_eq!(v["dueDate"], "2999-12-31");
         assert_eq!(v["parentId"], parent);
         assert_eq!(v["overdue"], false);
-        assert_eq!(v["devStatus"], "NOT_STARTED");
-        assert_eq!(v["testStatus"], "NOT_STARTED");
         assert!(v["createdAt"].as_i64().expect("createdAt") > 0);
         assert!(v["updatedAt"].as_i64().expect("updatedAt") > 0);
-        assert!(v["devStartedAt"].is_null());
+        // 7 阶段流水线:CREATED 已随建档完成,当前停在 AUDIT。
+        let stages = v["stages"].as_array().expect("stages");
+        assert_eq!(stages.len(), 7);
+        assert_eq!(
+            stages.iter().map(|s| s["stage"].as_str().expect("stage")).collect::<Vec<_>>(),
+            ["CREATED", "AUDIT", "REVIEW", "DEV", "TEST", "ACCEPTANCE", "DELIVERY"]
+        );
+        assert_eq!(stages[0]["status"], "DONE");
+        assert!(stages[0]["startedAt"].as_i64().is_some());
+        assert!(stages[0]["finishedAt"].as_i64().is_some());
+        assert_eq!(stages[1]["status"], "PENDING");
+        assert!(stages[1]["plannedStart"].is_null());
+        assert_eq!(stages[1]["overdue"], false);
+        assert_eq!(v["currentStage"], "AUDIT");
     }
 
     #[tokio::test]
@@ -1379,30 +1426,36 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn dev_status_transition_stamps_and_rejects_invalid() {
+    async fn stage_transition_stamps_updates_plan_and_rejects_invalid() {
         let (app, t) = app_with("REQUIREMENT:READ+ADD+UPDATE").await;
         let id = create_req(&app, &t, "开发中").await;
         let r = app
             .clone()
             .oneshot(req(
-                "POST",
-                &format!("/requirement/{id}/dev-status"),
-                r#"{"status":"in_progress"}"#,
+                "PUT",
+                &format!("/requirement/{id}/stage/dev"),
+                r#"{"status":"in_progress","plannedEnd":"2999-12-31"}"#,
                 Some(&t),
             ))
             .await
             .expect("r");
         assert_eq!(r.status(), StatusCode::OK);
         let v = body_json(r).await;
-        assert_eq!(v["devStatus"], "IN_PROGRESS");
-        assert!(v["devStartedAt"].as_i64().is_some());
-        assert!(v["devFinishedAt"].is_null());
+        let dev = &v["stages"][3];
+        assert_eq!(dev["stage"], "DEV");
+        assert_eq!(dev["status"], "IN_PROGRESS");
+        assert_eq!(dev["plannedEnd"], "2999-12-31");
+        assert!(dev["startedAt"].as_i64().is_some());
+        assert!(dev["finishedAt"].is_null());
+        assert_eq!(dev["overdue"], false);
+        assert_eq!(v["currentStage"], "AUDIT"); // AUDIT 仍待处理,阶段推进不改当前指针
 
+        // 直接 DONE 补齐起止;空串清除计划日期。
         let r2 = app
             .clone()
             .oneshot(req(
-                "POST",
-                &format!("/requirement/{id}/test-status"),
+                "PUT",
+                &format!("/requirement/{id}/stage/TEST"),
                 r#"{"status":"DONE"}"#,
                 Some(&t),
             ))
@@ -1410,15 +1463,55 @@ mod tests {
             .expect("r");
         assert_eq!(r2.status(), StatusCode::OK);
         let v2 = body_json(r2).await;
-        assert_eq!(v2["testStatus"], "DONE");
-        assert!(v2["testStartedAt"].as_i64().is_some());
-        assert!(v2["testFinishedAt"].as_i64().is_some());
+        assert_eq!(v2["stages"][4]["status"], "DONE");
+        assert!(v2["stages"][4]["startedAt"].as_i64().is_some());
+        assert!(v2["stages"][4]["finishedAt"].as_i64().is_some());
+        let r3 = app
+            .clone()
+            .oneshot(req(
+                "PUT",
+                &format!("/requirement/{id}/stage/DEV"),
+                r#"{"plannedEnd":""}"#,
+                Some(&t),
+            ))
+            .await
+            .expect("r");
+        let v3 = body_json(r3).await;
+        assert!(v3["stages"][3]["plannedEnd"].is_null());
+        assert_eq!(v3["stages"][3]["status"], "IN_PROGRESS"); // 只清计划不动状态
 
+        // 未知阶段/状态/非法日期 → 400。
+        assert_eq!(
+            app.clone()
+                .oneshot(req(
+                    "PUT",
+                    &format!("/requirement/{id}/stage/DESIGN"),
+                    r#"{"status":"DONE"}"#,
+                    Some(&t)
+                ))
+                .await
+                .expect("r")
+                .status(),
+            StatusCode::BAD_REQUEST
+        );
+        assert_eq!(
+            app.clone()
+                .oneshot(req(
+                    "PUT",
+                    &format!("/requirement/{id}/stage/DEV"),
+                    r#"{"status":"PAUSED"}"#,
+                    Some(&t)
+                ))
+                .await
+                .expect("r")
+                .status(),
+            StatusCode::BAD_REQUEST
+        );
         assert_eq!(
             app.oneshot(req(
-                "POST",
-                &format!("/requirement/{id}/dev-status"),
-                r#"{"status":"PAUSED"}"#,
+                "PUT",
+                &format!("/requirement/{id}/stage/DEV"),
+                r#"{"plannedEnd":"2999/12/31"}"#,
                 Some(&t)
             ))
             .await
@@ -1564,8 +1657,8 @@ mod tests {
             .expect("r");
         app.clone()
             .oneshot(req(
-                "POST",
-                &format!("/requirement/{id}/dev-status"),
+                "PUT",
+                &format!("/requirement/{id}/stage/DEV"),
                 r#"{"status":"IN_PROGRESS"}"#,
                 Some(&t),
             ))
@@ -1579,9 +1672,9 @@ mod tests {
         assert_eq!(r.status(), StatusCode::OK);
         let v = body_json(r).await;
         let items = v["items"].as_array().expect("items");
-        assert_eq!(items.len(), 3);
-        assert_eq!(items[0]["field"], "devStatus");
-        assert_eq!(items[0]["oldValue"], "NOT_STARTED");
+        assert_eq!(items.len(), 4);
+        assert_eq!(items[0]["field"], "stage.DEV");
+        assert_eq!(items[0]["oldValue"], "PENDING");
         assert_eq!(items[0]["newValue"], "IN_PROGRESS");
         assert_eq!(items[0]["changedBy"], "u");
         assert!(items[0]["changedAt"].as_i64().is_some());
@@ -1589,28 +1682,17 @@ mod tests {
         assert_eq!(items[2]["field"], "title");
         assert_eq!(items[2]["oldValue"], "登录");
         assert_eq!(items[2]["newValue"], "登入");
+        // 建档钩子在最末(最旧)。
+        assert_eq!(items[3]["field"], "stage.CREATED");
     }
 
     #[tokio::test]
     async fn lifecycle_endpoints_enforce_guards() {
-        // 只有 READ:改状态/挂父 → 403。
+        // 只有 READ:改阶段/挂父 → 403。
         let (app, t) = app_with("REQUIREMENT:READ").await;
         assert_eq!(
             app.clone()
-                .oneshot(req("POST", "/requirement/x/dev-status", r#"{"status":"DONE"}"#, Some(&t)))
-                .await
-                .expect("r")
-                .status(),
-            StatusCode::FORBIDDEN
-        );
-        assert_eq!(
-            app.clone()
-                .oneshot(req(
-                    "POST",
-                    "/requirement/x/test-status",
-                    r#"{"status":"DONE"}"#,
-                    Some(&t)
-                ))
+                .oneshot(req("PUT", "/requirement/x/stage/DEV", r#"{"status":"DONE"}"#, Some(&t)))
                 .await
                 .expect("r")
                 .status(),
