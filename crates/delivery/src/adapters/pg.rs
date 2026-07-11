@@ -270,7 +270,7 @@ mod tests {
         sqlx::query("TRUNCATE ms_delivery_attempt").execute(&pool).await.expect("truncate");
 
         let repo = PgDeliveryRepository::new(pool.clone());
-        let mut a = repo.create("d1", "t1", ExecutorKind::ClaudeCode).await.expect("create");
+        let mut a = repo.create("d1", "t1", ExecutorKind::ClaudeCode, None).await.expect("create");
         a.start_running("run-9").expect("run");
         a.deliver(Deliverable {
             kind: DeliverableKind::PullRequest,
@@ -305,8 +305,8 @@ mod tests {
             .execute(&pool).await.expect("task");
 
         let repo = PgDeliveryRepository::new(pool.clone());
-        repo.create("d1", "t1", ExecutorKind::ClaudeCode).await.expect("create");
-        repo.create("d9", "t9", ExecutorKind::Codex).await.expect("create2");
+        repo.create("d1", "t1", ExecutorKind::ClaudeCode, None).await.expect("create");
+        repo.create("d9", "t9", ExecutorKind::Codex, None).await.expect("create2");
 
         let page = repo
             .list_tasks(&TaskListFilter { limit: 10, ..Default::default() })

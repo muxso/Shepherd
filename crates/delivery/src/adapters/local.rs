@@ -206,6 +206,7 @@ mod tests {
             executor: kind,
             context: None,
             instructions: None,
+            target_runtime: None,
         }
     }
 

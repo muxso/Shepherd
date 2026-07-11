@@ -149,6 +149,7 @@ mod tests {
             executor: ExecutorKind::Codex,
             context: None,
             instructions: None,
+            target_runtime: None,
         }
     }
 
