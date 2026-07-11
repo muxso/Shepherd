@@ -25,6 +25,10 @@ Only the latest `main` receives security fixes while the project is pre-1.0.
   执行。server 是全机群的信任根,务必最小化其暴露面。
 - **必须修改默认管理员口令。**`SHEPHERD_ADMIN_PASSWORD` 使用弱默认值时 server 与
   agent-runtime 启动都会打警告;生产环境应设置强随机口令。
+- **执行机凭据:推荐每台 runtime 一把 API key,而非共享管理员口令。** 管理员通过
+  `POST /system/apikey` 按最小权限(`DELIVERY:UPDATE` + `REQUIREMENT:UPDATE`)
+  为每台执行机签发独立 key,设为 `SHEPHERD_AGENT_KEY`;单台失陷只需吊销那一把
+  key,不用全机群换口令。
 - **建议在反向代理层终结 TLS。** server 自身监听明文 HTTP;公网部署必须置于
   HTTPS 反代之后,agent-runtime 的 `SHEPHERD_BASE` 也应指向 https 地址。
 - **CORS**:仅将可信来源写入 `SHEPHERD_CORS_ORIGINS`,不要使用通配符。
@@ -37,6 +41,11 @@ Before deploying:
   as the fleet's root of trust and minimize its exposure.
 - **Change the default admin password.** Both server and agent-runtime warn at
   startup when `SHEPHERD_ADMIN_PASSWORD` is a weak default.
+- **Runtime credentials: prefer one API key per runtime over a shared admin
+  password.** Issue each runtime its own key via `POST /system/apikey` with the
+  minimal permission set (`DELIVERY:UPDATE` + `REQUIREMENT:UPDATE`) and set it
+  as `SHEPHERD_AGENT_KEY`; a compromised box is contained by revoking that one
+  key instead of rotating a fleet-wide password.
 - **Terminate TLS at a reverse proxy.** The server listens on plain HTTP;
   never expose it directly on the public internet.
 - **CORS**: put only trusted origins in `SHEPHERD_CORS_ORIGINS`.

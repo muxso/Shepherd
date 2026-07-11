@@ -37,17 +37,47 @@ CodeBuddy)。机群架构与服务端配置见 [USAGE.zh-CN.md §7](./USAGE.zh-C
 
 ```bash
 SHEPHERD_BASE=http://<server>:8088 \
-SHEPHERD_ADMIN_PASSWORD=… \
+SHEPHERD_AGENT_KEY=sak_… \
 SHEPHERD_CAPS=<KIND[,KIND…]> \
 RUNTIME_NAME=$(hostname) \
 AGENT_WORKDIR=/path/to/target/repo \
 ./agent-runtime
 ```
 
+### 认证:API key(推荐)
+
+每台 runtime 发一把自己的静态 API key,不要共享管理员口令。key 永不过期,
+吊销只影响这一台 runtime,不牵连其他机器。管理员通过 `POST /system/apikey` 签发:
+
+```bash
+# 1. 管理员登录(拿一次管理员 token)
+TOKEN=$(curl -s -X POST http://<server>:8088/auth/login \
+  -H 'Content-Type: application/json' \
+  -d '{"username":"admin","password":"<admin-password>"}' | jq -r .token)
+
+# 2. 按最小权限集创建 key
+curl -s -X POST http://<server>:8088/system/apikey \
+  -H "Authorization: Bearer $TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{"name":"runtime-buildbox-1","permissions":["DELIVERY:UPDATE","REQUIREMENT:UPDATE"]}'
+# → {"key":"sak_<16hex>.<32hex>", …}  明文只出现这一次,当场保存
+```
+
+runtime key 的最小权限集是 `DELIVERY:UPDATE` + `REQUIREMENT:UPDATE`:
+runtime 调用的机群接口(注册、心跳、认领、交付 events/complete/fail)全部
+校验 `DELIVERY:UPDATE`,设计稿回填(`POST /proposal/{id}/design`)校验
+`REQUIREMENT:UPDATE`。不需要 `READ`,也不需要 `EXECUTE`。
+
+把 key 设为 `SHEPHERD_AGENT_KEY` 即可。设了 key,runtime 直接把它当静态
+bearer 用,不再调用登录接口;收到 `401` 表示 key 已被吊销(重新签发并更新
+环境变量)。未设 key 时回落到 `SHEPHERD_ADMIN_USER` / `SHEPHERD_ADMIN_PASSWORD`
+口令登录。
+
 | 环境变量 | 默认 | 含义 |
 |---|---|---|
 | `SHEPHERD_BASE` | `http://127.0.0.1:9180` | 服务端地址(仅出站,不需要入站端口) |
-| `SHEPHERD_ADMIN_USER` / `SHEPHERD_ADMIN_PASSWORD` | `admin` / `s3cret` | 注册与认领用的登录凭据 |
+| `SHEPHERD_AGENT_KEY` | *(未设)* | 静态 API key(`sak_…`),推荐;设了就优先于口令 |
+| `SHEPHERD_ADMIN_USER` / `SHEPHERD_ADMIN_PASSWORD` | `admin` / `s3cret` | 未设 key 时回落使用的登录凭据 |
 | `SHEPHERD_CAPS` | `CLAUDE_CODE` | 本 runtime 认领的执行者类型,逗号分隔 |
 | `RUNTIME_NAME` | `agent-runtime` | 机群注册表中的显示名 |
 | `AGENT_WORKDIR` | `.` | 任务操作的 git 仓库 |

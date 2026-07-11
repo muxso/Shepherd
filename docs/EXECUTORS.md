@@ -39,17 +39,49 @@ each already logged in (the runtime does not manage CLI auth).
 
 ```bash
 SHEPHERD_BASE=http://<server>:8088 \
-SHEPHERD_ADMIN_PASSWORD=… \
+SHEPHERD_AGENT_KEY=sak_… \
 SHEPHERD_CAPS=<KIND[,KIND…]> \
 RUNTIME_NAME=$(hostname) \
 AGENT_WORKDIR=/path/to/target/repo \
 ./agent-runtime
 ```
 
+### Authentication: API key (recommended)
+
+Give each runtime its own static API key instead of sharing the admin
+password. Keys never expire; revoking one kills exactly that runtime's access
+without touching the others. An admin creates a key via `POST /system/apikey`:
+
+```bash
+# 1. Admin login (once, to get an admin token)
+TOKEN=$(curl -s -X POST http://<server>:8088/auth/login \
+  -H 'Content-Type: application/json' \
+  -d '{"username":"admin","password":"<admin-password>"}' | jq -r .token)
+
+# 2. Create a key with the minimal runtime permission set
+curl -s -X POST http://<server>:8088/system/apikey \
+  -H "Authorization: Bearer $TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{"name":"runtime-buildbox-1","permissions":["DELIVERY:UPDATE","REQUIREMENT:UPDATE"]}'
+# → {"key":"sak_<16hex>.<32hex>", …}  — shown once, store it now
+```
+
+The minimal permission set for a runtime key is `DELIVERY:UPDATE` +
+`REQUIREMENT:UPDATE`: every fleet endpoint the runtime calls (register,
+heartbeat, claim, delivery events/complete/fail) checks `DELIVERY:UPDATE`,
+and the design-draft backfill (`POST /proposal/{id}/design`) checks
+`REQUIREMENT:UPDATE`. Nothing else is needed — no `READ`, no `EXECUTE`.
+
+Pass the key as `SHEPHERD_AGENT_KEY`. When set, the runtime sends it as a
+static bearer token and never calls login; a `401` means the key was revoked
+(re-issue and update the env). When unset, the runtime falls back to logging
+in with `SHEPHERD_ADMIN_USER` / `SHEPHERD_ADMIN_PASSWORD`.
+
 | Env | Default | Meaning |
 |---|---|---|
 | `SHEPHERD_BASE` | `http://127.0.0.1:9180` | Server base URL (outbound only; no inbound port needed) |
-| `SHEPHERD_ADMIN_USER` / `SHEPHERD_ADMIN_PASSWORD` | `admin` / `s3cret` | Login used to register and claim |
+| `SHEPHERD_AGENT_KEY` | *(unset)* | Static API key (`sak_…`), recommended; wins over user/password when set |
+| `SHEPHERD_ADMIN_USER` / `SHEPHERD_ADMIN_PASSWORD` | `admin` / `s3cret` | Fallback login used to register and claim when no key is set |
 | `SHEPHERD_CAPS` | `CLAUDE_CODE` | Comma-separated executor kinds this runtime claims |
 | `RUNTIME_NAME` | `agent-runtime` | Display name in the fleet registry |
 | `AGENT_WORKDIR` | `.` | Git repo the tasks operate on |

@@ -14,6 +14,8 @@ pub struct ServerClient {
     http: reqwest::Client,
     base: String,
     token: String,
+    /// 静态 API key 模式(SHEPHERD_AGENT_KEY):不登录、不刷新,401 即被吊销。
+    static_key: bool,
 }
 
 async fn retry<T, F, Fut>(label: &str, attempts: u32, mut f: F) -> anyhow::Result<T>
@@ -53,11 +55,36 @@ impl ServerClient {
             .and_then(|t| t.as_str())
             .ok_or_else(|| anyhow::anyhow!("login: no token"))?
             .to_string();
-        Ok(Self { http, base: base.to_string(), token })
+        Ok(Self { http, base: base.to_string(), token, static_key: false })
+    }
+
+    /// 静态 API key(`sak_…`)直接当 bearer 用:免登录免刷新,吊销即失效。
+    pub fn with_api_key(base: &str, key: &str) -> anyhow::Result<Self> {
+        let http = reqwest::Client::builder().connect_timeout(Duration::from_secs(10)).build()?;
+        Ok(Self { http, base: base.to_string(), token: key.to_string(), static_key: true })
     }
 
     fn auth(&self, rb: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
         rb.bearer_auth(&self.token).timeout(CONTROL_TIMEOUT)
+    }
+
+    /// 静态 key 遇到 401 说明 key 被吊销/无效,重试不会自愈,记一条明确指引。
+    fn key_revoked(&self, status: reqwest::StatusCode) -> bool {
+        let revoked = self.static_key && status == reqwest::StatusCode::UNAUTHORIZED;
+        if revoked {
+            tracing::error!(
+                "API key 已吊销或无效(HTTP 401):请管理员在 POST /system/apikey 重新签发,并更新 SHEPHERD_AGENT_KEY"
+            );
+        }
+        revoked
+    }
+
+    /// error_for_status 的替身:静态 key 的 401 换成可读错误(登录态维持原样的状态码错误)。
+    fn ensure_ok(&self, resp: reqwest::Response) -> anyhow::Result<reqwest::Response> {
+        if self.key_revoked(resp.status()) {
+            anyhow::bail!("API key 已吊销或无效");
+        }
+        Ok(resp.error_for_status()?)
     }
 
     pub async fn register(
@@ -67,14 +94,12 @@ impl ServerClient {
         max_concurrency: u32,
     ) -> anyhow::Result<String> {
         retry("register", REPORT_ATTEMPTS, || async {
-            let resp: serde_json::Value = self
+            let resp = self
                 .auth(self.http.post(format!("{}/agent/runtime", self.base)))
                 .json(&json!({"name": name, "caps": caps, "maxConcurrency": max_concurrency}))
                 .send()
-                .await?
-                .error_for_status()?
-                .json()
                 .await?;
+            let resp: serde_json::Value = self.ensure_ok(resp)?.json().await?;
             Ok(resp.get("runtimeId").and_then(|v| v.as_str()).unwrap_or_default().to_string())
         })
         .await
@@ -86,6 +111,9 @@ impl ServerClient {
             .send()
             .await?
             .status();
+        if self.key_revoked(code) {
+            anyhow::bail!("API key 已吊销或无效");
+        }
         Ok(code != reqwest::StatusCode::NOT_FOUND)
     }
 
@@ -106,7 +134,7 @@ impl ServerClient {
         if resp.status() == reqwest::StatusCode::NO_CONTENT {
             return Ok(None);
         }
-        let resp = resp.error_for_status()?;
+        let resp = self.ensure_ok(resp)?;
         Ok(Some(resp.json().await?))
     }
 
@@ -128,11 +156,12 @@ impl ServerClient {
         summary: &str,
     ) -> anyhow::Result<()> {
         retry("complete", REPORT_ATTEMPTS, || async {
-            self.auth(self.http.post(format!("{}/delivery/{attempt_id}/complete", self.base)))
+            let resp = self
+                .auth(self.http.post(format!("{}/delivery/{attempt_id}/complete", self.base)))
                 .json(&json!({"kind": kind, "reference": reference, "summary": summary}))
                 .send()
-                .await?
-                .error_for_status()?;
+                .await?;
+            self.ensure_ok(resp)?;
             Ok(())
         })
         .await
@@ -140,11 +169,12 @@ impl ServerClient {
 
     pub async fn fail(&self, attempt_id: &str, error: &str) -> anyhow::Result<()> {
         retry("fail", REPORT_ATTEMPTS, || async {
-            self.auth(self.http.post(format!("{}/delivery/{attempt_id}/fail", self.base)))
+            let resp = self
+                .auth(self.http.post(format!("{}/delivery/{attempt_id}/fail", self.base)))
                 .json(&json!({"error": error}))
                 .send()
-                .await?
-                .error_for_status()?;
+                .await?;
+            self.ensure_ok(resp)?;
             Ok(())
         })
         .await
@@ -152,11 +182,12 @@ impl ServerClient {
 
     pub async fn post_design(&self, proposal_id: &str, doc: &str) -> anyhow::Result<()> {
         retry("post_design", REPORT_ATTEMPTS, || async {
-            self.auth(self.http.post(format!("{}/proposal/{proposal_id}/design", self.base)))
+            let resp = self
+                .auth(self.http.post(format!("{}/proposal/{proposal_id}/design", self.base)))
                 .json(&json!({"doc": doc}))
                 .send()
-                .await?
-                .error_for_status()?;
+                .await?;
+            self.ensure_ok(resp)?;
             Ok(())
         })
         .await
@@ -208,5 +239,47 @@ mod tests {
         .expect_err("should exhaust");
         assert!(err.to_string().contains("always"));
         assert_eq!(calls.load(Ordering::SeqCst), 3);
+    }
+
+    fn static_client() -> ServerClient {
+        ServerClient::with_api_key("http://127.0.0.1:9", "sak_0123456789abcdef.deadbeef")
+            .expect("client")
+    }
+
+    fn login_client() -> ServerClient {
+        ServerClient {
+            http: reqwest::Client::new(),
+            base: "http://127.0.0.1:9".into(),
+            token: "session-token".into(),
+            static_key: false,
+        }
+    }
+
+    #[test]
+    fn with_api_key_is_static_and_attaches_bearer() {
+        let c = static_client();
+        assert!(c.static_key);
+        let req = c.auth(c.http.get("http://127.0.0.1:9/agent/work/claim")).build().expect("req");
+        assert_eq!(
+            req.headers()["authorization"],
+            "Bearer sak_0123456789abcdef.deadbeef",
+            "静态 key 应原样作为 bearer 附带"
+        );
+    }
+
+    #[test]
+    fn static_key_401_is_treated_as_revoked() {
+        let c = static_client();
+        assert!(c.key_revoked(reqwest::StatusCode::UNAUTHORIZED));
+        // 非 401 不算吊销(403 是权限不足、5xx 是服务端问题,按原有重试语义走)。
+        assert!(!c.key_revoked(reqwest::StatusCode::FORBIDDEN));
+        assert!(!c.key_revoked(reqwest::StatusCode::INTERNAL_SERVER_ERROR));
+    }
+
+    #[test]
+    fn login_mode_401_keeps_original_semantics() {
+        // 登录态的 401 不是"key 被吊销",维持原有状态码错误路径。
+        let c = login_client();
+        assert!(!c.key_revoked(reqwest::StatusCode::UNAUTHORIZED));
     }
 }
