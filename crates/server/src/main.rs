@@ -69,9 +69,9 @@ use skill::application::{CreateSkillUseCase, SkillService};
 use system_setting::adapters::auth::Argon2PasswordHasher;
 use system_setting::adapters::oidc::{FeishuProvider, WecomProvider};
 use system_setting::adapters::pg::{
-    PgApiKeyRepository, PgCredentialRepository, PgExternalUserRepository, PgOrgRepository,
-    PgRoleRepository, PgSessionStore, PgUserDirectory, PgUserRepository, PgUserRoleQuery,
-    PgUserRoleRepository,
+    PgApiKeyRepository, PgCredentialRepository, PgExternalUserRepository, PgLlmModelRepository,
+    PgOrgRepository, PgRoleRepository, PgSessionStore, PgUserDirectory, PgUserRepository,
+    PgUserRoleQuery, PgUserRoleRepository,
 };
 use system_setting::adapters::ApiKeySessionStore;
 use system_setting::application::{
@@ -270,6 +270,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let apikey_routes = system_setting::adapters::apikey_http::router(
         apikeys.clone(),
         Arc::new(Argon2PasswordHasher),
+        sessions.clone(),
+    );
+
+    // 个人模型设置(/me/llm-model)
+    let llm_model_routes = system_setting::adapters::llm_model_http::router(
+        Arc::new(PgLlmModelRepository::new(pool.clone())),
         sessions.clone(),
     );
 
@@ -631,7 +637,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .merge(oidc_routes)
                 .merge(org_routes)
                 .merge(role_routes)
-                .merge(apikey_routes),
+                .merge(apikey_routes)
+                .merge(llm_model_routes),
         ),
         routes::group(
             "project",

@@ -10,9 +10,10 @@ use crate::ports::{
     AuthRepoError, CredentialRepository, PasswordHasher, SessionStore, UserCredential,
 };
 
+// Mutex:自助改密要求在共享后仍可写(axum state 克隆间共享同一份)。
 #[derive(Clone, Default)]
 pub struct InMemoryCredentialRepository {
-    users: HashMap<String, UserCredential>,
+    users: Arc<Mutex<HashMap<String, UserCredential>>>,
 }
 
 impl InMemoryCredentialRepository {
@@ -21,7 +22,7 @@ impl InMemoryCredentialRepository {
     }
 
     pub fn with_user<I, S>(
-        mut self,
+        self,
         username: &str,
         user_id: &str,
         password_hash: &str,
@@ -31,7 +32,7 @@ impl InMemoryCredentialRepository {
         I: IntoIterator<Item = S>,
         S: Into<String>,
     {
-        self.users.insert(
+        self.users.lock().unwrap_or_else(std::sync::PoisonError::into_inner).insert(
             username.to_string(),
             UserCredential {
                 user_id: user_id.to_string(),
@@ -49,7 +50,31 @@ impl CredentialRepository for InMemoryCredentialRepository {
         &self,
         username: &str,
     ) -> Result<Option<UserCredential>, AuthRepoError> {
-        Ok(self.users.get(username).cloned())
+        let users = self.users.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        Ok(users.get(username).cloned())
+    }
+
+    async fn find_by_user_id(
+        &self,
+        user_id: &str,
+    ) -> Result<Option<UserCredential>, AuthRepoError> {
+        let users = self.users.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        Ok(users.values().find(|c| c.user_id == user_id).cloned())
+    }
+
+    async fn update_password(
+        &self,
+        user_id: &str,
+        password_hash: &str,
+    ) -> Result<bool, AuthRepoError> {
+        let mut users = self.users.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        match users.values_mut().find(|c| c.user_id == user_id) {
+            Some(c) => {
+                c.password_hash = password_hash.to_string();
+                Ok(true)
+            }
+            None => Ok(false),
+        }
     }
 }
 

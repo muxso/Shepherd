@@ -30,6 +30,8 @@ impl ApiKeyRepository for InMemoryApiKeyRepository {
         name: &str,
         secret_hash: &str,
         permissions: &[String],
+        user_id: &str,
+        expires_at_ms: Option<i64>,
     ) -> Result<ApiKeyRecord, ApiKeyRepoError> {
         let mut st = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         if st.values().any(|r| r.name == name) {
@@ -42,6 +44,8 @@ impl ApiKeyRepository for InMemoryApiKeyRepository {
             permissions: permissions.to_vec(),
             created_at_ms: now_ms(),
             revoked: false,
+            user_id: user_id.to_string(),
+            expires_at_ms,
         };
         st.insert(id.to_string(), rec.clone());
         Ok(rec)
@@ -52,9 +56,22 @@ impl ApiKeyRepository for InMemoryApiKeyRepository {
         Ok(st.values().cloned().collect())
     }
 
+    async fn list_by_user(&self, user_id: &str) -> Result<Vec<ApiKeyRecord>, ApiKeyRepoError> {
+        let st = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        Ok(st.values().filter(|r| r.user_id == user_id).cloned().collect())
+    }
+
+    async fn find(&self, id: &str) -> Result<Option<ApiKeyRecord>, ApiKeyRepoError> {
+        let st = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        Ok(st.get(id).cloned())
+    }
+
     async fn find_active(&self, id: &str) -> Result<Option<ApiKeyRecord>, ApiKeyRepoError> {
         let st = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-        Ok(st.get(id).filter(|r| !r.revoked).cloned())
+        Ok(st
+            .get(id)
+            .filter(|r| !r.revoked && r.expires_at_ms.is_none_or(|exp| exp > now_ms()))
+            .cloned())
     }
 
     async fn revoke(&self, id: &str) -> Result<bool, ApiKeyRepoError> {
@@ -65,6 +82,17 @@ impl ApiKeyRepository for InMemoryApiKeyRepository {
                 Ok(true)
             }
             _ => Ok(false),
+        }
+    }
+
+    async fn set_enabled(&self, id: &str, enabled: bool) -> Result<bool, ApiKeyRepoError> {
+        let mut st = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        match st.get_mut(id) {
+            Some(r) => {
+                r.revoked = !enabled;
+                Ok(true)
+            }
+            None => Ok(false),
         }
     }
 }

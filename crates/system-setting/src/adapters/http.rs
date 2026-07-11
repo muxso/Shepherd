@@ -59,6 +59,8 @@ pub fn router(
         .route("/auth/login", post(login_handler))
         .route("/auth/logout", post(logout_handler))
         .route("/auth/refresh", post(refresh_handler))
+        .route("/auth/me", get(me_handler))
+        .route("/auth/password", post(change_password))
         // 静态段 /names 必须先于 /{id} 注册,否则被通配吞掉
         .route("/system/user/names", get(resolve_names))
         .route("/system/user", post(create_user).get(list_users))
@@ -142,6 +144,56 @@ async fn refresh_handler(State(st): State<AppState>, headers: HeaderMap) -> Resp
         }
         Ok(None) => (StatusCode::UNAUTHORIZED, "invalid or expired token").into_response(),
         Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "auth error").into_response(),
+    }
+}
+
+#[derive(Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+struct MeResponse {
+    user_id: String,
+    /// 原始权限串(`RESOURCE:A+B`),与登录会话一致。
+    permissions: Vec<String>,
+}
+
+#[utoipa::path(get, path = "/auth/me", tag = "auth", responses((status = 200, body = MeResponse), (status = 401)), security(("bearer" = [])))]
+async fn me_handler(user: AuthUser) -> Response {
+    let body = MeResponse { permissions: user.permissions.to_raw(), user_id: user.user_id };
+    (StatusCode::OK, Json(body)).into_response()
+}
+
+#[derive(Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+struct ChangePasswordBody {
+    old_password: String,
+    new_password: String,
+}
+
+// 自助改密:验旧密码走登录同一套哈希校验;改完不吊销现有会话。
+#[utoipa::path(post, path = "/auth/password", tag = "auth", request_body = ChangePasswordBody, responses((status = 204), (status = 400), (status = 401), (status = 409)), security(("bearer" = [])))]
+async fn change_password(
+    user: AuthUser,
+    State(st): State<AppState>,
+    Json(req): Json<ChangePasswordBody>,
+) -> Response {
+    if req.new_password.trim().chars().count() < 8 {
+        return (StatusCode::BAD_REQUEST, "new password must be at least 8 chars").into_response();
+    }
+    let cred = match st.creds.find_by_user_id(&user.user_id).await {
+        Ok(Some(c)) => c,
+        // 凭据不在库里:如 SHEPHERD_ADMIN_PASSWORD 环境注入的内置账号,库侧改不动。
+        Ok(None) => {
+            return (StatusCode::CONFLICT, "password managed by environment").into_response()
+        }
+        Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "auth error").into_response(),
+    };
+    if !st.hasher.verify(&req.old_password, &cred.password_hash) {
+        return (StatusCode::UNAUTHORIZED, "wrong password").into_response();
+    }
+    let hash = st.hasher.hash(&req.new_password);
+    match st.creds.update_password(&user.user_id, &hash).await {
+        Ok(true) => StatusCode::NO_CONTENT.into_response(),
+        Ok(false) => (StatusCode::CONFLICT, "password managed by environment").into_response(),
+        Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
     }
 }
 
@@ -809,12 +861,13 @@ async fn revoke_role(
 #[derive(OpenApi)]
 #[openapi(
     paths(
-        login_handler, logout_handler, refresh_handler, resolve_names, oidc_authorize, oidc_callback,
+        login_handler, logout_handler, refresh_handler, me_handler, change_password,
+        resolve_names, oidc_authorize, oidc_callback,
         create_user, list_users, get_user, update_user, delete_user,
         create_org, list_orgs, get_org, update_org, delete_org,
         create_role, list_roles, get_role, update_role, delete_role, grant_role, revoke_role
     ),
-    components(schemas(LoginRequest, LoginResponse, CreateUserRequest, UserResponse, UserPage, UpdateUserBody, OrgResponse, OrgBody, OrgPage, RoleResponse, RoleBody, RolePage, GrantBody)),
+    components(schemas(LoginRequest, LoginResponse, MeResponse, ChangePasswordBody, CreateUserRequest, UserResponse, UserPage, UpdateUserBody, OrgResponse, OrgBody, OrgPage, RoleResponse, RoleBody, RolePage, GrantBody)),
     tags((name = "auth", description = "鉴权"), (name = "user", description = "用户管理"), (name = "organization", description = "组织"), (name = "role", description = "角色 / 授权"))
 )]
 struct ApiDoc;
@@ -822,6 +875,7 @@ struct ApiDoc;
 pub fn openapi() -> utoipa::openapi::OpenApi {
     let mut doc = ApiDoc::openapi();
     doc.merge(super::apikey_http::openapi());
+    doc.merge(super::llm_model_http::openapi());
     doc
 }
 
@@ -967,6 +1021,65 @@ mod tests {
         // 无令牌刷新 → 401。
         let no_tok = app.oneshot(post("/auth/refresh", "", None)).await.expect("resp");
         assert_eq!(no_tok.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn me_returns_session_user_and_permissions() {
+        let app = app();
+        let t = token(&app, "viewer", "pw").await.expect("token");
+        let resp = app.clone().oneshot(req("GET", "/auth/me", "", Some(&t))).await.expect("r");
+        assert_eq!(resp.status(), StatusCode::OK);
+        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.expect("body");
+        let v: serde_json::Value = serde_json::from_slice(&bytes).expect("json");
+        assert_eq!(v["userId"], "u-view");
+        assert_eq!(v["permissions"], serde_json::json!(["SYSTEM_USER:READ"]));
+
+        let anon = app.oneshot(req("GET", "/auth/me", "", None)).await.expect("r");
+        assert_eq!(anon.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn change_password_happy_path_keeps_session_alive() {
+        let app = app();
+        let t = token(&app, "admin", "secret").await.expect("token");
+        let body = r#"{"oldPassword":"secret","newPassword":"n3w-secret"}"#;
+        let resp = app.clone().oneshot(post("/auth/password", body, Some(&t))).await.expect("r");
+        assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+        // 旧口令失效,新口令可登录;既有会话不吊销
+        assert!(token(&app, "admin", "secret").await.is_none());
+        assert!(token(&app, "admin", "n3w-secret").await.is_some());
+        let still = app.oneshot(req("GET", "/auth/me", "", Some(&t))).await.expect("r");
+        assert_eq!(still.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn change_password_wrong_old_is_401_weak_new_is_400() {
+        let app = app();
+        let t = token(&app, "admin", "secret").await.expect("token");
+        let wrong = r#"{"oldPassword":"nope","newPassword":"n3w-secret"}"#;
+        let r = app.clone().oneshot(post("/auth/password", wrong, Some(&t))).await.expect("r");
+        assert_eq!(r.status(), StatusCode::UNAUTHORIZED);
+        // trim 后不足 8 字符 → 400(旧口令正确与否都不放行)
+        let weak = r#"{"oldPassword":"secret","newPassword":"  short1 "}"#;
+        let r = app.clone().oneshot(post("/auth/password", weak, Some(&t))).await.expect("r");
+        assert_eq!(r.status(), StatusCode::BAD_REQUEST);
+        // 未改动:旧口令仍可登录
+        assert!(token(&app, "admin", "secret").await.is_some());
+    }
+
+    #[tokio::test]
+    async fn change_password_env_managed_user_is_409() {
+        let (app, sessions) = app_store();
+        // 会话有效但凭据不在库里 → 视作环境注入的内置账号
+        let t = sessions
+            .create("u-env", kernel::permission::PermissionSet::default(), 3600)
+            .await
+            .expect("s");
+        let body = r#"{"oldPassword":"whatever","newPassword":"n3w-secret"}"#;
+        let r = app.oneshot(post("/auth/password", body, Some(&t))).await.expect("r");
+        assert_eq!(r.status(), StatusCode::CONFLICT);
+        let bytes = axum::body::to_bytes(r.into_body(), usize::MAX).await.expect("body");
+        assert_eq!(bytes.as_ref(), b"password managed by environment");
     }
 
     #[tokio::test]

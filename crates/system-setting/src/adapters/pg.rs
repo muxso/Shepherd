@@ -10,9 +10,10 @@ use crate::domain::{
 };
 use crate::ports::{
     ApiKeyRecord, ApiKeyRepoError, ApiKeyRepository, AuthRepoError, CredentialRepository,
-    DirectoryError, ExternalUserRepository, LinkedUser, OrgRepoError, OrgRepository, RepoError,
-    RoleRepoError, RoleRepository, SessionStore, UserCredential, UserDirectory, UserRepository,
-    UserRoleQuery, UserRoleRepository,
+    DirectoryError, ExternalUserRepository, LinkedUser, LlmModelPatch, LlmModelRecord,
+    LlmModelRepoError, LlmModelRepository, OrgRepoError, OrgRepository, RepoError, RoleRepoError,
+    RoleRepository, SessionStore, UserCredential, UserDirectory, UserRepository, UserRoleQuery,
+    UserRoleRepository,
 };
 
 fn repo_err(e: sqlx::Error) -> RepoError {
@@ -265,6 +266,40 @@ impl CredentialRepository for PgCredentialRepository {
             password_hash: r.try_get("password_hash").map_err(auth_err)?,
             permissions: r.try_get::<Vec<String>, _>("permissions").map_err(auth_err)?,
         }))
+    }
+
+    async fn find_by_user_id(
+        &self,
+        user_id: &str,
+    ) -> Result<Option<UserCredential>, AuthRepoError> {
+        let row = sqlx::query(
+            "SELECT user_id, password_hash, permissions FROM ms_user_credential WHERE user_id = $1",
+        )
+        .bind(user_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(auth_err)?;
+        let Some(r) = row else { return Ok(None) };
+        Ok(Some(UserCredential {
+            user_id: r.try_get("user_id").map_err(auth_err)?,
+            password_hash: r.try_get("password_hash").map_err(auth_err)?,
+            permissions: r.try_get::<Vec<String>, _>("permissions").map_err(auth_err)?,
+        }))
+    }
+
+    async fn update_password(
+        &self,
+        user_id: &str,
+        password_hash: &str,
+    ) -> Result<bool, AuthRepoError> {
+        let res =
+            sqlx::query("UPDATE ms_user_credential SET password_hash = $2 WHERE user_id = $1")
+                .bind(user_id)
+                .bind(password_hash)
+                .execute(&self.pool)
+                .await
+                .map_err(auth_err)?;
+        Ok(res.rows_affected() > 0)
     }
 
     /// 无凭证时按用户名新建并授只读权限
@@ -613,12 +648,15 @@ fn row_to_apikey(row: &sqlx::postgres::PgRow) -> Result<ApiKeyRecord, ApiKeyRepo
         permissions: row.try_get::<Vec<String>, _>("permissions").map_err(err)?,
         created_at_ms: row.try_get("created_at_ms").map_err(err)?,
         revoked: row.try_get("revoked").map_err(err)?,
+        user_id: row.try_get("user_id").map_err(err)?,
+        expires_at_ms: row.try_get::<Option<i64>, _>("expires_at_ms").map_err(err)?,
     })
 }
 
-// created_at 是 TIMESTAMPTZ,这里统一转 epoch 毫秒,与全库 created_at(BIGINT ms)口径一致。
+// created_at/expires_at 是 TIMESTAMPTZ,这里统一转 epoch 毫秒,与全库 created_at(BIGINT ms)口径一致。
 const APIKEY_COLS: &str = "id, name, secret_hash, permissions, \
-     (extract(epoch from created_at) * 1000)::bigint AS created_at_ms, revoked";
+     (extract(epoch from created_at) * 1000)::bigint AS created_at_ms, revoked, user_id, \
+     (extract(epoch from expires_at) * 1000)::bigint AS expires_at_ms";
 
 #[derive(Clone)]
 pub struct PgApiKeyRepository {
@@ -639,15 +677,21 @@ impl ApiKeyRepository for PgApiKeyRepository {
         name: &str,
         secret_hash: &str,
         permissions: &[String],
+        user_id: &str,
+        expires_at_ms: Option<i64>,
     ) -> Result<ApiKeyRecord, ApiKeyRepoError> {
+        // to_timestamp(NULL) 即 NULL,永久 key 直接落 NULL。
         let row = sqlx::query(&format!(
-            "INSERT INTO ms_apikey (id, name, secret_hash, permissions) \
-             VALUES ($1, $2, $3, $4) RETURNING {APIKEY_COLS}"
+            "INSERT INTO ms_apikey (id, name, secret_hash, permissions, user_id, expires_at) \
+             VALUES ($1, $2, $3, $4, $5, to_timestamp($6::bigint / 1000.0)) \
+             RETURNING {APIKEY_COLS}"
         ))
         .bind(id)
         .bind(name)
         .bind(secret_hash)
         .bind(permissions)
+        .bind(user_id)
+        .bind(expires_at_ms)
         .fetch_one(&self.pool)
         .await
         .map_err(apikey_err)?;
@@ -663,9 +707,30 @@ impl ApiKeyRepository for PgApiKeyRepository {
         rows.iter().map(row_to_apikey).collect()
     }
 
+    async fn list_by_user(&self, user_id: &str) -> Result<Vec<ApiKeyRecord>, ApiKeyRepoError> {
+        let rows = sqlx::query(&format!(
+            "SELECT {APIKEY_COLS} FROM ms_apikey WHERE user_id = $1 ORDER BY created_at, id"
+        ))
+        .bind(user_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(apikey_err)?;
+        rows.iter().map(row_to_apikey).collect()
+    }
+
+    async fn find(&self, id: &str) -> Result<Option<ApiKeyRecord>, ApiKeyRepoError> {
+        let row = sqlx::query(&format!("SELECT {APIKEY_COLS} FROM ms_apikey WHERE id = $1"))
+            .bind(id)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(apikey_err)?;
+        row.as_ref().map(row_to_apikey).transpose()
+    }
+
     async fn find_active(&self, id: &str) -> Result<Option<ApiKeyRecord>, ApiKeyRepoError> {
         let row = sqlx::query(&format!(
-            "SELECT {APIKEY_COLS} FROM ms_apikey WHERE id = $1 AND revoked = false"
+            "SELECT {APIKEY_COLS} FROM ms_apikey WHERE id = $1 AND revoked = false \
+             AND (expires_at IS NULL OR expires_at > now())"
         ))
         .bind(id)
         .fetch_optional(&self.pool)
@@ -681,6 +746,124 @@ impl ApiKeyRepository for PgApiKeyRepository {
                 .execute(&self.pool)
                 .await
                 .map_err(apikey_err)?;
+        Ok(res.rows_affected() > 0)
+    }
+
+    async fn set_enabled(&self, id: &str, enabled: bool) -> Result<bool, ApiKeyRepoError> {
+        let res = sqlx::query("UPDATE ms_apikey SET revoked = NOT $2 WHERE id = $1")
+            .bind(id)
+            .bind(enabled)
+            .execute(&self.pool)
+            .await
+            .map_err(apikey_err)?;
+        Ok(res.rows_affected() > 0)
+    }
+}
+
+fn llm_err(e: sqlx::Error) -> LlmModelRepoError {
+    if e.as_database_error().is_some_and(|d| d.is_unique_violation()) {
+        return LlmModelRepoError::Duplicate;
+    }
+    LlmModelRepoError::Backend(e.to_string())
+}
+
+fn row_to_llm_model(row: &sqlx::postgres::PgRow) -> Result<LlmModelRecord, LlmModelRepoError> {
+    let err = |e: sqlx::Error| LlmModelRepoError::Backend(e.to_string());
+    Ok(LlmModelRecord {
+        id: row.try_get("id").map_err(err)?,
+        user_id: row.try_get("user_id").map_err(err)?,
+        provider: row.try_get("provider").map_err(err)?,
+        name: row.try_get("name").map_err(err)?,
+        base_url: row.try_get("base_url").map_err(err)?,
+        api_key: row.try_get("api_key").map_err(err)?,
+        enabled: row.try_get("enabled").map_err(err)?,
+        created_at_ms: row.try_get("created_at_ms").map_err(err)?,
+    })
+}
+
+// id 是 UUID,对外统一转 text;路径参数按 text 比较,非法 uuid 自然查不到而非报错。
+const LLM_MODEL_COLS: &str = "id::text AS id, user_id, provider, name, base_url, api_key, \
+     enabled, (extract(epoch from created_at) * 1000)::bigint AS created_at_ms";
+
+#[derive(Clone)]
+pub struct PgLlmModelRepository {
+    pool: PgPool,
+}
+
+impl PgLlmModelRepository {
+    pub fn new(pool: PgPool) -> Self {
+        Self { pool }
+    }
+}
+
+#[async_trait]
+impl LlmModelRepository for PgLlmModelRepository {
+    async fn insert(
+        &self,
+        user_id: &str,
+        provider: &str,
+        name: &str,
+        base_url: &str,
+        api_key: &str,
+    ) -> Result<LlmModelRecord, LlmModelRepoError> {
+        let row = sqlx::query(&format!(
+            "INSERT INTO ms_user_llm_model (user_id, provider, name, base_url, api_key) \
+             VALUES ($1, $2, $3, $4, $5) RETURNING {LLM_MODEL_COLS}"
+        ))
+        .bind(user_id)
+        .bind(provider)
+        .bind(name)
+        .bind(base_url)
+        .bind(api_key)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(llm_err)?;
+        row_to_llm_model(&row)
+    }
+
+    async fn list_by_user(&self, user_id: &str) -> Result<Vec<LlmModelRecord>, LlmModelRepoError> {
+        let rows = sqlx::query(&format!(
+            "SELECT {LLM_MODEL_COLS} FROM ms_user_llm_model WHERE user_id = $1 \
+             ORDER BY created_at, id"
+        ))
+        .bind(user_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(llm_err)?;
+        rows.iter().map(row_to_llm_model).collect()
+    }
+
+    async fn update(
+        &self,
+        user_id: &str,
+        id: &str,
+        patch: LlmModelPatch,
+    ) -> Result<Option<LlmModelRecord>, LlmModelRepoError> {
+        let row = sqlx::query(&format!(
+            "UPDATE ms_user_llm_model SET \
+               name = COALESCE($3, name), base_url = COALESCE($4, base_url), \
+               api_key = COALESCE($5, api_key), enabled = COALESCE($6, enabled) \
+             WHERE id::text = $1 AND user_id = $2 RETURNING {LLM_MODEL_COLS}"
+        ))
+        .bind(id)
+        .bind(user_id)
+        .bind(patch.name)
+        .bind(patch.base_url)
+        .bind(patch.api_key)
+        .bind(patch.enabled)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(llm_err)?;
+        row.as_ref().map(row_to_llm_model).transpose()
+    }
+
+    async fn delete(&self, user_id: &str, id: &str) -> Result<bool, LlmModelRepoError> {
+        let res = sqlx::query("DELETE FROM ms_user_llm_model WHERE id::text = $1 AND user_id = $2")
+            .bind(id)
+            .bind(user_id)
+            .execute(&self.pool)
+            .await
+            .map_err(llm_err)?;
         Ok(res.rows_affected() > 0)
     }
 }
@@ -811,15 +994,24 @@ mod tests {
 
         let repo = PgApiKeyRepository::new(pool);
         let rec = repo
-            .insert("0123456789abcdef", "runner-1", "$argon2$fake", &["DELIVERY:READ".to_string()])
+            .insert(
+                "0123456789abcdef",
+                "runner-1",
+                "$argon2$fake",
+                &["DELIVERY:READ".to_string()],
+                "",
+                None,
+            )
             .await
             .expect("insert");
         assert_eq!(rec.name, "runner-1");
         assert!(rec.created_at_ms > 0);
         assert!(!rec.revoked);
+        assert_eq!(rec.user_id, "");
+        assert!(rec.expires_at_ms.is_none());
 
         // 重名 → NameExists
-        let dup = repo.insert("fedcba9876543210", "runner-1", "h", &[]).await;
+        let dup = repo.insert("fedcba9876543210", "runner-1", "h", &[], "", None).await;
         assert!(matches!(dup, Err(ApiKeyRepoError::NameExists)));
 
         let active = repo.find_active(&rec.id).await.expect("q").expect("some");
@@ -831,6 +1023,90 @@ mod tests {
         // 已吊销后再吊销 → false;列表仍保留审计记录
         assert!(!repo.revoke(&rec.id).await.expect("revoke2"));
         assert!(repo.list().await.expect("list")[0].revoked);
+        // 恢复启用后重新可鉴权
+        assert!(repo.set_enabled(&rec.id, true).await.expect("enable"));
+        assert!(repo.find_active(&rec.id).await.expect("q").is_some());
+    }
+
+    #[tokio::test]
+    #[ignore = "需要 DATABASE_URL 指向一个 PostgreSQL 实例"]
+    async fn pg_apikey_owner_and_expiry_roundtrip() {
+        let url = std::env::var("DATABASE_URL").expect("set DATABASE_URL");
+        let pool = PgPool::connect(&url).await.expect("connect");
+        migrate::run(&pool).await.expect("migrate");
+        sqlx::raw_sql("TRUNCATE ms_apikey").execute(&pool).await.expect("trunc");
+
+        let repo = PgApiKeyRepository::new(pool);
+        let now = now_ms();
+        let alive = repo
+            .insert("aaaa000000000001", "mine-alive", "h1", &[], "u-alice", Some(now + 3_600_000))
+            .await
+            .expect("insert");
+        let dead = repo
+            .insert("aaaa000000000002", "mine-dead", "h2", &[], "u-alice", Some(now - 1_000))
+            .await
+            .expect("insert");
+        repo.insert("aaaa000000000003", "other", "h3", &[], "u-bob", None).await.expect("insert");
+
+        assert_eq!(alive.user_id, "u-alice");
+        // 时间戳经 TIMESTAMPTZ 往返,毫秒级容差
+        assert!((alive.expires_at_ms.expect("exp") - (now + 3_600_000)).abs() < 5);
+
+        let mine = repo.list_by_user("u-alice").await.expect("list");
+        assert_eq!(mine.len(), 2);
+        // 已过期:管理路径可见,鉴权路径拒绝
+        assert!(repo.find(&dead.id).await.expect("q").is_some());
+        assert!(repo.find_active(&dead.id).await.expect("q").is_none());
+        assert!(repo.find_active(&alive.id).await.expect("q").is_some());
+    }
+
+    #[tokio::test]
+    #[ignore = "需要 DATABASE_URL 指向一个 PostgreSQL 实例"]
+    async fn pg_llm_model_roundtrip() {
+        let url = std::env::var("DATABASE_URL").expect("set DATABASE_URL");
+        let pool = PgPool::connect(&url).await.expect("connect");
+        migrate::run(&pool).await.expect("migrate");
+        sqlx::raw_sql("TRUNCATE ms_user_llm_model").execute(&pool).await.expect("trunc");
+
+        let repo = PgLlmModelRepository::new(pool);
+        let rec = repo
+            .insert("u-alice", "deepseek", "deepseek-chat", "https://api.deepseek.com", "sk-12345")
+            .await
+            .expect("insert");
+        assert!(rec.enabled && rec.created_at_ms > 0);
+
+        // 同 user+provider+name → Duplicate;其他用户同名不冲突
+        let dup = repo.insert("u-alice", "deepseek", "deepseek-chat", "", "").await;
+        assert!(matches!(dup, Err(LlmModelRepoError::Duplicate)));
+        repo.insert("u-bob", "deepseek", "deepseek-chat", "", "").await.expect("other user ok");
+
+        assert_eq!(repo.list_by_user("u-alice").await.expect("list").len(), 1);
+
+        let patch = LlmModelPatch {
+            name: Some("deepseek-reasoner".into()),
+            enabled: Some(false),
+            ..Default::default()
+        };
+        let updated = repo.update("u-alice", &rec.id, patch).await.expect("update").expect("some");
+        assert_eq!(updated.name, "deepseek-reasoner");
+        assert!(!updated.enabled);
+        assert_eq!(updated.api_key, "sk-12345"); // 未动的字段保持原值
+
+        // 非本人 → None;非法 uuid → None 而非报错
+        assert!(repo
+            .update("u-bob", &rec.id, LlmModelPatch::default())
+            .await
+            .expect("update")
+            .is_none());
+        assert!(repo
+            .update("u-alice", "not-a-uuid", LlmModelPatch::default())
+            .await
+            .expect("update")
+            .is_none());
+
+        assert!(!repo.delete("u-bob", &rec.id).await.expect("del"));
+        assert!(repo.delete("u-alice", &rec.id).await.expect("del"));
+        assert!(repo.list_by_user("u-alice").await.expect("list").is_empty());
     }
 
     #[tokio::test]

@@ -162,7 +162,7 @@ mod tests {
 
     async fn seed(keys: &InMemoryApiKeyRepository) {
         // PlainPasswordHasher:哈希 = 明文
-        keys.insert(ID, "runner-1", SECRET, &["DELIVERY:READ+UPDATE".to_string()])
+        keys.insert(ID, "runner-1", SECRET, &["DELIVERY:READ+UPDATE".to_string()], "u-owner", None)
             .await
             .expect("seed");
     }
@@ -197,6 +197,13 @@ mod tests {
         for t in ["sak_", "sak_nodot", "sak_.", &format!("sak_{ID}."), "sak_UPPER.HEX"] {
             assert!(store.get(t).await.expect("ok").is_none(), "{t}");
         }
+    }
+
+    #[tokio::test]
+    async fn expired_key_rejected() {
+        let (store, keys) = store(Duration::ZERO);
+        keys.insert(ID, "runner-1", SECRET, &[], "u-owner", Some(1)).await.expect("seed expired");
+        assert!(store.get(&token()).await.expect("ok").is_none());
     }
 
     #[tokio::test]

@@ -16,6 +16,24 @@ pub trait CredentialRepository: Send + Sync {
         username: &str,
     ) -> Result<Option<UserCredential>, AuthRepoError>;
 
+    /// 会话只带 user_id,自助改密按 user_id 取凭据。
+    /// 默认 None:凭据不在库里(如环境变量注入的内置账号),库侧改不动。
+    async fn find_by_user_id(
+        &self,
+        _user_id: &str,
+    ) -> Result<Option<UserCredential>, AuthRepoError> {
+        Ok(None)
+    }
+
+    /// 更新密码哈希;`false` 表示库中无该用户凭据。
+    async fn update_password(
+        &self,
+        _user_id: &str,
+        _password_hash: &str,
+    ) -> Result<bool, AuthRepoError> {
+        Ok(false)
+    }
+
     /// 默认 no-op,仅 PG 实现真正重置
     async fn reset_password(
         &self,
