@@ -724,5 +724,25 @@ export function useListView<T>({
     </Space>
   )
 
-  return { toolbar, rows: filtered, columns: columns.filter((c) => !hiddenCols.includes(c.key)) }
+  // 列头查找/筛选:列 key 与筛选字段 key 相同即自动挂上(text → 放大镜搜索;enum/tags → 漏斗多选),
+  // 与工具栏筛选叠加生效;列自带 filterDropdown/filters 时不覆盖。
+  const withHeaderFilter = (c: ListColumn<T>): ColumnType<T> => {
+    if (c.filterDropdown || c.filters || c.onFilter) return c
+    const f = fields.find((x) => x.key === c.key)
+    if (!f) return c
+    if (f.type === 'text') return { ...c, ...columnSearch((r) => String(f.get(r) ?? ''), t) }
+    if ((f.type === 'enum' || f.type === 'tags') && f.options?.length)
+      return {
+        ...c,
+        filters: f.options.map((o) => ({ text: o.label, value: o.value })),
+        filterSearch: f.options.length > 8,
+        onFilter: (v, r) => {
+          const got = f.get(r)
+          return Array.isArray(got) ? got.includes(String(v)) : got === v
+        },
+      }
+    return c
+  }
+
+  return { toolbar, rows: filtered, columns: columns.filter((c) => !hiddenCols.includes(c.key)).map(withHeaderFilter) }
 }

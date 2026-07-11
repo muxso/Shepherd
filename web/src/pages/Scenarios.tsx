@@ -10,6 +10,7 @@ import { useApp } from '../context'
 import { methodColor, statusColor, outcomeColor, priorityColor } from '../components/tags'
 import { Workspace, useWorkTabs, useWorkspaceExtraSlot, useOpenParam } from '../components/Workspace'
 import { ModuleTreePanel, inSelectedModule } from '../components/ModuleTreePanel'
+import { columnSearch } from '../components/ListView'
 import AssertionEditor from '../components/AssertionEditor'
 import ProcessorEditor from '../components/ProcessorEditor'
 import KVEditor, { type KVRow } from '../components/KVEditor'
@@ -266,15 +267,18 @@ export default function Scenarios() {
     })
   }
   const muted = (v?: string) => <span style={{ color: 'var(--text-3)' }}>{v || '—'}</span>
+  // 列头查找/筛选(对齐接口定义页):文本列放大镜搜索,枚举列漏斗多选;与顶部搜索/筛选叠加生效。
+  const allSceneTags = [...new Set(filtered.flatMap((s) => ((s.meta?.tags as string[] | undefined) || [])))]
+  const allSceneEnvs = [...new Set(filtered.map((s) => (s.meta?.envName as string | undefined) || '').filter(Boolean))]
   const richCols: ColumnsType<Scenario> = [
-    { key: 'id', title: 'ID', dataIndex: 'id', width: 110, render: (v: string) => <span className="ms-mono" style={{ fontSize: 12 }}>{v.slice(0, 8)}</span> },
-    { key: 'name', title: t('scenario.colSceneName', '场景名称'), dataIndex: 'name', ellipsis: true, render: (v: string) => <span style={{ fontWeight: 500 }}>{v}</span> },
-    { key: 'priority', title: t('scenario.priority', '场景等级'), width: 110, render: (_v, s) => { const p = (s.meta?.priority as string) || 'P0'; return <span style={{ color: priorityColor(p) }}>● {p}</span> } },
-    { key: 'status', title: t('scenario.colStatus', '状态'), dataIndex: 'status', width: 110, render: (s: string) => <Tag color={statusColor(s)}>{scStatusLabel(s, t)}</Tag> },
-    { key: 'execResult', title: t('scenario.colExecResult', '执行结果'), width: 110, render: (_v, s) => (s.lastResult ? <Tag color={outcomeColor(s.lastResult)} style={{ margin: 0 }}>{runOutcomeLabel(s.lastResult, t)}</Tag> : muted()) },
-    { key: 'tags', title: t('scenario.tags', '标签'), width: 160, render: (_v, s) => { const tags = (s.meta?.tags as string[] | undefined) || []; return tags.length ? <Space size={[4, 4]} wrap>{tags.map((tg) => <Tag key={tg} style={{ margin: 0 }}>{tg}</Tag>)}</Space> : muted() } },
-    { key: 'sceneEnv', title: t('scenario.colSceneEnv', '场景环境'), width: 130, render: (_v, s) => { const en = s.meta?.envName as string | undefined; return en ? <Tag color="blue" style={{ margin: 0 }}>{en}</Tag> : muted() } },
-    { key: 'createdBy', title: t('scenario.createdBy', '创建人'), dataIndex: 'createdBy', width: 110, render: (v?: string) => muted(v || undefined) },
+    { key: 'id', title: 'ID', dataIndex: 'id', width: 110, render: (v: string) => <span className="ms-mono" style={{ fontSize: 12 }}>{v.slice(0, 8)}</span>, ...columnSearch<Scenario>((s) => s.id, t) },
+    { key: 'name', title: t('scenario.colSceneName', '场景名称'), dataIndex: 'name', ellipsis: true, render: (v: string) => <span style={{ fontWeight: 500 }}>{v}</span>, ...columnSearch<Scenario>((s) => s.name, t) },
+    { key: 'priority', title: t('scenario.priority', '场景等级'), width: 110, render: (_v, s) => { const p = (s.meta?.priority as string) || 'P0'; return <span style={{ color: priorityColor(p) }}>● {p}</span> }, filters: SCENARIO_PRIORITIES.map((p) => ({ text: p, value: p })), onFilter: (v, s) => ((s.meta?.priority as string) || 'P0') === v },
+    { key: 'status', title: t('scenario.colStatus', '状态'), dataIndex: 'status', width: 110, render: (s: string) => <Tag color={statusColor(s)}>{scStatusLabel(s, t)}</Tag>, filters: SCENARIO_STATUSES.map((s) => ({ text: scStatusLabel(s, t), value: s })), onFilter: (v, s) => s.status === v },
+    { key: 'execResult', title: t('scenario.colExecResult', '执行结果'), width: 110, render: (_v, s) => (s.lastResult ? <Tag color={outcomeColor(s.lastResult)} style={{ margin: 0 }}>{runOutcomeLabel(s.lastResult, t)}</Tag> : muted()), filters: [{ text: t('scenario.runSuccess', '成功'), value: 'SUCCESS' }, { text: t('scenario.runError', '失败'), value: 'ERROR' }], onFilter: (v, s) => runOutcomeLabel(s.lastResult || '', t) === runOutcomeLabel(String(v), t) },
+    { key: 'tags', title: t('scenario.tags', '标签'), width: 160, render: (_v, s) => { const tags = (s.meta?.tags as string[] | undefined) || []; return tags.length ? <Space size={[4, 4]} wrap>{tags.map((tg) => <Tag key={tg} style={{ margin: 0 }}>{tg}</Tag>)}</Space> : muted() }, filters: allSceneTags.map((tg) => ({ text: tg, value: tg })), filterSearch: allSceneTags.length > 8, onFilter: (v, s) => (((s.meta?.tags as string[] | undefined) || [])).includes(String(v)) },
+    { key: 'sceneEnv', title: t('scenario.colSceneEnv', '场景环境'), width: 130, render: (_v, s) => { const en = s.meta?.envName as string | undefined; return en ? <Tag color="blue" style={{ margin: 0 }}>{en}</Tag> : muted() }, filters: allSceneEnvs.map((e) => ({ text: e, value: e })), onFilter: (v, s) => ((s.meta?.envName as string | undefined) || '') === v },
+    { key: 'createdBy', title: t('scenario.createdBy', '创建人'), dataIndex: 'createdBy', width: 110, render: (v?: string) => muted(v || undefined), ...columnSearch<Scenario>((s) => s.createdBy || '', t) },
     { key: 'updatedBy', title: t('scenario.updatedBy', '更新人'), width: 110, render: (_v, s) => muted(s.createdBy || undefined) },
     {
       key: 'action',

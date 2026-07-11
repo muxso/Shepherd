@@ -263,6 +263,14 @@ export default function TestPlans() {
       },
       { key: 'tags', label: t('plan.colTags', '标签'), type: 'tags', options: allTags.map((v) => ({ value: v, label: v })), get: (p) => tagsOf(p) },
       { key: 'createdBy', label: t('plan.colCreatedBy', '创建人'), type: 'text', get: (p) => p.meta?.createdBy || '', advOnly: true },
+      // 以下仅供条件/列头查找(与搜索框重复,不渲染在声明式筛选区)。
+      { key: 'id', label: 'ID', type: 'text', advOnly: true, get: (p) => p.id },
+      { key: 'name', label: t('plan.colName', '名称'), type: 'text', advOnly: true, get: (p) => p.label },
+      {
+        key: 'module', label: t('plan.colModule', '所属模块'), type: 'enum', advOnly: true,
+        options: [{ value: '', label: t('plan.moduleUnfiled', '未规划') }, ...modules.map((m) => ({ value: m.id, label: m.name }))],
+        get: (p) => moduleOf(p),
+      },
     ],
     columns: allColumns,
     rows: scoped,
