@@ -1,26 +1,28 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Button, Card, Drawer, Empty, Form, Input, Modal, Popconfirm, Select, Switch, Table, Tag } from 'antd'
+import { Alert, Button, Card, Drawer, Form, Input, Modal, Popconfirm, Select, Space, Switch, Table, Tag } from 'antd'
 import { FolderOpenOutlined, SearchOutlined } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
 import { message } from '../feedback'
-import { api, ApiError, userStore, type Organization, type ProjectMember, type Role, type User } from '../api'
+import { api, ApiError, userStore, type Organization, type Project, type ProjectMember, type Role, type User } from '../api'
 import { useApp } from '../context'
 import { useI18n } from '../i18n'
 import { SelectProjectEmpty } from '../components/Page'
+import PermissionMatrix, { parsePermissions, serializePermissions } from '../components/PermissionMatrix'
 
-// 项目与权限:左侧二级导航(项目 / 成员权限)+ 右侧内容。对齐参考图 #44-#48。
-type NavKey = 'basic' | 'appSettings' | 'members' | 'userGroups'
+// 项目与权限:左侧窄栏分组导航(项目与权限:项目/基本信息/应用设置 + 成员权限:成员/用户组)+ 右侧内容。对齐参考图 #44-#48。
+type NavKey = 'projects' | 'basic' | 'appSettings' | 'members' | 'userGroups'
 
 export default function ProjectAdmin() {
   const { t } = useI18n()
   const { projects, projectId } = useApp()
-  const [nav, setNav] = useState<NavKey>('basic')
+  const [nav, setNav] = useState<NavKey>('projects')
   const project = projects.find((p) => p.id === projectId)
 
   if (!projectId || !project) return <SelectProjectEmpty />
 
   const groups: { title: string; items: { key: NavKey; label: string }[] }[] = [
-    { title: t('proj.grpProject', '项目'), items: [
+    { title: t('pa.grpProjectPerm', '项目与权限'), items: [
+      { key: 'projects', label: t('pa.navProjects', '项目') },
       { key: 'basic', label: t('proj.basic', '基本信息') },
       { key: 'appSettings', label: t('proj.appSettings', '应用设置') },
     ] },
@@ -32,11 +34,10 @@ export default function ProjectAdmin() {
 
   return (
     <div style={{ display: 'flex', height: '100%' }}>
-      {/* 左侧二级导航 */}
-      <div style={{ width: 200, flexShrink: 0, borderRight: '1px solid var(--border-soft)', padding: '12px 8px', overflow: 'auto', background: 'var(--panel)' }}>
-        <div style={{ fontWeight: 600, fontSize: 13, padding: '4px 10px 8px' }}>{t('proj.permTitle', '项目与权限')}</div>
-        {groups.map((g) => (
-          <div key={g.title} style={{ marginBottom: 8 }}>
+      {/* 左侧窄栏分组导航 */}
+      <div style={{ width: 180, flexShrink: 0, borderRight: '1px solid var(--border-soft)', padding: '12px 8px', overflow: 'auto', background: 'var(--panel)' }}>
+        {groups.map((g, gi) => (
+          <div key={g.title} style={gi > 0 ? { borderTop: '1px solid var(--border-soft)', marginTop: 8, paddingTop: 8 } : undefined}>
             <div style={{ fontSize: 12, color: 'var(--text-3)', padding: '6px 10px 2px' }}>{g.title}</div>
             {g.items.map((it) => (
               <div
@@ -56,6 +57,7 @@ export default function ProjectAdmin() {
       </div>
       {/* 右侧内容 */}
       <div style={{ flex: 1, minWidth: 0, overflow: 'auto', padding: 16, background: 'var(--bg)' }}>
+        {nav === 'projects' && <ProjectsPanel t={t} projects={projects} currentId={projectId} />}
         {nav === 'basic' && <BasicInfo project={project} t={t} />}
         {nav === 'appSettings' && <AppSettings t={t} />}
         {nav === 'members' && <Members t={t} projectId={projectId} />}
@@ -66,6 +68,35 @@ export default function ProjectAdmin() {
 }
 
 type TFn = (k: string, d?: string) => string
+
+// 项目:组织/项目列表(所属组织由 /organization 补名)。
+function ProjectsPanel({ t, projects, currentId }: { t: TFn; projects: Project[]; currentId: string }) {
+  const [orgs, setOrgs] = useState<Organization[]>([])
+  useEffect(() => {
+    api.organizations().then((p) => setOrgs(p.items ?? [])).catch(() => setOrgs([]))
+  }, [])
+  const orgName = useMemo(() => new Map(orgs.map((o) => [o.id, o.name])), [orgs])
+  const cols: ColumnsType<Project> = [
+    {
+      title: t('pa.colProjectName', '项目名称'),
+      render: (_v, p) => (
+        <Space size={8}>
+          <FolderOpenOutlined style={{ color: 'var(--brand)' }} />
+          <span style={{ fontWeight: 600 }}>{p.name}</span>
+          {p.id === currentId && <Tag color="blue">{t('pa.current', '当前')}</Tag>}
+        </Space>
+      ),
+    },
+    { title: t('proj.org', '所属组织'), width: 220, render: (_v, p) => <Tag>{orgName.get(p.organizationId) || p.organizationId}</Tag> },
+    { title: t('proj.status', '状态'), width: 100, render: (_v, p) => <Tag color={p.enable ? 'green' : 'default'}>{p.enable ? t('proj.enabled', '启用') : t('proj.disabled', '禁用')}</Tag> },
+    { title: 'ID', width: 300, render: (_v, p) => <span className="ms-mono" style={{ fontSize: 12, color: 'var(--text-3)' }}>{p.id}</span> },
+  ]
+  return (
+    <Card size="small" styles={{ body: { padding: 12 } }}>
+      <Table<Project> rowKey="id" size="middle" dataSource={projects} columns={cols} pagination={false} />
+    </Card>
+  )
+}
 
 function BasicInfo({ project, t }: { project: { id: string; name: string; enable: boolean; organizationId: string }; t: TFn }) {
   const [orgName, setOrgName] = useState('')
@@ -261,32 +292,59 @@ function AddMemberModal({ open, projectId, candidates, onClose, onDone, t }: {
   )
 }
 
+// 用户组:表(名称 + 成员数)→ 行点击打开权限矩阵抽屉。成员数按用户表 userGroups(组名/组 id 均匹配)统计。
 function UserGroups({ t }: { t: TFn }) {
   const [roles, setRoles] = useState<Role[]>([])
+  const [users, setUsers] = useState<User[]>([])
   const [loading, setLoading] = useState(false)
   const [sel, setSel] = useState<Role | null>(null)
   const [createOpen, setCreateOpen] = useState(false)
   const load = useCallback(() => {
     setLoading(true)
-    api.roles().then((p) => setRoles(p.items ?? [])).catch(() => setRoles([])).finally(() => setLoading(false))
+    Promise.all([api.roles(), api.users().catch(() => ({ items: [] as User[] }))])
+      .then(([rp, up]) => { setRoles(rp.items ?? []); setUsers(up.items ?? []) })
+      .catch(() => { setRoles([]); setUsers([]) })
+      .finally(() => setLoading(false))
   }, [])
   useEffect(load, [load])
+  const memberCount = useCallback(
+    (r: Role) => users.filter((u) => (u.userGroups ?? []).some((g) => g === r.name || g === r.id)).length,
+    [users],
+  )
   const cols: ColumnsType<Role> = [
-    { title: t('proj.groupName', '用户组名称'), dataIndex: 'name' },
-    { title: t('proj.memberCount', '成员数'), width: 120, render: () => <span style={{ color: 'var(--brand)' }}>—</span> },
-    { title: t('apidef.colAction', '操作'), width: 120, render: (_v, r) => <Button type="link" size="small" onClick={() => setSel(r)}>{t('proj.viewPerm', '查看权限')}</Button> },
+    {
+      title: t('proj.groupName', '用户组名称'), dataIndex: 'name',
+      render: (v: string, r) => (
+        <span>
+          {v}
+          {r.scope === 'SYSTEM' && <span style={{ color: 'var(--text-3)', fontSize: 12, marginLeft: 6 }}>{t('pa.sysBuiltin', '(系统内置)')}</span>}
+        </span>
+      ),
+    },
+    {
+      title: t('proj.memberCount', '成员数'), width: 120,
+      render: (_v, r) => <span style={{ color: 'var(--brand)', cursor: 'pointer' }}>{memberCount(r)}</span>,
+    },
   ]
   return (
     <Card size="small" styles={{ body: { padding: 12 } }}>
       <div style={{ marginBottom: 12 }}><Button type="primary" onClick={() => setCreateOpen(true)}>{t('proj.addGroup', '添加用户组')}</Button></div>
-      <Table<Role> rowKey="id" size="middle" loading={loading} dataSource={roles} columns={cols} pagination={false} />
-      <PermissionDrawer role={sel} onClose={() => setSel(null)} t={t} />
+      <Table<Role>
+        rowKey="id"
+        size="middle"
+        loading={loading}
+        dataSource={roles}
+        columns={cols}
+        pagination={false}
+        onRow={(r) => ({ onClick: () => setSel(r), style: { cursor: 'pointer' } })}
+      />
+      <PermissionDrawer role={sel} onClose={() => setSel(null)} onSaved={() => { setSel(null); load() }} t={t} />
       <AddGroupModal open={createOpen} onClose={() => setCreateOpen(false)} onDone={() => { setCreateOpen(false); load() }} t={t} />
     </Card>
   )
 }
 
-// 项目内新建用户组:固定 PROJECT 作用域;权限矩阵在「系统/用户组」里编辑。
+// 项目内新建用户组:固定 PROJECT 作用域;权限在行点击的矩阵抽屉里编辑。
 function AddGroupModal({ open, onClose, onDone, t }: { open: boolean; onClose: () => void; onDone: () => void; t: TFn }) {
   const [form] = Form.useForm<{ name: string }>()
   const [busy, setBusy] = useState(false)
@@ -318,30 +376,54 @@ function AddGroupModal({ open, onClose, onDone, t }: { open: boolean; onClose: (
   )
 }
 
-// 权限抽屉:把角色 permissions(如 "API_DEFINITION:READ+ADD+UPDATE")解析为「资源 → 动作」矩阵。
-function PermissionDrawer({ role, onClose, t }: { role: Role | null; onClose: () => void; t: TFn }) {
-  const parsed = useMemo(() => {
-    return (role?.permissions ?? []).map((p) => {
-      const [res, actions] = p.split(':')
-      return { res, actions: (actions ?? '').split('+').filter(Boolean) }
-    })
+// 权限抽屉:Role.permissions("RES:ACT+ACT")⇄ 勾选矩阵;系统内置组只读;保存走 updateRole。
+function PermissionDrawer({ role, onClose, onSaved, t }: { role: Role | null; onClose: () => void; onSaved: () => void; t: TFn }) {
+  const readOnly = role?.scope === 'SYSTEM'
+  const [checked, setChecked] = useState<Set<string>>(new Set())
+  const [extras, setExtras] = useState<string[]>([])
+  const [busy, setBusy] = useState(false)
+  useEffect(() => {
+    if (role) {
+      const p = parsePermissions(role.permissions)
+      setChecked(p.checked)
+      setExtras(p.extras)
+    }
   }, [role])
+  const save = async () => {
+    if (!role) return
+    setBusy(true)
+    try {
+      await api.updateRole(role.id, { name: role.name, permissions: serializePermissions(checked, extras) })
+      message.success(t('ug.saved', '已保存'))
+      onSaved()
+    } catch (e) {
+      message.error(e instanceof ApiError ? e.message : t('ug.saveFailed', '保存失败'))
+    } finally {
+      setBusy(false)
+    }
+  }
   return (
-    <Drawer open={!!role} onClose={onClose} width={560} title={role?.name || t('proj.viewPerm', '查看权限')}>
-      {parsed.length === 0 ? (
-        <Empty description={t('common.empty', '暂无数据')} />
-      ) : (
-        <Table
-          size="small"
-          rowKey="res"
-          pagination={false}
-          dataSource={parsed}
-          columns={[
-            { title: t('proj.resource', '资源'), dataIndex: 'res', width: 220, render: (v: string) => <span className="ms-mono" style={{ fontSize: 12 }}>{v}</span> },
-            { title: t('proj.permission', '权限'), dataIndex: 'actions', render: (a: string[]) => a.map((x) => <Tag key={x} color="green" style={{ marginBottom: 4 }}>{x}</Tag>) },
-          ]}
-        />
+    <Drawer
+      open={!!role}
+      onClose={onClose}
+      width="55%"
+      title={role?.name}
+      destroyOnHidden
+      footer={readOnly ? null : (
+        <Space>
+          <Button type="primary" loading={busy} onClick={save}>{t('a.save', '保存')}</Button>
+          <Button onClick={onClose}>{t('a.cancel', '取消')}</Button>
+        </Space>
       )}
+    >
+      <Alert
+        type="info"
+        closable
+        showIcon
+        style={{ marginBottom: 12 }}
+        message={t('pa.reloginTip', '修改权限后,已登录的会话需要重新登录才会生效')}
+      />
+      <PermissionMatrix checked={checked} onChange={setChecked} disabled={readOnly} />
     </Drawer>
   )
 }
