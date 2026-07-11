@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Button, Drawer, Empty, Form, Input, Modal, Select, Space, Table, Tag, Tooltip } from 'antd'
 import { message, modal } from '../feedback'
 import { LinkOutlined, PlusOutlined, ReloadOutlined } from '@ant-design/icons'
-import { api, ApiError, type Bug, type BugRelation } from '../api'
+import { api, ApiError, userIdStore, type Bug, type BugRelation } from '../api'
 import { useApp } from '../context'
 import { useI18n } from '../i18n'
 import { PageBody, PageContainer, PageHeader, SelectProjectEmpty } from '../components/Page'
@@ -125,6 +125,9 @@ function BugsList({ items, loading, projectId, refresh, createOpen, setCreateOpe
     projectId,
     searchOf: (r) => r.title || r.id,
     searchLabel: t('bug.searchPh', '搜索标题'),
+    systemViews: [
+      { key: 'mine', label: t('lv.mine', '我创建的'), pred: (r) => !!r.createdBy && r.createdBy === userIdStore.get() },
+    ],
     fields: [
       {
         key: 'status',
@@ -133,6 +136,10 @@ function BugsList({ items, loading, projectId, refresh, createOpen, setCreateOpe
         options: STATUSES.map((s) => ({ value: s, label: statusLabel(t, s) })),
         get: (r) => (r.status || 'NEW').toUpperCase(),
       },
+      // 以下仅供条件选择(与搜索框/列展示重复,不渲染在声明式筛选区)。
+      { key: 'id', label: 'ID', type: 'text', advOnly: true, get: (r) => r.id },
+      { key: 'title', label: t('bug.colTitle', '标题'), type: 'text', advOnly: true, get: (r) => r.title || '' },
+      { key: 'createdBy', label: t('lv.createdBy', '创建人'), type: 'text', advOnly: true, get: (r) => r.createdBy || '' },
     ],
     columns: allColumns,
     rows: items,

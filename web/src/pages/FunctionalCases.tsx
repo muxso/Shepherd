@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { Button, Descriptions, Empty, Form, Input, Modal, Popconfirm, Select, Space, Table, Tabs, Tag, Tree, Upload } from 'antd'
 import { DeleteOutlined, DownloadOutlined, EditOutlined, ImportOutlined } from '@ant-design/icons'
 import { message } from '../feedback'
-import { api, ApiError, type CaseRequirementLink, type CaseStep, type FunctionalCase, type Requirement, type TemplateField } from '../api'
+import { api, ApiError, userIdStore, type CaseRequirementLink, type CaseStep, type FunctionalCase, type Requirement, type TemplateField } from '../api'
 import { useApp } from '../context'
 import { Workspace, WorkList, PaneHeader, useWorkTabs } from '../components/Workspace'
 import StepsEditor from '../components/StepsEditor'
@@ -125,6 +125,9 @@ export default function FunctionalCases() {
     projectId,
     searchOf: (c) => c.name,
     searchLabel: t('func.searchName', '搜索用例名'),
+    systemViews: [
+      { key: 'mine', label: t('lv.mine', '我创建的'), pred: (c) => !!c.createdBy && c.createdBy === userIdStore.get() },
+    ],
     fields: [
       {
         key: 'priority', label: t('func.colPriority', '优先级'), type: 'enum',
@@ -141,6 +144,10 @@ export default function FunctionalCases() {
         options: [...new Set(cases.map((c) => c.status || 'PREPARED'))].map((s) => ({ value: s, label: s })),
         get: (c) => c.status || 'PREPARED',
       },
+      // 以下仅供条件选择(与搜索框/列展示重复,不渲染在声明式筛选区)。
+      { key: 'id', label: 'ID', type: 'text', advOnly: true, get: (c) => c.id },
+      { key: 'name', label: t('func.colName', '用例名'), type: 'text', advOnly: true, get: (c) => c.name },
+      { key: 'createdBy', label: t('lv.createdBy', '创建人'), type: 'text', advOnly: true, get: (c) => c.createdBy || '' },
     ],
     columns: allColumns,
     rows: cases,

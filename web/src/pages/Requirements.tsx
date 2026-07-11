@@ -31,7 +31,7 @@ import ContributionGrid from '../components/ContributionGrid'
 import { useListView, type ListColumn } from '../components/ListView'
 import { CF_GROUP, CustomFieldItem, CustomFieldItems, collectCustomValues, customFormValues, useFieldTemplate } from '../components/TemplateFields'
 import { fieldLabel } from '../fieldTemplates'
-import type { TemplateField } from '../api'
+import { userIdStore, type TemplateField } from '../api'
 import { useI18n } from '../i18n'
 
 const toLines = (s: string) => s.split('\n').map((x) => x.trim()).filter(Boolean)
@@ -165,6 +165,9 @@ export default function Requirements() {
     projectId,
     searchOf: (r) => r.titleText,
     searchLabel: t('req.searchPh', '搜索标题'),
+    systemViews: [
+      { key: 'mine', label: t('lv.mine', '我创建的'), pred: (r) => !!r.raw?.createdBy && r.raw.createdBy === userIdStore.get() },
+    ],
     fields: [
       {
         key: 'status', label: t('req.status', '状态'), type: 'enum',
@@ -187,6 +190,14 @@ export default function Requirements() {
         get: (r) => r.tags ?? [],
       },
       { key: 'overdue', label: t('req.overdueOnly', '仅看延期'), type: 'bool', get: (r) => r.overdue === true },
+      // 以下仅供条件选择(与搜索框/列展示重复,不渲染在声明式筛选区)。
+      { key: 'title', label: t('req.colTitle', '标题'), type: 'text', advOnly: true, get: (r) => r.titleText },
+      {
+        key: 'currentStage', label: t('req.currentStage', '当前阶段'), type: 'enum', advOnly: true,
+        options: ['CREATED', 'AUDIT', 'REVIEW', 'DEV', 'TEST', 'ACCEPTANCE', 'DELIVERY'].map((s) => ({ value: s, label: t(`req.stage.${s}`, s) })),
+        get: (r) => r.raw?.currentStage || '',
+      },
+      { key: 'createdBy', label: t('lv.createdBy', '创建人'), type: 'text', advOnly: true, get: (r) => r.raw?.createdBy || '' },
     ],
     columns: reqColumns(t),
     rows: items,

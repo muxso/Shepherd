@@ -4,8 +4,8 @@
 // 用法:页面声明 fields/columns,useListView 返回 {toolbar, rows, columns},
 // 页面只管把 rows/columns 喂给自己的 Table;页面私有状态(模块选中/分页等)可经 extra 挂进视图快照。
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
-import { Button, Checkbox, Dropdown, Input, Popover, Segmented, Select, Space, Switch, Tag } from 'antd'
-import { DeleteOutlined, DownOutlined, FilterOutlined, LinkOutlined, MinusOutlined, PlusOutlined, RightOutlined, SettingOutlined, EyeOutlined, SearchOutlined } from '@ant-design/icons'
+import { Alert, Button, Checkbox, Dropdown, Input, Modal, Popover, Segmented, Select, Space, Switch, Tag } from 'antd'
+import { DeleteOutlined, DownOutlined, EditOutlined, FilterOutlined, LinkOutlined, MinusCircleOutlined, MinusOutlined, PlusOutlined, RightOutlined, SettingOutlined, SearchOutlined } from '@ant-design/icons'
 import type { ColumnType } from 'antd/es/table'
 import { message } from '../feedback'
 import { api, ApiError, type ApiView } from '../api'
@@ -35,6 +35,13 @@ export interface AdvCond {
   field: string
   op: 'contains' | 'notContains' | 'equals' | 'notEquals' | 'empty' | 'notEmpty'
   value: string
+}
+
+/** 系统视图(视图下拉「系统视图」组):页面按行数据能力声明,如 我创建的 = createdBy 等于当前用户。 */
+export interface SystemView<T> {
+  key: string
+  label: string
+  pred: (row: T) => boolean
 }
 
 // 操作符选项:存 i18n key + 中文回退,渲染时经 t() 解析(模块级常量拿不到 hook)。
@@ -123,6 +130,7 @@ export function useListView<T>({
   rows,
   extra,
   matchKind,
+  systemViews = [],
 }: {
   /** 视图归属页面标识(config.kind),如 'requirement' / 'bug'。 */
   kind: string
@@ -137,6 +145,8 @@ export function useListView<T>({
   extra?: { get: () => Record<string, unknown>; apply: (v: Record<string, unknown>) => void }
   /** 视图归属判定(默认严格等于 kind);接口定义页需兼容老视图的 kind 缺省。 */
   matchKind?: (k: string | undefined) => boolean
+  /** 系统视图(全部数据之外的内置数据集,如 我创建的);不传则只有「全部数据」。 */
+  systemViews?: SystemView<T>[]
 }): { toolbar: ReactNode; rows: T[]; columns: ColumnType<T>[] } {
   const { t } = useI18n()
   const [search, setSearch] = useState('')
@@ -146,11 +156,21 @@ export function useListView<T>({
   const [advConds, setAdvConds] = useState<AdvCond[]>([])
   const [advOpen, setAdvOpen] = useState(false)
   const [views, setViews] = useState<ApiView[]>([])
-  const [viewName, setViewName] = useState('')
-  const [shared, setShared] = useState(false)
+  // 当前视图:系统视图('sys:<key>',全部数据= 'sys:all')或已存视图('view:<id>')。
+  const [activeKey, setActiveKey] = useState('sys:all')
+  // 视图编辑弹窗:新建(id 为空)或编辑已有;conds 为草稿,保存并应用时才写入 advConds。
+  const [editor, setEditor] = useState<{
+    id?: string
+    name: string
+    nameEditing: boolean
+    logic: 'all' | 'any'
+    conds: AdvCond[]
+    shared: boolean
+  } | null>(null)
 
-  // 高级条件可选字段:声明式字段里的 text/enum(复用其 label/get;enum 的值输入用其 options 下拉)。
-  const advFields = fields.filter((f) => f.type === 'text' || f.type === 'enum')
+  // 高级条件可选字段:text/enum/tags(复用其 label/get;enum/tags 的值输入用其 options 下拉;
+  // tags 取值为数组,匹配时按空格拼成文本参与 包含/为空 等判断)。
+  const advFields = fields.filter((f) => f.type === 'text' || f.type === 'enum' || f.type === 'tags')
 
   const isKindMatch = (k: string | undefined) => (matchKind ? matchKind(k) : k === kind)
   const loadViews = () =>
@@ -175,13 +195,32 @@ export function useListView<T>({
     if (c.extra && extra) extra.apply(c.extra)
   }
 
+  // 切系统视图 = 回到干净数据集:清搜索/筛选/条件,列恢复默认显隐。
+  const resetConfig = () => {
+    setSearch('')
+    setFilters({})
+    setAdvConds([])
+    setAdvLogic('all')
+    setAdvOpen(false)
+    setHiddenCols(columns.filter((c) => c.defaultHidden).map((c) => c.key))
+  }
+
+  const selectSystem = (key: string) => {
+    setActiveKey(`sys:${key}`)
+    resetConfig()
+  }
+  const selectView = (v: ApiView) => {
+    setActiveKey(`view:${v.id}`)
+    applyConfig(v.config)
+  }
+
   // 深链 ?view=<id>:视图列表就绪后命中即应用,然后清参数避免重复触发。
   useEffect(() => {
     const id = new URLSearchParams(window.location.search).get('view')
     if (!id || views.length === 0) return
     const v = views.find((x) => x.id === id)
     if (v) {
-      applyConfig(v.config)
+      selectView(v)
       const url = new URL(window.location.href)
       url.searchParams.delete('view')
       window.history.replaceState(null, '', url.toString())
@@ -201,18 +240,25 @@ export function useListView<T>({
     const condMatch = (r: T, c: AdvCond): boolean => {
       const f = advFields.find((x) => x.key === c.field)
       if (!f) return true // 字段声明已不存在的旧条件:不参与过滤
-      const a = String(f.get(r) ?? '').toLowerCase()
+      const raw = f.get(r)
+      const a = (Array.isArray(raw) ? raw.join(' ') : String(raw ?? '')).toLowerCase()
       const v = c.value.trim().toLowerCase()
+      // 包含/不包含:值按空格拆成多个关键字,命中任一即算包含。
+      const kws = v.split(/\s+/).filter(Boolean)
       switch (c.op) {
-        case 'contains': return a.includes(v)
-        case 'notContains': return !a.includes(v)
+        case 'contains': return kws.length === 0 || kws.some((k) => a.includes(k))
+        case 'notContains': return !kws.some((k) => a.includes(k))
         case 'equals': return a === v
         case 'notEquals': return a !== v
         case 'empty': return a === ''
         case 'notEmpty': return a !== ''
       }
     }
+    const sysPred = activeKey.startsWith('sys:') && activeKey !== 'sys:all'
+      ? systemViews.find((sv) => `sys:${sv.key}` === activeKey)?.pred
+      : undefined
     return rows.filter((r) => {
+      if (sysPred && !sysPred(r)) return false
       if (q && !searchOf(r).toLowerCase().includes(q)) return false
       for (const f of fields) {
         const want = filters[f.key]
@@ -234,23 +280,54 @@ export function useListView<T>({
       return true
     })
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rows, search, filters, fields, searchOf, advConds, advLogic])
+  }, [rows, search, filters, fields, searchOf, advConds, advLogic, activeKey, systemViews])
 
-  const saveView = async () => {
-    const name = viewName.trim()
+  // 新建视图:默认名 未命名视图001/002…(避开已有名字)。
+  const openNewEditor = () => {
+    const base = t('lv.unnamedView', '未命名视图')
+    const names = new Set(views.map((v) => v.name))
+    let n = 1
+    while (names.has(`${base}${String(n).padStart(3, '0')}`)) n++
+    setEditor({
+      name: `${base}${String(n).padStart(3, '0')}`,
+      nameEditing: false,
+      logic: 'all',
+      conds: advFields.length > 0 ? [{ field: advFields[0].key, op: 'contains', value: '' }] : [],
+      shared: false,
+    })
+  }
+
+  const openEditEditor = (v: ApiView) => {
+    const c = normalizeViewConfig(v.config)
+    setEditor({
+      id: v.id,
+      name: v.name,
+      nameEditing: false,
+      logic: c.adv?.logic === 'any' ? 'any' : 'all',
+      conds: c.adv?.conds?.length ? c.adv.conds : advFields.length > 0 ? [{ field: advFields[0].key, op: 'contains', value: '' }] : [],
+      shared: v.shared,
+    })
+  }
+
+  // 保存并应用:新建存纯条件快照;编辑保留原快照的其余键(搜索/筛选/列/extra),只换条件。
+  const saveEditor = async () => {
+    if (!editor) return
+    const name = editor.name.trim()
     if (!name) return message.warning(t('lv.nameRequired', '请输入视图名称'))
+    const orig = editor.id ? views.find((v) => v.id === editor.id) : undefined
     const config: ViewConfig = {
+      ...(orig ? normalizeViewConfig(orig.config) : {}),
       kind,
-      search,
-      filters,
-      adv: { logic: advLogic, conds: advConds },
-      hiddenCols,
-      ...(extra ? { extra: extra.get() } : {}),
+      adv: { logic: editor.logic, conds: editor.conds },
     }
     try {
-      await api.createView({ projectId, name, config, shared })
-      setViewName('')
-      loadViews()
+      const saved = editor.id
+        ? await api.updateView(editor.id, { name, config, shared: editor.shared })
+        : await api.createView({ projectId, name, config, shared: editor.shared })
+      setEditor(null)
+      await loadViews()
+      setActiveKey(`view:${saved.id}`)
+      applyConfig(config)
       message.success(t('lv.saved', '视图已保存'))
     } catch (e) {
       message.error(e instanceof ApiError ? e.message : t('lv.saveFailed', '保存失败'))
@@ -269,6 +346,8 @@ export function useListView<T>({
     try {
       await api.deleteView(v.id)
       setViews((vs) => vs.filter((x) => x.id !== v.id))
+      // 删的是当前视图 → 回到全部数据。
+      if (activeKey === `view:${v.id}`) selectSystem('all')
       message.success(t('lv.deleted', '视图已删除'))
     } catch (e) {
       message.error(e instanceof ApiError ? e.message : t('lv.deleteFailed', '删除失败'))
@@ -320,7 +399,7 @@ export function useListView<T>({
                 />
                 {noValue ? (
                   <Input size="small" disabled value="" placeholder="—" style={{ flex: 1, minWidth: 0 }} />
-                ) : fieldDef?.type === 'enum' ? (
+                ) : fieldDef?.type === 'enum' || fieldDef?.type === 'tags' ? (
                   <Select
                     size="small"
                     allowClear
@@ -424,41 +503,197 @@ export function useListView<T>({
     </div>
   )
 
+  // 视图下拉:系统视图(全部数据 + 页面声明的内置数据集)/ 我的视图(悬浮改/享/删)/ 底部新建。
   const viewMenu = {
+    selectable: true,
+    selectedKeys: [activeKey],
     items: [
-      ...views.map((v) => ({
-        key: v.id,
-        label: (
-          <Space>
-            <span onClick={() => applyConfig(v.config)}>{v.name}</span>
-            {v.shared && <Tag style={{ margin: 0 }}>{t('lv.shared', '共享')}</Tag>}
-            <LinkOutlined onClick={(e) => { e.stopPropagation(); shareView(v) }} />
-            <DeleteOutlined onClick={(e) => { e.stopPropagation(); removeView(v) }} />
-          </Space>
-        ),
-      })),
+      {
+        type: 'group' as const,
+        key: 'g-sys',
+        label: t('lv.systemViews', '系统视图'),
+        children: [
+          { key: 'sys:all', label: t('lv.allData', '全部数据') },
+          ...systemViews.map((sv) => ({ key: `sys:${sv.key}`, label: sv.label })),
+        ],
+      },
+      ...(views.length > 0
+        ? [
+            {
+              type: 'group' as const,
+              key: 'g-mine',
+              label: t('lv.myViews', '我的视图'),
+              children: views.map((v) => ({
+                key: `view:${v.id}`,
+                label: (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 180 }}>
+                    <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{v.name}</span>
+                    {v.shared && <Tag style={{ margin: 0 }}>{t('lv.shared', '共享')}</Tag>}
+                    <EditOutlined onClick={(e) => { e.stopPropagation(); openEditEditor(v) }} />
+                    <LinkOutlined onClick={(e) => { e.stopPropagation(); shareView(v) }} />
+                    <DeleteOutlined onClick={(e) => { e.stopPropagation(); removeView(v) }} />
+                  </div>
+                ),
+              })),
+            },
+          ]
+        : []),
       { type: 'divider' as const, key: 'd' },
       {
-        key: '__save',
+        key: '__new',
         label: (
-          <div onClick={(e) => e.stopPropagation()} style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-            <Input
-              size="small"
-              style={{ width: 130 }}
-              placeholder={t('lv.namePh', '视图名称')}
-              value={viewName}
-              onChange={(e) => setViewName(e.target.value)}
-              onPressEnter={saveView}
-            />
-            <Checkbox checked={shared} onChange={(e) => setShared(e.target.checked)}>
-              {t('lv.shared', '共享')}
-            </Checkbox>
-            <Button size="small" type="primary" onClick={saveView}>{t('lv.save', '保存')}</Button>
-          </div>
+          <Space>
+            <PlusOutlined />
+            {t('lv.newView', '新建视图')}
+          </Space>
         ),
       },
     ],
+    onClick: ({ key }: { key: string }) => {
+      if (key === '__new') return openNewEditor()
+      if (key === 'sys:all') return selectSystem('all')
+      if (key.startsWith('sys:')) return selectSystem(key.slice(4))
+      if (key.startsWith('view:')) {
+        const v = views.find((x) => x.id === key.slice(5))
+        if (v) selectView(v)
+      }
+    },
   }
+
+  const activeName = activeKey === 'sys:all'
+    ? t('lv.allData', '全部数据')
+    : activeKey.startsWith('sys:')
+      ? systemViews.find((sv) => `sys:${sv.key}` === activeKey)?.label || t('lv.allData', '全部数据')
+      : views.find((v) => `view:${v.id}` === activeKey)?.name || t('lv.allData', '全部数据')
+
+  // 视图编辑弹窗:标题可改名;条件行 = 字段(可搜索)+ 操作符 + 值;底部 共享 + 取消/保存。
+  const editorModal = editor && (
+    <Modal
+      open
+      width={640}
+      onCancel={() => setEditor(null)}
+      title={
+        editor.nameEditing ? (
+          <Input
+            size="small"
+            autoFocus
+            defaultValue={editor.name}
+            style={{ width: 240 }}
+            onBlur={(e) => setEditor((s) => (s ? { ...s, name: e.target.value, nameEditing: false } : s))}
+            onPressEnter={(e) => {
+              const v = (e.target as HTMLInputElement).value
+              setEditor((s) => (s ? { ...s, name: v, nameEditing: false } : s))
+            }}
+          />
+        ) : (
+          <Space>
+            {editor.name}
+            <EditOutlined
+              style={{ color: 'var(--text-3)', fontSize: 13, cursor: 'pointer' }}
+              onClick={() => setEditor((s) => (s ? { ...s, nameEditing: true } : s))}
+            />
+          </Space>
+        )
+      }
+      footer={
+        <div style={{ display: 'flex', alignItems: 'center' }}>
+          <Checkbox
+            checked={editor.shared}
+            onChange={(e) => setEditor((s) => (s ? { ...s, shared: e.target.checked } : s))}
+          >
+            {t('lv.shared', '共享')}
+          </Checkbox>
+          <div style={{ flex: 1 }} />
+          <Space>
+            <Button onClick={() => setEditor(null)}>{t('a.cancel', '取消')}</Button>
+            <Button type="primary" onClick={saveEditor}>{t('lv.save', '保存')}</Button>
+          </Space>
+        </div>
+      }
+    >
+      <Alert
+        type="info"
+        showIcon
+        closable
+        message={t('lv.viewHint', '视图保存下方条件组合;应用视图即切换到该数据集')}
+        style={{ marginBottom: 12 }}
+      />
+      <Space style={{ marginBottom: 10 }}>
+        <span style={{ color: 'var(--text-2)' }}>{t('lv.matchCond', '符合以下条件')}</span>
+        <Select
+          size="small"
+          style={{ width: 72 }}
+          value={editor.logic}
+          onChange={(v) => setEditor((s) => (s ? { ...s, logic: v } : s))}
+          options={[
+            { value: 'all', label: t('lv.matchAll', '所有') },
+            { value: 'any', label: t('lv.matchAny', '任一') },
+          ]}
+        />
+      </Space>
+      {editor.conds.map((c, i) => {
+        const set = (p: Partial<AdvCond>) =>
+          setEditor((s) => (s ? { ...s, conds: s.conds.map((x, idx) => (idx === i ? { ...x, ...p } : x)) } : s))
+        const fieldDef = advFields.find((f) => f.key === c.field)
+        const noValue = c.op === 'empty' || c.op === 'notEmpty'
+        return (
+          <div key={i} style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+            <Select
+              showSearch
+              optionFilterProp="label"
+              style={{ width: 150 }}
+              value={c.field || undefined}
+              placeholder={t('lv.fieldPh', '请选择')}
+              onChange={(v) => set({ field: v, value: '' })}
+              options={advFields.map((f) => ({ value: f.key, label: f.label }))}
+            />
+            <Select
+              style={{ width: 96 }}
+              value={c.op}
+              onChange={(v) => set({ op: v })}
+              options={ADV_OPS.map((o) => ({ value: o.value, label: t(o.key, o.fallback) }))}
+            />
+            {noValue ? (
+              <Input disabled value="" placeholder="—" style={{ flex: 1, minWidth: 0 }} />
+            ) : fieldDef?.type === 'enum' || fieldDef?.type === 'tags' ? (
+              <Select
+                allowClear
+                style={{ flex: 1, minWidth: 0 }}
+                value={c.value || undefined}
+                onChange={(v) => set({ value: v ?? '' })}
+                options={fieldDef.options}
+                placeholder={t('lv.condValuePh', '值')}
+              />
+            ) : (
+              <Input
+                value={c.value}
+                onChange={(e) => set({ value: e.target.value })}
+                placeholder={t('lv.kwPh', '关键字之间以空格进行分隔')}
+                style={{ flex: 1, minWidth: 0 }}
+              />
+            )}
+            <Button
+              type="text"
+              icon={<MinusCircleOutlined />}
+              disabled={editor.conds.length <= 1}
+              onClick={() => setEditor((s) => (s ? { ...s, conds: s.conds.filter((_, idx) => idx !== i) } : s))}
+            />
+          </div>
+        )
+      })}
+      <Button
+        type="link"
+        icon={<PlusOutlined />}
+        style={{ paddingLeft: 0 }}
+        disabled={advFields.length === 0}
+        onClick={() =>
+          setEditor((s) => (s ? { ...s, conds: [...s.conds, { field: advFields[0].key, op: 'contains', value: '' }] } : s))
+        }
+      >
+        {t('lv.addCond', '添加条件')}
+      </Button>
+    </Modal>
+  )
 
   const toolbar = (
     <Space size={8} wrap>
@@ -471,8 +706,13 @@ export function useListView<T>({
         onChange={(e) => setSearch(e.target.value)}
       />
       <Dropdown menu={viewMenu} trigger={['click']}>
-        <Button size="small" icon={<EyeOutlined />}>{t('lv.views', '视图')}{views.length > 0 ? ` (${views.length})` : ''}</Button>
+        <Button size="small">
+          <span style={{ color: 'var(--text-3)' }}>{t('lv.views', '视图')}</span>
+          {activeName}
+          <DownOutlined style={{ fontSize: 10 }} />
+        </Button>
       </Dropdown>
+      {editorModal}
       <Popover content={filterPanel} trigger="click" placement="bottomRight">
         <Button size="small" icon={<FilterOutlined />}>
           {t('lv.filter', '筛选')}{activeFilterCount > 0 ? ` (${activeFilterCount})` : ''}

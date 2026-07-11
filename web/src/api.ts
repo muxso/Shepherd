@@ -18,6 +18,15 @@ export const userStore = {
   clear: () => localStorage.removeItem(USER_KEY),
 }
 
+// 会话用户 id(登录响应 userId):created_by 等审计字段的口径,「我创建的」按它匹配。
+// 老会话没存过 → 回退用户名(自建部署两者常一致)。
+const USER_ID_KEY = 'shepherd.userId'
+export const userIdStore = {
+  get: () => localStorage.getItem(USER_ID_KEY) || localStorage.getItem(USER_KEY) || 'admin',
+  set: (u: string) => localStorage.setItem(USER_ID_KEY, u),
+  clear: () => localStorage.removeItem(USER_ID_KEY),
+}
+
 let onUnauthorized: (() => void) | null = null
 export const setUnauthorizedHandler = (fn: () => void) => {
   onUnauthorized = fn
@@ -738,6 +747,8 @@ export interface Requirement {
   /** 创建/更新时间(epoch 毫秒)。 */
   createdAt?: number
   updatedAt?: number
+  /** 创建人;历史数据可能为空。 */
+  createdBy?: string
   /** 当前所处阶段。 */
   currentStage?: RequirementStageKey
   /** 7 段阶段明细(创建→审核→评审→开发→测试→验收→交付)。 */
@@ -961,6 +972,7 @@ export interface Bug {
   title?: string
   status: string
   createdAt?: number
+  createdBy?: string | null
 }
 
 /** 人机协同人效:需求维度的 AI/人工 交付拆分(口径:VERIFIED + 有无 DELIVERED 交付记录)。 */
@@ -1045,7 +1057,7 @@ const emptyPage = <T>(): Page<T> => ({ total: 0, current: 1, pageSize: 0, totalP
 
 export const api = {
   login: (username: string, password: string) =>
-    http.post<{ token: string }>('/auth/login', { username, password }),
+    http.post<{ token: string; userId?: string }>('/auth/login', { username, password }),
 
   organizations: () => http.get<Page<Organization>>('/organization?pageSize=100'),
   createOrganization: (name: string) => http.post<Organization>('/organization', { name }),
@@ -1071,6 +1083,8 @@ export const api = {
       : Promise.resolve([] as ApiView[]),
   createView: (b: { projectId: string; name: string; config: unknown; shared?: boolean }) =>
     http.post<ApiView>('/api/api-view', b),
+  updateView: (id: string, b: { name?: string; config?: unknown; shared?: boolean }) =>
+    http.put<ApiView>(`/api/api-view/${id}`, b),
   deleteView: (id: string) => http.del(`/api/api-view/${id}`),
   getDefinition: (id: string) => http.get<ApiDefinition>(`/api/definition/${id}`),
   // 更新接口定义基础字段(名称/协议/方法/路径);缺省字段后端保持原值,返回更新后的定义。

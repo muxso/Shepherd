@@ -24,7 +24,7 @@ import {
   SearchOutlined,
 } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
-import { api, ApiError, type ApiCase, type ApiDefinition, type ApiModule, type ApiSpec, type DebugResponse, type Environment, type ImportFormat, type ImportSchedule, type ProjectMock } from '../api'
+import { api, ApiError, userIdStore, type ApiCase, type ApiDefinition, type ApiModule, type ApiSpec, type DebugResponse, type Environment, type ImportFormat, type ImportSchedule, type ProjectMock } from '../api'
 import { columnSearch, useListView, type ListColumn } from '../components/ListView'
 import { useApp } from '../context'
 import { methodColor, statusColor } from '../components/tags'
@@ -353,6 +353,9 @@ export default function ApiDefinitions() {
     searchOf: (d) => `${d.num ?? ''} ${d.name} ${d.path}`,
     // 老视图(本页早期实现)config 无 kind:也归属本页;场景页视图 kind==='scenario' 自然被排除。
     matchKind: (k) => k === 'apidef' || k === undefined,
+    systemViews: [
+      { key: 'mine', label: t('lv.mine', '我创建的'), pred: (d) => !!d.createdBy && d.createdBy === userIdStore.get() },
+    ],
     fields: [
       { key: 'protocol', label: t('apidef.protocol', '协议'), type: 'enum', options: PROTOCOLS.map((p) => ({ value: p, label: p })), get: (d) => d.protocol },
       { key: 'method', label: t('apidef.reqType', '请求类型'), type: 'enum', options: METHODS.map((m) => ({ value: m, label: m })), get: (d) => d.method },
