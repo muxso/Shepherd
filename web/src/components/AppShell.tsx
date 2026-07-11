@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { Layout, Menu, Select, Button, Space, Tooltip, Drawer, Avatar, Descriptions, Segmented, Empty, Dropdown } from 'antd'
 import {
   ApiOutlined,
@@ -167,6 +167,20 @@ export default function AppShell({ children }: { children: ReactNode }) {
       document.documentElement.requestFullscreen().catch(() => {})
     }
   }
+  // 顶栏滚动感知:内容区任意滚动容器离开顶部 → 顶栏切换到实体态。
+  // scroll 不冒泡,用捕获阶段在 document 上监听,并限定目标在内容区内。
+  const contentRef = useRef<HTMLDivElement>(null)
+  const [scrolled, setScrolled] = useState(false)
+  useEffect(() => {
+    const onScroll = (e: Event) => {
+      const el = e.target
+      if (!(el instanceof Element) || !contentRef.current?.contains(el)) return
+      setScrolled(el.scrollTop > 8)
+    }
+    document.addEventListener('scroll', onScroll, true)
+    return () => document.removeEventListener('scroll', onScroll, true)
+  }, [])
+
   const currentProject = projects.find((p) => p.id === projectId)
   const username = userStore.get()
 
@@ -248,16 +262,13 @@ export default function AppShell({ children }: { children: ReactNode }) {
         <Layout style={{ background: 'var(--bg)' }}>
           {/* 顶栏:当前模块的二级菜单(左,横向)+ 右上角图标簇。磨砂玻璃。 */}
           <div
+            className={`ms-topbar${scrolled ? ' ms-scrolled' : ''}`}
             style={{
               height: 48,
               display: 'flex',
               alignItems: 'center',
               paddingInline: 16,
               gap: 8,
-              background: 'var(--glass)',
-              backdropFilter: 'var(--glass-blur)',
-              WebkitBackdropFilter: 'var(--glass-blur)',
-              borderBottom: '1px solid var(--border-soft)',
               flexShrink: 0,
             }}
           >
@@ -332,7 +343,9 @@ export default function AppShell({ children }: { children: ReactNode }) {
             </Dropdown>
           </div>
           {/* 不放面包屑:层级已由左栏模块高亮 + 顶栏选中标签完整表达,再来一行是纯重复。 */}
-          <Content style={{ overflow: 'hidden' }}>{children}</Content>
+          <Content style={{ overflow: 'hidden' }}>
+            <div ref={contentRef} style={{ height: '100%' }}>{children}</div>
+          </Content>
         </Layout>
       </Layout>
       <NewProjectModal open={newProjOpen} onClose={() => setNewProjOpen(false)} />

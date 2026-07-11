@@ -18,8 +18,9 @@
   --text: #1d2129;
   --text-2: #4e5969;
   --text-3: #86909c;
-  /* 磨砂玻璃:半透明面板 + 背景模糊 */
+  /* 磨砂玻璃:半透明面板 + 背景模糊;--glass-0 为页面未滚动时的更通透态 */
   --glass: rgba(255, 255, 255, 0.8);
+  --glass-0: rgba(255, 255, 255, 0.45);
   --glass-blur: blur(16px) saturate(125%);
   /* 环境光晕:极淡的蓝,近乎不可见,只留一点空气感。 */
   --spotlight:
@@ -44,6 +45,7 @@
   --text-2: #a3aab6;
   --text-3: #6e7681;
   --glass: rgba(22, 23, 26, 0.65);
+  --glass-0: rgba(22, 23, 26, 0.35);
   --glass-blur: blur(16px) saturate(125%);
   --spotlight:
     radial-gradient(ellipse 72% 56% at 10% 100%, rgba(64, 134, 255, 0.10), transparent 66%),
@@ -258,4 +260,22 @@ body::before {
 [data-theme='dark'] .ms-hover-card:hover,
 [data-theme='dark'] .ant-card-hoverable:hover {
   box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+}
+
+/* 顶栏滚动感知:页面在顶部时更通透(融入背景),滚动后回到磨砂实体感 + 细边 + 淡影,
+   过渡 0.25s。滚动检测在 AppShell 里以捕获方式监听内容区。 */
+.ms-topbar {
+  background: var(--glass-0);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+  border-bottom: 1px solid transparent;
+  transition: background-color 0.25s ease, border-color 0.25s ease, box-shadow 0.25s ease;
+}
+.ms-topbar.ms-scrolled {
+  background: var(--glass);
+  border-bottom-color: var(--border-soft);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.04);
+}
+[data-theme='dark'] .ms-topbar.ms-scrolled {
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
 }
