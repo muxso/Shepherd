@@ -65,6 +65,12 @@ struct CreateBody {
     description: String,
     #[serde(default)]
     acceptance_criteria: Vec<String>,
+    /// 优先级 P0/P1/P2/P3(不区分大小写),缺省 P2。
+    #[serde(default)]
+    priority: Option<String>,
+    /// 需求类型 FEATURE/ENHANCEMENT/TECH_DEBT/BUGFIX(不区分大小写),缺省 FEATURE。
+    #[serde(default)]
+    req_type: Option<String>,
 }
 
 #[derive(Deserialize, ToSchema)]
@@ -87,8 +93,15 @@ struct RejectReviewBody {
 }
 
 #[derive(Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
 struct RenameBody {
     title: String,
+    /// 可选:更新优先级,缺省不动。
+    #[serde(default)]
+    priority: Option<String>,
+    /// 可选:更新需求类型,缺省不动。
+    #[serde(default)]
+    req_type: Option<String>,
 }
 
 #[derive(Serialize, ToSchema)]
@@ -121,6 +134,8 @@ struct RequirementResponse {
     versions: Vec<VersionResponse>,
     #[serde(skip_serializing_if = "Option::is_none")]
     review_comment: Option<String>,
+    priority: String,
+    req_type: String,
 }
 
 impl From<Requirement> for RequirementResponse {
@@ -136,6 +151,8 @@ impl From<Requirement> for RequirementResponse {
             latest_version,
             versions,
             review_comment: r.review_comment,
+            priority: r.priority.as_str().to_string(),
+            req_type: r.req_type.as_str().to_string(),
         }
     }
 }
@@ -206,7 +223,7 @@ fn create_err(e: CreateRequirementError) -> Response {
     }
 }
 
-#[utoipa::path(post, path = "/requirement", tag = "requirement", request_body = CreateBody, responses((status = 201, body = RequirementResponse), (status = 401), (status = 403), (status = 409)), security(("bearer" = [])))]
+#[utoipa::path(post, path = "/requirement", tag = "requirement", request_body = CreateBody, responses((status = 201, body = RequirementResponse), (status = 400), (status = 401), (status = 403), (status = 409)), security(("bearer" = [])))]
 async fn create_requirement(
     user: AuthUser,
     State(st): State<ReqState>,
@@ -215,7 +232,18 @@ async fn create_requirement(
     if !user.can("REQUIREMENT", "ADD") {
         return (StatusCode::FORBIDDEN, "permission denied").into_response();
     }
-    match st.create.execute(&b.project_id, &b.title, &b.description, &b.acceptance_criteria).await {
+    match st
+        .create
+        .execute_with(
+            &b.project_id,
+            &b.title,
+            &b.description,
+            &b.acceptance_criteria,
+            b.priority.as_deref(),
+            b.req_type.as_deref(),
+        )
+        .await
+    {
         Ok(r) => (StatusCode::CREATED, Json(RequirementResponse::from(r))).into_response(),
         Err(e) => create_err(e),
     }
@@ -335,7 +363,7 @@ async fn reject_review(
     }
 }
 
-#[utoipa::path(put, path = "/requirement/{id}", tag = "requirement", params(("id" = String, Path)), request_body = RenameBody, responses((status = 200, body = RequirementResponse), (status = 404), (status = 409)), security(("bearer" = [])))]
+#[utoipa::path(put, path = "/requirement/{id}", tag = "requirement", params(("id" = String, Path)), request_body = RenameBody, responses((status = 200, body = RequirementResponse), (status = 400), (status = 404), (status = 409)), security(("bearer" = [])))]
 async fn rename_requirement(
     user: AuthUser,
     State(st): State<ReqState>,
@@ -345,7 +373,7 @@ async fn rename_requirement(
     if !user.can("REQUIREMENT", "UPDATE") {
         return (StatusCode::FORBIDDEN, "permission denied").into_response();
     }
-    match st.admin.rename(&id, &b.title).await {
+    match st.admin.update(&id, &b.title, b.priority.as_deref(), b.req_type.as_deref()).await {
         Ok(r) => (StatusCode::OK, Json(RequirementResponse::from(r))).into_response(),
         Err(e) => cmd_err(e),
     }
@@ -876,6 +904,124 @@ mod tests {
             .expect("r")
             .status(),
             StatusCode::CONFLICT
+        );
+    }
+
+    #[tokio::test]
+    async fn create_defaults_priority_and_req_type() {
+        let (app, t) = app_with("REQUIREMENT:READ+ADD").await;
+        let r = app
+            .clone()
+            .oneshot(req("POST", "/requirement", r#"{"projectId":"p1","title":"登录"}"#, Some(&t)))
+            .await
+            .expect("r");
+        assert_eq!(r.status(), StatusCode::CREATED);
+        let v = body_json(r).await;
+        assert_eq!(v["priority"], "P2");
+        assert_eq!(v["reqType"], "FEATURE");
+
+        let id = v["id"].as_str().expect("id");
+        let d = body_json(
+            app.oneshot(req("GET", &format!("/requirement/{id}"), "", Some(&t))).await.expect("r"),
+        )
+        .await;
+        assert_eq!(d["priority"], "P2");
+        assert_eq!(d["reqType"], "FEATURE");
+    }
+
+    #[tokio::test]
+    async fn create_accepts_explicit_priority_and_req_type_normalized() {
+        let (app, t) = app_with("REQUIREMENT:READ+ADD").await;
+        let r = app
+            .clone()
+            .oneshot(req(
+                "POST",
+                "/requirement",
+                r#"{"projectId":"p1","title":"登录","priority":" p0 ","reqType":"tech_debt"}"#,
+                Some(&t),
+            ))
+            .await
+            .expect("r");
+        assert_eq!(r.status(), StatusCode::CREATED);
+        let v = body_json(r).await;
+        assert_eq!(v["priority"], "P0");
+        assert_eq!(v["reqType"], "TECH_DEBT");
+    }
+
+    #[tokio::test]
+    async fn create_invalid_priority_or_req_type_400() {
+        let (app, t) = app_with("REQUIREMENT:READ+ADD").await;
+        assert_eq!(
+            app.clone()
+                .oneshot(req(
+                    "POST",
+                    "/requirement",
+                    r#"{"projectId":"p1","title":"登录","priority":"P9"}"#,
+                    Some(&t)
+                ))
+                .await
+                .expect("r")
+                .status(),
+            StatusCode::BAD_REQUEST
+        );
+        assert_eq!(
+            app.oneshot(req(
+                "POST",
+                "/requirement",
+                r#"{"projectId":"p1","title":"登录","reqType":"EPIC"}"#,
+                Some(&t)
+            ))
+            .await
+            .expect("r")
+            .status(),
+            StatusCode::BAD_REQUEST
+        );
+    }
+
+    #[tokio::test]
+    async fn put_updates_priority_and_req_type_and_omission_keeps_them() {
+        let (app, t) = app_with("REQUIREMENT:READ+ADD+UPDATE").await;
+        let id = create_req(&app, &t, "登录").await;
+
+        let r = app
+            .clone()
+            .oneshot(req(
+                "PUT",
+                &format!("/requirement/{id}"),
+                r#"{"title":"登录","priority":"p1","reqType":"bugfix"}"#,
+                Some(&t),
+            ))
+            .await
+            .expect("r");
+        assert_eq!(r.status(), StatusCode::OK);
+        let v = body_json(r).await;
+        assert_eq!(v["priority"], "P1");
+        assert_eq!(v["reqType"], "BUGFIX");
+
+        // 只改名不带优先级/类型 → 保留原值。
+        let r2 = app
+            .clone()
+            .oneshot(req("PUT", &format!("/requirement/{id}"), r#"{"title":"登入"}"#, Some(&t)))
+            .await
+            .expect("r");
+        assert_eq!(r2.status(), StatusCode::OK);
+        let v2 = body_json(r2).await;
+        assert_eq!(v2["title"], "登入");
+        assert_eq!(v2["priority"], "P1");
+        assert_eq!(v2["reqType"], "BUGFIX");
+
+        // 非法优先级 → 400。
+        assert_eq!(
+            app.oneshot(req(
+                "PUT",
+                &format!("/requirement/{id}"),
+                r#"{"title":"登入","priority":"高"}"#,
+                Some(&t)
+            ))
+            .await
+            .expect("r")
+            .status(),
+            StatusCode::BAD_REQUEST
         );
     }
 

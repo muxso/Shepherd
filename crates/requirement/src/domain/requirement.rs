@@ -23,6 +23,10 @@ pub enum RequirementError {
     EmptyReviewComment,
     #[error("requirement is not pending review")]
     NotUnderReview,
+    #[error("invalid requirement priority: {0}")]
+    InvalidPriority(String),
+    #[error("invalid requirement type: {0}")]
+    InvalidReqType(String),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -51,6 +55,8 @@ pub struct NewRequirement {
     pub description: String,
     pub acceptance_criteria: Vec<AcceptanceCriterion>,
     pub created_by: String,
+    pub priority: RequirementPriority,
+    pub req_type: RequirementType,
 }
 
 impl NewRequirement {
@@ -78,11 +84,23 @@ impl NewRequirement {
             description: description.trim().to_string(),
             acceptance_criteria: parse_criteria(criteria)?,
             created_by: String::new(),
+            priority: RequirementPriority::default(),
+            req_type: RequirementType::default(),
         })
     }
 
     pub fn with_created_by(mut self, user_id: &str) -> Self {
         self.created_by = user_id.trim().to_string();
+        self
+    }
+
+    pub fn with_priority(mut self, priority: RequirementPriority) -> Self {
+        self.priority = priority;
+        self
+    }
+
+    pub fn with_req_type(mut self, req_type: RequirementType) -> Self {
+        self.req_type = req_type;
         self
     }
 }
@@ -141,6 +159,81 @@ impl RequirementStatus {
     }
 }
 
+/// 需求优先级,P0 最高;缺省 P2。
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum RequirementPriority {
+    P0,
+    P1,
+    #[default]
+    P2,
+    P3,
+}
+
+impl RequirementPriority {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::P0 => "P0",
+            Self::P1 => "P1",
+            Self::P2 => "P2",
+            Self::P3 => "P3",
+        }
+    }
+
+    /// 归一化(trim + 大写)后匹配;非法值 → None。
+    pub fn parse(s: &str) -> Option<Self> {
+        match s.trim().to_ascii_uppercase().as_str() {
+            "P0" => Some(Self::P0),
+            "P1" => Some(Self::P1),
+            "P2" => Some(Self::P2),
+            "P3" => Some(Self::P3),
+            _ => None,
+        }
+    }
+}
+
+/// 解析优先级;非法值报校验错(HTTP 层映射为 400)。
+pub fn parse_priority(s: &str) -> Result<RequirementPriority, RequirementError> {
+    RequirementPriority::parse(s)
+        .ok_or_else(|| RequirementError::InvalidPriority(s.trim().to_string()))
+}
+
+/// 需求类型;缺省 FEATURE。
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum RequirementType {
+    #[default]
+    Feature,
+    Enhancement,
+    TechDebt,
+    Bugfix,
+}
+
+impl RequirementType {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Feature => "FEATURE",
+            Self::Enhancement => "ENHANCEMENT",
+            Self::TechDebt => "TECH_DEBT",
+            Self::Bugfix => "BUGFIX",
+        }
+    }
+
+    /// 归一化(trim + 大写)后匹配;非法值 → None。
+    pub fn parse(s: &str) -> Option<Self> {
+        match s.trim().to_ascii_uppercase().as_str() {
+            "FEATURE" => Some(Self::Feature),
+            "ENHANCEMENT" => Some(Self::Enhancement),
+            "TECH_DEBT" => Some(Self::TechDebt),
+            "BUGFIX" => Some(Self::Bugfix),
+            _ => None,
+        }
+    }
+}
+
+/// 解析需求类型;非法值报校验错(HTTP 层映射为 400)。
+pub fn parse_req_type(s: &str) -> Result<RequirementType, RequirementError> {
+    RequirementType::parse(s).ok_or_else(|| RequirementError::InvalidReqType(s.trim().to_string()))
+}
+
 /// 不可变快照:一旦创建,内容永不改写;修订只追加新版本。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RequirementVersion {
@@ -159,6 +252,8 @@ pub struct Requirement {
     pub versions: Vec<RequirementVersion>,
     pub deleted: bool,
     pub review_comment: Option<String>,
+    pub priority: RequirementPriority,
+    pub req_type: RequirementType,
 }
 
 impl Requirement {
@@ -176,6 +271,8 @@ impl Requirement {
             }],
             deleted: false,
             review_comment: None,
+            priority: new.priority,
+            req_type: new.req_type,
         }
     }
 
@@ -435,6 +532,55 @@ mod tests {
         let mut a = Requirement::create("req-2", &new_req());
         a.archive();
         assert_eq!(a.reject_review("x"), Err(RequirementError::Archived));
+    }
+
+    #[test]
+    fn create_defaults_priority_p2_and_type_feature() {
+        let r = Requirement::create("req-1", &new_req());
+        assert_eq!(r.priority, RequirementPriority::P2);
+        assert_eq!(r.req_type, RequirementType::Feature);
+    }
+
+    #[test]
+    fn create_carries_explicit_priority_and_type() {
+        let n =
+            new_req().with_priority(RequirementPriority::P0).with_req_type(RequirementType::Bugfix);
+        let r = Requirement::create("req-1", &n);
+        assert_eq!(r.priority, RequirementPriority::P0);
+        assert_eq!(r.req_type, RequirementType::Bugfix);
+    }
+
+    #[test]
+    fn priority_str_roundtrip_and_normalization() {
+        for p in [
+            RequirementPriority::P0,
+            RequirementPriority::P1,
+            RequirementPriority::P2,
+            RequirementPriority::P3,
+        ] {
+            assert_eq!(RequirementPriority::parse(p.as_str()), Some(p));
+        }
+        // trim + 大写归一。
+        assert_eq!(RequirementPriority::parse("  p1 "), Some(RequirementPriority::P1));
+        assert_eq!(RequirementPriority::parse("P9"), None);
+        assert_eq!(parse_priority("p3"), Ok(RequirementPriority::P3));
+        assert_eq!(parse_priority(" P9 "), Err(RequirementError::InvalidPriority("P9".into())));
+    }
+
+    #[test]
+    fn req_type_str_roundtrip_and_normalization() {
+        for t in [
+            RequirementType::Feature,
+            RequirementType::Enhancement,
+            RequirementType::TechDebt,
+            RequirementType::Bugfix,
+        ] {
+            assert_eq!(RequirementType::parse(t.as_str()), Some(t));
+        }
+        assert_eq!(RequirementType::parse(" tech_debt "), Some(RequirementType::TechDebt));
+        assert_eq!(RequirementType::parse("EPIC"), None);
+        assert_eq!(parse_req_type("bugfix"), Ok(RequirementType::Bugfix));
+        assert_eq!(parse_req_type(" EPIC "), Err(RequirementError::InvalidReqType("EPIC".into())));
     }
 
     #[test]

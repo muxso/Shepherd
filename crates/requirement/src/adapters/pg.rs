@@ -5,8 +5,8 @@ use async_trait::async_trait;
 use sqlx::{PgPool, Row};
 
 use crate::domain::{
-    AcceptanceCriterion, NewRequirement, Requirement, RequirementStatus, RequirementVersion,
-    StatusCounts,
+    AcceptanceCriterion, NewRequirement, Requirement, RequirementPriority, RequirementStatus,
+    RequirementType, RequirementVersion, StatusCounts,
 };
 use crate::ports::{RepoError, RequirementRepository};
 
@@ -24,6 +24,8 @@ impl PgRequirementRepository {
         let id: String = meta.try_get("id").map_err(map_err)?;
         let baseline_i: i32 = meta.try_get("baseline_version").map_err(map_err)?;
         let status_s: String = meta.try_get("status").map_err(map_err)?;
+        let priority_s: String = meta.try_get("priority").map_err(map_err)?;
+        let req_type_s: String = meta.try_get("req_type").map_err(map_err)?;
 
         let vrows = sqlx::query(
             "SELECT version, description, acceptance_criteria FROM ms_requirement_version \
@@ -58,6 +60,8 @@ impl PgRequirementRepository {
             versions,
             deleted: meta.try_get("deleted").map_err(map_err)?,
             review_comment: meta.try_get("review_comment").map_err(map_err)?,
+            priority: RequirementPriority::parse(&priority_s).unwrap_or_default(),
+            req_type: RequirementType::parse(&req_type_s).unwrap_or_default(),
         })
     }
 }
@@ -70,7 +74,8 @@ fn criteria_to_vec(v: &RequirementVersion) -> Vec<String> {
     v.acceptance_criteria.iter().map(|c| c.text.clone()).collect()
 }
 
-const META_COLS: &str = "id, project_id, title, status, baseline_version, deleted, review_comment";
+const META_COLS: &str =
+    "id, project_id, title, status, baseline_version, deleted, review_comment, priority, req_type";
 
 #[async_trait]
 impl RequirementRepository for PgRequirementRepository {
@@ -97,10 +102,13 @@ impl RequirementRepository for PgRequirementRepository {
     async fn insert(&self, new: &NewRequirement) -> Result<Requirement, RepoError> {
         let mut tx = self.pool.begin().await.map_err(map_err)?;
         let id: String = sqlx::query(
-            "INSERT INTO ms_requirement (project_id, title) VALUES ($1, $2) RETURNING id",
+            "INSERT INTO ms_requirement (project_id, title, priority, req_type) \
+             VALUES ($1, $2, $3, $4) RETURNING id",
         )
         .bind(&new.project_id)
         .bind(&new.title)
+        .bind(new.priority.as_str())
+        .bind(new.req_type.as_str())
         .fetch_one(&mut *tx)
         .await
         .map_err(map_err)?
@@ -176,8 +184,8 @@ impl RequirementRepository for PgRequirementRepository {
     async fn save(&self, requirement: &Requirement) -> Result<(), RepoError> {
         let mut tx = self.pool.begin().await.map_err(map_err)?;
         sqlx::query(
-            "UPDATE ms_requirement SET title = $2, status = $3, baseline_version = $4, deleted = $5, review_comment = $6 \
-             WHERE id = $1",
+            "UPDATE ms_requirement SET title = $2, status = $3, baseline_version = $4, deleted = $5, review_comment = $6, \
+             priority = $7, req_type = $8 WHERE id = $1",
         )
         .bind(&requirement.id)
         .bind(&requirement.title)
@@ -185,6 +193,8 @@ impl RequirementRepository for PgRequirementRepository {
         .bind(requirement.baseline_version as i32)
         .bind(requirement.deleted)
         .bind(&requirement.review_comment)
+        .bind(requirement.priority.as_str())
+        .bind(requirement.req_type.as_str())
         .execute(&mut *tx)
         .await
         .map_err(map_err)?;
@@ -275,6 +285,9 @@ mod tests {
         assert_eq!(got.latest_version(), 1);
         assert_eq!(got.baseline_version, 1);
         assert_eq!(got.baseline().acceptance_criteria[0].text, "正确凭证登录");
+        // 新建默认优先级/类型落库。
+        assert_eq!(got.priority, RequirementPriority::P2);
+        assert_eq!(got.req_type, RequirementType::Feature);
 
         got.revise("v2 描述", vec![AcceptanceCriterion { text: "新增标准".into() }])
             .expect("revise");
@@ -286,8 +299,13 @@ mod tests {
 
         let mut r2 = reloaded;
         r2.set_baseline(2).expect("baseline");
+        r2.priority = RequirementPriority::P0;
+        r2.req_type = RequirementType::Bugfix;
         repo.save(&r2).await.expect("save");
-        assert_eq!(repo.get(&r.id).await.expect("g").expect("s").baseline_version, 2);
+        let after = repo.get(&r.id).await.expect("g").expect("s");
+        assert_eq!(after.baseline_version, 2);
+        assert_eq!(after.priority, RequirementPriority::P0);
+        assert_eq!(after.req_type, RequirementType::Bugfix);
 
         assert!(repo.find_active_by_title("p1", "登录").await.expect("q").is_some());
         r2.soft_delete();

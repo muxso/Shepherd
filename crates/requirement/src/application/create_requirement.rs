@@ -2,7 +2,9 @@ use std::sync::Arc;
 
 use thiserror::Error;
 
-use crate::domain::{NewRequirement, Requirement, RequirementError};
+use crate::domain::{
+    parse_priority, parse_req_type, NewRequirement, Requirement, RequirementError,
+};
 use crate::ports::{RepoError, RequirementRepository};
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
@@ -32,7 +34,24 @@ impl CreateRequirementUseCase {
         description: &str,
         criteria: &[String],
     ) -> Result<Requirement, CreateRequirementError> {
-        let new = NewRequirement::new(project_id, title, description, criteria)?;
+        self.execute_with(project_id, title, description, criteria, None, None).await
+    }
+
+    /// 同 `execute`,另接收可选优先级/需求类型原始串:缺省取默认值,非法值报校验错。
+    pub async fn execute_with(
+        &self,
+        project_id: &str,
+        title: &str,
+        description: &str,
+        criteria: &[String],
+        priority: Option<&str>,
+        req_type: Option<&str>,
+    ) -> Result<Requirement, CreateRequirementError> {
+        let priority = priority.map(parse_priority).transpose()?.unwrap_or_default();
+        let req_type = req_type.map(parse_req_type).transpose()?.unwrap_or_default();
+        let new = NewRequirement::new(project_id, title, description, criteria)?
+            .with_priority(priority)
+            .with_req_type(req_type);
 
         if self.repo.find_active_by_title(&new.project_id, &new.title).await?.is_some() {
             return Err(CreateRequirementError::TitleAlreadyExists);
@@ -83,6 +102,37 @@ mod tests {
         let r = uc.execute("p1", "登录", "d", &[]).await.expect("ok");
         repo.soft_delete(&r.id);
         assert!(uc.execute("p1", "登录", "d", &[]).await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn creates_with_default_priority_and_type() {
+        use crate::domain::{RequirementPriority, RequirementType};
+        let r = uc().execute("p1", "登录", "d", &[]).await.expect("ok");
+        assert_eq!(r.priority, RequirementPriority::P2);
+        assert_eq!(r.req_type, RequirementType::Feature);
+    }
+
+    #[tokio::test]
+    async fn creates_with_explicit_priority_and_type_normalized() {
+        use crate::domain::{RequirementPriority, RequirementType};
+        let r = uc()
+            .execute_with("p1", "登录", "d", &[], Some(" p0 "), Some("tech_debt"))
+            .await
+            .expect("ok");
+        assert_eq!(r.priority, RequirementPriority::P0);
+        assert_eq!(r.req_type, RequirementType::TechDebt);
+    }
+
+    #[tokio::test]
+    async fn rejects_invalid_priority_and_type() {
+        assert_eq!(
+            uc().execute_with("p1", "登录", "d", &[], Some("P9"), None).await.unwrap_err(),
+            CreateRequirementError::Validation(RequirementError::InvalidPriority("P9".into()))
+        );
+        assert_eq!(
+            uc().execute_with("p1", "登录", "d", &[], None, Some("EPIC")).await.unwrap_err(),
+            CreateRequirementError::Validation(RequirementError::InvalidReqType("EPIC".into()))
+        );
     }
 
     #[tokio::test]

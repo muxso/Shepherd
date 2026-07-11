@@ -1,6 +1,8 @@
 use std::sync::Arc;
 
-use crate::domain::{parse_criteria, Requirement, RequirementError, StatusCounts};
+use crate::domain::{
+    parse_criteria, parse_priority, parse_req_type, Requirement, RequirementError, StatusCounts,
+};
 use crate::ports::{RepoError, RequirementRepository};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -90,6 +92,19 @@ impl RequirementService {
 
     /// 标题唯一性忽略软删除并排除自身。
     pub async fn rename(&self, id: &str, title: &str) -> Result<Requirement, RequirementCmdError> {
+        self.update(id, title, None, None).await
+    }
+
+    /// 改名 + 可选更新优先级/需求类型:None 表示不动,非法值报校验错。
+    pub async fn update(
+        &self,
+        id: &str,
+        title: &str,
+        priority: Option<&str>,
+        req_type: Option<&str>,
+    ) -> Result<Requirement, RequirementCmdError> {
+        let priority = priority.map(parse_priority).transpose()?;
+        let req_type = req_type.map(parse_req_type).transpose()?;
         let mut req = self.get(id).await?;
         let trimmed = title.trim();
         if let Some(existing) = self.repo.find_active_by_title(&req.project_id, trimmed).await? {
@@ -98,6 +113,12 @@ impl RequirementService {
             }
         }
         req.rename(title)?;
+        if let Some(p) = priority {
+            req.priority = p;
+        }
+        if let Some(t) = req_type {
+            req.req_type = t;
+        }
         self.repo.save(&req).await?;
         Ok(req)
     }
@@ -223,6 +244,25 @@ mod tests {
         let svc = RequirementService::new(repo);
         assert_eq!(svc.rename(&a, "注册").await.unwrap_err(), RequirementCmdError::TitleExists);
         assert!(svc.rename(&a, "登入").await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn update_sets_priority_and_type_and_none_keeps_them() {
+        use crate::domain::{RequirementPriority, RequirementType};
+        let (svc, id) = seeded().await;
+        let r = svc.update(&id, "登录", Some(" p1 "), Some("bugfix")).await.expect("update");
+        assert_eq!(r.priority, RequirementPriority::P1);
+        assert_eq!(r.req_type, RequirementType::Bugfix);
+        // None 不动已有值。
+        let r2 = svc.update(&id, "登入", None, None).await.expect("update");
+        assert_eq!(r2.title, "登入");
+        assert_eq!(r2.priority, RequirementPriority::P1);
+        assert_eq!(r2.req_type, RequirementType::Bugfix);
+        // 非法值报校验错。
+        assert_eq!(
+            svc.update(&id, "登入", Some("P9"), None).await.unwrap_err(),
+            RequirementCmdError::Validation(RequirementError::InvalidPriority("P9".into()))
+        );
     }
 
     #[tokio::test]
