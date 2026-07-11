@@ -28,7 +28,7 @@ Only the latest `main` receives security fixes while the project is pre-1.0.
 - **建议在反向代理层终结 TLS。** server 自身监听明文 HTTP;公网部署必须置于
   HTTPS 反代之后,agent-runtime 的 `SHEPHERD_BASE` 也应指向 https 地址。
 - **CORS**:仅将可信来源写入 `SHEPHERD_CORS_ORIGINS`,不要使用通配符。
-- **限流**:`SHEPHERD_RATE_LIMIT_RPS` 默认关闭;公网部署请开启。
+- **限流**:默认按客户端 200 rps;`SHEPHERD_RATE_LIMIT_RPS` 可调,设 0 关闭。
 
 Before deploying:
 
@@ -40,5 +40,5 @@ Before deploying:
 - **Terminate TLS at a reverse proxy.** The server listens on plain HTTP;
   never expose it directly on the public internet.
 - **CORS**: put only trusted origins in `SHEPHERD_CORS_ORIGINS`.
-- **Rate limiting**: `SHEPHERD_RATE_LIMIT_RPS` is off by default; enable it for
-  public deployments.
+- **Rate limiting**: on by default (200 rps per client); tune via
+  `SHEPHERD_RATE_LIMIT_RPS`, set 0 to disable.

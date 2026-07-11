@@ -1,5 +1,6 @@
-//! 每客户端令牌桶限流。opt-in:`SHEPHERD_RATE_LIMIT_RPS>0` 才启用。
-//! 客户端 key 取 `X-Forwarded-For` / `X-Real-IP` 首段(经反代);取不到归一到 "unknown"。
+//! 每客户端令牌桶限流。默认启用(200 rps/客户端);`SHEPHERD_RATE_LIMIT_RPS=0` 显式关闭。
+//! 客户端 key 取 `X-Forwarded-For` / `X-Real-IP` 首段(经反代);取不到归一到 "unknown"——
+//! 即无反代直连时全体共享一个桶,所以默认值必须宽松,真正的登录爆破由锁定机制兜底。
 //! 桶逻辑与时钟解耦(`check` 收外部 `Instant`),纯逻辑可测。
 
 use std::collections::HashMap;
@@ -23,9 +24,14 @@ pub struct RateLimiter {
     buckets: Mutex<HashMap<String, Bucket>>,
 }
 
+const DEFAULT_RPS: f64 = 200.0;
+
 impl RateLimiter {
     pub fn from_env() -> Option<Arc<Self>> {
-        let rps = std::env::var("SHEPHERD_RATE_LIMIT_RPS").ok()?.trim().parse::<f64>().ok()?;
+        let rps = match std::env::var("SHEPHERD_RATE_LIMIT_RPS") {
+            Ok(v) => v.trim().parse::<f64>().ok()?,
+            Err(_) => DEFAULT_RPS,
+        };
         if rps <= 0.0 {
             return None;
         }
