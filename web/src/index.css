@@ -199,6 +199,20 @@ body::before {
   background: var(--brand);
 }
 
+/* 主题切换动画(View Transitions):关掉默认交叉淡入,由 JS 用 clip-path 圆形扩散揭开新主题;
+   新主题在上层,旧主题静止垫底。 */
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation: none;
+  mix-blend-mode: normal;
+}
+::view-transition-old(root) {
+  z-index: 1;
+}
+::view-transition-new(root) {
+  z-index: 2;
+}
+
 /* 左侧模块树(接口/场景/用例/计划/文件等):行高统一 28px,与项目页左导航一致;
    图标/标题/行内工具按钮全部垂直居中,标题不换行。 */
 .ant-tree .ant-tree-treenode {

@@ -324,7 +324,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
               <Button type="text" icon={<BellOutlined />} onClick={() => setMsgOpen(true)} />
             </Tooltip>
             <Tooltip title={mode === 'dark' ? t('top.lightMode', '浅色模式') : t('top.darkMode', '暗色模式')}>
-              <Button type="text" icon={<BulbOutlined style={{ color: mode === 'dark' ? 'var(--brand)' : undefined }} />} onClick={toggle} />
+              <Button type="text" icon={<BulbOutlined style={{ color: mode === 'dark' ? 'var(--brand)' : undefined }} />} onClick={(e) => toggle(e)} />
             </Tooltip>
             <Tooltip title={isFullscreen ? t('top.exitFullscreen', '退出全屏') : t('top.fullscreen', '全屏')}>
               <Button type="text" icon={isFullscreen ? <FullscreenExitOutlined style={{ color: 'var(--brand)' }} /> : <FullscreenOutlined />} onClick={toggleFullscreen} />
