@@ -7,7 +7,7 @@ pub mod work_queue;
 
 pub use agent_executor::{AgentExecutor, DispatchOutcome, ExecError, WorkSpec};
 pub use delivery_repository::{
-    CollabRequirementRow, CollabStats, CollabWeek, DeliveryRepository, RepoError, TaskListFilter,
+    CollabDay, CollabRequirementRow, CollabStats, DeliveryRepository, RepoError, TaskListFilter,
     TaskPage, TaskRow,
 };
 pub use event_sink::{EventSink, NoopEventSink};

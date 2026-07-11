@@ -889,15 +889,15 @@ export interface CollabRequirementItem {
   aiPoints: number
   humanPoints: number
 }
-export interface CollabWeekItem {
-  /** 周一日期 YYYY-MM-DD。 */
-  week: string
+export interface CollabDayItem {
+  /** 日期 YYYY-MM-DD。 */
+  date: string
   ai: number
   human: number
 }
 export interface CollabStats {
   items: CollabRequirementItem[]
-  weekly: CollabWeekItem[]
+  daily: CollabDayItem[]
 }
 
 export interface BugRelation {

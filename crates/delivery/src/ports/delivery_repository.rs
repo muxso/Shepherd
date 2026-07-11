@@ -49,10 +49,11 @@ pub struct CollabRequirementRow {
     pub human_points: i64,
 }
 
-/// 按周(周一日期)的验收通过任务数拆分;verified_at 为空的历史任务不计入。
+/// 按日的验收通过任务数拆分(近一年,GitHub 贡献格子的数据源);
+/// verified_at 为空的历史任务不计入。
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CollabWeek {
-    pub week: String,
+pub struct CollabDay {
+    pub date: String,
     pub ai: i64,
     pub human: i64,
 }
@@ -60,7 +61,7 @@ pub struct CollabWeek {
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct CollabStats {
     pub items: Vec<CollabRequirementRow>,
-    pub weekly: Vec<CollabWeek>,
+    pub daily: Vec<CollabDay>,
 }
 
 #[async_trait]

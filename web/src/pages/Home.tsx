@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Button, Card, Checkbox, Col, Dropdown, Empty, Row, Spin, Statistic, Tooltip } from 'antd'
+import { Button, Card, Checkbox, Col, Dropdown, Empty, Row, Spin, Statistic, Tooltip, Segmented } from 'antd'
 import {
   ApiOutlined,
   PartitionOutlined,
@@ -26,6 +26,7 @@ import { regList } from '../registry'
 import { useI18n } from '../i18n'
 import Donut from '../components/Donut'
 import type { CollabStats } from '../api'
+import ContributionGrid from '../components/ContributionGrid'
 import GroupedBars, { type BarRow } from '../components/GroupedBars'
 
 interface Counts {
@@ -88,6 +89,7 @@ export default function Home() {
   const [exec, setExec] = useState<CaseExecSummary | null>(null)
   const [trend, setTrend] = useState<ExecTrendPoint[]>([])
   const [collab, setCollab] = useState<CollabStats | null>(null)
+  const [collabMetric, setCollabMetric] = useState<'total' | 'ai' | 'human'>('total')
   const [loading, setLoading] = useState(false)
   const [prefs, setPrefs] = useState<CardPref[]>(loadPrefs)
 
@@ -285,10 +287,7 @@ export default function Home() {
         const humanTasks = sum((x) => x.humanTasks)
         const aiPoints = sum((x) => x.aiPoints)
         const humanPoints = sum((x) => x.humanPoints)
-        const weeklyRows: BarRow[] = (collab?.weekly ?? []).map((w) => ({
-          name: w.week.slice(5),
-          values: { ai: w.ai, human: w.human },
-        }))
+
         // 需求明细:按总工作量降序,工作量全 0 时退回按任务数。
         const ranked = [...items]
           .map((x) => ({ ...x, tp: x.aiPoints + x.humanPoints, tc: x.aiTasks + x.humanTasks }))
@@ -335,18 +334,20 @@ export default function Home() {
                     </div>
                   </Col>
                   <Col xs={24} lg={14}>
-                    {weeklyRows.length > 0 ? (
-                      <GroupedBars
-                        height={170}
-                        series={[
-                          { key: 'ai', label: t('home.aiDelivered', 'AI 交付'), color: '#1664ff' },
-                          { key: 'human', label: t('home.humanDelivered', '人工交付'), color: '#ff9a2e' },
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+                      <span style={{ fontSize: 12, color: 'var(--text-3)' }}>{t('home.collabGridTitle', '近一年验收日历(格子=当日验收任务数)')}</span>
+                      <Segmented
+                        size="small"
+                        value={collabMetric}
+                        onChange={(v) => setCollabMetric(v as 'total' | 'ai' | 'human')}
+                        options={[
+                          { label: t('home.metricTotal', '全部'), value: 'total' },
+                          { label: 'AI', value: 'ai' },
+                          { label: t('home.humanShort', '人'), value: 'human' },
                         ]}
-                        rows={weeklyRows}
                       />
-                    ) : (
-                      <div style={{ fontSize: 12, color: 'var(--text-3)' }}>{t('home.collabNoTrend', '暂无周趋势(需要新的验收记录积累时间戳)')}</div>
-                    )}
+                    </div>
+                    <ContributionGrid days={collab?.daily ?? []} metric={collabMetric} />
                   </Col>
                 </Row>
                 {/* 需求明细:每条需求内 AI/人工 的工作量占比(工作量为 0 的需求按任务数占比)。 */}

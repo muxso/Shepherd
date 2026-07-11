@@ -6,7 +6,7 @@ use crate::domain::{
     ExecutorKind, NewExecutionEvent,
 };
 use crate::ports::{
-    CollabRequirementRow, CollabStats, CollabWeek, DeliveryRepository, RepoError, TaskListFilter,
+    CollabDay, CollabRequirementRow, CollabStats, DeliveryRepository, RepoError, TaskListFilter,
     TaskPage, TaskRow,
 };
 
@@ -290,33 +290,32 @@ impl DeliveryRepository for PgDeliveryRepository {
             })
             .collect::<Result<Vec<_>, RepoError>>()?;
 
-        // 最近 12 周;倒序取最近再翻正,趋势图从旧到新。
+        // 近一年按日聚合(GitHub 贡献格子);稀疏返回,前端补全日历格。
         let rows = sqlx::query(&format!(
-            "SELECT to_char(date_trunc('week', x.verified_at), 'YYYY-MM-DD') AS wk, \
+            "SELECT to_char(date_trunc('day', x.verified_at), 'YYYY-MM-DD') AS d, \
                 count(*) FILTER (WHERE x.ai) AS ai, \
                 count(*) FILTER (WHERE NOT x.ai) AS human \
              FROM ({VERIFIED_SPLIT}) x \
              JOIN ms_requirement r ON r.id = x.requirement_id \
-             WHERE r.project_id = $1 AND x.verified_at IS NOT NULL \
-             GROUP BY wk ORDER BY wk DESC LIMIT 12"
+             WHERE r.project_id = $1 AND x.verified_at >= now() - interval '370 days' \
+             GROUP BY d ORDER BY d"
         ))
         .bind(project_id)
         .fetch_all(&self.pool)
         .await
         .map_err(map_err)?;
-        let mut weekly = rows
+        let daily = rows
             .iter()
             .map(|r| {
-                Ok(CollabWeek {
-                    week: r.try_get("wk").map_err(map_err)?,
+                Ok(CollabDay {
+                    date: r.try_get("d").map_err(map_err)?,
                     ai: r.try_get("ai").map_err(map_err)?,
                     human: r.try_get("human").map_err(map_err)?,
                 })
             })
             .collect::<Result<Vec<_>, RepoError>>()?;
-        weekly.reverse();
 
-        Ok(CollabStats { items, weekly })
+        Ok(CollabStats { items, daily })
     }
 
     async fn delete(&self, id: &str) -> Result<bool, RepoError> {

@@ -455,8 +455,8 @@ struct CollabRequirementItem {
 
 #[derive(Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
-struct CollabWeekItem {
-    week: String,
+struct CollabDayItem {
+    date: String,
     ai: i64,
     human: i64,
 }
@@ -465,7 +465,7 @@ struct CollabWeekItem {
 #[serde(rename_all = "camelCase")]
 struct CollabStatsResponse {
     items: Vec<CollabRequirementItem>,
-    weekly: Vec<CollabWeekItem>,
+    daily: Vec<CollabDayItem>,
 }
 
 // 人机协同人效:口径 = 任务 VERIFIED 且有 DELIVERED 交付记录算 AI,否则算人工。
@@ -496,10 +496,10 @@ async fn collab_stats(
                         human_points: r.human_points,
                     })
                     .collect(),
-                weekly: cs
-                    .weekly
+                daily: cs
+                    .daily
                     .into_iter()
-                    .map(|w| CollabWeekItem { week: w.week, ai: w.ai, human: w.human })
+                    .map(|d| CollabDayItem { date: d.date, ai: d.ai, human: d.human })
                     .collect(),
             };
             (StatusCode::OK, Json(body)).into_response()
@@ -549,7 +549,7 @@ async fn delete_attempt(
 #[derive(OpenApi)]
 #[openapi(
     paths(dispatch, list_by_task, get_attempt, report_running, complete, fail, record_event, list_events, list_tasks, collab_stats, stop, delete_attempt),
-    components(schemas(DispatchBody, RunningBody, CompleteBody, FailBody, EventBody, EventResponse, DeliverableResponse, AttemptResponse, TaskItemResponse, TaskPageResponse, CollabRequirementItem, CollabWeekItem, CollabStatsResponse, StopBody)),
+    components(schemas(DispatchBody, RunningBody, CompleteBody, FailBody, EventBody, EventResponse, DeliverableResponse, AttemptResponse, TaskItemResponse, TaskPageResponse, CollabRequirementItem, CollabDayItem, CollabStatsResponse, StopBody)),
     tags((name = "delivery", description = "交付执行(AI 执行者)"))
 )]
 struct ApiDoc;
