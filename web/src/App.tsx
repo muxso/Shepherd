@@ -20,6 +20,7 @@ const FunctionalCases = lazy(() => import('./pages/FunctionalCases'))
 const OrganizationsPage = lazy(() => import('./pages/OrgProjects'))
 const RolesPage = lazy(() => import('./pages/UserGroups'))
 const UsersPage = lazy(() => import('./pages/Users'))
+const ApiKeysPage = lazy(() => import('./pages/ApiKeys'))
 const ProjectAdmin = lazy(() => import('./pages/ProjectAdmin'))
 const FileManagement = lazy(() => import('./pages/FileManagement'))
 const MessageSettings = lazy(() => import('./pages/MessageSettings'))
@@ -55,6 +56,7 @@ export default function App() {
           <Route path="/organization" element={<OrganizationsPage />} />
           <Route path="/role" element={<RolesPage />} />
           <Route path="/user" element={<UsersPage />} />
+          <Route path="/system/apikeys" element={<ApiKeysPage />} />
           <Route path="/system/params" element={<ComingSoon title={t('sys.params', '系统参数')} />} />
           <Route path="/system/tasks" element={<TaskCenter />} />
           <Route path="/system/plugins" element={<ComingSoon title={t('sys.plugins', '插件')} />} />

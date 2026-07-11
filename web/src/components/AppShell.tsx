@@ -30,6 +30,7 @@ import {
   ExperimentOutlined,
   FullscreenOutlined,
   FullscreenExitOutlined,
+  KeyOutlined,
 } from '@ant-design/icons'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { userStore } from '../api'
@@ -132,6 +133,7 @@ const MODULES: ModuleDef[] = [
     children: [
       { key: '/user', icon: <UserOutlined />, label: ['sys.users', '用户'] },
       { key: '/role', icon: <SafetyOutlined />, label: ['sys.userGroups', '用户组'] },
+      { key: '/system/apikeys', icon: <KeyOutlined />, label: ['sys.apikeys', 'API 密钥'] },
       { key: '/organization', icon: <ClusterOutlined />, label: ['sys.orgProj', '组织与项目'] },
       { key: '/system/params', icon: <SettingOutlined />, label: ['sys.params', '系统参数'] },
       { key: '/resource-pool', icon: <DatabaseOutlined />, label: ['m.pool', '资源池'] },

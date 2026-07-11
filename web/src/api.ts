@@ -561,6 +561,17 @@ export interface User {
   userGroups?: string[]
 }
 
+export interface ApiKey {
+  id: string
+  name: string
+  /** 明文密钥(sak_…);仅创建响应携带一次,列表接口不返回。 */
+  key?: string
+  /** 权限串,如 "DELIVERY:READ+UPDATE+EXECUTE"(资源:动作+动作)。 */
+  permissions: string[]
+  createdAt: string
+  revoked?: boolean
+}
+
 export interface ProjectMember {
   projectId: string
   userId: string
@@ -1105,6 +1116,11 @@ export const api = {
     http.put<User>(`/system/user/${id}`, b),
   deleteUser: (id: string) => http.del(`/system/user/${id}`),
   resetUserPassword: (id: string) => http.post<{ password: string }>(`/system/user/${id}/reset-password`),
+
+  // API 密钥(系统级;创建响应含一次性明文 key,吊销即 DELETE)
+  apiKeys: () => http.get<{ items: ApiKey[] }>('/system/apikey'),
+  createApiKey: (b: { name: string; permissions: string[] }) => http.post<ApiKey>('/system/apikey', b),
+  revokeApiKey: (id: string) => http.del(`/system/apikey/${encodeURIComponent(id)}`),
 
   // 功能用例(项目级)
   functionalCases: (projectId: string) =>
