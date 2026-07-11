@@ -6,6 +6,7 @@ import { api, ApiError, type Bug, type BugRelation } from '../api'
 import { useApp } from '../context'
 import { useI18n } from '../i18n'
 import { PageBody, PageContainer, PageHeader, SelectProjectEmpty } from '../components/Page'
+import { useListView, type ListColumn } from '../components/ListView'
 
 const STATUSES = ['NEW', 'RESOLVED', 'CLOSED', 'REOPENED', 'REJECTED']
 
@@ -72,6 +73,68 @@ export default function Bugs() {
     })
   }
 
+  return <BugsList items={items} loading={loading} projectId={projectId} refresh={refresh} createOpen={createOpen} setCreateOpen={setCreateOpen} setItems={setItems} relBug={relBug} setRelBug={setRelBug} changeStatus={changeStatus} t={t} />
+}
+
+// 列表 + 三件套(视图/筛选/列设置):useListView 是 hook,拆成子组件避免主组件条件返回后调用 hook。
+function BugsList({ items, loading, projectId, refresh, createOpen, setCreateOpen, setItems, relBug, setRelBug, changeStatus, t }: {
+  items: Bug[]
+  loading: boolean
+  projectId: string
+  refresh: () => void
+  createOpen: boolean
+  setCreateOpen: (v: boolean) => void
+  setItems: React.Dispatch<React.SetStateAction<Bug[]>>
+  relBug: Bug | null
+  setRelBug: (b: Bug | null) => void
+  changeStatus: (b: Bug) => void
+  t: (k: string, d?: string) => string
+}) {
+  const allColumns: ListColumn<Bug>[] = [
+    { key: 'title', label: t('bug.title', '标题'), title: t('bug.title', '标题'), dataIndex: 'title' },
+    {
+      key: 'status',
+      label: t('bug.status', '状态'),
+      title: t('bug.status', '状态'),
+      width: 130,
+      render: (_, r) => <Tag color={bugColor(r.status || 'NEW')}>{statusLabel(t, r.status || 'NEW')}</Tag>,
+    },
+    { key: 'id', label: 'ID', title: 'ID', dataIndex: 'id', width: 110, render: (v: string) => <Tooltip title={v}><span className="ms-mono" style={{ fontSize: 12, color: 'var(--text-3)' }}>{v?.slice(0, 8)}</span></Tooltip> },
+    {
+      key: 'action',
+      label: t('bug.action', '操作'),
+      title: t('bug.action', '操作'),
+      width: 190,
+      render: (_, r) => (
+        <>
+          <Button type="link" size="small" onClick={() => changeStatus(r)}>
+            {t('bug.changeStatusBtn', '变更状态')}
+          </Button>
+          <Button type="link" size="small" icon={<LinkOutlined />} onClick={() => setRelBug(r)}>
+            {t('bug.relations', '关联')}
+          </Button>
+        </>
+      ),
+    },
+  ]
+  const lv = useListView<Bug>({
+    kind: 'bug',
+    projectId,
+    searchOf: (r) => r.title || r.id,
+    searchLabel: t('bug.searchPh', '搜索标题'),
+    fields: [
+      {
+        key: 'status',
+        label: t('bug.status', '状态'),
+        type: 'enum',
+        options: STATUSES.map((s) => ({ value: s, label: statusLabel(t, s) })),
+        get: (r) => (r.status || 'NEW').toUpperCase(),
+      },
+    ],
+    columns: allColumns,
+    rows: items,
+  })
+
   return (
     <PageContainer>
       <PageHeader
@@ -86,36 +149,15 @@ export default function Bugs() {
         }
       />
       <PageBody>
+        <div style={{ marginBottom: 12 }}>{lv.toolbar}</div>
         <Table<Bug>
           rowKey="id"
           size="middle"
           loading={loading}
-          dataSource={items}
+          dataSource={lv.rows}
           pagination={{ pageSize: 15, size: 'small' }}
           locale={{ emptyText: <Empty description={t('bug.empty', '暂无缺陷')} /> }}
-          columns={[
-            { title: t('bug.title', '标题'), dataIndex: 'title' },
-            {
-              title: t('bug.status', '状态'),
-              width: 130,
-              render: (_, r) => <Tag color={bugColor(r.status || 'NEW')}>{statusLabel(t, r.status || 'NEW')}</Tag>,
-            },
-            { title: 'ID', dataIndex: 'id', width: 110, render: (v: string) => <Tooltip title={v}><span className="ms-mono" style={{ fontSize: 12, color: 'var(--text-3)' }}>{v?.slice(0, 8)}</span></Tooltip> },
-            {
-              title: t('bug.action', '操作'),
-              width: 190,
-              render: (_, r) => (
-                <>
-                  <Button type="link" size="small" onClick={() => changeStatus(r)}>
-                    {t('bug.changeStatusBtn', '变更状态')}
-                  </Button>
-                  <Button type="link" size="small" icon={<LinkOutlined />} onClick={() => setRelBug(r)}>
-                    {t('bug.relations', '关联')}
-                  </Button>
-                </>
-              ),
-            },
-          ]}
+          columns={lv.columns}
         />
       </PageBody>
 
