@@ -52,12 +52,14 @@ impl CreateRequirementUseCase {
             None,
             &BTreeMap::new(),
             "",
+            "",
         )
         .await
     }
 
-    /// 同 `execute`,另接收可选优先级/需求类型/标签/截止日期/父需求/自定义字段/创建人:
-    /// 缺省取默认值,非法值报校验错;父需求须存在(未软删)且同项目。
+    /// 同 `execute`,另接收可选优先级/需求类型/标签/截止日期/父需求/自定义字段/所属模块/创建人:
+    /// 缺省取默认值,非法值报校验错;父需求须存在(未软删)且同项目;
+    /// `module_id` 空串 = 未规划(模块实体在共享 ms_module 表,不做存在性校验)。
     #[allow(clippy::too_many_arguments)]
     pub async fn execute_with(
         &self,
@@ -71,6 +73,7 @@ impl CreateRequirementUseCase {
         due_date: Option<&str>,
         parent_id: Option<&str>,
         custom_fields: &BTreeMap<String, String>,
+        module_id: &str,
         by: &str,
     ) -> Result<Requirement, CreateRequirementError> {
         let priority = priority.map(parse_priority).transpose()?.unwrap_or_default();
@@ -86,6 +89,7 @@ impl CreateRequirementUseCase {
             .with_tags(tags)
             .with_due_date(due_date)
             .with_custom_fields(custom_fields)
+            .with_module(module_id)
             .with_created_by(by);
 
         if let Some(pid) = parent_id.map(str::trim).filter(|p| !p.is_empty()) {
@@ -201,6 +205,7 @@ mod tests {
                 None,
                 &BTreeMap::new(),
                 "",
+                "",
             )
             .await
             .expect("ok");
@@ -222,6 +227,7 @@ mod tests {
                 None,
                 None,
                 &BTreeMap::new(),
+                "",
                 ""
             )
             .await
@@ -240,6 +246,7 @@ mod tests {
                 None,
                 None,
                 &BTreeMap::new(),
+                "",
                 ""
             )
             .await
@@ -266,6 +273,7 @@ mod tests {
                 Some(&parent.id),
                 &BTreeMap::new(),
                 "",
+                "",
             )
             .await
             .expect("ok");
@@ -286,6 +294,7 @@ mod tests {
                 None,
                 &BTreeMap::new(),
                 "",
+                "",
             )
             .await
             .expect("ok");
@@ -293,17 +302,42 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn creates_with_module_and_defaults_unfiled() {
+        let uc = uc();
+        let r = uc
+            .execute_with(
+                "p1",
+                "登录",
+                "d",
+                &[],
+                None,
+                None,
+                &[],
+                None,
+                None,
+                &BTreeMap::new(),
+                " mod-1 ",
+                "u1",
+            )
+            .await
+            .expect("ok");
+        assert_eq!(r.module_id, "mod-1"); // 自动 trim
+        let r2 = uc.execute("p1", "注册", "d", &[]).await.expect("ok");
+        assert_eq!(r2.module_id, ""); // 缺省未规划
+    }
+
+    #[tokio::test]
     async fn creates_with_custom_fields_normalized_and_rejects_invalid() {
         let raw = BTreeMap::from([(" owner ".to_string(), "alice".to_string())]);
         let r = uc()
-            .execute_with("p1", "登录", "d", &[], None, None, &[], None, None, &raw, "")
+            .execute_with("p1", "登录", "d", &[], None, None, &[], None, None, &raw, "", "")
             .await
             .expect("ok");
         assert_eq!(r.custom_fields, BTreeMap::from([("owner".to_string(), "alice".to_string())]));
         // 空白键报校验错。
         let bad = BTreeMap::from([("  ".to_string(), "v".to_string())]);
         assert_eq!(
-            uc().execute_with("p1", "注册", "d", &[], None, None, &[], None, None, &bad, "")
+            uc().execute_with("p1", "注册", "d", &[], None, None, &[], None, None, &bad, "", "")
                 .await
                 .unwrap_err(),
             CreateRequirementError::Validation(RequirementError::EmptyCustomFieldKey)
@@ -327,6 +361,7 @@ mod tests {
                 None,
                 Some("ghost"),
                 &BTreeMap::new(),
+                "",
                 ""
             )
             .await
@@ -345,6 +380,7 @@ mod tests {
                 None,
                 Some(&other.id),
                 &BTreeMap::new(),
+                "",
                 ""
             )
             .await
@@ -366,6 +402,7 @@ mod tests {
                 None,
                 Some(&doomed.id),
                 &BTreeMap::new(),
+                "",
                 ""
             )
             .await
@@ -388,6 +425,7 @@ mod tests {
                 Some("2026-13-01"),
                 None,
                 &BTreeMap::new(),
+                "",
                 ""
             )
             .await
@@ -409,6 +447,7 @@ mod tests {
                 None,
                 None,
                 &BTreeMap::new(),
+                "",
                 ""
             )
             .await

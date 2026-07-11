@@ -97,6 +97,8 @@ pub struct NewRequirement {
     pub parent_id: Option<String>,
     /// 已校验的自定义字段值(见 `normalize_custom_fields`);字段定义由项目模板管理。
     pub custom_fields: BTreeMap<String, String>,
+    /// 所属模块 id(共享 ms_module 项目级模块树);空串 = 未规划。
+    pub module_id: String,
 }
 
 impl NewRequirement {
@@ -130,6 +132,7 @@ impl NewRequirement {
             due_date: None,
             parent_id: None,
             custom_fields: BTreeMap::new(),
+            module_id: String::new(),
         })
     }
 
@@ -169,6 +172,12 @@ impl NewRequirement {
     /// 携带已校验的自定义字段(调用方先过 `normalize_custom_fields`)。
     pub fn with_custom_fields(mut self, custom_fields: BTreeMap<String, String>) -> Self {
         self.custom_fields = custom_fields;
+        self
+    }
+
+    /// 携带所属模块 id(共享模块树;空串 = 未规划)。
+    pub fn with_module(mut self, module_id: &str) -> Self {
+        self.module_id = module_id.trim().to_string();
         self
     }
 }
@@ -638,6 +647,8 @@ pub struct Requirement {
     pub parent_id: Option<String>,
     /// 自定义字段值 map<字段key, 字符串值>;字段定义由项目模板管理,多选值逗号拼接。
     pub custom_fields: BTreeMap<String, String>,
+    /// 所属模块 id(共享 ms_module 项目级模块树);空串 = 未规划。
+    pub module_id: String,
     /// 截止日期 `YYYY-MM-DD`;是否逾期由 `is_overdue` 实时计算,不落库。
     pub due_date: Option<String>,
     /// 创建/更新时间(epoch 毫秒,全库口径);由存储层盖章,内存值 0 表示尚未落库。
@@ -675,6 +686,7 @@ impl Requirement {
             tags: new.tags.clone(),
             parent_id: new.parent_id.clone(),
             custom_fields: new.custom_fields.clone(),
+            module_id: new.module_id.clone(),
             due_date: new.due_date.clone(),
             created_at_ms: 0,
             updated_at_ms: 0,
@@ -1086,7 +1098,10 @@ mod tests {
         let ten: Vec<String> = (0..10).map(|i| format!("t{i}")).collect();
         assert_eq!(normalize_tags(&ten).expect("ok").len(), 10);
         let long = "标".repeat(33);
-        assert_eq!(normalize_tags(&[long.clone()]), Err(RequirementError::TagTooLong(long)));
+        assert_eq!(
+            normalize_tags(std::slice::from_ref(&long)),
+            Err(RequirementError::TagTooLong(long))
+        );
         // 32 个字符(含中文)合法。
         assert!(normalize_tags(&["标".repeat(32)]).is_ok());
     }
@@ -1210,6 +1225,13 @@ mod tests {
         assert_eq!(r.test_status, WorkStatus::Done);
         assert_eq!(r.test_started_at_ms, Some(500));
         assert_eq!(r.test_finished_at_ms, Some(500));
+    }
+
+    #[test]
+    fn create_carries_module_and_defaults_to_unfiled() {
+        let r = Requirement::create("req-1", &new_req().with_module(" mod-1 "));
+        assert_eq!(r.module_id, "mod-1"); // with_module 会 trim
+        assert_eq!(Requirement::create("req-2", &new_req()).module_id, "");
     }
 
     #[test]

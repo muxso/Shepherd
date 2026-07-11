@@ -90,6 +90,9 @@ struct CreateBody {
     /// 字段定义由项目模板管理,多选值逗号拼接。
     #[serde(default)]
     custom_fields: BTreeMap<String, String>,
+    /// 所属模块 id(共享项目模块树);缺省/空串 = 未规划。
+    #[serde(default)]
+    module_id: String,
 }
 
 #[derive(Deserialize, ToSchema)]
@@ -130,6 +133,9 @@ struct RenameBody {
     /// 可选:整体替换自定义字段(空 map 即清空),缺省不动。
     #[serde(default)]
     custom_fields: Option<BTreeMap<String, String>>,
+    /// 可选:更新所属模块 id(空串 = 摘回未规划),缺省不动。
+    #[serde(default)]
+    module_id: Option<String>,
 }
 
 #[derive(Deserialize, ToSchema)]
@@ -225,6 +231,8 @@ struct RequirementResponse {
     parent_id: Option<String>,
     /// 自定义字段值 map<字段key, 字符串值>;字段定义由项目模板管理,多选值逗号拼接。
     custom_fields: BTreeMap<String, String>,
+    /// 所属模块 id(共享项目模块树);空串 = 未规划。
+    module_id: String,
     /// 截止日期 YYYY-MM-DD;null 表示未设置。
     due_date: Option<String>,
     /// 是否逾期(实时计算:截止日期规则或任一阶段逾期)。
@@ -262,6 +270,7 @@ impl From<Requirement> for RequirementResponse {
             tags: r.tags,
             parent_id: r.parent_id,
             custom_fields: r.custom_fields,
+            module_id: r.module_id,
             due_date: r.due_date,
             overdue,
             created_at: r.created_at_ms,
@@ -417,6 +426,7 @@ async fn create_requirement(
             b.due_date.as_deref(),
             b.parent_id.as_deref(),
             &b.custom_fields,
+            &b.module_id,
             &user.user_id,
         )
         .await
@@ -562,6 +572,7 @@ async fn rename_requirement(
             b.tags.as_deref(),
             due_date,
             b.custom_fields.as_ref(),
+            b.module_id.as_deref(),
             &user.user_id,
         )
         .await
@@ -1657,6 +1668,79 @@ mod tests {
             .expect("r");
         let v3 = body_json(r3).await;
         assert!(v3["dueDate"].is_null());
+    }
+
+    #[tokio::test]
+    async fn module_create_update_and_omission_semantics() {
+        let (app, t) = app_with("REQUIREMENT:READ+ADD+UPDATE").await;
+        // 创建携带 moduleId;缺省为空串(未规划)。
+        let r = app
+            .clone()
+            .oneshot(req(
+                "POST",
+                "/requirement",
+                r#"{"projectId":"p1","title":"登录","moduleId":"mod-1"}"#,
+                Some(&t),
+            ))
+            .await
+            .expect("r");
+        assert_eq!(r.status(), StatusCode::CREATED);
+        let v = body_json(r).await;
+        assert_eq!(v["moduleId"], "mod-1");
+        let id = v["id"].as_str().expect("id").to_string();
+        let d = body_json(
+            app.clone()
+                .oneshot(req(
+                    "POST",
+                    "/requirement",
+                    r#"{"projectId":"p1","title":"注册"}"#,
+                    Some(&t),
+                ))
+                .await
+                .expect("r"),
+        )
+        .await;
+        assert_eq!(d["moduleId"], "");
+
+        // PUT 缺省不动;带 moduleId 替换;空串摘回未规划。
+        let r2 = app
+            .clone()
+            .oneshot(req("PUT", &format!("/requirement/{id}"), r#"{"title":"登录"}"#, Some(&t)))
+            .await
+            .expect("r");
+        assert_eq!(body_json(r2).await["moduleId"], "mod-1");
+        let r3 = app
+            .clone()
+            .oneshot(req(
+                "PUT",
+                &format!("/requirement/{id}"),
+                r#"{"title":"登录","moduleId":"mod-2"}"#,
+                Some(&t),
+            ))
+            .await
+            .expect("r");
+        assert_eq!(body_json(r3).await["moduleId"], "mod-2");
+        let r4 = app
+            .clone()
+            .oneshot(req(
+                "PUT",
+                &format!("/requirement/{id}"),
+                r#"{"title":"登录","moduleId":""}"#,
+                Some(&t),
+            ))
+            .await
+            .expect("r");
+        assert_eq!(body_json(r4).await["moduleId"], "");
+        // 变更日志记 module 字段。
+        let log = body_json(
+            app.oneshot(req("GET", &format!("/requirement/{id}/changes"), "", Some(&t)))
+                .await
+                .expect("r"),
+        )
+        .await;
+        assert_eq!(log["items"][0]["field"], "module");
+        assert_eq!(log["items"][0]["oldValue"], "mod-2");
+        assert_eq!(log["items"][0]["newValue"], "");
     }
 
     #[tokio::test]
