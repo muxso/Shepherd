@@ -29,6 +29,7 @@ impl PgRequirementRepository {
         let req_type_s: String = meta.try_get("req_type").map_err(map_err)?;
         let dev_status_s: String = meta.try_get("dev_status").map_err(map_err)?;
         let test_status_s: String = meta.try_get("test_status").map_err(map_err)?;
+        let custom: serde_json::Value = meta.try_get("custom_fields").map_err(map_err)?;
 
         let vrows = sqlx::query(
             "SELECT version, description, acceptance_criteria FROM ms_requirement_version \
@@ -69,6 +70,7 @@ impl PgRequirementRepository {
             req_type: RequirementType::parse(&req_type_s).unwrap_or_default(),
             tags: meta.try_get("tags").map_err(map_err)?,
             parent_id: meta.try_get("parent_id").map_err(map_err)?,
+            custom_fields: json_to_fields(&custom),
             due_date: meta.try_get("due_date").map_err(map_err)?,
             created_at_ms: meta.try_get("created_at_ms").map_err(map_err)?,
             updated_at_ms: meta.try_get("updated_at_ms").map_err(map_err)?,
@@ -115,13 +117,37 @@ fn map_err(e: sqlx::Error) -> RepoError {
     RepoError::Backend(e.to_string())
 }
 
+/// 自定义字段 map → JSONB 对象(值一律字符串)。
+fn fields_to_json(f: &std::collections::BTreeMap<String, String>) -> serde_json::Value {
+    serde_json::Value::Object(
+        f.iter().map(|(k, v)| (k.clone(), serde_json::Value::String(v.clone()))).collect(),
+    )
+}
+
+/// JSONB 对象 → 自定义字段 map;非字符串值(理论不该出现)按 JSON 文本兜底。
+fn json_to_fields(v: &serde_json::Value) -> std::collections::BTreeMap<String, String> {
+    v.as_object()
+        .map(|obj| {
+            obj.iter()
+                .map(|(k, val)| {
+                    let s = match val {
+                        serde_json::Value::String(s) => s.clone(),
+                        other => other.to_string(),
+                    };
+                    (k.clone(), s)
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 fn criteria_to_vec(v: &RequirementVersion) -> Vec<String> {
     v.acceptance_criteria.iter().map(|c| c.text.clone()).collect()
 }
 
 // 时间列统一转 epoch 毫秒(与全库口径一致);due_date 以 `YYYY-MM-DD` 文本进出。
 const META_COLS: &str = "id, project_id, title, status, baseline_version, deleted, review_comment, priority, req_type, \
-     tags, parent_id, due_date::text AS due_date, \
+     tags, parent_id, custom_fields, due_date::text AS due_date, \
      (extract(epoch from created_at) * 1000)::bigint AS created_at_ms, \
      (extract(epoch from updated_at) * 1000)::bigint AS updated_at_ms, \
      dev_status, test_status, \
@@ -161,8 +187,8 @@ impl RequirementRepository for PgRequirementRepository {
     async fn insert(&self, new: &NewRequirement) -> Result<Requirement, RepoError> {
         let mut tx = self.pool.begin().await.map_err(map_err)?;
         let row = sqlx::query(
-            "INSERT INTO ms_requirement (project_id, title, priority, req_type, tags, parent_id, due_date) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7::date) \
+            "INSERT INTO ms_requirement (project_id, title, priority, req_type, tags, parent_id, due_date, custom_fields) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7::date, $8) \
              RETURNING id, (extract(epoch from created_at) * 1000)::bigint AS created_at_ms, \
                        (extract(epoch from updated_at) * 1000)::bigint AS updated_at_ms",
         )
@@ -173,6 +199,7 @@ impl RequirementRepository for PgRequirementRepository {
         .bind(&new.tags)
         .bind(&new.parent_id)
         .bind(&new.due_date)
+        .bind(fields_to_json(&new.custom_fields))
         .fetch_one(&mut *tx)
         .await
         .map_err(map_err)?;
@@ -257,7 +284,7 @@ impl RequirementRepository for PgRequirementRepository {
              dev_finished_at = to_timestamp($15::double precision / 1000.0), \
              test_started_at = to_timestamp($16::double precision / 1000.0), \
              test_finished_at = to_timestamp($17::double precision / 1000.0), \
-             updated_at = now() WHERE id = $1",
+             custom_fields = $18, updated_at = now() WHERE id = $1",
         )
         .bind(&requirement.id)
         .bind(&requirement.title)
@@ -276,6 +303,7 @@ impl RequirementRepository for PgRequirementRepository {
         .bind(requirement.dev_finished_at_ms)
         .bind(requirement.test_started_at_ms)
         .bind(requirement.test_finished_at_ms)
+        .bind(fields_to_json(&requirement.custom_fields))
         .execute(&mut *tx)
         .await
         .map_err(map_err)?;
@@ -508,11 +536,15 @@ mod tests {
             .insert(&NewRequirement::new("p1", "父需求", "d", &[]).expect("valid"))
             .await
             .expect("insert parent");
+        let cf = |pairs: &[(&str, &str)]| -> std::collections::BTreeMap<String, String> {
+            pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()
+        };
         let child_new = NewRequirement::new("p1", "子需求", "d", &[])
             .expect("valid")
             .with_tags(vec!["api".to_string(), "web".to_string()])
             .with_due_date(Some("2026-12-31".to_string()))
-            .with_parent(Some(parent.id.clone()));
+            .with_parent(Some(parent.id.clone()))
+            .with_custom_fields(cf(&[("owner", "alice"), ("多选", "a,b,c")]));
         let child = repo.insert(&child_new).await.expect("insert child");
         assert!(child.created_at_ms > 0);
         assert_eq!(child.created_at_ms, child.updated_at_ms);
@@ -523,12 +555,18 @@ mod tests {
         assert_eq!(got.due_date.as_deref(), Some("2026-12-31"));
         assert_eq!(got.parent_id.as_deref(), Some(parent.id.as_str()));
         assert_eq!(got.dev_status, WorkStatus::NotStarted);
+        // 自定义字段写入即读回;父需求未写过则为空 map。
+        assert_eq!(got.custom_fields, cf(&[("owner", "alice"), ("多选", "a,b,c")]));
+        assert!(parent.custom_fields.is_empty());
 
         got.set_dev_status(WorkStatus::InProgress, 1_700_000_000_000);
         got.set_test_status(WorkStatus::Done, 1_700_000_100_000);
         got.due_date = None;
+        got.custom_fields = cf(&[("owner", "bob"), ("env", "prod")]);
         repo.save(&got).await.expect("save");
         let reloaded = repo.get(&child.id).await.expect("get").expect("some");
+        // save 整体替换自定义字段。
+        assert_eq!(reloaded.custom_fields, cf(&[("owner", "bob"), ("env", "prod")]));
         assert_eq!(reloaded.dev_status, WorkStatus::InProgress);
         assert_eq!(reloaded.dev_started_at_ms, Some(1_700_000_000_000));
         assert_eq!(reloaded.test_status, WorkStatus::Done);

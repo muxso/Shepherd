@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use axum::{
@@ -85,6 +86,10 @@ struct CreateBody {
     /// 父需求 id(须同项目且未删除)。
     #[serde(default)]
     parent_id: Option<String>,
+    /// 自定义字段值 map<字段key, 字符串值>(最多 32 个键,键 ≤ 64 字符,值 ≤ 2000 字符);
+    /// 字段定义由项目模板管理,多选值逗号拼接。
+    #[serde(default)]
+    custom_fields: BTreeMap<String, String>,
 }
 
 #[derive(Deserialize, ToSchema)]
@@ -122,6 +127,9 @@ struct RenameBody {
     /// 可选:更新截止日期 YYYY-MM-DD;空串清除,缺省不动。
     #[serde(default)]
     due_date: Option<String>,
+    /// 可选:整体替换自定义字段(空 map 即清空),缺省不动。
+    #[serde(default)]
+    custom_fields: Option<BTreeMap<String, String>>,
 }
 
 #[derive(Deserialize, ToSchema)]
@@ -215,6 +223,8 @@ struct RequirementResponse {
     req_type: String,
     tags: Vec<String>,
     parent_id: Option<String>,
+    /// 自定义字段值 map<字段key, 字符串值>;字段定义由项目模板管理,多选值逗号拼接。
+    custom_fields: BTreeMap<String, String>,
     /// 截止日期 YYYY-MM-DD;null 表示未设置。
     due_date: Option<String>,
     /// 是否逾期(实时计算:截止日期规则或任一阶段逾期)。
@@ -249,6 +259,7 @@ impl From<Requirement> for RequirementResponse {
             req_type: r.req_type.as_str().to_string(),
             tags: r.tags,
             parent_id: r.parent_id,
+            custom_fields: r.custom_fields,
             due_date: r.due_date,
             overdue,
             created_at: r.created_at_ms,
@@ -402,6 +413,7 @@ async fn create_requirement(
             &b.tags,
             b.due_date.as_deref(),
             b.parent_id.as_deref(),
+            &b.custom_fields,
         )
         .await
     {
@@ -545,6 +557,7 @@ async fn rename_requirement(
             b.req_type.as_deref(),
             b.tags.as_deref(),
             due_date,
+            b.custom_fields.as_ref(),
             &user.user_id,
         )
         .await
@@ -1640,6 +1653,82 @@ mod tests {
             .expect("r");
         let v3 = body_json(r3).await;
         assert!(v3["dueDate"].is_null());
+    }
+
+    #[tokio::test]
+    async fn custom_fields_create_update_and_omission_semantics() {
+        let (app, t) = app_with("REQUIREMENT:READ+ADD+UPDATE").await;
+        // 创建携带 customFields(键自动 trim)。
+        let r = app
+            .clone()
+            .oneshot(req(
+                "POST",
+                "/requirement",
+                r#"{"projectId":"p1","title":"登录","customFields":{" owner ":"alice","module":"登录"}}"#,
+                Some(&t),
+            ))
+            .await
+            .expect("r");
+        assert_eq!(r.status(), StatusCode::CREATED);
+        let v = body_json(r).await;
+        assert_eq!(v["customFields"], serde_json::json!({"owner": "alice", "module": "登录"}));
+        let id = v["id"].as_str().expect("id").to_string();
+
+        // PUT 整体替换;缺省不动。
+        let r2 = app
+            .clone()
+            .oneshot(req(
+                "PUT",
+                &format!("/requirement/{id}"),
+                r#"{"title":"登录","customFields":{"owner":"bob"}}"#,
+                Some(&t),
+            ))
+            .await
+            .expect("r");
+        assert_eq!(r2.status(), StatusCode::OK);
+        assert_eq!(body_json(r2).await["customFields"], serde_json::json!({"owner": "bob"}));
+        let r3 = app
+            .clone()
+            .oneshot(req("PUT", &format!("/requirement/{id}"), r#"{"title":"登录"}"#, Some(&t)))
+            .await
+            .expect("r");
+        assert_eq!(body_json(r3).await["customFields"], serde_json::json!({"owner": "bob"}));
+        // 空 map 清空。
+        let r4 = app
+            .clone()
+            .oneshot(req(
+                "PUT",
+                &format!("/requirement/{id}"),
+                r#"{"title":"登录","customFields":{}}"#,
+                Some(&t),
+            ))
+            .await
+            .expect("r");
+        assert_eq!(body_json(r4).await["customFields"], serde_json::json!({}));
+        // 变更日志走 custom.<key>。
+        let log = body_json(
+            app.clone()
+                .oneshot(req("GET", &format!("/requirement/{id}/changes"), "", Some(&t)))
+                .await
+                .expect("r"),
+        )
+        .await;
+        assert_eq!(log["items"][0]["field"], "custom.owner");
+        assert_eq!(log["items"][0]["oldValue"], "bob");
+        assert_eq!(log["items"][0]["newValue"], "");
+        // 非法(空白键)→ 400。
+        assert_eq!(
+            app.oneshot(req(
+                "POST",
+                "/requirement",
+                r#"{"projectId":"p1","title":"坏字段","customFields":{"  ":"v"}}"#,
+                Some(&t)
+            ))
+            .await
+            .expect("r")
+            .status(),
+            StatusCode::BAD_REQUEST
+        );
     }
 
     #[tokio::test]

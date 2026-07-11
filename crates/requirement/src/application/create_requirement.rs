@@ -1,10 +1,11 @@
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use thiserror::Error;
 
 use crate::domain::{
-    normalize_tags, parse_due_date, parse_priority, parse_req_type, NewChange, NewRequirement,
-    Requirement, RequirementError, Stage, StageRow, StageStatus,
+    normalize_custom_fields, normalize_tags, parse_due_date, parse_priority, parse_req_type,
+    NewChange, NewRequirement, Requirement, RequirementError, Stage, StageRow, StageStatus,
 };
 use crate::ports::{RepoError, RequirementRepository};
 
@@ -39,11 +40,22 @@ impl CreateRequirementUseCase {
         description: &str,
         criteria: &[String],
     ) -> Result<Requirement, CreateRequirementError> {
-        self.execute_with(project_id, title, description, criteria, None, None, &[], None, None)
-            .await
+        self.execute_with(
+            project_id,
+            title,
+            description,
+            criteria,
+            None,
+            None,
+            &[],
+            None,
+            None,
+            &BTreeMap::new(),
+        )
+        .await
     }
 
-    /// 同 `execute`,另接收可选优先级/需求类型/标签/截止日期/父需求:
+    /// 同 `execute`,另接收可选优先级/需求类型/标签/截止日期/父需求/自定义字段:
     /// 缺省取默认值,非法值报校验错;父需求须存在(未软删)且同项目。
     #[allow(clippy::too_many_arguments)]
     pub async fn execute_with(
@@ -57,10 +69,12 @@ impl CreateRequirementUseCase {
         tags: &[String],
         due_date: Option<&str>,
         parent_id: Option<&str>,
+        custom_fields: &BTreeMap<String, String>,
     ) -> Result<Requirement, CreateRequirementError> {
         let priority = priority.map(parse_priority).transpose()?.unwrap_or_default();
         let req_type = req_type.map(parse_req_type).transpose()?.unwrap_or_default();
         let tags = normalize_tags(tags)?;
+        let custom_fields = normalize_custom_fields(custom_fields)?;
         // 空串等同未填,不视为非法日期。
         let due_date =
             due_date.map(str::trim).filter(|d| !d.is_empty()).map(parse_due_date).transpose()?;
@@ -68,7 +82,8 @@ impl CreateRequirementUseCase {
             .with_priority(priority)
             .with_req_type(req_type)
             .with_tags(tags)
-            .with_due_date(due_date);
+            .with_due_date(due_date)
+            .with_custom_fields(custom_fields);
 
         if let Some(pid) = parent_id.map(str::trim).filter(|p| !p.is_empty()) {
             let parent = self
@@ -171,7 +186,18 @@ mod tests {
     async fn creates_with_explicit_priority_and_type_normalized() {
         use crate::domain::{RequirementPriority, RequirementType};
         let r = uc()
-            .execute_with("p1", "登录", "d", &[], Some(" p0 "), Some("tech_debt"), &[], None, None)
+            .execute_with(
+                "p1",
+                "登录",
+                "d",
+                &[],
+                Some(" p0 "),
+                Some("tech_debt"),
+                &[],
+                None,
+                None,
+                &BTreeMap::new(),
+            )
             .await
             .expect("ok");
         assert_eq!(r.priority, RequirementPriority::P0);
@@ -181,15 +207,37 @@ mod tests {
     #[tokio::test]
     async fn rejects_invalid_priority_and_type() {
         assert_eq!(
-            uc().execute_with("p1", "登录", "d", &[], Some("P9"), None, &[], None, None)
-                .await
-                .unwrap_err(),
+            uc().execute_with(
+                "p1",
+                "登录",
+                "d",
+                &[],
+                Some("P9"),
+                None,
+                &[],
+                None,
+                None,
+                &BTreeMap::new()
+            )
+            .await
+            .unwrap_err(),
             CreateRequirementError::Validation(RequirementError::InvalidPriority("P9".into()))
         );
         assert_eq!(
-            uc().execute_with("p1", "登录", "d", &[], None, Some("EPIC"), &[], None, None)
-                .await
-                .unwrap_err(),
+            uc().execute_with(
+                "p1",
+                "登录",
+                "d",
+                &[],
+                None,
+                Some("EPIC"),
+                &[],
+                None,
+                None,
+                &BTreeMap::new()
+            )
+            .await
+            .unwrap_err(),
             CreateRequirementError::Validation(RequirementError::InvalidReqType("EPIC".into()))
         );
     }
@@ -210,6 +258,7 @@ mod tests {
                 &[" api ".to_string(), "api".to_string(), "web".to_string()],
                 Some("2026-12-31"),
                 Some(&parent.id),
+                &BTreeMap::new(),
             )
             .await
             .expect("ok");
@@ -218,10 +267,39 @@ mod tests {
         assert_eq!(r.parent_id.as_deref(), Some(parent.id.as_str()));
         // 空串日期等同未填。
         let r2 = uc
-            .execute_with("p1", "另一条", "d", &[], None, None, &[], Some("  "), None)
+            .execute_with(
+                "p1",
+                "另一条",
+                "d",
+                &[],
+                None,
+                None,
+                &[],
+                Some("  "),
+                None,
+                &BTreeMap::new(),
+            )
             .await
             .expect("ok");
         assert!(r2.due_date.is_none());
+    }
+
+    #[tokio::test]
+    async fn creates_with_custom_fields_normalized_and_rejects_invalid() {
+        let raw = BTreeMap::from([(" owner ".to_string(), "alice".to_string())]);
+        let r = uc()
+            .execute_with("p1", "登录", "d", &[], None, None, &[], None, None, &raw)
+            .await
+            .expect("ok");
+        assert_eq!(r.custom_fields, BTreeMap::from([("owner".to_string(), "alice".to_string())]));
+        // 空白键报校验错。
+        let bad = BTreeMap::from([("  ".to_string(), "v".to_string())]);
+        assert_eq!(
+            uc().execute_with("p1", "注册", "d", &[], None, None, &[], None, None, &bad)
+                .await
+                .unwrap_err(),
+            CreateRequirementError::Validation(RequirementError::EmptyCustomFieldKey)
+        );
     }
 
     #[tokio::test]
@@ -230,24 +308,57 @@ mod tests {
         let uc = CreateRequirementUseCase::new(repo.clone());
         let other = uc.execute("p2", "别家", "d", &[]).await.expect("other");
         assert_eq!(
-            uc.execute_with("p1", "子", "d", &[], None, None, &[], None, Some("ghost"))
-                .await
-                .unwrap_err(),
+            uc.execute_with(
+                "p1",
+                "子",
+                "d",
+                &[],
+                None,
+                None,
+                &[],
+                None,
+                Some("ghost"),
+                &BTreeMap::new()
+            )
+            .await
+            .unwrap_err(),
             CreateRequirementError::ParentNotFound
         );
         assert_eq!(
-            uc.execute_with("p1", "子", "d", &[], None, None, &[], None, Some(&other.id))
-                .await
-                .unwrap_err(),
+            uc.execute_with(
+                "p1",
+                "子",
+                "d",
+                &[],
+                None,
+                None,
+                &[],
+                None,
+                Some(&other.id),
+                &BTreeMap::new()
+            )
+            .await
+            .unwrap_err(),
             CreateRequirementError::CrossProjectParent
         );
         // 软删除的父视为不存在。
         let doomed = uc.execute("p1", "亡父", "d", &[]).await.expect("p");
         repo.soft_delete(&doomed.id);
         assert_eq!(
-            uc.execute_with("p1", "子", "d", &[], None, None, &[], None, Some(&doomed.id))
-                .await
-                .unwrap_err(),
+            uc.execute_with(
+                "p1",
+                "子",
+                "d",
+                &[],
+                None,
+                None,
+                &[],
+                None,
+                Some(&doomed.id),
+                &BTreeMap::new()
+            )
+            .await
+            .unwrap_err(),
             CreateRequirementError::ParentNotFound
         );
     }
@@ -255,18 +366,40 @@ mod tests {
     #[tokio::test]
     async fn rejects_invalid_due_date_and_tags() {
         assert_eq!(
-            uc().execute_with("p1", "登录", "d", &[], None, None, &[], Some("2026-13-01"), None)
-                .await
-                .unwrap_err(),
+            uc().execute_with(
+                "p1",
+                "登录",
+                "d",
+                &[],
+                None,
+                None,
+                &[],
+                Some("2026-13-01"),
+                None,
+                &BTreeMap::new()
+            )
+            .await
+            .unwrap_err(),
             CreateRequirementError::Validation(RequirementError::InvalidDueDate(
                 "2026-13-01".into()
             ))
         );
         let many: Vec<String> = (0..11).map(|i| format!("t{i}")).collect();
         assert_eq!(
-            uc().execute_with("p1", "登录", "d", &[], None, None, &many, None, None)
-                .await
-                .unwrap_err(),
+            uc().execute_with(
+                "p1",
+                "登录",
+                "d",
+                &[],
+                None,
+                None,
+                &many,
+                None,
+                None,
+                &BTreeMap::new()
+            )
+            .await
+            .unwrap_err(),
             CreateRequirementError::Validation(RequirementError::TooManyTags)
         );
     }

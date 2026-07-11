@@ -9,14 +9,15 @@ rust-version.workspace = true
 [dependencies]
 async-trait = { workspace = true }
 thiserror = { workspace = true }
-sqlx = { workspace = true, features = ["runtime-tokio", "postgres"], optional = true }
+serde_json = { workspace = true, optional = true }
+sqlx = { workspace = true, features = ["runtime-tokio", "postgres", "json"], optional = true }
 axum = { workspace = true, optional = true }
 utoipa = { workspace = true, optional = true }
 webauth = { workspace = true, optional = true }
 serde = { workspace = true, optional = true }
 
 [features]
-pg = ["dep:sqlx"]
+pg = ["dep:sqlx", "dep:serde_json"]
 http = ["dep:axum", "dep:serde", "dep:webauth", "webauth/http", "dep:utoipa"]
 
 [dev-dependencies]

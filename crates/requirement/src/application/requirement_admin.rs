@@ -1,9 +1,10 @@
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use crate::domain::{
-    normalize_tags, parse_criteria, parse_due_date, parse_priority, parse_req_type, parse_stage,
-    parse_stage_status, ChangeEntry, NewChange, Requirement, RequirementError, Stage, StageStatus,
-    StatusCounts,
+    normalize_custom_fields, normalize_tags, parse_criteria, parse_due_date, parse_priority,
+    parse_req_type, parse_stage, parse_stage_status, ChangeEntry, NewChange, Requirement,
+    RequirementError, Stage, StageStatus, StatusCounts,
 };
 use crate::ports::{RepoError, RequirementRepository};
 
@@ -156,11 +157,12 @@ impl RequirementService {
         title: &str,
         by: &str,
     ) -> Result<Requirement, RequirementCmdError> {
-        self.update(id, title, None, None, None, None, by).await
+        self.update(id, title, None, None, None, None, None, by).await
     }
 
-    /// 改名 + 可选更新优先级/需求类型/标签/截止日期:None 表示不动,非法值报校验错。
+    /// 改名 + 可选更新优先级/需求类型/标签/截止日期/自定义字段:None 表示不动,非法值报校验错。
     /// `due_date`:外层 None 不动;`Some(None)` 清除;`Some(Some(d))` 设为 d(须为 YYYY-MM-DD)。
+    /// `custom_fields`:None 不动;Some(map) 整体替换(空 map 即清空)。
     #[allow(clippy::too_many_arguments)]
     pub async fn update(
         &self,
@@ -170,11 +172,13 @@ impl RequirementService {
         req_type: Option<&str>,
         tags: Option<&[String]>,
         due_date: Option<Option<&str>>,
+        custom_fields: Option<&BTreeMap<String, String>>,
         by: &str,
     ) -> Result<Requirement, RequirementCmdError> {
         let priority = priority.map(parse_priority).transpose()?;
         let req_type = req_type.map(parse_req_type).transpose()?;
         let tags = tags.map(normalize_tags).transpose()?;
+        let custom_fields = custom_fields.map(normalize_custom_fields).transpose()?;
         let due_date = match due_date {
             None => None,
             Some(None) => Some(None),
@@ -220,6 +224,24 @@ impl RequirementService {
                 ));
             }
             req.due_date = d;
+        }
+        if let Some(cf) = custom_fields {
+            // 整体替换,逐键对比记 change log:新增键 old 为空,删除键 new 为空。
+            for (k, old_v) in &req.custom_fields {
+                match cf.get(k) {
+                    Some(new_v) if new_v != old_v => {
+                        log.push(change(by, &format!("custom.{k}"), old_v.clone(), new_v.clone()));
+                    }
+                    Some(_) => {}
+                    None => log.push(change(by, &format!("custom.{k}"), old_v.clone(), "")),
+                }
+            }
+            for (k, new_v) in &cf {
+                if !req.custom_fields.contains_key(k) {
+                    log.push(change(by, &format!("custom.{k}"), "", new_v.clone()));
+                }
+            }
+            req.custom_fields = cf;
         }
         self.repo.save(&req).await?;
         if !log.is_empty() {
@@ -540,19 +562,19 @@ mod tests {
         use crate::domain::{RequirementPriority, RequirementType};
         let (svc, id) = seeded().await;
         let r = svc
-            .update(&id, "登录", Some(" p1 "), Some("bugfix"), None, None, "u1")
+            .update(&id, "登录", Some(" p1 "), Some("bugfix"), None, None, None, "u1")
             .await
             .expect("update");
         assert_eq!(r.priority, RequirementPriority::P1);
         assert_eq!(r.req_type, RequirementType::Bugfix);
         // None 不动已有值。
-        let r2 = svc.update(&id, "登入", None, None, None, None, "u1").await.expect("update");
+        let r2 = svc.update(&id, "登入", None, None, None, None, None, "u1").await.expect("update");
         assert_eq!(r2.title, "登入");
         assert_eq!(r2.priority, RequirementPriority::P1);
         assert_eq!(r2.req_type, RequirementType::Bugfix);
         // 非法值报校验错。
         assert_eq!(
-            svc.update(&id, "登入", Some("P9"), None, None, None, "u1").await.unwrap_err(),
+            svc.update(&id, "登入", Some("P9"), None, None, None, None, "u1").await.unwrap_err(),
             RequirementCmdError::Validation(RequirementError::InvalidPriority("P9".into()))
         );
     }
@@ -792,21 +814,24 @@ mod tests {
         let (svc, id) = seeded().await;
         let tags = vec![" api ".to_string(), "web".to_string(), "api".to_string()];
         let r = svc
-            .update(&id, "登录", None, None, Some(&tags), Some(Some("2026-12-31")), "u1")
+            .update(&id, "登录", None, None, Some(&tags), Some(Some("2026-12-31")), None, "u1")
             .await
             .expect("update");
         assert_eq!(r.tags, vec!["api".to_string(), "web".to_string()]);
         assert_eq!(r.due_date.as_deref(), Some("2026-12-31"));
         // 外层 None 不动。
-        let r2 = svc.update(&id, "登录", None, None, None, None, "u1").await.expect("update");
+        let r2 = svc.update(&id, "登录", None, None, None, None, None, "u1").await.expect("update");
         assert_eq!(r2.tags, vec!["api".to_string(), "web".to_string()]);
         assert_eq!(r2.due_date.as_deref(), Some("2026-12-31"));
         // Some(None) 清除截止日期。
-        let r3 = svc.update(&id, "登录", None, None, None, Some(None), "u1").await.expect("update");
+        let r3 = svc
+            .update(&id, "登录", None, None, None, Some(None), None, "u1")
+            .await
+            .expect("update");
         assert!(r3.due_date.is_none());
         // 非法日期报校验错。
         assert_eq!(
-            svc.update(&id, "登录", None, None, None, Some(Some("2026/12/31")), "u1")
+            svc.update(&id, "登录", None, None, None, Some(Some("2026/12/31")), None, "u1")
                 .await
                 .unwrap_err(),
             RequirementCmdError::Validation(RequirementError::InvalidDueDate("2026/12/31".into()))
@@ -814,9 +839,77 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn update_replaces_custom_fields_and_logs_per_key_diff() {
+        let (svc, id) = seeded().await;
+        let cf = |pairs: &[(&str, &str)]| -> BTreeMap<String, String> {
+            pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()
+        };
+        let r = svc
+            .update(
+                &id,
+                "登录",
+                None,
+                None,
+                None,
+                None,
+                Some(&cf(&[("owner", "alice"), ("module", "登录")])),
+                "u1",
+            )
+            .await
+            .expect("update");
+        assert_eq!(r.custom_fields, cf(&[("owner", "alice"), ("module", "登录")]));
+        // None 不动。
+        let r2 = svc.update(&id, "登录", None, None, None, None, None, "u1").await.expect("update");
+        assert_eq!(r2.custom_fields, cf(&[("owner", "alice"), ("module", "登录")]));
+        // 整体替换:改 owner、删 module、增 env。
+        let r3 = svc
+            .update(
+                &id,
+                "登录",
+                None,
+                None,
+                None,
+                None,
+                Some(&cf(&[("owner", "bob"), ("env", "prod")])),
+                "u1",
+            )
+            .await
+            .expect("update");
+        assert_eq!(r3.custom_fields, cf(&[("owner", "bob"), ("env", "prod")]));
+        // 非法键报校验错。
+        assert_eq!(
+            svc.update(&id, "登录", None, None, None, None, Some(&cf(&[("  ", "v")])), "u1")
+                .await
+                .unwrap_err(),
+            RequirementCmdError::Validation(RequirementError::EmptyCustomFieldKey)
+        );
+        // 变更日志:最新一轮为 env(新增,old 空)/ module(删除,new 空)/ owner(改值);
+        // BTreeMap 迭代按键序,先对比旧键(module/owner)再补新增键(env)。
+        let log = svc.changes(&id).await.expect("changes");
+        let head: Vec<(&str, &str, &str)> = log[..3]
+            .iter()
+            .map(|c| (c.field.as_str(), c.old_value.as_str(), c.new_value.as_str()))
+            .collect();
+        assert_eq!(
+            head,
+            [
+                ("custom.env", "", "prod"),
+                ("custom.owner", "alice", "bob"),
+                ("custom.module", "登录", ""),
+            ]
+        );
+        // 相同 map 再提交:不追加日志。
+        let n = log.len();
+        svc.update(&id, "登录", None, None, None, None, Some(&r3.custom_fields), "u1")
+            .await
+            .expect("update");
+        assert_eq!(svc.changes(&id).await.expect("changes").len(), n);
+    }
+
+    #[tokio::test]
     async fn mutations_record_change_log_newest_first() {
         let (svc, id) = seeded().await;
-        svc.update(&id, "登入", Some("P0"), None, None, None, "alice").await.expect("update");
+        svc.update(&id, "登入", Some("P0"), None, None, None, None, "alice").await.expect("update");
         svc.revise(&id, "v2", &[], "bob").await.expect("revise");
         svc.set_baseline(&id, 2, "carol").await.expect("baseline");
         svc.set_stage(&id, "DEV", Some("IN_PROGRESS"), None, None, "dave").await.expect("stage");
@@ -859,7 +952,7 @@ mod tests {
         let (svc, id) = seeded().await;
         // 种子只有建档钩子那一条。
         assert_eq!(svc.changes(&id).await.expect("changes").len(), 1);
-        svc.update(&id, "登录", None, None, None, None, "u1").await.expect("update");
+        svc.update(&id, "登录", None, None, None, None, None, "u1").await.expect("update");
         assert_eq!(svc.changes(&id).await.expect("changes").len(), 1);
         svc.set_stage(&id, "DEV", Some("IN_PROGRESS"), None, None, "u1").await.expect("stage");
         svc.set_stage(&id, "DEV", Some("IN_PROGRESS"), None, None, "u1").await.expect("stage");
@@ -870,7 +963,7 @@ mod tests {
     async fn save_bumps_updated_at() {
         let (svc, id) = seeded().await;
         let before = svc.get(&id).await.expect("get").updated_at_ms;
-        svc.update(&id, "登入", None, None, None, None, "u1").await.expect("update");
+        svc.update(&id, "登入", None, None, None, None, None, "u1").await.expect("update");
         let after = svc.get(&id).await.expect("get").updated_at_ms;
         assert!(after > before);
     }

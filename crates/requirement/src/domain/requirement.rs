@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use thiserror::Error;
 
 /// 与 DB 列一致。
@@ -7,6 +9,11 @@ pub const MAX_TITLE_LEN: usize = 255;
 pub const MAX_TAGS: usize = 10;
 /// 单个标签最大长度(按字符数,避免中文被误判)。
 pub const MAX_TAG_LEN: usize = 32;
+
+/// 自定义字段:最多键数 / 键长 / 值长(按字符数)。
+pub const MAX_CUSTOM_FIELDS: usize = 32;
+pub const MAX_CUSTOM_FIELD_KEY_LEN: usize = 64;
+pub const MAX_CUSTOM_FIELD_VALUE_LEN: usize = 2000;
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum RequirementError {
@@ -44,6 +51,14 @@ pub enum RequirementError {
     InvalidStage(String),
     #[error("invalid stage status: {0}")]
     InvalidStageStatus(String),
+    #[error("too many custom fields (max {MAX_CUSTOM_FIELDS})")]
+    TooManyCustomFields,
+    #[error("custom field key must not be empty")]
+    EmptyCustomFieldKey,
+    #[error("custom field key too long: {0}")]
+    CustomFieldKeyTooLong(String),
+    #[error("custom field value too long for key: {0}")]
+    CustomFieldValueTooLong(String),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -80,6 +95,8 @@ pub struct NewRequirement {
     pub due_date: Option<String>,
     /// 父需求 id;存在性/同项目校验在应用层做(需要仓储)。
     pub parent_id: Option<String>,
+    /// 已校验的自定义字段值(见 `normalize_custom_fields`);字段定义由项目模板管理。
+    pub custom_fields: BTreeMap<String, String>,
 }
 
 impl NewRequirement {
@@ -112,6 +129,7 @@ impl NewRequirement {
             tags: Vec::new(),
             due_date: None,
             parent_id: None,
+            custom_fields: BTreeMap::new(),
         })
     }
 
@@ -145,6 +163,12 @@ impl NewRequirement {
     /// 携带父需求 id(应用层已校验存在性/同项目)。
     pub fn with_parent(mut self, parent_id: Option<String>) -> Self {
         self.parent_id = parent_id;
+        self
+    }
+
+    /// 携带已校验的自定义字段(调用方先过 `normalize_custom_fields`)。
+    pub fn with_custom_fields(mut self, custom_fields: BTreeMap<String, String>) -> Self {
+        self.custom_fields = custom_fields;
         self
     }
 }
@@ -492,6 +516,31 @@ pub fn normalize_tags(raw: &[String]) -> Result<Vec<String>, RequirementError> {
     Ok(out)
 }
 
+/// 自定义字段清洗:键 trim 后须非空且 ≤ `MAX_CUSTOM_FIELD_KEY_LEN` 字符,
+/// 值 ≤ `MAX_CUSTOM_FIELD_VALUE_LEN` 字符,最多 `MAX_CUSTOM_FIELDS` 个键(长度均按字符数)。
+pub fn normalize_custom_fields(
+    raw: &BTreeMap<String, String>,
+) -> Result<BTreeMap<String, String>, RequirementError> {
+    let mut out = BTreeMap::new();
+    for (k, v) in raw {
+        let k = k.trim();
+        if k.is_empty() {
+            return Err(RequirementError::EmptyCustomFieldKey);
+        }
+        if k.chars().count() > MAX_CUSTOM_FIELD_KEY_LEN {
+            return Err(RequirementError::CustomFieldKeyTooLong(k.to_string()));
+        }
+        if v.chars().count() > MAX_CUSTOM_FIELD_VALUE_LEN {
+            return Err(RequirementError::CustomFieldValueTooLong(k.to_string()));
+        }
+        out.insert(k.to_string(), v.clone());
+    }
+    if out.len() > MAX_CUSTOM_FIELDS {
+        return Err(RequirementError::TooManyCustomFields);
+    }
+    Ok(out)
+}
+
 /// 校验截止日期串:严格 `YYYY-MM-DD`,月日范围合法(含闰年判定)。
 pub fn parse_due_date(s: &str) -> Result<String, RequirementError> {
     let s = s.trim();
@@ -587,6 +636,8 @@ pub struct Requirement {
     pub req_type: RequirementType,
     pub tags: Vec<String>,
     pub parent_id: Option<String>,
+    /// 自定义字段值 map<字段key, 字符串值>;字段定义由项目模板管理,多选值逗号拼接。
+    pub custom_fields: BTreeMap<String, String>,
     /// 截止日期 `YYYY-MM-DD`;是否逾期由 `is_overdue` 实时计算,不落库。
     pub due_date: Option<String>,
     /// 创建/更新时间(epoch 毫秒,全库口径);由存储层盖章,内存值 0 表示尚未落库。
@@ -621,6 +672,7 @@ impl Requirement {
             req_type: new.req_type,
             tags: new.tags.clone(),
             parent_id: new.parent_id.clone(),
+            custom_fields: new.custom_fields.clone(),
             due_date: new.due_date.clone(),
             created_at_ms: 0,
             updated_at_ms: 0,
@@ -1034,6 +1086,59 @@ mod tests {
         assert_eq!(normalize_tags(&[long.clone()]), Err(RequirementError::TagTooLong(long)));
         // 32 个字符(含中文)合法。
         assert!(normalize_tags(&["标".repeat(32)]).is_ok());
+    }
+
+    fn fields(pairs: &[(&str, &str)]) -> BTreeMap<String, String> {
+        pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()
+    }
+
+    #[test]
+    fn normalize_custom_fields_trims_keys_and_keeps_values() {
+        let raw = fields(&[(" owner ", "alice"), ("模块", "登录")]);
+        let out = normalize_custom_fields(&raw).expect("ok");
+        assert_eq!(out, fields(&[("owner", "alice"), ("模块", "登录")]));
+        assert_eq!(normalize_custom_fields(&BTreeMap::new()), Ok(BTreeMap::new()));
+    }
+
+    #[test]
+    fn normalize_custom_fields_rejects_blank_or_long_key() {
+        assert_eq!(
+            normalize_custom_fields(&fields(&[("   ", "v")])),
+            Err(RequirementError::EmptyCustomFieldKey)
+        );
+        let long_key = "键".repeat(65);
+        assert_eq!(
+            normalize_custom_fields(&fields(&[(long_key.as_str(), "v")])),
+            Err(RequirementError::CustomFieldKeyTooLong(long_key.clone()))
+        );
+        // 64 个字符(含中文)合法。
+        assert!(normalize_custom_fields(&fields(&[("键".repeat(64).as_str(), "v")])).is_ok());
+    }
+
+    #[test]
+    fn normalize_custom_fields_rejects_long_value_or_too_many_keys() {
+        let long_val = "值".repeat(2001);
+        assert_eq!(
+            normalize_custom_fields(&fields(&[("k", long_val.as_str())])),
+            Err(RequirementError::CustomFieldValueTooLong("k".to_string()))
+        );
+        // 2000 个字符恰好合法。
+        assert!(normalize_custom_fields(&fields(&[("k", "值".repeat(2000).as_str())])).is_ok());
+        let many: BTreeMap<String, String> =
+            (0..33).map(|i| (format!("k{i}"), "v".to_string())).collect();
+        assert_eq!(normalize_custom_fields(&many), Err(RequirementError::TooManyCustomFields));
+        let ok: BTreeMap<String, String> =
+            (0..32).map(|i| (format!("k{i}"), "v".to_string())).collect();
+        assert_eq!(normalize_custom_fields(&ok).expect("ok").len(), 32);
+    }
+
+    #[test]
+    fn create_carries_custom_fields() {
+        let n = new_req().with_custom_fields(fields(&[("owner", "alice")]));
+        let r = Requirement::create("req-1", &n);
+        assert_eq!(r.custom_fields, fields(&[("owner", "alice")]));
+        // 缺省为空 map。
+        assert!(Requirement::create("req-2", &new_req()).custom_fields.is_empty());
     }
 
     #[test]

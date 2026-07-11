@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
@@ -75,6 +75,7 @@ impl BugRepository for InMemoryBugRepository {
             deleted: false,
             created_at: seq as i64,
             created_by: new_bug.created_by.clone(),
+            custom_fields: new_bug.custom_fields.clone(),
         };
         state.order.push(bug.id.clone());
         state.bugs.insert(bug.id.clone(), bug.clone());
@@ -108,6 +109,19 @@ impl BugRepository for InMemoryBugRepository {
             self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner).bugs.get_mut(id)
         {
             b.status = status.to_string();
+        }
+        Ok(())
+    }
+
+    async fn set_custom_fields(
+        &self,
+        id: &str,
+        fields: &BTreeMap<String, String>,
+    ) -> Result<(), RepoError> {
+        if let Some(b) =
+            self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner).bugs.get_mut(id)
+        {
+            b.custom_fields = fields.clone();
         }
         Ok(())
     }

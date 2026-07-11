@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use async_trait::async_trait;
 
 use crate::domain::{Bug, BugRelation, NewBug, StatusFlowGraph};
@@ -21,6 +23,13 @@ pub trait BugRepository: Send + Sync {
     async fn get(&self, id: &str) -> Result<Option<Bug>, RepoError>;
 
     async fn set_status(&self, id: &str, status: &str) -> Result<(), RepoError>;
+
+    /// 整体替换自定义字段值(空 map 即清空)。
+    async fn set_custom_fields(
+        &self,
+        id: &str,
+        fields: &BTreeMap<String, String>,
+    ) -> Result<(), RepoError>;
 
     async fn add_follower(&self, bug_id: &str, user_id: &str) -> Result<(), RepoError>;
 

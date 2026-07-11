@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use crate::domain::{Bug, BugRelation, NewBug, StatusFlowGraph, StatusItem};
 use crate::ports::{BugRepository, RepoError};
 use async_trait::async_trait;
@@ -18,7 +20,35 @@ fn map_err(e: sqlx::Error) -> RepoError {
     RepoError::Backend(e.to_string())
 }
 
+/// 自定义字段 map → JSONB 对象(值一律字符串)。
+fn fields_to_json(f: &BTreeMap<String, String>) -> serde_json::Value {
+    serde_json::Value::Object(
+        f.iter().map(|(k, v)| (k.clone(), serde_json::Value::String(v.clone()))).collect(),
+    )
+}
+
+/// JSONB 对象 → 自定义字段 map;非字符串值(理论不该出现)按 JSON 文本兜底。
+fn json_to_fields(v: &serde_json::Value) -> BTreeMap<String, String> {
+    v.as_object()
+        .map(|obj| {
+            obj.iter()
+                .map(|(k, val)| {
+                    let s = match val {
+                        serde_json::Value::String(s) => s.clone(),
+                        other => other.to_string(),
+                    };
+                    (k.clone(), s)
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+const BUG_COLS: &str =
+    "id, project_id, title, status, deleted, created_at, created_by, custom_fields";
+
 fn row_to_bug(row: &sqlx::postgres::PgRow) -> Result<Bug, RepoError> {
+    let custom: serde_json::Value = row.try_get("custom_fields").map_err(map_err)?;
     Ok(Bug {
         id: row.try_get("id").map_err(map_err)?,
         project_id: row.try_get("project_id").map_err(map_err)?,
@@ -27,6 +57,7 @@ fn row_to_bug(row: &sqlx::postgres::PgRow) -> Result<Bug, RepoError> {
         deleted: row.try_get("deleted").map_err(map_err)?,
         created_at: row.try_get("created_at").map_err(map_err)?,
         created_by: row.try_get("created_by").map_err(map_err)?,
+        custom_fields: json_to_fields(&custom),
     })
 }
 
@@ -69,14 +100,15 @@ impl BugRepository for PgBugRepository {
     }
 
     async fn insert(&self, new_bug: &NewBug, initial_status: &str) -> Result<Bug, RepoError> {
-        let row = sqlx::query(
-            "INSERT INTO ms_bug (project_id, title, status, created_by) VALUES ($1, $2, $3, $4) \
-             RETURNING id, project_id, title, status, deleted, created_at, created_by",
-        )
+        let row = sqlx::query(&format!(
+            "INSERT INTO ms_bug (project_id, title, status, created_by, custom_fields) \
+             VALUES ($1, $2, $3, $4, $5) RETURNING {BUG_COLS}"
+        ))
         .bind(&new_bug.project_id)
         .bind(&new_bug.title)
         .bind(initial_status)
         .bind(&new_bug.created_by)
+        .bind(fields_to_json(&new_bug.custom_fields))
         .fetch_one(&self.pool)
         .await
         .map_err(map_err)?;
@@ -84,10 +116,10 @@ impl BugRepository for PgBugRepository {
     }
 
     async fn list(&self, project_id: &str) -> Result<Vec<Bug>, RepoError> {
-        let rows = sqlx::query(
-            "SELECT id, project_id, title, status, deleted, created_at, created_by FROM ms_bug \
-             WHERE project_id = $1 AND deleted = false ORDER BY created_at DESC, id DESC",
-        )
+        let rows = sqlx::query(&format!(
+            "SELECT {BUG_COLS} FROM ms_bug \
+             WHERE project_id = $1 AND deleted = false ORDER BY created_at DESC, id DESC"
+        ))
         .bind(project_id)
         .fetch_all(&self.pool)
         .await
@@ -96,10 +128,9 @@ impl BugRepository for PgBugRepository {
     }
 
     async fn get(&self, id: &str) -> Result<Option<Bug>, RepoError> {
-        let row = sqlx::query(
-            "SELECT id, project_id, title, status, deleted, created_at, created_by FROM ms_bug \
-             WHERE id = $1 AND deleted = false",
-        )
+        let row = sqlx::query(&format!(
+            "SELECT {BUG_COLS} FROM ms_bug WHERE id = $1 AND deleted = false"
+        ))
         .bind(id)
         .fetch_optional(&self.pool)
         .await
@@ -111,6 +142,20 @@ impl BugRepository for PgBugRepository {
         sqlx::query("UPDATE ms_bug SET status = $2 WHERE id = $1")
             .bind(id)
             .bind(status)
+            .execute(&self.pool)
+            .await
+            .map_err(map_err)?;
+        Ok(())
+    }
+
+    async fn set_custom_fields(
+        &self,
+        id: &str,
+        fields: &BTreeMap<String, String>,
+    ) -> Result<(), RepoError> {
+        sqlx::query("UPDATE ms_bug SET custom_fields = $2 WHERE id = $1")
+            .bind(id)
+            .bind(fields_to_json(fields))
             .execute(&self.pool)
             .await
             .map_err(map_err)?;
@@ -209,7 +254,8 @@ mod tests {
         let url = std::env::var("DATABASE_URL").expect("set DATABASE_URL");
         let pool = PgPool::connect(&url).await.expect("connect");
         migrate::run(&pool).await.expect("migrate");
-        sqlx::raw_sql("TRUNCATE ms_status_item, ms_status_flow, ms_bug")
+        // CASCADE:ms_bug_follower / ms_bug_relation 以外键挂在 ms_bug 上。
+        sqlx::raw_sql("TRUNCATE ms_status_item, ms_status_flow, ms_bug CASCADE")
             .execute(&pool)
             .await
             .expect("truncate");
@@ -231,12 +277,29 @@ mod tests {
         assert!(!g.can_transition("NEW", "CLOSED"));
         assert_eq!(g.targets("RESOLVED"), vec!["CLOSED"]);
 
-        let nb = NewBug::new("p1", "登录崩溃").expect("valid");
+        let cf = |pairs: &[(&str, &str)]| -> BTreeMap<String, String> {
+            pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()
+        };
+        let nb = NewBug::new("p1", "登录崩溃")
+            .expect("valid")
+            .with_custom_fields(cf(&[("severity", "P0"), ("多选", "a,b")]));
         let bug = repo.insert(&nb, "NEW").await.expect("insert");
-        assert_eq!(repo.get(&bug.id).await.expect("get").expect("some").status, "NEW");
+        let got = repo.get(&bug.id).await.expect("get").expect("some");
+        assert_eq!(got.status, "NEW");
+        // 自定义字段写入即读回。
+        assert_eq!(got.custom_fields, cf(&[("severity", "P0"), ("多选", "a,b")]));
 
         repo.set_status(&bug.id, "RESOLVED").await.expect("set");
         assert_eq!(repo.get(&bug.id).await.expect("get").expect("some").status, "RESOLVED");
+
+        // 整体替换自定义字段(空 map 即清空)。
+        repo.set_custom_fields(&bug.id, &cf(&[("env", "prod")])).await.expect("set fields");
+        assert_eq!(
+            repo.get(&bug.id).await.expect("get").expect("some").custom_fields,
+            cf(&[("env", "prod")])
+        );
+        repo.set_custom_fields(&bug.id, &BTreeMap::new()).await.expect("clear fields");
+        assert!(repo.get(&bug.id).await.expect("get").expect("some").custom_fields.is_empty());
 
         let listed = repo.list("p1").await.expect("list");
         assert_eq!(listed.len(), 1);
