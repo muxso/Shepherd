@@ -22,6 +22,7 @@ mod perf_run;
 mod plan_run;
 mod plan_scheduler;
 mod planner;
+mod prd_draft_route;
 mod problem;
 mod project_file;
 mod ratelimit;
@@ -325,6 +326,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         llm::case_drafter(),
         sessions.clone(),
     );
+    let prd_draft_routes = prd_draft_route::router(llm::prd_drafter(), sessions.clone());
     let verification_routes = verification::adapters::http::router(
         CreateVerificationUseCase::new(ver_repo.clone()),
         ver_admin.clone(),
@@ -641,7 +643,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .merge(design_routes)
                 .merge(decomposition_run_routes)
                 .merge(verification_routes)
-                .merge(breakdown_routes),
+                .merge(breakdown_routes)
+                .merge(prd_draft_routes),
         ),
         routes::group("skill", skill_routes.merge(mcp_routes)),
         routes::group(

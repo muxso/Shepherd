@@ -337,6 +337,47 @@ impl Planner for LlmPlanner {
     }
 }
 
+const PRD_PROMPT_V: &str = "prd-v1";
+const PRD_SYSTEM: &str = "你是资深产品经理,把用户粘贴的原始素材(MRD/会议纪要/想法)整理成结构化需求。\
+只输出 JSON {\"title\":string,\"description\":string,\"acceptanceCriteria\":string[],\"priority\":string}。\
+title 一句话;description 含背景/目标/范围;acceptanceCriteria 每条独立可判定(3~8 条);\
+priority 取 P0/P1/P2/P3;不要输出 JSON 以外的任何内容。";
+
+/// MRD → PRD 起草结果。
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PrdDraft {
+    #[serde(default)]
+    pub title: String,
+    #[serde(default)]
+    pub description: String,
+    #[serde(default)]
+    pub acceptance_criteria: Vec<String>,
+    #[serde(default)]
+    pub priority: String,
+}
+
+pub struct LlmPrdDrafter {
+    client: LlmClient,
+}
+impl LlmPrdDrafter {
+    pub fn new(client: LlmClient) -> Self {
+        Self { client }
+    }
+
+    pub async fn draft(&self, raw: &str) -> Result<PrdDraft, String> {
+        let text = self.client.complete(PRD_PROMPT_V, PRD_SYSTEM, raw).await?;
+        let mut d: PrdDraft = serde_json::from_str(extract_json(&text))
+            .map_err(|e| format!("PRD 草稿解析失败: {e}"))?;
+        d.title = d.title.trim().to_string();
+        d.acceptance_criteria.retain(|c| !c.trim().is_empty());
+        if d.title.is_empty() {
+            return Err("PRD 草稿缺标题".to_string());
+        }
+        Ok(d)
+    }
+}
+
 const CASES_PROMPT_V: &str = "cases-v1";
 const CASES_SYSTEM: &str = "你是资深测试工程师,基于需求与拆分任务设计功能测试用例。\
 只输出 JSON 数组,每项 {\"name\":string,\"criterionIndexes\":number[],\"steps\":[{\"step\":string,\"expected\":string}]}。\
@@ -496,6 +537,10 @@ impl AgentExecutor for LlmExecutor {
 pub fn planner() -> Option<Arc<dyn Planner>> {
     LlmClient::from_env().map(|c| Arc::new(LlmPlanner::new(c)) as Arc<dyn Planner>)
 }
+pub fn prd_drafter() -> Option<Arc<LlmPrdDrafter>> {
+    LlmClient::from_env().map(|c| Arc::new(LlmPrdDrafter::new(c)))
+}
+
 pub fn case_drafter() -> Option<Arc<dyn crate::case_drafter::CaseDrafter>> {
     LlmClient::from_env()
         .map(|c| Arc::new(LlmCaseDrafter::new(c)) as Arc<dyn crate::case_drafter::CaseDrafter>)
