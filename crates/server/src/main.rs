@@ -1,10 +1,12 @@
 #![allow(clippy::doc_lazy_continuation)]
 
 mod breakdown_route;
+mod case_exec_summary;
 mod config;
-mod design_bridge;
 mod debug_send;
 mod decomposition_run;
+mod design_bridge;
+mod import_scheduler;
 mod judge;
 mod llm;
 mod mcp_bus;
@@ -12,14 +14,12 @@ mod mcp_tools;
 mod metrics;
 mod openapi;
 mod orchestration;
-mod case_exec_summary;
-mod import_scheduler;
 mod perf_run;
 mod plan_run;
 mod plan_scheduler;
-mod project_file;
 mod planner;
 mod problem;
+mod project_file;
 mod ratelimit;
 mod references_route;
 mod report_archive_job;
@@ -35,35 +35,32 @@ use axum::routing::get;
 use axum::Router;
 use migrate::PgPool;
 
-use bug::application::{BugFollowersUseCase, BugRelationsUseCase, ChangeBugStatusUseCase, CreateBugUseCase, ListBugsUseCase};
-use bug::adapters::pg::PgBugRepository;
-use follow::application::FollowService;
-use follow::adapters::pg::PgFollowStore;
-use api_test::application::StartBatchRunUseCase;
 use api_test::adapters::jmeter::HttpTaskDispatcher;
 use api_test::adapters::local::LocalRunnerDispatcher;
 use api_test::adapters::pg::{
     PgBatchReportExecutor, PgCaseResultSink, PgCaseSpecSource, PgResourcePool,
 };
-use test_plan::application::{CreatePlanUseCase, PlanStatisticsUseCase};
-use test_plan::adapters::pg::PgPlanRepository;
-use case::application::SubmitReviewUseCase;
+use api_test::application::StartBatchRunUseCase;
+use bug::adapters::pg::PgBugRepository;
+use bug::application::{
+    BugFollowersUseCase, BugRelationsUseCase, ChangeBugStatusUseCase, CreateBugUseCase,
+    ListBugsUseCase,
+};
 use case::adapters::pg::PgReviewRepository;
-use project::application::{CreateProjectUseCase, ListProjectsUseCase};
+use case::application::SubmitReviewUseCase;
+use delivery::adapters::pg::PgDeliveryRepository;
+use delivery::application::DeliveryService;
+use delivery::ports::AgentExecutor;
+use follow::adapters::pg::PgFollowStore;
+use follow::application::FollowService;
 use project::adapters::pg::PgProjectRepository;
+use project::application::{CreateProjectUseCase, ListProjectsUseCase};
+use requirement::adapters::pg::PgRequirementRepository;
 use requirement::application::{
     CreateRequirementUseCase, ListRequirementsUseCase, RequirementService,
 };
-use requirement::adapters::pg::PgRequirementRepository;
-use task::application::{BreakdownUseCase, CreateDecompositionUseCase, TaskService};
-use task::adapters::pg::PgTaskRepository;
-use delivery::application::DeliveryService;
-use delivery::adapters::pg::PgDeliveryRepository;
-use delivery::ports::AgentExecutor;
-use verification::application::{CreateVerificationUseCase, VerificationService};
-use verification::adapters::pg::PgVerificationRepository;
-use skill::application::{CreateSkillUseCase, SkillService};
 use skill::adapters::pg::PgSkillRepository;
+use skill::application::{CreateSkillUseCase, SkillService};
 use system_setting::adapters::auth::Argon2PasswordHasher;
 use system_setting::adapters::oidc::{FeishuProvider, WecomProvider};
 use system_setting::adapters::pg::{
@@ -71,10 +68,16 @@ use system_setting::adapters::pg::{
     PgSessionStore, PgUserDirectory, PgUserRepository, PgUserRoleQuery, PgUserRoleRepository,
 };
 use system_setting::application::{
-    CreateUserUseCase, LoginUseCase, OidcLoginUseCase, OrganizationService, ResolveUserNamesUseCase,
-    RoleService, UserRoleService, UserService,
+    CreateUserUseCase, LoginUseCase, OidcLoginUseCase, OrganizationService,
+    ResolveUserNamesUseCase, RoleService, UserRoleService, UserService,
 };
 use system_setting::ports::PasswordHasher as _;
+use task::adapters::pg::PgTaskRepository;
+use task::application::{BreakdownUseCase, CreateDecompositionUseCase, TaskService};
+use test_plan::adapters::pg::PgPlanRepository;
+use test_plan::application::{CreatePlanUseCase, PlanStatisticsUseCase};
+use verification::adapters::pg::PgVerificationRepository;
+use verification::application::{CreateVerificationUseCase, VerificationService};
 
 async fn healthz() -> &'static str {
     "ok"
@@ -151,6 +154,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // 展示名解析直查 ms_user,绕开任何拦截(OIDC quirk 的修复)。
     let resolve_uc = ResolveUserNamesUseCase::new(Arc::new(PgUserDirectory::new(pool.clone())));
 
+    // 弱默认口令是公网扫描的首要目标;不拒启(保住本地开发),但日志里给出无法忽视的警告。
+    if matches!(cfg.admin_pw.as_str(), "admin" | "change-me" | "s3cret") {
+        tracing::warn!(
+            "SHEPHERD_ADMIN_PASSWORD 使用弱默认值({:?});生产部署必须改为强随机口令",
+            cfg.admin_pw
+        );
+    }
+
     let hasher = Argon2PasswordHasher;
     let creds = PgCredentialRepository::new(pool.clone());
     creds
@@ -186,9 +197,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let ttl_secs = cfg.session_ttl_secs;
     let role_repo = Arc::new(PgRoleRepository::new(pool.clone()));
     let user_role_repo = Arc::new(PgUserRoleRepository::new(pool.clone()));
-    let mut login_uc =
-        LoginUseCase::new(Arc::new(creds), Arc::new(hasher), sessions.clone(), user_role_repo.clone())
-            .with_ttl_secs(ttl_secs);
+    let mut login_uc = LoginUseCase::new(
+        Arc::new(creds),
+        Arc::new(hasher),
+        sessions.clone(),
+        user_role_repo.clone(),
+    )
+    .with_ttl_secs(ttl_secs);
     // 可选 LDAP 目录认证(本地授权 + 外部认证):仅当 SHEPHERD_LDAP_* 配齐才启用。
     if let Some(ldap) =
         system_setting::adapters::ldap::LdapAuthenticator::from_env(|k| std::env::var(k).ok())
@@ -198,7 +213,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     let creds_admin: Arc<dyn system_setting::ports::CredentialRepository> =
         Arc::new(PgCredentialRepository::new(pool.clone()));
-    let hasher_admin: Arc<dyn system_setting::ports::PasswordHasher> = Arc::new(Argon2PasswordHasher);
+    let hasher_admin: Arc<dyn system_setting::ports::PasswordHasher> =
+        Arc::new(Argon2PasswordHasher);
     let user_role_query: Arc<dyn system_setting::ports::UserRoleQuery> =
         Arc::new(PgUserRoleQuery::new(pool.clone()));
     let user_routes = system_setting::adapters::http::router(
@@ -217,11 +233,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Arc::new(PgExternalUserRepository::new(pool.clone(), vec!["PROJECT:READ".to_string()]));
     let mut oidc_uc = OidcLoginUseCase::new(ext_users, sessions.clone()).with_ttl_secs(ttl_secs);
     if let Some(p) = &cfg.feishu {
-        oidc_uc = oidc_uc.register(Arc::new(FeishuProvider::new(&p.app_id, &p.app_secret, &p.redirect)));
+        oidc_uc =
+            oidc_uc.register(Arc::new(FeishuProvider::new(&p.app_id, &p.app_secret, &p.redirect)));
         tracing::info!("registered OIDC provider: feishu");
     }
     if let Some(p) = &cfg.wecom {
-        oidc_uc = oidc_uc.register(Arc::new(WecomProvider::new(&p.app_id, &p.app_secret, &p.redirect)));
+        oidc_uc =
+            oidc_uc.register(Arc::new(WecomProvider::new(&p.app_id, &p.app_secret, &p.redirect)));
         tracing::info!("registered OIDC provider: wecom");
     }
     let oidc_routes = system_setting::adapters::http::oidc_router(oidc_uc);
@@ -384,8 +402,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         });
     }
     let mcp_delivery = delivery_svc.clone();
-    let decomposition_run_routes =
-        decomposition_run::router(task_admin.clone(), delivery_svc.clone(), req_admin.clone(), sessions.clone());
+    let decomposition_run_routes = decomposition_run::router(
+        task_admin.clone(),
+        delivery_svc.clone(),
+        req_admin.clone(),
+        sessions.clone(),
+    );
     let delivery_routes = delivery::adapters::http::router(delivery_svc, sessions.clone());
     let proposal_svc = design::application::ProposalService::new(Arc::new(
         design::adapters::pg::PgProposalRepository::new(pool.clone()),
@@ -437,8 +459,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     let review_repo = Arc::new(PgReviewRepository::new(pool.clone()));
-    let case_routes =
-        case::adapters::http::router(SubmitReviewUseCase::new(review_repo.clone()), review_repo, sessions.clone());
+    let case_routes = case::adapters::http::router(
+        SubmitReviewUseCase::new(review_repo.clone()),
+        review_repo,
+        sessions.clone(),
+    );
 
     let bug_repo = Arc::new(PgBugRepository::new(pool.clone()));
     let bug_routes = bug::adapters::http::router(
@@ -480,7 +505,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     Arc::new(PgCaseSpecSource::new(pool.clone())),
                     Arc::new(PgCaseResultSink::new(pool.clone())),
                 )
-                .with_env_writer(Arc::new(api_test::adapters::pg::PgEnvironment::new(pool.clone()))),
+                .with_env_writer(Arc::new(
+                    api_test::adapters::pg::PgEnvironment::new(pool.clone()),
+                )),
             )
         }
     };
@@ -502,8 +529,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         )),
     );
 
-    let apidef_repo = Arc::new(api_definition::adapters::pg::PgApiDefinitionRepository::new(pool.clone()));
-    let apidef_routes = api_definition::adapters::http::router(apidef_repo.clone(), sessions.clone());
+    let apidef_repo =
+        Arc::new(api_definition::adapters::pg::PgApiDefinitionRepository::new(pool.clone()));
+    let apidef_routes =
+        api_definition::adapters::http::router(apidef_repo.clone(), sessions.clone());
 
     let env_repo = Arc::new(environment::adapters::pg::PgEnvironmentRepository::new(pool.clone()));
     let environment_routes = environment::adapters::http::router(env_repo, sessions.clone());
@@ -568,7 +597,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let project_file_routes = project_file::router(pool.clone(), sessions.clone());
 
     let app = routes::assemble(vec![
-        routes::group("system", user_routes.merge(oidc_routes).merge(org_routes).merge(role_routes)),
+        routes::group(
+            "system",
+            user_routes.merge(oidc_routes).merge(org_routes).merge(role_routes),
+        ),
         routes::group(
             "project",
             project_routes
@@ -590,7 +622,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         routes::group("skill", skill_routes.merge(mcp_routes)),
         routes::group(
             "test-case",
-            case_routes.merge(case_exec_routes).merge(case_summary_routes).merge(functional_case_routes),
+            case_routes
+                .merge(case_exec_routes)
+                .merge(case_summary_routes)
+                .merge(functional_case_routes),
         ),
         routes::group("bug", bug_routes.merge(follow_routes)),
         routes::group("test-plan", plan_routes.merge(plan_run_routes).merge(plan_scheduler_routes)),

@@ -34,7 +34,9 @@ impl Config {
     fn from_env() -> Self {
         let env = |k: &str, d: &str| std::env::var(k).unwrap_or_else(|_| d.to_string());
         let secs = |k: &str, d: u64| -> Duration {
-            Duration::from_secs(std::env::var(k).ok().and_then(|s| s.parse().ok()).unwrap_or(d).max(1))
+            Duration::from_secs(
+                std::env::var(k).ok().and_then(|s| s.parse().ok()).unwrap_or(d).max(1),
+            )
         };
         Self {
             base: env("SHEPHERD_BASE", "http://127.0.0.1:9180"),
@@ -123,7 +125,9 @@ async fn handle(
         match backend.execute(&prompt, base_workdir, &NoopSink).await {
             Ok(doc) => match client.post_design(&spec.attempt_id, &doc).await {
                 Ok(()) => tracing::info!(proposal = %spec.attempt_id, "设计稿已回填 → 待审"),
-                Err(e) => tracing::error!(proposal = %spec.attempt_id, "回填设计稿最终失败(已重试): {e}"),
+                Err(e) => {
+                    tracing::error!(proposal = %spec.attempt_id, "回填设计稿最终失败(已重试): {e}")
+                }
             },
             Err(e) => tracing::warn!(proposal = %spec.attempt_id, "设计起草失败: {e}"),
         }
@@ -173,12 +177,15 @@ async fn connect(cfg: &Config) -> anyhow::Result<(Arc<ServerClient>, String)> {
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "info".into()),
+            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()),
         )
         .init();
 
     let cfg = Config::from_env();
+    // 弱默认口令警告:runtime 与 server 共用登录凭证,默认值等于把认领接口敞开。
+    if matches!(cfg.pass.as_str(), "admin" | "change-me" | "s3cret") {
+        tracing::warn!("SHEPHERD_ADMIN_PASSWORD 使用弱默认值;生产部署必须改为强随机口令");
+    }
     let mc = cfg.concurrency as u32;
     let mut sd = install_shutdown();
 
@@ -253,12 +260,17 @@ async fn main() -> anyhow::Result<()> {
     hb.abort();
     let inflight = cfg.concurrency - sem.available_permits();
     if inflight > 0 {
-        tracing::info!(inflight, drain_secs = cfg.drain_timeout.as_secs(),
-            "收到关停信号,等待在飞任务收尾…");
+        tracing::info!(
+            inflight,
+            drain_secs = cfg.drain_timeout.as_secs(),
+            "收到关停信号,等待在飞任务收尾…"
+        );
         match tokio::time::timeout(cfg.drain_timeout, sem.acquire_many(mc)).await {
             Ok(_) => tracing::info!("在飞任务已全部收尾"),
-            Err(_) => tracing::warn!(stuck = cfg.concurrency - sem.available_permits(),
-                "排空超时,强制退出(server 将到点 reclaim 未完成任务)"),
+            Err(_) => tracing::warn!(
+                stuck = cfg.concurrency - sem.available_permits(),
+                "排空超时,强制退出(server 将到点 reclaim 未完成任务)"
+            ),
         }
     }
     tracing::info!("agent-runtime 优雅退出");
