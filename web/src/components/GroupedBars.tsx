@@ -1,6 +1,7 @@
 // 分组柱状图(纯 SVG,无依赖)。每个 row 一组,组内每个 series 一根柱。
 // 宽度策略:测量容器宽度,内容自然宽 = 行数 × 每组最小宽。两者取大 →
 //   组少时撑满容器,组多时按自然宽渲染并由外层横向滚动(不再挤压)。
+// 悬浮:柱子即时高亮(其余变淡)+ 自绘 tooltip 跟随,不依赖原生 title 的延迟提示。
 import { useEffect, useRef, useState } from 'react'
 
 export interface BarSeries {
@@ -18,6 +19,8 @@ const MIN_GROUP_W = 72 // 每组最小宽度(px);组多时据此撑出滚动。
 export default function GroupedBars({ series, rows, height = 260 }: { series: BarSeries[]; rows: BarRow[]; height?: number }) {
   const wrapRef = useRef<HTMLDivElement>(null)
   const [cw, setCw] = useState(800)
+  // 悬浮中的柱:行/系列下标 + 柱顶坐标(svg 坐标系,滚动容器内定位 tooltip 用)。
+  const [hover, setHover] = useState<{ ri: number; si: number; x: number; y: number } | null>(null)
   useEffect(() => {
     const el = wrapRef.current
     if (!el) return
@@ -61,7 +64,7 @@ export default function GroupedBars({ series, rows, height = 260 }: { series: Ba
           </span>
         ))}
       </div>
-      <div ref={wrapRef} style={{ overflowX: 'auto', overflowY: 'hidden' }}>
+      <div ref={wrapRef} style={{ overflowX: 'auto', overflowY: 'hidden', position: 'relative' }}>
         <svg width={W} height={H} viewBox={`0 0 ${W} ${H}`} style={{ display: 'block' }}>
           {/* 网格 + y 轴刻度 */}
           {ticks.map((tk, i) => (
@@ -82,12 +85,22 @@ export default function GroupedBars({ series, rows, height = 260 }: { series: Ba
                   const x = startX + si * (barW + barGap)
                   const y = yOf(v)
                   const h = padT + plotH - y
+                  const active = hover?.ri === ri && hover?.si === si
                   return (
                     <g key={s.key}>
-                      <rect x={x} y={y} width={barW} height={Math.max(0, h)} fill={s.color} rx={2}>
-                        <title>{`${row.name} · ${s.label}: ${v}`}</title>
-                      </rect>
-                      {v > 0 && <text x={x + barW / 2} y={y - 3} textAnchor="middle" fontSize="10" fill="#8a9099">{v}</text>}
+                      <rect
+                        x={x}
+                        y={y}
+                        width={barW}
+                        height={Math.max(0, h)}
+                        fill={s.color}
+                        rx={2}
+                        opacity={hover == null || active ? 1 : 0.35}
+                        style={{ transition: 'opacity 0.12s', cursor: 'default' }}
+                        onMouseEnter={() => setHover({ ri, si, x: x + barW / 2, y })}
+                        onMouseLeave={() => setHover(null)}
+                      />
+                      {v > 0 && <text x={x + barW / 2} y={y - 3} textAnchor="middle" fontSize="10" fill="#8a9099" style={{ pointerEvents: 'none' }}>{v}</text>}
                     </g>
                   )
                 })}
@@ -96,6 +109,33 @@ export default function GroupedBars({ series, rows, height = 260 }: { series: Ba
             )
           })}
         </svg>
+        {/* 自绘 tooltip:定位在柱顶上方,随滚动容器一起滚。 */}
+        {hover && (
+          <div
+            style={{
+              position: 'absolute',
+              left: hover.x,
+              top: Math.max(0, hover.y - 8),
+              transform: 'translate(-50%, -100%)',
+              background: 'var(--panel)',
+              border: '1px solid var(--border)',
+              borderRadius: 6,
+              boxShadow: '0 4px 12px rgba(0, 0, 0, 0.10)',
+              padding: '6px 10px',
+              fontSize: 12,
+              whiteSpace: 'nowrap',
+              pointerEvents: 'none',
+              zIndex: 1,
+            }}
+          >
+            <div style={{ color: 'var(--text-2)', marginBottom: 2 }}>{rows[hover.ri]?.name}</div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <span style={{ width: 8, height: 8, borderRadius: 2, background: series[hover.si]?.color }} />
+              <span style={{ color: 'var(--text)' }}>{series[hover.si]?.label}</span>
+              <b style={{ color: 'var(--text)' }}>{rows[hover.ri]?.values[series[hover.si]?.key ?? ''] ?? 0}</b>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   )
