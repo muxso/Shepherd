@@ -25,14 +25,27 @@ jobs:
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: ${{ env.RUST_TOOLCHAIN }}
-          components: clippy
+          components: clippy, rustfmt
       - uses: Swatinem/rust-cache@v2
-      # 仅 lib+bin(production)零告警:domain 的 unwrap 等已被 workspace lint 约束;
-      # 测试代码的 unwrap 不在此门内(--all-targets 才含 tests)。
+      - name: fmt
+        run: cargo fmt --all --check
+      # 仅 lib+bin(production)零告警:domain 的 unwrap 等已被 workspace lint 约束。
       - name: clippy (production, deny warnings)
         run: cargo clippy --workspace --locked -- -D warnings
+      # 测试目标也必须编译零告警(unwrap 在测试里放行):防"lib 编译过但测试夹具漏改"。
+      - name: clippy (all targets)
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings -A clippy::unwrap-used
       - name: build
         run: cargo build --workspace --locked
+
+  # —— 供应链:依赖漏洞扫描(RustSec 通告库)——
+  audit:
+    name: cargo audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: taiki-e/install-action@cargo-audit
+      - run: cargo audit
 
   # —— 前端构建门:类型检查 + 产物构建,防 web/ 腐化 ——
   web:
