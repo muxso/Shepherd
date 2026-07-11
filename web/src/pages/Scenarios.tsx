@@ -1593,7 +1593,7 @@ function StatRing({ d, centerLabel }: { d: Dist; centerLabel: string }) {
           return el
         })}
       </g>
-      <text x="60" y="58" textAnchor="middle" fontSize="22" fontWeight="700" fill="#1f2329">{total}</text>
+      <text x="60" y="58" textAnchor="middle" fontSize="22" fontWeight="700" fill="currentColor" style={{ color: 'var(--text)' }}>{total}</text>
       <text x="60" y="76" textAnchor="middle" fontSize="11" fill="#8a9099">{centerLabel}</text>
     </svg>
   )

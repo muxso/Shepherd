@@ -44,8 +44,8 @@ export default function ProjectAdmin() {
                 onClick={() => setNav(it.key)}
                 style={{
                   padding: '8px 12px', borderRadius: 6, cursor: 'pointer', fontSize: 13, margin: '2px 0',
-                  background: nav === it.key ? '#e6f7ef' : 'transparent',
-                  color: nav === it.key ? 'var(--brand)' : '#1f2329',
+                  background: nav === it.key ? 'var(--brand-soft)' : 'transparent',
+                  color: nav === it.key ? 'var(--brand)' : 'var(--text)',
                 }}
               >
                 {it.label}

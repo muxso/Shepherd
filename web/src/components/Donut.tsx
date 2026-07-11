@@ -52,7 +52,7 @@ export default function Donut({
               return seg
             })}
       </g>
-      <text x={cx} y={cx - 2} textAnchor="middle" fontSize={20} fontWeight={700} fill="#1f2329">
+      <text x={cx} y={cx - 2} textAnchor="middle" fontSize={20} fontWeight={700} fill="currentColor" style={{ color: 'var(--text)' }}>
         {total}
       </text>
       <text x={cx} y={cx + 16} textAnchor="middle" fontSize={11} fill="#8a9099">

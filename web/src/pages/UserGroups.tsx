@@ -145,8 +145,8 @@ export default function UserGroups() {
                   onClick={() => setSelId(r.id)}
                   style={{
                     padding: '7px 14px', margin: '2px 0', borderRadius: 6, cursor: 'pointer', fontSize: 13,
-                    background: selId === r.id ? '#e6f7ef' : 'transparent',
-                    color: selId === r.id ? 'var(--brand)' : '#1f2329',
+                    background: selId === r.id ? 'var(--brand-soft)' : 'transparent',
+                    color: selId === r.id ? 'var(--brand)' : 'var(--text)',
                   }}
                 >
                   {r.name}
