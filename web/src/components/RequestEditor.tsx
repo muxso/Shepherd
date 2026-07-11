@@ -103,11 +103,14 @@ export default function RequestEditor({
   initialMethod = 'GET',
   initialUrl = '',
   lockedProtocol,
+  embedded = false,
 }: {
   initialMethod?: string
   initialUrl?: string
   /** 嵌入接口定义调试时:协议由定义决定并锁定(HTTP 定义不能切到 Redis/SSH…)。 */
   lockedProtocol?: string
+  /** 嵌入模式:方法/路径以定义行为准,请求行只留 环境 + 发送(不重复协议/方法/路径)。 */
+  embedded?: boolean
 }) {
   const { t } = useI18n()
   const { projectId } = useApp()
@@ -280,13 +283,15 @@ export default function RequestEditor({
   const reqPanel = (
     <>
       <Space.Compact style={{ width: '100%', marginBottom: 12 }}>
-        {/* 协议:定义内调试锁定为定义协议(只读);独立调试可自由切换。 */}
-        {lockedProtocol ? (
-          <Select value={protocol} disabled style={{ width: 120 }} options={[{ value: protocol, label: spec.label }]} />
-        ) : (
-          <Select value={protocol} onChange={setProtocol} style={{ width: 120 }} options={protoOptions} />
+        {/* 嵌入模式:协议/方法/路径由上方定义行承载,这里只留 环境 + 发送,避免两套请求行。 */}
+        {!embedded && (
+          lockedProtocol ? (
+            <Select value={protocol} disabled style={{ width: 120 }} options={[{ value: protocol, label: spec.label }]} />
+          ) : (
+            <Select value={protocol} onChange={setProtocol} style={{ width: 120 }} options={protoOptions} />
+          )
         )}
-        {spec.httpMethod && (
+        {!embedded && spec.httpMethod && (
           <Select value={method} onChange={setMethod} style={{ width: 100 }} popupMatchSelectWidth={false} options={METHODS.map((m) => ({ value: m, label: m }))} />
         )}
         {/* 环境选择器:HTTP 下提供 baseUrl + 默认头 + {{变量}}。空=无环境(需填绝对 URL)。 */}
@@ -294,14 +299,16 @@ export default function RequestEditor({
           <Select
             value={envId || undefined}
             onChange={setEnvId}
-            style={{ width: 168 }}
+            style={embedded ? { flex: 1, minWidth: 0 } : { width: 168 }}
             placeholder={t('editor.selectEnv', '选择环境')}
             allowClear
             options={envs.map((e) => ({ value: e.id, label: e.baseUrl ? `${e.name} · ${e.baseUrl}` : e.name }))}
             notFoundContent={t('editor.noEnvConfigured', '未配置环境,去「环境」页新建')}
           />
         )}
-        <Input value={url} onChange={(e) => setUrl(e.target.value)} placeholder={spec.httpMethod ? t('editor.urlPlaceholder', '/apis/... 或 http://...') : spec.urlPhKey ? t(spec.urlPhKey, spec.urlPlaceholder) : spec.urlPlaceholder} className="ms-mono" onPressEnter={send} />
+        {!embedded && (
+          <Input value={url} onChange={(e) => setUrl(e.target.value)} placeholder={spec.httpMethod ? t('editor.urlPlaceholder', '/apis/... 或 http://...') : spec.urlPhKey ? t(spec.urlPhKey, spec.urlPlaceholder) : spec.urlPlaceholder} className="ms-mono" onPressEnter={send} />
+        )}
         <Button type="primary" icon={<SendOutlined />} loading={sending} onClick={send}>{t('a.send', '发送')}</Button>
       </Space.Compact>
       {spec.httpMethod && env?.baseUrl && (

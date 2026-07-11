@@ -1249,7 +1249,7 @@ function NewDefinitionTab({
       ) : defMode === 'define' ? (
         <ApiSpecPanel definition={draftDef} mode="create" value={spec} onChange={setSpec} />
       ) : (
-        <RequestEditor initialMethod={method} initialUrl={path} lockedProtocol={protocol} />
+        <RequestEditor initialMethod={method} initialUrl={path} lockedProtocol={protocol} embedded />
       )}
     </div>
   )
