@@ -142,9 +142,11 @@ Run on the machine that has the agent CLIs (or anywhere with `AGENT_MOCK=1`). It
 # Server, in fleet mode (single-host in-process queue)
 SHEPHERD_AGENT_FLEET=1 DATABASE_URL=… SHEPHERD_ADMIN_PASSWORD=s3cret cargo run -p server
 
-# Executor: outbound long-poll, claims CLAUDE_CODE tasks
+# Executor: outbound long-poll, claims CLAUDE_CODE tasks.
+# Auth is API-key only: issue one in the web console (个人中心 → API KEY)
+# or via POST /system/apikey, then:
 SHEPHERD_BASE=http://<server>:8088 \
-SHEPHERD_ADMIN_PASSWORD=s3cret \
+SHEPHERD_AGENT_KEY=sak_… \
 SHEPHERD_CAPS=CLAUDE_CODE \
 cargo run -p agent-runtime
 ```
@@ -190,8 +192,7 @@ Advanced/lazy-read switches also exist for the pluggable AI touchpoints — `SHE
 | Variable | Default | Meaning |
 |---|---|---|
 | `SHEPHERD_BASE` | `http://127.0.0.1:9180` | Server address to long-poll |
-| `SHEPHERD_ADMIN_USER` | `admin` | Login user |
-| `SHEPHERD_ADMIN_PASSWORD` | `s3cret` | Login password |
+| `SHEPHERD_AGENT_KEY` | **required** | Static API key (`sak_…`) — the only credential; issue via 个人中心 → API KEY or `POST /system/apikey` |
 | `SHEPHERD_CAPS` | `CLAUDE_CODE` | Comma-separated capabilities — which task kinds this runtime claims (e.g. `CLAUDE_CODE,CODEX`) |
 | `AGENT_CONCURRENCY` | `1` | Max concurrent in-flight tasks (semaphore-bounded) |
 | `AGENT_WORKDIR` | `.` | Base working directory; each task runs in its own git worktree under it |
@@ -285,6 +286,8 @@ curl -s localhost:8088/organization -H 'Authorization: Bearer <token>'
 
 Sessions are PG-backed (survive a server restart) and expire after `SHEPHERD_SESSION_TTL_SECS`. Write endpoints enforce per-resource RBAC; reads are open.
 
+`/auth/login` is for humans (web console). Programmatic clients (agent-runtime, `shepherd-cli`, MCP clients, scripts) should authenticate with a static API key instead: issue one in the web console (个人中心 → API KEY) or via `POST /system/apikey`, then send it as `Authorization: Bearer sak_…` — no login, no refresh, revocation takes effect immediately.
+
 ### 8.2 Health
 
 | Endpoint | Meaning |
@@ -295,6 +298,8 @@ Sessions are PG-backed (survive a server restart) and expire after `SHEPHERD_SES
 ### 8.3 MCP
 
 The full pipeline is exposed as MCP tools over Streamable HTTP at `POST /mcp` (JSON-RPC): `initialize` issues an `Mcp-Session-Id`, `GET /mcp` holds an SSE stream, `DELETE /mcp` terminates. Tools are RBAC-filtered per session (`tools/list` hides tools you can't call). About ten `shepherd_*` tools drive requirements → breakdown → dispatch → verification.
+
+MCP clients authenticate with an API key: configure the MCP server with `Authorization: Bearer sak_…` (issued via 个人中心 → API KEY or `POST /system/apikey`) — do not embed the admin password. The key's permissions decide which tools are visible and callable.
 
 ### 8.4 OpenAPI & self-bootstrap (dogfood)
 

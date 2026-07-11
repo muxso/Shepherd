@@ -123,6 +123,11 @@ resource "helm_release" "shepherd" {
   }
 
   set_sensitive {
+    name  = "config.agentKey"
+    value = var.agent_key
+  }
+
+  set_sensitive {
     name  = "database.url"
     value = var.database_url
   }

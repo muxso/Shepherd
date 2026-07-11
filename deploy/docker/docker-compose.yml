@@ -81,8 +81,10 @@ services:
       dockerfile: deploy/docker/Dockerfile.agent-runtime
     environment:
       SHEPHERD_BASE: http://server:8088
-      SHEPHERD_ADMIN_USER: admin
-      SHEPHERD_ADMIN_PASSWORD: ${SHEPHERD_ADMIN_PASSWORD:?set in deploy/docker/.env}
+      # API key is the only runtime credential. Issue one after first boot
+      # (web: 个人中心 → API KEY, or POST /system/apikey), put it in .env,
+      # then `docker compose up -d agent-runtime`.
+      SHEPHERD_AGENT_KEY: ${SHEPHERD_AGENT_KEY:?issue via POST /system/apikey and set in deploy/docker/.env}
       AGENT_MOCK: "1"
     depends_on:
       server:

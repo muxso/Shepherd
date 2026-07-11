@@ -13,9 +13,8 @@ const REPORT_ATTEMPTS: u32 = 6;
 pub struct ServerClient {
     http: reqwest::Client,
     base: String,
-    token: String,
-    /// 静态 API key 模式(SHEPHERD_AGENT_KEY):不登录、不刷新,401 即被吊销。
-    static_key: bool,
+    /// 静态 API key(SHEPHERD_AGENT_KEY):唯一凭证,不登录、不刷新,401 即被吊销。
+    key: String,
 }
 
 async fn retry<T, F, Fut>(label: &str, attempts: u32, mut f: F) -> anyhow::Result<T>
@@ -39,38 +38,19 @@ where
 }
 
 impl ServerClient {
-    pub async fn login(base: &str, user: &str, pass: &str) -> anyhow::Result<Self> {
-        let http = reqwest::Client::builder().connect_timeout(Duration::from_secs(10)).build()?;
-        let resp: serde_json::Value = http
-            .post(format!("{base}/auth/login"))
-            .timeout(CONTROL_TIMEOUT)
-            .json(&json!({"username": user, "password": pass}))
-            .send()
-            .await?
-            .error_for_status()?
-            .json()
-            .await?;
-        let token = resp
-            .get("token")
-            .and_then(|t| t.as_str())
-            .ok_or_else(|| anyhow::anyhow!("login: no token"))?
-            .to_string();
-        Ok(Self { http, base: base.to_string(), token, static_key: false })
-    }
-
     /// 静态 API key(`sak_…`)直接当 bearer 用:免登录免刷新,吊销即失效。
     pub fn with_api_key(base: &str, key: &str) -> anyhow::Result<Self> {
         let http = reqwest::Client::builder().connect_timeout(Duration::from_secs(10)).build()?;
-        Ok(Self { http, base: base.to_string(), token: key.to_string(), static_key: true })
+        Ok(Self { http, base: base.to_string(), key: key.to_string() })
     }
 
     fn auth(&self, rb: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
-        rb.bearer_auth(&self.token).timeout(CONTROL_TIMEOUT)
+        rb.bearer_auth(&self.key).timeout(CONTROL_TIMEOUT)
     }
 
-    /// 静态 key 遇到 401 说明 key 被吊销/无效,重试不会自愈,记一条明确指引。
+    /// 401 说明 key 被吊销/无效,重试不会自愈,记一条明确指引。
     fn key_revoked(&self, status: reqwest::StatusCode) -> bool {
-        let revoked = self.static_key && status == reqwest::StatusCode::UNAUTHORIZED;
+        let revoked = status == reqwest::StatusCode::UNAUTHORIZED;
         if revoked {
             tracing::error!(
                 "API key 已吊销或无效(HTTP 401):请管理员在 POST /system/apikey 重新签发,并更新 SHEPHERD_AGENT_KEY"
@@ -79,7 +59,7 @@ impl ServerClient {
         revoked
     }
 
-    /// error_for_status 的替身:静态 key 的 401 换成可读错误(登录态维持原样的状态码错误)。
+    /// error_for_status 的替身:401 换成可读的「key 已吊销」错误,其余维持状态码错误。
     fn ensure_ok(&self, resp: reqwest::Response) -> anyhow::Result<reqwest::Response> {
         if self.key_revoked(resp.status()) {
             anyhow::bail!("API key 已吊销或无效");
@@ -246,19 +226,9 @@ mod tests {
             .expect("client")
     }
 
-    fn login_client() -> ServerClient {
-        ServerClient {
-            http: reqwest::Client::new(),
-            base: "http://127.0.0.1:9".into(),
-            token: "session-token".into(),
-            static_key: false,
-        }
-    }
-
     #[test]
-    fn with_api_key_is_static_and_attaches_bearer() {
+    fn with_api_key_attaches_bearer_verbatim() {
         let c = static_client();
-        assert!(c.static_key);
         let req = c.auth(c.http.get("http://127.0.0.1:9/agent/work/claim")).build().expect("req");
         assert_eq!(
             req.headers()["authorization"],
@@ -268,18 +238,11 @@ mod tests {
     }
 
     #[test]
-    fn static_key_401_is_treated_as_revoked() {
+    fn only_401_is_treated_as_key_revoked() {
         let c = static_client();
         assert!(c.key_revoked(reqwest::StatusCode::UNAUTHORIZED));
         // 非 401 不算吊销(403 是权限不足、5xx 是服务端问题,按原有重试语义走)。
         assert!(!c.key_revoked(reqwest::StatusCode::FORBIDDEN));
         assert!(!c.key_revoked(reqwest::StatusCode::INTERNAL_SERVER_ERROR));
-    }
-
-    #[test]
-    fn login_mode_401_keeps_original_semantics() {
-        // 登录态的 401 不是"key 被吊销",维持原有状态码错误路径。
-        let c = login_client();
-        assert!(!c.key_revoked(reqwest::StatusCode::UNAUTHORIZED));
     }
 }

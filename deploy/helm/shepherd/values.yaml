@@ -86,9 +86,14 @@ web:
 # Shared application configuration.
 # ---------------------------------------------------------------------------
 config:
-  # SHEPHERD_ADMIN_PASSWORD — REQUIRED. Never commit a real value; set via --set
-  # or a sealed/external secret in production.
+  # SHEPHERD_ADMIN_PASSWORD — REQUIRED (server-side admin account bootstrap +
+  # web login). Never commit a real value; set via --set or a sealed/external
+  # secret in production.
   adminPassword: ""
+  # SHEPHERD_AGENT_KEY — REQUIRED when agent-runtime replicas > 0. Static API
+  # key (sak_…) the runtimes authenticate with; issue via POST /system/apikey
+  # (minimal permissions: DELIVERY:UPDATE + REQUIREMENT:UPDATE).
+  agentKey: ""
   # SHEPHERD_SESSION_TTL_SECS
   sessionTtlSecs: 28800
   fleet:

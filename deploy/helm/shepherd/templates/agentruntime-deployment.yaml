@@ -35,13 +35,11 @@ spec:
           env:
             - name: SHEPHERD_BASE
               value: {{ printf "http://%s:%v" (include "shepherd.serverServiceName" .) .Values.server.service.port | quote }}
-            - name: SHEPHERD_ADMIN_USER
-              value: "admin"
-            - name: SHEPHERD_ADMIN_PASSWORD
+            - name: SHEPHERD_AGENT_KEY
               valueFrom:
                 secretKeyRef:
                   name: {{ include "shepherd.secretName" . }}
-                  key: SHEPHERD_ADMIN_PASSWORD
+                  key: SHEPHERD_AGENT_KEY
             {{- if .Values.agentRuntime.mock }}
             - name: AGENT_MOCK
               value: "1"

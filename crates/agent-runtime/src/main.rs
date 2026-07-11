@@ -19,10 +19,8 @@ use models::WorkSpec;
 
 struct Config {
     base: String,
-    /// 静态 API key(SHEPHERD_AGENT_KEY):设了就直接当 bearer 用,不再走登录/口令。
-    key: Option<String>,
-    user: String,
-    pass: String,
+    /// 静态 API key(SHEPHERD_AGENT_KEY,必填):直接当 bearer 用,无登录/口令路径。
+    key: String,
     caps: Vec<String>,
     name: String,
     workdir: String,
@@ -36,18 +34,16 @@ struct Config {
 }
 
 impl Config {
-    fn from_env() -> Self {
+    fn from_env() -> anyhow::Result<Self> {
         let env = |k: &str, d: &str| std::env::var(k).unwrap_or_else(|_| d.to_string());
         let secs = |k: &str, d: u64| -> Duration {
             Duration::from_secs(
                 std::env::var(k).ok().and_then(|s| s.parse().ok()).unwrap_or(d).max(1),
             )
         };
-        Self {
+        Ok(Self {
             base: env("SHEPHERD_BASE", "http://127.0.0.1:9180"),
-            key: agent_key(std::env::var("SHEPHERD_AGENT_KEY").ok()),
-            user: env("SHEPHERD_ADMIN_USER", "admin"),
-            pass: env("SHEPHERD_ADMIN_PASSWORD", "s3cret"),
+            key: agent_key(std::env::var("SHEPHERD_AGENT_KEY").ok())?,
             caps: env("SHEPHERD_CAPS", "CLAUDE_CODE")
                 .split(',')
                 .map(|s| s.trim().to_string())
@@ -60,18 +56,18 @@ impl Config {
             task_timeout: secs("AGENT_TASK_TIMEOUT_SECS", 1800),
             heartbeat: secs("AGENT_HEARTBEAT_SECS", 10),
             drain_timeout: secs("AGENT_DRAIN_TIMEOUT_SECS", 60),
-        }
-    }
-
-    /// 弱默认口令只在口令真正用于登录时才值得告警;配了 API key 后口令不会被使用。
-    fn warns_weak_password(&self) -> bool {
-        self.key.is_none() && matches!(self.pass.as_str(), "admin" | "change-me" | "s3cret")
+        })
     }
 }
 
-/// SHEPHERD_AGENT_KEY:空串/纯空白视同未设置(回落到口令登录)。
-fn agent_key(raw: Option<String>) -> Option<String> {
-    raw.filter(|s| !s.trim().is_empty())
+/// SHEPHERD_AGENT_KEY 是唯一凭证:空串/纯空白视同未设置,直接启动报错并给签发指引。
+fn agent_key(raw: Option<String>) -> anyhow::Result<String> {
+    raw.filter(|s| !s.trim().is_empty()).ok_or_else(|| {
+        anyhow::anyhow!(
+            "缺少 SHEPHERD_AGENT_KEY:agent-runtime 只接受 API key 认证。\
+             请设置 SHEPHERD_AGENT_KEY=sak_…;key 可在 个人中心 → API KEY 或 POST /system/apikey 签发"
+        )
+    })
 }
 
 fn install_shutdown() -> watch::Receiver<bool> {
@@ -184,11 +180,8 @@ async fn handle(
 }
 
 async fn connect(cfg: &Config) -> anyhow::Result<(Arc<ServerClient>, String)> {
-    // API key 优先:免登录免刷新;未配 key 才退回管理员口令登录。
-    let client = match cfg.key.as_deref() {
-        Some(key) => Arc::new(ServerClient::with_api_key(&cfg.base, key)?),
-        None => Arc::new(ServerClient::login(&cfg.base, &cfg.user, &cfg.pass).await?),
-    };
+    // 只有 API key 一条认证路径:免登录免刷新,401 即 key 被吊销。
+    let client = Arc::new(ServerClient::with_api_key(&cfg.base, &cfg.key)?);
     let id = client.register(&cfg.name, &cfg.caps, cfg.concurrency as u32).await?;
     Ok((client, id))
 }
@@ -201,13 +194,7 @@ async fn main() -> anyhow::Result<()> {
         )
         .init();
 
-    let cfg = Config::from_env();
-    // 弱默认口令警告:runtime 与 server 共用登录凭证,默认值等于把认领接口敞开。
-    if cfg.warns_weak_password() {
-        tracing::warn!(
-            "SHEPHERD_ADMIN_PASSWORD 使用弱默认值;生产部署应改为强随机口令,或改用 SHEPHERD_AGENT_KEY(推荐)"
-        );
-    }
+    let cfg = Config::from_env()?;
     let mc = cfg.concurrency as u32;
     let mut sd = install_shutdown();
 
@@ -303,51 +290,18 @@ async fn main() -> anyhow::Result<()> {
 mod tests {
     use super::*;
 
-    fn cfg(key: Option<&str>, pass: &str) -> Config {
-        Config {
-            base: "http://127.0.0.1:9180".into(),
-            key: agent_key(key.map(str::to_string)),
-            user: "admin".into(),
-            pass: pass.into(),
-            caps: vec!["CLAUDE_CODE".into()],
-            name: "t".into(),
-            workdir: ".".into(),
-            base_ref: None,
-            concurrency: 1,
-            task_timeout: Duration::from_secs(1),
-            heartbeat: Duration::from_secs(1),
-            drain_timeout: Duration::from_secs(1),
+    #[test]
+    fn agent_key_accepts_real_key() {
+        assert_eq!(agent_key(Some("sak_ab.cd".into())).expect("key"), "sak_ab.cd");
+    }
+
+    #[test]
+    fn agent_key_missing_or_blank_errors_with_guidance() {
+        for raw in [None, Some(String::new()), Some("   ".into())] {
+            let err = agent_key(raw).expect_err("blank/missing key must fail startup");
+            let msg = err.to_string();
+            assert!(msg.contains("SHEPHERD_AGENT_KEY"), "要点名缺的环境变量: {msg}");
+            assert!(msg.contains("/system/apikey"), "要给签发指引: {msg}");
         }
-    }
-
-    #[test]
-    fn agent_key_blank_means_unset() {
-        assert_eq!(agent_key(None), None);
-        assert_eq!(agent_key(Some(String::new())), None);
-        assert_eq!(agent_key(Some("   ".into())), None);
-        assert_eq!(agent_key(Some("sak_ab.cd".into())), Some("sak_ab.cd".to_string()));
-    }
-
-    #[test]
-    fn key_set_wins_over_password_login() {
-        // key 存在即走静态模式;弱口令告警随之关闭(口令不会被使用)。
-        let c = cfg(Some("sak_ab.cd"), "s3cret");
-        assert_eq!(c.key.as_deref(), Some("sak_ab.cd"));
-        assert!(!c.warns_weak_password());
-    }
-
-    #[test]
-    fn blank_key_falls_back_to_password_login() {
-        let c = cfg(Some("  "), "s3cret");
-        assert_eq!(c.key, None);
-        assert!(c.warns_weak_password());
-    }
-
-    #[test]
-    fn weak_default_password_warns_without_key() {
-        for weak in ["admin", "change-me", "s3cret"] {
-            assert!(cfg(None, weak).warns_weak_password(), "{weak} 应触发告警");
-        }
-        assert!(!cfg(None, "Xq9!rand0m").warns_weak_password());
     }
 }

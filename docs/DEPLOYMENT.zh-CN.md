@@ -122,7 +122,9 @@ compose 栈所连接的内容：
   `SHEPHERD_ADMIN_PASSWORD`。首次启动自动执行迁移；PG 可达后就绪检查转为 200。
 - `agent-runtime`——无端口；`SHEPHERD_BASE=http://server:8088`，并设 `AGENT_MOCK=1`，
   无需真实 agent CLI 即可运行。设置 `AGENT_MOCK=0` 并挂载 `git`/`claude`/`codex` 二进制可驱动
-  真实后端。
+  真实后端。只接受 API key 认证：server 首次启动后签发 key（Web 个人中心 → API KEY，或
+  `POST /system/apikey`），把 `SHEPHERD_AGENT_KEY` 写入 `deploy/docker/.env`，再启动/重启
+  `agent-runtime` 服务。
 - `web`——nginx 监听 `8080:80`，反向代理到 `server`。
 
 销毁（加 `-v` 同时删除数据库卷）：
@@ -142,7 +144,7 @@ docker compose down -v     # 清空数据
 Chart 位于 [`deploy/helm/shepherd/`](../deploy/helm/shepherd/)（`apiVersion: v2`，
 `appVersion: 0.0.1`）。它渲染 server/agent-runtime/web 的 Deployment + Service、server 与
 web 的 Ingress、可选 HPA 与 server 的 PodDisruptionBudget、一个共享 Secret
-（`DATABASE_URL`、`SHEPHERD_ADMIN_PASSWORD`、`SHEPHERD_FLEET_REDIS`、OIDC）以及一个非敏感
+（`DATABASE_URL`、`SHEPHERD_ADMIN_PASSWORD`、`SHEPHERD_AGENT_KEY`、`SHEPHERD_FLEET_REDIS`、OIDC）以及一个非敏感
 ConfigMap（含 nginx 配置）。探针接到 `/healthz`（存活）与 `/readyz`（就绪）。
 
 ### 安装 / 升级
@@ -162,9 +164,15 @@ helm upgrade --install shepherd deploy/helm/shepherd \
   --set global.image.registry=ghcr.io/muxso \
   --set global.image.tag=v0.0.1 \
   --set config.adminPassword="$SHEPHERD_ADMIN_PASSWORD" \
+  --set config.agentKey="$SHEPHERD_AGENT_KEY" \
   --set database.url="$DATABASE_URL" \
   --set config.fleet.redisUrl="$REDIS_URL"
 ```
+
+`config.agentKey` 是 agent-runtime 认证用的静态 API key（`sak_…`）——runtime 没有口令
+路径，缺 key 启动即退出。key 通过 `POST /system/apikey` 签发（权限
+`DELIVERY:UPDATE` + `REQUIREMENT:UPDATE`）；全新集群先装 chart、签发 key，再
+`helm upgrade --set config.agentKey=…`。
 
 检查发布状态：
 
@@ -195,6 +203,7 @@ web:
   ingress: { enabled: true, className: "", host: shepherd.example.com, tls: false }
 config:
   adminPassword: ""                             # → Secret SHEPHERD_ADMIN_PASSWORD（必需）
+  agentKey: ""                                  # → Secret SHEPHERD_AGENT_KEY（跑 agent-runtime 必需）
   sessionTtlSecs: 28800
   fleet: { enabled: true, redisUrl: "" }        # SHEPHERD_FLEET_REDIS
   oidc: { feishu: {...}, wecom: {...} }
@@ -240,8 +249,8 @@ web:
 ### 密钥处理
 
 密钥绝不写入镜像或提交到仓库。在安装时通过 `--set`（来自 shell/CI 环境）提供，或使用预创建 Secret +
-`existingSecret` 模式。`config.adminPassword` 与 `database.url` 在生产中**必需**，会写入 chart
-Secret 的 `SHEPHERD_ADMIN_PASSWORD` 与 `DATABASE_URL`。生产部署中应优先使用密钥管理工具（External
+`existingSecret` 模式。`config.adminPassword`、`config.agentKey` 与 `database.url` 在生产中**必需**，会写入 chart
+Secret 的 `SHEPHERD_ADMIN_PASSWORD`、`SHEPHERD_AGENT_KEY` 与 `DATABASE_URL`。生产部署中应优先使用密钥管理工具（External
 Secrets Operator、SealedSecrets、云端密钥库），而非明文 `--set`。
 
 ---
@@ -350,7 +359,8 @@ echo "App: $(terraform output -raw app_url)"
 
 | Secret | 用途 |
 |--------|------|
-| `SHEPHERD_ADMIN_PASSWORD` | 管理员登录 + agent-runtime 认证 |
+| `SHEPHERD_ADMIN_PASSWORD` | 管理员建号 + Web 登录 |
+| `SHEPHERD_AGENT_KEY` | 静态 API key（`sak_…`），agent-runtime 唯一凭证 |
 | `DATABASE_URL` | `postgres://…` 连接串 |
 | `REDIS_URL` | 机群 Redis URL |
 
@@ -417,7 +427,7 @@ Redis 是临时的机群队列（仅多机群时存在），无需备份；丢�
 ```bash
 curl -fsS https://shepherd.example.com/healthz
 curl -fsS https://shepherd.example.com/readyz
-curl -fsS -u admin:$SHEPHERD_ADMIN_PASSWORD https://shepherd.example.com/agent/work/stats
+curl -fsS -H "Authorization: Bearer $SHEPHERD_AGENT_KEY" https://shepherd.example.com/agent/work/stats
 ```
 
 ### 扩缩机群
@@ -445,11 +455,12 @@ kubectl -n shepherd scale deploy/shepherd-agent-runtime --replicas=8
 ```bash
 helm upgrade shepherd deploy/helm/shepherd -n shepherd --reuse-values \
   --set config.adminPassword="$NEW_PASSWORD"
-kubectl -n shepherd rollout restart deploy/shepherd-server deploy/shepherd-agent-runtime
+kubectl -n shepherd rollout restart deploy/shepherd-server
 ```
 
-请同时轮换 agent-runtime 与 server，使两端共享新凭证（runtime 使用
-`SHEPHERD_ADMIN_USER` / `SHEPHERD_ADMIN_PASSWORD` 认证）。`DATABASE_URL` /
+管理员密码只影响 server（建号 + Web 登录）。轮换 runtime 凭证走 API key：先
+`POST /system/apikey` 签发新 key，`helm upgrade --reuse-values --set config.agentKey="$NEW_KEY"`
+并重启 `deploy/shepherd-agent-runtime`，滚动完成后吊销旧 key。`DATABASE_URL` /
 `SHEPHERD_FLEET_REDIS` 同理轮换。若使用密钥管理工具，更新后端密钥并重启相应 deployment。
 
 ### 零停机滚动更新

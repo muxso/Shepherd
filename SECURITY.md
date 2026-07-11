@@ -23,12 +23,12 @@ Only the latest `main` receives security fixes while the project is pre-1.0.
 - **server 被攻破 = 所有 agent-runtime 机器可被远程执行代码。** 执行机通过出站长轮询
   从 server 领取任务,任务 prompt 会直接喂给本机的 AI CLI(claude/codex/opencode/codebuddy)
   执行。server 是全机群的信任根,务必最小化其暴露面。
-- **必须修改默认管理员口令。**`SHEPHERD_ADMIN_PASSWORD` 使用弱默认值时 server 与
-  agent-runtime 启动都会打警告;生产环境应设置强随机口令。
-- **执行机凭据:推荐每台 runtime 一把 API key,而非共享管理员口令。** 管理员通过
+- **必须修改默认管理员口令。**`SHEPHERD_ADMIN_PASSWORD` 使用弱默认值时 server
+  启动会打警告;生产环境应设置强随机口令。该口令只用于管理员建号与 Web 登录。
+- **执行机凭据:只有 API key 一条路径,每台 runtime 一把。** 管理员通过
   `POST /system/apikey` 按最小权限(`DELIVERY:UPDATE` + `REQUIREMENT:UPDATE`)
-  为每台执行机签发独立 key,设为 `SHEPHERD_AGENT_KEY`;单台失陷只需吊销那一把
-  key,不用全机群换口令。
+  为每台执行机签发独立 key,设为 `SHEPHERD_AGENT_KEY`(缺失则 runtime 拒绝启动);
+  单台失陷只需吊销那一把 key,不牵连其他机器。
 - **建议在反向代理层终结 TLS。** server 自身监听明文 HTTP;公网部署必须置于
   HTTPS 反代之后,agent-runtime 的 `SHEPHERD_BASE` 也应指向 https 地址。
 - **CORS**:仅将可信来源写入 `SHEPHERD_CORS_ORIGINS`,不要使用通配符。
@@ -39,13 +39,14 @@ Before deploying:
 - **A compromised server means RCE on every agent-runtime box.** Runtimes pull
   task prompts from the server and feed them to local AI CLIs. Treat the server
   as the fleet's root of trust and minimize its exposure.
-- **Change the default admin password.** Both server and agent-runtime warn at
-  startup when `SHEPHERD_ADMIN_PASSWORD` is a weak default.
-- **Runtime credentials: prefer one API key per runtime over a shared admin
-  password.** Issue each runtime its own key via `POST /system/apikey` with the
-  minimal permission set (`DELIVERY:UPDATE` + `REQUIREMENT:UPDATE`) and set it
-  as `SHEPHERD_AGENT_KEY`; a compromised box is contained by revoking that one
-  key instead of rotating a fleet-wide password.
+- **Change the default admin password.** The server warns at startup when
+  `SHEPHERD_ADMIN_PASSWORD` is a weak default. The password is only used for
+  the admin account bootstrap and web login.
+- **Runtime credentials: API key only, one per runtime.** Issue each runtime
+  its own key via `POST /system/apikey` with the minimal permission set
+  (`DELIVERY:UPDATE` + `REQUIREMENT:UPDATE`) and set it as
+  `SHEPHERD_AGENT_KEY` (the runtime refuses to start without one); a
+  compromised box is contained by revoking that one key.
 - **Terminate TLS at a reverse proxy.** The server listens on plain HTTP;
   never expose it directly on the public internet.
 - **CORS**: put only trusted origins in `SHEPHERD_CORS_ORIGINS`.

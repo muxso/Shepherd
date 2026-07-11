@@ -142,9 +142,10 @@ dev 服务器(5173 端口)把所有后端前缀代理到服务端,并按 `Accept
 # 服务端,机群模式(单机进程内队列)
 SHEPHERD_AGENT_FLEET=1 DATABASE_URL=… SHEPHERD_ADMIN_PASSWORD=s3cret cargo run -p server
 
-# 执行者:出站长轮询,认领 CLAUDE_CODE 任务
+# 执行者:出站长轮询,认领 CLAUDE_CODE 任务。
+# 只接受 API key 认证:先在 个人中心 → API KEY(或 POST /system/apikey)签发,再:
 SHEPHERD_BASE=http://<server>:8088 \
-SHEPHERD_ADMIN_PASSWORD=s3cret \
+SHEPHERD_AGENT_KEY=sak_… \
 SHEPHERD_CAPS=CLAUDE_CODE \
 cargo run -p agent-runtime
 ```
@@ -190,8 +191,7 @@ cargo clippy --workspace -- -D warnings
 | 变量 | 默认 | 含义 |
 |---|---|---|
 | `SHEPHERD_BASE` | `http://127.0.0.1:9180` | 长轮询的服务端地址 |
-| `SHEPHERD_ADMIN_USER` | `admin` | 登录用户 |
-| `SHEPHERD_ADMIN_PASSWORD` | `s3cret` | 登录密码 |
+| `SHEPHERD_AGENT_KEY` | **必填** | 静态 API key(`sak_…`),唯一凭证;在 个人中心 → API KEY 或 `POST /system/apikey` 签发 |
 | `SHEPHERD_CAPS` | `CLAUDE_CODE` | 逗号分隔能力——本 runtime 认领哪类任务(如 `CLAUDE_CODE,CODEX`) |
 | `AGENT_CONCURRENCY` | `1` | 最大在飞并发(信号量上限) |
 | `AGENT_WORKDIR` | `.` | 基础工作目录;每个任务在其下的独立 git worktree 里运行 |
@@ -285,6 +285,8 @@ curl -s localhost:8088/organization -H 'Authorization: Bearer <token>'
 
 会话落 PG(服务端重启存活),按 `SHEPHERD_SESSION_TTL_SECS` 过期。写端点按资源 RBAC 校验;读端点开放。
 
+`/auth/login` 是给人(Web 控制台)用的。程序化接入(agent-runtime、`shepherd-cli`、MCP 客户端、脚本)一律用静态 API key:在 个人中心 → API KEY 或 `POST /system/apikey` 签发,请求带 `Authorization: Bearer sak_…`——免登录免刷新,吊销即时生效。
+
 ### 8.2 健康检查
 
 | 端点 | 含义 |
@@ -295,6 +297,8 @@ curl -s localhost:8088/organization -H 'Authorization: Bearer <token>'
 ### 8.3 MCP
 
 全链路经 Streamable HTTP 暴露为 MCP 工具,入口 `POST /mcp`(JSON-RPC):`initialize` 签发 `Mcp-Session-Id`,`GET /mcp` 维持 SSE 长连接,`DELETE /mcp` 终止。工具按会话 RBAC 过滤(`tools/list` 隐藏你无权调用的工具)。约十个 `shepherd_*` 工具驱动 需求 → 拆分 → 派发 → 验证。
+
+MCP 客户端用 API key 认证:在 MCP server 配置里带 `Authorization: Bearer sak_…`(key 在 个人中心 → API KEY 或 `POST /system/apikey` 签发),不要写管理员口令。key 的权限决定可见/可调用的工具集。
 
 ### 8.4 OpenAPI 与自举(dogfood)
 

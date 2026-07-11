@@ -46,11 +46,12 @@ AGENT_WORKDIR=/path/to/target/repo \
 ./agent-runtime
 ```
 
-### Authentication: API key (recommended)
+### Authentication: API key (required)
 
-Give each runtime its own static API key instead of sharing the admin
-password. Keys never expire; revoking one kills exactly that runtime's access
-without touching the others. An admin creates a key via `POST /system/apikey`:
+The runtime authenticates with a static API key only — there is no
+username/password path. Give each runtime its own key: keys never expire, and
+revoking one kills exactly that runtime's access without touching the others.
+Issue a key in the web console (个人中心 → API KEY) or via `POST /system/apikey`:
 
 ```bash
 # 1. Admin login (once, to get an admin token)
@@ -72,16 +73,14 @@ heartbeat, claim, delivery events/complete/fail) checks `DELIVERY:UPDATE`,
 and the design-draft backfill (`POST /proposal/{id}/design`) checks
 `REQUIREMENT:UPDATE`. Nothing else is needed — no `READ`, no `EXECUTE`.
 
-Pass the key as `SHEPHERD_AGENT_KEY`. When set, the runtime sends it as a
-static bearer token and never calls login; a `401` means the key was revoked
-(re-issue and update the env). When unset, the runtime falls back to logging
-in with `SHEPHERD_ADMIN_USER` / `SHEPHERD_ADMIN_PASSWORD`.
+Pass the key as `SHEPHERD_AGENT_KEY`. The runtime sends it as a static bearer
+token; a `401` means the key was revoked (re-issue and update the env). The
+runtime refuses to start without a key.
 
 | Env | Default | Meaning |
 |---|---|---|
 | `SHEPHERD_BASE` | `http://127.0.0.1:9180` | Server base URL (outbound only; no inbound port needed) |
-| `SHEPHERD_AGENT_KEY` | *(unset)* | Static API key (`sak_…`), recommended; wins over user/password when set |
-| `SHEPHERD_ADMIN_USER` / `SHEPHERD_ADMIN_PASSWORD` | `admin` / `s3cret` | Fallback login used to register and claim when no key is set |
+| `SHEPHERD_AGENT_KEY` | **required** | Static API key (`sak_…`) — the only credential; startup fails without it |
 | `SHEPHERD_CAPS` | `CLAUDE_CODE` | Comma-separated executor kinds this runtime claims |
 | `RUNTIME_NAME` | `agent-runtime` | Display name in the fleet registry |
 | `AGENT_WORKDIR` | `.` | Git repo the tasks operate on |

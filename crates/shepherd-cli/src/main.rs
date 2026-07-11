@@ -24,14 +24,13 @@ static JSON_OUTPUT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBoo
 
 #[derive(Subcommand)]
 enum Cmd {
-    /// 登录并保存会话。
+    /// 保存服务地址与 API key(唯一认证方式;key 在 个人中心 → API KEY 或 POST /system/apikey 签发)。
     Login {
         #[arg(long, default_value = "http://localhost:8088")]
         url: String,
-        #[arg(long)]
-        user: String,
-        #[arg(long)]
-        password: String,
+        /// API key(sak_…);省略则读环境变量 SHEPHERD_API_KEY。
+        #[arg(long = "api-key")]
+        api_key: Option<String>,
     },
     /// 生成上手脚手架(需求模板 + 快速上手),离线、不联网。
     Init {
@@ -97,7 +96,7 @@ enum Cmd {
         #[command(subcommand)]
         cmd: AgentCmd,
     },
-    /// 注销当前会话(撤销服务端令牌并清空本地 token)。
+    /// 清除本地保存的 API key(要让 key 失效,请在服务端 API KEY 管理里吊销)。
     Logout,
     /// 项目管理。
     Project {
@@ -1082,10 +1081,16 @@ enum EnvCmd {
 #[derive(Serialize, Deserialize, Default, Clone)]
 struct Config {
     url: String,
-    token: String,
+    /// 静态 API key(sak_…)。旧版存的是登录会话 token,该路径已移除。
+    #[serde(default)]
+    api_key: String,
     #[serde(default)]
     agent: Option<String>,
 }
+
+const NO_KEY_HINT: &str =
+    "未配置 API key:执行 `shepherd login --api-key sak_…` 或设 SHEPHERD_API_KEY\
+(key 可在 个人中心 → API KEY 或 POST /system/apikey 签发)";
 
 fn config_path() -> PathBuf {
     let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
@@ -1101,8 +1106,8 @@ impl Config {
         if let Ok(u) = std::env::var("SHEPHERD_URL") {
             c.url = u;
         }
-        if let Ok(t) = std::env::var("SHEPHERD_TOKEN") {
-            c.token = t;
+        if let Ok(k) = std::env::var("SHEPHERD_API_KEY") {
+            c.api_key = k;
         }
         if c.url.is_empty() {
             c.url = "http://127.0.0.1:8088".into();
@@ -1138,10 +1143,10 @@ impl Client {
 
     fn send(&self, mut rb: reqwest::blocking::RequestBuilder, auth: bool) -> R<Value> {
         if auth {
-            if self.cfg.token.is_empty() {
-                return Err("未登录:先执行 `shepherd login`".into());
+            if self.cfg.api_key.is_empty() {
+                return Err(NO_KEY_HINT.into());
             }
-            rb = rb.bearer_auth(&self.cfg.token);
+            rb = rb.bearer_auth(&self.cfg.api_key);
         }
         let resp = rb.send()?;
         let status = resp.status();
@@ -1170,10 +1175,10 @@ impl Client {
     fn get_bytes(&self, path: &str, auth: bool) -> R<Vec<u8>> {
         let mut rb = self.http.get(self.url(path));
         if auth {
-            if self.cfg.token.is_empty() {
-                return Err("未登录:先执行 `shepherd login`".into());
+            if self.cfg.api_key.is_empty() {
+                return Err(NO_KEY_HINT.into());
             }
-            rb = rb.bearer_auth(&self.cfg.token);
+            rb = rb.bearer_auth(&self.cfg.api_key);
         }
         let resp = rb.send()?;
         let status = resp.status();
@@ -1185,10 +1190,10 @@ impl Client {
     fn get_text(&self, path: &str, auth: bool) -> R<String> {
         let mut rb = self.http.get(self.url(path));
         if auth {
-            if self.cfg.token.is_empty() {
-                return Err("未登录:先执行 `shepherd login`".into());
+            if self.cfg.api_key.is_empty() {
+                return Err(NO_KEY_HINT.into());
             }
-            rb = rb.bearer_auth(&self.cfg.token);
+            rb = rb.bearer_auth(&self.cfg.api_key);
         }
         let resp = rb.send()?;
         let status = resp.status();
@@ -1363,7 +1368,8 @@ const TPL_GETTING_STARTED: &str = "# Shepherd 上手
 
 前置:一个运行中的 server(默认 http://localhost:8088)。
 
-1. 登录:`shepherd login --url http://localhost:8088 --user admin --password <pw>`
+1. 配置认证:`shepherd login --url http://localhost:8088 --api-key sak_…`
+   (API key 在 个人中心 → API KEY 或 `POST /system/apikey` 签发;也可设环境变量 SHEPHERD_API_KEY)
 2. 录入需求:见 `requirements/example.md`
 3. 拆分任务:`shepherd decompose --req <requirementId> --version 1`
 4. 派发执行:`shepherd dispatch --decomp <decompositionId> --task <taskId> --executor CLAUDE_CODE`
@@ -1400,19 +1406,23 @@ fn run(cli: Cli) -> R<()> {
                 "下一步:编辑 requirements/example.md,然后 `shepherd login` 并按其中命令录入需求。"
             );
         }
-        Cmd::Login { url, user, password } => {
+        Cmd::Login { url, api_key } => {
             let mut cfg = Config::load();
             cfg.url = url;
-            let client = Client::new(cfg.clone())?;
-            let v = client.post(
-                "/auth/login",
-                json!({"username": user, "password": password}),
-                false,
-            )?;
-            let token = v["token"].as_str().ok_or("登录响应缺少 token")?;
-            cfg.token = token.to_string();
+            let key = api_key
+                .or_else(|| std::env::var("SHEPHERD_API_KEY").ok())
+                .filter(|k| !k.trim().is_empty())
+                .ok_or(NO_KEY_HINT)?;
+            cfg.api_key = key.trim().to_string();
+            // key 是静态凭证,无登录接口可验;只探测服务可达性,鉴权错误在首个业务命令时暴露。
+            let healthy = Client::new(cfg.clone())?.get("/healthz", false).is_ok();
             cfg.save()?;
-            println!("✅ 已登录 {} → 会话存于 {}", cfg.url, config_path().display());
+            println!(
+                "✅ 已保存 {} 的 API key → {} 服务{}",
+                cfg.url,
+                config_path().display(),
+                if healthy { "可达" } else { "暂不可达" }
+            );
         }
         Cmd::Agent { cmd } => match cmd {
             AgentCmd::Connect { kind } => {
@@ -1431,7 +1441,7 @@ fn run(cli: Cli) -> R<()> {
                 let cfg = Config::load();
                 let healthy = Client::new(cfg.clone())?.get("/healthz", false).is_ok();
                 println!("服务  : {}", cfg.url);
-                println!("登录  : {}", if cfg.token.is_empty() { "未登录" } else { "已登录" });
+                println!("API key: {}", if cfg.api_key.is_empty() { "未配置" } else { "已配置" });
                 println!("agent : {}", cfg.agent.as_deref().unwrap_or("(未连接,默认 CLAUDE_CODE)"));
                 println!("健康  : {}", if healthy { "可达" } else { "不可达" });
             }
@@ -1560,11 +1570,9 @@ fn run(cli: Cli) -> R<()> {
         }
         Cmd::Logout => {
             let mut cfg = Config::load();
-            let c = Client::new(cfg.clone())?;
-            let _ = c.post("/auth/logout", json!({}), true);
-            cfg.token.clear();
+            cfg.api_key.clear();
             cfg.save()?;
-            println!("✅ 已注销,本地会话已清空");
+            println!("✅ 已清除本地 API key(要让 key 失效,请在服务端 API KEY 管理里吊销)");
         }
         Cmd::Project { cmd } => {
             let c = Client::new(Config::load())?;
@@ -2124,15 +2132,33 @@ mod tests {
 
     #[test]
     fn url_join_trims_slash() {
-        let c = Client::new(Config { url: "http://h:1/".into(), token: "t".into(), agent: None })
-            .expect("client");
+        let c = Client::new(Config {
+            url: "http://h:1/".into(),
+            api_key: "sak_a.b".into(),
+            agent: None,
+        })
+        .expect("client");
         assert_eq!(c.url("/x"), "http://h:1/x");
     }
 
     #[test]
     fn config_defaults_url_when_empty() {
-        let c = Config { url: String::new(), token: String::new(), agent: None };
+        let c = Config { url: String::new(), api_key: String::new(), agent: None };
         assert!(c.url.is_empty());
+    }
+
+    #[test]
+    fn missing_api_key_yields_issuance_hint() {
+        let c = Client::new(Config {
+            url: "http://127.0.0.1:9".into(),
+            api_key: String::new(),
+            agent: None,
+        })
+        .expect("client");
+        let err = c.get("/organization", true).expect_err("no key must fail before any request");
+        let msg = err.to_string();
+        assert!(msg.contains("SHEPHERD_API_KEY"), "要点名环境变量: {msg}");
+        assert!(msg.contains("/system/apikey"), "要给签发指引: {msg}");
     }
 
     #[test]
