@@ -105,7 +105,7 @@ mod tests {
     #[test]
     fn formats_messages() {
         assert_eq!(message_to_string(&Message::Text("hi".into())), "hi");
-        assert_eq!(message_to_string(&Message::Binary(b"ab".to_vec().into())), "ab");
+        assert_eq!(message_to_string(&Message::Binary(b"ab".to_vec())), "ab");
     }
 
     #[tokio::test]
