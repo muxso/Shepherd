@@ -25,6 +25,7 @@ import { useApp } from '../context'
 import { regList } from '../registry'
 import { useI18n } from '../i18n'
 import Donut from '../components/Donut'
+import type { CollabStats } from '../api'
 import GroupedBars, { type BarRow } from '../components/GroupedBars'
 
 interface Counts {
@@ -49,7 +50,7 @@ const PROJECT_SERIES = [
 ]
 
 // 卡片清单(完整版「卡片设置」):每张卡可独立显隐 + 自由排序。
-const ALL_CARDS = ['overview', 'projectBars', 'assets', 'apiStats', 'caseStats', 'execTrend', 'quality', 'shortcuts'] as const
+const ALL_CARDS = ['overview', 'collab', 'projectBars', 'assets', 'apiStats', 'caseStats', 'execTrend', 'quality', 'shortcuts'] as const
 const TREND_DAYS = 7
 type CardKey = (typeof ALL_CARDS)[number]
 interface CardPref {
@@ -86,6 +87,7 @@ export default function Home() {
   const [projRows, setProjRows] = useState<BarRow[]>([])
   const [exec, setExec] = useState<CaseExecSummary | null>(null)
   const [trend, setTrend] = useState<ExecTrendPoint[]>([])
+  const [collab, setCollab] = useState<CollabStats | null>(null)
   const [loading, setLoading] = useState(false)
   const [prefs, setPrefs] = useState<CardPref[]>(loadPrefs)
 
@@ -107,9 +109,11 @@ export default function Home() {
       setC(null)
       setExec(null)
       setTrend([])
+      setCollab(null)
       return
     }
     api.caseExecSummary(projectId).then(setExec).catch(() => setExec(null))
+    api.collabStats(projectId).then(setCollab).catch(() => setCollab(null))
     api.execTrend(projectId, TREND_DAYS).then((t) => setTrend(Array.isArray(t) ? t : [])).catch(() => setTrend([]))
     setLoading(true)
     Promise.all([
@@ -182,6 +186,7 @@ export default function Home() {
 
   const cardTitle: Record<CardKey, string> = {
     overview: t('home.title', '项目概览'),
+    collab: t('home.collab', '人机协同人效'),
     projectBars: t('home.projectCompare', '项目资产对比'),
     assets: t('home.assetDist', '测试资产分布'),
     apiStats: t('home.apiStats', '接口数'),
@@ -270,6 +275,107 @@ export default function Home() {
             )}
           </Card>
         )
+      case 'collab': {
+        // 人机协同人效:口径 = 任务验收通过(VERIFIED)后,有 AI 的 DELIVERED 交付记录算 AI 交付,
+        // 否则算人工交付;验收不通过不计入任何一方。工作量用任务 points。
+        const AI_COLOR = 'var(--brand)'
+        const items = collab?.items ?? []
+        const sum = (f: (x: (typeof items)[number]) => number) => items.reduce((n, x) => n + f(x), 0)
+        const aiTasks = sum((x) => x.aiTasks)
+        const humanTasks = sum((x) => x.humanTasks)
+        const aiPoints = sum((x) => x.aiPoints)
+        const humanPoints = sum((x) => x.humanPoints)
+        const weeklyRows: BarRow[] = (collab?.weekly ?? []).map((w) => ({
+          name: w.week.slice(5),
+          values: { ai: w.ai, human: w.human },
+        }))
+        // 需求明细:按总工作量降序,工作量全 0 时退回按任务数。
+        const ranked = [...items]
+          .map((x) => ({ ...x, tp: x.aiPoints + x.humanPoints, tc: x.aiTasks + x.humanTasks }))
+          .sort((a, b) => b.tp - a.tp || b.tc - a.tc)
+          .slice(0, 8)
+        const legend = (color: string, label: string, n: number, pts: number) => (
+          <span style={{ display: 'inline-flex', alignItems: 'center', fontSize: 13, color: 'var(--text-2)', marginRight: 16 }}>
+            <span style={{ width: 10, height: 10, borderRadius: 2, background: color, marginRight: 6 }} />
+            {label} <b style={{ color: 'var(--text)', margin: '0 4px' }}>{n}</b>
+            <span style={{ color: 'var(--text-3)' }}>({pts} {t('home.ptsUnit', '点')})</span>
+          </span>
+        )
+        return (
+          <Card title={<span><RobotOutlined style={{ color: AI_COLOR, marginRight: 6 }} />{cardTitle.collab}</span>} size="small" style={{ marginBottom: 16 }}>
+            {aiTasks + humanTasks === 0 ? (
+              <Empty description={t('home.collabEmpty', '暂无已验收任务;任务派发并验收通过后,这里展示 AI/人工 的交付拆分')} />
+            ) : (
+              <>
+                <Row gutter={[24, 16]} align="middle">
+                  <Col xs={24} lg={10}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 24 }}>
+                      <Donut
+                        segments={[
+                          { label: t('home.aiDelivered', 'AI 交付'), value: aiTasks, color: '#1664ff' },
+                          { label: t('home.humanDelivered', '人工交付'), value: humanTasks, color: '#ff9a2e' },
+                        ]}
+                        size={120}
+                        thickness={16}
+                        centerLabel={t('home.byCount', '已验收任务')}
+                      />
+                      <Donut
+                        segments={[
+                          { label: t('home.aiDelivered', 'AI 交付'), value: aiPoints, color: '#1664ff' },
+                          { label: t('home.humanDelivered', '人工交付'), value: humanPoints, color: '#ff9a2e' },
+                        ]}
+                        size={120}
+                        thickness={16}
+                        centerLabel={t('home.byPoints', '工作量(点)')}
+                      />
+                      <div>
+                        <div style={{ marginBottom: 8 }}>{legend('#1664ff', t('home.aiDelivered', 'AI 交付'), aiTasks, aiPoints)}</div>
+                        <div>{legend('#ff9a2e', t('home.humanDelivered', '人工交付'), humanTasks, humanPoints)}</div>
+                      </div>
+                    </div>
+                  </Col>
+                  <Col xs={24} lg={14}>
+                    {weeklyRows.length > 0 ? (
+                      <GroupedBars
+                        height={170}
+                        series={[
+                          { key: 'ai', label: t('home.aiDelivered', 'AI 交付'), color: '#1664ff' },
+                          { key: 'human', label: t('home.humanDelivered', '人工交付'), color: '#ff9a2e' },
+                        ]}
+                        rows={weeklyRows}
+                      />
+                    ) : (
+                      <div style={{ fontSize: 12, color: 'var(--text-3)' }}>{t('home.collabNoTrend', '暂无周趋势(需要新的验收记录积累时间戳)')}</div>
+                    )}
+                  </Col>
+                </Row>
+                {/* 需求明细:每条需求内 AI/人工 的工作量占比(工作量为 0 的需求按任务数占比)。 */}
+                <div style={{ marginTop: 16 }}>
+                  <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>{t('home.reqSplit', '需求内工作量占比')}</div>
+                  {ranked.map((r) => {
+                    const usePts = r.tp > 0
+                    const a = usePts ? r.aiPoints : r.aiTasks
+                    const h = usePts ? r.humanPoints : r.humanTasks
+                    const total = a + h || 1
+                    return (
+                      <div key={r.requirementId} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '4px 0' }}>
+                        <span style={{ width: 220, fontSize: 13, color: 'var(--text-2)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={r.title}>{r.title}</span>
+                        <div style={{ flex: 1, display: 'flex', height: 14, borderRadius: 4, overflow: 'hidden', background: 'var(--border-soft)' }}>
+                          <div title={`AI ${a}`} style={{ width: `${(a * 100) / total}%`, background: '#1664ff' }} />
+                          <div title={`${t('home.humanDelivered', '人工交付')} ${h}`} style={{ width: `${(h * 100) / total}%`, background: '#ff9a2e' }} />
+                        </div>
+                        <span style={{ width: 150, fontSize: 12, color: 'var(--text-3)', textAlign: 'right' }}>
+                          AI {a} · {t('home.humanShort', '人')} {h}{usePts ? ` ${t('home.ptsUnit', '点')}` : ''} · {((a * 100) / total).toFixed(0)}%
+                        </span>
+                      </div>
+                    )
+                  })}
+                </div>
+              </>
+            )}
+          </Card>
+        )
+      }
       case 'projectBars': {
         // 资产量降序;支持横向滚动后放宽到 60(够用且防极端项目数撑爆)。
         const TOP = 60

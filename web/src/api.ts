@@ -880,6 +880,26 @@ export interface Bug {
   createdAt?: number
 }
 
+/** 人机协同人效:需求维度的 AI/人工 交付拆分(口径:VERIFIED + 有无 DELIVERED 交付记录)。 */
+export interface CollabRequirementItem {
+  requirementId: string
+  title: string
+  aiTasks: number
+  humanTasks: number
+  aiPoints: number
+  humanPoints: number
+}
+export interface CollabWeekItem {
+  /** 周一日期 YYYY-MM-DD。 */
+  week: string
+  ai: number
+  human: number
+}
+export interface CollabStats {
+  items: CollabRequirementItem[]
+  weekly: CollabWeekItem[]
+}
+
 export interface BugRelation {
   /** REQUIREMENT | SCENARIO | FUNCTIONAL_CASE。 */
   kind: string
@@ -1312,6 +1332,10 @@ export const api = {
     projectId ? http.get<Bug[]>(`/bug?projectId=${encodeURIComponent(projectId)}`) : Promise.resolve([] as Bug[]),
   createBug: (b: { projectId: string; title: string; initialStatus: string }) => http.post<Bug>('/bug', b),
   setBugStatus: (id: string, status: string) => http.post<Bug>(`/bug/${id}/status`, { status }),
+  // 人机协同人效(需求维度 AI/人工 拆分 + 周趋势)
+  collabStats: (projectId: string) =>
+    http.get<CollabStats>(`/delivery/collab-stats?projectId=${encodeURIComponent(projectId)}`),
+
   // 缺陷 ↔ 资产关联(需求/场景用例/功能用例)
   bugRelations: (id: string) =>
     http.get<{ relations: BugRelation[] }>(`/bug/${encodeURIComponent(id)}/relation`),
