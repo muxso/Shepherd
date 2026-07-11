@@ -298,7 +298,6 @@ export default function AppShell({ children }: { children: ReactNode }) {
               style={{ flex: 1, minWidth: 0, borderBottom: 'none', background: 'transparent' }}
             />
             <Select
-              size="small"
               style={{ width: 200 }}
               value={projectId || undefined}
               placeholder={t('top.project')}
@@ -319,16 +318,16 @@ export default function AppShell({ children }: { children: ReactNode }) {
               )}
             />
             <Tooltip title={t('top.newProject')}>
-              <Button type="text" size="small" icon={<PlusOutlined />} onClick={() => setNewProjOpen(true)} />
+              <Button type="text" icon={<PlusOutlined />} onClick={() => setNewProjOpen(true)} />
             </Tooltip>
             <Tooltip title={t('top.notifications', '通知')}>
-              <Button type="text" size="small" icon={<BellOutlined />} onClick={() => setMsgOpen(true)} />
+              <Button type="text" icon={<BellOutlined />} onClick={() => setMsgOpen(true)} />
             </Tooltip>
             <Tooltip title={mode === 'dark' ? t('top.lightMode', '浅色模式') : t('top.darkMode', '暗色模式')}>
-              <Button type="text" size="small" icon={<BulbOutlined style={{ color: mode === 'dark' ? 'var(--brand)' : undefined }} />} onClick={toggle} />
+              <Button type="text" icon={<BulbOutlined style={{ color: mode === 'dark' ? 'var(--brand)' : undefined }} />} onClick={toggle} />
             </Tooltip>
             <Tooltip title={isFullscreen ? t('top.exitFullscreen', '退出全屏') : t('top.fullscreen', '全屏')}>
-              <Button type="text" size="small" icon={isFullscreen ? <FullscreenExitOutlined style={{ color: 'var(--brand)' }} /> : <FullscreenOutlined />} onClick={toggleFullscreen} />
+              <Button type="text" icon={isFullscreen ? <FullscreenExitOutlined style={{ color: 'var(--brand)' }} /> : <FullscreenOutlined />} onClick={toggleFullscreen} />
             </Tooltip>
             {/* 语言切换:与相邻图标按钮风格一致的紧凑触发器(地球图标 + 当前语言短码),
                 下拉项对选中语言显示品牌色对勾,切换后所见即所得。 */}
@@ -351,7 +350,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
               }}
             >
               <Tooltip title={t('top.language', '语言')}>
-                <Button type="text" size="small">
+                <Button type="text">
                   <Space size={4}>
                     <GlobalOutlined />
                     {lang === 'zh' ? '中' : 'EN'}
