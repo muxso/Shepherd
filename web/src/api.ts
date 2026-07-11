@@ -578,7 +578,26 @@ export interface ApiKey {
   /** 权限串,如 "DELIVERY:READ+UPDATE+EXECUTE"(资源:动作+动作)。 */
   permissions: string[]
   createdAt: string
+  /** 到期时间;空 = 永久有效。 */
+  expiresAt?: string | null
   revoked?: boolean
+}
+
+// 会话身份(GET /auth/me):个人中心基本信息页的数据源;失败时回退本地 store。
+export interface AuthMe {
+  userId: string
+  permissions: string[]
+}
+
+// 个人 LLM 模型配置(/me/llm-model):apiKey 只写不读,列表返回掩码。
+export interface LlmModel {
+  id: string
+  provider: string
+  name: string
+  baseUrl?: string
+  apiKeyMasked?: string
+  enabled: boolean
+  createdAt: string
 }
 
 export interface ProjectMember {
@@ -1252,6 +1271,20 @@ export const api = {
   apiKeys: () => http.get<{ items: ApiKey[] }>('/system/apikey'),
   createApiKey: (b: { name: string; permissions: string[] }) => http.post<ApiKey>('/system/apikey', b),
   revokeApiKey: (id: string) => http.del(`/system/apikey/${encodeURIComponent(id)}`),
+
+  // 个人中心:身份 / 改密 / 我的 API KEY / 我的模型配置
+  me: () => http.get<AuthMe>('/auth/me'),
+  changePassword: (b: { oldPassword: string; newPassword: string }) => http.post<void>('/auth/password', b),
+  myApiKeys: () => http.get<{ items: ApiKey[] }>('/system/apikey/mine'),
+  createMyApiKey: (b: { name?: string; ttlSecs?: number }) => http.post<ApiKey>('/system/apikey/mine', b),
+  setApiKeyEnabled: (id: string, enabled: boolean) =>
+    http.put(`/system/apikey/${encodeURIComponent(id)}/enabled`, { enabled }),
+  llmModels: () => http.get<{ items: LlmModel[] }>('/me/llm-model'),
+  createLlmModel: (b: { provider: string; name: string; baseUrl?: string; apiKey?: string }) =>
+    http.post<LlmModel>('/me/llm-model', b),
+  updateLlmModel: (id: string, b: { name?: string; baseUrl?: string; apiKey?: string; enabled?: boolean }) =>
+    http.put<LlmModel>(`/me/llm-model/${encodeURIComponent(id)}`, b),
+  deleteLlmModel: (id: string) => http.del(`/me/llm-model/${encodeURIComponent(id)}`),
 
   // 功能用例(项目级)
   functionalCases: (projectId: string) =>
