@@ -10,7 +10,10 @@ rust-version.workspace = true
 kernel = { workspace = true }
 async-trait = { workspace = true }
 thiserror = { workspace = true }
-sqlx = { workspace = true, features = ["runtime-tokio", "postgres"], optional = true }
+# 模板 config 是对后端不透明的 JSONB,领域模型直接用 serde_json::Value,
+# 故非 feature 门控。serde_json::Value 不属 IO,架构守卫放行。
+serde_json = { workspace = true }
+sqlx = { workspace = true, features = ["runtime-tokio", "postgres", "json"], optional = true }
 axum = { workspace = true, optional = true }
 utoipa = { workspace = true, optional = true }
 webauth = { workspace = true, optional = true }

@@ -285,6 +285,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         )),
         sessions.clone(),
     );
+    let project_template_routes = project::adapters::template_http::router(
+        project::application::TemplateService::new(Arc::new(
+            project::adapters::pg_template::PgTemplateRepository::new(pool.clone()),
+        )),
+        sessions.clone(),
+    );
 
     let req_repo = Arc::new(PgRequirementRepository::new(pool.clone()));
     let req_admin = RequirementService::new(req_repo.clone());
@@ -631,6 +637,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             "project",
             project_routes
                 .merge(project_member_routes)
+                .merge(project_template_routes)
                 .merge(project_file_routes)
                 .merge(references_routes),
         ),
