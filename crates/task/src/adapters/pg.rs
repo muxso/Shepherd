@@ -178,13 +178,18 @@ impl TaskRepository for PgTaskRepository {
         status: TaskStatus,
     ) -> Result<(), RepoError> {
         // Single-row update so concurrent sibling advances don't lose updates.
-        sqlx::query("UPDATE ms_task SET status = $3 WHERE decomposition_id = $1 AND id = $2")
-            .bind(decomposition_id)
-            .bind(task_id)
-            .bind(status.as_str())
-            .execute(&self.pool)
-            .await
-            .map_err(map_err)?;
+        // 首次转 VERIFIED 时落 verified_at(保留最早一次;返工再验不覆盖)。
+        sqlx::query(
+            "UPDATE ms_task SET status = $3, \
+             verified_at = CASE WHEN $3 = 'VERIFIED' THEN COALESCE(verified_at, now()) ELSE verified_at END \
+             WHERE decomposition_id = $1 AND id = $2",
+        )
+        .bind(decomposition_id)
+        .bind(task_id)
+        .bind(status.as_str())
+        .execute(&self.pool)
+        .await
+        .map_err(map_err)?;
         Ok(())
     }
 }
