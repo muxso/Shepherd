@@ -17,7 +17,7 @@ const PAD_L = 28 // 周标签
 const PAD_T = 16 // 月标签
 
 // 值 → 透明度分级;基色由 metric 决定(AI/全部=品牌蓝,人工=橙)。
-const LEVELS = [0.22, 0.45, 0.7, 1]
+const LEVELS = [0.16, 0.34, 0.55, 0.8]
 
 export default function ContributionGrid({
   days,

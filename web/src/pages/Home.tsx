@@ -40,14 +40,27 @@ interface Counts {
 }
 
 // 协议分段配色(轮转)。
-const PROTO_COLORS = ['var(--brand)', '#1677ff', '#13c2c2', '#52c41a', '#fa8c16', '#eb2f96', '#f5222d', '#8a9099']
+// 图表柔和色:同色相 + 降透明度,避免大面积满饱和原色刺眼;首页所有图共用。
+const C = {
+  blue: 'rgba(22, 100, 255, 0.72)',
+  skyblue: 'rgba(22, 119, 255, 0.68)',
+  cyan: 'rgba(19, 194, 194, 0.68)',
+  green: 'rgba(82, 196, 26, 0.68)',
+  orange: 'rgba(250, 140, 22, 0.75)',
+  pink: 'rgba(235, 47, 150, 0.72)',
+  red: 'rgba(245, 34, 45, 0.72)',
+  grey: '#8a9099',
+  human: 'rgba(255, 154, 46, 0.8)',
+}
+
+const PROTO_COLORS = [C.blue, C.skyblue, C.cyan, C.green, C.orange, C.pink, C.red, C.grey]
 
 // 项目对比柱状图的资产系列(配色对齐资产分布环)。
 const PROJECT_SERIES = [
-  { key: 'def', label: '接口定义', color: 'var(--brand)' },
-  { key: 'scenario', label: '场景用例', color: '#1677ff' },
-  { key: 'apiCase', label: '接口用例', color: '#13c2c2' },
-  { key: 'funcCase', label: '功能用例', color: '#52c41a' },
+  { key: 'def', label: '接口定义', color: C.blue },
+  { key: 'scenario', label: '场景用例', color: C.skyblue },
+  { key: 'apiCase', label: '接口用例', color: C.cyan },
+  { key: 'funcCase', label: '功能用例', color: C.green },
 ]
 
 // 卡片清单(完整版「卡片设置」):每张卡可独立显隐 + 自由排序。
@@ -199,22 +212,22 @@ export default function Home() {
 
   const cards = useMemo(
     () => [
-      { key: 'def', label: t('home.def', '接口定义'), value: c?.def ?? 0, icon: <ApiOutlined />, color: 'var(--brand)', to: '/api/definition' },
-      { key: 'scenario', label: t('home.scenario', '场景用例'), value: c?.scenario ?? 0, icon: <PartitionOutlined />, color: '#1677ff', to: '/api/scenario' },
-      { key: 'apiCase', label: t('home.apiCase', '接口用例'), value: c?.apiCase ?? 0, icon: <ProfileOutlined />, color: '#13c2c2', to: '/api/definition' },
-      { key: 'funcCase', label: t('home.funcCase', '功能用例'), value: c?.funcCase ?? 0, icon: <ProfileOutlined />, color: '#52c41a', to: '/functional-case' },
-      { key: 'plan', label: t('home.plan', '测试计划'), value: c?.plan ?? 0, icon: <ScheduleOutlined />, color: '#fa8c16', to: '/test-plan' },
-      { key: 'req', label: t('home.req', '需求'), value: c?.req ?? 0, icon: <FileTextOutlined />, color: '#eb2f96', to: '/requirement' },
-      { key: 'bug', label: t('home.bug', '缺陷'), value: c?.bug ?? 0, icon: <BugOutlined />, color: '#f5222d', to: '/bug' },
+      { key: 'def', label: t('home.def', '接口定义'), value: c?.def ?? 0, icon: <ApiOutlined />, color: C.blue, to: '/api/definition' },
+      { key: 'scenario', label: t('home.scenario', '场景用例'), value: c?.scenario ?? 0, icon: <PartitionOutlined />, color: C.skyblue, to: '/api/scenario' },
+      { key: 'apiCase', label: t('home.apiCase', '接口用例'), value: c?.apiCase ?? 0, icon: <ProfileOutlined />, color: C.cyan, to: '/api/definition' },
+      { key: 'funcCase', label: t('home.funcCase', '功能用例'), value: c?.funcCase ?? 0, icon: <ProfileOutlined />, color: C.green, to: '/functional-case' },
+      { key: 'plan', label: t('home.plan', '测试计划'), value: c?.plan ?? 0, icon: <ScheduleOutlined />, color: C.orange, to: '/test-plan' },
+      { key: 'req', label: t('home.req', '需求'), value: c?.req ?? 0, icon: <FileTextOutlined />, color: C.pink, to: '/requirement' },
+      { key: 'bug', label: t('home.bug', '缺陷'), value: c?.bug ?? 0, icon: <BugOutlined />, color: C.red, to: '/bug' },
     ],
     [c, t],
   )
 
   const donutSegs = [
     { label: t('home.def', '接口定义'), value: c?.def ?? 0, color: 'var(--brand)' },
-    { label: t('home.scenario', '场景用例'), value: c?.scenario ?? 0, color: '#1677ff' },
-    { label: t('home.apiCase', '接口用例'), value: c?.apiCase ?? 0, color: '#13c2c2' },
-    { label: t('home.funcCase', '功能用例'), value: c?.funcCase ?? 0, color: '#52c41a' },
+    { label: t('home.scenario', '场景用例'), value: c?.scenario ?? 0, color: C.skyblue },
+    { label: t('home.apiCase', '接口用例'), value: c?.apiCase ?? 0, color: C.cyan },
+    { label: t('home.funcCase', '功能用例'), value: c?.funcCase ?? 0, color: C.green },
   ]
   const totalAssets = donutSegs.reduce((s, x) => s + x.value, 0)
   const totalCases = (c?.apiCase ?? 0) + (c?.funcCase ?? 0)
@@ -287,8 +300,8 @@ export default function Home() {
                     <div style={{ display: 'flex', alignItems: 'center', gap: 24 }}>
                       <Donut
                         segments={[
-                          { label: t('home.aiDelivered', 'AI 交付'), value: aiTasks, color: '#1664ff' },
-                          { label: t('home.humanDelivered', '人工交付'), value: humanTasks, color: '#ff9a2e' },
+                          { label: t('home.aiDelivered', 'AI 交付'), value: aiTasks, color: C.blue },
+                          { label: t('home.humanDelivered', '人工交付'), value: humanTasks, color: C.human },
                         ]}
                         size={120}
                         thickness={16}
@@ -296,16 +309,16 @@ export default function Home() {
                       />
                       <Donut
                         segments={[
-                          { label: t('home.aiDelivered', 'AI 交付'), value: aiPoints, color: '#1664ff' },
-                          { label: t('home.humanDelivered', '人工交付'), value: humanPoints, color: '#ff9a2e' },
+                          { label: t('home.aiDelivered', 'AI 交付'), value: aiPoints, color: C.blue },
+                          { label: t('home.humanDelivered', '人工交付'), value: humanPoints, color: C.human },
                         ]}
                         size={120}
                         thickness={16}
                         centerLabel={t('home.byPoints', '工作量(点)')}
                       />
                       <div>
-                        <div style={{ marginBottom: 8 }}>{legend('#1664ff', t('home.aiDelivered', 'AI 交付'), aiTasks, aiPoints)}</div>
-                        <div>{legend('#ff9a2e', t('home.humanDelivered', '人工交付'), humanTasks, humanPoints)}</div>
+                        <div style={{ marginBottom: 8 }}>{legend(C.blue, t('home.aiDelivered', 'AI 交付'), aiTasks, aiPoints)}</div>
+                        <div>{legend(C.human, t('home.humanDelivered', '人工交付'), humanTasks, humanPoints)}</div>
                       </div>
                     </div>
                   </Col>
@@ -338,8 +351,8 @@ export default function Home() {
                       <div key={r.requirementId} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '4px 0' }}>
                         <span style={{ width: 220, fontSize: 13, color: 'var(--text-2)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={r.title}>{r.title}</span>
                         <div style={{ flex: 1, display: 'flex', height: 14, borderRadius: 4, overflow: 'hidden', background: 'var(--border-soft)' }}>
-                          <div title={`AI ${a}`} style={{ width: `${(a * 100) / total}%`, background: '#1664ff' }} />
-                          <div title={`${t('home.humanDelivered', '人工交付')} ${h}`} style={{ width: `${(h * 100) / total}%`, background: '#ff9a2e' }} />
+                          <div title={`AI ${a}`} style={{ width: `${(a * 100) / total}%`, background: C.blue }} />
+                          <div title={`${t('home.humanDelivered', '人工交付')} ${h}`} style={{ width: `${(h * 100) / total}%`, background: C.human }} />
                         </div>
                         <span style={{ width: 150, fontSize: 12, color: 'var(--text-3)', textAlign: 'right' }}>
                           AI {a} · {t('home.humanShort', '人')} {h}{usePts ? ` ${t('home.ptsUnit', '点')}` : ''} · {((a * 100) / total).toFixed(0)}%
@@ -363,7 +376,7 @@ export default function Home() {
         const shown = ranked.slice(0, TOP).map((x) => x.r)
         return (
           <Card
-            title={<span><ApiOutlined style={{ color: '#1677ff', marginRight: 6 }} />{cardTitle.projectBars}</span>}
+            title={<span><ApiOutlined style={{ color: C.skyblue, marginRight: 6 }} />{cardTitle.projectBars}</span>}
             extra={ranked.length > TOP ? <span style={{ fontSize: 12, color: 'var(--text-3)' }}>{t('home.topN', '资产量前 {n}').replace('{n}', String(TOP))}</span> : ranked.length > 8 ? <span style={{ fontSize: 12, color: 'var(--text-3)' }}>{t('home.scrollHint', '← 左右滑动 →')}</span> : undefined}
             size="small"
             style={{ marginBottom: 16 }}
@@ -410,7 +423,7 @@ export default function Home() {
                   <div style={{ display: 'flex', alignItems: 'center', gap: 24 }}>
                     <Donut
                       segments={[
-                        { label: t('home.covered', '已覆盖'), value: coveredDefs, color: '#52c41a' },
+                        { label: t('home.covered', '已覆盖'), value: coveredDefs, color: C.green },
                         { label: t('home.uncovered', '未覆盖'), value: uncovered, color: 'var(--text-3)' },
                       ]}
                       size={132}
@@ -418,10 +431,10 @@ export default function Home() {
                       centerLabel={t('home.coverRate', '覆盖率')}
                     />
                     <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontSize: 22, fontWeight: 700, color: coverRate >= 60 ? '#52c41a' : coverRate >= 30 ? '#fa8c16' : '#f5222d' }}>{coverRate.toFixed(1)}%</div>
+                      <div style={{ fontSize: 22, fontWeight: 700, color: coverRate >= 60 ? C.green : coverRate >= 30 ? C.orange : C.red }}>{coverRate.toFixed(1)}%</div>
                       <div style={{ color: 'var(--text-3)', fontSize: 12, marginBottom: 10 }}>{t('home.coverRateHint', '有用例引用的接口占比')}</div>
                       <div style={{ display: 'flex', alignItems: 'center', padding: '5px 0', fontSize: 13 }}>
-                        <span style={{ width: 10, height: 10, borderRadius: 2, background: '#52c41a', marginRight: 8 }} />
+                        <span style={{ width: 10, height: 10, borderRadius: 2, background: C.green, marginRight: 8 }} />
                         <span style={{ flex: 1, color: 'var(--text-2)' }}>{t('home.covered', '已覆盖')}</span>
                         <b>{coveredDefs}</b>
                       </div>
@@ -457,7 +470,7 @@ export default function Home() {
           <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
             <Donut segments={segs} size={104} thickness={14} centerLabel={label} />
             <div>
-              <div style={{ fontSize: 18, fontWeight: 700, color: rate >= 60 ? '#52c41a' : rate >= 30 ? '#fa8c16' : '#f5222d' }}>{rate.toFixed(1)}%</div>
+              <div style={{ fontSize: 18, fontWeight: 700, color: rate >= 60 ? C.green : rate >= 30 ? C.orange : C.red }}>{rate.toFixed(1)}%</div>
               {segs.map((s) => (
                 <div key={s.label} style={{ display: 'flex', alignItems: 'center', fontSize: 12, padding: '2px 0' }}>
                   <span style={{ width: 8, height: 8, borderRadius: 2, background: s.color, marginRight: 6 }} />
@@ -469,24 +482,24 @@ export default function Home() {
           </div>
         )
         return (
-          <Card title={<span><ProfileOutlined style={{ color: '#13c2c2', marginRight: 6 }} />{cardTitle.caseStats}</span>} size="small" style={{ marginBottom: 16 }}>
+          <Card title={<span><ProfileOutlined style={{ color: C.cyan, marginRight: 6 }} />{cardTitle.caseStats}</span>} size="small" style={{ marginBottom: 16 }}>
             <Row gutter={[24, 16]} align="middle">
               <Col xs={24} md={6}>
                 <div style={{ display: 'flex', gap: 24, flexWrap: 'wrap' }}>
-                  {metric(t('home.caseTotal', '接口用例数'), totalCases, '#13c2c2')}
-                  {metric(t('home.execCount', '执行次数'), executions, '#1677ff')}
+                  {metric(t('home.caseTotal', '接口用例数'), totalCases, C.cyan)}
+                  {metric(t('home.execCount', '执行次数'), executions, C.skyblue)}
                 </div>
               </Col>
               <Col xs={24} md={9}>
                 {rateBlock(t('home.execRate', '执行率'), execRate, [
-                  { label: t('home.executed', '已执行'), value: executedCases, color: '#1677ff' },
+                  { label: t('home.executed', '已执行'), value: executedCases, color: C.skyblue },
                   { label: t('home.unexecuted', '未执行'), value: unexecuted, color: 'var(--text-3)' },
                 ])}
               </Col>
               <Col xs={24} md={9}>
                 {rateBlock(t('home.passRate', '通过率'), passRate, [
-                  { label: t('home.passed', '已通过'), value: passed, color: '#52c41a' },
-                  { label: t('home.failedExec', '未通过'), value: failed, color: '#f5222d' },
+                  { label: t('home.passed', '已通过'), value: passed, color: C.green },
+                  { label: t('home.failedExec', '未通过'), value: failed, color: C.red },
                 ])}
               </Col>
             </Row>
@@ -496,15 +509,15 @@ export default function Home() {
       case 'execTrend': {
         const hasData = trendRows.some((r) => (r.values.passed ?? 0) + (r.values.failed ?? 0) > 0)
         return (
-          <Card title={<span><ThunderboltOutlined style={{ color: '#fa8c16', marginRight: 6 }} />{cardTitle.execTrend}</span>} extra={<span style={{ fontSize: 12, color: 'var(--text-3)' }}>{t('home.last7d', '近 7 天')}</span>} size="small" style={{ marginBottom: 16 }}>
+          <Card title={<span><ThunderboltOutlined style={{ color: C.orange, marginRight: 6 }} />{cardTitle.execTrend}</span>} extra={<span style={{ fontSize: 12, color: 'var(--text-3)' }}>{t('home.last7d', '近 7 天')}</span>} size="small" style={{ marginBottom: 16 }}>
             {!hasData ? (
               <Empty description={t('home.noExec', '近 7 天无执行记录')} />
             ) : (
               <GroupedBars
                 height={220}
                 series={[
-                  { key: 'passed', label: t('home.passed', '已通过'), color: '#52c41a' },
-                  { key: 'failed', label: t('home.failedExec', '未通过'), color: '#f5222d' },
+                  { key: 'passed', label: t('home.passed', '已通过'), color: C.green },
+                  { key: 'failed', label: t('home.failedExec', '未通过'), color: C.red },
                 ]}
                 rows={trendRows}
               />
@@ -517,7 +530,7 @@ export default function Home() {
           <Card
             title={
               <span>
-                <SafetyCertificateOutlined style={{ color: '#52c41a', marginRight: 6 }} />
+                <SafetyCertificateOutlined style={{ color: C.green, marginRight: 6 }} />
                 {cardTitle.quality}
               </span>
             }
@@ -526,13 +539,13 @@ export default function Home() {
           >
             <Row gutter={[16, 16]}>
               <Col xs={12} sm={6}>
-                <Statistic title={t('home.req', '需求')} value={c?.req ?? 0} valueStyle={{ color: '#eb2f96' }} />
+                <Statistic title={t('home.req', '需求')} value={c?.req ?? 0} valueStyle={{ color: C.pink }} />
               </Col>
               <Col xs={12} sm={6}>
-                <Statistic title={t('home.bug', '缺陷')} value={c?.bug ?? 0} valueStyle={{ color: '#f5222d' }} />
+                <Statistic title={t('home.bug', '缺陷')} value={c?.bug ?? 0} valueStyle={{ color: C.red }} />
               </Col>
               <Col xs={12} sm={6}>
-                <Statistic title={t('home.plan', '测试计划')} value={c?.plan ?? 0} valueStyle={{ color: '#fa8c16' }} />
+                <Statistic title={t('home.plan', '测试计划')} value={c?.plan ?? 0} valueStyle={{ color: C.orange }} />
               </Col>
               <Col xs={12} sm={6}>
                 <Tooltip title={t('home.bugRateHint', '缺陷数 / 用例总数')}>
@@ -541,7 +554,7 @@ export default function Home() {
                     value={bugRate}
                     precision={1}
                     suffix="%"
-                    valueStyle={{ color: bugRate > 20 ? '#f5222d' : '#52c41a' }}
+                    valueStyle={{ color: bugRate > 20 ? C.red : C.green }}
                   />
                 </Tooltip>
               </Col>
@@ -553,7 +566,7 @@ export default function Home() {
           <Card
             title={
               <span>
-                <ThunderboltOutlined style={{ color: '#fa8c16', marginRight: 6 }} />
+                <ThunderboltOutlined style={{ color: C.orange, marginRight: 6 }} />
                 {cardTitle.shortcuts}
               </span>
             }
