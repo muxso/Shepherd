@@ -20,6 +20,8 @@ pub enum ApiDefinitionError {
     BadResponseStatus(i32),
     #[error("unrecognized import document: {0}")]
     BadImport(String),
+    #[error("config must be a json object")]
+    BadConfig,
 }
 
 pub(crate) fn normalize_http_method(method: &str) -> Result<String, ApiDefinitionError> {

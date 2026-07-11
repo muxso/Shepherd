@@ -8,8 +8,8 @@ use crate::application::{
     UpdateApiDefinitionError, UpdateApiDefinitionUseCase, UpdateApiMockError, UpdateApiMockUseCase,
 };
 use crate::domain::{
-    ApiCase, ApiDefinition, ApiMock, ApiModule, ApiProtocol, ApiView, ImportFormat, NewApiCase,
-    NewApiModule, NewApiView,
+    ApiCase, ApiDefinition, ApiMock, ApiModule, ApiProtocol, ApiView, ApiViewPatch, ImportFormat,
+    NewApiCase, NewApiModule, NewApiView,
 };
 use crate::ports::ApiDefinitionRepository;
 use axum::{
@@ -83,7 +83,7 @@ pub fn router(repo: Arc<dyn ApiDefinitionRepository>, sessions: Arc<dyn SessionS
         .route("/api/module/{id}", put(rename_module).delete(delete_module))
         .route("/api/definition/{id}/module", put(move_definition))
         .route("/api/api-view", post(create_view).get(list_views))
-        .route("/api/api-view/{id}", axum::routing::delete(delete_view))
+        .route("/api/api-view/{id}", put(update_view).delete(delete_view))
         .route("/api/task-case", post(link_task_case).get(list_task_cases))
         .route("/api/task-case/unlink", post(unlink_task_case))
         .with_state(state)
@@ -1229,6 +1229,42 @@ async fn list_views(
     }
 }
 
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+struct ApiViewUpdateBody {
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
+    config: Option<serde_json::Value>,
+    #[serde(default)]
+    shared: Option<bool>,
+}
+
+#[utoipa::path(
+    put,
+    path = "/api/api-view/{id}",
+    tag = "api-definition",
+    params(("id" = String, Path)),
+    request_body = ApiViewUpdateBody,
+    responses((status = 200, body = ApiViewResponse), (status = 400), (status = 404)),
+    security(("bearer" = []))
+)]
+async fn update_view(
+    user: AuthUser,
+    State(st): State<ApiDefinitionState>,
+    Path(id): Path<String>,
+    Json(req): Json<ApiViewUpdateBody>,
+) -> Response {
+    match ApiViewPatch::new(req.name.as_deref(), req.config, req.shared) {
+        Ok(patch) => match st.repo.update_view(&id, &user.user_id, &patch).await {
+            Ok(Some(v)) => (StatusCode::OK, Json(ApiViewResponse::from(v))).into_response(),
+            Ok(None) => (StatusCode::NOT_FOUND, "view not found").into_response(),
+            Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
+        },
+        Err(_) => (StatusCode::BAD_REQUEST, "invalid view payload").into_response(),
+    }
+}
+
 async fn delete_view(
     user: AuthUser,
     State(st): State<ApiDefinitionState>,
@@ -1341,7 +1377,8 @@ async fn import_definitions(
         list_project_cases,
         create_mock,
         update_mock,
-        list_mocks
+        list_mocks,
+        update_view
     ),
     components(schemas(
         ApiDefinitionCreateBody,
@@ -1357,7 +1394,9 @@ async fn import_definitions(
         ApiMockCreateBody,
         ApiMockResponse,
         ImportBody,
-        ImportResultResponse
+        ImportResultResponse,
+        ApiViewUpdateBody,
+        ApiViewResponse
     )),
     tags((name = "api-definition", description = "接口定义"))
 )]
@@ -1979,5 +2018,119 @@ mod tests {
         let resp =
             app.oneshot(put("/api/mock/ghost", r#"{"name":"x"}"#, Some(&t))).await.expect("resp");
         assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    }
+
+    async fn create_view_returns_id(app: &Router, t: &str) -> String {
+        let resp = app
+            .clone()
+            .oneshot(post(
+                "/api/api-view",
+                r#"{"projectId":"p1","name":"我的视图","config":{"pageSize":10},"shared":true}"#,
+                Some(t),
+            ))
+            .await
+            .expect("resp");
+        assert_eq!(resp.status(), StatusCode::CREATED);
+        json_body(resp).await["id"].as_str().expect("id").to_string()
+    }
+
+    #[tokio::test]
+    async fn update_view_partial_then_full() {
+        let (app, t) = app().await;
+        let id = create_view_returns_id(&app, &t).await;
+
+        // 只改 name:config/shared 保持原值。
+        let resp = app
+            .clone()
+            .oneshot(put(&format!("/api/api-view/{id}"), r#"{"name":" 改名视图 "}"#, Some(&t)))
+            .await
+            .expect("resp");
+        assert_eq!(resp.status(), StatusCode::OK);
+        let v = json_body(resp).await;
+        assert_eq!(v["name"], "改名视图");
+        assert_eq!(v["config"], serde_json::json!({"pageSize": 10}));
+        assert_eq!(v["shared"], true);
+
+        // config + shared 一起改。
+        let resp = app
+            .clone()
+            .oneshot(put(
+                &format!("/api/api-view/{id}"),
+                r#"{"config":{"pageSize":50},"shared":false}"#,
+                Some(&t),
+            ))
+            .await
+            .expect("resp");
+        assert_eq!(resp.status(), StatusCode::OK);
+        let v = json_body(resp).await;
+        assert_eq!(v["name"], "改名视图");
+        assert_eq!(v["config"], serde_json::json!({"pageSize": 50}));
+        assert_eq!(v["shared"], false);
+
+        // 列表里可见更新后的值。
+        let resp = app.oneshot(get("/api/api-view?projectId=p1", Some(&t))).await.expect("resp");
+        let list = json_body(resp).await;
+        assert_eq!(list[0]["name"], "改名视图");
+        assert_eq!(list[0]["shared"], false);
+    }
+
+    #[tokio::test]
+    async fn update_view_rejects_blank_name_and_bad_config() {
+        let (app, t) = app().await;
+        let id = create_view_returns_id(&app, &t).await;
+        let resp = app
+            .clone()
+            .oneshot(put(&format!("/api/api-view/{id}"), r#"{"name":"  "}"#, Some(&t)))
+            .await
+            .expect("resp");
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+        let resp = app
+            .oneshot(put(&format!("/api/api-view/{id}"), r#"{"config":[1,2]}"#, Some(&t)))
+            .await
+            .expect("resp");
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn update_view_non_owner_404() {
+        let repo = Arc::new(InMemoryApiDefinitionRepository::new());
+        let sessions = Arc::new(InMemorySessionStore::new());
+        let perms =
+            PermissionSet::from_raw(["API_DEFINITION:READ+ADD".to_string()]).expect("perms");
+        let owner = sessions.create("admin", perms.clone(), 3600).await.expect("token");
+        let other = sessions.create("viewer", perms, 3600).await.expect("token");
+        let app = router(repo, sessions);
+        let id = create_view_returns_id(&app, &owner).await;
+
+        let resp = app
+            .clone()
+            .oneshot(put(&format!("/api/api-view/{id}"), r#"{"name":"越权改名"}"#, Some(&other)))
+            .await
+            .expect("resp");
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+
+        // 原视图未被改动。
+        let resp =
+            app.oneshot(get("/api/api-view?projectId=p1", Some(&owner))).await.expect("resp");
+        let list = json_body(resp).await;
+        assert_eq!(list[0]["name"], "我的视图");
+    }
+
+    #[tokio::test]
+    async fn update_missing_view_404() {
+        let (app, t) = app().await;
+        let resp = app
+            .oneshot(put("/api/api-view/ghost", r#"{"name":"x"}"#, Some(&t)))
+            .await
+            .expect("resp");
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn update_view_without_token_401() {
+        let (app, _t) = app().await;
+        let resp =
+            app.oneshot(put("/api/api-view/x", r#"{"name":"x"}"#, None)).await.expect("resp");
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
     }
 }

@@ -2,7 +2,7 @@ use async_trait::async_trait;
 
 use crate::domain::{
     ApiCase, ApiDefinition, ApiDefinitionChange, ApiMock, ApiModule, ApiProtocol, ApiStatus,
-    ApiView, NewApiCase, NewApiDefinition, NewApiMock, NewApiModule, NewApiView,
+    ApiView, ApiViewPatch, NewApiCase, NewApiDefinition, NewApiMock, NewApiModule, NewApiView,
 };
 use crate::ports::{ApiDefinitionRepository, ProjectMockRow, RepoError};
 use sqlx::{PgPool, Row};
@@ -576,6 +576,30 @@ impl ApiDefinitionRepository for PgApiDefinitionRepository {
         rows.iter().map(row_to_view).collect()
     }
 
+    async fn update_view(
+        &self,
+        id: &str,
+        user_id: &str,
+        patch: &ApiViewPatch,
+    ) -> Result<Option<ApiView>, RepoError> {
+        let row = sqlx::query(
+            "UPDATE ms_api_view \
+             SET name = COALESCE($3, name), config = COALESCE($4, config), \
+                 shared = COALESCE($5, shared) \
+             WHERE id = $1 AND user_id = $2 \
+             RETURNING id, project_id, user_id, name, config, shared, created_at::text AS created_at",
+        )
+        .bind(id)
+        .bind(user_id)
+        .bind(patch.name.as_deref())
+        .bind(patch.config.as_ref())
+        .bind(patch.shared)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(map_err)?;
+        row.as_ref().map(row_to_view).transpose()
+    }
+
     async fn delete_view(&self, id: &str, user_id: &str) -> Result<(), RepoError> {
         sqlx::query("DELETE FROM ms_api_view WHERE id = $1 AND user_id = $2")
             .bind(id)
@@ -728,5 +752,49 @@ mod tests {
         assert!(!mocks[0].enabled);
         assert_eq!(mocks[0].match_rule, serde_json::json!({"path": "/logout"}));
         assert!(!repo.update_mock("ghost", &nm2).await.expect("update missing"));
+    }
+
+    #[tokio::test]
+    #[ignore = "需要 DATABASE_URL 指向一个 PostgreSQL 实例"]
+    async fn pg_view_update_roundtrip() {
+        let url = std::env::var("DATABASE_URL").expect("set DATABASE_URL");
+        let pool = PgPool::connect(&url).await.expect("connect");
+        migrate::run(&pool).await.expect("migrate");
+        sqlx::raw_sql("TRUNCATE ms_api_view").execute(&pool).await.expect("truncate");
+
+        let repo = PgApiDefinitionRepository::new(pool.clone());
+
+        let nv = NewApiView::new("p1", "u1", "我的视图", serde_json::json!({"pageSize": 10}), true)
+            .expect("valid");
+        let view = repo.insert_view(&nv).await.expect("insert view");
+
+        // 部分更新:只改 name,config/shared 保持原值。
+        let patch = ApiViewPatch::new(Some("改名视图"), None, None).expect("patch");
+        let updated =
+            repo.update_view(&view.id, "u1", &patch).await.expect("update").expect("owner match");
+        assert_eq!(updated.name, "改名视图");
+        assert_eq!(updated.config, serde_json::json!({"pageSize": 10}));
+        assert!(updated.shared);
+
+        // 全字段更新。
+        let patch = ApiViewPatch::new(
+            Some("再改名"),
+            Some(serde_json::json!({"pageSize": 50})),
+            Some(false),
+        )
+        .expect("patch");
+        let updated =
+            repo.update_view(&view.id, "u1", &patch).await.expect("update").expect("owner match");
+        assert_eq!(updated.name, "再改名");
+        assert_eq!(updated.config, serde_json::json!({"pageSize": 50}));
+        assert!(!updated.shared);
+
+        // 非 owner 与不存在的 id 都不命中。
+        let patch = ApiViewPatch::new(Some("越权"), None, None).expect("patch");
+        assert!(repo.update_view(&view.id, "u2", &patch).await.expect("update").is_none());
+        assert!(repo.update_view("ghost", "u1", &patch).await.expect("update").is_none());
+        let views = repo.list_views("p1", "u1").await.expect("list");
+        assert_eq!(views.len(), 1);
+        assert_eq!(views[0].name, "再改名");
     }
 }

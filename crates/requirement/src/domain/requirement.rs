@@ -643,6 +643,8 @@ pub struct Requirement {
     /// 创建/更新时间(epoch 毫秒,全库口径);由存储层盖章,内存值 0 表示尚未落库。
     pub created_at_ms: i64,
     pub updated_at_ms: i64,
+    /// 创建人(登录用户 id);历史数据可能为空串。
+    pub created_by: String,
     pub dev_status: WorkStatus,
     pub test_status: WorkStatus,
     pub dev_started_at_ms: Option<i64>,
@@ -676,6 +678,7 @@ impl Requirement {
             due_date: new.due_date.clone(),
             created_at_ms: 0,
             updated_at_ms: 0,
+            created_by: new.created_by.clone(),
             dev_status: WorkStatus::NotStarted,
             test_status: WorkStatus::NotStarted,
             dev_started_at_ms: None,

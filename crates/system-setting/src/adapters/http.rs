@@ -88,14 +88,21 @@ struct LoginRequest {
 }
 
 #[derive(Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
 struct LoginResponse {
     token: String,
+    /// 会话用户 id(created_by 等审计字段用的口径);取会话失败时缺省。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    user_id: Option<String>,
 }
 
 #[utoipa::path(post, path = "/auth/login", tag = "auth", request_body = LoginRequest, responses((status = 200, body = LoginResponse), (status = 401), (status = 429)))]
 async fn login_handler(State(st): State<AppState>, Json(req): Json<LoginRequest>) -> Response {
     match st.login.execute(&req.username, &req.password).await {
-        Ok(token) => (StatusCode::OK, Json(LoginResponse { token })).into_response(),
+        Ok(token) => {
+            let user_id = st.sessions.get(&token).await.ok().flatten().map(|s| s.user_id);
+            (StatusCode::OK, Json(LoginResponse { token, user_id })).into_response()
+        }
         Err(AuthError::InvalidCredentials) => {
             (StatusCode::UNAUTHORIZED, "invalid credentials").into_response()
         }
@@ -127,7 +134,8 @@ async fn refresh_handler(State(st): State<AppState>, headers: HeaderMap) -> Resp
             match st.sessions.create(&session.user_id, session.permissions, st.ttl_secs).await {
                 Ok(fresh) => {
                     let _ = st.sessions.revoke(token).await;
-                    (StatusCode::OK, Json(LoginResponse { token: fresh })).into_response()
+                    let user_id = Some(session.user_id);
+                    (StatusCode::OK, Json(LoginResponse { token: fresh, user_id })).into_response()
                 }
                 Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "auth error").into_response(),
             }
@@ -418,7 +426,7 @@ async fn oidc_callback(
         return (StatusCode::BAD_REQUEST, "invalid or missing state").into_response();
     }
     let mut resp = match uc.complete(&provider, &q.code).await {
-        Ok(token) => (StatusCode::OK, Json(LoginResponse { token })).into_response(),
+        Ok(token) => (StatusCode::OK, Json(LoginResponse { token, user_id: None })).into_response(),
         Err(OidcError::UnknownProvider(_)) => {
             (StatusCode::NOT_FOUND, "unknown provider").into_response()
         }

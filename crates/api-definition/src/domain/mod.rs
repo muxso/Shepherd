@@ -17,7 +17,7 @@ pub use api_definition::{
 };
 pub use api_mock::{ApiMock, NewApiMock};
 pub use api_module::{ApiModule, NewApiModule};
-pub use api_view::{ApiView, NewApiView};
+pub use api_view::{ApiView, ApiViewPatch, NewApiView};
 pub use error::ApiDefinitionError;
 pub use import::{parse_import, parse_openapi, ImportFormat, ImportedApi};
 pub use import_schedule::{ImportSchedule, ImportScheduleError, NewImportSchedule};

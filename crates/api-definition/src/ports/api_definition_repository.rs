@@ -1,8 +1,8 @@
 use async_trait::async_trait;
 
 use crate::domain::{
-    ApiCase, ApiDefinition, ApiDefinitionChange, ApiMock, ApiModule, ApiView, NewApiCase,
-    NewApiDefinition, NewApiMock, NewApiModule, NewApiView,
+    ApiCase, ApiDefinition, ApiDefinitionChange, ApiMock, ApiModule, ApiView, ApiViewPatch,
+    NewApiCase, NewApiDefinition, NewApiMock, NewApiModule, NewApiView,
 };
 
 use thiserror::Error;
@@ -107,6 +107,15 @@ pub trait ApiDefinitionRepository: Send + Sync {
     async fn insert_view(&self, v: &NewApiView) -> Result<ApiView, RepoError>;
 
     async fn list_views(&self, project_id: &str, user_id: &str) -> Result<Vec<ApiView>, RepoError>;
+
+    /// 部分更新视图,归属判断与 [`Self::delete_view`] 一致:只匹配 `id + user_id`。
+    /// 无匹配行(不存在或非 owner)返回 `Ok(None)`。
+    async fn update_view(
+        &self,
+        id: &str,
+        user_id: &str,
+        patch: &ApiViewPatch,
+    ) -> Result<Option<ApiView>, RepoError>;
 
     async fn delete_view(&self, id: &str, user_id: &str) -> Result<(), RepoError>;
 

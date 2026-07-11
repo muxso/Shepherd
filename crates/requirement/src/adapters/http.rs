@@ -232,6 +232,8 @@ struct RequirementResponse {
     /// 时间戳一律为 epoch 毫秒。
     created_at: i64,
     updated_at: i64,
+    /// 创建人;历史数据可能为空串。
+    created_by: String,
     /// 7 阶段流水线,恒为全部阶段、按顺序。
     stages: Vec<StageResponse>,
     /// 当前所处阶段:第一个既未完成也未跳过的;全部完成 → DELIVERY。
@@ -264,6 +266,7 @@ impl From<Requirement> for RequirementResponse {
             overdue,
             created_at: r.created_at_ms,
             updated_at: r.updated_at_ms,
+            created_by: r.created_by,
             stages,
             current_stage,
         }
@@ -414,6 +417,7 @@ async fn create_requirement(
             b.due_date.as_deref(),
             b.parent_id.as_deref(),
             &b.custom_fields,
+            &user.user_id,
         )
         .await
     {

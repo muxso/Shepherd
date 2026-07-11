@@ -4,8 +4,8 @@ use std::sync::{Arc, Mutex};
 use async_trait::async_trait;
 
 use crate::domain::{
-    ApiCase, ApiDefinition, ApiDefinitionChange, ApiMock, ApiModule, ApiView, NewApiCase,
-    NewApiDefinition, NewApiMock, NewApiModule, NewApiView,
+    ApiCase, ApiDefinition, ApiDefinitionChange, ApiMock, ApiModule, ApiView, ApiViewPatch,
+    NewApiCase, NewApiDefinition, NewApiMock, NewApiModule, NewApiView,
 };
 use crate::ports::{ApiDefinitionRepository, ProjectMockRow, RepoError};
 
@@ -432,6 +432,28 @@ impl ApiDefinitionRepository for InMemoryApiDefinitionRepository {
             .collect();
         out.reverse();
         Ok(out)
+    }
+
+    async fn update_view(
+        &self,
+        id: &str,
+        user_id: &str,
+        patch: &ApiViewPatch,
+    ) -> Result<Option<ApiView>, RepoError> {
+        let mut state = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let Some(v) = state.views.iter_mut().find(|v| v.id == id && v.user_id == user_id) else {
+            return Ok(None);
+        };
+        if let Some(name) = &patch.name {
+            v.name = name.clone();
+        }
+        if let Some(config) = &patch.config {
+            v.config = config.clone();
+        }
+        if let Some(shared) = patch.shared {
+            v.shared = shared;
+        }
+        Ok(Some(v.clone()))
     }
 
     async fn delete_view(&self, id: &str, user_id: &str) -> Result<(), RepoError> {

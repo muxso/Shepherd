@@ -32,6 +32,41 @@ impl NewApiView {
     }
 }
 
+/// 视图的部分更新:字段为 `None` 表示保持原值。
+///
+/// name 的校验与 [`NewApiView::new`] 一致(trim 后非空);config 若给出必须是 JSON 对象。
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ApiViewPatch {
+    pub name: Option<String>,
+    pub config: Option<serde_json::Value>,
+    pub shared: Option<bool>,
+}
+
+impl ApiViewPatch {
+    pub fn new(
+        name: Option<&str>,
+        config: Option<serde_json::Value>,
+        shared: Option<bool>,
+    ) -> Result<Self, ApiDefinitionError> {
+        let name = match name {
+            Some(n) => {
+                let n = n.trim();
+                if n.is_empty() {
+                    return Err(ApiDefinitionError::EmptyName);
+                }
+                Some(n.to_string())
+            }
+            None => None,
+        };
+        if let Some(c) = &config {
+            if !c.is_object() {
+                return Err(ApiDefinitionError::BadConfig);
+            }
+        }
+        Ok(Self { name, config, shared })
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ApiView {
     pub id: String,
@@ -60,5 +95,27 @@ mod tests {
     fn new_view_rejects_blank_name() {
         let err = NewApiView::new("p1", "u1", "  ", serde_json::json!({}), true).unwrap_err();
         assert_eq!(err, ApiDefinitionError::EmptyName);
+    }
+
+    #[test]
+    fn patch_trims_name_and_keeps_absent_fields() {
+        let p = ApiViewPatch::new(Some(" 新名字 "), None, Some(false)).expect("ok");
+        assert_eq!(p.name.as_deref(), Some("新名字"));
+        assert_eq!(p.config, None);
+        assert_eq!(p.shared, Some(false));
+        let empty = ApiViewPatch::new(None, None, None).expect("ok");
+        assert_eq!(empty, ApiViewPatch::default());
+    }
+
+    #[test]
+    fn patch_rejects_blank_name() {
+        let err = ApiViewPatch::new(Some("  "), None, None).unwrap_err();
+        assert_eq!(err, ApiDefinitionError::EmptyName);
+    }
+
+    #[test]
+    fn patch_rejects_non_object_config() {
+        let err = ApiViewPatch::new(None, Some(serde_json::json!([1])), None).unwrap_err();
+        assert_eq!(err, ApiDefinitionError::BadConfig);
     }
 }

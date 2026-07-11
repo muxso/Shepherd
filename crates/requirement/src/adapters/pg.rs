@@ -74,6 +74,10 @@ impl PgRequirementRepository {
             due_date: meta.try_get("due_date").map_err(map_err)?,
             created_at_ms: meta.try_get("created_at_ms").map_err(map_err)?,
             updated_at_ms: meta.try_get("updated_at_ms").map_err(map_err)?,
+            created_by: meta
+                .try_get::<Option<String>, _>("created_by")
+                .map_err(map_err)?
+                .unwrap_or_default(),
             dev_status: WorkStatus::parse(&dev_status_s).unwrap_or_default(),
             test_status: WorkStatus::parse(&test_status_s).unwrap_or_default(),
             dev_started_at_ms: meta.try_get("dev_started_at_ms").map_err(map_err)?,
@@ -147,7 +151,7 @@ fn criteria_to_vec(v: &RequirementVersion) -> Vec<String> {
 
 // 时间列统一转 epoch 毫秒(与全库口径一致);due_date 以 `YYYY-MM-DD` 文本进出。
 const META_COLS: &str = "id, project_id, title, status, baseline_version, deleted, review_comment, priority, req_type, \
-     tags, parent_id, custom_fields, due_date::text AS due_date, \
+     tags, parent_id, custom_fields, created_by, due_date::text AS due_date, \
      (extract(epoch from created_at) * 1000)::bigint AS created_at_ms, \
      (extract(epoch from updated_at) * 1000)::bigint AS updated_at_ms, \
      dev_status, test_status, \
@@ -187,8 +191,8 @@ impl RequirementRepository for PgRequirementRepository {
     async fn insert(&self, new: &NewRequirement) -> Result<Requirement, RepoError> {
         let mut tx = self.pool.begin().await.map_err(map_err)?;
         let row = sqlx::query(
-            "INSERT INTO ms_requirement (project_id, title, priority, req_type, tags, parent_id, due_date, custom_fields) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7::date, $8) \
+            "INSERT INTO ms_requirement (project_id, title, priority, req_type, tags, parent_id, due_date, custom_fields, created_by) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7::date, $8, $9) \
              RETURNING id, (extract(epoch from created_at) * 1000)::bigint AS created_at_ms, \
                        (extract(epoch from updated_at) * 1000)::bigint AS updated_at_ms",
         )
@@ -200,6 +204,7 @@ impl RequirementRepository for PgRequirementRepository {
         .bind(&new.parent_id)
         .bind(&new.due_date)
         .bind(fields_to_json(&new.custom_fields))
+        .bind(&new.created_by)
         .fetch_one(&mut *tx)
         .await
         .map_err(map_err)?;
