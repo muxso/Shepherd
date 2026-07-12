@@ -250,7 +250,7 @@ impl ControlKind {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StepKind {
-    Request(InlineRequest),
+    Request(Box<InlineRequest>),
     Case { case_id: String },
     Scenario { scenario_id: String },
     Control { control: ControlKind, payload: serde_json::Value },
@@ -469,7 +469,7 @@ impl RunnableStep {
 
 pub fn flatten_step(step: &ScenarioStep) -> Option<RunnableStep> {
     match &step.kind {
-        StepKind::Request(req) => Some(RunnableStep::from_request(req.clone())),
+        StepKind::Request(req) => Some(RunnableStep::from_request((**req).clone())),
         StepKind::Case { case_id } => Some(RunnableStep::from_case(case_id.clone())),
         StepKind::Scenario { .. } | StepKind::Control { .. } => None,
     }
@@ -570,7 +570,8 @@ mod tests {
     #[test]
     fn kind_str_matches_variant() {
         assert_eq!(
-            StepKind::Request(InlineRequest::new("GET", "u", None).expect("valid")).kind_str(),
+            StepKind::Request(Box::new(InlineRequest::new("GET", "u", None).expect("valid")))
+                .kind_str(),
             "REQUEST"
         );
         assert_eq!(StepKind::Case { case_id: "c".into() }.kind_str(), "CASE");
@@ -630,7 +631,7 @@ mod tests {
     #[test]
     fn flatten_request_yields_request_runnable() {
         let req = InlineRequest::new("POST", "http://x", Some("b".into())).expect("valid");
-        let s = step("s1", 0, StepKind::Request(req.clone()));
+        let s = step("s1", 0, StepKind::Request(Box::new(req.clone())));
         let r = flatten_step(&s).expect("some");
         assert_eq!(r, RunnableStep::from_request(req));
         assert!(r.case_id.is_none());

@@ -89,8 +89,9 @@ mod tests {
         .expect("case step");
         add.execute(&s.id, &case).await.expect("add case");
         let req = InlineRequest::new("POST", "http://x/order", Some("{}".into())).expect("req");
-        let request = NewScenarioStep::new(1, StepKind::Request(req), RefMode::Reference, None)
-            .expect("req step");
+        let request =
+            NewScenarioStep::new(1, StepKind::Request(Box::new(req)), RefMode::Reference, None)
+                .expect("req step");
         add.execute(&s.id, &request).await.expect("add req");
         s.id
     }

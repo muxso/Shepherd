@@ -102,7 +102,11 @@ mod tests {
         let (svc, repo) = seeded().await;
         let create = CreateSkillUseCase::new(repo);
         let a = create.execute("p1", "基础", "", "遵循六边形", &[]).await.expect("a").id;
-        let b = create.execute("p1", "Rust", "", "用 thiserror", &[a.clone()]).await.expect("b").id;
+        let b = create
+            .execute("p1", "Rust", "", "用 thiserror", std::slice::from_ref(&a))
+            .await
+            .expect("b")
+            .id;
 
         let comp = svc.compose("p1", &[b]).await.expect("compose");
         assert_eq!(comp.skill_ids, vec![a.clone(), comp.skill_ids[1].clone()]);
