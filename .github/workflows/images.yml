@@ -5,7 +5,11 @@
 #   - ghcr.io/<owner>/shepherd-agent-runtime
 #   - ghcr.io/<owner>/shepherd-web
 #
-# Triggers: pushing a git tag matching v* (e.g. v0.0.1), or manual dispatch.
+# Triggers:
+#   - push of a git tag matching v*  → tags: semver + latest-off, plus sha
+#   - the CI workflow completing successfully on main  → tags: main + latest + sha
+#     (this is the "publish images once main passes" path)
+#   - manual workflow_dispatch
 # Auth: GHCR via the built-in GITHUB_TOKEN (no extra secrets required).
 name: images
 
@@ -14,6 +18,16 @@ on:
     tags:
       - 'v*'
   workflow_dispatch:
+  # Publish images automatically once the CI workflow goes green on main, so we
+  # only ship artifacts that have passed the quality gate (ci.yml).
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+
+concurrency:
+  group: images-${{ github.ref }}-${{ github.event.workflow_run.head_sha || github.sha }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
@@ -22,6 +36,8 @@ permissions:
 jobs:
   build-push:
     name: build & push ${{ matrix.component }}
+    # When triggered by workflow_run, only build if CI concluded successfully.
+    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -30,6 +46,10 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        # Under workflow_run, check out the exact commit CI tested, so we ship
+        # the version that actually passed.
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.ref }}
 
       - name: Set up Buildx
         uses: docker/setup-buildx-action@v3
@@ -51,6 +71,9 @@ jobs:
             type=semver,pattern={{version}}
             type=sha
             type=raw,value=latest,enable={{is_default_branch}}
+            # Rolling images published after CI passes on main are tagged
+            # `main` so the deploy job can pull them by default.
+            type=raw,value=main,enable={{is_default_branch}}
 
       - name: Build and push
         uses: docker/build-push-action@v6
