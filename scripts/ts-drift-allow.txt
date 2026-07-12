@@ -1,7 +1,6 @@
 /agent/runtime
 /agent/work/stats
 /api/api-view
-/api/api-view/*
 /api/case-exec-summary
 /api/case/*
 /api/debug/protocols

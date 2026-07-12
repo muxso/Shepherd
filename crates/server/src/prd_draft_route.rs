@@ -15,6 +15,7 @@ use axum::{
     Json, Router,
 };
 use serde::{Deserialize, Serialize};
+use utoipa::{OpenApi, ToSchema};
 use webauth::{AuthUser, SessionStore};
 
 use crate::llm::{LlmPrdDrafter, PrdDraft};
@@ -37,13 +38,13 @@ pub fn router(drafter: Option<Arc<LlmPrdDrafter>>, sessions: Arc<dyn SessionStor
         .with_state(DraftState { drafter, sessions })
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 struct DraftBody {
     raw: String,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 struct DraftResponse {
     title: String,
@@ -93,6 +94,12 @@ fn heuristic_draft(raw: &str) -> PrdDraft {
     }
 }
 
+#[utoipa::path(
+    post, path = "/requirement/draft", tag = "requirement",
+    request_body = DraftBody,
+    responses((status = 200, body = DraftResponse), (status = 400)),
+    security(("bearer" = []))
+)]
 async fn draft_handler(
     user: AuthUser,
     State(st): State<DraftState>,
@@ -157,4 +164,16 @@ mod tests {
         assert_eq!(d.title, "就一句话的想法");
         assert!(d.acceptance_criteria.is_empty());
     }
+}
+
+#[derive(OpenApi)]
+#[openapi(
+    paths(draft_handler),
+    components(schemas(DraftBody, DraftResponse)),
+    tags((name = "requirement", description = "requirements"))
+)]
+struct ApiDoc;
+
+pub fn openapi() -> utoipa::openapi::OpenApi {
+    ApiDoc::openapi()
 }
