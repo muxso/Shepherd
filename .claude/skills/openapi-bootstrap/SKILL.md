@@ -1,6 +1,21 @@
 ---
 name: openapi-bootstrap
-description: Self-bootstrap (dogfood) Shepherd's own HTTP API. Fetches the running system's OpenAPI (/api-docs/openapi.json), idempotently imports it as API definitions (with parsed request params / required flags / responses + a default assertion-bearing case per interface), then builds a REAL chained scenario that references api cases (kind=CASE): login → extract token → authenticated calls (Bearer ${token}) → extract orgId → chained call, plus a negative 401 case. Runs it in-process with an environment and reports per-step pass/fail + extracted variables. A companion script (scenarios_all.py) builds one real CRUD/lifecycle scenario per business module (every OpenAPI tag — org, project, requirement, task, delivery, verification, test-plan, etc.) and executes all of them with a per-module pass/fail report (currently 20/20 modules green). Use when the user asks to 自举 / dogfood / smoke-test the live API, to get scenario coverage across all business modules (所有业务模块的场景测试), or to orchestrate the system's own OpenAPI through /api/definition and /api/scenario.
+description: >-
+  Self-bootstrap (dogfood) Shepherd's own HTTP API. Fetches the running
+  system's OpenAPI (/api-docs/openapi.json), idempotently imports it as API
+  definitions (with parsed request params / required flags / responses + a
+  default assertion-bearing case per interface), then builds a REAL chained
+  scenario that references api cases (kind=CASE): login → extract token →
+  authenticated calls (Bearer ${token}) → extract orgId → chained call, plus a
+  negative 401 case. Runs it in-process with an environment and reports
+  per-step pass/fail + extracted variables. A companion script
+  (scenarios_all.py) builds one real CRUD/lifecycle scenario per business
+  module (every OpenAPI tag — org, project, requirement, task, delivery,
+  verification, test-plan, etc.) and executes all of them with a per-module
+  pass/fail report (currently 20/20 modules green). Use when the user asks to
+  自举 / dogfood / smoke-test the live API, to get scenario coverage across
+  all business modules (所有业务模块的场景测试), or to orchestrate the
+  system's own OpenAPI through /api/definition and /api/scenario.
 ---
 
 # OpenAPI 自举(Self-Bootstrap)
