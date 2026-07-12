@@ -47,6 +47,18 @@ The executor itself (`agent-runtime`) is plain Rust: concurrency is bounded by a
  └────────────┘                           heartbeat per-task worktree isolation
 ```
 
+## Measuring what AI actually delivered
+
+"How much is AI really helping?" is famously hard to answer — lines of AI-written code and suggestion acceptance rates measure activity, not outcomes. Shepherd can answer it more honestly, because the acceptance gate is already in the flow: **a task counts as AI-delivered only when the delivery came from an AI executor *and* a human verified it.** Rejected work counts against quality, not against output.
+
+On top of that rule you get, per project and per requirement:
+
+- the AI / human split of delivered tasks and of workload points — each requirement carries an "AI share" you can read as a percentage;
+- delivery quality: attempts vs. deliveries vs. failures, and the first-pass rate (delivered and verified on the first try);
+- a contribution-calendar view of daily deliveries, AI and human side by side.
+
+It measures shipped outcomes rather than keystrokes. That makes the numbers smaller and more boring than "90% of our code is AI-written" claims — which is the point.
+
 ## Running it
 
 ```bash
@@ -84,7 +96,7 @@ Prefer one command? `docker compose -f deploy/docker/docker-compose.yml up --bui
 
 Each business module is its own crate, laid out hexagonally: `domain` / `ports` / `application` are pure logic with no IO by default, while the database and HTTP live in `adapters` behind feature flags. `tests/architecture.rs` scans the source and fails the build if a pure layer ever imports an IO crate like sqlx or axum — that keeps the layering from quietly eroding over time.
 
-Working today: auth / RBAC / OIDC (Feishu, WeCom), projects, versioned requirements, the task DAG, the design approval gate, fleet dispatch and reclaim, MCP tools (`POST /mcp`), Skill orchestration, plus a test-management suite (cases / bugs / plans / API and scenario tests / Mock).
+Working today: auth / RBAC / OIDC (Feishu, WeCom), projects, versioned requirements, the task DAG, the design approval gate, fleet dispatch and reclaim, human-AI delivery metrics (per-project and per-requirement AI share), MCP tools (`POST /mcp`), Skill orchestration, plus a test-management suite (cases / bugs / plans / API and scenario tests / Mock).
 
 Not done yet: the verification gate is still heavier to use than I'd like; `shepherd-cli` is half-built; finer fleet metrics (e.g. claim-latency distribution) aren't there; and more executor backends (such as wiring OpenHands in as one) are on the list.
 
