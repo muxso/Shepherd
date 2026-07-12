@@ -155,6 +155,7 @@ web/               React + antd 前端
 - **[使用指南](docs/USAGE.zh-CN.md)**([English](docs/USAGE.md))—— 概念、快速上手、完整配置参考、Web 控制台、机群与执行机配置、HTTP API。
 - **[部署与运维](docs/DEPLOYMENT.zh-CN.md)**([English](docs/DEPLOYMENT.md))—— Docker Compose、Kubernetes(Helm,`deploy/helm/shepherd`)、多云 Terraform(`deploy/terraform/{aws,gcp,azure}`)、CI/CD 自动部署。
 - **[AI 执行者运行指南](docs/EXECUTORS.zh-CN.md)**([English](docs/EXECUTORS.md))—— 在 `agent-runtime` 下运行 Claude Code / Codex / OpenCode / CodeBuddy。
+- **[安装 agent-runtime](docs/INSTALL.md)** —— Homebrew、Windows(Scoop / PowerShell)、Linux 二进制,以及接入服务端(目前为英文)。
 
 ## 和别的方案比
 
@@ -187,3 +188,11 @@ cargo test --workspace -- --ignored         # 真实数据库集成测试
 ## 许可证
 
 GPL-2.0,见 [LICENSE](LICENSE)。
+
+## 交流群
+
+有疑问或想一起交流,欢迎加入:
+
+- **微信交流群 —— Shepherd 人机协同 交流群:** 扫码加入。
+
+<img src="docs/assets/wechat-group.jpg" alt="Shepherd 人机协同 交流群" width="240" />
