@@ -149,7 +149,7 @@ struct ScenarioStepResponse {
 impl From<&ScenarioStep> for ScenarioStepResponse {
     fn from(s: &ScenarioStep) -> Self {
         let (case_id, scenario_id, request, control) = match &s.kind {
-            StepKind::Request(r) => (None, None, Some(InlineRequestDto::from(r)), None),
+            StepKind::Request(r) => (None, None, Some(InlineRequestDto::from(&**r)), None),
             StepKind::Case { case_id } => (Some(case_id.clone()), None, None, None),
             StepKind::Scenario { scenario_id } => (None, Some(scenario_id.clone()), None, None),
             StepKind::Control { payload, .. } => (None, None, None, Some(payload.clone())),
@@ -548,7 +548,7 @@ async fn add_step(
             };
             let empty = || serde_json::Value::Array(vec![]);
             match InlineRequest::new(&r.method, &r.url, r.body) {
-                Ok(req) => StepKind::Request(
+                Ok(req) => StepKind::Request(Box::new(
                     req.with_assertions(r.assertions.unwrap_or_else(empty)).with_spec(
                         r.headers.unwrap_or_else(empty),
                         r.query_params.unwrap_or_else(empty),
@@ -556,7 +556,7 @@ async fn add_step(
                         r.auth.unwrap_or_else(|| serde_json::json!({})),
                         r.processors.unwrap_or_else(empty),
                     ),
-                ),
+                )),
                 Err(_) => {
                     return (StatusCode::BAD_REQUEST, "invalid inline request").into_response()
                 }

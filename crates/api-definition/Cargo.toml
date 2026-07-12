@@ -11,7 +11,7 @@ kernel = { workspace = true }
 async-trait = { workspace = true }
 thiserror = { workspace = true }
 serde_json = { workspace = true }
-quick-xml = "0.36"
+quick-xml = "0.41"
 sqlx = { workspace = true, features = ["runtime-tokio", "postgres"], optional = true }
 axum = { workspace = true, optional = true }
 utoipa = { workspace = true, optional = true }

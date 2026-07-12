@@ -7,7 +7,11 @@ use crate::domain::import::{
 };
 
 pub fn parse_jmeter(xml: &str) -> Result<Vec<ImportedApi>, ApiDefinitionError> {
-    let mut reader = Reader::from_str(xml);
+    // quick-xml 0.41 silently drops predefined entity references (e.g. &quot;) inside
+    // text content, so JSON bodies stored as {&quot;...&quot;} come out mangled. Expand
+    // the XML predefined entities in text content (not inside tags) before parsing.
+    let xml = expand_xml_entities(xml);
+    let mut reader = Reader::from_str(&xml);
     reader.config_mut().trim_text(true);
 
     let mut out = Vec::new();
@@ -44,20 +48,30 @@ pub fn parse_jmeter(xml: &str) -> Result<Vec<ImportedApi>, ApiDefinitionError> {
                 if cur.is_none() {
                     continue;
                 }
-                let text = e.unescape().map(|c| c.into_owned()).unwrap_or_default();
+                // quick-xml 0.41: decode + entity unescape replace the old BytesText::unescape.
+                // A logical text node can arrive as several Text events (e.g. split around
+                // entity references like &quot;), so append instead of overwriting.
+                let text = e
+                    .decode()
+                    .ok()
+                    .and_then(|c| quick_xml::escape::unescape(&c).ok().map(|u| u.into_owned()))
+                    .unwrap_or_default();
+                if text.is_empty() {
+                    continue;
+                }
                 let Some(prop) = cur_prop.as_deref() else { continue };
                 if in_arg {
                     match prop {
-                        "Argument.name" => arg_name = Some(text),
-                        "Argument.value" => arg_value = Some(text),
+                        "Argument.name" => append(&mut arg_name, &text),
+                        "Argument.value" => append(&mut arg_value, &text),
                         _ => {}
                     }
                 } else if let Some(s) = cur.as_mut() {
                     match prop {
-                        "HTTPSampler.path" => s.path = text,
-                        "HTTPSampler.method" => s.method = text,
-                        "HTTPSampler.domain" => s.domain = text,
-                        "HTTPSampler.protocol" => s.protocol = text,
+                        "HTTPSampler.path" => s.path.push_str(&text),
+                        "HTTPSampler.method" => s.method.push_str(&text),
+                        "HTTPSampler.domain" => s.domain.push_str(&text),
+                        "HTTPSampler.protocol" => s.protocol.push_str(&text),
                         "HTTPSampler.postBodyRaw" => s.post_body_raw = text.trim() == "true",
                         _ => {}
                     }
@@ -176,10 +190,72 @@ impl Sampler {
 }
 
 fn attr(e: &BytesStart, name: &[u8]) -> Option<String> {
-    e.attributes()
-        .flatten()
-        .find(|a| a.key.as_ref() == name)
-        .and_then(|a| a.unescape_value().ok().map(|c| c.into_owned()))
+    e.attributes().flatten().find(|a| a.key.as_ref() == name).and_then(|a| {
+        a.normalized_value(quick_xml::XmlVersion::Implicit1_0).ok().map(|c| c.into_owned())
+    })
+}
+
+fn append(opt: &mut Option<String>, s: &str) {
+    match opt {
+        Some(v) => v.push_str(s),
+        None => *opt = Some(s.to_string()),
+    }
+}
+
+/// Expands the five XML predefined entities, but only in text content (outside of
+/// tags), so attribute values that legitimately contain `&quot;` etc. are left intact.
+/// quick-xml 0.41 drops entity references inside text, so without this step a JSON body
+/// stored as `{&quot;username&quot;:&quot;admin&quot;}` would arrive as `{username:admin}`.
+fn expand_xml_entities(xml: &str) -> String {
+    let mut out = String::with_capacity(xml.len());
+    let mut text = String::new();
+    let mut in_tag = false;
+    let mut quote: Option<char> = None;
+    let mut chars = xml.chars().peekable();
+
+    let flush = |out: &mut String, text: &mut String| {
+        if text.is_empty() {
+            return;
+        }
+        let expanded = std::mem::take(text)
+            .replace("&quot;", "\"")
+            .replace("&apos;", "'")
+            .replace("&lt;", "<")
+            .replace("&gt;", ">")
+            .replace("&amp;", "&");
+        out.push_str(&expanded);
+    };
+
+    for c in &mut chars {
+        match c {
+            '<' if quote.is_none() => {
+                flush(&mut out, &mut text);
+                in_tag = true;
+                out.push(c);
+            }
+            '>' if quote.is_none() => {
+                in_tag = false;
+                out.push(c);
+            }
+            '"' | '\'' if in_tag => {
+                if quote == Some(c) {
+                    quote = None;
+                } else if quote.is_none() {
+                    quote = Some(c);
+                }
+                out.push(c);
+            }
+            _ => {
+                if in_tag {
+                    out.push(c);
+                } else {
+                    text.push(c);
+                }
+            }
+        }
+    }
+    flush(&mut out, &mut text);
+    out
 }
 
 #[cfg(test)]

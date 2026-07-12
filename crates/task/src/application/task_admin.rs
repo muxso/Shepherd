@@ -179,7 +179,7 @@ mod tests {
     async fn add_dispatch_and_unlock_dependent() {
         let (svc, did) = seeded().await;
         let a = svc.add_task(&did, "A", "", &[], &[], 0).await.expect("a");
-        let _b = svc.add_task(&did, "B", "", &[], &[a.clone()], 0).await.expect("b");
+        let _b = svc.add_task(&did, "B", "", &[], std::slice::from_ref(&a), 0).await.expect("b");
 
         assert_eq!(
             svc.dispatch(&did, "t2").await.unwrap_err(),
@@ -220,8 +220,8 @@ mod tests {
         let (svc, did) = seeded().await;
         let svc = Arc::new(svc);
         let t1 = svc.add_task(&did, "root", "", &[], &[], 0).await.expect("t1");
-        svc.add_task(&did, "left", "", &[], &[t1.clone()], 0).await.expect("t2");
-        svc.add_task(&did, "right", "", &[], &[t1.clone()], 0).await.expect("t3");
+        svc.add_task(&did, "left", "", &[], std::slice::from_ref(&t1), 0).await.expect("t2");
+        svc.add_task(&did, "right", "", &[], std::slice::from_ref(&t1), 0).await.expect("t3");
         svc.advance_to(&did, &t1, TaskStatus::Verified).await.expect("t1 verified");
 
         let (s2, s3, d2, d3) = (svc.clone(), svc.clone(), did.clone(), did.clone());

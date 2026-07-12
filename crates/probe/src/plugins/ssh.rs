@@ -3,7 +3,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use russh::client::{self, Handler};
-use russh::keys::key::PublicKey;
+use russh::keys::PublicKey;
 use russh::ChannelMsg;
 
 use crate::domain::{ProbeRequest, RawProbe};
@@ -21,7 +21,6 @@ impl SshPlugin {
 // Debug/probe use case: skip host key verification (accept any), matching the one-shot connection semantics.
 struct AcceptAll;
 
-#[async_trait]
 impl Handler for AcceptAll {
     type Error = russh::Error;
     async fn check_server_key(&mut self, _key: &PublicKey) -> Result<bool, Self::Error> {
@@ -45,7 +44,7 @@ async fn run_ssh(
         .map_err(|e| format!("连接失败: {e}"))?;
     let authed =
         handle.authenticate_password(user, password).await.map_err(|e| format!("认证错误: {e}"))?;
-    if !authed {
+    if !authed.success() {
         return Err("认证失败(用户名/密码)".to_string());
     }
     let mut channel =

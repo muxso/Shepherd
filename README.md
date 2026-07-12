@@ -1,4 +1,4 @@
-# Shepherd 🐑
+# Shepherd
 
 <img src="web/public/logo.svg" alt="Shepherd logo" width="88" align="right" />
 
@@ -9,9 +9,9 @@ Let AI write the code; you stay in charge of what ships.
 [![status](https://img.shields.io/badge/status-experimental-yellow.svg)](#status)
 &nbsp; · &nbsp; [简体中文](README.zh-CN.md) | English
 
-Shepherd is an early-stage platform for supervising AI-driven development. The idea is simple: AI can write code now, but it won't judge whether it actually finished the requirement, and it won't be accountable for the result. So instead of building yet another "smarter agent," Shepherd is the layer *around* the agent — it breaks requirements down for AI executors to work on, then puts a human approval step at two points (design and verification), and keeps a record of the whole thing.
+Shepherd is a platform for supervising AI-driven development. AI can write code, but it won't judge whether it actually finished the requirement, and it won't be accountable for the result. Instead of building another "smarter agent," Shepherd sits around the agent: it breaks requirements down for AI executors to work on, puts a human approval step at two points (design and verification), and keeps a record of the whole thing.
 
-> **Status:** `v0.0.1`, experimental, and something we currently dogfood ourselves. The full loop works, but it's not production-ready and there's no public benchmark. Don't treat it as a finished tool.
+> **Status:** `v0.0.1`, experimental, dogfooded internally. The full loop works, but it isn't production-ready and there's no public benchmark. Don't treat it as a finished tool.
 
 <!-- demo GIF pending: see docs/assets/. Uncomment the next line once it exists. -->
 <!-- ![demo](docs/assets/demo.gif) -->
@@ -26,11 +26,9 @@ you file a requirement → AI drafts a design →(you approve)→ split into a t
 you sign off ←(verification gate)← adjudication ← deliverable (diff / PR) ←────────────────────┘
 ```
 
-The design gate and the verification gate are hard steps in the flow, not optional prompts. However fast the AI runs, nothing reaches your main branch until it clears a gate. That's basically the problem Shepherd is trying to solve: letting you put AI to work at scale *because* the output is reviewable and accountable.
+The design gate and the verification gate are hard steps in the flow, not optional prompts. No matter how fast the AI runs, nothing reaches your main branch until it clears a gate. That's the problem Shepherd is trying to solve: putting AI to work at scale while keeping the output reviewable and accountable.
 
 ## Why the fleet pulls instead of being pushed to
-
-This is the part of the project I find most interesting.
 
 The AI tools in a company (Claude Code, Codex, and friends) usually run on internal dev machines or CI — boxes with no public inbound. The server, on the other hand, has a public address. So the server can't push work to an executor; it has to be the other way around: **executors reach out and long-poll to claim work.** Plenty of orchestration frameworks assume they can reach the agent, and that assumption falls apart on a real internal network.
 
@@ -51,7 +49,7 @@ The executor itself (`agent-runtime`) is plain Rust: concurrency is bounded by a
 
 ## Measuring what AI actually delivered
 
-"How much is AI really helping?" is famously hard to answer — lines of AI-written code and suggestion acceptance rates measure activity, not outcomes. Shepherd can answer it more honestly, because the acceptance gate is already in the flow: **a task counts as AI-delivered only when the delivery came from an AI executor *and* a human verified it.** Rejected work counts against quality, not against output.
+"How much is AI really helping?" is hard to answer — lines of AI-written code and suggestion acceptance rates measure activity, not outcomes. Shepherd can measure it more honestly, because the acceptance gate is already in the flow: **a task counts as AI-delivered only when the delivery came from an AI executor *and* a human verified it.** Rejected work counts against quality, not against output.
 
 On top of that rule you get, per project and per requirement:
 
@@ -59,7 +57,7 @@ On top of that rule you get, per project and per requirement:
 - delivery quality: attempts vs. deliveries vs. failures, and the first-pass rate (delivered and verified on the first try);
 - a contribution-calendar view of daily deliveries, AI and human side by side.
 
-It measures shipped outcomes rather than keystrokes. That makes the numbers smaller and more boring than "90% of our code is AI-written" claims — which is the point.
+It measures shipped outcomes rather than keystrokes. The numbers come out smaller and more boring than "90% of our code is AI-written" claims — which is the point.
 
 ## Running it
 
@@ -100,7 +98,7 @@ Each business module is its own crate, laid out hexagonally: `domain` / `ports` 
 
 Working today: auth / RBAC / OIDC (Feishu, WeCom), projects, versioned requirements, the task DAG, the design approval gate, fleet dispatch and reclaim, human-AI delivery metrics (per-project and per-requirement AI share), MCP tools (`POST /mcp`), Skill orchestration, plus a test-management suite (cases / bugs / plans / API and scenario tests / Mock).
 
-Not done yet: the verification gate is still heavier to use than I'd like; `shepherd-cli` is half-built; finer fleet metrics (e.g. claim-latency distribution) aren't there; and more executor backends (such as wiring OpenHands in as one) are on the list.
+Not done yet: the verification gate is heavier to use than it should be; `shepherd-cli` is half-built; finer fleet metrics (e.g. claim-latency distribution) aren't there; and more executor backends (such as wiring OpenHands in as one) are on the list.
 
 <details>
 <summary>Full crate tree</summary>
@@ -158,11 +156,11 @@ Executor `agent-runtime`:
 
 ## How it compares
 
-**vs. agent harnesses — Claude Code, Codex, OpenCode, OpenHands, Aider.** A harness wraps an LLM and runs the agentic loop (tools, context, turn by turn) to get one task done well. Shepherd is the layer *above* that: it doesn't run the loop — it decides what the tasks are, dispatches them, gates them on human approval, and verifies they were actually done. The harness is a swappable executor: `agent-runtime` literally shells out to `claude` / `codex` / `opencode` and streams their events back. So OpenCode isn't a competitor — it's one of the executors you hang on Shepherd's fleet (`OPENCODE_CMD=opencode run`).
+**vs. agent harnesses — Claude Code, Codex, OpenCode, OpenHands, Aider.** A harness wraps an LLM and runs the agentic loop (tools, context, turn by turn) to get one task done well. Shepherd is the layer *above* that: it doesn't run the loop — it decides what the tasks are, dispatches them, gates them on human approval, and verifies they were actually done. The harness is a swappable executor: `agent-runtime` literally shells out to `claude` / `codex` / `opencode` and streams their events back. OpenCode isn't a competitor — it's one of the executors you hang on Shepherd's fleet (`OPENCODE_CMD=opencode run`).
 
-**vs. multi-agent frameworks — AutoGen, CrewAI.** Most take the autonomy route: let agents loop until done, compete on benchmarks. Shepherd's focus is governance — approval and verification are steps you can't route around, not prompts you interrupt in a chat, and the deployment model is a central server plus internal executors that pull work outbound. Those frameworks *are* the agent; Shepherd is the supervisor above swappable agents.
+**vs. multi-agent frameworks — AutoGen, CrewAI.** They take the autonomy route: let agents loop until done, compete on benchmarks. Shepherd focuses on governance — approval and verification are steps you can't route around, not prompts you interrupt in a chat, and the deployment model is a central server plus internal executors that pull work outbound. Those frameworks *are* the agent; Shepherd is the supervisor above swappable agents.
 
-**vs. personal agent orchestrators — Gas Town (and Beads).** Gas Town runs a fleet of coding agents on your own machine and keeps them busy around the clock: workers pick up whatever lands on their hook, a mayor coordinates across repos, merges get serialized. It's built to maximize one developer's throughput, and it's good at that. Shepherd works the same street from the other end: it governs what a team ships — executors authenticate with API keys, every delivery attempt leaves a record, and the acceptance gate can't be routed around. The work ledgers are close cousins (beads live in git, tasks live in Postgres), so the two compose rather than compete: a Gas Town rig can hang off Shepherd's fleet as one more executor, and Shepherd supplies the acceptance and accounting layer a local factory doesn't have.
+**vs. personal agent orchestrators — Gas Town (and Beads).** Gas Town runs a fleet of coding agents on your own machine and keeps them busy around the clock: workers pick up whatever lands on their hook, a mayor coordinates across repos, merges get serialized. It's built to maximize one developer's throughput, and it's good at that. Shepherd tackles the same problem from the other end: it governs what a team ships — executors authenticate with API keys, every delivery attempt leaves a record, and the acceptance gate can't be routed around. The work ledgers are close cousins (beads live in git, tasks live in Postgres), so the two compose rather than compete: a Gas Town rig can hang off Shepherd's fleet as one more executor, and Shepherd supplies the acceptance and accounting layer a local factory doesn't have.
 
 One concrete boundary: Shepherd speaks MCP as a *server* (it exposes `shepherd_*` tools so an agent can drive the requirement→verify lifecycle), while coding agents like OpenCode speak MCP as a *client*. They compose in both directions rather than overlap.
 
@@ -173,7 +171,7 @@ cargo test --workspace                      # everything; non-integration runs i
 cargo test --workspace -- --ignored         # real-database integration tests
 ```
 
-866 tests; the integration ones run against a real server + PG / Redis / MySQL. Besides the architecture guard there's a migration-uniqueness guard: a duplicate migration version number fails CI (sqlx silently drops duplicates — we hit that once and it cost us a missing-column 500).
+866 tests; the integration ones run against a real server + PG / Redis / MySQL. Besides the architecture guard, duplicate migration version numbers are rejected at startup and in CI (sqlx would otherwise silently drop one).
 
 ## Contributing
 

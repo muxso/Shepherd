@@ -173,7 +173,7 @@ mod tests {
         let p = s.create("req-9", "支付重构").await.expect("create");
         assert_eq!(
             drafter.drafted.lock().unwrap_or_else(std::sync::PoisonError::into_inner).as_slice(),
-            &[p.id.clone()]
+            std::slice::from_ref(&p.id)
         );
         assert_eq!(p.status, ProposalStatus::Drafting);
 

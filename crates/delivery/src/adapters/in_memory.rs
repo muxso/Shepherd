@@ -153,7 +153,7 @@ impl DeliveryRepository for InMemoryDeliveryRepository {
             })
             .collect();
 
-        matched.sort_by(|x, y| y.created_at.cmp(&x.created_at));
+        matched.sort_by_key(|y| std::cmp::Reverse(y.created_at));
         let total = matched.len() as i64;
         let items = matched
             .into_iter()

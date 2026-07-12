@@ -62,7 +62,7 @@ fn row_to_step(row: &sqlx::postgres::PgRow) -> Result<ScenarioStep, RepoError> {
                 .map_err(|e| RepoError::Backend(e.to_string()))?
                 .with_assertions(assertions)
                 .with_spec_json(&v);
-            StepKind::Request(req)
+            StepKind::Request(Box::new(req))
         }
         "CASE" => StepKind::Case {
             case_id: ref_id
@@ -437,7 +437,7 @@ mod tests {
         let req = InlineRequest::new("POST", "http://x/order", Some("{}".into())).expect("valid");
         repo.add_step(
             &scenario.id,
-            &NewScenarioStep::new(2, StepKind::Request(req), RefMode::Reference, None)
+            &NewScenarioStep::new(2, StepKind::Request(Box::new(req)), RefMode::Reference, None)
                 .expect("valid"),
         )
         .await
