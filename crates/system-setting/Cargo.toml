@@ -27,7 +27,7 @@ serde_json = { workspace = true, optional = true }
 # OIDC state(CSRF)随机 token,feature 门控。
 uuid = { workspace = true, optional = true }
 # LDAP 目录认证(adapters::ldap,feature 门控);rustls 避免系统 OpenSSL。
-ldap3 = { version = "0.11", default-features = false, features = ["tls-rustls"], optional = true }
+ldap3 = { version = "0.12", default-features = false, features = ["tls-rustls-ring"], optional = true }
 
 [features]
 pg = ["dep:sqlx"]

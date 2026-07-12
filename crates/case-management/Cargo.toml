@@ -19,7 +19,8 @@ utoipa = { workspace = true, optional = true }
 webauth = { workspace = true, optional = true }
 serde = { workspace = true, optional = true }
 rust_xlsxwriter = { version = "0.79", optional = true }
-calamine = { version = "0.26", optional = true }
+# calamine 0.36 (quick-xml 0.41) needs Rust 1.88; 0.35 is the newest for our 1.86 pin.
+calamine = { version = "0.35", optional = true }
 
 [features]
 pg = ["dep:sqlx"]
