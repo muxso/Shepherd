@@ -6,7 +6,7 @@ const KEY = 'shepherd.lang'
 // Flat dictionary: key → {zh,en}. Unregistered keys fall back to the original text.
 const DICT: Record<string, { zh: string; en: string }> = {
   // Document title (browser tab)
-  'app.title': { zh: '接口测试管理', en: 'API Testing Management' },
+  'app.title': { zh: 'AI 交付监督平台', en: 'AI Delivery Supervision' },
   // Left global nav (top-level module icon + label)
   'nav.home': { zh: '首页', en: 'Home' },
   'nav.project': { zh: '项目', en: 'Project' },
@@ -1454,7 +1454,7 @@ const DICT: Record<string, { zh: string; en: string }> = {
   "mcp.colDesc": { zh: "说明", en: "Description" },
   "login.ok": { zh: "登录成功", en: "Signed in" },
   "login.fail": { zh: "登录失败", en: "Sign-in failed" },
-  "login.subtitle": { zh: "接口测试管理平台", en: "API Testing Management Platform" },
+  "login.subtitle": { zh: "让 AI 写代码,交付由你把关", en: "AI writes the code; you decide what ships" },
   "login.username": { zh: "用户名", en: "Username" },
   "login.password": { zh: "密码", en: "Password" },
   "login.passwordPlaceholder": { zh: "请输入密码", en: "Enter password" },

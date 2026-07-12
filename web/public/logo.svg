@@ -1,8 +1,10 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" width="512" height="512">
-  <!-- Shepherd mark: a crook guiding a node (the AI agent), two more nodes following (the fleet). -->
-  <path d="M14 44 V17 A9.5 9.5 0 0 1 33 17 A6 6 0 0 1 27 23"
-        fill="none" stroke="#1664ff" stroke-width="4.4" stroke-linecap="round"/>
-  <circle cx="25.5" cy="14.5" r="2.7" fill="#6ad2ff"/>
-  <circle cx="29.5" cy="39.5" r="2.3" fill="#1664ff" opacity="0.8"/>
-  <circle cx="37.5" cy="33.5" r="2.3" fill="#6ad2ff"/>
+  <!-- Shepherd mark: the letter S drawn as a single route — the execution trace between the
+       AI end (cyan, top) and the human end (warm orange, bottom; the product's "human" chart
+       color). One continuous, auditable path: what AI does travels the route, the human signs
+       off at the other end. -->
+  <path d="M33 11 H19 A7 7 0 0 0 19 25 H29 A7 7 0 0 1 29 39 H15"
+        fill="none" stroke="#1664ff" stroke-width="5" stroke-linecap="round"/>
+  <circle cx="35" cy="11" r="3.4" fill="#6ad2ff"/>
+  <circle cx="13" cy="39" r="3.4" fill="#ff9a2e"/>
 </svg>

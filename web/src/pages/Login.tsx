@@ -41,7 +41,7 @@ export default function Login() {
           <Typography.Title level={3} style={{ margin: '8px 0 0' }}>
             Shepherd
           </Typography.Title>
-          <Typography.Text type="secondary">{t('login.subtitle', '接口测试管理平台')}</Typography.Text>
+          <Typography.Text type="secondary">{t('login.subtitle', '让 AI 写代码,交付由你把关')}</Typography.Text>
         </div>
         <Form layout="vertical" onFinish={onFinish} initialValues={{ username: 'admin' }}>
           <Form.Item name="username" label={t('login.username', '用户名')} rules={[{ required: true }]}>
