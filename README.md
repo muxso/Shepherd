@@ -1,5 +1,7 @@
 # Shepherd 🐑
 
+<img src="web/public/logo.svg" alt="Shepherd logo" width="88" align="right" />
+
 Let AI write the code; you stay in charge of what ships.
 
 [![Rust](https://img.shields.io/badge/Rust-2021-orange.svg)](https://www.rust-lang.org/)

@@ -252,7 +252,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
               onClick={() => nav('/home')}
               style={{ height: 56, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 2, cursor: 'pointer' }}
             >
-              <DeploymentUnitOutlined style={{ color: 'var(--brand)', fontSize: 22 }} />
+              <img src="/logo.svg" alt="Shepherd" width={24} height={24} style={{ display: 'block' }} />
               <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: 0.3, color: 'var(--brand)' }}>Shepherd</span>
             </div>
           </Tooltip>

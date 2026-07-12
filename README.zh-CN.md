@@ -1,5 +1,7 @@
 # Shepherd 🐑
 
+<img src="web/public/logo.svg" alt="Shepherd logo" width="88" align="right" />
+
 让 AI 写代码,你来把关。
 
 [![Rust](https://img.shields.io/badge/Rust-2021-orange.svg)](https://www.rust-lang.org/)

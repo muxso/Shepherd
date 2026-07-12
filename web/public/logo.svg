@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" width="512" height="512">
+  <!-- Shepherd mark: a crook guiding a node (the AI agent), two more nodes following (the fleet). -->
+  <path d="M14 44 V17 A9.5 9.5 0 0 1 33 17 A6 6 0 0 1 27 23"
+        fill="none" stroke="#1664ff" stroke-width="4.4" stroke-linecap="round"/>
+  <circle cx="25.5" cy="14.5" r="2.7" fill="#6ad2ff"/>
+  <circle cx="29.5" cy="39.5" r="2.3" fill="#1664ff" opacity="0.8"/>
+  <circle cx="37.5" cy="33.5" r="2.3" fill="#6ad2ff"/>
+</svg>

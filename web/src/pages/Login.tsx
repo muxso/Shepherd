@@ -1,7 +1,6 @@
 import { useState } from 'react'
 import { Card, Form, Input, Button, Typography } from 'antd'
 import { message } from '../feedback'
-import { DeploymentUnitOutlined } from '@ant-design/icons'
 import { api, ApiError, userIdStore, userStore } from '../api'
 import { useApp } from '../context'
 import { useI18n } from '../i18n'
@@ -38,7 +37,7 @@ export default function Login() {
     >
       <Card style={{ width: 360 }} variant="borderless">
         <div style={{ textAlign: 'center', marginBottom: 24 }}>
-          <DeploymentUnitOutlined style={{ fontSize: 36, color: 'var(--brand)' }} />
+          <img src="/logo.svg" alt="Shepherd" width={44} height={44} style={{ display: 'block', margin: '0 auto' }} />
           <Typography.Title level={3} style={{ margin: '8px 0 0' }}>
             Shepherd
           </Typography.Title>
