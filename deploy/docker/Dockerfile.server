@@ -1,7 +1,8 @@
 # Build context = repo root. Build: docker build -f deploy/docker/Dockerfile.server .
 
-# ---- build stage ----
-FROM rust:latest AS build
+# ---- build stage ---- (pin to bookworm so the binary's glibc matches the
+# runtime stage and stays reproducible; rust:latest drifts glibc versions)
+FROM rust:1.86-bookworm AS build
 WORKDIR /app
 
 COPY Cargo.toml Cargo.lock ./
