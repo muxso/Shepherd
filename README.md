@@ -152,6 +152,7 @@ Executor `agent-runtime`:
 
 - **[Usage guide](docs/USAGE.md)** ([中文](docs/USAGE.zh-CN.md)) — concepts, quick start, the full configuration reference, the web console, fleet & executor setup, and the HTTP API.
 - **[Deployment & ops](docs/DEPLOYMENT.md)** ([中文](docs/DEPLOYMENT.zh-CN.md)) — Docker Compose, Kubernetes via Helm (`deploy/helm/shepherd`), multi-cloud Terraform (`deploy/terraform/{aws,gcp,azure}`), and CI/CD auto-deploy.
+- **[Install agent-runtime](docs/INSTALL.md)** — Homebrew, Windows (Scoop / PowerShell), Linux binary, and registering to a server.
 - **[Running AI executors](docs/EXECUTORS.md)** ([中文](docs/EXECUTORS.zh-CN.md)) — Claude Code / Codex / OpenCode / CodeBuddy behind `agent-runtime`.
 
 ## How it compares
