@@ -1,0 +1,89 @@
+# Shepherd single-host stack using the prebuilt GHCR images (no local build).
+#
+# Usage:
+#   1. copy shepherd.example.env -> .env and set SHEPHERD_ADMIN_PASSWORD
+#   2. docker compose -f deploy/docker/docker-compose.ghcr.yml pull
+#   3. docker compose -f deploy/docker/docker-compose.ghcr.yml up -d
+#
+# URLs:   web http://localhost:8080   api http://localhost:8088
+# Login:  admin / $SHEPHERD_ADMIN_PASSWORD
+#
+# Not a production deployment (secrets inline, PG/Redis local). For prod use
+# deploy/helm or deploy/terraform.
+
+name: shepherd
+
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-shepherd}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-shepherd}
+      POSTGRES_DB: ${POSTGRES_DB:-shepherd}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-shepherd} -d ${POSTGRES_DB:-shepherd}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  redis:
+    image: redis:7
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  server:
+    image: ghcr.io/muxso/shepherd-server:main
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER:-shepherd}:${POSTGRES_PASSWORD:-shepherd}@postgres:5432/${POSTGRES_DB:-shepherd}
+      SHEPHERD_BIND: 0.0.0.0:8088
+      SHEPHERD_ADMIN_PASSWORD: ${SHEPHERD_ADMIN_PASSWORD}
+      SHEPHERD_AGENT_FLEET: "1"
+      SHEPHERD_FLEET_REDIS: redis://redis:6379
+    ports:
+      - "8088:8088"
+    networks:
+      default:
+        aliases:
+          - shepherd-server
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8088/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 20s
+    restart: unless-stopped
+
+  agent-runtime:
+    image: ghcr.io/muxso/shepherd-agent-runtime:main
+    environment:
+      SHEPHERD_BASE: http://server:8088
+      SHEPHERD_ADMIN_USER: admin
+      SHEPHERD_ADMIN_PASSWORD: ${SHEPHERD_ADMIN_PASSWORD}
+      AGENT_MOCK: "1"
+    depends_on:
+      server:
+        condition: service_healthy
+    restart: unless-stopped
+
+  web:
+    image: ghcr.io/muxso/shepherd-web:main
+    ports:
+      - "8080:80"
+    depends_on:
+      - server
+    restart: unless-stopped
+
+volumes:
+  pgdata:
