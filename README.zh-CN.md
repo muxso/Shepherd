@@ -2,7 +2,8 @@
 
 <img src="web/public/logo.svg" alt="Shepherd logo" width="88" align="right" />
 
-让 AI 写代码,你来把关。
+软件工程 AI 决策引擎。  
+AI ROI、人效分析、软件工程建模、Task Graph。
 
 [![Rust](https://img.shields.io/badge/Rust-2021-orange.svg)](https://www.rust-lang.org/)
 [![License](https://img.shields.io/badge/License-GPL--2.0-blue.svg)](LICENSE)
@@ -48,6 +49,13 @@ Shepherd 是一个还在早期阶段的研发监督平台。AI 现在能写代�
  └────────────┘  回调收尾 └──────────────┘ 注册/心跳 └──────────────────┘
    /delivery/{id}/…                                 每任务 git worktree 隔离
 ```
+
+## 界面预览
+
+<p float="left">
+  <img src="docs/assets/screenshot-zh-1.png" width="49%" alt="Shepherd 控制台 — 概览" />
+  <img src="docs/assets/screenshot-zh-2.png" width="49%" alt="Shepherd — 需求拆分与任务图" />
+</p>
 
 ## AI 到底交付了多少,可以量化
 

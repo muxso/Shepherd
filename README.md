@@ -2,7 +2,8 @@
 
 <img src="web/public/logo.svg" alt="Shepherd logo" width="88" align="right" />
 
-Let AI write the code; you stay in charge of what ships.
+The AI Decision Engine for Software Engineering.  
+AI ROI · human-AI efficiency analytics · software engineering modeling · Task Graph.
 
 [![Rust](https://img.shields.io/badge/Rust-2021-orange.svg)](https://www.rust-lang.org/)
 [![License](https://img.shields.io/badge/License-GPL--2.0-blue.svg)](LICENSE)
@@ -12,6 +13,8 @@ Let AI write the code; you stay in charge of what ships.
 Shepherd is a platform for supervising AI-driven development. AI can write code, but it won't judge whether it actually finished the requirement, and it won't be accountable for the result. Instead of building another "smarter agent," Shepherd sits around the agent: it breaks requirements down for AI executors to work on, puts a human approval step at two points (design and verification), and keeps a record of the whole thing.
 
 > **Status:** `v0.0.1`, experimental, dogfooded internally. The full loop works, but it isn't production-ready and there's no public benchmark. Don't treat it as a finished tool.
+
+<img src="docs/assets/screenshot-intro.png" alt="Shepherd overview" width="100%" />
 
 <!-- demo GIF pending: see docs/assets/. Uncomment the next line once it exists. -->
 <!-- ![demo](docs/assets/demo.gif) -->
@@ -46,6 +49,13 @@ The executor itself (`agent-runtime`) is plain Rust: concurrency is bounded by a
  │   gates)   │ callback └──────────────┘ register/└──────────────────┘
  └────────────┘                           heartbeat per-task worktree isolation
 ```
+
+## Screenshots
+
+<p float="left">
+  <img src="docs/assets/screenshot-en-1.png" width="49%" alt="Shepherd console — overview" />
+  <img src="docs/assets/screenshot-en-2.png" width="49%" alt="Shepherd — requirement decomposition and task graph" />
+</p>
 
 ## Measuring what AI actually delivered
 
