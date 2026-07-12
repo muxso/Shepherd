@@ -186,3 +186,11 @@ Issues and PRs welcome. A few conventions:
 ## License
 
 GPL-2.0, see [LICENSE](LICENSE).
+
+## Community
+
+Questions or want to chat? Join us:
+
+- **WeChat group — Shepherd Human-AI Collaboration (人机协同 交流群):** scan the QR code to join.
+
+<img src="docs/assets/wechat-group.jpg" alt="Shepherd Human-AI Collaboration WeChat group" width="240" />
