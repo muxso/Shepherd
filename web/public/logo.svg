@@ -1,10 +1,15 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" width="512" height="512">
-  <!-- Shepherd mark: the letter S drawn as a single route — the execution trace between the
-       AI end (cyan, top) and the human end (warm orange, bottom; the product's "human" chart
-       color). One continuous, auditable path: what AI does travels the route, the human signs
-       off at the other end. -->
-  <path d="M33 11 H19 A7 7 0 0 0 19 25 H29 A7 7 0 0 1 29 39 H15"
-        fill="none" stroke="#1664ff" stroke-width="5" stroke-linecap="round"/>
-  <circle cx="35" cy="11" r="3.4" fill="#6ad2ff"/>
-  <circle cx="13" cy="39" r="3.4" fill="#ff9a2e"/>
+  <!-- Shepherd mark: an S built from layered strata — stacked execution traces. Two interlocked
+       halves (180-degree symmetry) meet along a 45-degree seam: the hand-off between the AI end
+       (cyan, top right) and the human end (warm orange, bottom left; the product's "human"
+       chart color). Layers = the audit trail; the seam = the acceptance gate between them. -->
+  <g fill="none" stroke="#1664ff" stroke-width="2.8" stroke-linecap="butt">
+    <g id="half">
+      <path d="M42 6 H10 V22.4 H31"/>
+      <path d="M37.8 10.2 H14.2 V18.2 H27.4"/>
+    </g>
+    <use href="#half" transform="rotate(180 24 24)"/>
+  </g>
+  <circle cx="44.6" cy="6" r="2.3" fill="#6ad2ff"/>
+  <circle cx="3.4" cy="42" r="2.3" fill="#ff9a2e"/>
 </svg>
