@@ -253,6 +253,8 @@ body::before {
   background: var(--panel-2) !important;
   color: var(--text-2) !important;
   font-weight: 600;
+  /* Header labels never wrap: filter/search icons squeeze narrow columns otherwise. */
+  white-space: nowrap;
 }
 .ant-table-tbody > tr > td {
   padding-top: 9px !important;

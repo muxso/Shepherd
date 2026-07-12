@@ -96,8 +96,8 @@ function reqColumns(t: (k: string, d?: string) => string, modules: ApiModule[], 
         return m ? (modules.find((x) => x.id === m)?.name ?? m) : <span style={{ color: 'var(--text-3)' }}>{t('req.moduleUnfiled', '未规划')}</span>
       },
     },
-    { key: 'reqType', label: t('req.reqType', '类型'), title: t('req.reqType', '类型'), dataIndex: 'reqType', width: 80, render: (v?: string) => (v ? <Tag>{t(`req.type.${v}`, v)}</Tag> : '—') },
-    { key: 'priority', label: t('req.priority', '优先级'), title: t('req.priority', '优先级'), dataIndex: 'priority', width: 70, render: (p?: string) => (p ? <Tag color={prioColor(p)}>{p}</Tag> : '—') },
+    { key: 'reqType', label: t('req.reqType', '类型'), title: t('req.reqType', '类型'), dataIndex: 'reqType', width: 96, render: (v?: string) => (v ? <Tag>{t(`req.type.${v}`, v)}</Tag> : '—') },
+    { key: 'priority', label: t('req.priority', '优先级'), title: t('req.priority', '优先级'), dataIndex: 'priority', width: 100, render: (p?: string) => (p ? <Tag color={prioColor(p)}>{p}</Tag> : '—') },
     {
       key: 'tags', label: t('req.tags', '标签'), title: t('req.tags', '标签'), dataIndex: 'tags',
       render: (tags?: string[]) =>
