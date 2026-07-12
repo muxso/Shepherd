@@ -37,8 +37,10 @@ pub struct TaskPage {
     pub total: i64,
 }
 
-/// 人机协同人效:某需求下已验收任务的 AI/人工 拆分。
-/// 口径:任务 VERIFIED 且存在 DELIVERED 交付记录 = AI 交付;VERIFIED 无记录 = 人工交付。
+/// AI/human split of verified tasks under one requirement.
+///
+/// Definition: a VERIFIED task with a DELIVERED delivery record counts as AI-delivered;
+/// VERIFIED without one counts as human-delivered.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CollabRequirementRow {
     pub requirement_id: String,
@@ -47,16 +49,17 @@ pub struct CollabRequirementRow {
     pub human_tasks: i64,
     pub ai_points: i64,
     pub human_points: i64,
-    /// 交付质量(尝试维度,不限于已验收任务):总尝试/成功/失败。
+    /// Delivery quality at attempt level (not limited to verified tasks):
+    /// total / succeeded / failed attempts.
     pub ai_attempts: i64,
     pub ai_delivered: i64,
     pub ai_failed: i64,
-    /// 一次交付即验收通过的 AI 任务数(质量口径:attempt 数 = 1 且 VERIFIED)。
+    /// AI tasks verified on the first delivery (attempt count = 1 and VERIFIED).
     pub ai_first_pass: i64,
 }
 
-/// 按日的验收通过任务数拆分(近一年,GitHub 贡献格子的数据源);
-/// verified_at 为空的历史任务不计入。
+/// Per-day verified-task split (past year; data source for the GitHub-style
+/// contribution grid). Historical tasks with a null verified_at are excluded.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CollabDay {
     pub date: String,
@@ -100,8 +103,9 @@ pub trait DeliveryRepository: Send + Sync {
 
     async fn list_tasks(&self, filter: &TaskListFilter) -> Result<TaskPage, RepoError>;
 
-    /// 人机协同人效统计(跨上下文 SQL 聚合;内存实现返回空,仅 pg 有意义)。
-    /// requirement_id 给定时只统计该需求(需求详情的单独视图)。
+    /// Human/AI collaboration stats (cross-context SQL aggregation; the in-memory
+    /// implementation returns empty, only pg is meaningful). With requirement_id,
+    /// scope to that requirement (requirement-detail view).
     async fn collab_stats(
         &self,
         project_id: &str,

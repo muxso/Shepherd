@@ -8,9 +8,9 @@ import { useI18n } from '../i18n'
 import { message, modal } from '../feedback'
 import { SelectProjectEmpty } from '../components/Page'
 
-// 消息设置:「项目 → 消息设置」。左侧二级导航(机器人 + 各业务事件分类),
-// 右侧为该分类下的通知规则表(通知场景 → 接收人 → 接收方式 → 模板 → 启用)。
-// 设置按项目持久化到 localStorage(与「应用设置」一致:后端通知服务接入前的本地态)。
+// Message settings ("Project → Message Settings"). Left: secondary nav (robots + business event categories);
+// right: notification rules for the selected category (event → recipients → channels → template → enabled).
+// Persisted per project to localStorage (like App Settings: local state until the backend notification service lands).
 
 type ChannelKey = 'inapp' | 'email' | 'wecom' | 'dingtalk' | 'lark' | 'webhook'
 type CatKey = 'plan' | 'bug' | 'case' | 'api' | 'schedule' | 'git'
@@ -19,7 +19,7 @@ type NavKey = 'robot' | CatKey
 interface Rule {
   id: string
   cat: CatKey
-  event: string // 事件 key(见 EVENTS)
+  event: string // event key (see EVENTS)
   recipients: string[]
   channels: ChannelKey[]
   template: string
@@ -44,7 +44,7 @@ const CATS: CatKey[] = ['plan', 'bug', 'case', 'api', 'schedule', 'git']
 
 const CHANNELS: ChannelKey[] = ['inapp', 'email', 'wecom', 'dingtalk', 'lark', 'webhook']
 
-// 各分类下的内置通知场景(事件)。value 为稳定 key,展示走 i18n。
+// Built-in notification events per category. value is a stable key; display goes through i18n.
 const EVENTS: Record<CatKey, { key: string; zh: string; en: string }[]> = {
   plan: [
     { key: 'planExec', zh: '测试计划执行完成', en: 'Test plan executed' },
@@ -77,7 +77,7 @@ const EVENTS: Record<CatKey, { key: string; zh: string; en: string }[]> = {
   ],
 }
 
-// 固定接收人角色(项目内人员之外的语义化收件人)。
+// Fixed recipient roles (semantic recipients beyond project members).
 const ROLE_RCPTS = ['creator', 'follower', 'operator', 'assignee', 'projectAdmin'] as const
 
 const storageKey = (projectId: string) => `shepherd.msgSettings.${projectId}`
@@ -135,7 +135,7 @@ export default function MessageSettings() {
     api.users().then((p) => setUsers(p.items ?? [])).catch(() => setUsers([]))
   }, [])
 
-  // 任何变更后按项目持久化(自动保存)。
+  // Persist per project on every change (auto-save).
   const persist = (next: Settings) => {
     setSettings(next)
     if (projectId) localStorage.setItem(storageKey(projectId), JSON.stringify(next))
@@ -157,7 +157,7 @@ export default function MessageSettings() {
 
   return (
     <div style={{ display: 'flex', height: '100%' }}>
-      {/* 左侧二级导航 */}
+      {/* Left secondary nav */}
       <div
         style={{
           width: 200,
@@ -192,7 +192,7 @@ export default function MessageSettings() {
           </div>
         ))}
       </div>
-      {/* 右侧内容 */}
+      {/* Right panel */}
       <div style={{ flex: 1, minWidth: 0, overflow: 'auto', padding: 16, background: 'var(--bg)' }}>
         {nav === 'robot' ? (
           <RobotPanel settings={settings} persist={persist} t={t} lang={lang} />
@@ -236,7 +236,7 @@ function eventLabel(cat: CatKey, key: string, lang: Lang): string {
   return lang === 'en' ? ev.en : ev.zh
 }
 
-// ---------- 通知规则面板 ----------
+// ---------- Notification rules panel ----------
 
 function RulePanel({
   cat,
@@ -480,7 +480,7 @@ function RuleDrawer({
   )
 }
 
-// ---------- 机器人面板 ----------
+// ---------- Robot panel ----------
 
 function RobotPanel({
   settings,
@@ -603,7 +603,7 @@ function RobotDrawer({
   useEffect(() => setDraft(robot), [robot])
   if (!draft) return null
   const set = (patch: Partial<Robot>) => setDraft({ ...draft, ...patch })
-  // 站内信 / 邮件为内置通道,无需 webhook;其余机器人需配置 webhook。
+  // In-app and email are built-in channels (no webhook); all other robots require one.
   const needsWebhook = draft.type !== 'inapp' && draft.type !== 'email'
   const field = (label: string, control: React.ReactNode) => (
     <div style={{ marginBottom: 16 }}>

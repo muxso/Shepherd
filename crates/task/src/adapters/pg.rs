@@ -178,7 +178,8 @@ impl TaskRepository for PgTaskRepository {
         status: TaskStatus,
     ) -> Result<(), RepoError> {
         // Single-row update so concurrent sibling advances don't lose updates.
-        // 首次转 VERIFIED 时落 verified_at(保留最早一次;返工再验不覆盖)。
+        // Set verified_at on the first VERIFIED transition (keep the earliest; re-verification
+        // after rework does not overwrite it).
         sqlx::query(
             "UPDATE ms_task SET status = $3, \
              verified_at = CASE WHEN $3 = 'VERIFIED' THEN COALESCE(verified_at, now()) ELSE verified_at END \

@@ -16,7 +16,7 @@ import { useListView, type ListColumn } from '../components/ListView'
 const PRIORITIES = ['P0', 'P1', 'P2', 'P3']
 const prioColor = (p?: string) => (p === 'P0' ? 'red' : p === 'P1' ? 'orange' : 'blue')
 
-// 工作区常驻「新建用例」tab 的 key(与详情 tab 的用例 id 共用同一 tab 池)。
+// Key of the persistent "new case" workspace tab (shares the tab pool with detail tabs keyed by case id).
 const NEW_KEY = '__new_case__'
 
 export default function FunctionalCases() {
@@ -54,17 +54,16 @@ export default function FunctionalCases() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId])
 
-  // module 字段从此存模块 id;历史数据存的是名称文本 → 不匹配任何模块 id 时按未归类处理。
+  // module now stores a module id; legacy data stored name text → treat values matching no module id as unfiled.
   const moduleIdOf = (c: FunctionalCase) => (modules.some((m) => m.id === c.module) ? c.module! : '')
   const moduleNameOf = (id: string) => modules.find((m) => m.id === id)?.name
-  // 「模块」列:命中模块显示模块名;旧文本值原样显示(灰色);空显示未归类。
+  // Module column: matched module shows its name; legacy text values render as-is (gray); empty shows unfiled.
   const renderModule = (m?: string) => {
     if (!m) return unfiled
     const name = moduleNameOf(m)
     return name ?? <span style={{ color: 'var(--text-3)' }}>{m}</span>
   }
 
-  // 导出 xlsx(浏览器下载)/ 导入 xlsx(选文件即上传,返回导入条数)。
   const doExport = async () => {
     if (!projectId) return
     try {
@@ -101,7 +100,7 @@ export default function FunctionalCases() {
     }
   }
 
-  // 列表三件套(视图/筛选/列设置):useListView 必须在条件 return 之前调用。
+  // View/filter/column toolbar: useListView must be called before the conditional return below.
   const allColumns: ListColumn<FunctionalCase>[] = [
     { key: 'name', label: t('func.colName', '名称'), title: t('func.colName', '名称'), dataIndex: 'name', ellipsis: true },
     { key: 'module', label: t('func.colModule', '模块'), title: t('func.colModule', '模块'), dataIndex: 'module', width: 140, render: renderModule },
@@ -146,7 +145,7 @@ export default function FunctionalCases() {
       {
         key: 'module', label: t('func.colModule', '模块'), type: 'enum',
         options: [unfiled, ...modules.map((m) => m.name)].map((m) => ({ value: m, label: m })),
-        // 命中模块 → 模块名;旧文本值 → 原文;空 → 未归类。
+        // Matched module → name; legacy text value → as-is; empty → unfiled.
         get: (c) => { const id = moduleIdOf(c); return id ? moduleNameOf(id)! : c.module || unfiled },
       },
       {
@@ -154,7 +153,7 @@ export default function FunctionalCases() {
         options: [...new Set(cases.map((c) => c.status || 'PREPARED'))].map((s) => ({ value: s, label: s })),
         get: (c) => c.status || 'PREPARED',
       },
-      // 以下仅供条件选择(与搜索框/列展示重复,不渲染在声明式筛选区)。
+      // Advanced-condition only (duplicates search box / columns; not rendered in the declarative filter area).
       { key: 'id', label: 'ID', type: 'text', advOnly: true, get: (c) => c.id },
       { key: 'name', label: t('func.colName', '用例名'), type: 'text', advOnly: true, get: (c) => c.name },
       { key: 'createdBy', label: t('lv.createdBy', '创建人'), type: 'text', advOnly: true, get: (c) => c.createdBy || '' },
@@ -165,10 +164,10 @@ export default function FunctionalCases() {
 
   if (!projectId) return <SelectProjectEmpty />
 
-  // 左侧模块树的筛选叠加在三件套筛选之上(选父含子;旧文本值按未归类)。
+  // Module-tree filter stacks on top of toolbar filters (selecting a parent includes children; legacy text values count as unfiled).
   const visible = lv.rows.filter((c) => inSelectedModule(modules, moduleKey, moduleIdOf(c)))
 
-  // 左侧:项目级模块树(模块搜索 + 收起全部/新建顶层模块 + 模块增删改),与场景页一致。
+  // Left: project-level module tree, same as the scenarios page.
   const left = (
     <ModuleTreePanel
       projectId={projectId}
@@ -256,7 +255,7 @@ function CaseDetail({ c, moduleLabel }: { c: FunctionalCase; moduleLabel?: React
   const cf = c.customFields || {}
   const [covReqs, setCovReqs] = useState<CaseRequirementLink[]>([])
   const loadCov = () => api.caseRequirements(c.id).then(setCovReqs).catch(() => setCovReqs([]))
-  // 主动关联需求:选需求 → 选验收标准 → link。
+  // Manual requirement linking: pick requirement → pick acceptance criterion → link.
   const [linkOpen, setLinkOpen] = useState(false)
   const [reqs, setReqs] = useState<Requirement[]>([])
   const [selReq, setSelReq] = useState<Requirement | null>(null)
@@ -380,8 +379,8 @@ function CaseDetail({ c, moduleLabel }: { c: FunctionalCase; moduleLabel?: React
   )
 }
 
-// 用例表单主体(模板驱动的系统字段顺序/必填/显隐 + StepsEditor + 自定义字段)。
-// 新建 Tab 与编辑弹窗共用;form 实例由外层持有(外层触发 form.submit())。
+// Case form body (template-driven system field order/required/visibility + StepsEditor + custom fields).
+// Shared by the new-case tab and the edit modal; the caller owns the form instance and triggers form.submit().
 function CaseForm({
   form,
   projectId,
@@ -397,7 +396,7 @@ function CaseForm({
   modules: ApiModule[]
   editing: FunctionalCase | null
   defaultModule?: string
-  /** 字段模板:系统字段的顺序/必填/显隐 + 自定义字段渲染(name 永远在)。 */
+  /** Field template: system field order/required/visibility + custom field rendering (name is always present). */
   tplFields: TemplateField[]
   onSavingChange: (v: boolean) => void
   onSaved: (c: FunctionalCase) => void
@@ -417,7 +416,7 @@ function CaseForm({
         [CF_GROUP]: customFormValues(tplFields, editing.customFields),
       }
     : { priority: 'P1', module: defaultModule, steps: [{ step: '', expected: '' }] }
-  // 系统字段渲染器:key → 表单项;顺序按模板数组序,必填按配置(name 锁定必填)。
+  // System field renderer: key → form item; order follows the template array, required per config (name is always required).
   const sysItem = (f: TemplateField) => {
     const rules = f.required ? [{ required: true }] : undefined
     switch (f.key) {
@@ -428,8 +427,9 @@ function CaseForm({
           </Form.Item>
         )
       case 'module': {
-        // 选项 = 未归类('') + 项目模块(value=模块 id)。编辑回填遇到旧名称值(不在模块表里)时
-        // 追加一个临时选项原样展示,避免丢失旧数据可见性;保存不改动即保留原值。
+        // Options = unfiled ('') + project modules (value = module id). When edit backfill hits a legacy
+        // name value not in the module table, append a temp option so old data stays visible; saving
+        // without changing it keeps the original value.
         const opts: { value: string; label: string }[] = [
           { value: '', label: t('func.unfiled', '未归类') },
           ...modules.map((m) => ({ value: m.id, label: m.name })),
@@ -455,7 +455,7 @@ function CaseForm({
           </Form.Item>
         )
       case 'steps':
-        // 步骤(步骤+预期):保持 StepsEditor 渲染,必填在提交时校验至少一条。
+        // Steps (step + expected): rendered via StepsEditor; "required" is enforced at submit (at least one row).
         return (
           <Form.Item key="steps" name="steps" label={t('func.testSteps', '测试步骤(步骤 + 预期结果)')} required={f.required}>
             <StepsEditor />
@@ -478,7 +478,7 @@ function CaseForm({
       preserve={false}
       initialValues={initial}
       onFinish={async (v) => {
-          // steps 隐藏时不动已有步骤(编辑),新建则为空。
+          // When steps is hidden, keep existing steps on edit; empty for new cases.
           const steps = enabled('steps')
             ? (v.steps || []).filter((s: CaseStep) => s.step.trim() || s.expected.trim())
             : editing?.steps || []
@@ -489,16 +489,16 @@ function CaseForm({
           }
           onSavingChange(true)
           try {
-            // 编辑时保留用例原有的其它自定义字段;前置条件/备注沿用既有的中文 key 映射。
+            // On edit, keep the case's other custom fields; prerequisite/remark keep their legacy Chinese keys.
             const customFields: Record<string, string> = { ...(editing?.customFields || {}) }
             const setOrDel = (k: string, val?: string) => {
               if (val?.trim()) customFields[k] = val.trim()
               else delete customFields[k]
             }
-            // 隐藏的字段不动已有值(表单里没渲染,提交值为 undefined)。
+            // Hidden fields keep existing values (not rendered, so submit value is undefined).
             if (enabled('prerequisite')) setOrDel('前置条件', v.prerequisite)
             if (enabled('remark')) setOrDel('备注', v.remark)
-            // 模板自定义字段:值并入 customFields map(键用字段 key)。
+            // Template custom fields merge into the customFields map, keyed by field key.
             const custom = collectCustomValues(tplFields, v[CF_GROUP])
             for (const f of tplFields) {
               if (f.system || !f.enabled) continue
@@ -515,7 +515,7 @@ function CaseForm({
                 name: v.name,
                 priority,
                 module,
-                status: editing.status, // 保留原状态(由评审流程驱动,编辑不改)
+                status: editing.status, // keep original status (driven by the review flow, not editable here)
                 steps,
                 customFields: fields,
               })
@@ -539,7 +539,7 @@ function CaseForm({
           }
         }}
       >
-      {/* 按字段模板的数组序渲染:系统字段走各自渲染器,自定义字段按类型渲染;隐藏字段跳过。 */}
+      {/* Render in template array order: system fields via their renderers, custom fields by type; hidden fields skipped. */}
       {tplFields.filter((f) => f.enabled).map((f) =>
         f.system ? sysItem(f) : <CustomFieldItem key={f.key} kind="functional-case" field={f} />
       )}
@@ -547,7 +547,7 @@ function CaseForm({
   )
 }
 
-// 编辑功能用例弹窗(创建已改为工作区「新建用例」Tab,见 NewCaseTab)。
+// Edit dialog only; creation lives in the NewCaseTab workspace tab.
 function CaseEditModal({
   projectId,
   modules,
@@ -564,7 +564,7 @@ function CaseEditModal({
   const { t } = useI18n()
   const [form] = Form.useForm()
   const [saving, setSaving] = useState(false)
-  // 模板常驻加载(弹窗打开时字段配置已就绪,编辑回填不缺自定义字段)。
+  // Template loaded up-front so field config is ready when the modal opens and edit backfill has all custom fields.
   const { fields: tplFields } = useFieldTemplate('functional-case')
   return (
     <Modal
@@ -589,7 +589,6 @@ function CaseEditModal({
   )
 }
 
-// 工作区「新建用例」Tab:CaseForm 平铺 + 底部 创建/取消。
 function NewCaseTab({
   projectId,
   modules,

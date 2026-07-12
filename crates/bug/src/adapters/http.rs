@@ -43,7 +43,7 @@ pub fn router(
     relations: BugRelationsUseCase,
     sessions: Arc<dyn SessionStore>,
 ) -> Router {
-    // 自定义字段用例与其余用例共享同一仓储,在此组装,免改调用方签名。
+    // Built here from the create use case's repository so callers' signatures stay unchanged.
     let custom_fields = BugCustomFieldsUseCase::new(create.repo());
     Router::new()
         .route("/bug", post(create_bug).get(list_bugs))
@@ -74,7 +74,8 @@ struct BugResponse {
     created_at: i64,
     #[serde(skip_serializing_if = "Option::is_none")]
     created_by: Option<String>,
-    /// 自定义字段值 map<字段key, 字符串值>;字段定义由项目模板管理,多选值逗号拼接。
+    /// Custom field values, key → string value; field definitions live in the project
+    /// template, multi-select values are comma-joined.
     custom_fields: BTreeMap<String, String>,
 }
 
@@ -98,7 +99,7 @@ struct CreateBugRequest {
     project_id: String,
     title: String,
     initial_status: String,
-    /// 自定义字段值 map<字段key, 字符串值>(最多 32 个键,键 ≤ 64 字符,值 ≤ 2000 字符)。
+    /// Custom field values, key → string value (max 32 keys, key ≤ 64 chars, value ≤ 2000 chars).
     #[serde(default)]
     custom_fields: BTreeMap<String, String>,
 }
@@ -197,12 +198,13 @@ async fn change_status(
 #[derive(Debug, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 struct SetCustomFieldsRequest {
-    /// 自定义字段值 map<字段key, 字符串值>;整体替换,空 map 即清空。
+    /// Custom field values, key → string value; full replacement, empty map clears all.
     #[serde(default)]
     custom_fields: BTreeMap<String, String>,
 }
 
-/// 整体替换缺陷的自定义字段值;字段定义由项目模板管理,多选值逗号拼接。
+/// Replaces the bug's custom field values wholesale; field definitions live in the
+/// project template, multi-select values are comma-joined.
 #[utoipa::path(put, path = "/bug/{id}/custom-fields", tag = "bug", params(("id" = String, Path)), request_body = SetCustomFieldsRequest, responses((status = 200, body = BugResponse), (status = 400), (status = 403), (status = 404)), security(("bearer" = [])))]
 async fn set_custom_fields(
     user: AuthUser,
@@ -297,7 +299,7 @@ async fn unfollow_bug(
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 struct RelationItem {
-    /// REQUIREMENT | SCENARIO | FUNCTIONAL_CASE。
+    /// REQUIREMENT | SCENARIO | FUNCTIONAL_CASE.
     kind: String,
     target_id: String,
 }
@@ -317,7 +319,7 @@ struct RelationsResponse {
 #[derive(Debug, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 struct LinkRelationRequest {
-    /// REQUIREMENT | SCENARIO | FUNCTIONAL_CASE。
+    /// REQUIREMENT | SCENARIO | FUNCTIONAL_CASE.
     kind: String,
     target_id: String,
 }
@@ -477,7 +479,7 @@ mod tests {
     #[tokio::test]
     async fn create_carries_custom_fields_and_put_replaces_them() {
         let (app, t) = app().await;
-        // 创建携带 customFields(键自动 trim)。
+        // Create with customFields; keys get trimmed.
         let resp = app
             .clone()
             .oneshot(post(
@@ -493,7 +495,7 @@ mod tests {
         assert_eq!(v["customFields"], serde_json::json!({"severity": "P0"}));
         let id = v["id"].as_str().expect("id").to_string();
 
-        // PUT 整体替换。
+        // PUT replaces wholesale.
         let resp = app
             .clone()
             .oneshot(put_req(
@@ -508,13 +510,13 @@ mod tests {
         let v: serde_json::Value = serde_json::from_slice(&bytes).expect("json");
         assert_eq!(v["customFields"], serde_json::json!({"env": "prod", "多选": "a,b"}));
 
-        // 列表读回替换后的字段。
+        // List reads back the replaced fields.
         let resp = app.clone().oneshot(get("/bug?projectId=p1", Some(&t))).await.expect("resp");
         let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.expect("body");
         let v: serde_json::Value = serde_json::from_slice(&bytes).expect("json");
         assert_eq!(v[0]["customFields"], serde_json::json!({"env": "prod", "多选": "a,b"}));
 
-        // 非法(空白键)→ 400;缺陷不存在 → 404。
+        // Blank key → 400; missing bug → 404.
         assert_eq!(
             app.clone()
                 .oneshot(put_req(

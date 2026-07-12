@@ -16,7 +16,8 @@ pub enum BugCustomFieldsError {
     Repo(#[from] RepoError),
 }
 
-/// 整体替换缺陷的自定义字段值(空 map 即清空);字段定义由项目模板管理。
+/// Replaces a bug's custom field values wholesale (empty map clears all); field
+/// definitions live in the project template.
 #[derive(Clone)]
 pub struct BugCustomFieldsUseCase {
     repo: Arc<dyn BugRepository>,
@@ -69,7 +70,7 @@ mod tests {
             .await
             .expect("replace");
         assert_eq!(bug.custom_fields, fields(&[("env", "prod"), ("owner", "bob")]));
-        // 持久化到仓储(severity 已被整体替换掉)。
+        // Persisted in the repository (severity was replaced away).
         let uc2 = BugCustomFieldsUseCase::new(Arc::new(repo));
         let cleared = uc2.replace(&id, &BTreeMap::new()).await.expect("clear");
         assert!(cleared.custom_fields.is_empty());

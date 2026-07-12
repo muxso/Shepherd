@@ -203,7 +203,7 @@ impl Verification {
         let mut created = 0;
         for idx in indices {
             let before = self.criterion(idx).map(|c| c.links.len()).unwrap_or(0);
-            // idx 来自自身标准,link 必成功;丢弃 Result 安全。
+            // idx comes from our own criteria, so link cannot fail; dropping the Result is safe.
             let _ = self.link(idx, decomposition_id, task_id);
             let after = self.criterion(idx).map(|c| c.links.len()).unwrap_or(0);
             if after > before {

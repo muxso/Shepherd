@@ -1,5 +1,5 @@
-//! Shepherd HTTP 服务组装根:装配各上下文的 pg 适配器与 http 路由,
-//! 暴露 REST API、OpenAPI 文档与 MCP 工具入口。
+//! Shepherd HTTP server composition root: wires each context's pg adapters and
+//! http routers, exposing the REST API, OpenAPI docs, and MCP tool entrypoint.
 
 #![allow(clippy::doc_lazy_continuation)]
 
@@ -90,7 +90,7 @@ async fn healthz() -> &'static str {
     "ok"
 }
 
-// 2s 短超时:PG 宕机时快速 503,不卡到连接池 acquire 超时。
+// Short 2s timeout: return 503 fast when PG is down instead of blocking on pool acquire.
 async fn readyz(State(pool): State<PgPool>) -> StatusCode {
     match tokio::time::timeout(Duration::from_secs(2), migrate::ping(&pool)).await {
         Ok(true) => StatusCode::OK,
@@ -158,10 +158,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let user_repo = Arc::new(PgUserRepository::new(pool.clone()));
     let user_uc = CreateUserUseCase::new(user_repo.clone());
     let user_admin = UserService::new(user_repo);
-    // 展示名解析直查 ms_user,绕开任何拦截(OIDC quirk 的修复)。
+    // Display-name resolution queries ms_user directly, bypassing any interception (fixes an OIDC quirk).
     let resolve_uc = ResolveUserNamesUseCase::new(Arc::new(PgUserDirectory::new(pool.clone())));
 
-    // 弱默认口令是公网扫描的首要目标;不拒启(保住本地开发),但日志里给出无法忽视的警告。
+    // Weak default passwords are the prime target of internet scans; don't refuse to start
+    // (keeps local dev working) but log a warning that is hard to miss.
     if matches!(cfg.admin_pw.as_str(), "admin" | "change-me" | "s3cret") {
         tracing::warn!(
             "SHEPHERD_ADMIN_PASSWORD 使用弱默认值({:?});生产部署必须改为强随机口令",
@@ -201,7 +202,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             ],
         )
         .await?;
-    // 组合存储:sak_ 前缀走 API Key 校验(agent 派发凭证),其余仍是 PG 会话;路由零改动。
+    // Composite store: sak_-prefixed tokens go through API-key verification (agent dispatch
+    // credentials); everything else stays PG sessions. No route changes needed.
     let apikeys = Arc::new(PgApiKeyRepository::new(pool.clone()));
     let sessions: Arc<dyn webauth::SessionStore> = Arc::new(ApiKeySessionStore::new(
         Arc::new(PgSessionStore::new(pool.clone())),
@@ -218,7 +220,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         user_role_repo.clone(),
     )
     .with_ttl_secs(ttl_secs);
-    // 可选 LDAP 目录认证(本地授权 + 外部认证):仅当 SHEPHERD_LDAP_* 配齐才启用。
+    // Optional LDAP directory auth (local authorization + external authentication);
+    // enabled only when all SHEPHERD_LDAP_* vars are set.
     if let Some(ldap) =
         system_setting::adapters::ldap::LdapAuthenticator::from_env(|k| std::env::var(k).ok())
     {
@@ -273,7 +276,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         sessions.clone(),
     );
 
-    // 个人模型设置(/me/llm-model)
+    // Per-user model settings (/me/llm-model).
     let llm_model_routes = system_setting::adapters::llm_model_http::router(
         Arc::new(PgLlmModelRepository::new(pool.clone())),
         sessions.clone(),
@@ -307,7 +310,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         sessions.clone(),
     );
 
-    // 通用评论(多态挂任意实体:REQUIREMENT / BUG / FUNCTIONAL_CASE …)。
+    // Generic comments (polymorphic: attach to any entity — REQUIREMENT / BUG / FUNCTIONAL_CASE ...).
     let comment_repo = Arc::new(comment::adapters::pg::PgCommentRepository::new(pool.clone()));
     let comment_routes = comment::adapters::http::router(
         comment::application::AddCommentUseCase::new(comment_repo.clone()),
@@ -353,7 +356,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         sessions.clone(),
     );
 
-    // SHEPHERD_AGENT_ASYNC:子进程后台跑 + HTTP 自回调收尾(派发秒回,绕开 30s 请求超时)。
+    // SHEPHERD_AGENT_ASYNC: run the subprocess in the background and finish via an HTTP
+    // self-callback, so dispatch returns immediately and avoids the 30s request timeout.
     let mut fleet_queue: Option<Arc<dyn delivery::ports::WorkQueue>> = None;
     let mut fleet_registry: Option<Arc<dyn delivery::ports::FleetRegistry>> = None;
     let agent: Arc<dyn AgentExecutor> = if cfg.agent.fleet {
@@ -396,7 +400,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     } else {
         Arc::new(delivery::adapters::EchoAgentExecutor::new())
     };
-    // 在 agent 被移入观察者前留一份克隆给 design 起草执行者。
+    // Keep a clone for the design drafting executor before `agent` moves into the observer.
     let design_agent = agent.clone();
     let base_delivery =
         DeliveryService::new(Arc::new(PgDeliveryRepository::new(pool.clone())), agent.clone());
@@ -412,7 +416,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut delivery_svc = base_delivery.with_observer(delivery_observer);
     if let Some(q) = &fleet_queue {
         delivery_svc = delivery_svc.with_queue(q.clone());
-        // 回收任务:周期重投「持有者 runtime 已离线 + 过容忍期」的 pending(心跳判活)。
+        // Reaper: periodically requeue pending work whose holder runtime is offline
+        // (liveness via heartbeat) and past the grace period.
         let q = q.clone();
         let reg = fleet_registry.clone();
         let interval_s: u64 = cfg.agent.fleet_reap_interval_s;
@@ -521,7 +526,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
     let plan_run_routes = plan_run::router(pool.clone(), sessions.clone());
 
-    // 默认选 local 而非 Noop:否则 `api batch-run` 会静默停在 RUNNING 且无结果。
+    // Default to local rather than Noop: otherwise `api batch-run` silently stalls in RUNNING with no results.
     let dispatcher: Arc<dyn api_test::ports::TaskDispatcher> = match &cfg.executor_url {
         Some(url) => {
             tracing::info!("api runner: HTTP dispatcher (JMeter) → {url}");

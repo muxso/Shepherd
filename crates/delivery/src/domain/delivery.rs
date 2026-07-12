@@ -15,7 +15,8 @@ pub enum ExecutorKind {
 }
 
 impl ExecutorKind {
-    /// 全部执行者类型的唯一权威清单;队列适配器与测试都从这里取,新增变体只改本文件。
+    /// Single authoritative list of executor kinds; queue adapters and tests consume
+    /// it, so a new variant only touches this file.
     pub const ALL: [ExecutorKind; 4] =
         [Self::ClaudeCode, Self::Codex, Self::OpenCode, Self::CodeBuddy];
 
@@ -131,7 +132,7 @@ pub struct DeliveryAttempt {
     pub decomposition_id: String,
     pub task_id: String,
     pub executor: ExecutorKind,
-    /// 定向派发的目标 runtime name;None = 任意同能力 runtime。
+    /// Target runtime name for targeted dispatch; None = any runtime with the capability.
     pub target_runtime: Option<String>,
     pub status: AttemptStatus,
     pub run_id: Option<String>,

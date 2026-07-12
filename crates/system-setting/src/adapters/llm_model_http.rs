@@ -1,5 +1,5 @@
-//! 个人模型设置(/me/llm-model):登录即可,增删改查只作用于本人配置;
-//! api_key 只写不读,响应一律掩码。
+//! Per-user model settings (/me/llm-model): any logged-in user; CRUD only touches the
+//! caller's own configs. api_key is write-only — responses always mask it.
 
 use std::sync::Arc;
 
@@ -37,7 +37,7 @@ pub fn router(repo: Arc<dyn LlmModelRepository>, sessions: Arc<dyn SessionStore>
         .with_state(LlmModelState { repo, sessions })
 }
 
-/// 空串→"";否则 "****" + 末 4 位。绝不回明文。
+/// Empty string → ""; otherwise "****" + last 4 chars. Never returns the plaintext.
 fn mask_api_key(key: &str) -> String {
     if key.is_empty() {
         return String::new();
@@ -89,7 +89,7 @@ fn repo_err_response(e: LlmModelRepoError) -> Response {
     }
 }
 
-/// provider/name 共用的口径:trim 非空且 ≤64 字符。
+/// Shared rule for provider/name: non-empty after trim and ≤64 chars.
 fn valid_field(s: &str) -> bool {
     let t = s.trim();
     !t.is_empty() && t.chars().count() <= 64
@@ -247,13 +247,13 @@ mod tests {
         assert_eq!(r.status(), StatusCode::CREATED);
         let v = json_body(r).await;
         let id = v["id"].as_str().expect("id").to_string();
-        assert_eq!(v["provider"], "deepseek"); // 入库小写
+        assert_eq!(v["provider"], "deepseek"); // lowercased on storage
         assert_eq!(v["name"], "deepseek-chat");
         assert_eq!(v["baseUrl"], "https://api.deepseek.com");
-        assert_eq!(v["apiKeyMasked"], "****2345"); // 掩码:****+末 4 位
+        assert_eq!(v["apiKeyMasked"], "****2345"); // mask: **** + last 4 chars
         assert_eq!(v["enabled"], true);
         assert!(v["createdAt"].is_i64());
-        assert!(v.get("apiKey").is_none(), "{v}"); // 绝不回明文
+        assert!(v.get("apiKey").is_none(), "{v}"); // plaintext never returned
 
         let list =
             app.clone().oneshot(req("GET", "/me/llm-model", "", Some(&alice))).await.expect("r");
@@ -276,7 +276,7 @@ mod tests {
         let v = json_body(upd).await;
         assert_eq!(v["name"], "deepseek-reasoner");
         assert_eq!(v["enabled"], false);
-        assert_eq!(v["apiKeyMasked"], "****2345"); // 未动的 key 保留
+        assert_eq!(v["apiKeyMasked"], "****2345"); // untouched key preserved
 
         let del = app
             .clone()
@@ -316,7 +316,7 @@ mod tests {
             .await
             .expect("r");
         assert_eq!(first.status(), StatusCode::CREATED);
-        // 同 user+provider+name → 409;另一用户不冲突
+        // Same user+provider+name → 409; another user does not conflict.
         let dup = app
             .clone()
             .oneshot(req("POST", "/me/llm-model", CREATE, Some(&alice)))
@@ -351,7 +351,8 @@ mod tests {
             .expect("r");
         let id = json_body(r).await["id"].as_str().expect("id").to_string();
 
-        // 越权(bob 改/删 alice 的行)与不存在的 id 同为 404
+        // Cross-user access (bob updating/deleting alice's row) and a missing id are
+        // both 404.
         let upd = app
             .clone()
             .oneshot(req("PUT", &format!("/me/llm-model/{id}"), r#"{"enabled":false}"#, Some(&bob)))
@@ -371,7 +372,7 @@ mod tests {
             .expect("r");
         assert_eq!(ghost.status(), StatusCode::NOT_FOUND);
 
-        // 匿名 → 401
+        // Anonymous → 401.
         let anon = app.oneshot(req("GET", "/me/llm-model", "", None)).await.expect("r");
         assert_eq!(anon.status(), StatusCode::UNAUTHORIZED);
     }

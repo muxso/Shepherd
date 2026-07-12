@@ -36,7 +36,8 @@ impl LocalCommandAgentExecutor {
         match kind {
             ExecutorKind::ClaudeCode => &self.claude_code,
             ExecutorKind::Codex => &self.codex,
-            // 本地路径只配两套 argv;OpenCode/CodeBuddy 故意回退 claude argv(真正路由在 crates/agent-runtime)。
+            // The local path only configures two argvs; OpenCode/CodeBuddy deliberately
+            // fall back to the claude argv (real routing lives in crates/agent-runtime).
             ExecutorKind::OpenCode | ExecutorKind::CodeBuddy => &self.claude_code,
         }
     }
@@ -118,7 +119,7 @@ impl AgentExecutor for LocalCommandAgentExecutor {
                     .await
                     .map_err(|e| ExecError::Backend(e.to_string()))?;
             }
-            // 后台 wait() 必须保留:不收割子进程会留下僵尸。
+            // The background wait() is required: an unreaped child becomes a zombie.
             tokio::spawn(async move {
                 let _ = child.wait().await;
             });
@@ -138,7 +139,7 @@ impl AgentExecutor for LocalCommandAgentExecutor {
                 .write_all(spec_to_prompt(spec).as_bytes())
                 .await
                 .map_err(|e| ExecError::Backend(e.to_string()))?;
-            // stdin 在此 drop → 向子进程发送 EOF(否则按行读取会永远阻塞)
+            // stdin drops here, sending EOF to the child (line reads would block forever otherwise)
         }
 
         let stdout = child.stdout.take().ok_or_else(|| ExecError::Backend("no stdout".into()))?;

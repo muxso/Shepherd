@@ -8,12 +8,14 @@ import { useI18n } from '../i18n'
 import { PageBody, PageContainer, PageHeader, SelectProjectEmpty } from '../components/Page'
 import { regList, type RegItem } from '../registry'
 
-// 待办 = 当前项目里「等我处理」的事,按来源分区聚合:
-//   待评审需求(DRAFT 或处于 审核/评审 阶段)→ /requirement
-//   待处理缺陷(NEW / REOPENED)→ /bug
-//   进行中的测试计划(已开始执行但未全部通过)→ /test-plan?open=<id>
-//   待验收需求(currentStage=ACCEPTANCE;delivery 无项目级待验收列表接口,用需求验收阶段口径)→ /requirement
-// 只读聚合现有接口,不引入新端点;各区独立拉取,单区失败不拖垮整页。
+// Todos = items awaiting the current user in this project, grouped by source:
+//   requirements pending review (DRAFT or in AUDIT/REVIEW stage) → /requirement
+//   pending bugs (NEW / REOPENED) → /bug
+//   in-progress test plans (started but not fully passed) → /test-plan?open=<id>
+//   requirements pending acceptance (currentStage=ACCEPTANCE; delivery side has no
+//   project-level pending-acceptance list API, so use the requirement stage) → /requirement
+// Read-only aggregation over existing APIs, no new endpoints; sections fetch
+// independently so one failure doesn't break the page.
 
 interface TodoRow {
   id: string
@@ -109,7 +111,7 @@ export default function Todos() {
 
   if (!projectId) return <SelectProjectEmpty />
 
-  // 需求阶段中文兜底(仅待办视图展示用;正式阶段文案以需求页为准)。
+  // Chinese stage-label fallback for this view only; canonical labels live in the requirement page.
   const stageZh: Record<string, string> = { AUDIT: '审核', REVIEW: '评审', ACCEPTANCE: '验收' }
   const stageTag = (r: Requirement) => {
     const s = r.currentStage || ''
@@ -120,15 +122,14 @@ export default function Todos() {
     )
   }
 
-  // 待评审需求:草稿(还没定基线)或流水线卡在 审核/评审 阶段。
+  // Pending review: drafts (not yet baselined) or stuck in AUDIT/REVIEW stage.
   const reviewReqs = reqs.filter(
     (r) => r.status === 'DRAFT' || r.currentStage === 'AUDIT' || r.currentStage === 'REVIEW',
   )
-  // 待验收:需求验收阶段口径(delivery/任务侧没有项目级「待验收」列表接口)。
+  // Pending acceptance: requirement ACCEPTANCE stage (delivery/task side has no project-level list API).
   const acceptReqs = reqs.filter((r) => r.currentStage === 'ACCEPTANCE')
-  // 待处理缺陷:新建 + 重新打开。
   const pendingBugs = bugs.filter((b) => ['NEW', 'REOPENED'].includes((b.status || '').toUpperCase()))
-  // 进行中的计划:已开始执行但未全部通过(与测试计划页「进行中」口径一致)。
+  // In-progress plans: started but not fully passed (same definition as the test-plan page).
   const runningPlans = plans.filter((p) => {
     const s = statsMap[p.id]
     return !!s && s.executeRate > 0 && !s.isPass

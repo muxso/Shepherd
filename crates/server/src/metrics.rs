@@ -1,5 +1,7 @@
-//! 进程内 Prometheus 指标:HTTP 请求计数 + 时延直方图(按 method/status),`/metrics` 暴露。
-//! 零外部依赖;label 只取 method+status(不含原始 path,避免基数爆炸)。OTel 分布式追踪后续。
+//! In-process Prometheus metrics: HTTP request counter + latency histogram (by
+//! method/status), exposed at `/metrics`. Zero external dependencies; labels are
+//! method+status only (no raw path, to avoid cardinality explosion). OTel
+//! distributed tracing comes later.
 
 use std::collections::HashMap;
 use std::fmt::Write as _;
@@ -26,7 +28,7 @@ impl Series {
     fn observe(&self, ms: u64) {
         self.count.fetch_add(1, Ordering::Relaxed);
         self.sum_ms.fetch_add(ms, Ordering::Relaxed);
-        // 超过最大桶的只计入 +Inf(= count),不落任何显式桶。
+        // Values above the largest bucket count only toward +Inf (= count), no explicit bucket.
         if let Some(i) = BUCKETS_MS.iter().position(|&b| ms <= b) {
             self.buckets[i].fetch_add(1, Ordering::Relaxed);
         }
@@ -92,7 +94,8 @@ impl Metrics {
     }
 }
 
-/// 中间件:记录每个请求的 method/status/时延。挂在最外层以覆盖超时/限流转换后的最终状态。
+/// Middleware: records each request's method/status/latency. Mounted outermost so it
+/// sees the final status after timeout/rate-limit conversions.
 pub async fn track(State(m): State<Arc<Metrics>>, req: Request, next: Next) -> Response {
     let method = req.method().as_str().to_owned();
     let start = Instant::now();
@@ -119,7 +122,7 @@ mod tests {
 
         assert!(out.contains("shepherd_http_requests_total{method=\"GET\",status=\"200\"} 2"));
         assert!(out.contains("shepherd_http_requests_total{method=\"POST\",status=\"500\"} 1"));
-        // 3ms ≤ le=5(累计 1);3ms,7ms ≤ le=10(累计 2)。
+        // 3ms <= le=5 (cumulative 1); 3ms and 7ms <= le=10 (cumulative 2).
         assert!(out.contains("method=\"GET\",status=\"200\",le=\"5\"} 1"));
         assert!(out.contains("method=\"GET\",status=\"200\",le=\"10\"} 2"));
         assert!(
@@ -127,7 +130,7 @@ mod tests {
         );
         assert!(out
             .contains("shepherd_http_request_duration_ms_count{method=\"GET\",status=\"200\"} 2"));
-        // 600ms 落入 le=1000;+Inf 与 count 都为 1。
+        // 600ms lands in le=1000; +Inf and count are both 1.
         assert!(out.contains("method=\"POST\",status=\"500\",le=\"1000\"} 1"));
         assert!(out.contains("method=\"POST\",status=\"500\",le=\"+Inf\"} 1"));
     }

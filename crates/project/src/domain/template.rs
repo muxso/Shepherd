@@ -1,5 +1,6 @@
-//! 项目内模板:kind 区分使用场景(requirement / functional-case / bug ...),
-//! config 对后端不透明,只要求是 JSON 对象,结构由各前端场景自定义。
+//! Project-scoped templates: `kind` distinguishes the usage scenario (requirement /
+//! functional-case / bug ...). `config` is opaque to the backend — it only has to be a JSON
+//! object; each frontend scenario defines its own structure.
 
 use serde_json::Value;
 use thiserror::Error;
@@ -23,7 +24,8 @@ pub enum TemplateError {
     ConfigNotObject,
 }
 
-/// kind 归一:trim + 小写,空或超长报错。写入与查询过滤共用同一套规则。
+/// Normalizes `kind`: trim + lowercase; errors on empty or over-length. Writes and query
+/// filters share this same rule.
 pub fn normalize_kind(kind: &str) -> Result<String, TemplateError> {
     let kind = kind.trim().to_lowercase();
     if kind.is_empty() {
@@ -35,7 +37,8 @@ pub fn normalize_kind(kind: &str) -> Result<String, TemplateError> {
     Ok(kind)
 }
 
-/// name 归一:trim,空或超长报错(大小写保留,唯一性按原样比较)。
+/// Normalizes `name`: trim; errors on empty or over-length (case is preserved; uniqueness
+/// compares the name as-is).
 pub fn normalize_name(name: &str) -> Result<String, TemplateError> {
     let name = name.trim();
     if name.is_empty() {
@@ -47,7 +50,8 @@ pub fn normalize_name(name: &str) -> Result<String, TemplateError> {
     Ok(name.to_string())
 }
 
-/// config 只做最小约束:必须是 JSON 对象,内部结构后端不解释。
+/// Minimal constraint on `config`: it must be a JSON object; the backend does not interpret
+/// its internal structure.
 pub fn validate_config(config: &Value) -> Result<(), TemplateError> {
     if config.is_object() {
         Ok(())
@@ -56,7 +60,7 @@ pub fn validate_config(config: &Value) -> Result<(), TemplateError> {
     }
 }
 
-/// 入参校验后的模板(尚未落库)。
+/// A validated template that has not been persisted yet.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NewTemplate {
     pub project_id: String,

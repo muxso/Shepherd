@@ -1,4 +1,4 @@
-// 写 UNCOMPRESSED:避免引入 C 压缩依赖,保持纯 Rust。
+// Writes UNCOMPRESSED to avoid pulling in C compression deps and stay pure Rust.
 
 use std::sync::Arc;
 

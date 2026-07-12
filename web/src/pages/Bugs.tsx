@@ -12,7 +12,7 @@ import { CF_GROUP, CustomFieldItems, collectCustomValues, useFieldTemplate } fro
 
 const STATUSES = ['NEW', 'RESOLVED', 'CLOSED', 'REOPENED', 'REJECTED']
 
-// 工作区常驻「新建缺陷」tab 的 key(缺陷暂无详情 tab,tab 池里只有列表 + 新建)。
+// Key of the persistent "new bug" workspace tab (bugs have no detail tab; the tab pool is list + new only).
 const NEW_KEY = '__new_bug__'
 
 const bugColor = (s: string) => {
@@ -23,7 +23,7 @@ const bugColor = (s: string) => {
   return 'blue'
 }
 
-// 状态码 → 展示文案(i18n key 兜底中文);未登记的自定义状态原样显示。
+// Status code → display label (i18n key with Chinese fallback); unregistered custom statuses render as-is.
 const statusLabel = (t: (k: string, d?: string) => string, s: string) => {
   const zh: Record<string, string> = {
     NEW: '新建', RESOLVED: '已解决', CLOSED: '已关闭', REOPENED: '重新打开', REJECTED: '已拒绝',
@@ -31,7 +31,7 @@ const statusLabel = (t: (k: string, d?: string) => string, s: string) => {
   return zh[s] ? t(`bug.st.${s}`, zh[s]) : s
 }
 
-// 缺陷列表/创建/状态流转全走后端(GET /bug、POST /bug、POST /bug/{id}/status)。
+// Bug list/create/status transitions all go through the backend (GET /bug, POST /bug, POST /bug/{id}/status).
 export default function Bugs() {
   const { t } = useI18n()
   const { projectId } = useApp()
@@ -85,7 +85,7 @@ export default function Bugs() {
   return <BugsList items={items} loading={loading} projectId={projectId} refresh={refresh} setItems={setItems} relBug={relBug} setRelBug={setRelBug} changeStatus={changeStatus} tabs={tabs} t={t} />
 }
 
-// 列表 + 三件套(视图/筛选/列设置):useListView 是 hook,拆成子组件避免主组件条件返回后调用 hook。
+// List + view/filter/column toolbar: useListView is a hook, so this lives in a child component to avoid calling hooks after the parent's conditional return.
 function BugsList({ items, loading, projectId, refresh, setItems, relBug, setRelBug, changeStatus, tabs, t }: {
   items: Bug[]
   loading: boolean
@@ -141,7 +141,7 @@ function BugsList({ items, loading, projectId, refresh, setItems, relBug, setRel
         options: STATUSES.map((s) => ({ value: s, label: statusLabel(t, s) })),
         get: (r) => (r.status || 'NEW').toUpperCase(),
       },
-      // 以下仅供条件选择(与搜索框/列展示重复,不渲染在声明式筛选区)。
+      // Advanced-condition only (duplicates search box / columns; not rendered in the declarative filter area).
       { key: 'id', label: 'ID', type: 'text', advOnly: true, get: (r) => r.id },
       { key: 'title', label: t('bug.colTitle', '标题'), type: 'text', advOnly: true, get: (r) => r.title || '' },
       { key: 'createdBy', label: t('lv.createdBy', '创建人'), type: 'text', advOnly: true, get: (r) => r.createdBy || '' },
@@ -150,7 +150,6 @@ function BugsList({ items, loading, projectId, refresh, setItems, relBug, setRel
     rows: items,
   })
 
-  // 工作区「新建缺陷」tab:标题 + 模板自定义字段平铺;成功 → 关 tab、列表刷新。
   const detailTabs = tabs.openIds.flatMap((id) =>
     id === NEW_KEY
       ? [{
@@ -196,11 +195,10 @@ function BugsList({ items, loading, projectId, refresh, setItems, relBug, setRel
   )
 }
 
-// 工作区「新建缺陷」Tab:标题 + 模板自定义字段,底部 创建/取消。
-// 新建缺陷一律从「新建」状态开始;导入历史缺陷带其它状态走 API 的 initialStatus。
+// New bugs always start in NEW status; importing historical bugs with other statuses goes through the API's initialStatus.
 function NewBugTab({ projectId, onCreated, onCancel }: { projectId: string; onCreated: (b: Bug) => void; onCancel: () => void }) {
   const { t } = useI18n()
-  // 缺陷字段模板:title 之外的字段全靠自定义,按模板渲染。
+  // Bug field template: every field except title is custom, rendered from the template.
   const { fields: tplFields } = useFieldTemplate('bug')
   const [saving, setSaving] = useState(false)
   return (
@@ -230,7 +228,6 @@ function NewBugTab({ projectId, onCreated, onCancel }: { projectId: string; onCr
         <Form.Item name="title" label={t('bug.title', '标题')} rules={[{ required: true }]}>
           <Input placeholder={t('bug.titlePlaceholder', '如:登录按钮无响应')} autoFocus />
         </Form.Item>
-        {/* 自定义字段(字段模板):按模板配置动态渲染。 */}
         <CustomFieldItems kind="bug" fields={tplFields} />
         <Space>
           <Button type="primary" htmlType="submit" loading={saving}>{t('a.create', '创建')}</Button>
@@ -241,8 +238,8 @@ function NewBugTab({ projectId, onCreated, onCancel }: { projectId: string; onCr
   )
 }
 
-// 缺陷 ↔ 资产关联抽屉:回溯缺陷来自哪条需求/场景用例/功能用例。
-// 目标名称从各自列表接口解析;已关联的目标在候选里隐藏。
+// Bug ↔ asset relations drawer: traces which requirement/scenario/functional case a bug came from.
+// Target names resolve from each list endpoint; already-linked targets are hidden from candidates.
 const REL_KINDS = ['REQUIREMENT', 'SCENARIO', 'FUNCTIONAL_CASE'] as const
 
 function RelationsDrawer({ bug, projectId, onClose }: { bug: Bug | null; projectId: string; onClose: () => void }) {
@@ -265,7 +262,7 @@ function RelationsDrawer({ bug, projectId, onClose }: { bug: Bug | null; project
     setKind('REQUIREMENT')
     setTargetId(undefined)
     api.bugRelations(bug.id).then((p) => setRelations(p.relations ?? [])).catch(() => setRelations([]))
-    // 三类资产各拉一次,构建 id → 名称 映射(候选下拉 + 已关联行共用)。
+    // Fetch each asset kind once and build id → name maps (shared by candidate dropdown and linked rows).
     Promise.all([
       api.requirements(projectId).then((p) => p.items ?? []).catch(() => []),
       api.scenarios(projectId).catch(() => []),

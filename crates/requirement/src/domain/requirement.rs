@@ -2,15 +2,15 @@ use std::collections::BTreeMap;
 
 use thiserror::Error;
 
-/// 与 DB 列一致。
+/// Matches the DB column width.
 pub const MAX_TITLE_LEN: usize = 255;
 
-/// 单条需求最多挂的标签数。
+/// Max tags per requirement.
 pub const MAX_TAGS: usize = 10;
-/// 单个标签最大长度(按字符数,避免中文被误判)。
+/// Max tag length in chars (not bytes, so CJK is not over-counted).
 pub const MAX_TAG_LEN: usize = 32;
 
-/// 自定义字段:最多键数 / 键长 / 值长(按字符数)。
+/// Custom fields: max key count / key length / value length (in chars).
 pub const MAX_CUSTOM_FIELDS: usize = 32;
 pub const MAX_CUSTOM_FIELD_KEY_LEN: usize = 64;
 pub const MAX_CUSTOM_FIELD_VALUE_LEN: usize = 2000;
@@ -89,15 +89,17 @@ pub struct NewRequirement {
     pub created_by: String,
     pub priority: RequirementPriority,
     pub req_type: RequirementType,
-    /// 已清洗的标签(见 `normalize_tags`)。
+    /// Normalized tags (see `normalize_tags`).
     pub tags: Vec<String>,
-    /// 已校验的截止日期 `YYYY-MM-DD`。
+    /// Validated due date, `YYYY-MM-DD`.
     pub due_date: Option<String>,
-    /// 父需求 id;存在性/同项目校验在应用层做(需要仓储)。
+    /// Parent requirement id; existence/same-project checks happen in the
+    /// application layer (they need the repository).
     pub parent_id: Option<String>,
-    /// 已校验的自定义字段值(见 `normalize_custom_fields`);字段定义由项目模板管理。
+    /// Validated custom field values (see `normalize_custom_fields`); field
+    /// definitions are managed by the project template.
     pub custom_fields: BTreeMap<String, String>,
-    /// 所属模块 id(共享 ms_module 项目级模块树);空串 = 未规划。
+    /// Module id (shared ms_module project-level module tree); empty = unfiled.
     pub module_id: String,
 }
 
@@ -116,7 +118,7 @@ impl NewRequirement {
         if title.is_empty() {
             return Err(RequirementError::EmptyTitle);
         }
-        // 按字符数计长度,避免中文标题被误判超长。
+        // Count chars, not bytes, so CJK titles are not flagged as too long.
         if title.chars().count() > MAX_TITLE_LEN {
             return Err(RequirementError::TitleTooLong);
         }
@@ -151,38 +153,38 @@ impl NewRequirement {
         self
     }
 
-    /// 携带已清洗的标签(调用方先过 `normalize_tags`)。
+    /// Attach normalized tags (caller runs `normalize_tags` first).
     pub fn with_tags(mut self, tags: Vec<String>) -> Self {
         self.tags = tags;
         self
     }
 
-    /// 携带已校验的截止日期(调用方先过 `parse_due_date`)。
+    /// Attach a validated due date (caller runs `parse_due_date` first).
     pub fn with_due_date(mut self, due_date: Option<String>) -> Self {
         self.due_date = due_date;
         self
     }
 
-    /// 携带父需求 id(应用层已校验存在性/同项目)。
+    /// Attach a parent id (application layer already checked existence/same project).
     pub fn with_parent(mut self, parent_id: Option<String>) -> Self {
         self.parent_id = parent_id;
         self
     }
 
-    /// 携带已校验的自定义字段(调用方先过 `normalize_custom_fields`)。
+    /// Attach validated custom fields (caller runs `normalize_custom_fields` first).
     pub fn with_custom_fields(mut self, custom_fields: BTreeMap<String, String>) -> Self {
         self.custom_fields = custom_fields;
         self
     }
 
-    /// 携带所属模块 id(共享模块树;空串 = 未规划)。
+    /// Attach a module id (shared module tree; empty = unfiled).
     pub fn with_module(mut self, module_id: &str) -> Self {
         self.module_id = module_id.trim().to_string();
         self
     }
 }
 
-/// 按状态聚合的需求计数(项目仪表盘用)。
+/// Requirement counts grouped by status (project dashboard).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct StatusCounts {
     pub draft: u64,
@@ -196,7 +198,6 @@ impl StatusCounts {
         self.draft + self.baselined + self.delivered + self.archived
     }
 
-    /// 把一个状态计入对应桶。
     pub fn add(&mut self, status: RequirementStatus) {
         match status {
             RequirementStatus::Draft => self.draft += 1,
@@ -236,7 +237,7 @@ impl RequirementStatus {
     }
 }
 
-/// 需求优先级,P0 最高;缺省 P2。
+/// Requirement priority; P0 is highest, defaults to P2.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum RequirementPriority {
     P0,
@@ -256,7 +257,7 @@ impl RequirementPriority {
         }
     }
 
-    /// 归一化(trim + 大写)后匹配;非法值 → None。
+    /// Match after normalization (trim + uppercase); unknown values → None.
     pub fn parse(s: &str) -> Option<Self> {
         match s.trim().to_ascii_uppercase().as_str() {
             "P0" => Some(Self::P0),
@@ -268,13 +269,13 @@ impl RequirementPriority {
     }
 }
 
-/// 解析优先级;非法值报校验错(HTTP 层映射为 400)。
+/// Parse a priority; invalid values are a validation error (HTTP layer maps it to 400).
 pub fn parse_priority(s: &str) -> Result<RequirementPriority, RequirementError> {
     RequirementPriority::parse(s)
         .ok_or_else(|| RequirementError::InvalidPriority(s.trim().to_string()))
 }
 
-/// 需求类型;缺省 FEATURE。
+/// Requirement type; defaults to FEATURE.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum RequirementType {
     #[default]
@@ -294,7 +295,7 @@ impl RequirementType {
         }
     }
 
-    /// 归一化(trim + 大写)后匹配;非法值 → None。
+    /// Match after normalization (trim + uppercase); unknown values → None.
     pub fn parse(s: &str) -> Option<Self> {
         match s.trim().to_ascii_uppercase().as_str() {
             "FEATURE" => Some(Self::Feature),
@@ -306,12 +307,12 @@ impl RequirementType {
     }
 }
 
-/// 解析需求类型;非法值报校验错(HTTP 层映射为 400)。
+/// Parse a requirement type; invalid values are a validation error (HTTP layer maps it to 400).
 pub fn parse_req_type(s: &str) -> Result<RequirementType, RequirementError> {
     RequirementType::parse(s).ok_or_else(|| RequirementError::InvalidReqType(s.trim().to_string()))
 }
 
-/// 工作推进状态(开发/测试共用);缺省未开始。
+/// Work progress status (shared by dev and test); defaults to not started.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum WorkStatus {
     #[default]
@@ -329,7 +330,7 @@ impl WorkStatus {
         }
     }
 
-    /// 归一化(trim + 大写)后匹配;非法值 → None。
+    /// Match after normalization (trim + uppercase); unknown values → None.
     pub fn parse(s: &str) -> Option<Self> {
         match s.trim().to_ascii_uppercase().as_str() {
             "NOT_STARTED" => Some(Self::NotStarted),
@@ -340,12 +341,12 @@ impl WorkStatus {
     }
 }
 
-/// 解析工作状态;非法值报校验错(HTTP 层映射为 400)。
+/// Parse a work status; invalid values are a validation error (HTTP layer maps it to 400).
 pub fn parse_work_status(s: &str) -> Result<WorkStatus, RequirementError> {
     WorkStatus::parse(s).ok_or_else(|| RequirementError::InvalidWorkStatus(s.trim().to_string()))
 }
 
-/// 需求流水线阶段,顺序固定:创建 → 审核 → 评审 → 开发 → 测试 → 验收 → 交付。
+/// Requirement pipeline stage; fixed order: created → audit → review → dev → test → acceptance → delivery.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Stage {
     Created,
@@ -358,7 +359,7 @@ pub enum Stage {
 }
 
 impl Stage {
-    /// 全部阶段,按流水线顺序。
+    /// All stages, in pipeline order.
     pub const ALL: [Stage; 7] = [
         Self::Created,
         Self::Audit,
@@ -381,7 +382,7 @@ impl Stage {
         }
     }
 
-    /// 归一化(trim + 大写)后匹配;非法值 → None。
+    /// Match after normalization (trim + uppercase); unknown values → None.
     pub fn parse(s: &str) -> Option<Self> {
         match s.trim().to_ascii_uppercase().as_str() {
             "CREATED" => Some(Self::Created),
@@ -396,12 +397,12 @@ impl Stage {
     }
 }
 
-/// 解析阶段;非法值报校验错(HTTP 层映射为 400)。
+/// Parse a stage; invalid values are a validation error (HTTP layer maps it to 400).
 pub fn parse_stage(s: &str) -> Result<Stage, RequirementError> {
     Stage::parse(s).ok_or_else(|| RequirementError::InvalidStage(s.trim().to_string()))
 }
 
-/// 阶段推进状态;缺省待处理。
+/// Stage progress status; defaults to pending.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum StageStatus {
     #[default]
@@ -421,7 +422,7 @@ impl StageStatus {
         }
     }
 
-    /// 归一化(trim + 大写)后匹配;非法值 → None。
+    /// Match after normalization (trim + uppercase); unknown values → None.
     pub fn parse(s: &str) -> Option<Self> {
         match s.trim().to_ascii_uppercase().as_str() {
             "PENDING" => Some(Self::Pending),
@@ -433,12 +434,12 @@ impl StageStatus {
     }
 }
 
-/// 解析阶段状态;非法值报校验错(HTTP 层映射为 400)。
+/// Parse a stage status; invalid values are a validation error (HTTP layer maps it to 400).
 pub fn parse_stage_status(s: &str) -> Result<StageStatus, RequirementError> {
     StageStatus::parse(s).ok_or_else(|| RequirementError::InvalidStageStatus(s.trim().to_string()))
 }
 
-/// 一条阶段行:状态 + 计划起止日期(`YYYY-MM-DD`)+ 实际起止时间(epoch 毫秒)。
+/// One stage row: status + planned start/end dates (`YYYY-MM-DD`) + actual start/finish times (epoch ms).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StageRow {
     pub stage: Stage,
@@ -450,7 +451,7 @@ pub struct StageRow {
 }
 
 impl StageRow {
-    /// 该阶段的默认行:PENDING、无计划、无时间戳。
+    /// Default row for a stage: PENDING, no plan, no timestamps.
     pub fn pending(stage: Stage) -> Self {
         Self {
             stage,
@@ -462,8 +463,10 @@ impl StageRow {
         }
     }
 
-    /// 推进状态并盖章:进 IN_PROGRESS 记开始时间;进 DONE 补齐开始/完成时间。
-    /// 时间戳先写先得,重复推进不覆盖;回 PENDING 不清空;SKIPPED 任意状态可进,不盖章。
+    /// Advance the status and stamp times: IN_PROGRESS records the start time;
+    /// DONE backfills start/finish. Timestamps are first-write-wins and never
+    /// overwritten; going back to PENDING keeps them; SKIPPED is reachable from
+    /// any state and stamps nothing.
     pub fn set_status(&mut self, status: StageStatus, now_ms: i64) {
         self.status = status;
         match status {
@@ -479,8 +482,9 @@ impl StageRow {
     }
 }
 
-/// 把稀疏的阶段行归一成固定 7 行(按流水线顺序,缺失的补 PENDING 默认行);
-/// 旧数据没回填也能得到完整流水线。
+/// Normalize sparse stage rows into the fixed 7 rows (pipeline order, missing
+/// rows filled with PENDING defaults); legacy data without backfill still gets
+/// a complete pipeline.
 pub fn fill_stages(rows: &[StageRow]) -> Vec<StageRow> {
     Stage::ALL
         .iter()
@@ -490,8 +494,10 @@ pub fn fill_stages(rows: &[StageRow]) -> Vec<StageRow> {
         .collect()
 }
 
-/// 阶段逾期判定(实时计算,不落库):设了计划结束日且未跳过——
-/// 已完成的看完成日期是否晚于计划;未完成的看今天是否已过计划(当天不算)。
+/// Stage overdue check (computed on read, not persisted): only when a planned
+/// end date is set and the stage is not skipped — a finished stage is overdue
+/// if it finished after the plan; an unfinished one if today is past the plan
+/// (the planned day itself does not count).
 pub fn stage_overdue(row: &StageRow, today: &str) -> bool {
     let Some(end) = row.planned_end.as_deref() else { return false };
     if row.status == StageStatus::Skipped {
@@ -503,7 +509,8 @@ pub fn stage_overdue(row: &StageRow, today: &str) -> bool {
     }
 }
 
-/// 标签清洗:trim、去空、按首现顺序去重;超过 `MAX_TAGS` 个或单个超 `MAX_TAG_LEN` 报校验错。
+/// Tag normalization: trim, drop empties, dedupe keeping first occurrence;
+/// more than `MAX_TAGS` tags or one longer than `MAX_TAG_LEN` is a validation error.
 pub fn normalize_tags(raw: &[String]) -> Result<Vec<String>, RequirementError> {
     let mut out: Vec<String> = Vec::new();
     for t in raw {
@@ -525,8 +532,9 @@ pub fn normalize_tags(raw: &[String]) -> Result<Vec<String>, RequirementError> {
     Ok(out)
 }
 
-/// 自定义字段清洗:键 trim 后须非空且 ≤ `MAX_CUSTOM_FIELD_KEY_LEN` 字符,
-/// 值 ≤ `MAX_CUSTOM_FIELD_VALUE_LEN` 字符,最多 `MAX_CUSTOM_FIELDS` 个键(长度均按字符数)。
+/// Custom field normalization: keys must be non-empty after trim and at most
+/// `MAX_CUSTOM_FIELD_KEY_LEN` chars, values at most `MAX_CUSTOM_FIELD_VALUE_LEN`
+/// chars, at most `MAX_CUSTOM_FIELDS` keys (all lengths counted in chars).
 pub fn normalize_custom_fields(
     raw: &BTreeMap<String, String>,
 ) -> Result<BTreeMap<String, String>, RequirementError> {
@@ -550,7 +558,7 @@ pub fn normalize_custom_fields(
     Ok(out)
 }
 
-/// 校验截止日期串:严格 `YYYY-MM-DD`,月日范围合法(含闰年判定)。
+/// Validate a due date string: strict `YYYY-MM-DD` with valid month/day ranges (leap years included).
 pub fn parse_due_date(s: &str) -> Result<String, RequirementError> {
     let s = s.trim();
     let bad = || RequirementError::InvalidDueDate(s.to_string());
@@ -589,7 +597,7 @@ fn days_in_month(year: u32, month: u32) -> u32 {
     }
 }
 
-/// epoch 毫秒 → UTC 日期串 `YYYY-MM-DD`(civil-from-days 算法,纯函数便于测试)。
+/// Epoch ms → UTC date string `YYYY-MM-DD` (civil-from-days algorithm; pure function for easy testing).
 pub fn date_from_epoch_ms(ms: i64) -> String {
     let days = ms.div_euclid(86_400_000);
     let z = days + 719_468;
@@ -604,7 +612,7 @@ pub fn date_from_epoch_ms(ms: i64) -> String {
     format!("{y:04}-{m:02}-{d:02}")
 }
 
-/// 变更日志:待追加的一条字段级变更(时间由存储层盖章)。
+/// Change log: one field-level change to append (timestamp stamped by the storage layer).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NewChange {
     pub changed_by: String,
@@ -613,7 +621,7 @@ pub struct NewChange {
     pub new_value: String,
 }
 
-/// 变更日志:已落库的一条记录(读侧)。
+/// Change log: one persisted record (read side).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ChangeEntry {
     pub changed_at_ms: i64,
@@ -623,7 +631,7 @@ pub struct ChangeEntry {
     pub new_value: String,
 }
 
-/// 不可变快照:一旦创建,内容永不改写;修订只追加新版本。
+/// Immutable snapshot: never rewritten once created; revisions only append new versions.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RequirementVersion {
     pub version: u32,
@@ -645,16 +653,18 @@ pub struct Requirement {
     pub req_type: RequirementType,
     pub tags: Vec<String>,
     pub parent_id: Option<String>,
-    /// 自定义字段值 map<字段key, 字符串值>;字段定义由项目模板管理,多选值逗号拼接。
+    /// Custom field values, map of field key → string value; definitions are
+    /// managed by the project template, multi-select values are comma-joined.
     pub custom_fields: BTreeMap<String, String>,
-    /// 所属模块 id(共享 ms_module 项目级模块树);空串 = 未规划。
+    /// Module id (shared ms_module project-level module tree); empty = unfiled.
     pub module_id: String,
-    /// 截止日期 `YYYY-MM-DD`;是否逾期由 `is_overdue` 实时计算,不落库。
+    /// Due date `YYYY-MM-DD`; overdue is computed on read by `is_overdue`, not persisted.
     pub due_date: Option<String>,
-    /// 创建/更新时间(epoch 毫秒,全库口径);由存储层盖章,内存值 0 表示尚未落库。
+    /// Created/updated timestamps (epoch ms, DB-wide convention); stamped by
+    /// the storage layer, 0 means not yet persisted.
     pub created_at_ms: i64,
     pub updated_at_ms: i64,
-    /// 创建人(登录用户 id);历史数据可能为空串。
+    /// Creator (login user id); may be empty for legacy data.
     pub created_by: String,
     pub dev_status: WorkStatus,
     pub test_status: WorkStatus,
@@ -662,7 +672,7 @@ pub struct Requirement {
     pub dev_finished_at_ms: Option<i64>,
     pub test_started_at_ms: Option<i64>,
     pub test_finished_at_ms: Option<i64>,
-    /// 7 阶段流水线,恒为全部阶段、按顺序(仓储层用 `fill_stages` 补齐缺行)。
+    /// The 7-stage pipeline, always all stages in order (repository fills missing rows via `fill_stages`).
     pub stages: Vec<StageRow>,
 }
 
@@ -717,7 +727,7 @@ impl Requirement {
         self.versions.last().expect("a requirement always has at least version 1")
     }
 
-    /// 追加新版本但不移动 baseline;归档后拒绝修订。
+    /// Append a new version without moving the baseline; archived requirements reject revision.
     pub fn revise(
         &mut self,
         description: &str,
@@ -736,7 +746,8 @@ impl Requirement {
         Ok(next)
     }
 
-    /// 评审不通过:记录原因,需求留在 DRAFT 待重评;仅对待评审草稿适用。
+    /// Review rejection: record the reason and keep the requirement in DRAFT
+    /// for re-review; only valid for drafts pending review.
     pub fn reject_review(&mut self, reason: &str) -> Result<(), RequirementError> {
         let reason = reason.trim();
         if reason.is_empty() {
@@ -754,7 +765,7 @@ impl Requirement {
         }
     }
 
-    /// 首次定基把 Draft → Baselined。
+    /// The first baseline promotes Draft → Baselined.
     pub fn set_baseline(&mut self, version: u32) -> Result<(), RequirementError> {
         if self.version(version).is_none() {
             return Err(RequirementError::NoSuchVersion(version));
@@ -767,7 +778,7 @@ impl Requirement {
         Ok(())
     }
 
-    /// Baselined → Delivered,幂等;未定基线 → NotBaselined。
+    /// Baselined → Delivered, idempotent; not yet baselined → NotBaselined.
     pub fn deliver(&mut self) -> Result<(), RequirementError> {
         match self.status {
             RequirementStatus::Delivered => Ok(()),
@@ -796,18 +807,19 @@ impl Requirement {
         self.status = RequirementStatus::Archived;
     }
 
-    /// 软删除后标题被释放(可重建同名)。
+    /// Soft delete frees the title (a same-titled requirement can be recreated).
     pub fn soft_delete(&mut self) {
         self.deleted = true;
     }
 
-    /// 仅未删除的需求参与标题唯一性判定。
+    /// Only non-deleted requirements participate in title uniqueness.
     pub fn occupies_title(&self) -> bool {
         !self.deleted
     }
 
-    /// 逾期判定(实时计算,不落库):截止日期规则(设了截止日期、已过 `today`
-    /// 且尚未交付/归档)或任一阶段逾期(见 `stage_overdue`)。
+    /// Overdue check (computed on read, not persisted): the due-date rule (due
+    /// date set, past `today`, and not yet delivered/archived) or any stage
+    /// overdue (see `stage_overdue`).
     pub fn is_overdue(&self, today: &str) -> bool {
         let due_overdue = match (&self.due_date, self.status) {
             (_, RequirementStatus::Delivered | RequirementStatus::Archived) => false,
@@ -817,7 +829,7 @@ impl Requirement {
         due_overdue || self.stages.iter().any(|row| stage_overdue(row, today))
     }
 
-    /// 当前所处阶段:按顺序第一个既未完成也未跳过的;全部完成 → 交付。
+    /// Current stage: the first one, in order, that is neither done nor skipped; all done → delivery.
     pub fn current_stage(&self) -> Stage {
         self.stages
             .iter()
@@ -834,21 +846,22 @@ impl Requirement {
         self.stages.iter_mut().find(|r| r.stage == stage)
     }
 
-    /// 推进某阶段状态并盖章;规则见 `StageRow::set_status`。
+    /// Advance a stage's status and stamp times; rules in `StageRow::set_status`.
     pub fn set_stage(&mut self, stage: Stage, status: StageStatus, now_ms: i64) {
         if let Some(row) = self.stage_row_mut(stage) {
             row.set_status(status, now_ms);
         }
     }
 
-    /// 推进开发状态并盖章:首次进 IN_PROGRESS 记开始时间;进 DONE 记完成时间
-    /// (若开始时间尚缺一并补上);重复推进不覆盖已有时间戳。
+    /// Advance the dev status and stamp times: the first IN_PROGRESS records
+    /// the start time; DONE records the finish time (backfilling the start if
+    /// missing); repeats never overwrite existing timestamps.
     pub fn set_dev_status(&mut self, status: WorkStatus, now_ms: i64) {
         self.dev_status = status;
         stamp(status, now_ms, &mut self.dev_started_at_ms, &mut self.dev_finished_at_ms);
     }
 
-    /// 推进测试状态并盖章;规则同 `set_dev_status`。
+    /// Advance the test status; same rules as `set_dev_status`.
     pub fn set_test_status(&mut self, status: WorkStatus, now_ms: i64) {
         self.test_status = status;
         stamp(status, now_ms, &mut self.test_started_at_ms, &mut self.test_finished_at_ms);
@@ -1046,7 +1059,6 @@ mod tests {
         ] {
             assert_eq!(RequirementPriority::parse(p.as_str()), Some(p));
         }
-        // trim + 大写归一。
         assert_eq!(RequirementPriority::parse("  p1 "), Some(RequirementPriority::P1));
         assert_eq!(RequirementPriority::parse("P9"), None);
         assert_eq!(parse_priority("p3"), Ok(RequirementPriority::P3));
@@ -1094,7 +1106,7 @@ mod tests {
     fn normalize_tags_rejects_too_many_or_too_long() {
         let many: Vec<String> = (0..11).map(|i| format!("t{i}")).collect();
         assert_eq!(normalize_tags(&many), Err(RequirementError::TooManyTags));
-        // 去重后 10 个恰好合法。
+        // Exactly 10 tags is still legal.
         let ten: Vec<String> = (0..10).map(|i| format!("t{i}")).collect();
         assert_eq!(normalize_tags(&ten).expect("ok").len(), 10);
         let long = "标".repeat(33);
@@ -1102,7 +1114,7 @@ mod tests {
             normalize_tags(std::slice::from_ref(&long)),
             Err(RequirementError::TagTooLong(long))
         );
-        // 32 个字符(含中文)合法。
+        // 32 chars (CJK included) is legal.
         assert!(normalize_tags(&["标".repeat(32)]).is_ok());
     }
 
@@ -1129,7 +1141,7 @@ mod tests {
             normalize_custom_fields(&fields(&[(long_key.as_str(), "v")])),
             Err(RequirementError::CustomFieldKeyTooLong(long_key.clone()))
         );
-        // 64 个字符(含中文)合法。
+        // 64 chars (CJK included) is legal.
         assert!(normalize_custom_fields(&fields(&[("键".repeat(64).as_str(), "v")])).is_ok());
     }
 
@@ -1140,7 +1152,7 @@ mod tests {
             normalize_custom_fields(&fields(&[("k", long_val.as_str())])),
             Err(RequirementError::CustomFieldValueTooLong("k".to_string()))
         );
-        // 2000 个字符恰好合法。
+        // Exactly 2000 chars is legal.
         assert!(normalize_custom_fields(&fields(&[("k", "值".repeat(2000).as_str())])).is_ok());
         let many: BTreeMap<String, String> =
             (0..33).map(|i| (format!("k{i}"), "v".to_string())).collect();
@@ -1155,14 +1167,14 @@ mod tests {
         let n = new_req().with_custom_fields(fields(&[("owner", "alice")]));
         let r = Requirement::create("req-1", &n);
         assert_eq!(r.custom_fields, fields(&[("owner", "alice")]));
-        // 缺省为空 map。
+        // Defaults to an empty map.
         assert!(Requirement::create("req-2", &new_req()).custom_fields.is_empty());
     }
 
     #[test]
     fn parse_due_date_validates_format_and_ranges() {
         assert_eq!(parse_due_date(" 2026-07-11 "), Ok("2026-07-11".to_string()));
-        assert_eq!(parse_due_date("2024-02-29"), Ok("2024-02-29".to_string())); // 闰年
+        assert_eq!(parse_due_date("2024-02-29"), Ok("2024-02-29".to_string())); // leap year
         for bad in [
             "2026/07/11",
             "2026-13-01",
@@ -1179,26 +1191,26 @@ mod tests {
     #[test]
     fn date_from_epoch_ms_converts_utc() {
         assert_eq!(date_from_epoch_ms(0), "1970-01-01");
-        // 2026-07-11 00:00:00 UTC = 1783728000s。
+        // 2026-07-11 00:00:00 UTC = 1783728000s.
         assert_eq!(date_from_epoch_ms(1_783_728_000_000), "2026-07-11");
-        // 前一毫秒仍是 7 月 10 日。
+        // One millisecond earlier is still Jul 10.
         assert_eq!(date_from_epoch_ms(1_783_727_999_999), "2026-07-10");
-        // 闰日:2024-02-29 12:00 UTC。
+        // Leap day: 2024-02-29 12:00 UTC.
         assert_eq!(date_from_epoch_ms(1_709_208_000_000), "2024-02-29");
     }
 
     #[test]
     fn overdue_requires_past_due_date_and_open_status() {
         let mut r = Requirement::create("req-1", &new_req());
-        assert!(!r.is_overdue("2026-07-11")); // 无截止日期
+        assert!(!r.is_overdue("2026-07-11")); // no due date
         r.due_date = Some("2026-07-10".to_string());
-        assert!(r.is_overdue("2026-07-11")); // 已过期
-        assert!(!r.is_overdue("2026-07-10")); // 当天不算逾期
-        assert!(!r.is_overdue("2026-07-09")); // 未到期
+        assert!(r.is_overdue("2026-07-11")); // past due
+        assert!(!r.is_overdue("2026-07-10")); // the due day itself is not overdue
+        assert!(!r.is_overdue("2026-07-09")); // not yet due
         r.status = RequirementStatus::Delivered;
-        assert!(!r.is_overdue("2026-07-11")); // 已交付不再逾期
+        assert!(!r.is_overdue("2026-07-11")); // delivered is never overdue
         r.status = RequirementStatus::Archived;
-        assert!(!r.is_overdue("2026-07-11")); // 已归档不再逾期
+        assert!(!r.is_overdue("2026-07-11")); // archived is never overdue
     }
 
     #[test]
@@ -1208,7 +1220,7 @@ mod tests {
         r.set_dev_status(WorkStatus::InProgress, 100);
         assert_eq!(r.dev_started_at_ms, Some(100));
         assert_eq!(r.dev_finished_at_ms, None);
-        // 重复推进不覆盖。
+        // Repeats do not overwrite.
         r.set_dev_status(WorkStatus::InProgress, 200);
         assert_eq!(r.dev_started_at_ms, Some(100));
         r.set_dev_status(WorkStatus::Done, 300);
@@ -1230,7 +1242,7 @@ mod tests {
     #[test]
     fn create_carries_module_and_defaults_to_unfiled() {
         let r = Requirement::create("req-1", &new_req().with_module(" mod-1 "));
-        assert_eq!(r.module_id, "mod-1"); // with_module 会 trim
+        assert_eq!(r.module_id, "mod-1"); // with_module trims
         assert_eq!(Requirement::create("req-2", &new_req()).module_id, "");
     }
 
@@ -1282,13 +1294,13 @@ mod tests {
 
     #[test]
     fn fill_stages_completes_and_orders_all_seven() {
-        // 空输入 → 7 行 PENDING,按流水线顺序。
+        // Empty input → 7 PENDING rows in pipeline order.
         let filled = fill_stages(&[]);
         assert_eq!(filled.len(), 7);
         assert_eq!(filled.iter().map(|r| r.stage).collect::<Vec<_>>(), Stage::ALL);
         assert!(filled.iter().all(|r| r.status == StageStatus::Pending));
 
-        // 乱序稀疏输入:已有行保留,缺行补默认。
+        // Sparse out-of-order input: existing rows kept, missing rows defaulted.
         let mut dev = StageRow::pending(Stage::Dev);
         dev.set_status(StageStatus::InProgress, 100);
         let mut created = StageRow::pending(Stage::Created);
@@ -1300,40 +1312,40 @@ mod tests {
         assert_eq!(filled[1], StageRow::pending(Stage::Audit));
     }
 
-    // 2026-07-11 00:00:00 UTC = 1_783_728_000_000 毫秒(见 date_from_epoch_ms 测试)。
+    // 2026-07-11 00:00:00 UTC = 1_783_728_000_000 ms (see the date_from_epoch_ms test).
     const JUL_11_MS: i64 = 1_783_728_000_000;
 
     #[test]
     fn stage_overdue_matrix() {
         let today = "2026-07-11";
         let mut row = StageRow::pending(Stage::Dev);
-        // 无计划结束日 → 不逾期。
+        // No planned end date → not overdue.
         assert!(!stage_overdue(&row, today));
 
-        // 未完成且今天已过计划(当天不算)。
+        // Unfinished and today is past the plan (the planned day itself does not count).
         row.planned_end = Some("2026-07-10".to_string());
         assert!(stage_overdue(&row, today));
         assert!(!stage_overdue(&row, "2026-07-10"));
         assert!(!stage_overdue(&row, "2026-07-09"));
 
-        // 跳过的阶段不算逾期。
+        // Skipped stages are never overdue.
         row.set_status(StageStatus::Skipped, JUL_11_MS);
         assert!(stage_overdue(&StageRow { status: StageStatus::InProgress, ..row.clone() }, today));
         assert!(!stage_overdue(&row, today));
 
-        // 按时完成:完成日 ≤ 计划 → 不逾期,哪怕今天已过计划。
+        // Finished on time: finish date <= plan → not overdue even if today is past the plan.
         let mut done = StageRow::pending(Stage::Test);
         done.planned_end = Some("2026-07-10".to_string());
-        done.set_status(StageStatus::Done, JUL_11_MS - 86_400_000); // 完成于 07-10
+        done.set_status(StageStatus::Done, JUL_11_MS - 86_400_000); // finished on 07-10
         assert!(!stage_overdue(&done, "2026-08-01"));
 
-        // 迟完成:完成日 > 计划 → 永久逾期(与 today 无关)。
+        // Finished late: finish date > plan → permanently overdue, regardless of today.
         let mut late = StageRow::pending(Stage::Test);
         late.planned_end = Some("2026-07-10".to_string());
-        late.set_status(StageStatus::Done, JUL_11_MS); // 完成于 07-11
+        late.set_status(StageStatus::Done, JUL_11_MS); // finished on 07-11
         assert!(stage_overdue(&late, "2026-07-01"));
 
-        // 状态 DONE 但完成时间缺失(理论不该出现)→ 不按「未完成」误判。
+        // DONE but finish time missing (should not happen) → not misjudged as unfinished.
         let odd = StageRow {
             status: StageStatus::Done,
             finished_at_ms: None,
@@ -1347,14 +1359,14 @@ mod tests {
     fn requirement_overdue_combines_due_date_and_stage_rules() {
         let mut r = Requirement::create("req-1", &new_req());
         assert!(!r.is_overdue("2026-07-11"));
-        // 仅阶段逾期(无截止日期)也算需求逾期。
+        // A stage being overdue alone (no due date) makes the requirement overdue.
         r.stage_row_mut(Stage::Dev).expect("dev row").planned_end = Some("2026-07-01".to_string());
         assert!(r.is_overdue("2026-07-11"));
-        // 已交付豁免截止日期规则,但阶段迟完成仍算逾期。
+        // Delivered exempts the due-date rule, but a late stage still counts.
         r.status = RequirementStatus::Delivered;
         assert!(r.is_overdue("2026-07-11"));
-        // 阶段按时完成后不再逾期。
-        r.set_stage(Stage::Dev, StageStatus::Done, 1_751_328_000_000); // 完成于 2025-07-01,早于计划
+        // No longer overdue once the stage finishes on time.
+        r.set_stage(Stage::Dev, StageStatus::Done, 1_751_328_000_000); // finished 2025-07-01, before the plan
         assert!(!r.is_overdue("2026-07-11"));
     }
 
@@ -1364,10 +1376,10 @@ mod tests {
         assert_eq!(r.current_stage(), Stage::Created);
         r.set_stage(Stage::Created, StageStatus::Done, 1);
         assert_eq!(r.current_stage(), Stage::Audit);
-        // SKIPPED 视同越过。
+        // SKIPPED counts as passed.
         r.set_stage(Stage::Audit, StageStatus::Skipped, 2);
         assert_eq!(r.current_stage(), Stage::Review);
-        // IN_PROGRESS 仍停在当前阶段。
+        // IN_PROGRESS stays at the current stage.
         r.set_stage(Stage::Review, StageStatus::InProgress, 3);
         assert_eq!(r.current_stage(), Stage::Review);
         for s in Stage::ALL {
@@ -1383,10 +1395,10 @@ mod tests {
         let dev = |r: &Requirement| r.stage_row(Stage::Dev).expect("dev row").clone();
         assert_eq!(dev(&r).started_at_ms, Some(100));
         assert_eq!(dev(&r).finished_at_ms, None);
-        // 重复推进不覆盖。
+        // Repeats do not overwrite.
         r.set_stage(Stage::Dev, StageStatus::InProgress, 200);
         assert_eq!(dev(&r).started_at_ms, Some(100));
-        // 回 PENDING 不清空时间戳。
+        // Moving back to PENDING keeps the timestamps.
         r.set_stage(Stage::Dev, StageStatus::Pending, 300);
         assert_eq!(dev(&r).status, StageStatus::Pending);
         assert_eq!(dev(&r).started_at_ms, Some(100));
@@ -1395,11 +1407,11 @@ mod tests {
         assert_eq!(dev(&r).finished_at_ms, Some(400));
         r.set_stage(Stage::Dev, StageStatus::Done, 500);
         assert_eq!(dev(&r).finished_at_ms, Some(400));
-        // DONE 后仍可 SKIPPED(任意状态可进),时间戳保留。
+        // SKIPPED is reachable even after DONE (any state allowed); timestamps kept.
         r.set_stage(Stage::Dev, StageStatus::Skipped, 600);
         assert_eq!(dev(&r).status, StageStatus::Skipped);
         assert_eq!(dev(&r).finished_at_ms, Some(400));
-        // 直接 DONE 补齐开始时间。
+        // Going straight to DONE backfills the start time.
         r.set_stage(Stage::Test, StageStatus::Done, 700);
         let test = r.stage_row(Stage::Test).expect("test row");
         assert_eq!(test.started_at_ms, Some(700));

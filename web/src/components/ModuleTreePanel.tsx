@@ -5,23 +5,24 @@ import { FolderOutlined, InboxOutlined, MinusSquareOutlined, MoreOutlined, PlusO
 import { api, ApiError, type ApiModule } from '../api'
 import { useI18n } from '../i18n'
 
-// 给定模块 id,返回其自身 + 所有后代 id(用于「选父含子」的列表过滤,使计数与列表一致)。
+// Return a module id plus all descendant ids (parent selection includes children, keeping counts consistent with the list).
 export function collectSubtreeIds(modules: ApiModule[], moduleId: string): string[] {
   const childrenOf = (mid: string) => modules.filter((m) => (m.parentId || null) === mid)
   const walk = (mid: string): string[] => [mid, ...childrenOf(mid).flatMap((c) => walk(c.id))]
   return walk(moduleId)
 }
 
-// 列表项是否落在当前选中的模块键下(ALL=全部,UNFILED=未归类,<id>=该模块整棵子树)。
+// Whether a list item falls under the selected module key (ALL = everything, UNFILED = no module, <id> = that module's whole subtree).
 export function inSelectedModule(modules: ApiModule[], selectedKey: string, moduleId: string): boolean {
   if (selectedKey === 'ALL') return true
   if (selectedKey === 'UNFILED') return !moduleId
   return collectSubtreeIds(modules, selectedKey).includes(moduleId)
 }
 
-// 统一的左侧模块树面板(场景 / 文件管理 等复用):模块名称搜索 + 「全部 (N)」工具条
-// (收起全部 / 新建顶层模块)+ 层级模块树(子树计数 + 新建子模块 / 重命名 / 删除)。
-// 不含外层宽度/边框 —— 由调用方用 <ResizableSider> 包裹(获得左右拖拽改宽)。
+// Shared left module-tree panel (scenarios, file management, ...): module name search +
+// "All (N)" toolbar row (collapse all / new top-level module) + hierarchical tree
+// (subtree counts + new sub-module / rename / delete).
+// No outer width/border — callers wrap it in <ResizableSider> for drag-resizing.
 export function ModuleTreePanel<T>({
   projectId,
   modules,
@@ -91,13 +92,14 @@ export function ModuleTreePanel<T>({
     const matchName = (m: ApiModule) => !moduleSearch || lc(m.name).includes(lc(moduleSearch))
     const moduleNode = (m: ApiModule): any => {
       const subs = childModulesOf(m.id).map(moduleNode).filter(Boolean)
-      if (moduleSearch && !matchName(m) && subs.length === 0) return null // 搜索无命中则隐藏
+      if (moduleSearch && !matchName(m) && subs.length === 0) return null // hide when search misses
       return { key: m.id, title: <ModuleTitle name={m.name} count={subtreeCount(m.id)} onAction={(a) => onModuleAction(a, m)} />, children: subs.length ? subs : undefined }
     }
     const roots = childModulesOf(null).map(moduleNode).filter(Boolean)
-    // 根节点行内嵌 收起全部/新建顶层模块 图标(与「全部 (N)」同一行,不再单独占一行)。
-    // 注意:根节点不用 Tree 的 icon 槽(独立 icon 元素 + 100% 宽标题会把标题挤到下一行),
-    // 文件夹图标并进标题,保证「图标 + 名称 + 工具按钮」恒为一行。
+    // Root row inlines the collapse-all / new-top-module icons on the same line as "All (N)".
+    // Note: the root must not use Tree's icon slot — a separate icon element plus a 100%-wide
+    // title pushes the title to the next line. Folding the folder icon into the title keeps
+    // icon + name + tool buttons on one line.
     return [{
       key: 'ALL',
       title: (
@@ -155,7 +157,7 @@ export function ModuleTreePanel<T>({
   )
 }
 
-// 模块树子节点标题:文件夹图标 + 名称 + 子树计数 + 「...」菜单(新建子模块 / 重命名 / 删除)。
+// Child node title: folder icon + name + subtree count + "..." menu (new sub-module / rename / delete).
 function ModuleTitle({ name, count, onAction }: { name: string; count?: number; onAction: (a: string) => void }) {
   const { t } = useI18n()
   return (
@@ -181,7 +183,7 @@ function ModuleTitle({ name, count, onAction }: { name: string; count?: number; 
   )
 }
 
-// 新建 / 重命名模块弹窗(复用项目级模块 API)。
+// Create / rename module modal (reuses the project-level module API).
 function ModuleFormModal({ state, projectId, onClose, onDone }: { state: { mode: 'create' | 'rename'; id?: string; parentId?: string | null; name?: string } | null; projectId: string; onClose: () => void; onDone: () => void }) {
   const { t } = useI18n()
   const [name, setName] = useState('')

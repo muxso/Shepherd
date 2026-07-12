@@ -24,7 +24,7 @@ impl CreateBugUseCase {
         Self { repo }
     }
 
-    /// 组装用:暴露底层仓储,供构造共享同一存储的其他用例(如自定义字段用例)。
+    /// Exposes the repository so other use cases (e.g. custom fields) can share the same storage.
     pub fn repo(&self) -> Arc<dyn BugRepository> {
         self.repo.clone()
     }
@@ -77,7 +77,7 @@ mod tests {
         let raw = BTreeMap::from([(" severity ".to_string(), "P0".to_string())]);
         let bug = uc.execute("p1", "登录崩溃", "NEW", None, &raw).await.expect("ok");
         assert_eq!(bug.custom_fields, BTreeMap::from([("severity".to_string(), "P0".to_string())]));
-        // 空白键报校验错。
+        // Blank key is a validation error.
         let bad = BTreeMap::from([("  ".to_string(), "v".to_string())]);
         assert_eq!(
             uc.execute("p1", "又崩了", "NEW", None, &bad).await.unwrap_err(),

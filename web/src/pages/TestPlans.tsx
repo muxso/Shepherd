@@ -24,13 +24,13 @@ import {
   type PlanModule,
 } from '../components/plan/planLocal'
 
-// 工作区常驻「新建测试计划 / 新建计划组」tab 的 key(与计划详情 tab 共用同一 tab 池)。
+// Keys of the persistent "new plan / new group" workspace tabs (share the tab pool with plan-detail tabs).
 const NEW_PLAN_KEY = '__new_plan__'
 const NEW_GROUP_KEY = '__new_group__'
 
-// 测试计划页(照 MeterSphere 布局):顶部「计划 / 报告」线性 tab;
-// 计划 tab = 左模块树 + 右(全部/计划/计划组 Segmented + 列表工具栏 + 表格 + 详情多开);
-// 报告 tab = 各计划的 Markdown 报告入口。模块/分组/标签为本地 meta(见 planLocal.ts)。
+// Test plans page (MeterSphere layout): top "Plans / Reports" tabs.
+// Plans tab = left module tree + right list (all/plan/group Segmented, toolbar, table, multi-open details);
+// Reports tab = Markdown report entry per plan. Modules/groups/tags are local meta (see planLocal.ts).
 export default function TestPlans() {
   const { t } = useI18n()
   const { projectId } = useApp()
@@ -39,7 +39,7 @@ export default function TestPlans() {
   const [statsMap, setStatsMap] = useState<Record<string, PlanStats>>({})
   const [moduleKey, setModuleKey] = useState('ALL')
   const [seg, setSeg] = useState<'all' | 'plan' | 'group'>('all')
-  // 编辑弹窗(新建改为工作区 Tab,editing 必填)。
+  // Edit modal only; creation happens in workspace tabs, so `editing` is required.
   const [form, setForm] = useState<{ mode: 'plan' | 'group'; editing: RegItem } | null>(null)
   const [runningId, setRunningId] = useState('')
   const [expandedKeys, setExpandedKeys] = useState<string[]>([])
@@ -64,11 +64,11 @@ export default function TestPlans() {
     tabs.reset()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId])
-  useOpenParam(tabs.open) // 支持 ?open=<planId> 深链
+  useOpenParam(tabs.open) // deep link: ?open=<planId>
 
   const membersOf = (g: RegItem) => plans.filter((x) => !isGroup(x) && groupIdOf(x) === g.id)
 
-  // 通过/执行/总数(计划来自 planStats;计划组聚合组内计划;无统计返回 undefined)。
+  // pass/exec/total: plans read planStats; groups aggregate member plans; undefined when no stats.
   const numsOf = (p: RegItem): { total: number; pass: number; exec: number } | undefined => {
     if (isGroup(p)) {
       const ns = membersOf(p).map(numsOf).filter(Boolean) as { total: number; pass: number; exec: number }[]
@@ -79,7 +79,7 @@ export default function TestPlans() {
     if (!s) return undefined
     return { total: s.total, pass: Math.round(s.passRate * s.total), exec: Math.round(s.executeRate * s.total) }
   }
-  // 状态口径:无结果=未开始;部分有结果=进行中;全部有结果=已完成。
+  // Status rule: no results = not started; partial = running; all executed = done.
   const statusOf = (p: RegItem): 'NOT_STARTED' | 'RUNNING' | 'DONE' => {
     const n = numsOf(p)
     if (!n || n.total === 0 || n.exec <= 0) return 'NOT_STARTED'
@@ -134,7 +134,7 @@ export default function TestPlans() {
     })
   }
 
-  // 模块增删改:删除时把归属其下的计划改回未规划。
+  // Module CRUD; on delete, move plans under it back to unplanned.
   const onModulesChanged = (mods: PlanModule[], removedIds?: string[]) => {
     setModules(mods)
     if (removedIds?.length) {
@@ -177,7 +177,7 @@ export default function TestPlans() {
     </span>
   )
 
-  // 列表三件套(视图/筛选/列设置):useListView 必须在条件 return 之前调用。
+  // List toolbar trio (view/filter/columns): useListView must be called before any conditional return.
   const allTags = [...new Set(plans.flatMap(tagsOf))]
   const allColumns: ListColumn<RegItem>[] = [
     {
@@ -244,7 +244,7 @@ export default function TestPlans() {
     { key: 'action', label: t('plan.colAction', '操作'), title: t('plan.colAction', '操作'), width: 160, render: (_, p) => actionCell(p) },
   ]
 
-  // 进入 useListView 前先按 左树模块 + Segmented(全部/计划/计划组)收敛数据集。
+  // Narrow the dataset by left-tree module + Segmented (all/plan/group) before useListView.
   const scoped = plans.filter(
     (p) => inPlanModule(modules, moduleKey, moduleOf(p)) && (seg === 'all' || (seg === 'group') === isGroup(p)),
   )
@@ -263,7 +263,7 @@ export default function TestPlans() {
       },
       { key: 'tags', label: t('plan.colTags', '标签'), type: 'tags', options: allTags.map((v) => ({ value: v, label: v })), get: (p) => tagsOf(p) },
       { key: 'createdBy', label: t('plan.colCreatedBy', '创建人'), type: 'text', get: (p) => p.meta?.createdBy || '', advOnly: true },
-      // 以下仅供条件/列头查找(与搜索框重复,不渲染在声明式筛选区)。
+      // Lookup-only fields for conditions/column headers (duplicate the search box; not rendered in the declarative filter area).
       { key: 'id', label: 'ID', type: 'text', advOnly: true, get: (p) => p.id },
       { key: 'name', label: t('plan.colName', '名称'), type: 'text', advOnly: true, get: (p) => p.label },
       {
@@ -278,7 +278,7 @@ export default function TestPlans() {
 
   if (!projectId) return <SelectProjectEmpty />
 
-  // 组行展开:组内计划子表(点行进详情)。
+  // Group row expansion: member-plan subtable; row click opens the plan detail.
   const expandedRowRender = (g: RegItem) => (
     <Table<RegItem>
       rowKey="id"
@@ -312,7 +312,6 @@ export default function TestPlans() {
     />
   )
 
-  // 右侧列表:Segmented(全部/计划/计划组)+ 列表三件套工具栏 + 表格。
   const listContent = (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 12px', borderBottom: '1px solid var(--border-soft)' }}>
@@ -357,8 +356,8 @@ export default function TestPlans() {
     </div>
   )
 
-  // 工作区「新建测试计划 / 新建计划组」tab:PlanForm 平铺;创建成功 → 关 tab、
-  // 刷新列表,计划再打开详情(计划组无详情,只刷新)。
+  // Workspace "new plan / new group" tab: inline PlanForm; on create, close the tab,
+  // refresh the list, then open the plan detail (groups have no detail, refresh only).
   const newFormTab = (key: string, mode: 'plan' | 'group') => ({
     key,
     label: mode === 'group' ? t('plan.newGroup', '新建计划组') : t('plan.newPlan', '新建测试计划'),
@@ -389,7 +388,7 @@ export default function TestPlans() {
     return p ? [{ key: p.id, label: p.label, children: <PlanDetail planId={p.id} name={p.label} projectId={projectId} /> }] : []
   })
 
-  // 计划 tab:左模块树 + 右列表(含详情多开 workspace)。
+  // Plans tab: left module tree + right list (multi-open detail workspace).
   const plansTab = (
     <Workspace
       left={
@@ -415,7 +414,7 @@ export default function TestPlans() {
     />
   )
 
-  // 报告 tab:各计划的报告入口(计划组无报告,不列)。
+  // Reports tab: report entry per plan (groups have no reports, not listed).
   const openReport = async (p: RegItem) => {
     try {
       setReport({ name: p.label, md: await api.planReportMd(p.id) })

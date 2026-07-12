@@ -1,7 +1,8 @@
-//! 压测上下文:LoadPlan 定义负载(按迭代次数或持续时长),engine 按计划驱动 RequestExecutor 发压
-//! (api-runner-exec/probe-exec 分别复用 api-runner 与 probe),
-//! Sample 经 SampleSink(内存/parquet-sink)落盘并汇总为 LatencyStats/LoadReport。
-//! domain/ports 不做 IO;各执行器与 sink 适配器由 feature 启用。
+//! Load-testing context: LoadPlan defines the load (iteration count or duration),
+//! the engine drives a RequestExecutor accordingly (api-runner-exec/probe-exec
+//! reuse api-runner and probe respectively). Samples flow through a SampleSink
+//! (in-memory or parquet-sink) and aggregate into LatencyStats/LoadReport.
+//! domain/ports do no IO; executors and sink adapters are feature-gated.
 
 pub mod adapters;
 pub mod domain;

@@ -68,7 +68,7 @@ impl EnvironmentRepository for InMemoryEnvironmentRepository {
         if !state.envs.contains_key(id) {
             return Ok(None);
         }
-        // project_id 不可变:沿用既有行的 project_id。
+        // project_id is immutable: keep the existing row's project_id.
         let project_id = state.envs[id].project_id.clone();
         let mut env = to_env(id.to_string(), e);
         env.project_id = project_id;

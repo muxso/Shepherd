@@ -16,8 +16,9 @@ pub trait CredentialRepository: Send + Sync {
         username: &str,
     ) -> Result<Option<UserCredential>, AuthRepoError>;
 
-    /// 会话只带 user_id,自助改密按 user_id 取凭据。
-    /// 默认 None:凭据不在库里(如环境变量注入的内置账号),库侧改不动。
+    /// Sessions only carry user_id; self-service password change looks up credentials by it.
+    /// Defaults to None: the credential is not stored (e.g. env-injected built-in account),
+    /// so the store cannot change it.
     async fn find_by_user_id(
         &self,
         _user_id: &str,
@@ -25,7 +26,7 @@ pub trait CredentialRepository: Send + Sync {
         Ok(None)
     }
 
-    /// 更新密码哈希;`false` 表示库中无该用户凭据。
+    /// Update the password hash; `false` means the store has no credential for this user.
     async fn update_password(
         &self,
         _user_id: &str,
@@ -34,7 +35,7 @@ pub trait CredentialRepository: Send + Sync {
         Ok(false)
     }
 
-    /// 默认 no-op,仅 PG 实现真正重置
+    /// Default no-op; only the PG implementation actually resets.
     async fn reset_password(
         &self,
         _user_id: &str,
@@ -55,9 +56,11 @@ pub trait PasswordHasher: Send + Sync {
     fn verify(&self, plain: &str, hash: &str) -> bool;
 }
 
-/// 外部目录认证(LDAP 等):仅验证「用户名 + 密码」能否绑定成功。
-/// 授权仍走本地角色/权限(**本地授权 + 外部认证**),用户须已在本地存在。
-/// `Ok(true)` 绑定成功;`Ok(false)` 凭证被拒;`Err` 为目录后端不可用(区别于密码错)。
+/// External directory authentication (LDAP etc.): only checks whether username + password
+/// can bind. Authorization still comes from local roles/permissions (**local authorization +
+/// external authentication**); the user must already exist locally.
+/// `Ok(true)` bind succeeded; `Ok(false)` credentials rejected; `Err` directory backend
+/// unavailable (distinct from a wrong password).
 #[async_trait]
 pub trait DirectoryAuthenticator: Send + Sync {
     async fn authenticate(&self, username: &str, password: &str) -> Result<bool, AuthRepoError>;

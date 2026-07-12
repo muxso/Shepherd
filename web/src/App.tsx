@@ -6,7 +6,7 @@ import { useI18n } from './i18n'
 import Login from './pages/Login'
 import AppShell from './components/AppShell'
 
-// 路由级懒加载:按页拆分 bundle,首屏只下登录/外壳,其余进入时按需加载。
+// Route-level lazy loading: per-page bundles; first paint only downloads login/shell, the rest load on entry.
 const Home = lazy(() => import('./pages/Home'))
 const Todos = lazy(() => import('./pages/Todos'))
 const Follows = lazy(() => import('./pages/Follows'))
@@ -35,7 +35,7 @@ const EnvironmentsPage = lazy(() => import('./pages/Environments').then((m) => (
 const ResourcePoolsPage = lazy(() => import('./pages/ResourcePoolPage').then((m) => ({ default: m.ResourcePoolsPage })))
 const ResourcePoolForm = lazy(() => import('./pages/ResourcePoolPage').then((m) => ({ default: m.ResourcePoolForm })))
 
-// 纯看 UI 不该被登录挡住:VITE_SKIP_LOGIN=1 时跳过登录门(仅 dev 构建生效,生产不受影响)。
+// UI-only browsing shouldn't be blocked by login: VITE_SKIP_LOGIN=1 skips the login gate (dev builds only; production unaffected).
 const SKIP_LOGIN = import.meta.env.DEV && import.meta.env.VITE_SKIP_LOGIN === '1'
 
 export default function App() {

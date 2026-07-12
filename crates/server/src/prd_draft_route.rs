@@ -1,7 +1,9 @@
-//! MRD → PRD 起草:把粘贴的原始素材(MRD/会议纪要/想法)整理成结构化需求草稿,
-//! 回填「新建需求」表单——首页承诺的「MRD 自动转 PRD」的落地入口。
-//! 配置了 LLM 由模型起草;否则走启发式(首行=标题,列表行=验收标准,其余=描述),
-//! 保证无 LLM 环境下按钮同样可用。
+//! MRD → PRD drafting: turns pasted raw material (MRD / meeting notes / ideas) into
+//! a structured requirement draft that prefills the "new requirement" form — the
+//! landing point for the "MRD auto-converts to PRD" promise on the home page.
+//! With an LLM configured the model drafts it; otherwise a heuristic runs
+//! (first line = title, list lines = acceptance criteria, the rest = description),
+//! so the button still works in LLM-less environments.
 
 use std::sync::Arc;
 
@@ -48,11 +50,12 @@ struct DraftResponse {
     description: String,
     acceptance_criteria: Vec<String>,
     priority: String,
-    /// llm | heuristic:前端提示草稿来源。
+    /// llm | heuristic: tells the frontend where the draft came from.
     source: &'static str,
 }
 
-/// 启发式兜底:首个非空行 = 标题;`-`/`*`/数字编号行 = 验收标准;其余归入描述。
+/// Heuristic fallback: first non-empty line = title; `-`/`*`/numbered lines =
+/// acceptance criteria; everything else goes into the description.
 fn heuristic_draft(raw: &str) -> PrdDraft {
     let mut title = String::new();
     let mut criteria = Vec::new();

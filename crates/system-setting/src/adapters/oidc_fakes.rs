@@ -6,7 +6,7 @@ use async_trait::async_trait;
 use crate::domain::{ExternalIdentity, OidcError};
 use crate::ports::{ExternalIdentityProvider, ExternalUserRepository, LinkedUser};
 
-/// `exchange` 对 code "bad" 报错,其余返回预置身份
+/// `exchange` fails for code "bad", otherwise returns the preset identity.
 #[derive(Clone)]
 pub struct FakeIdentityProvider {
     key: String,

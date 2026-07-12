@@ -15,8 +15,8 @@ export default function Login() {
     setLoading(true)
     try {
       const { token, userId } = await api.login(v.username, v.password)
-      userStore.set(v.username) // 供个人中心 / 创建人列展示(后端暂无 /me)
-      if (userId) userIdStore.set(userId) // created_by 口径,「我创建的」按它匹配
+      userStore.set(v.username) // shown in profile / creator columns (backend has no /me yet)
+      if (userId) userIdStore.set(userId) // created_by identity; "created by me" filters match on it
       login(token)
       message.success(t('login.ok', '登录成功'))
     } catch (e) {

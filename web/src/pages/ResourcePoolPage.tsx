@@ -33,10 +33,10 @@ import { useI18n } from '../i18n'
 
 type TFn = (k: string, d?: string) => string
 
-// 资源池(系统模块子标签,对齐参考图):列表页 + Node/Kubernetes 全屏新增/编辑表单。
-// 后端字段:name/enabled/description/maxConcurrency/poolType/allOrg/orgIds/serverUrl/config/时间。
+// Resource pools (system-module sub-tab, matches the reference UI): list page + full-screen Node/Kubernetes create/edit forms.
+// Backend fields: name/enabled/description/maxConcurrency/poolType/allOrg/orgIds/serverUrl/config/timestamps.
 
-// ---------------- 列表页 ----------------
+// ---------------- List page ----------------
 export function ResourcePoolsPage() {
   const { t } = useI18n()
   const nav = useNavigate()
@@ -59,7 +59,7 @@ export function ResourcePoolsPage() {
   const orgName = (id: string) => orgs.find((o) => o.id === id)?.name || id
   const rows = pools.filter((p) => !q || p.name.toLowerCase().includes(q.toLowerCase()))
 
-  // 状态开关:用整行数据 PUT 回去,仅翻转 enabled。
+  // Status toggle: PUT the whole row back with only `enabled` flipped.
   const toggle = async (p: ResourcePool, enabled: boolean) => {
     try {
       await api.updateResourcePool(p.id, { ...toInput(p), enabled })
@@ -185,7 +185,7 @@ export function ResourcePoolsPage() {
   )
 }
 
-// 视图 → 表单/提交入参(列表里翻转 enabled 时复用)。
+// View model → submit input (reused when the list flips `enabled`).
 function toInput(p: ResourcePool): ResourcePoolInput {
   return {
     name: p.name,
@@ -200,7 +200,7 @@ function toInput(p: ResourcePool): ResourcePoolInput {
   }
 }
 
-// ---------------- 新增 / 编辑表单 ----------------
+// ---------------- Create / edit form ----------------
 const NEW_NODE: PoolNode = { ip: '', port: '', concurrentNumber: 10, singleTaskConcurrentNumber: 3 }
 
 interface FormShape {
@@ -255,7 +255,7 @@ function poolToForm(p: ResourcePool): FormShape {
   }
 }
 
-// 表单值 → 提交入参:按类型组装 config 与 maxConcurrency。
+// Form values → submit input: assemble config and maxConcurrency per pool type.
 function formToInput(v: FormShape): ResourcePoolInput {
   const base = {
     name: v.name,
@@ -327,7 +327,7 @@ export function ResourcePoolForm() {
     }
   }, [id]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // 批量文本(每行 ip:port[:max[:single]])→ 节点表。
+  // Batch text (one `ip:port[:max[:single]]` per line) → node table.
   const applyBatch = () => {
     const nodes: PoolNode[] = batchText
       .split('\n')
@@ -405,7 +405,7 @@ export function ResourcePoolForm() {
             {isEdit ? t('pool.edit', '编辑资源池') : t('pool.add', '添加资源池')}
           </div>
           <Form form={form} layout="vertical" initialValues={EMPTY} style={{ maxWidth: 1100 }}>
-            {/* 基础信息:名称/类型/回连地址/组织范围/描述,两栏排布减少滚动 */}
+            {/* Basic info: name/type/callback URL/org scope/description; two-column layout to reduce scrolling */}
             <div style={{ fontWeight: 600, marginBottom: 12 }}>{t('pool.sectionBasic', '基础信息')}</div>
             <Row gutter={24}>
               <Col span={24} lg={12}>
@@ -458,7 +458,6 @@ export function ResourcePoolForm() {
                   </Form.Item>
                 )}
               </Col>
-              {/* 多行描述占整行 */}
               <Col span={24}>
                 <Form.Item name="description" label={t('res.colDesc', '描述')}>
                   <Input.TextArea rows={3} placeholder={t('pool.descPlaceholder', '请对该资源池进行描述')} maxLength={500} />
@@ -466,7 +465,7 @@ export function ResourcePoolForm() {
               </Col>
             </Row>
 
-            {/* 容量/配置:随 poolType 切换的字段 */}
+            {/* Capacity/config: fields switch with poolType */}
             <div style={{ fontWeight: 600, marginTop: 8, marginBottom: 12 }}>{t('pool.sectionConfig', '容量与配置')}</div>
             {poolType === 'Node' ? (
               <NodeSection
@@ -483,7 +482,7 @@ export function ResourcePoolForm() {
           </Form>
         </Card>
       </div>
-      {/* 底部操作条 */}
+      {/* Bottom action bar */}
       <div style={{ padding: '10px 24px', background: 'var(--panel)', borderTop: '1px solid var(--border-soft)', textAlign: 'right' }}>
         <Space>
           <Button onClick={() => nav('/resource-pool')}>{t('a.cancel', '取消')}</Button>
@@ -501,7 +500,7 @@ export function ResourcePoolForm() {
   )
 }
 
-// Node:单个添加(节点表)/ 批量添加(文本)。
+// Node pool: single add (node table) / batch add (text).
 function NodeSection({
   t,
   mode,
@@ -605,7 +604,7 @@ function NodeSection({
   )
 }
 
-// Kubernetes:IP/Token/命名空间/Deploy Name + 并发,两栏排布。
+// Kubernetes pool: IP/Token/namespace/deploy name + concurrency, two-column layout.
 function K8sSection({ t, labelHelp }: { t: TFn; labelHelp: (l: string, h: string) => React.ReactNode }) {
   return (
     <Row gutter={24}>

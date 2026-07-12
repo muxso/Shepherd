@@ -112,7 +112,7 @@ mod tests {
     #[tokio::test]
     async fn exchange_failure_propagates() {
         let (uc, _, _) = uc();
-        // FakeIdentityProvider 约定:code "bad" → 交换失败
+        // FakeIdentityProvider contract: code "bad" → exchange failure.
         assert!(matches!(uc.complete("feishu", "bad").await, Err(OidcError::Exchange(_))));
     }
 

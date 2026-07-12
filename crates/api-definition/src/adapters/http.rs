@@ -859,7 +859,7 @@ async fn update_case(
         return (StatusCode::FORBIDDEN, "permission denied").into_response();
     }
     let assertions = req.assertions.unwrap_or_else(|| serde_json::json!([]));
-    // "_" 占位:UPDATE 不改 api_definition_id/project_id,NewApiCase 仅校验 name/url/method。
+    // "_" placeholders: UPDATE never touches api_definition_id/project_id; NewApiCase only validates name/url/method.
     let new_case =
         match NewApiCase::new("_", "_", &req.name, &req.method, &req.url, req.body, assertions) {
             Ok(c) => c
@@ -2039,7 +2039,7 @@ mod tests {
         let (app, t) = app().await;
         let id = create_view_returns_id(&app, &t).await;
 
-        // 只改 name:config/shared 保持原值。
+        // Partial update: only name changes; config/shared keep their prior values.
         let resp = app
             .clone()
             .oneshot(put(&format!("/api/api-view/{id}"), r#"{"name":" 改名视图 "}"#, Some(&t)))
@@ -2051,7 +2051,7 @@ mod tests {
         assert_eq!(v["config"], serde_json::json!({"pageSize": 10}));
         assert_eq!(v["shared"], true);
 
-        // config + shared 一起改。
+        // Full update: config + shared together.
         let resp = app
             .clone()
             .oneshot(put(
@@ -2067,7 +2067,7 @@ mod tests {
         assert_eq!(v["config"], serde_json::json!({"pageSize": 50}));
         assert_eq!(v["shared"], false);
 
-        // 列表里可见更新后的值。
+        // List endpoint reflects the updated values.
         let resp = app.oneshot(get("/api/api-view?projectId=p1", Some(&t))).await.expect("resp");
         let list = json_body(resp).await;
         assert_eq!(list[0]["name"], "改名视图");
@@ -2109,7 +2109,7 @@ mod tests {
             .expect("resp");
         assert_eq!(resp.status(), StatusCode::NOT_FOUND);
 
-        // 原视图未被改动。
+        // The owner's view is untouched.
         let resp =
             app.oneshot(get("/api/api-view?projectId=p1", Some(&owner))).await.expect("resp");
         let list = json_body(resp).await;

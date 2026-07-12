@@ -37,11 +37,11 @@ import { userIdStore, type TemplateField } from '../api'
 import { useI18n } from '../i18n'
 
 const toLines = (s: string) => s.split('\n').map((x) => x.trim()).filter(Boolean)
-// 取需求的「当前」验收标准(优先基线版本,回落最新版本/顶层)。
+// Current acceptance criteria: prefer the baseline version, fall back to latest version / top-level field.
 const critsOf = (r: Requirement): string[] =>
   r.versions?.find((v) => v.version === r.baselineVersion)?.acceptanceCriteria ?? r.versions?.[r.versions.length - 1]?.acceptanceCriteria ?? r.acceptanceCriteria ?? []
 const taskColor = (s: string) => (s === 'VERIFIED' ? 'green' : s === 'FAILED' ? 'red' : s === 'PENDING' ? 'default' : 'blue')
-// 协同看板列:按任务状态归桶(进行中合并 派发/运行)。
+// Kanban columns bucket tasks by status; "in progress" merges DISPATCHED/RUNNING.
 const BOARD_COLS: { key: string; tkey: string; label: string; statuses: string[] }[] = [
   { key: 'PENDING', tkey: 'req.col.pending', label: '待派发', statuses: ['PENDING'] },
   { key: 'PROGRESS', tkey: 'req.col.progress', label: '进行中', statuses: ['DISPATCHED', 'RUNNING'] },
@@ -49,39 +49,33 @@ const BOARD_COLS: { key: string; tkey: string; label: string; statuses: string[]
   { key: 'VERIFIED', tkey: 'req.col.verified', label: '已验证', statuses: ['VERIFIED'] },
   { key: 'FAILED', tkey: 'req.col.failed', label: '失败', statuses: ['FAILED'] },
 ]
-// 需求状态色:DRAFT 灰 / BASELINED 蓝 / DELIVERED 绿 / ARCHIVED 灰。
 const reqStatusColor = (s?: string) =>
   s === 'DELIVERED' ? 'green' : s === 'BASELINED' ? 'blue' : s === 'ARCHIVED' ? 'default' : 'default'
-// 优先级色:P0 红 / P1 橙 / P2 蓝 / P3 灰。
 const prioColor = (p?: string) => (p === 'P0' ? 'red' : p === 'P1' ? 'orange' : p === 'P2' ? 'blue' : 'default')
-// 阶段状态 → Tag 状态色(未开始/跳过 灰 / 进行中 蓝 / 已完成 绿)。
 const stageTagColor = (s?: string): 'default' | 'processing' | 'success' =>
   s === 'DONE' ? 'success' : s === 'IN_PROGRESS' ? 'processing' : 'default'
-// 7 段需求流水线固定顺序:创建→审核→评审→开发→测试→验收→交付。
+// Canonical order of the 7-stage requirement pipeline.
 const STAGE_ORDER: RequirementStageKey[] = ['CREATED', 'AUDIT', 'REVIEW', 'DEV', 'TEST', 'ACCEPTANCE', 'DELIVERY']
-// 补齐阶段列表:后端固定返回 7 段,这里按固定顺序兜底,防缺段/乱序。
+// Rebuild the stage list in canonical order to guard against missing or out-of-order stages from the backend.
 const stagesOf = (r?: Requirement | null): RequirementStage[] => {
   const by = new Map((r?.stages ?? []).map((s) => [s.stage, s]))
   return STAGE_ORDER.map((k) => by.get(k) ?? { stage: k, status: 'PENDING', plannedStart: null, plannedEnd: null, startedAt: null, finishedAt: null, overdue: false })
 }
-// 阶段 → 行内小圆点色(延期 红 / 完成 绿 / 进行中 品牌蓝 / 未开始 灰 / 跳过 弱化)。
 const stageDotColor = (s: RequirementStage) =>
   s.overdue ? 'var(--error)' : s.status === 'DONE' ? 'var(--success)' : s.status === 'IN_PROGRESS' ? 'var(--brand)' : s.status === 'SKIPPED' ? 'var(--border)' : 'var(--text-3)'
-// 实际起止时间的短格式(MM-DD HH:mm)。
 const fmtShort = (ms?: number | null) => (ms ? dayjs(ms).format('MM-DD HH:mm') : '')
-// 计划日期短格式(MM-DD;缺省 —)。
 const fmtPlan = (d?: string | null) => (d ? dayjs(d).format('MM-DD') : '—')
 
-// 列表行 = 本地注册表项 + 后端需求状态/类型/优先级/标签/延期。
-// 新建需求的工作区 Tab key(与场景页 NEW_KEY 同模式,不弹窗)。
+// List row = local registry item + backend status/type/priority/tags/overdue.
+// Workspace tab key for creating a requirement (same pattern as the scenario page's NEW_KEY, no modal).
 const NEW_REQ_KEY = '__new_requirement__'
 
 type ReqRow = Omit<RegItem, 'label'> & {
   status?: string
   label: React.ReactNode
-  /** 纯文本标题(搜索/筛选用;label 已是带徽标的节点)。 */
+  /** Plain-text title for search/filter; label is a node carrying the coverage badge. */
   titleText: string
-  /** 原始需求(行内展开预览用)。 */
+  /** Raw requirement, for the inline expanded preview. */
   raw?: Requirement
   reqType?: string
   priority?: string
@@ -90,8 +84,8 @@ type ReqRow = Omit<RegItem, 'label'> & {
 }
 
 
-// 列表列(带 key/label 供「列设置」面板);label 是带覆盖徽标的节点,搜索用 titleText。
-// 「所属模块」列 id → 名称;key 与筛选字段同为 module,列头漏斗由 ListView.withHeaderFilter 自动挂上。
+// Columns carry key/label for the column-settings panel; label is a badge-decorated node, search uses titleText.
+// The module column shares key "module" with the filter field, so ListView.withHeaderFilter attaches the header funnel automatically.
 function reqColumns(t: (k: string, d?: string) => string, modules: ApiModule[], moduleOf: (r: ReqRow) => string): ListColumn<ReqRow>[] {
   return [
     { key: 'title', label: t('req.title', '标题'), title: t('req.title', '标题'), dataIndex: 'label' },
@@ -119,7 +113,7 @@ function reqColumns(t: (k: string, d?: string) => string, modules: ApiModule[], 
       render: (s: string | undefined, row: ReqRow) => (
         <>
           <Tag color={reqStatusColor(s)}>{s ? t(`req.status.${s}`, s) : '—'}</Tag>
-          {/* 当前流水线阶段:门禁状态(DRAFT/基线/交付)旁并列展示 */}
+          {/* Current pipeline stage, shown next to the gate status (DRAFT/baselined/delivered) */}
           {row.raw?.currentStage && (
             <span style={{ fontSize: 12, color: 'var(--brand)', marginRight: 6 }}>{t(`req.stage.${row.raw.currentStage}`, row.raw.currentStage)}</span>
           )}
@@ -131,37 +125,36 @@ function reqColumns(t: (k: string, d?: string) => string, modules: ApiModule[], 
   ]
 }
 
-// 需求与编排合一:需求列表 → 详情 Tab(需求信息/版本/基线/拆分 → 拆分图任务+运行+交付+验证)。
+// Requirements + orchestration in one page: list → detail tabs (info/versions/baseline/decomposition → task graph + runs + delivery + verification).
 export default function Requirements() {
   const { t } = useI18n()
   const { projectId } = useApp()
   const [items, setItems] = useState<ReqRow[]>([])
-  // 共享项目模块树(与场景/用例同一棵):左栏模块面板 + 「所属模块」列/筛选。
+  // Shared project module tree (same tree as scenarios/cases): left panel + module column/filter.
   const [modules, setModules] = useState<ApiModule[]>([])
   const [selModule, setSelModule] = useState('ALL') // ALL | UNFILED | <moduleId>
   const [moduleSearch, setModuleSearch] = useState('')
   const tabs = useWorkTabs()
-  // 需求字段模板:行内预览解析自定义字段的显示名。
+  // Requirement field template: resolves custom-field display names in the inline preview.
   const { fields: reqTplFields } = useFieldTemplate('requirement')
 
   const loadModules = () => {
     if (!projectId) { setModules([]); return }
     api.modules(projectId).then((mm) => setModules(Array.isArray(mm) ? mm : [])).catch(() => setModules([]))
   }
-  // 行的所属模块:取后端 moduleId,且须仍存在于模块树(模块被删后回落未规划)。
+  // Row module = backend moduleId, but only if it still exists in the tree (deleted modules fall back to unfiled).
   const moduleOf = (r: ReqRow) => {
     const m = r.raw?.moduleId || ''
     return modules.some((x) => x.id === m) ? m : ''
   }
 
-  // 列表以后端为准(含 CLI/API 建的需求),叠加本地注册表的 meta(拆分/验证链接)。
-  // 携带后端 status,让列表直观看到 DRAFT/BASELINED/DELIVERED。
+  // Backend is the source of truth (includes requirements created via CLI/API), overlaid with local registry meta (decomposition/verification links).
   const loadList = async () => {
     const local = regList('requirement', projectId)
     const localById = new Map(local.map((r) => [r.id, r]))
     try {
       const page = await api.requirements(projectId)
-      // 并行取各需求覆盖,行标签带覆盖率徽标(列表通常较小)。
+      // Fetch coverage for all requirements in parallel to badge row labels (lists are usually small).
       const covs = await Promise.all(page.items.map((r) => api.requirementCoverage(r.id).then((c) => [r.id, c] as const).catch(() => [r.id, []] as const)))
       const covMap: Record<string, CoverageCase[]> = Object.fromEntries(covs)
       setItems(page.items.map((r) => {
@@ -175,7 +168,7 @@ export default function Requirements() {
         return { ...base, status: r.status, reqType: r.reqType, priority: r.priority, tags: r.tags, overdue: r.overdue, label, titleText: r.title, raw: r }
       }))
     } catch {
-      setItems(local.map((r) => ({ ...r, titleText: String(r.label) }))) // 后端不可用时回落本地
+      setItems(local.map((r) => ({ ...r, titleText: String(r.label) }))) // backend unavailable: fall back to local registry
     }
   }
   useEffect(() => {
@@ -186,7 +179,7 @@ export default function Requirements() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId])
 
-  // 列表三件套:视图/筛选/列设置(useListView 必须在条件 return 之前调用)。
+  // List view/filter/column-settings trio; useListView must run before any conditional return (hook order).
   const allTags = [...new Set(items.flatMap((r) => r.tags ?? []))]
   const lv = useListView<ReqRow>({
     kind: 'requirement',
@@ -223,7 +216,7 @@ export default function Requirements() {
         get: (r) => moduleOf(r),
       },
       { key: 'overdue', label: t('req.overdueOnly', '仅看延期'), type: 'bool', get: (r) => r.overdue === true },
-      // 以下仅供条件选择(与搜索框/列展示重复,不渲染在声明式筛选区)。
+      // Advanced-condition-only fields (duplicate the search box/columns; not rendered in the declarative filter bar).
       { key: 'title', label: t('req.colTitle', '标题'), type: 'text', advOnly: true, get: (r) => r.titleText },
       {
         key: 'currentStage', label: t('req.currentStage', '当前阶段'), type: 'enum', advOnly: true,
@@ -233,12 +226,12 @@ export default function Requirements() {
       { key: 'createdBy', label: t('lv.createdBy', '创建人'), type: 'text', advOnly: true, get: (r) => r.raw?.createdBy || '' },
     ],
     columns: reqColumns(t, modules, moduleOf),
-    // 左树过滤(选父含子)先于视图/筛选生效;模块树计数用全量 items,与列表口径一致。
+    // Left-tree filter (selecting a parent includes children) applies before views/filters; tree counts use the full item set to stay consistent with the list.
     rows: items.filter((r) => inSelectedModule(modules, selModule, moduleOf(r))),
   })
 
-  // 行内展开预览:不离开列表就能看关键信息;深入编辑再进 Tab。
-  // 紧凑阶段条:7 个圆点按状态着色,当前阶段带名称高亮,延期阶段标红。
+  // Inline expanded preview: key info without leaving the list; open the tab for deeper editing.
+  // Compact stage strip: 7 dots colored by status, current stage highlighted with its name, overdue in red.
   const stageStrip = (r: Requirement) => (
     <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap', marginBottom: 8 }}>
       {stagesOf(r).map((s) => {
@@ -288,7 +281,7 @@ export default function Requirements() {
             {r.createdAt ? <div>{t('req.createdAt', '创建时间')}:{new Date(r.createdAt).toLocaleString()}</div> : null}
             {r.updatedAt ? <div>{t('req.updatedAt', '更新时间')}:{new Date(r.updatedAt).toLocaleString()}</div> : null}
           </div>
-          {/* 自定义字段(字段模板):字段名从模板解析,解析不到显示 key。 */}
+          {/* Custom fields: names resolved from the field template, falling back to the raw key. */}
           {r.customFields && Object.keys(r.customFields).length > 0 && (
             <div style={{ fontSize: 12, color: 'var(--text-3)', lineHeight: 1.9, marginTop: 6 }}>
               {Object.entries(r.customFields).map(([k, v]) => {
@@ -307,7 +300,7 @@ export default function Requirements() {
 
   if (!projectId) return <SelectProjectEmpty />
 
-  // 左栏:共享项目模块树(与场景页同款 ModuleTreePanel;Workspace 内部用 ResizableSider 包裹)。
+  // Left: shared module tree (same ModuleTreePanel as the scenario page; Workspace wraps it in ResizableSider).
   const left = (
     <ModuleTreePanel
       projectId={projectId}
@@ -325,10 +318,10 @@ export default function Requirements() {
       deleteModuleContent={t('req.deleteModuleContent', '其下需求将变为未规划(不会删除需求)。')}
     />
   )
-  // 新建默认带入左树当前选中的模块(ALL/UNFILED 视为未规划)。
+  // New requirements default to the module selected in the tree (ALL/UNFILED count as unfiled).
   const defaultModuleId = selModule !== 'ALL' && selModule !== 'UNFILED' ? selModule : ''
 
-  // 新建走工作区 Tab(与场景页一致,不弹窗):创建成功关闭新建页并进入详情。
+  // Creation runs in a workspace tab (like the scenario page, no modal); on success close it and open the detail tab.
   const detailTabs = [
     ...(tabs.openIds.includes(NEW_REQ_KEY)
       ? [{
@@ -386,8 +379,8 @@ export default function Requirements() {
   )
 }
 
-// 新建需求:AI 起草(MRD/素材 → 结构化草稿回填)+ 按字段模板动态渲染的表单
-// —— 系统字段的顺序/必填/显隐由「项目→模板管理」的需求字段模板决定,自定义字段动态追加。
+// Create requirement: AI drafting (MRD/raw material → structured draft backfill) + a form rendered from the field template.
+// System field order/required/visibility comes from the requirement field template (Project → Template management); custom fields are appended dynamically.
 const REQ_TYPES = ['FEATURE', 'ENHANCEMENT', 'TECH_DEBT', 'BUGFIX'] as const
 const PRIORITIES = ['P0', 'P1', 'P2', 'P3'] as const
 
@@ -396,9 +389,9 @@ function CreateRequirementForm({ projectId, modules, defaultModuleId, onDone }: 
   const [form] = Form.useForm()
   const [raw, setRaw] = useState('')
   const [drafting, setDrafting] = useState(false)
-  // 字段模板:决定表单里系统字段的顺序/必填/显隐,自定义字段按类型渲染。
+  // Field template drives system-field order/required/visibility; custom fields render by type.
   const { fields: tplFields } = useFieldTemplate('requirement')
-  // 父需求候选:项目下已有需求(失败静默,下拉为空即可)。
+  // Parent candidates: existing requirements in the project (fail silently, empty dropdown is fine).
   const [parents, setParents] = useState<Requirement[]>([])
   useEffect(() => {
     api.requirements(projectId).then((p) => setParents(p.items)).catch(() => setParents([]))
@@ -427,7 +420,7 @@ function CreateRequirementForm({ projectId, modules, defaultModuleId, onDone }: 
       setDrafting(false)
     }
   }
-  // 系统字段渲染器:key → 表单项;必填按模板配置(title 锁定必填)。
+  // System field renderer: key → form item; required follows the template (title is always required).
   const sysItem = (f: TemplateField) => {
     const rules = f.required ? [{ required: true }] : undefined
     switch (f.key) {
@@ -480,7 +473,7 @@ function CreateRequirementForm({ projectId, modules, defaultModuleId, onDone }: 
           </Form.Item>
         )
       case 'criteria':
-        // 验收标准列表:特殊渲染(逐条录入),必填在 onFinish 里校验至少一条。
+        // Criteria list renders specially (one entry per item); "required" is validated in onFinish (at least one).
         return (
           <Form.List key="criteria" name="criteria">
             {(fields, { add, remove }) => (
@@ -508,7 +501,7 @@ function CreateRequirementForm({ projectId, modules, defaultModuleId, onDone }: 
   }
   return (
     <>
-      {/* AI 起草:落地「MRD 自动转 PRD」——粘贴素材,起草结果回填下方表单,可再编辑 */}
+      {/* AI drafting (MRD → PRD): paste raw material, the draft backfills the form below and stays editable */}
       <div style={{ background: 'var(--panel-2)', border: '1px solid var(--border-soft)', borderRadius: 8, padding: 12, marginBottom: 16 }}>
         <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>{t('req.aiDraft', 'AI 起草(MRD 自动转 PRD)')}</div>
         <Input.TextArea
@@ -557,7 +550,7 @@ function CreateRequirementForm({ projectId, modules, defaultModuleId, onDone }: 
           }
         }}
       >
-        {/* 所属模块:共享项目模块树;新建默认带入左树选中模块,未规划 = 空串。 */}
+        {/* Module: defaults to the tree selection; unfiled = empty string. */}
         <Form.Item name="moduleId" label={t('req.module', '所属模块')}>
           <Select
             showSearch
@@ -565,7 +558,7 @@ function CreateRequirementForm({ projectId, modules, defaultModuleId, onDone }: 
             options={[{ value: '', label: t('req.moduleUnfiled', '未规划') }, ...modules.map((m) => ({ value: m.id, label: m.name }))]}
           />
         </Form.Item>
-        {/* 按字段模板的数组序渲染:系统字段走各自渲染器,自定义字段按类型渲染;隐藏字段跳过。 */}
+        {/* Render in template array order: system fields use their renderers, custom fields render by type, disabled fields are skipped. */}
         {tplFields.filter((f) => f.enabled).map((f) =>
           f.system ? sysItem(f) : <CustomFieldItem key={f.key} kind="requirement" field={f} />
         )}
@@ -577,7 +570,7 @@ function CreateRequirementForm({ projectId, modules, defaultModuleId, onDone }: 
   )
 }
 
-// 需求的功能用例覆盖:逐条验收标准 → 关联的功能用例(可增删)+ 覆盖率。打通「需求→标准→功能用例」手工覆盖链。
+// Functional-case coverage: per acceptance criterion, linked functional cases (add/remove) + coverage rate — the manual requirement → criterion → case chain.
 function RequirementCoveragePanel({ reqId, projectId, criteria }: { reqId: string; projectId: string; criteria: string[] }) {
   const { t } = useI18n()
   const [cov, setCov] = useState<CoverageCase[]>([])
@@ -640,9 +633,9 @@ function RequirementCoveragePanel({ reqId, projectId, criteria }: { reqId: strin
   )
 }
 
-// 阶段流水线面板:7 段卡片横排,当前阶段高亮(品牌色边框+淡底)。
-// 每段展示 状态 / 计划窗口 / 实际起止 / 延期;点卡片弹出流转(开始/完成/跳过)+ 排期(计划起止,清空传 "")。
-// CREATED 由系统管理只读;评审/验收/交付由基线/交付动作自动驱动,但保留手动覆盖入口。
+// Stage pipeline panel: 7 cards in a row, current stage highlighted (brand border + soft background).
+// Each card shows status / planned window / actual start-end / overdue; clicking opens transitions (start/done/skip) + scheduling (clearing a date sends "").
+// CREATED is system-managed read-only; review/acceptance/delivery are driven by baseline/deliver actions but keep a manual override.
 function StagePipeline({ req, onAction }: { req: Requirement; onAction: (stage: string, b: { status?: string; plannedStart?: string; plannedEnd?: string }) => void }) {
   const { t } = useI18n()
   return (
@@ -651,7 +644,7 @@ function StagePipeline({ req, onAction }: { req: Requirement; onAction: (stage: 
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
         {stagesOf(req).map((s) => {
           const cur = s.stage === req.currentStage
-          const editable = s.stage !== 'CREATED' // 创建段:系统落状态与时间,只读
+          const editable = s.stage !== 'CREATED' // CREATED is system-managed, read-only
           const card = (
             <div
               style={{
@@ -694,7 +687,7 @@ function StagePipeline({ req, onAction }: { req: Requirement; onAction: (stage: 
                     <Button size="small" type="primary" ghost disabled={s.status === 'DONE'} onClick={() => onAction(s.stage, { status: 'DONE' })}>{t('req.stageDone', '完成')}</Button>
                     <Button size="small" disabled={s.status === 'SKIPPED'} onClick={() => onAction(s.stage, { status: 'SKIPPED' })}>{t('req.stageSkip', '跳过')}</Button>
                   </Space>
-                  {/* 计划排期:清空即传 "" 让后端清除 */}
+                  {/* Clearing a date sends "" so the backend clears it */}
                   <DatePicker
                     size="small" style={{ width: 190 }} allowClear placeholder={t('req.plannedStart', '计划开始')}
                     value={s.plannedStart ? dayjs(s.plannedStart) : null}
@@ -720,12 +713,12 @@ function StagePipeline({ req, onAction }: { req: Requirement; onAction: (stage: 
 function RequirementDetail({ reqId, projectId, modules, onChanged, onDeleted, onOpen }: { reqId: string; projectId: string; modules: ApiModule[]; onChanged: () => void; onDeleted: () => void; onOpen?: (id: string) => void }) {
   const { t } = useI18n()
   const [req, setReq] = useState<Requirement | null>(null)
-  // 字段模板:编辑弹窗渲染自定义字段(回填现值,提交整体替换)。
+  // Field template: the edit modal renders custom fields (prefill current values; submit replaces the whole map).
   const { fields: tplFields } = useFieldTemplate('requirement')
   const [cov, setCov] = useState<CoverageCase[]>([])
   const [verOpen, setVerOpen] = useState(false)
-  const [verView, setVerView] = useState<RequirementVersion | null>(null) // 查看的历史版本明细
-  // 子需求 / 关联候选(项目全部需求)/ 变更记录抽屉。
+  const [verView, setVerView] = useState<RequirementVersion | null>(null) // version detail being viewed
+  // Children / link candidates (all project requirements) / change-history drawer.
   const [children, setChildren] = useState<Requirement[]>([])
   const [allReqs, setAllReqs] = useState<Requirement[]>([])
   const [childPick, setChildPick] = useState<string>()
@@ -751,7 +744,7 @@ function RequirementDetail({ reqId, projectId, modules, onChanged, onDeleted, on
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [reqId])
 
-  // 阶段流转/排期:PUT /requirement/:id/stage/:stage,落库后刷详情+列表(实际起止由后端记)。
+  // Stage transition/scheduling: PUT /requirement/:id/stage/:stage, then refresh detail + list (actual timestamps are recorded by the backend).
   const setStage = async (stage: string, b: { status?: string; plannedStart?: string; plannedEnd?: string }) => {
     try {
       await api.setRequirementStage(reqId, stage, b)
@@ -761,7 +754,7 @@ function RequirementDetail({ reqId, projectId, modules, onChanged, onDeleted, on
       message.error(e instanceof ApiError ? e.message : t('req.setStageFailed', '阶段更新失败'))
     }
   }
-  // 关联/解除子需求:改的是子需求的 parentId。
+  // Linking/unlinking a child mutates the child's parentId.
   const linkChild = async () => {
     if (!childPick) return
     try {
@@ -803,7 +796,7 @@ function RequirementDetail({ reqId, projectId, modules, onChanged, onDeleted, on
     })
   }
 
-  // 生命周期操作:编辑基本信息 / 交付 / 归档 / 删除(后端 PUT/POST/DELETE,带状态守卫,失败回显)。
+  // Lifecycle actions: edit / deliver / archive / delete. The backend guards status transitions; failures surface to the user.
   const [editOpen, setEditOpen] = useState(false)
   const deliver = () => modal.confirm({
     title: t('req.deliverConfirm', '确认交付该需求?'),
@@ -867,7 +860,7 @@ function RequirementDetail({ reqId, projectId, modules, onChanged, onDeleted, on
     }
   }
 
-  // 验收标准:后端把标准放在 versions[].acceptanceCriteria,优先取基线版本,回落最新版本/顶层字段。
+  // Criteria live in versions[].acceptanceCriteria; prefer the baseline version, fall back to latest version / top-level field.
   const baselineCriteria =
     req?.versions?.find((v) => v.version === req.baselineVersion)?.acceptanceCriteria ??
     req?.versions?.[req.versions.length - 1]?.acceptanceCriteria ??
@@ -923,10 +916,9 @@ function RequirementDetail({ reqId, projectId, modules, onChanged, onDeleted, on
                     ) : '—'}
                   </Descriptions.Item>
                 </Descriptions>
-                {/* 阶段进度:7 段流水线卡片(创建→审核→评审→开发→测试→验收→交付),
-                    当前阶段高亮;点卡片流转(开始/完成/跳过)+ 排期(计划起止)。 */}
+                {/* Stage progress: 7 pipeline cards, current stage highlighted; click to transition (start/done/skip) and schedule planned dates. */}
                 {req && <StagePipeline req={req} onAction={setStage} />}
-                {/* 子需求:列出挂在本需求下的需求(可打开/解除),并可把其他需求关联进来。 */}
+                {/* Children: requirements under this one (open/unlink), plus linking others in. */}
                 <Card size="small" title={`${t('req.children', '子需求')} (${children.length})`} style={{ marginTop: 12 }}>
                   <Space.Compact style={{ width: '100%', marginBottom: children.length ? 10 : 0 }}>
                     <Select
@@ -953,7 +945,7 @@ function RequirementDetail({ reqId, projectId, modules, onChanged, onDeleted, on
                     </div>
                   ))}
                 </Card>
-                {/* 版本历史:点「查看」走 GET /requirement/:id/version/:n 取该版本明细。 */}
+                {/* Version history: "view" fetches GET /requirement/:id/version/:n. */}
                 {!!req?.versions?.length && (
                   <Table<RequirementVersion>
                     style={{ marginTop: 12 }}
@@ -1015,7 +1007,7 @@ function RequirementDetail({ reqId, projectId, modules, onChanged, onDeleted, on
             priority: req?.priority || 'P2',
             tags: req?.tags || [],
             dueDate: req?.dueDate ? dayjs(req.dueDate) : undefined,
-            // 所属模块:回落未规划(模块已删/无值时)。
+            // Module: fall back to unfiled when deleted or unset.
             moduleId: req?.moduleId && modules.some((m) => m.id === req.moduleId) ? req.moduleId : '',
             [CF_GROUP]: customFormValues(tplFields, req?.customFields),
           }}
@@ -1026,11 +1018,11 @@ function RequirementDetail({ reqId, projectId, modules, onChanged, onDeleted, on
                 reqType: v.reqType,
                 priority: v.priority,
                 tags: v.tags,
-                // 空串 = 清除截止日期(后端约定)
+                // empty string clears the due date (backend convention)
                 dueDate: v.dueDate ? v.dueDate.format('YYYY-MM-DD') : '',
-                // 自定义字段整体替换(删掉值 = 从 map 移除)
+                // custom fields are replaced wholesale (removing a value drops it from the map)
                 customFields: collectCustomValues(tplFields, v[CF_GROUP]),
-                // 所属模块:空串 = 摘回未规划(缺省不动,这里始终随表单提交)
+                // module: empty string = back to unfiled (omitting leaves it untouched; always submitted here)
                 moduleId: v.moduleId ?? '',
               })
               message.success(t('req.updated', '已保存'))
@@ -1069,12 +1061,12 @@ function RequirementDetail({ reqId, projectId, modules, onChanged, onDeleted, on
           <Form.Item name="dueDate" label={t('req.dueDate', '截止日期')}>
             <DatePicker style={{ width: '100%' }} allowClear />
           </Form.Item>
-          {/* 自定义字段(字段模板):回填现值,保存时整体替换。 */}
+          {/* Custom fields: prefilled with current values; saving replaces the whole map. */}
           <CustomFieldItems kind="requirement" fields={tplFields} />
           <Button type="primary" htmlType="submit" block>{t('a.save', '保存')}</Button>
         </Form>
       </Modal>
-      {/* 变更记录:字段级流水(时间 / 操作人 / 字段: 旧值 → 新值)。 */}
+      {/* Change history: field-level log (time / actor / field: old → new). */}
       <Drawer title={t('req.changes', '变更记录')} open={changesOpen} onClose={() => setChangesOpen(false)} width={480}>
         {changes.length ? (
           <Timeline
@@ -1115,14 +1107,14 @@ function RequirementDetail({ reqId, projectId, modules, onChanged, onDeleted, on
   )
 }
 
-// 需求级人机协同:该需求下 AI/人工 交付对比 + AI 参与度/交付质量 + 验收日历格。
-// 口径与首页一致:任务验收通过且有 DELIVERED 交付记录 = AI 交付。
+// Requirement-level human-AI collaboration: AI vs human delivery comparison + AI share / delivery quality + acceptance calendar grid.
+// Same definition as the home page: task accepted with a DELIVERED delivery record = AI-delivered.
 function CollabPanel({ projectId, reqId, refreshKey }: { projectId: string; reqId: string; refreshKey?: unknown }) {
   const { t } = useI18n()
   const [stats, setStats] = useState<CollabStats | null>(null)
   useEffect(() => {
     api.collabStats(projectId, reqId).then(setStats).catch(() => setStats(null))
-    // refreshKey(任务列表)变化 = 可能有新的验收结果,重拉。
+    // refreshKey (the task list) changing may mean new acceptance results; refetch.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId, reqId, refreshKey])
   const row = stats?.items?.[0]
@@ -1166,19 +1158,19 @@ function CollabPanel({ projectId, reqId, refreshKey }: { projectId: string; reqI
 function DecompositionView({ decompId, verificationId, projectId, reqId }: { decompId: string; verificationId?: string; projectId: string; reqId?: string }) {
   const { t } = useI18n()
   const [tasks, setTasks] = useState<Task[]>([])
-  const [cov, setCov] = useState<CoverageCase[]>([]) // 手工功能用例覆盖(与任务覆盖并看)
+  const [cov, setCov] = useState<CoverageCase[]>([]) // manual functional-case coverage, viewed alongside task coverage
   useEffect(() => { if (reqId) api.requirementCoverage(reqId).then(setCov).catch(() => setCov([])) }, [reqId])
   const [running, setRunning] = useState(false)
-  const [dispatching, setDispatching] = useState<Set<string>>(new Set()) // 派发中的任务 id(防重复点击)
+  const [dispatching, setDispatching] = useState<Set<string>>(new Set()) // task ids being dispatched (guards double clicks)
   const [summary, setSummary] = useState<{ total: number; verified: number; failed: number; blocked: number; rounds: number } | null>(null)
   const [report, setReport] = useState<VerificationReport | null>(null)
   const [eventsFor, setEventsFor] = useState<Task | null>(null)
   const [casesFor, setCasesFor] = useState<Task | null>(null)
-  const [view, setView] = useState<'table' | 'board'>('table') // 表格 / 协同看板
-  // 负责人候选:人(项目用户)+ AI 执行机(runner-agent)。
+  const [view, setView] = useState<'table' | 'board'>('table')
+  // Assignee candidates: humans (project users) + AI executors (runner agents).
   const [assignees, setAssignees] = useState<{ value: string; label: string; kind: string; id: string }[]>([])
   const nameOfAssignee = (a?: string, kind?: string) => assignees.find((o) => o.kind === kind && o.id === a)?.label || a || ''
-  // 注册上来的远程 runtime 机群:派发菜单里可定向到具体某台。
+  // Registered remote runtime fleet: the dispatch menu can target a specific machine.
   const [fleet, setFleet] = useState<FleetRuntime[]>([])
   const loadFleet = () => api.fleetRuntimes().then(setFleet).catch(() => setFleet([]))
 
@@ -1194,7 +1186,7 @@ function DecompositionView({ decompId, verificationId, projectId, reqId }: { dec
   useEffect(() => {
     load()
     loadFleet()
-    // 负责人候选:人 + AI agent(失败静默,看板/列仍可用)。
+    // Assignee candidates: humans + AI agents (fail silently; board/columns still work).
     Promise.all([api.users().then((p) => p.items).catch(() => []), api.runnerAgents().catch(() => [])]).then(([us, ag]) => {
       setAssignees([
         ...us.map((u) => ({ value: `HUMAN:${u.id}`, label: `👤 ${u.name || u.email}`, kind: 'HUMAN', id: u.id })),
@@ -1204,7 +1196,7 @@ function DecompositionView({ decompId, verificationId, projectId, reqId }: { dec
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [decompId])
 
-  // 指派负责人(乐观更新本地后落库)。value 形如 "HUMAN:<id>" / "AGENT:<id>" / ""(取消)。
+  // Assign (optimistic update, then persist). value is "HUMAN:<id>" / "AGENT:<id>" / "" (unassign).
   const assign = async (task: Task, value: string | undefined) => {
     const [kind, id] = value ? value.split(':') : ['', '']
     setTasks((ts) => ts.map((x) => (x.id === task.id ? { ...x, assignee: id, assigneeKind: kind } : x)))
@@ -1229,11 +1221,11 @@ function DecompositionView({ decompId, verificationId, projectId, reqId }: { dec
       setRunning(false)
     }
   }
-  // 依赖门控:任务的依赖须全部 Verified 才能派发(否则提前派发会撞门、卡 PENDING)。
+  // Dependency gate: all dependencies must be VERIFIED before dispatch (dispatching early hits the gate and gets stuck PENDING).
   const statusOf = (id: string) => tasks.find((x) => x.id === id)?.status
   const depsReady = (t: Task) => (t.dependencies ?? []).every((d) => statusOf(d) === 'VERIFIED')
   const dispatch = async (task: Task, executor: string, targetRuntime?: string) => {
-    if (dispatching.has(task.id)) return // 已在派发中,忽略重复点击
+    if (dispatching.has(task.id)) return
     if (!depsReady(task)) {
       message.warning(t('req.depsNotReady', '依赖任务未全部验证完成,暂不能派发'))
       return
@@ -1249,7 +1241,7 @@ function DecompositionView({ decompId, verificationId, projectId, reqId }: { dec
       setDispatching((s) => { const n = new Set(s); n.delete(task.id); return n })
     }
   }
-  // 同名 runtime 只留一条(重连会产生新 id 的重复记录):在线优先,再取最近心跳。
+  // Keep one runtime per name (reconnects create duplicate records with new ids): prefer online, then latest heartbeat.
   const fleetByName = (() => {
     const m = new Map<string, FleetRuntime>()
     for (const r of fleet) {
@@ -1258,9 +1250,10 @@ function DecompositionView({ decompId, verificationId, projectId, reqId }: { dec
     }
     return [...m.values()]
   })()
-  // 派发按钮 = 执行者选择菜单:每种执行者一组,组内优先列具体注册 runtime(在线优先、
-  // 离线禁用),「任意在线执行者(排队)」放最后作兜底;一台都没注册时给明确提示,
-  // 避免只剩「任意」让人误以为选不了具体机器。定向按 runtime name(跨重连稳定)。
+  // Dispatch button = executor picker: one group per executor kind, registered runtimes first
+  // (online first, offline disabled), "any online executor (queued)" last as fallback. With none
+  // registered, show an explicit hint so "any" isn't mistaken for the only choice. Targeting uses
+  // the runtime name, which is stable across reconnects.
   const executorMenu = (task: Task) => ({
     items: Object.entries(EXECUTOR_LABEL).map(([key, label]) => {
       const runtimes = fleetByName
@@ -1300,7 +1293,7 @@ function DecompositionView({ decompId, verificationId, projectId, reqId }: { dec
       dispatch(task, executor, target)
     },
   })
-  // 工作量(task point)行内编辑:乐观更新本地后落库,失败回滚重载。
+  // Inline task-point editing: optimistic update, then persist; reload on failure.
   const setPoints = async (task: Task, points: number) => {
     setTasks((ts) => ts.map((x) => (x.id === task.id ? { ...x, points } : x)))
     try {
@@ -1383,7 +1376,7 @@ function DecompositionView({ decompId, verificationId, projectId, reqId }: { dec
           ]}
         />
       ) : (
-        // 协同看板:按状态分列,卡片显示工作量 + 负责人(人/AI agent),可直接指派/派发。
+        // Kanban: columns by status; cards show points + assignee (human/AI agent) with inline assign/dispatch.
         <Row gutter={8} wrap={false} style={{ overflowX: 'auto', paddingBottom: 8 }}>
           {BOARD_COLS.map((col) => {
             const colTasks = tasks.filter((tk) => col.statuses.includes(tk.status))
@@ -1435,7 +1428,7 @@ function DecompositionView({ decompId, verificationId, projectId, reqId }: { dec
             <Space direction="vertical" size={12} style={{ width: '100%' }}>
               <Space size={32} align="center">
                 <Statistic title={t('req.satisfiedCriteria', '已满足标准')} value={`${report.satisfied ?? 0}${report.total != null ? ` / ${report.total}` : ''}`} />
-                {/* 手工功能用例覆盖:与任务覆盖并看 — 分母用验证报告的标准总数。 */}
+                {/* Manual case coverage alongside task coverage — denominator is the report's criteria total. */}
                 <Statistic
                   title={t('req.manualCovered', '手工用例覆盖')}
                   value={`${new Set(cov.map((c) => c.criterionIndex)).size}${report.total != null ? ` / ${report.total}` : ''}`}
@@ -1446,7 +1439,7 @@ function DecompositionView({ decompId, verificationId, projectId, reqId }: { dec
                   <Tag color={report.complete ? 'green' : 'orange'}>{report.complete ? t('req.complete', '已完整') : t('req.hasGaps', '有缺口')}</Tag>
                 </Space>
               </Space>
-              {/* 缺口明细:未覆盖(无任务覆盖该标准)/ 未验证(已覆盖但未交付验证)。 */}
+              {/* Gap detail: UNCOVERED (no task covers the criterion) / UNVERIFIED (covered but not delivery-verified). */}
               {!!report.gaps?.length && (
                 <div>
                   <Typography.Text type="secondary" style={{ fontSize: 13 }}>{t('req.gaps', '缺口')} ({report.gaps.length})</Typography.Text>
@@ -1459,7 +1452,7 @@ function DecompositionView({ decompId, verificationId, projectId, reqId }: { dec
                             {g.kind === 'UNCOVERED' ? t('req.gapUncovered', '未覆盖') : t('req.gapUnverified', '未验证')}
                           </Tag>
                           <span>{g.text}</span>
-                          {/* 任务未覆盖但已有手工用例兜底:提示评审,避免误判为完全缺口。 */}
+                          {/* Manual cases exist despite no task coverage: flag for review so it isn't mistaken for a full gap. */}
                           {!!manual.length && (
                             <Tag color="blue" style={{ marginLeft: 6 }}>{t('req.hasManualCase', '有手工用例')} · {manual.length}</Tag>
                           )}
@@ -1479,7 +1472,7 @@ function DecompositionView({ decompId, verificationId, projectId, reqId }: { dec
   )
 }
 
-// 任务关联用例 + 用例所属计划:打通 任务→用例→计划,均可点进对应页。
+// Task-linked cases + their plans: the task → case → plan chain, each clickable through to its page.
 function TaskCasesDrawer({ decompId, projectId, task, onClose }: { decompId: string; projectId: string; task: Task | null; onClose: () => void }) {
   const { t } = useI18n()
   const nav = useNavigate()
@@ -1559,15 +1552,13 @@ function TaskCasesDrawer({ decompId, projectId, task, onClose }: { decompId: str
   )
 }
 
-// 交付尝试状态 → Badge 状态色。
 const attemptBadge = (s: string): 'processing' | 'success' | 'error' | 'warning' | 'default' =>
   s === 'RUNNING' ? 'processing' : s === 'DELIVERED' ? 'success' : s === 'FAILED' ? 'error' : s === 'DISPATCHED' ? 'warning' : 'default'
-// 审计事件类型 → 颜色(时间线圆点 / 标签)。
 const eventColor = (k: string): string =>
   k === 'DECISION' ? 'blue' : k === 'FILE_CHANGE' ? 'gold' : k === 'TEST_RESULT' ? 'green' : k === 'TOOL_CALL' ? 'geekblue' : k === 'VERDICT' ? 'purple' : 'default'
 
-// 执行进度抽屉:某任务的全部交付尝试 + 每个尝试的实时审计轨迹 + 交付物/错误。
-// RUNNING/DISPATCHED 期间每 3s 轮询,直到落终态(派发后能看着 AI 干活)。
+// Execution progress drawer: all delivery attempts for a task + live audit trail + deliverable/errors per attempt.
+// Polls every 3s while RUNNING/DISPATCHED until terminal, so the AI can be watched after dispatch.
 function EventsDrawer({ decompId, task, onClose }: { decompId: string; task: Task | null; onClose: () => void }) {
   const { t } = useI18n()
   const [attempts, setAttempts] = useState<DeliveryAttempt[]>([])
@@ -1579,7 +1570,7 @@ function EventsDrawer({ decompId, task, onClose }: { decompId: string; task: Tas
     setLoading(true)
     try {
       const atts = await api.deliveries(decompId, task.id).catch(() => [])
-      const ordered = [...atts].reverse() // 最近一次在前(列表按插入序返回)
+      const ordered = [...atts].reverse() // most recent first (API returns insertion order)
       const map: Record<string, DeliveryEvent[]> = {}
       for (const a of ordered) {
         const id = a.id || a.attemptId
@@ -1599,7 +1590,7 @@ function EventsDrawer({ decompId, task, onClose }: { decompId: string; task: Tas
     load()
   }, [task, load])
 
-  // 有尝试在跑就轮询;全部落终态后停。
+  // Poll while any attempt is running; stop once all are terminal.
   const live = attempts.some((a) => a.status === 'RUNNING' || a.status === 'DISPATCHED')
   useEffect(() => {
     if (!task || !live) return

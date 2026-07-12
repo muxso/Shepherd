@@ -21,7 +21,7 @@ export interface FieldDef {
 export interface CrudConfig<T> {
   title: string
   subtitle?: string
-  /** 需要项目作用域(空项目时给提示) */
+  /** Requires project scope (shows a hint when no project is selected) */
   needsProject?: boolean
   rowKey?: keyof T & string
   list: (ctx: { projectId: string }) => Promise<T[]>
@@ -32,7 +32,7 @@ export interface CrudConfig<T> {
   }
 }
 
-// 数据驱动的资源页:工具栏(新建/刷新)+ 表格 + 由 fields 生成的新建表单。
+// Data-driven resource page: toolbar (create/refresh) + table + create form generated from fields.
 export default function CrudResource<T extends object>({ cfg }: { cfg: CrudConfig<T> }) {
   const { projectId } = useApp()
   const { t } = useI18n()

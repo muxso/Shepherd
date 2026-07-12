@@ -9,7 +9,7 @@ export interface CardLayoutItem {
   size: CardSize
 }
 
-/** 各卡默认尺寸:信息密度高的图表卡占整行,统计/入口类占半行。 */
+/** Default card sizes: dense chart cards take a full row, stat/entry cards half. */
 export const CARD_DEFAULT_SIZE: Record<string, CardSize> = {
   assets: 'full',
   collab: 'full',
@@ -25,7 +25,7 @@ export const CARD_DEFAULT_SIZE: Record<string, CardSize> = {
 
 type ThumbKind = 'donut' | 'bars' | 'trend' | 'grid' | 'stat' | 'list'
 
-/** 库项缩略图:96x60 的小示意图,全部用 CSS 变量取色,暗浅色自适应。 */
+/** Library-item thumbnail: 96x60 sketch, colored entirely via CSS vars so it adapts to dark/light. */
 function Thumb({ kind }: { kind: ThumbKind }) {
   const body = () => {
     switch (kind) {
@@ -117,8 +117,9 @@ interface Props {
 }
 
 /**
- * 全屏卡片布局编辑器:左侧卡片库(分组 + 搜索),右侧当前布局。
- * 原生 HTML5 DnD:左→右拖入、右侧块间拖拽排序;改动落草稿,「保存」才回传持久化。
+ * Fullscreen card layout editor: card library (groups + search) on the left, current layout on the right.
+ * Native HTML5 DnD: drag left→right to add, drag between blocks to reorder. Changes stay in a draft;
+ * only "Save" persists via callback.
  */
 export default function CardSettings({ layout, onSave, onExit }: Props) {
   const { t } = useI18n()
@@ -182,7 +183,7 @@ export default function CardSettings({ layout, onSave, onExit }: Props) {
     setInsertAt(null)
   }
 
-  /** 落下:库项按插入位插入(默认尺寸),布局块移动到插入位。 */
+  /** Drop: library items insert at the target position (default size), layout blocks move there. */
   const commit = () => {
     const src = dragSrc.current
     const pos = insertAt
@@ -208,7 +209,7 @@ export default function CardSettings({ layout, onSave, onExit }: Props) {
 
   return (
     <div style={{ position: 'fixed', inset: 0, zIndex: 1000, background: 'var(--bg-base)', display: 'flex', flexDirection: 'column' }}>
-      {/* 顶部栏:标题 + 退出/保存 */}
+      {/* Top bar: title + exit/save */}
       <div style={{ flex: '0 0 auto', height: 56, display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 20px', background: 'var(--panel)', borderBottom: '1px solid var(--border)' }}>
         <div style={{ fontSize: 16, fontWeight: 600, color: 'var(--text)' }}>{t('home.cs.title', '卡片设置')}</div>
         <div style={{ display: 'flex', gap: 8 }}>
@@ -218,7 +219,7 @@ export default function CardSettings({ layout, onSave, onExit }: Props) {
       </div>
 
       <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>
-        {/* 左侧卡片库:搜索 + 分组(可折叠) */}
+        {/* Left card library: search + collapsible groups */}
         <aside style={{ flex: '0 0 300px', width: 300, borderRight: '1px solid var(--border)', background: 'var(--panel)', overflow: 'auto', padding: 12 }}>
           <Input
             allowClear
@@ -293,7 +294,7 @@ export default function CardSettings({ layout, onSave, onExit }: Props) {
           })}
         </aside>
 
-        {/* 右侧布局区:占位块,half 两块一行、full 整行;拖拽排序/拖入 */}
+        {/* Right layout area: placeholder blocks, half = two per row, full = whole row; drag to reorder/add */}
         <main
           onDragOver={(e) => {
             e.preventDefault()
@@ -364,7 +365,7 @@ export default function CardSettings({ layout, onSave, onExit }: Props) {
                   <span style={{ flex: 1, minWidth: 0, fontSize: 13, fontWeight: 600, color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                     {meta?.title ?? item.key}
                   </span>
-                  {/* 半屏/全屏 胶囊双选 */}
+                  {/* half/full pill toggle */}
                   <span style={{ flex: '0 0 auto', display: 'inline-flex', border: '1px solid var(--border)', borderRadius: 999, overflow: 'hidden' }}>
                     {(['half', 'full'] as CardSize[]).map((s) => (
                       <span

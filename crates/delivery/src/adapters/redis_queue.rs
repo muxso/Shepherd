@@ -1,4 +1,7 @@
-//! 消费组必须在任何 XADD 之前存在(否则 `$` 起点会漏掉已入队消息),故 connect 时预建全部能力组。
+//! Redis Streams work queue.
+//!
+//! Consumer groups must exist before any XADD (a `$` start position would miss
+//! already-enqueued messages), so connect pre-creates a group per capability.
 
 use async_trait::async_trait;
 use std::sync::Arc;
@@ -18,7 +21,7 @@ use crate::ports::{Claimed, QueueStat, WorkQueue, WorkSpec};
 
 const GROUP: &str = "fleet";
 const ACKMAP: &str = "fleet:ackmap";
-// 出现过定向流的 runtime name 索引,reclaim_dead 据此遍历定向流。
+// Index of runtime names that ever had a targeted stream; reclaim_dead walks it.
 const RT_INDEX: &str = "fleet:rt:index";
 const SEP: char = '\u{1f}';
 
@@ -30,12 +33,13 @@ fn stream_key(k: ExecutorKind) -> String {
     format!("fleet:s:{}", k.as_str())
 }
 
-// 定向流:按 runtime name 一流一名,只有该 name 的 runtime 会读它。
+// Targeted stream: one per runtime name; only the runtime with that name reads it.
 fn rt_stream_key(name: &str) -> String {
     format!("fleet:rt:{name}")
 }
 
-// XREADGROUP 碰到无组的 key 会整体 NOGROUP 报错,故读/写定向流前都要确保组存在(幂等)。
+// XREADGROUP fails the whole call with NOGROUP if any key lacks the group, so ensure
+// it exists (idempotent) before reading or writing a targeted stream.
 async fn ensure_group(conn: &mut MultiplexedConnection, key: &str) {
     let res: redis::RedisResult<()> = redis::cmd("XGROUP")
         .arg("CREATE")
@@ -52,8 +56,9 @@ async fn ensure_group(conn: &mut MultiplexedConnection, key: &str) {
 
 pub struct RedisStreamQueue {
     conn: MultiplexedConnection,
-    // claim 用它另开专用连接跑阻塞 XREADGROUP:阻塞命令绝不能跑在共享多路复用连接上,
-    // 否则会把同连接上的 XADD/其它 claim 全卡到超时(实测每次认领要等满 20s)。
+    // claim opens a dedicated connection from this client for the blocking XREADGROUP:
+    // blocking commands must never run on the shared multiplexed connection, or they
+    // stall every XADD / concurrent claim on it (observed: each claim waited the full 20s).
     client: redis::Client,
     default_consumer: String,
 }
@@ -67,7 +72,7 @@ impl RedisStreamQueue {
         let mut conn = client.get_multiplexed_async_connection().await?;
         for cap in known_caps() {
             let key = stream_key(cap);
-            // 组已存在 → BUSYGROUP,幂等忽略。
+            // Existing group yields BUSYGROUP; ignore for idempotency.
             let res: redis::RedisResult<()> = redis::cmd("XGROUP")
                 .arg("CREATE")
                 .arg(&key)
@@ -89,7 +94,7 @@ impl RedisStreamQueue {
 #[async_trait]
 impl WorkQueue for RedisStreamQueue {
     async fn enqueue(&self, spec: &WorkSpec) {
-        // 定向任务进该 runtime 专属流,其余进能力流。
+        // Targeted specs go to the runtime's own stream, the rest to the capability stream.
         let key = match &spec.target_runtime {
             Some(name) => rt_stream_key(name),
             None => stream_key(spec.executor),
@@ -120,7 +125,7 @@ impl WorkQueue for RedisStreamQueue {
         }
         let consumer = if consumer.is_empty() { self.default_consumer.as_str() } else { consumer };
         let mut keys: Vec<String> = Vec::with_capacity(caps.len() + 1);
-        // 自己名下的定向流排最前,优先于公共能力流被读到。
+        // Own targeted stream goes first so it is read before the shared capability streams.
         if !consumer_name.is_empty() {
             let rt_key = rt_stream_key(consumer_name);
             let mut conn = self.conn.clone();
@@ -134,7 +139,8 @@ impl WorkQueue for RedisStreamQueue {
             .block(wait.as_millis() as usize)
             .count(1);
 
-        // 专用连接跑阻塞 XREADGROUP(勿用共享 self.conn,否则卡死 enqueue/并发 claim)。
+        // Dedicated connection for the blocking XREADGROUP (never the shared self.conn,
+        // which would stall enqueue / concurrent claims).
         let mut conn = self.client.get_multiplexed_async_connection().await.ok()?;
         let reply: StreamReadReply = conn.xread_options(&keys, &ids, &opts).await.ok()?;
         let (key, entry) =
@@ -142,7 +148,8 @@ impl WorkQueue for RedisStreamQueue {
         let json: String = entry.get("spec")?;
         let wire: WireSpec = serde_json::from_str(&json).ok()?;
         let spec: WorkSpec = wire.into();
-        // ack 映射 attempt_id → "<streamkey>\x1f<entryid>",终态 XACK 时据此定位条目。
+        // Ack map: attempt_id -> "<streamkey>\x1f<entryid>", used to locate the entry
+        // for XACK on terminal state.
         let val = format!("{}{}{}", key, SEP, entry.id);
         let _: redis::RedisResult<()> = conn.hset(ACKMAP, &spec.attempt_id, val).await;
         Some(Claimed { spec })
@@ -157,10 +164,12 @@ impl WorkQueue for RedisStreamQueue {
         let _: redis::RedisResult<()> = conn.hdel(ACKMAP, attempt_id).await;
     }
 
-    // 只回收持有者已死(∉ live)且空闲超 grace 的 PEL 条目:重新 XADD + XACK 旧条目。
-    // 持有者仍在线则跳过(长任务也算在线),避免重投正在跑的任务。
-    // 定向流同样回收(重投回原定向流):runtime 掉线重连后拿新 id,旧 id 的 PEL 条目
-    // 不回收就永远没人能再领到。
+    // Reclaim only PEL entries whose holder is dead (not in `live`) and idle past
+    // `grace`: re-XADD then XACK the old entry. A live holder is skipped even for
+    // long-running work, to avoid re-dispatching a task that is still executing.
+    // Targeted streams are reclaimed too (re-added to the same targeted stream):
+    // a runtime that drops and reconnects gets a new id, so PEL entries under the
+    // old id would otherwise be claimable by no one, forever.
     async fn reclaim_dead(&self, live: &[String], grace: Duration) -> usize {
         let grace_ms = grace.as_millis() as usize;
         let mut conn = self.conn.clone();
@@ -178,7 +187,8 @@ impl WorkQueue for RedisStreamQueue {
                 if live.iter().any(|l| l == &p.consumer) || p.last_delivered_ms < grace_ms {
                     continue;
                 }
-                // 取不到原 payload(条目已被 MAXLEN 裁剪)→ 直接 XACK 清出 PEL,不重投。
+                // Original payload gone (entry trimmed by MAXLEN): XACK to clear the
+                // PEL without re-enqueueing.
                 let range: StreamRangeReply = match conn.xrange(&key, &p.id, &p.id).await {
                     Ok(r) => r,
                     Err(_) => continue,
@@ -205,7 +215,7 @@ impl WorkQueue for RedisStreamQueue {
         requeued
     }
 
-    // XINFO GROUPS 的 lag = ready,pending = in_flight;取不到则该能力计 0。
+    // XINFO GROUPS: lag = ready, pending = in_flight; a capability reports 0 on error.
     async fn stats(&self) -> Vec<QueueStat> {
         let mut conn = self.conn.clone();
         let mut out = Vec::with_capacity(known_caps().len());
@@ -242,7 +252,7 @@ impl WorkQueue for RedisStreamQueue {
     }
 }
 
-// WorkSpec 无 serde derive,故用 WireSpec 桥接线缆编解码。
+// WorkSpec has no serde derive, so WireSpec bridges the wire encoding.
 #[derive(serde::Serialize, serde::Deserialize)]
 struct WireSpec {
     attempt_id: String,
@@ -254,7 +264,7 @@ struct WireSpec {
     executor: String,
     context: Option<String>,
     instructions: Option<String>,
-    // default:兼容升级前已入队的旧条目(无此字段)。
+    // default: tolerate entries enqueued before this field existed.
     #[serde(default)]
     target_runtime: Option<String>,
 }

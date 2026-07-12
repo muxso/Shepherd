@@ -6,7 +6,7 @@ fn pure_layers_have_no_io_imports() {
     let base = Path::new(env!("CARGO_MANIFEST_DIR"));
     for layer in ["src/domain", "src/ports", "src/application"] {
         let dir = base.join(layer);
-        // 部分 crate 无 domain 层(如编排器纯用例编排);存在的层才检查。
+        // Some crates lack a domain layer (e.g. the orchestrator is pure use-case wiring); only check layers that exist.
         if dir.exists() {
             scan(&dir);
         }

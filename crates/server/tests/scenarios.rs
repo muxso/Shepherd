@@ -1,4 +1,4 @@
-//! 端到端业务场景测试(`#[ignore]`,需 PostgreSQL)。运行:
+//! End-to-end business scenario tests (`#[ignore]`, need PostgreSQL). Run with:
 //!   docker run -d --name ms-pg -e POSTGRES_USER=msuser -e POSTGRES_PASSWORD=mspass \
 //!     -e POSTGRES_DB=mstest -p 55432:5432 postgres:16-alpine
 //!   cargo test -p server --test scenarios -- --ignored --test-threads=1
@@ -57,7 +57,7 @@ impl TestServer {
             }
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
-        // 超时路径也要收割子进程,不然测试失败会留下孤儿 server 占着端口。
+        // Reap the child on the timeout path too, or a failing test leaves an orphan server holding the port.
         let _ = child.kill();
         let _ = child.wait();
         panic!("server 未在超时内就绪(确认 PostgreSQL 在 {})", db_url());
@@ -116,7 +116,7 @@ impl TestServer {
     }
 }
 
-/// 独立 projectId 避免共享库唯一性冲突。
+/// A distinct projectId avoids uniqueness collisions in the shared database.
 fn proj() -> String {
     format!("p-{}", free_port())
 }
@@ -279,7 +279,7 @@ async fn serve_mock_llm_selfcorrect() -> String {
                 let content: String = if sys.contains("规划器") {
                     r#"[{"title":"LLM任务A","description":"","acceptanceCriteria":["登录成功"],"dependencies":[]}]"#.into()
                 } else if sys.contains("评审") {
-                    // 首轮判不通过(触发修订),之后通过。
+                    // First round fails (triggers revision); subsequent rounds pass.
                     if jc.fetch_add(1, Ordering::SeqCst) == 0 {
                         r#"{"passed":false,"reason":"首轮缺测试"}"#.into()
                     } else {

@@ -89,7 +89,8 @@ impl TaskService {
         Ok(d)
     }
 
-    /// 批量重指派,返回(最新分解, 改动数)。无改动则不落库。
+    /// Bulk reassignment; returns (updated decomposition, change count). Skips persisting when
+    /// nothing changed.
     pub async fn reassign(
         &self,
         decomposition_id: &str,

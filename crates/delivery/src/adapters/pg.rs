@@ -249,14 +249,17 @@ impl DeliveryRepository for PgDeliveryRepository {
         Ok(TaskPage { items, total })
     }
 
-    // 人机协同人效:VERIFIED 任务按「是否存在 DELIVERED 交付记录」拆成 AI/人工,
-    // 需求维度聚合数量与工作量 + 交付质量(尝试成功率/一次通过);requirement_id 给定时只看该需求。
+    // Human/AI collaboration stats: VERIFIED tasks split into AI/human by whether a
+    // DELIVERED delivery record exists; aggregated per requirement (counts, points,
+    // plus delivery quality: attempt success rate / first-pass). With requirement_id,
+    // scope to that requirement only.
     async fn collab_stats(
         &self,
         project_id: &str,
         requirement_id: Option<&str>,
     ) -> Result<CollabStats, RepoError> {
-        // attempt_cnt 供「一次通过」判定;质量指标(尝试维度)单独聚合后在 SQL 里 LEFT JOIN。
+        // attempt_cnt feeds the first-pass check; attempt-level quality metrics are
+        // aggregated separately and LEFT JOINed in.
         const VERIFIED_SPLIT: &str = "SELECT t.points, t.verified_at, dc.requirement_id, \
                 (SELECT count(*) FROM ms_delivery_attempt a \
                  WHERE a.decomposition_id = t.decomposition_id AND a.task_id = t.id) AS attempt_cnt, \
@@ -266,7 +269,8 @@ impl DeliveryRepository for PgDeliveryRepository {
              FROM ms_task t \
              JOIN ms_task_decomposition dc ON dc.id = t.decomposition_id \
              WHERE t.status = 'VERIFIED'";
-        // 尝试维度(不限于已验收任务):某需求下全部交付尝试的 总数/成功/失败。
+        // Attempt level (not limited to verified tasks): total/succeeded/failed
+        // delivery attempts per requirement.
         const ATTEMPT_AGG: &str = "SELECT dc.requirement_id, \
                 count(*) AS ai_attempts, \
                 count(*) FILTER (WHERE a.status = 'DELIVERED') AS ai_delivered, \
@@ -274,7 +278,7 @@ impl DeliveryRepository for PgDeliveryRepository {
              FROM ms_delivery_attempt a \
              JOIN ms_task_decomposition dc ON dc.id = a.decomposition_id \
              GROUP BY dc.requirement_id";
-        // requirement_id 过滤:$2 为空串 = 不过滤(避免动态拼 SQL)。
+        // requirement_id filter: empty string in $2 = no filter (avoids dynamic SQL).
         let req_filter = requirement_id.unwrap_or("");
 
         let rows = sqlx::query(&format!(
@@ -318,7 +322,8 @@ impl DeliveryRepository for PgDeliveryRepository {
             })
             .collect::<Result<Vec<_>, RepoError>>()?;
 
-        // 近一年按日聚合(GitHub 贡献格子);稀疏返回,前端补全日历格。
+        // Daily aggregation over the past year (GitHub contribution grid); returned
+        // sparse, the frontend fills in missing calendar cells.
         let rows = sqlx::query(&format!(
             "SELECT to_char(date_trunc('day', x.verified_at), 'YYYY-MM-DD') AS d, \
                 count(*) FILTER (WHERE x.ai) AS ai, \

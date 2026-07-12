@@ -121,7 +121,7 @@ impl EnvironmentRepository for PgEnvironmentRepository {
     }
 
     async fn update(&self, id: &str, e: &NewEnvironment) -> Result<Option<Environment>, RepoError> {
-        // project_id 不可变:故意不在 SET 里。
+        // project_id is immutable: deliberately absent from SET.
         let row = sqlx::query(&format!(
             "UPDATE ms_environment SET name = $2, base_url = $3, headers = $4, variables = $5, enabled = $6 \
              WHERE id = $1 AND deleted = false RETURNING {COLS}"

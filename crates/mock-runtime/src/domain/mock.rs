@@ -29,7 +29,7 @@ impl MockRequest {
     }
 }
 
-/// `Regex` 非法时视为不命中(绝不 panic)。
+/// An invalid `Regex` counts as a non-match (never panics).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "op", content = "value", rename_all = "snake_case")]
 pub enum StringMatch {
@@ -48,7 +48,7 @@ impl StringMatch {
     }
 }
 
-/// `JsonPointer`:体非 JSON / 路径不存在 → 不命中。
+/// `JsonPointer`: a non-JSON body or a missing path → non-match.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum BodyMatch {
@@ -74,13 +74,14 @@ impl BodyMatch {
     }
 }
 
-/// 各项为 `None`/空 = 不约束(该维度任意命中)。
+/// A `None`/empty field means unconstrained (that dimension matches anything).
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MatchRule {
     #[serde(default)]
     pub method: Option<String>,
-    /// 路径模式:精确,或用 `*` 匹配单个路径段、末尾 `**` 匹配剩余所有段。
+    /// Path pattern: exact, or `*` matches a single segment and a trailing `**` matches all
+    /// remaining segments.
     pub path: String,
     #[serde(default)]
     pub headers: Vec<(String, StringMatch)>,
@@ -168,7 +169,7 @@ pub fn match_request<'a>(req: &MockRequest, rules: &'a [MockRule]) -> Option<&'a
     let mut best: Option<&MockRule> = None;
     for r in rules.iter().filter(|r| r.rule.matches(req)) {
         match best {
-            // `>=` 而非 `>`:仅严格更高才替换,并列保留先到。
+            // `>=` not `>`: only a strictly higher priority replaces; ties keep the first hit.
             Some(b) if b.rule.priority >= r.rule.priority => {}
             _ => best = Some(r),
         }
@@ -197,7 +198,7 @@ fn path_matches(pattern: &str, path: &str) -> bool {
     let mut i = 0;
     while i < pat.len() {
         match pat[i] {
-            "**" => return i + 1 == pat.len(), // `**` 只允许在末尾
+            "**" => return i + 1 == pat.len(), // `**` is only allowed at the end
             _ if i >= seg.len() => return false,
             "*" => {}
             literal if literal == seg[i] => {}

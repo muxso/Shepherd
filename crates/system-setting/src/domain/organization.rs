@@ -58,7 +58,7 @@ impl Organization {
         self.deleted = true;
     }
 
-    /// 软删除后名称可复用,故仅未删除时占用唯一性
+    /// Names are reusable after soft delete, so only non-deleted orgs occupy uniqueness.
     pub fn occupies_name(&self) -> bool {
         !self.deleted
     }

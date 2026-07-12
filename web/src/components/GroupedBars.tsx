@@ -1,7 +1,7 @@
-// 分组柱状图(纯 SVG,无依赖)。每个 row 一组,组内每个 series 一根柱。
-// 宽度策略:测量容器宽度,内容自然宽 = 行数 × 每组最小宽。两者取大 →
-//   组少时撑满容器,组多时按自然宽渲染并由外层横向滚动(不再挤压)。
-// 悬浮:柱子即时高亮(其余变淡)+ 自绘 tooltip 跟随,不依赖原生 title 的延迟提示。
+// Grouped bar chart (pure SVG, no deps). One group per row, one bar per series.
+// Width: max(measured container width, rows × min group width) — few groups fill the
+// container; many groups render at natural width and scroll horizontally instead of squeezing.
+// Hover: instant highlight (others dim) + custom tooltip, avoiding the native title delay.
 import { useEffect, useRef, useState } from 'react'
 
 export interface BarSeries {
@@ -14,12 +14,12 @@ export interface BarRow {
   values: Record<string, number>
 }
 
-const MIN_GROUP_W = 72 // 每组最小宽度(px);组多时据此撑出滚动。
+const MIN_GROUP_W = 72 // min group width (px); drives horizontal scroll when groups are many
 
 export default function GroupedBars({ series, rows, height = 260 }: { series: BarSeries[]; rows: BarRow[]; height?: number }) {
   const wrapRef = useRef<HTMLDivElement>(null)
   const [cw, setCw] = useState(800)
-  // 悬浮中的柱:行/系列下标 + 柱顶坐标(svg 坐标系,滚动容器内定位 tooltip 用)。
+  // Hovered bar: row/series indices + bar-top coords (svg space, used to position the tooltip inside the scroll container).
   const [hover, setHover] = useState<{ ri: number; si: number; x: number; y: number } | null>(null)
   useEffect(() => {
     const el = wrapRef.current
@@ -37,13 +37,13 @@ export default function GroupedBars({ series, rows, height = 260 }: { series: Ba
   const padR = 12
   const padT = 12
   const padB = 40
-  // 自然宽 = 左右留白 + 行数 × 最小组宽;与容器宽取大。
+  // Natural width = side padding + rows × min group width; take max with container width.
   const naturalW = padL + padR + rows.length * MIN_GROUP_W
   const W = Math.max(cw, naturalW)
   const plotW = W - padL - padR
   const plotH = H - padT - padB
 
-  // y 轴上界取「4 等分的 nice 值」。
+  // y-axis upper bound: a nice value that divides evenly into 4 ticks.
   const rawMax = Math.max(1, ...rows.flatMap((r) => series.map((s) => r.values[s.key] ?? 0)))
   const niceMax = niceCeil(rawMax)
   const yOf = (v: number) => padT + plotH - (v / niceMax) * plotH
@@ -55,7 +55,7 @@ export default function GroupedBars({ series, rows, height = 260 }: { series: Ba
 
   return (
     <div>
-      {/* 图例(固定,不随横向滚动) */}
+      {/* Legend (fixed, doesn't scroll horizontally) */}
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 16, marginBottom: 8 }}>
         {series.map((s) => (
           <span key={s.key} style={{ display: 'inline-flex', alignItems: 'center', fontSize: 12, color: 'var(--text-2)' }}>
@@ -66,14 +66,13 @@ export default function GroupedBars({ series, rows, height = 260 }: { series: Ba
       </div>
       <div ref={wrapRef} style={{ overflowX: 'auto', overflowY: 'hidden', position: 'relative' }}>
         <svg width={W} height={H} viewBox={`0 0 ${W} ${H}`} style={{ display: 'block' }}>
-          {/* 网格 + y 轴刻度 */}
+          {/* Grid + y-axis ticks */}
           {ticks.map((tk, i) => (
             <g key={i}>
               <line x1={padL} y1={yOf(tk)} x2={W - padR} y2={yOf(tk)} stroke="#f0f2f5" />
               <text x={padL - 8} y={yOf(tk) + 4} textAnchor="end" fontSize="11" fill="#a8adb5">{tk}</text>
             </g>
           ))}
-          {/* 分组柱 */}
           {rows.map((row, ri) => {
             const gx = padL + ri * groupW
             const inner = barW * series.length + barGap * (series.length - 1)
@@ -109,7 +108,7 @@ export default function GroupedBars({ series, rows, height = 260 }: { series: Ba
             )
           })}
         </svg>
-        {/* 自绘 tooltip:定位在柱顶上方,随滚动容器一起滚。 */}
+        {/* Custom tooltip: positioned above the bar top, scrolls with the container. */}
         {hover && (
           <div
             style={{
@@ -141,7 +140,7 @@ export default function GroupedBars({ series, rows, height = 260 }: { series: Ba
   )
 }
 
-// 取 ≥ v 的「好看上界」:1/2/5 × 10^n。
+// Smallest "nice" upper bound ≥ v: 1/2/5 × 10^n.
 function niceCeil(v: number): number {
   if (v <= 5) return 5
   const pow = Math.pow(10, Math.floor(Math.log10(v)))

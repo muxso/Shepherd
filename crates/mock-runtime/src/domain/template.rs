@@ -15,7 +15,7 @@ fn register_functions(env: &mut Environment<'static>) {
     use fake::Fake;
 
     env.add_function("uuid", || uuid::Uuid::new_v4().to_string());
-    // 字符串,避免大整数精度问题。
+    // Returned as a string to avoid big-integer precision issues.
     env.add_function("now", || {
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)

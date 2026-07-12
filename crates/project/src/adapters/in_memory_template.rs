@@ -9,7 +9,7 @@ use crate::ports::{RepoError, TemplateRepository};
 struct State {
     rows: Vec<Template>,
     seq: u64,
-    /// 逻辑时钟:每次写操作 +1,保证 created/updated 时间戳单调且可测。
+    /// Logical clock: +1 on every write, so created/updated timestamps are monotonic and testable.
     clock: i64,
 }
 
@@ -78,7 +78,7 @@ impl TemplateRepository for InMemoryTemplateRepository {
         };
         slot.name = t.name.clone();
         slot.config = t.config.clone();
-        // 与 pg 侧 `updated_at = now()` 对齐:每次 update 盖更新时间。
+        // Matches the pg side's `updated_at = now()`: every update stamps a new time.
         slot.updated_at_ms = now;
         Ok(Some(slot.clone()))
     }

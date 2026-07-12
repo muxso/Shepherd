@@ -184,7 +184,7 @@ impl ApiDefinitionRepository for PgApiDefinitionRepository {
     }
 
     async fn delete_definition(&self, id: &str) -> Result<(), RepoError> {
-        // 用例为硬删:ms_api_case 无 deleted 列,不能软删。
+        // Cases are hard-deleted: ms_api_case has no deleted column, so soft delete is impossible.
         sqlx::query(
             "UPDATE ms_api_definition SET deleted = true, updated_at = now() WHERE id = $1",
         )
@@ -768,7 +768,7 @@ mod tests {
             .expect("valid");
         let view = repo.insert_view(&nv).await.expect("insert view");
 
-        // 部分更新:只改 name,config/shared 保持原值。
+        // Partial update: only name changes; config/shared keep their prior values.
         let patch = ApiViewPatch::new(Some("改名视图"), None, None).expect("patch");
         let updated =
             repo.update_view(&view.id, "u1", &patch).await.expect("update").expect("owner match");
@@ -776,7 +776,7 @@ mod tests {
         assert_eq!(updated.config, serde_json::json!({"pageSize": 10}));
         assert!(updated.shared);
 
-        // 全字段更新。
+        // Full update of all fields.
         let patch = ApiViewPatch::new(
             Some("再改名"),
             Some(serde_json::json!({"pageSize": 50})),
@@ -789,7 +789,7 @@ mod tests {
         assert_eq!(updated.config, serde_json::json!({"pageSize": 50}));
         assert!(!updated.shared);
 
-        // 非 owner 与不存在的 id 都不命中。
+        // Neither a non-owner nor a nonexistent id matches.
         let patch = ApiViewPatch::new(Some("越权"), None, None).expect("patch");
         assert!(repo.update_view(&view.id, "u2", &patch).await.expect("update").is_none());
         assert!(repo.update_view("ghost", "u1", &patch).await.expect("update").is_none());

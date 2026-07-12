@@ -8,7 +8,7 @@ pub enum RelationError {
     EmptyTarget,
 }
 
-/// 缺陷可关联的资产类型:需求 / 场景用例 / 功能用例。
+/// Asset kinds a bug can link to: requirement / scenario case / functional case.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RelationKind {
     Requirement,

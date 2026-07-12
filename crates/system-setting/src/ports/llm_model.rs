@@ -1,14 +1,15 @@
 use async_trait::async_trait;
 use thiserror::Error;
 
-/// 个人 LLM 模型配置。api_key 存原文供后端调用,读接口一律只回掩码。
+/// Per-user LLM model config. api_key is stored in plaintext for backend calls; read
+/// endpoints only ever return a masked value.
 #[derive(Debug, Clone)]
 pub struct LlmModelRecord {
     pub id: String,
     pub user_id: String,
-    /// deepseek/openai/zhipu/custom 等,入库前已小写。
+    /// deepseek/openai/zhipu/custom etc., lowercased before storage.
     pub provider: String,
-    /// 模型名,如 deepseek-chat。
+    /// Model name, e.g. deepseek-chat.
     pub name: String,
     pub base_url: String,
     pub api_key: String,
@@ -16,7 +17,7 @@ pub struct LlmModelRecord {
     pub created_at_ms: i64,
 }
 
-/// 局部更新;None = 该字段不动。
+/// Partial update; None = leave the field unchanged.
 #[derive(Debug, Clone, Default)]
 pub struct LlmModelPatch {
     pub name: Option<String>,
@@ -35,7 +36,7 @@ pub enum LlmModelRepoError {
 
 #[async_trait]
 pub trait LlmModelRepository: Send + Sync {
-    /// 同 user+provider+name 重复 → Duplicate。
+    /// Same user+provider+name → Duplicate.
     async fn insert(
         &self,
         user_id: &str,
@@ -47,7 +48,8 @@ pub trait LlmModelRepository: Send + Sync {
 
     async fn list_by_user(&self, user_id: &str) -> Result<Vec<LlmModelRecord>, LlmModelRepoError>;
 
-    /// 只更新本人的行;不存在或非本人返回 None。改名撞唯一键 → Duplicate。
+    /// Only updates the caller's own rows; returns None if missing or not owned. Renaming
+    /// into an existing unique key → Duplicate.
     async fn update(
         &self,
         user_id: &str,
@@ -55,6 +57,6 @@ pub trait LlmModelRepository: Send + Sync {
         patch: LlmModelPatch,
     ) -> Result<Option<LlmModelRecord>, LlmModelRepoError>;
 
-    /// 只删本人的行;`false` 表示不存在或非本人。
+    /// Only deletes the caller's own rows; `false` means missing or not owned.
     async fn delete(&self, user_id: &str, id: &str) -> Result<bool, LlmModelRepoError>;
 }

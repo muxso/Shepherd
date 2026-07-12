@@ -128,7 +128,7 @@ impl Reviser for ExecutorReviser {
         feedback: &str,
     ) -> Result<DeliverableView, OrchError> {
         let spec = WorkSpec {
-            // 修订走同步收尾,不依赖异步回调,故 attempt_id 置空。
+            // Revision finishes synchronously, no async callback, so attempt_id stays empty.
             attempt_id: String::new(),
             decomposition_id: decomposition_id.to_string(),
             task_id: task_id.to_string(),
@@ -154,7 +154,7 @@ impl Reviser for ExecutorReviser {
     }
 }
 
-/// `recorder` 必须是**无观察者**的 DeliveryService,否则 Arc 环。
+/// `recorder` must be an **observer-free** DeliveryService, otherwise an Arc cycle forms.
 struct OrchestratorObserver {
     orchestrator: Arc<DeliveryFeedbackOrchestrator>,
     recorder: DeliveryService,
@@ -209,7 +209,7 @@ impl DeliveryObserver for OrchestratorObserver {
                 DeliveryProgress::Delivered { deliverable }
             }
             AttemptStatus::Failed => DeliveryProgress::Failed,
-            // 派发未开跑 / 主动停止:不驱动验证门。
+            // Dispatched-but-not-started / deliberately stopped: don't drive the verification gate.
             AttemptStatus::Dispatched | AttemptStatus::Stopped => return,
         };
         let dstatus = match attempt.status {
@@ -251,7 +251,7 @@ impl DeliveryObserver for OrchestratorObserver {
     }
 }
 
-/// `recorder` 应为**无观察者**的 DeliveryService(避免 Arc 环)。
+/// `recorder` should be an **observer-free** DeliveryService (avoids an Arc cycle).
 pub fn delivery_observer(
     task: TaskService,
     verification: VerificationService,

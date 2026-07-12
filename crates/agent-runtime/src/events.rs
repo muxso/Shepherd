@@ -90,7 +90,7 @@ fn parse_assistant(v: &serde_json::Value) -> Vec<ExecEvent> {
     out
 }
 
-/// 从 tool_result(stream-json 的 user 消息)里抽测试汇总,捕获真实通过/失败。
+/// Extracts test summaries from tool_result (stream-json user messages) to capture real pass/fail.
 fn parse_tool_results(v: &serde_json::Value) -> Vec<ExecEvent> {
     let Some(content) = v.get("message").and_then(|m| m.get("content")).and_then(|c| c.as_array())
     else {
@@ -108,7 +108,7 @@ fn parse_tool_results(v: &serde_json::Value) -> Vec<ExecEvent> {
     out
 }
 
-/// tool_result.content 可能是字符串,或 `[{type:text,text}]` 块数组。
+/// tool_result.content may be a string or a `[{type:text,text}]` block array.
 fn tool_result_text(content: Option<&serde_json::Value>) -> String {
     match content {
         Some(serde_json::Value::String(s)) => s.clone(),
@@ -142,7 +142,7 @@ fn is_test_command(cmd: &str) -> bool {
     .any(|p| c.contains(p))
 }
 
-/// best-effort:多 runner 的测试汇总行(cargo / pytest / jest / mocha…)。
+/// Best-effort match of test-summary lines across runners (cargo / pytest / jest / mocha…).
 fn test_summary(out: &str) -> Option<String> {
     for line in out.lines() {
         let l = line.trim();
@@ -204,19 +204,19 @@ mod tests {
 
     #[test]
     fn tool_result_test_summary_becomes_test_result() {
-        // content 为字符串(cargo 汇总在多行输出里)。
+        // String content (cargo summary embedded in multi-line output).
         let cargo = r#"{"type":"user","message":{"content":[{"type":"tool_result","content":"running 3 tests\n...\ntest result: ok. 3 passed; 0 failed; 0 ignored"}]}}"#;
         assert_eq!(
             parse_claude_line(cargo),
             vec![ExecEvent::new("TEST_RESULT", "test result: ok. 3 passed; 0 failed; 0 ignored")]
         );
-        // content 为块数组(pytest 风格)。
+        // Block-array content (pytest style).
         let pytest = r#"{"type":"user","message":{"content":[{"type":"tool_result","content":[{"type":"text","text":"=== 2 passed, 1 failed in 0.3s ==="}]}]}}"#;
         let evs = parse_claude_line(pytest);
         assert_eq!(evs.len(), 1);
         assert_eq!(evs[0].kind, "TEST_RESULT");
         assert!(evs[0].message.contains("2 passed, 1 failed"));
-        // 非测试输出 → 无事件。
+        // Non-test output produces no event.
         let noise = r#"{"type":"user","message":{"content":[{"type":"tool_result","content":"hello world"}]}}"#;
         assert!(parse_claude_line(noise).is_empty());
     }

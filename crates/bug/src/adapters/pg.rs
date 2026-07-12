@@ -20,14 +20,14 @@ fn map_err(e: sqlx::Error) -> RepoError {
     RepoError::Backend(e.to_string())
 }
 
-/// 自定义字段 map → JSONB 对象(值一律字符串)。
+/// Custom field map → JSONB object (values always strings).
 fn fields_to_json(f: &BTreeMap<String, String>) -> serde_json::Value {
     serde_json::Value::Object(
         f.iter().map(|(k, v)| (k.clone(), serde_json::Value::String(v.clone()))).collect(),
     )
 }
 
-/// JSONB 对象 → 自定义字段 map;非字符串值(理论不该出现)按 JSON 文本兜底。
+/// JSONB object → custom field map; non-string values (shouldn't occur) fall back to JSON text.
 fn json_to_fields(v: &serde_json::Value) -> BTreeMap<String, String> {
     v.as_object()
         .map(|obj| {
@@ -78,7 +78,8 @@ impl BugRepository for PgBugRepository {
             items.push(StatusItem { id, name, internal });
         }
 
-        // 未单独配置状态流的项目回落到领域默认种子流,保证缺陷功能开箱即用。
+        // Projects without a configured status flow fall back to the domain default
+        // seed flow so bugs work out of the box.
         if items.is_empty() {
             return Ok(StatusFlowGraph::default_bug_flow());
         }
@@ -254,7 +255,7 @@ mod tests {
         let url = std::env::var("DATABASE_URL").expect("set DATABASE_URL");
         let pool = PgPool::connect(&url).await.expect("connect");
         migrate::run(&pool).await.expect("migrate");
-        // CASCADE:ms_bug_follower / ms_bug_relation 以外键挂在 ms_bug 上。
+        // CASCADE: ms_bug_follower / ms_bug_relation hang off ms_bug via foreign keys.
         sqlx::raw_sql("TRUNCATE ms_status_item, ms_status_flow, ms_bug CASCADE")
             .execute(&pool)
             .await
@@ -286,13 +287,13 @@ mod tests {
         let bug = repo.insert(&nb, "NEW").await.expect("insert");
         let got = repo.get(&bug.id).await.expect("get").expect("some");
         assert_eq!(got.status, "NEW");
-        // 自定义字段写入即读回。
+        // Custom fields read back as written.
         assert_eq!(got.custom_fields, cf(&[("severity", "P0"), ("多选", "a,b")]));
 
         repo.set_status(&bug.id, "RESOLVED").await.expect("set");
         assert_eq!(repo.get(&bug.id).await.expect("get").expect("some").status, "RESOLVED");
 
-        // 整体替换自定义字段(空 map 即清空)。
+        // Full replacement; empty map clears all.
         repo.set_custom_fields(&bug.id, &cf(&[("env", "prod")])).await.expect("set fields");
         assert_eq!(
             repo.get(&bug.id).await.expect("get").expect("some").custom_fields,

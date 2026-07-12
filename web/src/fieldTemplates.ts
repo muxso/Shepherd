@@ -1,25 +1,26 @@
 import type { FieldTemplateConfig, TemplateField, TemplateFieldType } from './api'
 
-// 字段模板(MeterSphere 式):每个 kind 一份字段配置,决定创建表单的字段/顺序/必填/显隐。
-// 系统字段在此注册(key 固定,label 走 i18n);自定义字段由用户在模板管理里添加。
+// Field templates (MeterSphere-style): one field config per kind, driving each create form's
+// fields/order/required/visibility. System fields are registered here (fixed key, label via i18n);
+// custom fields are added by users in template management.
 
 export type TemplateKind = 'requirement' | 'functional-case' | 'bug'
 
 export const TEMPLATE_KINDS: TemplateKind[] = ['requirement', 'functional-case', 'bug']
 
-/** 每个 kind 恰好一份配置,模板行 name 固定用该值。 */
+/** Exactly one config per kind; template rows always use this name. */
 export const FIELDS_TEMPLATE_NAME = 'fields'
 
-/** 系统字段注册项:默认顺序 = 数组序。 */
+/** System field registration entry; default order = array order. */
 export interface SystemFieldDef {
   key: string
-  /** i18n key(渲染时取);zh 为回落文案。 */
+  /** i18n key (resolved at render); zh is the fallback label. */
   labelKey: string
   labelZh: string
   type: TemplateFieldType
-  /** 锁定 = 必填/显示开关禁用(如 title/name,永远必填可见)。 */
+  /** Locked = required/visible toggles disabled (e.g. title/name: always required and visible). */
   locked?: boolean
-  /** 默认必填(锁定字段隐含必填)。 */
+  /** Required by default (locked fields are implicitly required). */
   defaultRequired?: boolean
 }
 
@@ -32,7 +33,7 @@ export const SYSTEM_FIELDS: Record<TemplateKind, SystemFieldDef[]> = {
     { key: 'dueDate', labelKey: 'req.dueDate', labelZh: '截止日期', type: 'date' },
     { key: 'parentId', labelKey: 'req.parentReq', labelZh: '父需求', type: 'select' },
     { key: 'description', labelKey: 'req.description', labelZh: '需求描述', type: 'textarea' },
-    // 验收标准列表:type 只作标记,渲染由需求页自己处理(逐条录入)。
+    // Acceptance criteria list: type is only a marker; the requirement page renders it itself (one entry per criterion).
     { key: 'criteria', labelKey: 'req.criteriaPlain', labelZh: '验收标准', type: 'textarea' },
   ],
   'functional-case': [
@@ -40,7 +41,7 @@ export const SYSTEM_FIELDS: Record<TemplateKind, SystemFieldDef[]> = {
     { key: 'module', labelKey: 'func.colModule', labelZh: '模块', type: 'text' },
     { key: 'priority', labelKey: 'func.colPriority', labelZh: '优先级', type: 'select' },
     { key: 'prerequisite', labelKey: 'func.prerequisite', labelZh: '前置条件', type: 'textarea' },
-    // 步骤(步骤+预期):渲染由用例页自己处理(StepsEditor)。
+    // Steps (step + expected): rendered by the case page itself (StepsEditor).
     { key: 'steps', labelKey: 'func.stepsDesc', labelZh: '步骤描述', type: 'textarea' },
     { key: 'remark', labelKey: 'func.remark', labelZh: '备注', type: 'textarea' },
   ],
@@ -52,11 +53,11 @@ export const SYSTEM_FIELDS: Record<TemplateKind, SystemFieldDef[]> = {
 export const systemFieldDef = (kind: TemplateKind, key: string): SystemFieldDef | undefined =>
   SYSTEM_FIELDS[kind].find((d) => d.key === key)
 
-/** 系统字段是否锁定(必填/显示开关禁用)。 */
+/** Whether a system field is locked (required/visible toggles disabled). */
 export const isLockedField = (kind: TemplateKind, f: TemplateField): boolean =>
   f.system && !!systemFieldDef(kind, f.key)?.locked
 
-/** 字段显示名:系统字段走 i18n,自定义字段用 label(缺省回落 key)。 */
+/** Field display name: system fields via i18n; custom fields use label, falling back to key. */
 export const fieldLabel = (t: (k: string, d?: string) => string, kind: TemplateKind, f: TemplateField): string => {
   if (f.system) {
     const def = systemFieldDef(kind, f.key)
@@ -65,7 +66,7 @@ export const fieldLabel = (t: (k: string, d?: string) => string, kind: TemplateK
   return f.label || f.key
 }
 
-/** 内置默认配置:注册表全量系统字段,按注册顺序,全部显示。 */
+/** Built-in default config: all registered system fields, in registration order, all visible. */
 export const defaultTemplateFields = (kind: TemplateKind): TemplateField[] =>
   SYSTEM_FIELDS[kind].map((d) => ({
     key: d.key,
@@ -77,8 +78,8 @@ export const defaultTemplateFields = (kind: TemplateKind): TemplateField[] =>
   }))
 
 /**
- * 归一化已存配置:保留存储顺序;丢掉注册表里已不存在的系统字段;
- * 补齐注册表新增的系统字段(追加在末尾);锁定字段强制 required+enabled。
+ * Normalize a stored config: keep the stored order; drop system fields no longer in the registry;
+ * append newly registered system fields at the end; force locked fields to required+enabled.
  */
 export const normalizeFields = (kind: TemplateKind, config?: FieldTemplateConfig | null): TemplateField[] => {
   const saved = Array.isArray(config?.fields) ? config.fields : null
@@ -119,5 +120,5 @@ export const normalizeFields = (kind: TemplateKind, config?: FieldTemplateConfig
   return out
 }
 
-/** 自定义字段 key:c_ 前缀随机短 id。 */
+/** Custom field key: c_ prefix + random short id. */
 export const newCustomFieldKey = (): string => `c_${Math.random().toString(36).slice(2, 8)}`

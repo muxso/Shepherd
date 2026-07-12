@@ -1,6 +1,9 @@
-//! 接口用例执行内核:RequestSpec 请求描述、断言求值(MatchCondition/Assertion)、`${var}` 变量替换、
-//! 提取器(Extractor)与前后置处理(Processor),产出 CaseReport。
-//! domain 只做纯计算不发请求;ReqwestRunner 适配器负责真实 HTTP 执行,供场景/批量/压测/runner-agent 复用。
+//! API case execution kernel: RequestSpec request descriptions, assertion evaluation
+//! (MatchCondition/Assertion), `${var}` substitution, extractors and pre/post
+//! processors, producing a CaseReport.
+//!
+//! The domain layer is pure computation and sends no requests; the ReqwestRunner
+//! adapter does real HTTP, reused by scenario/batch/load-test/runner-agent.
 
 pub mod adapters;
 pub mod domain;

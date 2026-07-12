@@ -1,4 +1,5 @@
-//! 同组织未删除项目名唯一由 schema.sql 的部分唯一索引在 DB 层兜底。
+//! Name uniqueness among non-deleted projects in an organization is backstopped at the DB level
+//! by the partial unique index in schema.sql.
 
 use crate::domain::{NewProject, Project};
 use crate::ports::{ProjectRepository, RepoError};

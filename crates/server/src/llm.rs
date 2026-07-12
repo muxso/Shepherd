@@ -1,12 +1,14 @@
-//! LLM 适配器:三个 AI 触点(拆分 / 执行 / 验证)的可插拔实现。
+//! LLM adapters: pluggable implementations for the three AI touchpoints
+//! (decomposition / execution / verification).
 //!
-//! 两种线协议:OpenAI 兼容 `chat/completions`(默认)与 Anthropic 原生 Messages
-//! (`SHEPHERD_LLM_WIRE=anthropic`,默认模型 claude-opus-4-8)。产线化:每调用超时 +
-//! 对 429/5xx 与网络抖动按退避重试(尊重 `Retry-After`),并记录延迟/令牌(成本观测)。
+//! Two wire protocols: OpenAI-compatible `chat/completions` (default) and native
+//! Anthropic Messages (`SHEPHERD_LLM_WIRE=anthropic`, default model claude-opus-4-8).
+//! Production hardening: per-call timeout, backoff retries on 429/5xx and network
+//! errors (honoring `Retry-After`), plus latency/token recording for cost observability.
 //!
-//! 环境变量:SHEPHERD_LLM_URL、SHEPHERD_LLM_API_KEY、SHEPHERD_LLM_MODEL、
-//! SHEPHERD_LLM_WIRE(openai|anthropic)、SHEPHERD_LLM_MAX_TOKENS(默认 4096)、
-//! SHEPHERD_LLM_MAX_RETRIES(默认 3)、SHEPHERD_LLM_TIMEOUT_SECS(默认 120)。
+//! Env vars: SHEPHERD_LLM_URL, SHEPHERD_LLM_API_KEY, SHEPHERD_LLM_MODEL,
+//! SHEPHERD_LLM_WIRE (openai|anthropic), SHEPHERD_LLM_MAX_TOKENS (default 4096),
+//! SHEPHERD_LLM_MAX_RETRIES (default 3), SHEPHERD_LLM_TIMEOUT_SECS (default 120).
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -176,7 +178,7 @@ impl LlmClient {
                     { "role": "user", "content": user }
                 ]
             }),
-            // Opus 4.x 拒绝 temperature;max_tokens 必填。
+            // Opus 4.x rejects `temperature`; `max_tokens` is required.
             Wire::Anthropic => json!({
                 "model": self.model,
                 "max_tokens": self.max_tokens,
@@ -244,7 +246,7 @@ impl LlmClient {
                 Ok((text, usage))
             }
             Wire::Anthropic => {
-                // 安全分类器可能拒答:stop_reason=refusal 时 content 为空,按出错处理。
+                // The safety classifier may refuse: on stop_reason=refusal, content is empty, so treat it as an error.
                 if val.get("stop_reason").and_then(|s| s.as_str()) == Some("refusal") {
                     return Err("LLM 拒答(refusal)".to_string());
                 }
@@ -343,7 +345,7 @@ const PRD_SYSTEM: &str = "你是资深产品经理,把用户粘贴的原始素�
 title 一句话;description 含背景/目标/范围;acceptanceCriteria 每条独立可判定(3~8 条);\
 priority 取 P0/P1/P2/P3;不要输出 JSON 以外的任何内容。";
 
-/// MRD → PRD 起草结果。
+/// MRD → PRD drafting result.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PrdDraft {
@@ -468,7 +470,7 @@ impl Judge for LlmJudge {
                 Ok(v) => Verdict { passed: v.passed, reason: v.reason },
                 Err(e) => Verdict { passed: false, reason: format!("裁决解析失败: {e}") },
             },
-            // fail-closed:LLM 出错视为不通过。
+            // Fail closed: an LLM error counts as not passed.
             Err(e) => Verdict { passed: false, reason: e },
         }
     }

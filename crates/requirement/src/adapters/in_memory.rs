@@ -11,13 +11,13 @@ use crate::ports::{RepoError, RequirementRepository};
 struct State {
     requirements: Vec<Requirement>,
     seq: u64,
-    /// 需求 id → 显式秩(reorder 写入);未排序的回落到插入序。
+    /// Requirement id → explicit rank (written by reorder); unranked ones fall back to insertion order.
     order: std::collections::HashMap<String, i64>,
-    /// 变更日志:按追加序保存,读时倒序(最新在前)。
+    /// Change log, stored in append order; read in reverse (newest first).
     changes: std::collections::HashMap<String, Vec<ChangeEntry>>,
-    /// 阶段行(稀疏,只存 upsert 过的);读侧经 `fill_stages` 补齐,与 pg 侧独立成表对齐。
+    /// Stage rows (sparse, only upserted ones); read side fills via `fill_stages`, mirroring the separate table on the pg side.
     stages: std::collections::HashMap<String, Vec<StageRow>>,
-    /// 逻辑时钟:每次写操作 +1,保证 created/updated/changed 时间戳单调且可测。
+    /// Logical clock: +1 per write, keeping created/updated/changed timestamps monotonic and testable.
     clock: i64,
 }
 
@@ -27,7 +27,7 @@ impl State {
         self.clock
     }
 
-    /// 读侧统一从阶段表填充 `stages`(缺行补 PENDING 默认),与 pg 侧行为对齐。
+    /// Read side fills `stages` from the stage table (missing rows default to PENDING), matching the pg behavior.
     fn with_stages(&self, r: &Requirement) -> Requirement {
         let mut r = r.clone();
         r.stages = fill_stages(self.stages.get(&r.id).map(Vec::as_slice).unwrap_or(&[]));
@@ -103,7 +103,7 @@ impl RequirementRepository for InMemoryRequirementRepository {
         limit: u32,
     ) -> Result<Vec<Requirement>, RepoError> {
         let st = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-        // (显式秩, 插入序) 排序:未排序的秩为 0 → 按插入序;与历史行为一致。
+        // Sort by (explicit rank, insertion index): unranked rank is 0 → insertion order; matches historical behavior.
         let mut items: Vec<(usize, &Requirement)> = st
             .requirements
             .iter()
@@ -124,7 +124,7 @@ impl RequirementRepository for InMemoryRequirementRepository {
         let now = st.tick();
         if let Some(slot) = st.requirements.iter_mut().find(|r| r.id == requirement.id) {
             *slot = requirement.clone();
-            // 与 pg 侧 `updated_at = now()` 对齐:每次 save 盖更新时间。
+            // Match pg's `updated_at = now()`: stamp the update time on every save.
             slot.updated_at_ms = now;
         }
         Ok(())
@@ -235,12 +235,12 @@ mod tests {
             let nu = NewRequirement::new("p1", t, "d", &[]).expect("v");
             ids.push(repo.insert(&nu).await.expect("insert").id);
         }
-        // 默认:插入序 A,B,C。
+        // Default: insertion order A,B,C.
         let titles = |rs: &[Requirement]| rs.iter().map(|r| r.title.clone()).collect::<Vec<_>>();
         let listed = repo.list_active("p1", 0, 10).await.expect("list");
         assert_eq!(titles(&listed), ["A", "B", "C"]);
 
-        // 排序:C,A,B。
+        // Reordered: C,A,B.
         repo.set_order("p1", &[ids[2].clone(), ids[0].clone(), ids[1].clone()])
             .await
             .expect("order");
@@ -255,7 +255,7 @@ mod tests {
             repo.insert(&NewRequirement::new("p1", "A", "d", &[]).expect("v")).await.expect("i");
         let _other =
             repo.insert(&NewRequirement::new("p2", "X", "d", &[]).expect("v")).await.expect("i");
-        // 传入跨项目 id 不应影响 p1 的排序写入(仅本项目存在的 id 生效)。
+        // Cross-project ids must not affect p1's ordering (only ids existing in this project take effect).
         repo.set_order("p1", &["nope".to_string(), a.id.clone()]).await.expect("order");
         let listed = repo.list_active("p1", 0, 10).await.expect("list");
         assert_eq!(listed.len(), 1);
@@ -265,7 +265,7 @@ mod tests {
     #[tokio::test]
     async fn status_counts_tallies_active_by_status() {
         let repo = InMemoryRequirementRepository::new();
-        // 两条 DRAFT + 一条改成 DELETED(soft delete 不计) + 另一项目一条(不计)。
+        // Two DRAFT + one soft-deleted (not counted) + one in another project (not counted).
         let a =
             repo.insert(&NewRequirement::new("p1", "A", "d", &[]).expect("v")).await.expect("i");
         repo.insert(&NewRequirement::new("p1", "B", "d", &[]).expect("v")).await.expect("i");
@@ -273,7 +273,7 @@ mod tests {
             repo.insert(&NewRequirement::new("p1", "C", "d", &[]).expect("v")).await.expect("i");
         repo.insert(&NewRequirement::new("p2", "X", "d", &[]).expect("v")).await.expect("i");
         repo.soft_delete(&c.id);
-        // 把 A 推进到 BASELINED。
+        // Promote A to BASELINED.
         let mut ra = repo.get(&a.id).await.expect("g").expect("s");
         ra.set_baseline(1).expect("baseline");
         repo.save(&ra).await.expect("save");
@@ -283,7 +283,7 @@ mod tests {
         assert_eq!(counts.baselined, 1); // A
         assert_eq!(counts.delivered, 0);
         assert_eq!(counts.archived, 0);
-        assert_eq!(counts.total(), 2); // C 已软删,p2 不属本项目
+        assert_eq!(counts.total(), 2); // C soft-deleted, p2 in another project
     }
 
     #[tokio::test]
@@ -295,12 +295,12 @@ mod tests {
             .await
             .expect("insert");
 
-        // 未 upsert 前:7 行 PENDING 默认。
+        // Before any upsert: 7 PENDING default rows.
         let rows = repo.stages(&r.id).await.expect("stages");
         assert_eq!(rows.len(), 7);
         assert!(rows.iter().all(|s| s.status == StageStatus::Pending));
 
-        // upsert 一行后:该行更新,其余仍补默认;重复 upsert 覆盖同一行。
+        // After upserting one row: it is updated, others stay defaulted; a repeat upsert overwrites the same row.
         let mut dev = StageRow::pending(Stage::Dev);
         dev.planned_end = Some("2026-12-31".to_string());
         dev.set_status(StageStatus::InProgress, 100);
@@ -311,7 +311,7 @@ mod tests {
         let rows = repo.stages(&r.id).await.expect("stages");
         assert_eq!(rows.len(), 7);
         assert_eq!(rows[3], dev);
-        // get 读回的需求带填充后的 stages。
+        // get returns the requirement with filled stages.
         let got = repo.get(&r.id).await.expect("get").expect("some");
         assert_eq!(got.stages, rows);
     }

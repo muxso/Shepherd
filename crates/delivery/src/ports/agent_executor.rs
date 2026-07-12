@@ -21,8 +21,9 @@ pub struct WorkSpec {
     pub executor: ExecutorKind,
     pub context: Option<String>,
     pub instructions: Option<String>,
-    /// 定向派发:指定某个注册 runtime 的 name(跨重连稳定;id 每次注册会变),
-    /// None = 该能力的任意 runtime 都可认领。
+    /// Targeted dispatch: the name of a registered runtime (stable across reconnects,
+    /// unlike the id which changes on every register). None = any runtime with the
+    /// capability may claim.
     pub target_runtime: Option<String>,
 }
 

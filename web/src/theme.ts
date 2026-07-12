@@ -1,12 +1,12 @@
-// Shepherd 设计基线:简约小清新(参考火山引擎控制台/Arco 设计语言)。
-// 关键决策:品牌色 = 标准蓝;绿色仅用作「成功」语义色(brand ≠ success,消歧)。
-// 浅色 = 纯白面板 + 中性灰文字 + 极淡边框,克制留白;暗色 = 中性深灰。
-// AntD 主题 token 一处改、全局生效;非 AntD 的自定义样式走 index.css 里的 CSS 变量(同一套值)。
+// Shepherd design baseline: clean, light style (after Volcengine console / Arco design language).
+// Key decision: brand = standard blue; green is reserved for the "success" semantic (brand ≠ success).
+// Light = white panels + neutral gray text + faint borders; dark = neutral dark gray.
+// AntD theme tokens change here, apply globally; non-AntD custom styles use the CSS vars in index.css (same values).
 import { theme as antdTheme, type ThemeConfig } from 'antd'
 
 export type ThemeMode = 'light' | 'dark'
 
-// —— 品牌与语义色(浅色)——
+// Brand & semantic colors (light)
 export const BRAND = '#1664ff'
 const BRAND_HOVER = '#4086ff'
 const BRAND_ACTIVE = '#0e42d2'
@@ -22,7 +22,7 @@ const shared: ThemeConfig['token'] = {
   colorWarning: '#ff7d00',
   colorError: '#f53f3f',
   colorLink: BRAND,
-  // 扁平圆角:按钮/输入等控件 4px,小控件 2px;大容器(卡片/弹窗)另配。
+  // Flat radii: 4px for buttons/inputs, 2px for small controls; large containers (cards/modals) configured separately.
   borderRadius: 4,
   borderRadiusSM: 2,
   borderRadiusLG: 6,
@@ -36,7 +36,7 @@ export const lightTheme: ThemeConfig = {
   algorithm: antdTheme.defaultAlgorithm,
   token: {
     ...shared,
-    colorBgLayout: 'transparent', // 透明:让 body 的环境光晕透出(磨砂效果)
+    colorBgLayout: 'transparent', // transparent so the body ambient glow shows through (frosted effect)
     colorBgContainer: '#ffffff',
     colorBorder: '#e5e6eb',
     colorBorderSecondary: '#f2f3f5',
@@ -59,7 +59,7 @@ export const darkTheme: ThemeConfig = {
   algorithm: antdTheme.darkAlgorithm,
   token: {
     ...shared,
-    colorPrimary: '#4086ff', // 标准蓝,深灰底上取亮值
+    colorPrimary: '#4086ff', // standard blue, brightened for the dark gray canvas
     colorInfo: '#4086ff',
     colorLink: '#5b9aff',
     colorSuccess: '#27c346',

@@ -105,7 +105,8 @@ impl DeliveryFeedbackOrchestrator {
             None => false,
         };
 
-        // 须先 link 再 sync:否则覆盖链为空,sync 无链可更,完整性报告永远停在 UNCOVERED。
+        // link must run before sync: otherwise the coverage chain is empty, sync has
+        // nothing to update, and the completeness report stays UNCOVERED forever.
         let verification = match satisfied {
             None => VerificationSync::NotApplicable,
             Some(sat) => match self.task.requirement_of(decomposition_id).await? {

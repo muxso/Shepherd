@@ -2,10 +2,11 @@ use thiserror::Error;
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum AuthError {
-    /// 不区分用户不存在与密码错,避免账号枚举
+    /// Does not distinguish unknown user from wrong password, to prevent account enumeration.
     #[error("invalid username or password")]
     InvalidCredentials,
-    /// 同一用户名连续失败过多,锁定期内一律拒绝(含正确口令)
+    /// Too many consecutive failures for a username; everything is rejected during the
+    /// lockout window, even the correct password.
     #[error("too many failed attempts")]
     LockedOut,
     #[error("backend error: {0}")]

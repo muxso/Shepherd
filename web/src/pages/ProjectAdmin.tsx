@@ -9,7 +9,7 @@ import { useI18n } from '../i18n'
 import { SelectProjectEmpty } from '../components/Page'
 import PermissionMatrix, { parsePermissions, serializePermissions } from '../components/PermissionMatrix'
 
-// 项目与权限:左侧窄栏分组导航(项目与权限:项目/基本信息/应用设置 + 成员权限:成员/用户组)+ 右侧内容。对齐参考图 #44-#48。
+// Project & permissions: narrow grouped left nav + right content (ref #44-#48).
 type NavKey = 'projects' | 'basic' | 'appSettings' | 'members' | 'userGroups'
 
 export default function ProjectAdmin() {
@@ -34,7 +34,7 @@ export default function ProjectAdmin() {
 
   return (
     <div style={{ display: 'flex', height: '100%' }}>
-      {/* 左侧窄栏分组导航 */}
+      {/* Left: grouped nav */}
       <div style={{ width: 180, flexShrink: 0, borderRight: '1px solid var(--border-soft)', padding: '12px 8px', overflow: 'auto', background: 'var(--panel)' }}>
         {groups.map((g, gi) => (
           <div key={g.title} style={gi > 0 ? { borderTop: '1px solid var(--border-soft)', marginTop: 8, paddingTop: 8 } : undefined}>
@@ -55,7 +55,7 @@ export default function ProjectAdmin() {
           </div>
         ))}
       </div>
-      {/* 右侧内容 */}
+      {/* Right: content */}
       <div style={{ flex: 1, minWidth: 0, overflow: 'auto', padding: 16, background: 'var(--bg)' }}>
         {nav === 'projects' && <ProjectsPanel t={t} projects={projects} currentId={projectId} />}
         {nav === 'basic' && <BasicInfo project={project} t={t} />}
@@ -69,7 +69,7 @@ export default function ProjectAdmin() {
 
 type TFn = (k: string, d?: string) => string
 
-// 项目:组织/项目列表(所属组织由 /organization 补名)。
+// Projects: org/project list (org names resolved via /organization).
 function ProjectsPanel({ t, projects, currentId }: { t: TFn; projects: Project[]; currentId: string }) {
   const [orgs, setOrgs] = useState<Organization[]>([])
   useEffect(() => {
@@ -133,7 +133,7 @@ function BasicInfo({ project, t }: { project: { id: string; name: string; enable
   )
 }
 
-// 应用设置:对齐参考图的菜单开关(当前为本地态,持久化待后端项目配置接口)。
+// App settings: menu toggles (ref screenshots). Local state only; persistence waits on a backend project-config API.
 function AppSettings({ t }: { t: TFn }) {
   const [reuse, setReuse] = useState(false)
   const [linkReq, setLinkReq] = useState(false)
@@ -170,7 +170,7 @@ function AppSettings({ t }: { t: TFn }) {
   )
 }
 
-// 项目成员:真实成员列表(/project/{id}/member),关联平台用户表补齐姓名/邮箱。
+// Project members: real member list (/project/{id}/member), joined with the platform user table for name/email.
 type MemberRow = ProjectMember & { user?: User }
 
 function Members({ t, projectId }: { t: TFn; projectId: string }) {
@@ -292,7 +292,8 @@ function AddMemberModal({ open, projectId, candidates, onClose, onDone, t }: {
   )
 }
 
-// 用户组:表(名称 + 成员数)→ 行点击打开权限矩阵抽屉。成员数按用户表 userGroups(组名/组 id 均匹配)统计。
+// User groups: table (name + member count) → row click opens the permission matrix drawer. Member count is
+// computed from the user table's userGroups (matches either group name or group id).
 function UserGroups({ t }: { t: TFn }) {
   const [roles, setRoles] = useState<Role[]>([])
   const [users, setUsers] = useState<User[]>([])
@@ -344,7 +345,7 @@ function UserGroups({ t }: { t: TFn }) {
   )
 }
 
-// 项目内新建用户组:固定 PROJECT 作用域;权限在行点击的矩阵抽屉里编辑。
+// New user group within a project: PROJECT scope is fixed; permissions are edited in the row-click matrix drawer.
 function AddGroupModal({ open, onClose, onDone, t }: { open: boolean; onClose: () => void; onDone: () => void; t: TFn }) {
   const [form] = Form.useForm<{ name: string }>()
   const [busy, setBusy] = useState(false)
@@ -376,7 +377,7 @@ function AddGroupModal({ open, onClose, onDone, t }: { open: boolean; onClose: (
   )
 }
 
-// 权限抽屉:Role.permissions("RES:ACT+ACT")⇄ 勾选矩阵;系统内置组只读;保存走 updateRole。
+// Permission drawer: Role.permissions ("RES:ACT+ACT") ⇄ checkbox matrix; system built-in groups are read-only; saving goes through updateRole.
 function PermissionDrawer({ role, onClose, onSaved, t }: { role: Role | null; onClose: () => void; onSaved: () => void; t: TFn }) {
   const readOnly = role?.scope === 'SYSTEM'
   const [checked, setChecked] = useState<Set<string>>(new Set())

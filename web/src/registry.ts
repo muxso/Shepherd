@@ -1,5 +1,6 @@
-// 后端暂无「列表」端点的资源(测试计划 / 压测报告),用 localStorage 维护一份
-// 按项目隔离的本地注册表,让前端有可浏览的列表。后端补 list 端点后可平滑替换。
+// Resources with no backend list endpoint yet (test plans / perf reports): keep a per-project
+// local registry in localStorage so the frontend has a browsable list. Swap out once the
+// backend adds list endpoints.
 
 export interface RegItem {
   id: string

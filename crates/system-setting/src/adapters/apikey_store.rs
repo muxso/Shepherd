@@ -9,7 +9,7 @@ use crate::ports::{ApiKeyRepository, AuthRepoError, PasswordHasher, SessionStore
 use webauth::Session;
 
 const TOKEN_PREFIX: &str = "sak_";
-/// 缓存有效期,也是吊销生效的最大延迟。
+/// Cache TTL, and thus the maximum delay before a revocation takes effect.
 const DEFAULT_CACHE_TTL: Duration = Duration::from_secs(60);
 
 struct CachedKey {
@@ -18,11 +18,13 @@ struct CachedKey {
     permissions: PermissionSet,
 }
 
-/// 组合会话存储:`sak_` 前缀令牌走 API Key 校验,其余委托内层(如 PgSessionStore)。
-/// 路由层零改动 —— 对外仍是一个 `SessionStore`。
+/// Composite session store: tokens with the `sak_` prefix go through API key verification,
+/// everything else is delegated to the inner store (e.g. PgSessionStore). Zero changes at
+/// the routing layer — it still sees a single `SessionStore`.
 ///
-/// Argon2 校验太慢,不能每请求都做:校验成功的 key 进程内缓存 60s,
-/// 过期后回源重查(find_active + 重新验哈希),被吊销的 key 至多再存活一个缓存周期。
+/// Argon2 verification is too slow to run per request: a successfully verified key is
+/// cached in-process for 60s; after expiry we re-check the source (find_active + re-verify
+/// hash), so a revoked key survives at most one cache period.
 pub struct ApiKeySessionStore {
     inner: Arc<dyn SessionStore>,
     keys: Arc<dyn ApiKeyRepository>,
@@ -46,7 +48,7 @@ impl ApiKeySessionStore {
         }
     }
 
-    /// 测试注入:缩短缓存周期(`Duration::ZERO` = 每次都回源)。
+    /// Test hook: shorten the cache period (`Duration::ZERO` = always re-check the source).
     pub fn with_cache_ttl(mut self, ttl: Duration) -> Self {
         self.cache_ttl = ttl;
         self
@@ -74,7 +76,8 @@ impl ApiKeySessionStore {
 }
 
 fn session_for(token: &str, user_id: &str, permissions: PermissionSet) -> Session {
-    // API Key 无会话过期语义(吊销走 revoked 标记),expires_at_ms 给最大值。
+    // API keys have no session-expiry semantics (revocation uses the revoked flag), so
+    // expires_at_ms is set to the maximum.
     Session {
         token: token.to_string(),
         user_id: user_id.to_string(),
@@ -87,7 +90,8 @@ fn is_lower_hex(s: &str) -> bool {
     !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
 }
 
-/// 解析 `sak_<id>.<secret>`;格式不符返回 None(不回落内层,避免把 secret 当普通 token 查库)。
+/// Parse `sak_<id>.<secret>`; malformed input returns None (no fallthrough to the inner
+/// store, to avoid querying the DB with a secret as if it were a plain token).
 fn parse_token(token: &str) -> Option<(&str, &str)> {
     let rest = token.strip_prefix(TOKEN_PREFIX)?;
     let (id, secret) = rest.split_once('.')?;
@@ -133,7 +137,8 @@ impl SessionStore for ApiKeySessionStore {
     }
 
     async fn revoke(&self, token: &str) -> Result<(), AuthRepoError> {
-        // API Key 不支持按令牌注销(logout 语义);吊销走 DELETE /system/apikey/{id}。
+        // API keys can't be revoked by token (logout semantics); revocation goes through
+        // DELETE /system/apikey/{id}.
         if token.starts_with(TOKEN_PREFIX) {
             return Ok(());
         }
@@ -161,7 +166,7 @@ mod tests {
     }
 
     async fn seed(keys: &InMemoryApiKeyRepository) {
-        // PlainPasswordHasher:哈希 = 明文
+        // PlainPasswordHasher: hash == plaintext.
         keys.insert(ID, "runner-1", SECRET, &["DELIVERY:READ+UPDATE".to_string()], "u-owner", None)
             .await
             .expect("seed");
@@ -208,7 +213,7 @@ mod tests {
 
     #[tokio::test]
     async fn revoked_key_rejected_after_cache_expiry() {
-        // TTL=0:每次 get 都回源,吊销立即生效。
+        // TTL=0: every get re-checks the source, so revocation takes effect immediately.
         let (store, keys) = store(Duration::ZERO);
         seed(&keys).await;
         assert!(store.get(&token()).await.expect("ok").is_some());
@@ -218,7 +223,8 @@ mod tests {
 
     #[tokio::test]
     async fn cache_serves_within_ttl_even_after_revoke() {
-        // 文档化缓存语义:TTL 内吊销尚未生效(有界的宽限期)。
+        // Documents the cache semantics: within the TTL a revocation is not yet effective
+        // (a bounded grace period).
         let (store, keys) = store(DEFAULT_CACHE_TTL);
         seed(&keys).await;
         assert!(store.get(&token()).await.expect("ok").is_some());

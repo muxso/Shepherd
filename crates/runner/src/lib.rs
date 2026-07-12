@@ -1,7 +1,9 @@
-//! 远程执行器上下文:RunnerAgent 注册表(名称/base_url/支持协议/启停),
-//! RemoteRunner/RemoteProbe 端口把接口用例与探测请求转发到远端 runner-agent 执行,
-//! ExecutionStore 记录执行结果,DispatchTarget 决定本地或指定 agent 执行。
-//! domain/application/ports 不做 IO;pg/http/client(reqwest 远程调用)适配器由 feature 启用。
+//! Remote executor context: RunnerAgent registry (name/base_url/supported
+//! protocols/enable-disable). The RemoteRunner/RemoteProbe ports forward API
+//! cases and probe requests to a remote runner-agent for execution,
+//! ExecutionStore records results, and DispatchTarget picks local vs. a
+//! specific agent. domain/application/ports do no IO; pg/http/client (reqwest
+//! remote calls) adapters are feature-gated.
 
 pub mod adapters;
 pub mod application;

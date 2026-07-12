@@ -18,7 +18,7 @@ impl SshPlugin {
     }
 }
 
-// 调试/探测场景:不校验主机公钥(接受任意),与一次性连接语义一致。
+// Debug/probe use case: skip host key verification (accept any), matching the one-shot connection semantics.
 struct AcceptAll;
 
 #[async_trait]

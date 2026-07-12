@@ -50,7 +50,7 @@ impl PlanStatisticsUseCase {
                     child_statuses.push(c.derive_status(child.archived));
                     total = total.add(&c);
                 }
-                // 组状态须由子状态推导,而非由汇总计数推导。
+                // Group status must be derived from child statuses, not from the summed counts.
                 let status = if plan.archived {
                     ExecStatus::Archived
                 } else {

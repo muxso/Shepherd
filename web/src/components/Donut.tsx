@@ -1,5 +1,5 @@
-// 甜甜圈环形图(纯 SVG,无依赖)。segments 为各分段 {value,color,label};中心显示总数。
-// 悬浮分段:其余变淡(形状不变,避免加粗溢出画布变形),中心切换为该段「数值 + 名称 + 占比」。
+// Donut chart, pure SVG. Hovering a segment dims the others (shape unchanged —
+// thickening would overflow the canvas) and shows that segment's value/label/percent in the center.
 import { useState } from 'react'
 import { useI18n } from '../i18n'
 

@@ -1,8 +1,6 @@
 #!/usr/bin/env bash
-# 对账:后端 OpenAPI 路径 vs 前端手写客户端(web/src/api.ts)引用的路径。
-# 前端引用了 OpenAPI 里不存在的路径 → 大概率拼写/漂移,退出码 1;
-# 反向(后端有、前端没用)只作信息输出(CLI/MCP 专用端点属正常)。
-# 需要一个在跑的 server:BASE=http://127.0.0.1:9180 bash scripts/ts-drift.sh
+# Reconciles backend OpenAPI paths against those referenced by the handwritten frontend client (web/src/api.ts): a frontend path missing from OpenAPI is most likely a typo/drift (exit 1), while the reverse (backend-only, unused by frontend) is informational only since CLI/MCP-only endpoints are normal.
+# Needs a running server: BASE=http://127.0.0.1:9180 bash scripts/ts-drift.sh
 set -euo pipefail
 BASE="${BASE:-http://127.0.0.1:9180}"
 API_TS="${API_TS:-web/src/api.ts}"
@@ -15,9 +13,9 @@ python3 - "$API_TS" "$SPEC_FILE" <<'EOF'
 import json, re, sys
 
 spec = json.load(open(sys.argv[2]))
-# 模板段归一:/bug/{id}/relation → /bug/*/relation
+# Normalize template segments: /bug/{id}/relation → /bug/*/relation
 def norm(p):
-    # 顺序敏感:先替换 TS 模板 ${...},再替换 OpenAPI 的 {...},否则 ${x} 会残留 "$"。
+    # Order matters: replace TS templates ${...} before OpenAPI {...}, otherwise ${x} leaves a stray "$".
     p = re.sub(r"\$\{[^}]+\}", "*", p)
     p = re.sub(r"\{[^}]+\}", "*", p)
     return p.rstrip("/")
@@ -25,7 +23,7 @@ def norm(p):
 openapi = {norm(p) for p in spec.get("paths", {})}
 
 src = open(sys.argv[1]).read()
-# 提取 http.get/post/put/del/patch/getText/getBlob/upload 的首个字符串/模板参数里的路径
+# Extract the path from the first string/template argument of http.get/post/put/del/patch/getText/getBlob/upload
 used = set()
 for m in re.finditer(r"http\.(?:get|post|put|del|patch|getText|getBlob|upload)\s*(?:<[^>]*>)?\(\s*[`'\"]([^`'\"?]+)", src):
     path = m.group(1).split("?")[0]
@@ -35,7 +33,7 @@ for m in re.finditer(r"http\.(?:get|post|put|del|patch|getText|getBlob|upload)\s
 unknown = sorted(u for u in used if u not in openapi)
 unused = sorted(o for o in openapi if o not in used)
 
-# 基线:历史缺口(路由存在但未注册进 utoipa,待补 OpenAPI);只有新增漂移才挡板。
+# Baseline: known gaps (route exists but isn't registered in utoipa; OpenAPI to be backfilled). Only newly introduced drift fails the check.
 import os
 allow_file = os.environ.get("DRIFT_ALLOW", "scripts/ts-drift-allow.txt")
 allowed = set()

@@ -1,5 +1,6 @@
-//! 远程执行者运行时:以 pull 模式向 server 注册并心跳,长轮询领取 WorkSpec,
-//! 调用 Claude/通用 CLI 等后端在 git 工作区内执行任务,回传事件与交付结果。
+//! Remote executor runtime: registers with the server in pull mode with heartbeats,
+//! long-polls for WorkSpecs, runs tasks in a git workspace via Claude/generic CLI
+//! backends, and reports events and delivery results back.
 
 mod backend;
 mod client;
@@ -19,13 +20,13 @@ use models::WorkSpec;
 
 struct Config {
     base: String,
-    /// 静态 API key(SHEPHERD_AGENT_KEY,必填):直接当 bearer 用,无登录/口令路径。
+    /// Static API key (SHEPHERD_AGENT_KEY, required): used directly as bearer; no login/password path.
     key: String,
     caps: Vec<String>,
     name: String,
     workdir: String,
-    /// 任务基点 ref(如 origin/main);不设则用仓库当前 HEAD。
-    /// 宿主机与容器共用一个检出、各在不同分支时,用它把任务基点钉住。
+    /// Task base ref (e.g. origin/main); unset means the repo's current HEAD.
+    /// Pins the task base when host and container share one checkout on different branches.
     base_ref: Option<String>,
     concurrency: usize,
     task_timeout: Duration,
@@ -60,7 +61,7 @@ impl Config {
     }
 }
 
-/// SHEPHERD_AGENT_KEY 是唯一凭证:空串/纯空白视同未设置,直接启动报错并给签发指引。
+/// SHEPHERD_AGENT_KEY is the only credential: empty/whitespace counts as unset — fail startup with issuance guidance.
 fn agent_key(raw: Option<String>) -> anyhow::Result<String> {
     raw.filter(|s| !s.trim().is_empty()).ok_or_else(|| {
         anyhow::anyhow!(
@@ -180,7 +181,7 @@ async fn handle(
 }
 
 async fn connect(cfg: &Config) -> anyhow::Result<(Arc<ServerClient>, String)> {
-    // 只有 API key 一条认证路径:免登录免刷新,401 即 key 被吊销。
+    // API key is the sole auth path: no login/refresh; a 401 means the key was revoked.
     let client = Arc::new(ServerClient::with_api_key(&cfg.base, &cfg.key)?);
     let id = client.register(&cfg.name, &cfg.caps, cfg.concurrency as u32).await?;
     Ok((client, id))

@@ -10,7 +10,7 @@ type TFn = ReturnType<typeof useI18n>['t']
 
 const mono = (v: string) => <span className="ms-mono" style={{ fontSize: 12, color: 'var(--text-3)' }}>{v}</span>
 
-// —— 系统管理 ——
+// —— System admin ——
 const makeOrgCfg = (t: TFn): CrudConfig<Organization> => ({
   title: t('res.org', '组织'),
   list: () => api.organizations().then((p) => p.items),
@@ -61,7 +61,7 @@ const makeUserCfg = (t: TFn): CrudConfig<User> => ({
   ],
 })
 
-// —— 测试资产 / 执行 ——
+// —— Test assets / execution ——
 const makeFuncCaseCfg = (t: TFn): CrudConfig<FunctionalCase> => ({
   title: t('res.funcCase', '功能用例'),
   needsProject: true,
@@ -107,7 +107,7 @@ const makeEnvCfg = (t: TFn): CrudConfig<Environment> => ({
   ],
 })
 
-// 资源池列表/表单已迁出至 pages/ResourcePoolPage.tsx(对齐参考图,字段更丰富)。
+// Resource pool list/form lives in pages/ResourcePoolPage.tsx.
 
 export const OrganizationsPage = () => { const { t } = useI18n(); return <CrudResource cfg={makeOrgCfg(t)} /> }
 export const RolesPage = () => { const { t } = useI18n(); return <CrudResource cfg={makeRoleCfg(t)} /> }
@@ -115,7 +115,7 @@ export const UsersPage = () => { const { t } = useI18n(); return <CrudResource c
 export const FunctionalCasesPage = () => { const { t } = useI18n(); return <CrudResource cfg={makeFuncCaseCfg(t)} /> }
 export const EnvironmentsPage = () => { const { t } = useI18n(); return <CrudResource cfg={makeEnvCfg(t)} /> }
 
-// 项目页:直接用 context 已加载的项目(无全局列表端点)。
+// Projects page: reuse projects already loaded in context (no global list endpoint).
 export function ProjectsPage() {
   const { projects } = useApp()
   const { t } = useI18n()
@@ -140,7 +140,7 @@ export function ProjectsPage() {
   )
 }
 
-// 占位页:尚未接入的模块(下一波)。
+// Placeholder for modules not wired up yet.
 export function Placeholder({ name }: { name: string }) {
   const { t } = useI18n()
   return (

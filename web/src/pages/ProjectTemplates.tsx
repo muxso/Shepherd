@@ -17,8 +17,8 @@ import {
   type TemplateKind,
 } from '../fieldTemplates'
 
-// 模板管理(字段模板):每个模块(需求/测试用例/缺陷)一份字段配置,
-// 决定创建表单显示哪些字段、顺序、必填与否;自定义字段可增删。
+// Template management (field templates): one field config per module (requirement/test case/bug)
+// controlling which fields the create form shows, their order and required flags; custom fields can be added/removed.
 
 const FIELD_TYPES: TemplateFieldType[] = ['text', 'textarea', 'select', 'multiselect', 'date', 'number']
 
@@ -45,7 +45,7 @@ export default function ProjectTemplates() {
 function FieldTemplateEditor({ kind, projectId }: { kind: TemplateKind; projectId: string }) {
   const { t } = useI18n()
   const [fields, setFields] = useState<TemplateField[]>(() => defaultTemplateFields(kind))
-  // 已保存快照(JSON):对比判断是否有改动;templateId 为空 = 首次保存走 POST。
+  // Saved snapshot (JSON) for dirty checking; empty templateId = first save goes through POST.
   const [snapshot, setSnapshot] = useState(() => JSON.stringify(defaultTemplateFields(kind)))
   const [templateId, setTemplateId] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
@@ -74,7 +74,7 @@ function FieldTemplateEditor({ kind, projectId }: { kind: TemplateKind; projectI
 
   const dirty = useMemo(() => JSON.stringify(fields) !== snapshot, [fields, snapshot])
 
-  // 行拖拽排序(原生 HTML5 DnD):把手起拖,悬停行按上下半区显示插入指示线。
+  // Row drag reordering (native HTML5 DnD): drag starts from the handle; the hovered row shows an insert indicator on its upper/lower half.
   const dragFrom = useRef<number | null>(null)
   const [dragOver, setDragOver] = useState<{ idx: number; after: boolean } | null>(null)
   const reorder = (from: number, to: number) =>

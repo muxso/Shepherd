@@ -61,7 +61,7 @@ pub fn router(
         .route("/auth/refresh", post(refresh_handler))
         .route("/auth/me", get(me_handler))
         .route("/auth/password", post(change_password))
-        // 静态段 /names 必须先于 /{id} 注册,否则被通配吞掉
+        // The static segment /names must be registered before /{id}, or the wildcard eats it.
         .route("/system/user/names", get(resolve_names))
         .route("/system/user", post(create_user).get(list_users))
         .route("/system/user/{id}", get(get_user).put(update_user).delete(delete_user))
@@ -93,7 +93,8 @@ struct LoginRequest {
 #[serde(rename_all = "camelCase")]
 struct LoginResponse {
     token: String,
-    /// 会话用户 id(created_by 等审计字段用的口径);取会话失败时缺省。
+    /// Session user id (the value used by created_by and other audit fields); omitted if
+    /// the session lookup fails.
     #[serde(skip_serializing_if = "Option::is_none")]
     user_id: Option<String>,
 }
@@ -125,7 +126,8 @@ async fn logout_handler(State(st): State<AppState>, headers: HeaderMap) -> Respo
     StatusCode::NO_CONTENT.into_response()
 }
 
-// 滑动会话:用当前有效令牌换一枚新令牌(全新 TTL),旧令牌即时失效。
+// Sliding session: exchange the current valid token for a new one (fresh TTL); the old
+// token is invalidated immediately.
 #[utoipa::path(post, path = "/auth/refresh", tag = "auth", responses((status = 200, body = LoginResponse), (status = 401)), security(("bearer" = [])))]
 async fn refresh_handler(State(st): State<AppState>, headers: HeaderMap) -> Response {
     let Some(token) = bearer(&headers) else {
@@ -151,7 +153,7 @@ async fn refresh_handler(State(st): State<AppState>, headers: HeaderMap) -> Resp
 #[serde(rename_all = "camelCase")]
 struct MeResponse {
     user_id: String,
-    /// 原始权限串(`RESOURCE:A+B`),与登录会话一致。
+    /// Raw permission strings (`RESOURCE:A+B`), same as the login session.
     permissions: Vec<String>,
 }
 
@@ -168,7 +170,8 @@ struct ChangePasswordBody {
     new_password: String,
 }
 
-// 自助改密:验旧密码走登录同一套哈希校验;改完不吊销现有会话。
+// Self-service password change: the old password goes through the same hash verification
+// as login; existing sessions are not revoked afterwards.
 #[utoipa::path(post, path = "/auth/password", tag = "auth", request_body = ChangePasswordBody, responses((status = 204), (status = 400), (status = 401), (status = 409)), security(("bearer" = [])))]
 async fn change_password(
     user: AuthUser,
@@ -180,7 +183,8 @@ async fn change_password(
     }
     let cred = match st.creds.find_by_user_id(&user.user_id).await {
         Ok(Some(c)) => c,
-        // 凭据不在库里:如 SHEPHERD_ADMIN_PASSWORD 环境注入的内置账号,库侧改不动。
+        // Credential not stored: e.g. the built-in account injected via
+        // SHEPHERD_ADMIN_PASSWORD; the store cannot change it.
         Ok(None) => {
             return (StatusCode::CONFLICT, "password managed by environment").into_response()
         }
@@ -210,7 +214,7 @@ struct UserResponse {
     name: String,
     email: String,
     enable: bool,
-    /// 仅列表接口填充,其余接口恒为空
+    /// Only populated by the list endpoint; always empty elsewhere.
     #[serde(default)]
     user_groups: Vec<String>,
 }
@@ -399,7 +403,8 @@ struct NamesQuery {
     ids: String,
 }
 
-// 任意有效会话即可(展示名是所有登录页面的公共需求),但不再匿名开放。
+// Any valid session suffices (display names are needed by every logged-in page), but it
+// is no longer open to anonymous access.
 #[utoipa::path(get, path = "/system/user/names", tag = "user", params(NamesQuery), responses((status = 200), (status = 401)), security(("bearer" = [])))]
 async fn resolve_names(
     _user: AuthUser,
@@ -440,7 +445,8 @@ async fn oidc_authorize(
     State(uc): State<OidcLoginUseCase>,
     Path(provider): Path<String>,
 ) -> Response {
-    // 服务端生成不可猜的 state,经 HttpOnly cookie 跨重定向带回,回调时核对(防 CSRF)。
+    // The server generates an unguessable state, carried across the redirect via an
+    // HttpOnly cookie and checked in the callback (CSRF protection).
     let state = uuid::Uuid::new_v4().simple().to_string();
     match uc.authorize_url(&provider, &state) {
         Ok(url) => {
@@ -471,7 +477,7 @@ async fn oidc_callback(
     Query(q): Query<CallbackQuery>,
     headers: HeaderMap,
 ) -> Response {
-    // CSRF:回调 state 必须与 authorize 下发的 cookie 一致且非空。
+    // CSRF: the callback state must be non-empty and match the cookie set by authorize.
     if q.state.is_empty()
         || cookie_lookup(&headers, STATE_COOKIE).as_deref() != Some(q.state.as_str())
     {
@@ -489,7 +495,7 @@ async fn oidc_callback(
             (StatusCode::INTERNAL_SERVER_ERROR, "auth error").into_response()
         }
     };
-    // 一次性 state:用后即清。
+    // Single-use state: cleared after use.
     set_cookie(&mut resp, &format!("{STATE_COOKIE}=; Max-Age=0; Path=/auth/oidc"));
     resp
 }
@@ -975,7 +981,7 @@ mod tests {
             let r = app.clone().oneshot(post("/auth/login", body, None)).await.expect("r");
             assert_eq!(r.status(), StatusCode::UNAUTHORIZED);
         }
-        // 锁定后即使口令正确也是 429。
+        // Once locked out, even the correct password gets 429.
         let locked = app
             .oneshot(post("/auth/login", r#"{"username":"admin","password":"secret"}"#, None))
             .await
@@ -992,7 +998,7 @@ mod tests {
             .await
             .expect("r");
         assert_eq!(anon.status(), StatusCode::UNAUTHORIZED);
-        // viewer 只有 READ 权限,但任意有效会话即可解析展示名。
+        // viewer only has READ permission, but any valid session can resolve display names.
         let t = token(&app, "viewer", "pw").await.expect("token");
         let ok = app
             .oneshot(req("GET", "/system/user/names?ids=u-admin", "", Some(&t)))
@@ -1014,11 +1020,11 @@ mod tests {
             .expect("token")
             .to_string();
         assert_ne!(new, old);
-        // 新令牌有效;旧令牌已撤销。
+        // New token valid; old token revoked.
         assert!(sessions.get(&new).await.expect("ok").is_some());
         assert!(sessions.get(&old).await.expect("ok").is_none());
 
-        // 无令牌刷新 → 401。
+        // Refresh without a token → 401.
         let no_tok = app.oneshot(post("/auth/refresh", "", None)).await.expect("resp");
         assert_eq!(no_tok.status(), StatusCode::UNAUTHORIZED);
     }
@@ -1045,7 +1051,7 @@ mod tests {
         let body = r#"{"oldPassword":"secret","newPassword":"n3w-secret"}"#;
         let resp = app.clone().oneshot(post("/auth/password", body, Some(&t))).await.expect("r");
         assert_eq!(resp.status(), StatusCode::NO_CONTENT);
-        // 旧口令失效,新口令可登录;既有会话不吊销
+        // Old password stops working, new one logs in; existing sessions are not revoked.
         assert!(token(&app, "admin", "secret").await.is_none());
         assert!(token(&app, "admin", "n3w-secret").await.is_some());
         let still = app.oneshot(req("GET", "/auth/me", "", Some(&t))).await.expect("r");
@@ -1059,18 +1065,18 @@ mod tests {
         let wrong = r#"{"oldPassword":"nope","newPassword":"n3w-secret"}"#;
         let r = app.clone().oneshot(post("/auth/password", wrong, Some(&t))).await.expect("r");
         assert_eq!(r.status(), StatusCode::UNAUTHORIZED);
-        // trim 后不足 8 字符 → 400(旧口令正确与否都不放行)
+        // Fewer than 8 chars after trim → 400 (rejected regardless of the old password).
         let weak = r#"{"oldPassword":"secret","newPassword":"  short1 "}"#;
         let r = app.clone().oneshot(post("/auth/password", weak, Some(&t))).await.expect("r");
         assert_eq!(r.status(), StatusCode::BAD_REQUEST);
-        // 未改动:旧口令仍可登录
+        // Unchanged: the old password still logs in.
         assert!(token(&app, "admin", "secret").await.is_some());
     }
 
     #[tokio::test]
     async fn change_password_env_managed_user_is_409() {
         let (app, sessions) = app_store();
-        // 会话有效但凭据不在库里 → 视作环境注入的内置账号
+        // Valid session but credential not stored → treated as an env-injected built-in account.
         let t = sessions
             .create("u-env", kernel::permission::PermissionSet::default(), 3600)
             .await
@@ -1207,10 +1213,10 @@ mod tests {
 
     #[tokio::test]
     async fn oidc_callback_rejects_state_mismatch_or_missing_cookie() {
-        // cookie 与 query state 不一致 → 400(CSRF)。
+        // Cookie and query state mismatch → 400 (CSRF).
         let r1 = oidc_app().oneshot(cb_req("ok", "attacker", Some("real"))).await.expect("r");
         assert_eq!(r1.status(), StatusCode::BAD_REQUEST);
-        // 无 cookie → 400。
+        // No cookie → 400.
         let r2 = oidc_app().oneshot(cb_req("ok", "s", None)).await.expect("r");
         assert_eq!(r2.status(), StatusCode::BAD_REQUEST);
     }

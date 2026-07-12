@@ -8,8 +8,9 @@ import { PageBody, PageContainer, PageHeader } from '../components/Page'
 import { useApp } from '../context'
 import { useListView, type ListColumn } from '../components/ListView'
 
-// 人机协同 · 执行机(AI agent)管理:注册/列出 Claude Code、Codex 等远程执行者,
-// 刷新其自报协议、查看执行历史。任务派发在「AI 需求」拆分图里进行(指定 executor)。
+// Executor (AI agent) management: register/list remote executors (Claude Code, Codex, ...),
+// refresh their self-reported protocols, view execution history. Task dispatch happens in the
+// AI requirement breakdown graph (where an executor is picked).
 export default function Agents() {
   const { t } = useI18n()
   const { projectId } = useApp()
@@ -98,7 +99,7 @@ export default function Agents() {
       />
       <PageBody>
         <FleetSection />
-        {/* 三件套放到协议执行机小节行右侧:页头挤不下(英文更长),这里也贴它筛选的表。 */}
+        {/* List toolbar lives on the section row (not the page header) so it sits next to the table it filters. */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 24, marginBottom: 8 }}>
           <span style={{ fontWeight: 600, color: 'var(--text-2)' }}>
             {t('agent.probeSection', '协议执行机(API / 探测)')}
@@ -123,8 +124,9 @@ export default function Agents() {
   )
 }
 
-// AI 执行者机群:远程 Claude/Codex runtime(SHEPHERD_AGENT_FLEET 模式)。出站注册/心跳,
-// server 据心跳判活;此处每 5s 轮询在线状态。未启用机群模式则列表为空(隐藏整段)。
+// AI executor fleet: remote Claude/Codex runtimes (SHEPHERD_AGENT_FLEET mode). They register and
+// heartbeat outbound; the server judges liveness from heartbeats. Online status is polled every 5s.
+// With fleet mode disabled the list is empty and the whole section is hidden.
 function FleetSection() {
   const { t } = useI18n()
   const { projectId } = useApp()
@@ -137,7 +139,8 @@ function FleetSection() {
       api.fleetRuntimes()
         .then((r) => { if (alive) { setRts(Array.isArray(r) ? r : []); setLoaded(true) } })
         .catch(() => { if (alive) setLoaded(true) })
-      // 队列计数与 runtime 列表同频刷新;失败静默(机群未启用时端点为空路由)。
+      // Queue counts refresh at the same cadence as the runtime list; failures stay silent
+      // (the endpoint doesn't exist when fleet mode is disabled).
       api.fleetStats().then((s) => { if (alive) setStats(Array.isArray(s) ? s : []) }).catch(() => {})
     }
     load()
@@ -169,9 +172,9 @@ function FleetSection() {
     columns: cols,
     rows: rts,
   })
-  // 未启用机群(无 runtime 且首拉已完成)→ 不渲染,避免干扰协议执行机视图。
+  // Fleet not enabled (no runtimes after first fetch) → render nothing, keep the protocol-executor view clean.
   if (loaded && rts.length === 0) return null
-  // 仅展示有积压/在飞的能力,避免一排全 0 噪声。
+  // Only show capabilities with backlog or in-flight work, avoiding a row of all-zero noise.
   const busy = stats.filter((s) => s.ready > 0 || s.inFlight > 0)
   return (
     <>

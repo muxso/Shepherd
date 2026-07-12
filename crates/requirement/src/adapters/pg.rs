@@ -1,4 +1,4 @@
-//! 集成测试 `#[ignore]`,需 DATABASE_URL:
+//! Integration tests are `#[ignore]`d and need DATABASE_URL:
 //!   `DATABASE_URL=postgres://... cargo test -p requirement --features pg -- --ignored`
 
 use async_trait::async_trait;
@@ -89,7 +89,7 @@ impl PgRequirementRepository {
         })
     }
 
-    /// 读阶段表并补齐成固定 7 行(未回填的旧数据得到 PENDING 默认行)。
+    /// Load stage rows and fill up to the fixed 7 (non-backfilled legacy data gets PENDING defaults).
     async fn load_stages(&self, requirement_id: &str) -> Result<Vec<StageRow>, RepoError> {
         let rows = sqlx::query(&format!(
             "SELECT {STAGE_COLS} FROM ms_requirement_stage WHERE requirement_id = $1"
@@ -102,7 +102,7 @@ impl PgRequirementRepository {
         let mut out = Vec::with_capacity(rows.len());
         for r in &rows {
             let stage_s: String = r.try_get("stage").map_err(map_err)?;
-            // 未知阶段(理论不该出现)忽略,不污染流水线。
+            // Ignore unknown stages (should not happen) instead of polluting the pipeline.
             let Some(stage) = Stage::parse(&stage_s) else { continue };
             let status_s: String = r.try_get("status").map_err(map_err)?;
             out.push(StageRow {
@@ -122,14 +122,14 @@ fn map_err(e: sqlx::Error) -> RepoError {
     RepoError::Backend(e.to_string())
 }
 
-/// 自定义字段 map → JSONB 对象(值一律字符串)。
+/// Custom field map → JSONB object (values are always strings).
 fn fields_to_json(f: &std::collections::BTreeMap<String, String>) -> serde_json::Value {
     serde_json::Value::Object(
         f.iter().map(|(k, v)| (k.clone(), serde_json::Value::String(v.clone()))).collect(),
     )
 }
 
-/// JSONB 对象 → 自定义字段 map;非字符串值(理论不该出现)按 JSON 文本兜底。
+/// JSONB object → custom field map; non-string values (should not happen) fall back to their JSON text.
 fn json_to_fields(v: &serde_json::Value) -> std::collections::BTreeMap<String, String> {
     v.as_object()
         .map(|obj| {
@@ -150,7 +150,7 @@ fn criteria_to_vec(v: &RequirementVersion) -> Vec<String> {
     v.acceptance_criteria.iter().map(|c| c.text.clone()).collect()
 }
 
-// 时间列统一转 epoch 毫秒(与全库口径一致);due_date 以 `YYYY-MM-DD` 文本进出。
+// Time columns convert to epoch millis (consistent DB-wide); due_date round-trips as `YYYY-MM-DD` text.
 const META_COLS: &str = "id, project_id, title, status, baseline_version, deleted, review_comment, priority, req_type, \
      tags, parent_id, custom_fields, module_id, created_by, due_date::text AS due_date, \
      (extract(epoch from created_at) * 1000)::bigint AS created_at_ms, \
@@ -161,7 +161,7 @@ const META_COLS: &str = "id, project_id, title, status, baseline_version, delete
      (extract(epoch from test_started_at) * 1000)::bigint AS test_started_at_ms, \
      (extract(epoch from test_finished_at) * 1000)::bigint AS test_finished_at_ms";
 
-// 阶段行:计划日期以 `YYYY-MM-DD` 文本进出,实际起止转 epoch 毫秒。
+// Stage rows: planned dates round-trip as `YYYY-MM-DD` text; actual start/finish convert to epoch millis.
 const STAGE_COLS: &str =
     "stage, status, planned_start::text AS planned_start, planned_end::text AS planned_end, \
      (extract(epoch from started_at) * 1000)::bigint AS started_at_ms, \
@@ -282,7 +282,7 @@ impl RequirementRepository for PgRequirementRepository {
 
     async fn save(&self, requirement: &Requirement) -> Result<(), RepoError> {
         let mut tx = self.pool.begin().await.map_err(map_err)?;
-        // 每次 save 盖更新时间;开发/测试起止毫秒转 timestamptz 落库。
+        // Every save stamps updated_at; dev/test start/finish millis are stored as timestamptz.
         sqlx::query(
             "UPDATE ms_requirement SET title = $2, status = $3, baseline_version = $4, deleted = $5, review_comment = $6, \
              priority = $7, req_type = $8, tags = $9, parent_id = $10, due_date = $11::date, \
@@ -316,7 +316,7 @@ impl RequirementRepository for PgRequirementRepository {
         .await
         .map_err(map_err)?;
 
-        // 版本不可变:ON CONFLICT DO NOTHING 只追加新版本,已存在的不改写。
+        // Versions are immutable: ON CONFLICT DO NOTHING only appends new versions, never rewrites.
         for v in &requirement.versions {
             sqlx::query(
                 "INSERT INTO ms_requirement_version (requirement_id, version, description, acceptance_criteria) \
@@ -365,7 +365,7 @@ impl RequirementRepository for PgRequirementRepository {
         for row in &rows {
             let status: String = row.try_get("status").map_err(map_err)?;
             let n = row.try_get::<i64, _>("n").map_err(map_err)?.max(0) as u64;
-            // 未知状态(理论不该出现)忽略,不污染计数。
+            // Ignore unknown statuses (should not happen) instead of skewing counts.
             match RequirementStatus::parse(&status) {
                 Some(RequirementStatus::Draft) => counts.draft += n,
                 Some(RequirementStatus::Baselined) => counts.baselined += n,
@@ -499,7 +499,7 @@ mod tests {
         assert_eq!(got.latest_version(), 1);
         assert_eq!(got.baseline_version, 1);
         assert_eq!(got.baseline().acceptance_criteria[0].text, "正确凭证登录");
-        // 新建默认优先级/类型落库。
+        // Default priority/type are persisted on insert.
         assert_eq!(got.priority, RequirementPriority::P2);
         assert_eq!(got.req_type, RequirementType::Feature);
 
@@ -558,16 +558,16 @@ mod tests {
         assert!(child.created_at_ms > 0);
         assert_eq!(child.created_at_ms, child.updated_at_ms);
 
-        // 生命周期字段落库并可读回。
+        // Lifecycle fields persist and read back.
         let mut got = repo.get(&child.id).await.expect("get").expect("some");
         assert_eq!(got.tags, vec!["api".to_string(), "web".to_string()]);
         assert_eq!(got.due_date.as_deref(), Some("2026-12-31"));
         assert_eq!(got.parent_id.as_deref(), Some(parent.id.as_str()));
         assert_eq!(got.dev_status, WorkStatus::NotStarted);
-        // 自定义字段写入即读回;父需求未写过则为空 map。
+        // Custom fields round-trip; the parent never wrote any, so it reads an empty map.
         assert_eq!(got.custom_fields, cf(&[("owner", "alice"), ("多选", "a,b,c")]));
         assert!(parent.custom_fields.is_empty());
-        // 所属模块写入即读回;未挂模块默认空串(未规划)。
+        // Module id round-trips; no module defaults to empty string (unfiled).
         assert_eq!(got.module_id, "mod-1");
         assert_eq!(parent.module_id, "");
 
@@ -578,7 +578,7 @@ mod tests {
         got.module_id = "mod-2".to_string();
         repo.save(&got).await.expect("save");
         let reloaded = repo.get(&child.id).await.expect("get").expect("some");
-        // save 整体替换自定义字段;模块随 save 更新。
+        // save replaces custom fields wholesale; module updates with save.
         assert_eq!(reloaded.custom_fields, cf(&[("owner", "bob"), ("env", "prod")]));
         assert_eq!(reloaded.module_id, "mod-2");
         assert_eq!(reloaded.dev_status, WorkStatus::InProgress);
@@ -587,15 +587,14 @@ mod tests {
         assert_eq!(reloaded.test_started_at_ms, Some(1_700_000_100_000));
         assert_eq!(reloaded.test_finished_at_ms, Some(1_700_000_100_000));
         assert!(reloaded.due_date.is_none());
-        // save 盖了更新时间。
+        // save stamped updated_at.
         assert!(reloaded.updated_at_ms >= reloaded.created_at_ms);
 
-        // 子需求列表。
         let kids = repo.children(&parent.id).await.expect("children");
         assert_eq!(kids.len(), 1);
         assert_eq!(kids[0].id, child.id);
 
-        // 变更日志:追加后倒序读回,limit 生效。
+        // Change log: reads back newest-first after append; limit applies.
         let mk = |field: &str, old: &str, new: &str| NewChange {
             changed_by: "u1".to_string(),
             field: field.to_string(),
@@ -633,7 +632,7 @@ mod tests {
 
         let repo = PgRequirementRepository::new(pool.clone());
 
-        // —— upsert/读回 ——:未写行的需求读回 7 行 PENDING 默认。
+        // —— upsert/read-back ——: a requirement with no stage rows reads back 7 PENDING defaults.
         let r = repo
             .insert(&NewRequirement::new("p1", "阶段需求", "d", &[]).expect("valid"))
             .await
@@ -647,7 +646,7 @@ mod tests {
         dev.planned_end = Some("2026-07-31".to_string());
         dev.set_status(StageStatus::InProgress, 1_700_000_000_000);
         repo.upsert_stage(&r.id, &dev).await.expect("upsert");
-        // 幂等覆盖同一行。
+        // Idempotent overwrite of the same row.
         dev.set_status(StageStatus::Done, 1_700_000_100_000);
         repo.upsert_stage(&r.id, &dev).await.expect("upsert");
 
@@ -656,8 +655,8 @@ mod tests {
         let got = repo.get(&r.id).await.expect("get").expect("some");
         assert_eq!(got.stages, rows);
 
-        // —— 回填 ——:直接 SQL 造一条「旧形态」需求(只有 dev_/test_ 列,无阶段行),
-        // 重放迁移文件(幂等)后应得到按旧列推导的 7 行。
+        // —— backfill ——: seed an old-shape requirement via raw SQL (dev_/test_ columns only,
+        // no stage rows); replaying the (idempotent) migration derives the 7 rows from the old columns.
         let old_row = sqlx::query(
             "INSERT INTO ms_requirement \
              (project_id, title, status, dev_status, test_status, dev_started_at, dev_finished_at, \
@@ -679,27 +678,27 @@ mod tests {
 
         let stages = repo.stages(&old_id).await.expect("stages");
         assert_eq!(stages.iter().map(|s| s.stage).collect::<Vec<_>>(), Stage::ALL.to_vec());
-        // CREATED:完成,起止 = created_at。
+        // CREATED: done, start/finish = created_at.
         assert_eq!(stages[0].status, StageStatus::Done);
         assert_eq!(stages[0].started_at_ms, Some(old_created_ms));
         assert_eq!(stages[0].finished_at_ms, Some(old_created_ms));
-        // AUDIT:新阶段,待处理。
+        // AUDIT: new stage, pending.
         assert_eq!(stages[1].status, StageStatus::Pending);
-        // REVIEW:BASELINED → 视为评审通过。
+        // REVIEW: BASELINED → treated as review passed.
         assert_eq!(stages[2].status, StageStatus::Done);
-        // DEV:沿用旧状态与起止时间。
+        // DEV: carries over the old status and timestamps.
         assert_eq!(stages[3].status, StageStatus::InProgress);
         assert_eq!(stages[3].started_at_ms, Some(1_700_000_000_000));
         assert_eq!(stages[3].finished_at_ms, None);
-        // TEST:同上。
+        // TEST: same.
         assert_eq!(stages[4].status, StageStatus::Done);
         assert_eq!(stages[4].started_at_ms, Some(1_700_000_100_000));
         assert_eq!(stages[4].finished_at_ms, Some(1_700_000_200_000));
-        // ACCEPTANCE/DELIVERY:未交付 → 待处理。
+        // ACCEPTANCE/DELIVERY: not delivered → pending.
         assert_eq!(stages[5].status, StageStatus::Pending);
         assert_eq!(stages[6].status, StageStatus::Pending);
 
-        // 回填幂等:已有行(含前面 upsert 的 DEV 行)不被改写。
+        // Backfill is idempotent: existing rows (incl. the DEV row upserted above) stay untouched.
         sqlx::raw_sql(include_str!("../../../migrate/migrations/0084_requirement_stage.sql"))
             .execute(&pool)
             .await

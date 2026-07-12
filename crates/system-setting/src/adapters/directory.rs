@@ -1,4 +1,5 @@
-//! 替身:`names_validated` 对外部用户故意报 `ProvenanceCheckFailed`,复现拦截行为。
+//! Test double: `names_validated` deliberately fails with `ProvenanceCheckFailed` for
+//! external users, reproducing the interceptor behavior.
 
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};

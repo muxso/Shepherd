@@ -71,26 +71,26 @@ struct CreateBody {
     description: String,
     #[serde(default)]
     acceptance_criteria: Vec<String>,
-    /// 优先级 P0/P1/P2/P3(不区分大小写),缺省 P2。
+    /// Priority P0/P1/P2/P3 (case-insensitive); defaults to P2.
     #[serde(default)]
     priority: Option<String>,
-    /// 需求类型 FEATURE/ENHANCEMENT/TECH_DEBT/BUGFIX(不区分大小写),缺省 FEATURE。
+    /// Type FEATURE/ENHANCEMENT/TECH_DEBT/BUGFIX (case-insensitive); defaults to FEATURE.
     #[serde(default)]
     req_type: Option<String>,
-    /// 标签(最多 10 个,单个 ≤ 32 字符;自动 trim + 去重)。
+    /// Tags (max 10, each ≤ 32 chars; trimmed and deduplicated).
     #[serde(default)]
     tags: Vec<String>,
-    /// 截止日期 YYYY-MM-DD;空串等同未填。
+    /// Due date YYYY-MM-DD; empty string means unset.
     #[serde(default)]
     due_date: Option<String>,
-    /// 父需求 id(须同项目且未删除)。
+    /// Parent requirement id (must be same project and not deleted).
     #[serde(default)]
     parent_id: Option<String>,
-    /// 自定义字段值 map<字段key, 字符串值>(最多 32 个键,键 ≤ 64 字符,值 ≤ 2000 字符);
-    /// 字段定义由项目模板管理,多选值逗号拼接。
+    /// Custom field values map<key, string> (max 32 keys, key ≤ 64 chars, value ≤ 2000 chars);
+    /// field definitions live in the project template, multi-select values are comma-joined.
     #[serde(default)]
     custom_fields: BTreeMap<String, String>,
-    /// 所属模块 id(共享项目模块树);缺省/空串 = 未规划。
+    /// Module id (shared project module tree); missing/empty = unfiled.
     #[serde(default)]
     module_id: String,
 }
@@ -118,22 +118,22 @@ struct RejectReviewBody {
 #[serde(rename_all = "camelCase")]
 struct RenameBody {
     title: String,
-    /// 可选:更新优先级,缺省不动。
+    /// Optional: update priority; omitted keeps current.
     #[serde(default)]
     priority: Option<String>,
-    /// 可选:更新需求类型,缺省不动。
+    /// Optional: update requirement type; omitted keeps current.
     #[serde(default)]
     req_type: Option<String>,
-    /// 可选:整组替换标签,缺省不动。
+    /// Optional: replace tags wholesale; omitted keeps current.
     #[serde(default)]
     tags: Option<Vec<String>>,
-    /// 可选:更新截止日期 YYYY-MM-DD;空串清除,缺省不动。
+    /// Optional: update due date YYYY-MM-DD; empty string clears, omitted keeps current.
     #[serde(default)]
     due_date: Option<String>,
-    /// 可选:整体替换自定义字段(空 map 即清空),缺省不动。
+    /// Optional: replace custom fields wholesale (empty map clears); omitted keeps current.
     #[serde(default)]
     custom_fields: Option<BTreeMap<String, String>>,
-    /// 可选:更新所属模块 id(空串 = 摘回未规划),缺省不动。
+    /// Optional: update module id (empty string = unfiled); omitted keeps current.
     #[serde(default)]
     module_id: Option<String>,
 }
@@ -142,13 +142,13 @@ struct RenameBody {
 #[serde(rename_all = "camelCase")]
 #[schema(as = RequirementStageBody)]
 struct StageBody {
-    /// PENDING / IN_PROGRESS / DONE / SKIPPED(不区分大小写);缺省不动。
+    /// PENDING / IN_PROGRESS / DONE / SKIPPED (case-insensitive); omitted keeps current.
     #[serde(default)]
     status: Option<String>,
-    /// 计划开始日期 YYYY-MM-DD;空串清除,缺省不动。
+    /// Planned start date YYYY-MM-DD; empty string clears, omitted keeps current.
     #[serde(default)]
     planned_start: Option<String>,
-    /// 计划结束日期 YYYY-MM-DD;空串清除,缺省不动。
+    /// Planned end date YYYY-MM-DD; empty string clears, omitted keeps current.
     #[serde(default)]
     planned_end: Option<String>,
 }
@@ -157,7 +157,7 @@ struct StageBody {
 #[serde(rename_all = "camelCase")]
 #[schema(as = RequirementSetParentBody)]
 struct SetParentBody {
-    /// 目标父需求 id;null 或空串表示摘除父需求。
+    /// Target parent id; null or empty string detaches the parent.
     #[serde(default)]
     parent_id: Option<String>,
 }
@@ -184,18 +184,18 @@ impl From<&crate::domain::RequirementVersion> for VersionResponse {
 #[serde(rename_all = "camelCase")]
 #[schema(as = RequirementStageResponse)]
 struct StageResponse {
-    /// CREATED / AUDIT / REVIEW / DEV / TEST / ACCEPTANCE / DELIVERY。
+    /// CREATED / AUDIT / REVIEW / DEV / TEST / ACCEPTANCE / DELIVERY.
     stage: String,
-    /// PENDING / IN_PROGRESS / DONE / SKIPPED。
+    /// PENDING / IN_PROGRESS / DONE / SKIPPED.
     status: String,
-    /// 计划开始日期 YYYY-MM-DD;null 表示未设置。
+    /// Planned start date YYYY-MM-DD; null when unset.
     planned_start: Option<String>,
-    /// 计划结束日期 YYYY-MM-DD;null 表示未设置。
+    /// Planned end date YYYY-MM-DD; null when unset.
     planned_end: Option<String>,
-    /// 实际起止时间(epoch 毫秒)。
+    /// Actual start/finish times (epoch millis).
     started_at: Option<i64>,
     finished_at: Option<i64>,
-    /// 该阶段是否逾期(实时计算,见 stage_overdue 规则)。
+    /// Whether this stage is overdue (computed live; see stage_overdue rules).
     overdue: bool,
 }
 
@@ -229,22 +229,23 @@ struct RequirementResponse {
     req_type: String,
     tags: Vec<String>,
     parent_id: Option<String>,
-    /// 自定义字段值 map<字段key, 字符串值>;字段定义由项目模板管理,多选值逗号拼接。
+    /// Custom field values map<key, string>; field definitions live in the project template,
+    /// multi-select values are comma-joined.
     custom_fields: BTreeMap<String, String>,
-    /// 所属模块 id(共享项目模块树);空串 = 未规划。
+    /// Module id (shared project module tree); empty = unfiled.
     module_id: String,
-    /// 截止日期 YYYY-MM-DD;null 表示未设置。
+    /// Due date YYYY-MM-DD; null when unset.
     due_date: Option<String>,
-    /// 是否逾期(实时计算:截止日期规则或任一阶段逾期)。
+    /// Overdue flag (computed live: due-date rule or any overdue stage).
     overdue: bool,
-    /// 时间戳一律为 epoch 毫秒。
+    /// Timestamps are epoch millis.
     created_at: i64,
     updated_at: i64,
-    /// 创建人;历史数据可能为空串。
+    /// Creator; may be empty for legacy rows.
     created_by: String,
-    /// 7 阶段流水线,恒为全部阶段、按顺序。
+    /// 7-stage pipeline; always all stages, in order.
     stages: Vec<StageResponse>,
-    /// 当前所处阶段:第一个既未完成也未跳过的;全部完成 → DELIVERY。
+    /// Current stage: first one neither done nor skipped; DELIVERY when all complete.
     current_stage: String,
 }
 
@@ -286,7 +287,7 @@ impl From<Requirement> for RequirementResponse {
 #[serde(rename_all = "camelCase")]
 #[schema(as = RequirementChangeResponse)]
 struct ChangeResponse {
-    /// epoch 毫秒。
+    /// Epoch millis.
     changed_at: i64,
     changed_by: String,
     field: String,
@@ -560,7 +561,7 @@ async fn rename_requirement(
     if !user.can("REQUIREMENT", "UPDATE") {
         return (StatusCode::FORBIDDEN, "permission denied").into_response();
     }
-    // dueDate:缺省不动;空串清除;非空设为该日期。
+    // dueDate: omitted keeps current; empty string clears; non-empty sets.
     let due_date = b.due_date.as_deref().map(|d| Some(d.trim()).filter(|t| !t.is_empty()));
     match st
         .admin
@@ -612,8 +613,9 @@ async fn deliver_requirement(
     }
 }
 
-/// 推进流水线阶段:可选改状态(首次进 IN_PROGRESS/DONE 盖时间戳,重复推进不覆盖)、
-/// 可选设/清计划起止日期(空串清除);未知阶段/状态 → 400。
+/// Advance a pipeline stage: optionally change status (first transition to IN_PROGRESS/DONE
+/// stamps timestamps; repeats do not overwrite) and optionally set/clear planned dates
+/// (empty string clears); unknown stage/status → 400.
 #[utoipa::path(put, path = "/requirement/{id}/stage/{stage}", tag = "requirement", params(("id" = String, Path, description = "需求 id"), ("stage" = String, Path, description = "阶段:CREATED/AUDIT/REVIEW/DEV/TEST/ACCEPTANCE/DELIVERY")), request_body = StageBody, responses((status = 200, body = RequirementResponse), (status = 400), (status = 403), (status = 404)), security(("bearer" = [])))]
 async fn set_stage_route(
     user: AuthUser,
@@ -624,7 +626,7 @@ async fn set_stage_route(
     if !user.can("REQUIREMENT", "UPDATE") {
         return (StatusCode::FORBIDDEN, "permission denied").into_response();
     }
-    // 计划日期:缺省不动;空串清除;非空设为该日期。
+    // Planned dates: omitted keeps current; empty string clears; non-empty sets.
     fn planned(v: Option<&str>) -> Option<Option<&str>> {
         v.map(|d| Some(d.trim()).filter(|t| !t.is_empty()))
     }
@@ -645,7 +647,7 @@ async fn set_stage_route(
     }
 }
 
-/// 挂/摘父需求:父须同项目、未删除、非自身且不构成环(违规 → 400)。
+/// Attach/detach parent: must be same project, not deleted, not self, and acyclic (violation → 400).
 #[utoipa::path(put, path = "/requirement/{id}/parent", tag = "requirement", params(("id" = String, Path)), request_body = SetParentBody, responses((status = 200, body = RequirementResponse), (status = 400), (status = 403), (status = 404)), security(("bearer" = [])))]
 async fn set_parent(
     user: AuthUser,
@@ -662,7 +664,7 @@ async fn set_parent(
     }
 }
 
-/// 直属子需求(未删除)。
+/// Direct children (not deleted).
 #[utoipa::path(get, path = "/requirement/{id}/children", tag = "requirement", params(("id" = String, Path)), responses((status = 200, body = ChildrenResponse), (status = 403), (status = 404)), security(("bearer" = [])))]
 async fn get_children(
     user: AuthUser,
@@ -684,7 +686,7 @@ async fn get_children(
     }
 }
 
-/// 变更日志,最新在前(最多 200 条)。
+/// Change log, newest first (max 200 entries).
 #[utoipa::path(get, path = "/requirement/{id}/changes", tag = "requirement", params(("id" = String, Path)), responses((status = 200, body = ChangesResponse), (status = 403), (status = 404)), security(("bearer" = [])))]
 async fn get_changes(
     user: AuthUser,
@@ -726,7 +728,7 @@ struct ReorderBody {
     ordered_ids: Vec<String>,
 }
 
-/// 手工排序:按 `orderedIds` 顺序为项目内这些需求写入显式秩;列表按该秩展示。
+/// Manual ordering: writes explicit ranks in `orderedIds` order; the list follows this rank.
 #[utoipa::path(put, path = "/requirement/order", tag = "requirement", request_body = ReorderBody, responses((status = 204), (status = 403)), security(("bearer" = [])))]
 async fn reorder_requirements(
     user: AuthUser,
@@ -758,7 +760,7 @@ struct SummaryResponse {
     archived: u64,
 }
 
-/// 项目需求按状态聚合(仪表盘):总数 + 各状态计数。
+/// Per-status aggregation of a project's requirements (dashboard): total plus per-status counts.
 #[utoipa::path(get, path = "/requirement/summary", tag = "requirement", params(SummaryQuery), responses((status = 200, body = SummaryResponse), (status = 403)), security(("bearer" = [])))]
 async fn requirement_summary(
     user: AuthUser,
@@ -859,7 +861,7 @@ mod tests {
         let a = create_req(&app, &t, "A").await;
         let b = create_req(&app, &t, "B").await;
 
-        // PUT /requirement/order 命中 reorder(204),而非 /requirement/{id} 改名。
+        // PUT /requirement/order must hit reorder (204), not the /requirement/{id} rename route.
         let body = format!(r#"{{"projectId":"p1","orderedIds":["{b}","{a}"]}}"#);
         let r = app
             .clone()
@@ -882,7 +884,6 @@ mod tests {
         let (app, t) = app_with("REQUIREMENT:READ+ADD+UPDATE").await;
         create_req(&app, &t, "A").await;
         let b = create_req(&app, &t, "B").await;
-        // B → baselined。
         let r = app
             .clone()
             .oneshot(req(
@@ -908,7 +909,7 @@ mod tests {
 
     #[tokio::test]
     async fn summary_without_read_perm_403() {
-        // 无任何权限的会话。
+        // Session without any REQUIREMENT permission.
         let repo = Arc::new(InMemoryRequirementRepository::new());
         let sessions = Arc::new(InMemorySessionStore::new());
         let set = PermissionSet::from_raw(["BUG:READ".to_string()]).expect("perms");
@@ -1065,7 +1066,8 @@ mod tests {
         );
     }
 
-    /// 验收标准必须放在「基线版本」那条 `versions[]` 里(前端按 baselineVersion 检索)。
+    /// Acceptance criteria must sit in the `versions[]` entry matching the baseline
+    /// (the frontend looks it up by baselineVersion).
     #[tokio::test]
     async fn detail_exposes_acceptance_criteria_at_baseline_version() {
         let (app, t) = app_with("REQUIREMENT:READ+ADD+UPDATE").await;
@@ -1294,7 +1296,7 @@ mod tests {
         assert_eq!(v["priority"], "P1");
         assert_eq!(v["reqType"], "BUGFIX");
 
-        // 只改名不带优先级/类型 → 保留原值。
+        // Rename without priority/type keeps existing values.
         let r2 = app
             .clone()
             .oneshot(req("PUT", &format!("/requirement/{id}"), r#"{"title":"登入"}"#, Some(&t)))
@@ -1306,7 +1308,7 @@ mod tests {
         assert_eq!(v2["priority"], "P1");
         assert_eq!(v2["reqType"], "BUGFIX");
 
-        // 非法优先级 → 400。
+        // Invalid priority → 400.
         assert_eq!(
             app.oneshot(req(
                 "PUT",
@@ -1390,7 +1392,7 @@ mod tests {
         assert_eq!(v["overdue"], false);
         assert!(v["createdAt"].as_i64().expect("createdAt") > 0);
         assert!(v["updatedAt"].as_i64().expect("updatedAt") > 0);
-        // 7 阶段流水线:CREATED 已随建档完成,当前停在 AUDIT。
+        // 7-stage pipeline: CREATED completed at creation; current stage is AUDIT.
         let stages = v["stages"].as_array().expect("stages");
         assert_eq!(stages.len(), 7);
         assert_eq!(
@@ -1476,9 +1478,9 @@ mod tests {
         assert!(dev["startedAt"].as_i64().is_some());
         assert!(dev["finishedAt"].is_null());
         assert_eq!(dev["overdue"], false);
-        assert_eq!(v["currentStage"], "AUDIT"); // AUDIT 仍待处理,阶段推进不改当前指针
+        assert_eq!(v["currentStage"], "AUDIT"); // AUDIT still pending; a later stage does not move the pointer
 
-        // 直接 DONE 补齐起止;空串清除计划日期。
+        // Jumping straight to DONE backfills both stamps; empty string clears planned dates.
         let r2 = app
             .clone()
             .oneshot(req(
@@ -1506,9 +1508,9 @@ mod tests {
             .expect("r");
         let v3 = body_json(r3).await;
         assert!(v3["stages"][3]["plannedEnd"].is_null());
-        assert_eq!(v3["stages"][3]["status"], "IN_PROGRESS"); // 只清计划不动状态
+        assert_eq!(v3["stages"][3]["status"], "IN_PROGRESS"); // clearing the plan keeps status
 
-        // 未知阶段/状态/非法日期 → 400。
+        // Unknown stage/status or invalid date → 400.
         assert_eq!(
             app.clone()
                 .oneshot(req(
@@ -1568,7 +1570,7 @@ mod tests {
         assert_eq!(r.status(), StatusCode::OK);
         assert_eq!(body_json(r).await["parentId"], a);
 
-        // 环:A 再挂到 B 下 → 400;自挂 → 400。
+        // Cycle: putting A under B → 400; self-parent → 400.
         assert_eq!(
             app.clone()
                 .oneshot(req(
@@ -1606,7 +1608,7 @@ mod tests {
         assert_eq!(v["items"].as_array().expect("items").len(), 1);
         assert_eq!(v["items"][0]["id"], b);
 
-        // 摘除后子列表为空。
+        // Children list is empty after detaching.
         let r = app
             .clone()
             .oneshot(req(
@@ -1646,7 +1648,7 @@ mod tests {
         assert_eq!(v["tags"], serde_json::json!(["web", "api"]));
         assert_eq!(v["dueDate"], "2999-06-01");
 
-        // 缺省不动。
+        // Omitted keeps current.
         let r2 = app
             .clone()
             .oneshot(req("PUT", &format!("/requirement/{id}"), r#"{"title":"登录"}"#, Some(&t)))
@@ -1656,7 +1658,7 @@ mod tests {
         assert_eq!(v2["tags"], serde_json::json!(["web", "api"]));
         assert_eq!(v2["dueDate"], "2999-06-01");
 
-        // 空串清除截止日期。
+        // Empty string clears the due date.
         let r3 = app
             .oneshot(req(
                 "PUT",
@@ -1673,7 +1675,7 @@ mod tests {
     #[tokio::test]
     async fn module_create_update_and_omission_semantics() {
         let (app, t) = app_with("REQUIREMENT:READ+ADD+UPDATE").await;
-        // 创建携带 moduleId;缺省为空串(未规划)。
+        // Create with moduleId; missing defaults to empty (unfiled).
         let r = app
             .clone()
             .oneshot(req(
@@ -1702,7 +1704,7 @@ mod tests {
         .await;
         assert_eq!(d["moduleId"], "");
 
-        // PUT 缺省不动;带 moduleId 替换;空串摘回未规划。
+        // PUT: omitted keeps; moduleId replaces; empty string unfiles.
         let r2 = app
             .clone()
             .oneshot(req("PUT", &format!("/requirement/{id}"), r#"{"title":"登录"}"#, Some(&t)))
@@ -1731,7 +1733,7 @@ mod tests {
             .await
             .expect("r");
         assert_eq!(body_json(r4).await["moduleId"], "");
-        // 变更日志记 module 字段。
+        // Change log records the module field.
         let log = body_json(
             app.oneshot(req("GET", &format!("/requirement/{id}/changes"), "", Some(&t)))
                 .await
@@ -1746,7 +1748,7 @@ mod tests {
     #[tokio::test]
     async fn custom_fields_create_update_and_omission_semantics() {
         let (app, t) = app_with("REQUIREMENT:READ+ADD+UPDATE").await;
-        // 创建携带 customFields(键自动 trim)。
+        // Create with customFields (keys are trimmed).
         let r = app
             .clone()
             .oneshot(req(
@@ -1762,7 +1764,7 @@ mod tests {
         assert_eq!(v["customFields"], serde_json::json!({"owner": "alice", "module": "登录"}));
         let id = v["id"].as_str().expect("id").to_string();
 
-        // PUT 整体替换;缺省不动。
+        // PUT replaces wholesale; omitted keeps current.
         let r2 = app
             .clone()
             .oneshot(req(
@@ -1781,7 +1783,7 @@ mod tests {
             .await
             .expect("r");
         assert_eq!(body_json(r3).await["customFields"], serde_json::json!({"owner": "bob"}));
-        // 空 map 清空。
+        // Empty map clears.
         let r4 = app
             .clone()
             .oneshot(req(
@@ -1793,7 +1795,7 @@ mod tests {
             .await
             .expect("r");
         assert_eq!(body_json(r4).await["customFields"], serde_json::json!({}));
-        // 变更日志走 custom.<key>。
+        // Change log uses custom.<key> fields.
         let log = body_json(
             app.clone()
                 .oneshot(req("GET", &format!("/requirement/{id}/changes"), "", Some(&t)))
@@ -1804,7 +1806,7 @@ mod tests {
         assert_eq!(log["items"][0]["field"], "custom.owner");
         assert_eq!(log["items"][0]["oldValue"], "bob");
         assert_eq!(log["items"][0]["newValue"], "");
-        // 非法(空白键)→ 400。
+        // Invalid (blank key) → 400.
         assert_eq!(
             app.oneshot(req(
                 "POST",
@@ -1859,13 +1861,13 @@ mod tests {
         assert_eq!(items[2]["field"], "title");
         assert_eq!(items[2]["oldValue"], "登录");
         assert_eq!(items[2]["newValue"], "登入");
-        // 建档钩子在最末(最旧)。
+        // Creation hook is last (oldest).
         assert_eq!(items[3]["field"], "stage.CREATED");
     }
 
     #[tokio::test]
     async fn lifecycle_endpoints_enforce_guards() {
-        // 只有 READ:改阶段/挂父 → 403。
+        // READ only: stage update / parent link → 403.
         let (app, t) = app_with("REQUIREMENT:READ").await;
         assert_eq!(
             app.clone()
@@ -1883,7 +1885,7 @@ mod tests {
             StatusCode::FORBIDDEN
         );
 
-        // 只有 ADD+UPDATE(无 READ):children/changes → 403。
+        // ADD+UPDATE only (no READ): children/changes → 403.
         let (app2, t2) = app_with("REQUIREMENT:ADD+UPDATE").await;
         assert_eq!(
             app2.clone()

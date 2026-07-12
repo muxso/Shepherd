@@ -3,11 +3,11 @@ import { createContext, useContext, useEffect, useMemo, useState, type ReactNode
 export type Lang = 'zh' | 'en'
 const KEY = 'shepherd.lang'
 
-// 扁平字典:key → {zh,en}。逐页迁移文案到此处即可双语;未登记的 key 回落原文。
+// Flat dictionary: key → {zh,en}. Unregistered keys fall back to the original text.
 const DICT: Record<string, { zh: string; en: string }> = {
-  // 文档标题(浏览器标签)
+  // Document title (browser tab)
   'app.title': { zh: '接口测试管理', en: 'API Testing Management' },
-  // 左侧全局导航栏(一级模块图标 + 文字)
+  // Left global nav (top-level module icon + label)
   'nav.home': { zh: '首页', en: 'Home' },
   'nav.project': { zh: '项目', en: 'Project' },
   'nav.plan': { zh: '计划', en: 'Plan' },
@@ -15,12 +15,12 @@ const DICT: Record<string, { zh: string; en: string }> = {
   'nav.api': { zh: '接口', en: 'API' },
   'nav.bug': { zh: '缺陷', en: 'Bug' },
   'nav.sys': { zh: '系统', en: 'System' },
-  // 一级模块分组(AppShell 左栏);缺失会回落中文 → 英文模式中英混排,补全双语。
+  // Top-level module groups (AppShell left rail); missing entries fall back to Chinese and mix languages in EN mode.
   'nav.req': { zh: '需求', en: 'Reqs' },
   'nav.review': { zh: '评审', en: 'Review' },
   'nav.dev': { zh: '研发', en: 'Dev' },
   'nav.test': { zh: '测试', en: 'Testing' },
-  // 顶栏 / 一级导航
+  // Top bar / primary nav
   'top.home': { zh: '首页', en: 'Home' },
   'g.home': { zh: '工作台', en: 'Workspace' },
   'm.home': { zh: '工作台', en: 'Overview' },
@@ -60,7 +60,7 @@ const DICT: Record<string, { zh: string; en: string }> = {
   'home.cs.desc.collab': { zh: 'AI 与人工交付的任务量和工作量拆分', en: 'AI vs human delivery split' },
   'home.shortcuts': { zh: '快捷入口', en: 'Quick Links' },
   'home.bugRate': { zh: '缺陷率', en: 'Bug Rate' },
-  // 闭环门面
+  // Closed-loop landing page
   'loop.heroTitle': { zh: '从需求到交付的 AI 闭环', en: 'AI Loop: Requirements to Delivery' },
   'loop.heroSub': {
     zh: 'MRD 自动转 PRD → AI 参与评审(版本留痕)→ 多 Agent 协同研发 → TDD 测试验收 → 决策链路可视化,结果回归需求',
@@ -107,7 +107,7 @@ const DICT: Record<string, { zh: string; en: string }> = {
   'pc.project': { zh: '当前项目', en: 'Current Project' },
   'pc.projectCount': { zh: '可见项目数', en: 'Visible Projects' },
   'pc.lang': { zh: '语言', en: 'Language' },
-  // 个人中心(全屏抽屉:左侧分组导航 + 右侧内容)
+  // Personal center (full-screen drawer: grouped nav left, content right)
   'pc.groupInfo': { zh: '个人信息', en: 'Profile' },
   'pc.groupSettings': { zh: '个人设置', en: 'Preferences' },
   'pc.basic': { zh: '基本信息', en: 'Basic Info' },
@@ -115,7 +115,7 @@ const DICT: Record<string, { zh: string; en: string }> = {
   'pc.models': { zh: '模型设置', en: 'Model Settings' },
   'pc.userId': { zh: '用户 ID', en: 'User ID' },
   'pc.permCount': { zh: '权限条数', en: 'Permissions' },
-  // 密码设置
+  // Password settings
   'pc.pwdOld': { zh: '当前密码', en: 'Current password' },
   'pc.pwdNew': { zh: '新密码', en: 'New password' },
   'pc.pwdConfirm': { zh: '确认新密码', en: 'Confirm new password' },
@@ -154,7 +154,7 @@ const DICT: Record<string, { zh: string; en: string }> = {
   'pc.akEnabled': { zh: '已启用', en: 'Enabled' },
   'pc.akDisabled': { zh: '已停用', en: 'Disabled' },
   'pc.akEmpty': { zh: '暂无 API KEY', en: 'No API keys yet' },
-  // 模型设置
+  // Model settings
   'pc.provider': { zh: '供应商', en: 'Provider' },
   'pc.providerZhipu': { zh: '智谱 AI', en: 'Zhipu AI' },
   'pc.providerCustom': { zh: '自定义', en: 'Custom' },
@@ -190,7 +190,7 @@ const DICT: Record<string, { zh: string; en: string }> = {
   'top.lightMode': { zh: '浅色模式', en: 'Light mode' },
   'top.fullscreen': { zh: '全屏', en: 'Fullscreen' },
   'top.exitFullscreen': { zh: '退出全屏', en: 'Exit fullscreen' },
-  // 顶栏消息抽屉
+  // Top-bar message drawer
   'msg.title': { zh: '消息管理', en: 'Notifications' },
   'msg.subtitle': { zh: '(仅展示近 3 个月内站内消息)', en: '(only in-app messages from the last 3 months)' },
   'msg.settings': { zh: '消息设置', en: 'Message settings' },
@@ -206,7 +206,7 @@ const DICT: Record<string, { zh: string; en: string }> = {
   'msg.tab.mine': { zh: '@我的', en: '@Me' },
   'msg.tab.unread': { zh: '未读', en: 'Unread' },
   'msg.tab.read': { zh: '已读', en: 'Read' },
-  // 消息设置(项目 → 消息设置)
+  // Message settings (Project → Message Settings)
   'msgset.title': { zh: '消息设置', en: 'Message Settings' },
   'msgset.grpRobot': { zh: '机器人', en: 'Robots' },
   'msgset.grpEvent': { zh: '消息设置', en: 'Notifications' },
@@ -246,12 +246,12 @@ const DICT: Record<string, { zh: string; en: string }> = {
   'msgset.needWebhook': { zh: '请填写 Webhook 地址', en: 'Webhook URL is required' },
   'msgset.delConfirm': { zh: '确认删除该通知?', en: 'Delete this notification?' },
   'msgset.delRobotConfirm': { zh: '确认删除该机器人?', en: 'Delete this robot?' },
-  // 侧栏分组
+  // Sidebar groups
   'g.asset': { zh: '测试资产', en: 'Test Assets' },
   'g.exec': { zh: '计划与执行', en: 'Plan & Run' },
   'g.orch': { zh: '需求与编排', en: 'Requirement & Orchestration' },
   'g.sys': { zh: '系统管理', en: 'System' },
-  // 侧栏菜单项
+  // Sidebar menu items
   'm.definition': { zh: '定义', en: 'Definitions' },
   'm.scenario': { zh: '场景', en: 'Scenarios' },
   'm.functional': { zh: '用例', en: 'Cases' },
@@ -269,7 +269,7 @@ const DICT: Record<string, { zh: string; en: string }> = {
   'm.user': { zh: '用户', en: 'Users' },
   'm.proj': { zh: '项目', en: 'Projects' },
   'm.mcp': { zh: 'MCP 工具', en: 'MCP Tools' },
-  // 通用动作
+  // Common actions
   'a.new': { zh: '新建', en: 'New' },
   'a.create': { zh: '创建', en: 'Create' },
   'a.save': { zh: '保存', en: 'Save' },
@@ -288,7 +288,7 @@ const DICT: Record<string, { zh: string; en: string }> = {
   'common.selectProject': { zh: '请先在顶部选择项目', en: 'Select a project first' },
   'common.empty': { zh: '暂无数据', en: 'No data' },
   'common.comingSoon': { zh: '即将接入', en: 'Coming soon' },
-  // 系统模块顶部子菜单
+  // System module top submenu
   'sys.users': { zh: '用户', en: 'Users' },
   'sys.userGroups': { zh: '用户组', en: 'User Groups' },
   'sys.apikeys': { zh: 'API 密钥', en: 'API Keys' },
@@ -297,7 +297,7 @@ const DICT: Record<string, { zh: string; en: string }> = {
   'sys.tasks': { zh: '任务中心', en: 'Task Center' },
   'sys.plugins': { zh: '插件', en: 'Plugins' },
   'sys.logs': { zh: '日志', en: 'Logs' },
-  // API 密钥(系统)
+  // API keys (System)
   'ak.create': { zh: '新建密钥', en: 'New Key' },
   'ak.colName': { zh: '名称', en: 'Name' },
   'ak.colPerms': { zh: '权限', en: 'Permissions' },
@@ -325,7 +325,7 @@ const DICT: Record<string, { zh: string; en: string }> = {
   'ak.keyOnce': { zh: '密钥只显示这一次,请立即保存', en: 'This key is shown only once — save it now' },
   'ak.iSaved': { zh: '我已保存', en: 'I have saved it' },
   'ak.copied': { zh: '已复制', en: 'Copied' },
-  // 任务中心(系统:即时任务/后台任务/执行详情)
+  // Task center (System: real-time tasks / background tasks / execution detail)
   'tc.title': { zh: '任务中心', en: 'Task Center' },
   'tc.tabRealtime': { zh: '实时任务', en: 'Real-time Tasks' },
   'tc.tabBackground': { zh: '后台任务', en: 'Background Tasks' },
@@ -362,18 +362,18 @@ const DICT: Record<string, { zh: string; en: string }> = {
   'tc.runId': { zh: '运行 ID', en: 'Run ID' },
   'tc.autoRefresh': { zh: '自动刷新', en: 'Auto refresh' },
   'tc.loadFailed': { zh: '加载失败', en: 'Load failed' },
-  // 执行状态文案
+  // Execution status labels
   'tc.st.DISPATCHED': { zh: '排队中', en: 'Queued' },
   'tc.st.RUNNING': { zh: '执行中', en: 'Running' },
   'tc.st.DELIVERED': { zh: '已完成', en: 'Completed' },
   'tc.st.FAILED': { zh: '已失败', en: 'Failed' },
   'tc.st.STOPPED': { zh: '已停止', en: 'Stopped' },
-  // 执行结果文案
+  // Execution result labels
   'tc.res.SUCCESS': { zh: '成功', en: 'Success' },
   'tc.res.FAILED': { zh: '失败', en: 'Failed' },
   'tc.res.STOPPED': { zh: '已停止', en: 'Stopped' },
   'tc.res.PENDING': { zh: '进行中', en: 'In progress' },
-  // 系统/用户页
+  // System / Users page
   'user.username': { zh: '用户名', en: 'Username' },
   'user.name': { zh: '姓名', en: 'Name' },
   'user.email': { zh: '邮箱', en: 'Email' },
@@ -404,7 +404,7 @@ const DICT: Record<string, { zh: string; en: string }> = {
   'user.resetFailed': { zh: '重置失败', en: 'Reset failed' },
   'user.edit': { zh: '编辑用户', en: 'Edit User' },
   'user.updated': { zh: '已保存', en: 'Saved' },
-  // 用户组页 (#52)
+  // User groups page (#52)
   'ug.scope.SYSTEM': { zh: '系统用户组', en: 'System Groups' },
   'ug.scope.ORGANIZATION': { zh: '组织用户组', en: 'Org Groups' },
   'ug.scope.PROJECT': { zh: '项目用户组', en: 'Project Groups' },
@@ -416,7 +416,7 @@ const DICT: Record<string, { zh: string; en: string }> = {
   'ug.selectGroup': { zh: '请选择用户组', en: 'Select a group' },
   'ug.noPerm': { zh: '该用户组暂无权限', en: 'No permissions' },
   'ug.membersSoon': { zh: '成员管理即将接入(需按用户组反查用户)', en: 'Member management coming soon' },
-  // 组织与项目页 (#53)
+  // Orgs & projects page (#53)
   'op.orgs': { zh: '组织', en: 'Orgs' },
   'op.projTab': { zh: '项目', en: 'Projects' },
   'op.createOrg': { zh: '创建组织', en: 'Create Org' },
@@ -439,8 +439,7 @@ const DICT: Record<string, { zh: string; en: string }> = {
   'op.delConfirm': { zh: '确认删除组织?', en: 'Delete this organization?' },
   'op.deleted': { zh: '已删除', en: 'Deleted' },
   'op.delFailed': { zh: '删除失败', en: 'Delete failed' },
-  // 模板管理(项目级模板,当前仅需求模板)
-  // 模板管理(字段模板):每个模块一份字段配置,决定创建表单的字段/顺序/必填/显隐。
+  // Template management (field templates): one field config per module, driving each create form's fields/order/required/visibility.
   'tmpl.title': { zh: '模板管理', en: 'Templates' },
   'tmpl.subtitle': { zh: '定义各模块创建表单的字段、顺序与必填', en: 'Define the fields, order and required flags of each create form' },
   'tmpl.kindRequirement': { zh: '需求', en: 'Requirement' },
@@ -471,7 +470,7 @@ const DICT: Record<string, { zh: string; en: string }> = {
   'tmpl.type.number': { zh: '数字', en: 'Number' },
   'req.criteriaRequired': { zh: '请至少填写一条验收标准', en: 'Add at least one acceptance criterion' },
   'func.stepsRequired': { zh: '请至少填写一条测试步骤', en: 'Add at least one test step' },
-  // 项目管理(项目与权限)
+  // Project admin (project & permissions)
   'proj.permTab': { zh: '项目与权限', en: 'Project & Permissions' },
   'proj.tmplTab': { zh: '模板管理', en: 'Templates' },
   'proj.fileTab': { zh: '文件管理', en: 'Files' },
@@ -527,7 +526,7 @@ const DICT: Record<string, { zh: string; en: string }> = {
   'proj.addGroup': { zh: '添加用户组', en: 'Add Group' },
   'proj.resource': { zh: '资源', en: 'Resource' },
   'proj.permission': { zh: '权限', en: 'Permission' },
-  // —— 以下为各页面迁移登记的文案(由 i18n 迁移生成)——
+  // Entries below were registered per page during the i18n migration.
   "apidef.loadFailed": { zh: "加载失败", en: "Failed to load" },
   "apidef.allApis": { zh: "全部", en: "All" },
   "apidef.unfiled": { zh: "未归类", en: "Unfiled" },
@@ -1118,7 +1117,7 @@ const DICT: Record<string, { zh: string; en: string }> = {
   "req.noEvents": { zh: "暂无事件(先派发任务)", en: "No events (dispatch a task first)" },
   "req.eventType": { zh: "类型", en: "Type" },
   "req.eventMessage": { zh: "消息", en: "Message" },
-  // 需求生命周期:标签 / 截止日期 / 父子需求 / 研发进度 / 变更记录
+  // Requirement lifecycle: tags / due date / parent-child / dev progress / change log
   "req.tags": { zh: "标签", en: "Tags" },
   "req.tagsPh": { zh: "回车添加,最多 10 个", en: "Press Enter to add, up to 10" },
   "req.dueDate": { zh: "截止日期", en: "Due Date" },
@@ -1132,7 +1131,7 @@ const DICT: Record<string, { zh: string; en: string }> = {
   "req.unlinkFailed": { zh: "解除失败", en: "Unlink failed" },
   "req.linked": { zh: "已关联", en: "Linked" },
   "req.open": { zh: "打开", en: "Open" },
-  // 7 段需求流水线:阶段名 / 阶段状态 / 面板文案
+  // 7-stage requirement pipeline: stage names / stage states / panel labels
   "req.stagePanel": { zh: "阶段进度", en: "Stage Progress" },
   "req.stage.CREATED": { zh: "创建", en: "Created" },
   "req.stage.AUDIT": { zh: "审核", en: "Audit" },
@@ -1158,7 +1157,7 @@ const DICT: Record<string, { zh: string; en: string }> = {
   "req.noChanges": { zh: "暂无变更记录", en: "No changes yet" },
   "req.createdAt": { zh: "创建时间", en: "Created At" },
   "req.updatedAt": { zh: "更新时间", en: "Updated At" },
-  // 变更记录字段名(缺失回落原始字段名)
+  // Change-log field names (missing keys fall back to the raw field name)
   "req.chg.title": { zh: "标题", en: "Title" },
   "req.chg.description": { zh: "描述", en: "Description" },
   "req.chg.priority": { zh: "优先级", en: "Priority" },
@@ -1527,9 +1526,9 @@ const DICT: Record<string, { zh: string; en: string }> = {
   "editor.paramValue": { zh: "参数值", en: "Parameter value" },
   "editor.desc": { zh: "描述", en: "Description" },
   "editor.addRow": { zh: "加一行", en: "Add row" },
-  // 缺陷工作区(列表常驻 tab + 新建缺陷 tab)
+  // Bug workspace (pinned list tab + new-bug tab)
   'bug.allBugs': { zh: '全部缺陷', en: 'All Bugs' },
-  // ===== i18n 补齐:以下 key 此前只有中文回退,未登记词条(按前缀分组)=====
+  // Backfilled keys that previously had only a Chinese fallback (grouped by prefix).
   // a.*
   'a.actions': { zh: '操作', en: 'Actions' },
   'a.close': { zh: '关闭', en: 'Close' },
@@ -2165,7 +2164,7 @@ const DICT: Record<string, { zh: string; en: string }> = {
   // user.*
   'user.stDisabled': { zh: '禁用', en: 'Disabled' },
   'user.stEnabled': { zh: '启用', en: 'Enabled' },
-  // 动态 key 家族(模板串 t(`xx.${v}`) 静态扫描抓不到):review.cs.* / ug.res.* / ug.act.*
+  // Dynamic key families (template calls t(`xx.${v}`) escape static scans): review.cs.* / ug.res.* / ug.act.*
   'review.cs.UN_REVIEWED': { zh: '未评审', en: 'Not reviewed' },
   'review.cs.UNDER_REVIEWED': { zh: '评审中', en: 'Under review' },
   'review.cs.PASS': { zh: '通过', en: 'Passed' },
@@ -2232,7 +2231,6 @@ export function LangProvider({ children }: { children: (lang: Lang) => ReactNode
     () => ({ lang, setLang, t: (key, fallback) => DICT[key]?.[lang] ?? fallback ?? key }),
     [lang],
   )
-  // 浏览器标签标题随语言切换。
   useEffect(() => {
     document.title = `Shepherd · ${DICT['app.title'][lang]}`
   }, [lang])

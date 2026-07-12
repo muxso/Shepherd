@@ -30,7 +30,7 @@ impl TemplateService {
         Self { repo }
     }
 
-    /// 创建模板;同 (project, kind, name) 已存在返回 `NameExists`。
+    /// Creates a template; returns `NameExists` if the same (project, kind, name) already exists.
     pub async fn create(
         &self,
         project_id: &str,
@@ -46,7 +46,8 @@ impl TemplateService {
         Ok(self.repo.insert(&new).await?)
     }
 
-    /// 改名和/或换 config;`None` 表示保持不变。改名撞同 (project, kind) 下已有名字报 `NameExists`。
+    /// Renames and/or replaces the config; `None` keeps the current value. Renaming onto an
+    /// existing name within the same (project, kind) returns `NameExists`.
     pub async fn update(
         &self,
         id: &str,
@@ -70,7 +71,7 @@ impl TemplateService {
         self.repo.update(&cur).await?.ok_or(TemplateCmdError::NotFound)
     }
 
-    /// 删除模板;不存在返回 `NotFound`。
+    /// Deletes a template; returns `NotFound` if it does not exist.
     pub async fn delete(&self, id: &str) -> Result<(), TemplateCmdError> {
         if self.repo.delete(id).await? {
             Ok(())
@@ -79,7 +80,7 @@ impl TemplateService {
         }
     }
 
-    /// 列出项目内模板;kind 给定时按归一后的 kind 过滤。
+    /// Lists templates in a project; when `kind` is given, filters by the normalized kind.
     pub async fn list(
         &self,
         project_id: &str,
@@ -120,12 +121,12 @@ mod tests {
     async fn duplicate_name_same_project_kind_conflicts() {
         let s = svc();
         s.create("p1", "requirement", "默认", json!({}), "admin").await.expect("create");
-        // kind/name 归一后再比:大小写与空白不能绕开唯一性。
+        // kind/name are compared after normalization: case and whitespace cannot bypass uniqueness.
         assert_eq!(
             s.create("p1", " Requirement ", " 默认 ", json!({}), "admin").await,
             Err(TemplateCmdError::NameExists)
         );
-        // 不同 kind 或不同项目不冲突。
+        // A different kind or a different project does not conflict.
         assert!(s.create("p1", "bug", "默认", json!({}), "admin").await.is_ok());
         assert!(s.create("p2", "requirement", "默认", json!({}), "admin").await.is_ok());
     }
@@ -136,10 +137,10 @@ mod tests {
         let t = s.create("p1", "requirement", "默认", json!({}), "admin").await.expect("create");
         let t2 = s.update(&t.id, Some("改名"), None).await.expect("rename");
         assert_eq!(t2.name, "改名");
-        assert_eq!(t2.config, json!({})); // config 未动
+        assert_eq!(t2.config, json!({})); // config untouched
         assert!(t2.updated_at_ms > t2.created_at_ms);
         let t3 = s.update(&t.id, None, Some(json!({"a": 1}))).await.expect("reconfig");
-        assert_eq!(t3.name, "改名"); // name 未动
+        assert_eq!(t3.name, "改名"); // name untouched
         assert_eq!(t3.config, json!({"a": 1}));
     }
 
@@ -149,7 +150,7 @@ mod tests {
         s.create("p1", "requirement", "A", json!({}), "admin").await.expect("create");
         let b = s.create("p1", "requirement", "B", json!({}), "admin").await.expect("create");
         assert_eq!(s.update(&b.id, Some("A"), None).await, Err(TemplateCmdError::NameExists));
-        // 改成自己现在的名字不算冲突。
+        // Renaming to the template's own current name is not a conflict.
         assert!(s.update(&b.id, Some(" B "), None).await.is_ok());
     }
 

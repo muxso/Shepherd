@@ -76,9 +76,12 @@ pub async fn snapshot(cwd: &str, attempt_id: &str, title: &str) -> Option<Snapsh
     Some(Snapshot { reference, stat })
 }
 
-/// 从 `base_ref`(缺省当前 HEAD)拉出分离 worktree。基仓库的已检出分支不受影响,
-/// 所以宿主机和容器共用一个检出、各在不同分支上也互不干扰;要摆脱"基点跟着
-/// 宿主机当前分支走",就传入固定 ref(AGENT_BASE_REF,如 origin/main)。
+/// Creates a detached worktree from `base_ref` (defaults to current HEAD).
+///
+/// The base repo's checked-out branch is untouched, so host and container can
+/// share one checkout on different branches without interfering. To stop the
+/// task base from tracking the host's current branch, pass a fixed ref
+/// (AGENT_BASE_REF, e.g. origin/main).
 pub async fn add_worktree(base: &str, attempt_id: &str, base_ref: Option<&str>) -> Option<String> {
     let path = std::env::temp_dir().join(format!("shepherd-wt-{attempt_id}"));
     let path = path.to_string_lossy().to_string();
@@ -161,7 +164,7 @@ mod tests {
         run(&base, &["add", "-A"]).await;
         run(&base, &["commit", "-q", "-m", "c1"]).await;
         let pinned = git(&base, &["rev-parse", "HEAD"]).await.expect("sha").trim().to_string();
-        // 宿主机切去别的分支并前进一提交;钉住的任务基点不应跟过去。
+        // Host switches to another branch and advances a commit; the pinned task base must not follow.
         run(&base, &["checkout", "-q", "-b", "dev"]).await;
         std::fs::write(dir.join("f.txt"), "v2 on dev").expect("w");
         run(&base, &["add", "-A"]).await;

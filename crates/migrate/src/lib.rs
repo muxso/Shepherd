@@ -1,14 +1,15 @@
-//! 数据库迁移:嵌入本 crate 下 migrations/ 的 sqlx 迁移并按序执行,
-//! 另提供 PgPool 连接与 ping。新增迁移后需 touch 本文件重编译才会被嵌入。
+//! Database migrations: embeds the sqlx migrations under this crate's
+//! migrations/ dir and runs them in order; also provides PgPool connect and
+//! ping. After adding a migration, touch this file and rebuild or it won't be embedded.
 
 use sqlx::migrate::MigrateError;
-pub use sqlx::PgPool; // 重导出:组装根可命名 PgPool 而不直接依赖 sqlx
+pub use sqlx::PgPool; // Re-export so the composition root can name PgPool without depending on sqlx directly.
 
 pub async fn connect(url: &str) -> Result<PgPool, sqlx::Error> {
     PgPool::connect(url).await
 }
 
-/// 迁移器持有 advisory lock,可并发安全调用。
+/// The migrator holds an advisory lock, so concurrent calls are safe.
 pub async fn run(pool: &PgPool) -> Result<(), MigrateError> {
     sqlx::migrate!().run(pool).await
 }

@@ -22,10 +22,10 @@ import {
   type PlanModule,
 } from './planLocal'
 
-// 测试计划左侧模块树面板(本地模块,存 localStorage):
-// 「新建 ▾」(新建测试计划 / 新建计划组)+ 模块名称搜索 + 树
-// (根「全部测试计划 (n)」行尾带 加模块/加子模块;模块节点带 加子模块/重命名/删除)。
-// 外层宽度/边框由调用方的 <ResizableSider> 提供。
+// Left module-tree panel for test plans (modules are local, stored in localStorage):
+// "New ▾" dropdown (new plan / new group) + module name search + tree.
+// Root row ("all plans (n)") carries add-module/add-submodule actions; module nodes carry add-submodule/rename/delete.
+// Outer width/border comes from the caller's <ResizableSider>.
 export default function PlanModuleTree({
   projectId,
   items,
@@ -43,7 +43,7 @@ export default function PlanModuleTree({
   onSelect: (key: string) => void
   onNewPlan: () => void
   onNewGroup: () => void
-  /** 模块增删改后回调;删除时带被删 id 集(调用方把归属计划改回未规划)。 */
+  /** Fires after module add/rename/delete; delete passes removed ids so the caller moves owned plans back to unfiled. */
   onModulesChanged: (modules: PlanModule[], removedIds?: string[]) => void
 }) {
   const { t } = useI18n()
@@ -57,7 +57,7 @@ export default function PlanModuleTree({
     return items.filter((it) => ids.includes(moduleOf(it))).length
   }
   const unfiledCount = items.filter((it) => !moduleOf(it)).length
-  // 「加子模块」挂在当前选中的模块下;选中 全部/未规划 时不可用。
+  // "Add submodule" attaches under the currently selected module; unavailable when ALL/UNFILED is selected.
   const selectedModule = modules.find((m) => m.id === selectedKey)
 
   const onModuleAction = (action: string, m: PlanModule) => {
@@ -80,7 +80,7 @@ export default function PlanModuleTree({
     const lc = (s: string) => s.toLowerCase()
     const node = (m: PlanModule): any => {
       const subs = childOf(m.id).map(node).filter(Boolean)
-      if (search && !lc(m.name).includes(lc(search)) && subs.length === 0) return null // 搜索无命中则隐藏
+      if (search && !lc(m.name).includes(lc(search)) && subs.length === 0) return null // hide when search misses
       return {
         key: m.id,
         title: <ModuleTitle name={m.name} count={subtreeCount(m.id)} onAction={(a) => onModuleAction(a, m)} />,
@@ -128,7 +128,7 @@ export default function PlanModuleTree({
 
   return (
     <>
-      {/* 新建入口:主按钮默认新建测试计划,下拉箭头里可选 新建测试计划 / 新建计划组。 */}
+      {/* Create entry: main button = new test plan; dropdown arrow offers new plan / new plan group. */}
       <div style={{ padding: '10px 10px 0' }}>
         <Space.Compact style={{ width: '100%' }}>
           <Button type="primary" icon={<PlusOutlined />} style={{ flex: 1 }} onClick={onNewPlan}>
@@ -185,7 +185,7 @@ export default function PlanModuleTree({
   )
 }
 
-// 模块节点标题:文件夹图标 + 名称 + 子树计划数 + 「...」菜单(加子模块/重命名/删除)。
+// Module node title: folder icon + name + subtree plan count + "..." menu (add submodule/rename/delete).
 function ModuleTitle({ name, count, onAction }: { name: string; count: number; onAction: (a: string) => void }) {
   const { t } = useI18n()
   return (
@@ -211,7 +211,7 @@ function ModuleTitle({ name, count, onAction }: { name: string; count: number; o
   )
 }
 
-// 新建 / 重命名模块弹窗(纯本地,不走后端)。
+// Create/rename module modal (local only, no backend call).
 function ModuleNameModal({
   state,
   modules,

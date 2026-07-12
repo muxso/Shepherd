@@ -22,7 +22,6 @@ import { message, modal } from '../feedback'
 import { api, ApiError, EXECUTOR_LABEL, type DeliveryEvent, type TaskCenterItem } from '../api'
 import { useI18n } from '../i18n'
 
-// 执行状态 → Tag 颜色。
 const STATUS_COLOR: Record<string, string> = {
   DISPATCHED: 'default',
   RUNNING: 'processing',
@@ -30,7 +29,6 @@ const STATUS_COLOR: Record<string, string> = {
   FAILED: 'error',
   STOPPED: 'warning',
 }
-// 执行结果 → Tag 颜色。
 const RESULT_COLOR: Record<string, string> = {
   SUCCESS: 'success',
   FAILED: 'error',
@@ -62,7 +60,7 @@ export default function TaskCenter() {
   const [auto, setAuto] = useState(true)
   const [detail, setDetail] = useState<TaskCenterItem | null>(null)
 
-  // 自定义 active 标志:实时页只看未终态任务。
+  // Realtime tab shows only non-terminal tasks.
   const active = tab === 'realtime'
 
   const load = useCallback(async () => {
@@ -78,13 +76,13 @@ export default function TaskCenter() {
     }
   }, [active, status, executor, q, page, pageSize, t])
 
-  // 过滤/分页/搜索变化即加载(搜索做 300ms 去抖)。
+  // Reload on filter/pagination/search change; search is debounced 300ms.
   useEffect(() => {
     const id = setTimeout(load, q ? 300 : 0)
     return () => clearTimeout(id)
   }, [load, q])
 
-  // 自动刷新:实时页且存在进行中任务时,每 5s 轮询(不打断列表骨架)。
+  // Auto refresh: poll every 5s on the realtime tab without disturbing the table skeleton.
   const loadRef = useRef(load)
   loadRef.current = load
   useEffect(() => {
@@ -304,7 +302,7 @@ export default function TaskCenter() {
   )
 }
 
-// ---------------- 执行详情抽屉(尝试信息 + 执行事件时间线) ----------------
+// ---------------- Execution detail drawer (attempt info + event timeline) ----------------
 function TaskDetailDrawer({
   item,
   onClose,

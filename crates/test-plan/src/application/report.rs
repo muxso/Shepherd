@@ -352,7 +352,7 @@ pub fn report_html(name: &str, stats: &PlanStatistics, cases: &[PlanCase]) -> St
     )
 }
 
-/// markdown 表格单元转义:竖线与换行会破坏表格。
+/// Escapes a markdown table cell: pipes and newlines would break the table.
 fn md_cell(s: &str) -> String {
     s.replace('|', "\\|").replace('\n', " ")
 }
@@ -663,7 +663,8 @@ mod tests {
     #[test]
     fn escapes_content() {
         let mut cs = cases();
-        // 报告自身含 <script> 工具栏,故用 <img> 载荷验证转义,避免误判。
+        // The report itself contains a <script> toolbar, so verify escaping with an <img>
+        // payload to avoid a false positive.
         cs[0].name = "<img src=x onerror=alert(1)>".into();
         let html = report_html("<x>", &stats(), &cs);
         assert!(!html.contains("<img src=x"));

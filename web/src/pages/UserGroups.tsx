@@ -6,10 +6,10 @@ import type { ColumnsType } from 'antd/es/table'
 import { api, ApiError, type Role, type User } from '../api'
 import { useI18n } from '../i18n'
 
-// 用户组(系统/用户组,对齐参考图 #52)。左侧按 scope 分组的用户组树 + 右侧 权限/成员。
-// 权限矩阵由角色真实 permissions(如 "API_DEFINITION:READ+ADD")解析,资源→动作展示。
+// User groups: left tree grouped by scope, right pane permissions/members.
+// Permission matrix is parsed from real role permissions (e.g. "API_DEFINITION:READ+ADD") into resource → actions.
 
-// 资源/动作代码 → 中文(参考图用语);未登记回落原 code。
+// Resource/action code → Chinese label; unknown codes fall back to the raw code.
 const RES_LABEL: Record<string, string> = {
   BASIC_INFO: '基本信息', SYSTEM_USER: '用户', USER_ROLE: '用户组', ORGANIZATION: '组织', PROJECT: '项目',
   RESOURCE_POOL: '资源池', PLUGIN: '插件', AUTH: '授权', LOG: '日志', TASK_CENTER: '任务中心', APIKEY: 'APIKEY',
@@ -38,7 +38,7 @@ export default function UserGroups() {
   const [q, setQ] = useState('')
   const [selId, setSelId] = useState<string>('')
   const [tab, setTab] = useState('perm')
-  const [createScope, setCreateScope] = useState<string | null>(null) // 新建角色的 scope
+  const [createScope, setCreateScope] = useState<string | null>(null)
   const [editRole, setEditRole] = useState<Role | null>(null)
 
   const load = async () => {
@@ -92,7 +92,7 @@ export default function UserGroups() {
     },
   })
 
-  // 当前用户组的成员:用户列表中 userGroups(角色名)包含本组名的用户。
+  // Members = users whose userGroups (role names) include this group's name.
   const members = useMemo(() => (sel ? users.filter((u) => (u.userGroups ?? []).includes(sel.name)) : []), [users, sel])
   const nonMembers = useMemo(() => (sel ? users.filter((u) => !(u.userGroups ?? []).includes(sel.name)) : []), [users, sel])
 
@@ -119,13 +119,13 @@ export default function UserGroups() {
 
   return (
     <div style={{ display: 'flex', height: '100%' }}>
-      {/* 左侧:按 scope 分组的用户组树 */}
+      {/* Left: group tree grouped by scope */}
       <div style={{ width: 240, flexShrink: 0, borderRight: '1px solid var(--border-soft)', background: 'var(--panel)', display: 'flex', flexDirection: 'column' }}>
         <div style={{ padding: 10 }}>
           <Input allowClear prefix={<SearchOutlined style={{ color: 'var(--text-3)' }} />} placeholder={t('ug.search', '请输入用户组名称')} value={q} onChange={(e) => setQ(e.target.value)} />
         </div>
         <div style={{ flex: 1, overflow: 'auto', padding: '0 6px 10px' }}>
-          {/* 没有任何分组时也能新建系统用户组 */}
+          {/* Allow creating a system group even when no groups exist yet */}
           {!loading && grouped.length === 0 && (
             <div style={{ padding: '8px 8px' }}>
               <Button block icon={<PlusOutlined />} onClick={() => setCreateScope('SYSTEM')}>{t('ug.newGroup', '新建用户组')}</Button>
@@ -156,7 +156,7 @@ export default function UserGroups() {
           ))}
         </div>
       </div>
-      {/* 右侧:权限 / 成员 */}
+      {/* Right: permissions / members */}
       <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', background: 'var(--panel)' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 16px', borderBottom: '1px solid var(--border-soft)' }}>
           <Segmented value={tab} onChange={(v) => setTab(v as string)} options={[{ label: t('ug.perm', '权限'), value: 'perm' }, { label: t('ug.members', '成员'), value: 'members' }]} />
@@ -187,7 +187,7 @@ export default function UserGroups() {
   )
 }
 
-// 成员管理:已在组的用户列表(可移除)+ 下拉添加非成员用户(grant/revoke)。
+// Members: current members (removable) + picker to grant non-member users.
 function MembersPanel({ members, nonMembers, onGrant, onRevoke }: { members: User[]; nonMembers: User[]; onGrant: (userId: string) => void; onRevoke: (userId: string) => void }) {
   const { t } = useI18n()
   const [pick, setPick] = useState<string>('')
@@ -253,7 +253,7 @@ function RoleCreateModal({ scope, onClose, onDone }: { scope: string | null; onC
   )
 }
 
-// 编辑用户组:改名 + 权限(每行一条 "RESOURCE:ACTION+ACTION",由内核校验合法性)。
+// Edit group: rename + permissions, one "RESOURCE:ACTION+ACTION" per line; the kernel validates them.
 function RoleEditModal({ role, onClose, onDone }: { role: Role | null; onClose: () => void; onDone: () => void }) {
   const { t } = useI18n()
   const [form] = Form.useForm<{ name: string; perms: string }>()

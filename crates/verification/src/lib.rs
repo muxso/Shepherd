@@ -1,6 +1,8 @@
-//! 验收核查上下文:Verification 按验收准则逐条核对(CriterionStatus),关联覆盖证据(CoverageLink),
-//! 产出 CriterionReport/CompletenessReport 与 Gap 清单;全部准则满足是需求进入 DELIVERED 的前提。
-//! domain/application/ports 不做 IO;pg/http 适配器由 feature 启用。
+//! Acceptance verification context: a Verification checks each acceptance
+//! criterion (CriterionStatus), attaches coverage evidence (CoverageLink), and
+//! produces CriterionReport/CompletenessReport plus a Gap list. All criteria
+//! satisfied is the precondition for a requirement to reach DELIVERED.
+//! domain/application/ports do no IO; pg/http adapters are feature-gated.
 
 pub mod adapters;
 pub mod application;

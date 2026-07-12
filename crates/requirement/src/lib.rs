@@ -1,5 +1,7 @@
-//! 核心规则:同项目内标题唯一(忽略软删除,删后可重建同名);修订追加不可变版本快照;
-//! baseline 显式指向某个已存在版本,修订不自动移动基线。
+//! Core rules: titles are unique per project (soft-deleted rows excluded, so a
+//! deleted title can be recreated); each revision appends an immutable version
+//! snapshot; the baseline explicitly points at an existing version and does not
+//! move automatically on revision.
 
 pub mod adapters;
 pub mod application;

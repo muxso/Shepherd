@@ -89,7 +89,8 @@ pub struct ProbeOutcome {
 }
 
 impl ProbeOutcome {
-    /// 传输失败时,即使没写 `Success` 断言,也把传输错误并入 failures(避免静默失败)。
+    /// On transport failure, fold the transport error into failures even without an
+    /// explicit `Success` assertion (no silent failures).
     pub fn from_raw(raw: RawProbe, assertions: &[ProbeAssertion]) -> Self {
         let mut failures = evaluate(assertions, &raw);
         if !raw.transport_ok && !assertions.iter().any(|a| matches!(a, ProbeAssertion::Success)) {

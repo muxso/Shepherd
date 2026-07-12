@@ -1,4 +1,5 @@
-//! runtime 无公网入站,故派发是 runtime 出站长轮询认领(pull),不是 server→runtime 推。
+//! Runtimes have no inbound network access, so dispatch is outbound long-poll
+//! claiming (pull) by the runtime, not server-to-runtime push.
 
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
@@ -43,7 +44,8 @@ impl InMemoryWorkQueue {
 
     fn try_claim(&self, caps: &[ExecutorKind], consumer_name: &str) -> Option<WorkSpec> {
         let mut q = self.inner.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-        // 定向任务只允许 name 相符的 runtime 认领;未定向任务人人可领。
+        // Targeted specs can only be claimed by the runtime with the matching name;
+        // untargeted specs by anyone.
         let pos = q.iter().position(|s| {
             caps.contains(&s.executor)
                 && s.target_runtime.as_deref().is_none_or(|t| t == consumer_name)
@@ -61,7 +63,8 @@ impl WorkQueue for InMemoryWorkQueue {
             .push_back(spec.clone());
     }
 
-    // 认领即从队列移除,故无 PEL:ack 与超时回收都无需操作,consumer(id)被忽略。
+    // Claiming removes the entry, so there is no PEL: ack and timeout reclaim are
+    // no-ops and consumer (id) is ignored.
     async fn claim(
         &self,
         caps: &[ExecutorKind],
@@ -84,10 +87,10 @@ impl WorkQueue for InMemoryWorkQueue {
     }
 
     async fn ack(&self, _attempt_id: &str) {
-        // 认领即移除,无待处理列表,no-op。
+        // Claiming already removed the entry; nothing pending, no-op.
     }
 
-    // 无 PEL,故 in_flight / oldest 恒 0;ready = 各能力排队数。
+    // No PEL, so in_flight / oldest are always 0; ready = queued count per capability.
     async fn stats(&self) -> Vec<QueueStat> {
         let q = self.inner.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         KNOWN_CAPS
@@ -119,7 +122,8 @@ impl AgentExecutor for QueueAgentExecutor {
         spec: &WorkSpec,
         _sink: &dyn EventSink,
     ) -> Result<DispatchOutcome, ExecError> {
-        // 仅入队,不在此执行;事件经 runtime 的 HTTP 回调回流,sink 在此用不到。
+        // Enqueue only, no execution here; events flow back via the runtime's HTTP
+        // callback, so the sink is unused.
         self.queue.enqueue(spec).await;
         Ok(DispatchOutcome::Accepted { run_id: spec.attempt_id.clone() })
     }
@@ -138,7 +142,8 @@ impl FromRef<FleetState> for Arc<dyn SessionStore> {
     }
 }
 
-/// `queue` 必须与 `QueueAgentExecutor` 共享同一实例,否则认领端点拿不到入队任务。
+/// `queue` must be the same instance shared with `QueueAgentExecutor`, or the claim
+/// endpoint never sees enqueued work.
 pub fn router(
     queue: Arc<dyn WorkQueue>,
     registry: Arc<dyn FleetRegistry>,
@@ -212,7 +217,8 @@ async fn claim(
         return (StatusCode::BAD_REQUEST, "no known caps").into_response();
     }
     let consumer = q.runtime.as_deref().filter(|s| !s.is_empty()).unwrap_or("anon");
-    // runtime id → 注册名:定向任务按 name 匹配(name 跨重连稳定,id 每次注册都变)。
+    // Map runtime id to registered name: targeted specs match by name (stable across
+    // reconnects, unlike the id which changes on every register).
     let consumer_name = st
         .registry
         .list()
@@ -308,7 +314,8 @@ async fn register(
     (StatusCode::CREATED, Json(RegisteredResponse { runtime_id: id })).into_response()
 }
 
-// 未知 id 返回 404,runtime 据此触发重新 register(回收后的重新上线路径)。
+// Unknown id returns 404; the runtime treats that as a signal to re-register
+// (the come-back-online path after being reclaimed).
 async fn heartbeat(
     user: AuthUser,
     State(st): State<FleetState>,
@@ -389,7 +396,7 @@ mod tests {
     async fn targeted_spec_only_claimed_by_named_runtime() {
         let q = InMemoryWorkQueue::new();
         q.enqueue(&targeted("a1", ExecutorKind::Codex, "box-2")).await;
-        // 能力匹配但名字不符 → 领不到。
+        // Matching capability but wrong name: no claim.
         assert!(q
             .claim(&[ExecutorKind::Codex], Duration::from_millis(50), "rt-1", "box-1")
             .await
@@ -399,7 +406,7 @@ mod tests {
             .await
             .expect("claim");
         assert_eq!(got.spec.attempt_id, "a1");
-        // 定向任务不阻塞后续未定向任务。
+        // A targeted spec must not block later untargeted specs.
         q.enqueue(&targeted("a2", ExecutorKind::Codex, "box-2")).await;
         q.enqueue(&spec("a3", ExecutorKind::Codex)).await;
         let got = q

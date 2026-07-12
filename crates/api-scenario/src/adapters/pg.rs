@@ -245,7 +245,7 @@ impl ApiScenarioRepository for PgApiScenarioRepository {
     }
 
     async fn delete_scenario(&self, id: &str) -> Result<bool, RepoError> {
-        // 场景软删,步骤硬删(步骤表无软删列)。
+        // Scenario is soft-deleted; steps are hard-deleted (step table has no soft-delete column).
         let res = sqlx::query(
             "UPDATE ms_api_scenario SET deleted = true WHERE id = $1 AND deleted = false",
         )

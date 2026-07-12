@@ -1,4 +1,5 @@
-//! 解析名只走 `names_direct`,绝不走校验路径,否则 OIDC 用户会 500;出错降级为空。
+//! Name resolution only uses `names_direct`, never the validation path — that would 500
+//! for OIDC users. On error it degrades to an empty map.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;

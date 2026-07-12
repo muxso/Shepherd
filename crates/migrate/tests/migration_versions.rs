@@ -1,4 +1,5 @@
-//! sqlx `migrate!` 按文件名首段数字作版本号,同版本号多文件会被静默去重(丢迁移 → 缺列 → 运行期 500)。
+//! sqlx `migrate!` takes the leading number of the filename as the version; duplicate
+//! versions are silently deduped (a migration gets dropped -> missing column -> 500 at runtime).
 
 use std::collections::HashMap;
 use std::fs;

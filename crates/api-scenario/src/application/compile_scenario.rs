@@ -6,7 +6,7 @@ use crate::ports::{ApiScenarioRepository, RepoError};
 
 use thiserror::Error;
 
-/// 递归深度上限,防止病态嵌套耗尽栈。
+/// Recursion depth cap; guards against pathological nesting exhausting the stack.
 const MAX_DEPTH: usize = 20;
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
@@ -36,7 +36,7 @@ impl CompileScenarioUseCase {
         self.compile_inner(scenario_id, &mut visited, 0).await
     }
 
-    // Box::pin 装箱递归 future,绕开 async 自递归的返回类型大小限制。
+    // Box::pin the recursive future to sidestep async self-recursion's unsized return type.
     fn compile_inner<'a>(
         &'a self,
         scenario_id: &'a str,

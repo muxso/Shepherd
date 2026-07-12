@@ -1,7 +1,10 @@
-//! 交付上下文:任务派发到执行者并跟踪交付。核心是 DeliveryAttempt 状态机与 Deliverable 交付物,
-//! AgentExecutor 抽象执行者(stub 桩/local 本地/exec-http 远程/exec-queue 机群队列),
-//! WorkQueue + FleetRegistry 支撑无公网 agent 的 pull 式领取与心跳注册,ExecutionEvent 记录执行过程。
-//! domain/application/ports 不做 IO;pg/http/redis 等适配器由 feature 启用。
+//! Delivery context: dispatch tasks to executors and track delivery.
+//!
+//! Core pieces: the DeliveryAttempt state machine and Deliverable artifacts;
+//! AgentExecutor abstracts the executor (stub / local / exec-http / exec-queue fleet);
+//! WorkQueue + FleetRegistry support pull-style claiming and heartbeat registration
+//! for agents without inbound network access; ExecutionEvent records execution progress.
+//! domain/application/ports do no IO; pg/http/redis adapters are feature-gated.
 
 pub mod adapters;
 pub mod application;

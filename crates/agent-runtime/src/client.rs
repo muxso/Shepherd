@@ -13,7 +13,7 @@ const REPORT_ATTEMPTS: u32 = 6;
 pub struct ServerClient {
     http: reqwest::Client,
     base: String,
-    /// 静态 API key(SHEPHERD_AGENT_KEY):唯一凭证,不登录、不刷新,401 即被吊销。
+    /// Static API key (SHEPHERD_AGENT_KEY): the only credential — no login, no refresh; a 401 means revoked.
     key: String,
 }
 
@@ -38,7 +38,7 @@ where
 }
 
 impl ServerClient {
-    /// 静态 API key(`sak_…`)直接当 bearer 用:免登录免刷新,吊销即失效。
+    /// Uses the static API key (`sak_…`) directly as bearer: no login/refresh; revocation kills it.
     pub fn with_api_key(base: &str, key: &str) -> anyhow::Result<Self> {
         let http = reqwest::Client::builder().connect_timeout(Duration::from_secs(10)).build()?;
         Ok(Self { http, base: base.to_string(), key: key.to_string() })
@@ -48,7 +48,7 @@ impl ServerClient {
         rb.bearer_auth(&self.key).timeout(CONTROL_TIMEOUT)
     }
 
-    /// 401 说明 key 被吊销/无效,重试不会自愈,记一条明确指引。
+    /// A 401 means the key is revoked/invalid; retrying won't recover, so log explicit guidance.
     fn key_revoked(&self, status: reqwest::StatusCode) -> bool {
         let revoked = status == reqwest::StatusCode::UNAUTHORIZED;
         if revoked {
@@ -59,7 +59,7 @@ impl ServerClient {
         revoked
     }
 
-    /// error_for_status 的替身:401 换成可读的「key 已吊销」错误,其余维持状态码错误。
+    /// Stand-in for error_for_status: maps 401 to a readable "key revoked" error, keeps status errors otherwise.
     fn ensure_ok(&self, resp: reqwest::Response) -> anyhow::Result<reqwest::Response> {
         if self.key_revoked(resp.status()) {
             anyhow::bail!("API key 已吊销或无效");
@@ -241,7 +241,7 @@ mod tests {
     fn only_401_is_treated_as_key_revoked() {
         let c = static_client();
         assert!(c.key_revoked(reqwest::StatusCode::UNAUTHORIZED));
-        // 非 401 不算吊销(403 是权限不足、5xx 是服务端问题,按原有重试语义走)。
+        // Non-401 is not revocation (403 = insufficient perms, 5xx = server issue; normal retry semantics apply).
         assert!(!c.key_revoked(reqwest::StatusCode::FORBIDDEN));
         assert!(!c.key_revoked(reqwest::StatusCode::INTERNAL_SERVER_ERROR));
     }

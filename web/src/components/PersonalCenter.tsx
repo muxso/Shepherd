@@ -21,9 +21,10 @@ import { api, ApiError, userIdStore, userStore, type ApiKey, type AuthMe, type L
 import { message } from '../feedback'
 import { useI18n } from '../i18n'
 
-// 个人中心(对齐 MeterSphere):全屏抽屉,左侧分组导航(个人信息 / 个人设置),
-// 右侧内容随导航切换。数据契约见 api.ts 的「个人中心」段;后端并行开发中,
-// 接口未就绪时各面板降级为空态/本地回退,不阻塞打开。
+// Personal center (mirrors MeterSphere): fullscreen drawer, grouped nav on the left,
+// content switches with the nav. Data contract: the personal-center section of api.ts.
+// Backend is developed in parallel — panels degrade to empty state / local fallback
+// when endpoints aren't ready, so opening never blocks.
 type TabKey = 'basic' | 'password' | 'apikey' | 'models'
 
 export default function PersonalCenter({ open, onClose }: { open: boolean; onClose: () => void }) {
@@ -56,7 +57,7 @@ export default function PersonalCenter({ open, onClose }: { open: boolean; onClo
       destroyOnHidden
       styles={{ body: { padding: 0, display: 'flex', overflow: 'hidden' } }}
     >
-      {/* 左:窄栏分组导航,选中项品牌色高亮 */}
+      {/* Left: narrow grouped nav, selected item highlighted in brand color */}
       <div style={{ width: 208, flexShrink: 0, borderRight: '1px solid var(--border-soft)', overflowY: 'auto', padding: '12px 8px' }}>
         {groups.map((g, gi) => (
           <div key={g.title}>
@@ -85,7 +86,7 @@ export default function PersonalCenter({ open, onClose }: { open: boolean; onClo
           </div>
         ))}
       </div>
-      {/* 右:内容区 */}
+      {/* Right: content area */}
       <div style={{ flex: 1, minWidth: 0, overflowY: 'auto', padding: 24 }}>
         {tab === 'basic' && <BasicPanel />}
         {tab === 'password' && <PasswordPanel />}
@@ -96,7 +97,7 @@ export default function PersonalCenter({ open, onClose }: { open: boolean; onClo
   )
 }
 
-// YYYY-MM-DD HH:mm:ss(对齐参考样式的时间口径)。
+// YYYY-MM-DD HH:mm:ss, matching the reference UI's time format.
 function fmtTime(v?: string | null): string {
   if (!v) return '-'
   const d = new Date(v)
@@ -105,7 +106,7 @@ function fmtTime(v?: string | null): string {
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`
 }
 
-// 面板标题:名称 + 可选的问号提示。
+// Panel title: name + optional question-mark tooltip.
 function PanelTitle({ text, tip }: { text: string; tip?: string }) {
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 16, fontWeight: 600, marginBottom: 16 }}>
@@ -119,13 +120,13 @@ function PanelTitle({ text, tip }: { text: string; tip?: string }) {
   )
 }
 
-// ---------- 基本信息 ----------
+// ---------- Basic info ----------
 
 function BasicPanel() {
   const { t } = useI18n()
   const [me, setMe] = useState<AuthMe | null>(null)
   useEffect(() => {
-    api.me().then(setMe).catch(() => setMe(null)) // 接口未就绪 → 回退本地 store
+    api.me().then(setMe).catch(() => setMe(null)) // endpoint not ready → fall back to local store
   }, [])
   return (
     <div style={{ maxWidth: 560 }}>
@@ -141,7 +142,7 @@ function BasicPanel() {
   )
 }
 
-// ---------- 密码设置 ----------
+// ---------- Password ----------
 
 function PasswordPanel() {
   const { t } = useI18n()
@@ -217,14 +218,14 @@ function ApiKeyPanel() {
   const [items, setItems] = useState<ApiKey[]>([])
   const [loading, setLoading] = useState(false)
   const [createOpen, setCreateOpen] = useState(false)
-  // 创建成功待展示的一次性明文 key(后端不再返回明文,只此一次)。
+  // One-time plaintext key pending display after create (backend never returns it again).
   const [createdKey, setCreatedKey] = useState<string | null>(null)
 
   const load = () => {
     setLoading(true)
     api.myApiKeys()
       .then((p) => setItems(p.items ?? []))
-      .catch(() => setItems([])) // 接口未就绪 → 空态
+      .catch(() => setItems([])) // endpoint not ready → empty state
       .finally(() => setLoading(false))
   }
   useEffect(load, [])
@@ -301,7 +302,7 @@ function KeyCard({ k, onDelete, onToggle }: { k: ApiKey; onDelete: () => void; o
           t('pc.akSecretKey', 'Secret Key'),
           <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
             <span className="ms-mono">****************</span>
-            {/* 只存哈希,无法回显:眼睛不做切换,点它只给说明 */}
+            {/* Only the hash is stored, nothing to reveal: the eye icon doesn't toggle, it just explains */}
             <Tooltip title={t('pc.akSecretHint', '仅创建时可见')}>
               <EyeInvisibleOutlined style={{ color: 'var(--text-3)', cursor: 'pointer' }} />
             </Tooltip>
@@ -396,7 +397,7 @@ function CreateKeyModal({ open, onClose, onDone }: { open: boolean; onClose: () 
   )
 }
 
-// 一次性明文 key:遮罩/ESC 关不掉,只能点「我已保存」,防手滑丢 key。
+// One-time plaintext key: mask/ESC can't close it; only the "saved it" button can, so the key isn't lost by accident.
 function KeyOnceModal({ keyText, onClose }: { keyText: string | null; onClose: () => void }) {
   const { t } = useI18n()
   return (
@@ -431,9 +432,9 @@ function KeyOnceModal({ keyText, onClose }: { keyText: string | null; onClose: (
   )
 }
 
-// ---------- 模型设置 ----------
+// ---------- Model settings ----------
 
-// 供应商固定四档(对齐参考样式);图标用首字母圆形占位,不引外部图片。
+// Fixed set of four providers (matches the reference UI); icons are initial-letter circles, no external images.
 const PROVIDERS: { key: string; label: [string, string]; letter: string }[] = [
   { key: 'deepseek', label: ['', 'DeepSeek'], letter: 'D' },
   { key: 'openai', label: ['', 'OpenAI'], letter: 'O' },
@@ -454,7 +455,7 @@ function ModelPanel() {
     setLoading(true)
     api.llmModels()
       .then((p) => setItems(p.items ?? []))
-      .catch(() => setItems([])) // 接口未就绪 → 空态
+      .catch(() => setItems([])) // endpoint not ready → empty state
       .finally(() => setLoading(false))
   }
   useEffect(load, [])
@@ -489,7 +490,7 @@ function ModelPanel() {
     <div>
       <PanelTitle text={t('pc.models', '模型设置')} />
       <div style={{ display: 'flex', gap: 16, alignItems: 'flex-start' }}>
-        {/* 左:供应商卡片列表 */}
+        {/* Left: provider card list */}
         <div style={{ width: 216, flexShrink: 0, display: 'flex', flexDirection: 'column', gap: 8 }}>
           <div style={{ fontSize: 12, color: 'var(--text-3)', padding: '0 2px' }}>{t('pc.provider', '供应商')}</div>
           {PROVIDERS.map((p) => {
@@ -533,7 +534,7 @@ function ModelPanel() {
             )
           })}
         </div>
-        {/* 右:工具条 + 模型表格 */}
+        {/* Right: toolbar + model table */}
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 12 }}>
             <Button type="primary" icon={<PlusOutlined />} onClick={() => { setEditing(null); setEditorOpen(true) }}>
@@ -629,7 +630,7 @@ function ModelEditorModal({
       form.setFieldsValue({
         name: editing?.name ?? '',
         baseUrl: editing?.baseUrl ?? '',
-        apiKey: '', // 编辑时留空 = 不改;只存服务端,不回显
+        apiKey: '', // empty on edit = unchanged; stored server-side only, never echoed back
         enabled: editing?.enabled ?? true,
       })
     }

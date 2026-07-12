@@ -26,13 +26,15 @@ struct BreakdownState {
     breakdown: BreakdownUseCase,
     create_verification: CreateVerificationUseCase,
     cases: Arc<dyn CaseRepository>,
-    /// LLM 用例起草;None 或失败时回落任务模板。
+    /// LLM case drafter; falls back to the per-task template when None or on failure.
     drafter: Option<Arc<dyn CaseDrafter>>,
     sessions: Arc<dyn SessionStore>,
 }
 
-// 拆分后自动添加测试:按「任务」起草功能用例(配置了 LLM 则由 AI 生成带步骤的用例,
-// 否则每任务一条模板用例),落库并按验收标准下标回链覆盖关系。幂等:需求已有覆盖用例则跳过。
+// Auto-add tests after decomposition: draft functional cases per task (AI-generated
+// with steps when an LLM is configured, otherwise one template case per task),
+// persist them and link coverage back by acceptance-criterion index. Idempotent:
+// skipped when the requirement already has covering cases.
 async fn seed_functional_cases(
     cases: &Arc<dyn CaseRepository>,
     drafter: &Option<Arc<dyn CaseDrafter>>,

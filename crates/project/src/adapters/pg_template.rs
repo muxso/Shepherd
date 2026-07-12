@@ -1,4 +1,5 @@
-//! 同 (project_id, kind, name) 唯一由 0085 迁移的 UNIQUE 约束在 DB 层兜底。
+//! (project_id, kind, name) uniqueness is backstopped at the DB level by the UNIQUE constraint
+//! from migration 0085.
 
 use async_trait::async_trait;
 use sqlx::{PgPool, Row};

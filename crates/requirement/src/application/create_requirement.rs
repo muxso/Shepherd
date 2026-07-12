@@ -57,9 +57,11 @@ impl CreateRequirementUseCase {
         .await
     }
 
-    /// 同 `execute`,另接收可选优先级/需求类型/标签/截止日期/父需求/自定义字段/所属模块/创建人:
-    /// 缺省取默认值,非法值报校验错;父需求须存在(未软删)且同项目;
-    /// `module_id` 空串 = 未规划(模块实体在共享 ms_module 表,不做存在性校验)。
+    /// Like `execute`, but also takes optional priority/type/tags/due date/
+    /// parent/custom fields/module/creator: missing values fall back to
+    /// defaults, invalid ones are validation errors; the parent must exist
+    /// (not soft-deleted) and belong to the same project; empty `module_id` =
+    /// unfiled (modules live in the shared ms_module table, no existence check).
     #[allow(clippy::too_many_arguments)]
     pub async fn execute_with(
         &self,
@@ -80,7 +82,7 @@ impl CreateRequirementUseCase {
         let req_type = req_type.map(parse_req_type).transpose()?.unwrap_or_default();
         let tags = normalize_tags(tags)?;
         let custom_fields = normalize_custom_fields(custom_fields)?;
-        // 空串等同未填,不视为非法日期。
+        // Empty string means unset, not an invalid date.
         let due_date =
             due_date.map(str::trim).filter(|d| !d.is_empty()).map(parse_due_date).transpose()?;
         let mut new = NewRequirement::new(project_id, title, description, criteria)?
@@ -114,8 +116,9 @@ impl CreateRequirementUseCase {
         Ok(req)
     }
 
-    /// 创建即完成 CREATED 阶段(起止 = created_at)并记变更日志;
-    /// 写失败不影响创建本身,仅告警(读侧回落 PENDING 默认行)。
+    /// Creation completes the CREATED stage right away (start = finish =
+    /// created_at) and logs the change; a write failure does not fail the
+    /// creation, it only warns (read side falls back to the PENDING default row).
     async fn stamp_created_stage(&self, req: &mut Requirement, by: &str) {
         let mut row = StageRow::pending(Stage::Created);
         row.set_status(StageStatus::Done, req.created_at_ms);
@@ -280,7 +283,7 @@ mod tests {
         assert_eq!(r.tags, vec!["api".to_string(), "web".to_string()]);
         assert_eq!(r.due_date.as_deref(), Some("2026-12-31"));
         assert_eq!(r.parent_id.as_deref(), Some(parent.id.as_str()));
-        // 空串日期等同未填。
+        // An empty-string date means unset.
         let r2 = uc
             .execute_with(
                 "p1",
@@ -321,9 +324,9 @@ mod tests {
             )
             .await
             .expect("ok");
-        assert_eq!(r.module_id, "mod-1"); // 自动 trim
+        assert_eq!(r.module_id, "mod-1"); // trimmed
         let r2 = uc.execute("p1", "注册", "d", &[]).await.expect("ok");
-        assert_eq!(r2.module_id, ""); // 缺省未规划
+        assert_eq!(r2.module_id, ""); // defaults to unfiled
     }
 
     #[tokio::test]
@@ -334,7 +337,7 @@ mod tests {
             .await
             .expect("ok");
         assert_eq!(r.custom_fields, BTreeMap::from([("owner".to_string(), "alice".to_string())]));
-        // 空白键报校验错。
+        // A blank key is a validation error.
         let bad = BTreeMap::from([("  ".to_string(), "v".to_string())]);
         assert_eq!(
             uc().execute_with("p1", "注册", "d", &[], None, None, &[], None, None, &bad, "", "")
@@ -387,7 +390,7 @@ mod tests {
             .unwrap_err(),
             CreateRequirementError::CrossProjectParent
         );
-        // 软删除的父视为不存在。
+        // A soft-deleted parent counts as missing.
         let doomed = uc.execute("p1", "亡父", "d", &[]).await.expect("p");
         repo.soft_delete(&doomed.id);
         assert_eq!(

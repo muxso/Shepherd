@@ -35,7 +35,8 @@ impl InMemoryPlanRepository {
             plan_type: new_plan.plan_type,
             group_id: new_plan.group_id.clone(),
             archived: false,
-            // 无真实时钟:用单调递增的 seq 当创建时间,保证列表排序稳定。
+            // No real clock: use the monotonically increasing seq as the creation time so list
+            // ordering stays stable.
             created_at_ms: state.seq as i64,
         };
         state.plans.insert(plan.id.clone(), plan.clone());

@@ -46,8 +46,10 @@ impl<S: Send + Sync> FromRequestParts<S> for WantsSse {
 
 const SESSION_HEADER: &str = "mcp-session-id";
 
-// 会话与认证用户绑定:id 随机不可猜,且仅其属主(同一 Bearer 用户)可复用/删除——
-// 防止已认证用户 A 凭可猜 id 操作 B 的会话(纵深防御,/mcp 本就有 Bearer 鉴权)。
+// Sessions are bound to the authenticated user: ids are random and unguessable, and
+// only the owner (same Bearer user) may reuse/delete one — prevents authenticated
+// user A from manipulating B's session via a guessable id (defense in depth; /mcp
+// already requires Bearer auth).
 #[derive(Default)]
 struct McpSessions {
     owners: Mutex<HashMap<String, String>>,
@@ -712,7 +714,8 @@ async fn mcp_sse(
     let ready = tokio_stream::once(Ok::<Event, Infallible>(
         Event::default().event("ready").data(json!({ "server": "shepherd" }).to_string()),
     ));
-    // 服务端推送:订阅事件总线,把任务/交付/验证事件转成 SSE notification;lagged 跳过。
+    // Server push: subscribe to the event bus and turn task/delivery/verification
+    // events into SSE notifications; lagged entries are skipped.
     let notifications = BroadcastStream::new(st.bus.subscribe()).filter_map(|r| {
         r.ok().map(|ev| {
             Ok::<Event, Infallible>(

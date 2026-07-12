@@ -7,7 +7,7 @@ import { api, ApiError, type CaseReviewDetail, type CaseReviewSummary, type Func
 import { useApp } from '../context'
 import { useI18n } from '../i18n'
 
-// AI 评审:① 需求评审(评审=定基线)② 用例评审队列(或签/会签裁决)。
+// AI review: 1) requirement review (review = set baseline) 2) case review queue (any-one / all-approve verdicts).
 const REVIEW: Record<string, { label: string; color: string }> = {
   DRAFT: { label: '待评审', color: 'orange' },
   BASELINED: { label: '已基线(评审通过)', color: 'green' },
@@ -198,7 +198,7 @@ function ReviewDetailDrawer({ reviewId, caseName, onClose, onChanged }: { review
       message.error(e instanceof ApiError ? e.message : t('review.submitFailed', '提交失败'))
     }
   }
-  // 一键评审通过:对该评审下尚未通过的用例逐个提交 PASS(满足规则后整体即通过)。
+  // One-click approve: submit PASS for every not-yet-passed case in this review (the review passes once its rule is met).
   const passAll = () => {
     if (!reviewId || !detail) return
     const pending = detail.cases.filter((c) => c.status !== 'PASS')

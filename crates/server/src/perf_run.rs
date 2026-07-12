@@ -172,7 +172,7 @@ async fn run_perf(
             return (StatusCode::BAD_REQUEST, format!("invalid load plan: {e}")).into_response()
         }
     };
-    // 时长模式记 0(实际完成数见 total),否则按 iterations。
+    // Duration mode records 0 (actual completions are in `total`); otherwise use iterations.
     let planned_iterations = if req.duration_ms.is_some() { 0 } else { req.iterations as i32 };
 
     let assertions = build_assertions(&req);
@@ -324,7 +324,8 @@ impl CaseResultSink for NoopSink {
     }
 }
 
-/// 每个 case 只查一次 DB,否则高并发×高迭代会把压测变成自家 PG 的压测。
+/// Query the DB once per case; otherwise high concurrency x high iterations turns
+/// the load test into a load test of our own PG.
 struct CachingSpecSource {
     inner: Arc<dyn CaseSpecSource>,
     cache: RwLock<HashMap<String, Option<CaseRunSpec>>>,

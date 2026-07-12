@@ -10,7 +10,8 @@ fn now_ms() -> i64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as i64).unwrap_or(0)
 }
 
-/// 测试/本地用的内存实现;BTreeMap 保证 list 顺序稳定,id 用递增序号。
+/// In-memory implementation for tests/local; BTreeMap keeps list order stable, ids are
+/// sequential.
 #[derive(Default)]
 struct LlmModelState {
     rows: BTreeMap<String, LlmModelRecord>,

@@ -1,6 +1,9 @@
-//! 拆分后自动起草功能测试用例(第四个 AI 触点,前三个见 llm.rs:拆分/执行/验证)。
-//! 输入 = 需求 + 刚拆出的任务;输出 = 带步骤的用例草稿,由 breakdown 路由落库并关联验收标准。
-//! 未配置 LLM 或起草失败时,回落到按任务的确定性模板(每任务一条,步骤来自任务验收标准)。
+//! Auto-drafts functional test cases after decomposition (the fourth AI touchpoint;
+//! the first three — decompose/execute/verify — live in llm.rs).
+//! Input = requirement + freshly decomposed tasks; output = case drafts with steps,
+//! persisted by the breakdown route and linked to acceptance criteria.
+//! Without a configured LLM, or on drafting failure, falls back to a deterministic
+//! per-task template (one case per task, steps from the task's acceptance criteria).
 
 use async_trait::async_trait;
 
@@ -17,7 +20,8 @@ pub struct DraftedStep {
 pub struct DraftedCase {
     pub name: String,
     pub steps: Vec<DraftedStep>,
-    /// 覆盖的需求级验收标准下标(0 起);落库时逐条建立覆盖关联。
+    /// 0-based indexes of covered requirement-level acceptance criteria;
+    /// persistence creates one coverage link per index.
     pub criterion_indexes: Vec<i32>,
 }
 
@@ -30,8 +34,9 @@ pub trait CaseDrafter: Send + Sync {
     ) -> Result<Vec<DraftedCase>, String>;
 }
 
-/// 确定性模板:每任务一条用例;步骤 = 该任务的验收标准逐条「验证 → 预期」;
-/// 与需求级标准文本相同的条目回链覆盖关系。
+/// Deterministic template: one case per task; each task acceptance criterion becomes
+/// a "verify → expected" step. Entries whose text matches a requirement-level
+/// criterion get linked back as coverage.
 pub fn template_cases(spec: &RequirementSpec, tasks: &[Task]) -> Vec<DraftedCase> {
     tasks
         .iter()
@@ -61,7 +66,8 @@ pub fn template_cases(spec: &RequirementSpec, tasks: &[Task]) -> Vec<DraftedCase
         .collect()
 }
 
-/// LLM 起草结果解析(独立成函数便于单测):越界下标丢弃、空名/空步骤跳过、总量封顶 3×任务数。
+/// Parses LLM drafting output (a free function for unit testing): drops out-of-range
+/// indexes, skips empty names/steps, caps the total at 3x the task count.
 pub fn parse_drafted(
     text: &str,
     task_count: usize,
@@ -176,7 +182,7 @@ mod tests {
         ]"#;
         let cases = parse_drafted(text, 1, 2).expect("parse");
         assert_eq!(cases.len(), 1);
-        assert_eq!(cases[0].criterion_indexes, vec![0]); // 9 越界被丢
+        assert_eq!(cases[0].criterion_indexes, vec![0]); // 9 is out of range, dropped
     }
 
     #[test]

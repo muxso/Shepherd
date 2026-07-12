@@ -8,7 +8,7 @@ pub enum ScheduleError {
     EmptyCron,
 }
 
-/// `cron` 为 6 段(秒 分 时 日 月 周)表达式。
+/// `cron` is a 6-field expression (sec min hour day month weekday).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Schedule {
     pub id: String,

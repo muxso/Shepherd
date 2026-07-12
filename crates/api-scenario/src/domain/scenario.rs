@@ -277,7 +277,7 @@ pub enum PlanStep {
     Timer { ms: u64 },
 }
 
-/// 嵌套深度上限,防止病态深载荷耗尽栈。
+/// Nesting depth cap; guards against pathologically deep payloads exhausting the stack.
 const MAX_CONTROL_DEPTH: usize = 10;
 
 fn parse_plan_step(v: &serde_json::Value, depth: usize) -> Option<PlanStep> {
@@ -295,7 +295,7 @@ fn parse_plan_step(v: &serde_json::Value, depth: usize) -> Option<PlanStep> {
                 .map(PlanStep::Request)
         }
         other => match ControlKind::parse(other) {
-            // 子步骤本身是控制器:同一对象既带 kind 又是其载荷,递归。
+            // A child step that is itself a controller: the same object carries both kind and payload — recurse.
             Some(ck) if depth < MAX_CONTROL_DEPTH => Some(parse_control_inner(ck, v, depth + 1)),
             _ => None,
         },
@@ -396,7 +396,7 @@ pub struct ScenarioReference {
     pub name: String,
 }
 
-/// `meta` 为不透明 JSON,故不派生 `Eq`(serde_json::Value 无 Eq)。
+/// No `Eq` derive: `meta` is opaque JSON and `serde_json::Value` lacks `Eq`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ApiScenario {
     pub id: String,

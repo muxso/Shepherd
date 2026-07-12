@@ -66,7 +66,8 @@ impl DeliveryService {
         self
     }
 
-    // 终态才 ack:把消息移出 Redis Streams 的 PEL,免得被死 runtime 回收逻辑重投。
+    // Ack only on terminal state: removes the message from the Redis Streams PEL so
+    // the dead-runtime reclaim logic cannot re-dispatch it.
     async fn ack_if_terminal(&self, attempt: &DeliveryAttempt) {
         if attempt.status.is_terminal() {
             if let Some(q) = &self.queue {
@@ -86,7 +87,8 @@ impl DeliveryService {
         }
     }
 
-    // 执行者后端错误不向上传播,而是把尝试记为 Failed 后照常返回,避免卡在中间态。
+    // Executor backend errors are not propagated: the attempt is recorded as Failed and
+    // returned normally, so it never sticks in an intermediate state.
     #[allow(clippy::too_many_arguments)]
     pub async fn dispatch(
         &self,
@@ -108,7 +110,8 @@ impl DeliveryService {
         }
         let kind = ExecutorKind::parse(executor)
             .ok_or_else(|| DeliveryCmdError::Validation(format!("unknown executor: {executor}")))?;
-        // 空白当未定向;定向 name 原样透传,是否在线不在此校验(离线 runtime 回来后仍可认领)。
+        // Blank means untargeted; a target name is passed through as-is with no online
+        // check (an offline runtime can still claim once it comes back).
         let target_runtime = target_runtime.map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
 
         let mut attempt =

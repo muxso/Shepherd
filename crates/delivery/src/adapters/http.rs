@@ -30,7 +30,8 @@ impl FromRef<DelState> for Arc<dyn SessionStore> {
 pub fn router(svc: DeliveryService, sessions: Arc<dyn SessionStore>) -> Router {
     Router::new()
         .route("/delivery", post(dispatch).get(list_by_task))
-        // 静态段 /delivery/tasks 必须先于 /delivery/{id} 注册,否则被通配吞掉。
+        // Static segment /delivery/tasks must be registered before /delivery/{id},
+        // or the wildcard swallows it.
         .route("/delivery/tasks", get(list_tasks))
         .route("/delivery/collab-stats", get(collab_stats))
         .route("/delivery/{id}", get(get_attempt).delete(delete_attempt))
@@ -57,7 +58,7 @@ struct DispatchBody {
     context: Option<String>,
     #[serde(default)]
     instructions: Option<String>,
-    /// 定向到某个注册 runtime 的 name;缺省 = 任意同能力 runtime。
+    /// Target a registered runtime by name; unset = any runtime with the capability.
     #[serde(default)]
     target_runtime: Option<String>,
 }
@@ -440,7 +441,7 @@ async fn list_tasks(
 #[serde(rename_all = "camelCase")]
 struct CollabQuery {
     project_id: String,
-    /// 给定时只统计该需求(需求详情的单独视图)。
+    /// When set, restrict stats to this requirement (requirement-detail view).
     #[serde(default)]
     requirement_id: Option<String>,
 }
@@ -475,7 +476,8 @@ struct CollabStatsResponse {
     daily: Vec<CollabDayItem>,
 }
 
-// 人机协同人效:口径 = 任务 VERIFIED 且有 DELIVERED 交付记录算 AI,否则算人工。
+// Human/AI collaboration stats: a task counts as AI when it is VERIFIED and has a
+// DELIVERED delivery record, otherwise as human.
 #[utoipa::path(
     get, path = "/delivery/collab-stats", tag = "delivery", params(CollabQuery),
     responses((status = 200, body = CollabStatsResponse), (status = 403)), security(("bearer" = []))

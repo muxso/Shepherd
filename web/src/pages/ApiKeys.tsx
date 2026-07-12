@@ -7,16 +7,17 @@ import { useApp } from '../context'
 import { useI18n } from '../i18n'
 import { useListView, type ListColumn } from '../components/ListView'
 
-// 系统 / API 密钥:签发给执行机(agent runner)等外部调用方的长期凭证。
-// 明文 key(sak_…)只在创建响应里出现一次,这里用不可误关的弹窗强制用户保存;
-// 列表只展示元信息,吊销(DELETE)后行保留并标记「已吊销」。
+// System / API keys: long-lived credentials issued to external callers (agent runners etc.).
+// The plaintext key (sak_…) appears exactly once, in the create response — an un-dismissable
+// modal forces the user to save it. The list shows metadata only; revoking (DELETE) keeps the
+// row and marks it revoked.
 export default function ApiKeys() {
   const { t } = useI18n()
   const { projectId } = useApp()
   const [items, setItems] = useState<ApiKey[]>([])
   const [loading, setLoading] = useState(false)
   const [createOpen, setCreateOpen] = useState(false)
-  // 创建成功后待展示的一次性明文密钥;非空时弹「请立即保存」窗。
+  // One-time plaintext key from a successful create; non-null opens the save-now modal.
   const [createdKey, setCreatedKey] = useState<string | null>(null)
 
   const load = () => {
@@ -92,7 +93,7 @@ export default function ApiKeys() {
     },
   ]
 
-  // 列表三件套(视图/筛选/列设置):系统页无 PageHeader,工具条右对齐放在表格上方。
+  // List toolbar (view/filter/columns): system pages have no PageHeader, so it sits right-aligned above the table.
   const lv = useListView<ApiKey>({
     kind: 'apikey',
     projectId,
@@ -141,8 +142,8 @@ export default function ApiKeys() {
   )
 }
 
-// 权限预设:执行机 = 任务派发/回写闭环所需的最小集;自定义 = 手填权限串。
-// 执行机实测最小权限集(register/heartbeat/claim/回调=DELIVERY:UPDATE;设计稿回填=REQUIREMENT:UPDATE)
+// Permission presets: executor = minimal set for the dispatch/write-back loop; custom = free-form.
+// Verified minimal executor set: register/heartbeat/claim/callbacks = DELIVERY:UPDATE; design-doc write-back = REQUIREMENT:UPDATE.
 const PRESET_EXECUTOR = ['DELIVERY:UPDATE', 'REQUIREMENT:UPDATE']
 
 function CreateKeyModal({ open, onClose, onDone }: { open: boolean; onClose: () => void; onDone: (key: string) => void }) {
@@ -214,7 +215,8 @@ function CreateKeyModal({ open, onClose, onDone }: { open: boolean; onClose: () 
   )
 }
 
-// 一次性明文密钥展示:遮罩/ESC/右上角都关不掉,只能点「我已保存」,防手滑丢 key。
+// One-time plaintext key display: mask/ESC/close button are all disabled — only "I saved it"
+// dismisses, so a stray click can't lose the key.
 function KeyOnceModal({ keyText, onClose }: { keyText: string | null; onClose: () => void }) {
   const { t } = useI18n()
   return (

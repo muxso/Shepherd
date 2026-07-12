@@ -10,7 +10,8 @@ use crate::ports::{
     AuthRepoError, CredentialRepository, PasswordHasher, SessionStore, UserCredential,
 };
 
-// Mutex:自助改密要求在共享后仍可写(axum state 克隆间共享同一份)。
+// Mutex: self-service password change must stay writable after sharing (axum state clones
+// share the same instance).
 #[derive(Clone, Default)]
 pub struct InMemoryCredentialRepository {
     users: Arc<Mutex<HashMap<String, UserCredential>>>,
@@ -148,7 +149,8 @@ impl SessionStore for InMemorySessionStore {
     }
 }
 
-/// 仅测试/本地:hash 原样返回明文;生产用 `Argon2PasswordHasher`(feature=auth)。
+/// Tests/local only: hash returns the plaintext as-is; production uses
+/// `Argon2PasswordHasher` (feature=auth).
 #[derive(Clone, Default)]
 pub struct PlainPasswordHasher;
 

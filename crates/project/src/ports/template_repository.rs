@@ -9,7 +9,7 @@ pub trait TemplateRepository: Send + Sync {
 
     async fn find_by_id(&self, id: &str) -> Result<Option<Template>, RepoError>;
 
-    /// (project_id, kind, name) 唯一,用于创建/改名前的重名检查。
+    /// (project_id, kind, name) is unique; used for duplicate-name checks before create/rename.
     async fn find_by_name(
         &self,
         project_id: &str,
@@ -17,12 +17,12 @@ pub trait TemplateRepository: Send + Sync {
         name: &str,
     ) -> Result<Option<Template>, RepoError>;
 
-    /// 盖写 name/config 并刷新 updated_at;id 不存在返回 `None`。
+    /// Overwrites name/config and refreshes updated_at; returns `None` if the id does not exist.
     async fn update(&self, template: &Template) -> Result<Option<Template>, RepoError>;
 
-    /// 删除模板;返回是否确有一行被删。
+    /// Deletes a template; returns whether a row was actually removed.
     async fn delete(&self, id: &str) -> Result<bool, RepoError>;
 
-    /// 按创建时间列出项目内模板;kind 给定时只列该场景。
+    /// Lists project templates ordered by creation time; when `kind` is given, only that kind.
     async fn list(&self, project_id: &str, kind: Option<&str>) -> Result<Vec<Template>, RepoError>;
 }

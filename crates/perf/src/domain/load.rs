@@ -81,7 +81,7 @@ pub struct LoadReport {
     pub latency: LatencyStats,
 }
 
-// nearest-rank 分位:取 ceil(p/100*n) 名(1 基),非插值。
+// Nearest-rank percentile: take the ceil(p/100*n)-th value (1-based), no interpolation.
 fn percentile(sorted: &[u64], p: f64) -> u64 {
     if sorted.is_empty() {
         return 0;
@@ -92,7 +92,8 @@ fn percentile(sorted: &[u64], p: f64) -> u64 {
     sorted[idx]
 }
 
-// 延迟分位对全部样本计算(含失败):失败多为慢/超时,纳入才反映真实尾延迟。
+// Latency percentiles are computed over all samples, failures included: failures
+// are usually slow/timeouts, so excluding them would hide the real tail latency.
 pub fn aggregate(samples: &[Sample], elapsed_ms: u64) -> LoadReport {
     let total = samples.len();
     let success = samples.iter().filter(|s| s.success).count();

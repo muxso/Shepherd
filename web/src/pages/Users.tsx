@@ -7,8 +7,8 @@ import { useApp } from '../context'
 import { useI18n } from '../i18n'
 import { useListView, type ListColumn } from '../components/ListView'
 
-// 系统 / 用户:对齐参考图 #51。创建用户为真实接口;编辑/重置密码/删除/状态切换/
-// 邮箱邀请/导入用户 后端暂未提供,占位提示。组织/用户组列以系统默认值呈现。
+// System / Users. Email invite and user import have no backend yet (placeholder toast);
+// org/user-group columns show system defaults.
 export default function Users() {
   const { t } = useI18n()
   const { projectId } = useApp()
@@ -27,7 +27,7 @@ export default function Users() {
 
   const soon = () => message.info(t('common.comingSoon', '即将接入'))
 
-  // 启停:乐观更新 + PUT 回写(失败回滚)。
+  // Enable/disable: optimistic update, persist via PUT, roll back on failure.
   const toggleEnable = async (u: User, enable: boolean) => {
     setUsers((prev) => prev.map((x) => (x.id === u.id ? { ...x, enable } : x)))
     try {
@@ -115,7 +115,7 @@ export default function Users() {
     },
   ]
 
-  // 列表三件套(视图/筛选/列设置):系统页无 PageHeader,工具条右对齐放在表格上方。
+  // List view/filter/column-settings trio: system pages have no PageHeader, so the toolbar sits right-aligned above the table.
   const lv = useListView<User>({
     kind: 'user',
     projectId,
@@ -163,7 +163,7 @@ export default function Users() {
 
 type TFn = (k: string, d?: string) => string
 
-// 创建/编辑用户:editing 非空为编辑(走 PUT 保留启停),否则创建(POST)。
+// Non-null editing means edit (PUT, preserves the enable flag), otherwise create (POST).
 function UserModal({ open, editing, onClose, onDone, t }: { open: boolean; editing: User | null; onClose: () => void; onDone: () => void; t: TFn }) {
   const [form] = Form.useForm()
   const [busy, setBusy] = useState(false)

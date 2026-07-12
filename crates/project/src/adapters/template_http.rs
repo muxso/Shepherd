@@ -264,7 +264,7 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::CREATED);
         let v = body_json(resp).await;
         assert_eq!(v["projectId"], "p1");
-        assert_eq!(v["kind"], "requirement"); // 归一为小写
+        assert_eq!(v["kind"], "requirement"); // normalized to lowercase
         assert_eq!(v["name"], "默认");
         assert_eq!(v["config"], serde_json::json!({"fields": [1]}));
         assert_eq!(v["createdBy"], "admin");

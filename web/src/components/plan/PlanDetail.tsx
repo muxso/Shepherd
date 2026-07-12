@@ -8,7 +8,7 @@ import { outcomeColor } from '../tags'
 import Donut from '../Donut'
 import { useI18n } from '../../i18n'
 
-// 计划详情(workspace tab 内容):挂用例 / 执行 / 登记结果 / 定时 / Markdown 报告 + 分析卡片。
+// Plan detail (workspace tab content): attach cases / run / record results / schedule / Markdown report + analytics cards.
 export default function PlanDetail({ planId, name, projectId }: { planId: string; name: string; projectId: string }) {
   const { t } = useI18n()
   const [stats, setStats] = useState<PlanStats | null>(null)
@@ -132,7 +132,7 @@ export default function PlanDetail({ planId, name, projectId }: { planId: string
   )
 }
 
-// Markdown 报告弹窗:详情页与「报告」tab 共用。
+// Markdown report modal, shared by the detail page and the report tab.
 export function ReportMdModal({ open, name, md, onClose }: { open: boolean; name: string; md: string; onClose: () => void }) {
   const { t } = useI18n()
   return (
@@ -186,8 +186,8 @@ function LinkCaseModal({ open, planId, projectId, onClose, onLinked }: { open: b
   )
 }
 
-// 计划报告多卡分析:报告分析 + 执行分析甜甜圈 + 用例状态条形。
-// 状态分布从 planCases 客户端聚合(SUCCESS/ERROR/FAKE_ERROR/BLOCK/PENDING)。
+// Plan report analytics cards: report analysis + execution donut + case status bars.
+// Status distribution is aggregated client-side from planCases (SUCCESS/ERROR/FAKE_ERROR/BLOCK/PENDING).
 function ReportAnalytics({ stats, cases }: { stats: PlanStats | null; cases: PlanCase[] }) {
   const { t } = useI18n()
   const by = (s: string) => cases.filter((c) => (c.status || 'PENDING').toUpperCase() === s).length
@@ -249,7 +249,7 @@ function ReportAnalytics({ stats, cases }: { stats: PlanStats | null; cases: Pla
 
 const rowStyle: CSSProperties = { display: 'flex', justifyContent: 'space-between', padding: '6px 0', fontSize: 14 }
 
-// 可手动登记的执行结果:通过/不通过/阻塞/误报。
+// Manually recordable execution results: pass / fail / blocked / false alarm.
 const CASE_RESULT_OPTIONS = [
   { value: 'SUCCESS', i18nKey: 'plan.resPass', fallback: '通过' },
   { value: 'ERROR', i18nKey: 'plan.resFail', fallback: '不通过' },
@@ -257,7 +257,7 @@ const CASE_RESULT_OPTIONS = [
   { value: 'FAKE_ERROR', i18nKey: 'plan.resFake', fallback: '误报' },
 ]
 
-// 用例状态码 → 本地化标签(未执行/通过/不通过/阻塞/误报)。
+// Case status code → localized label.
 function caseStatusLabel(s: string, t: (k: string, d: string) => string): string {
   switch ((s || 'PENDING').toUpperCase()) {
     case 'SUCCESS': return t('plan.resPass', '通过')

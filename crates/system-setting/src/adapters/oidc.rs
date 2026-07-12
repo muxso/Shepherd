@@ -1,4 +1,5 @@
-//! 飞书/企业微信是 OAuth2(非标准 OIDC),多步换取用户信息;端点路径按厂商文档实现,可能随厂商调整。
+//! Feishu/WeCom are OAuth2 (not standard OIDC) and need multiple steps to obtain user info;
+//! endpoint paths follow vendor docs and may change on their side.
 
 use async_trait::async_trait;
 use serde::Deserialize;

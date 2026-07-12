@@ -3,22 +3,22 @@ import { Button, Dropdown, Empty, Input, InputNumber, Segmented, Select, Space, 
 import { PlusOutlined, DeleteOutlined } from '@ant-design/icons'
 import { useI18n } from '../i18n'
 
-// 后端断言(api-runner Assertion,serde tag=type/content=args)。
+// Backend assertion (api-runner Assertion, serde tag=type / content=args).
 export type Assertion = Record<string, unknown>
 
 type Cat = 'status' | 'header' | 'body' | 'variable' | 'time'
 
-// 内部行:统一承载各类断言字段,按类别序列化为后端 JSON。
+// Internal row: holds fields for every assertion kind, serialized to backend JSON per category.
 interface Row {
   cat: Cat
-  name: string // 响应头名 / 变量名
-  bodyMode: 'jsonpath' | 'whole' // 响应体:JSONPath 取值 或 整体
-  path: string // JSONPath 表达式
+  name: string // response header name / variable name
+  bodyMode: 'jsonpath' | 'whole' // body: JSONPath extraction or whole body
+  path: string // JSONPath expression
   condition: string // MatchCondition(SCREAMING_SNAKE)
   expected: string
 }
 
-// value=后端 MatchCondition(数据,不翻译);labelKey/fallback 在 render 时经 t() 解析为双语。
+// value = backend MatchCondition (data, never translated); labelKey/fallback resolve via t() at render time.
 const NUMERIC_CONDS = [
   { value: 'EQUALS', labelKey: 'assert.opEquals', fallback: '等于' },
   { value: 'NOT_EQUALS', labelKey: 'assert.opNotEquals', fallback: '不等于' },
@@ -92,7 +92,7 @@ function fromAssertion(a: Assertion): Row {
   }
 }
 
-// 受控:value 为后端断言数组,onChange 回传同结构。断言矩阵(左列类别 + 右侧编辑)。
+// Controlled: value is the backend assertion array; onChange returns the same shape. Matrix layout (category list left + editor right).
 export default function AssertionEditor({
   value,
   onChange,
@@ -139,7 +139,7 @@ export default function AssertionEditor({
         <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('assert.emptyHint', '无断言(执行只看传输是否可达)')} />
       ) : (
         <div style={{ display: 'flex', gap: 12, border: '1px solid var(--border-soft)', borderRadius: 6 }}>
-          {/* 左列:断言类别列表 */}
+          {/* Left: assertion category list */}
           <div style={{ width: 160, borderRight: '1px solid var(--border-soft)', padding: 8 }}>
             <Space direction="vertical" style={{ width: '100%' }} size={4}>
               {rows.map((r, i) => (
@@ -174,7 +174,7 @@ export default function AssertionEditor({
               ))}
             </Space>
           </div>
-          {/* 右侧:当前断言编辑 */}
+          {/* Right: editor for the selected assertion */}
           <div style={{ flex: 1, padding: 12 }}>
             {cur && <RowEditor row={cur} onChange={(p) => update(sel, p)} t={t} />}
           </div>

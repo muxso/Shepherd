@@ -1,5 +1,5 @@
-// 主题模式(浅/暗)上下文:localStorage 持久化 + 在 <html data-theme> 上标注(供 CSS 变量切换),
-// 并把对应 AntD ThemeConfig 喂给 ConfigProvider。
+// Theme mode (light/dark) context: persisted in localStorage, mirrored on <html data-theme>
+// (drives the CSS var switch), and feeds the matching AntD ThemeConfig to ConfigProvider.
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { flushSync } from 'react-dom'
 import type { ThemeMode } from './theme'
@@ -17,7 +17,7 @@ export function ThemeModeProvider({ children }: { children: (mode: ThemeMode) =>
     document.documentElement.setAttribute('data-theme', mode)
     localStorage.setItem(KEY, mode)
   }, [mode])
-  // 切换动画:View Transitions 从点击位置圆形扩散揭开新主题;不支持的浏览器直接切。
+  // Toggle animation: View Transitions reveal the new theme in a circle expanding from the click point; unsupported browsers switch instantly.
   const toggle = useCallback((e?: { clientX: number; clientY: number }) => {
     const flip = (m: ThemeMode): ThemeMode => (m === 'dark' ? 'light' : 'dark')
     const doc = document as Document & { startViewTransition?: (cb: () => void) => { ready: Promise<void> } }
@@ -28,7 +28,7 @@ export function ThemeModeProvider({ children }: { children: (mode: ThemeMode) =>
     const { clientX: x, clientY: y } = e
     const r = Math.hypot(Math.max(x, window.innerWidth - x), Math.max(y, window.innerHeight - y))
     const vt = doc.startViewTransition(() => {
-      // useEffect 是异步的,快照回调内需同步改 DOM:直接落 data-theme + flushSync 渲染 antd 主题。
+      // useEffect is async, but the snapshot callback must mutate the DOM synchronously: set data-theme directly and flushSync the antd theme render.
       const next = (document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark') as ThemeMode
       document.documentElement.setAttribute('data-theme', next)
       flushSync(() => setMode(next))

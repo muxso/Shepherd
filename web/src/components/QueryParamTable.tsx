@@ -3,7 +3,7 @@ import { PlusOutlined, DeleteOutlined } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
 import { useI18n } from '../i18n'
 
-/** 一行 Query 参数:key/value 驱动执行;type/min/max/description 为文档元信息(随用例存储)。 */
+/** One query param row: key/value drive execution; type/min/max/description are doc metadata stored with the case. */
 export type QueryParam = {
   enabled: boolean
   key: string
@@ -27,8 +27,8 @@ export const emptyQueryParam = (): QueryParam => ({
 const TYPES = ['string', 'integer', 'number', 'boolean', 'array', 'file']
 
 /**
- * Query 参数结构化表格:启用 / 参数名称 / 类型 / 参数值 / 长度区间 / 描述。
- * 执行只取 key=value(且 enabled);其余列为文档/约束元信息,随用例往返存储。
+ * Structured query-param table: enabled / name / type / value / length range / description.
+ * Execution only uses key=value (when enabled); other columns are doc/constraint metadata that round-trips with the case.
  */
 export default function QueryParamTable({
   rows,

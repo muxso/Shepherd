@@ -32,9 +32,9 @@ impl NewApiView {
     }
 }
 
-/// 视图的部分更新:字段为 `None` 表示保持原值。
+/// Partial update of a view: `None` fields keep their current values.
 ///
-/// name 的校验与 [`NewApiView::new`] 一致(trim 后非空);config 若给出必须是 JSON 对象。
+/// name validation matches [`NewApiView::new`] (non-empty after trim); config, if given, must be a JSON object.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ApiViewPatch {
     pub name: Option<String>,

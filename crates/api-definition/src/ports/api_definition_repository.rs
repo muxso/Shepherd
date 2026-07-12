@@ -108,8 +108,8 @@ pub trait ApiDefinitionRepository: Send + Sync {
 
     async fn list_views(&self, project_id: &str, user_id: &str) -> Result<Vec<ApiView>, RepoError>;
 
-    /// 部分更新视图,归属判断与 [`Self::delete_view`] 一致:只匹配 `id + user_id`。
-    /// 无匹配行(不存在或非 owner)返回 `Ok(None)`。
+    /// Partially updates a view; ownership check matches [`Self::delete_view`]: only `id + user_id` rows.
+    /// Returns `Ok(None)` when no row matches (missing id or non-owner).
     async fn update_view(
         &self,
         id: &str,

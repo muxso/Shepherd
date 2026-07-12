@@ -10,7 +10,7 @@ fn now_ms() -> i64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as i64).unwrap_or(0)
 }
 
-/// 测试/本地用的内存实现;BTreeMap 保证 list 顺序稳定。
+/// In-memory implementation for tests/local; BTreeMap keeps list order stable.
 #[derive(Clone, Default)]
 pub struct InMemoryApiKeyRepository {
     state: Arc<Mutex<BTreeMap<String, ApiKeyRecord>>>,

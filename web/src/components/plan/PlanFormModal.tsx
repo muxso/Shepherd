@@ -6,10 +6,10 @@ import { useI18n } from '../../i18n'
 import { regAdd, type RegItem } from '../../registry'
 import { groupIdOf, isGroup, joinTags, moduleOf, planRegUpdate, tagsOf, type PlanModule } from './planLocal'
 
-// 测试计划 / 计划组 表单(名称/所属模块/所属计划组/标签)。
-// 新建:api.createPlan(计划组带 type='GROUP')+ regAdd 落本地注册表;
-// 编辑:后端无更新端点,只改本地 label/meta(模块/分组/标签),保持列表原顺序。
-// 新建走工作区 Tab 平铺(传 onCancel 显示「取消」);编辑仍走下方的 PlanFormModal 弹窗。
+// Test plan / plan group form (name / module / owning group / tags).
+// Create: api.createPlan (groups pass type='GROUP') + regAdd into the local registry.
+// Edit: backend has no update endpoint — only local label/meta (module/group/tags) change, keeping list order.
+// Create renders inline in a workspace tab (pass onCancel to show a cancel button); edit still uses PlanFormModal below.
 export function PlanForm({
   mode,
   editing,
@@ -19,22 +19,22 @@ export function PlanForm({
   onSaved,
   onCancel,
 }: {
-  /** plan=测试计划;group=计划组(无 所属计划组 字段)。 */
+  /** plan = test plan; group = plan group (no owning-group field). */
   mode: 'plan' | 'group'
-  /** 传入则为编辑,否则新建。 */
+  /** Present = edit, absent = create. */
   editing?: RegItem | null
   projectId: string
   modules: PlanModule[]
   groups: RegItem[]
-  /** list=更新后的注册表;created=新建成功的计划(计划组不回传,用于打开详情)。 */
+  /** list = updated registry; created = newly created plan (not set for groups), used to open its detail. */
   onSaved: (list: RegItem[], created?: { id: string; name: string }) => void
-  /** 传入则在提交按钮旁显示「取消」(Tab 平铺模式);弹窗模式不传,保持整宽按钮。 */
+  /** Present = show a cancel button next to submit (inline-tab mode); omit in modal mode to keep the full-width button. */
   onCancel?: () => void
 }) {
   const { t } = useI18n()
   const [saving, setSaving] = useState(false)
 
-  // 模块下拉:树按层级缩进拍平。
+  // Module dropdown: tree flattened with depth indentation.
   const moduleOptions: { value: string; label: string }[] = []
   const walk = (pid: string | null, depth: number) => {
     modules
@@ -117,7 +117,7 @@ export function PlanForm({
   )
 }
 
-// 编辑 测试计划 / 计划组 弹窗(新建改为工作区 Tab,见 TestPlans 的 PlanForm 用法)。
+// Edit modal for test plan / plan group (create moved to a workspace tab — see PlanForm usage in TestPlans).
 export default function PlanFormModal({
   open,
   mode,

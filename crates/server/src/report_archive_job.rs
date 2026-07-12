@@ -17,7 +17,7 @@ pub fn spawn(pool: PgPool) {
     let interval = env_u64("REPORT_ARCHIVE_INTERVAL_SECS", 60).max(5);
     let batch = env_u64("REPORT_ARCHIVE_BATCH", 100).clamp(1, 1000) as i64;
 
-    // 目录需先存在(LocalFileSystem 要求)。
+    // The directory must exist beforehand (LocalFileSystem requires it).
     if let Err(e) = std::fs::create_dir_all(&dir) {
         tracing::warn!(%dir, error = %e, "report archive: cannot create dir, disabled");
         return;
@@ -43,7 +43,8 @@ pub fn spawn(pool: PgPool) {
                         match reports.detail(id).await {
                             Ok(Some(d)) => match archiver.archive(id, &d).await {
                                 Ok(_) => {
-                                    // 归档成功才打标;失败留待下轮重试(幂等:同键覆盖)。
+                                    // Mark only after a successful archive; failures retry next
+                                    // round (idempotent: same key overwrites).
                                     if let Err(e) = reports.mark_archived(id).await {
                                         tracing::warn!(report = %id, error = %e, "report archive: mark failed");
                                     } else {
@@ -54,7 +55,7 @@ pub fn spawn(pool: PgPool) {
                                     tracing::warn!(report = %id, error = %e, "report archive: write failed")
                                 }
                             },
-                            // 报告无明细:直接打标,避免反复扫描。
+                            // Report has no detail: mark it directly to avoid rescanning forever.
                             Ok(None) => {
                                 let _ = reports.mark_archived(id).await;
                             }

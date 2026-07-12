@@ -27,10 +27,10 @@ impl ProjectMemberRepository for InMemoryProjectMemberRepository {
             added_at: String::new(),
         };
         match rows.iter_mut().find(|r| r.project_id == m.project_id && r.user_id == m.user_id) {
-            Some(r) => r.role = m.role, // 改角色,保留加入时间
+            Some(r) => r.role = m.role, // role change keeps the join time
             None => rows.push(out.clone()),
         }
-        // 返回当前态(改角色时 added_at 取已存在行)。
+        // Return the current row (on role change, added_at comes from the existing row).
         let cur = rows
             .iter()
             .find(|r| r.project_id == m.project_id && r.user_id == m.user_id)

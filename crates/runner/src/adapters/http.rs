@@ -138,7 +138,7 @@ async fn run_via(
         Err(RunViaAgentError::AgentNotFound) => {
             (StatusCode::NOT_FOUND, "agent not found or disabled").into_response()
         }
-        // agent 不可达/出错:上游 502(中央侧无误,是目标环境的 agent 问题)。
+        // Agent unreachable/errored: 502 (fault is on the target-environment agent, not central).
         Err(RunViaAgentError::Backend(_)) => {
             (StatusCode::BAD_GATEWAY, "agent dispatch failed").into_response()
         }
@@ -294,7 +294,7 @@ async fn run_probe(
             }),
         )
             .into_response(),
-        // 没有支持该协议的 agent:404(中央侧无可路由目标)。
+        // No agent supports this protocol: 404 (central has no routable target).
         Err(RunProbeError::NoAgent(_)) => {
             (StatusCode::NOT_FOUND, "no agent supports this protocol").into_response()
         }

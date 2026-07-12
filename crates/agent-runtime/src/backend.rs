@@ -30,10 +30,11 @@ async fn spawn_retrying_etxtbsy(cmd: &mut Command) -> std::io::Result<Child> {
     cmd.spawn()
 }
 
-// Windows 上 npm 装的 CLI(claude/codebuddy/opencode)是 `<name>.cmd` 垫片,
-// 而 std 只按 `.exe` 解析裸名 → spawn 直接 NotFound。裸名解析不到 exe、但 PATH
-// 里有同名 .cmd 时,改用垫片全路径(std 对 .cmd 会经 cmd.exe 执行)。
-// codex 等原生 .exe、以及带路径/扩展名的显式配置(CLAUDE_BIN 等)不受影响。
+// On Windows, npm-installed CLIs (claude/codebuddy/opencode) are `<name>.cmd` shims,
+// but std resolves bare names as `.exe` only, so spawn fails with NotFound. When a bare
+// name has no exe on PATH but a same-named .cmd exists, use the shim's full path
+// (std runs .cmd via cmd.exe). Native .exe binaries like codex, and explicit configs
+// with a path/extension (CLAUDE_BIN etc.), are unaffected.
 fn resolve_cli_program(name: &str) -> String {
     if !cfg!(windows) || name.contains(['.', '/', '\\']) {
         return name.to_string();
@@ -41,8 +42,8 @@ fn resolve_cli_program(name: &str) -> String {
     find_cmd_shim(name, std::env::var_os("PATH").as_deref()).unwrap_or_else(|| name.to_string())
 }
 
-// 按 PATH 顺序找第一个提供 `<name>.exe` 或 `<name>.cmd` 的目录:
-// exe 命中 → None(交给 std 正常解析);cmd 命中 → Some(垫片全路径)。
+// Walk PATH for the first dir providing `<name>.exe` or `<name>.cmd`:
+// exe hit → None (let std resolve normally); cmd hit → Some(full shim path).
 fn find_cmd_shim(name: &str, path: Option<&std::ffi::OsStr>) -> Option<String> {
     for dir in std::env::split_paths(path?) {
         if dir.join(format!("{name}.exe")).is_file() {
@@ -69,8 +70,8 @@ fn in_own_process_group(cmd: &mut Command) {
 
 // Kill the whole process group (pgid == pid via process_group(0); negative pid = group)
 // so a spawned CLI that forks children leaves no orphans on timeout/shutdown.
-// Windows 无进程组语义:直接子进程由 kill_on_drop(TerminateProcess)兜底,
-// 但孙进程可能存活(未用 Job Object)。
+// Windows has no process-group semantics: kill_on_drop (TerminateProcess) covers the
+// direct child, but grandchildren may survive (no Job Object).
 fn kill_process_group(pid: u32) {
     #[cfg(unix)]
     unsafe {
@@ -240,7 +241,8 @@ impl GenericCliBackend {
         Self::from_env("opencode", "OPENCODE_CMD", "opencode run", timeout)
     }
     pub fn codebuddy(timeout: Duration) -> Self {
-        // 缺省对齐 ClaudeBackend 的权限策略:非交互下允许编辑,否则 CLI 会拒绝写文件。
+        // Default mirrors ClaudeBackend's permission policy: allow edits when
+        // non-interactive, otherwise the CLI refuses to write files.
         Self::from_env(
             "codebuddy",
             "CODEBUDDY_CMD",
@@ -371,7 +373,7 @@ mod tests {
 
         let shim = find_cmd_shim("tool", Some(&path)).expect("shim");
         assert!(shim.ends_with(if cfg!(windows) { "one\\tool.cmd" } else { "one/tool.cmd" }));
-        // 同目录有 exe → 交给 std 正常解析,后续目录的 .cmd 不再考虑。
+        // An exe in the same dir wins: std resolves it; later dirs' .cmd is ignored.
         assert!(find_cmd_shim("native", Some(&path)).is_none());
         assert!(find_cmd_shim("missing", Some(&path)).is_none());
         assert!(find_cmd_shim("tool", None).is_none());

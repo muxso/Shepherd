@@ -8,11 +8,10 @@ import { useApp } from '../context'
 import { useI18n } from '../i18n'
 
 type Row = { k: string; v: string }
-/** 环境变量行(参数名称/类型/参数值/标签/描述)。仅 名称→值 持久化(后端 variables 为扁平 map)。 */
+/** Env variable row. Only name→value persists (backend `variables` is a flat map); type/tags/desc are UI-only. */
 type VarRow = { name: string; type: string; value: string; tags: string; desc: string }
 type TFn = (key: string, fallback?: string) => string
 
-// 键值行编辑器(HTTP 全局请求头共用)。
 function KvEditor({ rows, onChange, t }: { rows: Row[]; onChange: (r: Row[]) => void; t: TFn }) {
   const set = (i: number, patch: Partial<Row>) => onChange(rows.map((r, idx) => (idx === i ? { ...r, ...patch } : r)))
   return (
@@ -31,7 +30,7 @@ function KvEditor({ rows, onChange, t }: { rows: Row[]; onChange: (r: Row[]) => 
   )
 }
 
-/** 环境变量表(对齐参考图 #19:参数名称/类型/参数值/标签/描述 + 加一行)。 */
+/** Env variable table (ref #19). */
 function VarTable({ rows, onChange, t }: { rows: VarRow[]; onChange: (r: VarRow[]) => void; t: TFn }) {
   const set = (i: number, patch: Partial<VarRow>) => onChange(rows.map((r, idx) => (idx === i ? { ...r, ...patch } : r)))
   const cols: ColumnsType<VarRow & { _i: number }> = [
@@ -52,19 +51,20 @@ function VarTable({ rows, onChange, t }: { rows: VarRow[]; onChange: (r: VarRow[
   )
 }
 
-// 占位:后端环境暂只持久化 名称/baseUrl/全局请求头/变量/启用;其余协议级配置先留位(对齐参考图 tab 行)。
+// Placeholder: the backend persists only name/baseUrl/global headers/variables/enabled; the
+// remaining protocol-level config tabs are stubs (tab row kept to match ref #19).
 function Placeholder({ label }: { label: string }) {
   const { t } = useI18n()
   return <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={`${label} · ${t('env.notWired', '暂未接入(仅 HTTP/变量已生效)')}`} style={{ margin: '32px 0' }} />
 }
 
-// 环境管理:左侧环境列表(搜索)+ 右侧编辑器(名称/描述 + 环境变量/HTTP/…/显示设置 标签 + 保存)。
-// 后端 EnvironmentBody 支持 name/baseUrl/headers/variables/enabled;其余 tab 先占位。
+// Environment management: env list on the left, editor on the right. Backend EnvironmentBody
+// supports name/baseUrl/headers/variables/enabled; the other tabs are placeholders.
 export function EnvironmentsPage() {
   const { projectId } = useApp()
   const { t } = useI18n()
   const [list, setList] = useState<Environment[]>([])
-  const [sel, setSel] = useState<string | null>(null) // null = 新建
+  const [sel, setSel] = useState<string | null>(null) // null = creating
   const [name, setName] = useState('')
   const [desc, setDesc] = useState('')
   const [baseUrl, setBaseUrl] = useState('')
@@ -132,7 +132,7 @@ export function EnvironmentsPage() {
     }
   }
 
-  // 左侧只是环境名列表,按名称过滤就够了(不上视图/筛选三件套)。
+  // A plain name filter is enough for the left list; no view/filter toolbar here.
   const [search, setSearch] = useState('')
   const shown = list.filter((e) => e.name.toLowerCase().includes(search.trim().toLowerCase()))
 
@@ -143,7 +143,7 @@ export function EnvironmentsPage() {
       </div>
     )
 
-  // 协议级配置 tab(对齐参考图 #19 的标签行);仅 环境变量/HTTP/显示设置 已接入。
+  // Protocol-level config tabs (ref #19); only variables/HTTP/display settings are wired.
   const tabs = [
     { key: 'vars', label: t('env.variables', '环境变量'), children: <VarTable rows={vars} onChange={setVars} t={t} /> },
     {
@@ -187,7 +187,7 @@ export function EnvironmentsPage() {
 
   return (
     <div style={{ display: 'flex', height: '100%' }}>
-      {/* 左:环境列表 + 搜索 */}
+      {/* Left: env list + search */}
       <div style={{ width: 248, background: 'var(--panel)', borderRight: '1px solid var(--border-soft)', display: 'flex', flexDirection: 'column' }}>
         <div style={{ padding: '10px 10px 6px' }}>
           <Input.Search
@@ -228,7 +228,7 @@ export function EnvironmentsPage() {
         </div>
       </div>
 
-      {/* 右:编辑器(名称/描述 + 协议级配置标签 + 保存条) */}
+      {/* Right: editor (name/desc + protocol config tabs + save bar) */}
       <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
         <div style={{ flex: 1, overflow: 'auto', padding: 20 }}>
           <div style={{ marginBottom: 14, maxWidth: 980 }}>
@@ -243,7 +243,7 @@ export function EnvironmentsPage() {
           </div>
           <Tabs className="ms-detail-tabs" size="small" items={tabs} />
         </div>
-        {/* 底部保存条 */}
+        {/* Bottom save bar */}
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, padding: '10px 20px', borderTop: '1px solid var(--border-soft)', background: 'var(--panel)' }}>
           <Button onClick={reset}>{t('a.cancel', '取消')}</Button>
           <Button type="primary" icon={<SaveOutlined />} loading={saving} onClick={save}>{t('a.save', '保存')}</Button>

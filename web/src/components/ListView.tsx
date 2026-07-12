@@ -1,8 +1,9 @@
-// 列表三件套的通用抽象:视图(保存的筛选/列快照,存 /api/api-view,按 config.kind 区分页面)
-// + 筛选(声明式字段:枚举/文本/标签/布尔,全客户端过滤;可折叠「高级条件」支持 包含/等于/为空 等操作符组合)
-// + 列设置(显隐)。
-// 用法:页面声明 fields/columns,useListView 返回 {toolbar, rows, columns},
-// 页面只管把 rows/columns 喂给自己的 Table;页面私有状态(模块选中/分页等)可经 extra 挂进视图快照。
+// Shared list toolkit: views (saved filter/column snapshots in /api/api-view, keyed per page
+// by config.kind) + filters (declarative fields: enum/text/tags/bool, all client-side;
+// collapsible "advanced conditions" with contains/equals/empty operators) + column visibility.
+// Usage: page declares fields/columns; useListView returns {toolbar, rows, columns} and the
+// page feeds rows/columns to its own Table. Page-private state (module selection, page size)
+// can ride along in the view snapshot via `extra`.
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { Alert, Button, Checkbox, Dropdown, Input, Modal, Popover, Segmented, Select, Space, Switch, Tag } from 'antd'
 import { DeleteOutlined, DownOutlined, EditOutlined, FilterOutlined, LinkOutlined, MinusCircleOutlined, MinusOutlined, PlusOutlined, RightOutlined, SettingOutlined, SearchOutlined } from '@ant-design/icons'
@@ -11,40 +12,40 @@ import { message } from '../feedback'
 import { api, ApiError, type ApiView } from '../api'
 import { useI18n } from '../i18n'
 
-/** 筛选字段声明。enum=单选下拉;tags=多选(命中任一);text=包含匹配;bool=开关。 */
+/** Filter field declaration. enum = single select; tags = multi select (any match); text = contains; bool = switch. */
 export interface FilterField<T> {
   key: string
   label: string
   type: 'enum' | 'tags' | 'text' | 'bool'
   options?: { value: string; label: string }[]
-  /** 从行取值:enum/text 返回 string;tags 返回 string[];bool 返回 boolean。 */
+  /** Value extractor: enum/text return string; tags return string[]; bool returns boolean. */
   get: (row: T) => string | string[] | boolean | undefined
-  /** 只出现在「高级条件」的字段选择里,不渲染在声明式筛选区(如与搜索框重复的 名称/路径)。 */
+  /** Only offered in "advanced conditions", not rendered in the declarative filter area (e.g. name/path fields that duplicate the search box). */
   advOnly?: boolean
 }
 
-/** 列声明 = antd 列 + 稳定 key + 显示名(列设置面板用)+ 是否默认隐藏。 */
+/** Column declaration = antd column + stable key + display label (for the column panel) + default-hidden flag. */
 export interface ListColumn<T> extends ColumnType<T> {
   key: string
   label: string
   defaultHidden?: boolean
 }
 
-/** 高级条件:字段(text/enum 声明字段的 key)+ 操作符 + 值。 */
+/** Advanced condition: field (key of a declared text/enum field) + operator + value. */
 export interface AdvCond {
   field: string
   op: 'contains' | 'notContains' | 'equals' | 'notEquals' | 'empty' | 'notEmpty'
   value: string
 }
 
-/** 系统视图(视图下拉「系统视图」组):页面按行数据能力声明,如 我创建的 = createdBy 等于当前用户。 */
+/** System view ("system views" group in the view dropdown), declared per page, e.g. "created by me" = createdBy equals current user. */
 export interface SystemView<T> {
   key: string
   label: string
   pred: (row: T) => boolean
 }
 
-// 操作符选项:存 i18n key + 中文回退,渲染时经 t() 解析(模块级常量拿不到 hook)。
+// Operator options store i18n key + fallback, resolved via t() at render time (module-level constant has no hook access).
 const ADV_OPS: { value: AdvCond['op']; key: string; fallback: string }[] = [
   { value: 'contains', key: 'lv.opContains', fallback: '包含' },
   { value: 'notContains', key: 'lv.opNotContains', fallback: '不包含' },
@@ -54,8 +55,8 @@ const ADV_OPS: { value: AdvCond['op']; key: string; fallback: string }[] = [
   { value: 'notEmpty', key: 'lv.opNotEmpty', fallback: '不为空' },
 ]
 
-/** 列头文本搜索(antd filterDropdown):给任意文本列加漏斗搜索,与工具栏筛选叠加生效。
-    用法:{ ...columnSearch((r) => r.name, t), ...其余列属性 } */
+/** Column-header text search (antd filterDropdown); stacks with toolbar filters.
+    Usage: { ...columnSearch((r) => r.name, t), ...other column props } */
 export function columnSearch<T>(
   get: (row: T) => string,
   t: (k: string, d?: string) => string,
@@ -89,11 +90,11 @@ interface ViewConfig {
   filters?: Record<string, unknown>
   adv?: { logic: 'all' | 'any'; conds: AdvCond[] }
   hiddenCols?: string[]
-  /** 页面私有快照(经 extra 钩子存取),如 {moduleKey, pageSize}。 */
+  /** Page-private snapshot (read/written via the extra hook), e.g. {moduleKey, pageSize}. */
   extra?: Record<string, unknown>
 }
 
-/** 旧接口定义页的视图形状(顶层 advConds/advLogic/moduleKey/pageSize)→ 归一为当前形状,老视图继续可用。 */
+/** Normalize the legacy API-definition view shape (top-level advConds/advLogic/moduleKey/pageSize) so old saved views keep working. */
 export function normalizeViewConfig(raw: unknown): ViewConfig {
   const c = (raw || {}) as ViewConfig & {
     advConds?: AdvCond[]
@@ -117,7 +118,7 @@ export function normalizeViewConfig(raw: unknown): ViewConfig {
   return { kind: c.kind, search: c.search, filters: c.filters, adv, hiddenCols: c.hiddenCols, extra }
 }
 
-/** 需要值的操作符,值为空 → 条件视为未填,忽略。 */
+/** Value-requiring operators with an empty value count as unfilled and are ignored. */
 const effectiveConds = (conds: AdvCond[]) => conds.filter((c) => c.op === 'empty' || c.op === 'notEmpty' || c.value.trim())
 
 export function useListView<T>({
@@ -132,20 +133,20 @@ export function useListView<T>({
   matchKind,
   systemViews = [],
 }: {
-  /** 视图归属页面标识(config.kind),如 'requirement' / 'bug'。 */
+  /** Page identifier for view ownership (config.kind), e.g. 'requirement' / 'bug'. */
   kind: string
   projectId: string
   searchLabel?: string
-  /** 搜索框匹配的文本(通常是标题/名称)。 */
+  /** Text the search box matches against (usually title/name). */
   searchOf: (row: T) => string
   fields: FilterField<T>[]
   columns: ListColumn<T>[]
   rows: T[]
-  /** 页面私有状态随视图存/取:保存时 get() 存入 config.extra,应用视图时 apply(extra) 还原。 */
+  /** Page-private state saved with views: get() is stored into config.extra on save; apply(extra) restores it when a view is applied. */
   extra?: { get: () => Record<string, unknown>; apply: (v: Record<string, unknown>) => void }
-  /** 视图归属判定(默认严格等于 kind);接口定义页需兼容老视图的 kind 缺省。 */
+  /** View ownership test (defaults to strict equality with kind); the API-definition page must accept legacy views with kind unset. */
   matchKind?: (k: string | undefined) => boolean
-  /** 系统视图(全部数据之外的内置数据集,如 我创建的);不传则只有「全部数据」。 */
+  /** System views (built-in data sets beyond "all data", e.g. "created by me"); omit for "all data" only. */
   systemViews?: SystemView<T>[]
 }): { toolbar: ReactNode; rows: T[]; columns: ColumnType<T>[] } {
   const { t } = useI18n()
@@ -156,9 +157,9 @@ export function useListView<T>({
   const [advConds, setAdvConds] = useState<AdvCond[]>([])
   const [advOpen, setAdvOpen] = useState(false)
   const [views, setViews] = useState<ApiView[]>([])
-  // 当前视图:系统视图('sys:<key>',全部数据= 'sys:all')或已存视图('view:<id>')。
+  // Active view: system view ('sys:<key>', all data = 'sys:all') or saved view ('view:<id>').
   const [activeKey, setActiveKey] = useState('sys:all')
-  // 视图编辑弹窗:新建(id 为空)或编辑已有;conds 为草稿,保存并应用时才写入 advConds。
+  // View editor modal: create (id empty) or edit; conds is a draft, written to advConds only on save-and-apply.
   const [editor, setEditor] = useState<{
     id?: string
     name: string
@@ -168,8 +169,9 @@ export function useListView<T>({
     shared: boolean
   } | null>(null)
 
-  // 高级条件可选字段:text/enum/tags(复用其 label/get;enum/tags 的值输入用其 options 下拉;
-  // tags 取值为数组,匹配时按空格拼成文本参与 包含/为空 等判断)。
+  // Fields available to advanced conditions: text/enum/tags (reusing their label/get; enum/tags
+  // value input uses their options dropdown; tags values are arrays, joined with spaces into
+  // text for contains/empty checks).
   const advFields = fields.filter((f) => f.type === 'text' || f.type === 'enum' || f.type === 'tags')
 
   const isKindMatch = (k: string | undefined) => (matchKind ? matchKind(k) : k === kind)
@@ -195,7 +197,7 @@ export function useListView<T>({
     if (c.extra && extra) extra.apply(c.extra)
   }
 
-  // 切系统视图 = 回到干净数据集:清搜索/筛选/条件,列恢复默认显隐。
+  // Switching to a system view resets to a clean data set: clear search/filters/conditions, restore default column visibility.
   const resetConfig = () => {
     setSearch('')
     setFilters({})
@@ -214,7 +216,7 @@ export function useListView<T>({
     applyConfig(v.config)
   }
 
-  // 深链 ?view=<id>:视图列表就绪后命中即应用,然后清参数避免重复触发。
+  // Deep link ?view=<id>: apply once the view list is ready, then strip the param to avoid re-triggering.
   useEffect(() => {
     const id = new URLSearchParams(window.location.search).get('view')
     if (!id || views.length === 0) return
@@ -239,11 +241,11 @@ export function useListView<T>({
     const conds = effectiveConds(advConds)
     const condMatch = (r: T, c: AdvCond): boolean => {
       const f = advFields.find((x) => x.key === c.field)
-      if (!f) return true // 字段声明已不存在的旧条件:不参与过滤
+      if (!f) return true // stale condition whose field is no longer declared: skip it
       const raw = f.get(r)
       const a = (Array.isArray(raw) ? raw.join(' ') : String(raw ?? '')).toLowerCase()
       const v = c.value.trim().toLowerCase()
-      // 包含/不包含:值按空格拆成多个关键字,命中任一即算包含。
+      // contains/notContains: value splits on spaces into keywords; any keyword hit counts as contains.
       const kws = v.split(/\s+/).filter(Boolean)
       switch (c.op) {
         case 'contains': return kws.length === 0 || kws.some((k) => a.includes(k))
@@ -272,7 +274,7 @@ export function useListView<T>({
           if (!(want as string[]).some((w) => gs.includes(w))) return false
         }
       }
-      // 声明式筛选与高级条件是 AND 关系;高级条件内部按 且(all)/或(any) 组合。
+      // Declarative filters AND advanced conditions; within advanced conditions, all/any per advLogic.
       if (conds.length > 0) {
         const ok = advLogic === 'all' ? conds.every((c) => condMatch(r, c)) : conds.some((c) => condMatch(r, c))
         if (!ok) return false
@@ -282,7 +284,7 @@ export function useListView<T>({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rows, search, filters, fields, searchOf, advConds, advLogic, activeKey, systemViews])
 
-  // 新建视图:默认名 未命名视图001/002…(避开已有名字)。
+  // New view: default name = localized "unnamed view" + 001/002…, skipping names already taken.
   const openNewEditor = () => {
     const base = t('lv.unnamedView', '未命名视图')
     const names = new Set(views.map((v) => v.name))
@@ -309,7 +311,7 @@ export function useListView<T>({
     })
   }
 
-  // 保存并应用:新建存纯条件快照;编辑保留原快照的其余键(搜索/筛选/列/extra),只换条件。
+  // Save and apply: create stores a conditions-only snapshot; edit keeps the original snapshot's other keys (search/filters/columns/extra) and only swaps conditions.
   const saveEditor = async () => {
     if (!editor) return
     const name = editor.name.trim()
@@ -346,7 +348,6 @@ export function useListView<T>({
     try {
       await api.deleteView(v.id)
       setViews((vs) => vs.filter((x) => x.id !== v.id))
-      // 删的是当前视图 → 回到全部数据。
       if (activeKey === `view:${v.id}`) selectSystem('all')
       message.success(t('lv.deleted', '视图已删除'))
     } catch (e) {
@@ -354,7 +355,7 @@ export function useListView<T>({
     }
   }
 
-  // 高级条件区(筛选气泡内可折叠):行 = [字段][操作符][值] + 增删,组合方式 且/或。
+  // Advanced-conditions area (collapsible inside the filter popover): rows of [field][op][value] with add/remove, combined via all/any.
   const advPanel = advFields.length > 0 && (
     <div style={{ borderTop: '1px solid var(--border-soft)', marginTop: 10, paddingTop: 8 }}>
       <div
@@ -503,7 +504,7 @@ export function useListView<T>({
     </div>
   )
 
-  // 视图下拉:系统视图(全部数据 + 页面声明的内置数据集)/ 我的视图(悬浮改/享/删)/ 底部新建。
+  // View dropdown: system views (all data + page-declared data sets) / my views (inline edit/share/delete) / new view at the bottom.
   const viewMenu = {
     selectable: true,
     selectedKeys: [activeKey],
@@ -566,7 +567,7 @@ export function useListView<T>({
       ? systemViews.find((sv) => `sys:${sv.key}` === activeKey)?.label || t('lv.allData', '全部数据')
       : views.find((v) => `view:${v.id}` === activeKey)?.name || t('lv.allData', '全部数据')
 
-  // 视图编辑弹窗:标题可改名;条件行 = 字段(可搜索)+ 操作符 + 值;底部 共享 + 取消/保存。
+  // View editor modal: renamable title; condition rows = searchable field + operator + value; footer has share toggle + cancel/save.
   const editorModal = editor && (
     <Modal
       open
@@ -695,7 +696,7 @@ export function useListView<T>({
     </Modal>
   )
 
-  // 工具栏控件用默认尺寸(32px),与页面主按钮(新建等)同高。
+  // Toolbar controls use the default size (32px) to match page primary buttons.
   const toolbar = (
     <Space size={8} wrap>
       <Input.Search
@@ -724,8 +725,9 @@ export function useListView<T>({
     </Space>
   )
 
-  // 列头查找/筛选:列 key 与筛选字段 key 相同即自动挂上(text → 放大镜搜索;enum/tags → 漏斗多选),
-  // 与工具栏筛选叠加生效;列自带 filterDropdown/filters 时不覆盖。
+  // Header search/filter: auto-attached when a column key matches a filter field key
+  // (text → search box; enum/tags → multi-select funnel), stacking with toolbar filters.
+  // Columns that bring their own filterDropdown/filters are left untouched.
   const withHeaderFilter = (c: ListColumn<T>): ColumnType<T> => {
     if (c.filterDropdown || c.filters || c.onFilter) return c
     const f = fields.find((x) => x.key === c.key)

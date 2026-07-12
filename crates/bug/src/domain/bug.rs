@@ -4,7 +4,8 @@ use crate::domain::status_flow::StatusFlowGraph;
 
 use thiserror::Error;
 
-/// 自定义字段:最多键数 / 键长 / 值长(按字符数,避免中文被误判)。
+/// Custom field limits: max key count / key length / value length. Lengths count
+/// chars, not bytes, so CJK text isn't over-counted.
 pub const MAX_CUSTOM_FIELDS: usize = 32;
 pub const MAX_CUSTOM_FIELD_KEY_LEN: usize = 64;
 pub const MAX_CUSTOM_FIELD_VALUE_LEN: usize = 2000;
@@ -27,8 +28,9 @@ pub enum BugError {
     CustomFieldValueTooLong(String),
 }
 
-/// 自定义字段清洗:键 trim 后须非空且 ≤ `MAX_CUSTOM_FIELD_KEY_LEN` 字符,
-/// 值 ≤ `MAX_CUSTOM_FIELD_VALUE_LEN` 字符,最多 `MAX_CUSTOM_FIELDS` 个键(长度均按字符数)。
+/// Normalizes custom fields: keys trimmed, must be non-empty and ≤ `MAX_CUSTOM_FIELD_KEY_LEN`
+/// chars; values ≤ `MAX_CUSTOM_FIELD_VALUE_LEN` chars; at most `MAX_CUSTOM_FIELDS` keys
+/// (all lengths in chars, not bytes).
 pub fn normalize_custom_fields(
     raw: &BTreeMap<String, String>,
 ) -> Result<BTreeMap<String, String>, BugError> {
@@ -57,7 +59,8 @@ pub struct NewBug {
     pub project_id: String,
     pub title: String,
     pub created_by: Option<String>,
-    /// 已校验的自定义字段值(见 `normalize_custom_fields`);字段定义由项目模板管理。
+    /// Validated custom field values (see `normalize_custom_fields`); field definitions
+    /// live in the project template.
     pub custom_fields: BTreeMap<String, String>,
 }
 
@@ -80,7 +83,7 @@ impl NewBug {
         self
     }
 
-    /// 携带已校验的自定义字段(调用方先过 `normalize_custom_fields`)。
+    /// Attaches validated custom fields (caller runs `normalize_custom_fields` first).
     pub fn with_custom_fields(mut self, custom_fields: BTreeMap<String, String>) -> Self {
         self.custom_fields = custom_fields;
         self
@@ -96,7 +99,8 @@ pub struct Bug {
     pub deleted: bool,
     pub created_at: i64,
     pub created_by: Option<String>,
-    /// 自定义字段值 map<字段key, 字符串值>;字段定义由项目模板管理,多选值逗号拼接。
+    /// Custom field values, key → string value; field definitions live in the project
+    /// template, multi-select values are comma-joined.
     pub custom_fields: BTreeMap<String, String>,
 }
 
@@ -188,7 +192,7 @@ mod tests {
             normalize_custom_fields(&fields(&[(long_key.as_str(), "v")])),
             Err(BugError::CustomFieldKeyTooLong(long_key))
         );
-        // 64 个字符(含中文)合法。
+        // 64 chars (CJK included) is legal.
         assert!(normalize_custom_fields(&fields(&[("键".repeat(64).as_str(), "v")])).is_ok());
     }
 

@@ -3,8 +3,9 @@ import { Checkbox, Table } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
 import { useI18n } from '../i18n'
 
-// 权限矩阵(项目与权限 → 用户组抽屉):模块(rowSpan 分组)/ 功能 / 权限(动作 Checkbox)+ 行全选 + 表头总全选。
-// 权限串格式与 Role.permissions 一致:"RESOURCE:ACT+ACT"(如 "PROJECT:READ+UPDATE")。
+// Permission matrix (user-group drawer): module (rowSpan grouping) / feature / action checkboxes,
+// plus per-row select-all and a header master toggle.
+// Permission string format matches Role.permissions: "RESOURCE:ACT+ACT" (e.g. "PROJECT:READ+UPDATE").
 
 interface PermResource {
   res: string
@@ -18,7 +19,7 @@ interface PermGroup {
   resources: PermResource[]
 }
 
-// 资源 → 动作全集(动作代码与后端权限串一致;RUNNER 用 EDIT,其余编辑用 UPDATE)。
+// Resource → full action set. Action codes match backend permission strings; RUNNER uses EDIT, everything else UPDATE.
 const CATALOG: PermGroup[] = [
   {
     key: 'project', label: '项目',
@@ -62,12 +63,12 @@ const ACT_LABEL: Record<string, string> = {
   READ: '查询', ADD: '创建', UPDATE: '编辑', EDIT: '编辑', DELETE: '删除', EXECUTE: '执行', REVIEW: '评审',
 }
 
-// UPDATE/EDIT 同义(都显示「编辑」):解析时归一到目录里登记的那个代码。
+// UPDATE/EDIT are synonyms (same "edit" label); parsing normalizes to whichever code the catalog registers.
 const EDIT_ALIAS: Record<string, string> = { UPDATE: 'EDIT', EDIT: 'UPDATE' }
 
 const RES_INDEX = new Map<string, PermResource>(CATALOG.flatMap((g) => g.resources).map((r) => [r.res, r]))
 
-/** 解析 Role.permissions → 勾选集(键 "RES:ACT")+ 目录外无法呈现的原串(保存时原样带回,避免丢权限)。 */
+/** Parse Role.permissions → checked set (keys "RES:ACT") + raw strings the catalog can't render (carried back verbatim on save so no permissions are lost). */
 export function parsePermissions(perms: string[] | undefined): { checked: Set<string>; extras: string[] } {
   const checked = new Set<string>()
   const extras: string[] = []
@@ -88,7 +89,7 @@ export function parsePermissions(perms: string[] | undefined): { checked: Set<st
   return { checked, extras }
 }
 
-/** 勾选集 → Role.permissions 串(只输出勾了动作的资源;extras 原样附加)。 */
+/** Checked set → Role.permissions strings (only resources with checked actions; extras appended verbatim). */
 export function serializePermissions(checked: Set<string>, extras: string[] = []): string[] {
   const out: string[] = []
   for (const g of CATALOG) {
@@ -161,7 +162,7 @@ export default function PermissionMatrix({ checked, onChange, disabled }: {
       ),
     },
     {
-      // 最右列:本行全选;表头为总开关「全选」。
+      // Rightmost column: per-row select-all; header cell is the master toggle.
       title: (
         <Checkbox
           disabled={disabled}

@@ -12,7 +12,7 @@ import { useI18n } from '../i18n'
 
 const BODY_TYPES: ApiBodyType[] = ['none', 'form-data', 'x-www-form-urlencoded', 'json', 'xml', 'raw', 'binary']
 const PRIORITIES = ['P0', 'P1', 'P2', 'P3']
-// 用例状态值持久化到后端(保留中文值);仅翻译展示标签。
+// Case status values persist to the backend as-is (Chinese values kept); only display labels are translated.
 const CASE_STATUSES = ['进行中', '已完成', '已废弃']
 const CASE_STATUS_LABELS: Record<string, string> = {
   '进行中': 'case.statusInProgress',
@@ -22,7 +22,7 @@ const CASE_STATUS_LABELS: Record<string, string> = {
 
 type AuthState = { type: 'none' | 'bearer' | 'basic'; token: string }
 
-/** 尽力格式化 JSON;非法原样返回。 */
+/** Best-effort JSON pretty-print; invalid input is returned unchanged. */
 function formatJson(text: string): string {
   try {
     return JSON.stringify(JSON.parse(text), null, 2)
@@ -33,8 +33,8 @@ function formatJson(text: string): string {
 
 const countKV = (rows: KVRow[]) => rows.filter((r) => r.key.trim()).length
 
-// 接口用例工作台:头部信息卡 + 名称/执行行 + 优先级/状态/标签 +
-// 请求参数下划线子标签(请求头/请求体/Query/REST/前置/后置/断言/认证/设置)+ 响应区。
+// API case workbench: header info card + name/run row + priority/status/tags +
+// underlined request sub-tabs (headers/body/query/REST/pre/post/assertions/auth/settings) + response area.
 export default function CaseEditorDrawer({
   open,
   definition,
@@ -68,7 +68,7 @@ export default function CaseEditorDrawer({
   const [resp, setResp] = useState<DebugResponse | null>(null)
   const [err, setErr] = useState('')
 
-  // 每次打开按当前接口定义重置。
+  // Reset from the current API definition on every open.
   useEffect(() => {
     if (open) reset()
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -117,7 +117,7 @@ export default function CaseEditorDrawer({
     }
   }
 
-  // 前置 + 后置操作合并为 runner 可消费的 processors 数组(Wait 前置/Extract 后置;脚本/SQL 存储待执行引擎)。
+  // Merge pre + post processors into the runner-consumable array (Wait pre / Extract post; script/SQL stored until an execution engine exists).
   const buildProcessors = (): unknown[] => [...preProcessors, ...postProcessors]
 
   const doSave = async (): Promise<boolean> => {
@@ -142,7 +142,7 @@ export default function CaseEditorDrawer({
         priority,
         status,
         tags,
-        // 按 body 类型补默认 Content-Type(可选:用户已写则不覆盖),随用例持久化 → runner 执行时带上。
+        // Fill a default Content-Type from the body type (never overriding a user-set one); persisted with the case so the runner sends it.
         headers: withBodyContentType(headers.filter((h) => h.key.trim()), hasBody ? bodyType : 'none'),
         queryParams: query.filter((h) => h.key.trim()).map((q) => ({ key: q.key.trim(), value: q.value, enabled: q.enabled, type: q.type, minLen: q.minLen, maxLen: q.maxLen, description: q.description })),
         restParams: rest.filter((h) => h.key.trim()),
@@ -168,7 +168,7 @@ export default function CaseEditorDrawer({
     }
   }
 
-  // 请求参数子标签(下划线风,对齐参考图 #3)。
+  // Request sub-tabs (underline style, per reference shot #3).
   const reqTabs = [
     {
       key: 'headers',
@@ -274,7 +274,7 @@ export default function CaseEditorDrawer({
         </div>
       }
     >
-      {/* 头部信息卡:【id】名称 + 请求类型 + 路径(对齐参考图 #3) */}
+      {/* Header info card: [id] name + request type + path (per reference shot #3) */}
       <Card size="small" styles={{ body: { padding: '10px 14px' } }} style={{ marginBottom: 12, background: 'var(--panel-2)' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
           <span style={{ fontWeight: 600 }}>【{definition.num ?? '—'}】{definition.name}</span>
@@ -284,7 +284,7 @@ export default function CaseEditorDrawer({
         </div>
       </Card>
 
-      {/* 名称 + 服务端执行 */}
+      {/* Name + server-side run */}
       <Space.Compact style={{ width: '100%', marginBottom: 10 }}>
         <Input
           value={name}
@@ -296,7 +296,7 @@ export default function CaseEditorDrawer({
         <Button type="primary" icon={<SendOutlined />} loading={sending} onClick={send}>{t('apidef.serverRun', '服务端执行')}</Button>
       </Space.Compact>
 
-      {/* 优先级 / 状态 / 标签 */}
+      {/* Priority / status / tags */}
       <Space wrap style={{ marginBottom: 14 }}>
         <Select value={priority} onChange={setPriority} style={{ width: 110 }} options={PRIORITIES.map((p) => ({ value: p, label: p }))} />
         <Select value={status} onChange={setStatus} style={{ width: 130 }} options={CASE_STATUSES.map((s) => ({ value: s, label: t(CASE_STATUS_LABELS[s], s) }))} />

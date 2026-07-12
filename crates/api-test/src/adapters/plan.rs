@@ -50,7 +50,7 @@ pub enum PlanNode {
         condition: Condition,
         body: Vec<PlanNode>,
     },
-    /// 同一 id 全程只进一次(被外层循环包裹也只跑首次)。
+    /// Runs at most once per id for the whole execution (even when wrapped in an outer loop).
     Once {
         id: u32,
         body: Vec<PlanNode>,
@@ -200,7 +200,7 @@ impl PlanExecutor {
         if wait > 0 {
             tokio::time::sleep(Duration::from_millis(wait)).await;
         }
-        // 必须传 state.vars:否则 outcome 用空 vars 算 Variable 断言会误报,与下方 detailed 矛盾。
+        // Must pass state.vars: otherwise the outcome evaluates Variable assertions with empty vars, misreporting and contradicting `detailed` below.
         let (report, snap) =
             self.runner.run_case_with_snapshot_vars(&req, &assertions, &state.vars).await;
         let (outcome, failures): (&str, Vec<String>) = match report.outcome {
@@ -208,7 +208,7 @@ impl PlanExecutor {
             CaseOutcome::Error => ("ERROR", report.failures),
         };
         self.sink.record(report_id, &case_id, outcome, &failures).await?;
-        // best-effort:回填失败不影响执行。提取只算一次,既落库又写上下文。
+        // Best-effort: writeback failure never affects execution. Extraction is computed once, then both persisted and written to the context.
         if let Some(s) = &snap {
             let detailed = evaluate_detailed_with_vars(&assertions, s, &state.vars);
             let assertions_json = serde_json::Value::Array(

@@ -1,11 +1,12 @@
-//! Web 认证共享件:Session/AuthUser 模型与 SessionStore 端口(内置 InMemorySessionStore),
-//! http feature 下提供 axum 提取器,从 Bearer token 解析出携带 PermissionSet 的 AuthUser,
-//! 供各上下文的 http 适配器统一做鉴权。
+//! Shared web auth components: Session/AuthUser models and the SessionStore port
+//! (with a built-in InMemorySessionStore). Under the http feature, provides an axum
+//! extractor that resolves a Bearer token into an AuthUser carrying a PermissionSet,
+//! so every context's http adapter authorizes the same way.
 
 use async_trait::async_trait;
 use thiserror::Error;
 
-// 重导出:下游可铸造服务令牌而无需直接依赖 kernel。
+// Re-export so downstream crates can mint service tokens without depending on kernel directly.
 pub use kernel::permission::PermissionSet;
 
 #[derive(Debug, Clone)]
@@ -42,9 +43,9 @@ pub trait SessionStore: Send + Sync {
         permissions: PermissionSet,
         ttl_secs: i64,
     ) -> Result<String, AuthRepoError>;
-    /// 不存在或已过期均返回 None。
+    /// Returns None when the token is missing or expired.
     async fn get(&self, token: &str) -> Result<Option<Session>, AuthRepoError>;
-    /// 幂等。
+    /// Idempotent.
     async fn revoke(&self, token: &str) -> Result<(), AuthRepoError>;
 }
 

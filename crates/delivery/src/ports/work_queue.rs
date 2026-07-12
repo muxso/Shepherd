@@ -14,7 +14,8 @@ pub struct QueueStat {
     pub executor: ExecutorKind,
     pub ready: u64,
     pub in_flight: u64,
-    // 后端自身时钟所计(Redis 下为 XPENDING idle),不可跨进程比较。
+    // Measured by the backend's own clock (XPENDING idle on Redis); not comparable
+    // across processes.
     pub oldest_in_flight_ms: u64,
 }
 
@@ -22,8 +23,9 @@ pub struct QueueStat {
 pub trait WorkQueue: Send + Sync {
     async fn enqueue(&self, spec: &WorkSpec);
 
-    // 阻塞到 wait 超时的长轮询;consumer = runtime id(PEL 归属与死 runtime 回收),
-    // consumer_name = runtime 注册名(定向任务匹配:只有 name 相符的 runtime 能认领)。
+    // Long poll blocking up to `wait`. consumer = runtime id (PEL ownership and
+    // dead-runtime reclaim); consumer_name = registered runtime name (targeted-spec
+    // matching: only the runtime with that name may claim).
     async fn claim(
         &self,
         caps: &[ExecutorKind],
@@ -32,10 +34,12 @@ pub trait WorkQueue: Send + Sync {
         consumer_name: &str,
     ) -> Option<Claimed>;
 
-    // 终态时调用,把消息移出 PEL,避免被 reclaim_dead 重投。内存实现为 no-op。
+    // Called on terminal state to move the message out of the PEL so reclaim_dead
+    // cannot re-dispatch it. No-op for the in-memory implementation.
     async fn ack(&self, attempt_id: &str);
 
-    // 重投持有者已不在 live 且空闲超 grace 的待处理任务;live 由注册表心跳判定。
+    // Re-dispatch pending work whose holder is not in `live` and has been idle past
+    // `grace`; `live` comes from registry heartbeats.
     async fn reclaim_dead(&self, _live: &[String], _grace: Duration) -> usize {
         0
     }

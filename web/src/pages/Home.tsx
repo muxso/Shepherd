@@ -40,8 +40,7 @@ interface Counts {
   bug: number
 }
 
-// 协议分段配色(轮转)。
-// 图表柔和色:同色相 + 降透明度,避免大面积满饱和原色刺眼;首页所有图共用。
+// Muted palette shared by all Home charts: reduced alpha so large areas aren't glaring saturated primaries.
 const C = {
   blue: 'rgba(22, 100, 255, 0.72)',
   skyblue: 'rgba(22, 119, 255, 0.68)',
@@ -56,7 +55,7 @@ const C = {
 
 const PROTO_COLORS = [C.blue, C.skyblue, C.cyan, C.green, C.orange, C.pink, C.red, C.grey]
 
-// 项目对比柱状图的资产系列(配色对齐资产分布环)。
+// Asset series for the project-comparison bars; colors match the asset-distribution donut.
 const PROJECT_SERIES = [
   { key: 'def', label: '接口定义', color: C.blue },
   { key: 'scenario', label: '场景用例', color: C.skyblue },
@@ -64,9 +63,9 @@ const PROJECT_SERIES = [
   { key: 'funcCase', label: '功能用例', color: C.green },
 ]
 
-// 卡片清单(「卡片设置」编辑器可拖拽增删排序):布局数组序 = 展示序,不在数组 = 隐藏。
+// Card registry (drag-sortable in the card-settings editor): layout array order = display order; not in array = hidden.
 const ALL_CARDS = ['collab', 'projectBars', 'assets', 'apiStats', 'caseStats', 'execTrend', 'quality', 'shortcuts', 'planOverview', 'apiChanges'] as const
-// 新增卡默认不进布局(v7 语义:不在数组 = 隐藏),用户从「卡片设置」库手动拖入。
+// New cards stay out of the layout by default (v7: not in array = hidden); users drag them in from the card-settings library.
 const DEFAULT_HIDDEN: readonly string[] = ['planOverview', 'apiChanges']
 const TREND_DAYS = 7
 type CardKey = (typeof ALL_CARDS)[number]
@@ -77,7 +76,7 @@ interface CardLayout {
 const CARDS_KEY = 'shepherd.home.cards.v7'
 const LEGACY_CARDS_KEY = 'shepherd.home.cards.v6'
 
-/** 读持久化布局。v7 = {key,size}[];读到旧 v6({key,shown}[])时迁移:shown 保留、尺寸取默认。 */
+/** Load persisted layout. v7 = {key,size}[]; legacy v6 ({key,shown}[]) migrates: shown kept, sizes default. */
 function loadLayout(): CardLayout[] {
   const isKey = (k: unknown): k is CardKey => (ALL_CARDS as readonly string[]).includes(k as string)
   const withSize = (k: CardKey, size?: unknown): CardLayout => ({
@@ -110,7 +109,7 @@ function loadLayout(): CardLayout[] {
   return ALL_CARDS.filter((k) => !DEFAULT_HIDDEN.includes(k)).map((k) => withSize(k))
 }
 
-// 首页工作台:当前项目测试资产概览(可自定义卡片显隐与排序)。
+// Home workbench: test-asset overview for the current project, with customizable card layout.
 export default function Home() {
   const { projectId, projects } = useApp()
   const { t } = useI18n()
@@ -126,12 +125,12 @@ export default function Home() {
   const [loading, setLoading] = useState(false)
   const [layout, setLayout] = useState<CardLayout[]>(loadLayout)
   const [editing, setEditing] = useState(false)
-  // —— 测试计划概览卡:选中计划 + 其统计/关联用例数 + 项目缺陷(仅卡片在布局时拉取)——
+  // Plan-overview card: selected plan + its stats/linked-case count + project bugs (fetched only while the card is in the layout).
   const [planId, setPlanId] = useState('')
   const [planStat, setPlanStat] = useState<PlanStats | null>(null)
   const [planCaseCount, setPlanCaseCount] = useState(0)
   const [bugs, setBugs] = useState<Bug[]>([])
-  // —— 接口变更卡:最近接口的引用计数(用例/场景)——
+  // API-changes card: reference counts (cases/scenarios) for recent definitions.
   const [refCounts, setRefCounts] = useState<Record<string, { cases: number; scenarios: number }>>({})
 
   const hasPlanCard = layout.some((p) => p.key === 'planOverview')
@@ -178,7 +177,7 @@ export default function Home() {
       .finally(() => setLoading(false))
   }, [projectId])
 
-  // 接口协议分布 + 覆盖率(真实数据:定义按 protocol 分组;有用例引用的定义=已覆盖)。
+  // Protocol distribution + coverage: definitions grouped by protocol; a definition referenced by any case counts as covered.
   const protocolSegs = useMemo(() => {
     const m = new Map<string, number>()
     defs.forEach((d) => { const k = (d.protocol || 'HTTP').toUpperCase(); m.set(k, (m.get(k) ?? 0) + 1) })
@@ -189,7 +188,7 @@ export default function Home() {
     return defs.filter((d) => ref.has(d.id)).length
   }, [defs, cases])
 
-  // 近 N 天执行趋势:后端只回有执行的日期,这里补全连续日轴(通过/未通过)。
+  // Exec trend, last N days: backend only returns dates that had executions, so backfill a continuous day axis (passed/failed).
   const trendRows = useMemo<BarRow[]>(() => {
     const map = new Map(trend.map((p) => [p.date, p]))
     const today = new Date()
@@ -205,7 +204,7 @@ export default function Home() {
     return rows
   }, [trend])
 
-  // 项目对比:对每个项目并发拉取四类资产计数(真实数据,与当前选中项目无关)。
+  // Project comparison: fetch the four asset counts per project concurrently (independent of the selected project).
   useEffect(() => {
     if (!projects.length) { setProjRows([]); return }
     let alive = true
@@ -223,7 +222,7 @@ export default function Home() {
     return () => { alive = false }
   }, [projects])
 
-  // —— 测试计划概览:计划列表(排除计划组)、选中项持久化、统计与关联用例、项目缺陷 ——
+  // Plan overview: plan list (groups excluded), persisted selection, stats + linked cases, project bugs.
   const planList = useMemo(() => (projectId ? regList('plan', projectId).filter((p) => !isGroup(p)) : []), [projectId])
   useEffect(() => {
     if (!projectId || !planList.length) { setPlanId(''); return }
@@ -247,7 +246,7 @@ export default function Home() {
     return () => { alive = false }
   }, [projectId, hasPlanCard])
 
-  // —— 接口变更:按更新时间(缺失则创建时间)倒序取最近 10 条,再拉各自引用计数 ——
+  // API changes: latest 10 definitions by updatedAt (createdAt fallback), then fetch each one's reference counts.
   const recentDefs = useMemo(
     () => [...defs].sort((a, b) => (b.updatedAt ?? b.createdAt ?? '').localeCompare(a.updatedAt ?? a.createdAt ?? '')).slice(0, 10),
     [defs],
@@ -337,8 +336,8 @@ export default function Home() {
           </Card>
         )
       case 'collab': {
-        // 人机协同人效:口径 = 任务验收通过(VERIFIED)后,有 AI 的 DELIVERED 交付记录算 AI 交付,
-        // 否则算人工交付;验收不通过不计入任何一方。工作量用任务 points。
+        // Accounting rule: once a task passes acceptance (VERIFIED), a DELIVERED delivery record involving AI
+        // counts as an AI delivery, otherwise human; failed acceptance counts for neither. Workload = task points.
         const AI_COLOR = 'var(--brand)'
         const items = collab?.items ?? []
         const sum = (f: (x: (typeof items)[number]) => number) => items.reduce((n, x) => n + f(x), 0)
@@ -347,7 +346,7 @@ export default function Home() {
         const aiPoints = sum((x) => x.aiPoints)
         const humanPoints = sum((x) => x.humanPoints)
 
-        // 需求明细:按总工作量降序,工作量全 0 时退回按任务数。
+        // Requirement breakdown: total points desc; fall back to task count when all points are 0.
         const ranked = [...items]
           .map((x) => ({ ...x, tp: x.aiPoints + x.humanPoints, tc: x.aiTasks + x.humanTasks }))
           .sort((a, b) => b.tp - a.tp || b.tc - a.tc)
@@ -409,7 +408,7 @@ export default function Home() {
                     <ContributionGrid days={collab?.daily ?? []} metric={collabMetric} />
                   </Col>
                 </Row>
-                {/* 需求明细:每条需求内 AI/人工 的工作量占比(工作量为 0 的需求按任务数占比)。 */}
+                {/* Per-requirement AI/human workload split (task-count split when points are 0). */}
                 <div style={{ marginTop: 16 }}>
                   <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>{t('home.reqSplit', '需求内工作量占比')}</div>
                   {ranked.map((r) => {
@@ -437,7 +436,7 @@ export default function Home() {
         )
       }
       case 'projectBars': {
-        // 资产量降序;支持横向滚动后放宽到 60(够用且防极端项目数撑爆)。
+        // Asset total desc; cap raised to 60 now that the chart scrolls horizontally — enough, and guards against extreme project counts.
         const TOP = 60
         const ranked = projRows
           .map((r) => ({ r, total: Object.values(r.values).reduce((s, v) => s + v, 0) }))
@@ -472,7 +471,7 @@ export default function Home() {
               <Empty description={t('common.empty', '暂无数据')} />
             ) : (
               <Row gutter={[24, 16]} align="middle">
-                {/* 协议分布:总数环 + 逐协议占比 */}
+                {/* Protocol distribution: total donut + per-protocol share */}
                 <Col xs={24} lg={14}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 24 }}>
                     <Donut segments={protocolSegs} size={132} thickness={18} centerLabel={t('home.apiTotal', '接口总数')} />
@@ -488,7 +487,7 @@ export default function Home() {
                     </div>
                   </div>
                 </Col>
-                {/* 用例覆盖率:已覆盖 / 未覆盖 */}
+                {/* Case coverage: covered / uncovered */}
                 <Col xs={24} lg={10}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 24 }}>
                     <Donut
@@ -654,9 +653,9 @@ export default function Home() {
           </Card>
         )
       case 'planOverview': {
-        // 口径:执行数/状态来自 planStats(exec = executeRate×total,同测试计划页);
-        // 「接口 CASE」= 计划关联用例数(planCases,PlanCase 无类型字段拆不动);
-        // 功能用例/接口场景/缺陷数为项目维度计数(与顶部资产统计同源)。
+        // Metric sourcing: exec count/status come from planStats (exec = executeRate × total, same as the test-plan page);
+        // "API CASE" = plan-linked case count (planCases; PlanCase has no type field, so it can't be split);
+        // functional cases / scenarios / bugs are project-level counts (same source as the top asset stats).
         const selPlan = planList.find((p) => p.id === planId)
         const total = planStat?.total ?? 0
         const exec = planStat ? Math.round(planStat.executeRate * planStat.total) : 0
@@ -677,7 +676,7 @@ export default function Home() {
             </div>
           </div>
         )
-        // 小环形:执行率 n%(纯 SVG)。
+        // Small exec-rate ring (plain SVG).
         const R = 34
         const CIRC = 2 * Math.PI * R
         const ring = (
@@ -735,7 +734,7 @@ export default function Home() {
                     </div>
                   </Col>
                 </Row>
-                {/* 处理人维度(计划用例暂无处理人概念,单桶「未分配」):分配/完成/提交缺陷/关闭缺陷 */}
+                {/* Per-assignee breakdown (plan cases have no assignee yet — single "unassigned" bucket): assigned/done/bugs filed/bugs closed */}
                 <div style={{ marginTop: 16 }}>
                   <GroupedBars
                     height={200}
@@ -787,9 +786,9 @@ export default function Home() {
     }
   }
 
-  // —— 闭环门面:需求 → 评审 → 研发交付 → 测试 → 验证,自动回归需求 ——
+  // Loop hero: requirement → review → dev delivery → test → verify, feeding back into requirements.
   const passRateHero = exec?.executions ? ((exec.passed ?? 0) * 100) / exec.executions : 0
-  // 各阶段的关联资产计数(可点击,按类型归属:需求→需求;测试→测试资产;验收→缺陷)。
+  // Clickable asset counts per stage, grouped by type: requirement → requirements; test → test assets; verify → bugs.
   const chip = (key: string) => cards.find((x) => x.key === key)
   const asset = (keys: string[]) => keys.map(chip).filter(Boolean) as typeof cards
   const loopStages = [
@@ -819,7 +818,7 @@ export default function Home() {
               onClick={() => navigate(s.to)}
               style={{ flex: 1, position: 'relative', overflow: 'hidden', cursor: 'pointer', background: 'linear-gradient(135deg, var(--brand-soft) 0%, var(--panel) 55%)', border: '1px solid var(--border-soft)', borderRadius: 10, padding: '12px 14px' }}
             >
-              {/* 幽灵步骤序号,右上角淡蓝斜体 */}
+              {/* Ghost step number, top-right */}
               <span style={{ position: 'absolute', top: 6, right: 12, fontStyle: 'italic', fontWeight: 800, fontSize: 22, lineHeight: 1, color: 'var(--brand)', opacity: 0.16, pointerEvents: 'none' }}>
                 <span style={{ fontSize: 12, fontWeight: 600, marginRight: 2 }}>step</span>{i + 1}
               </span>
@@ -851,7 +850,7 @@ export default function Home() {
             )}
           </div>
         ))}
-        {/* 闭环回归标记 */}
+        {/* Loop-closure badge */}
         <div style={{ display: 'flex', alignItems: 'center', flex: '0 0 auto', paddingLeft: 6 }}>
           <Tooltip title={t('loop.backHint', '验证结果自动回归需求,进入下一轮')}>
             <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '6px 10px', borderRadius: 20, background: 'var(--brand-soft)', color: 'var(--brand)', fontSize: 12, fontWeight: 600, cursor: 'default' }}>

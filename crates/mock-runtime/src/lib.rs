@@ -1,6 +1,8 @@
-//! Mock 运行时:接收 MockRequest,按 MatchRule(路径/方法/请求头/请求体匹配 + 附加条件)挑选启用的
-//! MockRule 并渲染响应(template feature 启用模板函数)。
-//! 规则来自 MockRuleSource 端口(pg 适配器读接口定义里的 ApiMock);http 适配器暴露 mock 入口路由。
+//! Mock runtime: takes a MockRequest, picks the enabled MockRule via MatchRule (path/method/
+//! header/body matching + extra conditions) and renders the response (the template feature
+//! enables template functions).
+//! Rules come from the MockRuleSource port (the pg adapter reads ApiMock from API definitions);
+//! the http adapter exposes the mock entry routes.
 
 pub mod adapters;
 pub mod domain;

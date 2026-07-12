@@ -45,7 +45,7 @@ fn now_ms() -> i64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as i64).unwrap_or(0)
 }
 
-/// id 16 hex + secret 32 hex,均由 v4 UUID(CSPRNG)取得。
+/// id is 16 hex chars, secret 32; both come from v4 UUIDs (CSPRNG).
 fn mint_key() -> (String, String) {
     let id = uuid::Uuid::new_v4().simple().to_string()[..16].to_string();
     let secret = uuid::Uuid::new_v4().simple().to_string();
@@ -63,11 +63,12 @@ struct CreateApiKeyBody {
 struct CreatedApiKey {
     id: String,
     name: String,
-    /// 完整令牌 `sak_<id>.<secret>`,仅此响应返回一次,之后不可再取。
+    /// Full token `sak_<id>.<secret>`, returned only once in this response and never
+    /// retrievable again.
     key: String,
     permissions: Vec<String>,
     created_at: i64,
-    /// 过期时刻(epoch 毫秒);null = 永久。
+    /// Expiry instant (epoch ms); null = never expires.
     expires_at: Option<i64>,
 }
 
@@ -120,7 +121,7 @@ async fn mint_and_insert(
 ) -> Response {
     let (id, secret) = mint_key();
     let hash = st.hasher.hash(&secret);
-    // 自动命名跟随铸出的 id,天然不重名。
+    // Auto-generated names follow the minted id, so they never collide.
     let name = if name.is_empty() { format!("key-{}", &id[..8]) } else { name.to_string() };
     match st.repo.insert(&id, &name, &hash, perms, owner, expires_at_ms).await {
         Ok(rec) => (
@@ -151,27 +152,29 @@ async fn create_apikey(
     if req.name.trim().is_empty() {
         return (StatusCode::BAD_REQUEST, "name must not be empty").into_response();
     }
-    // 入库前规范化(资源大写、动作排序),保证鉴权路径 from_raw 必然可解析。
+    // Normalize before storage (uppercase resources, sorted actions) so from_raw on the
+    // auth path is guaranteed to parse.
     let perms = match PermissionSet::from_raw(&req.permissions) {
         Ok(p) => p.to_raw(),
         Err(_) => return (StatusCode::BAD_REQUEST, "invalid permission").into_response(),
     };
-    // 管理端口径不变:无属主、永久有效。
+    // Admin semantics unchanged: no owner, never expires.
     mint_and_insert(&st, req.name.trim(), &perms, "", None).await
 }
 
 #[derive(Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 struct CreateMyApiKeyBody {
-    /// 缺省自动命名 key-<短id>。
+    /// Defaults to the auto-generated name key-<short-id>.
     #[serde(default)]
     name: Option<String>,
-    /// 有效期秒数;缺省 null = 永久。
+    /// Lifetime in seconds; default null = never expires.
     #[serde(default)]
     ttl_secs: Option<i64>,
 }
 
-// 个人自助(act-as-user):仅要求登录,权限 = 会话当前权限快照,属主 = 会话用户。
+// Personal self-service (act-as-user): only requires login; permissions = a snapshot of
+// the session's current permissions, owner = the session user.
 #[utoipa::path(post, path = "/system/apikey/mine", tag = "apikey", request_body = CreateMyApiKeyBody, responses((status = 201, body = CreatedApiKey), (status = 400), (status = 409)), security(("bearer" = [])))]
 async fn create_my_apikey(
     user: AuthUser,
@@ -212,7 +215,8 @@ async fn list_apikeys(user: AuthUser, State(st): State<ApiKeyState>) -> Response
     }
 }
 
-/// 属主本人放行;否则要求 APIKEY:DELETE。不存在 → 404,存在但无权 → 403。
+/// The owner passes; otherwise APIKEY:DELETE is required. Missing → 404, exists but no
+/// permission → 403.
 async fn owner_or_delete_perm(user: &AuthUser, st: &ApiKeyState, id: &str) -> Option<Response> {
     if user.can("APIKEY", "DELETE") {
         return None;
@@ -230,7 +234,7 @@ struct SetEnabledBody {
     enabled: bool,
 }
 
-// enabled=false 等价吊销,true 恢复;幂等。
+// enabled=false equals revoke, true restores; idempotent.
 #[utoipa::path(put, path = "/system/apikey/{id}/enabled", tag = "apikey", params(("id" = String, Path)), request_body = SetEnabledBody, responses((status = 204), (status = 403), (status = 404)), security(("bearer" = [])))]
 async fn set_apikey_enabled(
     user: AuthUser,
@@ -357,7 +361,7 @@ mod tests {
         let item = &v["items"][0];
         assert_eq!(item["name"], "runner-1");
         assert_eq!(item["revoked"], false);
-        // 列表绝不带 key/secret
+        // The list never includes key/secret.
         assert!(item.get("key").is_none() && item.get("secretHash").is_none(), "{item}");
     }
 
@@ -406,7 +410,8 @@ mod tests {
             .await
             .expect("r");
         assert_eq!(del.status(), StatusCode::NO_CONTENT);
-        // 吊销后记录仍在列表(revoked=true),但再次 DELETE 是 404
+        // After revocation the record stays in the list (revoked=true), but a repeat
+        // DELETE is 404.
         let again = app
             .clone()
             .oneshot(req("DELETE", &format!("/system/apikey/{id}"), "", Some(&admin)))
@@ -445,12 +450,13 @@ mod tests {
         }
     }
 
-    // —— 个人 API KEY:建 → 列 → 停 → 启 → 过期拒绝 ——
+    // —— Personal API keys: create → list → disable → enable → expiry rejection ——
 
     #[tokio::test]
     async fn my_key_lifecycle_create_list_disable_enable() {
         let c = ctx().await;
-        // 无 APIKEY 权限的普通用户也能自助建 key;权限 = 会话快照
+        // Regular users without APIKEY permission can still self-create keys;
+        // permissions = session snapshot.
         let r = c
             .app
             .clone()
@@ -460,11 +466,11 @@ mod tests {
         assert_eq!(r.status(), StatusCode::CREATED);
         let v = json_body(r).await;
         let id = v["id"].as_str().expect("id").to_string();
-        assert_eq!(v["name"], format!("key-{}", &id[..8])); // 自动命名
+        assert_eq!(v["name"], format!("key-{}", &id[..8])); // auto-generated name
         assert_eq!(v["permissions"], serde_json::json!(["PROJECT:READ"]));
         assert!(v["expiresAt"].is_null());
 
-        // 只列自己的
+        // Lists only the caller's own keys.
         let mine = c
             .app
             .clone()
@@ -482,7 +488,7 @@ mod tests {
             .expect("r");
         assert!(json_body(other).await["items"].as_array().expect("arr").is_empty());
 
-        // 属主停用 → revoked;再启用 → 恢复
+        // Owner disables → revoked; re-enable → restored.
         for (enabled, expect_revoked) in [(false, true), (true, false)] {
             let r = c
                 .app
@@ -500,7 +506,7 @@ mod tests {
             assert_eq!(rec.revoked, expect_revoked);
         }
 
-        // 属主可 DELETE 自己的 key(无 APIKEY:DELETE)
+        // The owner can DELETE their own key (without APIKEY:DELETE).
         let del = c
             .app
             .clone()
@@ -530,7 +536,7 @@ mod tests {
         let exp = v["expiresAt"].as_i64().expect("expiresAt");
         assert!(exp >= before + 60_000 && exp <= now_ms() + 60_000, "{exp}");
 
-        // ttlSecs 非正 → 400
+        // Non-positive ttlSecs → 400.
         let bad = c
             .app
             .clone()
@@ -539,7 +545,8 @@ mod tests {
             .expect("r");
         assert_eq!(bad.status(), StatusCode::BAD_REQUEST);
 
-        // 校验链路拒绝过期 key:预置一把已过期的,find_active 必须为 None
+        // The verification path rejects expired keys: seed one already expired,
+        // find_active must be None.
         c.store
             .insert("aaaa000000000009", "dead", "h", &[], "u-view", Some(1))
             .await
@@ -550,7 +557,7 @@ mod tests {
     #[tokio::test]
     async fn foreign_key_enable_and_delete_are_denied_without_perm() {
         let c = ctx().await;
-        // admin 名下的 key
+        // A key owned by admin.
         let r = c
             .app
             .clone()
@@ -559,7 +566,7 @@ mod tests {
             .expect("r");
         let id = json_body(r).await["id"].as_str().expect("id").to_string();
 
-        // viewer 不是属主、无 APIKEY:DELETE → 403;不存在 → 404
+        // viewer is not the owner and lacks APIKEY:DELETE → 403; missing key → 404.
         let deny = c
             .app
             .clone()
@@ -592,7 +599,7 @@ mod tests {
             .expect("r");
         assert_eq!(ghost.status(), StatusCode::NOT_FOUND);
 
-        // 有 APIKEY:DELETE 的管理员可停用别人的 key
+        // An admin with APIKEY:DELETE can disable someone else's key.
         let sess = c.sessions.clone();
         let ops = sess
             .create("u-ops", PermissionSet::from_raw(["APIKEY:DELETE"]).expect("p"), 3600)

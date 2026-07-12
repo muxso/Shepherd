@@ -195,7 +195,7 @@ impl PlanRepository for PgPlanRepository {
     }
 
     async fn delete(&self, id: &str) -> Result<bool, RepoError> {
-        // 无 FK 级联:必须先删挂入用例,再删计划本体。
+        // No FK cascade: linked cases must be deleted before the plan row itself.
         sqlx::query("DELETE FROM ms_test_plan_case WHERE plan_id = $1")
             .bind(id)
             .execute(&self.pool)

@@ -1,6 +1,6 @@
-//! 缺陷上下文:Bug 聚合 + 项目级状态流机(StatusFlowGraph,决定合法状态迁移)+
-//! 关注人 + 与用例/需求等资产的关联(BugRelation)。
-//! domain/application/ports 不做 IO;pg/http 适配器由 feature 启用。
+//! Bug context: Bug aggregate + per-project status flow machine (StatusFlowGraph,
+//! decides legal transitions) + followers + relations to assets like cases/requirements (BugRelation).
+//! domain/application/ports do no IO; pg/http adapters are feature-gated.
 
 pub mod adapters;
 pub mod application;

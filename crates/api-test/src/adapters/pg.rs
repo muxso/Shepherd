@@ -86,7 +86,7 @@ impl PgResourcePoolAdmin {
 #[async_trait]
 impl ResourcePoolAdminPort for PgResourcePoolAdmin {
     async fn create(&self, new_pool: &NewResourcePool) -> Result<ResourcePool, PortError> {
-        // id 走表默认 gen_random_uuid()::text,故不 bind。
+        // id comes from the table default gen_random_uuid()::text, so it is not bound.
         let sql = format!(
             "INSERT INTO ms_resource_pool \
              (name, enabled, description, max_concurrency, pool_type, all_org, org_ids, server_url, config, deleted) \
@@ -299,7 +299,7 @@ impl BatchExecutorPort for PgBatchReportExecutor {
                 Ok(DispatchReport { report_id, status })
             }
             Err(e) => {
-                // 标记 DISPATCH_FAILED 避免任务卡在 PENDING。
+                // Mark DISPATCH_FAILED so the task doesn't stay stuck in PENDING.
                 let _ = self.set_status(&report_id, "DISPATCH_FAILED").await;
                 Err(e)
             }
@@ -366,7 +366,7 @@ fn auth_header(v: &serde_json::Value) -> Option<(String, String)> {
     }
 }
 
-// 不做 URL 编码,与既有调试链路一致。
+// No URL encoding, matching the existing debug path.
 fn merge_query(url: &str, query: &[(String, String)]) -> String {
     if query.is_empty() {
         return url.to_string();
@@ -474,7 +474,7 @@ impl CaseResultSink for PgCaseResultSink {
         req_headers: &[(String, String)],
         req_body: Option<&str>,
     ) -> Result<(), PortError> {
-        // 截断到 64KB,避免明细表膨胀。
+        // Truncate to 64KB to keep the detail table from bloating.
         let body_trunc: String = body.chars().take(65536).collect();
         let req_body_trunc: Option<String> = req_body.map(|b| b.chars().take(65536).collect());
         let headers_json = serde_json::to_value(headers)
@@ -508,7 +508,7 @@ impl CaseResultSink for PgCaseResultSink {
     }
 }
 
-// 计划树执行不经资源池(本地 runner 就地跑),pool_id 落占位 'local'。
+// Plan-tree execution bypasses resource pools (the local runner runs in place); pool_id gets the placeholder 'local'.
 #[derive(Clone)]
 pub struct PgBatchReport {
     pool: PgPool,
@@ -701,7 +701,7 @@ impl CaseExecutionQueryPort for PgCaseExecutionQuery {
         offset: u64,
         limit: u32,
     ) -> Result<Vec<CaseExecutionRecord>, PortError> {
-        // sqlx 未启用 chrono/time feature,故在 SQL 内用 to_char 把 TIMESTAMPTZ 归一为 RFC3339。
+        // sqlx has no chrono/time feature enabled, so normalize TIMESTAMPTZ to RFC3339 via to_char in SQL.
         let rows = sqlx::query(
             "SELECT report_id, case_id, outcome, failures, \
                     to_char(executed_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"') AS executed_at \

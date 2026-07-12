@@ -6,13 +6,13 @@ import { useApp } from '../context'
 import { useI18n } from '../i18n'
 import { FIELDS_TEMPLATE_NAME, defaultTemplateFields, fieldLabel, normalizeFields, type TemplateKind } from '../fieldTemplates'
 
-// 字段模板消费端:加载某 kind 的字段配置(带内置默认回退)+ 自定义字段的动态渲染/取值。
-// 三个创建表单(需求/功能用例/缺陷)复用。
+// Field-template consumer side: loads a kind's field config (with built-in default fallback)
+// plus dynamic rendering/collection of custom fields. Shared by the requirement/case/bug create forms.
 
-/** 自定义字段在 Form 里的分组名:values.cf[key]。 */
+/** Form group name for custom fields: values.cf[key]. */
 export const CF_GROUP = 'cf'
 
-/** 加载当前项目某 kind 的字段配置;未配置或加载失败回落内置默认。 */
+/** Load the current project's field config for a kind; falls back to built-in defaults when unconfigured or on load failure. */
 export function useFieldTemplate(kind: TemplateKind): { fields: TemplateField[]; loading: boolean } {
   const { projectId } = useApp()
   const [fields, setFields] = useState<TemplateField[]>(() => defaultTemplateFields(kind))
@@ -37,7 +37,7 @@ export function useFieldTemplate(kind: TemplateKind): { fields: TemplateField[];
   return { fields, loading }
 }
 
-/** 单个自定义字段 → 表单项(text/textarea/select/multiselect/date/number)。 */
+/** One custom field → form item (text/textarea/select/multiselect/date/number). */
 export function CustomFieldItem({ kind, field }: { kind: TemplateKind; field: TemplateField }) {
   const { t } = useI18n()
   if (field.system || !field.enabled) return null
@@ -57,7 +57,7 @@ export function CustomFieldItem({ kind, field }: { kind: TemplateKind; field: Te
   )
 }
 
-/** 一组自定义字段(按数组序渲染,跳过系统/隐藏字段)。 */
+/** Custom fields in array order, skipping system/hidden fields. */
 export function CustomFieldItems({ kind, fields }: { kind: TemplateKind; fields: TemplateField[] }) {
   return (
     <>
@@ -68,7 +68,7 @@ export function CustomFieldItems({ kind, fields }: { kind: TemplateKind; fields:
   )
 }
 
-/** 提交时收集自定义字段值 → map<key,string>(多选逗号拼接,date YYYY-MM-DD,number String;空值跳过)。 */
+/** Collect custom field values on submit → map<key,string> (multiselect comma-joined, date YYYY-MM-DD, number stringified; empties skipped). */
 export function collectCustomValues(fields: TemplateField[], cf?: Record<string, unknown>): Record<string, string> {
   const out: Record<string, string> = {}
   if (!cf) return out
@@ -92,7 +92,7 @@ export function collectCustomValues(fields: TemplateField[], cf?: Record<string,
   return out
 }
 
-/** 编辑回填:已存的 map<key,string> → 表单值(按字段类型解析)。 */
+/** Edit backfill: saved map<key,string> → form values, parsed per field type. */
 export function customFormValues(fields: TemplateField[], saved?: Record<string, string>): Record<string, unknown> {
   const out: Record<string, unknown> = {}
   if (!saved) return out

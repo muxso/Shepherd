@@ -50,7 +50,7 @@ async fn handle(State(st): State<MockState>, req: Request) -> Response {
     }
 }
 
-/// 渲染失败回落原始串,绝不 500。
+/// Falls back to the raw string when rendering fails; never a 500.
 #[cfg(feature = "template")]
 fn render_body(raw: String, req: &MockRequest) -> String {
     crate::domain::render_body(&raw, req).unwrap_or(raw)
@@ -60,7 +60,7 @@ fn render_body(raw: String, _req: &MockRequest) -> String {
     raw
 }
 
-/// 不做 URL 解码(简化版)。
+/// No URL decoding (simplified).
 fn parse_query(q: &str) -> BTreeMap<String, String> {
     q.split('&')
         .filter(|kv| !kv.is_empty())

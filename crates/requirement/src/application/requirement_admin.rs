@@ -8,9 +8,9 @@ use crate::domain::{
 };
 use crate::ports::{RepoError, RequirementRepository};
 
-/// 变更日志单次最多回放的条数。
+/// Max change-log entries returned per query.
 const MAX_CHANGE_ENTRIES: u32 = 200;
-/// 父链上溯步数上限(防御脏数据里的既有环)。
+/// Max hops when walking the parent chain (guards against pre-existing cycles in dirty data).
 const MAX_ANCESTOR_HOPS: usize = 32;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -21,13 +21,13 @@ pub enum RequirementCmdError {
     NoSuchVersion(u32),
     Archived,
     NotUnderReview,
-    /// 指定的父需求不存在(或已软删除)。
+    /// Parent requirement does not exist (or is soft-deleted).
     ParentNotFound,
-    /// 需求不能作为自己的父需求。
+    /// A requirement cannot be its own parent.
     SelfParent,
-    /// 父需求必须与本需求同项目。
+    /// Parent must belong to the same project.
     CrossProjectParent,
-    /// 设置该父需求会构成环。
+    /// Setting this parent would create a cycle.
     ParentCycle,
     Repo(RepoError),
 }
@@ -39,12 +39,12 @@ pub(crate) fn now_ms() -> i64 {
         .unwrap_or(0)
 }
 
-/// 可选值统一转字符串入变更日志(None → 空串)。
+/// Optional value as a change-log string (None → empty).
 fn opt_str(v: Option<&str>) -> String {
     v.unwrap_or_default().to_string()
 }
 
-/// 计划日期入参:外层 None 不动;`Some(None)` 清除;`Some(Some(d))` 须为 YYYY-MM-DD。
+/// Planned-date input: outer None keeps current; `Some(None)` clears; `Some(Some(d))` must be YYYY-MM-DD.
 fn parse_planned(v: Option<Option<&str>>) -> Result<Option<Option<String>>, RequirementError> {
     match v {
         None => Ok(None),
@@ -89,12 +89,12 @@ impl RequirementService {
         Self { repo }
     }
 
-    /// 软删除视为不存在。
+    /// Soft-deleted requirements are treated as missing.
     pub async fn get(&self, id: &str) -> Result<Requirement, RequirementCmdError> {
         self.repo.get(id).await?.filter(|r| !r.deleted).ok_or(RequirementCmdError::NotFound)
     }
 
-    /// 手工排序:按给定顺序为项目内这些需求写入显式秩。
+    /// Manual ordering: writes explicit ranks for these requirements in the given order.
     pub async fn reorder(
         &self,
         project_id: &str,
@@ -104,7 +104,7 @@ impl RequirementService {
         Ok(())
     }
 
-    /// 项目内需求按状态聚合(仪表盘)。
+    /// Per-status aggregation of a project's requirements (dashboard).
     pub async fn status_summary(
         &self,
         project_id: &str,
@@ -145,12 +145,12 @@ impl RequirementService {
                 .append_change(id, &[change(by, "status", old.as_str(), req.status.as_str())])
                 .await?;
         }
-        // 定基线即评审通过。
+        // Baselining implies the review passed.
         self.stage_hook(&mut req, Stage::Review, StageStatus::Done, by).await;
         Ok(req)
     }
 
-    /// 标题唯一性忽略软删除并排除自身。
+    /// Title uniqueness ignores soft-deleted rows and the requirement itself.
     pub async fn rename(
         &self,
         id: &str,
@@ -160,10 +160,11 @@ impl RequirementService {
         self.update(id, title, None, None, None, None, None, None, by).await
     }
 
-    /// 改名 + 可选更新优先级/需求类型/标签/截止日期/自定义字段/所属模块:None 表示不动,非法值报校验错。
-    /// `due_date`:外层 None 不动;`Some(None)` 清除;`Some(Some(d))` 设为 d(须为 YYYY-MM-DD)。
-    /// `custom_fields`:None 不动;Some(map) 整体替换(空 map 即清空)。
-    /// `module_id`:None 不动;Some 替换(空串 = 摘回未规划)。
+    /// Rename plus optional updates to priority/type/tags/due date/custom fields/module:
+    /// None keeps the current value, invalid values fail validation.
+    /// `due_date`: outer None keeps; `Some(None)` clears; `Some(Some(d))` sets d (must be YYYY-MM-DD).
+    /// `custom_fields`: None keeps; Some(map) replaces wholesale (empty map clears).
+    /// `module_id`: None keeps; Some replaces (empty string = unfiled).
     #[allow(clippy::too_many_arguments)]
     pub async fn update(
         &self,
@@ -228,7 +229,7 @@ impl RequirementService {
             req.due_date = d;
         }
         if let Some(cf) = custom_fields {
-            // 整体替换,逐键对比记 change log:新增键 old 为空,删除键 new 为空。
+            // Wholesale replace; diff per key for the change log: added keys log empty old, removed keys empty new.
             for (k, old_v) in &req.custom_fields {
                 match cf.get(k) {
                     Some(new_v) if new_v != old_v => {
@@ -259,8 +260,9 @@ impl RequirementService {
         Ok(req)
     }
 
-    /// 推进流水线阶段:可选改状态(盖章规则见 `StageRow::set_status`)、可选设/清计划起止日期
-    /// (外层 None 不动;`Some(None)` 清除;`Some(Some(d))` 设为 d,须为 YYYY-MM-DD)。
+    /// Advance a pipeline stage: optionally change status (stamping rules in `StageRow::set_status`)
+    /// and optionally set/clear planned dates (outer None keeps; `Some(None)` clears;
+    /// `Some(Some(d))` sets d, must be YYYY-MM-DD).
     pub async fn set_stage(
         &self,
         id: &str,
@@ -320,8 +322,9 @@ impl RequirementService {
         Ok(req)
     }
 
-    /// 阶段自动钩子:业务动作成功后同步对应阶段行;已是目标状态则跳过。
-    /// 阶段写失败不拖垮主操作,仅告警(读侧回落 `fill_stages` 默认行)。
+    /// Stage auto-hook: syncs the matching stage row after a business action succeeds;
+    /// skipped when already at the target status. A failed stage write must not fail the
+    /// main operation — warn only (reads fall back to `fill_stages` default rows).
     async fn stage_hook(&self, req: &mut Requirement, stage: Stage, status: StageStatus, by: &str) {
         let Some(row) = req.stage_row(stage) else { return };
         let old = row.status;
@@ -343,7 +346,8 @@ impl RequirementService {
         }
     }
 
-    /// 挂/摘父需求:父须存在(未软删)、同项目、非自身,且不得构成环。
+    /// Attach/detach parent: parent must exist (not soft-deleted), be in the same project,
+    /// not be the requirement itself, and must not create a cycle.
     pub async fn set_parent(
         &self,
         id: &str,
@@ -390,7 +394,8 @@ impl RequirementService {
         if parent.project_id != req.project_id {
             return Err(RequirementCmdError::CrossProjectParent);
         }
-        // 沿父链上溯:碰到自身即成环;步数封顶,防御脏数据里的既有环。
+        // Walk up the parent chain: hitting self means a cycle; hops are capped to guard
+        // against pre-existing cycles in dirty data.
         let mut cursor = parent.parent_id;
         for _ in 0..MAX_ANCESTOR_HOPS {
             let Some(ancestor_id) = cursor else { return Ok(()) };
@@ -402,22 +407,23 @@ impl RequirementService {
         Ok(())
     }
 
-    /// 直属子需求(未软删除)。
+    /// Direct children (not soft-deleted).
     pub async fn children(&self, id: &str) -> Result<Vec<Requirement>, RequirementCmdError> {
         self.get(id).await?;
         Ok(self.repo.children(id).await?)
     }
 
-    /// 变更日志,最新在前,封顶 `MAX_CHANGE_ENTRIES` 条。
+    /// Change log, newest first, capped at `MAX_CHANGE_ENTRIES`.
     pub async fn changes(&self, id: &str) -> Result<Vec<ChangeEntry>, RequirementCmdError> {
         self.get(id).await?;
         Ok(self.repo.list_changes(id, MAX_CHANGE_ENTRIES).await?)
     }
 
-    // TODO(评审 AI 化): 在人工通过/驳回之外引入 AI 评审意见 —— 检索该需求关联的
-    // 测试用例(功能用例覆盖链)与产品 PRD 语料(RAG),让模型给出「通过/驳回 + 依据」
-    // 作为评审决策输入。落点:第五个 LLM 触点(见 server/llm.rs 前四个:拆分/执行/
-    // 验证/用例起草),评审门仍由人最终拍板,AI 结论作为附签意见展示在评审页。
+    // TODO(AI review): beyond manual approve/reject, add an AI review opinion — retrieve the
+    // requirement's linked test cases (functional coverage chain) and PRD corpus (RAG) and have
+    // the model output "approve/reject + rationale" as decision input. Lands as the fifth LLM
+    // touchpoint (see server/llm.rs for the first four: split/execute/verify/case drafting);
+    // the review gate stays human-decided, with the AI verdict shown as an attached opinion.
     pub async fn reject_review(
         &self,
         id: &str,
@@ -428,11 +434,12 @@ impl RequirementService {
         let old = req.status;
         req.reject_review(reason)?;
         self.repo.save(&req).await?;
-        // 驳回不改状态(留在 DRAFT 待重评),仍记一条 status 流水标记这次评审动作。
+        // Rejection keeps the status (stays DRAFT for re-review) but still logs a status entry
+        // to record the review action.
         self.repo
             .append_change(id, &[change(by, "status", old.as_str(), req.status.as_str())])
             .await?;
-        // 驳回意味着评审仍在进行中。
+        // Rejection means the review is still in progress.
         self.stage_hook(&mut req, Stage::Review, StageStatus::InProgress, by).await;
         Ok(req)
     }
@@ -447,7 +454,7 @@ impl RequirementService {
                 .append_change(id, &[change(by, "status", old.as_str(), req.status.as_str())])
                 .await?;
         }
-        // 交付即验收完成(若尚未)+ 交付完成。
+        // Delivering completes acceptance (if not already) and delivery.
         self.stage_hook(&mut req, Stage::Acceptance, StageStatus::Done, by).await;
         self.stage_hook(&mut req, Stage::Delivery, StageStatus::Done, by).await;
         Ok(req)
@@ -576,7 +583,7 @@ mod tests {
             .expect("update");
         assert_eq!(r.priority, RequirementPriority::P1);
         assert_eq!(r.req_type, RequirementType::Bugfix);
-        // None 不动已有值。
+        // None keeps existing values.
         let r2 = svc
             .update(&id, "登入", None, None, None, None, None, None, "u1")
             .await
@@ -584,7 +591,7 @@ mod tests {
         assert_eq!(r2.title, "登入");
         assert_eq!(r2.priority, RequirementPriority::P1);
         assert_eq!(r2.req_type, RequirementType::Bugfix);
-        // 非法值报校验错。
+        // Invalid value fails validation.
         assert_eq!(
             svc.update(&id, "登入", Some("P9"), None, None, None, None, None, "u1")
                 .await
@@ -619,7 +626,7 @@ mod tests {
         assert_eq!(created.started_at_ms, Some(r.created_at_ms));
         assert_eq!(created.finished_at_ms, Some(r.created_at_ms));
         assert_eq!(r.current_stage(), Stage::Audit);
-        // 钩子记了变更日志。
+        // The hook recorded a change-log entry.
         let log = svc.changes(&id).await.expect("changes");
         assert_eq!(log.len(), 1);
         assert_eq!(log[0].field, "stage.CREATED");
@@ -638,7 +645,7 @@ mod tests {
         assert_eq!(dev.status, StageStatus::InProgress);
         let started = dev.started_at_ms.expect("started stamped");
         assert!(dev.finished_at_ms.is_none());
-        // 重复推进不覆盖开始时间。
+        // Repeated transition does not overwrite the start stamp.
         let r2 =
             svc.set_stage(&id, "DEV", Some("IN_PROGRESS"), None, None, "u1").await.expect("stage");
         assert_eq!(stage_of(&r2, Stage::Dev).started_at_ms, Some(started));
@@ -648,14 +655,14 @@ mod tests {
         let finished = dev3.finished_at_ms.expect("finished stamped");
         let r4 = svc.set_stage(&id, "DEV", Some("DONE"), None, None, "u1").await.expect("stage");
         assert_eq!(stage_of(&r4, Stage::Dev).finished_at_ms, Some(finished));
-        // 持久化了(重取仍在);直接 DONE 补齐开始时间。
+        // Persisted (survives reload); jumping straight to DONE backfills the start stamp.
         let got = svc.get(&id).await.expect("get");
         assert_eq!(stage_of(&got, Stage::Dev).status, StageStatus::Done);
         let r5 = svc.set_stage(&id, "TEST", Some("done"), None, None, "u1").await.expect("stage");
         let test = stage_of(&r5, Stage::Test);
         assert!(test.started_at_ms.is_some());
         assert!(test.finished_at_ms.is_some());
-        // 非法阶段/状态报校验错。
+        // Invalid stage/status fails validation.
         assert_eq!(
             svc.set_stage(&id, "DESIGN", Some("DONE"), None, None, "u1").await.unwrap_err(),
             RequirementCmdError::Validation(RequirementError::InvalidStage("DESIGN".into()))
@@ -676,22 +683,22 @@ mod tests {
         let dev = stage_of(&r, Stage::Dev);
         assert_eq!(dev.planned_start.as_deref(), Some("2026-07-01"));
         assert_eq!(dev.planned_end.as_deref(), Some("2026-07-31"));
-        assert_eq!(dev.status, StageStatus::Pending); // 只改计划不动状态
-                                                      // 外层 None 不动。
+        assert_eq!(dev.status, StageStatus::Pending); // plan-only update keeps status
+                                                      // Outer None keeps.
         let r2 = svc.set_stage(&id, "DEV", None, None, None, "u1").await.expect("stage");
         assert_eq!(stage_of(&r2, Stage::Dev).planned_end.as_deref(), Some("2026-07-31"));
-        // Some(None) 清除。
+        // Some(None) clears.
         let r3 = svc.set_stage(&id, "DEV", None, None, Some(None), "u1").await.expect("stage");
         assert!(stage_of(&r3, Stage::Dev).planned_end.is_none());
         assert_eq!(stage_of(&r3, Stage::Dev).planned_start.as_deref(), Some("2026-07-01"));
-        // 非法日期报校验错。
+        // Invalid date fails validation.
         assert_eq!(
             svc.set_stage(&id, "DEV", None, None, Some(Some("2026/07/31")), "u1")
                 .await
                 .unwrap_err(),
             RequirementCmdError::Validation(RequirementError::InvalidDueDate("2026/07/31".into()))
         );
-        // 变更日志:最新在前 = 清除 plannedEnd → 设 plannedEnd → 设 plannedStart → 建档。
+        // Change log, newest first: clear plannedEnd → set plannedEnd → set plannedStart → creation.
         let log = svc.changes(&id).await.expect("changes");
         let fields: Vec<&str> = log.iter().map(|c| c.field.as_str()).collect();
         assert_eq!(
@@ -710,13 +717,13 @@ mod tests {
     #[tokio::test]
     async fn baseline_and_reject_hooks_drive_review_stage() {
         let (svc, id) = seeded().await;
-        // 驳回 → 评审进行中。
+        // Reject → review in progress.
         let r = svc.reject_review(&id, "缺少异常路径", "u1").await.expect("reject");
         assert_eq!(stage_of(&r, Stage::Review).status, StageStatus::InProgress);
-        // 定基线 → 评审通过。
+        // Baseline → review done.
         let r2 = svc.set_baseline(&id, 1, "u1").await.expect("baseline");
         assert_eq!(stage_of(&r2, Stage::Review).status, StageStatus::Done);
-        // 持久化 + 变更日志。
+        // Persisted + change log.
         let got = svc.get(&id).await.expect("get");
         assert_eq!(stage_of(&got, Stage::Review).status, StageStatus::Done);
         let fields: Vec<String> =
@@ -731,7 +738,7 @@ mod tests {
         let r = svc.deliver(&id, "u1").await.expect("deliver");
         assert_eq!(stage_of(&r, Stage::Acceptance).status, StageStatus::Done);
         assert_eq!(stage_of(&r, Stage::Delivery).status, StageStatus::Done);
-        // 重复交付幂等:不再追加阶段日志。
+        // Repeated delivery is idempotent: no extra stage log entries.
         let n = svc.changes(&id).await.expect("changes").len();
         svc.deliver(&id, "u1").await.expect("deliver again");
         assert_eq!(svc.changes(&id).await.expect("changes").len(), n);
@@ -745,7 +752,7 @@ mod tests {
         let finished =
             stage_of(&svc.get(&id).await.expect("get"), Stage::Acceptance).finished_at_ms;
         svc.deliver(&id, "u1").await.expect("deliver");
-        // 已完成的验收不被钩子改写(时间戳保持),且只为 DELIVERY 记日志。
+        // The hook leaves already-done acceptance untouched (timestamp kept) and logs only DELIVERY.
         let got = svc.get(&id).await.expect("get");
         assert_eq!(stage_of(&got, Stage::Acceptance).finished_at_ms, finished);
         let fields: Vec<String> =
@@ -781,7 +788,6 @@ mod tests {
         let kids = svc.children(&ids[0]).await.expect("children");
         assert_eq!(kids.len(), 2);
         assert!(kids.iter().all(|k| k.parent_id.as_deref() == Some(ids[0].as_str())));
-        // 摘除父需求。
         let r = svc.set_parent(&ids[1], None, "u1").await.expect("unlink");
         assert!(r.parent_id.is_none());
         assert_eq!(svc.children(&ids[0]).await.expect("children").len(), 1);
@@ -809,14 +815,14 @@ mod tests {
             svc.set_parent(&a, Some(&other), "u1").await.unwrap_err(),
             RequirementCmdError::CrossProjectParent
         );
-        // A → B → C 后,C 再挂 A 成环。
+        // With B under A and C under B, hanging A under C forms a cycle.
         svc.set_parent(&b, Some(&a), "u1").await.expect("b under a");
         svc.set_parent(&c, Some(&b), "u1").await.expect("c under b");
         assert_eq!(
             svc.set_parent(&a, Some(&c), "u1").await.unwrap_err(),
             RequirementCmdError::ParentCycle
         );
-        // 直接父子环也拦。
+        // Direct parent-child cycle is rejected too.
         assert_eq!(
             svc.set_parent(&a, Some(&b), "u1").await.unwrap_err(),
             RequirementCmdError::ParentCycle
@@ -843,20 +849,20 @@ mod tests {
             .expect("update");
         assert_eq!(r.tags, vec!["api".to_string(), "web".to_string()]);
         assert_eq!(r.due_date.as_deref(), Some("2026-12-31"));
-        // 外层 None 不动。
+        // Outer None keeps.
         let r2 = svc
             .update(&id, "登录", None, None, None, None, None, None, "u1")
             .await
             .expect("update");
         assert_eq!(r2.tags, vec!["api".to_string(), "web".to_string()]);
         assert_eq!(r2.due_date.as_deref(), Some("2026-12-31"));
-        // Some(None) 清除截止日期。
+        // Some(None) clears the due date.
         let r3 = svc
             .update(&id, "登录", None, None, None, Some(None), None, None, "u1")
             .await
             .expect("update");
         assert!(r3.due_date.is_none());
-        // 非法日期报校验错。
+        // Invalid date fails validation.
         assert_eq!(
             svc.update(&id, "登录", None, None, None, Some(Some("2026/12/31")), None, None, "u1")
                 .await
@@ -868,19 +874,19 @@ mod tests {
     #[tokio::test]
     async fn update_sets_module_none_keeps_and_empty_unfiles() {
         let (svc, id) = seeded().await;
-        // Some 替换 + 记 module 变更日志。
+        // Some replaces and logs a module change.
         let r = svc
             .update(&id, "登录", None, None, None, None, None, Some(" mod-1 "), "u1")
             .await
             .expect("update");
-        assert_eq!(r.module_id, "mod-1"); // 自动 trim
-                                          // None 不动。
+        assert_eq!(r.module_id, "mod-1"); // trimmed
+                                          // None keeps.
         let r2 = svc
             .update(&id, "登录", None, None, None, None, None, None, "u1")
             .await
             .expect("update");
         assert_eq!(r2.module_id, "mod-1");
-        // 相同值不记日志;空串摘回未规划。
+        // Same value logs nothing; empty string unfiles the module.
         svc.update(&id, "登录", None, None, None, None, None, Some("mod-1"), "u1")
             .await
             .expect("update");
@@ -895,7 +901,7 @@ mod tests {
             .filter(|c| c.field == "module")
             .map(|c| (c.old_value.as_str(), c.new_value.as_str()))
             .collect();
-        // 最新在前:摘除(mod-1 → "")、设置("" → mod-1);相同值那次没记。
+        // Newest first: unfile (mod-1 → "") then set ("" → mod-1); the same-value update logged nothing.
         assert_eq!(modules, [("mod-1", ""), ("", "mod-1")]);
     }
 
@@ -920,13 +926,13 @@ mod tests {
             .await
             .expect("update");
         assert_eq!(r.custom_fields, cf(&[("owner", "alice"), ("module", "登录")]));
-        // None 不动。
+        // None keeps.
         let r2 = svc
             .update(&id, "登录", None, None, None, None, None, None, "u1")
             .await
             .expect("update");
         assert_eq!(r2.custom_fields, cf(&[("owner", "alice"), ("module", "登录")]));
-        // 整体替换:改 owner、删 module、增 env。
+        // Wholesale replace: change owner, drop module, add env.
         let r3 = svc
             .update(
                 &id,
@@ -942,15 +948,15 @@ mod tests {
             .await
             .expect("update");
         assert_eq!(r3.custom_fields, cf(&[("owner", "bob"), ("env", "prod")]));
-        // 非法键报校验错。
+        // Invalid key fails validation.
         assert_eq!(
             svc.update(&id, "登录", None, None, None, None, Some(&cf(&[("  ", "v")])), None, "u1")
                 .await
                 .unwrap_err(),
             RequirementCmdError::Validation(RequirementError::EmptyCustomFieldKey)
         );
-        // 变更日志:最新一轮为 env(新增,old 空)/ module(删除,new 空)/ owner(改值);
-        // BTreeMap 迭代按键序,先对比旧键(module/owner)再补新增键(env)。
+        // Latest round in the change log: env (added, empty old) / module (removed, empty new) / owner (changed).
+        // BTreeMap iterates in key order: existing keys (module/owner) are diffed first, then added keys (env).
         let log = svc.changes(&id).await.expect("changes");
         let head: Vec<(&str, &str, &str)> = log[..3]
             .iter()
@@ -964,7 +970,7 @@ mod tests {
                 ("custom.module", "登录", ""),
             ]
         );
-        // 相同 map 再提交:不追加日志。
+        // Resubmitting the same map appends nothing.
         let n = log.len();
         svc.update(&id, "登录", None, None, None, None, Some(&r3.custom_fields), None, "u1")
             .await
@@ -985,8 +991,8 @@ mod tests {
 
         let log = svc.changes(&id).await.expect("changes");
         let fields: Vec<&str> = log.iter().map(|c| c.field.as_str()).collect();
-        // 最新在前:deliver(status + 验收/交付钩子) → set_stage(DEV) →
-        // baseline(status + 评审钩子) → revise → update(title, priority) → 建档钩子。
+        // Newest first: deliver (status + acceptance/delivery hooks) → set_stage(DEV) →
+        // baseline (status + review hook) → revise → update (title, priority) → creation hook.
         assert_eq!(
             fields,
             [
@@ -1011,14 +1017,14 @@ mod tests {
         assert_eq!(log[6].new_value, "2");
         assert_eq!(log[8].old_value, "登录");
         assert_eq!(log[8].new_value, "登入");
-        // 时间戳单调(倒序)。
+        // Timestamps are monotonic (descending).
         assert!(log.windows(2).all(|w| w[0].changed_at_ms >= w[1].changed_at_ms));
     }
 
     #[tokio::test]
     async fn unchanged_update_and_repeat_status_record_nothing() {
         let (svc, id) = seeded().await;
-        // 种子只有建档钩子那一条。
+        // Seed has only the creation-hook entry.
         assert_eq!(svc.changes(&id).await.expect("changes").len(), 1);
         svc.update(&id, "登录", None, None, None, None, None, None, "u1").await.expect("update");
         assert_eq!(svc.changes(&id).await.expect("changes").len(), 1);

@@ -7,9 +7,10 @@ import { useApp } from '../context'
 import { useI18n } from '../i18n'
 import { PageBody, PageContainer, PageHeader, SelectProjectEmpty } from '../components/Page'
 
-// 关注 = 我盯的资产。后端 /follow 是通用关注(projectId + entityType + entityId),
-// 当前只有缺陷域实际写入 entityType=bug;其他资产(需求/用例/计划)接入后在此加区即可。
-// 口径:GET /follow/mine?entityType=bug 拿我关注的缺陷 id,再与项目缺陷列表求交集补齐标题/状态。
+// Follows = assets I watch. Backend /follow is generic (projectId + entityType + entityId), but
+// only the bug domain writes entityType=bug today; add sections here as other assets wire in.
+// Data flow: GET /follow/mine?entityType=bug for followed bug ids, then intersect with the
+// project bug list to fill in title/status.
 
 const bugColor = (s: string) => {
   const v = (s || '').toUpperCase()

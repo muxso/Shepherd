@@ -1,6 +1,7 @@
-// GitHub 风格贡献格子(纯 SVG,无依赖):近一年日历格,列=周(周日起),行=周日~周六。
-// 颜色深浅 = 当日数量分级(4 级);悬浮显示日期与 AI/人工 明细。
-// 零值格用 CSS 变量(--border-soft)兜底,亮暗主题都自然。
+// GitHub-style contribution grid (pure SVG, no deps): last year of days,
+// columns = weeks (starting Sunday), rows = Sun–Sat. Color depth = 4-level count buckets;
+// hover shows date with AI/human breakdown. Zero cells fall back to the --border-soft
+// CSS variable so both light and dark themes look right.
 import { useMemo, useState } from 'react'
 import { useI18n } from '../i18n'
 
@@ -13,10 +14,10 @@ export interface DayCell {
 const CELL = 11
 const GAP = 3
 const WEEKS = 53
-const PAD_L = 28 // 周标签
-const PAD_T = 16 // 月标签
+const PAD_L = 28 // room for weekday labels
+const PAD_T = 16 // room for month labels
 
-// 值 → 透明度分级;基色由 metric 决定(AI/全部=品牌蓝,人工=橙)。
+// Value → opacity levels; base color depends on metric (AI/total = brand blue, human = orange).
 const LEVELS = [0.16, 0.34, 0.55, 0.8]
 
 export default function ContributionGrid({
@@ -24,7 +25,7 @@ export default function ContributionGrid({
   metric,
 }: {
   days: DayCell[]
-  /** total = AI+人工;ai / human 单看一方。 */
+  /** total = AI + human; ai / human show one side only. */
   metric: 'total' | 'ai' | 'human'
 }) {
   const { t } = useI18n()
@@ -34,7 +35,7 @@ export default function ContributionGrid({
   const valueOf = (c: DayCell) => (metric === 'ai' ? c.ai : metric === 'human' ? c.human : c.ai + c.human)
   const base = metric === 'human' ? '255, 125, 0' : '22, 100, 255'
 
-  // 网格:从「今天所在周的周日」往前推 52 周;逐列(周)逐行(星期)生成。
+  // Grid: 52 weeks back from the Sunday of the current week; generated column (week) by row (weekday).
   const { cols, monthMarks, max } = useMemo(() => {
     const today = new Date()
     const end = new Date(Date.UTC(today.getFullYear(), today.getMonth(), today.getDate()))
@@ -116,7 +117,7 @@ export default function ContributionGrid({
           )),
         )}
       </svg>
-      {/* 图例:Less → More */}
+      {/* Legend: less → more */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 3, fontSize: 11, color: 'var(--text-3)', marginTop: 4, justifyContent: 'flex-end' }}>
         {t('grid.less', '少')}
         <span style={{ width: CELL, height: CELL, borderRadius: 2, background: 'var(--border-soft)' }} />

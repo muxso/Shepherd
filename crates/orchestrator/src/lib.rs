@@ -1,7 +1,9 @@
-//! 交付反馈编排:交付完成后由 Judge 按验收准则评审交付物(内置 AcceptAllJudge/RuleJudge),
-//! 不通过走 Reviser 修订循环,通过后经 VerificationGateway 同步验收状态,
-//! 串起 requirement → dispatch → verify 流水线的收尾一环。
-//! 仅依赖 TaskGateway/VerificationGateway 等端口,自身无 IO。
+//! Delivery feedback orchestration: after a delivery completes, a Judge reviews
+//! the deliverable against the acceptance criteria (built-in AcceptAllJudge/
+//! RuleJudge). Failures go through the Reviser revision loop; passes sync
+//! acceptance state via VerificationGateway — the final leg of the
+//! requirement → dispatch → verify pipeline.
+//! Depends only on ports (TaskGateway/VerificationGateway etc.); no IO itself.
 
 pub mod application;
 pub mod judges;

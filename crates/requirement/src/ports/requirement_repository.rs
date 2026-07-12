@@ -1,4 +1,4 @@
-//! 端口契约:`*_active` 方法一律只看未软删除的需求。
+//! Port contract: every `*_active` method only sees non-soft-deleted requirements.
 
 use async_trait::async_trait;
 use thiserror::Error;
@@ -32,32 +32,32 @@ pub trait RequirementRepository: Send + Sync {
         limit: u32,
     ) -> Result<Vec<Requirement>, RepoError>;
 
-    /// 版本不可变:save 只追加尚未落库的版本,不改写已存在的。
+    /// Versions are immutable: save only appends versions not yet persisted, never rewrites existing ones.
     async fn save(&self, requirement: &Requirement) -> Result<(), RepoError>;
 
-    /// 手工排序:按给定顺序为这些需求写入显式秩(1..N);未列出的保持原秩。
+    /// Manual ordering: write explicit ranks (1..N) for these requirements in the given order; unlisted ones keep their rank.
     async fn set_order(&self, project_id: &str, ordered_ids: &[String]) -> Result<(), RepoError>;
 
-    /// 项目内未删除需求按状态聚合(仪表盘)。
+    /// Per-status counts of non-deleted requirements in a project (dashboard).
     async fn status_counts(&self, project_id: &str) -> Result<StatusCounts, RepoError>;
 
-    /// 直属子需求(未软删除),按展示序返回。
+    /// Direct children (non-soft-deleted), in display order.
     async fn children(&self, parent_id: &str) -> Result<Vec<Requirement>, RepoError>;
 
-    /// 写入/覆盖一条阶段行(按 (需求, 阶段) 幂等 upsert)。
+    /// Insert or overwrite one stage row (idempotent upsert keyed by (requirement, stage)).
     async fn upsert_stage(&self, requirement_id: &str, row: &StageRow) -> Result<(), RepoError>;
 
-    /// 该需求的 7 阶段流水线,恒为全部阶段、按顺序(缺行补 PENDING 默认)。
+    /// The requirement's 7-stage pipeline, always all stages in order (missing rows filled with PENDING defaults).
     async fn stages(&self, requirement_id: &str) -> Result<Vec<StageRow>, RepoError>;
 
-    /// 追加一批变更日志(只增不改;时间由存储层盖章)。
+    /// Append a batch of change-log entries (append-only; timestamps stamped by the storage layer).
     async fn append_change(
         &self,
         requirement_id: &str,
         changes: &[NewChange],
     ) -> Result<(), RepoError>;
 
-    /// 变更日志,最新在前,最多 `limit` 条。
+    /// Change log, newest first, at most `limit` entries.
     async fn list_changes(
         &self,
         requirement_id: &str,

@@ -7,14 +7,14 @@ import { useI18n } from '../i18n'
 
 const LIST_KEY = '__list__'
 
-// 工作区 Tab 栏右侧的额外内容插槽(DOM 节点)。活动 Tab 可通过 createPortal
-// 把自己的工具栏(如场景的「环境/服务端执行/保存」)投射到 Tab 栏同一行右侧。
+// Extra-content slot (DOM node) on the right of the workspace tab bar. The active tab can
+// createPortal its own toolbar (e.g. scenario's env/run/save) into the same row.
 const ExtraSlotContext = createContext<HTMLElement | null>(null)
 export function useWorkspaceExtraSlot() {
   return useContext(ExtraSlotContext)
 }
 
-// 深链:读取 ?open=<id>,交给调用方打开对应详情 tab,然后清除该参数(避免重复触发)。
+// Deep link: read ?open=<id>, let the caller open the detail tab, then strip the param to avoid re-triggering.
 export function useOpenParam(onOpen: (id: string) => void) {
   const [params, setParams] = useSearchParams()
   useEffect(() => {
@@ -29,7 +29,7 @@ export function useOpenParam(onOpen: (id: string) => void) {
   }, [params])
 }
 
-// 多 Tab 工作区状态:首个常驻列表 tab + 动态打开的详情 tab。
+// Multi-tab workspace state: a permanent list tab + dynamically opened detail tabs.
 export function useWorkTabs() {
   const [openIds, setOpenIds] = useState<string[]>([])
   const [activeKey, setActiveKey] = useState(LIST_KEY)
@@ -57,8 +57,8 @@ export interface WorkTab {
   children: ReactNode
 }
 
-// 统一的可拖拽左栏(树/筛选面板)。右缘提供 6px 拖拽热区,左右拖拽改宽,
-// 宽度在 [min, max] 内夹取;带 storageKey 时记忆到 localStorage(刷新保留)。
+// Shared resizable left pane (tree/filter panels). A 6px hot zone on the right edge drags the
+// width, clamped to [min, max]; with storageKey the width persists to localStorage.
 export function ResizableSider({
   children,
   defaultWidth = 252,
@@ -112,7 +112,7 @@ export function ResizableSider({
   )
 }
 
-// 统一三栏:左(树/筛选,可选)| 中右合一为多 Tab(列表常驻 + 详情多开)。
+// Shared layout: optional left pane (tree/filter) | multi-tab area (permanent list + multiple detail tabs).
 export function Workspace({
   left,
   leftWidth = 220,
@@ -135,7 +135,7 @@ export function Workspace({
   onClose: (k: string) => void
 }) {
   const { t } = useI18n()
-  // Tab 栏右侧插槽:活动 Tab 通过 useWorkspaceExtraSlot()+createPortal 投射工具栏。
+  // Right-side slot: the active tab portals its toolbar in via useWorkspaceExtraSlot() + createPortal.
   const [slotEl, setSlotEl] = useState<HTMLDivElement | null>(null)
   const items = [
     { key: LIST_KEY, label: listLabel ?? t('ws.list', '列表'), closable: false, children: listContent },
@@ -167,7 +167,7 @@ export function Workspace({
   )
 }
 
-// 统一列表:工具栏(新建/自定义动作 + 搜索 + 刷新)+ 表格 + 分页。
+// Shared list: toolbar (new/custom actions + search + refresh) + table + pagination.
 export function WorkList<T extends object>({
   onNew,
   newLabel,
@@ -195,7 +195,7 @@ export function WorkList<T extends object>({
   rowKey?: string
   onRowClick?: (record: T) => void
   emptyText?: string
-  /** 行内展开预览(antd expandable 透传);展开图标的点击不触发行点击。 */
+  /** Inline expand preview (passed through to antd expandable); clicking the expand icon does not trigger row click. */
   expandable?: TableProps<T>['expandable']
 }) {
   const { t } = useI18n()
@@ -209,7 +209,7 @@ export function WorkList<T extends object>({
         )}
         <div style={{ flex: 1 }} />
         {onSearch && <Input.Search placeholder={searchPlaceholder ?? t('a.search', '搜索')} allowClear style={{ width: 240 }} onChange={(e) => onSearch(e.target.value)} />}
-        {/* 工具类操作(搜索/视图/筛选/列)统一靠右,对齐场景页布局 */}
+        {/* Utility actions (search/views/filter/columns) align right, matching the scenario page layout */}
         {extraActions}
         {onRefresh && <Button icon={<ReloadOutlined />} onClick={onRefresh} />}
       </div>
@@ -223,7 +223,7 @@ export function WorkList<T extends object>({
           expandable={expandable}
           onRow={onRowClick ? (r) => ({
             onClick: (e) => {
-              // 展开图标的点击只做展开,不进详情。
+              // Expand-icon clicks only expand; don't open the detail.
               if ((e.target as Element).closest?.('.ant-table-row-expand-icon')) return
               onRowClick(r)
             },
@@ -237,7 +237,7 @@ export function WorkList<T extends object>({
   )
 }
 
-// 左栏统一头部(标题 + 右侧动作)。
+// Shared left-pane header (title + right-side action).
 export function PaneHeader({ title, action }: { title: string; action?: ReactNode }) {
   return (
     <div style={{ display: 'flex', alignItems: 'center', padding: '10px 12px', borderBottom: '1px solid var(--border-soft)' }}>

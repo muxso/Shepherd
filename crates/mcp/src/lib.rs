@@ -1,6 +1,8 @@
-//! MCP(Model Context Protocol)服务端最小实现:注册 Tool,分发 initialize / tools/list / tools/call,
-//! CapabilityChecker 按 resource+action 过滤工具可见性并校验调用授权。
-//! 只做 JSON-RPC 消息处理,不含传输层;由组装根挂到 HTTP 等通道上。
+//! Minimal MCP (Model Context Protocol) server: registers Tools and dispatches
+//! initialize / tools/list / tools/call. CapabilityChecker filters tool
+//! visibility by resource+action and authorizes calls.
+//! JSON-RPC message handling only, no transport layer; the composition root
+//! mounts it on HTTP or another channel.
 
 use std::sync::Arc;
 

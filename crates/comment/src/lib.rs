@@ -1,6 +1,6 @@
-//! 通用评论上下文:Comment 以 (target_type, target_id) 挂到任意资源(缺陷/需求/用例等),
-//! 增删查由 CommentRepository 端口承载。
-//! domain/application/ports 不做 IO;pg/http 适配器由 feature 启用。
+//! Generic comment context: a Comment attaches to any resource (bug/requirement/case/…)
+//! via (target_type, target_id); create/delete/list go through the CommentRepository port.
+//! domain/application/ports do no IO; pg/http adapters are feature-gated.
 
 pub mod adapters;
 pub mod application;

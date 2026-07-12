@@ -1,7 +1,11 @@
-//! 每客户端令牌桶限流。默认启用(200 rps/客户端);`SHEPHERD_RATE_LIMIT_RPS=0` 显式关闭。
-//! 客户端 key 取 `X-Forwarded-For` / `X-Real-IP` 首段(经反代);取不到归一到 "unknown"——
-//! 即无反代直连时全体共享一个桶,所以默认值必须宽松,真正的登录爆破由锁定机制兜底。
-//! 桶逻辑与时钟解耦(`check` 收外部 `Instant`),纯逻辑可测。
+//! Per-client token-bucket rate limiting. Enabled by default (200 rps/client);
+//! `SHEPHERD_RATE_LIMIT_RPS=0` disables it explicitly.
+//! Client key is the first hop of `X-Forwarded-For` / `X-Real-IP` (behind a reverse
+//! proxy); without one it collapses to "unknown" — i.e. direct connections all share
+//! one bucket, so the default must be generous. Real login brute-force protection is
+//! handled by the lockout mechanism.
+//! Bucket logic is decoupled from the clock (`check` takes an external `Instant`),
+//! keeping it testable as pure logic.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -43,7 +47,7 @@ impl RateLimiter {
         Some(Arc::new(Self { rps, burst, buckets: Mutex::new(HashMap::new()) }))
     }
 
-    /// 放行返回 Ok;拒绝返回建议等待秒(≥1)。
+    /// Ok = allowed; Err = rejected with the suggested wait in seconds (>= 1).
     fn check(&self, key: &str, now: Instant) -> Result<(), u64> {
         let mut g = self.buckets.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let b = g.entry(key.to_string()).or_insert(Bucket { tokens: self.burst, last: now });
@@ -94,12 +98,12 @@ mod tests {
     fn allows_burst_then_429_then_refills() {
         let rl = limiter(1.0, 2.0);
         let t0 = Instant::now();
-        // burst=2 → 头两次放行。
+        // burst=2 -> first two pass.
         assert!(rl.check("ip", t0).is_ok());
         assert!(rl.check("ip", t0).is_ok());
-        // 第三次(同一时刻)拒绝,建议等待 1s。
+        // Third (same instant) rejected with a 1s suggested wait.
         assert_eq!(rl.check("ip", t0), Err(1));
-        // 过 1s 回填 1 个令牌 → 放行一次。
+        // After 1s one token refills -> one more pass.
         assert!(rl.check("ip", t0 + Duration::from_secs(1)).is_ok());
         assert!(rl.check("ip", t0 + Duration::from_secs(1)).is_err());
     }
@@ -110,7 +114,7 @@ mod tests {
         let t = Instant::now();
         assert!(rl.check("a", t).is_ok());
         assert!(rl.check("a", t).is_err());
-        // 另一个 client 不受影响。
+        // A different client is unaffected.
         assert!(rl.check("b", t).is_ok());
     }
 

@@ -261,7 +261,7 @@ fn to_node(step: &PlanStep, once: &mut u32) -> PlanNode {
     }
 }
 
-/// 静态叶子数:循环体只算一次(不乘 times)。
+/// Static leaf count: a loop body counts once (not multiplied by `times`).
 pub(crate) fn count_leaves(nodes: &[PlanNode]) -> usize {
     nodes
         .iter()

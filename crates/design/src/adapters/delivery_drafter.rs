@@ -41,7 +41,7 @@ impl DesignDrafter for DeliveryDesignDrafter {
                 "覆盖方案/接口/数据模型/错误处理/风险".to_string(),
             ],
             executor: self.kind,
-            // "design" 路由 runtime 到 design bridge(回填 /proposal/{id}/design),而非默认实现 bridge。
+            // "design" routes the runtime to the design bridge (writes back to /proposal/{id}/design) instead of the default implementation bridge.
             context: Some("design".to_string()),
             instructions: Some(ARCHITECT_ROLE.replace("{proposal_id}", &proposal.id)),
             target_runtime: None,

@@ -1,44 +1,45 @@
-/* —— 设计令牌(单一真源,与 src/theme.ts 同值)。简约小清新(参考火山引擎控制台/Arco):
-   品牌=标准蓝,浅色=纯白面板 + 中性灰文字 + 极淡边框,大量留白;点缀用极淡的蓝白渐变。
-   绿色只留给「成功」语义,品牌与 pass/fail 状态色分离,列表页扫一眼就能区分。 —— */
+/* Design tokens (single source of truth, same values as src/theme.ts). Clean, light style
+   (after Volcengine console / Arco): brand = standard blue; light mode = white panels,
+   neutral gray text, faint borders, generous whitespace; accents use a faint blue-white gradient.
+   Green is reserved for "success" — brand and pass/fail colors stay distinct so lists scan easily. */
 :root {
-  --brand: #1664ff; /* 标准蓝 */
+  --brand: #1664ff; /* standard blue */
   --brand-hover: #4086ff;
-  --brand-soft: #eaf2ff; /* 选中/悬浮的淡品牌底 */
-  --accent: #6ad2ff; /* 辅助青蓝,图表/装饰用 */
+  --brand-soft: #eaf2ff; /* faint brand bg for selected/hover */
+  --accent: #6ad2ff; /* secondary cyan-blue for charts/decoration */
   --success: #00b42a;
   --error: #f53f3f;
   --warning: #ff7d00;
-  --bg: transparent; /* 应用画布:透明,让 body 环境光晕透出 */
-  --bg-base: #f7f8fa; /* body 实底,中性浅灰 */
-  --panel: #ffffff; /* 卡片/面板 */
-  --panel-2: #f7f8fa; /* 次级面板/表头 */
+  --bg: transparent; /* app canvas: transparent so the body ambient glow shows through */
+  --bg-base: #f7f8fa; /* body solid bg, neutral light gray */
+  --panel: #ffffff; /* cards/panels */
+  --panel-2: #f7f8fa; /* secondary panels / table headers */
   --border: #e5e6eb;
   --border-soft: #f2f3f5;
   --text: #1d2129;
   --text-2: #4e5969;
   --text-3: #86909c;
-  /* 磨砂玻璃:半透明面板 + 背景模糊;--glass-0 为页面未滚动时的更通透态 */
+  /* Frosted glass: translucent panel + backdrop blur; --glass-0 is the more transparent state before the page scrolls */
   --glass: rgba(255, 255, 255, 0.8);
   --glass-0: rgba(255, 255, 255, 0.45);
   --glass-blur: blur(16px) saturate(125%);
-  /* 环境光晕:极淡的蓝,近乎不可见,只留一点空气感。 */
+  /* Ambient glow: near-invisible faint blue, just a hint of air. */
   --spotlight:
     radial-gradient(ellipse 72% 56% at 10% 100%, rgba(22, 100, 255, 0.04), transparent 66%),
     radial-gradient(ellipse 60% 50% at 90% 100%, rgba(106, 210, 255, 0.04), transparent 68%);
 }
 [data-theme='dark'] {
-  --brand: #4086ff; /* 标准蓝,深灰底上取亮值 */
+  --brand: #4086ff; /* standard blue, brightened for the dark gray canvas */
   --brand-hover: #5b9aff;
-  --brand-soft: #1c2b4a; /* 选中行的深蓝底 */
+  --brand-soft: #1c2b4a; /* dark blue bg for selected rows */
   --accent: #6ad2ff;
   --success: #27c346;
   --error: #f76965;
   --warning: #ff9a2e;
   --bg: transparent;
-  --bg-base: #161719; /* 中性深灰画布 */
-  --panel: #1d1f25; /* 行/卡片 */
-  --panel-2: #24262e; /* 表头/悬浮 */
+  --bg-base: #161719; /* neutral dark gray canvas */
+  --panel: #1d1f25; /* rows/cards */
+  --panel-2: #24262e; /* table headers / hover */
   --border: #2f333b;
   --border-soft: #272b32;
   --text: #e2e5ec;
@@ -52,8 +53,9 @@
     radial-gradient(ellipse 60% 50% at 90% 100%, rgba(106, 210, 255, 0.05), transparent 68%);
 }
 
-/* 闭环门面背景:一道柔和微光从左到右持续流动,呼应"流水线 / 闭环"。
-   用多层 background-position 动画(不引入伪元素 → 无层叠冲突,内容天然在背景之上)。 */
+/* Closed-loop landing hero: a soft glow sweeps left to right, echoing the "pipeline / loop" theme.
+   Implemented with layered background-position animation — no pseudo-element, so no stacking
+   conflicts and content naturally sits above the background. */
 .ms-loop-hero {
   background-image:
     linear-gradient(90deg, transparent 0%, rgba(22, 100, 255, 0.10) 50%, transparent 100%),
@@ -82,7 +84,7 @@ body {
   background: var(--bg-base);
   color: var(--text);
 }
-/* 环境光晕:固定于视口、置于所有内容之下,不参与布局/交互。 */
+/* Ambient glow: fixed to the viewport, below all content, no layout/interaction impact. */
 body::before {
   content: '';
   position: fixed;
@@ -95,13 +97,13 @@ body::before {
   font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-feature-settings: 'liga' 0;
 }
-/* 选中行高亮(三栏联动) */
+/* Selected-row highlight (synced across the three panes) */
 .ms-row-active > td {
   background: var(--brand-soft) !important;
 }
-/* 多 Tab 工作区:内容区铺满可用高度并各自滚动。
-   注意:全部选择器都用「> .ant-tabs-nav」直接子级限定,避免样式渗透到
-   详情里嵌套的「预览/定义/用例/MOCK」与子标签(那是普通 antd 线性 Tab)。 */
+/* Multi-tab workspace: content fills the available height, each pane scrolls independently.
+   Note: every selector is scoped with the direct child "> .ant-tabs-nav" so styles don't leak
+   into the nested detail tabs (Preview/Definition/Cases/Mock and their sub-tabs — plain antd line tabs). */
 .ms-worktabs {
   display: flex;
   flex-direction: column;
@@ -116,7 +118,7 @@ body::before {
 .ms-worktabs > .ant-tabs-content-holder > .ant-tabs-content > .ant-tabs-tabpane {
   height: 100%;
 }
-/* 工作 Tab(仅顶层):浅底浏览器式标签,选中白底 + 紫顶条 */
+/* Work tabs (top level only): browser-style tabs on a light bg; active tab gets white bg + brand top bar */
 .ms-worktabs > .ant-tabs-nav {
   background: var(--panel-2);
   padding: 6px 10px 0;
@@ -159,12 +161,13 @@ body::before {
   color: var(--text-2) !important;
 }
 
-/* 详情内「预览/定义/用例/MOCK」+ 子标签:干净的线性 Tab(扁平 + 紫色墨条/选中字)。 */
+/* Detail tabs (Preview/Definition/Cases/Mock + sub-tabs): clean line tabs (flat, brand ink bar and active text). */
 .ms-detail-tabs > .ant-tabs-nav {
   margin-bottom: 12px;
 }
-/* 仅「引用关系」预览子标签用:让内容填满可用高度(关系图整套铺满,而非固定 vh 留白)。
-   作用域到 .ms-fill-tabs,避免影响其它 .ms-detail-tabs 用例。 */
+/* Only for the "references" preview sub-tab: content fills the available height (the relation
+   graph stretches instead of leaving fixed-vh whitespace). Scoped to .ms-fill-tabs so other
+   .ms-detail-tabs usages are unaffected. */
 .ms-fill-tabs {
   height: 100%;
   display: flex;
@@ -199,8 +202,8 @@ body::before {
   background: var(--brand);
 }
 
-/* 主题切换动画(View Transitions):关掉默认交叉淡入,由 JS 用 clip-path 圆形扩散揭开新主题;
-   新主题在上层,旧主题静止垫底。 */
+/* Theme-switch animation (View Transitions): disable the default cross-fade; JS reveals the new
+   theme with a circular clip-path expansion. New theme on top, old theme static underneath. */
 ::view-transition-old(root),
 ::view-transition-new(root) {
   animation: none;
@@ -213,8 +216,8 @@ body::before {
   z-index: 2;
 }
 
-/* 左侧模块树(接口/场景/用例/计划/文件等):行高统一 28px,与项目页左导航一致;
-   图标/标题/行内工具按钮全部垂直居中,标题不换行。 */
+/* Left module tree (APIs/scenarios/cases/plans/files…): uniform 28px row height, matching the
+   project page left nav; icon/title/inline tool buttons all vertically centered, title never wraps. */
 .ant-tree .ant-tree-treenode {
   align-items: center;
   padding-bottom: 2px;
@@ -236,7 +239,7 @@ body::before {
   line-height: 28px;
   align-self: center;
 }
-/* 选中/悬浮态与项目页左导航一致:品牌淡底 + 品牌色字 / 次级灰底 */
+/* Selected/hover states match the project page left nav: faint brand bg + brand text / secondary gray bg */
 .ant-tree .ant-tree-node-content-wrapper:hover {
   background: var(--panel-2);
 }
@@ -245,7 +248,7 @@ body::before {
   color: var(--brand);
 }
 
-/* 表格观感:表头浅灰、行距更紧 */
+/* Table look: light gray header, tighter row spacing */
 .ant-table-thead > tr > th {
   background: var(--panel-2) !important;
   color: var(--text-2) !important;
@@ -256,19 +259,20 @@ body::before {
   padding-bottom: 9px !important;
 }
 
-/* 卡片标题更克制 */
+/* Restrained card header */
 .ant-card-head {
   min-height: 40px;
   font-size: 14px;
 }
 
-/* 顶栏一级导航选中项:紫色下划线 */
+/* Top-bar primary nav active item: brand underline */
 .ant-menu-horizontal.ant-menu-dark .ant-menu-item-selected {
   border-bottom: 2px solid var(--brand);
 }
 
-/* 场景步骤执行进度:整行背景从左到右填充(类似 0→100%),按执行顺序错峰起跑;
-   执行中蓝色填充,完成后整行变绿(通过)/红(失败)。置于内容之下(z-index:-1),文字可读。子步骤同样适用。 */
+/* Scenario step execution progress: the row background fills left to right (0→100%), staggered
+   by execution order; blue while running, then the whole row turns green (pass) / red (fail).
+   Sits below content (z-index:-1) so text stays readable. Applies to sub-steps too. */
 .ms-step-fillbg {
   position: absolute;
   top: 0;
@@ -291,8 +295,8 @@ body::before {
   to { width: 100%; }
 }
 
-/* 统一的卡片悬浮语言:轻抬 + 品牌色淡影。自定义卡片挂 .ms-hover-card,
-   antd 的 hoverable 卡片经选择器一并对齐,全站只有这一种悬浮效果。 */
+/* Single card-hover language site-wide: slight lift + faint brand shadow. Custom cards opt in
+   via .ms-hover-card; antd hoverable cards are aligned through the selector. */
 .ms-hover-card,
 .ant-card-hoverable {
   transition: transform 0.12s ease, box-shadow 0.12s ease;
@@ -302,14 +306,15 @@ body::before {
   transform: translateY(-2px);
   box-shadow: 0 6px 18px rgba(22, 100, 255, 0.10);
 }
-/* 深底上蓝色淡影不可见,暗色改用黑影表达同样的抬升。 */
+/* The faint blue shadow is invisible on dark backgrounds; dark mode uses a black shadow for the same lift. */
 [data-theme='dark'] .ms-hover-card:hover,
 [data-theme='dark'] .ant-card-hoverable:hover {
   box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
 }
 
-/* 顶栏滚动感知:页面在顶部时更通透(融入背景),滚动后回到磨砂实体感 + 细边 + 淡影,
-   过渡 0.25s。滚动检测在 AppShell 里以捕获方式监听内容区。 */
+/* Scroll-aware top bar: more transparent at the top of the page (blends into the background),
+   frosted solid + thin border + faint shadow once scrolled, 0.25s transition. Scroll detection
+   lives in AppShell, listening on the content area in capture phase. */
 .ms-topbar {
   background: var(--glass-0);
   backdrop-filter: var(--glass-blur);

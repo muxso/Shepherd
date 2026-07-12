@@ -140,7 +140,7 @@ pub struct Task {
     pub assignee_kind: String,
 }
 
-/// 任务按状态聚合(分解仪表盘)。
+/// Per-status task counts (decomposition dashboard).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct TaskStatusCounts {
     pub pending: u64,
@@ -157,7 +157,7 @@ impl TaskStatusCounts {
     }
 }
 
-/// 依赖图节点:任务 + 拓扑层 + 当前是否就绪(可派发)。
+/// Dependency-graph node: task + topological layer + whether it is currently ready (dispatchable).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GraphNode {
     pub id: String,
@@ -169,7 +169,7 @@ pub struct GraphNode {
     pub ready: bool,
 }
 
-/// 有向边:`from`(依赖/前驱)→ `to`(被依赖的任务/后继)。
+/// Directed edge: `from` (dependency/predecessor) → `to` (dependent task/successor).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GraphEdge {
     pub from: String,
@@ -180,7 +180,7 @@ pub struct GraphEdge {
 pub struct GraphView {
     pub nodes: Vec<GraphNode>,
     pub edges: Vec<GraphEdge>,
-    /// 总层数 = 最长链长度;空图为 0。
+    /// Total layer count = longest chain length; 0 for an empty graph.
     pub layers: u32,
 }
 
@@ -307,7 +307,7 @@ impl Decomposition {
         }
     }
 
-    /// 任务按状态聚合(分解仪表盘)。
+    /// Per-status task counts (decomposition dashboard).
     pub fn status_summary(&self) -> TaskStatusCounts {
         let mut c = TaskStatusCounts::default();
         for t in &self.tasks {
@@ -323,9 +323,11 @@ impl Decomposition {
         c
     }
 
-    /// 批量重指派:把当前归属 `from` 的**未完成**任务(跳过 Verified/Failed,避免误改已完成工作的归属)
-    /// 改派给 `to`,返回改动数量。`from`/`to` 按 trim 后精确匹配(`from` 为空串匹配未指派任务);
-    /// `to` 为空表示清空指派(同时清 kind)。典型用途:某执行者掉线,把它的活整体转给另一个。
+    /// Bulk reassignment: moves the **unfinished** tasks currently assigned to `from` over to
+    /// `to` (skips Verified/Failed so completed work keeps its owner) and returns how many
+    /// changed. `from`/`to` match exactly after trim (an empty `from` matches unassigned tasks);
+    /// an empty `to` clears the assignment (and kind). Typical use: an executor goes offline and
+    /// its whole workload is handed to another.
     pub fn reassign(&mut self, from: &str, to: &str, kind: &str) -> usize {
         let from = from.trim();
         let to = to.trim();
@@ -344,8 +346,10 @@ impl Decomposition {
         changed
     }
 
-    /// 依赖图只读视图(可视化用):节点(含拓扑层与就绪态)+ 边(依赖 → 被依赖任务)。
-    /// 层 = 最长依赖链深度(根为 0);松弛求解,不依赖任务行序,DAG 保证收敛。
+    /// Read-only dependency-graph view (for visualization): nodes (with topological layer and
+    /// readiness) + edges (dependency → dependent task).
+    /// Layer = longest dependency-chain depth (roots are 0); computed by relaxation, so it does
+    /// not depend on task row order, and the DAG guarantees convergence.
     pub fn graph_view(&self) -> GraphView {
         let mut layer: std::collections::HashMap<&str, u32> =
             self.tasks.iter().map(|t| (t.id.as_str(), 0u32)).collect();
@@ -471,7 +475,7 @@ mod tests {
 
     #[test]
     fn graph_view_layers_edges_and_ready() {
-        // 菱形:t1 → {t2, t3} → t4。
+        // Diamond: t1 → {t2, t3} → t4.
         let mut d = Decomposition::new("d1", "req1", 1);
         d.add_task(nt("A", &[])).expect("a");
         d.add_task(nt("B", &["t1"])).expect("b");
@@ -479,19 +483,19 @@ mod tests {
         d.add_task(nt("D", &["t2", "t3"])).expect("d");
 
         let g = d.graph_view();
-        assert_eq!(g.layers, 3); // t1=0, t2/t3=1, t4=2 → 3 层
+        assert_eq!(g.layers, 3); // t1=0, t2/t3=1, t4=2 → 3 layers
         let layer = |id: &str| g.nodes.iter().find(|n| n.id == id).expect("node").layer;
         assert_eq!(layer("t1"), 0);
         assert_eq!(layer("t2"), 1);
         assert_eq!(layer("t3"), 1);
         assert_eq!(layer("t4"), 2);
 
-        // 边:每条依赖一条 from(前驱)→ to(后继)。
+        // Edges: one from (predecessor) → to (successor) per dependency.
         assert_eq!(g.edges.len(), 4);
         assert!(g.edges.contains(&GraphEdge { from: "t1".into(), to: "t2".into() }));
         assert!(g.edges.contains(&GraphEdge { from: "t2".into(), to: "t4".into() }));
 
-        // 仅无依赖的 t1 此刻就绪;有未验证依赖的不就绪。
+        // Only dependency-free t1 is ready now; tasks with unverified dependencies are not.
         let ready = |id: &str| g.nodes.iter().find(|n| n.id == id).expect("node").ready;
         assert!(ready("t1"));
         assert!(!ready("t2"));
@@ -506,7 +510,7 @@ mod tests {
         drive_to_verified(&mut d, "t1");
 
         let g = d.graph_view();
-        // t1 已验证 → 不再 Pending,不就绪;t2 依赖满足 → 就绪。
+        // t1 verified → no longer Pending, not ready; t2's dependency satisfied → ready.
         assert!(!g.nodes.iter().find(|n| n.id == "t1").expect("t1").ready);
         assert!(g.nodes.iter().find(|n| n.id == "t2").expect("t2").ready);
     }
@@ -526,7 +530,7 @@ mod tests {
         assert_eq!(d.task("t1").expect("t1").assignee, "agent-z");
         assert_eq!(d.task("t2").expect("t2").assignee, "agent-z");
         assert_eq!(d.task("t2").expect("t2").assignee_kind, "AGENT");
-        assert_eq!(d.task("t3").expect("t3").assignee, "agent-y"); // 未匹配,不动
+        assert_eq!(d.task("t3").expect("t3").assignee, "agent-y"); // no match, untouched
     }
 
     #[test]
@@ -539,8 +543,8 @@ mod tests {
         drive_to_verified(&mut d, "t1"); // t1 → Verified
 
         let n = d.reassign("agent-x", "agent-z", "AGENT");
-        assert_eq!(n, 1); // 仅未完成的 t2
-        assert_eq!(d.task("t1").expect("t1").assignee, "agent-x"); // 已验证,归属保留
+        assert_eq!(n, 1); // only the unfinished t2
+        assert_eq!(d.task("t1").expect("t1").assignee, "agent-x"); // verified, keeps its assignee
         assert_eq!(d.task("t2").expect("t2").assignee, "agent-z");
     }
 
@@ -569,7 +573,7 @@ mod tests {
         d.add_task(nt("A", &[])).expect("a");
         d.add_task(nt("B", &[])).expect("b");
         d.add_task(nt("C", &[])).expect("c");
-        // A → Verified, B → Dispatched, C 留 Pending。
+        // A → Verified, B → Dispatched, C stays Pending.
         drive_to_verified(&mut d, "t1");
         d.dispatch("t2").expect("dispatch");
 

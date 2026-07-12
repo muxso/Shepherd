@@ -118,7 +118,7 @@ fn json_path_to_pointer(path: &str) -> String {
             continue;
         }
         out.push('/');
-        // RFC6901 转义:~ → ~0 必须先于 / → ~1。
+        // RFC 6901 escaping: `~` → `~0` must run before `/` → `~1`.
         out.push_str(&seg.replace('~', "~0").replace('/', "~1"));
     }
     out
@@ -494,12 +494,12 @@ pub enum Processor {
     Extract {
         extractors: Vec<Extractor>,
     },
-    /// 随用例往返存储;执行引擎尚未接入,执行器当前忽略。
+    /// Stored round-trip with the case; no script engine is wired up yet, so the executor ignores it.
     Script {
         lang: String,
         code: String,
     },
-    /// 随用例往返存储;数据源执行尚未接入,执行器当前忽略。
+    /// Stored round-trip with the case; datasource execution is not wired up yet, so the executor ignores it.
     Sql {
         name: String,
         datasource: String,
@@ -676,7 +676,7 @@ mod tests {
 
     #[test]
     fn assertion_json_format_is_stable() {
-        // 锁定 JSONB 存储格式(PG 种子/读取依赖)
+        // Pins the JSONB storage format (PG seeds/reads depend on it).
         let a = Assertion::StatusIs(200);
         assert_eq!(
             serde_json::to_value(&a).expect("ser"),

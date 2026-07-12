@@ -40,7 +40,7 @@ impl ApiDefinitionRepository for InMemoryApiDefinitionRepository {
         state.seq += 1;
         let def = ApiDefinition {
             id: format!("apidef-{}", state.seq),
-            // 100000+ 对齐 pg num 序列起点(100001)。
+            // 100000+ matches the pg num sequence start (100001).
             num: 100000 + state.seq as i64,
             project_id: d.project_id.clone(),
             name: d.name.clone(),

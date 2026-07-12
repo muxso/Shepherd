@@ -25,7 +25,7 @@ import { useI18n } from '../i18n'
 
 const API_STATUSES = ['DRAFT', 'DEBUGGING', 'COMPLETED', 'DEPRECATED']
 
-/** 复制文本到剪贴板(带轻提示)。navigator.clipboard 在非安全上下文可能缺失,降级 execCommand。 */
+/** Copy text to clipboard (with toast). navigator.clipboard may be missing in insecure contexts; falls back to execCommand. */
 async function copy(text: string, ok: string, fail = '复制失败') {
   try {
     if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(text)
@@ -59,11 +59,11 @@ export const emptySpec = (): ApiSpec => ({
   assertions: [],
 })
 
-/** 解析 cURL 命令(method / url / -H 头 / -d 体)。尽力而为,失败返回 null。 */
+/** Parse a cURL command (method / url / -H headers / -d body). Best-effort; returns null on failure. */
 export function parseCurl(text: string): { method: string; url: string; headers: ApiSpecKV[]; body: string } | null {
   const raw = text.trim().replace(/\\\r?\n/g, ' ')
   if (!/^curl\b/.test(raw)) return null
-  // 词法切分(支持单/双引号)。
+  // Tokenize (single/double quotes supported).
   const toks: string[] = []
   const re = /"([^"]*)"|'([^']*)'|(\S+)/g
   let m: RegExpExecArray | null
@@ -89,19 +89,19 @@ export function parseCurl(text: string): { method: string; url: string; headers:
 }
 
 /**
- * 接口「预览」(只读)/「定义」(可编辑)/「新建」(create:受控、无 id)共用面板。
- * create 模式由父组件托管 spec(value/onChange),不自行加载/保存,保存按钮也交给父级(新建接口 Tab)。
+ * Shared panel for API "preview" (read-only) / "define" (editable) / "create" (controlled, no id).
+ * In create mode the parent owns the spec (value/onChange): no self load/save, and the save button belongs to the parent (new-API tab).
  */
 export type ExecMode = 'server' | 'local'
-/** 实际发送的请求(用于「实际请求 / 控制台 / cURL」展示)。 */
+/** The request actually sent (shown in actual request / console / cURL). */
 export type SentRequest = { method: string; url: string; headers: { key: string; value: string }[]; body?: string }
 export interface ApiSpecPanelHandle {
   save: () => void
-  /** cURL 导入:把解析结果合并进当前 spec(请求头/请求体),并回填请求行方法/路径。 */
+  /** cURL import: merge parsed headers/body into the current spec; the parent backfills request-line method/path. */
   applyCurl: (parsed: { method: string; url: string; headers: ApiSpecKV[]; body: string }) => void
-  /** 执行(调试模式):server=服务端代理发起;local=浏览器本地直发。 */
+  /** Execute (debug mode): server = via server-side proxy; local = direct from the browser. */
   execute: (mode?: ExecMode) => void
-  /** 另存为测试用例(调试模式「保存」):用当前请求 + 断言/处理器新建用例。 */
+  /** Save as test case (debug-mode save): create a case from the current request + assertions/processors. */
   saveAsCase: () => void
 }
 
@@ -110,27 +110,27 @@ const ApiSpecPanel = forwardRef<ApiSpecPanelHandle, {
   mode: 'preview' | 'define' | 'create' | 'debug'
   value?: ApiSpec
   onChange?: (s: ApiSpec) => void
-  /** 隐藏内部「保存」按钮(由父级请求行的保存统一触发,经 ref.save())。 */
+  /** Hide the internal save button (parent request line triggers saves via ref.save()). */
   hideSave?: boolean
-  /** 调试请求行:方法/路径(由父级请求行维护,cURL 导入会回填)。 */
+  /** Debug request line: method/path (owned by the parent request line; cURL import backfills them). */
   reqMethod?: string
   reqPath?: string
-  /** 接口名称(由父级请求行维护);define/debug 保存时随基础字段一并落库。 */
+  /** API name (owned by the parent request line); persisted with the base fields on define/debug save. */
   reqName?: string
-  /** 基础字段/spec 保存成功后回调(父级据此刷新列表/详情)。 */
+  /** Called after base fields/spec are saved (parent refreshes list/detail). */
   onSaved?: () => void
-  /** 当前执行方式(由父级请求行的下拉选择)。 */
+  /** Current exec mode (chosen in the parent request-line dropdown). */
   execMode?: ExecMode
-  /** 选中的环境(由父级顶栏环境选择器提供;调试执行用其 baseUrl/默认头/变量)。 */
+  /** Selected environment (from the parent top-bar picker; debug execution uses its baseUrl/default headers/variables). */
   env?: Environment
-  /** 「保存为新用例」成功后回调(父级据此跳转到「用例」标签并刷新)。 */
+  /** Called after save-as-new-case succeeds (parent switches to the cases tab and refreshes). */
   onCaseSaved?: () => void
 }>(function ApiSpecPanel({ definition, mode, value, onChange, hideSave, reqMethod, reqPath, reqName, onSaved, execMode = 'server', env, onCaseSaved }, ref) {
   const { t } = useI18n()
   const create = mode === 'create'
   const debug = mode === 'debug'
   const editable = mode === 'define' || create || debug
-  // 受控 = create 模式,或无 id 的草稿(新建接口的调试):spec 由父级持有,不走 load/save。
+  // Controlled = create mode, or an id-less draft (debugging a new API): parent owns the spec, no load/save here.
   const controlled = create || !definition.id
   const [innerSpec, setInnerSpec] = useState<ApiSpec>(emptySpec())
   const [loading, setLoading] = useState(!controlled)
@@ -163,10 +163,10 @@ const ApiSpecPanel = forwardRef<ApiSpecPanelHandle, {
   }
 
   const save = async () => {
-    if (!definition.id) return // 草稿:spec 由父级「保存」随创建一并落库。
+    if (!definition.id) return // draft: the parent's save persists the spec together with creation.
     setSaving(true)
     try {
-      // 基础字段(名称/方法/路径)由父级请求行维护;仅在确有变化时随保存一并落库。
+      // Base fields (name/method/path) are owned by the parent request line; persist them only when actually changed.
       const isHttp = (definition.protocol || 'HTTP').toUpperCase() === 'HTTP'
       const nameChanged = reqName !== undefined && reqName.trim() !== '' && reqName.trim() !== definition.name
       const methodChanged = isHttp && !!reqMethod && reqMethod !== definition.method
@@ -190,14 +190,14 @@ const ApiSpecPanel = forwardRef<ApiSpecPanelHandle, {
     }
   }
 
-  // 调试执行响应状态(环境由父级顶栏提供,经 env prop)。
+  // Debug execution state (environment comes from the parent top bar via the env prop).
   const [running, setRunning] = useState(false)
   const [resp, setResp] = useState<DebugResponse | null>(null)
   const [runErr, setRunErr] = useState('')
-  // 最近一次实际发送的请求(供「实际请求 / 控制台 / cURL」展示)。
+  // Last request actually sent (for actual request / console / cURL views).
   const [lastReq, setLastReq] = useState<SentRequest | null>(null)
 
-  // 把当前请求行 + spec 组装成可发送的请求(URL/headers/body)。失败时弹提示并返回 null。
+  // Assemble request line + spec into a sendable request (URL/headers/body). Warns and returns null on failure.
   const buildRequest = (): { method: string; url: string; headers: { key: string; value: string }[]; body?: string } | null => {
     const resolveVars = (s: string): string =>
       env?.variables ? s.replace(/\{\{\s*(\w+)\s*\}\}/g, (whole, k: string) => env.variables?.[k] ?? whole) : s
@@ -226,19 +226,19 @@ const ApiSpecPanel = forwardRef<ApiSpecPanelHandle, {
     for (const h of spec.requestHeaders || []) if (h.name?.trim()) hs.push({ key: h.name, value: resolveVars(h.value || '') })
     if (spec.auth?.type === 'bearer' && spec.auth.token) hs.push({ key: 'Authorization', value: `Bearer ${spec.auth.token}` })
     if (spec.auth?.type === 'basic' && spec.auth.token) hs.push({ key: 'Authorization', value: `Basic ${btoa(spec.auth.token)}` })
-    // 旧规格可能只有 requestBody 文本而无 bodyType:回退 raw(与预览一致),仍发体、不强加 Content-Type。
+    // Legacy specs may have requestBody text without bodyType: fall back to raw (matching preview), still send the body, don't force a Content-Type.
     const bt: ApiBodyType = spec.bodyType || (spec.requestBody?.trim() ? 'raw' : 'none')
     const hasBody = bt !== 'none' && !!spec.requestBody?.trim()
     return {
       method: reqMethod || definition.method || 'GET',
       url: finalUrl,
-      // 按 body 类型补默认 Content-Type(可选:用户/环境已写则不覆盖)。
+      // Add a default Content-Type per body type (skipped when user/environment already set one).
       headers: withBodyContentType(hs, hasBody ? bt : 'none'),
       body: hasBody ? resolveVars(spec.requestBody || '') : undefined,
     }
   }
 
-  // 本地执行:浏览器直发(可能受 CORS 限制——这正是「本地」与「服务端代理」的区别)。
+  // Local execution: direct from the browser (subject to CORS — the difference from server proxy).
   const localSend = async (req: { method: string; url: string; headers: { key: string; value: string }[]; body?: string }): Promise<DebugResponse> => {
     const t0 = performance.now()
     const res = await fetch(req.url, { method: req.method, headers: Object.fromEntries(req.headers.map((h) => [h.key, h.value])), body: req.body })
@@ -268,7 +268,7 @@ const ApiSpecPanel = forwardRef<ApiSpecPanelHandle, {
     }
   }
 
-  // 另存为测试用例:用当前请求 + 断言/处理器/标签新建用例(对齐参考图 #9「保存=另存为用例」)。
+  // Save as test case: create a case from the current request + assertions/processors/tags (reference UI #9: save = save-as-case).
   const [caseModalOpen, setCaseModalOpen] = useState(false)
   const [caseName, setCaseName] = useState('')
   const [caseSaving, setCaseSaving] = useState(false)
@@ -314,12 +314,12 @@ const ApiSpecPanel = forwardRef<ApiSpecPanelHandle, {
     })
   }
 
-  // 暴露 save/execute/applyCurl/saveAsCase 给父级(定义页请求行的按钮统一触发)。
+  // Expose save/execute/applyCurl/saveAsCase to the parent (triggered by the definition-page request-line buttons).
   useImperativeHandle(ref, () => ({ save, execute, applyCurl, saveAsCase }), [save, execute, applyCurl, saveAsCase])
 
   if (loading) return <div style={{ padding: 24, color: 'var(--text-3)' }}>{t('a.loading', '加载中…')}</div>
 
-  // 预览(只读):平铺各段。
+  // Preview (read-only): sections laid out flat.
   if (!editable) {
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
@@ -334,7 +334,7 @@ const ApiSpecPanel = forwardRef<ApiSpecPanelHandle, {
     )
   }
 
-  // 定义(可编辑):子标签。
+  // Define (editable): sub-tabs.
   const tabs = [
     {
       key: 'basic',
@@ -361,7 +361,7 @@ const ApiSpecPanel = forwardRef<ApiSpecPanelHandle, {
       label: `REST${spec.restParams?.length ? ` (${spec.restParams.length})` : ''}`,
       children: <KVSection title={t('apidef.restParams', 'REST 路径参数')} rows={spec.restParams || []} editable onChange={(rows) => patch({ restParams: rows })} hideTitle />,
     },
-    // 前置/后置/断言:仅「调试」模式(对齐参考图 #9;定义态不含)。
+    // Pre/post/assertions: debug mode only (reference UI #9; absent in define mode).
     ...(debug
       ? [
           {
@@ -395,7 +395,7 @@ const ApiSpecPanel = forwardRef<ApiSpecPanelHandle, {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-      {/* create / hideSave 模式由父级请求行的保存统一提交,这里不再重复。 */}
+      {/* In create/hideSave mode the parent request line submits saves; no duplicate button here. */}
       {!create && !hideSave && (
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <Button type="primary" icon={<SaveOutlined />} loading={saving} disabled={!dirty} onClick={save}>
@@ -404,9 +404,8 @@ const ApiSpecPanel = forwardRef<ApiSpecPanelHandle, {
           {dirty && <span style={{ color: '#ef6c00', fontSize: 12 }}>{t('apidef.unsaved', '有未保存修改')}</span>}
         </div>
       )}
-      {/* 下划线子标签:基本信息/请求头/请求体/…/设置。 */}
       <Tabs className="ms-detail-tabs" items={tabs} size="small" />
-      {/* 底部「响应内容」:定义=示例响应(状态码 200/404…);调试=服务端执行结果。 */}
+      {/* Bottom response section: define = example responses (200/404…); debug = server execution result. */}
       {debug ? (
         <DebugResultPanel
           running={running}
@@ -420,7 +419,6 @@ const ApiSpecPanel = forwardRef<ApiSpecPanelHandle, {
       ) : (
         <ExampleResponsesPanel responses={spec.responses || []} onChange={(rows) => patch({ responses: rows })} />
       )}
-      {/* 另存为测试用例:命名后用当前请求新建用例。 */}
       <Modal
         title={t('apidef.saveAsCase', '保存为新用例')}
         open={caseModalOpen}
@@ -438,7 +436,7 @@ const ApiSpecPanel = forwardRef<ApiSpecPanelHandle, {
   )
 })
 
-/** 定义态底部「响应内容」:示例响应。状态码标签(200/404…)切换 + 添加;每个示例含 响应体/响应头/状态码。 */
+/** Define-mode bottom response section: example responses. Status-code tabs (200/404…) with add; each example holds body/headers/status. */
 function ExampleResponsesPanel({ responses, onChange }: { responses: ApiSpecResponse[]; onChange: (rows: ApiSpecResponse[]) => void }) {
   const { t } = useI18n()
   const [sel, setSel] = useState(0)
@@ -502,7 +500,7 @@ function ExampleResponsesPanel({ responses, onChange }: { responses: ApiSpecResp
   )
 }
 
-/** 把实际请求渲染成 cURL 命令。 */
+/** Render the sent request as a cURL command. */
 function reqToCurl(req: SentRequest): string {
   const parts = [`curl -X ${req.method} '${req.url}'`]
   for (const h of req.headers) parts.push(`  -H '${h.key}: ${(h.value || '').replace(/'/g, "'\\''")}'`)
@@ -512,7 +510,7 @@ function reqToCurl(req: SentRequest): string {
 
 const codeBox: React.CSSProperties = { background: '#0f1419', color: '#d6deeb', padding: 12, borderRadius: 6, maxHeight: 360, overflow: 'auto', fontSize: 12, whiteSpace: 'pre-wrap', wordBreak: 'break-all', margin: 0 }
 
-/** 调试结果面板:响应体/响应头/实际请求/控制台/cURL/提取/断言(执行由请求行触发,环境在顶栏选)。 */
+/** Debug result panel: body/headers/actual request/console/cURL/extractions/assertions (execution triggered by the request line, env picked in the top bar). */
 export function DebugResultPanel({
   running,
   resp,
@@ -533,7 +531,7 @@ export function DebugResultPanel({
   const { t } = useI18n()
   const [view, setView] = useState<'json' | 'raw'>('json')
 
-  // 提取器(后置处理器里 type=Extract 的 extractors 列表)。
+  // Extractors: the extractors list of post-processors with type=Extract.
   const extractRows = (extractors || [])
     .filter((p) => String(p.type) === 'Extract')
     .flatMap((p) => ((p.args as { extractors?: { variable?: string; kind?: string; expression?: string }[] })?.extractors || []))
@@ -590,7 +588,7 @@ export function DebugResultPanel({
         </pre>
       ),
     },
-    // cURL 仅 HTTP 协议。
+    // cURL tab: HTTP only.
     ...(isHttp
       ? [{
           key: 'curl',
@@ -601,7 +599,7 @@ export function DebugResultPanel({
     {
       key: 'extract',
       label: `${t('apidef.preExtract', '提取')}${resp?.extractions?.length ? ` (${resp.extractions.length})` : extractRows.length ? ` (${extractRows.length})` : ''}`,
-      // 服务端执行回传实际提取值则展示「变量=值」;否则展示已配置的提取器。
+      // If server execution returned actual extraction values, show variable=value; otherwise show configured extractors.
       children: resp?.extractions?.length ? (
         <Table
           size="small"
@@ -632,7 +630,7 @@ export function DebugResultPanel({
     {
       key: 'assert',
       label: `${t('apidef.assertions', '断言')}${resp?.assertions?.length ? ` (${resp.assertions.filter((a) => a.passed).length}/${resp.assertions.length})` : assertions?.length ? ` (${assertions.length})` : ''}`,
-      // 服务端执行回传逐条结果(通过/失败);否则展示「已配置、执行后出结果」。
+      // Server execution returns per-assertion pass/fail; otherwise show configured assertions pending a run.
       children: resp?.assertions?.length ? (
         <Table
           size="small"
@@ -672,7 +670,7 @@ export function DebugResultPanel({
 
 export default ApiSpecPanel
 
-/** 设置:对齐参考图占位(当前接口元信息只读;状态/模块在「基本信息」维护)。 */
+/** Settings: placeholder matching the reference UI (metadata read-only; status/module edited in basic info). */
 function SettingsTab({ definition }: { definition: ApiDefinition }) {
   const { t } = useI18n()
   return (
@@ -690,7 +688,7 @@ function SettingsTab({ definition }: { definition: ApiDefinition }) {
   )
 }
 
-/** 基本信息:描述 / 所属模块 / 标签 / 状态。描述/标签存 spec(随保存);模块/状态为定义级,即时写入。 */
+/** Basic info: description / module / tags / status. Description/tags live in the spec (saved with it); module/status are definition-level and written immediately. */
 function BasicInfo({ definition, spec, patch, create }: { definition: ApiDefinition; spec: ApiSpec; patch: (p: Partial<ApiSpec>) => void; create?: boolean }) {
   const { t } = useI18n()
   const [tagInput, setTagInput] = useState('')
@@ -700,7 +698,7 @@ function BasicInfo({ definition, spec, patch, create }: { definition: ApiDefinit
   const [status, setStatus] = useState(definition.status)
 
   useEffect(() => {
-    if (create) return // 新建态:模块/状态保存后再在「定义」里维护。
+    if (create) return // create mode: module/status become editable in define mode after saving.
     let alive = true
     api.modules(definition.projectId).then((m) => alive && setModules(Array.isArray(m) ? m : [])).catch(() => undefined)
     return () => {
@@ -708,7 +706,7 @@ function BasicInfo({ definition, spec, patch, create }: { definition: ApiDefinit
     }
   }, [definition.projectId, create])
 
-  // 模块/状态是定义级属性,即时写后端(不走 spec 的「保存」按钮)。
+  // Module/status are definition-level: written to the backend immediately (not via the spec save button).
   const changeModule = async (mid?: string) => {
     setModuleId(mid)
     try {
@@ -740,7 +738,7 @@ function BasicInfo({ definition, spec, patch, create }: { definition: ApiDefinit
             value={moduleId || ''}
             onChange={changeModule}
             placeholder={t('apidef.unfiled', '未归类')}
-            // 对齐左侧树:始终含「未归类」选项 + 各模块(项目无模块时也不显示「暂无数据」)。
+            // Match the left tree: always include the unfiled option + modules (no empty-data hint when the project has no modules).
             options={[
               { value: '', label: t('apidef.unfiled', '未归类') },
               ...modules.map((m) => ({ value: m.id, label: m.name })),
@@ -790,7 +788,7 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
   )
 }
 
-/** 请求体编辑器:none/form-data/urlencoded/json[Schema 树|Json]/xml/raw/binary。 */
+/** Request body editor: none/form-data/urlencoded/json (Schema tree | Json)/xml/raw/binary. */
 function BodyEditor({ spec, patch }: { spec: ApiSpec; patch: (p: Partial<ApiSpec>) => void }) {
   const { t } = useI18n()
   const bt = spec.bodyType || 'none'
@@ -852,7 +850,7 @@ function BodyEditor({ spec, patch }: { spec: ApiSpec; patch: (p: Partial<ApiSpec
   )
 }
 
-/** 批量添加抽屉:每行「参数名,类型,必填,参数值」快捷添加。 */
+/** Batch-add drawer: one `name,type,required,value` per line. */
 function BatchAddDrawer({ open, onClose, onApply }: { open: boolean; onClose: () => void; onApply: (rows: ApiSpecKV[]) => void }) {
   const { t } = useI18n()
   const [text, setText] = useState('')
@@ -891,7 +889,7 @@ function BatchAddDrawer({ open, onClose, onApply }: { open: boolean; onClose: ()
   )
 }
 
-/** 尽力格式化 JSON 文本;非法 JSON 原样返回。 */
+/** Best-effort JSON formatting; invalid JSON is returned as-is. */
 function formatJson(text: string): string {
   try {
     return JSON.stringify(JSON.parse(text), null, 2)
@@ -900,7 +898,6 @@ function formatJson(text: string): string {
   }
 }
 
-/** 认证:none / bearer / basic。 */
 function AuthEditor({ spec, patch }: { spec: ApiSpec; patch: (p: Partial<ApiSpec>) => void }) {
   const { t } = useI18n()
   const auth = spec.auth || { type: 'none' }
@@ -928,7 +925,7 @@ function SectionTitle({ children, extra }: { children: React.ReactNode; extra?: 
   )
 }
 
-/** 键值对区块(请求头 / Query / REST / form 体):预览=表格+复制,定义=可增删编辑 + Raw 切换。 */
+/** Key-value section (headers / query / REST / form body): preview = table + copy; define = editable rows + Raw toggle. */
 function KVSection({
   title,
   rows,
@@ -1035,7 +1032,7 @@ function KVSection({
   )
 }
 
-// 由一个示例 JSON 值推断 Schema 节点(响应/无 bodySchema 的请求体用);对象/数组递归。
+// Infer a schema node from a sample JSON value (used by responses and bodies without bodySchema); recurses into objects/arrays.
 function jsonNode(name: string, val: unknown): BodySchemaNode {
   if (Array.isArray(val)) {
     return { name, type: 'array', children: val.length ? [jsonNode('items', val[0])] : [] }
@@ -1053,16 +1050,16 @@ function jsonToSchemaNodes(text: string): BodySchemaNode[] {
     if (Array.isArray(v)) return [jsonNode('[]', v[0])]
     if (v && typeof v === 'object') return Object.entries(v as Record<string, unknown>).map(([k, val]) => jsonNode(k, val))
   } catch {
-    /* 非 JSON:无 schema */
+    /* not JSON: no schema */
   }
   return []
 }
 
-/** 只读 Schema 表(参数名称 / 必填 / 类型 / 参数值 / 描述,object/array 可展开)。对齐参考图。 */
+/** Read-only schema table (name / required / type / value / description; object/array expandable). Matches the reference UI. */
 function SchemaTable({ nodes }: { nodes: BodySchemaNode[] }) {
   const { t } = useI18n()
   type Row = { key: string; name: string; type: string; value?: string; desc: string; required: string; children?: Row[] }
-  // bodySchema 的 description 形如「必填」/「选填 · 用户名」;拆出必填标记 + 纯描述。
+  // bodySchema description is prefixed with a required/optional marker (matched below); split the flag from the plain description.
   const toRows = (ns: BodySchemaNode[], prefix = ''): Row[] =>
     ns.map((n, i) => {
       const d = n.description || ''
@@ -1088,21 +1085,21 @@ function SchemaTable({ nodes }: { nodes: BodySchemaNode[] }) {
   return <Table size="small" pagination={false} columns={cols} dataSource={toRows(nodes)} locale={{ emptyText: t('apidef.none', '无') }} />
 }
 
-/** Schema/JSON 切换器(预览 请求体/响应 共用)。 */
+/** Schema/JSON toggle (shared by preview body/responses). */
 function SchemaJsonToggle({ value, onChange }: { value: 'schema' | 'json'; onChange: (v: 'schema' | 'json') => void }) {
   return (
     <Segmented size="small" value={value} onChange={(v) => onChange(v as 'schema' | 'json')} options={[{ label: 'Schema', value: 'schema' }, { label: 'JSON', value: 'json' }]} />
   )
 }
 
-/** 预览模式的请求体只读视图(显示 content-type + 内容)。 */
+/** Read-only body view in preview mode (content-type + content). */
 function BodyView({ spec }: { spec: ApiSpec }) {
   const { t } = useI18n()
   const bt = spec.bodyType || (spec.requestBody ? 'raw' : 'none')
   const isForm = bt === 'form-data' || bt === 'x-www-form-urlencoded'
   const isJson = bt === 'json' || bt === 'raw'
   const [view, setView] = useState<'schema' | 'json'>('schema')
-  // Schema 优先用导入解析的 bodySchema 树;没有则从示例 JSON 推断。
+  // Prefer the imported bodySchema tree; otherwise infer from the sample JSON.
   const schemaNodes = (spec.bodySchema?.length ? spec.bodySchema : jsonToSchemaNodes(spec.requestBody || '')) as BodySchemaNode[]
   const hasSchema = isJson && schemaNodes.length > 0
   return (
@@ -1188,7 +1185,7 @@ function ResponsesSection({
   )
 }
 
-/** 预览模式的单个响应:状态码 + Schema/JSON 切换 + 复制(对齐参考图 响应体-JSON)。 */
+/** Single response in preview mode: status code + Schema/JSON toggle + copy (matches reference UI response-body JSON). */
 function ReadonlyResponse({ r }: { r: ApiSpecResponse }) {
   const { t } = useI18n()
   const [view, setView] = useState<'schema' | 'json'>('schema')

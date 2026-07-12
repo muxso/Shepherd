@@ -50,7 +50,7 @@ export default function Skills() {
   return <SkillsList items={items} loading={loading} projectId={projectId} refresh={refresh} createOpen={createOpen} setCreateOpen={setCreateOpen} composeOpen={composeOpen} setComposeOpen={setComposeOpen} edit={edit} setEdit={setEdit} del={del} t={t} />
 }
 
-// 列表 + 三件套(视图/筛选/列设置):useListView 是 hook,拆成子组件避免主组件条件返回后调用 hook。
+// List + view/filter/column-settings trio. useListView is a hook, so this lives in a child component to avoid calling hooks after the parent's conditional return.
 function SkillsList({ items, loading, projectId, refresh, createOpen, setCreateOpen, composeOpen, setComposeOpen, edit, setEdit, del, t }: {
   items: Skill[]
   loading: boolean
@@ -157,7 +157,7 @@ function SkillsList({ items, loading, projectId, refresh, createOpen, setCreateO
 
 type SkillFormValues = { name: string; description: string; instructions: string; enabled: boolean }
 
-// 新建 / 编辑共用表单弹窗。编辑态多一个「启用」开关。
+// Shared create/edit form modal; edit mode adds an "enabled" switch.
 function SkillFormModal({ open, title, initial, onClose, onSubmit, onDone }: {
   open: boolean
   title: string

@@ -17,7 +17,7 @@ pub fn apply_env_static(req: &mut RequestSpec, env: &ResolvedEnv) {
         let sep = if req.url.is_empty() || req.url.starts_with('/') { "" } else { "/" };
         req.url = format!("{}{sep}{}", env.base_url, req.url);
     }
-    // 用例已有同名头(忽略大小写)优先,环境只补缺。
+    // Case headers win (case-insensitive); environment headers only fill gaps.
     for (k, v) in &env.headers {
         if !req.headers.iter().any(|(hk, _)| hk.eq_ignore_ascii_case(k)) {
             req.headers.push((k.clone(), v.clone()));
@@ -94,7 +94,7 @@ pub struct LocalRunnerDispatcher {
 
 impl LocalRunnerDispatcher {
     pub fn new(specs: Arc<dyn CaseSpecSource>, sink: Arc<dyn CaseResultSink>) -> Self {
-        // 默认绕过环境代理,否则 http_proxy 会劫持被测目标请求。
+        // Bypass environment proxies by default; otherwise http_proxy hijacks requests to the target under test.
         Self {
             specs,
             sink,
@@ -178,7 +178,7 @@ impl TaskDispatcher for LocalRunnerDispatcher {
                         Err(e) => v.push(Err(e)),
                     }
                 }
-                // best-effort:回写失败不影响用例结果。
+                // Best-effort: writeback failure never affects the case result.
                 if let (Some(writer), Some(env_id)) = (&self.env_writer, &task.environment_id) {
                     if !env_updates.is_empty() {
                         if let Err(e) = writer.set_vars(env_id, &env_updates).await {

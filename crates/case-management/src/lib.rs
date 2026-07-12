@@ -1,6 +1,7 @@
-//! 功能用例上下文:FunctionalCase 聚合(步骤 CaseStep + 预期结果)及其与需求的覆盖关联(CaseRequirement),
-//! 为验收核查提供覆盖证据来源。
-//! domain/application/ports 不做 IO;pg/http 适配器由 feature 启用。
+//! Functional case context: FunctionalCase aggregate (CaseStep steps + expected results)
+//! and its requirement-coverage links (CaseRequirement), the evidence source for
+//! acceptance verification.
+//! domain/application/ports do no IO; pg/http adapters are feature-gated.
 
 pub mod adapters;
 pub mod application;

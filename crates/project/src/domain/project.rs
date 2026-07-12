@@ -1,6 +1,6 @@
 use thiserror::Error;
 
-/// 项目名长度上限(与 DB 列一致)。
+/// Max project-name length (matches the DB column).
 pub const MAX_NAME_LEN: usize = 255;
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
@@ -29,7 +29,7 @@ impl NewProject {
         if name.is_empty() {
             return Err(ProjectError::EmptyName);
         }
-        // 按字符数而非字节数计长度,避免中文项目名被误判超长。
+        // Count chars, not bytes, so multibyte (e.g. Chinese) names aren't falsely over-length.
         if name.chars().count() > MAX_NAME_LEN {
             return Err(ProjectError::NameTooLong);
         }
@@ -69,7 +69,7 @@ impl Project {
         self.deleted = true;
     }
 
-    /// 仅未删除的项目占用其名字(软删除后名字可被重建复用)。
+    /// Only non-deleted projects occupy their name (after soft delete the name can be reused).
     pub fn occupies_name(&self) -> bool {
         !self.deleted
     }

@@ -6,7 +6,7 @@ import { api, ApiError, userStore, type Organization, type Project } from '../ap
 import { modal } from '../feedback'
 import { useI18n } from '../i18n'
 
-// 系统 / 组织与项目(对齐参考图 #53)。组织/项目 两 tab + 创建组织 + 富表格。
+// System / organizations & projects (ref #53): org/project tabs + create org.
 export default function OrgProjects() {
   const { t } = useI18n()
   const [orgs, setOrgs] = useState<Organization[]>([])

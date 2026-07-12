@@ -24,7 +24,7 @@ pub trait BugRepository: Send + Sync {
 
     async fn set_status(&self, id: &str, status: &str) -> Result<(), RepoError>;
 
-    /// 整体替换自定义字段值(空 map 即清空)。
+    /// Replaces custom field values wholesale (empty map clears all).
     async fn set_custom_fields(
         &self,
         id: &str,

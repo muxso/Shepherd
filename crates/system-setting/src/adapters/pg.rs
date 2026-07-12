@@ -118,7 +118,7 @@ impl UserRepository for PgUserRepository {
     }
 }
 
-/// 无拦截器,故 `names_validated` 与 `names_direct` 都直查 ms_user。
+/// No interceptor here, so both `names_validated` and `names_direct` query ms_user directly.
 #[derive(Clone)]
 pub struct PgUserDirectory {
     pool: PgPool,
@@ -302,7 +302,7 @@ impl CredentialRepository for PgCredentialRepository {
         Ok(res.rows_affected() > 0)
     }
 
-    /// 无凭证时按用户名新建并授只读权限
+    /// If no credential exists, creates one keyed by username with read-only permissions.
     async fn reset_password(
         &self,
         user_id: &str,
@@ -416,7 +416,7 @@ impl ExternalUserRepository for PgExternalUserRepository {
         &self,
         identity: &ExternalIdentity,
     ) -> Result<LinkedUser, OidcError> {
-        // 已存在时只刷新 display_name,保留既有 user_id/permissions
+        // On conflict only refresh display_name; keep existing user_id/permissions.
         let row = sqlx::query(
             "INSERT INTO ms_external_user_link (provider, open_id, display_name, permissions) \
              VALUES ($1, $2, $3, $4) \
@@ -653,7 +653,8 @@ fn row_to_apikey(row: &sqlx::postgres::PgRow) -> Result<ApiKeyRecord, ApiKeyRepo
     })
 }
 
-// created_at/expires_at 是 TIMESTAMPTZ,这里统一转 epoch 毫秒,与全库 created_at(BIGINT ms)口径一致。
+// created_at/expires_at are TIMESTAMPTZ; convert to epoch ms here to match the DB-wide
+// created_at convention (BIGINT ms).
 const APIKEY_COLS: &str = "id, name, secret_hash, permissions, \
      (extract(epoch from created_at) * 1000)::bigint AS created_at_ms, revoked, user_id, \
      (extract(epoch from expires_at) * 1000)::bigint AS expires_at_ms";
@@ -680,7 +681,7 @@ impl ApiKeyRepository for PgApiKeyRepository {
         user_id: &str,
         expires_at_ms: Option<i64>,
     ) -> Result<ApiKeyRecord, ApiKeyRepoError> {
-        // to_timestamp(NULL) 即 NULL,永久 key 直接落 NULL。
+        // to_timestamp(NULL) is NULL, so never-expiring keys store NULL directly.
         let row = sqlx::query(&format!(
             "INSERT INTO ms_apikey (id, name, secret_hash, permissions, user_id, expires_at) \
              VALUES ($1, $2, $3, $4, $5, to_timestamp($6::bigint / 1000.0)) \
@@ -781,7 +782,8 @@ fn row_to_llm_model(row: &sqlx::postgres::PgRow) -> Result<LlmModelRecord, LlmMo
     })
 }
 
-// id 是 UUID,对外统一转 text;路径参数按 text 比较,非法 uuid 自然查不到而非报错。
+// id is a UUID exposed as text; path params compare as text, so an invalid uuid simply
+// finds nothing instead of erroring.
 const LLM_MODEL_COLS: &str = "id::text AS id, user_id, provider, name, base_url, api_key, \
      enabled, (extract(epoch from created_at) * 1000)::bigint AS created_at_ms";
 
@@ -1010,7 +1012,7 @@ mod tests {
         assert_eq!(rec.user_id, "");
         assert!(rec.expires_at_ms.is_none());
 
-        // 重名 → NameExists
+        // Duplicate name → NameExists.
         let dup = repo.insert("fedcba9876543210", "runner-1", "h", &[], "", None).await;
         assert!(matches!(dup, Err(ApiKeyRepoError::NameExists)));
 
@@ -1020,10 +1022,10 @@ mod tests {
 
         assert!(repo.revoke(&rec.id).await.expect("revoke"));
         assert!(repo.find_active(&rec.id).await.expect("q").is_none());
-        // 已吊销后再吊销 → false;列表仍保留审计记录
+        // Revoking an already-revoked key → false; the list keeps the audit record.
         assert!(!repo.revoke(&rec.id).await.expect("revoke2"));
         assert!(repo.list().await.expect("list")[0].revoked);
-        // 恢复启用后重新可鉴权
+        // Re-enabling makes the key authenticate again.
         assert!(repo.set_enabled(&rec.id, true).await.expect("enable"));
         assert!(repo.find_active(&rec.id).await.expect("q").is_some());
     }
@@ -1049,12 +1051,12 @@ mod tests {
         repo.insert("aaaa000000000003", "other", "h3", &[], "u-bob", None).await.expect("insert");
 
         assert_eq!(alive.user_id, "u-alice");
-        // 时间戳经 TIMESTAMPTZ 往返,毫秒级容差
+        // Timestamps round-trip through TIMESTAMPTZ; allow millisecond-level tolerance.
         assert!((alive.expires_at_ms.expect("exp") - (now + 3_600_000)).abs() < 5);
 
         let mine = repo.list_by_user("u-alice").await.expect("list");
         assert_eq!(mine.len(), 2);
-        // 已过期:管理路径可见,鉴权路径拒绝
+        // Expired: visible via the admin path, rejected on the auth path.
         assert!(repo.find(&dead.id).await.expect("q").is_some());
         assert!(repo.find_active(&dead.id).await.expect("q").is_none());
         assert!(repo.find_active(&alive.id).await.expect("q").is_some());
@@ -1075,7 +1077,7 @@ mod tests {
             .expect("insert");
         assert!(rec.enabled && rec.created_at_ms > 0);
 
-        // 同 user+provider+name → Duplicate;其他用户同名不冲突
+        // Same user+provider+name → Duplicate; the same name under another user is fine.
         let dup = repo.insert("u-alice", "deepseek", "deepseek-chat", "", "").await;
         assert!(matches!(dup, Err(LlmModelRepoError::Duplicate)));
         repo.insert("u-bob", "deepseek", "deepseek-chat", "", "").await.expect("other user ok");
@@ -1090,9 +1092,9 @@ mod tests {
         let updated = repo.update("u-alice", &rec.id, patch).await.expect("update").expect("some");
         assert_eq!(updated.name, "deepseek-reasoner");
         assert!(!updated.enabled);
-        assert_eq!(updated.api_key, "sk-12345"); // 未动的字段保持原值
+        assert_eq!(updated.api_key, "sk-12345"); // untouched fields keep their values
 
-        // 非本人 → None;非法 uuid → None 而非报错
+        // Not the owner → None; invalid uuid → None rather than an error.
         assert!(repo
             .update("u-bob", &rec.id, LlmModelPatch::default())
             .await

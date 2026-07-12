@@ -1,19 +1,20 @@
 use async_trait::async_trait;
 use thiserror::Error;
 
-/// API Key 记录。secret 只存哈希;明文仅在创建响应里出现一次。
+/// API key record. Only the secret's hash is stored; the plaintext appears exactly once,
+/// in the create response.
 #[derive(Debug, Clone)]
 pub struct ApiKeyRecord {
     pub id: String,
     pub name: String,
     pub secret_hash: String,
-    /// 原始权限串(`RESOURCE:A+B`),入库前已按 PermissionSet 规范化。
+    /// Raw permission strings (`RESOURCE:A+B`), normalized via PermissionSet before storage.
     pub permissions: Vec<String>,
     pub created_at_ms: i64,
     pub revoked: bool,
-    /// 属主用户 id;管理端旧口径的 key 无属主(空串)。
+    /// Owner user id; legacy admin-created keys have no owner (empty string).
     pub user_id: String,
-    /// 过期时刻(epoch 毫秒);None = 永久。
+    /// Expiry instant (epoch ms); None = never expires.
     pub expires_at_ms: Option<i64>,
 }
 
@@ -39,18 +40,19 @@ pub trait ApiKeyRepository: Send + Sync {
 
     async fn list(&self) -> Result<Vec<ApiKeyRecord>, ApiKeyRepoError>;
 
-    /// 个人视角:只列属主为 user_id 的 key。
+    /// Personal view: only keys owned by user_id.
     async fn list_by_user(&self, user_id: &str) -> Result<Vec<ApiKeyRecord>, ApiKeyRepoError>;
 
-    /// 管理路径:按 id 取记录,不过滤 revoked/过期(属主判定用)。
+    /// Admin path: fetch by id without filtering revoked/expired (used for ownership checks).
     async fn find(&self, id: &str) -> Result<Option<ApiKeyRecord>, ApiKeyRepoError>;
 
-    /// 鉴权路径:只返回未吊销且未过期的记录。
+    /// Auth path: only returns records that are neither revoked nor expired.
     async fn find_active(&self, id: &str) -> Result<Option<ApiKeyRecord>, ApiKeyRepoError>;
 
-    /// 吊销(置 revoked=true)。返回 `false` 表示 id 不存在或已吊销。
+    /// Revoke (set revoked=true). Returns `false` if the id is missing or already revoked.
     async fn revoke(&self, id: &str) -> Result<bool, ApiKeyRepoError>;
 
-    /// 启停:enabled=false 等价吊销,true 恢复;幂等。返回 `false` 表示 id 不存在。
+    /// Enable/disable: enabled=false equals revoke, true restores; idempotent. Returns
+    /// `false` if the id does not exist.
     async fn set_enabled(&self, id: &str, enabled: bool) -> Result<bool, ApiKeyRepoError>;
 }
