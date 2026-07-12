@@ -126,12 +126,15 @@ mod tests {
             .await
             .expect("a");
         let _b = repo
-            .insert(&NewSkill::new("p1", "Rust", "", "用 thiserror", &[a.id.clone()]).expect("v"))
+            .insert(
+                &NewSkill::new("p1", "Rust", "", "用 thiserror", std::slice::from_ref(&a.id))
+                    .expect("v"),
+            )
             .await
             .expect("b");
 
         let lib = SkillLibrary::new(repo.list_active("p1").await.expect("list"));
-        let comp = lib.compose(&[_b.id.clone()]).expect("compose");
+        let comp = lib.compose(std::slice::from_ref(&_b.id)).expect("compose");
         assert_eq!(comp.skill_ids[0], a.id);
         assert!(
             comp.instructions.contains("遵循六边形") && comp.instructions.contains("用 thiserror")

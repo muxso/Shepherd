@@ -28,7 +28,7 @@ tokio-tungstenite = { version = "0.24", optional = true }
 futures-util = { version = "0.3", default-features = false, features = ["sink"], optional = true }
 tokio = { workspace = true, features = ["time"], optional = true }
 # SSH 协议:纯 Rust(russh,无 libssh2 C 依赖)。target=host:port,payload=命令,认证用 metadata。
-russh = { version = "0.45", optional = true }
+russh = { version = "0.62", optional = true }
 
 [features]
 default = ["http"]

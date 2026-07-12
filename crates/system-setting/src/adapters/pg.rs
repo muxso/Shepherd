@@ -1127,7 +1127,7 @@ mod tests {
         };
 
         let dir = PgUserDirectory::new(pool);
-        let names = dir.names_direct(&[user.id.clone()]).await.expect("direct");
+        let names = dir.names_direct(std::slice::from_ref(&user.id)).await.expect("direct");
         assert_eq!(names.get(&user.id), Some(&"Alice".to_string()));
     }
 }

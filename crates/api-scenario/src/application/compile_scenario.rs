@@ -114,7 +114,7 @@ impl CompileScenarioUseCase {
             for step in &scenario.steps {
                 match &step.kind {
                     StepKind::Case { case_id } => out.push(PlanStep::Case(case_id.clone())),
-                    StepKind::Request(req) => out.push(PlanStep::Request(req.clone())),
+                    StepKind::Request(req) => out.push(PlanStep::Request((**req).clone())),
                     StepKind::Control { control, payload } => {
                         out.push(parse_control(*control, payload))
                     }
@@ -160,7 +160,7 @@ mod tests {
         let repo = Arc::new(InMemoryApiScenarioRepository::new());
         let id = new_scenario(&repo, "flat").await;
         let req = InlineRequest::new("GET", "http://a", None).expect("valid");
-        add(&repo, &id, 0, StepKind::Request(req)).await;
+        add(&repo, &id, 0, StepKind::Request(Box::new(req))).await;
         add(&repo, &id, 1, StepKind::Case { case_id: "case-1".into() }).await;
 
         let uc = CompileScenarioUseCase::new(repo);

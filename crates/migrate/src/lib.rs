@@ -10,8 +10,24 @@ pub async fn connect(url: &str) -> Result<PgPool, sqlx::Error> {
 }
 
 /// The migrator holds an advisory lock, so concurrent calls are safe.
+/// Duplicate version numbers abort before anything runs: sqlx silently dedupes
+/// them, which drops a migration (missing column -> 500 at runtime).
 pub async fn run(pool: &PgPool) -> Result<(), MigrateError> {
-    sqlx::migrate!().run(pool).await
+    let migrator = sqlx::migrate!();
+    assert_unique_versions(&migrator);
+    migrator.run(pool).await
+}
+
+fn assert_unique_versions(migrator: &sqlx::migrate::Migrator) {
+    let mut seen = std::collections::HashMap::new();
+    for m in migrator.iter() {
+        if let Some(other) = seen.insert(m.version, m.description.clone()) {
+            panic!(
+                "duplicate migration version {}: \"{}\" and \"{}\" — renumber one of them",
+                m.version, other, m.description
+            );
+        }
+    }
 }
 
 pub async fn ping(pool: &PgPool) -> bool {

@@ -1,0 +1,20 @@
+# cargo-audit config. Each ignore documents why the advisory cannot be fixed yet.
+# Revisit all entries when the pinned toolchain (1.86, see .github/workflows/ci.yml) is upgraded.
+
+[advisories]
+ignore = [
+    # rsa: Marvin timing side channel. No fixed release exists (patched = []).
+    # Transitive only: sqlx-mysql (sqlx macros/runtime) and russh. Exploitation needs
+    # an attacker able to measure decryption timing locally; we accept the risk.
+    "RUSTSEC-2023-0071",
+    # quick-xml DoS (quadratic attr check / unbounded NsReader allocation), fixed in 0.41.
+    # Our direct use (api-definition) is on 0.41. The remaining vulnerable copy comes via
+    # calamine (xlsx import): calamine 0.36 moves to quick-xml 0.41 but requires Rust 1.88,
+    # above our 1.86 pin. calamine 0.35 (quick-xml 0.39) is the newest we can build.
+    "RUSTSEC-2026-0194",
+    "RUSTSEC-2026-0195",
+    # time: stack exhaustion parsing untrusted input with the Rfc2822 format only.
+    # time enters the tree solely via ldap3 -> x509-parser, which builds timestamps from
+    # DER fields and never parses Rfc2822. The fix (0.3.47) requires Rust 1.88 > our 1.86 pin.
+    "RUSTSEC-2026-0009",
+]
