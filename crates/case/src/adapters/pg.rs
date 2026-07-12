@@ -1,6 +1,6 @@
-use async_trait::async_trait;
 use crate::domain::{PassRule, ReviewRecord, ReviewSetting, ReviewStatus};
 use crate::ports::{RepoError, ReviewCaseStatus, ReviewDetail, ReviewRepository, ReviewSummary};
+use async_trait::async_trait;
 use sqlx::{PgPool, Row};
 
 #[derive(Clone)]
@@ -157,8 +157,7 @@ impl ReviewRepository for PgReviewRepository {
                 let passed: i64 = r.try_get("passed").map_err(map_err)?;
                 let total = total.max(0) as usize;
                 let passed = passed.max(0) as usize;
-                let status =
-                    if total > 0 && passed >= total { "COMPLETED" } else { "IN_PROGRESS" };
+                let status = if total > 0 && passed >= total { "COMPLETED" } else { "IN_PROGRESS" };
                 Ok(ReviewSummary {
                     id: r.try_get("id").map_err(map_err)?,
                     pass_rule: r.try_get("pass_rule").map_err(map_err)?,
@@ -182,11 +181,12 @@ impl ReviewRepository for PgReviewRepository {
         let pass_rule: String = head.try_get("pass_rule").map_err(map_err)?;
         let count: i32 = head.try_get("reviewer_count").map_err(map_err)?;
         let case_ids: Vec<String> = head.try_get("case_ids").map_err(map_err)?;
-        let srows = sqlx::query("SELECT case_id, status FROM ms_case_review_status WHERE review_id = $1")
-            .bind(review_id)
-            .fetch_all(&self.pool)
-            .await
-            .map_err(map_err)?;
+        let srows =
+            sqlx::query("SELECT case_id, status FROM ms_case_review_status WHERE review_id = $1")
+                .bind(review_id)
+                .fetch_all(&self.pool)
+                .await
+                .map_err(map_err)?;
         let mut status_of = std::collections::HashMap::new();
         for r in &srows {
             let cid: String = r.try_get("case_id").map_err(map_err)?;
@@ -196,11 +196,17 @@ impl ReviewRepository for PgReviewRepository {
         let cases = case_ids
             .into_iter()
             .map(|cid| {
-                let status = status_of.get(&cid).cloned().unwrap_or_else(|| "UN_REVIEWED".to_string());
+                let status =
+                    status_of.get(&cid).cloned().unwrap_or_else(|| "UN_REVIEWED".to_string());
                 ReviewCaseStatus { case_id: cid, status }
             })
             .collect();
-        Ok(ReviewDetail { id: review_id.to_string(), pass_rule, reviewer_count: count.max(0) as usize, cases })
+        Ok(ReviewDetail {
+            id: review_id.to_string(),
+            pass_rule,
+            reviewer_count: count.max(0) as usize,
+            cases,
+        })
     }
 }
 
@@ -233,12 +239,20 @@ mod tests {
         assert_eq!(setting.reviewer_count, 2);
         assert_eq!(repo.review_setting("nope").await, Err(RepoError::NotFound));
 
-        repo.append_history("rev1", "c1", &ReviewRecord { reviewer_id: "u1".into(), status: ReviewStatus::UnPass })
-            .await
-            .expect("h1");
-        repo.append_history("rev1", "c1", &ReviewRecord { reviewer_id: "u1".into(), status: ReviewStatus::Pass })
-            .await
-            .expect("h2");
+        repo.append_history(
+            "rev1",
+            "c1",
+            &ReviewRecord { reviewer_id: "u1".into(), status: ReviewStatus::UnPass },
+        )
+        .await
+        .expect("h1");
+        repo.append_history(
+            "rev1",
+            "c1",
+            &ReviewRecord { reviewer_id: "u1".into(), status: ReviewStatus::Pass },
+        )
+        .await
+        .expect("h2");
         let hist = repo.history_of("rev1", "c1").await.expect("hist");
         assert_eq!(hist.len(), 2);
         assert_eq!(hist[0].status, ReviewStatus::UnPass);
@@ -246,10 +260,12 @@ mod tests {
 
         repo.set_case_status("rev1", "c1", ReviewStatus::UnderReviewed).await.expect("s1");
         repo.set_case_status("rev1", "c1", ReviewStatus::Pass).await.expect("s2");
-        let row = sqlx::query("SELECT status FROM ms_case_review_status WHERE review_id='rev1' AND case_id='c1'")
-            .fetch_one(&pool)
-            .await
-            .expect("status row");
+        let row = sqlx::query(
+            "SELECT status FROM ms_case_review_status WHERE review_id='rev1' AND case_id='c1'",
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("status row");
         let s: String = row.try_get("status").expect("status");
         assert_eq!(s, "PASS");
     }

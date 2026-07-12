@@ -10,6 +10,16 @@ import { useI18n } from '../i18n'
 
 const METHODS = ['GET', 'POST', 'PUT', 'DELETE']
 type TargetType = 'url' | 'scenario'
+
+// SCENARIO is a pseudo method for scenario perf runs, shown translated; real HTTP methods (GET/POST…) render as-is.
+const kindLabel = (t: (k: string, d?: string) => string, m: string) =>
+  m === 'SCENARIO' ? t('perf.kindScenario', '场景') : m
+
+// Report status code → display label; unregistered codes fall back to raw value.
+const statusLabel = (t: (k: string, d?: string) => string, s: string) => {
+  const zh: Record<string, string> = { COMPLETED: '已完成', RUNNING: '压测中', ERROR: '失败' }
+  return zh[s] ? t(`perf.st.${s}`, zh[s]) : s
+}
 type LoadMode = 'iterations' | 'duration'
 
 export default function Perf() {
@@ -51,7 +61,7 @@ export default function Perf() {
               <Space direction="vertical" size={2} style={{ width: '100%' }}>
                 <Space size={4}>
                   <Tag color={methodColor(r.meta?.method || 'GET')} style={{ margin: 0 }}>
-                    {r.meta?.method || 'GET'}
+                    {kindLabel(t, r.meta?.method || 'GET')}
                   </Tag>
                   <Typography.Text ellipsis style={{ maxWidth: 200 }} className="ms-mono">
                     {r.label}
@@ -95,7 +105,7 @@ function RunForm({
   const [scenarios, setScenarios] = useState<Scenario[]>([])
   const [envs, setEnvs] = useState<Environment[]>([])
 
-  // 场景/环境下拉:进入页面即拉,切换目标时无需等待。
+  // Scenario/environment dropdowns: fetched on mount so switching targets has no wait.
   useEffect(() => {
     if (!projectId) return
     api.scenarios(projectId).then(setScenarios).catch(() => setScenarios([]))
@@ -105,7 +115,7 @@ function RunForm({
   const submit = async (v: Record<string, unknown>) => {
     setRunning(true)
     try {
-      // 施压量:按次数 → iterations;按时长 → durationMs(秒 × 1000)。
+      // Load: by count → iterations; by duration → durationMs (seconds × 1000).
       const load =
         mode === 'duration'
           ? { durationMs: Math.max(1, Number(v.durationSec) || 0) * 1000 }
@@ -201,9 +211,16 @@ function RunForm({
               <InputNumber min={1} max={1000} style={{ width: '100%' }} />
             </Form.Item>
           </Col>
-          <Col flex="200px">
+          {/* flex=none: width fits the label so longer English text doesn't wrap and stack. */}
+          <Col flex="none">
             <Form.Item label={t('perf.loadMode', '施压方式')}>
-              <Radio.Group value={mode} onChange={(e) => setMode(e.target.value)} optionType="button" buttonStyle="solid">
+              <Radio.Group
+                value={mode}
+                onChange={(e) => setMode(e.target.value)}
+                optionType="button"
+                buttonStyle="solid"
+                style={{ whiteSpace: 'nowrap' }}
+              >
                 <Radio.Button value="iterations">{t('perf.byIterations', '按次数')}</Radio.Button>
                 <Radio.Button value="duration">{t('perf.byDuration', '按时长')}</Radio.Button>
               </Radio.Group>
@@ -238,7 +255,7 @@ function ReportView({ reportId }: { reportId: string }) {
   const [rep, setRep] = useState<PerfReport | null>(null)
   const [loading, setLoading] = useState(false)
 
-  // silent=true:轮询用,不弹 loading / 不弹错误 toast。
+  // silent=true: used by polling; no loading state, no error toast.
   const load = async (silent = false) => {
     if (!silent) setLoading(true)
     try {
@@ -250,15 +267,16 @@ function ReportView({ reportId }: { reportId: string }) {
     }
   }
 
-  // 首次加载(切报告时先清空,避免显示上一份)
+  // Initial load (clear first when switching reports to avoid showing the previous one)
   useEffect(() => {
     setRep(null)
     load()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [reportId])
 
-  // RUNNING 期间静默轮询(场景压测整条链耗时可达数十秒),跑完自动停。
-  // 依赖 rep 对象身份:每次 setRep 换新引用 → 重新计时下一拍;状态转 COMPLETED/ERROR 即不再续约。
+  // Poll silently while RUNNING (a scenario perf run can take tens of seconds); stops automatically when done.
+  // Depends on rep object identity: each setRep produces a new reference → schedules the next tick; once status
+  // turns COMPLETED/ERROR the timer is not renewed.
   useEffect(() => {
     if (rep?.status !== 'RUNNING') return
     const id = window.setTimeout(() => load(true), 1500)
@@ -269,7 +287,7 @@ function ReportView({ reportId }: { reportId: string }) {
   if (!rep) return <Card loading={loading} />
 
   const running = rep.status === 'RUNNING'
-  // RUNNING 时后端 latency 仍是空 jsonb({}),各分位缺失 → 用 0 兜底,避免分位表出现空白行。
+  // While RUNNING the backend latency is still an empty jsonb ({}), so percentiles are missing → default to 0 to avoid blank rows.
   const l = (rep.latency || {}) as Partial<PerfLatency>
   const lat = {
     min: l.min ?? 0, max: l.max ?? 0, mean: l.mean ?? 0,
@@ -280,10 +298,10 @@ function ReportView({ reportId }: { reportId: string }) {
       loading={loading}
       title={
         <Space>
-          <Tag color={methodColor(rep.method)}>{rep.method}</Tag>
+          <Tag color={methodColor(rep.method)}>{kindLabel(t, rep.method)}</Tag>
           <span className="ms-mono">{rep.url}</span>
           <Tag color={rep.status === 'COMPLETED' ? 'green' : running ? 'processing' : 'blue'}>
-            {running ? `${rep.status}…` : rep.status}
+            {running ? `${statusLabel(t, rep.status)}…` : statusLabel(t, rep.status)}
           </Tag>
         </Space>
       }

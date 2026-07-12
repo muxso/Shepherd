@@ -78,7 +78,8 @@ counts, and HPAs, and keeps the in-cluster datastores disabled.
 | `web.resources` | requests 50m/64Mi, limits 500m/256Mi | Web resources. |
 | `web.service.{type,port}` | `ClusterIP` / `80` | Web Service. |
 | `web.ingress.{enabled,className,host,tls,annotations}` | enabled | Web ingress. |
-| `config.adminPassword` | `""` (**required**) | `SHEPHERD_ADMIN_PASSWORD`. |
+| `config.adminPassword` | `""` (**required**) | `SHEPHERD_ADMIN_PASSWORD` (server admin bootstrap + web login). |
+| `config.agentKey` | `""` (**required** for agent-runtime) | `SHEPHERD_AGENT_KEY` — static API key (`sak_…`) the runtimes authenticate with; issue via `POST /system/apikey`. |
 | `config.sessionTtlSecs` | `28800` | `SHEPHERD_SESSION_TTL_SECS`. |
 | `config.fleet.enabled` | `true` | Multi-host fleet mode (`SHEPHERD_AGENT_FLEET`). |
 | `config.fleet.redisUrl` | `""` | `SHEPHERD_FLEET_REDIS` (required for multi-replica fleet). |
@@ -94,6 +95,11 @@ counts, and HPAs, and keeps the in-cluster datastores disabled.
 
 - `config.adminPassword` is **required** for any non-throwaway deployment. When empty,
   the server falls back to its built-in default — fine for a local demo, unsafe otherwise.
+- `config.agentKey` is **required** whenever agent-runtime pods run: the runtime only
+  authenticates with a static API key (`SHEPHERD_AGENT_KEY`) and exits at startup without
+  one. Bootstrap order on a fresh cluster: install with the runtime scaled to 0 (or let it
+  crash-loop), issue a key (`POST /system/apikey`, permissions `DELIVERY:UPDATE` +
+  `REQUIREMENT:UPDATE`), then `helm upgrade --set config.agentKey=sak_…`.
 - `database.url` is **required** unless `postgresql.enabled=true` (then it is derived
   from the in-cluster service).
 - For a multi-replica server fleet, set `config.fleet.redisUrl` (or `redis.enabled=true`

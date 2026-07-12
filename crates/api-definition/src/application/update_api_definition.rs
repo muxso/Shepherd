@@ -49,10 +49,7 @@ mod tests {
 
     async fn seed(repo: Arc<InMemoryApiDefinitionRepository>) -> String {
         let uc = CreateApiDefinitionUseCase::new(repo);
-        uc.execute("p1", "登录", ApiProtocol::Http, "get", "/login", "u1")
-            .await
-            .expect("seed")
-            .id
+        uc.execute("p1", "登录", ApiProtocol::Http, "get", "/login", "u1").await.expect("seed").id
     }
 
     #[tokio::test]
@@ -60,10 +57,8 @@ mod tests {
         let repo = Arc::new(InMemoryApiDefinitionRepository::new());
         let id = seed(repo.clone()).await;
         let uc = UpdateApiDefinitionUseCase::new(repo);
-        let d = uc
-            .execute(&id, " 登录v2 ", ApiProtocol::Http, "post", "/v2/login")
-            .await
-            .expect("ok");
+        let d =
+            uc.execute(&id, " 登录v2 ", ApiProtocol::Http, "post", "/v2/login").await.expect("ok");
         assert_eq!(d.name, "登录v2");
         assert_eq!(d.method, "POST");
         assert_eq!(d.path, "/v2/login");
@@ -75,10 +70,7 @@ mod tests {
         let repo = Arc::new(InMemoryApiDefinitionRepository::new());
         let id = seed(repo.clone()).await;
         let uc = UpdateApiDefinitionUseCase::new(repo);
-        let err = uc
-            .execute(&id, "x", ApiProtocol::Http, "FETCH", "/")
-            .await
-            .unwrap_err();
+        let err = uc.execute(&id, "x", ApiProtocol::Http, "FETCH", "/").await.unwrap_err();
         assert_eq!(
             err,
             UpdateApiDefinitionError::Validation(ApiDefinitionError::UnknownMethod("FETCH".into()))
@@ -89,10 +81,7 @@ mod tests {
     async fn missing_definition_not_found() {
         let repo = Arc::new(InMemoryApiDefinitionRepository::new());
         let uc = UpdateApiDefinitionUseCase::new(repo);
-        let err = uc
-            .execute("ghost", "x", ApiProtocol::Http, "GET", "/")
-            .await
-            .unwrap_err();
+        let err = uc.execute("ghost", "x", ApiProtocol::Http, "GET", "/").await.unwrap_err();
         assert_eq!(err, UpdateApiDefinitionError::NotFound);
     }
 }

@@ -13,13 +13,13 @@ pub enum DirectoryError {
 
 #[async_trait]
 pub trait UserDirectory: Send + Sync {
-    /// 受拦截的校验路径,对 OIDC 用户会 `ProvenanceCheckFailed`
+    /// Intercepted validation path; fails with `ProvenanceCheckFailed` for OIDC users.
     async fn names_validated(
         &self,
         ids: &[String],
     ) -> Result<BTreeMap<String, String>, DirectoryError>;
 
-    /// 直查旁路,不受 provenance 限制
+    /// Direct-query bypass, not subject to provenance checks.
     async fn names_direct(
         &self,
         ids: &[String],

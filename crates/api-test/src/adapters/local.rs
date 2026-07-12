@@ -2,14 +2,14 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Duration;
 
-use async_trait::async_trait;
-use futures::stream::{self, StreamExt};
 use crate::domain::{BatchRunMode, ResolvedEnv};
 use crate::ports::{DispatchOutcome, EnvVarWriter, PortError, RunTask, TaskDispatcher};
 use api_runner::{
     env_extracts, run_extracts, substitute, wait_millis, Assertion, CaseOutcome, Processor,
-    ReqwestRunner, RequestSpec, ResponseSnapshot,
+    RequestSpec, ReqwestRunner, ResponseSnapshot,
 };
+use async_trait::async_trait;
+use futures::stream::{self, StreamExt};
 
 pub fn apply_env_static(req: &mut RequestSpec, env: &ResolvedEnv) {
     let is_absolute = req.url.starts_with("http://") || req.url.starts_with("https://");
@@ -17,7 +17,7 @@ pub fn apply_env_static(req: &mut RequestSpec, env: &ResolvedEnv) {
         let sep = if req.url.is_empty() || req.url.starts_with('/') { "" } else { "/" };
         req.url = format!("{}{sep}{}", env.base_url, req.url);
     }
-    // 用例已有同名头(忽略大小写)优先,环境只补缺。
+    // Case headers win (case-insensitive); environment headers only fill gaps.
     for (k, v) in &env.headers {
         if !req.headers.iter().any(|(hk, _)| hk.eq_ignore_ascii_case(k)) {
             req.headers.push((k.clone(), v.clone()));
@@ -94,7 +94,7 @@ pub struct LocalRunnerDispatcher {
 
 impl LocalRunnerDispatcher {
     pub fn new(specs: Arc<dyn CaseSpecSource>, sink: Arc<dyn CaseResultSink>) -> Self {
-        // 默认绕过环境代理,否则 http_proxy 会劫持被测目标请求。
+        // Bypass environment proxies by default; otherwise http_proxy hijacks requests to the target under test.
         Self {
             specs,
             sink,
@@ -178,7 +178,7 @@ impl TaskDispatcher for LocalRunnerDispatcher {
                         Err(e) => v.push(Err(e)),
                     }
                 }
-                // best-effort:回写失败不影响用例结果。
+                // Best-effort: writeback failure never affects the case result.
                 if let (Some(writer), Some(env_id)) = (&self.env_writer, &task.environment_id) {
                     if !env_updates.is_empty() {
                         if let Err(e) = writer.set_vars(env_id, &env_updates).await {
@@ -211,8 +211,8 @@ impl TaskDispatcher for LocalRunnerDispatcher {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use axum::{routing::get, Json, Router};
     use api_runner::HttpMethod;
+    use axum::{routing::get, Json, Router};
     use std::collections::HashMap;
     use std::sync::Mutex;
     use tokio::net::TcpListener;
@@ -234,9 +234,10 @@ mod tests {
         }
     }
 
+    type SinkRow = (String, String, Vec<String>);
     #[derive(Clone, Default)]
     struct SpySink {
-        rows: Arc<Mutex<Vec<(String, String, Vec<String>)>>>,
+        rows: Arc<Mutex<Vec<SinkRow>>>,
     }
     #[async_trait]
     impl CaseResultSink for SpySink {
@@ -247,7 +248,7 @@ mod tests {
             outcome: &str,
             failures: &[String],
         ) -> Result<(), PortError> {
-            self.rows.lock().expect("lock").push((
+            self.rows.lock().unwrap_or_else(std::sync::PoisonError::into_inner).push((
                 case_id.to_string(),
                 outcome.to_string(),
                 failures.to_vec(),
@@ -288,14 +289,18 @@ mod tests {
         }
     }
 
+    type WrittenVars = (String, Vec<(String, String)>);
     #[derive(Clone, Default)]
     struct SpyEnvWriter {
-        written: Arc<Mutex<Vec<(String, Vec<(String, String)>)>>>,
+        written: Arc<Mutex<Vec<WrittenVars>>>,
     }
     #[async_trait]
     impl EnvVarWriter for SpyEnvWriter {
         async fn set_vars(&self, env_id: &str, vars: &[(String, String)]) -> Result<(), PortError> {
-            self.written.lock().expect("lock").push((env_id.to_string(), vars.to_vec()));
+            self.written
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .push((env_id.to_string(), vars.to_vec()));
             Ok(())
         }
     }
@@ -309,10 +314,20 @@ mod tests {
         let addr = listener.local_addr().expect("addr");
         tokio::spawn(async move { axum::serve(listener, app).await.expect("serve") });
         let a = CaseRunSpec {
-            request: RequestSpec { method: HttpMethod::Get, url: format!("http://{addr}/token"), headers: vec![], body: None },
+            request: RequestSpec {
+                method: HttpMethod::Get,
+                url: format!("http://{addr}/token"),
+                headers: vec![],
+                body: None,
+            },
             assertions: vec![Assertion::StatusIs(200)],
             processors: vec![Processor::Extract {
-                extractors: vec![Extractor { variable: "tk".into(), kind: ExtractKind::JsonPath, expression: "$.token".into(), scope: ExtractScope::Env }],
+                extractors: vec![Extractor {
+                    variable: "tk".into(),
+                    kind: ExtractKind::JsonPath,
+                    expression: "$.token".into(),
+                    scope: ExtractScope::Env,
+                }],
             }],
         };
         let specs = InMemorySpecs::default().with("a", a);
@@ -323,8 +338,12 @@ mod tests {
         let mut t = task(BatchRunMode::Serial, &["a"]);
         t.environment_id = Some("env-1".into());
         d.dispatch_task(&t).await.expect("ok");
-        let written = writer.written.lock().expect("lock").clone();
-        assert_eq!(written, vec![("env-1".to_string(), vec![("tk".to_string(), "E-7".to_string())])]);
+        let written =
+            writer.written.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clone();
+        assert_eq!(
+            written,
+            vec![("env-1".to_string(), vec![("tk".to_string(), "E-7".to_string())])]
+        );
     }
 
     #[test]
@@ -426,7 +445,7 @@ mod tests {
             d.dispatch_task(&task(BatchRunMode::Parallel, &["c1", "c2"])).await.expect("ok");
         assert_eq!(outcome, DispatchOutcome::Completed { status: "SUCCESS".into() });
 
-        let rows = sink.rows.lock().expect("lock");
+        let rows = sink.rows.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         assert_eq!(rows.len(), 2);
         assert!(rows.iter().all(|(_, o, f)| o == "SUCCESS" && f.is_empty()));
     }
@@ -444,7 +463,7 @@ mod tests {
             d.dispatch_task(&task(BatchRunMode::Serial, &["ok", "bad"])).await.expect("ok");
         assert_eq!(outcome, DispatchOutcome::Completed { status: "ERROR".into() });
 
-        let rows = sink.rows.lock().expect("lock");
+        let rows = sink.rows.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let bad = rows.iter().find(|(c, _, _)| c == "bad").expect("bad row");
         assert_eq!(bad.1, "ERROR");
         assert!(!bad.2.is_empty());
@@ -455,10 +474,9 @@ mod tests {
         let sink = SpySink::default();
         let d =
             LocalRunnerDispatcher::new(Arc::new(InMemorySpecs::default()), Arc::new(sink.clone()));
-        let outcome =
-            d.dispatch_task(&task(BatchRunMode::Parallel, &["ghost"])).await.expect("ok");
+        let outcome = d.dispatch_task(&task(BatchRunMode::Parallel, &["ghost"])).await.expect("ok");
         assert_eq!(outcome, DispatchOutcome::Completed { status: "ERROR".into() });
-        let rows = sink.rows.lock().expect("lock");
+        let rows = sink.rows.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         assert_eq!(rows[0].1, "ERROR");
         assert!(rows[0].2[0].contains("not found"));
     }
@@ -472,11 +490,11 @@ mod tests {
                 .with(&format!("c{i}"), spec(format!("{base}/ok"), vec![Assertion::StatusIs(200)]));
         }
         let sink = SpySink::default();
-        let d = LocalRunnerDispatcher::new(Arc::new(specs), Arc::new(sink.clone()))
-            .with_concurrency(1);
+        let d =
+            LocalRunnerDispatcher::new(Arc::new(specs), Arc::new(sink.clone())).with_concurrency(1);
         let ids: Vec<&str> = ["c0", "c1", "c2", "c3", "c4"].to_vec();
         let outcome = d.dispatch_task(&task(BatchRunMode::Parallel, &ids)).await.expect("ok");
         assert_eq!(outcome, DispatchOutcome::Completed { status: "SUCCESS".into() });
-        assert_eq!(sink.rows.lock().expect("lock").len(), 5);
+        assert_eq!(sink.rows.lock().unwrap_or_else(std::sync::PoisonError::into_inner).len(), 5);
     }
 }

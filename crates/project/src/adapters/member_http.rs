@@ -96,7 +96,11 @@ async fn add_member(
     responses((status = 200, body = [MemberResponse]), (status = 403)),
     security(("bearer" = []))
 )]
-async fn list_members(user: AuthUser, State(st): State<MemberState>, Path(id): Path<String>) -> Response {
+async fn list_members(
+    user: AuthUser,
+    State(st): State<MemberState>,
+    Path(id): Path<String>,
+) -> Response {
     if !user.can("PROJECT", "READ") {
         return (StatusCode::FORBIDDEN, "permission denied").into_response();
     }
@@ -125,7 +129,9 @@ async fn remove_member(
     }
     match st.members.remove(&id, &user_id).await {
         Ok(()) => StatusCode::NO_CONTENT.into_response(),
-        Err(MemberCmdError::NotFound) => (StatusCode::NOT_FOUND, "member not found").into_response(),
+        Err(MemberCmdError::NotFound) => {
+            (StatusCode::NOT_FOUND, "member not found").into_response()
+        }
         Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
     }
 }

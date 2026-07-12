@@ -96,7 +96,7 @@ mod tests {
     async fn pg_proposal_lifecycle_roundtrip() {
         let url = std::env::var("DATABASE_URL").expect("set DATABASE_URL");
         let pool = PgPool::connect(&url).await.expect("connect");
-        // 自建表(等价于迁移 0065_design_proposal.sql),不跑全量 migrate —— 测试自包含。
+        // Create the table inline (equivalent to migration 0065_design_proposal.sql) instead of running full migrations — keeps the test self-contained.
         sqlx::query(
             "CREATE TABLE IF NOT EXISTS ms_design_proposal (\
                 seq BIGSERIAL, id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text, \

@@ -25,7 +25,7 @@ impl ProjectMemberService {
         Self { repo }
     }
 
-    /// 加入或改角色。校验在领域层(`NewMember`)。
+    /// Adds a member or changes their role. Validation lives in the domain layer (`NewMember`).
     pub async fn add(
         &self,
         project_id: &str,
@@ -40,7 +40,7 @@ impl ProjectMemberService {
         Ok(self.repo.list(project_id).await?)
     }
 
-    /// 移除成员;非成员返回 `NotFound`。
+    /// Removes a member; returns `NotFound` if they are not a member.
     pub async fn remove(&self, project_id: &str, user_id: &str) -> Result<(), MemberCmdError> {
         if self.repo.remove(project_id, user_id).await? {
             Ok(())
@@ -76,7 +76,7 @@ mod tests {
         s.add("p1", "u1", "member").await.expect("add");
         let m = s.add("p1", "u1", "owner").await.expect("re-add");
         assert_eq!(m.role, MemberRole::Owner);
-        assert_eq!(s.list("p1").await.expect("list").len(), 1); // 不重复
+        assert_eq!(s.list("p1").await.expect("list").len(), 1);
     }
 
     #[tokio::test]

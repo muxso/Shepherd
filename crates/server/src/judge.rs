@@ -29,7 +29,9 @@ impl Judge for HttpJudge {
         match self.client.post(&self.url).json(&body).send().await {
             Ok(r) if r.status().is_success() => match r.json::<JudgeResponse>().await {
                 Ok(jr) => Verdict { passed: jr.passed, reason: jr.reason },
-                Err(e) => Verdict { passed: false, reason: format!("judge 响应解析失败: {e}") },
+                Err(e) => {
+                    Verdict { passed: false, reason: format!("judge 响应解析失败: {e}") }
+                }
             },
             Ok(r) => Verdict { passed: false, reason: format!("judge HTTP {}", r.status()) },
             Err(e) => Verdict { passed: false, reason: format!("judge 不可达: {e}") },

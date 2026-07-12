@@ -1,10 +1,11 @@
-// 轻量 OpenAPI 3.x / Swagger 2.0 解析:从 schema 生成示例,把每个操作整理成可建用例的请求。
-// 用于「导入即按 schema(必填/选填)自动生成用例」,免去用户手敲 JSON。
+// Lightweight OpenAPI 3.x / Swagger 2.0 parsing: build examples from schemas and shape each
+// operation into a request a case can be created from. Powers "import → auto-generate cases
+// per schema (required/optional)" so users don't hand-write JSON.
 
 type Doc = any
 
 function resolveRef(ref: string, doc: Doc): any {
-  // "#/components/schemas/X" 或 "#/definitions/X"
+  // "#/components/schemas/X" or "#/definitions/X"
   const parts = ref.replace(/^#\//, '').split('/')
   let cur: any = doc
   for (const p of parts) cur = cur?.[p]
@@ -45,10 +46,10 @@ export function schemaToExample(schema: any, doc: Doc, depth = 0): any {
 export interface OpOperation {
   summary?: string
   query: { name: string; required: boolean; example: string }[]
-  bodyExample?: string // JSON 字符串
+  bodyExample?: string // JSON string
 }
 
-// 返回 key=`${METHOD} ${path}` → 操作信息。同时支持 OpenAPI3(requestBody)与 Swagger2(in:body 参数)。
+// Returns `${METHOD} ${path}` → operation info. Supports both OpenAPI3 (requestBody) and Swagger2 (in:body param).
 export function parseOperations(doc: Doc): Record<string, OpOperation> {
   const out: Record<string, OpOperation> = {}
   const paths = doc?.paths || {}
@@ -72,7 +73,7 @@ export function parseOperations(doc: Doc): Record<string, OpOperation> {
       let bodySchema: any =
         op.requestBody?.content?.['application/json']?.schema ||
         op.requestBody?.content?.['*/*']?.schema
-      // body:Swagger2(in:body 参数)
+      // body: Swagger2 (in:body param)
       if (!bodySchema) bodySchema = params.find((p) => p.in === 'body')?.schema
       let bodyExample: string | undefined
       if (bodySchema) {
@@ -85,7 +86,7 @@ export function parseOperations(doc: Doc): Record<string, OpOperation> {
   return out
 }
 
-// 给定操作信息,构造用于建用例的 url(路径 + 必填 query)。
+// Build the case URL for an operation (path + required query params).
 export function buildCaseUrl(path: string, op?: OpOperation): string {
   if (!op) return path
   const req = op.query.filter((q) => q.required && q.name)

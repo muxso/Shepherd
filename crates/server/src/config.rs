@@ -30,8 +30,9 @@ pub struct ServerConfig {
     pub runner_noop: bool,
 }
 
-/// 解析 `KEY=VALUE` 风格的环境文件:忽略空行与 `#` 注释,trim 键值,
-/// 可选 `export ` 前缀,去掉值两端成对引号。不做变量插值。
+/// Parses a `KEY=VALUE` env file: skips blank lines and `#` comments, trims keys
+/// and values, allows an `export ` prefix, strips matching surrounding quotes.
+/// No variable interpolation.
 fn parse_env_file(contents: &str) -> std::collections::HashMap<String, String> {
     let mut out = std::collections::HashMap::new();
     for line in contents.lines() {
@@ -56,8 +57,8 @@ fn parse_env_file(contents: &str) -> std::collections::HashMap<String, String> {
     out
 }
 
-/// 分层查找:进程环境优先,其后按优先级从高到低落到各文件层。
-/// 进程环境始终胜出,既有部署(只用环境变量)行为不变。
+/// Layered lookup: the process environment always wins, then file layers in
+/// priority order. Existing env-var-only deployments behave unchanged.
 fn layered_lookup(
     env: impl Fn(&str) -> Option<String>,
     files: Vec<std::collections::HashMap<String, String>>,
@@ -66,8 +67,9 @@ fn layered_lookup(
 }
 
 impl ServerConfig {
-    /// 加载顺序(前者优先):进程环境 → `shepherd.${SHEPHERD_ENV}.env`(profile)
-    /// → `shepherd.env`(共享默认)。文件目录由 `SHEPHERD_CONFIG_DIR` 指定,缺省当前目录。
+    /// Load order (earlier wins): process env → `shepherd.${SHEPHERD_ENV}.env`
+    /// (profile) → `shepherd.env` (shared defaults). File directory comes from
+    /// `SHEPHERD_CONFIG_DIR`, defaulting to the current directory.
     pub fn from_env() -> Self {
         let dir = std::env::var("SHEPHERD_CONFIG_DIR").unwrap_or_else(|_| ".".to_string());
         let read = |path: String| std::fs::read_to_string(path).ok().map(|c| parse_env_file(&c));
@@ -94,15 +96,16 @@ impl ServerConfig {
         let parse_u64 = |key: &str, default: u64| -> u64 {
             lookup(key).and_then(|v| v.parse().ok()).unwrap_or(default)
         };
-        let oidc = |id_key: &str, secret_key: &str, redirect_key: &str| {
-            match (lookup(id_key), lookup(secret_key)) {
-                (Some(app_id), Some(app_secret)) => Some(OidcProviderConfig {
-                    app_id,
-                    app_secret,
-                    redirect: lookup(redirect_key).unwrap_or_default(),
-                }),
-                _ => None,
-            }
+        let oidc = |id_key: &str, secret_key: &str, redirect_key: &str| match (
+            lookup(id_key),
+            lookup(secret_key),
+        ) {
+            (Some(app_id), Some(app_secret)) => Some(OidcProviderConfig {
+                app_id,
+                app_secret,
+                redirect: lookup(redirect_key).unwrap_or_default(),
+            }),
+            _ => None,
         };
 
         ServerConfig {
@@ -112,8 +115,16 @@ impl ServerConfig {
             mock_bind: lookup("MOCK_BIND").filter(|v| !v.trim().is_empty()),
             admin_pw: lookup("SHEPHERD_ADMIN_PASSWORD").unwrap_or_else(|| "admin".to_string()),
             session_ttl_secs: parse_or("SHEPHERD_SESSION_TTL_SECS", 8 * 3600),
-            feishu: oidc("SHEPHERD_FEISHU_APP_ID", "SHEPHERD_FEISHU_APP_SECRET", "SHEPHERD_FEISHU_REDIRECT"),
-            wecom: oidc("SHEPHERD_WECOM_CORP_ID", "SHEPHERD_WECOM_SECRET", "SHEPHERD_WECOM_REDIRECT"),
+            feishu: oidc(
+                "SHEPHERD_FEISHU_APP_ID",
+                "SHEPHERD_FEISHU_APP_SECRET",
+                "SHEPHERD_FEISHU_REDIRECT",
+            ),
+            wecom: oidc(
+                "SHEPHERD_WECOM_CORP_ID",
+                "SHEPHERD_WECOM_SECRET",
+                "SHEPHERD_WECOM_REDIRECT",
+            ),
             agent: AgentConfig {
                 fleet: present("SHEPHERD_AGENT_FLEET"),
                 fleet_redis: lookup("SHEPHERD_FLEET_REDIS"),
@@ -170,7 +181,11 @@ mod tests {
         let cfg = from(&[("SHEPHERD_FEISHU_APP_ID", "x"), ("SHEPHERD_FEISHU_APP_SECRET", "y")]);
         assert_eq!(
             cfg.feishu,
-            Some(OidcProviderConfig { app_id: "x".into(), app_secret: "y".into(), redirect: String::new() })
+            Some(OidcProviderConfig {
+                app_id: "x".into(),
+                app_secret: "y".into(),
+                redirect: String::new()
+            })
         );
     }
 
@@ -180,12 +195,12 @@ mod tests {
             "# comment\n\nSHEPHERD_BIND=127.0.0.1:9180\nexport SHEPHERD_ENV=prod\nQUOTED=\"a b\"\nSQ='x'\nDATABASE_URL=postgres://u:p@h/db?x=1\n=skip\n  PAD = 3 \n",
         );
         assert_eq!(m.get("SHEPHERD_BIND").unwrap(), "127.0.0.1:9180");
-        assert_eq!(m.get("SHEPHERD_ENV").unwrap(), "prod"); // export 前缀
-        assert_eq!(m.get("QUOTED").unwrap(), "a b"); // 去引号
+        assert_eq!(m.get("SHEPHERD_ENV").unwrap(), "prod"); // export prefix
+        assert_eq!(m.get("QUOTED").unwrap(), "a b"); // quotes stripped
         assert_eq!(m.get("SQ").unwrap(), "x");
-        assert_eq!(m.get("DATABASE_URL").unwrap(), "postgres://u:p@h/db?x=1"); // 值内 '=' 保留
-        assert_eq!(m.get("PAD").unwrap(), "3"); // 键值各自 trim
-        assert!(!m.contains_key("")); // 空键跳过
+        assert_eq!(m.get("DATABASE_URL").unwrap(), "postgres://u:p@h/db?x=1"); // '=' kept inside value
+        assert_eq!(m.get("PAD").unwrap(), "3"); // key and value trimmed
+        assert!(!m.contains_key("")); // empty key skipped
     }
 
     #[test]
@@ -195,13 +210,13 @@ mod tests {
         base.insert("SHEPHERD_ADMIN_PASSWORD".to_string(), "frombase".to_string());
         let mut profile = HashMap::new();
         profile.insert("SHEPHERD_BIND".to_string(), "profile:2".to_string());
-        // 优先级:进程环境 > profile > base。
+        // Priority: process env > profile > base.
         let env: HashMap<String, String> =
             [("SHEPHERD_BIND".to_string(), "env:3".to_string())].into_iter().collect();
         let lookup = layered_lookup(move |k| env.get(k).cloned(), vec![profile, base]);
         let cfg = ServerConfig::resolve(lookup);
-        assert_eq!(cfg.bind, "env:3"); // 进程环境胜出
-        assert_eq!(cfg.admin_pw, "frombase"); // 仅 base 提供 → 回落到 base
+        assert_eq!(cfg.bind, "env:3"); // process env wins
+        assert_eq!(cfg.admin_pw, "frombase"); // only base provides it -> falls back to base
     }
 
     #[test]

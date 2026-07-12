@@ -1,5 +1,5 @@
-import { useEffect, useState, type ReactNode } from 'react'
-import { Layout, Menu, Select, Button, Space, Tooltip, Drawer, Avatar, Descriptions, Segmented, Empty, Dropdown, Breadcrumb } from 'antd'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { Layout, Menu, Select, Button, Space, Tooltip, Drawer, Avatar, Segmented, Empty, Dropdown } from 'antd'
 import {
   ApiOutlined,
   PartitionOutlined,
@@ -30,6 +30,9 @@ import {
   ExperimentOutlined,
   FullscreenOutlined,
   FullscreenExitOutlined,
+  KeyOutlined,
+  CarryOutOutlined,
+  StarOutlined,
 } from '@ant-design/icons'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { userStore } from '../api'
@@ -37,51 +40,56 @@ import { useApp } from '../context'
 import { useI18n } from '../i18n'
 import { useThemeMode } from '../themeMode'
 import NewProjectModal from './NewProjectModal'
+import PersonalCenter from './PersonalCenter'
 
 const { Content } = Layout
 
-// 语言选项单一来源:顶栏(图标 + 下拉)与个人中心(分段切换)共用,避免两处文案漂移。
+// Single source for language options, shared by the top bar dropdown and the personal-center segmented control so the labels can't drift apart.
 const LANG_OPTIONS: { value: 'zh' | 'en'; label: string }[] = [
   { value: 'zh', label: '中文' },
   { value: 'en', label: 'English' },
 ]
 
-// 一级模块 = 左侧全局图标导航项(对齐参考图:图标在上、文字在下)+ 它专属的二级菜单。
-// 全局栏只切模块,二级栏随选中模块收敛成该模块子项。系统项底部固定。
-// label 用 [i18n key, 中文兜底];未登记字典也能正常显示。
+// Top-level module = an icon item in the left global rail (icon above text, per reference shots)
+// plus its own secondary menu. The rail only switches modules; the secondary bar shows the
+// selected module's children. System module is pinned to the bottom.
+// label is [i18n key, fallback], so entries missing from the dictionary still render.
 interface ModuleDef {
   key: string
   label: [string, string]
   icon: ReactNode
   match: string[]
-  bottom?: boolean // 底部固定(系统)
+  bottom?: boolean // pinned to the rail bottom (system module)
   children: { key: string; icon: ReactNode; label: [string, string] }[]
 }
 
-// IA 主轴 = AI 交付生命周期:工作台 → AI需求 → AI评审 → AI研发 → AI测试,再 项目(支撑)/ 系统(底部)。
-// 需求是产品主线(从原「缺陷」杂物抽屉里提出来);技能/协同/MCP 归入「AI 研发」;
-// 测试资产(用例/接口/场景/计划/性能/缺陷)统一收进「AI 测试」。
+// IA follows the AI delivery lifecycle: home → requirements → review → dev → test,
+// then project (supporting) and system (bottom). Requirements is the product mainline
+// (promoted out of the old "bugs" catch-all); skills/agents/MCP live under dev;
+// test assets (cases/API/scenarios/plans/perf/bugs) are all under test.
 const MODULES: ModuleDef[] = [
   {
+    // Home = personal entry points: workbench (overview) + todos (awaiting me) + follows (assets I watch).
     key: '/home',
     label: ['nav.home', '首页'],
     icon: <DashboardOutlined />,
-    match: ['/home'],
-    children: [{ key: '/home', icon: <DashboardOutlined />, label: ['m.home', '工作台'] }],
+    match: ['/home', '/todo', '/follow'],
+    children: [
+      { key: '/home', icon: <DashboardOutlined />, label: ['m.home', '工作台'] },
+      { key: '/todo', icon: <CarryOutOutlined />, label: ['home.todo.nav', '待办'] },
+      { key: '/follow', icon: <StarOutlined />, label: ['home.follow.nav', '关注'] },
+    ],
   },
   {
+    // Requirements and review share one domain: single rail entry, switched via the secondary menu (same pattern as the test module).
     key: '/requirement',
     label: ['nav.req', '需求'],
     icon: <FileDoneOutlined />,
-    match: ['/requirement'],
-    children: [{ key: '/requirement', icon: <FileDoneOutlined />, label: ['m.requirement', '需求'] }],
-  },
-  {
-    key: '/review',
-    label: ['nav.review', '评审'],
-    icon: <AuditOutlined />,
-    match: ['/review'],
-    children: [{ key: '/review', icon: <AuditOutlined />, label: ['m.review', '评审'] }],
+    match: ['/requirement', '/review'],
+    children: [
+      { key: '/requirement', icon: <FileDoneOutlined />, label: ['m.requirement', '需求'] },
+      { key: '/review', icon: <AuditOutlined />, label: ['m.review', '评审'] },
+    ],
   },
   {
     key: '/skill',
@@ -132,6 +140,7 @@ const MODULES: ModuleDef[] = [
     children: [
       { key: '/user', icon: <UserOutlined />, label: ['sys.users', '用户'] },
       { key: '/role', icon: <SafetyOutlined />, label: ['sys.userGroups', '用户组'] },
+      { key: '/system/apikeys', icon: <KeyOutlined />, label: ['sys.apikeys', 'API 密钥'] },
       { key: '/organization', icon: <ClusterOutlined />, label: ['sys.orgProj', '组织与项目'] },
       { key: '/system/params', icon: <SettingOutlined />, label: ['sys.params', '系统参数'] },
       { key: '/resource-pool', icon: <DatabaseOutlined />, label: ['m.pool', '资源池'] },
@@ -153,8 +162,8 @@ export default function AppShell({ children }: { children: ReactNode }) {
   const [msgOpen, setMsgOpen] = useState(false)
   const [msgCat, setMsgCat] = useState('all')
   const [msgTab, setMsgTab] = useState('all')
-  // 全屏:整窗进入浏览器全屏(隐藏地址栏/系统边框),沉浸式查看大表格/场景画布。
-  // 跟随原生 fullscreenchange 同步图标,兼容用户按 Esc 退出。
+  // Fullscreen: whole window enters browser fullscreen for large tables / scenario canvas.
+  // Icon syncs via the native fullscreenchange event so Esc-exit is also reflected.
   const [isFullscreen, setIsFullscreen] = useState(false)
   useEffect(() => {
     const onChange = () => setIsFullscreen(!!document.fullscreenElement)
@@ -168,13 +177,27 @@ export default function AppShell({ children }: { children: ReactNode }) {
       document.documentElement.requestFullscreen().catch(() => {})
     }
   }
-  const currentProject = projects.find((p) => p.id === projectId)
+  // Top bar turns solid once any scroll container in the content area leaves the top.
+  // scroll doesn't bubble, so listen on document in the capture phase and restrict targets to the content area.
+  const contentRef = useRef<HTMLDivElement>(null)
+  const [scrolled, setScrolled] = useState(false)
+  useEffect(() => {
+    const onScroll = (e: Event) => {
+      const el = e.target
+      if (!(el instanceof Element) || !contentRef.current?.contains(el)) return
+      setScrolled(el.scrollTop > 8)
+    }
+    document.addEventListener('scroll', onScroll, true)
+    return () => document.removeEventListener('scroll', onScroll, true)
+  }, [])
+
   const username = userStore.get()
 
-  // 当前所在模块由路由推断;二级栏与面包屑都跟着它走。
+  // Current module is inferred from the route; the secondary bar follows it.
   const activeModule = MODULES.find((m) => m.match.some((x) => loc.pathname.startsWith(x))) || MODULES[0]
-  // 取「key 是当前路径前缀」中最长的子项,这样嵌套路由(如 /resource-pool/new、
-  // /project/files)也能正确高亮二级菜单并落到对的面包屑,而非回退到第一个子项。
+  // Pick the longest child whose key prefixes the current path, so nested routes
+  // (/resource-pool/new, /project/files) highlight the right secondary item instead of
+  // falling back to the first child.
   const currentChild =
     activeModule.children
       .filter((c) => loc.pathname === c.key || loc.pathname.startsWith(c.key + '/'))
@@ -182,12 +205,12 @@ export default function AppShell({ children }: { children: ReactNode }) {
   const topModules = MODULES.filter((m) => !m.bottom)
   const sysModule = MODULES.find((m) => m.bottom)
 
-  // 浏览器标签标题随「当前页面 + 语言」切换:页面名取自当前二级菜单项的 i18n 标签。
+  // Browser tab title tracks current page + language, using the active secondary item's i18n label.
   useEffect(() => {
     document.title = `${t(...currentChild.label)} · Shepherd`
   }, [currentChild.key, lang, t])
 
-  // 全局栏导航项:图标在上、文字在下;选中态绿色(对齐参考图 #40)。
+  // Rail nav item: icon above text; selected state uses brand color (per reference shot #40).
   const RailItem = ({ m }: { m: ModuleDef }) => {
     const active = m.key === activeModule.key
     return (
@@ -210,7 +233,8 @@ export default function AppShell({ children }: { children: ReactNode }) {
           }}
         >
           <span style={{ fontSize: 18 }}>{m.icon}</span>
-          <span>{t(...m.label)}</span>
+          {/* English labels can exceed the narrow rail: ellipsize, full name in the Tooltip */}
+          <span style={{ maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t(...m.label)}</span>
         </div>
       </Tooltip>
     )
@@ -218,17 +242,17 @@ export default function AppShell({ children }: { children: ReactNode }) {
 
   return (
     <Layout style={{ height: '100vh' }}>
-      {/* hasSider:左侧为自定义 div(非 antd Sider),需显式声明横向布局,否则默认竖排。 */}
+      {/* hasSider: the left rail is a custom div (not antd Sider), so horizontal layout must be declared explicitly or antd stacks vertically. */}
       <Layout hasSider>
-        {/* 全局图标导航栏:品牌标 / 导航项 / 底部系统 + 头像。磨砂玻璃,环境光晕透出。 */}
+        {/* Global icon rail: brand mark / nav items / bottom system + avatar. Frosted glass over the ambient glow. */}
         <div style={{ width: 72, background: 'var(--glass)', backdropFilter: 'var(--glass-blur)', WebkitBackdropFilter: 'var(--glass-blur)', borderRight: '1px solid var(--border-soft)', display: 'flex', flexDirection: 'column', flexShrink: 0 }}>
-          {/* 品牌:几何标记 + 字标。点击回工作台(顶栏不再放重复的工作台图标)。 */}
+          {/* Brand: mark + wordmark. Click returns to the workbench (so the top bar carries no duplicate home icon). */}
           <Tooltip title={t('m.home', '工作台')} placement="right">
             <div
               onClick={() => nav('/home')}
               style={{ height: 56, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 2, cursor: 'pointer' }}
             >
-              <DeploymentUnitOutlined style={{ color: 'var(--brand)', fontSize: 22 }} />
+              <img src="/logo.svg" alt="Shepherd" width={24} height={24} style={{ display: 'block' }} />
               <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: 0.3, color: 'var(--brand)' }}>Shepherd</span>
             </div>
           </Tooltip>
@@ -237,27 +261,35 @@ export default function AppShell({ children }: { children: ReactNode }) {
           </div>
           <div style={{ paddingBottom: 6 }}>
             {sysModule && <RailItem m={sysModule} />}
-            <Tooltip title={t('pc.title', '个人中心')} placement="right">
-              <div style={{ display: 'flex', justifyContent: 'center', padding: '10px 0', cursor: 'pointer' }} onClick={() => setPcOpen(true)}>
+            {/* Avatar: dropdown (personal center / logout); personal center is a fullscreen drawer */}
+            <Dropdown
+              trigger={['click']}
+              placement="topRight"
+              menu={{
+                items: [
+                  { key: 'pc', icon: <UserOutlined />, label: t('pc.title', '个人中心'), onClick: () => setPcOpen(true) },
+                  { type: 'divider' },
+                  { key: 'logout', icon: <LogoutOutlined />, danger: true, label: t('top.logout', '退出登录'), onClick: logout },
+                ],
+              }}
+            >
+              <div style={{ display: 'flex', justifyContent: 'center', padding: '10px 0', cursor: 'pointer' }}>
                 <Avatar size={30} style={{ background: 'var(--brand)' }}>{username.slice(0, 1).toUpperCase()}</Avatar>
               </div>
-            </Tooltip>
+            </Dropdown>
           </div>
         </div>
 
         <Layout style={{ background: 'var(--bg)' }}>
-          {/* 顶栏:当前模块的二级菜单(左,横向)+ 右上角图标簇。磨砂玻璃。 */}
+          {/* Top bar: active module's secondary menu (left, horizontal) + icon cluster on the right. Frosted glass. */}
           <div
+            className={`ms-topbar${scrolled ? ' ms-scrolled' : ''}`}
             style={{
               height: 48,
               display: 'flex',
               alignItems: 'center',
               paddingInline: 16,
               gap: 8,
-              background: 'var(--glass)',
-              backdropFilter: 'var(--glass-blur)',
-              WebkitBackdropFilter: 'var(--glass-blur)',
-              borderBottom: '1px solid var(--border-soft)',
               flexShrink: 0,
             }}
           >
@@ -269,7 +301,6 @@ export default function AppShell({ children }: { children: ReactNode }) {
               style={{ flex: 1, minWidth: 0, borderBottom: 'none', background: 'transparent' }}
             />
             <Select
-              size="small"
               style={{ width: 200 }}
               value={projectId || undefined}
               placeholder={t('top.project')}
@@ -278,9 +309,9 @@ export default function AppShell({ children }: { children: ReactNode }) {
               optionFilterProp="label"
               options={projects.map((p) => ({ value: p.id, label: p.name }))}
               notFoundContent={t('common.empty')}
-              // 项目多时:下拉列表限高内部滚动,避免溢出视口
+              // Cap dropdown height with internal scroll so many projects don't overflow the viewport
               listHeight={320}
-              // 名称长时:弹层可比选择框更宽(限上限,避免顶到屏幕边),完整可读
+              // Popup may grow wider than the select (bounded max) so long names stay readable
               popupMatchSelectWidth={false}
               styles={{ popup: { root: { minWidth: 200, maxWidth: 360 } } }}
               optionRender={(opt) => (
@@ -290,19 +321,19 @@ export default function AppShell({ children }: { children: ReactNode }) {
               )}
             />
             <Tooltip title={t('top.newProject')}>
-              <Button type="text" size="small" icon={<PlusOutlined />} onClick={() => setNewProjOpen(true)} />
+              <Button type="text" icon={<PlusOutlined />} onClick={() => setNewProjOpen(true)} />
             </Tooltip>
             <Tooltip title={t('top.notifications', '通知')}>
-              <Button type="text" size="small" icon={<BellOutlined />} onClick={() => setMsgOpen(true)} />
+              <Button type="text" icon={<BellOutlined />} onClick={() => setMsgOpen(true)} />
             </Tooltip>
             <Tooltip title={mode === 'dark' ? t('top.lightMode', '浅色模式') : t('top.darkMode', '暗色模式')}>
-              <Button type="text" size="small" icon={<BulbOutlined style={{ color: mode === 'dark' ? 'var(--brand)' : undefined }} />} onClick={toggle} />
+              <Button type="text" icon={<BulbOutlined style={{ color: mode === 'dark' ? 'var(--brand)' : undefined }} />} onClick={(e) => toggle(e)} />
             </Tooltip>
             <Tooltip title={isFullscreen ? t('top.exitFullscreen', '退出全屏') : t('top.fullscreen', '全屏')}>
-              <Button type="text" size="small" icon={isFullscreen ? <FullscreenExitOutlined style={{ color: 'var(--brand)' }} /> : <FullscreenOutlined />} onClick={toggleFullscreen} />
+              <Button type="text" icon={isFullscreen ? <FullscreenExitOutlined style={{ color: 'var(--brand)' }} /> : <FullscreenOutlined />} onClick={toggleFullscreen} />
             </Tooltip>
-            {/* 语言切换:与相邻图标按钮风格一致的紧凑触发器(地球图标 + 当前语言短码),
-                下拉项对选中语言显示品牌色对勾,切换后所见即所得。 */}
+            {/* Language switch: compact trigger matching the neighboring icon buttons (globe + current
+                language code); dropdown marks the selected language with a brand-color check. */}
             <Dropdown
               trigger={['click']}
               placement="bottomRight"
@@ -322,7 +353,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
               }}
             >
               <Tooltip title={t('top.language', '语言')}>
-                <Button type="text" size="small">
+                <Button type="text">
                   <Space size={4}>
                     <GlobalOutlined />
                     {lang === 'zh' ? '中' : 'EN'}
@@ -331,44 +362,15 @@ export default function AppShell({ children }: { children: ReactNode }) {
               </Tooltip>
             </Dropdown>
           </div>
-          {/* 面包屑:沿用左栏/顶栏推断出的层级,显式呈现「模块 ›  当前页」。
-              单子项模块(模块名 == 子项名,如「需求」)去重,避免出现「需求 / 需求」。
-              模块项可点回模块主页;当前页为末项(纯文本,不可点)。 */}
-          {(() => {
-            const moduleLabel = t(...activeModule.label)
-            const childLabel = t(...currentChild.label)
-            const items = [
-              {
-                title: (
-                  <span style={{ cursor: 'pointer' }} onClick={() => nav(activeModule.key)}>
-                    {moduleLabel}
-                  </span>
-                ),
-              },
-              ...(moduleLabel !== childLabel ? [{ title: childLabel }] : []),
-            ]
-            return (
-              <div
-                style={{
-                  height: 36,
-                  display: 'flex',
-                  alignItems: 'center',
-                  paddingInline: 16,
-                  background: 'var(--bg)',
-                  borderBottom: '1px solid var(--border-soft)',
-                  flexShrink: 0,
-                }}
-              >
-                <Breadcrumb items={items} />
-              </div>
-            )
-          })()}
-          <Content style={{ overflow: 'hidden' }}>{children}</Content>
+          {/* No breadcrumb: rail highlight + selected top-bar tab already express the hierarchy; another row would be pure repetition. */}
+          <Content style={{ overflow: 'hidden' }}>
+            <div ref={contentRef} style={{ height: '100%' }}>{children}</div>
+          </Content>
         </Layout>
       </Layout>
       <NewProjectModal open={newProjOpen} onClose={() => setNewProjOpen(false)} />
 
-      {/* 消息管理(对齐参考图):右侧抽屉,左侧分类列表 + 右侧 全部/@我的/未读/已读 标签。后端暂无站内消息接口,计数为 0、内容空态。 */}
+      {/* Message center (per reference shots): right drawer with category list + all/@me/unread/read tabs. Backend has no in-app message API yet, so counts are 0 and content is empty state. */}
       <Drawer
         open={msgOpen}
         onClose={() => setMsgOpen(false)}
@@ -384,7 +386,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
         }
       >
         <div style={{ display: 'flex', flex: 1, minHeight: 0 }}>
-          {/* 左:消息分类(计数徽标右对齐)+ 底部消息设置 */}
+          {/* Left: message categories (count badge right-aligned) + message settings at the bottom */}
           <div style={{ width: 220, borderRight: '1px solid var(--border-soft)', display: 'flex', flexDirection: 'column' }}>
             <div style={{ flex: 1, overflowY: 'auto', padding: 8 }}>
               {[
@@ -442,7 +444,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
               {t('msg.settings', '消息设置')}
             </div>
           </div>
-          {/* 右:标签筛选 + 全部标为已读 + 内容空态 */}
+          {/* Right: tab filter + mark-all-read + empty state */}
           <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px' }}>
               <Segmented
@@ -466,30 +468,8 @@ export default function AppShell({ children }: { children: ReactNode }) {
         </div>
       </Drawer>
 
-      {/* 个人中心(后端暂无 /me,展示登录态可得信息) */}
-      <Drawer title={t('pc.title', '个人中心')} open={pcOpen} onClose={() => setPcOpen(false)} width={420}>
-        <Space direction="vertical" size={16} style={{ width: '100%' }}>
-          <Space align="center" size={12}>
-            <Avatar size={48} style={{ background: 'var(--brand)' }}>{username.slice(0, 1).toUpperCase()}</Avatar>
-            <span style={{ fontSize: 16, fontWeight: 600 }}>{username}</span>
-          </Space>
-          <Descriptions column={1} size="small" bordered>
-            <Descriptions.Item label={t('pc.username', '用户名')}>{username}</Descriptions.Item>
-            <Descriptions.Item label={t('pc.project', '当前项目')}>{currentProject?.name || '—'}</Descriptions.Item>
-            <Descriptions.Item label={t('pc.projectCount', '可见项目数')}>{projects.length}</Descriptions.Item>
-            <Descriptions.Item label={t('pc.lang', '语言')}>
-              {/* 设置面板内有富余空间:用分段切换一眼可见全部选项与当前态,无需展开下拉。 */}
-              <Segmented
-                size="small"
-                value={lang}
-                onChange={(v) => setLang(v as 'zh' | 'en')}
-                options={LANG_OPTIONS}
-              />
-            </Descriptions.Item>
-          </Descriptions>
-          <Button danger icon={<LogoutOutlined />} onClick={logout}>{t('top.logout', '退出登录')}</Button>
-        </Space>
-      </Drawer>
+      {/* Personal center: fullscreen drawer (profile / password / API keys / model settings) */}
+      <PersonalCenter open={pcOpen} onClose={() => setPcOpen(false)} />
     </Layout>
   )
 }

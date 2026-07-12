@@ -35,7 +35,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const reloadProjects = async () => {
     if (!token) return
-    // 取所有组织的项目并铺平(系统初装通常单组织)。/organization 为分页结构。
+    // Fetch projects across all orgs and flatten (fresh installs usually have one org). /organization is paginated.
     const orgs = (await api.organizations()).items
     const lists = await Promise.all(orgs.map((o) => api.projects(o.id).then((p) => p.items).catch(() => [])))
     const all = lists.flat()

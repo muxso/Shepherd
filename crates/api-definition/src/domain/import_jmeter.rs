@@ -72,7 +72,10 @@ pub fn parse_jmeter(xml: &str) -> Result<Vec<ImportedApi>, ApiDefinitionError> {
                                 .take()
                                 .filter(|n| !n.is_empty())
                                 .or_else(|| arg_fallback.take());
-                            s.args.push((name.unwrap_or_default(), arg_value.take().unwrap_or_default()));
+                            s.args.push((
+                                name.unwrap_or_default(),
+                                arg_value.take().unwrap_or_default(),
+                            ));
                         }
                         in_arg = false;
                     }
@@ -127,20 +130,21 @@ impl Sampler {
         let (path, url_query) = path_and_query(&normalized);
 
         let body_method = matches!(method.as_str(), "POST" | "PUT" | "PATCH");
-        let (body_text, query): (String, Vec<(String, String)>) = if self.post_body_raw && body_method {
-            let body = self
-                .args
-                .iter()
-                .find(|(n, _)| n.is_empty())
-                .or_else(|| self.args.first())
-                .map(|(_, v)| v.clone())
-                .unwrap_or_default();
-            (body, url_query)
-        } else {
-            let mut q = url_query;
-            q.extend(self.args.into_iter().filter(|(n, _)| !n.is_empty()));
-            (String::new(), q)
-        };
+        let (body_text, query): (String, Vec<(String, String)>) =
+            if self.post_body_raw && body_method {
+                let body = self
+                    .args
+                    .iter()
+                    .find(|(n, _)| n.is_empty())
+                    .or_else(|| self.args.first())
+                    .map(|(_, v)| v.clone())
+                    .unwrap_or_default();
+                (body, url_query)
+            } else {
+                let mut q = url_query;
+                q.extend(self.args.into_iter().filter(|(n, _)| !n.is_empty()));
+                (String::new(), q)
+            };
 
         let query_kv: Vec<_> = query.iter().map(|(k, v)| kv(k, v, "")).collect();
         let body_type = body_type_of(&body_text).to_string();
@@ -148,17 +152,22 @@ impl Sampler {
             .name
             .filter(|s| !s.trim().is_empty())
             .unwrap_or_else(|| format!("{method} {path}"));
-        let case_body = if body_method && !body_text.is_empty() {
-            Some(body_text.clone())
-        } else {
-            None
-        };
+        let case_body =
+            if body_method && !body_text.is_empty() { Some(body_text.clone()) } else { None };
 
         Some(ImportedApi {
             name,
             method,
             path,
-            spec: simple_spec("", Vec::new(), query_kv, Vec::new(), &body_type, &body_text, Vec::new()),
+            spec: simple_spec(
+                "",
+                Vec::new(),
+                query_kv,
+                Vec::new(),
+                &body_type,
+                &body_text,
+                Vec::new(),
+            ),
             case_assertions: status_assertions(200),
             case_body,
             module: None,

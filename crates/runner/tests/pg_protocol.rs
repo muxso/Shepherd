@@ -21,7 +21,8 @@ async fn protocols_column_roundtrip_and_protocol_routing() {
 
     let store = PgRunnerAgentStore::new(pool.clone());
 
-    let grpc_agent = NewRunnerAgent::new("pgtest-grpc", "http://grpc-env:9100", None, true).unwrap();
+    let grpc_agent =
+        NewRunnerAgent::new("pgtest-grpc", "http://grpc-env:9100", None, true).unwrap();
     let g = store
         .insert(&grpc_agent, &["http".to_string(), "grpc".to_string()])
         .await

@@ -1,4 +1,4 @@
-/// "NONE" 表示不属于任何计划组。
+/// "NONE" means the plan belongs to no plan group.
 pub const ROOT_GROUP: &str = "NONE";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -78,7 +78,7 @@ pub struct Plan {
     pub plan_type: PlanType,
     pub group_id: String,
     pub archived: bool,
-    /// Unix 毫秒。
+    /// Unix milliseconds.
     pub created_at_ms: i64,
 }
 
@@ -88,10 +88,7 @@ mod tests {
 
     #[test]
     fn rejects_blank_name() {
-        assert_eq!(
-            NewPlan::new("p1", "  ", PlanType::Plan, ROOT_GROUP),
-            Err(PlanError::EmptyName)
-        );
+        assert_eq!(NewPlan::new("p1", "  ", PlanType::Plan, ROOT_GROUP), Err(PlanError::EmptyName));
     }
 
     #[test]

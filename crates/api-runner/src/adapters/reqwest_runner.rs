@@ -157,7 +157,10 @@ mod tests {
                 &get_spec(format!("{base}/users/u1")),
                 &[
                     Assertion::StatusIs(200),
-                    Assertion::JsonFieldEquals { pointer: "/name".into(), expected: "Alice".into() },
+                    Assertion::JsonFieldEquals {
+                        pointer: "/name".into(),
+                        expected: "Alice".into(),
+                    },
                     Assertion::HeaderEquals { name: "x-trace".into(), value: "t-123".into() },
                 ],
             )

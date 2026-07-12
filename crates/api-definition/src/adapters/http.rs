@@ -1,12 +1,5 @@
 use std::sync::Arc;
 
-use axum::{
-    extract::{FromRef, Path, Query, State},
-    http::StatusCode,
-    response::{IntoResponse, Response},
-    routing::{post, put},
-    Json, Router,
-};
 use crate::application::{
     AddApiCaseError, AddApiCaseUseCase, AddApiMockError, AddApiMockUseCase, ApiCaseMeta,
     ApiMockExtras, CreateApiCaseError, CreateApiCaseUseCase, CreateApiDefinitionError,
@@ -14,9 +7,19 @@ use crate::application::{
     ListApiDefinitionsUseCase, ListApiMocksUseCase, ListProjectCasesUseCase,
     UpdateApiDefinitionError, UpdateApiDefinitionUseCase, UpdateApiMockError, UpdateApiMockUseCase,
 };
-use kernel::page::PageRequest;
-use crate::domain::{ApiCase, ApiDefinition, ApiModule, ApiMock, ApiProtocol, ApiView, ImportFormat, NewApiCase, NewApiModule, NewApiView};
+use crate::domain::{
+    ApiCase, ApiDefinition, ApiMock, ApiModule, ApiProtocol, ApiView, ApiViewPatch, ImportFormat,
+    NewApiCase, NewApiModule, NewApiView,
+};
 use crate::ports::ApiDefinitionRepository;
+use axum::{
+    extract::{FromRef, Path, Query, State},
+    http::StatusCode,
+    response::{IntoResponse, Response},
+    routing::{post, put},
+    Json, Router,
+};
+use kernel::page::PageRequest;
 use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, OpenApi, ToSchema};
 use webauth::{AuthUser, SessionStore};
@@ -44,10 +47,7 @@ impl FromRef<ApiDefinitionState> for Arc<dyn SessionStore> {
     }
 }
 
-pub fn router(
-    repo: Arc<dyn ApiDefinitionRepository>,
-    sessions: Arc<dyn SessionStore>,
-) -> Router {
+pub fn router(repo: Arc<dyn ApiDefinitionRepository>, sessions: Arc<dyn SessionStore>) -> Router {
     let state = ApiDefinitionState {
         create_def: CreateApiDefinitionUseCase::new(repo.clone()),
         update_def: UpdateApiDefinitionUseCase::new(repo.clone()),
@@ -66,7 +66,10 @@ pub fn router(
     Router::new()
         .route("/api/definition", post(create_definition).get(list_definitions))
         .route("/api/definition/import", post(import_definitions))
-        .route("/api/definition/{id}", axum::routing::get(get_definition).put(update_definition).delete(delete_definition))
+        .route(
+            "/api/definition/{id}",
+            axum::routing::get(get_definition).put(update_definition).delete(delete_definition),
+        )
         .route("/api/definition/{id}/spec", put(update_definition_spec))
         .route("/api/definition/{id}/changes", axum::routing::get(list_definition_changes))
         .route("/api/definition/{id}/status", put(update_definition_status))
@@ -80,7 +83,7 @@ pub fn router(
         .route("/api/module/{id}", put(rename_module).delete(delete_module))
         .route("/api/definition/{id}/module", put(move_definition))
         .route("/api/api-view", post(create_view).get(list_views))
-        .route("/api/api-view/{id}", axum::routing::delete(delete_view))
+        .route("/api/api-view/{id}", put(update_view).delete(delete_view))
         .route("/api/task-case", post(link_task_case).get(list_task_cases))
         .route("/api/task-case/unlink", post(unlink_task_case))
         .with_state(state)
@@ -328,11 +331,20 @@ async fn create_definition(
     };
     let method = req.method.as_deref().unwrap_or_default();
     let path = req.path.as_deref().unwrap_or_default();
-    match st.create_def.execute(&req.project_id, &req.name, protocol, method, path, &user.user_id).await {
+    match st
+        .create_def
+        .execute(&req.project_id, &req.name, protocol, method, path, &user.user_id)
+        .await
+    {
         Ok(d) => {
             let _ = st
                 .repo
-                .record_definition_change(&d.id, "CREATE", &format!("{} {}", d.method, d.path), &user.user_id)
+                .record_definition_change(
+                    &d.id,
+                    "CREATE",
+                    &format!("{} {}", d.method, d.path),
+                    &user.user_id,
+                )
                 .await;
             (StatusCode::CREATED, Json(ApiDefinitionResponse::from(d))).into_response()
         }
@@ -345,11 +357,15 @@ async fn create_definition(
     }
 }
 
-#[utoipa::path(get, path = "/api/definition", tag = "api-definition", params(DefinitionListQuery), responses((status = 200, body = [ApiDefinitionResponse])))]
+#[utoipa::path(get, path = "/api/definition", tag = "api-definition", params(DefinitionListQuery), responses((status = 200, body = [ApiDefinitionResponse])), security(("bearer" = [])))]
 async fn list_definitions(
+    user: AuthUser,
     State(st): State<ApiDefinitionState>,
     Query(q): Query<DefinitionListQuery>,
 ) -> Response {
+    if !user.can("API_DEFINITION", "READ") {
+        return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
     match st.list_def.execute(&q.project_id).await {
         Ok(list) => {
             let items: Vec<ApiDefinitionResponse> =
@@ -360,11 +376,15 @@ async fn list_definitions(
     }
 }
 
-#[utoipa::path(get, path = "/api/definition/{id}", tag = "api-definition", params(("id" = String, Path)), responses((status = 200, body = ApiDefinitionResponse), (status = 404)))]
+#[utoipa::path(get, path = "/api/definition/{id}", tag = "api-definition", params(("id" = String, Path)), responses((status = 200, body = ApiDefinitionResponse), (status = 404)), security(("bearer" = [])))]
 async fn get_definition(
+    user: AuthUser,
     State(st): State<ApiDefinitionState>,
     Path(id): Path<String>,
 ) -> Response {
+    if !user.can("API_DEFINITION", "READ") {
+        return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
     match st.repo.get_definition(&id).await {
         Ok(Some(d)) => (StatusCode::OK, Json(ApiDefinitionResponse::from(d))).into_response(),
         Ok(None) => (StatusCode::NOT_FOUND, "api definition not found").into_response(),
@@ -397,7 +417,12 @@ async fn delete_definition(
         Ok(()) => {
             let _ = st
                 .repo
-                .record_definition_change(&id, "DELETE", "删除接口定义(连带用例/Mock)", &user.user_id)
+                .record_definition_change(
+                    &id,
+                    "DELETE",
+                    "删除接口定义(连带用例/Mock)",
+                    &user.user_id,
+                )
                 .await;
             StatusCode::NO_CONTENT.into_response()
         }
@@ -447,7 +472,12 @@ async fn update_definition(
         Ok(d) => {
             let _ = st
                 .repo
-                .record_definition_change(&d.id, "UPDATE", &format!("{} {}", d.method, d.path), &user.user_id)
+                .record_definition_change(
+                    &d.id,
+                    "UPDATE",
+                    &format!("{} {}", d.method, d.path),
+                    &user.user_id,
+                )
                 .await;
             (StatusCode::OK, Json(ApiDefinitionResponse::from(d))).into_response()
         }
@@ -525,7 +555,12 @@ async fn update_definition_status(
         Ok(()) => {
             let _ = st
                 .repo
-                .record_definition_change(&id, "STATUS", &format!("状态 → {}", status.as_str()), &user.user_id)
+                .record_definition_change(
+                    &id,
+                    "STATUS",
+                    &format!("状态 → {}", status.as_str()),
+                    &user.user_id,
+                )
                 .await;
             StatusCode::NO_CONTENT.into_response()
         }
@@ -554,7 +589,11 @@ async fn create_case(
         rest_params: req.rest_params.unwrap_or_else(|| serde_json::json!([])),
         auth: req.auth.unwrap_or_else(|| serde_json::json!({})),
     };
-    match st.add_case.execute(&id, &req.name, &req.method, &req.url, req.body, assertions, processors, meta).await {
+    match st
+        .add_case
+        .execute(&id, &req.name, &req.method, &req.url, req.body, assertions, processors, meta)
+        .await
+    {
         Ok(c) => (StatusCode::CREATED, Json(ApiCaseResponse::from(c))).into_response(),
         Err(AddApiCaseError::NotFound) => {
             (StatusCode::NOT_FOUND, "api definition not found").into_response()
@@ -568,12 +607,18 @@ async fn create_case(
     }
 }
 
-#[utoipa::path(get, path = "/api/definition/{id}/case", tag = "api-definition", params(("id" = String, Path)), responses((status = 200, body = [ApiCaseResponse])))]
-async fn list_cases(State(st): State<ApiDefinitionState>, Path(id): Path<String>) -> Response {
+#[utoipa::path(get, path = "/api/definition/{id}/case", tag = "api-definition", params(("id" = String, Path)), responses((status = 200, body = [ApiCaseResponse])), security(("bearer" = [])))]
+async fn list_cases(
+    user: AuthUser,
+    State(st): State<ApiDefinitionState>,
+    Path(id): Path<String>,
+) -> Response {
+    if !user.can("API_DEFINITION", "READ") {
+        return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
     match st.list_case.execute(&id).await {
         Ok(list) => {
-            let items: Vec<ApiCaseResponse> =
-                list.into_iter().map(ApiCaseResponse::from).collect();
+            let items: Vec<ApiCaseResponse> = list.into_iter().map(ApiCaseResponse::from).collect();
             (StatusCode::OK, Json(items)).into_response()
         }
         Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
@@ -659,11 +704,15 @@ async fn create_standalone_case(
     }
 }
 
-#[utoipa::path(get, path = "/api/case", tag = "api-definition", params(CaseListQuery), responses((status = 200, body = ApiCasePageResponse), (status = 400)))]
+#[utoipa::path(get, path = "/api/case", tag = "api-definition", params(CaseListQuery), responses((status = 200, body = ApiCasePageResponse), (status = 400)), security(("bearer" = [])))]
 async fn list_project_cases(
+    user: AuthUser,
     State(st): State<ApiDefinitionState>,
     Query(q): Query<CaseListQuery>,
 ) -> Response {
+    if !user.can("API_DEFINITION", "READ") {
+        return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
     let page = match PageRequest::new(q.current, q.page_size) {
         Ok(p) => p,
         Err(_) => return (StatusCode::BAD_REQUEST, "invalid page params").into_response(),
@@ -704,7 +753,16 @@ async fn create_mock(
     };
     match st
         .add_mock
-        .execute(&id, &req.name, match_rule, response_status, req.response_body, enabled, extras, &user.user_id)
+        .execute(
+            &id,
+            &req.name,
+            match_rule,
+            response_status,
+            req.response_body,
+            enabled,
+            extras,
+            &user.user_id,
+        )
         .await
     {
         Ok(m) => (StatusCode::CREATED, Json(ApiMockResponse::from(m))).into_response(),
@@ -720,12 +778,18 @@ async fn create_mock(
     }
 }
 
-#[utoipa::path(get, path = "/api/definition/{id}/mock", tag = "api-definition", params(("id" = String, Path)), responses((status = 200, body = [ApiMockResponse])))]
-async fn list_mocks(State(st): State<ApiDefinitionState>, Path(id): Path<String>) -> Response {
+#[utoipa::path(get, path = "/api/definition/{id}/mock", tag = "api-definition", params(("id" = String, Path)), responses((status = 200, body = [ApiMockResponse])), security(("bearer" = [])))]
+async fn list_mocks(
+    user: AuthUser,
+    State(st): State<ApiDefinitionState>,
+    Path(id): Path<String>,
+) -> Response {
+    if !user.can("API_DEFINITION", "READ") {
+        return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
     match st.list_mock.execute(&id).await {
         Ok(list) => {
-            let items: Vec<ApiMockResponse> =
-                list.into_iter().map(ApiMockResponse::from).collect();
+            let items: Vec<ApiMockResponse> = list.into_iter().map(ApiMockResponse::from).collect();
             (StatusCode::OK, Json(items)).into_response()
         }
         Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
@@ -750,11 +814,15 @@ struct ProjectMockResponse {
     updated_at: String,
 }
 
-#[utoipa::path(get, path = "/api/mock", tag = "api-definition", params(("projectId" = String, Query)), responses((status = 200, body = [ProjectMockResponse])))]
+#[utoipa::path(get, path = "/api/mock", tag = "api-definition", params(("projectId" = String, Query)), responses((status = 200, body = [ProjectMockResponse])), security(("bearer" = [])))]
 async fn list_project_mocks(
+    user: AuthUser,
     State(st): State<ApiDefinitionState>,
     Query(q): Query<DefinitionListQuery>,
 ) -> Response {
+    if !user.can("API_DEFINITION", "READ") {
+        return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
     match st.repo.list_mocks_by_project(&q.project_id).await {
         Ok(rows) => {
             let items: Vec<ProjectMockResponse> = rows
@@ -791,23 +859,24 @@ async fn update_case(
         return (StatusCode::FORBIDDEN, "permission denied").into_response();
     }
     let assertions = req.assertions.unwrap_or_else(|| serde_json::json!([]));
-    // "_" 占位:UPDATE 不改 api_definition_id/project_id,NewApiCase 仅校验 name/url/method。
-    let new_case = match NewApiCase::new("_", "_", &req.name, &req.method, &req.url, req.body, assertions) {
-        Ok(c) => c
-            .with_processors(req.processors.unwrap_or_else(|| serde_json::json!([])))
-            .with_meta(
-                &req.priority.unwrap_or_default(),
-                &req.status.unwrap_or_default(),
-                req.tags.unwrap_or_else(|| serde_json::json!([])),
-            )
-            .with_headers(req.headers.unwrap_or_else(|| serde_json::json!([])))
-            .with_request(
-                req.query_params.unwrap_or_else(|| serde_json::json!([])),
-                req.rest_params.unwrap_or_else(|| serde_json::json!([])),
-                req.auth.unwrap_or_else(|| serde_json::json!({})),
-            ),
-        Err(_) => return (StatusCode::BAD_REQUEST, "invalid api case payload").into_response(),
-    };
+    // "_" placeholders: UPDATE never touches api_definition_id/project_id; NewApiCase only validates name/url/method.
+    let new_case =
+        match NewApiCase::new("_", "_", &req.name, &req.method, &req.url, req.body, assertions) {
+            Ok(c) => c
+                .with_processors(req.processors.unwrap_or_else(|| serde_json::json!([])))
+                .with_meta(
+                    &req.priority.unwrap_or_default(),
+                    &req.status.unwrap_or_default(),
+                    req.tags.unwrap_or_else(|| serde_json::json!([])),
+                )
+                .with_headers(req.headers.unwrap_or_else(|| serde_json::json!([])))
+                .with_request(
+                    req.query_params.unwrap_or_else(|| serde_json::json!([])),
+                    req.rest_params.unwrap_or_else(|| serde_json::json!([])),
+                    req.auth.unwrap_or_else(|| serde_json::json!({})),
+                ),
+            Err(_) => return (StatusCode::BAD_REQUEST, "invalid api case payload").into_response(),
+        };
     match st.repo.update_case(&id, &new_case).await {
         Ok(true) => StatusCode::NO_CONTENT.into_response(),
         Ok(false) => (StatusCode::NOT_FOUND, "api case not found").into_response(),
@@ -816,7 +885,11 @@ async fn update_case(
 }
 
 #[utoipa::path(delete, path = "/api/case/{id}", tag = "api-definition", params(("id" = String, Path)), responses((status = 204), (status = 404)), security(("bearer" = [])))]
-async fn delete_case(user: AuthUser, State(st): State<ApiDefinitionState>, Path(id): Path<String>) -> Response {
+async fn delete_case(
+    user: AuthUser,
+    State(st): State<ApiDefinitionState>,
+    Path(id): Path<String>,
+) -> Response {
     if !user.can("API_DEFINITION", "ADD") {
         return (StatusCode::FORBIDDEN, "permission denied").into_response();
     }
@@ -848,11 +921,21 @@ async fn update_mock(
     };
     match st
         .update_mock
-        .execute(&mock_id, &req.name, match_rule, response_status, req.response_body, enabled, extras)
+        .execute(
+            &mock_id,
+            &req.name,
+            match_rule,
+            response_status,
+            req.response_body,
+            enabled,
+            extras,
+        )
         .await
     {
         Ok(()) => StatusCode::NO_CONTENT.into_response(),
-        Err(UpdateApiMockError::NotFound) => (StatusCode::NOT_FOUND, "mock not found").into_response(),
+        Err(UpdateApiMockError::NotFound) => {
+            (StatusCode::NOT_FOUND, "mock not found").into_response()
+        }
         Err(UpdateApiMockError::Validation(_)) => {
             (StatusCode::BAD_REQUEST, "invalid api mock payload").into_response()
         }
@@ -863,7 +946,11 @@ async fn update_mock(
 }
 
 #[utoipa::path(delete, path = "/api/mock/{mock_id}", tag = "api-definition", params(("mock_id" = String, Path)), responses((status = 204), (status = 404)), security(("bearer" = [])))]
-async fn delete_mock(user: AuthUser, State(st): State<ApiDefinitionState>, Path(mock_id): Path<String>) -> Response {
+async fn delete_mock(
+    user: AuthUser,
+    State(st): State<ApiDefinitionState>,
+    Path(mock_id): Path<String>,
+) -> Response {
     if !user.can("API_DEFINITION", "ADD") {
         return (StatusCode::FORBIDDEN, "permission denied").into_response();
     }
@@ -893,9 +980,13 @@ async fn create_module(
 }
 
 async fn list_modules(
+    user: AuthUser,
     State(st): State<ApiDefinitionState>,
     Query(q): Query<DefinitionListQuery>,
 ) -> Response {
+    if !user.can("API_DEFINITION", "READ") {
+        return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
     match st.repo.list_modules(&q.project_id).await {
         Ok(list) => {
             let items: Vec<ApiModuleResponse> =
@@ -955,7 +1046,8 @@ async fn move_definition(
                 Some(m) => format!("移入模块 {m}"),
                 None => "移出到未归类".to_string(),
             };
-            let _ = st.repo.record_definition_change(&id, "MOVE_MODULE", &detail, &user.user_id).await;
+            let _ =
+                st.repo.record_definition_change(&id, "MOVE_MODULE", &detail, &user.user_id).await;
             StatusCode::NO_CONTENT.into_response()
         }
         Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
@@ -986,8 +1078,15 @@ impl From<crate::domain::ApiDefinitionChange> for ApiDefinitionChangeResponse {
     }
 }
 
-#[utoipa::path(get, path = "/api/definition/{id}/changes", tag = "api-definition", params(("id" = String, Path)), responses((status = 200, body = [ApiDefinitionChangeResponse])))]
-async fn list_definition_changes(State(st): State<ApiDefinitionState>, Path(id): Path<String>) -> Response {
+#[utoipa::path(get, path = "/api/definition/{id}/changes", tag = "api-definition", params(("id" = String, Path)), responses((status = 200, body = [ApiDefinitionChangeResponse])), security(("bearer" = [])))]
+async fn list_definition_changes(
+    user: AuthUser,
+    State(st): State<ApiDefinitionState>,
+    Path(id): Path<String>,
+) -> Response {
+    if !user.can("API_DEFINITION", "READ") {
+        return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
     match st.repo.list_definition_changes(&id).await {
         Ok(list) => {
             let items: Vec<ApiDefinitionChangeResponse> =
@@ -1042,9 +1141,13 @@ async fn unlink_task_case(
 }
 
 async fn list_task_cases(
+    user: AuthUser,
     State(st): State<ApiDefinitionState>,
     Query(q): Query<TaskCaseQuery>,
 ) -> Response {
+    if !user.can("API_DEFINITION", "READ") {
+        return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
     match st.repo.list_cases_for_task(&q.decomposition_id, &q.task_id).await {
         Ok(list) => {
             let items: Vec<ApiCaseResponse> = list.into_iter().map(ApiCaseResponse::from).collect();
@@ -1097,7 +1200,13 @@ async fn create_view(
     Json(req): Json<ApiViewCreateBody>,
 ) -> Response {
     let config = req.config.unwrap_or_else(|| serde_json::json!({}));
-    match NewApiView::new(&req.project_id, &user.user_id, &req.name, config, req.shared.unwrap_or(true)) {
+    match NewApiView::new(
+        &req.project_id,
+        &user.user_id,
+        &req.name,
+        config,
+        req.shared.unwrap_or(true),
+    ) {
         Ok(nv) => match st.repo.insert_view(&nv).await {
             Ok(v) => (StatusCode::CREATED, Json(ApiViewResponse::from(v))).into_response(),
             Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
@@ -1117,6 +1226,42 @@ async fn list_views(
             (StatusCode::OK, Json(items)).into_response()
         }
         Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
+    }
+}
+
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+struct ApiViewUpdateBody {
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
+    config: Option<serde_json::Value>,
+    #[serde(default)]
+    shared: Option<bool>,
+}
+
+#[utoipa::path(
+    put,
+    path = "/api/api-view/{id}",
+    tag = "api-definition",
+    params(("id" = String, Path)),
+    request_body = ApiViewUpdateBody,
+    responses((status = 200, body = ApiViewResponse), (status = 400), (status = 404)),
+    security(("bearer" = []))
+)]
+async fn update_view(
+    user: AuthUser,
+    State(st): State<ApiDefinitionState>,
+    Path(id): Path<String>,
+    Json(req): Json<ApiViewUpdateBody>,
+) -> Response {
+    match ApiViewPatch::new(req.name.as_deref(), req.config, req.shared) {
+        Ok(patch) => match st.repo.update_view(&id, &user.user_id, &patch).await {
+            Ok(Some(v)) => (StatusCode::OK, Json(ApiViewResponse::from(v))).into_response(),
+            Ok(None) => (StatusCode::NOT_FOUND, "view not found").into_response(),
+            Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
+        },
+        Err(_) => (StatusCode::BAD_REQUEST, "invalid view payload").into_response(),
     }
 }
 
@@ -1232,7 +1377,8 @@ async fn import_definitions(
         list_project_cases,
         create_mock,
         update_mock,
-        list_mocks
+        list_mocks,
+        update_view
     ),
     components(schemas(
         ApiDefinitionCreateBody,
@@ -1248,7 +1394,9 @@ async fn import_definitions(
         ApiMockCreateBody,
         ApiMockResponse,
         ImportBody,
-        ImportResultResponse
+        ImportResultResponse,
+        ApiViewUpdateBody,
+        ApiViewResponse
     )),
     tags((name = "api-definition", description = "接口定义"))
 )]
@@ -1260,9 +1408,9 @@ pub fn openapi() -> utoipa::openapi::OpenApi {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::adapters::InMemoryApiDefinitionRepository;
     use axum::body::Body;
     use axum::http::Request;
-    use crate::adapters::InMemoryApiDefinitionRepository;
     use kernel::permission::PermissionSet;
     use std::sync::Arc;
     use tower::ServiceExt;
@@ -1279,10 +1427,8 @@ mod tests {
     }
 
     fn post(uri: &str, body: &str, token: Option<&str>) -> Request<Body> {
-        let mut b = Request::builder()
-            .method("POST")
-            .uri(uri)
-            .header("content-type", "application/json");
+        let mut b =
+            Request::builder().method("POST").uri(uri).header("content-type", "application/json");
         if let Some(t) = token {
             b = b.header("authorization", format!("Bearer {t}"));
         }
@@ -1290,18 +1436,20 @@ mod tests {
     }
 
     fn put(uri: &str, body: &str, token: Option<&str>) -> Request<Body> {
-        let mut b = Request::builder()
-            .method("PUT")
-            .uri(uri)
-            .header("content-type", "application/json");
+        let mut b =
+            Request::builder().method("PUT").uri(uri).header("content-type", "application/json");
         if let Some(t) = token {
             b = b.header("authorization", format!("Bearer {t}"));
         }
         b.body(Body::from(body.to_string())).expect("req")
     }
 
-    fn get(uri: &str) -> Request<Body> {
-        Request::builder().uri(uri).body(Body::empty()).expect("req")
+    fn get(uri: &str, token: Option<&str>) -> Request<Body> {
+        let mut b = Request::builder().uri(uri);
+        if let Some(t) = token {
+            b = b.header("authorization", format!("Bearer {t}"));
+        }
+        b.body(Body::empty()).expect("req")
     }
 
     async fn json_body(resp: Response) -> serde_json::Value {
@@ -1347,11 +1495,7 @@ mod tests {
     async fn create_definition_without_token_401() {
         let (app, _t) = app().await;
         let resp = app
-            .oneshot(post(
-                "/api/definition",
-                r#"{"projectId":"p1","name":"x"}"#,
-                None,
-            ))
+            .oneshot(post("/api/definition", r#"{"projectId":"p1","name":"x"}"#, None))
             .await
             .expect("resp");
         assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
@@ -1408,19 +1552,20 @@ mod tests {
         let (app, t) = app().await;
         let id = create_definition_returns_id(&app, &t).await;
 
-        let resp = app.clone().oneshot(get("/api/definition?projectId=p1")).await.expect("resp");
+        let resp =
+            app.clone().oneshot(get("/api/definition?projectId=p1", Some(&t))).await.expect("resp");
         assert_eq!(resp.status(), StatusCode::OK);
         let v = json_body(resp).await;
         assert_eq!(v.as_array().expect("arr").len(), 1);
 
         let resp = app
             .clone()
-            .oneshot(get(&format!("/api/definition/{id}")))
+            .oneshot(get(&format!("/api/definition/{id}"), Some(&t)))
             .await
             .expect("resp");
         assert_eq!(resp.status(), StatusCode::OK);
 
-        let resp = app.oneshot(get("/api/definition/ghost")).await.expect("resp");
+        let resp = app.oneshot(get("/api/definition/ghost", Some(&t))).await.expect("resp");
         assert_eq!(resp.status(), StatusCode::NOT_FOUND);
     }
 
@@ -1446,11 +1591,11 @@ mod tests {
 
         let resp = app
             .clone()
-            .oneshot(get(&format!("/api/definition/{id}")))
+            .oneshot(get(&format!("/api/definition/{id}"), Some(&t)))
             .await
             .expect("resp");
         assert_eq!(resp.status(), StatusCode::NOT_FOUND);
-        let resp = app.oneshot(get("/api/definition?projectId=p1")).await.expect("resp");
+        let resp = app.oneshot(get("/api/definition?projectId=p1", Some(&t))).await.expect("resp");
         let v = json_body(resp).await;
         assert_eq!(v.as_array().expect("arr").len(), 0);
     }
@@ -1477,7 +1622,7 @@ mod tests {
             .expect("resp");
         assert_eq!(resp.status(), StatusCode::NO_CONTENT);
 
-        let resp = app.oneshot(get("/api/case?projectId=p1")).await.expect("resp");
+        let resp = app.oneshot(get("/api/case?projectId=p1", Some(&t))).await.expect("resp");
         assert_eq!(resp.status(), StatusCode::OK);
         let v = json_body(resp).await;
         assert_eq!(v["total"].as_u64().expect("total"), 0);
@@ -1486,20 +1631,14 @@ mod tests {
     #[tokio::test]
     async fn delete_definition_missing_404() {
         let (app, t) = app().await;
-        let resp = app
-            .oneshot(del("/api/definition/ghost", Some(&t)))
-            .await
-            .expect("resp");
+        let resp = app.oneshot(del("/api/definition/ghost", Some(&t))).await.expect("resp");
         assert_eq!(resp.status(), StatusCode::NOT_FOUND);
     }
 
     #[tokio::test]
     async fn delete_definition_without_token_401() {
         let (app, _t) = app().await;
-        let resp = app
-            .oneshot(del("/api/definition/whatever", None))
-            .await
-            .expect("resp");
+        let resp = app.oneshot(del("/api/definition/whatever", None)).await.expect("resp");
         assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
     }
 
@@ -1510,10 +1649,7 @@ mod tests {
         let perms = PermissionSet::from_raw(["API_DEFINITION:READ".to_string()]).expect("perms");
         let token = sessions.create("viewer", perms, 3600).await.expect("token");
         let app = router(repo, sessions);
-        let resp = app
-            .oneshot(del("/api/definition/whatever", Some(&token)))
-            .await
-            .expect("resp");
+        let resp = app.oneshot(del("/api/definition/whatever", Some(&token))).await.expect("resp");
         assert_eq!(resp.status(), StatusCode::FORBIDDEN);
     }
 
@@ -1536,7 +1672,8 @@ mod tests {
         assert_eq!(v["method"], "PUT");
         assert_eq!(v["path"], "/v2/login");
 
-        let resp = app.oneshot(get(&format!("/api/definition/{id}"))).await.expect("resp");
+        let resp =
+            app.oneshot(get(&format!("/api/definition/{id}"), Some(&t))).await.expect("resp");
         let v = json_body(resp).await;
         assert_eq!(v["name"], "登录v2");
         assert_eq!(v["path"], "/v2/login");
@@ -1619,10 +1756,8 @@ mod tests {
         let v = json_body(resp).await;
         assert_eq!(v["projectId"], "p1");
 
-        let resp = app
-            .oneshot(get(&format!("/api/definition/{id}/case")))
-            .await
-            .expect("resp");
+        let resp =
+            app.oneshot(get(&format!("/api/definition/{id}/case"), Some(&t))).await.expect("resp");
         assert_eq!(resp.status(), StatusCode::OK);
         let v = json_body(resp).await;
         assert_eq!(v.as_array().expect("arr").len(), 1);
@@ -1747,9 +1882,7 @@ mod tests {
                 .clone()
                 .oneshot(post(
                     "/api/case",
-                    &format!(
-                        r#"{{"projectId":"p1","name":"c{i}","method":"GET","url":"/x"}}"#
-                    ),
+                    &format!(r#"{{"projectId":"p1","name":"c{i}","method":"GET","url":"/x"}}"#),
                     Some(&t),
                 ))
                 .await
@@ -1757,7 +1890,7 @@ mod tests {
         }
 
         let resp = app
-            .oneshot(get("/api/case?projectId=p1&current=1&pageSize=2"))
+            .oneshot(get("/api/case?projectId=p1&current=1&pageSize=2", Some(&t)))
             .await
             .expect("resp");
         assert_eq!(resp.status(), StatusCode::OK);
@@ -1769,9 +1902,9 @@ mod tests {
 
     #[tokio::test]
     async fn list_project_cases_bad_page_params_400() {
-        let (app, _t) = app().await;
+        let (app, t) = app().await;
         let resp = app
-            .oneshot(get("/api/case?projectId=p1&current=0&pageSize=10"))
+            .oneshot(get("/api/case?projectId=p1&current=0&pageSize=10", Some(&t)))
             .await
             .expect("resp");
         assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
@@ -1796,10 +1929,8 @@ mod tests {
         assert_eq!(v["enabled"], false);
         assert_eq!(v["matchRule"], serde_json::json!({}));
 
-        let resp = app
-            .oneshot(get(&format!("/api/definition/{id}/mock")))
-            .await
-            .expect("resp");
+        let resp =
+            app.oneshot(get(&format!("/api/definition/{id}/mock"), Some(&t))).await.expect("resp");
         assert_eq!(resp.status(), StatusCode::OK);
         let v = json_body(resp).await;
         assert_eq!(v.as_array().expect("arr").len(), 1);
@@ -1852,10 +1983,8 @@ mod tests {
             .expect("resp");
         assert_eq!(resp.status(), StatusCode::NO_CONTENT);
 
-        let resp = app
-            .oneshot(get(&format!("/api/definition/{id}/mock")))
-            .await
-            .expect("resp");
+        let resp =
+            app.oneshot(get(&format!("/api/definition/{id}/mock"), Some(&t))).await.expect("resp");
         let v = json_body(resp).await;
         assert_eq!(v[0]["name"], "改名");
         assert_eq!(v[0]["responseStatus"], 500);
@@ -1873,7 +2002,11 @@ mod tests {
             .expect("resp");
         let mock_id = json_body(resp).await["id"].as_str().expect("id").to_string();
         let resp = app
-            .oneshot(put(&format!("/api/mock/{mock_id}"), r#"{"name":"x","responseStatus":700}"#, Some(&t)))
+            .oneshot(put(
+                &format!("/api/mock/{mock_id}"),
+                r#"{"name":"x","responseStatus":700}"#,
+                Some(&t),
+            ))
             .await
             .expect("resp");
         assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
@@ -1882,10 +2015,122 @@ mod tests {
     #[tokio::test]
     async fn update_missing_mock_404() {
         let (app, t) = app().await;
+        let resp =
+            app.oneshot(put("/api/mock/ghost", r#"{"name":"x"}"#, Some(&t))).await.expect("resp");
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    }
+
+    async fn create_view_returns_id(app: &Router, t: &str) -> String {
         let resp = app
-            .oneshot(put("/api/mock/ghost", r#"{"name":"x"}"#, Some(&t)))
+            .clone()
+            .oneshot(post(
+                "/api/api-view",
+                r#"{"projectId":"p1","name":"我的视图","config":{"pageSize":10},"shared":true}"#,
+                Some(t),
+            ))
+            .await
+            .expect("resp");
+        assert_eq!(resp.status(), StatusCode::CREATED);
+        json_body(resp).await["id"].as_str().expect("id").to_string()
+    }
+
+    #[tokio::test]
+    async fn update_view_partial_then_full() {
+        let (app, t) = app().await;
+        let id = create_view_returns_id(&app, &t).await;
+
+        // Partial update: only name changes; config/shared keep their prior values.
+        let resp = app
+            .clone()
+            .oneshot(put(&format!("/api/api-view/{id}"), r#"{"name":" 改名视图 "}"#, Some(&t)))
+            .await
+            .expect("resp");
+        assert_eq!(resp.status(), StatusCode::OK);
+        let v = json_body(resp).await;
+        assert_eq!(v["name"], "改名视图");
+        assert_eq!(v["config"], serde_json::json!({"pageSize": 10}));
+        assert_eq!(v["shared"], true);
+
+        // Full update: config + shared together.
+        let resp = app
+            .clone()
+            .oneshot(put(
+                &format!("/api/api-view/{id}"),
+                r#"{"config":{"pageSize":50},"shared":false}"#,
+                Some(&t),
+            ))
+            .await
+            .expect("resp");
+        assert_eq!(resp.status(), StatusCode::OK);
+        let v = json_body(resp).await;
+        assert_eq!(v["name"], "改名视图");
+        assert_eq!(v["config"], serde_json::json!({"pageSize": 50}));
+        assert_eq!(v["shared"], false);
+
+        // List endpoint reflects the updated values.
+        let resp = app.oneshot(get("/api/api-view?projectId=p1", Some(&t))).await.expect("resp");
+        let list = json_body(resp).await;
+        assert_eq!(list[0]["name"], "改名视图");
+        assert_eq!(list[0]["shared"], false);
+    }
+
+    #[tokio::test]
+    async fn update_view_rejects_blank_name_and_bad_config() {
+        let (app, t) = app().await;
+        let id = create_view_returns_id(&app, &t).await;
+        let resp = app
+            .clone()
+            .oneshot(put(&format!("/api/api-view/{id}"), r#"{"name":"  "}"#, Some(&t)))
+            .await
+            .expect("resp");
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+        let resp = app
+            .oneshot(put(&format!("/api/api-view/{id}"), r#"{"config":[1,2]}"#, Some(&t)))
+            .await
+            .expect("resp");
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn update_view_non_owner_404() {
+        let repo = Arc::new(InMemoryApiDefinitionRepository::new());
+        let sessions = Arc::new(InMemorySessionStore::new());
+        let perms =
+            PermissionSet::from_raw(["API_DEFINITION:READ+ADD".to_string()]).expect("perms");
+        let owner = sessions.create("admin", perms.clone(), 3600).await.expect("token");
+        let other = sessions.create("viewer", perms, 3600).await.expect("token");
+        let app = router(repo, sessions);
+        let id = create_view_returns_id(&app, &owner).await;
+
+        let resp = app
+            .clone()
+            .oneshot(put(&format!("/api/api-view/{id}"), r#"{"name":"越权改名"}"#, Some(&other)))
             .await
             .expect("resp");
         assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+
+        // The owner's view is untouched.
+        let resp =
+            app.oneshot(get("/api/api-view?projectId=p1", Some(&owner))).await.expect("resp");
+        let list = json_body(resp).await;
+        assert_eq!(list[0]["name"], "我的视图");
+    }
+
+    #[tokio::test]
+    async fn update_missing_view_404() {
+        let (app, t) = app().await;
+        let resp = app
+            .oneshot(put("/api/api-view/ghost", r#"{"name":"x"}"#, Some(&t)))
+            .await
+            .expect("resp");
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn update_view_without_token_401() {
+        let (app, _t) = app().await;
+        let resp =
+            app.oneshot(put("/api/api-view/x", r#"{"name":"x"}"#, None)).await.expect("resp");
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
     }
 }

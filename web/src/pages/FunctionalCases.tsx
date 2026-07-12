@@ -1,35 +1,47 @@
-import { useEffect, useMemo, useState } from 'react'
-import { Button, Descriptions, Empty, Form, Input, Modal, Popconfirm, Select, Space, Table, Tabs, Tag, Tree, Upload } from 'antd'
+import { useEffect, useState, type ReactNode } from 'react'
+import { Button, Descriptions, Empty, Form, Input, Modal, Popconfirm, Select, Space, Table, Tabs, Tag, Upload } from 'antd'
+import type { FormInstance } from 'antd'
 import { DeleteOutlined, DownloadOutlined, EditOutlined, ImportOutlined } from '@ant-design/icons'
 import { message } from '../feedback'
-import type { ColumnsType } from 'antd/es/table'
-import { api, ApiError, type CaseRequirementLink, type CaseStep, type FunctionalCase, type Requirement } from '../api'
+import { api, ApiError, userIdStore, type ApiModule, type CaseRequirementLink, type CaseStep, type FunctionalCase, type Requirement, type TemplateField } from '../api'
 import { useApp } from '../context'
-import { Workspace, WorkList, PaneHeader, useWorkTabs } from '../components/Workspace'
+import { Workspace, WorkList, useWorkTabs } from '../components/Workspace'
+import { ModuleTreePanel, inSelectedModule } from '../components/ModuleTreePanel'
 import StepsEditor from '../components/StepsEditor'
+import { CF_GROUP, CustomFieldItem, collectCustomValues, customFormValues, useFieldTemplate } from '../components/TemplateFields'
 import { useI18n } from '../i18n'
 import { SelectProjectEmpty } from '../components/Page'
+import { useListView, type ListColumn } from '../components/ListView'
 
 const PRIORITIES = ['P0', 'P1', 'P2', 'P3']
 const prioColor = (p?: string) => (p === 'P0' ? 'red' : p === 'P1' ? 'orange' : 'blue')
 
+// Key of the persistent "new case" workspace tab (shares the tab pool with detail tabs keyed by case id).
+const NEW_KEY = '__new_case__'
+
 export default function FunctionalCases() {
   const { t } = useI18n()
   const { projectId } = useApp()
-  const ungrouped = t('func.ungrouped', '未分组')
+  const unfiled = t('func.unfiled', '未归类')
   const [cases, setCases] = useState<FunctionalCase[]>([])
+  const [modules, setModules] = useState<ApiModule[]>([])
   const [loading, setLoading] = useState(false)
-  const [search, setSearch] = useState('')
+  // 'ALL' | 'UNFILED' | <moduleId>
   const [moduleKey, setModuleKey] = useState('ALL')
-  const [createOpen, setCreateOpen] = useState(false)
+  const [moduleSearch, setModuleSearch] = useState('')
   const [editing, setEditing] = useState<FunctionalCase | null>(null)
   const tabs = useWorkTabs()
 
   const load = async () => {
-    if (!projectId) return setCases([])
+    if (!projectId) { setCases([]); setModules([]); return }
     setLoading(true)
     try {
-      setCases(await api.functionalCases(projectId))
+      const [cs, mm] = await Promise.all([
+        api.functionalCases(projectId),
+        api.modules(projectId).catch(() => []),
+      ])
+      setCases(cs)
+      setModules(Array.isArray(mm) ? mm : [])
     } catch (e) {
       message.error(e instanceof ApiError ? e.message : t('func.loadFailed', '加载失败'))
     } finally {
@@ -42,29 +54,16 @@ export default function FunctionalCases() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId])
 
-  // 左:按模块(自由文本)聚合成树。
-  const treeData = useMemo(() => {
-    const byMod = new Map<string, number>()
-    cases.forEach((c) => byMod.set(c.module || ungrouped, (byMod.get(c.module || ungrouped) || 0) + 1))
-    return [
-      {
-        key: 'ALL',
-        title: `${t('func.allCases', '全部用例')} (${cases.length})`,
-        children: [...byMod.entries()].map(([m, n]) => ({ key: `mod:${m}`, title: `${m} (${n})` })),
-      },
-    ]
-  }, [cases, ungrouped, t])
+  // module now stores a module id; legacy data stored name text → treat values matching no module id as unfiled.
+  const moduleIdOf = (c: FunctionalCase) => (modules.some((m) => m.id === c.module) ? c.module! : '')
+  const moduleNameOf = (id: string) => modules.find((m) => m.id === id)?.name
+  // Module column: matched module shows its name; legacy text values render as-is (gray); empty shows unfiled.
+  const renderModule = (m?: string) => {
+    if (!m) return unfiled
+    const name = moduleNameOf(m)
+    return name ?? <span style={{ color: 'var(--text-3)' }}>{m}</span>
+  }
 
-  const filtered = useMemo(
-    () =>
-      cases.filter((c) => {
-        const mod = moduleKey === 'ALL' || (c.module || ungrouped) === moduleKey.replace('mod:', '')
-        return mod && c.name.toLowerCase().includes(search.toLowerCase())
-      }),
-    [cases, search, moduleKey, ungrouped],
-  )
-
-  // 导出 xlsx(浏览器下载)/ 导入 xlsx(选文件即上传,返回导入条数)。
   const doExport = async () => {
     if (!projectId) return
     try {
@@ -101,16 +100,17 @@ export default function FunctionalCases() {
     }
   }
 
-  if (!projectId) return <SelectProjectEmpty />
-
-  const columns: ColumnsType<FunctionalCase> = [
-    { title: t('func.colName', '名称'), dataIndex: 'name', ellipsis: true },
-    { title: t('func.colModule', '模块'), dataIndex: 'module', width: 140, render: (m?: string) => m || ungrouped },
-    { title: t('func.colPriority', '优先级'), dataIndex: 'priority', width: 90, render: (p?: string) => <Tag color={prioColor(p)}>{p || 'P2'}</Tag> },
-    { title: t('func.colSteps', '步骤'), dataIndex: 'steps', width: 70, render: (s?: CaseStep[]) => (s?.length || 0) },
-    { title: t('func.colStatus', '状态'), dataIndex: 'status', width: 110, render: (s?: string) => <Tag>{s || 'PREPARED'}</Tag> },
-    { title: t('func.colCreatedBy', '创建人'), dataIndex: 'createdBy', width: 110, ellipsis: true, render: (u?: string) => u ? <span style={{ color: 'var(--text-2)' }}>{u}</span> : <span style={{ color: 'var(--text-3)' }}>—</span> },
+  // View/filter/column toolbar: useListView must be called before the conditional return below.
+  const allColumns: ListColumn<FunctionalCase>[] = [
+    { key: 'name', label: t('func.colName', '名称'), title: t('func.colName', '名称'), dataIndex: 'name', ellipsis: true },
+    { key: 'module', label: t('func.colModule', '模块'), title: t('func.colModule', '模块'), dataIndex: 'module', width: 140, render: renderModule },
+    { key: 'priority', label: t('func.colPriority', '优先级'), title: t('func.colPriority', '优先级'), dataIndex: 'priority', width: 90, render: (p?: string) => <Tag color={prioColor(p)}>{p || 'P2'}</Tag> },
+    { key: 'steps', label: t('func.colSteps', '步骤'), title: t('func.colSteps', '步骤'), dataIndex: 'steps', width: 70, render: (s?: CaseStep[]) => (s?.length || 0) },
+    { key: 'status', label: t('func.colStatus', '状态'), title: t('func.colStatus', '状态'), dataIndex: 'status', width: 110, render: (s?: string) => <Tag>{s || 'PREPARED'}</Tag> },
+    { key: 'createdBy', label: t('func.colCreatedBy', '创建人'), title: t('func.colCreatedBy', '创建人'), dataIndex: 'createdBy', width: 110, ellipsis: true, render: (u?: string) => u ? <span style={{ color: 'var(--text-2)' }}>{u}</span> : <span style={{ color: 'var(--text-3)' }}>—</span> },
     {
+      key: 'action',
+      label: t('req.action', '操作'),
       title: t('req.action', '操作'),
       width: 110,
       render: (_v, c) => (
@@ -128,20 +128,82 @@ export default function FunctionalCases() {
       ),
     },
   ]
+  const lv = useListView<FunctionalCase>({
+    kind: 'functional-case',
+    projectId,
+    searchOf: (c) => c.name,
+    searchLabel: t('func.searchName', '搜索用例名'),
+    systemViews: [
+      { key: 'mine', label: t('lv.mine', '我创建的'), pred: (c) => !!c.createdBy && c.createdBy === userIdStore.get() },
+    ],
+    fields: [
+      {
+        key: 'priority', label: t('func.colPriority', '优先级'), type: 'enum',
+        options: PRIORITIES.map((p) => ({ value: p, label: p })),
+        get: (c) => c.priority || 'P2',
+      },
+      {
+        key: 'module', label: t('func.colModule', '模块'), type: 'enum',
+        options: [unfiled, ...modules.map((m) => m.name)].map((m) => ({ value: m, label: m })),
+        // Matched module → name; legacy text value → as-is; empty → unfiled.
+        get: (c) => { const id = moduleIdOf(c); return id ? moduleNameOf(id)! : c.module || unfiled },
+      },
+      {
+        key: 'status', label: t('func.colStatus', '状态'), type: 'enum',
+        options: [...new Set(cases.map((c) => c.status || 'PREPARED'))].map((s) => ({ value: s, label: s })),
+        get: (c) => c.status || 'PREPARED',
+      },
+      // Advanced-condition only (duplicates search box / columns; not rendered in the declarative filter area).
+      { key: 'id', label: 'ID', type: 'text', advOnly: true, get: (c) => c.id },
+      { key: 'name', label: t('func.colName', '用例名'), type: 'text', advOnly: true, get: (c) => c.name },
+      { key: 'createdBy', label: t('lv.createdBy', '创建人'), type: 'text', advOnly: true, get: (c) => c.createdBy || '' },
+    ],
+    columns: allColumns,
+    rows: cases,
+  })
 
+  if (!projectId) return <SelectProjectEmpty />
+
+  // Module-tree filter stacks on top of toolbar filters (selecting a parent includes children; legacy text values count as unfiled).
+  const visible = lv.rows.filter((c) => inSelectedModule(modules, moduleKey, moduleIdOf(c)))
+
+  // Left: project-level module tree, same as the scenarios page.
   const left = (
-    <>
-      <PaneHeader title={t('func.colModule', '模块')} />
-      <div style={{ flex: 1, overflow: 'auto', padding: 8 }}>
-        <Tree blockNode defaultExpandAll selectedKeys={[moduleKey]} treeData={treeData} onSelect={(k) => k.length && setModuleKey(String(k[0]))} />
-      </div>
-    </>
+    <ModuleTreePanel
+      projectId={projectId}
+      modules={modules}
+      items={cases}
+      getModuleId={moduleIdOf}
+      selectedKey={moduleKey}
+      onSelect={setModuleKey}
+      allLabel={t('func.allCases', '全部用例')}
+      unfiledLabel={unfiled}
+      moduleSearch={moduleSearch}
+      onModuleSearch={setModuleSearch}
+      searchPlaceholder={t('func.moduleSearchPh', '请输入模块名称搜索')}
+      onModulesChanged={load}
+      deleteModuleContent={t('func.deleteModuleContent', '其下用例将变为未归类(不会删除用例)。')}
+    />
   )
 
-  const detailTabs = tabs.openIds
-    .map((id) => cases.find((c) => c.id === id))
-    .filter((c): c is FunctionalCase => !!c)
-    .map((c) => ({ key: c.id, label: c.name, children: <CaseDetail c={c} /> }))
+  const detailTabs = tabs.openIds.flatMap((id) => {
+    if (id === NEW_KEY)
+      return [{
+        key: NEW_KEY,
+        label: t('func.newCase', '新建用例'),
+        children: (
+          <NewCaseTab
+            projectId={projectId}
+            modules={modules}
+            defaultModule={moduleKey !== 'ALL' && moduleKey !== 'UNFILED' ? moduleKey : ''}
+            onCancel={() => tabs.close(NEW_KEY)}
+            onCreated={(c) => { tabs.close(NEW_KEY); load().then(() => tabs.open(c.id)) }}
+          />
+        ),
+      }]
+    const c = cases.find((x) => x.id === id)
+    return c ? [{ key: c.id, label: c.name, children: <CaseDetail c={c} moduleLabel={renderModule(c.module)} /> }] : []
+  })
 
   return (
     <>
@@ -154,43 +216,31 @@ export default function FunctionalCases() {
         tabs={detailTabs}
         listContent={
           <WorkList<FunctionalCase>
-            onNew={() => setCreateOpen(true)}
+            onNew={() => tabs.open(NEW_KEY)}
             newLabel={t('func.newCase', '新建用例')}
             extraActions={
               <>
+                {lv.toolbar}
                 <Upload showUploadList={false} accept=".xlsx" beforeUpload={(f) => { doImport(f as File); return false }}>
                   <Button icon={<ImportOutlined />}>{t('func.import', '导入')}</Button>
                 </Upload>
                 <Button icon={<DownloadOutlined />} onClick={doExport} disabled={!cases.length}>{t('func.export', '导出')}</Button>
               </>
             }
-            onSearch={setSearch}
-            searchPlaceholder={t('func.searchName', '搜索用例名')}
             onRefresh={load}
-            columns={columns}
-            data={filtered}
+            columns={lv.columns}
+            data={visible}
+            pagination={lv.pagination}
             loading={loading}
             onRowClick={(c) => tabs.open(c.id)}
             emptyText={t('func.emptyCase', '暂无用例')}
           />
         }
       />
-      <CaseModal
-        open={createOpen}
+      <CaseEditModal
         projectId={projectId}
-        editing={null}
-        defaultModule={moduleKey.startsWith('mod:') ? moduleKey.replace('mod:', '') : ''}
-        onClose={() => setCreateOpen(false)}
-        onSaved={() => {
-          setCreateOpen(false)
-          load()
-        }}
-      />
-      <CaseModal
-        open={!!editing}
-        projectId={projectId}
+        modules={modules}
         editing={editing}
-        defaultModule=""
         onClose={() => setEditing(null)}
         onSaved={() => {
           setEditing(null)
@@ -201,12 +251,12 @@ export default function FunctionalCases() {
   )
 }
 
-function CaseDetail({ c }: { c: FunctionalCase }) {
+function CaseDetail({ c, moduleLabel }: { c: FunctionalCase; moduleLabel?: ReactNode }) {
   const { t } = useI18n()
   const cf = c.customFields || {}
   const [covReqs, setCovReqs] = useState<CaseRequirementLink[]>([])
   const loadCov = () => api.caseRequirements(c.id).then(setCovReqs).catch(() => setCovReqs([]))
-  // 主动关联需求:选需求 → 选验收标准 → link。
+  // Manual requirement linking: pick requirement → pick acceptance criterion → link.
   const [linkOpen, setLinkOpen] = useState(false)
   const [reqs, setReqs] = useState<Requirement[]>([])
   const [selReq, setSelReq] = useState<Requirement | null>(null)
@@ -255,7 +305,7 @@ function CaseDetail({ c }: { c: FunctionalCase }) {
             children: (
               <Descriptions column={2} size="small" bordered>
                 <Descriptions.Item label={t('func.colName', '名称')}>{c.name}</Descriptions.Item>
-                <Descriptions.Item label={t('func.colModule', '模块')}>{c.module || t('func.ungrouped', '未分组')}</Descriptions.Item>
+                <Descriptions.Item label={t('func.colModule', '模块')}>{moduleLabel ?? (c.module || t('func.unfiled', '未归类'))}</Descriptions.Item>
                 <Descriptions.Item label={t('func.colPriority', '优先级')}><Tag color={prioColor(c.priority)}>{c.priority || 'P2'}</Tag></Descriptions.Item>
                 <Descriptions.Item label={t('func.colStatus', '状态')}>{c.status || 'PREPARED'}</Descriptions.Item>
               </Descriptions>
@@ -330,24 +380,31 @@ function CaseDetail({ c }: { c: FunctionalCase }) {
   )
 }
 
-function CaseModal({
-  open,
+// Case form body (template-driven system field order/required/visibility + StepsEditor + custom fields).
+// Shared by the new-case tab and the edit modal; the caller owns the form instance and triggers form.submit().
+function CaseForm({
+  form,
   projectId,
+  modules,
   editing,
-  defaultModule,
-  onClose,
+  defaultModule = '',
+  tplFields,
+  onSavingChange,
   onSaved,
 }: {
-  open: boolean
+  form: FormInstance
   projectId: string
+  modules: ApiModule[]
   editing: FunctionalCase | null
-  defaultModule: string
-  onClose: () => void
-  onSaved: () => void
+  defaultModule?: string
+  /** Field template: system field order/required/visibility + custom field rendering (name is always present). */
+  tplFields: TemplateField[]
+  onSavingChange: (v: boolean) => void
+  onSaved: (c: FunctionalCase) => void
 }) {
   const { t } = useI18n()
-  const [form] = Form.useForm()
-  const [saving, setSaving] = useState(false)
+  const fieldOf = (k: string) => tplFields.find((f) => f.key === k)
+  const enabled = (k: string) => fieldOf(k)?.enabled !== false
   const cf = editing?.customFields || {}
   const initial = editing
     ? {
@@ -357,87 +414,217 @@ function CaseModal({
         prerequisite: cf['前置条件'] || '',
         remark: cf['备注'] || '',
         steps: editing.steps?.length ? editing.steps : [{ step: '', expected: '' }],
+        [CF_GROUP]: customFormValues(tplFields, editing.customFields),
       }
     : { priority: 'P1', module: defaultModule, steps: [{ step: '', expected: '' }] }
+  // System field renderer: key → form item; order follows the template array, required per config (name is always required).
+  const sysItem = (f: TemplateField) => {
+    const rules = f.required ? [{ required: true }] : undefined
+    switch (f.key) {
+      case 'name':
+        return (
+          <Form.Item key="name" name="name" label={t('func.caseName', '用例名')} rules={[{ required: true }]}>
+            <Input placeholder={t('func.namePlaceholder', '如:登录成功')} />
+          </Form.Item>
+        )
+      case 'module': {
+        // Options = unfiled ('') + project modules (value = module id). When edit backfill hits a legacy
+        // name value not in the module table, append a temp option so old data stays visible; saving
+        // without changing it keeps the original value.
+        const opts: { value: string; label: string }[] = [
+          { value: '', label: t('func.unfiled', '未归类') },
+          ...modules.map((m) => ({ value: m.id, label: m.name })),
+        ]
+        if (editing?.module && !modules.some((m) => m.id === editing.module))
+          opts.push({ value: editing.module, label: `${editing.module}${t('func.legacyModuleSuffix', '(旧数据)')}` })
+        return (
+          <Form.Item key="module" name="module" label={t('func.colModule', '模块')} rules={rules}>
+            <Select options={opts} />
+          </Form.Item>
+        )
+      }
+      case 'priority':
+        return (
+          <Form.Item key="priority" name="priority" label={t('func.colPriority', '优先级')} rules={rules}>
+            <Select options={PRIORITIES.map((p) => ({ value: p, label: p }))} />
+          </Form.Item>
+        )
+      case 'prerequisite':
+        return (
+          <Form.Item key="prerequisite" name="prerequisite" label={t('func.prerequisite', '前置条件')} rules={rules}>
+            <Input.TextArea rows={2} placeholder={t('func.prerequisitePlaceholder', '如:进入管理登录页 https://...')} />
+          </Form.Item>
+        )
+      case 'steps':
+        // Steps (step + expected): rendered via StepsEditor; "required" is enforced at submit (at least one row).
+        return (
+          <Form.Item key="steps" name="steps" label={t('func.testSteps', '测试步骤(步骤 + 预期结果)')} required={f.required}>
+            <StepsEditor />
+          </Form.Item>
+        )
+      case 'remark':
+        return (
+          <Form.Item key="remark" name="remark" label={t('func.remark', '备注')} rules={rules}>
+            <Input.TextArea rows={2} />
+          </Form.Item>
+        )
+      default:
+        return null
+    }
+  }
+  return (
+    <Form
+      form={form}
+      layout="vertical"
+      preserve={false}
+      initialValues={initial}
+      onFinish={async (v) => {
+          // When steps is hidden, keep existing steps on edit; empty for new cases.
+          const steps = enabled('steps')
+            ? (v.steps || []).filter((s: CaseStep) => s.step.trim() || s.expected.trim())
+            : editing?.steps || []
+          const stepsField = fieldOf('steps')
+          if (stepsField?.enabled && stepsField.required && !steps.length) {
+            message.warning(t('func.stepsRequired', '请至少填写一条测试步骤'))
+            return
+          }
+          onSavingChange(true)
+          try {
+            // On edit, keep the case's other custom fields; prerequisite/remark keep their legacy Chinese keys.
+            const customFields: Record<string, string> = { ...(editing?.customFields || {}) }
+            const setOrDel = (k: string, val?: string) => {
+              if (val?.trim()) customFields[k] = val.trim()
+              else delete customFields[k]
+            }
+            // Hidden fields keep existing values (not rendered, so submit value is undefined).
+            if (enabled('prerequisite')) setOrDel('前置条件', v.prerequisite)
+            if (enabled('remark')) setOrDel('备注', v.remark)
+            // Template custom fields merge into the customFields map, keyed by field key.
+            const custom = collectCustomValues(tplFields, v[CF_GROUP])
+            for (const f of tplFields) {
+              if (f.system || !f.enabled) continue
+              if (custom[f.key] !== undefined) customFields[f.key] = custom[f.key]
+              else delete customFields[f.key]
+            }
+            const fields = Object.keys(customFields).length ? customFields : undefined
+            const module = enabled('module') ? v.module || undefined : editing?.module || undefined
+            const priority = enabled('priority') ? v.priority : editing?.priority
+            let saved: FunctionalCase
+            if (editing) {
+              saved = await api.updateFunctionalCase(editing.id, {
+                projectId,
+                name: v.name,
+                priority,
+                module,
+                status: editing.status, // keep original status (driven by the review flow, not editable here)
+                steps,
+                customFields: fields,
+              })
+              message.success(t('func.updated', '用例已更新'))
+            } else {
+              saved = await api.createFunctionalCase({
+                projectId,
+                name: v.name,
+                priority,
+                module,
+                steps,
+                customFields: fields,
+              })
+              message.success(t('func.created', '用例已创建'))
+            }
+            onSaved(saved)
+          } catch (e) {
+            message.error(e instanceof ApiError ? e.message : t('func.saveFailed', '保存失败'))
+          } finally {
+            onSavingChange(false)
+          }
+        }}
+      >
+      {/* Render in template array order: system fields via their renderers, custom fields by type; hidden fields skipped. */}
+      {tplFields.filter((f) => f.enabled).map((f) =>
+        f.system ? sysItem(f) : <CustomFieldItem key={f.key} kind="functional-case" field={f} />
+      )}
+    </Form>
+  )
+}
+
+// Edit dialog only; creation lives in the NewCaseTab workspace tab.
+function CaseEditModal({
+  projectId,
+  modules,
+  editing,
+  onClose,
+  onSaved,
+}: {
+  projectId: string
+  modules: ApiModule[]
+  editing: FunctionalCase | null
+  onClose: () => void
+  onSaved: () => void
+}) {
+  const { t } = useI18n()
+  const [form] = Form.useForm()
+  const [saving, setSaving] = useState(false)
+  // Template loaded up-front so field config is ready when the modal opens and edit backfill has all custom fields.
+  const { fields: tplFields } = useFieldTemplate('functional-case')
   return (
     <Modal
-      title={editing ? t('func.editTitle', '编辑功能用例') : t('func.createTitle', '新建功能用例')}
-      open={open}
+      title={t('func.editTitle', '编辑功能用例')}
+      open={!!editing}
       onCancel={onClose}
       onOk={() => form.submit()}
       confirmLoading={saving}
       destroyOnHidden
       width={680}
     >
-      <Form
+      <CaseForm
         form={form}
-        layout="vertical"
-        preserve={false}
-        initialValues={initial}
-        onFinish={async (v) => {
-          setSaving(true)
-          try {
-            // 编辑时保留用例原有的其它自定义字段(只覆盖前置条件/备注)。
-            const customFields: Record<string, string> = { ...(editing?.customFields || {}) }
-            const setOrDel = (k: string, val?: string) => {
-              if (val?.trim()) customFields[k] = val.trim()
-              else delete customFields[k]
-            }
-            setOrDel('前置条件', v.prerequisite)
-            setOrDel('备注', v.remark)
-            const steps = (v.steps || []).filter((s: CaseStep) => s.step.trim() || s.expected.trim())
-            const fields = Object.keys(customFields).length ? customFields : undefined
-            if (editing) {
-              await api.updateFunctionalCase(editing.id, {
-                projectId,
-                name: v.name,
-                priority: v.priority,
-                module: v.module || undefined,
-                status: editing.status, // 保留原状态(由评审流程驱动,编辑不改)
-                steps,
-                customFields: fields,
-              })
-              message.success(t('func.updated', '用例已更新'))
-            } else {
-              await api.createFunctionalCase({
-                projectId,
-                name: v.name,
-                priority: v.priority,
-                module: v.module || undefined,
-                steps,
-                customFields: fields,
-              })
-              message.success(t('func.created', '用例已创建'))
-            }
-            onSaved()
-          } catch (e) {
-            message.error(e instanceof ApiError ? e.message : t('func.saveFailed', '保存失败'))
-          } finally {
-            setSaving(false)
-          }
-        }}
-      >
-        <Form.Item name="name" label={t('func.caseName', '用例名')} rules={[{ required: true }]}>
-          <Input placeholder={t('func.namePlaceholder', '如:登录成功')} />
-        </Form.Item>
-        <Space.Compact style={{ width: '100%' }}>
-          <Form.Item name="module" label={t('func.colModule', '模块')} style={{ flex: 1 }}>
-            <Input placeholder={t('func.modulePlaceholder', '如:登录')} />
-          </Form.Item>
-          <Form.Item name="priority" label={t('func.colPriority', '优先级')} style={{ width: 120 }}>
-            <Select options={PRIORITIES.map((p) => ({ value: p, label: p }))} />
-          </Form.Item>
-        </Space.Compact>
-        <Form.Item name="prerequisite" label={t('func.prerequisite', '前置条件')}>
-          <Input.TextArea rows={2} placeholder={t('func.prerequisitePlaceholder', '如:进入管理登录页 https://...')} />
-        </Form.Item>
-        <Form.Item name="steps" label={t('func.testSteps', '测试步骤(步骤 + 预期结果)')}>
-          <StepsEditor />
-        </Form.Item>
-        <Form.Item name="remark" label={t('func.remark', '备注')}>
-          <Input.TextArea rows={2} />
-        </Form.Item>
-      </Form>
+        projectId={projectId}
+        modules={modules}
+        editing={editing}
+        tplFields={tplFields}
+        onSavingChange={setSaving}
+        onSaved={onSaved}
+      />
     </Modal>
+  )
+}
+
+function NewCaseTab({
+  projectId,
+  modules,
+  defaultModule,
+  onCreated,
+  onCancel,
+}: {
+  projectId: string
+  modules: ApiModule[]
+  defaultModule: string
+  onCreated: (c: FunctionalCase) => void
+  onCancel: () => void
+}) {
+  const { t } = useI18n()
+  const [form] = Form.useForm()
+  const [saving, setSaving] = useState(false)
+  const { fields: tplFields } = useFieldTemplate('functional-case')
+  return (
+    <div style={{ padding: '16px 24px', height: '100%', overflow: 'auto' }}>
+      <div style={{ maxWidth: 680 }}>
+        <CaseForm
+          form={form}
+          projectId={projectId}
+          modules={modules}
+          editing={null}
+          defaultModule={defaultModule}
+          tplFields={tplFields}
+          onSavingChange={setSaving}
+          onSaved={onCreated}
+        />
+        <Space style={{ marginTop: 8 }}>
+          <Button type="primary" loading={saving} onClick={() => form.submit()}>{t('a.create', '创建')}</Button>
+          <Button onClick={onCancel}>{t('a.cancel', '取消')}</Button>
+        </Space>
+      </div>
+    </div>
   )
 }

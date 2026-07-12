@@ -44,8 +44,10 @@ mod tests {
         let repo = Arc::new(InMemoryRequirementRepository::new());
         seed(&repo, "p1", 3).await;
         seed(&repo, "p2", 2).await;
-        let doomed =
-            CreateRequirementUseCase::new(repo.clone()).execute("p1", "Doomed", "d", &[]).await.expect("ok");
+        let doomed = CreateRequirementUseCase::new(repo.clone())
+            .execute("p1", "Doomed", "d", &[])
+            .await
+            .expect("ok");
         repo.soft_delete(&doomed.id);
 
         let uc = ListRequirementsUseCase::new(repo);

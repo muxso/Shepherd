@@ -2,15 +2,18 @@ import { useEffect, useState } from 'react'
 import { Button, Drawer, Empty, Form, Input, Modal, Space, Switch, Table, Tag, Tooltip } from 'antd'
 import { message } from '../feedback'
 import { PlusOutlined, ReloadOutlined, SyncOutlined, HistoryOutlined } from '@ant-design/icons'
-import type { ColumnsType } from 'antd/es/table'
 import { api, ApiError, type RunnerAgent, type RunnerExecution, type FleetRuntime, type FleetStat } from '../api'
 import { useI18n } from '../i18n'
 import { PageBody, PageContainer, PageHeader } from '../components/Page'
+import { useApp } from '../context'
+import { useListView, type ListColumn } from '../components/ListView'
 
-// 人机协同 · 执行机(AI agent)管理:注册/列出 Claude Code、Codex 等远程执行者,
-// 刷新其自报协议、查看执行历史。任务派发在「AI 需求」拆分图里进行(指定 executor)。
+// Executor (AI agent) management: register/list remote executors (Claude Code, Codex, ...),
+// refresh their self-reported protocols, view execution history. Task dispatch happens in the
+// AI requirement breakdown graph (where an executor is picked).
 export default function Agents() {
   const { t } = useI18n()
+  const { projectId } = useApp()
   const [agents, setAgents] = useState<RunnerAgent[]>([])
   const [loading, setLoading] = useState(false)
   const [addOpen, setAddOpen] = useState(false)
@@ -43,12 +46,14 @@ export default function Agents() {
     }
   }
 
-  const cols: ColumnsType<RunnerAgent> = [
-    { title: t('agent.name', '名称'), dataIndex: 'name', render: (v: string) => <span style={{ fontWeight: 500 }}>{v}</span> },
-    { title: t('agent.baseUrl', '接入地址'), dataIndex: 'baseUrl', render: (v: string) => <span className="ms-mono" style={{ color: 'var(--text-2)' }}>{v}</span> },
-    { title: t('agent.protocols', '支持协议'), dataIndex: 'protocols', render: (ps?: string[]) => (ps?.length ? <Space size={[4, 4]} wrap>{ps.map((p) => <Tag key={p} color="geekblue">{p}</Tag>)}</Space> : <span style={{ color: 'var(--text-3)' }}>—</span>) },
-    { title: t('agent.status', '状态'), dataIndex: 'enabled', width: 90, render: (e: boolean) => <Tag color={e ? 'green' : 'default'}>{e ? t('agent.enabled', '启用') : t('agent.disabled', '停用')}</Tag> },
+  const cols: ListColumn<RunnerAgent>[] = [
+    { key: 'name', label: t('agent.name', '名称'), title: t('agent.name', '名称'), dataIndex: 'name', render: (v: string) => <span style={{ fontWeight: 500 }}>{v}</span> },
+    { key: 'baseUrl', label: t('agent.baseUrl', '接入地址'), title: t('agent.baseUrl', '接入地址'), dataIndex: 'baseUrl', render: (v: string) => <span className="ms-mono" style={{ color: 'var(--text-2)' }}>{v}</span> },
+    { key: 'protocols', label: t('agent.protocols', '支持协议'), title: t('agent.protocols', '支持协议'), dataIndex: 'protocols', render: (ps?: string[]) => (ps?.length ? <Space size={[4, 4]} wrap>{ps.map((p) => <Tag key={p} color="geekblue">{p}</Tag>)}</Space> : <span style={{ color: 'var(--text-3)' }}>—</span>) },
+    { key: 'status', label: t('agent.status', '状态'), title: t('agent.status', '状态'), dataIndex: 'enabled', width: 90, render: (e: boolean) => <Tag color={e ? 'green' : 'default'}>{e ? t('agent.enabled', '启用') : t('agent.disabled', '停用')}</Tag> },
     {
+      key: 'action',
+      label: t('req.action', '操作'),
       title: t('req.action', '操作'),
       width: 170,
       render: (_v, a) => (
@@ -61,6 +66,24 @@ export default function Agents() {
       ),
     },
   ]
+  const lv = useListView<RunnerAgent>({
+    kind: 'runner-agent',
+    projectId,
+    searchOf: (a) => `${a.name} ${a.baseUrl}`,
+    searchLabel: t('agent.searchPh', '搜索名称/地址'),
+    fields: [
+      {
+        key: 'status', label: t('agent.status', '状态'), type: 'enum',
+        options: [
+          { value: 'ENABLED', label: t('agent.enabled', '启用') },
+          { value: 'DISABLED', label: t('agent.disabled', '停用') },
+        ],
+        get: (a) => (a.enabled ? 'ENABLED' : 'DISABLED'),
+      },
+    ],
+    columns: cols,
+    rows: agents,
+  })
 
   return (
     <PageContainer>
@@ -76,16 +99,21 @@ export default function Agents() {
       />
       <PageBody>
         <FleetSection />
-        <div style={{ marginTop: 24, marginBottom: 8, fontWeight: 600, color: 'var(--text-2)' }}>
-          {t('agent.probeSection', '协议执行机(API / 探测)')}
+        {/* List toolbar lives on the section row (not the page header) so it sits next to the table it filters. */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 24, marginBottom: 8 }}>
+          <span style={{ fontWeight: 600, color: 'var(--text-2)' }}>
+            {t('agent.probeSection', '协议执行机(API / 探测)')}
+          </span>
+          <div style={{ flex: 1 }} />
+          {lv.toolbar}
         </div>
         <Table<RunnerAgent>
           rowKey="id"
           size="middle"
           loading={loading}
-          dataSource={agents}
-          columns={cols}
-          pagination={{ pageSize: 15, size: 'small' }}
+          dataSource={lv.rows}
+          columns={lv.columns}
+          pagination={lv.pagination}
           locale={{ emptyText: <Empty description={t('agent.empty', '暂无执行机,点「注册执行机」接入 AI agent')} /> }}
         />
       </PageBody>
@@ -96,10 +124,12 @@ export default function Agents() {
   )
 }
 
-// AI 执行者机群:远程 Claude/Codex runtime(SHEPHERD_AGENT_FLEET 模式)。出站注册/心跳,
-// server 据心跳判活;此处每 5s 轮询在线状态。未启用机群模式则列表为空(隐藏整段)。
+// AI executor fleet: remote Claude/Codex runtimes (SHEPHERD_AGENT_FLEET mode). They register and
+// heartbeat outbound; the server judges liveness from heartbeats. Online status is polled every 5s.
+// With fleet mode disabled the list is empty and the whole section is hidden.
 function FleetSection() {
   const { t } = useI18n()
+  const { projectId } = useApp()
   const [rts, setRts] = useState<FleetRuntime[]>([])
   const [stats, setStats] = useState<FleetStat[]>([])
   const [loaded, setLoaded] = useState(false)
@@ -109,30 +139,51 @@ function FleetSection() {
       api.fleetRuntimes()
         .then((r) => { if (alive) { setRts(Array.isArray(r) ? r : []); setLoaded(true) } })
         .catch(() => { if (alive) setLoaded(true) })
-      // 队列计数与 runtime 列表同频刷新;失败静默(机群未启用时端点为空路由)。
+      // Queue counts refresh at the same cadence as the runtime list; failures stay silent
+      // (the endpoint doesn't exist when fleet mode is disabled).
       api.fleetStats().then((s) => { if (alive) setStats(Array.isArray(s) ? s : []) }).catch(() => {})
     }
     load()
     const h = setInterval(load, 5000)
     return () => { alive = false; clearInterval(h) }
   }, [])
-  // 未启用机群(无 runtime 且首拉已完成)→ 不渲染,避免干扰协议执行机视图。
-  if (loaded && rts.length === 0) return null
   const now = Date.now()
-  // 仅展示有积压/在飞的能力,避免一排全 0 噪声。
-  const busy = stats.filter((s) => s.ready > 0 || s.inFlight > 0)
-  const cols: ColumnsType<FleetRuntime> = [
-    { title: t('fleet.status', '在线'), dataIndex: 'online', width: 80, render: (o: boolean) => <Tag color={o ? 'green' : 'default'}>{o ? t('fleet.online', '在线') : t('fleet.offline', '离线')}</Tag> },
-    { title: t('agent.name', '名称'), dataIndex: 'name', render: (v: string) => <span style={{ fontWeight: 500 }}>{v}</span> },
-    { title: t('fleet.runtimeId', 'Runtime ID'), dataIndex: 'id', width: 120, render: (v: string) => <span className="ms-mono" style={{ color: 'var(--text-3)' }}>{v}</span> },
-    { title: t('fleet.caps', '能力'), dataIndex: 'caps', render: (cs?: string[]) => (cs?.length ? <Space size={[4, 4]} wrap>{cs.map((c) => <Tag key={c} color="geekblue">{c}</Tag>)}</Space> : '—') },
-    { title: t('fleet.maxConc', '并发上限'), dataIndex: 'maxConcurrency', width: 90, align: 'center' as const },
-    { title: t('fleet.lastSeen', '最近心跳'), dataIndex: 'lastSeenMs', width: 110, render: (ms: number) => <span style={{ color: 'var(--text-3)', fontSize: 12 }}>{ms ? `${Math.max(0, Math.round((now - ms) / 1000))}s 前` : '—'}</span> },
+  const cols: ListColumn<FleetRuntime>[] = [
+    { key: 'online', label: t('fleet.status', '在线'), title: t('fleet.status', '在线'), dataIndex: 'online', width: 80, render: (o: boolean) => <Tag color={o ? 'green' : 'default'}>{o ? t('fleet.online', '在线') : t('fleet.offline', '离线')}</Tag> },
+    { key: 'name', label: t('agent.name', '名称'), title: t('agent.name', '名称'), dataIndex: 'name', render: (v: string) => <span style={{ fontWeight: 500 }}>{v}</span> },
+    { key: 'id', label: t('fleet.runtimeId', 'Runtime ID'), title: t('fleet.runtimeId', 'Runtime ID'), dataIndex: 'id', width: 120, render: (v: string) => <span className="ms-mono" style={{ color: 'var(--text-3)' }}>{v}</span> },
+    { key: 'caps', label: t('fleet.caps', '能力'), title: t('fleet.caps', '能力'), dataIndex: 'caps', render: (cs?: string[]) => (cs?.length ? <Space size={[4, 4]} wrap>{cs.map((c) => <Tag key={c} color="geekblue">{c}</Tag>)}</Space> : '—') },
+    { key: 'maxConc', label: t('fleet.maxConc', '并发上限'), title: t('fleet.maxConc', '并发上限'), dataIndex: 'maxConcurrency', width: 90, align: 'center' as const },
+    { key: 'lastSeen', label: t('fleet.lastSeen', '最近心跳'), title: t('fleet.lastSeen', '最近心跳'), dataIndex: 'lastSeenMs', width: 110, render: (ms: number) => <span style={{ color: 'var(--text-3)', fontSize: 12 }}>{ms ? `${Math.max(0, Math.round((now - ms) / 1000))}s 前` : '—'}</span> },
   ]
+  const lv = useListView<FleetRuntime>({
+    kind: 'fleet-runtime',
+    projectId,
+    searchOf: (r) => r.name,
+    searchLabel: t('fleet.searchPh', '搜索 runtime 名称'),
+    fields: [
+      { key: 'online', label: t('fleet.onlineOnly', '仅看在线'), type: 'bool', get: (r) => r.online },
+      {
+        key: 'cap', label: t('fleet.caps', '能力'), type: 'tags',
+        options: [...new Set(rts.flatMap((r) => r.caps))].map((c) => ({ value: c, label: c })),
+        get: (r) => r.caps,
+      },
+    ],
+    columns: cols,
+    rows: rts,
+  })
+  // Fleet not enabled (no runtimes after first fetch) → render nothing, keep the protocol-executor view clean.
+  if (loaded && rts.length === 0) return null
+  // Only show capabilities with backlog or in-flight work, avoiding a row of all-zero noise.
+  const busy = stats.filter((s) => s.ready > 0 || s.inFlight > 0)
   return (
     <>
-      <div style={{ marginBottom: 8, fontWeight: 600, color: 'var(--text-2)' }}>
-        {t('fleet.section', 'AI 执行者机群（远程 Claude / Codex）')}
+      <div style={{ display: 'flex', alignItems: 'center', marginBottom: 8 }}>
+        <span style={{ fontWeight: 600, color: 'var(--text-2)' }}>
+          {t('fleet.section', 'AI 执行者机群（远程 Claude / Codex）')}
+        </span>
+        <div style={{ flex: 1 }} />
+        {lv.toolbar}
       </div>
       {busy.length > 0 && (
         <Space size={[8, 8]} wrap style={{ marginBottom: 12 }}>
@@ -153,8 +204,8 @@ function FleetSection() {
       <Table<FleetRuntime>
         rowKey="id"
         size="middle"
-        dataSource={rts}
-        columns={cols}
+        dataSource={lv.rows}
+        columns={lv.columns}
         pagination={false}
         locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('fleet.empty', '暂无在线 runtime')} /> }}
       />

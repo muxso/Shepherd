@@ -1,5 +1,6 @@
-//! MCP 服务端推送总线:把任务/交付/验证生命周期事件广播给订阅 `GET /mcp` SSE 的客户端。
-//! 进程内 broadcast;无订阅者时发布即丢弃(send 的 Err 忽略)。
+//! MCP server-push bus: broadcasts task/delivery/verification lifecycle events to
+//! clients subscribed to `GET /mcp` SSE. In-process broadcast; with no subscribers
+//! a publish is simply dropped (send's Err is ignored).
 
 use tokio::sync::broadcast;
 
@@ -72,7 +73,7 @@ mod tests {
             task_id: "t".into(),
             message: String::new(),
         });
-        // 无订阅者:不 panic;empty 字段被 skip。
+        // No subscribers: no panic; empty fields are skipped.
         let mut rx = bus.subscribe();
         bus.publish(McpEvent {
             kind: "task",

@@ -4,7 +4,9 @@ use std::sync::{Arc, Mutex};
 use async_trait::async_trait;
 
 use crate::domain::{NewRole, Role};
-use crate::ports::{AuthRepoError, RoleRepoError, RoleRepository, UserRoleQuery, UserRoleRepository};
+use crate::ports::{
+    AuthRepoError, RoleRepoError, RoleRepository, UserRoleQuery, UserRoleRepository,
+};
 
 #[derive(Default)]
 struct RoleState {
@@ -26,7 +28,7 @@ impl InMemoryRoleRepository {
 #[async_trait]
 impl RoleRepository for InMemoryRoleRepository {
     async fn insert(&self, new_role: &NewRole) -> Result<Role, RoleRepoError> {
-        let mut st = self.state.lock().expect("lock");
+        let mut st = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         st.seq += 1;
         let role = Role {
             id: format!("role-{}", st.seq),
@@ -39,18 +41,25 @@ impl RoleRepository for InMemoryRoleRepository {
     }
 
     async fn get(&self, id: &str) -> Result<Option<Role>, RoleRepoError> {
-        Ok(self.state.lock().expect("lock").roles.iter().find(|r| r.id == id).cloned())
+        Ok(self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .roles
+            .iter()
+            .find(|r| r.id == id)
+            .cloned())
     }
 
     async fn count(&self) -> Result<u64, RoleRepoError> {
-        Ok(self.state.lock().expect("lock").roles.len() as u64)
+        Ok(self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner).roles.len() as u64)
     }
 
     async fn list(&self, offset: u64, limit: u32) -> Result<Vec<Role>, RoleRepoError> {
         Ok(self
             .state
             .lock()
-            .expect("lock")
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .roles
             .iter()
             .skip(offset as usize)
@@ -60,7 +69,7 @@ impl RoleRepository for InMemoryRoleRepository {
     }
 
     async fn save(&self, role: &Role) -> Result<(), RoleRepoError> {
-        let mut st = self.state.lock().expect("lock");
+        let mut st = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         if let Some(slot) = st.roles.iter_mut().find(|r| r.id == role.id) {
             *slot = role.clone();
         }
@@ -68,7 +77,11 @@ impl RoleRepository for InMemoryRoleRepository {
     }
 
     async fn delete(&self, id: &str) -> Result<(), RoleRepoError> {
-        self.state.lock().expect("lock").roles.retain(|r| r.id != id);
+        self.state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .roles
+            .retain(|r| r.id != id);
         Ok(())
     }
 }
@@ -88,18 +101,24 @@ impl InMemoryUserRoleRepository {
 #[async_trait]
 impl UserRoleRepository for InMemoryUserRoleRepository {
     async fn grant(&self, user_id: &str, role_id: &str) -> Result<(), RoleRepoError> {
-        self.grants.lock().expect("lock").insert((user_id.to_string(), role_id.to_string()));
+        self.grants
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert((user_id.to_string(), role_id.to_string()));
         Ok(())
     }
 
     async fn revoke(&self, user_id: &str, role_id: &str) -> Result<(), RoleRepoError> {
-        self.grants.lock().expect("lock").remove(&(user_id.to_string(), role_id.to_string()));
+        self.grants
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .remove(&(user_id.to_string(), role_id.to_string()));
         Ok(())
     }
 
     async fn effective_permissions(&self, user_id: &str) -> Result<Vec<String>, RoleRepoError> {
         let role_ids: Vec<String> = {
-            let g = self.grants.lock().expect("lock");
+            let g = self.grants.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
             g.iter().filter(|(u, _)| u == user_id).map(|(_, r)| r.clone()).collect()
         };
         let mut set: HashSet<String> = HashSet::new();
@@ -116,7 +135,7 @@ impl UserRoleRepository for InMemoryUserRoleRepository {
 impl UserRoleQuery for InMemoryUserRoleRepository {
     async fn roles_for(&self, user_ids: &[String]) -> Result<Vec<(String, String)>, AuthRepoError> {
         let grants: Vec<(String, String)> = {
-            let g = self.grants.lock().expect("lock");
+            let g = self.grants.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
             g.iter().filter(|(u, _)| user_ids.contains(u)).cloned().collect()
         };
         let mut out = Vec::new();

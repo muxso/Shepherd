@@ -50,9 +50,9 @@ fn row_to_step(row: &sqlx::postgres::PgRow) -> Result<ScenarioStep, RepoError> {
 
     let kind = match kind_s.as_str() {
         "REQUEST" => {
-            let v = inline.clone().ok_or_else(|| {
-                RepoError::Backend("REQUEST step missing inline payload".into())
-            })?;
+            let v = inline
+                .clone()
+                .ok_or_else(|| RepoError::Backend("REQUEST step missing inline payload".into()))?;
             let method = v.get("method").and_then(|m| m.as_str()).unwrap_or_default();
             let url = v.get("url").and_then(|u| u.as_str()).unwrap_or_default();
             let body = v.get("body").and_then(|b| b.as_str()).map(|s| s.to_string());
@@ -65,21 +65,21 @@ fn row_to_step(row: &sqlx::postgres::PgRow) -> Result<ScenarioStep, RepoError> {
             StepKind::Request(req)
         }
         "CASE" => StepKind::Case {
-            case_id: ref_id.clone().ok_or_else(|| {
-                RepoError::Backend("CASE step missing ref_id".into())
-            })?,
+            case_id: ref_id
+                .clone()
+                .ok_or_else(|| RepoError::Backend("CASE step missing ref_id".into()))?,
         },
         "SCENARIO" => StepKind::Scenario {
-            scenario_id: ref_id.clone().ok_or_else(|| {
-                RepoError::Backend("SCENARIO step missing ref_id".into())
-            })?,
+            scenario_id: ref_id
+                .clone()
+                .ok_or_else(|| RepoError::Backend("SCENARIO step missing ref_id".into()))?,
         },
         "LOOP" | "IF" | "ONCE" | "TIMER" => {
             let control = ControlKind::parse(&kind_s)
                 .ok_or_else(|| RepoError::Backend(format!("bad control kind: {kind_s}")))?;
-            let payload = inline.clone().ok_or_else(|| {
-                RepoError::Backend("control step missing inline payload".into())
-            })?;
+            let payload = inline
+                .clone()
+                .ok_or_else(|| RepoError::Backend("control step missing inline payload".into()))?;
             StepKind::Control { control, payload }
         }
         other => return Err(RepoError::Backend(format!("unknown step kind: {other}"))),
@@ -122,10 +122,7 @@ impl PgApiScenarioRepository {
 
 #[async_trait]
 impl ApiScenarioRepository for PgApiScenarioRepository {
-    async fn insert_scenario(
-        &self,
-        s: &NewApiScenario,
-    ) -> Result<ApiScenario, RepoError> {
+    async fn insert_scenario(&self, s: &NewApiScenario) -> Result<ApiScenario, RepoError> {
         let row = sqlx::query(
             "INSERT INTO ms_api_scenario (project_id, name, status, created_by) VALUES ($1, $2, $3, $4) \
              RETURNING id, project_id, name, status, meta, created_by, \
@@ -183,10 +180,7 @@ impl ApiScenarioRepository for PgApiScenarioRepository {
         Ok(Some(scenario))
     }
 
-    async fn list_scenarios(
-        &self,
-        project_id: &str,
-    ) -> Result<Vec<ApiScenario>, RepoError> {
+    async fn list_scenarios(&self, project_id: &str) -> Result<Vec<ApiScenario>, RepoError> {
         let rows = sqlx::query(
             "SELECT id, project_id, name, status, meta, created_by, \
                     created_at::text AS created_at, updated_at::text AS updated_at, deleted, \
@@ -240,22 +234,25 @@ impl ApiScenarioRepository for PgApiScenarioRepository {
     }
 
     async fn delete_step(&self, scenario_id: &str, step_id: &str) -> Result<bool, RepoError> {
-        let res = sqlx::query("DELETE FROM ms_api_scenario_step WHERE scenario_id = $1 AND id = $2")
-            .bind(scenario_id)
-            .bind(step_id)
-            .execute(&self.pool)
-            .await
-            .map_err(map_err)?;
+        let res =
+            sqlx::query("DELETE FROM ms_api_scenario_step WHERE scenario_id = $1 AND id = $2")
+                .bind(scenario_id)
+                .bind(step_id)
+                .execute(&self.pool)
+                .await
+                .map_err(map_err)?;
         Ok(res.rows_affected() > 0)
     }
 
     async fn delete_scenario(&self, id: &str) -> Result<bool, RepoError> {
-        // 场景软删,步骤硬删(步骤表无软删列)。
-        let res = sqlx::query("UPDATE ms_api_scenario SET deleted = true WHERE id = $1 AND deleted = false")
-            .bind(id)
-            .execute(&self.pool)
-            .await
-            .map_err(map_err)?;
+        // Scenario is soft-deleted; steps are hard-deleted (step table has no soft-delete column).
+        let res = sqlx::query(
+            "UPDATE ms_api_scenario SET deleted = true WHERE id = $1 AND deleted = false",
+        )
+        .bind(id)
+        .execute(&self.pool)
+        .await
+        .map_err(map_err)?;
         sqlx::query("DELETE FROM ms_api_scenario_step WHERE scenario_id = $1")
             .bind(id)
             .execute(&self.pool)
@@ -264,7 +261,11 @@ impl ApiScenarioRepository for PgApiScenarioRepository {
         Ok(res.rows_affected() > 0)
     }
 
-    async fn reorder_steps(&self, scenario_id: &str, ordered_ids: &[String]) -> Result<(), RepoError> {
+    async fn reorder_steps(
+        &self,
+        scenario_id: &str,
+        ordered_ids: &[String],
+    ) -> Result<(), RepoError> {
         for (i, id) in ordered_ids.iter().enumerate() {
             sqlx::query("UPDATE ms_api_scenario_step SET step_order = $3 WHERE scenario_id = $1 AND id = $2")
                 .bind(scenario_id)
@@ -436,7 +437,8 @@ mod tests {
         let req = InlineRequest::new("POST", "http://x/order", Some("{}".into())).expect("valid");
         repo.add_step(
             &scenario.id,
-            &NewScenarioStep::new(2, StepKind::Request(req), RefMode::Reference, None).expect("valid"),
+            &NewScenarioStep::new(2, StepKind::Request(req), RefMode::Reference, None)
+                .expect("valid"),
         )
         .await
         .expect("req step");
@@ -489,25 +491,17 @@ mod tests {
         let url = std::env::var("DATABASE_URL").expect("set DATABASE_URL");
         let pool = PgPool::connect(&url).await.expect("connect");
         migrate::run(&pool).await.expect("migrate");
-        sqlx::raw_sql("TRUNCATE ms_api_scenario_execution")
-            .execute(&pool)
-            .await
-            .expect("truncate");
+        sqlx::raw_sql("TRUNCATE ms_api_scenario_execution").execute(&pool).await.expect("truncate");
 
         let repo = PgApiScenarioRepository::new(pool.clone());
 
-        let e1 = repo
-            .record_execution("scn-1", "p1", "PENDING", 3, None)
-            .await
-            .expect("rec1");
+        let e1 = repo.record_execution("scn-1", "p1", "PENDING", 3, None).await.expect("rec1");
         assert_eq!(e1.status, ExecutionStatus::Pending);
         assert_eq!(e1.case_count, 3);
         assert!(e1.report_id.is_none());
         assert!(!e1.created_at.is_empty());
 
-        repo.record_execution("scn-1", "p1", "SUCCESS", 5, Some("rep-9"))
-            .await
-            .expect("rec2");
+        repo.record_execution("scn-1", "p1", "SUCCESS", 5, Some("rep-9")).await.expect("rec2");
         repo.record_execution("scn-2", "p1", "ERROR", 1, None).await.expect("rec3");
 
         let total = repo.count_executions("scn-1").await.expect("count");

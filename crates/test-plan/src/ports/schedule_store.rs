@@ -20,6 +20,6 @@ pub trait PlanRunStore: Send + Sync {
         execute_rate: f64,
     ) -> Result<PlanRun, RepoError>;
 
-    /// 时间倒序。
+    /// Newest first.
     async fn list_by_plan(&self, plan_id: &str, limit: u32) -> Result<Vec<PlanRun>, RepoError>;
 }

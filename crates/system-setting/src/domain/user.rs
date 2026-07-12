@@ -74,7 +74,7 @@ impl User {
         self.deleted = true;
     }
 
-    /// 仅未删除用户占用邮箱唯一性,软删除后邮箱可复用
+    /// Only non-deleted users occupy email uniqueness; emails are reusable after soft delete.
     pub fn occupies_email(&self) -> bool {
         !self.deleted
     }

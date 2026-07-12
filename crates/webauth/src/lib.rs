@@ -1,7 +1,12 @@
+//! Shared web auth components: Session/AuthUser models and the SessionStore port
+//! (with a built-in InMemorySessionStore). Under the http feature, provides an axum
+//! extractor that resolves a Bearer token into an AuthUser carrying a PermissionSet,
+//! so every context's http adapter authorizes the same way.
+
 use async_trait::async_trait;
 use thiserror::Error;
 
-// 重导出:下游可铸造服务令牌而无需直接依赖 kernel。
+// Re-export so downstream crates can mint service tokens without depending on kernel directly.
 pub use kernel::permission::PermissionSet;
 
 #[derive(Debug, Clone)]
@@ -38,9 +43,9 @@ pub trait SessionStore: Send + Sync {
         permissions: PermissionSet,
         ttl_secs: i64,
     ) -> Result<String, AuthRepoError>;
-    /// 不存在或已过期均返回 None。
+    /// Returns None when the token is missing or expired.
     async fn get(&self, token: &str) -> Result<Option<Session>, AuthRepoError>;
-    /// 幂等。
+    /// Idempotent.
     async fn revoke(&self, token: &str) -> Result<(), AuthRepoError>;
 }
 
@@ -77,6 +82,82 @@ mod extractor {
     }
 }
 
+#[cfg(all(test, feature = "http"))]
+mod extractor_tests {
+    use super::{AuthUser, SessionStore};
+    use axum::body::Body;
+    use axum::extract::FromRef;
+    use axum::http::{Request, StatusCode};
+    use axum::routing::get;
+    use axum::Router;
+    use std::sync::Arc;
+    use tower::ServiceExt;
+
+    #[derive(Clone)]
+    struct St {
+        sessions: Arc<dyn SessionStore>,
+    }
+    impl FromRef<St> for Arc<dyn SessionStore> {
+        fn from_ref(s: &St) -> Self {
+            s.sessions.clone()
+        }
+    }
+
+    async fn whoami(user: AuthUser) -> String {
+        format!("{}:{}", user.user_id, user.can("BUG", "READ"))
+    }
+
+    fn app(sessions: Arc<dyn SessionStore>) -> Router {
+        Router::new().route("/whoami", get(whoami)).with_state(St { sessions })
+    }
+
+    fn req(auth: Option<&str>) -> Request<Body> {
+        let mut b = Request::builder().uri("/whoami");
+        if let Some(a) = auth {
+            b = b.header("authorization", a);
+        }
+        b.body(Body::empty()).expect("req")
+    }
+
+    #[tokio::test]
+    async fn valid_token_yields_user_with_permissions() {
+        let store = Arc::new(super::testing::InMemorySessionStore::new());
+        let perms = super::PermissionSet::from_raw(["BUG:READ".to_string()]).expect("perms");
+        let token = store.create("u1", perms, 3600).await.expect("token");
+        let resp = app(store).oneshot(req(Some(&format!("Bearer {token}")))).await.expect("resp");
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX).await.expect("body");
+        assert_eq!(&body[..], b"u1:true");
+    }
+
+    #[tokio::test]
+    async fn missing_header_is_401() {
+        let store = Arc::new(super::testing::InMemorySessionStore::new());
+        let resp = app(store).oneshot(req(None)).await.expect("resp");
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn non_bearer_scheme_is_401() {
+        let store = Arc::new(super::testing::InMemorySessionStore::new());
+        let resp = app(store).oneshot(req(Some("Basic dXNlcjpwdw=="))).await.expect("resp");
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn unknown_and_revoked_tokens_are_401() {
+        let store = Arc::new(super::testing::InMemorySessionStore::new());
+        let resp = app(store.clone()).oneshot(req(Some("Bearer ghost"))).await.expect("resp");
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+
+        let perms = super::PermissionSet::from_raw(["BUG:READ".to_string()]).expect("perms");
+        let token = store.create("u1", perms, 3600).await.expect("token");
+        store.revoke(&token).await.expect("revoke");
+        let resp = app(store).oneshot(req(Some(&format!("Bearer {token}")))).await.expect("resp");
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+}
+
 #[cfg(any(test, feature = "test-util"))]
 pub mod testing {
     use super::{AuthRepoError, Session, SessionStore};
@@ -104,7 +185,7 @@ pub mod testing {
             permissions: PermissionSet,
             _ttl_secs: i64,
         ) -> Result<String, AuthRepoError> {
-            let mut g = self.inner.lock().expect("lock");
+            let mut g = self.inner.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
             g.0 += 1;
             let token = format!("test-token-{}", g.0);
             g.1.insert(
@@ -119,10 +200,16 @@ pub mod testing {
             Ok(token)
         }
         async fn get(&self, token: &str) -> Result<Option<Session>, AuthRepoError> {
-            Ok(self.inner.lock().expect("lock").1.get(token).cloned())
+            Ok(self
+                .inner
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .1
+                .get(token)
+                .cloned())
         }
         async fn revoke(&self, token: &str) -> Result<(), AuthRepoError> {
-            self.inner.lock().expect("lock").1.remove(token);
+            self.inner.lock().unwrap_or_else(std::sync::PoisonError::into_inner).1.remove(token);
             Ok(())
         }
     }

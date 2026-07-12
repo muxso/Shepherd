@@ -1,5 +1,7 @@
 # Shepherd 🐑
 
+<img src="web/public/logo.svg" alt="Shepherd logo" width="88" align="right" />
+
 让 AI 写代码,你来把关。
 
 [![Rust](https://img.shields.io/badge/Rust-2021-orange.svg)](https://www.rust-lang.org/)
@@ -47,6 +49,18 @@ Shepherd 是一个还在早期阶段的研发监督平台。出发点不复杂:A
    /delivery/{id}/…                                 每任务 git worktree 隔离
 ```
 
+## AI 到底交付了多少,可以量化
+
+「AI 到底帮了多少忙」出了名的难回答——AI 写的代码行数、建议采纳率,量的都是动作,不是结果。Shepherd 能回答得更实在,因为验收门本来就在流程里:**一个任务只有当交付来自 AI 执行者、且通过了人工验收,才算 AI 交付。** 被打回的活计入质量,不计入产出。
+
+在这条口径之上,每个项目、每条需求都能看到:
+
+- 已交付任务与工作量点数的 AI / 人工拆分——每条需求有一个可以直接读的「AI 占比」;
+- 交付质量:尝试数 / 交付数 / 失败数,以及一次交付通过率(第一次就交付并通过验收);
+- 贡献日历视图,AI 与人工的每日交付并排展示。
+
+它量的是交付结果,不是敲键盘。所以这些数字会比「我们 90% 的代码是 AI 写的」难看得多——这正是它的价值。
+
 ## 跑起来
 
 ```bash
@@ -84,7 +98,7 @@ SHEPHERD_BASE=http://<server>:8088 SHEPHERD_CAPS=CLAUDE_CODE cargo run -p agent-
 
 每个业务模块是一个独立 crate,按六边形分层:`domain` / `ports` / `application` 是纯逻辑、默认不碰 IO,数据库和 HTTP 都在 `adapters` 里用 feature 开关。`tests/architecture.rs` 会扫源码,纯层一旦引了 sqlx / axum 这类 IO crate 就让构建挂掉——免得分层写着写着被写穿。
 
-已经能用的:鉴权 / RBAC / OIDC(飞书、企业微信)、项目、多版本需求、任务 DAG、设计审批门、机群派发与回收、MCP 工具(`POST /mcp`)、Skill 编排,还有一套测试管理(用例 / 缺陷 / 计划 / 接口与场景测试 / Mock)。
+已经能用的:鉴权 / RBAC / OIDC(飞书、企业微信)、项目、多版本需求、任务 DAG、设计审批门、机群派发与回收、人机协同人效度量(项目与需求两级的 AI 占比)、MCP 工具(`POST /mcp`)、Skill 编排,还有一套测试管理(用例 / 缺陷 / 计划 / 接口与场景测试 / Mock)。
 
 还没做好的:验证门现在用起来偏重,想让它更省事;`shepherd-cli` 还在搭;更细的机群指标(比如认领延迟分布)还没加;更多执行机后端(比如把 OpenHands 接成一台)也在清单上。
 
@@ -140,13 +154,15 @@ web/               React + antd 前端
 
 - **[使用指南](docs/USAGE.zh-CN.md)**([English](docs/USAGE.md))—— 概念、快速上手、完整配置参考、Web 控制台、机群与执行机配置、HTTP API。
 - **[部署与运维](docs/DEPLOYMENT.zh-CN.md)**([English](docs/DEPLOYMENT.md))—— Docker Compose、Kubernetes(Helm,`deploy/helm/shepherd`)、多云 Terraform(`deploy/terraform/{aws,gcp,azure}`)、CI/CD 自动部署。
-- **[架构](ARCHITECTURE.md)** · **[路线图](ROADMAP.md)** · **[机群设计笔记](docs/remote-agent-runtime-plan.md)**
+- **[AI 执行者运行指南](docs/EXECUTORS.zh-CN.md)**([English](docs/EXECUTORS.md))—— 在 `agent-runtime` 下运行 Claude Code / Codex / OpenCode / CodeBuddy。
 
 ## 和别的方案比
 
 **对比 agent harness —— Claude Code、Codex、OpenCode、OpenHands、Aider。** harness 是包在 LLM 外面、跑 agentic loop(工具、上下文、逐 turn)的脚手架,目标是把一个任务干好。Shepherd 在它*上面*一层:不跑 loop,而是决定有哪些任务、派发、卡人工审批门、验证有没有真做到。harness 是可换的执行者——`agent-runtime` 就是 `spawn` 出 `claude` / `codex` / `opencode` 并把它们的事件流回传。所以 OpenCode 不是竞品,而是能挂到 Shepherd 机群上的执行者之一(`OPENCODE_CMD=opencode run`)。
 
 **对比多 agent 框架 —— AutoGen、CrewAI。** 它们大多走自治路线:让 agent 循环到完成、拼 benchmark。Shepherd 的重点在治理——审批和验证是绕不过去的节点,而不是聊天里随手打断;部署上是"中心服务端 + 内网执行机出站拉取"。那些框架本身就是 agent;Shepherd 是 agent 之上的监工,底下挂什么可以换。
+
+**对比个人 agent 编排 —— Gas Town(以及 Beads)。** Gas Town 在你自己的机器上养一群编码 agent,并让它们一直有活干:工人醒来看钩子上有活就跑,mayor 跨仓协调,合并串行化。它的目标是把一个开发者的产出拉满,这件事它做得很好。Shepherd 做的是同一条街的另一头:管一个团队交付什么——执行机持 API key 接入,每次交付留痕,验收门绕不过去。两边的工作台账是近亲(beads 存在 git 里,任务存在 Postgres 里),所以是组合而不是竞争:Gas Town 的 rig 可以作为一种执行者挂进 Shepherd 的机群,Shepherd 则补上本地工厂缺的验收和记账那一层。
 
 一个具体边界:Shepherd 作为 MCP **服务端**(暴露 `shepherd_*` 工具,让 agent 来驱动需求→验证的全生命周期),而 OpenCode 这类编码 agent 是 MCP **客户端**。两者是双向组合,而不是重叠。
 
@@ -158,8 +174,6 @@ cargo test --workspace -- --ignored         # 真实数据库集成测试
 ```
 
 866 个测试,集成测试连真实 server + PG / Redis / MySQL。除架构守卫外,还有一条迁移唯一性守卫:迁移版本号重号会让 CI 挂(sqlx 对重号会静默丢迁移,我们踩过一次,缺列导致 500)。
-
-更多背景见 [ARCHITECTURE.md](ARCHITECTURE.md)、[ROADMAP.md](ROADMAP.md)、[机群设计](docs/remote-agent-runtime-plan.md)。
 
 ## 贡献
 

@@ -1,3 +1,7 @@
+//! Remote test execution node: an HTTP service wrapping api-runner (API cases)
+//! and probe (multi-protocol probing). Accepts RequestSpec/ProbeRequest, executes
+//! and returns results; registered and dispatched by the runner context.
+
 use std::sync::Arc;
 
 use axum::{
@@ -9,7 +13,7 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 
-use api_runner::{Assertion, CaseOutcome, ReqwestRunner, RequestSpec};
+use api_runner::{Assertion, CaseOutcome, RequestSpec, ReqwestRunner};
 use probe::{PluginRegistry, ProbeRequest};
 
 #[derive(Clone)]
@@ -39,7 +43,11 @@ async fn healthz() -> &'static str {
     "ok"
 }
 
-async fn run(State(st): State<AgentState>, headers: HeaderMap, Json(body): Json<RunBody>) -> Response {
+async fn run(
+    State(st): State<AgentState>,
+    headers: HeaderMap,
+    Json(body): Json<RunBody>,
+) -> Response {
     if let Some(expected) = &st.token {
         let ok = headers
             .get("authorization")
@@ -79,7 +87,11 @@ fn authorized(token: &Option<String>, headers: &HeaderMap) -> bool {
     }
 }
 
-async fn probe(State(st): State<AgentState>, headers: HeaderMap, Json(req): Json<ProbeRequest>) -> Response {
+async fn probe(
+    State(st): State<AgentState>,
+    headers: HeaderMap,
+    Json(req): Json<ProbeRequest>,
+) -> Response {
     if !authorized(&st.token, &headers) {
         return (StatusCode::UNAUTHORIZED, "missing or bad token").into_response();
     }
@@ -132,7 +144,10 @@ mod tests {
     }
 
     fn run_req(body: &str, token: Option<&str>) -> Request<Body> {
-        let mut b = Request::builder().method("POST").uri("/run").header("content-type", "application/json");
+        let mut b = Request::builder()
+            .method("POST")
+            .uri("/run")
+            .header("content-type", "application/json");
         if let Some(t) = token {
             b = b.header("authorization", format!("Bearer {t}"));
         }
@@ -158,7 +173,7 @@ mod tests {
             .expect("resp");
         let v = json(resp).await;
         assert_eq!(v["outcome"], "ERROR");
-        assert!(v["failures"].as_array().expect("arr").len() >= 1);
+        assert!(!v["failures"].as_array().expect("arr").is_empty());
     }
 
     #[tokio::test]
@@ -168,8 +183,12 @@ mod tests {
             .await
             .expect("resp");
         let v = json(resp).await;
-        let names: Vec<String> =
-            v.as_array().expect("arr").iter().map(|s| s.as_str().unwrap_or("").to_string()).collect();
+        let names: Vec<String> = v
+            .as_array()
+            .expect("arr")
+            .iter()
+            .map(|s| s.as_str().unwrap_or("").to_string())
+            .collect();
         assert!(names.contains(&"http".to_string()));
         assert!(names.contains(&"grpc".to_string()));
         assert!(names.contains(&"sql".to_string()));
@@ -188,7 +207,7 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::OK);
         let v = json(resp).await;
         assert_eq!(v["success"], false);
-        assert!(v["failures"].as_array().expect("arr").len() >= 1);
+        assert!(!v["failures"].as_array().expect("arr").is_empty());
     }
 
     #[tokio::test]
@@ -207,14 +226,12 @@ mod tests {
 
     #[tokio::test]
     async fn auth_required_when_token_set() {
-        let body = r#"{"request":{"method":"GET","url":"http://127.0.0.1:1/x","headers":[],"body":null}}"#;
-        let resp =
-            app(state(Some("secret"))).oneshot(run_req(body, None)).await.expect("resp");
+        let body =
+            r#"{"request":{"method":"GET","url":"http://127.0.0.1:1/x","headers":[],"body":null}}"#;
+        let resp = app(state(Some("secret"))).oneshot(run_req(body, None)).await.expect("resp");
         assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
-        let resp = app(state(Some("secret")))
-            .oneshot(run_req(body, Some("secret")))
-            .await
-            .expect("resp");
+        let resp =
+            app(state(Some("secret"))).oneshot(run_req(body, Some("secret"))).await.expect("resp");
         assert_eq!(resp.status(), StatusCode::OK);
     }
 

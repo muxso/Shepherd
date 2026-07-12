@@ -97,7 +97,12 @@ mod tests {
     use super::*;
 
     fn draft(name: &str) -> ResourcePoolDraft {
-        ResourcePoolDraft { name: name.to_string(), enabled: true, all_org: true, ..Default::default() }
+        ResourcePoolDraft {
+            name: name.to_string(),
+            enabled: true,
+            all_org: true,
+            ..Default::default()
+        }
     }
 
     #[test]

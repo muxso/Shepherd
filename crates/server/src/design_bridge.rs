@@ -37,7 +37,7 @@ impl BreakdownTrigger for ServerBreakdownTrigger {
             acceptance_criteria: ver.acceptance_criteria.iter().map(|c| c.text.clone()).collect(),
         };
         match self.breakdown.execute(&spec).await {
-            // 幂等:已拆分则视作成功(审批可重入)。
+            // Idempotent: already decomposed counts as success (approval is re-entrant).
             Ok(_) | Err(BreakdownError::AlreadyExists) => Ok(()),
             Err(e) => Err(TriggerError::Backend(format!("breakdown: {e:?}"))),
         }

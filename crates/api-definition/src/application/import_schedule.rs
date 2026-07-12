@@ -31,7 +31,10 @@ impl ImportScheduleUseCase {
         Ok(self.store.insert(&valid).await?)
     }
 
-    pub async fn list_by_project(&self, project_id: &str) -> Result<Vec<ImportSchedule>, RepoError> {
+    pub async fn list_by_project(
+        &self,
+        project_id: &str,
+    ) -> Result<Vec<ImportSchedule>, RepoError> {
         self.store.list_by_project(project_id).await
     }
 
@@ -51,7 +54,12 @@ impl ImportScheduleUseCase {
         self.store.delete(id).await
     }
 
-    pub async fn record_run(&self, id: &str, result: &str, operator: &str) -> Result<(), RepoError> {
+    pub async fn record_run(
+        &self,
+        id: &str,
+        result: &str,
+        operator: &str,
+    ) -> Result<(), RepoError> {
         self.store.record_run(id, result, operator).await
     }
 }
@@ -107,6 +115,9 @@ mod tests {
         let mut bad = sample("p1");
         bad.cron = "".into();
         let err = uc.create(bad).await.unwrap_err();
-        assert!(matches!(err, CreateImportScheduleError::Validation(ImportScheduleError::EmptyCron)));
+        assert!(matches!(
+            err,
+            CreateImportScheduleError::Validation(ImportScheduleError::EmptyCron)
+        ));
     }
 }

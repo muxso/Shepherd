@@ -22,7 +22,7 @@ impl InMemoryProjectRepository {
     }
 
     pub fn soft_delete(&self, id: &str) {
-        let mut state = self.state.lock().expect("lock poisoned");
+        let mut state = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         if let Some(p) = state.projects.iter_mut().find(|p| p.id == id) {
             p.soft_delete();
         }
@@ -39,7 +39,7 @@ impl ProjectRepository for InMemoryProjectRepository {
         let found = self
             .state
             .lock()
-            .expect("lock poisoned")
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .projects
             .iter()
             .find(|p| p.occupies_name() && p.organization_id == organization_id && p.name == name)
@@ -48,7 +48,7 @@ impl ProjectRepository for InMemoryProjectRepository {
     }
 
     async fn insert(&self, new_project: &NewProject) -> Result<Project, RepoError> {
-        let mut state = self.state.lock().expect("lock poisoned");
+        let mut state = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         state.seq += 1;
         let project = Project::active(
             &format!("project-{}", state.seq),
@@ -63,7 +63,7 @@ impl ProjectRepository for InMemoryProjectRepository {
         let n = self
             .state
             .lock()
-            .expect("lock poisoned")
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .projects
             .iter()
             .filter(|p| p.occupies_name() && p.organization_id == organization_id)
@@ -80,7 +80,7 @@ impl ProjectRepository for InMemoryProjectRepository {
         let items = self
             .state
             .lock()
-            .expect("lock poisoned")
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .projects
             .iter()
             .filter(|p| p.occupies_name() && p.organization_id == organization_id)

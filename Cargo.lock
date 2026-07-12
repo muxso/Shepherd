@@ -3258,6 +3258,7 @@ dependencies = [
  "thiserror 2.0.18",
  "tokio",
  "tower 0.5.3",
+ "tracing",
  "utoipa",
  "webauth",
 ]
@@ -5103,6 +5104,8 @@ dependencies = [
  "axum 0.8.9",
  "kernel",
  "thiserror 2.0.18",
+ "tokio",
+ "tower 0.5.3",
 ]
 
 [[package]]

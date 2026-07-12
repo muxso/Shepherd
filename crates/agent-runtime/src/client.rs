@@ -13,7 +13,8 @@ const REPORT_ATTEMPTS: u32 = 6;
 pub struct ServerClient {
     http: reqwest::Client,
     base: String,
-    token: String,
+    /// Static API key (SHEPHERD_AGENT_KEY): the only credential — no login, no refresh; a 401 means revoked.
+    key: String,
 }
 
 async fn retry<T, F, Fut>(label: &str, attempts: u32, mut f: F) -> anyhow::Result<T>
@@ -37,27 +38,33 @@ where
 }
 
 impl ServerClient {
-    pub async fn login(base: &str, user: &str, pass: &str) -> anyhow::Result<Self> {
+    /// Uses the static API key (`sak_…`) directly as bearer: no login/refresh; revocation kills it.
+    pub fn with_api_key(base: &str, key: &str) -> anyhow::Result<Self> {
         let http = reqwest::Client::builder().connect_timeout(Duration::from_secs(10)).build()?;
-        let resp: serde_json::Value = http
-            .post(format!("{base}/auth/login"))
-            .timeout(CONTROL_TIMEOUT)
-            .json(&json!({"username": user, "password": pass}))
-            .send()
-            .await?
-            .error_for_status()?
-            .json()
-            .await?;
-        let token = resp
-            .get("token")
-            .and_then(|t| t.as_str())
-            .ok_or_else(|| anyhow::anyhow!("login: no token"))?
-            .to_string();
-        Ok(Self { http, base: base.to_string(), token })
+        Ok(Self { http, base: base.to_string(), key: key.to_string() })
     }
 
     fn auth(&self, rb: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
-        rb.bearer_auth(&self.token).timeout(CONTROL_TIMEOUT)
+        rb.bearer_auth(&self.key).timeout(CONTROL_TIMEOUT)
+    }
+
+    /// A 401 means the key is revoked/invalid; retrying won't recover, so log explicit guidance.
+    fn key_revoked(&self, status: reqwest::StatusCode) -> bool {
+        let revoked = status == reqwest::StatusCode::UNAUTHORIZED;
+        if revoked {
+            tracing::error!(
+                "API key 已吊销或无效(HTTP 401):请管理员在 POST /system/apikey 重新签发,并更新 SHEPHERD_AGENT_KEY"
+            );
+        }
+        revoked
+    }
+
+    /// Stand-in for error_for_status: maps 401 to a readable "key revoked" error, keeps status errors otherwise.
+    fn ensure_ok(&self, resp: reqwest::Response) -> anyhow::Result<reqwest::Response> {
+        if self.key_revoked(resp.status()) {
+            anyhow::bail!("API key 已吊销或无效");
+        }
+        Ok(resp.error_for_status()?)
     }
 
     pub async fn register(
@@ -67,14 +74,12 @@ impl ServerClient {
         max_concurrency: u32,
     ) -> anyhow::Result<String> {
         retry("register", REPORT_ATTEMPTS, || async {
-            let resp: serde_json::Value = self
+            let resp = self
                 .auth(self.http.post(format!("{}/agent/runtime", self.base)))
                 .json(&json!({"name": name, "caps": caps, "maxConcurrency": max_concurrency}))
                 .send()
-                .await?
-                .error_for_status()?
-                .json()
                 .await?;
+            let resp: serde_json::Value = self.ensure_ok(resp)?.json().await?;
             Ok(resp.get("runtimeId").and_then(|v| v.as_str()).unwrap_or_default().to_string())
         })
         .await
@@ -86,10 +91,17 @@ impl ServerClient {
             .send()
             .await?
             .status();
+        if self.key_revoked(code) {
+            anyhow::bail!("API key 已吊销或无效");
+        }
         Ok(code != reqwest::StatusCode::NOT_FOUND)
     }
 
-    pub async fn claim(&self, caps: &[String], runtime_id: &str) -> anyhow::Result<Option<WorkSpec>> {
+    pub async fn claim(
+        &self,
+        caps: &[String],
+        runtime_id: &str,
+    ) -> anyhow::Result<Option<WorkSpec>> {
         let caps_csv = caps.join(",");
         let resp = self
             .auth(self.http.get(format!(
@@ -102,7 +114,7 @@ impl ServerClient {
         if resp.status() == reqwest::StatusCode::NO_CONTENT {
             return Ok(None);
         }
-        let resp = resp.error_for_status()?;
+        let resp = self.ensure_ok(resp)?;
         Ok(Some(resp.json().await?))
     }
 
@@ -124,11 +136,12 @@ impl ServerClient {
         summary: &str,
     ) -> anyhow::Result<()> {
         retry("complete", REPORT_ATTEMPTS, || async {
-            self.auth(self.http.post(format!("{}/delivery/{attempt_id}/complete", self.base)))
+            let resp = self
+                .auth(self.http.post(format!("{}/delivery/{attempt_id}/complete", self.base)))
                 .json(&json!({"kind": kind, "reference": reference, "summary": summary}))
                 .send()
-                .await?
-                .error_for_status()?;
+                .await?;
+            self.ensure_ok(resp)?;
             Ok(())
         })
         .await
@@ -136,11 +149,12 @@ impl ServerClient {
 
     pub async fn fail(&self, attempt_id: &str, error: &str) -> anyhow::Result<()> {
         retry("fail", REPORT_ATTEMPTS, || async {
-            self.auth(self.http.post(format!("{}/delivery/{attempt_id}/fail", self.base)))
+            let resp = self
+                .auth(self.http.post(format!("{}/delivery/{attempt_id}/fail", self.base)))
                 .json(&json!({"error": error}))
                 .send()
-                .await?
-                .error_for_status()?;
+                .await?;
+            self.ensure_ok(resp)?;
             Ok(())
         })
         .await
@@ -148,11 +162,12 @@ impl ServerClient {
 
     pub async fn post_design(&self, proposal_id: &str, doc: &str) -> anyhow::Result<()> {
         retry("post_design", REPORT_ATTEMPTS, || async {
-            self.auth(self.http.post(format!("{}/proposal/{proposal_id}/design", self.base)))
+            let resp = self
+                .auth(self.http.post(format!("{}/proposal/{proposal_id}/design", self.base)))
                 .json(&json!({"doc": doc}))
                 .send()
-                .await?
-                .error_for_status()?;
+                .await?;
+            self.ensure_ok(resp)?;
             Ok(())
         })
         .await
@@ -204,5 +219,30 @@ mod tests {
         .expect_err("should exhaust");
         assert!(err.to_string().contains("always"));
         assert_eq!(calls.load(Ordering::SeqCst), 3);
+    }
+
+    fn static_client() -> ServerClient {
+        ServerClient::with_api_key("http://127.0.0.1:9", "sak_0123456789abcdef.deadbeef")
+            .expect("client")
+    }
+
+    #[test]
+    fn with_api_key_attaches_bearer_verbatim() {
+        let c = static_client();
+        let req = c.auth(c.http.get("http://127.0.0.1:9/agent/work/claim")).build().expect("req");
+        assert_eq!(
+            req.headers()["authorization"],
+            "Bearer sak_0123456789abcdef.deadbeef",
+            "静态 key 应原样作为 bearer 附带"
+        );
+    }
+
+    #[test]
+    fn only_401_is_treated_as_key_revoked() {
+        let c = static_client();
+        assert!(c.key_revoked(reqwest::StatusCode::UNAUTHORIZED));
+        // Non-401 is not revocation (403 = insufficient perms, 5xx = server issue; normal retry semantics apply).
+        assert!(!c.key_revoked(reqwest::StatusCode::FORBIDDEN));
+        assert!(!c.key_revoked(reqwest::StatusCode::INTERNAL_SERVER_ERROR));
     }
 }

@@ -20,7 +20,7 @@ Shepherd 是一个 AI 研发**监督**平台:AI 写代码,你掌控交付什么�
         │                  │ 派发
         ▼                  ▼
                     机群派发 ──► agent-runtime 执行者
-                   (拉取 / 长轮询)   (claude / codex / opencode)
+                   (拉取 / 长轮询)   (claude / codex / opencode / codebuddy)
                           │ 在独立 git worktree 中运行
                           ▼
                     交付物(diff / PR)
@@ -59,7 +59,7 @@ Shepherd 是一个 AI 研发**监督**平台:AI 写代码,你掌控交付什么�
 | 快速开始(Docker) | Docker + Docker Compose v2 |
 | 源码开发 | Rust(stable,edition 2021;CI 用 `rust:1.86`)、Node.js 18+、一个 PostgreSQL 16 实例 |
 | 多机机群 | Redis 7 |
-| 真实 AI 执行者 | `git` + agent CLI 在 `PATH` 上(`claude` / `codex` / `opencode`) |
+| 真实 AI 执行者 | `git` + agent CLI 在 `PATH` 上(`claude` / `codex` / `opencode` / `codebuddy`) |
 
 PostgreSQL 必需;服务端**启动时自动跑迁移**。Redis 仅在多机机群时必需。
 
@@ -142,9 +142,10 @@ dev 服务器(5173 端口)把所有后端前缀代理到服务端,并按 `Accept
 # 服务端,机群模式(单机进程内队列)
 SHEPHERD_AGENT_FLEET=1 DATABASE_URL=… SHEPHERD_ADMIN_PASSWORD=s3cret cargo run -p server
 
-# 执行者:出站长轮询,认领 CLAUDE_CODE 任务
+# 执行者:出站长轮询,认领 CLAUDE_CODE 任务。
+# 只接受 API key 认证:先在 个人中心 → API KEY(或 POST /system/apikey)签发,再:
 SHEPHERD_BASE=http://<server>:8088 \
-SHEPHERD_ADMIN_PASSWORD=s3cret \
+SHEPHERD_AGENT_KEY=sak_… \
 SHEPHERD_CAPS=CLAUDE_CODE \
 cargo run -p agent-runtime
 ```
@@ -190,16 +191,17 @@ cargo clippy --workspace -- -D warnings
 | 变量 | 默认 | 含义 |
 |---|---|---|
 | `SHEPHERD_BASE` | `http://127.0.0.1:9180` | 长轮询的服务端地址 |
-| `SHEPHERD_ADMIN_USER` | `admin` | 登录用户 |
-| `SHEPHERD_ADMIN_PASSWORD` | `s3cret` | 登录密码 |
+| `SHEPHERD_AGENT_KEY` | **必填** | 静态 API key(`sak_…`),唯一凭证;在 个人中心 → API KEY 或 `POST /system/apikey` 签发 |
 | `SHEPHERD_CAPS` | `CLAUDE_CODE` | 逗号分隔能力——本 runtime 认领哪类任务(如 `CLAUDE_CODE,CODEX`) |
 | `AGENT_CONCURRENCY` | `1` | 最大在飞并发(信号量上限) |
 | `AGENT_WORKDIR` | `.` | 基础工作目录;每个任务在其下的独立 git worktree 里运行 |
+| `AGENT_BASE_REF` | *(仓库 HEAD)* | 任务基点 ref(如 `origin/main`);与开发者共用检出时用它钉住基点 |
 | `RUNTIME_NAME` | `agent-runtime` | 机群注册表中的显示名 |
 | `AGENT_MOCK` | — | 存在 → mock 后端(无真实 CLI) |
 | `CLAUDE_BIN` | `claude` | Claude CLI 可执行文件 |
 | `CODEX_CMD` | `codex exec` | Codex CLI 调用 |
 | `OPENCODE_CMD` | `opencode run` | OpenCode CLI 调用 |
+| `CODEBUDDY_CMD` | `codebuddy -p --permission-mode acceptEdits` | CodeBuddy CLI 调用 |
 
 ---
 
@@ -253,9 +255,10 @@ runtime 按任务的 `executor` 类型选后端,除非 `AGENT_MOCK=1` 强制走 
 | `CLAUDE_CODE` | Claude(流式 `stream-json`) | `claude`(`CLAUDE_BIN`) |
 | `CODEX` | 通用 CLI | `codex exec`(`CODEX_CMD`) |
 | `OPENCODE` | 通用 CLI | `opencode run`(`OPENCODE_CMD`) |
+| `CODEBUDDY` | 通用 CLI | `codebuddy -p --permission-mode acceptEdits`(`CODEBUDDY_CMD`) |
 | 任意(配 `AGENT_MOCK=1`) | mock——返回固定输出 | 无 |
 
-真实后端需 `git` 与 CLI 在 `PATH`(或经覆盖 env 指定)。新增后端只需实现一个 `CliAgentBackend`(`async fn execute(prompt, cwd, sink)`)并注册一个枚举变体——见 `crates/agent-runtime/src/backend.rs`。
+真实后端需 `git` 与 CLI 在 `PATH`(或经覆盖 env 指定)。各执行者的运行指南(登录、权限模式、派发示例)见 [EXECUTORS.zh-CN.md](./EXECUTORS.zh-CN.md)。新增后端只需实现一个 `CliAgentBackend`(`async fn execute(prompt, cwd, sink)`)并注册一个枚举变体——见 `crates/agent-runtime/src/backend.rs`。
 
 ### 7.3 可观测性
 
@@ -282,6 +285,8 @@ curl -s localhost:8088/organization -H 'Authorization: Bearer <token>'
 
 会话落 PG(服务端重启存活),按 `SHEPHERD_SESSION_TTL_SECS` 过期。写端点按资源 RBAC 校验;读端点开放。
 
+`/auth/login` 是给人(Web 控制台)用的。程序化接入(agent-runtime、`shepherd-cli`、MCP 客户端、脚本)一律用静态 API key:在 个人中心 → API KEY 或 `POST /system/apikey` 签发,请求带 `Authorization: Bearer sak_…`——免登录免刷新,吊销即时生效。
+
 ### 8.2 健康检查
 
 | 端点 | 含义 |
@@ -292,6 +297,8 @@ curl -s localhost:8088/organization -H 'Authorization: Bearer <token>'
 ### 8.3 MCP
 
 全链路经 Streamable HTTP 暴露为 MCP 工具,入口 `POST /mcp`(JSON-RPC):`initialize` 签发 `Mcp-Session-Id`,`GET /mcp` 维持 SSE 长连接,`DELETE /mcp` 终止。工具按会话 RBAC 过滤(`tools/list` 隐藏你无权调用的工具)。约十个 `shepherd_*` 工具驱动 需求 → 拆分 → 派发 → 验证。
+
+MCP 客户端用 API key 认证:在 MCP server 配置里带 `Authorization: Bearer sak_…`(key 在 个人中心 → API KEY 或 `POST /system/apikey` 签发),不要写管理员口令。key 的权限决定可见/可调用的工具集。
 
 ### 8.4 OpenAPI 与自举(dogfood)
 
@@ -318,7 +325,7 @@ python3 .claude/skills/openapi-bootstrap/scenarios_all.py
 | dev 下控制台空白 / API 404 | Vite 代理目标不匹配。dev 代理指向 `:9180`;把服务端绑到那里,或设 `SHEPHERD_API` 为你的服务端 URL。 |
 | 任务始终无人认领 | 服务端未开机群模式(`SHEPHERD_AGENT_FLEET=1`)、无 runtime 在线,或能力不匹配——核对 `SHEPHERD_CAPS` 与任务 executor 类型,以及 `GET /agent/work/stats`。 |
 | 多机 runtime 无法共享任务 | 各服务端副本未设(或非同一个)`SHEPHERD_FLEET_REDIS` → 各自回落到自己的进程内队列。 |
-| 真实 agent 不动作 / spawn 报错 | CLI 不在 `PATH`;设 `CLAUDE_BIN` / `CODEX_CMD` / `OPENCODE_CMD`,或先用 `AGENT_MOCK=1` 验证链路。 |
+| 真实 agent 不动作 / spawn 报错 | CLI 不在 `PATH`;设 `CLAUDE_BIN` / `CODEX_CMD` / `OPENCODE_CMD` / `CODEBUDDY_CMD`,或先用 `AGENT_MOCK=1` 验证链路。 |
 | 接口批量运行卡在 `RUNNING` 无结果 | 设了 `SHEPHERD_RUNNER=noop`(演示占位)。取消它以走原生 runner。 |
 | 新迁移未生效 | 重启服务端——迁移在启动时跑;新迁移文件需重新构建。 |
 | OIDC 端点 404 | provider 仅在 id 与 secret 两个 env **都**设置时才注册。 |

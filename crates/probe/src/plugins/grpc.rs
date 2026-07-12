@@ -56,7 +56,13 @@ impl GrpcPlugin {
     }
 
     async fn channel_for(&self, target: &str) -> Result<Channel, String> {
-        if let Some(c) = self.channels.lock().expect("channels lock").get(target).cloned() {
+        if let Some(c) = self
+            .channels
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(target)
+            .cloned()
+        {
             return Ok(c);
         }
         let endpoint = Channel::from_shared(target.to_string()).map_err(|e| e.to_string())?;
@@ -64,7 +70,7 @@ impl GrpcPlugin {
         Ok(self
             .channels
             .lock()
-            .expect("channels lock")
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .entry(target.to_string())
             .or_insert(channel)
             .clone())
@@ -79,7 +85,7 @@ impl ProtocolPlugin for GrpcPlugin {
 
     async fn run(&self, req: &ProbeRequest) -> RawProbe {
         let method = match req.metadata.get("method") {
-            // gRPC 路径必须以 / 开头;调用方常写 pkg.Service/Method,这里宽容补全。
+            // gRPC paths must start with /; callers often write pkg.Service/Method, so prepend it leniently.
             Some(m) if m.starts_with('/') => m.clone(),
             Some(m) if !m.trim().is_empty() => format!("/{}", m.trim()),
             _ => {
@@ -93,7 +99,11 @@ impl ProtocolPlugin for GrpcPlugin {
         let path = match PathAndQuery::try_from(method) {
             Ok(p) => p,
             Err(e) => {
-                return RawProbe { transport_ok: false, error: Some(e.to_string()), ..Default::default() }
+                return RawProbe {
+                    transport_ok: false,
+                    error: Some(e.to_string()),
+                    ..Default::default()
+                }
             }
         };
         let channel = match self.channel_for(&req.target).await {

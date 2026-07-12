@@ -44,8 +44,30 @@ mod tests {
             .await
             .expect("ok");
         let add = AddApiCaseUseCase::new(repo.clone());
-        add.execute(&def.id, "c1", "GET", "/x", None, serde_json::json!([]), serde_json::json!([]), crate::application::ApiCaseMeta::default()).await.expect("ok");
-        add.execute(&def.id, "c2", "GET", "/x", None, serde_json::json!([]), serde_json::json!([]), crate::application::ApiCaseMeta::default()).await.expect("ok");
+        add.execute(
+            &def.id,
+            "c1",
+            "GET",
+            "/x",
+            None,
+            serde_json::json!([]),
+            serde_json::json!([]),
+            crate::application::ApiCaseMeta::default(),
+        )
+        .await
+        .expect("ok");
+        add.execute(
+            &def.id,
+            "c2",
+            "GET",
+            "/x",
+            None,
+            serde_json::json!([]),
+            serde_json::json!([]),
+            crate::application::ApiCaseMeta::default(),
+        )
+        .await
+        .expect("ok");
 
         let uc = ListApiCasesUseCase::new(repo);
         assert_eq!(uc.execute(&def.id).await.expect("ok").len(), 2);

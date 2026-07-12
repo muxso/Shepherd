@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 
-use api_runner::{HttpMethod, ReqwestRunner, RequestSpec};
+use api_runner::{HttpMethod, RequestSpec, ReqwestRunner};
 
 use crate::domain::{ProbeRequest, RawProbe};
 use crate::ports::ProtocolPlugin;

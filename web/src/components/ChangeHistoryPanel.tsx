@@ -10,7 +10,7 @@ const ACTION_COLOR: Record<string, string> = {
   RENAME: 'purple',
 }
 
-/** 接口定义「变更历史」(审计):按时间倒序的动作时间线。 */
+/** API definition change history (audit): action timeline, newest first. */
 export default function ChangeHistoryPanel({ definition }: { definition: ApiDefinition }) {
   const { t } = useI18n()
   const [loading, setLoading] = useState(true)

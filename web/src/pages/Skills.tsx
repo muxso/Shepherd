@@ -6,6 +6,7 @@ import { api, ApiError, type Skill } from '../api'
 import { useApp } from '../context'
 import { useI18n } from '../i18n'
 import { PageBody, PageContainer, PageHeader, SelectProjectEmpty } from '../components/Page'
+import { useListView, type ListColumn } from '../components/ListView'
 
 export default function Skills() {
   const { t } = useI18n()
@@ -46,12 +47,71 @@ export default function Skills() {
 
   if (!projectId) return <SelectProjectEmpty />
 
+  return <SkillsList items={items} loading={loading} projectId={projectId} refresh={refresh} createOpen={createOpen} setCreateOpen={setCreateOpen} composeOpen={composeOpen} setComposeOpen={setComposeOpen} edit={edit} setEdit={setEdit} del={del} t={t} />
+}
+
+// List + view/filter/column-settings trio. useListView is a hook, so this lives in a child component to avoid calling hooks after the parent's conditional return.
+function SkillsList({ items, loading, projectId, refresh, createOpen, setCreateOpen, composeOpen, setComposeOpen, edit, setEdit, del, t }: {
+  items: Skill[]
+  loading: boolean
+  projectId: string
+  refresh: () => void
+  createOpen: boolean
+  setCreateOpen: (v: boolean) => void
+  composeOpen: boolean
+  setComposeOpen: (v: boolean) => void
+  edit: Skill | null
+  setEdit: (s: Skill | null) => void
+  del: (s: Skill) => void
+  t: (k: string, d?: string) => string
+}) {
+  const allColumns: ListColumn<Skill>[] = [
+    { key: 'name', label: t('skill.name', '名称'), title: t('skill.name', '名称'), dataIndex: 'name', render: (v: string) => <span style={{ fontWeight: 500 }}>{v}</span> },
+    { key: 'desc', label: t('skill.descLabel', '描述'), title: t('skill.descLabel', '描述'), dataIndex: 'description', render: (v?: string) => v || <span style={{ color: 'var(--text-3)' }}>—</span> },
+    { key: 'instructions', label: t('skill.instructionsSummary', '指令摘要'), title: t('skill.instructionsSummary', '指令摘要'), dataIndex: 'instructions', render: (v?: string) => <Typography.Text type="secondary" ellipsis style={{ maxWidth: 360 }}>{v || '—'}</Typography.Text> },
+    { key: 'enabled', label: t('skill.enabled', '启用'), title: t('skill.enabled', '启用'), dataIndex: 'enabled', width: 80, render: (v: boolean) => <Tag color={v ? 'green' : 'default'}>{v ? t('skill.on', '启用') : t('skill.off', '停用')}</Tag> },
+    { key: 'id', label: 'ID', title: 'ID', dataIndex: 'id', width: 100, render: (v: string) => <Tooltip title={v}><span className="ms-mono" style={{ fontSize: 12, color: 'var(--text-3)' }}>{v?.slice(0, 8)}</span></Tooltip> },
+    {
+      key: 'action',
+      label: t('req.action', '操作'),
+      title: t('req.action', '操作'),
+      width: 130,
+      render: (_v, s) => (
+        <Space size={4}>
+          <Button type="link" size="small" onClick={() => setEdit(s)}>{t('a.edit', '编辑')}</Button>
+          <Button type="link" size="small" danger onClick={() => del(s)}>{t('a.delete', '删除')}</Button>
+        </Space>
+      ),
+    },
+  ]
+  const lv = useListView<Skill>({
+    kind: 'skill',
+    projectId,
+    searchOf: (s) => s.name,
+    searchLabel: t('skill.searchPh', '搜索名称'),
+    fields: [
+      {
+        key: 'enabled',
+        label: t('skill.enabled', '启用'),
+        type: 'enum',
+        options: [
+          { value: 'on', label: t('skill.on', '启用') },
+          { value: 'off', label: t('skill.off', '停用') },
+        ],
+        get: (s) => (s.enabled ? 'on' : 'off'),
+      },
+    ],
+    columns: allColumns,
+    rows: items,
+  })
+
   return (
     <PageContainer>
       <PageHeader
         title={t('m.skill', '技能')}
         extra={
           <>
+            {lv.toolbar}
             <Button icon={<MergeCellsOutlined />} onClick={() => setComposeOpen(true)} disabled={!items.length}>
               {t('skill.compose', '组合技能')}
             </Button>
@@ -67,26 +127,10 @@ export default function Skills() {
           rowKey="id"
           size="middle"
           loading={loading}
-          dataSource={items}
-          pagination={{ pageSize: 15, size: 'small' }}
+          dataSource={lv.rows}
+          pagination={lv.pagination}
           locale={{ emptyText: <Empty description={t('skill.empty', '暂无技能')} /> }}
-          columns={[
-            { title: t('skill.name', '名称'), dataIndex: 'name', render: (v: string) => <span style={{ fontWeight: 500 }}>{v}</span> },
-            { title: t('skill.descLabel', '描述'), dataIndex: 'description', render: (v?: string) => v || <span style={{ color: 'var(--text-3)' }}>—</span> },
-            { title: t('skill.instructionsSummary', '指令摘要'), dataIndex: 'instructions', render: (v?: string) => <Typography.Text type="secondary" ellipsis style={{ maxWidth: 360 }}>{v || '—'}</Typography.Text> },
-            { title: t('skill.enabled', '启用'), dataIndex: 'enabled', width: 80, render: (v: boolean) => <Tag color={v ? 'green' : 'default'}>{v ? t('skill.on', '启用') : t('skill.off', '停用')}</Tag> },
-            { title: 'ID', dataIndex: 'id', width: 100, render: (v: string) => <Tooltip title={v}><span className="ms-mono" style={{ fontSize: 12, color: 'var(--text-3)' }}>{v?.slice(0, 8)}</span></Tooltip> },
-            {
-              title: t('req.action', '操作'),
-              width: 130,
-              render: (_v, s) => (
-                <Space size={4}>
-                  <Button type="link" size="small" onClick={() => setEdit(s)}>{t('a.edit', '编辑')}</Button>
-                  <Button type="link" size="small" danger onClick={() => del(s)}>{t('a.delete', '删除')}</Button>
-                </Space>
-              ),
-            },
-          ]}
+          columns={lv.columns}
         />
       </PageBody>
 
@@ -113,7 +157,7 @@ export default function Skills() {
 
 type SkillFormValues = { name: string; description: string; instructions: string; enabled: boolean }
 
-// 新建 / 编辑共用表单弹窗。编辑态多一个「启用」开关。
+// Shared create/edit form modal; edit mode adds an "enabled" switch.
 function SkillFormModal({ open, title, initial, onClose, onSubmit, onDone }: {
   open: boolean
   title: string

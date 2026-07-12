@@ -1,20 +1,16 @@
-# syntax=docker/dockerfile:1
 # Build context = repo root. Build: docker build -f deploy/docker/Dockerfile.server .
 
 # ---- build stage ----
-FROM rust:1.86-bookworm AS build
+FROM rust:latest AS build
 WORKDIR /app
 
-# Cargo registry + target caches keep incremental rebuilds fast.
 COPY Cargo.toml Cargo.lock ./
 COPY crates ./crates
-RUN --mount=type=cache,target=/usr/local/cargo/registry \
-    --mount=type=cache,target=/app/target \
-    cargo build --release -p server && \
+RUN cargo build --release -p server && \
     cp target/release/server /usr/local/bin/server
 
 # ---- runtime stage ----
-FROM debian:bookworm-slim AS runtime
+FROM debian:latest AS runtime
 RUN apt-get update && \
     apt-get install -y --no-install-recommends ca-certificates libssl3 curl && \
     rm -rf /var/lib/apt/lists/*

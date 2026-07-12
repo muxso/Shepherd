@@ -23,7 +23,8 @@ pub fn parse_postman(doc: &Value) -> Result<Vec<ImportedApi>, ApiDefinitionError
 
 fn walk(item: &Value, module: Option<&str>, out: &mut Vec<ImportedApi>) {
     if let Some(children) = item.get("item").and_then(|v| v.as_array()) {
-        let folder = item.get("name").and_then(|v| v.as_str()).map(str::trim).filter(|s| !s.is_empty());
+        let folder =
+            item.get("name").and_then(|v| v.as_str()).map(str::trim).filter(|s| !s.is_empty());
         let next = folder.or(module);
         for c in children {
             walk(c, next, out);
@@ -37,11 +38,7 @@ fn walk(item: &Value, module: Option<&str>, out: &mut Vec<ImportedApi>) {
 
 fn request_to_api(item: &Value, module: Option<&str>) -> Option<ImportedApi> {
     let req = item.get("request")?;
-    let method = req
-        .get("method")
-        .and_then(|v| v.as_str())
-        .unwrap_or("GET")
-        .to_uppercase();
+    let method = req.get("method").and_then(|v| v.as_str()).unwrap_or("GET").to_uppercase();
 
     let (path, mut query) = url_of(req.get("url"))?;
 
@@ -71,9 +68,14 @@ fn request_to_api(item: &Value, module: Option<&str>) -> Option<ImportedApi> {
         .map(str::to_string)
         .filter(|s| !s.trim().is_empty())
         .unwrap_or_else(|| format!("{method} {path}"));
-    let description = item.get("request").and_then(|r| r.get("description")).and_then(|v| v.as_str()).unwrap_or("");
+    let description = item
+        .get("request")
+        .and_then(|r| r.get("description"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
 
-    let case_body = if matches!(method.as_str(), "POST" | "PUT" | "PATCH") && !body_text.is_empty() {
+    let case_body = if matches!(method.as_str(), "POST" | "PUT" | "PATCH") && !body_text.is_empty()
+    {
         Some(body_text.clone())
     } else {
         None
@@ -83,7 +85,15 @@ fn request_to_api(item: &Value, module: Option<&str>) -> Option<ImportedApi> {
         name,
         method,
         path: path.clone(),
-        spec: simple_spec(description, headers, query_kv, Vec::new(), &body_type, &body_text, Vec::new()),
+        spec: simple_spec(
+            description,
+            headers,
+            query_kv,
+            Vec::new(),
+            &body_type,
+            &body_text,
+            Vec::new(),
+        ),
         case_assertions: status_assertions(200),
         case_body,
         module: module.map(str::to_string),

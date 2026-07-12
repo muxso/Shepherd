@@ -4,7 +4,7 @@ import { PlusOutlined, DeleteOutlined } from '@ant-design/icons'
 import type { CaseStep } from '../api'
 import { useI18n } from '../i18n'
 
-// 受控:功能用例的「步骤 + 预期结果」行编辑器。可放进 AntD Form.Item。
+// Controlled row editor for functional-case steps + expected results. Usable inside an AntD Form.Item.
 export default function StepsEditor({
   value,
   onChange,

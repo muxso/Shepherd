@@ -4,10 +4,12 @@ import {
   Breadcrumb,
   Button,
   Card,
+  Col,
   Form,
   Input,
   InputNumber,
   Radio,
+  Row,
   Segmented,
   Select,
   Space,
@@ -31,10 +33,10 @@ import { useI18n } from '../i18n'
 
 type TFn = (k: string, d?: string) => string
 
-// 资源池(系统模块子标签,对齐参考图):列表页 + Node/Kubernetes 全屏新增/编辑表单。
-// 后端字段:name/enabled/description/maxConcurrency/poolType/allOrg/orgIds/serverUrl/config/时间。
+// Resource pools (system-module sub-tab, matches the reference UI): list page + full-screen Node/Kubernetes create/edit forms.
+// Backend fields: name/enabled/description/maxConcurrency/poolType/allOrg/orgIds/serverUrl/config/timestamps.
 
-// ---------------- 列表页 ----------------
+// ---------------- List page ----------------
 export function ResourcePoolsPage() {
   const { t } = useI18n()
   const nav = useNavigate()
@@ -57,7 +59,7 @@ export function ResourcePoolsPage() {
   const orgName = (id: string) => orgs.find((o) => o.id === id)?.name || id
   const rows = pools.filter((p) => !q || p.name.toLowerCase().includes(q.toLowerCase()))
 
-  // 状态开关:用整行数据 PUT 回去,仅翻转 enabled。
+  // Status toggle: PUT the whole row back with only `enabled` flipped.
   const toggle = async (p: ResourcePool, enabled: boolean) => {
     try {
       await api.updateResourcePool(p.id, { ...toInput(p), enabled })
@@ -183,7 +185,7 @@ export function ResourcePoolsPage() {
   )
 }
 
-// 视图 → 表单/提交入参(列表里翻转 enabled 时复用)。
+// View model → submit input (reused when the list flips `enabled`).
 function toInput(p: ResourcePool): ResourcePoolInput {
   return {
     name: p.name,
@@ -198,7 +200,7 @@ function toInput(p: ResourcePool): ResourcePoolInput {
   }
 }
 
-// ---------------- 新增 / 编辑表单 ----------------
+// ---------------- Create / edit form ----------------
 const NEW_NODE: PoolNode = { ip: '', port: '', concurrentNumber: 10, singleTaskConcurrentNumber: 3 }
 
 interface FormShape {
@@ -253,7 +255,7 @@ function poolToForm(p: ResourcePool): FormShape {
   }
 }
 
-// 表单值 → 提交入参:按类型组装 config 与 maxConcurrency。
+// Form values → submit input: assemble config and maxConcurrency per pool type.
 function formToInput(v: FormShape): ResourcePoolInput {
   const base = {
     name: v.name,
@@ -325,7 +327,7 @@ export function ResourcePoolForm() {
     }
   }, [id]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // 批量文本(每行 ip:port[:max[:single]])→ 节点表。
+  // Batch text (one `ip:port[:max[:single]]` per line) → node table.
   const applyBatch = () => {
     const nodes: PoolNode[] = batchText
       .split('\n')
@@ -403,54 +405,68 @@ export function ResourcePoolForm() {
             {isEdit ? t('pool.edit', '编辑资源池') : t('pool.add', '添加资源池')}
           </div>
           <Form form={form} layout="vertical" initialValues={EMPTY} style={{ maxWidth: 1100 }}>
-            <Form.Item
-              name="name"
-              label={t('pool.name', '资源池名称')}
-              rules={[{ required: true, message: t('pool.nameRequired', '请输入资源池名称') }]}
-            >
-              <Input placeholder={t('pool.namePlaceholder', '请输入资源池名称')} maxLength={64} />
-            </Form.Item>
-            <Form.Item name="description" label={t('res.colDesc', '描述')}>
-              <Input.TextArea rows={3} placeholder={t('pool.descPlaceholder', '请对该资源池进行描述')} maxLength={500} />
-            </Form.Item>
-            <Form.Item name="serverUrl" label={labelHelp(t('pool.serverUrl', '工作节点 URL'), t('pool.serverUrlHelp', 'MS 的部署地址,用于回连工作节点'))}>
-              <Input placeholder={t('pool.serverUrlPlaceholder', 'MS的部署地址')} />
-            </Form.Item>
+            {/* Basic info: name/type/callback URL/org scope/description; two-column layout to reduce scrolling */}
+            <div style={{ fontWeight: 600, marginBottom: 12 }}>{t('pool.sectionBasic', '基础信息')}</div>
+            <Row gutter={24}>
+              <Col span={24} lg={12}>
+                <Form.Item
+                  name="name"
+                  label={t('pool.name', '资源池名称')}
+                  rules={[{ required: true, message: t('pool.nameRequired', '请输入资源池名称') }]}
+                >
+                  <Input placeholder={t('pool.namePlaceholder', '请输入资源池名称')} maxLength={64} />
+                </Form.Item>
+              </Col>
+              <Col span={24} lg={12}>
+                <Form.Item name="poolType" label={t('pool.type', '类型')}>
+                  <Segmented
+                    options={[
+                      { value: 'Node', label: 'Node' },
+                      { value: 'Kubernetes', label: 'Kubernetes' },
+                    ]}
+                  />
+                </Form.Item>
+              </Col>
+              <Col span={24} lg={12}>
+                <Form.Item name="serverUrl" label={labelHelp(t('pool.serverUrl', '工作节点 URL'), t('pool.serverUrlHelp', 'MS 的部署地址,用于回连工作节点'))}>
+                  <Input placeholder={t('pool.serverUrlPlaceholder', 'MS的部署地址')} />
+                </Form.Item>
+              </Col>
+              <Col span={24} lg={12}>
+                <Form.Item label={t('pool.applyOrg', '应用组织')}>
+                  <Form.Item name="allOrg" noStyle>
+                    <Radio.Group>
+                      <Radio value={true}>
+                        {labelHelp(t('pool.allOrg', '全部组织'), t('pool.allOrgHelp', '所有组织都可使用该资源池'))}
+                      </Radio>
+                      <Radio value={false}>{t('pool.specifiedOrg', '指定组织')}</Radio>
+                    </Radio.Group>
+                  </Form.Item>
+                </Form.Item>
+                {allOrg === false && (
+                  <Form.Item
+                    name="orgIds"
+                    label={t('pool.specifiedOrg', '指定组织')}
+                    rules={[{ required: true, message: t('pool.orgRequired', '请选择组织') }]}
+                  >
+                    <Select
+                      mode="multiple"
+                      allowClear
+                      placeholder={t('pool.orgPlaceholder', '请选择组织')}
+                      options={orgs.map((o) => ({ value: o.id, label: o.name }))}
+                    />
+                  </Form.Item>
+                )}
+              </Col>
+              <Col span={24}>
+                <Form.Item name="description" label={t('res.colDesc', '描述')}>
+                  <Input.TextArea rows={3} placeholder={t('pool.descPlaceholder', '请对该资源池进行描述')} maxLength={500} />
+                </Form.Item>
+              </Col>
+            </Row>
 
-            <Form.Item label={t('pool.applyOrg', '应用组织')}>
-              <Form.Item name="allOrg" noStyle>
-                <Radio.Group>
-                  <Radio value={true}>
-                    {labelHelp(t('pool.allOrg', '全部组织'), t('pool.allOrgHelp', '所有组织都可使用该资源池'))}
-                  </Radio>
-                  <Radio value={false}>{t('pool.specifiedOrg', '指定组织')}</Radio>
-                </Radio.Group>
-              </Form.Item>
-            </Form.Item>
-            {allOrg === false && (
-              <Form.Item
-                name="orgIds"
-                label={t('pool.specifiedOrg', '指定组织')}
-                rules={[{ required: true, message: t('pool.orgRequired', '请选择组织') }]}
-              >
-                <Select
-                  mode="multiple"
-                  allowClear
-                  placeholder={t('pool.orgPlaceholder', '请选择组织')}
-                  options={orgs.map((o) => ({ value: o.id, label: o.name }))}
-                />
-              </Form.Item>
-            )}
-
-            <Form.Item name="poolType" label={t('pool.type', '类型')}>
-              <Segmented
-                options={[
-                  { value: 'Node', label: 'Node' },
-                  { value: 'Kubernetes', label: 'Kubernetes' },
-                ]}
-              />
-            </Form.Item>
-
+            {/* Capacity/config: fields switch with poolType */}
+            <div style={{ fontWeight: 600, marginTop: 8, marginBottom: 12 }}>{t('pool.sectionConfig', '容量与配置')}</div>
             {poolType === 'Node' ? (
               <NodeSection
                 t={t}
@@ -466,7 +482,7 @@ export function ResourcePoolForm() {
           </Form>
         </Card>
       </div>
-      {/* 底部操作条 */}
+      {/* Bottom action bar */}
       <div style={{ padding: '10px 24px', background: 'var(--panel)', borderTop: '1px solid var(--border-soft)', textAlign: 'right' }}>
         <Space>
           <Button onClick={() => nav('/resource-pool')}>{t('a.cancel', '取消')}</Button>
@@ -484,7 +500,7 @@ export function ResourcePoolForm() {
   )
 }
 
-// Node:单个添加(节点表)/ 批量添加(文本)。
+// Node pool: single add (node table) / batch add (text).
 function NodeSection({
   t,
   mode,
@@ -588,58 +604,69 @@ function NodeSection({
   )
 }
 
-// Kubernetes:IP/Token/命名空间/Deploy Name + 并发。
+// Kubernetes pool: IP/Token/namespace/deploy name + concurrency, two-column layout.
 function K8sSection({ t, labelHelp }: { t: TFn; labelHelp: (l: string, h: string) => React.ReactNode }) {
-  const single = { maxWidth: 560 }
   return (
-    <div style={single}>
-      <Form.Item
-        name="k8sIp"
-        label={t('pool.k8sIp', 'IP 地址/域名')}
-        extra={t('pool.k8sIpHint', '例如:100.0.0.100 或 example.com')}
-        rules={[{ required: true, message: t('pool.k8sIpRequired', '请输入 IP 地址/域名') }]}
-      >
-        <Input placeholder="example.com" />
-      </Form.Item>
-      <Form.Item name="token" label="Token" rules={[{ required: true, message: t('pool.tokenRequired', '请输入 Token') }]}>
-        <Input.Password placeholder={t('pool.tokenPlaceholder', '请输入 Token')} />
-      </Form.Item>
-      <Form.Item
-        name="namespace"
-        label={t('pool.namespace', '命名空间')}
-        rules={[{ required: true, message: t('pool.namespaceRequired', '请输入命名空间') }]}
-      >
-        <Space.Compact style={{ width: '100%' }}>
-          <Input placeholder={t('pool.namespacePlaceholder', '使用K8S资源池需要部署Role.yaml文件')} />
-          <Button onClick={() => downloadText('Role.yaml', ROLE_YAML)}>{t('pool.downloadYaml', '下载 YAML 文件')}</Button>
-        </Space.Compact>
-      </Form.Item>
-      <Form.Item
-        name="deployName"
-        label="Deploy Name"
-        rules={[{ required: true, message: t('pool.deployRequired', '请输入 Deploy Name') }]}
-      >
-        <Space.Compact style={{ width: '100%' }}>
-          <Input placeholder={t('pool.deployPlaceholder', '执行接口测试需要部署 Daemonset.yaml 或 Deployment.yaml 文件')} />
-          <Button onClick={() => downloadText('Daemonset.yaml', `# Daemonset\nkind: DaemonSet\n`)}>
-            {t('pool.downloadYaml', '下载 YAML 文件')}
-          </Button>
-        </Space.Compact>
-      </Form.Item>
-      <Form.Item
-        name="concurrentNumber"
-        label={labelHelp(t('pool.maxConcurrency', '最大并发数'), t('pool.maxConcurrencyHelp', '该资源池可并行执行的任务数上限'))}
-        rules={[{ required: true }]}
-      >
-        <InputNumber min={1} style={{ width: 160 }} />
-      </Form.Item>
-      <Form.Item
-        name="singleTaskConcurrentNumber"
-        label={labelHelp(t('pool.singleTaskMax', '单个任务最大并发数'), t('pool.singleTaskMaxHelp', '单个任务可占用的并发数上限'))}
-        rules={[{ required: true }]}
-      >
-        <InputNumber min={1} style={{ width: 160 }} />
-      </Form.Item>
-    </div>
+    <Row gutter={24}>
+      <Col span={24} lg={12}>
+        <Form.Item
+          name="k8sIp"
+          label={t('pool.k8sIp', 'IP 地址/域名')}
+          extra={t('pool.k8sIpHint', '例如:100.0.0.100 或 example.com')}
+          rules={[{ required: true, message: t('pool.k8sIpRequired', '请输入 IP 地址/域名') }]}
+        >
+          <Input placeholder="example.com" />
+        </Form.Item>
+      </Col>
+      <Col span={24} lg={12}>
+        <Form.Item name="token" label="Token" rules={[{ required: true, message: t('pool.tokenRequired', '请输入 Token') }]}>
+          <Input.Password placeholder={t('pool.tokenPlaceholder', '请输入 Token')} />
+        </Form.Item>
+      </Col>
+      <Col span={24} lg={12}>
+        <Form.Item
+          name="namespace"
+          label={t('pool.namespace', '命名空间')}
+          rules={[{ required: true, message: t('pool.namespaceRequired', '请输入命名空间') }]}
+        >
+          <Space.Compact style={{ width: '100%' }}>
+            <Input placeholder={t('pool.namespacePlaceholder', '使用K8S资源池需要部署Role.yaml文件')} />
+            <Button onClick={() => downloadText('Role.yaml', ROLE_YAML)}>{t('pool.downloadYaml', '下载 YAML 文件')}</Button>
+          </Space.Compact>
+        </Form.Item>
+      </Col>
+      <Col span={24} lg={12}>
+        <Form.Item
+          name="deployName"
+          label="Deploy Name"
+          rules={[{ required: true, message: t('pool.deployRequired', '请输入 Deploy Name') }]}
+        >
+          <Space.Compact style={{ width: '100%' }}>
+            <Input placeholder={t('pool.deployPlaceholder', '执行接口测试需要部署 Daemonset.yaml 或 Deployment.yaml 文件')} />
+            <Button onClick={() => downloadText('Daemonset.yaml', `# Daemonset\nkind: DaemonSet\n`)}>
+              {t('pool.downloadYaml', '下载 YAML 文件')}
+            </Button>
+          </Space.Compact>
+        </Form.Item>
+      </Col>
+      <Col span={24} lg={12}>
+        <Form.Item
+          name="concurrentNumber"
+          label={labelHelp(t('pool.maxConcurrency', '最大并发数'), t('pool.maxConcurrencyHelp', '该资源池可并行执行的任务数上限'))}
+          rules={[{ required: true }]}
+        >
+          <InputNumber min={1} style={{ width: 160 }} />
+        </Form.Item>
+      </Col>
+      <Col span={24} lg={12}>
+        <Form.Item
+          name="singleTaskConcurrentNumber"
+          label={labelHelp(t('pool.singleTaskMax', '单个任务最大并发数'), t('pool.singleTaskMaxHelp', '单个任务可占用的并发数上限'))}
+          rules={[{ required: true }]}
+        >
+          <InputNumber min={1} style={{ width: 160 }} />
+        </Form.Item>
+      </Col>
+    </Row>
   )
 }

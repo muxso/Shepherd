@@ -1,7 +1,7 @@
 import { defineConfig, devices } from '@playwright/test'
 
 // E2E 冒烟:针对正在运行的 dev 栈(vite :5173 代理 → server :9180)。
-// 前置:Shepherd server 跑在 :9180(见 scripts/agent/README 或 dev 启动命令)。
+// 前置:Shepherd server 跑在 :9180(见 docs/USAGE.zh-CN.md 或 dev 启动命令)。
 // vite 由下方 webServer 自动起(已起则复用)。首跑装浏览器:npx playwright install chromium。
 const PORT = process.env.E2E_PORT || '5173'
 

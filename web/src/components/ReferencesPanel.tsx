@@ -13,7 +13,7 @@ type RefRow = { id: string; name: string; resType: string; refType: string; kind
 const CASE_COLOR = '#06a561'
 const SCN_COLOR = '#1677ff'
 
-/** 接口定义「引用关系」:被哪些资源(接口用例 / 场景)引用。表格(搜索 + 排序)/ 关系图(SVG hub-spoke)双视图。 */
+/** API definition reference relations: which resources (api cases / scenarios) reference it. Two views: table (search + sort) / graph (SVG hub-spoke). */
 export default function ReferencesPanel({ definition }: { definition: ApiDefinition }) {
   const { t } = useI18n()
   const { projects, projectId } = useApp()
@@ -107,13 +107,13 @@ export default function ReferencesPanel({ definition }: { definition: ApiDefinit
 type GLayout = 'radial' | 'grouped'
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v))
 
-/** 引用关系图:中心=本接口,外围=引用它的资源。放射/分组 两布局 + 滚轮缩放 + 拖拽平移 + 点击节点跳转。零依赖纯 SVG。 */
+/** Reference graph: center = this API, periphery = referencing resources. Radial/grouped layouts + wheel zoom + drag pan + click-to-jump. Zero-dependency plain SVG. */
 function ReferenceGraph({ definition, rows, loading }: { definition: ApiDefinition; rows: RefRow[]; loading: boolean }) {
   const { t } = useI18n()
   const { mode } = useThemeMode()
   const navigate = useNavigate()
   const [hover, setHover] = useState<string | null>(null)
-  // SVG 呈现属性不解析 CSS var(),故按主题模式读取已解析的 token 值供 fill/stroke 用。
+  // SVG presentation attributes don't resolve CSS var(), so read resolved token values per theme mode for fill/stroke.
   const C = useMemo(() => {
     const cs = getComputedStyle(document.documentElement)
     const g = (n: string, fb: string) => cs.getPropertyValue(n).trim() || fb
@@ -131,13 +131,14 @@ function ReferenceGraph({ definition, rows, loading }: { definition: ApiDefiniti
   const wrapRef = useRef<HTMLDivElement>(null)
   const svgRef = useRef<SVGSVGElement>(null)
   const drag = useRef<{ sx: number; sy: number; tx: number; ty: number; moved: boolean } | null>(null)
-  const movedRef = useRef(false) // 拖拽中途移动过 → 抬起时抑制点击,避免误触发跳转
+  const movedRef = useRef(false) // moved during drag → suppress the click on mouseup to avoid accidental jumps
   const trim = (s: string, n = 14) => (s.length > n ? s.slice(0, n) + '…' : s)
-  // 视口尺寸随容器自适应(viewBox 取容器像素尺寸 → 无信箱黑边,内容铺满)。
+  // Viewport tracks the container (viewBox uses container pixel size → no letterboxing, content fills).
   const [size, setSize] = useState({ w: 1000, h: 560 })
   const N = rows.length
-  // 注:wrapRef/svgRef 在 loading/空 态时不渲染 → 依赖里带上 loading 与 N,
-  // 使图真正挂载后这些副作用会重跑并绑上 ResizeObserver / wheel 监听(否则缩放/自适应失效)。
+  // Note: wrapRef/svgRef are not rendered in loading/empty states → include loading and N in deps
+  // so these effects re-run once the graph actually mounts and attach ResizeObserver / wheel listeners
+  // (otherwise zoom/auto-fit silently break).
   useEffect(() => {
     const el = wrapRef.current
     if (!el || typeof ResizeObserver === 'undefined') return
@@ -151,14 +152,14 @@ function ReferenceGraph({ definition, rows, loading }: { definition: ApiDefiniti
   const VW = size.w
   const VH = size.h
 
-  // 点击节点跳转:场景 → 场景页打开;接口用例 → 本接口定义页打开该用例。
+  // Node click jump: scenario → open in the scenario page; api case → open the case in this API's definition page.
   const jump = (n: { id: string; kind: string }) => {
-    if (movedRef.current) return // 刚拖拽过,忽略本次点击
+    if (movedRef.current) return // just dragged; ignore this click
     if (n.kind === 'scenario') navigate(`/api/scenario?open=${encodeURIComponent(n.id)}`)
     else navigate(`/api/definition?openCase=${encodeURIComponent(n.id)}`)
   }
 
-  // ---- 布局:节点坐标(以原点为中心),center=本接口位置 ----
+  // ---- Layout: node coordinates (origin-centered); `center` = this API's position ----
   const { nodes, center, bounds } = useMemo(() => {
     const colored = rows.map((r) => ({ ...r, color: r.kind === 'case' ? CASE_COLOR : SCN_COLOR }))
     let center = { x: 0, y: 0 }
@@ -178,7 +179,7 @@ function ReferenceGraph({ definition, rows, loading }: { definition: ApiDefiniti
         return { ...row, x: r * Math.cos(ang), y: r * Math.sin(ang) }
       })
     } else {
-      // 分组:中心在左,接口用例 / 场景 各成一列在右,垂直排布。
+      // Grouped: center on the left; api cases and scenarios each form a vertical column on the right.
       const cases = colored.filter((r) => r.kind === 'case')
       const scns = colored.filter((r) => r.kind === 'scenario')
       const gap = 40
@@ -194,7 +195,7 @@ function ReferenceGraph({ definition, rows, loading }: { definition: ApiDefiniti
     return { nodes: placed, center, bounds }
   }, [rows, layout, N])
 
-  // 适应:按内容包围盒缩放居中。
+  // Fit: scale and center to the content bounding box.
   const fit = () => {
     const w = Math.max(1, bounds.x1 - bounds.x0 + 200)
     const h = Math.max(1, bounds.y1 - bounds.y0 + 160)
@@ -203,7 +204,7 @@ function ReferenceGraph({ definition, rows, loading }: { definition: ApiDefiniti
     const cyC = (bounds.y0 + bounds.y1) / 2
     setView({ k, tx: -cxC * k, ty: -cyC * k })
   }
-  // 布局/数据/容器尺寸变化时自动适应居中。
+  // Auto-fit when layout/data/container size changes.
   useEffect(() => { fit() /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [layout, N, VW, VH])
 
   const zoomAround = (px: number, py: number, factor: number) => {
@@ -214,7 +215,7 @@ function ReferenceGraph({ definition, rows, loading }: { definition: ApiDefiniti
       return { k: k2, tx: px - VW / 2 - k2 * cxc, ty: py - VH / 2 - k2 * cyc }
     })
   }
-  // 滚轮缩放走原生非被动监听:React 的 onWheel 是 passive,preventDefault 无效 → 页面会跟着滚动抖动。
+  // Wheel zoom uses a native non-passive listener: React's onWheel is passive, so preventDefault is a no-op → the page would scroll/jitter along.
   useEffect(() => {
     const svg = svgRef.current
     if (!svg) return
@@ -256,7 +257,7 @@ function ReferenceGraph({ definition, rows, loading }: { definition: ApiDefiniti
 
   return (
     <div ref={wrapRef} style={{ position: 'relative', width: '100%', height: '100%', minHeight: 360, overflow: 'hidden', background: 'var(--panel)', border: '1px solid var(--border-soft)', borderRadius: 8 }}>
-      {/* 控件:布局切换 + 缩放/适应 */}
+      {/* Controls: layout switch + zoom/fit */}
       <div style={{ position: 'absolute', left: 12, top: 12, zIndex: 2 }}>
         <Segmented
           size="small"
@@ -288,11 +289,11 @@ function ReferenceGraph({ definition, rows, loading }: { definition: ApiDefiniti
         role="img"
       >
         <g transform={gt}>
-          {/* 连线:中心 → 各资源;hover 高亮 */}
+          {/* Edges: center → each resource; highlighted on hover */}
           {nodes.map((n) => (
             <line key={`e-${n.id}`} x1={center.x} y1={center.y} x2={n.x} y2={n.y} stroke={hover === n.id ? n.color : C.border} strokeWidth={hover === n.id ? 2 : 1} />
           ))}
-          {/* 资源节点 */}
+          {/* Resource nodes */}
           {nodes.map((n) => {
             const on = hover === n.id
             return (
@@ -311,7 +312,7 @@ function ReferenceGraph({ definition, rows, loading }: { definition: ApiDefiniti
               </g>
             )
           })}
-          {/* 中心:本接口 */}
+          {/* Center: this API */}
           <g style={{ pointerEvents: 'none' }}>
             <circle cx={center.x} cy={center.y} r={46} fill={C.brand} />
             <text x={center.x} y={center.y - 6} textAnchor="middle" fontSize={13} fill="#fff" fontWeight={700}>{definition.method}</text>

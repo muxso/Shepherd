@@ -103,7 +103,7 @@ async fn run_decomposition(
     let executor = body.executor;
 
     let mut rounds = 0u32;
-    // 上限 = 任务数 + 1,防无进展死循环。
+    // Cap = task count + 1, guarding against a no-progress infinite loop.
     let guard = total as u32 + 1;
     loop {
         let dec = match st.tasks.get(&id).await {
@@ -139,7 +139,17 @@ async fn run_decomposition(
             set.spawn(async move {
                 let _permit = sem.acquire_owned().await;
                 let _ = delivery
-                    .dispatch(&did, &t.id, &t.title, &t.description, &t.acceptance_criteria, &exec, None, None)
+                    .dispatch(
+                        &did,
+                        &t.id,
+                        &t.title,
+                        &t.description,
+                        &t.acceptance_criteria,
+                        &exec,
+                        None,
+                        None,
+                        None,
+                    )
                     .await;
             });
         }
@@ -152,7 +162,7 @@ async fn run_decomposition(
     let blocked = total - verified - failed;
 
     if total > 0 && verified == total {
-        if let Err(e) = st.requirements.deliver(&final_dec.requirement_id).await {
+        if let Err(e) = st.requirements.deliver(&final_dec.requirement_id, "orchestrator").await {
             tracing::warn!(requirement = %final_dec.requirement_id, "自动标记交付失败(可能未定基线): {e:?}");
         } else {
             tracing::info!(requirement = %final_dec.requirement_id, "需求已自动标记交付(DELIVERED)");
@@ -193,7 +203,8 @@ struct GraphResponse {
     edges: Vec<GraphEdgeDto>,
 }
 
-/// 依赖图可视化数据:节点(含拓扑层与就绪态)+ 有向边(依赖 → 被依赖任务)。
+/// Dependency-graph visualization data: nodes (with topological layer and readiness)
+/// plus directed edges (dependency → dependent task).
 #[utoipa::path(
     get, path = "/decomposition/{id}/graph", tag = "task",
     params(("id" = String, Path)),
@@ -230,10 +241,7 @@ async fn graph_handler(
         })
         .collect();
     let edges = g.edges.into_iter().map(|e| GraphEdgeDto { from: e.from, to: e.to }).collect();
-    (
-        StatusCode::OK,
-        Json(GraphResponse { decomposition_id: id, layers: g.layers, nodes, edges }),
-    )
+    (StatusCode::OK, Json(GraphResponse { decomposition_id: id, layers: g.layers, nodes, edges }))
         .into_response()
 }
 
@@ -250,7 +258,7 @@ struct SummaryResponse {
     failed: u64,
 }
 
-/// 任务按状态聚合(分解仪表盘):总数 + 各状态计数。
+/// Task aggregation by status (decomposition dashboard): total plus per-status counts.
 #[utoipa::path(
     get, path = "/decomposition/{id}/summary", tag = "task",
     params(("id" = String, Path)),
@@ -291,11 +299,11 @@ async fn summary_handler(
 
 #[derive(Debug, Deserialize, ToSchema)]
 struct ReassignBody {
-    /// 当前归属(空串匹配未指派任务)。
+    /// Current assignee (empty string matches unassigned tasks).
     from: String,
-    /// 新归属(空串表示清空指派)。
+    /// New assignee (empty string clears the assignment).
     to: String,
-    /// 归属类型,如 AGENT / USER;`to` 为空时忽略。
+    /// Assignee kind, e.g. AGENT / USER; ignored when `to` is empty.
     #[serde(default = "default_kind")]
     kind: String,
 }
@@ -311,7 +319,8 @@ struct ReassignResponse {
     reassigned: usize,
 }
 
-/// 批量重指派:把某执行者的未完成任务整体转给另一个(跳过已完成),返回改动数。
+/// Bulk reassign: move one executor's unfinished tasks to another (skipping
+/// completed ones); returns the number changed.
 #[utoipa::path(
     post, path = "/decomposition/{id}/reassign", tag = "task",
     params(("id" = String, Path)),
@@ -329,11 +338,10 @@ async fn reassign_handler(
         return (StatusCode::FORBIDDEN, "permission denied").into_response();
     }
     match st.tasks.reassign(&id, &body.from, &body.to, &body.kind).await {
-        Ok((_, reassigned)) => (
-            StatusCode::OK,
-            Json(ReassignResponse { decomposition_id: id, reassigned }),
-        )
-            .into_response(),
+        Ok((_, reassigned)) => {
+            (StatusCode::OK, Json(ReassignResponse { decomposition_id: id, reassigned }))
+                .into_response()
+        }
         Err(TaskCmdError::DecompositionNotFound) => {
             (StatusCode::NOT_FOUND, "decomposition not found").into_response()
         }

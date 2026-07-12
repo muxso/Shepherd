@@ -27,13 +27,21 @@ impl BugFollowersUseCase {
         Ok(self.repo.list_followers(bug_id).await?)
     }
 
-    pub async fn follow(&self, bug_id: &str, user_id: &str) -> Result<Vec<String>, BugFollowerError> {
+    pub async fn follow(
+        &self,
+        bug_id: &str,
+        user_id: &str,
+    ) -> Result<Vec<String>, BugFollowerError> {
         self.ensure_bug(bug_id).await?;
         self.repo.add_follower(bug_id, user_id).await?;
         Ok(self.repo.list_followers(bug_id).await?)
     }
 
-    pub async fn unfollow(&self, bug_id: &str, user_id: &str) -> Result<Vec<String>, BugFollowerError> {
+    pub async fn unfollow(
+        &self,
+        bug_id: &str,
+        user_id: &str,
+    ) -> Result<Vec<String>, BugFollowerError> {
         self.ensure_bug(bug_id).await?;
         self.repo.remove_follower(bug_id, user_id).await?;
         Ok(self.repo.list_followers(bug_id).await?)
@@ -51,7 +59,11 @@ mod tests {
     use crate::application::CreateBugUseCase;
 
     async fn seed_bug(repo: &InMemoryBugRepository) -> String {
-        CreateBugUseCase::new(Arc::new(repo.clone())).execute("p1", "boom", "NEW", None).await.expect("seed").id
+        CreateBugUseCase::new(Arc::new(repo.clone()))
+            .execute("p1", "boom", "NEW", None, &std::collections::BTreeMap::new())
+            .await
+            .expect("seed")
+            .id
     }
 
     #[tokio::test]

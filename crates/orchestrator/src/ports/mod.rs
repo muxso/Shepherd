@@ -74,7 +74,8 @@ pub trait VerificationGateway: Send + Sync {
         version: u32,
     ) -> Result<Option<String>, OrchError>;
 
-    /// 须在 `sync` 前调用 —— 否则覆盖链为空,sync 无链可更,验证永远停在 UNCOVERED。
+    /// Must be called before `sync` — otherwise the coverage chain is empty, sync has
+    /// nothing to update, and the verification stays UNCOVERED forever.
     async fn link(
         &self,
         verification_id: &str,

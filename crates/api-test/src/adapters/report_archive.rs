@@ -25,7 +25,10 @@ impl ReportArchiver {
         Self { store, prefix: prefix.into() }
     }
 
-    pub fn new_local(root: impl AsRef<std::path::Path>, prefix: impl Into<String>) -> Result<Self, PortError> {
+    pub fn new_local(
+        root: impl AsRef<std::path::Path>,
+        prefix: impl Into<String>,
+    ) -> Result<Self, PortError> {
         let fs = LocalFileSystem::new_with_prefix(root).map_err(be)?;
         Ok(Self::new(Arc::new(fs), prefix))
     }
@@ -53,23 +56,39 @@ impl ReportArchiver {
         let report_ids = StringArray::from(vec![report_id; n]);
         let report_status = StringArray::from(vec![d.status.as_str(); n]);
         let case_count = Int32Array::from(vec![d.case_count; n]);
-        let case_id = StringArray::from(d.results.iter().map(|r| r.case_id.as_str()).collect::<Vec<_>>());
-        let outcome = StringArray::from(d.results.iter().map(|r| r.outcome.as_str()).collect::<Vec<_>>());
-        let status_code = Int32Array::from(d.results.iter().map(|r| r.status_code).collect::<Vec<_>>());
-        let latency_ms = Int64Array::from(d.results.iter().map(|r| r.latency_ms).collect::<Vec<_>>());
+        let case_id =
+            StringArray::from(d.results.iter().map(|r| r.case_id.as_str()).collect::<Vec<_>>());
+        let outcome =
+            StringArray::from(d.results.iter().map(|r| r.outcome.as_str()).collect::<Vec<_>>());
+        let status_code =
+            Int32Array::from(d.results.iter().map(|r| r.status_code).collect::<Vec<_>>());
+        let latency_ms =
+            Int64Array::from(d.results.iter().map(|r| r.latency_ms).collect::<Vec<_>>());
         let resp_size = Int64Array::from(d.results.iter().map(|r| r.resp_size).collect::<Vec<_>>());
-        let executed_at = StringArray::from(d.results.iter().map(|r| r.executed_at.as_str()).collect::<Vec<_>>());
+        let executed_at =
+            StringArray::from(d.results.iter().map(|r| r.executed_at.as_str()).collect::<Vec<_>>());
         let failures = StringArray::from(
             d.results.iter().map(|r| serde_json::json!(r.failures).to_string()).collect::<Vec<_>>(),
         );
-        let assertions = StringArray::from(d.results.iter().map(|r| r.assertions.to_string()).collect::<Vec<_>>());
-        let extractions = StringArray::from(d.results.iter().map(|r| r.extractions.to_string()).collect::<Vec<_>>());
-        let req_method = StringArray::from(d.results.iter().map(|r| r.req_method.as_deref()).collect::<Vec<_>>());
-        let req_url = StringArray::from(d.results.iter().map(|r| r.req_url.as_deref()).collect::<Vec<_>>());
-        let req_headers = StringArray::from(
-            d.results.iter().map(|r| serde_json::json!(r.req_headers).to_string()).collect::<Vec<_>>(),
+        let assertions = StringArray::from(
+            d.results.iter().map(|r| r.assertions.to_string()).collect::<Vec<_>>(),
         );
-        let req_body = StringArray::from(d.results.iter().map(|r| r.req_body.as_deref()).collect::<Vec<_>>());
+        let extractions = StringArray::from(
+            d.results.iter().map(|r| r.extractions.to_string()).collect::<Vec<_>>(),
+        );
+        let req_method = StringArray::from(
+            d.results.iter().map(|r| r.req_method.as_deref()).collect::<Vec<_>>(),
+        );
+        let req_url =
+            StringArray::from(d.results.iter().map(|r| r.req_url.as_deref()).collect::<Vec<_>>());
+        let req_headers = StringArray::from(
+            d.results
+                .iter()
+                .map(|r| serde_json::json!(r.req_headers).to_string())
+                .collect::<Vec<_>>(),
+        );
+        let req_body =
+            StringArray::from(d.results.iter().map(|r| r.req_body.as_deref()).collect::<Vec<_>>());
         let batch = RecordBatch::try_new(
             schema.clone(),
             vec![
@@ -107,10 +126,17 @@ impl ReportArchiver {
             .map(|r| r.executed_at.chars().take(10).collect::<String>())
             .filter(|s| s.len() == 10)
             .unwrap_or_else(|| "unknown".to_string());
-        format!("{}/dt={dt}/report_id={report_id}/part-0.parquet", self.prefix.trim_end_matches('/'))
+        format!(
+            "{}/dt={dt}/report_id={report_id}/part-0.parquet",
+            self.prefix.trim_end_matches('/')
+        )
     }
 
-    pub async fn archive(&self, report_id: &str, d: &BatchReportDetail) -> Result<String, PortError> {
+    pub async fn archive(
+        &self,
+        report_id: &str,
+        d: &BatchReportDetail,
+    ) -> Result<String, PortError> {
         let bytes = Self::encode(report_id, d)?;
         let key = self.object_key(report_id, d);
         self.store.put(&ObjPath::from(key.clone()), bytes.into()).await.map_err(be)?;
@@ -161,15 +187,12 @@ mod tests {
         let key = arch.archive("rep-1", &detail).await.expect("archive");
         assert_eq!(key, "reports/dt=2026-06-23/report_id=rep-1/part-0.parquet");
 
-        let bytes = store
-            .get(&ObjPath::from(key))
-            .await
-            .expect("get")
-            .bytes()
-            .await
-            .expect("bytes");
-        let reader =
-            ParquetRecordBatchReaderBuilder::try_new(bytes).expect("builder").build().expect("reader");
+        let bytes =
+            store.get(&ObjPath::from(key)).await.expect("get").bytes().await.expect("bytes");
+        let reader = ParquetRecordBatchReaderBuilder::try_new(bytes)
+            .expect("builder")
+            .build()
+            .expect("reader");
         let mut rows = 0usize;
         let mut errors = 0usize;
         for batch in reader {

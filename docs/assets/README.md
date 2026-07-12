@@ -27,7 +27,8 @@ A 20-second story: **file a requirement → AI drafts a design → you approve �
    DATABASE_URL=postgres://msuser:mspass@localhost:55432/mstest \
    SHEPHERD_ADMIN_PASSWORD=s3cret SHEPHERD_AGENT_FLEET=1 cargo run        # server :8088
 
-   AGENT_MOCK=1 SHEPHERD_BASE=http://127.0.0.1:8088 \
+   # 先在控制台(个人中心 → API KEY)或 POST /system/apikey 签发一把 key / issue an API key first
+   AGENT_MOCK=1 SHEPHERD_BASE=http://127.0.0.1:8088 SHEPHERD_AGENT_KEY=sak_… \
    SHEPHERD_CAPS=CLAUDE_CODE cargo run -p agent-runtime             # mock executor
 
    cd web && npm install && npm run dev                            # console

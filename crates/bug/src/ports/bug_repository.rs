@@ -1,6 +1,8 @@
+use std::collections::BTreeMap;
+
 use async_trait::async_trait;
 
-use crate::domain::{Bug, NewBug, StatusFlowGraph};
+use crate::domain::{Bug, BugRelation, NewBug, StatusFlowGraph};
 
 use thiserror::Error;
 
@@ -22,9 +24,22 @@ pub trait BugRepository: Send + Sync {
 
     async fn set_status(&self, id: &str, status: &str) -> Result<(), RepoError>;
 
+    /// Replaces custom field values wholesale (empty map clears all).
+    async fn set_custom_fields(
+        &self,
+        id: &str,
+        fields: &BTreeMap<String, String>,
+    ) -> Result<(), RepoError>;
+
     async fn add_follower(&self, bug_id: &str, user_id: &str) -> Result<(), RepoError>;
 
     async fn remove_follower(&self, bug_id: &str, user_id: &str) -> Result<(), RepoError>;
 
     async fn list_followers(&self, bug_id: &str) -> Result<Vec<String>, RepoError>;
+
+    async fn add_relation(&self, rel: &BugRelation) -> Result<(), RepoError>;
+
+    async fn remove_relation(&self, rel: &BugRelation) -> Result<(), RepoError>;
+
+    async fn list_relations(&self, bug_id: &str) -> Result<Vec<BugRelation>, RepoError>;
 }

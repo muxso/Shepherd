@@ -8,8 +8,9 @@ import { useI18n } from '../i18n'
 
 const METHODS = ['GET', 'POST', 'PUT', 'DELETE', 'PATCH']
 
-// 调试台协议 schema(声明式,数据驱动渲染)。后端协议插件 feature 门控、可动态插拔——
-// 新增一个协议=加一条 schema(+ 后端插件),无需改渲染分支。meta 为该协议的额外连接参数。
+// Declarative protocol schemas for the debug console (data-driven rendering). Backend protocol plugins are
+// feature-gated and pluggable — adding a protocol = one schema entry (+ backend plugin), no new render branches.
+// `meta` holds the protocol's extra connection params.
 interface MetaField {
   key: string
   labelKey: string
@@ -17,17 +18,17 @@ interface MetaField {
   secret?: boolean
 }
 interface ProtoSpec {
-  value: string // 前端值;小写后即后端协议名(registry key)
-  proto: string // 后端协议名(用于按可用列表过滤)
+  value: string // frontend value; lowercased it is the backend protocol name (registry key)
+  proto: string // backend protocol name (used to filter by the available list)
   label: string
-  urlPlaceholder: string // url 字段语义随协议而变(连接串/host:port/ws URL…)
-  // 含中文的占位符走 i18n:phKey/phFallback 在 render 时经 t() 解析(覆盖 urlPlaceholder)。
+  urlPlaceholder: string // url semantics vary per protocol (connection string / host:port / ws URL…)
+  // Placeholders containing Chinese go through i18n: phKey/phFallback resolved via t() at render (overrides urlPlaceholder).
   urlPhKey?: string
-  bodyPlaceholder?: string // body=载荷(命令/SQL/发送文本…)
-  bodyPhKey?: string // body 占位符的 i18n key(含中文时)
+  bodyPlaceholder?: string // body = payload (command / SQL / text to send…)
+  bodyPhKey?: string // i18n key for the body placeholder (when it contains Chinese)
   bodyPhFallback?: string
-  meta?: MetaField[] // 额外参数 → debug/send.meta(如 ssh user/password、grpc method)
-  httpMethod?: boolean // 仅 HTTP 显示方法下拉
+  meta?: MetaField[] // extra params → debug/send.meta (e.g. ssh user/password, grpc method)
+  httpMethod?: boolean // method dropdown shown for HTTP only
 }
 const PROTOCOLS: ProtoSpec[] = [
   { value: 'HTTP', proto: 'http', label: 'HTTP', urlPlaceholder: '/apis/... 或 http://...', httpMethod: true },
@@ -62,7 +63,7 @@ const PROTOCOLS: ProtoSpec[] = [
 ]
 type KV = { on: boolean; key: string; value: string; desc?: string }
 
-// @mock 变量(选取常用),发送前解析为随机值。
+// Common @mock variables, resolved to random values before sending.
 function makeMockVars(t: (key: string, fallback?: string) => string) {
   return [
     { value: '@natural', label: t('editor.mockNatural', '@natural — 随机自然数') },
@@ -98,26 +99,29 @@ function resolveMock(s: string): string {
   })
 }
 
-// 请求编辑器:请求行 + Query/请求头/请求体/认证 子 Tab(参数值带 @mock)+ 响应多视图。
+// Request editor: request line + query/headers/body/auth sub-tabs (values support @mock) + multi-view response.
 export default function RequestEditor({
   initialMethod = 'GET',
   initialUrl = '',
   lockedProtocol,
+  embedded = false,
 }: {
   initialMethod?: string
   initialUrl?: string
-  /** 嵌入接口定义调试时:协议由定义决定并锁定(HTTP 定义不能切到 Redis/SSH…)。 */
+  /** When embedded in API-definition debug: protocol comes from the definition and is locked (an HTTP definition can't switch to Redis/SSH…). */
   lockedProtocol?: string
+  /** Embedded mode: method/path follow the definition line; the request line keeps only env + send (no duplicate protocol/method/path). */
+  embedded?: boolean
 }) {
   const { t } = useI18n()
   const { projectId } = useApp()
   const [method, setMethod] = useState(initialMethod || 'GET')
-  // 协议锁定时取定义协议(大写,与 PROTOCOLS.value 对齐);否则默认 HTTP 可切换。
+  // When locked, use the definition protocol (uppercased to match PROTOCOLS.value); otherwise default HTTP, switchable.
   const [protocol, setProtocol] = useState(() => (lockedProtocol ? lockedProtocol.toUpperCase() : 'HTTP'))
   const [metaValues, setMetaValues] = useState<Record<string, string>>({})
   const [availProtos, setAvailProtos] = useState<string[]>(['http'])
-  // 环境:提供 baseUrl(相对路径前缀)+ 默认头 + {{变量}}。没有环境就无法对相对路径发请求——
-  // 这正是「环境都没有怎么发送」的根因,这里把环境接进调试台。
+  // Environment: provides baseUrl (prefix for relative paths) + default headers + {{variables}}.
+  // Without one, relative paths cannot be sent, so the debug console wires environments in.
   const [envs, setEnvs] = useState<Environment[]>([])
   const [envId, setEnvId] = useState<string>('')
   const env = envs.find((e) => e.id === envId)
@@ -134,18 +138,24 @@ export default function RequestEditor({
       .then((list) => {
         const arr = Array.isArray(list) ? list : []
         setEnvs(arr)
-        // 默认选中首个启用的环境,让「发送」开箱即用。
+        // Default to the first enabled environment so send works out of the box.
         setEnvId((cur) => cur || arr.find((e) => e.enabled !== false)?.id || '')
       })
       .catch(() => setEnvs([]))
   }, [projectId])
 
-  // {{var}} 用环境变量解析(找不到保持原样)。
+  // Resolve {{var}} with environment variables (unknown vars kept as-is).
   const resolveVars = (s: string): string =>
     env?.variables ? s.replace(/\{\{\s*(\w+)\s*\}\}/g, (whole, k: string) => env.variables?.[k] ?? whole) : s
   const spec = PROTOCOLS.find((p) => p.value === protocol) || PROTOCOLS[0]
   const protoOptions = PROTOCOLS.filter((p) => availProtos.includes(p.proto)).map((p) => ({ value: p.value, label: p.label }))
   const [url, setUrl] = useState(initialUrl)
+  // Embedded in definition debug: method/path follow the definition line and track its edits (standalone console unaffected).
+  useEffect(() => {
+    if (!lockedProtocol) return
+    setMethod(initialMethod || 'GET')
+    setUrl(initialUrl)
+  }, [lockedProtocol, initialMethod, initialUrl])
   const [query, setQuery] = useState<KV[]>([{ on: true, key: '', value: '', desc: '' }])
   const [headers, setHeaders] = useState<KV[]>([{ on: true, key: '', value: '', desc: '' }])
   const [body, setBody] = useState('')
@@ -162,7 +172,7 @@ export default function RequestEditor({
 
   const send = async () => {
     if (!url.trim()) return message.warning(t('editor.urlRequired', '请输入 URL'))
-    // 非 HTTP 协议(redis/ssh/…):url=连接目标,body=载荷(命令),走 probe 插件。
+    // Non-HTTP protocols (redis/ssh/…): url = connection target, body = payload (command), sent via the probe plugin.
     if (protocol !== 'HTTP') {
       setSending(true)
       setErr('')
@@ -179,24 +189,24 @@ export default function RequestEditor({
       }
       return
     }
-    // 解析 {{变量}},再据环境 baseUrl 把相对路径补成绝对 URL。
+    // Resolve {{variables}}, then absolutize relative paths with the environment baseUrl.
     const raw = resolveVars(url.trim())
     let base = raw
     if (!/^https?:\/\//i.test(raw)) {
       const baseUrl = env?.baseUrl?.trim().replace(/\/+$/, '')
       if (!baseUrl) {
-        // 调试发送在服务端直连目标:相对路径必须有环境 baseUrl 兜底,否则无从发起。
+        // Debug send connects from the server: relative paths need an environment baseUrl, otherwise nothing to dial.
         return message.warning(t('editor.needEnvOrAbs', '相对路径需先选择带 baseUrl 的环境,或填写绝对 URL(http(s)://)'))
       }
       base = `${baseUrl}${raw.startsWith('/') ? '' : '/'}${raw}`
     }
-    // 拼 query(解析 @mock + {{变量}})
+    // Build the query string (resolving @mock + {{variables}})
     const qs = query
       .filter((q) => q.on && q.key.trim())
       .map((q) => `${encodeURIComponent(q.key)}=${encodeURIComponent(resolveMock(resolveVars(q.value)))}`)
       .join('&')
     const finalUrl = qs ? `${base}${base.includes('?') ? '&' : '?'}${qs}` : base
-    // 环境默认头先注入,显式请求头可覆盖(同名后写优先,由后端按顺序处理)。
+    // Inject environment default headers first; explicit headers can override (last write wins, backend processes in order).
     const hs: { key: string; value: string }[] = []
     for (const eh of env?.headers || []) if (eh.name?.trim()) hs.push({ key: eh.name, value: resolveVars(eh.value || '') })
     for (const h of headers.filter((h) => h.on && h.key.trim())) hs.push({ key: h.key, value: resolveMock(resolveVars(h.value)) })
@@ -274,28 +284,32 @@ export default function RequestEditor({
   const reqPanel = (
     <>
       <Space.Compact style={{ width: '100%', marginBottom: 12 }}>
-        {/* 协议:定义内调试锁定为定义协议(只读);独立调试可自由切换。 */}
-        {lockedProtocol ? (
-          <Select value={protocol} disabled style={{ width: 120 }} options={[{ value: protocol, label: spec.label }]} />
-        ) : (
-          <Select value={protocol} onChange={setProtocol} style={{ width: 120 }} options={protoOptions} />
+        {/* Embedded mode: protocol/method/path live in the definition line above; keep only env + send to avoid two request lines. */}
+        {!embedded && (
+          lockedProtocol ? (
+            <Select value={protocol} disabled style={{ width: 120 }} options={[{ value: protocol, label: spec.label }]} />
+          ) : (
+            <Select value={protocol} onChange={setProtocol} style={{ width: 120 }} options={protoOptions} />
+          )
         )}
-        {spec.httpMethod && (
-          <Select value={method} onChange={setMethod} style={{ width: 100 }} options={METHODS.map((m) => ({ value: m, label: m }))} />
+        {!embedded && spec.httpMethod && (
+          <Select value={method} onChange={setMethod} style={{ width: 100 }} popupMatchSelectWidth={false} options={METHODS.map((m) => ({ value: m, label: m }))} />
         )}
-        {/* 环境选择器:HTTP 下提供 baseUrl + 默认头 + {{变量}}。空=无环境(需填绝对 URL)。 */}
+        {/* Env picker: for HTTP provides baseUrl + default headers + {{variables}}. Empty = no env (absolute URL required). */}
         {spec.httpMethod && (
           <Select
             value={envId || undefined}
             onChange={setEnvId}
-            style={{ width: 168 }}
+            style={embedded ? { flex: 1, minWidth: 0 } : { width: 168 }}
             placeholder={t('editor.selectEnv', '选择环境')}
             allowClear
             options={envs.map((e) => ({ value: e.id, label: e.baseUrl ? `${e.name} · ${e.baseUrl}` : e.name }))}
             notFoundContent={t('editor.noEnvConfigured', '未配置环境,去「环境」页新建')}
           />
         )}
-        <Input value={url} onChange={(e) => setUrl(e.target.value)} placeholder={spec.httpMethod ? t('editor.urlPlaceholder', '/apis/... 或 http://...') : spec.urlPhKey ? t(spec.urlPhKey, spec.urlPlaceholder) : spec.urlPlaceholder} className="ms-mono" onPressEnter={send} />
+        {!embedded && (
+          <Input value={url} onChange={(e) => setUrl(e.target.value)} placeholder={spec.httpMethod ? t('editor.urlPlaceholder', '/apis/... 或 http://...') : spec.urlPhKey ? t(spec.urlPhKey, spec.urlPlaceholder) : spec.urlPlaceholder} className="ms-mono" onPressEnter={send} />
+        )}
         <Button type="primary" icon={<SendOutlined />} loading={sending} onClick={send}>{t('a.send', '发送')}</Button>
       </Space.Compact>
       {spec.httpMethod && env?.baseUrl && (
@@ -379,7 +393,7 @@ function pretty(s: string, empty = '(空)'): string {
   }
 }
 
-// 键值表(Query / Headers 通用):启用 / 名 / 值(可选 @mock 下拉)/ 描述 / 删除。
+// Key-value table (shared by query/headers): enabled / name / value (optional @mock dropdown) / description / delete.
 function KvTable({ rows, setRows, mock }: { rows: KV[]; setRows: (r: KV[]) => void; mock?: boolean }) {
   const { t } = useI18n()
   const options = useMemo(() => makeMockVars(t), [t])

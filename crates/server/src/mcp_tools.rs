@@ -46,8 +46,10 @@ impl<S: Send + Sync> FromRequestParts<S> for WantsSse {
 
 const SESSION_HEADER: &str = "mcp-session-id";
 
-// 会话与认证用户绑定:id 随机不可猜,且仅其属主(同一 Bearer 用户)可复用/删除——
-// 防止已认证用户 A 凭可猜 id 操作 B 的会话(纵深防御,/mcp 本就有 Bearer 鉴权)。
+// Sessions are bound to the authenticated user: ids are random and unguessable, and
+// only the owner (same Bearer user) may reuse/delete one — prevents authenticated
+// user A from manipulating B's session via a guessable id (defense in depth; /mcp
+// already requires Bearer auth).
 #[derive(Default)]
 struct McpSessions {
     owners: Mutex<HashMap<String, String>>,
@@ -56,14 +58,22 @@ struct McpSessions {
 impl McpSessions {
     fn mint(&self, owner: &str) -> String {
         let id = format!("mcp-{}", uuid::Uuid::new_v4().simple());
-        self.owners.lock().expect("lock").insert(id.clone(), owner.to_string());
+        self.owners
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(id.clone(), owner.to_string());
         id
     }
     fn owns(&self, id: &str, owner: &str) -> bool {
-        self.owners.lock().expect("lock").get(id).map(|o| o == owner).unwrap_or(false)
+        self.owners
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(id)
+            .map(|o| o == owner)
+            .unwrap_or(false)
     }
     fn remove(&self, id: &str, owner: &str) -> bool {
-        let mut g = self.owners.lock().expect("lock");
+        let mut g = self.owners.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         if g.get(id).map(|o| o == owner).unwrap_or(false) {
             g.remove(id);
             true
@@ -104,7 +114,10 @@ fn opt_str<'a>(v: &'a Value, k: &str) -> &'a str {
     v.get(k).and_then(|x| x.as_str()).unwrap_or("")
 }
 fn req_u32(v: &Value, k: &str) -> Result<u32, String> {
-    v.get(k).and_then(|x| x.as_u64()).map(|n| n as u32).ok_or_else(|| format!("'{k}' (number) is required"))
+    v.get(k)
+        .and_then(|x| x.as_u64())
+        .map(|n| n as u32)
+        .ok_or_else(|| format!("'{k}' (number) is required"))
 }
 fn str_vec(v: &Value, k: &str) -> Vec<String> {
     v.get(k)
@@ -128,10 +141,17 @@ macro_rules! tool_handler {
 tool_handler!(CreateRequirement, CreateRequirementUseCase, |self, args| {
     let r = self
         .svc
-        .execute(req_str(&args, "projectId")?, req_str(&args, "title")?, opt_str(&args, "description"), &str_vec(&args, "acceptanceCriteria"))
+        .execute(
+            req_str(&args, "projectId")?,
+            req_str(&args, "title")?,
+            opt_str(&args, "description"),
+            &str_vec(&args, "acceptanceCriteria"),
+        )
         .await
         .map_err(|e| format!("{e:?}"))?;
-    Ok(json!({ "id": r.id, "title": r.title, "baselineVersion": r.baseline_version, "latestVersion": r.latest_version() }))
+    Ok(
+        json!({ "id": r.id, "title": r.title, "baselineVersion": r.baseline_version, "latestVersion": r.latest_version() }),
+    )
 });
 
 tool_handler!(Decompose, CreateDecompositionUseCase, |self, args| {
@@ -140,7 +160,9 @@ tool_handler!(Decompose, CreateDecompositionUseCase, |self, args| {
         .execute(req_str(&args, "requirementId")?, req_u32(&args, "requirementVersion")?)
         .await
         .map_err(|e| format!("{e:?}"))?;
-    Ok(json!({ "decompositionId": d.id, "requirementId": d.requirement_id, "requirementVersion": d.requirement_version }))
+    Ok(
+        json!({ "decompositionId": d.id, "requirementId": d.requirement_id, "requirementVersion": d.requirement_version }),
+    )
 });
 
 tool_handler!(AddTask, TaskService, |self, args| {
@@ -171,9 +193,12 @@ impl ToolHandler for DispatchDelivery {
         let skill_ids = str_vec(&args, "skillIds");
         if !skill_ids.is_empty() {
             let project = req_str(&args, "projectId")?;
-            let comp = self.skills.compose(project, &skill_ids).await.map_err(|e| format!("{e:?}"))?;
+            let comp =
+                self.skills.compose(project, &skill_ids).await.map_err(|e| format!("{e:?}"))?;
             instructions = Some(match instructions {
-                Some(extra) if !extra.trim().is_empty() => format!("{}\n\n{}", comp.instructions, extra),
+                Some(extra) if !extra.trim().is_empty() => {
+                    format!("{}\n\n{}", comp.instructions, extra)
+                }
                 _ => comp.instructions,
             });
         }
@@ -188,6 +213,7 @@ impl ToolHandler for DispatchDelivery {
                 req_str(&args, "executor")?,
                 None,
                 instructions,
+                None,
             )
             .await
             .map_err(|e| format!("{e:?}"))?;
@@ -213,7 +239,11 @@ impl ToolHandler for Breakdown {
             Err(RequirementCmdError::NotFound) => return Err("requirement not found".into()),
             Err(e) => return Err(format!("{e:?}")),
         };
-        let version = args.get("requirementVersion").and_then(|v| v.as_u64()).map(|n| n as u32).unwrap_or(req.baseline_version);
+        let version = args
+            .get("requirementVersion")
+            .and_then(|v| v.as_u64())
+            .map(|n| n as u32)
+            .unwrap_or(req.baseline_version);
         let ver = req.version(version).ok_or("requirement version not found")?;
         let spec = RequirementSpec {
             requirement_id: req.id.clone(),
@@ -233,7 +263,11 @@ impl ToolHandler for Breakdown {
 tool_handler!(CreateVerification, CreateVerificationUseCase, |self, args| {
     let v = self
         .svc
-        .execute(req_str(&args, "requirementId")?, req_u32(&args, "requirementVersion")?, &str_vec(&args, "criteria"))
+        .execute(
+            req_str(&args, "requirementId")?,
+            req_u32(&args, "requirementVersion")?,
+            &str_vec(&args, "criteria"),
+        )
         .await
         .map_err(|e| format!("{e:?}"))?;
     Ok(json!({ "verificationId": v.id }))
@@ -277,7 +311,8 @@ tool_handler!(ComposeSkills, SkillService, |self, args| {
 });
 
 tool_handler!(CompletenessReport, VerificationService, |self, args| {
-    let r = self.svc.report(req_str(&args, "verificationId")?).await.map_err(|e| format!("{e:?}"))?;
+    let r =
+        self.svc.report(req_str(&args, "verificationId")?).await.map_err(|e| format!("{e:?}"))?;
     Ok(json!({
         "complete": r.complete,
         "satisfied": r.satisfied,
@@ -446,7 +481,7 @@ pub fn router(
         .requires("TASK", "ADD"))
         .tool(Tool::new(
             "shepherd_dispatch_delivery",
-            "把任务派发给 AI 执行者(executor: CLAUDE_CODE | CODEX);自动驱动任务、过验证门并回灌验证。\
+            "把任务派发给 AI 执行者(executor: CLAUDE_CODE | CODEX | OPENCODE | CODEBUDDY);自动驱动任务、过验证门并回灌验证。\
              可直接传 skillIds(+projectId)自动组合行为规范注入,无需先调 compose。",
             obj(
                 json!({
@@ -455,7 +490,7 @@ pub fn router(
                     "title": { "type": "string" },
                     "description": { "type": "string" },
                     "acceptanceCriteria": { "type": "array", "items": { "type": "string" } },
-                    "executor": { "type": "string", "enum": ["CLAUDE_CODE", "CODEX"] },
+                    "executor": { "type": "string", "enum": ["CLAUDE_CODE", "CODEX", "OPENCODE", "CODEBUDDY"] },
                     "projectId": { "type": "string", "description": "skillIds 非空时必填(用于组合)" },
                     "skillIds": { "type": "array", "items": { "type": "string" }, "description": "可选:自动组合这些 skill 为行为规范" },
                     "instructions": { "type": "string", "description": "可选:显式行为规范(与 skillIds 组合结果合并)" }
@@ -604,14 +639,14 @@ pub fn router(
         )
         .requires("RUNNER", "EXECUTE"));
 
-    Router::new()
-        .route("/mcp", post(mcp_handler).get(mcp_sse).delete(mcp_delete))
-        .with_state(McpState {
+    Router::new().route("/mcp", post(mcp_handler).get(mcp_sse).delete(mcp_delete)).with_state(
+        McpState {
             server: Arc::new(server),
             sessions,
             mcp_sessions: Arc::new(McpSessions::default()),
             bus,
-        })
+        },
+    )
 }
 
 fn is_initialize(body: &Value) -> bool {
@@ -645,7 +680,10 @@ async fn mcp_handler(
     let mut response = match resp {
         None => StatusCode::ACCEPTED.into_response(),
         Some(resp) if wants_sse => {
-            let body = format!("event: message\ndata: {}\n\n", serde_json::to_string(&resp).unwrap_or_default());
+            let body = format!(
+                "event: message\ndata: {}\n\n",
+                serde_json::to_string(&resp).unwrap_or_default()
+            );
             Response::builder()
                 .status(StatusCode::OK)
                 .header(axum::http::header::CONTENT_TYPE, "text/event-stream")
@@ -676,7 +714,8 @@ async fn mcp_sse(
     let ready = tokio_stream::once(Ok::<Event, Infallible>(
         Event::default().event("ready").data(json!({ "server": "shepherd" }).to_string()),
     ));
-    // 服务端推送:订阅事件总线,把任务/交付/验证事件转成 SSE notification;lagged 跳过。
+    // Server push: subscribe to the event bus and turn task/delivery/verification
+    // events into SSE notifications; lagged entries are skipped.
     let notifications = BroadcastStream::new(st.bus.subscribe()).filter_map(|r| {
         r.ok().map(|ev| {
             Ok::<Event, Infallible>(

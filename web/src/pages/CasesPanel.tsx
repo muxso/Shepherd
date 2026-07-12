@@ -15,7 +15,7 @@ import { methodColor, outcomeColor } from '../components/tags'
 import CaseEditorDrawer from '../components/CaseEditorDrawer'
 import { useI18n } from '../i18n'
 
-// 用例状态展示映射(状态值为后端持久化中文,仅翻译标签)。
+// Case status display map (status values are Chinese as persisted by the backend; only the label is translated).
 const CASE_STATUS_LABELS: Record<string, string> = {
   '进行中': 'case.statusInProgress',
   '已完成': 'case.statusCompleted',

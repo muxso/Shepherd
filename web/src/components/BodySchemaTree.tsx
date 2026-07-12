@@ -9,7 +9,7 @@ const branch = (t: BodySchemaNode['type']) => t === 'object' || t === 'array'
 
 export const emptyNode = (): BodySchemaNode => ({ name: '', type: 'string', value: '', description: '' })
 
-/** 路径式更新(path 为各层 index)。 */
+/** Path-based update (path is the index at each level). */
 function updateAt(nodes: BodySchemaNode[], path: number[], fn: (n: BodySchemaNode) => BodySchemaNode): BodySchemaNode[] {
   const [i, ...rest] = path
   return nodes.map((n, idx) => {
@@ -24,7 +24,7 @@ function removeAt(nodes: BodySchemaNode[], path: number[]): BodySchemaNode[] {
   return nodes.map((n, idx) => (idx === i ? { ...n, children: removeAt(n.children || [], rest) } : n))
 }
 
-/** Schema 树 → JSON 示例。 */
+/** Schema tree → JSON example. */
 export function schemaToJson(nodes: BodySchemaNode[]): unknown {
   const obj: Record<string, unknown> = {}
   for (const n of nodes) {
@@ -52,7 +52,7 @@ function toRows(nodes: BodySchemaNode[], parent: number[] = []): Row[] {
   })
 }
 
-/** JSON 请求体 Schema 树编辑器:参数名称/类型/参数值/描述 + 嵌套 + 增删。 */
+/** JSON body schema tree editor: name/type/value/description + nesting + add/remove. */
 export default function BodySchemaTree({ nodes, onChange }: { nodes: BodySchemaNode[]; onChange: (n: BodySchemaNode[]) => void }) {
   const { t } = useI18n()
   const set = (path: number[], p: Partial<BodySchemaNode>) => onChange(updateAt(nodes, path, (n) => ({ ...n, ...p })))

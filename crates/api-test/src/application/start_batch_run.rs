@@ -1,6 +1,8 @@
 use std::sync::Arc;
 
-use crate::domain::{resolve_effective_pool, BatchRunCommand, BatchRunError, ResolvedEnv, RunModeConfig};
+use crate::domain::{
+    resolve_effective_pool, BatchRunCommand, BatchRunError, ResolvedEnv, RunModeConfig,
+};
 use crate::ports::{
     BatchExecutorPort, DispatchReport, DispatchSpec, EnvironmentPort, PortError, ResourcePoolPort,
 };
@@ -45,15 +47,24 @@ impl StartBatchRunUseCase {
             return Err(BatchRunError::ResourcePoolUnavailable { pool_id });
         }
 
-        let environment_id =
-            cmd.config.environment_id.as_deref().filter(|s| !s.trim().is_empty()).map(str::to_string);
+        let environment_id = cmd
+            .config
+            .environment_id
+            .as_deref()
+            .filter(|s| !s.trim().is_empty())
+            .map(str::to_string);
         let env = match environment_id.as_deref() {
             Some(id) => self.envs.resolve(id).await?.unwrap_or_default(),
             None => ResolvedEnv::default(),
         };
 
-        let spec =
-            DispatchSpec { case_ids: cmd.case_ids, pool_id, mode: cmd.config.mode, env, environment_id };
+        let spec = DispatchSpec {
+            case_ids: cmd.case_ids,
+            pool_id,
+            mode: cmd.config.mode,
+            env,
+            environment_id,
+        };
         Ok(self.executor.dispatch(&spec).await?)
     }
 }
@@ -89,7 +100,8 @@ mod tests {
     #[tokio::test]
     async fn falls_back_to_project_default_pool() {
         let exec = SpyExecutor::new();
-        let pools = FakeResourcePool::new().with_default("proj1", "proj-pool").with_available("proj-pool");
+        let pools =
+            FakeResourcePool::new().with_default("proj1", "proj-pool").with_available("proj-pool");
         let uc = uc(pools, exec.clone());
         uc.execute("proj1", vec!["c1".into()], config(None)).await.expect("ok");
         assert_eq!(exec.last_pool(), Some("proj-pool".to_string()));
@@ -114,7 +126,8 @@ mod tests {
     async fn resolved_pool_unavailable_is_rejected() {
         let exec = SpyExecutor::new();
         let uc = uc(FakeResourcePool::new(), exec.clone());
-        let err = uc.execute("proj1", vec!["c1".into()], config(Some("dead-pool"))).await.unwrap_err();
+        let err =
+            uc.execute("proj1", vec!["c1".into()], config(Some("dead-pool"))).await.unwrap_err();
         assert_eq!(err, BatchRunError::ResourcePoolUnavailable { pool_id: "dead-pool".into() });
         assert_eq!(exec.dispatch_count(), 0);
     }
@@ -151,10 +164,8 @@ mod tests {
         let exec = SpyExecutor::new();
         let pools = FakeResourcePool::new().with_available("client-pool");
         let uc = uc(pools, exec.clone());
-        let report = uc
-            .execute("proj1", vec!["c1".into()], config(Some("client-pool")))
-            .await
-            .expect("ok");
+        let report =
+            uc.execute("proj1", vec!["c1".into()], config(Some("client-pool"))).await.expect("ok");
         assert!(report.report_id.starts_with("report-"));
         assert_eq!(report.status, "SUCCESS");
     }

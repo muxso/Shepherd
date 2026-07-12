@@ -18,7 +18,7 @@ pub async fn run_collect(
         let exec = exec.clone();
         let mode = plan.mode;
         let worker_iters = match mode {
-            // 前 (n % concurrency) 个 worker 各多担一次,合计正好 iterations。
+            // First (n % concurrency) workers take one extra iteration each, summing exactly to n.
             LoadMode::Iterations(n) => n / plan.concurrency + usize::from(i < n % plan.concurrency),
             LoadMode::DurationMs(_) => 0,
         };
@@ -107,7 +107,7 @@ mod tests {
     #[tokio::test]
     async fn duration_mode_runs_for_the_window() {
         let plan = LoadPlan::duration_ms(4, 80).expect("plan");
-        // n=usize::MAX 让高速自旋恒成功,不触发失败阈值。
+        // n=usize::MAX keeps the fast spin loop always succeeding, so the failure threshold never trips.
         let exec = Arc::new(EveryNthFails { calls: AtomicUsize::new(0), n: usize::MAX });
         let report = run_load(&plan, exec).await;
         assert!(report.total > 0, "时长模式应至少跑若干次: {report:?}");

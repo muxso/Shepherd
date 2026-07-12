@@ -29,7 +29,11 @@ pub struct CaseRequirement {
 pub trait CaseRepository: Send + Sync {
     async fn insert(&self, c: &NewFunctionalCase) -> Result<FunctionalCase, RepoError>;
 
-    async fn update(&self, id: &str, c: &NewFunctionalCase) -> Result<Option<FunctionalCase>, RepoError>;
+    async fn update(
+        &self,
+        id: &str,
+        c: &NewFunctionalCase,
+    ) -> Result<Option<FunctionalCase>, RepoError>;
 
     async fn delete(&self, id: &str) -> Result<bool, RepoError>;
 
@@ -52,7 +56,13 @@ pub trait CaseRepository: Send + Sync {
         functional_case_id: &str,
     ) -> Result<(), RepoError>;
 
-    async fn cases_for_requirement(&self, requirement_id: &str) -> Result<Vec<CoverageCase>, RepoError>;
+    async fn cases_for_requirement(
+        &self,
+        requirement_id: &str,
+    ) -> Result<Vec<CoverageCase>, RepoError>;
 
-    async fn requirements_for_case(&self, functional_case_id: &str) -> Result<Vec<CaseRequirement>, RepoError>;
+    async fn requirements_for_case(
+        &self,
+        functional_case_id: &str,
+    ) -> Result<Vec<CaseRequirement>, RepoError>;
 }

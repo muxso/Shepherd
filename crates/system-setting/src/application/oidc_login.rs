@@ -61,7 +61,9 @@ impl OidcLoginUseCase {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::adapters::{FakeIdentityProvider, InMemoryExternalUserRepository, InMemorySessionStore};
+    use crate::adapters::{
+        FakeIdentityProvider, InMemoryExternalUserRepository, InMemorySessionStore,
+    };
     use crate::domain::ExternalIdentity;
 
     fn uc() -> (OidcLoginUseCase, Arc<InMemorySessionStore>, Arc<InMemoryExternalUserRepository>) {
@@ -89,7 +91,10 @@ mod tests {
     #[tokio::test]
     async fn unknown_provider_errors() {
         let (uc, _, _) = uc();
-        assert_eq!(uc.authorize_url("github", "s"), Err(OidcError::UnknownProvider("github".into())));
+        assert_eq!(
+            uc.authorize_url("github", "s"),
+            Err(OidcError::UnknownProvider("github".into()))
+        );
         assert_eq!(
             uc.complete("github", "code").await,
             Err(OidcError::UnknownProvider("github".into()))
@@ -107,7 +112,7 @@ mod tests {
     #[tokio::test]
     async fn exchange_failure_propagates() {
         let (uc, _, _) = uc();
-        // FakeIdentityProvider 约定:code "bad" → 交换失败
+        // FakeIdentityProvider contract: code "bad" → exchange failure.
         assert!(matches!(uc.complete("feishu", "bad").await, Err(OidcError::Exchange(_))));
     }
 

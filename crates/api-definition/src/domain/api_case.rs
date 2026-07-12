@@ -92,8 +92,11 @@ impl NewApiCase {
         rest_params: serde_json::Value,
         auth: serde_json::Value,
     ) -> Self {
-        self.query_params =
-            if query_params.is_array() { query_params } else { serde_json::Value::Array(Vec::new()) };
+        self.query_params = if query_params.is_array() {
+            query_params
+        } else {
+            serde_json::Value::Array(Vec::new())
+        };
         self.rest_params =
             if rest_params.is_array() { rest_params } else { serde_json::Value::Array(Vec::new()) };
         self.auth = if auth.is_object() { auth } else { serde_json::json!({}) };
@@ -168,7 +171,11 @@ mod tests {
     fn with_request_keeps_arrays_and_object_falls_back() {
         let c = NewApiCase::new("d", "p", "n", "GET", "/x", None, serde_json::json!([]))
             .expect("ok")
-            .with_request(serde_json::json!([{"key": "q"}]), serde_json::json!("bad"), serde_json::json!({"type": "bearer"}));
+            .with_request(
+                serde_json::json!([{"key": "q"}]),
+                serde_json::json!("bad"),
+                serde_json::json!({"type": "bearer"}),
+            );
         assert_eq!(c.query_params, serde_json::json!([{"key": "q"}]));
         assert_eq!(c.rest_params, serde_json::json!([]));
         assert_eq!(c.auth, serde_json::json!({"type": "bearer"}));
@@ -176,29 +183,29 @@ mod tests {
 
     #[test]
     fn new_case_rejects_blank_name() {
-        let err = NewApiCase::new("d", "p", " ", "GET", "/x", None, serde_json::json!([]))
-            .unwrap_err();
+        let err =
+            NewApiCase::new("d", "p", " ", "GET", "/x", None, serde_json::json!([])).unwrap_err();
         assert_eq!(err, ApiDefinitionError::EmptyName);
     }
 
     #[test]
     fn new_case_rejects_blank_url() {
-        let err = NewApiCase::new("d", "p", "n", "GET", "  ", None, serde_json::json!([]))
-            .unwrap_err();
+        let err =
+            NewApiCase::new("d", "p", "n", "GET", "  ", None, serde_json::json!([])).unwrap_err();
         assert_eq!(err, ApiDefinitionError::EmptyUrl);
     }
 
     #[test]
     fn new_case_rejects_unknown_method() {
-        let err = NewApiCase::new("d", "p", "n", "FETCH", "/x", None, serde_json::json!([]))
-            .unwrap_err();
+        let err =
+            NewApiCase::new("d", "p", "n", "FETCH", "/x", None, serde_json::json!([])).unwrap_err();
         assert_eq!(err, ApiDefinitionError::UnknownMethod("FETCH".into()));
     }
 
     #[test]
     fn new_case_rejects_non_array_assertions() {
-        let err = NewApiCase::new("d", "p", "n", "GET", "/x", None, serde_json::json!({}))
-            .unwrap_err();
+        let err =
+            NewApiCase::new("d", "p", "n", "GET", "/x", None, serde_json::json!({})).unwrap_err();
         assert_eq!(err, ApiDefinitionError::BadAssertions);
     }
 }

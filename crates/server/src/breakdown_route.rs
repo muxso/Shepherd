@@ -11,8 +11,10 @@ use serde::Deserialize;
 use serde_json::json;
 use webauth::{AuthUser, SessionStore};
 
-use case_management::domain::NewFunctionalCase;
+use case_management::domain::{CaseStep, NewFunctionalCase};
 use case_management::ports::CaseRepository;
+
+use crate::case_drafter::{template_cases, CaseDrafter};
 use requirement::application::{RequirementCmdError, RequirementService};
 use task::application::{BreakdownError, BreakdownUseCase};
 use task::ports::RequirementSpec;
@@ -24,52 +26,82 @@ struct BreakdownState {
     breakdown: BreakdownUseCase,
     create_verification: CreateVerificationUseCase,
     cases: Arc<dyn CaseRepository>,
+    /// LLM case drafter; falls back to the per-task template when None or on failure.
+    drafter: Option<Arc<dyn CaseDrafter>>,
     sessions: Arc<dyn SessionStore>,
 }
 
+// Auto-add tests after decomposition: draft functional cases per task (AI-generated
+// with steps when an LLM is configured, otherwise one template case per task),
+// persist them and link coverage back by acceptance-criterion index. Idempotent:
+// skipped when the requirement already has covering cases.
 async fn seed_functional_cases(
     cases: &Arc<dyn CaseRepository>,
-    requirement_id: &str,
+    drafter: &Option<Arc<dyn CaseDrafter>>,
+    spec: &RequirementSpec,
     project_id: &str,
-    criteria: &[String],
+    tasks: &[task::domain::Task],
     created_by: &str,
 ) {
-    if criteria.is_empty() {
+    if tasks.is_empty() {
         return;
     }
-    match cases.cases_for_requirement(requirement_id).await {
+    match cases.cases_for_requirement(&spec.requirement_id).await {
         Ok(existing) if !existing.is_empty() => return,
         Ok(_) => {}
         Err(e) => {
-            tracing::warn!(requirement = %requirement_id, "拆分后查功能用例覆盖失败: {e:?}");
+            tracing::warn!(requirement = %spec.requirement_id, "拆分后查功能用例覆盖失败: {e:?}");
             return;
         }
     }
-    for (idx, text) in criteria.iter().enumerate() {
+    let drafted = match drafter {
+        Some(d) => match d.draft(spec, tasks).await {
+            Ok(v) => {
+                tracing::info!(requirement = %spec.requirement_id, cases = v.len(), "AI 起草测试用例");
+                v
+            }
+            Err(e) => {
+                tracing::warn!(requirement = %spec.requirement_id, "AI 起草测试用例失败,回落模板: {e}");
+                template_cases(spec, tasks)
+            }
+        },
+        None => template_cases(spec, tasks),
+    };
+    for c in drafted {
+        let steps: Vec<CaseStep> = c
+            .steps
+            .iter()
+            .map(|st| CaseStep { step: st.step.clone(), expected: st.expected.clone() })
+            .collect();
         let new = match NewFunctionalCase::new(
             project_id,
-            text,
+            &c.name,
             "需求拆分",
             "",
             "",
             std::collections::BTreeMap::new(),
-            Vec::new(),
+            steps,
         ) {
             Ok(n) => n.with_created_by(Some(created_by)),
             Err(e) => {
-                tracing::warn!(requirement = %requirement_id, "生成功能用例(标准{idx})失败: {e:?}");
+                tracing::warn!(requirement = %spec.requirement_id, name = %c.name, "生成功能用例失败: {e:?}");
                 continue;
             }
         };
         match cases.insert(&new).await {
-            Ok(c) => {
-                if let Err(e) =
-                    cases.link_requirement_case(requirement_id, idx as i32, &c.id, project_id).await
-                {
-                    tracing::warn!(requirement = %requirement_id, "关联功能用例(标准{idx})失败: {e:?}");
+            Ok(created) => {
+                for idx in &c.criterion_indexes {
+                    if let Err(e) = cases
+                        .link_requirement_case(&spec.requirement_id, *idx, &created.id, project_id)
+                        .await
+                    {
+                        tracing::warn!(requirement = %spec.requirement_id, criterion = idx, "关联覆盖失败: {e:?}");
+                    }
                 }
             }
-            Err(e) => tracing::warn!(requirement = %requirement_id, "插入功能用例(标准{idx})失败: {e:?}"),
+            Err(e) => {
+                tracing::warn!(requirement = %spec.requirement_id, name = %c.name, "插入功能用例失败: {e:?}")
+            }
         }
     }
 }
@@ -85,11 +117,12 @@ pub fn router(
     breakdown: BreakdownUseCase,
     create_verification: CreateVerificationUseCase,
     cases: Arc<dyn CaseRepository>,
+    drafter: Option<Arc<dyn CaseDrafter>>,
     sessions: Arc<dyn SessionStore>,
 ) -> Router {
-    Router::new()
-        .route("/requirement/{id}/breakdown", post(breakdown_handler))
-        .with_state(BreakdownState { reqs, breakdown, create_verification, cases, sessions })
+    Router::new().route("/requirement/{id}/breakdown", post(breakdown_handler)).with_state(
+        BreakdownState { reqs, breakdown, create_verification, cases, drafter, sessions },
+    )
 }
 
 #[derive(Deserialize)]
@@ -143,7 +176,15 @@ async fn breakdown_handler(
                     }
                 }
             };
-            seed_functional_cases(&st.cases, &spec.requirement_id, &req.project_id, &spec.acceptance_criteria, &user.user_id).await;
+            seed_functional_cases(
+                &st.cases,
+                &st.drafter,
+                &spec,
+                &req.project_id,
+                &d.tasks,
+                &user.user_id,
+            )
+            .await;
             let body = json!({
                 "id": d.id,
                 "requirementId": d.requirement_id,
@@ -167,7 +208,15 @@ async fn breakdown_handler(
                         .ok()
                         .flatten()
                         .map(|v| v.id);
-                    seed_functional_cases(&st.cases, &spec.requirement_id, &req.project_id, &spec.acceptance_criteria, &user.user_id).await;
+                    seed_functional_cases(
+                        &st.cases,
+                        &st.drafter,
+                        &spec,
+                        &req.project_id,
+                        &d.tasks,
+                        &user.user_id,
+                    )
+                    .await;
                     let body = json!({
                         "id": d.id,
                         "requirementId": d.requirement_id,
@@ -184,9 +233,15 @@ async fn breakdown_handler(
                 _ => (StatusCode::CONFLICT, "decomposition already exists").into_response(),
             }
         }
-        Err(BreakdownError::EmptyRequirement) => (StatusCode::BAD_REQUEST, "requirement id required").into_response(),
-        Err(BreakdownError::Validation(_)) => (StatusCode::BAD_REQUEST, "invalid planned task").into_response(),
+        Err(BreakdownError::EmptyRequirement) => {
+            (StatusCode::BAD_REQUEST, "requirement id required").into_response()
+        }
+        Err(BreakdownError::Validation(_)) => {
+            (StatusCode::BAD_REQUEST, "invalid planned task").into_response()
+        }
         Err(BreakdownError::Plan(_)) => (StatusCode::BAD_GATEWAY, "planner error").into_response(),
-        Err(BreakdownError::Repo(_)) => (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
+        Err(BreakdownError::Repo(_)) => {
+            (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response()
+        }
     }
 }

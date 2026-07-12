@@ -63,7 +63,11 @@ struct TrendPoint {
     passed: i64,
 }
 
-async fn exec_trend(_user: AuthUser, State(st): State<St>, Query(q): Query<TrendQuery>) -> Response {
+async fn exec_trend(
+    _user: AuthUser,
+    State(st): State<St>,
+    Query(q): Query<TrendQuery>,
+) -> Response {
     let days = q.days.clamp(1, 90);
     let sql = "SELECT to_char(r.executed_at::date, 'YYYY-MM-DD') AS d, \
                       count(*) AS executions, \
@@ -89,7 +93,11 @@ async fn exec_trend(_user: AuthUser, State(st): State<St>, Query(q): Query<Trend
     }
 }
 
-async fn case_exec_summary(_user: AuthUser, State(st): State<St>, Query(q): Query<SummaryQuery>) -> Response {
+async fn case_exec_summary(
+    _user: AuthUser,
+    State(st): State<St>,
+    Query(q): Query<SummaryQuery>,
+) -> Response {
     let sql = "SELECT count(*) AS executions, \
                       count(*) FILTER (WHERE r.outcome = 'SUCCESS') AS passed, \
                       count(DISTINCT r.case_id) AS executed_cases \

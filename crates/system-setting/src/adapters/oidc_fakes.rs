@@ -6,7 +6,7 @@ use async_trait::async_trait;
 use crate::domain::{ExternalIdentity, OidcError};
 use crate::ports::{ExternalIdentityProvider, ExternalUserRepository, LinkedUser};
 
-/// `exchange` 对 code "bad" 报错,其余返回预置身份
+/// `exchange` fails for code "bad", otherwise returns the preset identity.
 #[derive(Clone)]
 pub struct FakeIdentityProvider {
     key: String,
@@ -58,7 +58,7 @@ impl InMemoryExternalUserRepository {
     }
 
     pub fn provisioned_count(&self) -> usize {
-        *self.provisioned.lock().expect("lock")
+        *self.provisioned.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 }
 
@@ -69,11 +69,11 @@ impl ExternalUserRepository for InMemoryExternalUserRepository {
         identity: &ExternalIdentity,
     ) -> Result<LinkedUser, OidcError> {
         let key = (identity.provider.clone(), identity.open_id.clone());
-        let mut links = self.links.lock().expect("lock");
+        let mut links = self.links.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         if let Some(u) = links.get(&key) {
             return Ok(u.clone());
         }
-        *self.provisioned.lock().expect("lock") += 1;
+        *self.provisioned.lock().unwrap_or_else(std::sync::PoisonError::into_inner) += 1;
         let linked = LinkedUser {
             user_id: format!("ext-{}-{}", identity.provider, identity.open_id),
             permissions: self.default_perms.clone(),

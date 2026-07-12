@@ -32,16 +32,18 @@ fn parse_response_headers(v: &serde_json::Value) -> Vec<(String, String)> {
         .unwrap_or_default()
 }
 
-/// `/users/{id}/orders` → `/users/*/orders`(OpenAPI 路径参数 → 单段通配)。
+/// `/users/{id}/orders` → `/users/*/orders` (OpenAPI path parameter → single-segment wildcard).
 fn path_to_glob(path: &str) -> String {
     path.split('/')
-        .map(|seg| {
-            if seg.starts_with('{') && seg.ends_with('}') && seg.len() >= 2 {
-                "*"
-            } else {
-                seg
-            }
-        })
+        .map(
+            |seg| {
+                if seg.starts_with('{') && seg.ends_with('}') && seg.len() >= 2 {
+                    "*"
+                } else {
+                    seg
+                }
+            },
+        )
         .collect::<Vec<_>>()
         .join("/")
 }
@@ -72,7 +74,8 @@ impl MockRuleSource for PgMockRuleSource {
                 r.try_get("response_headers").unwrap_or_else(|_| serde_json::json!([]));
             let headers = parse_response_headers(&resp_headers);
             let delay_ms: i32 = r.try_get("response_delay_ms").unwrap_or(0);
-            // 形态不符(如默认 {})宽容回落空条件,不报错。
+            // Unexpected shapes (e.g. the default {}) fall back leniently to empty conditions
+            // instead of erroring.
             let extra: ExtraConditions = serde_json::from_value(match_rule).unwrap_or_default();
             rules.push(MockRule {
                 id,

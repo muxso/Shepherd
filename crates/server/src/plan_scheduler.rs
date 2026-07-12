@@ -48,11 +48,15 @@ async fn register_job(
         let pid = pid.clone();
         Box::pin(async move {
             match runner.run(&pid, None).await {
-                Ok(s) => tracing::info!(plan = %pid, executed = s.executed, success = s.success, failed = s.failed, "scheduled plan executed"),
+                Ok(s) => {
+                    tracing::info!(plan = %pid, executed = s.executed, success = s.success, failed = s.failed, "scheduled plan executed")
+                }
                 Err(()) => tracing::warn!(plan = %pid, "scheduled plan execute failed"),
             }
             match uc.execute(&pid).await {
-                Ok(run) => tracing::info!(plan = %pid, status = %run.status, "scheduled plan run snapshot"),
+                Ok(run) => {
+                    tracing::info!(plan = %pid, status = %run.status, "scheduled plan run snapshot")
+                }
                 Err(e) => tracing::warn!(plan = %pid, "scheduled snapshot failed: {e:?}"),
             }
         })

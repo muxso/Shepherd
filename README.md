@@ -1,5 +1,7 @@
 # Shepherd 🐑
 
+<img src="web/public/logo.svg" alt="Shepherd logo" width="88" align="right" />
+
 Let AI write the code; you stay in charge of what ships.
 
 [![Rust](https://img.shields.io/badge/Rust-2021-orange.svg)](https://www.rust-lang.org/)
@@ -47,6 +49,18 @@ The executor itself (`agent-runtime`) is plain Rust: concurrency is bounded by a
  └────────────┘                           heartbeat per-task worktree isolation
 ```
 
+## Measuring what AI actually delivered
+
+"How much is AI really helping?" is famously hard to answer — lines of AI-written code and suggestion acceptance rates measure activity, not outcomes. Shepherd can answer it more honestly, because the acceptance gate is already in the flow: **a task counts as AI-delivered only when the delivery came from an AI executor *and* a human verified it.** Rejected work counts against quality, not against output.
+
+On top of that rule you get, per project and per requirement:
+
+- the AI / human split of delivered tasks and of workload points — each requirement carries an "AI share" you can read as a percentage;
+- delivery quality: attempts vs. deliveries vs. failures, and the first-pass rate (delivered and verified on the first try);
+- a contribution-calendar view of daily deliveries, AI and human side by side.
+
+It measures shipped outcomes rather than keystrokes. That makes the numbers smaller and more boring than "90% of our code is AI-written" claims — which is the point.
+
 ## Running it
 
 ```bash
@@ -84,7 +98,7 @@ Prefer one command? `docker compose -f deploy/docker/docker-compose.yml up --bui
 
 Each business module is its own crate, laid out hexagonally: `domain` / `ports` / `application` are pure logic with no IO by default, while the database and HTTP live in `adapters` behind feature flags. `tests/architecture.rs` scans the source and fails the build if a pure layer ever imports an IO crate like sqlx or axum — that keeps the layering from quietly eroding over time.
 
-Working today: auth / RBAC / OIDC (Feishu, WeCom), projects, versioned requirements, the task DAG, the design approval gate, fleet dispatch and reclaim, MCP tools (`POST /mcp`), Skill orchestration, plus a test-management suite (cases / bugs / plans / API and scenario tests / Mock).
+Working today: auth / RBAC / OIDC (Feishu, WeCom), projects, versioned requirements, the task DAG, the design approval gate, fleet dispatch and reclaim, human-AI delivery metrics (per-project and per-requirement AI share), MCP tools (`POST /mcp`), Skill orchestration, plus a test-management suite (cases / bugs / plans / API and scenario tests / Mock).
 
 Not done yet: the verification gate is still heavier to use than I'd like; `shepherd-cli` is half-built; finer fleet metrics (e.g. claim-latency distribution) aren't there; and more executor backends (such as wiring OpenHands in as one) are on the list.
 
@@ -140,13 +154,15 @@ Executor `agent-runtime`:
 
 - **[Usage guide](docs/USAGE.md)** ([中文](docs/USAGE.zh-CN.md)) — concepts, quick start, the full configuration reference, the web console, fleet & executor setup, and the HTTP API.
 - **[Deployment & ops](docs/DEPLOYMENT.md)** ([中文](docs/DEPLOYMENT.zh-CN.md)) — Docker Compose, Kubernetes via Helm (`deploy/helm/shepherd`), multi-cloud Terraform (`deploy/terraform/{aws,gcp,azure}`), and CI/CD auto-deploy.
-- **[Architecture](ARCHITECTURE.md)** · **[Roadmap](ROADMAP.md)** · **[fleet design notes](docs/remote-agent-runtime-plan.md)**
+- **[Running AI executors](docs/EXECUTORS.md)** ([中文](docs/EXECUTORS.zh-CN.md)) — Claude Code / Codex / OpenCode / CodeBuddy behind `agent-runtime`.
 
 ## How it compares
 
 **vs. agent harnesses — Claude Code, Codex, OpenCode, OpenHands, Aider.** A harness wraps an LLM and runs the agentic loop (tools, context, turn by turn) to get one task done well. Shepherd is the layer *above* that: it doesn't run the loop — it decides what the tasks are, dispatches them, gates them on human approval, and verifies they were actually done. The harness is a swappable executor: `agent-runtime` literally shells out to `claude` / `codex` / `opencode` and streams their events back. So OpenCode isn't a competitor — it's one of the executors you hang on Shepherd's fleet (`OPENCODE_CMD=opencode run`).
 
 **vs. multi-agent frameworks — AutoGen, CrewAI.** Most take the autonomy route: let agents loop until done, compete on benchmarks. Shepherd's focus is governance — approval and verification are steps you can't route around, not prompts you interrupt in a chat, and the deployment model is a central server plus internal executors that pull work outbound. Those frameworks *are* the agent; Shepherd is the supervisor above swappable agents.
+
+**vs. personal agent orchestrators — Gas Town (and Beads).** Gas Town runs a fleet of coding agents on your own machine and keeps them busy around the clock: workers pick up whatever lands on their hook, a mayor coordinates across repos, merges get serialized. It's built to maximize one developer's throughput, and it's good at that. Shepherd works the same street from the other end: it governs what a team ships — executors authenticate with API keys, every delivery attempt leaves a record, and the acceptance gate can't be routed around. The work ledgers are close cousins (beads live in git, tasks live in Postgres), so the two compose rather than compete: a Gas Town rig can hang off Shepherd's fleet as one more executor, and Shepherd supplies the acceptance and accounting layer a local factory doesn't have.
 
 One concrete boundary: Shepherd speaks MCP as a *server* (it exposes `shepherd_*` tools so an agent can drive the requirement→verify lifecycle), while coding agents like OpenCode speak MCP as a *client*. They compose in both directions rather than overlap.
 
@@ -158,8 +174,6 @@ cargo test --workspace -- --ignored         # real-database integration tests
 ```
 
 866 tests; the integration ones run against a real server + PG / Redis / MySQL. Besides the architecture guard there's a migration-uniqueness guard: a duplicate migration version number fails CI (sqlx silently drops duplicates — we hit that once and it cost us a missing-column 500).
-
-More background in [ARCHITECTURE.md](ARCHITECTURE.md), [ROADMAP.md](ROADMAP.md), and the [fleet design notes](docs/remote-agent-runtime-plan.md).
 
 ## Contributing
 

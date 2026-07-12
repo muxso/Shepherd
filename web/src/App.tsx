@@ -6,8 +6,10 @@ import { useI18n } from './i18n'
 import Login from './pages/Login'
 import AppShell from './components/AppShell'
 
-// 路由级懒加载:按页拆分 bundle,首屏只下登录/外壳,其余进入时按需加载。
+// Route-level lazy loading: per-page bundles; first paint only downloads login/shell, the rest load on entry.
 const Home = lazy(() => import('./pages/Home'))
+const Todos = lazy(() => import('./pages/Todos'))
+const Follows = lazy(() => import('./pages/Follows'))
 const ApiDefinitions = lazy(() => import('./pages/ApiDefinitions'))
 const Scenarios = lazy(() => import('./pages/Scenarios'))
 const TestPlans = lazy(() => import('./pages/TestPlans'))
@@ -20,7 +22,9 @@ const FunctionalCases = lazy(() => import('./pages/FunctionalCases'))
 const OrganizationsPage = lazy(() => import('./pages/OrgProjects'))
 const RolesPage = lazy(() => import('./pages/UserGroups'))
 const UsersPage = lazy(() => import('./pages/Users'))
+const ApiKeysPage = lazy(() => import('./pages/ApiKeys'))
 const ProjectAdmin = lazy(() => import('./pages/ProjectAdmin'))
+const ProjectTemplates = lazy(() => import('./pages/ProjectTemplates'))
 const FileManagement = lazy(() => import('./pages/FileManagement'))
 const MessageSettings = lazy(() => import('./pages/MessageSettings'))
 const ComingSoon = lazy(() => import('./pages/ComingSoon'))
@@ -31,10 +35,13 @@ const EnvironmentsPage = lazy(() => import('./pages/Environments').then((m) => (
 const ResourcePoolsPage = lazy(() => import('./pages/ResourcePoolPage').then((m) => ({ default: m.ResourcePoolsPage })))
 const ResourcePoolForm = lazy(() => import('./pages/ResourcePoolPage').then((m) => ({ default: m.ResourcePoolForm })))
 
+// UI-only browsing shouldn't be blocked by login: VITE_SKIP_LOGIN=1 skips the login gate (dev builds only; production unaffected).
+const SKIP_LOGIN = import.meta.env.DEV && import.meta.env.VITE_SKIP_LOGIN === '1'
+
 export default function App() {
   const { token } = useApp()
   const { t } = useI18n()
-  if (!token) return <Login />
+  if (!token && !SKIP_LOGIN) return <Login />
 
   return (
     <AppShell>
@@ -42,6 +49,8 @@ export default function App() {
         <Routes>
           <Route path="/" element={<Navigate to="/home" replace />} />
           <Route path="/home" element={<Home />} />
+          <Route path="/todo" element={<Todos />} />
+          <Route path="/follow" element={<Follows />} />
           <Route path="/api/definition" element={<ApiDefinitions />} />
           <Route path="/api/scenario" element={<Scenarios />} />
           <Route path="/functional-case" element={<FunctionalCases />} />
@@ -52,12 +61,13 @@ export default function App() {
           <Route path="/organization" element={<OrganizationsPage />} />
           <Route path="/role" element={<RolesPage />} />
           <Route path="/user" element={<UsersPage />} />
+          <Route path="/system/apikeys" element={<ApiKeysPage />} />
           <Route path="/system/params" element={<ComingSoon title={t('sys.params', '系统参数')} />} />
           <Route path="/system/tasks" element={<TaskCenter />} />
           <Route path="/system/plugins" element={<ComingSoon title={t('sys.plugins', '插件')} />} />
           <Route path="/system/logs" element={<ComingSoon title={t('sys.logs', '日志')} />} />
           <Route path="/project" element={<ProjectAdmin />} />
-          <Route path="/project/templates" element={<ComingSoon title={t('proj.tmplTab', '模板管理')} />} />
+          <Route path="/project/templates" element={<ProjectTemplates />} />
           <Route path="/project/files" element={<FileManagement />} />
           <Route path="/project/messages" element={<MessageSettings />} />
           <Route path="/project/scripts" element={<ComingSoon title={t('proj.scriptTab', '公共脚本')} />} />

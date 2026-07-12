@@ -130,19 +130,14 @@ pub struct InlineRequest {
     pub processors: serde_json::Value,
 }
 
-const ALLOWED_METHODS: &[&str] =
-    &["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"];
+const ALLOWED_METHODS: &[&str] = &["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"];
 
 fn empty_arr() -> serde_json::Value {
     serde_json::Value::Array(vec![])
 }
 
 impl InlineRequest {
-    pub fn new(
-        method: &str,
-        url: &str,
-        body: Option<String>,
-    ) -> Result<Self, ScenarioError> {
+    pub fn new(method: &str, url: &str, body: Option<String>) -> Result<Self, ScenarioError> {
         let method = method.trim().to_uppercase();
         if !ALLOWED_METHODS.contains(&method.as_str()) {
             return Err(ScenarioError::InvalidMethod(method));
@@ -282,7 +277,7 @@ pub enum PlanStep {
     Timer { ms: u64 },
 }
 
-/// 嵌套深度上限,防止病态深载荷耗尽栈。
+/// Nesting depth cap; guards against pathologically deep payloads exhausting the stack.
 const MAX_CONTROL_DEPTH: usize = 10;
 
 fn parse_plan_step(v: &serde_json::Value, depth: usize) -> Option<PlanStep> {
@@ -300,14 +295,18 @@ fn parse_plan_step(v: &serde_json::Value, depth: usize) -> Option<PlanStep> {
                 .map(PlanStep::Request)
         }
         other => match ControlKind::parse(other) {
-            // 子步骤本身是控制器:同一对象既带 kind 又是其载荷,递归。
+            // A child step that is itself a controller: the same object carries both kind and payload — recurse.
             Some(ck) if depth < MAX_CONTROL_DEPTH => Some(parse_control_inner(ck, v, depth + 1)),
             _ => None,
         },
     }
 }
 
-fn parse_control_inner(control: ControlKind, payload: &serde_json::Value, depth: usize) -> PlanStep {
+fn parse_control_inner(
+    control: ControlKind,
+    payload: &serde_json::Value,
+    depth: usize,
+) -> PlanStep {
     let body = || -> Vec<PlanStep> {
         payload
             .get("children")
@@ -321,8 +320,16 @@ fn parse_control_inner(control: ControlKind, payload: &serde_json::Value, depth:
             body: body(),
         },
         ControlKind::If => PlanStep::If {
-            variable: payload.get("variable").and_then(|v| v.as_str()).unwrap_or_default().to_string(),
-            operator: payload.get("operator").and_then(|v| v.as_str()).unwrap_or("EQUALS").to_string(),
+            variable: payload
+                .get("variable")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_string(),
+            operator: payload
+                .get("operator")
+                .and_then(|v| v.as_str())
+                .unwrap_or("EQUALS")
+                .to_string(),
             value: payload.get("value").and_then(|v| v.as_str()).unwrap_or_default().to_string(),
             body: body(),
         },
@@ -389,7 +396,7 @@ pub struct ScenarioReference {
     pub name: String,
 }
 
-/// `meta` 为不透明 JSON,故不派生 `Eq`(serde_json::Value 无 Eq)。
+/// No `Eq` derive: `meta` is opaque JSON and `serde_json::Value` lacks `Eq`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ApiScenario {
     pub id: String,
@@ -506,7 +513,8 @@ mod tests {
         for _ in 0..50 {
             node = serde_json::json!({ "kind": "LOOP", "times": 1, "children": [node] });
         }
-        let plan = parse_control(ControlKind::Loop, &serde_json::json!({"times":1,"children":[node]}));
+        let plan =
+            parse_control(ControlKind::Loop, &serde_json::json!({"times":1,"children":[node]}));
         assert!(matches!(plan, PlanStep::Loop { .. }));
     }
 
@@ -556,10 +564,7 @@ mod tests {
             InlineRequest::new("FETCH", "http://x", None),
             Err(ScenarioError::InvalidMethod("FETCH".into()))
         );
-        assert_eq!(
-            InlineRequest::new("GET", "  ", None),
-            Err(ScenarioError::EmptyUrl)
-        );
+        assert_eq!(InlineRequest::new("GET", "  ", None), Err(ScenarioError::EmptyUrl));
     }
 
     #[test]
@@ -582,7 +587,12 @@ mod tests {
     #[test]
     fn new_step_validates_case_and_scenario_ids() {
         assert_eq!(
-            NewScenarioStep::new(0, StepKind::Case { case_id: " ".into() }, RefMode::Reference, None),
+            NewScenarioStep::new(
+                0,
+                StepKind::Case { case_id: " ".into() },
+                RefMode::Reference,
+                None
+            ),
             Err(ScenarioError::EmptyCaseId)
         );
         assert_eq!(
@@ -629,9 +639,8 @@ mod tests {
     #[test]
     fn inline_request_carries_assertions() {
         let a = serde_json::json!([{"type": "StatusIs", "args": 200}]);
-        let req = InlineRequest::new("GET", "http://x", None)
-            .expect("valid")
-            .with_assertions(a.clone());
+        let req =
+            InlineRequest::new("GET", "http://x", None).expect("valid").with_assertions(a.clone());
         assert_eq!(req.assertions, a);
         assert_eq!(
             InlineRequest::new("GET", "http://x", None).expect("valid").assertions,

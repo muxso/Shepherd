@@ -35,6 +35,7 @@ pub fn merged() -> utoipa::openapi::OpenApi {
     doc.merge(system_setting::adapters::http::openapi());
     doc.merge(project::adapters::http::openapi());
     doc.merge(project::adapters::member_http::openapi());
+    doc.merge(project::adapters::template_http::openapi());
     doc.merge(case::adapters::http::openapi());
     doc.merge(bug::adapters::http::openapi());
     doc.merge(comment::adapters::http::openapi());
@@ -50,6 +51,7 @@ pub fn merged() -> utoipa::openapi::OpenApi {
     doc.merge(crate::perf_run::openapi());
     doc.merge(crate::plan_run::openapi());
     doc.merge(crate::decomposition_run::openapi());
+    doc.merge(crate::prd_draft_route::openapi());
     doc.merge(crate::references_route::openapi());
     doc
 }

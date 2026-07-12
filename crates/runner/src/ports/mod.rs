@@ -24,10 +24,7 @@ pub trait RunnerAgentStore: Send + Sync {
     ) -> Result<RunnerAgent, PortError>;
     async fn list(&self) -> Result<Vec<RunnerAgent>, PortError>;
     async fn dispatch_target(&self, id: &str) -> Result<Option<DispatchTarget>, PortError>;
-    async fn agents_for_protocol(
-        &self,
-        protocol: &str,
-    ) -> Result<Vec<AgentTarget>, PortError>;
+    async fn agents_for_protocol(&self, protocol: &str) -> Result<Vec<AgentTarget>, PortError>;
     async fn set_protocols(&self, id: &str, protocols: &[String]) -> Result<bool, PortError>;
 }
 

@@ -1,3 +1,7 @@
+//! Remote executor runtime: registers with the server in pull mode with heartbeats,
+//! long-polls for WorkSpecs, runs tasks in a git workspace via Claude/generic CLI
+//! backends, and reports events and delivery results back.
+
 mod backend;
 mod client;
 mod events;
@@ -16,11 +20,14 @@ use models::WorkSpec;
 
 struct Config {
     base: String,
-    user: String,
-    pass: String,
+    /// Static API key (SHEPHERD_AGENT_KEY, required): used directly as bearer; no login/password path.
+    key: String,
     caps: Vec<String>,
     name: String,
     workdir: String,
+    /// Task base ref (e.g. origin/main); unset means the repo's current HEAD.
+    /// Pins the task base when host and container share one checkout on different branches.
+    base_ref: Option<String>,
     concurrency: usize,
     task_timeout: Duration,
     heartbeat: Duration,
@@ -28,15 +35,16 @@ struct Config {
 }
 
 impl Config {
-    fn from_env() -> Self {
+    fn from_env() -> anyhow::Result<Self> {
         let env = |k: &str, d: &str| std::env::var(k).unwrap_or_else(|_| d.to_string());
         let secs = |k: &str, d: u64| -> Duration {
-            Duration::from_secs(std::env::var(k).ok().and_then(|s| s.parse().ok()).unwrap_or(d).max(1))
+            Duration::from_secs(
+                std::env::var(k).ok().and_then(|s| s.parse().ok()).unwrap_or(d).max(1),
+            )
         };
-        Self {
+        Ok(Self {
             base: env("SHEPHERD_BASE", "http://127.0.0.1:9180"),
-            user: env("SHEPHERD_ADMIN_USER", "admin"),
-            pass: env("SHEPHERD_ADMIN_PASSWORD", "s3cret"),
+            key: agent_key(std::env::var("SHEPHERD_AGENT_KEY").ok())?,
             caps: env("SHEPHERD_CAPS", "CLAUDE_CODE")
                 .split(',')
                 .map(|s| s.trim().to_string())
@@ -44,12 +52,23 @@ impl Config {
                 .collect(),
             name: env("RUNTIME_NAME", "agent-runtime"),
             workdir: env("AGENT_WORKDIR", "."),
+            base_ref: std::env::var("AGENT_BASE_REF").ok().filter(|s| !s.trim().is_empty()),
             concurrency: env("AGENT_CONCURRENCY", "1").parse().unwrap_or(1).max(1),
             task_timeout: secs("AGENT_TASK_TIMEOUT_SECS", 1800),
             heartbeat: secs("AGENT_HEARTBEAT_SECS", 10),
             drain_timeout: secs("AGENT_DRAIN_TIMEOUT_SECS", 60),
-        }
+        })
     }
+}
+
+/// SHEPHERD_AGENT_KEY is the only credential: empty/whitespace counts as unset — fail startup with issuance guidance.
+fn agent_key(raw: Option<String>) -> anyhow::Result<String> {
+    raw.filter(|s| !s.trim().is_empty()).ok_or_else(|| {
+        anyhow::anyhow!(
+            "缺少 SHEPHERD_AGENT_KEY:agent-runtime 只接受 API key 认证。\
+             请设置 SHEPHERD_AGENT_KEY=sak_…;key 可在 个人中心 → API KEY 或 POST /system/apikey 签发"
+        )
+    })
 }
 
 fn install_shutdown() -> watch::Receiver<bool> {
@@ -97,11 +116,18 @@ fn backend_for(executor: &str, task_timeout: Duration) -> Arc<dyn CliAgentBacken
     match executor {
         "CODEX" => Arc::new(GenericCliBackend::codex(task_timeout)),
         "OPENCODE" => Arc::new(GenericCliBackend::opencode(task_timeout)),
+        "CODEBUDDY" => Arc::new(GenericCliBackend::codebuddy(task_timeout)),
         _ => Arc::new(ClaudeBackend::new(task_timeout)),
     }
 }
 
-async fn handle(client: &ServerClient, spec: &WorkSpec, base_workdir: &str, task_timeout: Duration) {
+async fn handle(
+    client: &ServerClient,
+    spec: &WorkSpec,
+    base_workdir: &str,
+    base_ref: Option<&str>,
+    task_timeout: Duration,
+) {
     let backend = backend_for(&spec.executor, task_timeout);
     let prompt = spec.to_prompt();
     let mode = if spec.is_design() { "design" } else { "implement" };
@@ -112,14 +138,16 @@ async fn handle(client: &ServerClient, spec: &WorkSpec, base_workdir: &str, task
         match backend.execute(&prompt, base_workdir, &NoopSink).await {
             Ok(doc) => match client.post_design(&spec.attempt_id, &doc).await {
                 Ok(()) => tracing::info!(proposal = %spec.attempt_id, "设计稿已回填 → 待审"),
-                Err(e) => tracing::error!(proposal = %spec.attempt_id, "回填设计稿最终失败(已重试): {e}"),
+                Err(e) => {
+                    tracing::error!(proposal = %spec.attempt_id, "回填设计稿最终失败(已重试): {e}")
+                }
             },
             Err(e) => tracing::warn!(proposal = %spec.attempt_id, "设计起草失败: {e}"),
         }
         return;
     }
 
-    let wt = git::add_worktree(base_workdir, &spec.attempt_id).await;
+    let wt = git::add_worktree(base_workdir, &spec.attempt_id, base_ref).await;
     let run_dir = wt.as_deref().unwrap_or(base_workdir);
     let sink = HttpSink { client, attempt_id: spec.attempt_id.clone() };
     match backend.execute(&prompt, run_dir, &sink).await {
@@ -153,7 +181,8 @@ async fn handle(client: &ServerClient, spec: &WorkSpec, base_workdir: &str, task
 }
 
 async fn connect(cfg: &Config) -> anyhow::Result<(Arc<ServerClient>, String)> {
-    let client = Arc::new(ServerClient::login(&cfg.base, &cfg.user, &cfg.pass).await?);
+    // API key is the sole auth path: no login/refresh; a 401 means the key was revoked.
+    let client = Arc::new(ServerClient::with_api_key(&cfg.base, &cfg.key)?);
     let id = client.register(&cfg.name, &cfg.caps, cfg.concurrency as u32).await?;
     Ok((client, id))
 }
@@ -162,12 +191,11 @@ async fn connect(cfg: &Config) -> anyhow::Result<(Arc<ServerClient>, String)> {
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "info".into()),
+            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()),
         )
         .init();
 
-    let cfg = Config::from_env();
+    let cfg = Config::from_env()?;
     let mc = cfg.concurrency as u32;
     let mut sd = install_shutdown();
 
@@ -196,10 +224,10 @@ async fn main() -> anyhow::Result<()> {
         tokio::spawn(async move {
             loop {
                 tokio::time::sleep(every).await;
-                let cur = rid.lock().expect("lock").clone();
+                let cur = rid.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clone();
                 if !client.heartbeat(&cur).await.unwrap_or(false) {
                     if let Ok(new) = client.register(&name, &caps, mc).await {
-                        *rid.lock().expect("lock") = new;
+                        *rid.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = new;
                     }
                 }
             }
@@ -216,16 +244,17 @@ async fn main() -> anyhow::Result<()> {
             _ = wait_shutdown(&mut sd) => break,
             p = sem.clone().acquire_owned() => p.expect("semaphore closed"),
         };
-        let rid_now = runtime_id.lock().expect("lock").clone();
+        let rid_now = runtime_id.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clone();
         let claimed = tokio::select! {
             _ = wait_shutdown(&mut sd) => { drop(permit); break; }
             r = client.claim(&cfg.caps, &rid_now) => r,
         };
         match claimed {
             Ok(Some(spec)) => {
-                let (client, wd, tt) = (client.clone(), cfg.workdir.clone(), cfg.task_timeout);
+                let (client, wd, br, tt) =
+                    (client.clone(), cfg.workdir.clone(), cfg.base_ref.clone(), cfg.task_timeout);
                 tokio::spawn(async move {
-                    handle(&client, &spec, &wd, tt).await;
+                    handle(&client, &spec, &wd, br.as_deref(), tt).await;
                     drop(permit);
                 });
             }
@@ -241,14 +270,39 @@ async fn main() -> anyhow::Result<()> {
     hb.abort();
     let inflight = cfg.concurrency - sem.available_permits();
     if inflight > 0 {
-        tracing::info!(inflight, drain_secs = cfg.drain_timeout.as_secs(),
-            "收到关停信号,等待在飞任务收尾…");
+        tracing::info!(
+            inflight,
+            drain_secs = cfg.drain_timeout.as_secs(),
+            "收到关停信号,等待在飞任务收尾…"
+        );
         match tokio::time::timeout(cfg.drain_timeout, sem.acquire_many(mc)).await {
             Ok(_) => tracing::info!("在飞任务已全部收尾"),
-            Err(_) => tracing::warn!(stuck = cfg.concurrency - sem.available_permits(),
-                "排空超时,强制退出(server 将到点 reclaim 未完成任务)"),
+            Err(_) => tracing::warn!(
+                stuck = cfg.concurrency - sem.available_permits(),
+                "排空超时,强制退出(server 将到点 reclaim 未完成任务)"
+            ),
         }
     }
     tracing::info!("agent-runtime 优雅退出");
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn agent_key_accepts_real_key() {
+        assert_eq!(agent_key(Some("sak_ab.cd".into())).expect("key"), "sak_ab.cd");
+    }
+
+    #[test]
+    fn agent_key_missing_or_blank_errors_with_guidance() {
+        for raw in [None, Some(String::new()), Some("   ".into())] {
+            let err = agent_key(raw).expect_err("blank/missing key must fail startup");
+            let msg = err.to_string();
+            assert!(msg.contains("SHEPHERD_AGENT_KEY"), "要点名缺的环境变量: {msg}");
+            assert!(msg.contains("/system/apikey"), "要给签发指引: {msg}");
+        }
+    }
 }

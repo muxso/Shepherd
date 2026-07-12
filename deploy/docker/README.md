@@ -21,8 +21,12 @@ images build and Postgres becomes healthy.
 | Web UI  | http://localhost:8080 |
 | API     | http://localhost:8088 |
 
-- **Login:** `admin` / `change-me-please`
+- **Web login:** `admin` / `change-me-please`
   (set via `SHEPHERD_ADMIN_PASSWORD` in `docker-compose.yml` — change it).
+- **agent-runtime auth:** API key only (`SHEPHERD_AGENT_KEY` in `.env`). On a
+  fresh stack, boot server + web first, issue a key (web: 个人中心 → API KEY,
+  or `POST /system/apikey` with `DELIVERY:UPDATE` + `REQUIREMENT:UPDATE`),
+  put it in `deploy/docker/.env`, then `docker compose up -d agent-runtime`.
 - `agent-runtime` runs with `AGENT_MOCK=1` (no real Claude/Codex CLIs). For
   real backends, add the CLIs to the agent-runtime image or bind-mount them and
   drop `AGENT_MOCK`.

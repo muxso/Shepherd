@@ -21,7 +21,10 @@ impl ListEnvironmentsUseCase {
         Self { repo }
     }
 
-    pub async fn execute(&self, project_id: &str) -> Result<Vec<Environment>, ListEnvironmentsError> {
+    pub async fn execute(
+        &self,
+        project_id: &str,
+    ) -> Result<Vec<Environment>, ListEnvironmentsError> {
         Ok(self.repo.list_by_project(project_id).await?)
     }
 }

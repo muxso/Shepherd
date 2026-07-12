@@ -64,10 +64,7 @@ impl RunnerAgentStore for InMemoryAgentStore {
             .map(|(v, tok)| DispatchTarget { base_url: v.base_url.clone(), token: tok.clone() }))
     }
 
-    async fn agents_for_protocol(
-        &self,
-        protocol: &str,
-    ) -> Result<Vec<AgentTarget>, PortError> {
+    async fn agents_for_protocol(&self, protocol: &str) -> Result<Vec<AgentTarget>, PortError> {
         Ok(self
             .agents
             .lock()
@@ -106,7 +103,7 @@ impl StubCapabilities {
     pub fn set(&self, base_url: &str, protocols: &[&str]) {
         self.by_url
             .lock()
-            .expect("lock")
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .push((base_url.to_string(), protocols.iter().map(|s| s.to_string()).collect()));
     }
 }
@@ -206,7 +203,10 @@ impl InMemoryCaseSpecSource {
         Self::default()
     }
     pub fn seed(&self, case_id: &str, request: RequestSpec, assertions: Vec<Assertion>) {
-        self.specs.lock().expect("lock").push((case_id.to_string(), CaseSpec { request, assertions }));
+        self.specs
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .push((case_id.to_string(), CaseSpec { request, assertions }));
     }
 }
 

@@ -1,7 +1,9 @@
-//! 统一错误体:把纯文本错误响应归一成 RFC 7807 `application/problem+json`。
-//! 作为最外层之一的响应中间件,覆盖 handler 的 `(StatusCode, &str)` 错误、框架 404
-//! 以及超时/限流/体积等层产生的 4xx/5xx,无需逐 handler 改造。
-//! 已是 JSON 的错误体放行;原状态码与原响应头(如限流的 `Retry-After`)保留。
+//! Unified error bodies: normalizes plain-text error responses into RFC 7807
+//! `application/problem+json`. As one of the outermost response middlewares it
+//! covers handlers' `(StatusCode, &str)` errors, framework 404s, and the 4xx/5xx
+//! produced by the timeout/rate-limit/body-size layers — no per-handler rework.
+//! Error bodies that are already JSON pass through; the original status code and
+//! headers (e.g. rate limiting's `Retry-After`) are preserved.
 
 use axum::body::Body;
 use axum::extract::Request;
@@ -44,7 +46,7 @@ pub async fn normalize(req: Request, next: Next) -> Response {
     let detail = String::from_utf8_lossy(&bytes);
     let out = problem_body(parts.status, detail.trim());
     parts.headers.insert(CONTENT_TYPE, HeaderValue::from_static(PROBLEM_JSON));
-    parts.headers.remove(CONTENT_LENGTH); // body 已替换,长度失效;由 axum 重算
+    parts.headers.remove(CONTENT_LENGTH); // body replaced, length is stale; axum recomputes it
     Response::from_parts(parts, Body::from(out))
 }
 

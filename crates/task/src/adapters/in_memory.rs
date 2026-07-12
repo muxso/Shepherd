@@ -29,9 +29,10 @@ impl TaskRepository for InMemoryTaskRepository {
         requirement_id: &str,
         requirement_version: u32,
     ) -> Result<Decomposition, RepoError> {
-        let mut st = self.state.lock().expect("lock poisoned");
+        let mut st = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         st.seq += 1;
-        let d = Decomposition::new(&format!("decomp-{}", st.seq), requirement_id, requirement_version);
+        let d =
+            Decomposition::new(&format!("decomp-{}", st.seq), requirement_id, requirement_version);
         st.decompositions.push(d.clone());
         Ok(d)
     }
@@ -44,19 +45,28 @@ impl TaskRepository for InMemoryTaskRepository {
         Ok(self
             .state
             .lock()
-            .expect("lock")
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .decompositions
             .iter()
-            .find(|d| d.requirement_id == requirement_id && d.requirement_version == requirement_version)
+            .find(|d| {
+                d.requirement_id == requirement_id && d.requirement_version == requirement_version
+            })
             .cloned())
     }
 
     async fn get(&self, id: &str) -> Result<Option<Decomposition>, RepoError> {
-        Ok(self.state.lock().expect("lock").decompositions.iter().find(|d| d.id == id).cloned())
+        Ok(self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .decompositions
+            .iter()
+            .find(|d| d.id == id)
+            .cloned())
     }
 
     async fn save(&self, decomposition: &Decomposition) -> Result<(), RepoError> {
-        let mut st = self.state.lock().expect("lock");
+        let mut st = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         if let Some(slot) = st.decompositions.iter_mut().find(|d| d.id == decomposition.id) {
             *slot = decomposition.clone();
         }
@@ -70,7 +80,7 @@ impl TaskRepository for InMemoryTaskRepository {
         status: TaskStatus,
     ) -> Result<(), RepoError> {
         // Touch only the target task's row (mirrors pg) so concurrent advances don't lose updates.
-        let mut st = self.state.lock().expect("lock");
+        let mut st = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         if let Some(d) = st.decompositions.iter_mut().find(|d| d.id == decomposition_id) {
             if let Some(t) = d.tasks.iter_mut().find(|t| t.id == task_id) {
                 t.status = status;

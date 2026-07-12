@@ -5,8 +5,7 @@ use std::time::Duration;
 
 use api_runner::{
     evaluate_detailed_with_vars, run_extracts, wait_millis, Assertion, CaseOutcome, MatchCondition,
-    Processor, ReqwestRunner,
-    RequestSpec,
+    Processor, RequestSpec, ReqwestRunner,
 };
 
 use super::local::{apply_env_static, substitute_request, CaseResultSink, CaseSpecSource};
@@ -15,7 +14,9 @@ use crate::ports::PortError;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Leaf {
-    Case { case_id: String },
+    Case {
+        case_id: String,
+    },
     Request {
         label: String,
         request: RequestSpec,
@@ -41,11 +42,22 @@ impl Condition {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PlanNode {
     Leaf(Leaf),
-    Loop { times: u32, body: Vec<PlanNode> },
-    If { condition: Condition, body: Vec<PlanNode> },
-    /// 同一 id 全程只进一次(被外层循环包裹也只跑首次)。
-    Once { id: u32, body: Vec<PlanNode> },
-    Timer { ms: u64 },
+    Loop {
+        times: u32,
+        body: Vec<PlanNode>,
+    },
+    If {
+        condition: Condition,
+        body: Vec<PlanNode>,
+    },
+    /// Runs at most once per id for the whole execution (even when wrapped in an outer loop).
+    Once {
+        id: u32,
+        body: Vec<PlanNode>,
+    },
+    Timer {
+        ms: u64,
+    },
 }
 
 struct RunState {
@@ -188,7 +200,7 @@ impl PlanExecutor {
         if wait > 0 {
             tokio::time::sleep(Duration::from_millis(wait)).await;
         }
-        // 必须传 state.vars:否则 outcome 用空 vars 算 Variable 断言会误报,与下方 detailed 矛盾。
+        // Must pass state.vars: otherwise the outcome evaluates Variable assertions with empty vars, misreporting and contradicting `detailed` below.
         let (report, snap) =
             self.runner.run_case_with_snapshot_vars(&req, &assertions, &state.vars).await;
         let (outcome, failures): (&str, Vec<String>) = match report.outcome {
@@ -196,7 +208,7 @@ impl PlanExecutor {
             CaseOutcome::Error => ("ERROR", report.failures),
         };
         self.sink.record(report_id, &case_id, outcome, &failures).await?;
-        // best-effort:回填失败不影响执行。提取只算一次,既落库又写上下文。
+        // Best-effort: writeback failure never affects execution. Extraction is computed once, then both persisted and written to the context.
         if let Some(s) = &snap {
             let detailed = evaluate_detailed_with_vars(&assertions, s, &state.vars);
             let assertions_json = serde_json::Value::Array(
@@ -285,7 +297,10 @@ mod tests {
             outcome: &str,
             _failures: &[String],
         ) -> Result<(), PortError> {
-            self.rows.lock().expect("lock").push((case_id.to_string(), outcome.to_string()));
+            self.rows
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .push((case_id.to_string(), outcome.to_string()));
             Ok(())
         }
     }
@@ -306,7 +321,11 @@ mod tests {
         format!("http://{addr}")
     }
 
-    fn get_case(url: String, assertions: Vec<Assertion>, processors: Vec<Processor>) -> CaseRunSpec {
+    fn get_case(
+        url: String,
+        assertions: Vec<Assertion>,
+        processors: Vec<Processor>,
+    ) -> CaseRunSpec {
         CaseRunSpec {
             request: RequestSpec { method: HttpMethod::Get, url, headers: vec![], body: None },
             assertions,
@@ -339,8 +358,8 @@ mod tests {
     #[tokio::test]
     async fn loop_repeats_body_n_times() {
         let base = spawn().await;
-        let specs =
-            InMemorySpecs::default().with("c", get_case(format!("{base}/ok"), vec![Assertion::StatusIs(200)], vec![]));
+        let specs = InMemorySpecs::default()
+            .with("c", get_case(format!("{base}/ok"), vec![Assertion::StatusIs(200)], vec![]));
         let sink = SpySink::default();
         let plan = vec![PlanNode::Loop {
             times: 3,
@@ -351,14 +370,14 @@ mod tests {
             .await
             .expect("ok");
         assert!(ok);
-        assert_eq!(sink.rows.lock().expect("lock").len(), 3);
+        assert_eq!(sink.rows.lock().unwrap_or_else(std::sync::PoisonError::into_inner).len(), 3);
     }
 
     #[tokio::test]
     async fn if_true_runs_else_skips() {
         let base = spawn().await;
-        let specs =
-            InMemorySpecs::default().with("c", get_case(format!("{base}/ok"), vec![Assertion::StatusIs(200)], vec![]));
+        let specs = InMemorySpecs::default()
+            .with("c", get_case(format!("{base}/ok"), vec![Assertion::StatusIs(200)], vec![]));
         let sink = SpySink::default();
         let env = ResolvedEnv {
             base_url: String::new(),
@@ -367,16 +386,24 @@ mod tests {
         };
         let plan = vec![
             PlanNode::If {
-                condition: Condition { variable: "go".into(), condition: MatchCondition::Equals, value: "yes".into() },
+                condition: Condition {
+                    variable: "go".into(),
+                    condition: MatchCondition::Equals,
+                    value: "yes".into(),
+                },
                 body: vec![PlanNode::Leaf(Leaf::Case { case_id: "c".into() })],
             },
             PlanNode::If {
-                condition: Condition { variable: "go".into(), condition: MatchCondition::Equals, value: "no".into() },
+                condition: Condition {
+                    variable: "go".into(),
+                    condition: MatchCondition::Equals,
+                    value: "no".into(),
+                },
                 body: vec![PlanNode::Leaf(Leaf::Case { case_id: "c".into() })],
             },
         ];
         exec(specs, sink.clone()).run("r1", &plan, &env, false).await.expect("ok");
-        assert_eq!(sink.rows.lock().expect("lock").len(), 1);
+        assert_eq!(sink.rows.lock().unwrap_or_else(std::sync::PoisonError::into_inner).len(), 1);
     }
 
     #[tokio::test]
@@ -390,11 +417,17 @@ mod tests {
             times: 3,
             body: vec![
                 PlanNode::Leaf(Leaf::Case { case_id: "body".into() }),
-                PlanNode::Once { id: 1, body: vec![PlanNode::Leaf(Leaf::Case { case_id: "once".into() })] },
+                PlanNode::Once {
+                    id: 1,
+                    body: vec![PlanNode::Leaf(Leaf::Case { case_id: "once".into() })],
+                },
             ],
         }];
-        exec(specs, sink.clone()).run("r1", &plan, &ResolvedEnv::default(), false).await.expect("ok");
-        let rows = sink.rows.lock().expect("lock");
+        exec(specs, sink.clone())
+            .run("r1", &plan, &ResolvedEnv::default(), false)
+            .await
+            .expect("ok");
+        let rows = sink.rows.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         assert_eq!(rows.iter().filter(|(id, _)| id == "body").count(), 3);
         assert_eq!(rows.iter().filter(|(id, _)| id == "once").count(), 1);
     }
@@ -415,7 +448,7 @@ mod tests {
             .await
             .expect("ok");
         assert!(!ok);
-        let rows = sink.rows.lock().expect("lock");
+        let rows = sink.rows.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0], ("bad".to_string(), "ERROR".to_string()));
     }
@@ -437,7 +470,10 @@ mod tests {
                 "b",
                 get_case(
                     format!("{base}/echo?id=${{tk}}"),
-                    vec![Assertion::ResponseBody { condition: MatchCondition::Equals, expected: "T-1".into() }],
+                    vec![Assertion::ResponseBody {
+                        condition: MatchCondition::Equals,
+                        expected: "T-1".into(),
+                    }],
                     vec![],
                 ),
             );
@@ -488,7 +524,7 @@ mod tests {
             .await
             .expect("ok");
         assert!(ok);
-        let rows = sink.rows.lock().expect("lock");
+        let rows = sink.rows.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let b = rows.iter().find(|(id, _)| id == "b").expect("b recorded");
         assert_eq!(b.1, "SUCCESS");
     }

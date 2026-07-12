@@ -115,12 +115,18 @@ mod tests {
 
         assert!(store.follow(&f).await.expect("follow"));
         assert!(!store.follow(&f).await.expect("follow"));
-        assert_eq!(store.followers("p1", "bug", "b1").await.expect("ls"), vec!["alice".to_string()]);
+        assert_eq!(
+            store.followers("p1", "bug", "b1").await.expect("ls"),
+            vec!["alice".to_string()]
+        );
         assert_eq!(
             store.following_ids("p1", "alice", Some("bug")).await.expect("mine"),
             vec!["b1".to_string()]
         );
-        assert_eq!(store.following_ids("p1", "alice", None).await.expect("mine"), vec!["b1".to_string()]);
+        assert_eq!(
+            store.following_ids("p1", "alice", None).await.expect("mine"),
+            vec!["b1".to_string()]
+        );
 
         assert!(store.unfollow("p1", "bug", "b1", "alice").await.expect("unfollow"));
         assert!(!store.unfollow("p1", "bug", "b1", "alice").await.expect("unfollow"));

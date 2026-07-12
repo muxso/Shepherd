@@ -158,7 +158,10 @@ mod tests {
         #[async_trait]
         impl DesignDrafter for RecordingDrafter {
             async fn request_draft(&self, p: &Proposal) -> Result<(), DraftError> {
-                self.drafted.lock().unwrap().push(p.id.clone());
+                self.drafted
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .push(p.id.clone());
                 Ok(())
             }
         }
@@ -168,7 +171,10 @@ mod tests {
             .with_drafter(drafter.clone());
 
         let p = s.create("req-9", "支付重构").await.expect("create");
-        assert_eq!(drafter.drafted.lock().unwrap().as_slice(), &[p.id.clone()]);
+        assert_eq!(
+            drafter.drafted.lock().unwrap_or_else(std::sync::PoisonError::into_inner).as_slice(),
+            &[p.id.clone()]
+        );
         assert_eq!(p.status, ProposalStatus::Drafting);
 
         let p = s.submit_design(&p.id, "## 架构\n拆分支付域").await.expect("callback");
@@ -190,7 +196,10 @@ mod tests {
         #[async_trait]
         impl BreakdownTrigger for RecordingTrigger {
             async fn on_design_approved(&self, p: &Proposal) -> Result<(), TriggerError> {
-                self.fired.lock().unwrap().push(p.requirement_id.clone());
+                self.fired
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .push(p.requirement_id.clone());
                 Ok(())
             }
         }
@@ -202,10 +211,13 @@ mod tests {
         s.submit_design(&p.id, "doc").await.expect("submit");
 
         s.approve(&p.id).await.expect("approve");
-        assert_eq!(trig.fired.lock().unwrap().as_slice(), &["req-7".to_string()]);
+        assert_eq!(
+            trig.fired.lock().unwrap_or_else(std::sync::PoisonError::into_inner).as_slice(),
+            &["req-7".to_string()]
+        );
 
         assert!(s.approve(&p.id).await.is_err());
-        assert_eq!(trig.fired.lock().unwrap().len(), 1);
+        assert_eq!(trig.fired.lock().unwrap_or_else(std::sync::PoisonError::into_inner).len(), 1);
     }
 
     #[tokio::test]

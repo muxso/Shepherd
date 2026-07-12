@@ -1,3 +1,9 @@
+//! Minimal MCP (Model Context Protocol) server: registers Tools and dispatches
+//! initialize / tools/list / tools/call. CapabilityChecker filters tool
+//! visibility by resource+action and authorizes calls.
+//! JSON-RPC message handling only, no transport layer; the composition root
+//! mounts it on HTTP or another channel.
+
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -66,7 +72,11 @@ pub struct McpServer {
 
 impl McpServer {
     pub fn new(server_name: impl Into<String>, server_version: impl Into<String>) -> Self {
-        Self { server_name: server_name.into(), server_version: server_version.into(), tools: Vec::new() }
+        Self {
+            server_name: server_name.into(),
+            server_version: server_version.into(),
+            tools: Vec::new(),
+        }
     }
 
     pub fn tool(mut self, tool: Tool) -> Self {
@@ -191,7 +201,10 @@ mod tests {
 
     #[tokio::test]
     async fn tools_list_returns_registered() {
-        let resp = server().dispatch(json!({"jsonrpc":"2.0","id":2,"method":"tools/list"}), &AllowAll).await.expect("r");
+        let resp = server()
+            .dispatch(json!({"jsonrpc":"2.0","id":2,"method":"tools/list"}), &AllowAll)
+            .await
+            .expect("r");
         let tools = resp["result"]["tools"].as_array().expect("arr");
         assert_eq!(tools.len(), 1);
         assert_eq!(tools[0]["name"], "echo");
@@ -219,15 +232,26 @@ mod tests {
 
     #[tokio::test]
     async fn unknown_tool_and_method_are_jsonrpc_errors() {
-        let r1 = server().dispatch(json!({"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"nope"}}), &AllowAll).await.expect("r");
+        let r1 = server()
+            .dispatch(
+                json!({"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"nope"}}),
+                &AllowAll,
+            )
+            .await
+            .expect("r");
         assert_eq!(r1["error"]["code"], -32602);
-        let r2 = server().dispatch(json!({"jsonrpc":"2.0","id":6,"method":"frobnicate"}), &AllowAll).await.expect("r");
+        let r2 = server()
+            .dispatch(json!({"jsonrpc":"2.0","id":6,"method":"frobnicate"}), &AllowAll)
+            .await
+            .expect("r");
         assert_eq!(r2["error"]["code"], -32601);
     }
 
     #[tokio::test]
     async fn notification_without_id_yields_no_response() {
-        let resp = server().dispatch(json!({"jsonrpc":"2.0","method":"notifications/initialized"}), &AllowAll).await;
+        let resp = server()
+            .dispatch(json!({"jsonrpc":"2.0","method":"notifications/initialized"}), &AllowAll)
+            .await;
         assert!(resp.is_none());
     }
 
@@ -247,9 +271,15 @@ mod tests {
 
     #[tokio::test]
     async fn tools_list_hides_disallowed_tools() {
-        let allowed = guarded_server().dispatch(json!({"jsonrpc":"2.0","id":1,"method":"tools/list"}), &AllowAll).await.expect("r");
+        let allowed = guarded_server()
+            .dispatch(json!({"jsonrpc":"2.0","id":1,"method":"tools/list"}), &AllowAll)
+            .await
+            .expect("r");
         assert_eq!(allowed["result"]["tools"].as_array().expect("a").len(), 1);
-        let denied = guarded_server().dispatch(json!({"jsonrpc":"2.0","id":1,"method":"tools/list"}), &Denies("SECRET")).await.expect("r");
+        let denied = guarded_server()
+            .dispatch(json!({"jsonrpc":"2.0","id":1,"method":"tools/list"}), &Denies("SECRET"))
+            .await
+            .expect("r");
         assert_eq!(denied["result"]["tools"].as_array().expect("a").len(), 0);
     }
 

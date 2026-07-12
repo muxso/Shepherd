@@ -21,6 +21,10 @@ pub struct WorkSpec {
     pub executor: ExecutorKind,
     pub context: Option<String>,
     pub instructions: Option<String>,
+    /// Targeted dispatch: the name of a registered runtime (stable across reconnects,
+    /// unlike the id which changes on every register). None = any runtime with the
+    /// capability may claim.
+    pub target_runtime: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

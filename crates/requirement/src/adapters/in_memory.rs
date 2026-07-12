@@ -2,15 +2,37 @@ use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 
-use crate::domain::{NewRequirement, Requirement, StatusCounts};
+use crate::domain::{
+    fill_stages, ChangeEntry, NewChange, NewRequirement, Requirement, StageRow, StatusCounts,
+};
 use crate::ports::{RepoError, RequirementRepository};
 
 #[derive(Default)]
 struct State {
     requirements: Vec<Requirement>,
     seq: u64,
-    /// 需求 id → 显式秩(reorder 写入);未排序的回落到插入序。
+    /// Requirement id → explicit rank (written by reorder); unranked ones fall back to insertion order.
     order: std::collections::HashMap<String, i64>,
+    /// Change log, stored in append order; read in reverse (newest first).
+    changes: std::collections::HashMap<String, Vec<ChangeEntry>>,
+    /// Stage rows (sparse, only upserted ones); read side fills via `fill_stages`, mirroring the separate table on the pg side.
+    stages: std::collections::HashMap<String, Vec<StageRow>>,
+    /// Logical clock: +1 per write, keeping created/updated/changed timestamps monotonic and testable.
+    clock: i64,
+}
+
+impl State {
+    fn tick(&mut self) -> i64 {
+        self.clock += 1;
+        self.clock
+    }
+
+    /// Read side fills `stages` from the stage table (missing rows default to PENDING), matching the pg behavior.
+    fn with_stages(&self, r: &Requirement) -> Requirement {
+        let mut r = r.clone();
+        r.stages = fill_stages(self.stages.get(&r.id).map(Vec::as_slice).unwrap_or(&[]));
+        r
+    }
 }
 
 #[derive(Clone, Default)]
@@ -24,7 +46,7 @@ impl InMemoryRequirementRepository {
     }
 
     pub fn soft_delete(&self, id: &str) {
-        let mut st = self.state.lock().expect("lock poisoned");
+        let mut st = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         if let Some(r) = st.requirements.iter_mut().find(|r| r.id == id) {
             r.soft_delete();
         }
@@ -38,33 +60,36 @@ impl RequirementRepository for InMemoryRequirementRepository {
         project_id: &str,
         title: &str,
     ) -> Result<Option<Requirement>, RepoError> {
-        Ok(self
-            .state
-            .lock()
-            .expect("lock poisoned")
+        let st = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        Ok(st
             .requirements
             .iter()
             .find(|r| r.occupies_title() && r.project_id == project_id && r.title == title)
-            .cloned())
+            .map(|r| st.with_stages(r)))
     }
 
     async fn insert(&self, new: &NewRequirement) -> Result<Requirement, RepoError> {
-        let mut st = self.state.lock().expect("lock poisoned");
+        let mut st = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         st.seq += 1;
-        let req = Requirement::create(&format!("requirement-{}", st.seq), new);
+        let id = format!("requirement-{}", st.seq);
+        let now = st.tick();
+        let mut req = Requirement::create(&id, new);
+        req.created_at_ms = now;
+        req.updated_at_ms = now;
         st.requirements.push(req.clone());
         Ok(req)
     }
 
     async fn get(&self, id: &str) -> Result<Option<Requirement>, RepoError> {
-        Ok(self.state.lock().expect("lock").requirements.iter().find(|r| r.id == id).cloned())
+        let st = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        Ok(st.requirements.iter().find(|r| r.id == id).map(|r| st.with_stages(r)))
     }
 
     async fn count_active(&self, project_id: &str) -> Result<u64, RepoError> {
         Ok(self
             .state
             .lock()
-            .expect("lock")
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .requirements
             .iter()
             .filter(|r| r.occupies_title() && r.project_id == project_id)
@@ -77,8 +102,8 @@ impl RequirementRepository for InMemoryRequirementRepository {
         offset: u64,
         limit: u32,
     ) -> Result<Vec<Requirement>, RepoError> {
-        let st = self.state.lock().expect("lock");
-        // (显式秩, 插入序) 排序:未排序的秩为 0 → 按插入序;与历史行为一致。
+        let st = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        // Sort by (explicit rank, insertion index): unranked rank is 0 → insertion order; matches historical behavior.
         let mut items: Vec<(usize, &Requirement)> = st
             .requirements
             .iter()
@@ -90,20 +115,23 @@ impl RequirementRepository for InMemoryRequirementRepository {
             .into_iter()
             .skip(offset as usize)
             .take(limit as usize)
-            .map(|(_, r)| r.clone())
+            .map(|(_, r)| st.with_stages(r))
             .collect())
     }
 
     async fn save(&self, requirement: &Requirement) -> Result<(), RepoError> {
-        let mut st = self.state.lock().expect("lock");
+        let mut st = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let now = st.tick();
         if let Some(slot) = st.requirements.iter_mut().find(|r| r.id == requirement.id) {
             *slot = requirement.clone();
+            // Match pg's `updated_at = now()`: stamp the update time on every save.
+            slot.updated_at_ms = now;
         }
         Ok(())
     }
 
     async fn set_order(&self, project_id: &str, ordered_ids: &[String]) -> Result<(), RepoError> {
-        let mut st = self.state.lock().expect("lock");
+        let mut st = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         for (i, id) in ordered_ids.iter().enumerate() {
             if st.requirements.iter().any(|r| r.id == *id && r.project_id == project_id) {
                 st.order.insert(id.clone(), i as i64 + 1);
@@ -113,12 +141,72 @@ impl RequirementRepository for InMemoryRequirementRepository {
     }
 
     async fn status_counts(&self, project_id: &str) -> Result<StatusCounts, RepoError> {
-        let st = self.state.lock().expect("lock");
+        let st = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let mut counts = StatusCounts::default();
-        for r in st.requirements.iter().filter(|r| r.occupies_title() && r.project_id == project_id) {
+        for r in st.requirements.iter().filter(|r| r.occupies_title() && r.project_id == project_id)
+        {
             counts.add(r.status);
         }
         Ok(counts)
+    }
+
+    async fn children(&self, parent_id: &str) -> Result<Vec<Requirement>, RepoError> {
+        let st = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        Ok(st
+            .requirements
+            .iter()
+            .filter(|r| r.occupies_title() && r.parent_id.as_deref() == Some(parent_id))
+            .map(|r| st.with_stages(r))
+            .collect())
+    }
+
+    async fn upsert_stage(&self, requirement_id: &str, row: &StageRow) -> Result<(), RepoError> {
+        let mut st = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let rows = st.stages.entry(requirement_id.to_string()).or_default();
+        match rows.iter_mut().find(|r| r.stage == row.stage) {
+            Some(slot) => *slot = row.clone(),
+            None => rows.push(row.clone()),
+        }
+        Ok(())
+    }
+
+    async fn stages(&self, requirement_id: &str) -> Result<Vec<StageRow>, RepoError> {
+        let st = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        Ok(fill_stages(st.stages.get(requirement_id).map(Vec::as_slice).unwrap_or(&[])))
+    }
+
+    async fn append_change(
+        &self,
+        requirement_id: &str,
+        changes: &[NewChange],
+    ) -> Result<(), RepoError> {
+        let mut st = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        for c in changes {
+            let now = st.tick();
+            st.changes.entry(requirement_id.to_string()).or_default().push(ChangeEntry {
+                changed_at_ms: now,
+                changed_by: c.changed_by.clone(),
+                field: c.field.clone(),
+                old_value: c.old_value.clone(),
+                new_value: c.new_value.clone(),
+            });
+        }
+        Ok(())
+    }
+
+    async fn list_changes(
+        &self,
+        requirement_id: &str,
+        limit: u32,
+    ) -> Result<Vec<ChangeEntry>, RepoError> {
+        Ok(self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .changes
+            .get(requirement_id)
+            .map(|v| v.iter().rev().take(limit as usize).cloned().collect())
+            .unwrap_or_default())
     }
 }
 
@@ -147,13 +235,15 @@ mod tests {
             let nu = NewRequirement::new("p1", t, "d", &[]).expect("v");
             ids.push(repo.insert(&nu).await.expect("insert").id);
         }
-        // 默认:插入序 A,B,C。
+        // Default: insertion order A,B,C.
         let titles = |rs: &[Requirement]| rs.iter().map(|r| r.title.clone()).collect::<Vec<_>>();
         let listed = repo.list_active("p1", 0, 10).await.expect("list");
         assert_eq!(titles(&listed), ["A", "B", "C"]);
 
-        // 排序:C,A,B。
-        repo.set_order("p1", &[ids[2].clone(), ids[0].clone(), ids[1].clone()]).await.expect("order");
+        // Reordered: C,A,B.
+        repo.set_order("p1", &[ids[2].clone(), ids[0].clone(), ids[1].clone()])
+            .await
+            .expect("order");
         let listed = repo.list_active("p1", 0, 10).await.expect("list");
         assert_eq!(titles(&listed), ["C", "A", "B"]);
     }
@@ -161,10 +251,11 @@ mod tests {
     #[tokio::test]
     async fn set_order_ignores_other_projects_ids() {
         let repo = InMemoryRequirementRepository::new();
-        let a = repo.insert(&NewRequirement::new("p1", "A", "d", &[]).expect("v")).await.expect("i");
+        let a =
+            repo.insert(&NewRequirement::new("p1", "A", "d", &[]).expect("v")).await.expect("i");
         let _other =
             repo.insert(&NewRequirement::new("p2", "X", "d", &[]).expect("v")).await.expect("i");
-        // 传入跨项目 id 不应影响 p1 的排序写入(仅本项目存在的 id 生效)。
+        // Cross-project ids must not affect p1's ordering (only ids existing in this project take effect).
         repo.set_order("p1", &["nope".to_string(), a.id.clone()]).await.expect("order");
         let listed = repo.list_active("p1", 0, 10).await.expect("list");
         assert_eq!(listed.len(), 1);
@@ -174,13 +265,15 @@ mod tests {
     #[tokio::test]
     async fn status_counts_tallies_active_by_status() {
         let repo = InMemoryRequirementRepository::new();
-        // 两条 DRAFT + 一条改成 DELETED(soft delete 不计) + 另一项目一条(不计)。
-        let a = repo.insert(&NewRequirement::new("p1", "A", "d", &[]).expect("v")).await.expect("i");
+        // Two DRAFT + one soft-deleted (not counted) + one in another project (not counted).
+        let a =
+            repo.insert(&NewRequirement::new("p1", "A", "d", &[]).expect("v")).await.expect("i");
         repo.insert(&NewRequirement::new("p1", "B", "d", &[]).expect("v")).await.expect("i");
-        let c = repo.insert(&NewRequirement::new("p1", "C", "d", &[]).expect("v")).await.expect("i");
+        let c =
+            repo.insert(&NewRequirement::new("p1", "C", "d", &[]).expect("v")).await.expect("i");
         repo.insert(&NewRequirement::new("p2", "X", "d", &[]).expect("v")).await.expect("i");
         repo.soft_delete(&c.id);
-        // 把 A 推进到 BASELINED。
+        // Promote A to BASELINED.
         let mut ra = repo.get(&a.id).await.expect("g").expect("s");
         ra.set_baseline(1).expect("baseline");
         repo.save(&ra).await.expect("save");
@@ -190,7 +283,37 @@ mod tests {
         assert_eq!(counts.baselined, 1); // A
         assert_eq!(counts.delivered, 0);
         assert_eq!(counts.archived, 0);
-        assert_eq!(counts.total(), 2); // C 已软删,p2 不属本项目
+        assert_eq!(counts.total(), 2); // C soft-deleted, p2 in another project
+    }
+
+    #[tokio::test]
+    async fn stage_upsert_read_and_get_fill_roundtrip() {
+        use crate::domain::{Stage, StageRow, StageStatus};
+        let repo = InMemoryRequirementRepository::new();
+        let r = repo
+            .insert(&NewRequirement::new("p1", "登录", "d", &[]).expect("v"))
+            .await
+            .expect("insert");
+
+        // Before any upsert: 7 PENDING default rows.
+        let rows = repo.stages(&r.id).await.expect("stages");
+        assert_eq!(rows.len(), 7);
+        assert!(rows.iter().all(|s| s.status == StageStatus::Pending));
+
+        // After upserting one row: it is updated, others stay defaulted; a repeat upsert overwrites the same row.
+        let mut dev = StageRow::pending(Stage::Dev);
+        dev.planned_end = Some("2026-12-31".to_string());
+        dev.set_status(StageStatus::InProgress, 100);
+        repo.upsert_stage(&r.id, &dev).await.expect("upsert");
+        dev.set_status(StageStatus::Done, 200);
+        repo.upsert_stage(&r.id, &dev).await.expect("upsert");
+
+        let rows = repo.stages(&r.id).await.expect("stages");
+        assert_eq!(rows.len(), 7);
+        assert_eq!(rows[3], dev);
+        // get returns the requirement with filled stages.
+        let got = repo.get(&r.id).await.expect("get").expect("some");
+        assert_eq!(got.stages, rows);
     }
 
     #[tokio::test]

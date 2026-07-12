@@ -22,6 +22,7 @@ redis_memory_size_gb = 1
 
 # Shepherd app
 admin_password  = "change-me-in-prod"
+agent_key       = "" # sak_… — issue via POST /system/apikey after first boot, then re-apply
 image_tag       = "latest"
 server_host     = "shepherd.example.com"
 web_host        = "shepherd.example.com"

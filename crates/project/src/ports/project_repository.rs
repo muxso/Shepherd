@@ -1,4 +1,5 @@
-//! `_active` 方法一律只看未软删除的项目(软删除语义固化进端口契约)。
+//! `_active` methods only consider non-soft-deleted projects (soft-delete semantics are baked
+//! into the port contract).
 
 use async_trait::async_trait;
 use thiserror::Error;

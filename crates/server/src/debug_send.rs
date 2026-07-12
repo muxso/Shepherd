@@ -12,7 +12,7 @@ use webauth::{AuthUser, SessionStore};
 
 use api_runner::{
     evaluate_detailed, run_extracts, Assertion, AssertionReport, HttpMethod, Processor,
-    ReqwestRunner, RequestSpec, ResponseSnapshot,
+    RequestSpec, ReqwestRunner, ResponseSnapshot,
 };
 use probe::{default_registry, ProbeRequest};
 
@@ -177,10 +177,7 @@ async fn send(_user: AuthUser, Json(req): Json<SendBody>) -> Response {
             let assertions: Vec<AssertionResult> = if req.assertions.is_empty() {
                 Vec::new()
             } else {
-                evaluate_detailed(&req.assertions, &snapshot)
-                    .into_iter()
-                    .map(Into::into)
-                    .collect()
+                evaluate_detailed(&req.assertions, &snapshot).into_iter().map(Into::into).collect()
             };
             let extractions = if req.processors.is_empty() {
                 Vec::new()

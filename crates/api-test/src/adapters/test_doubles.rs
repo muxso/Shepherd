@@ -53,28 +53,43 @@ impl SpyExecutor {
     }
 
     pub fn dispatch_count(&self) -> usize {
-        self.dispatches.lock().expect("lock").len()
+        self.dispatches.lock().unwrap_or_else(std::sync::PoisonError::into_inner).len()
     }
 
     pub fn last_pool(&self) -> Option<String> {
-        self.dispatches.lock().expect("lock").last().map(|d| d.pool_id.clone())
+        self.dispatches
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .last()
+            .map(|d| d.pool_id.clone())
     }
 
     pub fn last_case_count(&self) -> Option<usize> {
-        self.dispatches.lock().expect("lock").last().map(|d| d.case_ids.len())
+        self.dispatches
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .last()
+            .map(|d| d.case_ids.len())
     }
 
     pub fn last_env(&self) -> Option<ResolvedEnv> {
-        self.dispatches.lock().expect("lock").last().map(|d| d.env.clone())
+        self.dispatches
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .last()
+            .map(|d| d.env.clone())
     }
 }
 
 #[async_trait]
 impl BatchExecutorPort for SpyExecutor {
     async fn dispatch(&self, spec: &DispatchSpec) -> Result<DispatchReport, PortError> {
-        let mut d = self.dispatches.lock().expect("lock");
+        let mut d = self.dispatches.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         d.push(spec.clone());
-        Ok(DispatchReport { report_id: format!("report-{}", d.len()), status: "SUCCESS".to_string() })
+        Ok(DispatchReport {
+            report_id: format!("report-{}", d.len()),
+            status: "SUCCESS".to_string(),
+        })
     }
 }
 
@@ -94,18 +109,18 @@ impl SpyDispatcher {
     }
 
     pub fn count(&self) -> usize {
-        self.tasks.lock().expect("lock").len()
+        self.tasks.lock().unwrap_or_else(std::sync::PoisonError::into_inner).len()
     }
 
     pub fn last(&self) -> Option<RunTask> {
-        self.tasks.lock().expect("lock").last().cloned()
+        self.tasks.lock().unwrap_or_else(std::sync::PoisonError::into_inner).last().cloned()
     }
 }
 
 #[async_trait]
 impl TaskDispatcher for SpyDispatcher {
     async fn dispatch_task(&self, task: &RunTask) -> Result<DispatchOutcome, PortError> {
-        self.tasks.lock().expect("lock").push(task.clone());
+        self.tasks.lock().unwrap_or_else(std::sync::PoisonError::into_inner).push(task.clone());
         if self.fail {
             return Err(PortError::Backend("executor node unreachable".into()));
         }

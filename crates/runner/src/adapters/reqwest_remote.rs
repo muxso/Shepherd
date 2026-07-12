@@ -26,7 +26,7 @@ impl Default for ReqwestRemoteRunner {
 
 impl ReqwestRemoteRunner {
     pub fn new() -> Self {
-        // no_proxy:中央直连内网 agent,勿被全局代理劫持。
+        // no_proxy: central talks to intranet agents directly; must not be hijacked by a global proxy.
         Self { client: reqwest::Client::builder().no_proxy().build().unwrap_or_default() }
     }
 }

@@ -20,7 +20,7 @@ you file a requirement
         │                        │ dispatch
         ▼                        ▼
                           FLEET DISPATCH ──► agent-runtime executor
-                          (pull / long-poll)   (claude / codex / opencode)
+                          (pull / long-poll)   (claude / codex / opencode / codebuddy)
                                  │ runs in a git worktree
                                  ▼
                           deliverable (diff / PR)
@@ -59,7 +59,7 @@ Company AI tools (Claude Code, Codex, …) run on internal dev machines or CI �
 | Quick start (Docker) | Docker + Docker Compose v2 |
 | From-source dev | Rust (stable, edition 2021; CI uses `rust:1.86`), Node.js 18+, a PostgreSQL 16 instance |
 | Multi-host fleet | Redis 7 |
-| Real AI executors | `git` plus the agent CLIs on `PATH` (`claude` / `codex` / `opencode`) |
+| Real AI executors | `git` plus the agent CLIs on `PATH` (`claude` / `codex` / `opencode` / `codebuddy`) |
 
 PostgreSQL is required; the server **auto-applies migrations on startup**. Redis is required **only** for the multi-host fleet.
 
@@ -142,9 +142,11 @@ Run on the machine that has the agent CLIs (or anywhere with `AGENT_MOCK=1`). It
 # Server, in fleet mode (single-host in-process queue)
 SHEPHERD_AGENT_FLEET=1 DATABASE_URL=… SHEPHERD_ADMIN_PASSWORD=s3cret cargo run -p server
 
-# Executor: outbound long-poll, claims CLAUDE_CODE tasks
+# Executor: outbound long-poll, claims CLAUDE_CODE tasks.
+# Auth is API-key only: issue one in the web console (个人中心 → API KEY)
+# or via POST /system/apikey, then:
 SHEPHERD_BASE=http://<server>:8088 \
-SHEPHERD_ADMIN_PASSWORD=s3cret \
+SHEPHERD_AGENT_KEY=sak_… \
 SHEPHERD_CAPS=CLAUDE_CODE \
 cargo run -p agent-runtime
 ```
@@ -190,16 +192,17 @@ Advanced/lazy-read switches also exist for the pluggable AI touchpoints — `SHE
 | Variable | Default | Meaning |
 |---|---|---|
 | `SHEPHERD_BASE` | `http://127.0.0.1:9180` | Server address to long-poll |
-| `SHEPHERD_ADMIN_USER` | `admin` | Login user |
-| `SHEPHERD_ADMIN_PASSWORD` | `s3cret` | Login password |
+| `SHEPHERD_AGENT_KEY` | **required** | Static API key (`sak_…`) — the only credential; issue via 个人中心 → API KEY or `POST /system/apikey` |
 | `SHEPHERD_CAPS` | `CLAUDE_CODE` | Comma-separated capabilities — which task kinds this runtime claims (e.g. `CLAUDE_CODE,CODEX`) |
 | `AGENT_CONCURRENCY` | `1` | Max concurrent in-flight tasks (semaphore-bounded) |
 | `AGENT_WORKDIR` | `.` | Base working directory; each task runs in its own git worktree under it |
+| `AGENT_BASE_REF` | *(repo HEAD)* | Git ref tasks branch from (e.g. `origin/main`); pin it when the checkout is shared with a developer |
 | `RUNTIME_NAME` | `agent-runtime` | Display name in the fleet registry |
 | `AGENT_MOCK` | — | Presence → mock backend (no real CLI) |
 | `CLAUDE_BIN` | `claude` | Claude CLI binary |
 | `CODEX_CMD` | `codex exec` | Codex CLI invocation |
 | `OPENCODE_CMD` | `opencode run` | OpenCode CLI invocation |
+| `CODEBUDDY_CMD` | `codebuddy -p --permission-mode acceptEdits` | CodeBuddy CLI invocation |
 
 ---
 
@@ -253,9 +256,10 @@ The runtime picks a backend per task by its `executor` kind, unless `AGENT_MOCK=
 | `CLAUDE_CODE` | Claude (streaming `stream-json`) | `claude` (`CLAUDE_BIN`) |
 | `CODEX` | generic CLI | `codex exec` (`CODEX_CMD`) |
 | `OPENCODE` | generic CLI | `opencode run` (`OPENCODE_CMD`) |
+| `CODEBUDDY` | generic CLI | `codebuddy -p --permission-mode acceptEdits` (`CODEBUDDY_CMD`) |
 | any (with `AGENT_MOCK=1`) | mock — returns canned output | none |
 
-Real backends need `git` and the CLI on `PATH` (or pointed at via the override env). Adding a new backend means implementing one `CliAgentBackend` (`async fn execute(prompt, cwd, sink)`) and registering an enum variant — see `crates/agent-runtime/src/backend.rs`.
+Real backends need `git` and the CLI on `PATH` (or pointed at via the override env). Per-executor run recipes (login, permission modes, dispatch examples) are in [EXECUTORS.md](./EXECUTORS.md). Adding a new backend means implementing one `CliAgentBackend` (`async fn execute(prompt, cwd, sink)`) and registering an enum variant — see `crates/agent-runtime/src/backend.rs`.
 
 ### 7.3 Observability
 
@@ -282,6 +286,8 @@ curl -s localhost:8088/organization -H 'Authorization: Bearer <token>'
 
 Sessions are PG-backed (survive a server restart) and expire after `SHEPHERD_SESSION_TTL_SECS`. Write endpoints enforce per-resource RBAC; reads are open.
 
+`/auth/login` is for humans (web console). Programmatic clients (agent-runtime, `shepherd-cli`, MCP clients, scripts) should authenticate with a static API key instead: issue one in the web console (个人中心 → API KEY) or via `POST /system/apikey`, then send it as `Authorization: Bearer sak_…` — no login, no refresh, revocation takes effect immediately.
+
 ### 8.2 Health
 
 | Endpoint | Meaning |
@@ -292,6 +298,8 @@ Sessions are PG-backed (survive a server restart) and expire after `SHEPHERD_SES
 ### 8.3 MCP
 
 The full pipeline is exposed as MCP tools over Streamable HTTP at `POST /mcp` (JSON-RPC): `initialize` issues an `Mcp-Session-Id`, `GET /mcp` holds an SSE stream, `DELETE /mcp` terminates. Tools are RBAC-filtered per session (`tools/list` hides tools you can't call). About ten `shepherd_*` tools drive requirements → breakdown → dispatch → verification.
+
+MCP clients authenticate with an API key: configure the MCP server with `Authorization: Bearer sak_…` (issued via 个人中心 → API KEY or `POST /system/apikey`) — do not embed the admin password. The key's permissions decide which tools are visible and callable.
 
 ### 8.4 OpenAPI & self-bootstrap (dogfood)
 
@@ -318,7 +326,7 @@ Both honour `SHEPHERD_BASE` (default `http://127.0.0.1:9180`) and `SHEPHERD_USER
 | Web console shows blank / API 404 in dev | Vite proxy target mismatch. The dev proxy points at `:9180`; bind the server there or set `SHEPHERD_API` to your server URL. |
 | Tasks never get claimed | Server not in fleet mode (`SHEPHERD_AGENT_FLEET=1`), no runtime online, or capability mismatch — check `SHEPHERD_CAPS` vs the task's executor kind, and `GET /agent/work/stats`. |
 | Multi-host runtimes can't share work | `SHEPHERD_FLEET_REDIS` not set (or not the same Redis) on all server replicas → each falls back to its own in-process queue. |
-| Real agent does nothing / errors spawning | CLI not on `PATH`; set `CLAUDE_BIN` / `CODEX_CMD` / `OPENCODE_CMD`, or run with `AGENT_MOCK=1` to confirm the loop. |
+| Real agent does nothing / errors spawning | CLI not on `PATH`; set `CLAUDE_BIN` / `CODEX_CMD` / `OPENCODE_CMD` / `CODEBUDDY_CMD`, or run with `AGENT_MOCK=1` to confirm the loop. |
 | API batch-run stuck `RUNNING` with no results | `SHEPHERD_RUNNER=noop` is set (demo placeholder). Unset it to use the native runner. |
 | New migration not applied | Restart the server — migrations run on boot; a new migration file needs a rebuild. |
 | OIDC endpoint 404 | The provider is only registered when **both** id and secret env vars are set. |

@@ -40,7 +40,7 @@ def main():
     pid = projects[0]["id"]
     print(f"✓ 使用项目 {projects[0].get('name')} ({pid[:8]}…)")
 
-    # 新建接口定义
+    # Create the API definition
     _, d = req_json("POST", "/api/definition", token, {
         "projectId": pid, "name": "[验证] 定义编辑器全字段", "protocol": "HTTP",
         "method": "POST", "path": "/api/verify/{id}",
@@ -48,18 +48,18 @@ def main():
     did = d["id"]
     print(f"✓ 新建接口 num={d.get('num')} id={did[:8]}…")
 
-    # 覆盖所有子标签 + 请求体 content-type 的 spec
+    # Spec covering every sub-tab plus the request-body content-type
     spec = {
-        # 基本信息
+        # Basic info
         "description": "验证用接口·中文描述",
         "tags": ["smoke", "回归"],
-        # 请求头 子标签
+        # Request-headers sub-tab
         "requestHeaders": [{"name": "X-Trace", "value": "abc", "desc": "链路"}],
-        # Query 子标签
+        # Query sub-tab
         "requestQuery": [{"name": "page", "value": "1", "desc": "页码"}],
-        # REST 子标签
+        # REST-params sub-tab
         "restParams": [{"name": "id", "value": "42", "desc": "资源 id"}],
-        # 请求体 content-type: json + schema 树
+        # Request body content-type: json + schema tree
         "bodyType": "json",
         "requestBody": '{"user":"admin","age":30,"vip":true}',
         "bodySchema": [
@@ -68,11 +68,11 @@ def main():
             {"name": "vip", "type": "boolean", "value": "true"},
         ],
         "formBody": [{"name": "f1", "value": "v1", "desc": ""}],
-        # 认证 子标签
+        # Auth sub-tab
         "auth": {"type": "bearer", "token": "TKN"},
-        # 响应内容
+        # Response content
         "responses": [{"status": 200, "body": '{"ok":true}', "headers": [{"name": "Content-Type", "value": "application/json"}]}],
-        # 处理器 / 断言(调试态子标签)
+        # Processors / assertions (debug-mode sub-tabs)
         "preProcessors": [{"type": "Wait", "args": {"ms": 100}}],
         "postProcessors": [{"type": "Extract", "args": {"extractors": [{"variable": "tok", "kind": "JSONPath", "expression": "$.token"}]}}],
         "assertions": [{"type": "StatusCode", "condition": "eq", "expected": "200"}],
@@ -80,7 +80,7 @@ def main():
     st, _ = req("PUT", f"/api/definition/{did}/spec", token, {"spec": spec})
     print(f"✓ 保存 spec → HTTP {st}")
 
-    # 读回
+    # Read back
     _, got = req_json("GET", f"/api/definition/{did}", token)
     back = got.get("spec") or {}
 
@@ -95,7 +95,7 @@ def main():
             print(f"      期望: {json.dumps(spec[key], ensure_ascii=False)}")
             print(f"      读回: {json.dumps(back.get(key), ensure_ascii=False)}")
 
-    # 清理
+    # Cleanup
     req("DELETE", f"/api/definition/{did}", token)
     print(f"\n{'✅ 全部字段无损往返' if ok else '❌ 有字段丢失/变形'} (已删除验证数据)")
     sys.exit(0 if ok else 2)

@@ -3,7 +3,8 @@
 use probe::{default_registry, ProbeAssertion, ProbeRequest};
 
 fn mysql_url() -> String {
-    std::env::var("MYSQL_URL").unwrap_or_else(|_| "mysql://root:mspass@127.0.0.1:3306/mstest".into())
+    std::env::var("MYSQL_URL")
+        .unwrap_or_else(|_| "mysql://root:mspass@127.0.0.1:3306/mstest".into())
 }
 
 fn req(stmt: &str, assertions: Vec<ProbeAssertion>) -> ProbeRequest {

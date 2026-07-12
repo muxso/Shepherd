@@ -40,10 +40,8 @@ mod tests {
     #[tokio::test]
     async fn deletes_existing_comment() {
         let repo = Arc::new(InMemoryCommentRepository::new());
-        let c = AddCommentUseCase::new(repo.clone())
-            .execute("BUG", "b1", "x", "a")
-            .await
-            .expect("ok");
+        let c =
+            AddCommentUseCase::new(repo.clone()).execute("BUG", "b1", "x", "a").await.expect("ok");
         DeleteCommentUseCase::new(repo.clone()).execute(&c.id).await.expect("deleted");
         let list = ListCommentsUseCase::new(repo).execute("BUG", "b1").await.expect("ok");
         assert!(list.is_empty());
