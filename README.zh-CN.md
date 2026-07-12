@@ -148,6 +148,8 @@ web/               React + antd 前端
 
 **对比多 agent 框架 —— AutoGen、CrewAI。** 它们大多走自治路线:让 agent 循环到完成、拼 benchmark。Shepherd 的重点在治理——审批和验证是绕不过去的节点,而不是聊天里随手打断;部署上是"中心服务端 + 内网执行机出站拉取"。那些框架本身就是 agent;Shepherd 是 agent 之上的监工,底下挂什么可以换。
 
+**对比个人 agent 编排 —— Gas Town(以及 Beads)。** Gas Town 在你自己的机器上养一群编码 agent,并让它们一直有活干:工人醒来看钩子上有活就跑,mayor 跨仓协调,合并串行化。它的目标是把一个开发者的产出拉满,这件事它做得很好。Shepherd 做的是同一条街的另一头:管一个团队交付什么——执行机持 API key 接入,每次交付留痕,验收门绕不过去。两边的工作台账是近亲(beads 存在 git 里,任务存在 Postgres 里),所以是组合而不是竞争:Gas Town 的 rig 可以作为一种执行者挂进 Shepherd 的机群,Shepherd 则补上本地工厂缺的验收和记账那一层。
+
 一个具体边界:Shepherd 作为 MCP **服务端**(暴露 `shepherd_*` 工具,让 agent 来驱动需求→验证的全生命周期),而 OpenCode 这类编码 agent 是 MCP **客户端**。两者是双向组合,而不是重叠。
 
 ## 测试

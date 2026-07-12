@@ -148,6 +148,8 @@ Executor `agent-runtime`:
 
 **vs. multi-agent frameworks — AutoGen, CrewAI.** Most take the autonomy route: let agents loop until done, compete on benchmarks. Shepherd's focus is governance — approval and verification are steps you can't route around, not prompts you interrupt in a chat, and the deployment model is a central server plus internal executors that pull work outbound. Those frameworks *are* the agent; Shepherd is the supervisor above swappable agents.
 
+**vs. personal agent orchestrators — Gas Town (and Beads).** Gas Town runs a fleet of coding agents on your own machine and keeps them busy around the clock: workers pick up whatever lands on their hook, a mayor coordinates across repos, merges get serialized. It's built to maximize one developer's throughput, and it's good at that. Shepherd works the same street from the other end: it governs what a team ships — executors authenticate with API keys, every delivery attempt leaves a record, and the acceptance gate can't be routed around. The work ledgers are close cousins (beads live in git, tasks live in Postgres), so the two compose rather than compete: a Gas Town rig can hang off Shepherd's fleet as one more executor, and Shepherd supplies the acceptance and accounting layer a local factory doesn't have.
+
 One concrete boundary: Shepherd speaks MCP as a *server* (it exposes `shepherd_*` tools so an agent can drive the requirement→verify lifecycle), while coding agents like OpenCode speak MCP as a *client*. They compose in both directions rather than overlap.
 
 ## Tests
