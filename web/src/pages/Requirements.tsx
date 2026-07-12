@@ -369,6 +369,7 @@ export default function Requirements() {
           newLabel={t('req.new', '新建需求')}
           extraActions={lv.toolbar}
           data={lv.rows}
+          pagination={lv.pagination}
           onRowClick={(r) => tabs.open(r.id)}
           emptyText={t('req.empty', '暂无需求')}
           columns={lv.columns}

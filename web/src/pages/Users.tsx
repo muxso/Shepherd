@@ -154,7 +154,7 @@ export default function Users() {
         columns={lv.columns}
         scroll={{ x: 'max-content' }}
         rowSelection={{ type: 'checkbox' }}
-        pagination={{ pageSize: 50, size: 'small', showTotal: (n) => `${t('apidef.totalPrefix', '共')} ${n} ${t('proj.unit', '条')}` }}
+        pagination={{ ...lv.pagination, showTotal: (n) => `${t('apidef.totalPrefix', '共')} ${n} ${t('proj.unit', '条')}` }}
       />
       <UserModal open={modalOpen} editing={editing} onClose={() => setModalOpen(false)} onDone={() => { setModalOpen(false); load() }} t={t} />
     </div>

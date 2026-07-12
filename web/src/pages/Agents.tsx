@@ -113,7 +113,7 @@ export default function Agents() {
           loading={loading}
           dataSource={lv.rows}
           columns={lv.columns}
-          pagination={{ pageSize: 15, size: 'small' }}
+          pagination={lv.pagination}
           locale={{ emptyText: <Empty description={t('agent.empty', '暂无执行机,点「注册执行机」接入 AI agent')} /> }}
         />
       </PageBody>

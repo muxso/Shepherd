@@ -349,7 +349,7 @@ export default function TestPlans() {
             },
             style: { cursor: 'pointer' },
           })}
-          pagination={{ pageSize: 15, size: 'small', showTotal: (n) => t('ws.total', '共 {n} 条').replace('{n}', String(n)) }}
+          pagination={{ ...lv.pagination, showTotal: (n) => t('ws.total', '共 {n} 条').replace('{n}', String(n)) }}
           locale={{ emptyText }}
         />
       </div>

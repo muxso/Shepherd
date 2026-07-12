@@ -130,7 +130,7 @@ export default function ApiKeys() {
         dataSource={lv.rows}
         columns={lv.columns}
         scroll={{ x: 'max-content' }}
-        pagination={{ pageSize: 50, size: 'small', showTotal: (n) => `${t('apidef.totalPrefix', '共')} ${n} ${t('proj.unit', '条')}` }}
+        pagination={{ ...lv.pagination, showTotal: (n) => `${t('apidef.totalPrefix', '共')} ${n} ${t('proj.unit', '条')}` }}
       />
       <CreateKeyModal
         open={createOpen}

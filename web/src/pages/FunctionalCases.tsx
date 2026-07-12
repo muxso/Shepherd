@@ -230,6 +230,7 @@ export default function FunctionalCases() {
             onRefresh={load}
             columns={lv.columns}
             data={visible}
+            pagination={lv.pagination}
             loading={loading}
             onRowClick={(c) => tabs.open(c.id)}
             emptyText={t('func.emptyCase', '暂无用例')}

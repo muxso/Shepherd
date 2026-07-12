@@ -75,8 +75,6 @@ export default function ApiDefinitions() {
   const [openIds, setOpenIds] = useState<string[]>([])
   const [openCases, setOpenCases] = useState<Record<string, ApiCase>>({}) // open case-detail tabs (key = caseId)
   const [activeKey, setActiveKey] = useState(LIST_KEY)
-  // Page size shared by all three view modes; persisted via view extra. Search/filter/columns/views live in useListView.
-  const [pageSize, setPageSize] = useState(20)
   const [searchParams, setSearchParams] = useSearchParams()
   // Module tree: search / show interfaces in tree / hide empty modules / protocol filter / controlled expand.
   const [moduleSearch, setModuleSearch] = useState('')
@@ -344,7 +342,7 @@ export default function ApiDefinitions() {
       ),
     },
   ]
-  // List toolbar (views/filters/columns/advanced conditions) is delegated to useListView; moduleKey/pageSize are page-private state stored in view extra.
+  // List toolbar (views/filters/columns/page size/advanced conditions) is delegated to useListView; moduleKey is page-private state stored in view extra.
   const lv = useListView<ApiDefinition>({
     kind: 'apidef',
     projectId,
@@ -367,10 +365,9 @@ export default function ApiDefinitions() {
     columns: allColumns,
     rows: defs,
     extra: {
-      get: () => ({ moduleKey, pageSize }),
+      get: () => ({ moduleKey }),
       apply: (v) => {
         if (typeof v.moduleKey === 'string') setModuleKey(v.moduleKey)
-        if (typeof v.pageSize === 'number') setPageSize(v.pageSize)
       },
     },
   })
@@ -405,7 +402,7 @@ export default function ApiDefinitions() {
             columns={lv.columns}
             scroll={{ x: 'max-content' }}
             onRow={(d) => ({ onClick: () => openDef(d.id), style: { cursor: 'pointer' } })}
-            pagination={{ pageSize, size: 'small', showSizeChanger: true, pageSizeOptions: ['10', '20', '30', '50'], onShowSizeChange: (_, s) => setPageSize(s), showTotal: (total) => `${t('apidef.totalPrefix', '共')} ${total} ${t('apidef.totalSuffix', '个接口')}` }}
+            pagination={{ ...lv.pagination, showTotal: (total) => `${t('apidef.totalPrefix', '共')} ${total} ${t('apidef.totalSuffix', '个接口')}` }}
             locale={{ emptyText: <Empty description={t('apidef.emptyApis', '暂无接口')} /> }}
           />
         ) : viewMode === 'CASE' ? (
@@ -424,7 +421,7 @@ export default function ApiDefinitions() {
               { title: t('apidef.colPriority', '优先级'), dataIndex: 'priority', width: 90, render: (v?: string) => v || '—' },
               { title: t('apidef.colStatus', '状态'), dataIndex: 'status', width: 110, render: (v?: string) => v || '—' },
             ]}
-            pagination={{ pageSize, size: 'small', showSizeChanger: true, pageSizeOptions: ['10', '20', '30', '50'], onShowSizeChange: (_, s) => setPageSize(s), showTotal: (total) => `${t('apidef.totalPrefix', '共')} ${total} ${t('apidef.caseUnit', '个用例')}` }}
+            pagination={{ ...lv.pagination, showTotal: (total) => `${t('apidef.totalPrefix', '共')} ${total} ${t('apidef.caseUnit', '个用例')}` }}
             locale={{ emptyText: <Empty description={t('apidef.emptyCases', '暂无用例')} /> }}
           />
         ) : (
@@ -476,7 +473,7 @@ export default function ApiDefinitions() {
                 ),
               },
             ]}
-            pagination={{ pageSize, size: 'small', showSizeChanger: true, pageSizeOptions: ['10', '20', '30', '50'], onShowSizeChange: (_, s) => setPageSize(s), showTotal: (total) => `${t('apidef.totalPrefix', '共')} ${total} ${t('apidef.mockUnit', '个 Mock')}` }}
+            pagination={{ ...lv.pagination, showTotal: (total) => `${t('apidef.totalPrefix', '共')} ${total} ${t('apidef.mockUnit', '个 Mock')}` }}
             locale={{ emptyText: <Empty description={t('apidef.emptyMocks', '暂无 Mock')} /> }}
           />
         )}

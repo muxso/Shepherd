@@ -1,13 +1,14 @@
 // Shared list toolkit: views (saved filter/column snapshots in /api/api-view, keyed per page
 // by config.kind) + filters (declarative fields: enum/text/tags/bool, all client-side;
-// collapsible "advanced conditions" with contains/equals/empty operators) + column visibility.
-// Usage: page declares fields/columns; useListView returns {toolbar, rows, columns} and the
-// page feeds rows/columns to its own Table. Page-private state (module selection, page size)
-// can ride along in the view snapshot via `extra`.
+// collapsible "advanced conditions" with contains/equals/empty operators) + column visibility
+// + page size (set in the column-settings gear, saved with views).
+// Usage: page declares fields/columns; useListView returns {toolbar, rows, columns, pagination}
+// and the page feeds rows/columns/pagination to its own Table. Page-private state (module
+// selection) can ride along in the view snapshot via `extra`.
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { Alert, Button, Checkbox, Dropdown, Input, Modal, Popover, Segmented, Select, Space, Switch, Tag } from 'antd'
 import { DeleteOutlined, DownOutlined, EditOutlined, FilterOutlined, LinkOutlined, MinusCircleOutlined, MinusOutlined, PlusOutlined, RightOutlined, SettingOutlined, SearchOutlined } from '@ant-design/icons'
-import type { ColumnType } from 'antd/es/table'
+import type { ColumnType, TablePaginationConfig } from 'antd/es/table'
 import { message } from '../feedback'
 import { api, ApiError, type ApiView } from '../api'
 import { useI18n } from '../i18n'
@@ -90,36 +91,37 @@ interface ViewConfig {
   filters?: Record<string, unknown>
   adv?: { logic: 'all' | 'any'; conds: AdvCond[] }
   hiddenCols?: string[]
-  /** Page-private snapshot (read/written via the extra hook), e.g. {moduleKey, pageSize}. */
+  /** Rows per page; older views may carry it in extra instead (normalized below). */
+  pageSize?: number
+  /** Page-private snapshot (read/written via the extra hook), e.g. {moduleKey}. */
   extra?: Record<string, unknown>
 }
 
-/** Normalize the legacy API-definition view shape (top-level advConds/advLogic/moduleKey/pageSize) so old saved views keep working. */
+/** Normalize the legacy API-definition view shape (top-level advConds/advLogic/moduleKey and extra.pageSize) so old saved views keep working. */
 export function normalizeViewConfig(raw: unknown): ViewConfig {
   const c = (raw || {}) as ViewConfig & {
     advConds?: AdvCond[]
     advLogic?: 'all' | 'any'
     moduleKey?: string
-    pageSize?: number
   }
   const adv =
     c.adv ??
     (Array.isArray(c.advConds) || c.advLogic
       ? { logic: c.advLogic === 'any' ? ('any' as const) : ('all' as const), conds: Array.isArray(c.advConds) ? c.advConds : [] }
       : undefined)
-  const extra =
-    c.extra ??
-    (c.moduleKey !== undefined || c.pageSize !== undefined
-      ? {
-          ...(c.moduleKey !== undefined ? { moduleKey: c.moduleKey } : {}),
-          ...(c.pageSize !== undefined ? { pageSize: c.pageSize } : {}),
-        }
-      : undefined)
-  return { kind: c.kind, search: c.search, filters: c.filters, adv, hiddenCols: c.hiddenCols, extra }
+  const extra = c.extra ?? (c.moduleKey !== undefined ? { moduleKey: c.moduleKey } : undefined)
+  // pageSize lives top-level now; fall back to extra.pageSize written by the old API-definition page.
+  const pageSize =
+    typeof c.pageSize === 'number' ? c.pageSize : typeof extra?.pageSize === 'number' ? extra.pageSize : undefined
+  return { kind: c.kind, search: c.search, filters: c.filters, adv, hiddenCols: c.hiddenCols, pageSize, extra }
 }
 
 /** Value-requiring operators with an empty value count as unfilled and are ignored. */
 const effectiveConds = (conds: AdvCond[]) => conds.filter((c) => c.op === 'empty' || c.op === 'notEmpty' || c.value.trim())
+
+/** Rows-per-page choices offered in the column-settings gear. */
+const PAGE_SIZES = [10, 15, 20, 50, 100]
+const DEFAULT_PAGE_SIZE = 15
 
 export function useListView<T>({
   kind,
@@ -142,17 +144,18 @@ export function useListView<T>({
   fields: FilterField<T>[]
   columns: ListColumn<T>[]
   rows: T[]
-  /** Page-private state saved with views: get() is stored into config.extra on save; apply(extra) restores it when a view is applied. */
+  /** Page-private state saved with views (e.g. moduleKey): get() is stored into config.extra on save; apply(extra) restores it when a view is applied. */
   extra?: { get: () => Record<string, unknown>; apply: (v: Record<string, unknown>) => void }
   /** View ownership test (defaults to strict equality with kind); the API-definition page must accept legacy views with kind unset. */
   matchKind?: (k: string | undefined) => boolean
   /** System views (built-in data sets beyond "all data", e.g. "created by me"); omit for "all data" only. */
   systemViews?: SystemView<T>[]
-}): { toolbar: ReactNode; rows: T[]; columns: ColumnType<T>[] } {
+}): { toolbar: ReactNode; rows: T[]; columns: ColumnType<T>[]; pagination: TablePaginationConfig } {
   const { t } = useI18n()
   const [search, setSearch] = useState('')
   const [filters, setFilters] = useState<Record<string, unknown>>({})
   const [hiddenCols, setHiddenCols] = useState<string[]>(columns.filter((c) => c.defaultHidden).map((c) => c.key))
+  const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE)
   const [advLogic, setAdvLogic] = useState<'all' | 'any'>('all')
   const [advConds, setAdvConds] = useState<AdvCond[]>([])
   const [advOpen, setAdvOpen] = useState(false)
@@ -194,6 +197,7 @@ export function useListView<T>({
     setAdvLogic(c.adv?.logic === 'any' ? 'any' : 'all')
     setAdvConds(conds)
     setAdvOpen(conds.length > 0)
+    setPageSize(typeof c.pageSize === 'number' && c.pageSize > 0 ? c.pageSize : DEFAULT_PAGE_SIZE)
     if (c.extra && extra) extra.apply(c.extra)
   }
 
@@ -205,6 +209,7 @@ export function useListView<T>({
     setAdvLogic('all')
     setAdvOpen(false)
     setHiddenCols(columns.filter((c) => c.defaultHidden).map((c) => c.key))
+    setPageSize(DEFAULT_PAGE_SIZE)
   }
 
   const selectSystem = (key: string) => {
@@ -311,7 +316,7 @@ export function useListView<T>({
     })
   }
 
-  // Save and apply: create stores a conditions-only snapshot; edit keeps the original snapshot's other keys (search/filters/columns/extra) and only swaps conditions.
+  // Save and apply: create stores conditions + current page size; edit keeps the original snapshot's other keys (search/filters/columns/extra) and swaps conditions/page size.
   const saveEditor = async () => {
     if (!editor) return
     const name = editor.name.trim()
@@ -321,6 +326,7 @@ export function useListView<T>({
       ...(orig ? normalizeViewConfig(orig.config) : {}),
       kind,
       adv: { logic: editor.logic, conds: editor.conds },
+      pageSize,
     }
     try {
       const saved = editor.id
@@ -501,6 +507,17 @@ export function useListView<T>({
           </Checkbox>
         </div>
       ))}
+      {/* Page size shares the gear panel so sizing has a single entry point (table pager hides its size changer). */}
+      <div style={{ borderTop: '1px solid var(--border-soft)', marginTop: 8, paddingTop: 8, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <span style={{ fontSize: 12, color: 'var(--text-2)' }}>{t('lv.pageSize', '每页条数')}</span>
+        <Select
+          size="small"
+          style={{ width: 80 }}
+          value={pageSize}
+          onChange={setPageSize}
+          options={PAGE_SIZES.map((n) => ({ value: n, label: String(n) }))}
+        />
+      </div>
     </div>
   )
 
@@ -746,5 +763,13 @@ export function useListView<T>({
     return c
   }
 
-  return { toolbar, rows: filtered, columns: columns.filter((c) => !hiddenCols.includes(c.key)).map(withHeaderFilter) }
+  // Ready to spread onto antd Table `pagination`; pageSize is controlled here so onChange must sync it back.
+  const pagination: TablePaginationConfig = {
+    pageSize,
+    size: 'small',
+    showSizeChanger: false,
+    onChange: (_page, size) => { if (size && size !== pageSize) setPageSize(size) },
+  }
+
+  return { toolbar, rows: filtered, columns: columns.filter((c) => !hiddenCols.includes(c.key)).map(withHeaderFilter), pagination }
 }

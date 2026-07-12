@@ -967,6 +967,7 @@ const DICT: Record<string, { zh: string; en: string }> = {
   "lv.kwPh": { zh: "关键字之间以空格进行分隔", en: "Separate keywords with spaces" },
   "lv.fieldPh": { zh: "请选择", en: "Select field" },
   "lv.createdBy": { zh: "创建人", en: "Created by" },
+  "lv.pageSize": { zh: "每页条数", en: "Page size" },
   "pa.grpProjectPerm": { zh: "项目与权限", en: "Project & Permissions" },
   "pa.navProjects": { zh: "项目", en: "Projects" },
   "pa.colProjectName": { zh: "项目名称", en: "Project" },

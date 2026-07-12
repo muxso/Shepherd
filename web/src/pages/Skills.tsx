@@ -128,7 +128,7 @@ function SkillsList({ items, loading, projectId, refresh, createOpen, setCreateO
           size="middle"
           loading={loading}
           dataSource={lv.rows}
-          pagination={{ pageSize: 15, size: 'small' }}
+          pagination={lv.pagination}
           locale={{ emptyText: <Empty description={t('skill.empty', '暂无技能')} /> }}
           columns={lv.columns}
         />

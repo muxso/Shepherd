@@ -185,6 +185,7 @@ function BugsList({ items, loading, projectId, refresh, setItems, relBug, setRel
             onRefresh={refresh}
             columns={lv.columns}
             data={lv.rows}
+            pagination={lv.pagination}
             loading={loading}
             emptyText={t('bug.empty', '暂无缺陷')}
           />

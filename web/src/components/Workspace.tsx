@@ -1,7 +1,7 @@
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { Button, Empty, Input, Space, Table, Tabs } from 'antd'
-import type { ColumnsType, TableProps } from 'antd/es/table'
+import type { ColumnsType, TablePaginationConfig, TableProps } from 'antd/es/table'
 import { PlusOutlined, ReloadOutlined } from '@ant-design/icons'
 import { useI18n } from '../i18n'
 
@@ -182,6 +182,7 @@ export function WorkList<T extends object>({
   onRowClick,
   emptyText,
   expandable,
+  pagination,
 }: {
   onNew?: () => void
   newLabel?: string
@@ -197,6 +198,8 @@ export function WorkList<T extends object>({
   emptyText?: string
   /** Inline expand preview (passed through to antd expandable); clicking the expand icon does not trigger row click. */
   expandable?: TableProps<T>['expandable']
+  /** Overrides the default pager (15/page), e.g. useListView's view-managed pagination. */
+  pagination?: TablePaginationConfig
 }) {
   const { t } = useI18n()
   return (
@@ -229,7 +232,7 @@ export function WorkList<T extends object>({
             },
             style: { cursor: 'pointer' },
           }) : undefined}
-          pagination={{ pageSize: 15, size: 'small', showTotal: (n) => t('ws.total', '共 {n} 条').replace('{n}', String(n)) }}
+          pagination={{ pageSize: 15, size: 'small', showTotal: (n) => t('ws.total', '共 {n} 条').replace('{n}', String(n)), ...pagination }}
           locale={{ emptyText: <Empty description={emptyText ?? t('common.empty', '暂无数据')} /> }}
         />
       </div>
