@@ -173,7 +173,7 @@ cargo test --workspace                      # everything; non-integration runs i
 cargo test --workspace -- --ignored         # real-database integration tests
 ```
 
-866 tests; the integration ones run against a real server + PG / Redis / MySQL. Besides the architecture guard there's a migration-uniqueness guard: a duplicate migration version number fails CI (sqlx silently drops duplicates — we hit that once and it cost us a missing-column 500).
+866 tests; the integration ones run against a real server + PG / Redis / MySQL. Besides the architecture guard, duplicate migration version numbers are rejected at startup and in CI (sqlx would otherwise silently drop one).
 
 ## Contributing
 
