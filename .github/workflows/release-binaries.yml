@@ -1,0 +1,153 @@
+# Build & publish cross-platform `agent-runtime` binaries to a GitHub Release.
+#
+# Triggered by pushing a `v*` tag (same trigger as images.yml), so a "发布"
+# also yields installable binaries for brew / Windows / bare-metal Linux/macOS.
+# No OpenSSL in agent-runtime (rustls-tls) → pure-Rust cross-compile, no system libs.
+#
+# Output (one archive per target, attached to the release):
+#   agent-runtime-x86_64-unknown-linux-gnu.tar.gz
+#   agent-runtime-aarch64-unknown-linux-gnu.tar.gz
+#   agent-runtime-x86_64-apple-darwin.tar.gz
+#   agent-runtime-aarch64-apple-darwin.tar.gz
+#   agent-runtime-x86_64-pc-windows-msvc.zip
+#   checksums.txt
+#
+# After the release is published, a PR is opened against the Homebrew tap
+# (muxso/homebrew-shepherd) to bump version + sha256 — gated on TAP_GITHUB_TOKEN.
+name: release-binaries
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: build ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { target: x86_64-unknown-linux-gnu, os: ubuntu-latest, zig: true }
+          - { target: aarch64-unknown-linux-gnu, os: ubuntu-latest, zig: true }
+          - { target: x86_64-apple-darwin, os: macos-latest, zig: false }
+          - { target: aarch64-apple-darwin, os: macos-latest, zig: false }
+          - { target: x86_64-pc-windows-msvc, os: windows-latest, zig: false }
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.86.0"
+          targets: ${{ matrix.target }}
+
+      - name: Install zig + cargo-zigbuild (Linux cross)
+        if: ${{ matrix.zig }}
+        run: |
+          sudo apt-get update && sudo apt-get install -y zig
+          cargo install cargo-zigbuild --locked
+        env:
+          CARGO_TERM_COLOR: always
+
+      - name: Build
+        run: |
+          if [ "${{ matrix.zig }}" = "true" ]; then
+            cargo zigbuild --release --target ${{ matrix.target }} -p agent-runtime
+          else
+            cargo build --release --target ${{ matrix.target }} -p agent-runtime
+          fi
+        env:
+          CARGO_TERM_COLOR: always
+
+      - name: Package (unix)
+        if: ${{ !contains(matrix.target, 'windows') }}
+        run: |
+          mkdir -p out
+          tar -czf "out/agent-runtime-${{ matrix.target }}.tar.gz" -C "target/${{ matrix.target }}/release" agent-runtime
+
+      - name: Package (windows)
+        if: ${{ contains(matrix.target, 'windows') }}
+        shell: bash
+        run: |
+          mkdir -p out
+          cd "target/${{ matrix.target }}/release"
+          powershell -NoProfile -Command "Compress-Archive -Path agent-runtime.exe -DestinationPath ../../../out/agent-runtime-${{ matrix.target }}.zip"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: agent-runtime-${{ matrix.target }}
+          path: out/agent-runtime-${{ matrix.target }}.*
+          if-no-files-found: error
+
+  release:
+    name: publish release assets
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Generate checksums
+        run: |
+          cd artifacts
+          sha256sum agent-runtime-* > checksums.txt
+          cat checksums.txt
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/agent-runtime-*
+          fail_on_unmatched_files: false
+
+  update-tap:
+    name: update homebrew tap
+    needs: release
+    if: ${{ secrets.TAP_GITHUB_TOKEN != '' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fetch macOS asset sha256 + version
+        id: meta
+        env:
+          GH_REPO: ${{ github.repository }}
+        run: |
+          VER="${GITHUB_REF_NAME}"
+          URL="https://github.com/${GH_REPO}/releases/download/${VER}/agent-runtime-x86_64-apple-darwin.tar.gz"
+          curl -sSL "$URL" -o /tmp/rt.tar.gz
+          SHA=$(sha256sum /tmp/rt.tar.gz | cut -d' ' -f1)
+          echo "version=${VER#v}" >> "$GITHUB_OUTPUT"
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout tap repo
+        uses: actions/checkout@v4
+        with:
+          repository: muxso/homebrew-shepherd
+          token: ${{ secrets.TAP_GITHUB_TOKEN }}
+          path: tap
+
+      - name: Bump formula and open PR
+        env:
+          GH_TOKEN: ${{ secrets.TAP_GITHUB_TOKEN }}
+        run: |
+          cd tap
+          git config user.email "ci@shepherd.local"
+          git config user.name "shepherd-ci"
+          git checkout -b "bump-${{ steps.meta.outputs.version }}"
+          sed -i.bak -E "s/^  version \".*\"/  version \"${{ steps.meta.outputs.version }}\"/" Formula/agent-runtime.rb
+          sed -i.bak -E "s/^  sha256 \".*\"/  sha256 \"${{ steps.meta.outputs.sha }}\"/" Formula/agent-runtime.rb
+          rm -f Formula/agent-runtime.rb.bak
+          git add Formula/agent-runtime.rb
+          git commit -m "agent-runtime ${{ steps.meta.outputs.version }}"
+          git push origin "bump-${{ steps.meta.outputs.version }}"
+          gh pr create --fill \
+            --title "agent-runtime ${{ steps.meta.outputs.version }}" \
+            --body "Auto-update from release ${{ github.ref_name }}" || true
