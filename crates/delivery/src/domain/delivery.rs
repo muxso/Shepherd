@@ -11,14 +11,21 @@ pub enum ExecutorKind {
     ClaudeCode,
     Codex,
     OpenCode,
+    CodeBuddy,
 }
 
 impl ExecutorKind {
+    /// Single authoritative list of executor kinds; queue adapters and tests consume
+    /// it, so a new variant only touches this file.
+    pub const ALL: [ExecutorKind; 4] =
+        [Self::ClaudeCode, Self::Codex, Self::OpenCode, Self::CodeBuddy];
+
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::ClaudeCode => "CLAUDE_CODE",
             Self::Codex => "CODEX",
             Self::OpenCode => "OPENCODE",
+            Self::CodeBuddy => "CODEBUDDY",
         }
     }
 
@@ -27,6 +34,7 @@ impl ExecutorKind {
             "CLAUDE_CODE" => Some(Self::ClaudeCode),
             "CODEX" => Some(Self::Codex),
             "OPENCODE" => Some(Self::OpenCode),
+            "CODEBUDDY" => Some(Self::CodeBuddy),
             _ => None,
         }
     }
@@ -124,6 +132,8 @@ pub struct DeliveryAttempt {
     pub decomposition_id: String,
     pub task_id: String,
     pub executor: ExecutorKind,
+    /// Target runtime name for targeted dispatch; None = any runtime with the capability.
+    pub target_runtime: Option<String>,
     pub status: AttemptStatus,
     pub run_id: Option<String>,
     pub deliverable: Option<Deliverable>,
@@ -136,12 +146,14 @@ impl DeliveryAttempt {
         decomposition_id: &str,
         task_id: &str,
         executor: ExecutorKind,
+        target_runtime: Option<&str>,
     ) -> Self {
         Self {
             id: id.to_string(),
             decomposition_id: decomposition_id.to_string(),
             task_id: task_id.to_string(),
             executor,
+            target_runtime: target_runtime.map(|s| s.to_string()),
             status: AttemptStatus::Dispatched,
             run_id: None,
             deliverable: None,
@@ -199,7 +211,7 @@ mod tests {
     }
 
     fn attempt() -> DeliveryAttempt {
-        DeliveryAttempt::dispatched("a1", "d1", "t1", ExecutorKind::ClaudeCode)
+        DeliveryAttempt::dispatched("a1", "d1", "t1", ExecutorKind::ClaudeCode, None)
     }
 
     #[test]
@@ -252,14 +264,25 @@ mod tests {
 
     #[test]
     fn enum_str_roundtrips() {
-        for e in [ExecutorKind::ClaudeCode, ExecutorKind::Codex, ExecutorKind::OpenCode] {
+        for e in ExecutorKind::ALL {
             assert_eq!(ExecutorKind::parse(e.as_str()), Some(e));
         }
         assert_eq!(ExecutorKind::parse("X"), None);
-        for k in [DeliverableKind::Diff, DeliverableKind::PullRequest, DeliverableKind::Branch, DeliverableKind::Patch] {
+        for k in [
+            DeliverableKind::Diff,
+            DeliverableKind::PullRequest,
+            DeliverableKind::Branch,
+            DeliverableKind::Patch,
+        ] {
             assert_eq!(DeliverableKind::parse(k.as_str()), Some(k));
         }
-        for s in [AttemptStatus::Dispatched, AttemptStatus::Running, AttemptStatus::Delivered, AttemptStatus::Failed, AttemptStatus::Stopped] {
+        for s in [
+            AttemptStatus::Dispatched,
+            AttemptStatus::Running,
+            AttemptStatus::Delivered,
+            AttemptStatus::Failed,
+            AttemptStatus::Stopped,
+        ] {
             assert_eq!(AttemptStatus::parse(s.as_str()), Some(s));
         }
     }

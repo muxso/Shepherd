@@ -1,4 +1,4 @@
-// 方法/状态/结果 → AntD Tag 颜色,统一视觉。
+// Method/status/outcome → AntD Tag color mapping.
 
 export function methodColor(m: string): string {
   switch (m.toUpperCase()) {
@@ -37,19 +37,19 @@ export function statusColor(s: string): string {
   }
 }
 
-/** 优先级/等级 → 颜色(P0 最高=红,依次 橙/蓝/灰)。用例与场景共用。 */
+/** Priority/level → color (P0 highest = red). Shared by cases and scenarios. */
 export function priorityColor(p: string): string {
   switch (p.toUpperCase()) {
     case 'P0':
-      return '#ff4d4f' // 红:最高
+      return '#ff4d4f'
     case 'P1':
-      return '#fa8c16' // 橙
+      return '#fa8c16'
     case 'P2':
-      return '#1677ff' // 蓝
+      return '#1677ff'
     case 'P3':
-      return '#52c41a' // 绿
+      return '#52c41a'
     case 'P4':
-      return '#8a9099' // 灰
+      return '#8a9099'
     default:
       return '#8a9099'
   }

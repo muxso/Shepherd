@@ -3,6 +3,8 @@ name = "runner-agent"
 edition.workspace = true
 version.workspace = true
 license.workspace = true
+publish.workspace = true
+rust-version.workspace = true
 
 # 独立可部署的执行 agent:接收**自包含**的请求规格(method/url/headers/body/断言),
 # 就地执行并回传结果。部署在目标环境内(它能连到该环境的被测服务),不依赖中央 DB。
@@ -12,16 +14,16 @@ name = "runner-agent"
 path = "src/main.rs"
 
 [dependencies]
-api-runner = { path = "../api-runner" }
+api-runner = { workspace = true }
 # 协议插件:启用哪些 feature = 本 agent 支持哪些协议。
 # 默认 http/grpc/sql;可 `--no-default-features --features http`(等)裁出只支持部分协议的 agent。
-probe = { path = "../probe", default-features = false }
-axum = "0.8"
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "signal"] }
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+probe = { workspace = true }
+axum = { workspace = true }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "net", "signal"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
 
 [features]
 default = ["http", "grpc", "sql", "mysql", "redis", "websocket"]
@@ -33,7 +35,7 @@ redis = ["probe/redis"]
 websocket = ["probe/websocket"]
 
 [dev-dependencies]
-tower = { version = "0.5", features = ["util"] }
+tower = { workspace = true, features = ["util"] }
 
 [lints]
 workspace = true

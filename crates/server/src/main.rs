@@ -1,10 +1,16 @@
+//! Shepherd HTTP server composition root: wires each context's pg adapters and
+//! http routers, exposing the REST API, OpenAPI docs, and MCP tool entrypoint.
+
 #![allow(clippy::doc_lazy_continuation)]
 
 mod breakdown_route;
+mod case_drafter;
+mod case_exec_summary;
 mod config;
-mod design_bridge;
 mod debug_send;
 mod decomposition_run;
+mod design_bridge;
+mod import_scheduler;
 mod judge;
 mod llm;
 mod mcp_bus;
@@ -12,14 +18,13 @@ mod mcp_tools;
 mod metrics;
 mod openapi;
 mod orchestration;
-mod case_exec_summary;
-mod import_scheduler;
 mod perf_run;
 mod plan_run;
 mod plan_scheduler;
-mod project_file;
 mod planner;
+mod prd_draft_route;
 mod problem;
+mod project_file;
 mod ratelimit;
 mod references_route;
 mod report_archive_job;
@@ -35,52 +40,57 @@ use axum::routing::get;
 use axum::Router;
 use migrate::PgPool;
 
-use bug::application::{BugFollowersUseCase, ChangeBugStatusUseCase, CreateBugUseCase, ListBugsUseCase};
-use bug::adapters::pg::PgBugRepository;
-use follow::application::FollowService;
-use follow::adapters::pg::PgFollowStore;
-use api_test::application::StartBatchRunUseCase;
 use api_test::adapters::jmeter::HttpTaskDispatcher;
 use api_test::adapters::local::LocalRunnerDispatcher;
 use api_test::adapters::pg::{
     PgBatchReportExecutor, PgCaseResultSink, PgCaseSpecSource, PgResourcePool,
 };
-use test_plan::application::{CreatePlanUseCase, PlanStatisticsUseCase};
-use test_plan::adapters::pg::PgPlanRepository;
-use case::application::SubmitReviewUseCase;
+use api_test::application::StartBatchRunUseCase;
+use bug::adapters::pg::PgBugRepository;
+use bug::application::{
+    BugFollowersUseCase, BugRelationsUseCase, ChangeBugStatusUseCase, CreateBugUseCase,
+    ListBugsUseCase,
+};
 use case::adapters::pg::PgReviewRepository;
-use project::application::{CreateProjectUseCase, ListProjectsUseCase};
+use case::application::SubmitReviewUseCase;
+use delivery::adapters::pg::PgDeliveryRepository;
+use delivery::application::DeliveryService;
+use delivery::ports::AgentExecutor;
+use follow::adapters::pg::PgFollowStore;
+use follow::application::FollowService;
 use project::adapters::pg::PgProjectRepository;
+use project::application::{CreateProjectUseCase, ListProjectsUseCase};
+use requirement::adapters::pg::PgRequirementRepository;
 use requirement::application::{
     CreateRequirementUseCase, ListRequirementsUseCase, RequirementService,
 };
-use requirement::adapters::pg::PgRequirementRepository;
-use task::application::{BreakdownUseCase, CreateDecompositionUseCase, TaskService};
-use task::adapters::pg::PgTaskRepository;
-use delivery::application::DeliveryService;
-use delivery::adapters::pg::PgDeliveryRepository;
-use delivery::ports::AgentExecutor;
-use verification::application::{CreateVerificationUseCase, VerificationService};
-use verification::adapters::pg::PgVerificationRepository;
-use skill::application::{CreateSkillUseCase, SkillService};
 use skill::adapters::pg::PgSkillRepository;
+use skill::application::{CreateSkillUseCase, SkillService};
 use system_setting::adapters::auth::Argon2PasswordHasher;
 use system_setting::adapters::oidc::{FeishuProvider, WecomProvider};
 use system_setting::adapters::pg::{
-    PgCredentialRepository, PgExternalUserRepository, PgOrgRepository, PgRoleRepository,
-    PgSessionStore, PgUserDirectory, PgUserRepository, PgUserRoleQuery, PgUserRoleRepository,
+    PgApiKeyRepository, PgCredentialRepository, PgExternalUserRepository, PgLlmModelRepository,
+    PgOrgRepository, PgRoleRepository, PgSessionStore, PgUserDirectory, PgUserRepository,
+    PgUserRoleQuery, PgUserRoleRepository,
 };
+use system_setting::adapters::ApiKeySessionStore;
 use system_setting::application::{
-    CreateUserUseCase, LoginUseCase, OidcLoginUseCase, OrganizationService, ResolveUserNamesUseCase,
-    RoleService, UserRoleService, UserService,
+    CreateUserUseCase, LoginUseCase, OidcLoginUseCase, OrganizationService,
+    ResolveUserNamesUseCase, RoleService, UserRoleService, UserService,
 };
 use system_setting::ports::PasswordHasher as _;
+use task::adapters::pg::PgTaskRepository;
+use task::application::{BreakdownUseCase, CreateDecompositionUseCase, TaskService};
+use test_plan::adapters::pg::PgPlanRepository;
+use test_plan::application::{CreatePlanUseCase, PlanStatisticsUseCase};
+use verification::adapters::pg::PgVerificationRepository;
+use verification::application::{CreateVerificationUseCase, VerificationService};
 
 async fn healthz() -> &'static str {
     "ok"
 }
 
-// 2s 短超时:PG 宕机时快速 503,不卡到连接池 acquire 超时。
+// Short 2s timeout: return 503 fast when PG is down instead of blocking on pool acquire.
 async fn readyz(State(pool): State<PgPool>) -> StatusCode {
     match tokio::time::timeout(Duration::from_secs(2), migrate::ping(&pool)).await {
         Ok(true) => StatusCode::OK,
@@ -148,8 +158,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let user_repo = Arc::new(PgUserRepository::new(pool.clone()));
     let user_uc = CreateUserUseCase::new(user_repo.clone());
     let user_admin = UserService::new(user_repo);
-    // 展示名解析直查 ms_user,绕开任何拦截(OIDC quirk 的修复)。
+    // Display-name resolution queries ms_user directly, bypassing any interception (fixes an OIDC quirk).
     let resolve_uc = ResolveUserNamesUseCase::new(Arc::new(PgUserDirectory::new(pool.clone())));
+
+    // Weak default passwords are the prime target of internet scans; don't refuse to start
+    // (keeps local dev working) but log a warning that is hard to miss.
+    if matches!(cfg.admin_pw.as_str(), "admin" | "change-me" | "s3cret") {
+        tracing::warn!(
+            "SHEPHERD_ADMIN_PASSWORD 使用弱默认值({:?});生产部署必须改为强随机口令",
+            cfg.admin_pw
+        );
+    }
 
     let hasher = Argon2PasswordHasher;
     let creds = PgCredentialRepository::new(pool.clone());
@@ -166,7 +185,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 "BUG:READ+ADD+UPDATE".to_string(),
                 "TEST_PLAN:READ+ADD+EXECUTE".to_string(),
                 "CASE_REVIEW:READ+REVIEW".to_string(),
-                "API_DEFINITION:READ+ADD+UPDATE+DELETE".to_string(),
+                "API_DEFINITION:READ+ADD+UPDATE+DELETE+EXECUTE".to_string(),
                 "API_SCENARIO:READ+ADD+UPDATE+DELETE+EXECUTE".to_string(),
                 "ENVIRONMENT:READ+ADD+UPDATE+DELETE".to_string(),
                 "FUNCTIONAL_CASE:READ+ADD+UPDATE+DELETE".to_string(),
@@ -179,17 +198,30 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 "VERIFICATION:READ+ADD+UPDATE".to_string(),
                 "SKILL:READ+ADD+UPDATE+DELETE".to_string(),
                 "COMMENT:READ+ADD+DELETE".to_string(),
+                "APIKEY:READ+ADD+DELETE".to_string(),
             ],
         )
         .await?;
-    let sessions = Arc::new(PgSessionStore::new(pool.clone()));
+    // Composite store: sak_-prefixed tokens go through API-key verification (agent dispatch
+    // credentials); everything else stays PG sessions. No route changes needed.
+    let apikeys = Arc::new(PgApiKeyRepository::new(pool.clone()));
+    let sessions: Arc<dyn webauth::SessionStore> = Arc::new(ApiKeySessionStore::new(
+        Arc::new(PgSessionStore::new(pool.clone())),
+        apikeys.clone(),
+        Arc::new(Argon2PasswordHasher),
+    ));
     let ttl_secs = cfg.session_ttl_secs;
     let role_repo = Arc::new(PgRoleRepository::new(pool.clone()));
     let user_role_repo = Arc::new(PgUserRoleRepository::new(pool.clone()));
-    let mut login_uc =
-        LoginUseCase::new(Arc::new(creds), Arc::new(hasher), sessions.clone(), user_role_repo.clone())
-            .with_ttl_secs(ttl_secs);
-    // 可选 LDAP 目录认证(本地授权 + 外部认证):仅当 SHEPHERD_LDAP_* 配齐才启用。
+    let mut login_uc = LoginUseCase::new(
+        Arc::new(creds),
+        Arc::new(hasher),
+        sessions.clone(),
+        user_role_repo.clone(),
+    )
+    .with_ttl_secs(ttl_secs);
+    // Optional LDAP directory auth (local authorization + external authentication);
+    // enabled only when all SHEPHERD_LDAP_* vars are set.
     if let Some(ldap) =
         system_setting::adapters::ldap::LdapAuthenticator::from_env(|k| std::env::var(k).ok())
     {
@@ -198,7 +230,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     let creds_admin: Arc<dyn system_setting::ports::CredentialRepository> =
         Arc::new(PgCredentialRepository::new(pool.clone()));
-    let hasher_admin: Arc<dyn system_setting::ports::PasswordHasher> = Arc::new(Argon2PasswordHasher);
+    let hasher_admin: Arc<dyn system_setting::ports::PasswordHasher> =
+        Arc::new(Argon2PasswordHasher);
     let user_role_query: Arc<dyn system_setting::ports::UserRoleQuery> =
         Arc::new(PgUserRoleQuery::new(pool.clone()));
     let user_routes = system_setting::adapters::http::router(
@@ -217,11 +250,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Arc::new(PgExternalUserRepository::new(pool.clone(), vec!["PROJECT:READ".to_string()]));
     let mut oidc_uc = OidcLoginUseCase::new(ext_users, sessions.clone()).with_ttl_secs(ttl_secs);
     if let Some(p) = &cfg.feishu {
-        oidc_uc = oidc_uc.register(Arc::new(FeishuProvider::new(&p.app_id, &p.app_secret, &p.redirect)));
+        oidc_uc =
+            oidc_uc.register(Arc::new(FeishuProvider::new(&p.app_id, &p.app_secret, &p.redirect)));
         tracing::info!("registered OIDC provider: feishu");
     }
     if let Some(p) = &cfg.wecom {
-        oidc_uc = oidc_uc.register(Arc::new(WecomProvider::new(&p.app_id, &p.app_secret, &p.redirect)));
+        oidc_uc =
+            oidc_uc.register(Arc::new(WecomProvider::new(&p.app_id, &p.app_secret, &p.redirect)));
         tracing::info!("registered OIDC provider: wecom");
     }
     let oidc_routes = system_setting::adapters::http::oidc_router(oidc_uc);
@@ -232,6 +267,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let role_routes = system_setting::adapters::http::role_router(
         RoleService::new(role_repo.clone()),
         UserRoleService::new(role_repo, user_role_repo),
+        sessions.clone(),
+    );
+
+    let apikey_routes = system_setting::adapters::apikey_http::router(
+        apikeys.clone(),
+        Arc::new(Argon2PasswordHasher),
+        sessions.clone(),
+    );
+
+    // Per-user model settings (/me/llm-model).
+    let llm_model_routes = system_setting::adapters::llm_model_http::router(
+        Arc::new(PgLlmModelRepository::new(pool.clone())),
         sessions.clone(),
     );
 
@@ -247,6 +294,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         )),
         sessions.clone(),
     );
+    let project_template_routes = project::adapters::template_http::router(
+        project::application::TemplateService::new(Arc::new(
+            project::adapters::pg_template::PgTemplateRepository::new(pool.clone()),
+        )),
+        sessions.clone(),
+    );
 
     let req_repo = Arc::new(PgRequirementRepository::new(pool.clone()));
     let req_admin = RequirementService::new(req_repo.clone());
@@ -257,7 +310,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         sessions.clone(),
     );
 
-    // 通用评论(多态挂任意实体:REQUIREMENT / BUG / FUNCTIONAL_CASE …)。
+    // Generic comments (polymorphic: attach to any entity — REQUIREMENT / BUG / FUNCTIONAL_CASE ...).
     let comment_repo = Arc::new(comment::adapters::pg::PgCommentRepository::new(pool.clone()));
     let comment_routes = comment::adapters::http::router(
         comment::application::AddCommentUseCase::new(comment_repo.clone()),
@@ -285,8 +338,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         BreakdownUseCase::new(task_repo.clone(), task_planner.clone()),
         CreateVerificationUseCase::new(ver_repo.clone()),
         case_repo.clone(),
+        llm::case_drafter(),
         sessions.clone(),
     );
+    let prd_draft_routes = prd_draft_route::router(llm::prd_drafter(), sessions.clone());
     let verification_routes = verification::adapters::http::router(
         CreateVerificationUseCase::new(ver_repo.clone()),
         ver_admin.clone(),
@@ -301,7 +356,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         sessions.clone(),
     );
 
-    // SHEPHERD_AGENT_ASYNC:子进程后台跑 + HTTP 自回调收尾(派发秒回,绕开 30s 请求超时)。
+    // SHEPHERD_AGENT_ASYNC: run the subprocess in the background and finish via an HTTP
+    // self-callback, so dispatch returns immediately and avoids the 30s request timeout.
     let mut fleet_queue: Option<Arc<dyn delivery::ports::WorkQueue>> = None;
     let mut fleet_registry: Option<Arc<dyn delivery::ports::FleetRegistry>> = None;
     let agent: Arc<dyn AgentExecutor> = if cfg.agent.fleet {
@@ -328,7 +384,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let argv: Vec<String> = cmd.split_whitespace().map(String::from).collect();
         let mut ex = delivery::adapters::local::LocalCommandAgentExecutor::new(argv.clone(), argv);
         if cfg.agent.async_callback {
-            use webauth::SessionStore as _; // 令 sessions.create 可见
             let cb_host = bind.replace("0.0.0.0", "127.0.0.1");
             let cb_base = format!("http://{cb_host}");
             let perms = webauth::PermissionSet::from_raw(["DELIVERY:READ+UPDATE".to_string()])
@@ -345,7 +400,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     } else {
         Arc::new(delivery::adapters::EchoAgentExecutor::new())
     };
-    // 在 agent 被移入观察者前留一份克隆给 design 起草执行者。
+    // Keep a clone for the design drafting executor before `agent` moves into the observer.
     let design_agent = agent.clone();
     let base_delivery =
         DeliveryService::new(Arc::new(PgDeliveryRepository::new(pool.clone())), agent.clone());
@@ -361,7 +416,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut delivery_svc = base_delivery.with_observer(delivery_observer);
     if let Some(q) = &fleet_queue {
         delivery_svc = delivery_svc.with_queue(q.clone());
-        // 回收任务:周期重投「持有者 runtime 已离线 + 过容忍期」的 pending(心跳判活)。
+        // Reaper: periodically requeue pending work whose holder runtime is offline
+        // (liveness via heartbeat) and past the grace period.
         let q = q.clone();
         let reg = fleet_registry.clone();
         let interval_s: u64 = cfg.agent.fleet_reap_interval_s;
@@ -384,8 +440,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         });
     }
     let mcp_delivery = delivery_svc.clone();
-    let decomposition_run_routes =
-        decomposition_run::router(task_admin.clone(), delivery_svc.clone(), req_admin.clone(), sessions.clone());
+    let decomposition_run_routes = decomposition_run::router(
+        task_admin.clone(),
+        delivery_svc.clone(),
+        req_admin.clone(),
+        sessions.clone(),
+    );
     let delivery_routes = delivery::adapters::http::router(delivery_svc, sessions.clone());
     let proposal_svc = design::application::ProposalService::new(Arc::new(
         design::adapters::pg::PgProposalRepository::new(pool.clone()),
@@ -437,15 +497,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     let review_repo = Arc::new(PgReviewRepository::new(pool.clone()));
-    let case_routes =
-        case::adapters::http::router(SubmitReviewUseCase::new(review_repo.clone()), review_repo, sessions.clone());
+    let case_routes = case::adapters::http::router(
+        SubmitReviewUseCase::new(review_repo.clone()),
+        review_repo,
+        sessions.clone(),
+    );
 
     let bug_repo = Arc::new(PgBugRepository::new(pool.clone()));
     let bug_routes = bug::adapters::http::router(
         CreateBugUseCase::new(bug_repo.clone()),
         ChangeBugStatusUseCase::new(bug_repo.clone()),
         ListBugsUseCase::new(bug_repo.clone()),
-        BugFollowersUseCase::new(bug_repo),
+        BugFollowersUseCase::new(bug_repo.clone()),
+        BugRelationsUseCase::new(bug_repo),
         sessions.clone(),
     );
 
@@ -462,7 +526,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
     let plan_run_routes = plan_run::router(pool.clone(), sessions.clone());
 
-    // 默认选 local 而非 Noop:否则 `api batch-run` 会静默停在 RUNNING 且无结果。
+    // Default to local rather than Noop: otherwise `api batch-run` silently stalls in RUNNING with no results.
     let dispatcher: Arc<dyn api_test::ports::TaskDispatcher> = match &cfg.executor_url {
         Some(url) => {
             tracing::info!("api runner: HTTP dispatcher (JMeter) → {url}");
@@ -479,7 +543,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     Arc::new(PgCaseSpecSource::new(pool.clone())),
                     Arc::new(PgCaseResultSink::new(pool.clone())),
                 )
-                .with_env_writer(Arc::new(api_test::adapters::pg::PgEnvironment::new(pool.clone()))),
+                .with_env_writer(Arc::new(
+                    api_test::adapters::pg::PgEnvironment::new(pool.clone()),
+                )),
             )
         }
     };
@@ -487,7 +553,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let api_executor = Arc::new(PgBatchReportExecutor::new(pool.clone(), dispatcher));
     let api_envs = Arc::new(api_test::adapters::pg::PgEnvironment::new(pool.clone()));
     let batch_run_uc = StartBatchRunUseCase::new(api_pools, api_executor, api_envs.clone());
-    let apitest_routes = api_test::adapters::http::router(batch_run_uc.clone());
+    let apitest_routes = api_test::adapters::http::router(batch_run_uc.clone(), sessions.clone());
     let api_pool_admin = Arc::new(api_test::adapters::pg::PgResourcePoolAdmin::new(pool.clone()));
     let resource_pool_routes = api_test::adapters::http::resource_pool_router(
         api_test::application::CreateResourcePoolUseCase::new(api_pool_admin.clone()),
@@ -499,10 +565,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         api_test::application::ListCaseExecutionsUseCase::new(Arc::new(
             api_test::adapters::PgCaseExecutionQuery::new(pool.clone()),
         )),
+        sessions.clone(),
     );
 
-    let apidef_repo = Arc::new(api_definition::adapters::pg::PgApiDefinitionRepository::new(pool.clone()));
-    let apidef_routes = api_definition::adapters::http::router(apidef_repo.clone(), sessions.clone());
+    let apidef_repo =
+        Arc::new(api_definition::adapters::pg::PgApiDefinitionRepository::new(pool.clone()));
+    let apidef_routes =
+        api_definition::adapters::http::router(apidef_repo.clone(), sessions.clone());
 
     let env_repo = Arc::new(environment::adapters::pg::PgEnvironmentRepository::new(pool.clone()));
     let environment_routes = environment::adapters::http::router(env_repo, sessions.clone());
@@ -567,11 +636,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let project_file_routes = project_file::router(pool.clone(), sessions.clone());
 
     let app = routes::assemble(vec![
-        routes::group("system", user_routes.merge(oidc_routes).merge(org_routes).merge(role_routes)),
+        routes::group(
+            "system",
+            user_routes
+                .merge(oidc_routes)
+                .merge(org_routes)
+                .merge(role_routes)
+                .merge(apikey_routes)
+                .merge(llm_model_routes),
+        ),
         routes::group(
             "project",
             project_routes
                 .merge(project_member_routes)
+                .merge(project_template_routes)
                 .merge(project_file_routes)
                 .merge(references_routes),
         ),
@@ -584,12 +662,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .merge(design_routes)
                 .merge(decomposition_run_routes)
                 .merge(verification_routes)
-                .merge(breakdown_routes),
+                .merge(breakdown_routes)
+                .merge(prd_draft_routes),
         ),
         routes::group("skill", skill_routes.merge(mcp_routes)),
         routes::group(
             "test-case",
-            case_routes.merge(case_exec_routes).merge(case_summary_routes).merge(functional_case_routes),
+            case_routes
+                .merge(case_exec_routes)
+                .merge(case_summary_routes)
+                .merge(functional_case_routes),
         ),
         routes::group("bug", bug_routes.merge(follow_routes)),
         routes::group("test-plan", plan_routes.merge(plan_run_routes).merge(plan_scheduler_routes)),

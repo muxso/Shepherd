@@ -26,7 +26,7 @@ impl InMemoryPlanRepository {
     }
 
     fn insert_internal(&self, new_plan: &NewPlan) -> Plan {
-        let mut state = self.state.lock().expect("lock");
+        let mut state = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         state.seq += 1;
         let plan = Plan {
             id: format!("plan-{}", state.seq),
@@ -35,7 +35,8 @@ impl InMemoryPlanRepository {
             plan_type: new_plan.plan_type,
             group_id: new_plan.group_id.clone(),
             archived: false,
-            // 无真实时钟:用单调递增的 seq 当创建时间,保证列表排序稳定。
+            // No real clock: use the monotonically increasing seq as the creation time so list
+            // ordering stays stable.
             created_at_ms: state.seq as i64,
         };
         state.plans.insert(plan.id.clone(), plan.clone());
@@ -47,11 +48,19 @@ impl InMemoryPlanRepository {
     }
 
     pub fn set_counts(&self, plan_id: &str, counts: CaseCounts) {
-        self.state.lock().expect("lock").counts.insert(plan_id.to_string(), counts);
+        self.state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .counts
+            .insert(plan_id.to_string(), counts);
     }
 
     pub fn set_threshold(&self, plan_id: &str, threshold: f64) {
-        self.state.lock().expect("lock").thresholds.insert(plan_id.to_string(), threshold);
+        self.state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .thresholds
+            .insert(plan_id.to_string(), threshold);
     }
 }
 
@@ -62,14 +71,20 @@ impl PlanRepository for InMemoryPlanRepository {
     }
 
     async fn get(&self, id: &str) -> Result<Option<Plan>, RepoError> {
-        Ok(self.state.lock().expect("lock").plans.get(id).cloned())
+        Ok(self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .plans
+            .get(id)
+            .cloned())
     }
 
     async fn children(&self, group_id: &str) -> Result<Vec<Plan>, RepoError> {
         let mut children: Vec<Plan> = self
             .state
             .lock()
-            .expect("lock")
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .plans
             .values()
             .filter(|p| p.group_id == group_id)
@@ -80,7 +95,7 @@ impl PlanRepository for InMemoryPlanRepository {
     }
 
     async fn case_counts(&self, plan_id: &str) -> Result<CaseCounts, RepoError> {
-        let state = self.state.lock().expect("lock");
+        let state = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         match state.cases.get(plan_id) {
             Some(cases) if !cases.is_empty() => {
                 let mut c = CaseCounts::default();
@@ -100,11 +115,18 @@ impl PlanRepository for InMemoryPlanRepository {
     }
 
     async fn pass_threshold(&self, plan_id: &str) -> Result<f64, RepoError> {
-        Ok(self.state.lock().expect("lock").thresholds.get(plan_id).copied().unwrap_or(0.0))
+        Ok(self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .thresholds
+            .get(plan_id)
+            .copied()
+            .unwrap_or(0.0))
     }
 
     async fn link_case(&self, plan_id: &str, case_id: &str, name: &str) -> Result<(), RepoError> {
-        let mut state = self.state.lock().expect("lock");
+        let mut state = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let cases = state.cases.entry(plan_id.to_string()).or_default();
         if !cases.iter().any(|c| c.case_id == case_id) {
             cases.push(PlanCase {
@@ -124,7 +146,7 @@ impl PlanRepository for InMemoryPlanRepository {
         status: CaseStatus,
         result: Option<&CaseResult>,
     ) -> Result<bool, RepoError> {
-        let mut state = self.state.lock().expect("lock");
+        let mut state = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let Some(cases) = state.cases.get_mut(plan_id) else { return Ok(false) };
         match cases.iter_mut().find(|c| c.case_id == case_id) {
             Some(pc) => {
@@ -137,14 +159,21 @@ impl PlanRepository for InMemoryPlanRepository {
     }
 
     async fn list_cases(&self, plan_id: &str) -> Result<Vec<PlanCase>, RepoError> {
-        Ok(self.state.lock().expect("lock").cases.get(plan_id).cloned().unwrap_or_default())
+        Ok(self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .cases
+            .get(plan_id)
+            .cloned()
+            .unwrap_or_default())
     }
 
     async fn list(&self, project_id: &str) -> Result<Vec<Plan>, RepoError> {
         let mut plans: Vec<Plan> = self
             .state
             .lock()
-            .expect("lock")
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .plans
             .values()
             .filter(|p| p.project_id == project_id && !p.archived)
@@ -155,7 +184,7 @@ impl PlanRepository for InMemoryPlanRepository {
     }
 
     async fn rename(&self, id: &str, name: &str) -> Result<bool, RepoError> {
-        let mut state = self.state.lock().expect("lock");
+        let mut state = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         match state.plans.get_mut(id) {
             Some(p) => {
                 p.name = name.to_string();
@@ -166,7 +195,7 @@ impl PlanRepository for InMemoryPlanRepository {
     }
 
     async fn delete(&self, id: &str) -> Result<bool, RepoError> {
-        let mut state = self.state.lock().expect("lock");
+        let mut state = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         state.cases.remove(id);
         Ok(state.plans.remove(id).is_some())
     }

@@ -10,7 +10,8 @@ pub enum MemberError {
     InvalidRole(String),
 }
 
-/// 项目角色。授权仍由全局 RBAC 决定;这里只是项目内的成员身份标注。
+/// Project role. Authorization is still decided by global RBAC; this only labels membership
+/// within the project.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MemberRole {
     Owner,
@@ -37,7 +38,7 @@ impl MemberRole {
     }
 }
 
-/// 入参校验后的成员归属(尚未落库)。
+/// A validated membership that has not been persisted yet.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NewMember {
     pub project_id: String,

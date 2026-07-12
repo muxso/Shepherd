@@ -73,10 +73,7 @@ pub struct UserRoleService {
 }
 
 impl UserRoleService {
-    pub fn new(
-        roles: Arc<dyn RoleRepository>,
-        user_roles: Arc<dyn UserRoleRepository>,
-    ) -> Self {
+    pub fn new(roles: Arc<dyn RoleRepository>, user_roles: Arc<dyn UserRoleRepository>) -> Self {
         Self { roles, user_roles }
     }
 
@@ -142,8 +139,10 @@ mod tests {
         let roles = Arc::new(InMemoryRoleRepository::new());
         let ur = Arc::new(InMemoryUserRoleRepository::new(roles.clone()));
         let role_svc = RoleService::new(roles.clone());
-        let a = role_svc.create("a", RoleScope::System, vec!["PROJECT:READ".into()]).await.expect("a");
-        let b = role_svc.create("b", RoleScope::System, vec!["BUG:READ+ADD".into()]).await.expect("b");
+        let a =
+            role_svc.create("a", RoleScope::System, vec!["PROJECT:READ".into()]).await.expect("a");
+        let b =
+            role_svc.create("b", RoleScope::System, vec!["BUG:READ+ADD".into()]).await.expect("b");
 
         let grant = UserRoleService::new(roles, ur.clone());
         grant.grant("u1", &a.id).await.expect("g1");

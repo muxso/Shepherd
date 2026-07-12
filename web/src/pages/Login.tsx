@@ -1,8 +1,7 @@
 import { useState } from 'react'
 import { Card, Form, Input, Button, Typography } from 'antd'
 import { message } from '../feedback'
-import { DeploymentUnitOutlined } from '@ant-design/icons'
-import { api, ApiError, userStore } from '../api'
+import { api, ApiError, userIdStore, userStore } from '../api'
 import { useApp } from '../context'
 import { useI18n } from '../i18n'
 
@@ -14,8 +13,9 @@ export default function Login() {
   const onFinish = async (v: { username: string; password: string }) => {
     setLoading(true)
     try {
-      const { token } = await api.login(v.username, v.password)
-      userStore.set(v.username) // 供个人中心 / 创建人列展示(后端暂无 /me)
+      const { token, userId } = await api.login(v.username, v.password)
+      userStore.set(v.username) // shown in profile / creator columns (backend has no /me yet)
+      if (userId) userIdStore.set(userId) // created_by identity; "created by me" filters match on it
       login(token)
       message.success(t('login.ok', '登录成功'))
     } catch (e) {
@@ -37,11 +37,11 @@ export default function Login() {
     >
       <Card style={{ width: 360 }} variant="borderless">
         <div style={{ textAlign: 'center', marginBottom: 24 }}>
-          <DeploymentUnitOutlined style={{ fontSize: 36, color: 'var(--brand)' }} />
+          <img src="/logo.svg" alt="Shepherd" width={44} height={44} style={{ display: 'block', margin: '0 auto' }} />
           <Typography.Title level={3} style={{ margin: '8px 0 0' }}>
             Shepherd
           </Typography.Title>
-          <Typography.Text type="secondary">{t('login.subtitle', '接口测试管理平台')}</Typography.Text>
+          <Typography.Text type="secondary">{t('login.subtitle', '让 AI 写代码,交付由你把关')}</Typography.Text>
         </div>
         <Form layout="vertical" onFinish={onFinish} initialValues={{ username: 'admin' }}>
           <Form.Item name="username" label={t('login.username', '用户名')} rules={[{ required: true }]}>

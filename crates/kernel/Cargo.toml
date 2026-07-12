@@ -3,6 +3,8 @@ name = "kernel"
 edition.workspace = true
 version.workspace = true
 license.workspace = true
+publish.workspace = true
+rust-version.workspace = true
 
 # 阶段 0:共享内核。纯逻辑,零依赖。对应 Java 版 framework/sdk 里那些 util。
 [dependencies]

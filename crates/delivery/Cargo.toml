@@ -3,24 +3,26 @@ name = "delivery"
 edition.workspace = true
 version.workspace = true
 license.workspace = true
+publish.workspace = true
+rust-version.workspace = true
 
 # Shepherd 交付上下文:把任务派发给 AI 执行者(Claude Code / Codex)并记录交付尝试。
 # 复用 api-test 的"出站端口 + DispatchOutcome(异步 Accepted / 同步 Completed)"模式:
 # `AgentExecutor` 端口背后两种适配器并存 —— 本地子进程(exec-local)与 Agent HTTP API(exec-http),
 # 由组装根按环境/任务路由。领域/应用不感知具体执行器。
 [dependencies]
-kernel = { path = "../kernel" }
-async-trait = "0.1"
-thiserror = "2"
-sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "postgres"], optional = true }
-axum = { version = "0.8", optional = true }
-utoipa = { version = "5", optional = true }
-serde = { version = "1", features = ["derive"], optional = true }
-serde_json = { version = "1", optional = true }
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"], optional = true }
-redis = { version = "0.27", default-features = false, features = ["tokio-comp", "streams"], optional = true }
-tokio = { version = "1", features = ["process", "io-util", "macros", "time"], optional = true }
-webauth = { path = "../webauth", optional = true }
+kernel = { workspace = true }
+async-trait = { workspace = true }
+thiserror = { workspace = true }
+sqlx = { workspace = true, features = ["runtime-tokio", "postgres"], optional = true }
+axum = { workspace = true, optional = true }
+utoipa = { workspace = true, optional = true }
+serde = { workspace = true, optional = true }
+serde_json = { workspace = true, optional = true }
+reqwest = { workspace = true, features = ["json", "rustls-tls"], optional = true }
+redis = { workspace = true, features = ["tokio-comp", "streams"], optional = true }
+tokio = { workspace = true, features = ["process", "io-util", "macros", "time"], optional = true }
+webauth = { workspace = true, optional = true }
 
 [features]
 pg = ["dep:sqlx"]
@@ -32,12 +34,12 @@ exec-queue = ["http", "dep:tokio"]                           # 执行者机群:�
 exec-queue-redis = ["exec-queue", "dep:redis", "dep:serde_json"]  # 分布式队列:Redis Streams 消费组(多副本+多 runtime)
 
 [dev-dependencies]
-tokio = { version = "1", features = ["macros", "rt-multi-thread", "process", "io-util", "net"] }
-tower = { version = "0.5", features = ["util"] }
-serde_json = "1"
-axum = "0.8"
-migrate = { path = "../migrate" }
-webauth = { path = "../webauth", features = ["http", "test-util"] }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "process", "io-util", "net"] }
+tower = { workspace = true, features = ["util"] }
+serde_json = { workspace = true }
+axum = { workspace = true }
+migrate = { workspace = true }
+webauth = { workspace = true, features = ["http", "test-util"] }
 
 [lints]
 workspace = true

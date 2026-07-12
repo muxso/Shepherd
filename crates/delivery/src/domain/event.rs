@@ -77,7 +77,9 @@ mod tests {
             NewExecutionEvent::new(EventKind::Log, "   ", None).unwrap_err(),
             EventError::EmptyMessage
         );
-        let e = NewExecutionEvent::new(EventKind::Decision, "  选用 argon2  ", Some("  因为 PHC  ")).expect("ok");
+        let e =
+            NewExecutionEvent::new(EventKind::Decision, "  选用 argon2  ", Some("  因为 PHC  "))
+                .expect("ok");
         assert_eq!(e.message, "选用 argon2");
         assert_eq!(e.detail.as_deref(), Some("因为 PHC"));
         let e2 = NewExecutionEvent::new(EventKind::Log, "x", Some("  ")).expect("ok");

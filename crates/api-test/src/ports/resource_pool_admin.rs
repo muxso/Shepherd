@@ -11,7 +11,11 @@ pub trait ResourcePoolAdminPort: Send + Sync {
 
     async fn get(&self, id: &str) -> Result<Option<ResourcePool>, PortError>;
 
-    async fn update(&self, id: &str, pool: &NewResourcePool) -> Result<Option<ResourcePool>, PortError>;
+    async fn update(
+        &self,
+        id: &str,
+        pool: &NewResourcePool,
+    ) -> Result<Option<ResourcePool>, PortError>;
 
     async fn delete(&self, id: &str) -> Result<bool, PortError>;
 }

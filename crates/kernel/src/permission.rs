@@ -37,7 +37,7 @@ impl Permission {
     }
 }
 
-/// 一个主体(用户/角色聚合后)拥有的权限集合。
+/// Permission set held by a principal (aggregated over user/roles).
 #[derive(Debug, Default, Clone)]
 pub struct PermissionSet {
     granted: Vec<Permission>,
@@ -56,17 +56,17 @@ impl PermissionSet {
         Ok(Self { granted })
     }
 
-    /// 是否允许对某资源执行某动作。资源不区分大小写,动作要精确命中。
+    /// Whether the given action is allowed on the resource. Resource match is
+    /// case-insensitive; the action must match exactly.
     pub fn allows(&self, resource: &str, action: &str) -> bool {
         let resource = resource.to_uppercase();
         let action = action.to_uppercase();
-        self.granted
-            .iter()
-            .any(|p| p.resource == resource && p.actions.contains(&action))
+        self.granted.iter().any(|p| p.resource == resource && p.actions.contains(&action))
     }
 
-    /// 序列化回原始权限串(`RESOURCE:A+B`),用于持久化会话权限快照。
-    /// 与 [`from_raw`](Self::from_raw) 往返一致(动作按字典序,因底层是 BTreeSet)。
+    /// Serialize back to raw permission strings (`RESOURCE:A+B`), used to persist
+    /// session permission snapshots. Round-trips with [`from_raw`](Self::from_raw)
+    /// (actions come out in lexicographic order since the backing store is a BTreeSet).
     pub fn to_raw(&self) -> Vec<String> {
         self.granted
             .iter()
@@ -94,7 +94,6 @@ mod tests {
         let set = PermissionSet::from_raw(["SYSTEM_USER:READ+ADD", "PROJECT:READ"]).expect("valid");
         let raw = set.to_raw();
         let back = PermissionSet::from_raw(&raw).expect("valid");
-        // 往返后语义不变
         assert!(back.allows("SYSTEM_USER", "ADD"));
         assert!(back.allows("PROJECT", "READ"));
         assert!(!back.allows("PROJECT", "DELETE"));
@@ -134,7 +133,7 @@ mod tests {
     fn set_allows_granted_action() {
         let set = PermissionSet::from_raw(["SYSTEM_USER:READ+ADD"]).expect("valid");
         assert!(set.allows("SYSTEM_USER", "READ"));
-        assert!(set.allows("system_user", "add")); // 大小写无关
+        assert!(set.allows("system_user", "add")); // case-insensitive
     }
 
     #[test]

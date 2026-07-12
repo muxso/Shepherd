@@ -4,8 +4,8 @@ use std::sync::{Arc, Mutex};
 use async_trait::async_trait;
 
 use crate::domain::{
-    ApiCase, ApiDefinition, ApiDefinitionChange, ApiModule, ApiMock, ApiView, NewApiCase,
-    NewApiDefinition, NewApiModule, NewApiMock, NewApiView,
+    ApiCase, ApiDefinition, ApiDefinitionChange, ApiMock, ApiModule, ApiView, ApiViewPatch,
+    NewApiCase, NewApiDefinition, NewApiMock, NewApiModule, NewApiView,
 };
 use crate::ports::{ApiDefinitionRepository, ProjectMockRow, RepoError};
 
@@ -35,15 +35,12 @@ impl InMemoryApiDefinitionRepository {
 
 #[async_trait]
 impl ApiDefinitionRepository for InMemoryApiDefinitionRepository {
-    async fn insert_definition(
-        &self,
-        d: &NewApiDefinition,
-    ) -> Result<ApiDefinition, RepoError> {
-        let mut state = self.state.lock().expect("lock");
+    async fn insert_definition(&self, d: &NewApiDefinition) -> Result<ApiDefinition, RepoError> {
+        let mut state = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         state.seq += 1;
         let def = ApiDefinition {
             id: format!("apidef-{}", state.seq),
-            // 100000+ 对齐 pg num 序列起点(100001)。
+            // 100000+ matches the pg num sequence start (100001).
             num: 100000 + state.seq as i64,
             project_id: d.project_id.clone(),
             name: d.name.clone(),
@@ -62,7 +59,13 @@ impl ApiDefinitionRepository for InMemoryApiDefinitionRepository {
     }
 
     async fn get_definition(&self, id: &str) -> Result<Option<ApiDefinition>, RepoError> {
-        Ok(self.state.lock().expect("lock").definitions.get(id).cloned())
+        Ok(self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .definitions
+            .get(id)
+            .cloned())
     }
 
     async fn update_definition(
@@ -73,7 +76,7 @@ impl ApiDefinitionRepository for InMemoryApiDefinitionRepository {
         method: &str,
         path: &str,
     ) -> Result<Option<ApiDefinition>, RepoError> {
-        let mut state = self.state.lock().expect("lock");
+        let mut state = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         state.seq += 1;
         let seq = state.seq;
         let Some(d) = state.definitions.get_mut(id) else {
@@ -90,14 +93,26 @@ impl ApiDefinitionRepository for InMemoryApiDefinitionRepository {
     }
 
     async fn update_definition_spec(&self, id: &str, spec: &str) -> Result<(), RepoError> {
-        if let Some(d) = self.state.lock().expect("lock").definitions.get_mut(id) {
+        if let Some(d) = self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .definitions
+            .get_mut(id)
+        {
             d.spec = spec.to_string();
         }
         Ok(())
     }
 
     async fn update_definition_status(&self, id: &str, status: &str) -> Result<(), RepoError> {
-        if let Some(d) = self.state.lock().expect("lock").definitions.get_mut(id) {
+        if let Some(d) = self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .definitions
+            .get_mut(id)
+        {
             if let Some(s) = crate::domain::ApiStatus::parse(status) {
                 d.status = s;
             }
@@ -106,7 +121,7 @@ impl ApiDefinitionRepository for InMemoryApiDefinitionRepository {
     }
 
     async fn delete_definition(&self, id: &str) -> Result<(), RepoError> {
-        let mut state = self.state.lock().expect("lock");
+        let mut state = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         state.definitions.remove(id);
         let case_ids: Vec<String> = state
             .cases
@@ -129,7 +144,7 @@ impl ApiDefinitionRepository for InMemoryApiDefinitionRepository {
         detail: &str,
         actor: &str,
     ) -> Result<(), RepoError> {
-        let mut state = self.state.lock().expect("lock");
+        let mut state = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         state.seq += 1;
         let seq = state.seq;
         state.changes.push(ApiDefinitionChange {
@@ -147,7 +162,7 @@ impl ApiDefinitionRepository for InMemoryApiDefinitionRepository {
         &self,
         definition_id: &str,
     ) -> Result<Vec<ApiDefinitionChange>, RepoError> {
-        let state = self.state.lock().expect("lock");
+        let state = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         Ok(state
             .changes
             .iter()
@@ -157,23 +172,16 @@ impl ApiDefinitionRepository for InMemoryApiDefinitionRepository {
             .collect())
     }
 
-    async fn list_definitions(
-        &self,
-        project_id: &str,
-    ) -> Result<Vec<ApiDefinition>, RepoError> {
-        let state = self.state.lock().expect("lock");
-        let mut out: Vec<ApiDefinition> = state
-            .definitions
-            .values()
-            .filter(|d| d.project_id == project_id)
-            .cloned()
-            .collect();
+    async fn list_definitions(&self, project_id: &str) -> Result<Vec<ApiDefinition>, RepoError> {
+        let state = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut out: Vec<ApiDefinition> =
+            state.definitions.values().filter(|d| d.project_id == project_id).cloned().collect();
         out.sort_by(|a, b| a.id.cmp(&b.id));
         Ok(out)
     }
 
     async fn insert_case(&self, c: &NewApiCase) -> Result<ApiCase, RepoError> {
-        let mut state = self.state.lock().expect("lock");
+        let mut state = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         state.seq += 1;
         let case = ApiCase {
             id: format!("apicase-{}", state.seq),
@@ -199,7 +207,7 @@ impl ApiDefinitionRepository for InMemoryApiDefinitionRepository {
     }
 
     async fn update_case(&self, id: &str, c: &NewApiCase) -> Result<bool, RepoError> {
-        let mut state = self.state.lock().expect("lock");
+        let mut state = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let Some(existing) = state.cases.get_mut(id) else { return Ok(false) };
         existing.name = c.name.clone();
         existing.method = c.method.clone();
@@ -218,14 +226,14 @@ impl ApiDefinitionRepository for InMemoryApiDefinitionRepository {
     }
 
     async fn delete_case(&self, id: &str) -> Result<bool, RepoError> {
-        let mut state = self.state.lock().expect("lock");
+        let mut state = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let removed = state.cases.remove(id).is_some();
         state.case_order.retain(|cid| cid != id);
         Ok(removed)
     }
 
     async fn update_mock(&self, mock_id: &str, m: &NewApiMock) -> Result<bool, RepoError> {
-        let mut state = self.state.lock().expect("lock");
+        let mut state = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let Some(existing) = state.mocks.get_mut(mock_id) else { return Ok(false) };
         existing.name = m.name.clone();
         existing.match_rule = m.match_rule.clone();
@@ -240,11 +248,17 @@ impl ApiDefinitionRepository for InMemoryApiDefinitionRepository {
     }
 
     async fn delete_mock(&self, mock_id: &str) -> Result<bool, RepoError> {
-        Ok(self.state.lock().expect("lock").mocks.remove(mock_id).is_some())
+        Ok(self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .mocks
+            .remove(mock_id)
+            .is_some())
     }
 
     async fn list_cases(&self, api_definition_id: &str) -> Result<Vec<ApiCase>, RepoError> {
-        let state = self.state.lock().expect("lock");
+        let state = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let mut out: Vec<ApiCase> = state
             .cases
             .values()
@@ -256,7 +270,7 @@ impl ApiDefinitionRepository for InMemoryApiDefinitionRepository {
     }
 
     async fn count_cases_by_project(&self, project_id: &str) -> Result<u64, RepoError> {
-        let state = self.state.lock().expect("lock");
+        let state = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         Ok(state.cases.values().filter(|c| c.project_id == project_id).count() as u64)
     }
 
@@ -266,7 +280,7 @@ impl ApiDefinitionRepository for InMemoryApiDefinitionRepository {
         offset: u64,
         limit: u32,
     ) -> Result<Vec<ApiCase>, RepoError> {
-        let state = self.state.lock().expect("lock");
+        let state = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let out: Vec<ApiCase> = state
             .case_order
             .iter()
@@ -280,7 +294,7 @@ impl ApiDefinitionRepository for InMemoryApiDefinitionRepository {
     }
 
     async fn insert_mock(&self, m: &NewApiMock) -> Result<ApiMock, RepoError> {
-        let mut state = self.state.lock().expect("lock");
+        let mut state = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         state.seq += 1;
         let mock = ApiMock {
             id: format!("apimock-{}", state.seq),
@@ -301,7 +315,7 @@ impl ApiDefinitionRepository for InMemoryApiDefinitionRepository {
     }
 
     async fn list_mocks(&self, api_definition_id: &str) -> Result<Vec<ApiMock>, RepoError> {
-        let state = self.state.lock().expect("lock");
+        let state = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let mut out: Vec<ApiMock> = state
             .mocks
             .values()
@@ -312,8 +326,11 @@ impl ApiDefinitionRepository for InMemoryApiDefinitionRepository {
         Ok(out)
     }
 
-    async fn list_mocks_by_project(&self, project_id: &str) -> Result<Vec<ProjectMockRow>, RepoError> {
-        let state = self.state.lock().expect("lock");
+    async fn list_mocks_by_project(
+        &self,
+        project_id: &str,
+    ) -> Result<Vec<ProjectMockRow>, RepoError> {
+        let state = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let mut out: Vec<ProjectMockRow> = state
             .mocks
             .values()
@@ -338,7 +355,7 @@ impl ApiDefinitionRepository for InMemoryApiDefinitionRepository {
     }
 
     async fn insert_module(&self, m: &NewApiModule) -> Result<ApiModule, RepoError> {
-        let mut state = self.state.lock().expect("lock");
+        let mut state = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         state.seq += 1;
         let module = ApiModule {
             id: format!("apimod-{}", state.seq),
@@ -351,7 +368,7 @@ impl ApiDefinitionRepository for InMemoryApiDefinitionRepository {
     }
 
     async fn list_modules(&self, project_id: &str) -> Result<Vec<ApiModule>, RepoError> {
-        let state = self.state.lock().expect("lock");
+        let state = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let mut out: Vec<ApiModule> =
             state.modules.values().filter(|m| m.project_id == project_id).cloned().collect();
         out.sort_by(|a, b| a.id.cmp(&b.id));
@@ -359,7 +376,7 @@ impl ApiDefinitionRepository for InMemoryApiDefinitionRepository {
     }
 
     async fn rename_module(&self, id: &str, name: &str) -> Result<(), RepoError> {
-        let mut state = self.state.lock().expect("lock");
+        let mut state = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         if let Some(m) = state.modules.get_mut(id) {
             m.name = name.to_string();
         }
@@ -367,7 +384,7 @@ impl ApiDefinitionRepository for InMemoryApiDefinitionRepository {
     }
 
     async fn delete_module(&self, id: &str) -> Result<(), RepoError> {
-        let mut state = self.state.lock().expect("lock");
+        let mut state = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         state.modules.remove(id);
         for d in state.definitions.values_mut() {
             if d.module_id.as_deref() == Some(id) {
@@ -382,7 +399,7 @@ impl ApiDefinitionRepository for InMemoryApiDefinitionRepository {
         definition_id: &str,
         module_id: Option<&str>,
     ) -> Result<(), RepoError> {
-        let mut state = self.state.lock().expect("lock");
+        let mut state = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         if let Some(d) = state.definitions.get_mut(definition_id) {
             d.module_id = module_id.map(str::to_string);
         }
@@ -390,7 +407,7 @@ impl ApiDefinitionRepository for InMemoryApiDefinitionRepository {
     }
 
     async fn insert_view(&self, v: &NewApiView) -> Result<ApiView, RepoError> {
-        let mut state = self.state.lock().expect("lock");
+        let mut state = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         state.seq += 1;
         let view = ApiView {
             id: format!("apiview-{}", state.seq),
@@ -406,7 +423,7 @@ impl ApiDefinitionRepository for InMemoryApiDefinitionRepository {
     }
 
     async fn list_views(&self, project_id: &str, user_id: &str) -> Result<Vec<ApiView>, RepoError> {
-        let state = self.state.lock().expect("lock");
+        let state = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let mut out: Vec<ApiView> = state
             .views
             .iter()
@@ -417,14 +434,41 @@ impl ApiDefinitionRepository for InMemoryApiDefinitionRepository {
         Ok(out)
     }
 
+    async fn update_view(
+        &self,
+        id: &str,
+        user_id: &str,
+        patch: &ApiViewPatch,
+    ) -> Result<Option<ApiView>, RepoError> {
+        let mut state = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let Some(v) = state.views.iter_mut().find(|v| v.id == id && v.user_id == user_id) else {
+            return Ok(None);
+        };
+        if let Some(name) = &patch.name {
+            v.name = name.clone();
+        }
+        if let Some(config) = &patch.config {
+            v.config = config.clone();
+        }
+        if let Some(shared) = patch.shared {
+            v.shared = shared;
+        }
+        Ok(Some(v.clone()))
+    }
+
     async fn delete_view(&self, id: &str, user_id: &str) -> Result<(), RepoError> {
-        let mut state = self.state.lock().expect("lock");
+        let mut state = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         state.views.retain(|v| !(v.id == id && v.user_id == user_id));
         Ok(())
     }
 
-    async fn link_task_case(&self, decomposition_id: &str, task_id: &str, case_id: &str) -> Result<(), RepoError> {
-        let mut state = self.state.lock().expect("lock");
+    async fn link_task_case(
+        &self,
+        decomposition_id: &str,
+        task_id: &str,
+        case_id: &str,
+    ) -> Result<(), RepoError> {
+        let mut state = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let key = (decomposition_id.to_string(), task_id.to_string(), case_id.to_string());
         if !state.task_cases.contains(&key) {
             state.task_cases.push(key);
@@ -432,14 +476,25 @@ impl ApiDefinitionRepository for InMemoryApiDefinitionRepository {
         Ok(())
     }
 
-    async fn unlink_task_case(&self, decomposition_id: &str, task_id: &str, case_id: &str) -> Result<(), RepoError> {
-        let mut state = self.state.lock().expect("lock");
-        state.task_cases.retain(|(d, t, c)| !(d == decomposition_id && t == task_id && c == case_id));
+    async fn unlink_task_case(
+        &self,
+        decomposition_id: &str,
+        task_id: &str,
+        case_id: &str,
+    ) -> Result<(), RepoError> {
+        let mut state = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        state
+            .task_cases
+            .retain(|(d, t, c)| !(d == decomposition_id && t == task_id && c == case_id));
         Ok(())
     }
 
-    async fn list_cases_for_task(&self, decomposition_id: &str, task_id: &str) -> Result<Vec<ApiCase>, RepoError> {
-        let state = self.state.lock().expect("lock");
+    async fn list_cases_for_task(
+        &self,
+        decomposition_id: &str,
+        task_id: &str,
+    ) -> Result<Vec<ApiCase>, RepoError> {
+        let state = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let ids: Vec<&String> = state
             .task_cases
             .iter()

@@ -11,7 +11,7 @@ import { useI18n } from '../i18n'
 const MATCH_BODY_TYPES: ApiBodyType[] = ['none', 'form-data', 'x-www-form-urlencoded', 'json', 'xml', 'raw', 'binary']
 const RESP_BODY_TYPES = ['json', 'xml', 'raw', 'binary'] as const
 
-/** 尽力格式化 JSON;非法原样返回。 */
+/** Best-effort JSON pretty-print; invalid input is returned unchanged. */
 function formatJson(text: string): string {
   try {
     return JSON.stringify(JSON.parse(text), null, 2)
@@ -25,7 +25,7 @@ export default function MocksPanel({ definition }: { definition: ApiDefinition }
   const [mocks, setMocks] = useState<ApiMock[]>([])
   const [loading, setLoading] = useState(false)
   const [open, setOpen] = useState(false)
-  // 非空 = 编辑该条;null = 新建。
+  // non-null = editing that mock; null = creating.
   const [editing, setEditing] = useState<ApiMock | null>(null)
 
   const remove = async (mock: ApiMock) => {
@@ -148,7 +148,7 @@ function CreateMockForm({
   onCreated,
 }: {
   definition: ApiDefinition
-  // 编辑态传入的现有 Mock;为 null/undefined 时是「新建」。
+  // existing mock when editing; null/undefined = creating.
   mock?: ApiMock | null
   onClose: () => void
   onCreated: () => void
@@ -169,7 +169,7 @@ function CreateMockForm({
   const [respDelay, setRespDelay] = useState<number | null>(null)
   const [saving, setSaving] = useState(false)
 
-  // 编辑态:用现有 mock 预填表单(matchRule 反解 headers/query/body 条件)。
+  // Edit mode: prefill the form from the existing mock (matchRule decomposed back into header/query/body conditions).
   useEffect(() => {
     if (!mock) return
     const condsFrom = (v: unknown): MatchCond[] => {
@@ -210,7 +210,7 @@ function CreateMockForm({
       message.warning(t('mock.nameRequired', '请输入期望名称'))
       return false
     }
-    // 组装 mock-runtime 的 ExtraConditions:headers/query 为 [名, {op,value}] 元组(op=等于/包含/正则);body 为子串包含。
+    // Build mock-runtime ExtraConditions: headers/query are [name, {op,value}] tuples (op = equals/contains/regex); body is substring containment.
     const matchRule: Record<string, unknown> = {}
     const toConds = (rows: MatchCond[]) => rows.filter((r) => r.name.trim()).map((r) => [r.name.trim(), { op: r.op, value: r.value }])
     const mh = toConds(matchHeaders)
@@ -275,7 +275,7 @@ function CreateMockForm({
 
   const countCond = (rows: MatchCond[]) => rows.filter((r) => r.name.trim()).length
 
-  // 匹配规则子标签:请求头 / Query(参数名 + 等于/包含/正则 + 值)/ REST / 请求体(子串包含)。映射到 mock-runtime ExtraConditions。
+  // Match-rule sub-tabs: headers / query (name + equals/contains/regex + value) / REST / body (substring). Maps to mock-runtime ExtraConditions.
   const matchTabs = [
     {
       key: 'headers',
@@ -310,7 +310,7 @@ function CreateMockForm({
     },
   ]
 
-  // 响应内容子标签:响应体 / 响应头 / 状态码 / 响应延时。
+  // Response sub-tabs: body / headers / status code / delay.
   const respTabs = [
     {
       key: 'body',
@@ -362,7 +362,7 @@ function CreateMockForm({
 
   return (
     <div>
-      {/* 头部信息卡:【id】名称 + 请求类型 + 路径(对齐参考图 #4) */}
+      {/* Header card: [id] name + request type + path (ref #4) */}
       <Card size="small" styles={{ body: { padding: '10px 14px' } }} style={{ marginBottom: 12, background: 'var(--panel-2)' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
           <span style={{ fontWeight: 600 }}>【{definition.num ?? '—'}】{definition.name}</span>

@@ -1,4 +1,5 @@
-//! 纯层禁止引用 IO crate;feature 开启后编译屏障失效,本测试兜底。
+//! Pure layers must not import IO crates; feature flags can defeat the compile-time
+//! barrier, so this test is the backstop.
 
 use std::fs;
 use std::path::Path;

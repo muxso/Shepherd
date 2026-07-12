@@ -4,7 +4,7 @@ import { useI18n } from '../i18n'
 
 export type KVRow = { key: string; value: string }
 
-/** 键值对编辑器(请求头 / Query / REST / 响应头 共用):一行 名 + 值 + 删除,底部加一行。 */
+/** Key-value editor (shared by headers / query / REST / response headers): name + value + delete per row, add-row at the bottom. */
 export default function KVEditor({
   rows,
   onChange,

@@ -199,10 +199,13 @@ async fn import_url(
         return (StatusCode::FORBIDDEN, "permission denied").into_response();
     }
     let format = ImportFormat::from_source(b.format.as_deref().unwrap_or("openapi"));
-    let doc = match fetch_doc(&st.client, &b.url, b.token.as_deref().unwrap_or(""), b.basic_auth, format).await {
-        Ok(d) => d,
-        Err(e) => return (StatusCode::BAD_GATEWAY, e).into_response(),
-    };
+    let doc =
+        match fetch_doc(&st.client, &b.url, b.token.as_deref().unwrap_or(""), b.basic_auth, format)
+            .await
+        {
+            Ok(d) => d,
+            Err(e) => return (StatusCode::BAD_GATEWAY, e).into_response(),
+        };
     match st
         .import_uc
         .execute(
@@ -223,10 +226,10 @@ async fn import_url(
             Json(json!({ "created": o.created.len(), "updated": o.updated, "skipped": o.skipped })),
         )
             .into_response(),
-        Err(ImportError::Parse(_)) => {
-            (StatusCode::BAD_REQUEST, "来源文档无法解析").into_response()
+        Err(ImportError::Parse(_)) => (StatusCode::BAD_REQUEST, "来源文档无法解析").into_response(),
+        Err(ImportError::Repo(_)) => {
+            (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response()
         }
-        Err(ImportError::Repo(_)) => (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
     }
 }
 
@@ -280,7 +283,7 @@ struct ScheduleResponse {
 
 impl From<ImportSchedule> for ScheduleResponse {
     fn from(s: ImportSchedule) -> Self {
-        // 不回吐 auth_token(敏感)。
+        // Never echo auth_token back (sensitive).
         Self {
             id: s.id,
             project_id: s.project_id,
@@ -329,7 +332,8 @@ async fn create_schedule(
     match st.schedules.create(new).await {
         Ok(s) => {
             if s.enabled {
-                register_job(&st.sched, &st.import_uc, &st.schedules, &st.client, &s.id, &s.cron).await;
+                register_job(&st.sched, &st.import_uc, &st.schedules, &st.client, &s.id, &s.cron)
+                    .await;
             }
             (StatusCode::CREATED, Json(ScheduleResponse::from(s))).into_response()
         }
@@ -348,10 +352,14 @@ struct ListQuery {
     project_id: String,
 }
 
-async fn list_schedules(State(st): State<ImportSchedState>, Query(q): Query<ListQuery>) -> Response {
+async fn list_schedules(
+    State(st): State<ImportSchedState>,
+    Query(q): Query<ListQuery>,
+) -> Response {
     match st.schedules.list_by_project(&q.project_id).await {
         Ok(list) => {
-            let items: Vec<ScheduleResponse> = list.into_iter().map(ScheduleResponse::from).collect();
+            let items: Vec<ScheduleResponse> =
+                list.into_iter().map(ScheduleResponse::from).collect();
             (StatusCode::OK, Json(items)).into_response()
         }
         Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
@@ -367,7 +375,7 @@ async fn delete_schedule(
         return (StatusCode::FORBIDDEN, "permission denied").into_response();
     }
     match st.schedules.delete(&id).await {
-        // live cron 仍可能触发,但 run_schedule 重载取不到(已软删)即跳过。
+        // The live cron may still fire, but run_schedule's reload finds nothing (soft-deleted) and skips.
         Ok(()) => StatusCode::NO_CONTENT.into_response(),
         Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
     }
@@ -391,7 +399,7 @@ async fn set_enabled(
     if st.schedules.set_enabled(&id, b.enabled).await.is_err() {
         return (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response();
     }
-    // 重复挂上仅多一个 job,run_schedule 会 double-check enabled。
+    // Registering again only adds an extra job; run_schedule double-checks enabled.
     if b.enabled {
         if let Ok(Some(s)) = st.schedules.get(&id).await {
             register_job(&st.sched, &st.import_uc, &st.schedules, &st.client, &s.id, &s.cron).await;

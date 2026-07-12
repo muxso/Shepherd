@@ -10,10 +10,7 @@ pub struct Argon2PasswordHasher;
 impl PasswordHasher for Argon2PasswordHasher {
     fn hash(&self, plain: &str) -> String {
         let salt = SaltString::generate(&mut OsRng);
-        Argon2::default()
-            .hash_password(plain.as_bytes(), &salt)
-            .expect("argon2 hash")
-            .to_string()
+        Argon2::default().hash_password(plain.as_bytes(), &salt).expect("argon2 hash").to_string()
     }
 
     fn verify(&self, plain: &str, hash: &str) -> bool {

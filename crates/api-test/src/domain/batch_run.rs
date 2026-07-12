@@ -106,7 +106,10 @@ mod tests {
 
     #[test]
     fn client_pool_takes_precedence() {
-        assert_eq!(resolve_effective_pool(Some("client-pool"), Some("proj-pool")), Ok("client-pool".into()));
+        assert_eq!(
+            resolve_effective_pool(Some("client-pool"), Some("proj-pool")),
+            Ok("client-pool".into())
+        );
     }
 
     #[test]
@@ -117,7 +120,10 @@ mod tests {
 
     #[test]
     fn neither_pool_configured_is_explicit_error() {
-        assert_eq!(resolve_effective_pool(None, None), Err(BatchRunError::ResourcePoolNotConfigured));
+        assert_eq!(
+            resolve_effective_pool(None, None),
+            Err(BatchRunError::ResourcePoolNotConfigured)
+        );
         assert_eq!(
             resolve_effective_pool(Some(" "), Some("")),
             Err(BatchRunError::ResourcePoolNotConfigured)

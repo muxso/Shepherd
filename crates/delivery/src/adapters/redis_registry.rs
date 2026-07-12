@@ -1,4 +1,5 @@
-//! 在线状态由心跳新鲜度在 list 时算出,server 不反向探活。
+//! Online status is derived from heartbeat freshness at list time; the server never
+//! probes runtimes.
 
 use std::sync::Arc;
 

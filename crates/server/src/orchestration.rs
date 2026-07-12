@@ -4,9 +4,7 @@ use async_trait::async_trait;
 
 use delivery::application::DeliveryService;
 use delivery::domain::{AttemptStatus, DeliveryAttempt, ExecutorKind};
-use delivery::ports::{
-    AgentExecutor, DeliveryObserver, DispatchOutcome, NoopEventSink, WorkSpec,
-};
+use delivery::ports::{AgentExecutor, DeliveryObserver, DispatchOutcome, NoopEventSink, WorkSpec};
 use orchestrator::application::{DeliveryFeedbackOrchestrator, DeliveryProgress};
 use orchestrator::ports::{
     DeliverableView, OrchError, Reviser, TaskGateway, TaskTarget, VerificationGateway,
@@ -58,10 +56,7 @@ impl TaskGateway for TaskServiceGateway {
         task_id: &str,
     ) -> Result<Vec<String>, OrchError> {
         match self.svc.get(decomposition_id).await {
-            Ok(d) => Ok(d
-                .task(task_id)
-                .map(|t| t.acceptance_criteria.clone())
-                .unwrap_or_default()),
+            Ok(d) => Ok(d.task(task_id).map(|t| t.acceptance_criteria.clone()).unwrap_or_default()),
             Err(TaskCmdError::DecompositionNotFound) => Ok(Vec::new()),
             Err(e) => Err(OrchError::Gateway(format!("{e:?}"))),
         }
@@ -133,7 +128,7 @@ impl Reviser for ExecutorReviser {
         feedback: &str,
     ) -> Result<DeliverableView, OrchError> {
         let spec = WorkSpec {
-            // 修订走同步收尾,不依赖异步回调,故 attempt_id 置空。
+            // Revision finishes synchronously, no async callback, so attempt_id stays empty.
             attempt_id: String::new(),
             decomposition_id: decomposition_id.to_string(),
             task_id: task_id.to_string(),
@@ -145,6 +140,7 @@ impl Reviser for ExecutorReviser {
             instructions: Some(format!(
                 "上一轮交付未通过验证门,请据反馈修正后重做。\n反馈: {feedback}"
             )),
+            target_runtime: None,
         };
         match self.executor.dispatch(&spec, &NoopEventSink).await {
             Ok(DispatchOutcome::Completed { deliverable }) => Ok(DeliverableView {
@@ -158,7 +154,7 @@ impl Reviser for ExecutorReviser {
     }
 }
 
-/// `recorder` 必须是**无观察者**的 DeliveryService,否则 Arc 环。
+/// `recorder` must be an **observer-free** DeliveryService, otherwise an Arc cycle forms.
 struct OrchestratorObserver {
     orchestrator: Arc<DeliveryFeedbackOrchestrator>,
     recorder: DeliveryService,
@@ -173,7 +169,7 @@ impl OrchestratorObserver {
         if dec.tasks.is_empty() || !dec.tasks.iter().all(|t| t.status == TaskStatus::Verified) {
             return;
         }
-        match self.requirements.deliver(&dec.requirement_id).await {
+        match self.requirements.deliver(&dec.requirement_id, "orchestrator").await {
             Ok(_) => {
                 tracing::info!(requirement = %dec.requirement_id, "全部任务验证 → 需求自动交付(DELIVERED)");
                 self.bus.publish(McpEvent {
@@ -184,7 +180,9 @@ impl OrchestratorObserver {
                     message: format!("需求 {} 已交付", dec.requirement_id),
                 });
             }
-            Err(e) => tracing::warn!(requirement = %dec.requirement_id, "需求自动交付失败(可能未定基线): {e:?}"),
+            Err(e) => {
+                tracing::warn!(requirement = %dec.requirement_id, "需求自动交付失败(可能未定基线): {e:?}")
+            }
         }
     }
 }
@@ -211,7 +209,7 @@ impl DeliveryObserver for OrchestratorObserver {
                 DeliveryProgress::Delivered { deliverable }
             }
             AttemptStatus::Failed => DeliveryProgress::Failed,
-            // 派发未开跑 / 主动停止:不驱动验证门。
+            // Dispatched-but-not-started / deliberately stopped: don't drive the verification gate.
             AttemptStatus::Dispatched | AttemptStatus::Stopped => return,
         };
         let dstatus = match attempt.status {
@@ -226,8 +224,10 @@ impl DeliveryObserver for OrchestratorObserver {
             task_id: attempt.task_id.clone(),
             message: String::new(),
         });
-        if let Ok(outcome) =
-            self.orchestrator.on_progress(&attempt.decomposition_id, &attempt.task_id, progress).await
+        if let Ok(outcome) = self
+            .orchestrator
+            .on_progress(&attempt.decomposition_id, &attempt.task_id, progress)
+            .await
         {
             if let Some(v) = outcome.verdict {
                 let msg = if v.passed {
@@ -251,7 +251,7 @@ impl DeliveryObserver for OrchestratorObserver {
     }
 }
 
-/// `recorder` 应为**无观察者**的 DeliveryService(避免 Arc 环)。
+/// `recorder` should be an **observer-free** DeliveryService (avoids an Arc cycle).
 pub fn delivery_observer(
     task: TaskService,
     verification: VerificationService,

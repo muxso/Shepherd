@@ -60,12 +60,13 @@ impl ProjectMemberRepository for PgProjectMemberRepository {
     }
 
     async fn remove(&self, project_id: &str, user_id: &str) -> Result<bool, RepoError> {
-        let res = sqlx::query("DELETE FROM ms_project_member WHERE project_id = $1 AND user_id = $2")
-            .bind(project_id)
-            .bind(user_id)
-            .execute(&self.pool)
-            .await
-            .map_err(map_err)?;
+        let res =
+            sqlx::query("DELETE FROM ms_project_member WHERE project_id = $1 AND user_id = $2")
+                .bind(project_id)
+                .bind(user_id)
+                .execute(&self.pool)
+                .await
+                .map_err(map_err)?;
         Ok(res.rows_affected() > 0)
     }
 }

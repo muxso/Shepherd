@@ -1,33 +1,47 @@
 import { useCallback, useEffect, useState } from 'react'
-import { Badge, Button, Card, Col, Descriptions, Drawer, Empty, Form, Input, InputNumber, Modal, Progress, Row, Segmented, Select, Space, Spin, Statistic, Table, Tabs, Tag, Timeline, Tooltip, Typography } from 'antd'
+import { Badge, Button, Card, Col, DatePicker, Descriptions, Drawer, Dropdown, Empty, Form, Input, InputNumber, Modal, Popover, Progress, Row, Segmented, Select, Space, Spin, Statistic, Table, Tabs, Tag, Timeline, Tooltip, Typography } from 'antd'
+import dayjs, { type Dayjs } from 'dayjs'
 import { message, modal } from '../feedback'
 import { useNavigate } from 'react-router-dom'
-import { BranchesOutlined, DeleteOutlined, EditOutlined, FlagOutlined, InboxOutlined, PartitionOutlined, PlayCircleOutlined, ProfileOutlined, ReloadOutlined, SendOutlined } from '@ant-design/icons'
+import { BranchesOutlined, DeleteOutlined, EditOutlined, FlagOutlined, HistoryOutlined, InboxOutlined, PartitionOutlined, PlayCircleOutlined, ProfileOutlined, ReloadOutlined, SendOutlined } from '@ant-design/icons'
 import {
   api,
   ApiError,
+  EXECUTOR_LABEL,
   type ApiCase,
+  type ApiModule,
+  type CollabStats,
   type CoverageCase,
   type DeliveryAttempt,
   type DeliveryEvent,
+  type FleetRuntime,
   type FunctionalCase,
   type Requirement,
+  type RequirementChange,
+  type RequirementStage,
+  type RequirementStageKey,
   type RequirementVersion,
   type Task,
   type VerificationReport,
 } from '../api'
 import { useApp } from '../context'
 import { Workspace, WorkList, useWorkTabs } from '../components/Workspace'
+import { ModuleTreePanel, inSelectedModule } from '../components/ModuleTreePanel'
 import { SelectProjectEmpty } from '../components/Page'
 import { regAdd, regList, type RegItem } from '../registry'
+import ContributionGrid from '../components/ContributionGrid'
+import { useListView, type ListColumn } from '../components/ListView'
+import { CF_GROUP, CustomFieldItem, CustomFieldItems, collectCustomValues, customFormValues, useFieldTemplate } from '../components/TemplateFields'
+import { fieldLabel } from '../fieldTemplates'
+import { userIdStore, type TemplateField } from '../api'
 import { useI18n } from '../i18n'
 
 const toLines = (s: string) => s.split('\n').map((x) => x.trim()).filter(Boolean)
-// 取需求的「当前」验收标准(优先基线版本,回落最新版本/顶层)。
+// Current acceptance criteria: prefer the baseline version, fall back to latest version / top-level field.
 const critsOf = (r: Requirement): string[] =>
   r.versions?.find((v) => v.version === r.baselineVersion)?.acceptanceCriteria ?? r.versions?.[r.versions.length - 1]?.acceptanceCriteria ?? r.acceptanceCriteria ?? []
 const taskColor = (s: string) => (s === 'VERIFIED' ? 'green' : s === 'FAILED' ? 'red' : s === 'PENDING' ? 'default' : 'blue')
-// 协同看板列:按任务状态归桶(进行中合并 派发/运行)。
+// Kanban columns bucket tasks by status; "in progress" merges DISPATCHED/RUNNING.
 const BOARD_COLS: { key: string; tkey: string; label: string; statuses: string[] }[] = [
   { key: 'PENDING', tkey: 'req.col.pending', label: '待派发', statuses: ['PENDING'] },
   { key: 'PROGRESS', tkey: 'req.col.progress', label: '进行中', statuses: ['DISPATCHED', 'RUNNING'] },
@@ -35,29 +49,112 @@ const BOARD_COLS: { key: string; tkey: string; label: string; statuses: string[]
   { key: 'VERIFIED', tkey: 'req.col.verified', label: '已验证', statuses: ['VERIFIED'] },
   { key: 'FAILED', tkey: 'req.col.failed', label: '失败', statuses: ['FAILED'] },
 ]
-// 需求状态色:DRAFT 灰 / BASELINED 蓝 / DELIVERED 绿 / ARCHIVED 灰。
 const reqStatusColor = (s?: string) =>
   s === 'DELIVERED' ? 'green' : s === 'BASELINED' ? 'blue' : s === 'ARCHIVED' ? 'default' : 'default'
+const prioColor = (p?: string) => (p === 'P0' ? 'red' : p === 'P1' ? 'orange' : p === 'P2' ? 'blue' : 'default')
+const stageTagColor = (s?: string): 'default' | 'processing' | 'success' =>
+  s === 'DONE' ? 'success' : s === 'IN_PROGRESS' ? 'processing' : 'default'
+// Canonical order of the 7-stage requirement pipeline.
+const STAGE_ORDER: RequirementStageKey[] = ['CREATED', 'AUDIT', 'REVIEW', 'DEV', 'TEST', 'ACCEPTANCE', 'DELIVERY']
+// Rebuild the stage list in canonical order to guard against missing or out-of-order stages from the backend.
+const stagesOf = (r?: Requirement | null): RequirementStage[] => {
+  const by = new Map((r?.stages ?? []).map((s) => [s.stage, s]))
+  return STAGE_ORDER.map((k) => by.get(k) ?? { stage: k, status: 'PENDING', plannedStart: null, plannedEnd: null, startedAt: null, finishedAt: null, overdue: false })
+}
+const stageDotColor = (s: RequirementStage) =>
+  s.overdue ? 'var(--error)' : s.status === 'DONE' ? 'var(--success)' : s.status === 'IN_PROGRESS' ? 'var(--brand)' : s.status === 'SKIPPED' ? 'var(--border)' : 'var(--text-3)'
+const fmtShort = (ms?: number | null) => (ms ? dayjs(ms).format('MM-DD HH:mm') : '')
+const fmtPlan = (d?: string | null) => (d ? dayjs(d).format('MM-DD') : '—')
 
-// 列表行 = 本地注册表项 + 后端需求状态。
-type ReqRow = Omit<RegItem, 'label'> & { status?: string; label: React.ReactNode }
+// List row = local registry item + backend status/type/priority/tags/overdue.
+// Workspace tab key for creating a requirement (same pattern as the scenario page's NEW_KEY, no modal).
+const NEW_REQ_KEY = '__new_requirement__'
 
-// 需求与编排合一:需求列表 → 详情 Tab(需求信息/版本/基线/拆分 → 拆分图任务+运行+交付+验证)。
+type ReqRow = Omit<RegItem, 'label'> & {
+  status?: string
+  label: React.ReactNode
+  /** Plain-text title for search/filter; label is a node carrying the coverage badge. */
+  titleText: string
+  /** Raw requirement, for the inline expanded preview. */
+  raw?: Requirement
+  reqType?: string
+  priority?: string
+  tags?: string[]
+  overdue?: boolean
+}
+
+
+// Columns carry key/label for the column-settings panel; label is a badge-decorated node, search uses titleText.
+// The module column shares key "module" with the filter field, so ListView.withHeaderFilter attaches the header funnel automatically.
+function reqColumns(t: (k: string, d?: string) => string, modules: ApiModule[], moduleOf: (r: ReqRow) => string): ListColumn<ReqRow>[] {
+  return [
+    { key: 'title', label: t('req.title', '标题'), title: t('req.title', '标题'), dataIndex: 'label' },
+    {
+      key: 'module', label: t('req.module', '所属模块'), title: t('req.module', '所属模块'), width: 130,
+      render: (_v: unknown, row: ReqRow) => {
+        const m = moduleOf(row)
+        return m ? (modules.find((x) => x.id === m)?.name ?? m) : <span style={{ color: 'var(--text-3)' }}>{t('req.moduleUnfiled', '未规划')}</span>
+      },
+    },
+    { key: 'reqType', label: t('req.reqType', '类型'), title: t('req.reqType', '类型'), dataIndex: 'reqType', width: 96, render: (v?: string) => (v ? <Tag>{t(`req.type.${v}`, v)}</Tag> : '—') },
+    { key: 'priority', label: t('req.priority', '优先级'), title: t('req.priority', '优先级'), dataIndex: 'priority', width: 100, render: (p?: string) => (p ? <Tag color={prioColor(p)}>{p}</Tag> : '—') },
+    {
+      key: 'tags', label: t('req.tags', '标签'), title: t('req.tags', '标签'), dataIndex: 'tags',
+      render: (tags?: string[]) =>
+        tags?.length ? (
+          <>
+            {tags.slice(0, 2).map((tg) => <Tag key={tg} style={{ marginRight: 4 }}>{tg}</Tag>)}
+            {tags.length > 2 && <Tag style={{ marginRight: 0 }}>+{tags.length - 2}</Tag>}
+          </>
+        ) : '—',
+    },
+    {
+      key: 'status', label: t('req.status', '状态'), title: t('req.status', '状态'), dataIndex: 'status', width: 160,
+      render: (s: string | undefined, row: ReqRow) => (
+        <>
+          <Tag color={reqStatusColor(s)}>{s ? t(`req.status.${s}`, s) : '—'}</Tag>
+          {/* Current pipeline stage, shown next to the gate status (DRAFT/baselined/delivered) */}
+          {row.raw?.currentStage && (
+            <span style={{ fontSize: 12, color: 'var(--brand)', marginRight: 6 }}>{t(`req.stage.${row.raw.currentStage}`, row.raw.currentStage)}</span>
+          )}
+          {row.overdue && <Tag color="red" style={{ marginRight: 0 }}>{t('req.overdue', '延期')}</Tag>}
+        </>
+      ),
+    },
+    { key: 'decomposed', label: t('req.decomposed', '已拆分'), title: t('req.decomposed', '已拆分'), dataIndex: 'meta', width: 90, render: (m?: Record<string, string>) => (m?.decompositionId ? <Tag color="geekblue">{t('req.yes', '是')}</Tag> : '—') },
+  ]
+}
+
+// Requirements + orchestration in one page: list → detail tabs (info/versions/baseline/decomposition → task graph + runs + delivery + verification).
 export default function Requirements() {
   const { t } = useI18n()
   const { projectId } = useApp()
   const [items, setItems] = useState<ReqRow[]>([])
-  const [createOpen, setCreateOpen] = useState(false)
+  // Shared project module tree (same tree as scenarios/cases): left panel + module column/filter.
+  const [modules, setModules] = useState<ApiModule[]>([])
+  const [selModule, setSelModule] = useState('ALL') // ALL | UNFILED | <moduleId>
+  const [moduleSearch, setModuleSearch] = useState('')
   const tabs = useWorkTabs()
+  // Requirement field template: resolves custom-field display names in the inline preview.
+  const { fields: reqTplFields } = useFieldTemplate('requirement')
 
-  // 列表以后端为准(含 CLI/API 建的需求),叠加本地注册表的 meta(拆分/验证链接)。
-  // 携带后端 status,让列表直观看到 DRAFT/BASELINED/DELIVERED。
+  const loadModules = () => {
+    if (!projectId) { setModules([]); return }
+    api.modules(projectId).then((mm) => setModules(Array.isArray(mm) ? mm : [])).catch(() => setModules([]))
+  }
+  // Row module = backend moduleId, but only if it still exists in the tree (deleted modules fall back to unfiled).
+  const moduleOf = (r: ReqRow) => {
+    const m = r.raw?.moduleId || ''
+    return modules.some((x) => x.id === m) ? m : ''
+  }
+
+  // Backend is the source of truth (includes requirements created via CLI/API), overlaid with local registry meta (decomposition/verification links).
   const loadList = async () => {
     const local = regList('requirement', projectId)
     const localById = new Map(local.map((r) => [r.id, r]))
     try {
       const page = await api.requirements(projectId)
-      // 并行取各需求覆盖,行标签带覆盖率徽标(列表通常较小)。
+      // Fetch coverage for all requirements in parallel to badge row labels (lists are usually small).
       const covs = await Promise.all(page.items.map((r) => api.requirementCoverage(r.id).then((c) => [r.id, c] as const).catch(() => [r.id, []] as const)))
       const covMap: Record<string, CoverageCase[]> = Object.fromEntries(covs)
       setItems(page.items.map((r) => {
@@ -68,77 +165,413 @@ export default function Requirements() {
         const label = (
           <span>{r.title}{crits.length ? <Tag color={pct === 100 ? 'green' : pct > 0 ? 'gold' : 'default'} style={{ marginLeft: 6 }}>{pct}%</Tag> : null}</span>
         )
-        return { ...base, status: r.status, label }
+        return { ...base, status: r.status, reqType: r.reqType, priority: r.priority, tags: r.tags, overdue: r.overdue, label, titleText: r.title, raw: r }
       }))
     } catch {
-      setItems(local) // 后端不可用时回落本地
+      setItems(local.map((r) => ({ ...r, titleText: String(r.label) }))) // backend unavailable: fall back to local registry
     }
   }
   useEffect(() => {
     loadList()
+    loadModules()
+    setSelModule('ALL')
     tabs.reset()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId])
 
+  // List view/filter/column-settings trio; useListView must run before any conditional return (hook order).
+  const allTags = [...new Set(items.flatMap((r) => r.tags ?? []))]
+  const lv = useListView<ReqRow>({
+    kind: 'requirement',
+    projectId,
+    searchOf: (r) => r.titleText,
+    searchLabel: t('req.searchPh', '搜索标题'),
+    systemViews: [
+      { key: 'mine', label: t('lv.mine', '我创建的'), pred: (r) => !!r.raw?.createdBy && r.raw.createdBy === userIdStore.get() },
+    ],
+    fields: [
+      {
+        key: 'status', label: t('req.status', '状态'), type: 'enum',
+        options: ['DRAFT', 'BASELINED', 'DELIVERED', 'ARCHIVED'].map((v) => ({ value: v, label: t(`req.status.${v}`, v) })),
+        get: (r) => r.status,
+      },
+      {
+        key: 'reqType', label: t('req.reqType', '类型'), type: 'enum',
+        options: ['FEATURE', 'ENHANCEMENT', 'TECH_DEBT', 'BUGFIX'].map((v) => ({ value: v, label: t(`req.type.${v}`, v) })),
+        get: (r) => r.reqType,
+      },
+      {
+        key: 'priority', label: t('req.priority', '优先级'), type: 'enum',
+        options: ['P0', 'P1', 'P2', 'P3'].map((v) => ({ value: v, label: v })),
+        get: (r) => r.priority,
+      },
+      {
+        key: 'tags', label: t('req.tags', '标签'), type: 'tags',
+        options: allTags.map((v) => ({ value: v, label: v })),
+        get: (r) => r.tags ?? [],
+      },
+      {
+        key: 'module', label: t('req.module', '所属模块'), type: 'enum',
+        options: [{ value: '', label: t('req.moduleUnfiled', '未规划') }, ...modules.map((m) => ({ value: m.id, label: m.name }))],
+        get: (r) => moduleOf(r),
+      },
+      { key: 'overdue', label: t('req.overdueOnly', '仅看延期'), type: 'bool', get: (r) => r.overdue === true },
+      // Advanced-condition-only fields (duplicate the search box/columns; not rendered in the declarative filter bar).
+      { key: 'title', label: t('req.colTitle', '标题'), type: 'text', advOnly: true, get: (r) => r.titleText },
+      {
+        key: 'currentStage', label: t('req.currentStage', '当前阶段'), type: 'enum', advOnly: true,
+        options: ['CREATED', 'AUDIT', 'REVIEW', 'DEV', 'TEST', 'ACCEPTANCE', 'DELIVERY'].map((s) => ({ value: s, label: t(`req.stage.${s}`, s) })),
+        get: (r) => r.raw?.currentStage || '',
+      },
+      { key: 'createdBy', label: t('lv.createdBy', '创建人'), type: 'text', advOnly: true, get: (r) => r.raw?.createdBy || '' },
+    ],
+    columns: reqColumns(t, modules, moduleOf),
+    // Left-tree filter (selecting a parent includes children) applies before views/filters; tree counts use the full item set to stay consistent with the list.
+    rows: items.filter((r) => inSelectedModule(modules, selModule, moduleOf(r))),
+  })
+
+  // Inline expanded preview: key info without leaving the list; open the tab for deeper editing.
+  // Compact stage strip: 7 dots colored by status, current stage highlighted with its name, overdue in red.
+  const stageStrip = (r: Requirement) => (
+    <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap', marginBottom: 8 }}>
+      {stagesOf(r).map((s) => {
+        const cur = s.stage === r.currentStage
+        return (
+          <span
+            key={s.stage}
+            title={`${t(`req.stage.${s.stage}`, s.stage)} · ${t(`req.ss.${s.status}`, s.status)}`}
+            style={{
+              display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 12, lineHeight: '18px',
+              padding: cur ? '0 8px' : 0, borderRadius: 10,
+              border: cur ? '1px solid var(--brand)' : 'none',
+              background: cur ? 'var(--brand-soft)' : 'transparent',
+              color: s.overdue ? 'var(--error)' : 'var(--brand)',
+            }}
+          >
+            <span style={{ width: 8, height: 8, borderRadius: '50%', background: stageDotColor(s), display: 'inline-block' }} />
+            {cur && <span>{t(`req.stage.${s.stage}`, s.stage)}</span>}
+          </span>
+        )
+      })}
+    </div>
+  )
+  const rowPreview = (row: ReqRow) => {
+    const r = row.raw
+    if (!r) return null
+    const crits = critsOf(r)
+    return (
+      <div style={{ padding: '4px 8px', display: 'flex', gap: 32, flexWrap: 'wrap' }}>
+        <div style={{ flex: '2 1 320px', minWidth: 280 }}>
+          <div style={{ fontSize: 12, color: 'var(--text-3)', marginBottom: 4 }}>{t('req.description', '需求描述')}</div>
+          <div style={{ fontSize: 13, color: 'var(--text-2)', whiteSpace: 'pre-wrap' }}>
+            {r.versions?.find((v) => v.version === r.baselineVersion)?.description || r.versions?.[r.versions.length - 1]?.description || '—'}
+          </div>
+          <div style={{ fontSize: 12, color: 'var(--text-3)', margin: '10px 0 4px' }}>{t('req.criteriaPlain', '验收标准')}</div>
+          {crits.length ? (
+            <ol style={{ margin: 0, paddingLeft: 18, fontSize: 13, color: 'var(--text-2)' }}>
+              {crits.map((c, i) => <li key={i}>{c}</li>)}
+            </ol>
+          ) : '—'}
+        </div>
+        <div style={{ flex: '1 1 220px', minWidth: 200 }}>
+          <div style={{ fontSize: 12, color: 'var(--text-3)', marginBottom: 4 }}>{t('req.stagePanel', '阶段进度')}</div>
+          {stageStrip(r)}
+          <div style={{ fontSize: 12, color: 'var(--text-3)', lineHeight: 1.9 }}>
+            {r.dueDate && <div>{t('req.dueDate', '截止日期')}:{r.dueDate}{r.overdue && <Tag color="red" style={{ marginLeft: 6 }}>{t('req.overdue', '延期')}</Tag>}</div>}
+            {r.createdAt ? <div>{t('req.createdAt', '创建时间')}:{new Date(r.createdAt).toLocaleString()}</div> : null}
+            {r.updatedAt ? <div>{t('req.updatedAt', '更新时间')}:{new Date(r.updatedAt).toLocaleString()}</div> : null}
+          </div>
+          {/* Custom fields: names resolved from the field template, falling back to the raw key. */}
+          {r.customFields && Object.keys(r.customFields).length > 0 && (
+            <div style={{ fontSize: 12, color: 'var(--text-3)', lineHeight: 1.9, marginTop: 6 }}>
+              {Object.entries(r.customFields).map(([k, v]) => {
+                const f = reqTplFields.find((x) => !x.system && x.key === k)
+                return <div key={k}>{f ? fieldLabel(t, 'requirement', f) : k}:<span style={{ color: 'var(--text-2)', marginLeft: 4 }}>{v}</span></div>
+              })}
+            </div>
+          )}
+          <Button size="small" type="primary" ghost style={{ marginTop: 8 }} onClick={() => tabs.open(row.id)}>
+            {t('req.openDetail', '打开完整详情')}
+          </Button>
+        </div>
+      </div>
+    )
+  }
+
   if (!projectId) return <SelectProjectEmpty />
 
-  const detailTabs = items
-    .filter((r) => tabs.openIds.includes(r.id))
-    .map((r) => ({
-      key: r.id,
-      label: r.label,
-      children: <RequirementDetail key={r.id} reqId={r.id} projectId={projectId} onChanged={loadList} onDeleted={() => { tabs.close(r.id); loadList() }} />,
-    }))
+  // Left: shared module tree (same ModuleTreePanel as the scenario page; Workspace wraps it in ResizableSider).
+  const left = (
+    <ModuleTreePanel
+      projectId={projectId}
+      modules={modules}
+      items={items}
+      getModuleId={moduleOf}
+      selectedKey={selModule}
+      onSelect={setSelModule}
+      allLabel={t('req.allRequirements', '全部需求')}
+      unfiledLabel={t('req.moduleUnfiled', '未规划')}
+      moduleSearch={moduleSearch}
+      onModuleSearch={setModuleSearch}
+      searchPlaceholder={t('req.moduleSearchPh', '请输入模块名称进行搜索')}
+      onModulesChanged={loadModules}
+      deleteModuleContent={t('req.deleteModuleContent', '其下需求将变为未规划(不会删除需求)。')}
+    />
+  )
+  // New requirements default to the module selected in the tree (ALL/UNFILED count as unfiled).
+  const defaultModuleId = selModule !== 'ALL' && selModule !== 'UNFILED' ? selModule : ''
+
+  // Creation runs in a workspace tab (like the scenario page, no modal); on success close it and open the detail tab.
+  const detailTabs = [
+    ...(tabs.openIds.includes(NEW_REQ_KEY)
+      ? [{
+          key: NEW_REQ_KEY,
+          label: t('req.new', '新建需求'),
+          children: (
+            <div style={{ maxWidth: 720, padding: 16, overflow: 'auto', height: '100%' }}>
+              <CreateRequirementForm
+                projectId={projectId}
+                modules={modules}
+                defaultModuleId={defaultModuleId}
+                onDone={(r, title) => {
+                  regAdd('requirement', projectId, { id: r.id, label: title, createdAt: Date.now() })
+                  loadList()
+                  tabs.close(NEW_REQ_KEY)
+                  tabs.open(r.id)
+                }}
+              />
+            </div>
+          ),
+        }]
+      : []),
+    ...items
+      .filter((r) => tabs.openIds.includes(r.id))
+      .map((r) => ({
+        key: r.id,
+        label: r.label,
+        children: <RequirementDetail key={r.id} reqId={r.id} projectId={projectId} modules={modules} onChanged={loadList} onDeleted={() => { tabs.close(r.id); loadList() }} onOpen={(id) => tabs.open(id)} />,
+      })),
+  ]
 
   return (
+    <Workspace
+      left={left}
+      leftWidth={240}
+      siderKey="requirement-sider"
+      listLabel={t('req.allRequirements', '全部需求')}
+      activeKey={tabs.activeKey}
+      onChange={tabs.setActiveKey}
+      onClose={tabs.close}
+      tabs={detailTabs}
+      listContent={
+        <WorkList<ReqRow>
+          onNew={() => tabs.open(NEW_REQ_KEY)}
+          newLabel={t('req.new', '新建需求')}
+          extraActions={lv.toolbar}
+          data={lv.rows}
+          pagination={lv.pagination}
+          onRowClick={(r) => tabs.open(r.id)}
+          emptyText={t('req.empty', '暂无需求')}
+          columns={lv.columns}
+          expandable={{ expandedRowRender: rowPreview, rowExpandable: (r) => !!r.raw }}
+        />
+      }
+    />
+  )
+}
+
+// Create requirement: AI drafting (MRD/raw material → structured draft backfill) + a form rendered from the field template.
+// System field order/required/visibility comes from the requirement field template (Project → Template management); custom fields are appended dynamically.
+const REQ_TYPES = ['FEATURE', 'ENHANCEMENT', 'TECH_DEBT', 'BUGFIX'] as const
+const PRIORITIES = ['P0', 'P1', 'P2', 'P3'] as const
+
+function CreateRequirementForm({ projectId, modules, defaultModuleId, onDone }: { projectId: string; modules: ApiModule[]; defaultModuleId?: string; onDone: (r: Requirement, title: string) => void }) {
+  const { t } = useI18n()
+  const [form] = Form.useForm()
+  const [raw, setRaw] = useState('')
+  const [drafting, setDrafting] = useState(false)
+  // Field template drives system-field order/required/visibility; custom fields render by type.
+  const { fields: tplFields } = useFieldTemplate('requirement')
+  // Parent candidates: existing requirements in the project (fail silently, empty dropdown is fine).
+  const [parents, setParents] = useState<Requirement[]>([])
+  useEffect(() => {
+    api.requirements(projectId).then((p) => setParents(p.items)).catch(() => setParents([]))
+  }, [projectId])
+  const typeLabel: Record<string, string> = {
+    FEATURE: t('req.type.FEATURE', '功能'),
+    ENHANCEMENT: t('req.type.ENHANCEMENT', '优化'),
+    TECH_DEBT: t('req.type.TECH_DEBT', '技术债'),
+    BUGFIX: t('req.type.BUGFIX', '缺陷修复'),
+  }
+  const draft = async () => {
+    if (!raw.trim()) return
+    setDrafting(true)
+    try {
+      const d = await api.draftRequirement(raw)
+      form.setFieldsValue({
+        title: d.title,
+        description: d.description,
+        priority: d.priority,
+        criteria: d.acceptanceCriteria.length ? d.acceptanceCriteria : [''],
+      })
+      message.success(d.source === 'llm' ? t('req.draftedByAi', 'AI 已起草,请复核修改') : t('req.draftedHeuristic', '已按格式整理(未配置 LLM),请补充'))
+    } catch (e) {
+      message.error(e instanceof ApiError ? e.message : t('req.draftFailed', '起草失败'))
+    } finally {
+      setDrafting(false)
+    }
+  }
+  // System field renderer: key → form item; required follows the template (title is always required).
+  const sysItem = (f: TemplateField) => {
+    const rules = f.required ? [{ required: true }] : undefined
+    switch (f.key) {
+      case 'title':
+        return (
+          <Form.Item key="title" name="title" label={t('req.title', '标题')} rules={[{ required: true }]}>
+            <Input placeholder={t('req.titlePlaceholder', '如:用户登录')} />
+          </Form.Item>
+        )
+      case 'reqType':
+        return (
+          <Form.Item key="reqType" name="reqType" label={t('req.reqType', '类型')} rules={rules}>
+            <Select options={REQ_TYPES.map((k) => ({ value: k, label: typeLabel[k] }))} />
+          </Form.Item>
+        )
+      case 'priority':
+        return (
+          <Form.Item key="priority" name="priority" label={t('req.priority', '优先级')} rules={rules}>
+            <Select options={PRIORITIES.map((p) => ({ value: p, label: p }))} />
+          </Form.Item>
+        )
+      case 'tags':
+        return (
+          <Form.Item key="tags" name="tags" label={t('req.tags', '标签')} rules={rules}>
+            <Select mode="tags" maxCount={10} tokenSeparators={[',', ' ']} open={false} suffixIcon={null} placeholder={t('req.tagsPh', '回车添加,最多 10 个')} />
+          </Form.Item>
+        )
+      case 'dueDate':
+        return (
+          <Form.Item key="dueDate" name="dueDate" label={t('req.dueDate', '截止日期')} rules={rules}>
+            <DatePicker format="YYYY-MM-DD" style={{ width: '100%' }} />
+          </Form.Item>
+        )
+      case 'parentId':
+        return (
+          <Form.Item key="parentId" name="parentId" label={t('req.parentReq', '父需求')} rules={rules}>
+            <Select
+              allowClear
+              showSearch
+              optionFilterProp="label"
+              placeholder={t('req.parentPh', '可选:挂到某个已有需求下')}
+              options={parents.map((p) => ({ value: p.id, label: p.title }))}
+            />
+          </Form.Item>
+        )
+      case 'description':
+        return (
+          <Form.Item key="description" name="description" label={t('req.description', '需求描述')} rules={rules}>
+            <Input.TextArea rows={4} placeholder={t('req.descriptionPh', '背景:为什么做\n目标:做成什么样\n范围:边界与不做什么')} />
+          </Form.Item>
+        )
+      case 'criteria':
+        // Criteria list renders specially (one entry per item); "required" is validated in onFinish (at least one).
+        return (
+          <Form.List key="criteria" name="criteria">
+            {(fields, { add, remove }) => (
+              <Form.Item label={t('req.criteriaList', '验收标准(逐条,可判定)')} required={f.required}>
+                {fields.map(({ key, ...field }) => (
+                  <div key={key} style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+                    <Form.Item {...field} noStyle>
+                      <Input placeholder={t('req.criterionPh', '一条可判定的验收条件,如:错误密码提示明确')} />
+                    </Form.Item>
+                    {fields.length > 1 && (
+                      <Button type="text" icon={<DeleteOutlined />} onClick={() => remove(field.name)} />
+                    )}
+                  </div>
+                ))}
+                <Button type="dashed" block onClick={() => add('')}>
+                  + {t('req.addCriterion', '添加验收标准')}
+                </Button>
+              </Form.Item>
+            )}
+          </Form.List>
+        )
+      default:
+        return null
+    }
+  }
+  return (
     <>
-      <Workspace
-        listLabel={t('req.allRequirements', '全部需求')}
-        activeKey={tabs.activeKey}
-        onChange={tabs.setActiveKey}
-        onClose={tabs.close}
-        tabs={detailTabs}
-        listContent={
-          <WorkList<ReqRow>
-            onNew={() => setCreateOpen(true)}
-            newLabel={t('req.new', '新建需求')}
-            data={items}
-            onRowClick={(r) => tabs.open(r.id)}
-            emptyText={t('req.empty', '暂无需求')}
-            columns={[
-              { title: t('req.title', '标题'), dataIndex: 'label' },
-              { title: t('req.status', '状态'), dataIndex: 'status', width: 120, render: (s?: string) => <Tag color={reqStatusColor(s)}>{s ? t(`req.status.${s}`, s) : '—'}</Tag> },
-              { title: t('req.decomposed', '已拆分'), dataIndex: 'meta', width: 100, render: (m?: Record<string, string>) => (m?.decompositionId ? <Tag color="geekblue">{t('req.yes', '是')}</Tag> : '—') },
-            ]}
+      {/* AI drafting (MRD → PRD): paste raw material, the draft backfills the form below and stays editable */}
+      <div style={{ background: 'var(--panel-2)', border: '1px solid var(--border-soft)', borderRadius: 8, padding: 12, marginBottom: 16 }}>
+        <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>{t('req.aiDraft', 'AI 起草(MRD 自动转 PRD)')}</div>
+        <Input.TextArea
+          rows={3}
+          value={raw}
+          onChange={(e) => setRaw(e.target.value)}
+          placeholder={t('req.aiDraftPh', '粘贴 MRD/会议纪要/原始想法,AI 整理为标题、描述与逐条验收标准')}
+        />
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 8 }}>
+          <span style={{ fontSize: 12, color: 'var(--text-3)' }}>{t('req.aiDraftHint', '结果回填下方表单,创建前可修改')}</span>
+          <Button size="small" type="primary" ghost loading={drafting} disabled={!raw.trim()} onClick={draft}>
+            {t('req.aiDraftBtn', '起草')}
+          </Button>
+        </div>
+      </div>
+      <Form
+        form={form}
+        layout="vertical"
+        initialValues={{ reqType: 'FEATURE', priority: 'P2', criteria: [''], moduleId: defaultModuleId ?? '' }}
+        onFinish={async (v: { title: string; description?: string; reqType?: string; priority?: string; criteria?: string[]; tags?: string[]; dueDate?: Dayjs; parentId?: string; moduleId?: string; [CF_GROUP]?: Record<string, unknown> }) => {
+          const acceptanceCriteria = (v.criteria || []).map((c) => (c || '').trim()).filter(Boolean)
+          const critField = tplFields.find((f) => f.key === 'criteria')
+          if (critField?.enabled && critField.required && !acceptanceCriteria.length) {
+            message.warning(t('req.criteriaRequired', '请至少填写一条验收标准'))
+            return
+          }
+          const customFields = collectCustomValues(tplFields, v[CF_GROUP])
+          try {
+            const r = await api.createRequirement({
+              projectId,
+              title: v.title,
+              description: v.description?.trim() || undefined,
+              acceptanceCriteria,
+              priority: v.priority,
+              reqType: v.reqType,
+              tags: v.tags?.length ? v.tags : undefined,
+              dueDate: v.dueDate ? v.dueDate.format('YYYY-MM-DD') : undefined,
+              parentId: v.parentId || undefined,
+              customFields: Object.keys(customFields).length ? customFields : undefined,
+              moduleId: v.moduleId || undefined,
+            })
+            message.success(t('req.created', '需求已创建'))
+            onDone(r, v.title)
+          } catch (e) {
+            message.error(e instanceof ApiError ? e.message : t('req.createFailed', '创建失败'))
+          }
+        }}
+      >
+        {/* Module: defaults to the tree selection; unfiled = empty string. */}
+        <Form.Item name="moduleId" label={t('req.module', '所属模块')}>
+          <Select
+            showSearch
+            optionFilterProp="label"
+            options={[{ value: '', label: t('req.moduleUnfiled', '未规划') }, ...modules.map((m) => ({ value: m.id, label: m.name }))]}
           />
-        }
-      />
-      <Modal title={t('req.new', '新建需求')} open={createOpen} onCancel={() => setCreateOpen(false)} footer={null} destroyOnHidden>
-        <Form
-          layout="vertical"
-          onFinish={async (v: { title: string; criteria: string }) => {
-            try {
-              const r = await api.createRequirement({ projectId, title: v.title, acceptanceCriteria: toLines(v.criteria || '') })
-              message.success(t('req.created', '需求已创建'))
-              regAdd('requirement', projectId, { id: r.id, label: v.title, createdAt: Date.now() })
-              loadList()
-              setCreateOpen(false)
-              tabs.open(r.id)
-            } catch (e) {
-              message.error(e instanceof ApiError ? e.message : t('req.createFailed', '创建失败'))
-            }
-          }}
-        >
-          <Form.Item name="title" label={t('req.title', '标题')} rules={[{ required: true }]}><Input placeholder={t('req.titlePlaceholder', '如:用户登录')} autoFocus /></Form.Item>
-          <Form.Item name="criteria" label={t('req.criteria', '验收标准(每行一条)')}><Input.TextArea rows={4} placeholder={t('req.criteriaPlaceholder', '登录成功\n错误密码拒绝')} /></Form.Item>
-          <Button type="primary" htmlType="submit" block>{t('a.create', '创建')}</Button>
-        </Form>
-      </Modal>
+        </Form.Item>
+        {/* Render in template array order: system fields use their renderers, custom fields render by type, disabled fields are skipped. */}
+        {tplFields.filter((f) => f.enabled).map((f) =>
+          f.system ? sysItem(f) : <CustomFieldItem key={f.key} kind="requirement" field={f} />
+        )}
+        <Button type="primary" htmlType="submit" block>
+          {t('a.create', '创建')}
+        </Button>
+      </Form>
     </>
   )
 }
 
-// 需求的功能用例覆盖:逐条验收标准 → 关联的功能用例(可增删)+ 覆盖率。打通「需求→标准→功能用例」手工覆盖链。
+// Functional-case coverage: per acceptance criterion, linked functional cases (add/remove) + coverage rate — the manual requirement → criterion → case chain.
 function RequirementCoveragePanel({ reqId, projectId, criteria }: { reqId: string; projectId: string; criteria: string[] }) {
   const { t } = useI18n()
   const [cov, setCov] = useState<CoverageCase[]>([])
@@ -201,28 +634,151 @@ function RequirementCoveragePanel({ reqId, projectId, criteria }: { reqId: strin
   )
 }
 
-function RequirementDetail({ reqId, projectId, onChanged, onDeleted }: { reqId: string; projectId: string; onChanged: () => void; onDeleted: () => void }) {
+// Stage pipeline panel: 7 cards in a row, current stage highlighted (brand border + soft background).
+// Each card shows status / planned window / actual start-end / overdue; clicking opens transitions (start/done/skip) + scheduling (clearing a date sends "").
+// CREATED is system-managed read-only; review/acceptance/delivery are driven by baseline/deliver actions but keep a manual override.
+function StagePipeline({ req, onAction }: { req: Requirement; onAction: (stage: string, b: { status?: string; plannedStart?: string; plannedEnd?: string }) => void }) {
+  const { t } = useI18n()
+  return (
+    <div style={{ marginTop: 12 }}>
+      <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>{t('req.stagePanel', '阶段进度')}</div>
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+        {stagesOf(req).map((s) => {
+          const cur = s.stage === req.currentStage
+          const editable = s.stage !== 'CREATED' // CREATED is system-managed, read-only
+          const card = (
+            <div
+              style={{
+                flex: '1 1 128px', minWidth: 128, padding: '8px 10px', borderRadius: 8,
+                border: `1px solid ${cur ? 'var(--brand)' : 'var(--border-soft)'}`,
+                background: cur ? 'var(--brand-soft)' : 'var(--panel)',
+                cursor: editable ? 'pointer' : 'default',
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
+                {s.overdue && <span style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--error)', display: 'inline-block' }} />}
+                <span style={{ fontWeight: 600, fontSize: 13, color: cur ? 'var(--brand)' : 'var(--text)' }}>{t(`req.stage.${s.stage}`, s.stage)}</span>
+              </div>
+              <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginBottom: 6 }}>
+                <Tag color={stageTagColor(s.status)} style={{ marginRight: 0 }}>{t(`req.ss.${s.status}`, s.status)}</Tag>
+                {s.overdue && <Tag color="red" style={{ marginRight: 0 }}>{t('req.overdue', '延期')}</Tag>}
+              </div>
+              <div style={{ fontSize: 12, color: 'var(--text-3)' }}>
+                {t('req.plannedWindow', '计划窗口')}:{s.plannedStart || s.plannedEnd ? `${fmtPlan(s.plannedStart)} ~ ${fmtPlan(s.plannedEnd)}` : '—'}
+              </div>
+              {(s.startedAt || s.finishedAt) && (
+                <div style={{ fontSize: 12, color: 'var(--text-3)' }}>
+                  {t('req.actualWindow', '实际起止')}:{fmtShort(s.startedAt) || '—'} ~ {fmtShort(s.finishedAt) || '—'}
+                </div>
+              )}
+            </div>
+          )
+          if (!editable) {
+            return <Tooltip key={s.stage} title={t('req.stageSystem', '系统管理:创建需求时自动完成')}>{card}</Tooltip>
+          }
+          return (
+            <Popover
+              key={s.stage}
+              trigger="click"
+              title={t(`req.stage.${s.stage}`, s.stage)}
+              content={
+                <Space direction="vertical" size={8}>
+                  <Space size={6}>
+                    <Button size="small" disabled={s.status === 'IN_PROGRESS'} onClick={() => onAction(s.stage, { status: 'IN_PROGRESS' })}>{t('req.stageStart', '开始')}</Button>
+                    <Button size="small" type="primary" ghost disabled={s.status === 'DONE'} onClick={() => onAction(s.stage, { status: 'DONE' })}>{t('req.stageDone', '完成')}</Button>
+                    <Button size="small" disabled={s.status === 'SKIPPED'} onClick={() => onAction(s.stage, { status: 'SKIPPED' })}>{t('req.stageSkip', '跳过')}</Button>
+                  </Space>
+                  {/* Clearing a date sends "" so the backend clears it */}
+                  <DatePicker
+                    size="small" style={{ width: 190 }} allowClear placeholder={t('req.plannedStart', '计划开始')}
+                    value={s.plannedStart ? dayjs(s.plannedStart) : null}
+                    onChange={(d) => onAction(s.stage, { plannedStart: d ? d.format('YYYY-MM-DD') : '' })}
+                  />
+                  <DatePicker
+                    size="small" style={{ width: 190 }} allowClear placeholder={t('req.plannedEnd', '计划结束')}
+                    value={s.plannedEnd ? dayjs(s.plannedEnd) : null}
+                    onChange={(d) => onAction(s.stage, { plannedEnd: d ? d.format('YYYY-MM-DD') : '' })}
+                  />
+                </Space>
+              }
+            >
+              {card}
+            </Popover>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
+function RequirementDetail({ reqId, projectId, modules, onChanged, onDeleted, onOpen }: { reqId: string; projectId: string; modules: ApiModule[]; onChanged: () => void; onDeleted: () => void; onOpen?: (id: string) => void }) {
   const { t } = useI18n()
   const [req, setReq] = useState<Requirement | null>(null)
+  // Field template: the edit modal renders custom fields (prefill current values; submit replaces the whole map).
+  const { fields: tplFields } = useFieldTemplate('requirement')
   const [cov, setCov] = useState<CoverageCase[]>([])
   const [verOpen, setVerOpen] = useState(false)
-  const [verView, setVerView] = useState<RequirementVersion | null>(null) // 查看的历史版本明细
+  const [verView, setVerView] = useState<RequirementVersion | null>(null) // version detail being viewed
+  // Children / link candidates (all project requirements) / change-history drawer.
+  const [children, setChildren] = useState<Requirement[]>([])
+  const [allReqs, setAllReqs] = useState<Requirement[]>([])
+  const [childPick, setChildPick] = useState<string>()
+  const [changesOpen, setChangesOpen] = useState(false)
+  const [changes, setChanges] = useState<RequirementChange[]>([])
   const reg = regList('requirement', projectId).find((r) => r.id === reqId)
   const [decompId, setDecompId] = useState<string | undefined>(reg?.meta?.decompositionId)
   const [verId, setVerId] = useState<string | undefined>(reg?.meta?.verificationId)
 
+  const loadChildren = () => api.requirementChildren(reqId).then((r) => setChildren(r.items)).catch(() => setChildren([]))
   const load = async () => {
     try {
       setReq(await api.getRequirement(reqId))
       api.requirementCoverage(reqId).then(setCov).catch(() => setCov([]))
+      loadChildren()
     } catch (e) {
       message.error(e instanceof ApiError ? e.message : t('req.loadFailed', '加载需求失败'))
     }
   }
   useEffect(() => {
     load()
+    api.requirements(projectId).then((p) => setAllReqs(p.items)).catch(() => setAllReqs([]))
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [reqId])
+
+  // Stage transition/scheduling: PUT /requirement/:id/stage/:stage, then refresh detail + list (actual timestamps are recorded by the backend).
+  const setStage = async (stage: string, b: { status?: string; plannedStart?: string; plannedEnd?: string }) => {
+    try {
+      await api.setRequirementStage(reqId, stage, b)
+      load()
+      onChanged()
+    } catch (e) {
+      message.error(e instanceof ApiError ? e.message : t('req.setStageFailed', '阶段更新失败'))
+    }
+  }
+  // Linking/unlinking a child mutates the child's parentId.
+  const linkChild = async () => {
+    if (!childPick) return
+    try {
+      await api.setRequirementParent(childPick, reqId)
+      setChildPick(undefined)
+      message.success(t('req.linked', '已关联'))
+      loadChildren()
+    } catch (e) {
+      message.error(e instanceof ApiError ? e.message : t('req.linkFailed', '关联失败'))
+    }
+  }
+  const unlinkChild = async (childId: string) => {
+    try {
+      await api.setRequirementParent(childId, null)
+      loadChildren()
+    } catch (e) {
+      message.error(e instanceof ApiError ? e.message : t('req.unlinkFailed', '解除失败'))
+    }
+  }
+  const openChanges = () => {
+    setChangesOpen(true)
+    api.requirementChanges(reqId).then((r) => setChanges(r.items)).catch(() => setChanges([]))
+  }
 
   const setBaseline = () => {
     let v = String(req?.baselineVersion ?? 1)
@@ -241,24 +797,8 @@ function RequirementDetail({ reqId, projectId, onChanged, onDeleted }: { reqId: 
     })
   }
 
-  // 生命周期操作:重命名 / 交付 / 归档 / 删除(后端 PUT/POST/DELETE,带状态守卫,失败回显)。
-  const rename = () => {
-    let title = req?.title || ''
-    modal.confirm({
-      title: t('req.renameTitle', '重命名需求'),
-      content: <Input defaultValue={title} onChange={(e) => (title = e.target.value)} style={{ marginTop: 8 }} />,
-      onOk: async () => {
-        if (!title.trim()) return
-        try {
-          await api.renameRequirement(reqId, title.trim())
-          message.success(t('req.renamed', '已重命名'))
-          load(); onChanged()
-        } catch (e) {
-          message.error(e instanceof ApiError ? e.message : t('req.renameFailed', '重命名失败'))
-        }
-      },
-    })
-  }
+  // Lifecycle actions: edit / deliver / archive / delete. The backend guards status transitions; failures surface to the user.
+  const [editOpen, setEditOpen] = useState(false)
   const deliver = () => modal.confirm({
     title: t('req.deliverConfirm', '确认交付该需求?'),
     content: t('req.deliverHint', '需先定基线(BASELINED)才能交付。'),
@@ -321,7 +861,7 @@ function RequirementDetail({ reqId, projectId, onChanged, onDeleted }: { reqId: 
     }
   }
 
-  // 验收标准:后端把标准放在 versions[].acceptanceCriteria,优先取基线版本,回落最新版本/顶层字段。
+  // Criteria live in versions[].acceptanceCriteria; prefer the baseline version, fall back to latest version / top-level field.
   const baselineCriteria =
     req?.versions?.find((v) => v.version === req.baselineVersion)?.acceptanceCriteria ??
     req?.versions?.[req.versions.length - 1]?.acceptanceCriteria ??
@@ -338,13 +878,14 @@ function RequirementDetail({ reqId, projectId, onChanged, onDeleted }: { reqId: 
             children: (
               <>
                 <Space style={{ marginBottom: 12 }} wrap>
-                  <Button icon={<EditOutlined />} size="small" onClick={rename}>{t('req.rename', '重命名')}</Button>
+                  <Button icon={<EditOutlined />} size="small" onClick={() => setEditOpen(true)}>{t('a.edit', '编辑')}</Button>
                   <Button icon={<BranchesOutlined />} size="small" disabled={req?.status === 'ARCHIVED'} onClick={() => setVerOpen(true)}>{t('req.addVersion', '新增版本')}</Button>
                   <Button icon={<FlagOutlined />} size="small" disabled={req?.status === 'ARCHIVED'} onClick={setBaseline}>{t('req.setBaseline', '定基线')}</Button>
                   <Button type="primary" icon={<PartitionOutlined />} size="small" onClick={doBreakdown}>{t('req.autoDecompose', '自动拆分')}</Button>
                   <Button icon={<SendOutlined />} size="small" disabled={!(req?.status === 'BASELINED' || req?.status === 'DELIVERED')} onClick={deliver}>{t('req.deliver', '交付')}</Button>
                   <Button icon={<InboxOutlined />} size="small" disabled={req?.status === 'ARCHIVED'} onClick={archive}>{t('req.archive', '归档')}</Button>
                   <Button danger icon={<DeleteOutlined />} size="small" onClick={del}>{t('a.delete', '删除')}</Button>
+                  <Button icon={<HistoryOutlined />} size="small" onClick={openChanges}>{t('req.changes', '变更记录')}</Button>
                   {(() => {
                     const n = baselineCriteria.filter((_, i) => cov.some((c) => c.criterionIndex === i)).length
                     const pct = baselineCriteria.length ? Math.round((n / baselineCriteria.length) * 100) : 0
@@ -355,13 +896,57 @@ function RequirementDetail({ reqId, projectId, onChanged, onDeleted }: { reqId: 
                   <Descriptions.Item label={t('req.title', '标题')}>{req?.title}</Descriptions.Item>
                   <Descriptions.Item label={t('req.baselineVersion', '基线版本')}>v{req?.baselineVersion}</Descriptions.Item>
                   <Descriptions.Item label={t('req.status', '状态')}>{req?.status ? <Tag color={reqStatusColor(req.status)}>{t(`req.status.${req.status}`, req.status)}</Tag> : '—'}</Descriptions.Item>
+                  <Descriptions.Item label={t('req.reqType', '类型')}>{req?.reqType ? <Tag>{t(`req.type.${req.reqType}`, req.reqType)}</Tag> : '—'}</Descriptions.Item>
+                  <Descriptions.Item label={t('req.priority', '优先级')}>{req?.priority ? <Tag color={prioColor(req.priority)}>{req.priority}</Tag> : '—'}</Descriptions.Item>
+                  <Descriptions.Item label={t('req.tags', '标签')}>
+                    {req?.tags?.length ? req.tags.map((tg) => <Tag key={tg}>{tg}</Tag>) : '—'}
+                  </Descriptions.Item>
+                  <Descriptions.Item label={t('req.dueDate', '截止日期')}>
+                    {req?.dueDate ? (
+                      <span>
+                        {req.dueDate}
+                        {req.overdue && <Tag color="red" style={{ marginLeft: 6 }}>{t('req.overdue', '延期')}</Tag>}
+                      </span>
+                    ) : '—'}
+                  </Descriptions.Item>
+                  <Descriptions.Item label={t('req.createdAt', '创建时间')}>{req?.createdAt ? new Date(req.createdAt).toLocaleString() : '—'}</Descriptions.Item>
+                  <Descriptions.Item label={t('req.updatedAt', '更新时间')}>{req?.updatedAt ? new Date(req.updatedAt).toLocaleString() : '—'}</Descriptions.Item>
                   <Descriptions.Item label={t('req.acceptanceCriteria', '验收标准')}>
                     {baselineCriteria.length ? (
                       <ul style={{ margin: 0, paddingLeft: 18 }}>{baselineCriteria.map((c, i) => <li key={i}>{c}</li>)}</ul>
                     ) : '—'}
                   </Descriptions.Item>
                 </Descriptions>
-                {/* 版本历史:点「查看」走 GET /requirement/:id/version/:n 取该版本明细。 */}
+                {/* Stage progress: 7 pipeline cards, current stage highlighted; click to transition (start/done/skip) and schedule planned dates. */}
+                {req && <StagePipeline req={req} onAction={setStage} />}
+                {/* Children: requirements under this one (open/unlink), plus linking others in. */}
+                <Card size="small" title={`${t('req.children', '子需求')} (${children.length})`} style={{ marginTop: 12 }}>
+                  <Space.Compact style={{ width: '100%', marginBottom: children.length ? 10 : 0 }}>
+                    <Select
+                      size="small"
+                      style={{ flex: 1 }}
+                      allowClear
+                      showSearch
+                      optionFilterProp="label"
+                      placeholder={t('req.linkChildPh', '选择需求挂到本需求下')}
+                      value={childPick}
+                      onChange={setChildPick}
+                      options={allReqs
+                        .filter((r) => r.id !== reqId && !children.some((c) => c.id === r.id))
+                        .map((r) => ({ value: r.id, label: r.title }))}
+                    />
+                    <Button size="small" type="primary" disabled={!childPick} onClick={linkChild}>{t('req.linkChild', '关联子需求')}</Button>
+                  </Space.Compact>
+                  {children.map((c) => (
+                    <div key={c.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 0', borderTop: '1px solid var(--border-soft)' }}>
+                      <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.title}</span>
+                      <Tag color={reqStatusColor(c.status)} style={{ marginRight: 0 }}>{t(`req.status.${c.status}`, c.status)}</Tag>
+                      {onOpen && <Button type="link" size="small" onClick={() => onOpen(c.id)}>{t('req.open', '打开')}</Button>}
+                      <Button type="link" size="small" danger onClick={() => unlinkChild(c.id)}>{t('req.unlink', '解除')}</Button>
+                    </div>
+                  ))}
+                </Card>
+                {/* Version history: "view" fetches GET /requirement/:id/version/:n. */}
                 {!!req?.versions?.length && (
                   <Table<RequirementVersion>
                     style={{ marginTop: 12 }}
@@ -414,6 +999,99 @@ function RequirementDetail({ reqId, projectId, onChanged, onDeleted }: { reqId: 
           <Button type="primary" htmlType="submit" block>{t('req.createVersion', '创建版本')}</Button>
         </Form>
       </Modal>
+      <Modal title={t('req.editInfo', '编辑需求信息')} open={editOpen} onCancel={() => setEditOpen(false)} footer={null} destroyOnHidden>
+        <Form
+          layout="vertical"
+          initialValues={{
+            title: req?.title,
+            reqType: req?.reqType || 'FEATURE',
+            priority: req?.priority || 'P2',
+            tags: req?.tags || [],
+            dueDate: req?.dueDate ? dayjs(req.dueDate) : undefined,
+            // Module: fall back to unfiled when deleted or unset.
+            moduleId: req?.moduleId && modules.some((m) => m.id === req.moduleId) ? req.moduleId : '',
+            [CF_GROUP]: customFormValues(tplFields, req?.customFields),
+          }}
+          onFinish={async (v: { title: string; reqType: string; priority: string; tags: string[]; dueDate?: ReturnType<typeof dayjs>; moduleId?: string; [CF_GROUP]?: Record<string, unknown> }) => {
+            try {
+              await api.updateRequirement(reqId, {
+                title: v.title.trim(),
+                reqType: v.reqType,
+                priority: v.priority,
+                tags: v.tags,
+                // empty string clears the due date (backend convention)
+                dueDate: v.dueDate ? v.dueDate.format('YYYY-MM-DD') : '',
+                // custom fields are replaced wholesale (removing a value drops it from the map)
+                customFields: collectCustomValues(tplFields, v[CF_GROUP]),
+                // module: empty string = back to unfiled (omitting leaves it untouched; always submitted here)
+                moduleId: v.moduleId ?? '',
+              })
+              message.success(t('req.updated', '已保存'))
+              setEditOpen(false)
+              load(); onChanged()
+            } catch (e) {
+              message.error(e instanceof ApiError ? e.message : t('req.updateFailed', '保存失败'))
+            }
+          }}
+        >
+          <Form.Item name="title" label={t('req.title', '标题')} rules={[{ required: true }]}>
+            <Input />
+          </Form.Item>
+          <Row gutter={12}>
+            <Col span={12}>
+              <Form.Item name="reqType" label={t('req.reqType', '类型')}>
+                <Select options={['FEATURE', 'ENHANCEMENT', 'TECH_DEBT', 'BUGFIX'].map((k) => ({ value: k, label: t(`req.type.${k}`, k) }))} />
+              </Form.Item>
+            </Col>
+            <Col span={12}>
+              <Form.Item name="priority" label={t('req.priority', '优先级')}>
+                <Select options={['P0', 'P1', 'P2', 'P3'].map((p) => ({ value: p, label: p }))} />
+              </Form.Item>
+            </Col>
+          </Row>
+          <Form.Item name="tags" label={t('req.tags', '标签')}>
+            <Select mode="tags" maxCount={10} tokenSeparators={[',', ' ']} open={false} suffixIcon={null} placeholder={t('req.tagsPh', '输入后回车,最多 10 个')} />
+          </Form.Item>
+          <Form.Item name="moduleId" label={t('req.module', '所属模块')}>
+            <Select
+              showSearch
+              optionFilterProp="label"
+              options={[{ value: '', label: t('req.moduleUnfiled', '未规划') }, ...modules.map((m) => ({ value: m.id, label: m.name }))]}
+            />
+          </Form.Item>
+          <Form.Item name="dueDate" label={t('req.dueDate', '截止日期')}>
+            <DatePicker style={{ width: '100%' }} allowClear />
+          </Form.Item>
+          {/* Custom fields: prefilled with current values; saving replaces the whole map. */}
+          <CustomFieldItems kind="requirement" fields={tplFields} />
+          <Button type="primary" htmlType="submit" block>{t('a.save', '保存')}</Button>
+        </Form>
+      </Modal>
+      {/* Change history: field-level log (time / actor / field: old → new). */}
+      <Drawer title={t('req.changes', '变更记录')} open={changesOpen} onClose={() => setChangesOpen(false)} width={480}>
+        {changes.length ? (
+          <Timeline
+            items={changes.map((c, i) => ({
+              key: i,
+              children: (
+                <div>
+                  <div style={{ color: 'var(--text-3)', fontSize: 12 }}>
+                    {new Date(c.changedAt).toLocaleString()} · {c.changedBy}
+                  </div>
+                  <div>
+                    <Tag style={{ marginRight: 6 }}>{t(`req.chg.${c.field}`, c.field)}</Tag>
+                    <span style={{ color: 'var(--text-2)' }}>{c.oldValue || '—'}</span>
+                    <span style={{ color: 'var(--text-3)', margin: '0 6px' }}>→</span>
+                    <span>{c.newValue || '—'}</span>
+                  </div>
+                </div>
+              ),
+            }))}
+          />
+        ) : (
+          <Empty description={t('req.noChanges', '暂无变更记录')} />
+        )}
+      </Drawer>
       <Modal title={verView ? `${t('req.versionDetail', '版本明细')} · v${verView.version}` : ''} open={!!verView} onCancel={() => setVerView(null)} footer={null} destroyOnHidden>
         {verView && (
           <Descriptions column={1} size="small" bordered>
@@ -430,21 +1108,72 @@ function RequirementDetail({ reqId, projectId, onChanged, onDeleted }: { reqId: 
   )
 }
 
+// Requirement-level human-AI collaboration: AI vs human delivery comparison + AI share / delivery quality + acceptance calendar grid.
+// Same definition as the home page: task accepted with a DELIVERED delivery record = AI-delivered.
+function CollabPanel({ projectId, reqId, refreshKey }: { projectId: string; reqId: string; refreshKey?: unknown }) {
+  const { t } = useI18n()
+  const [stats, setStats] = useState<CollabStats | null>(null)
+  useEffect(() => {
+    api.collabStats(projectId, reqId).then(setStats).catch(() => setStats(null))
+    // refreshKey (the task list) changing may mean new acceptance results; refetch.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectId, reqId, refreshKey])
+  const row = stats?.items?.[0]
+  if (!row || (row.aiTasks + row.humanTasks === 0 && row.aiAttempts === 0)) return null
+  const totalPts = row.aiPoints + row.humanPoints
+  const aiShare = totalPts > 0 ? (row.aiPoints * 100) / totalPts : row.aiTasks + row.humanTasks > 0 ? (row.aiTasks * 100) / (row.aiTasks + row.humanTasks) : 0
+  const firstPassRate = row.aiTasks > 0 ? (row.aiFirstPass * 100) / row.aiTasks : 0
+  return (
+    <Card size="small" title={t('req.collabTitle', '人机协同')}>
+      <Row gutter={[16, 12]} align="middle">
+        <Col xs={12} lg={4}><Statistic title={t('req.aiShare', 'AI 参与度(工作量)')} value={aiShare.toFixed(0)} suffix="%" /></Col>
+        <Col xs={12} lg={4}>
+          <Statistic
+            title={t('req.deliverSplit', '交付任务(AI / 人)')}
+            value={row.aiTasks}
+            suffix={` / ${row.humanTasks}`}
+          />
+        </Col>
+        <Col xs={12} lg={4}>
+          <Statistic
+            title={t('req.attemptsStat', '交付尝试(成功 / 失败)')}
+            value={row.aiDelivered}
+            suffix={` / ${row.aiFailed}`}
+          />
+        </Col>
+        <Col xs={12} lg={4}>
+          <Statistic
+            title={t('req.firstPass', '一次交付通过率')}
+            value={row.aiTasks > 0 ? firstPassRate.toFixed(0) : '—'}
+            suffix={row.aiTasks > 0 ? '%' : ''}
+          />
+        </Col>
+        <Col xs={24} lg={8}>
+          <ContributionGrid days={stats?.daily ?? []} metric="total" />
+        </Col>
+      </Row>
+    </Card>
+  )
+}
+
 function DecompositionView({ decompId, verificationId, projectId, reqId }: { decompId: string; verificationId?: string; projectId: string; reqId?: string }) {
   const { t } = useI18n()
   const [tasks, setTasks] = useState<Task[]>([])
-  const [cov, setCov] = useState<CoverageCase[]>([]) // 手工功能用例覆盖(与任务覆盖并看)
+  const [cov, setCov] = useState<CoverageCase[]>([]) // manual functional-case coverage, viewed alongside task coverage
   useEffect(() => { if (reqId) api.requirementCoverage(reqId).then(setCov).catch(() => setCov([])) }, [reqId])
   const [running, setRunning] = useState(false)
-  const [dispatching, setDispatching] = useState<Set<string>>(new Set()) // 派发中的任务 id(防重复点击)
+  const [dispatching, setDispatching] = useState<Set<string>>(new Set()) // task ids being dispatched (guards double clicks)
   const [summary, setSummary] = useState<{ total: number; verified: number; failed: number; blocked: number; rounds: number } | null>(null)
   const [report, setReport] = useState<VerificationReport | null>(null)
   const [eventsFor, setEventsFor] = useState<Task | null>(null)
   const [casesFor, setCasesFor] = useState<Task | null>(null)
-  const [view, setView] = useState<'table' | 'board'>('table') // 表格 / 协同看板
-  // 负责人候选:人(项目用户)+ AI 执行机(runner-agent)。
+  const [view, setView] = useState<'table' | 'board'>('table')
+  // Assignee candidates: humans (project users) + AI executors (runner agents).
   const [assignees, setAssignees] = useState<{ value: string; label: string; kind: string; id: string }[]>([])
   const nameOfAssignee = (a?: string, kind?: string) => assignees.find((o) => o.kind === kind && o.id === a)?.label || a || ''
+  // Registered remote runtime fleet: the dispatch menu can target a specific machine.
+  const [fleet, setFleet] = useState<FleetRuntime[]>([])
+  const loadFleet = () => api.fleetRuntimes().then(setFleet).catch(() => setFleet([]))
 
   const load = async () => {
     try {
@@ -457,7 +1186,8 @@ function DecompositionView({ decompId, verificationId, projectId, reqId }: { dec
   }
   useEffect(() => {
     load()
-    // 负责人候选:人 + AI agent(失败静默,看板/列仍可用)。
+    loadFleet()
+    // Assignee candidates: humans + AI agents (fail silently; board/columns still work).
     Promise.all([api.users().then((p) => p.items).catch(() => []), api.runnerAgents().catch(() => [])]).then(([us, ag]) => {
       setAssignees([
         ...us.map((u) => ({ value: `HUMAN:${u.id}`, label: `👤 ${u.name || u.email}`, kind: 'HUMAN', id: u.id })),
@@ -467,7 +1197,7 @@ function DecompositionView({ decompId, verificationId, projectId, reqId }: { dec
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [decompId])
 
-  // 指派负责人(乐观更新本地后落库)。value 形如 "HUMAN:<id>" / "AGENT:<id>" / ""(取消)。
+  // Assign (optimistic update, then persist). value is "HUMAN:<id>" / "AGENT:<id>" / "" (unassign).
   const assign = async (task: Task, value: string | undefined) => {
     const [kind, id] = value ? value.split(':') : ['', '']
     setTasks((ts) => ts.map((x) => (x.id === task.id ? { ...x, assignee: id, assigneeKind: kind } : x)))
@@ -492,19 +1222,19 @@ function DecompositionView({ decompId, verificationId, projectId, reqId }: { dec
       setRunning(false)
     }
   }
-  // 依赖门控:任务的依赖须全部 Verified 才能派发(否则提前派发会撞门、卡 PENDING)。
+  // Dependency gate: all dependencies must be VERIFIED before dispatch (dispatching early hits the gate and gets stuck PENDING).
   const statusOf = (id: string) => tasks.find((x) => x.id === id)?.status
   const depsReady = (t: Task) => (t.dependencies ?? []).every((d) => statusOf(d) === 'VERIFIED')
-  const dispatch = async (task: Task) => {
-    if (dispatching.has(task.id)) return // 已在派发中,忽略重复点击
+  const dispatch = async (task: Task, executor: string, targetRuntime?: string) => {
+    if (dispatching.has(task.id)) return
     if (!depsReady(task)) {
       message.warning(t('req.depsNotReady', '依赖任务未全部验证完成,暂不能派发'))
       return
     }
     setDispatching((s) => new Set(s).add(task.id))
     try {
-      await api.createDelivery({ decompositionId: decompId, taskId: task.id, title: task.title, executor: 'CLAUDE_CODE' })
-      message.success(`${t('req.dispatched', '已派发')} ${task.id}`)
+      await api.createDelivery({ decompositionId: decompId, taskId: task.id, title: task.title, executor, targetRuntime })
+      message.success(`${t('req.dispatched', '已派发')} ${task.id}${targetRuntime ? ` → ${targetRuntime}` : ''}`)
       load()
     } catch (e) {
       message.error(e instanceof ApiError ? `${t('req.dispatchFailed', '派发失败')}:${e.status}` : t('req.dispatchFailed', '派发失败'))
@@ -512,7 +1242,59 @@ function DecompositionView({ decompId, verificationId, projectId, reqId }: { dec
       setDispatching((s) => { const n = new Set(s); n.delete(task.id); return n })
     }
   }
-  // 工作量(task point)行内编辑:乐观更新本地后落库,失败回滚重载。
+  // Keep one runtime per name (reconnects create duplicate records with new ids): prefer online, then latest heartbeat.
+  const fleetByName = (() => {
+    const m = new Map<string, FleetRuntime>()
+    for (const r of fleet) {
+      const prev = m.get(r.name)
+      if (!prev || (!prev.online && r.online) || (prev.online === r.online && r.lastSeenMs > prev.lastSeenMs)) m.set(r.name, r)
+    }
+    return [...m.values()]
+  })()
+  // Dispatch button = executor picker: one group per executor kind, registered runtimes first
+  // (online first, offline disabled), "any online executor (queued)" last as fallback. With none
+  // registered, show an explicit hint so "any" isn't mistaken for the only choice. Targeting uses
+  // the runtime name, which is stable across reconnects.
+  const executorMenu = (task: Task) => ({
+    items: Object.entries(EXECUTOR_LABEL).map(([key, label]) => {
+      const runtimes = fleetByName
+        .filter((r) => r.caps.includes(key))
+        .sort((a, b) => Number(b.online) - Number(a.online) || a.name.localeCompare(b.name))
+      return {
+        type: 'group' as const,
+        key,
+        label,
+        children: [
+          ...runtimes.map((r) => ({
+            key: `${key}@@${r.name}`,
+            disabled: !r.online,
+            label: (
+              <span>
+                <Badge status={r.online ? 'success' : 'default'} /> {r.name}
+                {!r.online && <span style={{ color: 'var(--text-3)', marginLeft: 6, fontSize: 12 }}>{t('req.rtOffline', '离线')}</span>}
+              </span>
+            ),
+          })),
+          ...(runtimes.length === 0
+            ? [{
+                key: `${key}##none`,
+                disabled: true,
+                label: <span style={{ color: 'var(--text-3)', fontSize: 12 }}>{t('req.noRuntime', '无已注册执行者')}</span>,
+              }]
+            : []),
+          {
+            key,
+            label: <span style={{ color: 'var(--text-2)' }}>{t('req.anyRuntime', '任意在线执行者(排队)')}</span>,
+          },
+        ],
+      }
+    }),
+    onClick: ({ key }: { key: string }) => {
+      const [executor, target] = key.split('@@')
+      dispatch(task, executor, target)
+    },
+  })
+  // Inline task-point editing: optimistic update, then persist; reload on failure.
   const setPoints = async (task: Task, points: number) => {
     setTasks((ts) => ts.map((x) => (x.id === task.id ? { ...x, points } : x)))
     try {
@@ -546,6 +1328,7 @@ function DecompositionView({ decompId, verificationId, projectId, reqId }: { dec
           <Col span={4}><Card size="small"><Statistic title={t('req.rounds', '轮次')} value={summary.rounds} /></Card></Col>
         </Row>
       )}
+      {reqId && <CollabPanel projectId={projectId} reqId={reqId} refreshKey={tasks} />}
       {view === 'table' ? (
         <Table<Task>
           rowKey="id"
@@ -582,7 +1365,9 @@ function DecompositionView({ decompId, verificationId, projectId, reqId }: { dec
               render: (_, row) => (
                 <Space>
                   <Tooltip title={depsReady(row) ? '' : t('req.depsNotReady', '依赖任务未全部验证完成,暂不能派发')}>
-                    <Button type="link" size="small" icon={<SendOutlined />} loading={dispatching.has(row.id)} disabled={dispatching.has(row.id) || !depsReady(row)} onClick={() => dispatch(row)}>{t('req.dispatch', '派发')}</Button>
+                    <Dropdown trigger={['click']} disabled={dispatching.has(row.id) || !depsReady(row)} menu={executorMenu(row)} onOpenChange={(o) => { if (o) loadFleet() }}>
+                      <Button type="link" size="small" icon={<SendOutlined />} loading={dispatching.has(row.id)} disabled={dispatching.has(row.id) || !depsReady(row)}>{t('req.dispatch', '派发')}</Button>
+                    </Dropdown>
                   </Tooltip>
                   <Button type="link" size="small" onClick={() => setCasesFor(row)}>{t('req.cases', '用例')}</Button>
                   <Button type="link" size="small" icon={<ProfileOutlined />} onClick={() => setEventsFor(row)}>{t('req.execProgress', '执行进度')}</Button>
@@ -592,7 +1377,7 @@ function DecompositionView({ decompId, verificationId, projectId, reqId }: { dec
           ]}
         />
       ) : (
-        // 协同看板:按状态分列,卡片显示工作量 + 负责人(人/AI agent),可直接指派/派发。
+        // Kanban: columns by status; cards show points + assignee (human/AI agent) with inline assign/dispatch.
         <Row gutter={8} wrap={false} style={{ overflowX: 'auto', paddingBottom: 8 }}>
           {BOARD_COLS.map((col) => {
             const colTasks = tasks.filter((tk) => col.statuses.includes(tk.status))
@@ -621,7 +1406,9 @@ function DecompositionView({ decompId, verificationId, projectId, reqId }: { dec
                           />
                           {tk.status === 'PENDING' && (
                             <Tooltip title={depsReady(tk) ? '' : t('req.depsNotReady', '依赖任务未全部验证完成,暂不能派发')}>
-                              <Button size="small" icon={<SendOutlined />} loading={dispatching.has(tk.id)} disabled={dispatching.has(tk.id) || !depsReady(tk)} onClick={() => dispatch(tk)} />
+                              <Dropdown trigger={['click']} disabled={dispatching.has(tk.id) || !depsReady(tk)} menu={executorMenu(tk)} onOpenChange={(o) => { if (o) loadFleet() }}>
+                                <Button size="small" icon={<SendOutlined />} loading={dispatching.has(tk.id)} disabled={dispatching.has(tk.id) || !depsReady(tk)} />
+                              </Dropdown>
                             </Tooltip>
                           )}
                           <Button size="small" icon={<ProfileOutlined />} title={t('req.execProgress', '执行进度')} onClick={() => setEventsFor(tk)} />
@@ -642,7 +1429,7 @@ function DecompositionView({ decompId, verificationId, projectId, reqId }: { dec
             <Space direction="vertical" size={12} style={{ width: '100%' }}>
               <Space size={32} align="center">
                 <Statistic title={t('req.satisfiedCriteria', '已满足标准')} value={`${report.satisfied ?? 0}${report.total != null ? ` / ${report.total}` : ''}`} />
-                {/* 手工功能用例覆盖:与任务覆盖并看 — 分母用验证报告的标准总数。 */}
+                {/* Manual case coverage alongside task coverage — denominator is the report's criteria total. */}
                 <Statistic
                   title={t('req.manualCovered', '手工用例覆盖')}
                   value={`${new Set(cov.map((c) => c.criterionIndex)).size}${report.total != null ? ` / ${report.total}` : ''}`}
@@ -653,7 +1440,7 @@ function DecompositionView({ decompId, verificationId, projectId, reqId }: { dec
                   <Tag color={report.complete ? 'green' : 'orange'}>{report.complete ? t('req.complete', '已完整') : t('req.hasGaps', '有缺口')}</Tag>
                 </Space>
               </Space>
-              {/* 缺口明细:未覆盖(无任务覆盖该标准)/ 未验证(已覆盖但未交付验证)。 */}
+              {/* Gap detail: UNCOVERED (no task covers the criterion) / UNVERIFIED (covered but not delivery-verified). */}
               {!!report.gaps?.length && (
                 <div>
                   <Typography.Text type="secondary" style={{ fontSize: 13 }}>{t('req.gaps', '缺口')} ({report.gaps.length})</Typography.Text>
@@ -666,7 +1453,7 @@ function DecompositionView({ decompId, verificationId, projectId, reqId }: { dec
                             {g.kind === 'UNCOVERED' ? t('req.gapUncovered', '未覆盖') : t('req.gapUnverified', '未验证')}
                           </Tag>
                           <span>{g.text}</span>
-                          {/* 任务未覆盖但已有手工用例兜底:提示评审,避免误判为完全缺口。 */}
+                          {/* Manual cases exist despite no task coverage: flag for review so it isn't mistaken for a full gap. */}
                           {!!manual.length && (
                             <Tag color="blue" style={{ marginLeft: 6 }}>{t('req.hasManualCase', '有手工用例')} · {manual.length}</Tag>
                           )}
@@ -686,7 +1473,7 @@ function DecompositionView({ decompId, verificationId, projectId, reqId }: { dec
   )
 }
 
-// 任务关联用例 + 用例所属计划:打通 任务→用例→计划,均可点进对应页。
+// Task-linked cases + their plans: the task → case → plan chain, each clickable through to its page.
 function TaskCasesDrawer({ decompId, projectId, task, onClose }: { decompId: string; projectId: string; task: Task | null; onClose: () => void }) {
   const { t } = useI18n()
   const nav = useNavigate()
@@ -766,15 +1553,13 @@ function TaskCasesDrawer({ decompId, projectId, task, onClose }: { decompId: str
   )
 }
 
-// 交付尝试状态 → Badge 状态色。
 const attemptBadge = (s: string): 'processing' | 'success' | 'error' | 'warning' | 'default' =>
   s === 'RUNNING' ? 'processing' : s === 'DELIVERED' ? 'success' : s === 'FAILED' ? 'error' : s === 'DISPATCHED' ? 'warning' : 'default'
-// 审计事件类型 → 颜色(时间线圆点 / 标签)。
 const eventColor = (k: string): string =>
   k === 'DECISION' ? 'blue' : k === 'FILE_CHANGE' ? 'gold' : k === 'TEST_RESULT' ? 'green' : k === 'TOOL_CALL' ? 'geekblue' : k === 'VERDICT' ? 'purple' : 'default'
 
-// 执行进度抽屉:某任务的全部交付尝试 + 每个尝试的实时审计轨迹 + 交付物/错误。
-// RUNNING/DISPATCHED 期间每 3s 轮询,直到落终态(派发后能看着 AI 干活)。
+// Execution progress drawer: all delivery attempts for a task + live audit trail + deliverable/errors per attempt.
+// Polls every 3s while RUNNING/DISPATCHED until terminal, so the AI can be watched after dispatch.
 function EventsDrawer({ decompId, task, onClose }: { decompId: string; task: Task | null; onClose: () => void }) {
   const { t } = useI18n()
   const [attempts, setAttempts] = useState<DeliveryAttempt[]>([])
@@ -786,7 +1571,7 @@ function EventsDrawer({ decompId, task, onClose }: { decompId: string; task: Tas
     setLoading(true)
     try {
       const atts = await api.deliveries(decompId, task.id).catch(() => [])
-      const ordered = [...atts].reverse() // 最近一次在前(列表按插入序返回)
+      const ordered = [...atts].reverse() // most recent first (API returns insertion order)
       const map: Record<string, DeliveryEvent[]> = {}
       for (const a of ordered) {
         const id = a.id || a.attemptId
@@ -806,7 +1591,7 @@ function EventsDrawer({ decompId, task, onClose }: { decompId: string; task: Tas
     load()
   }, [task, load])
 
-  // 有尝试在跑就轮询;全部落终态后停。
+  // Poll while any attempt is running; stop once all are terminal.
   const live = attempts.some((a) => a.status === 'RUNNING' || a.status === 'DISPATCHED')
   useEffect(() => {
     if (!task || !live) return
@@ -840,6 +1625,7 @@ function EventsDrawer({ decompId, task, onClose }: { decompId: string; task: Tas
                   <Badge status={attemptBadge(a.status)} />
                   <span>{a.status === 'RUNNING' ? t('req.attemptRunning', '执行中') : a.status === 'DELIVERED' ? t('req.attemptDelivered', '已交付') : a.status === 'FAILED' ? t('req.attemptFailed', '失败') : a.status}</span>
                   {a.executor && <Tag>{a.executor}</Tag>}
+                  {a.targetRuntime && <Tag color="geekblue">@{a.targetRuntime}</Tag>}
                   {idx === 0 && <Tag color="blue">{t('req.latest', '最近')}</Tag>}
                 </Space>
               }>

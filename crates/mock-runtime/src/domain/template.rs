@@ -15,7 +15,7 @@ fn register_functions(env: &mut Environment<'static>) {
     use fake::Fake;
 
     env.add_function("uuid", || uuid::Uuid::new_v4().to_string());
-    // 字符串,避免大整数精度问题。
+    // Returned as a string to avoid big-integer precision issues.
     env.add_function("now", || {
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -87,19 +87,14 @@ mod tests {
             &req(),
         )
         .expect("ok");
-        assert_eq!(
-            out,
-            r#"{"path":"/users/42","status":"paid","name":"Alice","trace":"t-1"}"#
-        );
+        assert_eq!(out, r#"{"path":"/users/42","status":"paid","name":"Alice","trace":"t-1"}"#);
     }
 
     #[test]
     fn supports_control_flow() {
-        let out = render_body(
-            "{% if query.status == 'paid' %}PAID{% else %}OTHER{% endif %}",
-            &req(),
-        )
-        .expect("ok");
+        let out =
+            render_body("{% if query.status == 'paid' %}PAID{% else %}OTHER{% endif %}", &req())
+                .expect("ok");
         assert_eq!(out, "PAID");
     }
 

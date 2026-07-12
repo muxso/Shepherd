@@ -1,5 +1,11 @@
 use std::sync::Arc;
 
+use crate::application::{
+    CreateResourcePoolError, CreateResourcePoolUseCase, EditResourcePoolUseCase,
+    ListCaseExecutionsUseCase, ListResourcePoolsUseCase, StartBatchRunUseCase,
+};
+use crate::domain::{BatchRunError, BatchRunMode, ResourcePool, ResourcePoolDraft, RunModeConfig};
+use crate::ports::CaseExecutionRecord;
 use axum::{
     extract::{FromRef, Path, Query, State},
     http::StatusCode,
@@ -7,28 +13,46 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
-use crate::application::{
-    CreateResourcePoolError, CreateResourcePoolUseCase, EditResourcePoolUseCase,
-    ListCaseExecutionsUseCase, ListResourcePoolsUseCase, StartBatchRunUseCase,
-};
-use crate::domain::{BatchRunError, BatchRunMode, ResourcePool, ResourcePoolDraft, RunModeConfig};
-use crate::ports::CaseExecutionRecord;
 use kernel::page::PageRequest;
 use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, OpenApi, ToSchema};
 use webauth::{AuthUser, SessionStore};
 
-pub fn router(use_case: StartBatchRunUseCase) -> Router {
+#[derive(Clone)]
+struct BatchRunState {
+    uc: StartBatchRunUseCase,
+    sessions: Arc<dyn SessionStore>,
+}
+
+impl FromRef<BatchRunState> for Arc<dyn SessionStore> {
+    fn from_ref(s: &BatchRunState) -> Self {
+        s.sessions.clone()
+    }
+}
+
+pub fn router(use_case: StartBatchRunUseCase, sessions: Arc<dyn SessionStore>) -> Router {
+    let state = BatchRunState { uc: use_case, sessions };
     Router::new()
         .route("/api/batch-run", post(batch_run))
         .route("/api/case/{id}/run", post(run_case))
-        .with_state(use_case)
+        .with_state(state)
 }
 
-pub fn executions_router(uc: ListCaseExecutionsUseCase) -> Router {
-    Router::new()
-        .route("/api/case/{caseId}/executions", get(list_executions))
-        .with_state(uc)
+#[derive(Clone)]
+struct ExecutionsState {
+    uc: ListCaseExecutionsUseCase,
+    sessions: Arc<dyn SessionStore>,
+}
+
+impl FromRef<ExecutionsState> for Arc<dyn SessionStore> {
+    fn from_ref(s: &ExecutionsState) -> Self {
+        s.sessions.clone()
+    }
+}
+
+pub fn executions_router(uc: ListCaseExecutionsUseCase, sessions: Arc<dyn SessionStore>) -> Router {
+    let state = ExecutionsState { uc, sessions };
+    Router::new().route("/api/case/{caseId}/executions", get(list_executions)).with_state(state)
 }
 
 #[derive(Debug, Deserialize, ToSchema)]
@@ -50,23 +74,29 @@ struct BatchRunResponse {
     status: String,
 }
 
-#[utoipa::path(post, path = "/api/batch-run", tag = "api-test", request_body = BatchRunRequest, responses((status = 200, body = BatchRunResponse), (status = 400), (status = 409)))]
+#[utoipa::path(post, path = "/api/batch-run", tag = "api-test", request_body = BatchRunRequest, responses((status = 200, body = BatchRunResponse), (status = 400), (status = 403), (status = 409)), security(("bearer" = [])))]
 async fn batch_run(
-    State(uc): State<StartBatchRunUseCase>,
+    user: AuthUser,
+    State(st): State<BatchRunState>,
     Json(req): Json<BatchRunRequest>,
 ) -> Response {
+    if !user.can("API_DEFINITION", "EXECUTE") {
+        return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
     let Some(mode) = BatchRunMode::parse(&req.run_mode) else {
         return (StatusCode::BAD_REQUEST, "unknown run mode").into_response();
     };
-    let config =
-        RunModeConfig { mode, pool_id: req.pool_id, retry: None, environment_id: req.environment_id };
+    let config = RunModeConfig {
+        mode,
+        pool_id: req.pool_id,
+        retry: None,
+        environment_id: req.environment_id,
+    };
 
-    dispatch_to_response(uc.execute(&req.project_id, req.case_ids, config).await)
+    dispatch_to_response(st.uc.execute(&req.project_id, req.case_ids, config).await)
 }
 
-fn dispatch_to_response(
-    result: Result<crate::ports::DispatchReport, BatchRunError>,
-) -> Response {
+fn dispatch_to_response(result: Result<crate::ports::DispatchReport, BatchRunError>) -> Response {
     match result {
         Ok(rep) => (
             StatusCode::OK,
@@ -77,10 +107,11 @@ fn dispatch_to_response(
         Err(BatchRunError::InvalidRetryConfig) => {
             (StatusCode::BAD_REQUEST, "invalid retry config").into_response()
         }
-        Err(BatchRunError::ResourcePoolNotConfigured) => {
-            (StatusCode::BAD_REQUEST, "resource pool not configured (supply poolId or set project default)")
-                .into_response()
-        }
+        Err(BatchRunError::ResourcePoolNotConfigured) => (
+            StatusCode::BAD_REQUEST,
+            "resource pool not configured (supply poolId or set project default)",
+        )
+            .into_response(),
         Err(BatchRunError::ResourcePoolUnavailable { pool_id }) => {
             (StatusCode::CONFLICT, format!("resource pool unavailable: {pool_id}")).into_response()
         }
@@ -112,19 +143,28 @@ fn default_serial() -> String {
     tag = "api-test",
     params(("id" = String, Path)),
     request_body = CaseRunRequest,
-    responses((status = 200, body = BatchRunResponse), (status = 400), (status = 409))
+    responses((status = 200, body = BatchRunResponse), (status = 400), (status = 403), (status = 409)),
+    security(("bearer" = []))
 )]
 async fn run_case(
-    State(uc): State<StartBatchRunUseCase>,
+    user: AuthUser,
+    State(st): State<BatchRunState>,
     Path(id): Path<String>,
     Json(req): Json<CaseRunRequest>,
 ) -> Response {
+    if !user.can("API_DEFINITION", "EXECUTE") {
+        return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
     let Some(mode) = BatchRunMode::parse(&req.run_mode) else {
         return (StatusCode::BAD_REQUEST, "unknown run mode").into_response();
     };
-    let config =
-        RunModeConfig { mode, pool_id: req.pool_id, retry: None, environment_id: req.environment_id };
-    dispatch_to_response(uc.execute(&req.project_id, vec![id], config).await)
+    let config = RunModeConfig {
+        mode,
+        pool_id: req.pool_id,
+        retry: None,
+        environment_id: req.environment_id,
+    };
+    dispatch_to_response(st.uc.execute(&req.project_id, vec![id], config).await)
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -180,18 +220,23 @@ fn default_page_size() -> u32 {
     path = "/api/case/{caseId}/executions",
     tag = "api-test",
     params(("caseId" = String, Path, description = "用例 id"), CaseExecutionQuery),
-    responses((status = 200, body = CaseExecutionPageResponse), (status = 400))
+    responses((status = 200, body = CaseExecutionPageResponse), (status = 400), (status = 403)),
+    security(("bearer" = []))
 )]
 async fn list_executions(
-    State(uc): State<ListCaseExecutionsUseCase>,
+    user: AuthUser,
+    State(st): State<ExecutionsState>,
     Path(case_id): Path<String>,
     Query(q): Query<CaseExecutionQuery>,
 ) -> Response {
+    if !user.can("API_DEFINITION", "READ") {
+        return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
     let page = match PageRequest::new(q.current, q.page_size) {
         Ok(p) => p,
         Err(_) => return (StatusCode::BAD_REQUEST, "invalid page params").into_response(),
     };
-    match uc.execute(&case_id, page).await {
+    match st.uc.execute(&case_id, page).await {
         Ok(page) => {
             let body = CaseExecutionPageResponse {
                 total: page.total,
@@ -335,8 +380,11 @@ async fn create_resource_pool(
     }
 }
 
-#[utoipa::path(get, path = "/api/resource-pool", tag = "api-test", responses((status = 200, body = [ResourcePoolResponse])))]
-async fn list_resource_pools(State(st): State<ResourcePoolState>) -> Response {
+#[utoipa::path(get, path = "/api/resource-pool", tag = "api-test", responses((status = 200, body = [ResourcePoolResponse]), (status = 403)), security(("bearer" = [])))]
+async fn list_resource_pools(user: AuthUser, State(st): State<ResourcePoolState>) -> Response {
+    if !user.can("RESOURCE_POOL", "READ") {
+        return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
     match st.list.execute().await {
         Ok(list) => {
             let items: Vec<ResourcePoolResponse> =
@@ -347,8 +395,15 @@ async fn list_resource_pools(State(st): State<ResourcePoolState>) -> Response {
     }
 }
 
-#[utoipa::path(get, path = "/api/resource-pool/{id}", tag = "api-test", responses((status = 200, body = ResourcePoolResponse), (status = 404)))]
-async fn get_resource_pool(State(st): State<ResourcePoolState>, Path(id): Path<String>) -> Response {
+#[utoipa::path(get, path = "/api/resource-pool/{id}", tag = "api-test", responses((status = 200, body = ResourcePoolResponse), (status = 403), (status = 404)), security(("bearer" = [])))]
+async fn get_resource_pool(
+    user: AuthUser,
+    State(st): State<ResourcePoolState>,
+    Path(id): Path<String>,
+) -> Response {
+    if !user.can("RESOURCE_POOL", "READ") {
+        return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
     match st.edit.get(&id).await {
         Ok(Some(p)) => (StatusCode::OK, Json(ResourcePoolResponse::from(p))).into_response(),
         Ok(None) => (StatusCode::NOT_FOUND, "resource pool not found").into_response(),
@@ -418,40 +473,52 @@ async fn delete_resource_pool(
     tags((name = "api-test", description = "接口批量执行"))
 )]
 struct ApiDoc;
-pub fn openapi() -> utoipa::openapi::OpenApi { ApiDoc::openapi() }
+pub fn openapi() -> utoipa::openapi::OpenApi {
+    ApiDoc::openapi()
+}
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::adapters::{FakeEnvironment, FakeResourcePool, SpyExecutor};
     use axum::body::Body;
     use axum::http::Request;
-    use crate::adapters::{FakeEnvironment, FakeResourcePool, SpyExecutor};
     use std::sync::Arc;
     use tower::ServiceExt;
 
-    fn app(pools: FakeResourcePool) -> Router {
+    async fn app(pools: FakeResourcePool) -> (Router, String) {
         let uc = StartBatchRunUseCase::new(
             Arc::new(pools),
             Arc::new(SpyExecutor::new()),
             Arc::new(FakeEnvironment::new()),
         );
-        router(uc)
+        let sessions = Arc::new(InMemorySessionStore::new());
+        let perms =
+            PermissionSet::from_raw(["API_DEFINITION:READ+EXECUTE".to_string()]).expect("perms");
+        let token = sessions.create("admin", perms, 3600).await.expect("token");
+        (router(uc, sessions), token)
     }
 
-    fn post(body: &str) -> Request<Body> {
-        Request::builder()
+    fn post(body: &str, token: Option<&str>) -> Request<Body> {
+        let mut b = Request::builder()
             .method("POST")
             .uri("/api/batch-run")
-            .header("content-type", "application/json")
-            .body(Body::from(body.to_string()))
-            .expect("req")
+            .header("content-type", "application/json");
+        if let Some(t) = token {
+            b = b.header("authorization", format!("Bearer {t}"));
+        }
+        b.body(Body::from(body.to_string())).expect("req")
     }
 
     #[tokio::test]
     async fn client_pool_available_returns_200_with_report() {
         let pools = FakeResourcePool::new().with_available("pool1");
-        let resp = app(pools)
-            .oneshot(post(r#"{"projectId":"p1","caseIds":["c1"],"runMode":"PARALLEL","poolId":"pool1"}"#))
+        let (app, t) = app(pools).await;
+        let resp = app
+            .oneshot(post(
+                r#"{"projectId":"p1","caseIds":["c1"],"runMode":"PARALLEL","poolId":"pool1"}"#,
+                Some(&t),
+            ))
             .await
             .expect("resp");
         assert_eq!(resp.status(), StatusCode::OK);
@@ -462,8 +529,9 @@ mod tests {
 
     #[tokio::test]
     async fn no_pool_configured_returns_400() {
-        let resp = app(FakeResourcePool::new())
-            .oneshot(post(r#"{"projectId":"p1","caseIds":["c1"],"runMode":"PARALLEL"}"#))
+        let (app, t) = app(FakeResourcePool::new()).await;
+        let resp = app
+            .oneshot(post(r#"{"projectId":"p1","caseIds":["c1"],"runMode":"PARALLEL"}"#, Some(&t)))
             .await
             .expect("resp");
         assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
@@ -471,8 +539,12 @@ mod tests {
 
     #[tokio::test]
     async fn unavailable_pool_returns_409() {
-        let resp = app(FakeResourcePool::new())
-            .oneshot(post(r#"{"projectId":"p1","caseIds":["c1"],"runMode":"PARALLEL","poolId":"dead"}"#))
+        let (app, t) = app(FakeResourcePool::new()).await;
+        let resp = app
+            .oneshot(post(
+                r#"{"projectId":"p1","caseIds":["c1"],"runMode":"PARALLEL","poolId":"dead"}"#,
+                Some(&t),
+            ))
             .await
             .expect("resp");
         assert_eq!(resp.status(), StatusCode::CONFLICT);
@@ -481,8 +553,12 @@ mod tests {
     #[tokio::test]
     async fn empty_cases_returns_400() {
         let pools = FakeResourcePool::new().with_available("pool1");
-        let resp = app(pools)
-            .oneshot(post(r#"{"projectId":"p1","caseIds":[],"runMode":"PARALLEL","poolId":"pool1"}"#))
+        let (app, t) = app(pools).await;
+        let resp = app
+            .oneshot(post(
+                r#"{"projectId":"p1","caseIds":[],"runMode":"PARALLEL","poolId":"pool1"}"#,
+                Some(&t),
+            ))
             .await
             .expect("resp");
         assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
@@ -491,13 +567,15 @@ mod tests {
     #[tokio::test]
     async fn single_case_run_returns_200_with_report() {
         let pools = FakeResourcePool::new().with_available("pool1");
+        let (app, t) = app(pools).await;
         let req = Request::builder()
             .method("POST")
             .uri("/api/case/c1/run")
             .header("content-type", "application/json")
+            .header("authorization", format!("Bearer {t}"))
             .body(Body::from(r#"{"projectId":"p1","poolId":"pool1"}"#.to_string()))
             .expect("req");
-        let resp = app(pools).oneshot(req).await.expect("resp");
+        let resp = app.oneshot(req).await.expect("resp");
         assert_eq!(resp.status(), StatusCode::OK);
         let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.expect("body");
         let v: serde_json::Value = serde_json::from_slice(&bytes).expect("json");
@@ -507,8 +585,12 @@ mod tests {
     #[tokio::test]
     async fn unknown_run_mode_returns_400() {
         let pools = FakeResourcePool::new().with_available("pool1");
-        let resp = app(pools)
-            .oneshot(post(r#"{"projectId":"p1","caseIds":["c1"],"runMode":"WAT","poolId":"pool1"}"#))
+        let (app, t) = app(pools).await;
+        let resp = app
+            .oneshot(post(
+                r#"{"projectId":"p1","caseIds":["c1"],"runMode":"WAT","poolId":"pool1"}"#,
+                Some(&t),
+            ))
             .await
             .expect("resp");
         assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
@@ -545,19 +627,31 @@ mod tests {
         }
     }
 
-    fn exec_app(total: u64) -> Router {
-        executions_router(ListCaseExecutionsUseCase::new(Arc::new(FakeQuery { total })))
+    async fn exec_app(total: u64) -> (Router, String) {
+        let sessions = Arc::new(InMemorySessionStore::new());
+        let perms =
+            PermissionSet::from_raw(["API_DEFINITION:READ+EXECUTE".to_string()]).expect("perms");
+        let token = sessions.create("admin", perms, 3600).await.expect("token");
+        let r = executions_router(
+            ListCaseExecutionsUseCase::new(Arc::new(FakeQuery { total })),
+            sessions,
+        );
+        (r, token)
+    }
+
+    fn exec_get(uri: &str, token: &str) -> Request<Body> {
+        Request::builder()
+            .uri(uri)
+            .header("authorization", format!("Bearer {token}"))
+            .body(Body::empty())
+            .expect("req")
     }
 
     #[tokio::test]
     async fn executions_returns_paginated_body() {
-        let resp = exec_app(3)
-            .oneshot(
-                Request::builder()
-                    .uri("/api/case/c1/executions?current=1&pageSize=2")
-                    .body(Body::empty())
-                    .expect("req"),
-            )
+        let (app, t) = exec_app(3).await;
+        let resp = app
+            .oneshot(exec_get("/api/case/c1/executions?current=1&pageSize=2", &t))
             .await
             .expect("resp");
         assert_eq!(resp.status(), StatusCode::OK);
@@ -577,15 +671,8 @@ mod tests {
 
     #[tokio::test]
     async fn executions_defaults_apply_without_query() {
-        let resp = exec_app(0)
-            .oneshot(
-                Request::builder()
-                    .uri("/api/case/c1/executions")
-                    .body(Body::empty())
-                    .expect("req"),
-            )
-            .await
-            .expect("resp");
+        let (app, t) = exec_app(0).await;
+        let resp = app.oneshot(exec_get("/api/case/c1/executions", &t)).await.expect("resp");
         assert_eq!(resp.status(), StatusCode::OK);
         let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.expect("body");
         let v: serde_json::Value = serde_json::from_slice(&bytes).expect("json");
@@ -595,13 +682,9 @@ mod tests {
 
     #[tokio::test]
     async fn executions_bad_page_params_returns_400() {
-        let resp = exec_app(3)
-            .oneshot(
-                Request::builder()
-                    .uri("/api/case/c1/executions?current=0&pageSize=10")
-                    .body(Body::empty())
-                    .expect("req"),
-            )
+        let (app, t) = exec_app(3).await;
+        let resp = app
+            .oneshot(exec_get("/api/case/c1/executions?current=0&pageSize=10", &t))
             .await
             .expect("resp");
         assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
@@ -638,19 +721,29 @@ mod tests {
     #[async_trait]
     impl ResourcePoolAdminPort for FakePoolAdmin {
         async fn create(&self, p: &NewResourcePool) -> Result<ResourcePool, PortError> {
-            let mut g = self.pools.lock().expect("lock");
+            let mut g = self.pools.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
             let view = pool_view(format!("p{}", g.len() + 1), p);
             g.push(view.clone());
             Ok(view)
         }
         async fn list(&self) -> Result<Vec<ResourcePool>, PortError> {
-            Ok(self.pools.lock().expect("lock").clone())
+            Ok(self.pools.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clone())
         }
         async fn get(&self, id: &str) -> Result<Option<ResourcePool>, PortError> {
-            Ok(self.pools.lock().expect("lock").iter().find(|p| p.id == id).cloned())
+            Ok(self
+                .pools
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .iter()
+                .find(|p| p.id == id)
+                .cloned())
         }
-        async fn update(&self, id: &str, p: &NewResourcePool) -> Result<Option<ResourcePool>, PortError> {
-            let mut g = self.pools.lock().expect("lock");
+        async fn update(
+            &self,
+            id: &str,
+            p: &NewResourcePool,
+        ) -> Result<Option<ResourcePool>, PortError> {
+            let mut g = self.pools.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
             match g.iter_mut().find(|x| x.id == id) {
                 Some(slot) => {
                     *slot = pool_view(id.to_string(), p);
@@ -660,7 +753,7 @@ mod tests {
             }
         }
         async fn delete(&self, id: &str) -> Result<bool, PortError> {
-            let mut g = self.pools.lock().expect("lock");
+            let mut g = self.pools.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
             let before = g.len();
             g.retain(|x| x.id != id);
             Ok(g.len() != before)
@@ -736,15 +829,29 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn list_pools_is_open_200() {
-        let (app, _t) = pool_app().await;
+    async fn list_pools_with_token_200() {
+        let (app, t) = pool_app().await;
         let resp = app
             .oneshot(
-                Request::builder().uri("/api/resource-pool").body(Body::empty()).expect("req"),
+                Request::builder()
+                    .uri("/api/resource-pool")
+                    .header("authorization", format!("Bearer {t}"))
+                    .body(Body::empty())
+                    .expect("req"),
             )
             .await
             .expect("resp");
         assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn list_pools_without_token_401() {
+        let (app, _t) = pool_app().await;
+        let resp = app
+            .oneshot(Request::builder().uri("/api/resource-pool").body(Body::empty()).expect("req"))
+            .await
+            .expect("resp");
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
     }
 
     async fn json_of(resp: Response) -> serde_json::Value {

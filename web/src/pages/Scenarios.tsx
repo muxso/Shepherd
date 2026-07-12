@@ -10,6 +10,7 @@ import { useApp } from '../context'
 import { methodColor, statusColor, outcomeColor, priorityColor } from '../components/tags'
 import { Workspace, useWorkTabs, useWorkspaceExtraSlot, useOpenParam } from '../components/Workspace'
 import { ModuleTreePanel, inSelectedModule } from '../components/ModuleTreePanel'
+import { columnSearch } from '../components/ListView'
 import AssertionEditor from '../components/AssertionEditor'
 import ProcessorEditor from '../components/ProcessorEditor'
 import KVEditor, { type KVRow } from '../components/KVEditor'
@@ -18,13 +19,13 @@ import { SelectProjectEmpty } from '../components/Page'
 import { useI18n } from '../i18n'
 
 type TFn = (key: string, fallback?: string) => string
-// 可编辑表单 + 场景参数行(存入 scenario.meta)。
+// Editable form state + scenario param rows (persisted in scenario.meta).
 type ScenarioParam = { name: string; type: string; value: string; tags: string; desc: string }
 type ScenarioForm = { name: string; status: string; description: string; tags: string[]; priority: string; params: ScenarioParam[]; csv: string; moduleId: string; disabledSteps: string[]; preProcessors: unknown[]; postProcessors: unknown[]; assertions: unknown[]; envCookie: boolean; sharedCookie: boolean }
 const SCENARIO_STATUSES = ['DRAFT', 'DEBUGGING', 'COMPLETED', 'DEPRECATED']
 const SCENARIO_PRIORITIES = ['P0', 'P1', 'P2', 'P3']
 
-// 场景状态 / 执行结果的本地化标签(避免在中文界面直出 DRAFT/ERROR 等原始枚举)。
+// Localized labels for scenario status / run outcome (avoid showing raw enums like DRAFT/ERROR).
 const scStatusLabel = (s: string, t: TFn): string =>
   (({ DRAFT: t('scenario.stDraft', '草稿'), DEBUGGING: t('scenario.stDebugging', '调试中'), COMPLETED: t('scenario.stCompleted', '已完成'), DEPRECATED: t('scenario.stDeprecated', '已废弃') } as Record<string, string>)[s] || s)
 const runOutcomeLabel = (o: string, t: TFn): string => {
@@ -34,10 +35,9 @@ const runOutcomeLabel = (o: string, t: TFn): string => {
   return o
 }
 
-// —— 列表「视图 + 高级筛选」(对齐接口定义页;客户端过滤)——
-// 视图存进同一张 ms_api_view 表(无页面区分列),用 config.kind 标记归属、列表加载时按 kind 过滤。
+// -- List views + advanced filter (mirrors the API definition page; client-side filtering) --
+// Views share the ms_api_view table (no page column); config.kind marks ownership and load filters by kind.
 const SC_VIEW_KIND = 'scenario'
-/** 高级筛选条件:字段 + 操作符 + 值。 */
 type ScAdvCond = { field: 'id' | 'name' | 'status' | 'priority' | 'tags'; op: 'contains' | 'notContains' | 'equals' | 'notEquals' | 'empty' | 'notEmpty'; value: string }
 const SC_ADV_FIELDS: { value: ScAdvCond['field']; tkey: string; fallback: string }[] = [
   { value: 'id', tkey: 'scenario.filterFieldId', fallback: 'ID' },
@@ -84,8 +84,8 @@ export default function Scenarios() {
   const [search, setSearch] = useState('')
   const [moduleSearch, setModuleSearch] = useState('')
   const [selModule, setSelModule] = useState('ALL') // ALL | UNFILED | <moduleId>
-  const [importOpen, setImportOpen] = useState(false) // 导入场景抽屉
-  // 列表:分页大小 / 列显隐 / 高级筛选 / 视图(全部客户端,对齐接口定义页)。
+  const [importOpen, setImportOpen] = useState(false)
+  // List state: page size / column visibility / advanced filter / views (all client-side, mirrors the API definition page).
   const [pageSize, setPageSize] = useState(20)
   const [hiddenCols, setHiddenCols] = useState<string[]>([])
   const [advOpen, setAdvOpen] = useState(false)
@@ -98,7 +98,7 @@ export default function Scenarios() {
   const [viewPopOpen, setViewPopOpen] = useState(false)
   const [searchParams, setSearchParams] = useSearchParams()
   const tabs = useWorkTabs()
-  useOpenParam((id) => tabs.open(id)) // 支持 ?open=<scenarioId> 深链(引用关系图点击场景跳转)
+  useOpenParam((id) => tabs.open(id)) // deep link ?open=<scenarioId> (reference graph clicks land here)
   const NEW_KEY = '__new_scenario__'
 
   const load = async () => {
@@ -112,8 +112,8 @@ export default function Scenarios() {
       ])
       setList(Array.isArray(ss) ? ss : [])
       setModules(Array.isArray(mm) ? mm : [])
-      // 执行结果由后端 list_scenarios 直接带出(lastResult);无需逐场景请求。
-      // 仅展示归属本页(config.kind === 'scenario')的视图,避免与接口定义视图混淆。
+      // lastResult comes with list_scenarios; no per-scenario request needed.
+      // Only show views owned by this page (config.kind === 'scenario') to avoid mixing with API definition views.
       setViews(Array.isArray(vs) ? vs.filter((v) => (v.config as ScViewConfig)?.kind === SC_VIEW_KIND) : [])
     } catch (e) {
       message.error(e instanceof ApiError ? e.message : t('scenario.loadFailed', '加载场景失败'))
@@ -122,7 +122,7 @@ export default function Scenarios() {
     }
   }
 
-  // 视图快照:当前筛选/列/分页 → config;反向 applyConfig 写回各状态。
+  // View snapshot: current filters/columns/paging into config; applyConfig writes it back.
   const currentConfig = (): ScViewConfig => ({ kind: SC_VIEW_KIND, search, selModule, pageSize, hiddenCols, advLogic: advApplied.logic, advConds: advApplied.conds })
   const applyConfig = (c: ScViewConfig) => {
     if (typeof c.search === 'string') setSearch(c.search)
@@ -174,7 +174,7 @@ export default function Scenarios() {
       message.error(e instanceof ApiError ? e.message : t('apidef.deleteFailed', '删除失败'))
     }
   }
-  // 深链 ?view=<id>:视图加载后命中即应用,然后清参数。
+  // Deep link ?view=<id>: apply once views load, then strip the param.
   useEffect(() => {
     const vid = searchParams.get('view')
     if (!vid || !views.length) return
@@ -200,7 +200,7 @@ export default function Scenarios() {
       const inMod = inSelectedModule(modules, selModule, moduleOf(s))
       const tags = (s.meta?.tags as string[] | undefined) || []
       const hit = !q || s.name.toLowerCase().includes(q) || s.id.toLowerCase().includes(q) || tags.some((tg) => tg.toLowerCase().includes(q))
-      // 高级筛选:所有=全部命中(AND);任一=任一命中(OR)。
+      // Advanced filter: all = AND across conditions; any = OR.
       const adv = conds.length === 0 ? true : advApplied.logic === 'all' ? conds.every((c) => scCondMatch(s, c)) : conds.some((c) => scCondMatch(s, c))
       return inMod && hit && adv
     })
@@ -209,7 +209,7 @@ export default function Scenarios() {
 
   if (!projectId) return <SelectProjectEmpty />
 
-  // 左侧:新建/导入(header)+ 复用 ModuleTreePanel(模块搜索 + 层级模块树 + 模块增删改)+ 回收站(footer)。
+  // Left panel: new/import (header) + shared ModuleTreePanel (search + tree + module CRUD) + recycle bin (footer).
   const left = (
     <ModuleTreePanel
       projectId={projectId}
@@ -227,9 +227,12 @@ export default function Scenarios() {
       deleteModuleContent={t('scenario.deleteModuleContent', '其下场景将变为未规划(不会删除场景)。')}
       header={
         <div style={{ padding: '10px 10px 0' }}>
+          {/* Import is icon-only: two text buttons overflow the left column with the longer English labels. */}
           <Space.Compact style={{ width: '100%' }}>
-            <Button type="primary" icon={<PlusOutlined />} style={{ flex: 1 }} onClick={() => tabs.open(NEW_KEY)}>{t('scenario.newScenario', '新建场景')}</Button>
-            <Button icon={<ImportOutlined />} style={{ flex: 1 }} onClick={() => setImportOpen(true)}>{t('scenario.importScenario', '导入场景')}</Button>
+            <Button type="primary" icon={<PlusOutlined />} style={{ flex: 1, minWidth: 0 }} onClick={() => tabs.open(NEW_KEY)}>{t('scenario.newScenario', '新建场景')}</Button>
+            <Tooltip title={t('scenario.importScenario', '导入场景')}>
+              <Button icon={<ImportOutlined />} style={{ flex: '0 0 40px' }} onClick={() => setImportOpen(true)} />
+            </Tooltip>
           </Space.Compact>
         </div>
       }
@@ -266,15 +269,18 @@ export default function Scenarios() {
     })
   }
   const muted = (v?: string) => <span style={{ color: 'var(--text-3)' }}>{v || '—'}</span>
+  // Column-header search/filter (mirrors the API definition page): text columns get magnifier search, enum columns funnel multi-select; stacks with the top search/filter.
+  const allSceneTags = [...new Set(filtered.flatMap((s) => ((s.meta?.tags as string[] | undefined) || [])))]
+  const allSceneEnvs = [...new Set(filtered.map((s) => (s.meta?.envName as string | undefined) || '').filter(Boolean))]
   const richCols: ColumnsType<Scenario> = [
-    { key: 'id', title: 'ID', dataIndex: 'id', width: 110, render: (v: string) => <span className="ms-mono" style={{ fontSize: 12 }}>{v.slice(0, 8)}</span> },
-    { key: 'name', title: t('scenario.colSceneName', '场景名称'), dataIndex: 'name', ellipsis: true, render: (v: string) => <span style={{ fontWeight: 500 }}>{v}</span> },
-    { key: 'priority', title: t('scenario.priority', '场景等级'), width: 110, render: (_v, s) => { const p = (s.meta?.priority as string) || 'P0'; return <span style={{ color: priorityColor(p) }}>● {p}</span> } },
-    { key: 'status', title: t('scenario.colStatus', '状态'), dataIndex: 'status', width: 110, render: (s: string) => <Tag color={statusColor(s)}>{scStatusLabel(s, t)}</Tag> },
-    { key: 'execResult', title: t('scenario.colExecResult', '执行结果'), width: 110, render: (_v, s) => (s.lastResult ? <Tag color={outcomeColor(s.lastResult)} style={{ margin: 0 }}>{runOutcomeLabel(s.lastResult, t)}</Tag> : muted()) },
-    { key: 'tags', title: t('scenario.tags', '标签'), width: 160, render: (_v, s) => { const tags = (s.meta?.tags as string[] | undefined) || []; return tags.length ? <Space size={[4, 4]} wrap>{tags.map((tg) => <Tag key={tg} style={{ margin: 0 }}>{tg}</Tag>)}</Space> : muted() } },
-    { key: 'sceneEnv', title: t('scenario.colSceneEnv', '场景环境'), width: 130, render: (_v, s) => { const en = s.meta?.envName as string | undefined; return en ? <Tag color="blue" style={{ margin: 0 }}>{en}</Tag> : muted() } },
-    { key: 'createdBy', title: t('scenario.createdBy', '创建人'), dataIndex: 'createdBy', width: 110, render: (v?: string) => muted(v || undefined) },
+    { key: 'id', title: 'ID', dataIndex: 'id', width: 110, render: (v: string) => <span className="ms-mono" style={{ fontSize: 12 }}>{v.slice(0, 8)}</span>, ...columnSearch<Scenario>((s) => s.id, t) },
+    { key: 'name', title: t('scenario.colSceneName', '场景名称'), dataIndex: 'name', ellipsis: true, render: (v: string) => <span style={{ fontWeight: 500 }}>{v}</span>, ...columnSearch<Scenario>((s) => s.name, t) },
+    { key: 'priority', title: t('scenario.priority', '场景等级'), width: 110, render: (_v, s) => { const p = (s.meta?.priority as string) || 'P0'; return <span style={{ color: priorityColor(p) }}>● {p}</span> }, filters: SCENARIO_PRIORITIES.map((p) => ({ text: p, value: p })), onFilter: (v, s) => ((s.meta?.priority as string) || 'P0') === v },
+    { key: 'status', title: t('scenario.colStatus', '状态'), dataIndex: 'status', width: 110, render: (s: string) => <Tag color={statusColor(s)}>{scStatusLabel(s, t)}</Tag>, filters: SCENARIO_STATUSES.map((s) => ({ text: scStatusLabel(s, t), value: s })), onFilter: (v, s) => s.status === v },
+    { key: 'execResult', title: t('scenario.colExecResult', '执行结果'), width: 110, render: (_v, s) => (s.lastResult ? <Tag color={outcomeColor(s.lastResult)} style={{ margin: 0 }}>{runOutcomeLabel(s.lastResult, t)}</Tag> : muted()), filters: [{ text: t('scenario.runSuccess', '成功'), value: 'SUCCESS' }, { text: t('scenario.runError', '失败'), value: 'ERROR' }], onFilter: (v, s) => runOutcomeLabel(s.lastResult || '', t) === runOutcomeLabel(String(v), t) },
+    { key: 'tags', title: t('scenario.tags', '标签'), width: 160, render: (_v, s) => { const tags = (s.meta?.tags as string[] | undefined) || []; return tags.length ? <Space size={[4, 4]} wrap>{tags.map((tg) => <Tag key={tg} style={{ margin: 0 }}>{tg}</Tag>)}</Space> : muted() }, filters: allSceneTags.map((tg) => ({ text: tg, value: tg })), filterSearch: allSceneTags.length > 8, onFilter: (v, s) => (((s.meta?.tags as string[] | undefined) || [])).includes(String(v)) },
+    { key: 'sceneEnv', title: t('scenario.colSceneEnv', '场景环境'), width: 130, render: (_v, s) => { const en = s.meta?.envName as string | undefined; return en ? <Tag color="blue" style={{ margin: 0 }}>{en}</Tag> : muted() }, filters: allSceneEnvs.map((e) => ({ text: e, value: e })), onFilter: (v, s) => ((s.meta?.envName as string | undefined) || '') === v },
+    { key: 'createdBy', title: t('scenario.createdBy', '创建人'), dataIndex: 'createdBy', width: 110, render: (v?: string) => muted(v || undefined), ...columnSearch<Scenario>((s) => s.createdBy || '', t) },
     { key: 'updatedBy', title: t('scenario.updatedBy', '更新人'), width: 110, render: (_v, s) => muted(s.createdBy || undefined) },
     {
       key: 'action',
@@ -291,7 +297,7 @@ export default function Scenarios() {
       ),
     },
   ]
-  // 列显隐:ID/名称/操作 固定;其余可在「表格设置」开关。
+  // Column visibility: ID/name/action are fixed; the rest toggle in table settings.
   const columns = richCols.filter((c) => !hiddenCols.includes(String(c.key)))
   const TOGGLE_COLS = richCols.filter((c) => !['id', 'name', 'action'].includes(String(c.key))).map((c) => ({ key: String(c.key), label: String(c.title) }))
 
@@ -408,7 +414,7 @@ export default function Scenarios() {
         listContent={listContent}
       />
       <ImportScenarioDrawer open={importOpen} projectId={projectId} modules={modules} onClose={() => setImportOpen(false)} onImported={load} />
-      {/* 高级筛选抽屉(条件组合 所有/任一 + 字段/操作符/值,客户端过滤)。 */}
+      {/* Advanced filter drawer (all/any logic + field/operator/value, client-side filtering). */}
       <Drawer
         title={t('apidef.filter', '筛选')}
         open={advOpen}
@@ -449,7 +455,6 @@ export default function Scenarios() {
   )
 }
 
-// 步骤类型 → 标签文案 + 颜色。
 function makeStepMeta(t: TFn): Record<string, { label: string; color: string }> {
   return {
     REQUEST: { label: t('scenario.stepRequest', '请求'), color: 'blue' },
@@ -466,13 +471,13 @@ interface Node {
   kind: string
   content: ReactNode
   children?: Node[]
-  /** 子步骤原始数据(控制器 children 项 / 子场景步骤),用于点击子步骤打开抽屉。 */
+  /** Raw child step (controller children item / sub-scenario step); used to open the drawer on click. */
   raw?: ScenarioStep
-  /** 执行结果(叶子=直接结果,父步骤=后代聚合);用于子步骤行显示绿/红最终状态。 */
+  /** Run result (leaf = direct, parent = aggregated from descendants); drives green/red on child rows. */
   result?: ReportResultItem
 }
 
-/** 把控制器子步骤原始 json / 子场景步骤,规整成抽屉可用的 ScenarioStep。 */
+/** Normalize a raw controller child json / sub-scenario step into a ScenarioStep the drawer can use. */
 function rawToStep(c: any): ScenarioStep {
   const kind = String(c?.kind || '').toUpperCase()
   const base = { id: c?.id || `child-${kind}-${c?.refId || c?.url || Math.random().toString(36).slice(2)}`, order: 0, kind, refMode: 'REFERENCE' as const }
@@ -482,10 +487,9 @@ function rawToStep(c: any): ScenarioStep {
   return { ...base, control: c }
 }
 
-// 引用 id → 可读名称(用例/子场景);未命中回落短 id,避免满屏 UUID。
+// Reference id to readable name (case/sub-scenario); falls back to a short id instead of full UUIDs.
 type NameOf = (id: string) => string
 
-// 把控制器载荷里的一个子步骤(原始 json)规整为 Node。
 function childToNode(c: any, t: TFn, nameOf: NameOf): Node {
   const kind = String(c?.kind || '').toUpperCase()
   if (kind === 'CASE') return { kind, content: <span className="ms-mono">{t('scenario.caseRef', '用例')} {nameOf(c.refId)}</span>, raw: rawToStep(c) }
@@ -504,7 +508,6 @@ function controlToNode(kind: string, payload: any, t: TFn, nameOf: NameOf): Node
   return { kind, content, children: kind === 'TIMER' ? undefined : children }
 }
 
-// 顶层步骤(ScenarioStep)→ Node。
 function stepToNode(s: ScenarioStep, t: TFn, nameOf: NameOf): Node {
   if (s.request) return { kind: 'REQUEST', content: <Space><Tag color={methodColor(s.request.method)}>{s.request.method}</Tag><span className="ms-mono">{s.request.url}</span></Space> }
   if (s.caseId) return { kind: 'CASE', content: <span className="ms-mono">{t('scenario.caseRef', '用例')} {nameOf(s.caseId)}</span> }
@@ -523,7 +526,7 @@ function StepRow({ node, idx, depth, t, result, running, seq = 0, enabled = true
       <div
         style={{
           position: 'relative',
-          isolation: 'isolate', // 自成层叠上下文,使 z-index:-1 的进度填充落在底色之上、内容之下
+          isolation: 'isolate', // own stacking context so the z-index:-1 progress fill sits above the row background but below content
           overflow: 'hidden',
           display: 'flex',
           alignItems: 'center',
@@ -537,18 +540,18 @@ function StepRow({ node, idx, depth, t, result, running, seq = 0, enabled = true
           opacity: enabled ? 1 : 0.5,
         }}
       >
-        {/* 执行进度:整行背景左→右填充(置于内容之下)。执行中蓝色按 seq 错峰起跑;完成后整行变绿(通过)/红(失败)。 */}
+        {/* Run progress: row background fills left-to-right under the content. Blue while running, staggered by seq; green (pass) / red (fail) when done. */}
         {running ? (
           <span className="ms-step-fillbg run" style={{ animationDelay: `${seq}s` }} />
         ) : result ? (
           <span className="ms-step-fillbg done" style={{ background: ok ? 'rgba(34,197,94,0.16)' : 'rgba(239,68,68,0.16)' }} />
         ) : null}
-        {/* 可展开(子场景/循环/条件/仅一次):▸/▾ 折叠箭头;叶子步骤留占位对齐。 */}
+        {/* Expandable (sub-scenario/loop/if/once): fold arrow; leaf steps keep a spacer for alignment. */}
         {expandable
           ? <span style={{ color: 'var(--text-3)', fontSize: 11, width: 12, cursor: 'pointer' }}>{expanded ? '▾' : '▸'}</span>
           : <span style={{ width: 12 }} />}
         <span style={{ color: 'var(--text-3)', cursor: 'grab' }}>⠿</span>
-        {/* 启用/禁用本步骤(禁用则置灰);播放=单步服务端执行。两者均阻止冒泡(不打开抽屉)。 */}
+        {/* Enable/disable this step (disabled = dimmed); play = single-step server run. Both stop propagation so the drawer stays closed. */}
         <Switch size="small" checked={enabled} disabled={!leaf || !onToggle} onChange={() => onToggle?.()} onClick={(_c, e) => e.stopPropagation()} />
         <PlayCircleOutlined
           style={{ color: leaf && onRun ? 'var(--brand)' : '#c9cdd4', cursor: leaf && onRun ? 'pointer' : 'default' }}
@@ -557,13 +560,13 @@ function StepRow({ node, idx, depth, t, result, running, seq = 0, enabled = true
         <span style={{ color: 'var(--text-3)', fontSize: 12, minWidth: 18 }}>{idx}</span>
         <Tag color={meta.color} style={{ margin: 0 }}>{meta.label}</Tag>
         <span style={{ flex: 1, minWidth: 0 }}>{node.content}</span>
-        {/* 执行后逐步结果(对齐参考图 #28):通过/状态码/响应时间/响应大小。
-            悬停「结果区」(行右侧,即鼠标所在处)弹出响应详情 → 锚定右侧,不再飘到左边。 */}
+        {/* Per-step result after a run (ref #28): pass / status / latency / size.
+            Hovering the result cluster pops response details anchored right (where the mouse is). */}
         {!running && result && (() => {
           const cluster = (
             <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }} onClick={(e) => e.stopPropagation()}>
               <Tag color={ok ? 'green' : 'red'} style={{ margin: 0 }}>{ok ? t('scenario.pass', '通过') : t('scenario.fail', '失败')}</Tag>
-              {result.statusCode != null && <span style={muted}>{t('apidef.statusCode', '状态码')} <span style={{ color: result.statusCode < 400 ? '#52c41a' : '#ff4d4f' }}>{result.statusCode}</span></span>}
+              {result.statusCode != null && <span style={muted}>{t('apidef.statusCode', '状态码')} <span style={{ color: result.statusCode < 400 ? 'var(--success)' : 'var(--error)' }}>{result.statusCode}</span></span>}
               <span style={muted}>{t('scenario.respTime', '响应时间')} {result.latencyMs != null ? `${result.latencyMs} ms` : '—'}</span>
               <span style={muted}>{t('scenario.respSize', '响应大小')} {result.respSize != null ? `${result.respSize} bytes` : '—'}</span>
             </span>
@@ -572,7 +575,7 @@ function StepRow({ node, idx, depth, t, result, running, seq = 0, enabled = true
             ? <Popover content={respPreview} trigger="hover" placement="bottomRight" mouseEnterDelay={0.35}>{cluster}</Popover>
             : cluster
         })()}
-        {/* 悬停显示:向上插入 / 向下插入 / 删除(右侧)。 */}
+        {/* Shown on hover: insert above / insert below / delete. */}
         {actions && (
           <span
             style={{ display: 'flex', gap: 2, marginLeft: 4, opacity: hovered ? 1 : 0, pointerEvents: hovered ? 'auto' : 'none', transition: 'opacity .15s' }}
@@ -582,7 +585,7 @@ function StepRow({ node, idx, depth, t, result, running, seq = 0, enabled = true
           </span>
         )}
       </div>
-      {/* 子步骤:仅展开时渲染;点击子步骤打开右侧抽屉(经 onChildSelect 上抛原始步骤)。 */}
+      {/* Children render only when expanded; clicking one opens the drawer (raw step bubbled via onChildSelect). */}
       {expanded && node.children?.map((c, i) => (
         <div
           key={i}
@@ -596,7 +599,7 @@ function StepRow({ node, idx, depth, t, result, running, seq = 0, enabled = true
   )
 }
 
-// 步骤响应预览(悬停弹出):状态行 + 响应体 / 响应头 标签。仅在该步已执行时使用。
+// Step response preview (hover popover): status line + body/headers tabs. Used only once the step has run.
 function StepRespPreview({ r, t }: { r: ReportResultItem; t: TFn }) {
   const ok = r.outcome === 'SUCCESS'
   const items = [
@@ -613,7 +616,7 @@ function StepRespPreview({ r, t }: { r: ReportResultItem; t: TFn }) {
     <div style={{ width: 560 }} onClick={(e) => e.stopPropagation()}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 8 }}>
         <Tag color={ok ? 'green' : 'red'} style={{ margin: 0 }}>{ok ? t('scenario.pass', '通过') : t('scenario.fail', '失败')}</Tag>
-        {r.statusCode != null && <span style={{ fontSize: 13, fontWeight: 600, color: r.statusCode < 400 ? '#52c41a' : '#ff4d4f' }}>{r.statusCode}</span>}
+        {r.statusCode != null && <span style={{ fontSize: 13, fontWeight: 600, color: r.statusCode < 400 ? 'var(--success)' : 'var(--error)' }}>{r.statusCode}</span>}
         <span style={{ fontSize: 12, color: 'var(--text-3)' }}>{r.latencyMs ?? '—'} ms</span>
         <span style={{ fontSize: 12, color: 'var(--text-3)' }}>{r.respSize ?? '—'} bytes</span>
       </div>
@@ -622,9 +625,9 @@ function StepRespPreview({ r, t }: { r: ReportResultItem; t: TFn }) {
   )
 }
 
-// 场景详情:全标签编辑器外壳(对齐参考图 #20-#24:头部 + 基本信息/步骤/参数/前后置/断言/
-// 场景工具栏(环境 + 服务端执行 + 保存):详情页与新建页复用,经 Workspace 插槽
-// 投射到 Tab 栏右侧(对齐参考图 #38 红色区域)。runDisabled 时执行按钮置灰(新建未保存)。
+// Scenario action bar (environment + server run + save): shared by the detail and new-scenario
+// tabs, portaled into the tab-bar right slot via Workspace (ref #38). runDisabled greys out the
+// run button (unsaved new scenario).
 function ScenarioActionBar({ envs, envId, onEnv, running, onRun, onLocalRun, saving, onSave, runDisabled, envDisabled, runTitle, viewReport, t }: {
   envs: Environment[]
   envId: string
@@ -672,35 +675,35 @@ function ScenarioActionBar({ envs, envId, onEnv, running, onRun, onLocalRun, sav
   )
 }
 
-// 执行历史/变更历史/设置 + 顶部右侧 环境/服务端执行/保存)。步骤详情抽屉(#25)、可编辑元信息
-// (需后端 updateScenario)、报告(#26)为后续切片。
+// Scenario detail: tabbed editor shell (refs #20-#24) — basic info / steps / params / pre-post /
+// assertions / exec history / change history / settings, plus the action-bar portal.
 function ScenarioDetail({ scenario, active }: { scenario: Scenario; active?: boolean }) {
   const { t } = useI18n()
   const slot = useWorkspaceExtraSlot()
   const [steps, setSteps] = useState<ScenarioStep[]>([])
   const [running, setRunning] = useState(false)
-  const [add, setAdd] = useState<string>('') // 当前打开的添加表单类型
-  const [importOpen, setImportOpen] = useState(false) // 导入系统请求抽屉
-  const [customReqOpen, setCustomReqOpen] = useState(false) // 自定义请求抽屉
-  const [hoverStep, setHoverStep] = useState<string | null>(null) // 悬停的步骤(显示行内插入/删除)
-  const [expandedSteps, setExpandedSteps] = useState<Set<string>>(new Set()) // 已展开的控制器/子场景步骤
-  const [subSteps, setSubSteps] = useState<Record<string, ScenarioStep[]>>({}) // 子场景 id → 其步骤(展开时按需加载)
-  // 插入位置:记录目标下标 + 插入前的步骤 id 集合(用于把新增步骤块挪到目标位置)。
+  const [add, setAdd] = useState<string>('') // which add-step form is open
+  const [importOpen, setImportOpen] = useState(false)
+  const [customReqOpen, setCustomReqOpen] = useState(false)
+  const [hoverStep, setHoverStep] = useState<string | null>(null) // hovered step row (shows inline insert/delete)
+  const [expandedSteps, setExpandedSteps] = useState<Set<string>>(new Set())
+  const [subSteps, setSubSteps] = useState<Record<string, ScenarioStep[]>>({}) // sub-scenario id to its steps (loaded on first expand)
+  // Pending insert: target index + snapshot of step ids before the add (used to move the new block into place).
   const [pendingInsert, setPendingInsert] = useState<{ at: number; before: string[] } | null>(null)
   const [lastRun, setLastRun] = useState<ScenarioRunResult | null>(null)
   const [lastRunAt, setLastRunAt] = useState<string>('')
-  // 执行后逐步结果(按 caseId 归集:REQUEST→"METHOD url",CASE→case_id)+ 报告弹窗。
+  // Per-step results after a run, keyed by caseId (REQUEST: "METHOD url", CASE: case_id) + report modal.
   const [stepResults, setStepResults] = useState<Record<string, ReportResultItem>>({})
   const [reportModalId, setReportModalId] = useState<string | null>(null)
   const [nameMap, setNameMap] = useState<Record<string, string>>({})
   const [caseMap, setCaseMap] = useState<Record<string, ApiCase>>({})
   const [selStep, setSelStep] = useState<{ step: ScenarioStep; idx: number } | null>(null)
   const [dragIdx, setDragIdx] = useState<number | null>(null)
-  // 执行配置:环境 + 步骤失败规则(后端 run 已支持 environment_id/failure_strategy)。
+  // Run config: environment + step failure rule (backend run accepts environment_id/failure_strategy).
   const [envs, setEnvs] = useState<Environment[]>([])
   const [envId, setEnvId] = useState<string>('')
   const [failureStrategy, setFailureStrategy] = useState<'CONTINUE' | 'STOP'>('CONTINUE')
-  // 可编辑基本信息 + 参数(保存走 PATCH /api/scenario/{id};meta 承载描述/标签/等级/参数)。
+  // Editable basic info + params (saved via PATCH /api/scenario/{id}; meta carries description/tags/priority/params).
   const m0 = (scenario.meta || {}) as Record<string, unknown>
   const [form, setForm] = useState<ScenarioForm>({
     name: scenario.name,
@@ -738,7 +741,7 @@ function ScenarioDetail({ scenario, active }: { scenario: Scenario; active?: boo
       setSaving(false)
     }
   }
-  // 引用名解析:命中用例/子场景名,未命中回落短 id(前 8 位),不再满屏 UUID。
+  // Resolve reference names; fall back to the first 8 chars of the id instead of full UUIDs.
   const nameOf = (id: string) => nameMap[id] || (id ? id.slice(0, 8) : '—')
 
   const loadSteps = async () => {
@@ -751,7 +754,7 @@ function ScenarioDetail({ scenario, active }: { scenario: Scenario; active?: boo
   }
   useEffect(() => {
     loadSteps()
-    // 拉项目用例 + 场景,建 id→名 映射供步骤展示;拉环境供执行选择。
+    // Load project cases + scenarios to build the id-to-name map for step display; load environments for run selection.
     Promise.all([
       api.projectCasesAll(scenario.projectId).catch(() => []),
       api.scenarios(scenario.projectId).then((s) => s).catch(() => []),
@@ -765,7 +768,7 @@ function ScenarioDetail({ scenario, active }: { scenario: Scenario; active?: boo
       setNameMap(m)
       setCaseMap(cm)
       setEnvs(environments)
-      // 优先用已保存的场景环境(meta.envId);否则回落第一个启用的环境。
+      // Prefer the saved scenario environment (meta.envId); otherwise the first enabled one.
       const savedEnvId = scenario.meta?.envId as string | undefined
       setEnvId((cur) => cur || (savedEnvId && environments.some((e) => e.id === savedEnvId) ? savedEnvId : environments.find((e) => e.enabled !== false)?.id || ''))
       setModules(mods)
@@ -779,13 +782,13 @@ function ScenarioDetail({ scenario, active }: { scenario: Scenario; active?: boo
       const r = await api.runScenario(scenario.id, scenario.projectId, { environmentId: envId || undefined, failureStrategy })
       setLastRun(r)
       setLastRunAt(new Date().toLocaleString())
-      // 拉报告明细,把逐步结果(通过/状态码/耗时/大小)映射到步骤行。
+      // Fetch report detail and map per-step results (pass/status/latency/size) onto step rows.
       const rep = await api.scenarioReport(r.reportId).catch(() => null)
       if (rep) {
         const map: Record<string, ReportResultItem> = {}
         rep.results.forEach((res) => { map[res.caseId] = res })
         setStepResults(map)
-        // 顶层子场景的最终状态需聚合其叶子结果 → 补载未加载的子场景步骤(否则父步骤行执行后会空白)。
+        // A top-level sub-scenario's status aggregates its leaf results, so load missing sub-scenario steps (otherwise the parent row stays blank after a run).
         await Promise.all(
           steps
             .filter((s) => s.scenarioId && !subSteps[s.scenarioId])
@@ -794,7 +797,7 @@ function ScenarioDetail({ scenario, active }: { scenario: Scenario; active?: boo
                 const sc = await api.getScenario(s.scenarioId as string)
                 setSubSteps((m) => ({ ...m, [s.scenarioId as string]: sc.steps || [] }))
               } catch {
-                /* 子场景加载失败:该父步骤聚合不出结果,不阻断 */
+                /* sub-scenario load failed: parent can't aggregate a result; don't block */
               }
             }),
         )
@@ -806,17 +809,17 @@ function ScenarioDetail({ scenario, active }: { scenario: Scenario; active?: boo
       setRunning(false)
     }
   }
-  // 步骤 → 结果键:CASE 用 case_id;REQUEST 用 "METHOD url"(对齐执行器 label)。
+  // Step to result key: CASE uses case_id; REQUEST uses "METHOD url" (matches the executor label).
   const stepKey = (s: ScenarioStep): string | null => (s.caseId ? s.caseId : s.request ? `${s.request.method} ${s.request.url}` : null)
-  // 顶层「子场景 / 控制器」步骤本身在报告里没有结果(报告只含叶子用例),收集其后代叶子结果键。
+  // Top-level sub-scenario/controller steps have no result of their own (reports only contain leaves); collect descendant leaf keys.
   const collectLeafKeys = (s: ScenarioStep): string[] => {
     const k = stepKey(s)
     if (k) return [k]
     if (s.scenarioId) return (subSteps[s.scenarioId] || []).flatMap(collectLeafKeys)
     return []
   }
-  // 取某步的执行结果:叶子=直接结果;父步骤=从后代叶子结果聚合(任一失败即失败),
-  // 使执行后父步骤行也能保留最终状态(绿=全通过 / 红=有失败),不随渲染消失。
+  // Result for a step: leaf = direct; parent = aggregated from descendant leaves (any failure fails),
+  // so parent rows keep their final green/red state across renders.
   const resultFor = (s: ScenarioStep): ReportResultItem | undefined => {
     const k = stepKey(s)
     if (k && stepResults[k]) return stepResults[k]
@@ -825,7 +828,7 @@ function ScenarioDetail({ scenario, active }: { scenario: Scenario; active?: boo
     const fail = rs.some((r) => r.outcome !== 'SUCCESS')
     return { caseId: s.id, outcome: fail ? 'ERROR' : 'SUCCESS', failures: [], executedAt: '' }
   }
-  // 单步执行(点击步骤行播放按钮):组装该步请求走 /api/debug/send,把结果写回该步。
+  // Single-step run (row play button): build the request, send via /api/debug/send, write the result back to the step.
   const runStep = async (s: ScenarioStep) => {
     const kase = s.caseId ? caseMap[s.caseId] : undefined
     const reqInfo = kase
@@ -846,7 +849,7 @@ function ScenarioDetail({ scenario, active }: { scenario: Scenario; active?: boo
       message.error(e instanceof ApiError ? e.message : t('editor.sendFail', '发送失败'))
     }
   }
-  // 拖拽重排:把 from 移到 to,乐观更新本地顺序后 PATCH 落库。
+  // Drag reorder: move from to to, optimistically update local order, then persist via PATCH.
   const moveStep = async (from: number, to: number) => {
     if (from === to) return
     const arr = [...steps].sort((a, b) => a.order - b.order)
@@ -863,7 +866,7 @@ function ScenarioDetail({ scenario, active }: { scenario: Scenario; active?: boo
 
   const ordered = [...steps].sort((a, b) => a.order - b.order)
   const nextOrder = steps.length ? Math.max(...steps.map((s) => s.order)) + 1 : 1
-  // 添加完成:新步骤总是追加在末尾;若是「行内插入」(pendingInsert),把新增的步骤块挪到目标位置再落库。
+  // After an add: new steps always append at the end; for inline inserts (pendingInsert), move the new block to the target index and persist.
   const onAdded = async () => {
     setAdd('')
     const pi = pendingInsert
@@ -871,7 +874,7 @@ function ScenarioDetail({ scenario, active }: { scenario: Scenario; active?: boo
     const sc = await api.getScenario(scenario.id).catch(() => null)
     let arr = sc ? [...(sc.steps || [])].sort((a, b) => a.order - b.order) : []
     if (pi && arr.length) {
-      const added = arr.filter((s) => !pi.before.includes(s.id)) // 新增块(追加在末尾,保序)
+      const added = arr.filter((s) => !pi.before.includes(s.id)) // newly added block (appended at the end, order preserved)
       if (added.length) {
         const rest = arr.filter((s) => pi.before.includes(s.id))
         rest.splice(Math.max(0, Math.min(pi.at, rest.length)), 0, ...added)
@@ -883,14 +886,13 @@ function ScenarioDetail({ scenario, active }: { scenario: Scenario; active?: boo
     }
     setSteps(arr)
   }
-  // 行内插入:记录目标下标 + 当前步骤 id 快照,然后打开对应添加入口(自定义请求/导入/控制器)。
+  // Inline insert: record the target index + a snapshot of current step ids, then open the matching add entry (custom request/import/controller).
   const startInsert = (key: string, at: number) => {
     setPendingInsert({ at, before: steps.map((s) => s.id) })
     if (key === 'IMPORT') setImportOpen(true)
     else if (key === 'REQUEST') setCustomReqOpen(true)
     else setAdd(key)
   }
-  // 删除单个步骤。
   const removeStep = async (s: ScenarioStep) => {
     try {
       await api.deleteScenarioStep(scenario.id, s.id)
@@ -900,7 +902,7 @@ function ScenarioDetail({ scenario, active }: { scenario: Scenario; active?: boo
       message.error(e instanceof ApiError ? e.message : t('scenario.deleteFailed', '删除失败'))
     }
   }
-  // 步骤类型子菜单(键编码插入位置 at;与底部「添加步骤」一致)。
+  // Step-type submenu (key encodes the insert position `at`; same set as the bottom add-step button).
   const typeChildren = (at: number) => [
     { type: 'group' as const, label: t('scenario.grpRequest', '请求 / 场景'), children: [
       { key: `IMPORT@${at}`, label: t('scenario.importSystem', '导入系统请求') },
@@ -913,12 +915,12 @@ function ScenarioDetail({ scenario, active }: { scenario: Scenario; active?: boo
     ] },
     { type: 'group' as const, label: t('scenario.grpOther', '其他'), children: [{ key: `TIMER@${at}`, label: t('scenario.stepTimer', '等待时间') }] },
   ]
-  // 行内插入选择(key 形如 KIND@at)。
+  // Inline insert pick (key is "KIND@at").
   const onInsertPick = (key: string) => {
     const at = key.lastIndexOf('@')
     if (at >= 0) startInsert(key.slice(0, at), Number(key.slice(at + 1)))
   }
-  // 复制步骤:构造与原步骤等价的 body,追加后挪到原步骤之后。
+  // Copy step: build an equivalent body, append it, then move it right after the original.
   const copyStep = async (s: ScenarioStep, i: number) => {
     let body: StepBody | null = null
     if (s.caseId) body = { kind: 'CASE', order: nextOrder, refId: s.caseId }
@@ -935,7 +937,7 @@ function ScenarioDetail({ scenario, active }: { scenario: Scenario; active?: boo
       message.error(e instanceof ApiError ? e.message : t('scenario.copyFailed', '复制失败'))
     }
   }
-  // 单行悬停操作:+(在上方/下方插入 → 步骤类型)· ⋯(复制 / 删除),对齐参考设计。
+  // Row hover actions: + (insert above/below, then pick step type) and a copy/delete menu.
   const rowActions = (s: ScenarioStep, i: number) => (
     <>
       <Dropdown
@@ -967,7 +969,7 @@ function ScenarioDetail({ scenario, active }: { scenario: Scenario; active?: boo
     </>
   )
 
-  // 展开/收起控制器或子场景步骤;子场景首次展开时按需加载其步骤。
+  // Expand/collapse a controller or sub-scenario; sub-scenario steps load lazily on first expand.
   const toggleExpand = async (s: ScenarioStep) => {
     setExpandedSteps((prev) => {
       const n = new Set(prev)
@@ -980,12 +982,12 @@ function ScenarioDetail({ scenario, active }: { scenario: Scenario; active?: boo
         const sc = await api.getScenario(s.scenarioId)
         setSubSteps((m) => ({ ...m, [s.scenarioId as string]: sc.steps || [] }))
       } catch {
-        /* 子场景加载失败:展开后显示空,不阻断 */
+        /* sub-scenario load failed: expands to empty; don't block */
       }
     }
   }
 
-  // 可展开的顶层步骤(子场景 / 循环 / 条件 / 仅一次);用于「展开全部 / 收起全部」。
+  // Expandable top-level steps (sub-scenario / loop / if / once); drives expand-all / collapse-all.
   const expandableStepIds = ordered
     .filter((s) => !!s.scenarioId || ['SCENARIO', 'LOOP', 'IF', 'ONCE'].includes(s.kind.toUpperCase()))
     .map((s) => s.id)
@@ -996,14 +998,14 @@ function ScenarioDetail({ scenario, active }: { scenario: Scenario; active?: boo
       return
     }
     setExpandedSteps(new Set(expandableStepIds))
-    // 展开全部时按需加载所有子场景的步骤(首次)。
+    // Expanding all lazy-loads every sub-scenario's steps (first time only).
     for (const s of ordered) {
       if (s.scenarioId && !subSteps[s.scenarioId]) {
         try {
           const sc = await api.getScenario(s.scenarioId)
           setSubSteps((m) => ({ ...m, [s.scenarioId as string]: sc.steps || [] }))
         } catch {
-          /* 子场景加载失败:展开后显示空,不阻断 */
+          /* sub-scenario load failed: expands to empty; don't block */
         }
       }
     }
@@ -1044,12 +1046,12 @@ function ScenarioDetail({ scenario, active }: { scenario: Scenario; active?: boo
         ordered.map((s, i) => {
           const res = resultFor(s)
           const hasResp = !!res && (res.statusCode != null || res.body != null || (res.headers?.length ?? 0) > 0)
-          // 子场景:展开后注入其步骤为子节点(带各自结果,使子步骤行也显示绿/红);控制器:children 来自其载荷。
+          // Sub-scenario: once expanded, inject its steps as children (with results so child rows show green/red); controllers get children from their payload.
           const node = stepToNode(s, t, nameOf)
           if (s.scenarioId && subSteps[s.scenarioId]) {
             node.children = subSteps[s.scenarioId].map((cs) => ({ ...stepToNode(cs, t, nameOf), raw: cs, result: resultFor(cs) }))
           }
-          // 可展开:子场景 / 控制器(LOOP/IF/ONCE)。点击展开而非打开抽屉;叶子步骤点击打开抽屉。
+          // Expandable: sub-scenario / controller (LOOP/IF/ONCE). Click expands instead of opening the drawer; leaf click opens the drawer.
           const expandable = !!s.scenarioId || (node.children?.length ?? 0) > 0 || ['SCENARIO', 'LOOP', 'IF', 'ONCE'].includes(s.kind.toUpperCase())
           const isExpanded = expandedSteps.has(s.id)
           return (
@@ -1141,7 +1143,7 @@ function ScenarioDetail({ scenario, active }: { scenario: Scenario; active?: boo
 
   return (
     <div style={{ padding: '12px 16px', height: '100%', overflow: 'auto' }}>
-      {/* 工具栏(环境 + 服务端执行 + 保存)投射到 Tab 栏右侧;仅活动 Tab 渲染。 */}
+      {/* Toolbar (environment + server run + save) portaled into the tab-bar right slot; rendered only for the active tab. */}
       {active && slot && createPortal(
         <ScenarioActionBar
           envs={envs}
@@ -1156,7 +1158,7 @@ function ScenarioDetail({ scenario, active }: { scenario: Scenario; active?: boo
         />,
         slot,
       )}
-      {/* 头部:状态 / 等级 / [id] / 名称 / 标签 / 描述。 */}
+      {/* Header: status / priority / [id] / name / tags. */}
       <div style={{ marginBottom: 14 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, flexWrap: 'wrap' }}>
           <Tag color={statusColor(form.status)} style={{ margin: 0 }}>{scStatusLabel(form.status, t)}</Tag>
@@ -1196,7 +1198,7 @@ function ScenarioDetail({ scenario, active }: { scenario: Scenario; active?: boo
   )
 }
 
-// 解析 {{var}} + 相对路径补 baseUrl,把用例/内联请求组装成可发送请求(复用调试发送的约定)。
+// Resolve {{var}} and prefix baseUrl onto relative paths; assemble a case/inline request into a sendable request (same conventions as debug send).
 function buildStepRequest(method: string, url: string, body: string | null | undefined, headers: { key: string; value: string }[], auth: { type: string; token?: string } | undefined, env?: Environment): SentRequest | null {
   const resolveVars = (s: string): string =>
     env?.variables ? s.replace(/\{\{\s*(\w+)\s*\}\}/g, (whole, k: string) => env.variables?.[k] ?? whole) : s
@@ -1217,8 +1219,8 @@ function buildStepRequest(method: string, url: string, body: string | null | und
   return { method: method || 'GET', url: base, headers: hs, body: body?.trim() ? resolveVars(body) : undefined }
 }
 
-// 步骤详情抽屉(对齐参考图 #25):点击步骤右侧展开;头部 + 服务端执行 + 请求标签 + 响应内容。
-// 引用用例展示其请求并可服务端执行;内联请求同理;控制器展示配置。删除/替换需后端,暂占位。
+// Step detail drawer (ref #25): header + server run + request tabs + response. Referenced cases
+// and inline requests are runnable; controllers show config only. Replace still needs backend support.
 function StepDetailDrawer({
   sel,
   scenarioId,
@@ -1268,14 +1270,14 @@ function StepDetailDrawer({
   const meta = step ? makeStepMeta(t)[step.kind.toUpperCase()] || { label: step.kind, color: 'default' } : null
   const kase = step?.caseId ? caseMap[step.caseId] : undefined
 
-  // 当前步骤可发送的请求(CASE→其用例;REQUEST→内联);控制器无。
+  // Sendable request for the current step (CASE: its case; REQUEST: inline); controllers have none.
   const reqInfo = (() => {
     if (kase) return { method: kase.method, url: kase.url, body: kase.body, headers: kase.headers || [], auth: kase.auth, assertions: kase.assertions, processors: kase.processors }
     if (step?.request) return { method: step.request.method, url: step.request.url, body: step.request.body ?? null, headers: [], auth: undefined, assertions: step.request.assertions, processors: undefined }
     return null
   })()
 
-  // 切换步骤时,用场景执行的该步结果回填响应面板 + 实际请求(避免显示「尚未执行」);无结果才清空。
+  // On step switch, backfill the response panel + actual request from the scenario run result; clear only when there is no result.
   useEffect(() => {
     setErr('')
     const hasResult = !!result && (result.statusCode != null || result.body != null || (result.headers?.length ?? 0) > 0)
@@ -1289,7 +1291,7 @@ function StepDetailDrawer({
         assertions: asserts.length ? asserts : undefined,
         extractions: result!.extractions?.length ? result!.extractions : undefined,
       })
-      // 回填「实际请求 / 控制台 / cURL」:重建实际发送的请求行(相对路径按环境 baseUrl 拼接,认证转 Authorization 头)。
+      // Backfill actual request / console / cURL: rebuild the request as sent (relative paths joined with env baseUrl, auth folded into an Authorization header).
       if (reqInfo) {
         const resolveUrl = (u: string) => {
           if (/^https?:\/\//i.test(u)) return u
@@ -1390,13 +1392,13 @@ function StepDetailDrawer({
   )
 }
 
-// 基本信息(可编辑,对齐参考图 #21):名称/等级/状态/标签/描述 + 只读 ID/步骤数。保存走顶部「保存」。
+// Basic info (editable, ref #21): name/priority/status/tags/description + read-only id/step count. Persisted via the top Save.
 function ScenarioBasicInfo({ scenario, stepCount, form, patch, modules }: { scenario: Scenario; stepCount: number; form: ScenarioForm; patch: (p: Partial<ScenarioForm>) => void; modules: ApiModule[] }) {
   const { t } = useI18n()
   const [tagInput, setTagInput] = useState('')
   const field = (label: string, value: ReactNode, req?: boolean) => (
     <div style={{ marginBottom: 14 }}>
-      <div style={{ fontSize: 13, color: 'var(--text-2)', marginBottom: 6 }}>{req && <span style={{ color: '#ff4d4f', marginRight: 4 }}>*</span>}{label}</div>
+      <div style={{ fontSize: 13, color: 'var(--text-2)', marginBottom: 6 }}>{req && <span style={{ color: 'var(--error)', marginRight: 4 }}>*</span>}{label}</div>
       {value}
     </div>
   )
@@ -1432,7 +1434,7 @@ function ScenarioBasicInfo({ scenario, stepCount, form, patch, modules }: { scen
   )
 }
 
-// 场景参数(对齐参考图 #22:常规参数表 + CSV 参数;变量名称/类型/参数值/标签/描述 + 加一行)。存入 meta.params / meta.csvParams。
+// Scenario params (ref #22): normal param table + CSV params. Stored in meta.params / meta.csvParams.
 function ScenarioParams({ params, onChange, csv, onCsvChange }: { params: ScenarioParam[]; onChange: (p: ScenarioParam[]) => void; csv: string; onCsvChange: (v: string) => void }) {
   const { t } = useI18n()
   const [mode, setMode] = useState<'normal' | 'csv'>('normal')
@@ -1483,7 +1485,7 @@ function ScenarioParams({ params, onChange, csv, onCsvChange }: { params: Scenar
   )
 }
 
-// 设置:步骤执行失败规则(对齐参考图 #24;映射到 run 的 failure_strategy)。Cookie 配置占位。
+// Settings: step failure rule (ref #24; maps to run's failure_strategy). Cookie config is a placeholder.
 function ScenarioSettings({ failureStrategy, onFailureStrategy, envCookie, sharedCookie, onCookie, t }: { failureStrategy: 'CONTINUE' | 'STOP'; onFailureStrategy: (v: 'CONTINUE' | 'STOP') => void; envCookie: boolean; sharedCookie: boolean; onCookie: (p: { envCookie?: boolean; sharedCookie?: boolean }) => void; t: TFn }) {
   return (
     <Space direction="vertical" size={18} style={{ width: '100%' }}>
@@ -1506,7 +1508,7 @@ function ScenarioSettings({ failureStrategy, onFailureStrategy, envCookie, share
   )
 }
 
-// 执行历史标签(对齐参考图 #23):序号 / 状态 / 用例数 / 时间 / 操作(执行结果→报告)。
+// Execution history tab (ref #23); result links open the report modal.
 function ScenarioExecutionsTab({ scenarioId, nameOf, caseMap, t }: { scenarioId: string; nameOf: NameOf; caseMap?: Record<string, ApiCase>; t: TFn }) {
   const [rows, setRows] = useState<ScenarioExecution[]>([])
   const [loading, setLoading] = useState(false)
@@ -1537,7 +1539,7 @@ function ScenarioExecutionsTab({ scenarioId, nameOf, caseMap, t }: { scenarioId:
   )
 }
 
-// 变更历史标签(审计日志):操作 / 详情 / 操作人 / 时间。
+// Change history tab (audit log).
 const CHANGE_ACTIONS: Record<string, { tkey: string; fallback: string; color: string }> = {
   CREATE: { tkey: 'scenario.actionCreate', fallback: '创建', color: 'green' },
   UPDATE: { tkey: 'scenario.actionUpdate', fallback: '更新', color: 'blue' },
@@ -1570,13 +1572,11 @@ function ScenarioChangesTab({ scenarioId, t }: { scenarioId: string; t: TFn }) {
   )
 }
 
-// 场景报告(对齐参考图 #26):报告头(状态/用例数)+ 报告明细逐步结果(通过/失败 + 失败原因)。
-// 注:响应时间/大小/状态码/响应体当前未持久化(执行器仅记录通过失败 + 失败原因),展示为 — ;
-// 完整明细需扩展执行器落库(后续切片)。
-// 4 态分布:通过 / 误报 / 失败 / 未执行(对齐参考报告:步骤分析 / 请求分析)。
+// Scenario report (ref #26). Latency/size/status/body are only persisted by newer executors;
+// missing values render as an em dash.
+// 4-state distribution: pass / false positive / fail / not run (mirrors the reference report).
 type Dist = { pass: number; falsePos: number; fail: number; skip: number }
 const DIST_COLORS = { pass: '#22c55e', falsePos: '#f59e0b', fail: '#ef4444', skip: '#c9cdd4' }
-// 多段 SVG 圆环 + 中心「总数(个) N」。
 function StatRing({ d, centerLabel }: { d: Dist; centerLabel: string }) {
   const total = d.pass + d.falsePos + d.fail + d.skip
   const C = 2 * Math.PI * 42
@@ -1593,12 +1593,11 @@ function StatRing({ d, centerLabel }: { d: Dist; centerLabel: string }) {
           return el
         })}
       </g>
-      <text x="60" y="58" textAnchor="middle" fontSize="22" fontWeight="700" fill="#1f2329">{total}</text>
+      <text x="60" y="58" textAnchor="middle" fontSize="22" fontWeight="700" fill="currentColor" style={{ color: 'var(--text)' }}>{total}</text>
       <text x="60" y="76" textAnchor="middle" fontSize="11" fill="#8a9099">{centerLabel}</text>
     </svg>
   )
 }
-// 分布卡:左圆环 + 右四行图例(标签 / 数量 / 百分比)。
 function DistCard({ title, d, centerLabel, t }: { title: string; d: Dist; centerLabel: string; t: TFn }) {
   const total = d.pass + d.falsePos + d.fail + d.skip
   const pct = (n: number) => (total ? ((n / total) * 100).toFixed(2) : '0.00')
@@ -1627,9 +1626,8 @@ function DistCard({ title, d, centerLabel, t }: { title: string; d: Dist; center
   )
 }
 
-// 场景执行报告:从右侧展开的抽屉(对齐 docs/api-coverage.html)。
-// 顶部=报告分析卡(步骤数/通过/失败/通过率)+ 圆环;工具栏=过滤 + 展开/收起全部;
-// 报告明细沿用现有 ReportRow 结构(逐步可展开,复用调试 7 标签面板)。
+// Scenario run report drawer: analysis cards + rings on top; toolbar filter + expand/collapse all;
+// detail rows reuse ReportRow (expandable, debug 7-tab panel).
 function ScenarioReportModal({ reportId, nameOf, caseMap, onClose }: { reportId: string | null; nameOf: NameOf; caseMap?: Record<string, ApiCase>; onClose: () => void }) {
   const { t } = useI18n()
   const [data, setData] = useState<ScenarioReportDetail | null>(null)
@@ -1646,23 +1644,23 @@ function ScenarioReportModal({ reportId, nameOf, caseMap, onClose }: { reportId:
   const passN = all.filter((r) => r.outcome === 'SUCCESS').length
   const failN = all.length - passN
   const passRate = all.length ? (passN / all.length) * 100 : 0
-  // 分布(误报/未执行后端暂未跟踪 → 0)。步骤与请求当前同源(扁平场景一步一请求)。
+  // Distribution (backend doesn't track false positives / not-run yet, so 0). Steps and requests share the same source (flat scenario, one request per step).
   const dist: Dist = { pass: passN, falsePos: 0, fail: failN, skip: 0 }
-  // 请求总耗时 = 各步延迟之和;报告总耗时 ≈ executedAt 跨度 + 末步延迟(无有效时间戳则回落请求总耗时)。
+  // Request total = sum of step latencies; report total is roughly the executedAt span + last step latency (falls back to request total without valid timestamps).
   const reqTotalMs = all.reduce((s, r) => s + (r.latencyMs ?? 0), 0)
-  // 报告总耗时:优先后端 wall-clock(durationMs,0056 后);旧报告回落 executedAt 跨度 / 请求总耗时。
+  // Report total time: prefer backend wall-clock (durationMs, since 0056); old reports fall back to executedAt span / request total.
   const times = all.map((r) => Date.parse((r.executedAt || '').replace(' ', 'T'))).filter((n) => !Number.isNaN(n))
   const span = times.length ? Math.max(...times) - Math.min(...times) : 0
   const reportTotalMs = (data?.durationMs != null && data.durationMs >= 0)
     ? data.durationMs
     : (span > 0 ? span + (all.length ? all[all.length - 1].latencyMs ?? 0 : 0) : reqTotalMs)
-  // 断言通过率(逐条断言;无断言数据回落步骤通过率)。
+  // Assertion pass rate (per assertion; falls back to step pass rate without assertion data).
   let asTotal = 0, asPass = 0
   for (const r of all) { const a = (r.assertions as AssertionResult[] | undefined) || []; asTotal += a.length; asPass += a.filter((x) => x.passed).length }
   const asRate = asTotal ? (asPass / asTotal) * 100 : passRate
   const rows = all.filter((r) => !search || r.caseId.toLowerCase().includes(search.toLowerCase()))
   const toggle = (i: number) => setOpenSet((prev) => { const n = new Set(prev); if (n.has(i)) n.delete(i); else n.add(i); return n })
-  // caseId 多为可读请求行(GET http://...)或用例 UUID;UUID 用 nameOf 解析。
+  // caseId is usually a readable request line (GET http://...) or a case UUID; resolve UUIDs via nameOf.
   const label = (id: string) => (/^[0-9a-f]{8}-/.test(id) ? nameOf(id) : id)
   const stat = (lbl: ReactNode, val: ReactNode, color?: string) => (
     <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', fontSize: 14 }}><span style={{ color: 'var(--text-2)' }}>{lbl}</span><b style={{ color }}>{val}</b></div>
@@ -1681,7 +1679,7 @@ function ScenarioReportModal({ reportId, nameOf, caseMap, onClose }: { reportId:
         <Empty description={t('scenario.noReport', '暂无报告')} />
       ) : (
         <>
-          {/* 概览:报告分析 + 步骤分析 + 请求分析(对齐参考报告)。 */}
+          {/* Overview: report / step / request analysis (mirrors the reference report). */}
           <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', marginBottom: 20 }}>
             <div style={{ flex: 1, minWidth: 260, border: '1px solid var(--border-soft)', borderRadius: 10, padding: '14px 18px', background: 'var(--panel)' }}>
               <h3 style={{ margin: '0 0 10px', fontSize: 14, color: 'var(--text-2)', display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -1694,7 +1692,7 @@ function ScenarioReportModal({ reportId, nameOf, caseMap, onClose }: { reportId:
             <DistCard title={t('scenario.stepAnalysis', '步骤分析')} d={dist} centerLabel={t('scenario.totalCount', '总数(个)')} t={t} />
             <DistCard title={t('scenario.reqAnalysis', '请求分析')} d={dist} centerLabel={t('scenario.totalCount', '总数(个)')} t={t} />
           </div>
-          {/* 报告明细 */}
+          {/* Report detail */}
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
             <Typography.Text strong>{t('scenario.reportDetail', '报告明细')}</Typography.Text>
             <div style={{ flex: 1 }} />
@@ -1711,8 +1709,8 @@ function ScenarioReportModal({ reportId, nameOf, caseMap, onClose }: { reportId:
   )
 }
 
-// 据引用用例重建实际请求行(镜像后端 to_node:REST 参数替换 / Query 拼接 / 认证头)。
-// 注:${var} 运行期替换无法在前端还原,这里展示用例模板请求(对无变量用例即实际请求)。
+// Rebuild the actual request line from the referenced case (mirrors backend to_node: REST substitution / query string / auth header).
+// ${var} runtime substitution can't be reproduced client-side, so this shows the case template request (identical when the case has no variables).
 function caseToSentRequest(c: ApiCase): SentRequest {
   let url = c.url || ''
   for (const p of c.restParams ?? []) if (p.key) url = url.split(`{${p.key}}`).join(p.value)
@@ -1728,17 +1726,17 @@ function caseToSentRequest(c: ApiCase): SentRequest {
 function ReportRow({ idx, r, label, t, open, onToggle, caseOf }: { idx: number; r: ReportResultItem; label: (id: string) => string; t: TFn; open: boolean; onToggle: () => void; caseOf?: (id: string) => ApiCase | undefined }) {
   const ok = r.outcome === 'SUCCESS'
   const hasDetail = r.statusCode != null || r.body != null || (r.headers?.length ?? 0) > 0
-  // 实际请求优先级:① 报告持久化的实际请求(0060 后,变量/baseUrl/认证已解析,100% 还原)
-  // ② 旧报告回落:REQUEST 步骤从 caseId="GET http://…" 解析;CASE 引用据用例模板重建。
+  // Actual request priority: 1) request persisted in the report (since 0060; variables/baseUrl/auth resolved),
+  // 2) legacy fallback: parse REQUEST steps from caseId="GET http://...", rebuild CASE references from the case template.
   const m = /^([A-Z]+)\s+(\S+)/.exec(r.caseId)
   const kase = m ? undefined : caseOf?.(r.caseId)
   const req: SentRequest | null = r.request
     ? { method: r.request.method, url: r.request.url, headers: (r.request.headers ?? []).map(([key, value]) => ({ key, value })), body: r.request.body ?? undefined }
     : m ? { method: m[1], url: m[2], headers: [] } : kase ? caseToSentRequest(kase) : null
-  // 0048 起报告持久化逐条断言(含通过项);旧报告无 → 据 failures 合成失败行兜底。
+  // Reports persist per-assertion results (incl. passes) since 0048; older reports synthesize failure rows from `failures`.
   const failAsserts: AssertionResult[] = r.failures.map((f) => ({ item: f, condition: '', expected: '', actual: '', passed: false, reason: f }))
   const asserts = r.assertions?.length ? r.assertions : failAsserts
-  // 用存储的响应明细合成一个 DebugResponse,复用调试的 7 标签面板。
+  // Synthesize a DebugResponse from the stored response detail to reuse the debug 7-tab panel.
   const resp: DebugResponse | null = hasDetail
     ? { status: r.statusCode ?? 0, latencyMs: r.latencyMs ?? 0, headers: r.headers ?? [], body: r.body ?? '', assertions: asserts.length ? asserts : undefined, extractions: r.extractions?.length ? r.extractions : undefined }
     : null
@@ -1750,13 +1748,13 @@ function ReportRow({ idx, r, label, t, open, onToggle, caseOf }: { idx: number; 
         <span style={{ color: 'var(--text-3)', fontSize: 12, minWidth: 18 }}>{idx}</span>
         <span style={{ flex: 1, minWidth: 0 }} className="ms-mono">{label(r.caseId)}</span>
         <Tag color={ok ? 'green' : 'red'} style={{ margin: 0 }}>{ok ? t('scenario.pass', '通过') : t('scenario.fail', '失败')}</Tag>
-        {r.statusCode != null && <span style={muted}>{t('apidef.statusCode', '状态码')} <span style={{ color: r.statusCode < 400 ? '#52c41a' : '#ff4d4f' }}>{r.statusCode}</span></span>}
+        {r.statusCode != null && <span style={muted}>{t('apidef.statusCode', '状态码')} <span style={{ color: r.statusCode < 400 ? 'var(--success)' : 'var(--error)' }}>{r.statusCode}</span></span>}
         <span style={muted}>{t('scenario.respTime', '响应时间')} {r.latencyMs != null ? `${r.latencyMs} ms` : '—'}</span>
         <span style={muted}>{t('scenario.respSize', '响应大小')} {r.respSize != null ? `${r.respSize} bytes` : '—'}</span>
       </div>
       {r.failures.length > 0 && (
         <div style={{ padding: '0 12px 8px 40px' }}>
-          {r.failures.map((f, j) => <div key={j} style={{ color: '#ff4d4f', fontSize: 12 }} className="ms-mono">✗ {f}</div>)}
+          {r.failures.map((f, j) => <div key={j} style={{ color: 'var(--error)', fontSize: 12 }} className="ms-mono">✗ {f}</div>)}
         </div>
       )}
       {open && resp && (
@@ -1768,7 +1766,7 @@ function ReportRow({ idx, r, label, t, open, onToggle, caseOf }: { idx: number; 
   )
 }
 
-// 控制器子步骤(叶子)构建:CASE 引用 或 内联 REQUEST。
+// Controller child (leaf) builder: CASE reference or inline REQUEST.
 type Child = { kind: 'CASE'; refId: string } | { kind: 'REQUEST'; method: string; url: string }
 
 function ChildrenBuilder({ value, onChange, projectCases }: { value: Child[]; onChange: (v: Child[]) => void; projectCases: ApiCase[] }) {
@@ -1800,10 +1798,10 @@ function ChildrenBuilder({ value, onChange, projectCases }: { value: Child[]; on
   )
 }
 
-// 按类型分发的添加步骤弹窗:CASE/REQUEST/SCENARIO 叶子 + LOOP/IF/ONCE/TIMER 控制器(含子步骤)。
+// Add-step modal dispatched by type: CASE/REQUEST/SCENARIO leaves + LOOP/IF/ONCE/TIMER controllers (with children).
 type StepBody = { kind: string; order: number; refId?: string; request?: unknown; control?: unknown }
-// 自定义请求抽屉:请求行 + 请求头/请求体/Query/REST/前置/后置/断言/认证
-// + 服务端执行 + 响应内容 + 取消/保存并继续添加/确认。后端内联请求已支持完整规格。
+// Custom request drawer: request line + headers/body/query/REST/pre/post/assertions/auth
+// + server run + response. The backend supports the full inline request spec.
 function CustomRequestDrawer({
   open,
   scenarioId,
@@ -1819,7 +1817,7 @@ function CustomRequestDrawer({
   env?: Environment
   onClose: () => void
   onAdded: () => void | Promise<void>
-  /** 新建场景(无 id)本地模式:不落库,回传步骤体。 */
+  /** New-scenario (no id) local mode: don't persist; hand the step body back. */
   onLocalAdd?: (body: StepBody) => void
 }) {
   const { t } = useI18n()
@@ -1863,7 +1861,7 @@ function CustomRequestDrawer({
     processors: [...pre, ...post],
   })
 
-  // 服务端执行:组装最终 URL(REST 替换 {key} + Query 拼接)后直发,展示响应。
+  // Server run: build the final URL (REST {key} substitution + query string), send directly, show the response.
   const run = async () => {
     if (!url.trim()) return message.warning(t('editor.urlRequired', '请输入 URL'))
     let u = url.trim()
@@ -1971,7 +1969,7 @@ function AddStepModal({
   nextOrder: number
   onClose: () => void
   onAdded: () => void
-  /** 新建场景(无 id)时:不落库,回传步骤体到本地。 */
+  /** New-scenario (no id) mode: don't persist; hand the step body back locally. */
   onLocalAdd?: (body: StepBody) => void
 }) {
   const { t } = useI18n()
@@ -1986,7 +1984,7 @@ function AddStepModal({
     if (type) {
       setChildren([])
       form.resetFields()
-      // CASE / 控制器 需要项目用例下拉;SCENARIO 需要场景下拉。
+      // CASE / controllers need the project-case dropdown; SCENARIO needs the scenario dropdown.
       if (isControl || type === 'CASE') api.projectCases(projectId).then((p) => setProjCases(p.items)).catch(() => undefined)
       if (type === 'SCENARIO') api.scenarios(projectId).then(setScns).catch(() => undefined)
     }
@@ -2066,8 +2064,8 @@ function AddStepModal({
   )
 }
 
-// 导入系统请求(对齐参考图 #29):统一以抽屉浏览 接口/用例/场景,多选后「引用」批量加为步骤。
-// 接口→REQUEST(方法/路径);用例→CASE 引用;场景→SCENARIO 引用。简化:仅当前项目 + 名称搜索。
+// Import system request (ref #29): browse APIs/cases/scenarios in one drawer, multi-select, then "reference" adds them as steps in bulk.
+// API becomes REQUEST (method/path); case becomes a CASE reference; scenario a SCENARIO reference. Simplified: current project + name search only.
 function ImportRequestDrawer({
   open,
   scenarioId,
@@ -2083,7 +2081,7 @@ function ImportRequestDrawer({
   nextOrder: number
   onClose: () => void
   onImported: () => void
-  /** 新建场景(无 id)时:不落库,回传步骤体数组到本地。 */
+  /** New-scenario (no id) mode: don't persist; hand the step bodies back locally. */
   onLocalImport?: (bodies: StepBody[]) => void
 }) {
   const { t } = useI18n()
@@ -2111,7 +2109,7 @@ function ImportRequestDrawer({
   }, [open, projectId, scenarioId])
 
   const lc = (s: string) => s.toLowerCase()
-  // case → 其接口定义所属模块;scenario → meta.moduleId。
+  // case: module of its API definition; scenario: meta.moduleId.
   const defModuleMap = Object.fromEntries(defs.map((d) => [d.id, d.moduleId || '']))
   const moduleOf = (x: ApiDefinition | ApiCase | Scenario): string =>
     tab === 'api' ? (x as ApiDefinition).moduleId || '' : tab === 'case' ? defModuleMap[(x as ApiCase).apiDefinitionId] || '' : ((x as Scenario).meta?.moduleId as string) || ''
@@ -2121,7 +2119,7 @@ function ImportRequestDrawer({
   const fScns = scns.filter((s) => inModule(s) && (!search || lc(s.name).includes(lc(search))))
   const total = selApi.length + selCase.length + selScn.length
 
-  // 左侧模块树计数(按当前标签数据;接口受协议过滤)。
+  // Left module-tree counts (based on the current tab's data; APIs also filtered by protocol).
   const activeData: (ApiDefinition | ApiCase | Scenario)[] = tab === 'api' ? defs.filter((d) => d.protocol === protocol) : tab === 'case' ? cases : scns
   const countFor = (mid: string) => activeData.filter((x) => (mid === 'ALL' ? true : mid === 'UNFILED' ? !moduleOf(x) : moduleOf(x) === mid)).length
   const shownModules = modules.filter((m) => !m.parentId).filter((m) => !moduleSearch || lc(m.name).includes(lc(moduleSearch)))
@@ -2129,7 +2127,7 @@ function ImportRequestDrawer({
     <div
       key={key}
       onClick={() => setSelModule(key)}
-      style={{ display: 'flex', alignItems: 'center', padding: '6px 8px', borderRadius: 6, cursor: 'pointer', fontSize: 13, background: selModule === key ? '#f3eaff' : 'transparent', color: selModule === key ? 'var(--brand)' : undefined }}
+      style={{ display: 'flex', alignItems: 'center', padding: '6px 8px', borderRadius: 6, cursor: 'pointer', fontSize: 13, background: selModule === key ? 'var(--brand-soft)' : 'transparent', color: selModule === key ? 'var(--brand)' : undefined }}
     >
       <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{name}</span>
       <span style={{ color: 'var(--text-3)', fontSize: 12 }}>{count}</span>
@@ -2207,7 +2205,7 @@ function ImportRequestDrawer({
         style={{ marginBottom: 12 }}
       />
       <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
-        {/* 左侧筛选栏(对齐参考图 #34:项目 + 协议 + 模块搜索 + 模块树计数)。 */}
+        {/* Left filter panel (ref #34): project + protocol + module search + module tree with counts. */}
         <div style={{ width: 240, flexShrink: 0 }}>
           <Space.Compact style={{ width: '100%', marginBottom: 8 }}>
             <Select size="small" value="__cur__" style={{ flex: 1 }} options={[{ value: '__cur__', label: t('scenario.curProject', '当前项目') }]} disabled />
@@ -2222,7 +2220,7 @@ function ImportRequestDrawer({
             {shownModules.map((m) => moduleRow(m.id, m.name, countFor(m.id)))}
           </div>
         </div>
-        {/* 右侧结果表 */}
+        {/* Result table */}
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
             <Typography.Text strong>{totalLabel} ({tab === 'api' ? fDefs.length : tab === 'case' ? fCases.length : fScns.length})</Typography.Text>
@@ -2244,7 +2242,7 @@ function ImportRequestDrawer({
   )
 }
 
-// 新建场景:全屏 tab(对齐参考图 #38)。左=步骤编辑器占位 + 右=基本信息表单;保存创建场景后转入详情。
+// New scenario: full-screen tab (ref #38). Left = step editor, right = basic info form; saving creates the scenario and opens its detail.
 function NewScenarioTab({ projectId, modules, onCreated, active }: { projectId: string; modules: ApiModule[]; onCreated: (s: Scenario) => void; active?: boolean }) {
   const { t } = useI18n()
   const slot = useWorkspaceExtraSlot()
@@ -2278,12 +2276,12 @@ function NewScenarioTab({ projectId, modules, onCreated, active }: { projectId: 
   }
   const field = (label: string, node: ReactNode, req?: boolean) => (
     <div style={{ marginBottom: 14 }}>
-      <div style={{ fontSize: 13, color: 'var(--text-2)', marginBottom: 6 }}>{req && <span style={{ color: '#ff4d4f', marginRight: 4 }}>*</span>}{label}</div>
+      <div style={{ fontSize: 13, color: 'var(--text-2)', marginBottom: 6 }}>{req && <span style={{ color: 'var(--error)', marginRight: 4 }}>*</span>}{label}</div>
       {node}
     </div>
   )
   const soon = (label: string) => <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={`${label} · ${t('scenario.saveFirst', '保存场景后可编辑')}`} style={{ margin: '32px 0' }} />
-  // 本地步骤体 → 展示用伪步骤(无 id,仅用于 StepRow 渲染)。
+  // Local step body to a display-only pseudo step (no id, only for StepRow rendering).
   const bodyToStep = (b: StepBody, i: number): ScenarioStep => ({
     id: `local-${i}`,
     order: b.order,
@@ -2331,7 +2329,7 @@ function NewScenarioTab({ projectId, modules, onCreated, active }: { projectId: 
   )
   return (
     <div style={{ padding: '12px 16px', height: '100%', overflow: 'auto' }}>
-      {/* 工具栏投射到 Tab 栏右侧;未保存场景:环境/执行置灰,仅保存可用。 */}
+      {/* Toolbar portaled into the tab-bar right slot; unsaved scenario: env/run disabled, only save works. */}
       {active && slot && createPortal(
         <ScenarioActionBar
           envs={[]}
@@ -2356,7 +2354,7 @@ function NewScenarioTab({ projectId, modules, onCreated, active }: { projectId: 
             { key: 'settings', label: t('apidef.settings', '设置'), children: soon(t('apidef.settings', '设置')) },
           ]} />
         </div>
-        {/* 右侧基本信息表单(对齐 #38)。 */}
+        {/* Right basic-info form (ref #38). */}
         <div style={{ width: 320, flexShrink: 0, borderLeft: '1px solid var(--border-soft)', paddingLeft: 16 }}>
           {field(t('scenario.name', '场景名称'), <Input value={name} onChange={(e) => setName(e.target.value)} placeholder={t('scenario.namePlaceholder2', '请输入场景名称')} />, true)}
           {field(t('scenario.ownerModule', '所属模块'), <Select style={{ width: '100%' }} value={moduleId || ''} onChange={(v) => setModuleId(v || '')} placeholder={t('scenario.unplanned', '未规划场景')} options={[{ value: '', label: t('scenario.unplanned', '未规划场景') }, ...modules.map((m) => ({ value: m.id, label: m.name }))]} />)}
@@ -2375,11 +2373,11 @@ function NewScenarioTab({ projectId, modules, onCreated, active }: { projectId: 
   )
 }
 
-// 导入场景抽屉(对齐参考图 #39):格式标签 + 所属模块 + 导入模式 + 文件拖拽。解析需后端,先占位。
-/** HAR 一个请求条目(只取本平台用得到的字段)。 */
+// Import scenario drawer (ref #39): format tabs + module + import mode + file dropzone. Only HAR parses client-side; MeterSphere/Jmeter need the backend.
+/** One HAR request entry (only the fields this platform uses). */
 type HarEntry = { request?: { method?: string; url?: string; postData?: { text?: string } } }
 
-/** 解析 HAR(JSON)的 log.entries → REQUEST 步骤体。无 method/url 的条目跳过。 */
+/** Parse HAR (JSON) log.entries into REQUEST step bodies. Entries without method/url are skipped. */
 function parseHarSteps(text: string): StepBody[] {
   const har = JSON.parse(text) as { log?: { entries?: HarEntry[] } }
   const entries = har?.log?.entries

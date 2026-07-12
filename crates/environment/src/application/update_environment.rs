@@ -39,10 +39,7 @@ impl UpdateEnvironmentUseCase {
             input.variables,
             input.enabled,
         )?;
-        self.repo
-            .update(id, &new_env)
-            .await?
-            .ok_or(UpdateEnvironmentError::NotFound)
+        self.repo.update(id, &new_env).await?.ok_or(UpdateEnvironmentError::NotFound)
     }
 }
 
@@ -67,10 +64,8 @@ mod tests {
     #[tokio::test]
     async fn updates_existing() {
         let repo = Arc::new(InMemoryEnvironmentRepository::new());
-        let created = CreateEnvironmentUseCase::new(repo.clone())
-            .execute(input("old"))
-            .await
-            .expect("ok");
+        let created =
+            CreateEnvironmentUseCase::new(repo.clone()).execute(input("old")).await.expect("ok");
         let uc = UpdateEnvironmentUseCase::new(repo);
         let updated = uc.execute(&created.id, input("new")).await.expect("ok");
         assert_eq!(updated.name, "new");
@@ -81,6 +76,9 @@ mod tests {
     async fn missing_is_not_found() {
         let repo = Arc::new(InMemoryEnvironmentRepository::new());
         let uc = UpdateEnvironmentUseCase::new(repo);
-        assert_eq!(uc.execute("ghost", input("x")).await.unwrap_err(), UpdateEnvironmentError::NotFound);
+        assert_eq!(
+            uc.execute("ghost", input("x")).await.unwrap_err(),
+            UpdateEnvironmentError::NotFound
+        );
     }
 }

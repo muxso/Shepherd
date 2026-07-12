@@ -12,7 +12,7 @@ import { bindFeedback } from './feedback'
 import App from './App'
 import './index.css'
 
-// 把 <App> 提供的 message/modal 实例注入全局桥接,供静态调用走主题/context。
+// Inject the message/modal instances provided by <App> into the global bridge so static calls get theme/context.
 function FeedbackBridge() {
   const { message, modal } = AntApp.useApp()
   useEffect(() => {

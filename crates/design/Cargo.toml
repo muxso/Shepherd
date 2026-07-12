@@ -3,17 +3,19 @@ name = "design"
 edition.workspace = true
 version.workspace = true
 license.workspace = true
+publish.workspace = true
+rust-version.workspace = true
 
 # Shepherd 设计/提案上下文(OpenSpec/BMAD 风格):在「拆分」前插一道人审批门 ——
 # agent 产出设计稿 → 人批准/驳回(带反馈→修订循环)→ 批准后方可拆分实现。
 [dependencies]
-async-trait = "0.1"
-thiserror = "2"
-axum = { version = "0.8", optional = true }
-serde = { version = "1", features = ["derive"], optional = true }
-webauth = { path = "../webauth", optional = true }
-delivery = { path = "../delivery", optional = true }
-sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "postgres"], optional = true }
+async-trait = { workspace = true }
+thiserror = { workspace = true }
+axum = { workspace = true, optional = true }
+serde = { workspace = true, optional = true }
+webauth = { workspace = true, optional = true }
+delivery = { workspace = true, optional = true }
+sqlx = { workspace = true, features = ["runtime-tokio", "postgres"], optional = true }
 
 [features]
 pg = ["dep:sqlx"]
@@ -22,7 +24,7 @@ http = ["dep:axum", "dep:serde", "dep:webauth", "webauth/http"]
 agent = ["dep:delivery"]
 
 [dev-dependencies]
-tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 
 [lints]
 workspace = true

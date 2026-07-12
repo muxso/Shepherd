@@ -3,6 +3,8 @@ name = "server"
 edition.workspace = true
 version.workspace = true
 license.workspace = true
+publish.workspace = true
+rust-version.workspace = true
 
 # 组装根(composition root)= Java 版 backend/app。
 # 唯一允许同时认识具体存储(PG)、HTTP(axum)、各模块用例的地方:
@@ -17,20 +19,20 @@ follow = { path = "../follow", features = ["pg", "http"] }
 test-plan = { path = "../test-plan", features = ["pg", "http"] }
 requirement = { path = "../requirement", features = ["pg", "http"] }
 task = { path = "../task", features = ["pg", "http"] }
-delivery = { path = "../delivery", features = ["pg", "http", "exec-http", "exec-local", "exec-queue", "exec-queue-redis"] }
+delivery = { workspace = true, features = ["pg", "http", "exec-http", "exec-local", "exec-queue", "exec-queue-redis"] }
 design = { path = "../design", features = ["pg", "http", "agent"] }
 verification = { path = "../verification", features = ["pg", "http"] }
 skill = { path = "../skill", features = ["pg", "http"] }
 orchestrator = { path = "../orchestrator" }
 mcp = { path = "../mcp" }
-webauth = { path = "../webauth", features = ["http"] }
-async-trait = "0.1"
-serde = { version = "1", features = ["derive"] }
-utoipa = "5"
-serde_json = "1"
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+webauth = { workspace = true, features = ["http"] }
+async-trait = { workspace = true }
+serde = { workspace = true }
+utoipa = { workspace = true }
+serde_json = { workspace = true }
+reqwest = { workspace = true, features = ["json", "rustls-tls"] }
 api-test = { path = "../api-test", features = ["pg", "http", "jmeter", "local", "parquet-archive"] }
-api-runner = { path = "../api-runner" }
+api-runner = { workspace = true }
 api-definition = { path = "../api-definition", features = ["pg", "http"] }
 api-scenario = { path = "../api-scenario", features = ["pg", "http"] }
 environment = { path = "../environment", features = ["pg", "http"] }
@@ -39,18 +41,18 @@ runner = { path = "../runner", features = ["pg", "http", "client"] }
 mock-runtime = { path = "../mock-runtime", features = ["http", "pg", "template"] }
 # 压测统一经 probe 注册表(probe-exec)驱动任意协议;probe 提供 http/grpc/sql 插件类型与默认注册表。
 perf = { path = "../perf", features = ["engine", "pg", "parquet-sink", "probe-exec"] }
-probe = { path = "../probe", features = ["http", "grpc", "sql", "mysql", "redis", "websocket", "ssh"] }
-migrate = { path = "../migrate" }
-sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "postgres"] }
-axum = "0.8"
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "signal", "time"] }
+probe = { workspace = true, default-features = true, features = ["http", "grpc", "sql", "mysql", "redis", "websocket", "ssh"] }
+migrate = { workspace = true }
+sqlx = { workspace = true, features = ["runtime-tokio", "postgres"] }
+axum = { workspace = true }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "net", "signal", "time"] }
 tokio-stream = { version = "0.1", features = ["time", "sync"] }
 tokio-cron-scheduler = "0.13"
-tower = "0.5"
+tower = { workspace = true }
 tower-http = { version = "0.6", features = ["trace", "timeout", "limit", "cors"] }
-tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-uuid = { version = "1", features = ["v4"] }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+uuid = { workspace = true }
 
 [lints]
 workspace = true

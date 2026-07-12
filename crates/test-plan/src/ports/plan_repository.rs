@@ -20,10 +20,10 @@ pub trait PlanRepository: Send + Sync {
 
     async fn case_counts(&self, plan_id: &str) -> Result<CaseCounts, RepoError>;
 
-    /// 通过阈值范围 0..=1。
+    /// Pass threshold in the range 0..=1.
     async fn pass_threshold(&self, plan_id: &str) -> Result<f64, RepoError>;
 
-    /// 幂等;已存在则保留原状态,初始状态 PENDING。
+    /// Idempotent; an existing link keeps its status, otherwise starts as PENDING.
     async fn link_case(&self, plan_id: &str, case_id: &str, name: &str) -> Result<(), RepoError>;
 
     async fn record_result(
@@ -36,11 +36,11 @@ pub trait PlanRepository: Send + Sync {
 
     async fn list_cases(&self, plan_id: &str) -> Result<Vec<PlanCase>, RepoError>;
 
-    /// 仅未归档计划。
+    /// Non-archived plans only.
     async fn list(&self, project_id: &str) -> Result<Vec<Plan>, RepoError>;
 
     async fn rename(&self, id: &str, name: &str) -> Result<bool, RepoError>;
 
-    /// 连带删除挂入的用例。
+    /// Also deletes the linked cases.
     async fn delete(&self, id: &str) -> Result<bool, RepoError>;
 }

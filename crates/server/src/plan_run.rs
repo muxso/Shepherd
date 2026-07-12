@@ -15,7 +15,9 @@ use sqlx::Row;
 use utoipa::{OpenApi, ToSchema};
 use webauth::{AuthUser, SessionStore};
 
-use api_runner::{evaluate_detailed, Assertion, CaseOutcome, HttpMethod, ReqwestRunner, RequestSpec};
+use api_runner::{
+    evaluate_detailed, Assertion, CaseOutcome, HttpMethod, RequestSpec, ReqwestRunner,
+};
 use api_scenario::application::CompileScenarioUseCase;
 use api_scenario::domain::PlanStep;
 use api_test::adapters::local::{apply_env_static, CaseSpecSource};
@@ -150,7 +152,10 @@ async fn plans_by_case(State(st): State<RunState>, Path(case_id): Path<String>) 
         Ok(rows) => {
             let out: Vec<PlanRef> = rows
                 .iter()
-                .map(|r| PlanRef { plan_id: r.get::<String, _>("id"), name: r.get::<String, _>("name") })
+                .map(|r| PlanRef {
+                    plan_id: r.get::<String, _>("id"),
+                    name: r.get::<String, _>("name"),
+                })
                 .collect();
             (StatusCode::OK, Json(out)).into_response()
         }
@@ -313,9 +318,11 @@ async fn run_step(
                 children: vec![],
             }
         }
-        PlanStep::Loop { times, body } => {
-            control(format!("循环 x{times}"), "循环控制器", run_steps(body, runner, specs, env).await)
-        }
+        PlanStep::Loop { times, body } => control(
+            format!("循环 x{times}"),
+            "循环控制器",
+            run_steps(body, runner, specs, env).await,
+        ),
         PlanStep::If { variable, operator, value, body } => control(
             format!("若 {variable} {operator} {value}"),
             "条件控制器",

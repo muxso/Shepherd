@@ -3,7 +3,7 @@ import { Button, Dropdown, Empty, Input, InputNumber, Select, Space, Switch, Typ
 import { PlusOutlined, DeleteOutlined } from '@ant-design/icons'
 import { useI18n } from '../i18n'
 
-// 后端处理器(api-runner Processor,serde tag=type/content=args)。
+// Backend processor (api-runner Processor, serde tag=type / content=args).
 export type Processor = Record<string, unknown>
 export type OpKind = 'wait' | 'extract' | 'script' | 'sql'
 
@@ -64,8 +64,8 @@ function serialize(ops: Op[]): Processor[] {
 }
 
 /**
- * 前置/后置操作编辑器:+操作 下拉 + 左列操作 + 右侧编辑。
- * 等待/提取真实接入执行器;脚本/SQL 仅存储(执行引擎待接入,明确标注)。
+ * Pre/post processor editor: add dropdown + processor list left + editor right.
+ * Wait/Extract are wired to the executor; script/SQL are stored only (execution engine pending, labeled as such in the UI).
  */
 export default function ProcessorEditor({
   value,
@@ -113,7 +113,8 @@ export default function ProcessorEditor({
         <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('proc.empty', '无操作')} />
       ) : (
         <div style={{ display: 'flex', gap: 12, border: '1px solid var(--border-soft)', borderRadius: 6 }}>
-          <div style={{ width: 170, borderRight: '1px solid var(--border-soft)', padding: 8 }}>
+          {/* Left: processor name stays on one line (ellipsized); index/switch/delete never shrink. */}
+          <div style={{ width: 216, flexShrink: 0, borderRight: '1px solid var(--border-soft)', padding: 8 }}>
             <Space direction="vertical" style={{ width: '100%' }} size={4}>
               {ops.map((o, i) => (
                 <div
@@ -121,10 +122,10 @@ export default function ProcessorEditor({
                   onClick={() => setSel(i)}
                   style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 8px', borderRadius: 4, cursor: 'pointer', background: i === sel ? 'var(--brand-soft)' : 'transparent' }}
                 >
-                  <span style={{ width: 18, height: 18, borderRadius: '50%', background: 'var(--brand)', color: '#fff', fontSize: 11, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>{i + 1}</span>
-                  <span style={{ flex: 1, fontSize: 13 }}>{LABEL[o.kind]}</span>
+                  <span style={{ width: 18, height: 18, flexShrink: 0, borderRadius: '50%', background: 'var(--brand)', color: '#fff', fontSize: 11, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>{i + 1}</span>
+                  <span style={{ flex: 1, minWidth: 0, fontSize: 13, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{LABEL[o.kind]}</span>
                   <Switch size="small" checked={o.enabled} onChange={(c) => update(i, { enabled: c })} onClick={(_, e) => e.stopPropagation()} />
-                  <Button type="text" size="small" danger icon={<DeleteOutlined />} onClick={(e) => { e.stopPropagation(); const next = ops.filter((_, idx) => idx !== i); push(next); setSel(Math.max(0, Math.min(sel, next.length - 1))) }} />
+                  <Button type="text" size="small" danger style={{ width: 22, minWidth: 22, padding: 0, flexShrink: 0 }} icon={<DeleteOutlined />} onClick={(e) => { e.stopPropagation(); const next = ops.filter((_, idx) => idx !== i); push(next); setSel(Math.max(0, Math.min(sel, next.length - 1))) }} />
                 </div>
               ))}
             </Space>

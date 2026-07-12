@@ -3,30 +3,32 @@ name = "skill"
 edition.workspace = true
 version.workspace = true
 license.workspace = true
+publish.workspace = true
+rust-version.workspace = true
 
 # Shepherd AI Skill 编排上下文:定义、复用、组合 AI Skill(规范 AI 行为)。
 # 核心是 compose —— 把若干 skill 经 includes 传递展开成一份有序、去重、防环的指令集,
 # 注入到交付的执行者提示中。沿用六边形分层 + feature 门控。
 [dependencies]
-kernel = { path = "../kernel" }
-async-trait = "0.1"
-thiserror = "2"
-sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "postgres"], optional = true }
-axum = { version = "0.8", optional = true }
-utoipa = { version = "5", optional = true }
-serde = { version = "1", features = ["derive"], optional = true }
-webauth = { path = "../webauth", optional = true }
+kernel = { workspace = true }
+async-trait = { workspace = true }
+thiserror = { workspace = true }
+sqlx = { workspace = true, features = ["runtime-tokio", "postgres"], optional = true }
+axum = { workspace = true, optional = true }
+utoipa = { workspace = true, optional = true }
+serde = { workspace = true, optional = true }
+webauth = { workspace = true, optional = true }
 
 [features]
 pg = ["dep:sqlx"]
 http = ["dep:axum", "dep:serde", "dep:webauth", "webauth/http", "dep:utoipa"]
 
 [dev-dependencies]
-tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
-tower = { version = "0.5", features = ["util"] }
-serde_json = "1"
-migrate = { path = "../migrate" }
-webauth = { path = "../webauth", features = ["http", "test-util"] }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+tower = { workspace = true, features = ["util"] }
+serde_json = { workspace = true }
+migrate = { workspace = true }
+webauth = { workspace = true, features = ["http", "test-util"] }
 
 [lints]
 workspace = true

@@ -1,12 +1,14 @@
-//! LLM 适配器:三个 AI 触点(拆分 / 执行 / 验证)的可插拔实现。
+//! LLM adapters: pluggable implementations for the three AI touchpoints
+//! (decomposition / execution / verification).
 //!
-//! 两种线协议:OpenAI 兼容 `chat/completions`(默认)与 Anthropic 原生 Messages
-//! (`SHEPHERD_LLM_WIRE=anthropic`,默认模型 claude-opus-4-8)。产线化:每调用超时 +
-//! 对 429/5xx 与网络抖动按退避重试(尊重 `Retry-After`),并记录延迟/令牌(成本观测)。
+//! Two wire protocols: OpenAI-compatible `chat/completions` (default) and native
+//! Anthropic Messages (`SHEPHERD_LLM_WIRE=anthropic`, default model claude-opus-4-8).
+//! Production hardening: per-call timeout, backoff retries on 429/5xx and network
+//! errors (honoring `Retry-After`), plus latency/token recording for cost observability.
 //!
-//! 环境变量:SHEPHERD_LLM_URL、SHEPHERD_LLM_API_KEY、SHEPHERD_LLM_MODEL、
-//! SHEPHERD_LLM_WIRE(openai|anthropic)、SHEPHERD_LLM_MAX_TOKENS(默认 4096)、
-//! SHEPHERD_LLM_MAX_RETRIES(默认 3)、SHEPHERD_LLM_TIMEOUT_SECS(默认 120)。
+//! Env vars: SHEPHERD_LLM_URL, SHEPHERD_LLM_API_KEY, SHEPHERD_LLM_MODEL,
+//! SHEPHERD_LLM_WIRE (openai|anthropic), SHEPHERD_LLM_MAX_TOKENS (default 4096),
+//! SHEPHERD_LLM_MAX_RETRIES (default 3), SHEPHERD_LLM_TIMEOUT_SECS (default 120).
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -123,7 +125,12 @@ impl LlmClient {
         ))
     }
 
-    async fn complete(&self, prompt_version: &str, system: &str, user: &str) -> Result<String, String> {
+    async fn complete(
+        &self,
+        prompt_version: &str,
+        system: &str,
+        user: &str,
+    ) -> Result<String, String> {
         let started = Instant::now();
         let mut delay = Duration::from_millis(200);
         let mut last = String::new();
@@ -171,7 +178,7 @@ impl LlmClient {
                     { "role": "user", "content": user }
                 ]
             }),
-            // Opus 4.x 拒绝 temperature;max_tokens 必填。
+            // Opus 4.x rejects `temperature`; `max_tokens` is required.
             Wire::Anthropic => json!({
                 "model": self.model,
                 "max_tokens": self.max_tokens,
@@ -227,13 +234,19 @@ impl LlmClient {
                     .to_string();
                 let u = val.get("usage");
                 let usage = Usage {
-                    input: u.and_then(|u| u.get("prompt_tokens")).and_then(|v| v.as_u64()).unwrap_or(0),
-                    output: u.and_then(|u| u.get("completion_tokens")).and_then(|v| v.as_u64()).unwrap_or(0),
+                    input: u
+                        .and_then(|u| u.get("prompt_tokens"))
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(0),
+                    output: u
+                        .and_then(|u| u.get("completion_tokens"))
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(0),
                 };
                 Ok((text, usage))
             }
             Wire::Anthropic => {
-                // 安全分类器可能拒答:stop_reason=refusal 时 content 为空,按出错处理。
+                // The safety classifier may refuse: on stop_reason=refusal, content is empty, so treat it as an error.
                 if val.get("stop_reason").and_then(|s| s.as_str()) == Some("refusal") {
                     return Err("LLM 拒答(refusal)".to_string());
                 }
@@ -253,8 +266,14 @@ impl LlmClient {
                 }
                 let u = val.get("usage");
                 let usage = Usage {
-                    input: u.and_then(|u| u.get("input_tokens")).and_then(|v| v.as_u64()).unwrap_or(0),
-                    output: u.and_then(|u| u.get("output_tokens")).and_then(|v| v.as_u64()).unwrap_or(0),
+                    input: u
+                        .and_then(|u| u.get("input_tokens"))
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(0),
+                    output: u
+                        .and_then(|u| u.get("output_tokens"))
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(0),
                 };
                 Ok((text, usage))
             }
@@ -295,7 +314,11 @@ impl Planner for LlmPlanner {
             "需求标题: {}\n描述: {}\n验收标准:\n{}",
             spec.title,
             spec.description,
-            spec.acceptance_criteria.iter().map(|c| format!("- {c}")).collect::<Vec<_>>().join("\n")
+            spec.acceptance_criteria
+                .iter()
+                .map(|c| format!("- {c}"))
+                .collect::<Vec<_>>()
+                .join("\n")
         );
         let text = self
             .client
@@ -313,6 +336,102 @@ impl Planner for LlmPlanner {
                 dependencies: d.dependencies,
             })
             .collect())
+    }
+}
+
+const PRD_PROMPT_V: &str = "prd-v1";
+const PRD_SYSTEM: &str = "你是资深产品经理,把用户粘贴的原始素材(MRD/会议纪要/想法)整理成结构化需求。\
+只输出 JSON {\"title\":string,\"description\":string,\"acceptanceCriteria\":string[],\"priority\":string}。\
+title 一句话;description 含背景/目标/范围;acceptanceCriteria 每条独立可判定(3~8 条);\
+priority 取 P0/P1/P2/P3;不要输出 JSON 以外的任何内容。";
+
+/// MRD → PRD drafting result.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PrdDraft {
+    #[serde(default)]
+    pub title: String,
+    #[serde(default)]
+    pub description: String,
+    #[serde(default)]
+    pub acceptance_criteria: Vec<String>,
+    #[serde(default)]
+    pub priority: String,
+}
+
+pub struct LlmPrdDrafter {
+    client: LlmClient,
+}
+impl LlmPrdDrafter {
+    pub fn new(client: LlmClient) -> Self {
+        Self { client }
+    }
+
+    pub async fn draft(&self, raw: &str) -> Result<PrdDraft, String> {
+        let text = self.client.complete(PRD_PROMPT_V, PRD_SYSTEM, raw).await?;
+        let mut d: PrdDraft = serde_json::from_str(extract_json(&text))
+            .map_err(|e| format!("PRD 草稿解析失败: {e}"))?;
+        d.title = d.title.trim().to_string();
+        d.acceptance_criteria.retain(|c| !c.trim().is_empty());
+        if d.title.is_empty() {
+            return Err("PRD 草稿缺标题".to_string());
+        }
+        Ok(d)
+    }
+}
+
+const CASES_PROMPT_V: &str = "cases-v1";
+const CASES_SYSTEM: &str = "你是资深测试工程师,基于需求与拆分任务设计功能测试用例。\
+只输出 JSON 数组,每项 {\"name\":string,\"criterionIndexes\":number[],\"steps\":[{\"step\":string,\"expected\":string}]}。\
+criterionIndexes 引用需求验收标准下标(0 起);每个任务至少 1 条用例;步骤要可执行、预期可判定;\
+不要输出 JSON 以外的任何内容。";
+
+pub struct LlmCaseDrafter {
+    client: LlmClient,
+}
+impl LlmCaseDrafter {
+    pub fn new(client: LlmClient) -> Self {
+        Self { client }
+    }
+}
+
+#[async_trait]
+impl crate::case_drafter::CaseDrafter for LlmCaseDrafter {
+    async fn draft(
+        &self,
+        spec: &RequirementSpec,
+        tasks: &[task::domain::Task],
+    ) -> Result<Vec<crate::case_drafter::DraftedCase>, String> {
+        let criteria = spec
+            .acceptance_criteria
+            .iter()
+            .enumerate()
+            .map(|(i, c)| format!("[{i}] {c}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let task_list = tasks
+            .iter()
+            .enumerate()
+            .map(|(i, t)| {
+                format!(
+                    "[{i}] {}\n  描述: {}\n  任务验收: {}",
+                    t.title,
+                    t.description,
+                    t.acceptance_criteria.join("; ")
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        let user = format!(
+            "需求标题: {}\n描述: {}\n需求验收标准:\n{}\n\n拆分任务:\n{}",
+            spec.title, spec.description, criteria, task_list
+        );
+        let text = self.client.complete(CASES_PROMPT_V, CASES_SYSTEM, &user).await?;
+        crate::case_drafter::parse_drafted(
+            extract_json(&text),
+            tasks.len(),
+            spec.acceptance_criteria.len(),
+        )
     }
 }
 
@@ -351,14 +470,15 @@ impl Judge for LlmJudge {
                 Ok(v) => Verdict { passed: v.passed, reason: v.reason },
                 Err(e) => Verdict { passed: false, reason: format!("裁决解析失败: {e}") },
             },
-            // fail-closed:LLM 出错视为不通过。
+            // Fail closed: an LLM error counts as not passed.
             Err(e) => Verdict { passed: false, reason: e },
         }
     }
 }
 
 const EXECUTOR_PROMPT_V: &str = "executor-v1";
-const EXECUTOR_SYSTEM: &str = "你是编码执行者。依据任务(及行为规范)产出变更摘要与一个引用(分支/PR)。\
+const EXECUTOR_SYSTEM: &str =
+    "你是编码执行者。依据任务(及行为规范)产出变更摘要与一个引用(分支/PR)。\
 只输出 JSON {\"reference\":string,\"summary\":string}。不要输出 JSON 以外的任何内容。";
 
 #[derive(Deserialize)]
@@ -405,7 +525,9 @@ impl AgentExecutor for LlmExecutor {
             .map_err(|e| ExecError::Backend(format!("交付物解析失败: {e}")))?;
         let reference =
             if d.reference.is_empty() { format!("llm://{}", spec.task_id) } else { d.reference };
-        if let Ok(ev) = NewExecutionEvent::new(EventKind::Decision, "LLM 执行者产出交付物", Some(&d.summary)) {
+        if let Ok(ev) =
+            NewExecutionEvent::new(EventKind::Decision, "LLM 执行者产出交付物", Some(&d.summary))
+        {
             sink.emit(ev).await;
         }
         Ok(DispatchOutcome::Completed {
@@ -417,6 +539,15 @@ impl AgentExecutor for LlmExecutor {
 pub fn planner() -> Option<Arc<dyn Planner>> {
     LlmClient::from_env().map(|c| Arc::new(LlmPlanner::new(c)) as Arc<dyn Planner>)
 }
+pub fn prd_drafter() -> Option<Arc<LlmPrdDrafter>> {
+    LlmClient::from_env().map(|c| Arc::new(LlmPrdDrafter::new(c)))
+}
+
+pub fn case_drafter() -> Option<Arc<dyn crate::case_drafter::CaseDrafter>> {
+    LlmClient::from_env()
+        .map(|c| Arc::new(LlmCaseDrafter::new(c)) as Arc<dyn crate::case_drafter::CaseDrafter>)
+}
+
 pub fn judge() -> Option<Arc<dyn Judge>> {
     LlmClient::from_env().map(|c| Arc::new(LlmJudge::new(c)) as Arc<dyn Judge>)
 }
@@ -491,7 +622,16 @@ mod tests {
     async fn llm_judge_parses_verdict() {
         let url = serve_openai("{\"passed\": false, \"reason\": \"缺测试\"}").await;
         let j = LlmJudge::new(LlmClient::new(url, None, "m"));
-        let v = j.judge(&["登录成功".into()], &DeliverableView { kind: "DIFF".into(), reference: "b".into(), summary: "s".into() }).await;
+        let v = j
+            .judge(
+                &["登录成功".into()],
+                &DeliverableView {
+                    kind: "DIFF".into(),
+                    reference: "b".into(),
+                    summary: "s".into(),
+                },
+            )
+            .await;
         assert!(!v.passed);
         assert_eq!(v.reason, "缺测试");
     }
@@ -510,6 +650,7 @@ mod tests {
             executor: ExecutorKind::ClaudeCode,
             context: None,
             instructions: None,
+            target_runtime: None,
         };
         match e.dispatch(&ws, &NoopEventSink).await.expect("dispatch") {
             DispatchOutcome::Completed { deliverable } => {
@@ -524,14 +665,28 @@ mod tests {
     async fn llm_judge_fail_closed_on_bad_json() {
         let url = serve_openai("not json at all").await;
         let j = LlmJudge::new(LlmClient::new(url, None, "m"));
-        let v = j.judge(&[], &DeliverableView { kind: "DIFF".into(), reference: "b".into(), summary: "s".into() }).await;
+        let v = j
+            .judge(
+                &[],
+                &DeliverableView {
+                    kind: "DIFF".into(),
+                    reference: "b".into(),
+                    summary: "s".into(),
+                },
+            )
+            .await;
         assert!(!v.passed);
     }
 
     #[tokio::test]
     async fn anthropic_wire_parses_content_blocks() {
-        let url = serve_anthropic("[{\"title\":\"实现登录\",\"acceptanceCriteria\":[],\"dependencies\":[]}]").await;
-        let p = LlmPlanner::new(LlmClient::new(url, Some("k".into()), "claude-opus-4-8").with_wire(Wire::Anthropic));
+        let url = serve_anthropic(
+            "[{\"title\":\"实现登录\",\"acceptanceCriteria\":[],\"dependencies\":[]}]",
+        )
+        .await;
+        let p = LlmPlanner::new(
+            LlmClient::new(url, Some("k".into()), "claude-opus-4-8").with_wire(Wire::Anthropic),
+        );
         let tasks = p.plan(&spec()).await.expect("plan");
         assert_eq!(tasks[0].title, "实现登录");
     }
@@ -540,13 +695,22 @@ mod tests {
     async fn anthropic_refusal_is_fail_closed() {
         let app = Router::new().route(
             "/v1/messages",
-            post(|| async {
-                Json(json!({ "content": [], "stop_reason": "refusal" }))
-            }),
+            post(|| async { Json(json!({ "content": [], "stop_reason": "refusal" })) }),
         );
         let url = spawn(app, "/v1/messages").await;
-        let j = LlmJudge::new(LlmClient::new(url, Some("k".into()), "claude-opus-4-8").with_wire(Wire::Anthropic));
-        let v = j.judge(&[], &DeliverableView { kind: "DIFF".into(), reference: "b".into(), summary: "s".into() }).await;
+        let j = LlmJudge::new(
+            LlmClient::new(url, Some("k".into()), "claude-opus-4-8").with_wire(Wire::Anthropic),
+        );
+        let v = j
+            .judge(
+                &[],
+                &DeliverableView {
+                    kind: "DIFF".into(),
+                    reference: "b".into(),
+                    summary: "s".into(),
+                },
+            )
+            .await;
         assert!(!v.passed);
         assert!(v.reason.contains("refusal"), "got: {}", v.reason);
     }
@@ -570,7 +734,16 @@ mod tests {
         );
         let url = spawn(app, "/v1/chat/completions").await;
         let j = LlmJudge::new(LlmClient::new(url, None, "m"));
-        let v = j.judge(&[], &DeliverableView { kind: "DIFF".into(), reference: "b".into(), summary: "s".into() }).await;
+        let v = j
+            .judge(
+                &[],
+                &DeliverableView {
+                    kind: "DIFF".into(),
+                    reference: "b".into(),
+                    summary: "s".into(),
+                },
+            )
+            .await;
         assert!(v.passed, "should have retried past the 503: {}", v.reason);
         assert_eq!(calls.load(Ordering::SeqCst), 2, "one failure + one success");
     }

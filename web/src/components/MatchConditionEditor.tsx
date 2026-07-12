@@ -2,14 +2,14 @@ import { Button, Input, Select, Space, Tooltip } from 'antd'
 import { PlusOutlined, DeleteOutlined } from '@ant-design/icons'
 import { useI18n } from '../i18n'
 
-/** 一条匹配条件:参数名 + 操作符 + 值。op 直接对应 mock-runtime 的 StringMatch。 */
+/** One match condition: param name + operator + value. op maps directly to mock-runtime StringMatch. */
 export type MatchCond = { logic: 'AND' | 'OR'; name: string; op: 'equals' | 'contains' | 'regex'; value: string }
 
 export const emptyCond = (): MatchCond => ({ logic: 'AND', name: '', op: 'equals', value: '' })
 
 /**
- * Mock 匹配条件编辑器:AND/OR + 参数名称 + 等于/包含/正则 + 值。
- * 注:匹配引擎当前按 AND 组合全部条件;AND/OR 选择器先做展示,OR 分组待引擎支持(故置灰提示)。
+ * Mock match-condition editor: AND/OR + param name + equals/contains/regex + value.
+ * Note: the match engine currently ANDs all conditions; the AND/OR selector is display-only until the engine supports OR grouping (hence disabled with a hint).
  */
 export default function MatchConditionEditor({
   rows,

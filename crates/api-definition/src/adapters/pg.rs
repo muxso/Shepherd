@@ -1,8 +1,8 @@
 use async_trait::async_trait;
 
 use crate::domain::{
-    ApiCase, ApiDefinition, ApiDefinitionChange, ApiModule, ApiMock, ApiProtocol, ApiStatus,
-    ApiView, NewApiCase, NewApiDefinition, NewApiModule, NewApiMock, NewApiView,
+    ApiCase, ApiDefinition, ApiDefinitionChange, ApiMock, ApiModule, ApiProtocol, ApiStatus,
+    ApiView, ApiViewPatch, NewApiCase, NewApiDefinition, NewApiMock, NewApiModule, NewApiView,
 };
 use crate::ports::{ApiDefinitionRepository, ProjectMockRow, RepoError};
 use sqlx::{PgPool, Row};
@@ -103,10 +103,7 @@ fn row_to_mock(row: &sqlx::postgres::PgRow) -> Result<ApiMock, RepoError> {
 
 #[async_trait]
 impl ApiDefinitionRepository for PgApiDefinitionRepository {
-    async fn insert_definition(
-        &self,
-        d: &NewApiDefinition,
-    ) -> Result<ApiDefinition, RepoError> {
+    async fn insert_definition(&self, d: &NewApiDefinition) -> Result<ApiDefinition, RepoError> {
         let row = sqlx::query(
             "INSERT INTO ms_api_definition (project_id, name, protocol, method, path, status, spec, created_by) \
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8) \
@@ -187,12 +184,14 @@ impl ApiDefinitionRepository for PgApiDefinitionRepository {
     }
 
     async fn delete_definition(&self, id: &str) -> Result<(), RepoError> {
-        // 用例为硬删:ms_api_case 无 deleted 列,不能软删。
-        sqlx::query("UPDATE ms_api_definition SET deleted = true, updated_at = now() WHERE id = $1")
-            .bind(id)
-            .execute(&self.pool)
-            .await
-            .map_err(map_err)?;
+        // Cases are hard-deleted: ms_api_case has no deleted column, so soft delete is impossible.
+        sqlx::query(
+            "UPDATE ms_api_definition SET deleted = true, updated_at = now() WHERE id = $1",
+        )
+        .bind(id)
+        .execute(&self.pool)
+        .await
+        .map_err(map_err)?;
         sqlx::query("UPDATE ms_api_mock SET deleted = true WHERE api_definition_id = $1")
             .bind(id)
             .execute(&self.pool)
@@ -254,10 +253,7 @@ impl ApiDefinitionRepository for PgApiDefinitionRepository {
             .collect()
     }
 
-    async fn list_definitions(
-        &self,
-        project_id: &str,
-    ) -> Result<Vec<ApiDefinition>, RepoError> {
+    async fn list_definitions(&self, project_id: &str) -> Result<Vec<ApiDefinition>, RepoError> {
         let rows = sqlx::query(
             "SELECT id, num, project_id, name, protocol, method, path, status, module_id, spec, \
                     created_by, created_at::text AS created_at, updated_at::text AS updated_at \
@@ -360,11 +356,12 @@ impl ApiDefinitionRepository for PgApiDefinitionRepository {
     }
 
     async fn delete_mock(&self, mock_id: &str) -> Result<bool, RepoError> {
-        let res = sqlx::query("UPDATE ms_api_mock SET deleted = true WHERE id = $1 AND deleted = false")
-            .bind(mock_id)
-            .execute(&self.pool)
-            .await
-            .map_err(map_err)?;
+        let res =
+            sqlx::query("UPDATE ms_api_mock SET deleted = true WHERE id = $1 AND deleted = false")
+                .bind(mock_id)
+                .execute(&self.pool)
+                .await
+                .map_err(map_err)?;
         Ok(res.rows_affected() > 0)
     }
 
@@ -450,7 +447,10 @@ impl ApiDefinitionRepository for PgApiDefinitionRepository {
         rows.iter().map(row_to_mock).collect()
     }
 
-    async fn list_mocks_by_project(&self, project_id: &str) -> Result<Vec<ProjectMockRow>, RepoError> {
+    async fn list_mocks_by_project(
+        &self,
+        project_id: &str,
+    ) -> Result<Vec<ProjectMockRow>, RepoError> {
         let rows = sqlx::query(
             "SELECT m.id, m.api_definition_id, m.name, m.match_rule, m.response_status, m.response_body, \
                     m.enabled, m.tags, m.response_headers, m.response_delay_ms, m.follow_definition, \
@@ -534,12 +534,14 @@ impl ApiDefinitionRepository for PgApiDefinitionRepository {
         definition_id: &str,
         module_id: Option<&str>,
     ) -> Result<(), RepoError> {
-        sqlx::query("UPDATE ms_api_definition SET module_id = $2, updated_at = now() WHERE id = $1")
-            .bind(definition_id)
-            .bind(module_id)
-            .execute(&self.pool)
-            .await
-            .map_err(map_err)?;
+        sqlx::query(
+            "UPDATE ms_api_definition SET module_id = $2, updated_at = now() WHERE id = $1",
+        )
+        .bind(definition_id)
+        .bind(module_id)
+        .execute(&self.pool)
+        .await
+        .map_err(map_err)?;
         Ok(())
     }
 
@@ -572,6 +574,30 @@ impl ApiDefinitionRepository for PgApiDefinitionRepository {
         .await
         .map_err(map_err)?;
         rows.iter().map(row_to_view).collect()
+    }
+
+    async fn update_view(
+        &self,
+        id: &str,
+        user_id: &str,
+        patch: &ApiViewPatch,
+    ) -> Result<Option<ApiView>, RepoError> {
+        let row = sqlx::query(
+            "UPDATE ms_api_view \
+             SET name = COALESCE($3, name), config = COALESCE($4, config), \
+                 shared = COALESCE($5, shared) \
+             WHERE id = $1 AND user_id = $2 \
+             RETURNING id, project_id, user_id, name, config, shared, created_at::text AS created_at",
+        )
+        .bind(id)
+        .bind(user_id)
+        .bind(patch.name.as_deref())
+        .bind(patch.config.as_ref())
+        .bind(patch.shared)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(map_err)?;
+        row.as_ref().map(row_to_view).transpose()
     }
 
     async fn delete_view(&self, id: &str, user_id: &str) -> Result<(), RepoError> {
@@ -684,16 +710,9 @@ mod tests {
         assert_eq!(cases.len(), 1);
         assert!(cases[0].assertions.is_array());
 
-        let standalone = NewApiCase::new(
-            "",
-            "p1",
-            "独立用例",
-            "GET",
-            "/ping",
-            None,
-            serde_json::json!([]),
-        )
-        .expect("valid");
+        let standalone =
+            NewApiCase::new("", "p1", "独立用例", "GET", "/ping", None, serde_json::json!([]))
+                .expect("valid");
         repo.insert_case(&standalone).await.expect("insert standalone");
         assert_eq!(repo.count_cases_by_project("p1").await.expect("count"), 2);
         let page = repo.list_cases_by_project("p1", 0, 1).await.expect("page");
@@ -733,5 +752,49 @@ mod tests {
         assert!(!mocks[0].enabled);
         assert_eq!(mocks[0].match_rule, serde_json::json!({"path": "/logout"}));
         assert!(!repo.update_mock("ghost", &nm2).await.expect("update missing"));
+    }
+
+    #[tokio::test]
+    #[ignore = "需要 DATABASE_URL 指向一个 PostgreSQL 实例"]
+    async fn pg_view_update_roundtrip() {
+        let url = std::env::var("DATABASE_URL").expect("set DATABASE_URL");
+        let pool = PgPool::connect(&url).await.expect("connect");
+        migrate::run(&pool).await.expect("migrate");
+        sqlx::raw_sql("TRUNCATE ms_api_view").execute(&pool).await.expect("truncate");
+
+        let repo = PgApiDefinitionRepository::new(pool.clone());
+
+        let nv = NewApiView::new("p1", "u1", "我的视图", serde_json::json!({"pageSize": 10}), true)
+            .expect("valid");
+        let view = repo.insert_view(&nv).await.expect("insert view");
+
+        // Partial update: only name changes; config/shared keep their prior values.
+        let patch = ApiViewPatch::new(Some("改名视图"), None, None).expect("patch");
+        let updated =
+            repo.update_view(&view.id, "u1", &patch).await.expect("update").expect("owner match");
+        assert_eq!(updated.name, "改名视图");
+        assert_eq!(updated.config, serde_json::json!({"pageSize": 10}));
+        assert!(updated.shared);
+
+        // Full update of all fields.
+        let patch = ApiViewPatch::new(
+            Some("再改名"),
+            Some(serde_json::json!({"pageSize": 50})),
+            Some(false),
+        )
+        .expect("patch");
+        let updated =
+            repo.update_view(&view.id, "u1", &patch).await.expect("update").expect("owner match");
+        assert_eq!(updated.name, "再改名");
+        assert_eq!(updated.config, serde_json::json!({"pageSize": 50}));
+        assert!(!updated.shared);
+
+        // Neither a non-owner nor a nonexistent id matches.
+        let patch = ApiViewPatch::new(Some("越权"), None, None).expect("patch");
+        assert!(repo.update_view(&view.id, "u2", &patch).await.expect("update").is_none());
+        assert!(repo.update_view("ghost", "u1", &patch).await.expect("update").is_none());
+        let views = repo.list_views("p1", "u1").await.expect("list");
+        assert_eq!(views.len(), 1);
+        assert_eq!(views[0].name, "再改名");
     }
 }

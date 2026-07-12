@@ -17,7 +17,7 @@ impl PlanCaseUseCase {
         self.repo.link_case(plan_id, case_id, name).await
     }
 
-    /// 返回 false 表示该用例未挂入计划(调用方据此 404)。
+    /// Returns false when the case is not linked to the plan (callers turn this into a 404).
     pub async fn record(
         &self,
         plan_id: &str,

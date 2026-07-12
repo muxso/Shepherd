@@ -1,28 +1,54 @@
-import { useEffect, useState, type CSSProperties } from 'react'
-import { Button, Card, Col, Empty, Form, Input, Modal, Progress, Row, Select, Space, Table, Tag } from 'antd'
+import { useEffect, useState } from 'react'
+import { Button, Empty, Segmented, Table, Tabs, Tag, Tooltip } from 'antd'
+import { QuestionCircleOutlined, ReloadOutlined } from '@ant-design/icons'
 import { message, modal } from '../feedback'
-import { PlayCircleOutlined, FileMarkdownOutlined, LinkOutlined, ClockCircleOutlined } from '@ant-design/icons'
-import { api, ApiError, userStore, type ApiCase, type PlanCase, type PlanStats } from '../api'
+import { api, ApiError, type PlanStats } from '../api'
 import { useApp } from '../context'
-import { outcomeColor } from '../components/tags'
-import { regAdd, regList, type RegItem } from '../registry'
-import { Workspace, WorkList, useWorkTabs, useOpenParam } from '../components/Workspace'
-import Donut from '../components/Donut'
+import { regList, regRemove, type RegItem } from '../registry'
+import { Workspace, useWorkTabs, useOpenParam } from '../components/Workspace'
 import { SelectProjectEmpty } from '../components/Page'
 import { useI18n } from '../i18n'
+import { useListView, type ListColumn } from '../components/ListView'
+import PlanModuleTree from '../components/plan/PlanModuleTree'
+import PlanFormModal, { PlanForm } from '../components/plan/PlanFormModal'
+import PlanDetail, { ReportMdModal } from '../components/plan/PlanDetail'
+import {
+  groupIdOf,
+  inPlanModule,
+  isGroup,
+  moduleNameOf,
+  moduleOf,
+  planModules,
+  planRegUpdate,
+  tagsOf,
+  type PlanModule,
+} from '../components/plan/planLocal'
 
+// Keys of the persistent "new plan / new group" workspace tabs (share the tab pool with plan-detail tabs).
+const NEW_PLAN_KEY = '__new_plan__'
+const NEW_GROUP_KEY = '__new_group__'
+
+// Test plans page (MeterSphere layout): top "Plans / Reports" tabs.
+// Plans tab = left module tree + right list (all/plan/group Segmented, toolbar, table, multi-open details);
+// Reports tab = Markdown report entry per plan. Modules/groups/tags are local meta (see planLocal.ts).
 export default function TestPlans() {
   const { t } = useI18n()
   const { projectId } = useApp()
   const [plans, setPlans] = useState<RegItem[]>([])
+  const [modules, setModules] = useState<PlanModule[]>([])
   const [statsMap, setStatsMap] = useState<Record<string, PlanStats>>({})
-  const [createOpen, setCreateOpen] = useState(false)
+  const [moduleKey, setModuleKey] = useState('ALL')
+  const [seg, setSeg] = useState<'all' | 'plan' | 'group'>('all')
+  // Edit modal only; creation happens in workspace tabs, so `editing` is required.
+  const [form, setForm] = useState<{ mode: 'plan' | 'group'; editing: RegItem } | null>(null)
   const [runningId, setRunningId] = useState('')
+  const [expandedKeys, setExpandedKeys] = useState<string[]>([])
+  const [report, setReport] = useState<{ name: string; md: string } | null>(null)
   const tabs = useWorkTabs()
 
   const loadStats = async (list: RegItem[]) => {
     const entries = await Promise.all(
-      list.map((p) => api.planStats(p.id).then((s) => [p.id, s] as const).catch(() => null)),
+      list.filter((p) => !isGroup(p)).map((p) => api.planStats(p.id).then((s) => [p.id, s] as const).catch(() => null)),
     )
     setStatsMap(Object.fromEntries(entries.filter(Boolean) as [string, PlanStats][]))
   }
@@ -30,17 +56,59 @@ export default function TestPlans() {
   useEffect(() => {
     const list = regList('plan', projectId)
     setPlans(list)
+    setModules(planModules(projectId))
+    setModuleKey('ALL')
+    setSeg('all')
+    setExpandedKeys([])
     loadStats(list)
     tabs.reset()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId])
-  useOpenParam(tabs.open) // 支持 ?open=<planId> 深链
+  useOpenParam(tabs.open) // deep link: ?open=<planId>
 
-  const runPlan = async (id: string) => {
-    setRunningId(id)
+  const membersOf = (g: RegItem) => plans.filter((x) => !isGroup(x) && groupIdOf(x) === g.id)
+
+  // pass/exec/total: plans read planStats; groups aggregate member plans; undefined when no stats.
+  const numsOf = (p: RegItem): { total: number; pass: number; exec: number } | undefined => {
+    if (isGroup(p)) {
+      const ns = membersOf(p).map(numsOf).filter(Boolean) as { total: number; pass: number; exec: number }[]
+      if (!ns.length) return undefined
+      return ns.reduce((a, b) => ({ total: a.total + b.total, pass: a.pass + b.pass, exec: a.exec + b.exec }), { total: 0, pass: 0, exec: 0 })
+    }
+    const s = statsMap[p.id]
+    if (!s) return undefined
+    return { total: s.total, pass: Math.round(s.passRate * s.total), exec: Math.round(s.executeRate * s.total) }
+  }
+  // Status rule: no results = not started; partial = running; all executed = done.
+  const statusOf = (p: RegItem): 'NOT_STARTED' | 'RUNNING' | 'DONE' => {
+    const n = numsOf(p)
+    if (!n || n.total === 0 || n.exec <= 0) return 'NOT_STARTED'
+    return n.exec >= n.total ? 'DONE' : 'RUNNING'
+  }
+  const statusMeta: Record<string, { label: string; color: string }> = {
+    NOT_STARTED: { label: t('plan.statusNotStarted', '未开始'), color: 'default' },
+    RUNNING: { label: t('plan.statusRunning', '进行中'), color: 'processing' },
+    DONE: { label: t('plan.statusDone', '已完成'), color: 'success' },
+  }
+
+  const run = async (p: RegItem) => {
+    setRunningId(p.id)
     try {
-      const r = await api.runPlan(id)
-      message.success(`${t('plan.runDone', '执行完成')}:${r.executed}/${r.total}`)
+      if (isGroup(p)) {
+        const members = membersOf(p)
+        if (!members.length) return void message.info(t('plan.noGroupPlans', '组内暂无计划'))
+        let executed = 0
+        let total = 0
+        for (const m of members) {
+          const r = await api.runPlan(m.id)
+          executed += r.executed
+          total += r.total
+        }
+        message.success(`${t('plan.groupRunDone', '计划组执行完成')}:${executed}/${total}`)
+      } else {
+        const r = await api.runPlan(p.id)
+        message.success(`${t('plan.runDone', '执行完成')}:${r.executed}/${r.total}`)
+      }
       loadStats(plans)
     } catch (e) {
       message.error(e instanceof ApiError ? `${t('plan.runFail', '执行失败')}:${e.status}` : t('plan.runFail', '执行失败'))
@@ -49,345 +117,361 @@ export default function TestPlans() {
     }
   }
 
-  if (!projectId) return <SelectProjectEmpty />
-
-  const detailTabs = plans
-    .filter((p) => tabs.openIds.includes(p.id))
-    .map((p) => ({ key: p.id, label: p.label, children: <PlanDetail planId={p.id} name={p.label} projectId={projectId} /> }))
-
-  return (
-    <>
-      <Workspace
-        listLabel={t('plan.allPlans', '全部计划')}
-        activeKey={tabs.activeKey}
-        onChange={tabs.setActiveKey}
-        onClose={tabs.close}
-        tabs={detailTabs}
-        listContent={
-          <WorkList<RegItem>
-            onNew={() => setCreateOpen(true)}
-            newLabel={t('plan.newPlan', '新建测试计划')}
-            extraActions={<Button size="middle" onClick={() => loadStats(plans)}>{t('plan.refreshStats', '刷新统计')}</Button>}
-            data={plans}
-            onRowClick={(p) => tabs.open(p.id)}
-            emptyText={t('plan.emptyPlans', '暂无计划')}
-            columns={[
-              { title: t('plan.colName', '计划名'), dataIndex: 'label', ellipsis: true },
-              {
-                title: t('plan.colStatus', '状态'),
-                width: 100,
-                render: (_, p) => {
-                  const s = statsMap[p.id]
-                  return s ? <Tag color={s.isPass ? 'green' : s.executeRate > 0 ? 'blue' : 'default'}>{s.executeRate > 0 ? (s.isPass ? t('plan.statusDone', '已完成') : t('plan.statusRunning', '进行中')) : t('plan.statusNotStarted', '未开始')}</Tag> : <Tag>—</Tag>
-                },
-              },
-              {
-                title: t('plan.colPassRate', '通过率'),
-                width: 160,
-                render: (_, p) => {
-                  const s = statsMap[p.id]
-                  const pr = Math.round((s?.passRate ?? 0) * 100)
-                  return <Progress percent={pr} size="small" status={pr === 100 ? 'success' : 'active'} />
-                },
-              },
-              { title: t('plan.colCaseCount', '用例数'), width: 80, render: (_, p) => statsMap[p.id]?.total ?? 0 },
-              { title: t('plan.colCreatedBy', '创建人'), width: 110, render: (_, p) => p.meta?.createdBy || '—' },
-              { title: t('plan.colCreatedAt', '创建时间'), dataIndex: 'createdAt', width: 180, render: (ts: number) => new Date(ts).toLocaleString() },
-              {
-                title: t('plan.colAction', '操作'),
-                width: 140,
-                render: (_, p) => (
-                  <Space size={0} onClick={(e) => e.stopPropagation()}>
-                    <Button type="link" size="small" loading={runningId === p.id} onClick={() => runPlan(p.id)}>{t('plan.exec', '执行')}</Button>
-                    <Button type="link" size="small" onClick={() => tabs.open(p.id)}>{t('plan.report', '报告')}</Button>
-                  </Space>
-                ),
-              },
-            ]}
-          />
-        }
-      />
-      <Modal title={t('plan.newPlan', '新建测试计划')} open={createOpen} onCancel={() => setCreateOpen(false)} footer={null} destroyOnHidden>
-        <CreatePlanForm
-          projectId={projectId}
-          onCreated={(id, name) => {
-            setCreateOpen(false)
-            setPlans(regAdd('plan', projectId, { id, label: name, createdAt: Date.now(), meta: { createdBy: userStore.get() } }))
-            tabs.open(id)
-          }}
-        />
-      </Modal>
-    </>
-  )
-}
-
-function CreatePlanForm({ projectId, onCreated }: { projectId: string; onCreated: (id: string, name: string) => void }) {
-  const { t } = useI18n()
-  const [saving, setSaving] = useState(false)
-  return (
-    <Form
-      layout="vertical"
-      onFinish={async (v: { name: string }) => {
-        setSaving(true)
-        try {
-          const p = await api.createPlan({ projectId, name: v.name })
-          message.success(t('plan.created', '计划已创建'))
-          onCreated(p.id, v.name)
-        } catch (e) {
-          message.error(e instanceof ApiError ? e.message : t('plan.createFail', '创建失败'))
-        } finally {
-          setSaving(false)
-        }
-      }}
-    >
-      <Form.Item name="name" label={t('plan.colName', '计划名')} rules={[{ required: true }]}><Input placeholder={t('plan.namePlaceholder', '如:回归冒烟')} autoFocus /></Form.Item>
-      <Button type="primary" htmlType="submit" loading={saving} block>{t('a.create', '创建')}</Button>
-    </Form>
-  )
-}
-
-function PlanDetail({ planId, name, projectId }: { planId: string; name: string; projectId: string }) {
-  const { t } = useI18n()
-  const [stats, setStats] = useState<PlanStats | null>(null)
-  const [cases, setCases] = useState<PlanCase[]>([])
-  const [loading, setLoading] = useState(false)
-  const [linkOpen, setLinkOpen] = useState(false)
-  const [running, setRunning] = useState(false)
-  const [marking, setMarking] = useState('')
-  const [mdOpen, setMdOpen] = useState(false)
-  const [md, setMd] = useState('')
-
-  const load = async () => {
-    setLoading(true)
-    try {
-      const [s, c] = await Promise.all([api.planStats(planId), api.planCases(planId)])
-      setStats(s)
-      setCases(Array.isArray(c) ? c : c.items)
-    } catch (e) {
-      message.error(e instanceof ApiError ? e.message : t('plan.loadFail', '加载计划失败'))
-    } finally {
-      setLoading(false)
-    }
-  }
-  useEffect(() => {
-    load()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [planId])
-
-  const run = async () => {
-    setRunning(true)
-    try {
-      const r = await api.runPlan(planId)
-      message.success(`${t('plan.runDone', '执行完成')}:${r.executed}/${r.total}`)
-      load()
-    } catch (e) {
-      message.error(e instanceof ApiError ? `${t('plan.runFail', '执行失败')}:${e.status}` : t('plan.runFail', '执行失败'))
-    } finally {
-      setRunning(false)
-    }
-  }
-  const markResult = async (caseId: string, status: string) => {
-    setMarking(caseId)
-    try {
-      await api.recordPlanCaseResult(planId, caseId, status)
-      message.success(t('plan.markDone', '已登记执行结果'))
-      load()
-    } catch (e) {
-      message.error(e instanceof ApiError ? `${t('plan.markFail', '登记失败')}:${e.status}` : t('plan.markFail', '登记失败'))
-    } finally {
-      setMarking('')
-    }
-  }
-  const openReport = async () => {
-    try {
-      setMd(await api.planReportMd(planId))
-      setMdOpen(true)
-    } catch (e) {
-      message.error(e instanceof ApiError ? e.message : t('plan.reportFail', '获取报告失败'))
-    }
-  }
-  const schedule = () => {
-    let cron = '0 0 * * * *'
+  const remove = (p: RegItem) => {
     modal.confirm({
-      title: t('plan.scheduleTitle', '配置定时执行(cron)'),
-      content: <Input defaultValue={cron} onChange={(e) => (cron = e.target.value)} style={{ marginTop: 8 }} className="ms-mono" />,
-      onOk: async () => {
-        try {
-          await api.planSchedule(planId, cron)
-          message.success(t('plan.scheduleDone', '定时已配置'))
-        } catch (e) {
-          message.error(e instanceof ApiError ? e.message : t('plan.scheduleFail', '配置失败'))
-        }
+      title: `${isGroup(p) ? t('plan.deleteGroupConfirm', '删除计划组') : t('plan.deleteConfirm', '删除测试计划')}「${p.label}」?`,
+      content: isGroup(p)
+        ? t('plan.deleteGroupContent', '仅从列表移除;组内计划保留并变为不归属任何计划组。')
+        : t('plan.deleteContent', '仅从本地列表移除,后端数据不受影响。'),
+      okButtonProps: { danger: true },
+      onOk: () => {
+        if (isGroup(p)) membersOf(p).forEach((m) => planRegUpdate(projectId, m.id, { meta: { groupId: '' } }))
+        regRemove('plan', projectId, p.id)
+        setPlans(regList('plan', projectId))
+        tabs.close(p.id)
+        message.success(t('plan.deleted', '已删除'))
       },
     })
   }
 
-  return (
-    <div style={{ padding: '12px 16px', height: '100%', overflow: 'auto' }}>
-      <Space style={{ marginBottom: 12 }} wrap>
-        <Button icon={<LinkOutlined />} size="small" onClick={() => setLinkOpen(true)}>{t('plan.linkCase', '挂用例')}</Button>
-        <Button type="primary" icon={<PlayCircleOutlined />} size="small" loading={running} onClick={run}>{t('plan.runPlan', '执行计划')}</Button>
-        <Button icon={<ClockCircleOutlined />} size="small" onClick={schedule}>{t('plan.schedule', '定时')}</Button>
-        <Button icon={<FileMarkdownOutlined />} size="small" onClick={openReport}>{t('plan.mdReport', 'Markdown 报告')}</Button>
-        {stats && <Tag color={stats.isPass ? 'green' : 'red'}>{stats.isPass ? t('plan.pass', '通过') : t('plan.notPass', '未通过')}</Tag>}
-      </Space>
-      <ReportAnalytics stats={stats} cases={cases} />
-      <div style={{ height: 16 }} />
-      <Table<PlanCase>
-        rowKey="caseId"
-        size="small"
-        loading={loading}
-        dataSource={cases}
-        pagination={false}
-        locale={{ emptyText: <Empty description={t('plan.noLinkedCase', '未挂用例,点「挂用例」')} /> }}
+  // Module CRUD; on delete, move plans under it back to unplanned.
+  const onModulesChanged = (mods: PlanModule[], removedIds?: string[]) => {
+    setModules(mods)
+    if (removedIds?.length) {
+      plans.filter((p) => removedIds.includes(moduleOf(p))).forEach((p) => planRegUpdate(projectId, p.id, { meta: { module: '' } }))
+      setPlans(regList('plan', projectId))
+    }
+  }
+
+  const toggleExpand = (id: string) => setExpandedKeys((ks) => (ks.includes(id) ? ks.filter((k) => k !== id) : [...ks, id]))
+  const openItem = (p: RegItem) => (isGroup(p) ? toggleExpand(p.id) : tabs.open(p.id))
+
+  const passRateCell = (p: RegItem) => {
+    const n = numsOf(p)
+    if (!n || !n.total) return <span style={{ color: 'var(--text-3)' }}>—</span>
+    const pr = Math.round((n.pass * 100) / n.total)
+    return (
+      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+        <span style={{ width: 60, height: 6, background: 'var(--panel-2)', border: '1px solid var(--border-soft)', borderRadius: 3, overflow: 'hidden', display: 'inline-block' }}>
+          <span style={{ display: 'block', width: `${pr}%`, height: '100%', background: 'var(--success)' }} />
+        </span>
+        <span style={{ color: 'var(--text-2)', fontSize: 12 }}>{pr}%</span>
+      </span>
+    )
+  }
+  const execResultCell = (p: RegItem) => {
+    const n = numsOf(p)
+    if (!n) return <span style={{ color: 'var(--text-3)' }}>—</span>
+    return (
+      <span style={{ fontSize: 12, color: 'var(--text-2)', whiteSpace: 'nowrap' }}>
+        <span style={{ color: 'var(--success)' }}>●</span> {t('plan.pass', '通过')} {n.pass}
+        <span style={{ marginLeft: 8, color: 'var(--error)' }}>●</span> {t('plan.fail', '失败')} {Math.max(0, n.exec - n.pass)}
+      </span>
+    )
+  }
+  const actionCell = (p: RegItem) => (
+    <span onClick={(e) => e.stopPropagation()}>
+      <Button type="link" size="small" loading={runningId === p.id} onClick={() => run(p)}>{t('plan.exec', '执行')}</Button>
+      <Button type="link" size="small" onClick={() => setForm({ mode: isGroup(p) ? 'group' : 'plan', editing: p })}>{t('a.edit', '编辑')}</Button>
+      <Button type="link" size="small" danger onClick={() => remove(p)}>{t('a.delete', '删除')}</Button>
+    </span>
+  )
+
+  // List toolbar trio (view/filter/columns): useListView must be called before any conditional return.
+  const allTags = [...new Set(plans.flatMap(tagsOf))]
+  const allColumns: ListColumn<RegItem>[] = [
+    {
+      key: 'id',
+      label: 'ID',
+      title: 'ID',
+      width: 96,
+      render: (_, p) => <span className="ms-mono" style={{ color: 'var(--text-2)', fontSize: 12 }}>{p.id.slice(0, 8)}</span>,
+    },
+    {
+      key: 'name',
+      label: t('plan.colName', '测试计划名称'),
+      title: t('plan.colName', '测试计划名称'),
+      ellipsis: true,
+      render: (_, p) => (
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
+          {isGroup(p) && <Tag color="processing" style={{ marginInlineEnd: 0 }}>{t('plan.groupTag', '计划组')}</Tag>}
+          <span style={{ color: 'var(--brand)', cursor: 'pointer', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} onClick={(e) => { e.stopPropagation(); openItem(p) }}>
+            {p.label}
+          </span>
+        </span>
+      ),
+    },
+    {
+      key: 'status',
+      label: t('plan.colStatus', '状态'),
+      title: t('plan.colStatus', '状态'),
+      width: 96,
+      render: (_, p) => { const m = statusMeta[statusOf(p)]; return <Tag color={m.color}>{m.label}</Tag> },
+    },
+    { key: 'createdBy', label: t('plan.colCreatedBy', '创建人'), title: t('plan.colCreatedBy', '创建人'), width: 100, render: (_, p) => p.meta?.createdBy || '—' },
+    {
+      key: 'passRate',
+      label: t('plan.colPassRate', '通过率'),
+      title: (
+        <span>
+          {t('plan.colPassRate', '通过率')}{' '}
+          <Tooltip title={t('plan.passRateTip', '通过率 = 通过用例数 / 总用例数')}>
+            <QuestionCircleOutlined style={{ color: 'var(--text-3)' }} />
+          </Tooltip>
+        </span>
+      ),
+      width: 130,
+      render: (_, p) => passRateCell(p),
+    },
+    { key: 'execResult', label: t('plan.colExecResult', '执行结果'), title: t('plan.colExecResult', '执行结果'), width: 160, render: (_, p) => execResultCell(p) },
+    { key: 'caseCount', label: t('plan.colCaseCount', '用例数'), title: t('plan.colCaseCount', '用例数'), width: 76, render: (_, p) => numsOf(p)?.total ?? 0 },
+    {
+      key: 'tags',
+      label: t('plan.colTags', '标签'),
+      title: t('plan.colTags', '标签'),
+      width: 150,
+      render: (_, p) => { const ts = tagsOf(p); return ts.length ? ts.map((tg) => <Tag key={tg}>{tg}</Tag>) : <span style={{ color: 'var(--text-3)' }}>—</span> },
+    },
+    {
+      key: 'module',
+      label: t('plan.colModule', '所属模块'),
+      title: t('plan.colModule', '所属模块'),
+      width: 120,
+      ellipsis: true,
+      render: (_, p) => moduleNameOf(modules, moduleOf(p)) || t('plan.moduleUnfiled', '未规划'),
+    },
+    { key: 'createdAt', label: t('plan.colCreatedAt', '创建时间'), title: t('plan.colCreatedAt', '创建时间'), width: 170, render: (_, p) => new Date(p.createdAt).toLocaleString() },
+    { key: 'action', label: t('plan.colAction', '操作'), title: t('plan.colAction', '操作'), width: 160, render: (_, p) => actionCell(p) },
+  ]
+
+  // Narrow the dataset by left-tree module + Segmented (all/plan/group) before useListView.
+  const scoped = plans.filter(
+    (p) => inPlanModule(modules, moduleKey, moduleOf(p)) && (seg === 'all' || (seg === 'group') === isGroup(p)),
+  )
+  const lv = useListView<RegItem>({
+    kind: 'test-plan',
+    projectId,
+    searchOf: (p) => p.label,
+    searchLabel: t('plan.searchPh', '搜索计划名'),
+    fields: [
+      {
+        key: 'status',
+        label: t('plan.colStatus', '状态'),
+        type: 'enum',
+        options: (['NOT_STARTED', 'RUNNING', 'DONE'] as const).map((v) => ({ value: v, label: statusMeta[v].label })),
+        get: (p) => statusOf(p),
+      },
+      { key: 'tags', label: t('plan.colTags', '标签'), type: 'tags', options: allTags.map((v) => ({ value: v, label: v })), get: (p) => tagsOf(p) },
+      { key: 'createdBy', label: t('plan.colCreatedBy', '创建人'), type: 'text', get: (p) => p.meta?.createdBy || '', advOnly: true },
+      // Lookup-only fields for conditions/column headers (duplicate the search box; not rendered in the declarative filter area).
+      { key: 'id', label: 'ID', type: 'text', advOnly: true, get: (p) => p.id },
+      { key: 'name', label: t('plan.colName', '名称'), type: 'text', advOnly: true, get: (p) => p.label },
+      {
+        key: 'module', label: t('plan.colModule', '所属模块'), type: 'enum', advOnly: true,
+        options: [{ value: '', label: t('plan.moduleUnfiled', '未规划') }, ...modules.map((m) => ({ value: m.id, label: m.name }))],
+        get: (p) => moduleOf(p),
+      },
+    ],
+    columns: allColumns,
+    rows: scoped,
+  })
+
+  if (!projectId) return <SelectProjectEmpty />
+
+  // Group row expansion: member-plan subtable; row click opens the plan detail.
+  const expandedRowRender = (g: RegItem) => (
+    <Table<RegItem>
+      rowKey="id"
+      size="small"
+      pagination={false}
+      dataSource={membersOf(g)}
+      locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('plan.noGroupPlans', '组内暂无计划')} /> }}
+      onRow={(r) => ({ onClick: () => tabs.open(r.id), style: { cursor: 'pointer' } })}
+      columns={[
+        { title: 'ID', width: 96, render: (_, p) => <span className="ms-mono" style={{ color: 'var(--text-2)', fontSize: 12 }}>{p.id.slice(0, 8)}</span> },
+        { title: t('plan.colName', '测试计划名称'), ellipsis: true, render: (_, p) => <span style={{ color: 'var(--brand)' }}>{p.label}</span> },
+        { title: t('plan.colStatus', '状态'), width: 96, render: (_, p) => { const m = statusMeta[statusOf(p)]; return <Tag color={m.color}>{m.label}</Tag> } },
+        { title: t('plan.colPassRate', '通过率'), width: 130, render: (_, p) => passRateCell(p) },
+        { title: t('plan.colCaseCount', '用例数'), width: 76, render: (_, p) => numsOf(p)?.total ?? 0 },
+        { title: t('plan.colAction', '操作'), width: 160, render: (_, p) => actionCell(p) },
+      ]}
+    />
+  )
+
+  const emptyText = (
+    <Empty
+      image={Empty.PRESENTED_IMAGE_SIMPLE}
+      description={
+        <span style={{ color: 'var(--text-3)' }}>
+          {t('common.empty', '暂无数据')}{' '}
+          <a style={{ color: 'var(--brand)' }} onClick={() => tabs.open(NEW_PLAN_KEY)}>{t('plan.newPlan', '新建测试计划')}</a>
+          {' '}{t('plan.or', '或')}{' '}
+          <a style={{ color: 'var(--brand)' }} onClick={() => tabs.open(NEW_GROUP_KEY)}>{t('plan.newGroup', '新建计划组')}</a>
+        </span>
+      }
+    />
+  )
+
+  const listContent = (
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 12px', borderBottom: '1px solid var(--border-soft)' }}>
+        <Segmented
+          value={seg}
+          onChange={(v) => setSeg(v as typeof seg)}
+          options={[
+            { value: 'all', label: t('plan.segAll', '全部') },
+            { value: 'plan', label: t('plan.segPlan', '计划') },
+            { value: 'group', label: t('plan.segGroup', '计划组') },
+          ]}
+        />
+        <div style={{ flex: 1 }} />
+        {lv.toolbar}
+        <Tooltip title={t('plan.refreshStats', '刷新统计')}>
+          <Button size="small" icon={<ReloadOutlined />} onClick={() => loadStats(plans)} />
+        </Tooltip>
+      </div>
+      <div style={{ flex: 1, overflow: 'auto', padding: 12 }}>
+        <Table<RegItem>
+          rowKey="id"
+          size="middle"
+          dataSource={lv.rows}
+          columns={lv.columns}
+          expandable={{
+            expandedRowKeys: expandedKeys,
+            onExpandedRowsChange: (ks) => setExpandedKeys(ks.map(String)),
+            rowExpandable: isGroup,
+            expandedRowRender,
+          }}
+          onRow={(p) => ({
+            onClick: (e) => {
+              if ((e.target as Element).closest?.('.ant-table-row-expand-icon')) return
+              openItem(p)
+            },
+            style: { cursor: 'pointer' },
+          })}
+          pagination={{ ...lv.pagination, showTotal: (n) => t('ws.total', '共 {n} 条').replace('{n}', String(n)) }}
+          locale={{ emptyText }}
+        />
+      </div>
+    </div>
+  )
+
+  // Workspace "new plan / new group" tab: inline PlanForm; on create, close the tab,
+  // refresh the list, then open the plan detail (groups have no detail, refresh only).
+  const newFormTab = (key: string, mode: 'plan' | 'group') => ({
+    key,
+    label: mode === 'group' ? t('plan.newGroup', '新建计划组') : t('plan.newPlan', '新建测试计划'),
+    children: (
+      <div style={{ padding: '16px 24px', height: '100%', overflow: 'auto' }}>
+        <div style={{ maxWidth: 520 }}>
+          <PlanForm
+            mode={mode}
+            projectId={projectId}
+            modules={modules}
+            groups={plans}
+            onCancel={() => tabs.close(key)}
+            onSaved={(list, created) => {
+              tabs.close(key)
+              setPlans(list)
+              loadStats(list)
+              if (created) tabs.open(created.id)
+            }}
+          />
+        </div>
+      </div>
+    ),
+  })
+  const detailTabs = tabs.openIds.flatMap((id) => {
+    if (id === NEW_PLAN_KEY) return [newFormTab(NEW_PLAN_KEY, 'plan')]
+    if (id === NEW_GROUP_KEY) return [newFormTab(NEW_GROUP_KEY, 'group')]
+    const p = plans.find((x) => x.id === id && !isGroup(x))
+    return p ? [{ key: p.id, label: p.label, children: <PlanDetail planId={p.id} name={p.label} projectId={projectId} /> }] : []
+  })
+
+  // Plans tab: left module tree + right list (multi-open detail workspace).
+  const plansTab = (
+    <Workspace
+      left={
+        <PlanModuleTree
+          projectId={projectId}
+          items={plans}
+          modules={modules}
+          selectedKey={moduleKey}
+          onSelect={setModuleKey}
+          onNewPlan={() => tabs.open(NEW_PLAN_KEY)}
+          onNewGroup={() => tabs.open(NEW_GROUP_KEY)}
+          onModulesChanged={onModulesChanged}
+        />
+      }
+      leftWidth={240}
+      siderKey="plan-sider"
+      listLabel={t('plan.allTestPlans', '全部测试计划')}
+      activeKey={tabs.activeKey}
+      onChange={tabs.setActiveKey}
+      onClose={tabs.close}
+      tabs={detailTabs}
+      listContent={listContent}
+    />
+  )
+
+  // Reports tab: report entry per plan (groups have no reports, not listed).
+  const openReport = async (p: RegItem) => {
+    try {
+      setReport({ name: p.label, md: await api.planReportMd(p.id) })
+    } catch (e) {
+      message.error(e instanceof ApiError ? e.message : t('plan.reportFail', '获取报告失败'))
+    }
+  }
+  const reportsTab = (
+    <div style={{ padding: '12px 16px' }}>
+      <Table<RegItem>
+        rowKey="id"
+        size="middle"
+        dataSource={plans.filter((p) => !isGroup(p))}
+        locale={{ emptyText: <Empty description={t('plan.reportEmpty', '暂无报告')} /> }}
+        pagination={{ pageSize: 15, size: 'small', showTotal: (n) => t('ws.total', '共 {n} 条').replace('{n}', String(n)) }}
         columns={[
-          { title: t('plan.caseName', '用例名'), dataIndex: 'name', ellipsis: true },
-          { title: t('plan.colResult', '结果'), dataIndex: 'status', width: 110, render: (s: string) => <Tag color={outcomeColor(s)}>{caseStatusLabel(s, t)}</Tag> },
-          { title: t('plan.colLatency', '耗时(ms)'), dataIndex: 'latencyMs', width: 100, render: (v?: number | null) => v ?? '—' },
-          { title: t('plan.colStatusCode', '状态码'), dataIndex: 'statusCode', width: 90, render: (v?: number | null) => v ?? '—' },
+          { title: 'ID', width: 96, render: (_, p) => <span className="ms-mono" style={{ color: 'var(--text-2)', fontSize: 12 }}>{p.id.slice(0, 8)}</span> },
+          { title: t('plan.colName', '测试计划名称'), ellipsis: true, dataIndex: 'label' },
+          { title: t('plan.colStatus', '状态'), width: 110, render: (_, p) => { const m = statusMeta[statusOf(p)]; return <Tag color={m.color}>{m.label}</Tag> } },
+          { title: t('plan.colPassRate', '通过率'), width: 140, render: (_, p) => passRateCell(p) },
+          { title: t('plan.colCreatedAt', '创建时间'), width: 180, render: (_, p) => new Date(p.createdAt).toLocaleString() },
           {
             title: t('plan.colAction', '操作'),
-            width: 130,
-            render: (_, c) => (
-              <Select
-                size="small"
-                variant="borderless"
-                style={{ width: 110 }}
-                placeholder={t('plan.markResult', '登记结果')}
-                value={undefined}
-                disabled={marking === c.caseId}
-                onChange={(s) => s && markResult(c.caseId, s)}
-                options={CASE_RESULT_OPTIONS.map((o) => ({ value: o.value, label: t(o.i18nKey, o.fallback) }))}
-              />
-            ),
+            width: 120,
+            render: (_, p) => <Button type="link" size="small" onClick={() => openReport(p)}>{t('plan.viewReport', '查看报告')}</Button>,
           },
         ]}
       />
-      <LinkCaseModal open={linkOpen} planId={planId} projectId={projectId} onClose={() => setLinkOpen(false)} onLinked={() => { setLinkOpen(false); load() }} />
-      <Modal title={`${t('plan.mdReport', 'Markdown 报告')} · ${name}`} open={mdOpen} onCancel={() => setMdOpen(false)} width={760} footer={<Button type="primary" onClick={() => setMdOpen(false)}>{t('plan.close', '关闭')}</Button>}>
-        <pre style={{ background: '#0f1419', color: '#d6deeb', padding: 12, borderRadius: 6, maxHeight: 520, overflow: 'auto', fontSize: 12 }}>{md}</pre>
-      </Modal>
     </div>
   )
-}
 
-function LinkCaseModal({ open, planId, projectId, onClose, onLinked }: { open: boolean; planId: string; projectId: string; onClose: () => void; onLinked: () => void }) {
-  const { t } = useI18n()
-  const [cases, setCases] = useState<ApiCase[]>([])
-  const [caseId, setCaseId] = useState('')
-  const [saving, setSaving] = useState(false)
-  useEffect(() => {
-    if (open) api.projectCases(projectId).then((p) => setCases(p.items)).catch(() => setCases([]))
-  }, [open, projectId])
-  const link = async () => {
-    const c = cases.find((x) => x.id === caseId)
-    if (!c) return
-    setSaving(true)
-    try {
-      await api.linkPlanCase(planId, c.id, c.name)
-      message.success(t('plan.linked', '已挂入用例'))
-      onLinked()
-    } catch (e) {
-      message.error(e instanceof ApiError ? e.message : t('plan.linkFail', '挂入失败'))
-    } finally {
-      setSaving(false)
-    }
-  }
   return (
-    <Modal title={t('plan.linkApiCase', '挂入接口用例')} open={open} onCancel={onClose} onOk={link} confirmLoading={saving} okButtonProps={{ disabled: !caseId }} destroyOnHidden>
-      <Select
-        style={{ width: '100%' }}
-        showSearch
-        placeholder={t('plan.selectApiCase', '选择项目下的接口用例')}
-        value={caseId || undefined}
-        onChange={setCaseId}
-        optionFilterProp="label"
-        options={cases.map((c) => ({ value: c.id, label: `${c.method} ${c.name}` }))}
-        notFoundContent={t('plan.noApiCase', '项目暂无接口用例(先去「接口定义」建用例)')}
+    <>
+      <Tabs
+        className="ms-detail-tabs ms-fill-tabs"
+        tabBarStyle={{ margin: 0, paddingInline: 16 }}
+        items={[
+          { key: 'plans', label: t('plan.tabPlans', '计划'), children: plansTab },
+          { key: 'reports', label: t('plan.tabReports', '报告'), children: reportsTab },
+        ]}
       />
-    </Modal>
+      <PlanFormModal
+        key={form ? `${form.mode}:${form.editing.id}` : 'closed'}
+        open={!!form}
+        mode={form?.mode || 'plan'}
+        editing={form?.editing}
+        projectId={projectId}
+        modules={modules}
+        groups={plans}
+        onClose={() => setForm(null)}
+        onSaved={(list) => {
+          setForm(null)
+          setPlans(list)
+          loadStats(list)
+        }}
+      />
+      <ReportMdModal open={!!report} name={report?.name || ''} md={report?.md || ''} onClose={() => setReport(null)} />
+    </>
   )
-}
-
-// 计划报告多卡分析:报告分析 + 执行分析甜甜圈 + 用例状态条形。
-// 状态分布从 planCases 客户端聚合(SUCCESS/ERROR/FAKE_ERROR/BLOCK/PENDING)。
-function ReportAnalytics({ stats, cases }: { stats: PlanStats | null; cases: PlanCase[] }) {
-  const { t } = useI18n()
-  const by = (s: string) => cases.filter((c) => (c.status || 'PENDING').toUpperCase() === s).length
-  const success = by('SUCCESS')
-  const error = by('ERROR')
-  const fake = by('FAKE_ERROR')
-  const block = by('BLOCK')
-  const pending = by('PENDING')
-  const total = cases.length || stats?.total || 0
-  const pct = (n: number) => (total ? ((n * 100) / total).toFixed(2) : '0.00')
-  const segs = [
-    { label: t('plan.segSuccess', '成功'), value: success, color: '#2e7d32' },
-    { label: t('plan.segError', '失败'), value: error, color: '#c62828' },
-    { label: t('plan.segFake', '误报'), value: fake, color: '#ef6c00' },
-    { label: t('plan.segBlock', '阻塞'), value: block, color: '#722ed1' },
-    { label: t('plan.segPending', '未执行'), value: pending, color: 'var(--text-3)' },
-  ]
-  return (
-    <Row gutter={16}>
-      <Col span={12}>
-        <Card size="small" title={t('plan.reportAnalysis', '报告分析')}>
-          <div style={rowStyle}><span>{t('plan.colPassRate', '通过率')}</span><b style={{ color: '#2e7d32' }}>{((stats?.passRate ?? 0) * 100).toFixed(2)}%</b></div>
-          <div style={rowStyle}><span>{t('plan.executeRate', '执行完成率')}</span><b>{((stats?.executeRate ?? 0) * 100).toFixed(2)}%</b></div>
-          <div style={rowStyle}><span>{t('plan.totalCases', '用例总数')}</span><b>{total}</b></div>
-          <div style={rowStyle}><span>{t('plan.conclusion', '结论')}</span><b style={{ color: stats?.isPass ? '#2e7d32' : '#c62828' }}>{stats?.isPass ? t('plan.pass', '通过') : t('plan.notPass', '未通过')}</b></div>
-        </Card>
-      </Col>
-      <Col span={12}>
-        <Card size="small" title={t('plan.execAnalysis', '执行分析')}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
-            <Donut segments={segs} />
-            <div style={{ flex: 1 }}>
-              {segs.map((s) => (
-                <div key={s.label} style={rowStyle}>
-                  <span style={{ color: s.color }}>● {s.label}</span>
-                  <b>{s.value}　{pct(s.value)}%</b>
-                </div>
-              ))}
-            </div>
-          </div>
-        </Card>
-      </Col>
-      <Col span={24} style={{ marginTop: 16 }}>
-        <Card size="small" title={t('plan.statusDist', '用例状态分布')}>
-          {segs.map((s) => (
-            <div key={s.label} style={{ display: 'flex', alignItems: 'center', gap: 12, margin: '6px 0' }}>
-              <span style={{ width: 48, color: s.color }}>{s.label}</span>
-              <div style={{ flex: 1, background: 'var(--bg)', borderRadius: 4, height: 10, overflow: 'hidden' }}>
-                <div style={{ width: `${pct(s.value)}%`, background: s.color, height: '100%' }} />
-              </div>
-              <span style={{ width: 90, textAlign: 'right', color: 'var(--text-2)' }}>{s.value}　{pct(s.value)}%</span>
-            </div>
-          ))}
-        </Card>
-      </Col>
-    </Row>
-  )
-}
-
-const rowStyle: CSSProperties = { display: 'flex', justifyContent: 'space-between', padding: '6px 0', fontSize: 14 }
-
-// 可手动登记的执行结果:通过/不通过/阻塞/误报。
-const CASE_RESULT_OPTIONS = [
-  { value: 'SUCCESS', i18nKey: 'plan.resPass', fallback: '通过' },
-  { value: 'ERROR', i18nKey: 'plan.resFail', fallback: '不通过' },
-  { value: 'BLOCK', i18nKey: 'plan.resBlock', fallback: '阻塞' },
-  { value: 'FAKE_ERROR', i18nKey: 'plan.resFake', fallback: '误报' },
-]
-
-// 用例状态码 → 本地化标签(未执行/通过/不通过/阻塞/误报)。
-function caseStatusLabel(s: string, t: (k: string, d: string) => string): string {
-  switch ((s || 'PENDING').toUpperCase()) {
-    case 'SUCCESS': return t('plan.resPass', '通过')
-    case 'ERROR': return t('plan.resFail', '不通过')
-    case 'BLOCK': return t('plan.resBlock', '阻塞')
-    case 'FAKE_ERROR': return t('plan.resFake', '误报')
-    case 'PENDING': return t('plan.segPending', '未执行')
-    default: return s
-  }
 }

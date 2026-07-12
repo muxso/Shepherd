@@ -10,9 +10,11 @@ use crate::ports::{
     AuthRepoError, CredentialRepository, PasswordHasher, SessionStore, UserCredential,
 };
 
+// Mutex: self-service password change must stay writable after sharing (axum state clones
+// share the same instance).
 #[derive(Clone, Default)]
 pub struct InMemoryCredentialRepository {
-    users: HashMap<String, UserCredential>,
+    users: Arc<Mutex<HashMap<String, UserCredential>>>,
 }
 
 impl InMemoryCredentialRepository {
@@ -20,12 +22,18 @@ impl InMemoryCredentialRepository {
         Self::default()
     }
 
-    pub fn with_user<I, S>(mut self, username: &str, user_id: &str, password_hash: &str, perms: I) -> Self
+    pub fn with_user<I, S>(
+        self,
+        username: &str,
+        user_id: &str,
+        password_hash: &str,
+        perms: I,
+    ) -> Self
     where
         I: IntoIterator<Item = S>,
         S: Into<String>,
     {
-        self.users.insert(
+        self.users.lock().unwrap_or_else(std::sync::PoisonError::into_inner).insert(
             username.to_string(),
             UserCredential {
                 user_id: user_id.to_string(),
@@ -43,7 +51,31 @@ impl CredentialRepository for InMemoryCredentialRepository {
         &self,
         username: &str,
     ) -> Result<Option<UserCredential>, AuthRepoError> {
-        Ok(self.users.get(username).cloned())
+        let users = self.users.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        Ok(users.get(username).cloned())
+    }
+
+    async fn find_by_user_id(
+        &self,
+        user_id: &str,
+    ) -> Result<Option<UserCredential>, AuthRepoError> {
+        let users = self.users.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        Ok(users.values().find(|c| c.user_id == user_id).cloned())
+    }
+
+    async fn update_password(
+        &self,
+        user_id: &str,
+        password_hash: &str,
+    ) -> Result<bool, AuthRepoError> {
+        let mut users = self.users.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        match users.values_mut().find(|c| c.user_id == user_id) {
+            Some(c) => {
+                c.password_hash = password_hash.to_string();
+                Ok(true)
+            }
+            None => Ok(false),
+        }
     }
 }
 
@@ -68,7 +100,7 @@ impl InMemorySessionStore {
     }
 
     pub fn insert_expired(&self, token: &str, user_id: &str) {
-        self.state.lock().expect("lock").sessions.insert(
+        self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner).sessions.insert(
             token.to_string(),
             Session {
                 token: token.to_string(),
@@ -88,7 +120,7 @@ impl SessionStore for InMemorySessionStore {
         permissions: PermissionSet,
         ttl_secs: i64,
     ) -> Result<String, AuthRepoError> {
-        let mut st = self.state.lock().expect("lock");
+        let mut st = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         st.seq += 1;
         let token = format!("sess-{}", st.seq);
         st.sessions.insert(
@@ -104,7 +136,7 @@ impl SessionStore for InMemorySessionStore {
     }
 
     async fn get(&self, token: &str) -> Result<Option<Session>, AuthRepoError> {
-        let st = self.state.lock().expect("lock");
+        let st = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         Ok(match st.sessions.get(token) {
             Some(s) if s.expires_at_ms > now_ms() => Some(s.clone()),
             _ => None,
@@ -112,12 +144,13 @@ impl SessionStore for InMemorySessionStore {
     }
 
     async fn revoke(&self, token: &str) -> Result<(), AuthRepoError> {
-        self.state.lock().expect("lock").sessions.remove(token);
+        self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner).sessions.remove(token);
         Ok(())
     }
 }
 
-/// 仅测试/本地:hash 原样返回明文;生产用 `Argon2PasswordHasher`(feature=auth)。
+/// Tests/local only: hash returns the plaintext as-is; production uses
+/// `Argon2PasswordHasher` (feature=auth).
 #[derive(Clone, Default)]
 pub struct PlainPasswordHasher;
 

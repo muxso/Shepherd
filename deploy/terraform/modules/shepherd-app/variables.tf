@@ -41,6 +41,13 @@ variable "admin_password" {
   sensitive   = true
 }
 
+variable "agent_key" {
+  description = "Static API key (sak_…) for agent-runtime pods (SHEPHERD_AGENT_KEY). Issue via POST /system/apikey; the runtime cannot start without it."
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
 variable "server_host" {
   description = "Public hostname for the shepherd-server ingress."
   type        = string

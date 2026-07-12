@@ -103,7 +103,10 @@ mod tests {
         assert!(!s.follow("p1", "bug", "b1", "alice").await.expect("ok"));
         assert!(s.is_following("p1", "BUG", "b1", "alice").await.expect("ok"));
         assert_eq!(s.followers("p1", "bug", "b1").await.expect("ok"), vec!["alice".to_string()]);
-        assert_eq!(s.following_ids("p1", "alice", Some("bug")).await.expect("ok"), vec!["b1".to_string()]);
+        assert_eq!(
+            s.following_ids("p1", "alice", Some("bug")).await.expect("ok"),
+            vec!["b1".to_string()]
+        );
     }
 
     #[tokio::test]

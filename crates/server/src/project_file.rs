@@ -148,7 +148,8 @@ async fn delete_file(user: AuthUser, State(st): State<St>, Path(id): Path<String
     if !user.can("PROJECT", "ADD") {
         return (StatusCode::FORBIDDEN, "permission denied").into_response();
     }
-    match sqlx::query("DELETE FROM ms_project_file WHERE id = $1").bind(&id).execute(&st.pool).await {
+    match sqlx::query("DELETE FROM ms_project_file WHERE id = $1").bind(&id).execute(&st.pool).await
+    {
         Ok(_) => StatusCode::NO_CONTENT.into_response(),
         Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
     }
@@ -161,7 +162,12 @@ struct MoveFileBody {
     module_id: Option<String>,
 }
 
-async fn move_file(user: AuthUser, State(st): State<St>, Path(id): Path<String>, Json(b): Json<MoveFileBody>) -> Response {
+async fn move_file(
+    user: AuthUser,
+    State(st): State<St>,
+    Path(id): Path<String>,
+    Json(b): Json<MoveFileBody>,
+) -> Response {
     if !user.can("PROJECT", "ADD") {
         return (StatusCode::FORBIDDEN, "permission denied").into_response();
     }

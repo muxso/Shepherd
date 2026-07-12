@@ -20,7 +20,7 @@ impl InMemoryFollowStore {
 #[async_trait]
 impl FollowStore for InMemoryFollowStore {
     async fn follow(&self, f: &Follow) -> Result<bool, RepoError> {
-        let mut rows = self.rows.lock().expect("lock");
+        let mut rows = self.rows.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         if rows.iter().any(|r| r == f) {
             return Ok(false);
         }
@@ -35,7 +35,7 @@ impl FollowStore for InMemoryFollowStore {
         entity_id: &str,
         user_id: &str,
     ) -> Result<bool, RepoError> {
-        let mut rows = self.rows.lock().expect("lock");
+        let mut rows = self.rows.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let before = rows.len();
         rows.retain(|r| {
             !(r.project_id == project_id
@@ -52,7 +52,7 @@ impl FollowStore for InMemoryFollowStore {
         entity_type: &str,
         entity_id: &str,
     ) -> Result<Vec<String>, RepoError> {
-        let rows = self.rows.lock().expect("lock");
+        let rows = self.rows.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         Ok(rows
             .iter()
             .filter(|r| {
@@ -70,7 +70,7 @@ impl FollowStore for InMemoryFollowStore {
         user_id: &str,
         entity_type: Option<&str>,
     ) -> Result<Vec<String>, RepoError> {
-        let rows = self.rows.lock().expect("lock");
+        let rows = self.rows.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         Ok(rows
             .iter()
             .filter(|r| {

@@ -30,6 +30,33 @@ async fn spawn_retrying_etxtbsy(cmd: &mut Command) -> std::io::Result<Child> {
     cmd.spawn()
 }
 
+// On Windows, npm-installed CLIs (claude/codebuddy/opencode) are `<name>.cmd` shims,
+// but std resolves bare names as `.exe` only, so spawn fails with NotFound. When a bare
+// name has no exe on PATH but a same-named .cmd exists, use the shim's full path
+// (std runs .cmd via cmd.exe). Native .exe binaries like codex, and explicit configs
+// with a path/extension (CLAUDE_BIN etc.), are unaffected.
+fn resolve_cli_program(name: &str) -> String {
+    if !cfg!(windows) || name.contains(['.', '/', '\\']) {
+        return name.to_string();
+    }
+    find_cmd_shim(name, std::env::var_os("PATH").as_deref()).unwrap_or_else(|| name.to_string())
+}
+
+// Walk PATH for the first dir providing `<name>.exe` or `<name>.cmd`:
+// exe hit → None (let std resolve normally); cmd hit → Some(full shim path).
+fn find_cmd_shim(name: &str, path: Option<&std::ffi::OsStr>) -> Option<String> {
+    for dir in std::env::split_paths(path?) {
+        if dir.join(format!("{name}.exe")).is_file() {
+            return None;
+        }
+        let shim = dir.join(format!("{name}.cmd"));
+        if shim.is_file() {
+            return Some(shim.to_string_lossy().to_string());
+        }
+    }
+    None
+}
+
 fn in_own_process_group(cmd: &mut Command) {
     #[cfg(unix)]
     {
@@ -43,6 +70,8 @@ fn in_own_process_group(cmd: &mut Command) {
 
 // Kill the whole process group (pgid == pid via process_group(0); negative pid = group)
 // so a spawned CLI that forks children leaves no orphans on timeout/shutdown.
+// Windows has no process-group semantics: kill_on_drop (TerminateProcess) covers the
+// direct child, but grandchildren may survive (no Job Object).
 fn kill_process_group(pid: u32) {
     #[cfg(unix)]
     unsafe {
@@ -89,7 +118,8 @@ pub struct ClaudeBackend {
 
 impl ClaudeBackend {
     pub fn new(timeout: Duration) -> Self {
-        Self { bin: std::env::var("CLAUDE_BIN").unwrap_or_else(|_| "claude".into()), timeout }
+        let bin = std::env::var("CLAUDE_BIN").unwrap_or_else(|_| "claude".into());
+        Self { bin: resolve_cli_program(&bin), timeout }
     }
 }
 
@@ -196,13 +226,29 @@ pub struct GenericCliBackend {
 }
 
 impl GenericCliBackend {
+    fn from_env(name: &'static str, env_key: &str, default_cmd: &str, timeout: Duration) -> Self {
+        let cmd = std::env::var(env_key).unwrap_or_else(|_| default_cmd.into());
+        let mut cmd: Vec<String> = cmd.split_whitespace().map(String::from).collect();
+        if let Some(program) = cmd.first_mut() {
+            *program = resolve_cli_program(program);
+        }
+        Self { name, cmd, timeout }
+    }
     pub fn codex(timeout: Duration) -> Self {
-        let cmd = std::env::var("CODEX_CMD").unwrap_or_else(|_| "codex exec".into());
-        Self { name: "codex", cmd: cmd.split_whitespace().map(String::from).collect(), timeout }
+        Self::from_env("codex", "CODEX_CMD", "codex exec", timeout)
     }
     pub fn opencode(timeout: Duration) -> Self {
-        let cmd = std::env::var("OPENCODE_CMD").unwrap_or_else(|_| "opencode run".into());
-        Self { name: "opencode", cmd: cmd.split_whitespace().map(String::from).collect(), timeout }
+        Self::from_env("opencode", "OPENCODE_CMD", "opencode run", timeout)
+    }
+    pub fn codebuddy(timeout: Duration) -> Self {
+        // Default mirrors ClaudeBackend's permission policy: allow edits when
+        // non-interactive, otherwise the CLI refuses to write files.
+        Self::from_env(
+            "codebuddy",
+            "CODEBUDDY_CMD",
+            "codebuddy -p --permission-mode acceptEdits",
+            timeout,
+        )
     }
 }
 
@@ -299,7 +345,7 @@ mod tests {
     #[async_trait]
     impl ProgressSink for RecSink {
         async fn emit(&self, ev: ExecEvent) {
-            self.events.lock().unwrap().push(ev);
+            self.events.lock().unwrap_or_else(std::sync::PoisonError::into_inner).push(ev);
         }
     }
 
@@ -313,12 +359,33 @@ mod tests {
         path
     }
 
+    #[test]
+    fn cmd_shim_lookup_prefers_exe_and_falls_back_to_cmd() {
+        let root = std::env::temp_dir().join(format!("ar-shim-{}", std::process::id()));
+        let (d1, d2) = (root.join("one"), root.join("two"));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&d1).expect("mkdir");
+        std::fs::create_dir_all(&d2).expect("mkdir");
+        std::fs::write(d1.join("tool.cmd"), "").expect("w");
+        std::fs::write(d1.join("native.exe"), "").expect("w");
+        std::fs::write(d2.join("native.cmd"), "").expect("w");
+        let path = std::env::join_paths([&d1, &d2]).expect("join");
+
+        let shim = find_cmd_shim("tool", Some(&path)).expect("shim");
+        assert!(shim.ends_with(if cfg!(windows) { "one\\tool.cmd" } else { "one/tool.cmd" }));
+        // An exe in the same dir wins: std resolves it; later dirs' .cmd is ignored.
+        assert!(find_cmd_shim("native", Some(&path)).is_none());
+        assert!(find_cmd_shim("missing", Some(&path)).is_none());
+        assert!(find_cmd_shim("tool", None).is_none());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
     #[tokio::test]
     async fn mock_emits_and_returns() {
         let b = MockBackend { output: "DOC".into() };
         let sink = RecSink::default();
         assert_eq!(b.execute("p", ".", &sink).await.expect("run"), "DOC");
-        assert_eq!(sink.events.lock().unwrap().len(), 1);
+        assert_eq!(sink.events.lock().unwrap_or_else(std::sync::PoisonError::into_inner).len(), 1);
     }
 
     #[tokio::test]
@@ -331,7 +398,10 @@ mod tests {
         let sink = RecSink::default();
         let out = b.execute("the prompt", ".", &sink).await.expect("run");
         assert_eq!(out, "## codex 设计");
-        assert_eq!(sink.events.lock().unwrap()[0].kind, "DECISION");
+        assert_eq!(
+            sink.events.lock().unwrap_or_else(std::sync::PoisonError::into_inner)[0].kind,
+            "DECISION"
+        );
     }
 
     #[tokio::test]
@@ -344,7 +414,7 @@ mod tests {
         let sink = RecSink::default();
         let out = b.execute("do it", ".", &sink).await.expect("run");
         assert_eq!(out, "完成");
-        let evs = sink.events.lock().unwrap();
+        let evs = sink.events.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         assert_eq!(evs.len(), 1);
         assert_eq!(evs[0], ExecEvent::new("FILE_CHANGE", "Edit a.rs"));
         let _ = std::fs::remove_file(&path);

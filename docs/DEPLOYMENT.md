@@ -129,7 +129,9 @@ What the compose stack wires up:
   to 200 once PG is reachable.
 - `agent-runtime` — no ports; `SHEPHERD_BASE=http://server:8088`, with `AGENT_MOCK=1`
   so it runs without real agent CLIs. Set `AGENT_MOCK=0` and mount `git`/`claude`/`codex`
-  binaries to drive real backends.
+  binaries to drive real backends. Auth is API-key only: issue a key after the first
+  server boot (web 个人中心 → API KEY, or `POST /system/apikey`), set `SHEPHERD_AGENT_KEY`
+  in `deploy/docker/.env`, then start/restart the `agent-runtime` service.
 - `web` — nginx on `8080:80`, reverse-proxying to `server`.
 
 Tear down (add `-v` to drop the database volume):
@@ -149,7 +151,8 @@ setup, registering real agent backends) see [USAGE.md](./USAGE.md).
 The chart lives in [`deploy/helm/shepherd/`](../deploy/helm/shepherd/) (`apiVersion: v2`,
 `appVersion: 0.0.1`). It renders Deployments + Services for server/agent-runtime/web,
 Ingress for server and web, optional HPAs and a server PodDisruptionBudget, a shared
-Secret (`DATABASE_URL`, `SHEPHERD_ADMIN_PASSWORD`, `SHEPHERD_FLEET_REDIS`, OIDC) and a
+Secret (`DATABASE_URL`, `SHEPHERD_ADMIN_PASSWORD`, `SHEPHERD_AGENT_KEY`,
+`SHEPHERD_FLEET_REDIS`, OIDC) and a
 non-secret ConfigMap (including the nginx config). Probes are wired to `/healthz`
 (liveness) and `/readyz` (readiness).
 
@@ -170,9 +173,15 @@ helm upgrade --install shepherd deploy/helm/shepherd \
   --set global.image.registry=ghcr.io/muxso \
   --set global.image.tag=v0.0.1 \
   --set config.adminPassword="$SHEPHERD_ADMIN_PASSWORD" \
+  --set config.agentKey="$SHEPHERD_AGENT_KEY" \
   --set database.url="$DATABASE_URL" \
   --set config.fleet.redisUrl="$REDIS_URL"
 ```
+
+`config.agentKey` is the static API key (`sak_…`) the agent-runtime pods authenticate
+with — the runtime has no password path and exits at startup without it. Issue it via
+`POST /system/apikey` (permissions `DELIVERY:UPDATE` + `REQUIREMENT:UPDATE`); on a fresh
+cluster, install first, issue the key, then `helm upgrade --set config.agentKey=…`.
 
 Check rollout:
 
@@ -203,6 +212,7 @@ web:
   ingress: { enabled: true, className: "", host: shepherd.example.com, tls: false }
 config:
   adminPassword: ""                             # → Secret SHEPHERD_ADMIN_PASSWORD (required)
+  agentKey: ""                                  # → Secret SHEPHERD_AGENT_KEY (required for agent-runtime)
   sessionTtlSecs: 28800
   fleet: { enabled: true, redisUrl: "" }        # SHEPHERD_FLEET_REDIS
   oidc: { feishu: {...}, wecom: {...} }
@@ -252,8 +262,9 @@ cloud LB ingress class (`alb`, `gce`) follow that controller's annotation conven
 
 Secrets are never baked into images or committed. Provide them at install time via
 `--set` (from your shell/CI environment) or with a pre-created Secret + `existingSecret`
-pattern. `config.adminPassword` and `database.url` are **required** in production and
-land in the chart's Secret as `SHEPHERD_ADMIN_PASSWORD` and `DATABASE_URL`. Prefer a
+pattern. `config.adminPassword`, `config.agentKey` and `database.url` are **required**
+in production and land in the chart's Secret as `SHEPHERD_ADMIN_PASSWORD`,
+`SHEPHERD_AGENT_KEY` and `DATABASE_URL`. Prefer a
 secrets manager (External Secrets Operator, SealedSecrets, cloud secret stores) over
 plaintext `--set` in real deployments.
 
@@ -369,7 +380,8 @@ the matching environment):
 
 | Secret | Purpose |
 |--------|---------|
-| `SHEPHERD_ADMIN_PASSWORD` | Admin login + agent-runtime auth |
+| `SHEPHERD_ADMIN_PASSWORD` | Admin account bootstrap + web login |
+| `SHEPHERD_AGENT_KEY` | Static API key (`sak_…`) — the only agent-runtime credential |
 | `DATABASE_URL` | `postgres://…` connection string |
 | `REDIS_URL` | Fleet Redis URL |
 
@@ -441,7 +453,7 @@ backup; losing it re-queues in-flight work rather than losing committed data.
 ```bash
 curl -fsS https://shepherd.example.com/healthz
 curl -fsS https://shepherd.example.com/readyz
-curl -fsS -u admin:$SHEPHERD_ADMIN_PASSWORD https://shepherd.example.com/agent/work/stats
+curl -fsS -H "Authorization: Bearer $SHEPHERD_AGENT_KEY" https://shepherd.example.com/agent/work/stats
 ```
 
 ### Scaling the fleet
@@ -471,11 +483,13 @@ runtime is outbound-only, adding replicas needs no ingress/networking changes.
 ```bash
 helm upgrade shepherd deploy/helm/shepherd -n shepherd --reuse-values \
   --set config.adminPassword="$NEW_PASSWORD"
-kubectl -n shepherd rollout restart deploy/shepherd-server deploy/shepherd-agent-runtime
+kubectl -n shepherd rollout restart deploy/shepherd-server
 ```
 
-Rotate the agent-runtime alongside the server so both sides share the new credential
-(the runtime authenticates with `SHEPHERD_ADMIN_USER` / `SHEPHERD_ADMIN_PASSWORD`).
+The admin password only affects the server (admin account + web login). To rotate the
+runtime credential, issue a new API key via `POST /system/apikey`, then
+`helm upgrade --reuse-values --set config.agentKey="$NEW_KEY"` and restart
+`deploy/shepherd-agent-runtime`; revoke the old key once the rollout completes.
 Rotate `DATABASE_URL` / `SHEPHERD_FLEET_REDIS` the same way. With a secrets manager,
 update the backing secret and restart the deployments.
 

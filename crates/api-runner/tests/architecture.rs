@@ -1,5 +1,5 @@
-//! `reqwest` 在 `[dependencies]` 里无条件引入,编译期 feature 屏障对它不成立 —— domain
-//! 层不碰 IO 的保证全靠这道源码扫描兜底。
+//! Source-scan backstop for the IO-free domain layer: `reqwest` is an unconditional
+//! `[dependencies]` entry, so the compile-time feature barrier does not cover it.
 use std::fs;
 use std::path::Path;
 

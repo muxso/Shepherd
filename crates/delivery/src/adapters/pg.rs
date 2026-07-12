@@ -5,7 +5,10 @@ use crate::domain::{
     AttemptStatus, Deliverable, DeliverableKind, DeliveryAttempt, EventKind, ExecutionEvent,
     ExecutorKind, NewExecutionEvent,
 };
-use crate::ports::{DeliveryRepository, RepoError, TaskListFilter, TaskPage, TaskRow};
+use crate::ports::{
+    CollabDay, CollabRequirementRow, CollabStats, DeliveryRepository, RepoError, TaskListFilter,
+    TaskPage, TaskRow,
+};
 
 #[derive(Clone)]
 pub struct PgDeliveryRepository {
@@ -22,7 +25,7 @@ fn map_err(e: sqlx::Error) -> RepoError {
     RepoError::Backend(e.to_string())
 }
 
-const COLS: &str = "id, decomposition_id, task_id, executor, status, run_id, \
+const COLS: &str = "id, decomposition_id, task_id, executor, target_runtime, status, run_id, \
                     deliverable_kind, deliverable_reference, deliverable_summary, error";
 
 fn row_to_attempt(row: &sqlx::postgres::PgRow) -> Result<DeliveryAttempt, RepoError> {
@@ -44,6 +47,7 @@ fn row_to_attempt(row: &sqlx::postgres::PgRow) -> Result<DeliveryAttempt, RepoEr
         decomposition_id: row.try_get("decomposition_id").map_err(map_err)?,
         task_id: row.try_get("task_id").map_err(map_err)?,
         executor: ExecutorKind::parse(&executor_s).unwrap_or(ExecutorKind::ClaudeCode),
+        target_runtime: row.try_get("target_runtime").map_err(map_err)?,
         status: AttemptStatus::parse(&status_s).unwrap_or(AttemptStatus::Dispatched),
         run_id: row.try_get("run_id").map_err(map_err)?,
         deliverable,
@@ -58,20 +62,22 @@ impl DeliveryRepository for PgDeliveryRepository {
         decomposition_id: &str,
         task_id: &str,
         executor: ExecutorKind,
+        target_runtime: Option<&str>,
     ) -> Result<DeliveryAttempt, RepoError> {
         let id: String = sqlx::query(
-            "INSERT INTO ms_delivery_attempt (decomposition_id, task_id, executor, status) \
-             VALUES ($1, $2, $3, 'DISPATCHED') RETURNING id",
+            "INSERT INTO ms_delivery_attempt (decomposition_id, task_id, executor, target_runtime, status) \
+             VALUES ($1, $2, $3, $4, 'DISPATCHED') RETURNING id",
         )
         .bind(decomposition_id)
         .bind(task_id)
         .bind(executor.as_str())
+        .bind(target_runtime)
         .fetch_one(&self.pool)
         .await
         .map_err(map_err)?
         .try_get("id")
         .map_err(map_err)?;
-        Ok(DeliveryAttempt::dispatched(&id, decomposition_id, task_id, executor))
+        Ok(DeliveryAttempt::dispatched(&id, decomposition_id, task_id, executor, target_runtime))
     }
 
     async fn get(&self, id: &str) -> Result<Option<DeliveryAttempt>, RepoError> {
@@ -211,7 +217,7 @@ impl DeliveryRepository for PgDeliveryRepository {
             .map_err(map_err)?;
 
         let mut pq = QueryBuilder::<sqlx::Postgres>::new(
-            "SELECT a.id, a.decomposition_id, a.task_id, a.executor, a.status, a.run_id, \
+            "SELECT a.id, a.decomposition_id, a.task_id, a.executor, a.target_runtime, a.status, a.run_id, \
              a.deliverable_kind, a.deliverable_reference, a.deliverable_summary, a.error, \
              a.created_at, t.title AS task_title, t.description AS task_description, \
              r.title AS module_title, \
@@ -243,6 +249,110 @@ impl DeliveryRepository for PgDeliveryRepository {
         Ok(TaskPage { items, total })
     }
 
+    // Human/AI collaboration stats: VERIFIED tasks split into AI/human by whether a
+    // DELIVERED delivery record exists; aggregated per requirement (counts, points,
+    // plus delivery quality: attempt success rate / first-pass). With requirement_id,
+    // scope to that requirement only.
+    async fn collab_stats(
+        &self,
+        project_id: &str,
+        requirement_id: Option<&str>,
+    ) -> Result<CollabStats, RepoError> {
+        // attempt_cnt feeds the first-pass check; attempt-level quality metrics are
+        // aggregated separately and LEFT JOINed in.
+        const VERIFIED_SPLIT: &str = "SELECT t.points, t.verified_at, dc.requirement_id, \
+                (SELECT count(*) FROM ms_delivery_attempt a \
+                 WHERE a.decomposition_id = t.decomposition_id AND a.task_id = t.id) AS attempt_cnt, \
+                EXISTS(SELECT 1 FROM ms_delivery_attempt a \
+                       WHERE a.decomposition_id = t.decomposition_id AND a.task_id = t.id \
+                         AND a.status = 'DELIVERED') AS ai \
+             FROM ms_task t \
+             JOIN ms_task_decomposition dc ON dc.id = t.decomposition_id \
+             WHERE t.status = 'VERIFIED'";
+        // Attempt level (not limited to verified tasks): total/succeeded/failed
+        // delivery attempts per requirement.
+        const ATTEMPT_AGG: &str = "SELECT dc.requirement_id, \
+                count(*) AS ai_attempts, \
+                count(*) FILTER (WHERE a.status = 'DELIVERED') AS ai_delivered, \
+                count(*) FILTER (WHERE a.status = 'FAILED') AS ai_failed \
+             FROM ms_delivery_attempt a \
+             JOIN ms_task_decomposition dc ON dc.id = a.decomposition_id \
+             GROUP BY dc.requirement_id";
+        // requirement_id filter: empty string in $2 = no filter (avoids dynamic SQL).
+        let req_filter = requirement_id.unwrap_or("");
+
+        let rows = sqlx::query(&format!(
+            "SELECT r.id, r.title, \
+                count(x.requirement_id) FILTER (WHERE x.ai) AS ai_tasks, \
+                count(x.requirement_id) FILTER (WHERE NOT x.ai) AS human_tasks, \
+                COALESCE(sum(x.points) FILTER (WHERE x.ai), 0)::BIGINT AS ai_points, \
+                COALESCE(sum(x.points) FILTER (WHERE NOT x.ai), 0)::BIGINT AS human_points, \
+                count(x.requirement_id) FILTER (WHERE x.ai AND x.attempt_cnt = 1) AS ai_first_pass, \
+                COALESCE(max(att.ai_attempts), 0) AS ai_attempts, \
+                COALESCE(max(att.ai_delivered), 0) AS ai_delivered, \
+                COALESCE(max(att.ai_failed), 0) AS ai_failed \
+             FROM ms_requirement r \
+             LEFT JOIN ({VERIFIED_SPLIT}) x ON x.requirement_id = r.id \
+             LEFT JOIN ({ATTEMPT_AGG}) att ON att.requirement_id = r.id \
+             WHERE r.project_id = $1 AND ($2 = '' OR r.id = $2) \
+             GROUP BY r.id, r.title \
+             HAVING count(x.requirement_id) > 0 OR COALESCE(max(att.ai_attempts), 0) > 0 \
+             ORDER BY count(x.requirement_id) DESC, r.id"
+        ))
+        .bind(project_id)
+        .bind(req_filter)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(map_err)?;
+        let items = rows
+            .iter()
+            .map(|r| {
+                Ok(CollabRequirementRow {
+                    requirement_id: r.try_get("id").map_err(map_err)?,
+                    title: r.try_get("title").map_err(map_err)?,
+                    ai_tasks: r.try_get("ai_tasks").map_err(map_err)?,
+                    human_tasks: r.try_get("human_tasks").map_err(map_err)?,
+                    ai_points: r.try_get("ai_points").map_err(map_err)?,
+                    human_points: r.try_get("human_points").map_err(map_err)?,
+                    ai_attempts: r.try_get("ai_attempts").map_err(map_err)?,
+                    ai_delivered: r.try_get("ai_delivered").map_err(map_err)?,
+                    ai_failed: r.try_get("ai_failed").map_err(map_err)?,
+                    ai_first_pass: r.try_get("ai_first_pass").map_err(map_err)?,
+                })
+            })
+            .collect::<Result<Vec<_>, RepoError>>()?;
+
+        // Daily aggregation over the past year (GitHub contribution grid); returned
+        // sparse, the frontend fills in missing calendar cells.
+        let rows = sqlx::query(&format!(
+            "SELECT to_char(date_trunc('day', x.verified_at), 'YYYY-MM-DD') AS d, \
+                count(*) FILTER (WHERE x.ai) AS ai, \
+                count(*) FILTER (WHERE NOT x.ai) AS human \
+             FROM ({VERIFIED_SPLIT}) x \
+             JOIN ms_requirement r ON r.id = x.requirement_id \
+             WHERE r.project_id = $1 AND ($2 = '' OR r.id = $2) \
+               AND x.verified_at >= now() - interval '370 days' \
+             GROUP BY d ORDER BY d"
+        ))
+        .bind(project_id)
+        .bind(req_filter)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(map_err)?;
+        let daily = rows
+            .iter()
+            .map(|r| {
+                Ok(CollabDay {
+                    date: r.try_get("d").map_err(map_err)?,
+                    ai: r.try_get("ai").map_err(map_err)?,
+                    human: r.try_get("human").map_err(map_err)?,
+                })
+            })
+            .collect::<Result<Vec<_>, RepoError>>()?;
+
+        Ok(CollabStats { items, daily })
+    }
+
     async fn delete(&self, id: &str) -> Result<bool, RepoError> {
         let res = sqlx::query("DELETE FROM ms_delivery_attempt WHERE id = $1")
             .bind(id)
@@ -267,7 +377,7 @@ mod tests {
         sqlx::query("TRUNCATE ms_delivery_attempt").execute(&pool).await.expect("truncate");
 
         let repo = PgDeliveryRepository::new(pool.clone());
-        let mut a = repo.create("d1", "t1", ExecutorKind::ClaudeCode).await.expect("create");
+        let mut a = repo.create("d1", "t1", ExecutorKind::ClaudeCode, None).await.expect("create");
         a.start_running("run-9").expect("run");
         a.deliver(Deliverable {
             kind: DeliverableKind::PullRequest,
@@ -302,8 +412,8 @@ mod tests {
             .execute(&pool).await.expect("task");
 
         let repo = PgDeliveryRepository::new(pool.clone());
-        repo.create("d1", "t1", ExecutorKind::ClaudeCode).await.expect("create");
-        repo.create("d9", "t9", ExecutorKind::Codex).await.expect("create2");
+        repo.create("d1", "t1", ExecutorKind::ClaudeCode, None).await.expect("create");
+        repo.create("d9", "t9", ExecutorKind::Codex, None).await.expect("create2");
 
         let page = repo
             .list_tasks(&TaskListFilter { limit: 10, ..Default::default() })

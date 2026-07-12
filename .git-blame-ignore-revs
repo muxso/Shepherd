@@ -1,0 +1,2 @@
+# 全量 rustfmt 提交,git blame 时跳过(git config blame.ignoreRevsFile .git-blame-ignore-revs)
+fbe935e88648536a0bb5c791283c16c495fbbf11

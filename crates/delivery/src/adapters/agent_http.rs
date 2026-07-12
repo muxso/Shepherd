@@ -101,8 +101,9 @@ impl AgentExecutor for HttpAgentExecutor {
 
         match body.status.as_str() {
             "accepted" => {
-                let run_id =
-                    body.run_id.ok_or_else(|| ExecError::Backend("accepted missing runId".into()))?;
+                let run_id = body
+                    .run_id
+                    .ok_or_else(|| ExecError::Backend("accepted missing runId".into()))?;
                 Ok(DispatchOutcome::Accepted { run_id })
             }
             "completed" => {
@@ -134,7 +135,10 @@ mod tests {
     #[async_trait]
     impl EventSink for RecordingSink {
         async fn emit(&self, e: NewExecutionEvent) {
-            self.kinds.lock().unwrap().push(e.kind.as_str().to_string());
+            self.kinds
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .push(e.kind.as_str().to_string());
         }
     }
 
@@ -149,6 +153,7 @@ mod tests {
             executor: ExecutorKind::Codex,
             context: None,
             instructions: None,
+            target_runtime: None,
         }
     }
 
@@ -168,7 +173,8 @@ mod tests {
             post(|| async { Json(serde_json::json!({"status":"accepted","runId":"run-x"})) }),
         );
         let url = serve(app).await;
-        match HttpAgentExecutor::new(url).dispatch(&spec(), &NoopEventSink).await.expect("dispatch") {
+        match HttpAgentExecutor::new(url).dispatch(&spec(), &NoopEventSink).await.expect("dispatch")
+        {
             DispatchOutcome::Accepted { run_id } => assert_eq!(run_id, "run-x"),
             other => panic!("expected Accepted, got {other:?}"),
         }
@@ -186,7 +192,8 @@ mod tests {
             }),
         );
         let url = serve(app).await;
-        match HttpAgentExecutor::new(url).dispatch(&spec(), &NoopEventSink).await.expect("dispatch") {
+        match HttpAgentExecutor::new(url).dispatch(&spec(), &NoopEventSink).await.expect("dispatch")
+        {
             DispatchOutcome::Completed { deliverable } => {
                 assert_eq!(deliverable.kind, DeliverableKind::PullRequest);
                 assert_eq!(deliverable.reference, "pr/9");
@@ -214,7 +221,10 @@ mod tests {
         let sink = RecordingSink::default();
         let out = HttpAgentExecutor::new(url).dispatch(&spec(), &sink).await.expect("dispatch");
         assert!(matches!(out, DispatchOutcome::Completed { .. }));
-        assert_eq!(sink.kinds.lock().unwrap().as_slice(), &["DECISION".to_string(), "TEST_RESULT".to_string()]);
+        assert_eq!(
+            sink.kinds.lock().unwrap_or_else(std::sync::PoisonError::into_inner).as_slice(),
+            &["DECISION".to_string(), "TEST_RESULT".to_string()]
+        );
     }
 
     #[tokio::test]

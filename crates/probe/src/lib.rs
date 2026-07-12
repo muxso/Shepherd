@@ -1,3 +1,9 @@
+//! Multi-protocol probing: a ProbeRequest runs through a ProtocolPlugin to a
+//! RawProbe, which is evaluated against ProbeAssertions into a ProbeOutcome.
+//! Built-in http/grpc/sql/mysql/redis/websocket/ssh plugins register into the
+//! PluginRegistry per feature flag (see default_registry).
+//! Domain evaluation is pure computation; all protocol IO lives in the plugins.
+
 pub mod domain;
 pub mod plugins;
 pub mod ports;

@@ -28,10 +28,8 @@ impl ListProjectCasesUseCase {
         page: PageRequest,
     ) -> Result<Page<ApiCase>, ListProjectCasesError> {
         let total = self.repo.count_cases_by_project(project_id).await?;
-        let items = self
-            .repo
-            .list_cases_by_project(project_id, page.offset(), page.page_size())
-            .await?;
+        let items =
+            self.repo.list_cases_by_project(project_id, page.offset(), page.page_size()).await?;
         Ok(Page::of(page, total, items))
     }
 }
@@ -48,12 +46,30 @@ mod tests {
         let create = CreateApiCaseUseCase::new(repo.clone());
         for i in 0..5 {
             create
-                .execute("p1", None, &format!("c{i}"), "GET", "/x", None, serde_json::json!([]), serde_json::json!([]))
+                .execute(
+                    "p1",
+                    None,
+                    &format!("c{i}"),
+                    "GET",
+                    "/x",
+                    None,
+                    serde_json::json!([]),
+                    serde_json::json!([]),
+                )
                 .await
                 .expect("ok");
         }
         create
-            .execute("p2", None, "other", "GET", "/x", None, serde_json::json!([]), serde_json::json!([]))
+            .execute(
+                "p2",
+                None,
+                "other",
+                "GET",
+                "/x",
+                None,
+                serde_json::json!([]),
+                serde_json::json!([]),
+            )
             .await
             .expect("ok");
 

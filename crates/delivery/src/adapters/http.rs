@@ -8,8 +8,8 @@ use axum::{
     Json, Router,
 };
 use serde::{Deserialize, Serialize};
-use webauth::{AuthUser, SessionStore};
 use utoipa::{IntoParams, OpenApi, ToSchema};
+use webauth::{AuthUser, SessionStore};
 
 use crate::application::{DeliveryCmdError, DeliveryService};
 use crate::domain::{AttemptStatus, DeliveryAttempt, ExecutionEvent, ExecutorKind};
@@ -30,8 +30,10 @@ impl FromRef<DelState> for Arc<dyn SessionStore> {
 pub fn router(svc: DeliveryService, sessions: Arc<dyn SessionStore>) -> Router {
     Router::new()
         .route("/delivery", post(dispatch).get(list_by_task))
-        // 静态段 /delivery/tasks 必须先于 /delivery/{id} 注册,否则被通配吞掉。
+        // Static segment /delivery/tasks must be registered before /delivery/{id},
+        // or the wildcard swallows it.
         .route("/delivery/tasks", get(list_tasks))
+        .route("/delivery/collab-stats", get(collab_stats))
         .route("/delivery/{id}", get(get_attempt).delete(delete_attempt))
         .route("/delivery/{id}/running", post(report_running))
         .route("/delivery/{id}/complete", post(complete))
@@ -56,6 +58,9 @@ struct DispatchBody {
     context: Option<String>,
     #[serde(default)]
     instructions: Option<String>,
+    /// Target a registered runtime by name; unset = any runtime with the capability.
+    #[serde(default)]
+    target_runtime: Option<String>,
 }
 
 #[derive(Deserialize, IntoParams)]
@@ -127,6 +132,7 @@ struct AttemptResponse {
     decomposition_id: String,
     task_id: String,
     executor: String,
+    target_runtime: Option<String>,
     status: String,
     run_id: Option<String>,
     deliverable: Option<DeliverableResponse>,
@@ -140,6 +146,7 @@ impl From<&DeliveryAttempt> for AttemptResponse {
             decomposition_id: a.decomposition_id.clone(),
             task_id: a.task_id.clone(),
             executor: a.executor.as_str().to_string(),
+            target_runtime: a.target_runtime.clone(),
             status: a.status.as_str().to_string(),
             run_id: a.run_id.clone(),
             deliverable: a.deliverable.as_ref().map(|d| DeliverableResponse {
@@ -174,6 +181,7 @@ struct TaskItemResponse {
     description: String,
     module: String,
     executor: String,
+    target_runtime: Option<String>,
     status: String,
     result: String,
     completion_rate: i32,
@@ -193,12 +201,10 @@ impl From<&TaskRow> for TaskItemResponse {
             AttemptStatus::Failed => ("FAILED", 100),
             AttemptStatus::Stopped => ("STOPPED", 100),
         };
-        let title = r
-            .title
-            .clone()
-            .filter(|t| !t.trim().is_empty())
-            .unwrap_or_else(|| a.task_id.clone());
-        let trimmed = |s: &Option<String>| s.clone().filter(|v| !v.trim().is_empty()).unwrap_or_default();
+        let title =
+            r.title.clone().filter(|t| !t.trim().is_empty()).unwrap_or_else(|| a.task_id.clone());
+        let trimmed =
+            |s: &Option<String>| s.clone().filter(|v| !v.trim().is_empty()).unwrap_or_default();
         Self {
             id: a.id.clone(),
             decomposition_id: a.decomposition_id.clone(),
@@ -207,6 +213,7 @@ impl From<&TaskRow> for TaskItemResponse {
             description: trimmed(&r.description),
             module: trimmed(&r.module),
             executor: a.executor.as_str().to_string(),
+            target_runtime: a.target_runtime.clone(),
             status: a.status.as_str().to_string(),
             result: result.to_string(),
             completion_rate,
@@ -239,13 +246,21 @@ fn cmd_err(e: DeliveryCmdError) -> Response {
     match e {
         DeliveryCmdError::NotFound => (StatusCode::NOT_FOUND, "attempt not found").into_response(),
         DeliveryCmdError::Validation(m) => (StatusCode::BAD_REQUEST, m).into_response(),
-        DeliveryCmdError::Conflict(_) => (StatusCode::CONFLICT, "attempt state conflict").into_response(),
-        DeliveryCmdError::Repo(_) => (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
+        DeliveryCmdError::Conflict(_) => {
+            (StatusCode::CONFLICT, "attempt state conflict").into_response()
+        }
+        DeliveryCmdError::Repo(_) => {
+            (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response()
+        }
     }
 }
 
 #[utoipa::path(post, path = "/delivery", tag = "delivery", request_body = DispatchBody, responses((status = 201, body = AttemptResponse)), security(("bearer" = [])))]
-async fn dispatch(user: AuthUser, State(st): State<DelState>, Json(b): Json<DispatchBody>) -> Response {
+async fn dispatch(
+    user: AuthUser,
+    State(st): State<DelState>,
+    Json(b): Json<DispatchBody>,
+) -> Response {
     if !user.can("DELIVERY", "EXECUTE") {
         return (StatusCode::FORBIDDEN, "permission denied").into_response();
     }
@@ -260,6 +275,7 @@ async fn dispatch(user: AuthUser, State(st): State<DelState>, Json(b): Json<Disp
             &b.executor,
             b.context,
             b.instructions,
+            b.target_runtime,
         )
         .await
     {
@@ -268,8 +284,15 @@ async fn dispatch(user: AuthUser, State(st): State<DelState>, Json(b): Json<Disp
     }
 }
 
-#[utoipa::path(get, path = "/delivery", tag = "delivery", params(ListQuery), responses((status = 200, body = [AttemptResponse])))]
-async fn list_by_task(State(st): State<DelState>, Query(q): Query<ListQuery>) -> Response {
+#[utoipa::path(get, path = "/delivery", tag = "delivery", params(ListQuery), responses((status = 200, body = [AttemptResponse])), security(("bearer" = [])))]
+async fn list_by_task(
+    user: AuthUser,
+    State(st): State<DelState>,
+    Query(q): Query<ListQuery>,
+) -> Response {
+    if !user.can("DELIVERY", "READ") {
+        return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
     match st.svc.list_by_task(&q.decomposition_id, &q.task_id).await {
         Ok(list) => {
             let body: Vec<AttemptResponse> = list.iter().map(AttemptResponse::from).collect();
@@ -279,8 +302,15 @@ async fn list_by_task(State(st): State<DelState>, Query(q): Query<ListQuery>) ->
     }
 }
 
-#[utoipa::path(get, path = "/delivery/{id}", tag = "delivery", params(("id" = String, Path)), responses((status = 200, body = AttemptResponse), (status = 404)))]
-async fn get_attempt(State(st): State<DelState>, Path(id): Path<String>) -> Response {
+#[utoipa::path(get, path = "/delivery/{id}", tag = "delivery", params(("id" = String, Path)), responses((status = 200, body = AttemptResponse), (status = 404)), security(("bearer" = [])))]
+async fn get_attempt(
+    user: AuthUser,
+    State(st): State<DelState>,
+    Path(id): Path<String>,
+) -> Response {
+    if !user.can("DELIVERY", "READ") {
+        return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
     match st.svc.get(&id).await {
         Ok(a) => (StatusCode::OK, Json(AttemptResponse::from(&a))).into_response(),
         Err(e) => cmd_err(e),
@@ -351,8 +381,15 @@ async fn record_event(
     }
 }
 
-#[utoipa::path(get, path = "/delivery/{id}/events", tag = "delivery", params(("id" = String, Path)), responses((status = 200, body = [EventResponse])))]
-async fn list_events(State(st): State<DelState>, Path(id): Path<String>) -> Response {
+#[utoipa::path(get, path = "/delivery/{id}/events", tag = "delivery", params(("id" = String, Path)), responses((status = 200, body = [EventResponse])), security(("bearer" = [])))]
+async fn list_events(
+    user: AuthUser,
+    State(st): State<DelState>,
+    Path(id): Path<String>,
+) -> Response {
+    if !user.can("DELIVERY", "READ") {
+        return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
     match st.svc.events(&id).await {
         Ok(list) => {
             let body: Vec<EventResponse> = list.iter().map(EventResponse::from).collect();
@@ -364,9 +401,16 @@ async fn list_events(State(st): State<DelState>, Path(id): Path<String>) -> Resp
 
 #[utoipa::path(
     get, path = "/delivery/tasks", tag = "delivery", params(TaskQuery),
-    responses((status = 200, body = TaskPageResponse))
+    responses((status = 200, body = TaskPageResponse)), security(("bearer" = []))
 )]
-async fn list_tasks(State(st): State<DelState>, Query(q): Query<TaskQuery>) -> Response {
+async fn list_tasks(
+    user: AuthUser,
+    State(st): State<DelState>,
+    Query(q): Query<TaskQuery>,
+) -> Response {
+    if !user.can("DELIVERY", "READ") {
+        return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
     let page = q.page.unwrap_or(1).max(1);
     let page_size = q.page_size.unwrap_or(20).clamp(1, 200);
     let filter = TaskListFilter {
@@ -386,6 +430,90 @@ async fn list_tasks(State(st): State<DelState>, Query(q): Query<TaskQuery>) -> R
                 page_size,
                 total_pages,
                 items: p.items.iter().map(TaskItemResponse::from).collect(),
+            };
+            (StatusCode::OK, Json(body)).into_response()
+        }
+        Err(e) => cmd_err(e),
+    }
+}
+
+#[derive(Deserialize, IntoParams)]
+#[serde(rename_all = "camelCase")]
+struct CollabQuery {
+    project_id: String,
+    /// When set, restrict stats to this requirement (requirement-detail view).
+    #[serde(default)]
+    requirement_id: Option<String>,
+}
+
+#[derive(Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+struct CollabRequirementItem {
+    requirement_id: String,
+    title: String,
+    ai_tasks: i64,
+    human_tasks: i64,
+    ai_points: i64,
+    human_points: i64,
+    ai_attempts: i64,
+    ai_delivered: i64,
+    ai_failed: i64,
+    ai_first_pass: i64,
+}
+
+#[derive(Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+struct CollabDayItem {
+    date: String,
+    ai: i64,
+    human: i64,
+}
+
+#[derive(Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+struct CollabStatsResponse {
+    items: Vec<CollabRequirementItem>,
+    daily: Vec<CollabDayItem>,
+}
+
+// Human/AI collaboration stats: a task counts as AI when it is VERIFIED and has a
+// DELIVERED delivery record, otherwise as human.
+#[utoipa::path(
+    get, path = "/delivery/collab-stats", tag = "delivery", params(CollabQuery),
+    responses((status = 200, body = CollabStatsResponse), (status = 403)), security(("bearer" = []))
+)]
+async fn collab_stats(
+    user: AuthUser,
+    State(st): State<DelState>,
+    Query(q): Query<CollabQuery>,
+) -> Response {
+    if !user.can("DELIVERY", "READ") {
+        return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
+    match st.svc.collab_stats(&q.project_id, q.requirement_id.as_deref()).await {
+        Ok(cs) => {
+            let body = CollabStatsResponse {
+                items: cs
+                    .items
+                    .into_iter()
+                    .map(|r| CollabRequirementItem {
+                        requirement_id: r.requirement_id,
+                        title: r.title,
+                        ai_tasks: r.ai_tasks,
+                        human_tasks: r.human_tasks,
+                        ai_points: r.ai_points,
+                        human_points: r.human_points,
+                        ai_attempts: r.ai_attempts,
+                        ai_delivered: r.ai_delivered,
+                        ai_failed: r.ai_failed,
+                        ai_first_pass: r.ai_first_pass,
+                    })
+                    .collect(),
+                daily: cs
+                    .daily
+                    .into_iter()
+                    .map(|d| CollabDayItem { date: d.date, ai: d.ai, human: d.human })
+                    .collect(),
             };
             (StatusCode::OK, Json(body)).into_response()
         }
@@ -417,7 +545,11 @@ async fn stop(
     delete, path = "/delivery/{id}", tag = "delivery", params(("id" = String, Path)),
     responses((status = 204), (status = 404), (status = 409)), security(("bearer" = []))
 )]
-async fn delete_attempt(user: AuthUser, State(st): State<DelState>, Path(id): Path<String>) -> Response {
+async fn delete_attempt(
+    user: AuthUser,
+    State(st): State<DelState>,
+    Path(id): Path<String>,
+) -> Response {
     if !user.can("DELIVERY", "UPDATE") {
         return (StatusCode::FORBIDDEN, "permission denied").into_response();
     }
@@ -429,20 +561,22 @@ async fn delete_attempt(user: AuthUser, State(st): State<DelState>, Path(id): Pa
 
 #[derive(OpenApi)]
 #[openapi(
-    paths(dispatch, list_by_task, get_attempt, report_running, complete, fail, record_event, list_events, list_tasks, stop, delete_attempt),
-    components(schemas(DispatchBody, RunningBody, CompleteBody, FailBody, EventBody, EventResponse, DeliverableResponse, AttemptResponse, TaskItemResponse, TaskPageResponse, StopBody)),
+    paths(dispatch, list_by_task, get_attempt, report_running, complete, fail, record_event, list_events, list_tasks, collab_stats, stop, delete_attempt),
+    components(schemas(DispatchBody, RunningBody, CompleteBody, FailBody, EventBody, EventResponse, DeliverableResponse, AttemptResponse, TaskItemResponse, TaskPageResponse, CollabRequirementItem, CollabDayItem, CollabStatsResponse, StopBody)),
     tags((name = "delivery", description = "交付执行(AI 执行者)"))
 )]
 struct ApiDoc;
-pub fn openapi() -> utoipa::openapi::OpenApi { ApiDoc::openapi() }
+pub fn openapi() -> utoipa::openapi::OpenApi {
+    ApiDoc::openapi()
+}
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use axum::body::Body;
-    use axum::http::Request;
     use crate::adapters::{InMemoryDeliveryRepository, StubAgentExecutor, StubBehavior};
     use crate::domain::{Deliverable, DeliverableKind};
+    use axum::body::Body;
+    use axum::http::Request;
     use kernel::permission::PermissionSet;
     use tower::ServiceExt;
     use webauth::testing::InMemorySessionStore;
@@ -459,7 +593,8 @@ mod tests {
     }
 
     fn req(method: &str, uri: &str, body: &str, token: Option<&str>) -> Request<Body> {
-        let mut b = Request::builder().method(method).uri(uri).header("content-type", "application/json");
+        let mut b =
+            Request::builder().method(method).uri(uri).header("content-type", "application/json");
         if let Some(t) = token {
             b = b.header("authorization", format!("Bearer {t}"));
         }
@@ -473,7 +608,11 @@ mod tests {
 
     #[tokio::test]
     async fn async_dispatch_then_callback_complete() {
-        let (app, t) = app_with("DELIVERY:READ+EXECUTE+UPDATE", StubBehavior::Accept { run_id: "run-3".into() }).await;
+        let (app, t) = app_with(
+            "DELIVERY:READ+EXECUTE+UPDATE",
+            StubBehavior::Accept { run_id: "run-3".into() },
+        )
+        .await;
         let r = app
             .clone()
             .oneshot(req("POST", "/delivery", r#"{"decompositionId":"d1","taskId":"t1","title":"build","executor":"CLAUDE_CODE"}"#, Some(&t)))
@@ -487,23 +626,41 @@ mod tests {
 
         let c = app
             .clone()
-            .oneshot(req("POST", &format!("/delivery/{id}/complete"), r#"{"kind":"PULL_REQUEST","reference":"pr/7","summary":"ok"}"#, Some(&t)))
+            .oneshot(req(
+                "POST",
+                &format!("/delivery/{id}/complete"),
+                r#"{"kind":"PULL_REQUEST","reference":"pr/7","summary":"ok"}"#,
+                Some(&t),
+            ))
             .await
             .expect("r");
         assert_eq!(c.status(), StatusCode::OK);
         assert_eq!(json(c).await["status"], "DELIVERED");
 
-        let l = app.oneshot(req("GET", "/delivery?decompositionId=d1&taskId=t1", "", Some(&t))).await.expect("r");
+        let l = app
+            .oneshot(req("GET", "/delivery?decompositionId=d1&taskId=t1", "", Some(&t)))
+            .await
+            .expect("r");
         assert_eq!(l.status(), StatusCode::OK);
         assert_eq!(json(l).await.as_array().expect("arr").len(), 1);
     }
 
     #[tokio::test]
     async fn sync_dispatch_delivers_immediately() {
-        let deliverable = Deliverable { kind: DeliverableKind::Diff, reference: "branch:x".into(), summary: "done".into() };
-        let (app, t) = app_with("DELIVERY:READ+EXECUTE+UPDATE", StubBehavior::Complete { deliverable }).await;
+        let deliverable = Deliverable {
+            kind: DeliverableKind::Diff,
+            reference: "branch:x".into(),
+            summary: "done".into(),
+        };
+        let (app, t) =
+            app_with("DELIVERY:READ+EXECUTE+UPDATE", StubBehavior::Complete { deliverable }).await;
         let r = app
-            .oneshot(req("POST", "/delivery", r#"{"decompositionId":"d1","taskId":"t1","title":"build","executor":"CODEX"}"#, Some(&t)))
+            .oneshot(req(
+                "POST",
+                "/delivery",
+                r#"{"decompositionId":"d1","taskId":"t1","title":"build","executor":"CODEX"}"#,
+                Some(&t),
+            ))
             .await
             .expect("r");
         assert_eq!(r.status(), StatusCode::CREATED);
@@ -514,45 +671,94 @@ mod tests {
 
     #[tokio::test]
     async fn rbac_dispatch_requires_execute() {
-        let (app, _t) = app_with("DELIVERY:READ", StubBehavior::Accept { run_id: "r".into() }).await;
+        let (app, _t) =
+            app_with("DELIVERY:READ", StubBehavior::Accept { run_id: "r".into() }).await;
         assert_eq!(
-            app.oneshot(req("POST", "/delivery", r#"{"decompositionId":"d1","taskId":"t1","title":"x","executor":"CODEX"}"#, None)).await.expect("r").status(),
+            app.oneshot(req(
+                "POST",
+                "/delivery",
+                r#"{"decompositionId":"d1","taskId":"t1","title":"x","executor":"CODEX"}"#,
+                None
+            ))
+            .await
+            .expect("r")
+            .status(),
             StatusCode::UNAUTHORIZED
         );
         let (app, t) = app_with("DELIVERY:READ", StubBehavior::Accept { run_id: "r".into() }).await;
         assert_eq!(
-            app.oneshot(req("POST", "/delivery", r#"{"decompositionId":"d1","taskId":"t1","title":"x","executor":"CODEX"}"#, Some(&t))).await.expect("r").status(),
+            app.oneshot(req(
+                "POST",
+                "/delivery",
+                r#"{"decompositionId":"d1","taskId":"t1","title":"x","executor":"CODEX"}"#,
+                Some(&t)
+            ))
+            .await
+            .expect("r")
+            .status(),
             StatusCode::FORBIDDEN
         );
     }
 
     #[tokio::test]
     async fn record_and_list_execution_events() {
-        let (app, t) = app_with("DELIVERY:READ+EXECUTE+UPDATE", StubBehavior::Accept { run_id: "r".into() }).await;
+        let (app, t) =
+            app_with("DELIVERY:READ+EXECUTE+UPDATE", StubBehavior::Accept { run_id: "r".into() })
+                .await;
         let r = app
             .clone()
-            .oneshot(req("POST", "/delivery", r#"{"decompositionId":"d1","taskId":"t1","title":"x","executor":"CLAUDE_CODE"}"#, Some(&t)))
+            .oneshot(req(
+                "POST",
+                "/delivery",
+                r#"{"decompositionId":"d1","taskId":"t1","title":"x","executor":"CLAUDE_CODE"}"#,
+                Some(&t),
+            ))
             .await
             .expect("r");
         let id = json(r).await["id"].as_str().expect("id").to_string();
 
         let e = app
             .clone()
-            .oneshot(req("POST", &format!("/delivery/{id}/events"), r#"{"kind":"DECISION","message":"选用 argon2","detail":"PHC"}"#, Some(&t)))
+            .oneshot(req(
+                "POST",
+                &format!("/delivery/{id}/events"),
+                r#"{"kind":"DECISION","message":"选用 argon2","detail":"PHC"}"#,
+                Some(&t),
+            ))
             .await
             .expect("r");
         assert_eq!(e.status(), StatusCode::CREATED);
         assert_eq!(json(e).await["kind"], "DECISION");
-        app.clone().oneshot(req("POST", &format!("/delivery/{id}/events"), r#"{"kind":"FILE_CHANGE","message":"edit auth.rs"}"#, Some(&t))).await.expect("r");
+        app.clone()
+            .oneshot(req(
+                "POST",
+                &format!("/delivery/{id}/events"),
+                r#"{"kind":"FILE_CHANGE","message":"edit auth.rs"}"#,
+                Some(&t),
+            ))
+            .await
+            .expect("r");
 
-        let list = app.clone().oneshot(req("GET", &format!("/delivery/{id}/events"), "", Some(&t))).await.expect("r");
+        let list = app
+            .clone()
+            .oneshot(req("GET", &format!("/delivery/{id}/events"), "", Some(&t)))
+            .await
+            .expect("r");
         assert_eq!(list.status(), StatusCode::OK);
         let arr = json(list).await;
         assert_eq!(arr.as_array().expect("a").len(), 2);
         assert_eq!(arr[0]["message"], "选用 argon2");
 
         assert_eq!(
-            app.oneshot(req("POST", &format!("/delivery/{id}/events"), r#"{"kind":"X","message":"m"}"#, Some(&t))).await.expect("r").status(),
+            app.oneshot(req(
+                "POST",
+                &format!("/delivery/{id}/events"),
+                r#"{"kind":"X","message":"m"}"#,
+                Some(&t)
+            ))
+            .await
+            .expect("r")
+            .status(),
             StatusCode::BAD_REQUEST
         );
     }
@@ -561,23 +767,42 @@ mod tests {
     async fn record_event_requires_update_permission() {
         let (app, t) = app_with("DELIVERY:READ", StubBehavior::Accept { run_id: "r".into() }).await;
         assert_eq!(
-            app.oneshot(req("POST", "/delivery/whatever/events", r#"{"kind":"LOG","message":"m"}"#, Some(&t))).await.expect("r").status(),
+            app.oneshot(req(
+                "POST",
+                "/delivery/whatever/events",
+                r#"{"kind":"LOG","message":"m"}"#,
+                Some(&t)
+            ))
+            .await
+            .expect("r")
+            .status(),
             StatusCode::FORBIDDEN
         );
     }
 
     #[tokio::test]
     async fn unknown_executor_400() {
-        let (app, t) = app_with("DELIVERY:READ+EXECUTE", StubBehavior::Accept { run_id: "r".into() }).await;
+        let (app, t) =
+            app_with("DELIVERY:READ+EXECUTE", StubBehavior::Accept { run_id: "r".into() }).await;
         assert_eq!(
-            app.oneshot(req("POST", "/delivery", r#"{"decompositionId":"d1","taskId":"t1","title":"x","executor":"GPT"}"#, Some(&t))).await.expect("r").status(),
+            app.oneshot(req(
+                "POST",
+                "/delivery",
+                r#"{"decompositionId":"d1","taskId":"t1","title":"x","executor":"GPT"}"#,
+                Some(&t)
+            ))
+            .await
+            .expect("r")
+            .status(),
             StatusCode::BAD_REQUEST
         );
     }
 
     #[tokio::test]
     async fn task_center_list_stop_and_delete_flow() {
-        let (app, t) = app_with("DELIVERY:READ+EXECUTE+UPDATE", StubBehavior::Accept { run_id: "r".into() }).await;
+        let (app, t) =
+            app_with("DELIVERY:READ+EXECUTE+UPDATE", StubBehavior::Accept { run_id: "r".into() })
+                .await;
         for tid in ["t1", "t2"] {
             app.clone()
                 .oneshot(req("POST", "/delivery", &format!(r#"{{"decompositionId":"d1","taskId":"{tid}","title":"build {tid}","executor":"CODEX"}}"#), Some(&t)))
@@ -585,7 +810,11 @@ mod tests {
                 .expect("r");
         }
 
-        let l = app.clone().oneshot(req("GET", "/delivery/tasks?page=1&pageSize=10", "", None)).await.expect("r");
+        let l = app
+            .clone()
+            .oneshot(req("GET", "/delivery/tasks?page=1&pageSize=10", "", Some(&t)))
+            .await
+            .expect("r");
         assert_eq!(l.status(), StatusCode::OK);
         let v = json(l).await;
         assert_eq!(v["total"], 2);
@@ -596,32 +825,83 @@ mod tests {
         assert_eq!(item["completionRate"], 50);
         let id = item["id"].as_str().expect("id").to_string();
 
-        let act = app.clone().oneshot(req("GET", "/delivery/tasks?active=true", "", None)).await.expect("r");
+        let act = app
+            .clone()
+            .oneshot(req("GET", "/delivery/tasks?active=true", "", Some(&t)))
+            .await
+            .expect("r");
         assert_eq!(json(act).await["total"], 2);
 
-        let stop = app.clone().oneshot(req("POST", &format!("/delivery/{id}/stop"), r#"{"reason":"手动停止"}"#, Some(&t))).await.expect("r");
+        let stop = app
+            .clone()
+            .oneshot(req(
+                "POST",
+                &format!("/delivery/{id}/stop"),
+                r#"{"reason":"手动停止"}"#,
+                Some(&t),
+            ))
+            .await
+            .expect("r");
         assert_eq!(stop.status(), StatusCode::OK);
         assert_eq!(json(stop).await["status"], "STOPPED");
 
-        assert_eq!(json(app.clone().oneshot(req("GET", "/delivery/tasks?active=true", "", None)).await.expect("r")).await["total"], 1);
+        assert_eq!(
+            json(
+                app.clone()
+                    .oneshot(req("GET", "/delivery/tasks?active=true", "", Some(&t)))
+                    .await
+                    .expect("r")
+            )
+            .await["total"],
+            1
+        );
 
-        let del = app.clone().oneshot(req("DELETE", &format!("/delivery/{id}"), "", Some(&t))).await.expect("r");
+        let del = app
+            .clone()
+            .oneshot(req("DELETE", &format!("/delivery/{id}"), "", Some(&t)))
+            .await
+            .expect("r");
         assert_eq!(del.status(), StatusCode::NO_CONTENT);
-        assert_eq!(json(app.clone().oneshot(req("GET", "/delivery/tasks", "", None)).await.expect("r")).await["total"], 1);
+        assert_eq!(
+            json(
+                app.clone().oneshot(req("GET", "/delivery/tasks", "", Some(&t))).await.expect("r")
+            )
+            .await["total"],
+            1
+        );
     }
 
     #[tokio::test]
     async fn delete_running_conflicts_and_rbac() {
-        let (app, t) = app_with("DELIVERY:READ+EXECUTE+UPDATE", StubBehavior::Accept { run_id: "r".into() }).await;
-        let r = app.clone().oneshot(req("POST", "/delivery", r#"{"decompositionId":"d1","taskId":"t1","title":"x","executor":"CODEX"}"#, Some(&t))).await.expect("r");
+        let (app, t) =
+            app_with("DELIVERY:READ+EXECUTE+UPDATE", StubBehavior::Accept { run_id: "r".into() })
+                .await;
+        let r = app
+            .clone()
+            .oneshot(req(
+                "POST",
+                "/delivery",
+                r#"{"decompositionId":"d1","taskId":"t1","title":"x","executor":"CODEX"}"#,
+                Some(&t),
+            ))
+            .await
+            .expect("r");
         let id = json(r).await["id"].as_str().expect("id").to_string();
         assert_eq!(
-            app.clone().oneshot(req("DELETE", &format!("/delivery/{id}"), "", Some(&t))).await.expect("r").status(),
+            app.clone()
+                .oneshot(req("DELETE", &format!("/delivery/{id}"), "", Some(&t)))
+                .await
+                .expect("r")
+                .status(),
             StatusCode::CONFLICT
         );
-        let (app2, ro) = app_with("DELIVERY:READ", StubBehavior::Accept { run_id: "r".into() }).await;
+        let (app2, ro) =
+            app_with("DELIVERY:READ", StubBehavior::Accept { run_id: "r".into() }).await;
         assert_eq!(
-            app2.oneshot(req("POST", "/delivery/whatever/stop", r#"{}"#, Some(&ro))).await.expect("r").status(),
+            app2.oneshot(req("POST", "/delivery/whatever/stop", r#"{}"#, Some(&ro)))
+                .await
+                .expect("r")
+                .status(),
             StatusCode::FORBIDDEN
         );
     }

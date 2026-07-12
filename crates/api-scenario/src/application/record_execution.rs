@@ -21,9 +21,7 @@ impl RecordScenarioExecutionUseCase {
         case_count: i32,
         report_id: Option<&str>,
     ) -> Result<ScenarioExecution, RepoError> {
-        self.repo
-            .record_execution(scenario_id, project_id, status, case_count, report_id)
-            .await
+        self.repo.record_execution(scenario_id, project_id, status, case_count, report_id).await
     }
 }
 

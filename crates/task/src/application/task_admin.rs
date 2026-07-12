@@ -22,7 +22,9 @@ impl From<TaskError> for TaskCmdError {
     fn from(e: TaskError) -> Self {
         match e {
             TaskError::NoSuchTask(_) => Self::TaskNotFound,
-            TaskError::DependenciesNotSatisfied => Self::Conflict(TaskError::DependenciesNotSatisfied),
+            TaskError::DependenciesNotSatisfied => {
+                Self::Conflict(TaskError::DependenciesNotSatisfied)
+            }
             TaskError::TransitionNotAllowed { from, to } => {
                 Self::Conflict(TaskError::TransitionNotAllowed { from, to })
             }
@@ -55,7 +57,8 @@ impl TaskService {
         points: i32,
     ) -> Result<String, TaskCmdError> {
         let mut d = self.get(decomposition_id).await?;
-        let new = NewTask::new(title, description, acceptance_criteria, dependencies)?.with_points(points);
+        let new = NewTask::new(title, description, acceptance_criteria, dependencies)?
+            .with_points(points);
         let id = d.add_task(new)?;
         self.repo.save(&d).await?;
         Ok(id)
@@ -86,7 +89,8 @@ impl TaskService {
         Ok(d)
     }
 
-    /// 批量重指派,返回(最新分解, 改动数)。无改动则不落库。
+    /// Bulk reassignment; returns (updated decomposition, change count). Skips persisting when
+    /// nothing changed.
     pub async fn reassign(
         &self,
         decomposition_id: &str,
@@ -204,7 +208,10 @@ mod tests {
         svc.add_task(&did, "A", "", &[], &[], 0).await.expect("a");
         assert_eq!(
             svc.transition(&did, "t1", TaskStatus::Verified).await.unwrap_err(),
-            TaskCmdError::Conflict(TaskError::TransitionNotAllowed { from: "PENDING", to: "VERIFIED" })
+            TaskCmdError::Conflict(TaskError::TransitionNotAllowed {
+                from: "PENDING",
+                to: "VERIFIED"
+            })
         );
     }
 
@@ -232,9 +239,6 @@ mod tests {
     async fn missing_decomposition_and_task() {
         let (svc, did) = seeded().await;
         assert_eq!(svc.get("ghost").await.unwrap_err(), TaskCmdError::DecompositionNotFound);
-        assert_eq!(
-            svc.dispatch(&did, "t1").await.unwrap_err(),
-            TaskCmdError::TaskNotFound
-        );
+        assert_eq!(svc.dispatch(&did, "t1").await.unwrap_err(), TaskCmdError::TaskNotFound);
     }
 }

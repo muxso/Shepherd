@@ -11,3 +11,10 @@
 /web/test-results/
 /web/playwright-report/
 /web/blob-report/
+# compose 密钥(deploy/docker/.env.example 为模板)
+deploy/docker/.env
+# 自测脚本生成的报告(scripts/api-coverage.sh 等),不入库
+docs/api-coverage.md
+docs/api-coverage.html
+docs/self-regression.md
+docs/dogfood-report.html

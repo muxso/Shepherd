@@ -50,7 +50,7 @@ async fn handle(State(st): State<MockState>, req: Request) -> Response {
     }
 }
 
-/// 渲染失败回落原始串,绝不 500。
+/// Falls back to the raw string when rendering fails; never a 500.
 #[cfg(feature = "template")]
 fn render_body(raw: String, req: &MockRequest) -> String {
     crate::domain::render_body(&raw, req).unwrap_or(raw)
@@ -60,7 +60,7 @@ fn render_body(raw: String, _req: &MockRequest) -> String {
     raw
 }
 
-/// 不做 URL 解码(简化版)。
+/// No URL decoding (simplified).
 fn parse_query(q: &str) -> BTreeMap<String, String> {
     q.split('&')
         .filter(|kv| !kv.is_empty())
@@ -87,14 +87,18 @@ fn build_response(resp: &MockResponse, req: &MockRequest) -> Response {
 mod tests {
     use super::*;
     use crate::adapters::InMemoryRuleSource;
-    use crate::domain::{MatchRule, MockRule, MockResponse};
+    use crate::domain::{MatchRule, MockResponse, MockRule};
     use axum::http::Request as HttpRequest;
     use tower::ServiceExt;
 
     fn ping_rule() -> MockRule {
         MockRule {
             id: "ping".into(),
-            rule: MatchRule { method: Some("GET".into()), path: "/ping".into(), ..Default::default() },
+            rule: MatchRule {
+                method: Some("GET".into()),
+                path: "/ping".into(),
+                ..Default::default()
+            },
             response: MockResponse {
                 status: 200,
                 headers: vec![("content-type".into(), "text/plain".into())],
@@ -116,7 +120,9 @@ mod tests {
     #[tokio::test]
     async fn matched_request_replays_mock_response() {
         let resp = app()
-            .oneshot(HttpRequest::builder().method("GET").uri("/ping").body(Body::empty()).expect("req"))
+            .oneshot(
+                HttpRequest::builder().method("GET").uri("/ping").body(Body::empty()).expect("req"),
+            )
             .await
             .expect("resp");
         assert_eq!(resp.status(), StatusCode::OK);
@@ -127,7 +133,9 @@ mod tests {
     #[tokio::test]
     async fn unmatched_request_returns_404() {
         let resp = app()
-            .oneshot(HttpRequest::builder().method("GET").uri("/nope").body(Body::empty()).expect("req"))
+            .oneshot(
+                HttpRequest::builder().method("GET").uri("/nope").body(Body::empty()).expect("req"),
+            )
             .await
             .expect("resp");
         assert_eq!(resp.status(), StatusCode::NOT_FOUND);
@@ -138,7 +146,11 @@ mod tests {
     async fn templated_body_renders_request_context() {
         let rule = MockRule {
             id: "echo".into(),
-            rule: MatchRule { method: Some("GET".into()), path: "/echo/*".into(), ..Default::default() },
+            rule: MatchRule {
+                method: Some("GET".into()),
+                path: "/echo/*".into(),
+                ..Default::default()
+            },
             response: MockResponse {
                 status: 200,
                 headers: vec![],
@@ -164,7 +176,13 @@ mod tests {
     #[tokio::test]
     async fn wrong_method_returns_404() {
         let resp = app()
-            .oneshot(HttpRequest::builder().method("POST").uri("/ping").body(Body::empty()).expect("req"))
+            .oneshot(
+                HttpRequest::builder()
+                    .method("POST")
+                    .uri("/ping")
+                    .body(Body::empty())
+                    .expect("req"),
+            )
             .await
             .expect("resp");
         assert_eq!(resp.status(), StatusCode::NOT_FOUND);

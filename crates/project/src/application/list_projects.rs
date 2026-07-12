@@ -21,10 +21,7 @@ impl ListProjectsUseCase {
         page: PageRequest,
     ) -> Result<Page<Project>, RepoError> {
         let total = self.repo.count_active(organization_id).await?;
-        let items = self
-            .repo
-            .list_active(organization_id, page.offset(), page.page_size())
-            .await?;
+        let items = self.repo.list_active(organization_id, page.offset(), page.page_size()).await?;
         Ok(Page::of(page, total, items))
     }
 }
@@ -48,10 +45,7 @@ mod tests {
         seed(&repo, "org1", 25).await;
         let uc = ListProjectsUseCase::new(Arc::new(repo));
 
-        let page = uc
-            .execute("org1", PageRequest::new(1, 10).expect("valid"))
-            .await
-            .expect("ok");
+        let page = uc.execute("org1", PageRequest::new(1, 10).expect("valid")).await.expect("ok");
         assert_eq!(page.total, 25);
         assert_eq!(page.items.len(), 10);
         assert_eq!(page.total_pages(), 3);
@@ -64,10 +58,7 @@ mod tests {
         seed(&repo, "org1", 25).await;
         let uc = ListProjectsUseCase::new(Arc::new(repo));
 
-        let page = uc
-            .execute("org1", PageRequest::new(3, 10).expect("valid"))
-            .await
-            .expect("ok");
+        let page = uc.execute("org1", PageRequest::new(3, 10).expect("valid")).await.expect("ok");
         assert_eq!(page.items.len(), 5);
         assert_eq!(page.items[0].name, "P21");
     }
@@ -82,10 +73,7 @@ mod tests {
         repo.soft_delete(&extra.id);
 
         let uc = ListProjectsUseCase::new(Arc::new(repo));
-        let page = uc
-            .execute("org1", PageRequest::new(1, 50).expect("valid"))
-            .await
-            .expect("ok");
+        let page = uc.execute("org1", PageRequest::new(1, 50).expect("valid")).await.expect("ok");
         assert_eq!(page.total, 3);
         assert_eq!(page.items.len(), 3);
         assert!(page.items.iter().all(|p| !p.deleted && p.organization_id == "org1"));

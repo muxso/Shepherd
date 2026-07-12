@@ -5,7 +5,7 @@ import { api, ApiError, type Organization } from '../api'
 import { useApp } from '../context'
 import { useI18n } from '../i18n'
 
-// 新建项目(并可顺手新建组织)——首装无项目时让 UI 自助可用。
+// Create project (optionally creating an org inline) — keeps the UI self-serve on a fresh install with no projects.
 export default function NewProjectModal({ open, onClose }: { open: boolean; onClose: () => void }) {
   const { reloadProjects, setProjectId } = useApp()
   const { t } = useI18n()

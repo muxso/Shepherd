@@ -1,15 +1,12 @@
-# syntax=docker/dockerfile:1
 # Build context = repo root. Build: docker build -f deploy/docker/Dockerfile.agent-runtime .
 
 # ---- build stage ----
-FROM rust:1.86-bookworm AS build
+FROM rust:latest AS build
 WORKDIR /app
 
 COPY Cargo.toml Cargo.lock ./
 COPY crates ./crates
-RUN --mount=type=cache,target=/usr/local/cargo/registry \
-    --mount=type=cache,target=/app/target \
-    cargo build --release -p agent-runtime && \
+RUN cargo build --release -p agent-runtime && \
     cp target/release/agent-runtime /usr/local/bin/agent-runtime
 
 # ---- runtime stage ----

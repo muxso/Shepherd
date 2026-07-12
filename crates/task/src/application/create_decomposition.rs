@@ -67,14 +67,20 @@ mod tests {
 
     #[tokio::test]
     async fn rejects_blank_requirement() {
-        assert_eq!(uc().execute("  ", 1).await.unwrap_err(), CreateDecompositionError::EmptyRequirement);
+        assert_eq!(
+            uc().execute("  ", 1).await.unwrap_err(),
+            CreateDecompositionError::EmptyRequirement
+        );
     }
 
     #[tokio::test]
     async fn one_decomposition_per_requirement_version() {
         let uc = uc();
         uc.execute("req1", 1).await.expect("first");
-        assert_eq!(uc.execute("req1", 1).await.unwrap_err(), CreateDecompositionError::AlreadyExists);
+        assert_eq!(
+            uc.execute("req1", 1).await.unwrap_err(),
+            CreateDecompositionError::AlreadyExists
+        );
         assert!(uc.execute("req1", 2).await.is_ok());
     }
 }

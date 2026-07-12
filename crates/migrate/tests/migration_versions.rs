@@ -1,4 +1,5 @@
-//! sqlx `migrate!` 按文件名首段数字作版本号,同版本号多文件会被静默去重(丢迁移 → 缺列 → 运行期 500)。
+//! sqlx `migrate!` takes the leading number of the filename as the version; duplicate
+//! versions are silently deduped (a migration gets dropped -> missing column -> 500 at runtime).
 
 use std::collections::HashMap;
 use std::fs;
@@ -25,8 +26,8 @@ fn sql_files() -> Vec<String> {
 fn migration_versions_are_unique() {
     let mut by_version: HashMap<u64, Vec<String>> = HashMap::new();
     for name in sql_files() {
-        let v = version_of(&name)
-            .unwrap_or_else(|| panic!("迁移文件缺少数字版本前缀(NNNN_…):{name}"));
+        let v =
+            version_of(&name).unwrap_or_else(|| panic!("迁移文件缺少数字版本前缀(NNNN_…):{name}"));
         by_version.entry(v).or_default().push(name);
     }
     let mut dups: Vec<_> = by_version

@@ -6,7 +6,7 @@ import { api, ApiError, type McpTool } from '../api'
 import { useI18n } from '../i18n'
 import { PageBody, PageContainer, PageHeader } from '../components/Page'
 
-// MCP 工具:只读列出 server 暴露的 JSON-RPC 工具(tools/list)。
+// MCP tools: read-only list of the server's exposed JSON-RPC tools (tools/list).
 export default function Mcp() {
   const { t } = useI18n()
   const [tools, setTools] = useState<McpTool[]>([])

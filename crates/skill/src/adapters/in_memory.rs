@@ -32,7 +32,7 @@ impl SkillRepository for InMemorySkillRepository {
         Ok(self
             .state
             .lock()
-            .expect("lock")
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .skills
             .iter()
             .find(|s| s.occupies_name() && s.project_id == project_id && s.name == name)
@@ -40,7 +40,7 @@ impl SkillRepository for InMemorySkillRepository {
     }
 
     async fn insert(&self, new: &NewSkill) -> Result<Skill, RepoError> {
-        let mut st = self.state.lock().expect("lock");
+        let mut st = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         st.seq += 1;
         let s = Skill::from_new(&format!("skill-{}", st.seq), new);
         st.skills.push(s.clone());
@@ -48,14 +48,21 @@ impl SkillRepository for InMemorySkillRepository {
     }
 
     async fn get(&self, id: &str) -> Result<Option<Skill>, RepoError> {
-        Ok(self.state.lock().expect("lock").skills.iter().find(|s| s.id == id).cloned())
+        Ok(self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .skills
+            .iter()
+            .find(|s| s.id == id)
+            .cloned())
     }
 
     async fn list_active(&self, project_id: &str) -> Result<Vec<Skill>, RepoError> {
         Ok(self
             .state
             .lock()
-            .expect("lock")
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .skills
             .iter()
             .filter(|s| s.occupies_name() && s.project_id == project_id)
@@ -64,7 +71,7 @@ impl SkillRepository for InMemorySkillRepository {
     }
 
     async fn save(&self, skill: &Skill) -> Result<(), RepoError> {
-        let mut st = self.state.lock().expect("lock");
+        let mut st = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         if let Some(slot) = st.skills.iter_mut().find(|s| s.id == skill.id) {
             *slot = skill.clone();
         }

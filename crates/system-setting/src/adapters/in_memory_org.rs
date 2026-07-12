@@ -25,7 +25,7 @@ impl InMemoryOrgRepository {
 #[async_trait]
 impl OrgRepository for InMemoryOrgRepository {
     async fn insert(&self, new_org: &NewOrganization) -> Result<Organization, OrgRepoError> {
-        let mut st = self.state.lock().expect("lock");
+        let mut st = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         st.seq += 1;
         let org = Organization::active(&format!("org-{}", st.seq), &new_org.name);
         st.orgs.push(org.clone());
@@ -36,7 +36,7 @@ impl OrgRepository for InMemoryOrgRepository {
         Ok(self
             .state
             .lock()
-            .expect("lock")
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .orgs
             .iter()
             .find(|o| o.occupies_name() && o.name == name)
@@ -44,18 +44,36 @@ impl OrgRepository for InMemoryOrgRepository {
     }
 
     async fn get(&self, id: &str) -> Result<Option<Organization>, OrgRepoError> {
-        Ok(self.state.lock().expect("lock").orgs.iter().find(|o| o.id == id).cloned())
-    }
-
-    async fn count_active(&self) -> Result<u64, OrgRepoError> {
-        Ok(self.state.lock().expect("lock").orgs.iter().filter(|o| o.occupies_name()).count() as u64)
-    }
-
-    async fn list_active(&self, offset: u64, limit: u32) -> Result<Vec<Organization>, OrgRepoError> {
         Ok(self
             .state
             .lock()
-            .expect("lock")
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .orgs
+            .iter()
+            .find(|o| o.id == id)
+            .cloned())
+    }
+
+    async fn count_active(&self) -> Result<u64, OrgRepoError> {
+        Ok(self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .orgs
+            .iter()
+            .filter(|o| o.occupies_name())
+            .count() as u64)
+    }
+
+    async fn list_active(
+        &self,
+        offset: u64,
+        limit: u32,
+    ) -> Result<Vec<Organization>, OrgRepoError> {
+        Ok(self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .orgs
             .iter()
             .filter(|o| o.occupies_name())
@@ -66,7 +84,7 @@ impl OrgRepository for InMemoryOrgRepository {
     }
 
     async fn save(&self, org: &Organization) -> Result<(), OrgRepoError> {
-        let mut st = self.state.lock().expect("lock");
+        let mut st = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         if let Some(slot) = st.orgs.iter_mut().find(|o| o.id == org.id) {
             *slot = org.clone();
         }

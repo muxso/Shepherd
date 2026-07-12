@@ -1,7 +1,6 @@
 import { Empty } from 'antd'
 import { useI18n } from '../i18n'
 
-// 通用占位页(功能即将接入)。title 为页面名。
 export default function ComingSoon({ title }: { title: string }) {
   const { t } = useI18n()
   return (

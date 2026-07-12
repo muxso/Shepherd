@@ -23,18 +23,13 @@ fn map_err(e: sqlx::Error) -> RepoError {
 
 fn headers_to_json(headers: &[(String, String)]) -> serde_json::Value {
     serde_json::Value::Array(
-        headers
-            .iter()
-            .map(|(n, v)| serde_json::json!({"name": n, "value": v}))
-            .collect(),
+        headers.iter().map(|(n, v)| serde_json::json!({"name": n, "value": v})).collect(),
     )
 }
 
 fn vars_to_json(vars: &BTreeMap<String, String>) -> serde_json::Value {
     serde_json::Value::Object(
-        vars.iter()
-            .map(|(k, v)| (k.clone(), serde_json::Value::String(v.clone())))
-            .collect(),
+        vars.iter().map(|(k, v)| (k.clone(), serde_json::Value::String(v.clone()))).collect(),
     )
 }
 
@@ -126,7 +121,7 @@ impl EnvironmentRepository for PgEnvironmentRepository {
     }
 
     async fn update(&self, id: &str, e: &NewEnvironment) -> Result<Option<Environment>, RepoError> {
-        // project_id 不可变:故意不在 SET 里。
+        // project_id is immutable: deliberately absent from SET.
         let row = sqlx::query(&format!(
             "UPDATE ms_environment SET name = $2, base_url = $3, headers = $4, variables = $5, enabled = $6 \
              WHERE id = $1 AND deleted = false RETURNING {COLS}"
@@ -144,11 +139,13 @@ impl EnvironmentRepository for PgEnvironmentRepository {
     }
 
     async fn delete(&self, id: &str) -> Result<bool, RepoError> {
-        let res = sqlx::query("UPDATE ms_environment SET deleted = true WHERE id = $1 AND deleted = false")
-            .bind(id)
-            .execute(&self.pool)
-            .await
-            .map_err(map_err)?;
+        let res = sqlx::query(
+            "UPDATE ms_environment SET deleted = true WHERE id = $1 AND deleted = false",
+        )
+        .bind(id)
+        .execute(&self.pool)
+        .await
+        .map_err(map_err)?;
         Ok(res.rows_affected() > 0)
     }
 }

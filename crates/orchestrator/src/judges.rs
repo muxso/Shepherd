@@ -31,7 +31,11 @@ mod tests {
     use super::*;
 
     fn dv(reference: &str, summary: &str) -> DeliverableView {
-        DeliverableView { kind: "DIFF".into(), reference: reference.into(), summary: summary.into() }
+        DeliverableView {
+            kind: "DIFF".into(),
+            reference: reference.into(),
+            summary: summary.into(),
+        }
     }
 
     #[tokio::test]

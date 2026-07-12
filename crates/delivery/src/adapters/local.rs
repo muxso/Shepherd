@@ -36,8 +36,9 @@ impl LocalCommandAgentExecutor {
         match kind {
             ExecutorKind::ClaudeCode => &self.claude_code,
             ExecutorKind::Codex => &self.codex,
-            // 本地路径只配两套 argv;OpenCode 故意回退 claude argv(真正路由在 crates/agent-runtime)。
-            ExecutorKind::OpenCode => &self.claude_code,
+            // The local path only configures two argvs; OpenCode/CodeBuddy deliberately
+            // fall back to the claude argv (real routing lives in crates/agent-runtime).
+            ExecutorKind::OpenCode | ExecutorKind::CodeBuddy => &self.claude_code,
         }
     }
 }
@@ -94,8 +95,9 @@ impl AgentExecutor for LocalCommandAgentExecutor {
         sink: &dyn EventSink,
     ) -> Result<DispatchOutcome, ExecError> {
         let argv = self.argv(spec.executor);
-        let (program, args) =
-            argv.split_first().ok_or_else(|| ExecError::Backend("empty executor command".into()))?;
+        let (program, args) = argv
+            .split_first()
+            .ok_or_else(|| ExecError::Backend("empty executor command".into()))?;
 
         if let Some((base, token)) = &self.callback {
             let mut child = Command::new(program)
@@ -117,7 +119,7 @@ impl AgentExecutor for LocalCommandAgentExecutor {
                     .await
                     .map_err(|e| ExecError::Backend(e.to_string()))?;
             }
-            // 后台 wait() 必须保留:不收割子进程会留下僵尸。
+            // The background wait() is required: an unreaped child becomes a zombie.
             tokio::spawn(async move {
                 let _ = child.wait().await;
             });
@@ -137,13 +139,15 @@ impl AgentExecutor for LocalCommandAgentExecutor {
                 .write_all(spec_to_prompt(spec).as_bytes())
                 .await
                 .map_err(|e| ExecError::Backend(e.to_string()))?;
-            // stdin 在此 drop → 向子进程发送 EOF(否则按行读取会永远阻塞)
+            // stdin drops here, sending EOF to the child (line reads would block forever otherwise)
         }
 
         let stdout = child.stdout.take().ok_or_else(|| ExecError::Backend("no stdout".into()))?;
         let mut lines = BufReader::new(stdout).lines();
         let mut result: Option<(String, String)> = None;
-        while let Some(line) = lines.next_line().await.map_err(|e| ExecError::Backend(e.to_string()))? {
+        while let Some(line) =
+            lines.next_line().await.map_err(|e| ExecError::Backend(e.to_string()))?
+        {
             let line = line.trim();
             if line.is_empty() {
                 continue;
@@ -191,7 +195,10 @@ mod tests {
     #[async_trait]
     impl EventSink for RecordingSink {
         async fn emit(&self, e: NewExecutionEvent) {
-            self.events.lock().unwrap().push((e.kind, e.message));
+            self.events
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .push((e.kind, e.message));
         }
     }
 
@@ -206,6 +213,7 @@ mod tests {
             executor: kind,
             context: None,
             instructions: None,
+            target_runtime: None,
         }
     }
 
@@ -225,7 +233,7 @@ mod tests {
             }
             other => panic!("expected Completed, got {other:?}"),
         }
-        let events = sink.events.lock().unwrap();
+        let events = sink.events.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         assert_eq!(events.len(), 2);
         assert_eq!(events[0], (EventKind::Decision, "用 argon2".to_string()));
         assert_eq!(events[1].0, EventKind::FileChange);
@@ -240,10 +248,12 @@ mod tests {
         let sink = RecordingSink::default();
         let out = exec.dispatch(&spec(ExecutorKind::ClaudeCode), &sink).await.expect("dispatch");
         match out {
-            DispatchOutcome::Completed { deliverable } => assert_eq!(deliverable.reference, "local://t1"),
+            DispatchOutcome::Completed { deliverable } => {
+                assert_eq!(deliverable.reference, "local://t1")
+            }
             other => panic!("expected Completed, got {other:?}"),
         }
-        let events = sink.events.lock().unwrap();
+        let events = sink.events.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         assert_eq!(events.len(), 1);
         assert_eq!(events[0], (EventKind::Log, "just text".to_string()));
     }

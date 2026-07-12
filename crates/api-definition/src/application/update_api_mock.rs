@@ -37,13 +37,14 @@ impl UpdateApiMockUseCase {
         enabled: bool,
         extras: ApiMockExtras,
     ) -> Result<(), UpdateApiMockError> {
-        let updated = NewApiMock::new("_", name, match_rule, response_status, response_body, enabled)?
-            .with_extras(
-                extras.tags,
-                extras.response_headers,
-                extras.response_delay_ms,
-                extras.follow_definition,
-            );
+        let updated =
+            NewApiMock::new("_", name, match_rule, response_status, response_body, enabled)?
+                .with_extras(
+                    extras.tags,
+                    extras.response_headers,
+                    extras.response_delay_ms,
+                    extras.follow_definition,
+                );
         if self.repo.update_mock(mock_id, &updated).await? {
             Ok(())
         } else {
@@ -67,14 +68,31 @@ mod tests {
             .await
             .expect("ok");
         let m = AddApiMockUseCase::new(repo.clone())
-            .execute(&def.id, "old", serde_json::json!({}), 200, None, true, ApiMockExtras::default(), "u1")
+            .execute(
+                &def.id,
+                "old",
+                serde_json::json!({}),
+                200,
+                None,
+                true,
+                ApiMockExtras::default(),
+                "u1",
+            )
             .await
             .expect("ok");
 
         let uc = UpdateApiMockUseCase::new(repo.clone());
-        uc.execute(&m.id, "new", serde_json::json!({"path": "/y"}), 404, Some("x".into()), false, ApiMockExtras::default())
-            .await
-            .expect("ok");
+        uc.execute(
+            &m.id,
+            "new",
+            serde_json::json!({"path": "/y"}),
+            404,
+            Some("x".into()),
+            false,
+            ApiMockExtras::default(),
+        )
+        .await
+        .expect("ok");
 
         let mocks = repo.list_mocks(&def.id).await.expect("ok");
         assert_eq!(mocks.len(), 1);
@@ -103,7 +121,16 @@ mod tests {
             .await
             .expect("ok");
         let m = AddApiMockUseCase::new(repo.clone())
-            .execute(&def.id, "old", serde_json::json!({}), 200, None, true, ApiMockExtras::default(), "u1")
+            .execute(
+                &def.id,
+                "old",
+                serde_json::json!({}),
+                200,
+                None,
+                true,
+                ApiMockExtras::default(),
+                "u1",
+            )
             .await
             .expect("ok");
         let uc = UpdateApiMockUseCase::new(repo);

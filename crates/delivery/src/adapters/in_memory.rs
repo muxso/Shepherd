@@ -32,14 +32,16 @@ impl DeliveryRepository for InMemoryDeliveryRepository {
         decomposition_id: &str,
         task_id: &str,
         executor: ExecutorKind,
+        target_runtime: Option<&str>,
     ) -> Result<DeliveryAttempt, RepoError> {
-        let mut st = self.state.lock().expect("lock poisoned");
+        let mut st = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         st.seq += 1;
         let a = DeliveryAttempt::dispatched(
             &format!("attempt-{}", st.seq),
             decomposition_id,
             task_id,
             executor,
+            target_runtime,
         );
         let created = st.seq as i64;
         st.created_at.push((a.id.clone(), created));
@@ -48,7 +50,14 @@ impl DeliveryRepository for InMemoryDeliveryRepository {
     }
 
     async fn get(&self, id: &str) -> Result<Option<DeliveryAttempt>, RepoError> {
-        Ok(self.state.lock().expect("lock").attempts.iter().find(|a| a.id == id).cloned())
+        Ok(self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .attempts
+            .iter()
+            .find(|a| a.id == id)
+            .cloned())
     }
 
     async fn list_by_task(
@@ -59,7 +68,7 @@ impl DeliveryRepository for InMemoryDeliveryRepository {
         Ok(self
             .state
             .lock()
-            .expect("lock")
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .attempts
             .iter()
             .filter(|a| a.decomposition_id == decomposition_id && a.task_id == task_id)
@@ -68,7 +77,7 @@ impl DeliveryRepository for InMemoryDeliveryRepository {
     }
 
     async fn save(&self, attempt: &DeliveryAttempt) -> Result<(), RepoError> {
-        let mut st = self.state.lock().expect("lock");
+        let mut st = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         if let Some(slot) = st.attempts.iter_mut().find(|a| a.id == attempt.id) {
             *slot = attempt.clone();
         }
@@ -80,7 +89,7 @@ impl DeliveryRepository for InMemoryDeliveryRepository {
         attempt_id: &str,
         event: &NewExecutionEvent,
     ) -> Result<ExecutionEvent, RepoError> {
-        let mut st = self.state.lock().expect("lock");
+        let mut st = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         st.event_seq += 1;
         let e = ExecutionEvent {
             seq: st.event_seq,
@@ -96,7 +105,7 @@ impl DeliveryRepository for InMemoryDeliveryRepository {
         let mut events: Vec<ExecutionEvent> = self
             .state
             .lock()
-            .expect("lock")
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .events
             .iter()
             .filter(|(aid, _)| aid == attempt_id)
@@ -107,13 +116,12 @@ impl DeliveryRepository for InMemoryDeliveryRepository {
     }
 
     async fn list_tasks(&self, filter: &TaskListFilter) -> Result<TaskPage, RepoError> {
-        let st = self.state.lock().expect("lock");
+        let st = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let created_of = |id: &str| -> i64 {
             st.created_at.iter().find(|(aid, _)| aid == id).map(|(_, c)| *c).unwrap_or(0)
         };
-        let event_count_of = |id: &str| -> i64 {
-            st.events.iter().filter(|(aid, _)| aid == id).count() as i64
-        };
+        let event_count_of =
+            |id: &str| -> i64 { st.events.iter().filter(|(aid, _)| aid == id).count() as i64 };
 
         let mut matched: Vec<TaskRow> = st
             .attempts
@@ -156,7 +164,7 @@ impl DeliveryRepository for InMemoryDeliveryRepository {
     }
 
     async fn delete(&self, id: &str) -> Result<bool, RepoError> {
-        let mut st = self.state.lock().expect("lock");
+        let mut st = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let before = st.attempts.len();
         st.attempts.retain(|a| a.id != id);
         let removed = st.attempts.len() != before;

@@ -1,9 +1,9 @@
-use async_trait::async_trait;
 use crate::domain::{
     AssertionResult, CaseCounts, CaseResult, CaseStatus, NewPlan, Plan, PlanCase, PlanType,
     RequestInfo, StepResult,
 };
 use crate::ports::{PlanRepository, RepoError};
+use async_trait::async_trait;
 use sqlx::{PgPool, Row};
 
 #[derive(Clone)]
@@ -66,12 +66,13 @@ impl PlanRepository for PgPlanRepository {
     }
 
     async fn children(&self, group_id: &str) -> Result<Vec<Plan>, RepoError> {
-        let rows =
-            sqlx::query(&format!("SELECT {PLAN_COLS} FROM ms_test_plan WHERE group_id = $1 ORDER BY id"))
-                .bind(group_id)
-                .fetch_all(&self.pool)
-                .await
-                .map_err(map_err)?;
+        let rows = sqlx::query(&format!(
+            "SELECT {PLAN_COLS} FROM ms_test_plan WHERE group_id = $1 ORDER BY id"
+        ))
+        .bind(group_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(map_err)?;
         rows.iter().map(row_to_plan).collect()
     }
 
@@ -160,7 +161,8 @@ impl PlanRepository for PgPlanRepository {
         rows.iter()
             .map(|r| {
                 let status: String = r.try_get("status").map_err(map_err)?;
-                let result_json: Option<serde_json::Value> = r.try_get("result").map_err(map_err)?;
+                let result_json: Option<serde_json::Value> =
+                    r.try_get("result").map_err(map_err)?;
                 Ok(PlanCase {
                     case_id: r.try_get("case_id").map_err(map_err)?,
                     name: r.try_get("name").map_err(map_err)?,
@@ -193,7 +195,7 @@ impl PlanRepository for PgPlanRepository {
     }
 
     async fn delete(&self, id: &str) -> Result<bool, RepoError> {
-        // 无 FK 级联:必须先删挂入用例,再删计划本体。
+        // No FK cascade: linked cases must be deleted before the plan row itself.
         sqlx::query("DELETE FROM ms_test_plan_case WHERE plan_id = $1")
             .bind(id)
             .execute(&self.pool)
@@ -211,10 +213,12 @@ impl PlanRepository for PgPlanRepository {
 fn assertions_to_json(a: &[AssertionResult]) -> serde_json::Value {
     serde_json::Value::Array(
         a.iter()
-            .map(|a| serde_json::json!({
-                "item": a.item, "actual": a.actual, "condition": a.condition,
-                "expected": a.expected, "passed": a.passed, "reason": a.reason,
-            }))
+            .map(|a| {
+                serde_json::json!({
+                    "item": a.item, "actual": a.actual, "condition": a.condition,
+                    "expected": a.expected, "passed": a.passed, "reason": a.reason,
+                })
+            })
             .collect(),
     )
 }
@@ -259,11 +263,27 @@ fn assertions_from_json(v: &serde_json::Value) -> Vec<AssertionResult> {
             arr.iter()
                 .map(|a| AssertionResult {
                     item: a.get("item").and_then(|x| x.as_str()).unwrap_or_default().to_string(),
-                    actual: a.get("actual").and_then(|x| x.as_str()).unwrap_or_default().to_string(),
-                    condition: a.get("condition").and_then(|x| x.as_str()).unwrap_or_default().to_string(),
-                    expected: a.get("expected").and_then(|x| x.as_str()).unwrap_or_default().to_string(),
+                    actual: a
+                        .get("actual")
+                        .and_then(|x| x.as_str())
+                        .unwrap_or_default()
+                        .to_string(),
+                    condition: a
+                        .get("condition")
+                        .and_then(|x| x.as_str())
+                        .unwrap_or_default()
+                        .to_string(),
+                    expected: a
+                        .get("expected")
+                        .and_then(|x| x.as_str())
+                        .unwrap_or_default()
+                        .to_string(),
                     passed: a.get("passed").and_then(|x| x.as_bool()).unwrap_or(false),
-                    reason: a.get("reason").and_then(|x| x.as_str()).unwrap_or_default().to_string(),
+                    reason: a
+                        .get("reason")
+                        .and_then(|x| x.as_str())
+                        .unwrap_or_default()
+                        .to_string(),
                 })
                 .collect()
         })
@@ -308,7 +328,11 @@ fn step_from_json(v: &serde_json::Value) -> StepResult {
 fn result_from_json(v: &serde_json::Value) -> CaseResult {
     let opt_str = |k: &str| {
         let s = v.get(k).and_then(|x| x.as_str()).unwrap_or_default().to_string();
-        if s.is_empty() { None } else { Some(s) }
+        if s.is_empty() {
+            None
+        } else {
+            Some(s)
+        }
     };
     let request = v.get("request").filter(|r| r.is_object()).map(|r| RequestInfo {
         method: r.get("method").and_then(|x| x.as_str()).unwrap_or_default().to_string(),
@@ -316,7 +340,11 @@ fn result_from_json(v: &serde_json::Value) -> CaseResult {
         headers: r.get("headers").map(headers_from_json).unwrap_or_default(),
         body: {
             let b = r.get("body").and_then(|x| x.as_str()).unwrap_or_default().to_string();
-            if b.is_empty() { None } else { Some(b) }
+            if b.is_empty() {
+                None
+            } else {
+                Some(b)
+            }
         },
     });
     CaseResult {
@@ -502,9 +530,18 @@ mod tests {
             body: Some("ok".into()),
             ..Default::default()
         };
-        assert!(repo.record_result(&child.id, "ca", CaseStatus::Success, Some(&res)).await.expect("rec a"));
-        assert!(repo.record_result(&child.id, "cb", CaseStatus::Success, None).await.expect("rec b"));
-        assert!(!repo.record_result(&child.id, "ghost", CaseStatus::Success, None).await.expect("rec ghost"));
+        assert!(repo
+            .record_result(&child.id, "ca", CaseStatus::Success, Some(&res))
+            .await
+            .expect("rec a"));
+        assert!(repo
+            .record_result(&child.id, "cb", CaseStatus::Success, None)
+            .await
+            .expect("rec b"));
+        assert!(!repo
+            .record_result(&child.id, "ghost", CaseStatus::Success, None)
+            .await
+            .expect("rec ghost"));
 
         let c = repo.case_counts(&child.id).await.expect("c");
         assert_eq!(c.success, 2);

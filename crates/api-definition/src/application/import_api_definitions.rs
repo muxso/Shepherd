@@ -75,15 +75,19 @@ impl ImportApiDefinitionsUseCase {
         let mut updated = 0usize;
         let mut skipped = 0usize;
         for api in apis {
-            let new_def =
-                match NewApiDefinition::new(project_id, &api.name, ApiProtocol::Http, &api.method, &api.path)
-                {
-                    Ok(d) => d.with_spec(&api.spec.to_string()),
-                    Err(_) => {
-                        skipped += 1;
-                        continue;
-                    }
-                };
+            let new_def = match NewApiDefinition::new(
+                project_id,
+                &api.name,
+                ApiProtocol::Http,
+                &api.method,
+                &api.path,
+            ) {
+                Ok(d) => d.with_spec(&api.spec.to_string()),
+                Err(_) => {
+                    skipped += 1;
+                    continue;
+                }
+            };
 
             let api_module = api.module.clone();
 
@@ -99,7 +103,13 @@ impl ImportApiDefinitionsUseCase {
                         .await;
                     if sync_module {
                         let mid = self
-                            .resolve_module(project_id, module_id, group_by_tag, api_module.as_deref(), &mut module_by_tag)
+                            .resolve_module(
+                                project_id,
+                                module_id,
+                                group_by_tag,
+                                api_module.as_deref(),
+                                &mut module_by_tag,
+                            )
                             .await;
                         if let Some(mid) = mid.as_deref() {
                             let _ = self.repo.set_definition_module(id, Some(mid)).await;
@@ -114,7 +124,13 @@ impl ImportApiDefinitionsUseCase {
 
             let mut def = self.repo.insert_definition(&new_def).await?;
             let mid = self
-                .resolve_module(project_id, module_id, group_by_tag, api_module.as_deref(), &mut module_by_tag)
+                .resolve_module(
+                    project_id,
+                    module_id,
+                    group_by_tag,
+                    api_module.as_deref(),
+                    &mut module_by_tag,
+                )
                 .await;
             if let Some(mid) = mid.as_deref() {
                 if self.repo.set_definition_module(&def.id, Some(mid)).await.is_ok() {
@@ -184,8 +200,15 @@ mod tests {
                 "/users": { "get": { "operationId": "listUsers" } }
             }
         });
-        let out =
-            uc.execute("p1", ImportFormat::Openapi, &doc, ImportOptions { overwrite: true, ..Default::default() }).await.expect("imported");
+        let out = uc
+            .execute(
+                "p1",
+                ImportFormat::Openapi,
+                &doc,
+                ImportOptions { overwrite: true, ..Default::default() },
+            )
+            .await
+            .expect("imported");
         assert_eq!(out.created.len(), 2);
         assert_eq!(out.skipped, 0);
         assert_eq!(repo.list_definitions("p1").await.unwrap().len(), 2);
@@ -204,8 +227,15 @@ mod tests {
                 "/ping": { "get": { "summary": "ping" } }
             }
         });
-        let out =
-            uc.execute("p1", ImportFormat::Openapi, &doc, ImportOptions { group_by_tag: true, overwrite: true, ..Default::default() }).await.expect("imported");
+        let out = uc
+            .execute(
+                "p1",
+                ImportFormat::Openapi,
+                &doc,
+                ImportOptions { group_by_tag: true, overwrite: true, ..Default::default() },
+            )
+            .await
+            .expect("imported");
         assert_eq!(out.created.len(), 4);
         let mods = repo.list_modules("p1").await.unwrap();
         assert_eq!(mods.len(), 2);
@@ -224,7 +254,12 @@ mod tests {
         let repo = Arc::new(InMemoryApiDefinitionRepository::new());
         let uc = ImportApiDefinitionsUseCase::new(repo);
         let err = uc
-            .execute("p1", ImportFormat::Openapi, &json!({"foo": 1}), ImportOptions { overwrite: true, ..Default::default() })
+            .execute(
+                "p1",
+                ImportFormat::Openapi,
+                &json!({"foo": 1}),
+                ImportOptions { overwrite: true, ..Default::default() },
+            )
             .await
             .unwrap_err();
         assert!(matches!(err, ImportError::Parse(ApiDefinitionError::BadImport(_))));

@@ -2,12 +2,11 @@ import type { ReactNode } from 'react'
 import { Empty, Typography } from 'antd'
 import { useI18n } from '../i18n'
 
-// 抽象出各业务页反复手写的整页骨架:
-//   <PageContainer>            整页 flex 纵向容器(占满高度)
-//     <PageHeader .../>        顶部工具栏(标题 + 副标题 + 中间内容 + 右侧操作)
-//     <PageBody>...</PageBody> 可滚动的主体区
+// Shared full-page skeleton:
+//   <PageContainer>            full-height flex column
+//     <PageHeader .../>        top toolbar (title + subtitle + middle content + right actions)
+//     <PageBody>...</PageBody> scrollable body
 //   </PageContainer>
-// 之前每个页面都复制粘贴同一套内联 style,这里收敛为一处。
 
 export function PageContainer({ children }: { children: ReactNode }) {
   return <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>{children}</div>
@@ -21,9 +20,9 @@ export function PageHeader({
 }: {
   title: ReactNode
   subtitle?: ReactNode
-  /** 标题与右侧弹簧之间的内容(如统计 Tag) */
+  /** Content between the title and the right-side spring (e.g. stat Tags) */
   children?: ReactNode
-  /** 右侧操作区(按钮 / 搜索框等),自动靠右 */
+  /** Right-aligned action area (buttons / search box) */
   extra?: ReactNode
 }) {
   return (
@@ -56,7 +55,7 @@ export function PageBody({ children }: { children: ReactNode }) {
   return <div style={{ flex: 1, overflow: 'auto', padding: 16 }}>{children}</div>
 }
 
-// 未选择项目时的统一空状态(顶部需要先选项目的页面共用)。
+// Shared empty state for pages that require a project selected in the top bar.
 export function SelectProjectEmpty() {
   const { t } = useI18n()
   return (

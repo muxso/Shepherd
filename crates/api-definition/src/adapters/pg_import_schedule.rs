@@ -80,7 +80,8 @@ impl ImportScheduleStore for PgImportScheduleStore {
             "SELECT {COLS} FROM ms_api_import_schedule \
              WHERE project_id = $1 AND deleted = false ORDER BY created_at DESC"
         );
-        let rows = sqlx::query(&sql).bind(project_id).fetch_all(&self.pool).await.map_err(map_err)?;
+        let rows =
+            sqlx::query(&sql).bind(project_id).fetch_all(&self.pool).await.map_err(map_err)?;
         rows.iter().map(row_to_schedule).collect()
     }
 

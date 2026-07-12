@@ -1,4 +1,5 @@
-//! 解析名只走 `names_direct`,绝不走校验路径,否则 OIDC 用户会 500;出错降级为空。
+//! Name resolution only uses `names_direct`, never the validation path — that would 500
+//! for OIDC users. On error it degrades to an empty map.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -35,9 +36,11 @@ mod tests {
 
     #[tokio::test]
     async fn resolves_oidc_user_names() {
-        let dir = SpyDirectory::new()
-            .with_user("u1", "Alice", UserSource::Oidc)
-            .with_user("u2", "Bob", UserSource::Local);
+        let dir = SpyDirectory::new().with_user("u1", "Alice", UserSource::Oidc).with_user(
+            "u2",
+            "Bob",
+            UserSource::Local,
+        );
         let uc = ResolveUserNamesUseCase::new(Arc::new(dir));
         let names = uc.execute(&ids(&["u1", "u2"])).await;
         assert_eq!(names.get("u1"), Some(&"Alice".to_string()));

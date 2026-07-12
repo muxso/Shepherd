@@ -71,10 +71,8 @@ mod tests {
         repo.set_setting("rev1", ReviewSetting { rule: PassRule::Multiple, reviewer_count: 2 });
         let uc = uc(&repo);
 
-        let status = uc
-            .execute("rev1", "c1", Verdict::new("u1", Pass, None).expect("v"))
-            .await
-            .expect("ok");
+        let status =
+            uc.execute("rev1", "c1", Verdict::new("u1", Pass, None).expect("v")).await.expect("ok");
         assert_eq!(status, UnderReviewed);
     }
 
@@ -85,10 +83,8 @@ mod tests {
         let uc = uc(&repo);
 
         uc.execute("rev1", "c1", Verdict::new("u1", Pass, None).expect("v")).await.expect("ok");
-        let status = uc
-            .execute("rev1", "c1", Verdict::new("u2", Pass, None).expect("v"))
-            .await
-            .expect("ok");
+        let status =
+            uc.execute("rev1", "c1", Verdict::new("u2", Pass, None).expect("v")).await.expect("ok");
         assert_eq!(status, Pass);
     }
 

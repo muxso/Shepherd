@@ -3,27 +3,29 @@ name = "system-setting"
 edition.workspace = true
 version.workspace = true
 license.workspace = true
+publish.workspace = true
+rust-version.workspace = true
 
 # 限界上下文 = 一个 crate。domain/ports/application 为模块;IO 适配器(pg/http)是
 # **feature 门控**的模块,可选依赖只在对应 feature 开启时拉入。
 # 默认 build(无 feature)根本没有 sqlx/axum —— domain/application 物理上 import 不到它们。
 [dependencies]
-kernel = { path = "../kernel" }
-webauth = { path = "../webauth" }
-async-trait = "0.1"
-thiserror = "2"
+kernel = { workspace = true }
+webauth = { workspace = true }
+async-trait = { workspace = true }
+thiserror = { workspace = true }
 # —— IO 适配器的可选依赖 ——
-sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "postgres"], optional = true }
-axum = { version = "0.8", optional = true }
-utoipa = { version = "5", optional = true }
-serde = { version = "1", features = ["derive"], optional = true }
+sqlx = { workspace = true, features = ["runtime-tokio", "postgres"], optional = true }
+axum = { workspace = true, optional = true }
+utoipa = { workspace = true, optional = true }
+serde = { workspace = true, optional = true }
 # 真实密码哈希(adapters::auth,feature 门控)
 argon2 = { version = "0.5", optional = true }
 # 第三方登录(adapters::oidc 飞书/企业微信,feature 门控)
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"], optional = true }
-serde_json = { version = "1", optional = true }
+reqwest = { workspace = true, features = ["json", "rustls-tls"], optional = true }
+serde_json = { workspace = true, optional = true }
 # OIDC state(CSRF)随机 token,feature 门控。
-uuid = { version = "1", features = ["v4"], optional = true }
+uuid = { workspace = true, optional = true }
 # LDAP 目录认证(adapters::ldap,feature 门控);rustls 避免系统 OpenSSL。
 ldap3 = { version = "0.11", default-features = false, features = ["tls-rustls"], optional = true }
 
@@ -35,11 +37,11 @@ oidc = ["dep:reqwest", "dep:serde", "dep:serde_json"]
 ldap = ["dep:ldap3"]
 
 [dev-dependencies]
-tokio = { version = "1", features = ["macros", "rt-multi-thread", "net"] }
-tower = { version = "0.5", features = ["util"] }
-serde_json = "1"
-axum = "0.8"
-migrate = { path = "../migrate" }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "net"] }
+tower = { workspace = true, features = ["util"] }
+serde_json = { workspace = true }
+axum = { workspace = true }
+migrate = { workspace = true }
 
 [lints]
 workspace = true

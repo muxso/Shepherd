@@ -36,8 +36,16 @@ impl CreateCaseUseCase {
         steps: Vec<crate::domain::CaseStep>,
         created_by: Option<&str>,
     ) -> Result<FunctionalCase, CreateCaseError> {
-        let new = NewFunctionalCase::new(project_id, name, module, priority, status, custom_fields, steps)?
-            .with_created_by(created_by);
+        let new = NewFunctionalCase::new(
+            project_id,
+            name,
+            module,
+            priority,
+            status,
+            custom_fields,
+            steps,
+        )?
+        .with_created_by(created_by);
         Ok(self.repo.insert(&new).await?)
     }
 }
@@ -64,8 +72,15 @@ impl UpdateCaseUseCase {
         custom_fields: BTreeMap<String, String>,
         steps: Vec<crate::domain::CaseStep>,
     ) -> Result<Option<FunctionalCase>, CreateCaseError> {
-        let new =
-            NewFunctionalCase::new(project_id, name, module, priority, status, custom_fields, steps)?;
+        let new = NewFunctionalCase::new(
+            project_id,
+            name,
+            module,
+            priority,
+            status,
+            custom_fields,
+            steps,
+        )?;
         Ok(self.repo.update(id, &new).await?)
     }
 }
@@ -169,10 +184,8 @@ fn cell(row: &[String], idx: Option<usize>) -> &str {
 }
 
 pub fn export_rows(cases: &[FunctionalCase]) -> Vec<Vec<String>> {
-    let mut field_names: Vec<String> = cases
-        .iter()
-        .flat_map(|c| c.custom_fields.keys().cloned())
-        .collect();
+    let mut field_names: Vec<String> =
+        cases.iter().flat_map(|c| c.custom_fields.keys().cloned()).collect();
     field_names.sort();
     field_names.dedup();
 

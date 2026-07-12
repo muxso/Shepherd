@@ -26,7 +26,9 @@
 #     AKS_RG                — AKS resource group
 #
 #   Application (all clouds):
-#     SHEPHERD_ADMIN_PASSWORD — admin password (overrides chart default)
+#     SHEPHERD_ADMIN_PASSWORD — admin password (server bootstrap + web login)
+#     SHEPHERD_AGENT_KEY      — static API key (sak_…) for agent-runtime pods,
+#                               issued via POST /system/apikey
 #     DATABASE_URL            — postgres://USER:PASS@HOST:5432/DB
 #     REDIS_URL               — redis://HOST:6379 (fleet queue)
 #
@@ -132,6 +134,7 @@ jobs:
             -f deploy/helm/shepherd/values-prod.yaml \
             --set global.image.tag="${IMAGE_TAG}" \
             --set config.adminPassword="${{ secrets.SHEPHERD_ADMIN_PASSWORD }}" \
+            --set config.agentKey="${{ secrets.SHEPHERD_AGENT_KEY }}" \
             --set database.url="${{ secrets.DATABASE_URL }}" \
             --set config.fleet.redisUrl="${{ secrets.REDIS_URL }}" \
             --namespace shepherd --create-namespace

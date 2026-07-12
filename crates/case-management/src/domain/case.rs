@@ -63,7 +63,11 @@ impl NewFunctionalCase {
         }
         let with_default = |v: &str, d: &str| {
             let v = v.trim();
-            if v.is_empty() { d.to_string() } else { v.to_string() }
+            if v.is_empty() {
+                d.to_string()
+            } else {
+                v.to_string()
+            }
         };
         Ok(Self {
             project_id: project_id.to_string(),
@@ -93,7 +97,8 @@ mod tests {
 
     #[test]
     fn defaults_priority_and_status() {
-        let c = NewFunctionalCase::new("p1", "登录成功", "", "", "", fields(), Vec::new()).expect("ok");
+        let c =
+            NewFunctionalCase::new("p1", "登录成功", "", "", "", fields(), Vec::new()).expect("ok");
         assert_eq!(c.priority, "P2");
         assert_eq!(c.status, "PREPARED");
         assert_eq!(c.custom_fields["owner"], "alice");
@@ -101,8 +106,16 @@ mod tests {
 
     #[test]
     fn keeps_given_values_and_trims() {
-        let c = NewFunctionalCase::new(" p1 ", " 用例 ", "登录", "P0", "REVIEWING", fields(), Vec::new())
-            .expect("ok");
+        let c = NewFunctionalCase::new(
+            " p1 ",
+            " 用例 ",
+            "登录",
+            "P0",
+            "REVIEWING",
+            fields(),
+            Vec::new(),
+        )
+        .expect("ok");
         assert_eq!(c.project_id, "p1");
         assert_eq!(c.name, "用例");
         assert_eq!(c.priority, "P0");

@@ -41,7 +41,9 @@ async fn web_commit_url(cwd: &str, sha: &str) -> Option<String> {
     let (host, path) = if let Some(rest) = remote.strip_prefix("git@") {
         let (h, p) = rest.split_once(':')?;
         (h.to_string(), p.to_string())
-    } else if let Some(rest) = remote.strip_prefix("https://").or_else(|| remote.strip_prefix("http://")) {
+    } else if let Some(rest) =
+        remote.strip_prefix("https://").or_else(|| remote.strip_prefix("http://"))
+    {
         let (h, p) = rest.split_once('/')?;
         (h.to_string(), p.to_string())
     } else {
@@ -74,12 +76,19 @@ pub async fn snapshot(cwd: &str, attempt_id: &str, title: &str) -> Option<Snapsh
     Some(Snapshot { reference, stat })
 }
 
-pub async fn add_worktree(base: &str, attempt_id: &str) -> Option<String> {
+/// Creates a detached worktree from `base_ref` (defaults to current HEAD).
+///
+/// The base repo's checked-out branch is untouched, so host and container can
+/// share one checkout on different branches without interfering. To stop the
+/// task base from tracking the host's current branch, pass a fixed ref
+/// (AGENT_BASE_REF, e.g. origin/main).
+pub async fn add_worktree(base: &str, attempt_id: &str, base_ref: Option<&str>) -> Option<String> {
     let path = std::env::temp_dir().join(format!("shepherd-wt-{attempt_id}"));
     let path = path.to_string_lossy().to_string();
     let _ = git(base, &["worktree", "prune"]).await;
     remove_worktree(base, &path).await;
-    git(base, &["worktree", "add", "--detach", &path, "HEAD"]).await?;
+    let start = base_ref.unwrap_or("HEAD");
+    git(base, &["worktree", "add", "--detach", &path, start]).await?;
     Some(path)
 }
 
@@ -130,7 +139,7 @@ mod tests {
         run(&base, &["add", "-A"]).await;
         run(&base, &["commit", "-q", "-m", "init"]).await;
 
-        let wt = add_worktree(&base, "att-xyz-9").await.expect("worktree");
+        let wt = add_worktree(&base, "att-xyz-9", None).await.expect("worktree");
         std::fs::write(std::path::Path::new(&wt).join("f.txt"), "agent edit").expect("w");
         let snap = snapshot(&wt, "att-xyz-9", "实现").await.expect("snapshot");
         assert!(snap.reference.starts_with("git://shepherd/deliver/att@"));
@@ -139,6 +148,34 @@ mod tests {
 
         remove_worktree(&base, &wt).await;
         assert!(!std::path::Path::new(&wt).exists(), "worktree dir removed");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn worktree_pins_to_base_ref_not_checked_out_branch() {
+        let dir = std::env::temp_dir().join(format!("ar-wt-ref-{}", std::process::id()));
+        let base = dir.to_string_lossy().to_string();
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("mkdir");
+        run(&base, &["init", "-q", "-b", "main"]).await;
+        run(&base, &["config", "user.email", "t@t"]).await;
+        run(&base, &["config", "user.name", "t"]).await;
+        std::fs::write(dir.join("f.txt"), "v1").expect("w");
+        run(&base, &["add", "-A"]).await;
+        run(&base, &["commit", "-q", "-m", "c1"]).await;
+        let pinned = git(&base, &["rev-parse", "HEAD"]).await.expect("sha").trim().to_string();
+        // Host switches to another branch and advances a commit; the pinned task base must not follow.
+        run(&base, &["checkout", "-q", "-b", "dev"]).await;
+        std::fs::write(dir.join("f.txt"), "v2 on dev").expect("w");
+        run(&base, &["add", "-A"]).await;
+        run(&base, &["commit", "-q", "-m", "c2"]).await;
+
+        let wt = add_worktree(&base, "att-pin-1", Some("main")).await.expect("worktree");
+        assert_eq!(std::fs::read_to_string(std::path::Path::new(&wt).join("f.txt")).unwrap(), "v1");
+        let head = git(&wt, &["rev-parse", "HEAD"]).await.expect("sha").trim().to_string();
+        assert_eq!(head, pinned);
+
+        remove_worktree(&base, &wt).await;
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -1,8 +1,8 @@
 use async_trait::async_trait;
 
 use crate::domain::{
-    ApiCase, ApiDefinition, ApiDefinitionChange, ApiModule, ApiMock, ApiView, NewApiCase,
-    NewApiDefinition, NewApiModule, NewApiMock, NewApiView,
+    ApiCase, ApiDefinition, ApiDefinitionChange, ApiMock, ApiModule, ApiView, ApiViewPatch,
+    NewApiCase, NewApiDefinition, NewApiMock, NewApiModule, NewApiView,
 };
 
 use thiserror::Error;
@@ -26,10 +26,7 @@ pub struct ProjectMockRow {
 
 #[async_trait]
 pub trait ApiDefinitionRepository: Send + Sync {
-    async fn insert_definition(
-        &self,
-        d: &NewApiDefinition,
-    ) -> Result<ApiDefinition, RepoError>;
+    async fn insert_definition(&self, d: &NewApiDefinition) -> Result<ApiDefinition, RepoError>;
 
     async fn get_definition(&self, id: &str) -> Result<Option<ApiDefinition>, RepoError>;
 
@@ -48,10 +45,7 @@ pub trait ApiDefinitionRepository: Send + Sync {
 
     async fn delete_definition(&self, id: &str) -> Result<(), RepoError>;
 
-    async fn list_definitions(
-        &self,
-        project_id: &str,
-    ) -> Result<Vec<ApiDefinition>, RepoError>;
+    async fn list_definitions(&self, project_id: &str) -> Result<Vec<ApiDefinition>, RepoError>;
 
     async fn record_definition_change(
         &self,
@@ -91,7 +85,10 @@ pub trait ApiDefinitionRepository: Send + Sync {
 
     async fn list_mocks(&self, api_definition_id: &str) -> Result<Vec<ApiMock>, RepoError>;
 
-    async fn list_mocks_by_project(&self, project_id: &str) -> Result<Vec<ProjectMockRow>, RepoError>;
+    async fn list_mocks_by_project(
+        &self,
+        project_id: &str,
+    ) -> Result<Vec<ProjectMockRow>, RepoError>;
 
     async fn insert_module(&self, m: &NewApiModule) -> Result<ApiModule, RepoError>;
 
@@ -110,6 +107,15 @@ pub trait ApiDefinitionRepository: Send + Sync {
     async fn insert_view(&self, v: &NewApiView) -> Result<ApiView, RepoError>;
 
     async fn list_views(&self, project_id: &str, user_id: &str) -> Result<Vec<ApiView>, RepoError>;
+
+    /// Partially updates a view; ownership check matches [`Self::delete_view`]: only `id + user_id` rows.
+    /// Returns `Ok(None)` when no row matches (missing id or non-owner).
+    async fn update_view(
+        &self,
+        id: &str,
+        user_id: &str,
+        patch: &ApiViewPatch,
+    ) -> Result<Option<ApiView>, RepoError>;
 
     async fn delete_view(&self, id: &str, user_id: &str) -> Result<(), RepoError>;
 

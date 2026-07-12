@@ -1,6 +1,5 @@
 #!/bin/bash
-# 全量 API 自测(深度版):对暴露的 REST 面逐端点断言**状态码 + 关键响应字段 + 业务结果**(非仅状态)。
-# 建资源→串 id→打子端点→断响应。前置:PG 已就绪(见 memory: live-test-env-quirks)。
+# Deep full-API self-test: asserts status code + key response fields + business result for every exposed REST endpoint, chaining created resource ids into sub-endpoints (requires PG up; see memory: live-test-env-quirks).
 set -uo pipefail
 cd "$(dirname "$0")/.."
 export DATABASE_URL=${DATABASE_URL:-postgres://msuser:mspass@localhost:55432/mstest}
@@ -14,9 +13,9 @@ echo "# Shepherd 全量 API 自测报告" >> "$RPT"
 echo >> "$RPT"
 printf '> 逐端点断言:状态码 + 关键响应字段 + 业务结果。由 scripts/api-coverage.sh 生成。HTML 版见 api-coverage.html。\n\n' >> "$RPT"
 row() { printf '| %s | %s | %s |\n' "$1" "$2" "$3" >> "$RPT"; }
-# —— HTML 报告:卡片 + 甜甜圈 + 每端点可折叠卡(请求体/响应/断言)——
+# ---- HTML report: summary cards + donut + collapsible per-endpoint cards (request body/response/assertions) ----
 BODY="$(mktemp)"
-esc() { python3 -c 'import sys,html;print(html.escape(sys.stdin.read()),end="")'; }   # 转义 <>&
+esc() { python3 -c 'import sys,html;print(html.escape(sys.stdin.read()),end="")'; }
 h() { printf '%s\n' "$*" >> "$BODY"; }
 CUR_M=""; CUR_P=""; CUR_B=""; CUR_HS=""; CUR_RESP=""; CUR_ROWS=""; CUR_AP=0; CUR_AF=0
 flush_call() {
@@ -26,7 +25,7 @@ flush_call() {
   elif [ "$CUR_AP" -gt 0 ]; then bcol="#2e7d32"; badge="✓ $CUR_AP"
   else bcol="#8a9099"; badge="—"; fi
   req=""; [ -n "$CUR_B" ] && req="<div class=sec>请求体</div><pre>$(printf '%s' "$CUR_B" | esc)</pre>"
-  # 二进制/非文本响应(如 ZIP 导出)用占位,保证 HTML 始终是合法 UTF-8;文本按字符截断。
+  # Binary/non-text responses (e.g. ZIP export) get a placeholder so the HTML stays valid UTF-8; text is truncated by characters.
   body_disp=$(printf '%s' "$CUR_RESP" | python3 -c '
 import sys, html
 raw = sys.stdin.buffer.read()
@@ -47,15 +46,15 @@ except Exception:
 }
 sec() { flush_call; echo "== $1 =="; printf '\n## %s\n\n| 检查 | 结果 | 说明 |\n|---|---|---|\n' "$1" >> "$RPT"; h "<h2 class=detail>$1</h2>"; }
 RESP=""; HS=""
-# call METHOD PATH [BODY] → 设 RESP(响应体)+ HS(状态码),并起一张 HTML 端点卡
+# call METHOD PATH [BODY] → sets RESP (response body) + HS (status code) and opens an HTML endpoint card
 call() { flush_call; local m=$1 p=$2 b=${3:-} out
   if [ -n "$b" ]; then out=$(curl -s -w $'\n%{http_code}' -X "$m" -H "$A" -H 'content-type: application/json' "$B$p" -d "$b")
   else out=$(curl -s -w $'\n%{http_code}' -X "$m" -H "$A" "$B$p"); fi
   HS="${out##*$'\n'}"; RESP="${out%$'\n'*}"
   CUR_M="$m"; CUR_P="$p"; CUR_B="$b"; CUR_HS="$HS"; CUR_RESP="$RESP"; }
-# sc desc expectedCodes  → 断状态码
+# sc desc expectedCodes  → assert status code
 sc() { T=$((T+1)); if [[ " $2 " == *" $HS "* ]]; then P=$((P+1)); CUR_AP=$((CUR_AP+1)); row "$1(状态)" "✅ $HS" ""; CUR_ROWS="$CUR_ROWS<tr><td>$1(状态)</td><td style=color:#2e7d32>✓ $HS</td><td></td></tr>"; else F=$((F+1)); CUR_AF=$((CUR_AF+1)); echo "  ✗ [$1] 状态=$HS 期望 $2  resp=$(printf %s "$RESP"|head -c160)"; row "$1(状态)" "❌ $HS" "期望 $2"; CUR_ROWS="$CUR_ROWS<tr><td>$1(状态)</td><td style=color:#c62828>✗ $HS</td><td>期望 $2</td></tr>"; fi; }
-# jchk desc pyBoolExpr  → 断响应字段/业务结果(d=响应 JSON)
+# jchk desc pyBoolExpr  → assert response fields/business result (d = response JSON)
 jchk() { T=$((T+1)); local r; r=$(printf %s "$RESP" | python3 -c "import sys,json
 try:d=json.load(sys.stdin)
 except:d=None
@@ -63,7 +62,7 @@ print(bool($2))" 2>/dev/null)
   if [ "$r" = "True" ]; then P=$((P+1)); CUR_AP=$((CUR_AP+1)); row "$1" "✅" ""; CUR_ROWS="$CUR_ROWS<tr><td>$1</td><td style=color:#2e7d32>✓</td><td></td></tr>"; else F=$((F+1)); CUR_AF=$((CUR_AF+1)); echo "  ✗ [$1] 断言失败:$2  resp=$(printf %s "$RESP"|head -c160)"; row "$1" "❌" "$2"; CUR_ROWS="$CUR_ROWS<tr><td>$1</td><td style=color:#c62828>✗</td><td>$(printf '%s' "$2" | esc)</td></tr>"; fi; }
 jval() { printf %s "$RESP" | python3 -c "import sys,json;d=json.load(sys.stdin);print($1)" 2>/dev/null; }
 
-A="authorization: Bearer x"  # 占位,登录后覆盖
+A="authorization: Bearer x"  # placeholder, replaced after login
 PJ="cov-$RANDOM"
 sec "登录 / 鉴权初始化"
 call POST /auth/login '{"username":"admin","password":"s3cret"}'
@@ -72,7 +71,7 @@ A="authorization: Bearer $(jval 'd["token"]')"
 echo "server up; proj=$PJ"
 
 sec "健康 / OpenAPI / 鉴权"
-call GET /healthz;             sc "healthz" 200; jchk "body=ok" 'd is None'  # 纯文本 ok,非 JSON
+call GET /healthz;             sc "healthz" 200; jchk "body=ok" 'd is None'  # plain-text "ok", not JSON
 call GET /readyz;              sc "readyz" 200
 call GET /api-docs/openapi.json; sc "openapi" 200; jchk "有 paths/openapi 字段" '"openapi" in d and "paths" in d'
 call POST /auth/login '{"username":"admin","password":"bad"}'; sc "错密码→401" 401
@@ -185,12 +184,12 @@ call POST "/runner-agent/$AG/refresh" '{}'; sc "刷新能力(agent 不可达→5
 call POST /runner/probe '{"protocol":"http","target":"http://127.0.0.1:1/x"}'; sc "中央探测(不可达→502)" "200 404 502"
 call POST /mcp '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'; sc "MCP tools/list" 200; jchk "≥15 个工具且含 shepherd_run_test_plan" 'len(d["result"]["tools"])>=15 and any(t["name"]=="shepherd_run_test_plan" for t in d["result"]["tools"])'
 
-flush_call   # 收尾最后一张端点卡
+flush_call   # flush the last endpoint card
 echo
 echo "############ 深度 API 自测:断言 $T 条(端点 + 字段 + 业务结果),通过 $P,失败 $F ############"
 { echo; echo "## 汇总"; echo; echo "- 断言总数:$T"; echo "- 通过:$P"; echo "- 失败:$F"; echo "- 结论:$([ "$F" -eq 0 ] && echo "全绿 ✅" || echo "有失败 ❌")"; } >> "$RPT"
 
-# —— 组装 HTML:头部卡片 + 甜甜圈(周长 2πr=263.89,r=42)+ 端点卡 body ——
+# ---- Assemble HTML: header cards + donut (circumference 2πr = 263.89, r = 42) + endpoint-card body ----
 RATE=$(python3 -c "print(f'{($P*100/$T) if $T else 0:.1f}')")
 DP=$(python3 -c "print(f'{263.894*$P/$T:.2f}' if $T else '0')")
 DF=$(python3 -c "print(f'{263.894*$F/$T:.2f}' if $T else '0')")

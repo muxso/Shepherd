@@ -38,7 +38,8 @@ mod tests {
     #[tokio::test]
     async fn records_writes_and_returns_key() {
         let sink = InMemorySampleSink::new();
-        let key = sink.write("r1", &[Sample::new(5, true), Sample::new(9, false)]).await.expect("ok");
+        let key =
+            sink.write("r1", &[Sample::new(5, true), Sample::new(9, false)]).await.expect("ok");
         assert_eq!(key, "memory://r1");
         let w = sink.writes();
         assert_eq!(w.len(), 1);

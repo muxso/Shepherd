@@ -264,6 +264,7 @@ module "app" {
   database_url       = local.database_url
   redis_url          = local.redis_url
   admin_password     = var.admin_password
+  agent_key          = var.agent_key
   server_host        = var.server_host
   web_host           = var.web_host
   ingress_class_name = "alb"

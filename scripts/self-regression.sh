@@ -1,7 +1,5 @@
 #!/bin/bash
-# 自举回归(真覆盖版):用 Shepherd 自己的接口用例 + 业务场景,经测试计划编排自测自身 REST API。
-# 关键:建一个带鉴权头的环境,计划执行时注入 → 能自测**带鉴权**的接口(非只健康检查)。
-# 前置:server 连的 PG 已就绪(见 memory: live-test-env-quirks)。
+# Self-regression with real coverage: Shepherd tests its own REST API via its own api-cases + business scenarios orchestrated by a test plan; the key trick is an environment carrying auth headers injected at plan execution, so authenticated endpoints get covered too, not just health checks (requires the server's PG to be up; see memory: live-test-env-quirks).
 set -uo pipefail
 cd "$(dirname "$0")/.."
 J() { python3 -c "import sys,json;d=json.load(sys.stdin);print($1)" 2>/dev/null; }
@@ -16,14 +14,14 @@ AUTH="authorization: Bearer $TOKEN"
 PROJ="selfreg-$RANDOM"
 echo "server up; token len=${#TOKEN}; proj=$PROJ"
 
-# 1) 环境:base_url=本机 server + 默认头(鉴权 + JSON)。计划执行时注入每个请求。
+# 1) Environment: base_url = local server + default headers (auth + JSON), injected into every request at plan execution.
 ENVID=$(curl -s -XPOST $BASE/api/environment -H "$AUTH" -H 'content-type: application/json' -d "{
   \"projectId\":\"$PROJ\",\"name\":\"自举环境\",\"baseUrl\":\"$BASE\",
   \"headers\":[{\"name\":\"Authorization\",\"value\":\"Bearer $TOKEN\"},{\"name\":\"Content-Type\",\"value\":\"application/json\"}]
 }" | J 'd["id"]')
 echo "env=$ENVID"
 
-# 2) 接口用例:打 Shepherd 自身各上下文端点(相对 url,env 拼 base_url + 注入鉴权)。
+# 2) API cases: hit Shepherd's own per-context endpoints (relative urls; env prepends base_url and injects auth).
 CASES=()
 mkcase() { # name method relurl bodyJson assertionsJson
   local id
@@ -45,19 +43,19 @@ mkcase "建技能"       POST /skill         "\"{\\\"projectId\\\":\\\"$PROJ\\\"
 mkcase "建缺陷"       POST /bug           "\"{\\\"projectId\\\":\\\"$PROJ\\\",\\\"title\\\":\\\"b\\\",\\\"initialStatus\\\":\\\"NEW\\\"}\"" '[{"type":"StatusIs","args":201},{"type":"BodyContains","args":"NEW"}]'
 mkcase "建场景"       POST /api/scenario  "\"{\\\"projectId\\\":\\\"$PROJ\\\",\\\"name\\\":\\\"Sc\\\"}\"" '[{"type":"StatusIs","args":201}]'
 
-# 3) 业务场景(多步编排):CASE(建需求)→ 内联 REQUEST(健康检查)。
+# 3) Business scenario (multi-step orchestration): CASE (create requirement) → inline REQUEST (health check).
 SCN=$(curl -s -XPOST $BASE/api/scenario -H "$AUTH" -H 'content-type: application/json' -d "{\"projectId\":\"$PROJ\",\"name\":\"需求冒烟编排\"}" | J 'd["id"]')
 curl -s -XPOST "$BASE/api/scenario/$SCN/step" -H "$AUTH" -H 'content-type: application/json' -d "{\"kind\":\"CASE\",\"order\":1,\"refId\":\"${CASES[0]}\"}" >/dev/null
 curl -s -XPOST "$BASE/api/scenario/$SCN/step" -H "$AUTH" -H 'content-type: application/json' -d "{\"kind\":\"REQUEST\",\"order\":2,\"request\":{\"method\":\"GET\",\"url\":\"/healthz\",\"assertions\":[{\"type\":\"StatusIs\",\"args\":200}]}}" >/dev/null
 echo "scenario=$SCN"
 
-# 4) 测试计划:挂入全部用例 + 业务场景。
+# 4) Test plan: link all cases plus the business scenario.
 PID=$(curl -s -XPOST $BASE/test-plan -H "$AUTH" -H 'content-type: application/json' -d "{\"projectId\":\"$PROJ\",\"name\":\"Shepherd 自举回归(全量)\",\"type\":\"TEST_PLAN\"}" | J 'd["id"]')
 i=1; for c in "${CASES[@]}"; do curl -s -XPOST "$BASE/test-plan/$PID/cases" -H "$AUTH" -H 'content-type: application/json' -d "{\"caseId\":\"$c\",\"name\":\"用例$i\"}" >/dev/null; i=$((i+1)); done
 curl -s -XPOST "$BASE/test-plan/$PID/cases" -H "$AUTH" -H 'content-type: application/json' -d "{\"caseId\":\"$SCN\",\"name\":\"需求冒烟编排\"}" >/dev/null
 echo "plan=$PID linked ${#CASES[@]} 用例 + 1 场景"
 
-# 5) 执行(注入环境=鉴权)→ 统计 + 报告。
+# 5) Run (inject environment = auth) → statistics + report.
 echo "=== run(environmentId=$ENVID)==="
 curl -s -XPOST "$BASE/test-plan/$PID/run" -H "$AUTH" -H 'content-type: application/json' -d "{\"environmentId\":\"$ENVID\"}"; echo
 echo "=== statistics ==="; curl -s -H "$AUTH" $BASE/test-plan/$PID/statistics; echo

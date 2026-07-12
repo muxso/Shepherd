@@ -1,6 +1,14 @@
+use std::collections::BTreeMap;
+
 use crate::domain::status_flow::StatusFlowGraph;
 
 use thiserror::Error;
+
+/// Custom field limits: max key count / key length / value length. Lengths count
+/// chars, not bytes, so CJK text isn't over-counted.
+pub const MAX_CUSTOM_FIELDS: usize = 32;
+pub const MAX_CUSTOM_FIELD_KEY_LEN: usize = 64;
+pub const MAX_CUSTOM_FIELD_VALUE_LEN: usize = 2000;
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum BugError {
@@ -10,6 +18,40 @@ pub enum BugError {
     UnknownStatus(String),
     #[error("transition not allowed: {from} -> {to}")]
     TransitionNotAllowed { from: String, to: String },
+    #[error("too many custom fields (max {MAX_CUSTOM_FIELDS})")]
+    TooManyCustomFields,
+    #[error("custom field key must not be empty")]
+    EmptyCustomFieldKey,
+    #[error("custom field key too long: {0}")]
+    CustomFieldKeyTooLong(String),
+    #[error("custom field value too long for key: {0}")]
+    CustomFieldValueTooLong(String),
+}
+
+/// Normalizes custom fields: keys trimmed, must be non-empty and ≤ `MAX_CUSTOM_FIELD_KEY_LEN`
+/// chars; values ≤ `MAX_CUSTOM_FIELD_VALUE_LEN` chars; at most `MAX_CUSTOM_FIELDS` keys
+/// (all lengths in chars, not bytes).
+pub fn normalize_custom_fields(
+    raw: &BTreeMap<String, String>,
+) -> Result<BTreeMap<String, String>, BugError> {
+    let mut out = BTreeMap::new();
+    for (k, v) in raw {
+        let k = k.trim();
+        if k.is_empty() {
+            return Err(BugError::EmptyCustomFieldKey);
+        }
+        if k.chars().count() > MAX_CUSTOM_FIELD_KEY_LEN {
+            return Err(BugError::CustomFieldKeyTooLong(k.to_string()));
+        }
+        if v.chars().count() > MAX_CUSTOM_FIELD_VALUE_LEN {
+            return Err(BugError::CustomFieldValueTooLong(k.to_string()));
+        }
+        out.insert(k.to_string(), v.clone());
+    }
+    if out.len() > MAX_CUSTOM_FIELDS {
+        return Err(BugError::TooManyCustomFields);
+    }
+    Ok(out)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -17,6 +59,9 @@ pub struct NewBug {
     pub project_id: String,
     pub title: String,
     pub created_by: Option<String>,
+    /// Validated custom field values (see `normalize_custom_fields`); field definitions
+    /// live in the project template.
+    pub custom_fields: BTreeMap<String, String>,
 }
 
 impl NewBug {
@@ -25,11 +70,22 @@ impl NewBug {
         if title.is_empty() {
             return Err(BugError::EmptyTitle);
         }
-        Ok(Self { project_id: project_id.to_string(), title: title.to_string(), created_by: None })
+        Ok(Self {
+            project_id: project_id.to_string(),
+            title: title.to_string(),
+            created_by: None,
+            custom_fields: BTreeMap::new(),
+        })
     }
 
     pub fn with_created_by(mut self, user_id: Option<&str>) -> Self {
         self.created_by = user_id.map(|s| s.to_string());
+        self
+    }
+
+    /// Attaches validated custom fields (caller runs `normalize_custom_fields` first).
+    pub fn with_custom_fields(mut self, custom_fields: BTreeMap<String, String>) -> Self {
+        self.custom_fields = custom_fields;
         self
     }
 }
@@ -43,6 +99,9 @@ pub struct Bug {
     pub deleted: bool,
     pub created_at: i64,
     pub created_by: Option<String>,
+    /// Custom field values, key → string value; field definitions live in the project
+    /// template, multi-select values are comma-joined.
+    pub custom_fields: BTreeMap<String, String>,
 }
 
 impl Bug {
@@ -86,7 +145,12 @@ mod tests {
             deleted: false,
             created_at: 0,
             created_by: None,
+            custom_fields: BTreeMap::new(),
         }
+    }
+
+    fn fields(pairs: &[(&str, &str)]) -> BTreeMap<String, String> {
+        pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()
     }
 
     #[test]
@@ -99,6 +163,52 @@ mod tests {
         let nb = NewBug::new("p1", "boom").expect("valid").with_created_by(Some("alice"));
         assert_eq!(nb.created_by.as_deref(), Some("alice"));
         assert_eq!(NewBug::new("p1", "boom").expect("valid").created_by, None);
+    }
+
+    #[test]
+    fn new_bug_carries_custom_fields_default_empty() {
+        let nb = NewBug::new("p1", "boom")
+            .expect("valid")
+            .with_custom_fields(fields(&[("severity", "P0")]));
+        assert_eq!(nb.custom_fields, fields(&[("severity", "P0")]));
+        assert!(NewBug::new("p1", "boom").expect("valid").custom_fields.is_empty());
+    }
+
+    #[test]
+    fn normalize_custom_fields_trims_keys_and_keeps_values() {
+        let out = normalize_custom_fields(&fields(&[(" severity ", "P0")])).expect("ok");
+        assert_eq!(out, fields(&[("severity", "P0")]));
+        assert_eq!(normalize_custom_fields(&BTreeMap::new()), Ok(BTreeMap::new()));
+    }
+
+    #[test]
+    fn normalize_custom_fields_rejects_blank_or_long_key() {
+        assert_eq!(
+            normalize_custom_fields(&fields(&[("  ", "v")])),
+            Err(BugError::EmptyCustomFieldKey)
+        );
+        let long_key = "键".repeat(65);
+        assert_eq!(
+            normalize_custom_fields(&fields(&[(long_key.as_str(), "v")])),
+            Err(BugError::CustomFieldKeyTooLong(long_key))
+        );
+        // 64 chars (CJK included) is legal.
+        assert!(normalize_custom_fields(&fields(&[("键".repeat(64).as_str(), "v")])).is_ok());
+    }
+
+    #[test]
+    fn normalize_custom_fields_rejects_long_value_or_too_many_keys() {
+        assert_eq!(
+            normalize_custom_fields(&fields(&[("k", "值".repeat(2001).as_str())])),
+            Err(BugError::CustomFieldValueTooLong("k".to_string()))
+        );
+        assert!(normalize_custom_fields(&fields(&[("k", "值".repeat(2000).as_str())])).is_ok());
+        let many: BTreeMap<String, String> =
+            (0..33).map(|i| (format!("k{i}"), "v".to_string())).collect();
+        assert_eq!(normalize_custom_fields(&many), Err(BugError::TooManyCustomFields));
+        let ok: BTreeMap<String, String> =
+            (0..32).map(|i| (format!("k{i}"), "v".to_string())).collect();
+        assert_eq!(normalize_custom_fields(&ok).expect("ok").len(), 32);
     }
 
     #[test]

@@ -1,5 +1,5 @@
-// Shepherd 后端 REST 客户端 + 类型(镜像 Rust DTO,camelCase)。
-// 所有请求带 Bearer token;401 触发登出回调。dev 经 Vite proxy → :9180。
+// REST client + types for the Shepherd backend (mirrors Rust DTOs, camelCase).
+// All requests carry a Bearer token; 401 triggers the logout callback. Dev goes through Vite proxy → :9180.
 
 const TOKEN_KEY = 'shepherd.token'
 const USER_KEY = 'shepherd.user'
@@ -10,12 +10,21 @@ export const tokenStore = {
   clear: () => localStorage.removeItem(TOKEN_KEY),
 }
 
-// 当前登录用户名:登录时写入,供个人中心 / 创建人列等展示(后端暂无 /me)。
-// 单一来源,避免各页对 localStorage key 与兜底值各写一份导致漂移。
+// Current login username: written at login, shown in personal center / creator columns.
+// Single source so pages don't each hardcode the localStorage key and fallback.
 export const userStore = {
   get: () => localStorage.getItem(USER_KEY) || 'admin',
   set: (u: string) => localStorage.setItem(USER_KEY, u),
   clear: () => localStorage.removeItem(USER_KEY),
+}
+
+// Session user id (login response userId): the value audit fields like created_by use; "created by me" matches on it.
+// Old sessions never stored it → fall back to username (usually identical on self-hosted deploys).
+const USER_ID_KEY = 'shepherd.userId'
+export const userIdStore = {
+  get: () => localStorage.getItem(USER_ID_KEY) || localStorage.getItem(USER_KEY) || 'admin',
+  set: (u: string) => localStorage.setItem(USER_ID_KEY, u),
+  clear: () => localStorage.removeItem(USER_ID_KEY),
 }
 
 let onUnauthorized: (() => void) | null = null
@@ -53,8 +62,8 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
     throw new ApiError(res.status, text || `${res.status} ${res.statusText}`)
   }
   if (!text) return undefined as T
-  // 2xx 但返回 HTML(典型:dev 代理未命中 → Vite 回 index.html)。
-  // 早期直接抛出清晰错误,避免把 HTML 字符串当数据塞进 state 引发白屏。
+  // 2xx but HTML body (typically: dev proxy miss → Vite returns index.html).
+  // Fail fast with a clear error instead of stuffing an HTML string into state and blanking the page.
   const ct = res.headers.get('content-type') || ''
   if (ct.includes('text/html') || text.trimStart().startsWith('<')) {
     throw new ApiError(
@@ -69,7 +78,7 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
   }
 }
 
-// 原始文本 GET(用于 Markdown 报告等非 JSON 响应)。
+// Raw text GET (non-JSON responses like Markdown reports).
 async function requestText(path: string): Promise<string> {
   const headers: Record<string, string> = {}
   const token = tokenStore.get()
@@ -84,7 +93,7 @@ async function requestText(path: string): Promise<string> {
   return text
 }
 
-// 原始二进制 GET(用于 xlsx 导出等文件下载)。
+// Raw binary GET (file downloads like xlsx export).
 async function requestBlob(path: string): Promise<Blob> {
   const headers: Record<string, string> = {}
   const token = tokenStore.get()
@@ -98,7 +107,7 @@ async function requestBlob(path: string): Promise<Blob> {
   return res.blob()
 }
 
-// 原始字节 POST(用于 xlsx 导入上传,body 直接是文件)。
+// Raw bytes POST (xlsx import upload; body is the file itself).
 async function requestUpload<T>(path: string, body: Blob): Promise<T> {
   const headers: Record<string, string> = { 'content-type': 'application/octet-stream' }
   const token = tokenStore.get()
@@ -124,7 +133,7 @@ export const http = {
   del: <T>(p: string, b?: unknown) => request<T>('DELETE', p, b),
 }
 
-// ---------- 类型 ----------
+// ---------- Types ----------
 
 export interface Page<T> {
   total: number
@@ -147,7 +156,7 @@ export interface Project {
   enable: boolean
 }
 
-/** 请求/响应规格(「定义」标签):请求头/Query/Body + 响应样例。 */
+/** Request/response spec ("Definition" tab): headers/query/body + sample responses. */
 export interface ApiSpecKV {
   name: string
   value?: string
@@ -156,13 +165,12 @@ export interface ApiSpecKV {
 export interface ApiSpecResponse {
   status?: number
   body?: string
-  /** 示例响应头(「响应内容」里「响应头」标签)。 */
+  /** Sample response headers ("Response headers" tab under response content). */
   headers?: ApiSpecKV[]
 }
-/** 请求体 content-type。 */
 export type ApiBodyType = 'none' | 'form-data' | 'x-www-form-urlencoded' | 'json' | 'xml' | 'raw' | 'binary'
 
-/** body 类型 → 默认 Content-Type;none 无体、raw 不强加(由用户/请求头决定)→ undefined。 */
+/** body type → default Content-Type; none has no body, raw is not forced (user/headers decide) → undefined. */
 export function contentTypeForBodyType(t?: ApiBodyType): string | undefined {
   switch (t) {
     case 'json':
@@ -170,22 +178,22 @@ export function contentTypeForBodyType(t?: ApiBodyType): string | undefined {
     case 'xml':
       return 'application/xml'
     case 'form-data':
-      // multipart 需 boundary 参数,而编辑器只提供原始文本体;不自动附加(无 boundary 的头反而让服务端解析失败),交由用户在请求头自定义。
+      // multipart needs a boundary param but the editor only holds a raw text body; don't auto-attach (a boundary-less header breaks server parsing) — user sets it in request headers.
       return undefined
     case 'x-www-form-urlencoded':
       return 'application/x-www-form-urlencoded'
     case 'binary':
       return 'application/octet-stream'
     default:
-      // none / raw / 未指定:不自动附加,Content-Type 可选。
+      // none / raw / unspecified: don't auto-attach; Content-Type is optional.
       return undefined
   }
 }
 
 /**
- * 按 body 类型为请求头补一个默认 Content-Type —— 但「可选」:
- * 用户已在请求头里写了 Content-Type(大小写不敏感)时尊重用户的,不覆盖;
- * body 类型为 none/raw 时不附加。返回新数组,不改入参。
+ * Add a default Content-Type header for the body type — but only as a fallback:
+ * if the user already set Content-Type (case-insensitive) it is respected, never overridden;
+ * none/raw body types attach nothing. Returns a new array, input untouched.
  */
 export function withBodyContentType<T extends { key: string; value: string }>(
   headers: T[],
@@ -196,12 +204,11 @@ export function withBodyContentType<T extends { key: string; value: string }>(
   if (headers.some((h) => h.key.trim().toLowerCase() === 'content-type')) return headers
   return [...headers, { key: 'Content-Type', value: ct } as T]
 }
-/** 认证模式。 */
 export interface ApiSpecAuth {
   type?: 'none' | 'bearer' | 'basic'
   token?: string
 }
-/** JSON 请求体 Schema 树节点(Schema 表格)。 */
+/** JSON request-body schema tree node (schema table). */
 export interface BodySchemaNode {
   name: string
   type: 'string' | 'integer' | 'number' | 'boolean' | 'object' | 'array'
@@ -211,32 +218,32 @@ export interface BodySchemaNode {
 }
 
 export interface ApiSpec {
-  // 基本信息
+  // basics
   description?: string
   tags?: string[]
-  // 请求
+  // request
   requestHeaders?: ApiSpecKV[]
   requestQuery?: ApiSpecKV[]
-  /** REST 路径参数(/users/{id} 里的 {id})。 */
+  /** REST path params (the {id} in /users/{id}). */
   restParams?: ApiSpecKV[]
   bodyType?: ApiBodyType
   requestBody?: string
-  /** form-data / urlencoded 的键值体。 */
+  /** Key-value body for form-data / urlencoded. */
   formBody?: ApiSpecKV[]
-  /** JSON 请求体的 Schema 树(参数名/类型/值/描述 + 嵌套);与 requestBody 文本并存。 */
+  /** Schema tree for the JSON body (name/type/value/description + nesting); coexists with the requestBody text. */
   bodySchema?: BodySchemaNode[]
   auth?: ApiSpecAuth
   responses?: ApiSpecResponse[]
-  /** 前置/后置处理器(api-runner Processor JSON;wait/extract/script/sql)。 */
+  /** Pre/post processors (api-runner Processor JSON; wait/extract/script/sql). */
   preProcessors?: unknown[]
   postProcessors?: unknown[]
-  /** 断言(api-runner Assertion JSON)。 */
+  /** Assertions (api-runner Assertion JSON). */
   assertions?: unknown[]
 }
 
 export interface ApiDefinition {
   id: string
-  /** 人类可读编号(【101093】式 ID;见 0042 迁移)。 */
+  /** Human-readable number ("101093"-style ID; migration 0042). */
   num?: number
   projectId: string
   name: string
@@ -245,16 +252,16 @@ export interface ApiDefinition {
   path: string
   status: string
   moduleId?: string | null
-  /** 不透明 JSON 规格;服务端往返存取(见 0037 迁移)。 */
+  /** Opaque JSON spec; round-tripped through the server (migration 0037). */
   spec?: ApiSpec
-  /** 创建人 user_id(见 0039 迁移)。 */
+  /** Creator user_id (migration 0039). */
   createdBy?: string
-  /** 创建/更新时间(服务端文本承载,如 "2026-06-21 12:34:56+00")。 */
+  /** Create/update time (server sends text, e.g. "2026-06-21 12:34:56+00"). */
   createdAt?: string
   updatedAt?: string
 }
 
-/** 接口列表视图(保存的筛选/列/分页快照;config 为不透明 JSON)。 */
+/** API list view (saved filter/column/pagination snapshot; config is opaque JSON). */
 export interface ApiView {
   id: string
   projectId: string
@@ -272,10 +279,9 @@ export interface ApiModule {
   name: string
 }
 
-/** 支持的导入来源格式。 */
 export type ImportFormat = 'openapi' | 'postman' | 'har' | 'jmeter' | 'metersphere'
 
-/** 定时导入计划(后端不回吐 token)。 */
+/** Scheduled import plan (backend never echoes the token back). */
 export interface ImportSchedule {
   id: string
   projectId: string
@@ -291,14 +297,14 @@ export interface ImportSchedule {
   enabled: boolean
   lastRunAt?: string | null
   lastResult: string
-  /** 最近一次运行的操作人(手动「立即执行」记触发用户;cron 自动运行为空 → 前端展示「自动」;见 0062 迁移)。 */
+  /** Operator of the last run (manual "run now" records the user; cron runs leave it empty → UI shows "auto"; migration 0062). */
   lastRunBy?: string
-  /** 创建人 user_id(后端审计列;见 0061 迁移)。 */
+  /** Creator user_id (audit column; migration 0061). */
   createdBy: string
   createdAt: string
 }
 
-/** URL 导入 / 定时导入共用的导入选项。 */
+/** Import options shared by URL import and scheduled import. */
 export interface ImportOpts {
   format?: ImportFormat
   moduleId?: string | null
@@ -309,7 +315,7 @@ export interface ImportOpts {
   basicAuth?: boolean
 }
 
-/** 接口定义变更历史一条(审计)。 */
+/** One API-definition change record (audit). */
 export interface ApiDefinitionChange {
   id: string
   definitionId: string
@@ -329,7 +335,7 @@ export interface ApiCase {
   body: string | null
   assertions: unknown
   processors: unknown
-  /** 优先级 / 状态 / 标签 / 请求头(见 0040 迁移)。 */
+  /** Priority / status / tags / headers (migration 0040). */
   priority?: string
   status?: string
   tags?: string[]
@@ -347,16 +353,16 @@ export interface ApiMock {
   responseStatus: number
   responseBody: string | null
   enabled: boolean
-  /** 创建人 user_id(审计列;见 0057 迁移)。 */
+  /** Creator user_id (audit column; migration 0057). */
   createdBy?: string
-  /** 标签 / 响应头 / 响应延时(ms)/ 跟随定义(见 0040 迁移)。 */
+  /** Tags / response headers / response delay (ms) / follow-definition (migration 0040). */
   tags?: string[]
   responseHeaders?: { key: string; value: string }[]
   responseDelayMs?: number
   followDefinition?: boolean
 }
 
-/** 项目级 Mock 行(MOCK 视图):Mock + 所属定义的 方法/路径/协议/名称。 */
+/** Project-level mock row (MOCK view): mock + owning definition's method/path/protocol/name. */
 export interface ProjectMock {
   id: string
   apiDefinitionId: string
@@ -368,7 +374,7 @@ export interface ProjectMock {
   path: string
   protocol: string
   definitionName: string
-  /** 操作人 / 更新时间(0057 后回填)。 */
+  /** Operator / update time (backfilled since 0057). */
   operator?: string
   updatedAt?: string
 }
@@ -386,15 +392,15 @@ export interface Scenario {
   projectId: string
   name: string
   status: string
-  /** 元信息(描述/标签/等级/模块/参数);不透明 JSON(见 0044 迁移)。 */
+  /** Meta (description/tags/level/module/params); opaque JSON (migration 0044). */
   meta?: Record<string, unknown>
-  /** 审计(只读;见 0046 迁移)。 */
+  /** Audit fields (read-only; migration 0046). */
   createdBy?: string | null
   createdAt?: string
   updatedAt?: string
-  /** 列表接口已返回步骤,用于显示步骤数。 */
+  /** List endpoint includes steps, used to show the step count. */
   steps?: ScenarioStep[]
-  /** 最近一次执行结果状态(SUCCESS/ERROR;列表回填,单查为 null)。 */
+  /** Latest run status (SUCCESS/ERROR; filled in list responses, null on single fetch). */
   lastResult?: string | null
 }
 
@@ -410,7 +416,7 @@ export interface ScenarioStep {
     url: string
     body?: string | null
     assertions?: unknown
-    /** 完整请求规格(后端 0056 起内联请求支持):请求头/Query/REST/认证/处理器,与用例同构。 */
+    /** Full request spec (inline requests supported since backend 0056): headers/query/REST/auth/processors, same shape as a case. */
     headers?: { key: string; value: string }[]
     queryParams?: { key: string; value: string }[]
     restParams?: { key: string; value: string }[]
@@ -427,47 +433,47 @@ export interface ScenarioRunResult {
   caseCount: number
 }
 
-/** 场景报告明细行(逐用例结果)。注:响应时间/大小/状态码暂未持久化(待执行器扩展)。 */
+/** Scenario report detail row (per-case result). Note: latency/size/status code not yet persisted (pending runner support). */
 export interface ReportResultItem {
   caseId: string
   outcome: string // SUCCESS | ERROR
   failures: string[]
   executedAt: string
-  /** 响应明细(0045 后回填;旧报告为 null)。 */
+  /** Response details (backfilled since 0045; null on older reports). */
   statusCode?: number | null
   latencyMs?: number | null
   respSize?: number | null
   body?: string | null
   headers?: [string, string][]
-  /** 逐条断言结果(含通过项)+ 提取变量(0048 后回填;旧报告为空数组)。 */
+  /** Per-assertion results (including passes) + extracted variables (since 0048; empty arrays on older reports). */
   assertions?: AssertionResult[]
   extractions?: [string, string][]
-  /** 实际发送的请求(0060 后回填;变量/baseUrl/认证已解析)。CASE 引用步骤也有。 */
+  /** Request actually sent (since 0060; variables/baseUrl/auth already resolved). Present for CASE reference steps too. */
   request?: { method: string; url: string; headers: [string, string][]; body?: string | null } | null
 }
 export interface ScenarioReportDetail {
   reportId: string
   status: string
   caseCount: number
-  /** 报告起止时间与总耗时(毫秒,wall-clock;0056 后回填,旧报告为 null)。 */
+  /** Report start/end and total duration (ms, wall-clock; since 0056, null on older reports). */
   startedAt?: string | null
   finishedAt?: string | null
   durationMs?: number | null
   results: ReportResultItem[]
 }
-/** 项目级接口用例执行汇总(GET /api/case-exec-summary)。 */
+/** Project-level API case execution summary (GET /api/case-exec-summary). */
 export interface CaseExecSummary {
   executions: number
   passed: number
   executedCases: number
 }
-/** 近 N 天执行趋势的单日数据点(GET /api/exec-trend)。 */
+/** Single-day point of the last-N-days execution trend (GET /api/exec-trend). */
 export interface ExecTrendPoint {
   date: string // YYYY-MM-DD
   executions: number
   passed: number
 }
-/** 项目文件(文件管理)。 */
+/** Project file (file management). */
 export interface ProjectFile {
   id: string
   name: string
@@ -479,7 +485,7 @@ export interface ProjectFile {
   updatedAt: string
 }
 
-/** 场景变更历史一条(审计日志)。 */
+/** One scenario change record (audit log). */
 export interface ScenarioChange {
   id: string
   action: string // CREATE | UPDATE | ADD_STEP | DELETE_STEP | REORDER
@@ -505,7 +511,7 @@ export interface PoolNode {
   singleTaskConcurrentNumber: number
 }
 
-/** 类型相关配置:Node 用 nodes[];Kubernetes 用 ip/token/namespace/deployName + 并发。 */
+/** Type-specific config: Node uses nodes[]; Kubernetes uses ip/token/namespace/deployName + concurrency. */
 export interface ResourcePoolConfig {
   nodes?: PoolNode[]
   ip?: string
@@ -531,7 +537,7 @@ export interface ResourcePool {
   updatedAt: string
 }
 
-/** 创建/更新资源池入参(后端字段缺省值见 ResourcePoolBody)。 */
+/** Create/update resource pool input (backend defaults: see ResourcePoolBody). */
 export interface ResourcePoolInput {
   name: string
   enabled?: boolean
@@ -547,7 +553,7 @@ export interface ResourcePoolInput {
 export interface Role {
   id: string
   name: string
-  /** SYSTEM | ORGANIZATION | PROJECT。 */
+  /** SYSTEM | ORGANIZATION | PROJECT. */
   scope?: string
   permissions?: string[]
 }
@@ -557,8 +563,46 @@ export interface User {
   name: string
   email: string
   enable?: boolean
-  /** 用户组(角色名);列表接口附带。 */
+  /** User groups (role names); included by the list endpoint. */
   userGroups?: string[]
+}
+
+export interface ApiKey {
+  id: string
+  name: string
+  /** Plaintext key (sak_…); returned once in the create response only, never by list. */
+  key?: string
+  /** Permission strings like "DELIVERY:READ+UPDATE+EXECUTE" (resource:action+action). */
+  permissions: string[]
+  createdAt: string
+  /** Expiry; empty = never expires. */
+  expiresAt?: string | null
+  revoked?: boolean
+}
+
+// Session identity (GET /auth/me): data source for the personal-center info page; falls back to local store on failure.
+export interface AuthMe {
+  userId: string
+  permissions: string[]
+}
+
+// Personal LLM model config (/me/llm-model): apiKey is write-only; list returns a masked value.
+export interface LlmModel {
+  id: string
+  provider: string
+  name: string
+  baseUrl?: string
+  apiKeyMasked?: string
+  enabled: boolean
+  createdAt: string
+}
+
+export interface ProjectMember {
+  projectId: string
+  userId: string
+  /** OWNER | MEMBER. */
+  role: string
+  addedAt: string
 }
 
 export interface CaseStep {
@@ -575,11 +619,11 @@ export interface FunctionalCase {
   status?: string
   steps?: CaseStep[]
   customFields?: Record<string, string>
-  /** 创建人 user_id(见 0063 迁移)。 */
+  /** Creator user_id (migration 0063). */
   createdBy?: string
 }
 
-/** 需求覆盖里的一条功能用例(按验收标准下标 criterionIndex)。 */
+/** One functional case in requirement coverage (keyed by acceptance-criterion index). */
 export interface CoverageCase {
   criterionIndex: number
   caseId: string
@@ -587,7 +631,7 @@ export interface CoverageCase {
   module: string
   priority: string
 }
-/** 一条功能用例覆盖的需求/标准(反查)。 */
+/** Requirement/criterion covered by a functional case (reverse lookup). */
 export interface CaseRequirementLink {
   requirementId: string
   requirementTitle: string
@@ -675,16 +719,100 @@ export interface RequirementVersion {
   acceptanceCriteria?: string[]
 }
 
+/** Requirement pipeline stages (fixed 7, in order: created → audit → review → dev → test → acceptance → delivery). */
+export type RequirementStageKey = 'CREATED' | 'AUDIT' | 'REVIEW' | 'DEV' | 'TEST' | 'ACCEPTANCE' | 'DELIVERY'
+export type RequirementStageStatus = 'PENDING' | 'IN_PROGRESS' | 'DONE' | 'SKIPPED'
+
+/** Requirement stage detail (backend always returns all 7 stages per requirement, in pipeline order). */
+export interface RequirementStage {
+  stage: RequirementStageKey
+  status: RequirementStageStatus
+  /** Planned start/end (YYYY-MM-DD); null = not scheduled. */
+  plannedStart: string | null
+  plannedEnd: string | null
+  /** Actual start/end (epoch ms); null = hasn't happened. */
+  startedAt: number | null
+  finishedAt: number | null
+  /** Planned end passed but stage not done → overdue. */
+  overdue: boolean
+}
+
 export interface Requirement {
   id: string
   projectId?: string
   title: string
+  /** P0-P3. */
+  priority?: string
+  /** FEATURE | ENHANCEMENT | TECH_DEBT | BUGFIX. */
+  reqType?: string
   baselineVersion: number
   latestVersion?: number
   status: string
-  // 兼容两种返回:顶层 acceptanceCriteria(旧)或 versions[].acceptanceCriteria(现)。
+  // Supports both response shapes: top-level acceptanceCriteria (old) or versions[].acceptanceCriteria (current).
   acceptanceCriteria?: string[]
   versions?: RequirementVersion[]
+  /** Tags (max 10). */
+  tags?: string[]
+  /** Parent requirement id; null = top-level. */
+  parentId?: string | null
+  /** Due date (YYYY-MM-DD); null = unset. */
+  dueDate?: string | null
+  /** Any stage overdue or overall due date passed → overdue. */
+  overdue?: boolean
+  /** Create/update time (epoch ms). */
+  createdAt?: number
+  updatedAt?: number
+  /** Creator; may be empty on legacy data. */
+  createdBy?: string
+  currentStage?: RequirementStageKey
+  stages?: RequirementStage[]
+  /** Custom field values from the field template (key → string value; multiselect joined with commas). */
+  customFields?: Record<string, string>
+  /** Module id (shared project module tree); empty/missing = unplanned. */
+  moduleId?: string
+}
+
+/** Field types in a field template (drives the create-form control). */
+export type TemplateFieldType = 'text' | 'textarea' | 'select' | 'multiselect' | 'date' | 'number'
+
+/** One field in a field template (system fields have fixed keys; custom field keys are c_-prefixed short ids). */
+export interface TemplateField {
+  key: string
+  /** Display name for custom fields; empty for system fields, which render via i18n. */
+  label: string
+  type: TemplateFieldType
+  required: boolean
+  /** false = hidden in the create form. */
+  enabled: boolean
+  system: boolean
+  /** Options for select/multiselect. */
+  options?: string[]
+}
+
+/** Field template config: stored as opaque JSON on the backend; array order = form order. */
+export interface FieldTemplateConfig {
+  fields: TemplateField[]
+}
+
+/** Project-level template: kind selects the module (requirement / functional-case / bug); config shape depends on kind. */
+export interface ProjectTemplate {
+  id: string
+  projectId: string
+  kind: string
+  name: string
+  config: FieldTemplateConfig
+  createdBy: string
+  createdAt: number
+  updatedAt: number
+}
+
+/** Requirement field change record (time/actor/field/old/new). */
+export interface RequirementChange {
+  changedAt: number
+  changedBy: string
+  field: string
+  oldValue: string
+  newValue: string
 }
 
 export interface Task {
@@ -693,11 +821,11 @@ export interface Task {
   status: string
   acceptanceCriteria?: string[]
   dependencies?: string[]
-  /** 工作量(task point);0 = 未估。 */
+  /** Effort (task points); 0 = unestimated. */
   points?: number
-  /** 负责人 id/名;空 = 未分配。 */
+  /** Assignee id/name; empty = unassigned. */
   assignee?: string
-  /** 负责人类型:HUMAN / AGENT。 */
+  /** Assignee kind: HUMAN / AGENT. */
   assigneeKind?: string
 }
 
@@ -714,6 +842,8 @@ export interface DeliveryAttempt {
   taskId?: string
   title?: string
   executor?: string
+  /** Target runtime name for directed dispatch; empty = any runtime with the capability. */
+  targetRuntime?: string | null
   runId?: string | null
   deliverable?: { kind: string; reference: string; summary: string } | null
   error?: string | null
@@ -726,23 +856,33 @@ export interface DeliveryEvent {
   detail?: unknown
 }
 
-/** 任务中心一行:全系统交付尝试的执行状态/方式/结果/完成率聚合视图。 */
+/** Dispatchable executor type → display name (shared by task-center filter and dispatch picker). */
+export const EXECUTOR_LABEL: Record<string, string> = {
+  CLAUDE_CODE: 'Claude Code',
+  CODEX: 'Codex',
+  OPENCODE: 'OpenCode',
+  CODEBUDDY: 'CodeBuddy',
+}
+
+/** One task-center row: system-wide delivery attempts aggregated by status/executor/result/completion rate. */
 export interface TaskCenterItem {
   id: string
   decompositionId: string
   taskId: string
   title: string
-  /** 任务描述(基本信息;无关联任务则空串)。 */
+  /** Task description (empty string when no linked task). */
   description: string
-  /** 所属模块(基本信息;任务归属需求标题,无则空串)。 */
+  /** Module (title of the owning requirement; empty string when none). */
   module: string
-  /** 执行方式(执行者):CLAUDE_CODE / CODEX。 */
+  /** Executor: CLAUDE_CODE / CODEX / OPENCODE / CODEBUDDY. */
   executor: string
-  /** 执行状态:DISPATCHED / RUNNING / DELIVERED / FAILED / STOPPED。 */
+  /** Target runtime name for directed dispatch; empty = any runtime with the capability. */
+  targetRuntime?: string | null
+  /** Execution status: DISPATCHED / RUNNING / DELIVERED / FAILED / STOPPED. */
   status: string
-  /** 执行结果:SUCCESS / FAILED / STOPPED / PENDING。 */
+  /** Result: SUCCESS / FAILED / STOPPED / PENDING. */
   result: string
-  /** 完成率 0..100。 */
+  /** Completion rate, 0..100. */
   completionRate: number
   runId?: string
   error?: string
@@ -761,14 +901,14 @@ export interface TaskCenterPage {
 export interface TaskCenterQuery {
   status?: string
   executor?: string
-  /** 仅实时任务(未终态)。 */
+  /** Live tasks only (not in a terminal state). */
   active?: boolean
   q?: string
   page?: number
   pageSize?: number
 }
 
-/** 执行机 / AI agent(Claude Code、Codex 等远程执行者),注册时自报支持协议。 */
+/** Runner machine / AI agent (remote executors like Claude Code, Codex); self-reports supported protocols at registration. */
 export interface RunnerAgent {
   id: string
   name: string
@@ -777,7 +917,7 @@ export interface RunnerAgent {
   protocols: string[]
 }
 
-// AI 执行者机群:远程 Claude/Codex runtime,出站 register/heartbeat,server 据心跳判活。
+// AI executor fleet: remote Claude/Codex runtimes; outbound register/heartbeat, server derives liveness from heartbeats.
 export interface FleetRuntime {
   id: string
   name: string
@@ -787,7 +927,7 @@ export interface FleetRuntime {
   online: boolean
 }
 
-// 队列计数(机群可观测):各能力的积压 / 在飞 / 最久在飞空闲。
+// Queue counters (fleet observability): per-capability backlog / in-flight / oldest in-flight age.
 export interface FleetStat {
   executor: string
   ready: number
@@ -807,7 +947,7 @@ export interface RunnerExecution {
   executedAt: string
 }
 
-/** 验证缺口:某条验收标准未被覆盖(UNCOVERED)或已覆盖但未交付验证(UNVERIFIED)。 */
+/** Verification gap: a criterion either not covered (UNCOVERED) or covered but not verified by a delivery (UNVERIFIED). */
 export interface VerificationGap {
   criterionIndex: number
   text: string
@@ -821,7 +961,7 @@ export interface VerificationReport {
   [k: string]: unknown
 }
 
-/** 用例评审(队列概览):通过规则 + 用例总数/已通过数。 */
+/** Case review (queue overview): pass rule + total/passed case counts. */
 export interface CaseReviewSummary {
   id: string
   passRule: string
@@ -847,9 +987,41 @@ export interface Bug {
   title?: string
   status: string
   createdAt?: number
+  createdBy?: string | null
 }
 
-/** 关注状态:某对象的关注人列表 + 当前用户是否在关注(后端 /follow 回读)。 */
+/** Human-AI collaboration stats: per-requirement AI/human delivery split (measured as VERIFIED + presence of a DELIVERED attempt). */
+export interface CollabRequirementItem {
+  requirementId: string
+  title: string
+  aiTasks: number
+  humanTasks: number
+  aiPoints: number
+  humanPoints: number
+  /** Delivery quality (attempt level): total/success/failed attempts; tasks accepted on the first delivery. */
+  aiAttempts: number
+  aiDelivered: number
+  aiFailed: number
+  aiFirstPass: number
+}
+export interface CollabDayItem {
+  /** Date, YYYY-MM-DD. */
+  date: string
+  ai: number
+  human: number
+}
+export interface CollabStats {
+  items: CollabRequirementItem[]
+  daily: CollabDayItem[]
+}
+
+export interface BugRelation {
+  /** REQUIREMENT | SCENARIO | FUNCTIONAL_CASE. */
+  kind: string
+  targetId: string
+}
+
+/** Follow status: an entity's follower list + whether the current user follows it (read back from /follow). */
 export interface FollowStatus {
   entityType: string
   entityId: string
@@ -886,21 +1058,21 @@ export interface DebugResponse {
   latencyMs: number
   headers: [string, string][]
   body: string
-  /** 断言逐条结果(服务端执行时求值;本地执行无)。 */
+  /** Per-assertion results (evaluated on server-side runs; absent for local runs). */
   assertions?: AssertionResult[]
-  /** 提取到的变量(变量名, 值)。 */
+  /** Extracted variables (name, value). */
   extractions?: [string, string][]
 }
 
 export type RunMode = 'PARALLEL' | 'SERIAL'
 
-// ---------- 端点封装 ----------
+// ---------- Endpoint wrappers ----------
 
 const emptyPage = <T>(): Page<T> => ({ total: 0, current: 1, pageSize: 0, totalPages: 0, items: [] })
 
 export const api = {
   login: (username: string, password: string) =>
-    http.post<{ token: string }>('/auth/login', { username, password }),
+    http.post<{ token: string; userId?: string }>('/auth/login', { username, password }),
 
   organizations: () => http.get<Page<Organization>>('/organization?pageSize=100'),
   createOrganization: (name: string) => http.post<Organization>('/organization', { name }),
@@ -919,16 +1091,18 @@ export const api = {
       ? http.get<ApiDefinition[]>(`/api/definition?projectId=${encodeURIComponent(projectId)}`)
       : Promise.resolve([] as ApiDefinition[]),
 
-  // 列表视图(保存筛选/列/分页快照;own + shared)。
+  // List views (saved filter/column/pagination snapshots; own + shared).
   views: (projectId: string) =>
     projectId
       ? http.get<ApiView[]>(`/api/api-view?projectId=${encodeURIComponent(projectId)}`)
       : Promise.resolve([] as ApiView[]),
   createView: (b: { projectId: string; name: string; config: unknown; shared?: boolean }) =>
     http.post<ApiView>('/api/api-view', b),
+  updateView: (id: string, b: { name?: string; config?: unknown; shared?: boolean }) =>
+    http.put<ApiView>(`/api/api-view/${id}`, b),
   deleteView: (id: string) => http.del(`/api/api-view/${id}`),
   getDefinition: (id: string) => http.get<ApiDefinition>(`/api/definition/${id}`),
-  // 更新接口定义基础字段(名称/协议/方法/路径);缺省字段后端保持原值,返回更新后的定义。
+  // Update definition base fields (name/protocol/method/path); omitted fields keep their value; returns the updated definition.
   updateDefinition: (
     id: string,
     b: { name?: string; protocol?: string; method?: string; path?: string },
@@ -951,7 +1125,7 @@ export const api = {
     method?: string
     path?: string
   }) => http.post<ApiDefinition>('/api/definition', b),
-  // 文件/粘贴导入:OpenAPI/Postman/HAR/MeterSphere 传 JSON 对象;JMeter(.jmx XML)传原始文本字符串。
+  // File/paste import: OpenAPI/Postman/HAR/MeterSphere send a JSON object; JMeter (.jmx XML) sends the raw text string.
   importDefinitions: (projectId: string, content: unknown, opts?: ImportOpts) =>
     http.post<{ created: ApiDefinition[]; updated: number; skipped: number }>('/api/definition/import', {
       projectId,
@@ -962,7 +1136,7 @@ export const api = {
       overwrite: opts?.overwrite ?? true,
       syncModule: opts?.syncModule ?? false,
     }),
-  // URL 导入:服务端拉取来源 URL(绕开浏览器跨域)并按格式导入,返回新增/覆盖/跳过计数。
+  // URL import: server fetches the source URL (sidesteps browser CORS) and imports by format; returns created/updated/skipped counts.
   importFromUrl: (projectId: string, url: string, opts?: ImportOpts) =>
     http.post<{ created: number; updated: number; skipped: number }>('/api/definition/import-url', {
       projectId,
@@ -976,7 +1150,7 @@ export const api = {
       syncModule: opts?.syncModule ?? false,
     }),
 
-  // 定时导入计划
+  // Scheduled imports
   importSchedules: (projectId: string) =>
     projectId
       ? http.get<ImportSchedule[]>(`/api/import-schedule?projectId=${encodeURIComponent(projectId)}`)
@@ -1001,7 +1175,7 @@ export const api = {
     http.post<{ result: string }>(`/api/import-schedule/${id}/run`),
   deleteImportSchedule: (id: string) => http.del(`/api/import-schedule/${id}`),
 
-  // 接口模块(文件夹)
+  // API modules (folders)
   modules: (projectId: string) =>
     projectId
       ? http.get<ApiModule[]>(`/api/module?projectId=${encodeURIComponent(projectId)}`)
@@ -1013,14 +1187,14 @@ export const api = {
   moveDefinition: (definitionId: string, moduleId: string | null) =>
     http.put(`/api/definition/${definitionId}/module`, { moduleId }),
 
-  // 任务 ↔ 用例 关联(链路:任务→用例)
+  // Task ↔ case links (task → case direction)
   taskCases: (decompositionId: string, taskId: string) =>
     http.get<ApiCase[]>(`/api/task-case?decompositionId=${encodeURIComponent(decompositionId)}&taskId=${encodeURIComponent(taskId)}`),
   linkTaskCase: (decompositionId: string, taskId: string, caseId: string) =>
     http.post('/api/task-case', { decompositionId, taskId, caseId }),
   unlinkTaskCase: (decompositionId: string, taskId: string, caseId: string) =>
     http.post('/api/task-case/unlink', { decompositionId, taskId, caseId }),
-  // 用例 → 计划 反查(链路:用例→计划)
+  // Case → plan reverse lookup
   plansByCase: (caseId: string) => http.get<{ planId: string; name: string }[]>(`/test-plan/by-case/${caseId}`),
 
   cases: (definitionId: string) =>
@@ -1058,7 +1232,24 @@ export const api = {
     http.put<ResourcePool>(`/api/resource-pool/${id}`, body),
   deleteResourcePool: (id: string) => http.del<void>(`/api/resource-pool/${id}`),
 
-  // 角色 / 用户(平台级)
+  // Project members
+  projectMembers: (projectId: string) =>
+    http.get<ProjectMember[]>(`/project/${encodeURIComponent(projectId)}/member`),
+  addProjectMember: (projectId: string, b: { userId: string; role?: string }) =>
+    http.post<ProjectMember>(`/project/${encodeURIComponent(projectId)}/member`, b),
+  removeProjectMember: (projectId: string, userId: string) =>
+    http.del(`/project/${encodeURIComponent(projectId)}/member/${encodeURIComponent(userId)}`),
+
+  // Project templates (kind selects the purpose, currently only requirement; name unique per project+kind, duplicate → 409)
+  projectTemplates: (projectId: string, kind: string) =>
+    http.get<{ items: ProjectTemplate[] }>(`/project/${encodeURIComponent(projectId)}/template?kind=${encodeURIComponent(kind)}`),
+  createProjectTemplate: (projectId: string, b: { kind: string; name: string; config: FieldTemplateConfig }) =>
+    http.post<ProjectTemplate>(`/project/${encodeURIComponent(projectId)}/template`, b),
+  updateProjectTemplate: (id: string, b: { name?: string; config?: FieldTemplateConfig }) =>
+    http.put<ProjectTemplate>(`/template/${encodeURIComponent(id)}`, b),
+  deleteProjectTemplate: (id: string) => http.del(`/template/${encodeURIComponent(id)}`),
+
+  // Roles / users (platform level)
   roles: () => http.get<Page<Role>>('/role?pageSize=100'),
   createRole: (b: { name: string; scope?: string; permissions?: string[] }) => http.post<Role>('/role', b),
   updateRole: (id: string, b: { name: string; permissions?: string[] }) => http.put<Role>(`/role/${id}`, b),
@@ -1072,7 +1263,26 @@ export const api = {
   deleteUser: (id: string) => http.del(`/system/user/${id}`),
   resetUserPassword: (id: string) => http.post<{ password: string }>(`/system/user/${id}/reset-password`),
 
-  // 功能用例(项目级)
+  // API keys (system level; create response carries the one-time plaintext key, revoke = DELETE)
+  apiKeys: () => http.get<{ items: ApiKey[] }>('/system/apikey'),
+  createApiKey: (b: { name: string; permissions: string[] }) => http.post<ApiKey>('/system/apikey', b),
+  revokeApiKey: (id: string) => http.del(`/system/apikey/${encodeURIComponent(id)}`),
+
+  // Personal center: identity / password change / my API keys / my model configs
+  me: () => http.get<AuthMe>('/auth/me'),
+  changePassword: (b: { oldPassword: string; newPassword: string }) => http.post<void>('/auth/password', b),
+  myApiKeys: () => http.get<{ items: ApiKey[] }>('/system/apikey/mine'),
+  createMyApiKey: (b: { name?: string; ttlSecs?: number }) => http.post<ApiKey>('/system/apikey/mine', b),
+  setApiKeyEnabled: (id: string, enabled: boolean) =>
+    http.put(`/system/apikey/${encodeURIComponent(id)}/enabled`, { enabled }),
+  llmModels: () => http.get<{ items: LlmModel[] }>('/me/llm-model'),
+  createLlmModel: (b: { provider: string; name: string; baseUrl?: string; apiKey?: string }) =>
+    http.post<LlmModel>('/me/llm-model', b),
+  updateLlmModel: (id: string, b: { name?: string; baseUrl?: string; apiKey?: string; enabled?: boolean }) =>
+    http.put<LlmModel>(`/me/llm-model/${encodeURIComponent(id)}`, b),
+  deleteLlmModel: (id: string) => http.del(`/me/llm-model/${encodeURIComponent(id)}`),
+
+  // Functional cases (project level)
   functionalCases: (projectId: string) =>
     projectId
       ? http.get<FunctionalCase[]>(`/functional-case?projectId=${encodeURIComponent(projectId)}`)
@@ -1085,7 +1295,7 @@ export const api = {
     steps?: CaseStep[]
     customFields?: Record<string, string>
   }) => http.post<FunctionalCase>('/functional-case', b),
-  // 全量更新一条功能用例(PUT 语义:未传字段会被覆盖为缺省,调用方需带齐字段)。
+  // Full update of a functional case (PUT semantics: omitted fields reset to defaults — callers must send everything).
   updateFunctionalCase: (
     id: string,
     b: {
@@ -1099,12 +1309,12 @@ export const api = {
     },
   ) => http.put<FunctionalCase>(`/functional-case/${id}`, b),
   deleteFunctionalCase: (id: string) => http.del<void>(`/functional-case/${id}`),
-  // 导出 xlsx(二进制下载)/ 导入 xlsx(原始字节上传,返回导入条数)。
+  // Export xlsx (binary download) / import xlsx (raw byte upload, returns imported count).
   exportFunctionalCases: (projectId: string) =>
     http.getBlob(`/functional-case/export?projectId=${encodeURIComponent(projectId)}`),
   importFunctionalCases: (projectId: string, file: File) =>
     http.upload<{ imported: number }>(`/functional-case/import?projectId=${encodeURIComponent(projectId)}`, file),
-  // 需求 ↔ 功能用例 覆盖关联。
+  // Requirement ↔ functional-case coverage links.
   linkRequirementCase: (b: { requirementId: string; criterionIndex: number; functionalCaseId: string; projectId?: string }) =>
     http.post('/requirement-case/link', b),
   unlinkRequirementCase: (b: { requirementId: string; criterionIndex: number; functionalCaseId: string }) =>
@@ -1114,12 +1324,12 @@ export const api = {
   caseRequirements: (caseId: string) =>
     http.get<CaseRequirementLink[]>(`/functional-case/${caseId}/requirements`),
 
-  // 项目接口用例(供测试计划挂载选择)
+  // Project API cases (for test-plan case selection)
   projectCases: (projectId: string) =>
     projectId
       ? http.get<Page<ApiCase>>(`/api/case?projectId=${encodeURIComponent(projectId)}&pageSize=100`)
       : Promise.resolve(emptyPage<ApiCase>()),
-  // 翻页拉全部项目用例(场景步骤 id→名 映射用:用例数 >100 时单页会漏,导致步骤名回落短 id)。
+  // Page through all project cases (for the scenario step id→name map: a single page misses cases when there are >100, making step names fall back to short ids).
   projectCasesAll: async (projectId: string): Promise<ApiCase[]> => {
     if (!projectId) return []
     const size = 200
@@ -1134,14 +1344,14 @@ export const api = {
     return out
   },
 
-  // 测试计划(无 list 端点 → 列表由前端注册表维护)
+  // Test plans (no list endpoint → the list lives in the frontend registry)
   createPlan: (b: { projectId: string; name: string; type?: string }) =>
     http.post<TestPlan>('/test-plan', { type: 'TEST_PLAN', ...b }),
   planStats: (id: string) => http.get<PlanStats>(`/test-plan/${id}/statistics`),
   planCases: (id: string) => http.get<PlanCase[] | Page<PlanCase>>(`/test-plan/${id}/cases`),
   linkPlanCase: (id: string, caseId: string, name: string) =>
     http.post(`/test-plan/${id}/cases`, { caseId, name }),
-  // 手动登记一条用例的执行结果(通过/不通过/阻塞/误报);status: SUCCESS|ERROR|BLOCK|FAKE_ERROR|PENDING
+  // Manually record a case result (pass/fail/blocked/false alarm); status: SUCCESS|ERROR|BLOCK|FAKE_ERROR|PENDING
   recordPlanCaseResult: (id: string, caseId: string, status: string) =>
     http.post(`/test-plan/${id}/cases/${caseId}/result`, { status }),
   runPlan: (id: string, environmentId?: string) =>
@@ -1150,7 +1360,7 @@ export const api = {
   planRuns: (id: string) => http.get<unknown[]>(`/test-plan/${id}/runs`),
   planReportMd: (id: string) => http.getText(`/test-plan/${id}/report.md`),
 
-  // 性能压测(无 list 端点 → 报告列表由前端注册表维护)
+  // Perf testing (no list endpoint → report list lives in the frontend registry)
   runPerf: (b: {
     projectId: string
     method: string
@@ -1159,7 +1369,7 @@ export const api = {
     iterations?: number
     durationMs?: number
   }) => http.post<{ reportId: string; status: string }>('/perf/run', b),
-  // 场景压测:一次施压 = 跑完整条场景链(登录→提取→鉴权调用→…),报告复用 PerfReport。
+  // Scenario perf: one load unit = running the full scenario chain (login → extract → authed calls → …); report reuses PerfReport.
   runScenarioPerf: (b: {
     projectId: string
     scenarioId: string
@@ -1170,17 +1380,23 @@ export const api = {
   }) => http.post<{ reportId: string; status: string; stepCount: number }>('/perf/scenario/run', b),
   perfReport: (id: string) => http.get<PerfReport>(`/perf/report/${id}`),
 
-  // 需求(版本 / 基线 / 拆分)— 无 list 端点,列表用前端注册表
-  createRequirement: (b: { projectId: string; title: string; acceptanceCriteria: string[] }) =>
+  // Requirements (versions / baseline / breakdown) — no list endpoint, list uses the frontend registry
+  createRequirement: (b: { projectId: string; title: string; description?: string; acceptanceCriteria: string[]; priority?: string; reqType?: string; tags?: string[]; dueDate?: string; parentId?: string; customFields?: Record<string, string>; moduleId?: string }) =>
     http.post<Requirement>('/requirement', b),
+  /** MRD/raw material → structured requirement draft (AI-drafted if an LLM is configured, heuristic otherwise). */
+  draftRequirement: (raw: string) =>
+    http.post<{ title: string; description: string; acceptanceCriteria: string[]; priority: string; source: 'llm' | 'heuristic' }>('/requirement/draft', { raw }),
   getRequirement: (id: string) => http.get<Requirement>(`/requirement/${id}`),
-  // 列表走后端(分页),pageSize 取大值一次拉全 —— 让 CLI/API 建的需求也在 UI 可见。
+  // List comes from the backend (paged); large pageSize pulls everything at once so CLI/API-created requirements show in the UI.
   requirements: (projectId: string) =>
     http.get<Page<Requirement>>(`/requirement?projectId=${encodeURIComponent(projectId)}&current=1&pageSize=200`),
   addRequirementVersion: (id: string, b: { description: string; acceptanceCriteria: string[] }) =>
     http.post<{ version: number }>(`/requirement/${id}/version`, b),
   getRequirementVersion: (id: string, n: number) =>
     http.get<RequirementVersion>(`/requirement/${id}/version/${n}`),
+  /** Edit requirement basics: title required; others optional and untouched when omitted; empty-string dueDate clears it; customFields replaced wholesale. */
+  updateRequirement: (id: string, b: { title: string; priority?: string; reqType?: string; tags?: string[]; dueDate?: string; customFields?: Record<string, string>; moduleId?: string }) =>
+    http.put<Requirement>(`/requirement/${id}`, b),
   renameRequirement: (id: string, title: string) =>
     http.put<Requirement>(`/requirement/${id}`, { title }),
   deleteRequirement: (id: string) => http.del(`/requirement/${id}`),
@@ -1190,8 +1406,19 @@ export const api = {
     http.put<Requirement>(`/requirement/${id}/baseline`, { version }),
   breakdown: (id: string) =>
     http.post<{ id: string; verificationId: string; tasks: Task[] }>(`/requirement/${id}/breakdown`, {}),
+  /** Stage transition/scheduling: status moves the stage (IN_PROGRESS/DONE/SKIPPED); plannedStart/plannedEnd schedule it (empty string clears); returns the fresh requirement. */
+  setRequirementStage: (id: string, stage: string, b: { status?: string; plannedStart?: string; plannedEnd?: string }) =>
+    http.put<Requirement>(`/requirement/${id}/stage/${stage}`, b),
+  /** Set/unset parent requirement (parentId=null unsets). */
+  setRequirementParent: (id: string, parentId: string | null) =>
+    http.put<Requirement>(`/requirement/${id}/parent`, { parentId }),
+  requirementChildren: (id: string) =>
+    http.get<{ items: Requirement[] }>(`/requirement/${id}/children`),
+  /** Field change records (sort order decided by the backend). */
+  requirementChanges: (id: string) =>
+    http.get<{ items: RequirementChange[] }>(`/requirement/${id}/changes`),
 
-  // 拆分图 / 任务
+  // Decomposition / tasks
   decomposition: (id: string) => http.get<Decomposition>(`/decomposition/${id}`),
   decompositionReady: (id: string) => http.get<Task[]>(`/decomposition/${id}/ready`),
   addTask: (id: string, b: { title: string; acceptanceCriteria: string[]; dependencies: string[]; points?: number }) =>
@@ -1206,8 +1433,8 @@ export const api = {
       {},
     ),
 
-  // 交付
-  createDelivery: (b: { decompositionId: string; taskId: string; title: string; executor: string }) =>
+  // Delivery
+  createDelivery: (b: { decompositionId: string; taskId: string; title: string; executor: string; targetRuntime?: string }) =>
     http.post<DeliveryAttempt>('/delivery', b),
   deliveries: (decompositionId: string, taskId: string) =>
     http.get<DeliveryAttempt[]>(
@@ -1215,7 +1442,7 @@ export const api = {
     ),
   deliveryEvents: (attemptId: string) => http.get<DeliveryEvent[]>(`/delivery/${attemptId}/events`),
 
-  // 任务中心(系统级:后台任务/即时任务列表 + 执行详情 + 停止/删除)
+  // Task center (system level: background/live task lists + execution detail + stop/delete)
   taskCenter: (params: TaskCenterQuery = {}) => {
     const sp = new URLSearchParams()
     if (params.status) sp.set('status', params.status)
@@ -1230,10 +1457,10 @@ export const api = {
     http.post<DeliveryAttempt>(`/delivery/${id}/stop`, { reason }),
   deleteTask: (id: string) => http.del<void>(`/delivery/${id}`),
 
-  // 执行机 / AI agent 管理(人机协同的执行者侧)
-  // AI 执行者机群(SHEPHERD_AGENT_FLEET 模式):列出远程 runtime + 在线状态。
+  // Runner / AI agent management (the executor side of human-AI collaboration)
+  // AI executor fleet (SHEPHERD_AGENT_FLEET mode): list remote runtimes + online status.
   fleetRuntimes: () => http.get<FleetRuntime[]>('/agent/runtime'),
-  // 机群队列计数:各能力积压/在飞(机群可观测),供机群视图 backlog 概览。
+  // Fleet queue counters: per-capability backlog/in-flight, feeds the fleet view's backlog overview.
   fleetStats: () => http.get<FleetStat[]>('/agent/work/stats'),
   runnerAgents: () => http.get<RunnerAgent[]>('/runner-agent'),
   registerRunnerAgent: (b: { name: string; baseUrl: string; token?: string; enabled?: boolean }) =>
@@ -1241,14 +1468,14 @@ export const api = {
   refreshRunnerAgent: (id: string) => http.post<string[]>(`/runner-agent/${id}/refresh`, {}),
   runnerExecutions: (id: string) => http.get<RunnerExecution[]>(`/runner-agent/${id}/executions`),
 
-  // 验证(覆盖链 / 报告)
+  // Verification (coverage chain / report)
   verificationReport: (id: string) => http.get<VerificationReport>(`/verification/${id}/report`),
   verificationLink: (id: string, b: { criterionIndex: number; decompositionId: string; taskId: string }) =>
     http.post(`/verification/${id}/link`, b),
   verificationSync: (id: string, b: { decompositionId: string; taskId: string; satisfied: boolean }) =>
     http.post(`/verification/${id}/sync`, b),
 
-  // 用例评审队列(创建/列表/详情/提交裁决)
+  // Case review queues (create/list/detail/submit verdict)
   caseReviews: (projectId: string) =>
     projectId ? http.get<CaseReviewSummary[]>(`/case-review?projectId=${encodeURIComponent(projectId)}`) : Promise.resolve([] as CaseReviewSummary[]),
   createCaseReview: (b: { projectId: string; passRule: string; reviewerCount: number; caseIds: string[] }) =>
@@ -1257,13 +1484,28 @@ export const api = {
   submitCaseReview: (reviewId: string, caseId: string, b: { reviewerId: string; status: string; content?: string }) =>
     http.post<{ status: string }>(`/case-review/${reviewId}/${caseId}`, b),
 
-  // 缺陷 — 列表/创建/状态流转全走后端(按项目隔离,按创建时间倒序)
+  // Bugs — list/create/status transitions all backend-driven (project-scoped, newest first)
   bugs: (projectId: string) =>
     projectId ? http.get<Bug[]>(`/bug?projectId=${encodeURIComponent(projectId)}`) : Promise.resolve([] as Bug[]),
-  createBug: (b: { projectId: string; title: string; initialStatus: string }) => http.post<Bug>('/bug', b),
+  createBug: (b: { projectId: string; title: string; initialStatus: string; customFields?: Record<string, string> }) => http.post<Bug>('/bug', b),
   setBugStatus: (id: string, status: string) => http.post<Bug>(`/bug/${id}/status`, { status }),
+  // Human-AI collaboration stats (per-requirement AI/human split + weekly trend)
+  collabStats: (projectId: string, requirementId?: string) =>
+    http.get<CollabStats>(
+      `/delivery/collab-stats?projectId=${encodeURIComponent(projectId)}${requirementId ? `&requirementId=${encodeURIComponent(requirementId)}` : ''}`,
+    ),
 
-  // 关注人(通用):任意对象按 (projectId, entityType, entityId) 关注/取消/查询。
+  // Bug ↔ asset links (requirement/scenario case/functional case)
+  bugRelations: (id: string) =>
+    http.get<{ relations: BugRelation[] }>(`/bug/${encodeURIComponent(id)}/relation`),
+  linkBugRelation: (id: string, b: { kind: string; targetId: string }) =>
+    http.post<{ relations: BugRelation[] }>(`/bug/${encodeURIComponent(id)}/relation`, b),
+  unlinkBugRelation: (id: string, kind: string, targetId: string) =>
+    http.del<{ relations: BugRelation[] }>(
+      `/bug/${encodeURIComponent(id)}/relation/${encodeURIComponent(kind)}/${encodeURIComponent(targetId)}`,
+    ),
+
+  // Followers (generic): follow/unfollow/query any entity by (projectId, entityType, entityId).
   follow: (b: { projectId: string; entityType: string; entityId: string }) =>
     http.post<FollowStatus>('/follow', b),
   unfollow: (b: { projectId: string; entityType: string; entityId: string }) =>
@@ -1277,7 +1519,7 @@ export const api = {
       `/follow/mine?projectId=${encodeURIComponent(projectId)}${entityType ? `&entityType=${encodeURIComponent(entityType)}` : ''}`,
     ),
 
-  // 技能 — 列表/详情/更新/删除走后端
+  // Skills — list/detail/update/delete backend-driven
   skills: (projectId: string) =>
     projectId ? http.get<Skill[]>(`/skill?projectId=${encodeURIComponent(projectId)}`) : Promise.resolve([] as Skill[]),
   getSkill: (id: string) => http.get<Skill>(`/skill/${id}`),
@@ -1289,17 +1531,17 @@ export const api = {
   composeSkills: (projectId: string, skillIds: string[]) =>
     http.post<{ instructions: string }>('/skill/compose', { projectId, skillIds }),
 
-  // 接口调试台:进程内即时发起请求(POST /api/debug/send)
+  // API debug console: fire a request in-process (POST /api/debug/send)
   debugSend: (b: { protocol?: string; method: string; url: string; headers?: { key: string; value: string }[]; body?: string; meta?: Record<string, string>; assertions?: unknown[]; processors?: unknown[] }) =>
     http.post<DebugResponse>('/api/debug/send', b),
-  // 后端启用的协议插件(即插即用:开了哪个 feature 就返回哪个),供调试台动态渲染。
+  // Protocol plugins enabled on the backend (returns whichever features are compiled in); debug console renders them dynamically.
   debugProtocols: () => http.get<{ protocols: string[] }>('/api/debug/protocols'),
 
-  // MCP 工具
+  // MCP tools
   mcpTools: () =>
     http.post<{ result: { tools: McpTool[] } }>('/mcp', { jsonrpc: '2.0', id: 1, method: 'tools/list' }),
 
-  // 环境(项目级)
+  // Environments (project level)
   environments: (projectId: string) =>
     projectId
       ? http.get<Environment[]>(`/api/environment?projectId=${encodeURIComponent(projectId)}`)

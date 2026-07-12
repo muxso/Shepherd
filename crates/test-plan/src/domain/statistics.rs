@@ -180,7 +180,8 @@ impl CaseCounts {
     }
 }
 
-/// 含 Underway 或「Completed+Prepared 混合」→ Underway;全 Completed → Completed;否则 Prepared。
+/// Any Underway, or a Completed+Prepared mix → Underway; all Completed → Completed;
+/// otherwise Prepared.
 pub fn status_by_children(children: &[ExecStatus]) -> ExecStatus {
     let has_underway = children.contains(&ExecStatus::Underway);
     let has_completed = children.contains(&ExecStatus::Completed);

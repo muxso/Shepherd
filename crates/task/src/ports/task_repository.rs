@@ -25,7 +25,7 @@ pub trait TaskRepository: Send + Sync {
 
     async fn get(&self, id: &str) -> Result<Option<Decomposition>, RepoError>;
 
-    /// Whole-graph write for add-task/build only; do NOT use for status changes (concurrent siblings lose updates) — use [`save_task_status`].
+    /// Whole-graph write for add-task/build only; do NOT use for status changes (concurrent siblings lose updates) — use [`Self::save_task_status`].
     async fn save(&self, decomposition: &Decomposition) -> Result<(), RepoError>;
 
     /// Row-level atomic status update, avoiding the whole-graph lost-update.

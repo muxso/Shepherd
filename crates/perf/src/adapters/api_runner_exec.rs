@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 
-use api_runner::{Assertion, CaseOutcome, ReqwestRunner, RequestSpec};
+use api_runner::{Assertion, CaseOutcome, RequestSpec, ReqwestRunner};
 
 use crate::ports::RequestExecutor;
 
@@ -15,7 +15,11 @@ impl ApiRunnerExecutor {
         Self { runner: ReqwestRunner::no_proxy(), spec, assertions }
     }
 
-    pub fn with_runner(runner: ReqwestRunner, spec: RequestSpec, assertions: Vec<Assertion>) -> Self {
+    pub fn with_runner(
+        runner: ReqwestRunner,
+        spec: RequestSpec,
+        assertions: Vec<Assertion>,
+    ) -> Self {
         Self { runner, spec, assertions }
     }
 }

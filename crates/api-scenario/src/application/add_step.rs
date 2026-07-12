@@ -50,8 +50,8 @@ mod tests {
 
         let uc = AddStepUseCase::new(repo);
         let req = InlineRequest::new("GET", "http://x", None).expect("valid");
-        let step =
-            NewScenarioStep::new(0, StepKind::Request(req), RefMode::Reference, None).expect("valid");
+        let step = NewScenarioStep::new(0, StepKind::Request(req), RefMode::Reference, None)
+            .expect("valid");
         let stored = uc.execute(&s.id, &step).await.expect("added");
         assert_eq!(stored.order, 0);
         assert_eq!(stored.kind.kind_str(), "REQUEST");

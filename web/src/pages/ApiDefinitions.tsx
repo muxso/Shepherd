@@ -14,25 +14,23 @@ import {
   QuestionCircleOutlined,
   SaveOutlined,
   FilterOutlined,
-  SettingOutlined,
   ThunderboltOutlined,
   CodeOutlined,
   DownOutlined,
-  ShareAltOutlined,
-  DeleteOutlined,
   EyeOutlined,
   EyeInvisibleOutlined,
   UnorderedListOutlined,
   MinusSquareOutlined,
   SearchOutlined,
+  SendOutlined,
 } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
-import { api, ApiError, type ApiCase, type ApiDefinition, type ApiModule, type ApiSpec, type ApiView, type DebugResponse, type Environment, type ImportFormat, type ImportSchedule, type ProjectMock } from '../api'
+import { api, ApiError, userIdStore, type ApiCase, type ApiDefinition, type ApiModule, type ApiSpec, type DebugResponse, type Environment, type ImportFormat, type ImportSchedule, type ProjectMock } from '../api'
+import { columnSearch, useListView, type ListColumn } from '../components/ListView'
 import { useApp } from '../context'
 import { methodColor, statusColor } from '../components/tags'
 import CasesPanel from './CasesPanel'
 import MocksPanel from './MocksPanel'
-import RequestEditor from '../components/RequestEditor'
 import ApiSpecPanel, { DebugResultPanel, emptySpec, parseCurl, type ApiSpecPanelHandle, type ExecMode, type SentRequest } from '../components/ApiSpecPanel'
 import KVEditor, { type KVRow } from '../components/KVEditor'
 import AssertionEditor from '../components/AssertionEditor'
@@ -47,53 +45,12 @@ const API_STATUSES = ['DRAFT', 'DEBUGGING', 'COMPLETED', 'DEPRECATED']
 const LIST_KEY = '__list__'
 const NEW_KEY = '__new__'
 
-/** 高级筛选条件:字段 + 操作符 + 值(筛选抽屉)。 */
-type AdvCond = { field: 'num' | 'name' | 'path' | 'protocol' | 'method' | 'status'; op: 'contains' | 'notContains' | 'equals' | 'notEquals' | 'empty' | 'notEmpty'; value: string }
-
-// 字段/操作符选项:存 i18n key + 中文回退,渲染时经 t() 解析(模块级常量拿不到 hook)。
-const ADV_FIELDS: { value: AdvCond['field']; key: string; fallback: string }[] = [
-  { value: 'num', key: 'apidef.fieldNum', fallback: 'ID' },
-  { value: 'name', key: 'apidef.fieldName', fallback: '接口名称' },
-  { value: 'path', key: 'apidef.colPath', fallback: '路径' },
-  { value: 'protocol', key: 'apidef.protocol', fallback: '协议' },
-  { value: 'method', key: 'apidef.reqType', fallback: '请求类型' },
-  { value: 'status', key: 'apidef.colStatus', fallback: '状态' },
-]
-const ADV_OPS: { value: AdvCond['op']; key: string; fallback: string }[] = [
-  { value: 'contains', key: 'apidef.opContains', fallback: '包含' },
-  { value: 'notContains', key: 'apidef.opNotContains', fallback: '不包含' },
-  { value: 'equals', key: 'apidef.opEquals', fallback: '等于' },
-  { value: 'notEquals', key: 'apidef.opNotEquals', fallback: '不等于' },
-  { value: 'empty', key: 'apidef.opEmpty', fallback: '为空' },
-  { value: 'notEmpty', key: 'apidef.opNotEmpty', fallback: '不为空' },
-]
-// 用例状态:value 是发往后端的数据(保持中文),label 经 t() 翻译展示。
+// Case statuses: values are persisted to the backend (stay Chinese); labels are translated via t().
 const CASE_STATUSES = ['进行中', '已完成', '已废弃']
 const caseStatusKey = (s: string): string =>
   s === '进行中' ? 'apidef.caseStInProgress' : s === '已完成' ? 'apidef.caseStCompleted' : 'apidef.caseStDeprecated'
 
-function fieldVal(d: ApiDefinition, f: AdvCond['field']): string {
-  if (f === 'num') return String(d.num ?? '')
-  if (f === 'name') return d.name || ''
-  if (f === 'path') return d.path || ''
-  if (f === 'protocol') return d.protocol || ''
-  if (f === 'method') return d.method || ''
-  return d.status || ''
-}
-function condMatch(d: ApiDefinition, c: AdvCond): boolean {
-  const a = fieldVal(d, c.field).toLowerCase()
-  const v = c.value.trim().toLowerCase()
-  switch (c.op) {
-    case 'contains': return a.includes(v)
-    case 'notContains': return !a.includes(v)
-    case 'equals': return a === v
-    case 'notEquals': return a !== v
-    case 'empty': return a === ''
-    case 'notEmpty': return a !== ''
-  }
-}
-
-/** 把服务端时间文本("2026-06-21 12:34:56.78+00")渲染为 "2026-06-21 12:34:56";空/解析失败回退 "—"。 */
+/** Render server timestamp ("2026-06-21 12:34:56.78+00") as "2026-06-21 12:34:56"; empty/unparsable falls back to "—". */
 function fmtTs(ts?: string): string {
   if (!ts) return '—'
   const m = ts.match(/^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2}:\d{2})/)
@@ -106,33 +63,20 @@ export default function ApiDefinitions() {
   const [defs, setDefs] = useState<ApiDefinition[]>([])
   const [modules, setModules] = useState<ApiModule[]>([])
   const [loading, setLoading] = useState(false)
-  const [search, setSearch] = useState('')
   const [moduleKey, setModuleKey] = useState('ALL') // ALL | UNFILED | <moduleId>
   const [creating, setCreating] = useState(false)
   const [importOpen, setImportOpen] = useState(false)
-  // 列表视图模式:API(接口定义)/ CASE(项目用例)/ MOCK(项目 Mock)。
+  // List view mode: API (definitions) / CASE (project cases) / MOCK (project mocks).
   const [viewMode, setViewMode] = useState<'API' | 'CASE' | 'MOCK'>('API')
   const [caseRows, setCaseRows] = useState<ApiCase[]>([])
   const [mockRows, setMockRows] = useState<ProjectMock[]>([])
   const [viewLoading, setViewLoading] = useState(false)
   const [moduleForm, setModuleForm] = useState<{ mode: 'create' | 'rename'; id?: string; parentId?: string | null; name?: string } | null>(null)
   const [openIds, setOpenIds] = useState<string[]>([])
-  const [openCases, setOpenCases] = useState<Record<string, ApiCase>>({}) // 打开的用例详情 tab(key=caseId)
+  const [openCases, setOpenCases] = useState<Record<string, ApiCase>>({}) // open case-detail tabs (key = caseId)
   const [activeKey, setActiveKey] = useState(LIST_KEY)
-  // 列表:分页大小 / 列显隐 / 高级筛选(全部客户端)。
-  const [pageSize, setPageSize] = useState(20)
-  const [hiddenCols, setHiddenCols] = useState<string[]>([])
-  const [advOpen, setAdvOpen] = useState(false)
-  const [advLogic, setAdvLogic] = useState<'all' | 'any'>('all')
-  const [advConds, setAdvConds] = useState<AdvCond[]>([])
-  const [advApplied, setAdvApplied] = useState<{ logic: 'all' | 'any'; conds: AdvCond[] }>({ logic: 'all', conds: [] })
-  // 列表视图(保存的筛选/列/分页快照)。
-  const [views, setViews] = useState<ApiView[]>([])
-  const [activeViewId, setActiveViewId] = useState<string | null>(null)
-  const [viewName, setViewName] = useState('')
-  const [viewPopOpen, setViewPopOpen] = useState(false)
   const [searchParams, setSearchParams] = useSearchParams()
-  // 模块树:搜索 / 树内展示接口 / 隐藏空模块 / 协议过滤 / 受控展开(收起全部)。
+  // Module tree: search / show interfaces in tree / hide empty modules / protocol filter / controlled expand.
   const [moduleSearch, setModuleSearch] = useState('')
   const [showInterfaces, setShowInterfaces] = useState(false)
   const [hideEmpty, setHideEmpty] = useState(false)
@@ -143,16 +87,13 @@ export default function ApiDefinitions() {
     if (!projectId) {
       setDefs([])
       setModules([])
-      setViews([])
       return
     }
     setLoading(true)
     try {
-      const [ds, ms, vs] = await Promise.all([api.definitions(projectId), api.modules(projectId), api.views(projectId)])
+      const [ds, ms] = await Promise.all([api.definitions(projectId), api.modules(projectId)])
       setDefs(Array.isArray(ds) ? ds : [])
       setModules(Array.isArray(ms) ? ms : [])
-      // 排除归属其他页面的视图(如场景页 config.kind==='scenario');本页视图无 kind 或为 'apidef'。
-      setViews(Array.isArray(vs) ? vs.filter((v) => (v.config as ViewConfig & { kind?: string })?.kind !== 'scenario') : [])
     } catch (e) {
       message.error(e instanceof ApiError ? e.message : t('apidef.loadFailed', '加载失败'))
     } finally {
@@ -160,61 +101,7 @@ export default function ApiDefinitions() {
     }
   }
 
-  // 视图快照:当前筛选/列/分页 → config;反向 applyConfig 把 config 写回各状态。
-  type ViewConfig = { kind?: string; search?: string; moduleKey?: string; pageSize?: number; hiddenCols?: string[]; advLogic?: 'all' | 'any'; advConds?: AdvCond[] }
-  const currentConfig = (): ViewConfig => ({ kind: 'apidef', search, moduleKey, pageSize, hiddenCols, advLogic: advApplied.logic, advConds: advApplied.conds })
-  const applyConfig = (c: ViewConfig) => {
-    if (typeof c.search === 'string') setSearch(c.search)
-    if (typeof c.moduleKey === 'string') setModuleKey(c.moduleKey)
-    if (typeof c.pageSize === 'number') setPageSize(c.pageSize)
-    if (Array.isArray(c.hiddenCols)) setHiddenCols(c.hiddenCols)
-    const logic = c.advLogic ?? 'all'
-    const conds = Array.isArray(c.advConds) ? c.advConds : []
-    setAdvApplied({ logic, conds })
-    setAdvLogic(logic)
-    setAdvConds(conds)
-  }
-  const applyView = (v: ApiView) => {
-    applyConfig(v.config as ViewConfig)
-    setActiveViewId(v.id)
-    setViewPopOpen(false)
-    message.success(t('apidef.viewApplied', '已应用视图') + `「${v.name}」`)
-  }
-  const saveView = async () => {
-    const name = viewName.trim()
-    if (!name) return message.warning(t('apidef.viewNameRequired', '请输入视图名称'))
-    try {
-      const v = await api.createView({ projectId, name, config: currentConfig(), shared: true })
-      setViews((vs) => [v, ...vs])
-      setActiveViewId(v.id)
-      setViewName('')
-      message.success(t('apidef.viewSaved', '视图已保存'))
-    } catch (e) {
-      message.error(e instanceof ApiError ? e.message : t('apidef.saveFailed', '保存失败'))
-    }
-  }
-  const shareView = async (v: ApiView) => {
-    const url = `${window.location.origin}${window.location.pathname}?view=${encodeURIComponent(v.id)}`
-    try {
-      await navigator.clipboard?.writeText(url)
-      message.success(t('apidef.viewLinkCopied', '分享链接已复制'))
-    } catch {
-      message.info(url)
-    }
-  }
-  const removeView = async (v: ApiView) => {
-    try {
-      await api.deleteView(v.id)
-      setViews((vs) => vs.filter((x) => x.id !== v.id))
-      if (activeViewId === v.id) setActiveViewId(null)
-      message.success(t('apidef.viewDeleted', '视图已删除'))
-    } catch (e) {
-      message.error(e instanceof ApiError ? e.message : t('apidef.deleteFailed', '删除失败'))
-    }
-  }
-
-  // 深链 ?view=<id>:视图加载后命中即应用,然后清参数(避免重复)。
-  // 切到 CASE/MOCK 视图时按需加载项目级用例 / Mock。
+  // Lazy-load project-level cases / mocks when switching to CASE/MOCK view.
   useEffect(() => {
     if (viewMode === 'API') return
     let alive = true
@@ -225,16 +112,7 @@ export default function ApiDefinitions() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [viewMode, projectId])
 
-  useEffect(() => {
-    const vid = searchParams.get('view')
-    if (!vid || !views.length) return
-    const v = views.find((x) => x.id === vid)
-    if (v) applyView(v)
-    const next = new URLSearchParams(searchParams)
-    next.delete('view')
-    setSearchParams(next, { replace: true })
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [views])
+  // Deep link ?view=<id> is handled by useListView (clears the param after applying); do not parse it here again or it applies twice.
 
   useEffect(() => {
     load()
@@ -243,11 +121,11 @@ export default function ApiDefinitions() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId])
 
-  // 协议过滤选项:来自当前项目接口里出现过的协议(动态、即插即用)。
+  // Protocol filter options come from protocols actually present in this project's definitions.
   const protoOptions = useMemo(() => Array.from(new Set(defs.map((d) => d.protocol).filter(Boolean))).sort(), [defs])
 
-  // 模块树:全部接口 > [未归类] + 模块(parentId 嵌套);可选树内展示接口(方法标签),
-  // 支持 名称搜索 / 协议过滤 / 隐藏空模块 / 子树计数。
+  // Module tree: All APIs > [Unfiled] + modules (nested via parentId); optional interface leaves (method tag),
+  // with name search / protocol filter / hide-empty / subtree counts.
   const treeData = useMemo(() => {
     const lc = (s: string) => s.toLowerCase()
     const matchProto = (d: ApiDefinition) => protoFilter.length === 0 || protoFilter.includes(d.protocol)
@@ -263,7 +141,7 @@ export default function ApiDefinitions() {
       const children = [...subModules, ...leaves]
       const total = subtreeCount(m.id)
       const nameMatch = !moduleSearch || lc(m.name).includes(lc(moduleSearch))
-      if (moduleSearch && !nameMatch && children.length === 0) return null // 搜索时:无命中则隐藏
+      if (moduleSearch && !nameMatch && children.length === 0) return null // hide non-matching nodes while searching
       if (hideEmpty && total === 0) return null
       return {
         key: m.id,
@@ -290,7 +168,7 @@ export default function ApiDefinitions() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [defs, modules, showInterfaces, moduleSearch, protoFilter, hideEmpty])
 
-  // 树内全部可展开的 key(供「收起全部 / 展开全部」)。
+  // All expandable keys, for collapse-all / expand-all.
   const allExpandableKeys = useMemo(() => ['ALL', ...modules.map((m) => m.id)], [modules])
 
   const onModuleAction = (action: string, m: ApiModule) => {
@@ -314,36 +192,17 @@ export default function ApiDefinitions() {
       })
   }
 
-  const filtered = useMemo(() => {
-    const conds = advApplied.conds.filter((c) => c.op === 'empty' || c.op === 'notEmpty' || c.value.trim())
-    return defs.filter((d) => {
-      const mod =
-        moduleKey === 'ALL' ? true : moduleKey === 'UNFILED' ? !d.moduleId : d.moduleId === moduleKey
-      const q =
-        d.name.toLowerCase().includes(search.toLowerCase()) ||
-        d.path.toLowerCase().includes(search.toLowerCase())
-      // 高级筛选:所有=全部命中(AND);任一=任一命中(OR)。
-      const adv =
-        conds.length === 0
-          ? true
-          : advApplied.logic === 'all'
-            ? conds.every((c) => condMatch(d, c))
-            : conds.some((c) => condMatch(d, c))
-      return mod && q && adv
-    })
-  }, [defs, search, moduleKey, advApplied])
-
   const openDef = (id: string) => {
     setOpenIds((ids) => (ids.includes(id) ? ids : [...ids, id]))
     setActiveKey(id)
   }
-  // 点击 CASE 行 ID:打开用例详情 tab(对象在打开时捕获,切换视图后仍可见)。
+  // Clicking a CASE row opens its detail tab; the case object is captured at open time so the tab survives view switches.
   const openCase = (c: ApiCase) => {
     setOpenCases((m) => ({ ...m, [c.id]: c }))
     setActiveKey(`case:${c.id}`)
   }
-  useOpenParam(openDef) // 支持 ?open=<definitionId> 深链打开
-  // 支持 ?openCase=<caseId> 深链:引用关系图点击用例跳转 → 拉项目用例找到后打开其详情 tab。
+  useOpenParam(openDef) // ?open=<definitionId> deep link
+  // ?openCase=<caseId> deep link (case click in the reference graph): fetch project cases, then open the case's detail tab.
   useEffect(() => {
     const cid = searchParams.get('openCase')
     if (!cid || !projectId) return
@@ -382,7 +241,6 @@ export default function ApiDefinitions() {
     }
   }
 
-  // 复制接口:同协议/方法/路径新建一条「<名> copy」,归入同模块。
   const removeDef = (d: ApiDefinition) => {
     Modal.confirm({
       title: t('apidef.deleteConfirmTitle', '删除接口定义?'),
@@ -413,47 +271,51 @@ export default function ApiDefinitions() {
     }
   }
 
-  const allColumns: ColumnsType<ApiDefinition> = [
-    { key: 'num', title: 'ID', dataIndex: 'num', width: 90, render: (num: number | undefined, d) => <span className="ms-mono" style={{ color: 'var(--text-3)', fontSize: 12 }} title={d.id}>{num ?? '—'}</span> },
-    { key: 'name', title: t('apidef.colName', '名称'), dataIndex: 'name', ellipsis: true, render: (name: string) => <span style={{ fontWeight: 500 }}>{name}</span> },
+  const allColumns: ListColumn<ApiDefinition>[] = [
+    { key: 'num', label: 'ID', title: 'ID', dataIndex: 'num', width: 90, ...columnSearch<ApiDefinition>((d) => `${d.num ?? ''} ${d.id}`, t), render: (num: number | undefined, d) => <span className="ms-mono" style={{ color: 'var(--text-3)', fontSize: 12 }} title={d.id}>{num ?? '—'}</span> },
+    { key: 'name', label: t('apidef.colName', '名称'), title: t('apidef.colName', '名称'), dataIndex: 'name', ellipsis: true, ...columnSearch<ApiDefinition>((d) => d.name, t), render: (name: string) => <span style={{ fontWeight: 500 }}>{name}</span> },
     {
-      key: 'protocol', title: t('apidef.protocol', '协议'), dataIndex: 'protocol', width: 100,
+      key: 'protocol', label: t('apidef.protocol', '协议'), title: t('apidef.protocol', '协议'), dataIndex: 'protocol', width: 100,
       filters: PROTOCOLS.map((p) => ({ text: p, value: p })),
       onFilter: (v, d) => d.protocol === v,
       render: (p: string) => <Tag>{p}</Tag>,
     },
     {
-      key: 'method', title: t('apidef.reqType', '请求类型'), dataIndex: 'method', width: 110,
+      key: 'method', label: t('apidef.reqType', '请求类型'), title: t('apidef.reqType', '请求类型'), dataIndex: 'method', width: 110,
       filters: METHODS.map((m) => ({ text: m, value: m })),
       onFilter: (v, d) => d.method === v,
       render: (m: string) => <Tag color={methodColor(m)} style={{ fontWeight: 600 }}>{m || '—'}</Tag>,
     },
-    { key: 'path', title: t('apidef.colPath', '路径'), dataIndex: 'path', ellipsis: true, render: (p: string) => <span className="ms-mono" style={{ color: 'var(--text-2)' }}>{p || '—'}</span> },
+    { key: 'path', label: t('apidef.colPath', '路径'), title: t('apidef.colPath', '路径'), dataIndex: 'path', ellipsis: true, ...columnSearch<ApiDefinition>((d) => d.path || '', t), render: (p: string) => <span className="ms-mono" style={{ color: 'var(--text-2)' }}>{p || '—'}</span> },
     {
-      key: 'status', title: t('apidef.colStatus', '状态'), dataIndex: 'status', width: 100,
+      key: 'status', label: t('apidef.colStatus', '状态'), title: t('apidef.colStatus', '状态'), dataIndex: 'status', width: 100,
       filters: API_STATUSES.map((s) => ({ text: s, value: s })),
       onFilter: (v, d) => d.status === v,
       render: (s: string) => <Tag color={statusColor(s)}>{s}</Tag>,
     },
     {
-      key: 'module', title: t('apidef.colModule', '模块'), dataIndex: 'moduleId', width: 120,
+      key: 'module', label: t('apidef.colModule', '模块'), title: t('apidef.colModule', '模块'), dataIndex: 'moduleId', width: 120,
+      filters: [{ text: t('apidef.unfiled', '未归类'), value: '__unfiled__' }, ...modules.map((m) => ({ text: m.name, value: m.id }))],
+      onFilter: (v, d) => (v === '__unfiled__' ? !d.moduleId : d.moduleId === v),
       render: (mid?: string | null) => {
         const m = modules.find((x) => x.id === mid)
         return m ? <Tag color="geekblue">{m.name}</Tag> : <span style={{ color: 'var(--text-3)' }}>{t('apidef.unfiled', '未归类')}</span>
       },
     },
     {
-      key: 'tags', title: t('apidef.tags', '标签'), dataIndex: 'spec', width: 140,
+      key: 'tags', label: t('apidef.tags', '标签'), title: t('apidef.tags', '标签'), dataIndex: 'spec', width: 140,
+      filters: [...new Set(defs.flatMap((d) => d.spec?.tags || []))].map((tg) => ({ text: tg, value: tg })),
+      onFilter: (v, d) => (d.spec?.tags || []).includes(v as string),
       render: (spec?: ApiDefinition['spec']) => {
         const tags = spec?.tags || []
         return tags.length ? <Space size={[2, 2]} wrap>{tags.map((tg) => <Tag key={tg} style={{ margin: 0 }}>{tg}</Tag>)}</Space> : <span style={{ color: 'var(--text-3)' }}>—</span>
       },
     },
-    { key: 'createdBy', title: t('apidef.colCreatedBy', '创建人'), dataIndex: 'createdBy', width: 110, ellipsis: true, render: (u?: string) => u ? <span style={{ color: 'var(--text-2)' }}>{u}</span> : <span style={{ color: 'var(--text-3)' }}>—</span> },
-    { key: 'createdAt', title: t('apidef.colCreatedAt', '创建时间'), dataIndex: 'createdAt', width: 160, render: (ts?: string) => <span style={{ color: 'var(--text-3)', fontSize: 12 }}>{fmtTs(ts)}</span> },
-    { key: 'updatedAt', title: t('apidef.updatedAt', '更新时间'), dataIndex: 'updatedAt', width: 160, render: (ts?: string) => <span style={{ color: 'var(--text-3)', fontSize: 12 }}>{fmtTs(ts)}</span> },
+    { key: 'createdBy', label: t('apidef.colCreatedBy', '创建人'), title: t('apidef.colCreatedBy', '创建人'), dataIndex: 'createdBy', width: 110, ellipsis: true, ...columnSearch<ApiDefinition>((d) => d.createdBy || '', t), render: (u?: string) => u ? <span style={{ color: 'var(--text-2)' }}>{u}</span> : <span style={{ color: 'var(--text-3)' }}>—</span> },
+    { key: 'createdAt', label: t('apidef.colCreatedAt', '创建时间'), title: t('apidef.colCreatedAt', '创建时间'), dataIndex: 'createdAt', width: 160, render: (ts?: string) => <span style={{ color: 'var(--text-3)', fontSize: 12 }}>{fmtTs(ts)}</span> },
+    { key: 'updatedAt', label: t('apidef.updatedAt', '更新时间'), title: t('apidef.updatedAt', '更新时间'), dataIndex: 'updatedAt', width: 160, render: (ts?: string) => <span style={{ color: 'var(--text-3)', fontSize: 12 }}>{fmtTs(ts)}</span> },
     {
-      key: 'action', title: t('apidef.colAction', '操作'), width: 150, fixed: 'right',
+      key: 'action', label: t('apidef.colAction', '操作'), title: t('apidef.colAction', '操作'), width: 150, fixed: 'right',
       render: (_, d) => (
         <Space size={0} onClick={(e) => e.stopPropagation()}>
           <Button type="link" size="small" onClick={() => openDef(d.id)}>{t('a.edit', '编辑')}</Button>
@@ -480,15 +342,42 @@ export default function ApiDefinitions() {
       ),
     },
   ]
-  // 列显隐:ID/名称/操作 固定;其余可在「表格设置」开关。
-  const columns = allColumns.filter((c) => !hiddenCols.includes(String(c.key)))
-  // 可切换显隐的列(对齐参考图「表格设置」,ID/名称固定不可关、操作不在列表)。
-  const TOGGLE_COLS = allColumns.filter((c) => !['num', 'name', 'action'].includes(String(c.key))).map((c) => ({ key: String(c.key), label: String(c.title) }))
+  // List toolbar (views/filters/columns/page size/advanced conditions) is delegated to useListView; moduleKey is page-private state stored in view extra.
+  const lv = useListView<ApiDefinition>({
+    kind: 'apidef',
+    projectId,
+    searchLabel: t('apidef.searchPlaceholder', '搜索名称 / 路径'),
+    searchOf: (d) => `${d.num ?? ''} ${d.name} ${d.path}`,
+    // Views saved without a kind also belong to this page; scenario views (kind === 'scenario') are excluded.
+    matchKind: (k) => k === 'apidef' || k === undefined,
+    systemViews: [
+      { key: 'mine', label: t('lv.mine', '我创建的'), pred: (d) => !!d.createdBy && d.createdBy === userIdStore.get() },
+    ],
+    fields: [
+      { key: 'protocol', label: t('apidef.protocol', '协议'), type: 'enum', options: PROTOCOLS.map((p) => ({ value: p, label: p })), get: (d) => d.protocol },
+      { key: 'method', label: t('apidef.reqType', '请求类型'), type: 'enum', options: METHODS.map((m) => ({ value: m, label: m })), get: (d) => d.method },
+      { key: 'status', label: t('apidef.colStatus', '状态'), type: 'enum', options: API_STATUSES.map((s) => ({ value: s, label: s })), get: (d) => d.status },
+      // Below: advanced-condition picker only (duplicates search box / column filters, so not rendered in the declarative filter bar).
+      { key: 'num', label: 'ID', type: 'text', advOnly: true, get: (d) => String(d.num ?? '') },
+      { key: 'name', label: t('apidef.colName', '名称'), type: 'text', advOnly: true, get: (d) => d.name },
+      { key: 'path', label: t('apidef.colPath', '路径'), type: 'text', advOnly: true, get: (d) => d.path },
+    ],
+    columns: allColumns,
+    rows: defs,
+    extra: {
+      get: () => ({ moduleKey }),
+      apply: (v) => {
+        if (typeof v.moduleKey === 'string') setModuleKey(v.moduleKey)
+      },
+    },
+  })
+  // Module-tree selection filters on top of useListView filtering.
+  const visible = lv.rows.filter((d) => (moduleKey === 'ALL' ? true : moduleKey === 'UNFILED' ? !d.moduleId : d.moduleId === moduleKey))
 
   const listTab = (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 12px', borderBottom: '1px solid var(--border-soft)' }}>
-        {/* 视图模式切换:API / CASE / MOCK(对齐参考图左上角)。 */}
+        {/* View mode switch: API / CASE / MOCK (ref: top-left). */}
         <Dropdown
           trigger={['click']}
           menu={{ items: (['API', 'CASE', 'MOCK'] as const).map((m) => ({ key: m, label: m })), onClick: ({ key }) => setViewMode(key as 'API' | 'CASE' | 'MOCK') }}
@@ -496,74 +385,11 @@ export default function ApiDefinitions() {
           <Button>{viewMode} <DownOutlined /></Button>
         </Dropdown>
         <span style={{ fontWeight: 600, color: 'var(--brand)' }}>
-          {viewMode === 'API' ? t('apidef.allApis2', '全部接口') : viewMode === 'CASE' ? t('apidef.allCases', '全部用例') : t('apidef.allMocks', '全部 MOCK')}
+          {viewMode === 'API' ? t('apidef.allApis2', '全部') : viewMode === 'CASE' ? t('apidef.allCases', '全部用例') : t('apidef.allMocks', '全部 MOCK')}
         </span>
         <div style={{ flex: 1 }} />
-        <Input.Search placeholder={t('apidef.searchPlaceholder', '搜索 ID/名称/路径')} allowClear style={{ width: 240 }} value={search} onChange={(e) => setSearch(e.target.value)} />
-        <Popover
-          trigger="click"
-          placement="bottomRight"
-          open={viewPopOpen}
-          onOpenChange={setViewPopOpen}
-          title={t('apidef.views', '视图')}
-          content={
-            <div style={{ width: 268 }}>
-              {views.length === 0 ? (
-                <div style={{ color: 'var(--text-3)', fontSize: 12, padding: '2px 0 8px' }}>{t('apidef.noViews', '暂无视图,保存当前筛选为视图')}</div>
-              ) : (
-                <Space direction="vertical" size={2} style={{ width: '100%' }}>
-                  {views.map((v) => (
-                    <div key={v.id} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                      <a style={{ flex: 1, fontWeight: v.id === activeViewId ? 600 : 400, color: v.id === activeViewId ? 'var(--brand)' : undefined, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} onClick={() => applyView(v)} title={v.name}>
-                        {v.name}
-                      </a>
-                      <Tooltip title={t('apidef.shareView', '分享')}>
-                        <Button type="text" size="small" icon={<ShareAltOutlined />} onClick={() => shareView(v)} />
-                      </Tooltip>
-                      <Tooltip title={t('a.delete', '删除')}>
-                        <Button type="text" size="small" danger icon={<DeleteOutlined />} onClick={() => removeView(v)} />
-                      </Tooltip>
-                    </div>
-                  ))}
-                </Space>
-              )}
-              <Divider style={{ margin: '8px 0' }} />
-              <Space.Compact style={{ width: '100%' }}>
-                <Input size="small" placeholder={t('apidef.viewName', '视图名称')} value={viewName} onChange={(e) => setViewName(e.target.value)} onPressEnter={saveView} />
-                <Button size="small" type="primary" onClick={saveView}>{t('apidef.saveCurrent', '保存当前')}</Button>
-              </Space.Compact>
-            </div>
-          }
-        >
-          <Button icon={<EyeOutlined />}>
-            {t('apidef.views', '视图')}{activeViewId ? `: ${views.find((v) => v.id === activeViewId)?.name ?? ''}` : ''}
-          </Button>
-        </Popover>
-        <Button icon={<FilterOutlined />} onClick={() => { setAdvLogic(advApplied.logic); setAdvConds(advApplied.conds.length ? advApplied.conds : [{ field: 'name', op: 'contains', value: '' }]); setAdvOpen(true) }}>
-          {t('apidef.filter', '筛选')}{advApplied.conds.length ? ` (${advApplied.conds.length})` : ''}
-        </Button>
-        <Popover
-          trigger="click"
-          placement="bottomRight"
-          title={t('apidef.tableSettings', '表格设置')}
-          content={
-            <div style={{ width: 240 }}>
-              <div style={{ fontSize: 12, color: 'var(--text-3)', marginBottom: 6 }}>{t('apidef.pageSize', '每页显示数量')}</div>
-              <Segmented size="small" value={pageSize} onChange={(v) => setPageSize(Number(v))} options={[10, 20, 30, 50].map((n) => ({ label: String(n), value: n }))} style={{ marginBottom: 12 }} />
-              <div style={{ fontSize: 12, color: 'var(--text-3)', marginBottom: 6 }}>{t('apidef.colSettings', '表头设置')}</div>
-              <Space direction="vertical" size={6} style={{ width: '100%' }}>
-                {TOGGLE_COLS.map((c) => (
-                  <div key={c.key} style={{ display: 'flex', alignItems: 'center' }}>
-                    <span style={{ flex: 1, fontSize: 13 }}>{c.label}</span>
-                    <Switch size="small" checked={!hiddenCols.includes(c.key)} onChange={(on) => setHiddenCols((h) => (on ? h.filter((x) => x !== c.key) : [...h, c.key]))} />
-                  </div>
-                ))}
-              </Space>
-            </div>
-          }
-        >
-          <Button icon={<SettingOutlined />} />
-        </Popover>
+        {/* Toolbar (search/views/filters/columns) renders only in API mode; CASE/MOCK have no search/filter. */}
+        {viewMode === 'API' && lv.toolbar}
         <Button icon={<ReloadOutlined />} onClick={load} />
       </div>
       <div style={{ flex: 1, overflow: 'auto', padding: 12 }}>
@@ -572,11 +398,11 @@ export default function ApiDefinitions() {
             rowKey="id"
             size="middle"
             loading={loading}
-            dataSource={filtered}
-            columns={columns}
+            dataSource={visible}
+            columns={lv.columns}
             scroll={{ x: 'max-content' }}
             onRow={(d) => ({ onClick: () => openDef(d.id), style: { cursor: 'pointer' } })}
-            pagination={{ pageSize, size: 'small', showSizeChanger: true, pageSizeOptions: ['10', '20', '30', '50'], onShowSizeChange: (_, s) => setPageSize(s), showTotal: (total) => `${t('apidef.totalPrefix', '共')} ${total} ${t('apidef.totalSuffix', '个接口')}` }}
+            pagination={{ ...lv.pagination, showTotal: (total) => `${t('apidef.totalPrefix', '共')} ${total} ${t('apidef.totalSuffix', '个接口')}` }}
             locale={{ emptyText: <Empty description={t('apidef.emptyApis', '暂无接口')} /> }}
           />
         ) : viewMode === 'CASE' ? (
@@ -595,7 +421,7 @@ export default function ApiDefinitions() {
               { title: t('apidef.colPriority', '优先级'), dataIndex: 'priority', width: 90, render: (v?: string) => v || '—' },
               { title: t('apidef.colStatus', '状态'), dataIndex: 'status', width: 110, render: (v?: string) => v || '—' },
             ]}
-            pagination={{ pageSize, size: 'small', showTotal: (total) => `${t('apidef.totalPrefix', '共')} ${total} ${t('apidef.caseUnit', '个用例')}` }}
+            pagination={{ ...lv.pagination, showTotal: (total) => `${t('apidef.totalPrefix', '共')} ${total} ${t('apidef.caseUnit', '个用例')}` }}
             locale={{ emptyText: <Empty description={t('apidef.emptyCases', '暂无用例')} /> }}
           />
         ) : (
@@ -647,7 +473,7 @@ export default function ApiDefinitions() {
                 ),
               },
             ]}
-            pagination={{ pageSize, size: 'small', showTotal: (total) => `${t('apidef.totalPrefix', '共')} ${total} ${t('apidef.mockUnit', '个 Mock')}` }}
+            pagination={{ ...lv.pagination, showTotal: (total) => `${t('apidef.totalPrefix', '共')} ${total} ${t('apidef.mockUnit', '个 Mock')}` }}
             locale={{ emptyText: <Empty description={t('apidef.emptyMocks', '暂无 Mock')} /> }}
           />
         )}
@@ -709,14 +535,14 @@ export default function ApiDefinitions() {
   return (
     <div style={{ display: 'flex', height: '100%' }}>
       <ResizableSider defaultWidth={252} storageKey="apidef-sider">
-        {/* 顶部:添加接口 / 导入(对齐场景用例左栏头部样式:整宽 Compact 双按钮)。 */}
+        {/* Header: Add API / Import (full-width Compact button pair, matching the scenario page's left panel). */}
         <div style={{ padding: '10px 10px 0' }}>
           <Space.Compact style={{ width: '100%' }}>
             <Button type="primary" icon={<PlusOutlined />} style={{ flex: 1 }} disabled={viewMode !== 'API'} onClick={() => { setCreating(true); setActiveKey(NEW_KEY) }}>{t('apidef.addApi', '添加接口')}</Button>
             <Button icon={<ImportOutlined />} style={{ flex: 1 }} disabled={viewMode !== 'API'} onClick={() => setImportOpen(true)}>{t('a.import', '导入')}</Button>
           </Space.Compact>
         </div>
-        {/* 搜索:模块 / 接口名称(路径)。 */}
+        {/* Search: module / API name (path). */}
         <div style={{ padding: '10px 10px 6px' }}>
           <Input
             allowClear
@@ -727,14 +553,14 @@ export default function ApiDefinitions() {
             onChange={(e) => setModuleSearch(e.target.value)}
           />
         </div>
-        {/* 工具条:隐藏空模块 / 树内显示接口 / 收起全部 / 协议过滤 / 新建模块(「全部接口 (N)」由下方树根节点承载,不在此重复)。 */}
+        {/* Toolbar: hide empty / show interfaces / collapse all / protocol filter / new module. "All APIs (N)" lives on the tree root, not repeated here. */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 2, padding: '0 8px 8px', borderBottom: '1px solid var(--border-soft)' }}>
           <div style={{ flex: 1 }} />
           <Tooltip title={hideEmpty ? t('apidef.showEmpty', '显示空模块') : t('apidef.hideEmpty', '隐藏空模块')}>
             <Button size="small" type="text" icon={hideEmpty ? <EyeInvisibleOutlined /> : <EyeOutlined />} onClick={() => setHideEmpty((v) => !v)} />
           </Tooltip>
           <Tooltip title={showInterfaces ? t('apidef.hideIfaces', '隐藏接口') : t('apidef.showIfaces', '树内显示接口')}>
-            <Button size="small" type="text" icon={<UnorderedListOutlined />} style={{ color: showInterfaces ? '#52c41a' : undefined }} onClick={() => setShowInterfaces((v) => !v)} />
+            <Button size="small" type="text" icon={<UnorderedListOutlined />} style={{ color: showInterfaces ? 'var(--success)' : undefined }} onClick={() => setShowInterfaces((v) => !v)} />
           </Tooltip>
           <Tooltip title={treeExpanded.length ? t('apidef.collapseAll', '收起全部') : t('apidef.expandAll', '展开全部')}>
             <Button size="small" type="text" icon={<MinusSquareOutlined />} onClick={() => setTreeExpanded(treeExpanded.length ? [] : allExpandableKeys)} />
@@ -760,7 +586,7 @@ export default function ApiDefinitions() {
             </Tooltip>
           </Popover>
           <Tooltip title={t('apidef.newTopModule', '新建顶层模块')}>
-            <Button size="small" type="text" icon={<PlusOutlined />} style={{ color: '#52c41a' }} onClick={() => setModuleForm({ mode: 'create', parentId: null })} />
+            <Button size="small" type="text" icon={<PlusOutlined />} style={{ color: 'var(--success)' }} onClick={() => setModuleForm({ mode: 'create', parentId: null })} />
           </Tooltip>
         </div>
         <div style={{ flex: 1, overflow: 'auto', padding: 8 }}>
@@ -796,43 +622,6 @@ export default function ApiDefinitions() {
 
       <ImportModal open={importOpen} onClose={() => setImportOpen(false)} projectId={projectId} modules={modules} onDone={() => { setImportOpen(false); load() }} />
 
-      {/* 高级筛选抽屉:条件组合 所有/任一 + 字段/操作符/值,客户端过滤。 */}
-      <Drawer
-        title={t('apidef.filter', '筛选')}
-        open={advOpen}
-        onClose={() => setAdvOpen(false)}
-        width={460}
-        footer={
-          <div style={{ textAlign: 'right' }}>
-            <Space>
-              <Button onClick={() => { setAdvConds([]); setAdvApplied({ logic: advLogic, conds: [] }); }}>{t('a.reset', '重置')}</Button>
-              <Button type="primary" onClick={() => { setAdvApplied({ logic: advLogic, conds: advConds }); setAdvOpen(false) }}>{t('apidef.applyFilter', '保存并筛选')}</Button>
-            </Space>
-          </div>
-        }
-      >
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
-          <span style={{ color: 'var(--text-2)' }}>{t('apidef.matchCond', '符合以下条件')}</span>
-          <Select value={advLogic} onChange={(v) => setAdvLogic(v)} style={{ width: 90 }} options={[{ value: 'all', label: t('apidef.all', '所有') }, { value: 'any', label: t('apidef.any', '任一') }]} />
-        </div>
-        <Space direction="vertical" style={{ width: '100%' }} size={8}>
-          {advConds.map((c, i) => {
-            const set = (p: Partial<AdvCond>) => setAdvConds((cs) => cs.map((x, idx) => (idx === i ? { ...x, ...p } : x)))
-            const noValue = c.op === 'empty' || c.op === 'notEmpty'
-            return (
-              <Space.Compact key={i} style={{ width: '100%' }}>
-                <Select value={c.field} onChange={(v) => set({ field: v })} style={{ width: 130 }} options={ADV_FIELDS.map((f) => ({ value: f.value, label: t(f.key, f.fallback) }))} />
-                <Select value={c.op} onChange={(v) => set({ op: v })} style={{ width: 110 }} options={ADV_OPS.map((o) => ({ value: o.value, label: t(o.key, o.fallback) }))} />
-                <Input value={c.value} disabled={noValue} onChange={(e) => set({ value: e.target.value })} placeholder={noValue ? '—' : t('apidef.filterValue', '值')} />
-                <Button icon={<MoreOutlined />} onClick={() => setAdvConds((cs) => cs.filter((_, idx) => idx !== i))} danger />
-              </Space.Compact>
-            )
-          })}
-          <Button type="link" icon={<PlusOutlined />} onClick={() => setAdvConds((cs) => [...cs, { field: 'name', op: 'contains', value: '' }])} style={{ paddingLeft: 0 }}>
-            {t('apidef.addCond', '添加条件')}
-          </Button>
-        </Space>
-      </Drawer>
       <ModuleFormModal
         state={moduleForm}
         projectId={projectId}
@@ -843,7 +632,7 @@ export default function ApiDefinitions() {
   )
 }
 
-/** 树内接口叶子:方法标签 + 名称(点击打开详情)。 */
+/** Interface leaf in the tree: method tag + name (click opens detail). */
 function InterfaceLeaf({ d }: { d: ApiDefinition }) {
   return (
     <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, width: '100%', minWidth: 0 }} title={d.name}>
@@ -916,8 +705,8 @@ function ModuleFormModal({
   )
 }
 
-// 用例详情 tab(点击 CASE 行 ID 打开,对齐参考图):头部 + 请求头/请求体-JSON + 响应内容 + 服务端执行。
-// 更新用例抽屉(对齐参考图 #22):名称 + 优先级/状态/标签 + 请求头/请求体/Query/REST/断言/认证 → PUT /api/case/{id}。
+// Case detail tab (opened via CASE row ID, ref mock): header + request headers/body-JSON + response + server run.
+// Case edit drawer (ref #22): name + priority/status/tags + headers/body/query/REST/assertions/auth → PUT /api/case/{id}.
 function CaseEditDrawer({ open, caseItem, onClose, onSaved }: { open: boolean; caseItem: ApiCase; onClose: () => void; onSaved: (updated: ApiCase) => void }) {
   const { t } = useI18n()
   const blankKv = (): KVRow => ({ key: '', value: '' })
@@ -937,7 +726,7 @@ function CaseEditDrawer({ open, caseItem, onClose, onSaved }: { open: boolean; c
   const [assertions, setAssertions] = useState<unknown[]>((caseItem.assertions as unknown[]) || [])
   const [saving, setSaving] = useState(false)
 
-  // 重新打开/切换用例时,用最新用例值重置表单。
+  // Reset the form from the latest case values when reopening or switching cases.
   useEffect(() => {
     if (!open) return
     setName(caseItem.name); setMethod(caseItem.method); setUrl(caseItem.url)
@@ -1011,7 +800,7 @@ function CaseEditDrawer({ open, caseItem, onClose, onSaved }: { open: boolean; c
 
 function CaseDetailTab({ caseItem, projectId, onClose, onDeleted }: { caseItem: ApiCase; projectId: string; onClose: () => void; onDeleted?: () => void }) {
   const { t } = useI18n()
-  const [c, setC] = useState<ApiCase>(caseItem) // 本地副本:编辑后即时反映
+  const [c, setC] = useState<ApiCase>(caseItem) // local copy so edits reflect immediately
   const [editOpen, setEditOpen] = useState(false)
   const [envs, setEnvs] = useState<Environment[]>([])
   const [envId, setEnvId] = useState<string>('')
@@ -1086,7 +875,7 @@ function CaseDetailTab({ caseItem, projectId, onClose, onDeleted }: { caseItem: 
   return (
     <div style={{ padding: '12px 16px', height: '100%', overflow: 'auto' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
-        <span style={{ color: '#ff4d4f', fontSize: 12, fontWeight: 600 }}>{c.priority || 'P0'}</span>
+        <span style={{ color: 'var(--error)', fontSize: 12, fontWeight: 600 }}>{c.priority || 'P0'}</span>
         <span className="ms-mono" style={{ color: 'var(--text-3)', fontSize: 12 }}>[{c.id.slice(0, 8)}]</span>
         <span style={{ fontWeight: 600, fontSize: 15 }}>{c.name}</span>
         <div style={{ flex: 1 }} />
@@ -1127,25 +916,25 @@ function CaseDetailTab({ caseItem, projectId, onClose, onDeleted }: { caseItem: 
 
 function ApiDetail({ definition, onUpdated }: { definition: ApiDefinition; onUpdated?: () => void }) {
   const { t } = useI18n()
-  // 顶层标签 + 定义页内的 定义/调试 切换(调试是定义内的模式)。
+  // Top-level tabs + define/debug switch inside the Define tab (debug is a mode of Define).
   const [tab, setTab] = useState('preview')
   const [defMode, setDefMode] = useState<'define' | 'debug'>('define')
   const specRef = useRef<ApiSpecPanelHandle>(null)
   const [modules, setModules] = useState<ApiModule[]>([])
   const [meta, setMeta] = useState<{ tags: string[]; description?: string; spec?: ApiSpec }>({ tags: [] })
-  // 请求行名称/方法/路径(cURL 导入会回填方法/路径);初值取定义,保存时随基础字段落库。
+  // Request-line name/method/path (cURL import back-fills method/path); initialized from the definition, persisted with base fields on save.
   const [reqName, setReqName] = useState(definition.name || '')
   const [reqMethod, setReqMethod] = useState(definition.method || 'GET')
   const [reqPath, setReqPath] = useState(definition.path || '')
   const isHttp = (definition.protocol || 'HTTP').toUpperCase() === 'HTTP'
   const [curlOpen, setCurlOpen] = useState(false)
   const [curlText, setCurlText] = useState('')
-  // 调试执行方式:服务端代理(server)/ 浏览器本地直发(local)。
+  // Debug exec mode: server proxy vs. direct browser request.
   const [execMode, setExecMode] = useState<ExecMode>('server')
-  // 调试环境(顶栏选择;提供 baseUrl/默认头/变量)。
+  // Debug environment (picked in the top bar; supplies baseUrl/default headers/variables).
   const [envs, setEnvs] = useState<Environment[]>([])
   const [envId, setEnvId] = useState<string>('')
-  // 「保存为新用例」后自增,驱动「用例」标签重新加载。
+  // Bumped after "save as new case" to reload the Cases tab.
   const [casesRefresh, setCasesRefresh] = useState(0)
 
   useEffect(() => {
@@ -1179,7 +968,7 @@ function ApiDetail({ definition, onUpdated }: { definition: ApiDefinition; onUpd
 
   const moduleName = modules.find((m) => m.id === definition.moduleId)?.name || t('apidef.unfiled', '未归类')
 
-  // 预览头:状态/方法/[id]/名称 + 元信息行(对齐参考图 #1)。
+  // Preview header: status/method/[id]/name + meta row (ref #1).
   const previewHeader = (
     <div style={{ marginBottom: 16 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10, flexWrap: 'wrap' }}>
@@ -1200,8 +989,8 @@ function ApiDetail({ definition, onUpdated }: { definition: ApiDefinition; onUpd
     </div>
   )
 
-  // 预览:详情 / 引用关系 / 变更历史(对标参考图 #1,这三者是预览的子标签)。
-  // flex 列填满:头部固定 + 子标签 flex:1,使「引用关系」关系图整套铺满可用高度。
+  // Preview sub-tabs: detail / references / change history (ref #1).
+  // Flex column fill: fixed header + flex:1 sub-tabs so the reference graph fills the available height.
   const previewTab = (
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
       {previewHeader}
@@ -1218,8 +1007,8 @@ function ApiDetail({ definition, onUpdated }: { definition: ApiDefinition; onUpd
     </div>
   )
 
-  // 定义/调试共用同一编辑器外壳:请求行(协议/方法/路径)+ cURL 导入 + 行内 定义/调试 切换
-  // + 服务端执行/保存(对齐参考图 #6/#7)。调试在子标签下方追加「响应内容」面板。
+  // Define/debug share one editor shell: request line (protocol/method/path) + cURL import + inline define/debug switch
+  // + run/save (ref #6/#7). Debug appends a response panel below the sub-tabs.
   const importCurl = () => {
     const parsed = parseCurl(curlText)
     if (!parsed) {
@@ -1242,14 +1031,14 @@ function ApiDetail({ definition, onUpdated }: { definition: ApiDefinition; onUpd
       )}
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 12 }}>
         <Tag color="blue" style={{ margin: 0, padding: '4px 10px' }}>{definition.protocol}</Tag>
-        {isHttp && <Select value={reqMethod} onChange={setReqMethod} style={{ width: 100 }} options={METHODS.map((m) => ({ value: m, label: m }))} />}
+        {isHttp && <Select value={reqMethod} onChange={setReqMethod} style={{ width: 100 }} popupMatchSelectWidth={false} options={METHODS.map((m) => ({ value: m, label: m }))} />}
         <Input value={reqPath} onChange={(e) => setReqPath(e.target.value)} className="ms-mono" style={{ flex: 1, minWidth: 200 }} placeholder="/api/..." />
-        {/* 右侧动作统一收进 Space(不参与 flex 伸缩,保证路径输入框占满中段)。 */}
+        {/* Right-side actions grouped in a Space (excluded from flex growth so the path input fills the middle). */}
         <Space size={8}>
           <Tooltip title={t('apidef.importCurl', '导入 cURL')}>
             <Button icon={<CodeOutlined />} onClick={() => setCurlOpen(true)} />
           </Tooltip>
-          {/* 非 HTTP 协议暂不支持执行 → 不提供「调试」切换,仅保留「定义」。 */}
+          {/* Non-HTTP protocols can't execute yet → no debug switch, define only. */}
           {isHttp && (
             <Segmented
               value={defMode}
@@ -1262,7 +1051,7 @@ function ApiDetail({ definition, onUpdated }: { definition: ApiDefinition; onUpd
           )}
           {defMode === 'debug' ? (
             <>
-              {/* 执行:主键跑当前方式;下拉切「服务端执行 / 本地执行」并立即执行。 */}
+              {/* Run: main button uses the current mode; dropdown switches server/local and runs immediately. */}
               <Dropdown.Button
                 type="primary"
                 icon={<DownOutlined />}
@@ -1282,7 +1071,7 @@ function ApiDetail({ definition, onUpdated }: { definition: ApiDefinition; onUpd
               >
                 <ThunderboltOutlined /> {execMode === 'local' ? t('apidef.localRun', '本地执行') : t('apidef.serverRun', '服务端执行')}
               </Dropdown.Button>
-              {/* 调试态「保存」= 主键保存定义(与定义态共享同一份 spec);下拉「保存为新用例」。 */}
+              {/* Debug "Save": main button saves the definition (same spec as define mode); dropdown = save as new case. */}
               <Dropdown.Button
                 icon={<DownOutlined />}
                 onClick={() => specRef.current?.save()}
@@ -1301,7 +1090,7 @@ function ApiDetail({ definition, onUpdated }: { definition: ApiDefinition; onUpd
           )}
         </Space>
       </div>
-      {/* 接口名称:可编辑,保存时随基础字段(方法/路径)一并落库。 */}
+      {/* API name: editable, persisted with base fields (method/path) on save. */}
       <Input
         value={reqName}
         onChange={(e) => setReqName(e.target.value)}
@@ -1355,7 +1144,7 @@ function ApiDetail({ definition, onUpdated }: { definition: ApiDefinition; onUpd
               <Button type="primary" size="small" onClick={() => { setTab('define'); setDefMode('debug') }}>{t('apidef.serverRun', '服务端执行')}</Button>
             </Space>
           ) : tab === 'define' && defMode === 'debug' ? (
-            // 调试态:环境选择器与 预览/定义/用例/MOCK 同一行(右上)。
+            // Debug mode: env selector shares the tab bar row (top right).
             <Select
               size="small"
               value={envId || undefined}
@@ -1379,7 +1168,6 @@ function ApiDetail({ definition, onUpdated }: { definition: ApiDefinition; onUpd
   )
 }
 
-/** 元信息条目:标签 + 值(对齐参考图预览头)。 */
 function Meta({ label, value }: { label: string; value: ReactNode }) {
   return (
     <span style={{ color: 'var(--text-3)' }}>
@@ -1388,7 +1176,7 @@ function Meta({ label, value }: { label: string; value: ReactNode }) {
   )
 }
 
-/** 新建接口工作 Tab(对齐参考图:协议/方法/路径请求行 + 名称 + 描述 + 保存/取消)。 */
+/** New-API work tab (ref mock: protocol/method/path request line + name + description + save/cancel). */
 function NewDefinitionTab({
   projectId,
   moduleId,
@@ -1409,6 +1197,18 @@ function NewDefinitionTab({
   const [defMode, setDefMode] = useState<'define' | 'debug'>('define')
   const [saving, setSaving] = useState(false)
   const isHttp = protocol === 'HTTP'
+  // Debug reuses the detail page's ApiSpecPanel (controlled draft; no id so nothing persists); envs lazy-load on entering debug.
+  const panelRef = useRef<ApiSpecPanelHandle>(null)
+  const [envs, setEnvs] = useState<Environment[]>([])
+  const [envId, setEnvId] = useState('')
+  useEffect(() => {
+    if (defMode !== 'debug' || envs.length) return
+    api.environments(projectId).then((list) => {
+      const arr = Array.isArray(list) ? list : []
+      setEnvs(arr)
+      setEnvId((cur) => cur || arr.find((e) => e.enabled !== false)?.id || '')
+    }).catch(() => setEnvs([]))
+  }, [defMode, projectId, envs.length])
 
   const save = async () => {
     if (!name.trim()) return message.warning(t('apidef.nameRequired', '请填接口名称'))
@@ -1416,7 +1216,7 @@ function NewDefinitionTab({
     try {
       const d = await api.createDefinition({ projectId, name: name.trim(), protocol, method: isHttp ? method : '', path })
       if (moduleId) await api.moveDefinition(d.id, moduleId).catch(() => undefined)
-      // 把「定义」里编辑的请求/响应规格一并落库。
+      // Also persist the request/response spec edited in the Define tab.
       await api.updateDefinitionSpec(d.id, spec).catch(() => undefined)
       message.success(t('apidef.apiCreated', '接口已创建'))
       onCreated(d)
@@ -1427,15 +1227,15 @@ function NewDefinitionTab({
     }
   }
 
-  // 给 ApiSpecPanel(create)用的合成定义:无 id,仅带 projectId/protocol 供其渲染。
+  // Synthetic definition for ApiSpecPanel (create mode): no id, just projectId/protocol so it can render.
   const draftDef = { id: '', num: 0, projectId, name, protocol, method, path, status: 'DRAFT', moduleId, spec } as unknown as ApiDefinition
 
   return (
     <div style={{ padding: '12px 16px', height: '100%', overflow: 'auto' }}>
-      {/* 请求行:协议 + 方法 + 路径 + 定义/调试 + 保存(对齐参考图 #6/#7) */}
+      {/* Request line: protocol + method + path + define/debug + save (ref #6/#7) */}
       <div style={{ display: 'flex', gap: 8, marginBottom: 12, alignItems: 'center' }}>
         <Select value={protocol} onChange={setProtocol} style={{ width: 120 }} options={PROTOCOLS.map((p) => ({ value: p, label: p }))} />
-        {isHttp && <Select value={method} onChange={setMethod} style={{ width: 100 }} options={METHODS.map((m) => ({ value: m, label: m }))} />}
+        {isHttp && <Select value={method} onChange={setMethod} style={{ width: 100 }} popupMatchSelectWidth={false} options={METHODS.map((m) => ({ value: m, label: m }))} />}
         <Input value={path} onChange={(e) => setPath(e.target.value)} placeholder={isHttp ? '/api/login' : t('apidef.pathOrTarget', '路径 / 目标')} className="ms-mono" style={{ flex: 1 }} />
         {isHttp && (
           <Segmented
@@ -1447,6 +1247,21 @@ function NewDefinitionTab({
             ]}
           />
         )}
+        {/* Debug: env + send (server run); method/path/params share the same draft as define. */}
+        {isHttp && defMode === 'debug' && (
+          <>
+            <Select
+              value={envId || undefined}
+              onChange={setEnvId}
+              style={{ width: 200 }}
+              placeholder={t('editor.selectEnv', '选择环境')}
+              allowClear
+              options={envs.map((e) => ({ value: e.id, label: e.baseUrl ? `${e.name} · ${e.baseUrl}` : e.name }))}
+              notFoundContent={t('editor.noEnvConfigured', '未配置环境,去「环境」页新建')}
+            />
+            <Button type="primary" icon={<SendOutlined />} onClick={() => panelRef.current?.execute()}>{t('a.send', '发送')}</Button>
+          </>
+        )}
         <Button onClick={onCancel}>{t('a.cancel', '取消')}</Button>
         <Button type="primary" loading={saving} icon={<SaveOutlined />} onClick={save}>{t('a.save', '保存')}</Button>
       </div>
@@ -1456,7 +1271,18 @@ function NewDefinitionTab({
       ) : defMode === 'define' ? (
         <ApiSpecPanel definition={draftDef} mode="create" value={spec} onChange={setSpec} />
       ) : (
-        <RequestEditor initialMethod={method} initialUrl={path} lockedProtocol={protocol} />
+        <ApiSpecPanel
+          ref={panelRef}
+          definition={draftDef}
+          mode="debug"
+          value={spec}
+          onChange={setSpec}
+          hideSave
+          reqMethod={method}
+          reqPath={path}
+          reqName={name}
+          env={envs.find((e) => e.id === envId)}
+        />
       )}
     </div>
   )
@@ -1483,21 +1309,20 @@ function ImportModal({
     { label: 'JMeter', value: 'jmeter' },
     { label: 'MeterSphere', value: 'metersphere' },
   ]
-  const [source, setSource] = useState<ImportFormat>('openapi') // 来源格式
-  const [importType, setImportType] = useState('file') // file=一次性 | schedule=定时导入
+  const [source, setSource] = useState<ImportFormat>('openapi')
+  const [importType, setImportType] = useState('file') // file = one-shot | schedule = recurring import
   const [moduleId, setModuleId] = useState<string | undefined>(undefined)
-  const [groupByTag, setGroupByTag] = useState(true) // 按来源标签/分组自动建子模块并归类(默认开)
-  const [overwrite, setOverwrite] = useState(true) // 覆盖/不覆盖(对齐参考:默认覆盖)
-  const [syncModule, setSyncModule] = useState(true) // 同步更新接口所在目录
-  const [way, setWay] = useState('file') // 一次性导入的方式:file | url
+  const [groupByTag, setGroupByTag] = useState(true) // auto-create sub-modules from source tags/groups (default on)
+  const [overwrite, setOverwrite] = useState(true)
+  const [syncModule, setSyncModule] = useState(true) // on overwrite, also sync the API's module
+  const [way, setWay] = useState('file') // one-shot import via: file | url
   const [text, setText] = useState('')
   const [fileName, setFileName] = useState('')
   const [urlVal, setUrlVal] = useState('')
   const [token, setToken] = useState('')
   const [basicAuth, setBasicAuth] = useState(false)
   const [saving, setSaving] = useState(false)
-  // 定时导入
-  const [cron, setCron] = useState('0 0 2 * * *') // 默认每天 02:00(6 段)
+  const [cron, setCron] = useState('0 0 2 * * *') // 6-field cron, default daily 02:00
   const [scheduleName, setScheduleName] = useState('')
   const [schedules, setSchedules] = useState<ImportSchedule[]>([])
   const isJmeter = source === 'jmeter'
@@ -1510,7 +1335,7 @@ function ImportModal({
   }
 
   const loadSchedules = async () => {
-    try { setSchedules(await api.importSchedules(projectId)) } catch { /* 忽略加载失败 */ }
+    try { setSchedules(await api.importSchedules(projectId)) } catch { /* ignore load failure */ }
   }
   useEffect(() => {
     if (open && importType === 'schedule') void loadSchedules()
@@ -1524,7 +1349,7 @@ function ImportModal({
 
   const doImport = async () => {
     const opts = { format: source, moduleId: moduleId || undefined, groupByTag, overwrite, syncModule } as const
-    // URL 导入:服务端拉取(绕开跨域)。
+    // URL import: fetched server-side (avoids CORS).
     if (way === 'url') {
       if (!urlVal.trim()) return message.warning(t('apidef.importUrlRequired', '请输入来源 URL'))
       setSaving(true)
@@ -1537,11 +1362,11 @@ function ImportModal({
       } finally { setSaving(false) }
       return
     }
-    // 文件/粘贴导入。
+    // File/paste import.
     if (!text.trim()) return message.warning(t('apidef.importContentRequired', '请上传文件或粘贴文档内容'))
     let content: unknown = text
     if (!isJmeter) {
-      // JMeter 为 XML 原文;其余须为合法 JSON。
+      // JMeter is raw XML; everything else must be valid JSON.
       try { content = JSON.parse(text) } catch {
         return message.error(t('apidef.invalidJson', '不是合法 JSON(上传文件或粘贴文档内容)'))
       }
@@ -1600,7 +1425,7 @@ function ImportModal({
   )
 
   const isSchedule = importType === 'schedule'
-  // 定时导入必须基于 URL(到点重新拉取);一次性导入可文件或 URL。
+  // Scheduled imports must be URL-based (re-fetched on schedule); one-shot can be file or URL.
   const showUrlInputs = isSchedule || way === 'url'
   const importDisabled = isSchedule
     ? !urlVal.trim() || !cron.trim()
@@ -1633,7 +1458,7 @@ function ImportModal({
       ),
     },
     {
-      // 操作人:最近一次运行的触发者。手动「立即执行」记当前用户;cron 自动运行后端记空串 → 展示「自动」。
+      // Operator: who triggered the last run. Manual "run now" records the user; cron runs record '' → shown as "Auto".
       title: t('apidef.colOperator', '操作人'), dataIndex: 'lastRunBy', width: 100, ellipsis: true,
       render: (u: string | undefined, s: ImportSchedule) =>
         u ? <span style={{ color: 'var(--text-2)' }}>{u}</span>
@@ -1734,7 +1559,7 @@ function ImportModal({
           <Field label={t('apidef.scheduleName', '名称')}>
             <Input value={scheduleName} onChange={(e) => setScheduleName(e.target.value)} placeholder={t('apidef.scheduleNamePlaceholder', '可选,如:每日同步用户中心接口')} />
           </Field>
-          <Field label={<span><span style={{ color: '#ff4d4f', marginRight: 4 }}>*</span>cron</span>}>
+          <Field label={<span><span style={{ color: 'var(--error)', marginRight: 4 }}>*</span>cron</span>}>
             <Input value={cron} onChange={(e) => setCron(e.target.value)} className="ms-mono" placeholder="0 0 2 * * *" />
             <p style={{ color: 'var(--text-3)', fontSize: 12, margin: '4px 0 0' }}>
               {t('apidef.cronHint', '6 段表达式(秒 分 时 日 月 周)。例:0 0 2 * * * = 每天 02:00')}
@@ -1744,7 +1569,7 @@ function ImportModal({
       )}
       {showUrlInputs ? (
         <>
-          <Field label={<span><span style={{ color: '#ff4d4f', marginRight: 4 }}>*</span>{t('apidef.importSourceUrl', '来源 URL')}</span>}>
+          <Field label={<span><span style={{ color: 'var(--error)', marginRight: 4 }}>*</span>{t('apidef.importSourceUrl', '来源 URL')}</span>}>
             <Input value={urlVal} onChange={(e) => setUrlVal(e.target.value)} className="ms-mono" placeholder={t('apidef.importUrlPlaceholder', '请输入文档/集合的 URL')} />
           </Field>
           <Field label="token">

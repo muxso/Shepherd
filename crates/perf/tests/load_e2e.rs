@@ -1,7 +1,7 @@
 #![cfg(all(feature = "engine", feature = "api-runner-exec"))]
 
-use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 
 use api_runner::{Assertion, HttpMethod, RequestSpec};
 use axum::{routing::get, Router};

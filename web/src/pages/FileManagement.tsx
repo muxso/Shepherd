@@ -9,7 +9,7 @@ import { ResizableSider } from '../components/Workspace'
 import { ModuleTreePanel, inSelectedModule } from '../components/ModuleTreePanel'
 import { SelectProjectEmpty } from '../components/Page'
 
-// 文件管理(项目模块子标签,对齐参考图 #49/#50)。左侧文件树(简化)+ 右侧列表 + 添加文件抽屉。
+// File management (project module subtab, ref #49/#50): file tree on the left, list + add-file drawer on the right.
 export default function FileManagement() {
   const { t } = useI18n()
   const { projectId } = useApp()
@@ -30,7 +30,8 @@ export default function FileManagement() {
   }
   useEffect(load, [projectId]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // 文件归属模块:后端 ProjectFile 暂无 moduleId 字段,统一视为「未规划」。接入字段后改此处即可。
+  // Module ownership goes through moduleOf; missing moduleId counts as unfiled, and a backend
+  // field change only needs to touch this line.
   const moduleOf = (f: ProjectFile) => f.moduleId || ''
   const formats = useMemo(() => Array.from(new Set(files.map((f) => f.fileFormat).filter(Boolean))), [files])
   const rows = files.filter((f) => inSelectedModule(modules, selModule, moduleOf(f)) && (!q || f.name.toLowerCase().includes(q.toLowerCase())) && (fmt === 'all' || f.fileFormat === fmt))
@@ -66,7 +67,7 @@ export default function FileManagement() {
       message.error(e instanceof ApiError ? e.message : t('file.moveFailed', '移动失败'))
     }
   }
-  // 「移动到模块」菜单:未规划 + 各模块(对齐接口定义的移动范式)。
+  // "Move to module" menu: Unfiled + each module (same pattern as the API definitions page).
   const moveItems = [
     { key: 'UNFILED', label: t('apidef.moveToUnfiled', '移到「未规划」') },
     ...modules.map((m) => ({ key: m.id, label: `${t('apidef.moveToPrefix', '移到')}「${m.name}」` })),
@@ -105,7 +106,7 @@ export default function FileManagement() {
 
   return (
     <div style={{ display: 'flex', height: '100%' }}>
-      {/* 左侧:复用 ModuleTreePanel(模块树 + 增删改)+ ResizableSider(左右拖拽改宽)。 */}
+      {/* Left: shared ModuleTreePanel (module tree + CRUD) inside ResizableSider (drag to resize). */}
       <ResizableSider defaultWidth={240} storageKey="file-sider">
         <ModuleTreePanel
           projectId={projectId}
@@ -137,7 +138,7 @@ export default function FileManagement() {
           }
         />
       </ResizableSider>
-      {/* 右侧列表 */}
+      {/* Right: file list */}
       <div style={{ flex: 1, minWidth: 0, overflow: 'auto', padding: 12, background: 'var(--bg)' }}>
         <Card size="small" styles={{ body: { padding: 12 } }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>

@@ -1,4 +1,5 @@
-//! runtime 无公网入站,server 无法反向探活,故在线状态全由心跳新鲜度判定。
+//! Runtimes have no inbound network access, so the server cannot probe them; online
+//! status is determined entirely by heartbeat freshness.
 
 use async_trait::async_trait;
 

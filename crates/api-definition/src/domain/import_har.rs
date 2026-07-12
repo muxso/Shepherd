@@ -79,7 +79,8 @@ fn entry_to_api(entry: &Value) -> Option<ImportedApi> {
         .filter(|s| (100..600).contains(s))
         .unwrap_or(200);
 
-    let case_body = if matches!(method.as_str(), "POST" | "PUT" | "PATCH") && !body_text.is_empty() {
+    let case_body = if matches!(method.as_str(), "POST" | "PUT" | "PATCH") && !body_text.is_empty()
+    {
         Some(body_text.clone())
     } else {
         None

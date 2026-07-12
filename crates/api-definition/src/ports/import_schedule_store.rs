@@ -11,6 +11,6 @@ pub trait ImportScheduleStore: Send + Sync {
     async fn get(&self, id: &str) -> Result<Option<ImportSchedule>, RepoError>;
     async fn set_enabled(&self, id: &str, enabled: bool) -> Result<(), RepoError>;
     async fn delete(&self, id: &str) -> Result<(), RepoError>;
-    /// `operator` 空串表示 cron 自动运行。
+    /// An empty `operator` marks an automatic cron run.
     async fn record_run(&self, id: &str, result: &str, operator: &str) -> Result<(), RepoError>;
 }

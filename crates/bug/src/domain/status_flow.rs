@@ -64,11 +64,7 @@ impl StatusFlowGraph {
     }
 
     pub fn targets(&self, from: &str) -> Vec<String> {
-        self.edges
-            .iter()
-            .filter(|(f, _)| f == from)
-            .map(|(_, t)| t.clone())
-            .collect()
+        self.edges.iter().filter(|(f, _)| f == from).map(|(_, t)| t.clone()).collect()
     }
 
     pub fn can_transition(&self, from: &str, to: &str) -> bool {

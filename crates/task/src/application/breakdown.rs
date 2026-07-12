@@ -53,10 +53,15 @@ impl BreakdownUseCase {
             self.repo.create_decomposition(&spec.requirement_id, spec.requirement_version).await?;
         for (i, pt) in planned.iter().enumerate() {
             // Keep only back-references (j < i); a planner forward-reference would break the topological insert.
-            let deps: Vec<String> =
-                pt.dependencies.iter().filter(|&&j| j < i).map(|&j| format!("t{}", j + 1)).collect();
+            let deps: Vec<String> = pt
+                .dependencies
+                .iter()
+                .filter(|&&j| j < i)
+                .map(|&j| format!("t{}", j + 1))
+                .collect();
             let points = pt.acceptance_criteria.len().max(1) as i32;
-            let nt = NewTask::new(&pt.title, &pt.description, &pt.acceptance_criteria, &deps)?.with_points(points);
+            let nt = NewTask::new(&pt.title, &pt.description, &pt.acceptance_criteria, &deps)?
+                .with_points(points);
             d.add_task(nt)?;
         }
         self.repo.save(&d).await?;
@@ -96,7 +101,10 @@ mod tests {
     async fn breakdown_builds_dag_from_plan() {
         let d = uc().execute(&spec(&["登录成功", "错误密码拒绝"])).await.expect("breakdown");
         assert_eq!(d.tasks.len(), 3);
-        assert_eq!(d.task("t3").expect("t3").dependencies, vec!["t1".to_string(), "t2".to_string()]);
+        assert_eq!(
+            d.task("t3").expect("t3").dependencies,
+            vec!["t1".to_string(), "t2".to_string()]
+        );
         let ready: Vec<_> = d.ready_tasks().iter().map(|t| t.id.clone()).collect();
         assert_eq!(ready, vec!["t1".to_string(), "t2".to_string()]);
         assert!(d.tasks.iter().all(|t| t.status == TaskStatus::Pending));
