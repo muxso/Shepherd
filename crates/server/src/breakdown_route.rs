@@ -4,7 +4,7 @@ use axum::{
     extract::{FromRef, Path, Query, State},
     http::StatusCode,
     response::{IntoResponse, Response},
-    routing::post,
+    routing::{get, post},
     Json, Router,
 };
 use serde::Deserialize;
@@ -120,7 +120,10 @@ pub fn router(
     drafter: Option<Arc<dyn CaseDrafter>>,
     sessions: Arc<dyn SessionStore>,
 ) -> Router {
-    Router::new().route("/requirement/{id}/breakdown", post(breakdown_handler)).with_state(
+    Router::new()
+        .route("/requirement/{id}/breakdown", get(breakdown_get_handler))
+        .route("/requirement/{id}/breakdown", post(breakdown_handler))
+        .with_state(
         BreakdownState { reqs, breakdown, create_verification, cases, drafter, sessions },
     )
 }
@@ -128,6 +131,46 @@ pub fn router(
 #[derive(Deserialize)]
 struct VersionQuery {
     version: Option<u32>,
+}
+
+async fn breakdown_get_handler(
+    user: AuthUser,
+    State(st): State<BreakdownState>,
+    Path(id): Path<String>,
+    Query(q): Query<VersionQuery>,
+) -> Response {
+    if !user.can("TASK", "READ") {
+        return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
+    let req = match st.reqs.get(&id).await {
+        Ok(r) => r,
+        Err(RequirementCmdError::NotFound) => {
+            return (StatusCode::NOT_FOUND, "requirement not found").into_response();
+        }
+        Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
+    };
+    let version = q.version.unwrap_or(req.baseline_version);
+    match st.breakdown.find_existing(&req.id, version).await {
+        Ok(Some(d)) => {
+            let verification_id = st
+                .create_verification
+                .find_existing(&req.id, version)
+                .await
+                .ok()
+                .flatten()
+                .map(|v| v.id);
+            let body = json!({
+                "id": d.id,
+                "requirementVersion": d.requirement_version,
+                "verificationId": verification_id,
+            });
+            (StatusCode::OK, Json(body)).into_response()
+        }
+        Ok(None) => {
+            (StatusCode::NOT_FOUND, "no decomposition for this requirement version").into_response()
+        }
+        Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
+    }
 }
 
 async fn breakdown_handler(
