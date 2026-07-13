@@ -7,7 +7,47 @@ import { useApp } from '../context'
 import { useI18n } from '../i18n'
 import { useListView, type ListColumn } from '../components/ListView'
 
-// System / API keys: long-lived credentials issued to external callers (agent runners etc.).
+// Parse packed permission strings like "SYSTEM_USER:ADD+DELETE+READ+UPDATE" into
+// { resource, actions[] }. Unknown/custom strings fall back to resource-only.
+function parsePermissions(perms: string[] | undefined): { resource: string; actions: string[] }[] {
+  if (!perms?.length) return []
+  return perms.map((p) => {
+    const [resource, rest] = p.split(':')
+    if (!resource || rest === undefined) return { resource: p, actions: [] }
+    return { resource, actions: rest.split('+').filter(Boolean) }
+  })
+}
+
+const RESOURCE_COLORS: Record<string, string> = {
+  SYSTEM_USER: 'red',
+  PROJECT: 'blue',
+  ORGANIZATION: 'purple',
+  USER_ROLE: 'orange',
+  USER_GROUP: 'volcano',
+  ROLE: 'geekblue',
+  BUG: 'magenta',
+  REQUIREMENT: 'geekblue',
+  DECOMPOSITION: 'cyan',
+  DELIVERY: 'lime',
+  VERIFICATION: 'gold',
+  TEST_PLAN: 'cyan',
+  FUNCTIONAL_CASE: 'gold',
+  CASE_REVIEW: 'gold',
+  API_DEFINITION: 'green',
+  API_SCENARIO: 'green',
+  API_MOCK: 'green',
+  PERF: 'purple',
+  RUNNER: 'blue',
+  RUNNER_AGENT: 'blue',
+  AGENT: 'cyan',
+  FLEET: 'cyan',
+  MCP: 'purple',
+  SKILL: 'orange',
+  SYSTEM_SETTING: 'default',
+  SYSTEM_APIKEY: 'default',
+}
+
+const resourceColor = (r: string) => RESOURCE_COLORS[r.toUpperCase()] || 'default'
 // The plaintext key (sak_…) appears exactly once, in the create response — an un-dismissable
 // modal forces the user to save it. The list shows metadata only; revoking (DELETE) keeps the
 // row and marks it revoked.
@@ -49,10 +89,23 @@ export default function ApiKeys() {
       label: t('ak.colPerms', '权限'),
       title: t('ak.colPerms', '权限'),
       dataIndex: 'permissions',
-      render: (perms: string[]) =>
-        perms?.length
-          ? perms.map((p) => <Tag key={p} className="ms-mono" style={{ marginBottom: 2 }}>{p}</Tag>)
-          : <span style={{ color: 'var(--text-3)' }}>—</span>,
+      render: (perms: string[]) => {
+        const groups = parsePermissions(perms)
+        return groups.length ? (
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px 10px', alignItems: 'center' }}>
+            {groups.map((g) => (
+              <div key={g.resource} style={{ display: 'inline-flex', flexWrap: 'wrap', gap: 4, alignItems: 'center' }}>
+                <Tag color={resourceColor(g.resource)} style={{ margin: 0 }}>{g.resource}</Tag>
+                {g.actions.map((a) => (
+                  <Tag key={a} style={{ margin: 0, fontSize: 11, padding: '0 5px', lineHeight: '18px' }} bordered={false}>{a}</Tag>
+                ))}
+              </div>
+            ))}
+          </div>
+        ) : (
+          <span style={{ color: 'var(--text-3)' }}>—</span>
+        )
+      },
     },
     {
       key: 'created',

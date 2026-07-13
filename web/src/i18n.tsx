@@ -1567,6 +1567,12 @@ const DICT: Record<string, { zh: string; en: string }> = {
   'agent.title': { zh: '人机协同 · 执行机', en: 'Human-AI Collaboration - Runners' },
   'agent.token': { zh: '鉴权 Token(可选)', en: 'Auth Token (optional)' },
   'agent.tokenPlaceholder': { zh: '远程执行者的访问令牌', en: 'Access token of the remote executor' },
+  // agent-runtime onboarding tip on the Human-AI collaboration page
+  'agent.tipsTitle': { zh: '如何接入 agent-runtime', en: 'How to connect an agent-runtime' },
+  'agent.tipsInstall': { zh: '① 安装:macOS 用 brew install muxso/shepherd/agent-runtime;Windows 运行一键 PowerShell 脚本;或下载二进制。', en: '① Install: on macOS `brew install muxso/shepherd/agent-runtime`; on Windows run the one-click PowerShell script; or download a binary.' },
+  'agent.tipsDoc': { zh: '查看完整安装文档', en: 'Read the full install guide' },
+  'agent.tipsKey': { zh: '② 在「系统 → API 密钥」创建一个 Agent Key(格式 sak_xxx.yyy),然后在执行机本机运行:', en: '② Create an Agent Key in System → API Keys (format sak_xxx.yyy), then run this on the executor machine:' },
+  'agent.tipsDone': { zh: '启动后该执行机会出现在下方「AI 执行者机群」并自动拉取任务。', en: 'Once running, the executor shows up under "AI executor fleet" below and pulls tasks automatically.' },
   // apidef.*
   'apidef.actualReq': { zh: '实际请求', en: 'Actual Request' },
   'apidef.allApis2': { zh: '全部', en: 'All' },
@@ -2213,6 +2219,18 @@ const DICT: Record<string, { zh: string; en: string }> = {
   'ug.act.SHARE': { zh: '分享', en: 'Share' },
   'ug.act.COMMENT': { zh: '评论', en: 'Comment' },
   'ug.act.RESET': { zh: '重置', en: 'Reset' },
+  // Markdown editor shared strings
+  'md.bold': { zh: '粗体', en: 'Bold' },
+  'md.code': { zh: '代码', en: 'Code' },
+  'md.heading': { zh: '标题', en: 'Heading' },
+  'md.image': { zh: '图片', en: 'Image' },
+  'md.imageTooLarge': { zh: '图片超过 {size}MB', en: 'Image exceeds {size}MB' },
+  'md.italic': { zh: '斜体', en: 'Italic' },
+  'md.link': { zh: '链接', en: 'Link' },
+  'md.preview': { zh: '预览', en: 'Preview' },
+  'md.quote': { zh: '引用', en: 'Quote' },
+  'md.uploadImage': { zh: '上传图片', en: 'Upload image' },
+  'md.write': { zh: '编辑', en: 'Write' },
 }
 
 interface Ctx {

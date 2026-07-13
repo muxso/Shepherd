@@ -1,0 +1,45 @@
+.markdown-editor {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--panel);
+}
+.markdown-editor .ant-tabs-nav {
+  margin-bottom: 0 !important;
+  background: var(--panel-2);
+  padding: 0 8px;
+}
+.markdown-editor-toolbar {
+  display: flex;
+  gap: 6px;
+  padding: 8px;
+  border-bottom: 1px solid var(--border);
+  background: var(--panel);
+  flex-wrap: wrap;
+}
+.markdown-editor-toolbar .ant-btn {
+  padding: 0 8px;
+  min-width: 28px;
+}
+.markdown-editor-textarea {
+  width: 100%;
+  border: none;
+  outline: none;
+  padding: 12px;
+  resize: vertical;
+  font-family: inherit;
+  font-size: 14px;
+  line-height: 1.6;
+  background: var(--panel);
+  color: var(--text);
+  min-height: 160px;
+  box-sizing: border-box;
+}
+.markdown-editor-textarea::placeholder {
+  color: var(--text-3);
+}
+.markdown-editor-preview {
+  padding: 12px;
+  min-height: 160px;
+  background: var(--panel);
+}

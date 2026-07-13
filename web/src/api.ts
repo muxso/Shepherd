@@ -818,6 +818,7 @@ export interface RequirementChange {
 export interface Task {
   id: string
   title: string
+  description?: string
   status: string
   acceptanceCriteria?: string[]
   dependencies?: string[]
@@ -1235,6 +1236,11 @@ export const api = {
   // Project members
   projectMembers: (projectId: string) =>
     http.get<ProjectMember[]>(`/project/${encodeURIComponent(projectId)}/member`),
+  // Resolve user ids -> display names (id-only members become usable labels).
+  userNames: (ids: string[]) =>
+    ids.length
+      ? http.get<Record<string, string>>(`/system/user/names?ids=${encodeURIComponent(ids.join(','))}`)
+      : Promise.resolve({} as Record<string, string>),
   addProjectMember: (projectId: string, b: { userId: string; role?: string }) =>
     http.post<ProjectMember>(`/project/${encodeURIComponent(projectId)}/member`, b),
   removeProjectMember: (projectId: string, userId: string) =>
@@ -1434,8 +1440,17 @@ export const api = {
     ),
 
   // Delivery
-  createDelivery: (b: { decompositionId: string; taskId: string; title: string; executor: string; targetRuntime?: string }) =>
-    http.post<DeliveryAttempt>('/delivery', b),
+  createDelivery: (b: {
+    decompositionId: string
+    taskId: string
+    title: string
+    description?: string
+    acceptanceCriteria?: string[]
+    executor: string
+    targetRuntime?: string
+    context?: string
+    instructions?: string
+  }) => http.post<DeliveryAttempt>('/delivery', b),
   deliveries: (decompositionId: string, taskId: string) =>
     http.get<DeliveryAttempt[]>(
       `/delivery?decompositionId=${encodeURIComponent(decompositionId)}&taskId=${encodeURIComponent(taskId)}`,

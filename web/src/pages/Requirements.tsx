@@ -16,6 +16,7 @@ import {
   type DeliveryEvent,
   type FleetRuntime,
   type FunctionalCase,
+  type ProjectMember,
   type Requirement,
   type RequirementChange,
   type RequirementStage,
@@ -28,6 +29,8 @@ import { useApp } from '../context'
 import { Workspace, WorkList, useWorkTabs } from '../components/Workspace'
 import { ModuleTreePanel, inSelectedModule } from '../components/ModuleTreePanel'
 import { SelectProjectEmpty } from '../components/Page'
+import { MarkdownEditor } from '../components/MarkdownEditor'
+import { MarkdownRenderer } from '../components/MarkdownRenderer'
 import { regAdd, regList, type RegItem } from '../registry'
 import ContributionGrid from '../components/ContributionGrid'
 import { useListView, type ListColumn } from '../components/ListView'
@@ -263,8 +266,10 @@ export default function Requirements() {
       <div style={{ padding: '4px 8px', display: 'flex', gap: 32, flexWrap: 'wrap' }}>
         <div style={{ flex: '2 1 320px', minWidth: 280 }}>
           <div style={{ fontSize: 12, color: 'var(--text-3)', marginBottom: 4 }}>{t('req.description', '需求描述')}</div>
-          <div style={{ fontSize: 13, color: 'var(--text-2)', whiteSpace: 'pre-wrap' }}>
-            {r.versions?.find((v) => v.version === r.baselineVersion)?.description || r.versions?.[r.versions.length - 1]?.description || '—'}
+          <div style={{ fontSize: 13, color: 'var(--text-2)' }}>
+            <MarkdownRenderer
+              value={r.versions?.find((v) => v.version === r.baselineVersion)?.description || r.versions?.[r.versions.length - 1]?.description || ''}
+            />
           </div>
           <div style={{ fontSize: 12, color: 'var(--text-3)', margin: '10px 0 4px' }}>{t('req.criteriaPlain', '验收标准')}</div>
           {crits.length ? (
@@ -470,7 +475,7 @@ function CreateRequirementForm({ projectId, modules, defaultModuleId, onDone }: 
       case 'description':
         return (
           <Form.Item key="description" name="description" label={t('req.description', '需求描述')} rules={rules}>
-            <Input.TextArea rows={4} placeholder={t('req.descriptionPh', '背景:为什么做\n目标:做成什么样\n范围:边界与不做什么')} />
+            <MarkdownEditor placeholder={t('req.descriptionPh', '背景:为什么做\n目标:做成什么样\n范围:边界与不做什么')} />
           </Form.Item>
         )
       case 'criteria':
@@ -898,6 +903,9 @@ function RequirementDetail({ reqId, projectId, modules, onChanged, onDeleted, on
                   <Descriptions.Item label={t('req.status', '状态')}>{req?.status ? <Tag color={reqStatusColor(req.status)}>{t(`req.status.${req.status}`, req.status)}</Tag> : '—'}</Descriptions.Item>
                   <Descriptions.Item label={t('req.reqType', '类型')}>{req?.reqType ? <Tag>{t(`req.type.${req.reqType}`, req.reqType)}</Tag> : '—'}</Descriptions.Item>
                   <Descriptions.Item label={t('req.priority', '优先级')}>{req?.priority ? <Tag color={prioColor(req.priority)}>{req.priority}</Tag> : '—'}</Descriptions.Item>
+                  <Descriptions.Item label={t('req.description', '需求描述')}>
+                    {req ? <MarkdownRenderer value={req.versions?.find((v) => v.version === req.baselineVersion)?.description || req.versions?.[req.versions.length - 1]?.description || ''} /> : '—'}
+                  </Descriptions.Item>
                   <Descriptions.Item label={t('req.tags', '标签')}>
                     {req?.tags?.length ? req.tags.map((tg) => <Tag key={tg}>{tg}</Tag>) : '—'}
                   </Descriptions.Item>
@@ -973,7 +981,7 @@ function RequirementDetail({ reqId, projectId, modules, onChanged, onDeleted, on
             key: 'orch',
             label: t('req.orchTab', '拆分 / 交付 / 验证'),
             children: decompId ? (
-              <DecompositionView decompId={decompId} verificationId={verId} projectId={projectId} reqId={reqId} />
+              <DecompositionView decompId={decompId} verificationId={verId} projectId={projectId} reqId={reqId} req={req || undefined} />
             ) : (
               <Empty description={t('req.notDecomposedHint', '尚未拆分,去「需求信息」点「自动拆分」生成任务图')} />
             ),
@@ -1156,7 +1164,7 @@ function CollabPanel({ projectId, reqId, refreshKey }: { projectId: string; reqI
   )
 }
 
-function DecompositionView({ decompId, verificationId, projectId, reqId }: { decompId: string; verificationId?: string; projectId: string; reqId?: string }) {
+function DecompositionView({ decompId, verificationId, projectId, reqId, req }: { decompId: string; verificationId?: string; projectId: string; reqId?: string; req?: Requirement }) {
   const { t } = useI18n()
   const [tasks, setTasks] = useState<Task[]>([])
   const [cov, setCov] = useState<CoverageCase[]>([]) // manual functional-case coverage, viewed alongside task coverage
@@ -1174,6 +1182,8 @@ function DecompositionView({ decompId, verificationId, projectId, reqId }: { dec
   // Registered remote runtime fleet: the dispatch menu can target a specific machine.
   const [fleet, setFleet] = useState<FleetRuntime[]>([])
   const loadFleet = () => api.fleetRuntimes().then(setFleet).catch(() => setFleet([]))
+  // Live filter for the dispatch runtime picker (typed in the dropdown search box).
+  const [rtSearch, setRtSearch] = useState('')
 
   const load = async () => {
     try {
@@ -1187,13 +1197,27 @@ function DecompositionView({ decompId, verificationId, projectId, reqId }: { dec
   useEffect(() => {
     load()
     loadFleet()
-    // Assignee candidates: humans + AI agents (fail silently; board/columns still work).
-    Promise.all([api.users().then((p) => p.items).catch(() => []), api.runnerAgents().catch(() => [])]).then(([us, ag]) => {
+    // Assignee candidates: project members (humans) + AI executors (runner agents).
+    // Members come back as ids only, so resolve display names via /system/user/names.
+    // Any failure degrades silently; the board/columns still render.
+    const buildAssignees = async () => {
+      const [members, ag] = await Promise.all([
+        api.projectMembers(projectId).catch(() => [] as ProjectMember[]),
+        api.runnerAgents().catch(() => []),
+      ])
+      const ids = members.map((m) => m.userId).filter(Boolean)
+      const names = ids.length ? await api.userNames(ids).catch(() => ({}) as Record<string, string>) : {}
       setAssignees([
-        ...us.map((u) => ({ value: `HUMAN:${u.id}`, label: `👤 ${u.name || u.email}`, kind: 'HUMAN', id: u.id })),
+        ...members.map((m) => ({
+          value: `HUMAN:${m.userId}`,
+          label: `👤 ${names[m.userId] || m.userId}`,
+          kind: 'HUMAN',
+          id: m.userId,
+        })),
         ...ag.map((a) => ({ value: `AGENT:${a.id}`, label: `🤖 ${a.name}`, kind: 'AGENT', id: a.id })),
       ])
-    })
+    }
+    buildAssignees()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [decompId])
 
@@ -1231,9 +1255,31 @@ function DecompositionView({ decompId, verificationId, projectId, reqId }: { dec
       message.warning(t('req.depsNotReady', '依赖任务未全部验证完成,暂不能派发'))
       return
     }
+    // Build full requirement context so the agent runtime gets the big picture, not just the task.
+    const baselineVersion = req ? req.versions?.find((v) => v.version === req.baselineVersion) : undefined
+    const latestVersion = req ? req.versions?.[req.versions.length - 1] : undefined
+    const reqDescription = baselineVersion?.description || latestVersion?.description || ''
+    const reqCriteria = baselineVersion?.acceptanceCriteria || latestVersion?.acceptanceCriteria || req?.acceptanceCriteria || []
+    const contextParts = [
+      `需求标题: ${req?.title ?? ''}`,
+      req?.reqType ? `需求类型: ${t(`req.type.${req.reqType}`, req.reqType)}` : '',
+      req?.priority ? `优先级: ${req.priority}` : '',
+      req?.dueDate ? `截止日期: ${req.dueDate}` : '',
+      reqCriteria.length ? `验收标准:\n${reqCriteria.map((c, i) => `${i + 1}. ${c}`).join('\n')}` : '',
+      reqDescription ? `需求描述:\n${reqDescription}` : '',
+    ].filter(Boolean).join('\n\n')
     setDispatching((s) => new Set(s).add(task.id))
     try {
-      await api.createDelivery({ decompositionId: decompId, taskId: task.id, title: task.title, executor, targetRuntime })
+      await api.createDelivery({
+        decompositionId: decompId,
+        taskId: task.id,
+        title: task.title,
+        description: task.description,
+        acceptanceCriteria: task.acceptanceCriteria,
+        executor,
+        targetRuntime,
+        context: contextParts || undefined,
+      })
       message.success(`${t('req.dispatched', '已派发')} ${task.id}${targetRuntime ? ` → ${targetRuntime}` : ''}`)
       load()
     } catch (e) {
@@ -1255,10 +1301,11 @@ function DecompositionView({ decompId, verificationId, projectId, reqId }: { dec
   // (online first, offline disabled), "any online executor (queued)" last as fallback. With none
   // registered, show an explicit hint so "any" isn't mistaken for the only choice. Targeting uses
   // the runtime name, which is stable across reconnects.
-  const executorMenu = (task: Task) => ({
+  const executorMenu = (task: Task, search = '') => ({
     items: Object.entries(EXECUTOR_LABEL).map(([key, label]) => {
       const runtimes = fleetByName
         .filter((r) => r.caps.includes(key))
+        .filter((r) => !search || r.name.toLowerCase().includes(search.toLowerCase()))
         .sort((a, b) => Number(b.online) - Number(a.online) || a.name.localeCompare(b.name))
       return {
         type: 'group' as const,
@@ -1365,7 +1412,25 @@ function DecompositionView({ decompId, verificationId, projectId, reqId }: { dec
               render: (_, row) => (
                 <Space>
                   <Tooltip title={depsReady(row) ? '' : t('req.depsNotReady', '依赖任务未全部验证完成,暂不能派发')}>
-                    <Dropdown trigger={['click']} disabled={dispatching.has(row.id) || !depsReady(row)} menu={executorMenu(row)} onOpenChange={(o) => { if (o) loadFleet() }}>
+                    <Dropdown
+                      trigger={['click']}
+                      disabled={dispatching.has(row.id) || !depsReady(row)}
+                      menu={executorMenu(row, rtSearch)}
+                      onOpenChange={(o) => { if (o) loadFleet(); else setRtSearch('') }}
+                      dropdownRender={(menu) => (
+                        <div>
+                          <div style={{ padding: 8, borderBottom: '1px solid var(--border, #f0f0f0)' }}>
+                            <Input
+                              autoFocus size="small" allowClear
+                              placeholder={t('req.searchRuntime', '搜索执行者')}
+                              value={rtSearch}
+                              onChange={(e) => setRtSearch(e.target.value)}
+                            />
+                          </div>
+                          {menu}
+                        </div>
+                      )}
+                    >
                       <Button type="link" size="small" icon={<SendOutlined />} loading={dispatching.has(row.id)} disabled={dispatching.has(row.id) || !depsReady(row)}>{t('req.dispatch', '派发')}</Button>
                     </Dropdown>
                   </Tooltip>
@@ -1406,7 +1471,25 @@ function DecompositionView({ decompId, verificationId, projectId, reqId }: { dec
                           />
                           {tk.status === 'PENDING' && (
                             <Tooltip title={depsReady(tk) ? '' : t('req.depsNotReady', '依赖任务未全部验证完成,暂不能派发')}>
-                              <Dropdown trigger={['click']} disabled={dispatching.has(tk.id) || !depsReady(tk)} menu={executorMenu(tk)} onOpenChange={(o) => { if (o) loadFleet() }}>
+                              <Dropdown
+                                trigger={['click']}
+                                disabled={dispatching.has(tk.id) || !depsReady(tk)}
+                                menu={executorMenu(tk, rtSearch)}
+                                onOpenChange={(o) => { if (o) loadFleet(); else setRtSearch('') }}
+                                dropdownRender={(menu) => (
+                                  <div>
+                                    <div style={{ padding: 8, borderBottom: '1px solid var(--border, #f0f0f0)' }}>
+                                      <Input
+                                        autoFocus size="small" allowClear
+                                        placeholder={t('req.searchRuntime', '搜索执行者')}
+                                        value={rtSearch}
+                                        onChange={(e) => setRtSearch(e.target.value)}
+                                      />
+                                    </div>
+                                    {menu}
+                                  </div>
+                                )}
+                              >
                                 <Button size="small" icon={<SendOutlined />} loading={dispatching.has(tk.id)} disabled={dispatching.has(tk.id) || !depsReady(tk)} />
                               </Dropdown>
                             </Tooltip>
