@@ -51,11 +51,11 @@ jobs:
         if: ${{ matrix.zig }}
         uses: mlugg/setup-zig@v1
         with:
-          version: 0.14.0
+          version: 0.13.0
 
       - name: Install cargo-zigbuild (Linux cross)
         if: ${{ matrix.zig }}
-        run: cargo install cargo-zigbuild --locked
+        run: cargo install cargo-zigbuild --version 0.21.8 --locked
         env:
           CARGO_TERM_COLOR: always
 
