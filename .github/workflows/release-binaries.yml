@@ -47,15 +47,20 @@ jobs:
           toolchain: "1.86.0"
           targets: ${{ matrix.target }}
 
-      - name: Install zig + cargo-zigbuild (Linux cross)
+      - name: Install zig (Linux cross)
         if: ${{ matrix.zig }}
-        run: |
-          sudo apt-get update && sudo apt-get install -y zig
-          cargo install cargo-zigbuild --locked
+        uses: mlugg/setup-zig@v1
+        with:
+          version: 0.14.0
+
+      - name: Install cargo-zigbuild (Linux cross)
+        if: ${{ matrix.zig }}
+        run: cargo install cargo-zigbuild --locked
         env:
           CARGO_TERM_COLOR: always
 
       - name: Build
+        shell: bash
         run: |
           if [ "${{ matrix.zig }}" = "true" ]; then
             cargo zigbuild --release --target ${{ matrix.target }} -p agent-runtime
