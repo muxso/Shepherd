@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Button, Drawer, Empty, Form, Input, Modal, Space, Switch, Table, Tag, Tooltip } from 'antd'
+import { Alert, Button, Drawer, Empty, Form, Input, Modal, Space, Switch, Table, Tag, Tooltip } from 'antd'
 import { message } from '../feedback'
 import { PlusOutlined, ReloadOutlined, SyncOutlined, HistoryOutlined } from '@ant-design/icons'
 import { api, ApiError, type RunnerAgent, type RunnerExecution, type FleetRuntime, type FleetStat } from '../api'
@@ -98,6 +98,31 @@ export default function Agents() {
         }
       />
       <PageBody>
+        <Alert
+          type="info"
+          showIcon
+          style={{ marginBottom: 16 }}
+          message={t('agent.tipsTitle', '如何接入 agent-runtime')}
+          description={
+            <div>
+              <div style={{ marginBottom: 8 }}>
+                {t('agent.tipsInstall', '① 安装:macOS 用 brew install muxso/shepherd/agent-runtime;Windows 运行一键 PowerShell 脚本;或下载二进制。')}
+                {' '}
+                <a href="https://github.com/muxso/Shepherd/blob/main/docs/INSTALL.md" target="_blank" rel="noreferrer">
+                  {t('agent.tipsDoc', '查看完整安装文档')}
+                </a>
+              </div>
+              <div style={{ marginBottom: 8 }}>
+                {t('agent.tipsKey', '② 在「系统 → API 密钥」创建一个 Agent Key(格式 sak_xxx.yyy),然后在执行机本机运行:')}
+              </div>
+              <pre className="ms-mono" style={{ background: 'var(--bg-1)', border: '1px solid var(--border)', borderRadius: 6, padding: '10px 12px', margin: '0 0 8px', fontSize: 12, overflowX: 'auto', lineHeight: 1.6 }}>{`SHEPHERD_BASE=<服务器地址> \\
+SHEPHERD_CAPS=CLAUDE_CODE \\
+SHEPHERD_AGENT_KEY=<AccessKey>.<SecretKey> \\
+agent-runtime`}</pre>
+              <div>{t('agent.tipsDone', '启动后该执行机会出现在下方「AI 执行者机群」并自动拉取任务。')}</div>
+            </div>
+          }
+        />
         <FleetSection />
         {/* List toolbar lives on the section row (not the page header) so it sits next to the table it filters. */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 24, marginBottom: 8 }}>

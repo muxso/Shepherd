@@ -1,0 +1,51 @@
+.markdown-renderer {
+  line-height: 1.7;
+  color: var(--text);
+  font-size: 14px;
+  word-break: break-word;
+}
+.markdown-renderer h1,
+.markdown-renderer h2,
+.markdown-renderer h3,
+.markdown-renderer h4 {
+  margin: 16px 0 8px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+.markdown-renderer h1 { font-size: 20px; }
+.markdown-renderer h2 { font-size: 18px; }
+.markdown-renderer h3 { font-size: 16px; }
+.markdown-renderer p { margin: 8px 0; }
+.markdown-renderer ul,
+.markdown-renderer ol { margin: 8px 0; padding-left: 22px; }
+.markdown-renderer li { margin: 4px 0; }
+.markdown-renderer img {
+  max-width: 100%;
+  border-radius: 6px;
+  border: 1px solid var(--border-soft);
+  display: block;
+  margin: 8px 0;
+}
+.markdown-renderer blockquote {
+  margin: 8px 0;
+  padding: 8px 12px;
+  border-left: 3px solid var(--brand);
+  background: var(--panel-2);
+  color: var(--text-2);
+}
+.markdown-renderer pre {
+  background: var(--panel-2);
+  padding: 10px;
+  border-radius: 6px;
+  overflow-x: auto;
+  margin: 8px 0;
+}
+.markdown-renderer code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 12px;
+  background: var(--panel-2);
+  padding: 2px 4px;
+  border-radius: 4px;
+}
+.markdown-renderer pre code { background: transparent; padding: 0; }
+.markdown-empty { color: var(--text-3); }
