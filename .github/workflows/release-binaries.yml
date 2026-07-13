@@ -12,8 +12,8 @@
 #   agent-runtime-x86_64-pc-windows-msvc.zip
 #   checksums.txt
 #
-# After the release is published, a PR is opened against the Homebrew tap
-# (muxso/homebrew-shepherd) to bump version + sha256 — gated on TAP_GITHUB_TOKEN.
+# The Homebrew formula (muxso/homebrew-shepherd) is bumped separately: copy the
+# real sha256 of agent-runtime-x86_64-apple-darwin.tar.gz into Formula/agent-runtime.rb.
 name: release-binaries
 
 on:
@@ -108,46 +108,3 @@ jobs:
         with:
           files: artifacts/agent-runtime-*
           fail_on_unmatched_files: false
-
-  update-tap:
-    name: update homebrew tap
-    needs: release
-    if: ${{ secrets.TAP_GITHUB_TOKEN != '' }}
-    runs-on: ubuntu-latest
-    steps:
-      - name: Fetch macOS asset sha256 + version
-        id: meta
-        env:
-          GH_REPO: ${{ github.repository }}
-        run: |
-          VER="${GITHUB_REF_NAME}"
-          URL="https://github.com/${GH_REPO}/releases/download/${VER}/agent-runtime-x86_64-apple-darwin.tar.gz"
-          curl -sSL "$URL" -o /tmp/rt.tar.gz
-          SHA=$(sha256sum /tmp/rt.tar.gz | cut -d' ' -f1)
-          echo "version=${VER#v}" >> "$GITHUB_OUTPUT"
-          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
-
-      - name: Checkout tap repo
-        uses: actions/checkout@v4
-        with:
-          repository: muxso/homebrew-shepherd
-          token: ${{ secrets.TAP_GITHUB_TOKEN }}
-          path: tap
-
-      - name: Bump formula and open PR
-        env:
-          GH_TOKEN: ${{ secrets.TAP_GITHUB_TOKEN }}
-        run: |
-          cd tap
-          git config user.email "ci@shepherd.local"
-          git config user.name "shepherd-ci"
-          git checkout -b "bump-${{ steps.meta.outputs.version }}"
-          sed -i.bak -E "s/^  version \".*\"/  version \"${{ steps.meta.outputs.version }}\"/" Formula/agent-runtime.rb
-          sed -i.bak -E "s/^  sha256 \".*\"/  sha256 \"${{ steps.meta.outputs.sha }}\"/" Formula/agent-runtime.rb
-          rm -f Formula/agent-runtime.rb.bak
-          git add Formula/agent-runtime.rb
-          git commit -m "agent-runtime ${{ steps.meta.outputs.version }}"
-          git push origin "bump-${{ steps.meta.outputs.version }}"
-          gh pr create --fill \
-            --title "agent-runtime ${{ steps.meta.outputs.version }}" \
-            --body "Auto-update from release ${{ github.ref_name }}" || true
