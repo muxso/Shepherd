@@ -20,6 +20,14 @@ export default function Agents() {
   const [execFor, setExecFor] = useState<RunnerAgent | null>(null)
   const [refreshing, setRefreshing] = useState<string | null>(null)
 
+  const [tipsExpanded, setTipsExpanded] = useState(() => {
+    try {
+      return localStorage.getItem('agents:tipsExpanded') !== 'false'
+    } catch {
+      return true
+    }
+  })
+
   const load = async () => {
     setLoading(true)
     try {
@@ -103,8 +111,20 @@ export default function Agents() {
           showIcon
           style={{ marginBottom: 16 }}
           message={t('agent.tipsTitle', '如何接入 agent-runtime')}
+          action={
+            <Button type="text" size="small" onClick={() => {
+              setTipsExpanded((v) => {
+                const next = !v
+                try { localStorage.setItem('agents:tipsExpanded', String(next)) } catch {}
+                return next
+              })
+            }}>
+              {tipsExpanded ? t('agent.collapse', '收起') : t('agent.expand', '展开')}
+            </Button>
+          }
           description={
-            <div>
+            tipsExpanded ? (
+              <div>
               <div style={{ marginBottom: 8 }}>
                 {t('agent.tipsInstall', '① 安装:macOS 用 brew install muxso/shepherd/agent-runtime;Windows 运行一键 PowerShell 脚本;或下载二进制。')}
                 {' '}
@@ -121,6 +141,7 @@ SHEPHERD_AGENT_KEY=<AccessKey>.<SecretKey> \\
 agent-runtime`}</pre>
               <div>{t('agent.tipsDone', '启动后该执行机会出现在下方「AI 执行者机群」并自动拉取任务。')}</div>
             </div>
+            ) : undefined
           }
         />
         <FleetSection />

@@ -352,9 +352,10 @@ export default function Home() {
           .sort((a, b) => b.tp - a.tp || b.tc - a.tc)
           .slice(0, 8)
         const legend = (color: string, label: string, n: number, pts: number) => (
-          <span style={{ display: 'inline-flex', alignItems: 'center', fontSize: 13, color: 'var(--text-2)', marginRight: 16 }}>
-            <span style={{ width: 10, height: 10, borderRadius: 2, background: color, marginRight: 6 }} />
-            {label} <b style={{ color: 'var(--text)', margin: '0 4px' }}>{n}</b>
+          <span style={{ display: 'inline-flex', alignItems: 'center', fontSize: 13, color: 'var(--text-2)', whiteSpace: 'nowrap' }}>
+            <span style={{ width: 10, height: 10, borderRadius: 2, background: color, marginRight: 6, flexShrink: 0 }} />
+            {label}
+            <span style={{ color: 'var(--text)', fontWeight: 600, margin: '0 4px' }}>{n}</span>
             <span style={{ color: 'var(--text-3)' }}>({pts} {t('home.ptsUnit', '点')})</span>
           </span>
         )

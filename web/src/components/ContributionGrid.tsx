@@ -2,7 +2,7 @@
 // columns = weeks (starting Sunday), rows = Sun–Sat. Color depth = 4-level count buckets;
 // hover shows date with AI/human breakdown. Zero cells fall back to the --border-soft
 // CSS variable so both light and dark themes look right.
-import { useMemo, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import { useI18n } from '../i18n'
 
 export interface DayCell {
@@ -29,7 +29,8 @@ export default function ContributionGrid({
   metric: 'total' | 'ai' | 'human'
 }) {
   const { t } = useI18n()
-  const [hover, setHover] = useState<{ cell: DayCell; x: number; y: number } | null>(null)
+  const containerRef = useRef<HTMLDivElement>(null)
+  const [hover, setHover] = useState<{ cell: DayCell; left: number; top: number } | null>(null)
 
   const byDate = useMemo(() => new Map(days.map((d) => [d.date, d])), [days])
   const valueOf = (c: DayCell) => (metric === 'ai' ? c.ai : metric === 'human' ? c.human : c.ai + c.human)
@@ -83,8 +84,8 @@ export default function ContributionGrid({
   ]
 
   return (
-    <div style={{ overflowX: 'auto', position: 'relative' }}>
-      <svg width={W} height={H} style={{ display: 'block' }}>
+    <div ref={containerRef} style={{ position: 'relative', overflowX: 'hidden' }}>
+      <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="xMidYMid meet" style={{ width: '100%', height: 'auto', display: 'block' }}>
         {monthMarks.map((m) => (
           <text key={m.col} x={PAD_L + m.col * (CELL + GAP)} y={10} fontSize={10} fill="var(--text-3)">
             {m.label}
@@ -105,13 +106,16 @@ export default function ContributionGrid({
               height={CELL}
               rx={2}
               fill={fillOf(c.cell)}
-              onMouseEnter={() =>
+              onMouseEnter={(e) => {
+                if (!containerRef.current) return
+                const rect = e.currentTarget.getBoundingClientRect()
+                const containerRect = containerRef.current.getBoundingClientRect()
                 setHover({
                   cell: c.cell ?? { date: c.date.toISOString().slice(0, 10), ai: 0, human: 0 },
-                  x: PAD_L + ci * (CELL + GAP) + CELL / 2,
-                  y: PAD_T + c.date.getUTCDay() * (CELL + GAP),
+                  left: rect.left - containerRect.left + rect.width / 2,
+                  top: rect.top - containerRect.top,
                 })
-              }
+              }}
               onMouseLeave={() => setHover(null)}
             />
           )),
@@ -130,8 +134,8 @@ export default function ContributionGrid({
         <div
           style={{
             position: 'absolute',
-            left: hover.x,
-            top: Math.max(0, hover.y - 8),
+            left: hover.left,
+            top: Math.max(0, hover.top - 8),
             transform: 'translate(-50%, -100%)',
             background: 'var(--panel)',
             border: '1px solid var(--border)',
