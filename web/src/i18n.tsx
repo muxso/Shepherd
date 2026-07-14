@@ -1573,6 +1573,8 @@ const DICT: Record<string, { zh: string; en: string }> = {
   'agent.tipsDoc': { zh: '查看完整安装文档', en: 'Read the full install guide' },
   'agent.tipsKey': { zh: '② 在「系统 → API 密钥」创建一个 Agent Key(格式 sak_xxx.yyy),然后在执行机本机运行:', en: '② Create an Agent Key in System → API Keys (format sak_xxx.yyy), then run this on the executor machine:' },
   'agent.tipsDone': { zh: '启动后该执行机会出现在下方「AI 执行者机群」并自动拉取任务。', en: 'Once running, the executor shows up under "AI executor fleet" below and pulls tasks automatically.' },
+  'agent.collapse': { zh: '收起', en: 'Collapse' },
+  'agent.expand': { zh: '展开', en: 'Expand' },
   // apidef.*
   'apidef.actualReq': { zh: '实际请求', en: 'Actual Request' },
   'apidef.allApis2': { zh: '全部', en: 'All' },

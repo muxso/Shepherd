@@ -333,7 +333,7 @@ export default function Requirements() {
           key: NEW_REQ_KEY,
           label: t('req.new', '新建需求'),
           children: (
-            <div style={{ maxWidth: 720, padding: 16, overflow: 'auto', height: '100%' }}>
+            <div style={{ padding: 16, overflow: 'auto', height: '100%' }}>
               <CreateRequirementForm
                 projectId={projectId}
                 modules={modules}
@@ -505,9 +505,48 @@ function CreateRequirementForm({ projectId, modules, defaultModuleId, onDone }: 
         return null
     }
   }
+  // Split template fields into a left "attributes" column (compact inputs) and a right
+  // "content" column (description + acceptance criteria, the tall editors) so the form
+  // lays out side-by-side and avoids long vertical scrolling on the create screen.
+  const isContentField = (k: string) => k === 'description' || k === 'criteria'
+  const leftFields = tplFields.filter((f) => f.enabled && !isContentField(f.key))
+  const rightFields = tplFields.filter((f) => f.enabled && isContentField(f.key))
+
   return (
-    <>
-      {/* AI drafting (MRD → PRD): paste raw material, the draft backfills the form below and stays editable */}
+    <Form
+      form={form}
+      layout="vertical"
+      initialValues={{ reqType: 'FEATURE', priority: 'P2', criteria: [''], moduleId: defaultModuleId ?? '' }}
+      onFinish={async (v: { title: string; description?: string; reqType?: string; priority?: string; criteria?: string[]; tags?: string[]; dueDate?: Dayjs; parentId?: string; moduleId?: string; [CF_GROUP]?: Record<string, unknown> }) => {
+        const acceptanceCriteria = (v.criteria || []).map((c) => (c || '').trim()).filter(Boolean)
+        const critField = tplFields.find((f) => f.key === 'criteria')
+        if (critField?.enabled && critField.required && !acceptanceCriteria.length) {
+          message.warning(t('req.criteriaRequired', '请至少填写一条验收标准'))
+          return
+        }
+        const customFields = collectCustomValues(tplFields, v[CF_GROUP])
+        try {
+          const r = await api.createRequirement({
+            projectId,
+            title: v.title,
+            description: v.description?.trim() || undefined,
+            acceptanceCriteria,
+            priority: v.priority,
+            reqType: v.reqType,
+            tags: v.tags?.length ? v.tags : undefined,
+            dueDate: v.dueDate ? v.dueDate.format('YYYY-MM-DD') : undefined,
+            parentId: v.parentId || undefined,
+            customFields: Object.keys(customFields).length ? customFields : undefined,
+            moduleId: v.moduleId || undefined,
+          })
+          message.success(t('req.created', '需求已创建'))
+          onDone(r, v.title)
+        } catch (e) {
+          message.error(e instanceof ApiError ? e.message : t('req.createFailed', '创建失败'))
+        }
+      }}
+    >
+      {/* AI drafting (MRD → PRD): paste raw material, the draft backfills the form and stays editable. */}
       <div style={{ background: 'var(--panel-2)', border: '1px solid var(--border-soft)', borderRadius: 8, padding: 12, marginBottom: 16 }}>
         <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>{t('req.aiDraft', 'AI 起草(MRD 自动转 PRD)')}</div>
         <Input.TextArea
@@ -523,56 +562,31 @@ function CreateRequirementForm({ projectId, modules, defaultModuleId, onDone }: 
           </Button>
         </div>
       </div>
-      <Form
-        form={form}
-        layout="vertical"
-        initialValues={{ reqType: 'FEATURE', priority: 'P2', criteria: [''], moduleId: defaultModuleId ?? '' }}
-        onFinish={async (v: { title: string; description?: string; reqType?: string; priority?: string; criteria?: string[]; tags?: string[]; dueDate?: Dayjs; parentId?: string; moduleId?: string; [CF_GROUP]?: Record<string, unknown> }) => {
-          const acceptanceCriteria = (v.criteria || []).map((c) => (c || '').trim()).filter(Boolean)
-          const critField = tplFields.find((f) => f.key === 'criteria')
-          if (critField?.enabled && critField.required && !acceptanceCriteria.length) {
-            message.warning(t('req.criteriaRequired', '请至少填写一条验收标准'))
-            return
-          }
-          const customFields = collectCustomValues(tplFields, v[CF_GROUP])
-          try {
-            const r = await api.createRequirement({
-              projectId,
-              title: v.title,
-              description: v.description?.trim() || undefined,
-              acceptanceCriteria,
-              priority: v.priority,
-              reqType: v.reqType,
-              tags: v.tags?.length ? v.tags : undefined,
-              dueDate: v.dueDate ? v.dueDate.format('YYYY-MM-DD') : undefined,
-              parentId: v.parentId || undefined,
-              customFields: Object.keys(customFields).length ? customFields : undefined,
-              moduleId: v.moduleId || undefined,
-            })
-            message.success(t('req.created', '需求已创建'))
-            onDone(r, v.title)
-          } catch (e) {
-            message.error(e instanceof ApiError ? e.message : t('req.createFailed', '创建失败'))
-          }
-        }}
-      >
-        {/* Module: defaults to the tree selection; unfiled = empty string. */}
-        <Form.Item name="moduleId" label={t('req.module', '所属模块')}>
-          <Select
-            showSearch
-            optionFilterProp="label"
-            options={[{ value: '', label: t('req.moduleUnfiled', '未规划') }, ...modules.map((m) => ({ value: m.id, label: m.name }))]}
-          />
-        </Form.Item>
-        {/* Render in template array order: system fields use their renderers, custom fields render by type, disabled fields are skipped. */}
-        {tplFields.filter((f) => f.enabled).map((f) =>
-          f.system ? sysItem(f) : <CustomFieldItem key={f.key} kind="requirement" field={f} />
-        )}
-        <Button type="primary" htmlType="submit" block>
-          {t('a.create', '创建')}
-        </Button>
-      </Form>
-    </>
+      <Row gutter={[20, 0]} align="top">
+        {/* Left column: module + compact attribute fields + custom fields. */}
+        <Col xs={24} md={11}>
+          <Form.Item name="moduleId" label={t('req.module', '所属模块')}>
+            <Select
+              showSearch
+              optionFilterProp="label"
+              options={[{ value: '', label: t('req.moduleUnfiled', '未规划') }, ...modules.map((m) => ({ value: m.id, label: m.name }))]}
+            />
+          </Form.Item>
+          {leftFields.map((f) =>
+            f.system ? sysItem(f) : <CustomFieldItem key={f.key} kind="requirement" field={f} />
+          )}
+        </Col>
+        {/* Right column: the tall editors — description (markdown) + acceptance criteria. */}
+        <Col xs={24} md={13}>
+          {rightFields.map((f) =>
+            f.system ? sysItem(f) : <CustomFieldItem key={f.key} kind="requirement" field={f} />
+          )}
+        </Col>
+      </Row>
+      <Button type="primary" htmlType="submit" block>
+        {t('a.create', '创建')}
+      </Button>
+    </Form>
   )
 }
 
@@ -731,13 +745,24 @@ function RequirementDetail({ reqId, projectId, modules, onChanged, onDeleted, on
   const [changesOpen, setChangesOpen] = useState(false)
   const [changes, setChanges] = useState<RequirementChange[]>([])
   const reg = regList('requirement', projectId).find((r) => r.id === reqId)
-  const [decompId, setDecompId] = useState<string | undefined>(reg?.meta?.decompositionId)
-  const [verId, setVerId] = useState<string | undefined>(reg?.meta?.verificationId)
+  const [decompId, setDecompId] = useState<string | undefined>(undefined)
+  const [verId, setVerId] = useState<string | undefined>(undefined)
+  // Version currently decomposed / shown in the orchestration tab; defaults to the baseline, switchable via the picker.
+  const [splitVersion, setSplitVersion] = useState<number | undefined>(undefined)
 
   const loadChildren = () => api.requirementChildren(reqId).then((r) => setChildren(r.items)).catch(() => setChildren([]))
   const load = async () => {
     try {
-      setReq(await api.getRequirement(reqId))
+      const r = await api.getRequirement(reqId)
+      setReq(r)
+      // Restore the orchestration tab from the backend (not browser-local state) so 拆分/交付/验证
+      // survive switching browsers. Show the decomposition for the selected version (default baseline).
+      const v = splitVersion ?? r.baselineVersion
+      setSplitVersion(v)
+      api.requirementBreakdown(reqId, v).then((d) => {
+        setDecompId(d.id)
+        setVerId(d.verificationId)
+      }).catch(() => undefined)
       api.requirementCoverage(reqId).then(setCov).catch(() => setCov([]))
       loadChildren()
     } catch (e) {
@@ -747,8 +772,9 @@ function RequirementDetail({ reqId, projectId, modules, onChanged, onDeleted, on
   useEffect(() => {
     load()
     api.requirements(projectId).then((p) => setAllReqs(p.items)).catch(() => setAllReqs([]))
+    // Re-run when the requirement or the selected decomposition version changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [reqId])
+  }, [reqId, splitVersion])
 
   // Stage transition/scheduling: PUT /requirement/:id/stage/:stage, then refresh detail + list (actual timestamps are recorded by the backend).
   const setStage = async (stage: string, b: { status?: string; plannedStart?: string; plannedEnd?: string }) => {
@@ -854,9 +880,10 @@ function RequirementDetail({ reqId, projectId, modules, onChanged, onDeleted, on
   }
 
   const doBreakdown = async () => {
+    const version = splitVersion ?? req?.baselineVersion
     try {
-      const r = await api.breakdown(reqId)
-      message.success(`${t('req.decomposedTo', '已拆分')}:${r.tasks.length} ${t('req.tasksUnit', '个任务')}`)
+      const r = await api.breakdown(reqId, version)
+      message.success(`${t('req.decomposedTo', '已拆分')}:${r.tasks.length} ${t('req.tasksUnit', '个任务')} (v${version ?? '-'})`)
       regAdd('requirement', projectId, { id: reqId, label: req?.title || reqId, createdAt: reg?.createdAt || Date.now(), meta: { decompositionId: r.id, verificationId: r.verificationId } })
       setDecompId(r.id)
       setVerId(r.verificationId)
@@ -886,6 +913,19 @@ function RequirementDetail({ reqId, projectId, modules, onChanged, onDeleted, on
                   <Button icon={<EditOutlined />} size="small" onClick={() => setEditOpen(true)}>{t('a.edit', '编辑')}</Button>
                   <Button icon={<BranchesOutlined />} size="small" disabled={req?.status === 'ARCHIVED'} onClick={() => setVerOpen(true)}>{t('req.addVersion', '新增版本')}</Button>
                   <Button icon={<FlagOutlined />} size="small" disabled={req?.status === 'ARCHIVED'} onClick={setBaseline}>{t('req.setBaseline', '定基线')}</Button>
+                  <Select
+                    size="small"
+                    style={{ width: 120 }}
+                    value={req ? splitVersion ?? req.baselineVersion : undefined}
+                    disabled={!req?.versions?.length}
+                    onChange={(v) => setSplitVersion(v)}
+                    options={[
+                      ...(req?.baselineVersion != null ? [{ value: req.baselineVersion, label: `v${req.baselineVersion} (${t('req.baseline', '基线')})` }] : []),
+                      ...(req?.versions ?? [])
+                        .filter((v) => v.version !== req?.baselineVersion)
+                        .map((v) => ({ value: v.version, label: `v${v.version}` })),
+                    ]}
+                  />
                   <Button type="primary" icon={<PartitionOutlined />} size="small" onClick={doBreakdown}>{t('req.autoDecompose', '自动拆分')}</Button>
                   <Button icon={<SendOutlined />} size="small" disabled={!(req?.status === 'BASELINED' || req?.status === 'DELIVERED')} onClick={deliver}>{t('req.deliver', '交付')}</Button>
                   <Button icon={<InboxOutlined />} size="small" disabled={req?.status === 'ARCHIVED'} onClick={archive}>{t('req.archive', '归档')}</Button>
@@ -897,7 +937,13 @@ function RequirementDetail({ reqId, projectId, modules, onChanged, onDeleted, on
                     return <Tag color={pct === 100 ? 'green' : pct > 0 ? 'gold' : 'default'}>{t('req.coverageRate', '覆盖率')} {n}/{baselineCriteria.length} ({pct}%)</Tag>
                   })()}
                 </Space>
-                <Descriptions column={1} size="small" bordered>
+                <Descriptions
+                  column={1}
+                  size="small"
+                  bordered
+                  labelStyle={{ width: 120, minWidth: 120, whiteSpace: 'nowrap' }}
+                  contentStyle={{ width: 'auto', whiteSpace: 'normal' }}
+                >
                   <Descriptions.Item label={t('req.title', '标题')}>{req?.title}</Descriptions.Item>
                   <Descriptions.Item label={t('req.baselineVersion', '基线版本')}>v{req?.baselineVersion}</Descriptions.Item>
                   <Descriptions.Item label={t('req.status', '状态')}>{req?.status ? <Tag color={reqStatusColor(req.status)}>{t(`req.status.${req.status}`, req.status)}</Tag> : '—'}</Descriptions.Item>
@@ -996,6 +1042,7 @@ function RequirementDetail({ reqId, projectId, modules, onChanged, onDeleted, on
               const r = await api.addRequirementVersion(reqId, { description: v.description, acceptanceCriteria: toLines(v.criteria || '') })
               message.success(`${t('req.versionCreated', '已创建版本')} v${r.version}`)
               setVerOpen(false)
+              setSplitVersion(r.version)
               load()
             } catch (e) {
               message.error(e instanceof ApiError ? e.message : t('req.createVersionFailed', '创建版本失败'))
@@ -1133,34 +1180,66 @@ function CollabPanel({ projectId, reqId, refreshKey }: { projectId: string; reqI
   const firstPassRate = row.aiTasks > 0 ? (row.aiFirstPass * 100) / row.aiTasks : 0
   return (
     <Card size="small" title={t('req.collabTitle', '人机协同')}>
-      <Row gutter={[16, 12]} align="middle">
-        <Col xs={12} lg={4}><Statistic title={t('req.aiShare', 'AI 参与度(工作量)')} value={aiShare.toFixed(0)} suffix="%" /></Col>
-        <Col xs={12} lg={4}>
-          <Statistic
-            title={t('req.deliverSplit', '交付任务(AI / 人)')}
-            value={row.aiTasks}
-            suffix={` / ${row.humanTasks}`}
+      <Row gutter={[16, 16]} align="middle" justify="space-around" wrap>
+        <Col xs={12} sm={12} md={6} lg={4}>
+          <Progress
+            type="circle"
+            size={72}
+            percent={Math.round(aiShare)}
+            format={() => `${aiShare.toFixed(0)}%`}
+            strokeColor="#1664ff"
+          />
+          <div style={{ marginTop: 6, fontSize: 12, color: 'var(--text-2)' }}>{t('req.aiShare', 'AI 参与度(工作量)')}</div>
+        </Col>
+        <Col xs={12} sm={12} md={6} lg={4}>
+          <MiniSplit
+            label={t('req.deliverSplit', '交付任务(AI / 人)')}
+            left={row.aiTasks}
+            right={row.humanTasks}
+            leftColor="#1664ff"
+            rightColor="#8c8c8c"
           />
         </Col>
-        <Col xs={12} lg={4}>
-          <Statistic
-            title={t('req.attemptsStat', '交付尝试(成功 / 失败)')}
-            value={row.aiDelivered}
-            suffix={` / ${row.aiFailed}`}
+        <Col xs={12} sm={12} md={6} lg={4}>
+          <MiniSplit
+            label={t('req.attemptsStat', '交付尝试(成功 / 失败)')}
+            left={row.aiDelivered}
+            right={row.aiFailed}
+            leftColor="#52c41a"
+            rightColor="#ff4d4f"
           />
         </Col>
-        <Col xs={12} lg={4}>
-          <Statistic
-            title={t('req.firstPass', '一次交付通过率')}
-            value={row.aiTasks > 0 ? firstPassRate.toFixed(0) : '—'}
-            suffix={row.aiTasks > 0 ? '%' : ''}
+        <Col xs={12} sm={12} md={6} lg={4}>
+          <Progress
+            type="circle"
+            size={72}
+            percent={row.aiTasks > 0 ? Math.round(firstPassRate) : 0}
+            format={() => (row.aiTasks > 0 ? `${firstPassRate.toFixed(0)}%` : '—')}
+            strokeColor="#52c41a"
           />
-        </Col>
-        <Col xs={24} lg={8}>
-          <ContributionGrid days={stats?.daily ?? []} metric="total" />
+          <div style={{ marginTop: 6, fontSize: 12, color: 'var(--text-2)' }}>{t('req.firstPass', '一次交付通过率')}</div>
         </Col>
       </Row>
+      <div style={{ marginTop: 16 }}>
+        <ContributionGrid days={stats?.daily ?? []} metric="total" />
+      </div>
     </Card>
+  )
+}
+
+// Compact AI/human split bar: a single stacked progress with a center label.
+function MiniSplit({ label, left, right, leftColor, rightColor }: { label: string; left: number; right: number; leftColor: string; rightColor: string }) {
+  const total = left + right
+  const lp = total > 0 ? Math.round((left * 100) / total) : 0
+  return (
+    <div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, marginBottom: 4 }}>
+        <span style={{ color: leftColor, fontWeight: 600 }}>{left}</span>
+        <span style={{ color: rightColor, fontWeight: 600 }}>{right}</span>
+      </div>
+      <Progress percent={lp} showInfo={false} strokeColor={leftColor} trailColor={rightColor} size="small" />
+      <div style={{ marginTop: 6, fontSize: 12, color: 'var(--text-2)' }}>{label}</div>
+    </div>
   )
 }
 
