@@ -770,6 +770,8 @@ export interface Requirement {
   customFields?: Record<string, string>
   /** Module id (shared project module tree); empty/missing = unplanned. */
   moduleId?: string
+  /** Selected project skill ids (composed into agent instructions at dispatch time). */
+  skillIds?: string[]
 }
 
 /** Field types in a field template (drives the create-form control). */
@@ -1387,7 +1389,7 @@ export const api = {
   perfReport: (id: string) => http.get<PerfReport>(`/perf/report/${id}`),
 
   // Requirements (versions / baseline / breakdown) — no list endpoint, list uses the frontend registry
-  createRequirement: (b: { projectId: string; title: string; description?: string; acceptanceCriteria: string[]; priority?: string; reqType?: string; tags?: string[]; dueDate?: string; parentId?: string; customFields?: Record<string, string>; moduleId?: string }) =>
+  createRequirement: (b: { projectId: string; title: string; description?: string; acceptanceCriteria: string[]; priority?: string; reqType?: string; tags?: string[]; dueDate?: string; parentId?: string; customFields?: Record<string, string>; moduleId?: string; skillIds?: string[] }) =>
     http.post<Requirement>('/requirement', b),
   /** MRD/raw material → structured requirement draft (AI-drafted if an LLM is configured, heuristic otherwise). */
   draftRequirement: (raw: string) =>
