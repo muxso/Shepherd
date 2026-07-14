@@ -1412,13 +1412,13 @@ export const api = {
     http.put<Requirement>(`/requirement/${id}/baseline`, { version }),
   breakdown: (id: string, version?: number) =>
     http.post<{ id: string; verificationId: string; tasks: Task[] }>(
-      `/requirement/${id}/breakdown${version != null ? `?version=${version}` : ''}`,
+      `/requirement/${id}/breakdown` + (version != null ? `?version=${version}` : ''),
       {},
     ),
   /** Read-only: fetch the existing decomposition for a requirement version (404 if none). Used to restore the orchestration tab across browsers. */
   requirementBreakdown: (reqId: string, version?: number) =>
     http.get<{ id: string; requirementVersion: number; verificationId?: string }>(
-      `/requirement/${reqId}/breakdown${version != null ? `?version=${version}` : ''}`,
+      `/requirement/${reqId}/breakdown` + (version != null ? `?version=${version}` : ''),
     ),
   /** Stage transition/scheduling: status moves the stage (IN_PROGRESS/DONE/SKIPPED); plannedStart/plannedEnd schedule it (empty string clears); returns the fresh requirement. */
   setRequirementStage: (id: string, stage: string, b: { status?: string; plannedStart?: string; plannedEnd?: string }) =>
