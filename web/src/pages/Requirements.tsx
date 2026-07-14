@@ -23,6 +23,7 @@ import {
   type RequirementStageKey,
   type RequirementVersion,
   type Task,
+  type Skill,
   type VerificationReport,
 } from '../api'
 import { useApp } from '../context'
@@ -402,6 +403,12 @@ function CreateRequirementForm({ projectId, modules, defaultModuleId, onDone }: 
   useEffect(() => {
     api.requirements(projectId).then((p) => setParents(p.items)).catch(() => setParents([]))
   }, [projectId])
+  // Project skills: selected at creation and composed into agent instructions on dispatch.
+  const [skills, setSkills] = useState<Skill[]>([])
+  useEffect(() => {
+    if (!projectId) return
+    api.skills(projectId).then(setSkills).catch(() => setSkills([]))
+  }, [projectId])
   const typeLabel: Record<string, string> = {
     FEATURE: t('req.type.FEATURE', '功能'),
     ENHANCEMENT: t('req.type.ENHANCEMENT', '优化'),
@@ -517,7 +524,7 @@ function CreateRequirementForm({ projectId, modules, defaultModuleId, onDone }: 
       form={form}
       layout="vertical"
       initialValues={{ reqType: 'FEATURE', priority: 'P2', criteria: [''], moduleId: defaultModuleId ?? '' }}
-      onFinish={async (v: { title: string; description?: string; reqType?: string; priority?: string; criteria?: string[]; tags?: string[]; dueDate?: Dayjs; parentId?: string; moduleId?: string; [CF_GROUP]?: Record<string, unknown> }) => {
+      onFinish={async (v: { title: string; description?: string; reqType?: string; priority?: string; criteria?: string[]; tags?: string[]; dueDate?: Dayjs; parentId?: string; moduleId?: string; skillIds?: string[]; [CF_GROUP]?: Record<string, unknown> }) => {
         const acceptanceCriteria = (v.criteria || []).map((c) => (c || '').trim()).filter(Boolean)
         const critField = tplFields.find((f) => f.key === 'criteria')
         if (critField?.enabled && critField.required && !acceptanceCriteria.length) {
@@ -538,6 +545,7 @@ function CreateRequirementForm({ projectId, modules, defaultModuleId, onDone }: 
             parentId: v.parentId || undefined,
             customFields: Object.keys(customFields).length ? customFields : undefined,
             moduleId: v.moduleId || undefined,
+            skillIds: v.skillIds?.length ? v.skillIds : undefined,
           })
           message.success(t('req.created', '需求已创建'))
           onDone(r, v.title)
@@ -570,6 +578,17 @@ function CreateRequirementForm({ projectId, modules, defaultModuleId, onDone }: 
               showSearch
               optionFilterProp="label"
               options={[{ value: '', label: t('req.moduleUnfiled', '未规划') }, ...modules.map((m) => ({ value: m.id, label: m.name }))]}
+            />
+          </Form.Item>
+          <Form.Item name="skillIds" label={t('req.skills', '关联技能')}>
+            <Select
+              mode="multiple"
+              allowClear
+              showSearch
+              optionFilterProp="label"
+              maxTagCount="responsive"
+              placeholder={t('req.skillsPh', '选择本项目技能,派发时下发到 agent')}
+              options={skills.map((s) => ({ value: s.id, label: s.name }))}
             />
           </Form.Item>
           {leftFields.map((f) =>
@@ -1347,6 +1366,17 @@ function DecompositionView({ decompId, verificationId, projectId, reqId, req }: 
       reqCriteria.length ? `验收标准:\n${reqCriteria.map((c, i) => `${i + 1}. ${c}`).join('\n')}` : '',
       reqDescription ? `需求描述:\n${reqDescription}` : '',
     ].filter(Boolean).join('\n\n')
+    // Compose the requirement's selected skills into agent instructions so the
+    // skill data "really moves" — the agent runtime receives them at dispatch time.
+    let instructions: string | undefined
+    if (req?.skillIds?.length) {
+      try {
+        const composed = await api.composeSkills(projectId, req.skillIds)
+        instructions = composed.instructions || undefined
+      } catch (e) {
+        console.warn('compose requirement skills failed', e)
+      }
+    }
     setDispatching((s) => new Set(s).add(task.id))
     try {
       await api.createDelivery({
@@ -1358,6 +1388,7 @@ function DecompositionView({ decompId, verificationId, projectId, reqId, req }: 
         executor,
         targetRuntime,
         context: contextParts || undefined,
+        instructions,
       })
       message.success(`${t('req.dispatched', '已派发')} ${task.id}${targetRuntime ? ` → ${targetRuntime}` : ''}`)
       load()

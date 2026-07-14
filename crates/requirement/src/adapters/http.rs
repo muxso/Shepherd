@@ -93,6 +93,9 @@ struct CreateBody {
     /// Module id (shared project module tree); missing/empty = unfiled.
     #[serde(default)]
     module_id: String,
+    /// Selected project skill ids (composed into agent instructions at dispatch time).
+    #[serde(default)]
+    skill_ids: Vec<String>,
 }
 
 #[derive(Deserialize, ToSchema)]
@@ -234,6 +237,8 @@ struct RequirementResponse {
     custom_fields: BTreeMap<String, String>,
     /// Module id (shared project module tree); empty = unfiled.
     module_id: String,
+    /// Selected project skill ids (composed into agent instructions at dispatch time).
+    skill_ids: Vec<String>,
     /// Due date YYYY-MM-DD; null when unset.
     due_date: Option<String>,
     /// Overdue flag (computed live: due-date rule or any overdue stage).
@@ -272,6 +277,7 @@ impl From<Requirement> for RequirementResponse {
             parent_id: r.parent_id,
             custom_fields: r.custom_fields,
             module_id: r.module_id,
+            skill_ids: r.skill_ids,
             due_date: r.due_date,
             overdue,
             created_at: r.created_at_ms,
@@ -428,6 +434,7 @@ async fn create_requirement(
             b.parent_id.as_deref(),
             &b.custom_fields,
             &b.module_id,
+            &b.skill_ids,
             &user.user_id,
         )
         .await
