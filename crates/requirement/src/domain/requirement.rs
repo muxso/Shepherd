@@ -101,6 +101,8 @@ pub struct NewRequirement {
     pub custom_fields: BTreeMap<String, String>,
     /// Module id (shared ms_module project-level module tree); empty = unfiled.
     pub module_id: String,
+    /// Selected project skill ids (dispatched to the agent runtime as composed instructions).
+    pub skill_ids: Vec<String>,
 }
 
 impl NewRequirement {
@@ -135,6 +137,7 @@ impl NewRequirement {
             parent_id: None,
             custom_fields: BTreeMap::new(),
             module_id: String::new(),
+            skill_ids: Vec::new(),
         })
     }
 
@@ -180,6 +183,18 @@ impl NewRequirement {
     /// Attach a module id (shared module tree; empty = unfiled).
     pub fn with_module(mut self, module_id: &str) -> Self {
         self.module_id = module_id.trim().to_string();
+        self
+    }
+
+    /// Attach selected project skill ids (trimmed, empties dropped, deduped in order).
+    /// The agent runtime composes these into the dispatch prompt at execution time.
+    pub fn with_skill_ids(mut self, skill_ids: Vec<String>) -> Self {
+        let mut seen = std::collections::HashSet::new();
+        self.skill_ids = skill_ids
+            .into_iter()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty() && seen.insert(s.clone()))
+            .collect();
         self
     }
 }
@@ -658,6 +673,8 @@ pub struct Requirement {
     pub custom_fields: BTreeMap<String, String>,
     /// Module id (shared ms_module project-level module tree); empty = unfiled.
     pub module_id: String,
+    /// Selected project skill ids (composed into agent instructions at dispatch time).
+    pub skill_ids: Vec<String>,
     /// Due date `YYYY-MM-DD`; overdue is computed on read by `is_overdue`, not persisted.
     pub due_date: Option<String>,
     /// Created/updated timestamps (epoch ms, DB-wide convention); stamped by
@@ -697,6 +714,7 @@ impl Requirement {
             parent_id: new.parent_id.clone(),
             custom_fields: new.custom_fields.clone(),
             module_id: new.module_id.clone(),
+            skill_ids: new.skill_ids.clone(),
             due_date: new.due_date.clone(),
             created_at_ms: 0,
             updated_at_ms: 0,
@@ -1244,6 +1262,20 @@ mod tests {
         let r = Requirement::create("req-1", &new_req().with_module(" mod-1 "));
         assert_eq!(r.module_id, "mod-1"); // with_module trims
         assert_eq!(Requirement::create("req-2", &new_req()).module_id, "");
+    }
+
+    #[test]
+    fn create_carries_skill_ids_trimmed_and_deduped() {
+        let n = new_req().with_skill_ids(vec![
+            " sk-1 ".to_string(),
+            "sk-2".to_string(),
+            "sk-1".to_string(),
+            "".to_string(),
+        ]);
+        let r = Requirement::create("req-1", &n);
+        assert_eq!(r.skill_ids, vec!["sk-1".to_string(), "sk-2".to_string()]);
+        // Defaults to empty.
+        assert!(Requirement::create("req-2", &new_req()).skill_ids.is_empty());
     }
 
     #[test]

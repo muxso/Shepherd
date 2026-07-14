@@ -52,13 +52,14 @@ impl CreateRequirementUseCase {
             None,
             &BTreeMap::new(),
             "",
+            &[],
             "",
         )
         .await
     }
 
     /// Like `execute`, but also takes optional priority/type/tags/due date/
-    /// parent/custom fields/module/creator: missing values fall back to
+    /// parent/custom fields/module/skill-ids/creator: missing values fall back to
     /// defaults, invalid ones are validation errors; the parent must exist
     /// (not soft-deleted) and belong to the same project; empty `module_id` =
     /// unfiled (modules live in the shared ms_module table, no existence check).
@@ -76,6 +77,7 @@ impl CreateRequirementUseCase {
         parent_id: Option<&str>,
         custom_fields: &BTreeMap<String, String>,
         module_id: &str,
+        skill_ids: &[String],
         by: &str,
     ) -> Result<Requirement, CreateRequirementError> {
         let priority = priority.map(parse_priority).transpose()?.unwrap_or_default();
@@ -92,6 +94,7 @@ impl CreateRequirementUseCase {
             .with_due_date(due_date)
             .with_custom_fields(custom_fields)
             .with_module(module_id)
+            .with_skill_ids(skill_ids.to_vec())
             .with_created_by(by);
 
         if let Some(pid) = parent_id.map(str::trim).filter(|p| !p.is_empty()) {
@@ -208,6 +211,7 @@ mod tests {
                 None,
                 &BTreeMap::new(),
                 "",
+                &[],
                 "",
             )
             .await
@@ -231,6 +235,7 @@ mod tests {
                 None,
                 &BTreeMap::new(),
                 "",
+                &[],
                 ""
             )
             .await
@@ -250,6 +255,7 @@ mod tests {
                 None,
                 &BTreeMap::new(),
                 "",
+                &[],
                 ""
             )
             .await
@@ -276,6 +282,7 @@ mod tests {
                 Some(&parent.id),
                 &BTreeMap::new(),
                 "",
+                &[],
                 "",
             )
             .await
@@ -297,6 +304,7 @@ mod tests {
                 None,
                 &BTreeMap::new(),
                 "",
+                &[],
                 "",
             )
             .await
@@ -320,6 +328,7 @@ mod tests {
                 None,
                 &BTreeMap::new(),
                 " mod-1 ",
+                &[],
                 "u1",
             )
             .await
@@ -330,19 +339,77 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn creates_with_skill_ids() {
+        let uc = uc();
+        let r = uc
+            .execute_with(
+                "p1",
+                "登录",
+                "d",
+                &[],
+                None,
+                None,
+                &[],
+                None,
+                None,
+                &BTreeMap::new(),
+                "",
+                &["sk-1".to_string(), "sk-2".to_string()],
+                "",
+            )
+            .await
+            .expect("ok");
+        assert_eq!(r.skill_ids, vec!["sk-1".to_string(), "sk-2".to_string()]);
+        // Empty selection defaults to none.
+        let r2 = uc
+            .execute_with(
+                "p1",
+                "注册",
+                "d",
+                &[],
+                None,
+                None,
+                &[],
+                None,
+                None,
+                &BTreeMap::new(),
+                "",
+                &[],
+                "",
+            )
+            .await
+            .expect("ok");
+        assert!(r2.skill_ids.is_empty());
+    }
+
+    #[tokio::test]
     async fn creates_with_custom_fields_normalized_and_rejects_invalid() {
         let raw = BTreeMap::from([(" owner ".to_string(), "alice".to_string())]);
         let r = uc()
-            .execute_with("p1", "登录", "d", &[], None, None, &[], None, None, &raw, "", "")
+            .execute_with("p1", "登录", "d", &[], None, None, &[], None, None, &raw, "", &[], "")
             .await
             .expect("ok");
         assert_eq!(r.custom_fields, BTreeMap::from([("owner".to_string(), "alice".to_string())]));
         // A blank key is a validation error.
         let bad = BTreeMap::from([("  ".to_string(), "v".to_string())]);
         assert_eq!(
-            uc().execute_with("p1", "注册", "d", &[], None, None, &[], None, None, &bad, "", "")
-                .await
-                .unwrap_err(),
+            uc().execute_with(
+                "p1",
+                "注册",
+                "d",
+                &[],
+                None,
+                None,
+                &[],
+                None,
+                None,
+                &bad,
+                "",
+                &[],
+                ""
+            )
+            .await
+            .unwrap_err(),
             CreateRequirementError::Validation(RequirementError::EmptyCustomFieldKey)
         );
     }
@@ -365,6 +432,7 @@ mod tests {
                 Some("ghost"),
                 &BTreeMap::new(),
                 "",
+                &[],
                 ""
             )
             .await
@@ -384,6 +452,7 @@ mod tests {
                 Some(&other.id),
                 &BTreeMap::new(),
                 "",
+                &[],
                 ""
             )
             .await
@@ -406,6 +475,7 @@ mod tests {
                 Some(&doomed.id),
                 &BTreeMap::new(),
                 "",
+                &[],
                 ""
             )
             .await
@@ -429,6 +499,7 @@ mod tests {
                 None,
                 &BTreeMap::new(),
                 "",
+                &[],
                 ""
             )
             .await
@@ -451,6 +522,7 @@ mod tests {
                 None,
                 &BTreeMap::new(),
                 "",
+                &[],
                 ""
             )
             .await
