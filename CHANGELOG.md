@@ -7,6 +7,8 @@ Unreleased changes go under Unreleased and move into the matching version sectio
 
 ## [Unreleased]
 
+## [0.0.2] - 2026-07-14
+
 ### Added
 - Defect ↔ requirement / scenario-case / functional-case linkage (traceability chain), including a linkage drawer UI
 - Dispatch can target a specific registered runtime (by name; under Redis a dedicated stream is used, offline-target tasks stay queued)
