@@ -123,9 +123,14 @@ pub fn router(
     Router::new()
         .route("/requirement/{id}/breakdown", get(breakdown_get_handler))
         .route("/requirement/{id}/breakdown", post(breakdown_handler))
-        .with_state(
-        BreakdownState { reqs, breakdown, create_verification, cases, drafter, sessions },
-    )
+        .with_state(BreakdownState {
+            reqs,
+            breakdown,
+            create_verification,
+            cases,
+            drafter,
+            sessions,
+        })
 }
 
 #[derive(Deserialize)]
