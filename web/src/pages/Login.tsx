@@ -14,7 +14,14 @@ const OIDC_PROVIDER = (import.meta.env.VITE_OIDC_PROVIDER as string | undefined)
 export default function Login() {
   const { login } = useApp()
   const { t } = useI18n()
-  const [mode, setMode] = useState<'admin' | 'sso'>('admin')
+  const [mode, setModeState] = useState<'admin' | 'sso'>('admin')
+  // First mount plays the default entrance; after any switch the replay
+  // mirrors to follow the travel direction.
+  const [switched, setSwitched] = useState(false)
+  const setMode = (m: 'admin' | 'sso') => {
+    setSwitched(true)
+    setModeState(m)
+  }
   const [username, setUsername] = useState('admin')
   const [password, setPassword] = useState('')
   const [loading, setLoading] = useState(false)
@@ -129,9 +136,11 @@ export default function Login() {
         </div>
       </div>
 
-      {/* Brand mark floats above the active panel and slides with it. */}
+      {/* Brand mark floats above the active panel and slides with it. The mode
+          key remounts the mark so the strata entrance replays on each switch,
+          mirrored to match the travel direction. */}
       <div className={`login-logo${mode === 'sso' ? ' on-right' : ''}`}>
-        <AnimatedLogo size={104} />
+        <AnimatedLogo key={mode} size={104} className={mode === 'admin' && switched ? 'reverse' : undefined} />
         <span className="login-brand">Shepherd</span>
         <span className="login-slogan">{t('login.subtitle', '从 idea 到交付,更安全、更可靠的质量把关')}</span>
       </div>

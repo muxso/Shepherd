@@ -44,6 +44,28 @@
   50% { opacity: 0.72; }
 }
 
+/* Mirrored entrance: used when the mark travels right-to-left so the strata
+   trail the motion instead of fighting it. */
+.shepherd-logo.reverse .stratum {
+  transform: translateX(14px);
+  animation-name: logoSlideInR, logoShimmer;
+}
+
+@keyframes logoSlideInR {
+  0% {
+    opacity: 0;
+    transform: translateX(14px);
+  }
+  70% {
+    opacity: 1;
+    transform: translateX(-3px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .shepherd-logo .stratum {
     opacity: 1;
