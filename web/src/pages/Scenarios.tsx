@@ -1638,6 +1638,24 @@ function StepDetailDrawer({
   const { t } = useI18n()
   const [full, setFull] = useState(false)
   const [deleting, setDeleting] = useState(false)
+  // Replace: swap the referenced case of a CASE step for another project case.
+  const [replaceOpen, setReplaceOpen] = useState(false)
+  const [replaceSel, setReplaceSel] = useState<string>()
+  const [replacing, setReplacing] = useState(false)
+  const doReplace = async () => {
+    if (!sel || !replaceSel) return message.warning(t('scenario.pickReplaceCase', '请选择用例'))
+    setReplacing(true)
+    try {
+      await api.updateScenarioStep(scenarioId, sel.step.id, { kind: 'CASE', refId: replaceSel })
+      message.success(t('scenario.replaced', '已替换'))
+      setReplaceOpen(false)
+      onDeleted()
+    } catch (e) {
+      message.error(e instanceof ApiError ? e.message : t('func.saveFailed', '保存失败'))
+    } finally {
+      setReplacing(false)
+    }
+  }
   const del = () => {
     if (!sel) return
     modal.confirm({
@@ -1766,7 +1784,16 @@ function StepDetailDrawer({
           {onEdit && step?.kind.toUpperCase() === 'REQUEST' && (
             <Button type="text" size="small" icon={<EditOutlined />} onClick={() => onEdit(step)}>{t('a.edit', '编辑')}</Button>
           )}
-          <Button type="text" size="small" icon={<SwapOutlined />} disabled title={t('scenario.replaceSoon', '替换(即将接入)')}>{t('scenario.replace', '替换')}</Button>
+          <Button
+            type="text"
+            size="small"
+            icon={<SwapOutlined />}
+            disabled={step?.kind.toUpperCase() !== 'CASE'}
+            title={step?.kind.toUpperCase() === 'CASE' ? undefined : t('scenario.replaceCaseOnly', '仅引用用例的步骤支持替换')}
+            onClick={() => { setReplaceSel(undefined); setReplaceOpen(true) }}
+          >
+            {t('scenario.replace', '替换')}
+          </Button>
           <Button type="text" size="small" danger icon={<DeleteOutlined />} loading={deleting} onClick={del}>{t('a.delete', '删除')}</Button>
           <Button type="text" size="small" icon={<FullscreenOutlined />} onClick={() => setFull((v) => !v)}>{t('scenario.fullscreen', '全屏')}</Button>
           <Button type="text" size="small" icon={<CloseOutlined />} onClick={onClose} />
@@ -1786,6 +1813,28 @@ function StepDetailDrawer({
       ) : (
         <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('scenario.controlStepInfo', '控制器步骤:在步骤列表中查看其配置与子步骤')} style={{ margin: '48px 0' }} />
       )}
+      <Modal
+        open={replaceOpen}
+        title={t('scenario.replaceCase', '替换引用用例')}
+        onCancel={() => setReplaceOpen(false)}
+        onOk={doReplace}
+        confirmLoading={replacing}
+        okText={t('a.confirm', '确定')}
+        cancelText={t('a.cancel', '取消')}
+        destroyOnHidden
+      >
+        <Select
+          showSearch
+          style={{ width: '100%' }}
+          placeholder={t('scenario.pickReplaceCase', '请选择用例')}
+          optionFilterProp="label"
+          value={replaceSel}
+          onChange={setReplaceSel}
+          options={Object.values(caseMap)
+            .filter((c) => c.id !== step?.caseId)
+            .map((c) => ({ value: c.id, label: `${c.method} ${c.name}` }))}
+        />
+      </Modal>
     </Drawer>
   )
 }
@@ -2328,14 +2377,23 @@ function CustomRequestDrawer({
     setBody(r?.body || '')
     setAuthType(r?.auth?.type === 'bearer' || r?.auth?.type === 'basic' ? r.auth.type : 'none'); setAuthToken(r?.auth?.token || '')
     setAssertions(r ? (Array.isArray(r.assertions) ? r.assertions : []) : [{ type: 'StatusIs', args: 200 }])
-    // Stored processors carry no pre/post split; surface existing ones in the post tab.
-    setPre([]); setPost(r?.processors?.length ? r.processors : [])
+    // Split stored processors by args.phase; legacy entries without a phase land in the post tab.
+    const stored = (r?.processors?.length ? r.processors : []) as { args?: { phase?: string } }[]
+    setPre(stored.filter((p) => p?.args?.phase === 'pre'))
+    setPost(stored.filter((p) => p?.args?.phase !== 'pre'))
     setResp(null); setErr(''); setLastReq(null)
   }
   useEffect(() => { if (open) reset() }, [open, editStep?.id]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const clean = (rows: KVRow[]) => rows.filter((r) => r.key.trim())
   const authObj = () => (authType === 'none' ? undefined : { type: authType, token: authToken })
+  // The runner reads one processors array; args.phase only records which editor tab each entry belongs to.
+  const withPhase = (list: unknown[], phase: 'pre' | 'post') =>
+    list.map((p) => {
+      const o = p as { args?: Record<string, unknown> }
+      return { ...o, args: { ...(o.args || {}), phase } }
+    })
+  const mergedProcessors = () => [...withPhase(pre, 'pre'), ...withPhase(post, 'post')]
   const buildRequest = () => ({
     method,
     url: url.trim(),
@@ -2345,7 +2403,7 @@ function CustomRequestDrawer({
     restParams: clean(rest),
     auth: authObj(),
     assertions,
-    processors: [...pre, ...post],
+    processors: mergedProcessors(),
   })
 
   // Server run: build the final URL (REST {key} substitution + query string), send directly, show the response.
@@ -2359,7 +2417,7 @@ function CustomRequestDrawer({
     if (!req) return message.warning(t('editor.needEnvOrAbs', '相对路径需先选择带 baseUrl 的环境,或填写绝对 URL(http(s)://)'))
     setLastReq(req); setRunning(true); setErr(''); setResp(null)
     try {
-      setResp(await api.debugSend({ ...req, assertions: assertions as unknown[], processors: [...pre, ...post] as unknown[] }))
+      setResp(await api.debugSend({ ...req, assertions: assertions as unknown[], processors: mergedProcessors() as unknown[] }))
     } catch (e) {
       setErr(e instanceof ApiError ? e.message : t('editor.sendFail', '发送失败'))
     } finally {
