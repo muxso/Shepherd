@@ -2044,7 +2044,7 @@ function StatRing({ d, centerLabel }: { d: Dist; centerLabel: string }) {
   return (
     <svg width="116" height="116" viewBox="0 0 120 120">
       <g transform="rotate(-90 60 60)">
-        <circle cx="60" cy="60" r="42" fill="none" stroke="#f0f2f5" strokeWidth="14" />
+        <circle cx="60" cy="60" r="42" fill="none" stroke="var(--border-soft)" strokeWidth="14" />
         {total > 0 && order.map((k) => {
           const len = (d[k] / total) * C
           const el = <circle key={k} cx="60" cy="60" r="42" fill="none" stroke={DIST_COLORS[k]} strokeWidth="14" strokeDasharray={`${len} ${C - len}`} strokeDashoffset={`-${off}`} />
