@@ -25,14 +25,21 @@ impl ChangeBugStatusUseCase {
         Self { repo }
     }
 
-    pub async fn execute(&self, bug_id: &str, to: &str) -> Result<Bug, ChangeBugStatusError> {
+    /// Transitions the bug; `operator` stamps updated_by/updated_at.
+    pub async fn execute(
+        &self,
+        bug_id: &str,
+        to: &str,
+        operator: Option<&str>,
+    ) -> Result<Bug, ChangeBugStatusError> {
         let mut bug = self.repo.get(bug_id).await?.ok_or(ChangeBugStatusError::BugNotFound)?;
         let flow = self.repo.status_flow(&bug.project_id).await?;
 
         bug.change_status(to, &flow)?;
 
-        self.repo.set_status(&bug.id, &bug.status).await?;
-        Ok(bug)
+        self.repo.set_status(&bug.id, &bug.status, operator).await?;
+        // Re-read so the response carries the stamped audit pair.
+        Ok(self.repo.get(&bug.id).await?.unwrap_or(bug))
     }
 }
 
@@ -45,7 +52,7 @@ mod tests {
     async fn seed_bug(repo: &InMemoryBugRepository) -> String {
         let create = CreateBugUseCase::new(Arc::new(repo.clone()));
         create
-            .execute("p1", "boom", "NEW", None, &std::collections::BTreeMap::new())
+            .execute("p1", "boom", "NEW", None, None, None, &std::collections::BTreeMap::new())
             .await
             .expect("seed")
             .id
@@ -57,8 +64,11 @@ mod tests {
         let id = seed_bug(&repo).await;
         let uc = ChangeBugStatusUseCase::new(Arc::new(repo.clone()));
 
-        let bug = uc.execute(&id, "RESOLVED").await.expect("ok");
+        let bug = uc.execute(&id, "RESOLVED", Some("alice")).await.expect("ok");
         assert_eq!(bug.status, "RESOLVED");
+        // The mutation stamps the operator into the audit pair.
+        assert_eq!(bug.updated_by.as_deref(), Some("alice"));
+        assert!(bug.updated_at.is_some());
         assert_eq!(repo.status_of(&id), Some("RESOLVED".to_string()));
     }
 
@@ -68,7 +78,7 @@ mod tests {
         let id = seed_bug(&repo).await;
         let uc = ChangeBugStatusUseCase::new(Arc::new(repo.clone()));
 
-        let err = uc.execute(&id, "CLOSED").await.unwrap_err();
+        let err = uc.execute(&id, "CLOSED", None).await.unwrap_err();
         assert_eq!(
             err,
             ChangeBugStatusError::Domain(BugError::TransitionNotAllowed {
@@ -83,7 +93,10 @@ mod tests {
     async fn missing_bug_is_not_found() {
         let repo = InMemoryBugRepository::with_default_flow("p1");
         let uc = ChangeBugStatusUseCase::new(Arc::new(repo));
-        assert_eq!(uc.execute("ghost", "RESOLVED").await, Err(ChangeBugStatusError::BugNotFound));
+        assert_eq!(
+            uc.execute("ghost", "RESOLVED", None).await,
+            Err(ChangeBugStatusError::BugNotFound)
+        );
     }
 
     #[tokio::test]
@@ -92,9 +105,9 @@ mod tests {
         let id = seed_bug(&repo).await;
         let uc = ChangeBugStatusUseCase::new(Arc::new(repo.clone()));
 
-        uc.execute(&id, "RESOLVED").await.expect("new->resolved");
-        uc.execute(&id, "CLOSED").await.expect("resolved->closed");
-        uc.execute(&id, "REOPENED").await.expect("closed->reopened");
+        uc.execute(&id, "RESOLVED", None).await.expect("new->resolved");
+        uc.execute(&id, "CLOSED", None).await.expect("resolved->closed");
+        uc.execute(&id, "REOPENED", None).await.expect("closed->reopened");
         assert_eq!(repo.status_of(&id), Some("REOPENED".to_string()));
     }
 }

@@ -36,11 +36,11 @@ mod tests {
         let repo = Arc::new(InMemoryBugRepository::with_default_flow("p1"));
         let create = crate::application::CreateBugUseCase::new(repo.clone());
         create
-            .execute("p1", "first", "NEW", None, &std::collections::BTreeMap::new())
+            .execute("p1", "first", "NEW", None, None, None, &std::collections::BTreeMap::new())
             .await
             .expect("ok");
         create
-            .execute("p1", "second", "NEW", None, &std::collections::BTreeMap::new())
+            .execute("p1", "second", "NEW", None, None, None, &std::collections::BTreeMap::new())
             .await
             .expect("ok");
 
@@ -55,7 +55,7 @@ mod tests {
     async fn isolates_by_project() {
         let repo = Arc::new(InMemoryBugRepository::with_default_flow("p1"));
         crate::application::CreateBugUseCase::new(repo.clone())
-            .execute("p1", "boom", "NEW", None, &std::collections::BTreeMap::new())
+            .execute("p1", "boom", "NEW", None, None, None, &std::collections::BTreeMap::new())
             .await
             .expect("ok");
 
