@@ -3018,13 +3018,18 @@ function ImportRequestDrawer({
   const [selScn, setSelScn] = useState<string[]>([])
   const [importing, setImporting] = useState(false)
 
+  const reload = () => {
+    api.definitions(projectId).then((d) => setDefs(Array.isArray(d) ? d : [])).catch(() => setDefs([]))
+    api.projectCasesAll(projectId).then(setCases).catch(() => setCases([]))
+    api.scenarios(projectId).then((s) => setScns(s.filter((x) => x.id !== scenarioId))).catch(() => setScns([]))
+    api.modules(projectId).then((m) => setModules(Array.isArray(m) ? m : [])).catch(() => setModules([]))
+  }
+
   useEffect(() => {
     if (!open) return
     setSearch(''); setModuleSearch(''); setSelModule('ALL'); setSelApi([]); setSelCase([]); setSelScn([])
-    api.definitions(projectId).then((d) => setDefs(Array.isArray(d) ? d : [])).catch(() => setDefs([]))
-    api.projectCases(projectId).then((p) => setCases(p.items)).catch(() => setCases([]))
-    api.scenarios(projectId).then((s) => setScns(s.filter((x) => x.id !== scenarioId))).catch(() => setScns([]))
-    api.modules(projectId).then((m) => setModules(Array.isArray(m) ? m : [])).catch(() => setModules([]))
+    reload()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, projectId, scenarioId])
 
   const lc = (s: string) => s.toLowerCase()
@@ -3077,6 +3082,82 @@ function ImportRequestDrawer({
     }
   }
 
+  // Copy mode: materialize selections into editable inline REQUEST steps
+  // (same request payload shape CustomRequestDrawer saves).
+  const arr = (v: unknown): unknown[] => (Array.isArray(v) ? v : [])
+  const cleanAuth = (a?: { type?: string; token?: string }) => (a?.type && a.type !== 'none' ? { type: a.type, token: a.token } : undefined)
+  const caseToRequest = (c: ApiCase) => ({
+    method: c.method || 'GET',
+    url: c.url || '',
+    body: c.body ?? null,
+    headers: c.headers ?? [],
+    queryParams: c.queryParams ?? [],
+    restParams: c.restParams ?? [],
+    auth: cleanAuth(c.auth),
+    assertions: arr(c.assertions),
+    processors: arr(c.processors),
+  })
+  const specKv = (rows?: { name: string; value?: string }[]) => (rows ?? []).filter((r) => r.name).map((r) => ({ key: r.name, value: r.value ?? '' }))
+  // Spec processors carry no editor tab; tag args.phase so they land in the pre/post tabs.
+  const tagPhase = (list: unknown[], phase: 'pre' | 'post') =>
+    list.map((p) => {
+      const o = p as { args?: Record<string, unknown> }
+      return { ...o, args: { ...(o.args || {}), phase } }
+    })
+  const defToRequest = (d: ApiDefinition) => {
+    const s = d.spec
+    return {
+      method: d.method || 'GET',
+      url: d.path || '',
+      body: s?.requestBody || null,
+      headers: specKv(s?.requestHeaders),
+      queryParams: specKv(s?.requestQuery),
+      restParams: specKv(s?.restParams),
+      auth: cleanAuth(s?.auth),
+      assertions: arr(s?.assertions).length ? arr(s?.assertions) : [{ type: 'StatusIs', args: 200 }],
+      processors: [...tagPhase(arr(s?.preProcessors), 'pre'), ...tagPhase(arr(s?.postProcessors), 'post')],
+    }
+  }
+
+  const doCopy = async () => {
+    setImporting(true)
+    let order = nextOrder
+    try {
+      const bodies: StepBody[] = []
+      for (const id of selApi) {
+        const d = defs.find((x) => x.id === id)
+        if (d) bodies.push({ kind: 'REQUEST', order: order++, request: defToRequest(d) })
+      }
+      for (const id of selCase) {
+        const c = cases.find((x) => x.id === id)
+        if (c) bodies.push({ kind: 'REQUEST', order: order++, request: caseToRequest(c) })
+      }
+      // Scenario: expand one level — inline/case steps become editable requests,
+      // nested scenario refs stay references, control steps keep their payload.
+      for (const id of selScn) {
+        const sc = await api.getScenario(id)
+        for (const st of sc.steps || []) {
+          if (st.kind === 'REQUEST' && st.request) bodies.push({ kind: 'REQUEST', order: order++, request: st.request })
+          else if (st.kind === 'CASE' && st.caseId) {
+            const c = cases.find((x) => x.id === st.caseId)
+            if (c) bodies.push({ kind: 'REQUEST', order: order++, request: caseToRequest(c) })
+            else bodies.push({ kind: 'CASE', order: order++, refId: st.caseId })
+          } else if (st.kind === 'SCENARIO' && st.scenarioId) bodies.push({ kind: 'SCENARIO', order: order++, refId: st.scenarioId })
+          else if (st.control != null) bodies.push({ kind: st.kind, order: order++, control: st.control })
+        }
+      }
+      if (onLocalImport) onLocalImport(bodies)
+      else for (const b of bodies) await api.addStep(scenarioId, b)
+      message.success(`${t('scenario.copied', '已复制')} ${bodies.length}`)
+      onImported()
+      onClose()
+    } catch (e) {
+      message.error(e instanceof ApiError ? e.message : t('scenario.copyFailed', '复制失败'))
+    } finally {
+      setImporting(false)
+    }
+  }
+
   const apiCols: ColumnsType<ApiDefinition> = [
     { title: 'ID', dataIndex: 'num', width: 90, render: (v?: number) => <span className="ms-mono" style={{ fontSize: 12 }}>{v ?? '—'}</span> },
     { title: t('scenario.apiName', '接口名称'), dataIndex: 'name', ellipsis: true },
@@ -3105,10 +3186,14 @@ function ImportRequestDrawer({
       footer={
         <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
           <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-            {t('scenario.totalSelected', '共选择')} {total} · {t('scenario.apiName', '接口')} {selApi.length} · {t('scenario.caseUnit', '用例')} {selCase.length} · {t('scenario.scenarioUnit', '场景')} {selScn.length}
+            {t('scenario.totalSelected', '共选择')} {total} · {t('scenario.tabApi', '接口')} {selApi.length} · {t('scenario.caseUnit', '用例')} {selCase.length} · {t('scenario.scenarioUnit', '场景')} {selScn.length}
           </Typography.Text>
+          {total > 0 && (
+            <Button type="link" size="small" style={{ padding: 0 }} onClick={() => { setSelApi([]); setSelCase([]); setSelScn([]) }}>{t('scenario.clearSel', '清空')}</Button>
+          )}
           <div style={{ flex: 1 }} />
           <Button onClick={onClose}>{t('a.cancel', '取消')}</Button>
+          <Button loading={importing} disabled={total === 0} onClick={doCopy}>{t('a.copy', '复制')}</Button>
           <Button type="primary" loading={importing} disabled={total === 0} onClick={doImport}>{t('scenario.doReference', '引用')}</Button>
         </div>
       }
@@ -3145,6 +3230,7 @@ function ImportRequestDrawer({
             <Typography.Text strong>{totalLabel} ({tab === 'api' ? fDefs.length : tab === 'case' ? fCases.length : fScns.length})</Typography.Text>
             <div style={{ flex: 1 }} />
             <Input allowClear size="small" style={{ width: 240 }} prefix={<SearchOutlined style={{ color: 'var(--text-3)' }} />} placeholder={t('scenario.searchByPathName', '通过路径或名称搜索')} value={search} onChange={(e) => setSearch(e.target.value)} />
+            <Button size="small" icon={<ReloadOutlined />} onClick={reload} title={t('a.refresh', '刷新')} />
           </div>
           {tab === 'api' && (
             <Table<ApiDefinition> rowKey="id" size="small" columns={apiCols} dataSource={fDefs} pagination={{ pageSize: 10, size: 'small' }} rowSelection={{ selectedRowKeys: selApi, onChange: (k) => setSelApi(k.map(String)) }} locale={{ emptyText: <Empty description={t('scenario.noImportData', '暂无可引用数据,可切换项目获取数据')} /> }} />
