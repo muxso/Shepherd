@@ -906,6 +906,9 @@ const DICT: Record<string, { zh: string; en: string }> = {
   "scenario.caseRef": { zh: "用例", en: "Case" },
   "scenario.loopPrefix": { zh: "循环", en: "Loop" },
   "scenario.loopSuffix": { zh: "次", en: "times" },
+  // Loop round label in the report tree ("第 N 次" / "Round N").
+  "scenario.iterPrefix": { zh: "第", en: "Round" },
+  "scenario.iterSuffix": { zh: "次", en: "" },
   "scenario.onceOnly": { zh: "仅执行一次", en: "Run once only" },
   "scenario.waitPrefix": { zh: "等待", en: "Wait" },
   "scenario.subScenario": { zh: "子场景", en: "Sub-scenario" },
