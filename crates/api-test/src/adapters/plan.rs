@@ -92,6 +92,22 @@ impl PlanExecutor {
     ) -> Result<bool, PortError> {
         let mut state =
             RunState { vars: env.variables.clone(), stopped: false, once_done: HashSet::new() };
+        // Built-in per-run variables: `${__runid}` (8-hex, unique per execution)
+        // and `${__timestamp}` (epoch ms) let steps mint collision-free names,
+        // making chains that create persistent resources safely re-runnable.
+        let runid = format!(
+            "{:08x}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| (d.as_nanos() as u32) ^ (std::process::id().wrapping_mul(0x9e3779b9)))
+                .unwrap_or(0)
+        );
+        state.vars.entry("__runid".to_string()).or_insert(runid);
+        let ts = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis().to_string())
+            .unwrap_or_default();
+        state.vars.entry("__timestamp".to_string()).or_insert(ts);
         self.exec_seq(report_id, env, &mut state, plan, stop_on_failure).await
     }
 
