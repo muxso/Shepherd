@@ -20,6 +20,8 @@ const proxy = Object.fromEntries(
     '/verification',
     '/skill',
     '/bug',
+    '/comment',
+    '/follow',
     '/functional-case',
     '/test-plan',
     '/perf',
