@@ -59,6 +59,9 @@ impl PlanRunner {
             reports: PgBatchReport::new(pool.clone()),
             recorder: api_scenario::application::RecordScenarioExecutionUseCase::new(scenario_repo),
             pool: pool.clone(),
+            specs: Arc::new(PgCaseSpecSource::new(pool.clone())),
+            // Plan runs stay in-process: no pool routing, no live event stream.
+            hub: None,
         };
         Self {
             cases: PlanCaseUseCase::new(plan_repo),
@@ -104,7 +107,7 @@ impl PlanRunner {
             Some(id) => Some(id.to_string()),
             None => self.scenarios.default_env_of(case_id).await,
         };
-        match self.scenarios.run(case_id, project_id, eff_env.as_deref(), false).await {
+        match self.scenarios.run(case_id, project_id, eff_env.as_deref(), false, None).await {
             Ok(o) => {
                 let ok = o.status == "SUCCESS";
                 let status = if ok { CaseStatus::Success } else { CaseStatus::Error };

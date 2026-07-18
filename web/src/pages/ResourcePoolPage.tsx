@@ -42,6 +42,7 @@ export function ResourcePoolsPage() {
   const nav = useNavigate()
   const [pools, setPools] = useState<ResourcePool[]>([])
   const [orgs, setOrgs] = useState<Organization[]>([])
+  const [online, setOnline] = useState<Record<string, number>>({})
   const [loading, setLoading] = useState(false)
   const [q, setQ] = useState('')
 
@@ -53,6 +54,8 @@ export function ResourcePoolsPage() {
       .catch(() => setPools([]))
       .finally(() => setLoading(false))
     api.organizations().then((p) => setOrgs(p.items)).catch(() => setOrgs([]))
+    // Connected pool-runner processes (WS registry), refreshed with the list.
+    api.poolRunnerStatus().then(setOnline).catch(() => setOnline({}))
   }
   useEffect(load, [])
 
@@ -106,6 +109,19 @@ export function ResourcePoolsPage() {
       render: (v: boolean, p) => <Switch size="small" checked={v} onChange={(c) => toggle(p, c)} />,
     },
     { title: t('pool.maxConcurrency', '最大并发数'), dataIndex: 'maxConcurrency', width: 120 },
+    {
+      title: t('pool.onlineRunners', '在线执行机'),
+      key: 'onlineRunners',
+      width: 110,
+      render: (_v, p) => {
+        const n = online[p.id] ?? 0
+        return (
+          <Tag color={n > 0 ? 'green' : 'default'} style={{ margin: 0 }}>
+            {n > 0 ? n : t('pool.offline', '无')}
+          </Tag>
+        )
+      },
+    },
     {
       title: t('pool.applyOrg', '应用组织'),
       dataIndex: 'allOrg',

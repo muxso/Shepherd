@@ -38,13 +38,14 @@ api-scenario = { path = "../api-scenario", features = ["pg", "http"] }
 environment = { path = "../environment", features = ["pg", "http"] }
 case-management = { path = "../case-management", features = ["pg", "http"] }
 runner = { path = "../runner", features = ["pg", "http", "client"] }
+pool-runner = { path = "../pool-runner" }
 mock-runtime = { path = "../mock-runtime", features = ["http", "pg", "template"] }
 # 压测统一经 probe 注册表(probe-exec)驱动任意协议;probe 提供 http/grpc/sql 插件类型与默认注册表。
 perf = { path = "../perf", features = ["engine", "pg", "parquet-sink", "probe-exec"] }
 probe = { workspace = true, default-features = true, features = ["http", "grpc", "sql", "mysql", "redis", "websocket", "ssh"] }
 migrate = { workspace = true }
 sqlx = { workspace = true, features = ["runtime-tokio", "postgres"] }
-axum = { workspace = true }
+axum = { workspace = true, features = ["ws"] }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "net", "signal", "time"] }
 tokio-stream = { version = "0.1", features = ["time", "sync"] }
 tokio-cron-scheduler = "0.13"
