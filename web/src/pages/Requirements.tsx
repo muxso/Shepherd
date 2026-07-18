@@ -482,7 +482,7 @@ function CreateRequirementForm({ projectId, modules, defaultModuleId, onDone }: 
       case 'description':
         return (
           <Form.Item key="description" name="description" label={t('req.description', '需求描述')} rules={rules}>
-            <MarkdownEditor placeholder={t('req.descriptionPh', '背景:为什么做\n目标:做成什么样\n范围:边界与不做什么')} />
+            <MarkdownEditor projectId={projectId} placeholder={t('req.descriptionPh', '背景:为什么做\n目标:做成什么样\n范围:边界与不做什么')} />
           </Form.Item>
         )
       case 'criteria':

@@ -28,6 +28,7 @@ pub fn router(pool: PgPool, sessions: Arc<dyn SessionStore>) -> Router {
         .route("/api/project-file/{id}", axum::routing::delete(delete_file))
         .route("/api/project-file/{id}/module", axum::routing::put(move_file))
         .route("/api/project-file/{id}/download", get(download_file))
+        .route("/api/project-file/{id}/raw", get(raw_file))
         .with_state(St { pool, sessions })
 }
 
@@ -139,6 +140,46 @@ async fn download_file(State(st): State<St>, Path(id): Path<String>) -> Response
             content_base64: r.try_get("content_b64").unwrap_or_default(),
         })
         .into_response(),
+        Ok(None) => (StatusCode::NOT_FOUND, "file not found").into_response(),
+        Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
+    }
+}
+
+fn content_type_of(format: &str) -> &'static str {
+    match format.to_ascii_lowercase().as_str() {
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "svg" => "image/svg+xml",
+        "pdf" => "application/pdf",
+        "txt" | "md" => "text/plain; charset=utf-8",
+        _ => "application/octet-stream",
+    }
+}
+
+/// Serves the decoded file bytes so markdown image links can reference
+/// `/api/project-file/{id}/raw` directly.
+async fn raw_file(State(st): State<St>, Path(id): Path<String>) -> Response {
+    let row = sqlx::query("SELECT file_format, content_b64 FROM ms_project_file WHERE id = $1")
+        .bind(&id)
+        .fetch_optional(&st.pool)
+        .await;
+    match row {
+        Ok(Some(r)) => {
+            let format: String = r.try_get("file_format").unwrap_or_default();
+            let b64: String = r.try_get("content_b64").unwrap_or_default();
+            use base64::Engine;
+            match base64::engine::general_purpose::STANDARD.decode(b64.trim()) {
+                Ok(bytes) => (
+                    StatusCode::OK,
+                    [(axum::http::header::CONTENT_TYPE, content_type_of(&format))],
+                    bytes,
+                )
+                    .into_response(),
+                Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "decode error").into_response(),
+            }
+        }
         Ok(None) => (StatusCode::NOT_FOUND, "file not found").into_response(),
         Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
     }

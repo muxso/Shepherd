@@ -1,6 +1,7 @@
 import { useCallback, useRef, useState } from 'react'
 import { Button, Tabs, Tooltip, Upload } from 'antd'
 import { PictureOutlined } from '@ant-design/icons'
+import { api } from '../api'
 import { message } from '../feedback'
 import { useI18n } from '../i18n'
 import { MarkdownRenderer } from './MarkdownRenderer'
@@ -12,9 +13,11 @@ export interface MarkdownEditorProps {
   placeholder?: string
   /** Max image size in bytes; default 5MB. */
   maxImageSize?: number
+  /** When set, images upload to project files and markdown stores a URL instead of inline base64. */
+  projectId?: string
 }
 
-export function MarkdownEditor({ value = '', onChange, placeholder, maxImageSize = 5 * 1024 * 1024 }: MarkdownEditorProps) {
+export function MarkdownEditor({ value = '', onChange, placeholder, maxImageSize = 5 * 1024 * 1024, projectId }: MarkdownEditorProps) {
   const { t } = useI18n()
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const [activeTab, setActiveTab] = useState('write')
@@ -44,16 +47,34 @@ export function MarkdownEditor({ value = '', onChange, placeholder, maxImageSize
       message.error(t('md.imageTooLarge', '图片超过 {size}MB').replace('{size}', mb))
       return
     }
+    const alt = file.name.replace(/\.[^.]+$/, '')
     const reader = new FileReader()
-    reader.onload = (e) => {
-      const url = e.target?.result as string
-      if (url) {
-        insertImage(url, file.name.replace(/\.[^.]+$/, ''))
-        setActiveTab('write')
+    reader.onload = async (e) => {
+      const dataUrl = e.target?.result as string
+      if (!dataUrl) return
+      if (projectId) {
+        try {
+          const r = await api.uploadProjectFile({
+            projectId,
+            name: file.name,
+            fileFormat: file.name.split('.').pop() || '',
+            sizeBytes: file.size,
+            contentBase64: dataUrl.split(',')[1] || '',
+            moduleId: 'markdown',
+          })
+          insertImage(`/api/project-file/${r.id}/raw`, alt)
+          setActiveTab('write')
+          return
+        } catch {
+          message.error(t('md.uploadFailed', '图片上传失败'))
+          return
+        }
       }
+      insertImage(dataUrl, alt)
+      setActiveTab('write')
     }
     reader.readAsDataURL(file)
-  }, [insertImage, maxImageSize, t])
+  }, [insertImage, maxImageSize, projectId, t])
 
   const handlePaste = useCallback((e: React.ClipboardEvent<HTMLTextAreaElement>) => {
     const items = e.clipboardData?.items

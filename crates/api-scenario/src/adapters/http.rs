@@ -3,7 +3,7 @@ use std::sync::Arc;
 use crate::application::{
     AddStepError, AddStepUseCase, CompileError, CompileScenarioUseCase, CopyScenarioError,
     CopyScenarioUseCase, CreateScenarioError, CreateScenarioUseCase, GetScenarioUseCase,
-    ListScenarioExecutionsUseCase, ListScenariosUseCase,
+    ListScenarioExecutionsUseCase, ListScenariosUseCase, UpdateStepError, UpdateStepUseCase,
 };
 use crate::domain::{
     ApiScenario, ControlKind, InlineRequest, NewScenarioStep, RefMode, RunnableStep,
@@ -29,6 +29,7 @@ struct ScenarioAppState {
     list: ListScenariosUseCase,
     get: GetScenarioUseCase,
     add_step: AddStepUseCase,
+    update_step: UpdateStepUseCase,
     compile: CompileScenarioUseCase,
     list_executions: ListScenarioExecutionsUseCase,
     repo: Arc<dyn ApiScenarioRepository>,
@@ -48,6 +49,7 @@ pub fn router(repo: Arc<dyn ApiScenarioRepository>, sessions: Arc<dyn SessionSto
         list: ListScenariosUseCase::new(repo.clone()),
         get: GetScenarioUseCase::new(repo.clone()),
         add_step: AddStepUseCase::new(repo.clone()),
+        update_step: UpdateStepUseCase::new(repo.clone()),
         compile: CompileScenarioUseCase::new(repo.clone()),
         list_executions: ListScenarioExecutionsUseCase::new(repo.clone()),
         repo,
@@ -61,7 +63,10 @@ pub fn router(repo: Arc<dyn ApiScenarioRepository>, sessions: Arc<dyn SessionSto
         )
         .route("/api/scenario/{id}/copy", post(copy_scenario))
         .route("/api/scenario/{id}/step", post(add_step))
-        .route("/api/scenario/{id}/step/{step_id}", axum::routing::delete(delete_step))
+        .route(
+            "/api/scenario/{id}/step/{step_id}",
+            axum::routing::patch(update_step).delete(delete_step),
+        )
         .route("/api/scenario/{id}/steps/order", axum::routing::patch(reorder_steps))
         .route("/api/scenario/{id}/compile", get(compile_scenario))
         .route("/api/scenario/{id}/executions", get(list_executions))
@@ -173,6 +178,7 @@ impl From<&ScenarioStep> for ScenarioStepResponse {
 struct ScenarioResponse {
     id: String,
     project_id: String,
+    num: i64,
     name: String,
     status: String,
     meta: serde_json::Value,
@@ -189,6 +195,7 @@ impl From<ApiScenario> for ScenarioResponse {
         Self {
             id: s.id,
             project_id: s.project_id,
+            num: s.num,
             name: s.name,
             status: s.status.as_str().to_string(),
             meta: s.meta,
@@ -218,6 +225,24 @@ struct AddStepBody {
     #[serde(default)]
     ref_mode: Option<String>,
     order: i32,
+    #[serde(default)]
+    request: Option<InlineRequestBody>,
+    #[serde(default)]
+    ref_id: Option<String>,
+    #[serde(default)]
+    control: Option<serde_json::Value>,
+    #[serde(default)]
+    snapshot: Option<serde_json::Value>,
+}
+
+/// Same shape as `AddStepBody` minus `order`: updates replace the step payload only,
+/// ordering goes through the reorder endpoint.
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+struct UpdateStepBody {
+    kind: String,
+    #[serde(default)]
+    ref_mode: Option<String>,
     #[serde(default)]
     request: Option<InlineRequestBody>,
     #[serde(default)]
@@ -530,6 +555,46 @@ async fn delete_scenario(
     }
 }
 
+/// Build a `StepKind` from the wire fields shared by add/update step bodies.
+fn parse_step_kind(
+    kind: &str,
+    request: Option<InlineRequestBody>,
+    ref_id: Option<String>,
+    control: Option<serde_json::Value>,
+) -> Result<StepKind, &'static str> {
+    match kind {
+        "REQUEST" => {
+            let Some(r) = request else { return Err("request payload required") };
+            let empty = || serde_json::Value::Array(vec![]);
+            let req = InlineRequest::new(&r.method, &r.url, r.body)
+                .map_err(|_| "invalid inline request")?;
+            Ok(StepKind::Request(Box::new(
+                req.with_assertions(r.assertions.unwrap_or_else(empty)).with_spec(
+                    r.headers.unwrap_or_else(empty),
+                    r.query_params.unwrap_or_else(empty),
+                    r.rest_params.unwrap_or_else(empty),
+                    r.auth.unwrap_or_else(|| serde_json::json!({})),
+                    r.processors.unwrap_or_else(empty),
+                ),
+            )))
+        }
+        "CASE" => match ref_id {
+            Some(case_id) => Ok(StepKind::Case { case_id }),
+            None => Err("refId required for CASE"),
+        },
+        "SCENARIO" => match ref_id {
+            Some(scenario_id) => Ok(StepKind::Scenario { scenario_id }),
+            None => Err("refId required for SCENARIO"),
+        },
+        "LOOP" | "IF" | "ONCE" | "TIMER" => {
+            let control_kind = ControlKind::parse(kind).ok_or("unknown control kind")?;
+            let payload = control.ok_or("control payload required")?;
+            Ok(StepKind::Control { control: control_kind, payload })
+        }
+        _ => Err("unknown step kind"),
+    }
+}
+
 #[utoipa::path(post, path = "/api/scenario/{id}/step", tag = "api-scenario", params(("id" = String, Path)), request_body = AddStepBody, responses((status = 201, body = ScenarioStepResponse), (status = 400), (status = 404)), security(("bearer" = [])))]
 async fn add_step(
     user: AuthUser,
@@ -541,47 +606,9 @@ async fn add_step(
         return (StatusCode::FORBIDDEN, "permission denied").into_response();
     }
 
-    let kind = match req.kind.as_str() {
-        "REQUEST" => {
-            let Some(r) = req.request else {
-                return (StatusCode::BAD_REQUEST, "request payload required").into_response();
-            };
-            let empty = || serde_json::Value::Array(vec![]);
-            match InlineRequest::new(&r.method, &r.url, r.body) {
-                Ok(req) => StepKind::Request(Box::new(
-                    req.with_assertions(r.assertions.unwrap_or_else(empty)).with_spec(
-                        r.headers.unwrap_or_else(empty),
-                        r.query_params.unwrap_or_else(empty),
-                        r.rest_params.unwrap_or_else(empty),
-                        r.auth.unwrap_or_else(|| serde_json::json!({})),
-                        r.processors.unwrap_or_else(empty),
-                    ),
-                )),
-                Err(_) => {
-                    return (StatusCode::BAD_REQUEST, "invalid inline request").into_response()
-                }
-            }
-        }
-        "CASE" => match req.ref_id {
-            Some(case_id) => StepKind::Case { case_id },
-            None => return (StatusCode::BAD_REQUEST, "refId required for CASE").into_response(),
-        },
-        "SCENARIO" => match req.ref_id {
-            Some(scenario_id) => StepKind::Scenario { scenario_id },
-            None => {
-                return (StatusCode::BAD_REQUEST, "refId required for SCENARIO").into_response()
-            }
-        },
-        "LOOP" | "IF" | "ONCE" | "TIMER" => {
-            let Some(control) = ControlKind::parse(&req.kind) else {
-                return (StatusCode::BAD_REQUEST, "unknown control kind").into_response();
-            };
-            let Some(payload) = req.control else {
-                return (StatusCode::BAD_REQUEST, "control payload required").into_response();
-            };
-            StepKind::Control { control, payload }
-        }
-        _ => return (StatusCode::BAD_REQUEST, "unknown step kind").into_response(),
+    let kind = match parse_step_kind(&req.kind, req.request, req.ref_id, req.control) {
+        Ok(k) => k,
+        Err(msg) => return (StatusCode::BAD_REQUEST, msg).into_response(),
     };
 
     let ref_mode = req.ref_mode.as_deref().map(RefMode::parse).unwrap_or_default();
@@ -607,6 +634,49 @@ async fn add_step(
             (StatusCode::NOT_FOUND, "scenario not found").into_response()
         }
         Err(AddStepError::Repo(_)) => {
+            (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response()
+        }
+    }
+}
+
+#[utoipa::path(patch, path = "/api/scenario/{id}/step/{step_id}", tag = "api-scenario", params(("id" = String, Path), ("step_id" = String, Path)), request_body = UpdateStepBody, responses((status = 200, body = ScenarioStepResponse), (status = 400), (status = 404)), security(("bearer" = [])))]
+async fn update_step(
+    user: AuthUser,
+    State(st): State<ScenarioAppState>,
+    Path((id, step_id)): Path<(String, String)>,
+    Json(req): Json<UpdateStepBody>,
+) -> Response {
+    if !user.can("API_SCENARIO", "UPDATE") {
+        return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
+
+    let kind = match parse_step_kind(&req.kind, req.request, req.ref_id, req.control) {
+        Ok(k) => k,
+        Err(msg) => return (StatusCode::BAD_REQUEST, msg).into_response(),
+    };
+
+    let ref_mode = req.ref_mode.as_deref().map(RefMode::parse).unwrap_or_default();
+    // Order 0 is a placeholder: the repo keeps the stored step_order on update.
+    let step = match NewScenarioStep::new(0, kind, ref_mode, req.snapshot) {
+        Ok(s) => s,
+        Err(_) => return (StatusCode::BAD_REQUEST, "invalid step payload").into_response(),
+    };
+
+    match st.update_step.execute(&id, &step_id, &step).await {
+        Ok(stored) => {
+            let _ = st
+                .repo
+                .record_change(
+                    &id,
+                    "UPDATE_STEP",
+                    Some(&format!("更新步骤 {}", req.kind)),
+                    Some(&user.user_id),
+                )
+                .await;
+            (StatusCode::OK, Json(ScenarioStepResponse::from(&stored))).into_response()
+        }
+        Err(UpdateStepError::NotFound) => (StatusCode::NOT_FOUND, "step not found").into_response(),
+        Err(UpdateStepError::Repo(_)) => {
             (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response()
         }
     }
@@ -710,13 +780,14 @@ async fn list_changes(
 
 #[derive(OpenApi)]
 #[openapi(
-    paths(create_scenario, copy_scenario, list_scenarios, get_scenario, delete_scenario, add_step, compile_scenario, list_executions),
+    paths(create_scenario, copy_scenario, list_scenarios, get_scenario, delete_scenario, add_step, update_step, delete_step, compile_scenario, list_executions),
     components(schemas(
         ScenarioCreateBody,
         ScenarioCopyBody,
         ScenarioResponse,
         ScenarioStepResponse,
         AddStepBody,
+        UpdateStepBody,
         InlineRequestBody,
         InlineRequestDto,
         CompiledStepDto,
@@ -923,6 +994,108 @@ mod tests {
             .await
             .expect("resp");
         assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    }
+
+    fn patch_req(uri: &str, body: &str, token: Option<&str>) -> Request<Body> {
+        let mut b =
+            Request::builder().method("PATCH").uri(uri).header("content-type", "application/json");
+        if let Some(t) = token {
+            b = b.header("authorization", format!("Bearer {t}"));
+        }
+        b.body(Body::from(body.to_string())).expect("req")
+    }
+
+    async fn app_with_update() -> (Router, String) {
+        let repo = Arc::new(InMemoryApiScenarioRepository::new());
+        let sessions = Arc::new(InMemorySessionStore::new());
+        let perms =
+            PermissionSet::from_raw(["API_SCENARIO:READ+ADD+UPDATE".to_string()]).expect("perms");
+        let token = sessions.create("admin", perms, 3600).await.expect("token");
+        (router(repo, sessions), token)
+    }
+
+    async fn add_request_step_id(app: &Router, t: &str, scenario_id: &str) -> String {
+        let resp = app
+            .clone()
+            .oneshot(post(
+                &format!("/api/scenario/{scenario_id}/step"),
+                r#"{"kind":"REQUEST","order":1,"request":{"method":"GET","url":"http://x"}}"#,
+                Some(t),
+            ))
+            .await
+            .expect("resp");
+        assert_eq!(resp.status(), StatusCode::CREATED);
+        json_body(resp).await["id"].as_str().expect("id").to_string()
+    }
+
+    #[tokio::test]
+    async fn update_step_replaces_request_payload_200() {
+        let (app, t) = app_with_update().await;
+        let id = create_scenario_id(&app, &t).await;
+        let step_id = add_request_step_id(&app, &t, &id).await;
+        let resp = app
+            .clone()
+            .oneshot(patch_req(
+                &format!("/api/scenario/{id}/step/{step_id}"),
+                r#"{"kind":"REQUEST","request":{"method":"POST","url":"http://y","assertions":[{"type":"StatusIs","args":201}]}}"#,
+                Some(&t),
+            ))
+            .await
+            .expect("resp");
+        assert_eq!(resp.status(), StatusCode::OK);
+        let v = json_body(resp).await;
+        assert_eq!(v["id"], step_id);
+        assert_eq!(v["order"], 1);
+        assert_eq!(v["request"]["method"], "POST");
+        assert_eq!(v["request"]["assertions"][0]["args"], 201);
+    }
+
+    #[tokio::test]
+    async fn update_missing_step_404() {
+        let (app, t) = app_with_update().await;
+        let id = create_scenario_id(&app, &t).await;
+        let resp = app
+            .oneshot(patch_req(
+                &format!("/api/scenario/{id}/step/ghost"),
+                r#"{"kind":"REQUEST","request":{"method":"GET","url":"http://x"}}"#,
+                Some(&t),
+            ))
+            .await
+            .expect("resp");
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn update_step_invalid_method_400() {
+        let (app, t) = app_with_update().await;
+        let id = create_scenario_id(&app, &t).await;
+        let step_id = add_request_step_id(&app, &t, &id).await;
+        let resp = app
+            .oneshot(patch_req(
+                &format!("/api/scenario/{id}/step/{step_id}"),
+                r#"{"kind":"REQUEST","request":{"method":"FETCH","url":"http://x"}}"#,
+                Some(&t),
+            ))
+            .await
+            .expect("resp");
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn update_step_without_update_permission_403() {
+        // The default test app only grants READ+ADD.
+        let (app, t) = app().await;
+        let id = create_scenario_id(&app, &t).await;
+        let step_id = add_request_step_id(&app, &t, &id).await;
+        let resp = app
+            .oneshot(patch_req(
+                &format!("/api/scenario/{id}/step/{step_id}"),
+                r#"{"kind":"REQUEST","request":{"method":"GET","url":"http://x"}}"#,
+                Some(&t),
+            ))
+            .await
+            .expect("resp");
+        assert_eq!(resp.status(), StatusCode::FORBIDDEN);
     }
 
     #[tokio::test]

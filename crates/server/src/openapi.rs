@@ -48,6 +48,7 @@ pub fn merged() -> utoipa::openapi::OpenApi {
     doc.merge(case_management::adapters::http::openapi());
     doc.merge(runner::adapters::http::openapi());
     doc.merge(crate::scenario_run::openapi());
+    doc.merge(crate::scenario_schedule::openapi());
     doc.merge(crate::perf_run::openapi());
     doc.merge(crate::plan_run::openapi());
     doc.merge(crate::decomposition_run::openapi());

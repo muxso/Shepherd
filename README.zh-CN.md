@@ -56,6 +56,13 @@ Shepherd 是一个还在早期阶段的研发监督平台。AI 现在能写代�
   <img src="docs/assets/screenshot-zh-1.png" width="49%" alt="Shepherd 控制台 — 概览" />
   <img src="docs/assets/screenshot-zh-2.png" width="49%" alt="Shepherd — 需求拆分与任务图" />
 </p>
+<p float="left">
+  <img src="docs/assets/screenshot-zh-3.png" width="49%" alt="Shepherd — OpenAPI 导入的接口定义" />
+  <img src="docs/assets/screenshot-zh-4.png" width="49%" alt="Shepherd — 场景编排(引用用例的链式步骤)" />
+</p>
+<p float="left">
+  <img src="docs/assets/screenshot-zh-5.png" width="49%" alt="Shepherd — 功能用例详情抽屉" />
+</p>
 
 ## AI 到底交付了多少,可以量化
 

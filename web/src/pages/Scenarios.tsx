@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { useSearchParams } from 'react-router-dom'
-import { Button, Divider, Drawer, Dropdown, Empty, Form, Input, Modal, Popover, Radio, Segmented, Select, Space, Switch, Table, Tabs, Tag, Tooltip, Typography, Upload } from 'antd'
+import { AutoComplete, Button, Cascader, Divider, Drawer, Dropdown, Empty, Form, Input, Modal, Popover, Radio, Segmented, Select, Space, Switch, Table, Tabs, Tag, Tooltip, Typography, Upload } from 'antd'
 import { message, modal } from '../feedback'
-import { PlayCircleOutlined, PlusOutlined, SaveOutlined, ThunderboltOutlined, DownOutlined, LinkOutlined, SwapOutlined, DeleteOutlined, FullscreenOutlined, CloseOutlined, SearchOutlined, FilterOutlined, ReloadOutlined, MoreOutlined, ImportOutlined, InboxOutlined, EyeOutlined, SettingOutlined, ShareAltOutlined } from '@ant-design/icons'
-import { api, ApiError, type ApiCase, type ApiDefinition, type ApiModule, type ApiView, type AssertionResult, type DebugResponse, type Environment, type ReportResultItem, type Scenario, type ScenarioChange, type ScenarioExecution, type ScenarioReportDetail, type ScenarioRunResult, type ScenarioStep } from '../api'
+import { PlayCircleOutlined, PlusOutlined, SaveOutlined, ThunderboltOutlined, DownOutlined, LinkOutlined, SwapOutlined, DeleteOutlined, FullscreenOutlined, CloseOutlined, SearchOutlined, FilterOutlined, ReloadOutlined, MoreOutlined, ImportOutlined, InboxOutlined, EyeOutlined, SettingOutlined, ShareAltOutlined, EditOutlined } from '@ant-design/icons'
+import { api, ApiError, type ApiCase, type ApiDefinition, type ApiModule, type ApiView, type AssertionResult, type DebugResponse, type Environment, type ReportResultItem, type ResourcePool, type Scenario, type ScenarioChange, type ScenarioExecution, type ScenarioReportDetail, type ScenarioRunResult, type ScenarioStep } from '../api'
 import type { ColumnsType } from 'antd/es/table'
 import { useApp } from '../context'
 import { methodColor, statusColor, outcomeColor, priorityColor } from '../components/tags'
@@ -97,6 +97,39 @@ export default function Scenarios() {
   const [viewName, setViewName] = useState('')
   const [viewPopOpen, setViewPopOpen] = useState(false)
   const [searchParams, setSearchParams] = useSearchParams()
+  // Batch selection + move/copy-to-module dialogs (bottom action bar, mirrors the reference list).
+  const [selectedIds, setSelectedIds] = useState<React.Key[]>([])
+  const [batchModal, setBatchModal] = useState<'move' | 'copy' | null>(null)
+  const [batchModule, setBatchModule] = useState('')
+  const [batchBusy, setBatchBusy] = useState(false)
+  // Batch run dialog: env override / serial-parallel / stop-on-fail / report mode / pool.
+  const [batchRunOpen, setBatchRunOpen] = useState(false)
+  const [runEnvMode, setRunEnvMode] = useState<'default' | 'new'>('default')
+  const [runEnvId, setRunEnvId] = useState<string>()
+  const [runMode, setRunMode] = useState<'serial' | 'parallel'>('serial')
+  const [stopOnFail, setStopOnFail] = useState(false)
+  const [reportMode, setReportMode] = useState<'independent' | 'union'>('independent')
+  const [reportName, setReportName] = useState('')
+  const [runPool, setRunPool] = useState('')
+  const [runEnvs, setRunEnvs] = useState<Environment[]>([])
+  const [runPools, setRunPools] = useState<ResourcePool[]>([])
+  // Union batch report viewer (list level): case names resolved lazily.
+  const [batchReportId, setBatchReportId] = useState<string | null>(null)
+  const [listCaseMap, setListCaseMap] = useState<Record<string, ApiCase>>({})
+  useEffect(() => {
+    if (!batchReportId || Object.keys(listCaseMap).length) return
+    api.projectCasesAll(projectId)
+      .then((cs) => setListCaseMap(Object.fromEntries(cs.map((c) => [c.id, c]))))
+      .catch(() => setListCaseMap({}))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [batchReportId])
+  // Batch timer dialog: cron / env / pool / enabled switch.
+  const [timerOpen, setTimerOpen] = useState(false)
+  const [timerCron, setTimerCron] = useState('')
+  const [timerEnvMode, setTimerEnvMode] = useState<'default' | 'new'>('default')
+  const [timerEnvId, setTimerEnvId] = useState<string>()
+  const [timerPool, setTimerPool] = useState<string>()
+  const [timerEnabled, setTimerEnabled] = useState(true)
   const tabs = useWorkTabs()
   useOpenParam((id) => tabs.open(id)) // deep link ?open=<scenarioId> (reference graph clicks land here)
   const NEW_KEY = '__new_scenario__'
@@ -273,8 +306,8 @@ export default function Scenarios() {
   const allSceneTags = [...new Set(filtered.flatMap((s) => ((s.meta?.tags as string[] | undefined) || [])))]
   const allSceneEnvs = [...new Set(filtered.map((s) => (s.meta?.envName as string | undefined) || '').filter(Boolean))]
   const richCols: ColumnsType<Scenario> = [
-    { key: 'id', title: 'ID', dataIndex: 'id', width: 110, render: (v: string) => <span className="ms-mono" style={{ fontSize: 12 }}>{v.slice(0, 8)}</span>, ...columnSearch<Scenario>((s) => s.id, t) },
-    { key: 'name', title: t('scenario.colSceneName', '场景名称'), dataIndex: 'name', ellipsis: true, render: (v: string) => <span style={{ fontWeight: 500 }}>{v}</span>, ...columnSearch<Scenario>((s) => s.name, t) },
+    { key: 'id', title: 'ID', dataIndex: 'num', width: 110, sorter: (a, b) => (a.num || 0) - (b.num || 0), render: (v: number, s) => <span className="ms-mono" style={{ color: 'var(--brand)', fontSize: 12 }}>{v || s.id.slice(0, 8)}</span>, ...columnSearch<Scenario>((s) => String(s.num || s.id), t) },
+    { key: 'name', title: t('scenario.colSceneName', '场景名称'), dataIndex: 'name', ellipsis: true, sorter: (a, b) => a.name.localeCompare(b.name), render: (v: string) => <span style={{ fontWeight: 500 }}>{v}</span>, ...columnSearch<Scenario>((s) => s.name, t) },
     { key: 'priority', title: t('scenario.priority', '场景等级'), width: 110, render: (_v, s) => { const p = (s.meta?.priority as string) || 'P0'; return <span style={{ color: priorityColor(p) }}>● {p}</span> }, filters: SCENARIO_PRIORITIES.map((p) => ({ text: p, value: p })), onFilter: (v, s) => ((s.meta?.priority as string) || 'P0') === v },
     { key: 'status', title: t('scenario.colStatus', '状态'), dataIndex: 'status', width: 110, render: (s: string) => <Tag color={statusColor(s)}>{scStatusLabel(s, t)}</Tag>, filters: SCENARIO_STATUSES.map((s) => ({ text: scStatusLabel(s, t), value: s })), onFilter: (v, s) => s.status === v },
     { key: 'execResult', title: t('scenario.colExecResult', '执行结果'), width: 110, render: (_v, s) => (s.lastResult ? <Tag color={outcomeColor(s.lastResult)} style={{ margin: 0 }}>{runOutcomeLabel(s.lastResult, t)}</Tag> : muted()), filters: [{ text: t('scenario.runSuccess', '成功'), value: 'SUCCESS' }, { text: t('scenario.runError', '失败'), value: 'ERROR' }], onFilter: (v, s) => runOutcomeLabel(s.lastResult || '', t) === runOutcomeLabel(String(v), t) },
@@ -291,7 +324,7 @@ export default function Scenarios() {
         <Space size={4} onClick={(e) => e.stopPropagation()}>
           <Button type="link" size="small" onClick={() => tabs.open(s.id)}>{t('a.edit', '编辑')}</Button>
           <Button type="link" size="small" onClick={(e) => runFromList(s, e)}>{t('apidef.run', '执行')}</Button>
-          <Button type="link" size="small" onClick={() => message.info(t('scenario.copySoon', '复制场景即将接入'))}>{t('a.copy', '复制')}</Button>
+          <Button type="link" size="small" onClick={async () => { try { await api.copyScenario(s.id); message.success(t('scenario.copied', '已复制')); load() } catch (e2) { message.error(e2 instanceof ApiError ? e2.message : t('scenario.copyFailed', '复制失败')) } }}>{t('a.copy', '复制')}</Button>
           <Dropdown menu={{ items: [{ key: 'del', label: t('a.delete', '删除'), danger: true }], onClick: ({ key }) => { if (key === 'del') removeScenario(s) } }}><Button type="link" size="small" icon={<MoreOutlined />} /></Dropdown>
         </Space>
       ),
@@ -300,6 +333,122 @@ export default function Scenarios() {
   // Column visibility: ID/name/action are fixed; the rest toggle in table settings.
   const columns = richCols.filter((c) => !hiddenCols.includes(String(c.key)))
   const TOGGLE_COLS = richCols.filter((c) => !['id', 'name', 'action'].includes(String(c.key))).map((c) => ({ key: String(c.key), label: String(c.title) }))
+
+  // Bottom batch actions over the selection: export / edit / run / move-to / copy-to / (timers, delete) / clear.
+  const selectedRows = list.filter((s) => selectedIds.includes(s.id))
+  const clearSel = () => setSelectedIds([])
+  const batchExport = () => {
+    const blob = new Blob([JSON.stringify(selectedRows, null, 2)], { type: 'application/json' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = 'scenarios.json'
+    a.click()
+    URL.revokeObjectURL(url)
+  }
+  const openBatchRun = () => {
+    setRunEnvMode('default'); setRunEnvId(undefined); setRunMode('serial'); setStopOnFail(false)
+    setReportMode('independent'); setReportName(''); setRunPool('')
+    setBatchRunOpen(true)
+    api.environments(projectId).then((e) => setRunEnvs(Array.isArray(e) ? e : [])).catch(() => setRunEnvs([]))
+    api.resourcePools().then((p) => setRunPools(Array.isArray(p) ? p : [])).catch(() => setRunPools([]))
+  }
+  const batchRun = async () => {
+    if (runEnvMode === 'new' && !runEnvId) return message.warning(t('scenario.pickNewEnv', '请选择新环境'))
+    if (reportMode === 'union' && !reportName.trim()) return message.warning(t('scenario.reportNameRequired', '请输入报告名称'))
+    setBatchBusy(true)
+    try {
+      const r = await api.batchRunScenarios({
+        projectId,
+        scenarioIds: selectedRows.map((s) => s.id),
+        environmentId: runEnvMode === 'new' ? runEnvId : undefined,
+        mode: runMode === 'parallel' ? 'PARALLEL' : 'SERIAL',
+        stopOnFail,
+        unionReport: reportMode === 'union',
+        reportName: reportMode === 'union' ? reportName.trim() : undefined,
+        poolId: runPool || undefined,
+      })
+      setBatchRunOpen(false)
+      message.success(`${t('scenario.batchRunDone', '批量执行完成')}: ${r.success}/${r.total}`)
+      // Union mode: open the combined report right away.
+      if (r.reportId) setBatchReportId(r.reportId)
+      load()
+    } catch (e) {
+      message.error(e instanceof ApiError ? e.message : t('scenario.runFailed2', '执行失败'))
+    } finally {
+      setBatchBusy(false)
+    }
+  }
+  const batchDelete = () => {
+    Modal.confirm({
+      title: `${t('scenario.batchDeleteConfirm', '确认删除选中的场景?')} (${selectedRows.length})`,
+      okType: 'danger',
+      okText: t('a.delete', '删除'),
+      cancelText: t('a.cancel', '取消'),
+      onOk: async () => {
+        for (const s of selectedRows) { try { await api.deleteScenario(s.id); tabs.close(s.id) } catch { /* partial delete surfaces via reload */ } }
+        clearSel()
+        load()
+      },
+    })
+  }
+  const toggleTimer = async (enabled: boolean) => {
+    try {
+      const r = await api.batchScenarioSchedule({ scenarioIds: selectedRows.map((s) => s.id), projectId, enabled })
+      message.success(`${enabled ? t('scenario.timerEnabled', '已开启定时任务') : t('scenario.timerDisabled', '已关闭定时任务')}: ${r.updated}`)
+    } catch (e) {
+      message.error(e instanceof ApiError ? e.message : t('func.saveFailed', '保存失败'))
+    }
+  }
+  const openTimerEdit = () => {
+    setTimerCron(''); setTimerEnvMode('default'); setTimerEnvId(undefined); setTimerPool(undefined); setTimerEnabled(true)
+    setTimerOpen(true)
+    api.environments(projectId).then((e) => setRunEnvs(Array.isArray(e) ? e : [])).catch(() => setRunEnvs([]))
+    api.resourcePools().then((p) => setRunPools(Array.isArray(p) ? p : [])).catch(() => setRunPools([]))
+  }
+  const saveTimer = async () => {
+    if (!timerCron.trim()) return message.warning(t('scenario.cronRequired', '请输入任务触发时间'))
+    if (timerEnvMode === 'new' && !timerEnvId) return message.warning(t('scenario.pickNewEnv', '请选择新环境'))
+    setBatchBusy(true)
+    try {
+      const r = await api.batchScenarioSchedule({
+        scenarioIds: selectedRows.map((s) => s.id),
+        projectId,
+        cron: timerCron.trim(),
+        envMode: timerEnvMode === 'new' ? 'NEW' : 'DEFAULT',
+        envId: timerEnvMode === 'new' ? timerEnvId : undefined,
+        poolId: timerPool,
+        enabled: timerEnabled,
+      })
+      message.success(`${t('scenario.timerSaved', '定时任务已保存')}: ${r.updated}`)
+      setTimerOpen(false)
+    } catch (e) {
+      message.error(e instanceof ApiError ? e.message : t('func.saveFailed', '保存失败'))
+    } finally {
+      setBatchBusy(false)
+    }
+  }
+  const batchMoveCopy = async () => {
+    setBatchBusy(true)
+    try {
+      for (const s of selectedRows) {
+        if (batchModal === 'move') {
+          await api.updateScenario(s.id, { name: s.name, status: s.status, meta: { ...(s.meta || {}), moduleId: batchModule || undefined } })
+        } else {
+          const copy = await api.copyScenario(s.id)
+          await api.updateScenario(copy.id, { name: copy.name, status: copy.status, meta: { ...(copy.meta || {}), moduleId: batchModule || undefined } })
+        }
+      }
+      message.success(batchModal === 'move' ? t('scenario.moved', '已移动') : t('scenario.copied', '已复制'))
+      setBatchModal(null)
+      clearSel()
+      load()
+    } catch (e) {
+      message.error(e instanceof ApiError ? e.message : t('func.saveFailed', '保存失败'))
+    } finally {
+      setBatchBusy(false)
+    }
+  }
 
   const listContent = (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
@@ -380,12 +529,207 @@ export default function Scenarios() {
           dataSource={filtered}
           columns={columns}
           scroll={{ x: 'max-content' }}
-          rowSelection={{ type: 'checkbox' }}
+          rowSelection={{ type: 'checkbox', selectedRowKeys: selectedIds, onChange: setSelectedIds }}
           onRow={(s) => ({ onClick: () => tabs.open(s.id), style: { cursor: 'pointer' } })}
           pagination={{ pageSize, size: 'small', showSizeChanger: true, pageSizeOptions: ['10', '20', '30', '50'], onShowSizeChange: (_, s) => setPageSize(s), showTotal: (total) => `${t('apidef.totalPrefix', '共')} ${total} ${t('scenario.unit', '条')}` }}
           locale={{ emptyText: <Empty description={t('scenario.empty', '暂无场景')} /> }}
         />
       </div>
+      {selectedIds.length > 0 && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 16px', borderTop: '1px solid var(--border-soft)', background: 'var(--panel)' }}>
+          <span>{t('scenario.selectedPrefix', '已选择')} {selectedIds.length} {t('scenario.unit', '条')}</span>
+          <Button size="small" onClick={batchExport}>{t('func.export', '导出')}</Button>
+          <Tooltip title={selectedIds.length !== 1 ? t('scenario.editOneOnly', '仅支持编辑单个场景') : undefined}>
+            <Button size="small" disabled={selectedIds.length !== 1} onClick={() => tabs.open(String(selectedIds[0]))}>{t('a.edit', '编辑')}</Button>
+          </Tooltip>
+          <Button size="small" onClick={openBatchRun}>{t('apidef.run', '执行')}</Button>
+          <Button size="small" onClick={() => { setBatchModule(''); setBatchModal('move') }}>{t('scenario.moveTo', '移动到')}</Button>
+          <Button size="small" onClick={() => { setBatchModule(''); setBatchModal('copy') }}>{t('scenario.copyTo', '复制到')}</Button>
+          <Dropdown
+            menu={{
+              items: [
+                { key: 'timerOn', label: t('scenario.timerOn', '开启定时任务') },
+                { key: 'timerOff', label: t('scenario.timerOff', '关闭定时任务') },
+                { key: 'timerEdit', label: t('scenario.timerEdit', '编辑定时任务') },
+                { key: 'del', label: t('a.delete', '删除'), danger: true },
+              ],
+              onClick: ({ key }) => {
+                if (key === 'del') batchDelete()
+                else if (key === 'timerOn') toggleTimer(true)
+                else if (key === 'timerOff') toggleTimer(false)
+                else if (key === 'timerEdit') openTimerEdit()
+              },
+            }}
+          >
+            <Button size="small" icon={<MoreOutlined />} />
+          </Dropdown>
+          <Button size="small" type="text" onClick={clearSel}>{t('scenario.clearSel', '清空')}</Button>
+        </div>
+      )}
+      <ScenarioReportModal
+        reportId={batchReportId}
+        nameOf={(id) => listCaseMap[id]?.name || id}
+        caseMap={listCaseMap}
+        onClose={() => setBatchReportId(null)}
+      />
+      <Modal
+        open={timerOpen}
+        title={`${t('scenario.timerEditTitle', '批量编辑定时任务')}(${t('scenario.selectedShort', '已选')} ${selectedIds.length} ${t('scenario.unitItems', '项数据')})`}
+        onCancel={() => setTimerOpen(false)}
+        footer={
+          <div style={{ display: 'flex', alignItems: 'center' }}>
+            <Switch size="small" checked={timerEnabled} onChange={setTimerEnabled} />
+            <span style={{ marginLeft: 8 }}>
+              {t('scenario.timerStatus', '任务状态')}{' '}
+              <Tooltip title={t('scenario.timerStatusTip', '开启后按触发时间自动执行')}><span style={{ color: 'var(--text-3)' }}>?</span></Tooltip>
+            </span>
+            <span style={{ flex: 1 }} />
+            <Button onClick={() => setTimerOpen(false)}>{t('a.cancel', '取消')}</Button>
+            <Button type="primary" style={{ marginLeft: 8 }} loading={batchBusy} onClick={saveTimer}>{t('a.save', '保存')}</Button>
+          </div>
+        }
+        destroyOnHidden
+      >
+        <div style={{ marginBottom: 16 }}>
+          <div style={{ marginBottom: 8 }}>{t('scenario.cronLabel', '任务触发时间')}</div>
+          <AutoComplete
+            style={{ width: '100%' }}
+            placeholder={t('scenario.cronPh', '可直接输入表达式')}
+            value={timerCron}
+            onChange={setTimerCron}
+            options={[
+              { value: '0 0 * * * *', label: `${t('scenario.cronHourly', '每小时')} (0 0 * * * *)` },
+              { value: '0 0 0 * * *', label: `${t('scenario.cronDaily', '每天 0 点')} (0 0 0 * * *)` },
+              { value: '0 0 12 * * *', label: `${t('scenario.cronNoon', '每天 12 点')} (0 0 12 * * *)` },
+              { value: '0 0 0 * * 1', label: `${t('scenario.cronWeekly', '每周一 0 点')} (0 0 0 * * 1)` },
+              { value: '0 */30 * * * *', label: `${t('scenario.cronHalfHour', '每 30 分钟')} (0 */30 * * * *)` },
+            ]}
+          />
+        </div>
+        <div style={{ marginBottom: 16 }}>
+          <div style={{ marginBottom: 8 }}>{t('scenario.envPick', '环境选择')}</div>
+          <Radio.Group value={timerEnvMode} onChange={(e) => setTimerEnvMode(e.target.value)}>
+            <Radio value="default">
+              {t('scenario.envDefault', '默认环境')}{' '}
+              <Tooltip title={t('scenario.envDefaultTip', '使用每个场景自身配置的环境')}><span style={{ color: 'var(--text-3)' }}>?</span></Tooltip>
+            </Radio>
+            <Radio value="new">{t('scenario.envNew', '新环境')}</Radio>
+          </Radio.Group>
+        </div>
+        {timerEnvMode === 'new' && (
+          <div style={{ marginBottom: 16 }}>
+            <div style={{ marginBottom: 8 }}>{t('scenario.envNew', '新环境')} <span style={{ color: 'var(--error)' }}>*</span></div>
+            <Select
+              style={{ width: '100%' }}
+              placeholder={t('a.pleaseSelect', '请选择')}
+              value={timerEnvId}
+              onChange={setTimerEnvId}
+              options={runEnvs.map((e) => ({ value: e.id, label: e.name }))}
+            />
+          </div>
+        )}
+        <div style={{ marginBottom: 8 }}>
+          <div style={{ marginBottom: 8 }}>{t('scenario.poolLabel', '运行资源池')} <span style={{ color: 'var(--error)' }}>*</span></div>
+          <Select
+            style={{ width: '100%' }}
+            placeholder={t('a.pleaseSelect', '请选择')}
+            value={timerPool}
+            onChange={setTimerPool}
+            options={[{ value: '', label: t('scenario.defaultPool', '默认资源池') }, ...runPools.map((p) => ({ value: p.id, label: p.name }))]}
+          />
+        </div>
+      </Modal>
+      <Modal
+        open={batchRunOpen}
+        title={`${t('scenario.batchRun', '批量执行')}（${t('scenario.selectedShort', '已选')} ${selectedIds.length} ${t('scenario.unitScene', '条场景')}）`}
+        onCancel={() => setBatchRunOpen(false)}
+        footer={
+          <>
+            <Button onClick={() => setBatchRunOpen(false)}>{t('a.cancel', '取消')}</Button>
+            <Button type="primary" loading={batchBusy} onClick={batchRun}>{t('apidef.run', '执行')}</Button>
+          </>
+        }
+        destroyOnHidden
+      >
+        <div style={{ marginBottom: 16 }}>
+          <div style={{ marginBottom: 8 }}>{t('scenario.envPick', '环境选择')}</div>
+          <Radio.Group value={runEnvMode} onChange={(e) => setRunEnvMode(e.target.value)}>
+            <Radio value="default">
+              {t('scenario.envDefault', '默认环境')}{' '}
+              <Tooltip title={t('scenario.envDefaultTip', '使用每个场景自身配置的环境')}><span style={{ color: 'var(--text-3)' }}>?</span></Tooltip>
+            </Radio>
+            <Radio value="new">{t('scenario.envNew', '新环境')}</Radio>
+          </Radio.Group>
+        </div>
+        {runEnvMode === 'new' && (
+          <div style={{ marginBottom: 16 }}>
+            <div style={{ marginBottom: 8 }}>{t('scenario.envNew', '新环境')} <span style={{ color: 'var(--error)' }}>*</span></div>
+            <Select
+              style={{ width: '100%' }}
+              placeholder={t('a.pleaseSelect', '请选择')}
+              value={runEnvId}
+              onChange={setRunEnvId}
+              options={runEnvs.map((e) => ({ value: e.id, label: e.name }))}
+            />
+          </div>
+        )}
+        <div style={{ marginBottom: 16 }}>
+          <div style={{ marginBottom: 8 }}>{t('scenario.runModeLabel', '模式')}</div>
+          <Radio.Group value={runMode} onChange={(e) => setRunMode(e.target.value)}>
+            <Radio value="serial">{t('scenario.serial', '串行')}</Radio>
+            <Radio value="parallel">{t('scenario.parallel', '并行')}</Radio>
+          </Radio.Group>
+          {runMode === 'serial' && (
+            <div style={{ marginTop: 10 }}>
+              <Switch size="small" checked={stopOnFail} onChange={setStopOnFail} />
+              <span style={{ marginLeft: 8 }}>{t('scenario.stopOnFail', '失败停止')}</span>
+            </div>
+          )}
+        </div>
+        <div style={{ marginBottom: 16 }}>
+          <div style={{ marginBottom: 8 }}>{t('scenario.reportConfig', '报告配置')}</div>
+          <Segmented
+            value={reportMode}
+            onChange={(v) => setReportMode(v as 'independent' | 'union')}
+            options={[
+              { value: 'independent', label: t('scenario.reportIndependent', '独立报告') },
+              { value: 'union', label: t('scenario.reportUnion', '集合报告') },
+            ]}
+          />
+        </div>
+        {reportMode === 'union' && (
+          <div style={{ marginBottom: 16 }}>
+            <div style={{ marginBottom: 8 }}>{t('scenario.reportName', '报告名称')} <span style={{ color: 'var(--error)' }}>*</span></div>
+            <Input placeholder={t('a.pleaseInput', '请输入')} value={reportName} onChange={(e) => setReportName(e.target.value)} />
+          </div>
+        )}
+        <div style={{ marginBottom: 8 }}>
+          <div style={{ marginBottom: 8 }}>{t('scenario.poolRun', '资源池运行')} <span style={{ color: 'var(--error)' }}>*</span></div>
+          <Select
+            style={{ width: '100%' }}
+            value={runPool}
+            onChange={setRunPool}
+            options={[{ value: '', label: t('scenario.defaultPool', '默认资源池') }, ...runPools.map((p) => ({ value: p.id, label: p.name }))]}
+          />
+        </div>
+      </Modal>
+      <Modal
+        open={!!batchModal}
+        title={batchModal === 'move' ? t('scenario.moveTo', '移动到') : t('scenario.copyTo', '复制到')}
+        onCancel={() => setBatchModal(null)}
+        onOk={batchMoveCopy}
+        confirmLoading={batchBusy}
+        okText={t('a.confirm', '确定')}
+        cancelText={t('a.cancel', '取消')}
+        destroyOnHidden
+      >
+        <Select
+          style={{ width: '100%' }}
+          value={batchModule}
+          onChange={setBatchModule}
+          options={[{ value: '', label: t('scenario.unplanned', '未规划场景') }, ...modules.map((m) => ({ value: m.id, label: m.name }))]}
+        />
+      </Modal>
     </div>
   )
 
@@ -516,7 +860,7 @@ function stepToNode(s: ScenarioStep, t: TFn, nameOf: NameOf): Node {
   return { kind: s.kind, content: '—' }
 }
 
-function StepRow({ node, idx, depth, t, result, running, seq = 0, enabled = true, onToggle, onRun, actions, hovered, respPreview, expandable, expanded, onChildSelect }: { node: Node; idx: number; depth: number; t: TFn; result?: ReportResultItem; running?: boolean; seq?: number; enabled?: boolean; onToggle?: () => void; onRun?: () => void; actions?: React.ReactNode; hovered?: boolean; respPreview?: React.ReactNode; expandable?: boolean; expanded?: boolean; onChildSelect?: (raw: ScenarioStep, idx: number) => void }) {
+function StepRow({ node, idx, depth, t, result, running, seq = 0, enabled = true, onToggle, onRun, actions, hovered, respPreview, expandable, expanded, onChildSelect, onChildDblClick }: { node: Node; idx: number; depth: number; t: TFn; result?: ReportResultItem; running?: boolean; seq?: number; enabled?: boolean; onToggle?: () => void; onRun?: () => void; actions?: React.ReactNode; hovered?: boolean; respPreview?: React.ReactNode; expandable?: boolean; expanded?: boolean; onChildSelect?: (raw: ScenarioStep, path: number[]) => void; onChildDblClick?: (raw: ScenarioStep, path: number[]) => void }) {
   const meta = makeStepMeta(t)[node.kind] || { label: node.kind, color: 'default' }
   const ok = result?.outcome === 'SUCCESS'
   const muted: React.CSSProperties = { color: 'var(--text-3)', fontSize: 12, whiteSpace: 'nowrap' }
@@ -589,10 +933,23 @@ function StepRow({ node, idx, depth, t, result, running, seq = 0, enabled = true
       {expanded && node.children?.map((c, i) => (
         <div
           key={i}
-          onClick={(e) => { if (c.raw && onChildSelect) { e.stopPropagation(); onChildSelect(c.raw, i) } }}
+          onClick={(e) => { if (c.raw && onChildSelect) { e.stopPropagation(); onChildSelect(c.raw, [i]) } }}
+          onDoubleClick={(e) => { if (c.raw && onChildDblClick) { e.stopPropagation(); onChildDblClick(c.raw, [i]) } }}
           style={{ cursor: c.raw && onChildSelect ? 'pointer' : 'default' }}
         >
-          <StepRow node={c} idx={i + 1} depth={depth + 1} t={t} result={c.result} running={running} seq={seq + (i + 1) * 0.12} onChildSelect={onChildSelect} expandable={(c.children?.length ?? 0) > 0} expanded />
+          <StepRow
+            node={c}
+            idx={i + 1}
+            depth={depth + 1}
+            t={t}
+            result={c.result}
+            running={running}
+            seq={seq + (i + 1) * 0.12}
+            onChildSelect={onChildSelect && ((raw, p) => onChildSelect(raw, [i, ...p]))}
+            onChildDblClick={onChildDblClick && ((raw, p) => onChildDblClick(raw, [i, ...p]))}
+            expandable={(c.children?.length ?? 0) > 0}
+            expanded
+          />
         </div>
       ))}
     </>
@@ -685,6 +1042,12 @@ function ScenarioDetail({ scenario, active }: { scenario: Scenario; active?: boo
   const [add, setAdd] = useState<string>('') // which add-step form is open
   const [importOpen, setImportOpen] = useState(false)
   const [customReqOpen, setCustomReqOpen] = useState(false)
+  // Only non-reference steps are editable: inline custom requests (REQUEST kind).
+  // Referenced cases/sub-scenarios stay read-only in the detail drawer.
+  const [editReqStep, setEditReqStep] = useState<ScenarioStep | null>(null)
+  // Controller-nested inline request: edited via the same drawer, saved by patching the parent
+  // controller's payload (children have no step id of their own).
+  const [editChild, setEditChild] = useState<{ parent: ScenarioStep; path: number[]; step: ScenarioStep } | null>(null)
   const [hoverStep, setHoverStep] = useState<string | null>(null) // hovered step row (shows inline insert/delete)
   const [expandedSteps, setExpandedSteps] = useState<Set<string>>(new Set())
   const [subSteps, setSubSteps] = useState<Record<string, ScenarioStep[]>>({}) // sub-scenario id to its steps (loaded on first expand)
@@ -697,7 +1060,9 @@ function ScenarioDetail({ scenario, active }: { scenario: Scenario; active?: boo
   const [reportModalId, setReportModalId] = useState<string | null>(null)
   const [nameMap, setNameMap] = useState<Record<string, string>>({})
   const [caseMap, setCaseMap] = useState<Record<string, ApiCase>>({})
-  const [selStep, setSelStep] = useState<{ step: ScenarioStep; idx: number } | null>(null)
+  // `child`: selected via a nested row (controller/sub-scenario child) — no directly patchable
+  // step id, so the read-only drawer must not offer the edit entry (dblclick covers controllers).
+  const [selStep, setSelStep] = useState<{ step: ScenarioStep; idx: number; child?: boolean } | null>(null)
   const [dragIdx, setDragIdx] = useState<number | null>(null)
   // Run config: environment + step failure rule (backend run accepts environment_id/failure_strategy).
   const [envs, setEnvs] = useState<Environment[]>([])
@@ -987,6 +1352,28 @@ function ScenarioDetail({ scenario, active }: { scenario: Scenario; active?: boo
     }
   }
 
+  // Double-click on a controller-nested inline request opens the editor. Sub-scenario children
+  // belong to the referenced scenario and stay read-only, hence the parent.control guard.
+  const openChildEdit = (parent: ScenarioStep, path: number[], raw: ScenarioStep) => {
+    if (!parent.control || raw.kind.toUpperCase() !== 'REQUEST') return
+    let node: any = parent.control
+    for (let d = 0; d < path.length - 1; d++) node = node?.children?.[path[d]]
+    const child = node?.children?.[path[path.length - 1]]
+    if (!child || String(child.kind).toUpperCase() !== 'REQUEST') return
+    setSelStep(null)
+    setEditChild({
+      parent,
+      path,
+      step: {
+        id: `${parent.id}:${path.join('.')}`,
+        order: path[path.length - 1] + 1,
+        kind: 'REQUEST',
+        refMode: 'REFERENCE',
+        request: { method: child.method || 'GET', url: child.url || '', body: child.body ?? null, assertions: child.assertions, headers: child.headers, queryParams: child.queryParams, restParams: child.restParams, auth: child.auth, processors: child.processors },
+      },
+    })
+  }
+
   // Expandable top-level steps (sub-scenario / loop / if / once); drives expand-all / collapse-all.
   const expandableStepIds = ordered
     .filter((s) => !!s.scenarioId || ['SCENARIO', 'LOOP', 'IF', 'ONCE'].includes(s.kind.toUpperCase()))
@@ -1064,6 +1451,7 @@ function ScenarioDetail({ scenario, active }: { scenario: Scenario; active?: boo
               onMouseEnter={() => setHoverStep(s.id)}
               onMouseLeave={() => setHoverStep((h) => (h === s.id ? null : h))}
               onClick={() => (expandable ? toggleExpand(s) : setSelStep({ step: s, idx: i + 1 }))}
+              onDoubleClick={() => { if (s.kind.toUpperCase() === 'REQUEST') { setSelStep(null); setEditReqStep(s) } }}
               style={{ cursor: 'pointer', opacity: dragIdx === i ? 0.5 : 1 }}
             >
               <StepRow
@@ -1082,7 +1470,8 @@ function ScenarioDetail({ scenario, active }: { scenario: Scenario; active?: boo
                 respPreview={hasResp ? <StepRespPreview r={res!} t={t} /> : undefined}
                 expandable={expandable}
                 expanded={isExpanded}
-                onChildSelect={(raw, ci) => setSelStep({ step: raw, idx: ci + 1 })}
+                onChildSelect={(raw, path) => setSelStep({ step: raw, idx: (path[path.length - 1] ?? 0) + 1, child: true })}
+                onChildDblClick={(raw, path) => openChildEdit(s, path, raw)}
               />
             </div>
           )
@@ -1111,6 +1500,8 @@ function ScenarioDetail({ scenario, active }: { scenario: Scenario; active?: boo
       </div>
       <AddStepModal type={add} scenarioId={scenario.id} projectId={scenario.projectId} nextOrder={nextOrder} onClose={() => setAdd('')} onAdded={onAdded} />
       <CustomRequestDrawer open={customReqOpen} scenarioId={scenario.id} nextOrder={nextOrder} env={envs.find((e) => e.id === envId)} onClose={() => setCustomReqOpen(false)} onAdded={onAdded} />
+      <CustomRequestDrawer open={!!editReqStep} editStep={editReqStep} scenarioId={scenario.id} nextOrder={nextOrder} env={envs.find((e) => e.id === envId)} onClose={() => setEditReqStep(null)} onAdded={onAdded} />
+      <CustomRequestDrawer open={!!editChild} editStep={editChild?.step} editChild={editChild} scenarioId={scenario.id} nextOrder={nextOrder} env={envs.find((e) => e.id === envId)} onClose={() => setEditChild(null)} onAdded={onAdded} />
       <ImportRequestDrawer open={importOpen} scenarioId={scenario.id} projectId={scenario.projectId} nextOrder={nextOrder} onClose={() => setImportOpen(false)} onImported={onAdded} />
     </div>
   )
@@ -1192,6 +1583,7 @@ function ScenarioDetail({ scenario, active }: { scenario: Scenario; active?: boo
         result={selStep ? stepResults[stepKey(selStep.step) ?? ''] : undefined}
         onClose={() => setSelStep(null)}
         onDeleted={() => { setSelStep(null); loadSteps() }}
+        onEdit={selStep?.child ? undefined : (st) => { setSelStep(null); setEditReqStep(st) }}
       />
       <ScenarioReportModal reportId={reportModalId} nameOf={nameOf} caseMap={caseMap} onClose={() => setReportModalId(null)} />
     </div>
@@ -1230,6 +1622,7 @@ function StepDetailDrawer({
   result,
   onClose,
   onDeleted,
+  onEdit,
 }: {
   sel: { step: ScenarioStep; idx: number } | null
   scenarioId: string
@@ -1239,6 +1632,8 @@ function StepDetailDrawer({
   result?: ReportResultItem
   onClose: () => void
   onDeleted: () => void
+  /** Present for editable (non-reference) steps; referenced cases/sub-scenarios are read-only. */
+  onEdit?: (step: ScenarioStep) => void
 }) {
   const { t } = useI18n()
   const [full, setFull] = useState(false)
@@ -1368,6 +1763,9 @@ function StepDetailDrawer({
       closeIcon={false}
       extra={
         <Space>
+          {onEdit && step?.kind.toUpperCase() === 'REQUEST' && (
+            <Button type="text" size="small" icon={<EditOutlined />} onClick={() => onEdit(step)}>{t('a.edit', '编辑')}</Button>
+          )}
           <Button type="text" size="small" icon={<SwapOutlined />} disabled title={t('scenario.replaceSoon', '替换(即将接入)')}>{t('scenario.replace', '替换')}</Button>
           <Button type="text" size="small" danger icon={<DeleteOutlined />} loading={deleting} onClick={del}>{t('a.delete', '删除')}</Button>
           <Button type="text" size="small" icon={<FullscreenOutlined />} onClick={() => setFull((v) => !v)}>{t('scenario.fullscreen', '全屏')}</Button>
@@ -1544,6 +1942,7 @@ const CHANGE_ACTIONS: Record<string, { tkey: string; fallback: string; color: st
   CREATE: { tkey: 'scenario.actionCreate', fallback: '创建', color: 'green' },
   UPDATE: { tkey: 'scenario.actionUpdate', fallback: '更新', color: 'blue' },
   ADD_STEP: { tkey: 'scenario.actionAddStep', fallback: '新增步骤', color: 'geekblue' },
+  UPDATE_STEP: { tkey: 'scenario.actionUpdateStep', fallback: '更新步骤', color: 'cyan' },
   DELETE_STEP: { tkey: 'scenario.actionDeleteStep', fallback: '删除步骤', color: 'red' },
   REORDER: { tkey: 'scenario.actionReorder', fallback: '调整顺序', color: 'purple' },
 }
@@ -1634,9 +2033,14 @@ function ScenarioReportModal({ reportId, nameOf, caseMap, onClose }: { reportId:
   const [loading, setLoading] = useState(false)
   const [search, setSearch] = useState('')
   const [openSet, setOpenSet] = useState<Set<number>>(new Set())
+  // Flat list vs one-tab-per-step view; outcome filter is a [scope, outcome] cascader pick.
+  const [view, setView] = useState<'flat' | 'tab'>('flat')
+  const [filter, setFilter] = useState<string[]>()
   useEffect(() => {
     if (!reportId) { setData(null); return }
     setOpenSet(new Set())
+    setSearch('')
+    setFilter(undefined)
     setLoading(true)
     api.scenarioReport(reportId).then(setData).catch(() => setData(null)).finally(() => setLoading(false))
   }, [reportId])
@@ -1658,10 +2062,29 @@ function ScenarioReportModal({ reportId, nameOf, caseMap, onClose }: { reportId:
   let asTotal = 0, asPass = 0
   for (const r of all) { const a = (r.assertions as AssertionResult[] | undefined) || []; asTotal += a.length; asPass += a.filter((x) => x.passed).length }
   const asRate = asTotal ? (asPass / asTotal) * 100 : passRate
-  const rows = all.filter((r) => !search || r.caseId.toLowerCase().includes(search.toLowerCase()))
-  const toggle = (i: number) => setOpenSet((prev) => { const n = new Set(prev); if (n.has(i)) n.delete(i); else n.add(i); return n })
   // caseId is usually a readable request line (GET http://...) or a case UUID; resolve UUIDs via nameOf.
   const label = (id: string) => (/^[0-9a-f]{8}-/.test(id) ? nameOf(id) : id)
+  // Outcome filter predicates: step and request scopes share one source (flat scenario, one request per step).
+  const outcomeMatch: Record<string, (r: ReportResultItem) => boolean> = {
+    pass: (r) => r.outcome === 'SUCCESS',
+    falsePos: () => false,
+    fail: (r) => r.outcome !== 'SUCCESS' && r.outcome !== 'ERROR' && r.outcome !== 'SKIPPED',
+    skip: (r) => r.outcome === 'SKIPPED',
+    scriptError: (r) => r.outcome === 'ERROR',
+  }
+  const outcomeKey = filter?.[1] as string | undefined
+  const rows = all.filter((r) =>
+    (!search || label(r.caseId).toLowerCase().includes(search.toLowerCase())) &&
+    (!outcomeKey || outcomeMatch[outcomeKey]?.(r) !== false),
+  )
+  const toggle = (i: number) => setOpenSet((prev) => { const n = new Set(prev); if (n.has(i)) n.delete(i); else n.add(i); return n })
+  const outcomeOptions = [
+    { value: 'pass', label: t('scenario.pass', '通过') },
+    { value: 'falsePos', label: t('scenario.falsePos', '误报') },
+    { value: 'fail', label: t('scenario.fail', '失败') },
+    { value: 'skip', label: t('scenario.skip', '未执行') },
+    { value: 'scriptError', label: t('scenario.scriptError', '脚本错误') },
+  ]
   const stat = (lbl: ReactNode, val: ReactNode, color?: string) => (
     <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', fontSize: 14 }}><span style={{ color: 'var(--text-2)' }}>{lbl}</span><b style={{ color }}>{val}</b></div>
   )
@@ -1670,7 +2093,7 @@ function ScenarioReportModal({ reportId, nameOf, caseMap, onClose }: { reportId:
       open={!!reportId}
       onClose={onClose}
       width="60%"
-      title={t('scenario.report', '场景报告')}
+      title={data?.name ? `${t('scenario.report', '场景报告')} · ${data.name}` : t('scenario.report', '场景报告')}
       styles={{ body: { background: 'var(--panel-2)' } }}
     >
       {loading ? (
@@ -1692,16 +2115,68 @@ function ScenarioReportModal({ reportId, nameOf, caseMap, onClose }: { reportId:
             <DistCard title={t('scenario.stepAnalysis', '步骤分析')} d={dist} centerLabel={t('scenario.totalCount', '总数(个)')} t={t} />
             <DistCard title={t('scenario.reqAnalysis', '请求分析')} d={dist} centerLabel={t('scenario.totalCount', '总数(个)')} t={t} />
           </div>
-          {/* Report detail */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+          {/* Report detail: view toggle + name search + outcome cascader + expand/collapse (flat view only). */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10, flexWrap: 'wrap' }}>
             <Typography.Text strong>{t('scenario.reportDetail', '报告明细')}</Typography.Text>
+            <Segmented
+              size="small"
+              value={view}
+              onChange={(v) => setView(v as 'flat' | 'tab')}
+              options={[
+                { value: 'flat', label: t('scenario.flatView', '平铺展示') },
+                { value: 'tab', label: t('scenario.tabView', 'Tab展示') },
+              ]}
+            />
             <div style={{ flex: 1 }} />
-            <Input size="small" allowClear style={{ width: 220 }} placeholder={t('scenario.searchByName', '通过名称搜索')} value={search} onChange={(e) => setSearch(e.target.value)} />
-            <Button size="small" onClick={() => setOpenSet(new Set(rows.map((_, i) => i)))}>{t('scenario.expandAll', '展开全部')}</Button>
-            <Button size="small" onClick={() => setOpenSet(new Set())}>{t('scenario.collapseAll', '收起全部')}</Button>
+            <Input
+              size="small"
+              allowClear
+              style={{ width: 200 }}
+              placeholder={t('scenario.searchByName', '通过名称搜索')}
+              suffix={<span style={{ color: 'var(--text-3)' }}>⌕</span>}
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+            />
+            <Cascader
+              size="small"
+              style={{ width: 200 }}
+              placeholder={t('scenario.filterPh', '请选择过滤条件')}
+              value={filter}
+              onChange={(v) => setFilter(v as string[] | undefined)}
+              allowClear
+              expandTrigger="hover"
+              options={[
+                { value: 'step', label: t('scenario.filterStep', '步骤'), children: outcomeOptions },
+                { value: 'request', label: t('scenario.filterReq', '请求'), children: outcomeOptions },
+              ]}
+            />
+            {view === 'flat' && (
+              <>
+                <Button size="small" onClick={() => setOpenSet(new Set(rows.map((_, i) => i)))}>{t('scenario.expandAll', '展开全部')}</Button>
+                <Button size="small" onClick={() => setOpenSet(new Set())}>{t('scenario.collapseAll', '收起全部')}</Button>
+              </>
+            )}
           </div>
           <div style={{ marginTop: 10 }}>
-            {rows.length === 0 ? <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('scenario.noStepResult', '无步骤结果')} /> : rows.map((r, i) => <ReportRow key={i} idx={i + 1} r={r} label={label} t={t} open={openSet.has(i)} onToggle={() => toggle(i)} caseOf={(id) => caseMap?.[id]} />)}
+            {rows.length === 0 ? (
+              <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('scenario.noStepResult', '无步骤结果')} />
+            ) : view === 'flat' ? (
+              rows.map((r, i) => <ReportRow key={i} idx={i + 1} r={r} label={label} t={t} open={openSet.has(i)} onToggle={() => toggle(i)} caseOf={(id) => caseMap?.[id]} />)
+            ) : (
+              <Tabs
+                size="small"
+                items={rows.map((r, i) => ({
+                  key: String(i),
+                  label: (
+                    <span>
+                      <span style={{ color: r.outcome === 'SUCCESS' ? 'var(--success)' : 'var(--error)', marginRight: 6 }}>●</span>
+                      {i + 1} {label(r.caseId)}
+                    </span>
+                  ),
+                  children: <ReportRow idx={i + 1} r={r} label={label} t={t} open onToggle={() => undefined} caseOf={(id) => caseMap?.[id]} />,
+                }))}
+              />
+            )}
           </div>
         </>
       )}
@@ -1810,6 +2285,8 @@ function CustomRequestDrawer({
   onClose,
   onAdded,
   onLocalAdd,
+  editStep,
+  editChild,
 }: {
   open: boolean
   scenarioId: string
@@ -1819,6 +2296,10 @@ function CustomRequestDrawer({
   onAdded: () => void | Promise<void>
   /** New-scenario (no id) local mode: don't persist; hand the step body back. */
   onLocalAdd?: (body: StepBody) => void
+  /** Edit mode: prefill from this REQUEST step and PATCH it instead of adding. */
+  editStep?: ScenarioStep | null
+  /** Controller-child edit: PATCH the parent controller's payload at this children path. */
+  editChild?: { parent: ScenarioStep; path: number[] } | null
 }) {
   const { t } = useI18n()
   const blankKv = (): KVRow => ({ key: '', value: '' })
@@ -1841,11 +2322,17 @@ function CustomRequestDrawer({
   const [lastReq, setLastReq] = useState<SentRequest | null>(null)
 
   const reset = () => {
-    setMethod('GET'); setUrl(''); setHeaders([blankKv()]); setQuery([blankKv()]); setRest([blankKv()])
-    setBody(''); setAuthType('none'); setAuthToken(''); setAssertions([{ type: 'StatusIs', args: 200 }])
-    setPre([]); setPost([]); setResp(null); setErr(''); setLastReq(null)
+    const r = editStep?.request
+    const kv = (rows?: { key: string; value: string }[]): KVRow[] => (rows?.length ? rows.map((x) => ({ key: x.key, value: x.value })) : [blankKv()])
+    setMethod(r?.method || 'GET'); setUrl(r?.url || ''); setHeaders(kv(r?.headers)); setQuery(kv(r?.queryParams)); setRest(kv(r?.restParams))
+    setBody(r?.body || '')
+    setAuthType(r?.auth?.type === 'bearer' || r?.auth?.type === 'basic' ? r.auth.type : 'none'); setAuthToken(r?.auth?.token || '')
+    setAssertions(r ? (Array.isArray(r.assertions) ? r.assertions : []) : [{ type: 'StatusIs', args: 200 }])
+    // Stored processors carry no pre/post split; surface existing ones in the post tab.
+    setPre([]); setPost(r?.processors?.length ? r.processors : [])
+    setResp(null); setErr(''); setLastReq(null)
   }
-  useEffect(() => { if (open) reset() }, [open]) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (open) reset() }, [open, editStep?.id]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const clean = (rows: KVRow[]) => rows.filter((r) => r.key.trim())
   const authObj = () => (authType === 'none' ? undefined : { type: authType, token: authToken })
@@ -1884,6 +2371,28 @@ function CustomRequestDrawer({
     if (!url.trim()) return message.warning(t('editor.urlRequired', '请输入 URL'))
     setSaving(true)
     try {
+      if (editChild) {
+        // Rewrite the child in a payload clone, then PATCH the whole controller step.
+        const payload = JSON.parse(JSON.stringify(editChild.parent.control || {}))
+        let node: any = payload
+        for (let d = 0; d < editChild.path.length - 1; d++) node = node?.children?.[editChild.path[d]]
+        const li = editChild.path[editChild.path.length - 1]
+        if (!node?.children?.[li]) throw new ApiError(404, t('scenario.updateFailed', '更新失败'))
+        const r = buildRequest()
+        node.children[li] = { ...node.children[li], kind: 'REQUEST', method: r.method, url: r.url, body: r.body, assertions: r.assertions, headers: r.headers, queryParams: r.queryParams, restParams: r.restParams, auth: r.auth, processors: r.processors }
+        await api.updateScenarioStep(scenarioId, editChild.parent.id, { kind: editChild.parent.kind, control: payload })
+        message.success(t('scenario.stepUpdated', '步骤已更新'))
+        await onAdded()
+        onClose()
+        return
+      }
+      if (editStep) {
+        await api.updateScenarioStep(scenarioId, editStep.id, { kind: 'REQUEST', request: buildRequest() })
+        message.success(t('scenario.stepUpdated', '步骤已更新'))
+        await onAdded()
+        onClose()
+        return
+      }
       const stepBody: StepBody = { kind: 'REQUEST', order: nextOrder, request: buildRequest() }
       if (onLocalAdd) onLocalAdd(stepBody)
       else await api.addStep(scenarioId, stepBody)
@@ -1892,7 +2401,7 @@ function CustomRequestDrawer({
       if (keepOpen) reset()
       else onClose()
     } catch (e) {
-      message.error(e instanceof ApiError ? e.message : t('scenario.addFailed', '添加失败'))
+      message.error(e instanceof ApiError ? e.message : editStep ? t('scenario.updateFailed', '更新失败') : t('scenario.addFailed', '添加失败'))
     } finally {
       setSaving(false)
     }
@@ -1925,7 +2434,13 @@ function CustomRequestDrawer({
       onClose={onClose}
       width={full ? '92%' : 720}
       closeIcon={false}
-      title={<span style={{ fontWeight: 600 }}>{t('scenario.customRequest', '自定义请求')}</span>}
+      title={
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          {editStep && <span style={{ color: 'var(--text-3)', fontSize: 12 }}>{editStep.order}</span>}
+          <Tag color="blue" style={{ margin: 0 }}>{t('scenario.customRequest', '自定义请求')}</Tag>
+          <span style={{ fontWeight: 600 }}>{editStep ? editStep.request?.url : t('scenario.addStep', '添加步骤')}</span>
+        </div>
+      }
       extra={
         <Space>
           <span style={{ fontSize: 12, color: 'var(--text-3)' }}>{t('apidef.currentEnv', '当前环境')}: {env?.name || t('apidef.noEnv', '不引用')}</span>
@@ -1936,8 +2451,8 @@ function CustomRequestDrawer({
       footer={
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
           <Button onClick={onClose}>{t('a.cancel', '取消')}</Button>
-          <Button loading={saving} onClick={() => save(true)}>{t('scenario.saveAndContinue', '保存并继续添加')}</Button>
-          <Button type="primary" loading={saving} onClick={() => save(false)}>{t('a.confirm', '确认')}</Button>
+          {!editStep && <Button loading={saving} onClick={() => save(true)}>{t('scenario.saveAndContinue', '保存并继续添加')}</Button>}
+          <Button type="primary" loading={saving} onClick={() => save(false)}>{editStep ? t('a.save', '保存') : t('a.confirm', '确认')}</Button>
         </div>
       }
     >
