@@ -332,3 +332,57 @@ body::before {
 [data-theme='dark'] .ms-topbar.ms-scrolled {
   box-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
 }
+
+/* Drawers: flat — no elevation shadow at all; a hairline border separates the
+   panel, and the (light) mask does the layering. */
+.ant-drawer .ant-drawer-content-wrapper {
+  box-shadow: none !important;
+}
+.ant-drawer-right .ant-drawer-content { border-left: 1px solid var(--border-soft); }
+.ant-drawer-left .ant-drawer-content { border-right: 1px solid var(--border-soft); }
+.ant-drawer-top .ant-drawer-content { border-bottom: 1px solid var(--border-soft); }
+.ant-drawer-bottom .ant-drawer-content { border-top: 1px solid var(--border-soft); }
+.ant-drawer .ant-drawer-mask {
+  transition: opacity 0.35s ease;
+}
+
+/* Drag-resize handle on right-placed drawers (see ResizableDrawer). */
+.ant-drawer .ant-drawer-content {
+  position: relative;
+}
+.ms-drawer-resizer {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 10px;
+  cursor: col-resize;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  touch-action: none;
+}
+.ms-drawer-resizer::after {
+  content: '';
+  width: 4px;
+  height: 36px;
+  border-radius: 2px;
+  background: var(--border);
+  transition: background 0.15s, height 0.15s;
+}
+.ms-drawer-resizer:hover::after,
+.ms-drawer-resizer:active::after {
+  background: var(--brand);
+  height: 48px;
+}
+
+/* Home dashboard grid: cards in the same row stretch to equal height. */
+.ms-home-grid > .ant-col > .ant-card {
+  height: calc(100% - 16px);
+  display: flex;
+  flex-direction: column;
+}
+.ms-home-grid > .ant-col > .ant-card > .ant-card-body {
+  flex: 1;
+}

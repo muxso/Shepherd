@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
-import { Button, Empty, Form, Input, InputNumber, Modal, Select, Table } from 'antd'
+import { Button, Empty, Form, Input, InputNumber, Select, Table } from 'antd'
+import EditDrawer from './EditDrawer'
 import { message } from '../feedback'
 import type { ColumnsType } from 'antd/es/table'
 import { PlusOutlined, ReloadOutlined } from '@ant-design/icons'
@@ -132,13 +133,12 @@ function CreateModal({
     fields.filter((f) => f.initial !== undefined).map((f) => [f.name, f.initial]),
   )
   return (
-    <Modal
+    <EditDrawer
       title={title}
       open={open}
       onCancel={onClose}
       onOk={() => form.submit()}
       confirmLoading={saving}
-      destroyOnHidden
     >
       <Form
         form={form}
@@ -175,6 +175,6 @@ function CreateModal({
           </Form.Item>
         ))}
       </Form>
-    </Modal>
+    </EditDrawer>
   )
 }

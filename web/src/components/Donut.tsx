@@ -36,7 +36,7 @@ export default function Donut({
   return (
     <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
       <g transform={`rotate(-90 ${cx} ${cx})`}>
-        <circle cx={cx} cy={cx} r={r} fill="none" stroke="#f0f2f5" strokeWidth={thickness} />
+        <circle cx={cx} cy={cx} r={r} fill="none" stroke="var(--border-soft)" strokeWidth={thickness} />
         {total > 0 &&
           visible.map((s) => {
             const len = (circ * s.value) / total

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Button, Drawer, Empty, Form, Input, Select, Space, Tag, Tooltip } from 'antd'
+import { Button, Empty, Form, Input, Select, Space, Tag, Tooltip } from 'antd'
+import ResizableDrawer from '../components/ResizableDrawer'
 import { message, modal } from '../feedback'
 import { LinkOutlined } from '@ant-design/icons'
 import { api, ApiError, userIdStore, type Bug, type BugRelation } from '../api'
@@ -308,7 +309,7 @@ function RelationsDrawer({ bug, projectId, onClose }: { bug: Bug | null; project
   }
 
   return (
-    <Drawer open={!!bug} onClose={onClose} width={520} title={`${t('bug.relTitle', '关联资产')} · ${bug?.title || bug?.id || ''}`}>
+    <ResizableDrawer open={!!bug} onClose={onClose} width={520} title={`${t('bug.relTitle', '关联资产')} · ${bug?.title || bug?.id || ''}`}>
       <Space.Compact style={{ width: '100%', marginBottom: 16 }}>
         <Select
           value={kind}
@@ -349,6 +350,6 @@ function RelationsDrawer({ bug, projectId, onClose }: { bug: Bug | null; project
           </div>
         ))
       )}
-    </Drawer>
+    </ResizableDrawer>
   )
 }

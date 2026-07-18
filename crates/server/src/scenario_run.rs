@@ -457,6 +457,10 @@ struct ReportResultItem {
     assertions: serde_json::Value,
     #[schema(value_type = Vec<Object>)]
     extractions: serde_json::Value,
+    /// Per-phase HTTP timings (dnsMs / ttfbMs / downloadMs) when captured.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(value_type = Object)]
+    timings: Option<serde_json::Value>,
     request: Option<ReqInfo>,
 }
 
@@ -510,6 +514,7 @@ async fn scenario_report(
                         headers: r.headers,
                         assertions: r.assertions,
                         extractions: r.extractions,
+                        timings: r.timings.clone(),
                         request: r.req_method.clone().map(|method| ReqInfo {
                             method,
                             url: r.req_url.clone().unwrap_or_default(),

@@ -1,11 +1,12 @@
 import { useEffect, useState } from 'react'
-import { Button, Dropdown, Form, Input, Modal, Space, Switch, Table, Tag, message } from 'antd'
+import { Button, Dropdown, Form, Input, Space, Switch, Table, Tag, message } from 'antd'
 import { MoreOutlined } from '@ant-design/icons'
 import { api, ApiError, type User } from '../api'
 import { modal } from '../feedback'
 import { useApp } from '../context'
 import { useI18n } from '../i18n'
 import { useListView, type ListColumn } from '../components/ListView'
+import EditDrawer from '../components/EditDrawer'
 
 // System / Users. Email invite and user import have no backend yet (placeholder toast);
 // org/user-group columns show system defaults.
@@ -191,7 +192,7 @@ function UserModal({ open, editing, onClose, onDone, t }: { open: boolean; editi
     }
   }
   return (
-    <Modal open={open} onCancel={onClose} onOk={submit} confirmLoading={busy} title={editing ? t('user.edit', '编辑用户') : t('user.create', '创建用户')} destroyOnHidden>
+    <EditDrawer open={open} onCancel={onClose} onOk={submit} confirmLoading={busy} title={editing ? t('user.edit', '编辑用户') : t('user.create', '创建用户')}>
       <Form form={form} layout="vertical" requiredMark={false}>
         <Form.Item name="name" label={t('user.name', '姓名')} rules={[{ required: true, message: t('user.nameRequired', '请输入姓名') }]}>
           <Input placeholder={t('user.namePh', '请输入姓名')} />
@@ -200,6 +201,6 @@ function UserModal({ open, editing, onClose, onDone, t }: { open: boolean; editi
           <Input placeholder={t('user.emailPh', '请输入邮箱')} />
         </Form.Item>
       </Form>
-    </Modal>
+    </EditDrawer>
   )
 }

@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
-import { Badge, Button, Card, Col, DatePicker, Descriptions, Drawer, Dropdown, Empty, Form, Input, InputNumber, Modal, Popover, Progress, Row, Segmented, Select, Space, Spin, Statistic, Table, Tabs, Tag, Timeline, Tooltip, Typography } from 'antd'
+import { Badge, Button, Card, Col, DatePicker, Descriptions, Dropdown, Empty, Form, Input, InputNumber, Modal, Popover, Progress, Row, Segmented, Select, Space, Spin, Statistic, Table, Tabs, Tag, Timeline, Tooltip, Typography } from 'antd'
+import ResizableDrawer from '../components/ResizableDrawer'
+import EditDrawer from '../components/EditDrawer'
 import dayjs, { type Dayjs } from 'dayjs'
 import { message, modal } from '../feedback'
 import { useNavigate } from 'react-router-dom'
@@ -1053,7 +1055,7 @@ function RequirementDetail({ reqId, projectId, modules, onChanged, onDeleted, on
           },
         ]}
       />
-      <Modal title={t('req.addVersionTitle', '新增需求版本')} open={verOpen} onCancel={() => setVerOpen(false)} footer={null} destroyOnHidden>
+      <EditDrawer title={t('req.addVersionTitle', '新增需求版本')} open={verOpen} onCancel={() => setVerOpen(false)} footer={null}>
         <Form
           layout="vertical"
           onFinish={async (v: { description: string; criteria: string }) => {
@@ -1072,8 +1074,8 @@ function RequirementDetail({ reqId, projectId, modules, onChanged, onDeleted, on
           <Form.Item name="criteria" label={t('req.criteria', '验收标准(每行一条)')}><Input.TextArea rows={4} /></Form.Item>
           <Button type="primary" htmlType="submit" block>{t('req.createVersion', '创建版本')}</Button>
         </Form>
-      </Modal>
-      <Modal title={t('req.editInfo', '编辑需求信息')} open={editOpen} onCancel={() => setEditOpen(false)} footer={null} destroyOnHidden>
+      </EditDrawer>
+      <EditDrawer title={t('req.editInfo', '编辑需求信息')} open={editOpen} onCancel={() => setEditOpen(false)} footer={null}>
         <Form
           layout="vertical"
           initialValues={{
@@ -1140,9 +1142,9 @@ function RequirementDetail({ reqId, projectId, modules, onChanged, onDeleted, on
           <CustomFieldItems kind="requirement" fields={tplFields} />
           <Button type="primary" htmlType="submit" block>{t('a.save', '保存')}</Button>
         </Form>
-      </Modal>
+      </EditDrawer>
       {/* Change history: field-level log (time / actor / field: old → new). */}
-      <Drawer title={t('req.changes', '变更记录')} open={changesOpen} onClose={() => setChangesOpen(false)} width={480}>
+      <ResizableDrawer title={t('req.changes', '变更记录')} open={changesOpen} onClose={() => setChangesOpen(false)} width={480}>
         {changes.length ? (
           <Timeline
             items={changes.map((c, i) => ({
@@ -1165,7 +1167,7 @@ function RequirementDetail({ reqId, projectId, modules, onChanged, onDeleted, on
         ) : (
           <Empty description={t('req.noChanges', '暂无变更记录')} />
         )}
-      </Drawer>
+      </ResizableDrawer>
       <Modal title={verView ? `${t('req.versionDetail', '版本明细')} · v${verView.version}` : ''} open={!!verView} onCancel={() => setVerView(null)} footer={null} destroyOnHidden>
         {verView && (
           <Descriptions column={1} size="small" bordered>
@@ -1704,7 +1706,7 @@ function TaskCasesDrawer({ decompId, projectId, task, onClose }: { decompId: str
   }
 
   return (
-    <Drawer title={task ? `${t('req.taskCases', '任务用例')} · ${task.title}` : ''} open={!!task} onClose={onClose} width={560}>
+    <ResizableDrawer title={task ? `${t('req.taskCases', '任务用例')} · ${task.title}` : ''} open={!!task} onClose={onClose} width={560}>
       <Space.Compact style={{ width: '100%', marginBottom: 12 }}>
         <Select
           style={{ flex: 1 }}
@@ -1742,7 +1744,7 @@ function TaskCasesDrawer({ decompId, projectId, task, onClose }: { decompId: str
           { title: '', width: 50, render: (_, c) => <Button type="link" size="small" danger onClick={() => unlink(c.id)}>{t('req.remove', '移除')}</Button> },
         ]}
       />
-    </Drawer>
+    </ResizableDrawer>
   )
 }
 
@@ -1793,7 +1795,7 @@ function EventsDrawer({ decompId, task, onClose }: { decompId: string; task: Tas
   }, [task, live, load])
 
   return (
-    <Drawer
+    <ResizableDrawer
       title={
         <Space>
           <span>{task ? `${t('req.execProgress', '执行进度')} · ${task.title}` : ''}</span>
@@ -1854,6 +1856,6 @@ function EventsDrawer({ decompId, task, onClose }: { decompId: string; task: Tas
           })}
         </Space>
       )}
-    </Drawer>
+    </ResizableDrawer>
   )
 }

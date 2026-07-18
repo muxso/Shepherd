@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { useSearchParams } from 'react-router-dom'
-import { AutoComplete, Button, Cascader, Divider, Drawer, Dropdown, Empty, Form, Input, Modal, Popover, Radio, Segmented, Select, Space, Switch, Table, Tabs, Tag, Tooltip, Typography, Upload } from 'antd'
+import { AutoComplete, Button, Cascader, Divider, Dropdown, Empty, Form, Input, Modal, Popover, Radio, Segmented, Select, Space, Switch, Table, Tabs, Tag, Tooltip, Typography, Upload } from 'antd'
+import ResizableDrawer from '../components/ResizableDrawer'
+import EditDrawer from '../components/EditDrawer'
 import { message, modal } from '../feedback'
 import { PlayCircleOutlined, PlusOutlined, SaveOutlined, ThunderboltOutlined, DownOutlined, LinkOutlined, SwapOutlined, DeleteOutlined, FullscreenOutlined, CloseOutlined, SearchOutlined, FilterOutlined, ReloadOutlined, MoreOutlined, ImportOutlined, InboxOutlined, EyeOutlined, SettingOutlined, ShareAltOutlined, EditOutlined } from '@ant-design/icons'
 import { api, ApiError, type ApiCase, type ApiDefinition, type ApiModule, type ApiView, type AssertionResult, type DebugResponse, type Environment, type ReportResultItem, type ResourcePool, type Scenario, type ScenarioChange, type ScenarioExecution, type ScenarioReportDetail, type ScenarioRunResult, type ScenarioStep } from '../api'
@@ -15,10 +17,21 @@ import AssertionEditor from '../components/AssertionEditor'
 import ProcessorEditor from '../components/ProcessorEditor'
 import KVEditor, { type KVRow } from '../components/KVEditor'
 import { DebugResultPanel, type SentRequest } from '../components/ApiSpecPanel'
+import { LatencyStat } from '../components/TimingBreakdown'
 import { SelectProjectEmpty } from '../components/Page'
 import { useI18n } from '../i18n'
 
 type TFn = (key: string, fallback?: string) => string
+
+/* Humanized units for report stats: ms flips to seconds past 1s, bytes climb KB/MB/GB. */
+const fmtDuration = (ms: number) =>
+  ms >= 60_000 ? `${(ms / 60_000).toFixed(1)} min` : ms >= 1000 ? `${(ms / 1000).toFixed(2)} s` : `${ms} ms`
+const fmtSize = (b: number) =>
+  b >= 1 << 30 ? `${(b / (1 << 30)).toFixed(2)} GB`
+  : b >= 1 << 20 ? `${(b / (1 << 20)).toFixed(2)} MB`
+  : b >= 1024 ? `${(b / 1024).toFixed(1)} KB`
+  : `${b} bytes`
+
 // Editable form state + scenario param rows (persisted in scenario.meta).
 type ScenarioParam = { name: string; type: string; value: string; tags: string; desc: string }
 type ScenarioForm = { name: string; status: string; description: string; tags: string[]; priority: string; params: ScenarioParam[]; csv: string; moduleId: string; disabledSteps: string[]; preProcessors: unknown[]; postProcessors: unknown[]; assertions: unknown[]; envCookie: boolean; sharedCookie: boolean }
@@ -572,7 +585,7 @@ export default function Scenarios() {
         caseMap={listCaseMap}
         onClose={() => setBatchReportId(null)}
       />
-      <Modal
+      <EditDrawer
         open={timerOpen}
         title={`${t('scenario.timerEditTitle', '批量编辑定时任务')}(${t('scenario.selectedShort', '已选')} ${selectedIds.length} ${t('scenario.unitItems', '项数据')})`}
         onCancel={() => setTimerOpen(false)}
@@ -588,7 +601,6 @@ export default function Scenarios() {
             <Button type="primary" style={{ marginLeft: 8 }} loading={batchBusy} onClick={saveTimer}>{t('a.save', '保存')}</Button>
           </div>
         }
-        destroyOnHidden
       >
         <div style={{ marginBottom: 16 }}>
           <div style={{ marginBottom: 8 }}>{t('scenario.cronLabel', '任务触发时间')}</div>
@@ -638,8 +650,8 @@ export default function Scenarios() {
             options={[{ value: '', label: t('scenario.defaultPool', '默认资源池') }, ...runPools.map((p) => ({ value: p.id, label: p.name }))]}
           />
         </div>
-      </Modal>
-      <Modal
+      </EditDrawer>
+      <EditDrawer
         open={batchRunOpen}
         title={`${t('scenario.batchRun', '批量执行')}（${t('scenario.selectedShort', '已选')} ${selectedIds.length} ${t('scenario.unitScene', '条场景')}）`}
         onCancel={() => setBatchRunOpen(false)}
@@ -649,7 +661,6 @@ export default function Scenarios() {
             <Button type="primary" loading={batchBusy} onClick={batchRun}>{t('apidef.run', '执行')}</Button>
           </>
         }
-        destroyOnHidden
       >
         <div style={{ marginBottom: 16 }}>
           <div style={{ marginBottom: 8 }}>{t('scenario.envPick', '环境选择')}</div>
@@ -712,8 +723,8 @@ export default function Scenarios() {
             options={[{ value: '', label: t('scenario.defaultPool', '默认资源池') }, ...runPools.map((p) => ({ value: p.id, label: p.name }))]}
           />
         </div>
-      </Modal>
-      <Modal
+      </EditDrawer>
+      <EditDrawer
         open={!!batchModal}
         title={batchModal === 'move' ? t('scenario.moveTo', '移动到') : t('scenario.copyTo', '复制到')}
         onCancel={() => setBatchModal(null)}
@@ -721,7 +732,6 @@ export default function Scenarios() {
         confirmLoading={batchBusy}
         okText={t('a.confirm', '确定')}
         cancelText={t('a.cancel', '取消')}
-        destroyOnHidden
       >
         <Select
           style={{ width: '100%' }}
@@ -729,7 +739,7 @@ export default function Scenarios() {
           onChange={setBatchModule}
           options={[{ value: '', label: t('scenario.unplanned', '未规划场景') }, ...modules.map((m) => ({ value: m.id, label: m.name }))]}
         />
-      </Modal>
+      </EditDrawer>
     </div>
   )
 
@@ -759,7 +769,7 @@ export default function Scenarios() {
       />
       <ImportScenarioDrawer open={importOpen} projectId={projectId} modules={modules} onClose={() => setImportOpen(false)} onImported={load} />
       {/* Advanced filter drawer (all/any logic + field/operator/value, client-side filtering). */}
-      <Drawer
+      <ResizableDrawer
         title={t('apidef.filter', '筛选')}
         open={advOpen}
         onClose={() => setAdvOpen(false)}
@@ -794,7 +804,7 @@ export default function Scenarios() {
             {t('apidef.addCond', '添加条件')}
           </Button>
         </Space>
-      </Drawer>
+      </ResizableDrawer>
     </>
   )
 }
@@ -910,9 +920,15 @@ function StepRow({ node, idx, depth, t, result, running, seq = 0, enabled = true
           const cluster = (
             <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }} onClick={(e) => e.stopPropagation()}>
               <Tag color={ok ? 'green' : 'red'} style={{ margin: 0 }}>{ok ? t('scenario.pass', '通过') : t('scenario.fail', '失败')}</Tag>
-              {result.statusCode != null && <span style={muted}>{t('apidef.statusCode', '状态码')} <span style={{ color: result.statusCode < 400 ? 'var(--success)' : 'var(--error)' }}>{result.statusCode}</span></span>}
-              <span style={muted}>{t('scenario.respTime', '响应时间')} {result.latencyMs != null ? `${result.latencyMs} ms` : '—'}</span>
-              <span style={muted}>{t('scenario.respSize', '响应大小')} {result.respSize != null ? `${result.respSize} bytes` : '—'}</span>
+              {result.statusCode != null && <Tooltip title={t('scenario.statusTip', '服务端返回的 HTTP 状态码')}><span style={muted}>{t('apidef.statusCode', '状态码')} <span style={{ color: result.statusCode < 400 ? 'var(--success)' : 'var(--error)' }}>{result.statusCode}</span></span></Tooltip>}
+              {result.timings ? (
+                <LatencyStat totalMs={result.latencyMs ?? 0} timings={result.timings}>
+                  <span style={muted}>{t('scenario.respTime', '响应时间')} {result.latencyMs != null ? fmtDuration(result.latencyMs) : '—'}</span>
+                </LatencyStat>
+              ) : (
+                <Tooltip title={t('scenario.respTimeTip', '从建立连接到收到服务端完整响应的全链路耗时')}><span style={muted}>{t('scenario.respTime', '响应时间')} {result.latencyMs != null ? fmtDuration(result.latencyMs) : '—'}</span></Tooltip>
+              )}
+              <Tooltip title={t('scenario.respSizeTip', '响应体大小')}><span style={muted}>{t('scenario.respSize', '响应大小')} {result.respSize != null ? fmtSize(result.respSize) : '—'}</span></Tooltip>
             </span>
           )
           return respPreview
@@ -1585,7 +1601,7 @@ function ScenarioDetail({ scenario, active }: { scenario: Scenario; active?: boo
         onDeleted={() => { setSelStep(null); loadSteps() }}
         onEdit={selStep?.child ? undefined : (st) => { setSelStep(null); setEditReqStep(st) }}
       />
-      <ScenarioReportModal reportId={reportModalId} nameOf={nameOf} caseMap={caseMap} onClose={() => setReportModalId(null)} />
+      <ScenarioReportModal reportId={reportModalId} scenarioId={scenario.id} nameOf={nameOf} caseMap={caseMap} onClose={() => setReportModalId(null)} />
     </div>
   )
 }
@@ -1638,6 +1654,24 @@ function StepDetailDrawer({
   const { t } = useI18n()
   const [full, setFull] = useState(false)
   const [deleting, setDeleting] = useState(false)
+  // Replace: swap the referenced case of a CASE step for another project case.
+  const [replaceOpen, setReplaceOpen] = useState(false)
+  const [replaceSel, setReplaceSel] = useState<string>()
+  const [replacing, setReplacing] = useState(false)
+  const doReplace = async () => {
+    if (!sel || !replaceSel) return message.warning(t('scenario.pickReplaceCase', '请选择用例'))
+    setReplacing(true)
+    try {
+      await api.updateScenarioStep(scenarioId, sel.step.id, { kind: 'CASE', refId: replaceSel })
+      message.success(t('scenario.replaced', '已替换'))
+      setReplaceOpen(false)
+      onDeleted()
+    } catch (e) {
+      message.error(e instanceof ApiError ? e.message : t('func.saveFailed', '保存失败'))
+    } finally {
+      setReplacing(false)
+    }
+  }
   const del = () => {
     if (!sel) return
     modal.confirm({
@@ -1755,7 +1789,7 @@ function StepDetailDrawer({
     : []
 
   return (
-    <Drawer
+    <ResizableDrawer
       open={!!sel}
       onClose={onClose}
       width={full ? '92%' : 680}
@@ -1766,7 +1800,16 @@ function StepDetailDrawer({
           {onEdit && step?.kind.toUpperCase() === 'REQUEST' && (
             <Button type="text" size="small" icon={<EditOutlined />} onClick={() => onEdit(step)}>{t('a.edit', '编辑')}</Button>
           )}
-          <Button type="text" size="small" icon={<SwapOutlined />} disabled title={t('scenario.replaceSoon', '替换(即将接入)')}>{t('scenario.replace', '替换')}</Button>
+          <Button
+            type="text"
+            size="small"
+            icon={<SwapOutlined />}
+            disabled={step?.kind.toUpperCase() !== 'CASE'}
+            title={step?.kind.toUpperCase() === 'CASE' ? undefined : t('scenario.replaceCaseOnly', '仅引用用例的步骤支持替换')}
+            onClick={() => { setReplaceSel(undefined); setReplaceOpen(true) }}
+          >
+            {t('scenario.replace', '替换')}
+          </Button>
           <Button type="text" size="small" danger icon={<DeleteOutlined />} loading={deleting} onClick={del}>{t('a.delete', '删除')}</Button>
           <Button type="text" size="small" icon={<FullscreenOutlined />} onClick={() => setFull((v) => !v)}>{t('scenario.fullscreen', '全屏')}</Button>
           <Button type="text" size="small" icon={<CloseOutlined />} onClick={onClose} />
@@ -1786,7 +1829,28 @@ function StepDetailDrawer({
       ) : (
         <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('scenario.controlStepInfo', '控制器步骤:在步骤列表中查看其配置与子步骤')} style={{ margin: '48px 0' }} />
       )}
-    </Drawer>
+      <EditDrawer
+        open={replaceOpen}
+        title={t('scenario.replaceCase', '替换引用用例')}
+        onCancel={() => setReplaceOpen(false)}
+        onOk={doReplace}
+        confirmLoading={replacing}
+        okText={t('a.confirm', '确定')}
+        cancelText={t('a.cancel', '取消')}
+      >
+        <Select
+          showSearch
+          style={{ width: '100%' }}
+          placeholder={t('scenario.pickReplaceCase', '请选择用例')}
+          optionFilterProp="label"
+          value={replaceSel}
+          onChange={setReplaceSel}
+          options={Object.values(caseMap)
+            .filter((c) => c.id !== step?.caseId)
+            .map((c) => ({ value: c.id, label: `${c.method} ${c.name}` }))}
+        />
+      </EditDrawer>
+    </ResizableDrawer>
   )
 }
 
@@ -1805,7 +1869,7 @@ function ScenarioBasicInfo({ scenario, stepCount, form, patch, modules }: { scen
       {field(t('scenario.name', '场景名称'), <Input value={form.name} onChange={(e) => patch({ name: e.target.value })} placeholder={t('scenario.namePlaceholder', '如:下单主流程')} />, true)}
       {field(t('scenario.ownerModule', '所属模块'), <Select style={{ width: 280 }} value={form.moduleId || ''} onChange={(v) => patch({ moduleId: v || '' })} placeholder={t('scenario.unplanned', '未规划场景')} options={[{ value: '', label: t('scenario.unplanned', '未规划场景') }, ...modules.map((m) => ({ value: m.id, label: m.name }))]} />)}
       {field(t('scenario.priority', '场景等级'), <Select style={{ width: 200 }} value={form.priority} onChange={(v) => patch({ priority: v })} options={SCENARIO_PRIORITIES.map((p) => ({ value: p, label: <span style={{ color: priorityColor(p) }}>● <span style={{ color: 'var(--text)' }}>{p}</span></span> }))} />)}
-      {field(t('scenario.colStatus', '场景状态'), <Select style={{ width: 200 }} value={form.status} onChange={(v) => patch({ status: v })} options={SCENARIO_STATUSES.map((s) => ({ value: s, label: s }))} />)}
+      {field(t('scenario.colStatus', '场景状态'), <Select style={{ width: 200 }} value={form.status} onChange={(v) => patch({ status: v })} options={SCENARIO_STATUSES.map((s) => ({ value: s, label: scStatusLabel(s, t) }))} />)}
       {field(t('scenario.tags', '标签'), (
         <Space size={[6, 6]} wrap>
           {form.tags.map((tg) => (
@@ -1839,7 +1903,7 @@ function ScenarioParams({ params, onChange, csv, onCsvChange }: { params: Scenar
   const set = (i: number, p: Partial<ScenarioParam>) => onChange(params.map((r, idx) => (idx === i ? { ...r, ...p } : r)))
   return (
     <div>
-      <div style={{ background: '#f6ffed', border: '1px solid #b7eb8f', borderRadius: 6, padding: '6px 10px', marginBottom: 12, fontSize: 12, color: '#389e0d' }}>
+      <div style={{ background: 'var(--panel-2)', border: '1px solid var(--border-soft)', borderRadius: 6, padding: '6px 10px', marginBottom: 12, fontSize: 12, color: 'var(--text-2)' }}>
         {t('scenario.varPriority', '变量优先级:临时参数 > 场景参数 > 环境参数;同名变量场景级 CSV 优先级最高')}
       </div>
       <Segmented
@@ -1932,7 +1996,7 @@ function ScenarioExecutionsTab({ scenarioId, nameOf, caseMap, t }: { scenarioId:
           { title: t('apidef.colAction', '操作'), width: 100, render: (_v, r) => <Button type="link" size="small" disabled={!r.reportId} onClick={() => setReportId(r.reportId)}>{t('scenario.viewResult', '执行结果')}</Button> },
         ]}
       />
-      <ScenarioReportModal reportId={reportId} nameOf={nameOf} caseMap={caseMap} onClose={() => setReportId(null)} />
+      <ScenarioReportModal reportId={reportId} scenarioId={scenarioId} nameOf={nameOf} caseMap={caseMap} onClose={() => setReportId(null)} />
     </>
   )
 }
@@ -1976,7 +2040,7 @@ function ScenarioChangesTab({ scenarioId, t }: { scenarioId: string; t: TFn }) {
 // 4-state distribution: pass / false positive / fail / not run (mirrors the reference report).
 type Dist = { pass: number; falsePos: number; fail: number; skip: number }
 const DIST_COLORS = { pass: '#22c55e', falsePos: '#f59e0b', fail: '#ef4444', skip: '#c9cdd4' }
-function StatRing({ d, centerLabel }: { d: Dist; centerLabel: string }) {
+function StatRing({ d, centerLabel, labels }: { d: Dist; centerLabel: string; labels: Record<keyof Dist, string> }) {
   const total = d.pass + d.falsePos + d.fail + d.skip
   const C = 2 * Math.PI * 42
   const order: (keyof Dist)[] = ['pass', 'falsePos', 'fail', 'skip']
@@ -1984,10 +2048,15 @@ function StatRing({ d, centerLabel }: { d: Dist; centerLabel: string }) {
   return (
     <svg width="116" height="116" viewBox="0 0 120 120">
       <g transform="rotate(-90 60 60)">
-        <circle cx="60" cy="60" r="42" fill="none" stroke="#f0f2f5" strokeWidth="14" />
+        <circle cx="60" cy="60" r="42" fill="none" stroke="var(--border-soft)" strokeWidth="14" />
         {total > 0 && order.map((k) => {
+          if (d[k] <= 0) return null
           const len = (d[k] / total) * C
-          const el = <circle key={k} cx="60" cy="60" r="42" fill="none" stroke={DIST_COLORS[k]} strokeWidth="14" strokeDasharray={`${len} ${C - len}`} strokeDashoffset={`-${off}`} />
+          const el = (
+            <Tooltip key={k} title={`${labels[k]} ${d[k]} · ${((d[k] / total) * 100).toFixed(2)}%`}>
+              <circle cx="60" cy="60" r="42" fill="none" stroke={DIST_COLORS[k]} strokeWidth="14" strokeDasharray={`${len} ${C - len}`} strokeDashoffset={`-${off}`} style={{ cursor: 'pointer' }} />
+            </Tooltip>
+          )
           off += len
           return el
         })}
@@ -2010,7 +2079,7 @@ function DistCard({ title, d, centerLabel, t }: { title: string; d: Dist; center
     <div style={{ flex: 1, minWidth: 300, border: '1px solid var(--border-soft)', borderRadius: 10, padding: '14px 18px', background: 'var(--panel)' }}>
       <h3 style={{ margin: '0 0 10px', fontSize: 14, color: 'var(--text-2)' }}>{title}</h3>
       <div style={{ display: 'flex', alignItems: 'center', gap: 20 }}>
-        <StatRing d={d} centerLabel={centerLabel} />
+        <StatRing d={d} centerLabel={centerLabel} labels={Object.fromEntries(rows.map((r) => [r.k, r.label])) as Record<keyof Dist, string>} />
         <div style={{ flex: 1 }}>
           {rows.map(({ k, label }) => (
             <div key={k} style={{ display: 'grid', gridTemplateColumns: '1fr auto auto', alignItems: 'center', columnGap: 18, padding: '5px 0', fontSize: 13 }}>
@@ -2025,17 +2094,258 @@ function DistCard({ title, d, centerLabel, t }: { title: string; d: Dist; center
   )
 }
 
+// ---- Report step tree: mirrors the scenario structure; flat results are mapped onto the
+// tree by walking it in the same DFS order the compiled plan executes (sub-scenarios expanded
+// in place, LOOP bodies repeated `times` times, IF bodies matched leaf-by-leaf). ----
+type RTNode = {
+  key: string
+  kind: string // step kinds + ITER (loop round) + EXTRA (unmatched trailing results)
+  content: ReactNode
+  /** Plain text for the name search. */
+  text: string
+  children?: RTNode[]
+  /** Executable leaf that consumes one result row during the DFS walk. */
+  leaf?: boolean
+  /** Leaf identity for conditional (IF) matching: CASE id or REQUEST method+url. */
+  match?: { caseId?: string; method?: string; url?: string }
+  /** Subtree the executor never runs (ONCE body on loop rounds >1, SCENARIO refs nested in controllers). */
+  noExec?: boolean
+  result?: ReportResultItem
+}
+
+type ReportTreeData = { subs: Record<string, ScenarioStep[]>; names: Record<string, string> }
+type ReportTreeCtx = { data: ReportTreeData; t: TFn; nameOf: NameOf; onceRepeat?: boolean }
+
+/** Scenario ids referenced by steps: direct SCENARIO steps + controller children, recursively. */
+function collectScenarioRefs(steps: ScenarioStep[]): string[] {
+  const out: string[] = []
+  const fromChild = (c: any) => {
+    if (!c) return
+    if (String(c.kind || '').toUpperCase() === 'SCENARIO' && c.refId) out.push(String(c.refId))
+    if (Array.isArray(c.children)) c.children.forEach(fromChild)
+  }
+  for (const s of steps) {
+    if (s.scenarioId) out.push(s.scenarioId)
+    const ctl = s.control as { children?: unknown[] } | null | undefined
+    if (Array.isArray(ctl?.children)) ctl.children.forEach(fromChild)
+  }
+  return out
+}
+
+const reportReqNode = (key: string, method: string, url: string): RTNode => ({
+  key,
+  kind: 'REQUEST',
+  leaf: true,
+  match: { method, url },
+  text: `${method} ${url}`,
+  content: <Space><Tag color={methodColor(method)} style={{ margin: 0 }}>{method}</Tag><span className="ms-mono">{url}</span></Space>,
+})
+
+function buildScenarioNodes(id: string, prefix: string, ctx: ReportTreeCtx, depth: number, stack: string[]): RTNode[] {
+  // Cycle/depth guard mirrors the fetch cache; missing entries render as an empty group.
+  if (depth > 5 || stack.includes(id)) return []
+  const steps = ctx.data.subs[id]
+  if (!steps) return []
+  return [...steps].sort((a, b) => a.order - b.order).map((s, i) => buildReportStepNode(s, `${prefix}.${i}`, ctx, depth, [...stack, id]))
+}
+
+function buildReportStepNode(s: ScenarioStep, key: string, ctx: ReportTreeCtx, depth: number, stack: string[]): RTNode {
+  const { t, nameOf } = ctx
+  if (s.caseId) return { key, kind: 'CASE', leaf: true, match: { caseId: s.caseId }, text: nameOf(s.caseId), content: <span className="ms-mono">{t('scenario.caseRef', '用例')} {nameOf(s.caseId)}</span> }
+  if (s.request) return reportReqNode(key, s.request.method, s.request.url)
+  if (s.scenarioId) return { key, kind: 'SCENARIO', text: nameOf(s.scenarioId), content: <span className="ms-mono">{t('scenario.subScenario', '子场景')} {nameOf(s.scenarioId)}</span>, children: buildScenarioNodes(s.scenarioId, key, ctx, depth + 1, stack) }
+  if (s.control) return buildReportControlNode(s.kind.toUpperCase(), s.control, key, ctx, depth, stack)
+  return { key, kind: s.kind.toUpperCase(), text: '', content: '—' }
+}
+
+function buildReportChildNode(c: any, key: string, ctx: ReportTreeCtx, depth: number, stack: string[]): RTNode {
+  const kind = String(c?.kind || '').toUpperCase()
+  const { t, nameOf } = ctx
+  if (kind === 'CASE') return { key, kind, leaf: true, match: { caseId: c.refId }, text: nameOf(c.refId), content: <span className="ms-mono">{t('scenario.caseRef', '用例')} {nameOf(c.refId)}</span> }
+  if (kind === 'REQUEST') return reportReqNode(key, c.method || 'GET', c.url || '')
+  if (kind === 'SCENARIO')
+    // The plan compiler drops SCENARIO refs nested in controllers, so this subtree never executes.
+    return { key, kind, noExec: true, text: nameOf(c.refId), content: <span className="ms-mono">{t('scenario.subScenario', '子场景')} {nameOf(c.refId)}</span>, children: buildScenarioNodes(String(c.refId), key, ctx, depth + 1, stack) }
+  return buildReportControlNode(kind, c, key, ctx, depth, stack)
+}
+
+function buildReportControlNode(kind: string, payload: any, key: string, ctx: ReportTreeCtx, depth: number, stack: string[]): RTNode {
+  const { t } = ctx
+  const raw = Array.isArray(payload?.children) ? payload.children : []
+  const buildKids = (prefix: string, onceRepeat: boolean) => raw.map((c: any, i: number) => buildReportChildNode(c, `${prefix}.${i}`, { ...ctx, onceRepeat }, depth, stack))
+  if (kind === 'LOOP') {
+    const times = Math.max(1, Number(payload?.times ?? 1) || 1)
+    const label = `${t('scenario.loopPrefix', '循环')} ${times} ${t('scenario.loopSuffix', '次')}`
+    // Rounds >1: ONCE bodies inside run only on the first pass (executor keeps once-done state per run).
+    const children = times > 1
+      ? Array.from({ length: times }, (_, r) => ({
+          key: `${key}#${r}`,
+          kind: 'ITER',
+          text: '',
+          content: `${t('scenario.iterPrefix', '第')} ${r + 1} ${t('scenario.iterSuffix', '次')}`.trim(),
+          children: buildKids(`${key}#${r}`, !!ctx.onceRepeat || r > 0),
+        }))
+      : buildKids(key, !!ctx.onceRepeat)
+    return { key, kind: 'LOOP', text: label, content: label, children }
+  }
+  if (kind === 'IF') {
+    const label = `${payload?.variable ?? ''} ${payload?.operator ?? ''} ${payload?.value ?? ''}`.trim()
+    return { key, kind: 'IF', text: label, content: <span className="ms-mono">{label}</span>, children: buildKids(key, !!ctx.onceRepeat) }
+  }
+  if (kind === 'ONCE') return { key, kind: 'ONCE', text: '', content: t('scenario.onceOnly', '仅执行一次'), noExec: ctx.onceRepeat, children: buildKids(key, !!ctx.onceRepeat) }
+  if (kind === 'TIMER') return { key, kind: 'TIMER', text: '', content: `${t('scenario.waitPrefix', '等待')} ${payload?.ms ?? 0} ms` }
+  return { key, kind, text: '', content: '—' }
+}
+
+/** Does the result row belong to this leaf? Used only under IF bodies (skippable at runtime). */
+function reportLeafMatches(m: { caseId?: string; method?: string; url?: string }, r: ReportResultItem): boolean {
+  if (m.caseId) return r.caseId === m.caseId
+  const parsed = /^([A-Z]+)\s+(\S*)/.exec(r.caseId)
+  const method = (parsed?.[1] || r.request?.method || '').toUpperCase()
+  if (method && m.method && method !== m.method.toUpperCase()) return false
+  // Report labels carry merged query/REST params; compare paths loosely.
+  const strip = (u?: string) => (u || '').split('?')[0].replace(/\/+$/, '')
+  const a = strip(parsed?.[2] || r.request?.url)
+  const b = strip(m.url)
+  return !a || !b || a === b || a.endsWith(b) || b.endsWith(a)
+}
+
+/** DFS walk with a cursor into results[]; leaves inside IF bodies only consume on a match. */
+function assignReportResults(nodes: RTNode[], results: ReportResultItem[], cur: { i: number }, conditional: boolean) {
+  for (const n of nodes) {
+    if (n.noExec) continue
+    if (n.leaf && n.match && cur.i < results.length) {
+      const r = results[cur.i]
+      if (!conditional || reportLeafMatches(n.match, r)) {
+        n.result = r
+        cur.i++
+      }
+    }
+    if (n.children) assignReportResults(n.children, results, cur, conditional || n.kind === 'IF')
+  }
+}
+
+/** Keep leaves matching the predicate plus their ancestor rows; no filters = full tree. */
+function filterReportTree(nodes: RTNode[], pred: (n: RTNode) => boolean, filtering: boolean): RTNode[] {
+  return nodes.flatMap((n) => {
+    if (n.children?.length) {
+      const kids = filterReportTree(n.children, pred, filtering)
+      return kids.length || !filtering ? [{ ...n, children: kids }] : []
+    }
+    return !filtering || pred(n) ? [n] : []
+  })
+}
+
+function collectGroupKeys(nodes: RTNode[], out: string[] = []): string[] {
+  for (const n of nodes) {
+    if (n.children?.length) {
+      out.push(n.key)
+      collectGroupKeys(n.children, out)
+    }
+  }
+  return out
+}
+
+// Per-leaf result cluster (pass/fail tag + status + latency w/ timing waterfall + size); shared by
+// the flat report row and the tree row.
+function ResultCluster({ r, t }: { r: ReportResultItem; t: TFn }) {
+  const ok = r.outcome === 'SUCCESS'
+  const muted: React.CSSProperties = { color: 'var(--text-3)', fontSize: 12, whiteSpace: 'nowrap' }
+  return (
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 10 }}>
+      <Tag color={ok ? 'green' : 'red'} style={{ margin: 0 }}>{ok ? t('scenario.pass', '通过') : t('scenario.fail', '失败')}</Tag>
+      {r.statusCode != null && <Tooltip title={t('scenario.statusTip', '服务端返回的 HTTP 状态码')}><span style={muted}>{t('apidef.statusCode', '状态码')} <span style={{ color: r.statusCode < 400 ? 'var(--success)' : 'var(--error)' }}>{r.statusCode}</span></span></Tooltip>}
+      {r.timings ? (
+        <LatencyStat totalMs={r.latencyMs ?? 0} timings={r.timings}>
+          <span style={muted}>{t('scenario.respTime', '响应时间')} {r.latencyMs != null ? fmtDuration(r.latencyMs) : '—'}</span>
+        </LatencyStat>
+      ) : (
+        <Tooltip title={t('scenario.respTimeTip', '从建立连接到收到服务端完整响应的全链路耗时')}><span style={muted}>{t('scenario.respTime', '响应时间')} {r.latencyMs != null ? fmtDuration(r.latencyMs) : '—'}</span></Tooltip>
+      )}
+      <Tooltip title={t('scenario.respSizeTip', '响应体大小')}><span style={muted}>{t('scenario.respSize', '响应大小')} {r.respSize != null ? fmtSize(r.respSize) : '—'}</span></Tooltip>
+    </span>
+  )
+}
+
+// Report tree rows: numbered per level, groups expand/collapse; in tab view executed leaves also
+// expand an inline response panel (same debug panel synthesis as ReportRow).
+function ReportTreeRows({ nodes, depth, view, t, caseOf, expandedKeys, openKeys, onExpand, onOpen }: {
+  nodes: RTNode[]
+  depth: number
+  view: 'flat' | 'tab'
+  t: TFn
+  caseOf?: (id: string) => ApiCase | undefined
+  expandedKeys: Set<string>
+  openKeys: Set<string>
+  onExpand: (k: string) => void
+  onOpen: (k: string) => void
+}) {
+  const stepMeta = makeStepMeta(t)
+  return (
+    <>
+      {nodes.map((n, i) => {
+        const meta = stepMeta[n.kind]
+        const hasKids = (n.children?.length ?? 0) > 0
+        const isExpanded = expandedKeys.has(n.key)
+        const r = n.result
+        const hasDetail = !!r && (r.statusCode != null || r.body != null || (r.headers?.length ?? 0) > 0)
+        const canOpen = view === 'tab' && hasDetail
+        const isOpen = canOpen && openKeys.has(n.key)
+        const clickable = hasKids || canOpen
+        const req = r && isOpen ? synthSentRequest(r, caseOf) : null
+        const resp = r && isOpen ? synthDebugResponse(r) : null
+        return (
+          <div key={n.key}>
+            <div
+              onClick={() => { if (hasKids) onExpand(n.key); else if (canOpen) onOpen(n.key) }}
+              style={{ marginLeft: depth * 24, border: '1px solid var(--border-soft)', borderRadius: 6, marginBottom: 6, background: depth ? 'var(--panel-2)' : 'var(--panel)', cursor: clickable ? 'pointer' : 'default' }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px' }}>
+                {clickable
+                  ? <span style={{ color: 'var(--text-3)', fontSize: 11, width: 12 }}>{(hasKids ? isExpanded : isOpen) ? '▾' : '▸'}</span>
+                  : <span style={{ width: 12 }} />}
+                <span style={{ color: 'var(--text-3)', fontSize: 12, minWidth: 18 }}>{i + 1}</span>
+                {meta && <Tag color={meta.color} style={{ margin: 0 }}>{meta.label}</Tag>}
+                <span style={{ flex: 1, minWidth: 0, fontWeight: n.kind === 'ITER' ? 500 : undefined }}>{n.content}</span>
+                {n.leaf && (r ? <ResultCluster r={r} t={t} /> : <Tag style={{ margin: 0, color: 'var(--text-3)' }}>{t('scenario.skip', '未执行')}</Tag>)}
+              </div>
+              {r && r.failures.length > 0 && (
+                <div style={{ padding: '0 12px 8px 42px' }}>
+                  {r.failures.map((f, j) => <div key={j} style={{ color: 'var(--error)', fontSize: 12 }} className="ms-mono">✗ {f}</div>)}
+                </div>
+              )}
+              {isOpen && resp && (
+                <div style={{ padding: '0 12px 12px' }} onClick={(e) => e.stopPropagation()}>
+                  <DebugResultPanel running={false} resp={resp} err="" req={req} isHttp={!!req} />
+                </div>
+              )}
+            </div>
+            {hasKids && isExpanded && (
+              <ReportTreeRows nodes={n.children!} depth={depth + 1} view={view} t={t} caseOf={caseOf} expandedKeys={expandedKeys} openKeys={openKeys} onExpand={onExpand} onOpen={onOpen} />
+            )}
+          </div>
+        )
+      })}
+    </>
+  )
+}
+
 // Scenario run report drawer: analysis cards + rings on top; toolbar filter + expand/collapse all;
-// detail rows reuse ReportRow (expandable, debug 7-tab panel).
-function ScenarioReportModal({ reportId, nameOf, caseMap, onClose }: { reportId: string | null; nameOf: NameOf; caseMap?: Record<string, ApiCase>; onClose: () => void }) {
+// detail rows mirror the scenario step tree when the owning scenario is known (scenarioId prop),
+// otherwise fall back to the flat list (union batch reports). Rows reuse ReportRow / ReportTreeRows.
+function ScenarioReportModal({ reportId, scenarioId, nameOf, caseMap, onClose }: { reportId: string | null; scenarioId?: string; nameOf: NameOf; caseMap?: Record<string, ApiCase>; onClose: () => void }) {
   const { t } = useI18n()
   const [data, setData] = useState<ScenarioReportDetail | null>(null)
   const [loading, setLoading] = useState(false)
   const [search, setSearch] = useState('')
   const [openSet, setOpenSet] = useState<Set<number>>(new Set())
-  // Flat list vs one-tab-per-step view; outcome filter is a [scope, outcome] cascader pick.
-  const [view, setView] = useState<'flat' | 'tab'>('flat')
+  // Flat rows vs tab view (tab = expanding a leaf also opens the response panel); outcome filter is a [scope, outcome] cascader pick.
+  const [view, setView] = useState<'flat' | 'tab'>('tab')
   const [filter, setFilter] = useState<string[]>()
+  // Step tree of the owning scenario (+ referenced sub-scenarios, fetched recursively).
+  const [treeData, setTreeData] = useState<ReportTreeData | null>(null)
+  const [expandedKeys, setExpandedKeys] = useState<Set<string>>(new Set())
+  const [openKeys, setOpenKeys] = useState<Set<string>>(new Set())
   useEffect(() => {
     if (!reportId) { setData(null); return }
     setOpenSet(new Set())
@@ -2044,6 +2354,26 @@ function ScenarioReportModal({ reportId, nameOf, caseMap, onClose }: { reportId:
     setLoading(true)
     api.scenarioReport(reportId).then(setData).catch(() => setData(null)).finally(() => setLoading(false))
   }, [reportId])
+  useEffect(() => {
+    setTreeData(null)
+    if (!reportId || !scenarioId) return
+    let alive = true
+    const subs: Record<string, ScenarioStep[]> = {}
+    const names: Record<string, string> = {}
+    // Recursive fetch with cycle guard + depth cap; sub-scenario failures leave an empty group.
+    const load = async (id: string, depth: number, stack: Set<string>): Promise<void> => {
+      if (depth > 5 || stack.has(id) || subs[id]) return
+      const sc = await api.getScenario(id)
+      subs[id] = sc.steps || []
+      names[id] = sc.name
+      const next = new Set(stack).add(id)
+      for (const rid of collectScenarioRefs(subs[id])) await load(rid, depth + 1, next).catch(() => undefined)
+    }
+    load(scenarioId, 0, new Set())
+      .then(() => { if (alive) setTreeData({ subs, names }) })
+      .catch(() => { if (alive) setTreeData(null) })
+    return () => { alive = false }
+  }, [reportId, scenarioId])
   const all = data?.results || []
   const passN = all.filter((r) => r.outcome === 'SUCCESS').length
   const failN = all.length - passN
@@ -2078,6 +2408,45 @@ function ScenarioReportModal({ reportId, nameOf, caseMap, onClose }: { reportId:
     (!outcomeKey || outcomeMatch[outcomeKey]?.(r) !== false),
   )
   const toggle = (i: number) => setOpenSet((prev) => { const n = new Set(prev); if (n.has(i)) n.delete(i); else n.add(i); return n })
+  // Build the step tree + map results by DFS order; null = fall back to the flat list.
+  const treeNameOf: NameOf = (id) => treeData?.names[id] || nameOf(id)
+  const tree = useMemo(() => {
+    if (!treeData || !data || !scenarioId) return null
+    const rootSteps = treeData.subs[scenarioId]
+    if (!rootSteps?.length) return null
+    const ctx: ReportTreeCtx = { data: treeData, t, nameOf: treeNameOf }
+    const nodes = [...rootSteps].sort((a, b) => a.order - b.order).map((s, i) => buildReportStepNode(s, `s${i}`, ctx, 0, [scenarioId]))
+    const cur = { i: 0 }
+    assignReportResults(nodes, data.results, cur, false)
+    // Rows left over after the walk (alignment drift): append flat, never hide data.
+    data.results.slice(cur.i).forEach((r, j) =>
+      nodes.push({ key: `x${j}`, kind: 'EXTRA', leaf: true, text: label(r.caseId), content: <span className="ms-mono">{label(r.caseId)}</span>, result: r }))
+    return nodes
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [treeData, data, scenarioId, t])
+  // Default: hierarchy fully expanded, response panels closed.
+  useEffect(() => {
+    setExpandedKeys(new Set(tree ? collectGroupKeys(tree) : []))
+    setOpenKeys(new Set())
+  }, [tree])
+  const filtering = !!search.trim() || !!outcomeKey
+  const visibleTree = useMemo(() => {
+    if (!tree) return null
+    const q = search.trim().toLowerCase()
+    const pred = (n: RTNode) => {
+      if (q && !n.text.toLowerCase().includes(q)) return false
+      if (outcomeKey) {
+        if (!n.leaf) return false
+        if (outcomeKey === 'skip') return !n.result
+        return n.result ? outcomeMatch[outcomeKey]?.(n.result) !== false : false
+      }
+      return true
+    }
+    return filterReportTree(tree, pred, filtering)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tree, search, outcomeKey])
+  const toggleKey = (set: React.Dispatch<React.SetStateAction<Set<string>>>) => (k: string) =>
+    set((prev) => { const n = new Set(prev); if (n.has(k)) n.delete(k); else n.add(k); return n })
   const outcomeOptions = [
     { value: 'pass', label: t('scenario.pass', '通过') },
     { value: 'falsePos', label: t('scenario.falsePos', '误报') },
@@ -2089,7 +2458,7 @@ function ScenarioReportModal({ reportId, nameOf, caseMap, onClose }: { reportId:
     <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', fontSize: 14 }}><span style={{ color: 'var(--text-2)' }}>{lbl}</span><b style={{ color }}>{val}</b></div>
   )
   return (
-    <Drawer
+    <ResizableDrawer
       open={!!reportId}
       onClose={onClose}
       width="60%"
@@ -2108,9 +2477,9 @@ function ScenarioReportModal({ reportId, nameOf, caseMap, onClose }: { reportId:
               <h3 style={{ margin: '0 0 10px', fontSize: 14, color: 'var(--text-2)', display: 'flex', alignItems: 'center', gap: 8 }}>
                 {t('scenario.reportAnalysis', '报告分析')}<Tag color={outcomeColor(data.status)} style={{ margin: 0 }}>{runOutcomeLabel(data.status, t)}</Tag>
               </h3>
-              {stat(t('scenario.reportTotalTime', '报告总耗时'), <>{(reportTotalMs / 1000).toFixed(3)} <span style={{ color: 'var(--text-3)', fontWeight: 400 }}>(sec)</span></>)}
-              {stat(t('scenario.reqTotalTime', '请求总耗时'), <>{reqTotalMs} <span style={{ color: 'var(--text-3)', fontWeight: 400 }}>(ms)</span></>)}
-              {stat(t('scenario.assertPassRate', '断言通过率'), <>{asRate.toFixed(2)} <span style={{ color: 'var(--text-3)', fontWeight: 400 }}>(%)</span></>, asRate >= 100 ? '#22c55e' : undefined)}
+              {stat(t('scenario.reportTotalTime', '报告总耗时'), <Tooltip title={t('scenario.reportTotalTip', '从第一步开始到最后一步完成的墙钟总耗时')}><span>{(reportTotalMs / 1000).toFixed(3)} <span style={{ color: 'var(--text-3)', fontWeight: 400 }}>(sec)</span></span></Tooltip>)}
+              {stat(t('scenario.reqTotalTime', '请求总耗时'), <Tooltip title={t('scenario.respTimeTip', '从建立连接到收到服务端完整响应的全链路耗时')}><span>{fmtDuration(reqTotalMs)}</span></Tooltip>)}
+              {stat(t('scenario.assertPassRate', '断言通过率'), <Tooltip title={t('scenario.assertRateTip', '通过断言数占全部断言数的比例')}><span>{asRate.toFixed(2)} <span style={{ color: 'var(--text-3)', fontWeight: 400 }}>(%)</span></span></Tooltip>, asRate >= 100 ? '#22c55e' : undefined)}
             </div>
             <DistCard title={t('scenario.stepAnalysis', '步骤分析')} d={dist} centerLabel={t('scenario.totalCount', '总数(个)')} t={t} />
             <DistCard title={t('scenario.reqAnalysis', '请求分析')} d={dist} centerLabel={t('scenario.totalCount', '总数(个)')} t={t} />
@@ -2150,15 +2519,42 @@ function ScenarioReportModal({ reportId, nameOf, caseMap, onClose }: { reportId:
                 { value: 'request', label: t('scenario.filterReq', '请求'), children: outcomeOptions },
               ]}
             />
-            {view === 'flat' && (
-              <>
-                <Button size="small" onClick={() => setOpenSet(new Set(rows.map((_, i) => i)))}>{t('scenario.expandAll', '展开全部')}</Button>
-                <Button size="small" onClick={() => setOpenSet(new Set())}>{t('scenario.collapseAll', '收起全部')}</Button>
-              </>
-            )}
+            {visibleTree ? (() => {
+              // Tree mode: toggles the hierarchy only (never auto-opens response panels).
+              const keys = collectGroupKeys(visibleTree)
+              const allOpen = keys.length > 0 && keys.every((k) => expandedKeys.has(k))
+              return keys.length > 0 ? (
+                <Button size="small" onClick={() => setExpandedKeys(allOpen ? new Set() : new Set(collectGroupKeys(tree!)))}>
+                  {allOpen ? t('scenario.collapseAll', '收起全部') : t('scenario.expandAll', '展开全部')}
+                </Button>
+              ) : null
+            })() : view === 'flat' && (() => {
+              const allOpen = rows.length > 0 && openSet.size >= rows.length
+              return (
+                <Button size="small" onClick={() => setOpenSet(allOpen ? new Set() : new Set(rows.map((_, i) => i)))}>
+                  {allOpen ? t('scenario.collapseAll', '收起全部') : t('scenario.expandAll', '展开全部')}
+                </Button>
+              )
+            })()}
           </div>
           <div style={{ marginTop: 10 }}>
-            {rows.length === 0 ? (
+            {visibleTree ? (
+              visibleTree.length === 0 ? (
+                <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('scenario.noStepResult', '无步骤结果')} />
+              ) : (
+                <ReportTreeRows
+                  nodes={visibleTree}
+                  depth={0}
+                  view={view}
+                  t={t}
+                  caseOf={(id) => caseMap?.[id]}
+                  expandedKeys={expandedKeys}
+                  openKeys={openKeys}
+                  onExpand={toggleKey(setExpandedKeys)}
+                  onOpen={toggleKey(setOpenKeys)}
+                />
+              )
+            ) : rows.length === 0 ? (
               <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('scenario.noStepResult', '无步骤结果')} />
             ) : view === 'flat' ? (
               rows.map((r, i) => <ReportRow key={i} idx={i + 1} r={r} label={label} t={t} open={openSet.has(i)} onToggle={() => toggle(i)} caseOf={(id) => caseMap?.[id]} />)
@@ -2180,7 +2576,7 @@ function ScenarioReportModal({ reportId, nameOf, caseMap, onClose }: { reportId:
           </div>
         </>
       )}
-    </Drawer>
+    </ResizableDrawer>
   )
 }
 
@@ -2198,34 +2594,37 @@ function caseToSentRequest(c: ApiCase): SentRequest {
   return { method: c.method, url, headers, body: c.body ?? undefined }
 }
 
-function ReportRow({ idx, r, label, t, open, onToggle, caseOf }: { idx: number; r: ReportResultItem; label: (id: string) => string; t: TFn; open: boolean; onToggle: () => void; caseOf?: (id: string) => ApiCase | undefined }) {
-  const ok = r.outcome === 'SUCCESS'
-  const hasDetail = r.statusCode != null || r.body != null || (r.headers?.length ?? 0) > 0
-  // Actual request priority: 1) request persisted in the report (since 0060; variables/baseUrl/auth resolved),
-  // 2) legacy fallback: parse REQUEST steps from caseId="GET http://...", rebuild CASE references from the case template.
+// Actual request priority: 1) request persisted in the report (since 0060; variables/baseUrl/auth resolved),
+// 2) legacy fallback: parse REQUEST steps from caseId="GET http://...", rebuild CASE references from the case template.
+function synthSentRequest(r: ReportResultItem, caseOf?: (id: string) => ApiCase | undefined): SentRequest | null {
+  if (r.request) return { method: r.request.method, url: r.request.url, headers: (r.request.headers ?? []).map(([key, value]) => ({ key, value })), body: r.request.body ?? undefined }
   const m = /^([A-Z]+)\s+(\S+)/.exec(r.caseId)
-  const kase = m ? undefined : caseOf?.(r.caseId)
-  const req: SentRequest | null = r.request
-    ? { method: r.request.method, url: r.request.url, headers: (r.request.headers ?? []).map(([key, value]) => ({ key, value })), body: r.request.body ?? undefined }
-    : m ? { method: m[1], url: m[2], headers: [] } : kase ? caseToSentRequest(kase) : null
-  // Reports persist per-assertion results (incl. passes) since 0048; older reports synthesize failure rows from `failures`.
+  if (m) return { method: m[1], url: m[2], headers: [] }
+  const kase = caseOf?.(r.caseId)
+  return kase ? caseToSentRequest(kase) : null
+}
+
+// Synthesize a DebugResponse from the stored response detail to reuse the debug 7-tab panel.
+// Reports persist per-assertion results (incl. passes) since 0048; older reports synthesize failure rows from `failures`.
+function synthDebugResponse(r: ReportResultItem): DebugResponse | null {
+  const hasDetail = r.statusCode != null || r.body != null || (r.headers?.length ?? 0) > 0
+  if (!hasDetail) return null
   const failAsserts: AssertionResult[] = r.failures.map((f) => ({ item: f, condition: '', expected: '', actual: '', passed: false, reason: f }))
   const asserts = r.assertions?.length ? r.assertions : failAsserts
-  // Synthesize a DebugResponse from the stored response detail to reuse the debug 7-tab panel.
-  const resp: DebugResponse | null = hasDetail
-    ? { status: r.statusCode ?? 0, latencyMs: r.latencyMs ?? 0, headers: r.headers ?? [], body: r.body ?? '', assertions: asserts.length ? asserts : undefined, extractions: r.extractions?.length ? r.extractions : undefined }
-    : null
-  const muted: React.CSSProperties = { color: 'var(--text-3)', fontSize: 12 }
+  return { status: r.statusCode ?? 0, latencyMs: r.latencyMs ?? 0, headers: r.headers ?? [], body: r.body ?? '', assertions: asserts.length ? asserts : undefined, extractions: r.extractions?.length ? r.extractions : undefined }
+}
+
+function ReportRow({ idx, r, label, t, open, onToggle, caseOf }: { idx: number; r: ReportResultItem; label: (id: string) => string; t: TFn; open: boolean; onToggle: () => void; caseOf?: (id: string) => ApiCase | undefined }) {
+  const hasDetail = r.statusCode != null || r.body != null || (r.headers?.length ?? 0) > 0
+  const req = synthSentRequest(r, caseOf)
+  const resp = synthDebugResponse(r)
   return (
     <div style={{ border: '1px solid var(--border-soft)', borderRadius: 8, marginBottom: 8, background: 'var(--panel)' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', cursor: hasDetail ? 'pointer' : 'default' }} onClick={() => hasDetail && onToggle()}>
         {hasDetail && <span style={{ color: 'var(--text-3)', fontSize: 11 }}>{open ? '▾' : '▸'}</span>}
         <span style={{ color: 'var(--text-3)', fontSize: 12, minWidth: 18 }}>{idx}</span>
         <span style={{ flex: 1, minWidth: 0 }} className="ms-mono">{label(r.caseId)}</span>
-        <Tag color={ok ? 'green' : 'red'} style={{ margin: 0 }}>{ok ? t('scenario.pass', '通过') : t('scenario.fail', '失败')}</Tag>
-        {r.statusCode != null && <span style={muted}>{t('apidef.statusCode', '状态码')} <span style={{ color: r.statusCode < 400 ? 'var(--success)' : 'var(--error)' }}>{r.statusCode}</span></span>}
-        <span style={muted}>{t('scenario.respTime', '响应时间')} {r.latencyMs != null ? `${r.latencyMs} ms` : '—'}</span>
-        <span style={muted}>{t('scenario.respSize', '响应大小')} {r.respSize != null ? `${r.respSize} bytes` : '—'}</span>
+        <ResultCluster r={r} t={t} />
       </div>
       {r.failures.length > 0 && (
         <div style={{ padding: '0 12px 8px 40px' }}>
@@ -2328,14 +2727,23 @@ function CustomRequestDrawer({
     setBody(r?.body || '')
     setAuthType(r?.auth?.type === 'bearer' || r?.auth?.type === 'basic' ? r.auth.type : 'none'); setAuthToken(r?.auth?.token || '')
     setAssertions(r ? (Array.isArray(r.assertions) ? r.assertions : []) : [{ type: 'StatusIs', args: 200 }])
-    // Stored processors carry no pre/post split; surface existing ones in the post tab.
-    setPre([]); setPost(r?.processors?.length ? r.processors : [])
+    // Split stored processors by args.phase; legacy entries without a phase land in the post tab.
+    const stored = (r?.processors?.length ? r.processors : []) as { args?: { phase?: string } }[]
+    setPre(stored.filter((p) => p?.args?.phase === 'pre'))
+    setPost(stored.filter((p) => p?.args?.phase !== 'pre'))
     setResp(null); setErr(''); setLastReq(null)
   }
   useEffect(() => { if (open) reset() }, [open, editStep?.id]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const clean = (rows: KVRow[]) => rows.filter((r) => r.key.trim())
   const authObj = () => (authType === 'none' ? undefined : { type: authType, token: authToken })
+  // The runner reads one processors array; args.phase only records which editor tab each entry belongs to.
+  const withPhase = (list: unknown[], phase: 'pre' | 'post') =>
+    list.map((p) => {
+      const o = p as { args?: Record<string, unknown> }
+      return { ...o, args: { ...(o.args || {}), phase } }
+    })
+  const mergedProcessors = () => [...withPhase(pre, 'pre'), ...withPhase(post, 'post')]
   const buildRequest = () => ({
     method,
     url: url.trim(),
@@ -2345,7 +2753,7 @@ function CustomRequestDrawer({
     restParams: clean(rest),
     auth: authObj(),
     assertions,
-    processors: [...pre, ...post],
+    processors: mergedProcessors(),
   })
 
   // Server run: build the final URL (REST {key} substitution + query string), send directly, show the response.
@@ -2359,7 +2767,7 @@ function CustomRequestDrawer({
     if (!req) return message.warning(t('editor.needEnvOrAbs', '相对路径需先选择带 baseUrl 的环境,或填写绝对 URL(http(s)://)'))
     setLastReq(req); setRunning(true); setErr(''); setResp(null)
     try {
-      setResp(await api.debugSend({ ...req, assertions: assertions as unknown[], processors: [...pre, ...post] as unknown[] }))
+      setResp(await api.debugSend({ ...req, assertions: assertions as unknown[], processors: mergedProcessors() as unknown[] }))
     } catch (e) {
       setErr(e instanceof ApiError ? e.message : t('editor.sendFail', '发送失败'))
     } finally {
@@ -2429,7 +2837,7 @@ function CustomRequestDrawer({
   ]
 
   return (
-    <Drawer
+    <ResizableDrawer
       open={open}
       onClose={onClose}
       width={full ? '92%' : 720}
@@ -2465,7 +2873,7 @@ function CustomRequestDrawer({
       <Divider style={{ margin: '12px 0' }} />
       <Typography.Text strong style={{ fontSize: 13 }}>{t('apidef.respContent', '响应内容')}</Typography.Text>
       <DebugResultPanel running={running} resp={resp} err={err} req={lastReq} isHttp assertions={assertions as Record<string, unknown>[]} extractors={[...pre, ...post] as Record<string, unknown>[]} />
-    </Drawer>
+    </ResizableDrawer>
   )
 }
 
@@ -2531,7 +2939,7 @@ function AddStepModal({
 
   const title = (makeStepMeta(t)[type]?.label || t('scenario.step', '步骤'))
   return (
-    <Modal title={`${t('scenario.addPrefix', '添加')} · ${title}`} open={!!type} onCancel={onClose} onOk={() => form.submit()} confirmLoading={saving} destroyOnHidden width={620}>
+    <EditDrawer title={`${t('scenario.addPrefix', '添加')} · ${title}`} open={!!type} onCancel={onClose} onOk={() => form.submit()} confirmLoading={saving} width={620}>
       <Form form={form} layout="vertical" initialValues={{ method: 'GET', operator: '等于', times: 3, ms: 1000, assertions: [{ type: 'StatusIs', args: 200 }] }} onFinish={submit}>
         {(type === 'CASE' || type === 'SCENARIO') && (
           <Form.Item name="refId" label={type === 'CASE' ? t('scenario.stepCase', '引用用例') : t('scenario.refSubScenario', '引用子场景')} rules={[{ required: true }]}>
@@ -2575,7 +2983,7 @@ function AddStepModal({
           </Form.Item>
         )}
       </Form>
-    </Modal>
+    </EditDrawer>
   )
 }
 
@@ -2693,7 +3101,7 @@ function ImportRequestDrawer({
   ]
 
   return (
-    <Drawer
+    <ResizableDrawer
       open={open}
       onClose={onClose}
       width="82%"
@@ -2753,7 +3161,7 @@ function ImportRequestDrawer({
           )}
         </div>
       </div>
-    </Drawer>
+    </ResizableDrawer>
   )
 }
 
@@ -2874,7 +3282,7 @@ function NewScenarioTab({ projectId, modules, onCreated, active }: { projectId: 
           {field(t('scenario.name', '场景名称'), <Input value={name} onChange={(e) => setName(e.target.value)} placeholder={t('scenario.namePlaceholder2', '请输入场景名称')} />, true)}
           {field(t('scenario.ownerModule', '所属模块'), <Select style={{ width: '100%' }} value={moduleId || ''} onChange={(v) => setModuleId(v || '')} placeholder={t('scenario.unplanned', '未规划场景')} options={[{ value: '', label: t('scenario.unplanned', '未规划场景') }, ...modules.map((m) => ({ value: m.id, label: m.name }))]} />)}
           {field(t('scenario.priority', '场景等级'), <Select style={{ width: '100%' }} value={priority} onChange={setPriority} options={SCENARIO_PRIORITIES.map((p) => ({ value: p, label: <span style={{ color: priorityColor(p) }}>● <span style={{ color: 'var(--text)' }}>{p}</span></span> }))} />)}
-          {field(t('scenario.sceneStatus', '场景状态'), <Select style={{ width: '100%' }} value={status} onChange={setStatus} options={SCENARIO_STATUSES.map((s) => ({ value: s, label: s }))} />)}
+          {field(t('scenario.sceneStatus', '场景状态'), <Select style={{ width: '100%' }} value={status} onChange={setStatus} options={SCENARIO_STATUSES.map((s) => ({ value: s, label: scStatusLabel(s, t) }))} />)}
           {field(t('scenario.tags', '标签'), (
             <Space size={[6, 6]} wrap>
               {tags.map((tg) => <Tag key={tg} closable onClose={() => setTags(tags.filter((x) => x !== tg))}>{tg}</Tag>)}
@@ -2943,7 +3351,7 @@ function ImportScenarioDrawer({ open, projectId, modules, onClose, onImported }:
   }
 
   return (
-    <Drawer
+    <ResizableDrawer
       open={open}
       onClose={onClose}
       width={560}
@@ -2965,6 +3373,6 @@ function ImportScenarioDrawer({ open, projectId, modules, onClose, onImported }:
           <p className="ant-upload-hint" style={{ fontSize: 12 }}>{t('scenario.fileHint', 'HAR 直接解析为请求步骤;MeterSphere/Jmeter 解析后续接入')}</p>
         </Upload.Dragger>
       </div>
-    </Drawer>
+    </ResizableDrawer>
   )
 }

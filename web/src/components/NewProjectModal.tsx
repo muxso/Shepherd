@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
-import { Modal, Form, Input, Select, Space, Button, Divider } from 'antd'
+import { Form, Input, Select, Space, Button, Divider } from 'antd'
+import EditDrawer from './EditDrawer'
 import { message } from '../feedback'
 import { api, ApiError, type Organization } from '../api'
 import { useApp } from '../context'
@@ -40,7 +41,7 @@ export default function NewProjectModal({ open, onClose }: { open: boolean; onCl
   }
 
   return (
-    <Modal title={t('proj.title', '新建项目')} open={open} onCancel={onClose} onOk={() => form.submit()} confirmLoading={saving} destroyOnHidden>
+    <EditDrawer title={t('proj.title', '新建项目')} open={open} onCancel={onClose} onOk={() => form.submit()} confirmLoading={saving}>
       <Form
         form={form}
         layout="vertical"
@@ -87,6 +88,6 @@ export default function NewProjectModal({ open, onClose }: { open: boolean; onCl
           <Input placeholder={t('proj.namePlaceholder', '如:电商核心')} />
         </Form.Item>
       </Form>
-    </Modal>
+    </EditDrawer>
   )
 }

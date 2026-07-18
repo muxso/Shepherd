@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Button, Dropdown, Form, Input, Modal, Segmented, Space, Switch, Table, Tag, message } from 'antd'
+import { Button, Dropdown, Form, Input, Segmented, Space, Switch, Table, Tag, message } from 'antd'
 import { MoreOutlined, SearchOutlined } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
 import { api, ApiError, userStore, type Organization, type Project } from '../api'
 import { modal } from '../feedback'
 import { useI18n } from '../i18n'
+import EditDrawer from '../components/EditDrawer'
 
 // System / organizations & projects (ref #53): org/project tabs + create org.
 export default function OrgProjects() {
@@ -117,12 +118,12 @@ function OrgModal({ open, editing, onClose, onDone, t }: { open: boolean; editin
     } finally { setBusy(false) }
   }
   return (
-    <Modal open={open} onCancel={onClose} onOk={submit} confirmLoading={busy} title={editing ? t('op.editOrg', '编辑组织') : t('op.createOrg', '创建组织')} destroyOnHidden>
+    <EditDrawer open={open} onCancel={onClose} onOk={submit} confirmLoading={busy} title={editing ? t('op.editOrg', '编辑组织') : t('op.createOrg', '创建组织')}>
       <Form form={form} layout="vertical" requiredMark={false}>
         <Form.Item name="name" label={t('op.name', '名称')} rules={[{ required: true, message: t('op.nameRequired', '请输入名称') }]}>
           <Input placeholder={t('op.namePh', '请输入组织名称')} />
         </Form.Item>
       </Form>
-    </Modal>
+    </EditDrawer>
   )
 }

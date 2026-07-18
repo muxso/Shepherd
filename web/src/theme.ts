@@ -43,6 +43,12 @@ export const lightTheme: ThemeConfig = {
     colorText: '#1d2129',
     colorTextSecondary: '#4e5969',
     colorTextTertiary: '#86909c',
+    // Lighter overlay mask: the stock 45% black reads too heavy behind drawers/modals.
+    colorBgMask: 'rgba(15, 23, 42, 0.18)',
+    // Flat elevation: shallow, low-alpha shadows across popovers/modals/drawers.
+    boxShadow: '0 2px 8px rgba(15, 23, 42, 0.06), 0 0 1px rgba(15, 23, 42, 0.08)',
+    boxShadowSecondary: '0 4px 16px rgba(15, 23, 42, 0.08), 0 0 1px rgba(15, 23, 42, 0.08)',
+    boxShadowTertiary: '0 1px 4px rgba(15, 23, 42, 0.05)',
   },
   components: {
     Button: { colorPrimaryHover: BRAND_HOVER, colorPrimaryActive: BRAND_ACTIVE, primaryShadow: 'none' },
@@ -73,6 +79,12 @@ export const darkTheme: ThemeConfig = {
     colorText: '#e2e5ec',
     colorTextSecondary: '#a3aab6',
     colorTextTertiary: '#6e7681',
+    // Lighter overlay mask (see lightTheme note).
+    colorBgMask: 'rgba(0, 0, 0, 0.35)',
+    // Flat elevation (see lightTheme note).
+    boxShadow: '0 2px 8px rgba(0, 0, 0, 0.22), 0 0 1px rgba(0, 0, 0, 0.3)',
+    boxShadowSecondary: '0 4px 16px rgba(0, 0, 0, 0.26), 0 0 1px rgba(0, 0, 0, 0.3)',
+    boxShadowTertiary: '0 1px 4px rgba(0, 0, 0, 0.2)',
   },
   components: {
     Layout: { headerBg: 'transparent', bodyBg: 'transparent', siderBg: 'transparent' },

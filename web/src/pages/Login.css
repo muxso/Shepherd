@@ -1,0 +1,265 @@
+/* Sliding two-panel login card: a welcome overlay covers the inactive form
+   and slides across when switching between SSO and password login. */
+
+.login-page,
+.login-page * {
+  box-sizing: border-box;
+}
+
+.login-page {
+  position: relative;
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background:
+    radial-gradient(1200px 600px at 20% -10%, color-mix(in srgb, var(--brand) 18%, transparent), transparent 60%),
+    radial-gradient(900px 500px at 110% 110%, color-mix(in srgb, var(--brand) 12%, transparent), transparent 55%),
+    var(--panel-2);
+}
+
+.login-logo {
+  position: absolute;
+  left: calc(50% - 230px);
+  top: calc(50% - 238px);
+  transform: translateX(-50%);
+  z-index: 200;
+  pointer-events: none;
+  transition: left 0.6s cubic-bezier(0.65, 0, 0.35, 1);
+  animation: loginFadeIn 0.6s ease-out both;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+.login-logo.on-right {
+  left: calc(50% + 230px);
+}
+.login-logo .login-brand {
+  display: block;
+  margin-top: 10px;
+  font-size: 24px;
+  font-weight: 700;
+  color: var(--text);
+  letter-spacing: 0.03em;
+}
+.login-logo .login-slogan {
+  display: block;
+  margin-top: 4px;
+  font-size: 12.5px;
+  color: var(--text-3);
+}
+
+.login-card {
+  position: relative;
+  width: 920px;
+  max-width: 100%;
+  height: 560px;
+  border: 1px solid var(--border-soft);
+  border-radius: 16px;
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.07), 0 0 1px rgba(15, 23, 42, 0.1);
+  overflow: hidden;
+  isolation: isolate;
+  animation: loginFadeIn 0.6s ease-out both;
+}
+
+@keyframes loginFadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .login-card, .login-logo { animation: none; }
+}
+
+.login-panel {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 50%;
+  height: 100%;
+  background: var(--panel);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 248px 40px 48px;
+  transition: all 0.6s cubic-bezier(0.65, 0, 0.35, 1);
+  overflow: hidden;
+}
+.login-panel-inner {
+  width: 100%;
+  max-width: 320px;
+  text-align: center;
+}
+.login-panel-inner h1 {
+  font-size: 26px;
+  font-weight: 600;
+  margin: 16px 0 8px;
+  color: var(--text);
+  letter-spacing: -0.01em;
+  line-height: 1.25;
+}
+.login-panel-sub {
+  color: var(--text-3);
+  font-size: 13px;
+  margin: 0 0 24px;
+  line-height: 1.55;
+}
+
+.login-panel-admin { z-index: 2; }
+.login-panel-sso { z-index: 1; opacity: 0; }
+
+/* mode=sso: the password panel slides right and the SSO panel takes over. */
+.login-card.mode-sso .login-panel-admin { transform: translateX(100%); }
+.login-card.mode-sso .login-panel-sso {
+  transform: translateX(100%);
+  opacity: 1;
+  z-index: 5;
+  animation: loginShowPanel 0.6s cubic-bezier(0.65, 0, 0.35, 1);
+}
+.login-card.mode-sso .login-overlay-wrap { transform: translateX(-100%); }
+.login-card.mode-sso .login-overlay { transform: translateX(50%); }
+
+@keyframes loginShowPanel {
+  0%, 49.99% { opacity: 0; z-index: 1; }
+  50%, 100% { opacity: 1; z-index: 5; }
+}
+
+.login-btn {
+  width: 100%;
+  height: 44px;
+  border-radius: 22px;
+  font-size: 14px;
+  font-weight: 500;
+  border: none;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  background: var(--brand);
+  color: #fff;
+  transition: filter 0.15s, transform 0.12s ease;
+}
+.login-btn:hover { filter: brightness(1.1); }
+.login-btn:active { transform: scale(0.97); }
+.login-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.login-btn-outline {
+  background: transparent;
+  color: var(--text);
+  border: 1.5px solid var(--text);
+  border-radius: 22px;
+  padding: 10px 28px;
+  font-size: 13.5px;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+.login-btn-outline:hover {
+  background: var(--text);
+  color: var(--panel);
+}
+
+.login-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 100%;
+  margin-top: 4px;
+}
+.login-form .ant-input-affix-wrapper,
+.login-form .ant-input {
+  border-radius: 22px !important;
+  min-height: 44px;
+  padding: 4px 16px;
+  background: var(--panel-2);
+  border-color: transparent;
+}
+.login-form .ant-input-affix-wrapper .ant-input {
+  min-height: unset;
+  background: transparent;
+}
+
+.login-overlay-wrap {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  width: 50%;
+  height: 100%;
+  overflow: hidden;
+  transition: transform 0.6s cubic-bezier(0.65, 0, 0.35, 1);
+  z-index: 100;
+}
+.login-overlay {
+  position: relative;
+  left: -100%;
+  width: 200%;
+  height: 100%;
+  background: var(--panel-2);
+  transition: transform 0.6s cubic-bezier(0.65, 0, 0.35, 1);
+}
+.login-overlay-side {
+  position: absolute;
+  top: 0;
+  width: 50%;
+  height: 100%;
+  padding: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+}
+.login-overlay-side.left { left: 0; }
+.login-overlay-side.right { right: 0; }
+.login-overlay-inner { max-width: 320px; }
+.login-overlay-inner h2 {
+  font-size: 26px;
+  font-weight: 600;
+  color: var(--text);
+  margin: 0 0 12px;
+  letter-spacing: -0.01em;
+}
+.login-overlay-inner p {
+  font-size: 13.5px;
+  color: var(--text-3);
+  line-height: 1.6;
+  margin: 0 0 28px;
+}
+
+/* Mobile: the slide metaphor needs width; below 720px stack and toggle. */
+@media (max-width: 720px) {
+  .login-logo, .login-logo.on-right { left: 50%; top: 40px; transform: translate(-50%, 0); }
+  .login-card { height: auto; min-height: 440px; }
+  .login-panel,
+  .login-card.mode-sso .login-panel-admin,
+  .login-card.mode-sso .login-panel-sso {
+    position: relative;
+    width: 100%;
+    transform: none;
+    padding: 96px 24px 32px;
+  }
+  .login-panel-admin { display: flex; }
+  .login-panel-sso { display: none; opacity: 1; }
+  .login-card.mode-sso .login-panel-admin { display: none; }
+  .login-card.mode-sso .login-panel-sso { display: flex; }
+  .login-overlay-wrap, .login-overlay {
+    position: relative;
+    left: 0;
+    width: 100%;
+    height: auto;
+    transform: none !important;
+    background: transparent;
+  }
+  .login-overlay-side {
+    position: relative;
+    width: 100%;
+    height: auto;
+    padding: 8px 24px 24px;
+  }
+  .login-overlay-side p { display: none; }
+  .login-overlay-side.right { display: flex; }
+  .login-overlay-side.left { display: none; }
+  .login-card.mode-sso .login-overlay-side.right { display: none; }
+  .login-card.mode-sso .login-overlay-side.left { display: flex; }
+}

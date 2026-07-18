@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Button, Card, Empty, Input, InputNumber, Modal, Popconfirm, Segmented, Space, Switch, Table, Tabs, Tag, Typography } from 'antd'
+import { Button, Card, Empty, Input, InputNumber, Popconfirm, Segmented, Space, Switch, Table, Tabs, Tag, Typography } from 'antd'
 import { message } from '../feedback'
 import { DeleteOutlined, EditOutlined, PlusOutlined, ReloadOutlined } from '@ant-design/icons'
 import { api, ApiError, type ApiBodyType, type ApiDefinition, type ApiMock } from '../api'
@@ -7,6 +7,7 @@ import { methodColor } from '../components/tags'
 import KVEditor, { type KVRow } from '../components/KVEditor'
 import MatchConditionEditor, { type MatchCond, emptyCond } from '../components/MatchConditionEditor'
 import { useI18n } from '../i18n'
+import EditDrawer from '../components/EditDrawer'
 
 const MATCH_BODY_TYPES: ApiBodyType[] = ['none', 'form-data', 'x-www-form-urlencoded', 'json', 'xml', 'raw', 'binary']
 const RESP_BODY_TYPES = ['json', 'xml', 'raw', 'binary'] as const
@@ -119,12 +120,11 @@ export default function MocksPanel({ definition }: { definition: ApiDefinition }
         ]}
       />
 
-      <Modal
+      <EditDrawer
         title={editing ? t('mock.editTitle', '编辑 MOCK') : t('mock.newTitle', '创建 MOCK')}
         open={open}
         onCancel={() => setOpen(false)}
         footer={null}
-        destroyOnHidden
         width={760}
       >
         <CreateMockForm
@@ -136,7 +136,7 @@ export default function MocksPanel({ definition }: { definition: ApiDefinition }
             load()
           }}
         />
-      </Modal>
+      </EditDrawer>
     </>
   )
 }

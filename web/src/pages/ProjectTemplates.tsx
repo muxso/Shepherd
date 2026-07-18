@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Button, Form, Input, Modal, Popconfirm, Select, Space, Switch, Table, Tabs, Tag } from 'antd'
+import { Button, Form, Input, Popconfirm, Select, Space, Switch, Table, Tabs, Tag } from 'antd'
 import { DeleteOutlined, HolderOutlined, PlusOutlined } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
 import { message } from '../feedback'
@@ -7,6 +7,7 @@ import { api, ApiError, type TemplateField, type TemplateFieldType } from '../ap
 import { useApp } from '../context'
 import { useI18n } from '../i18n'
 import { PageBody, PageContainer, PageHeader, SelectProjectEmpty } from '../components/Page'
+import EditDrawer from '../components/EditDrawer'
 import {
   FIELDS_TEMPLATE_NAME,
   defaultTemplateFields,
@@ -242,7 +243,7 @@ function AddFieldModal({ open, existing, kind, onClose, onAdd }: {
   }
 
   return (
-    <Modal title={t('tmpl.addField', '添加字段')} open={open} onCancel={onClose} onOk={() => form.submit()} okText={t('a.confirm', '确定')} cancelText={t('a.cancel', '取消')} destroyOnHidden>
+    <EditDrawer title={t('tmpl.addField', '添加字段')} open={open} onCancel={onClose} onOk={() => form.submit()} okText={t('a.confirm', '确定')} cancelText={t('a.cancel', '取消')}>
       <Form form={form} layout="vertical" initialValues={{ type: 'text', required: false }} onFinish={submit}>
         <Form.Item name="label" label={t('tmpl.colField', '字段名')} rules={[{ required: true, whitespace: true }]}>
           <Input placeholder={t('tmpl.fieldNamePh', '如:所属版本')} autoFocus maxLength={40} />
@@ -259,6 +260,6 @@ function AddFieldModal({ open, existing, kind, onClose, onAdd }: {
           <Switch size="small" />
         </Form.Item>
       </Form>
-    </Modal>
+    </EditDrawer>
   )
 }

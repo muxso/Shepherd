@@ -42,6 +42,14 @@ fn configured_builder() -> reqwest::ClientBuilder {
     reqwest::Client::builder().timeout(DEFAULT_TIMEOUT).connect_timeout(DEFAULT_CONNECT_TIMEOUT)
 }
 
+/// `host:port` for a timed DNS lookup; None for URLs without a host.
+fn host_port(url: &str) -> Option<String> {
+    let u = url::Url::parse(url).ok()?;
+    let host = u.host_str()?.to_string();
+    let port = u.port_or_known_default()?;
+    Some(format!("{host}:{port}"))
+}
+
 #[derive(Clone)]
 pub struct ReqwestRunner {
     client: reqwest::Client,
@@ -76,8 +84,23 @@ impl ReqwestRunner {
         if let Some(body) = &spec.body {
             req = req.body(body.clone());
         }
+
+        // DNS phase: a separately timed resolver lookup (the OS cache applies,
+        // so this reflects what the actual request will pay).
+        let dns_ms = match host_port(&spec.url) {
+            Some(hp) => {
+                let t = std::time::Instant::now();
+                match tokio::net::lookup_host(hp).await {
+                    Ok(_) => Some(t.elapsed().as_millis() as u64),
+                    Err(_) => None,
+                }
+            }
+            None => None,
+        };
+
         let started = std::time::Instant::now();
         let resp = req.send().await.map_err(|e| RunError::from_reqwest(&e))?;
+        let ttfb_ms = started.elapsed().as_millis() as u64;
 
         let status = resp.status().as_u16();
         let headers = resp
@@ -85,9 +108,21 @@ impl ReqwestRunner {
             .iter()
             .map(|(k, v)| (k.as_str().to_string(), v.to_str().unwrap_or("").to_string()))
             .collect();
+        let body_started = std::time::Instant::now();
         let body = resp.text().await.map_err(|e| RunError::from_reqwest(&e))?;
+        let download_ms = body_started.elapsed().as_millis() as u64;
         let elapsed_ms = started.elapsed().as_millis() as u64;
-        Ok(ResponseSnapshot { status, headers, body, elapsed_ms })
+        Ok(ResponseSnapshot {
+            status,
+            headers,
+            body,
+            elapsed_ms,
+            timings: crate::domain::PhaseTimings {
+                dns_ms,
+                ttfb_ms: Some(ttfb_ms),
+                download_ms: Some(download_ms),
+            },
+        })
     }
 
     pub async fn run_case(&self, spec: &RequestSpec, assertions: &[Assertion]) -> CaseReport {

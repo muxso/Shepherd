@@ -1,5 +1,7 @@
 import { forwardRef, useEffect, useImperativeHandle, useState } from 'react'
-import { Button, Card, Drawer, Empty, Input, InputNumber, Modal, Radio, Segmented, Select, Space, Table, Tabs, Tag, Tooltip, Typography } from 'antd'
+import { Button, Card, Empty, Input, InputNumber, Radio, Segmented, Select, Space, Table, Tabs, Tag, Tooltip, Typography } from 'antd'
+import ResizableDrawer from './ResizableDrawer'
+import EditDrawer from './EditDrawer'
 import { CopyOutlined, PlusOutlined, DeleteOutlined, SaveOutlined, UploadOutlined } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
 import QueryParamTable from './QueryParamTable'
@@ -22,6 +24,7 @@ import {
 } from '../api'
 import { message } from '../feedback'
 import { useI18n } from '../i18n'
+import { LatencyStat, fmtDurationMs } from './TimingBreakdown'
 
 const API_STATUSES = ['DRAFT', 'DEBUGGING', 'COMPLETED', 'DEPRECATED']
 
@@ -419,7 +422,7 @@ const ApiSpecPanel = forwardRef<ApiSpecPanelHandle, {
       ) : (
         <ExampleResponsesPanel responses={spec.responses || []} onChange={(rows) => patch({ responses: rows })} />
       )}
-      <Modal
+      <EditDrawer
         title={t('apidef.saveAsCase', '保存为新用例')}
         open={caseModalOpen}
         onCancel={() => setCaseModalOpen(false)}
@@ -427,11 +430,10 @@ const ApiSpecPanel = forwardRef<ApiSpecPanelHandle, {
         okButtonProps={{ loading: caseSaving }}
         okText={t('a.save', '保存')}
         cancelText={t('a.cancel', '取消')}
-        destroyOnHidden
       >
         <div style={{ fontSize: 13, color: 'var(--text-2)', marginBottom: 6 }}>{t('apidef.caseName', '用例名称')}</div>
         <Input value={caseName} onChange={(e) => setCaseName(e.target.value)} onPressEnter={doSaveCase} placeholder={t('apidef.caseName', '用例名称')} />
-      </Modal>
+      </EditDrawer>
     </div>
   )
 })
@@ -508,7 +510,7 @@ function reqToCurl(req: SentRequest): string {
   return parts.join(' \\\n')
 }
 
-const codeBox: React.CSSProperties = { background: '#0f1419', color: '#d6deeb', padding: 12, borderRadius: 6, maxHeight: 360, overflow: 'auto', fontSize: 12, whiteSpace: 'pre-wrap', wordBreak: 'break-all', margin: 0 }
+const codeBox: React.CSSProperties = { background: 'var(--panel-2)', color: 'var(--text)', border: '1px solid var(--border-soft)', padding: 12, borderRadius: 6, maxHeight: 360, overflow: 'auto', fontSize: 12, whiteSpace: 'pre-wrap', wordBreak: 'break-all', margin: 0 }
 
 /** Debug result panel: body/headers/actual request/console/cURL/extractions/assertions (execution triggered by the request line, env picked in the top bar). */
 export function DebugResultPanel({
@@ -661,7 +663,11 @@ export function DebugResultPanel({
         <div style={{ flex: 1 }} />
         {running && <Typography.Text type="secondary" style={{ fontSize: 12 }}>{t('a.loading', '加载中…')}</Typography.Text>}
         {resp && <Tag color={resp.status < 400 ? 'green' : 'red'}>{resp.status}</Tag>}
-        {resp && <Typography.Text type="secondary" style={{ fontSize: 12 }}>{resp.latencyMs} ms</Typography.Text>}
+        {resp && (
+          <LatencyStat totalMs={resp.latencyMs} timings={resp.timings}>
+            <Typography.Text type="secondary" style={{ fontSize: 12 }}>{fmtDurationMs(resp.latencyMs)}</Typography.Text>
+          </LatencyStat>
+        )}
       </div>
       <Tabs className="ms-detail-tabs" size="small" items={items} />
     </Card>
@@ -869,7 +875,7 @@ function BatchAddDrawer({ open, onClose, onApply }: { open: boolean; onClose: ()
     onClose()
   }
   return (
-    <Drawer
+    <ResizableDrawer
       title={t('body.batchAdd', '批量添加')}
       open={open}
       onClose={onClose}
@@ -885,7 +891,7 @@ function BatchAddDrawer({ open, onClose, onApply }: { open: boolean; onClose: ()
     >
       <div style={{ color: 'var(--text-3)', fontSize: 12, marginBottom: 8 }}>{t('body.batchHint', '书写格式:参数名,类型,必填,参数值;多条记录换行分隔')}</div>
       <Input.TextArea rows={12} value={text} onChange={(e) => setText(e.target.value)} placeholder={'username,string,true,admin\npassword,string,true,123'} className="ms-mono" />
-    </Drawer>
+    </ResizableDrawer>
   )
 }
 

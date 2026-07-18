@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react'
-import { Button, Drawer, Empty, Form, Input, Modal, Select, Space, Table, Tag, Tooltip, Typography } from 'antd'
+import { Button, Empty, Form, Input, Select, Space, Table, Tag, Tooltip, Typography } from 'antd'
+import EditDrawer from '../components/EditDrawer'
+import ResizableDrawer from '../components/ResizableDrawer'
 import { message } from '../feedback'
 import { PlusOutlined, PlayCircleOutlined, HistoryOutlined, ReloadOutlined } from '@ant-design/icons'
 import {
@@ -198,7 +200,7 @@ function RunModal({
   }
 
   return (
-    <Modal
+    <EditDrawer
       title={caseItem ? `${t('case.runCase', '运行用例')} · ${caseItem.name}` : ''}
       open={!!caseItem}
       onCancel={onClose}
@@ -243,7 +245,7 @@ function RunModal({
           />
         </Form.Item>
       </Form>
-    </Modal>
+    </EditDrawer>
   )
 }
 
@@ -264,7 +266,7 @@ function ExecutionsDrawer({ caseItem, onClose }: { caseItem: ApiCase | null; onC
   }, [caseItem])
 
   return (
-    <Drawer
+    <ResizableDrawer
       title={caseItem ? `${t('case.execHistory', '执行历史')} · ${caseItem.name}` : ''}
       open={!!caseItem}
       onClose={onClose}
@@ -295,6 +297,6 @@ function ExecutionsDrawer({ caseItem, onClose }: { caseItem: ApiCase | null; onC
           },
         ]}
       />
-    </Drawer>
+    </ResizableDrawer>
   )
 }

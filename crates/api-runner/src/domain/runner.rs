@@ -30,12 +30,25 @@ pub struct RequestSpec {
     pub body: Option<String>,
 }
 
+/// Per-phase timing of one HTTP exchange. `dns_ms` is a separately timed
+/// resolver lookup (OS cache applies); `ttfb_ms` spans request send to
+/// response headers (connect + TLS + server wait); `download_ms` is the body
+/// read. Phases other than the total are absent when not measured.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PhaseTimings {
+    pub dns_ms: Option<u64>,
+    pub ttfb_ms: Option<u64>,
+    pub download_ms: Option<u64>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResponseSnapshot {
     pub status: u16,
     pub headers: Vec<(String, String)>,
     pub body: String,
     pub elapsed_ms: u64,
+    pub timings: PhaseTimings,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -556,6 +569,7 @@ mod tests {
             headers: headers.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect(),
             body: body.to_string(),
             elapsed_ms: 0,
+            timings: PhaseTimings::default(),
         }
     }
 
