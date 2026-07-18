@@ -71,6 +71,9 @@ pub fn router(repo: Arc<dyn ApiScenarioRepository>, sessions: Arc<dyn SessionSto
         .route("/api/scenario/{id}/compile", get(compile_scenario))
         .route("/api/scenario/{id}/executions", get(list_executions))
         .route("/api/scenario/{id}/changes", get(list_changes))
+        .route("/api/scenario/recycle", get(list_recycle))
+        .route("/api/scenario/{id}/restore", post(restore_scenario))
+        .route("/api/scenario/{id}/purge", axum::routing::delete(purge_scenario))
         .with_state(state)
 }
 
@@ -784,9 +787,60 @@ async fn list_changes(
     }
 }
 
+#[utoipa::path(get, path = "/api/scenario/recycle", tag = "api-scenario", params(ScenarioListQuery), responses((status = 200, body = [ScenarioResponse]), (status = 403)), security(("bearer" = [])))]
+async fn list_recycle(
+    user: AuthUser,
+    State(st): State<ScenarioAppState>,
+    Query(q): Query<ScenarioListQuery>,
+) -> Response {
+    if !user.can("API_SCENARIO", "READ") {
+        return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
+    match st.repo.list_deleted(&q.project_id).await {
+        Ok(list) => {
+            let items: Vec<ScenarioResponse> =
+                list.into_iter().map(ScenarioResponse::from).collect();
+            (StatusCode::OK, Json(items)).into_response()
+        }
+        Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
+    }
+}
+
+#[utoipa::path(post, path = "/api/scenario/{id}/restore", tag = "api-scenario", params(("id" = String, Path)), responses((status = 204), (status = 403), (status = 404)), security(("bearer" = [])))]
+async fn restore_scenario(
+    user: AuthUser,
+    State(st): State<ScenarioAppState>,
+    Path(id): Path<String>,
+) -> Response {
+    if !user.can("API_SCENARIO", "UPDATE") {
+        return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
+    match st.repo.restore_scenario(&id).await {
+        Ok(true) => StatusCode::NO_CONTENT.into_response(),
+        Ok(false) => (StatusCode::NOT_FOUND, "scenario not found in recycle bin").into_response(),
+        Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
+    }
+}
+
+#[utoipa::path(delete, path = "/api/scenario/{id}/purge", tag = "api-scenario", params(("id" = String, Path)), responses((status = 204), (status = 403), (status = 404)), security(("bearer" = [])))]
+async fn purge_scenario(
+    user: AuthUser,
+    State(st): State<ScenarioAppState>,
+    Path(id): Path<String>,
+) -> Response {
+    if !user.can("API_SCENARIO", "DELETE") {
+        return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
+    match st.repo.purge_scenario(&id).await {
+        Ok(true) => StatusCode::NO_CONTENT.into_response(),
+        Ok(false) => (StatusCode::NOT_FOUND, "scenario not found in recycle bin").into_response(),
+        Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
+    }
+}
+
 #[derive(OpenApi)]
 #[openapi(
-    paths(create_scenario, copy_scenario, list_scenarios, get_scenario, delete_scenario, add_step, update_step, delete_step, compile_scenario, list_executions),
+    paths(create_scenario, copy_scenario, list_scenarios, get_scenario, delete_scenario, add_step, update_step, delete_step, compile_scenario, list_executions, list_recycle, restore_scenario, purge_scenario),
     components(schemas(
         ScenarioCreateBody,
         ScenarioCopyBody,

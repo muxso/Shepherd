@@ -280,15 +280,60 @@ impl ApiScenarioRepository for PgApiScenarioRepository {
     }
 
     async fn delete_scenario(&self, id: &str) -> Result<bool, RepoError> {
-        // Scenario is soft-deleted; steps are hard-deleted (step table has no soft-delete column).
+        // Soft delete only: steps stay so the recycle bin can restore intact.
         let res = sqlx::query(
             "UPDATE ms_api_scenario SET deleted = true WHERE id = $1 AND deleted = false",
         )
         .bind(id)
         .execute(&self.pool)
         .await
+            .map_err(map_err)?;
+        Ok(res.rows_affected() > 0)
+    }
+
+    async fn list_deleted(&self, project_id: &str) -> Result<Vec<ApiScenario>, RepoError> {
+        let rows = sqlx::query(
+            "SELECT id, project_id, COALESCE(num, 0) AS num, name, status, meta, created_by, \
+                    created_at::text AS created_at, updated_at::text AS updated_at, deleted \
+             FROM ms_api_scenario WHERE project_id = $1 AND deleted = true ORDER BY num DESC, id",
+        )
+        .bind(project_id)
+        .fetch_all(&self.pool)
+        .await
         .map_err(map_err)?;
+        let mut out = Vec::with_capacity(rows.len());
+        for row in &rows {
+            let mut scenario = row_to_scenario(row)?;
+            scenario.steps = self.load_steps(&scenario.id).await?;
+            out.push(scenario);
+        }
+        Ok(out)
+    }
+
+    async fn restore_scenario(&self, id: &str) -> Result<bool, RepoError> {
+        let res = sqlx::query(
+            "UPDATE ms_api_scenario SET deleted = false, updated_at = now() \
+             WHERE id = $1 AND deleted = true",
+        )
+        .bind(id)
+        .execute(&self.pool)
+        .await
+        .map_err(map_err)?;
+        Ok(res.rows_affected() > 0)
+    }
+
+    async fn purge_scenario(&self, id: &str) -> Result<bool, RepoError> {
         sqlx::query("DELETE FROM ms_api_scenario_step WHERE scenario_id = $1")
+            .bind(id)
+            .execute(&self.pool)
+            .await
+            .map_err(map_err)?;
+        sqlx::query("DELETE FROM ms_api_scenario_execution WHERE scenario_id = $1")
+            .bind(id)
+            .execute(&self.pool)
+            .await
+            .map_err(map_err)?;
+        let res = sqlx::query("DELETE FROM ms_api_scenario WHERE id = $1 AND deleted = true")
             .bind(id)
             .execute(&self.pool)
             .await
