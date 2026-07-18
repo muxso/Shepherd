@@ -12,6 +12,7 @@ const Todos = lazy(() => import('./pages/Todos'))
 const Follows = lazy(() => import('./pages/Follows'))
 const ApiDefinitions = lazy(() => import('./pages/ApiDefinitions'))
 const Scenarios = lazy(() => import('./pages/Scenarios'))
+const ScenarioRecycle = lazy(() => import('./pages/ScenarioRecycle'))
 const TestPlans = lazy(() => import('./pages/TestPlans'))
 const Perf = lazy(() => import('./pages/Perf'))
 const Requirements = lazy(() => import('./pages/Requirements'))
@@ -53,6 +54,7 @@ export default function App() {
           <Route path="/follow" element={<Follows />} />
           <Route path="/api/definition" element={<ApiDefinitions />} />
           <Route path="/api/scenario" element={<Scenarios />} />
+          <Route path="/api/scenario/recycle-bin" element={<ScenarioRecycle />} />
           <Route path="/functional-case" element={<FunctionalCases />} />
           <Route path="/environment" element={<EnvironmentsPage />} />
           <Route path="/resource-pool" element={<ResourcePoolsPage />} />
