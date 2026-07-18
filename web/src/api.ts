@@ -390,6 +390,8 @@ export interface CaseExecution {
 export interface Scenario {
   id: string
   projectId: string
+  /** Per-project display number shown as the list ID (100001…). */
+  num?: number
   name: string
   status: string
   /** Meta (description/tags/level/module/params); opaque JSON (migration 0044). */
@@ -433,6 +435,17 @@ export interface ScenarioRunResult {
   caseCount: number
 }
 
+/** Scenario cron schedule row (batch-edited from the list page). */
+export interface ScenarioSchedule {
+  scenarioId: string
+  cron: string
+  envMode: string
+  envId?: string | null
+  poolId?: string | null
+  enabled: boolean
+  lastRunAt: string
+}
+
 /** Scenario report detail row (per-case result). Note: latency/size/status code not yet persisted (pending runner support). */
 export interface ReportResultItem {
   caseId: string
@@ -455,6 +468,8 @@ export interface ScenarioReportDetail {
   reportId: string
   status: string
   caseCount: number
+  /** Display name (union batch reports); absent for single runs. */
+  name?: string
   /** Report start/end and total duration (ms, wall-clock; since 0056, null on older reports). */
   startedAt?: string | null
   finishedAt?: string | null
@@ -613,14 +628,72 @@ export interface CaseStep {
 export interface FunctionalCase {
   id: string
   projectId: string
+  /** Per-project display number shown as the case ID in the UI (100001…). */
+  num?: number
   name: string
   module?: string
   priority?: string
   status?: string
+  tags?: string[]
   steps?: CaseStep[]
   customFields?: Record<string, string>
   /** Creator user_id (migration 0063). */
   createdBy?: string
+  createdAt?: string
+  updatedAt?: string
+}
+
+/** One audit entry of a functional case (field-level old → new). */
+export interface CaseChange {
+  field: string
+  oldValue: string
+  newValue: string
+  actor: string
+  createdAt: string
+}
+
+/** Bug linked to a functional case (via ms_bug_relation). */
+export interface CaseBugLink {
+  bugId: string
+  title: string
+  status: string
+  createdBy: string
+  handler: string
+}
+
+/** Review containing the case + the case's own review status. */
+export interface CaseReviewLink {
+  reviewId: string
+  status: string
+  createdAt: string
+}
+
+/** Test plan containing the case + its execution outcome. */
+export interface CasePlanLink {
+  planId: string
+  planName: string
+  projectName: string
+  archived: boolean
+  execStatus: string
+  executedAt: string
+}
+
+/** Pre/post case dependency, resolved to the other case's identity. */
+export interface CaseDependencyLink {
+  caseId: string
+  num: number
+  name: string
+  createdBy: string
+}
+
+/** Generic comment attached to any entity (targetType + targetId). */
+export interface CommentItem {
+  id: string
+  targetType: string
+  targetId: string
+  content: string
+  author: string
+  createdAt: string
 }
 
 /** One functional case in requirement coverage (keyed by acceptance-criterion index). */
@@ -1300,6 +1373,7 @@ export const api = {
     name: string
     priority?: string
     module?: string
+    tags?: string[]
     steps?: CaseStep[]
     customFields?: Record<string, string>
   }) => http.post<FunctionalCase>('/functional-case', b),
@@ -1312,10 +1386,12 @@ export const api = {
       priority?: string
       status?: string
       module?: string
+      tags?: string[]
       steps?: CaseStep[]
       customFields?: Record<string, string>
     },
   ) => http.put<FunctionalCase>(`/functional-case/${id}`, b),
+  getFunctionalCase: (id: string) => http.get<FunctionalCase>(`/functional-case/${id}`),
   deleteFunctionalCase: (id: string) => http.del<void>(`/functional-case/${id}`),
   // Export xlsx (binary download) / import xlsx (raw byte upload, returns imported count).
   exportFunctionalCases: (projectId: string) =>
@@ -1331,6 +1407,25 @@ export const api = {
     http.get<CoverageCase[]>(`/requirement/${requirementId}/functional-coverage`),
   caseRequirements: (caseId: string) =>
     http.get<CaseRequirementLink[]>(`/functional-case/${caseId}/requirements`),
+  // Case detail drawer companions: audit trail, linked bugs/reviews/plans, pre/post dependencies.
+  caseChanges: (caseId: string) => http.get<CaseChange[]>(`/functional-case/${caseId}/changes`),
+  caseBugs: (caseId: string) => http.get<CaseBugLink[]>(`/functional-case/${caseId}/bugs`),
+  caseReviewLinks: (caseId: string) => http.get<CaseReviewLink[]>(`/functional-case/${caseId}/reviews`),
+  casePlanLinks: (caseId: string) => http.get<CasePlanLink[]>(`/functional-case/${caseId}/plans`),
+  caseDependencies: (caseId: string, direction: 'PRE' | 'POST') =>
+    http.get<CaseDependencyLink[]>(`/functional-case/${caseId}/dependencies?direction=${direction}`),
+  addCaseDependency: (caseId: string, b: { targetCaseId: string; direction: 'PRE' | 'POST'; projectId: string }) =>
+    http.post(`/functional-case/${caseId}/dependencies`, b),
+  removeCaseDependency: (caseId: string, targetId: string, direction: 'PRE' | 'POST') =>
+    http.del(`/functional-case/${caseId}/dependencies/${targetId}?direction=${direction}`),
+  // Generic comments (comment crate): list/add/delete by (targetType, targetId).
+  comments: (targetType: string, targetId: string) =>
+    http.get<CommentItem[]>(
+      `/comment?targetType=${encodeURIComponent(targetType)}&targetId=${encodeURIComponent(targetId)}`,
+    ),
+  addComment: (b: { targetType: string; targetId: string; content: string }) =>
+    http.post<CommentItem>('/comment', b),
+  deleteComment: (id: string) => http.del(`/comment/${id}`),
 
   // Project API cases (for test-plan case selection)
   projectCases: (projectId: string) =>
@@ -1628,10 +1723,48 @@ export const api = {
   ) => http.post<ScenarioStep>(`/api/scenario/${scenarioId}/step`, b),
   updateScenario: (id: string, b: { name: string; status?: string; meta?: Record<string, unknown> }) =>
     http.patch<Scenario>(`/api/scenario/${id}`, b),
+  // Replaces the step payload; ordering still goes through reorderScenarioSteps.
+  updateScenarioStep: (
+    scenarioId: string,
+    stepId: string,
+    b: { kind: string; refId?: string; request?: unknown; control?: unknown },
+  ) => http.patch<ScenarioStep>(`/api/scenario/${scenarioId}/step/${stepId}`, b),
   deleteScenarioStep: (scenarioId: string, stepId: string) =>
     http.del(`/api/scenario/${scenarioId}/step/${stepId}`),
   reorderScenarioSteps: (scenarioId: string, order: string[]) =>
     http.patch(`/api/scenario/${scenarioId}/steps/order`, { order }),
+  copyScenario: (scenarioId: string, name?: string) =>
+    http.post<Scenario>(`/api/scenario/${scenarioId}/copy`, { name }),
+  // Batch scenario execution: serial/parallel, optional env override, union report, pool-bound concurrency.
+  batchRunScenarios: (b: {
+    projectId: string
+    scenarioIds: string[]
+    environmentId?: string
+    mode?: 'SERIAL' | 'PARALLEL'
+    stopOnFail?: boolean
+    unionReport?: boolean
+    reportName?: string
+    poolId?: string
+  }) =>
+    http.post<{
+      status: string
+      reportId?: string
+      total: number
+      success: number
+      results: { scenarioId: string; reportId?: string | null; status: string }[]
+    }>('/api/scenario/batch-run', b),
+  // Scenario cron schedules: list per project; batch upsert (with cron) or toggle-only (enabled).
+  scenarioSchedules: (projectId: string) =>
+    http.get<ScenarioSchedule[]>(`/api/scenario/schedule?projectId=${encodeURIComponent(projectId)}`),
+  batchScenarioSchedule: (b: {
+    scenarioIds: string[]
+    projectId: string
+    cron?: string
+    envMode?: 'DEFAULT' | 'NEW'
+    envId?: string
+    poolId?: string
+    enabled?: boolean
+  }) => http.put<{ updated: number }>('/api/scenario/schedule/batch', b),
   runScenario: (scenarioId: string, projectId: string, opts?: { environmentId?: string; failureStrategy?: 'CONTINUE' | 'STOP' }) =>
     http.post<ScenarioRunResult>(`/api/scenario/${scenarioId}/run`, { projectId, environmentId: opts?.environmentId, failureStrategy: opts?.failureStrategy }),
   scenarioExecutions: (scenarioId: string) =>

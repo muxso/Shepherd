@@ -12,6 +12,7 @@ import { CF_GROUP, CustomFieldItem, collectCustomValues, customFormValues, useFi
 import { useI18n } from '../i18n'
 import { SelectProjectEmpty } from '../components/Page'
 import { useListView, type ListColumn } from '../components/ListView'
+import CaseDetailDrawer from '../components/CaseDetailDrawer'
 
 const PRIORITIES = ['P0', 'P1', 'P2', 'P3']
 const prioColor = (p?: string) => (p === 'P0' ? 'red' : p === 'P1' ? 'orange' : 'blue')
@@ -30,6 +31,8 @@ export default function FunctionalCases() {
   const [moduleKey, setModuleKey] = useState('ALL')
   const [moduleSearch, setModuleSearch] = useState('')
   const [editing, setEditing] = useState<FunctionalCase | null>(null)
+  // MeterSphere-style full-screen detail drawer; null = closed.
+  const [detailId, setDetailId] = useState<string | null>(null)
   const tabs = useWorkTabs()
 
   const load = async () => {
@@ -232,10 +235,22 @@ export default function FunctionalCases() {
             data={visible}
             pagination={lv.pagination}
             loading={loading}
-            onRowClick={(c) => tabs.open(c.id)}
+            onRowClick={(c) => setDetailId(c.id)}
             emptyText={t('func.emptyCase', '暂无用例')}
           />
         }
+      />
+      <CaseDetailDrawer
+        open={!!detailId}
+        caseId={detailId || ''}
+        cases={visible.length ? visible : cases}
+        modules={modules}
+        projectId={projectId}
+        onClose={() => setDetailId(null)}
+        onNavigate={setDetailId}
+        onEdit={(c) => setEditing(c)}
+        onChanged={load}
+        onDeleted={() => { setDetailId(null); load() }}
       />
       <CaseEditModal
         projectId={projectId}
