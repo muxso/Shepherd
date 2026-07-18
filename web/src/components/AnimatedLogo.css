@@ -10,19 +10,19 @@
   opacity: 0;
   transform: translateX(-14px);
   animation:
-    logoSlideIn 0.85s cubic-bezier(0.22, 1, 0.36, 1) forwards,
+    logoSlideIn 0.5s cubic-bezier(0.22, 1, 0.36, 1) forwards,
     logoShimmer 4.2s ease-in-out infinite;
 }
 
-.shepherd-logo .s-1 { animation-delay: 0.15s, 1.7s; }
-.shepherd-logo .s-2 { animation-delay: 0.26s, 1.85s; }
-.shepherd-logo .s-3 { animation-delay: 0.37s, 2.0s; }
-.shepherd-logo .s-4 { animation-delay: 0.48s, 2.15s; }
-.shepherd-logo .s-5 { animation-delay: 0.59s, 2.3s; }
-.shepherd-logo .s-6 { animation-delay: 0.7s, 2.45s; }
-.shepherd-logo .s-7 { animation-delay: 0.81s, 2.6s; }
-.shepherd-logo .s-8 { animation-delay: 0.92s, 2.75s; }
-.shepherd-logo .s-9 { animation-delay: 1.03s, 2.9s; }
+.shepherd-logo .s-1 { animation-delay: 0.05s, 1.0s; }
+.shepherd-logo .s-2 { animation-delay: 0.11s, 1.15s; }
+.shepherd-logo .s-3 { animation-delay: 0.17s, 1.3s; }
+.shepherd-logo .s-4 { animation-delay: 0.23s, 1.45s; }
+.shepherd-logo .s-5 { animation-delay: 0.29s, 1.6s; }
+.shepherd-logo .s-6 { animation-delay: 0.35s, 1.75s; }
+.shepherd-logo .s-7 { animation-delay: 0.41s, 1.9s; }
+.shepherd-logo .s-8 { animation-delay: 0.47s, 2.05s; }
+.shepherd-logo .s-9 { animation-delay: 0.53s, 2.2s; }
 
 @keyframes logoSlideIn {
   0% {
