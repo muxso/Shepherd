@@ -22,13 +22,18 @@ pub enum CaseError {
 pub struct FunctionalCase {
     pub id: String,
     pub project_id: String,
+    /// Per-project display number shown as the case ID in the UI (100001…).
+    pub num: i64,
     pub name: String,
     pub module: String,
     pub priority: String,
     pub status: String,
+    pub tags: Vec<String>,
     pub custom_fields: BTreeMap<String, String>,
     pub steps: Vec<CaseStep>,
     pub created_by: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -38,6 +43,7 @@ pub struct NewFunctionalCase {
     pub module: String,
     pub priority: String,
     pub status: String,
+    pub tags: Vec<String>,
     pub custom_fields: BTreeMap<String, String>,
     pub steps: Vec<CaseStep>,
     pub created_by: Option<String>,
@@ -75,6 +81,7 @@ impl NewFunctionalCase {
             module: module.trim().to_string(),
             priority: with_default(priority, "P2"),
             status: with_default(status, "PREPARED"),
+            tags: Vec::new(),
             custom_fields,
             steps,
             created_by: None,
@@ -83,6 +90,11 @@ impl NewFunctionalCase {
 
     pub fn with_created_by(mut self, user_id: Option<&str>) -> Self {
         self.created_by = user_id.map(str::trim).filter(|s| !s.is_empty()).map(str::to_string);
+        self
+    }
+
+    pub fn with_tags(mut self, tags: Vec<String>) -> Self {
+        self.tags = tags.into_iter().map(|t| t.trim().to_string()).filter(|t| !t.is_empty()).collect();
         self
     }
 }

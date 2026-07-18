@@ -3,12 +3,17 @@ use std::sync::Mutex;
 use async_trait::async_trait;
 
 use crate::domain::{FunctionalCase, NewFunctionalCase};
-use crate::ports::{CaseRepository, CaseRequirement, CoverageCase, RepoError};
+use crate::ports::{
+    CaseBugRef, CaseChange, CaseDependencyRef, CasePlanRef, CaseRepository, CaseRequirement,
+    CaseReviewRef, CoverageCase, RepoError,
+};
 
 #[derive(Default)]
 pub struct InMemoryCaseRepository {
     cases: Mutex<Vec<FunctionalCase>>,
     links: Mutex<Vec<(String, i32, String, String)>>,
+    changes: Mutex<Vec<(String, CaseChange)>>,
+    deps: Mutex<Vec<(String, String, String)>>,
 }
 
 impl InMemoryCaseRepository {
@@ -21,16 +26,26 @@ impl InMemoryCaseRepository {
 impl CaseRepository for InMemoryCaseRepository {
     async fn insert(&self, c: &NewFunctionalCase) -> Result<FunctionalCase, RepoError> {
         let mut g = self.cases.lock().map_err(|e| RepoError::Backend(e.to_string()))?;
+        let next_num = g
+            .iter()
+            .filter(|x| x.project_id == c.project_id)
+            .map(|x| x.num)
+            .max()
+            .map_or(100001, |m| m + 1);
         let view = FunctionalCase {
             id: format!("c{}", g.len() + 1),
             project_id: c.project_id.clone(),
+            num: next_num,
             name: c.name.clone(),
             module: c.module.clone(),
             priority: c.priority.clone(),
             status: c.status.clone(),
+            tags: c.tags.clone(),
             custom_fields: c.custom_fields.clone(),
             steps: c.steps.clone(),
             created_by: c.created_by.clone(),
+            created_at: String::new(),
+            updated_at: String::new(),
         };
         g.push(view.clone());
         Ok(view)
@@ -47,6 +62,7 @@ impl CaseRepository for InMemoryCaseRepository {
         existing.module = c.module.clone();
         existing.priority = c.priority.clone();
         existing.status = c.status.clone();
+        existing.tags = c.tags.clone();
         existing.custom_fields = c.custom_fields.clone();
         existing.steps = c.steps.clone();
         Ok(Some(existing.clone()))
@@ -135,5 +151,94 @@ impl CaseRepository for InMemoryCaseRepository {
                 criterion_index: *idx,
             })
             .collect())
+    }
+
+    async fn record_changes(
+        &self,
+        case_id: &str,
+        changes: &[(String, String, String)],
+        actor: &str,
+    ) -> Result<(), RepoError> {
+        let mut g = self.changes.lock().map_err(|e| RepoError::Backend(e.to_string()))?;
+        for (field, old, new) in changes {
+            g.push((
+                case_id.to_string(),
+                CaseChange {
+                    field: field.clone(),
+                    old_value: old.clone(),
+                    new_value: new.clone(),
+                    actor: actor.to_string(),
+                    created_at: String::new(),
+                },
+            ));
+        }
+        Ok(())
+    }
+
+    async fn list_changes(&self, case_id: &str) -> Result<Vec<CaseChange>, RepoError> {
+        let g = self.changes.lock().map_err(|e| RepoError::Backend(e.to_string()))?;
+        Ok(g.iter().filter(|(c, _)| c == case_id).map(|(_, ch)| ch.clone()).rev().collect())
+    }
+
+    async fn add_dependency(
+        &self,
+        project_id: &str,
+        case_id: &str,
+        depends_on_id: &str,
+        _created_by: &str,
+    ) -> Result<(), RepoError> {
+        let mut g = self.deps.lock().map_err(|e| RepoError::Backend(e.to_string()))?;
+        if !g.iter().any(|(_, c, d)| c == case_id && d == depends_on_id) {
+            g.push((project_id.to_string(), case_id.to_string(), depends_on_id.to_string()));
+        }
+        Ok(())
+    }
+
+    async fn remove_dependency(
+        &self,
+        case_id: &str,
+        depends_on_id: &str,
+    ) -> Result<(), RepoError> {
+        let mut g = self.deps.lock().map_err(|e| RepoError::Backend(e.to_string()))?;
+        g.retain(|(_, c, d)| !(c == case_id && d == depends_on_id));
+        Ok(())
+    }
+
+    async fn dependencies_for_case(
+        &self,
+        case_id: &str,
+        reverse: bool,
+    ) -> Result<Vec<CaseDependencyRef>, RepoError> {
+        let deps = self.deps.lock().map_err(|e| RepoError::Backend(e.to_string()))?;
+        let cases = self.cases.lock().map_err(|e| RepoError::Backend(e.to_string()))?;
+        Ok(deps
+            .iter()
+            .filter_map(|(_, c, d)| {
+                let other = if reverse {
+                    (d == case_id).then_some(c)
+                } else {
+                    (c == case_id).then_some(d)
+                }?;
+                let found = cases.iter().find(|x| &x.id == other)?;
+                Some(CaseDependencyRef {
+                    case_id: found.id.clone(),
+                    num: found.num,
+                    name: found.name.clone(),
+                    created_by: found.created_by.clone().unwrap_or_default(),
+                })
+            })
+            .collect())
+    }
+
+    async fn bugs_for_case(&self, _case_id: &str) -> Result<Vec<CaseBugRef>, RepoError> {
+        Ok(Vec::new())
+    }
+
+    async fn reviews_for_case(&self, _case_id: &str) -> Result<Vec<CaseReviewRef>, RepoError> {
+        Ok(Vec::new())
+    }
+
+    async fn plans_for_case(&self, _case_id: &str) -> Result<Vec<CasePlanRef>, RepoError> {
+        Ok(Vec::new())
     }
 }
