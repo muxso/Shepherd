@@ -351,7 +351,8 @@ export default function CardSettings({ layout, onSave, onExit }: Props) {
                   commit()
                 }}
                 style={{
-                  width: item.size === 'half' ? 'calc(50% - 6px)' : '100%',
+                  width: item.size === 'half' ? 'calc(50% - 8px)' : '100%',
+                  boxSizing: 'border-box',
                   display: 'flex',
                   alignItems: 'center',
                   gap: 8,

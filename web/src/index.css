@@ -376,3 +376,13 @@ body::before {
   background: var(--brand);
   height: 48px;
 }
+
+/* Home dashboard grid: cards in the same row stretch to equal height. */
+.ms-home-grid > .ant-col > .ant-card {
+  height: calc(100% - 16px);
+  display: flex;
+  flex-direction: column;
+}
+.ms-home-grid > .ant-col > .ant-card > .ant-card-body {
+  flex: 1;
+}
