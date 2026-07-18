@@ -819,6 +819,8 @@ function makeStepMeta(t: TFn): Record<string, { label: string; color: string }> 
 
 interface Node {
   kind: string
+  /** Copy provenance of a materialized request (COPY_CASE / COPY_API / COPY_SCENARIO). */
+  source?: string
   content: ReactNode
   children?: Node[]
   /** Raw child step (controller children item / sub-scenario step); used to open the drawer on click. */
@@ -859,7 +861,7 @@ function controlToNode(kind: string, payload: any, t: TFn, nameOf: NameOf): Node
 }
 
 function stepToNode(s: ScenarioStep, t: TFn, nameOf: NameOf): Node {
-  if (s.request) return { kind: 'REQUEST', content: <Space><Tag color={methodColor(s.request.method)}>{s.request.method}</Tag><span className="ms-mono">{s.request.url}</span></Space> }
+  if (s.request) return { kind: 'REQUEST', source: s.request.source || undefined, content: <Space><Tag color={methodColor(s.request.method)}>{s.request.method}</Tag><span className="ms-mono">{s.request.url}</span></Space> }
   if (s.caseId) return { kind: 'CASE', content: <span className="ms-mono">{t('scenario.caseRef', '用例')} {nameOf(s.caseId)}</span> }
   if (s.scenarioId) return { kind: 'SCENARIO', content: <span className="ms-mono">{t('scenario.subScenario', '子场景')} {nameOf(s.scenarioId)}</span> }
   if (s.control) return controlToNode(s.kind.toUpperCase(), s.control, t, nameOf)
@@ -867,7 +869,14 @@ function stepToNode(s: ScenarioStep, t: TFn, nameOf: NameOf): Node {
 }
 
 function StepRow({ node, idx, depth, t, result, running, seq = 0, enabled = true, onToggle, onRun, actions, hovered, respPreview, expandable, expanded, onChildSelect, onChildDblClick }: { node: Node; idx: number; depth: number; t: TFn; result?: ReportResultItem; running?: boolean; seq?: number; enabled?: boolean; onToggle?: () => void; onRun?: () => void; actions?: React.ReactNode; hovered?: boolean; respPreview?: React.ReactNode; expandable?: boolean; expanded?: boolean; onChildSelect?: (raw: ScenarioStep, path: number[]) => void; onChildDblClick?: (raw: ScenarioStep, path: number[]) => void }) {
-  const meta = makeStepMeta(t)[node.kind] || { label: node.kind, color: 'default' }
+  const copyLabels: Record<string, string> = {
+    COPY_CASE: t('scenario.copyCaseTag', '复制用例'),
+    COPY_API: t('scenario.copyApiTag', '复制API'),
+    COPY_SCENARIO: t('scenario.copyScnTag', '复制场景'),
+  }
+  const meta = node.source
+    ? { label: copyLabels[node.source] || t('scenario.copyTag', '复制'), color: 'green' }
+    : makeStepMeta(t)[node.kind] || { label: node.kind, color: 'default' }
   const ok = result?.outcome === 'SUCCESS'
   const muted: React.CSSProperties = { color: 'var(--text-3)', fontSize: 12, whiteSpace: 'nowrap' }
   const leaf = depth === 0
@@ -1129,8 +1138,7 @@ function ScenarioDetail({ scenario, active }: { scenario: Scenario; active?: boo
       message.error(e instanceof ApiError ? e.message : t('scenario.loadStepsFailed', '加载步骤失败'))
     }
   }
-  useEffect(() => {
-    loadSteps()
+  const loadReferenced = () =>
     // Load project cases + scenarios to build the id-to-name map for step display; load environments for run selection.
     Promise.all([
       api.projectCasesAll(scenario.projectId).catch(() => []),
@@ -1150,8 +1158,15 @@ function ScenarioDetail({ scenario, active }: { scenario: Scenario; active?: boo
       setEnvId((cur) => cur || (savedEnvId && environments.some((e) => e.id === savedEnvId) ? savedEnvId : environments.find((e) => e.enabled !== false)?.id || ''))
       setModules(mods)
     })
+  useEffect(() => {
+    loadSteps()
+    loadReferenced()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scenario.id])
+  const refreshReferenced = async () => {
+    await Promise.all([loadSteps(), loadReferenced()])
+    message.success(t('scenario.refDataRefreshed', '引用数据已刷新'))
+  }
 
   const run = async () => {
     setRunning(true)
@@ -1420,6 +1435,9 @@ function ScenarioDetail({ scenario, active }: { scenario: Scenario; active?: boo
           </Tooltip>
         )}
         <div style={{ flex: 1 }} />
+        <Tooltip title={t('scenario.refreshRefData', '刷新引用场景数据')}>
+          <Button size="small" icon={<ReloadOutlined />} onClick={refreshReferenced} />
+        </Tooltip>
         {lastRun && (() => {
           const vals = Object.values(stepResults)
           const passN = vals.filter((r) => r.outcome === 'SUCCESS').length
@@ -3126,21 +3144,21 @@ function ImportRequestDrawer({
       const bodies: StepBody[] = []
       for (const id of selApi) {
         const d = defs.find((x) => x.id === id)
-        if (d) bodies.push({ kind: 'REQUEST', order: order++, request: defToRequest(d) })
+        if (d) bodies.push({ kind: 'REQUEST', order: order++, request: { ...defToRequest(d), source: 'COPY_API' } })
       }
       for (const id of selCase) {
         const c = cases.find((x) => x.id === id)
-        if (c) bodies.push({ kind: 'REQUEST', order: order++, request: caseToRequest(c) })
+        if (c) bodies.push({ kind: 'REQUEST', order: order++, request: { ...caseToRequest(c), source: 'COPY_CASE' } })
       }
       // Scenario: expand one level — inline/case steps become editable requests,
       // nested scenario refs stay references, control steps keep their payload.
       for (const id of selScn) {
         const sc = await api.getScenario(id)
         for (const st of sc.steps || []) {
-          if (st.kind === 'REQUEST' && st.request) bodies.push({ kind: 'REQUEST', order: order++, request: st.request })
+          if (st.kind === 'REQUEST' && st.request) bodies.push({ kind: 'REQUEST', order: order++, request: { ...st.request, source: st.request.source || 'COPY_SCENARIO' } })
           else if (st.kind === 'CASE' && st.caseId) {
             const c = cases.find((x) => x.id === st.caseId)
-            if (c) bodies.push({ kind: 'REQUEST', order: order++, request: caseToRequest(c) })
+            if (c) bodies.push({ kind: 'REQUEST', order: order++, request: { ...caseToRequest(c), source: 'COPY_CASE' } })
             else bodies.push({ kind: 'CASE', order: order++, refId: st.caseId })
           } else if (st.kind === 'SCENARIO' && st.scenarioId) bodies.push({ kind: 'SCENARIO', order: order++, refId: st.scenarioId })
           else if (st.control != null) bodies.push({ kind: st.kind, order: order++, control: st.control })

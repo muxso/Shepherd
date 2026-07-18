@@ -424,6 +424,8 @@ export interface ScenarioStep {
     restParams?: { key: string; value: string }[]
     auth?: { type: string; token?: string }
     processors?: unknown[]
+    /** Copy provenance (COPY_CASE / COPY_API / COPY_SCENARIO) for materialized steps. */
+    source?: string
   } | null
   control?: unknown
   snapshot?: unknown

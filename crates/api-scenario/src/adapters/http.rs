@@ -113,6 +113,9 @@ struct InlineRequestDto {
     #[serde(skip_serializing_if = "Vec::is_empty")]
     #[schema(value_type = Vec<Object>)]
     processors: Vec<serde_json::Value>,
+    /// Provenance for materialized copies (COPY_CASE / COPY_API / COPY_SCENARIO).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    source: Option<String>,
 }
 
 impl From<&InlineRequest> for InlineRequestDto {
@@ -128,6 +131,7 @@ impl From<&InlineRequest> for InlineRequestDto {
             rest_params: arr(&r.rest_params),
             auth: r.auth.as_object().filter(|o| !o.is_empty()).map(|_| r.auth.clone()),
             processors: arr(&r.processors),
+            source: r.source.clone(),
         }
     }
 }
@@ -278,6 +282,8 @@ struct InlineRequestBody {
     #[serde(default)]
     #[schema(value_type = Vec<Object>)]
     processors: Option<serde_json::Value>,
+    #[serde(default)]
+    source: Option<String>,
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -568,15 +574,15 @@ fn parse_step_kind(
             let empty = || serde_json::Value::Array(vec![]);
             let req = InlineRequest::new(&r.method, &r.url, r.body)
                 .map_err(|_| "invalid inline request")?;
-            Ok(StepKind::Request(Box::new(
-                req.with_assertions(r.assertions.unwrap_or_else(empty)).with_spec(
-                    r.headers.unwrap_or_else(empty),
-                    r.query_params.unwrap_or_else(empty),
-                    r.rest_params.unwrap_or_else(empty),
-                    r.auth.unwrap_or_else(|| serde_json::json!({})),
-                    r.processors.unwrap_or_else(empty),
-                ),
-            )))
+            let mut req = req.with_assertions(r.assertions.unwrap_or_else(empty)).with_spec(
+                r.headers.unwrap_or_else(empty),
+                r.query_params.unwrap_or_else(empty),
+                r.rest_params.unwrap_or_else(empty),
+                r.auth.unwrap_or_else(|| serde_json::json!({})),
+                r.processors.unwrap_or_else(empty),
+            );
+            req.source = r.source.filter(|x| !x.trim().is_empty());
+            Ok(StepKind::Request(Box::new(req)))
         }
         "CASE" => match ref_id {
             Some(case_id) => Ok(StepKind::Case { case_id }),

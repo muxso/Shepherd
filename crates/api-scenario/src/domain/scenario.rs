@@ -128,6 +128,9 @@ pub struct InlineRequest {
     pub rest_params: serde_json::Value,
     pub auth: serde_json::Value,
     pub processors: serde_json::Value,
+    /// Provenance for materialized copies (COPY_CASE / COPY_API / COPY_SCENARIO);
+    /// None for hand-written requests.
+    pub source: Option<String>,
 }
 
 const ALLOWED_METHODS: &[&str] = &["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"];
@@ -156,6 +159,7 @@ impl InlineRequest {
             rest_params: empty_arr(),
             auth: serde_json::json!({}),
             processors: empty_arr(),
+            source: None,
         })
     }
 
@@ -182,13 +186,19 @@ impl InlineRequest {
     }
 
     pub fn with_spec_json(self, v: &serde_json::Value) -> Self {
-        self.with_spec(
+        let mut out = self.with_spec(
             v.get("headers").cloned().unwrap_or_else(empty_arr),
             v.get("queryParams").cloned().unwrap_or_else(empty_arr),
             v.get("restParams").cloned().unwrap_or_else(empty_arr),
             v.get("auth").cloned().unwrap_or_else(|| serde_json::json!({})),
             v.get("processors").cloned().unwrap_or_else(empty_arr),
-        )
+        );
+        out.source = v
+            .get("source")
+            .and_then(|x| x.as_str())
+            .filter(|x| !x.trim().is_empty())
+            .map(str::to_string);
+        out
     }
 
     pub fn to_inline_json(&self) -> serde_json::Value {
@@ -214,6 +224,9 @@ impl InlineRequest {
         }
         if nonempty_arr(&self.processors) {
             v["processors"] = self.processors.clone();
+        }
+        if let Some(src) = &self.source {
+            v["source"] = serde_json::Value::String(src.clone());
         }
         v
     }
