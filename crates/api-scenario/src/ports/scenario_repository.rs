@@ -37,6 +37,15 @@ pub trait ApiScenarioRepository: Send + Sync {
         step: &NewScenarioStep,
     ) -> Result<ScenarioStep, RepoError>;
 
+    /// Replace a step's payload (kind, ref_mode, snapshot); `step.order` is ignored —
+    /// ordering changes go through `reorder_steps`. Returns None if the step is missing.
+    async fn update_step(
+        &self,
+        scenario_id: &str,
+        step_id: &str,
+        step: &NewScenarioStep,
+    ) -> Result<Option<ScenarioStep>, RepoError>;
+
     async fn delete_step(&self, scenario_id: &str, step_id: &str) -> Result<bool, RepoError>;
 
     async fn reorder_steps(

@@ -401,6 +401,8 @@ pub struct ScenarioReference {
 pub struct ApiScenario {
     pub id: String,
     pub project_id: String,
+    /// Per-project display number shown as the list ID (100001…).
+    pub num: i64,
     pub name: String,
     pub status: ScenarioStatus,
     pub meta: serde_json::Value,
