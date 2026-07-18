@@ -921,7 +921,13 @@ function StepRow({ node, idx, depth, t, result, running, seq = 0, enabled = true
             <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }} onClick={(e) => e.stopPropagation()}>
               <Tag color={ok ? 'green' : 'red'} style={{ margin: 0 }}>{ok ? t('scenario.pass', '通过') : t('scenario.fail', '失败')}</Tag>
               {result.statusCode != null && <Tooltip title={t('scenario.statusTip', '服务端返回的 HTTP 状态码')}><span style={muted}>{t('apidef.statusCode', '状态码')} <span style={{ color: result.statusCode < 400 ? 'var(--success)' : 'var(--error)' }}>{result.statusCode}</span></span></Tooltip>}
-              <Tooltip title={t('scenario.respTimeTip', '从建立连接到收到服务端完整响应的全链路耗时')}><span style={muted}>{t('scenario.respTime', '响应时间')} {result.latencyMs != null ? fmtDuration(result.latencyMs) : '—'}</span></Tooltip>
+              {result.timings ? (
+                <LatencyStat totalMs={result.latencyMs ?? 0} timings={result.timings}>
+                  <span style={muted}>{t('scenario.respTime', '响应时间')} {result.latencyMs != null ? fmtDuration(result.latencyMs) : '—'}</span>
+                </LatencyStat>
+              ) : (
+                <Tooltip title={t('scenario.respTimeTip', '从建立连接到收到服务端完整响应的全链路耗时')}><span style={muted}>{t('scenario.respTime', '响应时间')} {result.latencyMs != null ? fmtDuration(result.latencyMs) : '—'}</span></Tooltip>
+              )}
               <Tooltip title={t('scenario.respSizeTip', '响应体大小')}><span style={muted}>{t('scenario.respSize', '响应大小')} {result.respSize != null ? fmtSize(result.respSize) : '—'}</span></Tooltip>
             </span>
           )
