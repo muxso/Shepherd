@@ -857,7 +857,7 @@ function controlToNode(kind: string, payload: any, t: TFn, nameOf: NameOf): Node
 function stepToNode(s: ScenarioStep, t: TFn, nameOf: NameOf): Node {
   if (s.request) return { kind: 'REQUEST', source: s.request.source || undefined, content: <Space><Tag color={methodColor(s.request.method)}>{s.request.method}</Tag><span className="ms-mono">{s.request.url}</span></Space> }
   if (s.caseId) return { kind: 'CASE', content: <span className="ms-mono">{t('scenario.caseRef', '用例')} {nameOf(s.caseId)}</span> }
-  if (s.scenarioId) return { kind: 'SCENARIO', content: <span className="ms-mono">{t('scenario.subScenario', '子场景')} {nameOf(s.scenarioId)}</span> }
+  if (s.scenarioId) return { kind: 'SCENARIO', source: s.refMode === 'COPY' ? 'COPY_SCENARIO' : undefined, content: <span className="ms-mono">{t('scenario.subScenario', '子场景')} {nameOf(s.scenarioId)}</span> }
   if (s.control) return controlToNode(s.kind.toUpperCase(), s.control, t, nameOf)
   return { kind: s.kind, content: '—' }
 }
@@ -1271,6 +1271,8 @@ function ScenarioDetail({ scenario, active }: { scenario: Scenario; active?: boo
       }
     }
     setSteps(arr)
+    // New references (e.g. scenario copies) need fresh name/case maps to label correctly.
+    loadReferenced()
   }
   // Inline insert: record the target index + a snapshot of current step ids, then open the matching add entry (custom request/import/controller).
   const startInsert = (key: string, at: number) => {
@@ -2685,7 +2687,7 @@ function ChildrenBuilder({ value, onChange, projectCases }: { value: Child[]; on
 }
 
 // Add-step modal dispatched by type: CASE/REQUEST/SCENARIO leaves + LOOP/IF/ONCE/TIMER controllers (with children).
-type StepBody = { kind: string; order: number; refId?: string; request?: unknown; control?: unknown }
+type StepBody = { kind: string; order: number; refId?: string; refMode?: string; snapshot?: unknown; request?: unknown; control?: unknown }
 // Custom request drawer: request line + headers/body/query/REST/pre/post/assertions/auth
 // + server run + response. The backend supports the full inline request spec.
 function CustomRequestDrawer({
@@ -3148,19 +3150,11 @@ function ImportRequestDrawer({
         const c = cases.find((x) => x.id === id)
         if (c) bodies.push({ kind: 'REQUEST', order: order++, request: { ...caseToRequest(c), source: 'COPY_CASE' } })
       }
-      // Scenario: expand one level — inline/case steps become editable requests,
-      // nested scenario refs stay references, control steps keep their payload.
+      // Scenario: deep-copy into an independent scenario, then mount the copy as a
+      // COPY group — it renders like a reference group, but edits stay private.
       for (const id of selScn) {
-        const sc = await api.getScenario(id)
-        for (const st of sc.steps || []) {
-          if (st.kind === 'REQUEST' && st.request) bodies.push({ kind: 'REQUEST', order: order++, request: { ...st.request, source: st.request.source || 'COPY_SCENARIO' } })
-          else if (st.kind === 'CASE' && st.caseId) {
-            const c = cases.find((x) => x.id === st.caseId)
-            if (c) bodies.push({ kind: 'REQUEST', order: order++, request: { ...caseToRequest(c), source: 'COPY_CASE' } })
-            else bodies.push({ kind: 'CASE', order: order++, refId: st.caseId })
-          } else if (st.kind === 'SCENARIO' && st.scenarioId) bodies.push({ kind: 'SCENARIO', order: order++, refId: st.scenarioId })
-          else if (st.control != null) bodies.push({ kind: st.kind, order: order++, control: st.control })
-        }
+        const copy = await api.copyScenario(id)
+        bodies.push({ kind: 'SCENARIO', order: order++, refId: copy.id, refMode: 'COPY', snapshot: { copiedFrom: id } })
       }
       if (onLocalImport) onLocalImport(bodies)
       else for (const b of bodies) await api.addStep(scenarioId, b)

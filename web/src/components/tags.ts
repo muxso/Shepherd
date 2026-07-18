@@ -103,3 +103,16 @@ export function outcomeColor(o: string): string {
   if (v.includes('FAIL') || v.includes('ERROR')) return 'red'
   return 'default'
 }
+
+/** Functional case lifecycle labels (PREPARED/REVIEWING/PASS/REJECT/PENDING). */
+export const funcCaseStatusLabel = (s: string | undefined, t: (k: string, f?: string) => string): string => {
+  const v = (s || 'PREPARED').toUpperCase()
+  const map: Record<string, string> = {
+    PREPARED: t('fcase.stPrepared', '未开始'),
+    PENDING: t('fcase.stPending', '待评审'),
+    REVIEWING: t('fcase.stReviewing', '评审中'),
+    PASS: t('fcase.stPass', '评审通过'),
+    REJECT: t('fcase.stReject', '评审不通过'),
+  }
+  return map[v] || (s || 'PREPARED')
+}
