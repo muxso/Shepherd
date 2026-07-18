@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import {
-  Avatar, Badge, Button, Dropdown, Empty, Input, Modal, Popconfirm, Segmented,
-  Select, Table, Tabs, Tag, Tooltip, Upload,
+  Avatar, Badge, Button, Checkbox, Dropdown, Input, Modal, Popconfirm, Popover,
+  Segmented, Select, Space, Table, Tabs, Tag, Tooltip, Upload,
 } from 'antd'
 import ResizableDrawer from './ResizableDrawer'
 import EditDrawer from './EditDrawer'
@@ -20,8 +20,18 @@ import {
   type CommentItem, type FunctionalCase, type ProjectFile,
 } from '../api'
 import { useI18n } from '../i18n'
+import { priorityColor } from './tags'
 
 const PRIORITIES = ['P0', 'P1', 'P2', 'P3']
+
+/** Detail-tab sections togglable via the 显示设置 popover; hidden keys persist in localStorage. */
+const FIELDS_KEY = 'shepherd.caseDetailFields'
+const DETAIL_FIELDS = [
+  { key: 'prerequisite', i18nKey: 'func.prerequisite', fallback: '前置条件' },
+  { key: 'steps', i18nKey: 'func.stepsDesc', fallback: '步骤描述' },
+  { key: 'remark', i18nKey: 'func.remark', fallback: '备注' },
+  { key: 'attachment', i18nKey: 'funcd.fieldAttachment', fallback: '附件' },
+]
 const prioDot = (p?: string) =>
   p === 'P0' ? 'var(--error)' : p === 'P1' ? 'var(--warning, #ff7d00)' : p === 'P3' ? 'var(--text-3)' : 'var(--brand)'
 
@@ -70,6 +80,13 @@ export default function CaseDetailDrawer({
   const [fullscreen, setFullscreen] = useState(false)
   const [activeTab, setActiveTab] = useState('info')
   const [changeCount, setChangeCount] = useState(0)
+  const [hiddenFields, setHiddenFields] = useState<string[]>(() => {
+    try { return JSON.parse(localStorage.getItem(FIELDS_KEY) || '[]') } catch { return [] }
+  })
+  const saveHiddenFields = (next: string[]) => {
+    setHiddenFields(next)
+    localStorage.setItem(FIELDS_KEY, JSON.stringify(next))
+  }
 
   const load = () => {
     if (!caseId) return
@@ -192,15 +209,39 @@ export default function CaseDetailDrawer({
             activeKey={activeTab}
             onChange={setActiveTab}
             style={{ flex: 1, minHeight: 0, padding: '0 16px' }}
-            tabBarExtraContent={{ right: <Button type="text" size="small">{t('funcd.displaySettings', '显示设置')}</Button> }}
+            tabBarExtraContent={{
+              right: (
+                <Popover
+                  trigger="click"
+                  placement="bottomRight"
+                  title={t('funcd.displaySettings', '显示设置')}
+                  content={
+                    <Space direction="vertical" size={4} style={{ width: 140 }}>
+                      {DETAIL_FIELDS.map((f) => (
+                        <Checkbox
+                          key={f.key}
+                          checked={!hiddenFields.includes(f.key)}
+                          onChange={(e) =>
+                            saveHiddenFields(e.target.checked ? hiddenFields.filter((x) => x !== f.key) : [...hiddenFields, f.key])
+                          }
+                        >
+                          {t(f.i18nKey, f.fallback)}
+                        </Checkbox>
+                      ))}
+                    </Space>
+                  }
+                >
+                  <Button type="text" size="small">{t('funcd.displaySettings', '显示设置')}</Button>
+                </Popover>
+              ),
+            }}
             items={[
               { key: 'info', label: t('func.tabInfo', '基本信息'), children: c ? <InfoTab c={c} modules={modules} nameOf={nameOf} onSaveTags={(tags) => save({ tags })} /> : null },
-              { key: 'detail', label: t('a.detail', '详情'), children: c ? <DetailTab c={c} projectId={projectId} onSave={save} /> : null },
-              { key: 'case', label: t('nav.case', '用例'), children: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('g.empty', '暂无数据')} style={{ marginTop: 48 }} /> },
+              { key: 'detail', label: t('a.detail', '详情'), children: c ? <DetailTab c={c} projectId={projectId} hidden={hiddenFields} onSave={save} /> : null },
               { key: 'req', label: t('home.req', '需求'), children: <RequirementTab caseId={caseId} projectId={projectId} /> },
               { key: 'bug', label: t('home.bug', '缺陷'), children: <BugTab caseId={caseId} projectId={projectId} nameOf={nameOf} /> },
               { key: 'deps', label: t('funcd.deps', '依赖关系'), children: <DependencyTab caseId={caseId} projectId={projectId} cases={cases} nameOf={nameOf} /> },
-              { key: 'review', label: t('funcd.caseReview', '用例评审'), children: <ReviewTab caseId={caseId} /> },
+              { key: 'review', label: t('funcd.caseReview', '用例评审'), children: <ReviewTab caseId={caseId} projectId={projectId} /> },
               { key: 'plan', label: t('home.plan', '测试计划'), children: <PlanTab caseId={caseId} /> },
               { key: 'comment', label: t('funcd.comments', '评论'), children: <CommentTab caseId={caseId} nameOf={nameOf} /> },
               {
@@ -282,10 +323,11 @@ function InfoTab({
 
 /** Detail tab: prerequisite / steps (or text description) / remark / attachments; the edit button flips to inline edit. */
 function DetailTab({
-  c, projectId, onSave,
+  c, projectId, hidden, onSave,
 }: {
   c: FunctionalCase
   projectId: string
+  hidden: string[]
   onSave: (patch: { customFields?: Record<string, string>; steps?: CaseStep[] }) => void
 }) {
   const { t } = useI18n()
@@ -382,7 +424,7 @@ function DetailTab({
       >
         {t('funcd.contentEdit', '内容编辑')}
       </Button>
-      {section(
+      {!hidden.includes('prerequisite') && section(
         t('func.prerequisite', '前置条件'),
         editing ? (
           <MarkdownEditor projectId={projectId} value={draftPre} onChange={setDraftPre} placeholder={t('a.pleaseInput', '请输入内容')} />
@@ -390,7 +432,7 @@ function DetailTab({
           textBlock(cf['前置条件'])
         ),
       )}
-      {section(
+      {!hidden.includes('steps') && section(
         <span>
           {t('func.stepsDesc', '步骤描述')}
           <span style={{ margin: '0 10px', color: 'var(--border)' }}>|</span>
@@ -453,7 +495,7 @@ function DetailTab({
           />
         ),
       )}
-      {section(
+      {!hidden.includes('remark') && section(
         t('func.remark', '备注'),
         editing ? (
           <MarkdownEditor projectId={projectId} value={draftRemark} onChange={setDraftRemark} placeholder={t('a.pleaseInput', '请输入内容')} />
@@ -467,7 +509,7 @@ function DetailTab({
           <Button type="primary" onClick={saveEdit}>{t('a.save', '保存')}</Button>
         </div>
       )}
-      {section(
+      {!hidden.includes('attachment') && section(
         t('funcd.addAttachment', '添加附件'),
         <div>
           <Upload showUploadList={false} beforeUpload={upload}>
@@ -606,7 +648,9 @@ function RequirementTab({ caseId, projectId }: { caseId: string; projectId: stri
   )
 }
 
-/** Bugs tab: bugs linked to the case (direct) + link/create dialogs; the test-plan view is a placeholder. */
+/** Bugs tab: bugs linked to the case (direct) + link/create dialogs.
+ * The link DTO carries no severity, so the project bug list is joined in for the severity tag.
+ * The test-plan view stays read-only: bug relations only support direct case links (no plan-scoped kind). */
 function BugTab({ caseId, projectId, nameOf }: { caseId: string; projectId: string; nameOf: (u?: string) => string }) {
   const { t } = useI18n()
   const [view, setView] = useState<'direct' | 'plan'>('direct')
@@ -617,8 +661,12 @@ function BugTab({ caseId, projectId, nameOf }: { caseId: string; projectId: stri
   const [bugList, setBugList] = useState<Bug[]>([])
   const [selBug, setSelBug] = useState<string>()
   const [newTitle, setNewTitle] = useState('')
-  const load = () => api.caseBugs(caseId).then(setRows).catch(() => setRows([]))
+  const load = () => {
+    api.caseBugs(caseId).then(setRows).catch(() => setRows([]))
+    api.bugs(projectId).then(setBugList).catch(() => setBugList([]))
+  }
   useEffect(() => { load() }, [caseId]) // eslint-disable-line react-hooks/exhaustive-deps
+  const severityOf = (bugId: string) => bugList.find((b) => b.id === bugId)?.severity || ''
 
   const openLink = async () => {
     setLinkOpen(true)
@@ -639,7 +687,7 @@ function BugTab({ caseId, projectId, nameOf }: { caseId: string; projectId: stri
   const doCreate = async () => {
     if (!newTitle.trim()) return message.warning(t('funcd.bugTitleRequired', '请输入缺陷名称'))
     try {
-      const b = await api.createBug({ projectId, title: newTitle.trim(), initialStatus: 'OPEN' })
+      const b = await api.createBug({ projectId, title: newTitle.trim(), initialStatus: 'NEW' })
       await api.linkBugRelation(b.id, { kind: 'FUNCTIONAL_CASE', targetId: caseId })
       message.success(t('funcd.bugCreated', '缺陷已创建并关联'))
       setNewOpen(false)
@@ -675,7 +723,10 @@ function BugTab({ caseId, projectId, nameOf }: { caseId: string; projectId: stri
         <Button onClick={() => setNewOpen(true)}>{t('funcd.newBug', '新建缺陷')}</Button>
       </div>
       {view === 'plan' ? (
-        <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('g.empty', '暂无数据')} style={{ marginTop: 48 }} />
+        <div style={{ textAlign: 'center', color: 'var(--text-3)', padding: '48px 0' }}>
+          <InboxOutlined style={{ fontSize: 32 }} />
+          <div style={{ marginTop: 8 }}>{t('funcd.planBugsHint', '暂无测试计划执行产生的缺陷')}</div>
+        </div>
       ) : (
         <Table<CaseBugLink>
           rowKey="bugId"
@@ -693,6 +744,13 @@ function BugTab({ caseId, projectId, nameOf }: { caseId: string; projectId: stri
           columns={[
             { title: 'ID', dataIndex: 'bugId', width: 120, render: (v: string) => <span className="ms-mono">{v.slice(0, 8)}</span> },
             { title: t('funcd.bugName', '缺陷名称'), dataIndex: 'title' },
+            {
+              title: t('bug.severity', '严重程度'), key: 'severity', width: 110,
+              render: (_v, r) => {
+                const s = severityOf(r.bugId)
+                return s ? <Tag color={priorityColor(s)}>{s}</Tag> : '—'
+              },
+            },
             { title: t('funcd.bugStatus', '缺陷状态'), dataIndex: 'status', width: 140, render: (s: string) => <Tag>{s}</Tag> },
             { title: t('lv.createdBy', '创建人'), dataIndex: 'createdBy', width: 140, render: (u: string) => nameOf(u || undefined) },
             { title: t('funcd.handler', '处理人'), dataIndex: 'handler', width: 140, render: (u: string) => (u ? nameOf(u) : '—') },
@@ -821,17 +879,32 @@ function DependencyTab({
   )
 }
 
-const REVIEW_STATUS: Record<string, string> = { PASS: '通过', REJECT: '不通过', PENDING: '进行中' }
+// Per-case review verdicts (shared vocabulary with the review pages; i18n keys review.cs.*).
+const REVIEW_STATUS: Record<string, { label: string; color: string }> = {
+  UN_REVIEWED: { label: '未评审', color: 'default' },
+  UNDER_REVIEWED: { label: '评审中', color: 'blue' },
+  PASS: { label: '通过', color: 'green' },
+  UN_PASS: { label: '未通过', color: 'red' },
+  RE_REVIEWED: { label: '重新评审', color: 'orange' },
+}
 
-/** Reviews tab: reviews containing the case + the case's verdict inside each. */
-function ReviewTab({ caseId }: { caseId: string }) {
+/** Reviews tab: reviews containing the case + the case's verdict inside each.
+ * Review names come from the project review list (the link DTO only has ids). */
+function ReviewTab({ caseId, projectId }: { caseId: string; projectId: string }) {
   const { t } = useI18n()
   const [rows, setRows] = useState<CaseReviewLink[]>([])
+  const [names, setNames] = useState<Record<string, string>>({})
   const [search, setSearch] = useState('')
   useEffect(() => {
     api.caseReviewLinks(caseId).then(setRows).catch(() => setRows([]))
   }, [caseId])
-  const visible = rows.filter((r) => !search || r.reviewId.includes(search))
+  useEffect(() => {
+    api.caseReviews(projectId)
+      .then((rs) => setNames(Object.fromEntries(rs.filter((r) => r.name).map((r) => [r.id, r.name]))))
+      .catch(() => setNames({}))
+  }, [projectId])
+  const nameOf = (id: string) => names[id] || `${t('funcd.reviewShort', '评审')} ${id.slice(0, 8)}`
+  const visible = rows.filter((r) => !search || r.reviewId.includes(search) || nameOf(r.reviewId).includes(search))
   return (
     <div style={{ overflow: 'auto' }}>
       <div style={{ display: 'flex', marginBottom: 12 }}>
@@ -854,17 +927,18 @@ function ReviewTab({ caseId }: { caseId: string }) {
         locale={{ emptyText: <span style={{ color: 'var(--text-2)' }}>{t('g.empty', '暂无数据')}</span> }}
         columns={[
           { title: 'ID', dataIndex: 'reviewId', width: 160, render: (v: string) => <span className="ms-mono">{v.slice(0, 8)}</span> },
-          { title: t('funcd.reviewName', '评审名称'), dataIndex: 'reviewId', render: (v: string) => v },
+          { title: t('funcd.reviewName', '评审名称'), dataIndex: 'reviewId', key: 'name', render: (v: string) => nameOf(v) },
           {
             title: t('funcd.reviewStatus', '评审状态'), width: 140,
-            render: (_v, r) => <Tag color={r.status === 'PENDING' ? 'blue' : 'default'}>{r.status === 'PENDING' ? t('funcd.reviewing', '进行中') : t('funcd.reviewDone', '已完成')}</Tag>,
+            render: (_v, r) => {
+              const done = r.status === 'PASS' || r.status === 'UN_PASS'
+              return <Tag color={done ? 'default' : 'blue'}>{done ? t('funcd.reviewDone', '已完成') : t('funcd.reviewing', '进行中')}</Tag>
+            },
           },
           {
             title: t('funcd.reviewResult', '评审结果'), dataIndex: 'status', width: 140,
             render: (s: string) => (
-              <Tag color={s === 'PASS' ? 'green' : s === 'REJECT' ? 'red' : 'blue'}>
-                {t(`funcd.review.${s}`, REVIEW_STATUS[s] || s)}
-              </Tag>
+              <Tag color={REVIEW_STATUS[s]?.color || 'blue'}>{t(`review.cs.${s}`, REVIEW_STATUS[s]?.label || s)}</Tag>
             ),
           },
           { title: t('funcd.reviewTime', '评审时间'), dataIndex: 'createdAt', width: 200, render: (v: string) => <span className="ms-mono">{v.slice(0, 19)}</span> },
