@@ -31,6 +31,15 @@ pub trait ApiScenarioRepository: Send + Sync {
 
     async fn delete_scenario(&self, id: &str) -> Result<bool, RepoError>;
 
+    /// Soft-deleted scenarios of a project (the recycle bin).
+    async fn list_deleted(&self, project_id: &str) -> Result<Vec<ApiScenario>, RepoError>;
+
+    /// Clears the deleted flag; false when the id is unknown or not deleted.
+    async fn restore_scenario(&self, id: &str) -> Result<bool, RepoError>;
+
+    /// Hard-deletes a soft-deleted scenario with its steps and executions.
+    async fn purge_scenario(&self, id: &str) -> Result<bool, RepoError>;
+
     async fn add_step(
         &self,
         scenario_id: &str,

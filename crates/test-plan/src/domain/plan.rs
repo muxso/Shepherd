@@ -82,6 +82,38 @@ pub struct Plan {
     pub created_at_ms: i64,
 }
 
+/// Editable plan fields beyond the core Plan identity (PUT /test-plan/{id}).
+#[derive(Debug, Clone, PartialEq)]
+pub struct PlanMeta {
+    pub description: String,
+    pub tags: Vec<String>,
+    pub module_id: Option<String>,
+    pub group_id: String,
+    /// Unix milliseconds; None = no start date.
+    pub start_at_ms: Option<i64>,
+    pub end_at_ms: Option<i64>,
+    pub allow_duplicate_cases: bool,
+    pub auto_update_status: bool,
+    /// Fraction 0..=1 (the HTTP API exposes it as a 0..=100 percent).
+    pub pass_threshold: f64,
+}
+
+impl Default for PlanMeta {
+    fn default() -> Self {
+        Self {
+            description: String::new(),
+            tags: Vec::new(),
+            module_id: None,
+            group_id: ROOT_GROUP.to_string(),
+            start_at_ms: None,
+            end_at_ms: None,
+            allow_duplicate_cases: true,
+            auto_update_status: true,
+            pass_threshold: 1.0,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

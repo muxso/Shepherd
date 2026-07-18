@@ -1,5 +1,8 @@
 use crate::domain::{PassRule, ReviewRecord, ReviewSetting, ReviewStatus};
-use crate::ports::{RepoError, ReviewCaseStatus, ReviewDetail, ReviewRepository, ReviewSummary};
+use crate::ports::{
+    NewReview, RepoError, ReviewCaseStatus, ReviewDetail, ReviewMeta, ReviewMetaUpdate,
+    ReviewRepository, ReviewSummary,
+};
 use async_trait::async_trait;
 use sqlx::{PgPool, Row};
 
@@ -102,29 +105,35 @@ impl ReviewRepository for PgReviewRepository {
         Ok(())
     }
 
-    async fn create_review(
-        &self,
-        project_id: &str,
-        pass_rule: &str,
-        reviewer_count: usize,
-        case_ids: &[String],
-    ) -> Result<String, RepoError> {
-        let rule = PassRule::parse(pass_rule).unwrap_or(PassRule::Single);
+    async fn create_review(&self, req: &NewReview) -> Result<String, RepoError> {
+        let rule = PassRule::parse(&req.pass_rule).unwrap_or(PassRule::Single);
+        let tags =
+            serde_json::to_string(&req.meta.tags).map_err(|e| RepoError::Backend(e.to_string()))?;
         let mut tx = self.pool.begin().await.map_err(map_err)?;
         let id: String = sqlx::query(
-            "INSERT INTO ms_case_review (id, pass_rule, reviewer_count, project_id, case_ids) \
-             VALUES (gen_random_uuid()::text, $1, $2, $3, $4) RETURNING id",
+            "INSERT INTO ms_case_review \
+               (id, pass_rule, reviewer_count, project_id, case_ids, \
+                name, description, tags, module_id, start_at, end_at, created_by) \
+             VALUES (gen_random_uuid()::text, $1, $2, $3, $4, $5, $6, $7::jsonb, $8, \
+                NULLIF($9, '')::timestamptz, NULLIF($10, '')::timestamptz, $11) RETURNING id",
         )
         .bind(rule.as_str())
-        .bind(reviewer_count as i32)
-        .bind(project_id)
-        .bind(case_ids.to_vec())
+        .bind(req.reviewer_count as i32)
+        .bind(&req.project_id)
+        .bind(req.case_ids.clone())
+        .bind(&req.meta.name)
+        .bind(&req.meta.description)
+        .bind(&tags)
+        .bind(&req.meta.module_id)
+        .bind(req.meta.start_at.clone().unwrap_or_default())
+        .bind(req.meta.end_at.clone().unwrap_or_default())
+        .bind(&req.created_by)
         .fetch_one(&mut *tx)
         .await
         .map_err(map_err)?
         .try_get("id")
         .map_err(map_err)?;
-        for c in case_ids {
+        for c in &req.case_ids {
             sqlx::query(
                 "INSERT INTO ms_case_review_status (review_id, case_id, status) VALUES ($1, $2, 'UN_REVIEWED') \
                  ON CONFLICT (review_id, case_id) DO NOTHING",
@@ -139,11 +148,47 @@ impl ReviewRepository for PgReviewRepository {
         Ok(id)
     }
 
+    async fn update_review_meta(
+        &self,
+        review_id: &str,
+        update: &ReviewMetaUpdate,
+    ) -> Result<(), RepoError> {
+        let tags = serde_json::to_string(&update.meta.tags)
+            .map_err(|e| RepoError::Backend(e.to_string()))?;
+        let res = sqlx::query(
+            "UPDATE ms_case_review SET \
+                name = $2, description = $3, tags = $4::jsonb, module_id = $5, \
+                start_at = NULLIF($6, '')::timestamptz, end_at = NULLIF($7, '')::timestamptz, \
+                pass_rule = $8, reviewer_count = $9 \
+             WHERE id = $1 AND NOT deleted",
+        )
+        .bind(review_id)
+        .bind(&update.meta.name)
+        .bind(&update.meta.description)
+        .bind(&tags)
+        .bind(&update.meta.module_id)
+        .bind(update.meta.start_at.clone().unwrap_or_default())
+        .bind(update.meta.end_at.clone().unwrap_or_default())
+        .bind(&update.pass_rule)
+        .bind(update.reviewer_count as i32)
+        .execute(&self.pool)
+        .await
+        .map_err(map_err)?;
+        if res.rows_affected() == 0 {
+            return Err(RepoError::NotFound);
+        }
+        Ok(())
+    }
+
     async fn list_reviews(&self, project_id: &str) -> Result<Vec<ReviewSummary>, RepoError> {
         let rows = sqlx::query(
             "SELECT r.id, r.pass_rule, r.reviewer_count, r.created_at::text AS created_at, \
+                    r.name, r.description, r.tags::text AS tags, r.module_id, \
+                    r.start_at::text AS start_at, r.end_at::text AS end_at, r.created_by, \
                     coalesce(array_length(r.case_ids, 1), 0) AS total, \
-                    (SELECT count(*) FROM ms_case_review_status s WHERE s.review_id = r.id AND s.status = 'PASS') AS passed \
+                    (SELECT count(*) FROM ms_case_review_status s WHERE s.review_id = r.id AND s.status = 'PASS') AS passed, \
+                    (SELECT coalesce(array_agg(DISTINCT h.reviewer_id), '{}') \
+                       FROM ms_case_review_history h WHERE h.review_id = r.id) AS reviewers \
              FROM ms_case_review r WHERE r.project_id = $1 AND NOT r.deleted ORDER BY r.created_at DESC",
         )
         .bind(project_id)
@@ -158,6 +203,8 @@ impl ReviewRepository for PgReviewRepository {
                 let total = total.max(0) as usize;
                 let passed = passed.max(0) as usize;
                 let status = if total > 0 && passed >= total { "COMPLETED" } else { "IN_PROGRESS" };
+                let tags_raw: String = r.try_get("tags").map_err(map_err)?;
+                let tags: Vec<String> = serde_json::from_str(&tags_raw).unwrap_or_default();
                 Ok(ReviewSummary {
                     id: r.try_get("id").map_err(map_err)?,
                     pass_rule: r.try_get("pass_rule").map_err(map_err)?,
@@ -166,6 +213,16 @@ impl ReviewRepository for PgReviewRepository {
                     passed,
                     created_at: r.try_get("created_at").map_err(map_err)?,
                     status: status.to_string(),
+                    created_by: r.try_get("created_by").map_err(map_err)?,
+                    reviewers: r.try_get("reviewers").map_err(map_err)?,
+                    meta: ReviewMeta {
+                        name: r.try_get("name").map_err(map_err)?,
+                        description: r.try_get("description").map_err(map_err)?,
+                        tags,
+                        module_id: r.try_get("module_id").map_err(map_err)?,
+                        start_at: r.try_get("start_at").map_err(map_err)?,
+                        end_at: r.try_get("end_at").map_err(map_err)?,
+                    },
                 })
             })
             .collect()

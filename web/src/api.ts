@@ -424,6 +424,8 @@ export interface ScenarioStep {
     restParams?: { key: string; value: string }[]
     auth?: { type: string; token?: string }
     processors?: unknown[]
+    /** Copy provenance (COPY_CASE / COPY_API / COPY_SCENARIO) for materialized steps. */
+    source?: string
   } | null
   control?: unknown
   snapshot?: unknown
@@ -433,17 +435,6 @@ export interface ScenarioRunResult {
   reportId: string
   status: string
   caseCount: number
-}
-
-/** Scenario cron schedule row (batch-edited from the list page). */
-export interface ScenarioSchedule {
-  scenarioId: string
-  cron: string
-  envMode: string
-  envId?: string | null
-  poolId?: string | null
-  enabled: boolean
-  lastRunAt: string
 }
 
 /** Scenario report detail row (per-case result). Note: latency/size/status code not yet persisted (pending runner support). */
@@ -760,12 +751,88 @@ export interface PlanStats {
   isPass: boolean
 }
 
+/** Step result of a scenario mounted on a plan (recursive for controllers). */
+export interface PlanStepResult {
+  name: string
+  kind: string
+  status: string
+  latencyMs: number
+  statusCode?: number | null
+  children: PlanStepResult[]
+}
+
 export interface PlanCase {
   caseId: string
   name: string
   status: string
   latencyMs?: number | null
   statusCode?: number | null
+  /** Non-empty for scenario-mounted entries executed by the plan runner. */
+  steps?: PlanStepResult[]
+  /** Scenario report id for scenario-mounted entries; detail lives in the scenario report. */
+  reportId?: string | null
+}
+
+/** Per-node execution config in the plan mind-map (inherit = use the parent's config). */
+export interface PlanningNodeConfig {
+  inherit?: boolean
+  poolId?: string
+  envId?: string
+  mode?: 'serial' | 'parallel'
+  stopOnFail?: boolean
+  retry?: boolean
+}
+
+/** Mind-map node: category (功能/接口/场景用例) or custom 测试点; leaves carry linked case/scenario ids. */
+export interface PlanningNode {
+  id: string
+  name: string
+  kind: 'category' | 'point'
+  children?: PlanningNode[]
+  config?: PlanningNodeConfig
+  caseIds?: string[]
+  scenarioIds?: string[]
+}
+
+/** Planning doc stored verbatim; caseNames/scenarioNames feed the backend link sync display names. */
+export interface PlanningDoc {
+  nodes: PlanningNode[]
+  caseNames?: Record<string, string>
+  scenarioNames?: Record<string, string>
+}
+
+export interface PlanDetailInfo {
+  id: string
+  projectId: string
+  name: string
+  type: string
+  groupId: string
+  archived: boolean
+  createdAt: number
+  description: string
+  tags: string[]
+  moduleId: string | null
+  startAt: number | null
+  endAt: number | null
+  allowDuplicateCases: boolean
+  autoUpdateStatus: boolean
+  /** Percent 0-100. */
+  passThreshold: number
+  planning: PlanningDoc | null
+}
+
+/** Absent fields keep current values; moduleId '' clears, groupId ''/'NONE' = root, startAt/endAt <= 0 clears. */
+export interface PlanUpdateBody {
+  name?: string
+  description?: string
+  tags?: string[]
+  moduleId?: string
+  groupId?: string
+  startAt?: number
+  endAt?: number
+  allowDuplicateCases?: boolean
+  autoUpdateStatus?: boolean
+  passThreshold?: number
 }
 
 export interface PerfLatency {
@@ -1046,7 +1113,7 @@ export interface VerificationReport {
   [k: string]: unknown
 }
 
-/** Case review (queue overview): pass rule + total/passed case counts. */
+/** Case review (list row): pass rule + counts + header meta (name/tags/module/schedule/creator). */
 export interface CaseReviewSummary {
   id: string
   passRule: string
@@ -1054,6 +1121,24 @@ export interface CaseReviewSummary {
   total: number
   passed: number
   createdAt: string
+  status: string
+  name: string
+  description: string
+  tags: string[]
+  moduleId?: string | null
+  startAt?: string | null
+  endAt?: string | null
+  createdBy?: string | null
+  reviewers: string[]
+}
+/** Editable review header fields (create extras + PUT body). */
+export interface CaseReviewMetaInput {
+  name: string
+  description?: string
+  tags?: string[]
+  moduleId?: string | null
+  startAt?: string | null
+  endAt?: string | null
 }
 export interface CaseReviewCase {
   caseId: string
@@ -1461,16 +1546,26 @@ export const api = {
   // Test plans (no list endpoint → the list lives in the frontend registry)
   createPlan: (b: { projectId: string; name: string; type?: string }) =>
     http.post<TestPlan>('/test-plan', { type: 'TEST_PLAN', ...b }),
+  planDetail: (id: string) => http.get<PlanDetailInfo>(`/test-plan/${id}`),
+  updatePlan: (id: string, b: PlanUpdateBody) => http.put<PlanDetailInfo>(`/test-plan/${id}`, b),
+  savePlanPlanning: (id: string, doc: PlanningDoc) =>
+    http.put<{ linkedCases: number }>(`/test-plan/${id}/planning`, doc),
   planStats: (id: string) => http.get<PlanStats>(`/test-plan/${id}/statistics`),
   planCases: (id: string) => http.get<PlanCase[] | Page<PlanCase>>(`/test-plan/${id}/cases`),
   linkPlanCase: (id: string, caseId: string, name: string) =>
     http.post(`/test-plan/${id}/cases`, { caseId, name }),
+  unlinkPlanCase: (id: string, caseId: string) => http.del(`/test-plan/${id}/cases/${caseId}`),
+  // Runs exactly one linked case/scenario and records its result.
+  runPlanCase: (id: string, caseId: string) =>
+    http.post<{ caseId: string; status: string }>(`/test-plan/${id}/cases/${caseId}/run`, {}),
   // Manually record a case result (pass/fail/blocked/false alarm); status: SUCCESS|ERROR|BLOCK|FAKE_ERROR|PENDING
   recordPlanCaseResult: (id: string, caseId: string, status: string) =>
     http.post(`/test-plan/${id}/cases/${caseId}/result`, { status }),
   runPlan: (id: string, environmentId?: string) =>
     http.post<{ status?: string; total: number; executed: number }>(`/test-plan/${id}/run`, { environmentId }),
-  planSchedule: (id: string, cron: string) => http.post(`/test-plan/${id}/schedule`, { cron }),
+  planSchedule: (id: string, cron: string, enabled = true) =>
+    http.post(`/test-plan/${id}/schedule`, { cron, enabled }),
+  deletePlanSchedule: (id: string) => http.del(`/test-plan/${id}/schedule`),
   planRuns: (id: string) => http.get<unknown[]>(`/test-plan/${id}/runs`),
   planReportMd: (id: string) => http.getText(`/test-plan/${id}/report.md`),
 
@@ -1609,8 +1704,10 @@ export const api = {
   // Case review queues (create/list/detail/submit verdict)
   caseReviews: (projectId: string) =>
     projectId ? http.get<CaseReviewSummary[]>(`/case-review?projectId=${encodeURIComponent(projectId)}`) : Promise.resolve([] as CaseReviewSummary[]),
-  createCaseReview: (b: { projectId: string; passRule: string; reviewerCount: number; caseIds: string[] }) =>
+  createCaseReview: (b: { projectId: string; passRule: string; reviewerCount: number; caseIds: string[] } & Partial<CaseReviewMetaInput>) =>
     http.post<{ id: string }>('/case-review', b),
+  updateCaseReview: (id: string, b: CaseReviewMetaInput & { passRule: string; reviewerCount: number }) =>
+    http.put(`/case-review/${id}`, b),
   caseReview: (id: string) => http.get<CaseReviewDetail>(`/case-review/${id}`),
   submitCaseReview: (reviewId: string, caseId: string, b: { reviewerId: string; status: string; content?: string }) =>
     http.post<{ status: string }>(`/case-review/${reviewId}/${caseId}`, b),
@@ -1746,6 +1843,13 @@ export const api = {
     http.patch(`/api/scenario/${scenarioId}/steps/order`, { order }),
   copyScenario: (scenarioId: string, name?: string) =>
     http.post<Scenario>(`/api/scenario/${scenarioId}/copy`, { name }),
+  // Recycle bin: soft-deleted scenarios keep their steps, so restore is lossless; purge is final.
+  recycleScenarios: (projectId: string) =>
+    projectId
+      ? http.get<Scenario[]>(`/api/scenario/recycle?projectId=${encodeURIComponent(projectId)}`)
+      : Promise.resolve([] as Scenario[]),
+  restoreScenario: (id: string) => http.post<void>(`/api/scenario/${id}/restore`),
+  purgeScenario: (id: string) => http.del<void>(`/api/scenario/${id}/purge`),
   // Batch scenario execution: serial/parallel, optional env override, union report, pool-bound concurrency.
   batchRunScenarios: (b: {
     projectId: string
@@ -1764,18 +1868,6 @@ export const api = {
       success: number
       results: { scenarioId: string; reportId?: string | null; status: string }[]
     }>('/api/scenario/batch-run', b),
-  // Scenario cron schedules: list per project; batch upsert (with cron) or toggle-only (enabled).
-  scenarioSchedules: (projectId: string) =>
-    http.get<ScenarioSchedule[]>(`/api/scenario/schedule?projectId=${encodeURIComponent(projectId)}`),
-  batchScenarioSchedule: (b: {
-    scenarioIds: string[]
-    projectId: string
-    cron?: string
-    envMode?: 'DEFAULT' | 'NEW'
-    envId?: string
-    poolId?: string
-    enabled?: boolean
-  }) => http.put<{ updated: number }>('/api/scenario/schedule/batch', b),
   runScenario: (scenarioId: string, projectId: string, opts?: { environmentId?: string; failureStrategy?: 'CONTINUE' | 'STOP' }) =>
     http.post<ScenarioRunResult>(`/api/scenario/${scenarioId}/run`, { projectId, environmentId: opts?.environmentId, failureStrategy: opts?.failureStrategy }),
   scenarioExecutions: (scenarioId: string) =>

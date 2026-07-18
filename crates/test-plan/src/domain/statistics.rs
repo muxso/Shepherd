@@ -98,6 +98,8 @@ pub struct CaseResult {
     pub response_headers: Vec<(String, String)>,
     pub request: Option<RequestInfo>,
     pub steps: Vec<StepResult>,
+    /// Scenario batch report id for scenario-mounted plan entries; detail lives there.
+    pub report_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

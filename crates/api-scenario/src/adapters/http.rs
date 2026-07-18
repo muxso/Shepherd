@@ -71,6 +71,9 @@ pub fn router(repo: Arc<dyn ApiScenarioRepository>, sessions: Arc<dyn SessionSto
         .route("/api/scenario/{id}/compile", get(compile_scenario))
         .route("/api/scenario/{id}/executions", get(list_executions))
         .route("/api/scenario/{id}/changes", get(list_changes))
+        .route("/api/scenario/recycle", get(list_recycle))
+        .route("/api/scenario/{id}/restore", post(restore_scenario))
+        .route("/api/scenario/{id}/purge", axum::routing::delete(purge_scenario))
         .with_state(state)
 }
 
@@ -113,6 +116,9 @@ struct InlineRequestDto {
     #[serde(skip_serializing_if = "Vec::is_empty")]
     #[schema(value_type = Vec<Object>)]
     processors: Vec<serde_json::Value>,
+    /// Provenance for materialized copies (COPY_CASE / COPY_API / COPY_SCENARIO).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    source: Option<String>,
 }
 
 impl From<&InlineRequest> for InlineRequestDto {
@@ -128,6 +134,7 @@ impl From<&InlineRequest> for InlineRequestDto {
             rest_params: arr(&r.rest_params),
             auth: r.auth.as_object().filter(|o| !o.is_empty()).map(|_| r.auth.clone()),
             processors: arr(&r.processors),
+            source: r.source.clone(),
         }
     }
 }
@@ -278,6 +285,8 @@ struct InlineRequestBody {
     #[serde(default)]
     #[schema(value_type = Vec<Object>)]
     processors: Option<serde_json::Value>,
+    #[serde(default)]
+    source: Option<String>,
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -568,15 +577,15 @@ fn parse_step_kind(
             let empty = || serde_json::Value::Array(vec![]);
             let req = InlineRequest::new(&r.method, &r.url, r.body)
                 .map_err(|_| "invalid inline request")?;
-            Ok(StepKind::Request(Box::new(
-                req.with_assertions(r.assertions.unwrap_or_else(empty)).with_spec(
-                    r.headers.unwrap_or_else(empty),
-                    r.query_params.unwrap_or_else(empty),
-                    r.rest_params.unwrap_or_else(empty),
-                    r.auth.unwrap_or_else(|| serde_json::json!({})),
-                    r.processors.unwrap_or_else(empty),
-                ),
-            )))
+            let mut req = req.with_assertions(r.assertions.unwrap_or_else(empty)).with_spec(
+                r.headers.unwrap_or_else(empty),
+                r.query_params.unwrap_or_else(empty),
+                r.rest_params.unwrap_or_else(empty),
+                r.auth.unwrap_or_else(|| serde_json::json!({})),
+                r.processors.unwrap_or_else(empty),
+            );
+            req.source = r.source.filter(|x| !x.trim().is_empty());
+            Ok(StepKind::Request(Box::new(req)))
         }
         "CASE" => match ref_id {
             Some(case_id) => Ok(StepKind::Case { case_id }),
@@ -778,9 +787,60 @@ async fn list_changes(
     }
 }
 
+#[utoipa::path(get, path = "/api/scenario/recycle", tag = "api-scenario", params(ScenarioListQuery), responses((status = 200, body = [ScenarioResponse]), (status = 403)), security(("bearer" = [])))]
+async fn list_recycle(
+    user: AuthUser,
+    State(st): State<ScenarioAppState>,
+    Query(q): Query<ScenarioListQuery>,
+) -> Response {
+    if !user.can("API_SCENARIO", "READ") {
+        return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
+    match st.repo.list_deleted(&q.project_id).await {
+        Ok(list) => {
+            let items: Vec<ScenarioResponse> =
+                list.into_iter().map(ScenarioResponse::from).collect();
+            (StatusCode::OK, Json(items)).into_response()
+        }
+        Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
+    }
+}
+
+#[utoipa::path(post, path = "/api/scenario/{id}/restore", tag = "api-scenario", params(("id" = String, Path)), responses((status = 204), (status = 403), (status = 404)), security(("bearer" = [])))]
+async fn restore_scenario(
+    user: AuthUser,
+    State(st): State<ScenarioAppState>,
+    Path(id): Path<String>,
+) -> Response {
+    if !user.can("API_SCENARIO", "UPDATE") {
+        return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
+    match st.repo.restore_scenario(&id).await {
+        Ok(true) => StatusCode::NO_CONTENT.into_response(),
+        Ok(false) => (StatusCode::NOT_FOUND, "scenario not found in recycle bin").into_response(),
+        Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
+    }
+}
+
+#[utoipa::path(delete, path = "/api/scenario/{id}/purge", tag = "api-scenario", params(("id" = String, Path)), responses((status = 204), (status = 403), (status = 404)), security(("bearer" = [])))]
+async fn purge_scenario(
+    user: AuthUser,
+    State(st): State<ScenarioAppState>,
+    Path(id): Path<String>,
+) -> Response {
+    if !user.can("API_SCENARIO", "DELETE") {
+        return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
+    match st.repo.purge_scenario(&id).await {
+        Ok(true) => StatusCode::NO_CONTENT.into_response(),
+        Ok(false) => (StatusCode::NOT_FOUND, "scenario not found in recycle bin").into_response(),
+        Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
+    }
+}
+
 #[derive(OpenApi)]
 #[openapi(
-    paths(create_scenario, copy_scenario, list_scenarios, get_scenario, delete_scenario, add_step, update_step, delete_step, compile_scenario, list_executions),
+    paths(create_scenario, copy_scenario, list_scenarios, get_scenario, delete_scenario, add_step, update_step, delete_step, compile_scenario, list_executions, list_recycle, restore_scenario, purge_scenario),
     components(schemas(
         ScenarioCreateBody,
         ScenarioCopyBody,
