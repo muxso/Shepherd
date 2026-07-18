@@ -23,6 +23,7 @@ use api_test::ports::EnvironmentPort;
 use test_plan::application::PlanCaseUseCase;
 use test_plan::domain::{AssertionResult, CaseResult, CaseStatus, RequestInfo};
 
+use crate::pool_runner_ws::{HubObserver, PoolHub};
 use crate::scenario_run::{RunError, ScenarioRunner};
 
 #[derive(Clone)]
@@ -43,25 +44,30 @@ pub struct RunSummary {
 }
 
 impl PlanRunner {
-    pub fn new(pool: PgPool) -> Self {
+    /// `hub` enables pool routing + live run events for scenario-mounted
+    /// entries; None keeps plan runs fully in-process (MCP, scheduler).
+    pub fn new(pool: PgPool, hub: Option<Arc<PoolHub>>) -> Self {
         let plan_repo = Arc::new(test_plan::adapters::pg::PgPlanRepository::new(pool.clone()));
         let scenario_repo =
             Arc::new(api_scenario::adapters::pg::PgApiScenarioRepository::new(pool.clone()));
         // Same wiring as main.rs: scenario-mounted plan entries run through the
         // one true scenario executor (cross-step vars, seeds, scenario report).
+        let mut executor = PlanExecutor::new(
+            Arc::new(PgCaseSpecSource::new(pool.clone())),
+            Arc::new(PgCaseResultSink::new(pool.clone())),
+        );
+        if let Some(h) = &hub {
+            executor = executor.with_observer(Arc::new(HubObserver::new(h.events())));
+        }
         let scenarios = ScenarioRunner {
             compile: api_scenario::application::CompileScenarioUseCase::new(scenario_repo.clone()),
-            executor: PlanExecutor::new(
-                Arc::new(PgCaseSpecSource::new(pool.clone())),
-                Arc::new(PgCaseResultSink::new(pool.clone())),
-            ),
+            executor,
             envs: Arc::new(PgEnvironment::new(pool.clone())),
             reports: PgBatchReport::new(pool.clone()),
             recorder: api_scenario::application::RecordScenarioExecutionUseCase::new(scenario_repo),
             pool: pool.clone(),
             specs: Arc::new(PgCaseSpecSource::new(pool.clone())),
-            // Plan runs stay in-process: no pool routing, no live event stream.
-            hub: None,
+            hub,
         };
         Self {
             cases: PlanCaseUseCase::new(plan_repo),
@@ -94,6 +100,7 @@ impl PlanRunner {
         case_id: &str,
         env_id: Option<&str>,
         env: Option<&ResolvedEnv>,
+        pool_id: Option<&str>,
     ) -> (CaseStatus, bool) {
         if let Ok(Some(spec)) = self.specs.spec_of(case_id).await {
             let (status, result) =
@@ -107,7 +114,7 @@ impl PlanRunner {
             Some(id) => Some(id.to_string()),
             None => self.scenarios.default_env_of(case_id).await,
         };
-        match self.scenarios.run(case_id, project_id, eff_env.as_deref(), false, None).await {
+        match self.scenarios.run(case_id, project_id, eff_env.as_deref(), false, pool_id).await {
             Ok(o) => {
                 let ok = o.status == "SUCCESS";
                 let status = if ok { CaseStatus::Success } else { CaseStatus::Error };
@@ -157,16 +164,23 @@ impl PlanRunner {
         }
     }
 
-    pub async fn run(&self, plan_id: &str, env_id: Option<&str>) -> Result<RunSummary, ()> {
+    pub async fn run(
+        &self,
+        plan_id: &str,
+        env_id: Option<&str>,
+        pool_id: Option<&str>,
+    ) -> Result<RunSummary, ()> {
         let env_id = env_id.filter(|s| !s.trim().is_empty());
+        let pool_id = pool_id.filter(|s| !s.trim().is_empty());
         let env = self.resolve_env(env_id).await;
         let cases = self.cases.list(plan_id).await.map_err(|_| ())?;
         let project_id = self.project_of(plan_id).await;
         let total = cases.len();
         let (mut executed, mut success, mut failed) = (0usize, 0usize, 0usize);
         for pc in &cases {
-            let (status, counted) =
-                self.execute_case(plan_id, &project_id, &pc.case_id, env_id, env.as_ref()).await;
+            let (status, counted) = self
+                .execute_case(plan_id, &project_id, &pc.case_id, env_id, env.as_ref(), pool_id)
+                .await;
             if counted {
                 executed += 1;
                 match status {
@@ -184,8 +198,10 @@ impl PlanRunner {
         plan_id: &str,
         case_id: &str,
         env_id: Option<&str>,
+        pool_id: Option<&str>,
     ) -> Result<Option<CaseStatus>, ()> {
         let env_id = env_id.filter(|s| !s.trim().is_empty());
+        let pool_id = pool_id.filter(|s| !s.trim().is_empty());
         let cases = self.cases.list(plan_id).await.map_err(|_| ())?;
         if !cases.iter().any(|c| c.case_id == case_id) {
             return Ok(None);
@@ -193,7 +209,7 @@ impl PlanRunner {
         let env = self.resolve_env(env_id).await;
         let project_id = self.project_of(plan_id).await;
         let (status, _) =
-            self.execute_case(plan_id, &project_id, case_id, env_id, env.as_ref()).await;
+            self.execute_case(plan_id, &project_id, case_id, env_id, env.as_ref(), pool_id).await;
         Ok(Some(status))
     }
 }
@@ -211,12 +227,12 @@ impl FromRef<RunState> for Arc<dyn SessionStore> {
     }
 }
 
-pub fn router(pool: PgPool, sessions: Arc<dyn SessionStore>) -> Router {
+pub fn router(pool: PgPool, sessions: Arc<dyn SessionStore>, hub: Option<Arc<PoolHub>>) -> Router {
     Router::new()
         .route("/test-plan/{id}/run", post(run_plan))
         .route("/test-plan/{id}/cases/{caseId}/run", post(run_plan_case))
         .route("/test-plan/by-case/{caseId}", get(plans_by_case))
-        .with_state(RunState { plan_runner: PlanRunner::new(pool.clone()), pool, sessions })
+        .with_state(RunState { plan_runner: PlanRunner::new(pool.clone(), hub), pool, sessions })
 }
 
 #[derive(Debug, Serialize)]
@@ -327,6 +343,10 @@ async fn run_request(
 struct RunPlanBody {
     #[serde(default)]
     environment_id: Option<String>,
+    /// Resource pool routing for scenario-mounted entries: a pool with a
+    /// connected runner executes them remotely; empty = in-process.
+    #[serde(default)]
+    pool_id: Option<String>,
 }
 
 #[utoipa::path(
@@ -345,7 +365,7 @@ async fn run_plan(
     if !user.can("TEST_PLAN", "EXECUTE") {
         return (StatusCode::FORBIDDEN, "permission denied").into_response();
     }
-    match st.plan_runner.run(&id, body.environment_id.as_deref()).await {
+    match st.plan_runner.run(&id, body.environment_id.as_deref(), body.pool_id.as_deref()).await {
         Ok(s) => (
             StatusCode::OK,
             Json(RunPlanResponse {
@@ -371,6 +391,7 @@ struct RunPlanCaseResponse {
 #[utoipa::path(
     post, path = "/test-plan/{id}/cases/{caseId}/run", tag = "test-plan",
     params(("id" = String, Path), ("caseId" = String, Path)),
+    request_body = RunPlanBody,
     responses((status = 200, body = RunPlanCaseResponse), (status = 403), (status = 404)),
     security(("bearer" = []))
 )]
@@ -378,11 +399,17 @@ async fn run_plan_case(
     user: AuthUser,
     State(st): State<RunState>,
     Path((id, case_id)): Path<(String, String)>,
+    body: Option<Json<RunPlanBody>>,
 ) -> Response {
     if !user.can("TEST_PLAN", "EXECUTE") {
         return (StatusCode::FORBIDDEN, "permission denied").into_response();
     }
-    match st.plan_runner.run_case(&id, &case_id, None).await {
+    let body = body.map(|Json(b)| b).unwrap_or_default();
+    match st
+        .plan_runner
+        .run_case(&id, &case_id, body.environment_id.as_deref(), body.pool_id.as_deref())
+        .await
+    {
         Ok(Some(status)) => (
             StatusCode::OK,
             Json(RunPlanCaseResponse { case_id, status: status.as_str().to_string() }),

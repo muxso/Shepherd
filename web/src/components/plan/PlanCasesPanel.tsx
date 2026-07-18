@@ -63,13 +63,15 @@ function pointNameOf(nodes: PlanningNode[], id: string): string {
 
 // 场景用例 tab: left 测试点/模块 tree + case table with per-row run/unlink,
 // column settings and batch actions (layout mirrors the reference UI).
-export default function PlanCasesPanel({ planId, projectId, cases, loading, reload, toolbar }: {
+export default function PlanCasesPanel({ planId, projectId, cases, loading, reload, toolbar, poolId }: {
   planId: string
   projectId: string
   cases: PlanCase[]
   loading: boolean
   reload: () => void
   toolbar: ReactNode
+  /** Resource pool for row/batch runs; scenario entries execute remotely when set. */
+  poolId?: string
 }) {
   const { t } = useI18n()
   const { projects } = useApp()
@@ -196,7 +198,7 @@ export default function PlanCasesPanel({ planId, projectId, cases, loading, relo
   const runOne = async (caseId: string) => {
     setRunningId(caseId)
     try {
-      const r = await api.runPlanCase(planId, caseId)
+      const r = await api.runPlanCase(planId, caseId, poolId)
       message.success(`${t('plan.runDone', '执行完成')}:${planCaseStatusLabel(r.status, t)}`)
       reload()
     } catch (e) {
@@ -224,7 +226,7 @@ export default function PlanCasesPanel({ planId, projectId, cases, loading, relo
   const batchRun = async () => {
     setBatchBusy(true)
     try {
-      for (const id of selectedIds) await api.runPlanCase(planId, String(id)).catch(() => undefined)
+      for (const id of selectedIds) await api.runPlanCase(planId, String(id), poolId).catch(() => undefined)
       message.success(t('plan.runDone', '执行完成'))
       setSelectedIds([])
       reload()

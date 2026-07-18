@@ -25,7 +25,7 @@ use api_test::ports::EnvironmentPort;
 use pool_runner::protocol::{WireEnv, WireNode};
 use webauth::{AuthUser, SessionStore};
 
-use crate::pool_runner_ws::{PoolHub, RunCtx};
+use crate::pool_runner_ws::{PoolHub, RemoteOutcome, RunCtx};
 
 /// Remote runs that outlive this window are finalized as ERROR.
 const REMOTE_RUN_TIMEOUT: Duration = Duration::from_secs(900);
@@ -160,6 +160,8 @@ impl ScenarioRunner {
                             scenario_id: scenario_id.to_string(),
                             project_id: project_id.to_string(),
                             case_count: count as i32,
+                            report_id: report_id.clone(),
+                            finalize_report: true,
                         },
                     ),
                     // Unresolvable plan (missing case spec): run locally, which
@@ -174,36 +176,98 @@ impl ScenarioRunner {
         let sid = scenario_id.to_string();
         let proj = project_id.to_string();
         let rid = report_id.clone();
-        let fut: Pin<Box<dyn Future<Output = String> + Send>> = match remote {
-            Some(done) => Box::pin(async move {
+        let fut: Pin<Box<dyn Future<Output = String> + Send>> = Box::pin(async move {
+            if let Some(done) = remote {
                 match tokio::time::timeout(REMOTE_RUN_TIMEOUT, done).await {
-                    Ok(Ok(status)) => status,
+                    Ok(Ok(RemoteOutcome::Finished(status))) => return status,
+                    // Pool lost every runner while the run sat in the queue:
+                    // fall through to local execution.
+                    Ok(Ok(RemoteOutcome::Fallback)) => {}
                     // Timeout or hub dropped the waiter: finalize as error.
                     _ => {
                         if let Some(hub) = &this.hub {
                             hub.abort_run(&rid).await;
                         }
-                        "ERROR".to_string()
+                        return "ERROR".to_string();
                     }
                 }
-            }),
-            None => Box::pin(async move {
-                let status = match this.executor.run(&rid, &nodes, &env, stop_on_failure).await {
-                    Ok(true) => "SUCCESS",
-                    _ => "ERROR",
-                };
-                let _ = this.reports.set_status(&rid, status).await;
-                let _ = this.recorder.execute(&sid, &proj, status, count as i32, Some(&rid)).await;
-                if let Some(hub) = &this.hub {
-                    hub.events().publish(
-                        &rid,
-                        serde_json::json!({"type": "runComplete", "runId": rid, "status": status}),
-                    );
-                }
-                status.to_string()
-            }),
-        };
+            }
+            let status = match this.executor.run(&rid, &nodes, &env, stop_on_failure).await {
+                Ok(true) => "SUCCESS",
+                _ => "ERROR",
+            };
+            let _ = this.reports.set_status(&rid, status).await;
+            let _ = this.recorder.execute(&sid, &proj, status, count as i32, Some(&rid)).await;
+            if let Some(hub) = &this.hub {
+                hub.events().publish(
+                    &rid,
+                    serde_json::json!({"type": "runComplete", "runId": rid, "status": status}),
+                );
+            }
+            status.to_string()
+        });
         Ok(StartedRun { report_id, step_ids, case_count: count, fut })
+    }
+
+    /// Executes one member scenario of a union batch into the shared report.
+    /// Routed to the pool when it has live runners (unique dispatch run id,
+    /// results persisted under the shared report id); otherwise, or on queue
+    /// fallback, executed in-process. Records the scenario execution either way.
+    #[allow(clippy::too_many_arguments)]
+    async fn run_union_member(
+        &self,
+        report_id: &str,
+        scenario_id: &str,
+        project_id: &str,
+        nodes: &[PlanNode],
+        count: usize,
+        env: &api_test::domain::ResolvedEnv,
+        pool_id: Option<&str>,
+    ) -> String {
+        if let (Some(pid), Some(hub)) = (pool_id, &self.hub) {
+            if hub.has_runner(pid) {
+                if let Ok(wire) = plan_to_wire(nodes, self.specs.as_ref()).await {
+                    let run_id = uuid::Uuid::new_v4().to_string();
+                    let remote = hub.dispatch(
+                        pid,
+                        &run_id,
+                        wire,
+                        WireEnv {
+                            base_url: env.base_url.clone(),
+                            headers: env.headers.clone(),
+                            variables: env.variables.clone(),
+                        },
+                        false,
+                        RunCtx {
+                            scenario_id: scenario_id.to_string(),
+                            project_id: project_id.to_string(),
+                            case_count: count as i32,
+                            report_id: report_id.to_string(),
+                            finalize_report: false,
+                        },
+                    );
+                    if let Some(done) = remote {
+                        match tokio::time::timeout(REMOTE_RUN_TIMEOUT, done).await {
+                            Ok(Ok(RemoteOutcome::Finished(status))) => return status,
+                            Ok(Ok(RemoteOutcome::Fallback)) => {}
+                            _ => {
+                                hub.abort_run(&run_id).await;
+                                return "ERROR".to_string();
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        let status = match self.executor.run(report_id, nodes, env, false).await {
+            Ok(true) => "SUCCESS",
+            _ => "ERROR",
+        };
+        let _ = self
+            .recorder
+            .execute(scenario_id, project_id, status, count as i32, Some(report_id))
+            .await;
+        status.to_string()
     }
 
     pub async fn run(
@@ -446,38 +510,87 @@ async fn batch_run_scenarios(
             .execute(&st.runner.pool)
             .await;
         let mut success = 0usize;
-        let mut stopped = false;
-        for (sid, nodes, count) in &prepared {
-            if stopped {
+        let prepared_len = prepared.len();
+        let pool_live = pool_id
+            .map(|p| st.runner.hub.as_ref().is_some_and(|h| h.has_runner(p)))
+            .unwrap_or(false);
+        if pool_live && !b.stop_on_fail && prepared_len > 1 {
+            // Members run in parallel through the pool, bounded by the batch
+            // concurrency; runner caps + server-side queueing serialize the
+            // overflow. All results land in the one shared report.
+            let sem = Arc::new(tokio::sync::Semaphore::new(concurrency));
+            let mut handles = Vec::new();
+            for (sid, nodes, count) in prepared {
+                let runner = st.runner.clone();
+                let sem = sem.clone();
+                let project = b.project_id.clone();
+                let override_env = override_env.map(str::to_string);
+                let report = report_id.clone();
+                let pid = pool_id.map(str::to_string);
+                let sid2 = sid.clone();
+                handles.push((
+                    sid,
+                    tokio::spawn(async move {
+                        let _permit = sem.acquire().await;
+                        let env_id = effective_env(&runner, override_env.as_deref(), &sid2).await;
+                        let env = runner.resolve_env(env_id.as_deref()).await.unwrap_or_default();
+                        runner
+                            .run_union_member(
+                                &report,
+                                &sid2,
+                                &project,
+                                &nodes,
+                                count,
+                                &env,
+                                pid.as_deref(),
+                            )
+                            .await
+                    }),
+                ));
+            }
+            for (sid, h) in handles {
+                let status = h.await.unwrap_or_else(|_| "ERROR".to_string());
+                if status == "SUCCESS" {
+                    success += 1;
+                }
+                results.push(BatchRunItem {
+                    scenario_id: sid,
+                    report_id: Some(report_id.clone()),
+                    status,
+                });
+            }
+        } else {
+            // Serial members (stop_on_fail, single member, or no live runner);
+            // each still routes through the pool when one is available.
+            let mut stopped = false;
+            for (sid, nodes, count) in &prepared {
+                if stopped {
+                    results.push(BatchRunItem {
+                        scenario_id: sid.clone(),
+                        report_id: Some(report_id.clone()),
+                        status: "SKIPPED".to_string(),
+                    });
+                    continue;
+                }
+                let env_id = effective_env(&st.runner, override_env, sid).await;
+                let env = st.runner.resolve_env(env_id.as_deref()).await.unwrap_or_default();
+                let status = st
+                    .runner
+                    .run_union_member(&report_id, sid, &b.project_id, nodes, *count, &env, pool_id)
+                    .await;
+                if status == "SUCCESS" {
+                    success += 1;
+                } else if b.stop_on_fail {
+                    stopped = true;
+                }
                 results.push(BatchRunItem {
                     scenario_id: sid.clone(),
                     report_id: Some(report_id.clone()),
-                    status: "SKIPPED".to_string(),
+                    status,
                 });
-                continue;
             }
-            let env_id = effective_env(&st.runner, override_env, sid).await;
-            let env = st.runner.resolve_env(env_id.as_deref()).await.unwrap_or_default();
-            let pass =
-                st.runner.executor.run(&report_id, nodes, &env, false).await.unwrap_or(false);
-            let status = if pass { "SUCCESS" } else { "ERROR" };
-            if pass {
-                success += 1;
-            } else if b.stop_on_fail {
-                stopped = true;
-            }
-            let _ = st
-                .runner
-                .recorder
-                .execute(sid, &b.project_id, status, *count as i32, Some(&report_id))
-                .await;
-            results.push(BatchRunItem {
-                scenario_id: sid.clone(),
-                report_id: Some(report_id.clone()),
-                status: status.to_string(),
-            });
         }
-        let overall = if success == prepared.len() { "SUCCESS" } else { "ERROR" };
+        let overall = if success == prepared_len { "SUCCESS" } else { "ERROR" };
         let _ = st.reports.set_status(&report_id, overall).await;
         return Json(BatchRunResponse {
             status: overall.to_string(),

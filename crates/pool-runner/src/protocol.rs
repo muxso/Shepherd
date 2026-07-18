@@ -84,6 +84,9 @@ pub enum RunnerMsg {
         name: String,
         #[serde(default)]
         capabilities: Vec<String>,
+        /// Concurrent-run cap the server must respect when assigning work.
+        #[serde(default = "default_max_concurrent")]
+        max_concurrent: u32,
     },
     #[serde(rename_all = "camelCase")]
     StepStarted { run_id: String, step_id: String },
@@ -102,6 +105,10 @@ pub enum RunnerMsg {
     RunComplete { run_id: String, all_pass: bool },
     #[serde(rename_all = "camelCase")]
     RunError { run_id: String, message: String },
+}
+
+pub fn default_max_concurrent() -> u32 {
+    4
 }
 
 /// Server → runner.
@@ -140,5 +147,15 @@ mod tests {
         assert_eq!(s["type"], "run");
         assert_eq!(s["nodes"][0]["kind"], "timer");
         assert_eq!(s["stopOnFailure"], true);
+    }
+
+    #[test]
+    fn hello_without_cap_defaults_to_four() {
+        let m: RunnerMsg =
+            serde_json::from_str(r#"{"type":"hello","poolId":"p","name":"n"}"#).expect("de");
+        match m {
+            RunnerMsg::Hello { max_concurrent, .. } => assert_eq!(max_concurrent, 4),
+            other => panic!("expected hello, got {other:?}"),
+        }
     }
 }

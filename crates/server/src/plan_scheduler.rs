@@ -61,7 +61,7 @@ async fn register_job(
         let runner = runner.clone();
         let pid = pid.clone();
         Box::pin(async move {
-            match runner.run(&pid, None).await {
+            match runner.run(&pid, None, None).await {
                 Ok(s) => {
                     tracing::info!(plan = %pid, executed = s.executed, success = s.success, failed = s.failed, "scheduled plan executed")
                 }
@@ -101,7 +101,7 @@ pub async fn build(
     let store = Arc::new(PgScheduleStore::new(pool.clone()));
     let create = CreateScheduleUseCase::new(store.clone());
     let run_uc = ScheduledRunUseCase::new(PlanStatisticsUseCase::new(plan_repo), store);
-    let plan_runner = crate::plan_run::PlanRunner::new(pool.clone());
+    let plan_runner = crate::plan_run::PlanRunner::new(pool.clone(), None);
 
     let sched = JobScheduler::new().await?;
     let mut registered = HashMap::new();

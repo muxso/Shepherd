@@ -10,7 +10,7 @@
 //! State is in-memory only (registry + short-lived event history); a server
 //! restart simply drops runners, which reconnect with backoff.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -36,6 +36,9 @@ const LIVENESS_TIMEOUT: Duration = Duration::from_secs(45);
 const DONE_RETENTION: Duration = Duration::from_secs(300);
 const STALE_RETENTION: Duration = Duration::from_secs(1800);
 const HISTORY_CAP: usize = 2000;
+/// Max runs waiting per pool when every runner is at its concurrency cap;
+/// overflow falls back to local execution.
+const QUEUE_CAP: usize = 64;
 
 // ---------------------------------------------------------------------------
 // Browser-facing run event hub
@@ -148,6 +151,8 @@ pub struct RemoteDeps {
 struct RunnerEntry {
     pool_id: String,
     name: String,
+    /// Concurrent-run cap from the runner's hello; never assign beyond it.
+    max_concurrent: usize,
     tx: mpsc::UnboundedSender<ServerMsg>,
 }
 
@@ -156,18 +161,59 @@ pub struct RunCtx {
     pub scenario_id: String,
     pub project_id: String,
     pub case_count: i32,
+    /// Report the step results persist into. Equals the dispatch run id for
+    /// single runs; union batch members share one report under distinct run ids.
+    pub report_id: String,
+    /// false = the caller owns the report status (union batch: one report,
+    /// many member runs); the hub then only records the execution.
+    pub finalize_report: bool,
+}
+
+/// How a dispatched-or-queued run ended, from the waiter's point of view.
+pub enum RemoteOutcome {
+    /// Remote execution finished with this report status.
+    Finished(String),
+    /// Never started remotely (pool lost its runners while queued); the caller
+    /// should execute locally.
+    Fallback,
 }
 
 struct Pending {
     runner_id: String,
     ctx: RunCtx,
-    done: Option<oneshot::Sender<String>>,
+    done: Option<oneshot::Sender<RemoteOutcome>>,
+}
+
+/// Run accepted while every pool runner was at its cap; dispatched FIFO as
+/// capacity frees up.
+struct QueuedRun {
+    run_id: String,
+    nodes: Vec<WireNode>,
+    env: WireEnv,
+    stop_on_failure: bool,
+    ctx: RunCtx,
+    done: oneshot::Sender<RemoteOutcome>,
 }
 
 struct HubState {
     runners: HashMap<String, RunnerEntry>,
     pending: HashMap<String, Pending>,
+    queues: HashMap<String, VecDeque<QueuedRun>>,
     seq: u64,
+}
+
+/// Least-busy runner of the pool that still has spare capacity.
+fn pick_runner(st: &HubState, pool_id: &str) -> Option<String> {
+    let mut busy: HashMap<&str, usize> = HashMap::new();
+    for p in st.pending.values() {
+        *busy.entry(p.runner_id.as_str()).or_default() += 1;
+    }
+    let load = |id: &str| busy.get(id).copied().unwrap_or(0);
+    st.runners
+        .iter()
+        .filter(|(id, r)| r.pool_id == pool_id && load(id) < r.max_concurrent)
+        .min_by_key(|(id, _)| load(id))
+        .map(|(id, _)| id.clone())
 }
 
 /// Connected-runner registry plus in-flight remote runs.
@@ -183,6 +229,7 @@ impl PoolHub {
             state: Mutex::new(HubState {
                 runners: HashMap::new(),
                 pending: HashMap::new(),
+                queues: HashMap::new(),
                 seq: 0,
             }),
             deps,
@@ -208,33 +255,105 @@ impl PoolHub {
         self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
-    fn register(&self, pool_id: &str, name: &str, tx: mpsc::UnboundedSender<ServerMsg>) -> String {
-        let mut st = self.lock();
-        st.seq += 1;
-        let id = format!("pr-{}-{}", st.seq, &uuid::Uuid::new_v4().to_string()[..8]);
-        st.runners.insert(
-            id.clone(),
-            RunnerEntry { pool_id: pool_id.to_string(), name: name.to_string(), tx },
-        );
-        tracing::info!(runner = %id, pool = %pool_id, %name, "pool runner connected");
+    fn register(
+        &self,
+        pool_id: &str,
+        name: &str,
+        max_concurrent: usize,
+        tx: mpsc::UnboundedSender<ServerMsg>,
+    ) -> String {
+        let id = {
+            let mut st = self.lock();
+            st.seq += 1;
+            let id = format!("pr-{}-{}", st.seq, &uuid::Uuid::new_v4().to_string()[..8]);
+            st.runners.insert(
+                id.clone(),
+                RunnerEntry {
+                    pool_id: pool_id.to_string(),
+                    name: name.to_string(),
+                    max_concurrent: max_concurrent.max(1),
+                    tx,
+                },
+            );
+            id
+        };
+        tracing::info!(runner = %id, pool = %pool_id, %name, max_concurrent, "pool runner connected");
+        // New capacity may unblock queued runs of this pool.
+        self.drain(pool_id);
         id
     }
 
-    /// Removes the runner and fails all of its in-flight runs.
+    /// Removes the runner and fails all of its in-flight runs. Queued runs are
+    /// re-dispatched to surviving runners, or handed back for local execution
+    /// when the pool went empty.
     async fn unregister(&self, runner_id: &str) {
-        let orphans: Vec<String> = {
+        let (orphans, flush, drain_pool) = {
             let mut st = self.lock();
-            if st.runners.remove(runner_id).is_some() {
+            let pool_id = st.runners.remove(runner_id).map(|r| r.pool_id);
+            if pool_id.is_some() {
                 tracing::info!(runner = %runner_id, "pool runner disconnected");
             }
-            st.pending
+            let orphans: Vec<String> = st
+                .pending
                 .iter()
                 .filter(|(_, p)| p.runner_id == runner_id)
                 .map(|(rid, _)| rid.clone())
-                .collect()
+                .collect();
+            match pool_id {
+                Some(pid) if st.runners.values().any(|r| r.pool_id == pid) => {
+                    (orphans, VecDeque::new(), Some(pid))
+                }
+                Some(pid) => (orphans, st.queues.remove(&pid).unwrap_or_default(), None),
+                None => (orphans, VecDeque::new(), None),
+            }
         };
         for run_id in orphans {
             self.finish(&run_id, "ERROR", Some("runner disconnected")).await;
+        }
+        for job in flush {
+            tracing::info!(run = %job.run_id, "queued run falls back to local execution (pool has no runner)");
+            let _ = job.done.send(RemoteOutcome::Fallback);
+        }
+        if let Some(pid) = drain_pool {
+            self.drain(&pid);
+        }
+    }
+
+    /// Assigns queued runs of the pool while spare capacity exists.
+    fn drain(&self, pool_id: &str) {
+        loop {
+            let mut st = self.lock();
+            if st.queues.get(pool_id).is_none_or(|q| q.is_empty()) {
+                st.queues.remove(pool_id);
+                return;
+            }
+            let Some(rid) = pick_runner(&st, pool_id) else { return };
+            let Some((name, tx)) = st.runners.get(&rid).map(|e| (e.name.clone(), e.tx.clone()))
+            else {
+                return;
+            };
+            let Some(job) = st.queues.get_mut(pool_id).and_then(VecDeque::pop_front) else {
+                return;
+            };
+            let QueuedRun { run_id, nodes, env, stop_on_failure, ctx, done } = job;
+            let msg = ServerMsg::Run { run_id: run_id.clone(), nodes, env, stop_on_failure };
+            if let Err(mpsc::error::SendError(msg)) = tx.send(msg) {
+                // Runner died between liveness checks: drop it, requeue the job.
+                st.runners.remove(&rid);
+                if let ServerMsg::Run { run_id, nodes, env, stop_on_failure } = msg {
+                    st.queues.entry(pool_id.to_string()).or_default().push_front(QueuedRun {
+                        run_id,
+                        nodes,
+                        env,
+                        stop_on_failure,
+                        ctx,
+                        done,
+                    });
+                }
+                continue;
+            }
+            tracing::info!(run = %run_id, runner = %rid, %name, pool = %pool_id, "queued run dispatched to pool runner");
+            st.pending.insert(run_id, Pending { runner_id: rid, ctx, done: Some(done) });
         }
     }
 
@@ -252,8 +371,9 @@ impl PoolHub {
         m
     }
 
-    /// Sends the compiled plan to the least-loaded runner of the pool and
-    /// registers completion bookkeeping. None = no live runner (caller falls
+    /// Sends the compiled plan to the least-loaded runner of the pool that has
+    /// spare capacity; when every runner is at its cap, the run is queued FIFO
+    /// server-side. None = no live runner or the queue is full (caller falls
     /// back to in-process execution).
     pub fn dispatch(
         &self,
@@ -263,57 +383,123 @@ impl PoolHub {
         env: WireEnv,
         stop_on_failure: bool,
         ctx: RunCtx,
-    ) -> Option<oneshot::Receiver<String>> {
+    ) -> Option<oneshot::Receiver<RemoteOutcome>> {
         let (done_tx, done_rx) = oneshot::channel();
-        {
-            let mut st = self.lock();
-            // Least busy runner in the pool by in-flight run count.
-            let busy: HashMap<String, usize> =
-                st.pending.values().fold(HashMap::new(), |mut m, p| {
-                    *m.entry(p.runner_id.clone()).or_default() += 1;
-                    m
-                });
-            let (runner_id, entry) = st
-                .runners
-                .iter()
-                .filter(|(_, r)| r.pool_id == pool_id)
-                .min_by_key(|(id, _)| busy.get(*id).copied().unwrap_or(0))?;
-            let msg = ServerMsg::Run { run_id: run_id.to_string(), nodes, env, stop_on_failure };
-            if entry.tx.send(msg).is_err() {
-                return None;
-            }
-            tracing::info!(run = %run_id, runner = %runner_id, name = %entry.name, pool = %pool_id, "scenario dispatched to pool runner");
-            let runner_id = runner_id.clone();
-            st.pending.insert(run_id.to_string(), Pending { runner_id, ctx, done: Some(done_tx) });
+        let mut st = self.lock();
+        if !st.runners.values().any(|r| r.pool_id == pool_id) {
+            return None;
         }
-        Some(done_rx)
+        match pick_runner(&st, pool_id) {
+            Some(runner_id) => {
+                let entry = st.runners.get(&runner_id)?;
+                let name = entry.name.clone();
+                let msg =
+                    ServerMsg::Run { run_id: run_id.to_string(), nodes, env, stop_on_failure };
+                if entry.tx.send(msg).is_err() {
+                    return None;
+                }
+                tracing::info!(run = %run_id, runner = %runner_id, %name, pool = %pool_id, "scenario dispatched to pool runner");
+                st.pending
+                    .insert(run_id.to_string(), Pending { runner_id, ctx, done: Some(done_tx) });
+                Some(done_rx)
+            }
+            None => {
+                // Live runners, all saturated: queue within bounds.
+                let queue = st.queues.entry(pool_id.to_string()).or_default();
+                if queue.len() >= QUEUE_CAP {
+                    tracing::warn!(run = %run_id, pool = %pool_id, "pool queue full; falling back to local execution");
+                    return None;
+                }
+                queue.push_back(QueuedRun {
+                    run_id: run_id.to_string(),
+                    nodes,
+                    env,
+                    stop_on_failure,
+                    ctx,
+                    done: done_tx,
+                });
+                tracing::info!(run = %run_id, pool = %pool_id, depth = queue.len(), "pool saturated; run queued");
+                Some(done_rx)
+            }
+        }
     }
 
-    /// Finalizes a remote run once: report status, execution record, completion
-    /// event, waiter wake-up. Later duplicate calls are no-ops.
-    async fn finish(&self, run_id: &str, status: &str, reason: Option<&str>) {
-        let Some(mut p) = self.lock().pending.remove(run_id) else { return };
+    /// Report + execution record + browser completion event for one run.
+    async fn record_outcome(&self, run_id: &str, status: &str, ctx: &RunCtx, reason: Option<&str>) {
         if let Some(r) = reason {
             tracing::warn!(run = %run_id, %status, reason = r, "remote run finalized");
         }
-        let _ = self.deps.reports.set_status(run_id, status).await;
+        if ctx.finalize_report {
+            let _ = self.deps.reports.set_status(&ctx.report_id, status).await;
+        }
         let _ = self
             .deps
             .recorder
-            .execute(&p.ctx.scenario_id, &p.ctx.project_id, status, p.ctx.case_count, Some(run_id))
+            .execute(
+                &ctx.scenario_id,
+                &ctx.project_id,
+                status,
+                ctx.case_count,
+                Some(&ctx.report_id),
+            )
             .await;
-        self.events.publish(
-            run_id,
-            serde_json::json!({"type": "runComplete", "runId": run_id, "status": status}),
-        );
-        if let Some(tx) = p.done.take() {
-            let _ = tx.send(status.to_string());
+        if ctx.finalize_report {
+            self.events.publish(
+                &ctx.report_id,
+                serde_json::json!({"type": "runComplete", "runId": ctx.report_id, "status": status}),
+            );
         }
     }
 
-    /// Abandons a remote run from the waiter side (dispatch timeout).
+    /// Finalizes an in-flight remote run once: report status, execution record,
+    /// completion event, waiter wake-up, then hands freed capacity to the
+    /// queue. Later duplicate calls are no-ops.
+    async fn finish(&self, run_id: &str, status: &str, reason: Option<&str>) {
+        let (p, freed_pool) = {
+            let mut st = self.lock();
+            let Some(p) = st.pending.remove(run_id) else { return };
+            let pool = st.runners.get(&p.runner_id).map(|r| r.pool_id.clone());
+            (p, pool)
+        };
+        self.record_outcome(run_id, status, &p.ctx, reason).await;
+        if let Some(tx) = p.done {
+            let _ = tx.send(RemoteOutcome::Finished(status.to_string()));
+        }
+        if let Some(pool_id) = freed_pool {
+            self.drain(&pool_id);
+        }
+    }
+
+    /// Abandons a remote run from the waiter side (dispatch timeout), whether
+    /// still queued or already in flight.
     pub async fn abort_run(&self, run_id: &str) {
+        let queued = {
+            let mut st = self.lock();
+            let mut found = None;
+            for q in st.queues.values_mut() {
+                if let Some(pos) = q.iter().position(|j| j.run_id == run_id) {
+                    found = q.remove(pos);
+                    break;
+                }
+            }
+            found
+        };
+        if let Some(job) = queued {
+            // Waiter gave up; the done sender is dropped with the job.
+            self.record_outcome(run_id, "ERROR", &job.ctx, Some("dispatch timeout")).await;
+            return;
+        }
         self.finish(run_id, "ERROR", Some("dispatch timeout")).await;
+    }
+
+    /// Report a runner event belongs to: union batch members persist under a
+    /// shared report id distinct from their dispatch run id.
+    fn report_of(&self, run_id: &str) -> String {
+        self.lock()
+            .pending
+            .get(run_id)
+            .map(|p| p.ctx.report_id.clone())
+            .unwrap_or_else(|| run_id.to_string())
     }
 
     /// Ingests one event from a runner: persist through the local sinks and
@@ -322,27 +508,30 @@ impl PoolHub {
         match msg {
             RunnerMsg::Hello { .. } => {} // handled at connect
             RunnerMsg::StepStarted { run_id, step_id } => {
+                let report_id = self.report_of(&run_id);
                 self.events.publish(
-                    &run_id,
-                    serde_json::json!({"type": "stepStarted", "runId": run_id, "stepId": step_id}),
+                    &report_id,
+                    serde_json::json!({"type": "stepStarted", "runId": report_id, "stepId": step_id}),
                 );
             }
             RunnerMsg::StepFinished { run_id, step_id, outcome, failures } => {
-                let _ = self.deps.sink.record(&run_id, &step_id, &outcome, &failures).await;
+                let report_id = self.report_of(&run_id);
+                let _ = self.deps.sink.record(&report_id, &step_id, &outcome, &failures).await;
                 self.events.publish(
-                    &run_id,
+                    &report_id,
                     serde_json::json!({
-                        "type": "stepFinished", "runId": run_id, "stepId": step_id,
+                        "type": "stepFinished", "runId": report_id, "stepId": step_id,
                         "status": outcome, "failures": failures,
                     }),
                 );
             }
             RunnerMsg::StepDetail(d) => {
+                let report_id = self.report_of(&d.run_id);
                 let _ = self
                     .deps
                     .sink
                     .record_detail(
-                        &d.run_id,
+                        &report_id,
                         &d.step_id,
                         d.status_code,
                         d.latency_ms,
@@ -359,9 +548,9 @@ impl PoolHub {
                     )
                     .await;
                 self.events.publish(
-                    &d.run_id,
+                    &report_id,
                     serde_json::json!({
-                        "type": "stepDetail", "runId": d.run_id, "stepId": d.step_id,
+                        "type": "stepDetail", "runId": report_id, "stepId": d.step_id,
                         "statusCode": d.status_code, "latencyMs": d.latency_ms, "timings": d.timings,
                     }),
                 );
@@ -434,9 +623,11 @@ async fn runner_ws(
 async fn runner_session(mut socket: WebSocket, hub: Arc<PoolHub>) {
     // First frame must be a hello within 10s.
     let hello = tokio::time::timeout(Duration::from_secs(10), socket.recv()).await;
-    let (pool_id, name) = match hello {
+    let (pool_id, name, max_concurrent) = match hello {
         Ok(Some(Ok(Message::Text(t)))) => match serde_json::from_str::<RunnerMsg>(&t) {
-            Ok(RunnerMsg::Hello { pool_id, name, .. }) => (pool_id, name),
+            Ok(RunnerMsg::Hello { pool_id, name, max_concurrent, .. }) => {
+                (pool_id, name, max_concurrent)
+            }
             _ => {
                 let _ = socket.send(Message::Close(None)).await;
                 return;
@@ -445,7 +636,7 @@ async fn runner_session(mut socket: WebSocket, hub: Arc<PoolHub>) {
         _ => return,
     };
     let (out_tx, mut out_rx) = mpsc::unbounded_channel::<ServerMsg>();
-    let runner_id = hub.register(&pool_id, &name, out_tx);
+    let runner_id = hub.register(&pool_id, &name, max_concurrent as usize, out_tx);
     let ack = ServerMsg::HelloAck { runner_id: runner_id.clone() };
     if let Ok(s) = serde_json::to_string(&ack) {
         let _ = socket.send(Message::Text(s.into())).await;
