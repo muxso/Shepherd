@@ -1,7 +1,8 @@
 use std::sync::Arc;
 
 use crate::application::{
-    SubmitReviewError, SubmitReviewUseCase, UpdateReviewMetaError, UpdateReviewMetaUseCase,
+    DeleteReviewError, DeleteReviewUseCase, SubmitReviewError, SubmitReviewUseCase,
+    UpdateReviewMetaError, UpdateReviewMetaUseCase,
 };
 use crate::domain::{ReviewError, ReviewStatus, Verdict};
 use crate::ports::{NewReview, RepoError, ReviewMeta, ReviewMetaUpdate, ReviewRepository};
@@ -20,6 +21,7 @@ use webauth::{AuthUser, SessionStore};
 struct ReviewState {
     use_case: SubmitReviewUseCase,
     update_meta: UpdateReviewMetaUseCase,
+    delete_review: DeleteReviewUseCase,
     repo: Arc<dyn ReviewRepository>,
     sessions: Arc<dyn SessionStore>,
 }
@@ -36,11 +38,15 @@ pub fn router(
     sessions: Arc<dyn SessionStore>,
 ) -> Router {
     let update_meta = UpdateReviewMetaUseCase::new(repo.clone());
+    let delete_review = DeleteReviewUseCase::new(repo.clone());
     Router::new()
         .route("/case-review", post(create_review).get(list_reviews))
-        .route("/case-review/{review_id}", get(get_review).put(update_review))
+        .route(
+            "/case-review/{review_id}",
+            get(get_review).put(update_review).delete(delete_review_handler),
+        )
         .route("/case-review/{review_id}/{case_id}", post(submit_review))
-        .with_state(ReviewState { use_case, update_meta, repo, sessions })
+        .with_state(ReviewState { use_case, update_meta, delete_review, repo, sessions })
 }
 
 fn repo_err(e: RepoError) -> Response {
@@ -209,6 +215,21 @@ async fn update_review(
     }
 }
 
+#[utoipa::path(delete, path = "/case-review/{review_id}", tag = "case", params(("review_id" = String, Path)), responses((status = 204), (status = 404)), security(("bearer" = [])))]
+async fn delete_review_handler(
+    user: AuthUser,
+    State(st): State<ReviewState>,
+    Path(review_id): Path<String>,
+) -> Response {
+    if !user.can("CASE_REVIEW", "REVIEW") {
+        return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
+    match st.delete_review.execute(&review_id).await {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(DeleteReviewError::Repo(e)) => repo_err(e),
+    }
+}
+
 #[utoipa::path(get, path = "/case-review", tag = "case", params(("projectId" = String, Query)), responses((status = 200, body = [ReviewSummaryResponse])), security(("bearer" = [])))]
 async fn list_reviews(
     user: AuthUser,
@@ -325,7 +346,7 @@ async fn submit_review(
 }
 
 #[derive(OpenApi)]
-#[openapi(paths(submit_review, create_review, update_review, list_reviews, get_review), components(schemas(SubmitRequest, SubmitResponse, CreateReviewRequest, UpdateReviewRequest, CreatedReview, ReviewSummaryResponse, ReviewCaseStatusResponse, ReviewDetailResponse)), tags((name = "case", description = "用例评审")))]
+#[openapi(paths(submit_review, create_review, update_review, list_reviews, get_review, delete_review_handler), components(schemas(SubmitRequest, SubmitResponse, CreateReviewRequest, UpdateReviewRequest, CreatedReview, ReviewSummaryResponse, ReviewCaseStatusResponse, ReviewDetailResponse)), tags((name = "case", description = "用例评审")))]
 struct ApiDoc;
 pub fn openapi() -> utoipa::openapi::OpenApi {
     ApiDoc::openapi()
@@ -509,6 +530,66 @@ mod tests {
         assert_eq!(item["passRule"], "MULTIPLE");
         assert_eq!(item["reviewerCount"], 2);
         assert!(item["moduleId"].is_null());
+    }
+
+    #[tokio::test]
+    async fn delete_review_round_trip_204_then_404_and_gone_from_list() {
+        let (app, t) = app_with(PassRule::Single, 1).await;
+        let resp = app
+            .clone()
+            .oneshot(json_req("POST", "/case-review", r#"{"projectId":"p1","name":"n"}"#, &t))
+            .await
+            .expect("resp");
+        let id = body_json(resp).await["id"].as_str().expect("id").to_string();
+
+        let resp = app
+            .clone()
+            .oneshot(json_req("DELETE", &format!("/case-review/{id}"), "", &t))
+            .await
+            .expect("resp");
+        assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+
+        let resp = app
+            .clone()
+            .oneshot(json_req("GET", &format!("/case-review/{id}"), "", &t))
+            .await
+            .expect("resp");
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+
+        let resp = app
+            .clone()
+            .oneshot(json_req("GET", "/case-review?projectId=p1", "", &t))
+            .await
+            .expect("resp");
+        let list = body_json(resp).await;
+        assert!(list.as_array().expect("array").is_empty());
+
+        // Second delete of the same id is a miss.
+        let resp = app
+            .oneshot(json_req("DELETE", &format!("/case-review/{id}"), "", &t))
+            .await
+            .expect("resp");
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn delete_missing_review_returns_404() {
+        let (app, t) = app_with(PassRule::Single, 1).await;
+        let resp =
+            app.oneshot(json_req("DELETE", "/case-review/nope", "", &t)).await.expect("resp");
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn delete_without_review_permission_returns_403() {
+        let repo = Arc::new(InMemoryReviewRepository::new());
+        let sessions = Arc::new(InMemorySessionStore::new());
+        let perms = PermissionSet::from_raw(["CASE_REVIEW:READ".to_string()]).expect("perms");
+        let token = sessions.create("v", perms, 3600).await.expect("token");
+        let app = router(SubmitReviewUseCase::new(repo.clone()), repo, sessions);
+        let resp =
+            app.oneshot(json_req("DELETE", "/case-review/rev1", "", &token)).await.expect("resp");
+        assert_eq!(resp.status(), StatusCode::FORBIDDEN);
     }
 
     #[tokio::test]

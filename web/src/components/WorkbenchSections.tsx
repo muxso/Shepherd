@@ -17,8 +17,7 @@ import { funcCaseStatusLabel, priorityColor } from './tags'
 //   todo   → three sections (plans / reviews / bugs), pending items only
 //   follow → six sections (plans / functional cases / reviews / API cases /
 //            API scenarios / bugs), followed items only; plans via localStorage
-//            set, bugs and functional cases via /follow/mine. Reviews and API
-//            cases/scenarios have no follow support yet → empty tables.
+//            set, the rest via /follow/mine per entity type.
 
 type SectionKey = 'plan' | 'funcCase' | 'review' | 'apiCase' | 'apiScenario' | 'bug'
 
@@ -171,7 +170,15 @@ export default function WorkbenchSections({ mode }: { mode: 'todo' | 'follow' })
         setFuncRows(cases.filter((c) => idSet.has(c.id)))
       }
       const loadReviews = async () => {
-        if (mode === 'follow') { setReviews([]); return } // no follow support for reviews yet
+        if (mode === 'follow') {
+          const [rv, ids] = await Promise.all([
+            api.caseReviews(pid).catch(() => [] as CaseReviewSummary[]),
+            api.myFollows(pid, 'CASE_REVIEW').then((r) => r.entityIds || []).catch(() => [] as string[]),
+          ])
+          const idSet = new Set(ids)
+          setReviews(rv.filter((r) => idSet.has(r.id)))
+          return
+        }
         const rv = await api.caseReviews(pid).catch(() => [] as CaseReviewSummary[])
         setReviews(rv.filter((r) => r.passed < r.total || r.total === 0))
       }
@@ -457,13 +464,12 @@ export default function WorkbenchSections({ mode }: { mode: 'todo' | 'follow' })
     },
     {
       title: t('home.wb.reviewName', '评审名称'),
-      dataIndex: 'id',
+      dataIndex: 'name',
       key: 'name',
       ellipsis: true,
-      // Reviews have no name field; show a derived label.
-      render: (id: string) => (
-        <span style={{ fontFamily: MONO }}>{t('home.wb.reviewPrefix', '评审')} {shortId(id)}</span>
-      ),
+      // Unnamed legacy reviews fall back to a derived label.
+      render: (v: string, r) =>
+        v || <span style={{ fontFamily: MONO }}>{t('home.wb.reviewPrefix', '评审')} {shortId(r.id)}</span>,
     },
     {
       title: t('home.wb.reviewStatus', '评审状态'),
@@ -498,7 +504,7 @@ export default function WorkbenchSections({ mode }: { mode: 'todo' | 'follow' })
           ? <Tag color="blue" style={{ marginInlineEnd: 0 }}>{t('home.wb.singleReview', '单人评审')}</Tag>
           : <Tag color="purple" style={{ marginInlineEnd: 0 }}>{t('home.wb.multiReview', '多人评审')}</Tag>,
     },
-    { title: t('home.wb.createdBy', '创建人'), key: 'createdBy', width: 120, render: () => '-' },
+    { title: t('home.wb.createdBy', '创建人'), dataIndex: 'createdBy', width: 120, ellipsis: true, render: (v?: string | null) => v || '-' },
     {
       title: t('home.wb.createdAt', '创建时间'),
       dataIndex: 'createdAt',

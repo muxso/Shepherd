@@ -1764,6 +1764,7 @@ export const api = {
   updateCaseReview: (id: string, b: CaseReviewMetaInput & { passRule: string; reviewerCount: number }) =>
     http.put(`/case-review/${id}`, b),
   caseReview: (id: string) => http.get<CaseReviewDetail>(`/case-review/${id}`),
+  deleteCaseReview: (id: string) => http.del(`/case-review/${id}`),
   submitCaseReview: (reviewId: string, caseId: string, b: { reviewerId: string; status: string; content?: string }) =>
     http.post<{ status: string }>(`/case-review/${reviewId}/${caseId}`, b),
 
