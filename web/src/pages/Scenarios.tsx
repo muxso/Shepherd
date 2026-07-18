@@ -1893,7 +1893,7 @@ function ScenarioBasicInfo({ scenario, stepCount, form, patch, modules }: { scen
       {field(t('scenario.name', '场景名称'), <Input value={form.name} onChange={(e) => patch({ name: e.target.value })} placeholder={t('scenario.namePlaceholder', '如:下单主流程')} />, true)}
       {field(t('scenario.ownerModule', '所属模块'), <Select style={{ width: 280 }} value={form.moduleId || ''} onChange={(v) => patch({ moduleId: v || '' })} placeholder={t('scenario.unplanned', '未规划场景')} options={[{ value: '', label: t('scenario.unplanned', '未规划场景') }, ...modules.map((m) => ({ value: m.id, label: m.name }))]} />)}
       {field(t('scenario.priority', '场景等级'), <Select style={{ width: 200 }} value={form.priority} onChange={(v) => patch({ priority: v })} options={SCENARIO_PRIORITIES.map((p) => ({ value: p, label: <span style={{ color: priorityColor(p) }}>● <span style={{ color: 'var(--text)' }}>{p}</span></span> }))} />)}
-      {field(t('scenario.colStatus', '场景状态'), <Select style={{ width: 200 }} value={form.status} onChange={(v) => patch({ status: v })} options={SCENARIO_STATUSES.map((s) => ({ value: s, label: s }))} />)}
+      {field(t('scenario.colStatus', '场景状态'), <Select style={{ width: 200 }} value={form.status} onChange={(v) => patch({ status: v })} options={SCENARIO_STATUSES.map((s) => ({ value: s, label: scStatusLabel(s, t) }))} />)}
       {field(t('scenario.tags', '标签'), (
         <Space size={[6, 6]} wrap>
           {form.tags.map((tg) => (
@@ -2064,7 +2064,7 @@ function ScenarioChangesTab({ scenarioId, t }: { scenarioId: string; t: TFn }) {
 // 4-state distribution: pass / false positive / fail / not run (mirrors the reference report).
 type Dist = { pass: number; falsePos: number; fail: number; skip: number }
 const DIST_COLORS = { pass: '#22c55e', falsePos: '#f59e0b', fail: '#ef4444', skip: '#c9cdd4' }
-function StatRing({ d, centerLabel }: { d: Dist; centerLabel: string }) {
+function StatRing({ d, centerLabel, labels }: { d: Dist; centerLabel: string; labels: Record<keyof Dist, string> }) {
   const total = d.pass + d.falsePos + d.fail + d.skip
   const C = 2 * Math.PI * 42
   const order: (keyof Dist)[] = ['pass', 'falsePos', 'fail', 'skip']
@@ -2074,8 +2074,13 @@ function StatRing({ d, centerLabel }: { d: Dist; centerLabel: string }) {
       <g transform="rotate(-90 60 60)">
         <circle cx="60" cy="60" r="42" fill="none" stroke="var(--border-soft)" strokeWidth="14" />
         {total > 0 && order.map((k) => {
+          if (d[k] <= 0) return null
           const len = (d[k] / total) * C
-          const el = <circle key={k} cx="60" cy="60" r="42" fill="none" stroke={DIST_COLORS[k]} strokeWidth="14" strokeDasharray={`${len} ${C - len}`} strokeDashoffset={`-${off}`} />
+          const el = (
+            <Tooltip key={k} title={`${labels[k]} ${d[k]} · ${((d[k] / total) * 100).toFixed(2)}%`}>
+              <circle cx="60" cy="60" r="42" fill="none" stroke={DIST_COLORS[k]} strokeWidth="14" strokeDasharray={`${len} ${C - len}`} strokeDashoffset={`-${off}`} style={{ cursor: 'pointer' }} />
+            </Tooltip>
+          )
           off += len
           return el
         })}
@@ -2098,7 +2103,7 @@ function DistCard({ title, d, centerLabel, t }: { title: string; d: Dist; center
     <div style={{ flex: 1, minWidth: 300, border: '1px solid var(--border-soft)', borderRadius: 10, padding: '14px 18px', background: 'var(--panel)' }}>
       <h3 style={{ margin: '0 0 10px', fontSize: 14, color: 'var(--text-2)' }}>{title}</h3>
       <div style={{ display: 'flex', alignItems: 'center', gap: 20 }}>
-        <StatRing d={d} centerLabel={centerLabel} />
+        <StatRing d={d} centerLabel={centerLabel} labels={Object.fromEntries(rows.map((r) => [r.k, r.label])) as Record<keyof Dist, string>} />
         <div style={{ flex: 1 }}>
           {rows.map(({ k, label }) => (
             <div key={k} style={{ display: 'grid', gridTemplateColumns: '1fr auto auto', alignItems: 'center', columnGap: 18, padding: '5px 0', fontSize: 13 }}>
@@ -2973,7 +2978,7 @@ function NewScenarioTab({ projectId, modules, onCreated, active }: { projectId: 
           {field(t('scenario.name', '场景名称'), <Input value={name} onChange={(e) => setName(e.target.value)} placeholder={t('scenario.namePlaceholder2', '请输入场景名称')} />, true)}
           {field(t('scenario.ownerModule', '所属模块'), <Select style={{ width: '100%' }} value={moduleId || ''} onChange={(v) => setModuleId(v || '')} placeholder={t('scenario.unplanned', '未规划场景')} options={[{ value: '', label: t('scenario.unplanned', '未规划场景') }, ...modules.map((m) => ({ value: m.id, label: m.name }))]} />)}
           {field(t('scenario.priority', '场景等级'), <Select style={{ width: '100%' }} value={priority} onChange={setPriority} options={SCENARIO_PRIORITIES.map((p) => ({ value: p, label: <span style={{ color: priorityColor(p) }}>● <span style={{ color: 'var(--text)' }}>{p}</span></span> }))} />)}
-          {field(t('scenario.sceneStatus', '场景状态'), <Select style={{ width: '100%' }} value={status} onChange={setStatus} options={SCENARIO_STATUSES.map((s) => ({ value: s, label: s }))} />)}
+          {field(t('scenario.sceneStatus', '场景状态'), <Select style={{ width: '100%' }} value={status} onChange={setStatus} options={SCENARIO_STATUSES.map((s) => ({ value: s, label: scStatusLabel(s, t) }))} />)}
           {field(t('scenario.tags', '标签'), (
             <Space size={[6, 6]} wrap>
               {tags.map((tg) => <Tag key={tg} closable onClose={() => setTags(tags.filter((x) => x !== tg))}>{tg}</Tag>)}
