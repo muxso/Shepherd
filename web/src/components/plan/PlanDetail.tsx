@@ -9,6 +9,7 @@ import { api, ApiError, type ApiCase, type PlanCase, type PlanStats, type PlanSt
 import { outcomeColor } from '../tags'
 import Donut from '../Donut'
 import { fmtDurationMs } from '../TimingBreakdown'
+import { ScenarioReportModal } from '../ScenarioReport'
 import { useI18n } from '../../i18n'
 
 // Plan detail (workspace tab content): attach cases / run / record results / schedule / Markdown report + analytics cards.
@@ -138,7 +139,7 @@ export default function PlanDetail({ planId, name, projectId }: { planId: string
         ]}
       />
       <LinkCaseModal open={linkOpen} planId={planId} projectId={projectId} onClose={() => setLinkOpen(false)} onLinked={() => { setLinkOpen(false); load() }} />
-      <PlanReportDrawer open={reportOpen} planId={planId} name={name} onClose={() => setReportOpen(false)} />
+      <PlanReportDrawer open={reportOpen} planId={planId} name={name} projectId={projectId} onClose={() => setReportOpen(false)} />
     </div>
   )
 }
@@ -244,16 +245,31 @@ function PlanStepRows({ steps, depth, t }: { steps: PlanStepResult[]; depth: num
 
 // Plan report drawer: overview cards (analysis + case status ring) and a per-case
 // detail list with expandable step results; Markdown export is the secondary action.
-export function PlanReportDrawer({ open, planId, name, onClose }: { open: boolean; planId: string; name: string; onClose: () => void }) {
+export function PlanReportDrawer({ open, planId, name, projectId, onClose }: { open: boolean; planId: string; name: string; projectId?: string; onClose: () => void }) {
   const { t } = useI18n()
   const [stats, setStats] = useState<PlanStats | null>(null)
   const [cases, setCases] = useState<PlanCase[]>([])
   const [loading, setLoading] = useState(false)
   const [openSet, setOpenSet] = useState<Set<string>>(new Set())
+  // Scenario-mounted rows link to their scenario report; opened in the shared report modal.
+  const [scnReport, setScnReport] = useState<{ reportId: string; scenarioId: string } | null>(null)
+  const [caseMap, setCaseMap] = useState<Record<string, ApiCase>>({})
+  const openScnReport = (c: PlanCase) => {
+    if (!c.reportId) return
+    // Case names resolve report rows; fetched once per drawer, id-slice fallback otherwise.
+    if (projectId && !Object.keys(caseMap).length) {
+      api.projectCasesAll(projectId)
+        .then((cs) => setCaseMap(Object.fromEntries(cs.map((x) => [x.id, x]))))
+        .catch(() => undefined)
+    }
+    setScnReport({ reportId: c.reportId, scenarioId: c.caseId })
+  }
+  const scnNameOf = (id: string) => caseMap[id]?.name || (id ? id.slice(0, 8) : '—')
   useEffect(() => {
     if (!open || !planId) return
     setLoading(true)
     setOpenSet(new Set())
+    setScnReport(null)
     Promise.all([
       api.planStats(planId).catch(() => null),
       api.planCases(planId).then((c) => (Array.isArray(c) ? c : c.items)).catch(() => [] as PlanCase[]),
@@ -334,19 +350,27 @@ export function PlanReportDrawer({ open, planId, name, onClose }: { open: boolea
             <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('plan.noLinkedCase', '未挂用例,点「挂用例」')} />
           ) : (
             cases.map((c) => {
-              const hasSteps = (c.steps?.length ?? 0) > 0
+              // Rows with a scenario report id open the shared scenario report modal;
+              // the inline steps expansion remains for legacy rows with stored steps.
+              const hasReport = !!c.reportId
+              const hasSteps = !hasReport && (c.steps?.length ?? 0) > 0
               const isOpen = openSet.has(c.caseId)
               return (
                 <div key={c.caseId} style={{ border: '1px solid var(--border-soft)', borderRadius: 8, marginBottom: 8, background: 'var(--panel)' }}>
                   <div
-                    onClick={() => hasSteps && toggle(c.caseId)}
-                    style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', cursor: hasSteps ? 'pointer' : 'default' }}
+                    onClick={() => { if (hasReport) openScnReport(c); else if (hasSteps) toggle(c.caseId) }}
+                    style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', cursor: hasReport || hasSteps ? 'pointer' : 'default' }}
                   >
                     {hasSteps ? <span style={{ color: 'var(--text-3)', fontSize: 11, width: 12 }}>{isOpen ? '▾' : '▸'}</span> : <span style={{ width: 12 }} />}
                     <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                      {hasSteps && <Tag color="processing">{t('plan.scenarioTag', '场景')}</Tag>}
+                      {(hasReport || hasSteps) && <Tag color="processing">{t('plan.scenarioTag', '场景')}</Tag>}
                       {c.name}
                     </span>
+                    {hasReport && (
+                      <Button size="small" type="link" style={{ padding: 0, height: 'auto' }} onClick={(e) => { e.stopPropagation(); openScnReport(c) }}>
+                        {t('plan.viewScenarioReport', '查看场景报告')}
+                      </Button>
+                    )}
                     {c.statusCode != null && <span style={{ color: c.statusCode < 400 ? 'var(--success)' : 'var(--error)', fontSize: 12 }}>{c.statusCode}</span>}
                     <span style={{ color: 'var(--text-3)', fontSize: 12 }}>{c.latencyMs != null ? fmtDurationMs(c.latencyMs) : '—'}</span>
                     <Tag color={outcomeColor(c.status)} style={{ margin: 0 }}>{caseStatusLabel(c.status, t)}</Tag>
@@ -360,6 +384,13 @@ export function PlanReportDrawer({ open, planId, name, onClose }: { open: boolea
               )
             })
           )}
+          <ScenarioReportModal
+            reportId={scnReport?.reportId || null}
+            scenarioId={scnReport?.scenarioId}
+            nameOf={scnNameOf}
+            caseMap={caseMap}
+            onClose={() => setScnReport(null)}
+          />
         </>
       )}
     </ResizableDrawer>

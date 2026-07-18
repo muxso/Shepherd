@@ -254,6 +254,7 @@ fn result_to_json(r: &CaseResult) -> serde_json::Value {
         "responseHeaders": headers_to_json(&r.response_headers),
         "request": request,
         "steps": r.steps.iter().map(step_to_json).collect::<Vec<_>>(),
+        "reportId": r.report_id,
     })
 }
 
@@ -360,6 +361,7 @@ fn result_from_json(v: &serde_json::Value) -> CaseResult {
             .and_then(|s| s.as_array())
             .map(|arr| arr.iter().map(step_from_json).collect())
             .unwrap_or_default(),
+        report_id: opt_str("reportId"),
     }
 }
 

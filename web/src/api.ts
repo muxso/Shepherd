@@ -769,6 +769,8 @@ export interface PlanCase {
   statusCode?: number | null
   /** Non-empty for scenario-mounted entries executed by the plan runner. */
   steps?: PlanStepResult[]
+  /** Scenario report id for scenario-mounted entries; detail lives in the scenario report. */
+  reportId?: string | null
 }
 
 export interface PerfLatency {
@@ -1750,6 +1752,13 @@ export const api = {
     http.patch(`/api/scenario/${scenarioId}/steps/order`, { order }),
   copyScenario: (scenarioId: string, name?: string) =>
     http.post<Scenario>(`/api/scenario/${scenarioId}/copy`, { name }),
+  // Recycle bin: soft-deleted scenarios keep their steps, so restore is lossless; purge is final.
+  recycleScenarios: (projectId: string) =>
+    projectId
+      ? http.get<Scenario[]>(`/api/scenario/recycle?projectId=${encodeURIComponent(projectId)}`)
+      : Promise.resolve([] as Scenario[]),
+  restoreScenario: (id: string) => http.post<void>(`/api/scenario/${id}/restore`),
+  purgeScenario: (id: string) => http.del<void>(`/api/scenario/${id}/purge`),
   // Batch scenario execution: serial/parallel, optional env override, union report, pool-bound concurrency.
   batchRunScenarios: (b: {
     projectId: string

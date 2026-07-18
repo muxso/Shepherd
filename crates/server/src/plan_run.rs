@@ -1,5 +1,3 @@
-use std::future::Future;
-use std::pin::Pin;
 use std::sync::Arc;
 
 use axum::{
@@ -15,25 +13,25 @@ use sqlx::Row;
 use utoipa::{OpenApi, ToSchema};
 use webauth::{AuthUser, SessionStore};
 
-use api_runner::{
-    evaluate_detailed, Assertion, CaseOutcome, HttpMethod, RequestSpec, ReqwestRunner,
-};
-use api_scenario::application::CompileScenarioUseCase;
-use api_scenario::domain::PlanStep;
+use api_runner::{evaluate_detailed, Assertion, CaseOutcome, RequestSpec, ReqwestRunner};
 use api_test::adapters::local::{apply_env_static, CaseSpecSource};
-use api_test::adapters::pg::{PgCaseSpecSource, PgEnvironment};
+use api_test::adapters::pg::{PgCaseResultSink, PgCaseSpecSource, PgEnvironment};
+use api_test::adapters::plan::PlanExecutor;
+use api_test::adapters::PgBatchReport;
 use api_test::domain::ResolvedEnv;
 use api_test::ports::EnvironmentPort;
 use test_plan::application::PlanCaseUseCase;
-use test_plan::domain::{AssertionResult, CaseResult, CaseStatus, RequestInfo, StepResult};
+use test_plan::domain::{AssertionResult, CaseResult, CaseStatus, RequestInfo};
+
+use crate::scenario_run::{RunError, ScenarioRunner};
 
 #[derive(Clone)]
 pub struct PlanRunner {
     cases: PlanCaseUseCase,
     specs: Arc<PgCaseSpecSource>,
-    compile: CompileScenarioUseCase,
     runner: Arc<ReqwestRunner>,
     envs: Arc<PgEnvironment>,
+    scenarios: ScenarioRunner,
     pool: PgPool,
 }
 
@@ -49,38 +47,49 @@ impl PlanRunner {
         let plan_repo = Arc::new(test_plan::adapters::pg::PgPlanRepository::new(pool.clone()));
         let scenario_repo =
             Arc::new(api_scenario::adapters::pg::PgApiScenarioRepository::new(pool.clone()));
+        // Same wiring as main.rs: scenario-mounted plan entries run through the
+        // one true scenario executor (cross-step vars, seeds, scenario report).
+        let scenarios = ScenarioRunner {
+            compile: api_scenario::application::CompileScenarioUseCase::new(scenario_repo.clone()),
+            executor: PlanExecutor::new(
+                Arc::new(PgCaseSpecSource::new(pool.clone())),
+                Arc::new(PgCaseResultSink::new(pool.clone())),
+            ),
+            envs: Arc::new(PgEnvironment::new(pool.clone())),
+            reports: PgBatchReport::new(pool.clone()),
+            recorder: api_scenario::application::RecordScenarioExecutionUseCase::new(scenario_repo),
+            pool: pool.clone(),
+        };
         Self {
             cases: PlanCaseUseCase::new(plan_repo),
             specs: Arc::new(PgCaseSpecSource::new(pool.clone())),
-            compile: CompileScenarioUseCase::new(scenario_repo),
             runner: Arc::new(ReqwestRunner::no_proxy()),
             envs: Arc::new(PgEnvironment::new(pool.clone())),
+            scenarios,
             pool,
         }
     }
 
-    /// Fallback env for a scenario mounted on a plan: the scenario's own
-    /// configured environment (meta.envId), used when the run has no override.
-    async fn scenario_env(&self, scenario_id: &str) -> Option<ResolvedEnv> {
-        let env_id: Option<String> =
-            sqlx::query_scalar("SELECT meta->>'envId' FROM ms_api_scenario WHERE id = $1")
-                .bind(scenario_id)
-                .fetch_optional(&self.pool)
-                .await
-                .ok()
-                .flatten()
-                .flatten();
-        let env_id = env_id.filter(|s| !s.trim().is_empty())?;
-        self.envs.resolve(&env_id).await.ok().flatten()
+    /// Owning project of the plan; scenario execution records are filed under it.
+    async fn project_of(&self, plan_id: &str) -> String {
+        sqlx::query_scalar::<_, String>("SELECT project_id FROM ms_test_plan WHERE id = $1")
+            .bind(plan_id)
+            .fetch_optional(&self.pool)
+            .await
+            .ok()
+            .flatten()
+            .unwrap_or_default()
     }
 
     pub async fn run(&self, plan_id: &str, env_id: Option<&str>) -> Result<RunSummary, ()> {
-        let env: Option<ResolvedEnv> = match env_id.filter(|s| !s.trim().is_empty()) {
+        let env_id = env_id.filter(|s| !s.trim().is_empty());
+        let env: Option<ResolvedEnv> = match env_id {
             Some(id) => self.envs.resolve(id).await.ok().flatten(),
             None => None,
         };
         let env = env.as_ref();
         let cases = self.cases.list(plan_id).await.map_err(|_| ())?;
+        let project_id = self.project_of(plan_id).await;
         let total = cases.len();
         let (mut executed, mut success, mut failed) = (0usize, 0usize, 0usize);
         for pc in &cases {
@@ -95,41 +104,58 @@ impl PlanRunner {
                 let _ = self.cases.record(plan_id, &pc.case_id, status, Some(result)).await;
                 continue;
             }
-            if let Ok(steps_plan) = self.compile.compile_plan(&pc.case_id).await {
-                // No run-level env override: fall back to the scenario's own environment.
-                let own_env =
-                    if env.is_none() { self.scenario_env(&pc.case_id).await } else { None };
-                let steps =
-                    run_steps(&steps_plan, &self.runner, &self.specs, env.or(own_env.as_ref()))
-                        .await;
-                let ok = !steps.is_empty() && steps.iter().all(|s| s.status == CaseStatus::Success);
-                let status = if ok { CaseStatus::Success } else { CaseStatus::Error };
-                executed += 1;
-                if ok {
-                    success += 1;
-                } else {
-                    failed += 1;
+            // Not an API case: treat as a scenario-mounted entry. The run-level
+            // env wins; otherwise the scenario's own configured environment.
+            let eff_env = match env_id {
+                Some(id) => Some(id.to_string()),
+                None => self.scenarios.default_env_of(&pc.case_id).await,
+            };
+            match self.scenarios.run(&pc.case_id, &project_id, eff_env.as_deref(), false).await {
+                Ok(o) => {
+                    let ok = o.status == "SUCCESS";
+                    let status = if ok { CaseStatus::Success } else { CaseStatus::Error };
+                    executed += 1;
+                    if ok {
+                        success += 1;
+                    } else {
+                        failed += 1;
+                    }
+                    let result = CaseResult { report_id: Some(o.report_id), ..Default::default() };
+                    let _ = self.cases.record(plan_id, &pc.case_id, status, Some(result)).await;
                 }
-                let result = CaseResult {
-                    latency_ms: steps.iter().map(|s| s.latency_ms).sum(),
-                    steps,
-                    ..Default::default()
-                };
-                let _ = self.cases.record(plan_id, &pc.case_id, status, Some(result)).await;
-                continue;
+                Err(RunError::NotFound) => {
+                    let _ = self
+                        .cases
+                        .record(
+                            plan_id,
+                            &pc.case_id,
+                            CaseStatus::Block,
+                            Some(CaseResult {
+                                body: Some("用例规格未找到(非 ms_api_case / 非场景)".into()),
+                                ..Default::default()
+                            }),
+                        )
+                        .await;
+                }
+                Err(e) => {
+                    executed += 1;
+                    failed += 1;
+                    let msg = match e {
+                        RunError::CycleOrDepth => "场景引用成环或过深",
+                        RunError::NoSteps => "场景无可执行步骤",
+                        _ => "场景执行失败",
+                    };
+                    let _ = self
+                        .cases
+                        .record(
+                            plan_id,
+                            &pc.case_id,
+                            CaseStatus::Error,
+                            Some(CaseResult { body: Some(msg.into()), ..Default::default() }),
+                        )
+                        .await;
+                }
             }
-            let _ = self
-                .cases
-                .record(
-                    plan_id,
-                    &pc.case_id,
-                    CaseStatus::Block,
-                    Some(CaseResult {
-                        body: Some("用例规格未找到(非 ms_api_case / 非场景)".into()),
-                        ..Default::default()
-                    }),
-                )
-                .await;
         }
         Ok(RunSummary { total, executed, success, failed })
     }
@@ -203,10 +229,6 @@ fn truncate(s: &str, n: usize) -> String {
     }
 }
 
-fn method_of(m: &str) -> HttpMethod {
-    serde_json::from_value(serde_json::Value::String(m.to_uppercase())).unwrap_or(HttpMethod::Get)
-}
-
 fn map_assertions(reps: Vec<api_runner::AssertionReport>) -> Vec<AssertionResult> {
     reps.into_iter()
         .map(|a| AssertionResult {
@@ -251,7 +273,7 @@ async fn run_request(
             assertions: map_assertions(evaluate_detailed(assertions, s)),
             response_headers: s.headers.clone(),
             request: Some(req_info),
-            steps: vec![],
+            ..Default::default()
         },
         None => CaseResult {
             body: Some(report.failures.join("; ")),
@@ -260,109 +282,6 @@ async fn run_request(
         },
     };
     (status, result)
-}
-
-fn run_steps<'a>(
-    steps: &'a [PlanStep],
-    runner: &'a ReqwestRunner,
-    specs: &'a PgCaseSpecSource,
-    env: Option<&'a ResolvedEnv>,
-) -> Pin<Box<dyn Future<Output = Vec<StepResult>> + Send + 'a>> {
-    Box::pin(async move {
-        let mut out = Vec::new();
-        for step in steps {
-            out.push(run_step(step, runner, specs, env).await);
-        }
-        out
-    })
-}
-
-async fn run_step(
-    step: &PlanStep,
-    runner: &ReqwestRunner,
-    specs: &PgCaseSpecSource,
-    env: Option<&ResolvedEnv>,
-) -> StepResult {
-    let control = |name: String, kind: &str, children: Vec<StepResult>| {
-        let ok = children.iter().all(|c| c.status == CaseStatus::Success);
-        let latency = children.iter().map(|c| c.latency_ms).sum();
-        StepResult {
-            name,
-            kind: kind.to_string(),
-            status: if ok { CaseStatus::Success } else { CaseStatus::Error },
-            latency_ms: latency,
-            status_code: None,
-            assertions: vec![],
-            children,
-        }
-    };
-    match step {
-        PlanStep::Case(case_id) => match specs.spec_of(case_id).await {
-            Ok(Some(spec)) => {
-                let (status, r) = run_request(runner, &spec.request, &spec.assertions, env).await;
-                StepResult {
-                    name: format!("{} {}", spec.request.method.as_str(), spec.request.url),
-                    kind: "接口用例".to_string(),
-                    status,
-                    latency_ms: r.latency_ms,
-                    status_code: r.status_code,
-                    assertions: r.assertions,
-                    children: vec![],
-                }
-            }
-            _ => StepResult {
-                name: format!("用例 {case_id}"),
-                kind: "接口用例".to_string(),
-                status: CaseStatus::Block,
-                latency_ms: 0,
-                status_code: None,
-                assertions: vec![],
-                children: vec![],
-            },
-        },
-        PlanStep::Request(req) => {
-            let spec = RequestSpec {
-                method: method_of(&req.method),
-                url: req.url.clone(),
-                headers: vec![],
-                body: req.body.clone(),
-            };
-            let assertions: Vec<Assertion> =
-                serde_json::from_value(req.assertions.clone()).unwrap_or_default();
-            let (status, r) = run_request(runner, &spec, &assertions, env).await;
-            StepResult {
-                name: format!("{} {}", req.method, req.url),
-                kind: "请求".to_string(),
-                status,
-                latency_ms: r.latency_ms,
-                status_code: r.status_code,
-                assertions: r.assertions,
-                children: vec![],
-            }
-        }
-        PlanStep::Loop { times, body } => control(
-            format!("循环 x{times}"),
-            "循环控制器",
-            run_steps(body, runner, specs, env).await,
-        ),
-        PlanStep::If { variable, operator, value, body } => control(
-            format!("若 {variable} {operator} {value}"),
-            "条件控制器",
-            run_steps(body, runner, specs, env).await,
-        ),
-        PlanStep::Once { body } => {
-            control("仅一次".to_string(), "ONCE 控制器", run_steps(body, runner, specs, env).await)
-        }
-        PlanStep::Timer { ms } => StepResult {
-            name: format!("等待 {ms}ms"),
-            kind: "等待".to_string(),
-            status: CaseStatus::Success,
-            latency_ms: *ms,
-            status_code: None,
-            assertions: vec![],
-            children: vec![],
-        },
-    }
 }
 
 #[derive(Debug, Default, serde::Deserialize, ToSchema)]

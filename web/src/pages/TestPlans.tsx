@@ -465,7 +465,7 @@ export default function TestPlans() {
           loadStats(list)
         }}
       />
-      <PlanReportDrawer open={!!report} planId={report?.id || ''} name={report?.name || ''} onClose={() => setReport(null)} />
+      <PlanReportDrawer open={!!report} planId={report?.id || ''} name={report?.name || ''} projectId={projectId} onClose={() => setReport(null)} />
     </>
   )
 }

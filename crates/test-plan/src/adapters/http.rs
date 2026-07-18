@@ -329,6 +329,9 @@ struct PlanCaseResponse {
     status_code: Option<i64>,
     /// Non-empty for scenario-mounted entries executed by the plan runner.
     steps: Vec<StepResultDto>,
+    /// Scenario report id for scenario-mounted entries; the full detail lives there.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    report_id: Option<String>,
 }
 
 #[utoipa::path(get, path = "/test-plan/{id}/cases", tag = "test-plan", params(("id" = String, Path)), responses((status = 200, body = [PlanCaseResponse]), (status = 403)), security(("bearer" = [])))]
@@ -355,6 +358,7 @@ async fn list_cases(
                         .as_ref()
                         .map(|r| r.steps.iter().map(StepResultDto::from).collect())
                         .unwrap_or_default(),
+                    report_id: c.result.as_ref().and_then(|r| r.report_id.clone()),
                 })
                 .collect();
             (StatusCode::OK, Json(items)).into_response()
