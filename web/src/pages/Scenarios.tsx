@@ -370,14 +370,32 @@ export default function Scenarios() {
   // Bottom batch actions over the selection: export / edit / run / move-to / copy-to / (timers, delete) / clear.
   const selectedRows = list.filter((s) => selectedIds.includes(s.id))
   const clearSel = () => setSelectedIds([])
-  const batchExport = () => {
-    const blob = new Blob([JSON.stringify(selectedRows, null, 2)], { type: 'application/json' })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = 'scenarios.json'
-    a.click()
-    URL.revokeObjectURL(url)
+  // Export selected scenarios (full detail incl. steps) as a downloadable JSON file.
+  const batchExport = async () => {
+    try {
+      const details = await Promise.all(selectedRows.map((s) => api.getScenario(s.id)))
+      const payload = {
+        version: 1,
+        exportedAt: new Date().toISOString(),
+        scenarios: details.map((d) => ({
+          name: d.name,
+          num: d.num,
+          status: d.status,
+          meta: d.meta ?? {},
+          steps: (d.steps || []).map((st) => ({ order: st.order, kind: st.kind, refMode: st.refMode, snapshot: st.snapshot ?? null })),
+        })),
+      }
+      const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `shepherd-scenarios-${new Date().toISOString().slice(0, 10)}.json`
+      a.click()
+      URL.revokeObjectURL(url)
+      message.success(`${t('scenario.exported', '已导出')} ${details.length} ${t('scenario.unit', '条')}`)
+    } catch (e) {
+      message.error(e instanceof ApiError ? e.message : t('scenario.exportFailed', '导出失败'))
+    }
   }
   const openBatchRun = () => {
     setRunEnvMode('default'); setRunEnvId(undefined); setRunMode('serial'); setStopOnFail(false)
