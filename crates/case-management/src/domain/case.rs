@@ -94,7 +94,8 @@ impl NewFunctionalCase {
     }
 
     pub fn with_tags(mut self, tags: Vec<String>) -> Self {
-        self.tags = tags.into_iter().map(|t| t.trim().to_string()).filter(|t| !t.is_empty()).collect();
+        self.tags =
+            tags.into_iter().map(|t| t.trim().to_string()).filter(|t| !t.is_empty()).collect();
         self
     }
 }

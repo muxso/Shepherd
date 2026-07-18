@@ -132,8 +132,7 @@ pub trait CaseRepository: Send + Sync {
         created_by: &str,
     ) -> Result<(), RepoError>;
 
-    async fn remove_dependency(&self, case_id: &str, depends_on_id: &str)
-        -> Result<(), RepoError>;
+    async fn remove_dependency(&self, case_id: &str, depends_on_id: &str) -> Result<(), RepoError>;
 
     /// `reverse = false` lists preconditions of the case; `true` lists cases
     /// that depend on it (post cases).

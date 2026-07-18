@@ -194,11 +194,7 @@ impl CaseRepository for InMemoryCaseRepository {
         Ok(())
     }
 
-    async fn remove_dependency(
-        &self,
-        case_id: &str,
-        depends_on_id: &str,
-    ) -> Result<(), RepoError> {
+    async fn remove_dependency(&self, case_id: &str, depends_on_id: &str) -> Result<(), RepoError> {
         let mut g = self.deps.lock().map_err(|e| RepoError::Backend(e.to_string()))?;
         g.retain(|(_, c, d)| !(c == case_id && d == depends_on_id));
         Ok(())

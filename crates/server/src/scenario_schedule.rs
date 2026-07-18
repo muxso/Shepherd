@@ -243,7 +243,9 @@ pub fn spawn(pool: PgPool, runner: ScenarioRunner) {
                 let env =
                     if env_mode == "NEW" { env_id.as_deref() } else { scenario_env.as_deref() };
                 match runner.run(&sid, &project, env, false).await {
-                    Ok(o) => tracing::info!(scenario = %sid, status = %o.status, report = %o.report_id, "scheduled scenario executed"),
+                    Ok(o) => {
+                        tracing::info!(scenario = %sid, status = %o.status, report = %o.report_id, "scheduled scenario executed")
+                    }
                     Err(_) => tracing::warn!(scenario = %sid, "scheduled scenario execute failed"),
                 }
             }

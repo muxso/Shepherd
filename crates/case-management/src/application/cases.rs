@@ -76,9 +76,7 @@ impl CreateCaseUseCase {
         .with_tags(tags);
         let created = self.repo.insert(&new).await?;
         let entry = ("create".to_string(), String::new(), created.name.clone());
-        self.repo
-            .record_changes(&created.id, &[entry], created_by.unwrap_or_default())
-            .await?;
+        self.repo.record_changes(&created.id, &[entry], created_by.unwrap_or_default()).await?;
         Ok(created)
     }
 }

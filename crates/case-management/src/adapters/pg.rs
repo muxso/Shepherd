@@ -309,11 +309,7 @@ impl CaseRepository for PgCaseRepository {
         Ok(())
     }
 
-    async fn remove_dependency(
-        &self,
-        case_id: &str,
-        depends_on_id: &str,
-    ) -> Result<(), RepoError> {
+    async fn remove_dependency(&self, case_id: &str, depends_on_id: &str) -> Result<(), RepoError> {
         sqlx::query("DELETE FROM ms_case_dependency WHERE case_id = $1 AND depends_on_id = $2")
             .bind(case_id)
             .bind(depends_on_id)

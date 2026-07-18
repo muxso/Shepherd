@@ -291,11 +291,9 @@ async fn batch_run_scenarios(
                 continue;
             }
             let env_id = effective_env(&st.runner, override_env, sid).await;
-            let env = match st.runner.resolve_env(env_id.as_deref()).await {
-                Ok(e) => e,
-                Err(_) => Default::default(),
-            };
-            let pass = st.runner.executor.run(&report_id, nodes, &env, false).await.unwrap_or(false);
+            let env = st.runner.resolve_env(env_id.as_deref()).await.unwrap_or_default();
+            let pass =
+                st.runner.executor.run(&report_id, nodes, &env, false).await.unwrap_or(false);
             let status = if pass { "SUCCESS" } else { "ERROR" };
             if pass {
                 success += 1;
@@ -322,7 +320,7 @@ async fn batch_run_scenarios(
             success,
             results,
         })
-            .into_response();
+        .into_response();
     }
 
     // Independent reports: serial honors stop_on_fail; parallel is bounded by

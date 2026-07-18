@@ -54,10 +54,7 @@ pub fn router(
         .route("/functional-case", post(create_case).get(list_cases))
         .route("/functional-case/export", get(export_cases))
         .route("/functional-case/import", post(import_cases))
-        .route(
-            "/functional-case/{id}",
-            get(get_case).put(update_case).delete(delete_case),
-        )
+        .route("/functional-case/{id}", get(get_case).put(update_case).delete(delete_case))
         .route("/functional-case/{id}/requirements", get(case_requirements))
         .route("/functional-case/{id}/changes", get(list_case_changes))
         .route("/functional-case/{id}/bugs", get(list_case_bugs))
