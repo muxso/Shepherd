@@ -34,6 +34,7 @@ pub struct PlanRunner {
     compile: CompileScenarioUseCase,
     runner: Arc<ReqwestRunner>,
     envs: Arc<PgEnvironment>,
+    pool: PgPool,
 }
 
 pub struct RunSummary {
@@ -53,8 +54,24 @@ impl PlanRunner {
             specs: Arc::new(PgCaseSpecSource::new(pool.clone())),
             compile: CompileScenarioUseCase::new(scenario_repo),
             runner: Arc::new(ReqwestRunner::no_proxy()),
-            envs: Arc::new(PgEnvironment::new(pool)),
+            envs: Arc::new(PgEnvironment::new(pool.clone())),
+            pool,
         }
+    }
+
+    /// Fallback env for a scenario mounted on a plan: the scenario's own
+    /// configured environment (meta.envId), used when the run has no override.
+    async fn scenario_env(&self, scenario_id: &str) -> Option<ResolvedEnv> {
+        let env_id: Option<String> =
+            sqlx::query_scalar("SELECT meta->>'envId' FROM ms_api_scenario WHERE id = $1")
+                .bind(scenario_id)
+                .fetch_optional(&self.pool)
+                .await
+                .ok()
+                .flatten()
+                .flatten();
+        let env_id = env_id.filter(|s| !s.trim().is_empty())?;
+        self.envs.resolve(&env_id).await.ok().flatten()
     }
 
     pub async fn run(&self, plan_id: &str, env_id: Option<&str>) -> Result<RunSummary, ()> {
@@ -79,7 +96,12 @@ impl PlanRunner {
                 continue;
             }
             if let Ok(steps_plan) = self.compile.compile_plan(&pc.case_id).await {
-                let steps = run_steps(&steps_plan, &self.runner, &self.specs, env).await;
+                // No run-level env override: fall back to the scenario's own environment.
+                let own_env =
+                    if env.is_none() { self.scenario_env(&pc.case_id).await } else { None };
+                let steps =
+                    run_steps(&steps_plan, &self.runner, &self.specs, env.or(own_env.as_ref()))
+                        .await;
                 let ok = !steps.is_empty() && steps.iter().all(|s| s.status == CaseStatus::Success);
                 let status = if ok { CaseStatus::Success } else { CaseStatus::Error };
                 executed += 1;

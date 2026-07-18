@@ -435,17 +435,6 @@ export interface ScenarioRunResult {
   caseCount: number
 }
 
-/** Scenario cron schedule row (batch-edited from the list page). */
-export interface ScenarioSchedule {
-  scenarioId: string
-  cron: string
-  envMode: string
-  envId?: string | null
-  poolId?: string | null
-  enabled: boolean
-  lastRunAt: string
-}
-
 /** Scenario report detail row (per-case result). Note: latency/size/status code not yet persisted (pending runner support). */
 /** Per-phase timing of one HTTP exchange (waterfall on latency hover). */
 export interface PhaseTimings {
@@ -760,12 +749,24 @@ export interface PlanStats {
   isPass: boolean
 }
 
+/** Step result of a scenario mounted on a plan (recursive for controllers). */
+export interface PlanStepResult {
+  name: string
+  kind: string
+  status: string
+  latencyMs: number
+  statusCode?: number | null
+  children: PlanStepResult[]
+}
+
 export interface PlanCase {
   caseId: string
   name: string
   status: string
   latencyMs?: number | null
   statusCode?: number | null
+  /** Non-empty for scenario-mounted entries executed by the plan runner. */
+  steps?: PlanStepResult[]
 }
 
 export interface PerfLatency {
@@ -1470,7 +1471,8 @@ export const api = {
     http.post(`/test-plan/${id}/cases/${caseId}/result`, { status }),
   runPlan: (id: string, environmentId?: string) =>
     http.post<{ status?: string; total: number; executed: number }>(`/test-plan/${id}/run`, { environmentId }),
-  planSchedule: (id: string, cron: string) => http.post(`/test-plan/${id}/schedule`, { cron }),
+  planSchedule: (id: string, cron: string, enabled = true) =>
+    http.post(`/test-plan/${id}/schedule`, { cron, enabled }),
   planRuns: (id: string) => http.get<unknown[]>(`/test-plan/${id}/runs`),
   planReportMd: (id: string) => http.getText(`/test-plan/${id}/report.md`),
 
@@ -1764,18 +1766,6 @@ export const api = {
       success: number
       results: { scenarioId: string; reportId?: string | null; status: string }[]
     }>('/api/scenario/batch-run', b),
-  // Scenario cron schedules: list per project; batch upsert (with cron) or toggle-only (enabled).
-  scenarioSchedules: (projectId: string) =>
-    http.get<ScenarioSchedule[]>(`/api/scenario/schedule?projectId=${encodeURIComponent(projectId)}`),
-  batchScenarioSchedule: (b: {
-    scenarioIds: string[]
-    projectId: string
-    cron?: string
-    envMode?: 'DEFAULT' | 'NEW'
-    envId?: string
-    poolId?: string
-    enabled?: boolean
-  }) => http.put<{ updated: number }>('/api/scenario/schedule/batch', b),
   runScenario: (scenarioId: string, projectId: string, opts?: { environmentId?: string; failureStrategy?: 'CONTINUE' | 'STOP' }) =>
     http.post<ScenarioRunResult>(`/api/scenario/${scenarioId}/run`, { projectId, environmentId: opts?.environmentId, failureStrategy: opts?.failureStrategy }),
   scenarioExecutions: (scenarioId: string) =>

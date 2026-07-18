@@ -19,6 +19,8 @@ import KVEditor, { type KVRow } from '../components/KVEditor'
 import { DebugResultPanel, type SentRequest } from '../components/ApiSpecPanel'
 import { LatencyStat } from '../components/TimingBreakdown'
 import { SelectProjectEmpty } from '../components/Page'
+import { regAdd, regList, type RegItem } from '../registry'
+import { groupIdOf, isGroup } from '../components/plan/planLocal'
 import { useI18n } from '../i18n'
 
 type TFn = (key: string, fallback?: string) => string
@@ -136,13 +138,13 @@ export default function Scenarios() {
       .catch(() => setListCaseMap({}))
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [batchReportId])
-  // Batch timer dialog: cron / env / pool / enabled switch.
+  // Schedule-via-plan dialog: mount selected scenarios into a test plan and set the plan cron.
   const [timerOpen, setTimerOpen] = useState(false)
+  const [timerPlanId, setTimerPlanId] = useState<string>()
+  const [timerNewName, setTimerNewName] = useState('')
   const [timerCron, setTimerCron] = useState('')
-  const [timerEnvMode, setTimerEnvMode] = useState<'default' | 'new'>('default')
-  const [timerEnvId, setTimerEnvId] = useState<string>()
-  const [timerPool, setTimerPool] = useState<string>()
   const [timerEnabled, setTimerEnabled] = useState(true)
+  const [timerPlans, setTimerPlans] = useState<RegItem[]>([])
   const tabs = useWorkTabs()
   useOpenParam((id) => tabs.open(id)) // deep link ?open=<scenarioId> (reference graph clicks land here)
   const NEW_KEY = '__new_scenario__'
@@ -405,35 +407,29 @@ export default function Scenarios() {
       },
     })
   }
-  const toggleTimer = async (enabled: boolean) => {
-    try {
-      const r = await api.batchScenarioSchedule({ scenarioIds: selectedRows.map((s) => s.id), projectId, enabled })
-      message.success(`${enabled ? t('scenario.timerEnabled', '已开启定时任务') : t('scenario.timerDisabled', '已关闭定时任务')}: ${r.updated}`)
-    } catch (e) {
-      message.error(e instanceof ApiError ? e.message : t('func.saveFailed', '保存失败'))
-    }
-  }
+  // Scheduled execution goes through test plans: pick (or create) a plan, mount the
+  // selected scenarios as plan cases, then configure the plan cron.
+  const NEW_PLAN_VALUE = '__new_plan__'
   const openTimerEdit = () => {
-    setTimerCron(''); setTimerEnvMode('default'); setTimerEnvId(undefined); setTimerPool(undefined); setTimerEnabled(true)
+    setTimerPlanId(undefined); setTimerNewName(''); setTimerCron(''); setTimerEnabled(true)
+    setTimerPlans(regList('plan', projectId))
     setTimerOpen(true)
-    api.environments(projectId).then((e) => setRunEnvs(Array.isArray(e) ? e : [])).catch(() => setRunEnvs([]))
-    api.resourcePools().then((p) => setRunPools(Array.isArray(p) ? p : [])).catch(() => setRunPools([]))
   }
   const saveTimer = async () => {
+    if (!timerPlanId) return message.warning(t('scenario.planRequired', '请选择测试计划'))
+    if (timerPlanId === NEW_PLAN_VALUE && !timerNewName.trim()) return message.warning(t('scenario.planNameRequired', '请输入计划名称'))
     if (!timerCron.trim()) return message.warning(t('scenario.cronRequired', '请输入任务触发时间'))
-    if (timerEnvMode === 'new' && !timerEnvId) return message.warning(t('scenario.pickNewEnv', '请选择新环境'))
     setBatchBusy(true)
     try {
-      const r = await api.batchScenarioSchedule({
-        scenarioIds: selectedRows.map((s) => s.id),
-        projectId,
-        cron: timerCron.trim(),
-        envMode: timerEnvMode === 'new' ? 'NEW' : 'DEFAULT',
-        envId: timerEnvMode === 'new' ? timerEnvId : undefined,
-        poolId: timerPool,
-        enabled: timerEnabled,
-      })
-      message.success(`${t('scenario.timerSaved', '定时任务已保存')}: ${r.updated}`)
+      let planId = timerPlanId
+      if (planId === NEW_PLAN_VALUE) {
+        const p = await api.createPlan({ projectId, name: timerNewName.trim(), type: 'TEST_PLAN' })
+        regAdd('plan', projectId, { id: p.id, label: p.name, createdAt: Date.now() })
+        planId = p.id
+      }
+      for (const s of selectedRows) await api.linkPlanCase(planId, s.id, s.name)
+      await api.planSchedule(planId, timerCron.trim(), timerEnabled)
+      message.success(t('scenario.planTimerSaved', '已挂入计划并配置定时'))
       setTimerOpen(false)
     } catch (e) {
       message.error(e instanceof ApiError ? e.message : t('func.saveFailed', '保存失败'))
@@ -441,6 +437,17 @@ export default function Scenarios() {
       setBatchBusy(false)
     }
   }
+  // Plan picker options: plan groups become optgroups; "new plan" pinned on top.
+  const timerPlanOptions = (() => {
+    const plans = timerPlans.filter((p) => !isGroup(p))
+    const groups = timerPlans.filter(isGroup)
+    const opt = (p: RegItem) => ({ value: p.id, label: p.label })
+    const grouped = groups
+      .map((g) => ({ label: g.label, options: plans.filter((p) => groupIdOf(p) === g.id).map(opt) }))
+      .filter((g) => g.options.length)
+    const ungrouped = plans.filter((p) => !groups.some((g) => g.id === groupIdOf(p))).map(opt)
+    return [{ value: NEW_PLAN_VALUE, label: `+ ${t('scenario.newPlanOption', '新建计划')}` }, ...ungrouped, ...grouped]
+  })()
   const batchMoveCopy = async () => {
     setBatchBusy(true)
     try {
@@ -561,16 +568,12 @@ export default function Scenarios() {
           <Dropdown
             menu={{
               items: [
-                { key: 'timerOn', label: t('scenario.timerOn', '开启定时任务') },
-                { key: 'timerOff', label: t('scenario.timerOff', '关闭定时任务') },
-                { key: 'timerEdit', label: t('scenario.timerEdit', '编辑定时任务') },
+                { key: 'timerPlan', label: t('scenario.timerViaPlan', '定时执行(测试计划)') },
                 { key: 'del', label: t('a.delete', '删除'), danger: true },
               ],
               onClick: ({ key }) => {
                 if (key === 'del') batchDelete()
-                else if (key === 'timerOn') toggleTimer(true)
-                else if (key === 'timerOff') toggleTimer(false)
-                else if (key === 'timerEdit') openTimerEdit()
+                else if (key === 'timerPlan') openTimerEdit()
               },
             }}
           >
@@ -587,7 +590,7 @@ export default function Scenarios() {
       />
       <EditDrawer
         open={timerOpen}
-        title={`${t('scenario.timerEditTitle', '批量编辑定时任务')}(${t('scenario.selectedShort', '已选')} ${selectedIds.length} ${t('scenario.unitItems', '项数据')})`}
+        title={`${t('scenario.timerViaPlan', '定时执行(测试计划)')}(${t('scenario.selectedShort', '已选')} ${selectedIds.length} ${t('scenario.unitScene', '条场景')})`}
         onCancel={() => setTimerOpen(false)}
         footer={
           <div style={{ display: 'flex', alignItems: 'center' }}>
@@ -602,8 +605,33 @@ export default function Scenarios() {
           </div>
         }
       >
+        <div style={{ marginBottom: 12, color: 'var(--text-3)', fontSize: 12 }}>
+          {t('scenario.timerPlanNote', '所选场景将挂入测试计划,由计划按触发时间统一执行,报告见「测试计划」。')}
+        </div>
         <div style={{ marginBottom: 16 }}>
-          <div style={{ marginBottom: 8 }}>{t('scenario.cronLabel', '任务触发时间')}</div>
+          <div style={{ marginBottom: 8 }}>{t('scenario.pickPlan', '选择计划')} <span style={{ color: 'var(--error)' }}>*</span></div>
+          <Select
+            style={{ width: '100%' }}
+            showSearch
+            optionFilterProp="label"
+            placeholder={t('a.pleaseSelect', '请选择')}
+            value={timerPlanId}
+            onChange={setTimerPlanId}
+            options={timerPlanOptions}
+          />
+        </div>
+        {timerPlanId === NEW_PLAN_VALUE && (
+          <div style={{ marginBottom: 16 }}>
+            <div style={{ marginBottom: 8 }}>{t('scenario.newPlanOption', '新建计划')} <span style={{ color: 'var(--error)' }}>*</span></div>
+            <Input
+              placeholder={t('scenario.planNamePh', '请输入计划名称')}
+              value={timerNewName}
+              onChange={(e) => setTimerNewName(e.target.value)}
+            />
+          </div>
+        )}
+        <div style={{ marginBottom: 8 }}>
+          <div style={{ marginBottom: 8 }}>{t('scenario.cronLabel', '任务触发时间')} <span style={{ color: 'var(--error)' }}>*</span></div>
           <AutoComplete
             style={{ width: '100%' }}
             placeholder={t('scenario.cronPh', '可直接输入表达式')}
@@ -616,38 +644,6 @@ export default function Scenarios() {
               { value: '0 0 0 * * 1', label: `${t('scenario.cronWeekly', '每周一 0 点')} (0 0 0 * * 1)` },
               { value: '0 */30 * * * *', label: `${t('scenario.cronHalfHour', '每 30 分钟')} (0 */30 * * * *)` },
             ]}
-          />
-        </div>
-        <div style={{ marginBottom: 16 }}>
-          <div style={{ marginBottom: 8 }}>{t('scenario.envPick', '环境选择')}</div>
-          <Radio.Group value={timerEnvMode} onChange={(e) => setTimerEnvMode(e.target.value)}>
-            <Radio value="default">
-              {t('scenario.envDefault', '默认环境')}{' '}
-              <Tooltip title={t('scenario.envDefaultTip', '使用每个场景自身配置的环境')}><span style={{ color: 'var(--text-3)' }}>?</span></Tooltip>
-            </Radio>
-            <Radio value="new">{t('scenario.envNew', '新环境')}</Radio>
-          </Radio.Group>
-        </div>
-        {timerEnvMode === 'new' && (
-          <div style={{ marginBottom: 16 }}>
-            <div style={{ marginBottom: 8 }}>{t('scenario.envNew', '新环境')} <span style={{ color: 'var(--error)' }}>*</span></div>
-            <Select
-              style={{ width: '100%' }}
-              placeholder={t('a.pleaseSelect', '请选择')}
-              value={timerEnvId}
-              onChange={setTimerEnvId}
-              options={runEnvs.map((e) => ({ value: e.id, label: e.name }))}
-            />
-          </div>
-        )}
-        <div style={{ marginBottom: 8 }}>
-          <div style={{ marginBottom: 8 }}>{t('scenario.poolLabel', '运行资源池')} <span style={{ color: 'var(--error)' }}>*</span></div>
-          <Select
-            style={{ width: '100%' }}
-            placeholder={t('a.pleaseSelect', '请选择')}
-            value={timerPool}
-            onChange={setTimerPool}
-            options={[{ value: '', label: t('scenario.defaultPool', '默认资源池') }, ...runPools.map((p) => ({ value: p.id, label: p.name }))]}
           />
         </div>
       </EditDrawer>

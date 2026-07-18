@@ -11,7 +11,7 @@ import { useI18n } from '../i18n'
 import { useListView, type ListColumn } from '../components/ListView'
 import PlanModuleTree from '../components/plan/PlanModuleTree'
 import PlanFormModal, { PlanForm } from '../components/plan/PlanFormModal'
-import PlanDetail, { ReportMdModal } from '../components/plan/PlanDetail'
+import PlanDetail, { PlanReportDrawer } from '../components/plan/PlanDetail'
 import {
   groupIdOf,
   inPlanModule,
@@ -43,7 +43,7 @@ export default function TestPlans() {
   const [form, setForm] = useState<{ mode: 'plan' | 'group'; editing: RegItem } | null>(null)
   const [runningId, setRunningId] = useState('')
   const [expandedKeys, setExpandedKeys] = useState<string[]>([])
-  const [report, setReport] = useState<{ name: string; md: string } | null>(null)
+  const [report, setReport] = useState<{ id: string; name: string } | null>(null)
   const tabs = useWorkTabs()
 
   const loadStats = async (list: RegItem[]) => {
@@ -415,13 +415,7 @@ export default function TestPlans() {
   )
 
   // Reports tab: report entry per plan (groups have no reports, not listed).
-  const openReport = async (p: RegItem) => {
-    try {
-      setReport({ name: p.label, md: await api.planReportMd(p.id) })
-    } catch (e) {
-      message.error(e instanceof ApiError ? e.message : t('plan.reportFail', '获取报告失败'))
-    }
-  }
+  const openReport = (p: RegItem) => setReport({ id: p.id, name: p.label })
   const reportsTab = (
     <div style={{ padding: '12px 16px' }}>
       <Table<RegItem>
@@ -471,7 +465,7 @@ export default function TestPlans() {
           loadStats(list)
         }}
       />
-      <ReportMdModal open={!!report} name={report?.name || ''} md={report?.md || ''} onClose={() => setReport(null)} />
+      <PlanReportDrawer open={!!report} planId={report?.id || ''} name={report?.name || ''} onClose={() => setReport(null)} />
     </>
   )
 }

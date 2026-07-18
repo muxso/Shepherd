@@ -30,7 +30,6 @@ mod references_route;
 mod report_archive_job;
 mod routes;
 mod scenario_run;
-mod scenario_schedule;
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -617,8 +616,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         ),
         pool: pool.clone(),
     };
-    scenario_schedule::spawn(pool.clone(), scenario_runner.clone());
-    let scenario_schedule_routes = scenario_schedule::router(pool.clone(), sessions.clone());
     let scenario_run_routes = scenario_run::router(scenario_runner, sessions.clone());
 
     let perf_routes = perf_run::router(
@@ -690,7 +687,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .merge(runner_routes)
                 .merge(scenario_routes)
                 .merge(scenario_run_routes)
-                .merge(scenario_schedule_routes)
                 .merge(import_scheduler_routes),
         ),
         routes::group("perf", perf_routes),

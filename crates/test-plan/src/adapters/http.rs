@@ -293,6 +293,32 @@ async fn record_result(
     }
 }
 
+/// Per-step result of an executed scenario mounted on the plan (recursive for controllers).
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+struct StepResultDto {
+    name: String,
+    kind: String,
+    status: String,
+    latency_ms: u64,
+    status_code: Option<i64>,
+    #[schema(no_recursion)]
+    children: Vec<StepResultDto>,
+}
+
+impl From<&crate::domain::StepResult> for StepResultDto {
+    fn from(s: &crate::domain::StepResult) -> Self {
+        Self {
+            name: s.name.clone(),
+            kind: s.kind.clone(),
+            status: s.status.as_str().to_string(),
+            latency_ms: s.latency_ms,
+            status_code: s.status_code,
+            children: s.children.iter().map(Self::from).collect(),
+        }
+    }
+}
+
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 struct PlanCaseResponse {
@@ -301,6 +327,8 @@ struct PlanCaseResponse {
     status: String,
     latency_ms: Option<u64>,
     status_code: Option<i64>,
+    /// Non-empty for scenario-mounted entries executed by the plan runner.
+    steps: Vec<StepResultDto>,
 }
 
 #[utoipa::path(get, path = "/test-plan/{id}/cases", tag = "test-plan", params(("id" = String, Path)), responses((status = 200, body = [PlanCaseResponse]), (status = 403)), security(("bearer" = [])))]
@@ -322,6 +350,11 @@ async fn list_cases(
                     status: c.status.as_str().to_string(),
                     latency_ms: c.result.as_ref().map(|r| r.latency_ms),
                     status_code: c.result.as_ref().and_then(|r| r.status_code),
+                    steps: c
+                        .result
+                        .as_ref()
+                        .map(|r| r.steps.iter().map(StepResultDto::from).collect())
+                        .unwrap_or_default(),
                 })
                 .collect();
             (StatusCode::OK, Json(items)).into_response()
@@ -331,7 +364,7 @@ async fn list_cases(
 }
 
 #[derive(OpenApi)]
-#[openapi(paths(create_plan, statistics, report, report_md, link_case, record_result, list_cases), components(schemas(CreatePlanRequest, PlanResponse, StatisticsResponse, LinkCaseRequest, RecordResultRequest, AssertionResultDto, PlanCaseResponse)), tags((name = "test-plan", description = "测试计划")))]
+#[openapi(paths(create_plan, statistics, report, report_md, link_case, record_result, list_cases), components(schemas(CreatePlanRequest, PlanResponse, StatisticsResponse, LinkCaseRequest, RecordResultRequest, AssertionResultDto, PlanCaseResponse, StepResultDto)), tags((name = "test-plan", description = "测试计划")))]
 struct ApiDoc;
 pub fn openapi() -> utoipa::openapi::OpenApi {
     ApiDoc::openapi()

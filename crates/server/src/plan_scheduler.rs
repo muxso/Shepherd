@@ -100,6 +100,13 @@ pub async fn build(
 #[serde(rename_all = "camelCase")]
 struct ScheduleBody {
     cron: String,
+    /// Absent = enabled (backwards compatible).
+    #[serde(default = "default_enabled")]
+    enabled: bool,
+}
+
+fn default_enabled() -> bool {
+    true
 }
 
 #[derive(Debug, Serialize)]
@@ -120,9 +127,11 @@ async fn create_schedule(
     if !user.can("TEST_PLAN", "ADD") {
         return (StatusCode::FORBIDDEN, "permission denied").into_response();
     }
-    match st.create.execute(&id, &b.cron, true).await {
+    match st.create.execute(&id, &b.cron, b.enabled).await {
         Ok(s) => {
-            register_job(&st.sched, &st.run_uc, &st.plan_runner, &s.plan_id, &s.cron).await;
+            if s.enabled {
+                register_job(&st.sched, &st.run_uc, &st.plan_runner, &s.plan_id, &s.cron).await;
+            }
             (
                 StatusCode::CREATED,
                 Json(ScheduleResponse {
