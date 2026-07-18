@@ -332,3 +332,37 @@ body::before {
 [data-theme='dark'] .ms-topbar.ms-scrolled {
   box-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
 }
+
+/* Spring easing (approximated with linear(); browsers without linear() keep
+   the component's default curve). Shared by drawers and the login page. */
+:root {
+  --ease-spring: linear(
+    0, 0.009, 0.035 2.1%, 0.141 4.4%, 0.723 12.9%, 0.938 16.7%, 1.017 20.4%,
+    1.044 24.3%, 1.042 29.3%, 1.02 38.2%, 1.004 48%, 0.999 60%, 1
+  );
+}
+
+/* Drawers: softer elevation + lighter mask + spring slide. The stock shadow
+   reads far too heavy against both themes. */
+.ant-drawer .ant-drawer-content-wrapper {
+  box-shadow: -6px 0 20px rgba(15, 23, 42, 0.07) !important;
+  transition: transform 0.5s var(--ease-spring) !important;
+}
+.ant-drawer-left .ant-drawer-content-wrapper {
+  box-shadow: 6px 0 20px rgba(15, 23, 42, 0.07) !important;
+}
+.ant-drawer-top .ant-drawer-content-wrapper {
+  box-shadow: 0 6px 20px rgba(15, 23, 42, 0.07) !important;
+}
+.ant-drawer-bottom .ant-drawer-content-wrapper {
+  box-shadow: 0 -6px 20px rgba(15, 23, 42, 0.07) !important;
+}
+[data-theme='dark'] .ant-drawer .ant-drawer-content-wrapper {
+  box-shadow: -6px 0 20px rgba(0, 0, 0, 0.28) !important;
+}
+[data-theme='dark'] .ant-drawer-left .ant-drawer-content-wrapper {
+  box-shadow: 6px 0 20px rgba(0, 0, 0, 0.28) !important;
+}
+.ant-drawer .ant-drawer-mask {
+  transition: opacity 0.35s ease;
+}

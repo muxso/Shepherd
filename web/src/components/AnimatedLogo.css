@@ -25,11 +25,15 @@
 .shepherd-logo .s-9 { animation-delay: 0.53s, 2.2s; }
 
 @keyframes logoSlideIn {
-  from {
+  0% {
     opacity: 0;
     transform: translateX(-14px);
   }
-  to {
+  70% {
+    opacity: 1;
+    transform: translateX(3px);
+  }
+  100% {
     opacity: 1;
     transform: translateX(0);
   }

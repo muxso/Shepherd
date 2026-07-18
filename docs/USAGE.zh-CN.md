@@ -2,7 +2,7 @@
 
 > 适用对象:运行、运维或评估 Shepherd 的人。生产部署(Helm、Terraform、CI/CD、Day-2 运维)见 [DEPLOYMENT.zh-CN.md](DEPLOYMENT.zh-CN.md)。English version: [USAGE.md](USAGE.md)。
 
-Shepherd 是一个 AI 研发**监督**平台:AI 写代码,你掌控交付什么。它把需求拆给 AI 执行者去做,并在**两个环节设人工审批门**(设计、验证),把整条链路完整记录在案。
+Shepherd 是一个 AI 研发**监督**平台:从 idea 到交付,更安全、更可靠的质量把关。它把需求拆给 AI 执行者去做,并在**两个环节设人工审批门**(设计、验证),把整条链路完整记录在案。
 
 ---
 

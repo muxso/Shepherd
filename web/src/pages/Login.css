@@ -26,7 +26,7 @@
   transform: translateX(-50%);
   z-index: 200;
   pointer-events: none;
-  transition: left 0.6s cubic-bezier(0.65, 0, 0.35, 1);
+  transition: left 0.65s var(--ease-spring);
   animation: loginFadeIn 0.6s ease-out both;
   text-align: center;
   display: flex;
@@ -58,15 +58,26 @@
   height: 560px;
   border: 1px solid var(--border-soft);
   border-radius: 16px;
-  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.18), 0 4px 12px rgba(0, 0, 0, 0.08);
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.07), 0 0 1px rgba(15, 23, 42, 0.1);
   overflow: hidden;
   isolation: isolate;
-  animation: loginFadeIn 0.6s ease-out both;
+  animation: loginCardIn 0.7s var(--ease-spring) both;
 }
 
 @keyframes loginFadeIn {
   from { opacity: 0; }
   to { opacity: 1; }
+}
+
+@keyframes loginCardIn {
+  from {
+    opacity: 0;
+    transform: translateY(16px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -84,7 +95,7 @@
   align-items: flex-start;
   justify-content: center;
   padding: 248px 40px 48px;
-  transition: all 0.6s cubic-bezier(0.65, 0, 0.35, 1);
+  transition: all 0.65s var(--ease-spring);
   overflow: hidden;
 }
 .login-panel-inner {
@@ -116,7 +127,7 @@
   transform: translateX(100%);
   opacity: 1;
   z-index: 5;
-  animation: loginShowPanel 0.6s cubic-bezier(0.65, 0, 0.35, 1);
+  animation: loginShowPanel 0.65s var(--ease-spring);
 }
 .login-card.mode-sso .login-overlay-wrap { transform: translateX(-100%); }
 .login-card.mode-sso .login-overlay { transform: translateX(50%); }
@@ -140,9 +151,10 @@
   gap: 8px;
   background: var(--brand);
   color: #fff;
-  transition: filter 0.15s;
+  transition: filter 0.15s, transform 0.12s ease;
 }
 .login-btn:hover { filter: brightness(1.1); }
+.login-btn:active { transform: scale(0.97); }
 .login-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
 .login-btn-outline {
@@ -187,7 +199,7 @@
   width: 50%;
   height: 100%;
   overflow: hidden;
-  transition: transform 0.6s cubic-bezier(0.65, 0, 0.35, 1);
+  transition: transform 0.65s var(--ease-spring);
   z-index: 100;
 }
 .login-overlay {
@@ -196,7 +208,7 @@
   width: 200%;
   height: 100%;
   background: var(--panel-2);
-  transition: transform 0.6s cubic-bezier(0.65, 0, 0.35, 1);
+  transition: transform 0.65s var(--ease-spring);
 }
 .login-overlay-side {
   position: absolute;
