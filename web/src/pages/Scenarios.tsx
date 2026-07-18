@@ -20,6 +20,16 @@ import { SelectProjectEmpty } from '../components/Page'
 import { useI18n } from '../i18n'
 
 type TFn = (key: string, fallback?: string) => string
+
+/* Humanized units for report stats: ms flips to seconds past 1s, bytes climb KB/MB/GB. */
+const fmtDuration = (ms: number) =>
+  ms >= 60_000 ? `${(ms / 60_000).toFixed(1)} min` : ms >= 1000 ? `${(ms / 1000).toFixed(2)} s` : `${ms} ms`
+const fmtSize = (b: number) =>
+  b >= 1 << 30 ? `${(b / (1 << 30)).toFixed(2)} GB`
+  : b >= 1 << 20 ? `${(b / (1 << 20)).toFixed(2)} MB`
+  : b >= 1024 ? `${(b / 1024).toFixed(1)} KB`
+  : `${b} bytes`
+
 // Editable form state + scenario param rows (persisted in scenario.meta).
 type ScenarioParam = { name: string; type: string; value: string; tags: string; desc: string }
 type ScenarioForm = { name: string; status: string; description: string; tags: string[]; priority: string; params: ScenarioParam[]; csv: string; moduleId: string; disabledSteps: string[]; preProcessors: unknown[]; postProcessors: unknown[]; assertions: unknown[]; envCookie: boolean; sharedCookie: boolean }
@@ -911,9 +921,9 @@ function StepRow({ node, idx, depth, t, result, running, seq = 0, enabled = true
           const cluster = (
             <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }} onClick={(e) => e.stopPropagation()}>
               <Tag color={ok ? 'green' : 'red'} style={{ margin: 0 }}>{ok ? t('scenario.pass', '通过') : t('scenario.fail', '失败')}</Tag>
-              {result.statusCode != null && <span style={muted}>{t('apidef.statusCode', '状态码')} <span style={{ color: result.statusCode < 400 ? 'var(--success)' : 'var(--error)' }}>{result.statusCode}</span></span>}
-              <span style={muted}>{t('scenario.respTime', '响应时间')} {result.latencyMs != null ? `${result.latencyMs} ms` : '—'}</span>
-              <span style={muted}>{t('scenario.respSize', '响应大小')} {result.respSize != null ? `${result.respSize} bytes` : '—'}</span>
+              {result.statusCode != null && <Tooltip title={t('scenario.statusTip', '服务端返回的 HTTP 状态码')}><span style={muted}>{t('apidef.statusCode', '状态码')} <span style={{ color: result.statusCode < 400 ? 'var(--success)' : 'var(--error)' }}>{result.statusCode}</span></span></Tooltip>}
+              <Tooltip title={t('scenario.respTimeTip', '从建立连接到收到服务端完整响应的全链路耗时')}><span style={muted}>{t('scenario.respTime', '响应时间')} {result.latencyMs != null ? fmtDuration(result.latencyMs) : '—'}</span></Tooltip>
+              <Tooltip title={t('scenario.respSizeTip', '响应体大小')}><span style={muted}>{t('scenario.respSize', '响应大小')} {result.respSize != null ? fmtSize(result.respSize) : '—'}</span></Tooltip>
             </span>
           )
           return respPreview
@@ -2159,7 +2169,7 @@ function ScenarioReportModal({ reportId, nameOf, caseMap, onClose }: { reportId:
                 {t('scenario.reportAnalysis', '报告分析')}<Tag color={outcomeColor(data.status)} style={{ margin: 0 }}>{runOutcomeLabel(data.status, t)}</Tag>
               </h3>
               {stat(t('scenario.reportTotalTime', '报告总耗时'), <>{(reportTotalMs / 1000).toFixed(3)} <span style={{ color: 'var(--text-3)', fontWeight: 400 }}>(sec)</span></>)}
-              {stat(t('scenario.reqTotalTime', '请求总耗时'), <>{reqTotalMs} <span style={{ color: 'var(--text-3)', fontWeight: 400 }}>(ms)</span></>)}
+              {stat(t('scenario.reqTotalTime', '请求总耗时'), <Tooltip title={t('scenario.respTimeTip', '从建立连接到收到服务端完整响应的全链路耗时')}><span>{fmtDuration(reqTotalMs)}</span></Tooltip>)}
               {stat(t('scenario.assertPassRate', '断言通过率'), <>{asRate.toFixed(2)} <span style={{ color: 'var(--text-3)', fontWeight: 400 }}>(%)</span></>, asRate >= 100 ? '#22c55e' : undefined)}
             </div>
             <DistCard title={t('scenario.stepAnalysis', '步骤分析')} d={dist} centerLabel={t('scenario.totalCount', '总数(个)')} t={t} />
@@ -2273,9 +2283,9 @@ function ReportRow({ idx, r, label, t, open, onToggle, caseOf }: { idx: number; 
         <span style={{ color: 'var(--text-3)', fontSize: 12, minWidth: 18 }}>{idx}</span>
         <span style={{ flex: 1, minWidth: 0 }} className="ms-mono">{label(r.caseId)}</span>
         <Tag color={ok ? 'green' : 'red'} style={{ margin: 0 }}>{ok ? t('scenario.pass', '通过') : t('scenario.fail', '失败')}</Tag>
-        {r.statusCode != null && <span style={muted}>{t('apidef.statusCode', '状态码')} <span style={{ color: r.statusCode < 400 ? 'var(--success)' : 'var(--error)' }}>{r.statusCode}</span></span>}
-        <span style={muted}>{t('scenario.respTime', '响应时间')} {r.latencyMs != null ? `${r.latencyMs} ms` : '—'}</span>
-        <span style={muted}>{t('scenario.respSize', '响应大小')} {r.respSize != null ? `${r.respSize} bytes` : '—'}</span>
+        {r.statusCode != null && <Tooltip title={t('scenario.statusTip', '服务端返回的 HTTP 状态码')}><span style={muted}>{t('apidef.statusCode', '状态码')} <span style={{ color: r.statusCode < 400 ? 'var(--success)' : 'var(--error)' }}>{r.statusCode}</span></span></Tooltip>}
+        <Tooltip title={t('scenario.respTimeTip', '从建立连接到收到服务端完整响应的全链路耗时')}><span style={muted}>{t('scenario.respTime', '响应时间')} {r.latencyMs != null ? fmtDuration(r.latencyMs) : '—'}</span></Tooltip>
+        <Tooltip title={t('scenario.respSizeTip', '响应体大小')}><span style={muted}>{t('scenario.respSize', '响应大小')} {r.respSize != null ? fmtSize(r.respSize) : '—'}</span></Tooltip>
       </div>
       {r.failures.length > 0 && (
         <div style={{ padding: '0 12px 8px 40px' }}>
