@@ -3,7 +3,7 @@ import { Button, Empty, Form, Input, Select, Space, Table, Tag, Tooltip, Typogra
 import EditDrawer from '../components/EditDrawer'
 import ResizableDrawer from '../components/ResizableDrawer'
 import { message } from '../feedback'
-import { PlusOutlined, PlayCircleOutlined, HistoryOutlined, ReloadOutlined } from '@ant-design/icons'
+import { PlusOutlined, PlayCircleOutlined, HistoryOutlined, ReloadOutlined, StarFilled, StarOutlined } from '@ant-design/icons'
 import {
   api,
   ApiError,
@@ -24,11 +24,16 @@ export default function CasesPanel({ definition, refreshToken }: { definition: A
   const [createOpen, setCreateOpen] = useState(false)
   const [runFor, setRunFor] = useState<ApiCase | null>(null)
   const [execFor, setExecFor] = useState<ApiCase | null>(null)
+  const [followedIds, setFollowedIds] = useState<Set<string>>(new Set())
 
   const load = async () => {
     setLoading(true)
     try {
       setCases(await api.cases(definition.id))
+      // Followed case ids for the star column; failure just leaves stars empty.
+      api.myFollows(definition.projectId, 'API_CASE')
+        .then((r) => setFollowedIds(new Set(r.entityIds)))
+        .catch(() => {})
     } catch (e) {
       message.error(e instanceof ApiError ? e.message : t('case.loadFailed', '加载用例失败'))
     } finally {
@@ -40,6 +45,28 @@ export default function CasesPanel({ definition, refreshToken }: { definition: A
     load()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [definition.id, refreshToken])
+
+  // Optimistic star toggle; revert and warn on failure.
+  const toggleFollow = async (c: ApiCase) => {
+    const was = followedIds.has(c.id)
+    const apply = (on: boolean) =>
+      setFollowedIds((s) => {
+        const n = new Set(s)
+        if (on) n.add(c.id)
+        else n.delete(c.id)
+        return n
+      })
+    apply(!was)
+    const b = { projectId: definition.projectId, entityType: 'API_CASE', entityId: c.id }
+    try {
+      const st = was ? await api.unfollow(b) : await api.follow(b)
+      apply(st.following)
+      message.success(st.following ? t('follow.followed', '已关注') : t('follow.unfollowed', '已取消关注'))
+    } catch {
+      apply(was)
+      message.error(t('follow.failed', '关注操作失败'))
+    }
+  }
 
   return (
     <>
@@ -90,9 +117,17 @@ export default function CasesPanel({ definition, refreshToken }: { definition: A
           },
           {
             title: t('case.colActions', '操作'),
-            width: 170,
+            width: 200,
             render: (_: unknown, c: ApiCase) => (
               <Space>
+                <Tooltip title={followedIds.has(c.id) ? t('follow.unfollow', '取消关注') : t('follow.follow', '关注')}>
+                  <Button
+                    type="text"
+                    size="small"
+                    icon={followedIds.has(c.id) ? <StarFilled style={{ color: 'var(--warning, #ff7d00)' }} /> : <StarOutlined />}
+                    onClick={() => toggleFollow(c)}
+                  />
+                </Tooltip>
                 <Tooltip title={t('case.runTip', '选择资源池后执行')}>
                   <Button type="link" size="small" icon={<PlayCircleOutlined />} onClick={() => setRunFor(c)}>
                     {t('a.run', '运行')}
