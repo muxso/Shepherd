@@ -26,6 +26,9 @@ pub trait PlanRepository: Send + Sync {
     /// Idempotent; an existing link keeps its status, otherwise starts as PENDING.
     async fn link_case(&self, plan_id: &str, case_id: &str, name: &str) -> Result<(), RepoError>;
 
+    /// Removes the link (and its recorded result); false when the case is not linked.
+    async fn unlink_case(&self, plan_id: &str, case_id: &str) -> Result<bool, RepoError>;
+
     async fn record_result(
         &self,
         plan_id: &str,

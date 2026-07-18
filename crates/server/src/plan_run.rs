@@ -81,83 +81,117 @@ impl PlanRunner {
             .unwrap_or_default()
     }
 
-    pub async fn run(&self, plan_id: &str, env_id: Option<&str>) -> Result<RunSummary, ()> {
-        let env_id = env_id.filter(|s| !s.trim().is_empty());
-        let env: Option<ResolvedEnv> = match env_id {
+    /// Executes one linked entry (API case or scenario) and records its result.
+    /// `counted` is false for the spec-missing BLOCK case, which run() leaves
+    /// out of the executed/failed tally.
+    async fn execute_case(
+        &self,
+        plan_id: &str,
+        project_id: &str,
+        case_id: &str,
+        env_id: Option<&str>,
+        env: Option<&ResolvedEnv>,
+    ) -> (CaseStatus, bool) {
+        if let Ok(Some(spec)) = self.specs.spec_of(case_id).await {
+            let (status, result) =
+                run_request(&self.runner, &spec.request, &spec.assertions, env).await;
+            let _ = self.cases.record(plan_id, case_id, status, Some(result)).await;
+            return (status, true);
+        }
+        // Not an API case: treat as a scenario-mounted entry. The run-level
+        // env wins; otherwise the scenario's own configured environment.
+        let eff_env = match env_id {
+            Some(id) => Some(id.to_string()),
+            None => self.scenarios.default_env_of(case_id).await,
+        };
+        match self.scenarios.run(case_id, project_id, eff_env.as_deref(), false).await {
+            Ok(o) => {
+                let ok = o.status == "SUCCESS";
+                let status = if ok { CaseStatus::Success } else { CaseStatus::Error };
+                let result = CaseResult { report_id: Some(o.report_id), ..Default::default() };
+                let _ = self.cases.record(plan_id, case_id, status, Some(result)).await;
+                (status, true)
+            }
+            Err(RunError::NotFound) => {
+                let _ = self
+                    .cases
+                    .record(
+                        plan_id,
+                        case_id,
+                        CaseStatus::Block,
+                        Some(CaseResult {
+                            body: Some("用例规格未找到(非 ms_api_case / 非场景)".into()),
+                            ..Default::default()
+                        }),
+                    )
+                    .await;
+                (CaseStatus::Block, false)
+            }
+            Err(e) => {
+                let msg = match e {
+                    RunError::CycleOrDepth => "场景引用成环或过深",
+                    RunError::NoSteps => "场景无可执行步骤",
+                    _ => "场景执行失败",
+                };
+                let _ = self
+                    .cases
+                    .record(
+                        plan_id,
+                        case_id,
+                        CaseStatus::Error,
+                        Some(CaseResult { body: Some(msg.into()), ..Default::default() }),
+                    )
+                    .await;
+                (CaseStatus::Error, true)
+            }
+        }
+    }
+
+    async fn resolve_env(&self, env_id: Option<&str>) -> Option<ResolvedEnv> {
+        match env_id {
             Some(id) => self.envs.resolve(id).await.ok().flatten(),
             None => None,
-        };
-        let env = env.as_ref();
+        }
+    }
+
+    pub async fn run(&self, plan_id: &str, env_id: Option<&str>) -> Result<RunSummary, ()> {
+        let env_id = env_id.filter(|s| !s.trim().is_empty());
+        let env = self.resolve_env(env_id).await;
         let cases = self.cases.list(plan_id).await.map_err(|_| ())?;
         let project_id = self.project_of(plan_id).await;
         let total = cases.len();
         let (mut executed, mut success, mut failed) = (0usize, 0usize, 0usize);
         for pc in &cases {
-            if let Ok(Some(spec)) = self.specs.spec_of(&pc.case_id).await {
-                let (status, result) =
-                    run_request(&self.runner, &spec.request, &spec.assertions, env).await;
+            let (status, counted) =
+                self.execute_case(plan_id, &project_id, &pc.case_id, env_id, env.as_ref()).await;
+            if counted {
                 executed += 1;
                 match status {
                     CaseStatus::Success => success += 1,
                     _ => failed += 1,
                 }
-                let _ = self.cases.record(plan_id, &pc.case_id, status, Some(result)).await;
-                continue;
-            }
-            // Not an API case: treat as a scenario-mounted entry. The run-level
-            // env wins; otherwise the scenario's own configured environment.
-            let eff_env = match env_id {
-                Some(id) => Some(id.to_string()),
-                None => self.scenarios.default_env_of(&pc.case_id).await,
-            };
-            match self.scenarios.run(&pc.case_id, &project_id, eff_env.as_deref(), false).await {
-                Ok(o) => {
-                    let ok = o.status == "SUCCESS";
-                    let status = if ok { CaseStatus::Success } else { CaseStatus::Error };
-                    executed += 1;
-                    if ok {
-                        success += 1;
-                    } else {
-                        failed += 1;
-                    }
-                    let result = CaseResult { report_id: Some(o.report_id), ..Default::default() };
-                    let _ = self.cases.record(plan_id, &pc.case_id, status, Some(result)).await;
-                }
-                Err(RunError::NotFound) => {
-                    let _ = self
-                        .cases
-                        .record(
-                            plan_id,
-                            &pc.case_id,
-                            CaseStatus::Block,
-                            Some(CaseResult {
-                                body: Some("用例规格未找到(非 ms_api_case / 非场景)".into()),
-                                ..Default::default()
-                            }),
-                        )
-                        .await;
-                }
-                Err(e) => {
-                    executed += 1;
-                    failed += 1;
-                    let msg = match e {
-                        RunError::CycleOrDepth => "场景引用成环或过深",
-                        RunError::NoSteps => "场景无可执行步骤",
-                        _ => "场景执行失败",
-                    };
-                    let _ = self
-                        .cases
-                        .record(
-                            plan_id,
-                            &pc.case_id,
-                            CaseStatus::Error,
-                            Some(CaseResult { body: Some(msg.into()), ..Default::default() }),
-                        )
-                        .await;
-                }
             }
         }
         Ok(RunSummary { total, executed, success, failed })
+    }
+
+    /// Runs exactly one linked case/scenario; None when the case is not linked.
+    pub async fn run_case(
+        &self,
+        plan_id: &str,
+        case_id: &str,
+        env_id: Option<&str>,
+    ) -> Result<Option<CaseStatus>, ()> {
+        let env_id = env_id.filter(|s| !s.trim().is_empty());
+        let cases = self.cases.list(plan_id).await.map_err(|_| ())?;
+        if !cases.iter().any(|c| c.case_id == case_id) {
+            return Ok(None);
+        }
+        let env = self.resolve_env(env_id).await;
+        let project_id = self.project_of(plan_id).await;
+        let (status, _) =
+            self.execute_case(plan_id, &project_id, case_id, env_id, env.as_ref()).await;
+        Ok(Some(status))
     }
 }
 
@@ -177,6 +211,7 @@ impl FromRef<RunState> for Arc<dyn SessionStore> {
 pub fn router(pool: PgPool, sessions: Arc<dyn SessionStore>) -> Router {
     Router::new()
         .route("/test-plan/{id}/run", post(run_plan))
+        .route("/test-plan/{id}/cases/{caseId}/run", post(run_plan_case))
         .route("/test-plan/by-case/{caseId}", get(plans_by_case))
         .with_state(RunState { plan_runner: PlanRunner::new(pool.clone()), pool, sessions })
 }
@@ -323,8 +358,40 @@ async fn run_plan(
     }
 }
 
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+struct RunPlanCaseResponse {
+    case_id: String,
+    status: String,
+}
+
+#[utoipa::path(
+    post, path = "/test-plan/{id}/cases/{caseId}/run", tag = "test-plan",
+    params(("id" = String, Path), ("caseId" = String, Path)),
+    responses((status = 200, body = RunPlanCaseResponse), (status = 403), (status = 404)),
+    security(("bearer" = []))
+)]
+async fn run_plan_case(
+    user: AuthUser,
+    State(st): State<RunState>,
+    Path((id, case_id)): Path<(String, String)>,
+) -> Response {
+    if !user.can("TEST_PLAN", "EXECUTE") {
+        return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
+    match st.plan_runner.run_case(&id, &case_id, None).await {
+        Ok(Some(status)) => (
+            StatusCode::OK,
+            Json(RunPlanCaseResponse { case_id, status: status.as_str().to_string() }),
+        )
+            .into_response(),
+        Ok(None) => (StatusCode::NOT_FOUND, "case not linked to plan").into_response(),
+        Err(()) => (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
+    }
+}
+
 #[derive(OpenApi)]
-#[openapi(paths(run_plan), components(schemas(RunPlanResponse, RunPlanBody)), tags((name = "test-plan", description = "测试计划")))]
+#[openapi(paths(run_plan, run_plan_case), components(schemas(RunPlanResponse, RunPlanBody, RunPlanCaseResponse)), tags((name = "test-plan", description = "测试计划")))]
 struct ApiDoc;
 
 pub fn openapi() -> utoipa::openapi::OpenApi {

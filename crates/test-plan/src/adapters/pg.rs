@@ -127,6 +127,16 @@ impl PlanRepository for PgPlanRepository {
         Ok(())
     }
 
+    async fn unlink_case(&self, plan_id: &str, case_id: &str) -> Result<bool, RepoError> {
+        let res = sqlx::query("DELETE FROM ms_test_plan_case WHERE plan_id = $1 AND case_id = $2")
+            .bind(plan_id)
+            .bind(case_id)
+            .execute(&self.pool)
+            .await
+            .map_err(map_err)?;
+        Ok(res.rows_affected() > 0)
+    }
+
     async fn record_result(
         &self,
         plan_id: &str,

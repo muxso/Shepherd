@@ -48,6 +48,7 @@ pub fn router(
         .route("/test-plan/{id}/report", get(report))
         .route("/test-plan/{id}/report.md", get(report_md))
         .route("/test-plan/{id}/cases", post(link_case).get(list_cases))
+        .route("/test-plan/{id}/cases/{caseId}", axum::routing::delete(unlink_case))
         .route("/test-plan/{id}/cases/{caseId}/result", post(record_result))
         .with_state(PlanState { create, stats, cases, admin, sessions })
 }
@@ -388,6 +389,22 @@ async fn link_case(
     }
 }
 
+#[utoipa::path(delete, path = "/test-plan/{id}/cases/{caseId}", tag = "test-plan", params(("id" = String, Path), ("caseId" = String, Path)), responses((status = 204), (status = 403), (status = 404)), security(("bearer" = [])))]
+async fn unlink_case(
+    user: AuthUser,
+    State(st): State<PlanState>,
+    Path((id, case_id)): Path<(String, String)>,
+) -> Response {
+    if !user.can("TEST_PLAN", "UPDATE") {
+        return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
+    match st.cases.unlink(&id, &case_id).await {
+        Ok(true) => StatusCode::NO_CONTENT.into_response(),
+        Ok(false) => (StatusCode::NOT_FOUND, "case not linked to plan").into_response(),
+        Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
+    }
+}
+
 #[derive(Debug, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 struct AssertionResultDto {
@@ -530,7 +547,7 @@ async fn list_cases(
 }
 
 #[derive(OpenApi)]
-#[openapi(paths(create_plan, plan_detail, update_plan, save_planning, statistics, report, report_md, link_case, record_result, list_cases), components(schemas(CreatePlanRequest, PlanResponse, PlanDetailResponse, UpdatePlanRequest, SavePlanningResponse, StatisticsResponse, LinkCaseRequest, RecordResultRequest, AssertionResultDto, PlanCaseResponse, StepResultDto)), tags((name = "test-plan", description = "测试计划")))]
+#[openapi(paths(create_plan, plan_detail, update_plan, save_planning, statistics, report, report_md, link_case, unlink_case, record_result, list_cases), components(schemas(CreatePlanRequest, PlanResponse, PlanDetailResponse, UpdatePlanRequest, SavePlanningResponse, StatisticsResponse, LinkCaseRequest, RecordResultRequest, AssertionResultDto, PlanCaseResponse, StepResultDto)), tags((name = "test-plan", description = "测试计划")))]
 struct ApiDoc;
 pub fn openapi() -> utoipa::openapi::OpenApi {
     ApiDoc::openapi()
@@ -669,6 +686,38 @@ mod tests {
         assert!(html.contains("报告明细"));
         assert!(html.contains("断言项"));
         assert!(html.contains("通过率</span><b>100.0%"));
+    }
+
+    #[tokio::test]
+    async fn unlink_case_204_then_404() {
+        let repo = InMemoryPlanRepository::new();
+        let plan = repo
+            .seed(NewPlan::new("p1", "冒烟", crate::domain::PlanType::Plan, ROOT_GROUP).expect("v"))
+            .await;
+        let (app, t) = app_with(repo).await;
+        let pid = &plan.id;
+        let r = app
+            .clone()
+            .oneshot(post(
+                &format!("/test-plan/{pid}/cases"),
+                r#"{"caseId":"c1","name":"健康检查"}"#,
+                Some(&t),
+            ))
+            .await
+            .expect("link");
+        assert_eq!(r.status(), StatusCode::CREATED);
+        let del = |uri: String| {
+            Request::builder()
+                .method("DELETE")
+                .uri(uri)
+                .header("authorization", format!("Bearer {t}"))
+                .body(Body::empty())
+                .expect("req")
+        };
+        let r = app.clone().oneshot(del(format!("/test-plan/{pid}/cases/c1"))).await.expect("del");
+        assert_eq!(r.status(), StatusCode::NO_CONTENT);
+        let r = app.oneshot(del(format!("/test-plan/{pid}/cases/c1"))).await.expect("del again");
+        assert_eq!(r.status(), StatusCode::NOT_FOUND);
     }
 
     #[tokio::test]

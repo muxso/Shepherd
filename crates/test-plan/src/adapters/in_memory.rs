@@ -141,6 +141,14 @@ impl PlanRepository for InMemoryPlanRepository {
         Ok(())
     }
 
+    async fn unlink_case(&self, plan_id: &str, case_id: &str) -> Result<bool, RepoError> {
+        let mut state = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let Some(cases) = state.cases.get_mut(plan_id) else { return Ok(false) };
+        let before = cases.len();
+        cases.retain(|c| c.case_id != case_id);
+        Ok(cases.len() != before)
+    }
+
     async fn record_result(
         &self,
         plan_id: &str,

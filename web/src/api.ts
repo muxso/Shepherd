@@ -1113,7 +1113,7 @@ export interface VerificationReport {
   [k: string]: unknown
 }
 
-/** Case review (queue overview): pass rule + total/passed case counts. */
+/** Case review (list row): pass rule + counts + header meta (name/tags/module/schedule/creator). */
 export interface CaseReviewSummary {
   id: string
   passRule: string
@@ -1121,6 +1121,24 @@ export interface CaseReviewSummary {
   total: number
   passed: number
   createdAt: string
+  status: string
+  name: string
+  description: string
+  tags: string[]
+  moduleId?: string | null
+  startAt?: string | null
+  endAt?: string | null
+  createdBy?: string | null
+  reviewers: string[]
+}
+/** Editable review header fields (create extras + PUT body). */
+export interface CaseReviewMetaInput {
+  name: string
+  description?: string
+  tags?: string[]
+  moduleId?: string | null
+  startAt?: string | null
+  endAt?: string | null
 }
 export interface CaseReviewCase {
   caseId: string
@@ -1536,6 +1554,10 @@ export const api = {
   planCases: (id: string) => http.get<PlanCase[] | Page<PlanCase>>(`/test-plan/${id}/cases`),
   linkPlanCase: (id: string, caseId: string, name: string) =>
     http.post(`/test-plan/${id}/cases`, { caseId, name }),
+  unlinkPlanCase: (id: string, caseId: string) => http.del(`/test-plan/${id}/cases/${caseId}`),
+  // Runs exactly one linked case/scenario and records its result.
+  runPlanCase: (id: string, caseId: string) =>
+    http.post<{ caseId: string; status: string }>(`/test-plan/${id}/cases/${caseId}/run`, {}),
   // Manually record a case result (pass/fail/blocked/false alarm); status: SUCCESS|ERROR|BLOCK|FAKE_ERROR|PENDING
   recordPlanCaseResult: (id: string, caseId: string, status: string) =>
     http.post(`/test-plan/${id}/cases/${caseId}/result`, { status }),
@@ -1682,8 +1704,10 @@ export const api = {
   // Case review queues (create/list/detail/submit verdict)
   caseReviews: (projectId: string) =>
     projectId ? http.get<CaseReviewSummary[]>(`/case-review?projectId=${encodeURIComponent(projectId)}`) : Promise.resolve([] as CaseReviewSummary[]),
-  createCaseReview: (b: { projectId: string; passRule: string; reviewerCount: number; caseIds: string[] }) =>
+  createCaseReview: (b: { projectId: string; passRule: string; reviewerCount: number; caseIds: string[] } & Partial<CaseReviewMetaInput>) =>
     http.post<{ id: string }>('/case-review', b),
+  updateCaseReview: (id: string, b: CaseReviewMetaInput & { passRule: string; reviewerCount: number }) =>
+    http.put(`/case-review/${id}`, b),
   caseReview: (id: string) => http.get<CaseReviewDetail>(`/case-review/${id}`),
   submitCaseReview: (reviewId: string, caseId: string, b: { reviewerId: string; status: string; content?: string }) =>
     http.post<{ status: string }>(`/case-review/${reviewId}/${caseId}`, b),

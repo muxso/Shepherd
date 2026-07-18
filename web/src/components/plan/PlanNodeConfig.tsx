@@ -1,18 +1,14 @@
 import { useEffect, useState } from 'react'
-import { Button, Modal, Radio, Select, Switch, Table, Tabs, Tag } from 'antd'
+import { Button, Radio, Select, Switch, Tag } from 'antd'
 import type { Environment, PlanningNode, PlanningNodeConfig, ResourcePool } from '../../api'
-import { api } from '../../api'
 import { useI18n } from '../../i18n'
-
-export interface CaseOption {
-  id: string
-  name: string
-}
+import PlanCasePicker, { type PlanCatType } from './PlanCasePicker'
 
 /** Right slide-in config panel for a mind-map node: case links + execution config. */
 export default function PlanNodeConfig({
   node,
   projectId,
+  catType,
   envs,
   pools,
   onSave,
@@ -20,6 +16,8 @@ export default function PlanNodeConfig({
 }: {
   node: PlanningNode
   projectId: string
+  /** Category the node lives under; drives the picker tabs. */
+  catType: PlanCatType
   envs: Environment[]
   pools: ResourcePool[]
   /** Save the edited config + selections back into the tree (names feed the backend link sync). */
@@ -146,9 +144,10 @@ export default function PlanNodeConfig({
           {t('lv.save', '保存')}
         </Button>
       </div>
-      <CasePickerModal
+      <PlanCasePicker
         open={pickerOpen}
         projectId={projectId}
+        catType={catType}
         caseIds={caseIds}
         scenarioIds={scenarioIds}
         onClose={() => setPickerOpen(false)}
@@ -160,75 +159,5 @@ export default function PlanNodeConfig({
         }}
       />
     </div>
-  )
-}
-
-/** Case/scenario picker: link api-case ids and scenario ids to the node. */
-function CasePickerModal({
-  open,
-  projectId,
-  caseIds,
-  scenarioIds,
-  onClose,
-  onOk,
-}: {
-  open: boolean
-  projectId: string
-  caseIds: string[]
-  scenarioIds: string[]
-  onClose: () => void
-  onOk: (caseIds: string[], scenarioIds: string[], names: Record<string, string>) => void
-}) {
-  const { t } = useI18n()
-  const [cases, setCases] = useState<CaseOption[]>([])
-  const [scenarios, setScenarios] = useState<CaseOption[]>([])
-  const [selCases, setSelCases] = useState<string[]>([])
-  const [selScenarios, setSelScenarios] = useState<string[]>([])
-
-  useEffect(() => {
-    if (!open) return
-    setSelCases(caseIds)
-    setSelScenarios(scenarioIds)
-    api.projectCases(projectId)
-      .then((p) => setCases(p.items.map((c) => ({ id: c.id, name: `${c.method} ${c.name}` }))))
-      .catch(() => setCases([]))
-    api.scenarios(projectId)
-      .then((list) => setScenarios(list.map((s) => ({ id: s.id, name: s.name }))))
-      .catch(() => setScenarios([]))
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open])
-
-  const table = (rows: CaseOption[], sel: string[], setSel: (v: string[]) => void) => (
-    <Table<CaseOption>
-      rowKey="id"
-      size="small"
-      dataSource={rows}
-      pagination={{ pageSize: 8, size: 'small' }}
-      rowSelection={{ selectedRowKeys: sel, onChange: (ks) => setSel(ks.map(String)) }}
-      columns={[{ title: t('plan.caseName', '用例名'), dataIndex: 'name', ellipsis: true }]}
-      onRow={(r) => ({
-        onClick: () => setSel(sel.includes(r.id) ? sel.filter((k) => k !== r.id) : [...sel, r.id]),
-        style: { cursor: 'pointer' },
-      })}
-    />
-  )
-
-  const ok = () => {
-    const names: Record<string, string> = {}
-    cases.filter((c) => selCases.includes(c.id)).forEach((c) => (names[c.id] = c.name))
-    scenarios.filter((s) => selScenarios.includes(s.id)).forEach((s) => (names[s.id] = s.name))
-    onOk(selCases, selScenarios, names)
-  }
-
-  return (
-    <Modal title={t('plan.mm.pickTitle', '关联用例')} open={open} onCancel={onClose} onOk={ok} width={640} destroyOnHidden>
-      <Tabs
-        size="small"
-        items={[
-          { key: 'api', label: t('plan.mm.pickApiTab', '接口用例'), children: table(cases, selCases, setSelCases) },
-          { key: 'scenario', label: t('plan.mm.pickScenarioTab', '场景用例'), children: table(scenarios, selScenarios, setSelScenarios) },
-        ]}
-      />
-    </Modal>
   )
 }

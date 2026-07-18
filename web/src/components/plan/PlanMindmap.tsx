@@ -1,13 +1,17 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Alert, Button, Input, Tooltip } from 'antd'
+import { Alert, Button, Input, Modal, Popover, Select, Tag, Tooltip } from 'antd'
 import {
+  AimOutlined,
   DeleteOutlined,
   ExpandOutlined,
+  MacCommandOutlined,
   MinusSquareOutlined,
   PlusCircleOutlined,
   PlusSquareOutlined,
   SaveOutlined,
   SettingOutlined,
+  SwapOutlined,
+  UnorderedListOutlined,
 } from '@ant-design/icons'
 import { message, modal } from '../../feedback'
 import {
@@ -20,10 +24,13 @@ import {
 } from '../../api'
 import { useI18n } from '../../i18n'
 import PlanNodeConfig from './PlanNodeConfig'
+import PlanCategoryConfig from './PlanCategoryConfig'
+import PlanCasePicker, { type PlanCatType } from './PlanCasePicker'
 
 // Layout constants for the layered left-to-right tree.
 const NODE_W = 200
 const NODE_H = 52
+const LEAF_H = 30
 const H_GAP = 72
 const V_GAP = 16
 const PAD = 32
@@ -32,13 +39,56 @@ const HINT_KEY = 'shepherd.planMindmapHint'
 
 const uid = () => `n_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`
 
-// Default planning tree: one category node per case kind, mirroring MeterSphere.
-function defaultNodes(t: (k: string, d: string) => string): PlanningNode[] {
+// Planning node + additive catType marker on category nodes (doc stays backward compatible;
+// the backend stores the doc verbatim, so the extra field round-trips).
+type MmNode = PlanningNode & { catType?: PlanCatType }
+
+// Default planning tree: one category per case kind, each with one default test point
+// (mirrors MeterSphere). API/scenario categories default to serial execution.
+function defaultNodes(t: (k: string, d: string) => string): MmNode[] {
+  const point = (name: string): PlanningNode => ({
+    id: uid(),
+    name,
+    kind: 'point',
+    children: [],
+    config: { inherit: true, mode: 'serial' },
+    caseIds: [],
+    scenarioIds: [],
+  })
   return [
-    { id: uid(), name: t('plan.mm.funcCases', '功能用例'), kind: 'category', children: [] },
-    { id: uid(), name: t('plan.mm.apiCases', '接口用例'), kind: 'category', children: [] },
-    { id: uid(), name: t('plan.mm.scenarioCases', '场景用例'), kind: 'category', children: [] },
+    {
+      id: uid(),
+      name: t('plan.mm.funcCases', '功能用例'),
+      kind: 'category',
+      catType: 'func',
+      children: [point(t('plan.mm.defaultFuncPoint', '基本功能点'))],
+    },
+    {
+      id: uid(),
+      name: t('plan.mm.apiCases', '接口用例'),
+      kind: 'category',
+      catType: 'api',
+      config: { mode: 'serial' },
+      children: [point(t('plan.mm.defaultApiPoint', '单接口验证'))],
+    },
+    {
+      id: uid(),
+      name: t('plan.mm.scenarioCases', '场景用例'),
+      kind: 'category',
+      catType: 'scenario',
+      config: { mode: 'serial' },
+      children: [point(t('plan.mm.defaultScenarioPoint', '业务流程验证'))],
+    },
   ]
+}
+
+// Display tree node: real planning node or a virtual config leaf (case count / env / pool).
+type LeafKind = 'cases' | 'env' | 'pool'
+interface DispNode {
+  id: string
+  node?: PlanningNode
+  leaf?: { kind: LeafKind; text: string; ownerId: string }
+  children: DispNode[]
 }
 
 /** Test-planning tab: pan/zoom mind-map editor persisted as the plan's planning doc. */
@@ -55,6 +105,11 @@ export default function PlanMindmap({ planId, projectId }: { planId: string; pro
   const [view, setView] = useState({ x: 24, y: 24, z: 1 })
   const [dirty, setDirty] = useState(false)
   const [saving, setSaving] = useState(false)
+  const [menuOpen, setMenuOpen] = useState(false)
+  const [catCfgId, setCatCfgId] = useState('')
+  const [pickerId, setPickerId] = useState('')
+  const [envEditId, setEnvEditId] = useState('')
+  const [poolEditId, setPoolEditId] = useState('')
   const [hint, setHint] = useState(() => localStorage.getItem(HINT_KEY) !== '1')
   const containerRef = useRef<HTMLDivElement>(null)
   const drag = useRef<{ sx: number; sy: number; ox: number; oy: number } | null>(null)
@@ -78,48 +133,104 @@ export default function PlanMindmap({ planId, projectId }: { planId: string; pro
     [nodes, t],
   )
 
+  // Fallback to a raw id slice when the env/pool list has no match.
+  const envName = (id?: string) => (id ? envs.find((x) => x.id === id)?.name || id.slice(0, 8) : '')
+  const poolName = (id?: string) => (id ? pools.find((x) => x.id === id)?.name || id.slice(0, 8) : '')
+
+  // Node id -> owning category kind. New docs carry catType on the category node;
+  // older docs fall back to name matching. Nodes outside a known category act as api.
+  const catTypes = useMemo(() => {
+    const byName = (n: MmNode): PlanCatType => {
+      if (n.catType) return n.catType
+      if (/功能|functional/i.test(n.name)) return 'func'
+      if (/场景|scenario/i.test(n.name)) return 'scenario'
+      return 'api'
+    }
+    const map = new Map<string, PlanCatType>()
+    const walk = (n: PlanningNode, ct: PlanCatType) => {
+      map.set(n.id, ct)
+      ;(n.children || []).forEach((c) => walk(c, ct))
+    }
+    nodes.forEach((top) => walk(top, byName(top as MmNode)))
+    return map
+  }, [nodes])
+  const catTypeOf = (id: string): PlanCatType => catTypes.get(id) || 'api'
+
+  // Display tree: 测试点 nodes grow virtual leaves for case count / env / pool.
+  // API/scenario test points always show env + pool leaves (default text when unset).
+  const dispRoot = useMemo(() => {
+    const build = (n: PlanningNode): DispNode => {
+      const children = (n.children || []).map(build)
+      if (n.kind === 'point') {
+        const ct = catTypeOf(n.id)
+        const count = (n.caseIds?.length || 0) + (n.scenarioIds?.length || 0)
+        children.push({
+          id: `${n.id}::cases`,
+          leaf: { kind: 'cases', text: `${count}${t('plan.mm.casesUnit', '条')}`, ownerId: n.id },
+          children: [],
+        })
+        if (ct !== 'func' || n.config?.envId)
+          children.push({
+            id: `${n.id}::env`,
+            leaf: { kind: 'env', text: n.config?.envId ? envName(n.config.envId) : t('plan.mm.defaultEnv', '默认环境'), ownerId: n.id },
+            children: [],
+          })
+        if (ct !== 'func' || n.config?.poolId)
+          children.push({
+            id: `${n.id}::pool`,
+            leaf: { kind: 'pool', text: n.config?.poolId ? poolName(n.config.poolId) : t('plan.mm.defaultPool', '默认资源池'), ownerId: n.id },
+            children: [],
+          })
+      }
+      return { id: n.id, node: n, children }
+    }
+    return build(root)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [root, envs, pools, catTypes, t])
+
   // Layered tree layout: leaves stack top-to-bottom, parents center on their children.
   const layout = useMemo(() => {
-    const pos = new Map<string, { x: number; y: number }>()
+    const pos = new Map<string, { x: number; y: number; h: number }>()
     const edges: { from: string; to: string }[] = []
     let cursor = 0
     let maxDepth = 0
-    const place = (n: PlanningNode, depth: number): number => {
+    const place = (n: DispNode, depth: number): number => {
       maxDepth = Math.max(maxDepth, depth)
       const x = depth * (NODE_W + H_GAP)
-      const kids = collapsed.has(n.id) ? [] : n.children || []
+      const h = n.leaf ? LEAF_H : NODE_H
+      const kids = collapsed.has(n.id) ? [] : n.children
       if (!kids.length) {
         const y = cursor
-        cursor += NODE_H + V_GAP
-        pos.set(n.id, { x, y })
-        return y + NODE_H / 2
+        cursor += h + V_GAP
+        pos.set(n.id, { x, y, h })
+        return y + h / 2
       }
       const mids = kids.map((k) => {
         edges.push({ from: n.id, to: k.id })
         return place(k, depth + 1)
       })
       const mid = (mids[0] + mids[mids.length - 1]) / 2
-      pos.set(n.id, { x, y: mid - NODE_H / 2 })
+      pos.set(n.id, { x, y: mid - h / 2, h })
       return mid
     }
-    place(root, 0)
+    place(dispRoot, 0)
     return {
       pos,
       edges,
       height: Math.max(cursor, NODE_H),
       width: (maxDepth + 1) * (NODE_W + H_GAP),
     }
-  }, [root, collapsed])
+  }, [dispRoot, collapsed])
 
   const flat = useMemo(() => {
-    const out: { node: PlanningNode; parent: PlanningNode | null }[] = []
-    const walk = (n: PlanningNode, parent: PlanningNode | null) => {
-      out.push({ node: n, parent })
-      if (!collapsed.has(n.id)) (n.children || []).forEach((k) => walk(k, n))
+    const out: DispNode[] = []
+    const walk = (n: DispNode) => {
+      out.push(n)
+      if (!collapsed.has(n.id)) n.children.forEach(walk)
     }
-    walk(root, null)
+    walk(dispRoot)
     return out
-  }, [root, collapsed])
+  }, [dispRoot, collapsed])
 
   const findNode = (list: PlanningNode[], id: string): PlanningNode | null => {
     for (const n of list) {
@@ -130,6 +241,10 @@ export default function PlanMindmap({ planId, projectId }: { planId: string; pro
     return null
   }
   const selected = selectedId ? findNode(nodes, selectedId) : null
+  const catCfgNode = catCfgId ? findNode(nodes, catCfgId) : null
+  const pickerNode = pickerId ? findNode(nodes, pickerId) : null
+  const envEditNode = envEditId ? findNode(nodes, envEditId) : null
+  const poolEditNode = poolEditId ? findNode(nodes, poolEditId) : null
 
   const mutate = (fn: (list: PlanningNode[]) => PlanningNode[]) => {
     setNodes((prev) => fn(prev))
@@ -139,6 +254,29 @@ export default function PlanMindmap({ planId, projectId }: { planId: string; pro
     const walk = (list: PlanningNode[]): PlanningNode[] =>
       list.map((n) => (n.id === id ? { ...n, ...patch } : { ...n, children: walk(n.children || []) }))
     mutate(walk)
+  }
+  const patchConfig = (node: PlanningNode, patch: PlanningNode['config']) =>
+    patchNode(node.id, { config: { ...node.config, ...patch } })
+  const toggleMode = (node: PlanningNode) =>
+    patchConfig(node, { mode: node.config?.mode === 'parallel' ? 'serial' : 'parallel' })
+
+  // Apply a picker result to a node and record display names for the link sync.
+  const applyPicked = (id: string, caseIds: string[], scenarioIds: string[], picked: Record<string, string>) => {
+    patchNode(id, { caseIds, scenarioIds })
+    setNames((prev) => {
+      const next = { ...prev }
+      caseIds.forEach((cid) => {
+        if (picked[cid]) next[cid] = picked[cid]
+      })
+      return next
+    })
+    setScenarioNames((prev) => {
+      const next = { ...prev }
+      scenarioIds.forEach((sid) => {
+        if (picked[sid]) next[sid] = picked[sid]
+      })
+      return next
+    })
   }
 
   const addChild = (parentId: string) => {
@@ -183,7 +321,28 @@ export default function PlanMindmap({ planId, projectId }: { planId: string; pro
     })
   }
 
+  const renameNode = (node: PlanningNode) => {
+    let name = node.name
+    modal.confirm({
+      title: t('plan.mm.rename', '重命名'),
+      content: (
+        <Input
+          defaultValue={node.name}
+          onChange={(e) => (name = e.target.value)}
+          style={{ marginTop: 8 }}
+          autoFocus
+        />
+      ),
+      onOk: () => {
+        const v = name.trim()
+        if (v && v !== node.name) patchNode(node.id, { name: v })
+      },
+    })
+  }
+
   const removeNode = (id: string) => {
+    // Category nodes are fixed (no delete, from toolbar or keyboard).
+    if (findNode(nodes, id)?.kind === 'category') return
     modal.confirm({
       title: t('plan.mm.deleteNode', '删除该测试点及其子节点?'),
       okButtonProps: { danger: true },
@@ -206,17 +365,25 @@ export default function PlanMindmap({ planId, projectId }: { planId: string; pro
 
   const allParentIds = useMemo(() => {
     const ids: string[] = []
-    const walk = (n: PlanningNode) => {
-      if (n.children?.length) {
+    const walk = (n: DispNode) => {
+      if (n.children.length) {
         if (n.id !== '__root__') ids.push(n.id)
         n.children.forEach(walk)
       }
     }
-    walk(root)
+    walk(dispRoot)
     return ids
-  }, [root])
+  }, [dispRoot])
   const allCollapsed = allParentIds.length > 0 && allParentIds.every((id) => collapsed.has(id))
   const collapseAll = () => setCollapsed(allCollapsed ? new Set() : new Set(allParentIds))
+
+  // Reset pan/zoom so the root node sits vertically centered at the left edge.
+  const centerView = () => {
+    const el = containerRef.current
+    const rootPos = layout.pos.get('__root__')
+    if (!el || !rootPos) return
+    setView({ x: 24, y: Math.max(24, el.clientHeight / 2 - (rootPos.y + NODE_H / 2)), z: 1 })
+  }
 
   const save = async () => {
     setSaving(true)
@@ -233,13 +400,23 @@ export default function PlanMindmap({ planId, projectId }: { planId: string; pro
   }
   const saveRef = useRef(save)
   saveRef.current = save
+  const removeRef = useRef(removeNode)
+  removeRef.current = removeNode
+  const selectedIdRef = useRef(selectedId)
+  selectedIdRef.current = selectedId
 
-  // Cmd/Ctrl+S saves the planning doc while this tab is mounted.
+  // Keyboard shortcuts while this tab is mounted: ⌘/Ctrl+S save, Delete removes selected node.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's') {
         e.preventDefault()
         saveRef.current()
+        return
+      }
+      if (e.key === 'Delete' && selectedIdRef.current) {
+        const el = e.target as HTMLElement | null
+        if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)) return
+        removeRef.current(selectedIdRef.current)
       }
     }
     window.addEventListener('keydown', onKey)
@@ -267,38 +444,97 @@ export default function PlanMindmap({ planId, projectId }: { planId: string; pro
     setView((v) => ({ ...v, z }))
   }
 
-  const envName = (id?: string) => envs.find((x) => x.id === id)?.name
-  const poolName = (id?: string) => pools.find((x) => x.id === id)?.name
-
   const width = PAD * 2 + layout.width
 
-  const chip = (text: string, color: string, bg: string) => (
+  // Small brand-colored "#" chip shown before category / test-point labels.
+  const hashChip = (
     <span
-      key={text + color}
       style={{
-        fontSize: 11,
+        width: 16,
+        height: 16,
         lineHeight: '16px',
-        padding: '0 6px',
-        borderRadius: 8,
-        color,
-        background: bg,
-        whiteSpace: 'nowrap',
-        maxWidth: 84,
-        overflow: 'hidden',
-        textOverflow: 'ellipsis',
+        textAlign: 'center',
+        borderRadius: 4,
+        background: 'var(--brand)',
+        color: '#fff',
+        fontSize: 11,
+        fontWeight: 600,
+        flexShrink: 0,
       }}
     >
-      {text}
+      #
     </span>
   )
 
-  const renderNode = (node: PlanningNode) => {
-    const p = layout.pos.get(node.id)
+  const leafTagMeta: Record<LeafKind, { color: string; label: string }> = {
+    cases: { color: 'gold', label: t('plan.mm.caseCountTag', '用例数') },
+    env: { color: 'magenta', label: t('plan.mm.envTag', '环境') },
+    pool: { color: 'gold', label: t('plan.mm.poolTag', '资源池') },
+  }
+
+  // Virtual config leaf: value text + a small colored category tag.
+  // Click opens the matching editor: cases -> link dialog, env/pool -> select modal.
+  const renderLeaf = (d: DispNode) => {
+    const p = layout.pos.get(d.id)
+    if (!p || !d.leaf) return null
+    const meta = leafTagMeta[d.leaf.kind]
+    const { kind, ownerId } = d.leaf
+    return (
+      <div
+        key={d.id}
+        data-mm-node
+        onClick={() => {
+          if (kind === 'cases') setPickerId(ownerId)
+          else if (kind === 'env') setEnvEditId(ownerId)
+          else setPoolEditId(ownerId)
+        }}
+        style={{
+          cursor: 'pointer',
+          position: 'absolute',
+          left: p.x,
+          top: p.y,
+          height: LEAF_H,
+          maxWidth: NODE_W,
+          boxSizing: 'border-box',
+          display: 'flex',
+          alignItems: 'center',
+          gap: 6,
+          padding: '0 8px',
+          borderRadius: 6,
+          background: 'var(--panel)',
+          border: '1px solid var(--border)',
+          boxShadow: '0 1px 3px rgba(0,0,0,0.06)',
+        }}
+      >
+        <span
+          style={{
+            fontSize: 12,
+            color: 'var(--text)',
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap',
+          }}
+        >
+          {d.leaf.text}
+        </span>
+        <Tag color={meta.color} style={{ margin: 0, fontSize: 11, lineHeight: '16px', padding: '0 4px' }}>
+          {meta.label}
+        </Tag>
+      </div>
+    )
+  }
+
+  const renderNode = (d: DispNode) => {
+    if (d.leaf) return renderLeaf(d)
+    const node = d.node!
+    const p = layout.pos.get(d.id)
     if (!p) return null
     const isRoot = node.id === '__root__'
-    const caseCount = (node.caseIds?.length || 0) + (node.scenarioIds?.length || 0)
     const cfg = node.config
-    const showMode = !!cfg && cfg.inherit === false && !!cfg.mode
+    const isCat = node.kind === 'category' && !isRoot
+    const ct = catTypeOf(node.id)
+    // Serial/parallel badge: api/scenario subtrees only (功能用例 has no exec mode).
+    const showMode = !isRoot && ct !== 'func' && !!cfg?.mode
     const hovered = hoverId === node.id
     const isSelected = selectedId === node.id
     return (
@@ -308,6 +544,7 @@ export default function PlanMindmap({ planId, projectId }: { planId: string; pro
         onMouseEnter={() => setHoverId(node.id)}
         onMouseLeave={() => setHoverId((h) => (h === node.id ? '' : h))}
         onClick={() => !isRoot && setSelectedId(node.id)}
+        onDoubleClick={() => !isRoot && renameNode(node)}
         style={{
           position: 'absolute',
           left: p.x,
@@ -316,6 +553,8 @@ export default function PlanMindmap({ planId, projectId }: { planId: string; pro
           minHeight: NODE_H,
           boxSizing: 'border-box',
           padding: '6px 10px',
+          display: 'flex',
+          alignItems: 'center',
           borderRadius: 8,
           cursor: isRoot ? 'default' : 'pointer',
           background: isRoot ? 'var(--brand)' : 'var(--panel)',
@@ -324,7 +563,8 @@ export default function PlanMindmap({ planId, projectId }: { planId: string; pro
           boxShadow: isSelected ? '0 0 0 2px var(--brand-soft)' : '0 1px 3px rgba(0,0,0,0.06)',
         }}
       >
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, width: '100%' }}>
+          {!isRoot && hashChip}
           <span style={{ flex: 1, fontSize: 13, fontWeight: isRoot ? 600 : 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
             {node.name}
           </span>
@@ -346,13 +586,6 @@ export default function PlanMindmap({ planId, projectId }: { planId: string; pro
             </span>
           )}
         </div>
-        {!isRoot && (caseCount > 0 || cfg?.envId || cfg?.poolId) && (
-          <div style={{ display: 'flex', gap: 4, marginTop: 4, flexWrap: 'wrap' }}>
-            {caseCount > 0 && chip(`${caseCount}${t('plan.mm.casesUnit', '条')}`, 'var(--brand)', 'var(--brand-soft)')}
-            {envName(cfg?.envId) && chip(envName(cfg?.envId) as string, 'var(--success)', 'rgba(0,180,42,0.12)')}
-            {poolName(cfg?.poolId) && chip(poolName(cfg?.poolId) as string, 'var(--warning)', 'rgba(255,125,0,0.12)')}
-          </div>
-        )}
         {/* Hover toolbar: add child / configure / delete. */}
         {hovered && (
           <div
@@ -372,7 +605,18 @@ export default function PlanMindmap({ planId, projectId }: { planId: string; pro
             <Tooltip title={t('plan.mm.addPoint', '添加测试点')}>
               <Button type="text" size="small" icon={<PlusCircleOutlined />} onClick={(e) => { e.stopPropagation(); addChild(node.id) }} />
             </Tooltip>
-            {!isRoot && (
+            {/* API/scenario categories: serial-parallel toggle + category config. 功能用例 only adds points. */}
+            {isCat && ct !== 'func' && (
+              <>
+                <Tooltip title={t('plan.mm.toggleMode', '串行/并行')}>
+                  <Button type="text" size="small" icon={<SwapOutlined />} onClick={(e) => { e.stopPropagation(); toggleMode(node) }} />
+                </Tooltip>
+                <Tooltip title={t('plan.mm.config', '配置')}>
+                  <Button type="text" size="small" icon={<SettingOutlined />} onClick={(e) => { e.stopPropagation(); setCatCfgId(node.id) }} />
+                </Tooltip>
+              </>
+            )}
+            {!isRoot && !isCat && (
               <>
                 <Tooltip title={t('plan.mm.config', '配置')}>
                   <Button type="text" size="small" icon={<SettingOutlined />} onClick={(e) => { e.stopPropagation(); setSelectedId(node.id) }} />
@@ -384,8 +628,8 @@ export default function PlanMindmap({ planId, projectId }: { planId: string; pro
             )}
           </div>
         )}
-        {/* Collapse toggle on the right edge for nodes with children. */}
-        {(node.children?.length || 0) > 0 && (
+        {/* Collapse toggle on the right edge for nodes with children (incl. config leaves). */}
+        {d.children.length > 0 && (
           <span
             onClick={(e) => {
               e.stopPropagation()
@@ -409,12 +653,68 @@ export default function PlanMindmap({ planId, projectId }: { planId: string; pro
               zIndex: 2,
             }}
           >
-            {collapsed.has(node.id) ? node.children?.length : '−'}
+            {collapsed.has(node.id) ? d.children.length : '−'}
           </span>
         )}
       </div>
     )
   }
+
+  const shortcutRows: [string, string][] = [
+    ['⌘+S', t('plan.mm.save', '保存')],
+    [t('plan.mm.dblclick', '双击'), t('plan.mm.rename', '重命名')],
+    ['Delete', t('plan.mm.deleteNodeShort', '删除节点')],
+  ]
+  const shortcutContent = (
+    <div style={{ minWidth: 150 }}>
+      {shortcutRows.map(([key, desc]) => (
+        <div key={key} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, padding: '3px 0' }}>
+          <span style={{ fontSize: 12, color: 'var(--text-2)' }}>{desc}</span>
+          <span
+            style={{
+              fontSize: 11,
+              padding: '0 6px',
+              lineHeight: '18px',
+              borderRadius: 4,
+              border: '1px solid var(--border)',
+              background: 'var(--bg-base)',
+              color: 'var(--text)',
+            }}
+          >
+            {key}
+          </span>
+        </div>
+      ))}
+    </div>
+  )
+
+  // Vertical canvas-tool strip inside the toolbar dropdown.
+  const canvasMenu = (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+      <Tooltip placement="left" title={allCollapsed ? t('plan.mm.expandAll', '展开全部') : t('plan.mm.collapseAll', '收起全部')}>
+        <Button
+          type="text"
+          size="small"
+          icon={allCollapsed ? <PlusSquareOutlined /> : <MinusSquareOutlined />}
+          onClick={collapseAll}
+        />
+      </Tooltip>
+      <Popover placement="left" title={t('plan.mm.shortcuts', '快捷键')} content={shortcutContent}>
+        <Button type="text" size="small" icon={<MacCommandOutlined />} />
+      </Popover>
+      <Tooltip placement="left" title={t('plan.mm.recenter', '回到中心')}>
+        <Button
+          type="text"
+          size="small"
+          icon={<AimOutlined />}
+          onClick={() => {
+            centerView()
+            setMenuOpen(false)
+          }}
+        />
+      </Tooltip>
+    </div>
+  )
 
   return (
     <div ref={containerRef} style={{ position: 'relative', height: '100%', overflow: 'hidden', background: 'var(--bg-base)' }}>
@@ -439,17 +739,26 @@ export default function PlanMindmap({ planId, projectId }: { planId: string; pro
           style={{ position: 'absolute', top: 8, left: 8, right: 8, zIndex: 4 }}
         />
       )}
-      {/* Canvas toolbar: collapse-all / fullscreen / save (⌘+S). */}
+      {/* Canvas toolbar: tool dropdown / fullscreen / save (⌘+S). */}
       <div style={{ position: 'absolute', top: hint ? 52 : 8, right: 8, zIndex: 4, display: 'flex', gap: 6 }}>
-        <Tooltip title={allCollapsed ? t('plan.mm.expandAll', '展开全部') : t('plan.mm.collapseAll', '收起全部')}>
-          <Button size="small" icon={allCollapsed ? <PlusSquareOutlined /> : <MinusSquareOutlined />} onClick={collapseAll} />
-        </Tooltip>
+        <Popover
+          open={menuOpen}
+          onOpenChange={setMenuOpen}
+          trigger="click"
+          placement="bottomRight"
+          arrow={false}
+          styles={{ body: { padding: 4 } }}
+          content={canvasMenu}
+        >
+          <Tooltip title={t('plan.mm.canvasMenu', '画布工具')}>
+            <Button size="small" icon={<UnorderedListOutlined />} />
+          </Tooltip>
+        </Popover>
         <Tooltip title={t('plan.mm.fullscreen', '全屏')}>
           <Button size="small" icon={<ExpandOutlined />} onClick={() => containerRef.current?.requestFullscreen?.()} />
         </Tooltip>
         <Button size="small" type="primary" icon={<SaveOutlined />} loading={saving} onClick={save}>
-          {t('plan.mm.save', '保存')}
-          {dirty ? ' *' : ''}
+          {t('plan.mm.save', '保存')} (⌘+S){dirty ? ' *' : ''}
         </Button>
       </div>
       {/* Pan/zoom canvas. */}
@@ -471,9 +780,9 @@ export default function PlanMindmap({ planId, projectId }: { planId: string; pro
               const b = layout.pos.get(to)
               if (!a || !b) return null
               const x1 = a.x + NODE_W
-              const y1 = a.y + NODE_H / 2
+              const y1 = a.y + a.h / 2
               const x2 = b.x
-              const y2 = b.y + NODE_H / 2
+              const y2 = b.y + b.h / 2
               const mx = (x1 + x2) / 2
               return (
                 <path
@@ -486,38 +795,111 @@ export default function PlanMindmap({ planId, projectId }: { planId: string; pro
               )
             })}
           </svg>
-          {flat.map(({ node }) => renderNode(node))}
+          {flat.map((d) => renderNode(d))}
         </div>
       </div>
-      {/* Right slide-in node config panel. */}
-      {selected && (
+      {/* Right slide-in test-point config panel (categories use the category panel below). */}
+      {selected && selected.kind !== 'category' && (
         <PlanNodeConfig
           node={selected}
           projectId={projectId}
+          catType={catTypeOf(selected.id)}
           envs={envs}
           pools={pools}
           onClose={() => setSelectedId('')}
           onSave={({ config, caseIds, scenarioIds, names: picked }) => {
-            patchNode(selected.id, { config, caseIds, scenarioIds })
-            // Split picked names into case/scenario maps for the backend link sync.
-            setNames((prev) => {
-              const next = { ...prev }
-              caseIds.forEach((id) => {
-                if (picked[id]) next[id] = picked[id]
-              })
-              return next
-            })
-            setScenarioNames((prev) => {
-              const next = { ...prev }
-              scenarioIds.forEach((id) => {
-                if (picked[id]) next[id] = picked[id]
-              })
-              return next
-            })
+            patchNode(selected.id, { config })
+            applyPicked(selected.id, caseIds, scenarioIds, picked)
             setSelectedId('')
           }}
         />
       )}
+      {/* Category config panel (接口用例 / 场景用例). */}
+      {catCfgNode && (
+        <PlanCategoryConfig
+          node={catCfgNode}
+          envs={envs}
+          pools={pools}
+          onClose={() => setCatCfgId('')}
+          onSave={(config) => {
+            patchNode(catCfgNode.id, { config })
+            setCatCfgId('')
+          }}
+        />
+      )}
+      {/* Link-cases dialog opened from a 用例数 leaf. */}
+      {pickerNode && (
+        <PlanCasePicker
+          open
+          projectId={projectId}
+          catType={catTypeOf(pickerNode.id)}
+          caseIds={pickerNode.caseIds || []}
+          scenarioIds={pickerNode.scenarioIds || []}
+          onClose={() => setPickerId('')}
+          onOk={(c, s, picked) => {
+            applyPicked(pickerNode.id, c, s, picked)
+            setPickerId('')
+          }}
+        />
+      )}
+      {/* Env / pool leaf editors. */}
+      {envEditNode && (
+        <LeafSelectModal
+          title={t('plan.mm.setEnv', '设置环境')}
+          placeholder={t('plan.mm.defaultEnv', '默认环境')}
+          options={envs.map((e) => ({ value: e.id, label: e.name }))}
+          value={envEditNode.config?.envId}
+          onCancel={() => setEnvEditId('')}
+          onOk={(v) => {
+            patchConfig(envEditNode, { envId: v })
+            setEnvEditId('')
+          }}
+        />
+      )}
+      {poolEditNode && (
+        <LeafSelectModal
+          title={t('plan.mm.setPool', '设置资源池')}
+          placeholder={t('plan.mm.defaultPool', '默认资源池')}
+          options={pools.map((p) => ({ value: p.id, label: p.name }))}
+          value={poolEditNode.config?.poolId}
+          onCancel={() => setPoolEditId('')}
+          onOk={(v) => {
+            patchConfig(poolEditNode, { poolId: v })
+            setPoolEditId('')
+          }}
+        />
+      )}
     </div>
+  )
+}
+
+/** Small select modal for the env / pool leaves. */
+function LeafSelectModal({
+  title,
+  placeholder,
+  options,
+  value,
+  onOk,
+  onCancel,
+}: {
+  title: string
+  placeholder: string
+  options: { value: string; label: string }[]
+  value?: string
+  onOk: (v?: string) => void
+  onCancel: () => void
+}) {
+  const [v, setV] = useState<string | undefined>(value)
+  return (
+    <Modal open title={title} width={360} onCancel={onCancel} onOk={() => onOk(v)}>
+      <Select
+        style={{ width: '100%', margin: '8px 0' }}
+        allowClear
+        placeholder={placeholder}
+        value={v}
+        onChange={setV}
+        options={options}
+      />
+    </Modal>
   )
 }

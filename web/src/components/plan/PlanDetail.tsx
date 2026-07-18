@@ -1,5 +1,5 @@
-import { useEffect, useState, type CSSProperties } from 'react'
-import { Button, Card, Col, Empty, Row, Segmented, Select, Space, Table, Tabs, Tag } from 'antd'
+import { useEffect, useState } from 'react'
+import { Button, Empty, Segmented, Select, Space, Tabs, Tag } from 'antd'
 import { Input } from 'antd'
 import { message, modal } from '../../feedback'
 import EditDrawer from '../EditDrawer'
@@ -14,6 +14,7 @@ import { useI18n } from '../../i18n'
 import PlanMindmap from './PlanMindmap'
 import PlanEditDrawer from './PlanEditDrawer'
 import PlanDetailHeader, { PlanRunsTable } from './PlanDetailHeader'
+import PlanCasesPanel, { planCaseStatusLabel } from './PlanCasesPanel'
 
 // Plan detail (workspace tab content): header + tabs (测试规划 mind-map | 场景用例 | 缺陷列表 | 执行历史).
 export default function PlanDetail({ planId, name, projectId }: { planId: string; name: string; projectId: string }) {
@@ -23,17 +24,9 @@ export default function PlanDetail({ planId, name, projectId }: { planId: string
   const [loading, setLoading] = useState(false)
   const [linkOpen, setLinkOpen] = useState(false)
   const [running, setRunning] = useState(false)
-  const [marking, setMarking] = useState('')
   const [reportOpen, setReportOpen] = useState(false)
   const [editOpen, setEditOpen] = useState(false)
   const [planName, setPlanName] = useState(name)
-  // Project scenario ids: mark scenario-mounted plan cases with a tag.
-  const [scenarioIds, setScenarioIds] = useState<Set<string>>(new Set())
-  useEffect(() => {
-    api.scenarios(projectId)
-      .then((ss) => setScenarioIds(new Set((Array.isArray(ss) ? ss : []).map((s) => s.id))))
-      .catch(() => setScenarioIds(new Set()))
-  }, [projectId])
 
   const load = async () => {
     setLoading(true)
@@ -62,18 +55,6 @@ export default function PlanDetail({ planId, name, projectId }: { planId: string
       message.error(e instanceof ApiError ? `${t('plan.runFail', '执行失败')}:${e.status}` : t('plan.runFail', '执行失败'))
     } finally {
       setRunning(false)
-    }
-  }
-  const markResult = async (caseId: string, status: string) => {
-    setMarking(caseId)
-    try {
-      await api.recordPlanCaseResult(planId, caseId, status)
-      message.success(t('plan.markDone', '已登记执行结果'))
-      load()
-    } catch (e) {
-      message.error(e instanceof ApiError ? `${t('plan.markFail', '登记失败')}:${e.status}` : t('plan.markFail', '登记失败'))
-    } finally {
-      setMarking('')
     }
   }
   const schedule = () => {
@@ -114,59 +95,25 @@ export default function PlanDetail({ planId, name, projectId }: { planId: string
     })
   }
 
-  // 场景用例 tab body: the original toolbar + analytics + case table, unchanged.
+  // 场景用例 tab body: left 测试点/模块 tree + enriched case table (reference layout);
+  // the original action buttons stay in the panel toolbar.
   const casesTab = (
-    <div style={{ padding: '12px 16px' }}>
-      <Space style={{ marginBottom: 12 }} wrap>
-        <Button icon={<LinkOutlined />} size="small" onClick={() => setLinkOpen(true)}>{t('plan.linkCase', '挂用例')}</Button>
-        <Button type="primary" icon={<PlayCircleOutlined />} size="small" loading={running} onClick={run}>{t('plan.runPlan', '执行计划')}</Button>
-        <Button icon={<ClockCircleOutlined />} size="small" onClick={schedule}>{t('plan.schedule', '定时')}</Button>
-        <Button icon={<FileTextOutlined />} size="small" onClick={() => setReportOpen(true)}>{t('plan.viewReport', '查看报告')}</Button>
-        {stats && <Tag color={stats.isPass ? 'green' : 'red'}>{stats.isPass ? t('plan.pass', '通过') : t('plan.notPass', '未通过')}</Tag>}
-      </Space>
-      <ReportAnalytics stats={stats} cases={cases} />
-      <div style={{ height: 16 }} />
-      <Table<PlanCase>
-        rowKey="caseId"
-        size="small"
-        loading={loading}
-        dataSource={cases}
-        pagination={false}
-        locale={{ emptyText: <Empty description={t('plan.noLinkedCase', '未挂用例,点「挂用例」')} /> }}
-        columns={[
-          {
-            title: t('plan.caseName', '用例名'),
-            dataIndex: 'name',
-            ellipsis: true,
-            render: (v: string, c) => (
-              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
-                {scenarioIds.has(c.caseId) && <Tag color="processing" style={{ marginInlineEnd: 0 }}>{t('plan.scenarioTag', '场景')}</Tag>}
-                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{v}</span>
-              </span>
-            ),
-          },
-          { title: t('plan.colResult', '结果'), dataIndex: 'status', width: 110, render: (s: string) => <Tag color={outcomeColor(s)}>{caseStatusLabel(s, t)}</Tag> },
-          { title: t('plan.colLatency', '耗时(ms)'), dataIndex: 'latencyMs', width: 100, render: (v?: number | null) => v ?? '—' },
-          { title: t('plan.colStatusCode', '状态码'), dataIndex: 'statusCode', width: 90, render: (v?: number | null) => v ?? '—' },
-          {
-            title: t('plan.colAction', '操作'),
-            width: 130,
-            render: (_, c) => (
-              <Select
-                size="small"
-                variant="borderless"
-                style={{ width: 110 }}
-                placeholder={t('plan.markResult', '登记结果')}
-                value={undefined}
-                disabled={marking === c.caseId}
-                onChange={(s) => s && markResult(c.caseId, s)}
-                options={CASE_RESULT_OPTIONS.map((o) => ({ value: o.value, label: t(o.i18nKey, o.fallback) }))}
-              />
-            ),
-          },
-        ]}
-      />
-    </div>
+    <PlanCasesPanel
+      planId={planId}
+      projectId={projectId}
+      cases={cases}
+      loading={loading}
+      reload={load}
+      toolbar={
+        <Space size={8} wrap>
+          <Button icon={<LinkOutlined />} size="small" onClick={() => setLinkOpen(true)}>{t('plan.linkCase', '挂用例')}</Button>
+          <Button type="primary" icon={<PlayCircleOutlined />} size="small" loading={running} onClick={run}>{t('plan.runPlan', '执行计划')}</Button>
+          <Button icon={<ClockCircleOutlined />} size="small" onClick={schedule}>{t('plan.schedule', '定时')}</Button>
+          <Button icon={<FileTextOutlined />} size="small" onClick={() => setReportOpen(true)}>{t('plan.viewReport', '查看报告')}</Button>
+          {stats && <Tag color={stats.isPass ? 'green' : 'red'}>{stats.isPass ? t('plan.pass', '通过') : t('plan.notPass', '未通过')}</Tag>}
+        </Space>
+      }
+    />
   )
 
   return (
@@ -299,7 +246,7 @@ function PlanStepRows({ steps, depth, t }: { steps: PlanStepResult[]; depth: num
             <span className="ms-mono" style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.name}</span>
             {s.statusCode != null && <span style={{ color: s.statusCode < 400 ? 'var(--success)' : 'var(--error)', fontSize: 12 }}>{s.statusCode}</span>}
             <span style={{ color: 'var(--text-3)', fontSize: 12 }}>{fmtDurationMs(s.latencyMs)}</span>
-            <Tag color={outcomeColor(s.status)} style={{ margin: 0 }}>{caseStatusLabel(s.status, t)}</Tag>
+            <Tag color={outcomeColor(s.status)} style={{ margin: 0 }}>{planCaseStatusLabel(s.status, t)}</Tag>
           </div>
           {s.children.length > 0 && <PlanStepRows steps={s.children} depth={depth + 1} t={t} />}
         </div>
@@ -438,7 +385,7 @@ export function PlanReportDrawer({ open, planId, name, projectId, onClose }: { o
                     )}
                     {c.statusCode != null && <span style={{ color: c.statusCode < 400 ? 'var(--success)' : 'var(--error)', fontSize: 12 }}>{c.statusCode}</span>}
                     <span style={{ color: 'var(--text-3)', fontSize: 12 }}>{c.latencyMs != null ? fmtDurationMs(c.latencyMs) : '—'}</span>
-                    <Tag color={outcomeColor(c.status)} style={{ margin: 0 }}>{caseStatusLabel(c.status, t)}</Tag>
+                    <Tag color={outcomeColor(c.status)} style={{ margin: 0 }}>{planCaseStatusLabel(c.status, t)}</Tag>
                   </div>
                   {hasSteps && isOpen && (
                     <div style={{ padding: '0 12px 8px 34px' }}>
@@ -462,85 +409,3 @@ export function PlanReportDrawer({ open, planId, name, projectId, onClose }: { o
   )
 }
 
-// Plan report analytics cards: report analysis + execution donut + case status bars.
-// Status distribution is aggregated client-side from planCases (SUCCESS/ERROR/FAKE_ERROR/BLOCK/PENDING).
-function ReportAnalytics({ stats, cases }: { stats: PlanStats | null; cases: PlanCase[] }) {
-  const { t } = useI18n()
-  const by = (s: string) => cases.filter((c) => (c.status || 'PENDING').toUpperCase() === s).length
-  const success = by('SUCCESS')
-  const error = by('ERROR')
-  const fake = by('FAKE_ERROR')
-  const block = by('BLOCK')
-  const pending = by('PENDING')
-  const total = cases.length || stats?.total || 0
-  const pct = (n: number) => (total ? ((n * 100) / total).toFixed(2) : '0.00')
-  const segs = [
-    { label: t('plan.segSuccess', '成功'), value: success, color: '#2e7d32' },
-    { label: t('plan.segError', '失败'), value: error, color: '#c62828' },
-    { label: t('plan.segFake', '误报'), value: fake, color: '#ef6c00' },
-    { label: t('plan.segBlock', '阻塞'), value: block, color: '#722ed1' },
-    { label: t('plan.segPending', '未执行'), value: pending, color: 'var(--text-3)' },
-  ]
-  return (
-    <Row gutter={16}>
-      <Col span={12}>
-        <Card size="small" title={t('plan.reportAnalysis', '报告分析')}>
-          <div style={rowStyle}><span>{t('plan.colPassRate', '通过率')}</span><b style={{ color: '#2e7d32' }}>{((stats?.passRate ?? 0) * 100).toFixed(2)}%</b></div>
-          <div style={rowStyle}><span>{t('plan.executeRate', '执行完成率')}</span><b>{((stats?.executeRate ?? 0) * 100).toFixed(2)}%</b></div>
-          <div style={rowStyle}><span>{t('plan.totalCases', '用例总数')}</span><b>{total}</b></div>
-          <div style={rowStyle}><span>{t('plan.conclusion', '结论')}</span><b style={{ color: stats?.isPass ? '#2e7d32' : '#c62828' }}>{stats?.isPass ? t('plan.pass', '通过') : t('plan.notPass', '未通过')}</b></div>
-        </Card>
-      </Col>
-      <Col span={12}>
-        <Card size="small" title={t('plan.execAnalysis', '执行分析')}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
-            <Donut segments={segs} />
-            <div style={{ flex: 1 }}>
-              {segs.map((s) => (
-                <div key={s.label} style={rowStyle}>
-                  <span style={{ color: s.color }}>● {s.label}</span>
-                  <b>{s.value}　{pct(s.value)}%</b>
-                </div>
-              ))}
-            </div>
-          </div>
-        </Card>
-      </Col>
-      <Col span={24} style={{ marginTop: 16 }}>
-        <Card size="small" title={t('plan.statusDist', '用例状态分布')}>
-          {segs.map((s) => (
-            <div key={s.label} style={{ display: 'flex', alignItems: 'center', gap: 12, margin: '6px 0' }}>
-              <span style={{ width: 48, color: s.color }}>{s.label}</span>
-              <div style={{ flex: 1, background: 'var(--bg)', borderRadius: 4, height: 10, overflow: 'hidden' }}>
-                <div style={{ width: `${pct(s.value)}%`, background: s.color, height: '100%' }} />
-              </div>
-              <span style={{ width: 90, textAlign: 'right', color: 'var(--text-2)' }}>{s.value}　{pct(s.value)}%</span>
-            </div>
-          ))}
-        </Card>
-      </Col>
-    </Row>
-  )
-}
-
-const rowStyle: CSSProperties = { display: 'flex', justifyContent: 'space-between', padding: '6px 0', fontSize: 14 }
-
-// Manually recordable execution results: pass / fail / blocked / false alarm.
-const CASE_RESULT_OPTIONS = [
-  { value: 'SUCCESS', i18nKey: 'plan.resPass', fallback: '通过' },
-  { value: 'ERROR', i18nKey: 'plan.resFail', fallback: '不通过' },
-  { value: 'BLOCK', i18nKey: 'plan.resBlock', fallback: '阻塞' },
-  { value: 'FAKE_ERROR', i18nKey: 'plan.resFake', fallback: '误报' },
-]
-
-// Case status code → localized label.
-function caseStatusLabel(s: string, t: (k: string, d: string) => string): string {
-  switch ((s || 'PENDING').toUpperCase()) {
-    case 'SUCCESS': return t('plan.resPass', '通过')
-    case 'ERROR': return t('plan.resFail', '不通过')
-    case 'BLOCK': return t('plan.resBlock', '阻塞')
-    case 'FAKE_ERROR': return t('plan.resFake', '误报')
-    case 'PENDING': return t('plan.segPending', '未执行')
-    default: return s
-  }
-}
