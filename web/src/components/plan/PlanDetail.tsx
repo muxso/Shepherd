@@ -73,9 +73,31 @@ export default function PlanDetail({ planId, name, projectId }: { planId: string
   }
   const schedule = () => {
     let cron = '0 0 * * * *'
-    modal.confirm({
+    const dlg = modal.confirm({
       title: t('plan.scheduleTitle', '配置定时执行(cron)'),
-      content: <Input defaultValue={cron} onChange={(e) => (cron = e.target.value)} style={{ marginTop: 8 }} className="ms-mono" />,
+      content: (
+        <div style={{ marginTop: 8 }}>
+          <Input defaultValue={cron} onChange={(e) => (cron = e.target.value)} className="ms-mono" />
+          <Button
+            danger
+            type="link"
+            size="small"
+            style={{ marginTop: 8, paddingLeft: 0 }}
+            onClick={async () => {
+              try {
+                await api.deletePlanSchedule(planId)
+                message.success(t('plan.scheduleRemoved', '定时已移除'))
+              } catch (e) {
+                if (e instanceof ApiError && e.status === 404) message.info(t('plan.scheduleNone', '该计划没有定时任务'))
+                else message.error(e instanceof ApiError ? e.message : t('plan.scheduleFail', '配置失败'))
+              }
+              dlg.destroy()
+            }}
+          >
+            {t('plan.scheduleRemove', '移除定时')}
+          </Button>
+        </div>
+      ),
       onOk: async () => {
         try {
           await api.planSchedule(planId, cron)

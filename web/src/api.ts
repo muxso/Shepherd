@@ -1477,6 +1477,7 @@ export const api = {
     http.post<{ status?: string; total: number; executed: number }>(`/test-plan/${id}/run`, { environmentId }),
   planSchedule: (id: string, cron: string, enabled = true) =>
     http.post(`/test-plan/${id}/schedule`, { cron, enabled }),
+  deletePlanSchedule: (id: string) => http.del(`/test-plan/${id}/schedule`),
   planRuns: (id: string) => http.get<unknown[]>(`/test-plan/${id}/runs`),
   planReportMd: (id: string) => http.getText(`/test-plan/${id}/report.md`),
 

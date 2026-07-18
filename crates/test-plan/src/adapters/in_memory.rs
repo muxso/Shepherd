@@ -220,6 +220,7 @@ impl crate::ports::ScheduleStore for InMemoryScheduleStore {
         s: &crate::domain::NewSchedule,
     ) -> Result<crate::domain::Schedule, RepoError> {
         let mut g = self.schedules.lock().map_err(|e| RepoError::Backend(e.to_string()))?;
+        g.retain(|x| x.plan_id != s.plan_id);
         let view = crate::domain::Schedule {
             id: format!("s{}", g.len() + 1),
             plan_id: s.plan_id.clone(),
@@ -228,6 +229,12 @@ impl crate::ports::ScheduleStore for InMemoryScheduleStore {
         };
         g.push(view.clone());
         Ok(view)
+    }
+    async fn delete_by_plan(&self, plan_id: &str) -> Result<bool, RepoError> {
+        let mut g = self.schedules.lock().map_err(|e| RepoError::Backend(e.to_string()))?;
+        let before = g.len();
+        g.retain(|x| x.plan_id != plan_id);
+        Ok(g.len() != before)
     }
     async fn list_enabled(&self) -> Result<Vec<crate::domain::Schedule>, RepoError> {
         Ok(self

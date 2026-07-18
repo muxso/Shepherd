@@ -5,8 +5,11 @@ use crate::ports::RepoError;
 
 #[async_trait]
 pub trait ScheduleStore: Send + Sync {
+    /// Replaces any existing schedule for the plan (one schedule per plan).
     async fn insert(&self, s: &NewSchedule) -> Result<Schedule, RepoError>;
     async fn list_enabled(&self) -> Result<Vec<Schedule>, RepoError>;
+    /// Returns false when the plan had no schedule.
+    async fn delete_by_plan(&self, plan_id: &str) -> Result<bool, RepoError>;
 }
 
 #[async_trait]

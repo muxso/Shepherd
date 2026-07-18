@@ -382,6 +382,12 @@ impl crate::ports::ScheduleStore for PgScheduleStore {
         &self,
         s: &crate::domain::NewSchedule,
     ) -> Result<crate::domain::Schedule, RepoError> {
+        let mut tx = self.pool.begin().await.map_err(map_err)?;
+        sqlx::query("DELETE FROM ms_test_plan_schedule WHERE plan_id = $1")
+            .bind(&s.plan_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(map_err)?;
         let row = sqlx::query(
             "INSERT INTO ms_test_plan_schedule (plan_id, cron, enabled) VALUES ($1,$2,$3) \
              RETURNING id, plan_id, cron, enabled",
@@ -389,9 +395,10 @@ impl crate::ports::ScheduleStore for PgScheduleStore {
         .bind(&s.plan_id)
         .bind(&s.cron)
         .bind(s.enabled)
-        .fetch_one(&self.pool)
+        .fetch_one(&mut *tx)
         .await
         .map_err(map_err)?;
+        tx.commit().await.map_err(map_err)?;
         Ok(crate::domain::Schedule {
             id: row.try_get("id").map_err(map_err)?,
             plan_id: row.try_get("plan_id").map_err(map_err)?,
@@ -418,6 +425,15 @@ impl crate::ports::ScheduleStore for PgScheduleStore {
                 })
             })
             .collect()
+    }
+
+    async fn delete_by_plan(&self, plan_id: &str) -> Result<bool, RepoError> {
+        let res = sqlx::query("DELETE FROM ms_test_plan_schedule WHERE plan_id = $1")
+            .bind(plan_id)
+            .execute(&self.pool)
+            .await
+            .map_err(map_err)?;
+        Ok(res.rows_affected() > 0)
     }
 }
 

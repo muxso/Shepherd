@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use axum::{
@@ -9,7 +10,9 @@ use axum::{
 };
 use migrate::PgPool;
 use serde::{Deserialize, Serialize};
+use tokio::sync::Mutex;
 use tokio_cron_scheduler::{Job, JobScheduler};
+use uuid::Uuid;
 use webauth::{AuthUser, SessionStore};
 
 use test_plan::adapters::pg::{PgPlanRepository, PgScheduleStore};
@@ -23,7 +26,18 @@ struct SchedState {
     run_uc: ScheduledRunUseCase,
     plan_runner: crate::plan_run::PlanRunner,
     sched: Arc<JobScheduler>,
+    /// Registered cron job ids per plan; jobs live only in memory, so
+    /// re-save/delete must unhook them here or they fire until restart.
+    jobs: Arc<Mutex<HashMap<String, Uuid>>>,
     sessions: Arc<dyn SessionStore>,
+}
+
+async fn unregister_job(sched: &JobScheduler, jobs: &Mutex<HashMap<String, Uuid>>, plan_id: &str) {
+    if let Some(uuid) = jobs.lock().await.remove(plan_id) {
+        if let Err(e) = sched.remove(&uuid).await {
+            tracing::warn!(plan = %plan_id, "remove cron job failed: {e}");
+        }
+    }
 }
 
 impl FromRef<SchedState> for Arc<dyn SessionStore> {
@@ -38,7 +52,7 @@ async fn register_job(
     runner: &crate::plan_run::PlanRunner,
     plan_id: &str,
     cron: &str,
-) {
+) -> Option<Uuid> {
     let uc = run_uc.clone();
     let runner = runner.clone();
     let pid = plan_id.to_string();
@@ -63,11 +77,19 @@ async fn register_job(
     });
     match job {
         Ok(j) => {
-            if let Err(e) = sched.add(j).await {
-                tracing::warn!(plan = %plan_id, "add cron job failed: {e}");
+            let uuid = j.guid();
+            match sched.add(j).await {
+                Ok(_) => Some(uuid),
+                Err(e) => {
+                    tracing::warn!(plan = %plan_id, "add cron job failed: {e}");
+                    None
+                }
             }
         }
-        Err(e) => tracing::warn!(plan = %plan_id, cron, "invalid cron: {e}"),
+        Err(e) => {
+            tracing::warn!(plan = %plan_id, cron, "invalid cron: {e}");
+            None
+        }
     }
 }
 
@@ -82,18 +104,24 @@ pub async fn build(
     let plan_runner = crate::plan_run::PlanRunner::new(pool.clone());
 
     let sched = JobScheduler::new().await?;
+    let mut registered = HashMap::new();
     if let Ok(schedules) = create.list_enabled().await {
         for s in schedules {
-            register_job(&sched, &run_uc, &plan_runner, &s.plan_id, &s.cron).await;
+            if let Some(uuid) =
+                register_job(&sched, &run_uc, &plan_runner, &s.plan_id, &s.cron).await
+            {
+                registered.insert(s.plan_id.clone(), uuid);
+            }
         }
     }
     sched.start().await?;
     let sched = Arc::new(sched);
+    let jobs = Arc::new(Mutex::new(registered));
 
     Ok(Router::new()
-        .route("/test-plan/{id}/schedule", post(create_schedule))
+        .route("/test-plan/{id}/schedule", post(create_schedule).delete(delete_schedule))
         .route("/test-plan/{id}/runs", get(list_runs))
-        .with_state(SchedState { create, run_uc, plan_runner, sched, sessions }))
+        .with_state(SchedState { create, run_uc, plan_runner, sched, jobs, sessions }))
 }
 
 #[derive(Debug, Deserialize)]
@@ -129,8 +157,13 @@ async fn create_schedule(
     }
     match st.create.execute(&id, &b.cron, b.enabled).await {
         Ok(s) => {
+            unregister_job(&st.sched, &st.jobs, &s.plan_id).await;
             if s.enabled {
-                register_job(&st.sched, &st.run_uc, &st.plan_runner, &s.plan_id, &s.cron).await;
+                if let Some(uuid) =
+                    register_job(&st.sched, &st.run_uc, &st.plan_runner, &s.plan_id, &s.cron).await
+                {
+                    st.jobs.lock().await.insert(s.plan_id.clone(), uuid);
+                }
             }
             (
                 StatusCode::CREATED,
@@ -149,6 +182,23 @@ async fn create_schedule(
         Err(CreateScheduleError::Repo(_)) => {
             (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response()
         }
+    }
+}
+
+async fn delete_schedule(
+    user: AuthUser,
+    State(st): State<SchedState>,
+    Path(id): Path<String>,
+) -> Response {
+    // Same capability as configuring a schedule (plans have no DELETE action).
+    if !user.can("TEST_PLAN", "ADD") {
+        return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
+    unregister_job(&st.sched, &st.jobs, &id).await;
+    match st.create.delete(&id).await {
+        Ok(true) => StatusCode::NO_CONTENT.into_response(),
+        Ok(false) => (StatusCode::NOT_FOUND, "no schedule for plan").into_response(),
+        Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
     }
 }
 

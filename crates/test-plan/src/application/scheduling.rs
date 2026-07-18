@@ -37,6 +37,10 @@ impl CreateScheduleUseCase {
     pub async fn list_enabled(&self) -> Result<Vec<Schedule>, RepoError> {
         self.schedules.list_enabled().await
     }
+
+    pub async fn delete(&self, plan_id: &str) -> Result<bool, RepoError> {
+        self.schedules.delete_by_plan(plan_id).await
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
@@ -83,6 +87,20 @@ mod tests {
         let uc = CreateScheduleUseCase::new(store);
         uc.execute("p1", "*/5 * * * * *", true).await.expect("create");
         assert_eq!(uc.list_enabled().await.expect("list").len(), 1);
+    }
+
+    #[tokio::test]
+    async fn resave_replaces_and_delete_removes() {
+        let store = Arc::new(InMemoryScheduleStore::new());
+        let uc = CreateScheduleUseCase::new(store);
+        uc.execute("p1", "*/5 * * * * *", true).await.expect("create");
+        uc.execute("p1", "0 0 * * * *", true).await.expect("resave");
+        let enabled = uc.list_enabled().await.expect("list");
+        assert_eq!(enabled.len(), 1);
+        assert_eq!(enabled[0].cron, "0 0 * * * *");
+        assert!(uc.delete("p1").await.expect("delete"));
+        assert!(uc.list_enabled().await.expect("list").is_empty());
+        assert!(!uc.delete("p1").await.expect("second delete"));
     }
 
     #[tokio::test]
