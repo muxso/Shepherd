@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { Button, Checkbox, Divider, Dropdown, Empty, Input, Table, Modal, Popover, Radio, Segmented, Select, Space, Switch, Tabs, Tag, Tooltip, Tree, Upload } from 'antd'
 import ResizableDrawer from '../components/ResizableDrawer'
+import EditDrawer from '../components/EditDrawer'
 import { useSearchParams } from 'react-router-dom'
 import { message, modal } from '../feedback'
 import {
@@ -700,9 +701,9 @@ function ModuleFormModal({
     }
   }
   return (
-    <Modal title={state.mode === 'create' ? t('apidef.newModule', '新建模块') : t('apidef.renameModule', '重命名模块')} open onCancel={onClose} onOk={submit} destroyOnHidden>
+    <EditDrawer title={state.mode === 'create' ? t('apidef.newModule', '新建模块') : t('apidef.renameModule', '重命名模块')} open onCancel={onClose} onOk={submit}>
       <Input placeholder={t('apidef.moduleName', '模块名')} value={name} onChange={(e) => setName(e.target.value)} onPressEnter={submit} autoFocus />
-    </Modal>
+    </EditDrawer>
   )
 }
 
@@ -1111,7 +1112,7 @@ function ApiDetail({ definition, onUpdated }: { definition: ApiDefinition; onUpd
         onCaseSaved={() => { setCasesRefresh((n) => n + 1); setTab('cases') }}
         hideSave
       />
-      <Modal
+      <EditDrawer
         title={t('apidef.importCurl', '导入 cURL')}
         open={curlOpen}
         onCancel={() => setCurlOpen(false)}
@@ -1119,7 +1120,6 @@ function ApiDetail({ definition, onUpdated }: { definition: ApiDefinition; onUpd
         okText={t('a.import', '导入')}
         cancelText={t('a.cancel', '取消')}
         width={680}
-        destroyOnHidden
       >
         <Input.TextArea
           rows={10}
@@ -1128,7 +1128,7 @@ function ApiDetail({ definition, onUpdated }: { definition: ApiDefinition; onUpd
           placeholder={"curl -X POST 'https://api.example.com/login' \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"user\":\"admin\"}'"}
           className="ms-mono"
         />
-      </Modal>
+      </EditDrawer>
     </div>
   )
 

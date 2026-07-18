@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react'
-import { Button, Dropdown, Input, Modal, Space, Tooltip, Tree } from 'antd'
+import { Button, Dropdown, Input, Space, Tooltip, Tree } from 'antd'
+import EditDrawer from '../EditDrawer'
 import {
   DownOutlined,
   FolderAddOutlined,
@@ -229,13 +230,12 @@ function ModuleNameModal({
   const submit = () => { const v = name.trim(); if (v) onSubmit(v) }
   if (!state) return null
   return (
-    <Modal
+    <EditDrawer
       title={state.mode === 'create' ? t('plan.newModuleTitle', '新建模块') : t('plan.renameModuleTitle', '重命名模块')}
       open
       onCancel={onClose}
       onOk={submit}
       okButtonProps={{ disabled: !name.trim() }}
-      destroyOnHidden
     >
       <Input
         placeholder={t('plan.moduleName', '模块名称')}
@@ -244,6 +244,6 @@ function ModuleNameModal({
         onPressEnter={submit}
         autoFocus
       />
-    </Modal>
+    </EditDrawer>
   )
 }

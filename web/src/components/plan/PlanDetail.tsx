@@ -2,6 +2,7 @@ import { useEffect, useState, type CSSProperties } from 'react'
 import { Button, Card, Col, Empty, Modal, Row, Select, Space, Table, Tag } from 'antd'
 import { Input } from 'antd'
 import { message, modal } from '../../feedback'
+import EditDrawer from '../EditDrawer'
 import { PlayCircleOutlined, FileMarkdownOutlined, LinkOutlined, ClockCircleOutlined } from '@ant-design/icons'
 import { api, ApiError, type ApiCase, type PlanCase, type PlanStats } from '../../api'
 import { outcomeColor } from '../tags'
@@ -171,7 +172,7 @@ function LinkCaseModal({ open, planId, projectId, onClose, onLinked }: { open: b
     }
   }
   return (
-    <Modal title={t('plan.linkApiCase', '挂入接口用例')} open={open} onCancel={onClose} onOk={link} confirmLoading={saving} okButtonProps={{ disabled: !caseId }} destroyOnHidden>
+    <EditDrawer title={t('plan.linkApiCase', '挂入接口用例')} open={open} onCancel={onClose} onOk={link} confirmLoading={saving} okButtonProps={{ disabled: !caseId }}>
       <Select
         style={{ width: '100%' }}
         showSearch
@@ -182,7 +183,7 @@ function LinkCaseModal({ open, planId, projectId, onClose, onLinked }: { open: b
         options={cases.map((c) => ({ value: c.id, label: `${c.method} ${c.name}` }))}
         notFoundContent={t('plan.noApiCase', '项目暂无接口用例(先去「接口定义」建用例)')}
       />
-    </Modal>
+    </EditDrawer>
   )
 }
 

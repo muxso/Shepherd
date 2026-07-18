@@ -1,5 +1,6 @@
 import { useState } from 'react'
-import { Button, Form, Input, Modal, Select, Space } from 'antd'
+import { Button, Form, Input, Select, Space } from 'antd'
+import EditDrawer from '../EditDrawer'
 import { message } from '../../feedback'
 import { api, ApiError, userStore } from '../../api'
 import { useI18n } from '../../i18n'
@@ -143,8 +144,8 @@ export default function PlanFormModal({
     : mode === 'group' ? t('plan.newGroup', '新建计划组') : t('plan.newPlan', '新建测试计划')
 
   return (
-    <Modal title={title} open={open} onCancel={onClose} footer={null} destroyOnHidden>
+    <EditDrawer title={title} open={open} onCancel={onClose} footer={null}>
       <PlanForm mode={mode} editing={editing} projectId={projectId} modules={modules} groups={groups} onSaved={onSaved} />
-    </Modal>
+    </EditDrawer>
   )
 }

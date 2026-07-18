@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
-import { Button, Dropdown, Input, Modal, Tooltip, Tree } from 'antd'
+import { Button, Dropdown, Input, Tooltip, Tree } from 'antd'
+import EditDrawer from './EditDrawer'
 import { message, modal } from '../feedback'
 import { FolderOutlined, InboxOutlined, MinusSquareOutlined, MoreOutlined, PlusOutlined, SearchOutlined } from '@ant-design/icons'
 import { api, ApiError, type ApiModule } from '../api'
@@ -201,8 +202,8 @@ function ModuleFormModal({ state, projectId, onClose, onDone }: { state: { mode:
     }
   }
   return (
-    <Modal title={state.mode === 'create' ? t('apidef.newModule', '新建模块') : t('apidef.renameModule', '重命名模块')} open onCancel={onClose} onOk={submit} destroyOnHidden>
+    <EditDrawer title={state.mode === 'create' ? t('apidef.newModule', '新建模块') : t('apidef.renameModule', '重命名模块')} open onCancel={onClose} onOk={submit}>
       <Input placeholder={t('apidef.moduleName', '模块名')} value={name} onChange={(e) => setName(e.target.value)} onPressEnter={submit} autoFocus />
-    </Modal>
+    </EditDrawer>
   )
 }

@@ -1,6 +1,7 @@
 import { forwardRef, useEffect, useImperativeHandle, useState } from 'react'
-import { Button, Card, Empty, Input, InputNumber, Modal, Radio, Segmented, Select, Space, Table, Tabs, Tag, Tooltip, Typography } from 'antd'
+import { Button, Card, Empty, Input, InputNumber, Radio, Segmented, Select, Space, Table, Tabs, Tag, Tooltip, Typography } from 'antd'
 import ResizableDrawer from './ResizableDrawer'
+import EditDrawer from './EditDrawer'
 import { CopyOutlined, PlusOutlined, DeleteOutlined, SaveOutlined, UploadOutlined } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
 import QueryParamTable from './QueryParamTable'
@@ -420,7 +421,7 @@ const ApiSpecPanel = forwardRef<ApiSpecPanelHandle, {
       ) : (
         <ExampleResponsesPanel responses={spec.responses || []} onChange={(rows) => patch({ responses: rows })} />
       )}
-      <Modal
+      <EditDrawer
         title={t('apidef.saveAsCase', '保存为新用例')}
         open={caseModalOpen}
         onCancel={() => setCaseModalOpen(false)}
@@ -428,11 +429,10 @@ const ApiSpecPanel = forwardRef<ApiSpecPanelHandle, {
         okButtonProps={{ loading: caseSaving }}
         okText={t('a.save', '保存')}
         cancelText={t('a.cancel', '取消')}
-        destroyOnHidden
       >
         <div style={{ fontSize: 13, color: 'var(--text-2)', marginBottom: 6 }}>{t('apidef.caseName', '用例名称')}</div>
         <Input value={caseName} onChange={(e) => setCaseName(e.target.value)} onPressEnter={doSaveCase} placeholder={t('apidef.caseName', '用例名称')} />
-      </Modal>
+      </EditDrawer>
     </div>
   )
 })

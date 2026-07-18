@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom'
 import { useSearchParams } from 'react-router-dom'
 import { AutoComplete, Button, Cascader, Divider, Dropdown, Empty, Form, Input, Modal, Popover, Radio, Segmented, Select, Space, Switch, Table, Tabs, Tag, Tooltip, Typography, Upload } from 'antd'
 import ResizableDrawer from '../components/ResizableDrawer'
+import EditDrawer from '../components/EditDrawer'
 import { message, modal } from '../feedback'
 import { PlayCircleOutlined, PlusOutlined, SaveOutlined, ThunderboltOutlined, DownOutlined, LinkOutlined, SwapOutlined, DeleteOutlined, FullscreenOutlined, CloseOutlined, SearchOutlined, FilterOutlined, ReloadOutlined, MoreOutlined, ImportOutlined, InboxOutlined, EyeOutlined, SettingOutlined, ShareAltOutlined, EditOutlined } from '@ant-design/icons'
 import { api, ApiError, type ApiCase, type ApiDefinition, type ApiModule, type ApiView, type AssertionResult, type DebugResponse, type Environment, type ReportResultItem, type ResourcePool, type Scenario, type ScenarioChange, type ScenarioExecution, type ScenarioReportDetail, type ScenarioRunResult, type ScenarioStep } from '../api'
@@ -583,7 +584,7 @@ export default function Scenarios() {
         caseMap={listCaseMap}
         onClose={() => setBatchReportId(null)}
       />
-      <Modal
+      <EditDrawer
         open={timerOpen}
         title={`${t('scenario.timerEditTitle', '批量编辑定时任务')}(${t('scenario.selectedShort', '已选')} ${selectedIds.length} ${t('scenario.unitItems', '项数据')})`}
         onCancel={() => setTimerOpen(false)}
@@ -599,7 +600,6 @@ export default function Scenarios() {
             <Button type="primary" style={{ marginLeft: 8 }} loading={batchBusy} onClick={saveTimer}>{t('a.save', '保存')}</Button>
           </div>
         }
-        destroyOnHidden
       >
         <div style={{ marginBottom: 16 }}>
           <div style={{ marginBottom: 8 }}>{t('scenario.cronLabel', '任务触发时间')}</div>
@@ -649,8 +649,8 @@ export default function Scenarios() {
             options={[{ value: '', label: t('scenario.defaultPool', '默认资源池') }, ...runPools.map((p) => ({ value: p.id, label: p.name }))]}
           />
         </div>
-      </Modal>
-      <Modal
+      </EditDrawer>
+      <EditDrawer
         open={batchRunOpen}
         title={`${t('scenario.batchRun', '批量执行')}（${t('scenario.selectedShort', '已选')} ${selectedIds.length} ${t('scenario.unitScene', '条场景')}）`}
         onCancel={() => setBatchRunOpen(false)}
@@ -660,7 +660,6 @@ export default function Scenarios() {
             <Button type="primary" loading={batchBusy} onClick={batchRun}>{t('apidef.run', '执行')}</Button>
           </>
         }
-        destroyOnHidden
       >
         <div style={{ marginBottom: 16 }}>
           <div style={{ marginBottom: 8 }}>{t('scenario.envPick', '环境选择')}</div>
@@ -723,8 +722,8 @@ export default function Scenarios() {
             options={[{ value: '', label: t('scenario.defaultPool', '默认资源池') }, ...runPools.map((p) => ({ value: p.id, label: p.name }))]}
           />
         </div>
-      </Modal>
-      <Modal
+      </EditDrawer>
+      <EditDrawer
         open={!!batchModal}
         title={batchModal === 'move' ? t('scenario.moveTo', '移动到') : t('scenario.copyTo', '复制到')}
         onCancel={() => setBatchModal(null)}
@@ -732,7 +731,6 @@ export default function Scenarios() {
         confirmLoading={batchBusy}
         okText={t('a.confirm', '确定')}
         cancelText={t('a.cancel', '取消')}
-        destroyOnHidden
       >
         <Select
           style={{ width: '100%' }}
@@ -740,7 +738,7 @@ export default function Scenarios() {
           onChange={setBatchModule}
           options={[{ value: '', label: t('scenario.unplanned', '未规划场景') }, ...modules.map((m) => ({ value: m.id, label: m.name }))]}
         />
-      </Modal>
+      </EditDrawer>
     </div>
   )
 
@@ -1824,7 +1822,7 @@ function StepDetailDrawer({
       ) : (
         <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('scenario.controlStepInfo', '控制器步骤:在步骤列表中查看其配置与子步骤')} style={{ margin: '48px 0' }} />
       )}
-      <Modal
+      <EditDrawer
         open={replaceOpen}
         title={t('scenario.replaceCase', '替换引用用例')}
         onCancel={() => setReplaceOpen(false)}
@@ -1832,7 +1830,6 @@ function StepDetailDrawer({
         confirmLoading={replacing}
         okText={t('a.confirm', '确定')}
         cancelText={t('a.cancel', '取消')}
-        destroyOnHidden
       >
         <Select
           showSearch
@@ -1845,7 +1842,7 @@ function StepDetailDrawer({
             .filter((c) => c.id !== step?.caseId)
             .map((c) => ({ value: c.id, label: `${c.method} ${c.name}` }))}
         />
-      </Modal>
+      </EditDrawer>
     </ResizableDrawer>
   )
 }
@@ -2600,7 +2597,7 @@ function AddStepModal({
 
   const title = (makeStepMeta(t)[type]?.label || t('scenario.step', '步骤'))
   return (
-    <Modal title={`${t('scenario.addPrefix', '添加')} · ${title}`} open={!!type} onCancel={onClose} onOk={() => form.submit()} confirmLoading={saving} destroyOnHidden width={620}>
+    <EditDrawer title={`${t('scenario.addPrefix', '添加')} · ${title}`} open={!!type} onCancel={onClose} onOk={() => form.submit()} confirmLoading={saving} width={620}>
       <Form form={form} layout="vertical" initialValues={{ method: 'GET', operator: '等于', times: 3, ms: 1000, assertions: [{ type: 'StatusIs', args: 200 }] }} onFinish={submit}>
         {(type === 'CASE' || type === 'SCENARIO') && (
           <Form.Item name="refId" label={type === 'CASE' ? t('scenario.stepCase', '引用用例') : t('scenario.refSubScenario', '引用子场景')} rules={[{ required: true }]}>
@@ -2644,7 +2641,7 @@ function AddStepModal({
           </Form.Item>
         )}
       </Form>
-    </Modal>
+    </EditDrawer>
   )
 }
 

@@ -4,6 +4,7 @@ import {
   Select, Table, Tabs, Tag, Tooltip, Upload,
 } from 'antd'
 import ResizableDrawer from './ResizableDrawer'
+import EditDrawer from './EditDrawer'
 import {
   CloseOutlined, DeleteOutlined, DownOutlined, EditOutlined, EllipsisOutlined,
   FullscreenOutlined, InboxOutlined, LeftOutlined,
@@ -576,11 +577,10 @@ function RequirementTab({ caseId, projectId }: { caseId: string; projectId: stri
           },
         ]}
       />
-      <Modal
+      <EditDrawer
         open={open}
         title={t('funcd.addRequirement', '添加需求')}
         onCancel={() => setOpen(false)}
-        destroyOnHidden
         footer={
           <>
             <Button onClick={() => setOpen(false)}>{t('a.cancel', '取消')}</Button>
@@ -601,7 +601,7 @@ function RequirementTab({ caseId, projectId }: { caseId: string; projectId: stri
           <div style={{ marginBottom: 6 }}>{t('funcd.reqUrl', '需求地址')}</div>
           <Input placeholder={t('funcd.reqUrlPh', '请输入需求地址')} value={furl} onChange={(e) => setFurl(e.target.value)} />
         </div>
-      </Modal>
+      </EditDrawer>
     </div>
   )
 }
@@ -707,7 +707,7 @@ function BugTab({ caseId, projectId, nameOf }: { caseId: string; projectId: stri
           ]}
         />
       )}
-      <Modal open={linkOpen} title={t('funcd.linkBug', '关联缺陷')} onCancel={() => setLinkOpen(false)} onOk={doLink} okText={t('a.confirm', '确定')} cancelText={t('a.cancel', '取消')} destroyOnHidden>
+      <EditDrawer open={linkOpen} title={t('funcd.linkBug', '关联缺陷')} onCancel={() => setLinkOpen(false)} onOk={doLink} okText={t('a.confirm', '确定')} cancelText={t('a.cancel', '取消')}>
         <Select
           showSearch
           style={{ width: '100%' }}
@@ -718,10 +718,10 @@ function BugTab({ caseId, projectId, nameOf }: { caseId: string; projectId: stri
           options={bugList.map((b) => ({ value: b.id, label: b.title || b.id }))}
           notFoundContent={t('funcd.noBugs', '项目暂无缺陷')}
         />
-      </Modal>
-      <Modal open={newOpen} title={t('funcd.newBug', '新建缺陷')} onCancel={() => setNewOpen(false)} onOk={doCreate} okText={t('a.create', '创建')} cancelText={t('a.cancel', '取消')} destroyOnHidden>
+      </EditDrawer>
+      <EditDrawer open={newOpen} title={t('funcd.newBug', '新建缺陷')} onCancel={() => setNewOpen(false)} onOk={doCreate} okText={t('a.create', '创建')} cancelText={t('a.cancel', '取消')}>
         <Input placeholder={t('funcd.bugTitlePh', '请输入缺陷名称')} value={newTitle} onChange={(e) => setNewTitle(e.target.value)} />
-      </Modal>
+      </EditDrawer>
     </div>
   )
 }
@@ -806,7 +806,7 @@ function DependencyTab({
           },
         ]}
       />
-      <Modal open={open} title={addLabel} onCancel={() => setOpen(false)} onOk={doAdd} okText={t('a.confirm', '确定')} cancelText={t('a.cancel', '取消')} destroyOnHidden>
+      <EditDrawer open={open} title={addLabel} onCancel={() => setOpen(false)} onOk={doAdd} okText={t('a.confirm', '确定')} cancelText={t('a.cancel', '取消')}>
         <Select
           showSearch
           style={{ width: '100%' }}
@@ -816,7 +816,7 @@ function DependencyTab({
           onChange={setSel}
           options={cases.filter((x) => x.id !== caseId).map((x) => ({ value: x.id, label: `[${x.num || '—'}] ${x.name}` }))}
         />
-      </Modal>
+      </EditDrawer>
     </div>
   )
 }

@@ -16,6 +16,7 @@ import {
   Typography,
 } from 'antd'
 import ResizableDrawer from './ResizableDrawer'
+import EditDrawer from './EditDrawer'
 import { EyeInvisibleOutlined, PlusOutlined, QuestionCircleOutlined } from '@ant-design/icons'
 import { api, ApiError, userIdStore, userStore, type ApiKey, type AuthMe, type LlmModel } from '../api'
 import { message } from '../feedback'
@@ -370,7 +371,7 @@ function CreateKeyModal({ open, onClose, onDone }: { open: boolean; onClose: () 
   }
 
   return (
-    <Modal open={open} onCancel={onClose} onOk={submit} confirmLoading={busy} title={t('pc.akAdd', '新增')} destroyOnHidden>
+    <EditDrawer open={open} onCancel={onClose} onOk={submit} confirmLoading={busy} title={t('pc.akAdd', '新增')}>
       <Form form={form} layout="vertical" requiredMark={false}>
         <Form.Item name="name" label={t('pc.akName', '名称')}>
           <Input placeholder={t('pc.akNamePh', '可选')} autoFocus maxLength={64} />
@@ -393,7 +394,7 @@ function CreateKeyModal({ open, onClose, onDone }: { open: boolean; onClose: () 
           }
         </Form.Item>
       </Form>
-    </Modal>
+    </EditDrawer>
   )
 }
 
@@ -667,13 +668,12 @@ function ModelEditorModal({
   }
 
   return (
-    <Modal
+    <EditDrawer
       open={open}
       onCancel={onClose}
       onOk={submit}
       confirmLoading={busy}
       title={editing ? t('pc.editModel', '编辑模型') : t('pc.addModel', '添加模型')}
-      destroyOnHidden
     >
       <Form form={form} layout="vertical" requiredMark={false}>
         <Form.Item
@@ -699,6 +699,6 @@ function ModelEditorModal({
           </Form.Item>
         )}
       </Form>
-    </Modal>
+    </EditDrawer>
   )
 }

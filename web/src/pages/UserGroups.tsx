@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Button, Empty, Form, Input, Modal, Segmented, Select, Space, Table, Tag, Tooltip } from 'antd'
+import { Button, Empty, Form, Input, Segmented, Select, Space, Table, Tag, Tooltip } from 'antd'
 import { message, modal } from '../feedback'
 import { DeleteOutlined, EditOutlined, PlusOutlined, SearchOutlined } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
 import { api, ApiError, type Role, type User } from '../api'
 import { useI18n } from '../i18n'
+import EditDrawer from '../components/EditDrawer'
 
 // User groups: left tree grouped by scope, right pane permissions/members.
 // Permission matrix is parsed from real role permissions (e.g. "API_DEFINITION:READ+ADD") into resource → actions.
@@ -227,7 +228,7 @@ function RoleCreateModal({ scope, onClose, onDone }: { scope: string | null; onC
   const [busy, setBusy] = useState(false)
   useEffect(() => { if (scope) form.resetFields() }, [scope, form])
   return (
-    <Modal title={`${t('ug.newGroup', '新建用户组')}${scope ? ` · ${t(`ug.scope.${scope}`, SCOPE_LABEL[scope] || scope)}` : ''}`} open={!!scope} onCancel={onClose} footer={null} destroyOnHidden>
+    <EditDrawer title={`${t('ug.newGroup', '新建用户组')}${scope ? ` · ${t(`ug.scope.${scope}`, SCOPE_LABEL[scope] || scope)}` : ''}`} open={!!scope} onCancel={onClose} footer={null}>
       <Form
         form={form}
         layout="vertical"
@@ -249,7 +250,7 @@ function RoleCreateModal({ scope, onClose, onDone }: { scope: string | null; onC
         </Form.Item>
         <Button type="primary" htmlType="submit" block loading={busy}>{t('a.create', '创建')}</Button>
       </Form>
-    </Modal>
+    </EditDrawer>
   )
 }
 
@@ -262,7 +263,7 @@ function RoleEditModal({ role, onClose, onDone }: { role: Role | null; onClose: 
     if (role) form.setFieldsValue({ name: role.name, perms: (role.permissions ?? []).join('\n') })
   }, [role, form])
   return (
-    <Modal title={t('ug.editGroup', '编辑用户组')} open={!!role} onCancel={onClose} footer={null} width={560} destroyOnHidden>
+    <EditDrawer title={t('ug.editGroup', '编辑用户组')} open={!!role} onCancel={onClose} footer={null} width={560}>
       <Form
         form={form}
         layout="vertical"
@@ -289,6 +290,6 @@ function RoleEditModal({ role, onClose, onDone }: { role: Role | null; onClose: 
         </Form.Item>
         <Button type="primary" htmlType="submit" block loading={busy}>{t('a.save', '保存')}</Button>
       </Form>
-    </Modal>
+    </EditDrawer>
   )
 }

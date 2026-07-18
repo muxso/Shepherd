@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
-import { Alert, Button, Empty, Form, Input, Modal, Space, Switch, Table, Tag, Tooltip } from 'antd'
+import { Alert, Button, Empty, Form, Input, Space, Switch, Table, Tag, Tooltip } from 'antd'
+import EditDrawer from '../components/EditDrawer'
 import ResizableDrawer from '../components/ResizableDrawer'
 import { message } from '../feedback'
 import { PlusOutlined, ReloadOutlined, SyncOutlined, HistoryOutlined } from '@ant-design/icons'
@@ -266,7 +267,7 @@ function RegisterAgentModal({ open, onClose, onDone }: { open: boolean; onClose:
   const [busy, setBusy] = useState(false)
   useEffect(() => { if (open) form.setFieldsValue({ name: '', baseUrl: '', token: '', enabled: true }) }, [open, form])
   return (
-    <Modal title={t('agent.register', '注册执行机')} open={open} onCancel={onClose} footer={null} destroyOnHidden>
+    <EditDrawer title={t('agent.register', '注册执行机')} open={open} onCancel={onClose} footer={null}>
       <Form
         form={form}
         layout="vertical"
@@ -297,7 +298,7 @@ function RegisterAgentModal({ open, onClose, onDone }: { open: boolean; onClose:
         </Form.Item>
         <Button type="primary" htmlType="submit" block loading={busy}>{t('agent.register', '注册执行机')}</Button>
       </Form>
-    </Modal>
+    </EditDrawer>
   )
 }
 

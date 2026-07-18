@@ -1,6 +1,7 @@
 import { useMemo, useRef, useState } from 'react'
 import { Button, Input, Tooltip } from 'antd'
 import { CaretRightOutlined, DeleteOutlined, HolderOutlined, SearchOutlined } from '@ant-design/icons'
+import ResizableDrawer from './ResizableDrawer'
 import { useI18n } from '../i18n'
 
 export type CardSize = 'half' | 'full'
@@ -117,7 +118,7 @@ interface Props {
 }
 
 /**
- * Fullscreen card layout editor: card library (groups + search) on the left, current layout on the right.
+ * Card layout editor in a right drawer: card library (groups + search) on the left, current layout on the right.
  * Native HTML5 DnD: drag left→right to add, drag between blocks to reorder. Changes stay in a draft;
  * only "Save" persists via callback.
  */
@@ -208,207 +209,208 @@ export default function CardSettings({ layout, onSave, onExit }: Props) {
   const kw = q.trim().toLowerCase()
 
   return (
-    <div style={{ position: 'fixed', inset: 0, zIndex: 1000, background: 'var(--bg-base)', display: 'flex', flexDirection: 'column' }}>
-      {/* Top bar: title + exit/save */}
-      <div style={{ flex: '0 0 auto', height: 56, display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 20px', background: 'var(--panel)', borderBottom: '1px solid var(--border)' }}>
-        <div style={{ fontSize: 16, fontWeight: 600, color: 'var(--text)' }}>{t('home.cs.title', '卡片设置')}</div>
+    <ResizableDrawer
+      open
+      onClose={onExit}
+      width="72%"
+      title={t('home.cs.title', '卡片设置')}
+      extra={
         <div style={{ display: 'flex', gap: 8 }}>
           <Button onClick={onExit}>{t('home.cs.exit', '退出编辑')}</Button>
           <Button type="primary" onClick={() => onSave(draft)}>{t('home.cs.save', '保存')}</Button>
         </div>
-      </div>
-
-      <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>
-        {/* Left card library: search + collapsible groups */}
-        <aside style={{ flex: '0 0 300px', width: 300, borderRight: '1px solid var(--border)', background: 'var(--panel)', overflow: 'auto', padding: 12 }}>
-          <Input
-            allowClear
-            prefix={<SearchOutlined style={{ color: 'var(--text-3)' }} />}
-            placeholder={t('home.cs.search', '卡片搜索')}
-            value={q}
-            onChange={(e) => setQ(e.target.value)}
-            style={{ marginBottom: 12 }}
-          />
-          {groups.map((g) => {
-            const cards = kw ? g.cards.filter((c) => c.title.toLowerCase().includes(kw)) : g.cards
-            if (kw && cards.length === 0) return null
-            const open = kw ? true : !collapsed[g.key]
-            return (
-              <div key={g.key} style={{ marginBottom: 4 }}>
-                <div
-                  onClick={() => setCollapsed((s) => ({ ...s, [g.key]: !s[g.key] }))}
-                  style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', padding: '6px 4px', fontSize: 12, fontWeight: 600, color: 'var(--text-2)', userSelect: 'none' }}
-                >
-                  <CaretRightOutlined style={{ fontSize: 10, color: 'var(--text-3)', transform: open ? 'rotate(90deg)' : undefined, transition: 'transform .15s' }} />
-                  {g.title}
-                </div>
-                {open &&
-                  cards.map((c) => {
-                    const used = draft.some((d) => d.key === c.key)
-                    return (
-                      <div
-                        key={c.key}
-                        className={used ? undefined : 'ms-hover-card'}
-                        draggable={!used}
-                        onDragStart={
-                          used
-                            ? undefined
-                            : (e) => {
-                                dragSrc.current = { from: 'lib', key: c.key }
-                                setDragging(c.key)
-                                e.dataTransfer.setData('text/plain', c.key)
-                                e.dataTransfer.effectAllowed = 'copyMove'
-                              }
-                        }
-                        onDragEnd={cleanup}
-                        style={{
-                          display: 'flex',
-                          alignItems: 'center',
-                          gap: 10,
-                          padding: 8,
-                          marginBottom: 8,
-                          borderRadius: 8,
-                          border: '1px solid var(--border-soft)',
-                          background: 'var(--panel)',
-                          cursor: used ? 'not-allowed' : 'grab',
-                          opacity: used ? 0.45 : dragging === c.key ? 0.4 : 1,
-                        }}
-                      >
-                        <Thumb kind={c.thumb} />
-                        <div style={{ flex: 1, minWidth: 0 }}>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, fontWeight: 600, color: 'var(--text)' }}>
-                            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.title}</span>
-                            {used && (
-                              <span style={{ flex: '0 0 auto', fontSize: 11, fontWeight: 400, color: 'var(--text-3)', border: '1px solid var(--border)', borderRadius: 4, padding: '0 4px' }}>
-                                {t('home.cs.added', '已添加')}
-                              </span>
-                            )}
-                          </div>
-                          <div style={{ fontSize: 12, color: 'var(--text-3)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.desc}</div>
+      }
+      styles={{ body: { padding: 0, display: 'flex', minHeight: 0 } }}
+    >
+      {/* Left card library: search + collapsible groups */}
+      <aside style={{ flex: '0 0 300px', width: 300, borderRight: '1px solid var(--border)', background: 'var(--panel)', overflow: 'auto', padding: 12 }}>
+        <Input
+          allowClear
+          prefix={<SearchOutlined style={{ color: 'var(--text-3)' }} />}
+          placeholder={t('home.cs.search', '卡片搜索')}
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          style={{ marginBottom: 12 }}
+        />
+        {groups.map((g) => {
+          const cards = kw ? g.cards.filter((c) => c.title.toLowerCase().includes(kw)) : g.cards
+          if (kw && cards.length === 0) return null
+          const open = kw ? true : !collapsed[g.key]
+          return (
+            <div key={g.key} style={{ marginBottom: 4 }}>
+              <div
+                onClick={() => setCollapsed((s) => ({ ...s, [g.key]: !s[g.key] }))}
+                style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', padding: '6px 4px', fontSize: 12, fontWeight: 600, color: 'var(--text-2)', userSelect: 'none' }}
+              >
+                <CaretRightOutlined style={{ fontSize: 10, color: 'var(--text-3)', transform: open ? 'rotate(90deg)' : undefined, transition: 'transform .15s' }} />
+                {g.title}
+              </div>
+              {open &&
+                cards.map((c) => {
+                  const used = draft.some((d) => d.key === c.key)
+                  return (
+                    <div
+                      key={c.key}
+                      className={used ? undefined : 'ms-hover-card'}
+                      draggable={!used}
+                      onDragStart={
+                        used
+                          ? undefined
+                          : (e) => {
+                              dragSrc.current = { from: 'lib', key: c.key }
+                              setDragging(c.key)
+                              e.dataTransfer.setData('text/plain', c.key)
+                              e.dataTransfer.effectAllowed = 'copyMove'
+                            }
+                      }
+                      onDragEnd={cleanup}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 10,
+                        padding: 8,
+                        marginBottom: 8,
+                        borderRadius: 8,
+                        border: '1px solid var(--border-soft)',
+                        background: 'var(--panel)',
+                        cursor: used ? 'not-allowed' : 'grab',
+                        opacity: used ? 0.45 : dragging === c.key ? 0.4 : 1,
+                      }}
+                    >
+                      <Thumb kind={c.thumb} />
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, fontWeight: 600, color: 'var(--text)' }}>
+                          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.title}</span>
+                          {used && (
+                            <span style={{ flex: '0 0 auto', fontSize: 11, fontWeight: 400, color: 'var(--text-3)', border: '1px solid var(--border)', borderRadius: 4, padding: '0 4px' }}>
+                              {t('home.cs.added', '已添加')}
+                            </span>
+                          )}
                         </div>
+                        <div style={{ fontSize: 12, color: 'var(--text-3)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.desc}</div>
                       </div>
-                    )
-                  })}
+                    </div>
+                  )
+                })}
+            </div>
+          )
+        })}
+      </aside>
+
+      {/* Right layout area: placeholder blocks, half = two per row, full = whole row; drag to reorder/add */}
+      <main
+        onDragOver={(e) => {
+          e.preventDefault()
+          if (dragSrc.current) setInsertAt(draft.length)
+        }}
+        onDrop={(e) => {
+          e.preventDefault()
+          commit()
+        }}
+        style={{ flex: 1, minWidth: 0, overflow: 'auto', padding: 20 }}
+      >
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, alignContent: 'flex-start', minHeight: '100%' }}>
+          {draft.map((item, i) => {
+            const meta = metaByKey.get(item.key)
+            const showBefore = dragging != null && insertAt === i
+            const showAfter = dragging != null && insertAt === i + 1 && i === draft.length - 1
+            const indicator =
+              item.size === 'half'
+                ? showBefore
+                  ? '-2px 0 0 var(--brand)'
+                  : showAfter
+                    ? '2px 0 0 var(--brand)'
+                    : undefined
+                : showBefore
+                  ? '0 -2px 0 var(--brand)'
+                  : showAfter
+                    ? '0 2px 0 var(--brand)'
+                    : undefined
+            return (
+              <div
+                key={item.key}
+                draggable
+                onDragStart={(e) => {
+                  dragSrc.current = { from: 'layout', index: i }
+                  setDragging(item.key)
+                  e.dataTransfer.setData('text/plain', item.key)
+                  e.dataTransfer.effectAllowed = 'move'
+                }}
+                onDragEnd={cleanup}
+                onDragOver={(e) => {
+                  e.preventDefault()
+                  e.stopPropagation()
+                  if (!dragSrc.current) return
+                  const r = e.currentTarget.getBoundingClientRect()
+                  const before = item.size === 'half' ? e.clientX < r.left + r.width / 2 : e.clientY < r.top + r.height / 2
+                  setInsertAt(before ? i : i + 1)
+                }}
+                onDrop={(e) => {
+                  e.preventDefault()
+                  e.stopPropagation()
+                  commit()
+                }}
+                style={{
+                  width: item.size === 'half' ? 'calc(50% - 6px)' : '100%',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 8,
+                  padding: '12px 14px',
+                  borderRadius: 8,
+                  border: '1px solid var(--border)',
+                  background: 'var(--panel)',
+                  cursor: 'grab',
+                  opacity: dragging === item.key ? 0.4 : 1,
+                  boxShadow: indicator,
+                }}
+              >
+                <HolderOutlined style={{ color: 'var(--text-3)' }} />
+                <span style={{ flex: 1, minWidth: 0, fontSize: 13, fontWeight: 600, color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {meta?.title ?? item.key}
+                </span>
+                {/* half/full pill toggle */}
+                <span style={{ flex: '0 0 auto', display: 'inline-flex', border: '1px solid var(--border)', borderRadius: 999, overflow: 'hidden' }}>
+                  {(['half', 'full'] as CardSize[]).map((s) => (
+                    <span
+                      key={s}
+                      onClick={() => resize(i, s)}
+                      style={{
+                        padding: '2px 10px',
+                        fontSize: 12,
+                        cursor: 'pointer',
+                        userSelect: 'none',
+                        background: item.size === s ? 'var(--brand-soft)' : 'transparent',
+                        color: item.size === s ? 'var(--brand)' : 'var(--text-3)',
+                      }}
+                    >
+                      {s === 'half' ? t('home.cs.half', '半屏') : t('home.cs.full', '全屏')}
+                    </span>
+                  ))}
+                </span>
+                <Tooltip title={t('home.cs.remove', '移除')}>
+                  <Button type="text" size="small" icon={<DeleteOutlined />} onClick={() => removeAt(i)} />
+                </Tooltip>
               </div>
             )
           })}
-        </aside>
-
-        {/* Right layout area: placeholder blocks, half = two per row, full = whole row; drag to reorder/add */}
-        <main
-          onDragOver={(e) => {
-            e.preventDefault()
-            if (dragSrc.current) setInsertAt(draft.length)
-          }}
-          onDrop={(e) => {
-            e.preventDefault()
-            commit()
-          }}
-          style={{ flex: 1, minWidth: 0, overflow: 'auto', padding: 20 }}
-        >
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, alignContent: 'flex-start', minHeight: '100%' }}>
-            {draft.map((item, i) => {
-              const meta = metaByKey.get(item.key)
-              const showBefore = dragging != null && insertAt === i
-              const showAfter = dragging != null && insertAt === i + 1 && i === draft.length - 1
-              const indicator =
-                item.size === 'half'
-                  ? showBefore
-                    ? '-2px 0 0 var(--brand)'
-                    : showAfter
-                      ? '2px 0 0 var(--brand)'
-                      : undefined
-                  : showBefore
-                    ? '0 -2px 0 var(--brand)'
-                    : showAfter
-                      ? '0 2px 0 var(--brand)'
-                      : undefined
-              return (
-                <div
-                  key={item.key}
-                  draggable
-                  onDragStart={(e) => {
-                    dragSrc.current = { from: 'layout', index: i }
-                    setDragging(item.key)
-                    e.dataTransfer.setData('text/plain', item.key)
-                    e.dataTransfer.effectAllowed = 'move'
-                  }}
-                  onDragEnd={cleanup}
-                  onDragOver={(e) => {
-                    e.preventDefault()
-                    e.stopPropagation()
-                    if (!dragSrc.current) return
-                    const r = e.currentTarget.getBoundingClientRect()
-                    const before = item.size === 'half' ? e.clientX < r.left + r.width / 2 : e.clientY < r.top + r.height / 2
-                    setInsertAt(before ? i : i + 1)
-                  }}
-                  onDrop={(e) => {
-                    e.preventDefault()
-                    e.stopPropagation()
-                    commit()
-                  }}
-                  style={{
-                    width: item.size === 'half' ? 'calc(50% - 6px)' : '100%',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 8,
-                    padding: '12px 14px',
-                    borderRadius: 8,
-                    border: '1px solid var(--border)',
-                    background: 'var(--panel)',
-                    cursor: 'grab',
-                    opacity: dragging === item.key ? 0.4 : 1,
-                    boxShadow: indicator,
-                  }}
-                >
-                  <HolderOutlined style={{ color: 'var(--text-3)' }} />
-                  <span style={{ flex: 1, minWidth: 0, fontSize: 13, fontWeight: 600, color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                    {meta?.title ?? item.key}
-                  </span>
-                  {/* half/full pill toggle */}
-                  <span style={{ flex: '0 0 auto', display: 'inline-flex', border: '1px solid var(--border)', borderRadius: 999, overflow: 'hidden' }}>
-                    {(['half', 'full'] as CardSize[]).map((s) => (
-                      <span
-                        key={s}
-                        onClick={() => resize(i, s)}
-                        style={{
-                          padding: '2px 10px',
-                          fontSize: 12,
-                          cursor: 'pointer',
-                          userSelect: 'none',
-                          background: item.size === s ? 'var(--brand-soft)' : 'transparent',
-                          color: item.size === s ? 'var(--brand)' : 'var(--text-3)',
-                        }}
-                      >
-                        {s === 'half' ? t('home.cs.half', '半屏') : t('home.cs.full', '全屏')}
-                      </span>
-                    ))}
-                  </span>
-                  <Tooltip title={t('home.cs.remove', '移除')}>
-                    <Button type="text" size="small" icon={<DeleteOutlined />} onClick={() => removeAt(i)} />
-                  </Tooltip>
-                </div>
-              )
-            })}
-            {draft.length === 0 && (
-              <div
-                style={{
-                  width: '100%',
-                  padding: '48px 0',
-                  textAlign: 'center',
-                  fontSize: 13,
-                  color: 'var(--text-3)',
-                  border: '1px dashed var(--border)',
-                  borderRadius: 8,
-                  background: dragging != null && insertAt != null ? 'var(--brand-soft)' : undefined,
-                }}
-              >
-                {t('home.cs.emptyLayout', '从左侧拖入卡片')}
-              </div>
-            )}
-          </div>
-        </main>
-      </div>
-    </div>
+          {draft.length === 0 && (
+            <div
+              style={{
+                width: '100%',
+                padding: '48px 0',
+                textAlign: 'center',
+                fontSize: 13,
+                color: 'var(--text-3)',
+                border: '1px dashed var(--border)',
+                borderRadius: 8,
+                background: dragging != null && insertAt != null ? 'var(--brand-soft)' : undefined,
+              }}
+            >
+              {t('home.cs.emptyLayout', '从左侧拖入卡片')}
+            </div>
+          )}
+        </div>
+      </main>
+    </ResizableDrawer>
   )
 }

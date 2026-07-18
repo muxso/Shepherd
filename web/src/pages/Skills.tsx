@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Button, Card, Empty, Form, Input, Modal, Select, Space, Switch, Table, Tag, Tooltip, Typography } from 'antd'
+import { Button, Card, Empty, Form, Input, Select, Space, Switch, Table, Tag, Tooltip, Typography } from 'antd'
 import { message, modal } from '../feedback'
 import { PlusOutlined, ReloadOutlined, MergeCellsOutlined } from '@ant-design/icons'
 import { api, ApiError, type Skill } from '../api'
@@ -7,6 +7,7 @@ import { useApp } from '../context'
 import { useI18n } from '../i18n'
 import { PageBody, PageContainer, PageHeader, SelectProjectEmpty } from '../components/Page'
 import { useListView, type ListColumn } from '../components/ListView'
+import EditDrawer from '../components/EditDrawer'
 
 export default function Skills() {
   const { t } = useI18n()
@@ -174,7 +175,7 @@ function SkillFormModal({ open, title, initial, onClose, onSubmit, onDone }: {
   }, [open, initial, form])
 
   return (
-    <Modal title={title} open={open} onCancel={onClose} footer={null} destroyOnHidden>
+    <EditDrawer title={title} open={open} onCancel={onClose} footer={null}>
       <Form
         form={form}
         layout="vertical"
@@ -209,7 +210,7 @@ function SkillFormModal({ open, title, initial, onClose, onSubmit, onDone }: {
           {initial ? t('a.save', '保存') : t('a.create', '创建')}
         </Button>
       </Form>
-    </Modal>
+    </EditDrawer>
   )
 }
 
@@ -242,7 +243,7 @@ function ComposeModal({
   }
 
   return (
-    <Modal title={t('skill.compose', '组合技能')} open={open} onCancel={onClose} footer={null} width={680} destroyOnHidden>
+    <EditDrawer title={t('skill.compose', '组合技能')} open={open} onCancel={onClose} footer={null} width={680}>
       <Space direction="vertical" style={{ width: '100%' }}>
         <Select
           mode="multiple"
@@ -261,6 +262,6 @@ function ComposeModal({
           </Card>
         )}
       </Space>
-    </Modal>
+    </EditDrawer>
   )
 }

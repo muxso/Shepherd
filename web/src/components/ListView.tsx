@@ -6,7 +6,8 @@
 // and the page feeds rows/columns/pagination to its own Table. Page-private state (module
 // selection) can ride along in the view snapshot via `extra`.
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
-import { Alert, Button, Checkbox, Dropdown, Input, Modal, Popover, Segmented, Select, Space, Switch, Tag } from 'antd'
+import { Alert, Button, Checkbox, Dropdown, Input, Popover, Segmented, Select, Space, Switch, Tag } from 'antd'
+import EditDrawer from './EditDrawer'
 import { DeleteOutlined, DownOutlined, EditOutlined, FilterOutlined, LinkOutlined, MinusCircleOutlined, MinusOutlined, PlusOutlined, RightOutlined, SettingOutlined, SearchOutlined } from '@ant-design/icons'
 import type { ColumnType, TablePaginationConfig } from 'antd/es/table'
 import { message } from '../feedback'
@@ -586,7 +587,7 @@ export function useListView<T>({
 
   // View editor modal: renamable title; condition rows = searchable field + operator + value; footer has share toggle + cancel/save.
   const editorModal = editor && (
-    <Modal
+    <EditDrawer
       open
       width={640}
       onCancel={() => setEditor(null)}
@@ -710,7 +711,7 @@ export function useListView<T>({
       >
         {t('lv.addCond', '添加条件')}
       </Button>
-    </Modal>
+    </EditDrawer>
   )
 
   // Toolbar controls use the default size (32px) to match page primary buttons.
