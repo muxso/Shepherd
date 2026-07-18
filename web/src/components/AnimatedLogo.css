@@ -1,0 +1,49 @@
+/* Entrance: strata slide into place with a stagger; then a shimmer loops
+   through the layers. Both respect prefers-reduced-motion. */
+
+.shepherd-logo {
+  color: var(--brand);
+  display: block;
+}
+
+.shepherd-logo .stratum {
+  opacity: 0;
+  transform: translateX(-14px);
+  animation:
+    logoSlideIn 0.5s cubic-bezier(0.22, 1, 0.36, 1) forwards,
+    logoShimmer 4.2s ease-in-out infinite;
+}
+
+.shepherd-logo .s-1 { animation-delay: 0.05s, 1.0s; }
+.shepherd-logo .s-2 { animation-delay: 0.11s, 1.15s; }
+.shepherd-logo .s-3 { animation-delay: 0.17s, 1.3s; }
+.shepherd-logo .s-4 { animation-delay: 0.23s, 1.45s; }
+.shepherd-logo .s-5 { animation-delay: 0.29s, 1.6s; }
+.shepherd-logo .s-6 { animation-delay: 0.35s, 1.75s; }
+.shepherd-logo .s-7 { animation-delay: 0.41s, 1.9s; }
+.shepherd-logo .s-8 { animation-delay: 0.47s, 2.05s; }
+.shepherd-logo .s-9 { animation-delay: 0.53s, 2.2s; }
+
+@keyframes logoSlideIn {
+  from {
+    opacity: 0;
+    transform: translateX(-14px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes logoShimmer {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.72; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .shepherd-logo .stratum {
+    opacity: 1;
+    transform: none;
+    animation: none;
+  }
+}
