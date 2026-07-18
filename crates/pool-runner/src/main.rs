@@ -7,6 +7,7 @@
 //!   SHEPHERD_POOL_ID    resource pool id to register under (required)
 //!   SHEPHERD_RUNNER_KEY API key (sak_...) or session token (required)
 //!   RUNNER_NAME         display name (default: hostname)
+//!   RUNNER_MAX_CONCURRENT concurrent run cap advertised to the server (default 4)
 
 use std::time::Duration;
 
@@ -24,6 +25,7 @@ struct Config {
     pool_id: String,
     key: String,
     name: String,
+    max_concurrent: u32,
 }
 
 impl Config {
@@ -42,6 +44,11 @@ impl Config {
                     .filter(|s| !s.is_empty())
                     .unwrap_or_else(|| "pool-runner".to_string())
             }),
+            max_concurrent: std::env::var("RUNNER_MAX_CONCURRENT")
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .filter(|&n| n >= 1)
+                .unwrap_or_else(pool_runner::protocol::default_max_concurrent),
         })
     }
 }
@@ -61,7 +68,7 @@ async fn main() {
             std::process::exit(2);
         }
     };
-    tracing::info!(pool = %cfg.pool_id, name = %cfg.name, server = %cfg.ws_url, "pool-runner starting");
+    tracing::info!(pool = %cfg.pool_id, name = %cfg.name, server = %cfg.ws_url, max_concurrent = cfg.max_concurrent, "pool-runner starting");
     let mut backoff = 1u64;
     loop {
         match serve_once(&cfg).await {
@@ -109,8 +116,11 @@ async fn serve_once(cfg: &Config) -> Result<(), String> {
             pool_id: cfg.pool_id.clone(),
             name: cfg.name.clone(),
             capabilities: vec!["http".to_string()],
+            max_concurrent: cfg.max_concurrent,
         },
     );
+
+    let permits = std::sync::Arc::new(tokio::sync::Semaphore::new(cfg.max_concurrent as usize));
 
     // Event forwarder: RunnerMsg from executing runs → text frames.
     let (ev_tx, mut ev_rx) = mpsc::unbounded_channel::<RunnerMsg>();
@@ -135,7 +145,11 @@ async fn serve_once(cfg: &Config) -> Result<(), String> {
                 Ok(ServerMsg::Run { run_id, nodes, env, stop_on_failure }) => {
                     tracing::info!(%run_id, steps = nodes.len(), "run dispatched");
                     let ev = ev_tx.clone();
+                    let permits = permits.clone();
                     tokio::spawn(async move {
+                        // Local guard mirroring the advertised cap; the server
+                        // already schedules within it.
+                        let _permit = permits.acquire_owned().await;
                         let id = run_id.clone();
                         execute_assignment(run_id, nodes, env, stop_on_failure, ev).await;
                         tracing::info!(run_id = %id, "run finished");

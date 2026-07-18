@@ -491,7 +491,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         CreatePlanUseCase::new(mcp_plan_repo.clone()),
         test_plan::application::PlanCaseUseCase::new(mcp_plan_repo.clone()),
         PlanStatisticsUseCase::new(mcp_plan_repo),
-        plan_run::PlanRunner::new(pool.clone()),
+        plan_run::PlanRunner::new(pool.clone(), None),
         mcp_runner_svc,
         sessions.clone(),
         mcp_bus,
@@ -526,8 +526,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         test_plan::application::PlanAdminUseCase::new(plan_repo),
         sessions.clone(),
     );
-    let plan_run_routes = plan_run::router(pool.clone(), sessions.clone());
-
     // Default to local rather than Noop: otherwise `api batch-run` silently stalls in RUNNING with no results.
     let dispatcher: Arc<dyn api_test::ports::TaskDispatcher> = match &cfg.executor_url {
         Some(url) => {
@@ -635,6 +633,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         hub: Some(pool_hub.clone()),
     };
     let scenario_run_routes = scenario_run::router(scenario_runner, sessions.clone());
+    // Plan runs share the hub: scenario-mounted entries route through pools and
+    // stream live events.
+    let plan_run_routes = plan_run::router(pool.clone(), sessions.clone(), Some(pool_hub.clone()));
     let pool_runner_routes = pool_runner_ws::router(pool_hub, sessions.clone());
 
     let perf_routes = perf_run::router(

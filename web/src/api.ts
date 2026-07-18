@@ -1577,14 +1577,15 @@ export const api = {
   linkPlanCase: (id: string, caseId: string, name: string) =>
     http.post(`/test-plan/${id}/cases`, { caseId, name }),
   unlinkPlanCase: (id: string, caseId: string) => http.del(`/test-plan/${id}/cases/${caseId}`),
-  // Runs exactly one linked case/scenario and records its result.
-  runPlanCase: (id: string, caseId: string) =>
-    http.post<{ caseId: string; status: string }>(`/test-plan/${id}/cases/${caseId}/run`, {}),
+  // Runs exactly one linked case/scenario and records its result. A poolId
+  // routes scenario entries to that resource pool's runners.
+  runPlanCase: (id: string, caseId: string, poolId?: string) =>
+    http.post<{ caseId: string; status: string }>(`/test-plan/${id}/cases/${caseId}/run`, { poolId }),
   // Manually record a case result (pass/fail/blocked/false alarm); status: SUCCESS|ERROR|BLOCK|FAKE_ERROR|PENDING
   recordPlanCaseResult: (id: string, caseId: string, status: string) =>
     http.post(`/test-plan/${id}/cases/${caseId}/result`, { status }),
-  runPlan: (id: string, environmentId?: string) =>
-    http.post<{ status?: string; total: number; executed: number }>(`/test-plan/${id}/run`, { environmentId }),
+  runPlan: (id: string, environmentId?: string, poolId?: string) =>
+    http.post<{ status?: string; total: number; executed: number }>(`/test-plan/${id}/run`, { environmentId, poolId }),
   planSchedule: (id: string, cron: string, enabled = true) =>
     http.post(`/test-plan/${id}/schedule`, { cron, enabled }),
   deletePlanSchedule: (id: string) => http.del(`/test-plan/${id}/schedule`),
