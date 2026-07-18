@@ -12,7 +12,8 @@ AI ROI · human-AI efficiency analytics · software engineering modeling · Task
 
 Shepherd is a platform for supervising AI-driven development. AI can write code, but it won't judge whether it actually finished the requirement, and it won't be accountable for the result. Instead of building another "smarter agent," Shepherd sits around the agent: it breaks requirements down for AI executors to work on, puts a human approval step at two points (design and verification), and keeps a record of the whole thing.
 
-> **Status:** `v0.0.1`, experimental, dogfooded internally. The full loop works, but it isn't production-ready and there's no public benchmark. Don't treat it as a finished tool.
+<a id="status"></a>
+> **Status:** `v0.0.2`, experimental, dogfooded internally. The full loop works, but it isn't production-ready and there's no public benchmark. Don't treat it as a finished tool.
 
 <img src="docs/assets/screenshot-intro.png" alt="Shepherd — scenario run report" width="100%" />
 
