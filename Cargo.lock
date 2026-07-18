@@ -47,7 +47,7 @@ dependencies = [
 
 [[package]]
 name = "agent-runtime"
-version = "0.0.2"
+version = "0.0.3"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -163,7 +163,7 @@ checksum = "7f202df86484c868dbad7eaa557ef785d5c66295e41b460ef922eca0723b842c"
 
 [[package]]
 name = "api-definition"
-version = "0.0.2"
+version = "0.0.3"
 dependencies = [
  "async-trait",
  "axum 0.8.9",
@@ -182,7 +182,7 @@ dependencies = [
 
 [[package]]
 name = "api-runner"
-version = "0.0.2"
+version = "0.0.3"
 dependencies = [
  "axum 0.8.9",
  "regex",
@@ -195,7 +195,7 @@ dependencies = [
 
 [[package]]
 name = "api-scenario"
-version = "0.0.2"
+version = "0.0.3"
 dependencies = [
  "async-trait",
  "axum 0.8.9",
@@ -213,7 +213,7 @@ dependencies = [
 
 [[package]]
 name = "api-test"
-version = "0.0.2"
+version = "0.0.3"
 dependencies = [
  "api-runner",
  "arrow",
@@ -818,7 +818,7 @@ dependencies = [
 
 [[package]]
 name = "bug"
-version = "0.0.2"
+version = "0.0.3"
 dependencies = [
  "async-trait",
  "axum 0.8.9",
@@ -871,7 +871,7 @@ dependencies = [
 
 [[package]]
 name = "case"
-version = "0.0.2"
+version = "0.0.3"
 dependencies = [
  "async-trait",
  "axum 0.8.9",
@@ -889,7 +889,7 @@ dependencies = [
 
 [[package]]
 name = "case-management"
-version = "0.0.2"
+version = "0.0.3"
 dependencies = [
  "async-trait",
  "axum 0.8.9",
@@ -1065,7 +1065,7 @@ dependencies = [
 
 [[package]]
 name = "comment"
-version = "0.0.2"
+version = "0.0.3"
 dependencies = [
  "async-trait",
  "axum 0.8.9",
@@ -1356,7 +1356,7 @@ dependencies = [
 
 [[package]]
 name = "delivery"
-version = "0.0.2"
+version = "0.0.3"
 dependencies = [
  "async-trait",
  "axum 0.8.9",
@@ -1441,7 +1441,7 @@ dependencies = [
 
 [[package]]
 name = "design"
-version = "0.0.2"
+version = "0.0.3"
 dependencies = [
  "async-trait",
  "axum 0.8.9",
@@ -1601,7 +1601,7 @@ dependencies = [
 
 [[package]]
 name = "environment"
-version = "0.0.2"
+version = "0.0.3"
 dependencies = [
  "async-trait",
  "axum 0.8.9",
@@ -1739,7 +1739,7 @@ checksum = "d9c4f5dac5e15c24eb999c26181a6ca40b39fe946cbe4c263c7209467bc83af2"
 
 [[package]]
 name = "follow"
-version = "0.0.2"
+version = "0.0.3"
 dependencies = [
  "async-trait",
  "axum 0.8.9",
@@ -2460,7 +2460,7 @@ dependencies = [
 
 [[package]]
 name = "kernel"
-version = "0.0.2"
+version = "0.0.3"
 
 [[package]]
 name = "lazy_static"
@@ -2647,7 +2647,7 @@ checksum = "47e1ffaa40ddd1f3ed91f717a33c8c0ee23fff369e3aa8772b9605cc1d22f4c3"
 
 [[package]]
 name = "mcp"
-version = "0.0.2"
+version = "0.0.3"
 dependencies = [
  "async-trait",
  "serde",
@@ -2685,7 +2685,7 @@ checksum = "38d1115007560874e373613744c6fba374c17688327a71c1476d1a5954cc857b"
 
 [[package]]
 name = "migrate"
-version = "0.0.2"
+version = "0.0.3"
 dependencies = [
  "sqlx",
 ]
@@ -2749,7 +2749,7 @@ dependencies = [
 
 [[package]]
 name = "mock-runtime"
-version = "0.0.2"
+version = "0.0.3"
 dependencies = [
  "async-trait",
  "axum 0.8.9",
@@ -2964,7 +2964,7 @@ checksum = "7c87def4c32ab89d880effc9e097653c8da5d6ef28e6b539d313baaacfbafcbe"
 
 [[package]]
 name = "orchestrator"
-version = "0.0.2"
+version = "0.0.3"
 dependencies = [
  "async-trait",
  "thiserror 2.0.18",
@@ -3159,7 +3159,7 @@ checksum = "9b4f627cb1b25917193a259e49bdad08f671f8d9708acfd5fe0a8c1455d87220"
 
 [[package]]
 name = "perf"
-version = "0.0.2"
+version = "0.0.3"
 dependencies = [
  "api-runner",
  "arrow",
@@ -3358,7 +3358,7 @@ dependencies = [
 
 [[package]]
 name = "probe"
-version = "0.0.2"
+version = "0.0.3"
 dependencies = [
  "api-runner",
  "async-trait",
@@ -3387,7 +3387,7 @@ dependencies = [
 
 [[package]]
 name = "project"
-version = "0.0.2"
+version = "0.0.3"
 dependencies = [
  "async-trait",
  "axum 0.8.9",
@@ -3635,7 +3635,7 @@ checksum = "dc897dd8d9e8bd1ed8cdad82b5966c3e0ecae09fb1907d58efaa013543185d0a"
 
 [[package]]
 name = "requirement"
-version = "0.0.2"
+version = "0.0.3"
 dependencies = [
  "async-trait",
  "axum 0.8.9",
@@ -3757,7 +3757,7 @@ dependencies = [
 
 [[package]]
 name = "runner"
-version = "0.0.2"
+version = "0.0.3"
 dependencies = [
  "api-runner",
  "async-trait",
@@ -3778,7 +3778,7 @@ dependencies = [
 
 [[package]]
 name = "runner-agent"
-version = "0.0.2"
+version = "0.0.3"
 dependencies = [
  "api-runner",
  "axum 0.8.9",
@@ -4153,7 +4153,7 @@ dependencies = [
 
 [[package]]
 name = "server"
-version = "0.0.2"
+version = "0.0.3"
 dependencies = [
  "api-definition",
  "api-runner",
@@ -4265,7 +4265,7 @@ dependencies = [
 
 [[package]]
 name = "shepherd-cli"
-version = "0.0.2"
+version = "0.0.3"
 dependencies = [
  "clap",
  "reqwest",
@@ -4317,7 +4317,7 @@ checksum = "703d5c7ef118737c72f1af64ad2f6f8c5e1921f818cdcb97b8fe6fc69bf66214"
 
 [[package]]
 name = "skill"
-version = "0.0.2"
+version = "0.0.3"
 dependencies = [
  "async-trait",
  "axum 0.8.9",
@@ -4733,7 +4733,7 @@ dependencies = [
 
 [[package]]
 name = "system-setting"
-version = "0.0.2"
+version = "0.0.3"
 dependencies = [
  "argon2 0.5.3",
  "async-trait",
@@ -4755,7 +4755,7 @@ dependencies = [
 
 [[package]]
 name = "task"
-version = "0.0.2"
+version = "0.0.3"
 dependencies = [
  "async-trait",
  "axum 0.8.9",
@@ -4773,7 +4773,7 @@ dependencies = [
 
 [[package]]
 name = "test-plan"
-version = "0.0.2"
+version = "0.0.3"
 dependencies = [
  "async-trait",
  "axum 0.8.9",
@@ -5337,7 +5337,7 @@ checksum = "accd4ea62f7bb7a82fe23066fb0957d48ef677f6eeb8215f372f52e48bb32426"
 
 [[package]]
 name = "verification"
-version = "0.0.2"
+version = "0.0.3"
 dependencies = [
  "async-trait",
  "axum 0.8.9",
@@ -5476,7 +5476,7 @@ dependencies = [
 
 [[package]]
 name = "webauth"
-version = "0.0.2"
+version = "0.0.3"
 dependencies = [
  "async-trait",
  "axum 0.8.9",
