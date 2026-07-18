@@ -41,7 +41,7 @@ members = [
 # 引入 sqlx/axum/tokio 等 IO 依赖时,只加在 adapters 层的 crate,domain/application 永远保持纯净。
 [workspace.package]
 edition = "2021"
-version = "0.0.2"
+version = "0.0.3"
 license = "GPL-2.0"
 # CI 钉在 1.86.0;各成员 crate 用 rust-version.workspace = true 继承。
 rust-version = "1.86"

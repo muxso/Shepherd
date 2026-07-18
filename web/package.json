@@ -1,7 +1,7 @@
 {
   "name": "shepherd-web",
   "private": true,
-  "version": "0.0.2",
+  "version": "0.0.3",
   "type": "module",
   "description": "Shepherd 前端:接口测试管理",
   "scripts": {
