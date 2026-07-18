@@ -5,7 +5,7 @@ import { AutoComplete, Button, Divider, Dropdown, Empty, Form, Input, Modal, Pop
 import ResizableDrawer from '../components/ResizableDrawer'
 import EditDrawer from '../components/EditDrawer'
 import { message, modal } from '../feedback'
-import { PlayCircleOutlined, PlusOutlined, SaveOutlined, ThunderboltOutlined, DownOutlined, LinkOutlined, SwapOutlined, DeleteOutlined, FullscreenOutlined, CloseOutlined, SearchOutlined, FilterOutlined, ReloadOutlined, MoreOutlined, ImportOutlined, InboxOutlined, EyeOutlined, SettingOutlined, ShareAltOutlined, EditOutlined } from '@ant-design/icons'
+import { PlayCircleOutlined, PlusOutlined, SaveOutlined, ThunderboltOutlined, DownOutlined, LinkOutlined, SwapOutlined, DeleteOutlined, FullscreenOutlined, CloseOutlined, SearchOutlined, FilterOutlined, ReloadOutlined, MoreOutlined, ImportOutlined, InboxOutlined, EyeOutlined, SettingOutlined, ShareAltOutlined, EditOutlined, StarFilled, StarOutlined } from '@ant-design/icons'
 import { api, ApiError, type ApiCase, type ApiDefinition, type ApiModule, type ApiView, type AssertionResult, type DebugResponse, type Environment, type ReportResultItem, type ResourcePool, type Scenario, type ScenarioChange, type ScenarioExecution, type ScenarioRunResult, type ScenarioStep } from '../api'
 import type { ColumnsType } from 'antd/es/table'
 import { useApp } from '../context'
@@ -19,8 +19,8 @@ import KVEditor, { type KVRow } from '../components/KVEditor'
 import { DebugResultPanel, type SentRequest } from '../components/ApiSpecPanel'
 import { LatencyStat } from '../components/TimingBreakdown'
 import { SelectProjectEmpty } from '../components/Page'
-import { regAdd, regList, type RegItem } from '../registry'
-import { groupIdOf, isGroup } from '../components/plan/planLocal'
+import type { RegItem } from '../registry'
+import { fetchPlanItems, groupIdOf, isGroup } from '../components/plan/planLocal'
 import { ScenarioReportModal, fmtDuration, fmtSize, makeStepMeta, type NameOf, type TFn } from '../components/ScenarioReport'
 import { useI18n } from '../i18n'
 
@@ -98,6 +98,7 @@ export default function Scenarios() {
   const [searchParams, setSearchParams] = useSearchParams()
   // Batch selection + move/copy-to-module dialogs (bottom action bar, mirrors the reference list).
   const [selectedIds, setSelectedIds] = useState<React.Key[]>([])
+  const [followedIds, setFollowedIds] = useState<Set<string>>(new Set())
   const [batchModal, setBatchModal] = useState<'move' | 'copy' | null>(null)
   const [batchModule, setBatchModule] = useState('')
   const [batchBusy, setBatchBusy] = useState(false)
@@ -144,6 +145,10 @@ export default function Scenarios() {
       ])
       setList(Array.isArray(ss) ? ss : [])
       setModules(Array.isArray(mm) ? mm : [])
+      // Followed scenario ids for the star action; failure just leaves stars empty.
+      api.myFollows(projectId, 'SCENARIO')
+        .then((r) => setFollowedIds(new Set(r.entityIds)))
+        .catch(() => {})
       // lastResult comes with list_scenarios; no per-scenario request needed.
       // Only show views owned by this page (config.kind === 'scenario') to avoid mixing with API definition views.
       setViews(Array.isArray(vs) ? vs.filter((v) => (v.config as ScViewConfig)?.kind === SC_VIEW_KIND) : [])
@@ -300,6 +305,27 @@ export default function Scenarios() {
       },
     })
   }
+  // Optimistic star toggle; revert and warn on failure.
+  const toggleFollow = async (s: Scenario) => {
+    const was = followedIds.has(s.id)
+    const apply = (on: boolean) =>
+      setFollowedIds((prev) => {
+        const n = new Set(prev)
+        if (on) n.add(s.id)
+        else n.delete(s.id)
+        return n
+      })
+    apply(!was)
+    const b = { projectId: s.projectId, entityType: 'SCENARIO', entityId: s.id }
+    try {
+      const st = was ? await api.unfollow(b) : await api.follow(b)
+      apply(st.following)
+      message.success(st.following ? t('follow.followed', '已关注') : t('follow.unfollowed', '已取消关注'))
+    } catch {
+      apply(was)
+      message.error(t('follow.failed', '关注操作失败'))
+    }
+  }
   const muted = (v?: string) => <span style={{ color: 'var(--text-3)' }}>{v || '—'}</span>
   // Column-header search/filter (mirrors the API definition page): text columns get magnifier search, enum columns funnel multi-select; stacks with the top search/filter.
   const allSceneTags = [...new Set(filtered.flatMap((s) => ((s.meta?.tags as string[] | undefined) || [])))]
@@ -317,10 +343,18 @@ export default function Scenarios() {
     {
       key: 'action',
       title: t('apidef.colAction', '操作'),
-      width: 160,
+      width: 190,
       fixed: 'right',
       render: (_v, s) => (
         <Space size={4} onClick={(e) => e.stopPropagation()}>
+          <Tooltip title={followedIds.has(s.id) ? t('follow.unfollow', '取消关注') : t('follow.follow', '关注')}>
+            <Button
+              type="text"
+              size="small"
+              icon={followedIds.has(s.id) ? <StarFilled style={{ color: 'var(--warning, #ff7d00)' }} /> : <StarOutlined />}
+              onClick={() => toggleFollow(s)}
+            />
+          </Tooltip>
           <Button type="link" size="small" onClick={() => tabs.open(s.id)}>{t('a.edit', '编辑')}</Button>
           <Button type="link" size="small" onClick={(e) => runFromList(s, e)}>{t('apidef.run', '执行')}</Button>
           <Button type="link" size="small" onClick={async () => { try { await api.copyScenario(s.id); message.success(t('scenario.copied', '已复制')); load() } catch (e2) { message.error(e2 instanceof ApiError ? e2.message : t('scenario.copyFailed', '复制失败')) } }}>{t('a.copy', '复制')}</Button>
@@ -396,7 +430,8 @@ export default function Scenarios() {
   const NEW_PLAN_VALUE = '__new_plan__'
   const openTimerEdit = () => {
     setTimerPlanId(undefined); setTimerNewName(''); setTimerCron(''); setTimerEnabled(true)
-    setTimerPlans(regList('plan', projectId))
+    setTimerPlans([])
+    fetchPlanItems(projectId).then(setTimerPlans).catch(() => setTimerPlans([]))
     setTimerOpen(true)
   }
   const saveTimer = async () => {
@@ -408,7 +443,6 @@ export default function Scenarios() {
       let planId = timerPlanId
       if (planId === NEW_PLAN_VALUE) {
         const p = await api.createPlan({ projectId, name: timerNewName.trim(), type: 'TEST_PLAN' })
-        regAdd('plan', projectId, { id: p.id, label: p.name, createdAt: Date.now() })
         planId = p.id
       }
       for (const s of selectedRows) await api.linkPlanCase(planId, s.id, s.name)

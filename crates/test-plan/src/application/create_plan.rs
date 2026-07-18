@@ -32,7 +32,22 @@ impl CreatePlanUseCase {
         plan_type: PlanType,
         group_id: &str,
     ) -> Result<Plan, CreatePlanError> {
-        let new_plan = NewPlan::new(project_id, name, plan_type, group_id)?;
+        self.execute_as(project_id, name, plan_type, group_id, None).await
+    }
+
+    /// Create with the acting user recorded as the plan creator.
+    pub async fn execute_as(
+        &self,
+        project_id: &str,
+        name: &str,
+        plan_type: PlanType,
+        group_id: &str,
+        created_by: Option<&str>,
+    ) -> Result<Plan, CreatePlanError> {
+        let mut new_plan = NewPlan::new(project_id, name, plan_type, group_id)?;
+        if let Some(user) = created_by {
+            new_plan = new_plan.with_created_by(user);
+        }
 
         if new_plan.belongs_to_group() {
             match self.repo.get(&new_plan.group_id).await? {
@@ -57,6 +72,23 @@ mod tests {
         let p = uc.execute("proj1", "冒烟", PlanType::Plan, ROOT_GROUP).await.expect("ok");
         assert_eq!(p.name, "冒烟");
         assert!(!p.archived);
+    }
+
+    #[tokio::test]
+    async fn creates_plan_with_creator() {
+        let repo = Arc::new(InMemoryPlanRepository::new());
+        let uc = CreatePlanUseCase::new(repo.clone());
+        let p = uc
+            .execute_as("proj1", "冒烟", PlanType::Plan, ROOT_GROUP, Some("admin"))
+            .await
+            .expect("ok");
+        assert_eq!(p.created_by.as_deref(), Some("admin"));
+        let list = repo.list("proj1").await.expect("list");
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].0.created_by.as_deref(), Some("admin"));
+        // No user: created_by stays empty.
+        let anon = uc.execute("proj1", "匿名", PlanType::Plan, ROOT_GROUP).await.expect("ok");
+        assert_eq!(anon.created_by, None);
     }
 
     #[tokio::test]

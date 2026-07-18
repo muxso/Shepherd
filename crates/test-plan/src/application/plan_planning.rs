@@ -37,6 +37,8 @@ pub struct PlanPatch {
     pub auto_update_status: Option<bool>,
     /// Percent 0..=100 (stored as a 0..=1 fraction).
     pub pass_threshold: Option<f64>,
+    /// true archives the plan (hidden from the list), false restores it.
+    pub archived: Option<bool>,
 }
 
 pub type PlanDetail = (Plan, PlanMeta, Option<serde_json::Value>);
@@ -53,6 +55,11 @@ impl PlanAdminUseCase {
 
     pub async fn detail(&self, id: &str) -> Result<PlanDetail, PlanAdminError> {
         self.repo.detail(id).await?.ok_or(PlanAdminError::NotFound)
+    }
+
+    /// Non-archived plans of a project (groups included), newest first.
+    pub async fn list(&self, project_id: &str) -> Result<Vec<(Plan, PlanMeta)>, PlanAdminError> {
+        Ok(self.repo.list(project_id).await?)
     }
 
     /// Merge the patch over the current meta, then write the full row back.
@@ -102,6 +109,11 @@ impl PlanAdminUseCase {
         }
         if !self.repo.update_meta(id, &name, &meta).await? {
             return Err(PlanAdminError::NotFound);
+        }
+        if let Some(archived) = patch.archived {
+            if !self.repo.set_archived(id, archived).await? {
+                return Err(PlanAdminError::NotFound);
+            }
         }
         self.repo.detail(id).await?.ok_or(PlanAdminError::NotFound)
     }

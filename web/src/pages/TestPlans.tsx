@@ -4,7 +4,7 @@ import { QuestionCircleOutlined, ReloadOutlined } from '@ant-design/icons'
 import { message, modal } from '../feedback'
 import { api, ApiError, type PlanStats } from '../api'
 import { useApp } from '../context'
-import { regList, regRemove, type RegItem } from '../registry'
+import type { RegItem } from '../registry'
 import { Workspace, useWorkTabs, useOpenParam } from '../components/Workspace'
 import { SelectProjectEmpty } from '../components/Page'
 import { useI18n } from '../i18n'
@@ -13,20 +13,21 @@ import PlanModuleTree from '../components/plan/PlanModuleTree'
 import PlanFormModal from '../components/plan/PlanFormModal'
 import PlanDetail, { PlanReportDrawer } from '../components/plan/PlanDetail'
 import {
+  fetchPlanItems,
   groupIdOf,
   inPlanModule,
   isGroup,
   moduleNameOf,
   moduleOf,
   planModules,
-  planRegUpdate,
   tagsOf,
   type PlanModule,
 } from '../components/plan/planLocal'
 
 // Test plans page (MeterSphere layout): top "Plans / Reports" tabs.
 // Plans tab = left module tree + right list (all/plan/group Segmented, toolbar, table, multi-open details);
-// Reports tab = Markdown report entry per plan. Modules/groups/tags are local meta (see planLocal.ts).
+// Reports tab = Markdown report entry per plan. Plans/groups/tags come from the backend
+// list (GET /test-plan?projectId=); only the module tree is local (see planLocal.ts).
 export default function TestPlans() {
   const { t } = useI18n()
   const { projectId } = useApp()
@@ -49,14 +50,20 @@ export default function TestPlans() {
     setStatsMap(Object.fromEntries(entries.filter(Boolean) as [string, PlanStats][]))
   }
 
-  useEffect(() => {
-    const list = regList('plan', projectId)
+  // Reload the plan list from the backend (also refreshes per-plan stats).
+  const reload = async () => {
+    const list = await fetchPlanItems(projectId).catch(() => [] as RegItem[])
     setPlans(list)
+    loadStats(list)
+    return list
+  }
+
+  useEffect(() => {
     setModules(planModules(projectId))
     setModuleKey('ALL')
     setSeg('all')
     setExpandedKeys([])
-    loadStats(list)
+    void reload()
     tabs.reset()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId])
@@ -113,29 +120,38 @@ export default function TestPlans() {
     }
   }
 
+  // "Delete" archives server-side: the plan drops out of the list but its data is kept.
   const remove = (p: RegItem) => {
     modal.confirm({
       title: `${isGroup(p) ? t('plan.deleteGroupConfirm', '删除计划组') : t('plan.deleteConfirm', '删除测试计划')}「${p.label}」?`,
       content: isGroup(p)
-        ? t('plan.deleteGroupContent', '仅从列表移除;组内计划保留并变为不归属任何计划组。')
-        : t('plan.deleteContent', '仅从本地列表移除,后端数据不受影响。'),
+        ? t('plan.deleteGroupContent', '从列表移除(归档);组内计划保留并变为不归属任何计划组。')
+        : t('plan.deleteContent', '从列表移除(归档),计划数据保留。'),
       okButtonProps: { danger: true },
-      onOk: () => {
-        if (isGroup(p)) membersOf(p).forEach((m) => planRegUpdate(projectId, m.id, { meta: { groupId: '' } }))
-        regRemove('plan', projectId, p.id)
-        setPlans(regList('plan', projectId))
-        tabs.close(p.id)
-        message.success(t('plan.deleted', '已删除'))
+      onOk: async () => {
+        try {
+          if (isGroup(p)) for (const m of membersOf(p)) await api.updatePlan(m.id, { groupId: '' })
+          await api.updatePlan(p.id, { archived: true })
+          tabs.close(p.id)
+          message.success(t('plan.deleted', '已删除'))
+        } catch (e) {
+          message.error(e instanceof ApiError ? e.message : t('plan.deleteFail', '删除失败'))
+        }
+        await reload()
       },
     })
   }
 
-  // Module CRUD; on delete, move plans under it back to unplanned.
+  // Module CRUD; on delete, move plans under it back to unplanned (server-persisted).
   const onModulesChanged = (mods: PlanModule[], removedIds?: string[]) => {
     setModules(mods)
     if (removedIds?.length) {
-      plans.filter((p) => removedIds.includes(moduleOf(p))).forEach((p) => planRegUpdate(projectId, p.id, { meta: { module: '' } }))
-      setPlans(regList('plan', projectId))
+      void (async () => {
+        for (const p of plans.filter((x) => removedIds.includes(moduleOf(x)))) {
+          await api.updatePlan(p.id, { moduleId: '' }).catch(() => undefined)
+        }
+        await reload()
+      })()
     }
   }
 
@@ -428,10 +444,9 @@ export default function TestPlans() {
         modules={modules}
         groups={plans}
         onClose={() => setForm(null)}
-        onSaved={(list, created, stay) => {
+        onSaved={(created, stay) => {
           if (!stay) setForm(null)
-          setPlans(list)
-          loadStats(list)
+          void reload()
           if (created) tabs.open(created.id)
         }}
       />

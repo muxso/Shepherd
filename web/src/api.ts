@@ -801,6 +801,25 @@ export interface PlanningDoc {
   scenarioNames?: Record<string, string>
 }
 
+/** Row of GET /test-plan?projectId=; plan groups share the table (type GROUP). */
+export interface PlanListItem {
+  id: string
+  projectId: string
+  name: string
+  type: string
+  /** 'NONE' = not in a plan group. */
+  groupId: string
+  createdBy: string | null
+  createdAt: number
+  description: string
+  tags: string[]
+  moduleId: string | null
+  startAt: number | null
+  endAt: number | null
+  /** Percent 0-100. */
+  passThreshold: number
+}
+
 export interface PlanDetailInfo {
   id: string
   projectId: string
@@ -833,6 +852,8 @@ export interface PlanUpdateBody {
   allowDuplicateCases?: boolean
   autoUpdateStatus?: boolean
   passThreshold?: number
+  /** true archives the plan (hidden from the list), false restores it. */
+  archived?: boolean
 }
 
 export interface PerfLatency {
@@ -1158,6 +1179,14 @@ export interface Bug {
   status: string
   createdAt?: number
   createdBy?: string | null
+  /** Severity level P0..P3 (P0 highest). */
+  severity?: string | null
+  /** Handler user id. */
+  handler?: string | null
+  /** Last mutator's user id (stamped on every mutation). */
+  updatedBy?: string | null
+  /** Last mutation time (timestamptz text). */
+  updatedAt?: string | null
 }
 
 /** Human-AI collaboration stats: per-requirement AI/human delivery split (measured as VERIFIED + presence of a DELIVERED attempt). */
@@ -1543,7 +1572,11 @@ export const api = {
     return out
   },
 
-  // Test plans (no list endpoint → the list lives in the frontend registry)
+  // Test plans
+  listPlans: (projectId: string) =>
+    projectId
+      ? http.get<PlanListItem[]>(`/test-plan?projectId=${encodeURIComponent(projectId)}`)
+      : Promise.resolve([] as PlanListItem[]),
   createPlan: (b: { projectId: string; name: string; type?: string }) =>
     http.post<TestPlan>('/test-plan', { type: 'TEST_PLAN', ...b }),
   planDetail: (id: string) => http.get<PlanDetailInfo>(`/test-plan/${id}`),
@@ -1715,7 +1748,9 @@ export const api = {
   // Bugs — list/create/status transitions all backend-driven (project-scoped, newest first)
   bugs: (projectId: string) =>
     projectId ? http.get<Bug[]>(`/bug?projectId=${encodeURIComponent(projectId)}`) : Promise.resolve([] as Bug[]),
-  createBug: (b: { projectId: string; title: string; initialStatus: string; customFields?: Record<string, string> }) => http.post<Bug>('/bug', b),
+  createBug: (b: { projectId: string; title: string; initialStatus: string; severity?: string; handler?: string; customFields?: Record<string, string> }) => http.post<Bug>('/bug', b),
+  // Meta update: severity/handler are full replacements (omit to clear); omitted title keeps the current one.
+  updateBug: (id: string, b: { title?: string; severity?: string; handler?: string }) => http.put<Bug>(`/bug/${encodeURIComponent(id)}`, b),
   setBugStatus: (id: string, status: string) => http.post<Bug>(`/bug/${id}/status`, { status }),
   // Human-AI collaboration stats (per-requirement AI/human split + weekly trend)
   collabStats: (projectId: string, requirementId?: string) =>

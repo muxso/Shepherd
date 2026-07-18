@@ -12,7 +12,6 @@ import {
 } from '@ant-design/icons'
 import { message } from '../../feedback'
 import { api, ApiError, type PlanStats } from '../../api'
-import { regAdd } from '../../registry'
 import { useI18n } from '../../i18n'
 
 const FOLLOW_KEY = 'shepherd.planFollow'
@@ -74,7 +73,7 @@ export default function PlanDetailHeader({
       const created = await api.createPlan({ projectId, name: `${name}_copy` })
       const detail = await api.planDetail(planId)
       if (detail.planning) await api.savePlanPlanning(created.id, detail.planning)
-      regAdd('plan', projectId, { id: created.id, label: `${name}_copy`, createdAt: Date.now(), meta: {} })
+      // The copy shows up in the server list on the next reload.
       message.success(t('plan.copied', '已复制计划'))
     } catch (e) {
       message.error(e instanceof ApiError ? e.message : t('plan.copyFail', '复制失败'))
