@@ -8,6 +8,7 @@ import { useI18n } from '../i18n'
 import { PageBody, PageContainer, PageHeader, SelectProjectEmpty } from '../components/Page'
 import { useListView, type ListColumn } from '../components/ListView'
 import EditDrawer from '../components/EditDrawer'
+import { MarkdownEditor } from '../components/MarkdownEditor'
 
 export default function Skills() {
   const { t } = useI18n()
@@ -137,6 +138,7 @@ function SkillsList({ items, loading, projectId, refresh, createOpen, setCreateO
 
       <SkillFormModal
         open={createOpen}
+        projectId={projectId}
         onClose={() => setCreateOpen(false)}
         title={t('skill.new', '新建技能')}
         onSubmit={async (v) => { await api.createSkill({ projectId, name: v.name, description: v.description, instructions: v.instructions }); message.success(t('skill.created', '技能已创建')) }}
@@ -144,6 +146,7 @@ function SkillsList({ items, loading, projectId, refresh, createOpen, setCreateO
       />
       <SkillFormModal
         open={!!edit}
+        projectId={projectId}
         onClose={() => setEdit(null)}
         title={t('skill.edit', '编辑技能')}
         initial={edit ?? undefined}
@@ -159,10 +162,11 @@ function SkillsList({ items, loading, projectId, refresh, createOpen, setCreateO
 type SkillFormValues = { name: string; description: string; instructions: string; enabled: boolean }
 
 // Shared create/edit form modal; edit mode adds an "enabled" switch.
-function SkillFormModal({ open, title, initial, onClose, onSubmit, onDone }: {
+function SkillFormModal({ open, title, initial, projectId, onClose, onSubmit, onDone }: {
   open: boolean
   title: string
   initial?: Skill
+  projectId?: string
   onClose: () => void
   onSubmit: (v: SkillFormValues) => Promise<void>
   onDone: () => void
@@ -175,7 +179,7 @@ function SkillFormModal({ open, title, initial, onClose, onSubmit, onDone }: {
   }, [open, initial, form])
 
   return (
-    <EditDrawer title={title} open={open} onCancel={onClose} footer={null}>
+    <EditDrawer title={title} open={open} onCancel={onClose} footer={null} width={680}>
       <Form
         form={form}
         layout="vertical"
@@ -199,7 +203,7 @@ function SkillFormModal({ open, title, initial, onClose, onSubmit, onDone }: {
           <Input placeholder={t('skill.descPlaceholder', '一句话说明该技能用途')} />
         </Form.Item>
         <Form.Item name="instructions" label={t('skill.instructions', '指令')} rules={[{ required: true }]}>
-          <Input.TextArea rows={5} placeholder={t('skill.instructionsPlaceholder', '遵循六边形架构,端口在 ports/,适配器在 adapters/…')} />
+          <MarkdownEditor projectId={projectId} placeholder={t('skill.instructionsPlaceholder', '遵循六边形架构,端口在 ports/,适配器在 adapters/…')} />
         </Form.Item>
         {initial && (
           <Form.Item name="enabled" label={t('skill.enabled', '启用')} valuePropName="checked">
