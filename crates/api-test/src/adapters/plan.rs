@@ -66,20 +66,33 @@ struct RunState {
     once_done: HashSet<u32>,
 }
 
+/// Step lifecycle hook: lets callers stream live progress (WS relays, remote
+/// runners) without touching the result sink. Best-effort, non-async on purpose.
+pub trait StepObserver: Send + Sync {
+    fn step_started(&self, report_id: &str, step_id: &str);
+    fn step_finished(&self, report_id: &str, step_id: &str, outcome: &str, latency_ms: Option<u64>);
+}
+
 #[derive(Clone)]
 pub struct PlanExecutor {
     specs: Arc<dyn CaseSpecSource>,
     sink: Arc<dyn CaseResultSink>,
     runner: ReqwestRunner,
+    observer: Option<Arc<dyn StepObserver>>,
 }
 
 impl PlanExecutor {
     pub fn new(specs: Arc<dyn CaseSpecSource>, sink: Arc<dyn CaseResultSink>) -> Self {
-        Self { specs, sink, runner: ReqwestRunner::no_proxy() }
+        Self { specs, sink, runner: ReqwestRunner::no_proxy(), observer: None }
     }
 
     pub fn with_runner(mut self, runner: ReqwestRunner) -> Self {
         self.runner = runner;
+        self
+    }
+
+    pub fn with_observer(mut self, observer: Arc<dyn StepObserver>) -> Self {
+        self.observer = Some(observer);
         self
     }
 
@@ -187,6 +200,13 @@ impl PlanExecutor {
         leaf: &Leaf,
         stop_on_failure: bool,
     ) -> Result<bool, PortError> {
+        let step_id = match leaf {
+            Leaf::Case { case_id } => case_id.clone(),
+            Leaf::Request { label, .. } => label.clone(),
+        };
+        if let Some(obs) = &self.observer {
+            obs.step_started(report_id, &step_id);
+        }
         let (case_id, mut req, assertions, processors) = match leaf {
             Leaf::Case { case_id } => match self.specs.spec_of(case_id).await? {
                 Some(spec) => (case_id.clone(), spec.request, spec.assertions, spec.processors),
@@ -199,6 +219,9 @@ impl PlanExecutor {
                             &[format!("case spec not found: {case_id}")],
                         )
                         .await?;
+                    if let Some(obs) = &self.observer {
+                        obs.step_finished(report_id, &step_id, "ERROR", None);
+                    }
                     if stop_on_failure {
                         state.stopped = true;
                     }
@@ -224,6 +247,9 @@ impl PlanExecutor {
             CaseOutcome::Error => ("ERROR", report.failures),
         };
         self.sink.record(report_id, &case_id, outcome, &failures).await?;
+        if let Some(obs) = &self.observer {
+            obs.step_finished(report_id, &step_id, outcome, snap.as_ref().map(|s| s.elapsed_ms));
+        }
         // Best-effort: writeback failure never affects execution. Extraction is computed once, then both persisted and written to the context.
         if let Some(s) = &snap {
             let detailed = evaluate_detailed_with_vars(&assertions, s, &state.vars);

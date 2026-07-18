@@ -22,6 +22,7 @@ mod perf_run;
 mod plan_run;
 mod plan_scheduler;
 mod planner;
+mod pool_runner_ws;
 mod prd_draft_route;
 mod problem;
 mod project_file;
@@ -603,10 +604,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let scenario_routes =
         api_scenario::adapters::http::router(scenario_repo.clone(), sessions.clone());
     let references_routes = references_route::router(apidef_repo.clone(), scenario_repo.clone());
+    // Live run events + pool-runner registry: local runs publish step events via
+    // the executor observer; remote runs relay them from the runner WS.
+    let run_events = Arc::new(pool_runner_ws::RunEventHub::new());
+    let pool_hub = pool_runner_ws::PoolHub::new(
+        pool_runner_ws::RemoteDeps {
+            sink: Arc::new(PgCaseResultSink::new(pool.clone())),
+            reports: api_test::adapters::PgBatchReport::new(pool.clone()),
+            recorder: api_scenario::application::RecordScenarioExecutionUseCase::new(
+                scenario_repo.clone(),
+            ),
+        },
+        run_events.clone(),
+    );
     let plan_executor = api_test::adapters::plan::PlanExecutor::new(
         Arc::new(PgCaseSpecSource::new(pool.clone())),
         Arc::new(PgCaseResultSink::new(pool.clone())),
-    );
+    )
+    .with_observer(Arc::new(pool_runner_ws::HubObserver::new(run_events.clone())));
     let scenario_runner = scenario_run::ScenarioRunner {
         compile: api_scenario::application::CompileScenarioUseCase::new(scenario_repo.clone()),
         executor: plan_executor,
@@ -616,8 +631,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             scenario_repo.clone(),
         ),
         pool: pool.clone(),
+        specs: Arc::new(PgCaseSpecSource::new(pool.clone())),
+        hub: Some(pool_hub.clone()),
     };
     let scenario_run_routes = scenario_run::router(scenario_runner, sessions.clone());
+    let pool_runner_routes = pool_runner_ws::router(pool_hub, sessions.clone());
 
     let perf_routes = perf_run::router(
         pool.clone(),
@@ -688,6 +706,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .merge(runner_routes)
                 .merge(scenario_routes)
                 .merge(scenario_run_routes)
+                .merge(pool_runner_routes)
                 .merge(import_scheduler_routes),
         ),
         routes::group("perf", perf_routes),

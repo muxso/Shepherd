@@ -433,8 +433,30 @@ export interface ScenarioStep {
 
 export interface ScenarioRunResult {
   reportId: string
+  /** SUCCESS | ERROR, or RUNNING when started with asyncRun. */
   status: string
   caseCount: number
+  /** Ordered step identities (asyncRun): CASE = case id, REQUEST = "METHOD url". */
+  steps?: string[]
+}
+
+/** Live run event pushed over /api/run-events/ws?runId=… */
+export interface RunEvent {
+  type: 'runStarted' | 'stepStarted' | 'stepFinished' | 'stepDetail' | 'runComplete'
+  runId: string
+  stepId?: string
+  steps?: string[]
+  status?: string
+  statusCode?: number
+  latencyMs?: number | null
+  failures?: string[]
+  timings?: PhaseTimings | null
+}
+
+/** WebSocket URL for live run events (token via query: browsers can't set WS headers). */
+export const runEventsWsUrl = (runId: string) => {
+  const proto = window.location.protocol === 'https:' ? 'wss' : 'ws'
+  return `${proto}://${window.location.host}/api/run-events/ws?runId=${encodeURIComponent(runId)}&token=${encodeURIComponent(tokenStore.get())}`
 }
 
 /** Scenario report detail row (per-case result). Note: latency/size/status code not yet persisted (pending runner support). */
@@ -1868,8 +1890,10 @@ export const api = {
       success: number
       results: { scenarioId: string; reportId?: string | null; status: string }[]
     }>('/api/scenario/batch-run', b),
-  runScenario: (scenarioId: string, projectId: string, opts?: { environmentId?: string; failureStrategy?: 'CONTINUE' | 'STOP' }) =>
-    http.post<ScenarioRunResult>(`/api/scenario/${scenarioId}/run`, { projectId, environmentId: opts?.environmentId, failureStrategy: opts?.failureStrategy }),
+  runScenario: (scenarioId: string, projectId: string, opts?: { environmentId?: string; failureStrategy?: 'CONTINUE' | 'STOP'; poolId?: string; asyncRun?: boolean }) =>
+    http.post<ScenarioRunResult>(`/api/scenario/${scenarioId}/run`, { projectId, environmentId: opts?.environmentId, failureStrategy: opts?.failureStrategy, poolId: opts?.poolId, asyncRun: opts?.asyncRun }),
+  /** Online pool-runner count per resource pool (in-memory WS registry). */
+  poolRunnerStatus: () => http.get<Record<string, number>>('/api/pool-runner/status'),
   scenarioExecutions: (scenarioId: string) =>
     http.get<Page<ScenarioExecution>>(`/api/scenario/${scenarioId}/executions`),
   scenarioReport: (reportId: string) =>
