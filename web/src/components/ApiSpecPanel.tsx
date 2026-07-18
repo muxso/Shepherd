@@ -1,5 +1,6 @@
 import { forwardRef, useEffect, useImperativeHandle, useState } from 'react'
-import { Button, Card, Drawer, Empty, Input, InputNumber, Modal, Radio, Segmented, Select, Space, Table, Tabs, Tag, Tooltip, Typography } from 'antd'
+import { Button, Card, Empty, Input, InputNumber, Modal, Radio, Segmented, Select, Space, Table, Tabs, Tag, Tooltip, Typography } from 'antd'
+import ResizableDrawer from './ResizableDrawer'
 import { CopyOutlined, PlusOutlined, DeleteOutlined, SaveOutlined, UploadOutlined } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
 import QueryParamTable from './QueryParamTable'
@@ -869,7 +870,7 @@ function BatchAddDrawer({ open, onClose, onApply }: { open: boolean; onClose: ()
     onClose()
   }
   return (
-    <Drawer
+    <ResizableDrawer
       title={t('body.batchAdd', '批量添加')}
       open={open}
       onClose={onClose}
@@ -885,7 +886,7 @@ function BatchAddDrawer({ open, onClose, onApply }: { open: boolean; onClose: ()
     >
       <div style={{ color: 'var(--text-3)', fontSize: 12, marginBottom: 8 }}>{t('body.batchHint', '书写格式:参数名,类型,必填,参数值;多条记录换行分隔')}</div>
       <Input.TextArea rows={12} value={text} onChange={(e) => setText(e.target.value)} placeholder={'username,string,true,admin\npassword,string,true,123'} className="ms-mono" />
-    </Drawer>
+    </ResizableDrawer>
   )
 }
 

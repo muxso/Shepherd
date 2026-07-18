@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { useSearchParams } from 'react-router-dom'
-import { AutoComplete, Button, Cascader, Divider, Drawer, Dropdown, Empty, Form, Input, Modal, Popover, Radio, Segmented, Select, Space, Switch, Table, Tabs, Tag, Tooltip, Typography, Upload } from 'antd'
+import { AutoComplete, Button, Cascader, Divider, Dropdown, Empty, Form, Input, Modal, Popover, Radio, Segmented, Select, Space, Switch, Table, Tabs, Tag, Tooltip, Typography, Upload } from 'antd'
+import ResizableDrawer from '../components/ResizableDrawer'
 import { message, modal } from '../feedback'
 import { PlayCircleOutlined, PlusOutlined, SaveOutlined, ThunderboltOutlined, DownOutlined, LinkOutlined, SwapOutlined, DeleteOutlined, FullscreenOutlined, CloseOutlined, SearchOutlined, FilterOutlined, ReloadOutlined, MoreOutlined, ImportOutlined, InboxOutlined, EyeOutlined, SettingOutlined, ShareAltOutlined, EditOutlined } from '@ant-design/icons'
 import { api, ApiError, type ApiCase, type ApiDefinition, type ApiModule, type ApiView, type AssertionResult, type DebugResponse, type Environment, type ReportResultItem, type ResourcePool, type Scenario, type ScenarioChange, type ScenarioExecution, type ScenarioReportDetail, type ScenarioRunResult, type ScenarioStep } from '../api'
@@ -759,7 +760,7 @@ export default function Scenarios() {
       />
       <ImportScenarioDrawer open={importOpen} projectId={projectId} modules={modules} onClose={() => setImportOpen(false)} onImported={load} />
       {/* Advanced filter drawer (all/any logic + field/operator/value, client-side filtering). */}
-      <Drawer
+      <ResizableDrawer
         title={t('apidef.filter', '筛选')}
         open={advOpen}
         onClose={() => setAdvOpen(false)}
@@ -794,7 +795,7 @@ export default function Scenarios() {
             {t('apidef.addCond', '添加条件')}
           </Button>
         </Space>
-      </Drawer>
+      </ResizableDrawer>
     </>
   )
 }
@@ -1773,7 +1774,7 @@ function StepDetailDrawer({
     : []
 
   return (
-    <Drawer
+    <ResizableDrawer
       open={!!sel}
       onClose={onClose}
       width={full ? '92%' : 680}
@@ -1835,7 +1836,7 @@ function StepDetailDrawer({
             .map((c) => ({ value: c.id, label: `${c.method} ${c.name}` }))}
         />
       </Modal>
-    </Drawer>
+    </ResizableDrawer>
   )
 }
 
@@ -2138,7 +2139,7 @@ function ScenarioReportModal({ reportId, nameOf, caseMap, onClose }: { reportId:
     <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', fontSize: 14 }}><span style={{ color: 'var(--text-2)' }}>{lbl}</span><b style={{ color }}>{val}</b></div>
   )
   return (
-    <Drawer
+    <ResizableDrawer
       open={!!reportId}
       onClose={onClose}
       width="60%"
@@ -2229,7 +2230,7 @@ function ScenarioReportModal({ reportId, nameOf, caseMap, onClose }: { reportId:
           </div>
         </>
       )}
-    </Drawer>
+    </ResizableDrawer>
   )
 }
 
@@ -2487,7 +2488,7 @@ function CustomRequestDrawer({
   ]
 
   return (
-    <Drawer
+    <ResizableDrawer
       open={open}
       onClose={onClose}
       width={full ? '92%' : 720}
@@ -2523,7 +2524,7 @@ function CustomRequestDrawer({
       <Divider style={{ margin: '12px 0' }} />
       <Typography.Text strong style={{ fontSize: 13 }}>{t('apidef.respContent', '响应内容')}</Typography.Text>
       <DebugResultPanel running={running} resp={resp} err={err} req={lastReq} isHttp assertions={assertions as Record<string, unknown>[]} extractors={[...pre, ...post] as Record<string, unknown>[]} />
-    </Drawer>
+    </ResizableDrawer>
   )
 }
 
@@ -2751,7 +2752,7 @@ function ImportRequestDrawer({
   ]
 
   return (
-    <Drawer
+    <ResizableDrawer
       open={open}
       onClose={onClose}
       width="82%"
@@ -2811,7 +2812,7 @@ function ImportRequestDrawer({
           )}
         </div>
       </div>
-    </Drawer>
+    </ResizableDrawer>
   )
 }
 
@@ -3001,7 +3002,7 @@ function ImportScenarioDrawer({ open, projectId, modules, onClose, onImported }:
   }
 
   return (
-    <Drawer
+    <ResizableDrawer
       open={open}
       onClose={onClose}
       width={560}
@@ -3023,6 +3024,6 @@ function ImportScenarioDrawer({ open, projectId, modules, onClose, onImported }:
           <p className="ant-upload-hint" style={{ fontSize: 12 }}>{t('scenario.fileHint', 'HAR 直接解析为请求步骤;MeterSphere/Jmeter 解析后续接入')}</p>
         </Upload.Dragger>
       </div>
-    </Drawer>
+    </ResizableDrawer>
   )
 }

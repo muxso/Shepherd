@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { Button, Checkbox, Divider, Drawer, Dropdown, Empty, Input, Table, Modal, Popover, Radio, Segmented, Select, Space, Switch, Tabs, Tag, Tooltip, Tree, Upload } from 'antd'
+import { Button, Checkbox, Divider, Dropdown, Empty, Input, Table, Modal, Popover, Radio, Segmented, Select, Space, Switch, Tabs, Tag, Tooltip, Tree, Upload } from 'antd'
+import ResizableDrawer from '../components/ResizableDrawer'
 import { useSearchParams } from 'react-router-dom'
 import { message, modal } from '../feedback'
 import {
@@ -773,7 +774,7 @@ function CaseEditDrawer({ open, caseItem, onClose, onSaved }: { open: boolean; c
   ]
 
   return (
-    <Drawer
+    <ResizableDrawer
       open={open}
       onClose={onClose}
       width={720}
@@ -794,7 +795,7 @@ function CaseEditDrawer({ open, caseItem, onClose, onSaved }: { open: boolean; c
         <Input value={url} onChange={(e) => setUrl(e.target.value)} className="ms-mono" placeholder="/api/..." />
       </Space.Compact>
       <Tabs className="ms-detail-tabs" size="small" items={tabs} />
-    </Drawer>
+    </ResizableDrawer>
   )
 }
 
@@ -1481,7 +1482,7 @@ function ImportModal({
   ]
 
   return (
-    <Drawer
+    <ResizableDrawer
       title={t('apidef.importTitle2', '导入接口')}
       open={open}
       onClose={onClose}
@@ -1611,6 +1612,6 @@ function ImportModal({
           />
         </>
       )}
-    </Drawer>
+    </ResizableDrawer>
   )
 }

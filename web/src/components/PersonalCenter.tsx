@@ -3,7 +3,6 @@ import {
   Alert,
   Button,
   Descriptions,
-  Drawer,
   Empty,
   Form,
   Input,
@@ -16,6 +15,7 @@ import {
   Tooltip,
   Typography,
 } from 'antd'
+import ResizableDrawer from './ResizableDrawer'
 import { EyeInvisibleOutlined, PlusOutlined, QuestionCircleOutlined } from '@ant-design/icons'
 import { api, ApiError, userIdStore, userStore, type ApiKey, type AuthMe, type LlmModel } from '../api'
 import { message } from '../feedback'
@@ -49,7 +49,7 @@ export default function PersonalCenter({ open, onClose }: { open: boolean; onClo
   ]
 
   return (
-    <Drawer
+    <ResizableDrawer
       open={open}
       onClose={onClose}
       title={t('pc.title', '个人中心')}
@@ -93,7 +93,7 @@ export default function PersonalCenter({ open, onClose }: { open: boolean; onClo
         {tab === 'apikey' && <ApiKeyPanel />}
         {tab === 'models' && <ModelPanel />}
       </div>
-    </Drawer>
+    </ResizableDrawer>
   )
 }
 

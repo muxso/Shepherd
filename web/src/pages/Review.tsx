@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Button, Card, Col, Drawer, Empty, Form, Input, InputNumber, Modal, Row, Segmented, Select, Space, Statistic, Table, Tabs, Tag } from 'antd'
+import { Button, Card, Col, Empty, Form, Input, InputNumber, Modal, Row, Segmented, Select, Space, Statistic, Table, Tabs, Tag } from 'antd'
+import ResizableDrawer from '../components/ResizableDrawer'
 import { useNavigate } from 'react-router-dom'
 import { message, modal } from '../feedback'
 import type { ColumnsType } from 'antd/es/table'
@@ -232,7 +233,7 @@ function ReviewDetailDrawer({ reviewId, caseName, onClose, onChanged }: { review
   }
 
   return (
-    <Drawer
+    <ResizableDrawer
       title={t('review.reviewDetail', '评审详情')}
       open={!!reviewId}
       onClose={onClose}
@@ -271,6 +272,6 @@ function ReviewDetailDrawer({ reviewId, caseName, onClose, onChanged }: { review
           },
         ]}
       />
-    </Drawer>
+    </ResizableDrawer>
   )
 }

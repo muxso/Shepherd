@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
-import { Button, Drawer, Empty, Form, Input, Modal, Select, Space, Table, Tag, Tooltip, Typography } from 'antd'
+import { Button, Empty, Form, Input, Modal, Select, Space, Table, Tag, Tooltip, Typography } from 'antd'
+import ResizableDrawer from '../components/ResizableDrawer'
 import { message } from '../feedback'
 import { PlusOutlined, PlayCircleOutlined, HistoryOutlined, ReloadOutlined } from '@ant-design/icons'
 import {
@@ -264,7 +265,7 @@ function ExecutionsDrawer({ caseItem, onClose }: { caseItem: ApiCase | null; onC
   }, [caseItem])
 
   return (
-    <Drawer
+    <ResizableDrawer
       title={caseItem ? `${t('case.execHistory', '执行历史')} · ${caseItem.name}` : ''}
       open={!!caseItem}
       onClose={onClose}
@@ -295,6 +296,6 @@ function ExecutionsDrawer({ caseItem, onClose }: { caseItem: ApiCase | null; onC
           },
         ]}
       />
-    </Drawer>
+    </ResizableDrawer>
   )
 }

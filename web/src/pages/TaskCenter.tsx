@@ -3,7 +3,6 @@ import {
   Button,
   Card,
   Descriptions,
-  Drawer,
   Empty,
   Input,
   Progress,
@@ -16,6 +15,7 @@ import {
   Timeline,
   Tooltip,
 } from 'antd'
+import ResizableDrawer from '../components/ResizableDrawer'
 import type { ColumnsType } from 'antd/es/table'
 import { ReloadOutlined, SearchOutlined } from '@ant-design/icons'
 import { message, modal } from '../feedback'
@@ -336,7 +336,7 @@ function TaskDetailDrawer({
   }, [item])
 
   return (
-    <Drawer
+    <ResizableDrawer
       title={item ? `${t('tc.detail', '执行详情')} · ${item.title}` : ''}
       open={!!item}
       onClose={onClose}
@@ -402,6 +402,6 @@ function TaskDetailDrawer({
           )}
         </>
       )}
-    </Drawer>
+    </ResizableDrawer>
   )
 }

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { Layout, Menu, Select, Button, Space, Tooltip, Drawer, Avatar, Segmented, Empty, Dropdown } from 'antd'
+import { Layout, Menu, Select, Button, Space, Tooltip, Avatar, Segmented, Empty, Dropdown } from 'antd'
+import ResizableDrawer from './ResizableDrawer'
 import {
   ApiOutlined,
   PartitionOutlined,
@@ -371,7 +372,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
       <NewProjectModal open={newProjOpen} onClose={() => setNewProjOpen(false)} />
 
       {/* Message center (per reference shots): right drawer with category list + all/@me/unread/read tabs. Backend has no in-app message API yet, so counts are 0 and content is empty state. */}
-      <Drawer
+      <ResizableDrawer
         open={msgOpen}
         onClose={() => setMsgOpen(false)}
         width={960}
@@ -466,7 +467,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
             </div>
           </div>
         </div>
-      </Drawer>
+      </ResizableDrawer>
 
       {/* Personal center: fullscreen drawer (profile / password / API keys / model settings) */}
       <PersonalCenter open={pcOpen} onClose={() => setPcOpen(false)} />

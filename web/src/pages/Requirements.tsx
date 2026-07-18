@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
-import { Badge, Button, Card, Col, DatePicker, Descriptions, Drawer, Dropdown, Empty, Form, Input, InputNumber, Modal, Popover, Progress, Row, Segmented, Select, Space, Spin, Statistic, Table, Tabs, Tag, Timeline, Tooltip, Typography } from 'antd'
+import { Badge, Button, Card, Col, DatePicker, Descriptions, Dropdown, Empty, Form, Input, InputNumber, Modal, Popover, Progress, Row, Segmented, Select, Space, Spin, Statistic, Table, Tabs, Tag, Timeline, Tooltip, Typography } from 'antd'
+import ResizableDrawer from '../components/ResizableDrawer'
 import dayjs, { type Dayjs } from 'dayjs'
 import { message, modal } from '../feedback'
 import { useNavigate } from 'react-router-dom'
@@ -1142,7 +1143,7 @@ function RequirementDetail({ reqId, projectId, modules, onChanged, onDeleted, on
         </Form>
       </Modal>
       {/* Change history: field-level log (time / actor / field: old → new). */}
-      <Drawer title={t('req.changes', '变更记录')} open={changesOpen} onClose={() => setChangesOpen(false)} width={480}>
+      <ResizableDrawer title={t('req.changes', '变更记录')} open={changesOpen} onClose={() => setChangesOpen(false)} width={480}>
         {changes.length ? (
           <Timeline
             items={changes.map((c, i) => ({
@@ -1165,7 +1166,7 @@ function RequirementDetail({ reqId, projectId, modules, onChanged, onDeleted, on
         ) : (
           <Empty description={t('req.noChanges', '暂无变更记录')} />
         )}
-      </Drawer>
+      </ResizableDrawer>
       <Modal title={verView ? `${t('req.versionDetail', '版本明细')} · v${verView.version}` : ''} open={!!verView} onCancel={() => setVerView(null)} footer={null} destroyOnHidden>
         {verView && (
           <Descriptions column={1} size="small" bordered>
@@ -1704,7 +1705,7 @@ function TaskCasesDrawer({ decompId, projectId, task, onClose }: { decompId: str
   }
 
   return (
-    <Drawer title={task ? `${t('req.taskCases', '任务用例')} · ${task.title}` : ''} open={!!task} onClose={onClose} width={560}>
+    <ResizableDrawer title={task ? `${t('req.taskCases', '任务用例')} · ${task.title}` : ''} open={!!task} onClose={onClose} width={560}>
       <Space.Compact style={{ width: '100%', marginBottom: 12 }}>
         <Select
           style={{ flex: 1 }}
@@ -1742,7 +1743,7 @@ function TaskCasesDrawer({ decompId, projectId, task, onClose }: { decompId: str
           { title: '', width: 50, render: (_, c) => <Button type="link" size="small" danger onClick={() => unlink(c.id)}>{t('req.remove', '移除')}</Button> },
         ]}
       />
-    </Drawer>
+    </ResizableDrawer>
   )
 }
 
@@ -1793,7 +1794,7 @@ function EventsDrawer({ decompId, task, onClose }: { decompId: string; task: Tas
   }, [task, live, load])
 
   return (
-    <Drawer
+    <ResizableDrawer
       title={
         <Space>
           <span>{task ? `${t('req.execProgress', '执行进度')} · ${task.title}` : ''}</span>
@@ -1854,6 +1855,6 @@ function EventsDrawer({ decompId, task, onClose }: { decompId: string; task: Tas
           })}
         </Space>
       )}
-    </Drawer>
+    </ResizableDrawer>
   )
 }

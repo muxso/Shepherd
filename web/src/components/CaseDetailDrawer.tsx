@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import {
-  Avatar, Badge, Button, Drawer, Dropdown, Empty, Input, Modal, Popconfirm, Segmented,
+  Avatar, Badge, Button, Dropdown, Empty, Input, Modal, Popconfirm, Segmented,
   Select, Table, Tabs, Tag, Tooltip, Upload,
 } from 'antd'
+import ResizableDrawer from './ResizableDrawer'
 import {
   CloseOutlined, DeleteOutlined, DownOutlined, EditOutlined, EllipsisOutlined,
   FullscreenOutlined, InboxOutlined, LeftOutlined,
@@ -129,7 +130,7 @@ export default function CaseDetailDrawer({
   const c = detail
 
   return (
-    <Drawer
+    <ResizableDrawer
       open={open}
       onClose={onClose}
       width={fullscreen ? '100%' : '60%'}
@@ -216,7 +217,7 @@ export default function CaseDetailDrawer({
           {activeTab !== 'info' && <CommentBar caseId={caseId} onPosted={() => setActiveTab('comment')} />}
         </div>
       </div>
-    </Drawer>
+    </ResizableDrawer>
   )
 }
 

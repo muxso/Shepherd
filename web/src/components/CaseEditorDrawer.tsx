@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
-import { Button, Card, Drawer, Input, Radio, Segmented, Select, Space, Table, Tabs, Tag, Typography } from 'antd'
+import { Button, Card, Input, Radio, Segmented, Select, Space, Table, Tabs, Tag, Typography } from 'antd'
+import ResizableDrawer from './ResizableDrawer'
 import { message } from '../feedback'
 import { SendOutlined } from '@ant-design/icons'
 import { api, ApiError, contentTypeForBodyType, withBodyContentType, type ApiBodyType, type ApiDefinition, type DebugResponse } from '../api'
@@ -258,7 +259,7 @@ export default function CaseEditorDrawer({
   ]
 
   return (
-    <Drawer
+    <ResizableDrawer
       title={t('case.createTitle', '创建用例')}
       open={open}
       onClose={onClose}
@@ -371,6 +372,6 @@ export default function CaseEditorDrawer({
           )}
         </Card>
       )}
-    </Drawer>
+    </ResizableDrawer>
   )
 }
