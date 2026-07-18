@@ -4,7 +4,7 @@ import ResizableDrawer from './ResizableDrawer'
 import { message } from '../feedback'
 import { SendOutlined } from '@ant-design/icons'
 import { api, ApiError, contentTypeForBodyType, withBodyContentType, type ApiBodyType, type ApiDefinition, type DebugResponse } from '../api'
-import { methodColor } from './tags'
+import { methodColor, caseStatusLabel } from './tags'
 import AssertionEditor, { type Assertion } from './AssertionEditor'
 import KVEditor, { type KVRow } from './KVEditor'
 import ProcessorEditor, { type Processor } from './ProcessorEditor'
@@ -13,13 +13,8 @@ import { useI18n } from '../i18n'
 
 const BODY_TYPES: ApiBodyType[] = ['none', 'form-data', 'x-www-form-urlencoded', 'json', 'xml', 'raw', 'binary']
 const PRIORITIES = ['P0', 'P1', 'P2', 'P3']
-// Case status values persist to the backend as-is (Chinese values kept); only display labels are translated.
+// Case status values persist to the backend as-is (Chinese values kept); labels via caseStatusLabel.
 const CASE_STATUSES = ['进行中', '已完成', '已废弃']
-const CASE_STATUS_LABELS: Record<string, string> = {
-  '进行中': 'case.statusInProgress',
-  '已完成': 'case.statusCompleted',
-  '已废弃': 'case.statusDeprecated',
-}
 
 type AuthState = { type: 'none' | 'bearer' | 'basic'; token: string }
 
@@ -300,7 +295,7 @@ export default function CaseEditorDrawer({
       {/* Priority / status / tags */}
       <Space wrap style={{ marginBottom: 14 }}>
         <Select value={priority} onChange={setPriority} style={{ width: 110 }} options={PRIORITIES.map((p) => ({ value: p, label: p }))} />
-        <Select value={status} onChange={setStatus} style={{ width: 130 }} options={CASE_STATUSES.map((s) => ({ value: s, label: t(CASE_STATUS_LABELS[s], s) }))} />
+        <Select value={status} onChange={setStatus} style={{ width: 130 }} options={CASE_STATUSES.map((s) => ({ value: s, label: caseStatusLabel(s, t) }))} />
         <Space size={[4, 4]} wrap>
           {tags.map((tg) => (
             <Tag key={tg} closable onClose={() => setTags(tags.filter((x) => x !== tg))}>{tg}</Tag>

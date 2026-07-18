@@ -9,7 +9,7 @@ import { PlayCircleOutlined, PlusOutlined, SaveOutlined, ThunderboltOutlined, Do
 import { api, ApiError, type ApiCase, type ApiDefinition, type ApiModule, type ApiView, type AssertionResult, type DebugResponse, type Environment, type ReportResultItem, type ResourcePool, type Scenario, type ScenarioChange, type ScenarioExecution, type ScenarioReportDetail, type ScenarioRunResult, type ScenarioStep } from '../api'
 import type { ColumnsType } from 'antd/es/table'
 import { useApp } from '../context'
-import { methodColor, statusColor, outcomeColor, priorityColor } from '../components/tags'
+import { methodColor, statusColor, outcomeColor, priorityColor, statusLabel, execStatusLabel, caseStatusLabel } from '../components/tags'
 import { Workspace, useWorkTabs, useWorkspaceExtraSlot, useOpenParam } from '../components/Workspace'
 import { ModuleTreePanel, inSelectedModule } from '../components/ModuleTreePanel'
 import { columnSearch } from '../components/ListView'
@@ -40,15 +40,9 @@ type ScenarioForm = { name: string; status: string; description: string; tags: s
 const SCENARIO_STATUSES = ['DRAFT', 'DEBUGGING', 'COMPLETED', 'DEPRECATED']
 const SCENARIO_PRIORITIES = ['P0', 'P1', 'P2', 'P3']
 
-// Localized labels for scenario status / run outcome (avoid showing raw enums like DRAFT/ERROR).
-const scStatusLabel = (s: string, t: TFn): string =>
-  (({ DRAFT: t('scenario.stDraft', '草稿'), DEBUGGING: t('scenario.stDebugging', '调试中'), COMPLETED: t('scenario.stCompleted', '已完成'), DEPRECATED: t('scenario.stDeprecated', '已废弃') } as Record<string, string>)[s] || s)
-const runOutcomeLabel = (o: string, t: TFn): string => {
-  const v = (o || '').toUpperCase()
-  if (v === 'SUCCESS' || v.includes('PASS') || v === 'OK') return t('scenario.runSuccess', '成功')
-  if (v === 'ERROR' || v.includes('FAIL')) return t('scenario.runError', '失败')
-  return o
-}
+// Localized labels for scenario status / run outcome (shared helpers in components/tags.ts).
+const scStatusLabel = statusLabel
+const runOutcomeLabel = execStatusLabel
 
 // -- List views + advanced filter (mirrors the API definition page; client-side filtering) --
 // Views share the ms_api_view table (no page column); config.kind marks ownership and load filters by kind.
@@ -1480,7 +1474,11 @@ function ScenarioDetail({ scenario, active }: { scenario: Scenario; active?: boo
               onDrop={(e) => { e.preventDefault(); if (dragIdx != null) moveStep(dragIdx, i); setDragIdx(null) }}
               onMouseEnter={() => setHoverStep(s.id)}
               onMouseLeave={() => setHoverStep((h) => (h === s.id ? null : h))}
-              onClick={() => (expandable ? toggleExpand(s) : setSelStep({ step: s, idx: i + 1 }))}
+              onClick={() => {
+                if (expandable) return toggleExpand(s)
+                // Editable inline requests (incl. copied steps) open straight in the editor.
+                if (s.kind.toUpperCase() === 'REQUEST') { setSelStep(null); setEditReqStep(s) } else setSelStep({ step: s, idx: i + 1 })
+              }}
               onDoubleClick={() => { if (s.kind.toUpperCase() === 'REQUEST') { setSelStep(null); setEditReqStep(s) } }}
               style={{ cursor: 'pointer', opacity: dragIdx === i ? 0.5 : 1 }}
             >
@@ -1838,7 +1836,7 @@ function StepDetailDrawer({
             <Button type="primary" icon={<ThunderboltOutlined />} loading={running} onClick={run}>{t('apidef.serverRun', '服务端执行')}</Button>
           </div>
           <Tabs className="ms-detail-tabs" size="small" items={reqTabs} />
-          <DebugResultPanel running={running} resp={resp} err={err} req={lastReq} isHttp extractors={reqInfo.processors as Record<string, unknown>[] | undefined} assertions={reqInfo.assertions as Record<string, unknown>[] | undefined} />
+          <DebugResultPanel running={running} resp={resp} err={err} req={lastReq} isHttp onRun={run} extractors={reqInfo.processors as Record<string, unknown>[] | undefined} assertions={reqInfo.assertions as Record<string, unknown>[] | undefined} />
         </>
       ) : (
         <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('scenario.controlStepInfo', '控制器步骤:在步骤列表中查看其配置与子步骤')} style={{ margin: '48px 0' }} />
@@ -2004,7 +2002,7 @@ function ScenarioExecutionsTab({ scenarioId, nameOf, caseMap, t }: { scenarioId:
         pagination={{ pageSize: 20, size: 'small' }}
         columns={[
           { title: t('scenario.colSeq', '序号'), dataIndex: 'id', render: (v: string) => <span className="ms-mono" style={{ fontSize: 12 }}>{v.slice(0, 12)}</span> },
-          { title: t('scenario.colStatus', '执行状态'), dataIndex: 'status', width: 110, render: (s: string) => <Tag color={outcomeColor(s)}>{s}</Tag> },
+          { title: t('scenario.colStatus', '执行状态'), dataIndex: 'status', width: 110, render: (s: string) => <Tag color={outcomeColor(s)}>{execStatusLabel(s, t)}</Tag> },
           { title: t('scenario.caseUnit', '用例'), dataIndex: 'caseCount', width: 80 },
           { title: t('scenario.execTime', '操作时间'), dataIndex: 'createdAt', width: 200, render: (v: string) => <span className="ms-mono" style={{ fontSize: 12 }}>{v?.slice(0, 19)}</span> },
           { title: t('apidef.colAction', '操作'), width: 100, render: (_v, r) => <Button type="link" size="small" disabled={!r.reportId} onClick={() => setReportId(r.reportId)}>{t('scenario.viewResult', '执行结果')}</Button> },
@@ -2886,7 +2884,7 @@ function CustomRequestDrawer({
       <Tabs className="ms-detail-tabs" size="small" items={tabs} />
       <Divider style={{ margin: '12px 0' }} />
       <Typography.Text strong style={{ fontSize: 13 }}>{t('apidef.respContent', '响应内容')}</Typography.Text>
-      <DebugResultPanel running={running} resp={resp} err={err} req={lastReq} isHttp assertions={assertions as Record<string, unknown>[]} extractors={[...pre, ...post] as Record<string, unknown>[]} />
+      <DebugResultPanel running={running} resp={resp} err={err} req={lastReq} isHttp onRun={run} assertions={assertions as Record<string, unknown>[]} extractors={[...pre, ...post] as Record<string, unknown>[]} />
     </ResizableDrawer>
   )
 }
@@ -3181,18 +3179,18 @@ function ImportRequestDrawer({
     { title: t('scenario.apiName', '接口名称'), dataIndex: 'name', ellipsis: true },
     { title: t('apidef.colMethod', '请求类型'), dataIndex: 'method', width: 100, render: (m: string, r) => <Tag color={methodColor(m)}>{r.protocol === 'HTTP' ? m || 'GET' : r.protocol}</Tag> },
     { title: t('apidef.colPath', '路径'), dataIndex: 'path', ellipsis: true, render: (v: string) => <span className="ms-mono" style={{ fontSize: 12 }}>{v || '—'}</span> },
-    { title: t('apidef.colStatus', '状态'), dataIndex: 'status', width: 100, render: (s: string) => <Tag color={statusColor(s)}>{s}</Tag> },
+    { title: t('apidef.colStatus', '状态'), dataIndex: 'status', width: 100, render: (s: string) => <Tag color={statusColor(s)}>{statusLabel(s, t)}</Tag> },
   ]
   const caseCols: ColumnsType<ApiCase> = [
     { title: t('scenario.colName', '名称'), dataIndex: 'name', ellipsis: true },
     { title: t('apidef.colMethod', '请求类型'), dataIndex: 'method', width: 100, render: (m: string) => <Tag color={methodColor(m)}>{m}</Tag> },
     { title: t('apidef.colPath', '路径'), dataIndex: 'url', ellipsis: true, render: (v: string) => <span className="ms-mono" style={{ fontSize: 12 }}>{v || '—'}</span> },
-    { title: t('apidef.colStatus', '状态'), dataIndex: 'status', width: 100, render: (s?: string) => <Tag>{s || '—'}</Tag> },
+    { title: t('apidef.colStatus', '状态'), dataIndex: 'status', width: 100, render: (s?: string) => <Tag>{s ? caseStatusLabel(s, t) : '—'}</Tag> },
   ]
   const scnCols: ColumnsType<Scenario> = [
     { title: t('scenario.colName', '名称'), dataIndex: 'name', ellipsis: true },
     { title: t('scenario.colSteps', '步骤数'), dataIndex: 'steps', width: 90, render: (s?: unknown[]) => <Tag color={s?.length ? 'geekblue' : 'default'}>{s?.length ?? 0}</Tag> },
-    { title: t('scenario.colStatus', '状态'), dataIndex: 'status', width: 110, render: (s: string) => <Tag color={statusColor(s)}>{s}</Tag> },
+    { title: t('scenario.colStatus', '状态'), dataIndex: 'status', width: 110, render: (s: string) => <Tag color={statusColor(s)}>{statusLabel(s, t)}</Tag> },
   ]
 
   return (

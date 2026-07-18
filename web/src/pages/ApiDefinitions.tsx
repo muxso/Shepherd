@@ -30,7 +30,7 @@ import type { ColumnsType } from 'antd/es/table'
 import { api, ApiError, userIdStore, type ApiCase, type ApiDefinition, type ApiModule, type ApiSpec, type DebugResponse, type Environment, type ImportFormat, type ImportSchedule, type ProjectMock } from '../api'
 import { columnSearch, useListView, type ListColumn } from '../components/ListView'
 import { useApp } from '../context'
-import { methodColor, statusColor } from '../components/tags'
+import { methodColor, statusColor, statusLabel, caseStatusLabel } from '../components/tags'
 import CasesPanel from './CasesPanel'
 import MocksPanel from './MocksPanel'
 import ApiSpecPanel, { DebugResultPanel, emptySpec, parseCurl, type ApiSpecPanelHandle, type ExecMode, type SentRequest } from '../components/ApiSpecPanel'
@@ -47,10 +47,8 @@ const API_STATUSES = ['DRAFT', 'DEBUGGING', 'COMPLETED', 'DEPRECATED']
 const LIST_KEY = '__list__'
 const NEW_KEY = '__new__'
 
-// Case statuses: values are persisted to the backend (stay Chinese); labels are translated via t().
+// Case statuses: values are persisted to the backend (stay Chinese); labels via caseStatusLabel.
 const CASE_STATUSES = ['进行中', '已完成', '已废弃']
-const caseStatusKey = (s: string): string =>
-  s === '进行中' ? 'apidef.caseStInProgress' : s === '已完成' ? 'apidef.caseStCompleted' : 'apidef.caseStDeprecated'
 
 /** Render server timestamp ("2026-06-21 12:34:56.78+00") as "2026-06-21 12:34:56"; empty/unparsable falls back to "—". */
 function fmtTs(ts?: string): string {
@@ -291,9 +289,9 @@ export default function ApiDefinitions() {
     { key: 'path', label: t('apidef.colPath', '路径'), title: t('apidef.colPath', '路径'), dataIndex: 'path', ellipsis: true, ...columnSearch<ApiDefinition>((d) => d.path || '', t), render: (p: string) => <span className="ms-mono" style={{ color: 'var(--text-2)' }}>{p || '—'}</span> },
     {
       key: 'status', label: t('apidef.colStatus', '状态'), title: t('apidef.colStatus', '状态'), dataIndex: 'status', width: 100,
-      filters: API_STATUSES.map((s) => ({ text: s, value: s })),
+      filters: API_STATUSES.map((s) => ({ text: statusLabel(s, t), value: s })),
       onFilter: (v, d) => d.status === v,
-      render: (s: string) => <Tag color={statusColor(s)}>{s}</Tag>,
+      render: (s: string) => <Tag color={statusColor(s)}>{statusLabel(s, t)}</Tag>,
     },
     {
       key: 'module', label: t('apidef.colModule', '模块'), title: t('apidef.colModule', '模块'), dataIndex: 'moduleId', width: 120,
@@ -358,7 +356,7 @@ export default function ApiDefinitions() {
     fields: [
       { key: 'protocol', label: t('apidef.protocol', '协议'), type: 'enum', options: PROTOCOLS.map((p) => ({ value: p, label: p })), get: (d) => d.protocol },
       { key: 'method', label: t('apidef.reqType', '请求类型'), type: 'enum', options: METHODS.map((m) => ({ value: m, label: m })), get: (d) => d.method },
-      { key: 'status', label: t('apidef.colStatus', '状态'), type: 'enum', options: API_STATUSES.map((s) => ({ value: s, label: s })), get: (d) => d.status },
+      { key: 'status', label: t('apidef.colStatus', '状态'), type: 'enum', options: API_STATUSES.map((s) => ({ value: s, label: statusLabel(s, t) })), get: (d) => d.status },
       // Below: advanced-condition picker only (duplicates search box / column filters, so not rendered in the declarative filter bar).
       { key: 'num', label: 'ID', type: 'text', advOnly: true, get: (d) => String(d.num ?? '') },
       { key: 'name', label: t('apidef.colName', '名称'), type: 'text', advOnly: true, get: (d) => d.name },
@@ -421,7 +419,7 @@ export default function ApiDefinitions() {
               { title: t('apidef.colMethod', '请求类型'), dataIndex: 'method', width: 100, render: (m: string) => <Tag>{m}</Tag> },
               { title: 'URL', dataIndex: 'url', ellipsis: true, render: (v: string) => <span className="ms-mono" style={{ fontSize: 12 }}>{v}</span> },
               { title: t('apidef.colPriority', '优先级'), dataIndex: 'priority', width: 90, render: (v?: string) => v || '—' },
-              { title: t('apidef.colStatus', '状态'), dataIndex: 'status', width: 110, render: (v?: string) => v || '—' },
+              { title: t('apidef.colStatus', '状态'), dataIndex: 'status', width: 110, render: (v?: string) => (v ? caseStatusLabel(v, t) : '—') },
             ]}
             pagination={{ ...lv.pagination, showTotal: (total) => `${t('apidef.totalPrefix', '共')} ${total} ${t('apidef.caseUnit', '个用例')}` }}
             locale={{ emptyText: <Empty description={t('apidef.emptyCases', '暂无用例')} /> }}
@@ -785,7 +783,7 @@ function CaseEditDrawer({ open, caseItem, onClose, onSaved }: { open: boolean; c
       <Input value={name} onChange={(e) => setName(e.target.value)} maxLength={255} showCount placeholder={t('apidef.caseName', '用例名称')} style={{ marginBottom: 12 }} />
       <Space style={{ marginBottom: 12 }} wrap>
         <Select value={priority} onChange={setPriority} style={{ width: 120 }} options={['P0', 'P1', 'P2', 'P3'].map((p) => ({ value: p, label: p }))} />
-        <Select value={status} onChange={setStatus} style={{ width: 140 }} options={CASE_STATUSES.map((s) => ({ value: s, label: t(caseStatusKey(s), s) }))} />
+        <Select value={status} onChange={setStatus} style={{ width: 140 }} options={CASE_STATUSES.map((s) => ({ value: s, label: caseStatusLabel(s, t) }))} />
       </Space>
       <Space size={[6, 6]} wrap style={{ marginBottom: 12 }}>
         {tags.map((tg) => <Tag key={tg} closable onClose={() => setTags(tags.filter((x) => x !== tg))}>{tg}</Tag>)}
@@ -869,7 +867,7 @@ function CaseDetailTab({ caseItem, projectId, onClose, onDeleted }: { caseItem: 
       </div>
       <div>
         <span style={{ fontWeight: 600, fontSize: 13 }}>{t('apidef.responseContent', '响应内容')}</span>
-        <DebugResultPanel running={running} resp={resp} err={err} req={lastReq} isHttp assertions={(c.assertions as Record<string, unknown>[]) || undefined} extractors={(c.processors as Record<string, unknown>[]) || undefined} />
+        <DebugResultPanel running={running} resp={resp} err={err} req={lastReq} isHttp onRun={run} assertions={(c.assertions as Record<string, unknown>[]) || undefined} extractors={(c.processors as Record<string, unknown>[]) || undefined} />
       </div>
     </div>
   )
@@ -974,7 +972,7 @@ function ApiDetail({ definition, onUpdated }: { definition: ApiDefinition; onUpd
   const previewHeader = (
     <div style={{ marginBottom: 16 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10, flexWrap: 'wrap' }}>
-        <Tag color={statusColor(definition.status)} style={{ margin: 0 }}>{definition.status}</Tag>
+        <Tag color={statusColor(definition.status)} style={{ margin: 0 }}>{statusLabel(definition.status, t)}</Tag>
         <Tag color={methodColor(definition.method)} style={{ margin: 0, fontWeight: 600 }}>{definition.method || definition.protocol}</Tag>
         <span className="ms-mono" style={{ color: 'var(--text-3)', fontSize: 12 }}>[{definition.num ?? '—'}]</span>
         <span style={{ fontWeight: 600, fontSize: 15, color: 'var(--text)' }}>{definition.name}</span>

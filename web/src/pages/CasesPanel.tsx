@@ -13,16 +13,9 @@ import {
   type ResourcePool,
   type RunMode,
 } from '../api'
-import { methodColor, outcomeColor } from '../components/tags'
+import { methodColor, outcomeColor, execStatusLabel, caseStatusLabel } from '../components/tags'
 import CaseEditorDrawer from '../components/CaseEditorDrawer'
 import { useI18n } from '../i18n'
-
-// Case status display map (status values are Chinese as persisted by the backend; only the label is translated).
-const CASE_STATUS_LABELS: Record<string, string> = {
-  '进行中': 'case.statusInProgress',
-  '已完成': 'case.statusCompleted',
-  '已废弃': 'case.statusDeprecated',
-}
 
 export default function CasesPanel({ definition, refreshToken }: { definition: ApiDefinition; refreshToken?: number }) {
   const { t } = useI18n()
@@ -75,10 +68,7 @@ export default function CasesPanel({ definition, refreshToken }: { definition: A
             title: t('case.colStatus', '状态'),
             dataIndex: 'status',
             width: 90,
-            render: (s?: string) => {
-              const v = s || '进行中'
-              return <Tag>{t(CASE_STATUS_LABELS[v] ?? '', v)}</Tag>
-            },
+            render: (s?: string) => <Tag>{caseStatusLabel(s || '进行中', t)}</Tag>,
           },
           {
             title: t('case.colMethod', '方法'),
@@ -284,7 +274,7 @@ function ExecutionsDrawer({ caseItem, onClose }: { caseItem: ApiCase | null; onC
             title: t('case.colOutcome', '结果'),
             dataIndex: 'outcome',
             width: 90,
-            render: (o: string) => <Tag color={outcomeColor(o)}>{o}</Tag>,
+            render: (o: string) => <Tag color={outcomeColor(o)}>{execStatusLabel(o, t)}</Tag>,
           },
           { title: t('case.colTime', '时间'), dataIndex: 'executedAt', render: (v: string) => <span className="ms-mono">{v}</span> },
           {
