@@ -2276,6 +2276,8 @@ const DICT: Record<string, { zh: string; en: string }> = {
   'scenario.statusTip': { zh: '服务端返回的 HTTP 状态码', en: 'HTTP status code returned by the server' },
   'scenario.respTimeTip': { zh: '从建立连接到收到服务端完整响应的全链路耗时', en: 'End-to-end time from connection setup to the full server response' },
   'scenario.respSizeTip': { zh: '响应体大小', en: 'Response body size' },
+  'scenario.reportTotalTip': { zh: '从第一步开始到最后一步完成的墙钟总耗时', en: 'Wall-clock time from the first step to the last' },
+  'scenario.assertRateTip': { zh: '通过断言数占全部断言数的比例', en: 'Passed assertions over total assertions' },
   'scenario.flatView': { zh: '平铺展示', en: 'Flat view' },
   'scenario.tabView': { zh: 'Tab展示', en: 'Tab view' },
   'scenario.filterPh': { zh: '请选择过滤条件', en: 'Filter' },

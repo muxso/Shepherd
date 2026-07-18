@@ -2165,9 +2165,9 @@ function ScenarioReportModal({ reportId, nameOf, caseMap, onClose }: { reportId:
               <h3 style={{ margin: '0 0 10px', fontSize: 14, color: 'var(--text-2)', display: 'flex', alignItems: 'center', gap: 8 }}>
                 {t('scenario.reportAnalysis', '报告分析')}<Tag color={outcomeColor(data.status)} style={{ margin: 0 }}>{runOutcomeLabel(data.status, t)}</Tag>
               </h3>
-              {stat(t('scenario.reportTotalTime', '报告总耗时'), <>{(reportTotalMs / 1000).toFixed(3)} <span style={{ color: 'var(--text-3)', fontWeight: 400 }}>(sec)</span></>)}
+              {stat(t('scenario.reportTotalTime', '报告总耗时'), <Tooltip title={t('scenario.reportTotalTip', '从第一步开始到最后一步完成的墙钟总耗时')}><span>{(reportTotalMs / 1000).toFixed(3)} <span style={{ color: 'var(--text-3)', fontWeight: 400 }}>(sec)</span></span></Tooltip>)}
               {stat(t('scenario.reqTotalTime', '请求总耗时'), <Tooltip title={t('scenario.respTimeTip', '从建立连接到收到服务端完整响应的全链路耗时')}><span>{fmtDuration(reqTotalMs)}</span></Tooltip>)}
-              {stat(t('scenario.assertPassRate', '断言通过率'), <>{asRate.toFixed(2)} <span style={{ color: 'var(--text-3)', fontWeight: 400 }}>(%)</span></>, asRate >= 100 ? '#22c55e' : undefined)}
+              {stat(t('scenario.assertPassRate', '断言通过率'), <Tooltip title={t('scenario.assertRateTip', '通过断言数占全部断言数的比例')}><span>{asRate.toFixed(2)} <span style={{ color: 'var(--text-3)', fontWeight: 400 }}>(%)</span></span></Tooltip>, asRate >= 100 ? '#22c55e' : undefined)}
             </div>
             <DistCard title={t('scenario.stepAnalysis', '步骤分析')} d={dist} centerLabel={t('scenario.totalCount', '总数(个)')} t={t} />
             <DistCard title={t('scenario.reqAnalysis', '请求分析')} d={dist} centerLabel={t('scenario.totalCount', '总数(个)')} t={t} />
