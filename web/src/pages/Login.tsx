@@ -133,7 +133,7 @@ export default function Login() {
       <div className={`login-logo${mode === 'sso' ? ' on-right' : ''}`}>
         <AnimatedLogo size={104} />
         <span className="login-brand">Shepherd</span>
-        <span className="login-slogan">{t('login.subtitle', '让 AI 写代码,交付由你把关')}</span>
+        <span className="login-slogan">{t('login.subtitle', '从 idea 到交付,更安全、更可靠的质量把关')}</span>
       </div>
     </div>
   )
