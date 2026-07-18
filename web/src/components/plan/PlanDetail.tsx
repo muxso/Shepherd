@@ -1,5 +1,5 @@
 import { useEffect, useState, type CSSProperties } from 'react'
-import { Button, Card, Col, Empty, Row, Segmented, Select, Space, Table, Tag } from 'antd'
+import { Button, Card, Col, Empty, Row, Segmented, Select, Space, Table, Tabs, Tag } from 'antd'
 import { Input } from 'antd'
 import { message, modal } from '../../feedback'
 import EditDrawer from '../EditDrawer'
@@ -11,8 +11,11 @@ import Donut from '../Donut'
 import { fmtDurationMs } from '../TimingBreakdown'
 import { ScenarioReportModal } from '../ScenarioReport'
 import { useI18n } from '../../i18n'
+import PlanMindmap from './PlanMindmap'
+import PlanEditDrawer from './PlanEditDrawer'
+import PlanDetailHeader, { PlanRunsTable } from './PlanDetailHeader'
 
-// Plan detail (workspace tab content): attach cases / run / record results / schedule / Markdown report + analytics cards.
+// Plan detail (workspace tab content): header + tabs (测试规划 mind-map | 场景用例 | 缺陷列表 | 执行历史).
 export default function PlanDetail({ planId, name, projectId }: { planId: string; name: string; projectId: string }) {
   const { t } = useI18n()
   const [stats, setStats] = useState<PlanStats | null>(null)
@@ -22,6 +25,8 @@ export default function PlanDetail({ planId, name, projectId }: { planId: string
   const [running, setRunning] = useState(false)
   const [marking, setMarking] = useState('')
   const [reportOpen, setReportOpen] = useState(false)
+  const [editOpen, setEditOpen] = useState(false)
+  const [planName, setPlanName] = useState(name)
   // Project scenario ids: mark scenario-mounted plan cases with a tag.
   const [scenarioIds, setScenarioIds] = useState<Set<string>>(new Set())
   useEffect(() => {
@@ -109,8 +114,9 @@ export default function PlanDetail({ planId, name, projectId }: { planId: string
     })
   }
 
-  return (
-    <div style={{ padding: '12px 16px', height: '100%', overflow: 'auto' }}>
+  // 场景用例 tab body: the original toolbar + analytics + case table, unchanged.
+  const casesTab = (
+    <div style={{ padding: '12px 16px' }}>
       <Space style={{ marginBottom: 12 }} wrap>
         <Button icon={<LinkOutlined />} size="small" onClick={() => setLinkOpen(true)}>{t('plan.linkCase', '挂用例')}</Button>
         <Button type="primary" icon={<PlayCircleOutlined />} size="small" loading={running} onClick={run}>{t('plan.runPlan', '执行计划')}</Button>
@@ -160,8 +166,45 @@ export default function PlanDetail({ planId, name, projectId }: { planId: string
           },
         ]}
       />
+    </div>
+  )
+
+  return (
+    <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
+      <PlanDetailHeader
+        planId={planId}
+        projectId={projectId}
+        name={planName}
+        stats={stats}
+        onEdit={() => setEditOpen(true)}
+        onReport={() => setReportOpen(true)}
+        onSchedule={schedule}
+        onRefresh={load}
+      />
+      <Tabs
+        className="ms-detail-tabs ms-fill-tabs"
+        tabBarStyle={{ margin: 0, paddingInline: 16 }}
+        style={{ flex: 1, minHeight: 0 }}
+        items={[
+          { key: 'planning', label: t('plan.tabPlanning', '测试规划'), children: <PlanMindmap planId={planId} projectId={projectId} /> },
+          { key: 'cases', label: `${t('plan.tabCases', '场景用例')} (${cases.length})`, children: casesTab },
+          {
+            key: 'bugs',
+            label: t('plan.tabBugs', '缺陷列表'),
+            children: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('plan.noBugs', '暂无关联缺陷')} style={{ marginTop: 48 }} />,
+          },
+          { key: 'history', label: t('plan.tabHistory', '执行历史'), children: <div style={{ padding: '12px 16px' }}><PlanRunsTable planId={planId} /></div> },
+        ]}
+      />
       <LinkCaseModal open={linkOpen} planId={planId} projectId={projectId} onClose={() => setLinkOpen(false)} onLinked={() => { setLinkOpen(false); load() }} />
-      <PlanReportDrawer open={reportOpen} planId={planId} name={name} projectId={projectId} onClose={() => setReportOpen(false)} />
+      <PlanReportDrawer open={reportOpen} planId={planId} name={planName} projectId={projectId} onClose={() => setReportOpen(false)} />
+      <PlanEditDrawer
+        open={editOpen}
+        planId={planId}
+        projectId={projectId}
+        onClose={() => setEditOpen(false)}
+        onSaved={(d) => { setPlanName(d.name); load() }}
+      />
     </div>
   )
 }

@@ -773,6 +773,68 @@ export interface PlanCase {
   reportId?: string | null
 }
 
+/** Per-node execution config in the plan mind-map (inherit = use the parent's config). */
+export interface PlanningNodeConfig {
+  inherit?: boolean
+  poolId?: string
+  envId?: string
+  mode?: 'serial' | 'parallel'
+  stopOnFail?: boolean
+  retry?: boolean
+}
+
+/** Mind-map node: category (功能/接口/场景用例) or custom 测试点; leaves carry linked case/scenario ids. */
+export interface PlanningNode {
+  id: string
+  name: string
+  kind: 'category' | 'point'
+  children?: PlanningNode[]
+  config?: PlanningNodeConfig
+  caseIds?: string[]
+  scenarioIds?: string[]
+}
+
+/** Planning doc stored verbatim; caseNames/scenarioNames feed the backend link sync display names. */
+export interface PlanningDoc {
+  nodes: PlanningNode[]
+  caseNames?: Record<string, string>
+  scenarioNames?: Record<string, string>
+}
+
+export interface PlanDetailInfo {
+  id: string
+  projectId: string
+  name: string
+  type: string
+  groupId: string
+  archived: boolean
+  createdAt: number
+  description: string
+  tags: string[]
+  moduleId: string | null
+  startAt: number | null
+  endAt: number | null
+  allowDuplicateCases: boolean
+  autoUpdateStatus: boolean
+  /** Percent 0-100. */
+  passThreshold: number
+  planning: PlanningDoc | null
+}
+
+/** Absent fields keep current values; moduleId '' clears, groupId ''/'NONE' = root, startAt/endAt <= 0 clears. */
+export interface PlanUpdateBody {
+  name?: string
+  description?: string
+  tags?: string[]
+  moduleId?: string
+  groupId?: string
+  startAt?: number
+  endAt?: number
+  allowDuplicateCases?: boolean
+  autoUpdateStatus?: boolean
+  passThreshold?: number
+}
+
 export interface PerfLatency {
   min: number
   max: number
@@ -1466,6 +1528,10 @@ export const api = {
   // Test plans (no list endpoint → the list lives in the frontend registry)
   createPlan: (b: { projectId: string; name: string; type?: string }) =>
     http.post<TestPlan>('/test-plan', { type: 'TEST_PLAN', ...b }),
+  planDetail: (id: string) => http.get<PlanDetailInfo>(`/test-plan/${id}`),
+  updatePlan: (id: string, b: PlanUpdateBody) => http.put<PlanDetailInfo>(`/test-plan/${id}`, b),
+  savePlanPlanning: (id: string, doc: PlanningDoc) =>
+    http.put<{ linkedCases: number }>(`/test-plan/${id}/planning`, doc),
   planStats: (id: string) => http.get<PlanStats>(`/test-plan/${id}/statistics`),
   planCases: (id: string) => http.get<PlanCase[] | Page<PlanCase>>(`/test-plan/${id}/cases`),
   linkPlanCase: (id: string, caseId: string, name: string) =>

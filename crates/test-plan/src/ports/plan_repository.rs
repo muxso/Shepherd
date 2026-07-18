@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 
-use crate::domain::{CaseCounts, CaseResult, CaseStatus, NewPlan, Plan, PlanCase};
+use crate::domain::{CaseCounts, CaseResult, CaseStatus, NewPlan, Plan, PlanCase, PlanMeta};
 
 use thiserror::Error;
 
@@ -43,4 +43,16 @@ pub trait PlanRepository: Send + Sync {
 
     /// Also deletes the linked cases.
     async fn delete(&self, id: &str) -> Result<bool, RepoError>;
+
+    /// Full detail: core plan + editable meta + planning doc (mind-map, stored verbatim).
+    async fn detail(
+        &self,
+        id: &str,
+    ) -> Result<Option<(Plan, PlanMeta, Option<serde_json::Value>)>, RepoError>;
+
+    /// Full-row write of name + editable meta; false when the plan is missing.
+    async fn update_meta(&self, id: &str, name: &str, meta: &PlanMeta) -> Result<bool, RepoError>;
+
+    /// Stores the planning doc verbatim; false when the plan is missing.
+    async fn set_planning(&self, id: &str, doc: &serde_json::Value) -> Result<bool, RepoError>;
 }

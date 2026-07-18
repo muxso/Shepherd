@@ -1,15 +1,17 @@
 use std::sync::Arc;
 
 use crate::application::{
-    report_html, report_markdown, CreatePlanError, CreatePlanUseCase, PlanCaseUseCase,
-    PlanStatisticsError, PlanStatisticsUseCase,
+    report_html, report_markdown, CreatePlanError, CreatePlanUseCase, PlanAdminError,
+    PlanAdminUseCase, PlanCaseUseCase, PlanPatch, PlanStatisticsError, PlanStatisticsUseCase,
 };
-use crate::domain::{AssertionResult, CaseResult, CaseStatus, Plan, PlanType, ROOT_GROUP};
+use crate::domain::{
+    AssertionResult, CaseResult, CaseStatus, Plan, PlanMeta, PlanType, ROOT_GROUP,
+};
 use axum::{
     extract::{FromRef, Path, State},
     http::StatusCode,
     response::{IntoResponse, Response},
-    routing::{get, post},
+    routing::{get, post, put},
     Json, Router,
 };
 use serde::{Deserialize, Serialize};
@@ -21,6 +23,7 @@ struct PlanState {
     create: CreatePlanUseCase,
     stats: PlanStatisticsUseCase,
     cases: PlanCaseUseCase,
+    admin: PlanAdminUseCase,
     sessions: Arc<dyn SessionStore>,
 }
 
@@ -34,16 +37,19 @@ pub fn router(
     create: CreatePlanUseCase,
     stats: PlanStatisticsUseCase,
     cases: PlanCaseUseCase,
+    admin: PlanAdminUseCase,
     sessions: Arc<dyn SessionStore>,
 ) -> Router {
     Router::new()
         .route("/test-plan", post(create_plan))
+        .route("/test-plan/{id}", get(plan_detail).put(update_plan))
+        .route("/test-plan/{id}/planning", put(save_planning))
         .route("/test-plan/{id}/statistics", get(statistics))
         .route("/test-plan/{id}/report", get(report))
         .route("/test-plan/{id}/report.md", get(report_md))
         .route("/test-plan/{id}/cases", post(link_case).get(list_cases))
         .route("/test-plan/{id}/cases/{caseId}/result", post(record_result))
-        .with_state(PlanState { create, stats, cases, sessions })
+        .with_state(PlanState { create, stats, cases, admin, sessions })
 }
 
 #[derive(Debug, Deserialize, ToSchema)]
@@ -105,6 +111,162 @@ async fn create_plan(
             (StatusCode::BAD_REQUEST, "group not found or not a group").into_response()
         }
         Err(CreatePlanError::Repo(_)) => {
+            (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response()
+        }
+    }
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+struct PlanDetailResponse {
+    id: String,
+    project_id: String,
+    name: String,
+    #[serde(rename = "type")]
+    plan_type: String,
+    group_id: String,
+    archived: bool,
+    /// Unix milliseconds.
+    created_at: i64,
+    description: String,
+    tags: Vec<String>,
+    module_id: Option<String>,
+    /// Unix milliseconds; null = not set.
+    start_at: Option<i64>,
+    end_at: Option<i64>,
+    allow_duplicate_cases: bool,
+    auto_update_status: bool,
+    /// Percent 0..=100.
+    pass_threshold: f64,
+    /// Mind-map planning doc, stored verbatim; null until first saved.
+    #[schema(value_type = Object, nullable)]
+    planning: Option<serde_json::Value>,
+}
+
+fn detail_response(
+    plan: Plan,
+    meta: PlanMeta,
+    planning: Option<serde_json::Value>,
+) -> PlanDetailResponse {
+    PlanDetailResponse {
+        id: plan.id,
+        project_id: plan.project_id,
+        name: plan.name,
+        plan_type: plan.plan_type.as_str().to_string(),
+        group_id: meta.group_id.clone(),
+        archived: plan.archived,
+        created_at: plan.created_at_ms,
+        description: meta.description,
+        tags: meta.tags,
+        module_id: meta.module_id,
+        start_at: meta.start_at_ms,
+        end_at: meta.end_at_ms,
+        allow_duplicate_cases: meta.allow_duplicate_cases,
+        auto_update_status: meta.auto_update_status,
+        pass_threshold: meta.pass_threshold * 100.0,
+        planning,
+    }
+}
+
+#[utoipa::path(get, path = "/test-plan/{id}", tag = "test-plan", params(("id" = String, Path)), responses((status = 200, body = PlanDetailResponse), (status = 403), (status = 404)), security(("bearer" = [])))]
+async fn plan_detail(
+    user: AuthUser,
+    State(st): State<PlanState>,
+    Path(id): Path<String>,
+) -> Response {
+    if !user.can("TEST_PLAN", "READ") {
+        return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
+    match st.admin.detail(&id).await {
+        Ok((plan, meta, planning)) => {
+            (StatusCode::OK, Json(detail_response(plan, meta, planning))).into_response()
+        }
+        Err(e) => admin_error(e),
+    }
+}
+
+/// Absent fields are unchanged. Clearing sentinels: moduleId "" clears the module,
+/// groupId ""/"NONE" moves back to the root, startAt/endAt <= 0 clears the date.
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+struct UpdatePlanRequest {
+    name: Option<String>,
+    description: Option<String>,
+    tags: Option<Vec<String>>,
+    module_id: Option<String>,
+    group_id: Option<String>,
+    /// Unix milliseconds.
+    start_at: Option<i64>,
+    end_at: Option<i64>,
+    allow_duplicate_cases: Option<bool>,
+    auto_update_status: Option<bool>,
+    /// Percent 0..=100.
+    pass_threshold: Option<f64>,
+}
+
+#[utoipa::path(put, path = "/test-plan/{id}", tag = "test-plan", params(("id" = String, Path)), request_body = UpdatePlanRequest, responses((status = 200, body = PlanDetailResponse), (status = 400), (status = 403), (status = 404)), security(("bearer" = [])))]
+async fn update_plan(
+    user: AuthUser,
+    State(st): State<PlanState>,
+    Path(id): Path<String>,
+    Json(b): Json<UpdatePlanRequest>,
+) -> Response {
+    if !user.can("TEST_PLAN", "UPDATE") {
+        return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
+    let patch = PlanPatch {
+        name: b.name,
+        description: b.description,
+        tags: b.tags,
+        module_id: b.module_id,
+        group_id: b.group_id,
+        start_at_ms: b.start_at,
+        end_at_ms: b.end_at,
+        allow_duplicate_cases: b.allow_duplicate_cases,
+        auto_update_status: b.auto_update_status,
+        pass_threshold: b.pass_threshold,
+    };
+    match st.admin.update(&id, patch).await {
+        Ok((plan, meta, planning)) => {
+            (StatusCode::OK, Json(detail_response(plan, meta, planning))).into_response()
+        }
+        Err(e) => admin_error(e),
+    }
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+struct SavePlanningResponse {
+    /// Node-linked case/scenario ids synced into the flat plan-case links.
+    linked_cases: usize,
+}
+
+#[utoipa::path(put, path = "/test-plan/{id}/planning", tag = "test-plan", params(("id" = String, Path)), request_body = Object, responses((status = 200, body = SavePlanningResponse), (status = 400), (status = 403), (status = 404)), security(("bearer" = [])))]
+async fn save_planning(
+    user: AuthUser,
+    State(st): State<PlanState>,
+    Path(id): Path<String>,
+    Json(doc): Json<serde_json::Value>,
+) -> Response {
+    if !user.can("TEST_PLAN", "UPDATE") {
+        return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
+    match st.admin.save_planning(&id, doc).await {
+        Ok(linked) => {
+            (StatusCode::OK, Json(SavePlanningResponse { linked_cases: linked })).into_response()
+        }
+        Err(e) => admin_error(e),
+    }
+}
+
+fn admin_error(e: PlanAdminError) -> Response {
+    match e {
+        PlanAdminError::NotFound => (StatusCode::NOT_FOUND, "plan not found").into_response(),
+        PlanAdminError::EmptyName => {
+            (StatusCode::BAD_REQUEST, "plan name must not be empty").into_response()
+        }
+        PlanAdminError::Invalid(msg) => (StatusCode::BAD_REQUEST, msg).into_response(),
+        PlanAdminError::Repo(_) => {
             (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response()
         }
     }
@@ -368,7 +530,7 @@ async fn list_cases(
 }
 
 #[derive(OpenApi)]
-#[openapi(paths(create_plan, statistics, report, report_md, link_case, record_result, list_cases), components(schemas(CreatePlanRequest, PlanResponse, StatisticsResponse, LinkCaseRequest, RecordResultRequest, AssertionResultDto, PlanCaseResponse, StepResultDto)), tags((name = "test-plan", description = "测试计划")))]
+#[openapi(paths(create_plan, plan_detail, update_plan, save_planning, statistics, report, report_md, link_case, record_result, list_cases), components(schemas(CreatePlanRequest, PlanResponse, PlanDetailResponse, UpdatePlanRequest, SavePlanningResponse, StatisticsResponse, LinkCaseRequest, RecordResultRequest, AssertionResultDto, PlanCaseResponse, StepResultDto)), tags((name = "test-plan", description = "测试计划")))]
 struct ApiDoc;
 pub fn openapi() -> utoipa::openapi::OpenApi {
     ApiDoc::openapi()
@@ -389,13 +551,14 @@ mod tests {
     async fn app_with(repo: InMemoryPlanRepository) -> (Router, String) {
         let repo = Arc::new(repo);
         let sessions = Arc::new(InMemorySessionStore::new());
-        let perms =
-            PermissionSet::from_raw(["TEST_PLAN:READ+ADD+EXECUTE".to_string()]).expect("perms");
+        let perms = PermissionSet::from_raw(["TEST_PLAN:READ+ADD+UPDATE+EXECUTE".to_string()])
+            .expect("perms");
         let token = sessions.create("admin", perms, 3600).await.expect("token");
         let r = router(
             CreatePlanUseCase::new(repo.clone()),
             PlanStatisticsUseCase::new(repo.clone()),
-            PlanCaseUseCase::new(repo),
+            PlanCaseUseCase::new(repo.clone()),
+            PlanAdminUseCase::new(repo),
             sessions,
         );
         (r, token)
@@ -447,7 +610,8 @@ mod tests {
         let app = router(
             CreatePlanUseCase::new(repo.clone()),
             PlanStatisticsUseCase::new(repo.clone()),
-            PlanCaseUseCase::new(repo),
+            PlanCaseUseCase::new(repo.clone()),
+            PlanAdminUseCase::new(repo),
             sessions,
         );
         let resp = app
@@ -467,20 +631,7 @@ mod tests {
         let plan = repo
             .seed(NewPlan::new("p1", "冒烟", crate::domain::PlanType::Plan, ROOT_GROUP).expect("v"))
             .await;
-        let (app, t) = {
-            let repo = Arc::new(repo);
-            let sessions = Arc::new(InMemorySessionStore::new());
-            let perms =
-                PermissionSet::from_raw(["TEST_PLAN:READ+ADD+EXECUTE".to_string()]).expect("p");
-            let token = sessions.create("admin", perms, 3600).await.expect("tok");
-            let r = router(
-                CreatePlanUseCase::new(repo.clone()),
-                PlanStatisticsUseCase::new(repo.clone()),
-                PlanCaseUseCase::new(repo),
-                sessions,
-            );
-            (r, token)
-        };
+        let (app, t) = app_with(repo).await;
         let pid = &plan.id;
         let r = app
             .clone()
@@ -587,6 +738,134 @@ mod tests {
         assert_eq!(v["status"], "UNDERWAY");
         assert_eq!(v["total"], 4);
         assert_eq!(v["isPass"], true);
+    }
+
+    fn put_req(uri: &str, body: &str, token: &str) -> Request<Body> {
+        Request::builder()
+            .method("PUT")
+            .uri(uri)
+            .header("content-type", "application/json")
+            .header("authorization", format!("Bearer {token}"))
+            .body(Body::from(body.to_string()))
+            .expect("req")
+    }
+
+    async fn json_body(resp: axum::response::Response) -> serde_json::Value {
+        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.expect("body");
+        serde_json::from_slice(&bytes).expect("json")
+    }
+
+    #[tokio::test]
+    async fn detail_update_roundtrip() {
+        let repo = InMemoryPlanRepository::new();
+        let plan = repo
+            .seed(NewPlan::new("p1", "冒烟", crate::domain::PlanType::Plan, ROOT_GROUP).expect("v"))
+            .await;
+        let (app, t) = app_with(repo).await;
+        let body = r#"{"name":"回归","description":"说明","tags":["核心"],"moduleId":"m1","startAt":1000,"endAt":2000,"allowDuplicateCases":false,"autoUpdateStatus":false,"passThreshold":80}"#;
+        let resp = app
+            .clone()
+            .oneshot(put_req(&format!("/test-plan/{}", plan.id), body, &t))
+            .await
+            .expect("put");
+        assert_eq!(resp.status(), StatusCode::OK);
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/test-plan/{}", plan.id))
+                    .header("authorization", format!("Bearer {t}"))
+                    .body(Body::empty())
+                    .expect("req"),
+            )
+            .await
+            .expect("get");
+        assert_eq!(resp.status(), StatusCode::OK);
+        let v = json_body(resp).await;
+        assert_eq!(v["name"], "回归");
+        assert_eq!(v["description"], "说明");
+        assert_eq!(v["tags"], serde_json::json!(["核心"]));
+        assert_eq!(v["moduleId"], "m1");
+        assert_eq!(v["startAt"], 1000);
+        assert_eq!(v["allowDuplicateCases"], false);
+        assert_eq!(v["passThreshold"], 80.0);
+        assert_eq!(v["planning"], serde_json::Value::Null);
+    }
+
+    #[tokio::test]
+    async fn planning_roundtrip_and_link_sync() {
+        let repo = InMemoryPlanRepository::new();
+        let plan = repo
+            .seed(NewPlan::new("p1", "冒烟", crate::domain::PlanType::Plan, ROOT_GROUP).expect("v"))
+            .await;
+        let (app, t) = app_with(repo).await;
+        let doc = r#"{"nodes":[{"id":"n1","name":"接口用例","kind":"category","children":[{"id":"n2","name":"登录","kind":"point","caseIds":["c1"],"scenarioIds":["s1"],"config":{"mode":"serial"}}]}],"caseNames":{"c1":"健康检查"}}"#;
+        let resp = app
+            .clone()
+            .oneshot(put_req(&format!("/test-plan/{}/planning", plan.id), doc, &t))
+            .await
+            .expect("put planning");
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert_eq!(json_body(resp).await["linkedCases"], 2);
+        // GET detail returns the doc verbatim; the flat case list gained the links.
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/test-plan/{}", plan.id))
+                    .header("authorization", format!("Bearer {t}"))
+                    .body(Body::empty())
+                    .expect("req"),
+            )
+            .await
+            .expect("get");
+        let v = json_body(resp).await;
+        assert_eq!(v["planning"], serde_json::from_str::<serde_json::Value>(doc).expect("doc"));
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/test-plan/{}/cases", plan.id))
+                    .header("authorization", format!("Bearer {t}"))
+                    .body(Body::empty())
+                    .expect("req"),
+            )
+            .await
+            .expect("cases");
+        let v = json_body(resp).await;
+        assert_eq!(v.as_array().map(|a| a.len()), Some(2));
+    }
+
+    #[tokio::test]
+    async fn planning_non_object_400_and_missing_plan_404() {
+        let (app, t) = app_with(InMemoryPlanRepository::new()).await;
+        let resp = app
+            .clone()
+            .oneshot(put_req("/test-plan/ghost/planning", "[1,2]", &t))
+            .await
+            .expect("resp");
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+        let resp = app
+            .oneshot(put_req("/test-plan/ghost/planning", r#"{"nodes":[]}"#, &t))
+            .await
+            .expect("resp");
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn update_without_update_permission_403() {
+        let repo = Arc::new(InMemoryPlanRepository::new());
+        let sessions = Arc::new(InMemorySessionStore::new());
+        let perms = PermissionSet::from_raw(["TEST_PLAN:READ".to_string()]).expect("perms");
+        let token = sessions.create("viewer", perms, 3600).await.expect("token");
+        let app = router(
+            CreatePlanUseCase::new(repo.clone()),
+            PlanStatisticsUseCase::new(repo.clone()),
+            PlanCaseUseCase::new(repo.clone()),
+            PlanAdminUseCase::new(repo),
+            sessions,
+        );
+        let resp =
+            app.oneshot(put_req("/test-plan/x", r#"{"name":"y"}"#, &token)).await.expect("resp");
+        assert_eq!(resp.status(), StatusCode::FORBIDDEN);
     }
 
     #[tokio::test]

@@ -287,7 +287,7 @@ impl ApiScenarioRepository for PgApiScenarioRepository {
         .bind(id)
         .execute(&self.pool)
         .await
-            .map_err(map_err)?;
+        .map_err(map_err)?;
         Ok(res.rows_affected() > 0)
     }
 
