@@ -1,8 +1,10 @@
 use std::sync::Arc;
 
-use crate::application::{SubmitReviewError, SubmitReviewUseCase};
+use crate::application::{
+    SubmitReviewError, SubmitReviewUseCase, UpdateReviewMetaError, UpdateReviewMetaUseCase,
+};
 use crate::domain::{ReviewError, ReviewStatus, Verdict};
-use crate::ports::{RepoError, ReviewRepository};
+use crate::ports::{NewReview, RepoError, ReviewMeta, ReviewMetaUpdate, ReviewRepository};
 use axum::{
     extract::{FromRef, Path, Query, State},
     http::StatusCode,
@@ -17,6 +19,7 @@ use webauth::{AuthUser, SessionStore};
 #[derive(Clone)]
 struct ReviewState {
     use_case: SubmitReviewUseCase,
+    update_meta: UpdateReviewMetaUseCase,
     repo: Arc<dyn ReviewRepository>,
     sessions: Arc<dyn SessionStore>,
 }
@@ -32,11 +35,12 @@ pub fn router(
     repo: Arc<dyn ReviewRepository>,
     sessions: Arc<dyn SessionStore>,
 ) -> Router {
+    let update_meta = UpdateReviewMetaUseCase::new(repo.clone());
     Router::new()
         .route("/case-review", post(create_review).get(list_reviews))
-        .route("/case-review/{review_id}", get(get_review))
+        .route("/case-review/{review_id}", get(get_review).put(update_review))
         .route("/case-review/{review_id}/{case_id}", post(submit_review))
-        .with_state(ReviewState { use_case, repo, sessions })
+        .with_state(ReviewState { use_case, update_meta, repo, sessions })
 }
 
 fn repo_err(e: RepoError) -> Response {
@@ -58,9 +62,41 @@ struct CreateReviewRequest {
     reviewer_count: usize,
     #[serde(default)]
     case_ids: Vec<String>,
+    #[serde(default)]
+    name: String,
+    #[serde(default)]
+    description: String,
+    #[serde(default)]
+    tags: Vec<String>,
+    #[serde(default)]
+    module_id: Option<String>,
+    #[serde(default)]
+    start_at: Option<String>,
+    #[serde(default)]
+    end_at: Option<String>,
 }
 fn one() -> usize {
     1
+}
+
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+struct UpdateReviewRequest {
+    name: String,
+    #[serde(default)]
+    description: String,
+    #[serde(default)]
+    tags: Vec<String>,
+    #[serde(default)]
+    module_id: Option<String>,
+    #[serde(default)]
+    start_at: Option<String>,
+    #[serde(default)]
+    end_at: Option<String>,
+    #[serde(default)]
+    pass_rule: String,
+    #[serde(default = "one")]
+    reviewer_count: usize,
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -78,6 +114,15 @@ struct ReviewSummaryResponse {
     total: usize,
     passed: usize,
     created_at: String,
+    status: String,
+    name: String,
+    description: String,
+    tags: Vec<String>,
+    module_id: Option<String>,
+    start_at: Option<String>,
+    end_at: Option<String>,
+    created_by: Option<String>,
+    reviewers: Vec<String>,
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -112,13 +157,55 @@ async fn create_review(
         return (StatusCode::FORBIDDEN, "permission denied").into_response();
     }
     let rule = if req.pass_rule.trim().is_empty() { "SINGLE" } else { req.pass_rule.trim() };
-    match st
-        .repo
-        .create_review(&req.project_id, rule, req.reviewer_count.max(1), &req.case_ids)
-        .await
-    {
+    let new_review = NewReview {
+        project_id: req.project_id,
+        pass_rule: rule.to_string(),
+        reviewer_count: req.reviewer_count.max(1),
+        case_ids: req.case_ids,
+        created_by: user.user_id,
+        meta: ReviewMeta {
+            name: req.name.trim().to_string(),
+            description: req.description,
+            tags: req.tags,
+            module_id: req.module_id,
+            start_at: req.start_at,
+            end_at: req.end_at,
+        },
+    };
+    match st.repo.create_review(&new_review).await {
         Ok(id) => (StatusCode::CREATED, Json(CreatedReview { id })).into_response(),
         Err(e) => repo_err(e),
+    }
+}
+
+#[utoipa::path(put, path = "/case-review/{review_id}", tag = "case", params(("review_id" = String, Path)), request_body = UpdateReviewRequest, responses((status = 200), (status = 400), (status = 404)), security(("bearer" = [])))]
+async fn update_review(
+    user: AuthUser,
+    State(st): State<ReviewState>,
+    Path(review_id): Path<String>,
+    Json(req): Json<UpdateReviewRequest>,
+) -> Response {
+    if !user.can("CASE_REVIEW", "REVIEW") {
+        return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
+    let update = ReviewMetaUpdate {
+        pass_rule: req.pass_rule,
+        reviewer_count: req.reviewer_count,
+        meta: ReviewMeta {
+            name: req.name,
+            description: req.description,
+            tags: req.tags,
+            module_id: req.module_id,
+            start_at: req.start_at,
+            end_at: req.end_at,
+        },
+    };
+    match st.update_meta.execute(&review_id, update).await {
+        Ok(()) => StatusCode::OK.into_response(),
+        Err(UpdateReviewMetaError::Validation(msg)) => {
+            (StatusCode::BAD_REQUEST, msg).into_response()
+        }
+        Err(UpdateReviewMetaError::Repo(e)) => repo_err(e),
     }
 }
 
@@ -142,6 +229,15 @@ async fn list_reviews(
                     total: r.total,
                     passed: r.passed,
                     created_at: r.created_at,
+                    status: r.status,
+                    name: r.meta.name,
+                    description: r.meta.description,
+                    tags: r.meta.tags,
+                    module_id: r.meta.module_id,
+                    start_at: r.meta.start_at,
+                    end_at: r.meta.end_at,
+                    created_by: r.created_by,
+                    reviewers: r.reviewers,
                 })
                 .collect();
             (StatusCode::OK, Json(items)).into_response()
@@ -229,7 +325,7 @@ async fn submit_review(
 }
 
 #[derive(OpenApi)]
-#[openapi(paths(submit_review, create_review, list_reviews, get_review), components(schemas(SubmitRequest, SubmitResponse, CreateReviewRequest, CreatedReview, ReviewSummaryResponse, ReviewCaseStatusResponse, ReviewDetailResponse)), tags((name = "case", description = "用例评审")))]
+#[openapi(paths(submit_review, create_review, update_review, list_reviews, get_review), components(schemas(SubmitRequest, SubmitResponse, CreateReviewRequest, UpdateReviewRequest, CreatedReview, ReviewSummaryResponse, ReviewCaseStatusResponse, ReviewDetailResponse)), tags((name = "case", description = "用例评审")))]
 struct ApiDoc;
 pub fn openapi() -> utoipa::openapi::OpenApi {
     ApiDoc::openapi()
@@ -347,5 +443,111 @@ mod tests {
             .await
             .expect("resp");
         assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    }
+
+    fn json_req(method: &str, uri: &str, body: &str, token: &str) -> Request<Body> {
+        Request::builder()
+            .method(method)
+            .uri(uri)
+            .header("content-type", "application/json")
+            .header("authorization", format!("Bearer {token}"))
+            .body(Body::from(body.to_string()))
+            .expect("req")
+    }
+
+    async fn body_json(resp: axum::response::Response) -> serde_json::Value {
+        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.expect("body");
+        serde_json::from_slice(&bytes).expect("json")
+    }
+
+    #[tokio::test]
+    async fn create_with_meta_then_list_returns_meta_and_put_edits_it() {
+        let (app, t) = app_with(PassRule::Single, 1).await;
+
+        let create_body = r#"{"projectId":"p1","passRule":"SINGLE","reviewerCount":1,
+            "caseIds":["c1","c2"],"name":"v1.0 版本用例评审","description":"首轮",
+            "tags":["冒烟"],"moduleId":"m1","startAt":"2026-07-01T00:00:00Z","endAt":"2026-07-31T00:00:00Z"}"#;
+        let resp = app
+            .clone()
+            .oneshot(json_req("POST", "/case-review", create_body, &t))
+            .await
+            .expect("resp");
+        assert_eq!(resp.status(), StatusCode::CREATED);
+        let created = body_json(resp).await;
+        let id = created["id"].as_str().expect("id").to_string();
+
+        let resp = app
+            .clone()
+            .oneshot(json_req("GET", "/case-review?projectId=p1", "", &t))
+            .await
+            .expect("resp");
+        assert_eq!(resp.status(), StatusCode::OK);
+        let list = body_json(resp).await;
+        let item = &list.as_array().expect("array")[0];
+        assert_eq!(item["name"], "v1.0 版本用例评审");
+        assert_eq!(item["description"], "首轮");
+        assert_eq!(item["tags"][0], "冒烟");
+        assert_eq!(item["moduleId"], "m1");
+        assert_eq!(item["status"], "IN_PROGRESS");
+        assert_eq!(item["total"], 2);
+        assert_eq!(item["createdBy"], "admin");
+
+        let put_body = r#"{"name":"v2 评审","description":"二轮","tags":["回归"],
+            "moduleId":null,"passRule":"MULTIPLE","reviewerCount":2}"#;
+        let resp = app
+            .clone()
+            .oneshot(json_req("PUT", &format!("/case-review/{id}"), put_body, &t))
+            .await
+            .expect("resp");
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        let resp =
+            app.oneshot(json_req("GET", "/case-review?projectId=p1", "", &t)).await.expect("resp");
+        let list = body_json(resp).await;
+        let item = &list.as_array().expect("array")[0];
+        assert_eq!(item["name"], "v2 评审");
+        assert_eq!(item["passRule"], "MULTIPLE");
+        assert_eq!(item["reviewerCount"], 2);
+        assert!(item["moduleId"].is_null());
+    }
+
+    #[tokio::test]
+    async fn put_blank_name_returns_400() {
+        let (app, t) = app_with(PassRule::Single, 1).await;
+        let resp = app
+            .clone()
+            .oneshot(json_req("POST", "/case-review", r#"{"projectId":"p1","name":"n"}"#, &t))
+            .await
+            .expect("resp");
+        let id = body_json(resp).await["id"].as_str().expect("id").to_string();
+        let resp = app
+            .oneshot(json_req("PUT", &format!("/case-review/{id}"), r#"{"name":"  "}"#, &t))
+            .await
+            .expect("resp");
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn put_missing_review_returns_404() {
+        let (app, t) = app_with(PassRule::Single, 1).await;
+        let resp = app
+            .oneshot(json_req("PUT", "/case-review/nope", r#"{"name":"n"}"#, &t))
+            .await
+            .expect("resp");
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn put_without_review_permission_returns_403() {
+        let repo = Arc::new(InMemoryReviewRepository::new());
+        let sessions = Arc::new(InMemorySessionStore::new());
+        let perms = PermissionSet::from_raw(["CASE_REVIEW:READ".to_string()]).expect("perms");
+        let token = sessions.create("v", perms, 3600).await.expect("token");
+        let app = router(SubmitReviewUseCase::new(repo.clone()), repo, sessions);
+        let resp = app
+            .oneshot(json_req("PUT", "/case-review/rev1", r#"{"name":"n"}"#, &token))
+            .await
+            .expect("resp");
+        assert_eq!(resp.status(), StatusCode::FORBIDDEN);
     }
 }

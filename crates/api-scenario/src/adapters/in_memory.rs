@@ -160,6 +160,19 @@ impl ApiScenarioRepository for InMemoryApiScenarioRepository {
             .is_some())
     }
 
+    // In-memory recycle bin: delete is a hard remove here, so these are inert.
+    async fn list_deleted(&self, _project_id: &str) -> Result<Vec<ApiScenario>, RepoError> {
+        Ok(Vec::new())
+    }
+
+    async fn restore_scenario(&self, _id: &str) -> Result<bool, RepoError> {
+        Ok(false)
+    }
+
+    async fn purge_scenario(&self, id: &str) -> Result<bool, RepoError> {
+        self.delete_scenario(id).await
+    }
+
     async fn reorder_steps(
         &self,
         scenario_id: &str,

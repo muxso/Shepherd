@@ -10,8 +10,8 @@ import { SelectProjectEmpty } from '../components/Page'
 import { useI18n } from '../i18n'
 import { useListView, type ListColumn } from '../components/ListView'
 import PlanModuleTree from '../components/plan/PlanModuleTree'
-import PlanFormModal, { PlanForm } from '../components/plan/PlanFormModal'
-import PlanDetail, { ReportMdModal } from '../components/plan/PlanDetail'
+import PlanFormModal from '../components/plan/PlanFormModal'
+import PlanDetail, { PlanReportDrawer } from '../components/plan/PlanDetail'
 import {
   groupIdOf,
   inPlanModule,
@@ -24,10 +24,6 @@ import {
   type PlanModule,
 } from '../components/plan/planLocal'
 
-// Keys of the persistent "new plan / new group" workspace tabs (share the tab pool with plan-detail tabs).
-const NEW_PLAN_KEY = '__new_plan__'
-const NEW_GROUP_KEY = '__new_group__'
-
 // Test plans page (MeterSphere layout): top "Plans / Reports" tabs.
 // Plans tab = left module tree + right list (all/plan/group Segmented, toolbar, table, multi-open details);
 // Reports tab = Markdown report entry per plan. Modules/groups/tags are local meta (see planLocal.ts).
@@ -39,11 +35,11 @@ export default function TestPlans() {
   const [statsMap, setStatsMap] = useState<Record<string, PlanStats>>({})
   const [moduleKey, setModuleKey] = useState('ALL')
   const [seg, setSeg] = useState<'all' | 'plan' | 'group'>('all')
-  // Edit modal only; creation happens in workspace tabs, so `editing` is required.
-  const [form, setForm] = useState<{ mode: 'plan' | 'group'; editing: RegItem } | null>(null)
+  // Create + edit drawer; editing absent = create.
+  const [form, setForm] = useState<{ mode: 'plan' | 'group'; editing?: RegItem } | null>(null)
   const [runningId, setRunningId] = useState('')
   const [expandedKeys, setExpandedKeys] = useState<string[]>([])
-  const [report, setReport] = useState<{ name: string; md: string } | null>(null)
+  const [report, setReport] = useState<{ id: string; name: string } | null>(null)
   const tabs = useWorkTabs()
 
   const loadStats = async (list: RegItem[]) => {
@@ -304,9 +300,9 @@ export default function TestPlans() {
       description={
         <span style={{ color: 'var(--text-3)' }}>
           {t('common.empty', '暂无数据')}{' '}
-          <a style={{ color: 'var(--brand)' }} onClick={() => tabs.open(NEW_PLAN_KEY)}>{t('plan.newPlan', '新建测试计划')}</a>
+          <a style={{ color: 'var(--brand)' }} onClick={() => setForm({ mode: 'plan' })}>{t('plan.newPlan', '新建测试计划')}</a>
           {' '}{t('plan.or', '或')}{' '}
-          <a style={{ color: 'var(--brand)' }} onClick={() => tabs.open(NEW_GROUP_KEY)}>{t('plan.newGroup', '新建计划组')}</a>
+          <a style={{ color: 'var(--brand)' }} onClick={() => setForm({ mode: 'group' })}>{t('plan.newGroup', '新建计划组')}</a>
         </span>
       }
     />
@@ -356,34 +352,7 @@ export default function TestPlans() {
     </div>
   )
 
-  // Workspace "new plan / new group" tab: inline PlanForm; on create, close the tab,
-  // refresh the list, then open the plan detail (groups have no detail, refresh only).
-  const newFormTab = (key: string, mode: 'plan' | 'group') => ({
-    key,
-    label: mode === 'group' ? t('plan.newGroup', '新建计划组') : t('plan.newPlan', '新建测试计划'),
-    children: (
-      <div style={{ padding: '16px 24px', height: '100%', overflow: 'auto' }}>
-        <div style={{ maxWidth: 520 }}>
-          <PlanForm
-            mode={mode}
-            projectId={projectId}
-            modules={modules}
-            groups={plans}
-            onCancel={() => tabs.close(key)}
-            onSaved={(list, created) => {
-              tabs.close(key)
-              setPlans(list)
-              loadStats(list)
-              if (created) tabs.open(created.id)
-            }}
-          />
-        </div>
-      </div>
-    ),
-  })
   const detailTabs = tabs.openIds.flatMap((id) => {
-    if (id === NEW_PLAN_KEY) return [newFormTab(NEW_PLAN_KEY, 'plan')]
-    if (id === NEW_GROUP_KEY) return [newFormTab(NEW_GROUP_KEY, 'group')]
     const p = plans.find((x) => x.id === id && !isGroup(x))
     return p ? [{ key: p.id, label: p.label, children: <PlanDetail planId={p.id} name={p.label} projectId={projectId} /> }] : []
   })
@@ -398,8 +367,8 @@ export default function TestPlans() {
           modules={modules}
           selectedKey={moduleKey}
           onSelect={setModuleKey}
-          onNewPlan={() => tabs.open(NEW_PLAN_KEY)}
-          onNewGroup={() => tabs.open(NEW_GROUP_KEY)}
+          onNewPlan={() => setForm({ mode: 'plan' })}
+          onNewGroup={() => setForm({ mode: 'group' })}
           onModulesChanged={onModulesChanged}
         />
       }
@@ -415,13 +384,7 @@ export default function TestPlans() {
   )
 
   // Reports tab: report entry per plan (groups have no reports, not listed).
-  const openReport = async (p: RegItem) => {
-    try {
-      setReport({ name: p.label, md: await api.planReportMd(p.id) })
-    } catch (e) {
-      message.error(e instanceof ApiError ? e.message : t('plan.reportFail', '获取报告失败'))
-    }
-  }
+  const openReport = (p: RegItem) => setReport({ id: p.id, name: p.label })
   const reportsTab = (
     <div style={{ padding: '12px 16px' }}>
       <Table<RegItem>
@@ -457,7 +420,7 @@ export default function TestPlans() {
         ]}
       />
       <PlanFormModal
-        key={form ? `${form.mode}:${form.editing.id}` : 'closed'}
+        key={form ? `${form.mode}:${form.editing?.id || 'new'}` : 'closed'}
         open={!!form}
         mode={form?.mode || 'plan'}
         editing={form?.editing}
@@ -465,13 +428,14 @@ export default function TestPlans() {
         modules={modules}
         groups={plans}
         onClose={() => setForm(null)}
-        onSaved={(list) => {
-          setForm(null)
+        onSaved={(list, created, stay) => {
+          if (!stay) setForm(null)
           setPlans(list)
           loadStats(list)
+          if (created) tabs.open(created.id)
         }}
       />
-      <ReportMdModal open={!!report} name={report?.name || ''} md={report?.md || ''} onClose={() => setReport(null)} />
+      <PlanReportDrawer open={!!report} planId={report?.id || ''} name={report?.name || ''} projectId={projectId} onClose={() => setReport(null)} />
     </>
   )
 }

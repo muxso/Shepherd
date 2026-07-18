@@ -1,0 +1,2 @@
+# Local state: plan id reused across plans_selftest.py runs
+.plan_selftest_id

@@ -14,16 +14,15 @@ axum = { workspace = true, optional = true }
 utoipa = { workspace = true, optional = true }
 webauth = { workspace = true, optional = true }
 serde = { workspace = true, optional = true }
-serde_json = { workspace = true, optional = true }
+serde_json = { workspace = true }
 
 [features]
-pg = ["dep:sqlx", "dep:serde_json"]
+pg = ["dep:sqlx"]
 http = ["dep:axum", "dep:serde", "dep:webauth", "webauth/http", "dep:utoipa"]
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 tower = { workspace = true, features = ["util"] }
-serde_json = { workspace = true }
 migrate = { workspace = true }
 kernel = { workspace = true }
 webauth = { workspace = true, features = ["http", "test-util"] }

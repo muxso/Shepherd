@@ -12,7 +12,8 @@ AI ROI、人效分析、软件工程建模、Task Graph。
 
 Shepherd 是一个还在早期阶段的研发监督平台。AI 现在能写代码了,但它不会判断自己有没有真正做完需求,也不会替结果负责。与其再造一个"更聪明的 agent",Shepherd 做的是 agent 外面那一层——把需求拆给 AI 执行机去干,然后在设计和验证两个环节卡上人工审批,过程留痕。
 
-> **状态**:`v0.0.1`,实验性质,我们自己在用(dogfood)。完整闭环能跑通,但离生产可用还有距离,也没有公开 benchmark。别拿它当成熟工具。
+<a id="状态"></a>
+> **状态**:`v0.0.2`,实验性质,我们自己在用(dogfood)。完整闭环能跑通,但离生产可用还有距离,也没有公开 benchmark。别拿它当成熟工具。
 
 <!-- 演示动图待补:见 docs/assets/。放好后取消下一行注释。 -->
 <!-- ![演示](docs/assets/demo.gif) -->
@@ -54,14 +55,14 @@ Shepherd 是一个还在早期阶段的研发监督平台。AI 现在能写代�
 
 <p float="left">
   <img src="docs/assets/screenshot-zh-1.png" width="49%" alt="Shepherd 控制台 — 概览" />
-  <img src="docs/assets/screenshot-zh-2.png" width="49%" alt="Shepherd — 需求拆分与任务图" />
+  <img src="docs/assets/screenshot-zh-2.png" width="49%" alt="Shepherd — 需求拆分/交付/验证" />
 </p>
 <p float="left">
   <img src="docs/assets/screenshot-zh-3.png" width="49%" alt="Shepherd — OpenAPI 导入的接口定义" />
   <img src="docs/assets/screenshot-zh-4.png" width="49%" alt="Shepherd — 场景编排(引用用例的链式步骤)" />
 </p>
 <p float="left">
-  <img src="docs/assets/screenshot-zh-5.png" width="49%" alt="Shepherd — 功能用例详情抽屉" />
+  <img src="docs/assets/screenshot-zh-5.png" width="49%" alt="Shepherd — 测试计划·测试规划脑图" />
 </p>
 
 ## AI 到底交付了多少,可以量化

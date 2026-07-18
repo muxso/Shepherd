@@ -4,6 +4,37 @@ use crate::domain::{ReviewRecord, ReviewSetting, ReviewStatus};
 
 use thiserror::Error;
 
+/// Editable review header fields shown on the list page.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct ReviewMeta {
+    pub name: String,
+    pub description: String,
+    pub tags: Vec<String>,
+    pub module_id: Option<String>,
+    /// RFC3339/ISO timestamps as text; adapters cast to timestamptz.
+    pub start_at: Option<String>,
+    pub end_at: Option<String>,
+}
+
+/// Input for creating a review (setting + case set + header meta).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NewReview {
+    pub project_id: String,
+    pub pass_rule: String,
+    pub reviewer_count: usize,
+    pub case_ids: Vec<String>,
+    pub created_by: String,
+    pub meta: ReviewMeta,
+}
+
+/// Input for editing a review's header meta and pass setting.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReviewMetaUpdate {
+    pub pass_rule: String,
+    pub reviewer_count: usize,
+    pub meta: ReviewMeta,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReviewSummary {
     pub id: String,
@@ -13,6 +44,10 @@ pub struct ReviewSummary {
     pub passed: usize,
     pub created_at: String,
     pub status: String,
+    pub created_by: Option<String>,
+    /// Distinct reviewer ids that submitted verdicts (from history).
+    pub reviewers: Vec<String>,
+    pub meta: ReviewMeta,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -62,14 +97,16 @@ pub trait ReviewRepository: Send + Sync {
         status: ReviewStatus,
     ) -> Result<(), RepoError>;
 
-    async fn create_review(
-        &self,
-        _project_id: &str,
-        _pass_rule: &str,
-        _reviewer_count: usize,
-        _case_ids: &[String],
-    ) -> Result<String, RepoError> {
+    async fn create_review(&self, _req: &NewReview) -> Result<String, RepoError> {
         Err(RepoError::Backend("create_review unsupported".into()))
+    }
+
+    async fn update_review_meta(
+        &self,
+        _review_id: &str,
+        _update: &ReviewMetaUpdate,
+    ) -> Result<(), RepoError> {
+        Err(RepoError::Backend("update_review_meta unsupported".into()))
     }
 
     async fn list_reviews(&self, _project_id: &str) -> Result<Vec<ReviewSummary>, RepoError> {

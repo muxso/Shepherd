@@ -1,15 +1,15 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
-import { useSearchParams } from 'react-router-dom'
-import { AutoComplete, Button, Cascader, Divider, Dropdown, Empty, Form, Input, Modal, Popover, Radio, Segmented, Select, Space, Switch, Table, Tabs, Tag, Tooltip, Typography, Upload } from 'antd'
+import { Link, useSearchParams } from 'react-router-dom'
+import { AutoComplete, Button, Divider, Dropdown, Empty, Form, Input, Modal, Popover, Radio, Segmented, Select, Space, Switch, Table, Tabs, Tag, Tooltip, Typography, Upload } from 'antd'
 import ResizableDrawer from '../components/ResizableDrawer'
 import EditDrawer from '../components/EditDrawer'
 import { message, modal } from '../feedback'
 import { PlayCircleOutlined, PlusOutlined, SaveOutlined, ThunderboltOutlined, DownOutlined, LinkOutlined, SwapOutlined, DeleteOutlined, FullscreenOutlined, CloseOutlined, SearchOutlined, FilterOutlined, ReloadOutlined, MoreOutlined, ImportOutlined, InboxOutlined, EyeOutlined, SettingOutlined, ShareAltOutlined, EditOutlined } from '@ant-design/icons'
-import { api, ApiError, type ApiCase, type ApiDefinition, type ApiModule, type ApiView, type AssertionResult, type DebugResponse, type Environment, type ReportResultItem, type ResourcePool, type Scenario, type ScenarioChange, type ScenarioExecution, type ScenarioReportDetail, type ScenarioRunResult, type ScenarioStep } from '../api'
+import { api, ApiError, type ApiCase, type ApiDefinition, type ApiModule, type ApiView, type AssertionResult, type DebugResponse, type Environment, type ReportResultItem, type ResourcePool, type Scenario, type ScenarioChange, type ScenarioExecution, type ScenarioRunResult, type ScenarioStep } from '../api'
 import type { ColumnsType } from 'antd/es/table'
 import { useApp } from '../context'
-import { methodColor, statusColor, outcomeColor, priorityColor } from '../components/tags'
+import { methodColor, statusColor, outcomeColor, priorityColor, statusLabel, execStatusLabel, caseStatusLabel } from '../components/tags'
 import { Workspace, useWorkTabs, useWorkspaceExtraSlot, useOpenParam } from '../components/Workspace'
 import { ModuleTreePanel, inSelectedModule } from '../components/ModuleTreePanel'
 import { columnSearch } from '../components/ListView'
@@ -19,18 +19,10 @@ import KVEditor, { type KVRow } from '../components/KVEditor'
 import { DebugResultPanel, type SentRequest } from '../components/ApiSpecPanel'
 import { LatencyStat } from '../components/TimingBreakdown'
 import { SelectProjectEmpty } from '../components/Page'
+import { regAdd, regList, type RegItem } from '../registry'
+import { groupIdOf, isGroup } from '../components/plan/planLocal'
+import { ScenarioReportModal, fmtDuration, fmtSize, makeStepMeta, type NameOf, type TFn } from '../components/ScenarioReport'
 import { useI18n } from '../i18n'
-
-type TFn = (key: string, fallback?: string) => string
-
-/* Humanized units for report stats: ms flips to seconds past 1s, bytes climb KB/MB/GB. */
-const fmtDuration = (ms: number) =>
-  ms >= 60_000 ? `${(ms / 60_000).toFixed(1)} min` : ms >= 1000 ? `${(ms / 1000).toFixed(2)} s` : `${ms} ms`
-const fmtSize = (b: number) =>
-  b >= 1 << 30 ? `${(b / (1 << 30)).toFixed(2)} GB`
-  : b >= 1 << 20 ? `${(b / (1 << 20)).toFixed(2)} MB`
-  : b >= 1024 ? `${(b / 1024).toFixed(1)} KB`
-  : `${b} bytes`
 
 // Editable form state + scenario param rows (persisted in scenario.meta).
 type ScenarioParam = { name: string; type: string; value: string; tags: string; desc: string }
@@ -38,15 +30,9 @@ type ScenarioForm = { name: string; status: string; description: string; tags: s
 const SCENARIO_STATUSES = ['DRAFT', 'DEBUGGING', 'COMPLETED', 'DEPRECATED']
 const SCENARIO_PRIORITIES = ['P0', 'P1', 'P2', 'P3']
 
-// Localized labels for scenario status / run outcome (avoid showing raw enums like DRAFT/ERROR).
-const scStatusLabel = (s: string, t: TFn): string =>
-  (({ DRAFT: t('scenario.stDraft', '草稿'), DEBUGGING: t('scenario.stDebugging', '调试中'), COMPLETED: t('scenario.stCompleted', '已完成'), DEPRECATED: t('scenario.stDeprecated', '已废弃') } as Record<string, string>)[s] || s)
-const runOutcomeLabel = (o: string, t: TFn): string => {
-  const v = (o || '').toUpperCase()
-  if (v === 'SUCCESS' || v.includes('PASS') || v === 'OK') return t('scenario.runSuccess', '成功')
-  if (v === 'ERROR' || v.includes('FAIL')) return t('scenario.runError', '失败')
-  return o
-}
+// Localized labels for scenario status / run outcome (shared helpers in components/tags.ts).
+const scStatusLabel = statusLabel
+const runOutcomeLabel = execStatusLabel
 
 // -- List views + advanced filter (mirrors the API definition page; client-side filtering) --
 // Views share the ms_api_view table (no page column); config.kind marks ownership and load filters by kind.
@@ -136,13 +122,13 @@ export default function Scenarios() {
       .catch(() => setListCaseMap({}))
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [batchReportId])
-  // Batch timer dialog: cron / env / pool / enabled switch.
+  // Schedule-via-plan dialog: mount selected scenarios into a test plan and set the plan cron.
   const [timerOpen, setTimerOpen] = useState(false)
+  const [timerPlanId, setTimerPlanId] = useState<string>()
+  const [timerNewName, setTimerNewName] = useState('')
   const [timerCron, setTimerCron] = useState('')
-  const [timerEnvMode, setTimerEnvMode] = useState<'default' | 'new'>('default')
-  const [timerEnvId, setTimerEnvId] = useState<string>()
-  const [timerPool, setTimerPool] = useState<string>()
   const [timerEnabled, setTimerEnabled] = useState(true)
+  const [timerPlans, setTimerPlans] = useState<RegItem[]>([])
   const tabs = useWorkTabs()
   useOpenParam((id) => tabs.open(id)) // deep link ?open=<scenarioId> (reference graph clicks land here)
   const NEW_KEY = '__new_scenario__'
@@ -282,7 +268,7 @@ export default function Scenarios() {
           </Space.Compact>
         </div>
       }
-      footer={<div style={{ padding: '8px 14px', borderTop: '1px solid var(--border-soft)', color: 'var(--text-3)', fontSize: 12 }}>🗑 {t('scenario.recycleBin', '回收站')}</div>}
+      footer={<div style={{ padding: '8px 14px', borderTop: '1px solid var(--border-soft)', fontSize: 12 }}><Link to="/api/scenario/recycle-bin" style={{ color: 'var(--text-3)' }}>🗑 {t('scenario.recycleBin', '回收站')}</Link></div>}
     />
   )
 
@@ -405,35 +391,29 @@ export default function Scenarios() {
       },
     })
   }
-  const toggleTimer = async (enabled: boolean) => {
-    try {
-      const r = await api.batchScenarioSchedule({ scenarioIds: selectedRows.map((s) => s.id), projectId, enabled })
-      message.success(`${enabled ? t('scenario.timerEnabled', '已开启定时任务') : t('scenario.timerDisabled', '已关闭定时任务')}: ${r.updated}`)
-    } catch (e) {
-      message.error(e instanceof ApiError ? e.message : t('func.saveFailed', '保存失败'))
-    }
-  }
+  // Scheduled execution goes through test plans: pick (or create) a plan, mount the
+  // selected scenarios as plan cases, then configure the plan cron.
+  const NEW_PLAN_VALUE = '__new_plan__'
   const openTimerEdit = () => {
-    setTimerCron(''); setTimerEnvMode('default'); setTimerEnvId(undefined); setTimerPool(undefined); setTimerEnabled(true)
+    setTimerPlanId(undefined); setTimerNewName(''); setTimerCron(''); setTimerEnabled(true)
+    setTimerPlans(regList('plan', projectId))
     setTimerOpen(true)
-    api.environments(projectId).then((e) => setRunEnvs(Array.isArray(e) ? e : [])).catch(() => setRunEnvs([]))
-    api.resourcePools().then((p) => setRunPools(Array.isArray(p) ? p : [])).catch(() => setRunPools([]))
   }
   const saveTimer = async () => {
+    if (!timerPlanId) return message.warning(t('scenario.planRequired', '请选择测试计划'))
+    if (timerPlanId === NEW_PLAN_VALUE && !timerNewName.trim()) return message.warning(t('scenario.planNameRequired', '请输入计划名称'))
     if (!timerCron.trim()) return message.warning(t('scenario.cronRequired', '请输入任务触发时间'))
-    if (timerEnvMode === 'new' && !timerEnvId) return message.warning(t('scenario.pickNewEnv', '请选择新环境'))
     setBatchBusy(true)
     try {
-      const r = await api.batchScenarioSchedule({
-        scenarioIds: selectedRows.map((s) => s.id),
-        projectId,
-        cron: timerCron.trim(),
-        envMode: timerEnvMode === 'new' ? 'NEW' : 'DEFAULT',
-        envId: timerEnvMode === 'new' ? timerEnvId : undefined,
-        poolId: timerPool,
-        enabled: timerEnabled,
-      })
-      message.success(`${t('scenario.timerSaved', '定时任务已保存')}: ${r.updated}`)
+      let planId = timerPlanId
+      if (planId === NEW_PLAN_VALUE) {
+        const p = await api.createPlan({ projectId, name: timerNewName.trim(), type: 'TEST_PLAN' })
+        regAdd('plan', projectId, { id: p.id, label: p.name, createdAt: Date.now() })
+        planId = p.id
+      }
+      for (const s of selectedRows) await api.linkPlanCase(planId, s.id, s.name)
+      await api.planSchedule(planId, timerCron.trim(), timerEnabled)
+      message.success(t('scenario.planTimerSaved', '已挂入计划并配置定时'))
       setTimerOpen(false)
     } catch (e) {
       message.error(e instanceof ApiError ? e.message : t('func.saveFailed', '保存失败'))
@@ -441,6 +421,17 @@ export default function Scenarios() {
       setBatchBusy(false)
     }
   }
+  // Plan picker options: plan groups become optgroups; "new plan" pinned on top.
+  const timerPlanOptions = (() => {
+    const plans = timerPlans.filter((p) => !isGroup(p))
+    const groups = timerPlans.filter(isGroup)
+    const opt = (p: RegItem) => ({ value: p.id, label: p.label })
+    const grouped = groups
+      .map((g) => ({ label: g.label, options: plans.filter((p) => groupIdOf(p) === g.id).map(opt) }))
+      .filter((g) => g.options.length)
+    const ungrouped = plans.filter((p) => !groups.some((g) => g.id === groupIdOf(p))).map(opt)
+    return [{ value: NEW_PLAN_VALUE, label: `+ ${t('scenario.newPlanOption', '新建计划')}` }, ...ungrouped, ...grouped]
+  })()
   const batchMoveCopy = async () => {
     setBatchBusy(true)
     try {
@@ -561,16 +552,12 @@ export default function Scenarios() {
           <Dropdown
             menu={{
               items: [
-                { key: 'timerOn', label: t('scenario.timerOn', '开启定时任务') },
-                { key: 'timerOff', label: t('scenario.timerOff', '关闭定时任务') },
-                { key: 'timerEdit', label: t('scenario.timerEdit', '编辑定时任务') },
+                { key: 'timerPlan', label: t('scenario.timerViaPlan', '定时执行(测试计划)') },
                 { key: 'del', label: t('a.delete', '删除'), danger: true },
               ],
               onClick: ({ key }) => {
                 if (key === 'del') batchDelete()
-                else if (key === 'timerOn') toggleTimer(true)
-                else if (key === 'timerOff') toggleTimer(false)
-                else if (key === 'timerEdit') openTimerEdit()
+                else if (key === 'timerPlan') openTimerEdit()
               },
             }}
           >
@@ -587,7 +574,7 @@ export default function Scenarios() {
       />
       <EditDrawer
         open={timerOpen}
-        title={`${t('scenario.timerEditTitle', '批量编辑定时任务')}(${t('scenario.selectedShort', '已选')} ${selectedIds.length} ${t('scenario.unitItems', '项数据')})`}
+        title={`${t('scenario.timerViaPlan', '定时执行(测试计划)')}(${t('scenario.selectedShort', '已选')} ${selectedIds.length} ${t('scenario.unitScene', '条场景')})`}
         onCancel={() => setTimerOpen(false)}
         footer={
           <div style={{ display: 'flex', alignItems: 'center' }}>
@@ -602,8 +589,33 @@ export default function Scenarios() {
           </div>
         }
       >
+        <div style={{ marginBottom: 12, color: 'var(--text-3)', fontSize: 12 }}>
+          {t('scenario.timerPlanNote', '所选场景将挂入测试计划,由计划按触发时间统一执行,报告见「测试计划」。')}
+        </div>
         <div style={{ marginBottom: 16 }}>
-          <div style={{ marginBottom: 8 }}>{t('scenario.cronLabel', '任务触发时间')}</div>
+          <div style={{ marginBottom: 8 }}>{t('scenario.pickPlan', '选择计划')} <span style={{ color: 'var(--error)' }}>*</span></div>
+          <Select
+            style={{ width: '100%' }}
+            showSearch
+            optionFilterProp="label"
+            placeholder={t('a.pleaseSelect', '请选择')}
+            value={timerPlanId}
+            onChange={setTimerPlanId}
+            options={timerPlanOptions}
+          />
+        </div>
+        {timerPlanId === NEW_PLAN_VALUE && (
+          <div style={{ marginBottom: 16 }}>
+            <div style={{ marginBottom: 8 }}>{t('scenario.newPlanOption', '新建计划')} <span style={{ color: 'var(--error)' }}>*</span></div>
+            <Input
+              placeholder={t('scenario.planNamePh', '请输入计划名称')}
+              value={timerNewName}
+              onChange={(e) => setTimerNewName(e.target.value)}
+            />
+          </div>
+        )}
+        <div style={{ marginBottom: 8 }}>
+          <div style={{ marginBottom: 8 }}>{t('scenario.cronLabel', '任务触发时间')} <span style={{ color: 'var(--error)' }}>*</span></div>
           <AutoComplete
             style={{ width: '100%' }}
             placeholder={t('scenario.cronPh', '可直接输入表达式')}
@@ -616,38 +628,6 @@ export default function Scenarios() {
               { value: '0 0 0 * * 1', label: `${t('scenario.cronWeekly', '每周一 0 点')} (0 0 0 * * 1)` },
               { value: '0 */30 * * * *', label: `${t('scenario.cronHalfHour', '每 30 分钟')} (0 */30 * * * *)` },
             ]}
-          />
-        </div>
-        <div style={{ marginBottom: 16 }}>
-          <div style={{ marginBottom: 8 }}>{t('scenario.envPick', '环境选择')}</div>
-          <Radio.Group value={timerEnvMode} onChange={(e) => setTimerEnvMode(e.target.value)}>
-            <Radio value="default">
-              {t('scenario.envDefault', '默认环境')}{' '}
-              <Tooltip title={t('scenario.envDefaultTip', '使用每个场景自身配置的环境')}><span style={{ color: 'var(--text-3)' }}>?</span></Tooltip>
-            </Radio>
-            <Radio value="new">{t('scenario.envNew', '新环境')}</Radio>
-          </Radio.Group>
-        </div>
-        {timerEnvMode === 'new' && (
-          <div style={{ marginBottom: 16 }}>
-            <div style={{ marginBottom: 8 }}>{t('scenario.envNew', '新环境')} <span style={{ color: 'var(--error)' }}>*</span></div>
-            <Select
-              style={{ width: '100%' }}
-              placeholder={t('a.pleaseSelect', '请选择')}
-              value={timerEnvId}
-              onChange={setTimerEnvId}
-              options={runEnvs.map((e) => ({ value: e.id, label: e.name }))}
-            />
-          </div>
-        )}
-        <div style={{ marginBottom: 8 }}>
-          <div style={{ marginBottom: 8 }}>{t('scenario.poolLabel', '运行资源池')} <span style={{ color: 'var(--error)' }}>*</span></div>
-          <Select
-            style={{ width: '100%' }}
-            placeholder={t('a.pleaseSelect', '请选择')}
-            value={timerPool}
-            onChange={setTimerPool}
-            options={[{ value: '', label: t('scenario.defaultPool', '默认资源池') }, ...runPools.map((p) => ({ value: p.id, label: p.name }))]}
           />
         </div>
       </EditDrawer>
@@ -809,20 +789,10 @@ export default function Scenarios() {
   )
 }
 
-function makeStepMeta(t: TFn): Record<string, { label: string; color: string }> {
-  return {
-    REQUEST: { label: t('scenario.stepRequest', '请求'), color: 'blue' },
-    CASE: { label: t('scenario.stepCase', '引用用例'), color: 'green' },
-    SCENARIO: { label: t('scenario.stepScenario', '引用场景'), color: 'geekblue' },
-    LOOP: { label: t('scenario.stepLoop', '循环控制器'), color: 'purple' },
-    IF: { label: t('scenario.stepIf', '条件控制器'), color: 'magenta' },
-    ONCE: { label: t('scenario.stepOnce', '仅一次控制器'), color: 'cyan' },
-    TIMER: { label: t('scenario.stepTimer', '等待时间'), color: 'orange' },
-  }
-}
-
 interface Node {
   kind: string
+  /** Copy provenance of a materialized request (COPY_CASE / COPY_API / COPY_SCENARIO). */
+  source?: string
   content: ReactNode
   children?: Node[]
   /** Raw child step (controller children item / sub-scenario step); used to open the drawer on click. */
@@ -840,9 +810,6 @@ function rawToStep(c: any): ScenarioStep {
   if (kind === 'REQUEST') return { ...base, request: { method: c.method || 'GET', url: c.url || '', body: c.body ?? null, assertions: c.assertions } }
   return { ...base, control: c }
 }
-
-// Reference id to readable name (case/sub-scenario); falls back to a short id instead of full UUIDs.
-type NameOf = (id: string) => string
 
 function childToNode(c: any, t: TFn, nameOf: NameOf): Node {
   const kind = String(c?.kind || '').toUpperCase()
@@ -863,15 +830,22 @@ function controlToNode(kind: string, payload: any, t: TFn, nameOf: NameOf): Node
 }
 
 function stepToNode(s: ScenarioStep, t: TFn, nameOf: NameOf): Node {
-  if (s.request) return { kind: 'REQUEST', content: <Space><Tag color={methodColor(s.request.method)}>{s.request.method}</Tag><span className="ms-mono">{s.request.url}</span></Space> }
+  if (s.request) return { kind: 'REQUEST', source: s.request.source || undefined, content: <Space><Tag color={methodColor(s.request.method)}>{s.request.method}</Tag><span className="ms-mono">{s.request.url}</span></Space> }
   if (s.caseId) return { kind: 'CASE', content: <span className="ms-mono">{t('scenario.caseRef', '用例')} {nameOf(s.caseId)}</span> }
-  if (s.scenarioId) return { kind: 'SCENARIO', content: <span className="ms-mono">{t('scenario.subScenario', '子场景')} {nameOf(s.scenarioId)}</span> }
+  if (s.scenarioId) return { kind: 'SCENARIO', source: s.refMode === 'COPY' ? 'COPY_SCENARIO' : undefined, content: <span className="ms-mono">{t('scenario.subScenario', '子场景')} {nameOf(s.scenarioId)}</span> }
   if (s.control) return controlToNode(s.kind.toUpperCase(), s.control, t, nameOf)
   return { kind: s.kind, content: '—' }
 }
 
 function StepRow({ node, idx, depth, t, result, running, seq = 0, enabled = true, onToggle, onRun, actions, hovered, respPreview, expandable, expanded, onChildSelect, onChildDblClick }: { node: Node; idx: number; depth: number; t: TFn; result?: ReportResultItem; running?: boolean; seq?: number; enabled?: boolean; onToggle?: () => void; onRun?: () => void; actions?: React.ReactNode; hovered?: boolean; respPreview?: React.ReactNode; expandable?: boolean; expanded?: boolean; onChildSelect?: (raw: ScenarioStep, path: number[]) => void; onChildDblClick?: (raw: ScenarioStep, path: number[]) => void }) {
-  const meta = makeStepMeta(t)[node.kind] || { label: node.kind, color: 'default' }
+  const copyLabels: Record<string, string> = {
+    COPY_CASE: t('scenario.copyCaseTag', '复制用例'),
+    COPY_API: t('scenario.copyApiTag', '复制API'),
+    COPY_SCENARIO: t('scenario.copyScnTag', '复制场景'),
+  }
+  const meta = node.source
+    ? { label: copyLabels[node.source] || t('scenario.copyTag', '复制'), color: 'green' }
+    : makeStepMeta(t)[node.kind] || { label: node.kind, color: 'default' }
   const ok = result?.outcome === 'SUCCESS'
   const muted: React.CSSProperties = { color: 'var(--text-3)', fontSize: 12, whiteSpace: 'nowrap' }
   const leaf = depth === 0
@@ -1133,8 +1107,7 @@ function ScenarioDetail({ scenario, active }: { scenario: Scenario; active?: boo
       message.error(e instanceof ApiError ? e.message : t('scenario.loadStepsFailed', '加载步骤失败'))
     }
   }
-  useEffect(() => {
-    loadSteps()
+  const loadReferenced = () =>
     // Load project cases + scenarios to build the id-to-name map for step display; load environments for run selection.
     Promise.all([
       api.projectCasesAll(scenario.projectId).catch(() => []),
@@ -1154,8 +1127,15 @@ function ScenarioDetail({ scenario, active }: { scenario: Scenario; active?: boo
       setEnvId((cur) => cur || (savedEnvId && environments.some((e) => e.id === savedEnvId) ? savedEnvId : environments.find((e) => e.enabled !== false)?.id || ''))
       setModules(mods)
     })
+  useEffect(() => {
+    loadSteps()
+    loadReferenced()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scenario.id])
+  const refreshReferenced = async () => {
+    await Promise.all([loadSteps(), loadReferenced()])
+    message.success(t('scenario.refDataRefreshed', '引用数据已刷新'))
+  }
 
   const run = async () => {
     setRunning(true)
@@ -1266,6 +1246,8 @@ function ScenarioDetail({ scenario, active }: { scenario: Scenario; active?: boo
       }
     }
     setSteps(arr)
+    // New references (e.g. scenario copies) need fresh name/case maps to label correctly.
+    loadReferenced()
   }
   // Inline insert: record the target index + a snapshot of current step ids, then open the matching add entry (custom request/import/controller).
   const startInsert = (key: string, at: number) => {
@@ -1424,6 +1406,9 @@ function ScenarioDetail({ scenario, active }: { scenario: Scenario; active?: boo
           </Tooltip>
         )}
         <div style={{ flex: 1 }} />
+        <Tooltip title={t('scenario.refreshRefData', '刷新引用场景数据')}>
+          <Button size="small" icon={<ReloadOutlined />} onClick={refreshReferenced} />
+        </Tooltip>
         {lastRun && (() => {
           const vals = Object.values(stepResults)
           const passN = vals.filter((r) => r.outcome === 'SUCCESS').length
@@ -1466,7 +1451,11 @@ function ScenarioDetail({ scenario, active }: { scenario: Scenario; active?: boo
               onDrop={(e) => { e.preventDefault(); if (dragIdx != null) moveStep(dragIdx, i); setDragIdx(null) }}
               onMouseEnter={() => setHoverStep(s.id)}
               onMouseLeave={() => setHoverStep((h) => (h === s.id ? null : h))}
-              onClick={() => (expandable ? toggleExpand(s) : setSelStep({ step: s, idx: i + 1 }))}
+              onClick={() => {
+                if (expandable) return toggleExpand(s)
+                // Editable inline requests (incl. copied steps) open straight in the editor.
+                if (s.kind.toUpperCase() === 'REQUEST') { setSelStep(null); setEditReqStep(s) } else setSelStep({ step: s, idx: i + 1 })
+              }}
               onDoubleClick={() => { if (s.kind.toUpperCase() === 'REQUEST') { setSelStep(null); setEditReqStep(s) } }}
               style={{ cursor: 'pointer', opacity: dragIdx === i ? 0.5 : 1 }}
             >
@@ -1824,7 +1813,7 @@ function StepDetailDrawer({
             <Button type="primary" icon={<ThunderboltOutlined />} loading={running} onClick={run}>{t('apidef.serverRun', '服务端执行')}</Button>
           </div>
           <Tabs className="ms-detail-tabs" size="small" items={reqTabs} />
-          <DebugResultPanel running={running} resp={resp} err={err} req={lastReq} isHttp extractors={reqInfo.processors as Record<string, unknown>[] | undefined} assertions={reqInfo.assertions as Record<string, unknown>[] | undefined} />
+          <DebugResultPanel running={running} resp={resp} err={err} req={lastReq} isHttp onRun={run} extractors={reqInfo.processors as Record<string, unknown>[] | undefined} assertions={reqInfo.assertions as Record<string, unknown>[] | undefined} />
         </>
       ) : (
         <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('scenario.controlStepInfo', '控制器步骤:在步骤列表中查看其配置与子步骤')} style={{ margin: '48px 0' }} />
@@ -1990,7 +1979,7 @@ function ScenarioExecutionsTab({ scenarioId, nameOf, caseMap, t }: { scenarioId:
         pagination={{ pageSize: 20, size: 'small' }}
         columns={[
           { title: t('scenario.colSeq', '序号'), dataIndex: 'id', render: (v: string) => <span className="ms-mono" style={{ fontSize: 12 }}>{v.slice(0, 12)}</span> },
-          { title: t('scenario.colStatus', '执行状态'), dataIndex: 'status', width: 110, render: (s: string) => <Tag color={outcomeColor(s)}>{s}</Tag> },
+          { title: t('scenario.colStatus', '执行状态'), dataIndex: 'status', width: 110, render: (s: string) => <Tag color={outcomeColor(s)}>{execStatusLabel(s, t)}</Tag> },
           { title: t('scenario.caseUnit', '用例'), dataIndex: 'caseCount', width: 80 },
           { title: t('scenario.execTime', '操作时间'), dataIndex: 'createdAt', width: 200, render: (v: string) => <span className="ms-mono" style={{ fontSize: 12 }}>{v?.slice(0, 19)}</span> },
           { title: t('apidef.colAction', '操作'), width: 100, render: (_v, r) => <Button type="link" size="small" disabled={!r.reportId} onClick={() => setReportId(r.reportId)}>{t('scenario.viewResult', '执行结果')}</Button> },
@@ -2035,611 +2024,6 @@ function ScenarioChangesTab({ scenarioId, t }: { scenarioId: string; t: TFn }) {
   )
 }
 
-// Scenario report (ref #26). Latency/size/status/body are only persisted by newer executors;
-// missing values render as an em dash.
-// 4-state distribution: pass / false positive / fail / not run (mirrors the reference report).
-type Dist = { pass: number; falsePos: number; fail: number; skip: number }
-const DIST_COLORS = { pass: '#22c55e', falsePos: '#f59e0b', fail: '#ef4444', skip: '#c9cdd4' }
-function StatRing({ d, centerLabel, labels }: { d: Dist; centerLabel: string; labels: Record<keyof Dist, string> }) {
-  const total = d.pass + d.falsePos + d.fail + d.skip
-  const C = 2 * Math.PI * 42
-  const order: (keyof Dist)[] = ['pass', 'falsePos', 'fail', 'skip']
-  let off = 0
-  return (
-    <svg width="116" height="116" viewBox="0 0 120 120">
-      <g transform="rotate(-90 60 60)">
-        <circle cx="60" cy="60" r="42" fill="none" stroke="var(--border-soft)" strokeWidth="14" />
-        {total > 0 && order.map((k) => {
-          if (d[k] <= 0) return null
-          const len = (d[k] / total) * C
-          const el = (
-            <Tooltip key={k} title={`${labels[k]} ${d[k]} · ${((d[k] / total) * 100).toFixed(2)}%`}>
-              <circle cx="60" cy="60" r="42" fill="none" stroke={DIST_COLORS[k]} strokeWidth="14" strokeDasharray={`${len} ${C - len}`} strokeDashoffset={`-${off}`} style={{ cursor: 'pointer' }} />
-            </Tooltip>
-          )
-          off += len
-          return el
-        })}
-      </g>
-      <text x="60" y="58" textAnchor="middle" fontSize="22" fontWeight="700" fill="currentColor" style={{ color: 'var(--text)' }}>{total}</text>
-      <text x="60" y="76" textAnchor="middle" fontSize="11" fill="#8a9099">{centerLabel}</text>
-    </svg>
-  )
-}
-function DistCard({ title, d, centerLabel, t }: { title: string; d: Dist; centerLabel: string; t: TFn }) {
-  const total = d.pass + d.falsePos + d.fail + d.skip
-  const pct = (n: number) => (total ? ((n / total) * 100).toFixed(2) : '0.00')
-  const rows: { k: keyof Dist; label: string }[] = [
-    { k: 'pass', label: t('scenario.pass', '通过') },
-    { k: 'falsePos', label: t('scenario.falsePos', '误报') },
-    { k: 'fail', label: t('scenario.fail', '失败') },
-    { k: 'skip', label: t('scenario.skip', '未执行') },
-  ]
-  return (
-    <div style={{ flex: 1, minWidth: 300, border: '1px solid var(--border-soft)', borderRadius: 10, padding: '14px 18px', background: 'var(--panel)' }}>
-      <h3 style={{ margin: '0 0 10px', fontSize: 14, color: 'var(--text-2)' }}>{title}</h3>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 20 }}>
-        <StatRing d={d} centerLabel={centerLabel} labels={Object.fromEntries(rows.map((r) => [r.k, r.label])) as Record<keyof Dist, string>} />
-        <div style={{ flex: 1 }}>
-          {rows.map(({ k, label }) => (
-            <div key={k} style={{ display: 'grid', gridTemplateColumns: '1fr auto auto', alignItems: 'center', columnGap: 18, padding: '5px 0', fontSize: 13 }}>
-              <span style={{ color: 'var(--text-2)' }}><span style={{ color: DIST_COLORS[k] }}>●</span> {label}</span>
-              <b style={{ color: 'var(--text)' }}>{d[k]}</b>
-              <span style={{ color: 'var(--text-3)', minWidth: 56, textAlign: 'right' }}>{pct(d[k])}%</span>
-            </div>
-          ))}
-        </div>
-      </div>
-    </div>
-  )
-}
-
-// ---- Report step tree: mirrors the scenario structure; flat results are mapped onto the
-// tree by walking it in the same DFS order the compiled plan executes (sub-scenarios expanded
-// in place, LOOP bodies repeated `times` times, IF bodies matched leaf-by-leaf). ----
-type RTNode = {
-  key: string
-  kind: string // step kinds + ITER (loop round) + EXTRA (unmatched trailing results)
-  content: ReactNode
-  /** Plain text for the name search. */
-  text: string
-  children?: RTNode[]
-  /** Executable leaf that consumes one result row during the DFS walk. */
-  leaf?: boolean
-  /** Leaf identity for conditional (IF) matching: CASE id or REQUEST method+url. */
-  match?: { caseId?: string; method?: string; url?: string }
-  /** Subtree the executor never runs (ONCE body on loop rounds >1, SCENARIO refs nested in controllers). */
-  noExec?: boolean
-  result?: ReportResultItem
-}
-
-type ReportTreeData = { subs: Record<string, ScenarioStep[]>; names: Record<string, string> }
-type ReportTreeCtx = { data: ReportTreeData; t: TFn; nameOf: NameOf; onceRepeat?: boolean }
-
-/** Scenario ids referenced by steps: direct SCENARIO steps + controller children, recursively. */
-function collectScenarioRefs(steps: ScenarioStep[]): string[] {
-  const out: string[] = []
-  const fromChild = (c: any) => {
-    if (!c) return
-    if (String(c.kind || '').toUpperCase() === 'SCENARIO' && c.refId) out.push(String(c.refId))
-    if (Array.isArray(c.children)) c.children.forEach(fromChild)
-  }
-  for (const s of steps) {
-    if (s.scenarioId) out.push(s.scenarioId)
-    const ctl = s.control as { children?: unknown[] } | null | undefined
-    if (Array.isArray(ctl?.children)) ctl.children.forEach(fromChild)
-  }
-  return out
-}
-
-const reportReqNode = (key: string, method: string, url: string): RTNode => ({
-  key,
-  kind: 'REQUEST',
-  leaf: true,
-  match: { method, url },
-  text: `${method} ${url}`,
-  content: <Space><Tag color={methodColor(method)} style={{ margin: 0 }}>{method}</Tag><span className="ms-mono">{url}</span></Space>,
-})
-
-function buildScenarioNodes(id: string, prefix: string, ctx: ReportTreeCtx, depth: number, stack: string[]): RTNode[] {
-  // Cycle/depth guard mirrors the fetch cache; missing entries render as an empty group.
-  if (depth > 5 || stack.includes(id)) return []
-  const steps = ctx.data.subs[id]
-  if (!steps) return []
-  return [...steps].sort((a, b) => a.order - b.order).map((s, i) => buildReportStepNode(s, `${prefix}.${i}`, ctx, depth, [...stack, id]))
-}
-
-function buildReportStepNode(s: ScenarioStep, key: string, ctx: ReportTreeCtx, depth: number, stack: string[]): RTNode {
-  const { t, nameOf } = ctx
-  if (s.caseId) return { key, kind: 'CASE', leaf: true, match: { caseId: s.caseId }, text: nameOf(s.caseId), content: <span className="ms-mono">{t('scenario.caseRef', '用例')} {nameOf(s.caseId)}</span> }
-  if (s.request) return reportReqNode(key, s.request.method, s.request.url)
-  if (s.scenarioId) return { key, kind: 'SCENARIO', text: nameOf(s.scenarioId), content: <span className="ms-mono">{t('scenario.subScenario', '子场景')} {nameOf(s.scenarioId)}</span>, children: buildScenarioNodes(s.scenarioId, key, ctx, depth + 1, stack) }
-  if (s.control) return buildReportControlNode(s.kind.toUpperCase(), s.control, key, ctx, depth, stack)
-  return { key, kind: s.kind.toUpperCase(), text: '', content: '—' }
-}
-
-function buildReportChildNode(c: any, key: string, ctx: ReportTreeCtx, depth: number, stack: string[]): RTNode {
-  const kind = String(c?.kind || '').toUpperCase()
-  const { t, nameOf } = ctx
-  if (kind === 'CASE') return { key, kind, leaf: true, match: { caseId: c.refId }, text: nameOf(c.refId), content: <span className="ms-mono">{t('scenario.caseRef', '用例')} {nameOf(c.refId)}</span> }
-  if (kind === 'REQUEST') return reportReqNode(key, c.method || 'GET', c.url || '')
-  if (kind === 'SCENARIO')
-    // The plan compiler drops SCENARIO refs nested in controllers, so this subtree never executes.
-    return { key, kind, noExec: true, text: nameOf(c.refId), content: <span className="ms-mono">{t('scenario.subScenario', '子场景')} {nameOf(c.refId)}</span>, children: buildScenarioNodes(String(c.refId), key, ctx, depth + 1, stack) }
-  return buildReportControlNode(kind, c, key, ctx, depth, stack)
-}
-
-function buildReportControlNode(kind: string, payload: any, key: string, ctx: ReportTreeCtx, depth: number, stack: string[]): RTNode {
-  const { t } = ctx
-  const raw = Array.isArray(payload?.children) ? payload.children : []
-  const buildKids = (prefix: string, onceRepeat: boolean) => raw.map((c: any, i: number) => buildReportChildNode(c, `${prefix}.${i}`, { ...ctx, onceRepeat }, depth, stack))
-  if (kind === 'LOOP') {
-    const times = Math.max(1, Number(payload?.times ?? 1) || 1)
-    const label = `${t('scenario.loopPrefix', '循环')} ${times} ${t('scenario.loopSuffix', '次')}`
-    // Rounds >1: ONCE bodies inside run only on the first pass (executor keeps once-done state per run).
-    const children = times > 1
-      ? Array.from({ length: times }, (_, r) => ({
-          key: `${key}#${r}`,
-          kind: 'ITER',
-          text: '',
-          content: `${t('scenario.iterPrefix', '第')} ${r + 1} ${t('scenario.iterSuffix', '次')}`.trim(),
-          children: buildKids(`${key}#${r}`, !!ctx.onceRepeat || r > 0),
-        }))
-      : buildKids(key, !!ctx.onceRepeat)
-    return { key, kind: 'LOOP', text: label, content: label, children }
-  }
-  if (kind === 'IF') {
-    const label = `${payload?.variable ?? ''} ${payload?.operator ?? ''} ${payload?.value ?? ''}`.trim()
-    return { key, kind: 'IF', text: label, content: <span className="ms-mono">{label}</span>, children: buildKids(key, !!ctx.onceRepeat) }
-  }
-  if (kind === 'ONCE') return { key, kind: 'ONCE', text: '', content: t('scenario.onceOnly', '仅执行一次'), noExec: ctx.onceRepeat, children: buildKids(key, !!ctx.onceRepeat) }
-  if (kind === 'TIMER') return { key, kind: 'TIMER', text: '', content: `${t('scenario.waitPrefix', '等待')} ${payload?.ms ?? 0} ms` }
-  return { key, kind, text: '', content: '—' }
-}
-
-/** Does the result row belong to this leaf? Used only under IF bodies (skippable at runtime). */
-function reportLeafMatches(m: { caseId?: string; method?: string; url?: string }, r: ReportResultItem): boolean {
-  if (m.caseId) return r.caseId === m.caseId
-  const parsed = /^([A-Z]+)\s+(\S*)/.exec(r.caseId)
-  const method = (parsed?.[1] || r.request?.method || '').toUpperCase()
-  if (method && m.method && method !== m.method.toUpperCase()) return false
-  // Report labels carry merged query/REST params; compare paths loosely.
-  const strip = (u?: string) => (u || '').split('?')[0].replace(/\/+$/, '')
-  const a = strip(parsed?.[2] || r.request?.url)
-  const b = strip(m.url)
-  return !a || !b || a === b || a.endsWith(b) || b.endsWith(a)
-}
-
-/** DFS walk with a cursor into results[]; leaves inside IF bodies only consume on a match. */
-function assignReportResults(nodes: RTNode[], results: ReportResultItem[], cur: { i: number }, conditional: boolean) {
-  for (const n of nodes) {
-    if (n.noExec) continue
-    if (n.leaf && n.match && cur.i < results.length) {
-      const r = results[cur.i]
-      if (!conditional || reportLeafMatches(n.match, r)) {
-        n.result = r
-        cur.i++
-      }
-    }
-    if (n.children) assignReportResults(n.children, results, cur, conditional || n.kind === 'IF')
-  }
-}
-
-/** Keep leaves matching the predicate plus their ancestor rows; no filters = full tree. */
-function filterReportTree(nodes: RTNode[], pred: (n: RTNode) => boolean, filtering: boolean): RTNode[] {
-  return nodes.flatMap((n) => {
-    if (n.children?.length) {
-      const kids = filterReportTree(n.children, pred, filtering)
-      return kids.length || !filtering ? [{ ...n, children: kids }] : []
-    }
-    return !filtering || pred(n) ? [n] : []
-  })
-}
-
-function collectGroupKeys(nodes: RTNode[], out: string[] = []): string[] {
-  for (const n of nodes) {
-    if (n.children?.length) {
-      out.push(n.key)
-      collectGroupKeys(n.children, out)
-    }
-  }
-  return out
-}
-
-// Per-leaf result cluster (pass/fail tag + status + latency w/ timing waterfall + size); shared by
-// the flat report row and the tree row.
-function ResultCluster({ r, t }: { r: ReportResultItem; t: TFn }) {
-  const ok = r.outcome === 'SUCCESS'
-  const muted: React.CSSProperties = { color: 'var(--text-3)', fontSize: 12, whiteSpace: 'nowrap' }
-  return (
-    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 10 }}>
-      <Tag color={ok ? 'green' : 'red'} style={{ margin: 0 }}>{ok ? t('scenario.pass', '通过') : t('scenario.fail', '失败')}</Tag>
-      {r.statusCode != null && <Tooltip title={t('scenario.statusTip', '服务端返回的 HTTP 状态码')}><span style={muted}>{t('apidef.statusCode', '状态码')} <span style={{ color: r.statusCode < 400 ? 'var(--success)' : 'var(--error)' }}>{r.statusCode}</span></span></Tooltip>}
-      {r.timings ? (
-        <LatencyStat totalMs={r.latencyMs ?? 0} timings={r.timings}>
-          <span style={muted}>{t('scenario.respTime', '响应时间')} {r.latencyMs != null ? fmtDuration(r.latencyMs) : '—'}</span>
-        </LatencyStat>
-      ) : (
-        <Tooltip title={t('scenario.respTimeTip', '从建立连接到收到服务端完整响应的全链路耗时')}><span style={muted}>{t('scenario.respTime', '响应时间')} {r.latencyMs != null ? fmtDuration(r.latencyMs) : '—'}</span></Tooltip>
-      )}
-      <Tooltip title={t('scenario.respSizeTip', '响应体大小')}><span style={muted}>{t('scenario.respSize', '响应大小')} {r.respSize != null ? fmtSize(r.respSize) : '—'}</span></Tooltip>
-    </span>
-  )
-}
-
-// Report tree rows: numbered per level, groups expand/collapse; in tab view executed leaves also
-// expand an inline response panel (same debug panel synthesis as ReportRow).
-function ReportTreeRows({ nodes, depth, view, t, caseOf, expandedKeys, openKeys, onExpand, onOpen }: {
-  nodes: RTNode[]
-  depth: number
-  view: 'flat' | 'tab'
-  t: TFn
-  caseOf?: (id: string) => ApiCase | undefined
-  expandedKeys: Set<string>
-  openKeys: Set<string>
-  onExpand: (k: string) => void
-  onOpen: (k: string) => void
-}) {
-  const stepMeta = makeStepMeta(t)
-  return (
-    <>
-      {nodes.map((n, i) => {
-        const meta = stepMeta[n.kind]
-        const hasKids = (n.children?.length ?? 0) > 0
-        const isExpanded = expandedKeys.has(n.key)
-        const r = n.result
-        const hasDetail = !!r && (r.statusCode != null || r.body != null || (r.headers?.length ?? 0) > 0)
-        const canOpen = view === 'tab' && hasDetail
-        const isOpen = canOpen && openKeys.has(n.key)
-        const clickable = hasKids || canOpen
-        const req = r && isOpen ? synthSentRequest(r, caseOf) : null
-        const resp = r && isOpen ? synthDebugResponse(r) : null
-        return (
-          <div key={n.key}>
-            <div
-              onClick={() => { if (hasKids) onExpand(n.key); else if (canOpen) onOpen(n.key) }}
-              style={{ marginLeft: depth * 24, border: '1px solid var(--border-soft)', borderRadius: 6, marginBottom: 6, background: depth ? 'var(--panel-2)' : 'var(--panel)', cursor: clickable ? 'pointer' : 'default' }}
-            >
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px' }}>
-                {clickable
-                  ? <span style={{ color: 'var(--text-3)', fontSize: 11, width: 12 }}>{(hasKids ? isExpanded : isOpen) ? '▾' : '▸'}</span>
-                  : <span style={{ width: 12 }} />}
-                <span style={{ color: 'var(--text-3)', fontSize: 12, minWidth: 18 }}>{i + 1}</span>
-                {meta && <Tag color={meta.color} style={{ margin: 0 }}>{meta.label}</Tag>}
-                <span style={{ flex: 1, minWidth: 0, fontWeight: n.kind === 'ITER' ? 500 : undefined }}>{n.content}</span>
-                {n.leaf && (r ? <ResultCluster r={r} t={t} /> : <Tag style={{ margin: 0, color: 'var(--text-3)' }}>{t('scenario.skip', '未执行')}</Tag>)}
-              </div>
-              {r && r.failures.length > 0 && (
-                <div style={{ padding: '0 12px 8px 42px' }}>
-                  {r.failures.map((f, j) => <div key={j} style={{ color: 'var(--error)', fontSize: 12 }} className="ms-mono">✗ {f}</div>)}
-                </div>
-              )}
-              {isOpen && resp && (
-                <div style={{ padding: '0 12px 12px' }} onClick={(e) => e.stopPropagation()}>
-                  <DebugResultPanel running={false} resp={resp} err="" req={req} isHttp={!!req} />
-                </div>
-              )}
-            </div>
-            {hasKids && isExpanded && (
-              <ReportTreeRows nodes={n.children!} depth={depth + 1} view={view} t={t} caseOf={caseOf} expandedKeys={expandedKeys} openKeys={openKeys} onExpand={onExpand} onOpen={onOpen} />
-            )}
-          </div>
-        )
-      })}
-    </>
-  )
-}
-
-// Scenario run report drawer: analysis cards + rings on top; toolbar filter + expand/collapse all;
-// detail rows mirror the scenario step tree when the owning scenario is known (scenarioId prop),
-// otherwise fall back to the flat list (union batch reports). Rows reuse ReportRow / ReportTreeRows.
-function ScenarioReportModal({ reportId, scenarioId, nameOf, caseMap, onClose }: { reportId: string | null; scenarioId?: string; nameOf: NameOf; caseMap?: Record<string, ApiCase>; onClose: () => void }) {
-  const { t } = useI18n()
-  const [data, setData] = useState<ScenarioReportDetail | null>(null)
-  const [loading, setLoading] = useState(false)
-  const [search, setSearch] = useState('')
-  const [openSet, setOpenSet] = useState<Set<number>>(new Set())
-  // Flat rows vs tab view (tab = expanding a leaf also opens the response panel); outcome filter is a [scope, outcome] cascader pick.
-  const [view, setView] = useState<'flat' | 'tab'>('tab')
-  const [filter, setFilter] = useState<string[]>()
-  // Step tree of the owning scenario (+ referenced sub-scenarios, fetched recursively).
-  const [treeData, setTreeData] = useState<ReportTreeData | null>(null)
-  const [expandedKeys, setExpandedKeys] = useState<Set<string>>(new Set())
-  const [openKeys, setOpenKeys] = useState<Set<string>>(new Set())
-  useEffect(() => {
-    if (!reportId) { setData(null); return }
-    setOpenSet(new Set())
-    setSearch('')
-    setFilter(undefined)
-    setLoading(true)
-    api.scenarioReport(reportId).then(setData).catch(() => setData(null)).finally(() => setLoading(false))
-  }, [reportId])
-  useEffect(() => {
-    setTreeData(null)
-    if (!reportId || !scenarioId) return
-    let alive = true
-    const subs: Record<string, ScenarioStep[]> = {}
-    const names: Record<string, string> = {}
-    // Recursive fetch with cycle guard + depth cap; sub-scenario failures leave an empty group.
-    const load = async (id: string, depth: number, stack: Set<string>): Promise<void> => {
-      if (depth > 5 || stack.has(id) || subs[id]) return
-      const sc = await api.getScenario(id)
-      subs[id] = sc.steps || []
-      names[id] = sc.name
-      const next = new Set(stack).add(id)
-      for (const rid of collectScenarioRefs(subs[id])) await load(rid, depth + 1, next).catch(() => undefined)
-    }
-    load(scenarioId, 0, new Set())
-      .then(() => { if (alive) setTreeData({ subs, names }) })
-      .catch(() => { if (alive) setTreeData(null) })
-    return () => { alive = false }
-  }, [reportId, scenarioId])
-  const all = data?.results || []
-  const passN = all.filter((r) => r.outcome === 'SUCCESS').length
-  const failN = all.length - passN
-  const passRate = all.length ? (passN / all.length) * 100 : 0
-  // Distribution (backend doesn't track false positives / not-run yet, so 0). Steps and requests share the same source (flat scenario, one request per step).
-  const dist: Dist = { pass: passN, falsePos: 0, fail: failN, skip: 0 }
-  // Request total = sum of step latencies; report total is roughly the executedAt span + last step latency (falls back to request total without valid timestamps).
-  const reqTotalMs = all.reduce((s, r) => s + (r.latencyMs ?? 0), 0)
-  // Report total time: prefer backend wall-clock (durationMs, since 0056); old reports fall back to executedAt span / request total.
-  const times = all.map((r) => Date.parse((r.executedAt || '').replace(' ', 'T'))).filter((n) => !Number.isNaN(n))
-  const span = times.length ? Math.max(...times) - Math.min(...times) : 0
-  const reportTotalMs = (data?.durationMs != null && data.durationMs >= 0)
-    ? data.durationMs
-    : (span > 0 ? span + (all.length ? all[all.length - 1].latencyMs ?? 0 : 0) : reqTotalMs)
-  // Assertion pass rate (per assertion; falls back to step pass rate without assertion data).
-  let asTotal = 0, asPass = 0
-  for (const r of all) { const a = (r.assertions as AssertionResult[] | undefined) || []; asTotal += a.length; asPass += a.filter((x) => x.passed).length }
-  const asRate = asTotal ? (asPass / asTotal) * 100 : passRate
-  // caseId is usually a readable request line (GET http://...) or a case UUID; resolve UUIDs via nameOf.
-  const label = (id: string) => (/^[0-9a-f]{8}-/.test(id) ? nameOf(id) : id)
-  // Outcome filter predicates: step and request scopes share one source (flat scenario, one request per step).
-  const outcomeMatch: Record<string, (r: ReportResultItem) => boolean> = {
-    pass: (r) => r.outcome === 'SUCCESS',
-    falsePos: () => false,
-    fail: (r) => r.outcome !== 'SUCCESS' && r.outcome !== 'ERROR' && r.outcome !== 'SKIPPED',
-    skip: (r) => r.outcome === 'SKIPPED',
-    scriptError: (r) => r.outcome === 'ERROR',
-  }
-  const outcomeKey = filter?.[1] as string | undefined
-  const rows = all.filter((r) =>
-    (!search || label(r.caseId).toLowerCase().includes(search.toLowerCase())) &&
-    (!outcomeKey || outcomeMatch[outcomeKey]?.(r) !== false),
-  )
-  const toggle = (i: number) => setOpenSet((prev) => { const n = new Set(prev); if (n.has(i)) n.delete(i); else n.add(i); return n })
-  // Build the step tree + map results by DFS order; null = fall back to the flat list.
-  const treeNameOf: NameOf = (id) => treeData?.names[id] || nameOf(id)
-  const tree = useMemo(() => {
-    if (!treeData || !data || !scenarioId) return null
-    const rootSteps = treeData.subs[scenarioId]
-    if (!rootSteps?.length) return null
-    const ctx: ReportTreeCtx = { data: treeData, t, nameOf: treeNameOf }
-    const nodes = [...rootSteps].sort((a, b) => a.order - b.order).map((s, i) => buildReportStepNode(s, `s${i}`, ctx, 0, [scenarioId]))
-    const cur = { i: 0 }
-    assignReportResults(nodes, data.results, cur, false)
-    // Rows left over after the walk (alignment drift): append flat, never hide data.
-    data.results.slice(cur.i).forEach((r, j) =>
-      nodes.push({ key: `x${j}`, kind: 'EXTRA', leaf: true, text: label(r.caseId), content: <span className="ms-mono">{label(r.caseId)}</span>, result: r }))
-    return nodes
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [treeData, data, scenarioId, t])
-  // Default: hierarchy fully expanded, response panels closed.
-  useEffect(() => {
-    setExpandedKeys(new Set(tree ? collectGroupKeys(tree) : []))
-    setOpenKeys(new Set())
-  }, [tree])
-  const filtering = !!search.trim() || !!outcomeKey
-  const visibleTree = useMemo(() => {
-    if (!tree) return null
-    const q = search.trim().toLowerCase()
-    const pred = (n: RTNode) => {
-      if (q && !n.text.toLowerCase().includes(q)) return false
-      if (outcomeKey) {
-        if (!n.leaf) return false
-        if (outcomeKey === 'skip') return !n.result
-        return n.result ? outcomeMatch[outcomeKey]?.(n.result) !== false : false
-      }
-      return true
-    }
-    return filterReportTree(tree, pred, filtering)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tree, search, outcomeKey])
-  const toggleKey = (set: React.Dispatch<React.SetStateAction<Set<string>>>) => (k: string) =>
-    set((prev) => { const n = new Set(prev); if (n.has(k)) n.delete(k); else n.add(k); return n })
-  const outcomeOptions = [
-    { value: 'pass', label: t('scenario.pass', '通过') },
-    { value: 'falsePos', label: t('scenario.falsePos', '误报') },
-    { value: 'fail', label: t('scenario.fail', '失败') },
-    { value: 'skip', label: t('scenario.skip', '未执行') },
-    { value: 'scriptError', label: t('scenario.scriptError', '脚本错误') },
-  ]
-  const stat = (lbl: ReactNode, val: ReactNode, color?: string) => (
-    <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', fontSize: 14 }}><span style={{ color: 'var(--text-2)' }}>{lbl}</span><b style={{ color }}>{val}</b></div>
-  )
-  return (
-    <ResizableDrawer
-      open={!!reportId}
-      onClose={onClose}
-      width="60%"
-      title={data?.name ? `${t('scenario.report', '场景报告')} · ${data.name}` : t('scenario.report', '场景报告')}
-      styles={{ body: { background: 'var(--panel-2)' } }}
-    >
-      {loading ? (
-        <div style={{ padding: 32, color: 'var(--text-3)' }}>{t('a.loading', '加载中…')}</div>
-      ) : !data ? (
-        <Empty description={t('scenario.noReport', '暂无报告')} />
-      ) : (
-        <>
-          {/* Overview: report / step / request analysis (mirrors the reference report). */}
-          <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', marginBottom: 20 }}>
-            <div style={{ flex: 1, minWidth: 260, border: '1px solid var(--border-soft)', borderRadius: 10, padding: '14px 18px', background: 'var(--panel)' }}>
-              <h3 style={{ margin: '0 0 10px', fontSize: 14, color: 'var(--text-2)', display: 'flex', alignItems: 'center', gap: 8 }}>
-                {t('scenario.reportAnalysis', '报告分析')}<Tag color={outcomeColor(data.status)} style={{ margin: 0 }}>{runOutcomeLabel(data.status, t)}</Tag>
-              </h3>
-              {stat(t('scenario.reportTotalTime', '报告总耗时'), <Tooltip title={t('scenario.reportTotalTip', '从第一步开始到最后一步完成的墙钟总耗时')}><span>{(reportTotalMs / 1000).toFixed(3)} <span style={{ color: 'var(--text-3)', fontWeight: 400 }}>(sec)</span></span></Tooltip>)}
-              {stat(t('scenario.reqTotalTime', '请求总耗时'), <Tooltip title={t('scenario.respTimeTip', '从建立连接到收到服务端完整响应的全链路耗时')}><span>{fmtDuration(reqTotalMs)}</span></Tooltip>)}
-              {stat(t('scenario.assertPassRate', '断言通过率'), <Tooltip title={t('scenario.assertRateTip', '通过断言数占全部断言数的比例')}><span>{asRate.toFixed(2)} <span style={{ color: 'var(--text-3)', fontWeight: 400 }}>(%)</span></span></Tooltip>, asRate >= 100 ? '#22c55e' : undefined)}
-            </div>
-            <DistCard title={t('scenario.stepAnalysis', '步骤分析')} d={dist} centerLabel={t('scenario.totalCount', '总数(个)')} t={t} />
-            <DistCard title={t('scenario.reqAnalysis', '请求分析')} d={dist} centerLabel={t('scenario.totalCount', '总数(个)')} t={t} />
-          </div>
-          {/* Report detail: view toggle + name search + outcome cascader + expand/collapse (flat view only). */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10, flexWrap: 'wrap' }}>
-            <Typography.Text strong>{t('scenario.reportDetail', '报告明细')}</Typography.Text>
-            <Segmented
-              size="small"
-              value={view}
-              onChange={(v) => setView(v as 'flat' | 'tab')}
-              options={[
-                { value: 'flat', label: t('scenario.flatView', '平铺展示') },
-                { value: 'tab', label: t('scenario.tabView', 'Tab展示') },
-              ]}
-            />
-            <div style={{ flex: 1 }} />
-            <Input
-              size="small"
-              allowClear
-              style={{ width: 200 }}
-              placeholder={t('scenario.searchByName', '通过名称搜索')}
-              suffix={<span style={{ color: 'var(--text-3)' }}>⌕</span>}
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-            />
-            <Cascader
-              size="small"
-              style={{ width: 200 }}
-              placeholder={t('scenario.filterPh', '请选择过滤条件')}
-              value={filter}
-              onChange={(v) => setFilter(v as string[] | undefined)}
-              allowClear
-              expandTrigger="hover"
-              options={[
-                { value: 'step', label: t('scenario.filterStep', '步骤'), children: outcomeOptions },
-                { value: 'request', label: t('scenario.filterReq', '请求'), children: outcomeOptions },
-              ]}
-            />
-            {visibleTree ? (() => {
-              // Tree mode: toggles the hierarchy only (never auto-opens response panels).
-              const keys = collectGroupKeys(visibleTree)
-              const allOpen = keys.length > 0 && keys.every((k) => expandedKeys.has(k))
-              return keys.length > 0 ? (
-                <Button size="small" onClick={() => setExpandedKeys(allOpen ? new Set() : new Set(collectGroupKeys(tree!)))}>
-                  {allOpen ? t('scenario.collapseAll', '收起全部') : t('scenario.expandAll', '展开全部')}
-                </Button>
-              ) : null
-            })() : view === 'flat' && (() => {
-              const allOpen = rows.length > 0 && openSet.size >= rows.length
-              return (
-                <Button size="small" onClick={() => setOpenSet(allOpen ? new Set() : new Set(rows.map((_, i) => i)))}>
-                  {allOpen ? t('scenario.collapseAll', '收起全部') : t('scenario.expandAll', '展开全部')}
-                </Button>
-              )
-            })()}
-          </div>
-          <div style={{ marginTop: 10 }}>
-            {visibleTree ? (
-              visibleTree.length === 0 ? (
-                <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('scenario.noStepResult', '无步骤结果')} />
-              ) : (
-                <ReportTreeRows
-                  nodes={visibleTree}
-                  depth={0}
-                  view={view}
-                  t={t}
-                  caseOf={(id) => caseMap?.[id]}
-                  expandedKeys={expandedKeys}
-                  openKeys={openKeys}
-                  onExpand={toggleKey(setExpandedKeys)}
-                  onOpen={toggleKey(setOpenKeys)}
-                />
-              )
-            ) : rows.length === 0 ? (
-              <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('scenario.noStepResult', '无步骤结果')} />
-            ) : view === 'flat' ? (
-              rows.map((r, i) => <ReportRow key={i} idx={i + 1} r={r} label={label} t={t} open={openSet.has(i)} onToggle={() => toggle(i)} caseOf={(id) => caseMap?.[id]} />)
-            ) : (
-              <Tabs
-                size="small"
-                items={rows.map((r, i) => ({
-                  key: String(i),
-                  label: (
-                    <span>
-                      <span style={{ color: r.outcome === 'SUCCESS' ? 'var(--success)' : 'var(--error)', marginRight: 6 }}>●</span>
-                      {i + 1} {label(r.caseId)}
-                    </span>
-                  ),
-                  children: <ReportRow idx={i + 1} r={r} label={label} t={t} open onToggle={() => undefined} caseOf={(id) => caseMap?.[id]} />,
-                }))}
-              />
-            )}
-          </div>
-        </>
-      )}
-    </ResizableDrawer>
-  )
-}
-
-// Rebuild the actual request line from the referenced case (mirrors backend to_node: REST substitution / query string / auth header).
-// ${var} runtime substitution can't be reproduced client-side, so this shows the case template request (identical when the case has no variables).
-function caseToSentRequest(c: ApiCase): SentRequest {
-  let url = c.url || ''
-  for (const p of c.restParams ?? []) if (p.key) url = url.split(`{${p.key}}`).join(p.value)
-  const qs = (c.queryParams ?? []).filter((p) => p.key).map((p) => `${p.key}=${p.value}`).join('&')
-  if (qs) url += (url.includes('?') ? '&' : '?') + qs
-  const headers = [...(c.headers ?? [])]
-  if (c.auth?.token && c.auth.type && c.auth.type !== 'none') {
-    headers.push({ key: 'Authorization', value: `${c.auth.type === 'basic' ? 'Basic' : 'Bearer'} ${c.auth.token}` })
-  }
-  return { method: c.method, url, headers, body: c.body ?? undefined }
-}
-
-// Actual request priority: 1) request persisted in the report (since 0060; variables/baseUrl/auth resolved),
-// 2) legacy fallback: parse REQUEST steps from caseId="GET http://...", rebuild CASE references from the case template.
-function synthSentRequest(r: ReportResultItem, caseOf?: (id: string) => ApiCase | undefined): SentRequest | null {
-  if (r.request) return { method: r.request.method, url: r.request.url, headers: (r.request.headers ?? []).map(([key, value]) => ({ key, value })), body: r.request.body ?? undefined }
-  const m = /^([A-Z]+)\s+(\S+)/.exec(r.caseId)
-  if (m) return { method: m[1], url: m[2], headers: [] }
-  const kase = caseOf?.(r.caseId)
-  return kase ? caseToSentRequest(kase) : null
-}
-
-// Synthesize a DebugResponse from the stored response detail to reuse the debug 7-tab panel.
-// Reports persist per-assertion results (incl. passes) since 0048; older reports synthesize failure rows from `failures`.
-function synthDebugResponse(r: ReportResultItem): DebugResponse | null {
-  const hasDetail = r.statusCode != null || r.body != null || (r.headers?.length ?? 0) > 0
-  if (!hasDetail) return null
-  const failAsserts: AssertionResult[] = r.failures.map((f) => ({ item: f, condition: '', expected: '', actual: '', passed: false, reason: f }))
-  const asserts = r.assertions?.length ? r.assertions : failAsserts
-  return { status: r.statusCode ?? 0, latencyMs: r.latencyMs ?? 0, headers: r.headers ?? [], body: r.body ?? '', assertions: asserts.length ? asserts : undefined, extractions: r.extractions?.length ? r.extractions : undefined }
-}
-
-function ReportRow({ idx, r, label, t, open, onToggle, caseOf }: { idx: number; r: ReportResultItem; label: (id: string) => string; t: TFn; open: boolean; onToggle: () => void; caseOf?: (id: string) => ApiCase | undefined }) {
-  const hasDetail = r.statusCode != null || r.body != null || (r.headers?.length ?? 0) > 0
-  const req = synthSentRequest(r, caseOf)
-  const resp = synthDebugResponse(r)
-  return (
-    <div style={{ border: '1px solid var(--border-soft)', borderRadius: 8, marginBottom: 8, background: 'var(--panel)' }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', cursor: hasDetail ? 'pointer' : 'default' }} onClick={() => hasDetail && onToggle()}>
-        {hasDetail && <span style={{ color: 'var(--text-3)', fontSize: 11 }}>{open ? '▾' : '▸'}</span>}
-        <span style={{ color: 'var(--text-3)', fontSize: 12, minWidth: 18 }}>{idx}</span>
-        <span style={{ flex: 1, minWidth: 0 }} className="ms-mono">{label(r.caseId)}</span>
-        <ResultCluster r={r} t={t} />
-      </div>
-      {r.failures.length > 0 && (
-        <div style={{ padding: '0 12px 8px 40px' }}>
-          {r.failures.map((f, j) => <div key={j} style={{ color: 'var(--error)', fontSize: 12 }} className="ms-mono">✗ {f}</div>)}
-        </div>
-      )}
-      {open && resp && (
-        <div style={{ padding: '0 12px 12px' }}>
-          <DebugResultPanel running={false} resp={resp} err="" req={req} isHttp={!!req} />
-        </div>
-      )}
-    </div>
-  )
-}
-
 // Controller child (leaf) builder: CASE reference or inline REQUEST.
 type Child = { kind: 'CASE'; refId: string } | { kind: 'REQUEST'; method: string; url: string }
 
@@ -2673,7 +2057,7 @@ function ChildrenBuilder({ value, onChange, projectCases }: { value: Child[]; on
 }
 
 // Add-step modal dispatched by type: CASE/REQUEST/SCENARIO leaves + LOOP/IF/ONCE/TIMER controllers (with children).
-type StepBody = { kind: string; order: number; refId?: string; request?: unknown; control?: unknown }
+type StepBody = { kind: string; order: number; refId?: string; refMode?: string; snapshot?: unknown; request?: unknown; control?: unknown }
 // Custom request drawer: request line + headers/body/query/REST/pre/post/assertions/auth
 // + server run + response. The backend supports the full inline request spec.
 function CustomRequestDrawer({
@@ -2872,7 +2256,7 @@ function CustomRequestDrawer({
       <Tabs className="ms-detail-tabs" size="small" items={tabs} />
       <Divider style={{ margin: '12px 0' }} />
       <Typography.Text strong style={{ fontSize: 13 }}>{t('apidef.respContent', '响应内容')}</Typography.Text>
-      <DebugResultPanel running={running} resp={resp} err={err} req={lastReq} isHttp assertions={assertions as Record<string, unknown>[]} extractors={[...pre, ...post] as Record<string, unknown>[]} />
+      <DebugResultPanel running={running} resp={resp} err={err} req={lastReq} isHttp onRun={run} assertions={assertions as Record<string, unknown>[]} extractors={[...pre, ...post] as Record<string, unknown>[]} />
     </ResizableDrawer>
   )
 }
@@ -3022,13 +2406,18 @@ function ImportRequestDrawer({
   const [selScn, setSelScn] = useState<string[]>([])
   const [importing, setImporting] = useState(false)
 
+  const reload = () => {
+    api.definitions(projectId).then((d) => setDefs(Array.isArray(d) ? d : [])).catch(() => setDefs([]))
+    api.projectCasesAll(projectId).then(setCases).catch(() => setCases([]))
+    api.scenarios(projectId).then((s) => setScns(s.filter((x) => x.id !== scenarioId))).catch(() => setScns([]))
+    api.modules(projectId).then((m) => setModules(Array.isArray(m) ? m : [])).catch(() => setModules([]))
+  }
+
   useEffect(() => {
     if (!open) return
     setSearch(''); setModuleSearch(''); setSelModule('ALL'); setSelApi([]); setSelCase([]); setSelScn([])
-    api.definitions(projectId).then((d) => setDefs(Array.isArray(d) ? d : [])).catch(() => setDefs([]))
-    api.projectCases(projectId).then((p) => setCases(p.items)).catch(() => setCases([]))
-    api.scenarios(projectId).then((s) => setScns(s.filter((x) => x.id !== scenarioId))).catch(() => setScns([]))
-    api.modules(projectId).then((m) => setModules(Array.isArray(m) ? m : [])).catch(() => setModules([]))
+    reload()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, projectId, scenarioId])
 
   const lc = (s: string) => s.toLowerCase()
@@ -3081,23 +2470,91 @@ function ImportRequestDrawer({
     }
   }
 
+  // Copy mode: materialize selections into editable inline REQUEST steps
+  // (same request payload shape CustomRequestDrawer saves).
+  const arr = (v: unknown): unknown[] => (Array.isArray(v) ? v : [])
+  const cleanAuth = (a?: { type?: string; token?: string }) => (a?.type && a.type !== 'none' ? { type: a.type, token: a.token } : undefined)
+  const caseToRequest = (c: ApiCase) => ({
+    method: c.method || 'GET',
+    url: c.url || '',
+    body: c.body ?? null,
+    headers: c.headers ?? [],
+    queryParams: c.queryParams ?? [],
+    restParams: c.restParams ?? [],
+    auth: cleanAuth(c.auth),
+    assertions: arr(c.assertions),
+    processors: arr(c.processors),
+  })
+  const specKv = (rows?: { name: string; value?: string }[]) => (rows ?? []).filter((r) => r.name).map((r) => ({ key: r.name, value: r.value ?? '' }))
+  // Spec processors carry no editor tab; tag args.phase so they land in the pre/post tabs.
+  const tagPhase = (list: unknown[], phase: 'pre' | 'post') =>
+    list.map((p) => {
+      const o = p as { args?: Record<string, unknown> }
+      return { ...o, args: { ...(o.args || {}), phase } }
+    })
+  const defToRequest = (d: ApiDefinition) => {
+    const s = d.spec
+    return {
+      method: d.method || 'GET',
+      url: d.path || '',
+      body: s?.requestBody || null,
+      headers: specKv(s?.requestHeaders),
+      queryParams: specKv(s?.requestQuery),
+      restParams: specKv(s?.restParams),
+      auth: cleanAuth(s?.auth),
+      assertions: arr(s?.assertions).length ? arr(s?.assertions) : [{ type: 'StatusIs', args: 200 }],
+      processors: [...tagPhase(arr(s?.preProcessors), 'pre'), ...tagPhase(arr(s?.postProcessors), 'post')],
+    }
+  }
+
+  const doCopy = async () => {
+    setImporting(true)
+    let order = nextOrder
+    try {
+      const bodies: StepBody[] = []
+      for (const id of selApi) {
+        const d = defs.find((x) => x.id === id)
+        if (d) bodies.push({ kind: 'REQUEST', order: order++, request: { ...defToRequest(d), source: 'COPY_API' } })
+      }
+      for (const id of selCase) {
+        const c = cases.find((x) => x.id === id)
+        if (c) bodies.push({ kind: 'REQUEST', order: order++, request: { ...caseToRequest(c), source: 'COPY_CASE' } })
+      }
+      // Scenario: deep-copy into an independent scenario, then mount the copy as a
+      // COPY group — it renders like a reference group, but edits stay private.
+      for (const id of selScn) {
+        const copy = await api.copyScenario(id)
+        bodies.push({ kind: 'SCENARIO', order: order++, refId: copy.id, refMode: 'COPY', snapshot: { copiedFrom: id } })
+      }
+      if (onLocalImport) onLocalImport(bodies)
+      else for (const b of bodies) await api.addStep(scenarioId, b)
+      message.success(`${t('scenario.copied', '已复制')} ${bodies.length}`)
+      onImported()
+      onClose()
+    } catch (e) {
+      message.error(e instanceof ApiError ? e.message : t('scenario.copyFailed', '复制失败'))
+    } finally {
+      setImporting(false)
+    }
+  }
+
   const apiCols: ColumnsType<ApiDefinition> = [
     { title: 'ID', dataIndex: 'num', width: 90, render: (v?: number) => <span className="ms-mono" style={{ fontSize: 12 }}>{v ?? '—'}</span> },
     { title: t('scenario.apiName', '接口名称'), dataIndex: 'name', ellipsis: true },
     { title: t('apidef.colMethod', '请求类型'), dataIndex: 'method', width: 100, render: (m: string, r) => <Tag color={methodColor(m)}>{r.protocol === 'HTTP' ? m || 'GET' : r.protocol}</Tag> },
     { title: t('apidef.colPath', '路径'), dataIndex: 'path', ellipsis: true, render: (v: string) => <span className="ms-mono" style={{ fontSize: 12 }}>{v || '—'}</span> },
-    { title: t('apidef.colStatus', '状态'), dataIndex: 'status', width: 100, render: (s: string) => <Tag color={statusColor(s)}>{s}</Tag> },
+    { title: t('apidef.colStatus', '状态'), dataIndex: 'status', width: 100, render: (s: string) => <Tag color={statusColor(s)}>{statusLabel(s, t)}</Tag> },
   ]
   const caseCols: ColumnsType<ApiCase> = [
     { title: t('scenario.colName', '名称'), dataIndex: 'name', ellipsis: true },
     { title: t('apidef.colMethod', '请求类型'), dataIndex: 'method', width: 100, render: (m: string) => <Tag color={methodColor(m)}>{m}</Tag> },
     { title: t('apidef.colPath', '路径'), dataIndex: 'url', ellipsis: true, render: (v: string) => <span className="ms-mono" style={{ fontSize: 12 }}>{v || '—'}</span> },
-    { title: t('apidef.colStatus', '状态'), dataIndex: 'status', width: 100, render: (s?: string) => <Tag>{s || '—'}</Tag> },
+    { title: t('apidef.colStatus', '状态'), dataIndex: 'status', width: 100, render: (s?: string) => <Tag>{s ? caseStatusLabel(s, t) : '—'}</Tag> },
   ]
   const scnCols: ColumnsType<Scenario> = [
     { title: t('scenario.colName', '名称'), dataIndex: 'name', ellipsis: true },
     { title: t('scenario.colSteps', '步骤数'), dataIndex: 'steps', width: 90, render: (s?: unknown[]) => <Tag color={s?.length ? 'geekblue' : 'default'}>{s?.length ?? 0}</Tag> },
-    { title: t('scenario.colStatus', '状态'), dataIndex: 'status', width: 110, render: (s: string) => <Tag color={statusColor(s)}>{s}</Tag> },
+    { title: t('scenario.colStatus', '状态'), dataIndex: 'status', width: 110, render: (s: string) => <Tag color={statusColor(s)}>{statusLabel(s, t)}</Tag> },
   ]
 
   return (
@@ -3109,10 +2566,14 @@ function ImportRequestDrawer({
       footer={
         <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
           <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-            {t('scenario.totalSelected', '共选择')} {total} · {t('scenario.apiName', '接口')} {selApi.length} · {t('scenario.caseUnit', '用例')} {selCase.length} · {t('scenario.scenarioUnit', '场景')} {selScn.length}
+            {t('scenario.totalSelected', '共选择')} {total} · {t('scenario.tabApi', '接口')} {selApi.length} · {t('scenario.caseUnit', '用例')} {selCase.length} · {t('scenario.scenarioUnit', '场景')} {selScn.length}
           </Typography.Text>
+          {total > 0 && (
+            <Button type="link" size="small" style={{ padding: 0 }} onClick={() => { setSelApi([]); setSelCase([]); setSelScn([]) }}>{t('scenario.clearSel', '清空')}</Button>
+          )}
           <div style={{ flex: 1 }} />
           <Button onClick={onClose}>{t('a.cancel', '取消')}</Button>
+          <Button loading={importing} disabled={total === 0} onClick={doCopy}>{t('a.copy', '复制')}</Button>
           <Button type="primary" loading={importing} disabled={total === 0} onClick={doImport}>{t('scenario.doReference', '引用')}</Button>
         </div>
       }
@@ -3149,6 +2610,7 @@ function ImportRequestDrawer({
             <Typography.Text strong>{totalLabel} ({tab === 'api' ? fDefs.length : tab === 'case' ? fCases.length : fScns.length})</Typography.Text>
             <div style={{ flex: 1 }} />
             <Input allowClear size="small" style={{ width: 240 }} prefix={<SearchOutlined style={{ color: 'var(--text-3)' }} />} placeholder={t('scenario.searchByPathName', '通过路径或名称搜索')} value={search} onChange={(e) => setSearch(e.target.value)} />
+            <Button size="small" icon={<ReloadOutlined />} onClick={reload} title={t('a.refresh', '刷新')} />
           </div>
           {tab === 'api' && (
             <Table<ApiDefinition> rowKey="id" size="small" columns={apiCols} dataSource={fDefs} pagination={{ pageSize: 10, size: 'small' }} rowSelection={{ selectedRowKeys: selApi, onChange: (k) => setSelApi(k.map(String)) }} locale={{ emptyText: <Empty description={t('scenario.noImportData', '暂无可引用数据,可切换项目获取数据')} /> }} />

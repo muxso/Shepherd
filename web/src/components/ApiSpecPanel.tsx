@@ -25,6 +25,7 @@ import {
 import { message } from '../feedback'
 import { useI18n } from '../i18n'
 import { LatencyStat, fmtDurationMs } from './TimingBreakdown'
+import { statusLabel } from './tags'
 
 const API_STATUSES = ['DRAFT', 'DEBUGGING', 'COMPLETED', 'DEPRECATED']
 
@@ -415,6 +416,7 @@ const ApiSpecPanel = forwardRef<ApiSpecPanelHandle, {
           resp={resp}
           err={runErr}
           req={lastReq}
+          onRun={() => execute()}
           isHttp={(definition.protocol || 'HTTP').toUpperCase() === 'HTTP'}
           extractors={spec.postProcessors as Record<string, unknown>[] | undefined}
           assertions={spec.assertions as Record<string, unknown>[] | undefined}
@@ -521,6 +523,7 @@ export function DebugResultPanel({
   isHttp,
   extractors,
   assertions,
+  onRun,
 }: {
   running: boolean
   resp: DebugResponse | null
@@ -529,9 +532,40 @@ export function DebugResultPanel({
   isHttp: boolean
   extractors?: Record<string, unknown>[]
   assertions?: Record<string, unknown>[]
+  /** Present = show a run-it call-to-action in the not-yet-executed placeholder. */
+  onRun?: () => void
 }) {
   const { t } = useI18n()
   const [view, setView] = useState<'json' | 'raw'>('json')
+
+  // Nothing executed yet: a placeholder instead of empty response tabs.
+  if (!running && !resp && !err) {
+    return (
+      <Card size="small" style={{ marginTop: 12 }} styles={{ body: { padding: 12 } }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+          <span style={{ fontWeight: 600, fontSize: 13 }}>{t('apidef.responseContent', '响应内容')}</span>
+        </div>
+        <div style={{ textAlign: 'center', padding: '36px 0 40px', color: 'var(--text-3)' }}>
+          <svg width={72} height={48} viewBox="0 0 72 48" style={{ display: 'block', margin: '0 auto 12px' }}>
+            <rect x={1} y={1} width={70} height={46} rx={5} fill="var(--panel-2)" stroke="var(--border)" />
+            <rect x={7} y={7} width={58} height={6} rx={2} fill="var(--brand)" opacity={0.55} />
+            <rect x={7} y={18} width={40} height={5} rx={2} fill="var(--text-3)" opacity={0.4} />
+            <rect x={7} y={28} width={48} height={5} rx={2} fill="var(--text-3)" opacity={0.3} />
+            <rect x={7} y={38} width={30} height={5} rx={2} fill="var(--text-3)" opacity={0.25} />
+          </svg>
+          {onRun ? (
+            <span>
+              {t('editor.clickTo', '点击')}{' '}
+              <a onClick={onRun}>{t('apidef.serverRun', '服务端执行')}</a>{' '}
+              {t('editor.toGetResponse', '获取响应内容')}
+            </span>
+          ) : (
+            <span>{t('apidef.notRunYet', '尚未执行')}</span>
+          )}
+        </div>
+      </Card>
+    )
+  }
 
   // Extractors: the extractors list of post-processors with type=Extract.
   const extractRows = (extractors || [])
@@ -777,7 +811,7 @@ function BasicInfo({ definition, spec, patch, create }: { definition: ApiDefinit
             style={{ width: 180 }}
             value={status}
             onChange={changeStatus}
-            options={API_STATUSES.map((s) => ({ value: s, label: s }))}
+            options={API_STATUSES.map((s) => ({ value: s, label: statusLabel(s, t) }))}
           />
         </Field>
       )}

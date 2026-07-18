@@ -12,6 +12,7 @@ import { CF_GROUP, CustomFieldItem, collectCustomValues, customFormValues, useFi
 import { useI18n } from '../i18n'
 import { SelectProjectEmpty } from '../components/Page'
 import { useListView, type ListColumn } from '../components/ListView'
+import { funcCaseStatusLabel } from '../components/tags'
 import CaseDetailDrawer from '../components/CaseDetailDrawer'
 import EditDrawer from '../components/EditDrawer'
 
@@ -110,7 +111,7 @@ export default function FunctionalCases() {
     { key: 'module', label: t('func.colModule', '模块'), title: t('func.colModule', '模块'), dataIndex: 'module', width: 140, render: renderModule },
     { key: 'priority', label: t('func.colPriority', '优先级'), title: t('func.colPriority', '优先级'), dataIndex: 'priority', width: 90, render: (p?: string) => <Tag color={prioColor(p)}>{p || 'P2'}</Tag> },
     { key: 'steps', label: t('func.colSteps', '步骤'), title: t('func.colSteps', '步骤'), dataIndex: 'steps', width: 70, render: (s?: CaseStep[]) => (s?.length || 0) },
-    { key: 'status', label: t('func.colStatus', '状态'), title: t('func.colStatus', '状态'), dataIndex: 'status', width: 110, render: (s?: string) => <Tag>{s || 'PREPARED'}</Tag> },
+    { key: 'status', label: t('func.colStatus', '状态'), title: t('func.colStatus', '状态'), dataIndex: 'status', width: 110, render: (s?: string) => <Tag>{funcCaseStatusLabel(s, t)}</Tag> },
     { key: 'createdBy', label: t('func.colCreatedBy', '创建人'), title: t('func.colCreatedBy', '创建人'), dataIndex: 'createdBy', width: 110, ellipsis: true, render: (u?: string) => u ? <span style={{ color: 'var(--text-2)' }}>{u}</span> : <span style={{ color: 'var(--text-3)' }}>—</span> },
     {
       key: 'action',
@@ -154,7 +155,7 @@ export default function FunctionalCases() {
       },
       {
         key: 'status', label: t('func.colStatus', '状态'), type: 'enum',
-        options: [...new Set(cases.map((c) => c.status || 'PREPARED'))].map((s) => ({ value: s, label: s })),
+        options: [...new Set(cases.map((c) => c.status || 'PREPARED'))].map((s) => ({ value: s, label: funcCaseStatusLabel(s, t) })),
         get: (c) => c.status || 'PREPARED',
       },
       // Advanced-condition only (duplicates search box / columns; not rendered in the declarative filter area).

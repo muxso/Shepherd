@@ -30,7 +30,6 @@ mod references_route;
 mod report_archive_job;
 mod routes;
 mod scenario_run;
-mod scenario_schedule;
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -184,7 +183,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 "ORGANIZATION:READ+ADD+UPDATE+DELETE".to_string(),
                 "USER_ROLE:READ+ADD+UPDATE+DELETE".to_string(),
                 "BUG:READ+ADD+UPDATE".to_string(),
-                "TEST_PLAN:READ+ADD+EXECUTE".to_string(),
+                "TEST_PLAN:READ+ADD+UPDATE+EXECUTE".to_string(),
                 "CASE_REVIEW:READ+REVIEW".to_string(),
                 "API_DEFINITION:READ+ADD+UPDATE+DELETE+EXECUTE".to_string(),
                 "API_SCENARIO:READ+ADD+UPDATE+DELETE+EXECUTE".to_string(),
@@ -522,7 +521,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let plan_routes = test_plan::adapters::http::router(
         CreatePlanUseCase::new(plan_repo.clone()),
         PlanStatisticsUseCase::new(plan_repo.clone()),
-        test_plan::application::PlanCaseUseCase::new(plan_repo),
+        test_plan::application::PlanCaseUseCase::new(plan_repo.clone()),
+        test_plan::application::PlanAdminUseCase::new(plan_repo),
         sessions.clone(),
     );
     let plan_run_routes = plan_run::router(pool.clone(), sessions.clone());
@@ -617,8 +617,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         ),
         pool: pool.clone(),
     };
-    scenario_schedule::spawn(pool.clone(), scenario_runner.clone());
-    let scenario_schedule_routes = scenario_schedule::router(pool.clone(), sessions.clone());
     let scenario_run_routes = scenario_run::router(scenario_runner, sessions.clone());
 
     let perf_routes = perf_run::router(
@@ -690,7 +688,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .merge(runner_routes)
                 .merge(scenario_routes)
                 .merge(scenario_run_routes)
-                .merge(scenario_schedule_routes)
                 .merge(import_scheduler_routes),
         ),
         routes::group("perf", perf_routes),
