@@ -473,6 +473,7 @@ impl CaseResultSink for PgCaseResultSink {
         req_url: &str,
         req_headers: &[(String, String)],
         req_body: Option<&str>,
+        timings: &serde_json::Value,
     ) -> Result<(), PortError> {
         // Truncate to 64KB to keep the detail table from bloating.
         let body_trunc: String = body.chars().take(65536).collect();
@@ -485,7 +486,7 @@ impl CaseResultSink for PgCaseResultSink {
             "UPDATE ms_api_case_result \
                SET status_code = $3, latency_ms = $4, resp_size = $5, body = $6, headers = $7, \
                    assertions = $8, extractions = $9, \
-                   req_method = $10, req_url = $11, req_headers = $12, req_body = $13 \
+                   req_method = $10, req_url = $11, req_headers = $12, req_body = $13, timings = $14 \
              WHERE report_id = $1 AND case_id = $2",
         )
         .bind(report_id)
@@ -501,6 +502,7 @@ impl CaseResultSink for PgCaseResultSink {
         .bind(req_url)
         .bind(req_headers_json)
         .bind(req_body_trunc)
+        .bind(timings)
         .execute(&self.pool)
         .await
         .map_err(map_err)?;
@@ -580,7 +582,7 @@ impl PgBatchReport {
         let rows = sqlx::query(
             "SELECT case_id, outcome, failures, executed_at::text AS executed_at, \
                     status_code, latency_ms, resp_size, body, headers, assertions, extractions, \
-                    req_method, req_url, req_headers, req_body \
+                    req_method, req_url, req_headers, req_body, timings \
              FROM ms_api_case_result WHERE report_id = $1 ORDER BY executed_at",
         )
         .bind(report_id)
@@ -627,6 +629,7 @@ impl PgBatchReport {
                     req_url: r.try_get("req_url").ok().flatten(),
                     req_headers,
                     req_body: r.try_get("req_body").ok().flatten(),
+                    timings: r.try_get("timings").ok().flatten(),
                 })
             })
             .collect::<Result<Vec<_>, PortError>>()?;
@@ -668,6 +671,7 @@ pub struct CaseResultRow {
     pub req_url: Option<String>,
     pub req_headers: Vec<(String, String)>,
     pub req_body: Option<String>,
+    pub timings: Option<serde_json::Value>,
 }
 
 use crate::ports::{CaseExecutionQueryPort, CaseExecutionRecord};

@@ -22,6 +22,37 @@ import { useI18n } from '../i18n'
 
 type TFn = (key: string, fallback?: string) => string
 
+/** Chrome-style timing waterfall for one exchange: DNS / TTFB (connect + wait) / download. */
+function TimingBreakdown({ totalMs, timings, t }: { totalMs: number; timings?: import('../api').PhaseTimings | null; t: TFn }) {
+  const rows: { label: string; ms: number; offset: number; color: string }[] = []
+  const dns = timings?.dnsMs ?? null
+  const ttfb = timings?.ttfbMs ?? null
+  const dl = timings?.downloadMs ?? null
+  const span = Math.max(totalMs, (ttfb ?? 0) + (dl ?? 0), 1)
+  if (dns != null) rows.push({ label: t('scenario.phaseDns', 'DNS 解析'), ms: dns, offset: 0, color: 'var(--warning, #ff7d00)' })
+  if (ttfb != null) rows.push({ label: t('scenario.phaseTtfb', '等待响应 TTFB(含建连)'), ms: ttfb, offset: 0, color: 'var(--brand)' })
+  if (dl != null) rows.push({ label: t('scenario.phaseDownload', '内容下载'), ms: dl, offset: ttfb ?? 0, color: 'var(--success)' })
+  return (
+    <div style={{ width: 320 }}>
+      {rows.map((r) => (
+        <div key={r.label} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '3px 0', fontSize: 12 }}>
+          <span style={{ width: 128, color: 'var(--text-2)' }}>{r.label}</span>
+          <span style={{ flex: 1, height: 6, borderRadius: 3, background: 'var(--panel-2)', position: 'relative', overflow: 'hidden' }}>
+            <span style={{ position: 'absolute', left: `${(r.offset / span) * 100}%`, width: `${Math.max((r.ms / span) * 100, 1.5)}%`, top: 0, bottom: 0, borderRadius: 3, background: r.color }} />
+          </span>
+          <span className="ms-mono" style={{ width: 62, textAlign: 'right' }}>{fmtDuration(r.ms)}</span>
+        </div>
+      ))}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 0 0', fontSize: 12, borderTop: '1px solid var(--border-soft)', marginTop: 4 }}>
+        <span style={{ width: 128, color: 'var(--text-2)', fontWeight: 600 }}>{t('scenario.phaseTotal', '总计')}</span>
+        <span style={{ flex: 1 }} />
+        <span className="ms-mono" style={{ width: 62, textAlign: 'right', fontWeight: 600 }}>{fmtDuration(totalMs)}</span>
+      </div>
+      <div style={{ marginTop: 6, fontSize: 11, color: 'var(--text-3)' }}>{t('scenario.timingNote', '从建立连接到收到完整响应的全链路分解;DNS 为独立计时(受系统缓存影响)。')}</div>
+    </div>
+  )
+}
+
 /* Humanized units for report stats: ms flips to seconds past 1s, bytes climb KB/MB/GB. */
 const fmtDuration = (ms: number) =>
   ms >= 60_000 ? `${(ms / 60_000).toFixed(1)} min` : ms >= 1000 ? `${(ms / 1000).toFixed(2)} s` : `${ms} ms`
@@ -2207,12 +2238,14 @@ function ScenarioReportModal({ reportId, nameOf, caseMap, onClose }: { reportId:
                 { value: 'request', label: t('scenario.filterReq', '请求'), children: outcomeOptions },
               ]}
             />
-            {view === 'flat' && (
-              <>
-                <Button size="small" onClick={() => setOpenSet(new Set(rows.map((_, i) => i)))}>{t('scenario.expandAll', '展开全部')}</Button>
-                <Button size="small" onClick={() => setOpenSet(new Set())}>{t('scenario.collapseAll', '收起全部')}</Button>
-              </>
-            )}
+            {view === 'flat' && (() => {
+              const allOpen = rows.length > 0 && openSet.size >= rows.length
+              return (
+                <Button size="small" onClick={() => setOpenSet(allOpen ? new Set() : new Set(rows.map((_, i) => i)))}>
+                  {allOpen ? t('scenario.collapseAll', '收起全部') : t('scenario.expandAll', '展开全部')}
+                </Button>
+              )
+            })()}
           </div>
           <div style={{ marginTop: 10 }}>
             {rows.length === 0 ? (
@@ -2281,7 +2314,7 @@ function ReportRow({ idx, r, label, t, open, onToggle, caseOf }: { idx: number; 
         <span style={{ flex: 1, minWidth: 0 }} className="ms-mono">{label(r.caseId)}</span>
         <Tag color={ok ? 'green' : 'red'} style={{ margin: 0 }}>{ok ? t('scenario.pass', '通过') : t('scenario.fail', '失败')}</Tag>
         {r.statusCode != null && <Tooltip title={t('scenario.statusTip', '服务端返回的 HTTP 状态码')}><span style={muted}>{t('apidef.statusCode', '状态码')} <span style={{ color: r.statusCode < 400 ? 'var(--success)' : 'var(--error)' }}>{r.statusCode}</span></span></Tooltip>}
-        <Tooltip title={t('scenario.respTimeTip', '从建立连接到收到服务端完整响应的全链路耗时')}><span style={muted}>{t('scenario.respTime', '响应时间')} {r.latencyMs != null ? fmtDuration(r.latencyMs) : '—'}</span></Tooltip>
+        <Tooltip title={r.timings ? <TimingBreakdown totalMs={r.latencyMs ?? 0} timings={r.timings} t={t} /> : t('scenario.respTimeTip', '从建立连接到收到服务端完整响应的全链路耗时')}><span style={muted}>{t('scenario.respTime', '响应时间')} {r.latencyMs != null ? fmtDuration(r.latencyMs) : '—'}</span></Tooltip>
         <Tooltip title={t('scenario.respSizeTip', '响应体大小')}><span style={muted}>{t('scenario.respSize', '响应大小')} {r.respSize != null ? fmtSize(r.respSize) : '—'}</span></Tooltip>
       </div>
       {r.failures.length > 0 && (

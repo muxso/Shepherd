@@ -78,6 +78,7 @@ pub trait CaseResultSink: Send + Sync {
         _req_url: &str,
         _req_headers: &[(String, String)],
         _req_body: Option<&str>,
+        _timings: &serde_json::Value,
     ) -> Result<(), PortError> {
         Ok(())
     }

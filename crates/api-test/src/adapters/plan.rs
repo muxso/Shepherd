@@ -242,6 +242,7 @@ impl PlanExecutor {
                     &req.url,
                     &req.headers,
                     req.body.as_deref(),
+                    &serde_json::to_value(s.timings).unwrap_or(serde_json::Value::Null),
                 )
                 .await;
             for (k, v) in extracts {
