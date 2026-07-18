@@ -14,7 +14,7 @@ Shepherd is a platform for supervising AI-driven development. AI can write code,
 
 > **Status:** `v0.0.1`, experimental, dogfooded internally. The full loop works, but it isn't production-ready and there's no public benchmark. Don't treat it as a finished tool.
 
-<img src="docs/assets/screenshot-intro.png" alt="Shepherd overview" width="100%" />
+<img src="docs/assets/screenshot-intro.png" alt="Shepherd — scenario run report" width="100%" />
 
 <!-- demo GIF pending: see docs/assets/. Uncomment the next line once it exists. -->
 <!-- ![demo](docs/assets/demo.gif) -->
@@ -54,14 +54,14 @@ The executor itself (`agent-runtime`) is plain Rust: concurrency is bounded by a
 
 <p float="left">
   <img src="docs/assets/screenshot-en-1.png" width="49%" alt="Shepherd console — overview" />
-  <img src="docs/assets/screenshot-en-2.png" width="49%" alt="Shepherd — requirement decomposition and task graph" />
+  <img src="docs/assets/screenshot-en-2.png" width="49%" alt="Shepherd — requirement decomposition, delivery and verification" />
 </p>
 <p float="left">
   <img src="docs/assets/screenshot-en-3.png" width="49%" alt="Shepherd — API definitions imported from OpenAPI" />
   <img src="docs/assets/screenshot-en-4.png" width="49%" alt="Shepherd — scenario editor with chained case steps" />
 </p>
 <p float="left">
-  <img src="docs/assets/screenshot-en-5.png" width="49%" alt="Shepherd — functional case detail drawer" />
+  <img src="docs/assets/screenshot-en-5.png" width="49%" alt="Shepherd — test plan planning mind-map" />
 </p>
 
 ## Measuring what AI actually delivered
