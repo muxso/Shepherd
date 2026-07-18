@@ -144,7 +144,7 @@ export function ReportMdModal({ open, name, md, onClose }: { open: boolean; name
       width={760}
       footer={<Button type="primary" onClick={onClose}>{t('plan.close', '关闭')}</Button>}
     >
-      <pre style={{ background: '#0f1419', color: '#d6deeb', padding: 12, borderRadius: 6, maxHeight: 520, overflow: 'auto', fontSize: 12 }}>{md}</pre>
+      <pre style={{ background: 'var(--panel-2)', color: 'var(--text)', border: '1px solid var(--border-soft)', padding: 12, borderRadius: 6, maxHeight: 520, overflow: 'auto', fontSize: 12 }}>{md}</pre>
     </Modal>
   )
 }

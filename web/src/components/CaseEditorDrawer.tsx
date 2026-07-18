@@ -346,7 +346,7 @@ export default function CaseEditorDrawer({
                   key: 'rbody',
                   label: t('case.respBody', '响应体'),
                   children: (
-                    <pre style={{ background: '#0f1419', color: '#d6deeb', padding: 12, borderRadius: 6, maxHeight: 280, overflow: 'auto', fontSize: 12, whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
+                    <pre style={{ background: 'var(--panel-2)', color: 'var(--text)', border: '1px solid var(--border-soft)', padding: 12, borderRadius: 6, maxHeight: 280, overflow: 'auto', fontSize: 12, whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
                       {resp?.body || t('case.emptyBody', '(空)')}
                     </pre>
                   ),
