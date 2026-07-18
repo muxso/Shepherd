@@ -3,7 +3,7 @@ use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 
-use crate::domain::{CaseCounts, CaseResult, CaseStatus, NewPlan, Plan, PlanCase};
+use crate::domain::{CaseCounts, CaseResult, CaseStatus, NewPlan, Plan, PlanCase, PlanMeta};
 use crate::ports::{PlanRepository, RepoError};
 
 #[derive(Default)]
@@ -12,6 +12,8 @@ struct State {
     counts: HashMap<String, CaseCounts>,
     thresholds: HashMap<String, f64>,
     cases: HashMap<String, Vec<PlanCase>>,
+    metas: HashMap<String, PlanMeta>,
+    plannings: HashMap<String, serde_json::Value>,
     seq: u64,
 }
 
@@ -197,7 +199,43 @@ impl PlanRepository for InMemoryPlanRepository {
     async fn delete(&self, id: &str) -> Result<bool, RepoError> {
         let mut state = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         state.cases.remove(id);
+        state.metas.remove(id);
+        state.plannings.remove(id);
         Ok(state.plans.remove(id).is_some())
+    }
+
+    async fn detail(
+        &self,
+        id: &str,
+    ) -> Result<Option<(Plan, PlanMeta, Option<serde_json::Value>)>, RepoError> {
+        let state = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let Some(plan) = state.plans.get(id).cloned() else { return Ok(None) };
+        // Default meta mirrors the plan row: group from the plan, threshold from the map.
+        let meta = state.metas.get(id).cloned().unwrap_or_else(|| PlanMeta {
+            group_id: plan.group_id.clone(),
+            pass_threshold: state.thresholds.get(id).copied().unwrap_or(1.0),
+            ..PlanMeta::default()
+        });
+        Ok(Some((plan, meta, state.plannings.get(id).cloned())))
+    }
+
+    async fn update_meta(&self, id: &str, name: &str, meta: &PlanMeta) -> Result<bool, RepoError> {
+        let mut state = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let Some(plan) = state.plans.get_mut(id) else { return Ok(false) };
+        plan.name = name.to_string();
+        plan.group_id = meta.group_id.clone();
+        state.thresholds.insert(id.to_string(), meta.pass_threshold);
+        state.metas.insert(id.to_string(), meta.clone());
+        Ok(true)
+    }
+
+    async fn set_planning(&self, id: &str, doc: &serde_json::Value) -> Result<bool, RepoError> {
+        let mut state = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        if !state.plans.contains_key(id) {
+            return Ok(false);
+        }
+        state.plannings.insert(id.to_string(), doc.clone());
+        Ok(true)
     }
 }
 

@@ -1,6 +1,6 @@
 use crate::domain::{
-    AssertionResult, CaseCounts, CaseResult, CaseStatus, NewPlan, Plan, PlanCase, PlanType,
-    RequestInfo, StepResult,
+    AssertionResult, CaseCounts, CaseResult, CaseStatus, NewPlan, Plan, PlanCase, PlanMeta,
+    PlanType, RequestInfo, StepResult,
 };
 use crate::ports::{PlanRepository, RepoError};
 use async_trait::async_trait;
@@ -203,6 +203,79 @@ impl PlanRepository for PgPlanRepository {
             .map_err(map_err)?;
         let res = sqlx::query("DELETE FROM ms_test_plan WHERE id = $1")
             .bind(id)
+            .execute(&self.pool)
+            .await
+            .map_err(map_err)?;
+        Ok(res.rows_affected() > 0)
+    }
+
+    async fn detail(
+        &self,
+        id: &str,
+    ) -> Result<Option<(Plan, PlanMeta, Option<serde_json::Value>)>, RepoError> {
+        let row = sqlx::query(&format!(
+            "SELECT {PLAN_COLS}, description, tags, module_id, \
+             (extract(epoch from start_at)*1000)::bigint AS start_at_ms, \
+             (extract(epoch from end_at)*1000)::bigint AS end_at_ms, \
+             allow_duplicate_cases, auto_update_status, pass_threshold, planning \
+             FROM ms_test_plan WHERE id = $1"
+        ))
+        .bind(id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(map_err)?;
+        let Some(row) = row else { return Ok(None) };
+        let plan = row_to_plan(&row)?;
+        let tags_json: serde_json::Value = row.try_get("tags").map_err(map_err)?;
+        let tags = tags_json
+            .as_array()
+            .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+            .unwrap_or_default();
+        let meta = PlanMeta {
+            description: row.try_get("description").map_err(map_err)?,
+            tags,
+            module_id: row.try_get("module_id").map_err(map_err)?,
+            group_id: plan.group_id.clone(),
+            start_at_ms: row.try_get("start_at_ms").map_err(map_err)?,
+            end_at_ms: row.try_get("end_at_ms").map_err(map_err)?,
+            allow_duplicate_cases: row.try_get("allow_duplicate_cases").map_err(map_err)?,
+            auto_update_status: row.try_get("auto_update_status").map_err(map_err)?,
+            pass_threshold: row.try_get("pass_threshold").map_err(map_err)?,
+        };
+        let planning: Option<serde_json::Value> = row.try_get("planning").map_err(map_err)?;
+        Ok(Some((plan, meta, planning)))
+    }
+
+    async fn update_meta(&self, id: &str, name: &str, meta: &PlanMeta) -> Result<bool, RepoError> {
+        let res = sqlx::query(
+            "UPDATE ms_test_plan SET name = $2, description = $3, tags = $4, module_id = $5, \
+             group_id = $6, \
+             start_at = CASE WHEN $7::bigint IS NULL THEN NULL ELSE to_timestamp($7::bigint / 1000.0) END, \
+             end_at = CASE WHEN $8::bigint IS NULL THEN NULL ELSE to_timestamp($8::bigint / 1000.0) END, \
+             allow_duplicate_cases = $9, auto_update_status = $10, pass_threshold = $11 \
+             WHERE id = $1",
+        )
+        .bind(id)
+        .bind(name)
+        .bind(&meta.description)
+        .bind(serde_json::json!(meta.tags))
+        .bind(&meta.module_id)
+        .bind(&meta.group_id)
+        .bind(meta.start_at_ms)
+        .bind(meta.end_at_ms)
+        .bind(meta.allow_duplicate_cases)
+        .bind(meta.auto_update_status)
+        .bind(meta.pass_threshold)
+        .execute(&self.pool)
+        .await
+        .map_err(map_err)?;
+        Ok(res.rows_affected() > 0)
+    }
+
+    async fn set_planning(&self, id: &str, doc: &serde_json::Value) -> Result<bool, RepoError> {
+        let res = sqlx::query("UPDATE ms_test_plan SET planning = $2 WHERE id = $1")
+            .bind(id)
+            .bind(doc)
             .execute(&self.pool)
             .await
             .map_err(map_err)?;
