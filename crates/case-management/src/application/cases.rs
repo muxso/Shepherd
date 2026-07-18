@@ -36,6 +36,33 @@ impl CreateCaseUseCase {
         steps: Vec<crate::domain::CaseStep>,
         created_by: Option<&str>,
     ) -> Result<FunctionalCase, CreateCaseError> {
+        self.execute_with_tags(
+            project_id,
+            name,
+            module,
+            priority,
+            status,
+            Vec::new(),
+            custom_fields,
+            steps,
+            created_by,
+        )
+        .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn execute_with_tags(
+        &self,
+        project_id: &str,
+        name: &str,
+        module: &str,
+        priority: &str,
+        status: &str,
+        tags: Vec<String>,
+        custom_fields: BTreeMap<String, String>,
+        steps: Vec<crate::domain::CaseStep>,
+        created_by: Option<&str>,
+    ) -> Result<FunctionalCase, CreateCaseError> {
         let new = NewFunctionalCase::new(
             project_id,
             name,
@@ -45,8 +72,12 @@ impl CreateCaseUseCase {
             custom_fields,
             steps,
         )?
-        .with_created_by(created_by);
-        Ok(self.repo.insert(&new).await?)
+        .with_created_by(created_by)
+        .with_tags(tags);
+        let created = self.repo.insert(&new).await?;
+        let entry = ("create".to_string(), String::new(), created.name.clone());
+        self.repo.record_changes(&created.id, &[entry], created_by.unwrap_or_default()).await?;
+        Ok(created)
     }
 }
 
@@ -72,6 +103,35 @@ impl UpdateCaseUseCase {
         custom_fields: BTreeMap<String, String>,
         steps: Vec<crate::domain::CaseStep>,
     ) -> Result<Option<FunctionalCase>, CreateCaseError> {
+        self.execute_with_tags(
+            id,
+            project_id,
+            name,
+            module,
+            priority,
+            status,
+            Vec::new(),
+            custom_fields,
+            steps,
+            "",
+        )
+        .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn execute_with_tags(
+        &self,
+        id: &str,
+        project_id: &str,
+        name: &str,
+        module: &str,
+        priority: &str,
+        status: &str,
+        tags: Vec<String>,
+        custom_fields: BTreeMap<String, String>,
+        steps: Vec<crate::domain::CaseStep>,
+        actor: &str,
+    ) -> Result<Option<FunctionalCase>, CreateCaseError> {
         let new = NewFunctionalCase::new(
             project_id,
             name,
@@ -80,9 +140,51 @@ impl UpdateCaseUseCase {
             status,
             custom_fields,
             steps,
-        )?;
-        Ok(self.repo.update(id, &new).await?)
+        )?
+        .with_tags(tags);
+        let old = self.repo.get(id).await?;
+        let updated = self.repo.update(id, &new).await?;
+        if let (Some(old), Some(new_case)) = (old, updated.as_ref()) {
+            let changes = diff_case(&old, new_case);
+            if !changes.is_empty() {
+                self.repo.record_changes(id, &changes, actor).await?;
+            }
+        }
+        Ok(updated)
     }
+}
+
+/// Field-level diff of two case snapshots as (field, old, new) audit entries.
+fn diff_case(old: &FunctionalCase, new: &FunctionalCase) -> Vec<(String, String, String)> {
+    let mut out = Vec::new();
+    let mut push = |field: &str, o: String, n: String| {
+        if o != n {
+            out.push((field.to_string(), o, n));
+        }
+    };
+    push("name", old.name.clone(), new.name.clone());
+    push("module", old.module.clone(), new.module.clone());
+    push("priority", old.priority.clone(), new.priority.clone());
+    push("status", old.status.clone(), new.status.clone());
+    push("tags", old.tags.join(", "), new.tags.join(", "));
+    if old.steps != new.steps {
+        let fmt = |steps: &[crate::domain::CaseStep]| {
+            steps
+                .iter()
+                .map(|s| format!("{} => {}", s.step, s.expected))
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+        push("steps", fmt(&old.steps), fmt(&new.steps));
+    }
+    let keys: std::collections::BTreeSet<&String> =
+        old.custom_fields.keys().chain(new.custom_fields.keys()).collect();
+    for k in keys {
+        let o = old.custom_fields.get(k).cloned().unwrap_or_default();
+        let n = new.custom_fields.get(k).cloned().unwrap_or_default();
+        push(&format!("field.{k}"), o, n);
+    }
+    out
 }
 
 #[derive(Clone)]
@@ -224,13 +326,17 @@ mod tests {
         FunctionalCase {
             id: id.into(),
             project_id: "p1".into(),
+            num: 0,
             name: name.into(),
             module: "登录".into(),
             priority: "P2".into(),
             status: "PREPARED".into(),
+            tags: Vec::new(),
             custom_fields: fields.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect(),
             steps: Vec::new(),
             created_by: None,
+            created_at: String::new(),
+            updated_at: String::new(),
         }
     }
 

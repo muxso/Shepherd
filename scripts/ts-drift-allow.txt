@@ -21,7 +21,6 @@
 /api/project-file/*/module
 /api/scenario-report/*
 /api/scenario/*/changes
-/api/scenario/*/step/*
 /api/scenario/*/steps/order
 /api/task-case
 /api/task-case/unlink

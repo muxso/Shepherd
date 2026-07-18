@@ -30,6 +30,7 @@ mod references_route;
 mod report_archive_job;
 mod routes;
 mod scenario_run;
+mod scenario_schedule;
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -606,14 +607,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Arc::new(PgCaseSpecSource::new(pool.clone())),
         Arc::new(PgCaseResultSink::new(pool.clone())),
     );
-    let scenario_run_routes = scenario_run::router(
-        api_scenario::application::CompileScenarioUseCase::new(scenario_repo.clone()),
-        plan_executor,
-        api_envs.clone(),
-        api_test::adapters::PgBatchReport::new(pool.clone()),
-        api_scenario::application::RecordScenarioExecutionUseCase::new(scenario_repo.clone()),
-        sessions.clone(),
-    );
+    let scenario_runner = scenario_run::ScenarioRunner {
+        compile: api_scenario::application::CompileScenarioUseCase::new(scenario_repo.clone()),
+        executor: plan_executor,
+        envs: api_envs.clone(),
+        reports: api_test::adapters::PgBatchReport::new(pool.clone()),
+        recorder: api_scenario::application::RecordScenarioExecutionUseCase::new(
+            scenario_repo.clone(),
+        ),
+        pool: pool.clone(),
+    };
+    scenario_schedule::spawn(pool.clone(), scenario_runner.clone());
+    let scenario_schedule_routes = scenario_schedule::router(pool.clone(), sessions.clone());
+    let scenario_run_routes = scenario_run::router(scenario_runner, sessions.clone());
 
     let perf_routes = perf_run::router(
         pool.clone(),
@@ -684,6 +690,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .merge(runner_routes)
                 .merge(scenario_routes)
                 .merge(scenario_run_routes)
+                .merge(scenario_schedule_routes)
                 .merge(import_scheduler_routes),
         ),
         routes::group("perf", perf_routes),

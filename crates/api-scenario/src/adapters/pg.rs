@@ -29,6 +29,7 @@ fn row_to_scenario(row: &sqlx::postgres::PgRow) -> Result<ApiScenario, RepoError
     Ok(ApiScenario {
         id: row.try_get("id").map_err(map_err)?,
         project_id: row.try_get("project_id").map_err(map_err)?,
+        num: row.try_get("num").unwrap_or(0),
         name: row.try_get("name").map_err(map_err)?,
         status: ScenarioStatus::parse(&status),
         meta,
@@ -124,8 +125,9 @@ impl PgApiScenarioRepository {
 impl ApiScenarioRepository for PgApiScenarioRepository {
     async fn insert_scenario(&self, s: &NewApiScenario) -> Result<ApiScenario, RepoError> {
         let row = sqlx::query(
-            "INSERT INTO ms_api_scenario (project_id, name, status, created_by) VALUES ($1, $2, $3, $4) \
-             RETURNING id, project_id, name, status, meta, created_by, \
+            "INSERT INTO ms_api_scenario (project_id, num, name, status, created_by) \
+             VALUES ($1, (SELECT COALESCE(MAX(num) + 1, 100001) FROM ms_api_scenario WHERE project_id = $1), $2, $3, $4) \
+             RETURNING id, project_id, COALESCE(num, 0) AS num, name, status, meta, created_by, \
                        created_at::text AS created_at, updated_at::text AS updated_at, deleted",
         )
         .bind(&s.project_id)
@@ -140,7 +142,7 @@ impl ApiScenarioRepository for PgApiScenarioRepository {
 
     async fn get_scenario(&self, id: &str) -> Result<Option<ApiScenario>, RepoError> {
         let row = sqlx::query(
-            "SELECT id, project_id, name, status, meta, created_by, \
+            "SELECT id, project_id, COALESCE(num, 0) AS num, name, status, meta, created_by, \
                     created_at::text AS created_at, updated_at::text AS updated_at, deleted \
              FROM ms_api_scenario WHERE id = $1 AND deleted = false",
         )
@@ -164,7 +166,7 @@ impl ApiScenarioRepository for PgApiScenarioRepository {
         let row = sqlx::query(
             "UPDATE ms_api_scenario SET name = $2, status = $3, meta = $4, updated_at = now() \
              WHERE id = $1 AND deleted = false \
-             RETURNING id, project_id, name, status, meta, created_by, \
+             RETURNING id, project_id, COALESCE(num, 0) AS num, name, status, meta, created_by, \
                        created_at::text AS created_at, updated_at::text AS updated_at, deleted",
         )
         .bind(id)
@@ -182,11 +184,11 @@ impl ApiScenarioRepository for PgApiScenarioRepository {
 
     async fn list_scenarios(&self, project_id: &str) -> Result<Vec<ApiScenario>, RepoError> {
         let rows = sqlx::query(
-            "SELECT id, project_id, name, status, meta, created_by, \
+            "SELECT id, project_id, COALESCE(num, 0) AS num, name, status, meta, created_by, \
                     created_at::text AS created_at, updated_at::text AS updated_at, deleted, \
                     (SELECT e.status FROM ms_api_scenario_execution e \
                        WHERE e.scenario_id = ms_api_scenario.id ORDER BY e.created_at DESC LIMIT 1) AS last_result \
-             FROM ms_api_scenario WHERE project_id = $1 AND deleted = false ORDER BY id",
+             FROM ms_api_scenario WHERE project_id = $1 AND deleted = false ORDER BY num DESC, id",
         )
         .bind(project_id)
         .fetch_all(&self.pool)
@@ -231,6 +233,39 @@ impl ApiScenarioRepository for PgApiScenarioRepository {
         .await
         .map_err(map_err)?;
         row_to_step(&row)
+    }
+
+    async fn update_step(
+        &self,
+        scenario_id: &str,
+        step_id: &str,
+        step: &NewScenarioStep,
+    ) -> Result<Option<ScenarioStep>, RepoError> {
+        let (ref_id, inline): (Option<String>, Option<serde_json::Value>) = match &step.kind {
+            StepKind::Request(req) => (None, Some(req.to_inline_json())),
+            StepKind::Case { case_id } => (Some(case_id.clone()), step.snapshot.clone()),
+            StepKind::Scenario { scenario_id } => {
+                (Some(scenario_id.clone()), step.snapshot.clone())
+            }
+            StepKind::Control { payload, .. } => (None, Some(payload.clone())),
+        };
+
+        let row = sqlx::query(
+            "UPDATE ms_api_scenario_step \
+                SET kind = $3, ref_mode = $4, ref_id = $5, inline = $6 \
+             WHERE scenario_id = $1 AND id = $2 \
+             RETURNING id, step_order, kind, ref_mode, ref_id, inline",
+        )
+        .bind(scenario_id)
+        .bind(step_id)
+        .bind(step.kind.kind_str())
+        .bind(step.ref_mode.as_str())
+        .bind(ref_id)
+        .bind(inline)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(map_err)?;
+        row.as_ref().map(row_to_step).transpose()
     }
 
     async fn delete_step(&self, scenario_id: &str, step_id: &str) -> Result<bool, RepoError> {

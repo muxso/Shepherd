@@ -56,6 +56,13 @@ The executor itself (`agent-runtime`) is plain Rust: concurrency is bounded by a
   <img src="docs/assets/screenshot-en-1.png" width="49%" alt="Shepherd console — overview" />
   <img src="docs/assets/screenshot-en-2.png" width="49%" alt="Shepherd — requirement decomposition and task graph" />
 </p>
+<p float="left">
+  <img src="docs/assets/screenshot-en-3.png" width="49%" alt="Shepherd — API definitions imported from OpenAPI" />
+  <img src="docs/assets/screenshot-en-4.png" width="49%" alt="Shepherd — scenario editor with chained case steps" />
+</p>
+<p float="left">
+  <img src="docs/assets/screenshot-en-5.png" width="49%" alt="Shepherd — functional case detail drawer" />
+</p>
 
 ## Measuring what AI actually delivered
 

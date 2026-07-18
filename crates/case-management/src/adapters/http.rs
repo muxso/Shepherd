@@ -7,7 +7,7 @@ use axum::{
     extract::{FromRef, Path, Query, State},
     http::{header, StatusCode},
     response::{IntoResponse, Response},
-    routing::{get, post, put},
+    routing::{get, post},
     Json, Router,
 };
 use calamine::{Reader, Xlsx};
@@ -54,8 +54,20 @@ pub fn router(
         .route("/functional-case", post(create_case).get(list_cases))
         .route("/functional-case/export", get(export_cases))
         .route("/functional-case/import", post(import_cases))
-        .route("/functional-case/{id}", put(update_case).delete(delete_case))
+        .route("/functional-case/{id}", get(get_case).put(update_case).delete(delete_case))
         .route("/functional-case/{id}/requirements", get(case_requirements))
+        .route("/functional-case/{id}/changes", get(list_case_changes))
+        .route("/functional-case/{id}/bugs", get(list_case_bugs))
+        .route("/functional-case/{id}/reviews", get(list_case_reviews))
+        .route("/functional-case/{id}/plans", get(list_case_plans))
+        .route(
+            "/functional-case/{id}/dependencies",
+            get(list_case_dependencies).post(add_case_dependency),
+        )
+        .route(
+            "/functional-case/{id}/dependencies/{targetId}",
+            axum::routing::delete(remove_case_dependency),
+        )
         .route("/requirement-case/link", post(link_req_case))
         .route("/requirement-case/unlink", post(unlink_req_case))
         .route("/requirement/{id}/functional-coverage", get(requirement_coverage))
@@ -186,13 +198,17 @@ async fn case_requirements(
 struct CaseResponse {
     id: String,
     project_id: String,
+    num: i64,
     name: String,
     module: String,
     priority: String,
     status: String,
+    tags: Vec<String>,
     custom_fields: BTreeMap<String, String>,
     steps: Vec<CaseStepDto>,
     created_by: Option<String>,
+    created_at: String,
+    updated_at: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
@@ -219,13 +235,17 @@ impl From<FunctionalCase> for CaseResponse {
         Self {
             id: c.id,
             project_id: c.project_id,
+            num: c.num,
             name: c.name,
             module: c.module,
             priority: c.priority,
             status: c.status,
+            tags: c.tags,
             custom_fields: c.custom_fields,
             steps: c.steps.into_iter().map(CaseStepDto::from).collect(),
             created_by: c.created_by,
+            created_at: c.created_at,
+            updated_at: c.updated_at,
         }
     }
 }
@@ -241,6 +261,8 @@ struct CaseBody {
     priority: String,
     #[serde(default)]
     status: String,
+    #[serde(default)]
+    tags: Vec<String>,
     #[serde(default)]
     custom_fields: BTreeMap<String, String>,
     #[serde(default)]
@@ -265,12 +287,13 @@ async fn create_case(
     let steps: Vec<CaseStep> = b.steps.into_iter().map(CaseStep::from).collect();
     match st
         .create
-        .execute(
+        .execute_with_tags(
             &b.project_id,
             &b.name,
             &b.module,
             &b.priority,
             &b.status,
+            b.tags,
             b.custom_fields,
             steps,
             Some(user.user_id.as_str()),
@@ -300,15 +323,17 @@ async fn update_case(
     let steps: Vec<CaseStep> = b.steps.into_iter().map(CaseStep::from).collect();
     match st
         .update
-        .execute(
+        .execute_with_tags(
             &id,
             &b.project_id,
             &b.name,
             &b.module,
             &b.priority,
             &b.status,
+            b.tags,
             b.custom_fields,
             steps,
+            user.user_id.as_str(),
         )
         .await
     {
@@ -353,6 +378,265 @@ async fn list_cases(
             let items: Vec<CaseResponse> = list.into_iter().map(CaseResponse::from).collect();
             (StatusCode::OK, Json(items)).into_response()
         }
+        Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
+    }
+}
+
+#[utoipa::path(get, path = "/functional-case/{id}", tag = "functional-case", params(("id" = String, Path)), responses((status = 200, body = CaseResponse), (status = 403), (status = 404)), security(("bearer" = [])))]
+async fn get_case(user: AuthUser, State(st): State<CaseState>, Path(id): Path<String>) -> Response {
+    if !user.can("FUNCTIONAL_CASE", "READ") {
+        return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
+    match st.repo.get(&id).await {
+        Ok(Some(c)) => (StatusCode::OK, Json(CaseResponse::from(c))).into_response(),
+        Ok(None) => (StatusCode::NOT_FOUND, "case not found").into_response(),
+        Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
+    }
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+struct CaseChangeDto {
+    field: String,
+    old_value: String,
+    new_value: String,
+    actor: String,
+    created_at: String,
+}
+
+#[utoipa::path(get, path = "/functional-case/{id}/changes", tag = "functional-case", params(("id" = String, Path)), responses((status = 200, body = [CaseChangeDto]), (status = 403)), security(("bearer" = [])))]
+async fn list_case_changes(
+    user: AuthUser,
+    State(st): State<CaseState>,
+    Path(id): Path<String>,
+) -> Response {
+    if !user.can("FUNCTIONAL_CASE", "READ") {
+        return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
+    match st.repo.list_changes(&id).await {
+        Ok(rows) => {
+            let items: Vec<CaseChangeDto> = rows
+                .into_iter()
+                .map(|c| CaseChangeDto {
+                    field: c.field,
+                    old_value: c.old_value,
+                    new_value: c.new_value,
+                    actor: c.actor,
+                    created_at: c.created_at,
+                })
+                .collect();
+            (StatusCode::OK, Json(items)).into_response()
+        }
+        Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
+    }
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+struct CaseBugDto {
+    bug_id: String,
+    title: String,
+    status: String,
+    created_by: String,
+    handler: String,
+}
+
+#[utoipa::path(get, path = "/functional-case/{id}/bugs", tag = "functional-case", params(("id" = String, Path)), responses((status = 200, body = [CaseBugDto]), (status = 403)), security(("bearer" = [])))]
+async fn list_case_bugs(
+    user: AuthUser,
+    State(st): State<CaseState>,
+    Path(id): Path<String>,
+) -> Response {
+    if !user.can("FUNCTIONAL_CASE", "READ") {
+        return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
+    match st.repo.bugs_for_case(&id).await {
+        Ok(rows) => {
+            let items: Vec<CaseBugDto> = rows
+                .into_iter()
+                .map(|b| CaseBugDto {
+                    bug_id: b.bug_id,
+                    title: b.title,
+                    status: b.status,
+                    created_by: b.created_by,
+                    handler: b.handler,
+                })
+                .collect();
+            (StatusCode::OK, Json(items)).into_response()
+        }
+        Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
+    }
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+struct CaseReviewDto {
+    review_id: String,
+    status: String,
+    created_at: String,
+}
+
+#[utoipa::path(get, path = "/functional-case/{id}/reviews", tag = "functional-case", params(("id" = String, Path)), responses((status = 200, body = [CaseReviewDto]), (status = 403)), security(("bearer" = [])))]
+async fn list_case_reviews(
+    user: AuthUser,
+    State(st): State<CaseState>,
+    Path(id): Path<String>,
+) -> Response {
+    if !user.can("FUNCTIONAL_CASE", "READ") {
+        return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
+    match st.repo.reviews_for_case(&id).await {
+        Ok(rows) => {
+            let items: Vec<CaseReviewDto> = rows
+                .into_iter()
+                .map(|r| CaseReviewDto {
+                    review_id: r.review_id,
+                    status: r.status,
+                    created_at: r.created_at,
+                })
+                .collect();
+            (StatusCode::OK, Json(items)).into_response()
+        }
+        Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
+    }
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+struct CasePlanDto {
+    plan_id: String,
+    plan_name: String,
+    project_name: String,
+    archived: bool,
+    exec_status: String,
+    executed_at: String,
+}
+
+#[utoipa::path(get, path = "/functional-case/{id}/plans", tag = "functional-case", params(("id" = String, Path)), responses((status = 200, body = [CasePlanDto]), (status = 403)), security(("bearer" = [])))]
+async fn list_case_plans(
+    user: AuthUser,
+    State(st): State<CaseState>,
+    Path(id): Path<String>,
+) -> Response {
+    if !user.can("FUNCTIONAL_CASE", "READ") {
+        return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
+    match st.repo.plans_for_case(&id).await {
+        Ok(rows) => {
+            let items: Vec<CasePlanDto> = rows
+                .into_iter()
+                .map(|p| CasePlanDto {
+                    plan_id: p.plan_id,
+                    plan_name: p.plan_name,
+                    project_name: p.project_name,
+                    archived: p.archived,
+                    exec_status: p.exec_status,
+                    executed_at: p.executed_at,
+                })
+                .collect();
+            (StatusCode::OK, Json(items)).into_response()
+        }
+        Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
+    }
+}
+
+#[derive(Debug, Deserialize, IntoParams)]
+#[serde(rename_all = "camelCase")]
+struct DependencyQuery {
+    /// PRE lists preconditions of the case, POST lists cases depending on it.
+    #[serde(default)]
+    direction: Option<String>,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+struct CaseDependencyDto {
+    case_id: String,
+    num: i64,
+    name: String,
+    created_by: String,
+}
+
+#[utoipa::path(get, path = "/functional-case/{id}/dependencies", tag = "functional-case", params(("id" = String, Path), DependencyQuery), responses((status = 200, body = [CaseDependencyDto]), (status = 403)), security(("bearer" = [])))]
+async fn list_case_dependencies(
+    user: AuthUser,
+    State(st): State<CaseState>,
+    Path(id): Path<String>,
+    Query(q): Query<DependencyQuery>,
+) -> Response {
+    if !user.can("FUNCTIONAL_CASE", "READ") {
+        return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
+    let reverse = q.direction.as_deref() == Some("POST");
+    match st.repo.dependencies_for_case(&id, reverse).await {
+        Ok(rows) => {
+            let items: Vec<CaseDependencyDto> = rows
+                .into_iter()
+                .map(|d| CaseDependencyDto {
+                    case_id: d.case_id,
+                    num: d.num,
+                    name: d.name,
+                    created_by: d.created_by,
+                })
+                .collect();
+            (StatusCode::OK, Json(items)).into_response()
+        }
+        Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
+    }
+}
+
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+struct DependencyBody {
+    target_case_id: String,
+    /// PRE means target is a precondition of the case; POST the opposite edge.
+    #[serde(default)]
+    direction: Option<String>,
+    #[serde(default)]
+    project_id: String,
+}
+
+#[utoipa::path(post, path = "/functional-case/{id}/dependencies", tag = "functional-case", params(("id" = String, Path)), request_body = DependencyBody, responses((status = 204), (status = 400), (status = 403)), security(("bearer" = [])))]
+async fn add_case_dependency(
+    user: AuthUser,
+    State(st): State<CaseState>,
+    Path(id): Path<String>,
+    Json(b): Json<DependencyBody>,
+) -> Response {
+    if !user.can("FUNCTIONAL_CASE", "UPDATE") {
+        return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
+    if b.target_case_id == id {
+        return (StatusCode::BAD_REQUEST, "case cannot depend on itself").into_response();
+    }
+    let (case_id, depends_on) = if b.direction.as_deref() == Some("POST") {
+        (b.target_case_id.as_str(), id.as_str())
+    } else {
+        (id.as_str(), b.target_case_id.as_str())
+    };
+    match st.repo.add_dependency(&b.project_id, case_id, depends_on, &user.user_id).await {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
+    }
+}
+
+#[utoipa::path(delete, path = "/functional-case/{id}/dependencies/{targetId}", tag = "functional-case", params(("id" = String, Path), ("targetId" = String, Path), DependencyQuery), responses((status = 204), (status = 403)), security(("bearer" = [])))]
+async fn remove_case_dependency(
+    user: AuthUser,
+    State(st): State<CaseState>,
+    Path((id, target_id)): Path<(String, String)>,
+    Query(q): Query<DependencyQuery>,
+) -> Response {
+    if !user.can("FUNCTIONAL_CASE", "UPDATE") {
+        return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
+    let (case_id, depends_on) = if q.direction.as_deref() == Some("POST") {
+        (target_id.as_str(), id.as_str())
+    } else {
+        (id.as_str(), target_id.as_str())
+    };
+    match st.repo.remove_dependency(case_id, depends_on).await {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
         Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
     }
 }
@@ -442,8 +726,15 @@ fn rows_to_xlsx(rows: &[Vec<String>]) -> Result<Vec<u8>, rust_xlsxwriter::XlsxEr
 
 #[derive(OpenApi)]
 #[openapi(
-    paths(create_case, update_case, delete_case, list_cases, export_cases, import_cases),
-    components(schemas(CaseBody, CaseResponse, ImportResult)),
+    paths(
+        create_case, update_case, delete_case, list_cases, get_case, export_cases, import_cases,
+        list_case_changes, list_case_bugs, list_case_reviews, list_case_plans,
+        list_case_dependencies, add_case_dependency, remove_case_dependency
+    ),
+    components(schemas(
+        CaseBody, CaseResponse, ImportResult, CaseChangeDto, CaseBugDto, CaseReviewDto,
+        CasePlanDto, CaseDependencyDto, DependencyBody
+    )),
     tags((name = "functional-case", description = "功能用例"))
 )]
 struct ApiDoc;

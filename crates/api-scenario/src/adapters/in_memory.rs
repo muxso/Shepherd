@@ -44,6 +44,7 @@ impl ApiScenarioRepository for InMemoryApiScenarioRepository {
         let scenario = ApiScenario {
             id: format!("scn-{}", state.scn_seq),
             project_id: s.project_id.clone(),
+            num: 100000 + state.scn_seq as i64,
             name: s.name.clone(),
             status: ScenarioStatus::Draft,
             meta: serde_json::json!({}),
@@ -122,6 +123,23 @@ impl ApiScenarioRepository for InMemoryApiScenarioRepository {
             rec.scenario.steps.push(stored.clone());
         }
         Ok(stored)
+    }
+
+    async fn update_step(
+        &self,
+        scenario_id: &str,
+        step_id: &str,
+        step: &NewScenarioStep,
+    ) -> Result<Option<ScenarioStep>, RepoError> {
+        let mut state = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let Some(rec) = state.scenarios.get_mut(scenario_id) else { return Ok(None) };
+        let Some(st) = rec.scenario.steps.iter_mut().find(|s| s.id == step_id) else {
+            return Ok(None);
+        };
+        st.kind = step.kind.clone();
+        st.ref_mode = step.ref_mode;
+        st.snapshot = step.snapshot.clone();
+        Ok(Some(st.clone()))
     }
 
     async fn delete_step(&self, scenario_id: &str, step_id: &str) -> Result<bool, RepoError> {
