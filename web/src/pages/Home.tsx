@@ -873,7 +873,7 @@ export default function Home() {
         {layout.length === 0 ? (
           <Empty description={t('home.cs.empty', '暂无卡片,点击右上角「编辑」添加')} />
         ) : (
-          <Row gutter={16}>
+          <Row gutter={16} className="ms-home-grid">
             {layout.map((p) => (
               <Col key={p.key} span={p.size === 'full' ? 24 : 12}>
                 {renderCard(p.key)}

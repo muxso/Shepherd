@@ -111,7 +111,7 @@ def build_modules(pid, oid, admin_uid, sample_case_id, tok):
     # ---- project ----
     M.append(("project", "项目 创建+列", [login,
         step("创建项目", "POST", "/project", [OK(), C("id")],
-             body={"name": f"自举-proj-{tok}", "organizationId": oid}, processors=EX(("projId2", "$.id"))),
+             body={"name": "自举-proj-${__runid}", "organizationId": oid}, processors=EX(("projId2", "$.id"))),
         step("列项目", "GET", f"/project?organizationId={oid}&pageSize=5", [OK(), C("total")]),
     ]))
 
@@ -166,10 +166,10 @@ def build_modules(pid, oid, admin_uid, sample_case_id, tok):
     # ---- requirement(含版本/基线;见记忆:baseline body {version:N}) ----
     M.append(("requirement", "需求 生命周期", [login,
         step("创建需求", "POST", "/requirement", [OK(), C("id")],
-             body={"projectId": pid, "title": f"自举-需求-{tok}", "description": "desc", "acceptanceCriteria": ["AC1"]},
+             body={"projectId": pid, "title": "自举-需求-${__runid}", "description": "desc", "acceptanceCriteria": ["AC1"]},
              processors=EX(("reqId2", "$.id"))),
         step("查需求", "GET", "/requirement/${reqId2}", [OK()]),
-        step("改需求", "PUT", "/requirement/${reqId2}", [OK()], body={"title": f"自举-需求-{tok}-改"}),
+        step("改需求", "PUT", "/requirement/${reqId2}", [OK()], body={"title": "自举-需求-${__runid}-改"}),
         step("新增版本", "POST", "/requirement/${reqId2}/version", [OK()],
              body={"description": "v2", "acceptanceCriteria": ["AC1", "AC2"]}),
         step("基线化", "PUT", "/requirement/${reqId2}/baseline", [OK()], body={"version": 1}),
@@ -202,10 +202,10 @@ def build_modules(pid, oid, admin_uid, sample_case_id, tok):
     # ---- user ----
     M.append(("user", "用户 CRUD", [login,
         step("创建用户", "POST", "/system/user", [OK(), C("id")],
-             body={"name": f"自举-用户-{tok}", "email": f"bootstrap-{tok}@example.com"}, processors=EX(("userId2", "$.id"))),
+             body={"name": "自举-用户-${__runid}", "email": "bootstrap-${__runid}@example.com"}, processors=EX(("userId2", "$.id"))),
         step("查用户", "GET", "/system/user/${userId2}", [OK()]),
         step("改用户", "PUT", "/system/user/${userId2}", [OK()],
-             body={"name": f"自举-用户-{tok}-改", "email": f"bootstrap-{tok}@example.com", "enable": True}),
+             body={"name": "自举-用户-${__runid}-改", "email": "bootstrap-${__runid}@example.com", "enable": True}),
         step("列用户", "GET", "/system/user", [OK()]),
         step("用户名表", "GET", "/system/user/names", [OK()]),
         step("删用户", "DELETE", "/system/user/${userId2}", [OK()]),
@@ -228,7 +228,7 @@ def build_modules(pid, oid, admin_uid, sample_case_id, tok):
     # ---- functional-case ----
     M.append(("functional-case", "功能用例 创建+列+导出", [login,
         step("创建功能用例", "POST", "/functional-case", [OK(), C("id")],
-             body={"projectId": pid, "name": f"自举-功能用例-{tok}", "priority": "P1", "status": "PREPARED",
+             body={"projectId": pid, "name": "自举-功能用例-${__runid}", "priority": "P1", "status": "PREPARED",
                    "module": "", "steps": [], "customFields": {}}),
         step("列功能用例", "GET", f"/functional-case?projectId={pid}", [OK()]),
         step("导出功能用例", "GET", f"/functional-case/export?projectId={pid}", [OK()]),
@@ -237,7 +237,7 @@ def build_modules(pid, oid, admin_uid, sample_case_id, tok):
     # ---- bug ----
     M.append(("bug", "缺陷 创建+流转", [login,
         step("创建缺陷", "POST", "/bug", [OK(), C("id")],
-             body={"projectId": pid, "title": f"自举-缺陷-{tok}", "initialStatus": "NEW"},
+             body={"projectId": pid, "title": "自举-缺陷-${__runid}", "initialStatus": "NEW"},
              processors=EX(("bugId2", "$.id"))),
         step("流转缺陷状态", "POST", "/bug/${bugId2}/status", [OK()], body={"status": "RESOLVED"}),
     ]))
@@ -256,7 +256,7 @@ def build_modules(pid, oid, admin_uid, sample_case_id, tok):
     # ---- task / decomposition(依赖需求) ----
     M.append(("task", "任务拆分", [login,
         step("建需求(种子)", "POST", "/requirement", [OK(), C("id")],
-             body={"projectId": pid, "title": f"自举-拆分需求-{tok}", "description": "d", "acceptanceCriteria": ["AC1"]},
+             body={"projectId": pid, "title": "自举-拆分需求-${__runid}", "description": "d", "acceptanceCriteria": ["AC1"]},
              processors=EX(("reqForTask", "$.id"))),
         step("基线v1", "PUT", "/requirement/${reqForTask}/baseline", [OK()], body={"version": 1}),
         step("创建拆分", "POST", "/decomposition", [OK(), C("id")],
@@ -273,7 +273,7 @@ def build_modules(pid, oid, admin_uid, sample_case_id, tok):
     # ---- delivery(依赖拆分+任务) ----
     M.append(("delivery", "交付 生命周期", [login,
         step("建需求(种子)", "POST", "/requirement", [OK(), C("id")],
-             body={"projectId": pid, "title": f"自举-交付需求-{tok}", "description": "d", "acceptanceCriteria": ["AC1"]},
+             body={"projectId": pid, "title": "自举-交付需求-${__runid}", "description": "d", "acceptanceCriteria": ["AC1"]},
              processors=EX(("reqForDel", "$.id"))),
         step("基线v1", "PUT", "/requirement/${reqForDel}/baseline", [OK()], body={"version": 1}),
         step("创建拆分", "POST", "/decomposition", [OK(), C("id")],
@@ -295,7 +295,7 @@ def build_modules(pid, oid, admin_uid, sample_case_id, tok):
     # ---- verification(依赖需求 + 验收标准索引) ----
     M.append(("verification", "验证 创建+链接+报告", [login,
         step("建需求(种子)", "POST", "/requirement", [OK(), C("id")],
-             body={"projectId": pid, "title": f"自举-验证需求-{tok}", "description": "d", "acceptanceCriteria": ["AC1"]},
+             body={"projectId": pid, "title": "自举-验证需求-${__runid}", "description": "d", "acceptanceCriteria": ["AC1"]},
              processors=EX(("reqForVer", "$.id"))),
         step("基线v1", "PUT", "/requirement/${reqForVer}/baseline", [OK()], body={"version": 1}),
         step("创建验证", "POST", "/verification", [OK(), C("id")],
@@ -311,7 +311,7 @@ def build_modules(pid, oid, admin_uid, sample_case_id, tok):
     M.append(("runner", "执行器 注册+列表", [login,
         step("列执行器", "GET", "/runner-agent", [OK()]),
         step("注册执行器", "POST", "/runner-agent", [OK(), C("id")],
-             body={"name": f"自举-agent-{tok}", "baseUrl": BASE, "enabled": True}, processors=EX(("agentId2", "$.id"))),
+             body={"name": "自举-agent-${__runid}", "baseUrl": BASE, "enabled": True}, processors=EX(("agentId2", "$.id"))),
         step("执行器记录", "GET", "/runner-agent/${agentId2}/executions", [OK()]),
     ]))
 

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Button, Card, Drawer, Dropdown, Empty, Input, Segmented, Select, Space, Table, Tag, Upload, message } from 'antd'
+import { Button, Card, Dropdown, Empty, Input, Segmented, Select, Space, Table, Tag, Upload, message } from 'antd'
+import ResizableDrawer from '../components/ResizableDrawer'
 import { InboxOutlined, SearchOutlined } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
 import { api, ApiError, type ApiModule, type ProjectFile } from '../api'
@@ -190,7 +191,7 @@ function AddFileDrawer({ open, projectId, moduleId, onClose, onUploaded, t }: { 
   }
 
   return (
-    <Drawer
+    <ResizableDrawer
       open={open}
       onClose={onClose}
       width={560}
@@ -220,6 +221,6 @@ function AddFileDrawer({ open, projectId, moduleId, onClose, onUploaded, t }: { 
         </Upload.Dragger>
       </div>
       {file && <div style={{ marginTop: 12, fontSize: 13 }}><Tag color="green">{t('file.selected', '已选')}</Tag>{file.name}</div>}
-    </Drawer>
+    </ResizableDrawer>
   )
 }

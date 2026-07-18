@@ -14,6 +14,9 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 # 断言操作符 REGEX / 正则体断言用;纯库,无 IO,domain 可用。
 regex = { workspace = true }
+# Timed DNS phase in the runner: url parses the host, tokio does the lookup.
+tokio = { workspace = true, features = ["net"] }
+url = "2"
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "net"] }

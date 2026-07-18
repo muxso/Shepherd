@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Button, Card, Drawer, Input, Select, Switch, Table, Tag } from 'antd'
+import { Button, Card, Input, Select, Switch, Table, Tag } from 'antd'
+import ResizableDrawer from '../components/ResizableDrawer'
 import { PlusOutlined, RobotOutlined } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
 import { api, type User } from '../api'
@@ -411,7 +412,7 @@ function RuleDrawer({
     </div>
   )
   return (
-    <Drawer
+    <ResizableDrawer
       open={!!rule}
       onClose={onClose}
       width={520}
@@ -476,7 +477,7 @@ function RuleDrawer({
         t('msgset.colEnabled', '是否启用'),
         <Switch checked={draft.enabled} onChange={(c) => set({ enabled: c })} />,
       )}
-    </Drawer>
+    </ResizableDrawer>
   )
 }
 
@@ -612,7 +613,7 @@ function RobotDrawer({
     </div>
   )
   return (
-    <Drawer
+    <ResizableDrawer
       open={!!robot}
       onClose={onClose}
       width={520}
@@ -669,6 +670,6 @@ function RobotDrawer({
           />,
         )}
       {field(t('msgset.colEnabled', '是否启用'), <Switch checked={draft.enabled} onChange={(c) => set({ enabled: c })} />)}
-    </Drawer>
+    </ResizableDrawer>
   )
 }

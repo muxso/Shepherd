@@ -447,6 +447,13 @@ export interface ScenarioSchedule {
 }
 
 /** Scenario report detail row (per-case result). Note: latency/size/status code not yet persisted (pending runner support). */
+/** Per-phase timing of one HTTP exchange (waterfall on latency hover). */
+export interface PhaseTimings {
+  dnsMs?: number | null
+  ttfbMs?: number | null
+  downloadMs?: number | null
+}
+
 export interface ReportResultItem {
   caseId: string
   outcome: string // SUCCESS | ERROR
@@ -461,6 +468,8 @@ export interface ReportResultItem {
   /** Per-assertion results (including passes) + extracted variables (since 0048; empty arrays on older reports). */
   assertions?: AssertionResult[]
   extractions?: [string, string][]
+  /** Per-phase HTTP timings (since 0095; absent on older reports). */
+  timings?: PhaseTimings | null
   /** Request actually sent (since 0060; variables/baseUrl/auth already resolved). Present for CASE reference steps too. */
   request?: { method: string; url: string; headers: [string, string][]; body?: string | null } | null
 }
@@ -1132,6 +1141,8 @@ export interface AssertionResult {
 export interface DebugResponse {
   status: number
   latencyMs: number
+  /** Per-phase HTTP timings (absent for non-HTTP protocols). */
+  timings?: PhaseTimings | null
   headers: [string, string][]
   body: string
   /** Per-assertion results (evaluated on server-side runs; absent for local runs). */

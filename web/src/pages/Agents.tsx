@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react'
-import { Alert, Button, Drawer, Empty, Form, Input, Modal, Space, Switch, Table, Tag, Tooltip } from 'antd'
+import { Alert, Button, Empty, Form, Input, Space, Switch, Table, Tag, Tooltip } from 'antd'
+import EditDrawer from '../components/EditDrawer'
+import ResizableDrawer from '../components/ResizableDrawer'
 import { message } from '../feedback'
 import { PlusOutlined, ReloadOutlined, SyncOutlined, HistoryOutlined } from '@ant-design/icons'
 import { api, ApiError, type RunnerAgent, type RunnerExecution, type FleetRuntime, type FleetStat } from '../api'
@@ -265,7 +267,7 @@ function RegisterAgentModal({ open, onClose, onDone }: { open: boolean; onClose:
   const [busy, setBusy] = useState(false)
   useEffect(() => { if (open) form.setFieldsValue({ name: '', baseUrl: '', token: '', enabled: true }) }, [open, form])
   return (
-    <Modal title={t('agent.register', '注册执行机')} open={open} onCancel={onClose} footer={null} destroyOnHidden>
+    <EditDrawer title={t('agent.register', '注册执行机')} open={open} onCancel={onClose} footer={null}>
       <Form
         form={form}
         layout="vertical"
@@ -296,7 +298,7 @@ function RegisterAgentModal({ open, onClose, onDone }: { open: boolean; onClose:
         </Form.Item>
         <Button type="primary" htmlType="submit" block loading={busy}>{t('agent.register', '注册执行机')}</Button>
       </Form>
-    </Modal>
+    </EditDrawer>
   )
 }
 
@@ -310,7 +312,7 @@ function ExecutionsDrawer({ agent, onClose }: { agent: RunnerAgent | null; onClo
     api.runnerExecutions(agent.id).then((r) => setRows(Array.isArray(r) ? r : [])).catch(() => setRows([])).finally(() => setLoading(false))
   }, [agent])
   return (
-    <Drawer title={agent ? `${t('agent.executions', '执行历史')} · ${agent.name}` : ''} open={!!agent} onClose={onClose} width={760}>
+    <ResizableDrawer title={agent ? `${t('agent.executions', '执行历史')} · ${agent.name}` : ''} open={!!agent} onClose={onClose} width={760}>
       <Table<RunnerExecution>
         rowKey="id"
         size="small"
@@ -327,6 +329,6 @@ function ExecutionsDrawer({ agent, onClose }: { agent: RunnerAgent | null; onClo
           { title: t('agent.executedAt', '时间'), dataIndex: 'executedAt', width: 160, render: (v: string) => <span style={{ color: 'var(--text-3)', fontSize: 12 }}>{v?.slice(0, 19) || '—'}</span> },
         ]}
       />
-    </Drawer>
+    </ResizableDrawer>
   )
 }

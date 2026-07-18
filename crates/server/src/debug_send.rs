@@ -103,6 +103,8 @@ impl From<AssertionReport> for AssertionResult {
 struct SendResponse {
     status: u16,
     latency_ms: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    timings: Option<api_runner::PhaseTimings>,
     headers: Vec<(String, String)>,
     body: String,
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -139,6 +141,7 @@ async fn send(_user: AuthUser, Json(req): Json<SendBody>) -> Response {
                 Json(SendResponse {
                     status: out.status.unwrap_or(0) as u16,
                     latency_ms: out.latency_ms,
+                    timings: None,
                     headers: Vec::new(),
                     body: out.output.unwrap_or_default(),
                     assertions: Vec::new(),
@@ -173,6 +176,7 @@ async fn send(_user: AuthUser, Json(req): Json<SendBody>) -> Response {
                 headers: s.headers,
                 body: s.body,
                 elapsed_ms: s.elapsed_ms,
+                timings: s.timings,
             };
             let assertions: Vec<AssertionResult> = if req.assertions.is_empty() {
                 Vec::new()
@@ -189,6 +193,7 @@ async fn send(_user: AuthUser, Json(req): Json<SendBody>) -> Response {
                 Json(SendResponse {
                     status: snapshot.status,
                     latency_ms: snapshot.elapsed_ms,
+                    timings: Some(snapshot.timings),
                     headers: snapshot.headers,
                     body: snapshot.body,
                     assertions,

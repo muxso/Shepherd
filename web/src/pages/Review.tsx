@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Button, Card, Col, Drawer, Empty, Form, Input, InputNumber, Modal, Row, Segmented, Select, Space, Statistic, Table, Tabs, Tag } from 'antd'
+import { Button, Card, Col, Empty, Form, Input, InputNumber, Row, Segmented, Select, Space, Statistic, Table, Tabs, Tag } from 'antd'
+import ResizableDrawer from '../components/ResizableDrawer'
+import EditDrawer from '../components/EditDrawer'
 import { useNavigate } from 'react-router-dom'
 import { message, modal } from '../feedback'
 import type { ColumnsType } from 'antd/es/table'
@@ -147,7 +149,7 @@ function CreateReviewModal({ open, cases, projectId, onClose, onDone }: { open: 
   const [busy, setBusy] = useState(false)
   useEffect(() => { if (open) form.setFieldsValue({ passRule: 'SINGLE', reviewerCount: 1, caseIds: [] }) }, [open, form])
   return (
-    <Modal title={t('review.newReview', '发起用例评审')} open={open} onCancel={onClose} footer={null} destroyOnHidden>
+    <EditDrawer title={t('review.newReview', '发起用例评审')} open={open} onCancel={onClose} footer={null}>
       <Form form={form} layout="vertical" onFinish={async (v) => {
         if (!v.caseIds?.length) return message.warning(t('review.pickCases', '请选择要评审的用例'))
         setBusy(true)
@@ -170,7 +172,7 @@ function CreateReviewModal({ open, cases, projectId, onClose, onDone }: { open: 
         </Form.Item>
         <Button type="primary" htmlType="submit" block loading={busy}>{t('a.create', '创建')}</Button>
       </Form>
-    </Modal>
+    </EditDrawer>
   )
 }
 
@@ -232,7 +234,7 @@ function ReviewDetailDrawer({ reviewId, caseName, onClose, onChanged }: { review
   }
 
   return (
-    <Drawer
+    <ResizableDrawer
       title={t('review.reviewDetail', '评审详情')}
       open={!!reviewId}
       onClose={onClose}
@@ -271,6 +273,6 @@ function ReviewDetailDrawer({ reviewId, caseName, onClose, onChanged }: { review
           },
         ]}
       />
-    </Drawer>
+    </ResizableDrawer>
   )
 }

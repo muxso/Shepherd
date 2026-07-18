@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Alert, Button, Card, Drawer, Form, Input, Modal, Popconfirm, Select, Space, Switch, Table, Tag } from 'antd'
+import { Alert, Button, Card, Form, Input, Popconfirm, Select, Space, Switch, Table, Tag } from 'antd'
+import ResizableDrawer from '../components/ResizableDrawer'
+import EditDrawer from '../components/EditDrawer'
 import { FolderOpenOutlined, SearchOutlined } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
 import { message } from '../feedback'
@@ -251,7 +253,7 @@ function AddMemberModal({ open, projectId, candidates, onClose, onDone, t }: {
   const [busy, setBusy] = useState(false)
   useEffect(() => { if (open) form.resetFields() }, [open, form])
   return (
-    <Modal title={t('proj.addMember', '添加成员')} open={open} onCancel={onClose} footer={null} destroyOnHidden>
+    <EditDrawer title={t('proj.addMember', '添加成员')} open={open} onCancel={onClose} footer={null}>
       <Form
         form={form}
         layout="vertical"
@@ -288,7 +290,7 @@ function AddMemberModal({ open, projectId, candidates, onClose, onDone, t }: {
         </Form.Item>
         <Button type="primary" htmlType="submit" block loading={busy}>{t('proj.addMember', '添加成员')}</Button>
       </Form>
-    </Modal>
+    </EditDrawer>
   )
 }
 
@@ -351,7 +353,7 @@ function AddGroupModal({ open, onClose, onDone, t }: { open: boolean; onClose: (
   const [busy, setBusy] = useState(false)
   useEffect(() => { if (open) form.resetFields() }, [open, form])
   return (
-    <Modal title={t('proj.addGroup', '添加用户组')} open={open} onCancel={onClose} footer={null} destroyOnHidden>
+    <EditDrawer title={t('proj.addGroup', '添加用户组')} open={open} onCancel={onClose} footer={null}>
       <Form
         form={form}
         layout="vertical"
@@ -373,7 +375,7 @@ function AddGroupModal({ open, onClose, onDone, t }: { open: boolean; onClose: (
         </Form.Item>
         <Button type="primary" htmlType="submit" block loading={busy}>{t('a.create', '创建')}</Button>
       </Form>
-    </Modal>
+    </EditDrawer>
   )
 }
 
@@ -404,7 +406,7 @@ function PermissionDrawer({ role, onClose, onSaved, t }: { role: Role | null; on
     }
   }
   return (
-    <Drawer
+    <ResizableDrawer
       open={!!role}
       onClose={onClose}
       width="55%"
@@ -425,6 +427,6 @@ function PermissionDrawer({ role, onClose, onSaved, t }: { role: Role | null; on
         message={t('pa.reloginTip', '修改权限后,已登录的会话需要重新登录才会生效')}
       />
       <PermissionMatrix checked={checked} onChange={setChecked} disabled={readOnly} />
-    </Drawer>
+    </ResizableDrawer>
   )
 }

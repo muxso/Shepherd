@@ -197,6 +197,7 @@ cargo test --workspace -- --ignored         # 真实数据库集成测试
 
 - 遵循六边形分层:业务逻辑进 `domain` / `application`,IO 进 `adapters`,纯层别引 IO crate(`tests/architecture.rs` 会拦)。
 - 带测试;`cargo test --workspace` 和 `cargo clippy --workspace`(`-D warnings`)要全绿。
+- 每个克隆启用一次本地质量门:`git config core.hooksPath .githooks` — pre-commit 钩子会跑 fmt/clippy/build(以及 web 的 tsc/build),CI 失败提前暴露在本地。
 - 新增迁移用唯一递增的版本号:`NNNN_描述.sql`。
 - Commit 说清楚为什么改,不只是改了什么。
 

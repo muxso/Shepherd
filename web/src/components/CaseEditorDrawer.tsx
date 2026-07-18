@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
-import { Button, Card, Drawer, Input, Radio, Segmented, Select, Space, Table, Tabs, Tag, Typography } from 'antd'
+import { Button, Card, Input, Radio, Segmented, Select, Space, Table, Tabs, Tag, Typography } from 'antd'
+import ResizableDrawer from './ResizableDrawer'
 import { message } from '../feedback'
 import { SendOutlined } from '@ant-design/icons'
 import { api, ApiError, contentTypeForBodyType, withBodyContentType, type ApiBodyType, type ApiDefinition, type DebugResponse } from '../api'
@@ -258,7 +259,7 @@ export default function CaseEditorDrawer({
   ]
 
   return (
-    <Drawer
+    <ResizableDrawer
       title={t('case.createTitle', '创建用例')}
       open={open}
       onClose={onClose}
@@ -345,7 +346,7 @@ export default function CaseEditorDrawer({
                   key: 'rbody',
                   label: t('case.respBody', '响应体'),
                   children: (
-                    <pre style={{ background: '#0f1419', color: '#d6deeb', padding: 12, borderRadius: 6, maxHeight: 280, overflow: 'auto', fontSize: 12, whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
+                    <pre style={{ background: 'var(--panel-2)', color: 'var(--text)', border: '1px solid var(--border-soft)', padding: 12, borderRadius: 6, maxHeight: 280, overflow: 'auto', fontSize: 12, whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
                       {resp?.body || t('case.emptyBody', '(空)')}
                     </pre>
                   ),
@@ -371,6 +372,6 @@ export default function CaseEditorDrawer({
           )}
         </Card>
       )}
-    </Drawer>
+    </ResizableDrawer>
   )
 }

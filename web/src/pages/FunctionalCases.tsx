@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from 'react'
-import { Button, Descriptions, Empty, Form, Input, Modal, Popconfirm, Select, Space, Table, Tabs, Tag, Upload } from 'antd'
+import { Button, Descriptions, Empty, Form, Input, Popconfirm, Select, Space, Table, Tabs, Tag, Upload } from 'antd'
 import type { FormInstance } from 'antd'
 import { DeleteOutlined, DownloadOutlined, EditOutlined, ImportOutlined } from '@ant-design/icons'
 import { message } from '../feedback'
@@ -13,6 +13,7 @@ import { useI18n } from '../i18n'
 import { SelectProjectEmpty } from '../components/Page'
 import { useListView, type ListColumn } from '../components/ListView'
 import CaseDetailDrawer from '../components/CaseDetailDrawer'
+import EditDrawer from '../components/EditDrawer'
 
 const PRIORITIES = ['P0', 'P1', 'P2', 'P3']
 const prioColor = (p?: string) => (p === 'P0' ? 'red' : p === 'P1' ? 'orange' : 'blue')
@@ -377,7 +378,7 @@ function CaseDetail({ c, moduleLabel }: { c: FunctionalCase; moduleLabel?: React
           },
         ]}
       />
-      <Modal open={linkOpen} title={t('func.linkReq', '关联需求')} onCancel={() => setLinkOpen(false)} onOk={doLink} okText={t('a.confirm', '确定')} cancelText={t('a.cancel', '取消')} destroyOnHidden>
+      <EditDrawer open={linkOpen} title={t('func.linkReq', '关联需求')} onCancel={() => setLinkOpen(false)} onOk={doLink} okText={t('a.confirm', '确定')} cancelText={t('a.cancel', '取消')}>
         <div style={{ marginBottom: 12 }}>
           <div style={{ marginBottom: 6 }}>{t('func.pickReq', '需求')}</div>
           <Select showSearch style={{ width: '100%' }} placeholder={t('func.pickReq', '选择需求')} optionFilterProp="label" onChange={pickReq} options={reqs.map((r) => ({ value: r.id, label: r.title }))} notFoundContent={t('req.empty', '项目暂无需求')} />
@@ -390,7 +391,7 @@ function CaseDetail({ c, moduleLabel }: { c: FunctionalCase; moduleLabel?: React
               notFoundContent={t('func.noCriteria', '该需求没有验收标准')} />
           </div>
         )}
-      </Modal>
+      </EditDrawer>
     </div>
   )
 }
@@ -583,13 +584,12 @@ function CaseEditModal({
   // Template loaded up-front so field config is ready when the modal opens and edit backfill has all custom fields.
   const { fields: tplFields } = useFieldTemplate('functional-case')
   return (
-    <Modal
+    <EditDrawer
       title={t('func.editTitle', '编辑功能用例')}
       open={!!editing}
       onCancel={onClose}
       onOk={() => form.submit()}
       confirmLoading={saving}
-      destroyOnHidden
       width={680}
     >
       <CaseForm
@@ -601,7 +601,7 @@ function CaseEditModal({
         onSavingChange={setSaving}
         onSaved={onSaved}
       />
-    </Modal>
+    </EditDrawer>
   )
 }
 

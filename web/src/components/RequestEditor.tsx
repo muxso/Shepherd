@@ -252,7 +252,7 @@ export default function RequestEditor({
                       <Radio.Button value="raw">Raw</Radio.Button>
                     </Radio.Group>
                   </Space>
-                  <pre style={{ background: '#0f1419', color: '#d6deeb', padding: 12, borderRadius: 6, maxHeight: 360, overflow: 'auto', fontSize: 12, whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
+                  <pre style={{ background: 'var(--panel-2)', color: 'var(--text)', border: '1px solid var(--border-soft)', padding: 12, borderRadius: 6, maxHeight: 360, overflow: 'auto', fontSize: 12, whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
                     {respView === 'json' ? pretty(resp?.body || '', t('editor.empty', '(空)')) : resp?.body || t('editor.empty', '(空)')}
                   </pre>
                 </>

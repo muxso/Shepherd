@@ -197,6 +197,7 @@ Issues and PRs welcome. A few conventions:
 
 - Follow the hexagonal layering: business logic in `domain` / `application`, IO in `adapters`, and no IO crates in the pure layers (`tests/architecture.rs` will catch it).
 - Include tests; `cargo test --workspace` and `cargo clippy --workspace` (`-D warnings`) need to be green.
+- Enable the local quality gate once per clone: `git config core.hooksPath .githooks` — the pre-commit hook runs fmt/clippy/build (and web tsc/build) so CI failures surface before you push.
 - New migrations use a unique, increasing version number: `NNNN_description.sql`.
 - Write commit messages that explain *why*, not just what changed.
 

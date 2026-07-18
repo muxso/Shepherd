@@ -168,6 +168,7 @@ mod tests {
             req_url: Some("http://x/healthz".to_string()),
             req_headers: vec![],
             req_body: None,
+            timings: None,
         }
     }
 

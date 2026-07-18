@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Alert, Button, Form, Input, Modal, Popconfirm, Segmented, Select, Table, Tag, Typography } from 'antd'
+import EditDrawer from '../components/EditDrawer'
 import { PlusOutlined, ReloadOutlined } from '@ant-design/icons'
 import { api, ApiError, type ApiKey } from '../api'
 import { message } from '../feedback'
@@ -233,7 +234,7 @@ function CreateKeyModal({ open, onClose, onDone }: { open: boolean; onClose: () 
   }
 
   return (
-    <Modal open={open} onCancel={onClose} onOk={submit} confirmLoading={busy} title={t('ak.create', '新建密钥')} destroyOnHidden>
+    <EditDrawer open={open} onCancel={onClose} onOk={submit} confirmLoading={busy} title={t('ak.create', '新建密钥')}>
       <Form form={form} layout="vertical" requiredMark={false}>
         <Form.Item name="name" label={t('ak.colName', '名称')} rules={[{ required: true, message: t('ak.nameRequired', '请输入名称') }]}>
           <Input placeholder={t('ak.namePh', '如:执行机-01')} autoFocus />
@@ -264,7 +265,7 @@ function CreateKeyModal({ open, onClose, onDone }: { open: boolean; onClose: () 
           />
         </Form.Item>
       </Form>
-    </Modal>
+    </EditDrawer>
   )
 }
 

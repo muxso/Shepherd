@@ -69,7 +69,7 @@ export default function GroupedBars({ series, rows, height = 260 }: { series: Ba
           {/* Grid + y-axis ticks */}
           {ticks.map((tk, i) => (
             <g key={i}>
-              <line x1={padL} y1={yOf(tk)} x2={W - padR} y2={yOf(tk)} stroke="#f0f2f5" />
+              <line x1={padL} y1={yOf(tk)} x2={W - padR} y2={yOf(tk)} stroke="var(--border-soft)" />
               <text x={padL - 8} y={yOf(tk) + 4} textAnchor="end" fontSize="11" fill="#a8adb5">{tk}</text>
             </g>
           ))}

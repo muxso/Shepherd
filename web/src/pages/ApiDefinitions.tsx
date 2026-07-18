@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { Button, Checkbox, Divider, Drawer, Dropdown, Empty, Input, Table, Modal, Popover, Radio, Segmented, Select, Space, Switch, Tabs, Tag, Tooltip, Tree, Upload } from 'antd'
+import { Button, Checkbox, Divider, Dropdown, Empty, Input, Table, Modal, Popover, Radio, Segmented, Select, Space, Switch, Tabs, Tag, Tooltip, Tree, Upload } from 'antd'
+import ResizableDrawer from '../components/ResizableDrawer'
+import EditDrawer from '../components/EditDrawer'
 import { useSearchParams } from 'react-router-dom'
 import { message, modal } from '../feedback'
 import {
@@ -699,9 +701,9 @@ function ModuleFormModal({
     }
   }
   return (
-    <Modal title={state.mode === 'create' ? t('apidef.newModule', '新建模块') : t('apidef.renameModule', '重命名模块')} open onCancel={onClose} onOk={submit} destroyOnHidden>
+    <EditDrawer title={state.mode === 'create' ? t('apidef.newModule', '新建模块') : t('apidef.renameModule', '重命名模块')} open onCancel={onClose} onOk={submit}>
       <Input placeholder={t('apidef.moduleName', '模块名')} value={name} onChange={(e) => setName(e.target.value)} onPressEnter={submit} autoFocus />
-    </Modal>
+    </EditDrawer>
   )
 }
 
@@ -773,7 +775,7 @@ function CaseEditDrawer({ open, caseItem, onClose, onSaved }: { open: boolean; c
   ]
 
   return (
-    <Drawer
+    <ResizableDrawer
       open={open}
       onClose={onClose}
       width={720}
@@ -794,7 +796,7 @@ function CaseEditDrawer({ open, caseItem, onClose, onSaved }: { open: boolean; c
         <Input value={url} onChange={(e) => setUrl(e.target.value)} className="ms-mono" placeholder="/api/..." />
       </Space.Compact>
       <Tabs className="ms-detail-tabs" size="small" items={tabs} />
-    </Drawer>
+    </ResizableDrawer>
   )
 }
 
@@ -1110,7 +1112,7 @@ function ApiDetail({ definition, onUpdated }: { definition: ApiDefinition; onUpd
         onCaseSaved={() => { setCasesRefresh((n) => n + 1); setTab('cases') }}
         hideSave
       />
-      <Modal
+      <EditDrawer
         title={t('apidef.importCurl', '导入 cURL')}
         open={curlOpen}
         onCancel={() => setCurlOpen(false)}
@@ -1118,7 +1120,6 @@ function ApiDetail({ definition, onUpdated }: { definition: ApiDefinition; onUpd
         okText={t('a.import', '导入')}
         cancelText={t('a.cancel', '取消')}
         width={680}
-        destroyOnHidden
       >
         <Input.TextArea
           rows={10}
@@ -1127,7 +1128,7 @@ function ApiDetail({ definition, onUpdated }: { definition: ApiDefinition; onUpd
           placeholder={"curl -X POST 'https://api.example.com/login' \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"user\":\"admin\"}'"}
           className="ms-mono"
         />
-      </Modal>
+      </EditDrawer>
     </div>
   )
 
@@ -1481,7 +1482,7 @@ function ImportModal({
   ]
 
   return (
-    <Drawer
+    <ResizableDrawer
       title={t('apidef.importTitle2', '导入接口')}
       open={open}
       onClose={onClose}
@@ -1611,6 +1612,6 @@ function ImportModal({
           />
         </>
       )}
-    </Drawer>
+    </ResizableDrawer>
   )
 }
