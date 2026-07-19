@@ -13,6 +13,7 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
+use notice::application::{NoticeEvent, Notifier};
 use serde::{Deserialize, Serialize};
 use utoipa::{OpenApi, ToSchema};
 use webauth::{AuthUser, SessionStore};
@@ -23,6 +24,7 @@ struct ReviewState {
     update_meta: UpdateReviewMetaUseCase,
     delete_review: DeleteReviewUseCase,
     repo: Arc<dyn ReviewRepository>,
+    notifier: Option<Notifier>,
     sessions: Arc<dyn SessionStore>,
 }
 
@@ -35,6 +37,7 @@ impl FromRef<ReviewState> for Arc<dyn SessionStore> {
 pub fn router(
     use_case: SubmitReviewUseCase,
     repo: Arc<dyn ReviewRepository>,
+    notifier: Option<Notifier>,
     sessions: Arc<dyn SessionStore>,
 ) -> Router {
     let update_meta = UpdateReviewMetaUseCase::new(repo.clone());
@@ -46,7 +49,7 @@ pub fn router(
             get(get_review).put(update_review).delete(delete_review_handler),
         )
         .route("/case-review/{review_id}/{case_id}", post(submit_review))
-        .with_state(ReviewState { use_case, update_meta, delete_review, repo, sessions })
+        .with_state(ReviewState { use_case, update_meta, delete_review, repo, notifier, sessions })
 }
 
 fn repo_err(e: RepoError) -> Response {
@@ -179,7 +182,33 @@ async fn create_review(
         },
     };
     match st.repo.create_review(&new_review).await {
-        Ok(id) => (StatusCode::CREATED, Json(CreatedReview { id })).into_response(),
+        Ok(id) => {
+            // Reviewers are not assigned up front: candidate reviewers = project
+            // members (falls back to the creator when the project has no member list).
+            if let Some(notifier) = &st.notifier {
+                let title = if new_review.meta.name.is_empty() {
+                    id.clone()
+                } else {
+                    new_review.meta.name.clone()
+                };
+                notifier
+                    .notify_project_members(
+                        &new_review.created_by,
+                        NoticeEvent {
+                            project_id: new_review.project_id.clone(),
+                            category: "CASE".into(),
+                            event_type: "REVIEW_CREATED".into(),
+                            title,
+                            content: new_review.case_ids.len().to_string(),
+                            resource_type: "CASE_REVIEW".into(),
+                            resource_id: id.clone(),
+                            operator: new_review.created_by.clone(),
+                        },
+                    )
+                    .await;
+            }
+            (StatusCode::CREATED, Json(CreatedReview { id })).into_response()
+        }
         Err(e) => repo_err(e),
     }
 }
@@ -372,7 +401,7 @@ mod tests {
             PermissionSet::from_raw(["CASE_REVIEW:READ+REVIEW".to_string()]).expect("perms");
         let token = sessions.create("admin", perms, 3600).await.expect("token");
         let uc = SubmitReviewUseCase::new(repo.clone());
-        (router(uc, repo, sessions), token)
+        (router(uc, repo, None, sessions), token)
     }
 
     fn post(review: &str, case: &str, body: &str, token: Option<&str>) -> Request<Body> {
@@ -416,7 +445,7 @@ mod tests {
         let sessions = Arc::new(InMemorySessionStore::new());
         let perms = PermissionSet::from_raw(["CASE_REVIEW:READ".to_string()]).expect("perms");
         let token = sessions.create("v", perms, 3600).await.expect("token");
-        let app = router(SubmitReviewUseCase::new(repo.clone()), repo, sessions);
+        let app = router(SubmitReviewUseCase::new(repo.clone()), repo, None, sessions);
         let resp = app
             .oneshot(post("rev1", "c1", r#"{"reviewerId":"u1","status":"PASS"}"#, Some(&token)))
             .await
@@ -586,7 +615,7 @@ mod tests {
         let sessions = Arc::new(InMemorySessionStore::new());
         let perms = PermissionSet::from_raw(["CASE_REVIEW:READ".to_string()]).expect("perms");
         let token = sessions.create("v", perms, 3600).await.expect("token");
-        let app = router(SubmitReviewUseCase::new(repo.clone()), repo, sessions);
+        let app = router(SubmitReviewUseCase::new(repo.clone()), repo, None, sessions);
         let resp =
             app.oneshot(json_req("DELETE", "/case-review/rev1", "", &token)).await.expect("resp");
         assert_eq!(resp.status(), StatusCode::FORBIDDEN);
@@ -624,7 +653,7 @@ mod tests {
         let sessions = Arc::new(InMemorySessionStore::new());
         let perms = PermissionSet::from_raw(["CASE_REVIEW:READ".to_string()]).expect("perms");
         let token = sessions.create("v", perms, 3600).await.expect("token");
-        let app = router(SubmitReviewUseCase::new(repo.clone()), repo, sessions);
+        let app = router(SubmitReviewUseCase::new(repo.clone()), repo, None, sessions);
         let resp = app
             .oneshot(json_req("PUT", "/case-review/rev1", r#"{"name":"n"}"#, &token))
             .await

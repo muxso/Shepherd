@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Button, Card, Input, Select, Switch, Table, Tag } from 'antd'
+import { Alert, Button, Card, Input, Select, Switch, Table, Tag } from 'antd'
 import ResizableDrawer from '../components/ResizableDrawer'
 import { PlusOutlined, RobotOutlined } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
@@ -195,6 +195,13 @@ export default function MessageSettings() {
       </div>
       {/* Right panel */}
       <div style={{ flex: 1, minWidth: 0, overflow: 'auto', padding: 16, background: 'var(--bg)' }}>
+        {/* In-app delivery works server-side already; these rules stay local until the rule engine moves server-side. */}
+        <Alert
+          type="info"
+          showIcon
+          style={{ marginBottom: 12 }}
+          message={t('msgset.liveBanner', '站内信已生效;接收规则与 webhook 通道后续接入服务端')}
+        />
         {nav === 'robot' ? (
           <RobotPanel settings={settings} persist={persist} t={t} lang={lang} />
         ) : (
