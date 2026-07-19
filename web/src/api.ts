@@ -1305,6 +1305,34 @@ export interface DebugResponse {
 
 export type RunMode = 'PARALLEL' | 'SERIAL'
 
+/** In-app notification (message center). */
+export interface Notice {
+  id: string
+  projectId: string
+  /** PLAN | BUG | CASE | API | SCHEDULE (comment mentions may carry other entity categories). */
+  category: string
+  eventType: string
+  title: string
+  content: string
+  resourceType: string
+  resourceId: string
+  operator: string
+  atMention: boolean
+  read: boolean
+  /** Epoch millis. */
+  createdAt: number
+}
+
+export interface NoticePage {
+  items: Notice[]
+  total: number
+}
+
+export interface NoticeUnreadCount {
+  total: number
+  byCategory: Record<string, number>
+}
+
 // ---------- Endpoint wrappers ----------
 
 const emptyPage = <T>(): Page<T> => ({ total: 0, current: 1, pageSize: 0, totalPages: 0, items: [] })
@@ -1795,6 +1823,23 @@ export const api = {
   // Meta update: severity/handler are full replacements (omit to clear); omitted title keeps the current one.
   updateBug: (id: string, b: { title?: string; severity?: string; handler?: string }) => http.put<Bug>(`/bug/${encodeURIComponent(id)}`, b),
   setBugStatus: (id: string, status: string) => http.post<Bug>(`/bug/${id}/status`, { status }),
+
+  // In-app notifications (message center): always scoped to the current session user.
+  notices: (q: { projectId?: string; category?: string; tab?: string; page?: number; pageSize?: number }) => {
+    const params = new URLSearchParams()
+    if (q.projectId) params.set('projectId', q.projectId)
+    if (q.category) params.set('category', q.category)
+    if (q.tab) params.set('tab', q.tab)
+    if (q.page) params.set('page', String(q.page))
+    if (q.pageSize) params.set('pageSize', String(q.pageSize))
+    const qs = params.toString()
+    return http.get<NoticePage>(`/notice${qs ? `?${qs}` : ''}`)
+  },
+  noticeUnreadCount: (projectId?: string) =>
+    http.get<NoticeUnreadCount>(`/notice/unread-count${projectId ? `?projectId=${encodeURIComponent(projectId)}` : ''}`),
+  markNoticeRead: (id: string) => http.post(`/notice/${encodeURIComponent(id)}/read`),
+  markAllNoticesRead: (projectId?: string) =>
+    http.post(`/notice/read-all${projectId ? `?projectId=${encodeURIComponent(projectId)}` : ''}`),
   // Human-AI collaboration stats (per-requirement AI/human split + weekly trend)
   collabStats: (projectId: string, requirementId?: string) =>
     http.get<CollabStats>(

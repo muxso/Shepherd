@@ -14,6 +14,7 @@ use axum::{
     routing::{delete, get, post, put},
     Json, Router,
 };
+use notice::application::{NoticeEvent, Notifier};
 use serde::{Deserialize, Serialize};
 use utoipa::{OpenApi, ToSchema};
 use webauth::{AuthUser, SessionStore};
@@ -27,7 +28,28 @@ struct BugState {
     relations: BugRelationsUseCase,
     custom_fields: BugCustomFieldsUseCase,
     update: UpdateBugMetaUseCase,
+    notifier: Option<Notifier>,
     sessions: Arc<dyn SessionStore>,
+}
+
+/// In-app message to the bug's handler (assignment / status change); best-effort.
+async fn notify_handler(st: &BugState, bug: &Bug, event_type: &str, content: &str, operator: &str) {
+    let (Some(notifier), Some(handler)) = (&st.notifier, &bug.handler) else { return };
+    notifier
+        .notify(
+            vec![handler.clone()],
+            NoticeEvent {
+                project_id: bug.project_id.clone(),
+                category: "BUG".into(),
+                event_type: event_type.into(),
+                title: bug.title.clone(),
+                content: content.into(),
+                resource_type: "BUG".into(),
+                resource_id: bug.id.clone(),
+                operator: operator.into(),
+            },
+        )
+        .await;
 }
 
 impl FromRef<BugState> for Arc<dyn SessionStore> {
@@ -42,6 +64,7 @@ pub fn router(
     list: ListBugsUseCase,
     followers: BugFollowersUseCase,
     relations: BugRelationsUseCase,
+    notifier: Option<Notifier>,
     sessions: Arc<dyn SessionStore>,
 ) -> Router {
     // Built here from the create use case's repository so callers' signatures stay unchanged.
@@ -65,6 +88,7 @@ pub fn router(
             relations,
             custom_fields,
             update,
+            notifier,
             sessions,
         })
 }
@@ -151,7 +175,10 @@ async fn create_bug(
         )
         .await
     {
-        Ok(b) => (StatusCode::CREATED, Json(BugResponse::from(b))).into_response(),
+        Ok(b) => {
+            notify_handler(&st, &b, "BUG_ASSIGNED", &b.status, &user.user_id).await;
+            (StatusCode::CREATED, Json(BugResponse::from(b))).into_response()
+        }
         Err(CreateBugError::Validation(_)) => {
             (StatusCode::BAD_REQUEST, "invalid bug payload").into_response()
         }
@@ -206,7 +233,10 @@ async fn change_status(
         return (StatusCode::FORBIDDEN, "permission denied").into_response();
     }
     match st.change.execute(&id, &req.status, Some(&user.user_id)).await {
-        Ok(b) => (StatusCode::OK, Json(BugResponse::from(b))).into_response(),
+        Ok(b) => {
+            notify_handler(&st, &b, "BUG_STATUS_CHANGED", &b.status, &user.user_id).await;
+            (StatusCode::OK, Json(BugResponse::from(b))).into_response()
+        }
         Err(ChangeBugStatusError::BugNotFound) => {
             (StatusCode::NOT_FOUND, "bug not found").into_response()
         }
@@ -255,7 +285,13 @@ async fn update_bug(
         )
         .await
     {
-        Ok(b) => (StatusCode::OK, Json(BugResponse::from(b))).into_response(),
+        Ok(b) => {
+            // Only a request that actually (re)assigns a handler notifies them.
+            if req.handler.is_some() {
+                notify_handler(&st, &b, "BUG_ASSIGNED", &b.status, &user.user_id).await;
+            }
+            (StatusCode::OK, Json(BugResponse::from(b))).into_response()
+        }
         Err(UpdateBugMetaError::BugNotFound) => {
             (StatusCode::NOT_FOUND, "bug not found").into_response()
         }
@@ -507,6 +543,7 @@ mod tests {
             ListBugsUseCase::new(repo.clone()),
             BugFollowersUseCase::new(repo.clone()),
             BugRelationsUseCase::new(repo),
+            None,
             sessions,
         );
         (r, token)
@@ -669,6 +706,7 @@ mod tests {
             ListBugsUseCase::new(repo.clone()),
             BugFollowersUseCase::new(repo.clone()),
             BugRelationsUseCase::new(repo),
+            None,
             sessions,
         );
         let id = create_returns_id(&app, &token).await;
@@ -762,6 +800,7 @@ mod tests {
             ListBugsUseCase::new(repo.clone()),
             BugFollowersUseCase::new(repo.clone()),
             BugRelationsUseCase::new(repo),
+            None,
             sessions,
         );
         let id = create_returns_id(&app, &token).await;
@@ -798,6 +837,7 @@ mod tests {
             ListBugsUseCase::new(repo.clone()),
             BugFollowersUseCase::new(repo.clone()),
             BugRelationsUseCase::new(repo),
+            None,
             sessions,
         );
         let id = create_returns_id(&app, &token).await;
@@ -885,6 +925,7 @@ mod tests {
             ListBugsUseCase::new(repo.clone()),
             BugFollowersUseCase::new(repo.clone()),
             BugRelationsUseCase::new(repo),
+            None,
             sessions,
         );
         let resp = app.oneshot(get("/bug?projectId=p1", Some(&token))).await.expect("resp");

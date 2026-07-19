@@ -9,7 +9,9 @@ use axum::{
     Json, Router,
 };
 use migrate::PgPool;
+use notice::application::{NoticeEvent, Notifier};
 use serde::{Deserialize, Serialize};
+use sqlx::Row;
 use tokio::sync::Mutex;
 use tokio_cron_scheduler::{Job, JobScheduler};
 use uuid::Uuid;
@@ -29,7 +31,36 @@ struct SchedState {
     /// Registered cron job ids per plan; jobs live only in memory, so
     /// re-save/delete must unhook them here or they fire until restart.
     jobs: Arc<Mutex<HashMap<String, Uuid>>>,
+    pool: PgPool,
+    notifier: Option<Notifier>,
     sessions: Arc<dyn SessionStore>,
+}
+
+/// In-app message to the plan creator when a scheduled run fails; best-effort.
+async fn notify_run_failure(pool: &PgPool, notifier: &Notifier, plan_id: &str, detail: &str) {
+    let row = sqlx::query("SELECT project_id, name, created_by FROM ms_test_plan WHERE id = $1")
+        .bind(plan_id)
+        .fetch_optional(pool)
+        .await;
+    let Ok(Some(row)) = row else { return };
+    let Ok(Some(creator)) = row.try_get::<Option<String>, _>("created_by") else { return };
+    let project_id: String = row.try_get("project_id").unwrap_or_default();
+    let name: String = row.try_get("name").unwrap_or_else(|_| plan_id.to_string());
+    notifier
+        .notify(
+            vec![creator],
+            NoticeEvent {
+                project_id,
+                category: "SCHEDULE".into(),
+                event_type: "PLAN_SCHEDULE_FAILED".into(),
+                title: name,
+                content: detail.into(),
+                resource_type: "PLAN".into(),
+                resource_id: plan_id.to_string(),
+                operator: "scheduler".into(),
+            },
+        )
+        .await;
 }
 
 async fn unregister_job(sched: &JobScheduler, jobs: &Mutex<HashMap<String, Uuid>>, plan_id: &str) {
@@ -50,22 +81,36 @@ async fn register_job(
     sched: &JobScheduler,
     run_uc: &ScheduledRunUseCase,
     runner: &crate::plan_run::PlanRunner,
+    pool: &PgPool,
+    notifier: &Option<Notifier>,
     plan_id: &str,
     cron: &str,
 ) -> Option<Uuid> {
     let uc = run_uc.clone();
     let runner = runner.clone();
+    let pool = pool.clone();
+    let notifier = notifier.clone();
     let pid = plan_id.to_string();
     let job = Job::new_async(cron, move |_uuid, _l| {
         let uc = uc.clone();
         let runner = runner.clone();
+        let pool = pool.clone();
+        let notifier = notifier.clone();
         let pid = pid.clone();
         Box::pin(async move {
-            match runner.run(&pid, None, None).await {
+            // Failed cases and a failed run both count as "run failure" for the creator.
+            let failure: Option<String> = match runner.run(&pid, None, None).await {
                 Ok(s) => {
-                    tracing::info!(plan = %pid, executed = s.executed, success = s.success, failed = s.failed, "scheduled plan executed")
+                    tracing::info!(plan = %pid, executed = s.executed, success = s.success, failed = s.failed, "scheduled plan executed");
+                    (s.failed > 0).then(|| format!("{}/{} failed", s.failed, s.executed))
                 }
-                Err(()) => tracing::warn!(plan = %pid, "scheduled plan execute failed"),
+                Err(()) => {
+                    tracing::warn!(plan = %pid, "scheduled plan execute failed");
+                    Some("execute failed".to_string())
+                }
+            };
+            if let (Some(n), Some(detail)) = (&notifier, failure) {
+                notify_run_failure(&pool, n, &pid, &detail).await;
             }
             match uc.execute(&pid).await {
                 Ok(run) => {
@@ -96,6 +141,7 @@ async fn register_job(
 pub async fn build(
     pool: PgPool,
     sessions: Arc<dyn SessionStore>,
+    notifier: Option<Notifier>,
 ) -> Result<Router, Box<dyn std::error::Error>> {
     let plan_repo = Arc::new(PgPlanRepository::new(pool.clone()));
     let store = Arc::new(PgScheduleStore::new(pool.clone()));
@@ -108,7 +154,8 @@ pub async fn build(
     if let Ok(schedules) = create.list_enabled().await {
         for s in schedules {
             if let Some(uuid) =
-                register_job(&sched, &run_uc, &plan_runner, &s.plan_id, &s.cron).await
+                register_job(&sched, &run_uc, &plan_runner, &pool, &notifier, &s.plan_id, &s.cron)
+                    .await
             {
                 registered.insert(s.plan_id.clone(), uuid);
             }
@@ -121,7 +168,16 @@ pub async fn build(
     Ok(Router::new()
         .route("/test-plan/{id}/schedule", post(create_schedule).delete(delete_schedule))
         .route("/test-plan/{id}/runs", get(list_runs))
-        .with_state(SchedState { create, run_uc, plan_runner, sched, jobs, sessions }))
+        .with_state(SchedState {
+            create,
+            run_uc,
+            plan_runner,
+            sched,
+            jobs,
+            pool,
+            notifier,
+            sessions,
+        }))
 }
 
 #[derive(Debug, Deserialize)]
@@ -159,8 +215,16 @@ async fn create_schedule(
         Ok(s) => {
             unregister_job(&st.sched, &st.jobs, &s.plan_id).await;
             if s.enabled {
-                if let Some(uuid) =
-                    register_job(&st.sched, &st.run_uc, &st.plan_runner, &s.plan_id, &s.cron).await
+                if let Some(uuid) = register_job(
+                    &st.sched,
+                    &st.run_uc,
+                    &st.plan_runner,
+                    &st.pool,
+                    &st.notifier,
+                    &s.plan_id,
+                    &s.cron,
+                )
+                .await
                 {
                     st.jobs.lock().await.insert(s.plan_id.clone(), uuid);
                 }

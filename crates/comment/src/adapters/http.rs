@@ -13,6 +13,8 @@ use crate::application::{
     ListCommentsUseCase,
 };
 use crate::domain::Comment;
+use notice::application::{NoticeEvent, Notifier};
+use notice::domain::category_for_entity;
 use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, OpenApi, ToSchema};
 use webauth::{AuthUser, SessionStore};
@@ -22,7 +24,38 @@ struct CommentState {
     add: AddCommentUseCase,
     list: ListCommentsUseCase,
     delete: DeleteCommentUseCase,
+    notifier: Option<Notifier>,
     sessions: Arc<dyn SessionStore>,
+}
+
+/// First N chars of the comment as the message title.
+fn snippet(text: &str, max_chars: usize) -> String {
+    if text.chars().count() <= max_chars {
+        return text.to_string();
+    }
+    let cut: String = text.chars().take(max_chars).collect();
+    format!("{cut}…")
+}
+
+/// `@name` mentions become at-mention notices for the resolved users. Comments
+/// carry no project id, so the notice is unscoped and shows in every project.
+async fn notify_mentions(st: &CommentState, c: &Comment) {
+    let Some(notifier) = &st.notifier else { return };
+    notifier
+        .notify_mentions(
+            &c.content,
+            NoticeEvent {
+                project_id: String::new(),
+                category: category_for_entity(&c.target_type),
+                event_type: "MENTIONED".into(),
+                title: snippet(&c.content, 80),
+                content: String::new(),
+                resource_type: c.target_type.clone(),
+                resource_id: c.target_id.clone(),
+                operator: c.author.clone(),
+            },
+        )
+        .await;
 }
 
 impl FromRef<CommentState> for Arc<dyn SessionStore> {
@@ -35,12 +68,13 @@ pub fn router(
     add: AddCommentUseCase,
     list: ListCommentsUseCase,
     delete: DeleteCommentUseCase,
+    notifier: Option<Notifier>,
     sessions: Arc<dyn SessionStore>,
 ) -> Router {
     Router::new()
         .route("/comment", post(add_comment).get(list_comments))
         .route("/comment/{id}", delete_route(delete_comment))
-        .with_state(CommentState { add, list, delete, sessions })
+        .with_state(CommentState { add, list, delete, notifier, sessions })
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -85,7 +119,10 @@ async fn add_comment(
         return (StatusCode::FORBIDDEN, "permission denied").into_response();
     }
     match st.add.execute(&req.target_type, &req.target_id, &req.content, &user.user_id).await {
-        Ok(c) => (StatusCode::CREATED, Json(CommentResponse::from(c))).into_response(),
+        Ok(c) => {
+            notify_mentions(&st, &c).await;
+            (StatusCode::CREATED, Json(CommentResponse::from(c))).into_response()
+        }
         Err(AddCommentError::Validation(_)) => {
             (StatusCode::BAD_REQUEST, "invalid comment payload").into_response()
         }
@@ -167,6 +204,7 @@ mod tests {
             AddCommentUseCase::new(repo.clone()),
             ListCommentsUseCase::new(repo.clone()),
             DeleteCommentUseCase::new(repo),
+            None,
             sessions,
         );
         (r, token)
@@ -262,6 +300,7 @@ mod tests {
             AddCommentUseCase::new(repo.clone()),
             ListCommentsUseCase::new(repo.clone()),
             DeleteCommentUseCase::new(repo),
+            None,
             sessions,
         );
         let resp = app

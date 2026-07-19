@@ -1,5 +1,5 @@
 [package]
-name = "bug"
+name = "notice"
 edition.workspace = true
 version.workspace = true
 license.workspace = true
@@ -9,17 +9,16 @@ rust-version.workspace = true
 [dependencies]
 async-trait = { workspace = true }
 thiserror = { workspace = true }
-serde_json = { workspace = true, optional = true }
-sqlx = { workspace = true, features = ["runtime-tokio", "postgres", "json"], optional = true }
+tracing = { workspace = true }
+sqlx = { workspace = true, features = ["runtime-tokio", "postgres"], optional = true }
 axum = { workspace = true, optional = true }
 utoipa = { workspace = true, optional = true }
 webauth = { workspace = true, optional = true }
 serde = { workspace = true, optional = true }
-notice = { workspace = true, optional = true }
 
 [features]
-pg = ["dep:sqlx", "dep:serde_json"]
-http = ["dep:axum", "dep:serde", "dep:webauth", "webauth/http", "dep:utoipa", "dep:notice"]
+pg = ["dep:sqlx"]
+http = ["dep:axum", "dep:serde", "dep:webauth", "webauth/http", "dep:utoipa"]
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
