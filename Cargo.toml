@@ -36,6 +36,7 @@ members = [
     "crates/probe",
     "crates/shepherd-cli",
     "crates/follow",
+    "crates/notice",
 ]
 
 # 统一版本/lint 策略。阶段 0 刻意零外部依赖,保证离线可编译、测试秒级反馈。
@@ -58,6 +59,7 @@ webauth = { path = "crates/webauth" }
 migrate = { path = "crates/migrate" }
 api-runner = { path = "crates/api-runner" }
 delivery = { path = "crates/delivery" }
+notice = { path = "crates/notice" }
 # probe 多数使用方关默认插件(perf/runner/runner-agent 只要类型);server 自行开 default-features = true。
 probe = { path = "crates/probe", default-features = false }
 # —— 外部依赖 ——

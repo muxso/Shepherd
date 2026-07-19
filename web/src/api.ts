@@ -1253,7 +1253,7 @@ export interface CollabStats {
 }
 
 export interface BugRelation {
-  /** REQUIREMENT | SCENARIO | FUNCTIONAL_CASE. */
+  /** REQUIREMENT | SCENARIO | FUNCTIONAL_CASE | PLAN. */
   kind: string
   targetId: string
 }
@@ -1304,6 +1304,71 @@ export interface DebugResponse {
 }
 
 export type RunMode = 'PARALLEL' | 'SERIAL'
+
+/** In-app notification (message center). */
+export interface Notice {
+  id: string
+  projectId: string
+  /** PLAN | BUG | CASE | API | SCHEDULE (comment mentions may carry other entity categories). */
+  category: string
+  eventType: string
+  title: string
+  content: string
+  resourceType: string
+  resourceId: string
+  operator: string
+  atMention: boolean
+  read: boolean
+  /** Epoch millis. */
+  createdAt: number
+}
+
+export interface NoticePage {
+  items: Notice[]
+  total: number
+}
+
+export interface NoticeUnreadCount {
+  total: number
+  byCategory: Record<string, number>
+}
+
+export type NoticeRobotPlatform = 'FEISHU' | 'DINGTALK' | 'WECOM'
+export type NoticeChannel = 'IN_APP' | 'ROBOT'
+
+/** Webhook robot (Feishu / DingTalk / WeCom) receiving notification events. */
+export interface NoticeRobot {
+  id: string
+  projectId: string
+  name: string
+  platform: NoticeRobotPlatform
+  webhookUrl: string
+  /** DingTalk sign secret (empty = no signing). */
+  secret: string
+  enabled: boolean
+  /** Epoch millis. */
+  createdAt: number
+}
+
+/** Server-side notification rule: routes an event type to channels/robots. */
+export interface NoticeRule {
+  id: string
+  projectId: string
+  /** Producer event type or '*' for all. */
+  eventType: string
+  channels: NoticeChannel[]
+  robotIds: string[]
+  /** Supports ${title} ${operator} ${time}; empty uses the default text. */
+  template: string
+  enabled: boolean
+  /** Epoch millis. */
+  createdAt: number
+}
+
+export interface NoticeRobotTestResult {
+  status: number
+  body: string
+}
 
 // ---------- Endpoint wrappers ----------
 
@@ -1628,8 +1693,11 @@ export const api = {
   unlinkPlanCase: (id: string, caseId: string) => http.del(`/test-plan/${id}/cases/${caseId}`),
   // Runs exactly one linked case/scenario and records its result. Scenario
   // entries auto-route to an applicable pool with online runners (or local).
-  runPlanCase: (id: string, caseId: string) =>
-    http.post<{ caseId: string; status: string; executedOn?: ExecutedOn | null }>(`/test-plan/${id}/cases/${caseId}/run`, {}),
+  // asyncRun: scenario entries return RUNNING + reportId immediately (live
+  // events on runEventsWsUrl(reportId), row recorded at completion); plain API
+  // cases always complete synchronously.
+  runPlanCase: (id: string, caseId: string, opts?: { asyncRun?: boolean }) =>
+    http.post<{ caseId: string; status: string; reportId?: string | null; executedOn?: ExecutedOn | null }>(`/test-plan/${id}/cases/${caseId}/run`, { asyncRun: opts?.asyncRun }),
   // Manually record a case result (pass/fail/blocked/false alarm); status: SUCCESS|ERROR|BLOCK|FAKE_ERROR|PENDING
   recordPlanCaseResult: (id: string, caseId: string, status: string) =>
     http.post(`/test-plan/${id}/cases/${caseId}/result`, { status }),
@@ -1792,13 +1860,49 @@ export const api = {
   // Meta update: severity/handler are full replacements (omit to clear); omitted title keeps the current one.
   updateBug: (id: string, b: { title?: string; severity?: string; handler?: string }) => http.put<Bug>(`/bug/${encodeURIComponent(id)}`, b),
   setBugStatus: (id: string, status: string) => http.post<Bug>(`/bug/${id}/status`, { status }),
+
+  // In-app notifications (message center): always scoped to the current session user.
+  notices: (q: { projectId?: string; category?: string; tab?: string; page?: number; pageSize?: number }) => {
+    const params = new URLSearchParams()
+    if (q.projectId) params.set('projectId', q.projectId)
+    if (q.category) params.set('category', q.category)
+    if (q.tab) params.set('tab', q.tab)
+    if (q.page) params.set('page', String(q.page))
+    if (q.pageSize) params.set('pageSize', String(q.pageSize))
+    return http.get<NoticePage>(`/notice?${params.toString()}`)
+  },
+  noticeUnreadCount: (projectId?: string) =>
+    http.get<NoticeUnreadCount>(`/notice/unread-count?projectId=${encodeURIComponent(projectId || '')}`),
+  markNoticeRead: (id: string) => http.post(`/notice/${encodeURIComponent(id)}/read`),
+  markAllNoticesRead: (projectId?: string) =>
+    http.post(`/notice/read-all?projectId=${encodeURIComponent(projectId || '')}`),
+
+  // Notification settings: webhook robots + server-side routing rules (project-scoped)
+  noticeRobots: (projectId: string) =>
+    http.get<NoticeRobot[]>(`/notice/robots?projectId=${encodeURIComponent(projectId)}`),
+  createNoticeRobot: (b: { projectId: string; name: string; platform: NoticeRobotPlatform; webhookUrl: string; secret?: string; enabled?: boolean }) =>
+    http.post<NoticeRobot>('/notice/robots', b),
+  updateNoticeRobot: (id: string, b: { projectId: string; name: string; platform: NoticeRobotPlatform; webhookUrl: string; secret?: string; enabled?: boolean }) =>
+    http.put<NoticeRobot>(`/notice/robots/${encodeURIComponent(id)}`, b),
+  deleteNoticeRobot: (id: string, projectId: string) =>
+    http.del(`/notice/robots/${encodeURIComponent(id)}?projectId=${encodeURIComponent(projectId)}`),
+  testNoticeRobot: (id: string, projectId: string) =>
+    http.post<NoticeRobotTestResult>(`/notice/robots/${encodeURIComponent(id)}/test?projectId=${encodeURIComponent(projectId)}`),
+  noticeRules: (projectId: string) =>
+    http.get<NoticeRule[]>(`/notice/rules?projectId=${encodeURIComponent(projectId)}`),
+  createNoticeRule: (b: { projectId: string; eventType: string; channels: NoticeChannel[]; robotIds?: string[]; template?: string; enabled?: boolean }) =>
+    http.post<NoticeRule>('/notice/rules', b),
+  updateNoticeRule: (id: string, b: { projectId: string; eventType: string; channels: NoticeChannel[]; robotIds?: string[]; template?: string; enabled?: boolean }) =>
+    http.put<NoticeRule>(`/notice/rules/${encodeURIComponent(id)}`, b),
+  deleteNoticeRule: (id: string, projectId: string) =>
+    http.del(`/notice/rules/${encodeURIComponent(id)}?projectId=${encodeURIComponent(projectId)}`),
   // Human-AI collaboration stats (per-requirement AI/human split + weekly trend)
   collabStats: (projectId: string, requirementId?: string) =>
     http.get<CollabStats>(
       `/delivery/collab-stats?projectId=${encodeURIComponent(projectId)}${requirementId ? `&requirementId=${encodeURIComponent(requirementId)}` : ''}`,
     ),
 
-  // Bug ↔ asset links (requirement/scenario case/functional case)
+  // Bug ↔ asset links (requirement/scenario case/functional case/test plan)
   bugRelations: (id: string) =>
     http.get<{ relations: BugRelation[] }>(`/bug/${encodeURIComponent(id)}/relation`),
   linkBugRelation: (id: string, b: { kind: string; targetId: string }) =>
@@ -1807,6 +1911,8 @@ export const api = {
     http.del<{ relations: BugRelation[] }>(
       `/bug/${encodeURIComponent(id)}/relation/${encodeURIComponent(kind)}/${encodeURIComponent(targetId)}`,
     ),
+  // Reverse lookup: bugs linked to a test plan (kind = PLAN), newest first.
+  bugsByPlan: (planId: string) => http.get<Bug[]>(`/bug/by-plan/${encodeURIComponent(planId)}`),
 
   // Followers (generic): follow/unfollow/query any entity by (projectId, entityType, entityId).
   follow: (b: { projectId: string; entityType: string; entityId: string }) =>

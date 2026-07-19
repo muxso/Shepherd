@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use async_trait::async_trait;
 
-use crate::domain::{Bug, BugRelation, NewBug, StatusFlowGraph};
+use crate::domain::{Bug, BugRelation, NewBug, RelationKind, StatusFlowGraph};
 
 use thiserror::Error;
 
@@ -62,4 +62,11 @@ pub trait BugRepository: Send + Sync {
     async fn remove_relation(&self, rel: &BugRelation) -> Result<(), RepoError>;
 
     async fn list_relations(&self, bug_id: &str) -> Result<Vec<BugRelation>, RepoError>;
+
+    /// Reverse lookup: bugs linked to a target entity (newest first, deleted excluded).
+    async fn list_bugs_by_relation(
+        &self,
+        kind: RelationKind,
+        target_id: &str,
+    ) -> Result<Vec<Bug>, RepoError>;
 }

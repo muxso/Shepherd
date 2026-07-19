@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use crate::domain::{Bug, BugRelation, NewBug, StatusFlowGraph, StatusItem};
+use crate::domain::{Bug, BugRelation, NewBug, RelationKind, StatusFlowGraph, StatusItem};
 use crate::ports::{BugRepository, RepoError};
 use async_trait::async_trait;
 use sqlx::{PgPool, Row};
@@ -288,6 +288,24 @@ impl BugRepository for PgBugRepository {
             })
             .collect()
     }
+
+    async fn list_bugs_by_relation(
+        &self,
+        kind: RelationKind,
+        target_id: &str,
+    ) -> Result<Vec<Bug>, RepoError> {
+        let rows = sqlx::query(&format!(
+            "SELECT {BUG_COLS} FROM ms_bug WHERE deleted = false AND id IN \
+             (SELECT bug_id FROM ms_bug_relation WHERE kind = $1 AND target_id = $2) \
+             ORDER BY created_at DESC, id DESC"
+        ))
+        .bind(kind.as_str())
+        .bind(target_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(map_err)?;
+        rows.iter().map(row_to_bug).collect()
+    }
 }
 
 #[cfg(test)]
@@ -369,6 +387,24 @@ mod tests {
         assert_eq!(after.updated_by.as_deref(), Some("erin"));
         repo.set_custom_fields(&bug.id, &BTreeMap::new(), None).await.expect("clear fields");
         assert!(repo.get(&bug.id).await.expect("get").expect("some").custom_fields.is_empty());
+
+        // Relation reverse lookup: link to a plan, query by plan, then unlink.
+        let rel = BugRelation::new(&bug.id, "PLAN", "plan-1").expect("rel");
+        repo.add_relation(&rel).await.expect("add rel");
+        let linked = repo.list_bugs_by_relation(RelationKind::Plan, "plan-1").await.expect("rev");
+        assert_eq!(linked.len(), 1);
+        assert_eq!(linked[0].id, bug.id);
+        assert!(repo
+            .list_bugs_by_relation(RelationKind::Plan, "ghost")
+            .await
+            .expect("rev")
+            .is_empty());
+        repo.remove_relation(&rel).await.expect("rm rel");
+        assert!(repo
+            .list_bugs_by_relation(RelationKind::Plan, "plan-1")
+            .await
+            .expect("rev")
+            .is_empty());
 
         let listed = repo.list("p1").await.expect("list");
         assert_eq!(listed.len(), 1);

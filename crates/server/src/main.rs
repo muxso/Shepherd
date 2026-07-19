@@ -311,12 +311,34 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         sessions.clone(),
     );
 
+    // In-app notifications: the Notifier fans events out from producers
+    // (bug/case/comment/scheduler); the /notice routes are the personal inbox.
+    // Routing rules + webhook robots decide per event whether it lands in the
+    // inbox and/or gets pushed to Feishu / DingTalk / WeCom.
+    let notice_store = Arc::new(notice::adapters::pg::PgNoticeStore::new(pool.clone()));
+    let notice_rule_store = Arc::new(notice::adapters::pg::PgNoticeRuleStore::new(pool.clone()));
+    let robot_sender = Arc::new(notice::adapters::robot_sender::ReqwestRobotSender::new());
+    let notifier = notice::application::Notifier::new(
+        notice_store.clone(),
+        Arc::new(notice::adapters::pg::PgNoticeUserDirectory::new(pool.clone())),
+    )
+    .with_rules(notice_rule_store.clone(), robot_sender.clone());
+    let notice_routes = notice::adapters::http::router(
+        notice::application::NoticeQueryService::new(notice_store),
+        sessions.clone(),
+    )
+    .merge(notice::adapters::http::settings_router(
+        notice::application::NoticeRuleAdmin::new(notice_rule_store, robot_sender),
+        sessions.clone(),
+    ));
+
     // Generic comments (polymorphic: attach to any entity — REQUIREMENT / BUG / FUNCTIONAL_CASE ...).
     let comment_repo = Arc::new(comment::adapters::pg::PgCommentRepository::new(pool.clone()));
     let comment_routes = comment::adapters::http::router(
         comment::application::AddCommentUseCase::new(comment_repo.clone()),
         comment::application::ListCommentsUseCase::new(comment_repo.clone()),
         comment::application::DeleteCommentUseCase::new(comment_repo),
+        Some(notifier.clone()),
         sessions.clone(),
     );
 
@@ -501,6 +523,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let case_routes = case::adapters::http::router(
         SubmitReviewUseCase::new(review_repo.clone()),
         review_repo,
+        Some(notifier.clone()),
         sessions.clone(),
     );
 
@@ -511,6 +534,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         ListBugsUseCase::new(bug_repo.clone()),
         BugFollowersUseCase::new(bug_repo.clone()),
         BugRelationsUseCase::new(bug_repo),
+        Some(notifier.clone()),
         sessions.clone(),
     );
 
@@ -631,11 +655,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         pool: pool.clone(),
         specs: Arc::new(PgCaseSpecSource::new(pool.clone())),
         hub: Some(pool_hub.clone()),
+        notifier: Some(notifier.clone()),
     };
     let scenario_run_routes = scenario_run::router(scenario_runner, sessions.clone());
     // Plan runs share the hub: scenario-mounted entries route through pools and
     // stream live events.
-    let plan_run_routes = plan_run::router(pool.clone(), sessions.clone(), Some(pool_hub.clone()));
+    let plan_run_routes = plan_run::router(
+        pool.clone(),
+        sessions.clone(),
+        Some(pool_hub.clone()),
+        Some(notifier.clone()),
+    );
     let pool_runner_routes = pool_runner_ws::router(pool_hub, sessions.clone(), pool.clone());
 
     let perf_routes = perf_run::router(
@@ -648,7 +678,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
     let debug_send_routes = debug_send::router(sessions.clone());
 
-    let plan_scheduler_routes = plan_scheduler::build(pool.clone(), sessions.clone()).await?;
+    let plan_scheduler_routes =
+        plan_scheduler::build(pool.clone(), sessions.clone(), Some(notifier.clone())).await?;
 
     let import_scheduler_routes = import_scheduler::build(pool.clone(), sessions.clone()).await?;
 
@@ -697,6 +728,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .merge(functional_case_routes),
         ),
         routes::group("bug", bug_routes.merge(follow_routes)),
+        routes::group("notice", notice_routes),
         routes::group("test-plan", plan_routes.merge(plan_run_routes).merge(plan_scheduler_routes)),
         routes::group(
             "api-test",

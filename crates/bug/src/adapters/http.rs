@@ -11,9 +11,10 @@ use axum::{
     extract::{FromRef, Path, Query, State},
     http::StatusCode,
     response::{IntoResponse, Response},
-    routing::{delete, post, put},
+    routing::{delete, get, post, put},
     Json, Router,
 };
+use notice::application::{NoticeEvent, Notifier};
 use serde::{Deserialize, Serialize};
 use utoipa::{OpenApi, ToSchema};
 use webauth::{AuthUser, SessionStore};
@@ -27,7 +28,28 @@ struct BugState {
     relations: BugRelationsUseCase,
     custom_fields: BugCustomFieldsUseCase,
     update: UpdateBugMetaUseCase,
+    notifier: Option<Notifier>,
     sessions: Arc<dyn SessionStore>,
+}
+
+/// In-app message to the bug's handler (assignment / status change); best-effort.
+async fn notify_handler(st: &BugState, bug: &Bug, event_type: &str, content: &str, operator: &str) {
+    let (Some(notifier), Some(handler)) = (&st.notifier, &bug.handler) else { return };
+    notifier
+        .notify(
+            vec![handler.clone()],
+            NoticeEvent {
+                project_id: bug.project_id.clone(),
+                category: "BUG".into(),
+                event_type: event_type.into(),
+                title: bug.title.clone(),
+                content: content.into(),
+                resource_type: "BUG".into(),
+                resource_id: bug.id.clone(),
+                operator: operator.into(),
+            },
+        )
+        .await;
 }
 
 impl FromRef<BugState> for Arc<dyn SessionStore> {
@@ -42,6 +64,7 @@ pub fn router(
     list: ListBugsUseCase,
     followers: BugFollowersUseCase,
     relations: BugRelationsUseCase,
+    notifier: Option<Notifier>,
     sessions: Arc<dyn SessionStore>,
 ) -> Router {
     // Built here from the create use case's repository so callers' signatures stay unchanged.
@@ -56,6 +79,7 @@ pub fn router(
         .route("/bug/{id}/followers/{userId}", delete(unfollow_bug))
         .route("/bug/{id}/relation", post(link_relation).get(list_relations))
         .route("/bug/{id}/relation/{kind}/{targetId}", delete(unlink_relation))
+        .route("/bug/by-plan/{planId}", get(list_bugs_by_plan))
         .with_state(BugState {
             create,
             change,
@@ -64,6 +88,7 @@ pub fn router(
             relations,
             custom_fields,
             update,
+            notifier,
             sessions,
         })
 }
@@ -150,7 +175,10 @@ async fn create_bug(
         )
         .await
     {
-        Ok(b) => (StatusCode::CREATED, Json(BugResponse::from(b))).into_response(),
+        Ok(b) => {
+            notify_handler(&st, &b, "BUG_ASSIGNED", &b.status, &user.user_id).await;
+            (StatusCode::CREATED, Json(BugResponse::from(b))).into_response()
+        }
         Err(CreateBugError::Validation(_)) => {
             (StatusCode::BAD_REQUEST, "invalid bug payload").into_response()
         }
@@ -205,7 +233,10 @@ async fn change_status(
         return (StatusCode::FORBIDDEN, "permission denied").into_response();
     }
     match st.change.execute(&id, &req.status, Some(&user.user_id)).await {
-        Ok(b) => (StatusCode::OK, Json(BugResponse::from(b))).into_response(),
+        Ok(b) => {
+            notify_handler(&st, &b, "BUG_STATUS_CHANGED", &b.status, &user.user_id).await;
+            (StatusCode::OK, Json(BugResponse::from(b))).into_response()
+        }
         Err(ChangeBugStatusError::BugNotFound) => {
             (StatusCode::NOT_FOUND, "bug not found").into_response()
         }
@@ -254,7 +285,13 @@ async fn update_bug(
         )
         .await
     {
-        Ok(b) => (StatusCode::OK, Json(BugResponse::from(b))).into_response(),
+        Ok(b) => {
+            // Only a request that actually (re)assigns a handler notifies them.
+            if req.handler.is_some() {
+                notify_handler(&st, &b, "BUG_ASSIGNED", &b.status, &user.user_id).await;
+            }
+            (StatusCode::OK, Json(BugResponse::from(b))).into_response()
+        }
         Err(UpdateBugMetaError::BugNotFound) => {
             (StatusCode::NOT_FOUND, "bug not found").into_response()
         }
@@ -371,7 +408,7 @@ async fn unfollow_bug(
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 struct RelationItem {
-    /// REQUIREMENT | SCENARIO | FUNCTIONAL_CASE.
+    /// REQUIREMENT | SCENARIO | FUNCTIONAL_CASE | PLAN.
     kind: String,
     target_id: String,
 }
@@ -391,7 +428,7 @@ struct RelationsResponse {
 #[derive(Debug, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 struct LinkRelationRequest {
-    /// REQUIREMENT | SCENARIO | FUNCTIONAL_CASE.
+    /// REQUIREMENT | SCENARIO | FUNCTIONAL_CASE | PLAN.
     kind: String,
     target_id: String,
 }
@@ -458,8 +495,27 @@ async fn unlink_relation(
     }
 }
 
+/// Reverse lookup: bugs linked to a test plan (kind = PLAN), newest first.
+#[utoipa::path(get, path = "/bug/by-plan/{planId}", tag = "bug", params(("planId" = String, Path)), responses((status = 200, body = [BugResponse]), (status = 403)), security(("bearer" = [])))]
+async fn list_bugs_by_plan(
+    user: AuthUser,
+    State(st): State<BugState>,
+    Path(plan_id): Path<String>,
+) -> Response {
+    if !user.can("BUG", "READ") {
+        return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
+    match st.relations.bugs_for_target("PLAN", &plan_id).await {
+        Ok(bugs) => {
+            let body: Vec<BugResponse> = bugs.into_iter().map(BugResponse::from).collect();
+            (StatusCode::OK, Json(body)).into_response()
+        }
+        Err(e) => map_relation_err(e),
+    }
+}
+
 #[derive(OpenApi)]
-#[openapi(paths(create_bug, list_bugs, update_bug, change_status, set_custom_fields, list_followers, follow_bug, unfollow_bug, list_relations, link_relation, unlink_relation), components(schemas(CreateBugRequest, UpdateBugRequest, ChangeStatusRequest, SetCustomFieldsRequest, BugResponse, FollowRequest, FollowersResponse, LinkRelationRequest, RelationItem, RelationsResponse)), tags((name = "bug", description = "缺陷管理")))]
+#[openapi(paths(create_bug, list_bugs, update_bug, change_status, set_custom_fields, list_followers, follow_bug, unfollow_bug, list_relations, link_relation, unlink_relation, list_bugs_by_plan), components(schemas(CreateBugRequest, UpdateBugRequest, ChangeStatusRequest, SetCustomFieldsRequest, BugResponse, FollowRequest, FollowersResponse, LinkRelationRequest, RelationItem, RelationsResponse)), tags((name = "bug", description = "缺陷管理")))]
 struct ApiDoc;
 pub fn openapi() -> utoipa::openapi::OpenApi {
     ApiDoc::openapi()
@@ -487,6 +543,7 @@ mod tests {
             ListBugsUseCase::new(repo.clone()),
             BugFollowersUseCase::new(repo.clone()),
             BugRelationsUseCase::new(repo),
+            None,
             sessions,
         );
         (r, token)
@@ -649,6 +706,7 @@ mod tests {
             ListBugsUseCase::new(repo.clone()),
             BugFollowersUseCase::new(repo.clone()),
             BugRelationsUseCase::new(repo),
+            None,
             sessions,
         );
         let id = create_returns_id(&app, &token).await;
@@ -742,6 +800,7 @@ mod tests {
             ListBugsUseCase::new(repo.clone()),
             BugFollowersUseCase::new(repo.clone()),
             BugRelationsUseCase::new(repo),
+            None,
             sessions,
         );
         let id = create_returns_id(&app, &token).await;
@@ -778,6 +837,7 @@ mod tests {
             ListBugsUseCase::new(repo.clone()),
             BugFollowersUseCase::new(repo.clone()),
             BugRelationsUseCase::new(repo),
+            None,
             sessions,
         );
         let id = create_returns_id(&app, &token).await;
@@ -865,6 +925,7 @@ mod tests {
             ListBugsUseCase::new(repo.clone()),
             BugFollowersUseCase::new(repo.clone()),
             BugRelationsUseCase::new(repo),
+            None,
             sessions,
         );
         let resp = app.oneshot(get("/bug?projectId=p1", Some(&token))).await.expect("resp");
@@ -920,6 +981,72 @@ mod tests {
         assert_eq!(rels.len(), 1);
         assert_eq!(rels[0]["kind"], "SCENARIO");
         assert_eq!(rels[0]["targetId"], "s1");
+    }
+
+    #[tokio::test]
+    async fn plan_relation_reverse_lookup_roundtrip() {
+        let (app, t) = app().await;
+        let id = create_returns_id(&app, &t).await;
+
+        // Link the bug to a plan, then the reverse route returns it.
+        let resp = app
+            .clone()
+            .oneshot(post(
+                &format!("/bug/{id}/relation"),
+                r#"{"kind":"PLAN","targetId":"plan-1"}"#,
+                Some(&t),
+            ))
+            .await
+            .expect("resp");
+        assert_eq!(resp.status(), StatusCode::OK);
+        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.expect("body");
+        let v: serde_json::Value = serde_json::from_slice(&bytes).expect("json");
+        assert_eq!(v["relations"][0]["kind"], "PLAN");
+        assert_eq!(v["relations"][0]["targetId"], "plan-1");
+
+        let resp = app.clone().oneshot(get("/bug/by-plan/plan-1", Some(&t))).await.expect("resp");
+        assert_eq!(resp.status(), StatusCode::OK);
+        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.expect("body");
+        let v: serde_json::Value = serde_json::from_slice(&bytes).expect("json");
+        let arr = v.as_array().expect("array");
+        assert_eq!(arr.len(), 1);
+        assert_eq!(arr[0]["id"], id.as_str());
+
+        // Other plans stay empty; unlink drops the bug from the reverse view.
+        let resp = app.clone().oneshot(get("/bug/by-plan/other", Some(&t))).await.expect("resp");
+        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.expect("body");
+        let v: serde_json::Value = serde_json::from_slice(&bytes).expect("json");
+        assert!(v.as_array().expect("array").is_empty());
+
+        let resp = app
+            .clone()
+            .oneshot(del(&format!("/bug/{id}/relation/PLAN/plan-1"), Some(&t)))
+            .await
+            .expect("resp");
+        assert_eq!(resp.status(), StatusCode::OK);
+        let resp = app.oneshot(get("/bug/by-plan/plan-1", Some(&t))).await.expect("resp");
+        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.expect("body");
+        let v: serde_json::Value = serde_json::from_slice(&bytes).expect("json");
+        assert!(v.as_array().expect("array").is_empty());
+    }
+
+    #[tokio::test]
+    async fn list_bugs_by_plan_without_permission_403() {
+        let repo = Arc::new(InMemoryBugRepository::with_default_flow("p1"));
+        let sessions = Arc::new(InMemorySessionStore::new());
+        let perms = PermissionSet::from_raw(["BUG:ADD".to_string()]).expect("perms");
+        let token = sessions.create("u", perms, 3600).await.expect("token");
+        let app = router(
+            CreateBugUseCase::new(repo.clone()),
+            ChangeBugStatusUseCase::new(repo.clone()),
+            ListBugsUseCase::new(repo.clone()),
+            BugFollowersUseCase::new(repo.clone()),
+            BugRelationsUseCase::new(repo),
+            None,
+            sessions,
+        );
+        let resp = app.oneshot(get("/bug/by-plan/plan-1", Some(&token))).await.expect("resp");
+        assert_eq!(resp.status(), StatusCode::FORBIDDEN);
     }
 
     #[tokio::test]

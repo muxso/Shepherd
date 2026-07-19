@@ -5,7 +5,7 @@ import { message, modal } from '../../feedback'
 import EditDrawer from '../EditDrawer'
 import ResizableDrawer from '../ResizableDrawer'
 import { PlayCircleOutlined, FileMarkdownOutlined, FileTextOutlined, LinkOutlined, ClockCircleOutlined } from '@ant-design/icons'
-import { api, ApiError, type ApiCase, type PlanCase, type PlanStats, type PlanStepResult, type Scenario } from '../../api'
+import { api, ApiError, type ApiCase, type Bug, type PlanCase, type PlanStats, type PlanStepResult, type Scenario } from '../../api'
 import AutoPoolIndicator from '../AutoPoolIndicator'
 import { outcomeColor } from '../tags'
 import Donut from '../Donut'
@@ -16,12 +16,14 @@ import PlanMindmap from './PlanMindmap'
 import PlanEditDrawer from './PlanEditDrawer'
 import PlanDetailHeader, { PlanRunsTable } from './PlanDetailHeader'
 import PlanCasesPanel, { planCaseStatusLabel } from './PlanCasesPanel'
+import PlanBugsPanel from './PlanBugsPanel'
 
 // Plan detail (workspace tab content): header + tabs (测试规划 mind-map | 场景用例 | 缺陷列表 | 执行历史).
 export default function PlanDetail({ planId, name, projectId }: { planId: string; name: string; projectId: string }) {
   const { t } = useI18n()
   const [stats, setStats] = useState<PlanStats | null>(null)
   const [cases, setCases] = useState<PlanCase[]>([])
+  const [bugs, setBugs] = useState<Bug[]>([])
   const [loading, setLoading] = useState(false)
   const [linkOpen, setLinkOpen] = useState(false)
   const [running, setRunning] = useState(false)
@@ -32,9 +34,14 @@ export default function PlanDetail({ planId, name, projectId }: { planId: string
   const load = async () => {
     setLoading(true)
     try {
-      const [s, c] = await Promise.all([api.planStats(planId), api.planCases(planId)])
+      const [s, c, b] = await Promise.all([
+        api.planStats(planId),
+        api.planCases(planId),
+        api.bugsByPlan(planId).catch(() => [] as Bug[]),
+      ])
       setStats(s)
       setCases(Array.isArray(c) ? c : c.items)
+      setBugs(b)
     } catch (e) {
       message.error(e instanceof ApiError ? e.message : t('plan.loadFail', '加载计划失败'))
     } finally {
@@ -140,8 +147,8 @@ export default function PlanDetail({ planId, name, projectId }: { planId: string
           { key: 'cases', label: `${t('plan.tabCases', '场景用例')} (${cases.length})`, children: casesTab },
           {
             key: 'bugs',
-            label: t('plan.tabBugs', '缺陷列表'),
-            children: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('plan.noBugs', '暂无关联缺陷')} style={{ marginTop: 48 }} />,
+            label: `${t('plan.tabBugs', '缺陷列表')} (${bugs.length})`,
+            children: <PlanBugsPanel planId={planId} projectId={projectId} bugs={bugs} loading={loading} reload={load} />,
           },
           { key: 'history', label: t('plan.tabHistory', '执行历史'), children: <div style={{ padding: '12px 16px' }}><PlanRunsTable planId={planId} /></div> },
         ]}

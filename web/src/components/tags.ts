@@ -104,6 +104,24 @@ export function outcomeColor(o: string): string {
   return 'default'
 }
 
+/** Bug status → Tag color (resolved/closed green, rejected red, new/reopened orange). */
+export function bugStatusColor(s: string): string {
+  const v = (s || '').toUpperCase()
+  if (v === 'RESOLVED' || v === 'CLOSED') return 'green'
+  if (v === 'REJECTED') return 'red'
+  if (v === 'NEW' || v === 'REOPENED') return 'orange'
+  return 'blue'
+}
+
+/** Bug status → localized label (i18n keys bug.st.*); custom statuses render as-is. */
+export function bugStatusLabel(s: string, t: TFn): string {
+  const zh: Record<string, string> = {
+    NEW: '新建', RESOLVED: '已解决', CLOSED: '已关闭', REOPENED: '重新打开', REJECTED: '已拒绝',
+  }
+  const v = (s || 'NEW').toUpperCase()
+  return zh[v] ? t(`bug.st.${v}`, zh[v]) : s
+}
+
 /** Functional case lifecycle labels (PREPARED/REVIEWING/PASS/REJECT/PENDING). */
 export const funcCaseStatusLabel = (s: string | undefined, t: (k: string, f?: string) => string): string => {
   const v = (s || 'PREPARED').toUpperCase()
