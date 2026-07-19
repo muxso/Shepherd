@@ -10,6 +10,8 @@
 //!   SHEPHERD_RUNNER_KEY API key (sak_...) or session token (required)
 //!   RUNNER_NAME         display name (default: hostname)
 //!   RUNNER_MAX_CONCURRENT concurrent run cap advertised to the server (default 4)
+//!   RUNNER_CAPABILITIES comma-separated capability tags advertised to the server;
+//!                       runs requiring tags only dispatch to runners that have them all
 
 use std::time::Duration;
 
@@ -29,6 +31,7 @@ struct Config {
     key: String,
     name: String,
     max_concurrent: u32,
+    capabilities: Vec<String>,
 }
 
 impl Config {
@@ -58,6 +61,15 @@ impl Config {
                 .and_then(|s| s.parse().ok())
                 .filter(|&n| n >= 1)
                 .unwrap_or_else(pool_runner::protocol::default_max_concurrent),
+            capabilities: std::env::var("RUNNER_CAPABILITIES")
+                .map(|s| {
+                    s.split(',')
+                        .map(str::trim)
+                        .filter(|t| !t.is_empty())
+                        .map(str::to_string)
+                        .collect()
+                })
+                .unwrap_or_default(),
         })
     }
 }
@@ -126,7 +138,7 @@ async fn serve_once(cfg: &Config) -> Result<(), String> {
             pool_id: cfg.pool_id.clone(),
             pool_name: cfg.pool_name.clone(),
             name: cfg.name.clone(),
-            capabilities: vec!["http".to_string()],
+            capabilities: cfg.capabilities.clone(),
             max_concurrent: cfg.max_concurrent,
         },
     );

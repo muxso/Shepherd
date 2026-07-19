@@ -129,6 +129,23 @@ impl ScenarioRunner {
         .filter(|s| !s.trim().is_empty())
     }
 
+    /// Capability tags the scenario requires of a runner (meta.capabilities,
+    /// a JSON string array). Empty = any runner. No UI writes this field yet;
+    /// it is the designated requirement source for capability matching.
+    async fn required_caps_of(&self, scenario_id: &str) -> Vec<String> {
+        sqlx::query_scalar::<_, Option<String>>(
+            "SELECT meta->>'capabilities' FROM ms_api_scenario WHERE id = $1 AND NOT deleted",
+        )
+        .bind(scenario_id)
+        .fetch_optional(&self.pool)
+        .await
+        .ok()
+        .flatten()
+        .flatten()
+        .and_then(|s| serde_json::from_str::<Vec<String>>(&s).ok())
+        .unwrap_or_default()
+    }
+
     /// Display name of a live pool (empty when unknown).
     async fn pool_name_of(&self, pool_id: &str) -> String {
         sqlx::query_scalar::<_, String>(
@@ -215,6 +232,7 @@ impl ScenarioRunner {
             None => self.auto_pool(project_id).await,
         };
         let executed_on: ExecutedOnSlot = Arc::new(Mutex::new(None));
+        let required = self.required_caps_of(scenario_id).await;
         let remote = match (&picked, &self.hub) {
             (Some((pid, pname)), Some(hub)) if hub.has_runner(pid) => {
                 match plan_to_wire(&nodes, self.specs.as_ref()).await {
@@ -222,6 +240,7 @@ impl ScenarioRunner {
                         .dispatch(
                             pid,
                             &report_id,
+                            required,
                             wire,
                             WireEnv {
                                 base_url: env.base_url.clone(),
@@ -316,9 +335,11 @@ impl ScenarioRunner {
             if hub.has_runner(pid) {
                 if let Ok(wire) = plan_to_wire(nodes, self.specs.as_ref()).await {
                     let run_id = uuid::Uuid::new_v4().to_string();
+                    let required = self.required_caps_of(scenario_id).await;
                     let remote = hub.dispatch(
                         pid,
                         &run_id,
+                        required,
                         wire,
                         WireEnv {
                             base_url: env.base_url.clone(),

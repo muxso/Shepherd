@@ -1,11 +1,12 @@
-import { useEffect, useMemo, useState, type Key, type ReactNode } from 'react'
+import { useEffect, useMemo, useRef, useState, type Key, type ReactNode } from 'react'
 import { Button, Checkbox, Empty, Input, Popover, Segmented, Select, Space, Table, Tag, Tree } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
 import type { DataNode } from 'antd/es/tree'
 import { FilterOutlined, ReloadOutlined, SearchOutlined, SettingOutlined } from '@ant-design/icons'
 import { message, modal } from '../../feedback'
-import { api, ApiError, type ApiCase, type ApiModule, type PlanCase, type PlanningNode, type Scenario } from '../../api'
+import { api, ApiError, runEventsWsUrl, type ApiCase, type ApiModule, type PlanCase, type PlanningNode, type RunEvent, type Scenario } from '../../api'
 import { executedOnLabel } from '../AutoPoolIndicator'
+import { LiveRunBadge } from '../LiveRunBadge'
 import { outcomeColor, priorityColor } from '../tags'
 import { useApp } from '../../context'
 import { useI18n } from '../../i18n'
@@ -88,6 +89,13 @@ export default function PlanCasesPanel({ planId, projectId, cases, loading, relo
   const [pageSize, setPageSize] = useState(50)
   const [selectedIds, setSelectedIds] = useState<Key[]>([])
   const [runningId, setRunningId] = useState('')
+  // Live asyncRun scenario rows keyed by caseId; reportId doubles as the
+  // terminal marker (the plan case row is recorded with it at completion).
+  const [live, setLive] = useState<Record<string, { reportId: string; since: number }>>({})
+  const liveWs = useRef<Record<string, WebSocket>>({})
+  useEffect(() => () => {
+    Object.values(liveWs.current).forEach((w) => { try { w.close() } catch { /* already closed */ } })
+  }, [])
   const [batchBusy, setBatchBusy] = useState(false)
   // 筛选 popover: extra priority/result filters on top of column filters.
   const [fltPriority, setFltPriority] = useState<string[]>([])
@@ -194,13 +202,77 @@ export default function PlanCasesPanel({ planId, projectId, cases, loading, relo
     return list
   }, [rows, selectedKey, search, pointIdSets, fltPriority, fltResult])
 
-  const runOne = async (caseId: string) => {
-    setRunningId(caseId)
+  const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
+  // The recorded row carries our report id right after the run completes.
+  const fetchRecorded = async (caseId: string, reportId: string): Promise<PlanCase | null> => {
+    const cs = await api.planCases(planId).catch(() => null)
+    const list = Array.isArray(cs) ? cs : cs?.items || []
+    const row = list.find((c) => c.caseId === caseId)
+    return row?.reportId === reportId ? row : null
+  }
+  const settleLive = (caseId: string, status?: string) => {
+    delete liveWs.current[caseId]
+    setLive((m) => {
+      const n = { ...m }
+      delete n[caseId]
+      return n
+    })
+    if (status) message.success(`${t('plan.runDone', '执行完成')}:${planCaseStatusLabel(status, t)}`)
+    reload()
+  }
+  // Follows one asyncRun row over the run-events WS; degrades to polling the
+  // case list every 3s when the socket can't be established (or dies mid-run).
+  const followRow = (caseId: string, reportId: string) => {
+    let settled = false
+    const settle = (status?: string) => {
+      if (settled) return
+      settled = true
+      settleLive(caseId, status)
+    }
+    const poll = async () => {
+      for (let i = 0; i < 600 && !settled; i++) {
+        const row = await fetchRecorded(caseId, reportId)
+        if (row) return settle(row.status)
+        await sleep(3000)
+      }
+      settle()
+    }
+    let ws: WebSocket
+    try { ws = new WebSocket(runEventsWsUrl(reportId)) } catch { void poll(); return }
+    liveWs.current[caseId] = ws
+    let opened = false
+    ws.onopen = () => { opened = true }
+    ws.onmessage = async (m) => {
+      let ev: RunEvent
+      try { ev = JSON.parse(m.data as string) as RunEvent } catch { return }
+      if (ev.type !== 'runComplete' || settled) return
+      ws.close()
+      // The plan-case record lands right after the run: confirm it briefly so
+      // the refreshed row already shows the final result.
+      for (let i = 0; i < 10 && !settled; i++) {
+        const row = await fetchRecorded(caseId, reportId)
+        if (row) return settle(row.status)
+        await sleep(300)
+      }
+      settle(ev.status)
+    }
+    ws.onerror = () => { if (!opened && !settled) { try { ws.close() } catch { /* already closed */ } void poll() } }
+    ws.onclose = () => { if (opened && !settled) void poll() }
+  }
+  const runOne = async (r: Row) => {
+    setRunningId(r.caseId)
     try {
-      const r = await api.runPlanCase(planId, caseId)
-      const where = executedOnLabel(r.executedOn)
-      message.success(`${t('plan.runDone', '执行完成')}:${planCaseStatusLabel(r.status, t)}${where ? ` · ${where}` : ''}`)
-      reload()
+      // Scenario rows run async with a live row badge; plain API cases finish
+      // in one round trip either way.
+      const res = await api.runPlanCase(planId, r.caseId, r.isScenario ? { asyncRun: true } : undefined)
+      if (res.status === 'RUNNING' && res.reportId) {
+        setLive((m) => ({ ...m, [r.caseId]: { reportId: res.reportId as string, since: Date.now() } }))
+        followRow(r.caseId, res.reportId)
+      } else {
+        const where = executedOnLabel(res.executedOn)
+        message.success(`${t('plan.runDone', '执行完成')}:${planCaseStatusLabel(res.status, t)}${where ? ` · ${where}` : ''}`)
+        reload()
+      }
     } catch (e) {
       message.error(e instanceof ApiError ? `${t('plan.runFail', '执行失败')}:${e.status}` : t('plan.runFail', '执行失败'))
     } finally {
@@ -294,8 +366,10 @@ export default function PlanCasesPanel({ planId, projectId, cases, loading, relo
       onFilter: (v, r) => r.priority === v,
     },
     {
-      key: 'result', title: t('plan.pcColResult', '执行结果'), width: 110,
+      key: 'result', title: t('plan.pcColResult', '执行结果'), width: 130,
       render: (_v, r) => {
+        const lv = live[r.caseId]
+        if (lv) return <LiveRunBadge label={t('plan.pcRunning', '执行中')} since={lv.since} />
         const s = (r.status || 'PENDING').toUpperCase()
         return s === 'PENDING' ? muted() : <Tag color={outcomeColor(s)} style={{ margin: 0 }}>{planCaseStatusLabel(s, t)}</Tag>
       },
@@ -323,7 +397,7 @@ export default function PlanCasesPanel({ planId, projectId, cases, loading, relo
       fixed: 'right',
       render: (_v, r) => (
         <Space size={0} split={<span style={{ color: 'var(--border-soft)', margin: '0 2px' }}>|</span>}>
-          <Button type="link" size="small" style={{ padding: '0 2px' }} loading={runningId === r.caseId} onClick={() => runOne(r.caseId)}>{t('plan.exec', '执行')}</Button>
+          <Button type="link" size="small" style={{ padding: '0 2px' }} loading={runningId === r.caseId} disabled={!!live[r.caseId]} onClick={() => runOne(r)}>{t('plan.exec', '执行')}</Button>
           <Button type="link" size="small" style={{ padding: '0 2px' }} onClick={() => unlinkOne(r)}>{t('plan.pcUnlink', '取消关联')}</Button>
         </Space>
       ),
