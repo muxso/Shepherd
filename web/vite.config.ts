@@ -34,6 +34,8 @@ const proxy = Object.fromEntries(
     {
       target,
       changeOrigin: true,
+      // 实时执行事件 / pool-runner 走同前缀的 WebSocket。
+      ws: true,
       // 关键:这些前缀同时是前端路由(/api/definition、/test-plan…)。
       // 浏览器整页导航/刷新带 Accept: text/html → 返回 SPA;只有真正的 API fetch 才转发后端。
       bypass: (req: { headers: Record<string, string | string[] | undefined> }) =>

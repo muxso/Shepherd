@@ -5,8 +5,8 @@ import { AutoComplete, Button, Divider, Dropdown, Empty, Form, Input, Modal, Pop
 import ResizableDrawer from '../components/ResizableDrawer'
 import EditDrawer from '../components/EditDrawer'
 import { message, modal } from '../feedback'
-import { PlayCircleOutlined, PlusOutlined, SaveOutlined, ThunderboltOutlined, DownOutlined, LinkOutlined, SwapOutlined, DeleteOutlined, FullscreenOutlined, CloseOutlined, SearchOutlined, FilterOutlined, ReloadOutlined, MoreOutlined, ImportOutlined, InboxOutlined, EyeOutlined, SettingOutlined, ShareAltOutlined, EditOutlined } from '@ant-design/icons'
-import { api, ApiError, type ApiCase, type ApiDefinition, type ApiModule, type ApiView, type AssertionResult, type DebugResponse, type Environment, type ReportResultItem, type ResourcePool, type Scenario, type ScenarioChange, type ScenarioExecution, type ScenarioRunResult, type ScenarioStep } from '../api'
+import { PlayCircleOutlined, PlusOutlined, SaveOutlined, ThunderboltOutlined, DownOutlined, LinkOutlined, SwapOutlined, DeleteOutlined, FullscreenOutlined, CloseOutlined, SearchOutlined, FilterOutlined, ReloadOutlined, MoreOutlined, ImportOutlined, InboxOutlined, EyeOutlined, SettingOutlined, ShareAltOutlined, EditOutlined, StarFilled, StarOutlined } from '@ant-design/icons'
+import { api, ApiError, runEventsWsUrl, type ApiCase, type ApiDefinition, type ApiModule, type ApiView, type AssertionResult, type DebugResponse, type Environment, type ReportResultItem, type ResourcePool, type RunEvent, type Scenario, type ScenarioChange, type ScenarioExecution, type ScenarioRunResult, type ScenarioStep } from '../api'
 import type { ColumnsType } from 'antd/es/table'
 import { useApp } from '../context'
 import { methodColor, statusColor, outcomeColor, priorityColor, statusLabel, execStatusLabel, caseStatusLabel } from '../components/tags'
@@ -19,9 +19,10 @@ import KVEditor, { type KVRow } from '../components/KVEditor'
 import { DebugResultPanel, type SentRequest } from '../components/ApiSpecPanel'
 import { LatencyStat } from '../components/TimingBreakdown'
 import { SelectProjectEmpty } from '../components/Page'
-import { regAdd, regList, type RegItem } from '../registry'
-import { groupIdOf, isGroup } from '../components/plan/planLocal'
+import type { RegItem } from '../registry'
+import { fetchPlanItems, groupIdOf, isGroup } from '../components/plan/planLocal'
 import { ScenarioReportModal, fmtDuration, fmtSize, makeStepMeta, type NameOf, type TFn } from '../components/ScenarioReport'
+import AutoPoolIndicator, { executedOnLabel } from '../components/AutoPoolIndicator'
 import { useI18n } from '../i18n'
 
 // Editable form state + scenario param rows (persisted in scenario.meta).
@@ -98,6 +99,7 @@ export default function Scenarios() {
   const [searchParams, setSearchParams] = useSearchParams()
   // Batch selection + move/copy-to-module dialogs (bottom action bar, mirrors the reference list).
   const [selectedIds, setSelectedIds] = useState<React.Key[]>([])
+  const [followedIds, setFollowedIds] = useState<Set<string>>(new Set())
   const [batchModal, setBatchModal] = useState<'move' | 'copy' | null>(null)
   const [batchModule, setBatchModule] = useState('')
   const [batchBusy, setBatchBusy] = useState(false)
@@ -144,6 +146,10 @@ export default function Scenarios() {
       ])
       setList(Array.isArray(ss) ? ss : [])
       setModules(Array.isArray(mm) ? mm : [])
+      // Followed scenario ids for the star action; failure just leaves stars empty.
+      api.myFollows(projectId, 'SCENARIO')
+        .then((r) => setFollowedIds(new Set(r.entityIds)))
+        .catch(() => {})
       // lastResult comes with list_scenarios; no per-scenario request needed.
       // Only show views owned by this page (config.kind === 'scenario') to avoid mixing with API definition views.
       setViews(Array.isArray(vs) ? vs.filter((v) => (v.config as ScViewConfig)?.kind === SC_VIEW_KIND) : [])
@@ -300,6 +306,27 @@ export default function Scenarios() {
       },
     })
   }
+  // Optimistic star toggle; revert and warn on failure.
+  const toggleFollow = async (s: Scenario) => {
+    const was = followedIds.has(s.id)
+    const apply = (on: boolean) =>
+      setFollowedIds((prev) => {
+        const n = new Set(prev)
+        if (on) n.add(s.id)
+        else n.delete(s.id)
+        return n
+      })
+    apply(!was)
+    const b = { projectId: s.projectId, entityType: 'SCENARIO', entityId: s.id }
+    try {
+      const st = was ? await api.unfollow(b) : await api.follow(b)
+      apply(st.following)
+      message.success(st.following ? t('follow.followed', '已关注') : t('follow.unfollowed', '已取消关注'))
+    } catch {
+      apply(was)
+      message.error(t('follow.failed', '关注操作失败'))
+    }
+  }
   const muted = (v?: string) => <span style={{ color: 'var(--text-3)' }}>{v || '—'}</span>
   // Column-header search/filter (mirrors the API definition page): text columns get magnifier search, enum columns funnel multi-select; stacks with the top search/filter.
   const allSceneTags = [...new Set(filtered.flatMap((s) => ((s.meta?.tags as string[] | undefined) || [])))]
@@ -317,10 +344,18 @@ export default function Scenarios() {
     {
       key: 'action',
       title: t('apidef.colAction', '操作'),
-      width: 160,
+      width: 190,
       fixed: 'right',
       render: (_v, s) => (
         <Space size={4} onClick={(e) => e.stopPropagation()}>
+          <Tooltip title={followedIds.has(s.id) ? t('follow.unfollow', '取消关注') : t('follow.follow', '关注')}>
+            <Button
+              type="text"
+              size="small"
+              icon={followedIds.has(s.id) ? <StarFilled style={{ color: 'var(--warning, #ff7d00)' }} /> : <StarOutlined />}
+              onClick={() => toggleFollow(s)}
+            />
+          </Tooltip>
           <Button type="link" size="small" onClick={() => tabs.open(s.id)}>{t('a.edit', '编辑')}</Button>
           <Button type="link" size="small" onClick={(e) => runFromList(s, e)}>{t('apidef.run', '执行')}</Button>
           <Button type="link" size="small" onClick={async () => { try { await api.copyScenario(s.id); message.success(t('scenario.copied', '已复制')); load() } catch (e2) { message.error(e2 instanceof ApiError ? e2.message : t('scenario.copyFailed', '复制失败')) } }}>{t('a.copy', '复制')}</Button>
@@ -336,14 +371,32 @@ export default function Scenarios() {
   // Bottom batch actions over the selection: export / edit / run / move-to / copy-to / (timers, delete) / clear.
   const selectedRows = list.filter((s) => selectedIds.includes(s.id))
   const clearSel = () => setSelectedIds([])
-  const batchExport = () => {
-    const blob = new Blob([JSON.stringify(selectedRows, null, 2)], { type: 'application/json' })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = 'scenarios.json'
-    a.click()
-    URL.revokeObjectURL(url)
+  // Export selected scenarios (full detail incl. steps) as a downloadable JSON file.
+  const batchExport = async () => {
+    try {
+      const details = await Promise.all(selectedRows.map((s) => api.getScenario(s.id)))
+      const payload = {
+        version: 1,
+        exportedAt: new Date().toISOString(),
+        scenarios: details.map((d) => ({
+          name: d.name,
+          num: d.num,
+          status: d.status,
+          meta: d.meta ?? {},
+          steps: (d.steps || []).map((st) => ({ order: st.order, kind: st.kind, refMode: st.refMode, snapshot: st.snapshot ?? null })),
+        })),
+      }
+      const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `shepherd-scenarios-${new Date().toISOString().slice(0, 10)}.json`
+      a.click()
+      URL.revokeObjectURL(url)
+      message.success(`${t('scenario.exported', '已导出')} ${details.length} ${t('scenario.unit', '条')}`)
+    } catch (e) {
+      message.error(e instanceof ApiError ? e.message : t('scenario.exportFailed', '导出失败'))
+    }
   }
   const openBatchRun = () => {
     setRunEnvMode('default'); setRunEnvId(undefined); setRunMode('serial'); setStopOnFail(false)
@@ -396,7 +449,8 @@ export default function Scenarios() {
   const NEW_PLAN_VALUE = '__new_plan__'
   const openTimerEdit = () => {
     setTimerPlanId(undefined); setTimerNewName(''); setTimerCron(''); setTimerEnabled(true)
-    setTimerPlans(regList('plan', projectId))
+    setTimerPlans([])
+    fetchPlanItems(projectId).then(setTimerPlans).catch(() => setTimerPlans([]))
     setTimerOpen(true)
   }
   const saveTimer = async () => {
@@ -408,7 +462,6 @@ export default function Scenarios() {
       let planId = timerPlanId
       if (planId === NEW_PLAN_VALUE) {
         const p = await api.createPlan({ projectId, name: timerNewName.trim(), type: 'TEST_PLAN' })
-        regAdd('plan', projectId, { id: p.id, label: p.name, createdAt: Date.now() })
         planId = p.id
       }
       for (const s of selectedRows) await api.linkPlanCase(planId, s.id, s.name)
@@ -837,7 +890,17 @@ function stepToNode(s: ScenarioStep, t: TFn, nameOf: NameOf): Node {
   return { kind: s.kind, content: '—' }
 }
 
-function StepRow({ node, idx, depth, t, result, running, seq = 0, enabled = true, onToggle, onRun, actions, hovered, respPreview, expandable, expanded, onChildSelect, onChildDblClick }: { node: Node; idx: number; depth: number; t: TFn; result?: ReportResultItem; running?: boolean; seq?: number; enabled?: boolean; onToggle?: () => void; onRun?: () => void; actions?: React.ReactNode; hovered?: boolean; respPreview?: React.ReactNode; expandable?: boolean; expanded?: boolean; onChildSelect?: (raw: ScenarioStep, path: number[]) => void; onChildDblClick?: (raw: ScenarioStep, path: number[]) => void }) {
+// Count-up duration for a step that is executing right now (live WS mode).
+function LiveElapsed({ since }: { since: number }) {
+  const [, tick] = useState(0)
+  useEffect(() => {
+    const id = window.setInterval(() => tick((n) => n + 1), 100)
+    return () => window.clearInterval(id)
+  }, [])
+  return <span className="ms-mono" style={{ fontSize: 12, color: 'var(--brand)', whiteSpace: 'nowrap' }}>{fmtDuration(Math.max(Date.now() - since, 0))}</span>
+}
+
+function StepRow({ node, idx, depth, t, result, running, liveSince, seq = 0, enabled = true, onToggle, onRun, actions, hovered, respPreview, expandable, expanded, onChildSelect, onChildDblClick }: { node: Node; idx: number; depth: number; t: TFn; result?: ReportResultItem; running?: boolean; liveSince?: number; seq?: number; enabled?: boolean; onToggle?: () => void; onRun?: () => void; actions?: React.ReactNode; hovered?: boolean; respPreview?: React.ReactNode; expandable?: boolean; expanded?: boolean; onChildSelect?: (raw: ScenarioStep, path: number[]) => void; onChildDblClick?: (raw: ScenarioStep, path: number[]) => void }) {
   const copyLabels: Record<string, string> = {
     COPY_CASE: t('scenario.copyCaseTag', '复制用例'),
     COPY_API: t('scenario.copyApiTag', '复制API'),
@@ -870,7 +933,7 @@ function StepRow({ node, idx, depth, t, result, running, seq = 0, enabled = true
       >
         {/* Run progress: row background fills left-to-right under the content. Blue while running, staggered by seq; green (pass) / red (fail) when done. */}
         {running ? (
-          <span className="ms-step-fillbg run" style={{ animationDelay: `${seq}s` }} />
+          <span className={liveSince != null ? 'ms-step-fillbg live' : 'ms-step-fillbg run'} style={{ animationDelay: liveSince != null ? undefined : `${seq}s` }} />
         ) : result ? (
           <span className="ms-step-fillbg done" style={{ background: ok ? 'rgba(34,197,94,0.16)' : 'rgba(239,68,68,0.16)' }} />
         ) : null}
@@ -888,6 +951,8 @@ function StepRow({ node, idx, depth, t, result, running, seq = 0, enabled = true
         <span style={{ color: 'var(--text-3)', fontSize: 12, minWidth: 18 }}>{idx}</span>
         <Tag color={meta.color} style={{ margin: 0 }}>{meta.label}</Tag>
         <span style={{ flex: 1, minWidth: 0 }}>{node.content}</span>
+        {/* Live mode: elapsed time counts up while this step executes. */}
+        {running && liveSince != null && <LiveElapsed since={liveSince} />}
         {/* Per-step result after a run (ref #28): pass / status / latency / size.
             Hovering the result cluster pops response details anchored right (where the mouse is). */}
         {!running && result && (() => {
@@ -975,7 +1040,7 @@ function StepRespPreview({ r, t }: { r: ReportResultItem; t: TFn }) {
 // Scenario action bar (environment + server run + save): shared by the detail and new-scenario
 // tabs, portaled into the tab-bar right slot via Workspace (ref #38). runDisabled greys out the
 // run button (unsaved new scenario).
-function ScenarioActionBar({ envs, envId, onEnv, running, onRun, onLocalRun, saving, onSave, runDisabled, envDisabled, runTitle, viewReport, t }: {
+function ScenarioActionBar({ envs, envId, onEnv, running, onRun, onLocalRun, saving, onSave, runDisabled, envDisabled, runTitle, viewReport, runTarget, t }: {
   envs: Environment[]
   envId: string
   onEnv: (v: string) => void
@@ -988,11 +1053,14 @@ function ScenarioActionBar({ envs, envId, onEnv, running, onRun, onLocalRun, sav
   envDisabled?: boolean
   runTitle?: string
   viewReport?: ReactNode
+  /** Passive run-target indicator (auto pool pick / local execution). */
+  runTarget?: ReactNode
   t: TFn
 }) {
   return (
     <>
       {viewReport}
+      {runTarget}
       <Select
         size="small"
         value={envId || undefined}
@@ -1058,6 +1126,9 @@ function ScenarioDetail({ scenario, active }: { scenario: Scenario; active?: boo
   const [envs, setEnvs] = useState<Environment[]>([])
   const [envId, setEnvId] = useState<string>('')
   const [failureStrategy, setFailureStrategy] = useState<'CONTINUE' | 'STOP'>('CONTINUE')
+  // Live run state (async run + WS events): per-leaf running flag + start time for the count-up.
+  const [liveMode, setLiveMode] = useState(false)
+  const [liveSteps, setLiveSteps] = useState<Record<string, { running: boolean; startedAt: number }>>({})
   // Editable basic info + params (saved via PATCH /api/scenario/{id}; meta carries description/tags/priority/params).
   const m0 = (scenario.meta || {}) as Record<string, unknown>
   const [form, setForm] = useState<ScenarioForm>({
@@ -1137,33 +1208,99 @@ function ScenarioDetail({ scenario, active }: { scenario: Scenario; active?: boo
     message.success(t('scenario.refDataRefreshed', '引用数据已刷新'))
   }
 
+  // Fetch report detail and map per-step results (pass/status/latency/size) onto step rows.
+  const applyReport = async (reportId: string): Promise<string | null> => {
+    const rep = await api.scenarioReport(reportId).catch(() => null)
+    if (!rep) return null
+    const map: Record<string, ReportResultItem> = {}
+    rep.results.forEach((res) => { map[res.caseId] = res })
+    setStepResults(map)
+    // A top-level sub-scenario's status aggregates its leaf results, so load missing sub-scenario steps (otherwise the parent row stays blank after a run).
+    await Promise.all(
+      steps
+        .filter((s) => s.scenarioId && !subSteps[s.scenarioId])
+        .map(async (s) => {
+          try {
+            const sc = await api.getScenario(s.scenarioId as string)
+            setSubSteps((m) => ({ ...m, [s.scenarioId as string]: sc.steps || [] }))
+          } catch {
+            /* sub-scenario load failed: parent can't aggregate a result; don't block */
+          }
+        }),
+    )
+    return rep.status
+  }
+
+  // Live follow of an async run: WS step events animate rows as they execute.
+  // Degrades to polling the report when the socket can't be established.
+  const followLiveRun = (reportId: string) =>
+    new Promise<void>((resolve) => {
+      let settled = false
+      const finish = () => { if (!settled) { settled = true; resolve() } }
+      const poll = async () => {
+        for (let i = 0; i < 900 && !settled; i++) {
+          const rep = await api.scenarioReport(reportId).catch(() => null)
+          if (rep && rep.status !== 'RUNNING') break
+          await new Promise((r) => setTimeout(r, 1000))
+        }
+        finish()
+      }
+      let ws: WebSocket
+      try { ws = new WebSocket(runEventsWsUrl(reportId)) } catch { void poll(); return }
+      let opened = false
+      ws.onopen = () => { opened = true }
+      ws.onmessage = (m) => {
+        let ev: RunEvent
+        try { ev = JSON.parse(m.data as string) as RunEvent } catch { return }
+        const sid = ev.stepId
+        if (ev.type === 'stepStarted' && sid) {
+          setLiveSteps((prev) => ({ ...prev, [sid]: { running: true, startedAt: Date.now() } }))
+        } else if (ev.type === 'stepFinished' && sid) {
+          setLiveSteps((prev) => ({ ...prev, [sid]: { running: false, startedAt: prev[sid]?.startedAt ?? Date.now() } }))
+          setStepResults((prev) => ({
+            ...prev,
+            [sid]: {
+              ...(prev[sid] || {}),
+              caseId: sid,
+              outcome: ev.status === 'SUCCESS' ? 'SUCCESS' : 'ERROR',
+              failures: ev.failures || [],
+              executedAt: '',
+              latencyMs: ev.latencyMs ?? prev[sid]?.latencyMs,
+            },
+          }))
+        } else if (ev.type === 'stepDetail' && sid) {
+          setStepResults((prev) => {
+            const cur = prev[sid]
+            if (!cur) return prev
+            return { ...prev, [sid]: { ...cur, statusCode: ev.statusCode ?? cur.statusCode, latencyMs: ev.latencyMs ?? cur.latencyMs, timings: ev.timings ?? cur.timings } }
+          })
+        } else if (ev.type === 'runComplete') {
+          ws.close()
+          finish()
+        }
+      }
+      ws.onerror = () => { if (!opened) { try { ws.close() } catch { /* already closed */ } void poll() } }
+      // Socket died mid-run (server restart/proxy): keep polling to completion.
+      ws.onclose = () => { if (opened && !settled) void poll() }
+    })
+
   const run = async () => {
     setRunning(true)
+    setStepResults({})
+    setLiveSteps({})
     try {
-      const r = await api.runScenario(scenario.id, scenario.projectId, { environmentId: envId || undefined, failureStrategy })
+      // No pool selection: the server auto-picks an applicable pool with online
+      // runners, or executes locally (executedOn reports the decision).
+      const r = await api.runScenario(scenario.id, scenario.projectId, { environmentId: envId || undefined, failureStrategy, asyncRun: true })
       setLastRun(r)
       setLastRunAt(new Date().toLocaleString())
-      // Fetch report detail and map per-step results (pass/status/latency/size) onto step rows.
-      const rep = await api.scenarioReport(r.reportId).catch(() => null)
-      if (rep) {
-        const map: Record<string, ReportResultItem> = {}
-        rep.results.forEach((res) => { map[res.caseId] = res })
-        setStepResults(map)
-        // A top-level sub-scenario's status aggregates its leaf results, so load missing sub-scenario steps (otherwise the parent row stays blank after a run).
-        await Promise.all(
-          steps
-            .filter((s) => s.scenarioId && !subSteps[s.scenarioId])
-            .map(async (s) => {
-              try {
-                const sc = await api.getScenario(s.scenarioId as string)
-                setSubSteps((m) => ({ ...m, [s.scenarioId as string]: sc.steps || [] }))
-              } catch {
-                /* sub-scenario load failed: parent can't aggregate a result; don't block */
-              }
-            }),
-        )
-      }
-      message.success(`${t('scenario.triggered', '场景已触发执行')} · ${r.status}`)
+      const live = r.status === 'RUNNING'
+      setLiveMode(live)
+      if (live) await followLiveRun(r.reportId)
+      const finalStatus = (await applyReport(r.reportId)) ?? r.status
+      setLiveSteps({})
+      const where = executedOnLabel(r.executedOn) || t('scenario.localExec', '本地执行')
+      message.success(`${t('scenario.triggered', '场景已触发执行')} · ${finalStatus} · ${where}`)
     } catch (e) {
       message.error(e instanceof ApiError ? `${t('scenario.execFailed', '执行失败')}:${e.status}` : t('scenario.execFailed', '执行失败'))
     } finally {
@@ -1434,6 +1571,10 @@ function ScenarioDetail({ scenario, active }: { scenario: Scenario; active?: boo
         ordered.map((s, i) => {
           const res = resultFor(s)
           const hasResp = !!res && (res.statusCode != null || res.body != null || (res.headers?.length ?? 0) > 0)
+          // Live mode animates only the step(s) actually executing; legacy sync mode keeps the staggered all-rows animation.
+          const liveKeys = liveMode ? collectLeafKeys(s).filter((k) => liveSteps[k]?.running) : []
+          const rowRunning = running && (liveMode ? liveKeys.length > 0 : true)
+          const liveSince = rowRunning && liveKeys.length ? Math.min(...liveKeys.map((k) => liveSteps[k].startedAt)) : undefined
           // Sub-scenario: once expanded, inject its steps as children (with results so child rows show green/red); controllers get children from their payload.
           const node = stepToNode(s, t, nameOf)
           if (s.scenarioId && subSteps[s.scenarioId]) {
@@ -1465,8 +1606,9 @@ function ScenarioDetail({ scenario, active }: { scenario: Scenario; active?: boo
                 depth={0}
                 t={t}
                 result={res}
-                running={running}
-                seq={i * 0.18}
+                running={rowRunning}
+                liveSince={liveSince}
+                seq={liveMode ? 0 : i * 0.18}
                 enabled={!form.disabledSteps.includes(s.id)}
                 onToggle={() => toggleStep(s.id)}
                 onRun={() => runStep(s)}
@@ -1550,6 +1692,7 @@ function ScenarioDetail({ scenario, active }: { scenario: Scenario; active?: boo
           onLocalRun={() => message.info(t('scenario.localSoon', '本地执行即将接入'))}
           saving={saving}
           onSave={onSave}
+          runTarget={<AutoPoolIndicator projectId={scenario.projectId} active={active} />}
           t={t}
         />,
         slot,

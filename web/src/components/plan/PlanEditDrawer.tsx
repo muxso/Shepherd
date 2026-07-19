@@ -4,8 +4,8 @@ import dayjs, { type Dayjs } from 'dayjs'
 import { message } from '../../feedback'
 import { api, ApiError, type PlanDetailInfo } from '../../api'
 import { useI18n } from '../../i18n'
-import { regList } from '../../registry'
-import { isGroup, joinTags, planModules, planRegUpdate } from './planLocal'
+import type { RegItem } from '../../registry'
+import { fetchPlanItems, isGroup, planModules } from './planLocal'
 
 interface FormValues {
   name: string
@@ -37,8 +37,8 @@ export default function PlanEditDrawer({
   const { t } = useI18n()
   const [form] = Form.useForm<FormValues>()
   const [saving, setSaving] = useState(false)
+  const [groups, setGroups] = useState<RegItem[]>([])
   const modules = planModules(projectId)
-  const groups = regList('plan', projectId).filter(isGroup)
 
   // Module dropdown: tree flattened with depth indentation (same as PlanFormModal).
   const moduleOptions: { value: string; label: string }[] = []
@@ -54,6 +54,9 @@ export default function PlanEditDrawer({
 
   useEffect(() => {
     if (!open) return
+    fetchPlanItems(projectId)
+      .then((list) => setGroups(list.filter(isGroup)))
+      .catch(() => setGroups([]))
     api.planDetail(planId)
       .then((d) => {
         form.setFieldsValue({
@@ -87,15 +90,6 @@ export default function PlanEditDrawer({
         allowDuplicateCases: v.allowDuplicateCases,
         autoUpdateStatus: v.autoUpdateStatus,
         passThreshold: v.passThreshold,
-      })
-      // Keep the local list registry (label + module/group/tags meta) in step with the backend.
-      planRegUpdate(projectId, planId, {
-        label: detail.name,
-        meta: {
-          module: detail.moduleId || '',
-          groupId: detail.groupId !== 'NONE' ? detail.groupId : '',
-          tags: joinTags(detail.tags),
-        },
       })
       message.success(t('plan.updated', '已更新测试计划'))
       onSaved?.(detail)

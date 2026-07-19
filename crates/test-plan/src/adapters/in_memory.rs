@@ -40,6 +40,7 @@ impl InMemoryPlanRepository {
             // No real clock: use the monotonically increasing seq as the creation time so list
             // ordering stays stable.
             created_at_ms: state.seq as i64,
+            created_by: new_plan.created_by.clone(),
         };
         state.plans.insert(plan.id.clone(), plan.clone());
         plan
@@ -179,18 +180,37 @@ impl PlanRepository for InMemoryPlanRepository {
             .unwrap_or_default())
     }
 
-    async fn list(&self, project_id: &str) -> Result<Vec<Plan>, RepoError> {
-        let mut plans: Vec<Plan> = self
-            .state
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    async fn list(&self, project_id: &str) -> Result<Vec<(Plan, PlanMeta)>, RepoError> {
+        let state = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut plans: Vec<Plan> = state
             .plans
             .values()
             .filter(|p| p.project_id == project_id && !p.archived)
             .cloned()
             .collect();
-        plans.sort_by(|a, b| a.name.cmp(&b.name).then(a.id.cmp(&b.id)));
-        Ok(plans)
+        plans.sort_by(|a, b| b.created_at_ms.cmp(&a.created_at_ms).then(a.id.cmp(&b.id)));
+        Ok(plans
+            .into_iter()
+            .map(|p| {
+                let meta = state.metas.get(&p.id).cloned().unwrap_or_else(|| PlanMeta {
+                    group_id: p.group_id.clone(),
+                    pass_threshold: state.thresholds.get(&p.id).copied().unwrap_or(1.0),
+                    ..PlanMeta::default()
+                });
+                (p, meta)
+            })
+            .collect())
+    }
+
+    async fn set_archived(&self, id: &str, archived: bool) -> Result<bool, RepoError> {
+        let mut state = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        match state.plans.get_mut(id) {
+            Some(p) => {
+                p.archived = archived;
+                Ok(true)
+            }
+            None => Ok(false),
+        }
     }
 
     async fn rename(&self, id: &str, name: &str) -> Result<bool, RepoError> {

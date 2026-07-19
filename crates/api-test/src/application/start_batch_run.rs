@@ -10,7 +10,7 @@ use crate::ports::{
 impl From<PortError> for BatchRunError {
     fn from(e: PortError) -> Self {
         match e {
-            PortError::Backend(m) => BatchRunError::Backend(m),
+            PortError::Backend(m) | PortError::Conflict(m) => BatchRunError::Backend(m),
         }
     }
 }

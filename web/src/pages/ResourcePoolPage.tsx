@@ -19,13 +19,13 @@ import {
   Tooltip,
 } from 'antd'
 import { message, modal } from '../feedback'
-import { DeleteOutlined, PlusOutlined, QuestionCircleOutlined, ReloadOutlined, SearchOutlined } from '@ant-design/icons'
+import { CopyOutlined, QuestionCircleOutlined, ReloadOutlined, SearchOutlined } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
 import {
   api,
   ApiError,
   type Organization,
-  type PoolNode,
+  type PoolRunnerInfo,
   type ResourcePool,
   type ResourcePoolInput,
 } from '../api'
@@ -42,6 +42,7 @@ export function ResourcePoolsPage() {
   const nav = useNavigate()
   const [pools, setPools] = useState<ResourcePool[]>([])
   const [orgs, setOrgs] = useState<Organization[]>([])
+  const [online, setOnline] = useState<Record<string, number>>({})
   const [loading, setLoading] = useState(false)
   const [q, setQ] = useState('')
 
@@ -53,6 +54,8 @@ export function ResourcePoolsPage() {
       .catch(() => setPools([]))
       .finally(() => setLoading(false))
     api.organizations().then((p) => setOrgs(p.items)).catch(() => setOrgs([]))
+    // Connected pool-runner processes (WS registry), refreshed with the list.
+    api.poolRunnerStatus().then(setOnline).catch(() => setOnline({}))
   }
   useEffect(load, [])
 
@@ -106,6 +109,19 @@ export function ResourcePoolsPage() {
       render: (v: boolean, p) => <Switch size="small" checked={v} onChange={(c) => toggle(p, c)} />,
     },
     { title: t('pool.maxConcurrency', '最大并发数'), dataIndex: 'maxConcurrency', width: 120 },
+    {
+      title: t('pool.onlineRunners', '在线执行机'),
+      key: 'onlineRunners',
+      width: 110,
+      render: (_v, p) => {
+        const n = online[p.id] ?? 0
+        return (
+          <Tag color={n > 0 ? 'green' : 'default'} style={{ margin: 0 }}>
+            {n > 0 ? n : t('pool.offline', '无')}
+          </Tag>
+        )
+      },
+    },
     {
       title: t('pool.applyOrg', '应用组织'),
       dataIndex: 'allOrg',
@@ -201,8 +217,6 @@ function toInput(p: ResourcePool): ResourcePoolInput {
 }
 
 // ---------------- Create / edit form ----------------
-const NEW_NODE: PoolNode = { ip: '', port: '', concurrentNumber: 10, singleTaskConcurrentNumber: 3 }
-
 interface FormShape {
   name: string
   description: string
@@ -210,7 +224,8 @@ interface FormShape {
   allOrg: boolean
   orgIds: string[]
   poolType: string
-  nodes: PoolNode[]
+  // Node: pool-level cap; runners register themselves over WS.
+  maxConcurrency: number
   // K8s
   k8sIp: string
   token: string
@@ -227,7 +242,7 @@ const EMPTY: FormShape = {
   allOrg: true,
   orgIds: [],
   poolType: 'Node',
-  nodes: [{ ...NEW_NODE }],
+  maxConcurrency: 10,
   k8sIp: '',
   token: '',
   namespace: '',
@@ -245,7 +260,7 @@ function poolToForm(p: ResourcePool): FormShape {
     allOrg: p.allOrg,
     orgIds: p.orgIds || [],
     poolType: p.poolType || 'Node',
-    nodes: c.nodes?.length ? c.nodes : [{ ...NEW_NODE }],
+    maxConcurrency: p.maxConcurrency || 10,
     k8sIp: c.ip || '',
     token: c.token || '',
     namespace: c.namespace || '',
@@ -279,12 +294,8 @@ function formToInput(v: FormShape): ResourcePoolInput {
       },
     }
   }
-  const nodes = (v.nodes || []).filter((n) => n.ip.trim())
-  return {
-    ...base,
-    maxConcurrency: nodes.reduce((s, n) => s + (Number(n.concurrentNumber) || 0), 0),
-    config: { nodes },
-  }
+  // Node pools have no manual node list: runners join over WS with the pool name.
+  return { ...base, maxConcurrency: v.maxConcurrency || 0, config: {} }
 }
 
 function downloadText(name: string, text: string) {
@@ -314,8 +325,7 @@ export function ResourcePoolForm() {
   const [saving, setSaving] = useState(false)
   const poolType = Form.useWatch('poolType', form) || 'Node'
   const allOrg = Form.useWatch('allOrg', form)
-  const [nodeMode, setNodeMode] = useState<'single' | 'batch'>('single')
-  const [batchText, setBatchText] = useState('')
+  const watchedName = Form.useWatch('name', form)
 
   useEffect(() => {
     api.organizations().then((p) => setOrgs(p.items)).catch(() => setOrgs([]))
@@ -326,28 +336,6 @@ export function ResourcePoolForm() {
         .catch((e) => message.error(e instanceof ApiError ? e.message : t('pool.loadFailed', '加载失败')))
     }
   }, [id]) // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Batch text (one `ip:port[:max[:single]]` per line) → node table.
-  const applyBatch = () => {
-    const nodes: PoolNode[] = batchText
-      .split('\n')
-      .map((l) => l.trim())
-      .filter(Boolean)
-      .map((l) => {
-        const [ip, port, max, single] = l.split(/[:\s,]+/)
-        return {
-          ip: ip || '',
-          port: port || '',
-          concurrentNumber: Number(max) || 10,
-          singleTaskConcurrentNumber: Number(single) || 3,
-        }
-      })
-    if (nodes.length) {
-      form.setFieldValue('nodes', nodes)
-      setNodeMode('single')
-      message.success(t('pool.batchApplied', '已解析 {n} 个节点').replace('{n}', String(nodes.length)))
-    }
-  }
 
   const submit = async (stay: boolean) => {
     let v: FormShape
@@ -468,18 +456,24 @@ export function ResourcePoolForm() {
             {/* Capacity/config: fields switch with poolType */}
             <div style={{ fontWeight: 600, marginTop: 8, marginBottom: 12 }}>{t('pool.sectionConfig', '容量与配置')}</div>
             {poolType === 'Node' ? (
-              <NodeSection
-                t={t}
-                mode={nodeMode}
-                onMode={setNodeMode}
-                batchText={batchText}
-                onBatchText={setBatchText}
-                onApplyBatch={applyBatch}
-              />
+              <Row gutter={24}>
+                <Col span={24} lg={12}>
+                  <Form.Item
+                    name="maxConcurrency"
+                    label={labelHelp(t('pool.maxConcurrency', '最大并发数'), t('pool.maxConcurrencyHelp', '该资源池可并行执行的任务数上限'))}
+                    rules={[{ required: true, message: t('pool.maxConcurrencyRequired', '请输入最大并发数') }]}
+                  >
+                    <InputNumber min={1} style={{ width: 160 }} />
+                  </Form.Item>
+                </Col>
+              </Row>
             ) : (
               <K8sSection t={t} labelHelp={labelHelp} />
             )}
           </Form>
+          {/* Runner access: Node pools get workers by starting pool-runner processes
+              that register over WS with the pool name — no manual IP/Port entry. */}
+          {isEdit && poolType === 'Node' && <RunnerJoinPanel poolId={id!} poolName={watchedName || ''} t={t} />}
         </Card>
       </div>
       {/* Bottom action bar */}
@@ -500,107 +494,78 @@ export function ResourcePoolForm() {
   )
 }
 
-// Node pool: single add (node table) / batch add (text).
-function NodeSection({
-  t,
-  mode,
-  onMode,
-  batchText,
-  onBatchText,
-  onApplyBatch,
-}: {
-  t: TFn
-  mode: 'single' | 'batch'
-  onMode: (m: 'single' | 'batch') => void
-  batchText: string
-  onBatchText: (s: string) => void
-  onApplyBatch: () => void
-}) {
+// Runner access panel (Node pool edit view): copyable join command using the
+// pool NAME plus a live table of the runners registered over WS.
+function RunnerJoinPanel({ poolId, poolName, t }: { poolId: string; poolName: string; t: TFn }) {
+  const nav = useNavigate()
+  const [runners, setRunners] = useState<PoolRunnerInfo[]>([])
+  useEffect(() => {
+    const tick = () =>
+      api.poolRunnerStatusDetail().then((d) => setRunners(d[poolId] || [])).catch(() => setRunners([]))
+    tick()
+    const timer = window.setInterval(tick, 5000)
+    return () => window.clearInterval(timer)
+  }, [poolId])
+
+  const proto = window.location.protocol === 'https:' ? 'wss' : 'ws'
+  const cmd = `SHEPHERD_SERVER_WS=${proto}://${window.location.host}/api/pool-runner/ws SHEPHERD_POOL_NAME='${poolName}' SHEPHERD_RUNNER_KEY=<sak_...> cargo r -p pool-runner`
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(cmd)
+      message.success(t('pool.copied', '已复制'))
+    } catch {
+      message.error(t('pool.copyFailed', '复制失败'))
+    }
+  }
+
+  const cols: ColumnsType<PoolRunnerInfo> = [
+    { title: t('pool.runnerName', '名称'), dataIndex: 'name' },
+    { title: t('pool.runnerCap', '并发上限'), dataIndex: 'maxConcurrent', width: 110 },
+    {
+      title: t('pool.runnerInFlight', '在跑'),
+      dataIndex: 'inFlight',
+      width: 90,
+      render: (v: number) => <Tag color={v > 0 ? 'processing' : 'default'} style={{ margin: 0 }}>{v}</Tag>,
+    },
+  ]
+
   return (
-    <Form.Item label={t('pool.addNode', '添加节点')}>
-      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 8 }}>
-        <Segmented
-          size="small"
-          value={mode}
-          onChange={(v) => onMode(v as 'single' | 'batch')}
-          options={[
-            { value: 'single', label: t('pool.singleAdd', '单个添加') },
-            { value: 'batch', label: t('pool.batchAdd', '批量添加') },
-          ]}
-        />
+    <div style={{ maxWidth: 1100, marginTop: 8 }}>
+      <div style={{ fontWeight: 600, marginBottom: 12 }}>{t('pool.sectionJoin', '执行机接入')}</div>
+      <div style={{ color: 'var(--text-2)', fontSize: 13, marginBottom: 8 }}>
+        {t('pool.joinCmdHint', '在执行机上运行以下命令即可接入本资源池;')}
+        <a onClick={() => nav('/system/apikeys')}>{t('pool.joinKeyHint', '将 <sak_...> 替换为 API Key(API Keys 页生成)')}</a>
       </div>
-      {mode === 'single' ? (
-        <Card size="small" styles={{ body: { padding: 12 } }}>
-          <Form.List name="nodes">
-            {(fields, { add, remove }) => (
-              <>
-                <div style={{ display: 'flex', gap: 8, padding: '0 4px 6px', color: 'var(--text-2)', fontSize: 13 }}>
-                  <div style={{ flex: 2 }}>
-                    IP <span style={{ color: '#f5222d' }}>*</span>
-                  </div>
-                  <div style={{ flex: 2 }}>
-                    Port <span style={{ color: '#f5222d' }}>*</span>
-                  </div>
-                  <div style={{ flex: 2 }}>
-                    {t('pool.maxConcurrency', '最大并发数')} <span style={{ color: '#f5222d' }}>*</span>
-                  </div>
-                  <div style={{ flex: 2 }}>
-                    {t('pool.singleTaskMax', '单个任务最大并发数')} <span style={{ color: '#f5222d' }}>*</span>
-                  </div>
-                  <div style={{ width: 32 }} />
-                </div>
-                {fields.map((field) => (
-                  <div key={field.key} style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
-                    <Form.Item
-                      name={[field.name, 'ip']}
-                      style={{ flex: 2, marginBottom: 0 }}
-                      rules={[{ required: true, message: t('pool.ipRequired', '请输入 IP 地址') }]}
-                    >
-                      <Input placeholder={t('pool.ipPlaceholder', '请输入 IP 地址')} />
-                    </Form.Item>
-                    <Form.Item
-                      name={[field.name, 'port']}
-                      style={{ flex: 2, marginBottom: 0 }}
-                      rules={[{ required: true, message: t('pool.portRequired', '请输入 Port') }]}
-                    >
-                      <Input placeholder={t('pool.portPlaceholder', '请输入 Port')} />
-                    </Form.Item>
-                    <Form.Item name={[field.name, 'concurrentNumber']} style={{ flex: 2, marginBottom: 0 }}>
-                      <InputNumber min={1} style={{ width: '100%' }} />
-                    </Form.Item>
-                    <Form.Item name={[field.name, 'singleTaskConcurrentNumber']} style={{ flex: 2, marginBottom: 0 }}>
-                      <InputNumber min={1} style={{ width: '100%' }} />
-                    </Form.Item>
-                    <Button
-                      type="text"
-                      icon={<DeleteOutlined />}
-                      style={{ width: 32 }}
-                      disabled={fields.length <= 1}
-                      onClick={() => remove(field.name)}
-                    />
-                  </div>
-                ))}
-                <Button type="link" icon={<PlusOutlined />} onClick={() => add({ ...NEW_NODE })} style={{ paddingLeft: 4 }}>
-                  {t('pool.addNode', '添加节点')}
-                </Button>
-              </>
-            )}
-          </Form.List>
-        </Card>
-      ) : (
-        <Card size="small" styles={{ body: { padding: 12 } }}>
-          <Input.TextArea
-            rows={6}
-            value={batchText}
-            onChange={(e) => onBatchText(e.target.value)}
-            placeholder={t('pool.batchPlaceholder', '每行一个节点,格式:IP:Port:最大并发数:单个任务最大并发数\n例如:127.0.0.1:8082:10:3')}
-          />
-          <Button type="primary" size="small" style={{ marginTop: 8 }} onClick={onApplyBatch}>
-            {t('pool.parseBatch', '解析为节点')}
-          </Button>
-        </Card>
-      )}
-    </Form.Item>
+      <div
+        className="ms-mono"
+        style={{
+          display: 'flex',
+          alignItems: 'flex-start',
+          gap: 8,
+          padding: '10px 12px',
+          borderRadius: 8,
+          border: '1px solid var(--border-soft)',
+          background: 'var(--panel-2)',
+          fontSize: 12.5,
+          wordBreak: 'break-all',
+          marginBottom: 12,
+        }}
+      >
+        <code style={{ flex: 1 }}>{cmd}</code>
+        <Tooltip title={t('pool.copyCmd', '复制命令')}>
+          <Button size="small" icon={<CopyOutlined />} onClick={copy} />
+        </Tooltip>
+      </div>
+      <div style={{ color: 'var(--text-2)', fontSize: 13, marginBottom: 6 }}>{t('pool.onlineRunners', '在线执行机')}</div>
+      <Table<PoolRunnerInfo>
+        rowKey={(r) => r.name}
+        size="small"
+        dataSource={runners}
+        columns={cols}
+        pagination={false}
+        locale={{ emptyText: t('pool.noOnlineRunners', '暂无在线执行机,复制上方命令启动') }}
+      />
+    </div>
   )
 }
 

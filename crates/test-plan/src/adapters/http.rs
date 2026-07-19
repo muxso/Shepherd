@@ -8,14 +8,14 @@ use crate::domain::{
     AssertionResult, CaseResult, CaseStatus, Plan, PlanMeta, PlanType, ROOT_GROUP,
 };
 use axum::{
-    extract::{FromRef, Path, State},
+    extract::{FromRef, Path, Query, State},
     http::StatusCode,
     response::{IntoResponse, Response},
     routing::{get, post, put},
     Json, Router,
 };
 use serde::{Deserialize, Serialize};
-use utoipa::{OpenApi, ToSchema};
+use utoipa::{IntoParams, OpenApi, ToSchema};
 use webauth::{AuthUser, SessionStore};
 
 #[derive(Clone)]
@@ -41,7 +41,7 @@ pub fn router(
     sessions: Arc<dyn SessionStore>,
 ) -> Router {
     Router::new()
-        .route("/test-plan", post(create_plan))
+        .route("/test-plan", post(create_plan).get(list_plans))
         .route("/test-plan/{id}", get(plan_detail).put(update_plan))
         .route("/test-plan/{id}/planning", put(save_planning))
         .route("/test-plan/{id}/statistics", get(statistics))
@@ -103,7 +103,11 @@ async fn create_plan(
     let Some(plan_type) = PlanType::parse(&req.plan_type) else {
         return (StatusCode::BAD_REQUEST, "unknown plan type").into_response();
     };
-    match st.create.execute(&req.project_id, &req.name, plan_type, &req.group_id).await {
+    match st
+        .create
+        .execute_as(&req.project_id, &req.name, plan_type, &req.group_id, Some(&user.user_id))
+        .await
+    {
         Ok(p) => (StatusCode::CREATED, Json(PlanResponse::from(p))).into_response(),
         Err(CreatePlanError::Validation(_)) => {
             (StatusCode::BAD_REQUEST, "invalid plan payload").into_response()
@@ -114,6 +118,75 @@ async fn create_plan(
         Err(CreatePlanError::Repo(_)) => {
             (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response()
         }
+    }
+}
+
+#[derive(Debug, Deserialize, IntoParams)]
+#[serde(rename_all = "camelCase")]
+struct ListPlansQuery {
+    project_id: String,
+}
+
+/// Plan list row: core plan + the meta the list page renders, so the frontend
+/// needs no per-plan detail calls.
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+struct PlanListItemResponse {
+    id: String,
+    project_id: String,
+    name: String,
+    #[serde(rename = "type")]
+    plan_type: String,
+    group_id: String,
+    created_by: Option<String>,
+    /// Unix milliseconds.
+    created_at: i64,
+    description: String,
+    tags: Vec<String>,
+    module_id: Option<String>,
+    /// Unix milliseconds; null = not set.
+    start_at: Option<i64>,
+    end_at: Option<i64>,
+    /// Percent 0..=100.
+    pass_threshold: f64,
+}
+
+impl From<(Plan, PlanMeta)> for PlanListItemResponse {
+    fn from((plan, meta): (Plan, PlanMeta)) -> Self {
+        Self {
+            id: plan.id,
+            project_id: plan.project_id,
+            name: plan.name,
+            plan_type: plan.plan_type.as_str().to_string(),
+            group_id: meta.group_id,
+            created_by: plan.created_by,
+            created_at: plan.created_at_ms,
+            description: meta.description,
+            tags: meta.tags,
+            module_id: meta.module_id,
+            start_at: meta.start_at_ms,
+            end_at: meta.end_at_ms,
+            pass_threshold: meta.pass_threshold * 100.0,
+        }
+    }
+}
+
+#[utoipa::path(get, path = "/test-plan", tag = "test-plan", params(ListPlansQuery), responses((status = 200, body = [PlanListItemResponse]), (status = 403)), security(("bearer" = [])))]
+async fn list_plans(
+    user: AuthUser,
+    State(st): State<PlanState>,
+    Query(q): Query<ListPlansQuery>,
+) -> Response {
+    if !user.can("TEST_PLAN", "READ") {
+        return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
+    match st.admin.list(&q.project_id).await {
+        Ok(items) => {
+            let items: Vec<PlanListItemResponse> =
+                items.into_iter().map(PlanListItemResponse::from).collect();
+            (StatusCode::OK, Json(items)).into_response()
+        }
+        Err(e) => admin_error(e),
     }
 }
 
@@ -203,6 +276,8 @@ struct UpdatePlanRequest {
     auto_update_status: Option<bool>,
     /// Percent 0..=100.
     pass_threshold: Option<f64>,
+    /// true archives the plan (hidden from the list), false restores it.
+    archived: Option<bool>,
 }
 
 #[utoipa::path(put, path = "/test-plan/{id}", tag = "test-plan", params(("id" = String, Path)), request_body = UpdatePlanRequest, responses((status = 200, body = PlanDetailResponse), (status = 400), (status = 403), (status = 404)), security(("bearer" = [])))]
@@ -226,6 +301,7 @@ async fn update_plan(
         allow_duplicate_cases: b.allow_duplicate_cases,
         auto_update_status: b.auto_update_status,
         pass_threshold: b.pass_threshold,
+        archived: b.archived,
     };
     match st.admin.update(&id, patch).await {
         Ok((plan, meta, planning)) => {
@@ -547,7 +623,7 @@ async fn list_cases(
 }
 
 #[derive(OpenApi)]
-#[openapi(paths(create_plan, plan_detail, update_plan, save_planning, statistics, report, report_md, link_case, unlink_case, record_result, list_cases), components(schemas(CreatePlanRequest, PlanResponse, PlanDetailResponse, UpdatePlanRequest, SavePlanningResponse, StatisticsResponse, LinkCaseRequest, RecordResultRequest, AssertionResultDto, PlanCaseResponse, StepResultDto)), tags((name = "test-plan", description = "测试计划")))]
+#[openapi(paths(create_plan, list_plans, plan_detail, update_plan, save_planning, statistics, report, report_md, link_case, unlink_case, record_result, list_cases), components(schemas(CreatePlanRequest, PlanResponse, PlanListItemResponse, PlanDetailResponse, UpdatePlanRequest, SavePlanningResponse, StatisticsResponse, LinkCaseRequest, RecordResultRequest, AssertionResultDto, PlanCaseResponse, StepResultDto)), tags((name = "test-plan", description = "测试计划")))]
 struct ApiDoc;
 pub fn openapi() -> utoipa::openapi::OpenApi {
     ApiDoc::openapi()
@@ -915,6 +991,102 @@ mod tests {
         let resp =
             app.oneshot(put_req("/test-plan/x", r#"{"name":"y"}"#, &token)).await.expect("resp");
         assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+    }
+
+    fn get_req(uri: &str, token: &str) -> Request<Body> {
+        Request::builder()
+            .uri(uri)
+            .header("authorization", format!("Bearer {token}"))
+            .body(Body::empty())
+            .expect("req")
+    }
+
+    #[tokio::test]
+    async fn list_returns_created_plan_with_creator_and_meta() {
+        let (app, t) = app_with(InMemoryPlanRepository::new()).await;
+        let r = app
+            .clone()
+            .oneshot(post(
+                "/test-plan",
+                r#"{"projectId":"p1","name":"冒烟","type":"TEST_PLAN"}"#,
+                Some(&t),
+            ))
+            .await
+            .expect("create");
+        assert_eq!(r.status(), StatusCode::CREATED);
+        let id = json_body(r).await["id"].as_str().expect("id").to_string();
+        // Group rows come from the same table and show up in the same list.
+        let r = app
+            .clone()
+            .oneshot(post(
+                "/test-plan",
+                r#"{"projectId":"p1","name":"回归组","type":"GROUP"}"#,
+                Some(&t),
+            ))
+            .await
+            .expect("create group");
+        assert_eq!(r.status(), StatusCode::CREATED);
+        let body = r#"{"tags":["核心"],"moduleId":"m1","startAt":1000}"#;
+        let r =
+            app.clone().oneshot(put_req(&format!("/test-plan/{id}"), body, &t)).await.expect("put");
+        assert_eq!(r.status(), StatusCode::OK);
+
+        let r = app.oneshot(get_req("/test-plan?projectId=p1", &t)).await.expect("list");
+        assert_eq!(r.status(), StatusCode::OK);
+        let v = json_body(r).await;
+        let items = v.as_array().expect("array");
+        assert_eq!(items.len(), 2);
+        // Newest first: the group was created after the plan.
+        assert_eq!(items[0]["name"], "回归组");
+        assert_eq!(items[0]["type"], "GROUP");
+        let p = &items[1];
+        assert_eq!(p["id"].as_str(), Some(id.as_str()));
+        assert_eq!(p["createdBy"], "admin");
+        assert_eq!(p["tags"], serde_json::json!(["核心"]));
+        assert_eq!(p["moduleId"], "m1");
+        assert_eq!(p["startAt"], 1000);
+        assert_eq!(p["groupId"], "NONE");
+        assert!(p["createdAt"].as_i64().is_some());
+    }
+
+    #[tokio::test]
+    async fn list_scoped_to_project_and_hides_archived() {
+        let (app, t) = app_with(InMemoryPlanRepository::new()).await;
+        for body in [
+            r#"{"projectId":"p1","name":"甲","type":"TEST_PLAN"}"#,
+            r#"{"projectId":"p2","name":"乙","type":"TEST_PLAN"}"#,
+        ] {
+            let r = app.clone().oneshot(post("/test-plan", body, Some(&t))).await.expect("create");
+            assert_eq!(r.status(), StatusCode::CREATED);
+        }
+        let r = app.clone().oneshot(get_req("/test-plan?projectId=p1", &t)).await.expect("list");
+        let v = json_body(r).await;
+        assert_eq!(v.as_array().map(|a| a.len()), Some(1));
+        let id = v[0]["id"].as_str().expect("id").to_string();
+        // Archive via PUT: the plan disappears from the list but the detail survives.
+        let r = app
+            .clone()
+            .oneshot(put_req(&format!("/test-plan/{id}"), r#"{"archived":true}"#, &t))
+            .await
+            .expect("archive");
+        assert_eq!(r.status(), StatusCode::OK);
+        assert_eq!(json_body(r).await["archived"], true);
+        let r = app.clone().oneshot(get_req("/test-plan?projectId=p1", &t)).await.expect("list");
+        assert_eq!(json_body(r).await.as_array().map(|a| a.len()), Some(0));
+        let r = app.oneshot(get_req(&format!("/test-plan/{id}"), &t)).await.expect("detail");
+        assert_eq!(r.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn list_without_token_401() {
+        let (app, _t) = app_with(InMemoryPlanRepository::new()).await;
+        let r = app
+            .oneshot(
+                Request::builder().uri("/test-plan?projectId=p1").body(Body::empty()).expect("req"),
+            )
+            .await
+            .expect("resp");
+        assert_eq!(r.status(), StatusCode::UNAUTHORIZED);
     }
 
     #[tokio::test]

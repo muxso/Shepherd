@@ -374,7 +374,11 @@ impl ToolHandler for RunTestPlan {
     async fn call(&self, args: Value) -> Result<Value, String> {
         let s = self
             .runner
-            .run(req_str(&args, "planId")?, args.get("environmentId").and_then(|x| x.as_str()))
+            .run(
+                req_str(&args, "planId")?,
+                args.get("environmentId").and_then(|x| x.as_str()),
+                None,
+            )
             .await
             .map_err(|()| "plan execute failed".to_string())?;
         Ok(json!({

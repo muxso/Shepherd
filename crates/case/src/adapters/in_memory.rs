@@ -148,6 +148,15 @@ impl ReviewRepository for InMemoryReviewRepository {
         Ok(())
     }
 
+    async fn delete_review(&self, review_id: &str) -> Result<(), RepoError> {
+        let mut st = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        // Mirrors the pg soft delete: the review vanishes from list/get/setting,
+        // verdict history and per-case statuses stay.
+        st.reviews.remove(review_id).ok_or(RepoError::NotFound)?;
+        st.settings.remove(review_id);
+        Ok(())
+    }
+
     async fn list_reviews(&self, project_id: &str) -> Result<Vec<ReviewSummary>, RepoError> {
         let st = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let mut out: Vec<ReviewSummary> = st

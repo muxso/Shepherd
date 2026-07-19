@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use crate::domain::{Plan, PlanMeta, ROOT_GROUP};
+use crate::domain::{CaseStatus, Plan, PlanMeta, ROOT_GROUP};
 use crate::ports::{PlanRepository, RepoError};
 
 use thiserror::Error;
@@ -37,6 +37,8 @@ pub struct PlanPatch {
     pub auto_update_status: Option<bool>,
     /// Percent 0..=100 (stored as a 0..=1 fraction).
     pub pass_threshold: Option<f64>,
+    /// true archives the plan (hidden from the list), false restores it.
+    pub archived: Option<bool>,
 }
 
 pub type PlanDetail = (Plan, PlanMeta, Option<serde_json::Value>);
@@ -53,6 +55,11 @@ impl PlanAdminUseCase {
 
     pub async fn detail(&self, id: &str) -> Result<PlanDetail, PlanAdminError> {
         self.repo.detail(id).await?.ok_or(PlanAdminError::NotFound)
+    }
+
+    /// Non-archived plans of a project (groups included), newest first.
+    pub async fn list(&self, project_id: &str) -> Result<Vec<(Plan, PlanMeta)>, PlanAdminError> {
+        Ok(self.repo.list(project_id).await?)
     }
 
     /// Merge the patch over the current meta, then write the full row back.
@@ -103,12 +110,25 @@ impl PlanAdminUseCase {
         if !self.repo.update_meta(id, &name, &meta).await? {
             return Err(PlanAdminError::NotFound);
         }
+        if let Some(archived) = patch.archived {
+            if !self.repo.set_archived(id, archived).await? {
+                return Err(PlanAdminError::NotFound);
+            }
+        }
         self.repo.detail(id).await?.ok_or(PlanAdminError::NotFound)
     }
 
-    /// Store the doc verbatim, then sync node-linked cases/scenarios into the flat
-    /// plan-case links (add missing links only; never auto-remove). Names resolve
-    /// from the optional root-level caseNames/scenarioNames maps, falling back to the id.
+    /// Store the doc verbatim, then fully sync node-linked cases/scenarios into the
+    /// flat plan-case links. Names resolve from the optional root-level
+    /// caseNames/scenarioNames maps, falling back to the id.
+    ///
+    /// Sync rule: after linking the union of the doc's caseIds/scenarioIds, flat
+    /// links absent from that union are removed — but only when the doc still has
+    /// nodes (an empty doc means planning is not in use and never prunes) and only
+    /// PENDING links without a recorded result. Executed rows are history and
+    /// survive. Links added manually via the cases tab follow the same
+    /// no-result rule: an un-executed manual link not present in a non-empty
+    /// planning doc is pruned too.
     pub async fn save_planning(
         &self,
         id: &str,
@@ -126,10 +146,22 @@ impl PlanAdminUseCase {
         if !self.repo.set_planning(id, &doc).await? {
             return Err(PlanAdminError::NotFound);
         }
+        let union = collect_linked(&doc);
         let mut linked = 0usize;
-        for (case_id, name) in collect_linked(&doc) {
-            self.repo.link_case(id, &case_id, &name).await?;
+        for (case_id, name) in &union {
+            self.repo.link_case(id, case_id, name).await?;
             linked += 1;
+        }
+        let has_nodes = doc.get("nodes").and_then(|n| n.as_array()).is_some_and(|a| !a.is_empty());
+        if has_nodes {
+            let in_union: std::collections::BTreeSet<&str> =
+                union.iter().map(|(id, _)| id.as_str()).collect();
+            for c in self.repo.list_cases(id).await? {
+                let untouched = c.status == CaseStatus::Pending && c.result.is_none();
+                if untouched && !in_union.contains(c.case_id.as_str()) {
+                    self.repo.unlink_case(id, &c.case_id).await?;
+                }
+            }
         }
         Ok(linked)
     }
@@ -252,6 +284,50 @@ mod tests {
         assert_eq!(cases.len(), 3);
         assert!(cases.iter().any(|c| c.case_id == "c1" && c.name == "健康检查"));
         assert!(cases.iter().any(|c| c.case_id == "s1" && c.name == "登录链路"));
+    }
+
+    #[tokio::test]
+    async fn save_planning_prunes_unexecuted_links_dropped_from_doc() {
+        let (repo, p) = seeded().await;
+        let uc = PlanAdminUseCase::new(repo.clone());
+        let doc2 = json!({"nodes": [{"id": "n1", "caseIds": ["c1", "c2"]}]});
+        uc.save_planning(&p.id, doc2).await.expect("save two");
+        assert_eq!(repo.list_cases(&p.id).await.expect("cases").len(), 2);
+
+        // Drop c2 from the doc: its PENDING/no-result link goes away.
+        let doc1 = json!({"nodes": [{"id": "n1", "caseIds": ["c1"]}]});
+        uc.save_planning(&p.id, doc1).await.expect("save one");
+        let cases = repo.list_cases(&p.id).await.expect("cases");
+        assert_eq!(cases.len(), 1);
+        assert_eq!(cases[0].case_id, "c1");
+    }
+
+    #[tokio::test]
+    async fn save_planning_keeps_executed_links_dropped_from_doc() {
+        let (repo, p) = seeded().await;
+        let uc = PlanAdminUseCase::new(repo.clone());
+        let doc2 = json!({"nodes": [{"id": "n1", "caseIds": ["c1", "c2"]}]});
+        uc.save_planning(&p.id, doc2).await.expect("save two");
+        repo.record_result(&p.id, "c2", crate::domain::CaseStatus::Success, None)
+            .await
+            .expect("exec c2");
+
+        let doc1 = json!({"nodes": [{"id": "n1", "caseIds": ["c1"]}]});
+        uc.save_planning(&p.id, doc1).await.expect("save one");
+        let cases = repo.list_cases(&p.id).await.expect("cases");
+        // The executed c2 row is history and survives the prune.
+        assert_eq!(cases.len(), 2);
+        assert!(cases.iter().any(|c| c.case_id == "c2"));
+    }
+
+    #[tokio::test]
+    async fn save_planning_empty_doc_never_prunes() {
+        let (repo, p) = seeded().await;
+        let uc = PlanAdminUseCase::new(repo.clone());
+        // A manual link (cases tab) with no planning doc coverage.
+        repo.link_case(&p.id, "m1", "手动用例").await.expect("manual link");
+        uc.save_planning(&p.id, json!({"nodes": []})).await.expect("save empty");
+        assert_eq!(repo.list_cases(&p.id).await.expect("cases").len(), 1);
     }
 
     #[tokio::test]

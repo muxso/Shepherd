@@ -21,8 +21,8 @@ import {
 import { useNavigate } from 'react-router-dom'
 import { api, type ApiCase, type ApiDefinition, type Bug, type CaseExecSummary, type ExecTrendPoint, type PlanStats } from '../api'
 import { useApp } from '../context'
-import { regList } from '../registry'
-import { isGroup } from '../components/plan/planLocal'
+import { regList, type RegItem } from '../registry'
+import { fetchPlanItems, isGroup } from '../components/plan/planLocal'
 import { useI18n } from '../i18n'
 import Donut from '../components/Donut'
 import type { CollabStats } from '../api'
@@ -126,6 +126,7 @@ export default function Home() {
   const [layout, setLayout] = useState<CardLayout[]>(loadLayout)
   const [editing, setEditing] = useState(false)
   // Plan-overview card: selected plan + its stats/linked-case count + project bugs (fetched only while the card is in the layout).
+  const [planItems, setPlanItems] = useState<RegItem[]>([])
   const [planId, setPlanId] = useState('')
   const [planStat, setPlanStat] = useState<PlanStats | null>(null)
   const [planCaseCount, setPlanCaseCount] = useState(0)
@@ -148,6 +149,7 @@ export default function Home() {
       setExec(null)
       setTrend([])
       setCollab(null)
+      setPlanItems([])
       return
     }
     api.caseExecSummary(projectId).then(setExec).catch(() => setExec(null))
@@ -159,17 +161,19 @@ export default function Home() {
       api.scenarios(projectId).then((d) => d.length).catch(() => 0),
       api.projectCases(projectId).then((p) => ({ total: p.total ?? p.items.length, items: p.items ?? [] })).catch(() => ({ total: 0, items: [] as ApiCase[] })),
       api.functionalCases(projectId).then((d) => d.length).catch(() => 0),
+      fetchPlanItems(projectId).catch(() => [] as RegItem[]),
     ])
-      .then(([defList, scenario, casePage, funcCase]) => {
+      .then(([defList, scenario, casePage, funcCase, plans]) => {
         const dl = Array.isArray(defList) ? defList : []
         setDefs(dl)
         setCases(casePage.items)
+        setPlanItems(plans)
         setC({
           def: dl.length,
           scenario,
           apiCase: casePage.total,
           funcCase,
-          plan: regList('plan', projectId).length,
+          plan: plans.length,
           req: regList('requirement', projectId).length,
           bug: regList('bug', projectId).length,
         })
@@ -223,7 +227,7 @@ export default function Home() {
   }, [projects])
 
   // Plan overview: plan list (groups excluded), persisted selection, stats + linked cases, project bugs.
-  const planList = useMemo(() => (projectId ? regList('plan', projectId).filter((p) => !isGroup(p)) : []), [projectId])
+  const planList = useMemo(() => planItems.filter((p) => !isGroup(p)), [planItems])
   useEffect(() => {
     if (!projectId || !planList.length) { setPlanId(''); return }
     const saved = localStorage.getItem(planSelKey)

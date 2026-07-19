@@ -40,6 +40,8 @@ pub struct NewPlan {
     pub name: String,
     pub plan_type: PlanType,
     pub group_id: String,
+    /// Creating user id; None when the creator is unknown (e.g. internal tooling).
+    pub created_by: Option<String>,
 }
 
 impl NewPlan {
@@ -62,7 +64,14 @@ impl NewPlan {
             name: name.to_string(),
             plan_type,
             group_id: group_id.to_string(),
+            created_by: None,
         })
+    }
+
+    pub fn with_created_by(mut self, user_id: &str) -> Self {
+        let user_id = user_id.trim();
+        self.created_by = (!user_id.is_empty()).then(|| user_id.to_string());
+        self
     }
 
     pub fn belongs_to_group(&self) -> bool {
@@ -80,6 +89,7 @@ pub struct Plan {
     pub archived: bool,
     /// Unix milliseconds.
     pub created_at_ms: i64,
+    pub created_by: Option<String>,
 }
 
 /// Editable plan fields beyond the core Plan identity (PUT /test-plan/{id}).

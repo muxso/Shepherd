@@ -431,10 +431,48 @@ export interface ScenarioStep {
   snapshot?: unknown
 }
 
+/** Remote execution location of a run (explicit or auto-picked pool); null = local. */
+export interface ExecutedOn {
+  poolId: string
+  poolName: string
+  /** Assigned runner's display name; empty while the run sat queued. */
+  runner: string
+}
+
 export interface ScenarioRunResult {
   reportId: string
+  /** SUCCESS | ERROR, or RUNNING when started with asyncRun. */
   status: string
   caseCount: number
+  /** Ordered step identities (asyncRun): CASE = case id, REQUEST = "METHOD url". */
+  steps?: string[]
+  executedOn?: ExecutedOn | null
+}
+
+/** One connected pool-runner in the detailed status endpoint. */
+export interface PoolRunnerInfo {
+  name: string
+  maxConcurrent: number
+  inFlight: number
+}
+
+/** Live run event pushed over /api/run-events/ws?runId=… */
+export interface RunEvent {
+  type: 'runStarted' | 'stepStarted' | 'stepFinished' | 'stepDetail' | 'runComplete'
+  runId: string
+  stepId?: string
+  steps?: string[]
+  status?: string
+  statusCode?: number
+  latencyMs?: number | null
+  failures?: string[]
+  timings?: PhaseTimings | null
+}
+
+/** WebSocket URL for live run events (token via query: browsers can't set WS headers). */
+export const runEventsWsUrl = (runId: string) => {
+  const proto = window.location.protocol === 'https:' ? 'wss' : 'ws'
+  return `${proto}://${window.location.host}/api/run-events/ws?runId=${encodeURIComponent(runId)}&token=${encodeURIComponent(tokenStore.get())}`
 }
 
 /** Scenario report detail row (per-case result). Note: latency/size/status code not yet persisted (pending runner support). */
@@ -801,6 +839,25 @@ export interface PlanningDoc {
   scenarioNames?: Record<string, string>
 }
 
+/** Row of GET /test-plan?projectId=; plan groups share the table (type GROUP). */
+export interface PlanListItem {
+  id: string
+  projectId: string
+  name: string
+  type: string
+  /** 'NONE' = not in a plan group. */
+  groupId: string
+  createdBy: string | null
+  createdAt: number
+  description: string
+  tags: string[]
+  moduleId: string | null
+  startAt: number | null
+  endAt: number | null
+  /** Percent 0-100. */
+  passThreshold: number
+}
+
 export interface PlanDetailInfo {
   id: string
   projectId: string
@@ -833,6 +890,8 @@ export interface PlanUpdateBody {
   allowDuplicateCases?: boolean
   autoUpdateStatus?: boolean
   passThreshold?: number
+  /** true archives the plan (hidden from the list), false restores it. */
+  archived?: boolean
 }
 
 export interface PerfLatency {
@@ -1158,6 +1217,14 @@ export interface Bug {
   status: string
   createdAt?: number
   createdBy?: string | null
+  /** Severity level P0..P3 (P0 highest). */
+  severity?: string | null
+  /** Handler user id. */
+  handler?: string | null
+  /** Last mutator's user id (stamped on every mutation). */
+  updatedBy?: string | null
+  /** Last mutation time (timestamptz text). */
+  updatedAt?: string | null
 }
 
 /** Human-AI collaboration stats: per-requirement AI/human delivery split (measured as VERIFIED + presence of a DELIVERED attempt). */
@@ -1543,7 +1610,11 @@ export const api = {
     return out
   },
 
-  // Test plans (no list endpoint → the list lives in the frontend registry)
+  // Test plans
+  listPlans: (projectId: string) =>
+    projectId
+      ? http.get<PlanListItem[]>(`/test-plan?projectId=${encodeURIComponent(projectId)}`)
+      : Promise.resolve([] as PlanListItem[]),
   createPlan: (b: { projectId: string; name: string; type?: string }) =>
     http.post<TestPlan>('/test-plan', { type: 'TEST_PLAN', ...b }),
   planDetail: (id: string) => http.get<PlanDetailInfo>(`/test-plan/${id}`),
@@ -1555,14 +1626,15 @@ export const api = {
   linkPlanCase: (id: string, caseId: string, name: string) =>
     http.post(`/test-plan/${id}/cases`, { caseId, name }),
   unlinkPlanCase: (id: string, caseId: string) => http.del(`/test-plan/${id}/cases/${caseId}`),
-  // Runs exactly one linked case/scenario and records its result.
+  // Runs exactly one linked case/scenario and records its result. Scenario
+  // entries auto-route to an applicable pool with online runners (or local).
   runPlanCase: (id: string, caseId: string) =>
-    http.post<{ caseId: string; status: string }>(`/test-plan/${id}/cases/${caseId}/run`, {}),
+    http.post<{ caseId: string; status: string; executedOn?: ExecutedOn | null }>(`/test-plan/${id}/cases/${caseId}/run`, {}),
   // Manually record a case result (pass/fail/blocked/false alarm); status: SUCCESS|ERROR|BLOCK|FAKE_ERROR|PENDING
   recordPlanCaseResult: (id: string, caseId: string, status: string) =>
     http.post(`/test-plan/${id}/cases/${caseId}/result`, { status }),
-  runPlan: (id: string, environmentId?: string) =>
-    http.post<{ status?: string; total: number; executed: number }>(`/test-plan/${id}/run`, { environmentId }),
+  runPlan: (id: string, environmentId?: string, poolId?: string) =>
+    http.post<{ status?: string; total: number; executed: number }>(`/test-plan/${id}/run`, { environmentId, poolId }),
   planSchedule: (id: string, cron: string, enabled = true) =>
     http.post(`/test-plan/${id}/schedule`, { cron, enabled }),
   deletePlanSchedule: (id: string) => http.del(`/test-plan/${id}/schedule`),
@@ -1709,13 +1781,16 @@ export const api = {
   updateCaseReview: (id: string, b: CaseReviewMetaInput & { passRule: string; reviewerCount: number }) =>
     http.put(`/case-review/${id}`, b),
   caseReview: (id: string) => http.get<CaseReviewDetail>(`/case-review/${id}`),
+  deleteCaseReview: (id: string) => http.del(`/case-review/${id}`),
   submitCaseReview: (reviewId: string, caseId: string, b: { reviewerId: string; status: string; content?: string }) =>
     http.post<{ status: string }>(`/case-review/${reviewId}/${caseId}`, b),
 
   // Bugs — list/create/status transitions all backend-driven (project-scoped, newest first)
   bugs: (projectId: string) =>
     projectId ? http.get<Bug[]>(`/bug?projectId=${encodeURIComponent(projectId)}`) : Promise.resolve([] as Bug[]),
-  createBug: (b: { projectId: string; title: string; initialStatus: string; customFields?: Record<string, string> }) => http.post<Bug>('/bug', b),
+  createBug: (b: { projectId: string; title: string; initialStatus: string; severity?: string; handler?: string; customFields?: Record<string, string> }) => http.post<Bug>('/bug', b),
+  // Meta update: severity/handler are full replacements (omit to clear); omitted title keeps the current one.
+  updateBug: (id: string, b: { title?: string; severity?: string; handler?: string }) => http.put<Bug>(`/bug/${encodeURIComponent(id)}`, b),
   setBugStatus: (id: string, status: string) => http.post<Bug>(`/bug/${id}/status`, { status }),
   // Human-AI collaboration stats (per-requirement AI/human split + weekly trend)
   collabStats: (projectId: string, requirementId?: string) =>
@@ -1868,8 +1943,13 @@ export const api = {
       success: number
       results: { scenarioId: string; reportId?: string | null; status: string }[]
     }>('/api/scenario/batch-run', b),
-  runScenario: (scenarioId: string, projectId: string, opts?: { environmentId?: string; failureStrategy?: 'CONTINUE' | 'STOP' }) =>
-    http.post<ScenarioRunResult>(`/api/scenario/${scenarioId}/run`, { projectId, environmentId: opts?.environmentId, failureStrategy: opts?.failureStrategy }),
+  runScenario: (scenarioId: string, projectId: string, opts?: { environmentId?: string; failureStrategy?: 'CONTINUE' | 'STOP'; poolId?: string; asyncRun?: boolean }) =>
+    http.post<ScenarioRunResult>(`/api/scenario/${scenarioId}/run`, { projectId, environmentId: opts?.environmentId, failureStrategy: opts?.failureStrategy, poolId: opts?.poolId, asyncRun: opts?.asyncRun }),
+  /** Online pool-runner count per resource pool (in-memory WS registry). */
+  poolRunnerStatus: () => http.get<Record<string, number>>('/api/pool-runner/status'),
+  /** Per-pool connected runner details (name / cap / in-flight). */
+  poolRunnerStatusDetail: () =>
+    http.get<Record<string, PoolRunnerInfo[]>>('/api/pool-runner/status/detail'),
   scenarioExecutions: (scenarioId: string) =>
     http.get<Page<ScenarioExecution>>(`/api/scenario/${scenarioId}/executions`),
   scenarioReport: (reportId: string) =>

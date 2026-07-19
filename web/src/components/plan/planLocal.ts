@@ -1,12 +1,12 @@
-// Local-state layer for the test-plan page: the backend only has create/run/stats
-// endpoints, so the plan list comes from the registry (localStorage). Modules /
-// groups / tags have no backend fields and live here:
-// - plan module tree: shepherd.planModules.<projectId>, nodes {id,name,parentId}, persisted locally.
-// - plan extension fields: registry item meta (all string values):
-//   createdBy; kind='group' marks a plan-group entry; groupId = owning plan group;
-//   module = owning module id (empty/absent = unfiled); tags = comma-joined tag string.
+// Plan-page state layer. Plans (incl. plan groups) come from GET /test-plan?projectId=
+// and are mapped into the RegItem shape the page components consume; edits persist
+// via PUT /test-plan/{id}. Only the module tree is still frontend-local:
+// - plan module tree: shepherd.planModules.<projectId>, nodes {id,name,parentId}, in localStorage.
+// - RegItem meta (all string values): createdBy; kind='group' marks a plan-group row;
+//   groupId = owning plan group; module = owning module id (empty = unfiled);
+//   tags = comma-joined tag string.
+import { api, type PlanListItem } from '../../api'
 import type { RegItem } from '../../registry'
-import { regList } from '../../registry'
 
 export interface PlanModule {
   id: string
@@ -63,20 +63,26 @@ export function moduleNameOf(modules: PlanModule[], id: string): string {
   return modules.find((m) => m.id === id)?.name || ''
 }
 
-// In-place registry item update (regAdd is a move-to-top upsert; edits use this to keep list order).
-// Storage key must match src/registry.ts (kind fixed to 'plan').
-const regKey = (projectId: string) => `shepherd.reg.plan.${projectId || 'global'}`
+/** Server plan row → the RegItem shape the plan components render. */
+export function planToRegItem(p: PlanListItem): RegItem {
+  return {
+    id: p.id,
+    label: p.name,
+    createdAt: p.createdAt,
+    meta: {
+      createdBy: p.createdBy || '',
+      module: p.moduleId || '',
+      groupId: p.groupId && p.groupId !== 'NONE' ? p.groupId : '',
+      tags: joinTags(p.tags || []),
+      ...(p.type === 'GROUP' ? { kind: 'group' as const } : {}),
+    },
+  }
+}
 
-export function planRegUpdate(
-  projectId: string,
-  id: string,
-  patch: { label?: string; meta?: Record<string, string> },
-): RegItem[] {
-  const list = regList('plan', projectId).map((it) =>
-    it.id === id ? { ...it, label: patch.label ?? it.label, meta: { ...it.meta, ...patch.meta } } : it,
-  )
-  localStorage.setItem(regKey(projectId), JSON.stringify(list))
-  return list
+/** Non-archived plans + plan groups of a project, newest first. */
+export async function fetchPlanItems(projectId: string): Promise<RegItem[]> {
+  const list = await api.listPlans(projectId)
+  return list.map(planToRegItem)
 }
 
 export const isGroup = (p: RegItem) => p.meta?.kind === 'group'

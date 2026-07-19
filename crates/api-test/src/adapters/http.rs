@@ -5,7 +5,7 @@ use crate::application::{
     ListCaseExecutionsUseCase, ListResourcePoolsUseCase, StartBatchRunUseCase,
 };
 use crate::domain::{BatchRunError, BatchRunMode, ResourcePool, ResourcePoolDraft, RunModeConfig};
-use crate::ports::CaseExecutionRecord;
+use crate::ports::{CaseExecutionRecord, PortError};
 use axum::{
     extract::{FromRef, Path, Query, State},
     http::StatusCode,
@@ -360,7 +360,7 @@ impl From<ResourcePool> for ResourcePoolResponse {
     }
 }
 
-#[utoipa::path(post, path = "/api/resource-pool", tag = "api-test", request_body = ResourcePoolBody, responses((status = 201, body = ResourcePoolResponse), (status = 400), (status = 403)), security(("bearer" = [])))]
+#[utoipa::path(post, path = "/api/resource-pool", tag = "api-test", request_body = ResourcePoolBody, responses((status = 201, body = ResourcePoolResponse), (status = 400), (status = 403), (status = 409)), security(("bearer" = [])))]
 async fn create_resource_pool(
     user: AuthUser,
     State(st): State<ResourcePoolState>,
@@ -373,6 +373,9 @@ async fn create_resource_pool(
         Ok(p) => (StatusCode::CREATED, Json(ResourcePoolResponse::from(p))).into_response(),
         Err(CreateResourcePoolError::Validation(_)) => {
             (StatusCode::BAD_REQUEST, "invalid resource pool payload").into_response()
+        }
+        Err(CreateResourcePoolError::Backend(PortError::Conflict(_))) => {
+            (StatusCode::CONFLICT, "resource pool name already exists").into_response()
         }
         Err(CreateResourcePoolError::Backend(_)) => {
             (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response()
@@ -411,7 +414,7 @@ async fn get_resource_pool(
     }
 }
 
-#[utoipa::path(put, path = "/api/resource-pool/{id}", tag = "api-test", request_body = ResourcePoolBody, responses((status = 200, body = ResourcePoolResponse), (status = 400), (status = 403), (status = 404)), security(("bearer" = [])))]
+#[utoipa::path(put, path = "/api/resource-pool/{id}", tag = "api-test", request_body = ResourcePoolBody, responses((status = 200, body = ResourcePoolResponse), (status = 400), (status = 403), (status = 404), (status = 409)), security(("bearer" = [])))]
 async fn update_resource_pool(
     user: AuthUser,
     State(st): State<ResourcePoolState>,
@@ -426,6 +429,9 @@ async fn update_resource_pool(
         Ok(None) => (StatusCode::NOT_FOUND, "resource pool not found").into_response(),
         Err(CreateResourcePoolError::Validation(_)) => {
             (StatusCode::BAD_REQUEST, "invalid resource pool payload").into_response()
+        }
+        Err(CreateResourcePoolError::Backend(PortError::Conflict(_))) => {
+            (StatusCode::CONFLICT, "resource pool name already exists").into_response()
         }
         Err(CreateResourcePoolError::Backend(_)) => {
             (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response()

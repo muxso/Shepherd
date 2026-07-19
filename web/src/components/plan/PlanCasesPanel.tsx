@@ -5,6 +5,7 @@ import type { DataNode } from 'antd/es/tree'
 import { FilterOutlined, ReloadOutlined, SearchOutlined, SettingOutlined } from '@ant-design/icons'
 import { message, modal } from '../../feedback'
 import { api, ApiError, type ApiCase, type ApiModule, type PlanCase, type PlanningNode, type Scenario } from '../../api'
+import { executedOnLabel } from '../AutoPoolIndicator'
 import { outcomeColor, priorityColor } from '../tags'
 import { useApp } from '../../context'
 import { useI18n } from '../../i18n'
@@ -197,7 +198,8 @@ export default function PlanCasesPanel({ planId, projectId, cases, loading, relo
     setRunningId(caseId)
     try {
       const r = await api.runPlanCase(planId, caseId)
-      message.success(`${t('plan.runDone', '执行完成')}:${planCaseStatusLabel(r.status, t)}`)
+      const where = executedOnLabel(r.executedOn)
+      message.success(`${t('plan.runDone', '执行完成')}:${planCaseStatusLabel(r.status, t)}${where ? ` · ${where}` : ''}`)
       reload()
     } catch (e) {
       message.error(e instanceof ApiError ? `${t('plan.runFail', '执行失败')}:${e.status}` : t('plan.runFail', '执行失败'))

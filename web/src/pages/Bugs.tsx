@@ -9,9 +9,35 @@ import { useI18n } from '../i18n'
 import { SelectProjectEmpty } from '../components/Page'
 import { Workspace, WorkList, useWorkTabs } from '../components/Workspace'
 import { useListView, type ListColumn } from '../components/ListView'
+import { priorityColor } from '../components/tags'
 import { CF_GROUP, CustomFieldItems, collectCustomValues, useFieldTemplate } from '../components/TemplateFields'
 
 const STATUSES = ['NEW', 'RESOLVED', 'CLOSED', 'REOPENED', 'REJECTED']
+const SEVERITIES = ['P0', 'P1', 'P2', 'P3']
+
+/** Handler candidates: project members with display names resolved (id fallback). */
+function useMemberOptions(projectId: string) {
+  const [options, setOptions] = useState<{ value: string; label: string }[]>([])
+  useEffect(() => {
+    let alive = true
+    api
+      .projectMembers(projectId)
+      .then(async (ms) => {
+        const ids = [...new Set(ms.map((m) => m.userId).filter(Boolean))]
+        const names = ids.length ? await api.userNames(ids).catch(() => ({}) as Record<string, string>) : {}
+        if (alive) setOptions(ids.map((id) => ({ value: id, label: names[id] || id })))
+      })
+      .catch(() => {})
+    return () => { alive = false }
+  }, [projectId])
+  return options
+}
+
+const severityDot = (s?: string | null) =>
+  s ? <span style={{ color: priorityColor(s) }}>● {s}</span> : '-'
+
+/** Timestamptz text → "YYYY-MM-DD HH:mm:ss". */
+const fmtTs = (v?: string | null) => (v ? v.slice(0, 19).replace('T', ' ') : '-')
 
 // Key of the persistent "new bug" workspace tab (bugs have no detail tab; the tab pool is list + new only).
 const NEW_KEY = '__new_bug__'
@@ -75,7 +101,8 @@ export default function Bugs() {
         try {
           const b = await api.setBugStatus(item.id, status)
           message.success(`${t('bug.changedTo', '已变更为')} ${statusLabel(t, b.status)}`)
-          setItems((prev) => prev.map((x) => (x.id === item.id ? { ...x, status: b.status } : x)))
+          // Merge the full response so the stamped updatedBy/updatedAt show immediately.
+          setItems((prev) => prev.map((x) => (x.id === item.id ? { ...x, ...b } : x)))
         } catch (e) {
           message.error(e instanceof ApiError ? `${t('bug.changeFailedStatus', '变更失败')}:${e.status}${t('bug.illegalTransition', '(非法流转?)')}` : t('bug.changeFailed', '变更失败'))
         }
@@ -99,8 +126,25 @@ function BugsList({ items, loading, projectId, refresh, setItems, relBug, setRel
   tabs: ReturnType<typeof useWorkTabs>
   t: (k: string, d?: string) => string
 }) {
+  const [editBug, setEditBug] = useState<Bug | null>(null)
+  // Resolve handler/updater ids in the current rows to display names.
+  const [names, setNames] = useState<Record<string, string>>({})
+  useEffect(() => {
+    const ids = [...new Set(items.flatMap((b) => [b.handler, b.updatedBy]).filter((x): x is string => !!x))]
+    if (!ids.length) { setNames({}); return }
+    api.userNames(ids).then(setNames).catch(() => setNames({}))
+  }, [items])
+  const nameOf = (id?: string | null) => (id ? names[id] || id : '-')
+
   const allColumns: ListColumn<Bug>[] = [
     { key: 'title', label: t('bug.title', '标题'), title: t('bug.title', '标题'), dataIndex: 'title' },
+    {
+      key: 'severity',
+      label: t('bug.severity', '严重程度'),
+      title: t('bug.severity', '严重程度'),
+      width: 100,
+      render: (_, r) => severityDot(r.severity),
+    },
     {
       key: 'status',
       label: t('bug.status', '状态'),
@@ -108,14 +152,39 @@ function BugsList({ items, loading, projectId, refresh, setItems, relBug, setRel
       width: 130,
       render: (_, r) => <Tag color={bugColor(r.status || 'NEW')}>{statusLabel(t, r.status || 'NEW')}</Tag>,
     },
+    {
+      key: 'handler',
+      label: t('bug.handler', '处理人'),
+      title: t('bug.handler', '处理人'),
+      width: 120,
+      render: (_, r) => nameOf(r.handler),
+    },
+    {
+      key: 'updatedBy',
+      label: t('bug.updatedBy', '更新人'),
+      title: t('bug.updatedBy', '更新人'),
+      width: 120,
+      render: (_, r) => nameOf(r.updatedBy),
+    },
+    {
+      key: 'updatedAt',
+      label: t('bug.updatedAt', '更新时间'),
+      title: t('bug.updatedAt', '更新时间'),
+      width: 170,
+      sorter: (a, b) => (a.updatedAt || '').localeCompare(b.updatedAt || ''),
+      render: (_, r) => <span className="ms-mono" style={{ fontSize: 12 }}>{fmtTs(r.updatedAt)}</span>,
+    },
     { key: 'id', label: 'ID', title: 'ID', dataIndex: 'id', width: 110, render: (v: string) => <Tooltip title={v}><span className="ms-mono" style={{ fontSize: 12, color: 'var(--text-3)' }}>{v?.slice(0, 8)}</span></Tooltip> },
     {
       key: 'action',
       label: t('bug.action', '操作'),
       title: t('bug.action', '操作'),
-      width: 190,
+      width: 230,
       render: (_, r) => (
         <>
+          <Button type="link" size="small" onClick={() => setEditBug(r)}>
+            {t('bug.edit', '编辑')}
+          </Button>
           <Button type="link" size="small" onClick={() => changeStatus(r)}>
             {t('bug.changeStatusBtn', '变更状态')}
           </Button>
@@ -142,10 +211,19 @@ function BugsList({ items, loading, projectId, refresh, setItems, relBug, setRel
         options: STATUSES.map((s) => ({ value: s, label: statusLabel(t, s) })),
         get: (r) => (r.status || 'NEW').toUpperCase(),
       },
+      {
+        key: 'severity',
+        label: t('bug.severity', '严重程度'),
+        type: 'enum',
+        options: SEVERITIES.map((s) => ({ value: s, label: s })),
+        get: (r) => (r.severity || '').toUpperCase(),
+      },
       // Advanced-condition only (duplicates search box / columns; not rendered in the declarative filter area).
       { key: 'id', label: 'ID', type: 'text', advOnly: true, get: (r) => r.id },
       { key: 'title', label: t('bug.colTitle', '标题'), type: 'text', advOnly: true, get: (r) => r.title || '' },
       { key: 'createdBy', label: t('lv.createdBy', '创建人'), type: 'text', advOnly: true, get: (r) => r.createdBy || '' },
+      { key: 'handler', label: t('bug.handler', '处理人'), type: 'text', advOnly: true, get: (r) => r.handler || '' },
+      { key: 'updatedBy', label: t('bug.updatedBy', '更新人'), type: 'text', advOnly: true, get: (r) => r.updatedBy || '' },
     ],
     columns: allColumns,
     rows: items,
@@ -193,22 +271,87 @@ function BugsList({ items, loading, projectId, refresh, setItems, relBug, setRel
         }
       />
       <RelationsDrawer bug={relBug} projectId={projectId} onClose={() => setRelBug(null)} />
+      <EditBugDrawer
+        bug={editBug}
+        projectId={projectId}
+        onClose={() => setEditBug(null)}
+        onSaved={(b) => {
+          setEditBug(null)
+          setItems((prev) => prev.map((x) => (x.id === b.id ? { ...x, ...b } : x)))
+        }}
+      />
     </>
+  )
+}
+
+// Meta edit drawer: title / severity / handler via PUT /bug/{id}; the backend stamps updated_by/updated_at.
+function EditBugDrawer({ bug, projectId, onClose, onSaved }: { bug: Bug | null; projectId: string; onClose: () => void; onSaved: (b: Bug) => void }) {
+  const { t } = useI18n()
+  const members = useMemberOptions(projectId)
+  const [form] = Form.useForm<{ title: string; severity?: string; handler?: string }>()
+  const [saving, setSaving] = useState(false)
+  useEffect(() => {
+    if (bug) form.setFieldsValue({ title: bug.title || '', severity: bug.severity || undefined, handler: bug.handler || undefined })
+  }, [bug, form])
+  const save = async () => {
+    const v = await form.validateFields()
+    if (!bug) return
+    setSaving(true)
+    try {
+      const b = await api.updateBug(bug.id, { title: v.title, severity: v.severity, handler: v.handler })
+      message.success(t('bug.updated', '缺陷已更新'))
+      onSaved(b)
+    } catch (e) {
+      message.error(e instanceof ApiError ? e.message : t('bug.updateFailed', '更新失败'))
+    } finally {
+      setSaving(false)
+    }
+  }
+  return (
+    <ResizableDrawer
+      open={!!bug}
+      onClose={onClose}
+      width={480}
+      title={`${t('bug.editTitle', '编辑缺陷')} · ${bug?.title || bug?.id || ''}`}
+      footer={
+        <Space>
+          <Button type="primary" loading={saving} onClick={save}>{t('a.save', '保存')}</Button>
+          <Button onClick={onClose}>{t('a.cancel', '取消')}</Button>
+        </Space>
+      }
+    >
+      <Form form={form} layout="vertical">
+        <Form.Item name="title" label={t('bug.title', '标题')} rules={[{ required: true }]}>
+          <Input />
+        </Form.Item>
+        <Form.Item name="severity" label={t('bug.severity', '严重程度')}>
+          <Select
+            allowClear
+            placeholder={t('bug.severityPh', '选择严重程度')}
+            options={SEVERITIES.map((s) => ({ value: s, label: severityDot(s) }))}
+          />
+        </Form.Item>
+        <Form.Item name="handler" label={t('bug.handler', '处理人')}>
+          <Select allowClear showSearch optionFilterProp="label" placeholder={t('bug.handlerPh', '选择处理人')} options={members} />
+        </Form.Item>
+      </Form>
+    </ResizableDrawer>
   )
 }
 
 // New bugs always start in NEW status; importing historical bugs with other statuses goes through the API's initialStatus.
 function NewBugTab({ projectId, onCreated, onCancel }: { projectId: string; onCreated: (b: Bug) => void; onCancel: () => void }) {
   const { t } = useI18n()
-  // Bug field template: every field except title is custom, rendered from the template.
+  // Bug field template: every field except title/severity/handler is custom, rendered from the template.
   const { fields: tplFields } = useFieldTemplate('bug')
+  const members = useMemberOptions(projectId)
   const [saving, setSaving] = useState(false)
   return (
     <div style={{ padding: '16px 24px', height: '100%', overflow: 'auto' }}>
       <Form
         layout="vertical"
         style={{ maxWidth: 560 }}
-        onFinish={async (v: { title: string; [CF_GROUP]?: Record<string, unknown> }) => {
+        onFinish={async (v: { title: string; severity?: string; handler?: string; [CF_GROUP]?: Record<string, unknown> }) => {
           const customFields = collectCustomValues(tplFields, v[CF_GROUP])
           setSaving(true)
           try {
@@ -216,6 +359,8 @@ function NewBugTab({ projectId, onCreated, onCancel }: { projectId: string; onCr
               projectId,
               title: v.title,
               initialStatus: 'NEW',
+              severity: v.severity,
+              handler: v.handler,
               customFields: Object.keys(customFields).length ? customFields : undefined,
             })
             message.success(t('bug.created', '缺陷已创建'))
@@ -229,6 +374,16 @@ function NewBugTab({ projectId, onCreated, onCancel }: { projectId: string; onCr
       >
         <Form.Item name="title" label={t('bug.title', '标题')} rules={[{ required: true }]}>
           <Input placeholder={t('bug.titlePlaceholder', '如:登录按钮无响应')} autoFocus />
+        </Form.Item>
+        <Form.Item name="severity" label={t('bug.severity', '严重程度')}>
+          <Select
+            allowClear
+            placeholder={t('bug.severityPh', '选择严重程度')}
+            options={SEVERITIES.map((s) => ({ value: s, label: severityDot(s) }))}
+          />
+        </Form.Item>
+        <Form.Item name="handler" label={t('bug.handler', '处理人')}>
+          <Select allowClear showSearch optionFilterProp="label" placeholder={t('bug.handlerPh', '选择处理人')} options={members} />
         </Form.Item>
         <CustomFieldItems kind="bug" fields={tplFields} />
         <Space>
