@@ -268,3 +268,233 @@ mod tests {
         assert_eq!(store.mark_all_read("u2", None).await.expect("all"), 1);
     }
 }
+
+// ---------- Routing rules (robots + per-event rules) ----------
+
+use crate::domain::{Channel, Platform, Robot, RobotDraft, Rule, RuleDraft};
+use crate::ports::NoticeRuleStore;
+
+#[derive(Clone)]
+pub struct PgNoticeRuleStore {
+    pool: PgPool,
+}
+
+impl PgNoticeRuleStore {
+    pub fn new(pool: PgPool) -> Self {
+        Self { pool }
+    }
+}
+
+const ROBOT_COLS: &str = "id::text AS id, project_id, name, platform, webhook_url, secret, \
+     enabled, (extract(epoch FROM created_at) * 1000)::bigint AS created_at";
+
+// channels/robot_ids come out as text: notice's sqlx build has no json feature,
+// so JSONB columns round-trip through serde_json strings.
+const RULE_COLS: &str = "id::text AS id, project_id, event_type, channels::text AS channels, \
+     robot_ids::text AS robot_ids, template, enabled, \
+     (extract(epoch FROM created_at) * 1000)::bigint AS created_at";
+
+fn row_to_robot(row: &sqlx::postgres::PgRow) -> Result<Robot, RepoError> {
+    let platform: String = row.try_get("platform").map_err(map_err)?;
+    let platform = Platform::parse(&platform)
+        .ok_or_else(|| RepoError::Backend(format!("unknown robot platform: {platform}")))?;
+    Ok(Robot {
+        id: row.try_get("id").map_err(map_err)?,
+        project_id: row.try_get("project_id").map_err(map_err)?,
+        name: row.try_get("name").map_err(map_err)?,
+        platform,
+        webhook_url: row.try_get("webhook_url").map_err(map_err)?,
+        secret: row.try_get("secret").map_err(map_err)?,
+        enabled: row.try_get("enabled").map_err(map_err)?,
+        created_at: row.try_get("created_at").map_err(map_err)?,
+    })
+}
+
+fn parse_string_array(raw: &str) -> Vec<String> {
+    serde_json::from_str::<Vec<String>>(raw).unwrap_or_default()
+}
+
+fn row_to_rule(row: &sqlx::postgres::PgRow) -> Result<Rule, RepoError> {
+    let channels: String = row.try_get("channels").map_err(map_err)?;
+    let robot_ids: String = row.try_get("robot_ids").map_err(map_err)?;
+    Ok(Rule {
+        id: row.try_get("id").map_err(map_err)?,
+        project_id: row.try_get("project_id").map_err(map_err)?,
+        event_type: row.try_get("event_type").map_err(map_err)?,
+        // Unknown channel strings are dropped rather than failing the whole event.
+        channels: parse_string_array(&channels).iter().filter_map(|c| Channel::parse(c)).collect(),
+        robot_ids: parse_string_array(&robot_ids),
+        template: row.try_get("template").map_err(map_err)?,
+        enabled: row.try_get("enabled").map_err(map_err)?,
+        created_at: row.try_get("created_at").map_err(map_err)?,
+    })
+}
+
+fn channels_json(channels: &[Channel]) -> String {
+    serde_json::to_string(&channels.iter().map(Channel::as_str).collect::<Vec<_>>())
+        .unwrap_or_else(|_| "[]".to_string())
+}
+
+fn ids_json(ids: &[String]) -> String {
+    serde_json::to_string(ids).unwrap_or_else(|_| "[]".to_string())
+}
+
+#[async_trait]
+impl NoticeRuleStore for PgNoticeRuleStore {
+    async fn insert_robot(&self, draft: &RobotDraft) -> Result<Robot, RepoError> {
+        let row = sqlx::query(&format!(
+            "INSERT INTO ms_notice_robot (project_id, name, platform, webhook_url, secret, enabled) \
+             VALUES ($1, $2, $3, $4, $5, $6) RETURNING {ROBOT_COLS}"
+        ))
+        .bind(&draft.project_id)
+        .bind(&draft.name)
+        .bind(draft.platform.as_str())
+        .bind(&draft.webhook_url)
+        .bind(&draft.secret)
+        .bind(draft.enabled)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(map_err)?;
+        row_to_robot(&row)
+    }
+
+    async fn update_robot(&self, id: &str, draft: &RobotDraft) -> Result<Option<Robot>, RepoError> {
+        let row = sqlx::query(&format!(
+            "UPDATE ms_notice_robot SET name = $3, platform = $4, webhook_url = $5, secret = $6, \
+             enabled = $7 WHERE id::text = $1 AND project_id = $2 RETURNING {ROBOT_COLS}"
+        ))
+        .bind(id)
+        .bind(&draft.project_id)
+        .bind(&draft.name)
+        .bind(draft.platform.as_str())
+        .bind(&draft.webhook_url)
+        .bind(&draft.secret)
+        .bind(draft.enabled)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(map_err)?;
+        row.as_ref().map(row_to_robot).transpose()
+    }
+
+    async fn delete_robot(&self, id: &str, project_id: &str) -> Result<bool, RepoError> {
+        let res =
+            sqlx::query("DELETE FROM ms_notice_robot WHERE id::text = $1 AND project_id = $2")
+                .bind(id)
+                .bind(project_id)
+                .execute(&self.pool)
+                .await
+                .map_err(map_err)?;
+        Ok(res.rows_affected() > 0)
+    }
+
+    async fn list_robots(&self, project_id: &str) -> Result<Vec<Robot>, RepoError> {
+        let rows = sqlx::query(&format!(
+            "SELECT {ROBOT_COLS} FROM ms_notice_robot WHERE project_id = $1 ORDER BY created_at, id"
+        ))
+        .bind(project_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(map_err)?;
+        rows.iter().map(row_to_robot).collect()
+    }
+
+    async fn get_robot(&self, id: &str, project_id: &str) -> Result<Option<Robot>, RepoError> {
+        let row = sqlx::query(&format!(
+            "SELECT {ROBOT_COLS} FROM ms_notice_robot WHERE id::text = $1 AND project_id = $2"
+        ))
+        .bind(id)
+        .bind(project_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(map_err)?;
+        row.as_ref().map(row_to_robot).transpose()
+    }
+
+    async fn robots_by_ids(&self, ids: &[String]) -> Result<Vec<Robot>, RepoError> {
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let rows = sqlx::query(&format!(
+            "SELECT {ROBOT_COLS} FROM ms_notice_robot WHERE id::text = ANY($1)"
+        ))
+        .bind(ids)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(map_err)?;
+        rows.iter().map(row_to_robot).collect()
+    }
+
+    async fn insert_rule(&self, draft: &RuleDraft) -> Result<Rule, RepoError> {
+        let row = sqlx::query(&format!(
+            "INSERT INTO ms_notice_rule (project_id, event_type, channels, robot_ids, template, enabled) \
+             VALUES ($1, $2, $3::jsonb, $4::jsonb, $5, $6) RETURNING {RULE_COLS}"
+        ))
+        .bind(&draft.project_id)
+        .bind(&draft.event_type)
+        .bind(channels_json(&draft.channels))
+        .bind(ids_json(&draft.robot_ids))
+        .bind(&draft.template)
+        .bind(draft.enabled)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(map_err)?;
+        row_to_rule(&row)
+    }
+
+    async fn update_rule(&self, id: &str, draft: &RuleDraft) -> Result<Option<Rule>, RepoError> {
+        let row = sqlx::query(&format!(
+            "UPDATE ms_notice_rule SET event_type = $3, channels = $4::jsonb, \
+             robot_ids = $5::jsonb, template = $6, enabled = $7 \
+             WHERE id::text = $1 AND project_id = $2 RETURNING {RULE_COLS}"
+        ))
+        .bind(id)
+        .bind(&draft.project_id)
+        .bind(&draft.event_type)
+        .bind(channels_json(&draft.channels))
+        .bind(ids_json(&draft.robot_ids))
+        .bind(&draft.template)
+        .bind(draft.enabled)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(map_err)?;
+        row.as_ref().map(row_to_rule).transpose()
+    }
+
+    async fn delete_rule(&self, id: &str, project_id: &str) -> Result<bool, RepoError> {
+        let res = sqlx::query("DELETE FROM ms_notice_rule WHERE id::text = $1 AND project_id = $2")
+            .bind(id)
+            .bind(project_id)
+            .execute(&self.pool)
+            .await
+            .map_err(map_err)?;
+        Ok(res.rows_affected() > 0)
+    }
+
+    async fn list_rules(&self, project_id: &str) -> Result<Vec<Rule>, RepoError> {
+        let rows = sqlx::query(&format!(
+            "SELECT {RULE_COLS} FROM ms_notice_rule WHERE project_id = $1 ORDER BY created_at, id"
+        ))
+        .bind(project_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(map_err)?;
+        rows.iter().map(row_to_rule).collect()
+    }
+
+    async fn rules_for_event(
+        &self,
+        project_id: &str,
+        event_type: &str,
+    ) -> Result<Vec<Rule>, RepoError> {
+        let rows = sqlx::query(&format!(
+            "SELECT {RULE_COLS} FROM ms_notice_rule \
+             WHERE project_id = $1 AND enabled AND (event_type = $2 OR event_type = '*')"
+        ))
+        .bind(project_id)
+        .bind(event_type)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(map_err)?;
+        rows.iter().map(row_to_rule).collect()
+    }
+}

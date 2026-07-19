@@ -16,7 +16,7 @@ case = { path = "../case", features = ["pg", "http"] }
 bug = { path = "../bug", features = ["pg", "http"] }
 comment = { path = "../comment", features = ["pg", "http"] }
 follow = { path = "../follow", features = ["pg", "http"] }
-notice = { workspace = true, features = ["pg", "http"] }
+notice = { workspace = true, features = ["pg", "http", "robot"] }
 test-plan = { path = "../test-plan", features = ["pg", "http"] }
 requirement = { path = "../requirement", features = ["pg", "http"] }
 task = { path = "../task", features = ["pg", "http"] }

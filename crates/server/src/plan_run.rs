@@ -22,6 +22,7 @@ use api_test::adapters::plan::PlanExecutor;
 use api_test::adapters::PgBatchReport;
 use api_test::domain::ResolvedEnv;
 use api_test::ports::EnvironmentPort;
+use notice::application::{NoticeEvent, Notifier};
 use test_plan::adapters::pg::{PgPlanRepository, PgScheduleStore};
 use test_plan::application::{PlanCaseUseCase, PlanStatisticsUseCase, ScheduledRunUseCase};
 use test_plan::domain::{AssertionResult, CaseResult, CaseStatus, RequestInfo};
@@ -71,6 +72,7 @@ impl PlanRunner {
             pool: pool.clone(),
             specs: Arc::new(PgCaseSpecSource::new(pool.clone())),
             hub,
+            notifier: None,
         };
         Self {
             cases: PlanCaseUseCase::new(plan_repo),
@@ -302,6 +304,43 @@ struct RunState {
     plan_runner: PlanRunner,
     pool: PgPool,
     sessions: Arc<dyn SessionStore>,
+    notifier: Option<Notifier>,
+}
+
+/// In-app message to the plan creator when a manual run finishes; best-effort.
+async fn notify_plan_finished(
+    pool: &PgPool,
+    notifier: &Notifier,
+    plan_id: &str,
+    operator: &str,
+    summary: &RunSummary,
+) {
+    let row = sqlx::query("SELECT project_id, name, created_by FROM ms_test_plan WHERE id = $1")
+        .bind(plan_id)
+        .fetch_optional(pool)
+        .await;
+    let Ok(Some(row)) = row else { return };
+    let Ok(Some(creator)) = row.try_get::<Option<String>, _>("created_by") else { return };
+    let project_id: String = row.try_get("project_id").unwrap_or_default();
+    let name: String = row.try_get("name").unwrap_or_else(|_| plan_id.to_string());
+    notifier
+        .notify(
+            vec![creator],
+            NoticeEvent {
+                project_id,
+                category: "PLAN".into(),
+                event_type: "PLAN_RUN_FINISHED".into(),
+                title: name,
+                content: format!(
+                    "{}/{} passed, {} failed",
+                    summary.success, summary.executed, summary.failed
+                ),
+                resource_type: "PLAN".into(),
+                resource_id: plan_id.to_string(),
+                operator: operator.to_string(),
+            },
+        )
+        .await;
 }
 
 impl FromRef<RunState> for Arc<dyn SessionStore> {
@@ -310,12 +349,22 @@ impl FromRef<RunState> for Arc<dyn SessionStore> {
     }
 }
 
-pub fn router(pool: PgPool, sessions: Arc<dyn SessionStore>, hub: Option<Arc<PoolHub>>) -> Router {
+pub fn router(
+    pool: PgPool,
+    sessions: Arc<dyn SessionStore>,
+    hub: Option<Arc<PoolHub>>,
+    notifier: Option<Notifier>,
+) -> Router {
     Router::new()
         .route("/test-plan/{id}/run", post(run_plan))
         .route("/test-plan/{id}/cases/{caseId}/run", post(run_plan_case))
         .route("/test-plan/by-case/{caseId}", get(plans_by_case))
-        .with_state(RunState { plan_runner: PlanRunner::new(pool.clone(), hub), pool, sessions })
+        .with_state(RunState {
+            plan_runner: PlanRunner::new(pool.clone(), hub),
+            pool,
+            sessions,
+            notifier,
+        })
 }
 
 #[derive(Debug, Serialize)]
@@ -464,6 +513,9 @@ async fn run_plan(
                 ScheduledRunUseCase::new(stats, Arc::new(PgScheduleStore::new(st.pool.clone())));
             if let Err(e) = run_uc.execute(&id).await {
                 tracing::warn!(plan = %id, "manual run snapshot failed: {e:?}");
+            }
+            if let Some(n) = &st.notifier {
+                notify_plan_finished(&st.pool, n, &id, &user.user_id, &s).await;
             }
             (
                 StatusCode::OK,

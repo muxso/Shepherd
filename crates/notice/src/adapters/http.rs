@@ -5,15 +5,15 @@ use axum::{
     extract::{FromRef, Path, Query, State},
     http::StatusCode,
     response::{IntoResponse, Response},
-    routing::{get, post},
+    routing::{get, post, put},
     Json, Router,
 };
 use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, OpenApi, ToSchema};
 use webauth::{AuthUser, SessionStore};
 
-use crate::application::NoticeQueryService;
-use crate::domain::Notice;
+use crate::application::{NoticeQueryService, NoticeRuleAdmin, RuleAdminError};
+use crate::domain::{Channel, Notice, Platform, Robot, RobotDraft, Rule, RuleDraft};
 use crate::ports::{ListQuery, Tab};
 
 #[derive(Clone)]
@@ -183,8 +183,360 @@ async fn read_all(
     }
 }
 
+// ---------- Notification settings: robots + routing rules ----------
+
+#[derive(Clone)]
+struct SettingsState {
+    admin: NoticeRuleAdmin,
+    sessions: Arc<dyn SessionStore>,
+}
+
+impl FromRef<SettingsState> for Arc<dyn SessionStore> {
+    fn from_ref(s: &SettingsState) -> Self {
+        s.sessions.clone()
+    }
+}
+
+/// Project-scoped notification settings. Reads need PROJECT:READ, writes
+/// PROJECT:UPDATE (settings are part of project administration).
+pub fn settings_router(admin: NoticeRuleAdmin, sessions: Arc<dyn SessionStore>) -> Router {
+    Router::new()
+        .route("/notice/robots", get(list_robots).post(create_robot))
+        .route("/notice/robots/{id}", put(update_robot).delete(delete_robot))
+        .route("/notice/robots/{id}/test", post(test_robot))
+        .route("/notice/rules", get(list_rules).post(create_rule))
+        .route("/notice/rules/{id}", put(update_rule).delete(delete_rule))
+        .with_state(SettingsState { admin, sessions })
+}
+
+fn admin_error(e: RuleAdminError) -> Response {
+    match e {
+        RuleAdminError::Invalid(err) => (StatusCode::BAD_REQUEST, err.to_string()).into_response(),
+        RuleAdminError::NotFound => (StatusCode::NOT_FOUND, "not found").into_response(),
+        RuleAdminError::Backend(_) => {
+            (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response()
+        }
+        RuleAdminError::Delivery(m) => {
+            (StatusCode::BAD_GATEWAY, format!("webhook delivery failed: {m}")).into_response()
+        }
+    }
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+struct RobotResponse {
+    id: String,
+    project_id: String,
+    name: String,
+    /// FEISHU | DINGTALK | WECOM.
+    platform: String,
+    webhook_url: String,
+    secret: String,
+    enabled: bool,
+    /// Epoch millis.
+    created_at: i64,
+}
+
+impl From<Robot> for RobotResponse {
+    fn from(r: Robot) -> Self {
+        Self {
+            id: r.id,
+            project_id: r.project_id,
+            name: r.name,
+            platform: r.platform.as_str().to_string(),
+            webhook_url: r.webhook_url,
+            secret: r.secret,
+            enabled: r.enabled,
+            created_at: r.created_at,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+struct RobotBody {
+    project_id: String,
+    name: String,
+    /// FEISHU | DINGTALK | WECOM.
+    platform: String,
+    webhook_url: String,
+    #[serde(default)]
+    secret: String,
+    #[serde(default = "default_true")]
+    enabled: bool,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+impl RobotBody {
+    fn draft(self) -> Result<RobotDraft, (StatusCode, &'static str)> {
+        let Some(platform) = Platform::parse(&self.platform) else {
+            return Err((StatusCode::BAD_REQUEST, "unknown platform"));
+        };
+        Ok(RobotDraft {
+            project_id: self.project_id,
+            name: self.name,
+            platform,
+            webhook_url: self.webhook_url,
+            secret: self.secret,
+            enabled: self.enabled,
+        })
+    }
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+struct RuleResponse {
+    id: String,
+    project_id: String,
+    /// Producer event type or `*`.
+    event_type: String,
+    /// Subset of IN_APP / ROBOT.
+    channels: Vec<String>,
+    robot_ids: Vec<String>,
+    template: String,
+    enabled: bool,
+    /// Epoch millis.
+    created_at: i64,
+}
+
+impl From<Rule> for RuleResponse {
+    fn from(r: Rule) -> Self {
+        Self {
+            id: r.id,
+            project_id: r.project_id,
+            event_type: r.event_type,
+            channels: r.channels.iter().map(|c| c.as_str().to_string()).collect(),
+            robot_ids: r.robot_ids,
+            template: r.template,
+            enabled: r.enabled,
+            created_at: r.created_at,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+struct RuleBody {
+    project_id: String,
+    event_type: String,
+    /// Subset of IN_APP / ROBOT (empty mutes the event).
+    channels: Vec<String>,
+    #[serde(default)]
+    robot_ids: Vec<String>,
+    #[serde(default)]
+    template: String,
+    #[serde(default = "default_true")]
+    enabled: bool,
+}
+
+impl RuleBody {
+    fn draft(self) -> Result<RuleDraft, (StatusCode, &'static str)> {
+        let mut channels = Vec::new();
+        for c in &self.channels {
+            let Some(c) = Channel::parse(c) else {
+                return Err((StatusCode::BAD_REQUEST, "unknown channel"));
+            };
+            channels.push(c);
+        }
+        Ok(RuleDraft {
+            project_id: self.project_id,
+            event_type: self.event_type,
+            channels,
+            robot_ids: self.robot_ids,
+            template: self.template,
+            enabled: self.enabled,
+        })
+    }
+}
+
+#[derive(Debug, Deserialize, IntoParams)]
+#[serde(rename_all = "camelCase")]
+struct RequiredProjectQuery {
+    project_id: String,
+}
+
+fn require(user: &AuthUser, action: &str) -> Option<Response> {
+    if user.can("PROJECT", action) {
+        None
+    } else {
+        Some((StatusCode::FORBIDDEN, "permission denied").into_response())
+    }
+}
+
+#[utoipa::path(get, path = "/notice/robots", tag = "notice", params(RequiredProjectQuery), responses((status = 200, body = [RobotResponse])), security(("bearer" = [])))]
+async fn list_robots(
+    user: AuthUser,
+    State(st): State<SettingsState>,
+    Query(q): Query<RequiredProjectQuery>,
+) -> Response {
+    if let Some(deny) = require(&user, "READ") {
+        return deny;
+    }
+    match st.admin.list_robots(&q.project_id).await {
+        Ok(robots) => {
+            Json(robots.into_iter().map(RobotResponse::from).collect::<Vec<_>>()).into_response()
+        }
+        Err(e) => admin_error(e),
+    }
+}
+
+#[utoipa::path(post, path = "/notice/robots", tag = "notice", request_body = RobotBody, responses((status = 200, body = RobotResponse), (status = 400)), security(("bearer" = [])))]
+async fn create_robot(
+    user: AuthUser,
+    State(st): State<SettingsState>,
+    Json(body): Json<RobotBody>,
+) -> Response {
+    if let Some(deny) = require(&user, "UPDATE") {
+        return deny;
+    }
+    let draft = match body.draft() {
+        Ok(d) => d,
+        Err(err) => return err.into_response(),
+    };
+    match st.admin.create_robot(draft).await {
+        Ok(r) => Json(RobotResponse::from(r)).into_response(),
+        Err(e) => admin_error(e),
+    }
+}
+
+#[utoipa::path(put, path = "/notice/robots/{id}", tag = "notice", params(("id" = String, Path)), request_body = RobotBody, responses((status = 200, body = RobotResponse), (status = 404)), security(("bearer" = [])))]
+async fn update_robot(
+    user: AuthUser,
+    State(st): State<SettingsState>,
+    Path(id): Path<String>,
+    Json(body): Json<RobotBody>,
+) -> Response {
+    if let Some(deny) = require(&user, "UPDATE") {
+        return deny;
+    }
+    let draft = match body.draft() {
+        Ok(d) => d,
+        Err(err) => return err.into_response(),
+    };
+    match st.admin.update_robot(&id, draft).await {
+        Ok(r) => Json(RobotResponse::from(r)).into_response(),
+        Err(e) => admin_error(e),
+    }
+}
+
+#[utoipa::path(delete, path = "/notice/robots/{id}", tag = "notice", params(("id" = String, Path), RequiredProjectQuery), responses((status = 204), (status = 404)), security(("bearer" = [])))]
+async fn delete_robot(
+    user: AuthUser,
+    State(st): State<SettingsState>,
+    Path(id): Path<String>,
+    Query(q): Query<RequiredProjectQuery>,
+) -> Response {
+    if let Some(deny) = require(&user, "UPDATE") {
+        return deny;
+    }
+    match st.admin.delete_robot(&id, &q.project_id).await {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(e) => admin_error(e),
+    }
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+struct RobotTestResponse {
+    /// Upstream HTTP status of the webhook call.
+    status: u16,
+    /// Upstream response body (truncated).
+    body: String,
+}
+
+#[utoipa::path(post, path = "/notice/robots/{id}/test", tag = "notice", params(("id" = String, Path), RequiredProjectQuery), responses((status = 200, body = RobotTestResponse), (status = 404), (status = 502)), security(("bearer" = [])))]
+async fn test_robot(
+    user: AuthUser,
+    State(st): State<SettingsState>,
+    Path(id): Path<String>,
+    Query(q): Query<RequiredProjectQuery>,
+) -> Response {
+    if let Some(deny) = require(&user, "UPDATE") {
+        return deny;
+    }
+    match st.admin.test_robot(&id, &q.project_id, &user.user_id).await {
+        Ok(d) => Json(RobotTestResponse { status: d.status, body: d.body }).into_response(),
+        Err(e) => admin_error(e),
+    }
+}
+
+#[utoipa::path(get, path = "/notice/rules", tag = "notice", params(RequiredProjectQuery), responses((status = 200, body = [RuleResponse])), security(("bearer" = [])))]
+async fn list_rules(
+    user: AuthUser,
+    State(st): State<SettingsState>,
+    Query(q): Query<RequiredProjectQuery>,
+) -> Response {
+    if let Some(deny) = require(&user, "READ") {
+        return deny;
+    }
+    match st.admin.list_rules(&q.project_id).await {
+        Ok(rules) => {
+            Json(rules.into_iter().map(RuleResponse::from).collect::<Vec<_>>()).into_response()
+        }
+        Err(e) => admin_error(e),
+    }
+}
+
+#[utoipa::path(post, path = "/notice/rules", tag = "notice", request_body = RuleBody, responses((status = 200, body = RuleResponse), (status = 400)), security(("bearer" = [])))]
+async fn create_rule(
+    user: AuthUser,
+    State(st): State<SettingsState>,
+    Json(body): Json<RuleBody>,
+) -> Response {
+    if let Some(deny) = require(&user, "UPDATE") {
+        return deny;
+    }
+    let draft = match body.draft() {
+        Ok(d) => d,
+        Err(err) => return err.into_response(),
+    };
+    match st.admin.create_rule(draft).await {
+        Ok(r) => Json(RuleResponse::from(r)).into_response(),
+        Err(e) => admin_error(e),
+    }
+}
+
+#[utoipa::path(put, path = "/notice/rules/{id}", tag = "notice", params(("id" = String, Path)), request_body = RuleBody, responses((status = 200, body = RuleResponse), (status = 404)), security(("bearer" = [])))]
+async fn update_rule(
+    user: AuthUser,
+    State(st): State<SettingsState>,
+    Path(id): Path<String>,
+    Json(body): Json<RuleBody>,
+) -> Response {
+    if let Some(deny) = require(&user, "UPDATE") {
+        return deny;
+    }
+    let draft = match body.draft() {
+        Ok(d) => d,
+        Err(err) => return err.into_response(),
+    };
+    match st.admin.update_rule(&id, draft).await {
+        Ok(r) => Json(RuleResponse::from(r)).into_response(),
+        Err(e) => admin_error(e),
+    }
+}
+
+#[utoipa::path(delete, path = "/notice/rules/{id}", tag = "notice", params(("id" = String, Path), RequiredProjectQuery), responses((status = 204), (status = 404)), security(("bearer" = [])))]
+async fn delete_rule(
+    user: AuthUser,
+    State(st): State<SettingsState>,
+    Path(id): Path<String>,
+    Query(q): Query<RequiredProjectQuery>,
+) -> Response {
+    if let Some(deny) = require(&user, "UPDATE") {
+        return deny;
+    }
+    match st.admin.delete_rule(&id, &q.project_id).await {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(e) => admin_error(e),
+    }
+}
+
 #[derive(OpenApi)]
-#[openapi(paths(list_notices, unread_count, mark_read, read_all), components(schemas(NoticeResponse, NoticePageResponse, UnreadCountResponse)), tags((name = "notice", description = "站内信")))]
+#[openapi(paths(list_notices, unread_count, mark_read, read_all, list_robots, create_robot, update_robot, delete_robot, test_robot, list_rules, create_rule, update_rule, delete_rule), components(schemas(NoticeResponse, NoticePageResponse, UnreadCountResponse, RobotResponse, RobotBody, RobotTestResponse, RuleResponse, RuleBody)), tags((name = "notice", description = "站内信")))]
 struct ApiDoc;
 pub fn openapi() -> utoipa::openapi::OpenApi {
     ApiDoc::openapi()

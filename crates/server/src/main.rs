@@ -313,15 +313,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // In-app notifications: the Notifier fans events out from producers
     // (bug/case/comment/scheduler); the /notice routes are the personal inbox.
+    // Routing rules + webhook robots decide per event whether it lands in the
+    // inbox and/or gets pushed to Feishu / DingTalk / WeCom.
     let notice_store = Arc::new(notice::adapters::pg::PgNoticeStore::new(pool.clone()));
+    let notice_rule_store = Arc::new(notice::adapters::pg::PgNoticeRuleStore::new(pool.clone()));
+    let robot_sender = Arc::new(notice::adapters::robot_sender::ReqwestRobotSender::new());
     let notifier = notice::application::Notifier::new(
         notice_store.clone(),
         Arc::new(notice::adapters::pg::PgNoticeUserDirectory::new(pool.clone())),
-    );
+    )
+    .with_rules(notice_rule_store.clone(), robot_sender.clone());
     let notice_routes = notice::adapters::http::router(
         notice::application::NoticeQueryService::new(notice_store),
         sessions.clone(),
-    );
+    )
+    .merge(notice::adapters::http::settings_router(
+        notice::application::NoticeRuleAdmin::new(notice_rule_store, robot_sender),
+        sessions.clone(),
+    ));
 
     // Generic comments (polymorphic: attach to any entity — REQUIREMENT / BUG / FUNCTIONAL_CASE ...).
     let comment_repo = Arc::new(comment::adapters::pg::PgCommentRepository::new(pool.clone()));
@@ -646,11 +655,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         pool: pool.clone(),
         specs: Arc::new(PgCaseSpecSource::new(pool.clone())),
         hub: Some(pool_hub.clone()),
+        notifier: Some(notifier.clone()),
     };
     let scenario_run_routes = scenario_run::router(scenario_runner, sessions.clone());
     // Plan runs share the hub: scenario-mounted entries route through pools and
     // stream live events.
-    let plan_run_routes = plan_run::router(pool.clone(), sessions.clone(), Some(pool_hub.clone()));
+    let plan_run_routes = plan_run::router(
+        pool.clone(),
+        sessions.clone(),
+        Some(pool_hub.clone()),
+        Some(notifier.clone()),
+    );
     let pool_runner_routes = pool_runner_ws::router(pool_hub, sessions.clone(), pool.clone());
 
     let perf_routes = perf_run::router(

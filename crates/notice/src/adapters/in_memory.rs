@@ -182,3 +182,187 @@ impl NoticeUserDirectory for InMemoryUserDirectory {
         Ok(self.members.get(project_id).cloned().unwrap_or_default())
     }
 }
+
+// ---------- Routing rules (robots + per-event rules) ----------
+
+use crate::domain::{Robot, RobotDraft, Rule, RuleDraft};
+use crate::ports::{NoticeRuleStore, RobotDelivery, RobotSender};
+
+#[derive(Default)]
+struct RuleState {
+    robots: Vec<Robot>,
+    rules: Vec<Rule>,
+    seq: i64,
+}
+
+#[derive(Clone, Default)]
+pub struct InMemoryRuleStore {
+    state: Arc<Mutex<RuleState>>,
+}
+
+impl InMemoryRuleStore {
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+fn robot_from_draft(id: String, created_at: i64, d: &RobotDraft) -> Robot {
+    Robot {
+        id,
+        project_id: d.project_id.clone(),
+        name: d.name.clone(),
+        platform: d.platform,
+        webhook_url: d.webhook_url.clone(),
+        secret: d.secret.clone(),
+        enabled: d.enabled,
+        created_at,
+    }
+}
+
+fn rule_from_draft(id: String, created_at: i64, d: &RuleDraft) -> Rule {
+    Rule {
+        id,
+        project_id: d.project_id.clone(),
+        event_type: d.event_type.clone(),
+        channels: d.channels.clone(),
+        robot_ids: d.robot_ids.clone(),
+        template: d.template.clone(),
+        enabled: d.enabled,
+        created_at,
+    }
+}
+
+#[async_trait]
+impl NoticeRuleStore for InMemoryRuleStore {
+    async fn insert_robot(&self, draft: &RobotDraft) -> Result<Robot, RepoError> {
+        let mut st = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        st.seq += 1;
+        let robot = robot_from_draft(format!("robot-{}", st.seq), st.seq, draft);
+        st.robots.push(robot.clone());
+        Ok(robot)
+    }
+
+    async fn update_robot(&self, id: &str, draft: &RobotDraft) -> Result<Option<Robot>, RepoError> {
+        let mut st = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        match st.robots.iter_mut().find(|r| r.id == id && r.project_id == draft.project_id) {
+            Some(r) => {
+                *r = robot_from_draft(r.id.clone(), r.created_at, draft);
+                Ok(Some(r.clone()))
+            }
+            None => Ok(None),
+        }
+    }
+
+    async fn delete_robot(&self, id: &str, project_id: &str) -> Result<bool, RepoError> {
+        let mut st = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let before = st.robots.len();
+        st.robots.retain(|r| !(r.id == id && r.project_id == project_id));
+        Ok(st.robots.len() < before)
+    }
+
+    async fn list_robots(&self, project_id: &str) -> Result<Vec<Robot>, RepoError> {
+        let st = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        Ok(st.robots.iter().filter(|r| r.project_id == project_id).cloned().collect())
+    }
+
+    async fn get_robot(&self, id: &str, project_id: &str) -> Result<Option<Robot>, RepoError> {
+        let st = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        Ok(st.robots.iter().find(|r| r.id == id && r.project_id == project_id).cloned())
+    }
+
+    async fn robots_by_ids(&self, ids: &[String]) -> Result<Vec<Robot>, RepoError> {
+        let st = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        Ok(st.robots.iter().filter(|r| ids.contains(&r.id)).cloned().collect())
+    }
+
+    async fn insert_rule(&self, draft: &RuleDraft) -> Result<Rule, RepoError> {
+        let mut st = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        st.seq += 1;
+        let rule = rule_from_draft(format!("rule-{}", st.seq), st.seq, draft);
+        st.rules.push(rule.clone());
+        Ok(rule)
+    }
+
+    async fn update_rule(&self, id: &str, draft: &RuleDraft) -> Result<Option<Rule>, RepoError> {
+        let mut st = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        match st.rules.iter_mut().find(|r| r.id == id && r.project_id == draft.project_id) {
+            Some(r) => {
+                *r = rule_from_draft(r.id.clone(), r.created_at, draft);
+                Ok(Some(r.clone()))
+            }
+            None => Ok(None),
+        }
+    }
+
+    async fn delete_rule(&self, id: &str, project_id: &str) -> Result<bool, RepoError> {
+        let mut st = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let before = st.rules.len();
+        st.rules.retain(|r| !(r.id == id && r.project_id == project_id));
+        Ok(st.rules.len() < before)
+    }
+
+    async fn list_rules(&self, project_id: &str) -> Result<Vec<Rule>, RepoError> {
+        let st = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        Ok(st.rules.iter().filter(|r| r.project_id == project_id).cloned().collect())
+    }
+
+    async fn rules_for_event(
+        &self,
+        project_id: &str,
+        event_type: &str,
+    ) -> Result<Vec<Rule>, RepoError> {
+        let st = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        Ok(st
+            .rules
+            .iter()
+            .filter(|r| {
+                r.project_id == project_id
+                    && r.enabled
+                    && (r.event_type == event_type || r.event_type == "*")
+            })
+            .cloned()
+            .collect())
+    }
+}
+
+/// Test sender: records every (robot id, text) pair; optionally fails the
+/// first N sends to exercise the retry path.
+#[derive(Default)]
+pub struct RecordingRobotSender {
+    sent: Mutex<Vec<(String, String)>>,
+    fail_first: Mutex<u32>,
+}
+
+impl RecordingRobotSender {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn fail_first(self, n: u32) -> Self {
+        *self.fail_first.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = n;
+        self
+    }
+
+    pub fn sent(&self) -> Vec<(String, String)> {
+        self.sent.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clone()
+    }
+}
+
+#[async_trait]
+impl RobotSender for RecordingRobotSender {
+    async fn send(&self, robot: &Robot, text: &str) -> Result<RobotDelivery, String> {
+        {
+            let mut fail =
+                self.fail_first.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            if *fail > 0 {
+                *fail -= 1;
+                return Err("simulated failure".into());
+            }
+        }
+        self.sent
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .push((robot.id.clone(), text.to_string()));
+        Ok(RobotDelivery { status: 200, body: "{\"errcode\":0}".into() })
+    }
+}

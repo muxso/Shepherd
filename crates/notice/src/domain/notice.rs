@@ -11,6 +11,10 @@ pub enum NoticeError {
     EmptyCategory,
     #[error("notice title must not be empty")]
     EmptyTitle,
+    #[error("robot needs project, name and webhook url")]
+    InvalidRobot,
+    #[error("rule needs project and event type")]
+    InvalidRule,
 }
 
 /// A notification to fan out: one stored row per receiver.

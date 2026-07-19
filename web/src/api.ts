@@ -1333,6 +1333,43 @@ export interface NoticeUnreadCount {
   byCategory: Record<string, number>
 }
 
+export type NoticeRobotPlatform = 'FEISHU' | 'DINGTALK' | 'WECOM'
+export type NoticeChannel = 'IN_APP' | 'ROBOT'
+
+/** Webhook robot (Feishu / DingTalk / WeCom) receiving notification events. */
+export interface NoticeRobot {
+  id: string
+  projectId: string
+  name: string
+  platform: NoticeRobotPlatform
+  webhookUrl: string
+  /** DingTalk sign secret (empty = no signing). */
+  secret: string
+  enabled: boolean
+  /** Epoch millis. */
+  createdAt: number
+}
+
+/** Server-side notification rule: routes an event type to channels/robots. */
+export interface NoticeRule {
+  id: string
+  projectId: string
+  /** Producer event type or '*' for all. */
+  eventType: string
+  channels: NoticeChannel[]
+  robotIds: string[]
+  /** Supports ${title} ${operator} ${time}; empty uses the default text. */
+  template: string
+  enabled: boolean
+  /** Epoch millis. */
+  createdAt: number
+}
+
+export interface NoticeRobotTestResult {
+  status: number
+  body: string
+}
+
 // ---------- Endpoint wrappers ----------
 
 const emptyPage = <T>(): Page<T> => ({ total: 0, current: 1, pageSize: 0, totalPages: 0, items: [] })
@@ -1840,6 +1877,26 @@ export const api = {
   markNoticeRead: (id: string) => http.post(`/notice/${encodeURIComponent(id)}/read`),
   markAllNoticesRead: (projectId?: string) =>
     http.post(`/notice/read-all${projectId ? `?projectId=${encodeURIComponent(projectId)}` : ''}`),
+
+  // Notification settings: webhook robots + server-side routing rules (project-scoped)
+  noticeRobots: (projectId: string) =>
+    http.get<NoticeRobot[]>(`/notice/robots?projectId=${encodeURIComponent(projectId)}`),
+  createNoticeRobot: (b: { projectId: string; name: string; platform: NoticeRobotPlatform; webhookUrl: string; secret?: string; enabled?: boolean }) =>
+    http.post<NoticeRobot>('/notice/robots', b),
+  updateNoticeRobot: (id: string, b: { projectId: string; name: string; platform: NoticeRobotPlatform; webhookUrl: string; secret?: string; enabled?: boolean }) =>
+    http.put<NoticeRobot>(`/notice/robots/${encodeURIComponent(id)}`, b),
+  deleteNoticeRobot: (id: string, projectId: string) =>
+    http.del(`/notice/robots/${encodeURIComponent(id)}?projectId=${encodeURIComponent(projectId)}`),
+  testNoticeRobot: (id: string, projectId: string) =>
+    http.post<NoticeRobotTestResult>(`/notice/robots/${encodeURIComponent(id)}/test?projectId=${encodeURIComponent(projectId)}`),
+  noticeRules: (projectId: string) =>
+    http.get<NoticeRule[]>(`/notice/rules?projectId=${encodeURIComponent(projectId)}`),
+  createNoticeRule: (b: { projectId: string; eventType: string; channels: NoticeChannel[]; robotIds?: string[]; template?: string; enabled?: boolean }) =>
+    http.post<NoticeRule>('/notice/rules', b),
+  updateNoticeRule: (id: string, b: { projectId: string; eventType: string; channels: NoticeChannel[]; robotIds?: string[]; template?: string; enabled?: boolean }) =>
+    http.put<NoticeRule>(`/notice/rules/${encodeURIComponent(id)}`, b),
+  deleteNoticeRule: (id: string, projectId: string) =>
+    http.del(`/notice/rules/${encodeURIComponent(id)}?projectId=${encodeURIComponent(projectId)}`),
   // Human-AI collaboration stats (per-requirement AI/human split + weekly trend)
   collabStats: (projectId: string, requirementId?: string) =>
     http.get<CollabStats>(

@@ -1042,6 +1042,7 @@ mod tests {
             ListBugsUseCase::new(repo.clone()),
             BugFollowersUseCase::new(repo.clone()),
             BugRelationsUseCase::new(repo),
+            None,
             sessions,
         );
         let resp = app.oneshot(get("/bug/by-plan/plan-1", Some(&token))).await.expect("resp");

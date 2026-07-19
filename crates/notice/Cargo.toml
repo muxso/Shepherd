@@ -10,18 +10,29 @@ rust-version.workspace = true
 async-trait = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
+# Robot dispatch is fire-and-forget (tokio::spawn); chrono renders the ${time} placeholder.
+tokio = { workspace = true, features = ["rt"] }
+chrono = "0.4"
 sqlx = { workspace = true, features = ["runtime-tokio", "postgres"], optional = true }
+serde_json = { workspace = true, optional = true }
 axum = { workspace = true, optional = true }
 utoipa = { workspace = true, optional = true }
 webauth = { workspace = true, optional = true }
 serde = { workspace = true, optional = true }
+reqwest = { workspace = true, features = ["json", "rustls-tls"], optional = true }
+hmac = { version = "0.12", optional = true }
+sha2 = { version = "0.10", optional = true }
+base64 = { version = "0.22", optional = true }
+percent-encoding = { version = "2", optional = true }
 
 [features]
-pg = ["dep:sqlx"]
+pg = ["dep:sqlx", "dep:serde_json"]
 http = ["dep:axum", "dep:serde", "dep:webauth", "webauth/http", "dep:utoipa"]
+# Webhook robot sender (Feishu / DingTalk / WeCom).
+robot = ["dep:reqwest", "dep:serde_json", "dep:hmac", "dep:sha2", "dep:base64", "dep:percent-encoding"]
 
 [dev-dependencies]
-tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }
 tower = { workspace = true, features = ["util"] }
 serde_json = { workspace = true }
 migrate = { workspace = true }
