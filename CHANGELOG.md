@@ -7,6 +7,23 @@ Unreleased changes go under Unreleased and move into the matching version sectio
 
 ## [Unreleased]
 
+## [0.0.4] - 2026-07-19
+
+### Added
+- Remote execution over WebSocket: pool runners dial out and register into resource pools (by pool name or id) with heartbeat/reconnect; scenario, union-batch and plan runs route to connected runners and stream per-step events back; browser live-run view animates step status and timings from the same stream; per-runner concurrency caps with pool-side queueing; capability tag matching; graceful in-process fallback everywhere
+- Resource pools reworked around runners: Node pools drop the manual IP/Port node table for a join-command panel plus a live online-runner list; single runs auto-pick an applicable pool (explicit poolId still wins) and responses report where they executed; live pool-name uniqueness
+- In-app notification service: personal inbox (categories, @me/unread/read tabs, unread badge, click-through navigation) fed by real events — bug assignment/status change, review creation, comment @mentions, plan run finished, scenario run failed, scheduled run failures
+- Notification rules and webhook robots: per-event channel routing with templates, Feishu / DingTalk (HMAC signing) / WeCom payload formats, test-send, message settings page persisted server-side
+- Test plans: server-side list with created_by (frontend registry retired; delete = archive), async single-case runs with live row status, plan-scoped bug linkage (bugs tab with link/create/unlink; case drawer plan-bugs view), manual runs recorded into the execution history
+- Bugs gain severity (P0-P3), handler and update audit fields end to end
+- Follow (关注) entries for API cases, scenarios and case reviews; six-section follows workbench
+- Case reviews: delete endpoint; planning mind-map prunes un-executed links when nodes are removed
+- Scenario batch export to JSON; legacy base64 image migration script; execution endpoints exempt from the global 30s timeout (600s)
+
+### Fixed
+- Manual plan runs now appear in the execution history; re-saved plan schedules no longer stack cron jobs; ghost schedules stopped firing after plan deletion
+- Bug creation from the case drawer sent an invalid initial status and silently failed
+
 ## [0.0.3] - 2026-07-18
 
 ### Added
