@@ -23,6 +23,7 @@ import type { RegItem } from '../registry'
 import { fetchPlanItems, groupIdOf, isGroup } from '../components/plan/planLocal'
 import { ScenarioReportModal, fmtDuration, fmtSize, makeStepMeta, type NameOf, type TFn } from '../components/ScenarioReport'
 import AutoPoolIndicator, { executedOnLabel } from '../components/AutoPoolIndicator'
+import { LiveElapsed } from '../components/LiveRunBadge'
 import { useI18n } from '../i18n'
 
 // Editable form state + scenario param rows (persisted in scenario.meta).
@@ -888,16 +889,6 @@ function stepToNode(s: ScenarioStep, t: TFn, nameOf: NameOf): Node {
   if (s.scenarioId) return { kind: 'SCENARIO', source: s.refMode === 'COPY' ? 'COPY_SCENARIO' : undefined, content: <span className="ms-mono">{t('scenario.subScenario', '子场景')} {nameOf(s.scenarioId)}</span> }
   if (s.control) return controlToNode(s.kind.toUpperCase(), s.control, t, nameOf)
   return { kind: s.kind, content: '—' }
-}
-
-// Count-up duration for a step that is executing right now (live WS mode).
-function LiveElapsed({ since }: { since: number }) {
-  const [, tick] = useState(0)
-  useEffect(() => {
-    const id = window.setInterval(() => tick((n) => n + 1), 100)
-    return () => window.clearInterval(id)
-  }, [])
-  return <span className="ms-mono" style={{ fontSize: 12, color: 'var(--brand)', whiteSpace: 'nowrap' }}>{fmtDuration(Math.max(Date.now() - since, 0))}</span>
 }
 
 function StepRow({ node, idx, depth, t, result, running, liveSince, seq = 0, enabled = true, onToggle, onRun, actions, hovered, respPreview, expandable, expanded, onChildSelect, onChildDblClick }: { node: Node; idx: number; depth: number; t: TFn; result?: ReportResultItem; running?: boolean; liveSince?: number; seq?: number; enabled?: boolean; onToggle?: () => void; onRun?: () => void; actions?: React.ReactNode; hovered?: boolean; respPreview?: React.ReactNode; expandable?: boolean; expanded?: boolean; onChildSelect?: (raw: ScenarioStep, path: number[]) => void; onChildDblClick?: (raw: ScenarioStep, path: number[]) => void }) {

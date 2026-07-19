@@ -827,6 +827,7 @@ dependencies = [
  "axum 0.8.9",
  "kernel",
  "migrate",
+ "notice",
  "serde",
  "serde_json",
  "sqlx",
@@ -880,6 +881,7 @@ dependencies = [
  "axum 0.8.9",
  "kernel",
  "migrate",
+ "notice",
  "serde",
  "serde_json",
  "sqlx",
@@ -1074,6 +1076,7 @@ dependencies = [
  "axum 0.8.9",
  "kernel",
  "migrate",
+ "notice",
  "serde",
  "serde_json",
  "sqlx",
@@ -2802,6 +2805,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "notice"
+version = "0.0.3"
+dependencies = [
+ "async-trait",
+ "axum 0.8.9",
+ "base64",
+ "chrono",
+ "hmac 0.12.1",
+ "kernel",
+ "migrate",
+ "percent-encoding",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "sqlx",
+ "thiserror 2.0.18",
+ "tokio",
+ "tower 0.5.3",
+ "tracing",
+ "utoipa",
+ "webauth",
+]
+
+[[package]]
 name = "nu-ansi-term"
 version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4221,6 +4249,7 @@ dependencies = [
  "mcp",
  "migrate",
  "mock-runtime",
+ "notice",
  "orchestrator",
  "perf",
  "pool-runner",

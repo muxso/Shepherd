@@ -153,7 +153,15 @@ struct RunnerEntry {
     name: String,
     /// Concurrent-run cap from the runner's hello; never assign beyond it.
     max_concurrent: usize,
+    /// Capability tags from the runner's hello (e.g. "http", "browser").
+    capabilities: Vec<String>,
     tx: mpsc::UnboundedSender<ServerMsg>,
+}
+
+/// Capability match: the runner must advertise every required tag; a run with
+/// no requirements matches any runner.
+fn runner_eligible(entry: &RunnerEntry, required: &[String]) -> bool {
+    required.iter().all(|t| entry.capabilities.iter().any(|c| c == t))
 }
 
 /// Context needed to finalize a remote run (report status + execution record).
@@ -184,10 +192,12 @@ struct Pending {
     done: Option<oneshot::Sender<RemoteOutcome>>,
 }
 
-/// Run accepted while every pool runner was at its cap; dispatched FIFO as
-/// capacity frees up.
+/// Run accepted while every capable pool runner was at its cap; dispatched
+/// FIFO as capacity frees up.
 struct QueuedRun {
     run_id: String,
+    /// Capability tags the run requires; only matching runners are assigned.
+    required: Vec<String>,
     nodes: Vec<WireNode>,
     env: WireEnv,
     stop_on_failure: bool,
@@ -211,8 +221,8 @@ pub struct RunnerStatus {
     pub in_flight: usize,
 }
 
-/// Least-busy runner of the pool that still has spare capacity.
-fn pick_runner(st: &HubState, pool_id: &str) -> Option<String> {
+/// Least-busy capability-eligible runner of the pool with spare capacity.
+fn pick_runner(st: &HubState, pool_id: &str, required: &[String]) -> Option<String> {
     let mut busy: HashMap<&str, usize> = HashMap::new();
     for p in st.pending.values() {
         *busy.entry(p.runner_id.as_str()).or_default() += 1;
@@ -220,7 +230,9 @@ fn pick_runner(st: &HubState, pool_id: &str) -> Option<String> {
     let load = |id: &str| busy.get(id).copied().unwrap_or(0);
     st.runners
         .iter()
-        .filter(|(id, r)| r.pool_id == pool_id && load(id) < r.max_concurrent)
+        .filter(|(id, r)| {
+            r.pool_id == pool_id && runner_eligible(r, required) && load(id) < r.max_concurrent
+        })
         .min_by_key(|(id, _)| load(id))
         .map(|(id, _)| id.clone())
 }
@@ -269,6 +281,7 @@ impl PoolHub {
         pool_id: &str,
         name: &str,
         max_concurrent: usize,
+        capabilities: Vec<String>,
         tx: mpsc::UnboundedSender<ServerMsg>,
     ) -> String {
         let id = {
@@ -281,6 +294,7 @@ impl PoolHub {
                     pool_id: pool_id.to_string(),
                     name: name.to_string(),
                     max_concurrent: max_concurrent.max(1),
+                    capabilities,
                     tx,
                 },
             );
@@ -328,15 +342,28 @@ impl PoolHub {
         }
     }
 
-    /// Assigns queued runs of the pool while spare capacity exists.
+    /// Assigns queued runs of the pool while spare capacity exists. A front
+    /// job whose required capabilities no runner advertises anymore is handed
+    /// back for local execution instead of blocking the queue.
     fn drain(&self, pool_id: &str) {
         loop {
             let mut st = self.lock();
-            if st.queues.get(pool_id).is_none_or(|q| q.is_empty()) {
+            let Some(required) =
+                st.queues.get(pool_id).and_then(VecDeque::front).map(|j| j.required.clone())
+            else {
                 st.queues.remove(pool_id);
                 return;
+            };
+            if !st.runners.values().any(|r| r.pool_id == pool_id && runner_eligible(r, &required)) {
+                let job = st.queues.get_mut(pool_id).and_then(VecDeque::pop_front);
+                drop(st);
+                if let Some(job) = job {
+                    tracing::info!(run = %job.run_id, pool = %pool_id, "queued run falls back to local execution (no capable runner)");
+                    let _ = job.done.send(RemoteOutcome::Fallback);
+                }
+                continue;
             }
-            let Some(rid) = pick_runner(&st, pool_id) else { return };
+            let Some(rid) = pick_runner(&st, pool_id, &required) else { return };
             let Some((name, tx)) = st.runners.get(&rid).map(|e| (e.name.clone(), e.tx.clone()))
             else {
                 return;
@@ -344,7 +371,7 @@ impl PoolHub {
             let Some(job) = st.queues.get_mut(pool_id).and_then(VecDeque::pop_front) else {
                 return;
             };
-            let QueuedRun { run_id, nodes, env, stop_on_failure, ctx, done } = job;
+            let QueuedRun { run_id, required, nodes, env, stop_on_failure, ctx, done } = job;
             let msg = ServerMsg::Run { run_id: run_id.clone(), nodes, env, stop_on_failure };
             if let Err(mpsc::error::SendError(msg)) = tx.send(msg) {
                 // Runner died between liveness checks: drop it, requeue the job.
@@ -352,6 +379,7 @@ impl PoolHub {
                 if let ServerMsg::Run { run_id, nodes, env, stop_on_failure } = msg {
                     st.queues.entry(pool_id.to_string()).or_default().push_front(QueuedRun {
                         run_id,
+                        required,
                         nodes,
                         env,
                         stop_on_failure,
@@ -401,15 +429,19 @@ impl PoolHub {
         m
     }
 
-    /// Sends the compiled plan to the least-loaded runner of the pool that has
-    /// spare capacity; when every runner is at its cap, the run is queued FIFO
-    /// server-side. None = no live runner or the queue is full (caller falls
-    /// back to in-process execution). The second tuple element is the assigned
-    /// runner's display name (None while queued).
+    /// Sends the compiled plan to the least-loaded runner of the pool that
+    /// advertises every `required` capability tag and has spare capacity
+    /// (empty `required` matches any runner); when every eligible runner is at
+    /// its cap, the run is queued FIFO server-side. None = no eligible runner
+    /// or the queue is full (caller falls back to in-process execution). The
+    /// second tuple element is the assigned runner's display name (None while
+    /// queued).
+    #[allow(clippy::too_many_arguments)]
     pub fn dispatch(
         &self,
         pool_id: &str,
         run_id: &str,
+        required: Vec<String>,
         nodes: Vec<WireNode>,
         env: WireEnv,
         stop_on_failure: bool,
@@ -417,10 +449,13 @@ impl PoolHub {
     ) -> Option<(oneshot::Receiver<RemoteOutcome>, Option<String>)> {
         let (done_tx, done_rx) = oneshot::channel();
         let mut st = self.lock();
-        if !st.runners.values().any(|r| r.pool_id == pool_id) {
+        if !st.runners.values().any(|r| r.pool_id == pool_id && runner_eligible(r, &required)) {
+            if st.runners.values().any(|r| r.pool_id == pool_id) {
+                tracing::info!(run = %run_id, pool = %pool_id, ?required, "no pool runner advertises the required capabilities; falling back to local execution");
+            }
             return None;
         }
-        match pick_runner(&st, pool_id) {
+        match pick_runner(&st, pool_id, &required) {
             Some(runner_id) => {
                 let entry = st.runners.get(&runner_id)?;
                 let name = entry.name.clone();
@@ -435,7 +470,7 @@ impl PoolHub {
                 Some((done_rx, Some(name)))
             }
             None => {
-                // Live runners, all saturated: queue within bounds.
+                // Eligible runners exist but all are saturated: queue within bounds.
                 let queue = st.queues.entry(pool_id.to_string()).or_default();
                 if queue.len() >= QUEUE_CAP {
                     tracing::warn!(run = %run_id, pool = %pool_id, "pool queue full; falling back to local execution");
@@ -443,6 +478,7 @@ impl PoolHub {
                 }
                 queue.push_back(QueuedRun {
                     run_id: run_id.to_string(),
+                    required,
                     nodes,
                     env,
                     stop_on_failure,
@@ -684,10 +720,10 @@ async fn resolve_hello_pool(
 async fn runner_session(mut socket: WebSocket, hub: Arc<PoolHub>, db: migrate::PgPool) {
     // First frame must be a hello within 10s.
     let hello = tokio::time::timeout(Duration::from_secs(10), socket.recv()).await;
-    let (hello_pool_id, hello_pool_name, name, max_concurrent) = match hello {
+    let (hello_pool_id, hello_pool_name, name, max_concurrent, capabilities) = match hello {
         Ok(Some(Ok(Message::Text(t)))) => match serde_json::from_str::<RunnerMsg>(&t) {
-            Ok(RunnerMsg::Hello { pool_id, pool_name, name, max_concurrent, .. }) => {
-                (pool_id, pool_name, name, max_concurrent)
+            Ok(RunnerMsg::Hello { pool_id, pool_name, name, max_concurrent, capabilities }) => {
+                (pool_id, pool_name, name, max_concurrent, capabilities)
             }
             _ => {
                 let _ = socket.send(Message::Close(None)).await;
@@ -710,7 +746,7 @@ async fn runner_session(mut socket: WebSocket, hub: Arc<PoolHub>, db: migrate::P
         }
     };
     let (out_tx, mut out_rx) = mpsc::unbounded_channel::<ServerMsg>();
-    let runner_id = hub.register(&pool_id, &name, max_concurrent as usize, out_tx);
+    let runner_id = hub.register(&pool_id, &name, max_concurrent as usize, capabilities, out_tx);
     let ack = ServerMsg::HelloAck { runner_id: runner_id.clone() };
     if let Ok(s) = serde_json::to_string(&ack) {
         let _ = socket.send(Message::Text(s.into())).await;
@@ -843,5 +879,83 @@ async fn relay_run_events(mut socket: WebSocket, events: Arc<RunEventHub>, run_i
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn entry(pool: &str, caps: &[&str], max: usize) -> RunnerEntry {
+        let (tx, _rx) = mpsc::unbounded_channel();
+        RunnerEntry {
+            pool_id: pool.to_string(),
+            name: "r".to_string(),
+            max_concurrent: max,
+            capabilities: caps.iter().map(|s| s.to_string()).collect(),
+            tx,
+        }
+    }
+
+    fn state(runners: Vec<(&str, RunnerEntry)>) -> HubState {
+        HubState {
+            runners: runners.into_iter().map(|(k, v)| (k.to_string(), v)).collect(),
+            pending: HashMap::new(),
+            queues: HashMap::new(),
+            seq: 0,
+        }
+    }
+
+    fn req(tags: &[&str]) -> Vec<String> {
+        tags.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn no_requirements_match_any_runner() {
+        let e = entry("p", &[], 4);
+        assert!(runner_eligible(&e, &req(&[])));
+        let st = state(vec![("r1", entry("p", &[], 4))]);
+        assert_eq!(pick_runner(&st, "p", &req(&[])).as_deref(), Some("r1"));
+    }
+
+    #[test]
+    fn runner_must_advertise_every_required_tag() {
+        let e = entry("p", &["http", "browser"], 4);
+        assert!(runner_eligible(&e, &req(&["http"])));
+        assert!(runner_eligible(&e, &req(&["http", "browser"])));
+        assert!(!runner_eligible(&e, &req(&["http", "grpc"])));
+        assert!(!runner_eligible(&e, &req(&["grpc"])));
+    }
+
+    #[test]
+    fn pick_skips_runners_missing_required_tags() {
+        let st = state(vec![("r1", entry("p", &[], 4)), ("r2", entry("p", &["x"], 4))]);
+        assert_eq!(pick_runner(&st, "p", &req(&["x"])).as_deref(), Some("r2"));
+        assert!(pick_runner(&st, "p", &req(&["y"])).is_none());
+    }
+
+    #[test]
+    fn pick_respects_pool_and_capacity_among_eligible() {
+        // r1 is capable but saturated (cap 1, one pending run); r2 lacks the tag.
+        let mut st = state(vec![("r1", entry("p", &["x"], 1)), ("r2", entry("p", &[], 4))]);
+        st.pending.insert(
+            "run-1".to_string(),
+            Pending {
+                runner_id: "r1".to_string(),
+                ctx: RunCtx {
+                    scenario_id: String::new(),
+                    project_id: String::new(),
+                    case_count: 0,
+                    report_id: "run-1".to_string(),
+                    finalize_report: true,
+                },
+                done: None,
+            },
+        );
+        assert!(pick_runner(&st, "p", &req(&["x"])).is_none());
+        // Without requirements the idle runner wins.
+        assert_eq!(pick_runner(&st, "p", &req(&[])).as_deref(), Some("r2"));
+        // Other pools never match.
+        assert!(pick_runner(&st, "other", &req(&[])).is_none());
     }
 }

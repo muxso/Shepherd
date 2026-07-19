@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { Layout, Menu, Select, Button, Space, Tooltip, Avatar, Segmented, Empty, Dropdown } from 'antd'
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
+import { Layout, Menu, Select, Button, Space, Tooltip, Avatar, Segmented, Empty, Dropdown, Badge, Tag, Spin } from 'antd'
 import ResizableDrawer from './ResizableDrawer'
 import {
   ApiOutlined,
@@ -36,7 +36,7 @@ import {
   StarOutlined,
 } from '@ant-design/icons'
 import { useLocation, useNavigate } from 'react-router-dom'
-import { userStore } from '../api'
+import { api, userStore, type Notice, type NoticeUnreadCount } from '../api'
 import { useApp } from '../context'
 import { useI18n } from '../i18n'
 import { useThemeMode } from '../themeMode'
@@ -44,6 +44,29 @@ import NewProjectModal from './NewProjectModal'
 import PersonalCenter from './PersonalCenter'
 
 const { Content } = Layout
+
+// Drawer tab → backend tab filter (`@我的` = at-mentions).
+const MSG_TAB_PARAM: Record<string, string> = { all: 'all', mine: 'at', unread: 'unread', read: 'read' }
+
+// resource_type → route for message click-through. Comment mentions carry the
+// commented entity's type, so they reuse the same mapping.
+function noticeRoute(n: Notice): string | null {
+  switch (n.resourceType) {
+    case 'BUG':
+      return '/bug'
+    case 'CASE_REVIEW':
+      return '/review'
+    case 'PLAN':
+    case 'TEST_PLAN':
+      return `/test-plan?open=${encodeURIComponent(n.resourceId)}`
+    case 'FUNCTIONAL_CASE':
+      return '/functional-case'
+    case 'REQUIREMENT':
+      return '/requirement'
+    default:
+      return null
+  }
+}
 
 // Single source for language options, shared by the top bar dropdown and the personal-center segmented control so the labels can't drift apart.
 const LANG_OPTIONS: { value: 'zh' | 'en'; label: string }[] = [
@@ -163,6 +186,77 @@ export default function AppShell({ children }: { children: ReactNode }) {
   const [msgOpen, setMsgOpen] = useState(false)
   const [msgCat, setMsgCat] = useState('all')
   const [msgTab, setMsgTab] = useState('all')
+  // Message center data: unread counters (bell badge + category badges, polled
+  // every 60s) and the current list slice for the selected category/tab.
+  const [msgUnread, setMsgUnread] = useState<NoticeUnreadCount | null>(null)
+  const [msgs, setMsgs] = useState<Notice[]>([])
+  const [msgLoading, setMsgLoading] = useState(false)
+  const refreshUnread = useCallback(() => {
+    api.noticeUnreadCount(projectId || undefined).then(setMsgUnread).catch(() => {})
+  }, [projectId])
+  useEffect(() => {
+    refreshUnread()
+    const timer = setInterval(refreshUnread, 60_000)
+    return () => clearInterval(timer)
+  }, [refreshUnread])
+  const loadMsgs = useCallback(() => {
+    setMsgLoading(true)
+    api
+      .notices({
+        projectId: projectId || undefined,
+        category: msgCat === 'all' ? undefined : msgCat.toUpperCase(),
+        tab: MSG_TAB_PARAM[msgTab] || 'all',
+        pageSize: 50,
+      })
+      .then((p) => setMsgs(p.items))
+      .catch(() => setMsgs([]))
+      .finally(() => setMsgLoading(false))
+  }, [projectId, msgCat, msgTab])
+  useEffect(() => {
+    if (!msgOpen) return
+    loadMsgs()
+    refreshUnread()
+  }, [msgOpen, loadMsgs, refreshUnread])
+  const msgCatCount = (key: string): number => {
+    if (!msgUnread) return 0
+    if (key === 'all') return msgUnread.total
+    return msgUnread.byCategory?.[key.toUpperCase()] ?? 0
+  }
+  const openNotice = async (n: Notice) => {
+    if (!n.read) {
+      try {
+        await api.markNoticeRead(n.id)
+      } catch {
+        /* best-effort */
+      }
+      refreshUnread()
+    }
+    const route = noticeRoute(n)
+    if (route) {
+      setMsgOpen(false)
+      nav(route)
+    } else {
+      loadMsgs()
+    }
+  }
+  const markAllRead = async () => {
+    try {
+      await api.markAllNoticesRead(projectId || undefined)
+    } catch {
+      /* best-effort */
+    }
+    refreshUnread()
+    loadMsgs()
+  }
+  // Compact relative timestamp for message rows.
+  const relTime = (ms: number): string => {
+    const diff = Date.now() - ms
+    if (diff < 60_000) return t('msg.time.justNow', '刚刚')
+    if (diff < 3_600_000) return `${Math.floor(diff / 60_000)} ${t('msg.time.minAgo', '分钟前')}`
+    if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)} ${t('msg.time.hourAgo', '小时前')}`
+    if (diff < 7 * 86_400_000) return `${Math.floor(diff / 86_400_000)} ${t('msg.time.dayAgo', '天前')}`
+    return new Date(ms).toLocaleDateString()
+  }
   // Fullscreen: whole window enters browser fullscreen for large tables / scenario canvas.
   // Icon syncs via the native fullscreenchange event so Esc-exit is also reflected.
   const [isFullscreen, setIsFullscreen] = useState(false)
@@ -325,7 +419,9 @@ export default function AppShell({ children }: { children: ReactNode }) {
               <Button type="text" icon={<PlusOutlined />} onClick={() => setNewProjOpen(true)} />
             </Tooltip>
             <Tooltip title={t('top.notifications', '通知')}>
-              <Button type="text" icon={<BellOutlined />} onClick={() => setMsgOpen(true)} />
+              <Badge dot={(msgUnread?.total ?? 0) > 0} offset={[-8, 8]}>
+                <Button type="text" icon={<BellOutlined />} onClick={() => setMsgOpen(true)} />
+              </Badge>
             </Tooltip>
             <Tooltip title={mode === 'dark' ? t('top.lightMode', '浅色模式') : t('top.darkMode', '暗色模式')}>
               <Button type="text" icon={<BulbOutlined style={{ color: mode === 'dark' ? 'var(--brand)' : undefined }} />} onClick={(e) => toggle(e)} />
@@ -371,7 +467,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
       </Layout>
       <NewProjectModal open={newProjOpen} onClose={() => setNewProjOpen(false)} />
 
-      {/* Message center (per reference shots): right drawer with category list + all/@me/unread/read tabs. Backend has no in-app message API yet, so counts are 0 and content is empty state. */}
+      {/* Message center (per reference shots): right drawer with category list + all/@me/unread/read tabs, backed by /notice. */}
       <ResizableDrawer
         open={msgOpen}
         onClose={() => setMsgOpen(false)}
@@ -400,6 +496,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
                 ['git', t('msg.cat.git', 'Git')],
               ].map(([key, label]) => {
                 const active = key === msgCat
+                const count = msgCatCount(key)
                 return (
                   <div
                     key={key}
@@ -423,15 +520,15 @@ export default function AppShell({ children }: { children: ReactNode }) {
                         height: 20,
                         padding: '0 6px',
                         borderRadius: 10,
-                        background: active ? 'var(--brand-soft)' : 'var(--border-soft)',
-                        color: active ? 'var(--brand)' : 'var(--text-3)',
+                        background: active || count > 0 ? 'var(--brand-soft)' : 'var(--border-soft)',
+                        color: active || count > 0 ? 'var(--brand)' : 'var(--text-3)',
                         fontSize: 12,
                         display: 'inline-flex',
                         alignItems: 'center',
                         justifyContent: 'center',
                       }}
                     >
-                      0
+                      {count}
                     </span>
                   </div>
                 )
@@ -458,13 +555,68 @@ export default function AppShell({ children }: { children: ReactNode }) {
                   { value: 'read', label: t('msg.tab.read', '已读') },
                 ]}
               />
-              <Button type="link" size="small" icon={<FileDoneOutlined />} style={{ color: 'var(--brand)' }}>
+              <Button type="link" size="small" icon={<FileDoneOutlined />} style={{ color: 'var(--brand)' }} onClick={markAllRead}>
                 {t('msg.markAllRead', '全部标为已读')}
               </Button>
             </div>
-            <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-              <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('common.empty', '暂无数据')} />
-            </div>
+            {msgs.length === 0 ? (
+              <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                {msgLoading ? <Spin /> : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('common.empty', '暂无数据')} />}
+              </div>
+            ) : (
+              <div style={{ flex: 1, overflowY: 'auto', padding: '0 8px 8px' }}>
+                {msgs.map((n) => (
+                  <div
+                    key={n.id}
+                    onClick={() => openNotice(n)}
+                    style={{
+                      display: 'flex',
+                      gap: 10,
+                      alignItems: 'flex-start',
+                      padding: '12px 10px',
+                      borderRadius: 8,
+                      cursor: 'pointer',
+                      borderBottom: '1px solid var(--border-soft)',
+                    }}
+                  >
+                    {/* Unread dot column keeps read rows aligned. */}
+                    <span
+                      style={{
+                        width: 8,
+                        height: 8,
+                        borderRadius: 4,
+                        marginTop: 7,
+                        flexShrink: 0,
+                        background: n.read ? 'transparent' : 'var(--brand)',
+                      }}
+                    />
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <Tag style={{ marginInlineEnd: 0 }}>{t(`msg.evt.${n.eventType}`, n.eventType)}</Tag>
+                        {n.atMention && <Tag color="blue" style={{ marginInlineEnd: 0 }}>{t('msg.atMe', '@我')}</Tag>}
+                        <span
+                          style={{
+                            fontWeight: n.read ? 400 : 600,
+                            color: 'var(--text)',
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                            whiteSpace: 'nowrap',
+                          }}
+                          title={n.title}
+                        >
+                          {n.title}
+                        </span>
+                      </div>
+                      <div style={{ marginTop: 4, fontSize: 12, color: 'var(--text-3)' }}>
+                        {n.operator && <span>{n.operator} · </span>}
+                        {relTime(n.createdAt)}
+                        {n.content && <span> · {n.content}</span>}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         </div>
       </ResizableDrawer>

@@ -8,12 +8,13 @@ pub enum RelationError {
     EmptyTarget,
 }
 
-/// Asset kinds a bug can link to: requirement / scenario case / functional case.
+/// Asset kinds a bug can link to: requirement / scenario case / functional case / test plan.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RelationKind {
     Requirement,
     Scenario,
     FunctionalCase,
+    Plan,
 }
 
 impl RelationKind {
@@ -22,6 +23,7 @@ impl RelationKind {
             Self::Requirement => "REQUIREMENT",
             Self::Scenario => "SCENARIO",
             Self::FunctionalCase => "FUNCTIONAL_CASE",
+            Self::Plan => "PLAN",
         }
     }
 
@@ -30,6 +32,7 @@ impl RelationKind {
             "REQUIREMENT" => Ok(Self::Requirement),
             "SCENARIO" => Ok(Self::Scenario),
             "FUNCTIONAL_CASE" => Ok(Self::FunctionalCase),
+            "PLAN" => Ok(Self::Plan),
             other => Err(RelationError::UnknownKind(other.to_string())),
         }
     }
@@ -65,6 +68,7 @@ mod tests {
         assert_eq!(RelationKind::parse("requirement"), Ok(RelationKind::Requirement));
         assert_eq!(RelationKind::parse(" SCENARIO "), Ok(RelationKind::Scenario));
         assert_eq!(RelationKind::parse("functional_case"), Ok(RelationKind::FunctionalCase));
+        assert_eq!(RelationKind::parse("plan"), Ok(RelationKind::Plan));
         assert!(matches!(RelationKind::parse("king"), Err(RelationError::UnknownKind(_))));
     }
 

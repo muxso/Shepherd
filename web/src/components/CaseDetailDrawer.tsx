@@ -650,7 +650,7 @@ function RequirementTab({ caseId, projectId }: { caseId: string; projectId: stri
 
 /** Bugs tab: bugs linked to the case (direct) + link/create dialogs.
  * The link DTO carries no severity, so the project bug list is joined in for the severity tag.
- * The test-plan view stays read-only: bug relations only support direct case links (no plan-scoped kind). */
+ * The test-plan view is a read-only rollup: bugs linked (kind = PLAN) to the plans containing this case. */
 function BugTab({ caseId, projectId, nameOf }: { caseId: string; projectId: string; nameOf: (u?: string) => string }) {
   const { t } = useI18n()
   const [view, setView] = useState<'direct' | 'plan'>('direct')
@@ -661,11 +661,34 @@ function BugTab({ caseId, projectId, nameOf }: { caseId: string; projectId: stri
   const [bugList, setBugList] = useState<Bug[]>([])
   const [selBug, setSelBug] = useState<string>()
   const [newTitle, setNewTitle] = useState('')
+  // Plan view rows: case → plans (casePlanLinks) → bugs per plan (bugsByPlan), deduped by bug id.
+  const [planRows, setPlanRows] = useState<{ bug: Bug; planNames: string[] }[]>([])
   const load = () => {
     api.caseBugs(caseId).then(setRows).catch(() => setRows([]))
     api.bugs(projectId).then(setBugList).catch(() => setBugList([]))
   }
   useEffect(() => { load() }, [caseId]) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (view !== 'plan') return
+    api.casePlanLinks(caseId)
+      .then(async (plans) => {
+        const perPlan = await Promise.all(
+          plans.map((p) =>
+            api.bugsByPlan(p.planId)
+              .then((bs) => bs.map((bug) => ({ bug, planName: p.planName || p.planId.slice(0, 8) })))
+              .catch(() => []),
+          ),
+        )
+        const merged = new Map<string, { bug: Bug; planNames: string[] }>()
+        for (const { bug, planName } of perPlan.flat()) {
+          const e = merged.get(bug.id)
+          if (e) { if (!e.planNames.includes(planName)) e.planNames.push(planName) }
+          else merged.set(bug.id, { bug, planNames: [planName] })
+        }
+        setPlanRows([...merged.values()])
+      })
+      .catch(() => setPlanRows([]))
+  }, [view, caseId])
   const severityOf = (bugId: string) => bugList.find((b) => b.id === bugId)?.severity || ''
 
   const openLink = async () => {
@@ -719,14 +742,39 @@ function BugTab({ caseId, projectId, nameOf }: { caseId: string; projectId: stri
           allowClear
         />
         <span style={{ flex: 1 }} />
-        <Button type="primary" onClick={openLink}>{t('funcd.linkBug', '关联缺陷')}</Button>
-        <Button onClick={() => setNewOpen(true)}>{t('funcd.newBug', '新建缺陷')}</Button>
+        {view === 'direct' && (
+          <>
+            <Button type="primary" onClick={openLink}>{t('funcd.linkBug', '关联缺陷')}</Button>
+            <Button onClick={() => setNewOpen(true)}>{t('funcd.newBug', '新建缺陷')}</Button>
+          </>
+        )}
       </div>
       {view === 'plan' ? (
-        <div style={{ textAlign: 'center', color: 'var(--text-3)', padding: '48px 0' }}>
-          <InboxOutlined style={{ fontSize: 32 }} />
-          <div style={{ marginTop: 8 }}>{t('funcd.planBugsHint', '暂无测试计划执行产生的缺陷')}</div>
-        </div>
+        <Table<{ bug: Bug; planNames: string[] }>
+          rowKey={(r) => r.bug.id}
+          size="middle"
+          pagination={false}
+          dataSource={planRows.filter((r) => !search || (r.bug.title || '').includes(search))}
+          locale={{
+            emptyText: (
+              <div style={{ color: 'var(--text-3)', padding: '32px 0' }}>
+                <InboxOutlined style={{ fontSize: 32 }} />
+                <div style={{ marginTop: 8 }}>{t('funcd.planBugsHint', '暂无测试计划执行产生的缺陷')}</div>
+              </div>
+            ),
+          }}
+          columns={[
+            { title: 'ID', width: 120, render: (_v, r) => <span className="ms-mono">{r.bug.id.slice(0, 8)}</span> },
+            { title: t('funcd.bugName', '缺陷名称'), render: (_v, r) => r.bug.title || r.bug.id },
+            {
+              title: t('bug.severity', '严重程度'), width: 110,
+              render: (_v, r) => (r.bug.severity ? <Tag color={priorityColor(r.bug.severity)}>{r.bug.severity}</Tag> : '—'),
+            },
+            { title: t('funcd.bugStatus', '缺陷状态'), width: 140, render: (_v, r) => <Tag>{r.bug.status}</Tag> },
+            { title: t('funcd.planName', '计划名称'), width: 200, render: (_v, r) => r.planNames.join('、') },
+            { title: t('funcd.handler', '处理人'), width: 140, render: (_v, r) => (r.bug.handler ? nameOf(r.bug.handler) : '—') },
+          ]}
+        />
       ) : (
         <Table<CaseBugLink>
           rowKey="bugId"

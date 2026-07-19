@@ -51,6 +51,9 @@ pub struct ScenarioRunner {
     pub specs: Arc<dyn CaseSpecSource>,
     /// Pool-runner hub; None disables remote dispatch and live events (plan runs).
     pub hub: Option<Arc<PoolHub>>,
+    /// Failure notifications to the scenario creator; None for embedded runs
+    /// (plan entries roll failures up into the plan result instead).
+    pub notifier: Option<notice::application::Notifier>,
 }
 
 pub enum RunError {
@@ -127,6 +130,23 @@ impl ScenarioRunner {
         .flatten()
         .flatten()
         .filter(|s| !s.trim().is_empty())
+    }
+
+    /// Capability tags the scenario requires of a runner (meta.capabilities,
+    /// a JSON string array). Empty = any runner. No UI writes this field yet;
+    /// it is the designated requirement source for capability matching.
+    async fn required_caps_of(&self, scenario_id: &str) -> Vec<String> {
+        sqlx::query_scalar::<_, Option<String>>(
+            "SELECT meta->>'capabilities' FROM ms_api_scenario WHERE id = $1 AND NOT deleted",
+        )
+        .bind(scenario_id)
+        .fetch_optional(&self.pool)
+        .await
+        .ok()
+        .flatten()
+        .flatten()
+        .and_then(|s| serde_json::from_str::<Vec<String>>(&s).ok())
+        .unwrap_or_default()
     }
 
     /// Display name of a live pool (empty when unknown).
@@ -215,6 +235,7 @@ impl ScenarioRunner {
             None => self.auto_pool(project_id).await,
         };
         let executed_on: ExecutedOnSlot = Arc::new(Mutex::new(None));
+        let required = self.required_caps_of(scenario_id).await;
         let remote = match (&picked, &self.hub) {
             (Some((pid, pname)), Some(hub)) if hub.has_runner(pid) => {
                 match plan_to_wire(&nodes, self.specs.as_ref()).await {
@@ -222,6 +243,7 @@ impl ScenarioRunner {
                         .dispatch(
                             pid,
                             &report_id,
+                            required,
                             wire,
                             WireEnv {
                                 base_url: env.base_url.clone(),
@@ -294,6 +316,24 @@ impl ScenarioRunner {
             }
             status.to_string()
         });
+        // Failure notice to the scenario creator (direct runs only; embedded
+        // plan runs pass notifier: None and roll up into the plan result).
+        let fut: Pin<Box<dyn Future<Output = String> + Send>> = match self.notifier.clone() {
+            Some(notifier) => {
+                let db = self.pool.clone();
+                let sid = scenario_id.to_string();
+                let proj = project_id.to_string();
+                let rid = report_id.clone();
+                Box::pin(async move {
+                    let status = fut.await;
+                    if status == "ERROR" {
+                        notify_scenario_failure(&db, &notifier, &sid, &proj, &rid).await;
+                    }
+                    status
+                })
+            }
+            None => fut,
+        };
         Ok(StartedRun { report_id, step_ids, case_count: count, executed_on, fut })
     }
 
@@ -316,9 +356,11 @@ impl ScenarioRunner {
             if hub.has_runner(pid) {
                 if let Ok(wire) = plan_to_wire(nodes, self.specs.as_ref()).await {
                     let run_id = uuid::Uuid::new_v4().to_string();
+                    let required = self.required_caps_of(scenario_id).await;
                     let remote = hub.dispatch(
                         pid,
                         &run_id,
+                        required,
                         wire,
                         WireEnv {
                             base_url: env.base_url.clone(),
@@ -379,6 +421,39 @@ impl ScenarioRunner {
             executed_on,
         })
     }
+}
+
+/// In-app message to the scenario creator when a direct run fails; best-effort.
+async fn notify_scenario_failure(
+    pool: &migrate::PgPool,
+    notifier: &notice::application::Notifier,
+    scenario_id: &str,
+    project_id: &str,
+    report_id: &str,
+) {
+    use sqlx::Row as _;
+    let row = sqlx::query("SELECT name, created_by FROM ms_api_scenario WHERE id = $1")
+        .bind(scenario_id)
+        .fetch_optional(pool)
+        .await;
+    let Ok(Some(row)) = row else { return };
+    let Ok(Some(creator)) = row.try_get::<Option<String>, _>("created_by") else { return };
+    let name: String = row.try_get("name").unwrap_or_else(|_| scenario_id.to_string());
+    notifier
+        .notify(
+            vec![creator],
+            notice::application::NoticeEvent {
+                project_id: project_id.to_string(),
+                category: "API".into(),
+                event_type: "SCENARIO_RUN_FAILED".into(),
+                title: name,
+                content: format!("report {report_id}"),
+                resource_type: "SCENARIO".into(),
+                resource_id: scenario_id.to_string(),
+                operator: String::new(),
+            },
+        )
+        .await;
 }
 
 pub struct StartedRun {

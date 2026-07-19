@@ -1,3 +1,5 @@
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::Arc;
 
 use axum::{
@@ -20,12 +22,13 @@ use api_test::adapters::plan::PlanExecutor;
 use api_test::adapters::PgBatchReport;
 use api_test::domain::ResolvedEnv;
 use api_test::ports::EnvironmentPort;
+use notice::application::{NoticeEvent, Notifier};
 use test_plan::adapters::pg::{PgPlanRepository, PgScheduleStore};
 use test_plan::application::{PlanCaseUseCase, PlanStatisticsUseCase, ScheduledRunUseCase};
 use test_plan::domain::{AssertionResult, CaseResult, CaseStatus, RequestInfo};
 
 use crate::pool_runner_ws::{HubObserver, PoolHub};
-use crate::scenario_run::{ExecutedOn, RunError, ScenarioRunner};
+use crate::scenario_run::{ExecutedOn, ExecutedOnSlot, RunError, ScenarioRunner};
 
 #[derive(Clone)]
 pub struct PlanRunner {
@@ -69,6 +72,7 @@ impl PlanRunner {
             pool: pool.clone(),
             specs: Arc::new(PgCaseSpecSource::new(pool.clone())),
             hub,
+            notifier: None,
         };
         Self {
             cases: PlanCaseUseCase::new(plan_repo),
@@ -91,6 +95,86 @@ impl PlanRunner {
             .unwrap_or_default()
     }
 
+    /// Starts a scenario-mounted entry through the shared scenario begin path.
+    /// Returns the report id, the dispatch-target slot and a future that runs
+    /// to completion and records the plan-case result (with the report id).
+    /// Sync callers await the future; asyncRun spawns it.
+    async fn begin_scenario_case(
+        &self,
+        plan_id: &str,
+        project_id: &str,
+        case_id: &str,
+        env_id: Option<&str>,
+        pool_id: Option<&str>,
+    ) -> Result<(String, ExecutedOnSlot, Pin<Box<dyn Future<Output = CaseStatus> + Send>>), RunError>
+    {
+        // The run-level env wins; otherwise the scenario's own configured environment.
+        let eff_env = match env_id {
+            Some(id) => Some(id.to_string()),
+            None => self.scenarios.default_env_of(case_id).await,
+        };
+        let started =
+            self.scenarios.begin(case_id, project_id, eff_env.as_deref(), false, pool_id).await?;
+        let report_id = started.report_id.clone();
+        let cases = self.cases.clone();
+        let plan = plan_id.to_string();
+        let cid = case_id.to_string();
+        let rid = report_id.clone();
+        let inner = started.fut;
+        let fut: Pin<Box<dyn Future<Output = CaseStatus> + Send>> = Box::pin(async move {
+            let ok = inner.await == "SUCCESS";
+            let status = if ok { CaseStatus::Success } else { CaseStatus::Error };
+            let result = CaseResult { report_id: Some(rid), ..Default::default() };
+            let _ = cases.record(&plan, &cid, status, Some(result)).await;
+            status
+        });
+        Ok((report_id, started.executed_on, fut))
+    }
+
+    /// Records a scenario start failure on the plan case. The bool mirrors
+    /// execute_case's `counted`: spec-missing BLOCK stays out of the tally.
+    async fn record_scenario_error(
+        &self,
+        plan_id: &str,
+        case_id: &str,
+        e: &RunError,
+    ) -> (CaseStatus, bool) {
+        match e {
+            RunError::NotFound => {
+                let _ = self
+                    .cases
+                    .record(
+                        plan_id,
+                        case_id,
+                        CaseStatus::Block,
+                        Some(CaseResult {
+                            body: Some("用例规格未找到(非 ms_api_case / 非场景)".into()),
+                            ..Default::default()
+                        }),
+                    )
+                    .await;
+                (CaseStatus::Block, false)
+            }
+            e => {
+                let msg = match e {
+                    RunError::CycleOrDepth => "场景引用成环或过深",
+                    RunError::NoSteps => "场景无可执行步骤",
+                    _ => "场景执行失败",
+                };
+                let _ = self
+                    .cases
+                    .record(
+                        plan_id,
+                        case_id,
+                        CaseStatus::Error,
+                        Some(CaseResult { body: Some(msg.into()), ..Default::default() }),
+                    )
+                    .await;
+                (CaseStatus::Error, true)
+            }
+        }
+    }
+
     /// Executes one linked entry (API case or scenario) and records its result.
     /// `counted` is false for the spec-missing BLOCK case, which run() leaves
     /// out of the executed/failed tally. The last element is where a scenario
@@ -110,51 +194,18 @@ impl PlanRunner {
             let _ = self.cases.record(plan_id, case_id, status, Some(result)).await;
             return (status, true, None);
         }
-        // Not an API case: treat as a scenario-mounted entry. The run-level
-        // env wins; otherwise the scenario's own configured environment.
-        let eff_env = match env_id {
-            Some(id) => Some(id.to_string()),
-            None => self.scenarios.default_env_of(case_id).await,
-        };
-        match self.scenarios.run(case_id, project_id, eff_env.as_deref(), false, pool_id).await {
-            Ok(o) => {
-                let ok = o.status == "SUCCESS";
-                let status = if ok { CaseStatus::Success } else { CaseStatus::Error };
-                let result = CaseResult { report_id: Some(o.report_id), ..Default::default() };
-                let _ = self.cases.record(plan_id, case_id, status, Some(result)).await;
-                (status, true, o.executed_on)
-            }
-            Err(RunError::NotFound) => {
-                let _ = self
-                    .cases
-                    .record(
-                        plan_id,
-                        case_id,
-                        CaseStatus::Block,
-                        Some(CaseResult {
-                            body: Some("用例规格未找到(非 ms_api_case / 非场景)".into()),
-                            ..Default::default()
-                        }),
-                    )
-                    .await;
-                (CaseStatus::Block, false, None)
+        // Not an API case: treat as a scenario-mounted entry.
+        match self.begin_scenario_case(plan_id, project_id, case_id, env_id, pool_id).await {
+            Ok((_report_id, slot, fut)) => {
+                let status = fut.await;
+                // Read after completion: the run clears the slot on local fallback.
+                let executed_on =
+                    slot.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clone();
+                (status, true, executed_on)
             }
             Err(e) => {
-                let msg = match e {
-                    RunError::CycleOrDepth => "场景引用成环或过深",
-                    RunError::NoSteps => "场景无可执行步骤",
-                    _ => "场景执行失败",
-                };
-                let _ = self
-                    .cases
-                    .record(
-                        plan_id,
-                        case_id,
-                        CaseStatus::Error,
-                        Some(CaseResult { body: Some(msg.into()), ..Default::default() }),
-                    )
-                    .await;
-                (CaseStatus::Error, true, None)
+                let (status, counted) = self.record_scenario_error(plan_id, case_id, &e).await;
+                (status, counted, None)
             }
         }
     }
@@ -195,25 +246,57 @@ impl PlanRunner {
     }
 
     /// Runs exactly one linked case/scenario; None when the case is not linked.
+    /// `async_run` starts scenario entries in the background (result recorded
+    /// on completion); plain API cases are a single HTTP exchange and always
+    /// complete synchronously.
     pub async fn run_case(
         &self,
         plan_id: &str,
         case_id: &str,
         env_id: Option<&str>,
         pool_id: Option<&str>,
-    ) -> Result<Option<(CaseStatus, Option<ExecutedOn>)>, ()> {
+        async_run: bool,
+    ) -> Result<Option<CaseRun>, ()> {
         let env_id = env_id.filter(|s| !s.trim().is_empty());
         let pool_id = pool_id.filter(|s| !s.trim().is_empty());
         let cases = self.cases.list(plan_id).await.map_err(|_| ())?;
         if !cases.iter().any(|c| c.case_id == case_id) {
             return Ok(None);
         }
-        let env = self.resolve_env(env_id).await;
         let project_id = self.project_of(plan_id).await;
+        if async_run && !matches!(self.specs.spec_of(case_id).await, Ok(Some(_))) {
+            // Scenario-mounted entry: start it and let the spawned future
+            // record the plan-case result when the run completes.
+            return match self
+                .begin_scenario_case(plan_id, &project_id, case_id, env_id, pool_id)
+                .await
+            {
+                Ok((report_id, slot, fut)) => {
+                    // Dispatch decision at start; the run may still fall back local.
+                    let executed_on =
+                        slot.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clone();
+                    tokio::spawn(fut);
+                    Ok(Some(CaseRun::Started { report_id, executed_on }))
+                }
+                Err(e) => {
+                    let (status, _) = self.record_scenario_error(plan_id, case_id, &e).await;
+                    Ok(Some(CaseRun::Done { status, executed_on: None }))
+                }
+            };
+        }
+        let env = self.resolve_env(env_id).await;
         let (status, _, executed_on) =
             self.execute_case(plan_id, &project_id, case_id, env_id, env.as_ref(), pool_id).await;
-        Ok(Some((status, executed_on)))
+        Ok(Some(CaseRun::Done { status, executed_on }))
     }
+}
+
+/// One-case run outcome: Done = final status (sync runs and plain API cases);
+/// Started = asyncRun scenario entry running in the background, progress on
+/// /api/run-events/ws?runId={report_id}.
+pub enum CaseRun {
+    Done { status: CaseStatus, executed_on: Option<ExecutedOn> },
+    Started { report_id: String, executed_on: Option<ExecutedOn> },
 }
 
 #[derive(Clone)]
@@ -221,6 +304,43 @@ struct RunState {
     plan_runner: PlanRunner,
     pool: PgPool,
     sessions: Arc<dyn SessionStore>,
+    notifier: Option<Notifier>,
+}
+
+/// In-app message to the plan creator when a manual run finishes; best-effort.
+async fn notify_plan_finished(
+    pool: &PgPool,
+    notifier: &Notifier,
+    plan_id: &str,
+    operator: &str,
+    summary: &RunSummary,
+) {
+    let row = sqlx::query("SELECT project_id, name, created_by FROM ms_test_plan WHERE id = $1")
+        .bind(plan_id)
+        .fetch_optional(pool)
+        .await;
+    let Ok(Some(row)) = row else { return };
+    let Ok(Some(creator)) = row.try_get::<Option<String>, _>("created_by") else { return };
+    let project_id: String = row.try_get("project_id").unwrap_or_default();
+    let name: String = row.try_get("name").unwrap_or_else(|_| plan_id.to_string());
+    notifier
+        .notify(
+            vec![creator],
+            NoticeEvent {
+                project_id,
+                category: "PLAN".into(),
+                event_type: "PLAN_RUN_FINISHED".into(),
+                title: name,
+                content: format!(
+                    "{}/{} passed, {} failed",
+                    summary.success, summary.executed, summary.failed
+                ),
+                resource_type: "PLAN".into(),
+                resource_id: plan_id.to_string(),
+                operator: operator.to_string(),
+            },
+        )
+        .await;
 }
 
 impl FromRef<RunState> for Arc<dyn SessionStore> {
@@ -229,12 +349,22 @@ impl FromRef<RunState> for Arc<dyn SessionStore> {
     }
 }
 
-pub fn router(pool: PgPool, sessions: Arc<dyn SessionStore>, hub: Option<Arc<PoolHub>>) -> Router {
+pub fn router(
+    pool: PgPool,
+    sessions: Arc<dyn SessionStore>,
+    hub: Option<Arc<PoolHub>>,
+    notifier: Option<Notifier>,
+) -> Router {
     Router::new()
         .route("/test-plan/{id}/run", post(run_plan))
         .route("/test-plan/{id}/cases/{caseId}/run", post(run_plan_case))
         .route("/test-plan/by-case/{caseId}", get(plans_by_case))
-        .with_state(RunState { plan_runner: PlanRunner::new(pool.clone(), hub), pool, sessions })
+        .with_state(RunState {
+            plan_runner: PlanRunner::new(pool.clone(), hub),
+            pool,
+            sessions,
+            notifier,
+        })
 }
 
 #[derive(Debug, Serialize)]
@@ -349,6 +479,12 @@ struct RunPlanBody {
     /// connected runner executes them remotely; empty = in-process.
     #[serde(default)]
     pool_id: Option<String>,
+    /// Single-case run only. Scenario entries return RUNNING + reportId
+    /// immediately (events on /api/run-events/ws?runId={reportId}); the plan
+    /// case row records the final result when the run completes. Plain API
+    /// cases are one HTTP exchange and always complete synchronously.
+    #[serde(default)]
+    async_run: bool,
 }
 
 #[utoipa::path(
@@ -378,6 +514,9 @@ async fn run_plan(
             if let Err(e) = run_uc.execute(&id).await {
                 tracing::warn!(plan = %id, "manual run snapshot failed: {e:?}");
             }
+            if let Some(n) = &st.notifier {
+                notify_plan_finished(&st.pool, n, &id, &user.user_id, &s).await;
+            }
             (
                 StatusCode::OK,
                 Json(RunPlanResponse {
@@ -398,7 +537,12 @@ async fn run_plan(
 #[serde(rename_all = "camelCase")]
 struct RunPlanCaseResponse {
     case_id: String,
+    /// Final case status, or RUNNING when asyncRun started a scenario entry.
     status: String,
+    /// Scenario report id of an asyncRun start; follow live progress on
+    /// /api/run-events/ws?runId={reportId}.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    report_id: Option<String>,
     /// Remote execution location for scenario entries; null = local.
     executed_on: Option<ExecutedOn>,
 }
@@ -422,12 +566,33 @@ async fn run_plan_case(
     let body = body.map(|Json(b)| b).unwrap_or_default();
     match st
         .plan_runner
-        .run_case(&id, &case_id, body.environment_id.as_deref(), body.pool_id.as_deref())
+        .run_case(
+            &id,
+            &case_id,
+            body.environment_id.as_deref(),
+            body.pool_id.as_deref(),
+            body.async_run,
+        )
         .await
     {
-        Ok(Some((status, executed_on))) => (
+        Ok(Some(CaseRun::Done { status, executed_on })) => (
             StatusCode::OK,
-            Json(RunPlanCaseResponse { case_id, status: status.as_str().to_string(), executed_on }),
+            Json(RunPlanCaseResponse {
+                case_id,
+                status: status.as_str().to_string(),
+                report_id: None,
+                executed_on,
+            }),
+        )
+            .into_response(),
+        Ok(Some(CaseRun::Started { report_id, executed_on })) => (
+            StatusCode::OK,
+            Json(RunPlanCaseResponse {
+                case_id,
+                status: "RUNNING".to_string(),
+                report_id: Some(report_id),
+                executed_on,
+            }),
         )
             .into_response(),
         Ok(None) => (StatusCode::NOT_FOUND, "case not linked to plan").into_response(),
