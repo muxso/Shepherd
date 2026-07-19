@@ -1253,7 +1253,7 @@ export interface CollabStats {
 }
 
 export interface BugRelation {
-  /** REQUIREMENT | SCENARIO | FUNCTIONAL_CASE. */
+  /** REQUIREMENT | SCENARIO | FUNCTIONAL_CASE | PLAN. */
   kind: string
   targetId: string
 }
@@ -1628,8 +1628,11 @@ export const api = {
   unlinkPlanCase: (id: string, caseId: string) => http.del(`/test-plan/${id}/cases/${caseId}`),
   // Runs exactly one linked case/scenario and records its result. Scenario
   // entries auto-route to an applicable pool with online runners (or local).
-  runPlanCase: (id: string, caseId: string) =>
-    http.post<{ caseId: string; status: string; executedOn?: ExecutedOn | null }>(`/test-plan/${id}/cases/${caseId}/run`, {}),
+  // asyncRun: scenario entries return RUNNING + reportId immediately (live
+  // events on runEventsWsUrl(reportId), row recorded at completion); plain API
+  // cases always complete synchronously.
+  runPlanCase: (id: string, caseId: string, opts?: { asyncRun?: boolean }) =>
+    http.post<{ caseId: string; status: string; reportId?: string | null; executedOn?: ExecutedOn | null }>(`/test-plan/${id}/cases/${caseId}/run`, { asyncRun: opts?.asyncRun }),
   // Manually record a case result (pass/fail/blocked/false alarm); status: SUCCESS|ERROR|BLOCK|FAKE_ERROR|PENDING
   recordPlanCaseResult: (id: string, caseId: string, status: string) =>
     http.post(`/test-plan/${id}/cases/${caseId}/result`, { status }),
@@ -1798,7 +1801,7 @@ export const api = {
       `/delivery/collab-stats?projectId=${encodeURIComponent(projectId)}${requirementId ? `&requirementId=${encodeURIComponent(requirementId)}` : ''}`,
     ),
 
-  // Bug ↔ asset links (requirement/scenario case/functional case)
+  // Bug ↔ asset links (requirement/scenario case/functional case/test plan)
   bugRelations: (id: string) =>
     http.get<{ relations: BugRelation[] }>(`/bug/${encodeURIComponent(id)}/relation`),
   linkBugRelation: (id: string, b: { kind: string; targetId: string }) =>
@@ -1807,6 +1810,8 @@ export const api = {
     http.del<{ relations: BugRelation[] }>(
       `/bug/${encodeURIComponent(id)}/relation/${encodeURIComponent(kind)}/${encodeURIComponent(targetId)}`,
     ),
+  // Reverse lookup: bugs linked to a test plan (kind = PLAN), newest first.
+  bugsByPlan: (planId: string) => http.get<Bug[]>(`/bug/by-plan/${encodeURIComponent(planId)}`),
 
   // Followers (generic): follow/unfollow/query any entity by (projectId, entityType, entityId).
   follow: (b: { projectId: string; entityType: string; entityId: string }) =>

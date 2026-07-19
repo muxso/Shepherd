@@ -3,7 +3,7 @@ use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 
-use crate::domain::{Bug, BugRelation, NewBug, StatusFlowGraph};
+use crate::domain::{Bug, BugRelation, NewBug, RelationKind, StatusFlowGraph};
 use crate::ports::{BugRepository, RepoError};
 
 #[derive(Default)]
@@ -222,5 +222,27 @@ impl BugRepository for InMemoryBugRepository {
             .get(bug_id)
             .cloned()
             .unwrap_or_default())
+    }
+
+    async fn list_bugs_by_relation(
+        &self,
+        kind: RelationKind,
+        target_id: &str,
+    ) -> Result<Vec<Bug>, RepoError> {
+        let state = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        // Newest first, matching the pg adapter's ordering.
+        Ok(state
+            .order
+            .iter()
+            .rev()
+            .filter(|id| {
+                state.relations.get(*id).is_some_and(|rels| {
+                    rels.iter().any(|r| r.kind == kind && r.target_id == target_id)
+                })
+            })
+            .filter_map(|id| state.bugs.get(id))
+            .filter(|b| !b.deleted)
+            .cloned()
+            .collect())
     }
 }
