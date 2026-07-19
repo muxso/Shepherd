@@ -14,13 +14,13 @@ use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
+use axum::extract::ws::{close_code, CloseFrame, Message, WebSocket, WebSocketUpgrade};
 use axum::extract::{Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use axum::{Json, Router};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use tokio::sync::{broadcast, mpsc, oneshot};
 
 use api_scenario::application::RecordScenarioExecutionUseCase;
@@ -202,6 +202,15 @@ struct HubState {
     seq: u64,
 }
 
+/// One connected runner in the detailed status endpoint.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RunnerStatus {
+    pub name: String,
+    pub max_concurrent: usize,
+    pub in_flight: usize,
+}
+
 /// Least-busy runner of the pool that still has spare capacity.
 fn pick_runner(st: &HubState, pool_id: &str) -> Option<String> {
     let mut busy: HashMap<&str, usize> = HashMap::new();
@@ -371,10 +380,32 @@ impl PoolHub {
         m
     }
 
+    /// Per-pool runner details: name, advertised cap and current in-flight runs.
+    pub fn online_detail(&self) -> HashMap<String, Vec<RunnerStatus>> {
+        let st = self.lock();
+        let mut busy: HashMap<&str, usize> = HashMap::new();
+        for p in st.pending.values() {
+            *busy.entry(p.runner_id.as_str()).or_default() += 1;
+        }
+        let mut m: HashMap<String, Vec<RunnerStatus>> = HashMap::new();
+        for (id, r) in &st.runners {
+            m.entry(r.pool_id.clone()).or_default().push(RunnerStatus {
+                name: r.name.clone(),
+                max_concurrent: r.max_concurrent,
+                in_flight: busy.get(id.as_str()).copied().unwrap_or(0),
+            });
+        }
+        for v in m.values_mut() {
+            v.sort_by(|a, b| a.name.cmp(&b.name));
+        }
+        m
+    }
+
     /// Sends the compiled plan to the least-loaded runner of the pool that has
     /// spare capacity; when every runner is at its cap, the run is queued FIFO
     /// server-side. None = no live runner or the queue is full (caller falls
-    /// back to in-process execution).
+    /// back to in-process execution). The second tuple element is the assigned
+    /// runner's display name (None while queued).
     pub fn dispatch(
         &self,
         pool_id: &str,
@@ -383,7 +414,7 @@ impl PoolHub {
         env: WireEnv,
         stop_on_failure: bool,
         ctx: RunCtx,
-    ) -> Option<oneshot::Receiver<RemoteOutcome>> {
+    ) -> Option<(oneshot::Receiver<RemoteOutcome>, Option<String>)> {
         let (done_tx, done_rx) = oneshot::channel();
         let mut st = self.lock();
         if !st.runners.values().any(|r| r.pool_id == pool_id) {
@@ -401,7 +432,7 @@ impl PoolHub {
                 tracing::info!(run = %run_id, runner = %runner_id, %name, pool = %pool_id, "scenario dispatched to pool runner");
                 st.pending
                     .insert(run_id.to_string(), Pending { runner_id, ctx, done: Some(done_tx) });
-                Some(done_rx)
+                Some((done_rx, Some(name)))
             }
             None => {
                 // Live runners, all saturated: queue within bounds.
@@ -419,7 +450,7 @@ impl PoolHub {
                     done: done_tx,
                 });
                 tracing::info!(run = %run_id, pool = %pool_id, depth = queue.len(), "pool saturated; run queued");
-                Some(done_rx)
+                Some((done_rx, None))
             }
         }
     }
@@ -574,6 +605,8 @@ impl PoolHub {
 struct WsState {
     hub: Arc<PoolHub>,
     sessions: Arc<dyn SessionStore>,
+    /// Pool lookups at hello time (poolName resolution).
+    pool: migrate::PgPool,
 }
 
 #[derive(Deserialize)]
@@ -584,12 +617,13 @@ struct WsQuery {
     run_id: Option<String>,
 }
 
-pub fn router(hub: Arc<PoolHub>, sessions: Arc<dyn SessionStore>) -> Router {
+pub fn router(hub: Arc<PoolHub>, sessions: Arc<dyn SessionStore>, pool: migrate::PgPool) -> Router {
     Router::new()
         .route("/api/pool-runner/ws", get(runner_ws))
         .route("/api/pool-runner/status", get(runner_status))
+        .route("/api/pool-runner/status/detail", get(runner_status_detail))
         .route("/api/run-events/ws", get(run_events_ws))
-        .with_state(WsState { hub, sessions })
+        .with_state(WsState { hub, sessions, pool })
 }
 
 /// Browsers can't set Authorization on WebSocket upgrades, so accept the token
@@ -617,16 +651,43 @@ async fn runner_ws(
     if !session.permissions.allows("API_SCENARIO", "EXECUTE") {
         return (StatusCode::FORBIDDEN, "key lacks API_SCENARIO:EXECUTE").into_response();
     }
-    ws.on_upgrade(move |socket| runner_session(socket, st.hub))
+    ws.on_upgrade(move |socket| runner_session(socket, st.hub, st.pool))
 }
 
-async fn runner_session(mut socket: WebSocket, hub: Arc<PoolHub>) {
+/// Hello poolId/poolName → registered pool id. Err = human-readable rejection
+/// sent as the close reason (the runner logs it verbatim).
+async fn resolve_hello_pool(
+    db: &migrate::PgPool,
+    pool_id: Option<String>,
+    pool_name: Option<String>,
+) -> Result<String, String> {
+    if let Some(id) = pool_id.filter(|s| !s.trim().is_empty()) {
+        return Ok(id);
+    }
+    let Some(name) = pool_name.map(|s| s.trim().to_string()).filter(|s| !s.is_empty()) else {
+        return Err("hello requires poolId or poolName".to_string());
+    };
+    let ids = sqlx::query_scalar::<_, String>(
+        "SELECT id FROM ms_resource_pool WHERE name = $1 AND enabled AND NOT deleted",
+    )
+    .bind(&name)
+    .fetch_all(db)
+    .await
+    .map_err(|_| "pool lookup failed (storage error)".to_string())?;
+    match ids.as_slice() {
+        [id] => Ok(id.clone()),
+        [] => Err(format!("unknown or disabled pool name: {name}")),
+        many => Err(format!("ambiguous pool name: {name} matches {} pools", many.len())),
+    }
+}
+
+async fn runner_session(mut socket: WebSocket, hub: Arc<PoolHub>, db: migrate::PgPool) {
     // First frame must be a hello within 10s.
     let hello = tokio::time::timeout(Duration::from_secs(10), socket.recv()).await;
-    let (pool_id, name, max_concurrent) = match hello {
+    let (hello_pool_id, hello_pool_name, name, max_concurrent) = match hello {
         Ok(Some(Ok(Message::Text(t)))) => match serde_json::from_str::<RunnerMsg>(&t) {
-            Ok(RunnerMsg::Hello { pool_id, name, max_concurrent, .. }) => {
-                (pool_id, name, max_concurrent)
+            Ok(RunnerMsg::Hello { pool_id, pool_name, name, max_concurrent, .. }) => {
+                (pool_id, pool_name, name, max_concurrent)
             }
             _ => {
                 let _ = socket.send(Message::Close(None)).await;
@@ -634,6 +695,19 @@ async fn runner_session(mut socket: WebSocket, hub: Arc<PoolHub>) {
             }
         },
         _ => return,
+    };
+    let pool_id = match resolve_hello_pool(&db, hello_pool_id, hello_pool_name).await {
+        Ok(id) => id,
+        Err(reason) => {
+            tracing::warn!(runner = %name, %reason, "pool runner hello rejected");
+            let _ = socket
+                .send(Message::Close(Some(CloseFrame {
+                    code: close_code::POLICY,
+                    reason: reason.into(),
+                })))
+                .await;
+            return;
+        }
     };
     let (out_tx, mut out_rx) = mpsc::unbounded_channel::<ServerMsg>();
     let runner_id = hub.register(&pool_id, &name, max_concurrent as usize, out_tx);
@@ -688,6 +762,15 @@ async fn runner_status(
     State(st): State<WsState>,
 ) -> Json<HashMap<String, usize>> {
     Json(st.hub.online_counts())
+}
+
+/// Per-pool connected runner details (name / cap / in-flight) for the pool
+/// detail page's 执行机接入 panel and the run-target indicators.
+async fn runner_status_detail(
+    _user: webauth::AuthUser,
+    State(st): State<WsState>,
+) -> Json<HashMap<String, Vec<RunnerStatus>>> {
+    Json(st.hub.online_detail())
 }
 
 impl axum::extract::FromRef<WsState> for Arc<dyn SessionStore> {

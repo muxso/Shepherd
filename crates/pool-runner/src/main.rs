@@ -4,7 +4,9 @@
 //!
 //! Configuration (env):
 //!   SHEPHERD_SERVER_WS  ws(s)://host:port/api/pool-runner/ws (required)
-//!   SHEPHERD_POOL_ID    resource pool id to register under (required)
+//!   SHEPHERD_POOL_ID    resource pool id to register under
+//!   SHEPHERD_POOL_NAME  resource pool name, resolved server-side (id wins if both set;
+//!                       at least one of SHEPHERD_POOL_ID / SHEPHERD_POOL_NAME is required)
 //!   SHEPHERD_RUNNER_KEY API key (sak_...) or session token (required)
 //!   RUNNER_NAME         display name (default: hostname)
 //!   RUNNER_MAX_CONCURRENT concurrent run cap advertised to the server (default 4)
@@ -22,7 +24,8 @@ use pool_runner::protocol::{RunnerMsg, ServerMsg};
 
 struct Config {
     ws_url: String,
-    pool_id: String,
+    pool_id: Option<String>,
+    pool_name: Option<String>,
     key: String,
     name: String,
     max_concurrent: u32,
@@ -31,9 +34,15 @@ struct Config {
 impl Config {
     fn from_env() -> Result<Self, String> {
         let need = |k: &str| std::env::var(k).map_err(|_| format!("missing env {k}"));
+        let opt = |k: &str| std::env::var(k).ok().filter(|s| !s.trim().is_empty());
+        let (pool_id, pool_name) = (opt("SHEPHERD_POOL_ID"), opt("SHEPHERD_POOL_NAME"));
+        if pool_id.is_none() && pool_name.is_none() {
+            return Err("set SHEPHERD_POOL_ID or SHEPHERD_POOL_NAME".to_string());
+        }
         Ok(Self {
             ws_url: need("SHEPHERD_SERVER_WS")?,
-            pool_id: need("SHEPHERD_POOL_ID")?,
+            pool_id,
+            pool_name,
             key: need("SHEPHERD_RUNNER_KEY")?,
             name: std::env::var("RUNNER_NAME").unwrap_or_else(|_| {
                 std::process::Command::new("hostname")
@@ -68,7 +77,8 @@ async fn main() {
             std::process::exit(2);
         }
     };
-    tracing::info!(pool = %cfg.pool_id, name = %cfg.name, server = %cfg.ws_url, max_concurrent = cfg.max_concurrent, "pool-runner starting");
+    let pool_label = cfg.pool_id.clone().or_else(|| cfg.pool_name.clone()).unwrap_or_default();
+    tracing::info!(pool = %pool_label, name = %cfg.name, server = %cfg.ws_url, max_concurrent = cfg.max_concurrent, "pool-runner starting");
     let mut backoff = 1u64;
     loop {
         match serve_once(&cfg).await {
@@ -114,6 +124,7 @@ async fn serve_once(cfg: &Config) -> Result<(), String> {
         &tx,
         &RunnerMsg::Hello {
             pool_id: cfg.pool_id.clone(),
+            pool_name: cfg.pool_name.clone(),
             name: cfg.name.clone(),
             capabilities: vec!["http".to_string()],
             max_concurrent: cfg.max_concurrent,
@@ -160,7 +171,14 @@ async fn serve_once(cfg: &Config) -> Result<(), String> {
             Message::Ping(payload) => {
                 let _ = tx.send(Message::Pong(payload));
             }
-            Message::Close(_) => break,
+            Message::Close(frame) => {
+                // Registration rejections (unknown/ambiguous pool name) arrive as
+                // a close reason; surface it verbatim.
+                if let Some(f) = frame.filter(|f| !f.reason.is_empty()) {
+                    tracing::error!(reason = %f.reason, "server closed connection");
+                }
+                break;
+            }
             _ => {}
         }
     }

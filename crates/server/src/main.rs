@@ -636,7 +636,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Plan runs share the hub: scenario-mounted entries route through pools and
     // stream live events.
     let plan_run_routes = plan_run::router(pool.clone(), sessions.clone(), Some(pool_hub.clone()));
-    let pool_runner_routes = pool_runner_ws::router(pool_hub, sessions.clone());
+    let pool_runner_routes = pool_runner_ws::router(pool_hub, sessions.clone(), pool.clone());
 
     let perf_routes = perf_run::router(
         pool.clone(),

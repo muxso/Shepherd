@@ -8,6 +8,9 @@ use thiserror::Error;
 pub enum PortError {
     #[error("backend error: {0}")]
     Backend(String),
+    /// Unique-constraint violation (e.g. duplicate live resource pool name).
+    #[error("conflict: {0}")]
+    Conflict(String),
 }
 
 #[async_trait]

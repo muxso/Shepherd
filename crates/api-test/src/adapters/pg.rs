@@ -12,6 +12,17 @@ fn map_err(e: sqlx::Error) -> PortError {
     PortError::Backend(e.to_string())
 }
 
+/// Unique-violation aware mapping for resource-pool writes: the partial index
+/// on live names (0101) surfaces as a 409 upstream.
+fn map_pool_write_err(e: sqlx::Error) -> PortError {
+    if let sqlx::Error::Database(db) = &e {
+        if db.is_unique_violation() {
+            return PortError::Conflict("resource pool name already exists".to_string());
+        }
+    }
+    map_err(e)
+}
+
 #[derive(Clone)]
 pub struct PgResourcePool {
     pool: PgPool,
@@ -104,7 +115,7 @@ impl ResourcePoolAdminPort for PgResourcePoolAdmin {
             .bind(sqlx::types::Json(&new_pool.config))
             .fetch_one(&self.pool)
             .await
-            .map_err(map_err)?;
+            .map_err(map_pool_write_err)?;
         map_pool(&row)
     }
 
@@ -146,7 +157,7 @@ impl ResourcePoolAdminPort for PgResourcePoolAdmin {
             .bind(sqlx::types::Json(&new_pool.config))
             .fetch_optional(&self.pool)
             .await
-            .map_err(map_err)?;
+            .map_err(map_pool_write_err)?;
         row.as_ref().map(map_pool).transpose()
     }
 

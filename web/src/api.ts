@@ -431,6 +431,14 @@ export interface ScenarioStep {
   snapshot?: unknown
 }
 
+/** Remote execution location of a run (explicit or auto-picked pool); null = local. */
+export interface ExecutedOn {
+  poolId: string
+  poolName: string
+  /** Assigned runner's display name; empty while the run sat queued. */
+  runner: string
+}
+
 export interface ScenarioRunResult {
   reportId: string
   /** SUCCESS | ERROR, or RUNNING when started with asyncRun. */
@@ -438,6 +446,14 @@ export interface ScenarioRunResult {
   caseCount: number
   /** Ordered step identities (asyncRun): CASE = case id, REQUEST = "METHOD url". */
   steps?: string[]
+  executedOn?: ExecutedOn | null
+}
+
+/** One connected pool-runner in the detailed status endpoint. */
+export interface PoolRunnerInfo {
+  name: string
+  maxConcurrent: number
+  inFlight: number
 }
 
 /** Live run event pushed over /api/run-events/ws?runId=… */
@@ -1610,10 +1626,10 @@ export const api = {
   linkPlanCase: (id: string, caseId: string, name: string) =>
     http.post(`/test-plan/${id}/cases`, { caseId, name }),
   unlinkPlanCase: (id: string, caseId: string) => http.del(`/test-plan/${id}/cases/${caseId}`),
-  // Runs exactly one linked case/scenario and records its result. A poolId
-  // routes scenario entries to that resource pool's runners.
-  runPlanCase: (id: string, caseId: string, poolId?: string) =>
-    http.post<{ caseId: string; status: string }>(`/test-plan/${id}/cases/${caseId}/run`, { poolId }),
+  // Runs exactly one linked case/scenario and records its result. Scenario
+  // entries auto-route to an applicable pool with online runners (or local).
+  runPlanCase: (id: string, caseId: string) =>
+    http.post<{ caseId: string; status: string; executedOn?: ExecutedOn | null }>(`/test-plan/${id}/cases/${caseId}/run`, {}),
   // Manually record a case result (pass/fail/blocked/false alarm); status: SUCCESS|ERROR|BLOCK|FAKE_ERROR|PENDING
   recordPlanCaseResult: (id: string, caseId: string, status: string) =>
     http.post(`/test-plan/${id}/cases/${caseId}/result`, { status }),
@@ -1931,6 +1947,9 @@ export const api = {
     http.post<ScenarioRunResult>(`/api/scenario/${scenarioId}/run`, { projectId, environmentId: opts?.environmentId, failureStrategy: opts?.failureStrategy, poolId: opts?.poolId, asyncRun: opts?.asyncRun }),
   /** Online pool-runner count per resource pool (in-memory WS registry). */
   poolRunnerStatus: () => http.get<Record<string, number>>('/api/pool-runner/status'),
+  /** Per-pool connected runner details (name / cap / in-flight). */
+  poolRunnerStatusDetail: () =>
+    http.get<Record<string, PoolRunnerInfo[]>>('/api/pool-runner/status/detail'),
   scenarioExecutions: (scenarioId: string) =>
     http.get<Page<ScenarioExecution>>(`/api/scenario/${scenarioId}/executions`),
   scenarioReport: (reportId: string) =>

@@ -20,11 +20,12 @@ use api_test::adapters::plan::PlanExecutor;
 use api_test::adapters::PgBatchReport;
 use api_test::domain::ResolvedEnv;
 use api_test::ports::EnvironmentPort;
-use test_plan::application::PlanCaseUseCase;
+use test_plan::adapters::pg::{PgPlanRepository, PgScheduleStore};
+use test_plan::application::{PlanCaseUseCase, PlanStatisticsUseCase, ScheduledRunUseCase};
 use test_plan::domain::{AssertionResult, CaseResult, CaseStatus, RequestInfo};
 
 use crate::pool_runner_ws::{HubObserver, PoolHub};
-use crate::scenario_run::{RunError, ScenarioRunner};
+use crate::scenario_run::{ExecutedOn, RunError, ScenarioRunner};
 
 #[derive(Clone)]
 pub struct PlanRunner {
@@ -92,7 +93,8 @@ impl PlanRunner {
 
     /// Executes one linked entry (API case or scenario) and records its result.
     /// `counted` is false for the spec-missing BLOCK case, which run() leaves
-    /// out of the executed/failed tally.
+    /// out of the executed/failed tally. The last element is where a scenario
+    /// entry executed remotely (None = local / plain API case).
     async fn execute_case(
         &self,
         plan_id: &str,
@@ -101,12 +103,12 @@ impl PlanRunner {
         env_id: Option<&str>,
         env: Option<&ResolvedEnv>,
         pool_id: Option<&str>,
-    ) -> (CaseStatus, bool) {
+    ) -> (CaseStatus, bool, Option<ExecutedOn>) {
         if let Ok(Some(spec)) = self.specs.spec_of(case_id).await {
             let (status, result) =
                 run_request(&self.runner, &spec.request, &spec.assertions, env).await;
             let _ = self.cases.record(plan_id, case_id, status, Some(result)).await;
-            return (status, true);
+            return (status, true, None);
         }
         // Not an API case: treat as a scenario-mounted entry. The run-level
         // env wins; otherwise the scenario's own configured environment.
@@ -120,7 +122,7 @@ impl PlanRunner {
                 let status = if ok { CaseStatus::Success } else { CaseStatus::Error };
                 let result = CaseResult { report_id: Some(o.report_id), ..Default::default() };
                 let _ = self.cases.record(plan_id, case_id, status, Some(result)).await;
-                (status, true)
+                (status, true, o.executed_on)
             }
             Err(RunError::NotFound) => {
                 let _ = self
@@ -135,7 +137,7 @@ impl PlanRunner {
                         }),
                     )
                     .await;
-                (CaseStatus::Block, false)
+                (CaseStatus::Block, false, None)
             }
             Err(e) => {
                 let msg = match e {
@@ -152,7 +154,7 @@ impl PlanRunner {
                         Some(CaseResult { body: Some(msg.into()), ..Default::default() }),
                     )
                     .await;
-                (CaseStatus::Error, true)
+                (CaseStatus::Error, true, None)
             }
         }
     }
@@ -178,7 +180,7 @@ impl PlanRunner {
         let total = cases.len();
         let (mut executed, mut success, mut failed) = (0usize, 0usize, 0usize);
         for pc in &cases {
-            let (status, counted) = self
+            let (status, counted, _) = self
                 .execute_case(plan_id, &project_id, &pc.case_id, env_id, env.as_ref(), pool_id)
                 .await;
             if counted {
@@ -199,7 +201,7 @@ impl PlanRunner {
         case_id: &str,
         env_id: Option<&str>,
         pool_id: Option<&str>,
-    ) -> Result<Option<CaseStatus>, ()> {
+    ) -> Result<Option<(CaseStatus, Option<ExecutedOn>)>, ()> {
         let env_id = env_id.filter(|s| !s.trim().is_empty());
         let pool_id = pool_id.filter(|s| !s.trim().is_empty());
         let cases = self.cases.list(plan_id).await.map_err(|_| ())?;
@@ -208,9 +210,9 @@ impl PlanRunner {
         }
         let env = self.resolve_env(env_id).await;
         let project_id = self.project_of(plan_id).await;
-        let (status, _) =
+        let (status, _, executed_on) =
             self.execute_case(plan_id, &project_id, case_id, env_id, env.as_ref(), pool_id).await;
-        Ok(Some(status))
+        Ok(Some((status, executed_on)))
     }
 }
 
@@ -366,17 +368,28 @@ async fn run_plan(
         return (StatusCode::FORBIDDEN, "permission denied").into_response();
     }
     match st.plan_runner.run(&id, body.environment_id.as_deref(), body.pool_id.as_deref()).await {
-        Ok(s) => (
-            StatusCode::OK,
-            Json(RunPlanResponse {
-                plan_id: id,
-                total: s.total,
-                executed: s.executed,
-                success: s.success,
-                failed: s.failed,
-            }),
-        )
-            .into_response(),
+        Ok(s) => {
+            // Manual runs snapshot into the run history like scheduled runs do,
+            // so the 执行历史 tab reflects them.
+            let stats =
+                PlanStatisticsUseCase::new(Arc::new(PgPlanRepository::new(st.pool.clone())));
+            let run_uc =
+                ScheduledRunUseCase::new(stats, Arc::new(PgScheduleStore::new(st.pool.clone())));
+            if let Err(e) = run_uc.execute(&id).await {
+                tracing::warn!(plan = %id, "manual run snapshot failed: {e:?}");
+            }
+            (
+                StatusCode::OK,
+                Json(RunPlanResponse {
+                    plan_id: id,
+                    total: s.total,
+                    executed: s.executed,
+                    success: s.success,
+                    failed: s.failed,
+                }),
+            )
+                .into_response()
+        }
         Err(()) => (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
     }
 }
@@ -386,6 +399,8 @@ async fn run_plan(
 struct RunPlanCaseResponse {
     case_id: String,
     status: String,
+    /// Remote execution location for scenario entries; null = local.
+    executed_on: Option<ExecutedOn>,
 }
 
 #[utoipa::path(
@@ -410,9 +425,9 @@ async fn run_plan_case(
         .run_case(&id, &case_id, body.environment_id.as_deref(), body.pool_id.as_deref())
         .await
     {
-        Ok(Some(status)) => (
+        Ok(Some((status, executed_on))) => (
             StatusCode::OK,
-            Json(RunPlanCaseResponse { case_id, status: status.as_str().to_string() }),
+            Json(RunPlanCaseResponse { case_id, status: status.as_str().to_string(), executed_on }),
         )
             .into_response(),
         Ok(None) => (StatusCode::NOT_FOUND, "case not linked to plan").into_response(),

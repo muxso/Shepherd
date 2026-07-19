@@ -77,10 +77,14 @@ pub struct StepDetail {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum RunnerMsg {
-    /// First frame after connect; the server registers the runner under poolId.
+    /// First frame after connect; the server registers the runner under poolId,
+    /// or resolves poolName to a live pool when poolId is absent (id wins).
     #[serde(rename_all = "camelCase")]
     Hello {
-        pool_id: String,
+        #[serde(default)]
+        pool_id: Option<String>,
+        #[serde(default)]
+        pool_name: Option<String>,
         name: String,
         #[serde(default)]
         capabilities: Vec<String>,
@@ -154,7 +158,24 @@ mod tests {
         let m: RunnerMsg =
             serde_json::from_str(r#"{"type":"hello","poolId":"p","name":"n"}"#).expect("de");
         match m {
-            RunnerMsg::Hello { max_concurrent, .. } => assert_eq!(max_concurrent, 4),
+            RunnerMsg::Hello { pool_id, pool_name, max_concurrent, .. } => {
+                assert_eq!(pool_id.as_deref(), Some("p"));
+                assert_eq!(pool_name, None);
+                assert_eq!(max_concurrent, 4);
+            }
+            other => panic!("expected hello, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn hello_accepts_pool_name_without_id() {
+        let m: RunnerMsg =
+            serde_json::from_str(r#"{"type":"hello","poolName":"本地池","name":"n"}"#).expect("de");
+        match m {
+            RunnerMsg::Hello { pool_id, pool_name, .. } => {
+                assert_eq!(pool_id, None);
+                assert_eq!(pool_name.as_deref(), Some("本地池"));
+            }
             other => panic!("expected hello, got {other:?}"),
         }
     }

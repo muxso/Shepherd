@@ -22,6 +22,7 @@ import { SelectProjectEmpty } from '../components/Page'
 import type { RegItem } from '../registry'
 import { fetchPlanItems, groupIdOf, isGroup } from '../components/plan/planLocal'
 import { ScenarioReportModal, fmtDuration, fmtSize, makeStepMeta, type NameOf, type TFn } from '../components/ScenarioReport'
+import AutoPoolIndicator, { executedOnLabel } from '../components/AutoPoolIndicator'
 import { useI18n } from '../i18n'
 
 // Editable form state + scenario param rows (persisted in scenario.meta).
@@ -1039,7 +1040,7 @@ function StepRespPreview({ r, t }: { r: ReportResultItem; t: TFn }) {
 // Scenario action bar (environment + server run + save): shared by the detail and new-scenario
 // tabs, portaled into the tab-bar right slot via Workspace (ref #38). runDisabled greys out the
 // run button (unsaved new scenario).
-function ScenarioActionBar({ envs, envId, onEnv, running, onRun, onLocalRun, saving, onSave, runDisabled, envDisabled, runTitle, viewReport, pools, poolId, onPool, poolOnline, t }: {
+function ScenarioActionBar({ envs, envId, onEnv, running, onRun, onLocalRun, saving, onSave, runDisabled, envDisabled, runTitle, viewReport, runTarget, t }: {
   envs: Environment[]
   envId: string
   onEnv: (v: string) => void
@@ -1052,30 +1053,14 @@ function ScenarioActionBar({ envs, envId, onEnv, running, onRun, onLocalRun, sav
   envDisabled?: boolean
   runTitle?: string
   viewReport?: ReactNode
-  pools?: ResourcePool[]
-  poolId?: string
-  onPool?: (v: string) => void
-  poolOnline?: Record<string, number>
+  /** Passive run-target indicator (auto pool pick / local execution). */
+  runTarget?: ReactNode
   t: TFn
 }) {
   return (
     <>
       {viewReport}
-      {/* Run target: a pool with connected runners executes remotely; empty = in-process. */}
-      {pools && pools.length > 0 && onPool && (
-        <Select
-          size="small"
-          value={poolId || undefined}
-          onChange={(v) => onPool(v || '')}
-          style={{ width: 190 }}
-          allowClear
-          placeholder={t('scenario.selectPool', '资源池(本机执行)')}
-          options={pools.map((p) => {
-            const n = poolOnline?.[p.id] ?? 0
-            return { value: p.id, label: `${p.name}${n > 0 ? ` · ${n} ${t('scenario.runnersOnline', '在线')}` : ` · ${t('scenario.noRunner', '无在线执行机')}`}` }
-          })}
-        />
-      )}
+      {runTarget}
       <Select
         size="small"
         value={envId || undefined}
@@ -1141,10 +1126,6 @@ function ScenarioDetail({ scenario, active }: { scenario: Scenario; active?: boo
   const [envs, setEnvs] = useState<Environment[]>([])
   const [envId, setEnvId] = useState<string>('')
   const [failureStrategy, setFailureStrategy] = useState<'CONTINUE' | 'STOP'>('CONTINUE')
-  // Pool routing: a pool with a connected runner executes remotely; empty = in-process.
-  const [pools, setPools] = useState<ResourcePool[]>([])
-  const [poolOnline, setPoolOnline] = useState<Record<string, number>>({})
-  const [poolId, setPoolId] = useState<string>('')
   // Live run state (async run + WS events): per-leaf running flag + start time for the count-up.
   const [liveMode, setLiveMode] = useState(false)
   const [liveSteps, setLiveSteps] = useState<Record<string, { running: boolean; startedAt: number }>>({})
@@ -1220,9 +1201,6 @@ function ScenarioDetail({ scenario, active }: { scenario: Scenario; active?: boo
   useEffect(() => {
     loadSteps()
     loadReferenced()
-    // Enabled pools + live runner counts for the run-target selector.
-    api.resourcePools().then((ps) => setPools((ps || []).filter((p) => p.enabled !== false))).catch(() => {})
-    api.poolRunnerStatus().then(setPoolOnline).catch(() => {})
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scenario.id])
   const refreshReferenced = async () => {
@@ -1311,7 +1289,9 @@ function ScenarioDetail({ scenario, active }: { scenario: Scenario; active?: boo
     setStepResults({})
     setLiveSteps({})
     try {
-      const r = await api.runScenario(scenario.id, scenario.projectId, { environmentId: envId || undefined, failureStrategy, poolId: poolId || undefined, asyncRun: true })
+      // No pool selection: the server auto-picks an applicable pool with online
+      // runners, or executes locally (executedOn reports the decision).
+      const r = await api.runScenario(scenario.id, scenario.projectId, { environmentId: envId || undefined, failureStrategy, asyncRun: true })
       setLastRun(r)
       setLastRunAt(new Date().toLocaleString())
       const live = r.status === 'RUNNING'
@@ -1319,7 +1299,8 @@ function ScenarioDetail({ scenario, active }: { scenario: Scenario; active?: boo
       if (live) await followLiveRun(r.reportId)
       const finalStatus = (await applyReport(r.reportId)) ?? r.status
       setLiveSteps({})
-      message.success(`${t('scenario.triggered', '场景已触发执行')} · ${finalStatus}`)
+      const where = executedOnLabel(r.executedOn) || t('scenario.localExec', '本地执行')
+      message.success(`${t('scenario.triggered', '场景已触发执行')} · ${finalStatus} · ${where}`)
     } catch (e) {
       message.error(e instanceof ApiError ? `${t('scenario.execFailed', '执行失败')}:${e.status}` : t('scenario.execFailed', '执行失败'))
     } finally {
@@ -1711,10 +1692,7 @@ function ScenarioDetail({ scenario, active }: { scenario: Scenario; active?: boo
           onLocalRun={() => message.info(t('scenario.localSoon', '本地执行即将接入'))}
           saving={saving}
           onSave={onSave}
-          pools={pools}
-          poolId={poolId}
-          onPool={setPoolId}
-          poolOnline={poolOnline}
+          runTarget={<AutoPoolIndicator projectId={scenario.projectId} active={active} />}
           t={t}
         />,
         slot,

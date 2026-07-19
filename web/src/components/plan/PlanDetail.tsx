@@ -5,7 +5,8 @@ import { message, modal } from '../../feedback'
 import EditDrawer from '../EditDrawer'
 import ResizableDrawer from '../ResizableDrawer'
 import { PlayCircleOutlined, FileMarkdownOutlined, FileTextOutlined, LinkOutlined, ClockCircleOutlined } from '@ant-design/icons'
-import { api, ApiError, type ApiCase, type PlanCase, type PlanStats, type PlanStepResult, type ResourcePool, type Scenario } from '../../api'
+import { api, ApiError, type ApiCase, type PlanCase, type PlanStats, type PlanStepResult, type Scenario } from '../../api'
+import AutoPoolIndicator from '../AutoPoolIndicator'
 import { outcomeColor } from '../tags'
 import Donut from '../Donut'
 import { fmtDurationMs } from '../TimingBreakdown'
@@ -27,11 +28,6 @@ export default function PlanDetail({ planId, name, projectId }: { planId: string
   const [reportOpen, setReportOpen] = useState(false)
   const [editOpen, setEditOpen] = useState(false)
   const [planName, setPlanName] = useState(name)
-  // Run target: a resource pool with connected runners executes scenario
-  // entries remotely; empty = in-process.
-  const [pools, setPools] = useState<ResourcePool[]>([])
-  const [poolOnline, setPoolOnline] = useState<Record<string, number>>({})
-  const [poolId, setPoolId] = useState('')
 
   const load = async () => {
     setLoading(true)
@@ -47,15 +43,14 @@ export default function PlanDetail({ planId, name, projectId }: { planId: string
   }
   useEffect(() => {
     load()
-    api.resourcePools().then((ps) => setPools((ps || []).filter((p) => p.enabled !== false))).catch(() => {})
-    api.poolRunnerStatus().then(setPoolOnline).catch(() => {})
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [planId])
 
   const run = async () => {
     setRunning(true)
     try {
-      const r = await api.runPlan(planId, undefined, poolId || undefined)
+      // Scenario entries auto-route to an applicable pool with online runners.
+      const r = await api.runPlan(planId)
       message.success(`${t('plan.runDone', '执行完成')}:${r.executed}/${r.total}`)
       load()
     } catch (e) {
@@ -111,24 +106,10 @@ export default function PlanDetail({ planId, name, projectId }: { planId: string
       cases={cases}
       loading={loading}
       reload={load}
-      poolId={poolId || undefined}
       toolbar={
         <Space size={8} wrap>
           <Button icon={<LinkOutlined />} size="small" onClick={() => setLinkOpen(true)}>{t('plan.linkCase', '挂用例')}</Button>
-          {pools.length > 0 && (
-            <Select
-              size="small"
-              value={poolId || undefined}
-              onChange={(v) => setPoolId(v || '')}
-              style={{ width: 190 }}
-              allowClear
-              placeholder={t('scenario.selectPool', '资源池(本机执行)')}
-              options={pools.map((p) => {
-                const n = poolOnline?.[p.id] ?? 0
-                return { value: p.id, label: `${p.name}${n > 0 ? ` · ${n} ${t('scenario.runnersOnline', '在线')}` : ` · ${t('scenario.noRunner', '无在线执行机')}`}` }
-              })}
-            />
-          )}
+          <AutoPoolIndicator projectId={projectId} />
           <Button type="primary" icon={<PlayCircleOutlined />} size="small" loading={running} onClick={run}>{t('plan.runPlan', '执行计划')}</Button>
           <Button icon={<ClockCircleOutlined />} size="small" onClick={schedule}>{t('plan.schedule', '定时')}</Button>
           <Button icon={<FileTextOutlined />} size="small" onClick={() => setReportOpen(true)}>{t('plan.viewReport', '查看报告')}</Button>

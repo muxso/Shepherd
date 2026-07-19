@@ -1,6 +1,6 @@
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use axum::{
@@ -64,7 +64,23 @@ pub struct RunOutcome {
     pub report_id: String,
     pub status: String,
     pub case_count: usize,
+    /// Where the run executed remotely; None = in-process (local).
+    pub executed_on: Option<ExecutedOn>,
 }
+
+/// Remote execution location surfaced in run responses (null = local).
+#[derive(Debug, Clone, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ExecutedOn {
+    pub pool_id: String,
+    pub pool_name: String,
+    /// Assigned runner's display name; empty while the run sat queued.
+    pub runner: String,
+}
+
+/// Shared slot: begin() records the dispatch target, the run future clears it
+/// when the run falls back to local execution.
+pub type ExecutedOnSlot = Arc<Mutex<Option<ExecutedOn>>>;
 
 impl ScenarioRunner {
     /// Compiles a scenario into executable plan nodes (+ static leaf count).
@@ -113,10 +129,60 @@ impl ScenarioRunner {
         .filter(|s| !s.trim().is_empty())
     }
 
+    /// Display name of a live pool (empty when unknown).
+    async fn pool_name_of(&self, pool_id: &str) -> String {
+        sqlx::query_scalar::<_, String>(
+            "SELECT name FROM ms_resource_pool WHERE id = $1 AND NOT deleted",
+        )
+        .bind(pool_id)
+        .fetch_optional(&self.pool)
+        .await
+        .ok()
+        .flatten()
+        .unwrap_or_default()
+    }
+
+    /// Picks a pool for a run without an explicit poolId: enabled live pools
+    /// applicable to the project's organization (all-org or listed) that have
+    /// online runners, preferring the most spare capacity. None = run locally.
+    pub async fn auto_pool(&self, project_id: &str) -> Option<(String, String)> {
+        let hub = self.hub.as_ref()?;
+        let detail = hub.online_detail();
+        if detail.is_empty() {
+            return None;
+        }
+        let rows = sqlx::query_as::<_, (String, String)>(
+            "SELECT p.id, p.name FROM ms_resource_pool p \
+             WHERE p.enabled AND NOT p.deleted \
+               AND (p.all_org OR p.org_ids ? \
+                    (SELECT organization_id FROM ms_project WHERE id = $1))",
+        )
+        .bind(project_id)
+        .fetch_all(&self.pool)
+        .await
+        .ok()?;
+        let spare = |id: &str| {
+            detail
+                .get(id)
+                .map(|rs| {
+                    rs.iter().map(|r| r.max_concurrent.saturating_sub(r.in_flight)).sum::<usize>()
+                })
+                .unwrap_or(0)
+        };
+        let (id, name) = rows
+            .into_iter()
+            .filter(|(id, _)| detail.contains_key(id))
+            .max_by_key(|(id, _)| spare(id))?;
+        tracing::info!(pool = %id, %name, project = %project_id, "auto-selected resource pool for run");
+        Some((id, name))
+    }
+
     /// Creates the report and returns a completion future without awaiting it,
     /// so the HTTP layer can either await (sync) or spawn it (async + live WS).
-    /// Routing: a pool with a live runner gets the compiled plan over WS; no
-    /// runner (or unresolvable plan) falls back to in-process execution.
+    /// Routing: an explicit pool wins; without one an applicable pool with
+    /// online runners is auto-picked. A pool with a live runner gets the
+    /// compiled plan over WS; no runner (or unresolvable plan) falls back to
+    /// in-process execution.
     pub async fn begin(
         &self,
         scenario_id: &str,
@@ -143,27 +209,45 @@ impl ScenarioRunner {
             );
         }
 
-        let remote = match (pool_id.filter(|p| !p.trim().is_empty()), &self.hub) {
-            (Some(pid), Some(hub)) if hub.has_runner(pid) => {
+        // Effective pool: explicit request wins; otherwise auto-pick.
+        let picked = match pool_id.filter(|p| !p.trim().is_empty()) {
+            Some(pid) => Some((pid.to_string(), self.pool_name_of(pid).await)),
+            None => self.auto_pool(project_id).await,
+        };
+        let executed_on: ExecutedOnSlot = Arc::new(Mutex::new(None));
+        let remote = match (&picked, &self.hub) {
+            (Some((pid, pname)), Some(hub)) if hub.has_runner(pid) => {
                 match plan_to_wire(&nodes, self.specs.as_ref()).await {
-                    Ok(wire) => hub.dispatch(
-                        pid,
-                        &report_id,
-                        wire,
-                        WireEnv {
-                            base_url: env.base_url.clone(),
-                            headers: env.headers.clone(),
-                            variables: env.variables.clone(),
-                        },
-                        stop_on_failure,
-                        RunCtx {
-                            scenario_id: scenario_id.to_string(),
-                            project_id: project_id.to_string(),
-                            case_count: count as i32,
-                            report_id: report_id.clone(),
-                            finalize_report: true,
-                        },
-                    ),
+                    Ok(wire) => hub
+                        .dispatch(
+                            pid,
+                            &report_id,
+                            wire,
+                            WireEnv {
+                                base_url: env.base_url.clone(),
+                                headers: env.headers.clone(),
+                                variables: env.variables.clone(),
+                            },
+                            stop_on_failure,
+                            RunCtx {
+                                scenario_id: scenario_id.to_string(),
+                                project_id: project_id.to_string(),
+                                case_count: count as i32,
+                                report_id: report_id.clone(),
+                                finalize_report: true,
+                            },
+                        )
+                        .map(|(done, runner)| {
+                            *executed_on
+                                .lock()
+                                .unwrap_or_else(std::sync::PoisonError::into_inner) =
+                                Some(ExecutedOn {
+                                    pool_id: pid.clone(),
+                                    pool_name: pname.clone(),
+                                    runner: runner.unwrap_or_default(),
+                                });
+                            done
+                        }),
                     // Unresolvable plan (missing case spec): run locally, which
                     // records the precise per-step error.
                     Err(()) => None,
@@ -176,13 +260,17 @@ impl ScenarioRunner {
         let sid = scenario_id.to_string();
         let proj = project_id.to_string();
         let rid = report_id.clone();
+        let executed_slot = executed_on.clone();
         let fut: Pin<Box<dyn Future<Output = String> + Send>> = Box::pin(async move {
             if let Some(done) = remote {
                 match tokio::time::timeout(REMOTE_RUN_TIMEOUT, done).await {
                     Ok(Ok(RemoteOutcome::Finished(status))) => return status,
                     // Pool lost every runner while the run sat in the queue:
                     // fall through to local execution.
-                    Ok(Ok(RemoteOutcome::Fallback)) => {}
+                    Ok(Ok(RemoteOutcome::Fallback)) => {
+                        *executed_slot.lock().unwrap_or_else(std::sync::PoisonError::into_inner) =
+                            None;
+                    }
                     // Timeout or hub dropped the waiter: finalize as error.
                     _ => {
                         if let Some(hub) = &this.hub {
@@ -206,7 +294,7 @@ impl ScenarioRunner {
             }
             status.to_string()
         });
-        Ok(StartedRun { report_id, step_ids, case_count: count, fut })
+        Ok(StartedRun { report_id, step_ids, case_count: count, executed_on, fut })
     }
 
     /// Executes one member scenario of a union batch into the shared report.
@@ -246,7 +334,7 @@ impl ScenarioRunner {
                             finalize_report: false,
                         },
                     );
-                    if let Some(done) = remote {
+                    if let Some((done, _runner)) = remote {
                         match tokio::time::timeout(REMOTE_RUN_TIMEOUT, done).await {
                             Ok(Ok(RemoteOutcome::Finished(status))) => return status,
                             Ok(Ok(RemoteOutcome::Fallback)) => {}
@@ -281,7 +369,15 @@ impl ScenarioRunner {
         let started =
             self.begin(scenario_id, project_id, environment_id, stop_on_failure, pool_id).await?;
         let status = started.fut.await;
-        Ok(RunOutcome { report_id: started.report_id, status, case_count: started.case_count })
+        // Read after completion: the future clears the slot on local fallback.
+        let executed_on =
+            started.executed_on.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clone();
+        Ok(RunOutcome {
+            report_id: started.report_id,
+            status,
+            case_count: started.case_count,
+            executed_on,
+        })
     }
 }
 
@@ -289,6 +385,8 @@ pub struct StartedRun {
     pub report_id: String,
     pub step_ids: Vec<String>,
     pub case_count: usize,
+    /// Dispatch target; cleared by the future when execution falls back local.
+    pub executed_on: ExecutedOnSlot,
     /// Resolves to the final report status; report/record writes happen inside.
     pub fut: Pin<Box<dyn Future<Output = String> + Send>>,
 }
@@ -450,8 +548,8 @@ async fn batch_run_scenarios(
     // Pool gate: when picked it must exist and be enabled; its max_concurrency
     // bounds parallel execution.
     let mut concurrency = 4usize;
-    let pool_id = b.pool_id.as_deref().filter(|s| !s.trim().is_empty());
-    if let Some(pid) = pool_id {
+    let explicit_pool = b.pool_id.as_deref().filter(|s| !s.trim().is_empty());
+    if let Some(pid) = explicit_pool {
         let row = sqlx::query(
             "SELECT enabled, max_concurrency FROM ms_resource_pool WHERE id = $1 AND NOT deleted",
         )
@@ -472,6 +570,13 @@ async fn batch_run_scenarios(
             Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
         }
     }
+    // No explicit pool: auto-pick once for the whole batch (None = local).
+    let auto_pool = match explicit_pool {
+        Some(_) => None,
+        None => st.runner.auto_pool(&b.project_id).await,
+    };
+    let pool_owned = explicit_pool.map(str::to_string).or(auto_pool.map(|(id, _)| id));
+    let pool_id = pool_owned.as_deref();
     let override_env = b.environment_id.as_deref();
 
     if b.union_report {
@@ -829,6 +934,8 @@ struct RunScenarioResponse {
     /// Ordered step identities for live progress rendering.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     steps: Vec<String>,
+    /// Remote execution location (explicit or auto-picked pool); null = local.
+    executed_on: Option<ExecutedOn>,
 }
 
 fn op_to_condition(op: &str) -> MatchCondition {
@@ -988,6 +1095,12 @@ async fn run_scenario(
                 let report_id = started.report_id.clone();
                 let steps = started.step_ids.clone();
                 let case_count = started.case_count;
+                // Dispatch decision at start; the run may still fall back local.
+                let executed_on = started
+                    .executed_on
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .clone();
                 tokio::spawn(started.fut);
                 (
                     StatusCode::OK,
@@ -996,6 +1109,7 @@ async fn run_scenario(
                         status: "RUNNING".to_string(),
                         case_count,
                         steps,
+                        executed_on,
                     }),
                 )
                     .into_response()
@@ -1021,6 +1135,7 @@ async fn run_scenario(
                 status: o.status,
                 case_count: o.case_count,
                 steps: Vec::new(),
+                executed_on: o.executed_on,
             }),
         )
             .into_response(),
@@ -1044,7 +1159,7 @@ fn run_error_response(e: RunError) -> Response {
 #[derive(OpenApi)]
 #[openapi(
     paths(run_scenario, batch_run_scenarios),
-    components(schemas(RunScenarioBody, RunScenarioResponse, BatchRunBody, BatchRunResponse, BatchRunItem)),
+    components(schemas(RunScenarioBody, RunScenarioResponse, BatchRunBody, BatchRunResponse, BatchRunItem, ExecutedOn)),
     tags((name = "api-scenario", description = "场景"))
 )]
 struct ApiDoc;
