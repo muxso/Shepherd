@@ -1869,14 +1869,13 @@ export const api = {
     if (q.tab) params.set('tab', q.tab)
     if (q.page) params.set('page', String(q.page))
     if (q.pageSize) params.set('pageSize', String(q.pageSize))
-    const qs = params.toString()
-    return http.get<NoticePage>(`/notice${qs ? `?${qs}` : ''}`)
+    return http.get<NoticePage>(`/notice?${params.toString()}`)
   },
   noticeUnreadCount: (projectId?: string) =>
-    http.get<NoticeUnreadCount>(`/notice/unread-count${projectId ? `?projectId=${encodeURIComponent(projectId)}` : ''}`),
+    http.get<NoticeUnreadCount>(`/notice/unread-count?projectId=${encodeURIComponent(projectId || '')}`),
   markNoticeRead: (id: string) => http.post(`/notice/${encodeURIComponent(id)}/read`),
   markAllNoticesRead: (projectId?: string) =>
-    http.post(`/notice/read-all${projectId ? `?projectId=${encodeURIComponent(projectId)}` : ''}`),
+    http.post(`/notice/read-all?projectId=${encodeURIComponent(projectId || '')}`),
 
   // Notification settings: webhook robots + server-side routing rules (project-scoped)
   noticeRobots: (projectId: string) =>
