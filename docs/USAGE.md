@@ -232,6 +232,24 @@ Log in at the console (`admin` / your password). Pages map to the pipeline above
 
 Approval and verification gates surface inside the Requirements / Task flow — design proposals are reviewed before breakdown, deliverables before sign-off.
 
+### Notifications
+
+The bell in the top bar opens the message center: in-app notices produced by
+real events (bug assigned / status changed, review created, `@user` mentions
+in comments, failed scheduled runs), grouped by category with all / @me /
+unread / read tabs and a mark-all-read action.
+
+Delivery is configured per project under **Message Settings**:
+
+- **Robots** — webhook bots for Feishu, DingTalk and WeCom: a name plus the
+  webhook URL; DingTalk optionally takes the "加签" signing secret (blank =
+  unsigned). Every robot row has a test-send button so you can verify the
+  webhook before wiring rules to it.
+- **Rules** — map an event type (or the `*` wildcard) to channels: the in-app
+  inbox and/or one or more robots, with an optional message template
+  (`${title}`, `${operator}`, `${time}`; blank falls back to the default
+  text). Rules can be disabled without deleting them.
+
 ---
 
 ## 7. Fleet & agent-runtime setup

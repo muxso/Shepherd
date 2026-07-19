@@ -13,7 +13,7 @@ AI ROI · human-AI efficiency analytics · software engineering modeling · Task
 Shepherd is a platform for supervising AI-driven development. AI can write code, but it won't judge whether it actually finished the requirement, and it won't be accountable for the result. Instead of building another "smarter agent," Shepherd sits around the agent: it breaks requirements down for AI executors to work on, puts a human approval step at two points (design and verification), and keeps a record of the whole thing.
 
 <a id="status"></a>
-> **Status:** `v0.0.2`, experimental, dogfooded internally. The full loop works, but it isn't production-ready and there's no public benchmark. Don't treat it as a finished tool.
+> **Status:** `v0.0.4`, experimental, dogfooded internally. The full loop works, but it isn't production-ready and there's no public benchmark. Don't treat it as a finished tool.
 
 <img src="docs/assets/screenshot-intro.png" alt="Shepherd — scenario run report" width="100%" />
 
@@ -63,6 +63,10 @@ The executor itself (`agent-runtime`) is plain Rust: concurrency is bounded by a
 </p>
 <p float="left">
   <img src="docs/assets/screenshot-en-5.png" width="49%" alt="Shepherd — test plan planning mind-map" />
+  <img src="docs/assets/screenshot-en-6.png" width="49%" alt="Shepherd — message center with in-app notifications" />
+</p>
+<p float="left">
+  <img src="docs/assets/screenshot-en-7.png" width="49%" alt="Shepherd — resource pool with online WebSocket runners" />
 </p>
 
 ## Measuring what AI actually delivered
@@ -114,7 +118,7 @@ Prefer one command? `docker compose -f deploy/docker/docker-compose.yml up --bui
 
 Each business module is its own crate, laid out hexagonally: `domain` / `ports` / `application` are pure logic with no IO by default, while the database and HTTP live in `adapters` behind feature flags. `tests/architecture.rs` scans the source and fails the build if a pure layer ever imports an IO crate like sqlx or axum — that keeps the layering from quietly eroding over time.
 
-Working today: auth / RBAC / OIDC (Feishu, WeCom), projects, versioned requirements, the task DAG, the design approval gate, fleet dispatch and reclaim, human-AI delivery metrics (per-project and per-requirement AI share), MCP tools (`POST /mcp`), Skill orchestration, plus a test-management suite (cases / bugs / plans / API and scenario tests / Mock).
+Working today: auth / RBAC / OIDC (Feishu, WeCom), projects, versioned requirements, the task DAG, the design approval gate, fleet dispatch and reclaim, human-AI delivery metrics (per-project and per-requirement AI share), MCP tools (`POST /mcp`), Skill orchestration, in-app notifications plus Feishu / DingTalk / WeCom webhook robots, WebSocket remote runners with resource pools (live run streaming, capability tags), and a test-management suite (cases / bugs / plans / API and scenario tests / Mock) — test plans get a planning mind-map, async case runs and plan-scoped bugs.
 
 Not done yet: the verification gate is heavier to use than it should be; `shepherd-cli` is half-built; finer fleet metrics (e.g. claim-latency distribution) aren't there; and more executor backends (such as wiring OpenHands in as one) are on the list.
 

@@ -13,7 +13,7 @@ AI ROI、人效分析、软件工程建模、Task Graph。
 Shepherd 是一个还在早期阶段的研发监督平台。AI 现在能写代码了,但它不会判断自己有没有真正做完需求,也不会替结果负责。与其再造一个"更聪明的 agent",Shepherd 做的是 agent 外面那一层——把需求拆给 AI 执行机去干,然后在设计和验证两个环节卡上人工审批,过程留痕。
 
 <a id="状态"></a>
-> **状态**:`v0.0.2`,实验性质,我们自己在用(dogfood)。完整闭环能跑通,但离生产可用还有距离,也没有公开 benchmark。别拿它当成熟工具。
+> **状态**:`v0.0.4`,实验性质,我们自己在用(dogfood)。完整闭环能跑通,但离生产可用还有距离,也没有公开 benchmark。别拿它当成熟工具。
 
 <!-- 演示动图待补:见 docs/assets/。放好后取消下一行注释。 -->
 <!-- ![演示](docs/assets/demo.gif) -->
@@ -63,6 +63,10 @@ Shepherd 是一个还在早期阶段的研发监督平台。AI 现在能写代�
 </p>
 <p float="left">
   <img src="docs/assets/screenshot-zh-5.png" width="49%" alt="Shepherd — 测试计划·测试规划脑图" />
+  <img src="docs/assets/screenshot-zh-6.png" width="49%" alt="Shepherd — 消息中心(站内通知)" />
+</p>
+<p float="left">
+  <img src="docs/assets/screenshot-zh-7.png" width="49%" alt="Shepherd — 资源池与在线执行机(WebSocket)" />
 </p>
 
 ## AI 到底交付了多少,可以量化
@@ -114,7 +118,7 @@ SHEPHERD_BASE=http://<server>:8088 SHEPHERD_CAPS=CLAUDE_CODE cargo run -p agent-
 
 每个业务模块是一个独立 crate,按六边形分层:`domain` / `ports` / `application` 是纯逻辑、默认不碰 IO,数据库和 HTTP 都在 `adapters` 里用 feature 开关。`tests/architecture.rs` 会扫源码,纯层一旦引了 sqlx / axum 这类 IO crate 就让构建挂掉——免得分层写着写着被写穿。
 
-已经能用的:鉴权 / RBAC / OIDC(飞书、企业微信)、项目、多版本需求、任务 DAG、设计审批门、机群派发与回收、人机协同人效度量(项目与需求两级的 AI 占比)、MCP 工具(`POST /mcp`)、Skill 编排,还有一套测试管理(用例 / 缺陷 / 计划 / 接口与场景测试 / Mock)。
+已经能用的:鉴权 / RBAC / OIDC(飞书、企业微信)、项目、多版本需求、任务 DAG、设计审批门、机群派发与回收、人机协同人效度量(项目与需求两级的 AI 占比)、MCP 工具(`POST /mcp`)、Skill 编排、站内消息中心加飞书 / 钉钉 / 企业微信 webhook 机器人、带资源池的 WebSocket 远程执行机(实时执行推送、能力标签),还有一套测试管理(用例 / 缺陷 / 计划 / 接口与场景测试 / Mock)——测试计划带测试规划脑图、用例异步执行和计划内缺陷。
 
 还没做好的:验证门现在用起来偏重,想让它更省事;`shepherd-cli` 还在搭;更细的机群指标(比如认领延迟分布)还没加;更多执行机后端(比如把 OpenHands 接成一台)也在清单上。
 
