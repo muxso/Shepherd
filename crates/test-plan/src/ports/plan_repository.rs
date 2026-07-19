@@ -39,8 +39,11 @@ pub trait PlanRepository: Send + Sync {
 
     async fn list_cases(&self, plan_id: &str) -> Result<Vec<PlanCase>, RepoError>;
 
-    /// Non-archived plans only.
-    async fn list(&self, project_id: &str) -> Result<Vec<Plan>, RepoError>;
+    /// Non-archived plans only, newest first, with editable meta for the list view.
+    async fn list(&self, project_id: &str) -> Result<Vec<(Plan, PlanMeta)>, RepoError>;
+
+    /// Archives (hides from the list) or restores a plan; false when missing.
+    async fn set_archived(&self, id: &str, archived: bool) -> Result<bool, RepoError>;
 
     async fn rename(&self, id: &str, name: &str) -> Result<bool, RepoError>;
 

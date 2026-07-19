@@ -28,16 +28,18 @@ impl BugCustomFieldsUseCase {
         Self { repo }
     }
 
+    /// Replaces custom fields; `operator` stamps updated_by/updated_at.
     pub async fn replace(
         &self,
         bug_id: &str,
         fields: &BTreeMap<String, String>,
+        operator: Option<&str>,
     ) -> Result<Bug, BugCustomFieldsError> {
         let fields = normalize_custom_fields(fields)?;
-        let mut bug = self.repo.get(bug_id).await?.ok_or(BugCustomFieldsError::BugNotFound)?;
-        self.repo.set_custom_fields(bug_id, &fields).await?;
-        bug.custom_fields = fields;
-        Ok(bug)
+        let bug = self.repo.get(bug_id).await?.ok_or(BugCustomFieldsError::BugNotFound)?;
+        self.repo.set_custom_fields(bug_id, &fields, operator).await?;
+        // Re-read so the response carries the stamped audit pair.
+        Ok(self.repo.get(bug_id).await?.unwrap_or(Bug { custom_fields: fields, ..bug }))
     }
 }
 
@@ -53,7 +55,7 @@ mod tests {
 
     async fn seed_bug(repo: &InMemoryBugRepository) -> String {
         CreateBugUseCase::new(Arc::new(repo.clone()))
-            .execute("p1", "boom", "NEW", None, &fields(&[("severity", "P1")]))
+            .execute("p1", "boom", "NEW", None, None, None, &fields(&[("severity", "P1")]))
             .await
             .expect("seed")
             .id
@@ -66,13 +68,15 @@ mod tests {
         let uc = BugCustomFieldsUseCase::new(Arc::new(repo.clone()));
 
         let bug = uc
-            .replace(&id, &fields(&[(" env ", "prod"), ("owner", "bob")]))
+            .replace(&id, &fields(&[(" env ", "prod"), ("owner", "bob")]), Some("alice"))
             .await
             .expect("replace");
         assert_eq!(bug.custom_fields, fields(&[("env", "prod"), ("owner", "bob")]));
+        // The mutation stamps the operator into the audit pair.
+        assert_eq!(bug.updated_by.as_deref(), Some("alice"));
         // Persisted in the repository (severity was replaced away).
         let uc2 = BugCustomFieldsUseCase::new(Arc::new(repo));
-        let cleared = uc2.replace(&id, &BTreeMap::new()).await.expect("clear");
+        let cleared = uc2.replace(&id, &BTreeMap::new(), None).await.expect("clear");
         assert!(cleared.custom_fields.is_empty());
     }
 
@@ -82,11 +86,11 @@ mod tests {
         let id = seed_bug(&repo).await;
         let uc = BugCustomFieldsUseCase::new(Arc::new(repo));
         assert_eq!(
-            uc.replace(&id, &fields(&[("  ", "v")])).await.unwrap_err(),
+            uc.replace(&id, &fields(&[("  ", "v")]), None).await.unwrap_err(),
             BugCustomFieldsError::Validation(BugError::EmptyCustomFieldKey)
         );
         assert_eq!(
-            uc.replace("ghost", &BTreeMap::new()).await.unwrap_err(),
+            uc.replace("ghost", &BTreeMap::new(), None).await.unwrap_err(),
             BugCustomFieldsError::BugNotFound
         );
     }

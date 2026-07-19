@@ -44,8 +44,8 @@ fn json_to_fields(v: &serde_json::Value) -> BTreeMap<String, String> {
         .unwrap_or_default()
 }
 
-const BUG_COLS: &str =
-    "id, project_id, title, status, deleted, created_at, created_by, custom_fields";
+const BUG_COLS: &str = "id, project_id, title, status, deleted, created_at, created_by, \
+     severity, handler, updated_by, updated_at::text AS updated_at, custom_fields";
 
 fn row_to_bug(row: &sqlx::postgres::PgRow) -> Result<Bug, RepoError> {
     let custom: serde_json::Value = row.try_get("custom_fields").map_err(map_err)?;
@@ -57,6 +57,10 @@ fn row_to_bug(row: &sqlx::postgres::PgRow) -> Result<Bug, RepoError> {
         deleted: row.try_get("deleted").map_err(map_err)?,
         created_at: row.try_get("created_at").map_err(map_err)?,
         created_by: row.try_get("created_by").map_err(map_err)?,
+        severity: row.try_get("severity").map_err(map_err)?,
+        handler: row.try_get("handler").map_err(map_err)?,
+        updated_by: row.try_get("updated_by").map_err(map_err)?,
+        updated_at: row.try_get("updated_at").map_err(map_err)?,
         custom_fields: json_to_fields(&custom),
     })
 }
@@ -101,15 +105,19 @@ impl BugRepository for PgBugRepository {
     }
 
     async fn insert(&self, new_bug: &NewBug, initial_status: &str) -> Result<Bug, RepoError> {
+        // updated_by/updated_at seed from the creator so the audit pair is never empty.
         let row = sqlx::query(&format!(
-            "INSERT INTO ms_bug (project_id, title, status, created_by, custom_fields) \
-             VALUES ($1, $2, $3, $4, $5) RETURNING {BUG_COLS}"
+            "INSERT INTO ms_bug (project_id, title, status, created_by, custom_fields, \
+             severity, handler, updated_by, updated_at) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $4, now()) RETURNING {BUG_COLS}"
         ))
         .bind(&new_bug.project_id)
         .bind(&new_bug.title)
         .bind(initial_status)
         .bind(&new_bug.created_by)
         .bind(fields_to_json(&new_bug.custom_fields))
+        .bind(&new_bug.severity)
+        .bind(&new_bug.handler)
         .fetch_one(&self.pool)
         .await
         .map_err(map_err)?;
@@ -139,27 +147,64 @@ impl BugRepository for PgBugRepository {
         row.as_ref().map(row_to_bug).transpose()
     }
 
-    async fn set_status(&self, id: &str, status: &str) -> Result<(), RepoError> {
-        sqlx::query("UPDATE ms_bug SET status = $2 WHERE id = $1")
-            .bind(id)
-            .bind(status)
-            .execute(&self.pool)
-            .await
-            .map_err(map_err)?;
+    async fn set_status(
+        &self,
+        id: &str,
+        status: &str,
+        operator: Option<&str>,
+    ) -> Result<(), RepoError> {
+        sqlx::query(
+            "UPDATE ms_bug SET status = $2, updated_by = $3, updated_at = now() WHERE id = $1",
+        )
+        .bind(id)
+        .bind(status)
+        .bind(operator)
+        .execute(&self.pool)
+        .await
+        .map_err(map_err)?;
         Ok(())
+    }
+
+    async fn update_meta(
+        &self,
+        id: &str,
+        title: &str,
+        severity: Option<&str>,
+        handler: Option<&str>,
+        operator: Option<&str>,
+    ) -> Result<Option<Bug>, RepoError> {
+        let row = sqlx::query(&format!(
+            "UPDATE ms_bug SET title = $2, severity = $3, handler = $4, \
+             updated_by = $5, updated_at = now() \
+             WHERE id = $1 AND deleted = false RETURNING {BUG_COLS}"
+        ))
+        .bind(id)
+        .bind(title)
+        .bind(severity)
+        .bind(handler)
+        .bind(operator)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(map_err)?;
+        row.as_ref().map(row_to_bug).transpose()
     }
 
     async fn set_custom_fields(
         &self,
         id: &str,
         fields: &BTreeMap<String, String>,
+        operator: Option<&str>,
     ) -> Result<(), RepoError> {
-        sqlx::query("UPDATE ms_bug SET custom_fields = $2 WHERE id = $1")
-            .bind(id)
-            .bind(fields_to_json(fields))
-            .execute(&self.pool)
-            .await
-            .map_err(map_err)?;
+        sqlx::query(
+            "UPDATE ms_bug SET custom_fields = $2, updated_by = $3, updated_at = now() \
+             WHERE id = $1",
+        )
+        .bind(id)
+        .bind(fields_to_json(fields))
+        .bind(operator)
+        .execute(&self.pool)
+        .await
+        .map_err(map_err)?;
         Ok(())
     }
 
@@ -283,29 +328,52 @@ mod tests {
         };
         let nb = NewBug::new("p1", "登录崩溃")
             .expect("valid")
+            .with_created_by(Some("alice"))
+            .with_severity(Some("P1".into()))
+            .with_handler(Some("bob".into()))
             .with_custom_fields(cf(&[("severity", "P0"), ("多选", "a,b")]));
         let bug = repo.insert(&nb, "NEW").await.expect("insert");
         let got = repo.get(&bug.id).await.expect("get").expect("some");
         assert_eq!(got.status, "NEW");
+        // First-class fields land; the audit pair seeds from the creator.
+        assert_eq!(got.severity.as_deref(), Some("P1"));
+        assert_eq!(got.handler.as_deref(), Some("bob"));
+        assert_eq!(got.updated_by.as_deref(), Some("alice"));
+        assert!(got.updated_at.is_some());
         // Custom fields read back as written.
         assert_eq!(got.custom_fields, cf(&[("severity", "P0"), ("多选", "a,b")]));
 
-        repo.set_status(&bug.id, "RESOLVED").await.expect("set");
-        assert_eq!(repo.get(&bug.id).await.expect("get").expect("some").status, "RESOLVED");
+        repo.set_status(&bug.id, "RESOLVED", Some("carol")).await.expect("set");
+        let after = repo.get(&bug.id).await.expect("get").expect("some");
+        assert_eq!(after.status, "RESOLVED");
+        assert_eq!(after.updated_by.as_deref(), Some("carol"));
+
+        // Meta update replaces severity/handler and stamps the operator.
+        let updated = repo
+            .update_meta(&bug.id, "登录崩溃(改)", Some("P0"), None, Some("dave"))
+            .await
+            .expect("meta")
+            .expect("some");
+        assert_eq!(updated.title, "登录崩溃(改)");
+        assert_eq!(updated.severity.as_deref(), Some("P0"));
+        assert_eq!(updated.handler, None);
+        assert_eq!(updated.updated_by.as_deref(), Some("dave"));
+        assert!(repo.update_meta("ghost", "x", None, None, None).await.expect("meta").is_none());
 
         // Full replacement; empty map clears all.
-        repo.set_custom_fields(&bug.id, &cf(&[("env", "prod")])).await.expect("set fields");
-        assert_eq!(
-            repo.get(&bug.id).await.expect("get").expect("some").custom_fields,
-            cf(&[("env", "prod")])
-        );
-        repo.set_custom_fields(&bug.id, &BTreeMap::new()).await.expect("clear fields");
+        repo.set_custom_fields(&bug.id, &cf(&[("env", "prod")]), Some("erin"))
+            .await
+            .expect("set fields");
+        let after = repo.get(&bug.id).await.expect("get").expect("some");
+        assert_eq!(after.custom_fields, cf(&[("env", "prod")]));
+        assert_eq!(after.updated_by.as_deref(), Some("erin"));
+        repo.set_custom_fields(&bug.id, &BTreeMap::new(), None).await.expect("clear fields");
         assert!(repo.get(&bug.id).await.expect("get").expect("some").custom_fields.is_empty());
 
         let listed = repo.list("p1").await.expect("list");
         assert_eq!(listed.len(), 1);
         assert_eq!(listed[0].id, bug.id);
-        assert_eq!(listed[0].title, "登录崩溃");
+        assert_eq!(listed[0].title, "登录崩溃(改)");
         assert!(repo.list("other").await.expect("list").is_empty());
 
         assert!(repo.get("ghost").await.expect("get").is_none());

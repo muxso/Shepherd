@@ -33,23 +33,49 @@ fn row_to_plan(row: &sqlx::postgres::PgRow) -> Result<Plan, RepoError> {
         group_id: row.try_get("group_id").map_err(map_err)?,
         archived: row.try_get("archived").map_err(map_err)?,
         created_at_ms: row.try_get("created_at_ms").map_err(map_err)?,
+        created_by: row.try_get("created_by").map_err(map_err)?,
+    })
+}
+
+fn row_to_meta(row: &sqlx::postgres::PgRow, plan: &Plan) -> Result<PlanMeta, RepoError> {
+    let tags_json: serde_json::Value = row.try_get("tags").map_err(map_err)?;
+    let tags = tags_json
+        .as_array()
+        .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+        .unwrap_or_default();
+    Ok(PlanMeta {
+        description: row.try_get("description").map_err(map_err)?,
+        tags,
+        module_id: row.try_get("module_id").map_err(map_err)?,
+        group_id: plan.group_id.clone(),
+        start_at_ms: row.try_get("start_at_ms").map_err(map_err)?,
+        end_at_ms: row.try_get("end_at_ms").map_err(map_err)?,
+        allow_duplicate_cases: row.try_get("allow_duplicate_cases").map_err(map_err)?,
+        auto_update_status: row.try_get("auto_update_status").map_err(map_err)?,
+        pass_threshold: row.try_get("pass_threshold").map_err(map_err)?,
     })
 }
 
 const PLAN_COLS: &str =
-    "id, project_id, name, plan_type, group_id, archived, (extract(epoch from created_at)*1000)::bigint AS created_at_ms";
+    "id, project_id, name, plan_type, group_id, archived, (extract(epoch from created_at)*1000)::bigint AS created_at_ms, created_by";
+
+const META_COLS: &str = "description, tags, module_id, \
+     (extract(epoch from start_at)*1000)::bigint AS start_at_ms, \
+     (extract(epoch from end_at)*1000)::bigint AS end_at_ms, \
+     allow_duplicate_cases, auto_update_status, pass_threshold";
 
 #[async_trait]
 impl PlanRepository for PgPlanRepository {
     async fn insert(&self, new_plan: &NewPlan) -> Result<Plan, RepoError> {
-        let row = sqlx::query(
-            "INSERT INTO ms_test_plan (project_id, name, plan_type, group_id) \
-             VALUES ($1, $2, $3, $4) RETURNING id, project_id, name, plan_type, group_id, archived, (extract(epoch from created_at)*1000)::bigint AS created_at_ms",
-        )
+        let row = sqlx::query(&format!(
+            "INSERT INTO ms_test_plan (project_id, name, plan_type, group_id, created_by) \
+             VALUES ($1, $2, $3, $4, $5) RETURNING {PLAN_COLS}"
+        ))
         .bind(&new_plan.project_id)
         .bind(&new_plan.name)
         .bind(new_plan.plan_type.as_str())
         .bind(&new_plan.group_id)
+        .bind(&new_plan.created_by)
         .fetch_one(&self.pool)
         .await
         .map_err(map_err)?;
@@ -183,15 +209,32 @@ impl PlanRepository for PgPlanRepository {
             .collect()
     }
 
-    async fn list(&self, project_id: &str) -> Result<Vec<Plan>, RepoError> {
+    async fn list(&self, project_id: &str) -> Result<Vec<(Plan, PlanMeta)>, RepoError> {
         let rows = sqlx::query(&format!(
-            "SELECT {PLAN_COLS} FROM ms_test_plan WHERE project_id = $1 AND NOT archived ORDER BY name, id"
+            "SELECT {PLAN_COLS}, {META_COLS} FROM ms_test_plan \
+             WHERE project_id = $1 AND NOT archived ORDER BY created_at DESC, id"
         ))
         .bind(project_id)
         .fetch_all(&self.pool)
         .await
         .map_err(map_err)?;
-        rows.iter().map(row_to_plan).collect()
+        rows.iter()
+            .map(|row| {
+                let plan = row_to_plan(row)?;
+                let meta = row_to_meta(row, &plan)?;
+                Ok((plan, meta))
+            })
+            .collect()
+    }
+
+    async fn set_archived(&self, id: &str, archived: bool) -> Result<bool, RepoError> {
+        let res = sqlx::query("UPDATE ms_test_plan SET archived = $2 WHERE id = $1")
+            .bind(id)
+            .bind(archived)
+            .execute(&self.pool)
+            .await
+            .map_err(map_err)?;
+        Ok(res.rows_affected() > 0)
     }
 
     async fn rename(&self, id: &str, name: &str) -> Result<bool, RepoError> {
@@ -224,11 +267,7 @@ impl PlanRepository for PgPlanRepository {
         id: &str,
     ) -> Result<Option<(Plan, PlanMeta, Option<serde_json::Value>)>, RepoError> {
         let row = sqlx::query(&format!(
-            "SELECT {PLAN_COLS}, description, tags, module_id, \
-             (extract(epoch from start_at)*1000)::bigint AS start_at_ms, \
-             (extract(epoch from end_at)*1000)::bigint AS end_at_ms, \
-             allow_duplicate_cases, auto_update_status, pass_threshold, planning \
-             FROM ms_test_plan WHERE id = $1"
+            "SELECT {PLAN_COLS}, {META_COLS}, planning FROM ms_test_plan WHERE id = $1"
         ))
         .bind(id)
         .fetch_optional(&self.pool)
@@ -236,22 +275,7 @@ impl PlanRepository for PgPlanRepository {
         .map_err(map_err)?;
         let Some(row) = row else { return Ok(None) };
         let plan = row_to_plan(&row)?;
-        let tags_json: serde_json::Value = row.try_get("tags").map_err(map_err)?;
-        let tags = tags_json
-            .as_array()
-            .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
-            .unwrap_or_default();
-        let meta = PlanMeta {
-            description: row.try_get("description").map_err(map_err)?,
-            tags,
-            module_id: row.try_get("module_id").map_err(map_err)?,
-            group_id: plan.group_id.clone(),
-            start_at_ms: row.try_get("start_at_ms").map_err(map_err)?,
-            end_at_ms: row.try_get("end_at_ms").map_err(map_err)?,
-            allow_duplicate_cases: row.try_get("allow_duplicate_cases").map_err(map_err)?,
-            auto_update_status: row.try_get("auto_update_status").map_err(map_err)?,
-            pass_threshold: row.try_get("pass_threshold").map_err(map_err)?,
-        };
+        let meta = row_to_meta(&row, &plan)?;
         let planning: Option<serde_json::Value> = row.try_get("planning").map_err(map_err)?;
         Ok(Some((plan, meta, planning)))
     }

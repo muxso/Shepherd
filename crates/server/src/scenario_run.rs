@@ -1,4 +1,7 @@
-use std::sync::Arc;
+use std::future::Future;
+use std::pin::Pin;
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use axum::{
     extract::{FromRef, Path, State},
@@ -15,10 +18,17 @@ use api_scenario::application::{
     CompileError, CompileScenarioUseCase, RecordScenarioExecutionUseCase,
 };
 use api_scenario::domain::PlanStep;
+use api_test::adapters::local::CaseSpecSource;
 use api_test::adapters::plan::{Condition, Leaf, PlanExecutor, PlanNode};
 use api_test::adapters::PgBatchReport;
 use api_test::ports::EnvironmentPort;
+use pool_runner::protocol::{WireEnv, WireNode};
 use webauth::{AuthUser, SessionStore};
+
+use crate::pool_runner_ws::{PoolHub, RemoteOutcome, RunCtx};
+
+/// Remote runs that outlive this window are finalized as ERROR.
+const REMOTE_RUN_TIMEOUT: Duration = Duration::from_secs(900);
 
 #[derive(Clone)]
 struct RunState {
@@ -37,6 +47,10 @@ pub struct ScenarioRunner {
     pub reports: PgBatchReport,
     pub recorder: RecordScenarioExecutionUseCase,
     pub pool: migrate::PgPool,
+    /// Case spec source for resolving CASE steps into self-contained wire plans.
+    pub specs: Arc<dyn CaseSpecSource>,
+    /// Pool-runner hub; None disables remote dispatch and live events (plan runs).
+    pub hub: Option<Arc<PoolHub>>,
 }
 
 pub enum RunError {
@@ -50,7 +64,23 @@ pub struct RunOutcome {
     pub report_id: String,
     pub status: String,
     pub case_count: usize,
+    /// Where the run executed remotely; None = in-process (local).
+    pub executed_on: Option<ExecutedOn>,
 }
+
+/// Remote execution location surfaced in run responses (null = local).
+#[derive(Debug, Clone, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ExecutedOn {
+    pub pool_id: String,
+    pub pool_name: String,
+    /// Assigned runner's display name; empty while the run sat queued.
+    pub runner: String,
+}
+
+/// Shared slot: begin() records the dispatch target, the run future clears it
+/// when the run falls back to local execution.
+pub type ExecutedOnSlot = Arc<Mutex<Option<ExecutedOn>>>;
 
 impl ScenarioRunner {
     /// Compiles a scenario into executable plan nodes (+ static leaf count).
@@ -99,13 +129,68 @@ impl ScenarioRunner {
         .filter(|s| !s.trim().is_empty())
     }
 
-    pub async fn run(
+    /// Display name of a live pool (empty when unknown).
+    async fn pool_name_of(&self, pool_id: &str) -> String {
+        sqlx::query_scalar::<_, String>(
+            "SELECT name FROM ms_resource_pool WHERE id = $1 AND NOT deleted",
+        )
+        .bind(pool_id)
+        .fetch_optional(&self.pool)
+        .await
+        .ok()
+        .flatten()
+        .unwrap_or_default()
+    }
+
+    /// Picks a pool for a run without an explicit poolId: enabled live pools
+    /// applicable to the project's organization (all-org or listed) that have
+    /// online runners, preferring the most spare capacity. None = run locally.
+    pub async fn auto_pool(&self, project_id: &str) -> Option<(String, String)> {
+        let hub = self.hub.as_ref()?;
+        let detail = hub.online_detail();
+        if detail.is_empty() {
+            return None;
+        }
+        let rows = sqlx::query_as::<_, (String, String)>(
+            "SELECT p.id, p.name FROM ms_resource_pool p \
+             WHERE p.enabled AND NOT p.deleted \
+               AND (p.all_org OR p.org_ids ? \
+                    (SELECT organization_id FROM ms_project WHERE id = $1))",
+        )
+        .bind(project_id)
+        .fetch_all(&self.pool)
+        .await
+        .ok()?;
+        let spare = |id: &str| {
+            detail
+                .get(id)
+                .map(|rs| {
+                    rs.iter().map(|r| r.max_concurrent.saturating_sub(r.in_flight)).sum::<usize>()
+                })
+                .unwrap_or(0)
+        };
+        let (id, name) = rows
+            .into_iter()
+            .filter(|(id, _)| detail.contains_key(id))
+            .max_by_key(|(id, _)| spare(id))?;
+        tracing::info!(pool = %id, %name, project = %project_id, "auto-selected resource pool for run");
+        Some((id, name))
+    }
+
+    /// Creates the report and returns a completion future without awaiting it,
+    /// so the HTTP layer can either await (sync) or spawn it (async + live WS).
+    /// Routing: an explicit pool wins; without one an applicable pool with
+    /// online runners is auto-picked. A pool with a live runner gets the
+    /// compiled plan over WS; no runner (or unresolvable plan) falls back to
+    /// in-process execution.
+    pub async fn begin(
         &self,
         scenario_id: &str,
         project_id: &str,
         environment_id: Option<&str>,
         stop_on_failure: bool,
-    ) -> Result<RunOutcome, RunError> {
+        pool_id: Option<&str>,
+    ) -> Result<StartedRun, RunError> {
         let (nodes, count) = self.prepare(scenario_id).await?;
         let env = self.resolve_env(environment_id).await?;
         let report_id = self
@@ -113,21 +198,264 @@ impl ScenarioRunner {
             .create("SERIAL", count as i32)
             .await
             .map_err(|_| RunError::Internal("create report error"))?;
-        let all_pass = match self.executor.run(&report_id, &nodes, &env, stop_on_failure).await {
-            Ok(p) => p,
-            Err(_) => {
-                let _ = self.reports.set_status(&report_id, "ERROR").await;
-                return Err(RunError::Internal("execution error"));
-            }
+        let step_ids = leaf_ids(&nodes);
+        if let Some(hub) = &self.hub {
+            hub.events().publish(
+                &report_id,
+                serde_json::json!({
+                    "type": "runStarted", "runId": report_id,
+                    "scenarioId": scenario_id, "steps": step_ids,
+                }),
+            );
+        }
+
+        // Effective pool: explicit request wins; otherwise auto-pick.
+        let picked = match pool_id.filter(|p| !p.trim().is_empty()) {
+            Some(pid) => Some((pid.to_string(), self.pool_name_of(pid).await)),
+            None => self.auto_pool(project_id).await,
         };
-        let status = if all_pass { "SUCCESS" } else { "ERROR" };
-        let _ = self.reports.set_status(&report_id, status).await;
+        let executed_on: ExecutedOnSlot = Arc::new(Mutex::new(None));
+        let remote = match (&picked, &self.hub) {
+            (Some((pid, pname)), Some(hub)) if hub.has_runner(pid) => {
+                match plan_to_wire(&nodes, self.specs.as_ref()).await {
+                    Ok(wire) => hub
+                        .dispatch(
+                            pid,
+                            &report_id,
+                            wire,
+                            WireEnv {
+                                base_url: env.base_url.clone(),
+                                headers: env.headers.clone(),
+                                variables: env.variables.clone(),
+                            },
+                            stop_on_failure,
+                            RunCtx {
+                                scenario_id: scenario_id.to_string(),
+                                project_id: project_id.to_string(),
+                                case_count: count as i32,
+                                report_id: report_id.clone(),
+                                finalize_report: true,
+                            },
+                        )
+                        .map(|(done, runner)| {
+                            *executed_on
+                                .lock()
+                                .unwrap_or_else(std::sync::PoisonError::into_inner) =
+                                Some(ExecutedOn {
+                                    pool_id: pid.clone(),
+                                    pool_name: pname.clone(),
+                                    runner: runner.unwrap_or_default(),
+                                });
+                            done
+                        }),
+                    // Unresolvable plan (missing case spec): run locally, which
+                    // records the precise per-step error.
+                    Err(()) => None,
+                }
+            }
+            _ => None,
+        };
+
+        let this = self.clone();
+        let sid = scenario_id.to_string();
+        let proj = project_id.to_string();
+        let rid = report_id.clone();
+        let executed_slot = executed_on.clone();
+        let fut: Pin<Box<dyn Future<Output = String> + Send>> = Box::pin(async move {
+            if let Some(done) = remote {
+                match tokio::time::timeout(REMOTE_RUN_TIMEOUT, done).await {
+                    Ok(Ok(RemoteOutcome::Finished(status))) => return status,
+                    // Pool lost every runner while the run sat in the queue:
+                    // fall through to local execution.
+                    Ok(Ok(RemoteOutcome::Fallback)) => {
+                        *executed_slot.lock().unwrap_or_else(std::sync::PoisonError::into_inner) =
+                            None;
+                    }
+                    // Timeout or hub dropped the waiter: finalize as error.
+                    _ => {
+                        if let Some(hub) = &this.hub {
+                            hub.abort_run(&rid).await;
+                        }
+                        return "ERROR".to_string();
+                    }
+                }
+            }
+            let status = match this.executor.run(&rid, &nodes, &env, stop_on_failure).await {
+                Ok(true) => "SUCCESS",
+                _ => "ERROR",
+            };
+            let _ = this.reports.set_status(&rid, status).await;
+            let _ = this.recorder.execute(&sid, &proj, status, count as i32, Some(&rid)).await;
+            if let Some(hub) = &this.hub {
+                hub.events().publish(
+                    &rid,
+                    serde_json::json!({"type": "runComplete", "runId": rid, "status": status}),
+                );
+            }
+            status.to_string()
+        });
+        Ok(StartedRun { report_id, step_ids, case_count: count, executed_on, fut })
+    }
+
+    /// Executes one member scenario of a union batch into the shared report.
+    /// Routed to the pool when it has live runners (unique dispatch run id,
+    /// results persisted under the shared report id); otherwise, or on queue
+    /// fallback, executed in-process. Records the scenario execution either way.
+    #[allow(clippy::too_many_arguments)]
+    async fn run_union_member(
+        &self,
+        report_id: &str,
+        scenario_id: &str,
+        project_id: &str,
+        nodes: &[PlanNode],
+        count: usize,
+        env: &api_test::domain::ResolvedEnv,
+        pool_id: Option<&str>,
+    ) -> String {
+        if let (Some(pid), Some(hub)) = (pool_id, &self.hub) {
+            if hub.has_runner(pid) {
+                if let Ok(wire) = plan_to_wire(nodes, self.specs.as_ref()).await {
+                    let run_id = uuid::Uuid::new_v4().to_string();
+                    let remote = hub.dispatch(
+                        pid,
+                        &run_id,
+                        wire,
+                        WireEnv {
+                            base_url: env.base_url.clone(),
+                            headers: env.headers.clone(),
+                            variables: env.variables.clone(),
+                        },
+                        false,
+                        RunCtx {
+                            scenario_id: scenario_id.to_string(),
+                            project_id: project_id.to_string(),
+                            case_count: count as i32,
+                            report_id: report_id.to_string(),
+                            finalize_report: false,
+                        },
+                    );
+                    if let Some((done, _runner)) = remote {
+                        match tokio::time::timeout(REMOTE_RUN_TIMEOUT, done).await {
+                            Ok(Ok(RemoteOutcome::Finished(status))) => return status,
+                            Ok(Ok(RemoteOutcome::Fallback)) => {}
+                            _ => {
+                                hub.abort_run(&run_id).await;
+                                return "ERROR".to_string();
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        let status = match self.executor.run(report_id, nodes, env, false).await {
+            Ok(true) => "SUCCESS",
+            _ => "ERROR",
+        };
         let _ = self
             .recorder
-            .execute(scenario_id, project_id, status, count as i32, Some(&report_id))
+            .execute(scenario_id, project_id, status, count as i32, Some(report_id))
             .await;
-        Ok(RunOutcome { report_id, status: status.to_string(), case_count: count })
+        status.to_string()
     }
+
+    pub async fn run(
+        &self,
+        scenario_id: &str,
+        project_id: &str,
+        environment_id: Option<&str>,
+        stop_on_failure: bool,
+        pool_id: Option<&str>,
+    ) -> Result<RunOutcome, RunError> {
+        let started =
+            self.begin(scenario_id, project_id, environment_id, stop_on_failure, pool_id).await?;
+        let status = started.fut.await;
+        // Read after completion: the future clears the slot on local fallback.
+        let executed_on =
+            started.executed_on.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clone();
+        Ok(RunOutcome {
+            report_id: started.report_id,
+            status,
+            case_count: started.case_count,
+            executed_on,
+        })
+    }
+}
+
+pub struct StartedRun {
+    pub report_id: String,
+    pub step_ids: Vec<String>,
+    pub case_count: usize,
+    /// Dispatch target; cleared by the future when execution falls back local.
+    pub executed_on: ExecutedOnSlot,
+    /// Resolves to the final report status; report/record writes happen inside.
+    pub fut: Pin<Box<dyn Future<Output = String> + Send>>,
+}
+
+/// Ordered leaf identities (loop bodies once), matching executor result keys.
+fn leaf_ids(nodes: &[PlanNode]) -> Vec<String> {
+    let mut out = Vec::new();
+    collect_leaf_ids(nodes, &mut out);
+    out
+}
+
+fn collect_leaf_ids(nodes: &[PlanNode], out: &mut Vec<String>) {
+    for n in nodes {
+        match n {
+            PlanNode::Leaf(Leaf::Case { case_id }) => out.push(case_id.clone()),
+            PlanNode::Leaf(Leaf::Request { label, .. }) => out.push(label.clone()),
+            PlanNode::Loop { body, .. }
+            | PlanNode::If { body, .. }
+            | PlanNode::Once { body, .. } => collect_leaf_ids(body, out),
+            PlanNode::Timer { .. } => {}
+        }
+    }
+}
+
+/// Executable plan → self-contained wire plan: CASE leaves are resolved to full
+/// request specs so the runner needs no database. Err = some spec is missing
+/// or unreadable; the caller falls back to local execution.
+fn plan_to_wire<'a>(
+    nodes: &'a [PlanNode],
+    specs: &'a dyn CaseSpecSource,
+) -> Pin<Box<dyn Future<Output = Result<Vec<WireNode>, ()>> + Send + 'a>> {
+    Box::pin(async move {
+        let mut out = Vec::with_capacity(nodes.len());
+        for n in nodes {
+            out.push(match n {
+                PlanNode::Leaf(Leaf::Case { case_id }) => {
+                    let spec = specs.spec_of(case_id).await.map_err(|_| ())?.ok_or(())?;
+                    WireNode::Step {
+                        id: case_id.clone(),
+                        request: spec.request,
+                        assertions: spec.assertions,
+                        processors: spec.processors,
+                    }
+                }
+                PlanNode::Leaf(Leaf::Request { label, request, assertions, processors }) => {
+                    WireNode::Step {
+                        id: label.clone(),
+                        request: request.clone(),
+                        assertions: assertions.clone(),
+                        processors: processors.clone(),
+                    }
+                }
+                PlanNode::Loop { times, body } => {
+                    WireNode::Loop { times: *times, body: plan_to_wire(body, specs).await? }
+                }
+                PlanNode::If { condition, body } => WireNode::If {
+                    variable: condition.variable.clone(),
+                    operator: condition.condition,
+                    value: condition.value.clone(),
+                    body: plan_to_wire(body, specs).await?,
+                },
+                PlanNode::Once { id, body } => {
+                    WireNode::Once { id: *id, body: plan_to_wire(body, specs).await? }
+                }
+                PlanNode::Timer { ms } => WireNode::Timer { ms: *ms },
+            });
+        }
+        Ok(out)
+    })
 }
 
 impl FromRef<RunState> for Arc<dyn SessionStore> {
@@ -220,8 +548,8 @@ async fn batch_run_scenarios(
     // Pool gate: when picked it must exist and be enabled; its max_concurrency
     // bounds parallel execution.
     let mut concurrency = 4usize;
-    let pool_id = b.pool_id.as_deref().filter(|s| !s.trim().is_empty());
-    if let Some(pid) = pool_id {
+    let explicit_pool = b.pool_id.as_deref().filter(|s| !s.trim().is_empty());
+    if let Some(pid) = explicit_pool {
         let row = sqlx::query(
             "SELECT enabled, max_concurrency FROM ms_resource_pool WHERE id = $1 AND NOT deleted",
         )
@@ -242,6 +570,13 @@ async fn batch_run_scenarios(
             Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
         }
     }
+    // No explicit pool: auto-pick once for the whole batch (None = local).
+    let auto_pool = match explicit_pool {
+        Some(_) => None,
+        None => st.runner.auto_pool(&b.project_id).await,
+    };
+    let pool_owned = explicit_pool.map(str::to_string).or(auto_pool.map(|(id, _)| id));
+    let pool_id = pool_owned.as_deref();
     let override_env = b.environment_id.as_deref();
 
     if b.union_report {
@@ -280,38 +615,87 @@ async fn batch_run_scenarios(
             .execute(&st.runner.pool)
             .await;
         let mut success = 0usize;
-        let mut stopped = false;
-        for (sid, nodes, count) in &prepared {
-            if stopped {
+        let prepared_len = prepared.len();
+        let pool_live = pool_id
+            .map(|p| st.runner.hub.as_ref().is_some_and(|h| h.has_runner(p)))
+            .unwrap_or(false);
+        if pool_live && !b.stop_on_fail && prepared_len > 1 {
+            // Members run in parallel through the pool, bounded by the batch
+            // concurrency; runner caps + server-side queueing serialize the
+            // overflow. All results land in the one shared report.
+            let sem = Arc::new(tokio::sync::Semaphore::new(concurrency));
+            let mut handles = Vec::new();
+            for (sid, nodes, count) in prepared {
+                let runner = st.runner.clone();
+                let sem = sem.clone();
+                let project = b.project_id.clone();
+                let override_env = override_env.map(str::to_string);
+                let report = report_id.clone();
+                let pid = pool_id.map(str::to_string);
+                let sid2 = sid.clone();
+                handles.push((
+                    sid,
+                    tokio::spawn(async move {
+                        let _permit = sem.acquire().await;
+                        let env_id = effective_env(&runner, override_env.as_deref(), &sid2).await;
+                        let env = runner.resolve_env(env_id.as_deref()).await.unwrap_or_default();
+                        runner
+                            .run_union_member(
+                                &report,
+                                &sid2,
+                                &project,
+                                &nodes,
+                                count,
+                                &env,
+                                pid.as_deref(),
+                            )
+                            .await
+                    }),
+                ));
+            }
+            for (sid, h) in handles {
+                let status = h.await.unwrap_or_else(|_| "ERROR".to_string());
+                if status == "SUCCESS" {
+                    success += 1;
+                }
+                results.push(BatchRunItem {
+                    scenario_id: sid,
+                    report_id: Some(report_id.clone()),
+                    status,
+                });
+            }
+        } else {
+            // Serial members (stop_on_fail, single member, or no live runner);
+            // each still routes through the pool when one is available.
+            let mut stopped = false;
+            for (sid, nodes, count) in &prepared {
+                if stopped {
+                    results.push(BatchRunItem {
+                        scenario_id: sid.clone(),
+                        report_id: Some(report_id.clone()),
+                        status: "SKIPPED".to_string(),
+                    });
+                    continue;
+                }
+                let env_id = effective_env(&st.runner, override_env, sid).await;
+                let env = st.runner.resolve_env(env_id.as_deref()).await.unwrap_or_default();
+                let status = st
+                    .runner
+                    .run_union_member(&report_id, sid, &b.project_id, nodes, *count, &env, pool_id)
+                    .await;
+                if status == "SUCCESS" {
+                    success += 1;
+                } else if b.stop_on_fail {
+                    stopped = true;
+                }
                 results.push(BatchRunItem {
                     scenario_id: sid.clone(),
                     report_id: Some(report_id.clone()),
-                    status: "SKIPPED".to_string(),
+                    status,
                 });
-                continue;
             }
-            let env_id = effective_env(&st.runner, override_env, sid).await;
-            let env = st.runner.resolve_env(env_id.as_deref()).await.unwrap_or_default();
-            let pass =
-                st.runner.executor.run(&report_id, nodes, &env, false).await.unwrap_or(false);
-            let status = if pass { "SUCCESS" } else { "ERROR" };
-            if pass {
-                success += 1;
-            } else if b.stop_on_fail {
-                stopped = true;
-            }
-            let _ = st
-                .runner
-                .recorder
-                .execute(sid, &b.project_id, status, *count as i32, Some(&report_id))
-                .await;
-            results.push(BatchRunItem {
-                scenario_id: sid.clone(),
-                report_id: Some(report_id.clone()),
-                status: status.to_string(),
-            });
         }
-        let overall = if success == prepared.len() { "SUCCESS" } else { "ERROR" };
+        let overall = if success == prepared_len { "SUCCESS" } else { "ERROR" };
         let _ = st.reports.set_status(&report_id, overall).await;
         return Json(BatchRunResponse {
             status: overall.to_string(),
@@ -336,10 +720,12 @@ async fn batch_run_scenarios(
             let sid = sid.clone();
             let project = b.project_id.clone();
             let override_env = override_env.map(|s| s.to_string());
+            let pool = pool_id.map(str::to_string);
             handles.push(tokio::spawn(async move {
                 let _permit = sem.acquire().await;
                 let env_id = effective_env(&runner, override_env.as_deref(), &sid).await;
-                let out = runner.run(&sid, &project, env_id.as_deref(), false).await;
+                let out =
+                    runner.run(&sid, &project, env_id.as_deref(), false, pool.as_deref()).await;
                 (sid, out)
             }));
         }
@@ -375,7 +761,7 @@ async fn batch_run_scenarios(
                 continue;
             }
             let env_id = effective_env(&st.runner, override_env, sid).await;
-            match st.runner.run(sid, &b.project_id, env_id.as_deref(), false).await {
+            match st.runner.run(sid, &b.project_id, env_id.as_deref(), false, pool_id).await {
                 Ok(o) => {
                     if o.status == "SUCCESS" {
                         success += 1;
@@ -420,6 +806,13 @@ struct RunScenarioBody {
     environment_id: Option<String>,
     #[serde(default = "default_strategy")]
     failure_strategy: String,
+    /// Resource pool routing: a pool with a connected runner executes remotely.
+    #[serde(default)]
+    pool_id: Option<String>,
+    /// true = return immediately with status RUNNING; progress streams over
+    /// /api/run-events/ws?runId={reportId}.
+    #[serde(default)]
+    async_run: bool,
 }
 
 fn default_strategy() -> String {
@@ -535,8 +928,14 @@ async fn scenario_report(
 #[serde(rename_all = "camelCase")]
 struct RunScenarioResponse {
     report_id: String,
+    /// SUCCESS | ERROR, or RUNNING for asyncRun.
     status: String,
     case_count: usize,
+    /// Ordered step identities for live progress rendering.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    steps: Vec<String>,
+    /// Remote execution location (explicit or auto-picked pool); null = local.
+    executed_on: Option<ExecutedOn>,
 }
 
 fn op_to_condition(op: &str) -> MatchCondition {
@@ -679,7 +1078,55 @@ async fn run_scenario(
         return (StatusCode::FORBIDDEN, "permission denied").into_response();
     }
     let stop_on_failure = req.failure_strategy.eq_ignore_ascii_case("STOP");
-    match st.runner.run(&id, &req.project_id, req.environment_id.as_deref(), stop_on_failure).await
+    if req.async_run {
+        // Live mode: report id now, execution in the background, events over WS.
+        return match st
+            .runner
+            .begin(
+                &id,
+                &req.project_id,
+                req.environment_id.as_deref(),
+                stop_on_failure,
+                req.pool_id.as_deref(),
+            )
+            .await
+        {
+            Ok(started) => {
+                let report_id = started.report_id.clone();
+                let steps = started.step_ids.clone();
+                let case_count = started.case_count;
+                // Dispatch decision at start; the run may still fall back local.
+                let executed_on = started
+                    .executed_on
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .clone();
+                tokio::spawn(started.fut);
+                (
+                    StatusCode::OK,
+                    Json(RunScenarioResponse {
+                        report_id,
+                        status: "RUNNING".to_string(),
+                        case_count,
+                        steps,
+                        executed_on,
+                    }),
+                )
+                    .into_response()
+            }
+            Err(e) => run_error_response(e),
+        };
+    }
+    match st
+        .runner
+        .run(
+            &id,
+            &req.project_id,
+            req.environment_id.as_deref(),
+            stop_on_failure,
+            req.pool_id.as_deref(),
+        )
+        .await
     {
         Ok(o) => (
             StatusCode::OK,
@@ -687,24 +1134,32 @@ async fn run_scenario(
                 report_id: o.report_id,
                 status: o.status,
                 case_count: o.case_count,
+                steps: Vec::new(),
+                executed_on: o.executed_on,
             }),
         )
             .into_response(),
-        Err(RunError::NotFound) => (StatusCode::NOT_FOUND, "scenario not found").into_response(),
-        Err(RunError::CycleOrDepth) => {
+        Err(e) => run_error_response(e),
+    }
+}
+
+fn run_error_response(e: RunError) -> Response {
+    match e {
+        RunError::NotFound => (StatusCode::NOT_FOUND, "scenario not found").into_response(),
+        RunError::CycleOrDepth => {
             (StatusCode::CONFLICT, "scenario reference cycle or too deep").into_response()
         }
-        Err(RunError::NoSteps) => {
+        RunError::NoSteps => {
             (StatusCode::BAD_REQUEST, "scenario has no runnable steps").into_response()
         }
-        Err(RunError::Internal(msg)) => (StatusCode::INTERNAL_SERVER_ERROR, msg).into_response(),
+        RunError::Internal(msg) => (StatusCode::INTERNAL_SERVER_ERROR, msg).into_response(),
     }
 }
 
 #[derive(OpenApi)]
 #[openapi(
     paths(run_scenario, batch_run_scenarios),
-    components(schemas(RunScenarioBody, RunScenarioResponse, BatchRunBody, BatchRunResponse, BatchRunItem)),
+    components(schemas(RunScenarioBody, RunScenarioResponse, BatchRunBody, BatchRunResponse, BatchRunItem, ExecutedOn)),
     tags((name = "api-scenario", description = "场景"))
 )]
 struct ApiDoc;

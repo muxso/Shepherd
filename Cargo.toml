@@ -32,6 +32,7 @@ members = [
     "crates/case-management",
     "crates/runner-agent",
     "crates/runner",
+    "crates/pool-runner",
     "crates/probe",
     "crates/shepherd-cli",
     "crates/follow",

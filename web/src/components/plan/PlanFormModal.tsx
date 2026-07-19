@@ -4,10 +4,10 @@ import { QuestionCircleOutlined } from '@ant-design/icons'
 import type { Dayjs } from 'dayjs'
 import EditDrawer from '../EditDrawer'
 import { message } from '../../feedback'
-import { api, ApiError, userStore } from '../../api'
+import { api, ApiError } from '../../api'
 import { useI18n } from '../../i18n'
-import { regAdd, type RegItem } from '../../registry'
-import { groupIdOf, isGroup, joinTags, moduleOf, planRegUpdate, tagsOf, type PlanModule } from './planLocal'
+import type { RegItem } from '../../registry'
+import { groupIdOf, isGroup, moduleOf, tagsOf, type PlanModule } from './planLocal'
 
 type PlanFormValues = {
   name: string
@@ -25,8 +25,8 @@ type PlanFormValues = {
 // Test plan / plan group form.
 // Create (drawer): full field set — name / description / create-to (module|group) /
 // dates / tags / more-settings (dup cases, auto status, pass threshold); persists the
-// extras via PUT /test-plan/{id} after the create call. Edit: local registry only
-// (label/module/group/tags), keeping list order.
+// extras via PUT /test-plan/{id} after the create call. Edit: PUT of
+// name/module/group/tags; the caller re-fetches the list.
 export function PlanForm({
   mode,
   editing,
@@ -43,8 +43,8 @@ export function PlanForm({
   projectId: string
   modules: PlanModule[]
   groups: RegItem[]
-  /** list = updated registry; created = newly created plan (not set for groups); stay = keep the form open (save-and-continue). */
-  onSaved: (list: RegItem[], created?: { id: string; name: string }, stay?: boolean) => void
+  /** created = newly created plan (not set for groups); stay = keep the form open (save-and-continue). The caller re-fetches the list. */
+  onSaved: (created?: { id: string; name: string }, stay?: boolean) => void
   /** Cancel handler for the drawer/tab footer. */
   onCancel?: () => void
 }) {
@@ -68,44 +68,42 @@ export function PlanForm({
   const doSubmit = async (stay: boolean) => {
     const v = await form.validateFields()
     setSaving(true)
-    const meta: Record<string, string> = {
-      module: (v.createTo !== 'group' ? v.module : '') || '',
-      tags: joinTags(v.tags || []),
-      ...(mode === 'plan' ? { groupId: (v.createTo === 'group' ? v.groupId : '') || '' } : {}),
-    }
     try {
       if (editing) {
-        onSaved(planRegUpdate(projectId, editing.id, { label: v.name, meta }))
+        // Edit form shows both module and group selects; persist what it displays.
+        await api.updatePlan(editing.id, {
+          name: v.name,
+          tags: v.tags || [],
+          moduleId: v.module || '',
+          ...(mode === 'plan' ? { groupId: v.groupId || '' } : {}),
+        })
+        onSaved()
         message.success(t('plan.saved', '已保存'))
       } else {
         const p = await api.createPlan({ projectId, name: v.name, ...(mode === 'group' ? { type: 'GROUP' } : {}) })
-        if (mode === 'plan') {
-          // Persist the extended fields; the plan row already exists if this fails.
-          try {
-            await api.updatePlan(p.id, {
-              description: v.description || '',
-              tags: v.tags || [],
-              moduleId: meta.module,
-              groupId: meta.groupId || '',
-              startAt: v.range?.[0] ? v.range[0].valueOf() : 0,
-              endAt: v.range?.[1] ? v.range[1].valueOf() : 0,
-              allowDuplicateCases: !!v.allowDuplicateCases,
-              autoUpdateStatus: !!v.autoUpdateStatus,
-              passThreshold: v.passThreshold ?? 100,
-            })
-          } catch (e) {
-            if (e instanceof ApiError && e.status === 403) message.warning(t('plan.updatePermHint', '扩展设置未保存(权限不足),重新登录后可在「编辑」中补充'))
-          }
+        // Persist the extended fields; the plan row already exists if this fails.
+        try {
+          await api.updatePlan(p.id, {
+            tags: v.tags || [],
+            moduleId: (v.createTo !== 'group' ? v.module : '') || '',
+            ...(mode === 'plan'
+              ? {
+                  description: v.description || '',
+                  groupId: (v.createTo === 'group' ? v.groupId : '') || '',
+                  startAt: v.range?.[0] ? v.range[0].valueOf() : 0,
+                  endAt: v.range?.[1] ? v.range[1].valueOf() : 0,
+                  allowDuplicateCases: !!v.allowDuplicateCases,
+                  autoUpdateStatus: !!v.autoUpdateStatus,
+                  passThreshold: v.passThreshold ?? 100,
+                }
+              : {}),
+          })
+        } catch (e) {
+          if (e instanceof ApiError && e.status === 403) message.warning(t('plan.updatePermHint', '扩展设置未保存(权限不足),重新登录后可在「编辑」中补充'))
         }
-        const list = regAdd('plan', projectId, {
-          id: p.id,
-          label: v.name,
-          createdAt: Date.now(),
-          meta: { createdBy: userStore.get(), ...(mode === 'group' ? { kind: 'group' } : {}), ...meta },
-        })
         message.success(mode === 'group' ? t('plan.groupCreated', '计划组已创建') : t('plan.created', '计划已创建'))
         if (stay) form.resetFields()
-        onSaved(list, mode === 'plan' && !stay ? { id: p.id, name: v.name } : undefined, stay)
+        onSaved(mode === 'plan' && !stay ? { id: p.id, name: v.name } : undefined, stay)
       }
     } catch (e) {
       if (e instanceof Error && 'errorFields' in e) return
@@ -250,7 +248,7 @@ export default function PlanFormModal({
   modules: PlanModule[]
   groups: RegItem[]
   onClose: () => void
-  onSaved: (list: RegItem[], created?: { id: string; name: string }, stay?: boolean) => void
+  onSaved: (created?: { id: string; name: string }, stay?: boolean) => void
 }) {
   const { t } = useI18n()
   const title = editing

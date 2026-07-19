@@ -50,6 +50,11 @@ impl InMemoryBugRepository {
     }
 }
 
+/// Synthetic monotonic timestamp text: sorts like the pg timestamptz text form.
+fn tick(seq: u64) -> String {
+    format!("1970-01-01 00:00:00.{seq:06}+00")
+}
+
 #[async_trait]
 impl BugRepository for InMemoryBugRepository {
     async fn status_flow(&self, project_id: &str) -> Result<StatusFlowGraph, RepoError> {
@@ -75,6 +80,10 @@ impl BugRepository for InMemoryBugRepository {
             deleted: false,
             created_at: seq as i64,
             created_by: new_bug.created_by.clone(),
+            severity: new_bug.severity.clone(),
+            handler: new_bug.handler.clone(),
+            updated_by: new_bug.created_by.clone(),
+            updated_at: Some(tick(seq)),
             custom_fields: new_bug.custom_fields.clone(),
         };
         state.order.push(bug.id.clone());
@@ -104,24 +113,57 @@ impl BugRepository for InMemoryBugRepository {
             .cloned())
     }
 
-    async fn set_status(&self, id: &str, status: &str) -> Result<(), RepoError> {
-        if let Some(b) =
-            self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner).bugs.get_mut(id)
-        {
+    async fn set_status(
+        &self,
+        id: &str,
+        status: &str,
+        operator: Option<&str>,
+    ) -> Result<(), RepoError> {
+        let mut state = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        state.seq += 1;
+        let seq = state.seq;
+        if let Some(b) = state.bugs.get_mut(id) {
             b.status = status.to_string();
+            b.updated_by = operator.map(str::to_string);
+            b.updated_at = Some(tick(seq));
         }
         Ok(())
+    }
+
+    async fn update_meta(
+        &self,
+        id: &str,
+        title: &str,
+        severity: Option<&str>,
+        handler: Option<&str>,
+        operator: Option<&str>,
+    ) -> Result<Option<Bug>, RepoError> {
+        let mut state = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        state.seq += 1;
+        let seq = state.seq;
+        Ok(state.bugs.get_mut(id).map(|b| {
+            b.title = title.to_string();
+            b.severity = severity.map(str::to_string);
+            b.handler = handler.map(str::to_string);
+            b.updated_by = operator.map(str::to_string);
+            b.updated_at = Some(tick(seq));
+            b.clone()
+        }))
     }
 
     async fn set_custom_fields(
         &self,
         id: &str,
         fields: &BTreeMap<String, String>,
+        operator: Option<&str>,
     ) -> Result<(), RepoError> {
-        if let Some(b) =
-            self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner).bugs.get_mut(id)
-        {
+        let mut state = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        state.seq += 1;
+        let seq = state.seq;
+        if let Some(b) = state.bugs.get_mut(id) {
             b.custom_fields = fields.clone();
+            b.updated_by = operator.map(str::to_string);
+            b.updated_at = Some(tick(seq));
         }
         Ok(())
     }

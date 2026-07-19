@@ -7,8 +7,8 @@ import { api, type Bug, type CaseReviewSummary, type FunctionalCase, type PlanSt
 import { useApp } from '../context'
 import { useI18n } from '../i18n'
 import { SelectProjectEmpty } from './Page'
-import { regList } from '../registry'
-import { isGroup } from './plan/planLocal'
+import type { RegItem } from '../registry'
+import { fetchPlanItems, isGroup } from './plan/planLocal'
 import { funcCaseStatusLabel, priorityColor } from './tags'
 
 // Shared body for the 待办 / 关注 workbench pages: stacked full-width section
@@ -17,8 +17,7 @@ import { funcCaseStatusLabel, priorityColor } from './tags'
 //   todo   → three sections (plans / reviews / bugs), pending items only
 //   follow → six sections (plans / functional cases / reviews / API cases /
 //            API scenarios / bugs), followed items only; plans via localStorage
-//            set, bugs and functional cases via /follow/mine. Reviews and API
-//            cases/scenarios have no follow support yet → empty tables.
+//            set, the rest via /follow/mine per entity type.
 
 type SectionKey = 'plan' | 'funcCase' | 'review' | 'apiCase' | 'apiScenario' | 'bug'
 
@@ -41,6 +40,7 @@ interface PlanRow {
 // tables stay empty); typed so the columns compile.
 interface ApiCaseRow {
   id: string
+  displayId: string
   name: string
   priority: string
   status: string
@@ -120,13 +120,15 @@ export default function WorkbenchSections({ mode }: { mode: 'todo' | 'follow' })
   const [funcRows, setFuncRows] = useState<FunctionalCase[]>([])
   const [reviews, setReviews] = useState<CaseReviewSummary[]>([])
   const [bugRows, setBugRows] = useState<Bug[]>([])
+  const [apiCaseRows, setApiCaseRows] = useState<ApiCaseRow[]>([])
+  const [scenarioRows, setScenarioRows] = useState<ApiCaseRow[]>([])
 
   const load = useCallback(async () => {
     if (!pid) return
     setLoading(true)
     try {
       const loadPlans = async () => {
-        let plans = regList('plan', pid)
+        let plans = await fetchPlanItems(pid).catch(() => [] as RegItem[])
         if (mode === 'follow') {
           const fs = planFollowSet()
           plans = plans.filter((p) => fs.has(p.id))
@@ -168,7 +170,15 @@ export default function WorkbenchSections({ mode }: { mode: 'todo' | 'follow' })
         setFuncRows(cases.filter((c) => idSet.has(c.id)))
       }
       const loadReviews = async () => {
-        if (mode === 'follow') { setReviews([]); return } // no follow support for reviews yet
+        if (mode === 'follow') {
+          const [rv, ids] = await Promise.all([
+            api.caseReviews(pid).catch(() => [] as CaseReviewSummary[]),
+            api.myFollows(pid, 'CASE_REVIEW').then((r) => r.entityIds || []).catch(() => [] as string[]),
+          ])
+          const idSet = new Set(ids)
+          setReviews(rv.filter((r) => idSet.has(r.id)))
+          return
+        }
         const rv = await api.caseReviews(pid).catch(() => [] as CaseReviewSummary[])
         setReviews(rv.filter((r) => r.passed < r.total || r.total === 0))
       }
@@ -182,7 +192,49 @@ export default function WorkbenchSections({ mode }: { mode: 'todo' | 'follow' })
           setBugRows(bugs.filter((b) => ['NEW', 'REOPENED'].includes((b.status || '').toUpperCase())))
         }
       }
-      await Promise.all([loadPlans(), loadFuncCases(), loadReviews(), loadBugs()])
+      const loadApiCases = async () => {
+        if (mode !== 'follow') { setApiCaseRows([]); return }
+        const [cases, ids] = await Promise.all([
+          api.projectCasesAll(pid).catch(() => []),
+          api.myFollows(pid, 'API_CASE').then((r) => r.entityIds || []).catch(() => [] as string[]),
+        ])
+        const idSet = new Set(ids)
+        setApiCaseRows(
+          cases.filter((c) => idSet.has(c.id)).map((c) => ({
+            id: c.id,
+            displayId: shortId(c.id),
+            name: c.name,
+            priority: c.priority || 'P3',
+            status: c.status || '-',
+            execResult: '-',
+            env: '-',
+            createdBy: '-',
+            createdAt: 0,
+          })),
+        )
+      }
+      const loadScenarios = async () => {
+        if (mode !== 'follow') { setScenarioRows([]); return }
+        const [scns, ids] = await Promise.all([
+          api.scenarios(pid).then((ss) => (Array.isArray(ss) ? ss : [])).catch(() => []),
+          api.myFollows(pid, 'SCENARIO').then((r) => r.entityIds || []).catch(() => [] as string[]),
+        ])
+        const idSet = new Set(ids)
+        setScenarioRows(
+          scns.filter((s) => idSet.has(s.id)).map((s) => ({
+            id: s.id,
+            displayId: s.num ? String(s.num) : shortId(s.id),
+            name: s.name,
+            priority: String(s.meta?.priority || s.meta?.level || 'P3'),
+            status: s.status || '-',
+            execResult: s.lastResult || 'none',
+            env: '-',
+            createdBy: s.createdBy || '-',
+            createdAt: s.createdAt ? new Date(s.createdAt).getTime() : 0,
+          })),
+        )
+      }
+      await Promise.all([loadPlans(), loadFuncCases(), loadReviews(), loadBugs(), loadApiCases(), loadScenarios()])
     } finally {
       setLoading(false)
     }
@@ -327,8 +379,8 @@ export default function WorkbenchSections({ mode }: { mode: 'todo' | 'follow' })
     },
   ]
 
-  // API case / scenario sections have no follow wiring yet; the tables render
-  // empty but keep the reference column layout.
+  // API case / scenario sections: followed items via /follow (API_CASE / SCENARIO);
+  // env/exec columns show '-' where the list APIs lack the field.
   const API_STATUS_FILTERS = ['进行中', '已完成', '已废弃'].map((s) => ({ text: s, value: s }))
   const EXEC_FILTERS = [
     { text: t('status.success', '成功'), value: 'SUCCESS' },
@@ -336,7 +388,13 @@ export default function WorkbenchSections({ mode }: { mode: 'todo' | 'follow' })
     { text: t('home.wb.notExecuted', '未执行'), value: 'none' },
   ]
   const apiCaseCols: ColumnsType<ApiCaseRow> = [
-    { title: 'ID', dataIndex: 'id', width: 120, sorter: (a, b) => a.id.localeCompare(b.id) },
+    {
+      title: 'ID',
+      dataIndex: 'displayId',
+      width: 120,
+      sorter: (a, b) => a.displayId.localeCompare(b.displayId),
+      render: (v: string, r) => <span title={r.id} style={{ color: 'var(--brand)', fontFamily: MONO }}>{v}</span>,
+    },
     { title: t('home.wb.caseName', '用例名称'), dataIndex: 'name', ellipsis: true, sorter: (a, b) => a.name.localeCompare(b.name) },
     { title: t('home.wb.caseLevel', '用例等级'), dataIndex: 'priority', width: 110, filters: PRIORITY_FILTERS, onFilter: (v, r) => r.priority === v, render: prioTag },
     {
@@ -359,7 +417,13 @@ export default function WorkbenchSections({ mode }: { mode: 'todo' | 'follow' })
     },
   ]
   const scenarioCols: ColumnsType<ApiCaseRow> = [
-    { title: 'ID', dataIndex: 'id', width: 120, sorter: (a, b) => a.id.localeCompare(b.id) },
+    {
+      title: 'ID',
+      dataIndex: 'displayId',
+      width: 120,
+      sorter: (a, b) => a.displayId.localeCompare(b.displayId),
+      render: (v: string, r) => <span title={r.id} style={{ color: 'var(--brand)', fontFamily: MONO }}>{v}</span>,
+    },
     { title: t('home.wb.scenarioName', '场景名称'), dataIndex: 'name', ellipsis: true, sorter: (a, b) => a.name.localeCompare(b.name) },
     {
       title: t('home.wb.scenarioLevel', '场景等级'),
@@ -400,13 +464,12 @@ export default function WorkbenchSections({ mode }: { mode: 'todo' | 'follow' })
     },
     {
       title: t('home.wb.reviewName', '评审名称'),
-      dataIndex: 'id',
+      dataIndex: 'name',
       key: 'name',
       ellipsis: true,
-      // Reviews have no name field; show a derived label.
-      render: (id: string) => (
-        <span style={{ fontFamily: MONO }}>{t('home.wb.reviewPrefix', '评审')} {shortId(id)}</span>
-      ),
+      // Unnamed legacy reviews fall back to a derived label.
+      render: (v: string, r) =>
+        v || <span style={{ fontFamily: MONO }}>{t('home.wb.reviewPrefix', '评审')} {shortId(r.id)}</span>,
     },
     {
       title: t('home.wb.reviewStatus', '评审状态'),
@@ -441,7 +504,7 @@ export default function WorkbenchSections({ mode }: { mode: 'todo' | 'follow' })
           ? <Tag color="blue" style={{ marginInlineEnd: 0 }}>{t('home.wb.singleReview', '单人评审')}</Tag>
           : <Tag color="purple" style={{ marginInlineEnd: 0 }}>{t('home.wb.multiReview', '多人评审')}</Tag>,
     },
-    { title: t('home.wb.createdBy', '创建人'), key: 'createdBy', width: 120, render: () => '-' },
+    { title: t('home.wb.createdBy', '创建人'), dataIndex: 'createdBy', width: 120, ellipsis: true, render: (v?: string | null) => v || '-' },
     {
       title: t('home.wb.createdAt', '创建时间'),
       dataIndex: 'createdAt',
@@ -459,7 +522,14 @@ export default function WorkbenchSections({ mode }: { mode: 'todo' | 'follow' })
       render: (id: string) => <span title={id} style={{ color: 'var(--brand)', fontFamily: MONO }}>{shortId(id)}</span>,
     },
     { title: t('home.wb.bugName', '缺陷名称'), dataIndex: 'title', ellipsis: true, render: (v: string, r) => v || r.id },
-    { title: t('home.wb.severity', '严重程度'), key: 'severity', width: 100, render: () => '-' },
+    {
+      title: t('home.wb.severity', '严重程度'),
+      dataIndex: 'severity',
+      width: 100,
+      filters: PRIORITY_FILTERS,
+      onFilter: (v, r) => r.severity === v,
+      render: (v?: string | null) => (v ? prioTag(v) : '-'),
+    },
     {
       title: t('home.wb.status', '状态'),
       dataIndex: 'status',
@@ -470,7 +540,7 @@ export default function WorkbenchSections({ mode }: { mode: 'todo' | 'follow' })
         <Tag color={bugColor(s)} style={{ marginInlineEnd: 0 }}>{t(`bug.st.${s}`, BUG_ZH[s] || s)}</Tag>
       ),
     },
-    { title: t('home.wb.handler', '处理人'), key: 'handler', width: 100, render: () => '-' },
+    { title: t('home.wb.handler', '处理人'), dataIndex: 'handler', width: 100, ellipsis: true, render: (v?: string | null) => v || '-' },
     { title: t('home.wb.createdBy', '创建人'), dataIndex: 'createdBy', width: 120, ellipsis: true, render: (v: string | null) => v || '-' },
     {
       title: t('home.wb.createdAt', '创建时间'),
@@ -479,8 +549,14 @@ export default function WorkbenchSections({ mode }: { mode: 'todo' | 'follow' })
       sorter: (a, b) => (a.createdAt || 0) - (b.createdAt || 0),
       render: (v?: number) => fmtTime(v),
     },
-    { title: t('home.wb.updatedBy', '更新人'), key: 'updatedBy', width: 100, render: () => '-' },
-    { title: t('home.wb.updatedAt', '更新时间'), key: 'updatedAt', width: 110, render: () => '-' },
+    { title: t('home.wb.updatedBy', '更新人'), dataIndex: 'updatedBy', width: 100, ellipsis: true, render: (v?: string | null) => v || '-' },
+    {
+      title: t('home.wb.updatedAt', '更新时间'),
+      dataIndex: 'updatedAt',
+      width: 175,
+      sorter: (a, b) => new Date(a.updatedAt || 0).getTime() - new Date(b.updatedAt || 0).getTime(),
+      render: (v?: string | null) => fmtTime(v),
+    },
   ]
 
   const sectionCard = (title: string, table: ReactNode, extra?: ReactNode) => (
@@ -617,9 +693,11 @@ export default function WorkbenchSections({ mode }: { mode: 'todo' | 'follow' })
           <Table
             rowKey="id"
             size="small"
+            loading={loading}
             columns={apiCaseCols}
-            dataSource={[] as ApiCaseRow[]}
+            dataSource={apiCaseRows}
             pagination={pager}
+            onRow={() => ({ onClick: () => nav('/api/definition'), style: { cursor: 'pointer' } })}
           />,
         )}
       {mode === 'follow' && visible.includes('apiScenario') &&
@@ -628,9 +706,11 @@ export default function WorkbenchSections({ mode }: { mode: 'todo' | 'follow' })
           <Table
             rowKey="id"
             size="small"
+            loading={loading}
             columns={scenarioCols}
-            dataSource={[] as ApiCaseRow[]}
+            dataSource={scenarioRows}
             pagination={pager}
+            onRow={(r) => ({ onClick: () => nav(`/api/scenario?scenario=${encodeURIComponent(r.id)}`), style: { cursor: 'pointer' } })}
           />,
         )}
       {visible.includes('bug') &&

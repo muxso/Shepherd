@@ -6,6 +6,7 @@ import EditDrawer from '../EditDrawer'
 import ResizableDrawer from '../ResizableDrawer'
 import { PlayCircleOutlined, FileMarkdownOutlined, FileTextOutlined, LinkOutlined, ClockCircleOutlined } from '@ant-design/icons'
 import { api, ApiError, type ApiCase, type PlanCase, type PlanStats, type PlanStepResult, type Scenario } from '../../api'
+import AutoPoolIndicator from '../AutoPoolIndicator'
 import { outcomeColor } from '../tags'
 import Donut from '../Donut'
 import { fmtDurationMs } from '../TimingBreakdown'
@@ -48,6 +49,7 @@ export default function PlanDetail({ planId, name, projectId }: { planId: string
   const run = async () => {
     setRunning(true)
     try {
+      // Scenario entries auto-route to an applicable pool with online runners.
       const r = await api.runPlan(planId)
       message.success(`${t('plan.runDone', '执行完成')}:${r.executed}/${r.total}`)
       load()
@@ -107,6 +109,7 @@ export default function PlanDetail({ planId, name, projectId }: { planId: string
       toolbar={
         <Space size={8} wrap>
           <Button icon={<LinkOutlined />} size="small" onClick={() => setLinkOpen(true)}>{t('plan.linkCase', '挂用例')}</Button>
+          <AutoPoolIndicator projectId={projectId} />
           <Button type="primary" icon={<PlayCircleOutlined />} size="small" loading={running} onClick={run}>{t('plan.runPlan', '执行计划')}</Button>
           <Button icon={<ClockCircleOutlined />} size="small" onClick={schedule}>{t('plan.schedule', '定时')}</Button>
           <Button icon={<FileTextOutlined />} size="small" onClick={() => setReportOpen(true)}>{t('plan.viewReport', '查看报告')}</Button>

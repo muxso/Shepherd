@@ -113,6 +113,11 @@ pub trait ReviewRepository: Send + Sync {
         Ok(Vec::new())
     }
 
+    /// Soft delete: hides the review from list/get; verdict history stays intact.
+    async fn delete_review(&self, _review_id: &str) -> Result<(), RepoError> {
+        Err(RepoError::Backend("delete_review unsupported".into()))
+    }
+
     async fn get_review(&self, _review_id: &str) -> Result<ReviewDetail, RepoError> {
         Err(RepoError::NotFound)
     }

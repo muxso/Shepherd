@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type Key } from 'react'
-import { Button, Card, Checkbox, Col, Empty, Input, Popover, Row, Segmented, Select, Space, Statistic, Table, Tabs, Tag, Tooltip } from 'antd'
-import { FilterOutlined, ReloadOutlined, SettingOutlined } from '@ant-design/icons'
+import { Button, Card, Checkbox, Col, Dropdown, Empty, Input, Popover, Row, Segmented, Select, Space, Statistic, Table, Tabs, Tag, Tooltip } from 'antd'
+import { FilterOutlined, MoreOutlined, ReloadOutlined, SettingOutlined, StarFilled, StarOutlined } from '@ant-design/icons'
 import ResizableDrawer from '../components/ResizableDrawer'
 import { useNavigate } from 'react-router-dom'
 import { message, modal } from '../feedback'
@@ -130,6 +130,7 @@ function CaseReviewList() {
   const [pageSize, setPageSize] = useState(50)
   const [form, setForm] = useState<{ editing?: CaseReviewSummary } | null>(null)
   const [detailId, setDetailId] = useState<string | null>(null)
+  const [followedIds, setFollowedIds] = useState<Set<string>>(new Set())
   const caseName = (id: string) => cases.find((c) => c.id === id)?.name || id.slice(0, 8)
 
   const load = async () => {
@@ -139,6 +140,10 @@ function CaseReviewList() {
       const [rs, cs] = await Promise.all([api.caseReviews(projectId), api.functionalCases(projectId).catch(() => [])])
       setItems(Array.isArray(rs) ? rs : [])
       setCases(Array.isArray(cs) ? cs : [])
+      // Followed review ids for the star action; failure just leaves stars empty.
+      api.myFollows(projectId, 'CASE_REVIEW')
+        .then((r) => setFollowedIds(new Set(r.entityIds)))
+        .catch(() => {})
     } catch (e) {
       message.error(e instanceof ApiError ? e.message : t('review.caseLoadFailed', '加载评审失败'))
     } finally {
@@ -196,6 +201,48 @@ function CaseReviewList() {
         </span>
       </Tooltip>
     )
+  }
+
+  // Optimistic star toggle; revert and warn on failure (same pattern as Scenarios).
+  const toggleFollow = async (r: CaseReviewSummary) => {
+    if (!projectId) return
+    const was = followedIds.has(r.id)
+    const apply = (on: boolean) =>
+      setFollowedIds((prev) => {
+        const n = new Set(prev)
+        if (on) n.add(r.id)
+        else n.delete(r.id)
+        return n
+      })
+    apply(!was)
+    const b = { projectId, entityType: 'CASE_REVIEW', entityId: r.id }
+    try {
+      const st = was ? await api.unfollow(b) : await api.follow(b)
+      apply(st.following)
+      message.success(st.following ? t('follow.followed', '已关注') : t('follow.unfollowed', '已取消关注'))
+    } catch {
+      apply(was)
+      message.error(t('follow.failed', '关注操作失败'))
+    }
+  }
+  const removeReview = (r: CaseReviewSummary) => {
+    modal.confirm({
+      title: t('review.deleteConfirmTitle', '删除评审?'),
+      content: t('review.deleteConfirmBody', '将删除该评审(用例与评审历史不受影响)。'),
+      okType: 'danger',
+      okText: t('a.delete', '删除'),
+      cancelText: t('a.cancel', '取消'),
+      onOk: async () => {
+        try {
+          await api.deleteCaseReview(r.id)
+          message.success(t('review.deleted', '已删除'))
+          if (detailId === r.id) setDetailId(null)
+          load()
+        } catch (e) {
+          message.error(e instanceof ApiError ? e.message : t('review.deleteFailed', '删除失败'))
+        }
+      },
+    })
   }
 
   const dash = <span style={{ color: 'var(--text-3)' }}>-</span>
@@ -307,11 +354,23 @@ function CaseReviewList() {
         </Popover>
       </span>
     ),
-    width: 100,
+    width: 130,
     fixed: 'right' as const,
     render: (_v, r) => (
-      // No backend delete endpoint for reviews yet, so the action column only offers edit.
-      <Button type="link" size="small" style={{ paddingInline: 0 }} onClick={() => setForm({ editing: r })}>{t('a.edit', '编辑')}</Button>
+      <Space size={4} onClick={(e) => e.stopPropagation()}>
+        <Tooltip title={followedIds.has(r.id) ? t('follow.unfollow', '取消关注') : t('follow.follow', '关注')}>
+          <Button
+            type="text"
+            size="small"
+            icon={followedIds.has(r.id) ? <StarFilled style={{ color: 'var(--warning, #ff7d00)' }} /> : <StarOutlined />}
+            onClick={() => toggleFollow(r)}
+          />
+        </Tooltip>
+        <Button type="link" size="small" style={{ paddingInline: 0 }} onClick={() => setForm({ editing: r })}>{t('a.edit', '编辑')}</Button>
+        <Dropdown menu={{ items: [{ key: 'del', label: t('a.delete', '删除'), danger: true }], onClick: ({ key }) => { if (key === 'del') removeReview(r) } }}>
+          <Button type="link" size="small" icon={<MoreOutlined />} />
+        </Dropdown>
+      </Space>
     ),
   }
   const columns = [...dataCols.filter((c) => !hiddenCols.includes(c.key)), actionCol]

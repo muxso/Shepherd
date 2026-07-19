@@ -28,12 +28,14 @@ fn parse_status(s: &str) -> Result<ReviewStatus, RepoError> {
 #[async_trait]
 impl ReviewRepository for PgReviewRepository {
     async fn review_setting(&self, review_id: &str) -> Result<ReviewSetting, RepoError> {
-        let row = sqlx::query("SELECT pass_rule, reviewer_count FROM ms_case_review WHERE id = $1")
-            .bind(review_id)
-            .fetch_optional(&self.pool)
-            .await
-            .map_err(map_err)?
-            .ok_or(RepoError::NotFound)?;
+        let row = sqlx::query(
+            "SELECT pass_rule, reviewer_count FROM ms_case_review WHERE id = $1 AND NOT deleted",
+        )
+        .bind(review_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(map_err)?
+        .ok_or(RepoError::NotFound)?;
 
         let rule_raw: String = row.try_get("pass_rule").map_err(map_err)?;
         let rule = PassRule::parse(&rule_raw)
@@ -174,6 +176,19 @@ impl ReviewRepository for PgReviewRepository {
         .execute(&self.pool)
         .await
         .map_err(map_err)?;
+        if res.rows_affected() == 0 {
+            return Err(RepoError::NotFound);
+        }
+        Ok(())
+    }
+
+    async fn delete_review(&self, review_id: &str) -> Result<(), RepoError> {
+        let res =
+            sqlx::query("UPDATE ms_case_review SET deleted = true WHERE id = $1 AND NOT deleted")
+                .bind(review_id)
+                .execute(&self.pool)
+                .await
+                .map_err(map_err)?;
         if res.rows_affected() == 0 {
             return Err(RepoError::NotFound);
         }

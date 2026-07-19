@@ -4,7 +4,7 @@ use std::sync::Arc;
 use crate::application::{
     BugCustomFieldsError, BugCustomFieldsUseCase, BugFollowerError, BugFollowersUseCase,
     BugRelationError, BugRelationsUseCase, ChangeBugStatusError, ChangeBugStatusUseCase,
-    CreateBugError, CreateBugUseCase, ListBugsUseCase,
+    CreateBugError, CreateBugUseCase, ListBugsUseCase, UpdateBugMetaError, UpdateBugMetaUseCase,
 };
 use crate::domain::{Bug, BugError, BugRelation};
 use axum::{
@@ -26,6 +26,7 @@ struct BugState {
     followers: BugFollowersUseCase,
     relations: BugRelationsUseCase,
     custom_fields: BugCustomFieldsUseCase,
+    update: UpdateBugMetaUseCase,
     sessions: Arc<dyn SessionStore>,
 }
 
@@ -45,8 +46,10 @@ pub fn router(
 ) -> Router {
     // Built here from the create use case's repository so callers' signatures stay unchanged.
     let custom_fields = BugCustomFieldsUseCase::new(create.repo());
+    let update = UpdateBugMetaUseCase::new(create.repo());
     Router::new()
         .route("/bug", post(create_bug).get(list_bugs))
+        .route("/bug/{id}", put(update_bug))
         .route("/bug/{id}/status", post(change_status))
         .route("/bug/{id}/custom-fields", put(set_custom_fields))
         .route("/bug/{id}/followers", post(follow_bug).get(list_followers))
@@ -60,6 +63,7 @@ pub fn router(
             followers,
             relations,
             custom_fields,
+            update,
             sessions,
         })
 }
@@ -74,6 +78,18 @@ struct BugResponse {
     created_at: i64,
     #[serde(skip_serializing_if = "Option::is_none")]
     created_by: Option<String>,
+    /// Severity level P0..P3 (P0 highest).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    severity: Option<String>,
+    /// Handler user id.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    handler: Option<String>,
+    /// Last mutator's user id (stamped on every mutation).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    updated_by: Option<String>,
+    /// Last mutation time (timestamptz text).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    updated_at: Option<String>,
     /// Custom field values, key → string value; field definitions live in the project
     /// template, multi-select values are comma-joined.
     custom_fields: BTreeMap<String, String>,
@@ -88,6 +104,10 @@ impl From<Bug> for BugResponse {
             status: b.status,
             created_at: b.created_at,
             created_by: b.created_by,
+            severity: b.severity,
+            handler: b.handler,
+            updated_by: b.updated_by,
+            updated_at: b.updated_at,
             custom_fields: b.custom_fields,
         }
     }
@@ -99,6 +119,10 @@ struct CreateBugRequest {
     project_id: String,
     title: String,
     initial_status: String,
+    /// Severity level P0..P3 (optional).
+    severity: Option<String>,
+    /// Handler user id (optional).
+    handler: Option<String>,
     /// Custom field values, key → string value (max 32 keys, key ≤ 64 chars, value ≤ 2000 chars).
     #[serde(default)]
     custom_fields: BTreeMap<String, String>,
@@ -120,6 +144,8 @@ async fn create_bug(
             &req.title,
             &req.initial_status,
             Some(&user.user_id),
+            req.severity.as_deref(),
+            req.handler.as_deref(),
             &req.custom_fields,
         )
         .await
@@ -178,7 +204,7 @@ async fn change_status(
     if !user.can("BUG", "UPDATE") {
         return (StatusCode::FORBIDDEN, "permission denied").into_response();
     }
-    match st.change.execute(&id, &req.status).await {
+    match st.change.execute(&id, &req.status, Some(&user.user_id)).await {
         Ok(b) => (StatusCode::OK, Json(BugResponse::from(b))).into_response(),
         Err(ChangeBugStatusError::BugNotFound) => {
             (StatusCode::NOT_FOUND, "bug not found").into_response()
@@ -190,6 +216,52 @@ async fn change_status(
             (StatusCode::BAD_REQUEST, "invalid target status").into_response()
         }
         Err(ChangeBugStatusError::Repo(_)) => {
+            (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response()
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+struct UpdateBugRequest {
+    /// New title; absent/blank keeps the current one.
+    title: Option<String>,
+    /// Severity P0..P3; absent clears.
+    severity: Option<String>,
+    /// Handler user id; absent clears.
+    handler: Option<String>,
+}
+
+/// Updates title/severity/handler and stamps updated_by/updated_at with the caller.
+#[utoipa::path(put, path = "/bug/{id}", tag = "bug", params(("id" = String, Path)), request_body = UpdateBugRequest, responses((status = 200, body = BugResponse), (status = 400), (status = 403), (status = 404)), security(("bearer" = [])))]
+async fn update_bug(
+    user: AuthUser,
+    State(st): State<BugState>,
+    Path(id): Path<String>,
+    Json(req): Json<UpdateBugRequest>,
+) -> Response {
+    if !user.can("BUG", "UPDATE") {
+        return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
+    match st
+        .update
+        .execute(
+            &id,
+            req.title.as_deref(),
+            req.severity.as_deref(),
+            req.handler.as_deref(),
+            Some(&user.user_id),
+        )
+        .await
+    {
+        Ok(b) => (StatusCode::OK, Json(BugResponse::from(b))).into_response(),
+        Err(UpdateBugMetaError::BugNotFound) => {
+            (StatusCode::NOT_FOUND, "bug not found").into_response()
+        }
+        Err(UpdateBugMetaError::Validation(_)) => {
+            (StatusCode::BAD_REQUEST, "invalid bug payload").into_response()
+        }
+        Err(UpdateBugMetaError::Repo(_)) => {
             (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response()
         }
     }
@@ -215,7 +287,7 @@ async fn set_custom_fields(
     if !user.can("BUG", "UPDATE") {
         return (StatusCode::FORBIDDEN, "permission denied").into_response();
     }
-    match st.custom_fields.replace(&id, &req.custom_fields).await {
+    match st.custom_fields.replace(&id, &req.custom_fields, Some(&user.user_id)).await {
         Ok(b) => (StatusCode::OK, Json(BugResponse::from(b))).into_response(),
         Err(BugCustomFieldsError::BugNotFound) => {
             (StatusCode::NOT_FOUND, "bug not found").into_response()
@@ -387,7 +459,7 @@ async fn unlink_relation(
 }
 
 #[derive(OpenApi)]
-#[openapi(paths(create_bug, list_bugs, change_status, set_custom_fields, list_followers, follow_bug, unfollow_bug, list_relations, link_relation, unlink_relation), components(schemas(CreateBugRequest, ChangeStatusRequest, SetCustomFieldsRequest, BugResponse, FollowRequest, FollowersResponse, LinkRelationRequest, RelationItem, RelationsResponse)), tags((name = "bug", description = "缺陷管理")))]
+#[openapi(paths(create_bug, list_bugs, update_bug, change_status, set_custom_fields, list_followers, follow_bug, unfollow_bug, list_relations, link_relation, unlink_relation), components(schemas(CreateBugRequest, UpdateBugRequest, ChangeStatusRequest, SetCustomFieldsRequest, BugResponse, FollowRequest, FollowersResponse, LinkRelationRequest, RelationItem, RelationsResponse)), tags((name = "bug", description = "缺陷管理")))]
 struct ApiDoc;
 pub fn openapi() -> utoipa::openapi::OpenApi {
     ApiDoc::openapi()
@@ -465,6 +537,126 @@ mod tests {
         let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.expect("body");
         let v: serde_json::Value = serde_json::from_slice(&bytes).expect("json");
         assert_eq!(v["status"], "RESOLVED");
+        // Status change stamps the caller into the audit pair.
+        assert_eq!(v["updatedBy"], "admin");
+        assert!(v["updatedAt"].is_string());
+    }
+
+    #[tokio::test]
+    async fn create_carries_severity_and_handler() {
+        let (app, t) = app().await;
+        let resp = app
+            .clone()
+            .oneshot(post(
+                "/bug",
+                r#"{"projectId":"p1","title":"boom","initialStatus":"NEW","severity":"P1","handler":"bob"}"#,
+                Some(&t),
+            ))
+            .await
+            .expect("resp");
+        assert_eq!(resp.status(), StatusCode::CREATED);
+        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.expect("body");
+        let v: serde_json::Value = serde_json::from_slice(&bytes).expect("json");
+        assert_eq!(v["severity"], "P1");
+        assert_eq!(v["handler"], "bob");
+        assert_eq!(v["updatedBy"], "admin");
+        assert!(v["updatedAt"].is_string());
+
+        // List returns the same fields.
+        let resp = app.oneshot(get("/bug?projectId=p1", Some(&t))).await.expect("resp");
+        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.expect("body");
+        let v: serde_json::Value = serde_json::from_slice(&bytes).expect("json");
+        assert_eq!(v[0]["severity"], "P1");
+        assert_eq!(v[0]["handler"], "bob");
+        assert_eq!(v[0]["updatedBy"], "admin");
+    }
+
+    #[tokio::test]
+    async fn create_with_invalid_severity_400() {
+        let (app, t) = app().await;
+        let resp = app
+            .oneshot(post(
+                "/bug",
+                r#"{"projectId":"p1","title":"boom","initialStatus":"NEW","severity":"HIGH"}"#,
+                Some(&t),
+            ))
+            .await
+            .expect("resp");
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn update_bug_meta_roundtrip_and_errors() {
+        let (app, t) = app().await;
+        let id = create_returns_id(&app, &t).await;
+
+        // Meta update sets fields and stamps the caller.
+        let resp = app
+            .clone()
+            .oneshot(put_req(
+                &format!("/bug/{id}"),
+                r#"{"title":"boom v2","severity":"P0","handler":"carol"}"#,
+                Some(&t),
+            ))
+            .await
+            .expect("resp");
+        assert_eq!(resp.status(), StatusCode::OK);
+        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.expect("body");
+        let v: serde_json::Value = serde_json::from_slice(&bytes).expect("json");
+        assert_eq!(v["title"], "boom v2");
+        assert_eq!(v["severity"], "P0");
+        assert_eq!(v["handler"], "carol");
+        assert_eq!(v["updatedBy"], "admin");
+        assert!(v["updatedAt"].is_string());
+
+        // Absent severity/handler clear; absent title keeps.
+        let resp = app
+            .clone()
+            .oneshot(put_req(&format!("/bug/{id}"), r#"{}"#, Some(&t)))
+            .await
+            .expect("resp");
+        assert_eq!(resp.status(), StatusCode::OK);
+        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.expect("body");
+        let v: serde_json::Value = serde_json::from_slice(&bytes).expect("json");
+        assert_eq!(v["title"], "boom v2");
+        assert!(v.get("severity").is_none());
+        assert!(v.get("handler").is_none());
+
+        // Invalid severity → 400; missing bug → 404.
+        assert_eq!(
+            app.clone()
+                .oneshot(put_req(&format!("/bug/{id}"), r#"{"severity":"S1"}"#, Some(&t)))
+                .await
+                .expect("resp")
+                .status(),
+            StatusCode::BAD_REQUEST
+        );
+        assert_eq!(
+            app.oneshot(put_req("/bug/ghost", r#"{}"#, Some(&t))).await.expect("resp").status(),
+            StatusCode::NOT_FOUND
+        );
+    }
+
+    #[tokio::test]
+    async fn update_bug_without_permission_403() {
+        let repo = Arc::new(InMemoryBugRepository::with_default_flow("p1"));
+        let sessions = Arc::new(InMemorySessionStore::new());
+        let perms = PermissionSet::from_raw(["BUG:READ+ADD".to_string()]).expect("perms");
+        let token = sessions.create("u", perms, 3600).await.expect("token");
+        let app = router(
+            CreateBugUseCase::new(repo.clone()),
+            ChangeBugStatusUseCase::new(repo.clone()),
+            ListBugsUseCase::new(repo.clone()),
+            BugFollowersUseCase::new(repo.clone()),
+            BugRelationsUseCase::new(repo),
+            sessions,
+        );
+        let id = create_returns_id(&app, &token).await;
+        let resp = app
+            .oneshot(put_req(&format!("/bug/{id}"), r#"{"severity":"P1"}"#, Some(&token)))
+            .await
+            .expect("resp");
+        assert_eq!(resp.status(), StatusCode::FORBIDDEN);
     }
 
     fn put_req(uri: &str, body: &str, token: Option<&str>) -> Request<Body> {
