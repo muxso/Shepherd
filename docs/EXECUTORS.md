@@ -16,6 +16,7 @@ behind `agent-runtime`. For fleet architecture and server-side setup see
 - [Docker and host CLIs](#docker-and-host-clis)
 - [Shared checkout, different branches](#shared-checkout-different-branches)
 - [Dispatching to a specific executor](#dispatching-to-a-specific-executor)
+- [Pool runners (scenario execution)](#pool-runners-scenario-execution)
 - [Troubleshooting](#troubleshooting)
 
 ---
@@ -271,6 +272,50 @@ dedicated `fleet:rt:<name>` stream). If the target is offline the task waits for
 other runtimes never steal it. In the web UI, pick the concrete runtime from the dispatch
 menu on the decomposition graph; offline ones are greyed out. Multiple instances sharing a
 name share that stream — give each box a unique name for strict one-to-one pinning.
+
+## Pool runners (scenario execution)
+
+`pool-runner` is the other executor in the repo: it runs API scenario plans
+for the test-management side, not AI coding tasks. The network story matches
+`agent-runtime` — the runner has no inbound port and dials the server over an
+outbound WebSocket:
+
+```bash
+SHEPHERD_SERVER_WS=ws://<server>:8088/api/pool-runner/ws \
+SHEPHERD_POOL_NAME='my-pool' \
+SHEPHERD_RUNNER_KEY=sak_… \
+cargo r -p pool-runner
+```
+
+The resource-pool edit page (System → Resource Pools → a `Node` pool) shows
+this exact join command with the pool name pre-filled, plus the pool's live
+online-runner list.
+
+| Env | Default | Meaning |
+|---|---|---|
+| `SHEPHERD_SERVER_WS` | **required** | `ws(s)://host:port/api/pool-runner/ws` |
+| `SHEPHERD_POOL_ID` | — | Resource pool id to register under |
+| `SHEPHERD_POOL_NAME` | — | Pool name, resolved server-side; id wins when both are set (one of the two is required) |
+| `SHEPHERD_RUNNER_KEY` | **required** | API key (`sak_…`) or session token |
+| `RUNNER_NAME` | hostname | Display name in the pool's online-runner list |
+| `RUNNER_MAX_CONCURRENT` | `4` | Concurrent run cap advertised to the server |
+| `RUNNER_CAPABILITIES` | — | Comma-separated capability tags; runs that require tags only dispatch to runners that have them all |
+
+Registration: on connect the runner sends a hello (pool id/name, display name,
+capabilities, concurrency cap); the server resolves the pool — an unknown or
+ambiguous pool name is rejected with the reason in the WebSocket close frame —
+and keeps the socket open. Liveness is ping/pong (server pings every 15 s,
+drops a runner after 45 s of silence); the runner reconnects with exponential
+backoff (1 s doubling up to 30 s). The registry is in-memory: a server restart
+just drops runners and they re-register on reconnect.
+
+Routing: a scenario or plan run that names a pool goes to that pool; otherwise
+the server auto-picks an enabled pool that has online runners, preferring the
+most spare capacity. With no online runner (or a pool queue overflowing every
+runner's cap) the run falls back to local in-process execution. The run
+response's `executedOn` reports the decision (`null` = local), and step events
+stream back over the same socket, so remote reports and the live per-step
+animation look the same as local ones.
 
 ## Troubleshooting
 
