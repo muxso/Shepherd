@@ -16,6 +16,7 @@ CodeBuddy)。机群架构与服务端配置见 [USAGE.zh-CN.md §7](./USAGE.zh-C
 - [Docker 与宿主机 CLI](#docker-与宿主机-cli)
 - [共用检出、不同分支](#共用检出不同分支)
 - [指定执行者派发](#指定执行者派发)
+- [资源池执行机(场景执行)](#资源池执行机场景执行)
 - [排障](#排障)
 
 ---
@@ -247,6 +248,44 @@ curl -X POST $BASE/delivery -H "Authorization: Bearer $TOKEN" -H 'Content-Type: 
 定向任务只会被同名 runtime 认领(Redis 下走 `fleet:rt:<name>` 专属流);目标离线时任务留队等它回来,
 不会被其它 runtime 抢走。Web 端在拆分图的派发菜单里选具体执行者即可,离线的会置灰。
 同名多实例会共享这条定向流——需要一对一就给每台起唯一的名字。
+
+## 资源池执行机(场景执行)
+
+`pool-runner` 是仓库里的另一种执行机:跑的是测试管理侧的接口场景计划,不是 AI
+编码任务。网络模型与 `agent-runtime` 一致——执行机没有入站端口,通过出站
+WebSocket 主动连服务端:
+
+```bash
+SHEPHERD_SERVER_WS=ws://<server>:8088/api/pool-runner/ws \
+SHEPHERD_POOL_NAME='my-pool' \
+SHEPHERD_RUNNER_KEY=sak_… \
+cargo r -p pool-runner
+```
+
+资源池编辑页(系统 → 资源池 → `Node` 类型的池)会展示这条接入命令(池名已填好),
+以及该池的在线执行机列表。
+
+| 环境变量 | 默认值 | 含义 |
+|---|---|---|
+| `SHEPHERD_SERVER_WS` | **必填** | `ws(s)://host:port/api/pool-runner/ws` |
+| `SHEPHERD_POOL_ID` | — | 注册到的资源池 id |
+| `SHEPHERD_POOL_NAME` | — | 资源池名称,服务端解析;与 id 同时设置时 id 优先(两者必须给一个) |
+| `SHEPHERD_RUNNER_KEY` | **必填** | API key(`sak_…`)或会话令牌 |
+| `RUNNER_NAME` | 主机名 | 在池的在线执行机列表里的显示名 |
+| `RUNNER_MAX_CONCURRENT` | `4` | 向服务端申报的并发上限 |
+| `RUNNER_CAPABILITIES` | — | 逗号分隔的能力标签;要求标签的运行只派发给全部具备的执行机 |
+
+注册:连上后执行机发送 hello(池 id/名称、显示名、能力标签、并发上限);服务端解析
+资源池——池名不存在或有歧义会被拒绝,原因写在 WebSocket close 帧里——然后保持连接。
+存活靠 ping/pong(服务端每 15 秒 ping 一次,45 秒无响应即摘除);执行机断线后指数退避
+重连(1 秒起翻倍,上限 30 秒)。注册表只在内存里:服务端重启会丢掉执行机,重连后
+自动重新注册。
+
+路由:场景 / 计划运行指定了资源池就发给那个池;没指定时服务端自动挑一个启用且有
+在线执行机的池,优先剩余容量最大的。没有在线执行机(或池内排队超出所有执行机的
+并发上限)就回退到服务端进程内本地执行。运行响应的 `executedOn` 报告这次的去向
+(`null` = 本地),步骤事件沿同一条 socket 回流,远程报告和实时逐步动画与本地
+执行看起来完全一样。
 
 ## 排障
 
