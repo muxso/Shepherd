@@ -183,6 +183,11 @@ enum Cmd {
         #[command(subcommand)]
         cmd: apikey::ApikeyCmd,
     },
+    /// OIDC identity provider management as runtime system settings.
+    OidcAdmin {
+        #[command(subcommand)]
+        cmd: oidc_admin::OidcAdminCmd,
+    },
     /// Per-user LLM model settings (/me/llm-model).
     Llm {
         #[command(subcommand)]
@@ -275,6 +280,7 @@ fn run(cli: Cli) -> R<()> {
         Cmd::Pool { cmd } => pool::run(cmd),
         Cmd::Auth { cmd } => auth::run(cmd),
         Cmd::Apikey { cmd } => apikey::run(cmd),
+        Cmd::OidcAdmin { cmd } => oidc_admin::run(cmd),
         Cmd::Llm { cmd } => llm::run(cmd),
         Cmd::Notice { cmd } => notice::run(cmd),
         Cmd::Follow { cmd } => follow::run(cmd),
