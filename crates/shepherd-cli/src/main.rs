@@ -233,6 +233,8 @@ enum Cmd {
         #[command(subcommand)]
         cmd: CaseExecCmd,
     },
+    /// Prometheus metrics (plain text; no auth).
+    Metrics,
 }
 
 #[derive(Subcommand)]
@@ -3142,6 +3144,10 @@ fn run(cli: Cli) -> R<()> {
                     )?)
                 }
             }
+        }
+        Cmd::Metrics => {
+            let c = Client::new(Config::load())?;
+            print!("{}", c.get_text("/metrics", false)?)
         }
     }
     Ok(())
