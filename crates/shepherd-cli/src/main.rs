@@ -208,6 +208,11 @@ enum Cmd {
         #[command(subcommand)]
         cmd: ProposalCmd,
     },
+    /// PRD drafting (generate a requirement skeleton from raw material).
+    Prd {
+        #[command(subcommand)]
+        cmd: PrdCmd,
+    },
 }
 
 #[derive(Subcommand)]
@@ -641,6 +646,15 @@ enum ProposalCmd {
         id: String,
         #[arg(long)]
         comment: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum PrdCmd {
+    /// Draft a requirement (title/description/acceptance criteria) from raw material.
+    Draft {
+        #[arg(long)]
+        raw: String,
     },
 }
 
@@ -2676,6 +2690,14 @@ fn run(cli: Cli) -> R<()> {
                     json!({"comment": comment}),
                     true,
                 )?),
+            }
+        }
+        Cmd::Prd { cmd } => {
+            let c = Client::new(Config::load())?;
+            match cmd {
+                PrdCmd::Draft { raw } => {
+                    pretty(&c.post("/requirement/draft", json!({"raw": raw}), true)?)
+                }
             }
         }
     }
