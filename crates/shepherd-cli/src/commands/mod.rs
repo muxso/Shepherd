@@ -21,6 +21,7 @@ pub mod import;
 pub mod llm;
 pub mod mcp;
 pub mod notice;
+pub mod oidc_admin;
 pub mod org;
 pub mod perf;
 pub mod pfile;
