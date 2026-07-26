@@ -30,6 +30,9 @@ const proxy = Object.fromEntries(
     '/runner-agent',
     '/case-review',
     '/mcp',
+    '/template',
+    '/me',
+    '/prd-draft',
   ].map((p) => [
     p,
     {

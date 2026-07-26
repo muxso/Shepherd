@@ -1,7 +1,7 @@
 {{- $component := "web" -}}
 {{- $ctx := dict "root" . "component" $component -}}
 {{- $server := printf "http://%s:%v" (include "shepherd.serverServiceName" .) .Values.server.service.port -}}
-{{- $prefixes := list "/api" "/auth" "/project" "/organization" "/system" "/role" "/user-role" "/requirement" "/decomposition" "/delivery" "/verification" "/skill" "/bug" "/functional-case" "/test-plan" "/perf" "/runner" "/runner-agent" "/case-review" "/mcp" -}}
+{{- $prefixes := list "/api" "/auth" "/project" "/organization" "/system" "/role" "/user-role" "/requirement" "/decomposition" "/delivery" "/verification" "/skill" "/bug" "/functional-case" "/test-plan" "/perf" "/runner" "/runner-agent" "/case-review" "/mcp" "/notice" "/follow" "/comment" "/template" "/me" "/prd-draft" -}}
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -30,6 +30,13 @@ data:
         server {{ include "shepherd.serverServiceName" . }}:{{ .Values.server.service.port }};
       }
 
+      # Pass WebSocket upgrades through (/api/pool-runner/ws, /api/run-events/ws);
+      # plain requests keep an empty Connection header for upstream keepalive.
+      map $http_upgrade $shepherd_connection {
+        default "";
+        "~."    "upgrade";
+      }
+
       server {
         listen {{ .Values.web.service.port }};
         server_name _;
@@ -40,7 +47,8 @@ data:
         #   Accept: text/html  -> serve the SPA (deep-link / browser navigation)
         #   otherwise          -> reverse-proxy to shepherd-server (API / XHR / fetch)
         {{- range $prefixes }}
-        location {{ . }} {
+        # Segment-aware: "/me" must not swallow "/messages" etc.
+        location ~ ^{{ . }}(/|$) {
           if ($http_accept ~* "text/html") {
             rewrite ^ /index.html last;
           }
@@ -51,10 +59,22 @@ data:
           proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
           proxy_set_header X-Forwarded-Proto $scheme;
           proxy_set_header Upgrade $http_upgrade;
-          proxy_set_header Connection "upgrade";
+          proxy_set_header Connection $shepherd_connection;
           proxy_read_timeout 300s;
         }
         {{- end }}
+
+        # Backend-owned pages/endpoints: no SPA fallback even for text/html
+        # (swagger-ui is an HTML page served by the backend itself).
+        location ~ ^/(healthz|api-docs|swagger-ui)(/|$) {
+          proxy_pass http://shepherd_server;
+          proxy_http_version 1.1;
+          proxy_set_header Host $host;
+          proxy_set_header X-Real-IP $remote_addr;
+          proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+          proxy_set_header X-Forwarded-Proto $scheme;
+          proxy_set_header Connection "";
+        }
 
         # SPA fallback.
         location / {

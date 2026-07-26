@@ -4345,6 +4345,7 @@ dependencies = [
 name = "shepherd-cli"
 version = "0.0.4"
 dependencies = [
+ "base64",
  "clap",
  "reqwest",
  "serde",
