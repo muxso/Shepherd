@@ -1305,7 +1305,7 @@ fn pretty(v: &Value) {
 /// Print a freshly-minted API key (returned only once) before the normal output.
 fn print_key(v: &Value) {
     if let Some(k) = v.get("key").and_then(|x| x.as_str()) {
-        println!("✅ 已创建,密钥(仅此一次可见):\n{k}");
+        println!(" 已创建,密钥(仅此一次可见):\n{k}");
     }
     pretty(v);
 }
@@ -1502,7 +1502,7 @@ fn run(cli: Cli) -> R<()> {
             let healthy = Client::new(cfg.clone())?.get("/healthz", false).is_ok();
             cfg.save()?;
             println!(
-                "✅ 已保存 {} 的 API key → {} 服务{}",
+                " 已保存 {} 的 API key → {} 服务{}",
                 cfg.url,
                 config_path().display(),
                 if healthy { "可达" } else { "暂不可达" }
@@ -1516,7 +1516,7 @@ fn run(cli: Cli) -> R<()> {
                 cfg.agent = Some(executor.clone());
                 cfg.save()?;
                 println!(
-                    "✅ 已连接 agent: {executor}  服务 {} {}",
+                    " 已连接 agent: {executor}  服务 {} {}",
                     cfg.url,
                     if healthy { "(可达)" } else { "(暂不可达)" }
                 );
@@ -1656,7 +1656,7 @@ fn run(cli: Cli) -> R<()> {
             let mut cfg = Config::load();
             cfg.api_key.clear();
             cfg.save()?;
-            println!("✅ 已清除本地 API key(要让 key 失效,请在服务端 API KEY 管理里吊销)");
+            println!(" 已清除本地 API key(要让 key 失效,请在服务端 API KEY 管理里吊销)");
         }
         Cmd::Project { cmd } => {
             let c = Client::new(Config::load())?;
@@ -1986,7 +1986,7 @@ fn run(cli: Cli) -> R<()> {
                 FcaseCmd::Export { project, out } => {
                     let bytes = c.get_bytes(&format!("/functional-case/export?projectId={project}"), true)?;
                     std::fs::write(&out, &bytes)?;
-                    println!("✅ 已导出 {} 字节 → {out}", bytes.len());
+                    println!(" 已导出 {} 字节 → {out}", bytes.len());
                 }
                 FcaseCmd::Import { project, file } => {
                     let bytes = std::fs::read(&file)?;
@@ -2102,13 +2102,13 @@ fn run(cli: Cli) -> R<()> {
                 AuthCmd::Login { username, password } => {
                     let c = Client::new(cfg)?;
                     let v = c.post("/auth/login", json!({"username": username, "password": password}), false)?;
-                    println!("✅ 登录成功,会话 token:\n{}", v.get("token").and_then(|t| t.as_str()).unwrap_or(""));
+                    println!(" 登录成功,会话 token:\n{}", v.get("token").and_then(|t| t.as_str()).unwrap_or(""));
                     pretty(&v);
                 }
                 AuthCmd::Logout => {
                     let c = Client::new(cfg)?;
                     c.post("/auth/logout", json!({}), true)?;
-                    println!("✅ 已登出");
+                    println!(" 已登出");
                 }
                 AuthCmd::Refresh => {
                     let c = Client::new(cfg)?;
@@ -2125,7 +2125,7 @@ fn run(cli: Cli) -> R<()> {
                         json!({"oldPassword": old_password, "newPassword": new_password}),
                         true,
                     )?;
-                    println!("✅ 密码已修改");
+                    println!(" 密码已修改");
                 }
                 AuthCmd::Oidc { provider } => {
                     let base = cfg.url.trim_end_matches('/');
@@ -2159,7 +2159,7 @@ fn run(cli: Cli) -> R<()> {
                 ApikeyCmd::Mine => pretty(&c.get("/system/apikey/mine", true)?),
                 ApikeyCmd::Delete { id } => {
                     c.delete(&format!("/system/apikey/{id}"), true)?;
-                    println!("✅ 已吊销 {id}");
+                    println!(" 已吊销 {id}");
                 }
                 ApikeyCmd::Enable { id, disable } => {
                     c.put(
@@ -2167,7 +2167,7 @@ fn run(cli: Cli) -> R<()> {
                         json!({"enabled": !disable}),
                         true,
                     )?;
-                    println!("✅ API key {id} 已{}", if disable { "禁用" } else { "启用" });
+                    println!(" API key {id} 已{}", if disable { "禁用" } else { "启用" });
                 }
             }
         }
@@ -2208,7 +2208,7 @@ fn gen_suite(c: &Client, project: &str, base: &str, no_scenario: bool) -> R<()> 
         let ok = match mk_case(&format!("成功·期望{success_code}"), success_code) {
             Ok(v) => v,
             Err(e) => {
-                eprintln!("✗ {name}: 成功用例创建失败:{e}");
+                eprintln!(" {name}: 成功用例创建失败:{e}");
                 failed += 1;
                 continue;
             }
@@ -2216,7 +2216,7 @@ fn gen_suite(c: &Client, project: &str, base: &str, no_scenario: bool) -> R<()> 
         let bad = match mk_case("失败·期望401", 401) {
             Ok(v) => v,
             Err(e) => {
-                eprintln!("✗ {name}: 失败用例创建失败:{e}");
+                eprintln!(" {name}: 失败用例创建失败:{e}");
                 failed += 1;
                 continue;
             }
@@ -2237,7 +2237,7 @@ fn gen_suite(c: &Client, project: &str, base: &str, no_scenario: bool) -> R<()> 
         ) {
             Ok(v) => v,
             Err(e) => {
-                eprintln!("✗ {name}: 场景创建失败:{e}");
+                eprintln!(" {name}: 场景创建失败:{e}");
                 failed += 1;
                 continue;
             }
@@ -2251,12 +2251,12 @@ fn gen_suite(c: &Client, project: &str, base: &str, no_scenario: bool) -> R<()> 
                 true,
             ) {
                 Ok(_) => steps += 1,
-                Err(e) => eprintln!("✗ {name}: 步骤{order}添加失败:{e}"),
+                Err(e) => eprintln!(" {name}: 步骤{order}添加失败:{e}"),
             }
         }
     }
     println!(
-        "✅ 生成完成:{} 个接口 → {cases} 条用例、{scenarios} 条场景、{steps} 个步骤(失败 {failed})",
+        " 生成完成:{} 个接口 → {cases} 条用例、{scenarios} 条场景、{steps} 个步骤(失败 {failed})",
         list.len()
     );
     Ok(())
@@ -2264,7 +2264,7 @@ fn gen_suite(c: &Client, project: &str, base: &str, no_scenario: bool) -> R<()> 
 
 fn main() {
     if let Err(e) = run(Cli::parse()) {
-        eprintln!("✗ {e}");
+        eprintln!(" {e}");
         std::process::exit(1);
     }
 }
