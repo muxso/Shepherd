@@ -1442,6 +1442,46 @@ enum ApidefCmd {
         #[arg(long)]
         def: String,
     },
+    /// Delete an API definition (cascades its cases/mocks).
+    Delete {
+        #[arg(long)]
+        id: String,
+    },
+    /// List entities that reference a definition (cases + scenarios).
+    References {
+        #[arg(long)]
+        id: String,
+    },
+    /// Replace a definition's request/response spec (raw JSON via --spec-json).
+    Spec {
+        #[arg(long)]
+        id: String,
+        #[arg(long = "spec-json")]
+        spec_json: String,
+    },
+    /// Move a definition into (or out of) a module.
+    Module {
+        #[arg(long)]
+        id: String,
+        /// Target module id (omit with --unset to move back to uncategorized).
+        #[arg(long = "module-id")]
+        module_id: Option<String>,
+        /// Move the definition out of its module (uncategorized).
+        #[arg(long, default_value_t = false)]
+        unset: bool,
+    },
+    /// Set a definition's lifecycle status (e.g. DRAFT | ACTIVE | DEPRECATED).
+    Status {
+        #[arg(long)]
+        id: String,
+        #[arg(long)]
+        status: String,
+    },
+    /// List a definition's change history.
+    Changes {
+        #[arg(long)]
+        id: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -2322,6 +2362,42 @@ fn run(cli: Cli) -> R<()> {
                 )?),
                 ApidefCmd::Mocks { def } => {
                     pretty(&c.get(&format!("/api/definition/{def}/mock"), true)?)
+                }
+                ApidefCmd::Delete { id } => {
+                    c.delete(&format!("/api/definition/{id}"), true)?;
+                    println!(" 已删除接口定义 {id}");
+                }
+                ApidefCmd::References { id } => {
+                    pretty(&c.get(&format!("/api/definition/{id}/references"), true)?)
+                }
+                ApidefCmd::Spec { id, spec_json } => {
+                    let spec: Value = serde_json::from_str(&spec_json)
+                        .map_err(|e| format!("--spec-json 不是合法 JSON: {e}"))?;
+                    c.put(&format!("/api/definition/{id}/spec"), json!({ "spec": spec }), true)?;
+                    println!(" 已更新接口定义 {id} 的规格");
+                }
+                ApidefCmd::Module { id, module_id, unset } => {
+                    let mid = if unset { None } else { module_id };
+                    c.put(
+                        &format!("/api/definition/{id}/module"),
+                        json!({ "moduleId": mid }),
+                        true,
+                    )?;
+                    println!(
+                        " 接口定义 {id} 已{}",
+                        if mid.is_some() { "移入模块" } else { "移出到未归类" }
+                    );
+                }
+                ApidefCmd::Status { id, status } => {
+                    c.put(
+                        &format!("/api/definition/{id}/status"),
+                        json!({ "status": status }),
+                        true,
+                    )?;
+                    println!(" 已设置接口定义 {id} 状态为 {status}");
+                }
+                ApidefCmd::Changes { id } => {
+                    pretty(&c.get(&format!("/api/definition/{id}/changes"), true)?)
                 }
             }
         }
