@@ -2,7 +2,7 @@
 
 <img src="web/public/logo.svg" alt="Shepherd logo" width="88" align="right" />
 
-The AI Decision Engine for Software Engineering.  
+Shepherd is an end-to-end AI Software Engineering platform that supervises the complete software delivery lifecycle—not just code generation, but planning, execution, testing, regression, governance, deployment, and continuous knowledge growth.  
 AI ROI · human-AI efficiency analytics · software engineering modeling · Task Graph.
 
 [![Rust](https://img.shields.io/badge/Rust-2021-orange.svg)](https://www.rust-lang.org/)
