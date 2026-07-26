@@ -89,9 +89,12 @@ impl OidcLoginUseCase {
     /// `build` closure maps a stored [`OidcProvider`] to its strategy object;
     /// it is injected by the composition root so this always-compiled layer
     /// never depends on the (feature-gated) adapter layer.
-    pub async fn reload<R, F>(&self, repo: &R, build: F) -> Result<(), OidcRepoError>
+    pub async fn reload<F>(
+        &self,
+        repo: &dyn OidcProviderRepository,
+        build: F,
+    ) -> Result<(), OidcRepoError>
     where
-        R: OidcProviderRepository,
         F: Fn(&OidcProvider) -> Option<Arc<dyn ExternalIdentityProvider>>,
     {
         let enabled = repo.list_enabled().await?;
