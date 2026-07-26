@@ -6,7 +6,7 @@ const KEY = 'shepherd.lang'
 // Flat dictionary: key → {zh,en}. Unregistered keys fall back to the original text.
 const DICT: Record<string, { zh: string; en: string }> = {
   // Document title (browser tab)
-  'app.title': { zh: 'AI 交付监督平台', en: 'AI Delivery Supervision' },
+  'app.title': { zh: 'Shepherd 将 AI 的一次性交付，转化为组织的长期软件工程资产。', en: 'Shepherd turns one-shot AI delivery into your organization’s long-term software engineering assets.' },
   // Left global nav (top-level module icon + label)
   'nav.home': { zh: '首页', en: 'Home' },
   'nav.project': { zh: '项目', en: 'Project' },
@@ -1809,7 +1809,7 @@ const DICT: Record<string, { zh: string; en: string }> = {
   "mcp.colDesc": { zh: "说明", en: "Description" },
   "login.ok": { zh: "登录成功", en: "Signed in" },
   "login.fail": { zh: "登录失败", en: "Sign-in failed" },
-  "login.subtitle": { zh: "从 idea 到交付,更安全、更可靠的质量把关", en: "From idea to delivery — safer, more reliable quality gates" },
+  "login.subtitle": { zh: "Shepherd 将 AI 的一次性交付，转化为组织的长期软件工程资产。", en: "Shepherd turns one-shot AI delivery into your organization’s long-term software engineering assets." },
   "login.username": { zh: "用户名", en: "Username" },
   "login.password": { zh: "密码", en: "Password" },
   "login.passwordPlaceholder": { zh: "请输入密码", en: "Enter password" },
@@ -2787,7 +2787,7 @@ export function LangProvider({ children }: { children: (lang: Lang) => ReactNode
     [lang],
   )
   useEffect(() => {
-    document.title = `Shepherd · ${DICT['app.title'][lang]}`
+    document.title = DICT['app.title'][lang]
   }, [lang])
   return <LangCtx.Provider value={value}>{children(lang)}</LangCtx.Provider>
 }
