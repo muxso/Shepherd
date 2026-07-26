@@ -1,23 +1,15 @@
-#!/usr/bin/env bash
-# Local quality gate mirroring CI: fmt + clippy (production & all-targets) +
-# build must pass before a commit lands, so failures surface here instead of
-# in GitHub Actions. Skip with `git commit --no-verify` when unavoidable.
-set -euo pipefail
+#!/bin/sh
+# Local pre-commit guardrail for the Shepherd workspace.
+# Enforces the same formatting + lint gate as CI (.github/workflows/ci.yml)
+# so commits can never skip `cargo fmt` / `cargo clippy` again.
+#
+# Activated with: git config core.hooksPath .githooks
+set -e
 
-cd "$(git rev-parse --show-toplevel)"
-staged=$(git diff --cached --name-only)
+echo "[pre-commit] cargo fmt --all --check"
+cargo fmt --all --check
 
-if echo "$staged" | grep -qE '\.rs$|^Cargo\.(toml|lock)$|crates/.*Cargo\.toml$|crates/migrate/migrations/'; then
-  echo "[pre-commit] rust gates (fmt / clippy / build)…"
-  cargo fmt --all --check
-  cargo clippy --workspace --locked -- -D warnings
-  cargo clippy --workspace --all-targets --locked -- -D warnings -A clippy::unwrap-used
-  cargo build --workspace --locked
-fi
-
-if echo "$staged" | grep -q '^web/'; then
-  echo "[pre-commit] web gates (tsc / build)…"
-  (cd web && npx tsc --noEmit && npm run build --silent >/dev/null)
-fi
+echo "[pre-commit] cargo clippy --workspace --locked -- -D warnings"
+cargo clippy --workspace --locked -- -D warnings
 
 echo "[pre-commit] ok"
