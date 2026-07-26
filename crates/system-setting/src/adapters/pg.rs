@@ -5,15 +5,15 @@ use kernel::permission::PermissionSet;
 use sqlx::{PgPool, Row};
 
 use crate::domain::{
-    Email, ExternalIdentity, NewOrganization, NewRole, NewUser, OidcError, Organization, Role,
-    RoleScope, Session, User,
+    Email, ExternalIdentity, NewOrganization, NewRole, NewUser, OidcError, OidcProvider,
+    Organization, Role, RoleScope, Session, User,
 };
 use crate::ports::{
     ApiKeyRecord, ApiKeyRepoError, ApiKeyRepository, AuthRepoError, CredentialRepository,
     DirectoryError, ExternalUserRepository, LinkedUser, LlmModelPatch, LlmModelRecord,
-    LlmModelRepoError, LlmModelRepository, OrgRepoError, OrgRepository, RepoError, RoleRepoError,
-    RoleRepository, SessionStore, UserCredential, UserDirectory, UserRepository, UserRoleQuery,
-    UserRoleRepository,
+    LlmModelRepoError, LlmModelRepository, OidcProviderRepository, OidcRepoError, OrgRepoError,
+    OrgRepository, RepoError, RoleRepoError, RoleRepository, SessionStore, UserCredential,
+    UserDirectory, UserRepository, UserRoleQuery, UserRoleRepository,
 };
 
 fn repo_err(e: sqlx::Error) -> RepoError {
@@ -436,6 +436,107 @@ impl ExternalUserRepository for PgExternalUserRepository {
                 .try_get::<Vec<String>, _>("permissions")
                 .map_err(|e| OidcError::Backend(e.to_string()))?,
         })
+    }
+}
+
+#[derive(Clone)]
+pub struct PgOidcProviderRepository {
+    pool: PgPool,
+}
+
+impl PgOidcProviderRepository {
+    pub fn new(pool: PgPool) -> Self {
+        Self { pool }
+    }
+}
+
+fn oidc_err(e: sqlx::Error) -> OidcRepoError {
+    OidcRepoError::Backend(e.to_string())
+}
+
+fn row_to_provider(row: &sqlx::postgres::PgRow) -> Result<OidcProvider, OidcRepoError> {
+    Ok(OidcProvider {
+        provider_key: row.try_get("provider_key").map_err(oidc_err)?,
+        app_id: row.try_get("app_id").map_err(oidc_err)?,
+        app_secret: row.try_get("app_secret").map_err(oidc_err)?,
+        redirect: row.try_get("redirect").map_err(oidc_err)?,
+        default_permissions: row
+            .try_get::<Vec<String>, _>("default_permissions")
+            .map_err(oidc_err)?,
+        enabled: row.try_get("enabled").map_err(oidc_err)?,
+        base_url: row.try_get("base_url").map_err(oidc_err)?,
+    })
+}
+
+#[async_trait]
+impl OidcProviderRepository for PgOidcProviderRepository {
+    async fn list(&self) -> Result<Vec<OidcProvider>, OidcRepoError> {
+        let rows = sqlx::query(
+            "SELECT provider_key, app_id, app_secret, redirect, default_permissions, enabled, base_url \
+             FROM ms_oidc_provider ORDER BY provider_key",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(oidc_err)?;
+        rows.iter().map(row_to_provider).collect()
+    }
+
+    async fn list_enabled(&self) -> Result<Vec<OidcProvider>, OidcRepoError> {
+        let rows = sqlx::query(
+            "SELECT provider_key, app_id, app_secret, redirect, default_permissions, enabled, base_url \
+             FROM ms_oidc_provider WHERE enabled = true ORDER BY provider_key",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(oidc_err)?;
+        rows.iter().map(row_to_provider).collect()
+    }
+
+    async fn get(&self, key: &str) -> Result<Option<OidcProvider>, OidcRepoError> {
+        let row = sqlx::query(
+            "SELECT provider_key, app_id, app_secret, redirect, default_permissions, enabled, base_url \
+             FROM ms_oidc_provider WHERE provider_key = $1",
+        )
+        .bind(key)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(oidc_err)?;
+        row.as_ref().map(row_to_provider).transpose()
+    }
+
+    async fn upsert(&self, p: &OidcProvider) -> Result<(), OidcRepoError> {
+        sqlx::query(
+            "INSERT INTO ms_oidc_provider \
+             (provider_key, app_id, app_secret, redirect, default_permissions, enabled, base_url) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7) \
+             ON CONFLICT (provider_key) DO UPDATE SET \
+                app_id = EXCLUDED.app_id, \
+                app_secret = EXCLUDED.app_secret, \
+                redirect = EXCLUDED.redirect, \
+                default_permissions = EXCLUDED.default_permissions, \
+                enabled = EXCLUDED.enabled, \
+                base_url = EXCLUDED.base_url",
+        )
+        .bind(&p.provider_key)
+        .bind(&p.app_id)
+        .bind(&p.app_secret)
+        .bind(&p.redirect)
+        .bind(&p.default_permissions)
+        .bind(p.enabled)
+        .bind(p.base_url.as_ref())
+        .execute(&self.pool)
+        .await
+        .map_err(oidc_err)?;
+        Ok(())
+    }
+
+    async fn delete(&self, key: &str) -> Result<(), OidcRepoError> {
+        sqlx::query("DELETE FROM ms_oidc_provider WHERE provider_key = $1")
+            .bind(key)
+            .execute(&self.pool)
+            .await
+            .map_err(oidc_err)?;
+        Ok(())
     }
 }
 
@@ -1129,5 +1230,70 @@ mod tests {
         let dir = PgUserDirectory::new(pool);
         let names = dir.names_direct(std::slice::from_ref(&user.id)).await.expect("direct");
         assert_eq!(names.get(&user.id), Some(&"Alice".to_string()));
+    }
+
+    #[tokio::test]
+    #[ignore = "需要 DATABASE_URL 指向一个 PostgreSQL 实例"]
+    async fn pg_oidc_provider_roundtrip() {
+        let url = std::env::var("DATABASE_URL").expect("set DATABASE_URL");
+        let pool = PgPool::connect(&url).await.expect("connect");
+        migrate::run(&pool).await.expect("migrate");
+        sqlx::raw_sql("TRUNCATE ms_oidc_provider RESTART IDENTITY")
+            .execute(&pool)
+            .await
+            .expect("trunc");
+
+        let repo = PgOidcProviderRepository::new(pool);
+
+        // upsert inserts
+        repo.upsert(&OidcProvider {
+            provider_key: "slack".into(),
+            app_id: "cli_id".into(),
+            app_secret: "cli_sec".into(),
+            redirect: "https://ms/cb".into(),
+            default_permissions: vec!["PROJECT:READ".into()],
+            enabled: true,
+            base_url: None,
+        })
+        .await
+        .expect("upsert slack");
+        repo.upsert(&OidcProvider {
+            provider_key: "disabled".into(),
+            app_id: "x".into(),
+            app_secret: "y".into(),
+            redirect: String::new(),
+            default_permissions: vec![],
+            enabled: false,
+            base_url: Some("https://example.test".into()),
+        })
+        .await
+        .expect("upsert disabled");
+
+        // upsert updates in place (same key, new secret)
+        repo.upsert(&OidcProvider {
+            provider_key: "slack".into(),
+            app_id: "cli_id".into(),
+            app_secret: "rotated".into(),
+            redirect: "https://ms/cb".into(),
+            default_permissions: vec!["PROJECT:READ".into(), "BUG:READ".into()],
+            enabled: true,
+            base_url: None,
+        })
+        .await
+        .expect("upsert slack again");
+
+        let got = repo.get("slack").await.expect("get").expect("some");
+        assert_eq!(got.app_secret, "rotated");
+        assert_eq!(got.default_permissions, vec!["PROJECT:READ", "BUG:READ"]);
+
+        let enabled = repo.list_enabled().await.expect("list_enabled");
+        assert_eq!(enabled.len(), 1);
+        assert_eq!(enabled[0].provider_key, "slack");
+
+        let all = repo.list().await.expect("list");
+        assert_eq!(all.len(), 2);
+
+        repo.delete("slack").await.expect("delete");
+        assert!(repo.get("slack").await.expect("get").is_none());
     }
 }
