@@ -292,6 +292,10 @@ enum PoolCmd {
     },
     /// List resource pools.
     List,
+    /// Online runner counts per pool.
+    Status,
+    /// Per-pool connected runner details (name / capacity / in-flight).
+    StatusDetail,
 }
 
 #[derive(Subcommand)]
@@ -2678,6 +2682,8 @@ fn run(cli: Cli) -> R<()> {
                     true,
                 )?),
                 PoolCmd::List => pretty(&c.get("/api/resource-pool", true)?),
+                PoolCmd::Status => pretty(&c.get("/api/pool-runner/status", true)?),
+                PoolCmd::StatusDetail => pretty(&c.get("/api/pool-runner/status/detail", true)?),
             }
         }
         Cmd::Auth { cmd } => {
