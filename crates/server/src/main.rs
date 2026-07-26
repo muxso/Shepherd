@@ -68,18 +68,19 @@ use requirement::application::{
 use skill::adapters::pg::PgSkillRepository;
 use skill::application::{CreateSkillUseCase, SkillService};
 use system_setting::adapters::auth::Argon2PasswordHasher;
-use system_setting::adapters::oidc::{FeishuProvider, WecomProvider};
+use system_setting::adapters::oidc::build_provider;
 use system_setting::adapters::pg::{
     PgApiKeyRepository, PgCredentialRepository, PgExternalUserRepository, PgLlmModelRepository,
-    PgOrgRepository, PgRoleRepository, PgSessionStore, PgUserDirectory, PgUserRepository,
-    PgUserRoleQuery, PgUserRoleRepository,
+    PgOidcProviderRepository, PgOrgRepository, PgRoleRepository, PgSessionStore, PgUserDirectory,
+    PgUserRepository, PgUserRoleQuery, PgUserRoleRepository,
 };
 use system_setting::adapters::ApiKeySessionStore;
 use system_setting::application::{
     CreateUserUseCase, LoginUseCase, OidcLoginUseCase, OrganizationService,
     ResolveUserNamesUseCase, RoleService, UserRoleService, UserService,
 };
-use system_setting::ports::PasswordHasher as _;
+use system_setting::domain::OidcProvider;
+use system_setting::ports::{OidcProviderRepository, PasswordHasher as _};
 use task::adapters::pg::PgTaskRepository;
 use task::application::{BreakdownUseCase, CreateDecompositionUseCase, TaskService};
 use test_plan::adapters::pg::PgPlanRepository;
@@ -101,6 +102,42 @@ async fn readyz(State(pool): State<PgPool>) -> StatusCode {
 
 fn health_routes(pool: PgPool) -> Router {
     Router::new().route("/healthz", get(healthz)).route("/readyz", get(readyz)).with_state(pool)
+}
+
+/// First-boot seeding: if an env-provided provider is present but the DB has no
+/// row for that key, insert it. Existing rows are left untouched so the admin
+/// API (and any later manual edits) remains the source of truth.
+async fn seed_oidc_from_env(cfg: &config::ServerConfig, repo: &dyn OidcProviderRepository) {
+    if let Some(p) = &cfg.feishu {
+        seed_oidc_provider(repo, "feishu", p).await;
+    }
+    if let Some(p) = &cfg.wecom {
+        seed_oidc_provider(repo, "wecom", p).await;
+    }
+}
+
+/// Inserts a single provider row only when the key is absent in the DB.
+async fn seed_oidc_provider(
+    repo: &dyn OidcProviderRepository,
+    key: &str,
+    c: &config::OidcProviderConfig,
+) {
+    if repo.get(key).await.ok().flatten().is_some() {
+        return;
+    }
+    let provider = OidcProvider {
+        provider_key: key.to_string(),
+        app_id: c.app_id.clone(),
+        app_secret: c.app_secret.clone(),
+        redirect: c.redirect.clone(),
+        default_permissions: vec!["PROJECT:READ".to_string()],
+        enabled: true,
+        base_url: None,
+    };
+    match repo.upsert(&provider).await {
+        Ok(()) => tracing::info!("seeded OIDC provider: {key}"),
+        Err(e) => tracing::warn!("failed to seed OIDC provider {key}: {e}"),
+    }
 }
 
 async fn shutdown_signal() {
@@ -249,18 +286,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let ext_users =
         Arc::new(PgExternalUserRepository::new(pool.clone(), vec!["PROJECT:READ".to_string()]));
-    let mut oidc_uc = OidcLoginUseCase::new(ext_users, sessions.clone()).with_ttl_secs(ttl_secs);
-    if let Some(p) = &cfg.feishu {
-        oidc_uc =
-            oidc_uc.register(Arc::new(FeishuProvider::new(&p.app_id, &p.app_secret, &p.redirect)));
-        tracing::info!("registered OIDC provider: feishu");
+    let oidc_repo = Arc::new(PgOidcProviderRepository::new(pool.clone()));
+    // First-boot seeding: copy env-provided feishu/wecom into the DB only when the
+    // key is absent, so the admin API (and later manual edits) remain the single
+    // source of truth. Then rebuild the live registry from the DB.
+    seed_oidc_from_env(&cfg, oidc_repo.as_ref()).await;
+    let oidc_uc = OidcLoginUseCase::new(ext_users, sessions.clone()).with_ttl_secs(ttl_secs);
+    if let Err(e) = oidc_uc.reload(oidc_repo.as_ref(), build_provider).await {
+        tracing::error!("failed to load OIDC providers from DB: {e}");
+    } else {
+        tracing::info!("loaded OIDC providers from DB");
     }
-    if let Some(p) = &cfg.wecom {
-        oidc_uc =
-            oidc_uc.register(Arc::new(WecomProvider::new(&p.app_id, &p.app_secret, &p.redirect)));
-        tracing::info!("registered OIDC provider: wecom");
-    }
-    let oidc_routes = system_setting::adapters::http::oidc_router(oidc_uc);
+    let oidc_routes = system_setting::adapters::http::oidc_router(oidc_uc.clone());
+    let oidc_admin_routes = system_setting::adapters::http::oidc_admin_router(
+        oidc_uc,
+        oidc_repo.clone(),
+        sessions.clone(),
+    );
 
     let org_svc = OrganizationService::new(Arc::new(PgOrgRepository::new(pool.clone())));
     let org_routes = system_setting::adapters::http::org_router(org_svc, sessions.clone());
@@ -694,6 +736,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             "system",
             user_routes
                 .merge(oidc_routes)
+                .merge(oidc_admin_routes)
                 .merge(org_routes)
                 .merge(role_routes)
                 .merge(apikey_routes)
