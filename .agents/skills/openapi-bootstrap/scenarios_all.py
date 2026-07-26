@@ -22,6 +22,9 @@ import urllib.error
 BASE = os.environ.get("SHEPHERD_BASE", "http://127.0.0.1:9180")
 USER = os.environ.get("SHEPHERD_USER", "admin")
 PASS = os.environ.get("SHEPHERD_PASS", "s3cret")
+# 1 (default): delivery executors are sync stubs -> assert terminal DELIVERED.
+# 0: deployment dispatches to real agents -> assert async dispatch instead.
+DELIVERY_SYNC = os.environ.get("SHEPHERD_DELIVERY_SYNC", "1") != "0"
 
 
 def call(method, path, token=None, body=None, timeout=60):
@@ -289,15 +292,20 @@ def build_modules(pid, oid, admin_uid, sample_case_id, tok):
         step("add task", "POST", "/decomposition/${decForDel}/task", [OK(), C("taskId")],
              body={"title": "boot-delivery-task", "description": "d", "acceptanceCriteria": [], "dependencies": [], "points": 3},
              processors=EX(("taskForDel", "$.taskId"))),
-        # CLAUDE_CODE is a **synchronous stub executor**: POST /delivery completes in
-        # one step, created directly as DELIVERED. So no running/complete transitions
-        # (those belong to async executors and need an online agent); asserting
-        # DELIVERED confirms the synchronous delivery.
-        step("create delivery (sync->DELIVERED)", "POST", "/delivery", [OK(), C("DELIVERED")],
+        # With the default stub executor CLAUDE_CODE is **synchronous**: POST
+        # /delivery completes in one step, created directly as DELIVERED (no
+        # running/complete transitions — those belong to async executors and
+        # need an online agent). Deployments with SHEPHERD_AGENT_* configured
+        # dispatch asynchronously instead (status RUNNING until an agent picks
+        # it up); set SHEPHERD_DELIVERY_SYNC=0 there to assert dispatch (runId)
+        # rather than the terminal DELIVERED state.
+        step("create delivery (sync->DELIVERED)" if DELIVERY_SYNC else "create delivery (async dispatch)",
+             "POST", "/delivery", [OK(), C("DELIVERED" if DELIVERY_SYNC else "runId")],
              body={"decompositionId": "${decForDel}", "taskId": "${taskForDel}", "executor": "CLAUDE_CODE",
                    "title": "boot-delivery", "description": "d", "acceptanceCriteria": []},
              processors=EX(("delId2", "$.id"))),
-        step("get delivery", "GET", "/delivery/${delId2}", [OK(), C("DELIVERED")]),
+        step("get delivery", "GET", "/delivery/${delId2}",
+             [OK(), C("DELIVERED")] if DELIVERY_SYNC else [OK(), C("status")]),
         step("add delivery event", "POST", "/delivery/${delId2}/events", [OK()], body={"kind": "LOG", "message": "hello"}),
         step("list delivery events", "GET", "/delivery/${delId2}/events", [OK()]),
     ]))

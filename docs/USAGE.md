@@ -325,13 +325,13 @@ The server publishes its own OpenAPI at `GET /api-docs/openapi.json`. Shepherd c
 
 ```bash
 # Single chained self-bootstrap (login → extract → authed chain + negative 401)
-python3 .claude/skills/openapi-bootstrap/selftest.py
+python3 .agents/skills/openapi-bootstrap/selftest.py
 
 # One CRUD/lifecycle scenario per business module, with a per-module report
-python3 .claude/skills/openapi-bootstrap/scenarios_all.py
+python3 .agents/skills/openapi-bootstrap/scenarios_all.py
 ```
 
-Both honour `SHEPHERD_BASE` (default `http://127.0.0.1:9180`) and `SHEPHERD_USER` / `SHEPHERD_PASS` (default `admin` / `s3cret`). See `.claude/skills/openapi-bootstrap/SKILL.md` for details.
+Both honour `SHEPHERD_BASE` (default `http://127.0.0.1:9180`) and `SHEPHERD_USER` / `SHEPHERD_PASS` (default `admin` / `s3cret`). See `.agents/skills/openapi-bootstrap/SKILL.md` for details.
 
 ---
 

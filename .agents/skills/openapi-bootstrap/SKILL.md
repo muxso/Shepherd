@@ -28,15 +28,15 @@ definitions + cases + scenario orchestration + execution.
 ```bash
 # A. Single-chain bootstrap (login → extract → authed chain + negative 401):
 #    verifies the real-chain execution machinery
-python3 .claude/skills/openapi-bootstrap/selftest.py
+python3 .agents/skills/openapi-bootstrap/selftest.py
 
 # B. Full-module scenario coverage: one CRUD/lifecycle scenario per OpenAPI tag,
 #    executed with a per-module report
-python3 .claude/skills/openapi-bootstrap/scenarios_all.py
+python3 .agents/skills/openapi-bootstrap/scenarios_all.py
 
 # C. Test-plan operations self-check (plan CRUD, planning doc, case links,
 #    plan run, single-case re-run, schedule)
-python3 .claude/skills/openapi-bootstrap/plans_selftest.py
+python3 .agents/skills/openapi-bootstrap/plans_selftest.py
 ```
 
 `scenarios_all.py` builds one real chained scenario per business module (20
@@ -70,6 +70,8 @@ if backend enums change):
 | `SHEPHERD_BASE` | `http://127.0.0.1:9180` | Backend address |
 | `SHEPHERD_USER` / `SHEPHERD_PASS` | `admin` / `s3cret` | Login credentials (`SHEPHERD_ADMIN_PASSWORD`) |
 | `SHEPHERD_PROJECT_ID` | auto-resolved | Target project; defaults to the first org's first project, created if missing |
+| `SHEPHERD_SPEC_FILE` | unset | Local OpenAPI json for `selftest.py` when the deployment's reverse proxy does not forward `/api-docs` (generate one via a temp `crates/server/src/bin/` bin that merges the lib crates' `openapi()` docs — no DB needed) |
+| `SHEPHERD_DELIVERY_SYNC` | `1` | `scenarios_all.py` delivery assertions: `1` = stub executors, assert terminal `DELIVERED`; `0` = deployment dispatches to real agents (`SHEPHERD_AGENT_*` set), assert async dispatch (`runId`) instead |
 
 Scripts, environments, definitions, cases and scenarios are all
 create-or-reuse by name — repeated runs do not accumulate.
