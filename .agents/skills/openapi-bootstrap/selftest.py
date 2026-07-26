@@ -88,8 +88,14 @@ def main():
         pid = projs[0]["id"]
     print(f"[2/7] project projectId={pid}")
 
-    # 3) Fetch OpenAPI -> idempotent import
-    spec_doc = json.loads(call("GET", "/api-docs/openapi.json")[1])
+    # 3) Fetch OpenAPI -> idempotent import. Behind a reverse proxy /api-docs may
+    # not be forwarded (SPA fallback HTML); SHEPHERD_SPEC_FILE supplies the spec then.
+    spec_file = os.environ.get("SHEPHERD_SPEC_FILE")
+    if spec_file:
+        with open(spec_file) as f:
+            spec_doc = json.load(f)
+    else:
+        spec_doc = json.loads(call("GET", "/api-docs/openapi.json")[1])
     imported = j("POST", "/api/definition/import", token,
                  {"projectId": pid, "content": spec_doc})
     print(f"[3/7] OpenAPI {spec_doc['info']['title']} v{spec_doc['info']['version']} "

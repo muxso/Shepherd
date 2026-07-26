@@ -321,13 +321,13 @@ MCP 客户端用 API key 认证:在 MCP server 配置里带 `Authorization: Bear
 
 ```bash
 # 单链路自举(登录 → 提取 → 鉴权链 + 负向 401)
-python3 .claude/skills/openapi-bootstrap/selftest.py
+python3 .agents/skills/openapi-bootstrap/selftest.py
 
 # 每个业务模块一条 CRUD/生命周期场景,逐模块报告
-python3 .claude/skills/openapi-bootstrap/scenarios_all.py
+python3 .agents/skills/openapi-bootstrap/scenarios_all.py
 ```
 
-两者都遵循 `SHEPHERD_BASE`(默认 `http://127.0.0.1:9180`)与 `SHEPHERD_USER` / `SHEPHERD_PASS`(默认 `admin` / `s3cret`)。详见 `.claude/skills/openapi-bootstrap/SKILL.md`。
+两者都遵循 `SHEPHERD_BASE`(默认 `http://127.0.0.1:9180`)与 `SHEPHERD_USER` / `SHEPHERD_PASS`(默认 `admin` / `s3cret`)。详见 `.agents/skills/openapi-bootstrap/SKILL.md`。
 
 ---
 
