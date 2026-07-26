@@ -2,7 +2,7 @@
 
 <img src="web/public/logo.svg" alt="Shepherd logo" width="88" align="right" />
 
-Shepherd 不是一个 AI Coding Agent，而是一个端到端的 AI 软件工程平台。它管理的不只是代码生成，而是整个软件工程生命周期——从需求规划、任务拆解、代码实现、测试回归，到工程治理、持续价值交付和组织知识沉淀。  
+Shepherd 不是一个 AI Coding Agent，而是一个端到端的 AI 软件工程平台。它管理的不只是代码生成，而是整个软件工程生命周期——从需求规划、任务拆解、代码实现、测试回归，到工程治理、持续交付，以及组织工程知识的持续沉淀与演进。  
 AI ROI、人效分析、软件工程建模、Task Graph。
 
 [![Rust](https://img.shields.io/badge/Rust-2021-orange.svg)](https://www.rust-lang.org/)
