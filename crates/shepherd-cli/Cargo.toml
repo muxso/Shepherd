@@ -16,6 +16,7 @@ clap = { version = "4", features = ["derive"] }
 reqwest = { workspace = true, features = ["blocking", "json", "rustls-tls"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
+base64 = "0.22"
 
 [lints]
 workspace = true
