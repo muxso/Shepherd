@@ -13,7 +13,10 @@ pub use auth::{
     UserCredential, UserRoleQuery,
 };
 pub use llm_model::{LlmModelPatch, LlmModelRecord, LlmModelRepoError, LlmModelRepository};
-pub use oidc::{ExternalIdentityProvider, ExternalUserRepository, LinkedUser};
+pub use oidc::{
+    ExternalIdentityProvider, ExternalUserRepository, LinkedUser, OidcProvider,
+    OidcProviderRepository, OidcRepoError,
+};
 pub use organization_repository::{OrgRepoError, OrgRepository};
 pub use role_repository::{RoleRepoError, RoleRepository, UserRoleRepository};
 pub use user_directory::{DirectoryError, UserDirectory};
