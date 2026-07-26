@@ -22,6 +22,13 @@ use crate::application::{
 use crate::domain::RoleScope;
 use crate::domain::{AuthError, AuthUser, OidcError};
 use crate::ports::{CredentialRepository, PasswordHasher, SessionStore, UserRoleQuery};
+
+#[cfg(all(feature = "http", feature = "oidc"))]
+use crate::adapters::oidc::build_provider;
+#[cfg(all(feature = "http", feature = "oidc"))]
+use crate::domain::{OidcProvider, OidcRepoError};
+#[cfg(all(feature = "http", feature = "oidc"))]
+use crate::ports::OidcProviderRepository;
 use kernel::page::PageRequest;
 
 #[derive(Clone)]
@@ -421,7 +428,15 @@ pub fn oidc_router(oidc: OidcLoginUseCase) -> Router {
     Router::new()
         .route("/auth/oidc/{provider}/authorize", get(oidc_authorize))
         .route("/auth/oidc/{provider}/callback", get(oidc_callback))
+        .route("/auth/oidc/providers", get(oidc_providers_public))
         .with_state(oidc)
+}
+
+/// Public, unauthenticated: lists the keys of providers currently registered
+/// in the live runtime registry (so a login page can render SSO buttons).
+#[utoipa::path(get, path = "/auth/oidc/providers", tag = "auth", responses((status = 200)))]
+async fn oidc_providers_public(State(uc): State<OidcLoginUseCase>) -> Response {
+    (StatusCode::OK, Json(uc.provider_keys())).into_response()
 }
 
 const STATE_COOKIE: &str = "oidc_state";
@@ -498,6 +513,257 @@ async fn oidc_callback(
     // Single-use state: cleared after use.
     set_cookie(&mut resp, &format!("{STATE_COOKIE}=; Max-Age=0; Path=/auth/oidc"));
     resp
+}
+
+// ---------------------------------------------------------------------------
+// OIDC provider admin API (runtime-editable system settings)
+// ---------------------------------------------------------------------------
+// Gated on `oidc` because mutations rebuild the live registry via the
+// `build_provider` adapter factory. The public read route above is NOT gated
+// so a login page can discover providers without the `oidc` feature... but in
+// practice the server enables both together.
+
+/// Live OIDC provider admin state: the dynamic registry plus the repository
+/// that backs it. Mutations rebuild the registry via `reload`.
+#[derive(Clone)]
+#[cfg(all(feature = "http", feature = "oidc"))]
+struct OidcAdminState {
+    oidc: OidcLoginUseCase,
+    repo: Arc<dyn OidcProviderRepository>,
+    sessions: Arc<dyn SessionStore>,
+}
+
+#[cfg(all(feature = "http", feature = "oidc"))]
+impl FromRef<OidcAdminState> for Arc<dyn SessionStore> {
+    fn from_ref(s: &OidcAdminState) -> Self {
+        s.sessions.clone()
+    }
+}
+
+/// Provider record as returned by the admin API. `app_secret` is never
+/// serialized; `secret_set` tells the client whether a secret is configured.
+#[derive(Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+#[cfg(all(feature = "http", feature = "oidc"))]
+struct OidcProviderView {
+    provider_key: String,
+    app_id: String,
+    redirect: String,
+    default_permissions: Vec<String>,
+    enabled: bool,
+    base_url: Option<String>,
+    secret_set: bool,
+}
+
+#[cfg(all(feature = "http", feature = "oidc"))]
+impl OidcProviderView {
+    fn from_provider(p: &OidcProvider) -> Self {
+        Self {
+            provider_key: p.provider_key.clone(),
+            app_id: p.app_id.clone(),
+            redirect: p.redirect.clone(),
+            default_permissions: p.default_permissions.clone(),
+            enabled: p.enabled,
+            base_url: p.base_url.clone(),
+            secret_set: !p.app_secret.is_empty(),
+        }
+    }
+}
+
+#[derive(Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+#[cfg(all(feature = "http", feature = "oidc"))]
+struct OidcProviderCreate {
+    provider_key: String,
+    app_id: String,
+    app_secret: String,
+    #[serde(default)]
+    redirect: String,
+    #[serde(default)]
+    default_permissions: Vec<String>,
+    #[serde(default = "oidc_default_true")]
+    enabled: bool,
+    #[serde(default)]
+    base_url: Option<String>,
+}
+
+#[derive(Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+#[cfg(all(feature = "http", feature = "oidc"))]
+struct OidcProviderUpdate {
+    app_id: String,
+    #[serde(default)]
+    app_secret: Option<String>,
+    #[serde(default)]
+    redirect: String,
+    #[serde(default)]
+    default_permissions: Vec<String>,
+    #[serde(default)]
+    enabled: Option<bool>,
+    #[serde(default)]
+    base_url: Option<String>,
+}
+
+#[cfg(all(feature = "http", feature = "oidc"))]
+fn oidc_default_true() -> bool {
+    true
+}
+
+#[cfg(all(feature = "http", feature = "oidc"))]
+fn oidc_repo_err(e: OidcRepoError) -> Response {
+    match e {
+        OidcRepoError::NotFound => (StatusCode::NOT_FOUND, "provider not found").into_response(),
+        OidcRepoError::Backend(m) => {
+            (StatusCode::INTERNAL_SERVER_ERROR, format!("storage error: {m}")).into_response()
+        }
+    }
+}
+
+/// Rebuilds the live registry from the repository after a mutation.
+#[cfg(all(feature = "http", feature = "oidc"))]
+async fn oidc_reload_after_mutate(st: &OidcAdminState) -> Result<(), Response> {
+    st.oidc.reload(st.repo.as_ref(), build_provider).await.map_err(oidc_repo_err)
+}
+
+#[utoipa::path(get, path = "/system/oidc/providers", tag = "oidc", responses((status = 200, body = Vec<OidcProviderView>), (status = 401), (status = 403)), security(("bearer" = [])))]
+#[cfg(all(feature = "http", feature = "oidc"))]
+async fn oidc_list_providers(user: AuthUser, State(st): State<OidcAdminState>) -> Response {
+    if !user.can("SYSTEM_USER", "READ") {
+        return (StatusCode::FORBIDDEN, "permission denied: SYSTEM_USER:READ").into_response();
+    }
+    match st.repo.list().await {
+        Ok(items) => (
+            StatusCode::OK,
+            Json(items.iter().map(OidcProviderView::from_provider).collect::<Vec<_>>()),
+        )
+            .into_response(),
+        Err(e) => oidc_repo_err(e),
+    }
+}
+
+#[utoipa::path(get, path = "/system/oidc/providers/{key}", tag = "oidc", params(("key" = String, Path)), responses((status = 200, body = OidcProviderView), (status = 401), (status = 403), (status = 404)), security(("bearer" = [])))]
+#[cfg(all(feature = "http", feature = "oidc"))]
+async fn oidc_get_provider(
+    user: AuthUser,
+    State(st): State<OidcAdminState>,
+    Path(key): Path<String>,
+) -> Response {
+    if !user.can("SYSTEM_USER", "READ") {
+        return (StatusCode::FORBIDDEN, "permission denied: SYSTEM_USER:READ").into_response();
+    }
+    match st.repo.get(&key).await {
+        Ok(Some(p)) => (StatusCode::OK, Json(OidcProviderView::from_provider(&p))).into_response(),
+        Ok(None) => (StatusCode::NOT_FOUND, "provider not found").into_response(),
+        Err(e) => oidc_repo_err(e),
+    }
+}
+
+#[utoipa::path(post, path = "/system/oidc/providers", tag = "oidc", responses((status = 201, body = OidcProviderView), (status = 400), (status = 401), (status = 403)), security(("bearer" = [])))]
+#[cfg(all(feature = "http", feature = "oidc"))]
+async fn oidc_create_provider(
+    user: AuthUser,
+    State(st): State<OidcAdminState>,
+    Json(req): Json<OidcProviderCreate>,
+) -> Response {
+    if !user.can("SYSTEM_USER", "UPDATE") {
+        return (StatusCode::FORBIDDEN, "permission denied: SYSTEM_USER:UPDATE").into_response();
+    }
+    let provider = OidcProvider {
+        provider_key: req.provider_key.trim().to_string(),
+        app_id: req.app_id.trim().to_string(),
+        app_secret: req.app_secret,
+        redirect: req.redirect,
+        default_permissions: req.default_permissions,
+        enabled: req.enabled,
+        base_url: req.base_url,
+    };
+    if provider.provider_key.is_empty() {
+        return (StatusCode::BAD_REQUEST, "provider_key is required").into_response();
+    }
+    if build_provider(&provider).is_none() {
+        return (StatusCode::BAD_REQUEST, "unsupported provider key").into_response();
+    }
+    if let Err(e) = st.repo.upsert(&provider).await {
+        return oidc_repo_err(e);
+    }
+    if let Err(e) = oidc_reload_after_mutate(&st).await {
+        return e;
+    }
+    (StatusCode::CREATED, Json(OidcProviderView::from_provider(&provider))).into_response()
+}
+
+#[utoipa::path(put, path = "/system/oidc/providers/{key}", tag = "oidc", params(("key" = String, Path)), responses((status = 200, body = OidcProviderView), (status = 400), (status = 401), (status = 403), (status = 404)), security(("bearer" = [])))]
+#[cfg(all(feature = "http", feature = "oidc"))]
+async fn oidc_update_provider(
+    user: AuthUser,
+    State(st): State<OidcAdminState>,
+    Path(key): Path<String>,
+    Json(req): Json<OidcProviderUpdate>,
+) -> Response {
+    if !user.can("SYSTEM_USER", "UPDATE") {
+        return (StatusCode::FORBIDDEN, "permission denied: SYSTEM_USER:UPDATE").into_response();
+    }
+    let existing = match st.repo.get(&key).await {
+        Ok(Some(p)) => p,
+        Ok(None) => return (StatusCode::NOT_FOUND, "provider not found").into_response(),
+        Err(e) => return oidc_repo_err(e),
+    };
+    let provider = OidcProvider {
+        provider_key: key,
+        app_id: req.app_id.trim().to_string(),
+        app_secret: req.app_secret.unwrap_or(existing.app_secret),
+        redirect: req.redirect,
+        default_permissions: req.default_permissions,
+        enabled: req.enabled.unwrap_or(existing.enabled),
+        base_url: req.base_url,
+    };
+    if build_provider(&provider).is_none() {
+        return (StatusCode::BAD_REQUEST, "unsupported provider key").into_response();
+    }
+    if let Err(e) = st.repo.upsert(&provider).await {
+        return oidc_repo_err(e);
+    }
+    if let Err(e) = oidc_reload_after_mutate(&st).await {
+        return e;
+    }
+    (StatusCode::OK, Json(OidcProviderView::from_provider(&provider))).into_response()
+}
+
+#[utoipa::path(delete, path = "/system/oidc/providers/{key}", tag = "oidc", params(("key" = String, Path)), responses((status = 204), (status = 401), (status = 403), (status = 404)), security(("bearer" = [])))]
+#[cfg(all(feature = "http", feature = "oidc"))]
+async fn oidc_delete_provider(
+    user: AuthUser,
+    State(st): State<OidcAdminState>,
+    Path(key): Path<String>,
+) -> Response {
+    if !user.can("SYSTEM_USER", "UPDATE") {
+        return (StatusCode::FORBIDDEN, "permission denied: SYSTEM_USER:UPDATE").into_response();
+    }
+    match st.repo.delete(&key).await {
+        Ok(()) => {
+            if let Err(e) = oidc_reload_after_mutate(&st).await {
+                return e;
+            }
+            StatusCode::NO_CONTENT.into_response()
+        }
+        Err(e) => oidc_repo_err(e),
+    }
+}
+
+/// Admin router for managing OIDC providers as runtime system settings.
+#[cfg(all(feature = "http", feature = "oidc"))]
+pub fn oidc_admin_router(
+    oidc: OidcLoginUseCase,
+    repo: Arc<dyn OidcProviderRepository>,
+    sessions: Arc<dyn SessionStore>,
+) -> Router {
+    Router::new()
+        .route("/system/oidc/providers", get(oidc_list_providers).post(oidc_create_provider))
+        .route(
+            "/system/oidc/providers/{key}",
+            get(oidc_get_provider).put(oidc_update_provider).delete(oidc_delete_provider),
+        )
+        .with_state(OidcAdminState { oidc, repo, sessions })
 }
 
 #[derive(Clone)]
@@ -882,7 +1148,25 @@ pub fn openapi() -> utoipa::openapi::OpenApi {
     let mut doc = ApiDoc::openapi();
     doc.merge(super::apikey_http::openapi());
     doc.merge(super::llm_model_http::openapi());
+    #[cfg(all(feature = "http", feature = "oidc"))]
+    doc.merge(oidc_openapi());
     doc
+}
+
+/// OpenAPI fragment for the OIDC provider admin endpoints. Gated on `oidc`
+/// because the handlers and DTOs only exist when that feature is enabled.
+#[cfg(all(feature = "http", feature = "oidc"))]
+#[derive(OpenApi)]
+#[openapi(
+    paths(oidc_list_providers, oidc_get_provider, oidc_create_provider, oidc_update_provider, oidc_delete_provider),
+    components(schemas(OidcProviderView, OidcProviderCreate, OidcProviderUpdate)),
+    tags((name = "oidc", description = "OIDC 身份提供方"))
+)]
+struct OidcApiDoc;
+
+#[cfg(all(feature = "http", feature = "oidc"))]
+fn oidc_openapi() -> utoipa::openapi::OpenApi {
+    OidcApiDoc::openapi()
 }
 
 #[cfg(test)]
@@ -1228,6 +1512,187 @@ mod tests {
         let state = state_cookie(&auth);
         let resp = app.oneshot(cb_req("bad", &state, Some(&state))).await.expect("r");
         assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    // --- OIDC provider admin API (feature-gated on `oidc`) -------------------
+    #[cfg(all(feature = "http", feature = "oidc"))]
+    use async_trait::async_trait;
+
+    #[cfg(all(feature = "http", feature = "oidc"))]
+    struct MemOidcRepo {
+        inner: std::sync::Mutex<Vec<OidcProvider>>,
+    }
+
+    #[cfg(all(feature = "http", feature = "oidc"))]
+    impl MemOidcRepo {
+        fn new() -> Self {
+            Self { inner: std::sync::Mutex::new(Vec::new()) }
+        }
+    }
+
+    #[cfg(all(feature = "http", feature = "oidc"))]
+    #[async_trait]
+    impl OidcProviderRepository for MemOidcRepo {
+        async fn list(&self) -> Result<Vec<OidcProvider>, OidcRepoError> {
+            Ok(self.inner.lock().expect("poisoned").clone())
+        }
+        async fn list_enabled(&self) -> Result<Vec<OidcProvider>, OidcRepoError> {
+            Ok(self.inner.lock().expect("poisoned").iter().filter(|p| p.enabled).cloned().collect())
+        }
+        async fn get(&self, key: &str) -> Result<Option<OidcProvider>, OidcRepoError> {
+            Ok(self.inner.lock().expect("poisoned").iter().find(|p| p.provider_key == key).cloned())
+        }
+        async fn upsert(&self, p: &OidcProvider) -> Result<(), OidcRepoError> {
+            let mut v = self.inner.lock().expect("poisoned");
+            if let Some(existing) = v.iter_mut().find(|x| x.provider_key == p.provider_key) {
+                *existing = p.clone();
+            } else {
+                v.push(p.clone());
+            }
+            Ok(())
+        }
+        async fn delete(&self, key: &str) -> Result<(), OidcRepoError> {
+            self.inner.lock().expect("poisoned").retain(|x| x.provider_key != key);
+            Ok(())
+        }
+    }
+
+    #[cfg(all(feature = "http", feature = "oidc"))]
+    async fn oidc_admin_app() -> (Router, String, String) {
+        let users = Arc::new(InMemoryExternalUserRepository::new(["PROJECT:READ"]));
+        let sessions = Arc::new(InMemorySessionStore::new());
+        // Registry starts empty; mutations rebuild it via reload (exercised below).
+        let oidc = OidcLoginUseCase::new(users, sessions.clone());
+        let repo = Arc::new(MemOidcRepo::new());
+        let router = oidc_admin_router(oidc, repo, sessions.clone());
+        let admin = sessions
+            .create(
+                "u-admin",
+                PermissionSet::from_raw(["SYSTEM_USER:READ+UPDATE"]).expect("admin perms"),
+                3600,
+            )
+            .await
+            .expect("admin session");
+        let viewer = sessions
+            .create(
+                "u-view",
+                PermissionSet::from_raw(["SYSTEM_USER:READ"]).expect("viewer perms"),
+                3600,
+            )
+            .await
+            .expect("viewer session");
+        (router, admin, viewer)
+    }
+
+    #[tokio::test]
+    #[cfg(all(feature = "http", feature = "oidc"))]
+    async fn oidc_admin_crud_and_permission_flow() {
+        let (app, admin, viewer) = oidc_admin_app().await;
+
+        // Anonymous → 401 on the list endpoint.
+        let anon =
+            app.clone().oneshot(req("GET", "/system/oidc/providers", "", None)).await.expect("r");
+        assert_eq!(anon.status(), StatusCode::UNAUTHORIZED);
+
+        // Viewer (READ only) can list but cannot create (UPDATE required).
+        let listed = app
+            .clone()
+            .oneshot(req("GET", "/system/oidc/providers", "", Some(&viewer)))
+            .await
+            .expect("r");
+        assert_eq!(listed.status(), StatusCode::OK);
+        let created = app
+            .clone()
+            .oneshot(req(
+                "POST",
+                "/system/oidc/providers",
+                r#"{"providerKey":"feishu","appId":"cli_x","appSecret":"s3cr3t"}"#,
+                Some(&viewer),
+            ))
+            .await
+            .expect("r");
+        assert_eq!(created.status(), StatusCode::FORBIDDEN);
+
+        // Admin can create; secret is never echoed back (secret_set=true instead).
+        let created = app
+            .clone()
+            .oneshot(req(
+                "POST",
+                "/system/oidc/providers",
+                r#"{"providerKey":"feishu","appId":"cli_x","appSecret":"s3cr3t"}"#,
+                Some(&admin),
+            ))
+            .await
+            .expect("r");
+        assert_eq!(created.status(), StatusCode::CREATED);
+        let bytes = axum::body::to_bytes(created.into_body(), usize::MAX).await.expect("body");
+        let v: serde_json::Value = serde_json::from_slice(&bytes).expect("json");
+        assert_eq!(v["providerKey"], "feishu");
+        assert_eq!(v["appId"], "cli_x");
+        assert!(v.get("appSecret").is_none(), "secret must not be serialized");
+        assert_eq!(v["secretSet"], true);
+
+        // The new provider is now listed; the live registry was rebuilt via reload.
+        let listed = app
+            .clone()
+            .oneshot(req("GET", "/system/oidc/providers", "", Some(&admin)))
+            .await
+            .expect("r");
+        assert_eq!(listed.status(), StatusCode::OK);
+        let bytes = axum::body::to_bytes(listed.into_body(), usize::MAX).await.expect("body");
+        let v: serde_json::Value = serde_json::from_slice(&bytes).expect("json");
+        assert_eq!(v.as_array().expect("arr").len(), 1);
+
+        // Get by key, then update (rotating the secret), then delete.
+        let got = app
+            .clone()
+            .oneshot(req("GET", "/system/oidc/providers/feishu", "", Some(&admin)))
+            .await
+            .expect("r");
+        assert_eq!(got.status(), StatusCode::OK);
+
+        let updated = app
+            .clone()
+            .oneshot(req(
+                "PUT",
+                "/system/oidc/providers/feishu",
+                r#"{"appId":"cli_y","appSecret":"new-s3cr3t","enabled":false}"#,
+                Some(&admin),
+            ))
+            .await
+            .expect("r");
+        assert_eq!(updated.status(), StatusCode::OK);
+        let bytes = axum::body::to_bytes(updated.into_body(), usize::MAX).await.expect("body");
+        let v: serde_json::Value = serde_json::from_slice(&bytes).expect("json");
+        assert_eq!(v["appId"], "cli_y");
+        assert_eq!(v["enabled"], false);
+
+        // Unsupported provider key → 400 on create.
+        let bad = app
+            .clone()
+            .oneshot(req(
+                "POST",
+                "/system/oidc/providers",
+                r#"{"providerKey":"github","appId":"a","appSecret":"s"}"#,
+                Some(&admin),
+            ))
+            .await
+            .expect("r");
+        assert_eq!(bad.status(), StatusCode::BAD_REQUEST);
+
+        // Delete removes it and rebuilds the registry again.
+        let deleted = app
+            .clone()
+            .oneshot(req("DELETE", "/system/oidc/providers/feishu", "", Some(&admin)))
+            .await
+            .expect("r");
+        assert_eq!(deleted.status(), StatusCode::NO_CONTENT);
+        let listed =
+            app.oneshot(req("GET", "/system/oidc/providers", "", Some(&admin))).await.expect("r");
+        assert_eq!(listed.status(), StatusCode::OK);
+        let bytes = axum::body::to_bytes(listed.into_body(), usize::MAX).await.expect("body");
+        let v: serde_json::Value = serde_json::from_slice(&bytes).expect("json");
+        assert_eq!(v.as_array().expect("arr").len(), 0);
     }
 
     fn req(method: &str, uri: &str, body: &str, bearer: Option<&str>) -> Request<Body> {
