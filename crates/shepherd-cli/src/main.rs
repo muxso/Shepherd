@@ -228,6 +228,11 @@ enum Cmd {
         #[command(subcommand)]
         cmd: DebugCmd,
     },
+    /// API case execution statistics (summary + daily trend).
+    Caseexec {
+        #[command(subcommand)]
+        cmd: CaseExecCmd,
+    },
 }
 
 #[derive(Subcommand)]
@@ -818,6 +823,23 @@ enum DebugCmd {
     },
     /// List protocols supported by the debug proxy.
     Protocols,
+}
+
+#[derive(Subcommand)]
+enum CaseExecCmd {
+    /// Execution summary for a project (executions / passed / executed cases).
+    Summary {
+        #[arg(long)]
+        project: String,
+    },
+    /// Daily execution trend (pass/fail over the last N days).
+    Trend {
+        #[arg(long)]
+        project: String,
+        /// Lookback window in days (1-90, default 7).
+        #[arg(long, default_value_t = 7)]
+        days: i32,
+    },
 }
 
 #[derive(Subcommand)]
@@ -3099,6 +3121,20 @@ fn run(cli: Cli) -> R<()> {
                     pretty(&c.post("/api/debug/send", req, true)?)
                 }
                 DebugCmd::Protocols => pretty(&c.get("/api/debug/protocols", true)?),
+            }
+        }
+        Cmd::Caseexec { cmd } => {
+            let c = Client::new(Config::load())?;
+            match cmd {
+                CaseExecCmd::Summary { project } => {
+                    pretty(&c.get(&format!("/api/case-exec-summary?projectId={project}"), true)?)
+                }
+                CaseExecCmd::Trend { project, days } => {
+                    pretty(&c.get(
+                        &format!("/api/exec-trend?projectId={project}&days={days}"),
+                        true,
+                    )?)
+                }
             }
         }
     }
