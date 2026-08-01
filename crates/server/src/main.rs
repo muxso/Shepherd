@@ -284,7 +284,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         ttl_secs,
     );
 
-    let ext_users = Arc::new(PgExternalUserRepository::new(pool.clone()));
+    let ext_users =
+        Arc::new(PgExternalUserRepository::new(pool.clone(), vec!["PROJECT:READ".to_string()]));
     let oidc_repo = Arc::new(PgOidcProviderRepository::new(pool.clone()));
     // First-boot seeding: copy env-provided feishu/wecom into the DB only when the
     // key is absent, so the admin API (and later manual edits) remain the single
@@ -731,6 +732,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let project_file_routes = project_file::router(pool.clone(), sessions.clone());
 
+    // RAG knowledge-base Q&A: plain-PG vector store + OpenAI-compatible embeddings/chat (from env).
+    let rag_store: Arc<dyn rag::ports::VectorStore> =
+        Arc::new(rag::adapters::PgVectorStore::new(pool.clone()));
+    let rag_embedder: Arc<dyn rag::ports::Embedder> =
+        Arc::new(rag::adapters::OpenAiEmbedder::from_env());
+    let rag_chat: Arc<dyn rag::ports::Chat> = Arc::new(rag::adapters::OpenAiChat::from_env());
+    let rag_routes = rag::http::router(rag_store, rag_embedder, rag_chat, sessions.clone());
+
     let app = routes::assemble(vec![
         routes::group(
             "system",
@@ -786,6 +795,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .merge(import_scheduler_routes),
         ),
         routes::group("perf", perf_routes),
+        routes::group("rag", rag_routes),
         routes::group("debug", debug_send_routes),
         routes::group("meta", openapi::routes().merge(health_routes(pool.clone()))),
     ]);

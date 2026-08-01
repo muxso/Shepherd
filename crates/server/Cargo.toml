@@ -11,6 +11,7 @@ rust-version.workspace = true
 # 把它们 new 出来、合并路由、启动。其余各层永远只认抽象。
 [dependencies]
 system-setting = { path = "../system-setting", features = ["pg", "http", "auth", "oidc", "ldap"] }
+rag = { path = "../rag", features = ["http"] }
 project = { path = "../project", features = ["pg", "http"] }
 case = { path = "../case", features = ["pg", "http"] }
 bug = { path = "../bug", features = ["pg", "http"] }
