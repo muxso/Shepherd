@@ -397,3 +397,9 @@ body::before {
 .ms-home-grid > .ant-col > .ant-card > .ant-card-body {
   flex: 1;
 }
+
+/* Knowledge Q&A: message fade-in, streaming caret dots. */
+.dc-msg { animation: dc-fade 0.22s ease-out; }
+@keyframes dc-fade { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+.dc-dots::after { content: '…'; animation: dc-blink 1.4s steps(4) infinite; }
+@keyframes dc-blink { 0% { opacity: 0.2; } 50% { opacity: 1; } 100% { opacity: 0.2; } }

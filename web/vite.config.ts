@@ -10,6 +10,7 @@ const proxy = Object.fromEntries(
     '/api',
     '/auth',
     '/public',
+    '/rag',
     '/project',
     '/organization',
     '/system',
