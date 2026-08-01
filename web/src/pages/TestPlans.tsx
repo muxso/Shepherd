@@ -5,7 +5,7 @@ import { message, modal } from '../feedback'
 import { api, ApiError, type PlanStats } from '../api'
 import { useApp } from '../context'
 import type { RegItem } from '../registry'
-import { Workspace, useWorkTabs, useOpenParam } from '../components/Workspace'
+import { Workspace, useWorkTabs } from '../components/Workspace'
 import { SelectProjectEmpty } from '../components/Page'
 import { useI18n } from '../i18n'
 import { useListView, type ListColumn } from '../components/ListView'
@@ -67,7 +67,6 @@ export default function TestPlans() {
     tabs.reset()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId])
-  useOpenParam(tabs.open) // deep link: ?open=<planId>
 
   const membersOf = (g: RegItem) => plans.filter((x) => !isGroup(x) && groupIdOf(x) === g.id)
 

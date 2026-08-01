@@ -201,17 +201,25 @@ export default function ApiDefinitions() {
     setOpenCases((m) => ({ ...m, [c.id]: c }))
     setActiveKey(`case:${c.id}`)
   }
-  useOpenParam(openDef) // ?open=<definitionId> deep link
+  useOpenParam(openDef) // ?open=<definitionId> deep link (persistent → shareable)
   // ?openCase=<caseId> deep link (case click in the reference graph): fetch project cases, then open the case's detail tab.
+  // The param is kept (not stripped) so the URL stays shareable; guard on openCases to avoid re-fetching.
   useEffect(() => {
     const cid = searchParams.get('openCase')
-    if (!cid || !projectId) return
-    api
-      .projectCasesAll(projectId)
-      .then((cs) => { const c = cs.find((x) => x.id === cid); if (c) openCase(c) })
-      .finally(() => { const next = new URLSearchParams(searchParams); next.delete('openCase'); setSearchParams(next, { replace: true }) })
+    if (!cid || !projectId || openCases[cid]) return
+    api.projectCasesAll(projectId).then((cs) => { const c = cs.find((x) => x.id === cid); if (c) openCase(c) }).catch(() => undefined)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams, projectId])
+  // Mirror the active tab into the URL (?open=<defId> / ?openCase=<caseId>), so the open workspace is shareable/restorable.
+  useEffect(() => {
+    const next = new URLSearchParams(searchParams)
+    next.delete('open')
+    next.delete('openCase')
+    if (openIds.includes(activeKey)) next.set('open', activeKey)
+    else if (activeKey.startsWith('case:')) next.set('openCase', activeKey.slice(5))
+    if (next.toString() !== searchParams.toString()) setSearchParams(next, { replace: true })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeKey, openIds])
   const closeTab = (id: string) => {
     if (id === NEW_KEY) {
       setCreating(false)
@@ -373,24 +381,32 @@ export default function ApiDefinitions() {
   })
   // Module-tree selection filters on top of useListView filtering.
   const visible = lv.rows.filter((d) => (moduleKey === 'ALL' ? true : moduleKey === 'UNFILED' ? !d.moduleId : d.moduleId === moduleKey))
+  const viewCount = viewMode === 'API' ? visible.length : viewMode === 'CASE' ? caseRows.length : mockRows.length
 
   const listTab = (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 12px', borderBottom: '1px solid var(--border-soft)' }}>
-        {/* View mode switch: API / CASE / MOCK (ref: top-left). */}
-        <Dropdown
-          trigger={['click']}
-          menu={{ items: (['API', 'CASE', 'MOCK'] as const).map((m) => ({ key: m, label: m })), onClick: ({ key }) => setViewMode(key as 'API' | 'CASE' | 'MOCK') }}
-        >
-          <Button>{viewMode} <DownOutlined /></Button>
-        </Dropdown>
-        <span style={{ fontWeight: 600, color: 'var(--brand)' }}>
+      {/* Deck-style toolbar: segmented view switch + count pill on an elevated surface. */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 14px', borderBottom: '1px solid var(--border-soft)', background: 'var(--panel)' }}>
+        {/* View mode switch: API / CASE / MOCK. */}
+        <Segmented
+          value={viewMode}
+          onChange={(v) => setViewMode(v as 'API' | 'CASE' | 'MOCK')}
+          options={[
+            { value: 'API', label: 'API', icon: <ApiOutlined /> },
+            { value: 'CASE', label: 'CASE', icon: <ThunderboltOutlined /> },
+            { value: 'MOCK', label: 'MOCK', icon: <CodeOutlined /> },
+          ]}
+        />
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, padding: '3px 6px 3px 12px', borderRadius: 999, background: 'var(--brand-soft)', color: 'var(--brand)', fontSize: 13, fontWeight: 600 }}>
           {viewMode === 'API' ? t('apidef.allApis2', '全部') : viewMode === 'CASE' ? t('apidef.allCases', '全部用例') : t('apidef.allMocks', '全部 MOCK')}
+          <b style={{ background: 'var(--brand)', color: '#fff', borderRadius: 999, padding: '0 8px', fontSize: 12, lineHeight: '18px', minWidth: 18, textAlign: 'center' }}>{viewCount}</b>
         </span>
         <div style={{ flex: 1 }} />
         {/* Toolbar (search/views/filters/columns) renders only in API mode; CASE/MOCK have no search/filter. */}
         {viewMode === 'API' && lv.toolbar}
-        <Button icon={<ReloadOutlined />} onClick={load} />
+        <Tooltip title={t('a.refresh', '刷新')}>
+          <Button icon={<ReloadOutlined />} onClick={load} />
+        </Tooltip>
       </div>
       <div style={{ flex: 1, overflow: 'auto', padding: 12 }}>
         {viewMode === 'API' ? (
@@ -1131,9 +1147,10 @@ function ApiDetail({ definition, onUpdated }: { definition: ApiDefinition; onUpd
   )
 
   return (
-    <div style={{ padding: '12px 16px', height: '100%', overflow: 'auto' }}>
+    <div style={{ padding: '12px 16px', height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
       <Tabs
-        className="ms-detail-tabs"
+        className="ms-detail-tabs ms-fill-tabs"
+        style={{ flex: 1, minHeight: 0 }}
         activeKey={tab}
         onChange={setTab}
         tabBarExtraContent={

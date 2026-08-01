@@ -4,7 +4,7 @@ import ResizableDrawer from '../components/ResizableDrawer'
 import EditDrawer from '../components/EditDrawer'
 import dayjs, { type Dayjs } from 'dayjs'
 import { message, modal } from '../feedback'
-import { useNavigate } from 'react-router-dom'
+import { useScopedNavigate } from '../scope'
 import { BranchesOutlined, DeleteOutlined, EditOutlined, FlagOutlined, HistoryOutlined, InboxOutlined, PartitionOutlined, PlayCircleOutlined, ProfileOutlined, ReloadOutlined, SendOutlined } from '@ant-design/icons'
 import {
   api,
@@ -1671,7 +1671,7 @@ function DecompositionView({ decompId, verificationId, projectId, reqId, req }: 
 // Task-linked cases + their plans: the task → case → plan chain, each clickable through to its page.
 function TaskCasesDrawer({ decompId, projectId, task, onClose }: { decompId: string; projectId: string; task: Task | null; onClose: () => void }) {
   const { t } = useI18n()
-  const nav = useNavigate()
+  const nav = useScopedNavigate()
   const [linked, setLinked] = useState<ApiCase[]>([])
   const [plansOf, setPlansOf] = useState<Record<string, { planId: string; name: string }[]>>({})
   const [projCases, setProjCases] = useState<ApiCase[]>([])
