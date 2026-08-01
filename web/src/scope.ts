@@ -22,6 +22,7 @@ export const PROJECT_SCOPED_PREFIXES = [
   '/agents',
   '/skill',
   '/mcp',
+  '/knowledge',
 ]
 
 /** True when `path` (a logical path, no `/p/:pid`) belongs under a project. */

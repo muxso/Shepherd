@@ -37,6 +37,7 @@ const EnvironmentsPage = lazy(() => import('./pages/Environments').then((m) => (
 const ResourcePoolsPage = lazy(() => import('./pages/ResourcePoolPage').then((m) => ({ default: m.ResourcePoolsPage })))
 const ResourcePoolForm = lazy(() => import('./pages/ResourcePoolPage').then((m) => ({ default: m.ResourcePoolForm })))
 const PublicReport = lazy(() => import('./pages/PublicReport'))
+const KnowledgeQA = lazy(() => import('./pages/KnowledgeQA'))
 
 // UI-only browsing shouldn't be blocked by login: VITE_SKIP_LOGIN=1 skips the login gate (dev builds only; production unaffected).
 const SKIP_LOGIN = import.meta.env.DEV && import.meta.env.VITE_SKIP_LOGIN === '1'
@@ -83,6 +84,7 @@ export default function App() {
     { path: 'bug', element: <Bugs /> },
     { path: 'skill', element: <Skills /> },
     { path: 'mcp', element: <Mcp /> },
+    { path: 'knowledge', element: <KnowledgeQA /> },
   ]
 
   return (

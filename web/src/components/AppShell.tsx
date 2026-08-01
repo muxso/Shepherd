@@ -4,6 +4,7 @@ import ResizableDrawer from './ResizableDrawer'
 import { message } from '../feedback'
 import {
   ShareAltOutlined,
+  NodeIndexOutlined,
   ApiOutlined,
   PartitionOutlined,
   LogoutOutlined,
@@ -122,10 +123,11 @@ const MODULES: ModuleDef[] = [
     key: '/skill',
     label: ['nav.dev', '研发'],
     icon: <RobotOutlined />,
-    match: ['/skill', '/agents', '/mcp'],
+    match: ['/skill', '/agents', '/mcp', '/knowledge'],
     children: [
       { key: '/agents', icon: <DeploymentUnitOutlined />, label: ['m.agents', '人机协同'] },
       { key: '/skill', icon: <BulbOutlined />, label: ['m.skill', '技能库'] },
+      { key: '/knowledge', icon: <NodeIndexOutlined />, label: ['m.knowledge', '知识问答'] },
       { key: '/mcp', icon: <ApiOutlined />, label: ['m.mcp', 'MCP 工具'] },
     ],
   },
