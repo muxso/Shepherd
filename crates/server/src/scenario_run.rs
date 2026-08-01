@@ -545,6 +545,9 @@ pub fn router(runner: ScenarioRunner, sessions: Arc<dyn SessionStore>) -> Router
         .route("/api/scenario/{id}/run", post(run_scenario))
         .route("/api/scenario/batch-run", post(batch_run_scenarios))
         .route("/api/scenario-report/{report_id}", get(scenario_report))
+        .route("/api/scenario-report/{report_id}/share", post(create_scenario_share))
+        // Public: no auth — resolves a share token to the report. Mounted here so it shares state.
+        .route("/public/scenario-report/{token}", get(public_scenario_report))
         .with_state(RunState { runner, reports, sessions })
 }
 
@@ -906,6 +909,9 @@ struct ScenarioReportResponse {
     started_at: Option<String>,
     finished_at: Option<String>,
     duration_ms: Option<i64>,
+    /// Owning scenario (set only on the public share read) so the shared page can render the step tree.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    scenario_id: Option<String>,
     results: Vec<ReportResultItem>,
 }
 
@@ -942,11 +948,12 @@ struct ReqInfo {
 }
 
 #[utoipa::path(get, path = "/api/scenario-report/{report_id}", tag = "api-scenario", params(("report_id" = String, Path)), responses((status = 200, body = ScenarioReportResponse), (status = 404)), security(("bearer" = [])))]
-async fn scenario_report(
-    _user: AuthUser,
-    State(st): State<RunState>,
-    Path(report_id): Path<String>,
-) -> Response {
+/// Builds the report DTO by id. Shared by the authed and public (share-token) handlers.
+/// Returns Ok(None) when the report doesn't exist, Err(()) on a storage error.
+async fn build_scenario_report(
+    st: &RunState,
+    report_id: String,
+) -> Result<Option<ScenarioReportResponse>, ()> {
     let name = sqlx::query_scalar::<_, String>(
         "SELECT COALESCE(name, '') FROM ms_api_batch_report WHERE id = $1",
     )
@@ -957,43 +964,124 @@ async fn scenario_report(
     .flatten()
     .unwrap_or_default();
     match st.reports.detail(&report_id).await {
-        Ok(Some(d)) => (
-            StatusCode::OK,
-            Json(ScenarioReportResponse {
-                report_id,
-                status: d.status,
-                case_count: d.case_count,
-                name,
-                started_at: d.started_at,
-                finished_at: d.finished_at,
-                duration_ms: d.duration_ms,
-                results: d
-                    .results
-                    .into_iter()
-                    .map(|r| ReportResultItem {
-                        case_id: r.case_id,
-                        outcome: r.outcome,
-                        failures: r.failures,
-                        executed_at: r.executed_at,
-                        status_code: r.status_code,
-                        latency_ms: r.latency_ms,
-                        resp_size: r.resp_size,
-                        body: r.body,
-                        headers: r.headers,
-                        assertions: r.assertions,
-                        extractions: r.extractions,
-                        timings: r.timings.clone(),
-                        request: r.req_method.clone().map(|method| ReqInfo {
-                            method,
-                            url: r.req_url.clone().unwrap_or_default(),
-                            headers: r.req_headers.clone(),
-                            body: r.req_body.clone(),
-                        }),
-                    })
-                    .collect(),
-            }),
-        )
-            .into_response(),
+        Ok(Some(d)) => Ok(Some(ScenarioReportResponse {
+            report_id,
+            status: d.status,
+            case_count: d.case_count,
+            name,
+            started_at: d.started_at,
+            finished_at: d.finished_at,
+            duration_ms: d.duration_ms,
+            scenario_id: None,
+            results: d
+                .results
+                .into_iter()
+                .map(|r| ReportResultItem {
+                    case_id: r.case_id,
+                    outcome: r.outcome,
+                    failures: r.failures,
+                    executed_at: r.executed_at,
+                    status_code: r.status_code,
+                    latency_ms: r.latency_ms,
+                    resp_size: r.resp_size,
+                    body: r.body,
+                    headers: r.headers,
+                    assertions: r.assertions,
+                    extractions: r.extractions,
+                    timings: r.timings.clone(),
+                    request: r.req_method.clone().map(|method| ReqInfo {
+                        method,
+                        url: r.req_url.clone().unwrap_or_default(),
+                        headers: r.req_headers.clone(),
+                        body: r.req_body.clone(),
+                    }),
+                })
+                .collect(),
+        })),
+        Ok(None) => Ok(None),
+        Err(_) => Err(()),
+    }
+}
+
+async fn scenario_report(
+    _user: AuthUser,
+    State(st): State<RunState>,
+    Path(report_id): Path<String>,
+) -> Response {
+    match build_scenario_report(&st, report_id).await {
+        Ok(Some(r)) => (StatusCode::OK, Json(r)).into_response(),
+        Ok(None) => (StatusCode::NOT_FOUND, "report not found").into_response(),
+        Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
+    }
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+struct ShareResponse {
+    token: String,
+}
+
+#[derive(Debug, Default, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+struct ShareBody {
+    /// Owning scenario (from the report modal) — stored so the public page can render the step tree.
+    #[serde(default)]
+    scenario_id: Option<String>,
+}
+
+/// Create a public share link for a scenario report. Requires auth; the returned token maps
+/// to this report and can then be read anonymously via `/public/scenario-report/{token}`.
+#[utoipa::path(post, path = "/api/scenario-report/{report_id}/share", tag = "api-scenario", params(("report_id" = String, Path)), request_body = ShareBody, responses((status = 200, body = ShareResponse), (status = 404)), security(("bearer" = [])))]
+async fn create_scenario_share(
+    user: AuthUser,
+    State(st): State<RunState>,
+    Path(report_id): Path<String>,
+    body: Option<Json<ShareBody>>,
+) -> Response {
+    // The report must exist (and be readable) before we mint a public link for it.
+    match build_scenario_report(&st, report_id.clone()).await {
+        Ok(Some(_)) => {}
+        Ok(None) => return (StatusCode::NOT_FOUND, "report not found").into_response(),
+        Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
+    }
+    let scenario_id = body.and_then(|b| b.0.scenario_id);
+    let token = sqlx::query_scalar::<_, String>(
+        "INSERT INTO ms_report_share (token, report_type, report_id, scenario_id, created_by, created_at) \
+         VALUES (gen_random_uuid()::text, 'scenario', $1, $2, $3, (extract(epoch from now())*1000)::bigint) \
+         RETURNING token",
+    )
+    .bind(&report_id)
+    .bind(scenario_id.as_ref())
+    .bind(&user.user_id)
+    .fetch_one(&st.runner.pool)
+    .await;
+    match token {
+        Ok(token) => (StatusCode::OK, Json(ShareResponse { token })).into_response(),
+        Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
+    }
+}
+
+/// Public (unauthenticated) read of a shared scenario report by token.
+#[utoipa::path(get, path = "/public/scenario-report/{token}", tag = "api-scenario", params(("token" = String, Path)), responses((status = 200, body = ScenarioReportResponse), (status = 404)))]
+async fn public_scenario_report(State(st): State<RunState>, Path(token): Path<String>) -> Response {
+    let row = sqlx::query_as::<_, (String, Option<String>)>(
+        "SELECT report_id, scenario_id FROM ms_report_share \
+         WHERE token = $1 AND report_type = 'scenario' AND revoked = FALSE \
+           AND (expires_at IS NULL OR expires_at > (extract(epoch from now())*1000)::bigint)",
+    )
+    .bind(&token)
+    .fetch_optional(&st.runner.pool)
+    .await
+    .ok()
+    .flatten();
+    let Some((report_id, scenario_id)) = row else {
+        return (StatusCode::NOT_FOUND, "share not found or expired").into_response();
+    };
+    match build_scenario_report(&st, report_id).await {
+        Ok(Some(mut r)) => {
+            r.scenario_id = scenario_id; // lets the public page render the step tree
+            (StatusCode::OK, Json(r)).into_response()
+        }
         Ok(None) => (StatusCode::NOT_FOUND, "report not found").into_response(),
         Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
     }
