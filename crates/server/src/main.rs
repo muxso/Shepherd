@@ -731,6 +731,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let project_file_routes = project_file::router(pool.clone(), sessions.clone());
 
+    // RAG knowledge-base Q&A: plain-PG vector store + OpenAI-compatible embeddings/chat (from env).
+    let rag_store: Arc<dyn rag::ports::VectorStore> =
+        Arc::new(rag::adapters::PgVectorStore::new(pool.clone()));
+    let rag_embedder: Arc<dyn rag::ports::Embedder> =
+        Arc::new(rag::adapters::OpenAiEmbedder::from_env());
+    let rag_chat: Arc<dyn rag::ports::Chat> = Arc::new(rag::adapters::OpenAiChat::from_env());
+    let rag_routes = rag::http::router(rag_store, rag_embedder, rag_chat, sessions.clone());
+
     let app = routes::assemble(vec![
         routes::group(
             "system",
@@ -786,6 +794,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .merge(import_scheduler_routes),
         ),
         routes::group("perf", perf_routes),
+        routes::group("rag", rag_routes),
         routes::group("debug", debug_send_routes),
         routes::group("meta", openapi::routes().merge(health_routes(pool.clone()))),
     ]);
