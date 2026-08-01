@@ -401,12 +401,11 @@ impl SessionStore for PgSessionStore {
 #[derive(Clone)]
 pub struct PgExternalUserRepository {
     pool: PgPool,
-    default_perms: Vec<String>,
 }
 
 impl PgExternalUserRepository {
-    pub fn new(pool: PgPool, default_perms: Vec<String>) -> Self {
-        Self { pool, default_perms }
+    pub fn new(pool: PgPool) -> Self {
+        Self { pool }
     }
 }
 
@@ -415,6 +414,7 @@ impl ExternalUserRepository for PgExternalUserRepository {
     async fn find_or_provision(
         &self,
         identity: &ExternalIdentity,
+        default_permissions: &[String],
     ) -> Result<LinkedUser, OidcError> {
         // On conflict only refresh display_name; keep existing user_id/permissions.
         let row = sqlx::query(
@@ -426,7 +426,7 @@ impl ExternalUserRepository for PgExternalUserRepository {
         .bind(&identity.provider)
         .bind(&identity.open_id)
         .bind(&identity.display_name)
-        .bind(&self.default_perms)
+        .bind(default_permissions)
         .fetch_one(&self.pool)
         .await
         .map_err(|e| OidcError::Backend(e.to_string()))?;

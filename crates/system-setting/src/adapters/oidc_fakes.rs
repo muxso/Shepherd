@@ -37,24 +37,15 @@ impl ExternalIdentityProvider for FakeIdentityProvider {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct InMemoryExternalUserRepository {
-    default_perms: Vec<String>,
     links: Arc<Mutex<HashMap<(String, String), LinkedUser>>>,
     provisioned: Arc<Mutex<usize>>,
 }
 
 impl InMemoryExternalUserRepository {
-    pub fn new<I, S>(default_perms: I) -> Self
-    where
-        I: IntoIterator<Item = S>,
-        S: Into<String>,
-    {
-        Self {
-            default_perms: default_perms.into_iter().map(Into::into).collect(),
-            links: Arc::new(Mutex::new(HashMap::new())),
-            provisioned: Arc::new(Mutex::new(0)),
-        }
+    pub fn new() -> Self {
+        Self::default()
     }
 
     pub fn provisioned_count(&self) -> usize {
@@ -67,6 +58,7 @@ impl ExternalUserRepository for InMemoryExternalUserRepository {
     async fn find_or_provision(
         &self,
         identity: &ExternalIdentity,
+        default_permissions: &[String],
     ) -> Result<LinkedUser, OidcError> {
         let key = (identity.provider.clone(), identity.open_id.clone());
         let mut links = self.links.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -76,7 +68,7 @@ impl ExternalUserRepository for InMemoryExternalUserRepository {
         *self.provisioned.lock().unwrap_or_else(std::sync::PoisonError::into_inner) += 1;
         let linked = LinkedUser {
             user_id: format!("ext-{}-{}", identity.provider, identity.open_id),
-            permissions: self.default_perms.clone(),
+            permissions: default_permissions.to_vec(),
         };
         links.insert(key, linked.clone());
         Ok(linked)

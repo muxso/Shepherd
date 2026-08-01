@@ -1435,7 +1435,7 @@ mod tests {
     }
 
     fn oidc_app() -> Router {
-        let users = Arc::new(InMemoryExternalUserRepository::new(["PROJECT:READ"]));
+        let users = Arc::new(InMemoryExternalUserRepository::new());
         let sessions = Arc::new(InMemorySessionStore::new());
         let feishu = FakeIdentityProvider::new(
             "feishu",
@@ -1445,7 +1445,10 @@ mod tests {
                 display_name: "X".into(),
             },
         );
-        oidc_router(OidcLoginUseCase::new(users, sessions).register(Arc::new(feishu)))
+        oidc_router(
+            OidcLoginUseCase::new(users, sessions)
+                .register(Arc::new(feishu), vec!["PROJECT:READ".into()]),
+        )
     }
 
     fn get_req(uri: &str) -> Request<Body> {
@@ -1559,7 +1562,7 @@ mod tests {
 
     #[cfg(all(feature = "http", feature = "oidc"))]
     async fn oidc_admin_app() -> (Router, String, String) {
-        let users = Arc::new(InMemoryExternalUserRepository::new(["PROJECT:READ"]));
+        let users = Arc::new(InMemoryExternalUserRepository::new());
         let sessions = Arc::new(InMemorySessionStore::new());
         // Registry starts empty; mutations rebuild it via reload (exercised below).
         let oidc = OidcLoginUseCase::new(users, sessions.clone());

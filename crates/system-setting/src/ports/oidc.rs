@@ -20,8 +20,15 @@ pub struct LinkedUser {
 
 #[async_trait]
 pub trait ExternalUserRepository: Send + Sync {
-    async fn find_or_provision(&self, identity: &ExternalIdentity)
-        -> Result<LinkedUser, OidcError>;
+    /// Look up the local user linked to `identity`, provisioning a new one on
+    /// first login. `default_permissions` is the granting provider's configured
+    /// permission set, applied only when a new link is created; existing links
+    /// keep their stored permissions.
+    async fn find_or_provision(
+        &self,
+        identity: &ExternalIdentity,
+        default_permissions: &[String],
+    ) -> Result<LinkedUser, OidcError>;
 }
 
 /// Persistence for [`OidcProvider`] records. Implementations back the runtime

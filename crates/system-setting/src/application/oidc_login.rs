@@ -9,13 +9,22 @@ use crate::ports::{
     SessionStore,
 };
 
+/// A provider registered in the live runtime registry: the exchange strategy
+/// plus the permission set granted to users provisioned through it on first
+/// login.
+#[derive(Clone)]
+struct RegisteredProvider {
+    strategy: Arc<dyn ExternalIdentityProvider>,
+    default_permissions: Vec<String>,
+}
+
 #[derive(Clone)]
 pub struct OidcLoginUseCase {
     // Live, mutable registry. Behind an RwLock so the admin API can swap the
     // strategy set at runtime (after a DB mutation) without rebuilding the
-    // use case. Reads clone the Arc out and drop the guard before any `.await`
+    // use case. Reads clone the entry out and drop the guard before any `.await`
     // so the lock is never held across an await point.
-    providers: Arc<RwLock<HashMap<String, Arc<dyn ExternalIdentityProvider>>>>,
+    providers: Arc<RwLock<HashMap<String, RegisteredProvider>>>,
     users: Arc<dyn ExternalUserRepository>,
     sessions: Arc<dyn SessionStore>,
     ttl_secs: i64,
@@ -32,12 +41,17 @@ impl OidcLoginUseCase {
     }
 
     /// Builder-style registration (used e.g. for env-seeded providers). With
-    /// DB-backed providers prefer [`OidcLoginUseCase::reload`].
-    pub fn register(self, provider: Arc<dyn ExternalIdentityProvider>) -> Self {
-        self.providers
-            .write()
-            .expect("oidc registry poisoned")
-            .insert(provider.key().to_string(), provider);
+    /// DB-backed providers prefer [`OidcLoginUseCase::reload`]. `default_permissions`
+    /// is granted to users provisioned through this provider on first login.
+    pub fn register(
+        self,
+        provider: Arc<dyn ExternalIdentityProvider>,
+        default_permissions: Vec<String>,
+    ) -> Self {
+        self.providers.write().expect("oidc registry poisoned").insert(
+            provider.key().to_string(),
+            RegisteredProvider { strategy: provider, default_permissions },
+        );
         self
     }
 
@@ -61,15 +75,15 @@ impl OidcLoginUseCase {
         let p = self
             .provider(provider)?
             .ok_or_else(|| OidcError::UnknownProvider(provider.to_string()))?;
-        Ok(p.authorize_url(state))
+        Ok(p.strategy.authorize_url(state))
     }
 
     pub async fn complete(&self, provider: &str, code: &str) -> Result<String, OidcError> {
         let p = self
             .provider(provider)?
             .ok_or_else(|| OidcError::UnknownProvider(provider.to_string()))?;
-        let identity = p.exchange(code).await?;
-        let linked = self.users.find_or_provision(&identity).await?;
+        let identity = p.strategy.exchange(code).await?;
+        let linked = self.users.find_or_provision(&identity, &p.default_permissions).await?;
         let permissions = PermissionSet::from_raw(&linked.permissions)
             .map_err(|_| OidcError::Backend("invalid permission config".into()))?;
         self.sessions
@@ -79,8 +93,8 @@ impl OidcLoginUseCase {
     }
 
     /// Reads a provider out of the registry without holding the read lock
-    /// across an await point (the caller may `.await` on the returned Arc).
-    fn provider(&self, key: &str) -> Result<Option<Arc<dyn ExternalIdentityProvider>>, OidcError> {
+    /// across an await point (the caller may `.await` on the returned entry).
+    fn provider(&self, key: &str) -> Result<Option<RegisteredProvider>, OidcError> {
         let guard = self.providers.read().expect("oidc registry poisoned");
         Ok(guard.get(key).cloned())
     }
@@ -98,10 +112,16 @@ impl OidcLoginUseCase {
         F: Fn(&OidcProvider) -> Option<Arc<dyn ExternalIdentityProvider>>,
     {
         let enabled = repo.list_enabled().await?;
-        let mut map: HashMap<String, Arc<dyn ExternalIdentityProvider>> = HashMap::new();
+        let mut map: HashMap<String, RegisteredProvider> = HashMap::new();
         for cfg in &enabled {
-            if let Some(prov) = build(cfg) {
-                map.insert(prov.key().to_string(), prov);
+            if let Some(strategy) = build(cfg) {
+                map.insert(
+                    strategy.key().to_string(),
+                    RegisteredProvider {
+                        strategy,
+                        default_permissions: cfg.default_permissions.clone(),
+                    },
+                );
             }
         }
         *self.providers.write().expect("oidc registry poisoned") = map;
@@ -124,7 +144,7 @@ mod tests {
 
     fn uc() -> (OidcLoginUseCase, Arc<InMemorySessionStore>, Arc<InMemoryExternalUserRepository>) {
         let sessions = Arc::new(InMemorySessionStore::new());
-        let users = Arc::new(InMemoryExternalUserRepository::new(["PROJECT:READ"]));
+        let users = Arc::new(InMemoryExternalUserRepository::new());
         let feishu = FakeIdentityProvider::new(
             "feishu",
             ExternalIdentity {
@@ -133,7 +153,8 @@ mod tests {
                 display_name: "Alice".into(),
             },
         );
-        let uc = OidcLoginUseCase::new(users.clone(), sessions.clone()).register(Arc::new(feishu));
+        let uc = OidcLoginUseCase::new(users.clone(), sessions.clone())
+            .register(Arc::new(feishu), vec!["PROJECT:READ".into()]);
         (uc, sessions, users)
     }
 
@@ -230,18 +251,21 @@ mod tests {
     #[tokio::test]
     async fn reload_rebuilds_registry_from_repo() {
         let sessions = Arc::new(InMemorySessionStore::new());
-        let users = Arc::new(InMemoryExternalUserRepository::new(["PROJECT:READ"]));
+        let users = Arc::new(InMemoryExternalUserRepository::new());
         let uc = OidcLoginUseCase::new(users.clone(), sessions.clone());
 
         // Empty repo => empty registry (even after an earlier registration).
-        let uc = uc.register(Arc::new(FakeIdentityProvider::new(
-            "feishu",
-            ExternalIdentity {
-                provider: "feishu".into(),
-                open_id: "ou".into(),
-                display_name: "N".into(),
-            },
-        )));
+        let uc = uc.register(
+            Arc::new(FakeIdentityProvider::new(
+                "feishu",
+                ExternalIdentity {
+                    provider: "feishu".into(),
+                    open_id: "ou".into(),
+                    display_name: "N".into(),
+                },
+            )),
+            vec!["PROJECT:READ".into()],
+        );
         uc.reload(&InMemProviders::new(vec![]), fake_factory).await.unwrap();
         assert!(uc.provider_keys().is_empty());
 
