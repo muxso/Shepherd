@@ -10,7 +10,7 @@ import { api, ApiError, runEventsWsUrl, type ApiCase, type ApiDefinition, type A
 import type { ColumnsType } from 'antd/es/table'
 import { useApp } from '../context'
 import { methodColor, statusColor, outcomeColor, priorityColor, statusLabel, execStatusLabel, caseStatusLabel } from '../components/tags'
-import { Workspace, useWorkTabs, useWorkspaceExtraSlot, useOpenParam } from '../components/Workspace'
+import { Workspace, useWorkTabs, useWorkspaceExtraSlot } from '../components/Workspace'
 import { ModuleTreePanel, inSelectedModule } from '../components/ModuleTreePanel'
 import { columnSearch } from '../components/ListView'
 import AssertionEditor from '../components/AssertionEditor'
@@ -132,8 +132,7 @@ export default function Scenarios() {
   const [timerCron, setTimerCron] = useState('')
   const [timerEnabled, setTimerEnabled] = useState(true)
   const [timerPlans, setTimerPlans] = useState<RegItem[]>([])
-  const tabs = useWorkTabs()
-  useOpenParam((id) => tabs.open(id)) // deep link ?open=<scenarioId> (reference graph clicks land here)
+  const tabs = useWorkTabs() // ?open=<scenarioId> sync (deep link / reference-graph clicks) is built in
   const NEW_KEY = '__new_scenario__'
 
   const load = async () => {

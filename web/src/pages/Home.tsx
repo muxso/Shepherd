@@ -18,7 +18,7 @@ import {
   SyncOutlined,
   HistoryOutlined,
 } from '@ant-design/icons'
-import { useNavigate } from 'react-router-dom'
+import { useScopedNavigate } from '../scope'
 import { api, type ApiCase, type ApiDefinition, type Bug, type CaseExecSummary, type ExecTrendPoint, type PlanStats } from '../api'
 import { useApp } from '../context'
 import { regList, type RegItem } from '../registry'
@@ -113,7 +113,7 @@ function loadLayout(): CardLayout[] {
 export default function Home() {
   const { projectId, projects } = useApp()
   const { t } = useI18n()
-  const navigate = useNavigate()
+  const navigate = useScopedNavigate()
   const [c, setC] = useState<Counts | null>(null)
   const [defs, setDefs] = useState<ApiDefinition[]>([])
   const [cases, setCases] = useState<ApiCase[]>([])

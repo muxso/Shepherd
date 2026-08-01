@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState, type ReactNode } from 'react'
 import { Button, Card, Checkbox, Divider, Dropdown, Segmented, Select, Table, Tag, Tooltip } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
 import { DownOutlined, ReloadOutlined } from '@ant-design/icons'
-import { useNavigate } from 'react-router-dom'
+import { useScopedNavigate } from '../scope'
 import { api, type Bug, type CaseReviewSummary, type FunctionalCase, type PlanStats } from '../api'
 import { useApp } from '../context'
 import { useI18n } from '../i18n'
@@ -104,7 +104,7 @@ function RateBar({ rate, text }: { rate: number; text: string }) {
 export default function WorkbenchSections({ mode }: { mode: 'todo' | 'follow' }) {
   const { t } = useI18n()
   const { projects, projectId } = useApp()
-  const nav = useNavigate()
+  const nav = useScopedNavigate()
   // Local project scope: defaults to the app-level project, switching it only
   // affects this page's data.
   const [pid, setPid] = useState(projectId)
