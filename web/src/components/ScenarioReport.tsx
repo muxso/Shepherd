@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { Button, Cascader, Empty, Input, Segmented, Space, Tabs, Tag, Tooltip, Typography } from 'antd'
+import { ShareAltOutlined } from '@ant-design/icons'
+import { message } from '../feedback'
 import ResizableDrawer from './ResizableDrawer'
 import { api, type ApiCase, type AssertionResult, type DebugResponse, type ReportResultItem, type ScenarioReportDetail, type ScenarioStep } from '../api'
 import { methodColor, outcomeColor, execStatusLabel } from './tags'
@@ -333,10 +335,12 @@ function ReportTreeRows({ nodes, depth, view, t, caseOf, expandedKeys, openKeys,
 // Scenario run report drawer: analysis cards + rings on top; toolbar filter + expand/collapse all;
 // detail rows mirror the scenario step tree when the owning scenario is known (scenarioId prop),
 // otherwise fall back to the flat list (union batch reports). Rows reuse ReportRow / ReportTreeRows.
-export function ScenarioReportModal({ reportId, scenarioId, nameOf, caseMap, onClose }: { reportId: string | null; scenarioId?: string; nameOf: NameOf; caseMap?: Record<string, ApiCase>; onClose: () => void }) {
+// Report body: overview (report/step/request analysis) + detail list. Extracted so the in-app
+// modal (fetches by reportId) and the public share page (fed a pre-fetched `data`) render the
+// EXACT same layout. The step tree needs auth (api.getScenario), so it's absent on the public
+// page (no scenarioId) and gracefully falls back to the flat list.
+export function ScenarioReportBody({ data, scenarioId, nameOf, caseMap, fetchScenario }: { data: ScenarioReportDetail; scenarioId?: string; nameOf: NameOf; caseMap?: Record<string, ApiCase>; fetchScenario?: (id: string) => Promise<{ name: string; steps: ScenarioStep[] }> }) {
   const { t } = useI18n()
-  const [data, setData] = useState<ScenarioReportDetail | null>(null)
-  const [loading, setLoading] = useState(false)
   const [search, setSearch] = useState('')
   const [openSet, setOpenSet] = useState<Set<number>>(new Set())
   // Flat rows vs tab view (tab = expanding a leaf also opens the response panel); outcome filter is a [scope, outcome] cascader pick.
@@ -346,24 +350,19 @@ export function ScenarioReportModal({ reportId, scenarioId, nameOf, caseMap, onC
   const [treeData, setTreeData] = useState<ReportTreeData | null>(null)
   const [expandedKeys, setExpandedKeys] = useState<Set<string>>(new Set())
   const [openKeys, setOpenKeys] = useState<Set<string>>(new Set())
-  useEffect(() => {
-    if (!reportId) { setData(null); return }
-    setOpenSet(new Set())
-    setSearch('')
-    setFilter(undefined)
-    setLoading(true)
-    api.scenarioReport(reportId).then(setData).catch(() => setData(null)).finally(() => setLoading(false))
-  }, [reportId])
+  // Reset transient filters when the underlying report changes.
+  useEffect(() => { setOpenSet(new Set()); setSearch(''); setFilter(undefined) }, [data.reportId])
   useEffect(() => {
     setTreeData(null)
-    if (!reportId || !scenarioId) return
+    if (!scenarioId) return
     let alive = true
     const subs: Record<string, ScenarioStep[]> = {}
     const names: Record<string, string> = {}
     // Recursive fetch with cycle guard + depth cap; sub-scenario failures leave an empty group.
+    const getScenario = fetchScenario || api.getScenario
     const load = async (id: string, depth: number, stack: Set<string>): Promise<void> => {
       if (depth > 5 || stack.has(id) || subs[id]) return
-      const sc = await api.getScenario(id)
+      const sc = await getScenario(id)
       subs[id] = sc.steps || []
       names[id] = sc.name
       const next = new Set(stack).add(id)
@@ -373,8 +372,8 @@ export function ScenarioReportModal({ reportId, scenarioId, nameOf, caseMap, onC
       .then(() => { if (alive) setTreeData({ subs, names }) })
       .catch(() => { if (alive) setTreeData(null) })
     return () => { alive = false }
-  }, [reportId, scenarioId])
-  const all = data?.results || []
+  }, [scenarioId])
+  const all = data.results || []
   const passN = all.filter((r) => r.outcome === 'SUCCESS').length
   const failN = all.length - passN
   const passRate = all.length ? (passN / all.length) * 100 : 0
@@ -385,7 +384,7 @@ export function ScenarioReportModal({ reportId, scenarioId, nameOf, caseMap, onC
   // Report total time: prefer backend wall-clock (durationMs, since 0056); old reports fall back to executedAt span / request total.
   const times = all.map((r) => Date.parse((r.executedAt || '').replace(' ', 'T'))).filter((n) => !Number.isNaN(n))
   const span = times.length ? Math.max(...times) - Math.min(...times) : 0
-  const reportTotalMs = (data?.durationMs != null && data.durationMs >= 0)
+  const reportTotalMs = (data.durationMs != null && data.durationMs >= 0)
     ? data.durationMs
     : (span > 0 ? span + (all.length ? all[all.length - 1].latencyMs ?? 0 : 0) : reqTotalMs)
   // Assertion pass rate (per assertion; falls back to step pass rate without assertion data).
@@ -411,7 +410,7 @@ export function ScenarioReportModal({ reportId, scenarioId, nameOf, caseMap, onC
   // Build the step tree + map results by DFS order; null = fall back to the flat list.
   const treeNameOf: NameOf = (id) => treeData?.names[id] || nameOf(id)
   const tree = useMemo(() => {
-    if (!treeData || !data || !scenarioId) return null
+    if (!treeData || !scenarioId) return null
     const rootSteps = treeData.subs[scenarioId]
     if (!rootSteps?.length) return null
     const ctx: ReportTreeCtx = { data: treeData, t, nameOf: treeNameOf }
@@ -458,21 +457,9 @@ export function ScenarioReportModal({ reportId, scenarioId, nameOf, caseMap, onC
     <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', fontSize: 14 }}><span style={{ color: 'var(--text-2)' }}>{lbl}</span><b style={{ color }}>{val}</b></div>
   )
   return (
-    <ResizableDrawer
-      open={!!reportId}
-      onClose={onClose}
-      width="60%"
-      title={data?.name ? `${t('scenario.report', '场景报告')} · ${data.name}` : t('scenario.report', '场景报告')}
-      styles={{ body: { background: 'var(--panel-2)' } }}
-    >
-      {loading ? (
-        <div style={{ padding: 32, color: 'var(--text-3)' }}>{t('a.loading', '加载中…')}</div>
-      ) : !data ? (
-        <Empty description={t('scenario.noReport', '暂无报告')} />
-      ) : (
-        <>
-          {/* Overview: report / step / request analysis (mirrors the reference report). */}
-          <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', marginBottom: 20 }}>
+    <>
+      {/* Overview: report / step / request analysis (mirrors the reference report). */}
+      <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', marginBottom: 20 }}>
             <div style={{ flex: 1, minWidth: 260, border: '1px solid var(--border-soft)', borderRadius: 10, padding: '14px 18px', background: 'var(--panel)' }}>
               <h3 style={{ margin: '0 0 10px', fontSize: 14, color: 'var(--text-2)', display: 'flex', alignItems: 'center', gap: 8 }}>
                 {t('scenario.reportAnalysis', '报告分析')}<Tag color={outcomeColor(data.status)} style={{ margin: 0 }}>{runOutcomeLabel(data.status, t)}</Tag>
@@ -574,6 +561,53 @@ export function ScenarioReportModal({ reportId, scenarioId, nameOf, caseMap, onC
               />
             )}
           </div>
+        </>
+  )
+}
+
+// In-app modal: fetches the report by id and renders the shared body inside a drawer, plus a
+// "share" action that mints a public link. `scenarioId` enables the step-tree view.
+export function ScenarioReportModal({ reportId, scenarioId, nameOf, caseMap, onClose }: { reportId: string | null; scenarioId?: string; nameOf: NameOf; caseMap?: Record<string, ApiCase>; onClose: () => void }) {
+  const { t } = useI18n()
+  const [data, setData] = useState<ScenarioReportDetail | null>(null)
+  const [loading, setLoading] = useState(false)
+  useEffect(() => {
+    if (!reportId) { setData(null); return }
+    setLoading(true)
+    api.scenarioReport(reportId).then(setData).catch(() => setData(null)).finally(() => setLoading(false))
+  }, [reportId])
+  return (
+    <ResizableDrawer
+      open={!!reportId}
+      onClose={onClose}
+      width="60%"
+      title={data?.name ? `${t('scenario.report', '场景报告')} · ${data.name}` : t('scenario.report', '场景报告')}
+      styles={{ body: { background: 'var(--panel-2)' } }}
+    >
+      {loading ? (
+        <div style={{ padding: 32, color: 'var(--text-3)' }}>{t('a.loading', '加载中…')}</div>
+      ) : !data ? (
+        <Empty description={t('scenario.noReport', '暂无报告')} />
+      ) : (
+        <>
+          <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 12 }}>
+            <Button
+              icon={<ShareAltOutlined />}
+              onClick={async () => {
+                if (!reportId) return
+                try {
+                  const { token } = await api.shareScenarioReport(reportId, scenarioId)
+                  await navigator.clipboard?.writeText(`${window.location.origin}/share/scenario/${token}`)
+                  message.success(t('report.shareCopied', '分享链接已复制,无需登录即可访问'))
+                } catch {
+                  message.error(t('report.shareFailed', '生成分享链接失败'))
+                }
+              }}
+            >
+              {t('report.share', '分享报告')}
+            </Button>
+          </div>
+          <ScenarioReportBody data={data} scenarioId={scenarioId} nameOf={nameOf} caseMap={caseMap} />
         </>
       )}
     </ResizableDrawer>

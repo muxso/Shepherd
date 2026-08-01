@@ -512,6 +512,8 @@ export interface ScenarioReportDetail {
   startedAt?: string | null
   finishedAt?: string | null
   durationMs?: number | null
+  /** Owning scenario id (present only on public share reads) → enables the step-tree view. */
+  scenarioId?: string
   results: ReportResultItem[]
 }
 /** Project-level API case execution summary (GET /api/case-exec-summary). */
@@ -1708,6 +1710,8 @@ export const api = {
   deletePlanSchedule: (id: string) => http.del(`/test-plan/${id}/schedule`),
   planRuns: (id: string) => http.get<unknown[]>(`/test-plan/${id}/runs`),
   planReportMd: (id: string) => http.getText(`/test-plan/${id}/report.md`),
+  sharePlanReport: (id: string) => http.post<{ token: string }>(`/test-plan/${id}/report/share`),
+  publicPlanReportMd: (token: string) => http.getText(`/public/test-plan-report/${token}`),
 
   // Perf testing (no list endpoint → report list lives in the frontend registry)
   runPerf: (b: {
@@ -2060,6 +2064,15 @@ export const api = {
     http.get<Page<ScenarioExecution>>(`/api/scenario/${scenarioId}/executions`),
   scenarioReport: (reportId: string) =>
     http.get<ScenarioReportDetail>(`/api/scenario-report/${reportId}`),
+  // Public share: mint an unguessable token, then read the report anonymously (no auth) by that token.
+  // `scenarioId` is remembered so the public page can render the same step tree as the in-app report.
+  shareScenarioReport: (reportId: string, scenarioId?: string) =>
+    http.post<{ token: string }>(`/api/scenario-report/${reportId}/share`, { scenarioId }),
+  publicScenarioReport: (token: string) =>
+    http.get<ScenarioReportDetail>(`/public/scenario-report/${token}`),
+  // Token-guarded public read of a scenario's structure (for the shared report's step tree).
+  publicScenario: (token: string, id: string) =>
+    http.get<Scenario & { steps: ScenarioStep[] }>(`/public/scenario/${token}/${id}`),
   caseExecSummary: (projectId: string) =>
     http.get<CaseExecSummary>(`/api/case-exec-summary?projectId=${encodeURIComponent(projectId)}`),
   execTrend: (projectId: string, days = 7) =>

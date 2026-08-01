@@ -284,8 +284,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         ttl_secs,
     );
 
-    let ext_users =
-        Arc::new(PgExternalUserRepository::new(pool.clone(), vec!["PROJECT:READ".to_string()]));
+    let ext_users = Arc::new(PgExternalUserRepository::new(pool.clone()));
     let oidc_repo = Arc::new(PgOidcProviderRepository::new(pool.clone()));
     // First-boot seeding: copy env-provided feishu/wecom into the DB only when the
     // key is absent, so the admin API (and later manual edits) remain the single
@@ -591,6 +590,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         test_plan::application::PlanCaseUseCase::new(plan_repo.clone()),
         test_plan::application::PlanAdminUseCase::new(plan_repo),
         sessions.clone(),
+        pool.clone(),
     );
     // Default to local rather than Noop: otherwise `api batch-run` silently stalls in RUNNING with no results.
     let dispatcher: Arc<dyn api_test::ports::TaskDispatcher> = match &cfg.executor_url {
@@ -666,7 +666,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let scenario_repo =
         Arc::new(api_scenario::adapters::pg::PgApiScenarioRepository::new(pool.clone()));
     let scenario_routes =
-        api_scenario::adapters::http::router(scenario_repo.clone(), sessions.clone());
+        api_scenario::adapters::http::router(scenario_repo.clone(), sessions.clone(), pool.clone());
     let references_routes = references_route::router(apidef_repo.clone(), scenario_repo.clone());
     // Live run events + pool-runner registry: local runs publish step events via
     // the executor observer; remote runs relay them from the runner WS.

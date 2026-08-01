@@ -25,6 +25,7 @@ struct PlanState {
     cases: PlanCaseUseCase,
     admin: PlanAdminUseCase,
     sessions: Arc<dyn SessionStore>,
+    pool: sqlx::PgPool,
 }
 
 impl FromRef<PlanState> for Arc<dyn SessionStore> {
@@ -39,6 +40,7 @@ pub fn router(
     cases: PlanCaseUseCase,
     admin: PlanAdminUseCase,
     sessions: Arc<dyn SessionStore>,
+    pool: sqlx::PgPool,
 ) -> Router {
     Router::new()
         .route("/test-plan", post(create_plan).get(list_plans))
@@ -47,10 +49,13 @@ pub fn router(
         .route("/test-plan/{id}/statistics", get(statistics))
         .route("/test-plan/{id}/report", get(report))
         .route("/test-plan/{id}/report.md", get(report_md))
+        .route("/test-plan/{id}/report/share", post(create_plan_share))
+        // Public: no auth — resolves a share token to the plan's Markdown report.
+        .route("/public/test-plan-report/{token}", get(public_plan_report))
         .route("/test-plan/{id}/cases", post(link_case).get(list_cases))
         .route("/test-plan/{id}/cases/{caseId}", axum::routing::delete(unlink_case))
         .route("/test-plan/{id}/cases/{caseId}/result", post(record_result))
-        .with_state(PlanState { create, stats, cases, admin, sessions })
+        .with_state(PlanState { create, stats, cases, admin, sessions, pool })
 }
 
 #[derive(Debug, Deserialize, ToSchema)]
@@ -413,6 +418,23 @@ async fn report(user: AuthUser, State(st): State<PlanState>, Path(id): Path<Stri
     }
 }
 
+/// Renders a plan's Markdown report by id. Shared by the authed and public (share-token) handlers.
+/// Returns Ok(None) when the plan doesn't exist, Err(()) on a storage error.
+async fn build_plan_report_md(st: &PlanState, id: &str) -> Result<Option<String>, ()> {
+    match st.stats.with_name(id).await {
+        Ok((name, s)) => {
+            let cases = st.cases.list(id).await.unwrap_or_default();
+            Ok(Some(report_markdown(&name, &s, &cases)))
+        }
+        Err(PlanStatisticsError::PlanNotFound) => Ok(None),
+        Err(PlanStatisticsError::Repo(_)) => Err(()),
+    }
+}
+
+fn markdown_response(md: String) -> Response {
+    (StatusCode::OK, [("content-type", "text/markdown; charset=utf-8")], md).into_response()
+}
+
 #[utoipa::path(get, path = "/test-plan/{id}/report.md", tag = "test-plan", params(("id" = String, Path)), responses((status = 200, description = "Markdown 报告"), (status = 403), (status = 404)), security(("bearer" = [])))]
 async fn report_md(
     user: AuthUser,
@@ -422,22 +444,70 @@ async fn report_md(
     if !user.can("TEST_PLAN", "READ") {
         return (StatusCode::FORBIDDEN, "permission denied").into_response();
     }
-    match st.stats.with_name(&id).await {
-        Ok((name, s)) => {
-            let cases = st.cases.list(&id).await.unwrap_or_default();
-            (
-                StatusCode::OK,
-                [("content-type", "text/markdown; charset=utf-8")],
-                report_markdown(&name, &s, &cases),
-            )
-                .into_response()
-        }
-        Err(PlanStatisticsError::PlanNotFound) => {
-            (StatusCode::NOT_FOUND, "plan not found").into_response()
-        }
-        Err(PlanStatisticsError::Repo(_)) => {
-            (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response()
-        }
+    match build_plan_report_md(&st, &id).await {
+        Ok(Some(md)) => markdown_response(md),
+        Ok(None) => (StatusCode::NOT_FOUND, "plan not found").into_response(),
+        Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
+    }
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+struct PlanShareResponse {
+    token: String,
+}
+
+/// Create a public share link for a plan's report. Requires TEST_PLAN:READ; the returned token
+/// can then be read anonymously via `/public/test-plan-report/{token}`.
+#[utoipa::path(post, path = "/test-plan/{id}/report/share", tag = "test-plan", params(("id" = String, Path)), responses((status = 200, body = PlanShareResponse), (status = 403), (status = 404)), security(("bearer" = [])))]
+async fn create_plan_share(
+    user: AuthUser,
+    State(st): State<PlanState>,
+    Path(id): Path<String>,
+) -> Response {
+    if !user.can("TEST_PLAN", "READ") {
+        return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
+    match build_plan_report_md(&st, &id).await {
+        Ok(Some(_)) => {}
+        Ok(None) => return (StatusCode::NOT_FOUND, "plan not found").into_response(),
+        Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
+    }
+    let token = sqlx::query_scalar::<_, String>(
+        "INSERT INTO ms_report_share (token, report_type, report_id, created_by, created_at) \
+         VALUES (gen_random_uuid()::text, 'plan', $1, $2, (extract(epoch from now())*1000)::bigint) \
+         RETURNING token",
+    )
+    .bind(&id)
+    .bind(&user.user_id)
+    .fetch_one(&st.pool)
+    .await;
+    match token {
+        Ok(token) => (StatusCode::OK, Json(PlanShareResponse { token })).into_response(),
+        Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
+    }
+}
+
+/// Public (unauthenticated) read of a shared plan report (Markdown) by token.
+#[utoipa::path(get, path = "/public/test-plan-report/{token}", tag = "test-plan", params(("token" = String, Path)), responses((status = 200, description = "Markdown 报告"), (status = 404)))]
+async fn public_plan_report(State(st): State<PlanState>, Path(token): Path<String>) -> Response {
+    let plan_id = sqlx::query_scalar::<_, String>(
+        "SELECT report_id FROM ms_report_share \
+         WHERE token = $1 AND report_type = 'plan' AND revoked = FALSE \
+           AND (expires_at IS NULL OR expires_at > (extract(epoch from now())*1000)::bigint)",
+    )
+    .bind(&token)
+    .fetch_optional(&st.pool)
+    .await
+    .ok()
+    .flatten();
+    let Some(plan_id) = plan_id else {
+        return (StatusCode::NOT_FOUND, "share not found or expired").into_response();
+    };
+    match build_plan_report_md(&st, &plan_id).await {
+        Ok(Some(md)) => markdown_response(md),
+        Ok(None) => (StatusCode::NOT_FOUND, "plan not found").into_response(),
+        Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
     }
 }
 
