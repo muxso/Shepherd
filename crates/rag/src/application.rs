@@ -62,7 +62,9 @@ pub struct AskOutcome {
     pub trace: AskTrace,
 }
 
-/// Answer `question` for `project_id`: embed → cosine top-k → build context → synthesize, tracing each step.
+/// Answer `question` for `project_id` with hybrid retrieval (semantic + keyword, RRF-fused, optional
+/// LLM rerank) and multi-turn `history`, tracing each stage. `rerank` gates the (slower) LLM rerank.
+#[allow(clippy::too_many_arguments)]
 pub async fn ask(
     store: Arc<dyn VectorStore>,
     embedder: Arc<dyn Embedder>,
@@ -70,8 +72,11 @@ pub async fn ask(
     project_id: &str,
     question: &str,
     top_k: usize,
+    history: &[(String, String)],
+    rerank: bool,
 ) -> Result<AskOutcome> {
     let overall = Instant::now();
+    let top_k = top_k.clamp(1, 20);
     let mut trace = AskTrace {
         question: question.to_string(),
         started_at: now_ms().to_string(),
@@ -87,20 +92,57 @@ pub async fn ask(
         .steps
         .push(TraceStep::Embedding { dim: qvec.len(), latency_ms: t.elapsed().as_millis() as u64 });
 
-    // 2) semantic search
+    // 2) keyword search
     let t = Instant::now();
-    let hits = store.search(project_id, &qvec, top_k.clamp(1, 20)).await?;
-    trace.steps.push(TraceStep::SemanticSearch {
-        fetched: hits.len(),
-        top: hits
+    let kw = store.keyword_search(project_id, question, top_k * 2).await.unwrap_or_default();
+    trace.steps.push(TraceStep::KeywordSearch {
+        query: question.to_string(),
+        fetched: kw.len(),
+        top: kw
             .iter()
-            .take(8)
+            .take(6)
             .map(|h| TraceHit { topic: heading_or_title(h), score: h.score })
             .collect(),
         latency_ms: t.elapsed().as_millis() as u64,
     });
 
-    // 3) build context
+    // 3) semantic search
+    let t = Instant::now();
+    let sem = store.search(project_id, &qvec, top_k * 2).await?;
+    trace.steps.push(TraceStep::SemanticSearch {
+        fetched: sem.len(),
+        top: sem
+            .iter()
+            .take(6)
+            .map(|h| TraceHit { topic: heading_or_title(h), score: h.score })
+            .collect(),
+        latency_ms: t.elapsed().as_millis() as u64,
+    });
+
+    // 4) fuse (RRF) semantic + keyword
+    let candidates = kw.len() + sem.len();
+    let mut hits = rrf(&[sem, kw], 60.0, top_k.max(10));
+    trace.steps.push(TraceStep::Fusion { method: "rrf", candidates, selected: hits.len() });
+
+    // 5) optional LLM rerank of the fused candidates
+    let t = Instant::now();
+    let mut applied = false;
+    if rerank && hits.len() > 1 {
+        if let Some(order) = llm_rerank(chat.as_ref(), question, &hits).await {
+            hits = reorder(hits, &order);
+            applied = true;
+        }
+    }
+    if rerank {
+        trace.steps.push(TraceStep::Rerank {
+            candidates: hits.len(),
+            latency_ms: t.elapsed().as_millis() as u64,
+            applied,
+        });
+    }
+    hits.truncate(top_k);
+
+    // 6) build context
     let context: Vec<ContextChunk> = hits
         .iter()
         .enumerate()
@@ -121,8 +163,8 @@ pub async fn ask(
         approx_tokens,
     });
 
-    // 4) synthesize
-    let (system, user) = build_prompt(question, &context);
+    // 7) synthesize
+    let (system, user) = build_prompt(question, &context, history);
     let t = Instant::now();
     let answer_text = chat.complete(&system, &user).await?;
     trace.steps.push(TraceStep::LlmGeneration {
@@ -151,8 +193,80 @@ fn topic_of(c: &ContextChunk) -> String {
     }
 }
 
-/// Builds the (system, user) RAG prompt. Answer-first, cite `[n]`, never fabricate.
-pub fn build_prompt(question: &str, context: &[ContextChunk]) -> (String, String) {
+/// Reciprocal-rank fusion of ranked hit lists → top-k by summed 1/(k+rank), deduped by chunk id.
+fn rrf(lists: &[Vec<Hit>], k: f32, top_k: usize) -> Vec<Hit> {
+    use std::collections::HashMap;
+    let mut score: HashMap<String, f32> = HashMap::new();
+    let mut by_id: HashMap<String, Hit> = HashMap::new();
+    for list in lists {
+        for (rank, h) in list.iter().enumerate() {
+            *score.entry(h.chunk_id.clone()).or_insert(0.0) += 1.0 / (k + rank as f32 + 1.0);
+            by_id.entry(h.chunk_id.clone()).or_insert_with(|| h.clone());
+        }
+    }
+    let mut items: Vec<(String, f32)> = score.into_iter().collect();
+    items.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+    items
+        .into_iter()
+        .take(top_k)
+        .filter_map(|(id, s)| {
+            by_id.get(&id).map(|h| {
+                let mut h = h.clone();
+                h.score = s;
+                h
+            })
+        })
+        .collect()
+}
+
+/// Ask the LLM to rank candidates by relevance → 0-based order. None on any failure (keep fusion order).
+async fn llm_rerank(chat: &dyn Chat, question: &str, cands: &[Hit]) -> Option<Vec<usize>> {
+    let list = cands
+        .iter()
+        .enumerate()
+        .map(|(i, h)| format!("[{}] {}", i + 1, h.content.chars().take(200).collect::<String>()))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let sys = "你是检索重排器。根据与问题的相关性,把候选段落编号从最相关到最不相关排序,只输出逗号分隔的编号(例:3,1,2),不要任何解释。";
+    let user = format!("问题: {question}\n候选:\n{list}");
+    let out = chat.complete(sys, &user).await.ok()?;
+    let order: Vec<usize> = out
+        .split(|c: char| !c.is_ascii_digit())
+        .filter_map(|s| s.parse::<usize>().ok())
+        .filter(|n| *n >= 1 && *n <= cands.len())
+        .map(|n| n - 1)
+        .collect();
+    if order.is_empty() {
+        None
+    } else {
+        Some(order)
+    }
+}
+
+/// Reorder `hits` by `order` (0-based, possibly partial); any hits not listed keep their relative tail order.
+fn reorder(hits: Vec<Hit>, order: &[usize]) -> Vec<Hit> {
+    let mut out: Vec<Hit> = Vec::with_capacity(hits.len());
+    let mut used = vec![false; hits.len()];
+    for &i in order {
+        if i < hits.len() && !used[i] {
+            used[i] = true;
+            out.push(hits[i].clone());
+        }
+    }
+    for (i, h) in hits.into_iter().enumerate() {
+        if !used[i] {
+            out.push(h);
+        }
+    }
+    out
+}
+
+/// Builds the (system, user) RAG prompt. Answer-first, cite `[n]`, never fabricate. Includes history.
+pub fn build_prompt(
+    question: &str,
+    context: &[ContextChunk],
+    history: &[(String, String)],
+) -> (String, String) {
     let system = "你是知识库问答助手。规则:\n\
         1. 仅使用【上下文】回答,并用编号 [1][2] 标注来源。严禁编造上下文之外的信息。\n\
         2. 上下文中只要有与问题相关的内容,就直接给出答案(即使是部分答案)。\n\
@@ -171,7 +285,15 @@ pub fn build_prompt(question: &str, context: &[ContextChunk]) -> (String, String
             ctx.push_str(&format!("[{}] ({})\n{}\n\n", c.index + 1, head, c.content));
         }
     }
-    let user = format!("{ctx}【问题】\n{question}");
+    let mut hist = String::new();
+    if !history.is_empty() {
+        hist.push_str("【对话历史】\n");
+        for (role, content) in history.iter().rev().take(6).rev() {
+            hist.push_str(&format!("{role}: {content}\n"));
+        }
+        hist.push('\n');
+    }
+    let user = format!("{ctx}{hist}【问题】\n{question}");
     (system, user)
 }
 
@@ -220,7 +342,7 @@ mod tests {
             heading: "H".into(),
             document_id: "d".into(),
         }];
-        let (_s, user) = build_prompt("q?", &ctx);
+        let (_s, user) = build_prompt("q?", &ctx, &[]);
         assert!(user.contains("[1] (H)"));
         assert!(user.contains("【问题】\nq?"));
     }

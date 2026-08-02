@@ -115,11 +115,19 @@ struct AskBody {
     top_k: usize,
     #[serde(default)]
     trace: bool,
+    #[serde(default = "default_true")]
+    rerank: bool,
+    /// Prior turns as [role, content] pairs (role = "user" | "assistant").
+    #[serde(default)]
+    history: Vec<(String, String)>,
     #[serde(default)]
     session_id: Option<String>,
 }
 fn default_top_k() -> usize {
     8
+}
+fn default_true() -> bool {
+    true
 }
 
 /// SSE Q&A. Emits: `sources` (retrieved refs) → `chunk` (answer delta) → `trace` (decision chain,
@@ -138,7 +146,7 @@ async fn ask_stream(
             Ok(Event::default().event(name).json_data(data).unwrap_or_default())
         };
         let sid = session_id.clone();
-        match ask(store, embedder, chat, &b.project_id, &b.question, b.top_k).await {
+        match ask(store, embedder, chat, &b.project_id, &b.question, b.top_k, &b.history, b.rerank).await {
             Ok(out) => {
                 let sources: Vec<_> = out
                     .hits

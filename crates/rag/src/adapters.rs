@@ -290,4 +290,46 @@ impl VectorStore for PgVectorStore {
             })
             .collect())
     }
+
+    async fn keyword_search(
+        &self,
+        project_id: &str,
+        query: &str,
+        top_k: usize,
+    ) -> Result<Vec<Hit>> {
+        // Whitespace terms → ILIKE patterns; score = how many distinct terms a chunk contains.
+        let terms: Vec<String> = query
+            .split_whitespace()
+            .filter(|t| t.chars().count() >= 2)
+            .take(12)
+            .map(|t| format!("%{}%", t.replace(['%', '_'], "")))
+            .collect();
+        if terms.is_empty() {
+            return Ok(Vec::new());
+        }
+        let rows = sqlx::query_as::<_, (String, String, String, String, String, f64)>(
+            "SELECT c.id, c.document_id, COALESCE(d.title,''), c.heading, c.content, \
+                    (SELECT count(*) FROM unnest($2::text[]) p WHERE c.content ILIKE p)::float8 AS score \
+             FROM ms_rag_chunk c JOIN ms_rag_document d ON d.id = c.document_id \
+             WHERE c.project_id = $1 AND c.content ILIKE ANY($2::text[]) \
+             ORDER BY score DESC LIMIT $3",
+        )
+        .bind(project_id)
+        .bind(&terms)
+        .bind(top_k as i64)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(be)?;
+        Ok(rows
+            .into_iter()
+            .map(|(chunk_id, document_id, title, heading, content, score)| Hit {
+                chunk_id,
+                document_id,
+                title,
+                heading,
+                content,
+                score: score as f32,
+            })
+            .collect())
+    }
 }

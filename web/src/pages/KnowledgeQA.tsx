@@ -28,19 +28,25 @@ type Msg = {
 
 const STEP_META: Record<string, { label: string; glyph: string; tone: string }> = {
   embedding: { label: '生成向量', glyph: '∿', tone: '#8a7fd1' },
+  keyword_search: { label: '关键词检索', glyph: '⌕', tone: '#4ea394' },
   semantic_search: { label: '语义检索', glyph: '◌', tone: '#4ea394' },
+  fusion: { label: '融合 (RRF)', glyph: '⇶', tone: '#4ea394' },
+  rerank: { label: '重排', glyph: '✶', tone: '#e29a6b' },
   context_built: { label: '上下文组装', glyph: '☷', tone: '#64748b' },
   llm_generation: { label: '模型生成', glyph: '✦', tone: '#8a7fd1' },
 }
 const metaOf = (k: string) => STEP_META[k] || { label: k, glyph: '•', tone: '#94a3b8' }
 const summarise = (s: TraceStep): string => {
-  const anyS = s as Record<string, unknown>
-  const ms = anyS.latency_ms != null ? ` · ${anyS.latency_ms}ms` : ''
+  const a = s as Record<string, unknown>
+  const ms = a.latency_ms != null ? ` · ${a.latency_ms}ms` : ''
   switch (s.kind) {
-    case 'embedding': return `${(s as { dim: number }).dim} 维${ms}`
-    case 'semantic_search': return `${(s as { fetched: number }).fetched} 条命中${ms}`
-    case 'context_built': return `${(s as { chunks: unknown[] }).chunks.length} 段 · ~${(s as { approx_tokens: number }).approx_tokens} tokens`
-    case 'llm_generation': return `${(s as { answer_chars: number }).answer_chars} 字${ms}`
+    case 'embedding': return `${a.dim} 维${ms}`
+    case 'keyword_search': return `${a.fetched} 条命中${ms}`
+    case 'semantic_search': return `${a.fetched} 条命中${ms}`
+    case 'fusion': return `${a.candidates} → ${a.selected} 候选`
+    case 'rerank': return `${a.applied ? '已重排' : '跳过'} · ${a.candidates} 候选${ms}`
+    case 'context_built': return `${(a.chunks as unknown[]).length} 段 · ~${a.approx_tokens} tokens`
+    case 'llm_generation': return `${a.answer_chars} 字${ms}`
     default: return ''
   }
 }
@@ -101,12 +107,13 @@ function DecisionChain({ trace }: { trace: AskTrace }) {
 async function askStream(
   projectId: string,
   question: string,
+  history: [string, string][],
   onEvent: (ev: string, data: Record<string, unknown>) => void,
 ): Promise<void> {
   const res = await fetch('/rag/ask/stream', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${tokenStore.get()}` },
-    body: JSON.stringify({ projectId, question, trace: true, topK: 8 }),
+    body: JSON.stringify({ projectId, question, trace: true, topK: 8, rerank: true, history }),
   })
   if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`)
   const reader = res.body.getReader()
@@ -151,11 +158,13 @@ export default function KnowledgeQA() {
     if (!q || loading) return
     if (!projectId) return message.warning(t('rag.needProject', '请先选择项目'))
     setInput('')
+    // Prior turns (before this question) as [role, content] pairs for multi-turn context.
+    const history: [string, string][] = messages.filter((m) => m.content.trim()).map((m) => [m.role, m.content])
     setMessages((m) => [...m, { role: 'user', content: q }, { role: 'assistant', content: '', displayed: 0, streaming: true }])
     setLoading(true)
     const patchLast = (fn: (m: Msg) => Msg) => setMessages((ms) => ms.map((m, i) => (i === ms.length - 1 ? fn(m) : m)))
     try {
-      await askStream(projectId, q, (ev, data) => {
+      await askStream(projectId, q, history, (ev, data) => {
         if (ev === 'sources') patchLast((m) => ({ ...m, citations: (data.sources as Citation[]) || [] }))
         else if (ev === 'chunk') {
           const delta = (data.delta as string) || ''
