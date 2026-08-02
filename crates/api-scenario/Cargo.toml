@@ -19,7 +19,7 @@ serde = { workspace = true, optional = true }
 
 [features]
 pg = ["dep:sqlx"]
-http = ["dep:axum", "dep:serde", "dep:webauth", "webauth/http", "dep:utoipa"]
+http = ["dep:axum", "dep:serde", "dep:webauth", "webauth/http", "dep:utoipa", "dep:sqlx"]
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

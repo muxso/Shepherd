@@ -34,6 +34,7 @@ struct ScenarioAppState {
     list_executions: ListScenarioExecutionsUseCase,
     repo: Arc<dyn ApiScenarioRepository>,
     sessions: Arc<dyn SessionStore>,
+    pool: sqlx::PgPool,
 }
 
 impl FromRef<ScenarioAppState> for Arc<dyn SessionStore> {
@@ -42,7 +43,11 @@ impl FromRef<ScenarioAppState> for Arc<dyn SessionStore> {
     }
 }
 
-pub fn router(repo: Arc<dyn ApiScenarioRepository>, sessions: Arc<dyn SessionStore>) -> Router {
+pub fn router(
+    repo: Arc<dyn ApiScenarioRepository>,
+    sessions: Arc<dyn SessionStore>,
+    pool: sqlx::PgPool,
+) -> Router {
     let state = ScenarioAppState {
         create: CreateScenarioUseCase::new(repo.clone()),
         copy: CopyScenarioUseCase::new(repo.clone()),
@@ -54,6 +59,7 @@ pub fn router(repo: Arc<dyn ApiScenarioRepository>, sessions: Arc<dyn SessionSto
         list_executions: ListScenarioExecutionsUseCase::new(repo.clone()),
         repo,
         sessions,
+        pool,
     };
     Router::new()
         .route("/api/scenario", post(create_scenario).get(list_scenarios))
@@ -61,6 +67,9 @@ pub fn router(repo: Arc<dyn ApiScenarioRepository>, sessions: Arc<dyn SessionSto
             "/api/scenario/{id}",
             get(get_scenario).patch(update_scenario).delete(delete_scenario),
         )
+        // Public (no auth): read a scenario's structure when carrying a valid scenario-report share
+        // token, so the shared report page can render the same step tree as the in-app report.
+        .route("/public/scenario/{token}/{id}", get(public_scenario))
         .route("/api/scenario/{id}/copy", post(copy_scenario))
         .route("/api/scenario/{id}/step", post(add_step))
         .route(
@@ -450,6 +459,35 @@ async fn get_scenario(
 ) -> Response {
     if !user.can("API_SCENARIO", "READ") {
         return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
+    match st.get.execute(&id).await {
+        Ok(Some(s)) => (StatusCode::OK, Json(ScenarioResponse::from(s))).into_response(),
+        Ok(None) => (StatusCode::NOT_FOUND, "scenario not found").into_response(),
+        Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
+    }
+}
+
+/// Public (unauthenticated) read of a scenario's structure, gated by a valid scenario-report
+/// share token. Lets the shared report page walk the step tree (parent + sub-scenarios) the same
+/// way the authed in-app report does — without exposing scenarios to fully anonymous callers.
+#[utoipa::path(get, path = "/public/scenario/{token}/{id}", tag = "api-scenario", params(("token" = String, Path), ("id" = String, Path)), responses((status = 200, body = ScenarioResponse), (status = 404)))]
+async fn public_scenario(
+    State(st): State<ScenarioAppState>,
+    Path((token, id)): Path<(String, String)>,
+) -> Response {
+    let valid = sqlx::query_scalar::<_, String>(
+        "SELECT report_id FROM ms_report_share \
+         WHERE token = $1 AND report_type = 'scenario' AND revoked = FALSE \
+           AND (expires_at IS NULL OR expires_at > (extract(epoch from now())*1000)::bigint)",
+    )
+    .bind(&token)
+    .fetch_optional(&st.pool)
+    .await
+    .ok()
+    .flatten()
+    .is_some();
+    if !valid {
+        return (StatusCode::NOT_FOUND, "share not found or expired").into_response();
     }
     match st.get.execute(&id).await {
         Ok(Some(s)) => (StatusCode::OK, Json(ScenarioResponse::from(s))).into_response(),
@@ -873,12 +911,17 @@ mod tests {
     use tower::ServiceExt;
     use webauth::testing::InMemorySessionStore;
 
+    // Lazy pool: parses the URL but never connects — the tested routes don't touch report sharing.
+    fn test_pool() -> sqlx::PgPool {
+        sqlx::PgPool::connect_lazy("postgres://localhost/test").expect("lazy pool")
+    }
+
     async fn app() -> (Router, String) {
         let repo = Arc::new(InMemoryApiScenarioRepository::new());
         let sessions = Arc::new(InMemorySessionStore::new());
         let perms = PermissionSet::from_raw(["API_SCENARIO:READ+ADD".to_string()]).expect("perms");
         let token = sessions.create("admin", perms, 3600).await.expect("token");
-        let r = router(repo, sessions);
+        let r = router(repo, sessions, test_pool());
         (r, token)
     }
 
@@ -938,7 +981,7 @@ mod tests {
         let sessions = Arc::new(InMemorySessionStore::new());
         let perms = PermissionSet::from_raw(["API_SCENARIO:READ".to_string()]).expect("perms");
         let token = sessions.create("u", perms, 3600).await.expect("token");
-        let app = router(repo, sessions);
+        let app = router(repo, sessions, test_pool());
         let resp = app
             .oneshot(post("/api/scenario", r#"{"projectId":"p1","name":"x"}"#, Some(&token)))
             .await
@@ -1071,7 +1114,7 @@ mod tests {
         let perms =
             PermissionSet::from_raw(["API_SCENARIO:READ+ADD+UPDATE".to_string()]).expect("perms");
         let token = sessions.create("admin", perms, 3600).await.expect("token");
-        (router(repo, sessions), token)
+        (router(repo, sessions, test_pool()), token)
     }
 
     async fn add_request_step_id(app: &Router, t: &str, scenario_id: &str) -> String {
@@ -1196,7 +1239,7 @@ mod tests {
         let sessions = Arc::new(InMemorySessionStore::new());
         let perms = PermissionSet::from_raw(["API_SCENARIO:READ".to_string()]).expect("perms");
         let token = sessions.create("u", perms, 3600).await.expect("token");
-        let app = router(repo, sessions);
+        let app = router(repo, sessions, test_pool());
         let resp =
             app.oneshot(post("/api/scenario/any/copy", "{}", Some(&token))).await.expect("resp");
         assert_eq!(resp.status(), StatusCode::FORBIDDEN);
@@ -1275,7 +1318,7 @@ mod tests {
         let sessions = Arc::new(InMemorySessionStore::new());
         let perms = PermissionSet::from_raw(["API_SCENARIO:READ+ADD".to_string()]).expect("perms");
         let token = sessions.create("admin", perms, 3600).await.expect("token");
-        let r = router(repo.clone(), sessions);
+        let r = router(repo.clone(), sessions, test_pool());
         (r, repo, token)
     }
 

@@ -14,23 +14,23 @@ export function useWorkspaceExtraSlot() {
   return useContext(ExtraSlotContext)
 }
 
-// Deep link: read ?open=<id>, let the caller open the detail tab, then strip the param to avoid re-triggering.
+// Deep link: read ?open=<id> and let the caller open the detail tab. The param is kept
+// (not stripped) so the URL keeps reflecting the open resource and stays shareable — the
+// caller's onOpen must be idempotent. Pages that use useWorkTabs get this sync built in.
 export function useOpenParam(onOpen: (id: string) => void) {
-  const [params, setParams] = useSearchParams()
+  const [params] = useSearchParams()
+  const open = params.get('open') || ''
   useEffect(() => {
-    const id = params.get('open')
-    if (id) {
-      onOpen(id)
-      const next = new URLSearchParams(params)
-      next.delete('open')
-      setParams(next, { replace: true })
-    }
+    if (open) onOpen(open)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [params])
+  }, [open])
 }
 
 // Multi-tab workspace state: a permanent list tab + dynamically opened detail tabs.
+// The active tab is mirrored into the URL's ?open param (source of truth), so a workspace
+// URL is shareable and survives reload / back-forward.
 export function useWorkTabs() {
+  const [params, setParams] = useSearchParams()
   const [openIds, setOpenIds] = useState<string[]>([])
   const [activeKey, setActiveKey] = useState(LIST_KEY)
   const open = (id: string) => {
@@ -48,6 +48,25 @@ export function useWorkTabs() {
     setOpenIds([])
     setActiveKey(LIST_KEY)
   }
+
+  // Restore from ?open=<id> (shared URL / deep link / back-forward).
+  const urlOpen = params.get('open') || ''
+  useEffect(() => {
+    if (urlOpen && urlOpen !== activeKey) open(urlOpen)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [urlOpen])
+
+  // Reflect the active tab back into ?open (persistent → the URL is the source of truth).
+  useEffect(() => {
+    const want = activeKey === LIST_KEY ? '' : activeKey
+    if ((params.get('open') || '') === want) return
+    const next = new URLSearchParams(params)
+    if (want) next.set('open', want)
+    else next.delete('open')
+    setParams(next, { replace: true })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeKey])
+
   return { openIds, activeKey, setActiveKey, open, close, reset, LIST_KEY }
 }
 

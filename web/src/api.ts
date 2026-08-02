@@ -512,6 +512,8 @@ export interface ScenarioReportDetail {
   startedAt?: string | null
   finishedAt?: string | null
   durationMs?: number | null
+  /** Owning scenario id (present only on public share reads) → enables the step-tree view. */
+  scenarioId?: string
   results: ReportResultItem[]
 }
 /** Project-level API case execution summary (GET /api/case-exec-summary). */
@@ -648,6 +650,54 @@ export interface LlmModel {
   apiKeyMasked?: string
   enabled: boolean
   createdAt: string
+}
+
+// RAG config (system settings). GET masks keys as *KeySet booleans; PUT sends keys only to change them.
+export interface RagConfigView {
+  embedUrl: string
+  embedModel: string
+  embedDim: number
+  embedKeySet: boolean
+  chatUrl: string
+  chatModel: string
+  chatKeySet: boolean
+  maxTokens: number
+  topK: number
+  rerank: boolean
+}
+export interface RagConfigBody {
+  embedUrl: string
+  embedModel: string
+  embedDim: number
+  embedKey?: string
+  chatUrl: string
+  chatModel: string
+  chatKey?: string
+  maxTokens: number
+  topK: number
+  rerank: boolean
+}
+
+// AI requirement-review opinion grounded in KB retrieval (POST /rag/review). Advisory only.
+export interface RagSource {
+  chunkId: string
+  documentId: string
+  title: string
+  heading: string
+  content: string
+  score: number
+}
+export interface RagReviewOpinion {
+  verdict: 'APPROVE' | 'REVISE' | 'REJECT' | 'UNSURE'
+  summary: string
+  risks: string[]
+  missingCoverage: string[]
+  suggestions: string[]
+  citedSources: number[]
+}
+export interface RagReviewResult {
+  opinion: RagReviewOpinion
+  sources: RagSource[]
 }
 
 export interface ProjectMember {
@@ -1591,6 +1641,13 @@ export const api = {
     http.put<LlmModel>(`/me/llm-model/${encodeURIComponent(id)}`, b),
   deleteLlmModel: (id: string) => http.del(`/me/llm-model/${encodeURIComponent(id)}`),
 
+  // RAG config (system-level, /system/rag/config): keys are write-only; GET returns *KeySet booleans.
+  ragConfig: () => http.get<RagConfigView>('/system/rag/config'),
+  saveRagConfig: (b: RagConfigBody) => http.put('/system/rag/config', b),
+  // AI requirement review: retrieves KB context and returns an advisory opinion (human still decides).
+  reviewRequirement: (b: { projectId: string; title: string; text: string }) =>
+    http.post<RagReviewResult>('/rag/review', b),
+
   // Functional cases (project level)
   functionalCases: (projectId: string) =>
     projectId
@@ -1708,6 +1765,8 @@ export const api = {
   deletePlanSchedule: (id: string) => http.del(`/test-plan/${id}/schedule`),
   planRuns: (id: string) => http.get<unknown[]>(`/test-plan/${id}/runs`),
   planReportMd: (id: string) => http.getText(`/test-plan/${id}/report.md`),
+  sharePlanReport: (id: string) => http.post<{ token: string }>(`/test-plan/${id}/report/share`),
+  publicPlanReportMd: (token: string) => http.getText(`/public/test-plan-report/${token}`),
 
   // Perf testing (no list endpoint → report list lives in the frontend registry)
   runPerf: (b: {
@@ -2060,6 +2119,15 @@ export const api = {
     http.get<Page<ScenarioExecution>>(`/api/scenario/${scenarioId}/executions`),
   scenarioReport: (reportId: string) =>
     http.get<ScenarioReportDetail>(`/api/scenario-report/${reportId}`),
+  // Public share: mint an unguessable token, then read the report anonymously (no auth) by that token.
+  // `scenarioId` is remembered so the public page can render the same step tree as the in-app report.
+  shareScenarioReport: (reportId: string, scenarioId?: string) =>
+    http.post<{ token: string }>(`/api/scenario-report/${reportId}/share`, { scenarioId }),
+  publicScenarioReport: (token: string) =>
+    http.get<ScenarioReportDetail>(`/public/scenario-report/${token}`),
+  // Token-guarded public read of a scenario's structure (for the shared report's step tree).
+  publicScenario: (token: string, id: string) =>
+    http.get<Scenario & { steps: ScenarioStep[] }>(`/public/scenario/${token}/${id}`),
   caseExecSummary: (projectId: string) =>
     http.get<CaseExecSummary>(`/api/case-exec-summary?projectId=${encodeURIComponent(projectId)}`),
   execTrend: (projectId: string, days = 7) =>

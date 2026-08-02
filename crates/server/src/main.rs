@@ -591,6 +591,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         test_plan::application::PlanCaseUseCase::new(plan_repo.clone()),
         test_plan::application::PlanAdminUseCase::new(plan_repo),
         sessions.clone(),
+        pool.clone(),
     );
     // Default to local rather than Noop: otherwise `api batch-run` silently stalls in RUNNING with no results.
     let dispatcher: Arc<dyn api_test::ports::TaskDispatcher> = match &cfg.executor_url {
@@ -666,7 +667,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let scenario_repo =
         Arc::new(api_scenario::adapters::pg::PgApiScenarioRepository::new(pool.clone()));
     let scenario_routes =
-        api_scenario::adapters::http::router(scenario_repo.clone(), sessions.clone());
+        api_scenario::adapters::http::router(scenario_repo.clone(), sessions.clone(), pool.clone());
     let references_routes = references_route::router(apidef_repo.clone(), scenario_repo.clone());
     // Live run events + pool-runner registry: local runs publish step events via
     // the executor observer; remote runs relay them from the runner WS.
@@ -731,6 +732,34 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let project_file_routes = project_file::router(pool.clone(), sessions.clone());
 
+    // RAG knowledge-base Q&A: plain-PG vector store + tantivy (jieba) keyword index + OpenAI-compatible
+    // embeddings/chat (from env). The RAM keyword index is rebuilt from stored chunks on startup.
+    let rag_keyword =
+        Arc::new(rag::tantivy_kw::TantivyKeyword::new().expect("build tantivy index"));
+    match rag::adapters::rebuild_keyword_index(&pool, &rag_keyword).await {
+        Ok(n) => tracing::info!(chunks = n, "rag: tantivy keyword index built"),
+        Err(e) => tracing::warn!("rag: keyword index rebuild failed: {e}"),
+    }
+    let rag_store: Arc<dyn rag::ports::VectorStore> =
+        Arc::new(rag::adapters::PgVectorStore::with_keyword(pool.clone(), rag_keyword));
+    // Shared, hot-swappable RAG config: env defaults, overlaid by the ms_rag_config row (system settings).
+    let rag_config = rag::config::RagConfig::handle_from_env();
+    if let Err(e) = rag::http::load_config(&pool, &rag_config).await {
+        tracing::warn!("rag: load config failed: {e}");
+    }
+    let rag_embedder: Arc<dyn rag::ports::Embedder> =
+        Arc::new(rag::adapters::OpenAiEmbedder::new(rag_config.clone()));
+    let rag_chat: Arc<dyn rag::ports::Chat> =
+        Arc::new(rag::adapters::OpenAiChat::new(rag_config.clone()));
+    let rag_routes = rag::http::router(
+        rag_store,
+        rag_embedder,
+        rag_chat,
+        sessions.clone(),
+        rag_config,
+        pool.clone(),
+    );
+
     let app = routes::assemble(vec![
         routes::group(
             "system",
@@ -786,6 +815,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .merge(import_scheduler_routes),
         ),
         routes::group("perf", perf_routes),
+        routes::group("rag", rag_routes),
         routes::group("debug", debug_send_routes),
         routes::group("meta", openapi::routes().merge(health_routes(pool.clone()))),
     ]);

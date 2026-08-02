@@ -4,8 +4,8 @@ import ResizableDrawer from '../components/ResizableDrawer'
 import EditDrawer from '../components/EditDrawer'
 import dayjs, { type Dayjs } from 'dayjs'
 import { message, modal } from '../feedback'
-import { useNavigate } from 'react-router-dom'
-import { BranchesOutlined, DeleteOutlined, EditOutlined, FlagOutlined, HistoryOutlined, InboxOutlined, PartitionOutlined, PlayCircleOutlined, ProfileOutlined, ReloadOutlined, SendOutlined } from '@ant-design/icons'
+import { useScopedNavigate } from '../scope'
+import { BranchesOutlined, DeleteOutlined, EditOutlined, FlagOutlined, HistoryOutlined, InboxOutlined, PartitionOutlined, PlayCircleOutlined, ProfileOutlined, ReloadOutlined, RobotOutlined, SendOutlined } from '@ant-design/icons'
 import {
   api,
   ApiError,
@@ -19,6 +19,7 @@ import {
   type FleetRuntime,
   type FunctionalCase,
   type ProjectMember,
+  type RagReviewResult,
   type Requirement,
   type RequirementChange,
   type RequirementStage,
@@ -751,6 +752,71 @@ function StagePipeline({ req, onAction }: { req: Requirement; onAction: (stage: 
   )
 }
 
+// Advisory AI review opinion, grounded in retrieved KB context. Verdict is a suggestion; the human
+// reviewer still drives 定基线/交付. Renders summary + risks + missing coverage + suggestions + sources.
+const AI_VERDICT: Record<string, { color: string; label: [string, string] }> = {
+  APPROVE: { color: 'green', label: ['req.aiV.APPROVE', '建议通过'] },
+  REVISE: { color: 'gold', label: ['req.aiV.REVISE', '建议修订'] },
+  REJECT: { color: 'red', label: ['req.aiV.REJECT', '建议驳回'] },
+  UNSURE: { color: 'default', label: ['req.aiV.UNSURE', '证据不足'] },
+}
+
+function AiReviewPanel({ loading, result, onClose }: { loading: boolean; result: RagReviewResult | null; onClose: () => void }) {
+  const { t } = useI18n()
+  const bullets = (title: string, items: string[]) =>
+    items.length ? (
+      <div style={{ marginTop: 8 }}>
+        <div style={{ fontWeight: 600, marginBottom: 2 }}>{title}</div>
+        <ul style={{ margin: 0, paddingLeft: 18 }}>{items.map((x, i) => <li key={i}>{x}</li>)}</ul>
+      </div>
+    ) : null
+  const v = result ? (AI_VERDICT[result.opinion.verdict] ?? AI_VERDICT.UNSURE) : null
+  return (
+    <Card
+      size="small"
+      style={{ marginTop: 12 }}
+      title={
+        <Space>
+          <RobotOutlined />
+          {t('req.aiReviewTitle', 'AI 评审意见')}
+          {v && <Tag color={v.color}>{t(v.label[0], v.label[1])}</Tag>}
+          <Typography.Text type="secondary" style={{ fontWeight: 400, fontSize: 12 }}>
+            {t('req.aiReviewHint', '仅供参考,由你最终裁定')}
+          </Typography.Text>
+        </Space>
+      }
+      extra={!loading && <Button type="text" size="small" onClick={onClose}>{t('a.close', '关闭')}</Button>}
+    >
+      {loading ? (
+        <div style={{ textAlign: 'center', padding: '16px 0' }}>
+          <Spin /> <span style={{ marginLeft: 8, color: 'var(--muted, #999)' }}>{t('req.aiReviewing', '正在检索知识库并生成意见…')}</span>
+        </div>
+      ) : result ? (
+        <div style={{ fontSize: 13 }}>
+          {result.opinion.summary && <div style={{ whiteSpace: 'pre-wrap' }}>{result.opinion.summary}</div>}
+          {bullets(t('req.aiRisks', '风险点'), result.opinion.risks)}
+          {bullets(t('req.aiMissing', '缺失/冲突的测试覆盖'), result.opinion.missingCoverage)}
+          {bullets(t('req.aiSuggestions', '修改建议'), result.opinion.suggestions)}
+          {result.sources.length > 0 && (
+            <div style={{ marginTop: 10 }}>
+              <div style={{ fontWeight: 600, marginBottom: 4 }}>{t('req.aiSources', '参考来源')} ({result.sources.length})</div>
+              <Space direction="vertical" size={4} style={{ width: '100%' }}>
+                {result.sources.map((s, i) => (
+                  <Tooltip key={s.chunkId} title={s.content.slice(0, 300)}>
+                    <Tag style={{ maxWidth: '100%', whiteSpace: 'normal' }}>
+                      [{i + 1}] {s.title}{s.heading ? ` · ${s.heading}` : ''}
+                    </Tag>
+                  </Tooltip>
+                ))}
+              </Space>
+            </div>
+          )}
+        </div>
+      ) : null}
+    </Card>
+  )
+}
+
 function RequirementDetail({ reqId, projectId, modules, onChanged, onDeleted, onOpen }: { reqId: string; projectId: string; modules: ApiModule[]; onChanged: () => void; onDeleted: () => void; onOpen?: (id: string) => void }) {
   const { t } = useI18n()
   const [req, setReq] = useState<Requirement | null>(null)
@@ -770,6 +836,9 @@ function RequirementDetail({ reqId, projectId, modules, onChanged, onDeleted, on
   const [verId, setVerId] = useState<string | undefined>(undefined)
   // Version currently decomposed / shown in the orchestration tab; defaults to the baseline, switchable via the picker.
   const [splitVersion, setSplitVersion] = useState<number | undefined>(undefined)
+  // AI review opinion (RAG-grounded, advisory) for the current requirement.
+  const [aiReview, setAiReview] = useState<RagReviewResult | null>(null)
+  const [aiLoading, setAiLoading] = useState(false)
 
   const loadChildren = () => api.requirementChildren(reqId).then((r) => setChildren(r.items)).catch(() => setChildren([]))
   const load = async () => {
@@ -920,6 +989,32 @@ function RequirementDetail({ reqId, projectId, modules, onChanged, onDeleted, on
     req?.versions?.[req.versions.length - 1]?.acceptanceCriteria ??
     req?.acceptanceCriteria ??
     []
+  const baselineDesc =
+    req?.versions?.find((v) => v.version === req.baselineVersion)?.description ||
+    req?.versions?.[req.versions.length - 1]?.description ||
+    ''
+
+  // Ask the knowledge base for an advisory review opinion; the reviewer still decides via 定基线/交付.
+  const runAiReview = async () => {
+    if (!req) return
+    const text = [baselineDesc, baselineCriteria.length ? `验收标准:\n- ${baselineCriteria.join('\n- ')}` : '']
+      .filter(Boolean)
+      .join('\n\n')
+    if (!text.trim()) {
+      message.warning(t('req.aiReviewNoText', '该需求暂无描述内容,无法评审'))
+      return
+    }
+    setAiLoading(true)
+    setAiReview(null)
+    try {
+      const r = await api.reviewRequirement({ projectId, title: req.title, text })
+      setAiReview(r)
+    } catch (e) {
+      message.error(e instanceof ApiError ? e.message : t('req.aiReviewFailed', 'AI 评审失败'))
+    } finally {
+      setAiLoading(false)
+    }
+  }
 
   return (
     <div style={{ padding: '12px 16px', height: '100%', overflow: 'auto' }}>
@@ -952,6 +1047,7 @@ function RequirementDetail({ reqId, projectId, modules, onChanged, onDeleted, on
                   <Button icon={<InboxOutlined />} size="small" disabled={req?.status === 'ARCHIVED'} onClick={archive}>{t('req.archive', '归档')}</Button>
                   <Button danger icon={<DeleteOutlined />} size="small" onClick={del}>{t('a.delete', '删除')}</Button>
                   <Button icon={<HistoryOutlined />} size="small" onClick={openChanges}>{t('req.changes', '变更记录')}</Button>
+                  <Button icon={<RobotOutlined />} size="small" loading={aiLoading} onClick={runAiReview}>{t('req.aiReview', 'AI 评审')}</Button>
                   {(() => {
                     const n = baselineCriteria.filter((_, i) => cov.some((c) => c.criterionIndex === i)).length
                     const pct = baselineCriteria.length ? Math.round((n / baselineCriteria.length) * 100) : 0
@@ -992,6 +1088,10 @@ function RequirementDetail({ reqId, projectId, modules, onChanged, onDeleted, on
                     ) : '—'}
                   </Descriptions.Item>
                 </Descriptions>
+                {/* AI review opinion: KB-grounded, advisory. The reviewer still approves/rejects manually. */}
+                {(aiLoading || aiReview) && (
+                  <AiReviewPanel loading={aiLoading} result={aiReview} onClose={() => setAiReview(null)} />
+                )}
                 {/* Stage progress: 7 pipeline cards, current stage highlighted; click to transition (start/done/skip) and schedule planned dates. */}
                 {req && <StagePipeline req={req} onAction={setStage} />}
                 {/* Children: requirements under this one (open/unlink), plus linking others in. */}
@@ -1671,7 +1771,7 @@ function DecompositionView({ decompId, verificationId, projectId, reqId, req }: 
 // Task-linked cases + their plans: the task → case → plan chain, each clickable through to its page.
 function TaskCasesDrawer({ decompId, projectId, task, onClose }: { decompId: string; projectId: string; task: Task | null; onClose: () => void }) {
   const { t } = useI18n()
-  const nav = useNavigate()
+  const nav = useScopedNavigate()
   const [linked, setLinked] = useState<ApiCase[]>([])
   const [plansOf, setPlansOf] = useState<Record<string, { planId: string; name: string }[]>>({})
   const [projCases, setProjCases] = useState<ApiCase[]>([])

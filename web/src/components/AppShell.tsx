@@ -1,7 +1,10 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { Layout, Menu, Select, Button, Space, Tooltip, Avatar, Segmented, Empty, Dropdown, Badge, Tag, Spin } from 'antd'
 import ResizableDrawer from './ResizableDrawer'
+import { message } from '../feedback'
 import {
+  ShareAltOutlined,
+  CommentOutlined,
   ApiOutlined,
   PartitionOutlined,
   LogoutOutlined,
@@ -36,6 +39,7 @@ import {
   StarOutlined,
 } from '@ant-design/icons'
 import { useLocation, useNavigate } from 'react-router-dom'
+import { scopedPath, stripScope } from '../scope'
 import { api, userStore, type Notice, type NoticeUnreadCount } from '../api'
 import { useApp } from '../context'
 import { useI18n } from '../i18n'
@@ -127,6 +131,14 @@ const MODULES: ModuleDef[] = [
     ],
   },
   {
+    // Standalone chat: knowledge-base RAG Q&A over the current project.
+    key: '/chat',
+    label: ['nav.chat', '聊天'],
+    icon: <CommentOutlined />,
+    match: ['/chat'],
+    children: [{ key: '/chat', icon: <CommentOutlined />, label: ['m.chat', '聊天'] }],
+  },
+  {
     key: '/functional-case',
     label: ['nav.test', '测试'],
     icon: <ExperimentOutlined />,
@@ -167,6 +179,7 @@ const MODULES: ModuleDef[] = [
       { key: '/system/apikeys', icon: <KeyOutlined />, label: ['sys.apikeys', 'API 密钥'] },
       { key: '/organization', icon: <ClusterOutlined />, label: ['sys.orgProj', '组织与项目'] },
       { key: '/system/params', icon: <SettingOutlined />, label: ['sys.params', '系统参数'] },
+      { key: '/system/rag', icon: <ExperimentOutlined />, label: ['sys.rag', 'RAG 配置'] },
       { key: '/resource-pool', icon: <DatabaseOutlined />, label: ['m.pool', '资源池'] },
       { key: '/system/tasks', icon: <ScheduleOutlined />, label: ['sys.tasks', '任务中心'] },
       { key: '/system/plugins', icon: <AppstoreOutlined />, label: ['sys.plugins', '插件'] },
@@ -179,8 +192,12 @@ export default function AppShell({ children }: { children: ReactNode }) {
   const { projects, projectId, setProjectId, logout } = useApp()
   const { t, lang, setLang } = useI18n()
   const { mode, toggle } = useThemeMode()
-  const nav = useNavigate()
+  const navigate = useNavigate()
   const loc = useLocation()
+  // Scope-aware navigation: project-scoped targets get the current `/p/:projectId` prefix; global ones pass through.
+  const nav = (key: string) => navigate(scopedPath(key, projectId))
+  // Match menu highlight against the logical path (with any `/p/:projectId` prefix stripped).
+  const logicalPath = stripScope(loc.pathname).path
   const [newProjOpen, setNewProjOpen] = useState(false)
   const [pcOpen, setPcOpen] = useState(false)
   const [msgOpen, setMsgOpen] = useState(false)
@@ -289,13 +306,13 @@ export default function AppShell({ children }: { children: ReactNode }) {
   const username = userStore.get()
 
   // Current module is inferred from the route; the secondary bar follows it.
-  const activeModule = MODULES.find((m) => m.match.some((x) => loc.pathname.startsWith(x))) || MODULES[0]
+  const activeModule = MODULES.find((m) => m.match.some((x) => logicalPath.startsWith(x))) || MODULES[0]
   // Pick the longest child whose key prefixes the current path, so nested routes
   // (/resource-pool/new, /project/files) highlight the right secondary item instead of
   // falling back to the first child.
   const currentChild =
     activeModule.children
-      .filter((c) => loc.pathname === c.key || loc.pathname.startsWith(c.key + '/'))
+      .filter((c) => logicalPath === c.key || logicalPath.startsWith(c.key + '/'))
       .sort((a, b) => b.key.length - a.key.length)[0] || activeModule.children[0]
   const topModules = MODULES.filter((m) => !m.bottom)
   const sysModule = MODULES.find((m) => m.bottom)
@@ -417,6 +434,17 @@ export default function AppShell({ children }: { children: ReactNode }) {
             />
             <Tooltip title={t('top.newProject')}>
               <Button type="text" icon={<PlusOutlined />} onClick={() => setNewProjOpen(true)} />
+            </Tooltip>
+            <Tooltip title={t('top.copyLink', '复制当前页面链接(含项目与打开的标签)')}>
+              <Button
+                type="text"
+                icon={<ShareAltOutlined />}
+                onClick={() => {
+                  navigator.clipboard?.writeText(window.location.href)
+                    .then(() => message.success(t('top.linkCopied', '链接已复制')))
+                    .catch(() => message.error(t('top.copyFailed', '复制失败')))
+                }}
+              />
             </Tooltip>
             <Tooltip title={t('top.notifications', '通知')}>
               <Badge dot={(msgUnread?.total ?? 0) > 0} offset={[-8, 8]}>

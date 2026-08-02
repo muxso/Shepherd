@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState, type Key } from 'react'
 import { Button, Card, Checkbox, Col, Dropdown, Empty, Input, Popover, Row, Segmented, Select, Space, Statistic, Table, Tabs, Tag, Tooltip } from 'antd'
 import { FilterOutlined, MoreOutlined, ReloadOutlined, SettingOutlined, StarFilled, StarOutlined } from '@ant-design/icons'
 import ResizableDrawer from '../components/ResizableDrawer'
-import { useNavigate } from 'react-router-dom'
+import { useScopedNavigate } from '../scope'
 import { message, modal } from '../feedback'
 import type { ColumnsType } from 'antd/es/table'
 import dayjs from 'dayjs'
@@ -48,7 +48,7 @@ export default function Review() {
 function RequirementReview() {
   const { t } = useI18n()
   const { projectId } = useApp()
-  const nav = useNavigate()
+  const nav = useScopedNavigate()
   const [items, setItems] = useState<Requirement[]>([])
   const [loading, setLoading] = useState(false)
   const [filter, setFilter] = useState<string>('ALL')

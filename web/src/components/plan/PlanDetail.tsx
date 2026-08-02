@@ -4,7 +4,7 @@ import { Input } from 'antd'
 import { message, modal } from '../../feedback'
 import EditDrawer from '../EditDrawer'
 import ResizableDrawer from '../ResizableDrawer'
-import { PlayCircleOutlined, FileMarkdownOutlined, FileTextOutlined, LinkOutlined, ClockCircleOutlined } from '@ant-design/icons'
+import { PlayCircleOutlined, FileMarkdownOutlined, FileTextOutlined, LinkOutlined, ClockCircleOutlined, ShareAltOutlined } from '@ant-design/icons'
 import { api, ApiError, type ApiCase, type Bug, type PlanCase, type PlanStats, type PlanStepResult, type Scenario } from '../../api'
 import AutoPoolIndicator from '../AutoPoolIndicator'
 import { outcomeColor } from '../tags'
@@ -313,6 +313,15 @@ export function PlanReportDrawer({ open, planId, name, projectId, onClose }: { o
       message.error(e instanceof ApiError ? e.message : t('plan.reportFail', '获取报告失败'))
     }
   }
+  const doShare = async () => {
+    try {
+      const { token } = await api.sharePlanReport(planId)
+      await navigator.clipboard?.writeText(`${window.location.origin}/share/plan/${token}`)
+      message.success(t('report.shareCopied', '分享链接已复制,无需登录即可访问'))
+    } catch (e) {
+      message.error(e instanceof ApiError ? e.message : t('report.shareFailed', '生成分享链接失败'))
+    }
+  }
   const segs = PLAN_STATUS_SEGS(t)
   const countOf = (k: string) => cases.filter((c) => (c.status || 'PENDING').toUpperCase() === k).length
   const total = cases.length || stats?.total || 0
@@ -367,6 +376,7 @@ export function PlanReportDrawer({ open, planId, name, projectId, onClose }: { o
             <b>{t('plan.reportDetail', '报告明细')}</b>
             <div style={{ flex: 1 }} />
             <Button size="small" icon={<FileMarkdownOutlined />} onClick={exportMd}>{t('plan.exportMd', '导出 Markdown')}</Button>
+            <Button size="small" icon={<ShareAltOutlined />} onClick={doShare}>{t('report.share', '分享报告')}</Button>
           </div>
           {cases.length === 0 ? (
             <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('plan.noLinkedCase', '未挂用例,点「挂用例」')} />
