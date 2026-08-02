@@ -186,6 +186,74 @@ impl Chat for OpenAiChat {
             .map(|s| s.to_string())
             .ok_or_else(|| RagError::Llm("chat response missing choices[0].message.content".into()))
     }
+
+    async fn complete_stream(
+        &self,
+        system: &str,
+        user: &str,
+        tx: tokio::sync::mpsc::Sender<String>,
+    ) -> Result<String> {
+        use futures_util::StreamExt;
+        if self.key.is_empty() {
+            return Err(RagError::Config("LLM API key not configured".into()));
+        }
+        let resp = self
+            .client
+            .post(&self.url)
+            .bearer_auth(&self.key)
+            .json(&json!({
+                "model": self.model,
+                "max_tokens": self.max_tokens,
+                "temperature": 0.0,
+                "stream": true,
+                "messages": [
+                    { "role": "system", "content": system },
+                    { "role": "user", "content": user },
+                ],
+            }))
+            .send()
+            .await
+            .map_err(|e| RagError::Llm(e.to_string()))?;
+        if !resp.status().is_success() {
+            let s = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            return Err(RagError::Llm(format!("chat HTTP {s}: {body}")));
+        }
+        // Parse the OpenAI SSE stream: `data: {choices:[{delta:{content}}]}` lines, `data: [DONE]` ends it.
+        let mut stream = resp.bytes_stream();
+        let mut buf = String::new();
+        let mut full = String::new();
+        while let Some(chunk) = stream.next().await {
+            let bytes = chunk.map_err(|e| RagError::Llm(e.to_string()))?;
+            buf.push_str(&String::from_utf8_lossy(&bytes));
+            while let Some(nl) = buf.find('\n') {
+                let line: String = buf.drain(..=nl).collect();
+                let line = line.trim();
+                let Some(data) = line.strip_prefix("data:") else { continue };
+                let data = data.trim();
+                if data.is_empty() || data == "[DONE]" {
+                    continue;
+                }
+                if let Ok(v) = serde_json::from_str::<serde_json::Value>(data) {
+                    if let Some(c) = v
+                        .get("choices")
+                        .and_then(|c| c.get(0))
+                        .and_then(|c| c.get("delta"))
+                        .and_then(|d| d.get("content"))
+                        .and_then(|c| c.as_str())
+                    {
+                        if !c.is_empty() {
+                            full.push_str(c);
+                            if tx.send(c.to_string()).await.is_err() {
+                                break; // receiver dropped (client disconnected)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        Ok(full)
+    }
 }
 
 // ---------- Vector store (plain Postgres) ----------

@@ -62,20 +62,19 @@ pub struct AskOutcome {
     pub trace: AskTrace,
 }
 
-/// Answer `question` for `project_id` with hybrid retrieval (semantic + keyword, RRF-fused, optional
-/// LLM rerank) and multi-turn `history`, tracing each stage. `rerank` gates the (slower) LLM rerank.
+/// Retrieval half of ask: embed → keyword + semantic → RRF fuse → optional rerank → context, tracing
+/// each stage. Returns the ranked hits, the built context, and a trace with the retrieval steps (no
+/// generation step / total yet — the caller adds those after synthesizing).
 #[allow(clippy::too_many_arguments)]
-pub async fn ask(
-    store: Arc<dyn VectorStore>,
-    embedder: Arc<dyn Embedder>,
-    chat: Arc<dyn Chat>,
+pub async fn retrieve(
+    store: &dyn VectorStore,
+    embedder: &dyn Embedder,
+    chat: &dyn Chat,
     project_id: &str,
     question: &str,
     top_k: usize,
-    history: &[(String, String)],
     rerank: bool,
-) -> Result<AskOutcome> {
-    let overall = Instant::now();
+) -> Result<(Vec<Hit>, Vec<ContextChunk>, AskTrace)> {
     let top_k = top_k.clamp(1, 20);
     let mut trace = AskTrace {
         question: question.to_string(),
@@ -128,7 +127,7 @@ pub async fn ask(
     let t = Instant::now();
     let mut applied = false;
     if rerank && hits.len() > 1 {
-        if let Some(order) = llm_rerank(chat.as_ref(), question, &hits).await {
+        if let Some(order) = llm_rerank(chat, question, &hits).await {
             hits = reorder(hits, &order);
             applied = true;
         }
@@ -163,7 +162,29 @@ pub async fn ask(
         approx_tokens,
     });
 
-    // 7) synthesize
+    Ok((hits, context, trace))
+}
+
+/// Wall-clock ms since the trace's `started_at`.
+pub fn elapsed_since(trace: &AskTrace) -> u64 {
+    let start = trace.started_at.parse::<i64>().unwrap_or_else(|_| now_ms());
+    (now_ms() - start).max(0) as u64
+}
+
+/// Non-streaming ask: retrieve, then synthesize in one call (used where streaming isn't needed).
+#[allow(clippy::too_many_arguments)]
+pub async fn ask(
+    store: Arc<dyn VectorStore>,
+    embedder: Arc<dyn Embedder>,
+    chat: Arc<dyn Chat>,
+    project_id: &str,
+    question: &str,
+    top_k: usize,
+    history: &[(String, String)],
+    rerank: bool,
+) -> Result<AskOutcome> {
+    let (hits, context, mut trace) =
+        retrieve(&*store, &*embedder, &*chat, project_id, question, top_k, rerank).await?;
     let (system, user) = build_prompt(question, &context, history);
     let t = Instant::now();
     let answer_text = chat.complete(&system, &user).await?;
@@ -171,8 +192,7 @@ pub async fn ask(
         latency_ms: t.elapsed().as_millis() as u64,
         answer_chars: answer_text.chars().count(),
     });
-
-    trace.total_ms = overall.elapsed().as_millis() as u64;
+    trace.total_ms = elapsed_since(&trace);
     let cited = extract_citations(&answer_text);
     Ok(AskOutcome { answer: Answer { answer: answer_text, cited_sources: cited }, hits, trace })
 }
