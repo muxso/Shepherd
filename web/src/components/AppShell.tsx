@@ -4,7 +4,7 @@ import ResizableDrawer from './ResizableDrawer'
 import { message } from '../feedback'
 import {
   ShareAltOutlined,
-  NodeIndexOutlined,
+  CommentOutlined,
   ApiOutlined,
   PartitionOutlined,
   LogoutOutlined,
@@ -123,13 +123,20 @@ const MODULES: ModuleDef[] = [
     key: '/skill',
     label: ['nav.dev', '研发'],
     icon: <RobotOutlined />,
-    match: ['/skill', '/agents', '/mcp', '/knowledge'],
+    match: ['/skill', '/agents', '/mcp'],
     children: [
       { key: '/agents', icon: <DeploymentUnitOutlined />, label: ['m.agents', '人机协同'] },
       { key: '/skill', icon: <BulbOutlined />, label: ['m.skill', '技能库'] },
-      { key: '/knowledge', icon: <NodeIndexOutlined />, label: ['m.knowledge', '知识问答'] },
       { key: '/mcp', icon: <ApiOutlined />, label: ['m.mcp', 'MCP 工具'] },
     ],
+  },
+  {
+    // Standalone chat: knowledge-base RAG Q&A over the current project.
+    key: '/chat',
+    label: ['nav.chat', '聊天'],
+    icon: <CommentOutlined />,
+    match: ['/chat'],
+    children: [{ key: '/chat', icon: <CommentOutlined />, label: ['m.chat', '聊天'] }],
   },
   {
     key: '/functional-case',
