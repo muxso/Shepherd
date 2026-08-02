@@ -74,7 +74,10 @@ pub struct TraceContextChunk {
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum TraceStep {
     Embedding { dim: usize, latency_ms: u64 },
+    KeywordSearch { query: String, fetched: usize, top: Vec<TraceHit>, latency_ms: u64 },
     SemanticSearch { fetched: usize, top: Vec<TraceHit>, latency_ms: u64 },
+    Fusion { method: &'static str, candidates: usize, selected: usize },
+    Rerank { candidates: usize, latency_ms: u64, applied: bool },
     ContextBuilt { chunks: Vec<TraceContextChunk>, approx_tokens: usize },
     LlmGeneration { latency_ms: u64, answer_chars: usize },
 }

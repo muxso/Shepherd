@@ -26,6 +26,15 @@ pub trait VectorStore: Send + Sync {
     async fn delete_document(&self, id: &str) -> Result<()>;
     /// Top-k chunks in `project_id` by cosine similarity to `query`.
     async fn search(&self, project_id: &str, query: &[f32], top_k: usize) -> Result<Vec<Hit>>;
+    /// Top-k chunks by keyword match (for hybrid retrieval). Default: none (semantic-only store).
+    async fn keyword_search(
+        &self,
+        _project_id: &str,
+        _query: &str,
+        _top_k: usize,
+    ) -> Result<Vec<Hit>> {
+        Ok(Vec::new())
+    }
 }
 
 /// Synthesizes an answer from a system + user prompt (an OpenAI-compatible chat client, or a fake).
