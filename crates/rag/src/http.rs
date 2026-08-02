@@ -16,6 +16,7 @@ use serde_json::json;
 use webauth::{AuthUser, SessionStore};
 
 use crate::application::{build_prompt, elapsed_since, ingest, now_ms, retrieve};
+use crate::config::RagConfigHandle;
 use crate::domain::{RagDocument, TraceStep};
 use crate::ports::{Chat, Embedder, VectorStore};
 
@@ -25,6 +26,8 @@ pub struct RagState {
     pub embedder: Arc<dyn Embedder>,
     pub chat: Arc<dyn Chat>,
     pub sessions: Arc<dyn SessionStore>,
+    pub config: RagConfigHandle,
+    pub pool: sqlx::PgPool,
 }
 
 impl FromRef<RagState> for Arc<dyn SessionStore> {
@@ -33,18 +36,174 @@ impl FromRef<RagState> for Arc<dyn SessionStore> {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn router(
     store: Arc<dyn VectorStore>,
     embedder: Arc<dyn Embedder>,
     chat: Arc<dyn Chat>,
     sessions: Arc<dyn SessionStore>,
+    config: RagConfigHandle,
+    pool: sqlx::PgPool,
 ) -> Router {
     Router::new()
         .route("/rag/document", post(ingest_document))
         .route("/rag/document/{id}", axum::routing::delete(delete_document))
         .route("/rag/ask/stream", post(ask_stream))
         .route("/rag/evaluate", post(evaluate_answer))
-        .with_state(RagState { store, embedder, chat, sessions })
+        .route("/system/rag/config", axum::routing::get(get_config).put(put_config))
+        .with_state(RagState { store, embedder, chat, sessions, config, pool })
+}
+
+/// Overlay the persisted config row (if any) onto `handle`, keeping env values where a field is blank.
+pub async fn load_config(pool: &sqlx::PgPool, handle: &RagConfigHandle) -> Result<(), String> {
+    let row =
+        sqlx::query_as::<_, (String, String, i32, String, String, String, String, i32, i32, bool)>(
+            "SELECT embed_url, embed_model, embed_dim, embed_key, chat_url, chat_model, chat_key, \
+                max_tokens, top_k, rerank FROM ms_rag_config WHERE id = 1",
+        )
+        .fetch_optional(pool)
+        .await
+        .map_err(|e| e.to_string())?;
+    if let Some((eu, em, ed, ek, cu, cm, ck, mt, tk, rr)) = row {
+        let mut c = handle.write().map_err(|_| "config poisoned".to_string())?;
+        if !eu.is_empty() {
+            c.embed_url = eu;
+        }
+        if !em.is_empty() {
+            c.embed_model = em;
+        }
+        if ed > 0 {
+            c.embed_dim = ed as usize;
+        }
+        if !ek.is_empty() {
+            c.embed_key = ek;
+        }
+        if !cu.is_empty() {
+            c.chat_url = cu;
+        }
+        if !cm.is_empty() {
+            c.chat_model = cm;
+        }
+        if !ck.is_empty() {
+            c.chat_key = ck;
+        }
+        if mt > 0 {
+            c.max_tokens = mt as u32;
+        }
+        if tk > 0 {
+            c.top_k = tk as usize;
+        }
+        c.rerank = rr;
+    }
+    Ok(())
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ConfigView {
+    embed_url: String,
+    embed_model: String,
+    embed_dim: usize,
+    embed_key_set: bool,
+    chat_url: String,
+    chat_model: String,
+    chat_key_set: bool,
+    max_tokens: u32,
+    top_k: usize,
+    rerank: bool,
+}
+
+async fn get_config(user: AuthUser, State(st): State<RagState>) -> Response {
+    if !user.can("SYSTEM_USER", "READ") {
+        return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
+    let c = st.config.read().expect("rag config poisoned").clone();
+    (
+        StatusCode::OK,
+        Json(ConfigView {
+            embed_url: c.embed_url,
+            embed_model: c.embed_model,
+            embed_dim: c.embed_dim,
+            embed_key_set: !c.embed_key.is_empty(),
+            chat_url: c.chat_url,
+            chat_model: c.chat_model,
+            chat_key_set: !c.chat_key.is_empty(),
+            max_tokens: c.max_tokens,
+            top_k: c.top_k,
+            rerank: c.rerank,
+        }),
+    )
+        .into_response()
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ConfigBody {
+    embed_url: String,
+    embed_model: String,
+    embed_dim: usize,
+    #[serde(default)]
+    embed_key: Option<String>,
+    chat_url: String,
+    chat_model: String,
+    #[serde(default)]
+    chat_key: Option<String>,
+    max_tokens: u32,
+    top_k: usize,
+    rerank: bool,
+}
+
+async fn put_config(
+    user: AuthUser,
+    State(st): State<RagState>,
+    Json(b): Json<ConfigBody>,
+) -> Response {
+    if !user.can("SYSTEM_USER", "UPDATE") {
+        return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
+    // Apply to the live handle (blank key = keep existing), then persist the same values.
+    let (embed_key, chat_key) = {
+        let mut c = st.config.write().expect("rag config poisoned");
+        c.embed_url = b.embed_url.clone();
+        c.embed_model = b.embed_model.clone();
+        c.embed_dim = b.embed_dim.max(1);
+        c.chat_url = b.chat_url.clone();
+        c.chat_model = b.chat_model.clone();
+        c.max_tokens = b.max_tokens.max(1);
+        c.top_k = b.top_k.clamp(1, 20);
+        c.rerank = b.rerank;
+        if let Some(k) = b.embed_key.as_ref().filter(|k| !k.is_empty()) {
+            c.embed_key = k.clone();
+        }
+        if let Some(k) = b.chat_key.as_ref().filter(|k| !k.is_empty()) {
+            c.chat_key = k.clone();
+        }
+        (c.embed_key.clone(), c.chat_key.clone())
+    };
+    let r = sqlx::query(
+        "INSERT INTO ms_rag_config (id, embed_url, embed_model, embed_dim, embed_key, chat_url, \
+             chat_model, chat_key, max_tokens, top_k, rerank, updated_at) \
+         VALUES (1,$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,(extract(epoch from now())*1000)::bigint) \
+         ON CONFLICT (id) DO UPDATE SET embed_url=$1, embed_model=$2, embed_dim=$3, embed_key=$4, \
+             chat_url=$5, chat_model=$6, chat_key=$7, max_tokens=$8, top_k=$9, rerank=$10, \
+             updated_at=(extract(epoch from now())*1000)::bigint",
+    )
+    .bind(&b.embed_url)
+    .bind(&b.embed_model)
+    .bind(b.embed_dim as i32)
+    .bind(&embed_key)
+    .bind(&b.chat_url)
+    .bind(&b.chat_model)
+    .bind(&chat_key)
+    .bind(b.max_tokens as i32)
+    .bind(b.top_k as i32)
+    .bind(b.rerank)
+    .execute(&st.pool)
+    .await;
+    match r {
+        Ok(_) => StatusCode::NO_CONTENT.into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    }
 }
 
 #[derive(Deserialize)]

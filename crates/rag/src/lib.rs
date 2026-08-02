@@ -7,6 +7,7 @@
 
 pub mod application;
 pub mod chunk;
+pub mod config;
 pub mod domain;
 pub mod ports;
 

@@ -652,6 +652,32 @@ export interface LlmModel {
   createdAt: string
 }
 
+// RAG config (system settings). GET masks keys as *KeySet booleans; PUT sends keys only to change them.
+export interface RagConfigView {
+  embedUrl: string
+  embedModel: string
+  embedDim: number
+  embedKeySet: boolean
+  chatUrl: string
+  chatModel: string
+  chatKeySet: boolean
+  maxTokens: number
+  topK: number
+  rerank: boolean
+}
+export interface RagConfigBody {
+  embedUrl: string
+  embedModel: string
+  embedDim: number
+  embedKey?: string
+  chatUrl: string
+  chatModel: string
+  chatKey?: string
+  maxTokens: number
+  topK: number
+  rerank: boolean
+}
+
 export interface ProjectMember {
   projectId: string
   userId: string
@@ -1592,6 +1618,10 @@ export const api = {
   updateLlmModel: (id: string, b: { name?: string; baseUrl?: string; apiKey?: string; enabled?: boolean }) =>
     http.put<LlmModel>(`/me/llm-model/${encodeURIComponent(id)}`, b),
   deleteLlmModel: (id: string) => http.del(`/me/llm-model/${encodeURIComponent(id)}`),
+
+  // RAG config (system-level, /system/rag/config): keys are write-only; GET returns *KeySet booleans.
+  ragConfig: () => http.get<RagConfigView>('/system/rag/config'),
+  saveRagConfig: (b: RagConfigBody) => http.put('/system/rag/config', b),
 
   // Functional cases (project level)
   functionalCases: (projectId: string) =>

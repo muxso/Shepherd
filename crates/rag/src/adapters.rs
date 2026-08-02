@@ -12,35 +12,26 @@ use crate::ports::{Chat, Embedder, VectorStore};
 
 pub struct OpenAiEmbedder {
     client: reqwest::Client,
-    url: String, // full /embeddings endpoint
-    key: String,
-    model: String,
-    dim: usize,
+    cfg: crate::config::RagConfigHandle,
 }
 
 impl OpenAiEmbedder {
-    pub fn new(url: String, key: String, model: String, dim: usize) -> Self {
-        Self { client: reqwest::Client::new(), url, key, model, dim }
+    pub fn new(cfg: crate::config::RagConfigHandle) -> Self {
+        Self { client: reqwest::Client::new(), cfg }
     }
-    /// Build from env: SHEPHERD_RAG_EMBED_URL/MODEL/DIM/KEY (KEY falls back to SHEPHERD_LLM_API_KEY).
     pub fn from_env() -> Self {
-        let env = |k: &str| std::env::var(k).ok().filter(|v| !v.trim().is_empty());
-        let url = env("SHEPHERD_RAG_EMBED_URL")
-            .unwrap_or_else(|| "https://api.openai.com/v1/embeddings".to_string());
-        let key = env("SHEPHERD_RAG_EMBED_KEY")
-            .or_else(|| env("SHEPHERD_LLM_API_KEY"))
-            .unwrap_or_default();
-        let model =
-            env("SHEPHERD_RAG_EMBED_MODEL").unwrap_or_else(|| "text-embedding-3-small".to_string());
-        let dim = env("SHEPHERD_RAG_EMBED_DIM").and_then(|d| d.parse().ok()).unwrap_or(1536);
-        Self::new(url, key, model, dim)
+        Self::new(crate::config::RagConfig::handle_from_env())
+    }
+    fn snapshot(&self) -> (String, String, String) {
+        let c = self.cfg.read().expect("rag config poisoned");
+        (c.embed_url.clone(), c.embed_key.clone(), c.embed_model.clone())
     }
 }
 
 #[async_trait]
 impl Embedder for OpenAiEmbedder {
     fn dim(&self) -> usize {
-        self.dim
+        self.cfg.read().expect("rag config poisoned").embed_dim
     }
     async fn embed(&self, text: &str) -> Result<Vec<f32>> {
         Ok(self
@@ -53,21 +44,22 @@ impl Embedder for OpenAiEmbedder {
         if texts.is_empty() {
             return Ok(Vec::new());
         }
-        if self.key.is_empty() {
+        let (url, key, model) = self.snapshot();
+        if key.is_empty() {
             return Err(RagError::Config(
-                "embedding API key not configured (SHEPHERD_RAG_EMBED_KEY)".into(),
+                "embedding API key not configured (系统设置 → RAG)".into(),
             ));
         }
         // Volcano Engine multimodal embeddings take one {type:text} input at a time and return
         // { data: { embedding: [...] } } — a different shape from OpenAI's /embeddings batch.
-        if self.url.contains("multimodal") {
+        if url.contains("multimodal") {
             let mut out = Vec::with_capacity(texts.len());
             for t in texts {
                 let resp = self
                     .client
-                    .post(&self.url)
-                    .bearer_auth(&self.key)
-                    .json(&json!({ "model": self.model, "input": [{ "type": "text", "text": t }] }))
+                    .post(&url)
+                    .bearer_auth(&key)
+                    .json(&json!({ "model": model, "input": [{ "type": "text", "text": t }] }))
                     .send()
                     .await
                     .map_err(|e| RagError::Embedding(e.to_string()))?;
@@ -91,9 +83,9 @@ impl Embedder for OpenAiEmbedder {
         }
         let resp = self
             .client
-            .post(&self.url)
-            .bearer_auth(&self.key)
-            .json(&json!({ "model": self.model, "input": texts }))
+            .post(&url)
+            .bearer_auth(&key)
+            .json(&json!({ "model": model, "input": texts }))
             .send()
             .await
             .map_err(|e| RagError::Embedding(e.to_string()))?;
@@ -124,45 +116,36 @@ impl Embedder for OpenAiEmbedder {
 
 pub struct OpenAiChat {
     client: reqwest::Client,
-    url: String, // full /chat/completions endpoint
-    key: String,
-    model: String,
-    max_tokens: u32,
+    cfg: crate::config::RagConfigHandle,
 }
 
 impl OpenAiChat {
+    pub fn new(cfg: crate::config::RagConfigHandle) -> Self {
+        Self { client: reqwest::Client::new(), cfg }
+    }
     pub fn from_env() -> Self {
-        let env = |k: &str| std::env::var(k).ok().filter(|v| !v.trim().is_empty());
-        let url = env("SHEPHERD_RAG_CHAT_URL")
-            .or_else(|| env("SHEPHERD_LLM_URL"))
-            .unwrap_or_else(|| "https://api.openai.com/v1/chat/completions".to_string());
-        let key = env("SHEPHERD_RAG_CHAT_KEY")
-            .or_else(|| env("SHEPHERD_LLM_API_KEY"))
-            .unwrap_or_default();
-        let model = env("SHEPHERD_RAG_CHAT_MODEL")
-            .or_else(|| env("SHEPHERD_LLM_MODEL"))
-            .unwrap_or_else(|| "gpt-4o-mini".to_string());
-        let max_tokens =
-            env("SHEPHERD_RAG_MAX_TOKENS").and_then(|d| d.parse().ok()).unwrap_or(1500);
-        Self { client: reqwest::Client::new(), url, key, model, max_tokens }
+        Self::new(crate::config::RagConfig::handle_from_env())
+    }
+    fn snapshot(&self) -> (String, String, String, u32) {
+        let c = self.cfg.read().expect("rag config poisoned");
+        (c.chat_url.clone(), c.chat_key.clone(), c.chat_model.clone(), c.max_tokens)
     }
 }
 
 #[async_trait]
 impl Chat for OpenAiChat {
     async fn complete(&self, system: &str, user: &str) -> Result<String> {
-        if self.key.is_empty() {
-            return Err(RagError::Config(
-                "LLM API key not configured (SHEPHERD_RAG_CHAT_KEY / SHEPHERD_LLM_API_KEY)".into(),
-            ));
+        let (url, key, model, max_tokens) = self.snapshot();
+        if key.is_empty() {
+            return Err(RagError::Config("LLM API key not configured (系统设置 → RAG)".into()));
         }
         let resp = self
             .client
-            .post(&self.url)
-            .bearer_auth(&self.key)
+            .post(&url)
+            .bearer_auth(&key)
             .json(&json!({
-                "model": self.model,
-                "max_tokens": self.max_tokens,
+                "model": model,
+                "max_tokens": max_tokens,
                 "temperature": 0.0,
                 "messages": [
                     { "role": "system", "content": system },
@@ -194,16 +177,17 @@ impl Chat for OpenAiChat {
         tx: tokio::sync::mpsc::Sender<String>,
     ) -> Result<String> {
         use futures_util::StreamExt;
-        if self.key.is_empty() {
-            return Err(RagError::Config("LLM API key not configured".into()));
+        let (url, key, model, max_tokens) = self.snapshot();
+        if key.is_empty() {
+            return Err(RagError::Config("LLM API key not configured (系统设置 → RAG)".into()));
         }
         let resp = self
             .client
-            .post(&self.url)
-            .bearer_auth(&self.key)
+            .post(&url)
+            .bearer_auth(&key)
             .json(&json!({
-                "model": self.model,
-                "max_tokens": self.max_tokens,
+                "model": model,
+                "max_tokens": max_tokens,
                 "temperature": 0.0,
                 "stream": true,
                 "messages": [
