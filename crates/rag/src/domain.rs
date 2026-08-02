@@ -91,6 +91,17 @@ pub struct AskTrace {
     pub channel: &'static str,
 }
 
+/// LLM-as-judge scores for an answer (0-100 each), plus a one-line comment.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Eval {
+    pub relevance: u8,
+    pub faithfulness: u8,
+    pub completeness: u8,
+    pub overall: u8,
+    pub comment: String,
+}
+
 #[derive(Debug, Clone, thiserror::Error)]
 pub enum RagError {
     #[error("rag storage error: {0}")]

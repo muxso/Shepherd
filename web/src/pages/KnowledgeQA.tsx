@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Button, Input, Segmented, Tag, Tooltip, message } from 'antd'
-import { SendOutlined, BulbOutlined, PlusOutlined, NodeIndexOutlined } from '@ant-design/icons'
+import { Button, Input, Modal, Segmented, Tag, Tooltip, message } from 'antd'
+import { SendOutlined, BulbOutlined, PlusOutlined, NodeIndexOutlined, LineChartOutlined } from '@ant-design/icons'
 import { tokenStore } from '../api'
 import { useApp } from '../context'
 import { MarkdownRenderer } from '../components/MarkdownRenderer'
@@ -137,6 +137,29 @@ function DecisionChain({ trace }: { trace: AskTrace }) {
   )
 }
 
+type Eval = { relevance: number; faithfulness: number; completeness: number; overall: number; comment: string }
+
+/** Animated SVG gauge ring (0-100). */
+function Ring({ label, value, color, size = 84 }: { label: string; value: number; color: string; size?: number }) {
+  const [v, setV] = useState(0)
+  useEffect(() => { const id = setTimeout(() => setV(value), 60); return () => clearTimeout(id) }, [value])
+  const r = size / 2 - 8
+  const C = 2 * Math.PI * r
+  const fs = size > 100 ? 30 : 20
+  return (
+    <div style={{ textAlign: 'center' }}>
+      <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
+        <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="var(--border-soft)" strokeWidth={8} />
+        <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke={color} strokeWidth={8} strokeLinecap="round"
+          strokeDasharray={C} strokeDashoffset={C * (1 - v / 100)} transform={`rotate(-90 ${size / 2} ${size / 2})`}
+          style={{ transition: 'stroke-dashoffset 0.9s cubic-bezier(.2,.8,.2,1)' }} />
+        <text x={size / 2} y={size / 2 + fs / 3} textAnchor="middle" fontSize={fs} fontWeight={700} fill="var(--text)">{v}</text>
+      </svg>
+      <div style={{ fontSize: 12, color: 'var(--text-2)' }}>{label}</div>
+    </div>
+  )
+}
+
 /** Parse the backend SSE stream (event/data frames) and dispatch each event. */
 async function askStream(
   projectId: string,
@@ -181,6 +204,8 @@ export default function KnowledgeQA() {
   const [ingestOpen, setIngestOpen] = useState(false)
   const [ingTitle, setIngTitle] = useState('')
   const [ingText, setIngText] = useState('')
+  const [evalData, setEvalData] = useState<Eval | null>(null)
+  const [evalLoading, setEvalLoading] = useState(false)
   const scroller = useRef<HTMLDivElement>(null)
   const typer = useRef<number | undefined>(undefined)
 
@@ -229,6 +254,28 @@ export default function KnowledgeQA() {
       setIngestOpen(false); setIngTitle(''); setIngText('')
     } catch (e) {
       message.error(e instanceof Error ? e.message : t('rag.ingestFail', '入库失败'))
+    }
+  }
+
+  const runEval = async (i: number) => {
+    const answer = messages[i]?.content || ''
+    const question = messages[i - 1]?.content || ''
+    if (!answer || !projectId) return
+    setEvalData(null)
+    setEvalLoading(true)
+    try {
+      const res = await fetch('/rag/evaluate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${tokenStore.get()}` },
+        body: JSON.stringify({ projectId, question, answer }),
+      })
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      setEvalData(await res.json())
+    } catch (e) {
+      message.error(e instanceof Error ? e.message : t('rag.evalFail', '评估失败'))
+      setEvalData(null)
+    } finally {
+      setEvalLoading(false)
     }
   }
 
@@ -292,14 +339,17 @@ export default function KnowledgeQA() {
                       ))}
                     </div>
                   )}
-                  {m.role === 'assistant' && m.trace && (
-                    <div style={{ marginTop: 6 }}>
-                      <Button size="small" type="text" icon={<NodeIndexOutlined />} onClick={() => setMessages((ms) => ms.map((x, k) => (k === i ? { ...x, traceOpen: !x.traceOpen } : x)))}>
-                        {m.traceOpen ? t('rag.hideChain', '收起决策链') : t('rag.showChain', '决策链')} · {m.trace.steps.length} 步 {m.trace.total_ms}ms
-                      </Button>
-                      {m.traceOpen && <DecisionChain trace={m.trace} />}
+                  {m.role === 'assistant' && !m.streaming && !!m.content && (
+                    <div style={{ marginTop: 6, display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                      <Button size="small" type="text" icon={<LineChartOutlined />} onClick={() => runEval(i)}>{t('rag.evaluate', '评估')}</Button>
+                      {m.trace && (
+                        <Button size="small" type="text" icon={<NodeIndexOutlined />} onClick={() => setMessages((ms) => ms.map((x, k) => (k === i ? { ...x, traceOpen: !x.traceOpen } : x)))}>
+                          {m.traceOpen ? t('rag.hideChain', '收起决策链') : t('rag.showChain', '决策链')} · {m.trace.steps.length} 步 {m.trace.total_ms}ms
+                        </Button>
+                      )}
                     </div>
                   )}
+                  {m.role === 'assistant' && m.traceOpen && m.trace && <DecisionChain trace={m.trace} />}
                 </div>
               </div>
             ))}
@@ -319,6 +369,24 @@ export default function KnowledgeQA() {
           <Button type="primary" shape="circle" icon={<SendOutlined />} loading={loading} onClick={send} style={{ flexShrink: 0 }} />
         </div>
       </div>
+
+      <Modal open={evalLoading || !!evalData} onCancel={() => { setEvalData(null); setEvalLoading(false) }} footer={null} width={520} centered title={t('rag.evalTitle', '答案评估')}>
+        {evalLoading && !evalData ? (
+          <div style={{ padding: 48, textAlign: 'center', color: 'var(--text-3)' }}>{t('rag.evaluating', '评估中')}<span className="dc-dots" /></div>
+        ) : evalData ? (
+          <div>
+            <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 16 }}>
+              <Ring label={t('rag.overall', '综合')} value={evalData.overall} color="var(--brand)" size={120} />
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-around', marginBottom: 14 }}>
+              <Ring label={t('rag.relevance', '相关性')} value={evalData.relevance} color="#4ea394" />
+              <Ring label={t('rag.faithfulness', '忠实度')} value={evalData.faithfulness} color="#8a7fd1" />
+              <Ring label={t('rag.completeness', '完整性')} value={evalData.completeness} color="#e29a6b" />
+            </div>
+            {evalData.comment && <div style={{ background: 'var(--panel-2)', borderRadius: 8, padding: '10px 12px', color: 'var(--text-2)', fontSize: 13 }}>{evalData.comment}</div>}
+          </div>
+        ) : null}
+      </Modal>
     </div>
   )
 }

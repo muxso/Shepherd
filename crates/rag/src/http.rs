@@ -43,6 +43,7 @@ pub fn router(
         .route("/rag/document", post(ingest_document))
         .route("/rag/document/{id}", axum::routing::delete(delete_document))
         .route("/rag/ask/stream", post(ask_stream))
+        .route("/rag/evaluate", post(evaluate_answer))
         .with_state(RagState { store, embedder, chat, sessions })
 }
 
@@ -128,6 +129,37 @@ fn default_top_k() -> usize {
 }
 fn default_true() -> bool {
     true
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct EvalBody {
+    project_id: String,
+    question: String,
+    answer: String,
+    #[serde(default = "default_top_k")]
+    top_k: usize,
+}
+
+async fn evaluate_answer(
+    _user: AuthUser,
+    State(st): State<RagState>,
+    Json(b): Json<EvalBody>,
+) -> Response {
+    match crate::application::evaluate(
+        st.store.as_ref(),
+        st.embedder.as_ref(),
+        st.chat.as_ref(),
+        &b.project_id,
+        &b.question,
+        &b.answer,
+        b.top_k,
+    )
+    .await
+    {
+        Ok(e) => (StatusCode::OK, Json(e)).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    }
 }
 
 /// SSE Q&A. Emits: `sources` (retrieved refs) → `chunk` (answer delta) → `trace` (decision chain,
