@@ -731,9 +731,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let project_file_routes = project_file::router(pool.clone(), sessions.clone());
 
-    // RAG knowledge-base Q&A: plain-PG vector store + OpenAI-compatible embeddings/chat (from env).
+    // RAG knowledge-base Q&A: plain-PG vector store + tantivy (jieba) keyword index + OpenAI-compatible
+    // embeddings/chat (from env). The RAM keyword index is rebuilt from stored chunks on startup.
+    let rag_keyword =
+        Arc::new(rag::tantivy_kw::TantivyKeyword::new().expect("build tantivy index"));
+    match rag::adapters::rebuild_keyword_index(&pool, &rag_keyword).await {
+        Ok(n) => tracing::info!(chunks = n, "rag: tantivy keyword index built"),
+        Err(e) => tracing::warn!("rag: keyword index rebuild failed: {e}"),
+    }
     let rag_store: Arc<dyn rag::ports::VectorStore> =
-        Arc::new(rag::adapters::PgVectorStore::new(pool.clone()));
+        Arc::new(rag::adapters::PgVectorStore::with_keyword(pool.clone(), rag_keyword));
     let rag_embedder: Arc<dyn rag::ports::Embedder> =
         Arc::new(rag::adapters::OpenAiEmbedder::from_env());
     let rag_chat: Arc<dyn rag::ports::Chat> = Arc::new(rag::adapters::OpenAiChat::from_env());

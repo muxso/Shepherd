@@ -25,11 +25,13 @@ utoipa = { workspace = true, optional = true }
 async-stream = { version = "0.3", optional = true }
 tokio = { workspace = true, features = ["rt", "sync", "macros"], optional = true }
 futures-util = { version = "0.3", default-features = false, optional = true }
+tantivy = { version = "0.22", optional = true }
+jieba-rs = { version = "0.7", optional = true }
 
 [features]
 default = []
 pg = ["dep:sqlx"]
-http = ["dep:axum", "dep:reqwest", "dep:utoipa", "dep:async-stream", "dep:tokio", "dep:futures-util", "dep:sqlx", "webauth/http"]
+http = ["dep:axum", "dep:reqwest", "dep:utoipa", "dep:async-stream", "dep:tokio", "dep:futures-util", "dep:sqlx", "dep:tantivy", "dep:jieba-rs", "webauth/http"]
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
