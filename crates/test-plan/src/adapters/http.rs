@@ -693,7 +693,7 @@ async fn list_cases(
 }
 
 #[derive(OpenApi)]
-#[openapi(paths(create_plan, list_plans, plan_detail, update_plan, save_planning, statistics, report, report_md, link_case, unlink_case, record_result, list_cases), components(schemas(CreatePlanRequest, PlanResponse, PlanListItemResponse, PlanDetailResponse, UpdatePlanRequest, SavePlanningResponse, StatisticsResponse, LinkCaseRequest, RecordResultRequest, AssertionResultDto, PlanCaseResponse, StepResultDto)), tags((name = "test-plan", description = "测试计划")))]
+#[openapi(paths(create_plan, list_plans, plan_detail, update_plan, save_planning, statistics, report, report_md, create_plan_share, public_plan_report, link_case, unlink_case, record_result, list_cases), components(schemas(CreatePlanRequest, PlanResponse, PlanListItemResponse, PlanDetailResponse, UpdatePlanRequest, SavePlanningResponse, StatisticsResponse, PlanShareResponse, LinkCaseRequest, RecordResultRequest, AssertionResultDto, PlanCaseResponse, StepResultDto)), tags((name = "test-plan", description = "测试计划")))]
 struct ApiDoc;
 pub fn openapi() -> utoipa::openapi::OpenApi {
     ApiDoc::openapi()
