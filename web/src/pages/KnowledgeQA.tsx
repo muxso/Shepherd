@@ -304,10 +304,11 @@ export default function KnowledgeQA() {
 
       <div ref={scroller} style={{ flex: 1, overflow: 'auto', padding: empty ? 0 : '16px 0' }}>
         {empty ? (
-          <div style={{ maxWidth: 680, margin: '0 auto', paddingTop: 80, textAlign: 'center' }}>
-            <div style={{ fontSize: 26, fontWeight: 700, marginBottom: 6 }}>{t('rag.hero', '问我关于这个项目的任何问题')}</div>
-            <div style={{ color: 'var(--text-3)', marginBottom: 20 }}>{t('rag.heroSub', '基于知识库检索 + 大模型生成,答案带来源引用与决策链')}</div>
-            <div style={{ display: 'flex', gap: 8, justifyContent: 'center', flexWrap: 'wrap' }}>
+          <div style={{ maxWidth: 680, margin: '0 auto', paddingTop: 64, textAlign: 'center' }}>
+            <div className="rag-orb"><BulbOutlined style={{ fontSize: 34, color: '#fff' }} /></div>
+            <div className="rag-in rag-in-1" style={{ fontSize: 26, fontWeight: 700, marginBottom: 6 }}>{t('rag.hero', '问我关于这个项目的任何问题')}</div>
+            <div className="rag-in rag-in-2" style={{ color: 'var(--text-3)', marginBottom: 20 }}>{t('rag.heroSub', '基于知识库检索 + 大模型生成,答案带来源引用与决策链')}</div>
+            <div className="rag-in rag-in-3" style={{ display: 'flex', gap: 8, justifyContent: 'center', flexWrap: 'wrap' }}>
               {suggestions.map((s) => (
                 <Tag key={s} style={{ cursor: 'pointer', padding: '4px 12px', borderRadius: 999 }} onClick={() => setInput(s)}>{s}</Tag>
               ))}
