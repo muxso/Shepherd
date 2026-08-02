@@ -878,7 +878,7 @@ async fn purge_scenario(
 
 #[derive(OpenApi)]
 #[openapi(
-    paths(create_scenario, copy_scenario, list_scenarios, get_scenario, delete_scenario, add_step, update_step, delete_step, compile_scenario, list_executions, list_recycle, restore_scenario, purge_scenario),
+    paths(create_scenario, copy_scenario, list_scenarios, get_scenario, public_scenario, delete_scenario, add_step, update_step, delete_step, compile_scenario, list_executions, list_recycle, restore_scenario, purge_scenario),
     components(schemas(
         ScenarioCreateBody,
         ScenarioCopyBody,
