@@ -41,4 +41,18 @@ pub trait VectorStore: Send + Sync {
 #[async_trait]
 pub trait Chat: Send + Sync {
     async fn complete(&self, system: &str, user: &str) -> Result<String>;
+
+    /// Stream the answer token-by-token: each delta is sent on `tx`; returns the full text.
+    /// Default: falls back to `complete` and emits it as a single delta.
+    #[cfg(feature = "http")]
+    async fn complete_stream(
+        &self,
+        system: &str,
+        user: &str,
+        tx: tokio::sync::mpsc::Sender<String>,
+    ) -> Result<String> {
+        let full = self.complete(system, user).await?;
+        let _ = tx.send(full.clone()).await;
+        Ok(full)
+    }
 }

@@ -19,15 +19,17 @@ uuid = { workspace = true }
 tracing = { workspace = true }
 # —— IO adapter deps (optional) ——
 sqlx = { workspace = true, features = ["runtime-tokio", "postgres"], optional = true }
-reqwest = { workspace = true, features = ["json", "rustls-tls"], optional = true }
+reqwest = { workspace = true, features = ["json", "rustls-tls", "stream"], optional = true }
 axum = { workspace = true, optional = true }
 utoipa = { workspace = true, optional = true }
 async-stream = { version = "0.3", optional = true }
+tokio = { workspace = true, features = ["rt", "sync", "macros"], optional = true }
+futures-util = { version = "0.3", default-features = false, optional = true }
 
 [features]
 default = []
 pg = ["dep:sqlx"]
-http = ["dep:axum", "dep:reqwest", "dep:utoipa", "dep:async-stream", "dep:sqlx", "webauth/http"]
+http = ["dep:axum", "dep:reqwest", "dep:utoipa", "dep:async-stream", "dep:tokio", "dep:futures-util", "dep:sqlx", "webauth/http"]
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

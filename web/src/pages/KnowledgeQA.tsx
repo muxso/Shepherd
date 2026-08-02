@@ -201,17 +201,9 @@ export default function KnowledgeQA() {
       await askStream(projectId, q, history, (ev, data) => {
         if (ev === 'sources') patchLast((m) => ({ ...m, citations: (data.sources as Citation[]) || [] }))
         else if (ev === 'chunk') {
+          // Real token stream: append each delta and show it immediately (streaming IS the animation).
           const delta = (data.delta as string) || ''
-          patchLast((m) => ({ ...m, content: m.content + delta }))
-          // typewriter reveal
-          if (typer.current) clearInterval(typer.current)
-          typer.current = window.setInterval(() => {
-            setMessages((ms) => {
-              const last = ms[ms.length - 1]
-              if (!last || (last.displayed ?? 0) >= last.content.length) { if (typer.current) clearInterval(typer.current); return ms }
-              return ms.map((m, i) => (i === ms.length - 1 ? { ...m, displayed: Math.min(m.content.length, (m.displayed ?? 0) + 3) } : m))
-            })
-          }, 16)
+          patchLast((m) => ({ ...m, content: m.content + delta, displayed: m.content.length + delta.length }))
         } else if (ev === 'trace') patchLast((m) => ({ ...m, trace: data as unknown as AskTrace }))
         else if (ev === 'error') patchLast((m) => ({ ...m, content: m.content + `\n\n⚠ ${data.message}`, streaming: false }))
       })

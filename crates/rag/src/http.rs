@@ -15,8 +15,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use webauth::{AuthUser, SessionStore};
 
-use crate::application::{ask, ingest, now_ms};
-use crate::domain::RagDocument;
+use crate::application::{build_prompt, elapsed_since, ingest, now_ms, retrieve};
+use crate::domain::{RagDocument, TraceStep};
 use crate::ports::{Chat, Embedder, VectorStore};
 
 #[derive(Clone)]
@@ -138,18 +138,18 @@ async fn ask_stream(
     Json(b): Json<AskBody>,
 ) -> Response {
     let RagState { store, embedder, chat, .. } = st;
-    let session_id = b.session_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
-    let want_trace = b.trace;
+    let session_id = b.session_id.clone().unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
 
     let stream = async_stream::stream! {
         let ev = |name: &str, data: serde_json::Value| -> std::result::Result<Event, std::convert::Infallible> {
             Ok(Event::default().event(name).json_data(data).unwrap_or_default())
         };
         let sid = session_id.clone();
-        match ask(store, embedder, chat, &b.project_id, &b.question, b.top_k, &b.history, b.rerank).await {
-            Ok(out) => {
-                let sources: Vec<_> = out
-                    .hits
+        // 1) retrieve (embed → hybrid → fuse → rerank → context) and emit the sources up front
+        match retrieve(&*store, &*embedder, &*chat, &b.project_id, &b.question, b.top_k, b.rerank).await {
+            Err(e) => { yield ev("error", json!({ "message": e.to_string() })); }
+            Ok((hits, context, mut trace)) => {
+                let sources: Vec<_> = hits
                     .iter()
                     .map(|h| json!({
                         "doc_id": h.document_id,
@@ -160,14 +160,34 @@ async fn ask_stream(
                     }))
                     .collect();
                 yield ev("sources", json!({ "session_id": sid, "sources": sources }));
-                yield ev("chunk", json!({ "delta": out.answer.answer }));
-                if want_trace {
-                    yield ev("trace", serde_json::to_value(&out.trace).unwrap_or_default());
+
+                // 2) stream the answer token-by-token: the LLM task sends deltas on a channel we forward as `chunk`s
+                let (system, user) = build_prompt(&b.question, &context, &b.history);
+                let (tx, mut rx) = tokio::sync::mpsc::channel::<String>(64);
+                let chat2 = chat.clone();
+                let gen_start = std::time::Instant::now();
+                let handle = tokio::spawn(async move { chat2.complete_stream(&system, &user, tx).await });
+                let mut full = String::new();
+                while let Some(delta) = rx.recv().await {
+                    full.push_str(&delta);
+                    yield ev("chunk", json!({ "delta": delta }));
                 }
-                yield ev("done", json!({ "session_id": sid }));
-            }
-            Err(e) => {
-                yield ev("error", json!({ "message": e.to_string() }));
+                // 3) finalize: add the generation step to the trace, then trace + done (or error)
+                match handle.await {
+                    Ok(Ok(_)) => {
+                        if b.trace {
+                            trace.steps.push(TraceStep::LlmGeneration {
+                                latency_ms: gen_start.elapsed().as_millis() as u64,
+                                answer_chars: full.chars().count(),
+                            });
+                            trace.total_ms = elapsed_since(&trace);
+                            yield ev("trace", serde_json::to_value(&trace).unwrap_or_default());
+                        }
+                        yield ev("done", json!({ "session_id": sid }));
+                    }
+                    Ok(Err(e)) => { yield ev("error", json!({ "message": e.to_string() })); }
+                    Err(e) => { yield ev("error", json!({ "message": format!("stream task failed: {e}") })); }
+                }
             }
         }
     };
