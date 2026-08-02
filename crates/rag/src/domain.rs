@@ -102,6 +102,21 @@ pub struct Eval {
     pub comment: String,
 }
 
+/// AI review opinion for a requirement, grounded in retrieved KB context (PRD / test cases).
+/// It is advisory only — the human reviewer still approves or rejects via the requirement flow.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReviewOpinion {
+    /// APPROVE | REVISE | REJECT | UNSURE (uppercase; UNSURE when the KB is too thin to judge).
+    pub verdict: String,
+    pub summary: String,
+    pub risks: Vec<String>,
+    pub missing_coverage: Vec<String>,
+    pub suggestions: Vec<String>,
+    /// 1-based indices into the returned sources that the opinion drew on.
+    pub cited_sources: Vec<usize>,
+}
+
 #[derive(Debug, Clone, thiserror::Error)]
 pub enum RagError {
     #[error("rag storage error: {0}")]

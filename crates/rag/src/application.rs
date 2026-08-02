@@ -197,6 +197,85 @@ pub async fn ask(
     Ok(AskOutcome { answer: Answer { answer: answer_text, cited_sources: cited }, hits, trace })
 }
 
+/// AI requirement review: retrieve related KB context (PRD / test cases) for the requirement text,
+/// then ask the LLM for a grounded, advisory opinion — verdict, risks, missing coverage, suggestions.
+/// The reviewer stays in control; this only informs the decision.
+#[allow(clippy::too_many_arguments)]
+pub async fn review(
+    store: &dyn VectorStore,
+    embedder: &dyn Embedder,
+    chat: &dyn Chat,
+    project_id: &str,
+    title: &str,
+    text: &str,
+    top_k: usize,
+    rerank: bool,
+) -> Result<(crate::domain::ReviewOpinion, Vec<Hit>)> {
+    // Retrieve against title + body so both the name and the details steer recall.
+    let query = if title.trim().is_empty() { text.to_string() } else { format!("{title}\n{text}") };
+    let (hits, context, _) =
+        retrieve(store, embedder, chat, project_id, &query, top_k, rerank).await?;
+
+    let mut ctx = String::from("【知识库上下文】\n");
+    if context.is_empty() {
+        ctx.push_str("(无相关内容)\n");
+    } else {
+        for c in &context {
+            let head =
+                if c.heading.is_empty() { c.source_title.clone() } else { c.heading.clone() };
+            ctx.push_str(&format!("[{}] ({})\n{}\n\n", c.index + 1, head, c.content));
+        }
+    }
+
+    let sys =
+        "你是资深需求评审专家。基于【知识库上下文】(现有 PRD 与测试用例)评审【待评审需求】,给出\
+        专业、可执行的意见,供人工评审参考。只输出一个 JSON 对象,字段:\
+        verdict(取值 APPROVE/REVISE/REJECT/UNSURE,上下文过少无法判断时用 UNSURE)、\
+        summary(一段中文总体结论)、risks(风险点字符串数组)、\
+        missingCoverage(缺失的测试覆盖或与现有用例的冲突,字符串数组)、\
+        suggestions(可执行的修改建议,字符串数组)。\
+        在 summary/risks 等文本中引用上下文时用编号 [1][2] 标注。严禁编造上下文之外的事实。\
+        不要输出 JSON 以外的任何文字。";
+    let user = format!("{ctx}\n【待评审需求】\n标题: {title}\n正文:\n{text}");
+    let out = chat.complete(sys, &user).await?;
+
+    // Strip fences / prose and parse the first {...} object; fall back to an UNSURE opinion.
+    let json = out.find('{').and_then(|s| out.rfind('}').map(|e| &out[s..=e])).unwrap_or("{}");
+    let v: serde_json::Value = serde_json::from_str(json).unwrap_or(serde_json::Value::Null);
+    let str_list = |k: &str| -> Vec<String> {
+        v.get(k)
+            .and_then(|x| x.as_array())
+            .map(|a| a.iter().filter_map(|s| s.as_str().map(str::to_string)).collect())
+            .unwrap_or_default()
+    };
+    let verdict = v
+        .get("verdict")
+        .and_then(|x| x.as_str())
+        .map(|s| s.trim().to_uppercase())
+        .filter(|s| matches!(s.as_str(), "APPROVE" | "REVISE" | "REJECT" | "UNSURE"))
+        .unwrap_or_else(|| "UNSURE".to_string());
+    let summary = v.get("summary").and_then(|x| x.as_str()).unwrap_or("").to_string();
+    let risks = str_list("risks");
+    let missing_coverage = str_list("missingCoverage");
+    let suggestions = str_list("suggestions");
+
+    // Citations mentioned anywhere across the opinion text.
+    let joined = format!("{summary}\n{}\n{}", risks.join("\n"), missing_coverage.join("\n"));
+    let cited_sources = extract_citations(&joined);
+
+    Ok((
+        crate::domain::ReviewOpinion {
+            verdict,
+            summary,
+            risks,
+            missing_coverage,
+            suggestions,
+            cited_sources,
+        },
+        hits,
+    ))
+}
+
 fn heading_or_title(h: &Hit) -> String {
     if !h.heading.is_empty() {
         h.heading.clone()

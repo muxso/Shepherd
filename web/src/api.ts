@@ -678,6 +678,28 @@ export interface RagConfigBody {
   rerank: boolean
 }
 
+// AI requirement-review opinion grounded in KB retrieval (POST /rag/review). Advisory only.
+export interface RagSource {
+  chunkId: string
+  documentId: string
+  title: string
+  heading: string
+  content: string
+  score: number
+}
+export interface RagReviewOpinion {
+  verdict: 'APPROVE' | 'REVISE' | 'REJECT' | 'UNSURE'
+  summary: string
+  risks: string[]
+  missingCoverage: string[]
+  suggestions: string[]
+  citedSources: number[]
+}
+export interface RagReviewResult {
+  opinion: RagReviewOpinion
+  sources: RagSource[]
+}
+
 export interface ProjectMember {
   projectId: string
   userId: string
@@ -1622,6 +1644,9 @@ export const api = {
   // RAG config (system-level, /system/rag/config): keys are write-only; GET returns *KeySet booleans.
   ragConfig: () => http.get<RagConfigView>('/system/rag/config'),
   saveRagConfig: (b: RagConfigBody) => http.put('/system/rag/config', b),
+  // AI requirement review: retrieves KB context and returns an advisory opinion (human still decides).
+  reviewRequirement: (b: { projectId: string; title: string; text: string }) =>
+    http.post<RagReviewResult>('/rag/review', b),
 
   // Functional cases (project level)
   functionalCases: (projectId: string) =>
