@@ -213,6 +213,44 @@ fn topic_of(c: &ContextChunk) -> String {
     }
 }
 
+/// LLM-as-judge: re-retrieve the question's context, then score `answer` for relevance / faithfulness /
+/// completeness (0-100) with a one-line comment.
+#[allow(clippy::too_many_arguments)]
+pub async fn evaluate(
+    store: &dyn VectorStore,
+    embedder: &dyn Embedder,
+    chat: &dyn Chat,
+    project_id: &str,
+    question: &str,
+    answer: &str,
+    top_k: usize,
+) -> Result<crate::domain::Eval> {
+    let (_, context, _) =
+        retrieve(store, embedder, chat, project_id, question, top_k, false).await?;
+    let ctx: String = context
+        .iter()
+        .map(|c| format!("[{}] {}", c.index + 1, c.content))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let sys = "你是 RAG 答案评估器。基于【上下文】评估【答案】对【问题】的质量。只输出一个 JSON 对象,字段:\
+        relevance(相关性 0-100)、faithfulness(忠实度 0-100,答案是否忠于上下文、未编造)、\
+        completeness(完整性 0-100)、comment(一句话中文点评)。不要输出 JSON 以外的任何文字。";
+    let user = format!("【问题】{question}\n\n【答案】{answer}\n\n【上下文】\n{ctx}");
+    let out = chat.complete(sys, &user).await?;
+    // Strip markdown fences / prose and parse the first {...} object.
+    let json = out.find('{').and_then(|s| out.rfind('}').map(|e| &out[s..=e])).unwrap_or("{}");
+    let v: serde_json::Value = serde_json::from_str(json).unwrap_or(serde_json::Value::Null);
+    let g = |k: &str| -> u8 { v.get(k).and_then(|x| x.as_u64()).unwrap_or(0).min(100) as u8 };
+    let (r, f, c) = (g("relevance"), g("faithfulness"), g("completeness"));
+    Ok(crate::domain::Eval {
+        relevance: r,
+        faithfulness: f,
+        completeness: c,
+        overall: (((r as u16 + f as u16 + c as u16) / 3) as u8).min(100),
+        comment: v.get("comment").and_then(|x| x.as_str()).unwrap_or("").to_string(),
+    })
+}
+
 /// Reciprocal-rank fusion of ranked hit lists → top-k by summed 1/(k+rank), deduped by chunk id.
 fn rrf(lists: &[Vec<Hit>], k: f32, top_k: usize) -> Vec<Hit> {
     use std::collections::HashMap;
