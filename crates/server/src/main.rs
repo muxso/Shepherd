@@ -741,10 +741,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     let rag_store: Arc<dyn rag::ports::VectorStore> =
         Arc::new(rag::adapters::PgVectorStore::with_keyword(pool.clone(), rag_keyword));
+    // Shared, hot-swappable RAG config: env defaults, overlaid by the ms_rag_config row (system settings).
+    let rag_config = rag::config::RagConfig::handle_from_env();
+    if let Err(e) = rag::http::load_config(&pool, &rag_config).await {
+        tracing::warn!("rag: load config failed: {e}");
+    }
     let rag_embedder: Arc<dyn rag::ports::Embedder> =
-        Arc::new(rag::adapters::OpenAiEmbedder::from_env());
-    let rag_chat: Arc<dyn rag::ports::Chat> = Arc::new(rag::adapters::OpenAiChat::from_env());
-    let rag_routes = rag::http::router(rag_store, rag_embedder, rag_chat, sessions.clone());
+        Arc::new(rag::adapters::OpenAiEmbedder::new(rag_config.clone()));
+    let rag_chat: Arc<dyn rag::ports::Chat> =
+        Arc::new(rag::adapters::OpenAiChat::new(rag_config.clone()));
+    let rag_routes = rag::http::router(
+        rag_store,
+        rag_embedder,
+        rag_chat,
+        sessions.clone(),
+        rag_config,
+        pool.clone(),
+    );
 
     let app = routes::assemble(vec![
         routes::group(

@@ -306,6 +306,7 @@ const DICT: Record<string, { zh: string; en: string }> = {
   'sys.apikeys': { zh: 'API 密钥', en: 'API Keys' },
   'sys.orgProj': { zh: '组织与项目', en: 'Orgs & Projects' },
   'sys.params': { zh: '系统参数', en: 'System Params' },
+  'sys.rag': { zh: 'RAG 配置', en: 'RAG Config' },
   'sys.tasks': { zh: '任务中心', en: 'Task Center' },
   'sys.plugins': { zh: '插件', en: 'Plugins' },
   'sys.logs': { zh: '日志', en: 'Logs' },

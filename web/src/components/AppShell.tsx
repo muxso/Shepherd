@@ -179,6 +179,7 @@ const MODULES: ModuleDef[] = [
       { key: '/system/apikeys', icon: <KeyOutlined />, label: ['sys.apikeys', 'API 密钥'] },
       { key: '/organization', icon: <ClusterOutlined />, label: ['sys.orgProj', '组织与项目'] },
       { key: '/system/params', icon: <SettingOutlined />, label: ['sys.params', '系统参数'] },
+      { key: '/system/rag', icon: <ExperimentOutlined />, label: ['sys.rag', 'RAG 配置'] },
       { key: '/resource-pool', icon: <DatabaseOutlined />, label: ['m.pool', '资源池'] },
       { key: '/system/tasks', icon: <ScheduleOutlined />, label: ['sys.tasks', '任务中心'] },
       { key: '/system/plugins', icon: <AppstoreOutlined />, label: ['sys.plugins', '插件'] },
