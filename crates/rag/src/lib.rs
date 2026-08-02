@@ -14,3 +14,5 @@ pub mod ports;
 pub mod adapters;
 #[cfg(feature = "http")]
 pub mod http;
+#[cfg(feature = "http")]
+pub mod tantivy_kw;

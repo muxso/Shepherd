@@ -261,16 +261,41 @@ impl Chat for OpenAiChat {
 #[derive(Clone)]
 pub struct PgVectorStore {
     pool: PgPool,
+    keyword: Option<std::sync::Arc<crate::tantivy_kw::TantivyKeyword>>,
 }
 
 impl PgVectorStore {
     pub fn new(pool: PgPool) -> Self {
-        Self { pool }
+        Self { pool, keyword: None }
+    }
+    /// Attach a tantivy keyword index (jieba full-text). Without it, keyword search uses PG ILIKE.
+    pub fn with_keyword(
+        pool: PgPool,
+        keyword: std::sync::Arc<crate::tantivy_kw::TantivyKeyword>,
+    ) -> Self {
+        Self { pool, keyword: Some(keyword) }
     }
 }
 
 fn be(e: sqlx::Error) -> RagError {
     RagError::Backend(e.to_string())
+}
+
+/// Rebuild the tantivy keyword index from all stored chunks (called once on startup so the RAM
+/// index matches the DB). Returns the number of chunks indexed.
+pub async fn rebuild_keyword_index(
+    pool: &PgPool,
+    kw: &crate::tantivy_kw::TantivyKeyword,
+) -> Result<usize> {
+    let rows = sqlx::query_as::<_, (String, String, String, String, String)>(
+        "SELECT c.id, c.document_id, c.project_id, c.heading, c.content FROM ms_rag_chunk c",
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(be)?;
+    let n = rows.len();
+    kw.bulk_add(&rows)?;
+    Ok(n)
 }
 
 #[async_trait]
@@ -320,10 +345,21 @@ impl VectorStore for PgVectorStore {
             .map_err(be)?;
         }
         tx.commit().await.map_err(be)?;
+        if let Some(kw) = &self.keyword {
+            let rows: Vec<(String, String, String, String)> = chunks
+                .iter()
+                .map(|c| (c.id.clone(), c.project_id.clone(), c.heading.clone(), c.content.clone()))
+                .collect();
+            kw.replace_doc(document_id, &rows)?;
+        }
         Ok(())
     }
 
     async fn delete_document(&self, id: &str) -> Result<()> {
+        // Chunks cascade in PG; the tantivy index keys on document_id so delete there too.
+        if let Some(kw) = &self.keyword {
+            let _ = kw.delete_doc(id);
+        }
         sqlx::query("DELETE FROM ms_rag_document WHERE id = $1")
             .bind(id)
             .execute(&self.pool)
@@ -365,7 +401,41 @@ impl VectorStore for PgVectorStore {
         query: &str,
         top_k: usize,
     ) -> Result<Vec<Hit>> {
-        // Whitespace terms → ILIKE patterns; score = how many distinct terms a chunk contains.
+        // Tantivy (jieba full-text) when available: rank chunk ids, then hydrate them from PG.
+        if let Some(kw) = &self.keyword {
+            let ranked = kw.search(project_id, query, top_k)?;
+            if ranked.is_empty() {
+                return Ok(Vec::new());
+            }
+            let ids: Vec<String> = ranked.iter().map(|(id, _)| id.clone()).collect();
+            let rows = sqlx::query_as::<_, (String, String, String, String, String)>(
+                "SELECT c.id, c.document_id, COALESCE(d.title,''), c.heading, c.content \
+                 FROM ms_rag_chunk c JOIN ms_rag_document d ON d.id = c.document_id \
+                 WHERE c.id = ANY($1)",
+            )
+            .bind(&ids)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(be)?;
+            let by_id: std::collections::HashMap<String, (String, String, String, String)> = rows
+                .into_iter()
+                .map(|(id, doc, title, heading, content)| (id, (doc, title, heading, content)))
+                .collect();
+            return Ok(ranked
+                .into_iter()
+                .filter_map(|(id, score)| {
+                    by_id.get(&id).map(|(doc, title, heading, content)| Hit {
+                        chunk_id: id.clone(),
+                        document_id: doc.clone(),
+                        title: title.clone(),
+                        heading: heading.clone(),
+                        content: content.clone(),
+                        score,
+                    })
+                })
+                .collect());
+        }
+        // Fallback: whitespace terms → ILIKE patterns; score = how many distinct terms a chunk contains.
         let terms: Vec<String> = query
             .split_whitespace()
             .filter(|t| t.chars().count() >= 2)
