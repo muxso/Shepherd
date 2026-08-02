@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Button, Input, Tag, Tooltip, message } from 'antd'
+import { Button, Input, Segmented, Tag, Tooltip, message } from 'antd'
 import { SendOutlined, BulbOutlined, PlusOutlined, NodeIndexOutlined } from '@ant-design/icons'
 import { tokenStore } from '../api'
 import { useApp } from '../context'
@@ -51,54 +51,88 @@ const summarise = (s: TraceStep): string => {
   }
 }
 
-/** Decision chain: a vertical rail of pipeline steps, each expandable to its raw payload / hits. */
+/** Shared step-detail panel (top hits + raw payload). */
+function StepDetail({ s, tone }: { s: TraceStep; tone: string }) {
+  return (
+    <div className="dc-fade" style={{ marginTop: 8, border: '1px solid var(--border-soft)', borderRadius: 8, background: 'var(--panel-2)', padding: '8px 10px' }}>
+      {'top' in s && Array.isArray((s as { top: TraceHit[] }).top) && (s as { top: TraceHit[] }).top.length > 0 && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 3, marginBottom: 6 }}>
+          {(s as { top: TraceHit[] }).top.map((h, j) => (
+            <div key={j} style={{ display: 'flex', gap: 8, fontSize: 12 }}>
+              <span style={{ color: 'var(--text-3)' }}>{j + 1}</span>
+              <span style={{ flex: 1, color: 'var(--text-2)' }}>{h.topic || '(无标题)'}</span>
+              <span className="ms-mono" style={{ color: tone }}>{h.score.toFixed(3)}</span>
+            </div>
+          ))}
+        </div>
+      )}
+      <pre className="ms-mono" style={{ margin: 0, fontSize: 11, color: 'var(--text-3)', whiteSpace: 'pre-wrap', maxHeight: 160, overflow: 'auto' }}>{JSON.stringify(s, null, 2)}</pre>
+    </div>
+  )
+}
+
+/** Decision chain: a linear pipeline shown as a timeline (vertical) or node graph (horizontal). */
 function DecisionChain({ trace }: { trace: AskTrace }) {
   const [sel, setSel] = useState<number | null>(null)
+  const [view, setView] = useState<'timeline' | 'graph'>('graph')
+  const selStep = sel != null ? trace.steps[sel] : null
   return (
     <div style={{ marginTop: 8, border: '1px solid var(--border-soft)', borderRadius: 10, background: 'var(--panel)', padding: '10px 14px' }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6, color: 'var(--text-2)', fontSize: 12 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, color: 'var(--text-2)', fontSize: 12 }}>
         <NodeIndexOutlined /> <b style={{ color: 'var(--text)' }}>决策链</b>
         <span>{trace.steps.length} 步 · {trace.total_ms} ms</span>
+        <div style={{ flex: 1 }} />
+        <Segmented size="small" value={view} onChange={(v) => setView(v as 'timeline' | 'graph')} options={[{ label: '节点图', value: 'graph' }, { label: '时间线', value: 'timeline' }]} />
       </div>
-      {trace.steps.map((s, i) => {
-        const m = metaOf(s.kind)
-        const open = sel === i
-        return (
-          <div key={i} className="dc-step" style={{ display: 'flex', gap: 10, alignItems: 'flex-start' }}>
-            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', alignSelf: 'stretch' }}>
-              <span style={{ width: 22, height: 22, borderRadius: '50%', background: m.tone, color: '#fff', display: 'grid', placeItems: 'center', fontSize: 12, flexShrink: 0 }}>{m.glyph}</span>
-              {i < trace.steps.length - 1 && <span style={{ flex: 1, width: 2, background: 'var(--border-soft)', minHeight: 10 }} />}
-            </div>
-            <button
-              onClick={() => setSel(open ? null : i)}
-              style={{ flex: 1, textAlign: 'left', background: open ? 'var(--panel-2)' : 'transparent', border: '1px solid ' + (open ? m.tone : 'transparent'), borderRadius: 8, padding: '6px 10px', cursor: 'pointer', marginBottom: 6 }}
-            >
-              <div style={{ display: 'flex', gap: 8, alignItems: 'baseline' }}>
-                <span style={{ fontWeight: 600, fontSize: 13, color: 'var(--text)' }}>{m.label}</span>
-                <span style={{ color: 'var(--text-3)', fontSize: 12 }}>{summarise(s)}</span>
+
+      {view === 'graph' ? (
+        <div style={{ display: 'flex', alignItems: 'stretch', gap: 0, overflowX: 'auto', paddingBottom: 4 }}>
+          {trace.steps.map((s, i) => {
+            const m = metaOf(s.kind)
+            const on = sel === i
+            return (
+              <div key={i} style={{ display: 'flex', alignItems: 'center' }}>
+                <button
+                  className="dc-node"
+                  onClick={() => setSel(on ? null : i)}
+                  style={{ display: 'grid', gridTemplateColumns: '4px 22px 1fr', alignItems: 'center', gap: 6, minWidth: 148, textAlign: 'left', background: on ? 'var(--panel-2)' : 'var(--panel)', border: '1px solid ' + (on ? m.tone : 'var(--border-soft)'), borderRadius: 10, padding: '7px 9px', cursor: 'pointer' }}
+                >
+                  <span style={{ alignSelf: 'stretch', background: m.tone, borderRadius: 2 }} />
+                  <span style={{ width: 22, height: 22, borderRadius: '50%', background: m.tone, color: '#fff', display: 'grid', placeItems: 'center', fontSize: 12 }}>{m.glyph}</span>
+                  <span style={{ minWidth: 0 }}>
+                    <div style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--text)' }}>{m.label}</div>
+                    <div style={{ fontSize: 11, color: 'var(--text-3)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{summarise(s)}</div>
+                  </span>
+                </button>
+                {i < trace.steps.length - 1 && <span style={{ color: 'var(--text-3)', padding: '0 4px', flexShrink: 0 }}>→</span>}
               </div>
-              {open && (
-                <div style={{ marginTop: 6 }}>
-                  {'top' in s && Array.isArray((s as { top: TraceHit[] }).top) && (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-                      {(s as { top: TraceHit[] }).top.map((h, j) => (
-                        <div key={j} style={{ display: 'flex', gap: 8, fontSize: 12 }}>
-                          <span style={{ color: 'var(--text-3)' }}>{j + 1}</span>
-                          <span style={{ flex: 1, color: 'var(--text-2)' }}>{h.topic || '(无标题)'}</span>
-                          <span className="ms-mono" style={{ color: m.tone }}>{h.score.toFixed(3)}</span>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                  <pre className="ms-mono" style={{ margin: '6px 0 0', fontSize: 11, color: 'var(--text-3)', whiteSpace: 'pre-wrap', maxHeight: 160, overflow: 'auto' }}>
-                    {JSON.stringify(s, null, 2)}
-                  </pre>
+            )
+          })}
+        </div>
+      ) : (
+        <div>
+          {trace.steps.map((s, i) => {
+            const m = metaOf(s.kind)
+            const on = sel === i
+            return (
+              <div key={i} className="dc-step" style={{ display: 'flex', gap: 10, alignItems: 'flex-start' }}>
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', alignSelf: 'stretch' }}>
+                  <span style={{ width: 22, height: 22, borderRadius: '50%', background: m.tone, color: '#fff', display: 'grid', placeItems: 'center', fontSize: 12, flexShrink: 0 }}>{m.glyph}</span>
+                  {i < trace.steps.length - 1 && <span style={{ flex: 1, width: 2, background: 'var(--border-soft)', minHeight: 10 }} />}
                 </div>
-              )}
-            </button>
-          </div>
-        )
-      })}
+                <button onClick={() => setSel(on ? null : i)} style={{ flex: 1, textAlign: 'left', background: on ? 'var(--panel-2)' : 'transparent', border: '1px solid ' + (on ? m.tone : 'transparent'), borderRadius: 8, padding: '6px 10px', cursor: 'pointer', marginBottom: 6 }}>
+                  <div style={{ display: 'flex', gap: 8, alignItems: 'baseline' }}>
+                    <span style={{ fontWeight: 600, fontSize: 13, color: 'var(--text)' }}>{m.label}</span>
+                    <span style={{ color: 'var(--text-3)', fontSize: 12 }}>{summarise(s)}</span>
+                  </div>
+                </button>
+              </div>
+            )
+          })}
+        </div>
+      )}
+
+      {selStep && <StepDetail s={selStep} tone={metaOf(selStep.kind).tone} />}
     </div>
   )
 }
