@@ -84,7 +84,7 @@ export default function App() {
     { path: 'bug', element: <Bugs /> },
     { path: 'skill', element: <Skills /> },
     { path: 'mcp', element: <Mcp /> },
-    { path: 'knowledge', element: <KnowledgeQA /> },
+    { path: 'chat', element: <KnowledgeQA /> },
   ]
 
   return (

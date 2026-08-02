@@ -204,7 +204,7 @@ export default function KnowledgeQA() {
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: 'var(--bg-base)' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 16px', borderBottom: '1px solid var(--border-soft)', background: 'var(--panel)' }}>
         <BulbOutlined style={{ color: 'var(--brand)' }} />
-        <b>{t('rag.title', '知识问答')}</b>
+        <b>{t('rag.title', '聊天')}</b>
         <div style={{ flex: 1 }} />
         <Button icon={<PlusOutlined />} onClick={() => setIngestOpen((v) => !v)}>{t('rag.addKnowledge', '添加知识')}</Button>
       </div>
