@@ -50,6 +50,7 @@ pub fn router(
         .route("/rag/document/{id}", axum::routing::delete(delete_document))
         .route("/rag/ask/stream", post(ask_stream))
         .route("/rag/evaluate", post(evaluate_answer))
+        .route("/rag/review", post(review_requirement))
         .route("/system/rag/config", axum::routing::get(get_config).put(put_config))
         .with_state(RagState { store, embedder, chat, sessions, config, pool })
 }
@@ -317,6 +318,56 @@ async fn evaluate_answer(
     .await
     {
         Ok(e) => (StatusCode::OK, Json(e)).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ReviewBody {
+    project_id: String,
+    #[serde(default)]
+    title: String,
+    text: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ReviewResult {
+    opinion: crate::domain::ReviewOpinion,
+    sources: Vec<crate::domain::Hit>,
+}
+
+/// AI requirement-review opinion, grounded in the project's knowledge base. Advisory only — the
+/// reviewer still approves/rejects via the requirement flow. Retrieval depth/rerank follow the
+/// system RAG config.
+async fn review_requirement(
+    user: AuthUser,
+    State(st): State<RagState>,
+    Json(b): Json<ReviewBody>,
+) -> Response {
+    if !user.can("REQUIREMENT", "READ") {
+        return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
+    let (top_k, rerank) = {
+        let c = st.config.read().expect("rag config poisoned");
+        (c.top_k, c.rerank)
+    };
+    match crate::application::review(
+        st.store.as_ref(),
+        st.embedder.as_ref(),
+        st.chat.as_ref(),
+        &b.project_id,
+        &b.title,
+        &b.text,
+        top_k,
+        rerank,
+    )
+    .await
+    {
+        Ok((opinion, sources)) => {
+            (StatusCode::OK, Json(ReviewResult { opinion, sources })).into_response()
+        }
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
     }
 }
