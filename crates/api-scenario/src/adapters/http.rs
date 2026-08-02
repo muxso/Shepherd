@@ -911,12 +911,17 @@ mod tests {
     use tower::ServiceExt;
     use webauth::testing::InMemorySessionStore;
 
+    // Lazy pool: parses the URL but never connects — the tested routes don't touch report sharing.
+    fn test_pool() -> sqlx::PgPool {
+        sqlx::PgPool::connect_lazy("postgres://localhost/test").expect("lazy pool")
+    }
+
     async fn app() -> (Router, String) {
         let repo = Arc::new(InMemoryApiScenarioRepository::new());
         let sessions = Arc::new(InMemorySessionStore::new());
         let perms = PermissionSet::from_raw(["API_SCENARIO:READ+ADD".to_string()]).expect("perms");
         let token = sessions.create("admin", perms, 3600).await.expect("token");
-        let r = router(repo, sessions);
+        let r = router(repo, sessions, test_pool());
         (r, token)
     }
 
@@ -976,7 +981,7 @@ mod tests {
         let sessions = Arc::new(InMemorySessionStore::new());
         let perms = PermissionSet::from_raw(["API_SCENARIO:READ".to_string()]).expect("perms");
         let token = sessions.create("u", perms, 3600).await.expect("token");
-        let app = router(repo, sessions);
+        let app = router(repo, sessions, test_pool());
         let resp = app
             .oneshot(post("/api/scenario", r#"{"projectId":"p1","name":"x"}"#, Some(&token)))
             .await
@@ -1109,7 +1114,7 @@ mod tests {
         let perms =
             PermissionSet::from_raw(["API_SCENARIO:READ+ADD+UPDATE".to_string()]).expect("perms");
         let token = sessions.create("admin", perms, 3600).await.expect("token");
-        (router(repo, sessions), token)
+        (router(repo, sessions, test_pool()), token)
     }
 
     async fn add_request_step_id(app: &Router, t: &str, scenario_id: &str) -> String {
@@ -1234,7 +1239,7 @@ mod tests {
         let sessions = Arc::new(InMemorySessionStore::new());
         let perms = PermissionSet::from_raw(["API_SCENARIO:READ".to_string()]).expect("perms");
         let token = sessions.create("u", perms, 3600).await.expect("token");
-        let app = router(repo, sessions);
+        let app = router(repo, sessions, test_pool());
         let resp =
             app.oneshot(post("/api/scenario/any/copy", "{}", Some(&token))).await.expect("resp");
         assert_eq!(resp.status(), StatusCode::FORBIDDEN);
@@ -1313,7 +1318,7 @@ mod tests {
         let sessions = Arc::new(InMemorySessionStore::new());
         let perms = PermissionSet::from_raw(["API_SCENARIO:READ+ADD".to_string()]).expect("perms");
         let token = sessions.create("admin", perms, 3600).await.expect("token");
-        let r = router(repo.clone(), sessions);
+        let r = router(repo.clone(), sessions, test_pool());
         (r, repo, token)
     }
 

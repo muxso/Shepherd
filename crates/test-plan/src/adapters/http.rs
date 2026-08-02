@@ -711,6 +711,11 @@ mod tests {
     use tower::ServiceExt;
     use webauth::testing::InMemorySessionStore;
 
+    // Lazy pool: parses the URL but never connects — the tested routes don't touch report sharing.
+    fn test_pool() -> sqlx::PgPool {
+        sqlx::PgPool::connect_lazy("postgres://localhost/test").expect("lazy pool")
+    }
+
     async fn app_with(repo: InMemoryPlanRepository) -> (Router, String) {
         let repo = Arc::new(repo);
         let sessions = Arc::new(InMemorySessionStore::new());
@@ -723,6 +728,7 @@ mod tests {
             PlanCaseUseCase::new(repo.clone()),
             PlanAdminUseCase::new(repo),
             sessions,
+            test_pool(),
         );
         (r, token)
     }
@@ -776,6 +782,7 @@ mod tests {
             PlanCaseUseCase::new(repo.clone()),
             PlanAdminUseCase::new(repo),
             sessions,
+            test_pool(),
         );
         let resp = app
             .oneshot(post(
@@ -1057,6 +1064,7 @@ mod tests {
             PlanCaseUseCase::new(repo.clone()),
             PlanAdminUseCase::new(repo),
             sessions,
+            test_pool(),
         );
         let resp =
             app.oneshot(put_req("/test-plan/x", r#"{"name":"y"}"#, &token)).await.expect("resp");
