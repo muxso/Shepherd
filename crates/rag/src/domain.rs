@@ -10,8 +10,34 @@ pub struct RagDocument {
     pub source_type: String,
     pub source_id: Option<String>,
     pub title: String,
+    /// Uploader's user id. Used for the "owner can always see it" rule; None for legacy rows.
+    #[serde(default)]
+    pub owner_id: Option<String>,
+    /// Visibility-group ids this doc belongs to. Empty = restricted (owner + admin only, not everyone).
+    #[serde(default)]
+    pub visibility_groups: Vec<String>,
     pub created_at: i64,
     pub updated_at: i64,
+}
+
+/// A named, reusable bundle of RBAC role names controlling who can retrieve a document.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VisibilityGroup {
+    pub id: String,
+    pub name: String,
+    pub role_names: Vec<String>,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
+/// Who is asking, for document-visibility filtering during retrieval. A document is visible when the
+/// caller `is_admin`, uploaded it (`user_id == owner_id`), or the doc belongs to one of the groups the
+/// caller can see (`visible_group_ids` — precomputed from the caller's roles at request time).
+#[derive(Debug, Clone, Default)]
+pub struct Audience {
+    pub user_id: Option<String>,
+    pub visible_group_ids: Vec<String>,
+    pub is_admin: bool,
 }
 
 /// A chunk of a document plus its embedding. `embedding` is empty on read paths that don't need it.

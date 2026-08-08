@@ -237,6 +237,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 "SKILL:READ+ADD+UPDATE+DELETE".to_string(),
                 "COMMENT:READ+ADD+DELETE".to_string(),
                 "APIKEY:READ+ADD+DELETE".to_string(),
+                "RAG:READ+ADD+UPDATE+DELETE".to_string(),
             ],
         )
         .await?;
