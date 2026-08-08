@@ -44,6 +44,7 @@ const CATALOG: PermGroup[] = [
       { res: 'VERIFICATION', label: '验收', actions: ['READ', 'ADD', 'UPDATE'] },
       { res: 'CASE_REVIEW', label: '评审', actions: ['READ', 'REVIEW'] },
       { res: 'COMMENT', label: '评论', actions: ['READ', 'ADD', 'DELETE'] },
+      { res: 'RAG', label: '知识库', actions: ['READ', 'ADD', 'UPDATE', 'DELETE'] },
     ],
   },
   {

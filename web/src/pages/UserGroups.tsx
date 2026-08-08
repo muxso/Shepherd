@@ -1,35 +1,17 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Button, Empty, Form, Input, Segmented, Select, Space, Table, Tag, Tooltip } from 'antd'
+import { Button, Empty, Form, Input, Segmented, Select, Space, Table, Tooltip } from 'antd'
 import { message, modal } from '../feedback'
 import { DeleteOutlined, EditOutlined, PlusOutlined, SearchOutlined } from '@ant-design/icons'
-import type { ColumnsType } from 'antd/es/table'
 import { api, ApiError, type Role, type User } from '../api'
 import { useI18n } from '../i18n'
 import EditDrawer from '../components/EditDrawer'
+import PermissionMatrix, { parsePermissions, serializePermissions } from '../components/PermissionMatrix'
 
 // User groups: left tree grouped by scope, right pane permissions/members.
-// Permission matrix is parsed from real role permissions (e.g. "API_DEFINITION:READ+ADD") into resource → actions.
+// Both the read view and the editor use the shared PermissionMatrix (checkbox module/feature/action).
 
-// Resource/action code → Chinese label; unknown codes fall back to the raw code.
-const RES_LABEL: Record<string, string> = {
-  BASIC_INFO: '基本信息', SYSTEM_USER: '用户', USER_ROLE: '用户组', ORGANIZATION: '组织', PROJECT: '项目',
-  RESOURCE_POOL: '资源池', PLUGIN: '插件', AUTH: '授权', LOG: '日志', TASK_CENTER: '任务中心', APIKEY: 'APIKEY',
-  API_DEFINITION: '接口定义', API_SCENARIO: '场景', API_MOCK: 'Mock', FUNCTIONAL_CASE: '功能用例', CASE_REVIEW: '用例评审',
-  TEST_PLAN: '测试计划', BUG: '缺陷', ENVIRONMENT: '环境管理', REQUIREMENT: '需求', SKILL: '技能', TASK: '任务中心',
-  MESSAGE: '消息管理', FILE: '文件管理', TEMPLATE: '模板管理', SCRIPT: '公共脚本', APP_SETTING: '应用设置', SERVICE: '服务集成',
-}
-const ACT_LABEL: Record<string, string> = {
-  READ: '查询', ADD: '创建', UPDATE: '编辑', EDIT: '编辑', DELETE: '删除', EXECUTE: '执行', REVIEW: '评审',
-  IMPORT: '导入', EXPORT: '导出', INVITE: '邀请用户', GRANT: '关联/取消关联', SHARE: '分享', COMMENT: '评论', RESET: '重置',
-}
 const SCOPE_ORDER = ['SYSTEM', 'ORGANIZATION', 'PROJECT']
 const SCOPE_LABEL: Record<string, string> = { SYSTEM: '系统用户组', ORGANIZATION: '组织用户组', PROJECT: '项目用户组' }
-
-interface PermRow {
-  res: string
-  resLabel: string
-  actions: string[]
-}
 
 export default function UserGroups() {
   const { t } = useI18n()
@@ -66,17 +48,8 @@ export default function UserGroups() {
   }, [roles, q, t])
 
   const sel = roles.find((r) => r.id === selId)
-  const permRows: PermRow[] = useMemo(() => {
-    return (sel?.permissions ?? []).map((p) => {
-      const [res, acts] = p.split(':')
-      return { res, resLabel: t(`ug.res.${res}`, RES_LABEL[res] || res), actions: (acts ?? '').split('+').filter(Boolean) }
-    }).sort((a, b) => a.resLabel.localeCompare(b.resLabel))
-  }, [sel, t])
-
-  const cols: ColumnsType<PermRow> = [
-    { title: t('ug.resource', '资源'), dataIndex: 'resLabel', width: 200, render: (v: string, r) => <Tooltip title={r.res}><span style={{ fontWeight: 600 }}>{v}</span></Tooltip> },
-    { title: t('ug.permission', '权限'), dataIndex: 'actions', render: (a: string[]) => a.map((x) => <Tag key={x} color="green" style={{ marginBottom: 4 }}>{t(`ug.act.${x}`, ACT_LABEL[x] || x)}</Tag>) },
-  ]
+  // Read-only view uses the same matrix as the editor, so what you see maps 1:1 to what you edit.
+  const selParsed = useMemo(() => parsePermissions(sel?.permissions), [sel])
 
   const del = (r: Role) => modal.confirm({
     title: `${t('ug.deleteConfirm', '删除用户组')}「${r.name}」?`,
@@ -173,8 +146,15 @@ export default function UserGroups() {
           {!sel ? (
             <Empty description={t('ug.selectGroup', '请选择用户组')} />
           ) : tab === 'perm' ? (
-            permRows.length === 0 ? <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('ug.noPerm', '该用户组暂无权限')} /> : (
-              <Table<PermRow> rowKey="res" size="small" pagination={false} dataSource={permRows} columns={cols} />
+            !sel.permissions?.length ? <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('ug.noPerm', '该用户组暂无权限')} /> : (
+              <>
+                <PermissionMatrix checked={selParsed.checked} onChange={() => {}} disabled />
+                {selParsed.extras.length > 0 && (
+                  <div className="ms-mono" style={{ marginTop: 12, fontSize: 12, color: 'var(--text-3)' }}>
+                    {t('ug.permsExtra', '其他权限(不在此表内,已保留)')}: {selParsed.extras.join('  ·  ')}
+                  </div>
+                )}
+              </>
             )
           ) : (
             <MembersPanel members={members} nonMembers={nonMembers} onGrant={grant} onRevoke={revoke} />
@@ -254,16 +234,23 @@ function RoleCreateModal({ scope, onClose, onDone }: { scope: string | null; onC
   )
 }
 
-// Edit group: rename + permissions, one "RESOURCE:ACTION+ACTION" per line; the kernel validates them.
+// Edit group: rename + a checkbox permission matrix (module / feature / actions). Permissions the
+// catalog can't render (legacy/unknown resources) are preserved verbatim via `extras` so nothing is lost.
 function RoleEditModal({ role, onClose, onDone }: { role: Role | null; onClose: () => void; onDone: () => void }) {
   const { t } = useI18n()
-  const [form] = Form.useForm<{ name: string; perms: string }>()
+  const [form] = Form.useForm<{ name: string }>()
   const [busy, setBusy] = useState(false)
+  const [checked, setChecked] = useState<Set<string>>(new Set())
+  const [extras, setExtras] = useState<string[]>([])
   useEffect(() => {
-    if (role) form.setFieldsValue({ name: role.name, perms: (role.permissions ?? []).join('\n') })
+    if (role) {
+      form.setFieldsValue({ name: role.name })
+      const { checked: c, extras: e } = parsePermissions(role.permissions)
+      setChecked(c); setExtras(e)
+    }
   }, [role, form])
   return (
-    <EditDrawer title={t('ug.editGroup', '编辑用户组')} open={!!role} onCancel={onClose} footer={null} width={560}>
+    <EditDrawer title={t('ug.editGroup', '编辑用户组')} open={!!role} onCancel={onClose} footer={null} width={860}>
       <Form
         form={form}
         layout="vertical"
@@ -271,7 +258,7 @@ function RoleEditModal({ role, onClose, onDone }: { role: Role | null; onClose: 
           if (!role) return
           setBusy(true)
           try {
-            const permissions = v.perms.split('\n').map((s) => s.trim()).filter(Boolean)
+            const permissions = serializePermissions(checked, extras)
             await api.updateRole(role.id, { name: v.name.trim(), permissions })
             message.success(t('ug.saved', '已保存'))
             onDone()
@@ -285,9 +272,14 @@ function RoleEditModal({ role, onClose, onDone }: { role: Role | null; onClose: 
         <Form.Item name="name" label={t('ug.groupName', '用户组名称')} rules={[{ required: true }]}>
           <Input autoFocus />
         </Form.Item>
-        <Form.Item name="perms" label={t('ug.permsLabel', '权限(每行一条,格式 资源:动作+动作)')} extra={t('ug.permsHint', '示例:API_DEFINITION:READ+ADD+UPDATE')}>
-          <Input.TextArea rows={8} className="ms-mono" placeholder={'API_DEFINITION:READ+ADD\nFUNCTIONAL_CASE:READ'} />
+        <Form.Item label={t('ug.permsLabel2', '权限')}>
+          <PermissionMatrix checked={checked} onChange={setChecked} />
         </Form.Item>
+        {extras.length > 0 && (
+          <Form.Item label={t('ug.permsExtra', '其他权限(不在此表内,已保留)')}>
+            <div className="ms-mono" style={{ fontSize: 12, color: 'var(--text-3)' }}>{extras.join('  ·  ')}</div>
+          </Form.Item>
+        )}
         <Button type="primary" htmlType="submit" block loading={busy}>{t('a.save', '保存')}</Button>
       </Form>
     </EditDrawer>
