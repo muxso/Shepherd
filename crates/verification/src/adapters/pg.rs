@@ -164,7 +164,7 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    #[ignore = "需要 DATABASE_URL 指向一个 PostgreSQL 实例"]
+    #[ignore = "requires DATABASE_URL pointing to a PostgreSQL instance"]
     async fn pg_traceability_and_completeness() {
         let url = std::env::var("DATABASE_URL").expect("set DATABASE_URL");
         let pool = PgPool::connect(&url).await.expect("connect");
@@ -175,8 +175,12 @@ mod tests {
             .expect("truncate");
 
         let repo = PgVerificationRepository::new(pool.clone());
-        let new = NewVerification::new("req1", 1, &["登录成功".into(), "错误密码拒绝".into()])
-            .expect("valid");
+        let new = NewVerification::new(
+            "req1",
+            1,
+            &["login success".into(), "wrong password rejected".into()],
+        )
+        .expect("valid");
         let v = repo.create(&new).await.expect("create");
         assert_eq!(repo.get(&v.id).await.expect("g").expect("s").criteria.len(), 2);
 

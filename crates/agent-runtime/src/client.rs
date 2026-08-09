@@ -28,7 +28,7 @@ where
             Ok(v) => return Ok(v),
             Err(e) if i == attempts => return Err(e),
             Err(e) => {
-                tracing::warn!("{label} 第 {i}/{attempts} 次失败,{delay:?} 后重试: {e}");
+                tracing::warn!("{label} attempt {i}/{attempts} failed, retrying in {delay:?}: {e}");
                 tokio::time::sleep(delay).await;
                 delay = (delay * 2).min(Duration::from_secs(10));
             }
@@ -53,7 +53,7 @@ impl ServerClient {
         let revoked = status == reqwest::StatusCode::UNAUTHORIZED;
         if revoked {
             tracing::error!(
-                "API key 已吊销或无效(HTTP 401):请管理员在 POST /system/apikey 重新签发,并更新 SHEPHERD_AGENT_KEY"
+                "API key revoked or invalid (HTTP 401): ask an admin to reissue it via POST /system/apikey and update SHEPHERD_AGENT_KEY"
             );
         }
         revoked
@@ -62,7 +62,7 @@ impl ServerClient {
     /// Stand-in for error_for_status: maps 401 to a readable "key revoked" error, keeps status errors otherwise.
     fn ensure_ok(&self, resp: reqwest::Response) -> anyhow::Result<reqwest::Response> {
         if self.key_revoked(resp.status()) {
-            anyhow::bail!("API key 已吊销或无效");
+            anyhow::bail!("API key revoked or invalid");
         }
         Ok(resp.error_for_status()?)
     }
@@ -92,7 +92,7 @@ impl ServerClient {
             .await?
             .status();
         if self.key_revoked(code) {
-            anyhow::bail!("API key 已吊销或无效");
+            anyhow::bail!("API key revoked or invalid");
         }
         Ok(code != reqwest::StatusCode::NOT_FOUND)
     }
@@ -233,7 +233,7 @@ mod tests {
         assert_eq!(
             req.headers()["authorization"],
             "Bearer sak_0123456789abcdef.deadbeef",
-            "静态 key 应原样作为 bearer 附带"
+            "static key should be attached verbatim as bearer"
         );
     }
 

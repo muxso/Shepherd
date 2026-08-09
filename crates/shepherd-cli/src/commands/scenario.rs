@@ -115,14 +115,14 @@ pub fn run(cmd: ScenarioCmd) -> R<()> {
             if let Some(m) = method {
                 let assertions = match assertions_json {
                     Some(aj) => serde_json::from_str(&aj)
-                        .map_err(|e| format!("--assertions-json 不是合法 JSON: {e}"))?,
+                        .map_err(|e| format!("--assertions-json is not valid JSON: {e}"))?,
                     None => status_assertions(expect_status),
                 };
                 step["request"] = json!({"method": m, "url": url.unwrap_or_default(), "body": body, "assertions": assertions});
             }
             if let Some(cj) = control_json {
                 step["control"] = serde_json::from_str(&cj)
-                    .map_err(|e| format!("--control-json 不是合法 JSON: {e}"))?;
+                    .map_err(|e| format!("--control-json is not valid JSON: {e}"))?;
             }
             pretty(&c.post(&format!("/api/scenario/{scenario}/step"), step, true)?)
         }

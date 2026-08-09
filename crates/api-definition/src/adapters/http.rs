@@ -1398,7 +1398,7 @@ async fn import_definitions(
         ApiViewUpdateBody,
         ApiViewResponse
     )),
-    tags((name = "api-definition", description = "接口定义"))
+    tags((name = "api-definition", description = "API definition"))
 )]
 struct ApiDoc;
 pub fn openapi() -> utoipa::openapi::OpenApi {
@@ -1462,7 +1462,7 @@ mod tests {
             .clone()
             .oneshot(post(
                 "/api/definition",
-                r#"{"projectId":"p1","name":"登录","method":"POST","path":"/login"}"#,
+                r#"{"projectId":"p1","name":"login","method":"POST","path":"/login"}"#,
                 Some(t),
             ))
             .await
@@ -1479,7 +1479,7 @@ mod tests {
             .clone()
             .oneshot(post(
                 "/api/definition",
-                r#"{"projectId":"p1","name":"登录","method":"post","path":"/login"}"#,
+                r#"{"projectId":"p1","name":"login","method":"post","path":"/login"}"#,
                 Some(&t),
             ))
             .await
@@ -1608,7 +1608,7 @@ mod tests {
             .clone()
             .oneshot(post(
                 &format!("/api/definition/{id}/case"),
-                r#"{"name":"用例","method":"POST","url":"/login","assertions":[]}"#,
+                r#"{"name":"case","method":"POST","url":"/login","assertions":[]}"#,
                 Some(&t),
             ))
             .await
@@ -1661,21 +1661,21 @@ mod tests {
             .clone()
             .oneshot(put(
                 &format!("/api/definition/{id}"),
-                r#"{"name":"登录v2","method":"put","path":"/v2/login"}"#,
+                r#"{"name":"login v2","method":"put","path":"/v2/login"}"#,
                 Some(&t),
             ))
             .await
             .expect("resp");
         assert_eq!(resp.status(), StatusCode::OK);
         let v = json_body(resp).await;
-        assert_eq!(v["name"], "登录v2");
+        assert_eq!(v["name"], "login v2");
         assert_eq!(v["method"], "PUT");
         assert_eq!(v["path"], "/v2/login");
 
         let resp =
             app.oneshot(get(&format!("/api/definition/{id}"), Some(&t))).await.expect("resp");
         let v = json_body(resp).await;
-        assert_eq!(v["name"], "登录v2");
+        assert_eq!(v["name"], "login v2");
         assert_eq!(v["path"], "/v2/login");
     }
 
@@ -1689,7 +1689,7 @@ mod tests {
             .expect("resp");
         assert_eq!(resp.status(), StatusCode::OK);
         let v = json_body(resp).await;
-        assert_eq!(v["name"], "登录");
+        assert_eq!(v["name"], "login");
         assert_eq!(v["method"], "POST");
         assert_eq!(v["path"], "/login2");
     }
@@ -1747,7 +1747,7 @@ mod tests {
             .clone()
             .oneshot(post(
                 &format!("/api/definition/{id}/case"),
-                r#"{"name":"用例","method":"POST","url":"/login","assertions":[]}"#,
+                r#"{"name":"case","method":"POST","url":"/login","assertions":[]}"#,
                 Some(&t),
             ))
             .await
@@ -1769,7 +1769,7 @@ mod tests {
         let resp = app
             .oneshot(post(
                 "/api/definition/ghost/case",
-                r#"{"name":"用例","method":"GET","url":"/x"}"#,
+                r#"{"name":"case","method":"GET","url":"/x"}"#,
                 Some(&t),
             ))
             .await
@@ -1784,7 +1784,7 @@ mod tests {
         let resp = app
             .oneshot(post(
                 &format!("/api/definition/{id}/case"),
-                r#"{"name":"用例","method":"GET","url":"/x","assertions":{}}"#,
+                r#"{"name":"case","method":"GET","url":"/x","assertions":{}}"#,
                 Some(&t),
             ))
             .await
@@ -1799,7 +1799,7 @@ mod tests {
             .clone()
             .oneshot(post(
                 "/api/case",
-                r#"{"projectId":"p1","name":"用例","method":"post","url":"/login"}"#,
+                r#"{"projectId":"p1","name":"case","method":"post","url":"/login"}"#,
                 Some(&t),
             ))
             .await
@@ -1818,7 +1818,7 @@ mod tests {
             .clone()
             .oneshot(post(
                 "/api/case",
-                r#"{"projectId":"p1","apiDefinitionId":"def-9","name":"用例","method":"GET","url":"/x","assertions":[]}"#,
+                r#"{"projectId":"p1","apiDefinitionId":"def-9","name":"case","method":"GET","url":"/x","assertions":[]}"#,
                 Some(&t),
             ))
             .await
@@ -1834,7 +1834,7 @@ mod tests {
         let resp = app
             .oneshot(post(
                 "/api/case",
-                r#"{"projectId":"p1","name":"用例","method":"GET","url":"/x"}"#,
+                r#"{"projectId":"p1","name":"case","method":"GET","url":"/x"}"#,
                 None,
             ))
             .await
@@ -1852,7 +1852,7 @@ mod tests {
         let resp = app
             .oneshot(post(
                 "/api/case",
-                r#"{"projectId":"p1","name":"用例","method":"GET","url":"/x"}"#,
+                r#"{"projectId":"p1","name":"case","method":"GET","url":"/x"}"#,
                 Some(&token),
             ))
             .await
@@ -1866,7 +1866,7 @@ mod tests {
         let resp = app
             .oneshot(post(
                 "/api/case",
-                r#"{"projectId":"p1","name":"用例","method":"GET","url":"/x","assertions":{}}"#,
+                r#"{"projectId":"p1","name":"case","method":"GET","url":"/x","assertions":{}}"#,
                 Some(&t),
             ))
             .await
@@ -1918,7 +1918,7 @@ mod tests {
             .clone()
             .oneshot(post(
                 &format!("/api/definition/{id}/mock"),
-                r#"{"name":"挡板","responseStatus":404,"enabled":false}"#,
+                r#"{"name":"stub","responseStatus":404,"enabled":false}"#,
                 Some(&t),
             ))
             .await
@@ -1943,7 +1943,7 @@ mod tests {
         let resp = app
             .oneshot(post(
                 &format!("/api/definition/{id}/mock"),
-                r#"{"name":"挡板","responseStatus":700}"#,
+                r#"{"name":"stub","responseStatus":700}"#,
                 Some(&t),
             ))
             .await
@@ -1955,7 +1955,7 @@ mod tests {
     async fn add_mock_to_missing_definition_404() {
         let (app, t) = app().await;
         let resp = app
-            .oneshot(post("/api/definition/ghost/mock", r#"{"name":"挡板"}"#, Some(&t)))
+            .oneshot(post("/api/definition/ghost/mock", r#"{"name":"stub"}"#, Some(&t)))
             .await
             .expect("resp");
         assert_eq!(resp.status(), StatusCode::NOT_FOUND);
@@ -1967,7 +1967,7 @@ mod tests {
         let id = create_definition_returns_id(&app, &t).await;
         let resp = app
             .clone()
-            .oneshot(post(&format!("/api/definition/{id}/mock"), r#"{"name":"挡板"}"#, Some(&t)))
+            .oneshot(post(&format!("/api/definition/{id}/mock"), r#"{"name":"stub"}"#, Some(&t)))
             .await
             .expect("resp");
         let mock_id = json_body(resp).await["id"].as_str().expect("id").to_string();
@@ -1976,7 +1976,7 @@ mod tests {
             .clone()
             .oneshot(put(
                 &format!("/api/mock/{mock_id}"),
-                r#"{"name":"改名","responseStatus":500,"enabled":false}"#,
+                r#"{"name":"rename","responseStatus":500,"enabled":false}"#,
                 Some(&t),
             ))
             .await
@@ -1986,7 +1986,7 @@ mod tests {
         let resp =
             app.oneshot(get(&format!("/api/definition/{id}/mock"), Some(&t))).await.expect("resp");
         let v = json_body(resp).await;
-        assert_eq!(v[0]["name"], "改名");
+        assert_eq!(v[0]["name"], "rename");
         assert_eq!(v[0]["responseStatus"], 500);
         assert_eq!(v[0]["enabled"], false);
     }
@@ -1997,7 +1997,7 @@ mod tests {
         let id = create_definition_returns_id(&app, &t).await;
         let resp = app
             .clone()
-            .oneshot(post(&format!("/api/definition/{id}/mock"), r#"{"name":"挡板"}"#, Some(&t)))
+            .oneshot(post(&format!("/api/definition/{id}/mock"), r#"{"name":"stub"}"#, Some(&t)))
             .await
             .expect("resp");
         let mock_id = json_body(resp).await["id"].as_str().expect("id").to_string();
@@ -2025,7 +2025,7 @@ mod tests {
             .clone()
             .oneshot(post(
                 "/api/api-view",
-                r#"{"projectId":"p1","name":"我的视图","config":{"pageSize":10},"shared":true}"#,
+                r#"{"projectId":"p1","name":"my view","config":{"pageSize":10},"shared":true}"#,
                 Some(t),
             ))
             .await
@@ -2042,12 +2042,12 @@ mod tests {
         // Partial update: only name changes; config/shared keep their prior values.
         let resp = app
             .clone()
-            .oneshot(put(&format!("/api/api-view/{id}"), r#"{"name":" 改名视图 "}"#, Some(&t)))
+            .oneshot(put(&format!("/api/api-view/{id}"), r#"{"name":" rename view "}"#, Some(&t)))
             .await
             .expect("resp");
         assert_eq!(resp.status(), StatusCode::OK);
         let v = json_body(resp).await;
-        assert_eq!(v["name"], "改名视图");
+        assert_eq!(v["name"], "rename view");
         assert_eq!(v["config"], serde_json::json!({"pageSize": 10}));
         assert_eq!(v["shared"], true);
 
@@ -2063,14 +2063,14 @@ mod tests {
             .expect("resp");
         assert_eq!(resp.status(), StatusCode::OK);
         let v = json_body(resp).await;
-        assert_eq!(v["name"], "改名视图");
+        assert_eq!(v["name"], "rename view");
         assert_eq!(v["config"], serde_json::json!({"pageSize": 50}));
         assert_eq!(v["shared"], false);
 
         // List endpoint reflects the updated values.
         let resp = app.oneshot(get("/api/api-view?projectId=p1", Some(&t))).await.expect("resp");
         let list = json_body(resp).await;
-        assert_eq!(list[0]["name"], "改名视图");
+        assert_eq!(list[0]["name"], "rename view");
         assert_eq!(list[0]["shared"], false);
     }
 
@@ -2104,7 +2104,11 @@ mod tests {
 
         let resp = app
             .clone()
-            .oneshot(put(&format!("/api/api-view/{id}"), r#"{"name":"越权改名"}"#, Some(&other)))
+            .oneshot(put(
+                &format!("/api/api-view/{id}"),
+                r#"{"name":"unauthorized rename"}"#,
+                Some(&other),
+            ))
             .await
             .expect("resp");
         assert_eq!(resp.status(), StatusCode::NOT_FOUND);
@@ -2113,7 +2117,7 @@ mod tests {
         let resp =
             app.oneshot(get("/api/api-view?projectId=p1", Some(&owner))).await.expect("resp");
         let list = json_body(resp).await;
-        assert_eq!(list[0]["name"], "我的视图");
+        assert_eq!(list[0]["name"], "my view");
     }
 
     #[tokio::test]

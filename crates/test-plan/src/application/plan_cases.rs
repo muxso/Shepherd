@@ -50,8 +50,8 @@ mod tests {
     #[tokio::test]
     async fn unlink_removes_linked_case() {
         let uc = uc();
-        uc.link("p1", "c1", "登录").await.expect("link");
-        uc.link("p1", "c2", "登出").await.expect("link");
+        uc.link("p1", "c1", "login").await.expect("link");
+        uc.link("p1", "c2", "logout").await.expect("link");
         assert!(uc.unlink("p1", "c1").await.expect("unlink"));
         let left = uc.list("p1").await.expect("list");
         assert_eq!(left.len(), 1);
@@ -61,7 +61,7 @@ mod tests {
     #[tokio::test]
     async fn unlink_missing_case_returns_false() {
         let uc = uc();
-        uc.link("p1", "c1", "登录").await.expect("link");
+        uc.link("p1", "c1", "login").await.expect("link");
         assert!(!uc.unlink("p1", "ghost").await.expect("unlink"));
         assert!(!uc.unlink("other-plan", "c1").await.expect("unlink"));
         assert_eq!(uc.list("p1").await.expect("list").len(), 1);

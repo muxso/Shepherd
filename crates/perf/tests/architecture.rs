@@ -24,7 +24,11 @@ fn scan(dir: &Path) {
         let src = fs::read_to_string(&path).expect("read file");
         for token in FORBIDDEN {
             for pat in [format!("use {token}"), format!("{token}::")] {
-                assert!(!src.contains(&pat), "{} 含 `{pat}`(IO 只能在 adapters)", path.display());
+                assert!(
+                    !src.contains(&pat),
+                    "{} contains `{pat}` (IO belongs only in adapters)",
+                    path.display()
+                );
             }
         }
     }

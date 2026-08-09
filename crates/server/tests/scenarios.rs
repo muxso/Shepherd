@@ -60,7 +60,7 @@ impl TestServer {
         // Reap the child on the timeout path too, or a failing test leaves an orphan server holding the port.
         let _ = child.kill();
         let _ = child.wait();
-        panic!("server 未在超时内就绪(确认 PostgreSQL 在 {})", db_url());
+        panic!("server did not become ready within the timeout (check PostgreSQL at {})", db_url());
     }
 
     async fn login(&self) -> String {
@@ -122,7 +122,7 @@ fn proj() -> String {
 }
 
 #[tokio::test]
-#[ignore = "需要 PostgreSQL"]
+#[ignore = "requires PostgreSQL"]
 async fn scenario_auth_and_rbac() {
     let s = TestServer::start().await;
     let p = proj();
@@ -155,7 +155,7 @@ async fn scenario_auth_and_rbac() {
 }
 
 #[tokio::test]
-#[ignore = "需要 PostgreSQL"]
+#[ignore = "requires PostgreSQL"]
 async fn scenario_requirement_versioning() {
     let s = TestServer::start().await;
     let p = proj();
@@ -163,7 +163,7 @@ async fn scenario_requirement_versioning() {
     let rid = s
         .post(
             "/requirement",
-            json!({"projectId":&p,"title":"登录","acceptanceCriteria":["正确凭证登录"]}),
+            json!({"projectId":&p,"title":"login","acceptanceCriteria":["login with correct credentials"]}),
             Some(&t),
         )
         .await["id"]
@@ -173,7 +173,7 @@ async fn scenario_requirement_versioning() {
     assert_eq!(
         s.post(
             &format!("/requirement/{rid}/version"),
-            json!({"description":"v2","acceptanceCriteria":["支持飞书"]}),
+            json!({"description":"v2","acceptanceCriteria":["supports Feishu"]}),
             Some(&t)
         )
         .await["version"],
@@ -182,7 +182,7 @@ async fn scenario_requirement_versioning() {
     assert_eq!(s.get(&format!("/requirement/{rid}"), &t).await["baselineVersion"], 1);
     assert_eq!(
         s.get(&format!("/requirement/{rid}/version/1"), &t).await["acceptanceCriteria"][0],
-        "正确凭证登录"
+        "login with correct credentials"
     );
     let v = s.put(&format!("/requirement/{rid}/baseline"), json!({"version":2}), Some(&t)).await;
     assert_eq!(v["baselineVersion"], 2);
@@ -190,16 +190,19 @@ async fn scenario_requirement_versioning() {
 }
 
 #[tokio::test]
-#[ignore = "需要 PostgreSQL"]
+#[ignore = "requires PostgreSQL"]
 async fn scenario_shepherd_full_chain() {
     let s = TestServer::start().await;
     let p = proj();
     let t = s.login().await;
-    let rid = s.post("/requirement", json!({"projectId":&p,"title":"登录特性","acceptanceCriteria":["登录成功","错误密码拒绝"]}), Some(&t)).await["id"].as_str().unwrap().to_string();
+    let rid = s.post("/requirement", json!({"projectId":&p,"title":"login feature","acceptanceCriteria":["login success","wrong password rejected"]}), Some(&t)).await["id"].as_str().unwrap().to_string();
     let bd = s.post(&format!("/requirement/{rid}/breakdown"), Value::Null, Some(&t)).await;
     let did = bd["id"].as_str().unwrap().to_string();
     assert_eq!(bd["tasks"].as_array().unwrap().len(), 3);
-    let vid = bd["verificationId"].as_str().expect("breakdown 应自动开验证账本").to_string();
+    let vid = bd["verificationId"]
+        .as_str()
+        .expect("breakdown should open the verification ledger automatically")
+        .to_string();
     let _ = s
         .post(
             &format!("/verification/{vid}/link"),
@@ -207,7 +210,7 @@ async fn scenario_shepherd_full_chain() {
             Some(&t),
         )
         .await;
-    let _ = s.post("/delivery", json!({"decompositionId":&did,"taskId":"t1","title":"实现登录API","executor":"CLAUDE_CODE"}), Some(&t)).await;
+    let _ = s.post("/delivery", json!({"decompositionId":&did,"taskId":"t1","title":"implement login API","executor":"CLAUDE_CODE"}), Some(&t)).await;
     let dec = s.get(&format!("/decomposition/{did}"), &t).await;
     assert_eq!(dec["tasks"][0]["status"], "VERIFIED");
     let rep = s.get(&format!("/verification/{vid}/report"), &t).await;
@@ -222,11 +225,11 @@ async fn serve_mock_llm() -> String {
         post(|Json(body): Json<Value>| async move {
             let sys = body["messages"][0]["content"].as_str().unwrap_or("");
             let content = if sys.contains("规划器") {
-                r#"[{"title":"LLM任务A","description":"","acceptanceCriteria":["登录成功"],"dependencies":[]},{"title":"LLM任务B","description":"","acceptanceCriteria":["错误密码拒绝"],"dependencies":[0]}]"#
+                r#"[{"title":"LLM task A","description":"","acceptanceCriteria":["login success"],"dependencies":[]},{"title":"LLM task B","description":"","acceptanceCriteria":["wrong password rejected"],"dependencies":[0]}]"#
             } else if sys.contains("评审") {
-                r#"{"passed":false,"reason":"LLM 判定不通过(缺测试)"}"#
+                r#"{"passed":false,"reason":"LLM verdict: not passed (missing tests)"}"#
             } else if sys.contains("执行者") {
-                r#"{"reference":"branch:llm-feat","summary":"LLM 执行者完成"}"#
+                r#"{"reference":"branch:llm-feat","summary":"LLM executor finished"}"#
             } else {
                 "{}"
             };
@@ -240,7 +243,7 @@ async fn serve_mock_llm() -> String {
 }
 
 #[tokio::test]
-#[ignore = "需要 PostgreSQL"]
+#[ignore = "requires PostgreSQL"]
 async fn scenario_llm_agent_end_to_end() {
     let llm_url = serve_mock_llm().await;
     let s = TestServer::start_with_env(&[("SHEPHERD_LLM_URL", &llm_url)]).await;
@@ -248,7 +251,7 @@ async fn scenario_llm_agent_end_to_end() {
     let t = s.login().await;
 
     let rid = s
-        .post("/requirement", json!({"projectId":&p,"title":"登录特性","acceptanceCriteria":["登录成功","错误密码拒绝"]}), Some(&t))
+        .post("/requirement", json!({"projectId":&p,"title":"login feature","acceptanceCriteria":["login success","wrong password rejected"]}), Some(&t))
         .await["id"]
         .as_str()
         .unwrap()
@@ -257,12 +260,15 @@ async fn scenario_llm_agent_end_to_end() {
     let bd = s.post(&format!("/requirement/{rid}/breakdown"), Value::Null, Some(&t)).await;
     let did = bd["id"].as_str().unwrap().to_string();
     let tasks = bd["tasks"].as_array().unwrap();
-    assert_eq!(tasks.len(), 2, "应由 LLM 规划器产出 2 任务,而非启发式的 3: {bd}");
-    assert_eq!(tasks[0]["title"], "LLM任务A");
+    assert_eq!(tasks.len(), 2, "LLM planner should produce 2 tasks, not the heuristic 3: {bd}");
+    assert_eq!(tasks[0]["title"], "LLM task A");
 
-    let _ = s.post("/delivery", json!({"decompositionId":&did,"taskId":"t1","title":"实现登录API","executor":"CLAUDE_CODE"}), Some(&t)).await;
+    let _ = s.post("/delivery", json!({"decompositionId":&did,"taskId":"t1","title":"implement login API","executor":"CLAUDE_CODE"}), Some(&t)).await;
     let dec = s.get(&format!("/decomposition/{did}"), &t).await;
-    assert_ne!(dec["tasks"][0]["status"], "VERIFIED", "LLM 判不通过时任务不应 VERIFIED: {dec}");
+    assert_ne!(
+        dec["tasks"][0]["status"], "VERIFIED",
+        "task must not be VERIFIED when the LLM verdict fails: {dec}"
+    );
 }
 
 async fn serve_mock_llm_selfcorrect() -> String {
@@ -277,16 +283,16 @@ async fn serve_mock_llm_selfcorrect() -> String {
             async move {
                 let sys = body["messages"][0]["content"].as_str().unwrap_or("");
                 let content: String = if sys.contains("规划器") {
-                    r#"[{"title":"LLM任务A","description":"","acceptanceCriteria":["登录成功"],"dependencies":[]}]"#.into()
+                    r#"[{"title":"LLM task A","description":"","acceptanceCriteria":["login success"],"dependencies":[]}]"#.into()
                 } else if sys.contains("评审") {
                     // First round fails (triggers revision); subsequent rounds pass.
                     if jc.fetch_add(1, Ordering::SeqCst) == 0 {
-                        r#"{"passed":false,"reason":"首轮缺测试"}"#.into()
+                        r#"{"passed":false,"reason":"first round missing tests"}"#.into()
                     } else {
-                        r#"{"passed":true,"reason":"修订后达标"}"#.into()
+                        r#"{"passed":true,"reason":"meets criteria after revision"}"#.into()
                     }
                 } else if sys.contains("执行者") {
-                    r#"{"reference":"branch:llm","summary":"实现/修订完成"}"#.into()
+                    r#"{"reference":"branch:llm","summary":"implementation/revision finished"}"#.into()
                 } else {
                     "{}".into()
                 };
@@ -301,7 +307,7 @@ async fn serve_mock_llm_selfcorrect() -> String {
 }
 
 #[tokio::test]
-#[ignore = "需要 PostgreSQL"]
+#[ignore = "requires PostgreSQL"]
 async fn scenario_llm_self_correction_loop() {
     let llm_url = serve_mock_llm_selfcorrect().await;
     let s = TestServer::start_with_env(&[
@@ -314,7 +320,7 @@ async fn scenario_llm_self_correction_loop() {
     let rid = s
         .post(
             "/requirement",
-            json!({"projectId":&p,"title":"登录","acceptanceCriteria":["登录成功"]}),
+            json!({"projectId":&p,"title":"login","acceptanceCriteria":["login success"]}),
             Some(&t),
         )
         .await["id"]
@@ -325,13 +331,16 @@ async fn scenario_llm_self_correction_loop() {
         .as_str()
         .unwrap()
         .to_string();
-    let _ = s.post("/delivery", json!({"decompositionId":&did,"taskId":"t1","title":"实现登录","executor":"CLAUDE_CODE"}), Some(&t)).await;
+    let _ = s.post("/delivery", json!({"decompositionId":&did,"taskId":"t1","title":"implement login","executor":"CLAUDE_CODE"}), Some(&t)).await;
     let dec = s.get(&format!("/decomposition/{did}"), &t).await;
-    assert_eq!(dec["tasks"][0]["status"], "VERIFIED", "自纠正后应通过验证门: {dec}");
+    assert_eq!(
+        dec["tasks"][0]["status"], "VERIFIED",
+        "should pass the verification gate after self-correction: {dec}"
+    );
 }
 
 #[tokio::test]
-#[ignore = "需要 PostgreSQL"]
+#[ignore = "requires PostgreSQL"]
 async fn scenario_parallel_decomposition_run() {
     let s = TestServer::start().await;
     let p = proj();
@@ -339,7 +348,7 @@ async fn scenario_parallel_decomposition_run() {
     let rid = s
         .post(
             "/requirement",
-            json!({"projectId":&p,"title":"并行特性","acceptanceCriteria":["a"]}),
+            json!({"projectId":&p,"title":"parallel feature","acceptanceCriteria":["a"]}),
             Some(&t),
         )
         .await["id"]
@@ -356,29 +365,33 @@ async fn scenario_parallel_decomposition_run() {
         let deps: Vec<String> = deps.into_iter().map(String::from).collect();
         json!({"title":title,"acceptanceCriteria":["x"],"dependencies":deps})
     };
-    s.post(&format!("/decomposition/{did}/task"), add("根", vec![]), Some(&t)).await;
-    s.post(&format!("/decomposition/{did}/task"), add("左", vec!["t1"]), Some(&t)).await;
-    s.post(&format!("/decomposition/{did}/task"), add("右", vec!["t1"]), Some(&t)).await;
-    s.post(&format!("/decomposition/{did}/task"), add("汇", vec!["t2", "t3"]), Some(&t)).await;
+    s.post(&format!("/decomposition/{did}/task"), add("root", vec![]), Some(&t)).await;
+    s.post(&format!("/decomposition/{did}/task"), add("left", vec!["t1"]), Some(&t)).await;
+    s.post(&format!("/decomposition/{did}/task"), add("right", vec!["t1"]), Some(&t)).await;
+    s.post(&format!("/decomposition/{did}/task"), add("join", vec!["t2", "t3"]), Some(&t)).await;
 
     let run =
         s.post(&format!("/decomposition/{did}/run"), json!({"maxConcurrency":4}), Some(&t)).await;
     assert_eq!(run["total"], 4);
-    assert_eq!(run["verified"], 4, "钻石 DAG 应全部验证: {run}");
+    assert_eq!(run["verified"], 4, "the diamond DAG should be fully verified: {run}");
     assert_eq!(run["failed"], 0);
     assert_eq!(run["blocked"], 0);
     let rounds = run["rounds"].as_u64().unwrap();
-    assert!((3..=5).contains(&rounds), "应按依赖分层调度(≥3 轮): {run}");
+    assert!((3..=5).contains(&rounds), "should schedule in dependency layers (≥3 rounds): {run}");
 }
 
 #[tokio::test]
-#[ignore = "需要 PostgreSQL"]
+#[ignore = "requires PostgreSQL"]
 async fn scenario_skill_compose() {
     let s = TestServer::start().await;
     let p = proj();
     let t = s.login().await;
     let base = s
-        .post("/skill", json!({"projectId":&p,"name":"基础","instructions":"遵循六边形"}), Some(&t))
+        .post(
+            "/skill",
+            json!({"projectId":&p,"name":"basic","instructions":"follows hexagonal architecture"}),
+            Some(&t),
+        )
         .await["id"]
         .as_str()
         .unwrap()
@@ -386,7 +399,7 @@ async fn scenario_skill_compose() {
     let rust = s
         .post(
             "/skill",
-            json!({"projectId":&p,"name":"Rust","instructions":"用 thiserror","includes":[&base]}),
+            json!({"projectId":&p,"name":"Rust","instructions":"using thiserror","includes":[&base]}),
             Some(&t),
         )
         .await["id"]
@@ -396,11 +409,11 @@ async fn scenario_skill_compose() {
     let comp = s.post("/skill/compose", json!({"projectId":&p,"skillIds":[&rust]}), Some(&t)).await;
     assert_eq!(comp["skillIds"][0], base);
     let instr = comp["instructions"].as_str().unwrap();
-    assert!(instr.contains("遵循六边形") && instr.contains("用 thiserror"));
+    assert!(instr.contains("follows hexagonal architecture") && instr.contains("using thiserror"));
 }
 
 #[tokio::test]
-#[ignore = "需要 PostgreSQL"]
+#[ignore = "requires PostgreSQL"]
 async fn scenario_mcp_tools() {
     let s = TestServer::start().await;
     let t = s.login().await;
@@ -424,12 +437,12 @@ async fn scenario_mcp_tools() {
     assert!(names.contains(&"shepherd_create_requirement"));
     assert!(names.contains(&"shepherd_breakdown"));
     assert!(names.len() >= 10);
-    let call: Value = s.post("/mcp", json!({"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"shepherd_create_requirement","arguments":{"projectId":proj(),"title":"经 MCP 建的需求"}}}), Some(&t)).await;
+    let call: Value = s.post("/mcp", json!({"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"shepherd_create_requirement","arguments":{"projectId":proj(),"title":"requirement created via MCP"}}}), Some(&t)).await;
     assert_eq!(call["result"]["isError"], false);
 }
 
 #[tokio::test]
-#[ignore = "需要 PostgreSQL"]
+#[ignore = "requires PostgreSQL"]
 async fn scenario_api_definition_to_run() {
     let s = TestServer::start().await;
     let t = s.login().await;
@@ -449,16 +462,16 @@ async fn scenario_api_definition_to_run() {
         .as_str()
         .unwrap()
         .to_string();
-    let def = s.post("/api/definition", json!({"projectId":&p,"name":"登录接口","protocol":"HTTP","method":"POST","path":"/auth/login"}), Some(&t)).await;
+    let def = s.post("/api/definition", json!({"projectId":&p,"name":"login interface","protocol":"HTTP","method":"POST","path":"/auth/login"}), Some(&t)).await;
     assert_eq!(def["status"], "DRAFT");
     let def_id = def["id"].as_str().unwrap().to_string();
-    let case_id = s.post(&format!("/api/definition/{def_id}/case"), json!({"name":"正确凭证","method":"POST","url":"https://example.com/auth/login","assertions":[]}), Some(&t)).await["id"]
+    let case_id = s.post(&format!("/api/definition/{def_id}/case"), json!({"name":"correct credentials","method":"POST","url":"https://example.com/auth/login","assertions":[]}), Some(&t)).await["id"]
         .as_str().unwrap().to_string();
     assert_eq!(
         s.status(
             "POST",
             &format!("/api/definition/{def_id}/mock"),
-            json!({"name":"登录200","responseStatus":200}),
+            json!({"name":"login 200","responseStatus":200}),
             Some(&t)
         )
         .await,
@@ -468,7 +481,7 @@ async fn scenario_api_definition_to_run() {
         s.get(&format!("/api/definition?projectId={p}"), &t).await.as_array().unwrap().len(),
         1
     );
-    let scn = s.post("/api/scenario", json!({"projectId":&p,"name":"登录冒烟"}), Some(&t)).await
+    let scn = s.post("/api/scenario", json!({"projectId":&p,"name":"login smoke"}), Some(&t)).await
         ["id"]
         .as_str()
         .unwrap()
@@ -500,7 +513,7 @@ async fn scenario_api_definition_to_run() {
 }
 
 #[tokio::test]
-#[ignore = "需要 PostgreSQL"]
+#[ignore = "requires PostgreSQL"]
 async fn scenario_standalone_case_and_executions() {
     let s = TestServer::start().await;
     let t = s.login().await;
@@ -520,7 +533,7 @@ async fn scenario_standalone_case_and_executions() {
         .as_str()
         .unwrap()
         .to_string();
-    let case = s.post("/api/case", json!({"projectId":&p,"name":"独立用例","method":"GET","url":"https://example.com/ping"}), Some(&t)).await;
+    let case = s.post("/api/case", json!({"projectId":&p,"name":"standalone case","method":"GET","url":"https://example.com/ping"}), Some(&t)).await;
     assert_eq!(case["apiDefinitionId"], "");
     let case_id = case["id"].as_str().unwrap().to_string();
     let page = s.get(&format!("/api/case?projectId={p}&current=1&pageSize=10"), &t).await;
@@ -530,8 +543,9 @@ async fn scenario_standalone_case_and_executions() {
     let cexec = s.get(&format!("/api/case/{case_id}/executions?current=1&pageSize=10"), &t).await;
     assert_eq!(cexec["total"], 0);
     assert!(cexec["items"].is_array());
-    let scn = s.post("/api/scenario", json!({"projectId":&p,"name":"空执行场景"}), Some(&t)).await
-        ["id"]
+    let scn = s
+        .post("/api/scenario", json!({"projectId":&p,"name":"empty execution scenario"}), Some(&t))
+        .await["id"]
         .as_str()
         .unwrap()
         .to_string();

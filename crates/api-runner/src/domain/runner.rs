@@ -183,11 +183,10 @@ impl Assertion {
         vars: &std::collections::BTreeMap<String, String>,
     ) -> Option<String> {
         match self {
-            Assertion::StatusIs(want) => {
-                (resp.status != *want).then(|| format!("status: 期望 {want},实际 {}", resp.status))
-            }
+            Assertion::StatusIs(want) => (resp.status != *want)
+                .then(|| format!("status: expected {want}, actual {}", resp.status)),
             Assertion::BodyContains(needle) => {
-                (!resp.body.contains(needle)).then(|| format!("body 不含子串: {needle}"))
+                (!resp.body.contains(needle)).then(|| format!("body missing substring: {needle}"))
             }
             Assertion::HeaderEquals { name, value } => {
                 let got = resp
@@ -196,10 +195,10 @@ impl Assertion {
                     .find(|(k, _)| k.eq_ignore_ascii_case(name))
                     .map(|(_, v)| v.as_str());
                 (got != Some(value.as_str()))
-                    .then(|| format!("header {name}: 期望 {value},实际 {got:?}"))
+                    .then(|| format!("header {name}: expected {value}, actual {got:?}"))
             }
             Assertion::JsonFieldEquals { pointer, expected } => match json {
-                None => Some("body 不是合法 JSON".to_string()),
+                None => Some("body is not valid JSON".to_string()),
                 Some(v) => {
                     let got = v.pointer(pointer);
                     let matches = match got {
@@ -209,13 +208,14 @@ impl Assertion {
                             .unwrap_or(false),
                         None => false,
                     };
-                    (!matches).then(|| format!("json {pointer}: 期望 {expected},实际 {got:?}"))
+                    (!matches)
+                        .then(|| format!("json {pointer}: expected {expected}, actual {got:?}"))
                 }
             },
             Assertion::ResponseCode { condition, expected } => {
                 let actual = resp.status.to_string();
                 (!condition.matches(&actual, expected))
-                    .then(|| format!("status {condition:?}: 期望 {expected},实际 {actual}"))
+                    .then(|| format!("status {condition:?}: expected {expected}, actual {actual}"))
             }
             Assertion::ResponseHeader { name, condition, expected } => {
                 let got = resp
@@ -224,33 +224,37 @@ impl Assertion {
                     .find(|(k, _)| k.eq_ignore_ascii_case(name))
                     .map(|(_, v)| v.as_str())
                     .unwrap_or("");
-                (!condition.matches(got, expected))
-                    .then(|| format!("header {name} {condition:?}: 期望 {expected},实际 {got:?}"))
+                (!condition.matches(got, expected)).then(|| {
+                    format!("header {name} {condition:?}: expected {expected}, actual {got:?}")
+                })
             }
             Assertion::ResponseBody { condition, expected } => (!condition
                 .matches(&resp.body, expected))
-            .then(|| format!("body {condition:?}: 期望 {expected}")),
+            .then(|| format!("body {condition:?}: expected {expected}")),
             Assertion::JsonPath { path, condition, expected } => match json {
-                None => Some("body 不是合法 JSON".to_string()),
+                None => Some("body is not valid JSON".to_string()),
                 Some(v) => {
                     let pointer = json_path_to_pointer(path);
                     match v.pointer(&pointer) {
-                        None => Some(format!("json {path}: 路径不存在")),
+                        None => Some(format!("json {path}: path not found")),
                         Some(found) => {
                             let actual = json_value_to_string(found);
                             (!condition.matches(&actual, expected)).then(|| {
-                                format!("json {path} {condition:?}: 期望 {expected},实际 {actual}")
+                                format!(
+                                    "json {path} {condition:?}: expected {expected}, actual {actual}"
+                                )
                             })
                         }
                     }
                 }
             },
             Assertion::ResponseTime { max_ms } => (resp.elapsed_ms > *max_ms)
-                .then(|| format!("耗时: 期望 ≤{max_ms}ms,实际 {}ms", resp.elapsed_ms)),
+                .then(|| format!("elapsed: expected ≤{max_ms}ms, actual {}ms", resp.elapsed_ms)),
             Assertion::Variable { name, condition, expected } => {
                 let actual = vars.get(name).map(String::as_str).unwrap_or("");
-                (!condition.matches(actual, expected))
-                    .then(|| format!("变量 {name} {condition:?}: 期望 {expected},实际 {actual:?}"))
+                (!condition.matches(actual, expected)).then(|| {
+                    format!("variable {name} {condition:?}: expected {expected}, actual {actual:?}")
+                })
             }
         }
     }
@@ -322,26 +326,26 @@ pub struct AssertionReport {
 fn cond_label(c: &MatchCondition) -> String {
     use MatchCondition::*;
     match c {
-        Equals => "等于",
-        NotEquals => "不等于",
-        Contains => "包含",
-        NotContains => "不包含",
-        StartWith => "开头为",
-        EndWith => "结尾为",
-        Empty => "为空",
-        NotEmpty => "非空",
-        Regex => "正则",
-        Gt => "大于",
+        Equals => "equals",
+        NotEquals => "not equals",
+        Contains => "contains",
+        NotContains => "not contains",
+        StartWith => "starts with",
+        EndWith => "ends with",
+        Empty => "is empty",
+        NotEmpty => "not empty",
+        Regex => "regex",
+        Gt => "greater than",
         GtOrEquals => "≥",
-        Lt => "小于",
+        Lt => "less than",
         LtOrEquals => "≤",
-        LengthEquals => "长度=",
-        LengthNotEquals => "长度≠",
-        LengthGt => "长度>",
-        LengthGtOrEquals => "长度≥",
-        LengthLt => "长度<",
-        LengthLtOrEquals => "长度≤",
-        Unchecked => "不校验",
+        LengthEquals => "length =",
+        LengthNotEquals => "length ≠",
+        LengthGt => "length >",
+        LengthGtOrEquals => "length ≥",
+        LengthLt => "length <",
+        LengthLtOrEquals => "length ≤",
+        Unchecked => "unchecked",
     }
     .to_string()
 }
@@ -389,37 +393,43 @@ pub fn evaluate_detailed_with_vars(
             let passed = reason.is_none();
             let (item, condition, expected, actual) = match a {
                 Assertion::StatusIs(n) => (
-                    "状态码".to_string(),
-                    "等于".to_string(),
+                    "status code".to_string(),
+                    "equals".to_string(),
                     n.to_string(),
                     resp.status.to_string(),
                 ),
-                Assertion::BodyContains(s) => {
-                    ("响应体".to_string(), "包含".to_string(), s.clone(), truncate(&resp.body, 60))
-                }
-                Assertion::HeaderEquals { name, value } => {
-                    (format!("响应头[{name}]"), "等于".to_string(), value.clone(), header(name))
-                }
+                Assertion::BodyContains(s) => (
+                    "response body".to_string(),
+                    "contains".to_string(),
+                    s.clone(),
+                    truncate(&resp.body, 60),
+                ),
+                Assertion::HeaderEquals { name, value } => (
+                    format!("response header[{name}]"),
+                    "equals".to_string(),
+                    value.clone(),
+                    header(name),
+                ),
                 Assertion::JsonFieldEquals { pointer, expected } => (
                     format!("JSON {pointer}"),
-                    "等于".to_string(),
+                    "equals".to_string(),
                     expected.clone(),
                     json_at(pointer),
                 ),
                 Assertion::ResponseCode { condition, expected } => (
-                    "状态码".to_string(),
+                    "status code".to_string(),
                     cond_label(condition),
                     expected.clone(),
                     resp.status.to_string(),
                 ),
                 Assertion::ResponseHeader { name, condition, expected } => (
-                    format!("响应头[{name}]"),
+                    format!("response header[{name}]"),
                     cond_label(condition),
                     expected.clone(),
                     header(name),
                 ),
                 Assertion::ResponseBody { condition, expected } => (
-                    "响应体".to_string(),
+                    "response body".to_string(),
                     cond_label(condition),
                     expected.clone(),
                     truncate(&resp.body, 60),
@@ -431,13 +441,13 @@ pub fn evaluate_detailed_with_vars(
                     json_at(&json_path_to_pointer(path)),
                 ),
                 Assertion::ResponseTime { max_ms } => (
-                    "响应耗时(ms)".to_string(),
+                    "response time (ms)".to_string(),
                     "≤".to_string(),
                     max_ms.to_string(),
                     resp.elapsed_ms.to_string(),
                 ),
                 Assertion::Variable { name, condition, expected } => (
-                    format!("变量[{name}]"),
+                    format!("variable[{name}]"),
                     cond_label(condition),
                     expected.clone(),
                     vars.get(name).cloned().unwrap_or_default(),
@@ -608,14 +618,14 @@ mod tests {
         ];
         let reports = evaluate_detailed(&a, &r);
         assert_eq!(reports.len(), 3);
-        assert_eq!(reports[0].item, "状态码");
-        assert_eq!(reports[0].condition, "等于");
+        assert_eq!(reports[0].item, "status code");
+        assert_eq!(reports[0].condition, "equals");
         assert_eq!(reports[0].expected, "200");
         assert_eq!(reports[0].actual, "200");
         assert!(reports[0].passed);
         assert!(!reports[1].passed);
-        assert!(reports[1].reason.contains("期望 500"));
-        assert_eq!(reports[2].item, "响应体");
+        assert!(reports[1].reason.contains("expected 500"));
+        assert_eq!(reports[2].item, "response body");
         assert!(reports[2].passed);
     }
 

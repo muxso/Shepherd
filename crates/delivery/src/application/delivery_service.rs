@@ -413,7 +413,7 @@ mod tests {
             Arc::new(EchoAgentExecutor::new()),
         );
         let a = s
-            .dispatch("d1", "t1", "实现登录", "", &[], "CLAUDE_CODE", None, None, None)
+            .dispatch("d1", "t1", "implement login", "", &[], "CLAUDE_CODE", None, None, None)
             .await
             .expect("dispatch");
         let events = s.events(&a.id).await.expect("events");
@@ -429,9 +429,9 @@ mod tests {
             .await
             .expect("dispatch");
 
-        s.record_event(&a.id, "DECISION", "选用 argon2", Some("PHC 格式")).await.expect("ev1");
+        s.record_event(&a.id, "DECISION", "uses argon2", Some("PHC format")).await.expect("ev1");
         s.record_event(&a.id, "FILE_CHANGE", "edit auth.rs", None).await.expect("ev2");
-        s.record_event(&a.id, "TEST_RESULT", "cargo test 通过", None).await.expect("ev3");
+        s.record_event(&a.id, "TEST_RESULT", "cargo test passed", None).await.expect("ev3");
 
         let events = s.events(&a.id).await.expect("events");
         assert_eq!(events.len(), 3);

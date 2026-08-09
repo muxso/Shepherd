@@ -56,7 +56,7 @@ pub fn parse_import(
         ImportFormat::Har => super::import_har::parse_har(doc),
         ImportFormat::Jmeter => {
             let xml = doc.as_str().ok_or_else(|| {
-                ApiDefinitionError::BadImport("jmeter 导入需原始 .jmx 文本".into())
+                ApiDefinitionError::BadImport("jmeter import requires raw .jmx text".into())
             })?;
             super::import_jmeter::parse_jmeter(xml)
         }
@@ -471,7 +471,7 @@ mod tests {
         let doc = json!({
             "openapi": "3.0.0",
             "paths": {
-                "/login": { "post": { "summary": "登录" } },
+                "/login": { "post": { "summary": "login" } },
                 "/users": {
                     "get": { "operationId": "listUsers" },
                     "post": {}
@@ -482,7 +482,7 @@ mod tests {
         assert_eq!(apis.len(), 3);
         assert_eq!(
             (apis[0].name.as_str(), apis[0].method.as_str(), apis[0].path.as_str()),
-            ("登录", "POST", "/login")
+            ("login", "POST", "/login")
         );
         assert_eq!(apis[1].name, "listUsers");
         assert_eq!(apis[1].method, "GET");
@@ -539,7 +539,7 @@ mod tests {
     fn parameters_become_spec_kv_with_required_in_desc() {
         let doc = json!({
             "paths": { "/u": { "get": { "summary": "u", "parameters": [
-                { "name": "projectId", "in": "query", "required": true, "description": "项目", "schema": {"type": "string"} },
+                { "name": "projectId", "in": "query", "required": true, "description": "project", "schema": {"type": "string"} },
                 { "name": "X-Token", "in": "header", "required": false, "schema": {"type": "string"} },
                 { "name": "id", "in": "path", "required": true, "schema": {"type": "integer"} }
             ] } } }
@@ -548,7 +548,7 @@ mod tests {
         let q = api.spec["requestQuery"].as_array().unwrap();
         assert_eq!(q[0]["name"], "projectId");
         assert!(q[0]["desc"].as_str().unwrap().contains("必填"));
-        assert!(q[0]["desc"].as_str().unwrap().contains("项目"));
+        assert!(q[0]["desc"].as_str().unwrap().contains("project"));
         let h = api.spec["requestHeaders"].as_array().unwrap();
         assert!(h[0]["desc"].as_str().unwrap().contains("选填"));
         let r = api.spec["restParams"].as_array().unwrap();
@@ -562,7 +562,7 @@ mod tests {
                 "type": "object", "required": ["username"],
                 "properties": { "username": {"type": "string"}, "remember": {"type": "boolean"} }
             } } },
-            "paths": { "/login": { "post": { "summary": "登录",
+            "paths": { "/login": { "post": { "summary": "login",
                 "requestBody": { "content": { "application/json": { "schema": { "$ref": "#/components/schemas/LoginBody" } } } },
                 "responses": { "200": { "content": { "application/json": { "schema": {
                     "type": "object", "required": ["token"], "properties": { "token": {"type": "string"} }

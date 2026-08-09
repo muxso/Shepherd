@@ -137,7 +137,7 @@ async fn list_projects(
 }
 
 #[derive(OpenApi)]
-#[openapi(paths(create_project, list_projects), components(schemas(CreateProjectRequest, ProjectResponse, PageResponse)), tags((name = "project", description = "项目管理")))]
+#[openapi(paths(create_project, list_projects), components(schemas(CreateProjectRequest, ProjectResponse, PageResponse)), tags((name = "project", description = "Project management")))]
 struct ApiDoc;
 pub fn openapi() -> utoipa::openapi::OpenApi {
     ApiDoc::openapi()

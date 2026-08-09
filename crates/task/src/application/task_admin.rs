@@ -153,7 +153,7 @@ impl TaskService {
             .iter()
             .find(|t| t.id == task_id)
             .map(|t| t.status)
-            .expect("任务在成功推进后必存在");
+            .expect("task must exist after a successful advance");
         self.repo.save_task_status(decomposition_id, task_id, status).await?;
         Ok(())
     }
@@ -231,8 +231,16 @@ mod tests {
         h3.await.expect("join t3").expect("t3 advanced");
 
         let d = svc.get(&did).await.expect("get");
-        assert_eq!(d.task("t2").expect("t2").status, TaskStatus::Verified, "t2 应保持 Verified");
-        assert_eq!(d.task("t3").expect("t3").status, TaskStatus::Verified, "t3 不应被兄弟回写覆盖");
+        assert_eq!(
+            d.task("t2").expect("t2").status,
+            TaskStatus::Verified,
+            "t2 should stay Verified"
+        );
+        assert_eq!(
+            d.task("t3").expect("t3").status,
+            TaskStatus::Verified,
+            "t3 should not be overwritten by a sibling write-back"
+        );
     }
 
     #[tokio::test]

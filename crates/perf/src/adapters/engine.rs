@@ -110,8 +110,8 @@ mod tests {
         // n=usize::MAX keeps the fast spin loop always succeeding, so the failure threshold never trips.
         let exec = Arc::new(EveryNthFails { calls: AtomicUsize::new(0), n: usize::MAX });
         let report = run_load(&plan, exec).await;
-        assert!(report.total > 0, "时长模式应至少跑若干次: {report:?}");
-        assert!(report.elapsed_ms >= 70, "耗时应≈时长: {}", report.elapsed_ms);
+        assert!(report.total > 0, "duration mode should run at least a few times: {report:?}");
+        assert!(report.elapsed_ms >= 70, "elapsed should be ≈ the duration: {}", report.elapsed_ms);
         assert_eq!(report.failed, 0);
     }
 }

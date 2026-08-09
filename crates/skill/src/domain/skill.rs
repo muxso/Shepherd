@@ -210,9 +210,9 @@ mod tests {
             NewSkill::new("p", "n", "", "  ", &[]).unwrap_err(),
             SkillError::EmptyInstructions
         );
-        let s = NewSkill::new("p", " Rust 规范 ", "", " 用 thiserror ", &[]).expect("ok");
-        assert_eq!(s.name, "Rust 规范");
-        assert_eq!(s.instructions, "用 thiserror");
+        let s = NewSkill::new("p", " Rust conventions ", "", " using thiserror ", &[]).expect("ok");
+        assert_eq!(s.name, "Rust conventions");
+        assert_eq!(s.instructions, "using thiserror");
     }
 
     #[test]

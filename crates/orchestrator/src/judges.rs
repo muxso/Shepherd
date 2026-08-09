@@ -17,11 +17,11 @@ pub struct RuleJudge;
 impl Judge for RuleJudge {
     async fn judge(&self, _criteria: &[String], deliverable: &DeliverableView) -> Verdict {
         if deliverable.reference.trim().is_empty() {
-            Verdict { passed: false, reason: "交付物缺少 reference".into() }
+            Verdict { passed: false, reason: "deliverable is missing reference".into() }
         } else if deliverable.summary.trim().is_empty() {
-            Verdict { passed: false, reason: "交付物缺少 summary".into() }
+            Verdict { passed: false, reason: "deliverable is missing summary".into() }
         } else {
-            Verdict { passed: true, reason: "交付物完整".into() }
+            Verdict { passed: true, reason: "deliverable is complete".into() }
         }
     }
 }

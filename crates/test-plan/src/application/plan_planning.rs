@@ -199,7 +199,8 @@ mod tests {
 
     async fn seeded() -> (Arc<InMemoryPlanRepository>, Plan) {
         let repo = Arc::new(InMemoryPlanRepository::new());
-        let p = repo.seed(NewPlan::new("p1", "冒烟", PlanType::Plan, ROOT_GROUP).expect("v")).await;
+        let p =
+            repo.seed(NewPlan::new("p1", "smoke", PlanType::Plan, ROOT_GROUP).expect("v")).await;
         (repo, p)
     }
 
@@ -214,9 +215,9 @@ mod tests {
         let (repo, p) = seeded().await;
         let uc = PlanAdminUseCase::new(repo);
         let patch = PlanPatch {
-            name: Some("回归".into()),
-            description: Some("回归说明".into()),
-            tags: Some(vec!["核心".into(), " ".into()]),
+            name: Some("regression".into()),
+            description: Some("regression description".into()),
+            tags: Some(vec!["core".into(), " ".into()]),
             module_id: Some("m1".into()),
             start_at_ms: Some(1000),
             end_at_ms: Some(2000),
@@ -225,9 +226,9 @@ mod tests {
             ..Default::default()
         };
         let (plan, meta, _) = uc.update(&p.id, patch).await.expect("update");
-        assert_eq!(plan.name, "回归");
-        assert_eq!(meta.description, "回归说明");
-        assert_eq!(meta.tags, vec!["核心".to_string()]);
+        assert_eq!(plan.name, "regression");
+        assert_eq!(meta.description, "regression description");
+        assert_eq!(meta.tags, vec!["core".to_string()]);
         assert_eq!(meta.module_id.as_deref(), Some("m1"));
         assert_eq!(meta.start_at_ms, Some(1000));
         assert!(!meta.allow_duplicate_cases);
@@ -238,7 +239,7 @@ mod tests {
             .await
             .expect("clear module");
         assert_eq!(meta2.module_id, None);
-        assert_eq!(meta2.description, "回归说明");
+        assert_eq!(meta2.description, "regression description");
     }
 
     #[tokio::test]
@@ -265,16 +266,16 @@ mod tests {
         let uc = PlanAdminUseCase::new(repo.clone());
         let doc = json!({
             "nodes": [{
-                "id": "n1", "name": "功能用例", "kind": "category",
+                "id": "n1", "name": "functional case", "kind": "category",
                 "caseIds": ["c1"],
                 "children": [{
-                    "id": "n2", "name": "登录", "kind": "point",
+                    "id": "n2", "name": "login", "kind": "point",
                     "caseIds": ["c1", "c2"], "scenarioIds": ["s1"],
                     "config": {"inherit": false, "mode": "serial"}
                 }]
             }],
-            "caseNames": {"c1": "健康检查", "c2": "登录接口"},
-            "scenarioNames": {"s1": "登录链路"}
+            "caseNames": {"c1": "health check", "c2": "login interface"},
+            "scenarioNames": {"s1": "login flow"}
         });
         let linked = uc.save_planning(&p.id, doc.clone()).await.expect("save");
         assert_eq!(linked, 3);
@@ -282,8 +283,8 @@ mod tests {
         assert_eq!(stored, Some(doc));
         let cases = repo.list_cases(&p.id).await.expect("cases");
         assert_eq!(cases.len(), 3);
-        assert!(cases.iter().any(|c| c.case_id == "c1" && c.name == "健康检查"));
-        assert!(cases.iter().any(|c| c.case_id == "s1" && c.name == "登录链路"));
+        assert!(cases.iter().any(|c| c.case_id == "c1" && c.name == "health check"));
+        assert!(cases.iter().any(|c| c.case_id == "s1" && c.name == "login flow"));
     }
 
     #[tokio::test]
@@ -325,7 +326,7 @@ mod tests {
         let (repo, p) = seeded().await;
         let uc = PlanAdminUseCase::new(repo.clone());
         // A manual link (cases tab) with no planning doc coverage.
-        repo.link_case(&p.id, "m1", "手动用例").await.expect("manual link");
+        repo.link_case(&p.id, "m1", "manual case").await.expect("manual link");
         uc.save_planning(&p.id, json!({"nodes": []})).await.expect("save empty");
         assert_eq!(repo.list_cases(&p.id).await.expect("cases").len(), 1);
     }

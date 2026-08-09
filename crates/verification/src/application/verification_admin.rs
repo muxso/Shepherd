@@ -102,7 +102,7 @@ mod tests {
     async fn seeded() -> (VerificationService, String) {
         let repo = Arc::new(InMemoryVerificationRepository::new());
         let id = CreateVerificationUseCase::new(repo.clone())
-            .execute("req1", 1, &["登录成功".into(), "错误密码拒绝".into()])
+            .execute("req1", 1, &["login success".into(), "wrong password rejected".into()])
             .await
             .expect("seed")
             .id;
@@ -132,8 +132,12 @@ mod tests {
     #[tokio::test]
     async fn link_by_criteria_texts_then_sync_completes() {
         let (svc, id) = seeded().await;
-        svc.link_by_criteria_texts(&id, "d1", "t1", &["登录成功".into()]).await.expect("link0");
-        svc.link_by_criteria_texts(&id, "d1", "t2", &["错误密码拒绝".into()]).await.expect("link1");
+        svc.link_by_criteria_texts(&id, "d1", "t1", &["login success".into()])
+            .await
+            .expect("link0");
+        svc.link_by_criteria_texts(&id, "d1", "t2", &["wrong password rejected".into()])
+            .await
+            .expect("link1");
         let r = svc.report(&id).await.expect("report");
         assert_eq!(r.gaps.iter().filter(|g| g.kind == GapKind::Unverified).count(), 2);
         svc.sync_task(&id, "d1", "t1", true).await.expect("sync0");

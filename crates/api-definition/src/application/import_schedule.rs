@@ -99,9 +99,9 @@ mod tests {
         assert_eq!(uc.list_enabled().await.unwrap().len(), 0);
         assert_eq!(uc.list_by_project("p1").await.unwrap().len(), 1);
 
-        uc.record_run(&s.id, "新增 3 / 覆盖 1 / 跳过 0", "alice").await.expect("record");
+        uc.record_run(&s.id, "added 3 / overwritten 1 / skipped 0", "alice").await.expect("record");
         let got = uc.get(&s.id).await.unwrap().unwrap();
-        assert_eq!(got.last_result, "新增 3 / 覆盖 1 / 跳过 0");
+        assert_eq!(got.last_result, "added 3 / overwritten 1 / skipped 0");
         assert_eq!(got.last_run_by, "alice");
 
         uc.delete(&s.id).await.expect("delete");

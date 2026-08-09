@@ -219,7 +219,7 @@ fn default_page_size() -> u32 {
     get,
     path = "/api/case/{caseId}/executions",
     tag = "api-test",
-    params(("caseId" = String, Path, description = "用例 id"), CaseExecutionQuery),
+    params(("caseId" = String, Path, description = "Case id"), CaseExecutionQuery),
     responses((status = 200, body = CaseExecutionPageResponse), (status = 400), (status = 403)),
     security(("bearer" = []))
 )]
@@ -476,7 +476,7 @@ async fn delete_resource_pool(
         ResourcePoolBody,
         ResourcePoolResponse
     )),
-    tags((name = "api-test", description = "接口批量执行"))
+    tags((name = "api-test", description = "API batch execution"))
 )]
 struct ApiDoc;
 pub fn openapi() -> utoipa::openapi::OpenApi {
@@ -795,11 +795,12 @@ mod tests {
     #[tokio::test]
     async fn create_pool_with_permission_201() {
         let (app, t) = pool_app().await;
-        let resp = app.oneshot(pool_post(r#"{"name":"本地池"}"#, Some(&t))).await.expect("resp");
+        let resp =
+            app.oneshot(pool_post(r#"{"name":"local pool"}"#, Some(&t))).await.expect("resp");
         assert_eq!(resp.status(), StatusCode::CREATED);
         let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.expect("body");
         let v: serde_json::Value = serde_json::from_slice(&bytes).expect("json");
-        assert_eq!(v["name"], "本地池");
+        assert_eq!(v["name"], "local pool");
         assert_eq!(v["enabled"], true);
         assert!(v["id"].as_str().expect("id").starts_with('p'));
     }
@@ -868,7 +869,7 @@ mod tests {
     #[tokio::test]
     async fn create_carries_extended_fields() {
         let (app, t) = pool_app().await;
-        let body = r#"{"name":"k8s池","poolType":"Kubernetes","maxConcurrency":10,"description":"d","allOrg":false,"orgIds":["org-1"],"serverUrl":"http://ms","config":{"namespace":"ns"}}"#;
+        let body = r#"{"name":"k8s pool","poolType":"Kubernetes","maxConcurrency":10,"description":"d","allOrg":false,"orgIds":["org-1"],"serverUrl":"http://ms","config":{"namespace":"ns"}}"#;
         let resp = app.oneshot(pool_post(body, Some(&t))).await.expect("resp");
         assert_eq!(resp.status(), StatusCode::CREATED);
         let v = json_of(resp).await;
@@ -884,7 +885,7 @@ mod tests {
     async fn update_then_delete_roundtrip() {
         let (app, t) = pool_app().await;
         let created = json_of(
-            app.clone().oneshot(pool_post(r#"{"name":"池"}"#, Some(&t))).await.expect("resp"),
+            app.clone().oneshot(pool_post(r#"{"name":"pool"}"#, Some(&t))).await.expect("resp"),
         )
         .await;
         let id = created["id"].as_str().expect("id").to_string();
@@ -894,12 +895,12 @@ mod tests {
             .uri(format!("/api/resource-pool/{id}"))
             .header("content-type", "application/json")
             .header("authorization", format!("Bearer {t}"))
-            .body(Body::from(r#"{"name":"改名","enabled":false}"#))
+            .body(Body::from(r#"{"name":"rename","enabled":false}"#))
             .expect("req");
         let resp = app.clone().oneshot(put).await.expect("resp");
         assert_eq!(resp.status(), StatusCode::OK);
         let v = json_of(resp).await;
-        assert_eq!(v["name"], "改名");
+        assert_eq!(v["name"], "rename");
         assert_eq!(v["enabled"], false);
 
         let del = Request::builder()

@@ -211,8 +211,8 @@ mod tests {
                     "status":"completed",
                     "deliverable":{"kind":"DIFF","reference":"branch:y","summary":"ok"},
                     "events":[
-                        {"kind":"DECISION","message":"用 argon2","detail":"PHC"},
-                        {"kind":"TEST_RESULT","message":"12/12 通过"}
+                        {"kind":"DECISION","message":"using argon2","detail":"PHC"},
+                        {"kind":"TEST_RESULT","message":"12/12 passed"}
                     ]
                 }))
             }),

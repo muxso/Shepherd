@@ -201,7 +201,7 @@ mod tests {
     use crate::domain::NewTask;
 
     #[tokio::test]
-    #[ignore = "需要 DATABASE_URL 指向一个 PostgreSQL 实例"]
+    #[ignore = "requires DATABASE_URL pointing to a PostgreSQL instance"]
     async fn pg_dag_persistence_and_readiness() {
         let url = std::env::var("DATABASE_URL").expect("set DATABASE_URL");
         let pool = PgPool::connect(&url).await.expect("connect");
@@ -213,7 +213,7 @@ mod tests {
 
         let repo = PgTaskRepository::new(pool.clone());
         let mut d = repo.create_decomposition("req1", 1).await.expect("create");
-        d.add_task(NewTask::new("A", "", &["验收A".into()], &[]).expect("v")).expect("a");
+        d.add_task(NewTask::new("A", "", &["acceptance A".into()], &[]).expect("v")).expect("a");
         d.add_task(NewTask::new("B", "", &[], &["t1".into()]).expect("v")).expect("b");
         repo.save(&d).await.expect("save");
 

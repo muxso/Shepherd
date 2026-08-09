@@ -85,7 +85,7 @@ mod tests {
         let m = uc
             .execute(
                 &def.id,
-                "挡板",
+                "stub",
                 serde_json::json!({}),
                 200,
                 None,
@@ -106,7 +106,7 @@ mod tests {
         let err = uc
             .execute(
                 "ghost",
-                "挡板",
+                "stub",
                 serde_json::json!({}),
                 200,
                 None,
@@ -130,7 +130,7 @@ mod tests {
         let err = uc
             .execute(
                 &def.id,
-                "挡板",
+                "stub",
                 serde_json::json!({}),
                 700,
                 None,

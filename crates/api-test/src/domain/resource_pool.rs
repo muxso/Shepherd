@@ -107,8 +107,8 @@ mod tests {
 
     #[test]
     fn trims_and_accepts_name_with_default_type() {
-        let p = NewResourcePool::new(draft("  本地池 ")).expect("ok");
-        assert_eq!(p.name, "本地池");
+        let p = NewResourcePool::new(draft("  local pool ")).expect("ok");
+        assert_eq!(p.name, "local pool");
         assert!(p.enabled);
         assert_eq!(p.pool_type, "Node");
     }

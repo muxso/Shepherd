@@ -40,14 +40,14 @@ impl Planner for HttpPlanner {
             .json(&body)
             .send()
             .await
-            .map_err(|e| PlanError::Backend(format!("planner 不可达: {e}")))?;
+            .map_err(|e| PlanError::Backend(format!("planner unreachable: {e}")))?;
         if !resp.status().is_success() {
             return Err(PlanError::Backend(format!("planner HTTP {}", resp.status())));
         }
         let dtos: Vec<PlannedTaskDto> = resp
             .json()
             .await
-            .map_err(|e| PlanError::Backend(format!("planner 响应解析失败: {e}")))?;
+            .map_err(|e| PlanError::Backend(format!("failed to parse planner response: {e}")))?;
         Ok(dtos
             .into_iter()
             .map(|d| PlannedTask {

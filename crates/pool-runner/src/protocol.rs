@@ -170,11 +170,12 @@ mod tests {
     #[test]
     fn hello_accepts_pool_name_without_id() {
         let m: RunnerMsg =
-            serde_json::from_str(r#"{"type":"hello","poolName":"本地池","name":"n"}"#).expect("de");
+            serde_json::from_str(r#"{"type":"hello","poolName":"local pool","name":"n"}"#)
+                .expect("de");
         match m {
             RunnerMsg::Hello { pool_id, pool_name, .. } => {
                 assert_eq!(pool_id, None);
-                assert_eq!(pool_name.as_deref(), Some("本地池"));
+                assert_eq!(pool_name.as_deref(), Some("local pool"));
             }
             other => panic!("expected hello, got {other:?}"),
         }

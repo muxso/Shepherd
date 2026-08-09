@@ -70,12 +70,12 @@ mod tests {
 
     async fn seed(repo: Arc<dyn ApiScenarioRepository>) -> String {
         let create = CreateScenarioUseCase::new(repo.clone());
-        let s = create.execute("p1", "下单链路", Some("alice")).await.expect("create");
+        let s = create.execute("p1", "order placement flow", Some("alice")).await.expect("create");
         repo.update_scenario(
             &s.id,
-            "下单链路",
+            "order placement flow",
             "DEBUGGING",
-            &serde_json::json!({ "priority": "P1", "tags": ["核心"] }),
+            &serde_json::json!({ "priority": "P1", "tags": ["core"] }),
         )
         .await
         .expect("meta");
@@ -105,7 +105,7 @@ mod tests {
         let copy = uc.execute(&src, None, Some("bob")).await.expect("copy");
 
         assert_ne!(copy.id, src);
-        assert_eq!(copy.name, "下单链路_copy");
+        assert_eq!(copy.name, "order placement flow_copy");
         assert_eq!(copy.project_id, "p1");
         assert_eq!(copy.status.as_str(), "DEBUGGING");
         assert_eq!(copy.meta["priority"], "P1");
@@ -123,8 +123,8 @@ mod tests {
         let repo: Arc<dyn ApiScenarioRepository> = Arc::new(InMemoryApiScenarioRepository::new());
         let src = seed(repo.clone()).await;
         let uc = CopyScenarioUseCase::new(repo);
-        let copy = uc.execute(&src, Some("  回归_下单  "), None).await.expect("copy");
-        assert_eq!(copy.name, "回归_下单");
+        let copy = uc.execute(&src, Some("  regression_order  "), None).await.expect("copy");
+        assert_eq!(copy.name, "regression_order");
     }
 
     #[tokio::test]

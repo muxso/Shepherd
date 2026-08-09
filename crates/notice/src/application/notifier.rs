@@ -195,7 +195,7 @@ mod tests {
             project_id: "p1".into(),
             category: category.into(),
             event_type: event_type.into(),
-            title: "登录页崩溃".into(),
+            title: "login page crash".into(),
             content: String::new(),
             resource_type: "BUG".into(),
             resource_id: "b1".into(),
@@ -265,7 +265,8 @@ mod tests {
     #[tokio::test]
     async fn mentions_resolve_to_user_ids_and_set_at_mention() {
         let (store, notifier) = services();
-        let n = notifier.notify_mentions("@admin @ghost 看一下", event("BUG", "MENTIONED")).await;
+        let n =
+            notifier.notify_mentions("@admin @ghost take a look", event("BUG", "MENTIONED")).await;
         assert_eq!(n, 1);
         let page = store
             .list(&ListQuery {
@@ -296,7 +297,7 @@ mod rule_tests {
             project_id: "p1".into(),
             category: "BUG".into(),
             event_type: event_type.into(),
-            title: "登录页崩溃".into(),
+            title: "login page crash".into(),
             content: String::new(),
             resource_type: "BUG".into(),
             resource_id: "b1".into(),
@@ -407,7 +408,7 @@ mod rule_tests {
         let sent = wait_sent(&f.sender, 1).await;
         assert_eq!(sent.len(), 1);
         assert_eq!(sent[0].0, robot_id);
-        assert_eq!(sent[0].1, "登录页崩溃 / admin");
+        assert_eq!(sent[0].1, "login page crash / admin");
     }
 
     #[tokio::test]
@@ -419,7 +420,7 @@ mod rule_tests {
         assert_eq!(inbox_total(&f.store).await, 1);
         let sent = wait_sent(&f.sender, 1).await;
         // Default template: title + operator + time.
-        assert!(sent[0].1.contains("登录页崩溃") && sent[0].1.contains("admin"));
+        assert!(sent[0].1.contains("login page crash") && sent[0].1.contains("admin"));
     }
 
     #[tokio::test]

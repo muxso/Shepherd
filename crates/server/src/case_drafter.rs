@@ -92,7 +92,7 @@ pub fn parse_drafted(
         steps: Vec<StepDto>,
     }
     let dtos: Vec<CaseDto> =
-        serde_json::from_str(text).map_err(|e| format!("用例草稿解析失败: {e}"))?;
+        serde_json::from_str(text).map_err(|e| format!("failed to parse case drafts: {e}"))?;
     let cap = task_count.max(1) * 3;
     let out: Vec<DraftedCase> = dtos
         .into_iter()
@@ -119,7 +119,7 @@ pub fn parse_drafted(
         .take(cap)
         .collect();
     if out.is_empty() {
-        return Err("用例草稿为空".to_string());
+        return Err("case drafts are empty".to_string());
     }
     Ok(out)
 }

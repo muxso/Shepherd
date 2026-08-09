@@ -140,7 +140,7 @@ async fn remove_member(
 #[openapi(
     paths(add_member, list_members, remove_member),
     components(schemas(AddMemberRequest, MemberResponse)),
-    tags((name = "project", description = "项目管理"))
+    tags((name = "project", description = "Project management"))
 )]
 struct ApiDoc;
 pub fn openapi() -> utoipa::openapi::OpenApi {

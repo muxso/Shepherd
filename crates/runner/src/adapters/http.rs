@@ -311,7 +311,7 @@ async fn run_probe(
         RegisterBody, AgentResponse, RunViaBody, RunCaseBody, ExecutionResponse, ProbeBody,
         ProbeReportResponse
     )),
-    tags((name = "runner", description = "远程执行 agent"))
+    tags((name = "runner", description = "Remote execution agent"))
 )]
 struct ApiDoc;
 
@@ -379,7 +379,7 @@ mod tests {
             .clone()
             .oneshot(post(
                 "/runner-agent",
-                r#"{"name":"测试环境","baseUrl":"http://10.0.0.5:9100","token":"s"}"#,
+                r#"{"name":"test environment","baseUrl":"http://10.0.0.5:9100","token":"s"}"#,
                 Some(&t),
             ))
             .await
@@ -434,7 +434,7 @@ mod tests {
             .clone()
             .oneshot(post(
                 "/runner-agent",
-                r#"{"name":"环境A","baseUrl":"http://a:9100"}"#,
+                r#"{"name":"environment A","baseUrl":"http://a:9100"}"#,
                 Some(&t),
             ))
             .await
@@ -488,9 +488,10 @@ mod tests {
         let (app, t, caps, _c) = app_with_caps("RUNNER:READ+ADD+EXECUTE").await;
         caps.set("http://grpc-env:9100", &["http", "grpc"]);
         caps.set("http://sql-env:9100", &["http", "sql"]);
-        for (name, url) in
-            [("gRPC环境", "http://grpc-env:9100"), ("SQL环境", "http://sql-env:9100")]
-        {
+        for (name, url) in [
+            ("gRPC environment", "http://grpc-env:9100"),
+            ("SQL environment", "http://sql-env:9100"),
+        ] {
             app.clone()
                 .oneshot(post(
                     "/runner-agent",
@@ -512,7 +513,7 @@ mod tests {
             .expect("r");
         assert_eq!(r.status(), StatusCode::OK);
         let v = json(r).await;
-        assert_eq!(v["agentName"], "gRPC环境");
+        assert_eq!(v["agentName"], "gRPC environment");
         assert_eq!(v["outcome"]["success"], true);
 
         let r = app
@@ -520,7 +521,7 @@ mod tests {
             .oneshot(post("/runner/probe", r#"{"protocol":"sql","target":"x"}"#, Some(&t)))
             .await
             .expect("r");
-        assert_eq!(json(r).await["agentName"], "SQL环境");
+        assert_eq!(json(r).await["agentName"], "SQL environment");
 
         let r = app
             .oneshot(post("/runner/probe", r#"{"protocol":"redis","target":"x"}"#, Some(&t)))

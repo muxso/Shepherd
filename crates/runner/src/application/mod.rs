@@ -222,7 +222,7 @@ mod tests {
     async fn register_list_and_run_via() {
         let (svc, _store, _cases) = svc();
         let a = svc
-            .register("测试环境", "http://10.0.0.5:9100", Some("t".into()), true)
+            .register("test environment", "http://10.0.0.5:9100", Some("t".into()), true)
             .await
             .expect("reg");
         assert_eq!(svc.list().await.expect("list").len(), 1);
@@ -258,7 +258,7 @@ mod tests {
     #[tokio::test]
     async fn run_stored_case_via_agent() {
         let (svc, _s, cases) = svc();
-        let a = svc.register("环境A", "http://a:9100", None, true).await.expect("reg");
+        let a = svc.register("environment A", "http://a:9100", None, true).await.expect("reg");
         cases.seed("case1", spec(), vec![Assertion::StatusIs(200)]);
 
         let res = svc.run_case(&a.id, "case1").await.expect("run case");
@@ -269,7 +269,7 @@ mod tests {
     #[tokio::test]
     async fn run_unknown_case_is_not_found() {
         let (svc, _s, _c) = svc();
-        let a = svc.register("环境A", "http://a:9100", None, true).await.expect("reg");
+        let a = svc.register("environment A", "http://a:9100", None, true).await.expect("reg");
         assert_eq!(svc.run_case(&a.id, "ghost").await.unwrap_err(), RunCaseError::CaseNotFound);
     }
 
@@ -278,16 +278,19 @@ mod tests {
         let (svc, _s, _c, caps) = svc_full();
         caps.set("http://grpc-env:9100", &["http", "grpc"]);
         caps.set("http://sql-env:9100", &["http", "sql"]);
-        let g = svc.register("gRPC环境", "http://grpc-env:9100", None, true).await.expect("reg");
+        let g = svc
+            .register("gRPC environment", "http://grpc-env:9100", None, true)
+            .await
+            .expect("reg");
         assert_eq!(g.protocols, vec!["http".to_string(), "grpc".to_string()]);
-        svc.register("SQL环境", "http://sql-env:9100", None, true).await.expect("reg");
+        svc.register("SQL environment", "http://sql-env:9100", None, true).await.expect("reg");
 
         let rep = svc.run_probe(&probe_req("grpc")).await.expect("probe");
-        assert_eq!(rep.agent_name, "gRPC环境");
+        assert_eq!(rep.agent_name, "gRPC environment");
         assert!(rep.outcome.success);
 
         let rep = svc.run_probe(&probe_req("sql")).await.expect("probe");
-        assert_eq!(rep.agent_name, "SQL环境");
+        assert_eq!(rep.agent_name, "SQL environment");
 
         assert_eq!(svc.executions(&rep.agent_id, 10).await.expect("e")[0].method, "sql");
 

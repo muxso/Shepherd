@@ -674,7 +674,7 @@ mod tests {
     use crate::domain::ApiProtocol;
 
     #[tokio::test]
-    #[ignore = "需要 DATABASE_URL 指向一个 PostgreSQL 实例"]
+    #[ignore = "requires DATABASE_URL pointing to a PostgreSQL instance"]
     async fn pg_definition_case_mock_roundtrip() {
         let url = std::env::var("DATABASE_URL").expect("set DATABASE_URL");
         let pool = PgPool::connect(&url).await.expect("connect");
@@ -686,18 +686,18 @@ mod tests {
 
         let repo = PgApiDefinitionRepository::new(pool.clone());
 
-        let nd = NewApiDefinition::new("p1", "登录", ApiProtocol::Http, "POST", "/login")
+        let nd = NewApiDefinition::new("p1", "login", ApiProtocol::Http, "POST", "/login")
             .expect("valid");
         let def = repo.insert_definition(&nd).await.expect("insert def");
         assert_eq!(def.method, "POST");
-        assert_eq!(repo.get_definition(&def.id).await.expect("get").expect("some").name, "登录");
+        assert_eq!(repo.get_definition(&def.id).await.expect("get").expect("some").name, "login");
         assert_eq!(repo.list_definitions("p1").await.expect("list").len(), 1);
         assert!(repo.get_definition("ghost").await.expect("get").is_none());
 
         let nc = NewApiCase::new(
             &def.id,
             "p1",
-            "用例",
+            "case",
             "POST",
             "/login",
             Some("{}".into()),
@@ -710,9 +710,16 @@ mod tests {
         assert_eq!(cases.len(), 1);
         assert!(cases[0].assertions.is_array());
 
-        let standalone =
-            NewApiCase::new("", "p1", "独立用例", "GET", "/ping", None, serde_json::json!([]))
-                .expect("valid");
+        let standalone = NewApiCase::new(
+            "",
+            "p1",
+            "standalone case",
+            "GET",
+            "/ping",
+            None,
+            serde_json::json!([]),
+        )
+        .expect("valid");
         repo.insert_case(&standalone).await.expect("insert standalone");
         assert_eq!(repo.count_cases_by_project("p1").await.expect("count"), 2);
         let page = repo.list_cases_by_project("p1", 0, 1).await.expect("page");
@@ -722,7 +729,7 @@ mod tests {
 
         let nm = NewApiMock::new(
             &def.id,
-            "挡板",
+            "stub",
             serde_json::json!({"path": "/login"}),
             200,
             Some("ok".into()),
@@ -737,7 +744,7 @@ mod tests {
 
         let nm2 = NewApiMock::new(
             &def.id,
-            "改名挡板",
+            "renamed stub",
             serde_json::json!({"path": "/logout"}),
             404,
             Some("nope".into()),
@@ -747,7 +754,7 @@ mod tests {
         assert!(repo.update_mock(&mock.id, &nm2).await.expect("update mock"));
         let mocks = repo.list_mocks(&def.id).await.expect("list mocks");
         assert_eq!(mocks.len(), 1);
-        assert_eq!(mocks[0].name, "改名挡板");
+        assert_eq!(mocks[0].name, "renamed stub");
         assert_eq!(mocks[0].response_status, 404);
         assert!(!mocks[0].enabled);
         assert_eq!(mocks[0].match_rule, serde_json::json!({"path": "/logout"}));
@@ -755,7 +762,7 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "需要 DATABASE_URL 指向一个 PostgreSQL 实例"]
+    #[ignore = "requires DATABASE_URL pointing to a PostgreSQL instance"]
     async fn pg_view_update_roundtrip() {
         let url = std::env::var("DATABASE_URL").expect("set DATABASE_URL");
         let pool = PgPool::connect(&url).await.expect("connect");
@@ -764,37 +771,37 @@ mod tests {
 
         let repo = PgApiDefinitionRepository::new(pool.clone());
 
-        let nv = NewApiView::new("p1", "u1", "我的视图", serde_json::json!({"pageSize": 10}), true)
+        let nv = NewApiView::new("p1", "u1", "my view", serde_json::json!({"pageSize": 10}), true)
             .expect("valid");
         let view = repo.insert_view(&nv).await.expect("insert view");
 
         // Partial update: only name changes; config/shared keep their prior values.
-        let patch = ApiViewPatch::new(Some("改名视图"), None, None).expect("patch");
+        let patch = ApiViewPatch::new(Some("rename view"), None, None).expect("patch");
         let updated =
             repo.update_view(&view.id, "u1", &patch).await.expect("update").expect("owner match");
-        assert_eq!(updated.name, "改名视图");
+        assert_eq!(updated.name, "rename view");
         assert_eq!(updated.config, serde_json::json!({"pageSize": 10}));
         assert!(updated.shared);
 
         // Full update of all fields.
         let patch = ApiViewPatch::new(
-            Some("再改名"),
+            Some("renamed again"),
             Some(serde_json::json!({"pageSize": 50})),
             Some(false),
         )
         .expect("patch");
         let updated =
             repo.update_view(&view.id, "u1", &patch).await.expect("update").expect("owner match");
-        assert_eq!(updated.name, "再改名");
+        assert_eq!(updated.name, "renamed again");
         assert_eq!(updated.config, serde_json::json!({"pageSize": 50}));
         assert!(!updated.shared);
 
         // Neither a non-owner nor a nonexistent id matches.
-        let patch = ApiViewPatch::new(Some("越权"), None, None).expect("patch");
+        let patch = ApiViewPatch::new(Some("unauthorized"), None, None).expect("patch");
         assert!(repo.update_view(&view.id, "u2", &patch).await.expect("update").is_none());
         assert!(repo.update_view("ghost", "u1", &patch).await.expect("update").is_none());
         let views = repo.list_views("p1", "u1").await.expect("list");
         assert_eq!(views.len(), 1);
-        assert_eq!(views[0].name, "再改名");
+        assert_eq!(views[0].name, "renamed again");
     }
 }

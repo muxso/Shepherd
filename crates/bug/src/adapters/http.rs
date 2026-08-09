@@ -196,7 +196,7 @@ struct ListBugsQuery {
 
 #[utoipa::path(
     get, path = "/bug", tag = "bug",
-    params(("projectId" = String, Query, description = "项目 ID")),
+    params(("projectId" = String, Query, description = "Project ID")),
     responses((status = 200, body = [BugResponse]), (status = 403)),
     security(("bearer" = []))
 )]
@@ -515,7 +515,7 @@ async fn list_bugs_by_plan(
 }
 
 #[derive(OpenApi)]
-#[openapi(paths(create_bug, list_bugs, update_bug, change_status, set_custom_fields, list_followers, follow_bug, unfollow_bug, list_relations, link_relation, unlink_relation, list_bugs_by_plan), components(schemas(CreateBugRequest, UpdateBugRequest, ChangeStatusRequest, SetCustomFieldsRequest, BugResponse, FollowRequest, FollowersResponse, LinkRelationRequest, RelationItem, RelationsResponse)), tags((name = "bug", description = "缺陷管理")))]
+#[openapi(paths(create_bug, list_bugs, update_bug, change_status, set_custom_fields, list_followers, follow_bug, unfollow_bug, list_relations, link_relation, unlink_relation, list_bugs_by_plan), components(schemas(CreateBugRequest, UpdateBugRequest, ChangeStatusRequest, SetCustomFieldsRequest, BugResponse, FollowRequest, FollowersResponse, LinkRelationRequest, RelationItem, RelationsResponse)), tags((name = "bug", description = "Defect management")))]
 struct ApiDoc;
 pub fn openapi() -> utoipa::openapi::OpenApi {
     ApiDoc::openapi()
@@ -750,7 +750,7 @@ mod tests {
             .clone()
             .oneshot(put_req(
                 &format!("/bug/{id}/custom-fields"),
-                r#"{"customFields":{"env":"prod","多选":"a,b"}}"#,
+                r#"{"customFields":{"env":"prod","multi-select":"a,b"}}"#,
                 Some(&t),
             ))
             .await
@@ -758,13 +758,13 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::OK);
         let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.expect("body");
         let v: serde_json::Value = serde_json::from_slice(&bytes).expect("json");
-        assert_eq!(v["customFields"], serde_json::json!({"env": "prod", "多选": "a,b"}));
+        assert_eq!(v["customFields"], serde_json::json!({"env": "prod", "multi-select": "a,b"}));
 
         // List reads back the replaced fields.
         let resp = app.clone().oneshot(get("/bug?projectId=p1", Some(&t))).await.expect("resp");
         let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.expect("body");
         let v: serde_json::Value = serde_json::from_slice(&bytes).expect("json");
-        assert_eq!(v[0]["customFields"], serde_json::json!({"env": "prod", "多选": "a,b"}));
+        assert_eq!(v[0]["customFields"], serde_json::json!({"env": "prod", "multi-select": "a,b"}));
 
         // Blank key → 400; missing bug → 404.
         assert_eq!(

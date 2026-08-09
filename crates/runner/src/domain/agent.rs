@@ -75,9 +75,14 @@ mod tests {
 
     #[test]
     fn validates_and_trims() {
-        let a = NewRunnerAgent::new(" 测试环境 ", "http://10.0.0.5:9100/", Some("t".into()), true)
-            .expect("ok");
-        assert_eq!(a.name, "测试环境");
+        let a = NewRunnerAgent::new(
+            " test environment ",
+            "http://10.0.0.5:9100/",
+            Some("t".into()),
+            true,
+        )
+        .expect("ok");
+        assert_eq!(a.name, "test environment");
         assert_eq!(a.base_url, "http://10.0.0.5:9100");
         assert_eq!(a.token.as_deref(), Some("t"));
     }

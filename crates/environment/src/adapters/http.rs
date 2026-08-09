@@ -228,7 +228,7 @@ async fn delete_environment(
 #[openapi(
     paths(create_environment, list_environments, get_environment, update_environment, delete_environment),
     components(schemas(EnvironmentResponse, EnvironmentBody, HeaderDto)),
-    tags((name = "environment", description = "环境"))
+    tags((name = "environment", description = "Environment"))
 )]
 struct ApiDoc;
 

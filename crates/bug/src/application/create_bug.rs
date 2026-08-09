@@ -71,11 +71,11 @@ mod tests {
         let repo = InMemoryBugRepository::with_default_flow("p1");
         let uc = CreateBugUseCase::new(Arc::new(repo));
         let bug = uc
-            .execute("p1", "登录崩溃", "NEW", Some("alice"), None, None, &BTreeMap::new())
+            .execute("p1", "login crash", "NEW", Some("alice"), None, None, &BTreeMap::new())
             .await
             .expect("ok");
         assert_eq!(bug.status, "NEW");
-        assert_eq!(bug.title, "登录崩溃");
+        assert_eq!(bug.title, "login crash");
         assert_eq!(bug.created_by.as_deref(), Some("alice"));
         // Insert seeds the audit pair from the creator.
         assert_eq!(bug.updated_by.as_deref(), Some("alice"));
@@ -88,7 +88,15 @@ mod tests {
         let repo = InMemoryBugRepository::with_default_flow("p1");
         let uc = CreateBugUseCase::new(Arc::new(repo));
         let bug = uc
-            .execute("p1", "登录崩溃", "NEW", None, Some(" p0 "), Some(" bob "), &BTreeMap::new())
+            .execute(
+                "p1",
+                "login crash",
+                "NEW",
+                None,
+                Some(" p0 "),
+                Some(" bob "),
+                &BTreeMap::new(),
+            )
             .await
             .expect("ok");
         assert_eq!(bug.severity.as_deref(), Some("P0"));
@@ -111,12 +119,12 @@ mod tests {
         let repo = InMemoryBugRepository::with_default_flow("p1");
         let uc = CreateBugUseCase::new(Arc::new(repo));
         let raw = BTreeMap::from([(" severity ".to_string(), "P0".to_string())]);
-        let bug = uc.execute("p1", "登录崩溃", "NEW", None, None, None, &raw).await.expect("ok");
+        let bug = uc.execute("p1", "login crash", "NEW", None, None, None, &raw).await.expect("ok");
         assert_eq!(bug.custom_fields, BTreeMap::from([("severity".to_string(), "P0".to_string())]));
         // Blank key is a validation error.
         let bad = BTreeMap::from([("  ".to_string(), "v".to_string())]);
         assert_eq!(
-            uc.execute("p1", "又崩了", "NEW", None, None, None, &bad).await.unwrap_err(),
+            uc.execute("p1", "crashed again", "NEW", None, None, None, &bad).await.unwrap_err(),
             CreateBugError::Validation(BugError::EmptyCustomFieldKey)
         );
     }

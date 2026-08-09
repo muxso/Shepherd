@@ -226,7 +226,7 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    #[ignore = "需要 DATABASE_URL 指向一个 PostgreSQL 实例"]
+    #[ignore = "requires DATABASE_URL pointing to a PostgreSQL instance"]
     async fn pg_notice_roundtrip() {
         let url = std::env::var("DATABASE_URL").expect("set DATABASE_URL");
         let pool = PgPool::connect(&url).await.expect("connect");
@@ -239,7 +239,7 @@ mod tests {
             receivers: vec!["u1".into(), "u2".into()],
             category: "BUG".into(),
             event_type: "BUG_ASSIGNED".into(),
-            title: "登录页崩溃".into(),
+            title: "login page crash".into(),
             content: String::new(),
             resource_type: "BUG".into(),
             resource_id: "b1".into(),

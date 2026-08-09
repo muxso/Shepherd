@@ -10,15 +10,17 @@ pub fn run_init(dir: String, force: bool) -> R<()> {
     for (rel, contents) in scaffold_files() {
         let path = root.join(rel);
         if path.exists() && !force {
-            return Err(format!("已存在 {}(加 --force 覆盖)", path.display()).into());
+            return Err(
+                format!("{} already exists (use --force to overwrite)", path.display()).into()
+            );
         }
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
         std::fs::write(&path, contents)?;
-        println!("写入 {}", path.display());
+        println!("wrote {}", path.display());
     }
-    println!("下一步:编辑 requirements/example.md,然后 `shepherd login` 并按其中命令录入需求。");
+    println!("Next: edit requirements/example.md, then run `shepherd login` and follow the commands in it to enter requirements.");
     Ok(())
 }
 
@@ -34,10 +36,10 @@ pub fn run_login(url: String, api_key: Option<String>) -> R<()> {
     let healthy = Client::new(cfg.clone())?.get("/healthz", false).is_ok();
     cfg.save()?;
     println!(
-        " 已保存 {} 的 API key → {} 服务{}",
+        " saved API key for {} → {}; server is {}",
         cfg.url,
         config_path().display(),
-        if healthy { "可达" } else { "暂不可达" }
+        if healthy { "reachable" } else { "not reachable yet" }
     );
     Ok(())
 }
@@ -46,7 +48,7 @@ pub fn run_logout() -> R<()> {
     let mut cfg = Config::load();
     cfg.api_key.clear();
     cfg.save()?;
-    println!(" 已清除本地 API key(要让 key 失效,请在服务端 API KEY 管理里吊销)");
+    println!(" cleared local API key (to invalidate the key itself, revoke it in the server-side API KEY management)");
     Ok(())
 }
 
@@ -75,7 +77,7 @@ pub fn run_dispatch(
     let c = Client::new(cfg)?;
     let mut instr = instructions;
     if !skills.is_empty() {
-        let project = project.ok_or("--skills 需配合 --project")?;
+        let project = project.ok_or("--skills requires --project")?;
         let comp =
             c.post("/skill/compose", json!({"projectId": project, "skillIds": skills}), true)?;
         let composed = comp["instructions"].as_str().unwrap_or("").to_string();

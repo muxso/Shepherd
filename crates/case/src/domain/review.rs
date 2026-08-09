@@ -184,7 +184,7 @@ mod tests {
 
     #[test]
     fn un_pass_with_content_ok_and_pass_needs_no_content() {
-        assert!(Verdict::new("u1", UnPass, Some("理由")).is_ok());
+        assert!(Verdict::new("u1", UnPass, Some("reason")).is_ok());
         assert!(Verdict::new("u1", Pass, None).is_ok());
     }
 

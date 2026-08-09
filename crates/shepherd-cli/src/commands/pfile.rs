@@ -84,32 +84,37 @@ pub fn run(cmd: PfileCmd) -> R<()> {
                 body["moduleId"] = json!(m);
             }
             let v = c.post("/api/project-file", body, true)?;
-            println!(" 已上传 {}", v.get("id").and_then(|x| x.as_str()).unwrap_or(""));
+            println!(" uploaded {}", v.get("id").and_then(|x| x.as_str()).unwrap_or(""));
             pretty(&v);
         }
         PfileCmd::Delete { id } => {
             c.delete(&format!("/api/project-file/{id}"), true)?;
-            println!(" 已删除文件 {id}");
+            println!(" deleted file {id}");
         }
         PfileCmd::Move { id, module_id, unset } => {
             let mid = if unset { None } else { module_id };
             c.put(&format!("/api/project-file/{id}/module"), json!({ "moduleId": mid }), true)?;
-            println!(" 文件 {id} 已{}", if mid.is_some() { "移入模块" } else { "移出到未归类" });
+            println!(
+                " file {id} {}",
+                if mid.is_some() { "moved into module" } else { "moved out to uncategorized" }
+            );
         }
         PfileCmd::Download { id, out } => {
             let v = c.get(&format!("/api/project-file/{id}/download"), true)?;
-            let b64 =
-                v.get("contentBase64").and_then(|x| x.as_str()).ok_or("响应缺少 contentBase64")?;
+            let b64 = v
+                .get("contentBase64")
+                .and_then(|x| x.as_str())
+                .ok_or("response is missing contentBase64")?;
             let bytes = base64::engine::general_purpose::STANDARD
                 .decode(b64.trim())
-                .map_err(|e| format!("base64 解码失败:{e}"))?;
+                .map_err(|e| format!("base64 decode failed: {e}"))?;
             std::fs::write(&out, &bytes)?;
-            println!(" 已下载 {} 字节 → {out}", bytes.len());
+            println!(" downloaded {} bytes → {out}", bytes.len());
         }
         PfileCmd::Raw { id, out } => {
             let bytes = c.get_bytes(&format!("/api/project-file/{id}/raw"), true)?;
             std::fs::write(&out, &bytes)?;
-            println!(" 已写出 {out} ({} 字节)", bytes.len());
+            println!(" wrote {out} ({} bytes)", bytes.len());
         }
     };
     Ok(())

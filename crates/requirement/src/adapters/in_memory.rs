@@ -217,7 +217,7 @@ mod tests {
     #[tokio::test]
     async fn insert_get_save_roundtrip() {
         let repo = InMemoryRequirementRepository::new();
-        let nu = NewRequirement::new("p1", "登录", "d", &["c1".to_string()]).expect("v");
+        let nu = NewRequirement::new("p1", "login", "d", &["c1".to_string()]).expect("v");
         let mut r = repo.insert(&nu).await.expect("insert");
         assert_eq!(r.id, "requirement-1");
 
@@ -291,7 +291,7 @@ mod tests {
         use crate::domain::{Stage, StageRow, StageStatus};
         let repo = InMemoryRequirementRepository::new();
         let r = repo
-            .insert(&NewRequirement::new("p1", "登录", "d", &[]).expect("v"))
+            .insert(&NewRequirement::new("p1", "login", "d", &[]).expect("v"))
             .await
             .expect("insert");
 
@@ -319,10 +319,10 @@ mod tests {
     #[tokio::test]
     async fn find_active_ignores_soft_deleted() {
         let repo = InMemoryRequirementRepository::new();
-        let nu = NewRequirement::new("p1", "登录", "d", &[]).expect("v");
+        let nu = NewRequirement::new("p1", "login", "d", &[]).expect("v");
         let r = repo.insert(&nu).await.expect("insert");
-        assert!(repo.find_active_by_title("p1", "登录").await.expect("q").is_some());
+        assert!(repo.find_active_by_title("p1", "login").await.expect("q").is_some());
         repo.soft_delete(&r.id);
-        assert!(repo.find_active_by_title("p1", "登录").await.expect("q").is_none());
+        assert!(repo.find_active_by_title("p1", "login").await.expect("q").is_none());
     }
 }

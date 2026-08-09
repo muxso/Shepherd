@@ -163,9 +163,9 @@ async fn run_decomposition(
 
     if total > 0 && verified == total {
         if let Err(e) = st.requirements.deliver(&final_dec.requirement_id, "orchestrator").await {
-            tracing::warn!(requirement = %final_dec.requirement_id, "自动标记交付失败(可能未定基线): {e:?}");
+            tracing::warn!(requirement = %final_dec.requirement_id, "failed to auto-mark as delivered (baseline may not be set): {e:?}");
         } else {
-            tracing::info!(requirement = %final_dec.requirement_id, "需求已自动标记交付(DELIVERED)");
+            tracing::info!(requirement = %final_dec.requirement_id, "requirement auto-marked as delivered (DELIVERED)");
         }
     }
 
@@ -356,7 +356,7 @@ async fn reassign_handler(
         RunBody, RunResponse, GraphResponse, GraphNodeDto, GraphEdgeDto, SummaryResponse,
         ReassignBody, ReassignResponse
     )),
-    tags((name = "task", description = "任务编排"))
+    tags((name = "task", description = "Task orchestration"))
 )]
 struct ApiDoc;
 

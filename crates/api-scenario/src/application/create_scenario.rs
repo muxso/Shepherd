@@ -43,8 +43,8 @@ mod tests {
     async fn creates_scenario_with_empty_steps() {
         let repo = InMemoryApiScenarioRepository::new();
         let uc = CreateScenarioUseCase::new(Arc::new(repo));
-        let s = uc.execute("p1", "下单链路", None).await.expect("ok");
-        assert_eq!(s.name, "下单链路");
+        let s = uc.execute("p1", "order placement flow", None).await.expect("ok");
+        assert_eq!(s.name, "order placement flow");
         assert_eq!(s.project_id, "p1");
         assert!(s.steps.is_empty());
     }

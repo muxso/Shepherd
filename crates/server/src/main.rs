@@ -203,7 +203,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // (keeps local dev working) but log a warning that is hard to miss.
     if matches!(cfg.admin_pw.as_str(), "admin" | "change-me" | "s3cret") {
         tracing::warn!(
-            "SHEPHERD_ADMIN_PASSWORD 使用弱默认值({:?});生产部署必须改为强随机口令",
+            "SHEPHERD_ADMIN_PASSWORD uses a weak default ({:?}); production deployments must switch to a strong random password",
             cfg.admin_pw
         );
     }
@@ -500,7 +500,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 };
                 let n = q.reclaim_dead(&live, std::time::Duration::from_millis(grace_ms)).await;
                 if n > 0 {
-                    tracing::warn!(requeued = n, "fleet reaper: 重投死 runtime 任务");
+                    tracing::warn!(requeued = n, "fleet reaper: requeued dead runtime tasks");
                 }
             }
         });
@@ -601,11 +601,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             Arc::new(HttpTaskDispatcher::new(url.clone()))
         }
         _ if cfg.runner_noop => {
-            tracing::warn!("api runner: Noop(SHEPHERD_RUNNER=noop)—— 批量运行不会产出结果");
+            tracing::warn!(
+                "api runner: Noop (SHEPHERD_RUNNER=noop) — batch runs will produce no results"
+            );
             Arc::new(api_test::adapters::NoopDispatcher)
         }
         _ => {
-            tracing::info!("api runner: 本地原生 Rust runner(默认)");
+            tracing::info!("api runner: local native Rust runner (default)");
             Arc::new(
                 LocalRunnerDispatcher::new(
                     Arc::new(PgCaseSpecSource::new(pool.clone())),

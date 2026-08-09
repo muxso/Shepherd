@@ -160,12 +160,12 @@ mod tests {
         let create = CreateResourcePoolUseCase::new(admin.clone());
         let list = ListResourcePoolsUseCase::new(admin);
 
-        let p = create.execute(draft("  本地池 ")).await.expect("created");
+        let p = create.execute(draft("  local pool ")).await.expect("created");
         assert_eq!(p.id, "p1");
-        assert_eq!(p.name, "本地池");
+        assert_eq!(p.name, "local pool");
         assert!(p.enabled);
 
-        create.execute(draft("远端池")).await.expect("created");
+        create.execute(draft("remote pool")).await.expect("created");
         let all = list.execute().await.expect("listed");
         assert_eq!(all.len(), 2);
     }
@@ -185,13 +185,13 @@ mod tests {
         let create = CreateResourcePoolUseCase::new(admin.clone());
         let edit = EditResourcePoolUseCase::new(admin.clone());
 
-        let p = create.execute(draft("池")).await.expect("created");
+        let p = create.execute(draft("pool")).await.expect("created");
         let updated = edit
-            .update(&p.id, ResourcePoolDraft { enabled: false, ..draft("池改名") })
+            .update(&p.id, ResourcePoolDraft { enabled: false, ..draft("pool renamed") })
             .await
             .expect("ok")
             .expect("found");
-        assert_eq!(updated.name, "池改名");
+        assert_eq!(updated.name, "pool renamed");
         assert!(!updated.enabled);
 
         assert!(edit.update("nope", draft("x")).await.expect("ok").is_none());

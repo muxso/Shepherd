@@ -90,7 +90,7 @@ async fn require_project_member(
 }
 
 /// Map a RagError to an HTTP response. A missing/blank provider config is a precondition-not-met, not
-/// a server fault → 503 with the actionable message (so the UI can say "先去系统参数配置 RAG"); genuine
+/// a server fault → 503 with the actionable message (so the UI can say "configure RAG in system settings"); genuine
 /// failures stay 500.
 fn rag_error_response(e: RagError) -> Response {
     match e {
@@ -100,7 +100,7 @@ fn rag_error_response(e: RagError) -> Response {
 }
 
 /// Machine-readable code for an SSE `error` event so the Q&A UI can give a specific hint (e.g. a
-/// "去配置" prompt for an unconfigured provider) instead of just echoing the raw message.
+/// "go configure" prompt for an unconfigured provider) instead of just echoing the raw message.
 fn rag_error_code(e: &RagError) -> &'static str {
     match e {
         RagError::Config(_) => "not_configured",

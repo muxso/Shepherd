@@ -33,7 +33,7 @@ pub fn run(cmd: McpCmd) -> R<()> {
         McpCmd::Call { method, params_json, id } => {
             let params: Value = match params_json {
                 Some(p) => serde_json::from_str(&p)
-                    .map_err(|e| format!("--params-json 不是合法 JSON: {e}"))?,
+                    .map_err(|e| format!("--params-json is not valid JSON: {e}"))?,
                 None => Value::Null,
             };
             let mut body = json!({ "jsonrpc": "2.0", "method": method });
@@ -53,7 +53,7 @@ pub fn run(cmd: McpCmd) -> R<()> {
         McpCmd::ToolsCall { name, args_json } => {
             let args: Value = match args_json {
                 Some(a) => serde_json::from_str(&a)
-                    .map_err(|e| format!("--args-json 不是合法 JSON: {e}"))?,
+                    .map_err(|e| format!("--args-json is not valid JSON: {e}"))?,
                 None => json!({}),
             };
             pretty(&c.post(

@@ -178,7 +178,7 @@ async fn delete_comment(
 }
 
 #[derive(OpenApi)]
-#[openapi(paths(add_comment, list_comments, delete_comment), components(schemas(AddCommentRequest, CommentResponse)), tags((name = "comment", description = "通用评论")))]
+#[openapi(paths(add_comment, list_comments, delete_comment), components(schemas(AddCommentRequest, CommentResponse)), tags((name = "comment", description = "Generic comments")))]
 struct ApiDoc;
 pub fn openapi() -> utoipa::openapi::OpenApi {
     ApiDoc::openapi()
@@ -237,7 +237,7 @@ mod tests {
             .clone()
             .oneshot(post(
                 "/comment",
-                r#"{"targetType":"BUG","targetId":"b1","content":"复现步骤"}"#,
+                r#"{"targetType":"BUG","targetId":"b1","content":"reproduction steps"}"#,
                 Some(t),
             ))
             .await
@@ -259,7 +259,7 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::OK);
         let v = json(resp).await;
         assert_eq!(v.as_array().expect("arr").len(), 1);
-        assert_eq!(v[0]["content"], "复现步骤");
+        assert_eq!(v[0]["content"], "reproduction steps");
     }
 
     #[tokio::test]

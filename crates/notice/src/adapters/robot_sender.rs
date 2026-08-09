@@ -1,5 +1,5 @@
 //! Webhook robot sender: formats a text message per platform and posts it.
-//! DingTalk supports the optional "加签" mode: HMAC-SHA256 over "{ts}\n{secret}"
+//! DingTalk supports the optional "signed" mode: HMAC-SHA256 over "{ts}\n{secret}"
 //! keyed by the secret, base64 then URL-encoded, appended as timestamp+sign.
 
 use std::time::Duration;

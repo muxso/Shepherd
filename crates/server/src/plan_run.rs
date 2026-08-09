@@ -148,7 +148,9 @@ impl PlanRunner {
                         case_id,
                         CaseStatus::Block,
                         Some(CaseResult {
-                            body: Some("用例规格未找到(非 ms_api_case / 非场景)".into()),
+                            body: Some(
+                                "case spec not found (neither ms_api_case nor a scenario)".into(),
+                            ),
                             ..Default::default()
                         }),
                     )
@@ -157,9 +159,9 @@ impl PlanRunner {
             }
             e => {
                 let msg = match e {
-                    RunError::CycleOrDepth => "场景引用成环或过深",
-                    RunError::NoSteps => "场景无可执行步骤",
-                    _ => "场景执行失败",
+                    RunError::CycleOrDepth => "scenario reference is cyclic or too deep",
+                    RunError::NoSteps => "scenario has no executable steps",
+                    _ => "scenario execution failed",
                 };
                 let _ = self
                     .cases
@@ -506,7 +508,7 @@ async fn run_plan(
     match st.plan_runner.run(&id, body.environment_id.as_deref(), body.pool_id.as_deref()).await {
         Ok(s) => {
             // Manual runs snapshot into the run history like scheduled runs do,
-            // so the 执行历史 tab reflects them.
+            // so the execution history tab reflects them.
             let stats =
                 PlanStatisticsUseCase::new(Arc::new(PgPlanRepository::new(st.pool.clone())));
             let run_uc =
@@ -601,7 +603,7 @@ async fn run_plan_case(
 }
 
 #[derive(OpenApi)]
-#[openapi(paths(run_plan, run_plan_case), components(schemas(RunPlanResponse, RunPlanBody, RunPlanCaseResponse)), tags((name = "test-plan", description = "测试计划")))]
+#[openapi(paths(run_plan, run_plan_case), components(schemas(RunPlanResponse, RunPlanBody, RunPlanCaseResponse)), tags((name = "test-plan", description = "Test plan")))]
 struct ApiDoc;
 
 pub fn openapi() -> utoipa::openapi::OpenApi {

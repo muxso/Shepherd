@@ -496,7 +496,7 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    #[ignore = "需要 DATABASE_URL 指向一个 PostgreSQL 实例"]
+    #[ignore = "requires DATABASE_URL pointing to a PostgreSQL instance"]
     async fn pg_scenario_steps_roundtrip() {
         let url = std::env::var("DATABASE_URL").expect("set DATABASE_URL");
         let pool = PgPool::connect(&url).await.expect("connect");
@@ -509,7 +509,7 @@ mod tests {
         let repo = PgApiScenarioRepository::new(pool.clone());
 
         let scenario = repo
-            .insert_scenario(&NewApiScenario::new("p1", "下单链路").expect("valid"))
+            .insert_scenario(&NewApiScenario::new("p1", "order placement flow").expect("valid"))
             .await
             .expect("insert");
         assert_eq!(scenario.status, ScenarioStatus::Draft);
@@ -566,7 +566,7 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "需要 DATABASE_URL 指向一个 PostgreSQL 实例"]
+    #[ignore = "requires DATABASE_URL pointing to a PostgreSQL instance"]
     async fn pg_execution_roundtrip() {
         let url = std::env::var("DATABASE_URL").expect("set DATABASE_URL");
         let pool = PgPool::connect(&url).await.expect("connect");

@@ -49,7 +49,7 @@ mod tests {
 
     async fn seed(repo: Arc<InMemoryApiDefinitionRepository>) -> String {
         let uc = CreateApiDefinitionUseCase::new(repo);
-        uc.execute("p1", "登录", ApiProtocol::Http, "get", "/login", "u1").await.expect("seed").id
+        uc.execute("p1", "login", ApiProtocol::Http, "get", "/login", "u1").await.expect("seed").id
     }
 
     #[tokio::test]
@@ -57,9 +57,11 @@ mod tests {
         let repo = Arc::new(InMemoryApiDefinitionRepository::new());
         let id = seed(repo.clone()).await;
         let uc = UpdateApiDefinitionUseCase::new(repo);
-        let d =
-            uc.execute(&id, " 登录v2 ", ApiProtocol::Http, "post", "/v2/login").await.expect("ok");
-        assert_eq!(d.name, "登录v2");
+        let d = uc
+            .execute(&id, " login v2 ", ApiProtocol::Http, "post", "/v2/login")
+            .await
+            .expect("ok");
+        assert_eq!(d.name, "login v2");
         assert_eq!(d.method, "POST");
         assert_eq!(d.path, "/v2/login");
         assert_eq!(d.project_id, "p1");

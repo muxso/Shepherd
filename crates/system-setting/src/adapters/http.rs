@@ -1140,7 +1140,7 @@ async fn revoke_role(
         create_role, list_roles, get_role, update_role, delete_role, grant_role, revoke_role
     ),
     components(schemas(LoginRequest, LoginResponse, MeResponse, ChangePasswordBody, CreateUserRequest, UserResponse, UserPage, UpdateUserBody, OrgResponse, OrgBody, OrgPage, RoleResponse, RoleBody, RolePage, GrantBody)),
-    tags((name = "auth", description = "鉴权"), (name = "user", description = "用户管理"), (name = "organization", description = "组织"), (name = "role", description = "角色 / 授权"))
+    tags((name = "auth", description = "Authentication"), (name = "user", description = "User management"), (name = "organization", description = "Organization"), (name = "role", description = "Role / authorization"))
 )]
 struct ApiDoc;
 
@@ -1160,7 +1160,7 @@ pub fn openapi() -> utoipa::openapi::OpenApi {
 #[openapi(
     paths(oidc_list_providers, oidc_get_provider, oidc_create_provider, oidc_update_provider, oidc_delete_provider),
     components(schemas(OidcProviderView, OidcProviderCreate, OidcProviderUpdate)),
-    tags((name = "oidc", description = "OIDC 身份提供方"))
+    tags((name = "oidc", description = "OIDC identity provider"))
 )]
 struct OidcApiDoc;
 

@@ -118,7 +118,7 @@ mod tests {
         run(&cwd, &["commit", "-q", "-m", "init"]).await;
         assert!(snapshot(&cwd, "att-1", "t").await.is_none());
         std::fs::write(dir.join("a.txt"), "v2 changed").expect("w");
-        let snap = snapshot(&cwd, "att-abc-def", "实现登录").await.expect("snapshot");
+        let snap = snapshot(&cwd, "att-abc-def", "implement login").await.expect("snapshot");
         assert!(snap.reference.starts_with("git://shepherd/deliver/att@"));
         let branch = git(&cwd, &["rev-parse", "shepherd/deliver/att"]).await;
         assert!(branch.is_some(), "branch created");
@@ -141,7 +141,7 @@ mod tests {
 
         let wt = add_worktree(&base, "att-xyz-9", None).await.expect("worktree");
         std::fs::write(std::path::Path::new(&wt).join("f.txt"), "agent edit").expect("w");
-        let snap = snapshot(&wt, "att-xyz-9", "实现").await.expect("snapshot");
+        let snap = snapshot(&wt, "att-xyz-9", "implement").await.expect("snapshot");
         assert!(snap.reference.starts_with("git://shepherd/deliver/att@"));
         assert_eq!(std::fs::read_to_string(dir.join("f.txt")).unwrap(), "base");
         assert!(git(&base, &["rev-parse", "shepherd/deliver/att"]).await.is_some());

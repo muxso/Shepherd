@@ -531,7 +531,7 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    #[ignore = "需要 DATABASE_URL 指向一个 PostgreSQL 实例"]
+    #[ignore = "requires DATABASE_URL pointing to a PostgreSQL instance"]
     async fn pg_versioning_baseline_and_soft_delete() {
         let url = std::env::var("DATABASE_URL").expect("set DATABASE_URL");
         let pool = PgPool::connect(&url).await.expect("connect");
@@ -542,25 +542,33 @@ mod tests {
             .expect("truncate");
 
         let repo = PgRequirementRepository::new(pool.clone());
-        let nu = NewRequirement::new("p1", "登录", "用邮箱登录", &["正确凭证登录".to_string()])
-            .expect("valid");
+        let nu = NewRequirement::new(
+            "p1",
+            "login",
+            "log in with email",
+            &["login with correct credentials".to_string()],
+        )
+        .expect("valid");
 
         let r = repo.insert(&nu).await.expect("insert");
         let mut got = repo.get(&r.id).await.expect("get").expect("some");
         assert_eq!(got.latest_version(), 1);
         assert_eq!(got.baseline_version, 1);
-        assert_eq!(got.baseline().acceptance_criteria[0].text, "正确凭证登录");
+        assert_eq!(got.baseline().acceptance_criteria[0].text, "login with correct credentials");
         // Default priority/type are persisted on insert.
         assert_eq!(got.priority, RequirementPriority::P2);
         assert_eq!(got.req_type, RequirementType::Feature);
 
-        got.revise("v2 描述", vec![AcceptanceCriterion { text: "新增标准".into() }])
+        got.revise("v2 description", vec![AcceptanceCriterion { text: "new criterion".into() }])
             .expect("revise");
         repo.save(&got).await.expect("save");
         let reloaded = repo.get(&r.id).await.expect("get").expect("some");
         assert_eq!(reloaded.latest_version(), 2);
         assert_eq!(reloaded.baseline_version, 1);
-        assert_eq!(reloaded.version(1).expect("v1").acceptance_criteria[0].text, "正确凭证登录");
+        assert_eq!(
+            reloaded.version(1).expect("v1").acceptance_criteria[0].text,
+            "login with correct credentials"
+        );
 
         let mut r2 = reloaded;
         r2.set_baseline(2).expect("baseline");
@@ -572,15 +580,15 @@ mod tests {
         assert_eq!(after.priority, RequirementPriority::P0);
         assert_eq!(after.req_type, RequirementType::Bugfix);
 
-        assert!(repo.find_active_by_title("p1", "登录").await.expect("q").is_some());
+        assert!(repo.find_active_by_title("p1", "login").await.expect("q").is_some());
         r2.soft_delete();
         repo.save(&r2).await.expect("save");
-        assert!(repo.find_active_by_title("p1", "登录").await.expect("q").is_none());
+        assert!(repo.find_active_by_title("p1", "login").await.expect("q").is_none());
         assert!(repo.insert(&nu).await.is_ok());
     }
 
     #[tokio::test]
-    #[ignore = "需要 DATABASE_URL 指向一个 PostgreSQL 实例"]
+    #[ignore = "requires DATABASE_URL pointing to a PostgreSQL instance"]
     async fn pg_lifecycle_fields_children_and_change_log_roundtrip() {
         let url = std::env::var("DATABASE_URL").expect("set DATABASE_URL");
         let pool = PgPool::connect(&url).await.expect("connect");
@@ -592,18 +600,18 @@ mod tests {
 
         let repo = PgRequirementRepository::new(pool.clone());
         let parent = repo
-            .insert(&NewRequirement::new("p1", "父需求", "d", &[]).expect("valid"))
+            .insert(&NewRequirement::new("p1", "parent requirement", "d", &[]).expect("valid"))
             .await
             .expect("insert parent");
         let cf = |pairs: &[(&str, &str)]| -> std::collections::BTreeMap<String, String> {
             pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()
         };
-        let child_new = NewRequirement::new("p1", "子需求", "d", &[])
+        let child_new = NewRequirement::new("p1", "child requirement", "d", &[])
             .expect("valid")
             .with_tags(vec!["api".to_string(), "web".to_string()])
             .with_due_date(Some("2026-12-31".to_string()))
             .with_parent(Some(parent.id.clone()))
-            .with_custom_fields(cf(&[("owner", "alice"), ("多选", "a,b,c")]))
+            .with_custom_fields(cf(&[("owner", "alice"), ("multi-select", "a,b,c")]))
             .with_module("mod-1");
         let child = repo.insert(&child_new).await.expect("insert child");
         assert!(child.created_at_ms > 0);
@@ -616,7 +624,7 @@ mod tests {
         assert_eq!(got.parent_id.as_deref(), Some(parent.id.as_str()));
         assert_eq!(got.dev_status, WorkStatus::NotStarted);
         // Custom fields round-trip; the parent never wrote any, so it reads an empty map.
-        assert_eq!(got.custom_fields, cf(&[("owner", "alice"), ("多选", "a,b,c")]));
+        assert_eq!(got.custom_fields, cf(&[("owner", "alice"), ("multi-select", "a,b,c")]));
         assert!(parent.custom_fields.is_empty());
         // Module id round-trips; no module defaults to empty string (unfiled).
         assert_eq!(got.module_id, "mod-1");
@@ -671,7 +679,7 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "需要 DATABASE_URL 指向一个 PostgreSQL 实例"]
+    #[ignore = "requires DATABASE_URL pointing to a PostgreSQL instance"]
     async fn pg_stage_upsert_roundtrip_and_backfill_from_old_shape_row() {
         let url = std::env::var("DATABASE_URL").expect("set DATABASE_URL");
         let pool = PgPool::connect(&url).await.expect("connect");
@@ -685,7 +693,7 @@ mod tests {
 
         // —— upsert/read-back ——: a requirement with no stage rows reads back 7 PENDING defaults.
         let r = repo
-            .insert(&NewRequirement::new("p1", "阶段需求", "d", &[]).expect("valid"))
+            .insert(&NewRequirement::new("p1", "staged requirement", "d", &[]).expect("valid"))
             .await
             .expect("insert");
         let rows = repo.stages(&r.id).await.expect("stages");
@@ -712,7 +720,7 @@ mod tests {
             "INSERT INTO ms_requirement \
              (project_id, title, status, dev_status, test_status, dev_started_at, dev_finished_at, \
               test_started_at, test_finished_at) \
-             VALUES ('p1', '旧需求', 'BASELINED', 'IN_PROGRESS', 'DONE', \
+             VALUES ('p1', 'legacy requirement', 'BASELINED', 'IN_PROGRESS', 'DONE', \
                      to_timestamp(1700000000), NULL, to_timestamp(1700000100), to_timestamp(1700000200)) \
              RETURNING id, (extract(epoch from created_at) * 1000)::bigint AS created_at_ms",
         )
@@ -758,7 +766,7 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "需要 DATABASE_URL 指向一个 PostgreSQL 实例"]
+    #[ignore = "requires DATABASE_URL pointing to a PostgreSQL instance"]
     async fn pg_list_active_batch_assembly_groups_versions_and_stages() {
         let url = std::env::var("DATABASE_URL").expect("set DATABASE_URL");
         let pool = PgPool::connect(&url).await.expect("connect");
@@ -775,16 +783,16 @@ mod tests {
         for i in 1..=3 {
             let nu = NewRequirement::new(
                 "p1",
-                &format!("批量需求{i}"),
+                &format!("batch requirement {i}"),
                 &format!("r{i} v1"),
-                &[format!("r{i} 标准1")],
+                &[format!("r{i} criterion 1")],
             )
             .expect("valid");
             let r = repo.insert(&nu).await.expect("insert");
             let mut got = repo.get(&r.id).await.expect("get").expect("some");
             got.revise(
                 &format!("r{i} v2"),
-                vec![AcceptanceCriterion { text: format!("r{i} 标准2") }],
+                vec![AcceptanceCriterion { text: format!("r{i} criterion 2") }],
             )
             .expect("revise");
             repo.save(&got).await.expect("save");
@@ -813,10 +821,10 @@ mod tests {
             assert_eq!(r.versions.len(), 2, "requirement {n} versions");
             assert_eq!(r.versions[0].version, 1);
             assert_eq!(r.versions[0].description, format!("r{n} v1"));
-            assert_eq!(r.versions[0].acceptance_criteria[0].text, format!("r{n} 标准1"));
+            assert_eq!(r.versions[0].acceptance_criteria[0].text, format!("r{n} criterion 1"));
             assert_eq!(r.versions[1].version, 2);
             assert_eq!(r.versions[1].description, format!("r{n} v2"));
-            assert_eq!(r.versions[1].acceptance_criteria[0].text, format!("r{n} 标准2"));
+            assert_eq!(r.versions[1].acceptance_criteria[0].text, format!("r{n} criterion 2"));
             assert_eq!(r.stages.len(), 7);
         }
 

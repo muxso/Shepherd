@@ -78,14 +78,14 @@ mod tests {
     async fn adds_case_and_inherits_project() {
         let repo = Arc::new(InMemoryApiDefinitionRepository::new());
         let def = CreateApiDefinitionUseCase::new(repo.clone())
-            .execute("p1", "登录", ApiProtocol::Http, "POST", "/login", "u1")
+            .execute("p1", "login", ApiProtocol::Http, "POST", "/login", "u1")
             .await
             .expect("ok");
         let uc = AddApiCaseUseCase::new(repo);
         let c = uc
             .execute(
                 &def.id,
-                "用例",
+                "case",
                 "POST",
                 "/login",
                 None,
@@ -106,7 +106,7 @@ mod tests {
         let err = uc
             .execute(
                 "ghost",
-                "用例",
+                "case",
                 "GET",
                 "/x",
                 None,
@@ -130,7 +130,7 @@ mod tests {
         let err = uc
             .execute(
                 &def.id,
-                "用例",
+                "case",
                 "GET",
                 "/x",
                 None,

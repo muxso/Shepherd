@@ -32,7 +32,10 @@ async fn spawn_echo() -> String {
 async fn ws_probe_echo_through_registry() {
     let base = spawn_echo().await;
     let reg = default_registry();
-    assert!(reg.protocols().contains(&"websocket".to_string()), "websocket 插件应在注册表");
+    assert!(
+        reg.protocols().contains(&"websocket".to_string()),
+        "websocket plugin should be in the registry"
+    );
 
     let out = reg
         .dispatch(&ProbeRequest {
@@ -46,7 +49,10 @@ async fn ws_probe_echo_through_registry() {
             ],
         })
         .await;
-    assert!(out.success, "echo 应回原文且断言通过: {out:?}");
+    assert!(
+        out.success,
+        "echo should return the original payload and assertions should pass: {out:?}"
+    );
     assert_eq!(out.output.as_deref(), Some("hello probe"));
 
     let out = reg
@@ -58,6 +64,6 @@ async fn ws_probe_echo_through_registry() {
             assertions: vec![ProbeAssertion::Success],
         })
         .await;
-    assert!(out.success, "握手应成功: {out:?}");
+    assert!(out.success, "handshake should succeed: {out:?}");
     assert_eq!(out.output.as_deref(), Some("connected"));
 }

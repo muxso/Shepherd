@@ -50,18 +50,18 @@ async fn seed_functional_cases(
         Ok(existing) if !existing.is_empty() => return,
         Ok(_) => {}
         Err(e) => {
-            tracing::warn!(requirement = %spec.requirement_id, "拆分后查功能用例覆盖失败: {e:?}");
+            tracing::warn!(requirement = %spec.requirement_id, "failed to query functional case coverage after breakdown: {e:?}");
             return;
         }
     }
     let drafted = match drafter {
         Some(d) => match d.draft(spec, tasks).await {
             Ok(v) => {
-                tracing::info!(requirement = %spec.requirement_id, cases = v.len(), "AI 起草测试用例");
+                tracing::info!(requirement = %spec.requirement_id, cases = v.len(), "AI drafted test cases");
                 v
             }
             Err(e) => {
-                tracing::warn!(requirement = %spec.requirement_id, "AI 起草测试用例失败,回落模板: {e}");
+                tracing::warn!(requirement = %spec.requirement_id, "AI test case drafting failed, falling back to template: {e}");
                 template_cases(spec, tasks)
             }
         },
@@ -76,7 +76,7 @@ async fn seed_functional_cases(
         let new = match NewFunctionalCase::new(
             project_id,
             &c.name,
-            "需求拆分",
+            "requirement breakdown",
             "",
             "",
             std::collections::BTreeMap::new(),
@@ -84,7 +84,7 @@ async fn seed_functional_cases(
         ) {
             Ok(n) => n.with_created_by(Some(created_by)),
             Err(e) => {
-                tracing::warn!(requirement = %spec.requirement_id, name = %c.name, "生成功能用例失败: {e:?}");
+                tracing::warn!(requirement = %spec.requirement_id, name = %c.name, "failed to build functional case: {e:?}");
                 continue;
             }
         };
@@ -95,12 +95,12 @@ async fn seed_functional_cases(
                         .link_requirement_case(&spec.requirement_id, *idx, &created.id, project_id)
                         .await
                     {
-                        tracing::warn!(requirement = %spec.requirement_id, criterion = idx, "关联覆盖失败: {e:?}");
+                        tracing::warn!(requirement = %spec.requirement_id, criterion = idx, "failed to link coverage: {e:?}");
                     }
                 }
             }
             Err(e) => {
-                tracing::warn!(requirement = %spec.requirement_id, name = %c.name, "插入功能用例失败: {e:?}")
+                tracing::warn!(requirement = %spec.requirement_id, name = %c.name, "failed to insert functional case: {e:?}")
             }
         }
     }
@@ -219,7 +219,7 @@ async fn breakdown_handler(
                     Ok(v) => Some(v.id),
                     Err(CreateVerificationError::AlreadyExists) => None,
                     Err(e) => {
-                        tracing::warn!(requirement = %spec.requirement_id, version, "breakdown 后自动开验证失败: {e:?}");
+                        tracing::warn!(requirement = %spec.requirement_id, version, "failed to auto-create verification after breakdown: {e:?}");
                         None
                     }
                 }

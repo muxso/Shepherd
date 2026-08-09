@@ -128,7 +128,7 @@ pub fn run(cmd: OidcAdminCmd) -> R<()> {
         }
         OidcAdminCmd::Delete { provider_key } => {
             c.delete(&format!("/system/oidc/providers/{provider_key}"), true)?;
-            println!(" 已删除 OIDC provider: {provider_key}");
+            println!(" deleted OIDC provider: {provider_key}");
         }
     }
     Ok(())

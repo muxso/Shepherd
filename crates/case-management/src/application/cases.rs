@@ -328,7 +328,7 @@ mod tests {
             project_id: "p1".into(),
             num: 0,
             name: name.into(),
-            module: "登录".into(),
+            module: "login".into(),
             priority: "P2".into(),
             status: "PREPARED".into(),
             tags: Vec::new(),
@@ -346,12 +346,21 @@ mod tests {
         let create = CreateCaseUseCase::new(repo.clone());
         let list = ListCasesUseCase::new(repo);
         create
-            .execute("p1", "登录成功", "登录", "P0", "", BTreeMap::new(), Vec::new(), Some("alice"))
+            .execute(
+                "p1",
+                "login success",
+                "login",
+                "P0",
+                "",
+                BTreeMap::new(),
+                Vec::new(),
+                Some("alice"),
+            )
             .await
             .expect("created");
         let all = list.execute("p1").await.expect("listed");
         assert_eq!(all.len(), 1);
-        assert_eq!(all[0].name, "登录成功");
+        assert_eq!(all[0].name, "login success");
         assert_eq!(all[0].status, "PREPARED");
         assert_eq!(all[0].created_by.as_deref(), Some("alice"));
     }
@@ -359,14 +368,14 @@ mod tests {
     #[test]
     fn cases_from_rows_is_inverse_of_export() {
         let cases = vec![
-            case("c1", "用例1", &[("owner", "alice")]),
-            case("c2", "用例2", &[("sprint", "S1")]),
+            case("c1", "case 1", &[("owner", "alice")]),
+            case("c2", "case 2", &[("sprint", "S1")]),
         ];
         let rows = export_rows(&cases);
         let news = cases_from_rows("p1", &rows);
         assert_eq!(news.len(), 2);
-        assert_eq!(news[0].name, "用例1");
-        assert_eq!(news[0].module, "登录");
+        assert_eq!(news[0].name, "case 1");
+        assert_eq!(news[0].module, "login");
         assert_eq!(news[0].custom_fields.get("owner").map(String::as_str), Some("alice"));
         assert_eq!(news[1].custom_fields.get("sprint").map(String::as_str), Some("S1"));
     }
@@ -375,12 +384,12 @@ mod tests {
     fn cases_from_rows_skips_empty_name() {
         let rows = vec![
             vec!["名称".into(), "模块".into()],
-            vec!["".into(), "登录".into()],
-            vec!["有效用例".into(), "登录".into()],
+            vec!["".into(), "login".into()],
+            vec!["valid case".into(), "login".into()],
         ];
         let news = cases_from_rows("p1", &rows);
         assert_eq!(news.len(), 1);
-        assert_eq!(news[0].name, "有效用例");
+        assert_eq!(news[0].name, "valid case");
     }
 
     #[tokio::test]
@@ -390,8 +399,8 @@ mod tests {
         let list = ListCasesUseCase::new(repo);
         let rows = vec![
             vec!["名称".into(), "优先级".into(), "owner".into()],
-            vec!["登录成功".into(), "P0".into(), "alice".into()],
-            vec!["密码错误".into(), "P1".into(), "bob".into()],
+            vec!["login success".into(), "P0".into(), "alice".into()],
+            vec!["wrong password".into(), "P1".into(), "bob".into()],
         ];
         assert_eq!(import.execute("p1", &rows, Some("importer")).await.expect("import"), 2);
         let all = list.execute("p1").await.expect("list");
@@ -404,12 +413,12 @@ mod tests {
     #[test]
     fn export_rows_unions_custom_fields() {
         let cases = vec![
-            case("c1", "用例1", &[("owner", "alice")]),
-            case("c2", "用例2", &[("sprint", "S1")]),
+            case("c1", "case 1", &[("owner", "alice")]),
+            case("c2", "case 2", &[("sprint", "S1")]),
         ];
         let rows = export_rows(&cases);
         assert_eq!(rows[0], vec!["ID", "名称", "模块", "优先级", "状态", "owner", "sprint"]);
-        assert_eq!(rows[1], vec!["c1", "用例1", "登录", "P2", "PREPARED", "alice", ""]);
-        assert_eq!(rows[2], vec!["c2", "用例2", "登录", "P2", "PREPARED", "", "S1"]);
+        assert_eq!(rows[1], vec!["c1", "case 1", "login", "P2", "PREPARED", "alice", ""]);
+        assert_eq!(rows[2], vec!["c2", "case 2", "login", "P2", "PREPARED", "", "S1"]);
     }
 }

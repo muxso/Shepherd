@@ -58,16 +58,20 @@ pub fn router(
     let sink: Option<Arc<dyn SampleSink>> =
         std::env::var("PERF_SAMPLES_PATH").ok().filter(|p| !p.trim().is_empty()).and_then(|root| {
             if let Err(e) = std::fs::create_dir_all(&root) {
-                tracing::warn!("PERF_SAMPLES_PATH 不可建({root}): {e};样本下沉关闭");
+                tracing::warn!(
+                    "PERF_SAMPLES_PATH cannot be created ({root}): {e}; sample sink disabled"
+                );
                 return None;
             }
             match ParquetObjectStoreSink::new_local(&root, "perf") {
                 Ok(s) => {
-                    tracing::info!("perf 样本下沉已启用 → {root}");
+                    tracing::info!("perf sample sink enabled → {root}");
                     Some(Arc::new(s) as Arc<dyn SampleSink>)
                 }
                 Err(e) => {
-                    tracing::warn!("perf 样本下沉初始化失败: {e:?};仅存聚合");
+                    tracing::warn!(
+                        "perf sample sink initialization failed: {e:?}; storing aggregates only"
+                    );
                     None
                 }
             }
@@ -267,7 +271,7 @@ async fn run_perf(
             Some(s) => match s.write(&id, &samples).await {
                 Ok(key) => Some(key),
                 Err(e) => {
-                    tracing::warn!(report = %id, "perf 样本下沉失败: {e:?}");
+                    tracing::warn!(report = %id, "perf sample sink write failed: {e:?}");
                     None
                 }
             },
@@ -467,7 +471,7 @@ async fn run_scenario_perf(
             Some(s) => match s.write(&id, &samples).await {
                 Ok(key) => Some(key),
                 Err(e) => {
-                    tracing::warn!(report = %id, "perf 场景样本下沉失败: {e:?}");
+                    tracing::warn!(report = %id, "perf scenario sample sink write failed: {e:?}");
                     None
                 }
             },
@@ -487,7 +491,7 @@ async fn run_scenario_perf(
 #[openapi(
     paths(run_perf, run_scenario_perf, get_report),
     components(schemas(RunPerfBody, RunPerfResponse, RunScenarioPerfBody, RunScenarioPerfResponse)),
-    tags((name = "perf", description = "原生压测"))
+    tags((name = "perf", description = "Native load testing"))
 )]
 struct ApiDoc;
 

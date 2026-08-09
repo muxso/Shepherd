@@ -162,7 +162,7 @@ mod tests {
             resp_size: Some(34),
             body: Some("ok".to_string()),
             headers: vec![],
-            assertions: serde_json::json!([{"item": "状态码", "passed": true}]),
+            assertions: serde_json::json!([{"item": "status code", "passed": true}]),
             extractions: serde_json::json!([["token", "abc"]]),
             req_method: Some("GET".to_string()),
             req_url: Some("http://x/healthz".to_string()),

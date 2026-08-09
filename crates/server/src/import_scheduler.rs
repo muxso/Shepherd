@@ -47,15 +47,15 @@ async fn fetch_doc(
         let scheme = if basic_auth { "Basic" } else { "Bearer" };
         req = req.header("Authorization", format!("{scheme} {}", token.trim()));
     }
-    let resp = req.send().await.map_err(|e| format!("请求失败:{e}"))?;
+    let resp = req.send().await.map_err(|e| format!("request failed: {e}"))?;
     let status = resp.status();
     if !status.is_success() {
-        return Err(format!("来源返回 HTTP {}", status.as_u16()));
+        return Err(format!("source returned HTTP {}", status.as_u16()));
     }
-    let text = resp.text().await.map_err(|e| format!("读取响应失败:{e}"))?;
+    let text = resp.text().await.map_err(|e| format!("failed to read response: {e}"))?;
     match format {
         ImportFormat::Jmeter => Ok(Value::String(text)),
-        _ => serde_json::from_str(&text).map_err(|e| format!("来源非法 JSON:{e}")),
+        _ => serde_json::from_str(&text).map_err(|e| format!("invalid JSON from source: {e}")),
     }
 }
 
@@ -84,7 +84,7 @@ async fn run_import(
     let format = ImportFormat::from_source(&s.format);
     let doc = match fetch_doc(client, &s.source_url, &s.auth_token, s.basic_auth, format).await {
         Ok(d) => d,
-        Err(e) => return format!("拉取失败:{e}"),
+        Err(e) => return format!("fetch failed: {e}"),
     };
     match import_uc
         .execute(
@@ -100,9 +100,11 @@ async fn run_import(
         )
         .await
     {
-        Ok(o) => format!("新增 {} / 覆盖 {} / 跳过 {}", o.created.len(), o.updated, o.skipped),
-        Err(ImportError::Parse(_)) => "导入失败:文档无法解析".to_string(),
-        Err(ImportError::Repo(_)) => "导入失败:存储错误".to_string(),
+        Ok(o) => {
+            format!("created {} / updated {} / skipped {}", o.created.len(), o.updated, o.skipped)
+        }
+        Err(ImportError::Parse(_)) => "import failed: document could not be parsed".to_string(),
+        Err(ImportError::Repo(_)) => "import failed: storage error".to_string(),
     }
 }
 
@@ -226,7 +228,9 @@ async fn import_url(
             Json(json!({ "created": o.created.len(), "updated": o.updated, "skipped": o.skipped })),
         )
             .into_response(),
-        Err(ImportError::Parse(_)) => (StatusCode::BAD_REQUEST, "来源文档无法解析").into_response(),
+        Err(ImportError::Parse(_)) => {
+            (StatusCode::BAD_REQUEST, "source document could not be parsed").into_response()
+        }
         Err(ImportError::Repo(_)) => {
             (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response()
         }

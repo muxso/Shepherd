@@ -178,8 +178,8 @@ mod tests {
     #[test]
     fn new_definition_uppercases_method_and_defaults_draft() {
         let d =
-            NewApiDefinition::new("p1", " 登录 ", ApiProtocol::Http, "get", "/login").expect("ok");
-        assert_eq!(d.name, "登录");
+            NewApiDefinition::new("p1", " login ", ApiProtocol::Http, "get", "/login").expect("ok");
+        assert_eq!(d.name, "login");
         assert_eq!(d.method, "GET");
         assert_eq!(d.status, ApiStatus::Draft);
     }
@@ -210,7 +210,7 @@ mod tests {
 
     #[test]
     fn non_http_protocol_ignores_method() {
-        let d = NewApiDefinition::new("p1", "查询", ApiProtocol::Sql, "", "SELECT 1").expect("ok");
+        let d = NewApiDefinition::new("p1", "query", ApiProtocol::Sql, "", "SELECT 1").expect("ok");
         assert_eq!(d.protocol, ApiProtocol::Sql);
         assert_eq!(d.method, "");
     }

@@ -55,7 +55,7 @@ mod tests {
             .execute(
                 "p1",
                 None,
-                "用例",
+                "case",
                 "post",
                 "/login",
                 None,
@@ -77,7 +77,7 @@ mod tests {
             .execute(
                 "p1",
                 Some("def-1"),
-                "用例",
+                "case",
                 "GET",
                 "/x",
                 None,
@@ -97,7 +97,7 @@ mod tests {
             .execute(
                 "p1",
                 None,
-                "用例",
+                "case",
                 "GET",
                 "/x",
                 None,

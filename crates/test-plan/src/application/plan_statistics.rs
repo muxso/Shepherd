@@ -95,7 +95,7 @@ mod tests {
     async fn plan_statistics_from_own_counts() {
         let repo = InMemoryPlanRepository::new();
         let plan =
-            repo.seed(NewPlan::new("proj1", "冒烟", PlanType::Plan, ROOT_GROUP).expect("v")).await;
+            repo.seed(NewPlan::new("proj1", "smoke", PlanType::Plan, ROOT_GROUP).expect("v")).await;
         repo.set_counts(
             &plan.id,
             CaseCounts { pending: 1, success: 2, error: 1, ..Default::default() },
@@ -114,8 +114,9 @@ mod tests {
     #[tokio::test]
     async fn group_aggregates_children_counts_and_status() {
         let repo = InMemoryPlanRepository::new();
-        let group =
-            repo.seed(NewPlan::new("proj1", "组", PlanType::Group, ROOT_GROUP).expect("v")).await;
+        let group = repo
+            .seed(NewPlan::new("proj1", "group", PlanType::Group, ROOT_GROUP).expect("v"))
+            .await;
         let a = repo.seed(NewPlan::new("proj1", "A", PlanType::Plan, &group.id).expect("v")).await;
         let b = repo.seed(NewPlan::new("proj1", "B", PlanType::Plan, &group.id).expect("v")).await;
         repo.set_counts(&a.id, CaseCounts { success: 2, ..Default::default() });
@@ -132,8 +133,9 @@ mod tests {
     #[tokio::test]
     async fn empty_group_is_prepared() {
         let repo = InMemoryPlanRepository::new();
-        let group =
-            repo.seed(NewPlan::new("proj1", "空组", PlanType::Group, ROOT_GROUP).expect("v")).await;
+        let group = repo
+            .seed(NewPlan::new("proj1", "empty group", PlanType::Group, ROOT_GROUP).expect("v"))
+            .await;
         repo.set_threshold(&group.id, 0.5);
         let uc = PlanStatisticsUseCase::new(Arc::new(repo));
         let s = uc.execute(&group.id).await.expect("ok");

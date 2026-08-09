@@ -148,7 +148,7 @@ impl Reviser for ExecutorReviser {
                 reference: deliverable.reference,
                 summary: deliverable.summary,
             }),
-            Ok(_) => Err(OrchError::Gateway("修订未产出交付物".into())),
+            Ok(_) => Err(OrchError::Gateway("revision produced no deliverable".into())),
             Err(e) => Err(OrchError::Gateway(format!("{e:?}"))),
         }
     }
@@ -171,17 +171,17 @@ impl OrchestratorObserver {
         }
         match self.requirements.deliver(&dec.requirement_id, "orchestrator").await {
             Ok(_) => {
-                tracing::info!(requirement = %dec.requirement_id, "全部任务验证 → 需求自动交付(DELIVERED)");
+                tracing::info!(requirement = %dec.requirement_id, "all tasks verified → requirement auto-delivered (DELIVERED)");
                 self.bus.publish(McpEvent {
                     kind: "requirement",
                     status: "delivered".into(),
                     attempt_id: String::new(),
                     task_id: String::new(),
-                    message: format!("需求 {} 已交付", dec.requirement_id),
+                    message: format!("requirement {} delivered", dec.requirement_id),
                 });
             }
             Err(e) => {
-                tracing::warn!(requirement = %dec.requirement_id, "需求自动交付失败(可能未定基线): {e:?}")
+                tracing::warn!(requirement = %dec.requirement_id, "requirement auto-delivery failed (baseline may not be set): {e:?}")
             }
         }
     }
@@ -231,9 +231,9 @@ impl DeliveryObserver for OrchestratorObserver {
         {
             if let Some(v) = outcome.verdict {
                 let msg = if v.passed {
-                    format!("验证门通过: {}", v.reason)
+                    format!("verification gate passed: {}", v.reason)
                 } else {
-                    format!("验证门未通过: {}", v.reason)
+                    format!("verification gate failed: {}", v.reason)
                 };
                 let _ = self.recorder.record_event(&attempt.id, "VERDICT", &msg, None).await;
                 self.bus.publish(McpEvent {

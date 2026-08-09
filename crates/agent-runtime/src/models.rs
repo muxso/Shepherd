@@ -62,12 +62,12 @@ mod tests {
     #[test]
     fn deserializes_claim_and_detects_design() {
         let s = spec(
-            r#"{"attemptId":"a1","title":"登录","description":"做","executor":"CLAUDE_CODE","context":"design","acceptanceCriteria":["c1"]}"#,
+            r#"{"attemptId":"a1","title":"login","description":"do it","executor":"CLAUDE_CODE","context":"design","acceptanceCriteria":["c1"]}"#,
         );
         assert_eq!(s.attempt_id, "a1");
         assert!(s.is_design());
         let p = s.to_prompt();
-        assert!(p.contains("# Task: 登录"));
+        assert!(p.contains("# Task: login"));
         assert!(p.contains("- c1"));
         assert!(!p.contains("Context: design"));
     }

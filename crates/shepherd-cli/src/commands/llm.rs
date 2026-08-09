@@ -74,7 +74,7 @@ pub fn run(cmd: LlmCmd) -> R<()> {
         }
         LlmCmd::Delete { id } => {
             c.delete(&format!("/me/llm-model/{id}"), true)?;
-            println!(" 已删除 LLM model {id}");
+            println!(" deleted LLM model {id}");
         }
     };
     Ok(())

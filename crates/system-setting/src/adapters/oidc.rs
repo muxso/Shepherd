@@ -592,7 +592,7 @@ mod tests {
             )
             .route(
                 "/cgi-bin/user/get",
-                get(|| async { Json(serde_json::json!({"errcode":0,"name":"张三"})) }),
+                get(|| async { Json(serde_json::json!({"errcode":0,"name":"Zhang San"})) }),
             );
         serve(app).await
     }
@@ -639,7 +639,7 @@ mod tests {
         let id = p.exchange("auth-code").await.expect("exchange");
         assert_eq!(id.provider, "wecom");
         assert_eq!(id.open_id, "zhangsan");
-        assert_eq!(id.display_name, "张三");
+        assert_eq!(id.display_name, "Zhang San");
     }
 
     async fn spawn_lark() -> String {

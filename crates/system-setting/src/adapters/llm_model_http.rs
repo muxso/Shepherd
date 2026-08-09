@@ -189,7 +189,7 @@ async fn delete_model(
 #[openapi(
     paths(list_models, create_model, update_model, delete_model),
     components(schemas(LlmModelItem, LlmModelList, CreateLlmModelBody, UpdateLlmModelBody)),
-    tags((name = "llm-model", description = "个人模型设置"))
+    tags((name = "llm-model", description = "Personal model settings"))
 )]
 struct ApiDoc;
 

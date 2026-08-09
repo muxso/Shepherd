@@ -112,7 +112,7 @@ pub fn run(cmd: PlanCmd) -> R<()> {
         PlanCmd::Result { id, case, status, latency_ms, status_code, body, assertions_json } => {
             let assertions: Value = match assertions_json {
                 Some(aj) => serde_json::from_str(&aj)
-                    .map_err(|e| format!("--assertions-json 不是合法 JSON: {e}"))?,
+                    .map_err(|e| format!("--assertions-json is not valid JSON: {e}"))?,
                 None => json!([]),
             };
             pretty(&c.post(

@@ -13,7 +13,7 @@ use crate::client::{JSON_OUTPUT, R};
 use crate::commands::*;
 
 #[derive(Parser)]
-#[command(name = "shepherd", version, about = "Shepherd —— AI 研发监督平台 CLI")]
+#[command(name = "shepherd", version, about = "Shepherd — CLI for the AI R&D supervision platform")]
 struct Cli {
     /// Output raw JSON (default renders human-readable tables / key-values). For scripts/pipes.
     #[arg(long, global = true)]
@@ -353,8 +353,8 @@ mod tests {
         .expect("client");
         let err = c.get("/organization", true).expect_err("no key must fail before any request");
         let msg = err.to_string();
-        assert!(msg.contains("SHEPHERD_API_KEY"), "要点名环境变量: {msg}");
-        assert!(msg.contains("/system/apikey"), "要给签发指引: {msg}");
+        assert!(msg.contains("SHEPHERD_API_KEY"), "must name the environment variable: {msg}");
+        assert!(msg.contains("/system/apikey"), "must give issuance guidance: {msg}");
     }
 
     #[test]

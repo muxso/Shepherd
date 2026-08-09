@@ -196,10 +196,10 @@ pub fn run(cmd: ApidefCmd) -> R<()> {
             let raw = match (url, file) {
                 (Some(u), _) => c.fetch_text(&u)?,
                 (None, Some(f)) => std::fs::read_to_string(&f)?,
-                (None, None) => return Err("需指定 --file 或 --url".into()),
+                (None, None) => return Err("either --file or --url must be specified".into()),
             };
-            let content: Value =
-                serde_json::from_str(&raw).map_err(|e| format!("导入内容不是合法 JSON: {e}"))?;
+            let content: Value = serde_json::from_str(&raw)
+                .map_err(|e| format!("import content is not valid JSON: {e}"))?;
             pretty(&c.post(
                 "/api/definition/import",
                 json!({"projectId": project, "content": content}),
@@ -287,16 +287,16 @@ pub fn run(cmd: ApidefCmd) -> R<()> {
         }
         ApidefCmd::Delete { id } => {
             c.delete(&format!("/api/definition/{id}"), true)?;
-            println!(" 已删除接口定义 {id}");
+            println!(" deleted API definition {id}");
         }
         ApidefCmd::References { id } => {
             pretty(&c.get(&format!("/api/definition/{id}/references"), true)?)
         }
         ApidefCmd::Spec { id, spec_json } => {
             let spec: Value = serde_json::from_str(&spec_json)
-                .map_err(|e| format!("--spec-json 不是合法 JSON: {e}"))?;
+                .map_err(|e| format!("--spec-json is not valid JSON: {e}"))?;
             c.put(&format!("/api/definition/{id}/spec"), json!({ "spec": spec }), true)?;
-            println!(" 已更新接口定义 {id} 的规格");
+            println!(" updated spec of API definition {id}");
         }
         ApidefCmd::Module { id, module_id, unset } => {
             let mid = if unset { None } else { module_id };
@@ -306,8 +306,8 @@ pub fn run(cmd: ApidefCmd) -> R<()> {
                 true,
             )?;
             println!(
-                " 接口定义 {id} 已{}",
-                if mid.is_some() { "移入模块" } else { "移出到未归类" }
+                " API definition {id} {}",
+                if mid.is_some() { "moved into module" } else { "moved out to uncategorized" }
             );
         }
         ApidefCmd::Status { id, status } => {
@@ -316,7 +316,7 @@ pub fn run(cmd: ApidefCmd) -> R<()> {
                 json!({ "status": status }),
                 true,
             )?;
-            println!(" 已设置接口定义 {id} 状态为 {status}");
+            println!(" set API definition {id} status to {status}");
         }
         ApidefCmd::Changes { id } => {
             pretty(&c.get(&format!("/api/definition/{id}/changes"), true)?)

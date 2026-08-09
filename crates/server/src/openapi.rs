@@ -6,9 +6,9 @@ use utoipa::{Modify, OpenApi};
 
 #[derive(OpenApi)]
 #[openapi(
-    info(title = "Shepherd API", version = env!("CARGO_PKG_VERSION"), description = "AI 研发监督平台 REST API"),
+    info(title = "Shepherd API", version = env!("CARGO_PKG_VERSION"), description = "Shepherd AI R&D supervision platform REST API"),
     modifiers(&BearerAddon),
-    tags((name = "auth", description = "鉴权"))
+    tags((name = "auth", description = "Authentication"))
 )]
 struct Base;
 

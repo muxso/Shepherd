@@ -119,13 +119,13 @@ mod tests {
     #[tokio::test]
     async fn full_lifecycle_with_revision() {
         let s = svc();
-        let p = s.create("req-1", "登录改造").await.expect("create");
+        let p = s.create("req-1", "login revamp").await.expect("create");
         assert_eq!(p.status, ProposalStatus::Drafting);
 
         let p = s.submit_design(&p.id, "v1").await.expect("submit");
         assert_eq!(p.status, ProposalStatus::PendingReview);
 
-        let p = s.request_changes(&p.id, "补充失败分支").await.expect("reject");
+        let p = s.request_changes(&p.id, "add failure branches").await.expect("reject");
         assert_eq!(p.status, ProposalStatus::ChangesRequested);
         assert_eq!(p.revision, 1);
 
@@ -170,16 +170,19 @@ mod tests {
         let s = ProposalService::new(Arc::new(InMemoryProposalRepository::new()))
             .with_drafter(drafter.clone());
 
-        let p = s.create("req-9", "支付重构").await.expect("create");
+        let p = s.create("req-9", "payment refactor").await.expect("create");
         assert_eq!(
             drafter.drafted.lock().unwrap_or_else(std::sync::PoisonError::into_inner).as_slice(),
             std::slice::from_ref(&p.id)
         );
         assert_eq!(p.status, ProposalStatus::Drafting);
 
-        let p = s.submit_design(&p.id, "## 架构\n拆分支付域").await.expect("callback");
+        let p = s
+            .submit_design(&p.id, "## Architecture\nsplit the payment domain")
+            .await
+            .expect("callback");
         assert_eq!(p.status, ProposalStatus::PendingReview);
-        assert_eq!(p.design_doc.as_deref(), Some("## 架构\n拆分支付域"));
+        assert_eq!(p.design_doc.as_deref(), Some("## Architecture\nsplit the payment domain"));
     }
 
     #[tokio::test]
@@ -207,7 +210,7 @@ mod tests {
         let trig = Arc::new(RecordingTrigger::default());
         let s = ProposalService::new(Arc::new(InMemoryProposalRepository::new()))
             .with_breakdown_trigger(trig.clone());
-        let p = s.create("req-7", "设计").await.expect("create");
+        let p = s.create("req-7", "design").await.expect("create");
         s.submit_design(&p.id, "doc").await.expect("submit");
 
         s.approve(&p.id).await.expect("approve");

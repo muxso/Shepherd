@@ -112,7 +112,7 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    #[ignore = "需要 DATABASE_URL 指向一个 PostgreSQL 实例"]
+    #[ignore = "requires DATABASE_URL pointing to a PostgreSQL instance"]
     async fn pg_compose_roundtrip() {
         use crate::domain::SkillLibrary;
         let url = std::env::var("DATABASE_URL").expect("set DATABASE_URL");
@@ -122,12 +122,15 @@ mod tests {
 
         let repo = PgSkillRepository::new(pool.clone());
         let a = repo
-            .insert(&NewSkill::new("p1", "基础", "", "遵循六边形", &[]).expect("v"))
+            .insert(
+                &NewSkill::new("p1", "basic", "", "follows hexagonal architecture", &[])
+                    .expect("v"),
+            )
             .await
             .expect("a");
         let _b = repo
             .insert(
-                &NewSkill::new("p1", "Rust", "", "用 thiserror", std::slice::from_ref(&a.id))
+                &NewSkill::new("p1", "Rust", "", "using thiserror", std::slice::from_ref(&a.id))
                     .expect("v"),
             )
             .await
@@ -137,7 +140,8 @@ mod tests {
         let comp = lib.compose(std::slice::from_ref(&_b.id)).expect("compose");
         assert_eq!(comp.skill_ids[0], a.id);
         assert!(
-            comp.instructions.contains("遵循六边形") && comp.instructions.contains("用 thiserror")
+            comp.instructions.contains("follows hexagonal architecture")
+                && comp.instructions.contains("using thiserror")
         );
     }
 }

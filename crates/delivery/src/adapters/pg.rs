@@ -369,7 +369,7 @@ mod tests {
     use crate::domain::DeliverableKind;
 
     #[tokio::test]
-    #[ignore = "需要 DATABASE_URL 指向一个 PostgreSQL 实例"]
+    #[ignore = "requires DATABASE_URL pointing to a PostgreSQL instance"]
     async fn pg_attempt_roundtrip() {
         let url = std::env::var("DATABASE_URL").expect("set DATABASE_URL");
         let pool = PgPool::connect(&url).await.expect("connect");
@@ -395,7 +395,7 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "需要 DATABASE_URL 指向一个 PostgreSQL 实例"]
+    #[ignore = "requires DATABASE_URL pointing to a PostgreSQL instance"]
     async fn pg_list_tasks_carries_basic_info() {
         let url = std::env::var("DATABASE_URL").expect("set DATABASE_URL");
         let pool = PgPool::connect(&url).await.expect("connect");
@@ -404,11 +404,11 @@ mod tests {
             sqlx::query(&format!("TRUNCATE {t} CASCADE")).execute(&pool).await.expect("truncate");
         }
 
-        sqlx::query("INSERT INTO ms_requirement (id, project_id, title, status) VALUES ('r1','p1','登录模块','DRAFT')")
+        sqlx::query("INSERT INTO ms_requirement (id, project_id, title, status) VALUES ('r1','p1','login module','DRAFT')")
             .execute(&pool).await.expect("req");
         sqlx::query("INSERT INTO ms_task_decomposition (id, requirement_id, requirement_version) VALUES ('d1','r1',1)")
             .execute(&pool).await.expect("decomp");
-        sqlx::query("INSERT INTO ms_task (decomposition_id, id, title, description, status) VALUES ('d1','t1','实现登录接口','支持手机号+验证码登录','RUNNING')")
+        sqlx::query("INSERT INTO ms_task (decomposition_id, id, title, description, status) VALUES ('d1','t1','implement login API','supports phone number + verification code login','RUNNING')")
             .execute(&pool).await.expect("task");
 
         let repo = PgDeliveryRepository::new(pool.clone());
@@ -421,9 +421,12 @@ mod tests {
             .expect("list_tasks");
         assert_eq!(page.total, 2);
         let linked = page.items.iter().find(|r| r.attempt.task_id == "t1").expect("t1 row");
-        assert_eq!(linked.title.as_deref(), Some("实现登录接口"));
-        assert_eq!(linked.description.as_deref(), Some("支持手机号+验证码登录"));
-        assert_eq!(linked.module.as_deref(), Some("登录模块"));
+        assert_eq!(linked.title.as_deref(), Some("implement login API"));
+        assert_eq!(
+            linked.description.as_deref(),
+            Some("supports phone number + verification code login")
+        );
+        assert_eq!(linked.module.as_deref(), Some("login module"));
         let orphan = page.items.iter().find(|r| r.attempt.task_id == "t9").expect("t9 row");
         assert_eq!(orphan.title, None);
         assert_eq!(orphan.description, None);
