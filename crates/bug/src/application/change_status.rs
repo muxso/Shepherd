@@ -52,7 +52,16 @@ mod tests {
     async fn seed_bug(repo: &InMemoryBugRepository) -> String {
         let create = CreateBugUseCase::new(Arc::new(repo.clone()));
         create
-            .execute("p1", "boom", "NEW", None, None, None, &std::collections::BTreeMap::new())
+            .execute(
+                "p1",
+                "boom",
+                "NEW",
+                None,
+                None,
+                None,
+                None,
+                &std::collections::BTreeMap::new(),
+            )
             .await
             .expect("seed")
             .id

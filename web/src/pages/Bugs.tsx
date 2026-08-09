@@ -1,11 +1,14 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Button, Empty, Form, Input, Select, Space, Tag, Tooltip } from 'antd'
+import { Button, Descriptions, Empty, Form, Input, Select, Space, Tag, Tooltip } from 'antd'
 import ResizableDrawer from '../components/ResizableDrawer'
 import { message, modal } from '../feedback'
 import { LinkOutlined } from '@ant-design/icons'
+import { MarkdownEditor } from '../components/MarkdownEditor'
+import { MarkdownRenderer } from '../components/MarkdownRenderer'
 import { api, ApiError, userIdStore, type Bug, type BugRelation } from '../api'
 import { useApp } from '../context'
 import { useI18n } from '../i18n'
+import { useScopedNavigate } from '../scope'
 import { SelectProjectEmpty } from '../components/Page'
 import { Workspace, WorkList, useWorkTabs } from '../components/Workspace'
 import { useListView, type ListColumn } from '../components/ListView'
@@ -15,17 +18,24 @@ import { CF_GROUP, CustomFieldItems, collectCustomValues, useFieldTemplate } fro
 const STATUSES = ['NEW', 'RESOLVED', 'CLOSED', 'REOPENED', 'REJECTED']
 const SEVERITIES = ['P0', 'P1', 'P2', 'P3']
 
-/** Handler candidates: project members with display names resolved (id fallback). */
+/** Handler candidates: project members first, falling back to (and merged with) the global
+ *  user directory so the assignee list is never empty even for projects with no members. */
 function useMemberOptions(projectId: string) {
   const [options, setOptions] = useState<{ value: string; label: string }[]>([])
   useEffect(() => {
     let alive = true
-    api
-      .projectMembers(projectId)
-      .then(async (ms) => {
-        const ids = [...new Set(ms.map((m) => m.userId).filter(Boolean))]
-        const names = ids.length ? await api.userNames(ids).catch(() => ({}) as Record<string, string>) : {}
-        if (alive) setOptions(ids.map((id) => ({ value: id, label: names[id] || id })))
+    Promise.all([
+      api.projectMembers(projectId).catch(() => [] as { userId?: string }[]),
+      api.users().catch(() => ({ items: [] as { id?: string }[] })),
+    ])
+      .then(async ([ms, us]) => {
+        const ids = [
+          ...ms.map((m) => m.userId).filter(Boolean),
+          ...us.items.map((u) => u.id).filter(Boolean),
+        ] as string[]
+        const uniq = [...new Set(ids)]
+        const names = uniq.length ? await api.userNames(uniq).catch(() => ({}) as Record<string, string>) : {}
+        if (alive) setOptions(uniq.map((id) => ({ value: id, label: names[id] || id })))
       })
       .catch(() => {})
     return () => { alive = false }
@@ -127,10 +137,13 @@ function BugsList({ items, loading, projectId, refresh, setItems, relBug, setRel
   t: (k: string, d?: string) => string
 }) {
   const [editBug, setEditBug] = useState<Bug | null>(null)
+  const [detailBug, setDetailBug] = useState<Bug | null>(null)
+  // Jump to the global user directory so a bug's handler can be inspected in /user.
+  const nav = useScopedNavigate()
   // Resolve handler/updater ids in the current rows to display names.
   const [names, setNames] = useState<Record<string, string>>({})
   useEffect(() => {
-    const ids = [...new Set(items.flatMap((b) => [b.handler, b.updatedBy]).filter((x): x is string => !!x))]
+    const ids = [...new Set(items.flatMap((b) => [b.createdBy, b.handler, b.updatedBy]).filter((x): x is string => !!x))]
     if (!ids.length) { setNames({}); return }
     api.userNames(ids).then(setNames).catch(() => setNames({}))
   }, [items])
@@ -157,7 +170,9 @@ function BugsList({ items, loading, projectId, refresh, setItems, relBug, setRel
       label: t('bug.handler', '处理人'),
       title: t('bug.handler', '处理人'),
       width: 120,
-      render: (_, r) => nameOf(r.handler),
+      render: (_, r) => (r.handler
+        ? <a style={{ cursor: 'pointer' }} onClick={() => nav('/user')} title={t('bug.openUser', '在用户管理中查看')}>{nameOf(r.handler)}</a>
+        : '-'),
     },
     {
       key: 'updatedBy',
@@ -262,6 +277,7 @@ function BugsList({ items, loading, projectId, refresh, setItems, relBug, setRel
             newLabel={t('bug.new', '新建缺陷')}
             extraActions={lv.toolbar}
             onRefresh={refresh}
+            onRowClick={(r) => setDetailBug(r)}
             columns={lv.columns}
             data={lv.rows}
             pagination={lv.pagination}
@@ -280,6 +296,7 @@ function BugsList({ items, loading, projectId, refresh, setItems, relBug, setRel
           setItems((prev) => prev.map((x) => (x.id === b.id ? { ...x, ...b } : x)))
         }}
       />
+      <DetailBugDrawer bug={detailBug} onClose={() => setDetailBug(null)} />
     </>
   )
 }
@@ -288,17 +305,17 @@ function BugsList({ items, loading, projectId, refresh, setItems, relBug, setRel
 function EditBugDrawer({ bug, projectId, onClose, onSaved }: { bug: Bug | null; projectId: string; onClose: () => void; onSaved: (b: Bug) => void }) {
   const { t } = useI18n()
   const members = useMemberOptions(projectId)
-  const [form] = Form.useForm<{ title: string; severity?: string; handler?: string }>()
+  const [form] = Form.useForm<{ title: string; severity?: string; handler?: string; description?: string }>()
   const [saving, setSaving] = useState(false)
   useEffect(() => {
-    if (bug) form.setFieldsValue({ title: bug.title || '', severity: bug.severity || undefined, handler: bug.handler || undefined })
+    if (bug) form.setFieldsValue({ title: bug.title || '', severity: bug.severity || undefined, handler: bug.handler || undefined, description: bug.description || undefined })
   }, [bug, form])
   const save = async () => {
     const v = await form.validateFields()
     if (!bug) return
     setSaving(true)
     try {
-      const b = await api.updateBug(bug.id, { title: v.title, severity: v.severity, handler: v.handler })
+      const b = await api.updateBug(bug.id, { title: v.title, severity: v.severity, handler: v.handler, description: v.description })
       message.success(t('bug.updated', '缺陷已更新'))
       onSaved(b)
     } catch (e) {
@@ -334,7 +351,62 @@ function EditBugDrawer({ bug, projectId, onClose, onSaved }: { bug: Bug | null; 
         <Form.Item name="handler" label={t('bug.handler', '处理人')}>
           <Select allowClear showSearch optionFilterProp="label" placeholder={t('bug.handlerPh', '选择处理人')} options={members} />
         </Form.Item>
+        <Form.Item label={t('bug.description', '描述')}>
+          <Form.Item name="description" noStyle>
+            <MarkdownEditor projectId={projectId} placeholder={t('bug.descriptionPh', '复现步骤 / 期望结果 / 影响范围')} />
+          </Form.Item>
+        </Form.Item>
       </Form>
+    </ResizableDrawer>
+  )
+}
+
+// Read-only detail drawer opened by row click: shows metadata + the markdown description rendered.
+function DetailBugDrawer({ bug, onClose }: { bug: Bug | null; onClose: () => void }) {
+  const { t } = useI18n()
+  const nav = useScopedNavigate()
+  const [names, setNames] = useState<Record<string, string>>({})
+  useEffect(() => {
+    if (!bug) return
+    const ids = [bug.createdBy, bug.handler, bug.updatedBy].filter((x): x is string => !!x)
+    if (!ids.length) { setNames({}); return }
+    api.userNames(ids).then(setNames).catch(() => setNames({}))
+  }, [bug])
+  const nameOf = (id?: string | null) => (id ? names[id] || id : '-')
+  return (
+    <ResizableDrawer
+      open={!!bug}
+      onClose={onClose}
+      width={560}
+      title={`${t('bug.detail', '缺陷详情')} · ${bug?.title || bug?.id || ''}`}
+    >
+      {bug && (
+        <>
+          <Descriptions bordered column={1} size="small">
+            <Descriptions.Item label={t('bug.severity', '严重程度')}>{severityDot(bug.severity)}</Descriptions.Item>
+            <Descriptions.Item label={t('bug.status', '状态')}>
+              <Tag color={bugColor(bug.status || 'NEW')}>{statusLabel(t, bug.status || 'NEW')}</Tag>
+            </Descriptions.Item>
+            <Descriptions.Item label={t('bug.handler', '处理人')}>
+              {bug.handler
+                ? <a style={{ cursor: 'pointer' }} onClick={() => nav('/user')} title={t('bug.openUser', '在用户管理中查看')}>{nameOf(bug.handler)}</a>
+                : '-'}
+            </Descriptions.Item>
+            <Descriptions.Item label={t('bug.createdBy', '创建人')}>{nameOf(bug.createdBy)}</Descriptions.Item>
+            <Descriptions.Item label={t('bug.updatedBy', '更新人')}>{nameOf(bug.updatedBy)}</Descriptions.Item>
+            <Descriptions.Item label={t('bug.createdAt', '创建时间')}>
+              {bug.createdAt ? new Date(bug.createdAt).toLocaleString() : '-'}
+            </Descriptions.Item>
+            <Descriptions.Item label={t('bug.updatedAt', '更新时间')}>{fmtTs(bug.updatedAt)}</Descriptions.Item>
+          </Descriptions>
+          <div style={{ marginTop: 16 }}>
+            <div style={{ fontWeight: 600, marginBottom: 8 }}>{t('bug.description', '描述')}</div>
+            {bug.description
+              ? <MarkdownRenderer value={bug.description} />
+              : <Empty description={t('bug.noDescription', '暂无描述')} />}
+          </div>
+        </>
+      )}
     </ResizableDrawer>
   )
 }
@@ -351,7 +423,7 @@ function NewBugTab({ projectId, onCreated, onCancel }: { projectId: string; onCr
       <Form
         layout="vertical"
         style={{ maxWidth: 560 }}
-        onFinish={async (v: { title: string; severity?: string; handler?: string; [CF_GROUP]?: Record<string, unknown> }) => {
+        onFinish={async (v: { title: string; severity?: string; handler?: string; description?: string; [CF_GROUP]?: Record<string, unknown> }) => {
           const customFields = collectCustomValues(tplFields, v[CF_GROUP])
           setSaving(true)
           try {
@@ -361,6 +433,7 @@ function NewBugTab({ projectId, onCreated, onCancel }: { projectId: string; onCr
               initialStatus: 'NEW',
               severity: v.severity,
               handler: v.handler,
+              description: v.description?.trim() || undefined,
               customFields: Object.keys(customFields).length ? customFields : undefined,
             })
             message.success(t('bug.created', '缺陷已创建'))
@@ -384,6 +457,11 @@ function NewBugTab({ projectId, onCreated, onCancel }: { projectId: string; onCr
         </Form.Item>
         <Form.Item name="handler" label={t('bug.handler', '处理人')}>
           <Select allowClear showSearch optionFilterProp="label" placeholder={t('bug.handlerPh', '选择处理人')} options={members} />
+        </Form.Item>
+        <Form.Item label={t('bug.description', '描述')}>
+          <Form.Item name="description" noStyle>
+            <MarkdownEditor projectId={projectId} placeholder={t('bug.descriptionPh', '复现步骤 / 期望结果 / 影响范围')} />
+          </Form.Item>
         </Form.Item>
         <CustomFieldItems kind="bug" fields={tplFields} />
         <Space>

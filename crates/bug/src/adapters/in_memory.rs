@@ -82,6 +82,7 @@ impl BugRepository for InMemoryBugRepository {
             created_by: new_bug.created_by.clone(),
             severity: new_bug.severity.clone(),
             handler: new_bug.handler.clone(),
+            description: new_bug.description.clone(),
             updated_by: new_bug.created_by.clone(),
             updated_at: Some(tick(seq)),
             custom_fields: new_bug.custom_fields.clone(),
@@ -136,6 +137,7 @@ impl BugRepository for InMemoryBugRepository {
         title: &str,
         severity: Option<&str>,
         handler: Option<&str>,
+        description: Option<&str>,
         operator: Option<&str>,
     ) -> Result<Option<Bug>, RepoError> {
         let mut state = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -145,6 +147,7 @@ impl BugRepository for InMemoryBugRepository {
             b.title = title.to_string();
             b.severity = severity.map(str::to_string);
             b.handler = handler.map(str::to_string);
+            b.description = description.map(str::to_string);
             b.updated_by = operator.map(str::to_string);
             b.updated_at = Some(tick(seq));
             b.clone()
