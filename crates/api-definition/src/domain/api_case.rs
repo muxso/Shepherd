@@ -133,14 +133,14 @@ mod tests {
         let c = NewApiCase::new(
             "def1",
             "p1",
-            " 用例 ",
+            " case ",
             "post",
             " /login ",
             Some("{}".into()),
             serde_json::json!([{"type": "status", "value": 200}]),
         )
         .expect("ok");
-        assert_eq!(c.name, "用例");
+        assert_eq!(c.name, "case");
         assert_eq!(c.method, "POST");
         assert_eq!(c.url, "/login");
     }

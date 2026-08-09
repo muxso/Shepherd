@@ -105,7 +105,7 @@ mod tests {
     async fn create_then_list() {
         let s = svc();
         let t = s
-            .create("p1", "Requirement", "默认", json!({"fields": []}), "admin")
+            .create("p1", "Requirement", "default", json!({"fields": []}), "admin")
             .await
             .expect("create");
         assert_eq!(t.kind, "requirement");
@@ -114,33 +114,33 @@ mod tests {
         assert_eq!(t.created_at_ms, t.updated_at_ms);
         let list = s.list("p1", None).await.expect("list");
         assert_eq!(list.len(), 1);
-        assert_eq!(list[0].name, "默认");
+        assert_eq!(list[0].name, "default");
     }
 
     #[tokio::test]
     async fn duplicate_name_same_project_kind_conflicts() {
         let s = svc();
-        s.create("p1", "requirement", "默认", json!({}), "admin").await.expect("create");
+        s.create("p1", "requirement", "default", json!({}), "admin").await.expect("create");
         // kind/name are compared after normalization: case and whitespace cannot bypass uniqueness.
         assert_eq!(
-            s.create("p1", " Requirement ", " 默认 ", json!({}), "admin").await,
+            s.create("p1", " Requirement ", " default ", json!({}), "admin").await,
             Err(TemplateCmdError::NameExists)
         );
         // A different kind or a different project does not conflict.
-        assert!(s.create("p1", "bug", "默认", json!({}), "admin").await.is_ok());
-        assert!(s.create("p2", "requirement", "默认", json!({}), "admin").await.is_ok());
+        assert!(s.create("p1", "bug", "default", json!({}), "admin").await.is_ok());
+        assert!(s.create("p2", "requirement", "default", json!({}), "admin").await.is_ok());
     }
 
     #[tokio::test]
     async fn update_name_and_config_independently() {
         let s = svc();
-        let t = s.create("p1", "requirement", "默认", json!({}), "admin").await.expect("create");
-        let t2 = s.update(&t.id, Some("改名"), None).await.expect("rename");
-        assert_eq!(t2.name, "改名");
+        let t = s.create("p1", "requirement", "default", json!({}), "admin").await.expect("create");
+        let t2 = s.update(&t.id, Some("rename"), None).await.expect("rename");
+        assert_eq!(t2.name, "rename");
         assert_eq!(t2.config, json!({})); // config untouched
         assert!(t2.updated_at_ms > t2.created_at_ms);
         let t3 = s.update(&t.id, None, Some(json!({"a": 1}))).await.expect("reconfig");
-        assert_eq!(t3.name, "改名"); // name untouched
+        assert_eq!(t3.name, "rename"); // name untouched
         assert_eq!(t3.config, json!({"a": 1}));
     }
 

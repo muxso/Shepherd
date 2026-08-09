@@ -39,7 +39,7 @@ pub fn run(cmd: CommentCmd) -> R<()> {
         ),
         CommentCmd::Delete { id } => {
             c.delete(&format!("/comment/{id}"), true)?;
-            println!(" 已删除评论 {id}");
+            println!(" deleted comment {id}");
         }
     };
     Ok(())

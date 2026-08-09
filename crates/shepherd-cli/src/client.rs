@@ -17,8 +17,8 @@ pub type R<T> = Result<T, Box<dyn Error>>;
 pub static JSON_OUTPUT: AtomicBool = AtomicBool::new(false);
 
 pub const NO_KEY_HINT: &str =
-    "未配置 API key:执行 `shepherd login --api-key sak_…` 或设 SHEPHERD_API_KEY\
-(关键可在 个人中心 → API KEY 或 POST /system/apikey 签发)";
+    "API key not configured: run `shepherd login --api-key sak_…` or set SHEPHERD_API_KEY\
+ (issue a key from Profile → API KEY or POST /system/apikey)";
 
 #[derive(Serialize, Deserialize, Default, Clone)]
 pub struct Config {
@@ -148,7 +148,7 @@ impl Client {
     pub fn fetch_text(&self, url: &str) -> R<String> {
         let resp = self.http.get(url).send()?;
         if !resp.status().is_success() {
-            return Err(format!("拉取 {url} 失败:HTTP {}", resp.status()).into());
+            return Err(format!("failed to fetch {url}: HTTP {}", resp.status()).into());
         }
         Ok(resp.text()?)
     }
@@ -171,7 +171,7 @@ pub fn pretty(v: &Value) {
 /// Print a freshly-minted API key (returned only once) before the normal output.
 pub fn print_key(v: &Value) {
     if let Some(k) = v.get("key").and_then(|x| x.as_str()) {
-        println!(" 已创建,密钥(仅此一次可见):\n{k}");
+        println!(" Created. Key (visible only this once):\n{k}");
     }
     pretty(v);
 }
@@ -182,8 +182,8 @@ pub fn cell(v: &Value) -> String {
         Value::String(s) => s.clone(),
         Value::Bool(b) => b.to_string(),
         Value::Number(n) => n.to_string(),
-        Value::Array(a) => format!("[{} 项]", a.len()),
-        Value::Object(o) => format!("{{{} 字段}}", o.len()),
+        Value::Array(a) => format!("[{} items]", a.len()),
+        Value::Object(o) => format!("{{{} fields}}", o.len()),
     }
 }
 
@@ -194,7 +194,7 @@ pub fn render_human(v: &Value) {
         let cur = v.get("current").map(cell).unwrap_or_default();
         let pages = v.get("totalPages").map(cell).unwrap_or_default();
         if !total.is_empty() {
-            println!("\n共 {total} 条 · 第 {cur} 页 / 共 {pages} 页");
+            println!("\n{total} items · page {cur} / {pages}");
         }
         return;
     }
@@ -207,7 +207,7 @@ pub fn render_human(v: &Value) {
 
 pub fn render_table(items: &[Value]) {
     if items.is_empty() {
-        println!("(空)");
+        println!("(empty)");
         return;
     }
     let mut cols: Vec<String> = Vec::new();
@@ -280,8 +280,9 @@ pub fn status_assertions(expect_status: Option<u16>) -> Value {
 pub fn parse_headers(items: &[String]) -> R<Value> {
     let mut arr = Vec::with_capacity(items.len());
     for it in items {
-        let (name, value) =
-            it.split_once(':').ok_or_else(|| format!("--header 需 'Name: value' 格式:{it}"))?;
+        let (name, value) = it
+            .split_once(':')
+            .ok_or_else(|| format!("--header requires 'Name: value' format: {it}"))?;
         arr.push(json!({"name": name.trim(), "value": value.trim()}));
     }
     Ok(Value::Array(arr))
@@ -290,42 +291,43 @@ pub fn parse_headers(items: &[String]) -> R<Value> {
 pub fn parse_vars(items: &[String]) -> R<Value> {
     let mut map = serde_json::Map::with_capacity(items.len());
     for it in items {
-        let (k, v) = it.split_once('=').ok_or_else(|| format!("--var 需 'key=value' 格式:{it}"))?;
+        let (k, v) =
+            it.split_once('=').ok_or_else(|| format!("--var requires 'key=value' format: {it}"))?;
         map.insert(k.trim().to_string(), json!(v));
     }
     Ok(Value::Object(map))
 }
 
-const TPL_REQUIREMENT: &str = "# 需求模板
+const TPL_REQUIREMENT: &str = "# Requirement template
 
-标题: 用户登录
-描述: 支持邮箱 + 密码登录,签发会话令牌。
+Title: User login
+Description: Support email + password login, issuing a session token.
 
-验收标准:
-- 正确凭证返回 token
-- 错误凭证返回 401
-- 令牌过期后需重新登录
+Acceptance criteria:
+- correct credentials return a token
+- wrong credentials return 401
+- login again after the token expires
 
-改好后录入(需先 `shepherd login`):
+Once edited, submit it (run `shepherd login` first):
 
     shepherd req add --project <projectId> \\
-      --title \"用户登录\" \\
-      --description \"支持邮箱 + 密码登录,签发会话令牌。\" \\
-      --criteria \"正确凭证返回 token,错误凭证返回 401,令牌过期后需重新登录\"
+      --title \"User login\" \\
+      --description \"Support email + password login, issuing a session token.\" \\
+      --criteria \"correct credentials return a token,wrong credentials return 401,login again after the token expires\"
 ";
 
-const TPL_GETTING_STARTED: &str = "# Shepherd 上手
+const TPL_GETTING_STARTED: &str = "# Getting started with Shepherd
 
-前置:一个运行中的 server(默认 http://localhost:8088)。
+Prerequisite: a running server (default http://localhost:8088).
 
-1. 配置认证:`shepherd login --url http://localhost:8088 --api-key sak_…`
-   (API key 在 个人中心 → API KEY 或 `POST /system/apikey` 签发;也可设环境变量 SHEPHERD_API_KEY)
-2. 录入需求:见 `requirements/example.md`
-3. 拆分任务:`shepherd decompose --req <requirementId> --version 1`
-4. 派发执行:`shepherd dispatch --decomp <decompositionId> --task <taskId> --executor CLAUDE_CODE`
-5. 验证 / 复查:`shepherd verify --help`、`shepherd decomposition --help`
+1. Configure auth: `shepherd login --url http://localhost:8088 --api-key sak_…`
+   (issue an API key from Profile → API KEY or `POST /system/apikey`; the SHEPHERD_API_KEY env var also works)
+2. Add requirements: see `requirements/example.md`
+3. Decompose into tasks: `shepherd decompose --req <requirementId> --version 1`
+4. Dispatch execution: `shepherd dispatch --decomp <decompositionId> --task <taskId> --executor CLAUDE_CODE`
+5. Verify / review: `shepherd verify --help`, `shepherd decomposition --help`
 
-各命令的完整参数见 `shepherd <命令> --help`。
+See `shepherd <command> --help` for the full options of each command.
 ";
 
 /// Scaffold file manifest (relative path -> contents). Pure function for testability.
@@ -344,7 +346,7 @@ pub fn normalize_agent(t: &str) -> R<String> {
         // The brand is one word, but the claude-code spelling invites code-buddy; accept both.
         "codebuddy" | "code_buddy" => Ok("CODEBUDDY".into()),
         other => Err(format!(
-            "未知 agent 类型: {other}(支持 claude-code | codex | opencode | codebuddy)"
+            "unknown agent type: {other} (supported: claude-code | codex | opencode | codebuddy)"
         )
         .into()),
     }
@@ -352,9 +354,9 @@ pub fn normalize_agent(t: &str) -> R<String> {
 
 pub fn gen_suite(c: &Client, project: &str, base: &str, no_scenario: bool) -> R<()> {
     let defs = c.get(&format!("/api/definition?projectId={project}"), true)?;
-    let list = defs.as_array().ok_or("接口定义列表不是数组")?;
+    let list = defs.as_array().ok_or("api definition list is not an array")?;
     if list.is_empty() {
-        return Err("项目内没有接口定义,先 `apidef import`".into());
+        return Err("no api definitions in the project; run `apidef import` first".into());
     }
     let (mut cases, mut scenarios, mut steps, mut failed) = (0u32, 0u32, 0u32, 0u32);
     for d in list {
@@ -380,18 +382,18 @@ pub fn gen_suite(c: &Client, project: &str, base: &str, no_scenario: bool) -> R<
                 true,
             )
         };
-        let ok = match mk_case(&format!("成功·期望{success_code}"), success_code) {
+        let ok = match mk_case(&format!("success·expect {success_code}"), success_code) {
             Ok(v) => v,
             Err(e) => {
-                eprintln!(" {name}: 成功用例创建失败:{e}");
+                eprintln!(" {name}: failed to create the success case: {e}");
                 failed += 1;
                 continue;
             }
         };
-        let bad = match mk_case("失败·期望401", 401) {
+        let bad = match mk_case("fail·expect 401", 401) {
             Ok(v) => v,
             Err(e) => {
-                eprintln!(" {name}: 失败用例创建失败:{e}");
+                eprintln!(" {name}: failed to create the failure case: {e}");
                 failed += 1;
                 continue;
             }
@@ -407,12 +409,12 @@ pub fn gen_suite(c: &Client, project: &str, base: &str, no_scenario: bool) -> R<
         }
         let sc = match c.post(
             "/api/scenario",
-            json!({"projectId": project, "name": format!("{name} 场景")}),
+            json!({"projectId": project, "name": format!("{name} scenario")}),
             true,
         ) {
             Ok(v) => v,
             Err(e) => {
-                eprintln!(" {name}: 场景创建失败:{e}");
+                eprintln!(" {name}: failed to create the scenario: {e}");
                 failed += 1;
                 continue;
             }
@@ -426,12 +428,12 @@ pub fn gen_suite(c: &Client, project: &str, base: &str, no_scenario: bool) -> R<
                 true,
             ) {
                 Ok(_) => steps += 1,
-                Err(e) => eprintln!(" {name}: 步骤{order}添加失败:{e}"),
+                Err(e) => eprintln!(" {name}: failed to add step {order}: {e}"),
             }
         }
     }
     println!(
-        " 生成完成:{} 个接口 → {cases} 条用例、{scenarios} 条场景、{steps} 个步骤(失败 {failed})",
+        " Generation done: {} api definitions → {cases} cases, {scenarios} scenarios, {steps} steps ({failed} failed)",
         list.len()
     );
     Ok(())

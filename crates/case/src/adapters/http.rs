@@ -375,7 +375,7 @@ async fn submit_review(
 }
 
 #[derive(OpenApi)]
-#[openapi(paths(submit_review, create_review, update_review, list_reviews, get_review, delete_review_handler), components(schemas(SubmitRequest, SubmitResponse, CreateReviewRequest, UpdateReviewRequest, CreatedReview, ReviewSummaryResponse, ReviewCaseStatusResponse, ReviewDetailResponse)), tags((name = "case", description = "用例评审")))]
+#[openapi(paths(submit_review, create_review, update_review, list_reviews, get_review, delete_review_handler), components(schemas(SubmitRequest, SubmitResponse, CreateReviewRequest, UpdateReviewRequest, CreatedReview, ReviewSummaryResponse, ReviewCaseStatusResponse, ReviewDetailResponse)), tags((name = "case", description = "Case review")))]
 struct ApiDoc;
 pub fn openapi() -> utoipa::openapi::OpenApi {
     ApiDoc::openapi()
@@ -515,8 +515,8 @@ mod tests {
         let (app, t) = app_with(PassRule::Single, 1).await;
 
         let create_body = r#"{"projectId":"p1","passRule":"SINGLE","reviewerCount":1,
-            "caseIds":["c1","c2"],"name":"v1.0 版本用例评审","description":"首轮",
-            "tags":["冒烟"],"moduleId":"m1","startAt":"2026-07-01T00:00:00Z","endAt":"2026-07-31T00:00:00Z"}"#;
+            "caseIds":["c1","c2"],"name":"v1.0 release case review","description":"first round",
+            "tags":["smoke"],"moduleId":"m1","startAt":"2026-07-01T00:00:00Z","endAt":"2026-07-31T00:00:00Z"}"#;
         let resp = app
             .clone()
             .oneshot(json_req("POST", "/case-review", create_body, &t))
@@ -534,15 +534,15 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::OK);
         let list = body_json(resp).await;
         let item = &list.as_array().expect("array")[0];
-        assert_eq!(item["name"], "v1.0 版本用例评审");
-        assert_eq!(item["description"], "首轮");
-        assert_eq!(item["tags"][0], "冒烟");
+        assert_eq!(item["name"], "v1.0 release case review");
+        assert_eq!(item["description"], "first round");
+        assert_eq!(item["tags"][0], "smoke");
         assert_eq!(item["moduleId"], "m1");
         assert_eq!(item["status"], "IN_PROGRESS");
         assert_eq!(item["total"], 2);
         assert_eq!(item["createdBy"], "admin");
 
-        let put_body = r#"{"name":"v2 评审","description":"二轮","tags":["回归"],
+        let put_body = r#"{"name":"v2 review","description":"second round","tags":["regression"],
             "moduleId":null,"passRule":"MULTIPLE","reviewerCount":2}"#;
         let resp = app
             .clone()
@@ -555,7 +555,7 @@ mod tests {
             app.oneshot(json_req("GET", "/case-review?projectId=p1", "", &t)).await.expect("resp");
         let list = body_json(resp).await;
         let item = &list.as_array().expect("array")[0];
-        assert_eq!(item["name"], "v2 评审");
+        assert_eq!(item["name"], "v2 review");
         assert_eq!(item["passRule"], "MULTIPLE");
         assert_eq!(item["reviewerCount"], 2);
         assert!(item["moduleId"].is_null());

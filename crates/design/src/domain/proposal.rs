@@ -124,7 +124,7 @@ mod tests {
     use super::*;
 
     fn draft() -> Proposal {
-        Proposal::new("p1", "req-1", "登录改造设计").expect("new")
+        Proposal::new("p1", "req-1", "login revamp design").expect("new")
     }
 
     #[test]
@@ -141,9 +141,9 @@ mod tests {
     #[test]
     fn happy_path_draft_review_approve() {
         let mut p = draft();
-        p.submit_design("## 方案\n用 JWT").expect("submit");
+        p.submit_design("## proposal\nuses JWT").expect("submit");
         assert_eq!(p.status, ProposalStatus::PendingReview);
-        assert_eq!(p.design_doc.as_deref(), Some("## 方案\n用 JWT"));
+        assert_eq!(p.design_doc.as_deref(), Some("## proposal\nuses JWT"));
         p.approve().expect("approve");
         assert_eq!(p.status, ProposalStatus::Approved);
         assert!(p.status.is_terminal());
@@ -153,14 +153,14 @@ mod tests {
     fn reject_then_revise_loop() {
         let mut p = draft();
         p.submit_design("v1").expect("submit v1");
-        p.request_changes("缺少错误码设计").expect("reject");
+        p.request_changes("missing error code design").expect("reject");
         assert_eq!(p.status, ProposalStatus::ChangesRequested);
         assert_eq!(p.revision, 1);
-        assert_eq!(p.review_comment.as_deref(), Some("缺少错误码设计"));
-        p.submit_design("v2 含错误码").expect("submit v2");
+        assert_eq!(p.review_comment.as_deref(), Some("missing error code design"));
+        p.submit_design("v2 with error codes").expect("submit v2");
         assert_eq!(p.status, ProposalStatus::PendingReview);
         assert!(p.review_comment.is_none());
-        assert_eq!(p.design_doc.as_deref(), Some("v2 含错误码"));
+        assert_eq!(p.design_doc.as_deref(), Some("v2 with error codes"));
         p.approve().expect("approve");
         assert_eq!(p.status, ProposalStatus::Approved);
         assert_eq!(p.revision, 1);

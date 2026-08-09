@@ -179,11 +179,11 @@ pub fn run(cmd: NoticeCmd) -> R<()> {
                 None => "/notice/read-all".to_string(),
             };
             c.post(&path, json!({}), true)?;
-            println!(" 已全部已读");
+            println!(" marked all as read");
         }
         NoticeCmd::Read { id } => {
             c.post(&format!("/notice/{id}/read"), json!({}), true)?;
-            println!(" 已标记已读 {id}");
+            println!(" marked {id} as read");
         }
         NoticeCmd::Robots { cmd } => match cmd {
             NoticeRobotCmd::List => pretty(&c.get("/notice/robots", true)?),
@@ -220,7 +220,7 @@ pub fn run(cmd: NoticeCmd) -> R<()> {
             }
             NoticeRobotCmd::Delete { id } => {
                 c.delete(&format!("/notice/robots/{id}"), true)?;
-                println!(" 已删除 robot {id}");
+                println!(" deleted robot {id}");
             }
             NoticeRobotCmd::Test { id } => {
                 pretty(&c.post(&format!("/notice/robots/{id}/test"), json!({}), true)?);
@@ -261,7 +261,7 @@ pub fn run(cmd: NoticeCmd) -> R<()> {
             )?),
             NoticeRuleCmd::Delete { id } => {
                 c.delete(&format!("/notice/rules/{id}"), true)?;
-                println!(" 已删除 rule {id}");
+                println!(" deleted rule {id}");
             }
         },
     };

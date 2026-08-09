@@ -18,7 +18,7 @@ impl Planner for HeuristicPlanner {
     async fn plan(&self, spec: &RequirementSpec) -> Result<Vec<PlannedTask>, PlanError> {
         if spec.acceptance_criteria.is_empty() {
             return Ok(vec![PlannedTask {
-                title: format!("实现 {}", spec.title),
+                title: format!("implement {}", spec.title),
                 description: spec.description.clone(),
                 acceptance_criteria: Vec::new(),
                 dependencies: Vec::new(),
@@ -28,7 +28,7 @@ impl Planner for HeuristicPlanner {
             .acceptance_criteria
             .iter()
             .map(|c| PlannedTask {
-                title: format!("实现: {c}"),
+                title: format!("implement: {c}"),
                 description: String::new(),
                 acceptance_criteria: vec![c.clone()],
                 dependencies: Vec::new(),
@@ -37,8 +37,8 @@ impl Planner for HeuristicPlanner {
         if tasks.len() > 1 {
             let deps: Vec<usize> = (0..tasks.len()).collect();
             tasks.push(PlannedTask {
-                title: format!("集成验证: {}", spec.title),
-                description: "集成并验证全部验收标准".into(),
+                title: format!("integration verification: {}", spec.title),
+                description: "integrate and verify all acceptance criteria".into(),
                 acceptance_criteria: spec.acceptance_criteria.clone(),
                 dependencies: deps,
             });
@@ -55,7 +55,7 @@ mod tests {
         RequirementSpec {
             requirement_id: "r1".into(),
             requirement_version: 1,
-            title: "登录".into(),
+            title: "login".into(),
             description: "d".into(),
             acceptance_criteria: criteria.iter().map(|s| s.to_string()).collect(),
         }
@@ -63,10 +63,13 @@ mod tests {
 
     #[tokio::test]
     async fn one_task_per_criterion_plus_integration() {
-        let plan = HeuristicPlanner.plan(&spec(&["登录成功", "错误密码拒绝"])).await.expect("plan");
+        let plan = HeuristicPlanner
+            .plan(&spec(&["login success", "wrong password rejected"]))
+            .await
+            .expect("plan");
         assert_eq!(plan.len(), 3);
         assert_eq!(plan[2].dependencies, vec![0, 1]);
-        assert_eq!(plan[0].acceptance_criteria, vec!["登录成功".to_string()]);
+        assert_eq!(plan[0].acceptance_criteria, vec!["login success".to_string()]);
     }
 
     #[tokio::test]

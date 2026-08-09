@@ -641,7 +641,7 @@ async fn remove_case_dependency(
     }
 }
 
-#[utoipa::path(get, path = "/functional-case/export", tag = "functional-case", params(ProjectQuery), responses((status = 200, description = "xlsx 文件"), (status = 403)), security(("bearer" = [])))]
+#[utoipa::path(get, path = "/functional-case/export", tag = "functional-case", params(ProjectQuery), responses((status = 200, description = "xlsx file"), (status = 403)), security(("bearer" = [])))]
 async fn export_cases(
     user: AuthUser,
     State(st): State<CaseState>,
@@ -677,7 +677,7 @@ struct ImportResult {
     imported: usize,
 }
 
-#[utoipa::path(post, path = "/functional-case/import", tag = "functional-case", params(ProjectQuery), request_body(content = Vec<u8>, description = "xlsx 文件字节"), responses((status = 200, body = ImportResult), (status = 400), (status = 403)), security(("bearer" = [])))]
+#[utoipa::path(post, path = "/functional-case/import", tag = "functional-case", params(ProjectQuery), request_body(content = Vec<u8>, description = "xlsx file bytes"), responses((status = 200, body = ImportResult), (status = 400), (status = 403)), security(("bearer" = [])))]
 async fn import_cases(
     user: AuthUser,
     State(st): State<CaseState>,
@@ -735,7 +735,7 @@ fn rows_to_xlsx(rows: &[Vec<String>]) -> Result<Vec<u8>, rust_xlsxwriter::XlsxEr
         CaseBody, CaseResponse, ImportResult, CaseChangeDto, CaseBugDto, CaseReviewDto,
         CasePlanDto, CaseDependencyDto, DependencyBody
     )),
-    tags((name = "functional-case", description = "功能用例"))
+    tags((name = "functional-case", description = "Functional cases"))
 )]
 struct ApiDoc;
 
@@ -786,7 +786,7 @@ mod tests {
             .clone()
             .oneshot(post(
                 "/functional-case",
-                r#"{"projectId":"p1","name":"登录成功","module":"登录","customFields":{"owner":"alice"}}"#,
+                r#"{"projectId":"p1","name":"login success","module":"login","customFields":{"owner":"alice"}}"#,
                 Some(&t),
             ))
             .await
@@ -814,8 +814,8 @@ mod tests {
         let (app, t) = app("FUNCTIONAL_CASE:READ+ADD").await;
         let rows = vec![
             vec!["名称".to_string(), "优先级".to_string(), "owner".to_string()],
-            vec!["登录成功".into(), "P0".into(), "alice".into()],
-            vec!["密码错误".into(), "P1".into(), "bob".into()],
+            vec!["login success".into(), "P0".into(), "alice".into()],
+            vec!["wrong password".into(), "P1".into(), "bob".into()],
         ];
         let xlsx = rows_to_xlsx(&rows).expect("xlsx");
         let req = Request::builder()
@@ -853,7 +853,11 @@ mod tests {
         let (app, t) = app("FUNCTIONAL_CASE:READ+ADD+UPDATE+DELETE").await;
         let resp = app
             .clone()
-            .oneshot(post("/functional-case", r#"{"projectId":"p1","name":"登录成功"}"#, Some(&t)))
+            .oneshot(post(
+                "/functional-case",
+                r#"{"projectId":"p1","name":"login success"}"#,
+                Some(&t),
+            ))
             .await
             .expect("resp");
         assert_eq!(resp.status(), StatusCode::CREATED);
@@ -868,7 +872,9 @@ mod tests {
             .uri(format!("/functional-case/{id}"))
             .header("content-type", "application/json")
             .header("authorization", format!("Bearer {t}"))
-            .body(Body::from(r#"{"projectId":"p1","name":"登录失败","priority":"P0"}"#.to_string()))
+            .body(Body::from(
+                r#"{"projectId":"p1","name":"login failure","priority":"P0"}"#.to_string(),
+            ))
             .expect("req");
         let resp = app.clone().oneshot(put).await.expect("resp");
         assert_eq!(resp.status(), StatusCode::OK);
@@ -876,7 +882,7 @@ mod tests {
             let b = axum::body::to_bytes(resp.into_body(), usize::MAX).await.expect("body");
             serde_json::from_slice(&b).expect("json")
         };
-        assert_eq!(updated["name"], "登录失败");
+        assert_eq!(updated["name"], "login failure");
         assert_eq!(updated["priority"], "P0");
 
         let del = Request::builder()

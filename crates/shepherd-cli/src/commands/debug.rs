@@ -36,7 +36,7 @@ pub fn run(cmd: DebugCmd) -> R<()> {
             for h in &headers {
                 let (k, v) = h
                     .split_once(':')
-                    .ok_or_else(|| format!("--header 需 'Name: value' 格式:{h}"))?;
+                    .ok_or_else(|| format!("--header requires 'Name: value' format: {h}"))?;
                 hdr_arr.push(json!({ "key": k.trim(), "value": v.trim() }));
             }
             let mut metadata = serde_json::Map::new();
@@ -47,7 +47,7 @@ pub fn run(cmd: DebugCmd) -> R<()> {
             }
             let assertions: Value = match assertions_json {
                 Some(aj) => serde_json::from_str(&aj)
-                    .map_err(|e| format!("--assertions-json 不是合法 JSON: {e}"))?,
+                    .map_err(|e| format!("--assertions-json is not valid JSON: {e}"))?,
                 None => json!([]),
             };
             let req = json!({

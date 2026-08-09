@@ -207,7 +207,7 @@ async fn delete_template(
         TemplateResponse,
         TemplateListResponse
     )),
-    tags((name = "template", description = "项目模板"))
+    tags((name = "template", description = "Project template"))
 )]
 struct ApiDoc;
 pub fn openapi() -> utoipa::openapi::OpenApi {
@@ -256,7 +256,7 @@ mod tests {
             .oneshot(json_req(
                 "POST",
                 "/project/p1/template",
-                Some(r#"{"kind":"Requirement","name":"默认","config":{"fields":[1]}}"#),
+                Some(r#"{"kind":"Requirement","name":"default","config":{"fields":[1]}}"#),
                 Some(&t),
             ))
             .await
@@ -265,7 +265,7 @@ mod tests {
         let v = body_json(resp).await;
         assert_eq!(v["projectId"], "p1");
         assert_eq!(v["kind"], "requirement"); // normalized to lowercase
-        assert_eq!(v["name"], "默认");
+        assert_eq!(v["name"], "default");
         assert_eq!(v["config"], serde_json::json!({"fields": [1]}));
         assert_eq!(v["createdBy"], "admin");
         assert!(v["createdAt"].as_i64().expect("ms") > 0);
@@ -279,7 +279,7 @@ mod tests {
         let v = body_json(resp).await;
         let items = v["items"].as_array().expect("items");
         assert_eq!(items.len(), 1);
-        assert_eq!(items[0]["name"], "默认");
+        assert_eq!(items[0]["name"], "default");
     }
 
     #[tokio::test]
@@ -327,7 +327,7 @@ mod tests {
     #[tokio::test]
     async fn create_duplicate_name_409() {
         let (app, t) = app_with("PROJECT:UPDATE").await;
-        let body = r#"{"kind":"requirement","name":"默认"}"#;
+        let body = r#"{"kind":"requirement","name":"default"}"#;
         let resp = app
             .clone()
             .oneshot(json_req("POST", "/project/p1/template", Some(body), Some(&t)))

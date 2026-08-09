@@ -29,7 +29,7 @@ fn scan(dir: &Path) {
             for pat in [format!("use {token}"), format!("{token}::")] {
                 assert!(
                     !src.contains(&pat),
-                    "纯层禁止引用 IO crate:{} 含 `{pat}`(IO 只能在 adapters)",
+                    "pure layers must not reference IO crates: {} contains `{pat}` (IO belongs only in adapters)",
                     path.display()
                 );
             }

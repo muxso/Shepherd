@@ -107,7 +107,7 @@ mod tests {
     async fn scheduled_run_snapshots_stats() {
         let repo = InMemoryPlanRepository::new();
         let plan =
-            repo.seed(NewPlan::new("p1", "冒烟", PlanType::Plan, ROOT_GROUP).expect("v")).await;
+            repo.seed(NewPlan::new("p1", "smoke", PlanType::Plan, ROOT_GROUP).expect("v")).await;
         repo.set_counts(&plan.id, CaseCounts { success: 3, error: 1, ..Default::default() });
         let store = Arc::new(InMemoryScheduleStore::new());
         let stats = PlanStatisticsUseCase::new(Arc::new(repo));

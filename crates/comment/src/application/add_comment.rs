@@ -43,9 +43,10 @@ mod tests {
     #[tokio::test]
     async fn adds_valid_comment() {
         let uc = AddCommentUseCase::new(Arc::new(InMemoryCommentRepository::new()));
-        let c = uc.execute("BUG", "b1", "复现步骤如下", "admin").await.expect("ok");
+        let c =
+            uc.execute("BUG", "b1", "reproduction steps as follows", "admin").await.expect("ok");
         assert_eq!(c.target_id, "b1");
-        assert_eq!(c.content, "复现步骤如下");
+        assert_eq!(c.content, "reproduction steps as follows");
         assert_eq!(c.author, "admin");
     }
 

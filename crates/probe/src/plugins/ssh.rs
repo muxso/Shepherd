@@ -35,21 +35,23 @@ async fn run_ssh(
     password: &str,
 ) -> Result<(String, i64), String> {
     let (host, port) = match target.rsplit_once(':') {
-        Some((h, p)) => (h.to_string(), p.parse::<u16>().map_err(|_| "端口非法".to_string())?),
+        Some((h, p)) => (h.to_string(), p.parse::<u16>().map_err(|_| "invalid port".to_string())?),
         None => (target.to_string(), 22u16),
     };
     let config = Arc::new(client::Config::default());
     let mut handle = client::connect(config, (host.as_str(), port), AcceptAll)
         .await
-        .map_err(|e| format!("连接失败: {e}"))?;
-    let authed =
-        handle.authenticate_password(user, password).await.map_err(|e| format!("认证错误: {e}"))?;
+        .map_err(|e| format!("connection failed: {e}"))?;
+    let authed = handle
+        .authenticate_password(user, password)
+        .await
+        .map_err(|e| format!("authentication error: {e}"))?;
     if !authed.success() {
-        return Err("认证失败(用户名/密码)".to_string());
+        return Err("authentication failed (username/password)".to_string());
     }
     let mut channel =
-        handle.channel_open_session().await.map_err(|e| format!("开通道失败: {e}"))?;
-    channel.exec(true, command).await.map_err(|e| format!("执行失败: {e}"))?;
+        handle.channel_open_session().await.map_err(|e| format!("failed to open channel: {e}"))?;
+    channel.exec(true, command).await.map_err(|e| format!("execution failed: {e}"))?;
 
     let mut out: Vec<u8> = Vec::new();
     let mut code: i64 = 0;

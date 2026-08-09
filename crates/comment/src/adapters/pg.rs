@@ -93,7 +93,7 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    #[ignore = "需要 DATABASE_URL 指向一个 PostgreSQL 实例"]
+    #[ignore = "requires DATABASE_URL pointing to a PostgreSQL instance"]
     async fn pg_comment_roundtrip() {
         let url = std::env::var("DATABASE_URL").expect("set DATABASE_URL");
         let pool = PgPool::connect(&url).await.expect("connect");
@@ -101,13 +101,13 @@ mod tests {
         sqlx::raw_sql("TRUNCATE ms_comment").execute(&pool).await.expect("truncate");
 
         let repo = PgCommentRepository::new(pool.clone());
-        let nc = NewComment::new("BUG", "b1", "登录崩溃复现", "admin").expect("valid");
+        let nc = NewComment::new("BUG", "b1", "login crash reproduction", "admin").expect("valid");
         let c = repo.insert(&nc).await.expect("insert");
         assert!(!c.created_at.is_empty());
 
         let list = repo.list("BUG", "b1").await.expect("list");
         assert_eq!(list.len(), 1);
-        assert_eq!(list[0].content, "登录崩溃复现");
+        assert_eq!(list[0].content, "login crash reproduction");
 
         repo.soft_delete(&c.id).await.expect("delete");
         assert!(repo.list("BUG", "b1").await.expect("list").is_empty());

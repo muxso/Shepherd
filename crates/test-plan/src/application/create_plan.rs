@@ -69,8 +69,8 @@ mod tests {
     #[tokio::test]
     async fn creates_root_plan() {
         let uc = CreatePlanUseCase::new(Arc::new(InMemoryPlanRepository::new()));
-        let p = uc.execute("proj1", "冒烟", PlanType::Plan, ROOT_GROUP).await.expect("ok");
-        assert_eq!(p.name, "冒烟");
+        let p = uc.execute("proj1", "smoke", PlanType::Plan, ROOT_GROUP).await.expect("ok");
+        assert_eq!(p.name, "smoke");
         assert!(!p.archived);
     }
 
@@ -79,7 +79,7 @@ mod tests {
         let repo = Arc::new(InMemoryPlanRepository::new());
         let uc = CreatePlanUseCase::new(repo.clone());
         let p = uc
-            .execute_as("proj1", "冒烟", PlanType::Plan, ROOT_GROUP, Some("admin"))
+            .execute_as("proj1", "smoke", PlanType::Plan, ROOT_GROUP, Some("admin"))
             .await
             .expect("ok");
         assert_eq!(p.created_by.as_deref(), Some("admin"));
@@ -87,14 +87,14 @@ mod tests {
         assert_eq!(list.len(), 1);
         assert_eq!(list[0].0.created_by.as_deref(), Some("admin"));
         // No user: created_by stays empty.
-        let anon = uc.execute("proj1", "匿名", PlanType::Plan, ROOT_GROUP).await.expect("ok");
+        let anon = uc.execute("proj1", "anonymous", PlanType::Plan, ROOT_GROUP).await.expect("ok");
         assert_eq!(anon.created_by, None);
     }
 
     #[tokio::test]
     async fn nested_group_rejected_by_domain() {
         let uc = CreatePlanUseCase::new(Arc::new(InMemoryPlanRepository::new()));
-        let err = uc.execute("proj1", "组中组", PlanType::Group, "g1").await.unwrap_err();
+        let err = uc.execute("proj1", "nested group", PlanType::Group, "g1").await.unwrap_err();
         assert_eq!(err, CreatePlanError::Validation(PlanError::GroupCannotBeNested));
     }
 
@@ -102,17 +102,20 @@ mod tests {
     async fn plan_in_existing_group_ok() {
         let repo = InMemoryPlanRepository::new();
         let uc = CreatePlanUseCase::new(Arc::new(repo.clone()));
-        let group =
-            uc.execute("proj1", "回归组", PlanType::Group, ROOT_GROUP).await.expect("group");
+        let group = uc
+            .execute("proj1", "regression group", PlanType::Group, ROOT_GROUP)
+            .await
+            .expect("group");
 
-        let child = uc.execute("proj1", "子计划", PlanType::Plan, &group.id).await.expect("child");
+        let child =
+            uc.execute("proj1", "child plan", PlanType::Plan, &group.id).await.expect("child");
         assert_eq!(child.group_id, group.id);
     }
 
     #[tokio::test]
     async fn plan_in_missing_group_rejected() {
         let uc = CreatePlanUseCase::new(Arc::new(InMemoryPlanRepository::new()));
-        let err = uc.execute("proj1", "孤儿", PlanType::Plan, "ghost").await.unwrap_err();
+        let err = uc.execute("proj1", "orphan", PlanType::Plan, "ghost").await.unwrap_err();
         assert_eq!(err, CreatePlanError::InvalidGroup);
     }
 
@@ -120,8 +123,8 @@ mod tests {
     async fn plan_parented_to_a_non_group_rejected() {
         let repo = InMemoryPlanRepository::new();
         let uc = CreatePlanUseCase::new(Arc::new(repo.clone()));
-        let plain = uc.execute("proj1", "普通", PlanType::Plan, ROOT_GROUP).await.expect("plan");
-        let err = uc.execute("proj1", "子", PlanType::Plan, &plain.id).await.unwrap_err();
+        let plain = uc.execute("proj1", "plain", PlanType::Plan, ROOT_GROUP).await.expect("plan");
+        let err = uc.execute("proj1", "child", PlanType::Plan, &plain.id).await.unwrap_err();
         assert_eq!(err, CreatePlanError::InvalidGroup);
     }
 }

@@ -1323,7 +1323,7 @@ fn run_error_response(e: RunError) -> Response {
 #[openapi(
     paths(run_scenario, batch_run_scenarios, build_scenario_report, create_scenario_share, public_scenario_report),
     components(schemas(RunScenarioBody, RunScenarioResponse, BatchRunBody, BatchRunResponse, BatchRunItem, ExecutedOn, ScenarioReportResponse, ReportResultItem, ReqInfo, ShareBody, ShareResponse)),
-    tags((name = "api-scenario", description = "场景"))
+    tags((name = "api-scenario", description = "Scenarios"))
 )]
 struct ApiDoc;
 

@@ -50,7 +50,10 @@ async fn native_load_run_produces_report() {
 
     assert_eq!(report.total, 30);
     assert_eq!(report.success + report.failed, 30);
-    assert!(report.failed >= 1, "每 10 次一个 500,应有失败: {report:?}");
+    assert!(
+        report.failed >= 1,
+        "one 500 every 10 requests, so there should be failures: {report:?}"
+    );
     assert!(report.throughput_rps > 0.0);
     assert!(report.latency.p50 <= report.latency.p95);
     assert!(report.latency.p95 <= report.latency.max);

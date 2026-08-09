@@ -10,7 +10,7 @@ fn db_url() -> String {
 }
 
 #[tokio::test]
-#[ignore = "需要 PostgreSQL"]
+#[ignore = "requires PostgreSQL"]
 async fn protocols_column_roundtrip_and_protocol_routing() {
     let pool = migrate::connect(&db_url()).await.expect("connect PG");
     migrate::run(&pool).await.expect("run migrations");

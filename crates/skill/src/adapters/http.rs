@@ -247,7 +247,7 @@ async fn compose(
 #[openapi(
     paths(create_skill, list_skills, compose, get_skill, update_skill, delete_skill),
     components(schemas(CreateBody, UpdateBody, ComposeBody, SkillResponse, ComposeResponse)),
-    tags((name = "skill", description = "AI Skill 编排"))
+    tags((name = "skill", description = "AI skill orchestration"))
 )]
 struct ApiDoc;
 pub fn openapi() -> utoipa::openapi::OpenApi {
@@ -295,14 +295,14 @@ mod tests {
             .oneshot(req(
                 "POST",
                 "/skill",
-                r#"{"projectId":"p1","name":"基础","instructions":"遵循六边形"}"#,
+                r#"{"projectId":"p1","name":"basic","instructions":"follows hexagonal architecture"}"#,
                 Some(&t),
             ))
             .await
             .expect("r");
         assert_eq!(a.status(), StatusCode::CREATED);
         let aid = json(a).await["id"].as_str().expect("id").to_string();
-        let b = app.clone().oneshot(req("POST", "/skill", &format!(r#"{{"projectId":"p1","name":"Rust","instructions":"用 thiserror","includes":["{aid}"]}}"#), Some(&t))).await.expect("r");
+        let b = app.clone().oneshot(req("POST", "/skill", &format!(r#"{{"projectId":"p1","name":"Rust","instructions":"using thiserror","includes":["{aid}"]}}"#), Some(&t))).await.expect("r");
         let bid = json(b).await["id"].as_str().expect("id").to_string();
 
         let c = app
@@ -318,8 +318,8 @@ mod tests {
         assert_eq!(c.status(), StatusCode::OK);
         let cv = json(c).await;
         assert_eq!(cv["skillIds"][0], aid);
-        assert!(cv["instructions"].as_str().expect("s").contains("遵循六边形"));
-        assert!(cv["instructions"].as_str().expect("s").contains("用 thiserror"));
+        assert!(cv["instructions"].as_str().expect("s").contains("follows hexagonal architecture"));
+        assert!(cv["instructions"].as_str().expect("s").contains("using thiserror"));
 
         assert_eq!(
             app.clone()

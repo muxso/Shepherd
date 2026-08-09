@@ -39,20 +39,20 @@ impl ProbeAssertion {
                 if raw.transport_ok {
                     None
                 } else {
-                    Some(format!("传输失败: {}", raw.error.as_deref().unwrap_or("unknown")))
+                    Some(format!("transport failed: {}", raw.error.as_deref().unwrap_or("unknown")))
                 }
             }
             Self::StatusIs(want) => match raw.status {
                 Some(got) if got == *want => None,
-                Some(got) => Some(format!("status: 期望 {want},实际 {got}")),
-                None => Some(format!("status: 期望 {want},无状态码")),
+                Some(got) => Some(format!("status: expected {want}, actual {got}")),
+                None => Some(format!("status: expected {want}, no status code")),
             },
             Self::OutputContains(sub) => {
                 let out = raw.output.as_deref().unwrap_or("");
                 if out.contains(sub.as_str()) {
                     None
                 } else {
-                    Some(format!("output 不含子串: {sub}"))
+                    Some(format!("output does not contain substring: {sub}"))
                 }
             }
             Self::OutputEquals(want) => {
@@ -60,14 +60,14 @@ impl ProbeAssertion {
                 if out == want {
                     None
                 } else {
-                    Some("output 不等于期望值".to_string())
+                    Some("output does not equal the expected value".to_string())
                 }
             }
             Self::LatencyUnderMs(max) => {
                 if raw.latency_ms <= *max {
                     None
                 } else {
-                    Some(format!("latency {}ms 超过 {max}ms", raw.latency_ms))
+                    Some(format!("latency {}ms exceeds {max}ms", raw.latency_ms))
                 }
             }
         }
@@ -94,7 +94,8 @@ impl ProbeOutcome {
     pub fn from_raw(raw: RawProbe, assertions: &[ProbeAssertion]) -> Self {
         let mut failures = evaluate(assertions, &raw);
         if !raw.transport_ok && !assertions.iter().any(|a| matches!(a, ProbeAssertion::Success)) {
-            failures.push(format!("传输失败: {}", raw.error.as_deref().unwrap_or("unknown")));
+            failures
+                .push(format!("transport failed: {}", raw.error.as_deref().unwrap_or("unknown")));
         }
         Self {
             success: raw.transport_ok && failures.is_empty(),
@@ -146,7 +147,7 @@ mod tests {
             RawProbe { transport_ok: false, error: Some("refused".into()), ..Default::default() };
         let f = evaluate(&[ProbeAssertion::Success], &raw);
         assert_eq!(f.len(), 1);
-        assert!(f[0].contains("传输失败"));
+        assert!(f[0].contains("transport failed"));
         assert!(!ProbeOutcome::from_raw(raw, &[]).success);
     }
 

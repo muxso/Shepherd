@@ -9,14 +9,14 @@ pub fn parse_postman(doc: &Value) -> Result<Vec<ImportedApi>, ApiDefinitionError
     let items = doc
         .get("item")
         .and_then(|v| v.as_array())
-        .ok_or_else(|| ApiDefinitionError::BadImport("postman: 缺少 `item` 数组".into()))?;
+        .ok_or_else(|| ApiDefinitionError::BadImport("postman: missing `item` array".into()))?;
 
     let mut out = Vec::new();
     for it in items {
         walk(it, None, &mut out);
     }
     if out.is_empty() {
-        return Err(ApiDefinitionError::BadImport("postman: 未找到任何请求".into()));
+        return Err(ApiDefinitionError::BadImport("postman: no requests found".into()));
     }
     Ok(out)
 }
@@ -177,7 +177,7 @@ mod tests {
             "info": { "name": "demo" },
             "item": [
                 { "name": "auth", "item": [
-                    { "name": "登录", "request": {
+                    { "name": "login", "request": {
                         "method": "post",
                         "header": [{ "key": "Content-Type", "value": "application/json" }],
                         "url": { "raw": "{{base}}/login?from=web", "path": ["login"], "query": [{ "key": "from", "value": "web" }] },

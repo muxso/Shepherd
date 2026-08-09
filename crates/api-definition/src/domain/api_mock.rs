@@ -95,14 +95,14 @@ mod tests {
     fn new_mock_ok() {
         let m = NewApiMock::new(
             "def1",
-            " 挡板 ",
+            " stub ",
             serde_json::json!({"path": "/x"}),
             200,
             Some("{}".into()),
             true,
         )
         .expect("ok");
-        assert_eq!(m.name, "挡板");
+        assert_eq!(m.name, "stub");
         assert_eq!(m.response_status, 200);
         assert!(m.enabled);
     }

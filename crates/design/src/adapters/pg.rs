@@ -92,7 +92,7 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    #[ignore = "需要 DATABASE_URL 指向一个 PostgreSQL 实例"]
+    #[ignore = "requires DATABASE_URL pointing to a PostgreSQL instance"]
     async fn pg_proposal_lifecycle_roundtrip() {
         let url = std::env::var("DATABASE_URL").expect("set DATABASE_URL");
         let pool = PgPool::connect(&url).await.expect("connect");
@@ -110,27 +110,27 @@ mod tests {
         sqlx::query("TRUNCATE ms_design_proposal").execute(&pool).await.expect("truncate");
 
         let repo = PgProposalRepository::new(pool.clone());
-        let mut p = repo.create("req-1", "登录改造设计").await.expect("create");
+        let mut p = repo.create("req-1", "login revamp design").await.expect("create");
         assert_eq!(p.status, ProposalStatus::Drafting);
 
-        p.submit_design("## 方案 v1").expect("submit");
+        p.submit_design("## proposal v1").expect("submit");
         repo.save(&p).await.expect("save1");
-        p.request_changes("补充错误码").expect("reject");
+        p.request_changes("add error codes").expect("reject");
         repo.save(&p).await.expect("save2");
 
         let got = repo.get(&p.id).await.expect("get").expect("some");
         assert_eq!(got.status, ProposalStatus::ChangesRequested);
         assert_eq!(got.revision, 1);
-        assert_eq!(got.review_comment.as_deref(), Some("补充错误码"));
+        assert_eq!(got.review_comment.as_deref(), Some("add error codes"));
 
         let mut p = got;
-        p.submit_design("## 方案 v2 含错误码").expect("submit2");
+        p.submit_design("## proposal v2 with error codes").expect("submit2");
         p.approve().expect("approve");
         repo.save(&p).await.expect("save3");
 
         let final_p = repo.get(&p.id).await.expect("get2").expect("some");
         assert_eq!(final_p.status, ProposalStatus::Approved);
-        assert_eq!(final_p.design_doc.as_deref(), Some("## 方案 v2 含错误码"));
+        assert_eq!(final_p.design_doc.as_deref(), Some("## proposal v2 with error codes"));
         assert!(final_p.review_comment.is_none());
         assert_eq!(repo.list_by_requirement("req-1").await.expect("list").len(), 1);
     }

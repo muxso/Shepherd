@@ -536,7 +536,7 @@ async fn delete_rule(
 }
 
 #[derive(OpenApi)]
-#[openapi(paths(list_notices, unread_count, mark_read, read_all, list_robots, create_robot, update_robot, delete_robot, test_robot, list_rules, create_rule, update_rule, delete_rule), components(schemas(NoticeResponse, NoticePageResponse, UnreadCountResponse, RobotResponse, RobotBody, RobotTestResponse, RuleResponse, RuleBody)), tags((name = "notice", description = "站内信")))]
+#[openapi(paths(list_notices, unread_count, mark_read, read_all, list_robots, create_robot, update_robot, delete_robot, test_robot, list_rules, create_rule, update_rule, delete_rule), components(schemas(NoticeResponse, NoticePageResponse, UnreadCountResponse, RobotResponse, RobotBody, RobotTestResponse, RuleResponse, RuleBody)), tags((name = "notice", description = "Notifications")))]
 struct ApiDoc;
 pub fn openapi() -> utoipa::openapi::OpenApi {
     ApiDoc::openapi()
@@ -583,7 +583,7 @@ mod tests {
                 project_id: "p1".into(),
                 category: category.into(),
                 event_type: "BUG_ASSIGNED".into(),
-                title: "登录页崩溃".into(),
+                title: "login page crash".into(),
                 content: "NEW".into(),
                 resource_type: "BUG".into(),
                 resource_id: "b1".into(),

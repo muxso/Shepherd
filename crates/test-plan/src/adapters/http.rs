@@ -394,7 +394,7 @@ async fn statistics(
     }
 }
 
-#[utoipa::path(get, path = "/test-plan/{id}/report", tag = "test-plan", params(("id" = String, Path)), responses((status = 200, description = "HTML 报告"), (status = 403), (status = 404)), security(("bearer" = [])))]
+#[utoipa::path(get, path = "/test-plan/{id}/report", tag = "test-plan", params(("id" = String, Path)), responses((status = 200, description = "HTML report"), (status = 403), (status = 404)), security(("bearer" = [])))]
 async fn report(user: AuthUser, State(st): State<PlanState>, Path(id): Path<String>) -> Response {
     if !user.can("TEST_PLAN", "READ") {
         return (StatusCode::FORBIDDEN, "permission denied").into_response();
@@ -435,7 +435,7 @@ fn markdown_response(md: String) -> Response {
     (StatusCode::OK, [("content-type", "text/markdown; charset=utf-8")], md).into_response()
 }
 
-#[utoipa::path(get, path = "/test-plan/{id}/report.md", tag = "test-plan", params(("id" = String, Path)), responses((status = 200, description = "Markdown 报告"), (status = 403), (status = 404)), security(("bearer" = [])))]
+#[utoipa::path(get, path = "/test-plan/{id}/report.md", tag = "test-plan", params(("id" = String, Path)), responses((status = 200, description = "Markdown report"), (status = 403), (status = 404)), security(("bearer" = [])))]
 async fn report_md(
     user: AuthUser,
     State(st): State<PlanState>,
@@ -489,7 +489,7 @@ async fn create_plan_share(
 }
 
 /// Public (unauthenticated) read of a shared plan report (Markdown) by token.
-#[utoipa::path(get, path = "/public/test-plan-report/{token}", tag = "test-plan", params(("token" = String, Path)), responses((status = 200, description = "Markdown 报告"), (status = 404)))]
+#[utoipa::path(get, path = "/public/test-plan-report/{token}", tag = "test-plan", params(("token" = String, Path)), responses((status = 200, description = "Markdown report"), (status = 404)))]
 async fn public_plan_report(State(st): State<PlanState>, Path(token): Path<String>) -> Response {
     let plan_id = sqlx::query_scalar::<_, String>(
         "SELECT report_id FROM ms_report_share \
@@ -693,7 +693,7 @@ async fn list_cases(
 }
 
 #[derive(OpenApi)]
-#[openapi(paths(create_plan, list_plans, plan_detail, update_plan, save_planning, statistics, report, report_md, create_plan_share, public_plan_report, link_case, unlink_case, record_result, list_cases), components(schemas(CreatePlanRequest, PlanResponse, PlanListItemResponse, PlanDetailResponse, UpdatePlanRequest, SavePlanningResponse, StatisticsResponse, PlanShareResponse, LinkCaseRequest, RecordResultRequest, AssertionResultDto, PlanCaseResponse, StepResultDto)), tags((name = "test-plan", description = "测试计划")))]
+#[openapi(paths(create_plan, list_plans, plan_detail, update_plan, save_planning, statistics, report, report_md, create_plan_share, public_plan_report, link_case, unlink_case, record_result, list_cases), components(schemas(CreatePlanRequest, PlanResponse, PlanListItemResponse, PlanDetailResponse, UpdatePlanRequest, SavePlanningResponse, StatisticsResponse, PlanShareResponse, LinkCaseRequest, RecordResultRequest, AssertionResultDto, PlanCaseResponse, StepResultDto)), tags((name = "test-plan", description = "Test plan")))]
 struct ApiDoc;
 pub fn openapi() -> utoipa::openapi::OpenApi {
     ApiDoc::openapi()
@@ -748,7 +748,7 @@ mod tests {
         let resp = app
             .oneshot(post(
                 "/test-plan",
-                r#"{"projectId":"p1","name":"冒烟","type":"TEST_PLAN"}"#,
+                r#"{"projectId":"p1","name":"smoke","type":"TEST_PLAN"}"#,
                 Some(&t),
             ))
             .await
@@ -799,7 +799,9 @@ mod tests {
     async fn link_record_then_report_shows_case_detail() {
         let repo = InMemoryPlanRepository::new();
         let plan = repo
-            .seed(NewPlan::new("p1", "冒烟", crate::domain::PlanType::Plan, ROOT_GROUP).expect("v"))
+            .seed(
+                NewPlan::new("p1", "smoke", crate::domain::PlanType::Plan, ROOT_GROUP).expect("v"),
+            )
             .await;
         let (app, t) = app_with(repo).await;
         let pid = &plan.id;
@@ -807,13 +809,13 @@ mod tests {
             .clone()
             .oneshot(post(
                 &format!("/test-plan/{pid}/cases"),
-                r#"{"caseId":"c1","name":"健康检查"}"#,
+                r#"{"caseId":"c1","name":"health check"}"#,
                 Some(&t),
             ))
             .await
             .expect("link");
         assert_eq!(r.status(), StatusCode::CREATED);
-        let body = r#"{"status":"SUCCESS","latencyMs":12,"responseSize":3,"statusCode":200,"body":"ok","assertions":[{"item":"状态码","actual":"200","condition":"等于","expected":"200","passed":true}]}"#;
+        let body = r#"{"status":"SUCCESS","latencyMs":12,"responseSize":3,"statusCode":200,"body":"ok","assertions":[{"item":"status code","actual":"200","condition":"equals","expected":"200","passed":true}]}"#;
         let r = app
             .clone()
             .oneshot(post(&format!("/test-plan/{pid}/cases/c1/result"), body, Some(&t)))
@@ -835,7 +837,7 @@ mod tests {
             axum::body::to_bytes(r.into_body(), usize::MAX).await.expect("b").to_vec(),
         )
         .expect("utf8");
-        assert!(html.contains("健康检查"));
+        assert!(html.contains("health check"));
         assert!(html.contains("报告明细"));
         assert!(html.contains("断言项"));
         assert!(html.contains("通过率</span><b>100.0%"));
@@ -845,7 +847,9 @@ mod tests {
     async fn unlink_case_204_then_404() {
         let repo = InMemoryPlanRepository::new();
         let plan = repo
-            .seed(NewPlan::new("p1", "冒烟", crate::domain::PlanType::Plan, ROOT_GROUP).expect("v"))
+            .seed(
+                NewPlan::new("p1", "smoke", crate::domain::PlanType::Plan, ROOT_GROUP).expect("v"),
+            )
             .await;
         let (app, t) = app_with(repo).await;
         let pid = &plan.id;
@@ -853,7 +857,7 @@ mod tests {
             .clone()
             .oneshot(post(
                 &format!("/test-plan/{pid}/cases"),
-                r#"{"caseId":"c1","name":"健康检查"}"#,
+                r#"{"caseId":"c1","name":"health check"}"#,
                 Some(&t),
             ))
             .await
@@ -894,7 +898,7 @@ mod tests {
         let resp = app
             .oneshot(post(
                 "/test-plan",
-                r#"{"projectId":"p1","name":"组中组","type":"GROUP","groupId":"g1"}"#,
+                r#"{"projectId":"p1","name":"nested group","type":"GROUP","groupId":"g1"}"#,
                 Some(&t),
             ))
             .await
@@ -916,7 +920,7 @@ mod tests {
     async fn statistics_returns_rates() {
         let repo = InMemoryPlanRepository::new();
         let plan =
-            repo.seed(NewPlan::new("p1", "冒烟", PlanType::Plan, ROOT_GROUP).expect("v")).await;
+            repo.seed(NewPlan::new("p1", "smoke", PlanType::Plan, ROOT_GROUP).expect("v")).await;
         repo.set_counts(
             &plan.id,
             CaseCounts { pending: 1, success: 2, error: 1, ..Default::default() },
@@ -961,10 +965,12 @@ mod tests {
     async fn detail_update_roundtrip() {
         let repo = InMemoryPlanRepository::new();
         let plan = repo
-            .seed(NewPlan::new("p1", "冒烟", crate::domain::PlanType::Plan, ROOT_GROUP).expect("v"))
+            .seed(
+                NewPlan::new("p1", "smoke", crate::domain::PlanType::Plan, ROOT_GROUP).expect("v"),
+            )
             .await;
         let (app, t) = app_with(repo).await;
-        let body = r#"{"name":"回归","description":"说明","tags":["核心"],"moduleId":"m1","startAt":1000,"endAt":2000,"allowDuplicateCases":false,"autoUpdateStatus":false,"passThreshold":80}"#;
+        let body = r#"{"name":"regression","description":"description","tags":["core"],"moduleId":"m1","startAt":1000,"endAt":2000,"allowDuplicateCases":false,"autoUpdateStatus":false,"passThreshold":80}"#;
         let resp = app
             .clone()
             .oneshot(put_req(&format!("/test-plan/{}", plan.id), body, &t))
@@ -983,9 +989,9 @@ mod tests {
             .expect("get");
         assert_eq!(resp.status(), StatusCode::OK);
         let v = json_body(resp).await;
-        assert_eq!(v["name"], "回归");
-        assert_eq!(v["description"], "说明");
-        assert_eq!(v["tags"], serde_json::json!(["核心"]));
+        assert_eq!(v["name"], "regression");
+        assert_eq!(v["description"], "description");
+        assert_eq!(v["tags"], serde_json::json!(["core"]));
         assert_eq!(v["moduleId"], "m1");
         assert_eq!(v["startAt"], 1000);
         assert_eq!(v["allowDuplicateCases"], false);
@@ -997,10 +1003,12 @@ mod tests {
     async fn planning_roundtrip_and_link_sync() {
         let repo = InMemoryPlanRepository::new();
         let plan = repo
-            .seed(NewPlan::new("p1", "冒烟", crate::domain::PlanType::Plan, ROOT_GROUP).expect("v"))
+            .seed(
+                NewPlan::new("p1", "smoke", crate::domain::PlanType::Plan, ROOT_GROUP).expect("v"),
+            )
             .await;
         let (app, t) = app_with(repo).await;
-        let doc = r#"{"nodes":[{"id":"n1","name":"接口用例","kind":"category","children":[{"id":"n2","name":"登录","kind":"point","caseIds":["c1"],"scenarioIds":["s1"],"config":{"mode":"serial"}}]}],"caseNames":{"c1":"健康检查"}}"#;
+        let doc = r#"{"nodes":[{"id":"n1","name":"interface case","kind":"category","children":[{"id":"n2","name":"login","kind":"point","caseIds":["c1"],"scenarioIds":["s1"],"config":{"mode":"serial"}}]}],"caseNames":{"c1":"health check"}}"#;
         let resp = app
             .clone()
             .oneshot(put_req(&format!("/test-plan/{}/planning", plan.id), doc, &t))
@@ -1086,7 +1094,7 @@ mod tests {
             .clone()
             .oneshot(post(
                 "/test-plan",
-                r#"{"projectId":"p1","name":"冒烟","type":"TEST_PLAN"}"#,
+                r#"{"projectId":"p1","name":"smoke","type":"TEST_PLAN"}"#,
                 Some(&t),
             ))
             .await
@@ -1098,13 +1106,13 @@ mod tests {
             .clone()
             .oneshot(post(
                 "/test-plan",
-                r#"{"projectId":"p1","name":"回归组","type":"GROUP"}"#,
+                r#"{"projectId":"p1","name":"regression group","type":"GROUP"}"#,
                 Some(&t),
             ))
             .await
             .expect("create group");
         assert_eq!(r.status(), StatusCode::CREATED);
-        let body = r#"{"tags":["核心"],"moduleId":"m1","startAt":1000}"#;
+        let body = r#"{"tags":["core"],"moduleId":"m1","startAt":1000}"#;
         let r =
             app.clone().oneshot(put_req(&format!("/test-plan/{id}"), body, &t)).await.expect("put");
         assert_eq!(r.status(), StatusCode::OK);
@@ -1115,12 +1123,12 @@ mod tests {
         let items = v.as_array().expect("array");
         assert_eq!(items.len(), 2);
         // Newest first: the group was created after the plan.
-        assert_eq!(items[0]["name"], "回归组");
+        assert_eq!(items[0]["name"], "regression group");
         assert_eq!(items[0]["type"], "GROUP");
         let p = &items[1];
         assert_eq!(p["id"].as_str(), Some(id.as_str()));
         assert_eq!(p["createdBy"], "admin");
-        assert_eq!(p["tags"], serde_json::json!(["核心"]));
+        assert_eq!(p["tags"], serde_json::json!(["core"]));
         assert_eq!(p["moduleId"], "m1");
         assert_eq!(p["startAt"], 1000);
         assert_eq!(p["groupId"], "NONE");
@@ -1131,8 +1139,8 @@ mod tests {
     async fn list_scoped_to_project_and_hides_archived() {
         let (app, t) = app_with(InMemoryPlanRepository::new()).await;
         for body in [
-            r#"{"projectId":"p1","name":"甲","type":"TEST_PLAN"}"#,
-            r#"{"projectId":"p2","name":"乙","type":"TEST_PLAN"}"#,
+            r#"{"projectId":"p1","name":"alpha","type":"TEST_PLAN"}"#,
+            r#"{"projectId":"p2","name":"beta","type":"TEST_PLAN"}"#,
         ] {
             let r = app.clone().oneshot(post("/test-plan", body, Some(&t))).await.expect("create");
             assert_eq!(r.status(), StatusCode::CREATED);

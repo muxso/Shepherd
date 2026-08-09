@@ -801,7 +801,7 @@ async fn runner_status(
 }
 
 /// Per-pool connected runner details (name / cap / in-flight) for the pool
-/// detail page's 执行机接入 panel and the run-target indicators.
+/// detail page's executor-connection panel and the run-target indicators.
 async fn runner_status_detail(
     _user: webauth::AuthUser,
     State(st): State<WsState>,

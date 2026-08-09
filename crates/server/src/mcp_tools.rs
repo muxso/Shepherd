@@ -678,7 +678,7 @@ async fn mcp_handler(
     let mint = is_initialize(&body);
     let resp = st.server.dispatch(body, &UserCaps(&user)).await;
     let errored = resp.as_ref().map(|r| r.get("error").is_some()).unwrap_or(false);
-    tracing::info!(target: "mcp_audit", user = %user.user_id, method, tool, ok = !errored, "MCP 调用");
+    tracing::info!(target: "mcp_audit", user = %user.user_id, method, tool, ok = !errored, "MCP call");
     let new_sid = if mint { Some(st.mcp_sessions.mint(&user.user_id)) } else { None };
 
     let mut response = match resp {

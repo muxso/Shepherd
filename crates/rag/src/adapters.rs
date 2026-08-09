@@ -47,7 +47,7 @@ impl Embedder for OpenAiEmbedder {
         let (url, key, model) = self.snapshot();
         if key.is_empty() {
             return Err(RagError::Config(
-                "embedding API key not configured (系统参数 → RAG 配置)".into(),
+                "embedding API key not configured (System Params → RAG config)".into(),
             ));
         }
         // Volcano Engine multimodal embeddings take one {type:text} input at a time and return
@@ -138,7 +138,7 @@ impl Chat for OpenAiChat {
         let (url, key, model, max_tokens) = self.snapshot();
         if key.is_empty() {
             return Err(RagError::Config(
-                "LLM API key not configured (系统参数 → RAG 配置)".into(),
+                "LLM API key not configured (System Params → RAG config)".into(),
             ));
         }
         let resp = self
@@ -182,7 +182,7 @@ impl Chat for OpenAiChat {
         let (url, key, model, max_tokens) = self.snapshot();
         if key.is_empty() {
             return Err(RagError::Config(
-                "LLM API key not configured (系统参数 → RAG 配置)".into(),
+                "LLM API key not configured (System Params → RAG config)".into(),
             ));
         }
         let resp = self

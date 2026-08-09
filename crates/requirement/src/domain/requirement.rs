@@ -910,9 +910,12 @@ mod tests {
     fn new_req() -> NewRequirement {
         NewRequirement::new(
             "proj1",
-            "  登录功能  ",
-            "  用户可用邮箱登录  ",
-            &["可用正确邮箱+密码登录".to_string(), "错误密码拒绝".to_string()],
+            "  login feature  ",
+            "  users can log in with email  ",
+            &[
+                "login with correct email + password".to_string(),
+                "wrong password rejected".to_string(),
+            ],
         )
         .expect("valid")
     }
@@ -920,8 +923,8 @@ mod tests {
     #[test]
     fn new_requirement_trims_and_parses_criteria() {
         let n = new_req();
-        assert_eq!(n.title, "登录功能");
-        assert_eq!(n.description, "用户可用邮箱登录");
+        assert_eq!(n.title, "login feature");
+        assert_eq!(n.description, "users can log in with email");
         assert_eq!(n.acceptance_criteria.len(), 2);
     }
 
@@ -950,11 +953,11 @@ mod tests {
         let mut r = Requirement::create("req-1", &new_req());
         let v1_criteria = r.version(1).expect("v1").acceptance_criteria.clone();
 
-        let n = r.revise("v2 描述", crit(&["新标准A"])).expect("revise");
+        let n = r.revise("v2 description", crit(&["new criterion A"])).expect("revise");
         assert_eq!(n, 2);
         assert_eq!(r.latest_version(), 2);
         assert_eq!(r.version(1).expect("v1").acceptance_criteria, v1_criteria);
-        assert_eq!(r.version(2).expect("v2").description, "v2 描述");
+        assert_eq!(r.version(2).expect("v2").description, "v2 description");
 
         let n3 = r.revise("v3", crit(&["X"])).expect("revise");
         assert_eq!(n3, 3);
@@ -996,8 +999,8 @@ mod tests {
     #[test]
     fn rename_validates() {
         let mut r = Requirement::create("req-1", &new_req());
-        assert!(r.rename("  新标题 ").is_ok());
-        assert_eq!(r.title, "新标题");
+        assert!(r.rename("  new title ").is_ok());
+        assert_eq!(r.title, "new title");
         assert_eq!(r.rename("   "), Err(RequirementError::EmptyTitle));
     }
 
@@ -1012,9 +1015,9 @@ mod tests {
     #[test]
     fn reject_review_records_reason_and_keeps_draft() {
         let mut r = Requirement::create("req-1", &new_req());
-        r.reject_review("  验收标准不完整  ").expect("reject");
+        r.reject_review("  acceptance criteria incomplete  ").expect("reject");
         assert_eq!(r.status, RequirementStatus::Draft);
-        assert_eq!(r.review_comment.as_deref(), Some("验收标准不完整"));
+        assert_eq!(r.review_comment.as_deref(), Some("acceptance criteria incomplete"));
     }
 
     #[test]
@@ -1027,7 +1030,7 @@ mod tests {
     #[test]
     fn pass_then_baseline_clears_prior_rejection() {
         let mut r = Requirement::create("req-1", &new_req());
-        r.reject_review("缺少边界场景").expect("reject");
+        r.reject_review("missing boundary scenarios").expect("reject");
         r.set_baseline(1).expect("baseline");
         assert_eq!(r.status, RequirementStatus::Baselined);
         assert!(r.review_comment.is_none());
@@ -1036,8 +1039,8 @@ mod tests {
     #[test]
     fn revise_clears_prior_rejection() {
         let mut r = Requirement::create("req-1", &new_req());
-        r.reject_review("缺少边界场景").expect("reject");
-        r.revise("v2", crit(&["补充边界"])).expect("revise");
+        r.reject_review("missing boundary scenarios").expect("reject");
+        r.revise("v2", crit(&["boundary cases added"])).expect("revise");
         assert!(r.review_comment.is_none());
     }
 
@@ -1142,9 +1145,9 @@ mod tests {
 
     #[test]
     fn normalize_custom_fields_trims_keys_and_keeps_values() {
-        let raw = fields(&[(" owner ", "alice"), ("模块", "登录")]);
+        let raw = fields(&[(" owner ", "alice"), ("module", "login")]);
         let out = normalize_custom_fields(&raw).expect("ok");
-        assert_eq!(out, fields(&[("owner", "alice"), ("模块", "登录")]));
+        assert_eq!(out, fields(&[("owner", "alice"), ("module", "login")]));
         assert_eq!(normalize_custom_fields(&BTreeMap::new()), Ok(BTreeMap::new()));
     }
 
@@ -1308,7 +1311,7 @@ mod tests {
         assert_eq!(Stage::parse(" dev "), Some(Stage::Dev));
         assert_eq!(Stage::parse("DESIGN"), None);
         assert_eq!(parse_stage("review"), Ok(Stage::Review));
-        assert_eq!(parse_stage(" 上线 "), Err(RequirementError::InvalidStage("上线".into())));
+        assert_eq!(parse_stage(" GO_LIVE "), Err(RequirementError::InvalidStage("GO_LIVE".into())));
 
         for s in
             [StageStatus::Pending, StageStatus::InProgress, StageStatus::Done, StageStatus::Skipped]

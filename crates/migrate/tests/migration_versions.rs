@@ -26,19 +26,20 @@ fn sql_files() -> Vec<String> {
 fn migration_versions_are_unique() {
     let mut by_version: HashMap<u64, Vec<String>> = HashMap::new();
     for name in sql_files() {
-        let v =
-            version_of(&name).unwrap_or_else(|| panic!("迁移文件缺少数字版本前缀(NNNN_…):{name}"));
+        let v = version_of(&name).unwrap_or_else(|| {
+            panic!("migration file lacks a numeric version prefix (NNNN_…): {name}")
+        });
         by_version.entry(v).or_default().push(name);
     }
     let mut dups: Vec<_> = by_version
         .iter()
         .filter(|(_, files)| files.len() > 1)
-        .map(|(v, files)| format!("版本 {v}: {files:?}"))
+        .map(|(v, files)| format!("version {v}: {files:?}"))
         .collect();
     dups.sort();
     assert!(
         dups.is_empty(),
-        "迁移版本号重复 —— sqlx 会静默丢失其中的迁移!请重编号:\n{}",
+        "duplicate migration versions — sqlx will silently drop one of them! renumber them:\n{}",
         dups.join("\n")
     );
 }
@@ -46,7 +47,7 @@ fn migration_versions_are_unique() {
 #[test]
 fn migration_names_well_formed() {
     let bad: Vec<String> = sql_files().into_iter().filter(|n| version_of(n).is_none()).collect();
-    assert!(bad.is_empty(), "迁移文件名应为 `NNNN_描述.sql`:{bad:?}");
+    assert!(bad.is_empty(), "migration file names must be `NNNN_description.sql`: {bad:?}");
 }
 
 #[test]

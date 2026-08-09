@@ -87,7 +87,7 @@ mod tests {
         RequirementSpec {
             requirement_id: "req1".into(),
             requirement_version: 1,
-            title: "登录".into(),
+            title: "login".into(),
             description: "d".into(),
             acceptance_criteria: criteria.iter().map(|s| s.to_string()).collect(),
         }
@@ -99,7 +99,10 @@ mod tests {
 
     #[tokio::test]
     async fn breakdown_builds_dag_from_plan() {
-        let d = uc().execute(&spec(&["登录成功", "错误密码拒绝"])).await.expect("breakdown");
+        let d = uc()
+            .execute(&spec(&["login success", "wrong password rejected"]))
+            .await
+            .expect("breakdown");
         assert_eq!(d.tasks.len(), 3);
         assert_eq!(
             d.task("t3").expect("t3").dependencies,

@@ -313,7 +313,7 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    #[ignore = "需要 DATABASE_URL 指向一个 PostgreSQL 实例"]
+    #[ignore = "requires DATABASE_URL pointing to a PostgreSQL instance"]
     async fn pg_status_flow_assembled_and_bug_status_roundtrip() {
         let url = std::env::var("DATABASE_URL").expect("set DATABASE_URL");
         let pool = PgPool::connect(&url).await.expect("connect");
@@ -326,7 +326,7 @@ mod tests {
 
         sqlx::raw_sql(
             "INSERT INTO ms_status_item (id, project_id, name, internal) VALUES \
-                ('NEW','p1','新建',true),('RESOLVED','p1','已解决',true),('CLOSED','p1','已关闭',true); \
+                ('NEW','p1','New',true),('RESOLVED','p1','Resolved',true),('CLOSED','p1','Closed',true); \
              INSERT INTO ms_status_flow (project_id, from_id, to_id) VALUES \
                 ('p1','NEW','RESOLVED'),('p1','RESOLVED','CLOSED');",
         )
@@ -344,12 +344,12 @@ mod tests {
         let cf = |pairs: &[(&str, &str)]| -> BTreeMap<String, String> {
             pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()
         };
-        let nb = NewBug::new("p1", "登录崩溃")
+        let nb = NewBug::new("p1", "login crash")
             .expect("valid")
             .with_created_by(Some("alice"))
             .with_severity(Some("P1".into()))
             .with_handler(Some("bob".into()))
-            .with_custom_fields(cf(&[("severity", "P0"), ("多选", "a,b")]));
+            .with_custom_fields(cf(&[("severity", "P0"), ("multi-select", "a,b")]));
         let bug = repo.insert(&nb, "NEW").await.expect("insert");
         let got = repo.get(&bug.id).await.expect("get").expect("some");
         assert_eq!(got.status, "NEW");
@@ -359,7 +359,7 @@ mod tests {
         assert_eq!(got.updated_by.as_deref(), Some("alice"));
         assert!(got.updated_at.is_some());
         // Custom fields read back as written.
-        assert_eq!(got.custom_fields, cf(&[("severity", "P0"), ("多选", "a,b")]));
+        assert_eq!(got.custom_fields, cf(&[("severity", "P0"), ("multi-select", "a,b")]));
 
         repo.set_status(&bug.id, "RESOLVED", Some("carol")).await.expect("set");
         let after = repo.get(&bug.id).await.expect("get").expect("some");
@@ -368,11 +368,11 @@ mod tests {
 
         // Meta update replaces severity/handler and stamps the operator.
         let updated = repo
-            .update_meta(&bug.id, "登录崩溃(改)", Some("P0"), None, Some("dave"))
+            .update_meta(&bug.id, "login crash (modified)", Some("P0"), None, Some("dave"))
             .await
             .expect("meta")
             .expect("some");
-        assert_eq!(updated.title, "登录崩溃(改)");
+        assert_eq!(updated.title, "login crash (modified)");
         assert_eq!(updated.severity.as_deref(), Some("P0"));
         assert_eq!(updated.handler, None);
         assert_eq!(updated.updated_by.as_deref(), Some("dave"));
@@ -409,7 +409,7 @@ mod tests {
         let listed = repo.list("p1").await.expect("list");
         assert_eq!(listed.len(), 1);
         assert_eq!(listed[0].id, bug.id);
-        assert_eq!(listed[0].title, "登录崩溃(改)");
+        assert_eq!(listed[0].title, "login crash (modified)");
         assert!(repo.list("other").await.expect("list").is_empty());
 
         assert!(repo.get("ghost").await.expect("get").is_none());

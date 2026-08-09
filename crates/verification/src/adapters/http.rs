@@ -267,7 +267,7 @@ async fn sync_task(
 #[openapi(
     paths(create_verification, get_verification, get_report, link, sync_task),
     components(schemas(CreateBody, LinkBody, SyncBody, LinkResponse, CriterionResponse, VerificationResponse, GapResponse, ReportResponse)),
-    tags((name = "verification", description = "完整性验证"))
+    tags((name = "verification", description = "Integrity verification"))
 )]
 struct ApiDoc;
 pub fn openapi() -> utoipa::openapi::OpenApi {
@@ -316,7 +316,7 @@ mod tests {
         let (app, t) = app_with("VERIFICATION:READ+ADD+UPDATE").await;
         let r = app
             .clone()
-            .oneshot(req("POST", "/verification", r#"{"requirementId":"req1","requirementVersion":1,"criteria":["登录成功","错误密码拒绝"]}"#, Some(&t)))
+            .oneshot(req("POST", "/verification", r#"{"requirementId":"req1","requirementVersion":1,"criteria":["login success","wrong password rejected"]}"#, Some(&t)))
             .await
             .expect("r");
         assert_eq!(r.status(), StatusCode::CREATED);

@@ -26,7 +26,7 @@ pub fn parse_jmeter(xml: &str) -> Result<Vec<ImportedApi>, ApiDefinitionError> {
     loop {
         match reader.read_event_into(&mut buf) {
             Err(e) => {
-                return Err(ApiDefinitionError::BadImport(format!("jmeter: XML 解析失败:{e}")))
+                return Err(ApiDefinitionError::BadImport(format!("jmeter: XML parse failed: {e}")))
             }
             Ok(Event::Eof) => break,
             Ok(Event::Start(e)) => match e.local_name().as_ref() {
@@ -109,7 +109,7 @@ pub fn parse_jmeter(xml: &str) -> Result<Vec<ImportedApi>, ApiDefinitionError> {
     }
 
     if out.is_empty() {
-        return Err(ApiDefinitionError::BadImport("jmeter: 未找到 HTTP 取样器".into()));
+        return Err(ApiDefinitionError::BadImport("jmeter: no HTTP sampler found".into()));
     }
     Ok(out)
 }
@@ -265,7 +265,7 @@ mod tests {
     const JMX: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
 <jmeterTestPlan version="1.2">
   <hashTree>
-    <HTTPSamplerProxy guiclass="HttpTestSampleGui" testname="登录" enabled="true">
+    <HTTPSamplerProxy guiclass="HttpTestSampleGui" testname="login" enabled="true">
       <elementProp name="HTTPsampler.Arguments" elementType="Arguments">
         <collectionProp name="Arguments.arguments">
           <elementProp name="" elementType="HTTPArgument">
@@ -281,7 +281,7 @@ mod tests {
       <stringProp name="HTTPSampler.method">POST</stringProp>
       <boolProp name="HTTPSampler.postBodyRaw">true</boolProp>
     </HTTPSamplerProxy>
-    <HTTPSamplerProxy guiclass="HttpTestSampleGui" testname="列用户" enabled="true">
+    <HTTPSamplerProxy guiclass="HttpTestSampleGui" testname="list users" enabled="true">
       <elementProp name="HTTPsampler.Arguments" elementType="Arguments">
         <collectionProp name="Arguments.arguments">
           <elementProp name="page" elementType="HTTPArgument">
@@ -303,7 +303,7 @@ mod tests {
 
         let login = apis.iter().find(|a| a.path == "/login").expect("login");
         assert_eq!(login.method, "POST");
-        assert_eq!(login.name, "登录");
+        assert_eq!(login.name, "login");
         assert_eq!(login.spec["bodyType"], "json");
         assert!(login.case_body.as_deref().unwrap().contains("admin"));
         assert_eq!(login.spec["requestQuery"].as_array().unwrap().len(), 0);

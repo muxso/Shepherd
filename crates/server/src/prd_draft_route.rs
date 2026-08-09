@@ -116,14 +116,15 @@ async fn draft_handler(
         Some(d) => match d.draft(raw).await {
             Ok(v) => (v, "llm"),
             Err(e) => {
-                tracing::warn!("PRD AI 起草失败,回落启发式: {e}");
+                tracing::warn!("PRD AI drafting failed, falling back to heuristic: {e}");
                 (heuristic_draft(raw), "heuristic")
             }
         },
         None => (heuristic_draft(raw), "heuristic"),
     };
     if draft.title.is_empty() {
-        return (StatusCode::BAD_REQUEST, "无法从素材中提取需求").into_response();
+        return (StatusCode::BAD_REQUEST, "cannot extract a requirement from the raw material")
+            .into_response();
     }
     let priority = match draft.priority.trim().to_ascii_uppercase().as_str() {
         p @ ("P0" | "P1" | "P2" | "P3") => p.to_string(),
@@ -148,20 +149,24 @@ mod tests {
 
     #[test]
     fn heuristic_extracts_title_bullets_and_description() {
-        let raw = "支持手机号登录\n用户希望免密快捷进入。\n- 验证码 60 秒内送达\n- 错误验证码明确报错\n1. 三次失败锁定五分钟";
+        let raw = "support phone number login\nusers want quick passwordless entry\n- verification code arrives within 60 seconds\n- wrong verification code reports a clear error\n1. lock for five minutes after three failures";
         let d = heuristic_draft(raw);
-        assert_eq!(d.title, "支持手机号登录");
-        assert_eq!(d.description, "用户希望免密快捷进入。");
+        assert_eq!(d.title, "support phone number login");
+        assert_eq!(d.description, "users want quick passwordless entry");
         assert_eq!(
             d.acceptance_criteria,
-            vec!["验证码 60 秒内送达", "错误验证码明确报错", "三次失败锁定五分钟"]
+            vec![
+                "verification code arrives within 60 seconds",
+                "wrong verification code reports a clear error",
+                "lock for five minutes after three failures"
+            ]
         );
     }
 
     #[test]
     fn heuristic_handles_prose_only() {
-        let d = heuristic_draft("就一句话的想法");
-        assert_eq!(d.title, "就一句话的想法");
+        let d = heuristic_draft("just a one-sentence idea");
+        assert_eq!(d.title, "just a one-sentence idea");
         assert!(d.acceptance_criteria.is_empty());
     }
 }

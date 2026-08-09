@@ -8,11 +8,10 @@ use crate::domain::import::{
 };
 
 pub fn parse_har(doc: &Value) -> Result<Vec<ImportedApi>, ApiDefinitionError> {
-    let entries = doc
-        .get("log")
-        .and_then(|l| l.get("entries"))
-        .and_then(|v| v.as_array())
-        .ok_or_else(|| ApiDefinitionError::BadImport("har: 缺少 `log.entries` 数组".into()))?;
+    let entries =
+        doc.get("log").and_then(|l| l.get("entries")).and_then(|v| v.as_array()).ok_or_else(
+            || ApiDefinitionError::BadImport("har: missing `log.entries` array".into()),
+        )?;
 
     let mut out = Vec::new();
     let mut seen: HashSet<(String, String)> = HashSet::new();
@@ -23,7 +22,7 @@ pub fn parse_har(doc: &Value) -> Result<Vec<ImportedApi>, ApiDefinitionError> {
         }
     }
     if out.is_empty() {
-        return Err(ApiDefinitionError::BadImport("har: 未找到任何请求".into()));
+        return Err(ApiDefinitionError::BadImport("har: no requests found".into()));
     }
     Ok(out)
 }

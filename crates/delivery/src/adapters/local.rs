@@ -219,7 +219,7 @@ mod tests {
 
     #[tokio::test]
     async fn streams_events_then_completes_with_result() {
-        let script = r#"cat >/dev/null; printf '{"event":"DECISION","message":"用 argon2"}\n{"event":"FILE_CHANGE","message":"edit auth.rs"}\n{"reference":"branch:x","summary":"done"}\n'"#;
+        let script = r#"cat >/dev/null; printf '{"event":"DECISION","message":"using argon2"}\n{"event":"FILE_CHANGE","message":"edit auth.rs"}\n{"reference":"branch:x","summary":"done"}\n'"#;
         let exec = LocalCommandAgentExecutor::new(
             vec!["/bin/sh".into(), "-c".into(), script.into()],
             vec!["/bin/sh".into(), "-c".into(), "true".into()],
@@ -235,7 +235,7 @@ mod tests {
         }
         let events = sink.events.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         assert_eq!(events.len(), 2);
-        assert_eq!(events[0], (EventKind::Decision, "用 argon2".to_string()));
+        assert_eq!(events[0], (EventKind::Decision, "using argon2".to_string()));
         assert_eq!(events[1].0, EventKind::FileChange);
     }
 

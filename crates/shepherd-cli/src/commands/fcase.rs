@@ -55,7 +55,7 @@ pub fn run(cmd: FcaseCmd) -> R<()> {
             let bytes =
                 c.get_bytes(&format!("/functional-case/export?projectId={project}"), true)?;
             std::fs::write(&out, &bytes)?;
-            println!(" 已导出 {} 字节 → {out}", bytes.len());
+            println!(" exported {} bytes → {out}", bytes.len());
         }
         FcaseCmd::Import { project, file } => {
             let bytes = std::fs::read(&file)?;

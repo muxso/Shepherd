@@ -48,7 +48,7 @@ mod tests {
         let repo = Arc::new(InMemoryApiDefinitionRepository::new());
         let uc = CreateApiDefinitionUseCase::new(repo);
         let d =
-            uc.execute("p1", "登录", ApiProtocol::Http, "get", "/login", "u1").await.expect("ok");
+            uc.execute("p1", "login", ApiProtocol::Http, "get", "/login", "u1").await.expect("ok");
         assert_eq!(d.method, "GET");
         assert_eq!(d.protocol, ApiProtocol::Http);
     }

@@ -606,7 +606,7 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    #[ignore = "需要 DATABASE_URL 指向一个 PostgreSQL 实例"]
+    #[ignore = "requires DATABASE_URL pointing to a PostgreSQL instance"]
     async fn pg_plan_group_children_and_counts() {
         let url = std::env::var("DATABASE_URL").expect("set DATABASE_URL");
         let pool = PgPool::connect(&url).await.expect("connect");
@@ -619,11 +619,11 @@ mod tests {
         let repo = PgPlanRepository::new(pool.clone());
 
         let group = repo
-            .insert(&NewPlan::new("proj1", "组", PlanType::Group, "NONE").expect("v"))
+            .insert(&NewPlan::new("proj1", "group", PlanType::Group, "NONE").expect("v"))
             .await
             .expect("group");
         let child = repo
-            .insert(&NewPlan::new("proj1", "子", PlanType::Plan, &group.id).expect("v"))
+            .insert(&NewPlan::new("proj1", "child", PlanType::Plan, &group.id).expect("v"))
             .await
             .expect("child");
 
@@ -636,18 +636,18 @@ mod tests {
         assert_eq!(kids[0].id, child.id);
 
         assert_eq!(repo.case_counts(&child.id).await.expect("c"), CaseCounts::default());
-        repo.link_case(&child.id, "ca", "用例A").await.expect("link a");
-        repo.link_case(&child.id, "cb", "用例B").await.expect("link b");
-        repo.link_case(&child.id, "cc", "用例C").await.expect("link c");
-        repo.link_case(&child.id, "ca", "用例A").await.expect("link a again");
+        repo.link_case(&child.id, "ca", "case A").await.expect("link a");
+        repo.link_case(&child.id, "cb", "case B").await.expect("link b");
+        repo.link_case(&child.id, "cc", "case C").await.expect("link c");
+        repo.link_case(&child.id, "ca", "case A").await.expect("link a again");
         let res = CaseResult {
             latency_ms: 12,
             response_size: 3,
             status_code: Some(200),
             assertions: vec![AssertionResult {
-                item: "状态码".into(),
+                item: "status code".into(),
                 actual: "200".into(),
-                condition: "等于".into(),
+                condition: "equals".into(),
                 expected: "200".into(),
                 passed: true,
                 reason: String::new(),
@@ -676,7 +676,7 @@ mod tests {
         let cases = repo.list_cases(&child.id).await.expect("list");
         assert_eq!(cases.len(), 3);
         let ca = cases.iter().find(|x| x.case_id == "ca").expect("ca");
-        assert_eq!(ca.name, "用例A");
+        assert_eq!(ca.name, "case A");
         assert_eq!(ca.status, CaseStatus::Success);
         let r = ca.result.as_ref().expect("result");
         assert_eq!(r.latency_ms, 12);

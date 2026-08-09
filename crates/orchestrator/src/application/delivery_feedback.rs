@@ -250,7 +250,7 @@ mod tests {
     async fn terminal_auto_links_task_criteria_before_sync() {
         let task = Arc::new(FakeTask {
             map: vec![("d1".into(), "req1".into(), 1)],
-            criteria: vec!["登录成功".into()],
+            criteria: vec!["login success".into()],
             ..Default::default()
         });
         let verif = Arc::new(FakeVerif {
@@ -264,7 +264,7 @@ mod tests {
             .expect("ok");
         let linked = verif.linked.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         assert_eq!(linked.len(), 1);
-        assert_eq!(linked[0], ("v1/t1".to_string(), vec!["登录成功".to_string()]));
+        assert_eq!(linked[0], ("v1/t1".to_string(), vec!["login success".to_string()]));
         assert!(verif.synced.lock().unwrap_or_else(std::sync::PoisonError::into_inner)[0].1);
     }
 
@@ -342,7 +342,7 @@ mod tests {
             let mut n = self.calls.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
             *n += 1;
             if *n >= self.fix_after {
-                Ok(dv("branch:fixed", "已据反馈补齐"))
+                Ok(dv("branch:fixed", "completed per feedback"))
             } else {
                 Ok(dv("branch:retry", ""))
             }

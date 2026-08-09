@@ -86,11 +86,11 @@ pub fn assemble(groups: Vec<RouteGroup>) -> Router {
         .layer(axum::middleware::from_fn(timeout_by_route))
         .layer(RequestBodyLimitLayer::new(2 * 1024 * 1024));
     if let Some(cors) = cors_layer() {
-        tracing::info!("CORS 允许列表已启用");
+        tracing::info!("CORS allowlist enabled");
         app = app.layer(cors);
     }
     if let Some(rl) = RateLimiter::from_env() {
-        tracing::info!("限流已启用(每客户端令牌桶)");
+        tracing::info!("rate limiting enabled (per-client token bucket)");
         app = app.layer(axum::middleware::from_fn_with_state(rl, ratelimit::layer));
     }
     // Unified error bodies: normalize plain-text 4xx/5xx into problem+json

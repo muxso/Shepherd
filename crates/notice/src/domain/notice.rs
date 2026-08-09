@@ -149,7 +149,10 @@ mod tests {
 
     #[test]
     fn parse_mentions_extracts_names() {
-        assert_eq!(parse_mentions("cc @admin 和 @u-admin, 看下"), vec!["admin", "u-admin"]);
+        assert_eq!(
+            parse_mentions("cc @admin and @u-admin, please check"),
+            vec!["admin", "u-admin"]
+        );
         assert_eq!(parse_mentions("@a.b. end"), vec!["a.b"]);
         assert_eq!(parse_mentions("mail me at x@example.com"), vec!["example.com"]);
         assert!(parse_mentions("no mentions @ all").is_empty());

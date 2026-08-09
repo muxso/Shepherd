@@ -334,7 +334,7 @@ impl RequirementService {
         let mut updated = row.clone();
         updated.set_status(status, now_ms());
         if let Err(e) = self.repo.upsert_stage(&req.id, &updated).await {
-            tracing::warn!(requirement = %req.id, stage = stage.as_str(), error = %e, "阶段钩子写入失败");
+            tracing::warn!(requirement = %req.id, stage = stage.as_str(), error = %e, "failed to write stage hook");
             return;
         }
         if let Some(slot) = req.stage_row_mut(stage) {
@@ -342,7 +342,7 @@ impl RequirementService {
         }
         let entry = change(by, &format!("stage.{}", stage.as_str()), old.as_str(), status.as_str());
         if let Err(e) = self.repo.append_change(&req.id, &[entry]).await {
-            tracing::warn!(requirement = %req.id, stage = stage.as_str(), error = %e, "阶段变更日志写入失败");
+            tracing::warn!(requirement = %req.id, stage = stage.as_str(), error = %e, "failed to write stage change log");
         }
     }
 
@@ -490,7 +490,7 @@ mod tests {
     async fn seeded() -> (RequirementService, String) {
         let repo = Arc::new(InMemoryRequirementRepository::new());
         let id = CreateRequirementUseCase::new(repo.clone())
-            .execute("p1", "登录", "d", &["c1".to_string()])
+            .execute("p1", "login", "d", &["c1".to_string()])
             .await
             .expect("seed")
             .id;
@@ -511,11 +511,11 @@ mod tests {
     #[tokio::test]
     async fn reject_review_persists_reason_and_baseline_clears_it() {
         let (svc, id) = seeded().await;
-        let r = svc.reject_review(&id, "  缺少异常路径  ", "u1").await.expect("reject");
-        assert_eq!(r.review_comment.as_deref(), Some("缺少异常路径"));
+        let r = svc.reject_review(&id, "  missing exception path  ", "u1").await.expect("reject");
+        assert_eq!(r.review_comment.as_deref(), Some("missing exception path"));
         assert_eq!(
             svc.get(&id).await.expect("get").review_comment.as_deref(),
-            Some("缺少异常路径")
+            Some("missing exception path")
         );
         let p = svc.set_baseline(&id, 1, "u1").await.expect("baseline");
         assert!(p.review_comment.is_none());
@@ -563,14 +563,14 @@ mod tests {
     async fn rename_to_taken_title_conflicts() {
         let repo = Arc::new(InMemoryRequirementRepository::new());
         let create = CreateRequirementUseCase::new(repo.clone());
-        let a = create.execute("p1", "登录", "d", &[]).await.expect("a").id;
-        create.execute("p1", "注册", "d", &[]).await.expect("b");
+        let a = create.execute("p1", "login", "d", &[]).await.expect("a").id;
+        create.execute("p1", "register", "d", &[]).await.expect("b");
         let svc = RequirementService::new(repo);
         assert_eq!(
-            svc.rename(&a, "注册", "u1").await.unwrap_err(),
+            svc.rename(&a, "register", "u1").await.unwrap_err(),
             RequirementCmdError::TitleExists
         );
-        assert!(svc.rename(&a, "登入", "u1").await.is_ok());
+        assert!(svc.rename(&a, "sign in", "u1").await.is_ok());
     }
 
     #[tokio::test]
@@ -578,22 +578,22 @@ mod tests {
         use crate::domain::{RequirementPriority, RequirementType};
         let (svc, id) = seeded().await;
         let r = svc
-            .update(&id, "登录", Some(" p1 "), Some("bugfix"), None, None, None, None, "u1")
+            .update(&id, "login", Some(" p1 "), Some("bugfix"), None, None, None, None, "u1")
             .await
             .expect("update");
         assert_eq!(r.priority, RequirementPriority::P1);
         assert_eq!(r.req_type, RequirementType::Bugfix);
         // None keeps existing values.
         let r2 = svc
-            .update(&id, "登入", None, None, None, None, None, None, "u1")
+            .update(&id, "sign in", None, None, None, None, None, None, "u1")
             .await
             .expect("update");
-        assert_eq!(r2.title, "登入");
+        assert_eq!(r2.title, "sign in");
         assert_eq!(r2.priority, RequirementPriority::P1);
         assert_eq!(r2.req_type, RequirementType::Bugfix);
         // Invalid value fails validation.
         assert_eq!(
-            svc.update(&id, "登入", Some("P9"), None, None, None, None, None, "u1")
+            svc.update(&id, "sign in", Some("P9"), None, None, None, None, None, "u1")
                 .await
                 .unwrap_err(),
             RequirementCmdError::Validation(RequirementError::InvalidPriority("P9".into()))
@@ -718,7 +718,7 @@ mod tests {
     async fn baseline_and_reject_hooks_drive_review_stage() {
         let (svc, id) = seeded().await;
         // Reject → review in progress.
-        let r = svc.reject_review(&id, "缺少异常路径", "u1").await.expect("reject");
+        let r = svc.reject_review(&id, "missing exception path", "u1").await.expect("reject");
         assert_eq!(stage_of(&r, Stage::Review).status, StageStatus::InProgress);
         // Baseline → review done.
         let r2 = svc.set_baseline(&id, 1, "u1").await.expect("baseline");
@@ -782,7 +782,7 @@ mod tests {
 
     #[tokio::test]
     async fn set_parent_links_and_children_lists() {
-        let (svc, ids) = seeded_many(&["根", "叶A", "叶B"]).await;
+        let (svc, ids) = seeded_many(&["root", "leaf A", "leaf B"]).await;
         svc.set_parent(&ids[1], Some(&ids[0]), "u1").await.expect("link");
         svc.set_parent(&ids[2], Some(&ids[0]), "u1").await.expect("link");
         let kids = svc.children(&ids[0]).await.expect("children");
@@ -836,7 +836,7 @@ mod tests {
         let r = svc
             .update(
                 &id,
-                "登录",
+                "login",
                 None,
                 None,
                 Some(&tags),
@@ -851,20 +851,20 @@ mod tests {
         assert_eq!(r.due_date.as_deref(), Some("2026-12-31"));
         // Outer None keeps.
         let r2 = svc
-            .update(&id, "登录", None, None, None, None, None, None, "u1")
+            .update(&id, "login", None, None, None, None, None, None, "u1")
             .await
             .expect("update");
         assert_eq!(r2.tags, vec!["api".to_string(), "web".to_string()]);
         assert_eq!(r2.due_date.as_deref(), Some("2026-12-31"));
         // Some(None) clears the due date.
         let r3 = svc
-            .update(&id, "登录", None, None, None, Some(None), None, None, "u1")
+            .update(&id, "login", None, None, None, Some(None), None, None, "u1")
             .await
             .expect("update");
         assert!(r3.due_date.is_none());
         // Invalid date fails validation.
         assert_eq!(
-            svc.update(&id, "登录", None, None, None, Some(Some("2026/12/31")), None, None, "u1")
+            svc.update(&id, "login", None, None, None, Some(Some("2026/12/31")), None, None, "u1")
                 .await
                 .unwrap_err(),
             RequirementCmdError::Validation(RequirementError::InvalidDueDate("2026/12/31".into()))
@@ -876,22 +876,22 @@ mod tests {
         let (svc, id) = seeded().await;
         // Some replaces and logs a module change.
         let r = svc
-            .update(&id, "登录", None, None, None, None, None, Some(" mod-1 "), "u1")
+            .update(&id, "login", None, None, None, None, None, Some(" mod-1 "), "u1")
             .await
             .expect("update");
         assert_eq!(r.module_id, "mod-1"); // trimmed
                                           // None keeps.
         let r2 = svc
-            .update(&id, "登录", None, None, None, None, None, None, "u1")
+            .update(&id, "login", None, None, None, None, None, None, "u1")
             .await
             .expect("update");
         assert_eq!(r2.module_id, "mod-1");
         // Same value logs nothing; empty string unfiles the module.
-        svc.update(&id, "登录", None, None, None, None, None, Some("mod-1"), "u1")
+        svc.update(&id, "login", None, None, None, None, None, Some("mod-1"), "u1")
             .await
             .expect("update");
         let r3 = svc
-            .update(&id, "登录", None, None, None, None, None, Some(""), "u1")
+            .update(&id, "login", None, None, None, None, None, Some(""), "u1")
             .await
             .expect("update");
         assert_eq!(r3.module_id, "");
@@ -914,29 +914,29 @@ mod tests {
         let r = svc
             .update(
                 &id,
-                "登录",
+                "login",
                 None,
                 None,
                 None,
                 None,
-                Some(&cf(&[("owner", "alice"), ("module", "登录")])),
+                Some(&cf(&[("owner", "alice"), ("module", "login")])),
                 None,
                 "u1",
             )
             .await
             .expect("update");
-        assert_eq!(r.custom_fields, cf(&[("owner", "alice"), ("module", "登录")]));
+        assert_eq!(r.custom_fields, cf(&[("owner", "alice"), ("module", "login")]));
         // None keeps.
         let r2 = svc
-            .update(&id, "登录", None, None, None, None, None, None, "u1")
+            .update(&id, "login", None, None, None, None, None, None, "u1")
             .await
             .expect("update");
-        assert_eq!(r2.custom_fields, cf(&[("owner", "alice"), ("module", "登录")]));
+        assert_eq!(r2.custom_fields, cf(&[("owner", "alice"), ("module", "login")]));
         // Wholesale replace: change owner, drop module, add env.
         let r3 = svc
             .update(
                 &id,
-                "登录",
+                "login",
                 None,
                 None,
                 None,
@@ -950,7 +950,7 @@ mod tests {
         assert_eq!(r3.custom_fields, cf(&[("owner", "bob"), ("env", "prod")]));
         // Invalid key fails validation.
         assert_eq!(
-            svc.update(&id, "登录", None, None, None, None, Some(&cf(&[("  ", "v")])), None, "u1")
+            svc.update(&id, "login", None, None, None, None, Some(&cf(&[("  ", "v")])), None, "u1")
                 .await
                 .unwrap_err(),
             RequirementCmdError::Validation(RequirementError::EmptyCustomFieldKey)
@@ -967,12 +967,12 @@ mod tests {
             [
                 ("custom.env", "", "prod"),
                 ("custom.owner", "alice", "bob"),
-                ("custom.module", "登录", ""),
+                ("custom.module", "login", ""),
             ]
         );
         // Resubmitting the same map appends nothing.
         let n = log.len();
-        svc.update(&id, "登录", None, None, None, None, Some(&r3.custom_fields), None, "u1")
+        svc.update(&id, "login", None, None, None, None, Some(&r3.custom_fields), None, "u1")
             .await
             .expect("update");
         assert_eq!(svc.changes(&id).await.expect("changes").len(), n);
@@ -981,7 +981,7 @@ mod tests {
     #[tokio::test]
     async fn mutations_record_change_log_newest_first() {
         let (svc, id) = seeded().await;
-        svc.update(&id, "登入", Some("P0"), None, None, None, None, None, "alice")
+        svc.update(&id, "sign in", Some("P0"), None, None, None, None, None, "alice")
             .await
             .expect("update");
         svc.revise(&id, "v2", &[], "bob").await.expect("revise");
@@ -1015,8 +1015,8 @@ mod tests {
         assert_eq!(log[3].new_value, "IN_PROGRESS");
         assert_eq!(log[6].field, "version");
         assert_eq!(log[6].new_value, "2");
-        assert_eq!(log[8].old_value, "登录");
-        assert_eq!(log[8].new_value, "登入");
+        assert_eq!(log[8].old_value, "login");
+        assert_eq!(log[8].new_value, "sign in");
         // Timestamps are monotonic (descending).
         assert!(log.windows(2).all(|w| w[0].changed_at_ms >= w[1].changed_at_ms));
     }
@@ -1026,7 +1026,7 @@ mod tests {
         let (svc, id) = seeded().await;
         // Seed has only the creation-hook entry.
         assert_eq!(svc.changes(&id).await.expect("changes").len(), 1);
-        svc.update(&id, "登录", None, None, None, None, None, None, "u1").await.expect("update");
+        svc.update(&id, "login", None, None, None, None, None, None, "u1").await.expect("update");
         assert_eq!(svc.changes(&id).await.expect("changes").len(), 1);
         svc.set_stage(&id, "DEV", Some("IN_PROGRESS"), None, None, "u1").await.expect("stage");
         svc.set_stage(&id, "DEV", Some("IN_PROGRESS"), None, None, "u1").await.expect("stage");
@@ -1037,7 +1037,7 @@ mod tests {
     async fn save_bumps_updated_at() {
         let (svc, id) = seeded().await;
         let before = svc.get(&id).await.expect("get").updated_at_ms;
-        svc.update(&id, "登入", None, None, None, None, None, None, "u1").await.expect("update");
+        svc.update(&id, "sign in", None, None, None, None, None, None, "u1").await.expect("update");
         let after = svc.get(&id).await.expect("get").updated_at_ms;
         assert!(after > before);
     }

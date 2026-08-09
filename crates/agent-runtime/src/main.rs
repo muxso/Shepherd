@@ -65,8 +65,8 @@ impl Config {
 fn agent_key(raw: Option<String>) -> anyhow::Result<String> {
     raw.filter(|s| !s.trim().is_empty()).ok_or_else(|| {
         anyhow::anyhow!(
-            "缺少 SHEPHERD_AGENT_KEY:agent-runtime 只接受 API key 认证。\
-             请设置 SHEPHERD_AGENT_KEY=sak_…;key 可在 个人中心 → API KEY 或 POST /system/apikey 签发"
+            "missing SHEPHERD_AGENT_KEY: agent-runtime only accepts API key authentication. \
+             Set SHEPHERD_AGENT_KEY=sak_…; a key can be issued from Profile → API KEY or POST /system/apikey"
         )
     })
 }
@@ -132,17 +132,19 @@ async fn handle(
     let prompt = spec.to_prompt();
     let mode = if spec.is_design() { "design" } else { "implement" };
     tracing::info!(attempt = %spec.attempt_id, executor = %spec.executor, mode,
-        backend = backend.cli_name(), "认领任务");
+        backend = backend.cli_name(), "claimed task");
 
     if spec.is_design() {
         match backend.execute(&prompt, base_workdir, &NoopSink).await {
             Ok(doc) => match client.post_design(&spec.attempt_id, &doc).await {
-                Ok(()) => tracing::info!(proposal = %spec.attempt_id, "设计稿已回填 → 待审"),
+                Ok(()) => {
+                    tracing::info!(proposal = %spec.attempt_id, "design draft posted back → pending review")
+                }
                 Err(e) => {
-                    tracing::error!(proposal = %spec.attempt_id, "回填设计稿最终失败(已重试): {e}")
+                    tracing::error!(proposal = %spec.attempt_id, "posting the design draft back finally failed (after retries): {e}")
                 }
             },
-            Err(e) => tracing::warn!(proposal = %spec.attempt_id, "设计起草失败: {e}"),
+            Err(e) => tracing::warn!(proposal = %spec.attempt_id, "design drafting failed: {e}"),
         }
         return;
     }
@@ -157,21 +159,24 @@ async fn handle(
                 match git::snapshot(run_dir, &spec.attempt_id, &spec.title).await {
                     Some(s) => {
                         let stat: String = s.stat.replace('\n', ";").chars().take(300).collect();
-                        (s.reference, format!("变更:{stat} | {summary}"))
+                        (s.reference, format!("changes: {stat} | {summary}"))
                     }
-                    None => {
-                        (format!("runtime://{}", spec.attempt_id), format!("(无代码变动){summary}"))
-                    }
+                    None => (
+                        format!("runtime://{}", spec.attempt_id),
+                        format!("(no code changes){summary}"),
+                    ),
                 };
             match client.complete(&spec.attempt_id, "DIFF", &reference, &summary).await {
-                Ok(()) => tracing::info!(attempt = %spec.attempt_id, %reference, "交付完成"),
+                Ok(()) => {
+                    tracing::info!(attempt = %spec.attempt_id, %reference, "delivery complete")
+                }
                 Err(e) => tracing::error!(attempt = %spec.attempt_id,
-                    "交付上报最终失败(已重试,server 将到点 reclaim): {e}"),
+                    "delivery report finally failed (after retries; the server will reclaim on timeout): {e}"),
             }
         }
         Err(e) => {
             if let Err(e2) = client.fail(&spec.attempt_id, &e.to_string()).await {
-                tracing::error!(attempt = %spec.attempt_id, "失败上报也失败(已重试): {e2} / 原因 {e}");
+                tracing::error!(attempt = %spec.attempt_id, "reporting the failure also failed (after retries): {e2} / cause {e}");
             }
         }
     }
@@ -206,7 +211,7 @@ async fn main() -> anyhow::Result<()> {
         match connect(&cfg).await {
             Ok(pair) => break pair,
             Err(e) => {
-                tracing::warn!(base = %cfg.base, "连接 server 失败,5s 后重试: {e}");
+                tracing::warn!(base = %cfg.base, "failed to connect to the server, retrying in 5s: {e}");
                 tokio::select! {
                     _ = wait_shutdown(&mut sd) => return Ok(()),
                     _ = tokio::time::sleep(Duration::from_secs(5)) => {}
@@ -216,7 +221,7 @@ async fn main() -> anyhow::Result<()> {
     };
     let runtime_id = Arc::new(Mutex::new(id0.clone()));
     tracing::info!(base = %cfg.base, caps = ?cfg.caps, concurrency = cfg.concurrency, runtime_id = %id0,
-        "agent-runtime 上线");
+        "agent-runtime online");
 
     let hb = {
         let (client, rid, name, caps, every) =
@@ -260,7 +265,7 @@ async fn main() -> anyhow::Result<()> {
             }
             Ok(None) => drop(permit),
             Err(e) => {
-                tracing::warn!("认领出错: {e}");
+                tracing::warn!("claim failed: {e}");
                 drop(permit);
                 tokio::time::sleep(Duration::from_secs(2)).await;
             }
@@ -273,17 +278,17 @@ async fn main() -> anyhow::Result<()> {
         tracing::info!(
             inflight,
             drain_secs = cfg.drain_timeout.as_secs(),
-            "收到关停信号,等待在飞任务收尾…"
+            "shutdown signal received, waiting for in-flight tasks to finish…"
         );
         match tokio::time::timeout(cfg.drain_timeout, sem.acquire_many(mc)).await {
-            Ok(_) => tracing::info!("在飞任务已全部收尾"),
+            Ok(_) => tracing::info!("all in-flight tasks finished"),
             Err(_) => tracing::warn!(
                 stuck = cfg.concurrency - sem.available_permits(),
-                "排空超时,强制退出(server 将到点 reclaim 未完成任务)"
+                "drain timed out, forcing exit (the server will reclaim unfinished tasks on timeout)"
             ),
         }
     }
-    tracing::info!("agent-runtime 优雅退出");
+    tracing::info!("agent-runtime shut down gracefully");
     Ok(())
 }
 
@@ -301,8 +306,8 @@ mod tests {
         for raw in [None, Some(String::new()), Some("   ".into())] {
             let err = agent_key(raw).expect_err("blank/missing key must fail startup");
             let msg = err.to_string();
-            assert!(msg.contains("SHEPHERD_AGENT_KEY"), "要点名缺的环境变量: {msg}");
-            assert!(msg.contains("/system/apikey"), "要给签发指引: {msg}");
+            assert!(msg.contains("SHEPHERD_AGENT_KEY"), "must name the missing env var: {msg}");
+            assert!(msg.contains("/system/apikey"), "must give issuance guidance: {msg}");
         }
     }
 }

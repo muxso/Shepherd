@@ -194,7 +194,7 @@ impl CliAgentBackend for ClaudeBackend {
                 }
                 sink.emit(ExecEvent::new(
                     "TIMEOUT",
-                    &format!("超时 {}s,已终止", self.timeout.as_secs()),
+                    &format!("timed out after {}s, terminated", self.timeout.as_secs()),
                 ))
                 .await;
                 return Err(BackendError::Run(format!(
@@ -266,7 +266,8 @@ impl CliAgentBackend for GenericCliBackend {
     ) -> Result<String, BackendError> {
         let (program, args) =
             self.cmd.split_first().ok_or_else(|| BackendError::Run("empty cmd".into()))?;
-        sink.emit(ExecEvent::new("DECISION", &format!("调用 {} 执行任务", self.name))).await;
+        sink.emit(ExecEvent::new("DECISION", &format!("invoking {} to run the task", self.name)))
+            .await;
         let mut cmd = Command::new(program);
         cmd.current_dir(cwd)
             .args(args)
@@ -310,7 +311,7 @@ pub struct MockBackend {
 
 impl Default for MockBackend {
     fn default() -> Self {
-        Self { output: "## Mock 输出\n(agent-runtime mock backend)".to_string() }
+        Self { output: "## Mock output\n(agent-runtime mock backend)".to_string() }
     }
 }
 
@@ -326,7 +327,7 @@ impl CliAgentBackend for MockBackend {
         _cwd: &str,
         sink: &dyn ProgressSink,
     ) -> Result<String, BackendError> {
-        sink.emit(ExecEvent::new("DECISION", "mock backend 运行中")).await;
+        sink.emit(ExecEvent::new("DECISION", "mock backend running")).await;
         Ok(self.output.clone())
     }
 }
@@ -392,12 +393,12 @@ mod tests {
     async fn generic_backend_runs_cmd_and_captures_stdout() {
         let b = GenericCliBackend {
             name: "codex",
-            cmd: vec!["/bin/sh".into(), "-c".into(), "printf '## codex 设计'".into(), "_".into()],
+            cmd: vec!["/bin/sh".into(), "-c".into(), "printf '## codex design'".into(), "_".into()],
             timeout: TEST_TIMEOUT,
         };
         let sink = RecSink::default();
         let out = b.execute("the prompt", ".", &sink).await.expect("run");
-        assert_eq!(out, "## codex 设计");
+        assert_eq!(out, "## codex design");
         assert_eq!(
             sink.events.lock().unwrap_or_else(std::sync::PoisonError::into_inner)[0].kind,
             "DECISION"
@@ -408,12 +409,12 @@ mod tests {
     async fn claude_backend_streams_events_and_returns_result() {
         let path = write_script(
             "claude",
-            "#!/bin/sh\ncat >/dev/null\nprintf '%s\\n' '{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"tool_use\",\"name\":\"Edit\",\"input\":{\"file_path\":\"a.rs\"}}]}}' '{\"type\":\"result\",\"is_error\":false,\"result\":\"完成\"}'\n",
+            "#!/bin/sh\ncat >/dev/null\nprintf '%s\\n' '{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"tool_use\",\"name\":\"Edit\",\"input\":{\"file_path\":\"a.rs\"}}]}}' '{\"type\":\"result\",\"is_error\":false,\"result\":\"done\"}'\n",
         );
         let b = ClaudeBackend { bin: path.to_string_lossy().to_string(), timeout: TEST_TIMEOUT };
         let sink = RecSink::default();
         let out = b.execute("do it", ".", &sink).await.expect("run");
-        assert_eq!(out, "完成");
+        assert_eq!(out, "done");
         let evs = sink.events.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         assert_eq!(evs.len(), 1);
         assert_eq!(evs[0], ExecEvent::new("FILE_CHANGE", "Edit a.rs"));

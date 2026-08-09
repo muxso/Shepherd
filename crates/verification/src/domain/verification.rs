@@ -271,8 +271,13 @@ mod tests {
     use super::*;
 
     fn v() -> Verification {
-        Verification::create("v1", "req1", 1, &["登录成功".into(), "错误密码拒绝".into()])
-            .expect("valid")
+        Verification::create(
+            "v1",
+            "req1",
+            1,
+            &["login success".into(), "wrong password rejected".into()],
+        )
+        .expect("valid")
     }
 
     #[test]
@@ -353,17 +358,25 @@ mod tests {
     #[test]
     fn link_task_by_texts_matches_and_dedups() {
         let mut v = v();
-        let n = v.link_task_by_texts("d1", "t1", &[" 登录成功 ".into(), "无关标准".into()]);
+        let n = v.link_task_by_texts(
+            "d1",
+            "t1",
+            &[" login success ".into(), "unrelated criterion".into()],
+        );
         assert_eq!(n, 1);
         assert_eq!(v.criterion(0).expect("c0").status(), CriterionStatus::Pending);
         assert_eq!(v.criterion(1).expect("c1").status(), CriterionStatus::Uncovered);
-        assert_eq!(v.link_task_by_texts("d1", "t1", &["登录成功".into()]), 0);
+        assert_eq!(v.link_task_by_texts("d1", "t1", &["login success".into()]), 0);
     }
 
     #[test]
     fn link_task_by_texts_integration_task_covers_all() {
         let mut v = v();
-        let n = v.link_task_by_texts("d1", "t9", &["登录成功".into(), "错误密码拒绝".into()]);
+        let n = v.link_task_by_texts(
+            "d1",
+            "t9",
+            &["login success".into(), "wrong password rejected".into()],
+        );
         assert_eq!(n, 2);
         v.sync_task("d1", "t9", true);
         assert!(v.is_complete());

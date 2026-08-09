@@ -472,7 +472,7 @@ async fn list_requirements(
     }
 }
 
-#[utoipa::path(get, path = "/requirement/{id}", tag = "requirement", params(("id" = String, Path, description = "需求 id")), responses((status = 200, body = RequirementResponse), (status = 403), (status = 404)), security(("bearer" = [])))]
+#[utoipa::path(get, path = "/requirement/{id}", tag = "requirement", params(("id" = String, Path, description = "Requirement id")), responses((status = 200, body = RequirementResponse), (status = 403), (status = 404)), security(("bearer" = [])))]
 async fn get_requirement(
     user: AuthUser,
     State(st): State<ReqState>,
@@ -487,7 +487,7 @@ async fn get_requirement(
     }
 }
 
-#[utoipa::path(get, path = "/requirement/{id}/version/{n}", tag = "requirement", params(("id" = String, Path, description = "需求 id"), ("n" = u32, Path, description = "版本号")), responses((status = 200, body = VersionResponse), (status = 403), (status = 404)), security(("bearer" = [])))]
+#[utoipa::path(get, path = "/requirement/{id}/version/{n}", tag = "requirement", params(("id" = String, Path, description = "Requirement id"), ("n" = u32, Path, description = "Version number")), responses((status = 200, body = VersionResponse), (status = 403), (status = 404)), security(("bearer" = [])))]
 async fn get_version(
     user: AuthUser,
     State(st): State<ReqState>,
@@ -623,7 +623,7 @@ async fn deliver_requirement(
 /// Advance a pipeline stage: optionally change status (first transition to IN_PROGRESS/DONE
 /// stamps timestamps; repeats do not overwrite) and optionally set/clear planned dates
 /// (empty string clears); unknown stage/status → 400.
-#[utoipa::path(put, path = "/requirement/{id}/stage/{stage}", tag = "requirement", params(("id" = String, Path, description = "需求 id"), ("stage" = String, Path, description = "阶段:CREATED/AUDIT/REVIEW/DEV/TEST/ACCEPTANCE/DELIVERY")), request_body = StageBody, responses((status = 200, body = RequirementResponse), (status = 400), (status = 403), (status = 404)), security(("bearer" = [])))]
+#[utoipa::path(put, path = "/requirement/{id}/stage/{stage}", tag = "requirement", params(("id" = String, Path, description = "Requirement id"), ("stage" = String, Path, description = "Stage:CREATED/AUDIT/REVIEW/DEV/TEST/ACCEPTANCE/DELIVERY")), request_body = StageBody, responses((status = 200, body = RequirementResponse), (status = 400), (status = 403), (status = 404)), security(("bearer" = [])))]
 async fn set_stage_route(
     user: AuthUser,
     State(st): State<ReqState>,
@@ -801,7 +801,7 @@ async fn requirement_summary(
         set_stage_route, set_parent, get_children, get_changes
     ),
     components(schemas(CreateBody, ReviseBody, SetBaselineBody, RejectReviewBody, RenameBody, StageBody, SetParentBody, ReorderBody, SummaryResponse, VersionResponse, StageResponse, RequirementResponse, RequirementPage, VersionCreated, ChangeResponse, ChildrenResponse, ChangesResponse)),
-    tags((name = "requirement", description = "需求管理(多版本)"))
+    tags((name = "requirement", description = "Requirement management (multi-version)"))
 )]
 struct ApiDoc;
 
@@ -954,7 +954,7 @@ mod tests {
         let (app, t) = app_with("REQUIREMENT:READ+ADD+UPDATE+DELETE").await;
         let r = app
             .clone()
-            .oneshot(req("POST", "/requirement", r#"{"projectId":"p1","title":"登录","description":"d","acceptanceCriteria":["c1"]}"#, Some(&t)))
+            .oneshot(req("POST", "/requirement", r#"{"projectId":"p1","title":"login","description":"d","acceptanceCriteria":["c1"]}"#, Some(&t)))
             .await
             .expect("r");
         assert_eq!(r.status(), StatusCode::CREATED);
@@ -1029,7 +1029,12 @@ mod tests {
 
         assert_eq!(
             app.clone()
-                .oneshot(req("PUT", &format!("/requirement/{id}"), r#"{"title":"登入"}"#, Some(&t)))
+                .oneshot(req(
+                    "PUT",
+                    &format!("/requirement/{id}"),
+                    r#"{"title":"sign in"}"#,
+                    Some(&t)
+                ))
                 .await
                 .expect("r")
                 .status(),
@@ -1080,7 +1085,7 @@ mod tests {
         let (app, t) = app_with("REQUIREMENT:READ+ADD+UPDATE").await;
         let r = app
             .clone()
-            .oneshot(req("POST", "/requirement", r#"{"projectId":"p1","title":"登录","acceptanceCriteria":["登录成功跳转首页","错误密码拒绝并提示"]}"#, Some(&t)))
+            .oneshot(req("POST", "/requirement", r#"{"projectId":"p1","title":"login","acceptanceCriteria":["login success redirects to home","wrong password rejected with a message"]}"#, Some(&t)))
             .await
             .expect("r");
         assert_eq!(r.status(), StatusCode::CREATED);
@@ -1111,14 +1116,17 @@ mod tests {
         assert_eq!(d["baselineVersion"], 1);
         assert_eq!(
             crits_at_baseline(&d),
-            vec!["登录成功跳转首页".to_string(), "错误密码拒绝并提示".to_string()]
+            vec![
+                "login success redirects to home".to_string(),
+                "wrong password rejected with a message".to_string()
+            ]
         );
 
         app.clone()
             .oneshot(req(
                 "POST",
                 &format!("/requirement/{id}/version"),
-                r#"{"description":"v2","acceptanceCriteria":["新增验收点"]}"#,
+                r#"{"description":"v2","acceptanceCriteria":["new acceptance criterion"]}"#,
                 Some(&t),
             ))
             .await
@@ -1137,7 +1145,7 @@ mod tests {
         )
         .await;
         assert_eq!(d2["baselineVersion"], 2);
-        assert_eq!(crits_at_baseline(&d2), vec!["新增验收点".to_string()]);
+        assert_eq!(crits_at_baseline(&d2), vec!["new acceptance criterion".to_string()]);
     }
 
     #[tokio::test]
@@ -1148,7 +1156,7 @@ mod tests {
             .oneshot(req(
                 "POST",
                 "/requirement",
-                r#"{"projectId":"p1","title":"登录","acceptanceCriteria":["c1"]}"#,
+                r#"{"projectId":"p1","title":"login","acceptanceCriteria":["c1"]}"#,
                 Some(&t),
             ))
             .await
@@ -1174,7 +1182,7 @@ mod tests {
             .oneshot(req(
                 "POST",
                 &format!("/requirement/{id}/review/reject"),
-                r#"{"comment":"验收标准不完整"}"#,
+                r#"{"comment":"acceptance criteria incomplete"}"#,
                 Some(&t),
             ))
             .await
@@ -1182,7 +1190,7 @@ mod tests {
         assert_eq!(rj.status(), StatusCode::OK);
         let v = body_json(rj).await;
         assert_eq!(v["status"], "DRAFT");
-        assert_eq!(v["reviewComment"], "验收标准不完整");
+        assert_eq!(v["reviewComment"], "acceptance criteria incomplete");
 
         let sb = app
             .clone()
@@ -1217,7 +1225,7 @@ mod tests {
         let (app, t) = app_with("REQUIREMENT:READ+ADD").await;
         let r = app
             .clone()
-            .oneshot(req("POST", "/requirement", r#"{"projectId":"p1","title":"登录"}"#, Some(&t)))
+            .oneshot(req("POST", "/requirement", r#"{"projectId":"p1","title":"login"}"#, Some(&t)))
             .await
             .expect("r");
         assert_eq!(r.status(), StatusCode::CREATED);
@@ -1242,7 +1250,7 @@ mod tests {
             .oneshot(req(
                 "POST",
                 "/requirement",
-                r#"{"projectId":"p1","title":"登录","priority":" p0 ","reqType":"tech_debt"}"#,
+                r#"{"projectId":"p1","title":"login","priority":" p0 ","reqType":"tech_debt"}"#,
                 Some(&t),
             ))
             .await
@@ -1261,7 +1269,7 @@ mod tests {
                 .oneshot(req(
                     "POST",
                     "/requirement",
-                    r#"{"projectId":"p1","title":"登录","priority":"P9"}"#,
+                    r#"{"projectId":"p1","title":"login","priority":"P9"}"#,
                     Some(&t)
                 ))
                 .await
@@ -1273,7 +1281,7 @@ mod tests {
             app.oneshot(req(
                 "POST",
                 "/requirement",
-                r#"{"projectId":"p1","title":"登录","reqType":"EPIC"}"#,
+                r#"{"projectId":"p1","title":"login","reqType":"EPIC"}"#,
                 Some(&t)
             ))
             .await
@@ -1286,14 +1294,14 @@ mod tests {
     #[tokio::test]
     async fn put_updates_priority_and_req_type_and_omission_keeps_them() {
         let (app, t) = app_with("REQUIREMENT:READ+ADD+UPDATE").await;
-        let id = create_req(&app, &t, "登录").await;
+        let id = create_req(&app, &t, "login").await;
 
         let r = app
             .clone()
             .oneshot(req(
                 "PUT",
                 &format!("/requirement/{id}"),
-                r#"{"title":"登录","priority":"p1","reqType":"bugfix"}"#,
+                r#"{"title":"login","priority":"p1","reqType":"bugfix"}"#,
                 Some(&t),
             ))
             .await
@@ -1306,12 +1314,12 @@ mod tests {
         // Rename without priority/type keeps existing values.
         let r2 = app
             .clone()
-            .oneshot(req("PUT", &format!("/requirement/{id}"), r#"{"title":"登入"}"#, Some(&t)))
+            .oneshot(req("PUT", &format!("/requirement/{id}"), r#"{"title":"sign in"}"#, Some(&t)))
             .await
             .expect("r");
         assert_eq!(r2.status(), StatusCode::OK);
         let v2 = body_json(r2).await;
-        assert_eq!(v2["title"], "登入");
+        assert_eq!(v2["title"], "sign in");
         assert_eq!(v2["priority"], "P1");
         assert_eq!(v2["reqType"], "BUGFIX");
 
@@ -1320,7 +1328,7 @@ mod tests {
             app.oneshot(req(
                 "PUT",
                 &format!("/requirement/{id}"),
-                r#"{"title":"登入","priority":"高"}"#,
+                r#"{"title":"sign in","priority":"high"}"#,
                 Some(&t)
             ))
             .await
@@ -1360,7 +1368,7 @@ mod tests {
     #[tokio::test]
     async fn duplicate_title_409() {
         let (app, t) = app_with("REQUIREMENT:READ+ADD").await;
-        let body = r#"{"projectId":"p1","title":"唯一"}"#;
+        let body = r#"{"projectId":"p1","title":"unique"}"#;
         assert_eq!(
             app.clone()
                 .oneshot(req("POST", "/requirement", body, Some(&t)))
@@ -1378,14 +1386,14 @@ mod tests {
     #[tokio::test]
     async fn create_with_tags_due_date_and_parent_exposes_lifecycle_fields() {
         let (app, t) = app_with("REQUIREMENT:READ+ADD").await;
-        let parent = create_req(&app, &t, "父需求").await;
+        let parent = create_req(&app, &t, "parent requirement").await;
         let r = app
             .clone()
             .oneshot(req(
                 "POST",
                 "/requirement",
                 &format!(
-                    r#"{{"projectId":"p1","title":"子需求","tags":[" api ","api","web"],"dueDate":"2999-12-31","parentId":"{parent}"}}"#
+                    r#"{{"projectId":"p1","title":"child requirement","tags":[" api ","api","web"],"dueDate":"2999-12-31","parentId":"{parent}"}}"#
                 ),
                 Some(&t),
             ))
@@ -1423,7 +1431,7 @@ mod tests {
             .oneshot(req(
                 "POST",
                 "/requirement",
-                r#"{"projectId":"p1","title":"逾期需求","dueDate":"2000-01-01"}"#,
+                r#"{"projectId":"p1","title":"overdue requirement","dueDate":"2000-01-01"}"#,
                 Some(&t),
             ))
             .await
@@ -1440,7 +1448,7 @@ mod tests {
                 .oneshot(req(
                     "POST",
                     "/requirement",
-                    r#"{"projectId":"p1","title":"孤儿","parentId":"ghost"}"#,
+                    r#"{"projectId":"p1","title":"orphan","parentId":"ghost"}"#,
                     Some(&t)
                 ))
                 .await
@@ -1452,7 +1460,7 @@ mod tests {
             app.oneshot(req(
                 "POST",
                 "/requirement",
-                r#"{"projectId":"p1","title":"坏日期","dueDate":"2026-13-01"}"#,
+                r#"{"projectId":"p1","title":"bad date","dueDate":"2026-13-01"}"#,
                 Some(&t)
             ))
             .await
@@ -1465,7 +1473,7 @@ mod tests {
     #[tokio::test]
     async fn stage_transition_stamps_updates_plan_and_rejects_invalid() {
         let (app, t) = app_with("REQUIREMENT:READ+ADD+UPDATE").await;
-        let id = create_req(&app, &t, "开发中").await;
+        let id = create_req(&app, &t, "in development").await;
         let r = app
             .clone()
             .oneshot(req(
@@ -1639,13 +1647,13 @@ mod tests {
     #[tokio::test]
     async fn put_updates_tags_and_due_date_empty_string_clears() {
         let (app, t) = app_with("REQUIREMENT:READ+ADD+UPDATE").await;
-        let id = create_req(&app, &t, "登录").await;
+        let id = create_req(&app, &t, "login").await;
         let r = app
             .clone()
             .oneshot(req(
                 "PUT",
                 &format!("/requirement/{id}"),
-                r#"{"title":"登录","tags":["web","api"],"dueDate":"2999-06-01"}"#,
+                r#"{"title":"login","tags":["web","api"],"dueDate":"2999-06-01"}"#,
                 Some(&t),
             ))
             .await
@@ -1658,7 +1666,7 @@ mod tests {
         // Omitted keeps current.
         let r2 = app
             .clone()
-            .oneshot(req("PUT", &format!("/requirement/{id}"), r#"{"title":"登录"}"#, Some(&t)))
+            .oneshot(req("PUT", &format!("/requirement/{id}"), r#"{"title":"login"}"#, Some(&t)))
             .await
             .expect("r");
         let v2 = body_json(r2).await;
@@ -1670,7 +1678,7 @@ mod tests {
             .oneshot(req(
                 "PUT",
                 &format!("/requirement/{id}"),
-                r#"{"title":"登录","dueDate":""}"#,
+                r#"{"title":"login","dueDate":""}"#,
                 Some(&t),
             ))
             .await
@@ -1688,7 +1696,7 @@ mod tests {
             .oneshot(req(
                 "POST",
                 "/requirement",
-                r#"{"projectId":"p1","title":"登录","moduleId":"mod-1"}"#,
+                r#"{"projectId":"p1","title":"login","moduleId":"mod-1"}"#,
                 Some(&t),
             ))
             .await
@@ -1702,7 +1710,7 @@ mod tests {
                 .oneshot(req(
                     "POST",
                     "/requirement",
-                    r#"{"projectId":"p1","title":"注册"}"#,
+                    r#"{"projectId":"p1","title":"register"}"#,
                     Some(&t),
                 ))
                 .await
@@ -1714,7 +1722,7 @@ mod tests {
         // PUT: omitted keeps; moduleId replaces; empty string unfiles.
         let r2 = app
             .clone()
-            .oneshot(req("PUT", &format!("/requirement/{id}"), r#"{"title":"登录"}"#, Some(&t)))
+            .oneshot(req("PUT", &format!("/requirement/{id}"), r#"{"title":"login"}"#, Some(&t)))
             .await
             .expect("r");
         assert_eq!(body_json(r2).await["moduleId"], "mod-1");
@@ -1723,7 +1731,7 @@ mod tests {
             .oneshot(req(
                 "PUT",
                 &format!("/requirement/{id}"),
-                r#"{"title":"登录","moduleId":"mod-2"}"#,
+                r#"{"title":"login","moduleId":"mod-2"}"#,
                 Some(&t),
             ))
             .await
@@ -1734,7 +1742,7 @@ mod tests {
             .oneshot(req(
                 "PUT",
                 &format!("/requirement/{id}"),
-                r#"{"title":"登录","moduleId":""}"#,
+                r#"{"title":"login","moduleId":""}"#,
                 Some(&t),
             ))
             .await
@@ -1761,14 +1769,14 @@ mod tests {
             .oneshot(req(
                 "POST",
                 "/requirement",
-                r#"{"projectId":"p1","title":"登录","customFields":{" owner ":"alice","module":"登录"}}"#,
+                r#"{"projectId":"p1","title":"login","customFields":{" owner ":"alice","module":"login"}}"#,
                 Some(&t),
             ))
             .await
             .expect("r");
         assert_eq!(r.status(), StatusCode::CREATED);
         let v = body_json(r).await;
-        assert_eq!(v["customFields"], serde_json::json!({"owner": "alice", "module": "登录"}));
+        assert_eq!(v["customFields"], serde_json::json!({"owner": "alice", "module": "login"}));
         let id = v["id"].as_str().expect("id").to_string();
 
         // PUT replaces wholesale; omitted keeps current.
@@ -1777,7 +1785,7 @@ mod tests {
             .oneshot(req(
                 "PUT",
                 &format!("/requirement/{id}"),
-                r#"{"title":"登录","customFields":{"owner":"bob"}}"#,
+                r#"{"title":"login","customFields":{"owner":"bob"}}"#,
                 Some(&t),
             ))
             .await
@@ -1786,7 +1794,7 @@ mod tests {
         assert_eq!(body_json(r2).await["customFields"], serde_json::json!({"owner": "bob"}));
         let r3 = app
             .clone()
-            .oneshot(req("PUT", &format!("/requirement/{id}"), r#"{"title":"登录"}"#, Some(&t)))
+            .oneshot(req("PUT", &format!("/requirement/{id}"), r#"{"title":"login"}"#, Some(&t)))
             .await
             .expect("r");
         assert_eq!(body_json(r3).await["customFields"], serde_json::json!({"owner": "bob"}));
@@ -1796,7 +1804,7 @@ mod tests {
             .oneshot(req(
                 "PUT",
                 &format!("/requirement/{id}"),
-                r#"{"title":"登录","customFields":{}}"#,
+                r#"{"title":"login","customFields":{}}"#,
                 Some(&t),
             ))
             .await
@@ -1818,7 +1826,7 @@ mod tests {
             app.oneshot(req(
                 "POST",
                 "/requirement",
-                r#"{"projectId":"p1","title":"坏字段","customFields":{"  ":"v"}}"#,
+                r#"{"projectId":"p1","title":"bad field","customFields":{"  ":"v"}}"#,
                 Some(&t)
             ))
             .await
@@ -1831,12 +1839,12 @@ mod tests {
     #[tokio::test]
     async fn changes_endpoint_lists_newest_first() {
         let (app, t) = app_with("REQUIREMENT:READ+ADD+UPDATE").await;
-        let id = create_req(&app, &t, "登录").await;
+        let id = create_req(&app, &t, "login").await;
         app.clone()
             .oneshot(req(
                 "PUT",
                 &format!("/requirement/{id}"),
-                r#"{"title":"登入","priority":"P0"}"#,
+                r#"{"title":"sign in","priority":"P0"}"#,
                 Some(&t),
             ))
             .await
@@ -1866,8 +1874,8 @@ mod tests {
         assert!(items[0]["changedAt"].as_i64().is_some());
         assert_eq!(items[1]["field"], "priority");
         assert_eq!(items[2]["field"], "title");
-        assert_eq!(items[2]["oldValue"], "登录");
-        assert_eq!(items[2]["newValue"], "登入");
+        assert_eq!(items[2]["oldValue"], "login");
+        assert_eq!(items[2]["newValue"], "sign in");
         // Creation hook is last (oldest).
         assert_eq!(items[3]["field"], "stage.CREATED");
     }

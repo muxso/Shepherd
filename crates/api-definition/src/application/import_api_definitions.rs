@@ -99,7 +99,12 @@ impl ImportApiDefinitionsUseCase {
                 if self.repo.update_definition_spec(id, &new_def.spec).await.is_ok() {
                     let _ = self
                         .repo
-                        .record_definition_change(id, "UPDATE_SPEC", "OpenAPI 导入覆盖规格", "")
+                        .record_definition_change(
+                            id,
+                            "UPDATE_SPEC",
+                            "OpenAPI import overwrote spec",
+                            "",
+                        )
                         .await;
                     if sync_module {
                         let mid = self
@@ -137,7 +142,7 @@ impl ImportApiDefinitionsUseCase {
                     def.module_id = Some(mid.to_string());
                 }
             }
-            let case_name = format!("{} 默认用例", api.name);
+            let case_name = format!("{} default case", api.name);
             if let Ok(case) = NewApiCase::new(
                 &def.id,
                 project_id,
@@ -196,7 +201,7 @@ mod tests {
         let doc = json!({
             "openapi": "3.0.0",
             "paths": {
-                "/login": { "post": { "summary": "登录" } },
+                "/login": { "post": { "summary": "login" } },
                 "/users": { "get": { "operationId": "listUsers" } }
             }
         });
@@ -221,9 +226,9 @@ mod tests {
         let doc = json!({
             "openapi": "3.0.0",
             "paths": {
-                "/login": { "post": { "summary": "登录", "tags": ["auth"] } },
-                "/logout": { "post": { "summary": "登出", "tags": ["auth"] } },
-                "/users": { "get": { "summary": "列用户", "tags": ["user"] } },
+                "/login": { "post": { "summary": "login", "tags": ["auth"] } },
+                "/logout": { "post": { "summary": "logout", "tags": ["auth"] } },
+                "/users": { "get": { "summary": "list users", "tags": ["user"] } },
                 "/ping": { "get": { "summary": "ping" } }
             }
         });

@@ -126,7 +126,7 @@ impl CreateRequirementUseCase {
         let mut row = StageRow::pending(Stage::Created);
         row.set_status(StageStatus::Done, req.created_at_ms);
         if let Err(e) = self.repo.upsert_stage(&req.id, &row).await {
-            tracing::warn!(requirement = %req.id, error = %e, "CREATED 阶段写入失败");
+            tracing::warn!(requirement = %req.id, error = %e, "CREATED stage write failed");
             return;
         }
         if let Some(slot) = req.stage_row_mut(Stage::Created) {
@@ -139,7 +139,7 @@ impl CreateRequirementUseCase {
             new_value: StageStatus::Done.as_str().to_string(),
         };
         if let Err(e) = self.repo.append_change(&req.id, &[entry]).await {
-            tracing::warn!(requirement = %req.id, error = %e, "CREATED 阶段变更日志写入失败");
+            tracing::warn!(requirement = %req.id, error = %e, "CREATED stage change log write failed");
         }
     }
 }
@@ -155,7 +155,7 @@ mod tests {
 
     #[tokio::test]
     async fn creates_with_version_1_and_baseline_1() {
-        let r = uc().execute("p1", "登录", "desc", &["c1".to_string()]).await.expect("ok");
+        let r = uc().execute("p1", "login", "desc", &["c1".to_string()]).await.expect("ok");
         assert_eq!(r.latest_version(), 1);
         assert_eq!(r.baseline_version, 1);
         assert_eq!(r.baseline().acceptance_criteria.len(), 1);
@@ -164,9 +164,9 @@ mod tests {
     #[tokio::test]
     async fn rejects_duplicate_title_in_same_project() {
         let uc = uc();
-        uc.execute("p1", "登录", "d", &[]).await.expect("first");
+        uc.execute("p1", "login", "d", &[]).await.expect("first");
         assert_eq!(
-            uc.execute("p1", "登录", "d", &[]).await.unwrap_err(),
+            uc.execute("p1", "login", "d", &[]).await.unwrap_err(),
             CreateRequirementError::TitleAlreadyExists
         );
     }
@@ -174,23 +174,23 @@ mod tests {
     #[tokio::test]
     async fn allows_same_title_in_different_project() {
         let uc = uc();
-        uc.execute("p1", "登录", "d", &[]).await.expect("ok");
-        assert!(uc.execute("p2", "登录", "d", &[]).await.is_ok());
+        uc.execute("p1", "login", "d", &[]).await.expect("ok");
+        assert!(uc.execute("p2", "login", "d", &[]).await.is_ok());
     }
 
     #[tokio::test]
     async fn recreatable_after_soft_delete() {
         let repo = Arc::new(InMemoryRequirementRepository::new());
         let uc = CreateRequirementUseCase::new(repo.clone());
-        let r = uc.execute("p1", "登录", "d", &[]).await.expect("ok");
+        let r = uc.execute("p1", "login", "d", &[]).await.expect("ok");
         repo.soft_delete(&r.id);
-        assert!(uc.execute("p1", "登录", "d", &[]).await.is_ok());
+        assert!(uc.execute("p1", "login", "d", &[]).await.is_ok());
     }
 
     #[tokio::test]
     async fn creates_with_default_priority_and_type() {
         use crate::domain::{RequirementPriority, RequirementType};
-        let r = uc().execute("p1", "登录", "d", &[]).await.expect("ok");
+        let r = uc().execute("p1", "login", "d", &[]).await.expect("ok");
         assert_eq!(r.priority, RequirementPriority::P2);
         assert_eq!(r.req_type, RequirementType::Feature);
     }
@@ -201,7 +201,7 @@ mod tests {
         let r = uc()
             .execute_with(
                 "p1",
-                "登录",
+                "login",
                 "d",
                 &[],
                 Some(" p0 "),
@@ -225,7 +225,7 @@ mod tests {
         assert_eq!(
             uc().execute_with(
                 "p1",
-                "登录",
+                "login",
                 "d",
                 &[],
                 Some("P9"),
@@ -245,7 +245,7 @@ mod tests {
         assert_eq!(
             uc().execute_with(
                 "p1",
-                "登录",
+                "login",
                 "d",
                 &[],
                 None,
@@ -268,11 +268,11 @@ mod tests {
     async fn creates_with_tags_due_date_and_parent() {
         let repo = Arc::new(InMemoryRequirementRepository::new());
         let uc = CreateRequirementUseCase::new(repo.clone());
-        let parent = uc.execute("p1", "父需求", "d", &[]).await.expect("parent");
+        let parent = uc.execute("p1", "parent requirement", "d", &[]).await.expect("parent");
         let r = uc
             .execute_with(
                 "p1",
-                "子需求",
+                "child requirement",
                 "d",
                 &[],
                 None,
@@ -294,7 +294,7 @@ mod tests {
         let r2 = uc
             .execute_with(
                 "p1",
-                "另一条",
+                "another one",
                 "d",
                 &[],
                 None,
@@ -318,7 +318,7 @@ mod tests {
         let r = uc
             .execute_with(
                 "p1",
-                "登录",
+                "login",
                 "d",
                 &[],
                 None,
@@ -334,7 +334,7 @@ mod tests {
             .await
             .expect("ok");
         assert_eq!(r.module_id, "mod-1"); // trimmed
-        let r2 = uc.execute("p1", "注册", "d", &[]).await.expect("ok");
+        let r2 = uc.execute("p1", "register", "d", &[]).await.expect("ok");
         assert_eq!(r2.module_id, ""); // defaults to unfiled
     }
 
@@ -344,7 +344,7 @@ mod tests {
         let r = uc
             .execute_with(
                 "p1",
-                "登录",
+                "login",
                 "d",
                 &[],
                 None,
@@ -364,7 +364,7 @@ mod tests {
         let r2 = uc
             .execute_with(
                 "p1",
-                "注册",
+                "register",
                 "d",
                 &[],
                 None,
@@ -386,7 +386,7 @@ mod tests {
     async fn creates_with_custom_fields_normalized_and_rejects_invalid() {
         let raw = BTreeMap::from([(" owner ".to_string(), "alice".to_string())]);
         let r = uc()
-            .execute_with("p1", "登录", "d", &[], None, None, &[], None, None, &raw, "", &[], "")
+            .execute_with("p1", "login", "d", &[], None, None, &[], None, None, &raw, "", &[], "")
             .await
             .expect("ok");
         assert_eq!(r.custom_fields, BTreeMap::from([("owner".to_string(), "alice".to_string())]));
@@ -395,7 +395,7 @@ mod tests {
         assert_eq!(
             uc().execute_with(
                 "p1",
-                "注册",
+                "register",
                 "d",
                 &[],
                 None,
@@ -418,11 +418,11 @@ mod tests {
     async fn rejects_missing_or_cross_project_parent() {
         let repo = Arc::new(InMemoryRequirementRepository::new());
         let uc = CreateRequirementUseCase::new(repo.clone());
-        let other = uc.execute("p2", "别家", "d", &[]).await.expect("other");
+        let other = uc.execute("p2", "other project", "d", &[]).await.expect("other");
         assert_eq!(
             uc.execute_with(
                 "p1",
-                "子",
+                "child",
                 "d",
                 &[],
                 None,
@@ -442,7 +442,7 @@ mod tests {
         assert_eq!(
             uc.execute_with(
                 "p1",
-                "子",
+                "child",
                 "d",
                 &[],
                 None,
@@ -460,12 +460,12 @@ mod tests {
             CreateRequirementError::CrossProjectParent
         );
         // A soft-deleted parent counts as missing.
-        let doomed = uc.execute("p1", "亡父", "d", &[]).await.expect("p");
+        let doomed = uc.execute("p1", "dead parent", "d", &[]).await.expect("p");
         repo.soft_delete(&doomed.id);
         assert_eq!(
             uc.execute_with(
                 "p1",
-                "子",
+                "child",
                 "d",
                 &[],
                 None,
@@ -489,7 +489,7 @@ mod tests {
         assert_eq!(
             uc().execute_with(
                 "p1",
-                "登录",
+                "login",
                 "d",
                 &[],
                 None,
@@ -512,7 +512,7 @@ mod tests {
         assert_eq!(
             uc().execute_with(
                 "p1",
-                "登录",
+                "login",
                 "d",
                 &[],
                 None,

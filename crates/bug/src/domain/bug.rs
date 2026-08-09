@@ -179,9 +179,9 @@ mod tests {
     fn flow() -> StatusFlowGraph {
         StatusFlowGraph::new(
             vec![
-                StatusItem::new("NEW", "新建", true),
-                StatusItem::new("RESOLVED", "已解决", true),
-                StatusItem::new("CLOSED", "已关闭", true),
+                StatusItem::new("NEW", "New", true),
+                StatusItem::new("RESOLVED", "Resolved", true),
+                StatusItem::new("CLOSED", "Closed", true),
             ],
             vec![("NEW".into(), "RESOLVED".into()), ("RESOLVED".into(), "CLOSED".into())],
         )

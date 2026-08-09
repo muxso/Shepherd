@@ -6,8 +6,9 @@ use crate::domain::import::{
 };
 
 pub fn parse_metersphere(doc: &Value) -> Result<Vec<ImportedApi>, ApiDefinitionError> {
-    let list = locate_list(doc)
-        .ok_or_else(|| ApiDefinitionError::BadImport("metersphere: 未找到接口列表".into()))?;
+    let list = locate_list(doc).ok_or_else(|| {
+        ApiDefinitionError::BadImport("metersphere: interface list not found".into())
+    })?;
 
     let mut out = Vec::new();
     for item in list {
@@ -16,7 +17,7 @@ pub fn parse_metersphere(doc: &Value) -> Result<Vec<ImportedApi>, ApiDefinitionE
         }
     }
     if out.is_empty() {
-        return Err(ApiDefinitionError::BadImport("metersphere: 未找到任何有效接口".into()));
+        return Err(ApiDefinitionError::BadImport("metersphere: no valid interface found".into()));
     }
     Ok(out)
 }
@@ -172,17 +173,17 @@ mod tests {
             "projectName": "demo",
             "data": [
                 {
-                    "name": "登录",
+                    "name": "login",
                     "method": "post",
                     "path": "/login",
-                    "modulePath": "/认证/登录态",
+                    "modulePath": "/auth/login-state",
                     "request": "{\"headers\":[{\"name\":\"X-Token\",\"value\":\"t\",\"enable\":true}],\"arguments\":[{\"name\":\"from\",\"value\":\"web\"}],\"body\":{\"raw\":\"{\\\"u\\\":\\\"a\\\"}\"}}"
                 },
                 {
-                    "name": "列用户",
+                    "name": "list users",
                     "method": "GET",
                     "path": "/users?page=1",
-                    "moduleName": "用户"
+                    "moduleName": "users"
                 }
             ]
         });
@@ -190,14 +191,14 @@ mod tests {
         assert_eq!(apis.len(), 2);
         let login = apis.iter().find(|a| a.path == "/login").expect("login");
         assert_eq!(login.method, "POST");
-        assert_eq!(login.module.as_deref(), Some("认证"));
+        assert_eq!(login.module.as_deref(), Some("auth"));
         assert_eq!(login.spec["requestHeaders"][0]["name"], "X-Token");
         assert_eq!(login.spec["requestQuery"][0]["name"], "from");
         assert_eq!(login.spec["bodyType"], "json");
         assert!(login.case_body.as_deref().unwrap().contains("\"u\""));
 
         let users = apis.iter().find(|a| a.path == "/users").expect("users");
-        assert_eq!(users.module.as_deref(), Some("用户"));
+        assert_eq!(users.module.as_deref(), Some("users"));
         assert_eq!(users.spec["requestQuery"][0]["name"], "page");
     }
 

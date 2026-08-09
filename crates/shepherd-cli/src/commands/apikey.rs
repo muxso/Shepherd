@@ -61,11 +61,11 @@ pub fn run(cmd: ApikeyCmd) -> R<()> {
         ApikeyCmd::Mine => pretty(&c.get("/system/apikey/mine", true)?),
         ApikeyCmd::Delete { id } => {
             c.delete(&format!("/system/apikey/{id}"), true)?;
-            println!(" 已吊销 {id}");
+            println!(" revoked {id}");
         }
         ApikeyCmd::Enable { id, disable } => {
             c.put(&format!("/system/apikey/{id}/enabled"), json!({"enabled": !disable}), true)?;
-            println!(" API key {id} 已{}", if disable { "禁用" } else { "启用" });
+            println!(" API key {id} {}", if disable { "disabled" } else { "enabled" });
         }
     };
     Ok(())

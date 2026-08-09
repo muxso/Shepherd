@@ -135,7 +135,7 @@ mod tests {
 
     #[test]
     fn group_at_root_is_ok() {
-        let p = NewPlan::new("p1", "回归组", PlanType::Group, ROOT_GROUP).expect("ok");
+        let p = NewPlan::new("p1", "regression group", PlanType::Group, ROOT_GROUP).expect("ok");
         assert_eq!(p.plan_type, PlanType::Group);
         assert!(!p.belongs_to_group());
     }
@@ -143,14 +143,14 @@ mod tests {
     #[test]
     fn group_nested_in_another_group_is_rejected() {
         assert_eq!(
-            NewPlan::new("p1", "组中组", PlanType::Group, "g123"),
+            NewPlan::new("p1", "nested group", PlanType::Group, "g123"),
             Err(PlanError::GroupCannotBeNested)
         );
     }
 
     #[test]
     fn plan_inside_group_is_ok() {
-        let p = NewPlan::new("p1", "冒烟", PlanType::Plan, "g123").expect("ok");
+        let p = NewPlan::new("p1", "smoke", PlanType::Plan, "g123").expect("ok");
         assert!(p.belongs_to_group());
     }
 

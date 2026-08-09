@@ -125,7 +125,7 @@ mod tests {
 
     #[test]
     fn name_is_trimmed_and_length_checked() {
-        assert_eq!(normalize_name("  默认模板 ").expect("ok"), "默认模板");
+        assert_eq!(normalize_name("  default template ").expect("ok"), "default template");
         assert_eq!(normalize_name("  "), Err(TemplateError::EmptyName));
         assert_eq!(normalize_name(&"n".repeat(65)), Err(TemplateError::NameTooLong));
         assert!(normalize_name(&"n".repeat(64)).is_ok());
@@ -142,11 +142,11 @@ mod tests {
 
     #[test]
     fn new_template_normalizes_and_validates() {
-        let t = NewTemplate::new(" p1 ", " Requirement ", " 默认 ", json!({}), " admin ")
+        let t = NewTemplate::new(" p1 ", " Requirement ", " default ", json!({}), " admin ")
             .expect("valid");
         assert_eq!(t.project_id, "p1");
         assert_eq!(t.kind, "requirement");
-        assert_eq!(t.name, "默认");
+        assert_eq!(t.name, "default");
         assert_eq!(t.created_by, "admin");
     }
 

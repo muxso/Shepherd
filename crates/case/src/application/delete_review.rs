@@ -42,7 +42,7 @@ mod tests {
                 reviewer_count: 1,
                 case_ids: vec!["c1".into()],
                 created_by: "admin".into(),
-                meta: ReviewMeta { name: "v1 评审".into(), ..ReviewMeta::default() },
+                meta: ReviewMeta { name: "v1 review".into(), ..ReviewMeta::default() },
             })
             .await
             .expect("create");

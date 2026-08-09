@@ -42,10 +42,10 @@ mod tests {
 
     #[test]
     fn new_module_trims_and_normalizes_parent() {
-        let m = NewApiModule::new("p1", Some(""), " 登录域 ").expect("ok");
-        assert_eq!(m.name, "登录域");
+        let m = NewApiModule::new("p1", Some(""), " login module ").expect("ok");
+        assert_eq!(m.name, "login module");
         assert_eq!(m.parent_id, None);
-        let m2 = NewApiModule::new("p1", Some("mod-1"), "子模块").expect("ok");
+        let m2 = NewApiModule::new("p1", Some("mod-1"), "child module").expect("ok");
         assert_eq!(m2.parent_id.as_deref(), Some("mod-1"));
     }
 

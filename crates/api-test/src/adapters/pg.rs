@@ -789,7 +789,7 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "需要 DATABASE_URL 指向一个 PostgreSQL 实例"]
+    #[ignore = "requires DATABASE_URL pointing to a PostgreSQL instance"]
     async fn pg_pool_resolution_and_dispatch() {
         let url = std::env::var("DATABASE_URL").expect("set DATABASE_URL");
         let pool = PgPool::connect(&url).await.expect("connect");
@@ -800,7 +800,7 @@ mod tests {
             .expect("truncate");
         sqlx::raw_sql(
             "INSERT INTO ms_resource_pool (id,name,enabled,deleted) VALUES \
-                ('pool1','可用',true,false),('pool2','禁用',false,false); \
+                ('pool1','available',true,false),('pool2','disabled',false,false); \
              INSERT INTO ms_project_api_config (project_id, default_pool_id) VALUES \
                 ('proj1','pool1'),('proj2',NULL);",
         )
@@ -854,7 +854,7 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "需要 DATABASE_URL 指向一个 PostgreSQL 实例"]
+    #[ignore = "requires DATABASE_URL pointing to a PostgreSQL instance"]
     async fn pg_case_execution_query_pagination() {
         let url = std::env::var("DATABASE_URL").expect("set DATABASE_URL");
         let pool = PgPool::connect(&url).await.expect("connect");

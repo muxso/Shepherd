@@ -416,7 +416,12 @@ async fn copy_scenario(
         Ok(s) => {
             let _ = st
                 .repo
-                .record_change(&s.id, "CREATE", Some(&format!("复制自 {id}")), Some(&user.user_id))
+                .record_change(
+                    &s.id,
+                    "CREATE",
+                    Some(&format!("copied from {id}")),
+                    Some(&user.user_id),
+                )
                 .await;
             (StatusCode::CREATED, Json(ScenarioResponse::from(s))).into_response()
         }
@@ -523,7 +528,12 @@ async fn update_scenario(
         Ok(Some(s)) => {
             let _ = st
                 .repo
-                .record_change(&id, "UPDATE", Some("更新基本信息/参数/设置"), Some(&user.user_id))
+                .record_change(
+                    &id,
+                    "UPDATE",
+                    Some("updated basic info / params / settings"),
+                    Some(&user.user_id),
+                )
                 .await;
             (StatusCode::OK, Json(ScenarioResponse::from(s))).into_response()
         }
@@ -552,7 +562,7 @@ async fn reorder_steps(
         Ok(()) => {
             let _ = st
                 .repo
-                .record_change(&id, "REORDER", Some("调整步骤顺序"), Some(&user.user_id))
+                .record_change(&id, "REORDER", Some("reordered steps"), Some(&user.user_id))
                 .await;
             StatusCode::NO_CONTENT.into_response()
         }
@@ -573,7 +583,7 @@ async fn delete_step(
         Ok(true) => {
             let _ = st
                 .repo
-                .record_change(&id, "DELETE_STEP", Some("删除步骤"), Some(&user.user_id))
+                .record_change(&id, "DELETE_STEP", Some("deleted step"), Some(&user.user_id))
                 .await;
             StatusCode::NO_CONTENT.into_response()
         }
@@ -593,8 +603,10 @@ async fn delete_scenario(
     }
     match st.repo.delete_scenario(&id).await {
         Ok(true) => {
-            let _ =
-                st.repo.record_change(&id, "DELETE", Some("删除场景"), Some(&user.user_id)).await;
+            let _ = st
+                .repo
+                .record_change(&id, "DELETE", Some("deleted scenario"), Some(&user.user_id))
+                .await;
             StatusCode::NO_CONTENT.into_response()
         }
         Ok(false) => (StatusCode::NOT_FOUND, "scenario not found").into_response(),
@@ -671,7 +683,7 @@ async fn add_step(
                 .record_change(
                     &id,
                     "ADD_STEP",
-                    Some(&format!("新增步骤 {}", req.kind)),
+                    Some(&format!("added step {}", req.kind)),
                     Some(&user.user_id),
                 )
                 .await;
@@ -716,7 +728,7 @@ async fn update_step(
                 .record_change(
                     &id,
                     "UPDATE_STEP",
-                    Some(&format!("更新步骤 {}", req.kind)),
+                    Some(&format!("updated step {}", req.kind)),
                     Some(&user.user_id),
                 )
                 .await;
@@ -893,7 +905,7 @@ async fn purge_scenario(
         ScenarioExecutionDto,
         ScenarioExecutionPageResponse
     )),
-    tags((name = "api-scenario", description = "接口场景编排"))
+    tags((name = "api-scenario", description = "API scenario orchestration"))
 )]
 struct ApiDoc;
 pub fn openapi() -> utoipa::openapi::OpenApi {
@@ -950,7 +962,11 @@ mod tests {
     async fn create_scenario_id(app: &Router, t: &str) -> String {
         let resp = app
             .clone()
-            .oneshot(post("/api/scenario", r#"{"projectId":"p1","name":"下单"}"#, Some(t)))
+            .oneshot(post(
+                "/api/scenario",
+                r#"{"projectId":"p1","name":"order placement"}"#,
+                Some(t),
+            ))
             .await
             .expect("resp");
         assert_eq!(resp.status(), StatusCode::CREATED);
@@ -1220,7 +1236,7 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::CREATED);
         let v = json_body(resp).await;
         assert_ne!(v["id"].as_str().expect("id"), id);
-        assert_eq!(v["name"], "下单_copy");
+        assert_eq!(v["name"], "order placement_copy");
         assert_eq!(v["steps"][0]["kind"], "CASE");
         assert_eq!(v["steps"][0]["caseId"], "case-7");
     }

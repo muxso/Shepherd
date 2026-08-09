@@ -63,9 +63,9 @@ mod tests {
     #[tokio::test]
     async fn list_scoped_to_project() {
         let repo = Arc::new(InMemoryPlanRepository::new());
-        seed(&repo, "p1", "冒烟").await;
-        seed(&repo, "p1", "回归").await;
-        seed(&repo, "p2", "别的项目").await;
+        seed(&repo, "p1", "smoke").await;
+        seed(&repo, "p1", "regression").await;
+        seed(&repo, "p2", "another project").await;
         let uc = ManagePlanUseCase::new(repo);
         let list = uc.list("p1").await.expect("list");
         assert_eq!(list.len(), 2);
@@ -75,11 +75,11 @@ mod tests {
     #[tokio::test]
     async fn rename_then_list_reflects() {
         let repo = Arc::new(InMemoryPlanRepository::new());
-        let p = seed(&repo, "p1", "旧名").await;
+        let p = seed(&repo, "p1", "old name").await;
         let uc = ManagePlanUseCase::new(repo);
-        uc.rename(&p.id, "新名").await.expect("rename");
+        uc.rename(&p.id, "new name").await.expect("rename");
         let list = uc.list("p1").await.expect("list");
-        assert_eq!(list[0].name, "新名");
+        assert_eq!(list[0].name, "new name");
     }
 
     #[tokio::test]
@@ -99,7 +99,7 @@ mod tests {
     #[tokio::test]
     async fn delete_removes_from_list() {
         let repo = Arc::new(InMemoryPlanRepository::new());
-        let p = seed(&repo, "p1", "待删").await;
+        let p = seed(&repo, "p1", "to delete").await;
         let uc = ManagePlanUseCase::new(repo);
         uc.delete(&p.id).await.expect("delete");
         assert!(uc.list("p1").await.expect("list").is_empty());

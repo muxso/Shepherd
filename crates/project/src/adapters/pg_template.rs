@@ -128,7 +128,7 @@ mod tests {
     use serde_json::json;
 
     #[tokio::test]
-    #[ignore = "需要 DATABASE_URL 指向一个 PostgreSQL 实例"]
+    #[ignore = "requires DATABASE_URL pointing to a PostgreSQL instance"]
     async fn pg_template_roundtrip() {
         let url = std::env::var("DATABASE_URL").expect("set DATABASE_URL");
         let pool = PgPool::connect(&url).await.expect("connect");
@@ -136,25 +136,25 @@ mod tests {
         sqlx::query("TRUNCATE ms_template").execute(&pool).await.expect("truncate");
 
         let repo = PgTemplateRepository::new(pool.clone());
-        let nu = NewTemplate::new("p1", "requirement", "默认", json!({"fields": [1]}), "admin")
+        let nu = NewTemplate::new("p1", "requirement", "default", json!({"fields": [1]}), "admin")
             .expect("valid");
 
         let t = repo.insert(&nu).await.expect("insert");
         assert!(t.created_at_ms > 0);
         assert_eq!(t.config, json!({"fields": [1]}));
-        assert!(repo.find_by_name("p1", "requirement", "默认").await.expect("q").is_some());
+        assert!(repo.find_by_name("p1", "requirement", "default").await.expect("q").is_some());
 
-        repo.insert(&NewTemplate::new("p1", "bug", "默认", json!({}), "admin").expect("valid"))
+        repo.insert(&NewTemplate::new("p1", "bug", "default", json!({}), "admin").expect("valid"))
             .await
             .expect("other kind");
         assert_eq!(repo.list("p1", None).await.expect("list").len(), 2);
         assert_eq!(repo.list("p1", Some("requirement")).await.expect("list").len(), 1);
 
         let mut renamed = t.clone();
-        renamed.name = "改名".to_string();
+        renamed.name = "rename".to_string();
         renamed.config = json!({"a": true});
         let after = repo.update(&renamed).await.expect("update").expect("exists");
-        assert_eq!(after.name, "改名");
+        assert_eq!(after.name, "rename");
         assert_eq!(after.config, json!({"a": true}));
         assert!(after.updated_at_ms >= after.created_at_ms);
         assert!(repo

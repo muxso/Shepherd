@@ -52,7 +52,10 @@ async fn perf_through_probe_registry_produces_report() {
 
     assert_eq!(report.total, 30);
     assert_eq!(report.success + report.failed, 30);
-    assert!(report.failed >= 1, "每 10 次一个 500,断言应判失败: {report:?}");
+    assert!(
+        report.failed >= 1,
+        "one 500 every 10 requests, so the assertion should fail: {report:?}"
+    );
     assert!(report.throughput_rps > 0.0);
     assert!(report.latency.p50 <= report.latency.p95);
     assert!(report.latency.p95 <= report.latency.max);

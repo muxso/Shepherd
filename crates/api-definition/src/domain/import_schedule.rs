@@ -79,7 +79,7 @@ mod tests {
     fn base() -> NewImportSchedule {
         NewImportSchedule {
             project_id: " p1 ".into(),
-            name: " 每日同步 ".into(),
+            name: " daily sync ".into(),
             format: "Postman".into(),
             source_url: " https://h/c.json ".into(),
             auth_token: String::new(),
@@ -102,7 +102,7 @@ mod tests {
         assert_eq!(s.cron, "0 0 2 * * *");
         assert_eq!(s.format, "postman");
         assert_eq!(s.module_id, None);
-        assert_eq!(s.name, "每日同步");
+        assert_eq!(s.name, "daily sync");
     }
 
     #[test]

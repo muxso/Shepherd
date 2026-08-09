@@ -68,7 +68,7 @@ async fn list_references(State(st): State<ReferencesState>, Path(id): Path<Strin
 #[openapi(
     paths(list_references),
     components(schemas(ReferencesResponse, RefItem)),
-    tags((name = "api-definition", description = "接口定义"))
+    tags((name = "api-definition", description = "API definition"))
 )]
 struct ApiDoc;
 

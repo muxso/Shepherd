@@ -272,7 +272,7 @@ async fn revoke_apikey(
 #[openapi(
     paths(create_apikey, list_apikeys, revoke_apikey, create_my_apikey, list_my_apikeys, set_apikey_enabled),
     components(schemas(CreateApiKeyBody, CreateMyApiKeyBody, CreatedApiKey, ApiKeyItem, ApiKeyList, SetEnabledBody)),
-    tags((name = "apikey", description = "API Key(agent 派发凭证)"))
+    tags((name = "apikey", description = "API key (agent dispatch credential)"))
 )]
 struct ApiDoc;
 

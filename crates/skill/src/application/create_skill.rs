@@ -53,7 +53,7 @@ mod tests {
     #[tokio::test]
     async fn creates_and_rejects_duplicate() {
         let uc = uc();
-        uc.execute("p1", "Rust", "", "用 thiserror", &[]).await.expect("ok");
+        uc.execute("p1", "Rust", "", "using thiserror", &[]).await.expect("ok");
         assert_eq!(
             uc.execute("p1", "Rust", "", "x", &[]).await.unwrap_err(),
             CreateSkillError::NameAlreadyExists

@@ -72,7 +72,7 @@ mod tests {
                 reviewer_count: 1,
                 case_ids: vec!["c1".into()],
                 created_by: "admin".into(),
-                meta: meta("v1 评审"),
+                meta: meta("v1 review"),
             })
             .await
             .expect("create");
@@ -83,7 +83,7 @@ mod tests {
     async fn updates_meta_and_setting() {
         let (repo, id) = seeded_repo().await;
         let uc = UpdateReviewMetaUseCase::new(repo.clone());
-        let mut u = update("v2 评审", "MULTIPLE", 3);
+        let mut u = update("v2 review", "MULTIPLE", 3);
         u.meta.description = "desc".into();
         u.meta.tags = vec!["t1".into()];
         u.meta.module_id = Some("m1".into());
@@ -93,7 +93,7 @@ mod tests {
 
         let list = repo.list_reviews("p1").await.expect("list");
         let s = &list[0];
-        assert_eq!(s.meta.name, "v2 评审");
+        assert_eq!(s.meta.name, "v2 review");
         assert_eq!(s.meta.description, "desc");
         assert_eq!(s.meta.tags, vec!["t1".to_string()]);
         assert_eq!(s.meta.module_id.as_deref(), Some("m1"));

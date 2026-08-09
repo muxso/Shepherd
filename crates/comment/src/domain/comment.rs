@@ -58,10 +58,11 @@ mod tests {
 
     #[test]
     fn new_comment_trims_and_accepts_valid() {
-        let c = NewComment::new("BUG", "b1", "  看起来是空指针  ", " admin ").expect("valid");
+        let c = NewComment::new("BUG", "b1", "  looks like a null pointer  ", " admin ")
+            .expect("valid");
         assert_eq!(c.target_type, "BUG");
         assert_eq!(c.target_id, "b1");
-        assert_eq!(c.content, "看起来是空指针");
+        assert_eq!(c.content, "looks like a null pointer");
         assert_eq!(c.author, "admin");
     }
 

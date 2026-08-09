@@ -101,17 +101,21 @@ mod tests {
     async fn compose_via_service_expands_includes() {
         let (svc, repo) = seeded().await;
         let create = CreateSkillUseCase::new(repo);
-        let a = create.execute("p1", "基础", "", "遵循六边形", &[]).await.expect("a").id;
+        let a = create
+            .execute("p1", "basic", "", "follows hexagonal architecture", &[])
+            .await
+            .expect("a")
+            .id;
         let b = create
-            .execute("p1", "Rust", "", "用 thiserror", std::slice::from_ref(&a))
+            .execute("p1", "Rust", "", "using thiserror", std::slice::from_ref(&a))
             .await
             .expect("b")
             .id;
 
         let comp = svc.compose("p1", &[b]).await.expect("compose");
         assert_eq!(comp.skill_ids, vec![a.clone(), comp.skill_ids[1].clone()]);
-        assert!(comp.instructions.contains("遵循六边形"));
-        assert!(comp.instructions.contains("用 thiserror"));
+        assert!(comp.instructions.contains("follows hexagonal architecture"));
+        assert!(comp.instructions.contains("using thiserror"));
     }
 
     #[tokio::test]

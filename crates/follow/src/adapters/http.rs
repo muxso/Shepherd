@@ -161,7 +161,7 @@ async fn mine(
 #[openapi(
     paths(follow, unfollow, status, mine),
     components(schemas(FollowBody, FollowStatus, MineResponse)),
-    tags((name = "follow", description = "关注人(通用)"))
+    tags((name = "follow", description = "Followers (generic)"))
 )]
 struct ApiDoc;
 pub fn openapi() -> utoipa::openapi::OpenApi {

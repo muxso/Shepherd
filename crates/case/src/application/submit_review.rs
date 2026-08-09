@@ -106,7 +106,7 @@ mod tests {
 
         uc.execute("rev1", "c1", Verdict::new("u1", Pass, None).expect("v")).await.expect("ok");
         let status = uc
-            .execute("rev1", "c1", Verdict::new("u2", UnPass, Some("步骤缺失")).expect("v"))
+            .execute("rev1", "c1", Verdict::new("u2", UnPass, Some("missing steps")).expect("v"))
             .await
             .expect("ok");
         assert_eq!(status, UnPass);

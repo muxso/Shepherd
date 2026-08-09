@@ -38,7 +38,7 @@ pub fn run(cmd: AuthCmd) -> R<()> {
             let v =
                 c.post("/auth/login", json!({"username": username, "password": password}), false)?;
             println!(
-                " 登录成功,会话 token:\n{}",
+                " login success, session token:\n{}",
                 v.get("token").and_then(|t| t.as_str()).unwrap_or("")
             );
             pretty(&v);
@@ -46,7 +46,7 @@ pub fn run(cmd: AuthCmd) -> R<()> {
         AuthCmd::Logout => {
             let c = Client::new(cfg)?;
             c.post("/auth/logout", json!({}), true)?;
-            println!(" 已登出");
+            println!(" logged out");
         }
         AuthCmd::Refresh => {
             let c = Client::new(cfg)?;
@@ -63,7 +63,7 @@ pub fn run(cmd: AuthCmd) -> R<()> {
                 json!({"oldPassword": old_password, "newPassword": new_password}),
                 true,
             )?;
-            println!(" 密码已修改");
+            println!(" password changed");
         }
         AuthCmd::Oidc { provider } => {
             let base = cfg.url.trim_end_matches('/');

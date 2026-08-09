@@ -563,7 +563,7 @@ async fn delete_attempt(
 #[openapi(
     paths(dispatch, list_by_task, get_attempt, report_running, complete, fail, record_event, list_events, list_tasks, collab_stats, stop, delete_attempt),
     components(schemas(DispatchBody, RunningBody, CompleteBody, FailBody, EventBody, EventResponse, DeliverableResponse, AttemptResponse, TaskItemResponse, TaskPageResponse, CollabRequirementItem, CollabDayItem, CollabStatsResponse, StopBody)),
-    tags((name = "delivery", description = "交付执行(AI 执行者)"))
+    tags((name = "delivery", description = "Delivery execution (AI executor)"))
 )]
 struct ApiDoc;
 pub fn openapi() -> utoipa::openapi::OpenApi {
@@ -722,7 +722,7 @@ mod tests {
             .oneshot(req(
                 "POST",
                 &format!("/delivery/{id}/events"),
-                r#"{"kind":"DECISION","message":"选用 argon2","detail":"PHC"}"#,
+                r#"{"kind":"DECISION","message":"uses argon2","detail":"PHC"}"#,
                 Some(&t),
             ))
             .await
@@ -747,7 +747,7 @@ mod tests {
         assert_eq!(list.status(), StatusCode::OK);
         let arr = json(list).await;
         assert_eq!(arr.as_array().expect("a").len(), 2);
-        assert_eq!(arr[0]["message"], "选用 argon2");
+        assert_eq!(arr[0]["message"], "uses argon2");
 
         assert_eq!(
             app.oneshot(req(
@@ -837,7 +837,7 @@ mod tests {
             .oneshot(req(
                 "POST",
                 &format!("/delivery/{id}/stop"),
-                r#"{"reason":"手动停止"}"#,
+                r#"{"reason":"manual stop"}"#,
                 Some(&t),
             ))
             .await

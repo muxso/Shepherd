@@ -290,14 +290,14 @@ mod tests {
     #[test]
     fn stop_from_dispatched_or_running_then_terminal() {
         let mut a = attempt();
-        a.stop("用户停止").expect("stop");
+        a.stop("stopped by user").expect("stop");
         assert_eq!(a.status, AttemptStatus::Stopped);
-        assert_eq!(a.error.as_deref(), Some("用户停止"));
+        assert_eq!(a.error.as_deref(), Some("stopped by user"));
         assert!(a.status.is_terminal());
 
         let mut b = attempt();
         b.start_running("r").expect("run");
-        assert!(b.stop("中途停止").is_ok());
+        assert!(b.stop("stopped midway").is_ok());
 
         assert!(a.stop("again").is_err());
     }

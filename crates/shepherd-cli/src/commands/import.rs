@@ -171,7 +171,7 @@ pub fn run(cmd: ImportCmd) -> R<()> {
         }
         ImportCmd::ScheduleDelete { id } => {
             c.delete(&format!("/api/import-schedule/{id}"), true)?;
-            println!(" 已删除导入计划 {id}");
+            println!(" deleted import schedule {id}");
         }
         ImportCmd::ScheduleEnable { id, disable } => {
             c.put(
@@ -179,7 +179,7 @@ pub fn run(cmd: ImportCmd) -> R<()> {
                 json!({ "enabled": !disable }),
                 true,
             )?;
-            println!(" 导入计划 {id} 已{}", if disable { "禁用" } else { "启用" });
+            println!(" import schedule {id} {}", if disable { "disabled" } else { "enabled" });
         }
         ImportCmd::ScheduleRun { id } => {
             pretty(&c.post(&format!("/api/import-schedule/{id}/run"), json!({}), true)?)

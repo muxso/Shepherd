@@ -141,7 +141,7 @@ impl LlmClient {
                         wire = self.wire_name(), model = %self.model, prompt_version,
                         latency_ms = started.elapsed().as_millis() as u64,
                         input_tokens = usage.input, output_tokens = usage.output, attempt,
-                        "LLM 调用完成"
+                        "LLM call completed"
                     );
                     return Ok(text);
                 }
@@ -152,13 +152,13 @@ impl LlmClient {
                         break;
                     }
                     let wait = retry_after.unwrap_or(delay);
-                    tracing::warn!(attempt, "LLM 可重试失败,{wait:?} 后重试: {last}");
+                    tracing::warn!(attempt, "LLM retryable failure, retry after {wait:?}: {last}");
                     tokio::time::sleep(wait).await;
                     delay = (delay * 2).min(Duration::from_secs(20));
                 }
             }
         }
-        Err(format!("LLM 重试 {} 次仍失败: {last}", self.max_retries))
+        Err(format!("LLM still failing after {} retries: {last}", self.max_retries))
     }
 
     fn wire_name(&self) -> &'static str {
@@ -200,13 +200,15 @@ impl LlmClient {
         };
 
         let resp = rb.send().await.map_err(|e| SendErr::Retryable {
-            msg: format!("LLM 不可达: {e}"),
+            msg: format!("LLM unreachable: {e}"),
             retry_after: None,
         })?;
         let status = resp.status();
         if status.is_success() {
-            let val: serde_json::Value =
-                resp.json().await.map_err(|e| SendErr::Fatal(format!("LLM 响应解析失败: {e}")))?;
+            let val: serde_json::Value = resp
+                .json()
+                .await
+                .map_err(|e| SendErr::Fatal(format!("failed to parse the LLM response: {e}")))?;
             return self.parse_ok(&val).map_err(SendErr::Fatal);
         }
         let retry_after = resp
@@ -230,7 +232,7 @@ impl LlmClient {
                 let text = val
                     .pointer("/choices/0/message/content")
                     .and_then(|c| c.as_str())
-                    .ok_or_else(|| "LLM 无 choices".to_string())?
+                    .ok_or_else(|| "LLM response has no choices".to_string())?
                     .to_string();
                 let u = val.get("usage");
                 let usage = Usage {
@@ -248,7 +250,7 @@ impl LlmClient {
             Wire::Anthropic => {
                 // The safety classifier may refuse: on stop_reason=refusal, content is empty, so treat it as an error.
                 if val.get("stop_reason").and_then(|s| s.as_str()) == Some("refusal") {
-                    return Err("LLM 拒答(refusal)".to_string());
+                    return Err("LLM declined to answer (refusal)".to_string());
                 }
                 let text = val
                     .get("content")
@@ -262,7 +264,7 @@ impl LlmClient {
                     })
                     .unwrap_or_default();
                 if text.is_empty() {
-                    return Err("LLM 无 content".to_string());
+                    return Err("LLM response has no content".to_string());
                 }
                 let u = val.get("usage");
                 let usage = Usage {
@@ -326,7 +328,7 @@ impl Planner for LlmPlanner {
             .await
             .map_err(PlanError::Backend)?;
         let dtos: Vec<PlannedTaskDto> = serde_json::from_str(extract_json(&text))
-            .map_err(|e| PlanError::Backend(format!("规划结果解析失败: {e}")))?;
+            .map_err(|e| PlanError::Backend(format!("failed to parse the plan result: {e}")))?;
         Ok(dtos
             .into_iter()
             .map(|d| PlannedTask {
@@ -370,11 +372,11 @@ impl LlmPrdDrafter {
     pub async fn draft(&self, raw: &str) -> Result<PrdDraft, String> {
         let text = self.client.complete(PRD_PROMPT_V, PRD_SYSTEM, raw).await?;
         let mut d: PrdDraft = serde_json::from_str(extract_json(&text))
-            .map_err(|e| format!("PRD 草稿解析失败: {e}"))?;
+            .map_err(|e| format!("failed to parse the PRD draft: {e}"))?;
         d.title = d.title.trim().to_string();
         d.acceptance_criteria.retain(|c| !c.trim().is_empty());
         if d.title.is_empty() {
-            return Err("PRD 草稿缺标题".to_string());
+            return Err("PRD draft is missing a title".to_string());
         }
         Ok(d)
     }
@@ -468,7 +470,9 @@ impl Judge for LlmJudge {
         match self.client.complete(JUDGE_PROMPT_V, JUDGE_SYSTEM, &user).await {
             Ok(text) => match serde_json::from_str::<VerdictDto>(extract_json(&text)) {
                 Ok(v) => Verdict { passed: v.passed, reason: v.reason },
-                Err(e) => Verdict { passed: false, reason: format!("裁决解析失败: {e}") },
+                Err(e) => {
+                    Verdict { passed: false, reason: format!("failed to parse verdict: {e}") }
+                }
             },
             // Fail closed: an LLM error counts as not passed.
             Err(e) => Verdict { passed: false, reason: e },
@@ -522,12 +526,14 @@ impl AgentExecutor for LlmExecutor {
             .await
             .map_err(ExecError::Backend)?;
         let d: DeliverableDto = serde_json::from_str(extract_json(&text))
-            .map_err(|e| ExecError::Backend(format!("交付物解析失败: {e}")))?;
+            .map_err(|e| ExecError::Backend(format!("failed to parse the deliverable: {e}")))?;
         let reference =
             if d.reference.is_empty() { format!("llm://{}", spec.task_id) } else { d.reference };
-        if let Ok(ev) =
-            NewExecutionEvent::new(EventKind::Decision, "LLM 执行者产出交付物", Some(&d.summary))
-        {
+        if let Ok(ev) = NewExecutionEvent::new(
+            EventKind::Decision,
+            "LLM executor produced a deliverable",
+            Some(&d.summary),
+        ) {
             sink.emit(ev).await;
         }
         Ok(DispatchOutcome::Completed {
@@ -603,28 +609,28 @@ mod tests {
         RequirementSpec {
             requirement_id: "r1".into(),
             requirement_version: 1,
-            title: "登录".into(),
-            description: "邮箱登录".into(),
-            acceptance_criteria: vec!["登录成功".into()],
+            title: "login".into(),
+            description: "email login".into(),
+            acceptance_criteria: vec!["login success".into()],
         }
     }
 
     #[tokio::test]
     async fn llm_planner_parses_tasks_even_with_prose() {
-        let url = serve_openai("好的,这是计划:\n```json\n[{\"title\":\"实现登录\",\"acceptanceCriteria\":[\"登录成功\"],\"dependencies\":[]}]\n```").await;
+        let url = serve_openai("Sure, here is the plan:\n```json\n[{\"title\":\"implement login\",\"acceptanceCriteria\":[\"login success\"],\"dependencies\":[]}]\n```").await;
         let p = LlmPlanner::new(LlmClient::new(url, None, "m"));
         let tasks = p.plan(&spec()).await.expect("plan");
         assert_eq!(tasks.len(), 1);
-        assert_eq!(tasks[0].title, "实现登录");
+        assert_eq!(tasks[0].title, "implement login");
     }
 
     #[tokio::test]
     async fn llm_judge_parses_verdict() {
-        let url = serve_openai("{\"passed\": false, \"reason\": \"缺测试\"}").await;
+        let url = serve_openai("{\"passed\": false, \"reason\": \"missing tests\"}").await;
         let j = LlmJudge::new(LlmClient::new(url, None, "m"));
         let v = j
             .judge(
-                &["登录成功".into()],
+                &["login success".into()],
                 &DeliverableView {
                     kind: "DIFF".into(),
                     reference: "b".into(),
@@ -633,12 +639,14 @@ mod tests {
             )
             .await;
         assert!(!v.passed);
-        assert_eq!(v.reason, "缺测试");
+        assert_eq!(v.reason, "missing tests");
     }
 
     #[tokio::test]
     async fn llm_executor_parses_deliverable_and_emits_event() {
-        let url = serve_openai("{\"reference\":\"branch:feat\",\"summary\":\"实现完成\"}").await;
+        let url =
+            serve_openai("{\"reference\":\"branch:feat\",\"summary\":\"implementation done\"}")
+                .await;
         let e = LlmExecutor::new(LlmClient::new(url, None, "m"));
         let ws = WorkSpec {
             attempt_id: "a".into(),
@@ -655,7 +663,7 @@ mod tests {
         match e.dispatch(&ws, &NoopEventSink).await.expect("dispatch") {
             DispatchOutcome::Completed { deliverable } => {
                 assert_eq!(deliverable.reference, "branch:feat");
-                assert_eq!(deliverable.summary, "实现完成");
+                assert_eq!(deliverable.summary, "implementation done");
             }
             other => panic!("expected Completed, got {other:?}"),
         }
@@ -681,14 +689,14 @@ mod tests {
     #[tokio::test]
     async fn anthropic_wire_parses_content_blocks() {
         let url = serve_anthropic(
-            "[{\"title\":\"实现登录\",\"acceptanceCriteria\":[],\"dependencies\":[]}]",
+            "[{\"title\":\"implement login\",\"acceptanceCriteria\":[],\"dependencies\":[]}]",
         )
         .await;
         let p = LlmPlanner::new(
             LlmClient::new(url, Some("k".into()), "claude-opus-4-8").with_wire(Wire::Anthropic),
         );
         let tasks = p.plan(&spec()).await.expect("plan");
-        assert_eq!(tasks[0].title, "实现登录");
+        assert_eq!(tasks[0].title, "implement login");
     }
 
     #[tokio::test]

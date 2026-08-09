@@ -68,7 +68,7 @@ fn parse_assistant(v: &serde_json::Value) -> Vec<ExecEvent> {
                             .and_then(|x| x.as_str())
                             .unwrap_or("");
                         if is_test_command(cmd) {
-                            ExecEvent::new("TEST_RESULT", &format!("运行测试: {}", clip(cmd, 120)))
+                            ExecEvent::new("TEST_RESULT", &format!("run tests: {}", clip(cmd, 120)))
                         } else {
                             ExecEvent::new("TOOL_CALL", &format!("$ {}", clip(cmd, 120)))
                         }
@@ -189,8 +189,8 @@ mod tests {
         let bash = r#"{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash","input":{"command":"ls -la"}}]}}"#;
         assert_eq!(parse_claude_line(bash), vec![ExecEvent::new("TOOL_CALL", "$ ls -la")]);
 
-        let text = r#"{"type":"assistant","message":{"content":[{"type":"text","text":"用 argon2 哈希"}]}}"#;
-        assert_eq!(parse_claude_line(text), vec![ExecEvent::new("DECISION", "用 argon2 哈希")]);
+        let text = r#"{"type":"assistant","message":{"content":[{"type":"text","text":"hash with argon2"}]}}"#;
+        assert_eq!(parse_claude_line(text), vec![ExecEvent::new("DECISION", "hash with argon2")]);
     }
 
     #[test]
@@ -198,7 +198,7 @@ mod tests {
         let bash = r#"{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash","input":{"command":"cargo test -p auth"}}]}}"#;
         assert_eq!(
             parse_claude_line(bash),
-            vec![ExecEvent::new("TEST_RESULT", "运行测试: cargo test -p auth")]
+            vec![ExecEvent::new("TEST_RESULT", "run tests: cargo test -p auth")]
         );
     }
 

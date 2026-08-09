@@ -363,7 +363,7 @@ async fn transition_task(
 #[openapi(
     paths(create_decomposition, breakdown_requirement, get_decomposition, ready_tasks, add_task, dispatch_task, transition_task, set_task_points, set_task_assignee),
     components(schemas(CreateBody, BreakdownBody, AddTaskBody, StatusBody, PointsBody, AssigneeBody, TaskResponse, DecompositionResponse, TaskCreated)),
-    tags((name = "task", description = "任务拆分 DAG"))
+    tags((name = "task", description = "Task decomposition DAG"))
 )]
 struct ApiDoc;
 
@@ -557,7 +557,7 @@ mod tests {
         let (app, t) = app_with("TASK:READ+ADD+EXECUTE+UPDATE").await;
         let r = app
             .clone()
-            .oneshot(req("POST", "/decomposition/breakdown", r#"{"requirementId":"req1","requirementVersion":1,"title":"登录","acceptanceCriteria":["登录成功","错误密码拒绝"]}"#, Some(&t)))
+            .oneshot(req("POST", "/decomposition/breakdown", r#"{"requirementId":"req1","requirementVersion":1,"title":"login","acceptanceCriteria":["login success","wrong password rejected"]}"#, Some(&t)))
             .await
             .expect("r");
         assert_eq!(r.status(), StatusCode::CREATED);

@@ -5,7 +5,7 @@ use thiserror::Error;
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum DirectoryError {
-    #[error("CFT provenance check failed (检测到用户创建途径异常)")]
+    #[error("CFT provenance check failed (abnormal user creation path detected)")]
     ProvenanceCheckFailed,
     #[error("storage backend error: {0}")]
     Backend(String),
