@@ -1,10 +1,49 @@
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
 
-export type Lang = 'zh' | 'en'
+export type Lang =
+  | 'zh'
+  | 'en'
+  | 'ja'
+  | 'ko'
+  | 'fr'
+  | 'de'
+  | 'es'
+  | 'pt'
+  | 'ru'
+  | 'it'
+  | 'tr'
+  | 'vi'
+  | 'th'
+  | 'id'
+  | 'nl'
+  | 'pl'
+  | 'ar'
 const KEY = 'shepherd.lang'
 
-// Flat dictionary: key → {zh,en}. Unregistered keys fall back to the original text.
-const DICT: Record<string, { zh: string; en: string }> = {
+// Language metadata: native name + English name, in display order.
+export const LANG_LIST: { code: Lang; native: string; en: string }[] = [
+  { code: 'zh', native: '中文', en: 'Chinese' },
+  { code: 'en', native: 'English', en: 'English' },
+  { code: 'ja', native: '日本語', en: 'Japanese' },
+  { code: 'ko', native: '한국어', en: 'Korean' },
+  { code: 'fr', native: 'Français', en: 'French' },
+  { code: 'de', native: 'Deutsch', en: 'German' },
+  { code: 'es', native: 'Español', en: 'Spanish' },
+  { code: 'pt', native: 'Português', en: 'Portuguese' },
+  { code: 'ru', native: 'Русский', en: 'Russian' },
+  { code: 'it', native: 'Italiano', en: 'Italian' },
+  { code: 'tr', native: 'Türkçe', en: 'Turkish' },
+  { code: 'vi', native: 'Tiếng Việt', en: 'Vietnamese' },
+  { code: 'th', native: 'ไทย', en: 'Thai' },
+  { code: 'id', native: 'Indonesia', en: 'Indonesian' },
+  { code: 'nl', native: 'Nederlands', en: 'Dutch' },
+  { code: 'pl', native: 'Polski', en: 'Polish' },
+  { code: 'ar', native: 'العربية', en: 'Arabic' },
+]
+
+// Flat dictionary: key → { lang: text }. Entries may define any subset of languages;
+// missing languages fall back to `en`, then `zh`, then the caller's fallback.
+const DICT: Record<string, Partial<Record<Lang, string>>> = {
   // Document title (browser tab)
   'app.title': { zh: 'Shepherd 将 AI 的一次性交付，转化为组织的长期软件工程资产。', en: 'Shepherd turns one-shot AI delivery into your organization’s long-term software engineering assets.' },
   // Left global nav (top-level module icon + label)
@@ -647,7 +686,7 @@ const DICT: Record<string, { zh: string; en: string }> = {
   'proj.removed': { zh: '已移除', en: 'Removed' },
   'proj.removeFailed': { zh: '移除失败', en: 'Failed to remove' },
   'proj.removeConfirm': { zh: '确认将该成员移出项目?', en: 'Remove this member from the project?' },
-  'proj.unit': { zh: '条', en: '' },
+  'proj.unit': { zh: '条', en: "items" },
   'proj.groupName': { zh: '用户组名称', en: 'Group Name' },
   'proj.memberCount': { zh: '成员数', en: 'Members' },
   'proj.viewPerm': { zh: '查看权限', en: 'View Permissions' },
@@ -938,7 +977,7 @@ const DICT: Record<string, { zh: string; en: string }> = {
   "scenario.loopSuffix": { zh: "次", en: "times" },
   // Loop round label in the report tree ("第 N 次" / "Round N").
   "scenario.iterPrefix": { zh: "第", en: "Round" },
-  "scenario.iterSuffix": { zh: "次", en: "" },
+  "scenario.iterSuffix": { zh: "次", en: "times" },
   "scenario.onceOnly": { zh: "仅执行一次", en: "Run once only" },
   "scenario.waitPrefix": { zh: "等待", en: "Wait" },
   "scenario.subScenario": { zh: "子场景", en: "Sub-scenario" },
@@ -1025,6 +1064,20 @@ const DICT: Record<string, { zh: string; en: string }> = {
   "req.status.BASELINED": { zh: "已基线", en: "Baselined" },
   "req.status.DELIVERED": { zh: "已交付", en: "Delivered" },
   "req.status.ARCHIVED": { zh: "已归档", en: "Archived" },
+  // Task-level execution statuses (used in task table + kanban columns)
+  'req.taskStatus.PENDING':    { zh: '待派发', en: 'Pending' },
+  'req.taskStatus.DISPATCHED': { zh: '已派发', en: 'Dispatched' },
+  'req.taskStatus.RUNNING':    { zh: '执行中', en: 'Running' },
+  'req.taskStatus.DELIVERED':  { zh: '已交付', en: 'Delivered' },
+  'req.taskStatus.VERIFIED':   { zh: '已验证', en: 'Verified' },
+  'req.taskStatus.FAILED':     { zh: '失败',   en: 'Failed' },
+  'req.taskStatus.STOPPED':    { zh: '已停止', en: 'Stopped' },
+  // Kanban column headers (aggregate labels)
+  'req.col.pending':   { zh: '待派发', en: 'Pending' },
+  'req.col.progress':  { zh: '进行中', en: 'In Progress' },
+  'req.col.delivered': { zh: '已交付', en: 'Delivered' },
+  'req.col.verified':  { zh: '已验证', en: 'Verified' },
+  'req.col.failed':    { zh: '失败',   en: 'Failed' },
   "req.acceptanceCriteria": { zh: "验收标准", en: "Acceptance Criteria" },
   "req.orchTab": { zh: "拆分 / 交付 / 验证", en: "Decompose / Deliver / Verify" },
   "req.notDecomposedHint": { zh: "尚未拆分,去「需求信息」点「自动拆分」生成任务图", en: "Not decomposed yet. Go to \"Requirement Info\" and click \"Auto Decompose\" to generate the task graph" },
@@ -1418,7 +1471,7 @@ const DICT: Record<string, { zh: string; en: string }> = {
   "home.collabEmpty": { zh: "暂无已验收任务;任务派发并验收通过后,这里展示 AI/人工 的交付拆分", en: "No verified tasks yet — dispatch tasks and pass acceptance to see the AI/human split" },
   "home.collabGridTitle": { zh: "近一年验收日历(格子=当日验收任务数)", en: "Verification calendar, past year" },
   "home.metricTotal": { zh: "全部", en: "All" },
-  "grid.monthSuffix": { zh: "月", en: "" },
+  "grid.monthSuffix": { zh: "月", en: "mo" },
   "grid.mon": { zh: "一", en: "Mon" },
   "grid.wed": { zh: "三", en: "Wed" },
   "grid.fri": { zh: "五", en: "Fri" },
@@ -2795,28 +2848,238 @@ const DICT: Record<string, { zh: string; en: string }> = {
   'md.quote': { zh: '引用', en: 'Quote' },
   'md.uploadImage': { zh: '上传图片', en: 'Upload image' },
   'md.write': { zh: '编辑', en: 'Write' },
+
+  'common.actions': { zh: '操作', en: "Actions" },
+  'common.delFail': { zh: '删除失败', en: "Delete failed" },
+  'common.deleted': { zh: '已删除', en: "Deleted" },
+  'common.ok': { zh: '确定', en: "OK" },
+  'rag.addKnowledge': { zh: '添加知识', en: "Add knowledge" },
+  'rag.askTry': { zh: '试试', en: "Try" },
+  'rag.audienceFail': { zh: '更新失败', en: "Update failed" },
+  'rag.audienceSaved': { zh: '可见组已更新', en: "Visibility groups updated" },
+  'rag.bad': { zh: '待改进', en: "Needs improvement" },
+  'rag.chunks': { zh: '来源', en: "Sources" },
+  'rag.clearHistory': { zh: '清空历史', en: "Clear history" },
+  'rag.completeness': { zh: '完整性', en: "Completeness" },
+  'rag.copied': { zh: '已复制', en: "Copied" },
+  'rag.copy': { zh: '复制回答', en: "Copy answer" },
+  'rag.copyFail': { zh: '复制失败', en: "Copy failed" },
+  'rag.decisionChain': { zh: '决策链', en: "Decision chain" },
+  'rag.docDelConfirm': { zh: '删除该文档及其向量?', en: "Delete this document and its vectors?" },
+  'rag.docText': { zh: '粘贴 Markdown 文档内容,会被切块并向量化入库', en: "Paste Markdown document content; it will be chunked, vectorized and ingested" },
+  'rag.docTitle': { zh: '文档标题', en: "Document title" },
+  'rag.docsEmpty': { zh: '暂无文档', en: "No documents yet" },
+  'rag.evalFail': { zh: '评估失败', en: "Evaluation failed" },
+  'rag.evalTitle': { zh: '答案评估', en: "Answer evaluation" },
+  'rag.evaluate': { zh: '评估', en: "Evaluate" },
+  'rag.evaluating': { zh: '评估中', en: "Evaluating" },
+  'rag.excerpt': { zh: '原文片段', en: "Source excerpt" },
+  'rag.faithfulness': { zh: '忠实度', en: "Faithfulness" },
+  'rag.feedbackFail': { zh: '反馈失败', en: "Feedback failed" },
+  'rag.good': { zh: '有帮助', en: "Helpful" },
+  'rag.hero': { zh: '问我关于这个项目的任何问题', en: "Ask me anything about this project" },
+  'rag.heroStatsA': { zh: '整合本项目', en: "Integrated this project" },
+  'rag.heroStatsB': { zh: '个知识点,检索 + 大模型生成,答案带来源与决策链', en: "knowledge points, retrieval + LLM generation, answers with sources and decision chain" },
+  'rag.heroSub': { zh: '基于知识库检索 + 大模型生成,答案带来源引用与决策链', en: "Built on knowledge-base retrieval + LLM generation, answers include source citations and decision chain" },
+  'rag.hideChain': { zh: '收起决策链', en: "Hide decision chain" },
+  'rag.ingest': { zh: '入库', en: "Ingest" },
+  'rag.ingestFail': { zh: '入库失败', en: "Ingestion failed" },
+  'rag.ingested': { zh: '已入库 {n} 段', en: "Ingested {n} chunks" },
+  'rag.ingestedKw': { zh: '已按关键词入库 {n} 段;未配置 Embedding,语义检索暂不可用,配置后可在「知识库管理」回填', en: "Ingested {n} chunks by keyword; Embedding not configured, semantic search temporarily unavailable — after configuring you can backfill in \"Knowledge Base Management\"" },
+  'rag.loadDocsFail': { zh: '加载文档失败', en: "Failed to load documents" },
+  'rag.manage': { zh: '知识库管理', en: "Knowledge base management" },
+  'rag.manageTitle': { zh: '知识库文档管理', en: "Knowledge base document management" },
+  'rag.needProject': { zh: '请先选择项目', en: "Please select a project first" },
+  'rag.newChat': { zh: '新对话', en: "New chat" },
+  'rag.noExcerpt': { zh: '(无预览内容)', en: "(No preview content)" },
+  'rag.noGroups': { zh: '还没有可见组,去「系统设置 → RAG」创建', en: "No visibility groups yet; create one in \"System Settings → RAG\"" },
+  'rag.noHistory': { zh: '暂无', en: "None yet" },
+  'rag.noTitle': { zh: '(无标题)', en: "(Untitled)" },
+  'rag.nodeGraph': { zh: '节点图', en: "Node graph" },
+  'rag.notConfigured': { zh: '⚠ 尚未配置 RAG 模型:请到「系统参数 → RAG 配置」填写 Embedding 与生成模型后重试', en: "⚠ RAG model not configured: go to \"System Parameters → RAG Config\" and fill in the Embedding and generation models, then retry" },
+  'rag.notConfiguredToast': { zh: '尚未配置 RAG 模型,请到 系统参数 → RAG 配置', en: "RAG model not configured; go to System Parameters → RAG Config" },
+  'rag.overall': { zh: '综合', en: "Overall" },
+  'rag.pickGroups': { zh: '可见组(留空 = 仅自己与管理员可见)', en: "Visibility groups (blank = visible to you and admins only)" },
+  'rag.position': { zh: '位置', en: "Position" },
+  'rag.recentChats': { zh: '最近对话', en: "Recent chats" },
+  'rag.reindex': { zh: '回填语义向量', en: "Backfill semantic vectors" },
+  'rag.reindexFail': { zh: '回填失败(检查 Embedding 配置)', en: "Backfill failed (check Embedding config)" },
+  'rag.reindexTip': { zh: '把关键词-only 入库的知识块用当前 Embedding 配置补齐语义向量', en: "Use the current Embedding config to fill in semantic vectors for knowledge chunks ingested by keyword only" },
+  'rag.reindexed': { zh: '已回填 {n} 个知识块的语义向量', en: "Backfilled semantic vectors for {n} knowledge chunks" },
+  'rag.relevance': { zh: '相关性', en: "Relevance" },
+  'rag.requestFailed': { zh: '请求失败', en: "Request failed" },
+  'rag.restrictedPh': { zh: '未设 = 仅上传者/管理员', en: "Unset = uploader/admins only" },
+  'rag.sendHint': { zh: 'Enter 发送 · Shift+Enter 换行 · Tab 采纳', en: "Enter to send · Shift+Enter for newline · Tab to accept" },
+  'rag.showChain': { zh: '决策链', en: "Decision chain" },
+  'rag.source': { zh: '来源', en: "Source" },
+  'rag.stepContextBuilt': { zh: '上下文组装', en: "Context assembly" },
+  'rag.stepEmbedding': { zh: '生成向量', en: "Generate vectors" },
+  'rag.stepFusion': { zh: '融合 (RRF)', en: "Fusion (RRF)" },
+  'rag.stepKeywordSearch': { zh: '关键词检索', en: "Keyword search" },
+  'rag.stepLlmGeneration': { zh: '模型生成', en: "Model generation" },
+  'rag.stepRerank': { zh: '重排', en: "Rerank" },
+  'rag.stepSemanticSearch': { zh: '语义检索', en: "Semantic search" },
+  'rag.steps': { zh: '{n} 步', en: "{n} steps" },
+  'rag.thanksFeedback': { zh: '感谢反馈', en: "Thanks for your feedback" },
+  'rag.thinking': { zh: '思考中', en: "Thinking" },
+  'rag.timeline': { zh: '时间线', en: "Timeline" },
+  // Chat module labels for the AppShell nav rail and its secondary menu.
+  'nav.chat': { zh: '聊天', en: "Chat" },
+  'm.chat': { zh: '聊天', en: "Chat" },
+  // AI review verdicts (advisory only — the human reviewer still decides).
+  'req.aiV.APPROVE': { zh: '建议通过', en: "Approve suggested" },
+  'req.aiV.REVISE': { zh: '建议修订', en: "Revision suggested" },
+  'req.aiV.REJECT': { zh: '建议驳回', en: "Rejection suggested" },
+  'req.aiV.UNSURE': { zh: '证据不足', en: "Insufficient evidence" },
+  'rag.title': { zh: '聊天', en: "Chat" },
+  'rag.trace': { zh: '决策追溯', en: "Decision tracing" },
+  'rag.traceOffTip': { zh: '开启后回答带决策链', en: "When on, answers include the decision chain" },
+  'rag.traceOnTip': { zh: '记录每一步检索/融合/生成的决策链路', en: "Records the decision path for each step of retrieval/fusion/generation" },
+  'rag.untitledChat': { zh: '(新对话)', en: "(New chat)" },
+  'rag.untitledDoc': { zh: '未命名文档', en: "Untitled document" },
+  'rag.userLabel': { zh: '我', en: "Me" },
+  'rag.viewSource': { zh: '查看原文片段', en: "View source excerpt" },
+  'rag.visibleTo': { zh: '可见组', en: "Visibility group" },
+  // Keys recovered from t() call sites that had no dictionary entry.
+  'ak.permsExtra': { zh: '其他权限(不在此表内,已保留)', en: "Other permissions (not listed here, already preserved)" },
+  'ak.presetHint': { zh: '执行机 = 派发回写所需的最小权限;自定义则在下方勾选', en: "Runner = minimum permissions needed for dispatch and write-back; select below for custom" },
+  'common.delete': { zh: '删除', en: "Delete" },
+  'common.edit': { zh: '编辑', en: "Edit" },
+  'common.save': { zh: '保存', en: "Save" },
+  'common.saved': { zh: '已保存', en: "Saved" },
+  'g.empty': { zh: '暂无数据', en: "No data" },
+  'rag.chatKey': { zh: '生成 API Key', en: "Generation API Key" },
+  'rag.chatModel': { zh: '生成模型', en: "Generation Model" },
+  'rag.chatSection': { zh: '组合输出 Generation', en: "Combined Output · Generation" },
+  'rag.chatUrl': { zh: '生成接口地址', en: "Generation Endpoint" },
+  'rag.connFail': { zh: '连接失败', en: "Connection failed" },
+  'rag.connOk': { zh: '连接正常', en: "Connection OK" },
+  'rag.embedDim': { zh: '向量维度', en: "Vector Dimension" },
+  'rag.embedDimTip': { zh: '需与嵌入模型输出维度一致,修改后需重新入库', en: "Must match the embedding model's output dimension; re-ingest required after changes" },
+  'rag.embedKey': { zh: '嵌入 API Key', en: "Embedding API Key" },
+  'rag.embedModel': { zh: '嵌入模型', en: "Embedding Model" },
+  'rag.embedSection': { zh: '向量嵌入 Embedding', en: "Vector Embedding" },
+  'rag.embedUrl': { zh: '嵌入接口地址', en: "Embedding Endpoint" },
+  'rag.groupDelConfirm': { zh: '删除后,挂此组的文档将移除该组', en: "After deletion, documents in this group will be removed from it" },
+  'rag.groupEdit': { zh: '编辑可见组', en: "Edit Visibility Group" },
+  'rag.groupMemberCount': { zh: '{n} 人', en: "{n} people" },
+  'rag.groupMembers': { zh: '可见成员', en: "Visible Members" },
+  'rag.groupMembersTitle': { zh: '命中该组角色的用户', en: "Users with roles in this group" },
+  'rag.groupName': { zh: '名称', en: "Name" },
+  'rag.groupNamePh': { zh: '如:对外 / 研发内部', en: "e.g. External / Internal R&D" },
+  'rag.groupNew': { zh: '新建可见组', en: "New Visibility Group" },
+  'rag.groupNoRole': { zh: '(无角色 — 无人可见)', en: "(No role — visible to no one)" },
+  'rag.groupRoles': { zh: '包含角色', en: "Included Roles" },
+  'rag.groupRolesPh': { zh: '选择角色(销售 / 产品 / 研发 / 测试 …)', en: "Select roles (Sales / Product / R&D / QA …)" },
+  'rag.groupRolesTip': { zh: '拥有其中任一角色的用户即可看到挂此组的文档', en: "Any user with one of these roles can view documents in this group" },
+  'rag.groups': { zh: '知识库可见组', en: "Knowledge Base Visibility Groups" },
+  'rag.groupsEmpty': { zh: '还没有可见组', en: "No visibility groups yet" },
+  'rag.keySet': { zh: '已设置(留空保持不变)', en: "Set (leave blank to keep unchanged)" },
+  'rag.keyUnset': { zh: '尚未设置', en: "Not set" },
+  'rag.maxTokens': { zh: '生成最大 Token', en: "Max Generation Tokens" },
+  'rag.notSet': { zh: '尚未完成配置:知识问答、AI 评审需要 Embedding 与生成模型的接口地址和 API Key。未配置时可按关键词入库,但语义检索与问答不可用。', en: "Configuration incomplete: Knowledge Q&A and AI review require the Embedding and generation model endpoint URLs and API keys. Without configuration, you can ingest by keyword, but semantic search and Q&A are unavailable." },
+  'rag.phApis': { zh: '有哪些对外接口?', en: "What external APIs are there?" },
+  'rag.phAuth': { zh: '接口鉴权怎么做?', en: "How is API authentication done?" },
+  'rag.phDb': { zh: '数据库用的是什么?', en: "What database is used?" },
+  'rag.phDeploy': { zh: '这个项目怎么部署?', en: "How is this project deployed?" },
+  'rag.phLogin': { zh: '支持哪些登录方式?', en: "Which login methods are supported?" },
+  'rag.phStart': { zh: '如何本地启动?', en: "How to start locally?" },
+  'rag.required': { zh: '必填', en: "Required" },
+  'rag.rerank': { zh: 'LLM 重排', en: "LLM Rerank" },
+  'rag.rerankTip': { zh: '召回后用生成模型对相关性重新排序,更准但更慢', en: "After retrieval, the generation model reranks by relevance — more accurate but slower" },
+  'rag.saved': { zh: '已保存,已即时生效', en: "Saved, applied instantly" },
+  'rag.storeBackend': { zh: '存储后端', en: "Storage backend" },
+  'rag.storeBackendNote': { zh: '内置 rag_cosine 余弦检索,无需额外扩展', en: "Built-in rag_cosine cosine search, no extra extension needed" },
+  'rag.storeSection': { zh: '向量数据库', en: "Vector database" },
+  'rag.sumReranked': { zh: '已重排', en: "Reranked" },
+  'rag.sumSkipped': { zh: '跳过', en: "Skipped" },
+  'rag.testConn': { zh: '测试连接', en: "Test connection" },
+  'rag.topK': { zh: '召回条数 Top-K', en: "Top-K recall count" },
+  'rag.topKTip': { zh: '每次问答从库中召回的知识块数量', en: "Number of knowledge chunks recalled per Q&A" },
+  'req.aiMissing': { zh: '缺失/冲突的测试覆盖', en: "Missing/conflicting test coverage" },
+  'req.aiReview': { zh: 'AI 评审', en: "AI Review" },
+  'req.aiReviewFailed': { zh: 'AI 评审失败', en: "AI review failed" },
+  'req.aiReviewHint': { zh: '仅供参考,由你最终裁定', en: "For reference only, you make the final call" },
+  'req.aiReviewNoText': { zh: '该需求暂无描述内容,无法评审', en: "This requirement has no description yet, cannot review" },
+  'req.aiReviewTitle': { zh: 'AI 评审意见', en: "AI Review Comments" },
+  'req.aiReviewing': { zh: '正在检索知识库并生成意见…', en: "Retrieving knowledge base and generating comments…" },
+  'req.aiRisks': { zh: '风险点', en: "Risk points" },
+  'req.aiSources': { zh: '参考来源', en: "Reference sources" },
+  'req.aiSuggestions': { zh: '修改建议', en: "Suggested changes" },
+  'req.searchRuntime': { zh: '搜索执行者', en: "Search executor" },
+  'req.skills': { zh: '关联技能', en: "Associated skills" },
+  'req.skillsPh': { zh: '选择本项目技能,派发时下发到 agent', en: "Select this project's skills, sent to the agent on dispatch" },
+  'review.passAllConfirm': { zh: '将对 ${pending.length} 个未通过用例提交「通过」,确认?', en: "Will submit 「Pass」 for ${pending.length} failed cases, confirm?" },
+  'sysparam.grpAi': { zh: '智能能力', en: "AI capabilities" },
+  'ug.permsExtra': { zh: '其他权限(不在此表内,已保留)', en: "Other permissions (not in this table, preserved)" },
+  'ug.permsLabel2': { zh: '权限', en: "Permissions" },
+  // Keys recovered from t() call sites that had no dictionary entry.
+  'rag.groupsHint': { zh: '可见组 = 一组角色。给文档打上可见组后,只有拥有组内角色的用户能检索到该文档。改动这里的组,所有挂该组的文档实时生效。未打组的文档仅上传者与管理员可见。', en: "Visibility group = a set of roles. After tagging a document with a visibility group, only users with a role in that group can retrieve it. Changing the group here applies in real time to all documents with that group. Untagged documents are visible only to the uploader and admins." },
+  'rag.hint': { zh: '用于知识问答(聊天)与需求 AI 评审的检索/生成模型。留空 API Key 表示沿用已保存的密钥,保存后即时生效。', en: "Retrieval/generation model used for knowledge Q&A (chat) and requirement AI review. Leaving the API Key blank means reusing the saved key; takes effect immediately after saving." },
+  'rag.sumChars': { zh: '{n} 字', en: "{n} chars" },
+  'rag.sumContext': { zh: '{n} 段 · ~{tokens} tokens', en: "{n} segments · ~{tokens} tokens" },
+  'rag.sumDim': { zh: '{n} 维', en: "{n} dims" },
+  'rag.sumFusion': { zh: '{from} → {to} 候选', en: "{from} → {to} candidates" },
+  'rag.sumHits': { zh: '{n} 条命中', en: "{n} hits" },
+  'rag.sumRerank': { zh: '{state} · {n} 候选', en: "{state} · {n} candidates" },
+}
+
+// zh/en are the source of truth and live inline in DICT above. The other
+// languages are generated from them and kept in ./locales/<lang>.json so this
+// file stays readable and so a single language can be regenerated in isolation.
+// They are loaded on demand — bundling all of them would add megabytes to the
+// initial payload for strings the user will never see.
+const LOCALES = import.meta.glob<Record<string, string>>('./locales/*.json', { import: 'default' })
+
+type Vars = Record<string, string | number>
+
+/** Substitute `{name}` tokens. Unknown tokens are left as-is. */
+function interpolate(s: string, vars?: Vars): string {
+  if (!vars) return s
+  return s.replace(/\{(\w+)\}/g, (m, k) => (k in vars ? String(vars[k]) : m))
 }
 
 interface Ctx {
   lang: Lang
   setLang: (l: Lang) => void
-  t: (key: string, fallback?: string) => string
+  t: (key: string, fallback?: string, vars?: Vars) => string
 }
 const LangCtx = createContext<Ctx | null>(null)
 
 export function LangProvider({ children }: { children: (lang: Lang) => ReactNode }) {
   const [lang, setLangState] = useState<Lang>((localStorage.getItem(KEY) as Lang) || 'zh')
+  // Translations for the active language, once its locale file has loaded.
+  const [table, setTable] = useState<Record<string, string>>({})
   const setLang = (l: Lang) => {
     setLangState(l)
     localStorage.setItem(KEY, l)
   }
-  const value = useMemo<Ctx>(
-    () => ({ lang, setLang, t: (key, fallback) => DICT[key]?.[lang] ?? fallback ?? key }),
-    [lang],
-  )
+
   useEffect(() => {
-    document.title = DICT['app.title'][lang]
+    const load = LOCALES[`./locales/${lang}.json`]
+    if (!load) {
+      setTable({})
+      return
+    }
+    let alive = true
+    void load().then((m) => {
+      if (alive) setTable(m)
+    })
+    return () => {
+      alive = false
+    }
   }, [lang])
+
+  const value = useMemo<Ctx>(() => {
+    // Resolution order: locale file → inline zh/en → English → caller fallback → key.
+    const t = (key: string, fallback?: string, vars?: Vars) =>
+      interpolate(table[key] || DICT[key]?.[lang] || DICT[key]?.en || fallback || key, vars)
+    return { lang, setLang, t }
+  }, [lang, table])
+
+  useEffect(() => {
+    document.title = value.t('app.title')
+  }, [value])
   return <LangCtx.Provider value={value}>{children(lang)}</LangCtx.Provider>
 }
 

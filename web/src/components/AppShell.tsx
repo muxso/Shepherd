@@ -34,6 +34,8 @@ import {
   ExperimentOutlined,
   FullscreenOutlined,
   FullscreenExitOutlined,
+  SunOutlined,
+  MoonOutlined,
   KeyOutlined,
   CarryOutOutlined,
   StarOutlined,
@@ -42,7 +44,7 @@ import { useLocation, useNavigate } from 'react-router-dom'
 import { scopedPath, stripScope } from '../scope'
 import { api, userStore, type Notice, type NoticeUnreadCount } from '../api'
 import { useApp } from '../context'
-import { useI18n } from '../i18n'
+import { useI18n, LANG_LIST, type Lang } from '../i18n'
 import { useThemeMode } from '../themeMode'
 import NewProjectModal from './NewProjectModal'
 import PersonalCenter from './PersonalCenter'
@@ -73,11 +75,6 @@ function noticeRoute(n: Notice): string | null {
 }
 
 // Single source for language options, shared by the top bar dropdown and the personal-center segmented control so the labels can't drift apart.
-const LANG_OPTIONS: { value: 'zh' | 'en'; label: string }[] = [
-  { value: 'zh', label: '中文' },
-  { value: 'en', label: 'English' },
-]
-
 // Top-level module = an icon item in the left global rail (icon above text, per reference shots)
 // plus its own secondary menu. The rail only switches modules; the secondary bar shows the
 // selected module's children. System module is pinned to the bottom.
@@ -451,7 +448,16 @@ export default function AppShell({ children }: { children: ReactNode }) {
               </Badge>
             </Tooltip>
             <Tooltip title={mode === 'dark' ? t('top.lightMode', '浅色模式') : t('top.darkMode', '暗色模式')}>
-              <Button type="text" icon={<BulbOutlined style={{ color: mode === 'dark' ? 'var(--brand)' : undefined }} />} onClick={(e) => toggle(e)} />
+              <Button
+                type="text"
+                aria-label={mode === 'dark' ? t('top.lightMode', '浅色模式') : t('top.darkMode', '暗色模式')}
+                icon={
+                  mode === 'dark'
+                    ? <MoonOutlined style={{ color: 'var(--brand)' }} />
+                    : <SunOutlined />
+                }
+                onClick={(e) => toggle(e)}
+              />
             </Tooltip>
             <Tooltip title={isFullscreen ? t('top.exitFullscreen', '退出全屏') : t('top.fullscreen', '全屏')}>
               <Button type="text" icon={isFullscreen ? <FullscreenExitOutlined style={{ color: 'var(--brand)' }} /> : <FullscreenOutlined />} onClick={toggleFullscreen} />
@@ -464,13 +470,16 @@ export default function AppShell({ children }: { children: ReactNode }) {
               menu={{
                 selectable: true,
                 selectedKeys: [lang],
-                onClick: ({ key }) => setLang(key as 'zh' | 'en'),
-                items: LANG_OPTIONS.map((o) => ({
-                  key: o.value,
+                onClick: ({ key }) => setLang(key as Lang),
+                items: LANG_LIST.map((o) => ({
+                  key: o.code,
                   label: (
-                    <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 24, minWidth: 116 }}>
-                      <span>{o.label}</span>
-                      {lang === o.value && <CheckOutlined style={{ color: 'var(--brand)' }} />}
+                    <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 24, minWidth: 140 }}>
+                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+                        <span>{o.native}</span>
+                        <span style={{ color: 'var(--text-tertiary)', fontSize: 12 }}>{o.en}</span>
+                      </span>
+                      {lang === o.code && <CheckOutlined style={{ color: 'var(--brand)' }} />}
                     </span>
                   ),
                 })),
@@ -480,7 +489,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
                 <Button type="text">
                   <Space size={4}>
                     <GlobalOutlined />
-                    {lang === 'zh' ? '中' : 'EN'}
+                    {lang.toUpperCase()}
                   </Space>
                 </Button>
               </Tooltip>

@@ -18,3 +18,5 @@ docs/api-coverage.md
 docs/api-coverage.html
 docs/self-regression.md
 docs/dogfood-report.html
+# i18n 翻译流水线中间产物(scripts/i18n_*.mjs),最终产物是 web/src/locales/
+/.i18n-work/

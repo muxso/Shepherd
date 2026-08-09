@@ -1401,10 +1401,7 @@ function DecompositionView({ decompId, verificationId, projectId, reqId, req }: 
     // Members come back as ids only, so resolve display names via /system/user/names.
     // Any failure degrades silently; the board/columns still render.
     const buildAssignees = async () => {
-      const [members, ag] = await Promise.all([
-        api.projectMembers(projectId).catch(() => [] as ProjectMember[]),
-        api.runnerAgents().catch(() => []),
-      ])
+      const members = await api.projectMembers(projectId).catch(() => [] as ProjectMember[])
       const ids = members.map((m) => m.userId).filter(Boolean)
       const names = ids.length ? await api.userNames(ids).catch(() => ({}) as Record<string, string>) : {}
       setAssignees([
@@ -1414,7 +1411,6 @@ function DecompositionView({ decompId, verificationId, projectId, reqId, req }: 
           kind: 'HUMAN',
           id: m.userId,
         })),
-        ...ag.map((a) => ({ value: `AGENT:${a.id}`, label: `🤖 ${a.name}`, kind: 'AGENT', id: a.id })),
       ])
     }
     buildAssignees()
@@ -1598,7 +1594,7 @@ function DecompositionView({ decompId, verificationId, projectId, reqId, req }: 
           columns={[
             { title: t('req.task', '任务'), dataIndex: 'title', ellipsis: true },
             { title: 'ID', dataIndex: 'id', width: 70, render: (v: string) => <span className="ms-mono">{v}</span> },
-            { title: t('req.status', '状态'), dataIndex: 'status', width: 100, render: (s: string) => <Tag color={taskColor(s)}>{s}</Tag> },
+            { title: t('req.status', '状态'), dataIndex: 'status', width: 100, render: (s: string) => <Tag color={taskColor(s)}>{t(`req.taskStatus.${s}`, s)}</Tag> },
             {
               title: t('req.points', '工作量'), dataIndex: 'points', width: 100,
               render: (p: number | undefined, row) => (
@@ -1918,7 +1914,7 @@ function EventsDrawer({ decompId, task, onClose }: { decompId: string; task: Tas
               <Card key={id} size="small" title={
                 <Space size={8}>
                   <Badge status={attemptBadge(a.status)} />
-                  <span>{a.status === 'RUNNING' ? t('req.attemptRunning', '执行中') : a.status === 'DELIVERED' ? t('req.attemptDelivered', '已交付') : a.status === 'FAILED' ? t('req.attemptFailed', '失败') : a.status}</span>
+                  <span>{t(`req.taskStatus.${a.status}`, a.status)}</span>
                   {a.executor && <Tag>{a.executor}</Tag>}
                   {a.targetRuntime && <Tag color="geekblue">@{a.targetRuntime}</Tag>}
                   {idx === 0 && <Tag color="blue">{t('req.latest', '最近')}</Tag>}

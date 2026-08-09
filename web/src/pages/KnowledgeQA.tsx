@@ -36,33 +36,45 @@ type Msg = {
   feedback?: 'up' | 'down'
 }
 
-const STEP_META: Record<string, { label: string; glyph: string; tone: string }> = {
-  embedding: { label: '生成向量', glyph: '∿', tone: '#8a7fd1' },
-  keyword_search: { label: '关键词检索', glyph: '⌕', tone: '#4ea394' },
-  semantic_search: { label: '语义检索', glyph: '◌', tone: '#4ea394' },
-  fusion: { label: '融合 (RRF)', glyph: '⇶', tone: '#4ea394' },
-  rerank: { label: '重排', glyph: '✶', tone: '#e29a6b' },
-  context_built: { label: '上下文组装', glyph: '☷', tone: '#64748b' },
-  llm_generation: { label: '模型生成', glyph: '✦', tone: '#8a7fd1' },
+// `t` from useI18n — threaded into the module-scope helpers below, which cannot call the hook.
+type TFn = (key: string, fallback?: string, vars?: Record<string, string | number>) => string
+
+const STEP_META: Record<string, { labelKey: string; labelZh: string; glyph: string; tone: string }> = {
+  embedding: { labelKey: 'rag.stepEmbedding', labelZh: '生成向量', glyph: '∿', tone: '#8a7fd1' },
+  keyword_search: { labelKey: 'rag.stepKeywordSearch', labelZh: '关键词检索', glyph: '⌕', tone: '#4ea394' },
+  semantic_search: { labelKey: 'rag.stepSemanticSearch', labelZh: '语义检索', glyph: '◌', tone: '#4ea394' },
+  fusion: { labelKey: 'rag.stepFusion', labelZh: '融合 (RRF)', glyph: '⇶', tone: '#4ea394' },
+  rerank: { labelKey: 'rag.stepRerank', labelZh: '重排', glyph: '✶', tone: '#e29a6b' },
+  context_built: { labelKey: 'rag.stepContextBuilt', labelZh: '上下文组装', glyph: '☷', tone: '#64748b' },
+  llm_generation: { labelKey: 'rag.stepLlmGeneration', labelZh: '模型生成', glyph: '✦', tone: '#8a7fd1' },
 }
-const metaOf = (k: string) => STEP_META[k] || { label: k, glyph: '•', tone: '#94a3b8' }
-const summarise = (s: TraceStep): string => {
+const metaOf = (k: string, t: TFn): { label: string; glyph: string; tone: string } => {
+  const m = STEP_META[k]
+  return m
+    ? { label: t(m.labelKey, m.labelZh), glyph: m.glyph, tone: m.tone }
+    : { label: k, glyph: '•', tone: '#94a3b8' }
+}
+const summarise = (s: TraceStep, t: TFn): string => {
   const a = s as Record<string, unknown>
   const ms = a.latency_ms != null ? ` · ${a.latency_ms}ms` : ''
   switch (s.kind) {
-    case 'embedding': return `${a.dim} 维${ms}`
-    case 'keyword_search': return `${a.fetched} 条命中${ms}`
-    case 'semantic_search': return `${a.fetched} 条命中${ms}`
-    case 'fusion': return `${a.candidates} → ${a.selected} 候选`
-    case 'rerank': return `${a.applied ? '已重排' : '跳过'} · ${a.candidates} 候选${ms}`
-    case 'context_built': return `${(a.chunks as unknown[]).length} 段 · ~${a.approx_tokens} tokens`
-    case 'llm_generation': return `${a.answer_chars} 字${ms}`
+    case 'embedding': return `${t('rag.sumDim', '{n} 维', { n: String(a.dim) })}${ms}`
+    case 'keyword_search': return `${t('rag.sumHits', '{n} 条命中', { n: String(a.fetched) })}${ms}`
+    case 'semantic_search': return `${t('rag.sumHits', '{n} 条命中', { n: String(a.fetched) })}${ms}`
+    case 'fusion': return t('rag.sumFusion', '{from} → {to} 候选', { from: String(a.candidates), to: String(a.selected) })
+    case 'rerank': return `${t('rag.sumRerank', '{state} · {n} 候选', {
+      state: a.applied ? t('rag.sumReranked', '已重排') : t('rag.sumSkipped', '跳过'),
+      n: String(a.candidates),
+    })}${ms}`
+    case 'context_built': return t('rag.sumContext', '{n} 段 · ~{tokens} tokens', { n: (a.chunks as unknown[]).length, tokens: String(a.approx_tokens) })
+    case 'llm_generation': return `${t('rag.sumChars', '{n} 字', { n: String(a.answer_chars) })}${ms}`
     default: return ''
   }
 }
 
 /** Shared step-detail panel (top hits + raw payload). */
 function StepDetail({ s, tone }: { s: TraceStep; tone: string }) {
+  const { t } = useI18n()
   return (
     <div className="dc-fade" style={{ marginTop: 8, border: '1px solid var(--border-soft)', borderRadius: 8, background: 'var(--panel-2)', padding: '8px 10px' }}>
       {'top' in s && Array.isArray((s as { top: TraceHit[] }).top) && (s as { top: TraceHit[] }).top.length > 0 && (
@@ -70,7 +82,7 @@ function StepDetail({ s, tone }: { s: TraceStep; tone: string }) {
           {(s as { top: TraceHit[] }).top.map((h, j) => (
             <div key={j} style={{ display: 'flex', gap: 8, fontSize: 12 }}>
               <span style={{ color: 'var(--text-3)' }}>{j + 1}</span>
-              <span style={{ flex: 1, color: 'var(--text-2)' }}>{h.topic || '(无标题)'}</span>
+              <span style={{ flex: 1, color: 'var(--text-2)' }}>{h.topic || t('rag.noTitle', '(无标题)')}</span>
               <span className="ms-mono" style={{ color: tone }}>{h.score.toFixed(3)}</span>
             </div>
           ))}
@@ -87,7 +99,7 @@ const dcStepId = (i: number) => `step-${i}`
 // dagre layout: linear step-i-1 → step-i chain, rankdir LR, orthogonal L-shaped edges between node
 // centres (across to the midpoint, down to the target row, across) so it reads as a flow.
 interface DagreNode { id: string; i: number; x: number; y: number; w: number; h: number; label: string; glyph: string; tone: string; meta: string }
-function useDagreLayout(trace: AskTrace) {
+function useDagreLayout(trace: AskTrace, t: TFn) {
   return useMemo(() => {
     if (!trace.steps.length) return null
     const g = new dagre.graphlib.Graph({ directed: true })
@@ -103,8 +115,8 @@ function useDagreLayout(trace: AskTrace) {
       const n = g.node(id) as { x: number; y: number; width: number; height: number }
       const i = parseInt(id.replace('step-', ''), 10)
       const s = trace.steps[i]
-      const m = metaOf(s.kind)
-      return { id, i, x: n.x, y: n.y, w: n.width, h: n.height, label: m.label, glyph: m.glyph, tone: m.tone, meta: summarise(s) }
+      const m = metaOf(s.kind, t)
+      return { id, i, x: n.x, y: n.y, w: n.width, h: n.height, label: m.label, glyph: m.glyph, tone: m.tone, meta: summarise(s, t) }
     })
     const edges = g.edges().map((e) => {
       const src = g.node(e.v) as { x: number; y: number; width: number }
@@ -114,21 +126,22 @@ function useDagreLayout(trace: AskTrace) {
     })
     const gr = g.graph() as { width: number; height: number }
     return { width: gr.width, height: gr.height, nodes, edges }
-  }, [trace])
+  }, [trace, t])
 }
 
 function DecisionChain({ trace }: { trace: AskTrace }) {
+  const { t } = useI18n()
   const [sel, setSel] = useState<number | null>(null)
   const [view, setView] = useState<'timeline' | 'graph'>('graph')
   const selStep = sel != null ? trace.steps[sel] : null
-  const layout = useDagreLayout(trace)
+  const layout = useDagreLayout(trace, t)
   return (
     <div style={{ marginTop: 8, border: '1px solid var(--border-soft)', borderRadius: 10, background: 'var(--panel)', padding: '10px 14px' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, color: 'var(--text-2)', fontSize: 12 }}>
-        <NodeIndexOutlined /> <b style={{ color: 'var(--text)' }}>决策链</b>
-        <span>{trace.steps.length} 步 · {trace.total_ms} ms</span>
+        <NodeIndexOutlined /> <b style={{ color: 'var(--text)' }}>{t('rag.decisionChain', '决策链')}</b>
+        <span>{t('rag.steps', '{n} 步', { n: trace.steps.length })} · {trace.total_ms} ms</span>
         <div style={{ flex: 1 }} />
-        <Segmented size="small" value={view} onChange={(v) => setView(v as 'timeline' | 'graph')} options={[{ label: '节点图', value: 'graph' }, { label: '时间线', value: 'timeline' }]} />
+        <Segmented size="small" value={view} onChange={(v) => setView(v as 'timeline' | 'graph')} options={[{ label: t('rag.nodeGraph', '节点图'), value: 'graph' }, { label: t('rag.timeline', '时间线'), value: 'timeline' }]} />
       </div>
 
       {view === 'graph' ? (
@@ -170,7 +183,7 @@ function DecisionChain({ trace }: { trace: AskTrace }) {
       ) : (
         <div>
           {trace.steps.map((s, i) => {
-            const m = metaOf(s.kind)
+            const m = metaOf(s.kind, t)
             const on = sel === i
             return (
               <div key={i} className="dc-step" style={{ display: 'flex', gap: 10, alignItems: 'flex-start' }}>
@@ -181,7 +194,7 @@ function DecisionChain({ trace }: { trace: AskTrace }) {
                 <button onClick={() => setSel(on ? null : i)} style={{ flex: 1, textAlign: 'left', background: on ? 'var(--panel-2)' : 'transparent', border: '1px solid ' + (on ? m.tone : 'transparent'), borderRadius: 8, padding: '6px 10px', cursor: 'pointer', marginBottom: 6 }}>
                   <div style={{ display: 'flex', gap: 8, alignItems: 'baseline' }}>
                     <span style={{ fontWeight: 600, fontSize: 13, color: 'var(--text)' }}>{m.label}</span>
-                    <span style={{ color: 'var(--text-3)', fontSize: 12 }}>{summarise(s)}</span>
+                    <span style={{ color: 'var(--text-3)', fontSize: 12 }}>{summarise(s, t)}</span>
                   </div>
                 </button>
               </div>
@@ -190,7 +203,7 @@ function DecisionChain({ trace }: { trace: AskTrace }) {
         </div>
       )}
 
-      {selStep && <StepDetail s={selStep} tone={metaOf(selStep.kind).tone} />}
+      {selStep && <StepDetail s={selStep} tone={metaOf(selStep.kind, t).tone} />}
     </div>
   )
 }
@@ -374,8 +387,15 @@ export default function KnowledgeQA() {
   useEffect(() => { localStorage.setItem('rag_trace_on', traceOn ? '1' : '0') }, [traceOn])
   // Rotating placeholder suggestions (Tab accepts the current one).
   const placeholders = useMemo(
-    () => ['这个项目怎么部署?', '支持哪些登录方式?', '接口鉴权怎么做?', '数据库用的是什么?', '如何本地启动?', '有哪些对外接口?'],
-    [],
+    () => [
+      t('rag.phDeploy', '这个项目怎么部署?'),
+      t('rag.phLogin', '支持哪些登录方式?'),
+      t('rag.phAuth', '接口鉴权怎么做?'),
+      t('rag.phDb', '数据库用的是什么?'),
+      t('rag.phStart', '如何本地启动?'),
+      t('rag.phApis', '有哪些对外接口?'),
+    ],
+    [t],
   )
   useEffect(() => {
     const id = window.setInterval(() => setPhIdx((i) => (i + 1) % placeholders.length), 4000)
@@ -463,7 +483,7 @@ export default function KnowledgeQA() {
         }
       }, traceOn)
     } catch (e) {
-      patchLast((m) => ({ ...m, content: m.content + `\n\n⚠ ${e instanceof Error ? e.message : '请求失败'}` }))
+      patchLast((m) => ({ ...m, content: m.content + `\n\n⚠ ${e instanceof Error ? e.message : t('rag.requestFailed', '请求失败')}` }))
     } finally {
       patchLast((m) => ({ ...m, streaming: false, displayed: m.content.length }))
       setLoading(false)
@@ -482,15 +502,15 @@ export default function KnowledgeQA() {
     try {
       const j = await api.ingestRagDoc({
         projectId,
-        title: ingTitle.trim() || '未命名文档',
+        title: ingTitle.trim() || t('rag.untitledDoc', '未命名文档'),
         text: ingText,
         visibilityGroups: ingGroups,
       })
       if (j.embedded) {
-        message.success(t('rag.ingested', `已入库 ${j.chunks} 段`))
+        message.success(t('rag.ingested', '已入库 {n} 段', { n: j.chunks }))
       } else {
         // No embedding provider configured — stored keyword-only; semantic recall needs a backfill.
-        message.warning(t('rag.ingestedKw', `已按关键词入库 ${j.chunks} 段;未配置 Embedding,语义检索暂不可用,配置后可在「知识库管理」回填`))
+        message.warning(t('rag.ingestedKw', '已按关键词入库 {n} 段;未配置 Embedding,语义检索暂不可用,配置后可在「知识库管理」回填', { n: j.chunks }))
       }
       setIngestOpen(false); setIngTitle(''); setIngText(''); setIngGroups([])
     } catch (e) {
@@ -533,9 +553,9 @@ export default function KnowledgeQA() {
   // Landing suggestions: the user's recent questions first, then generic starters.
   const suggestions = useMemo(() => {
     const recent = hist.recentQuestions(3)
-    const base = ['这个项目怎么部署?', '支持哪些登录方式?', '接口鉴权怎么做?']
+    const base = placeholders.slice(0, 3)
     return [...recent, ...base.filter((b) => !recent.includes(b))].slice(0, 5)
-  }, [hist])
+  }, [hist, placeholders])
 
   return (
     <div style={{ display: 'flex', height: '100%', background: 'var(--bg-base)' }}>
@@ -610,7 +630,7 @@ export default function KnowledgeQA() {
             {messages.map((m, i) => (
               <div key={i} className="dc-msg" style={{ display: 'flex', gap: 10, flexDirection: m.role === 'user' ? 'row-reverse' : 'row', padding: '0 16px' }}>
                 <span style={{ width: 30, height: 30, borderRadius: '50%', display: 'grid', placeItems: 'center', background: m.role === 'user' ? 'var(--brand)' : 'var(--panel-2)', color: m.role === 'user' ? '#fff' : 'var(--brand)', flexShrink: 0, fontSize: 13 }}>
-                  {m.role === 'user' ? '我' : <BulbOutlined />}
+                  {m.role === 'user' ? t('rag.userLabel', '我') : <BulbOutlined />}
                 </span>
                 <div style={{ maxWidth: 640, minWidth: 0 }}>
                   <div style={{ background: 'var(--panel)', border: '1px solid var(--border-soft)', borderRadius: 12, padding: '10px 14px' }}>
@@ -621,7 +641,7 @@ export default function KnowledgeQA() {
                           onOpen={(idx) => m.citations?.[idx] && setCitePanel(m.citations[idx])}
                         />
                       : <span>{m.content}</span>}
-                    {m.role === 'assistant' && m.streaming && !m.content && <span style={{ color: 'var(--text-3)' }}>思考中<span className="dc-dots" /></span>}
+                    {m.role === 'assistant' && m.streaming && !m.content && <span style={{ color: 'var(--text-3)' }}>{t('rag.thinking', '思考中')}<span className="dc-dots" /></span>}
                   </div>
                   {!!m.citations?.length && (
                     <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 6 }}>
@@ -699,7 +719,7 @@ export default function KnowledgeQA() {
           <div style={{ display: 'flex', gap: 8 }}>
             <Input.TextArea
               autoSize={{ minRows: 1, maxRows: 4 }}
-              placeholder={`${t('rag.askTry', '试试')}:${placeholders[phIdx]}  (Enter 发送 · Shift+Enter 换行 · Tab 采纳)`}
+              placeholder={`${t('rag.askTry', '试试')}:${placeholders[phIdx]}  (${t('rag.sendHint', 'Enter 发送 · Shift+Enter 换行 · Tab 采纳')})`}
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={(e) => {
@@ -867,7 +887,7 @@ function ManageDrawer({
     setReindexing(true)
     try {
       const r = await api.reindexRag(projectId)
-      message.success(t('rag.reindexed', `已回填 ${r.reindexed} 个知识块的语义向量`))
+      message.success(t('rag.reindexed', '已回填 {n} 个知识块的语义向量', { n: r.reindexed }))
     } catch (e) {
       message.error(e instanceof Error ? e.message : t('rag.reindexFail', '回填失败(检查 Embedding 配置)'))
     } finally {

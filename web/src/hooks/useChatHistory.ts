@@ -54,7 +54,9 @@ export function useChatHistory(projectId: string) {
     setList((cur) => {
       if (!messages.length) return cur
       const now = Date.now()
-      const title = messages.find((m) => m.role === 'user')?.content?.slice(0, 40) || '(新对话)'
+      // Left untranslated on purpose: this is persisted to localStorage, so a translated placeholder
+      // would freeze into whichever language was active. Renderers fall back via t() instead.
+      const title = messages.find((m) => m.role === 'user')?.content?.slice(0, 40) || ''
       const trimmed = messages.slice(-MAX_MESSAGES_PER_CONV)
       const idx = cur.findIndex((c) => c.id === id)
       const conv: ChatConversation = {
