@@ -38,7 +38,7 @@ const ResourcePoolsPage = lazy(() => import('./pages/ResourcePoolPage').then((m)
 const ResourcePoolForm = lazy(() => import('./pages/ResourcePoolPage').then((m) => ({ default: m.ResourcePoolForm })))
 const PublicReport = lazy(() => import('./pages/PublicReport'))
 const KnowledgeQA = lazy(() => import('./pages/KnowledgeQA'))
-const RagSettings = lazy(() => import('./pages/RagSettings'))
+const SystemParams = lazy(() => import('./pages/SystemParams'))
 
 // UI-only browsing shouldn't be blocked by login: VITE_SKIP_LOGIN=1 skips the login gate (dev builds only; production unaffected).
 const SKIP_LOGIN = import.meta.env.DEV && import.meta.env.VITE_SKIP_LOGIN === '1'
@@ -104,8 +104,9 @@ export default function App() {
           <Route path="/role" element={<RolesPage />} />
           <Route path="/user" element={<UsersPage />} />
           <Route path="/system/apikeys" element={<ApiKeysPage />} />
-          <Route path="/system/params" element={<ComingSoon title={t('sys.params', '系统参数')} />} />
-          <Route path="/system/rag" element={<RagSettings />} />
+          <Route path="/system/params" element={<SystemParams />} />
+          {/* RAG config moved into 系统参数; keep the old path working. */}
+          <Route path="/system/rag" element={<Navigate to="/system/params" replace />} />
           <Route path="/system/tasks" element={<TaskCenter />} />
           <Route path="/system/plugins" element={<ComingSoon title={t('sys.plugins', '插件')} />} />
           <Route path="/system/logs" element={<ComingSoon title={t('sys.logs', '日志')} />} />

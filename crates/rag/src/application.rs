@@ -6,8 +6,8 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use crate::chunk::chunk_markdown;
 use crate::domain::{
-    Answer, AskTrace, ContextChunk, Hit, RagChunk, RagDocument, Result, TraceContextChunk,
-    TraceHit, TraceStep,
+    Answer, AskTrace, Audience, ContextChunk, Hit, RagChunk, RagDocument, RagError, Result,
+    TraceContextChunk, TraceHit, TraceStep,
 };
 use crate::ports::{Chat, Embedder, VectorStore};
 
@@ -25,27 +25,39 @@ pub async fn ingest(
     embedder: &dyn Embedder,
     doc: RagDocument,
     text: &str,
-) -> Result<usize> {
+) -> Result<IngestOutcome> {
     let pieces = chunk_markdown(&doc.title, text, CHUNK_MAX_CHARS);
     // Prepend the heading breadcrumb to the embedded text so retrieval has that context.
     let texts: Vec<String> =
         pieces.iter().map(|c| format!("{}\n{}", c.heading, c.content)).collect();
-    let embeddings =
-        if texts.is_empty() { Vec::new() } else { embedder.embed_batch(&texts).await? };
+    // Embedding is best-effort: if no endpoint is configured (Config error) fall back to keyword-only
+    // ingest with empty vectors — the doc is still stored and keyword-indexed (tantivy), and the
+    // vectors can be backfilled via `reindex` once a provider is set. A configured provider that
+    // errors (network/HTTP) still fails hard, so a real misconfiguration stays visible.
+    let embeddings = if texts.is_empty() {
+        Vec::new()
+    } else {
+        match embedder.embed_batch(&texts).await {
+            Ok(v) => v,
+            Err(RagError::Config(_)) => Vec::new(),
+            Err(e) => return Err(e),
+        }
+    };
+    let embedded = !embeddings.is_empty();
 
     let ts = now_ms();
     let chunks: Vec<RagChunk> = pieces
         .into_iter()
-        .zip(embeddings)
         .enumerate()
-        .map(|(i, (c, emb))| RagChunk {
+        .map(|(i, c)| RagChunk {
             id: uuid::Uuid::new_v4().to_string(),
             document_id: doc.id.clone(),
             project_id: doc.project_id.clone(),
             chunk_index: i as i32,
             heading: c.heading,
             content: c.content,
-            embedding: emb,
+            // Empty when embeddings were skipped; semantic search ignores zero-length vectors.
+            embedding: embeddings.get(i).cloned().unwrap_or_default(),
             created_at: ts,
         })
         .collect();
@@ -53,7 +65,46 @@ pub async fn ingest(
     store.upsert_document(&doc).await?;
     let n = chunks.len();
     store.replace_chunks(&doc.id, &chunks).await?;
-    Ok(n)
+    Ok(IngestOutcome { chunks: n, embedded })
+}
+
+/// Result of an ingest: how many chunks were stored, and whether semantic vectors were produced
+/// (`false` = keyword-only, pending a `reindex` once an embedding provider is configured).
+pub struct IngestOutcome {
+    pub chunks: usize,
+    pub embedded: bool,
+}
+
+/// Backfill embeddings for chunks stored without them (keyword-only ingests). Re-embeds in batches
+/// using the now-configured provider and returns how many chunks were vectorized. Scope to a single
+/// project or, with `None`, the whole store.
+pub async fn reindex(
+    store: &dyn VectorStore,
+    embedder: &dyn Embedder,
+    project_id: Option<&str>,
+) -> Result<usize> {
+    let mut total = 0;
+    // Bounded loop: each pass grabs a batch of un-embedded chunks until none remain.
+    loop {
+        let batch = store.chunks_missing_embedding(project_id, 128).await?;
+        if batch.is_empty() {
+            break;
+        }
+        let texts: Vec<String> =
+            batch.iter().map(|c| format!("{}\n{}", c.heading, c.content)).collect();
+        let embeddings = embedder.embed_batch(&texts).await?;
+        let updates: Vec<(String, Vec<f32>)> = batch
+            .into_iter()
+            .zip(embeddings)
+            .filter(|(_, e)| !e.is_empty())
+            .map(|(c, e)| (c.id, e))
+            .collect();
+        if updates.is_empty() {
+            break;
+        }
+        total += store.set_chunk_embeddings(&updates).await?;
+    }
+    Ok(total)
 }
 
 pub struct AskOutcome {
@@ -74,6 +125,7 @@ pub async fn retrieve(
     question: &str,
     top_k: usize,
     rerank: bool,
+    audience: &Audience,
 ) -> Result<(Vec<Hit>, Vec<ContextChunk>, AskTrace)> {
     let top_k = top_k.clamp(1, 20);
     let mut trace = AskTrace {
@@ -93,7 +145,8 @@ pub async fn retrieve(
 
     // 2) keyword search
     let t = Instant::now();
-    let kw = store.keyword_search(project_id, question, top_k * 2).await.unwrap_or_default();
+    let kw =
+        store.keyword_search(project_id, question, top_k * 2, audience).await.unwrap_or_default();
     trace.steps.push(TraceStep::KeywordSearch {
         query: question.to_string(),
         fetched: kw.len(),
@@ -107,7 +160,7 @@ pub async fn retrieve(
 
     // 3) semantic search
     let t = Instant::now();
-    let sem = store.search(project_id, &qvec, top_k * 2).await?;
+    let sem = store.search(project_id, &qvec, top_k * 2, audience).await?;
     trace.steps.push(TraceStep::SemanticSearch {
         fetched: sem.len(),
         top: sem
@@ -182,9 +235,11 @@ pub async fn ask(
     top_k: usize,
     history: &[(String, String)],
     rerank: bool,
+    audience: &Audience,
 ) -> Result<AskOutcome> {
     let (hits, context, mut trace) =
-        retrieve(&*store, &*embedder, &*chat, project_id, question, top_k, rerank).await?;
+        retrieve(&*store, &*embedder, &*chat, project_id, question, top_k, rerank, audience)
+            .await?;
     let (system, user) = build_prompt(question, &context, history);
     let t = Instant::now();
     let answer_text = chat.complete(&system, &user).await?;
@@ -210,11 +265,12 @@ pub async fn review(
     text: &str,
     top_k: usize,
     rerank: bool,
+    audience: &Audience,
 ) -> Result<(crate::domain::ReviewOpinion, Vec<Hit>)> {
     // Retrieve against title + body so both the name and the details steer recall.
     let query = if title.trim().is_empty() { text.to_string() } else { format!("{title}\n{text}") };
     let (hits, context, _) =
-        retrieve(store, embedder, chat, project_id, &query, top_k, rerank).await?;
+        retrieve(store, embedder, chat, project_id, &query, top_k, rerank, audience).await?;
 
     let mut ctx = String::from("【知识库上下文】\n");
     if context.is_empty() {
@@ -303,9 +359,10 @@ pub async fn evaluate(
     question: &str,
     answer: &str,
     top_k: usize,
+    audience: &Audience,
 ) -> Result<crate::domain::Eval> {
     let (_, context, _) =
-        retrieve(store, embedder, chat, project_id, question, top_k, false).await?;
+        retrieve(store, embedder, chat, project_id, question, top_k, false, audience).await?;
     let ctx: String = context
         .iter()
         .map(|c| format!("[{}] {}", c.index + 1, c.content))

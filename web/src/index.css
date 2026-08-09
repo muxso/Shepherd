@@ -404,6 +404,57 @@ body::before {
 .dc-dots::after { content: '…'; animation: dc-blink 1.4s steps(4) infinite; }
 @keyframes dc-blink { 0% { opacity: 0.2; } 50% { opacity: 1; } 100% { opacity: 0.2; } }
 
+/* Conversation history rail: hover highlight + reveal the delete affordance on hover only. */
+.rag-conv-item:hover { background: var(--bg-hover, rgba(125,125,125,0.08)) !important; }
+.rag-conv-del { opacity: 0; transition: opacity 0.15s ease-out; }
+.rag-conv-item:hover .rag-conv-del { opacity: 1; }
+
+/* Inline citation badges inside answers + the flash on the matching source chip when clicked. */
+.md-cite {
+  color: var(--brand); font-size: 0.72em; font-weight: 600; cursor: pointer;
+  padding: 0 2px; border-radius: 4px; vertical-align: super; line-height: 0;
+  transition: background 0.15s ease-out, color 0.15s ease-out;
+}
+.md-cite:hover, .md-cite:focus-visible { background: var(--brand-soft); outline: none; }
+.cite-flash { animation: cite-flash 0.7s ease-out; }
+@keyframes cite-flash {
+  0% { background: var(--brand); color: #fff; transform: scale(1.06); }
+  100% { background: var(--panel-2); color: var(--text-2); transform: scale(1); }
+}
+
+/* One-time fullscreen chat intro: Lottie centered, then shrinks up + fades to reveal the landing. */
+.rag-intro-overlay {
+  position: fixed; inset: 0; z-index: 1200; display: grid; place-items: center;
+  background: var(--bg-base); animation: rag-intro-in 0.4s ease-out;
+  transition: opacity 0.6s ease, transform 0.6s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.rag-intro-overlay.leaving { opacity: 0; transform: scale(0.42) translateY(-26vh); }
+@keyframes rag-intro-in { from { opacity: 0; } to { opacity: 1; } }
+
+/* Decision-chain node graph (dagre-laid-out): scrollable canvas with a dotted "graph paper" backdrop,
+   orthogonal dashed edges, and tone-accented step cards (tone strip | step# | glyph | text). */
+.dc-tree-wrap {
+  overflow: auto; padding: 14px; border-radius: 8px; background: var(--panel-2);
+  background-image: radial-gradient(circle at 1px 1px, var(--border-soft) 1px, transparent 0);
+  background-size: 16px 16px;
+}
+.dc-edge { fill: none; stroke: var(--text-3); stroke-width: 1.5; stroke-dasharray: 4 4; opacity: 0.7; }
+.dc-card {
+  display: grid; grid-template-columns: 4px 20px 34px 1fr; align-items: center; text-align: left;
+  background: var(--panel); border: 1px solid var(--border-soft); border-radius: 10px; overflow: hidden;
+  cursor: pointer; padding: 0;
+  transition: border-color 0.15s, box-shadow 0.15s, transform 0.15s, background 0.15s;
+}
+.dc-card:hover { border-color: var(--tone); box-shadow: 0 6px 16px rgba(15,23,42,0.10); transform: translateY(-1px); }
+.dc-card:focus-visible { outline: none; border-color: var(--tone); box-shadow: 0 0 0 3px var(--brand-soft); }
+.dc-card.selected { border-color: var(--tone); background: var(--panel-2); box-shadow: 0 6px 16px rgba(15,23,42,0.10); }
+.dc-card-tone { align-self: stretch; }
+.dc-card-step { font-size: 12px; color: var(--text-3); text-align: center; }
+.dc-card-glyph { font-size: 19px; text-align: center; line-height: 1; }
+.dc-card-text { display: flex; flex-direction: column; justify-content: center; gap: 2px; padding: 6px 12px 6px 6px; min-width: 0; }
+.dc-card-label { font-size: 13px; font-weight: 600; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dc-card-meta { font-size: 11px; color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
 /* Chat landing intro animation (pure CSS, no Lottie dep). */
 .rag-orb {
   width: 88px; height: 88px; margin: 0 auto 18px; border-radius: 50%;

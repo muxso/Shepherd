@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Alert, Button, Form, Input, Modal, Popconfirm, Segmented, Select, Table, Tag, Typography } from 'antd'
+import { Alert, Button, Form, Input, Modal, Popconfirm, Popover, Segmented, Table, Tag, Typography } from 'antd'
 import EditDrawer from '../components/EditDrawer'
 import { PlusOutlined, ReloadOutlined } from '@ant-design/icons'
 import { api, ApiError, type ApiKey } from '../api'
@@ -7,6 +7,7 @@ import { message } from '../feedback'
 import { useApp } from '../context'
 import { useI18n } from '../i18n'
 import { useListView, type ListColumn } from '../components/ListView'
+import PermissionMatrix, { serializePermissions } from '../components/PermissionMatrix'
 
 // Parse packed permission strings like "SYSTEM_USER:ADD+DELETE+READ+UPDATE" into
 // { resource, actions[] }. Unknown/custom strings fall back to resource-only.
@@ -49,6 +50,41 @@ const RESOURCE_COLORS: Record<string, string> = {
 }
 
 const resourceColor = (r: string) => RESOURCE_COLORS[r.toUpperCase()] || 'default'
+
+// Compact permission summary for a table cell: resource tags (each with its action count), capped with
+// a "+N" overflow, and the full resource→actions breakdown on hover — instead of an unreadable tag wall.
+function PermCell({ perms }: { perms?: string[] }) {
+  const groups = parsePermissions(perms)
+  if (!groups.length) return <span style={{ color: 'var(--text-3)' }}>—</span>
+  const CAP = 4
+  const shown = groups.slice(0, CAP)
+  const extra = groups.length - CAP
+  const detail = (
+    <div style={{ maxWidth: 460, display: 'flex', flexDirection: 'column', gap: 6 }}>
+      {groups.map((g) => (
+        <div key={g.resource} style={{ display: 'flex', flexWrap: 'wrap', gap: 4, alignItems: 'center' }}>
+          <Tag color={resourceColor(g.resource)} style={{ margin: 0 }}>{g.resource}</Tag>
+          {g.actions.map((a) => (
+            <Tag key={a} bordered={false} style={{ margin: 0, fontSize: 11, padding: '0 5px', lineHeight: '18px' }}>{a}</Tag>
+          ))}
+        </div>
+      ))}
+    </div>
+  )
+  return (
+    <Popover content={detail} trigger="hover" placement="topLeft">
+      <div style={{ display: 'inline-flex', flexWrap: 'wrap', gap: 4, alignItems: 'center', cursor: 'default' }}>
+        {shown.map((g) => (
+          <Tag key={g.resource} color={resourceColor(g.resource)} style={{ margin: 0 }}>
+            {g.resource}
+            {g.actions.length > 0 && <span style={{ opacity: 0.65, marginLeft: 5 }}>{g.actions.length}</span>}
+          </Tag>
+        ))}
+        {extra > 0 && <Tag style={{ margin: 0 }}>+{extra}</Tag>}
+      </div>
+    </Popover>
+  )
+}
 // The plaintext key (sak_…) appears exactly once, in the create response — an un-dismissable
 // modal forces the user to save it. The list shows metadata only; revoking (DELETE) keeps the
 // row and marks it revoked.
@@ -90,23 +126,8 @@ export default function ApiKeys() {
       label: t('ak.colPerms', '权限'),
       title: t('ak.colPerms', '权限'),
       dataIndex: 'permissions',
-      render: (perms: string[]) => {
-        const groups = parsePermissions(perms)
-        return groups.length ? (
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px 10px', alignItems: 'center' }}>
-            {groups.map((g) => (
-              <div key={g.resource} style={{ display: 'inline-flex', flexWrap: 'wrap', gap: 4, alignItems: 'center' }}>
-                <Tag color={resourceColor(g.resource)} style={{ margin: 0 }}>{g.resource}</Tag>
-                {g.actions.map((a) => (
-                  <Tag key={a} style={{ margin: 0, fontSize: 11, padding: '0 5px', lineHeight: '18px' }} bordered={false}>{a}</Tag>
-                ))}
-              </div>
-            ))}
-          </div>
-        ) : (
-          <span style={{ color: 'var(--text-3)' }}>—</span>
-        )
-      },
+      width: 380,
+      render: (perms: string[]) => <PermCell perms={perms} />,
     },
     {
       key: 'created',
@@ -202,27 +223,39 @@ const PRESET_EXECUTOR = ['DELIVERY:UPDATE', 'REQUIREMENT:UPDATE']
 
 function CreateKeyModal({ open, onClose, onDone }: { open: boolean; onClose: () => void; onDone: (key: string) => void }) {
   const { t } = useI18n()
-  const [form] = Form.useForm<{ name: string; permissions: string[] }>()
+  const [form] = Form.useForm<{ name: string }>()
   const [preset, setPreset] = useState<'executor' | 'custom'>('executor')
+  const [checked, setChecked] = useState<Set<string>>(new Set(PRESET_EXECUTOR))
+  const [extras, setExtras] = useState<string[]>([])
   const [busy, setBusy] = useState(false)
   useEffect(() => {
     if (open) {
       setPreset('executor')
-      form.setFieldsValue({ name: '', permissions: [...PRESET_EXECUTOR] })
+      setChecked(new Set(PRESET_EXECUTOR))
+      setExtras([])
+      form.setFieldsValue({ name: '' })
     }
   }, [open, form])
 
   const applyPreset = (p: 'executor' | 'custom') => {
     setPreset(p)
-    if (p === 'executor') form.setFieldValue('permissions', [...PRESET_EXECUTOR])
+    if (p === 'executor') { setChecked(new Set(PRESET_EXECUTOR)); setExtras([]) }
   }
+
+  // User edits in the matrix imply a custom permission set.
+  const onMatrix = (next: Set<string>) => { setChecked(next); setPreset('custom') }
 
   const submit = async () => {
     const v = await form.validateFields().catch(() => null)
     if (!v) return
+    const permissions = serializePermissions(checked, extras)
+    if (!permissions.length) {
+      message.warning(t('ak.permsRequired', '请至少选择一条权限'))
+      return
+    }
     setBusy(true)
     try {
-      const r = await api.createApiKey({ name: v.name.trim(), permissions: v.permissions })
+      const r = await api.createApiKey({ name: v.name.trim(), permissions })
       message.success(t('ak.created', '密钥已创建'))
       form.resetFields()
       onDone(r.key ?? '')
@@ -234,12 +267,12 @@ function CreateKeyModal({ open, onClose, onDone }: { open: boolean; onClose: () 
   }
 
   return (
-    <EditDrawer open={open} onCancel={onClose} onOk={submit} confirmLoading={busy} title={t('ak.create', '新建密钥')}>
+    <EditDrawer open={open} onCancel={onClose} onOk={submit} confirmLoading={busy} title={t('ak.create', '新建密钥')} width={860}>
       <Form form={form} layout="vertical" requiredMark={false}>
         <Form.Item name="name" label={t('ak.colName', '名称')} rules={[{ required: true, message: t('ak.nameRequired', '请输入名称') }]}>
           <Input placeholder={t('ak.namePh', '如:执行机-01')} autoFocus />
         </Form.Item>
-        <Form.Item label={t('ak.preset', '权限预设')}>
+        <Form.Item label={t('ak.preset', '权限预设')} extra={t('ak.presetHint', '执行机 = 派发回写所需的最小权限;自定义则在下方勾选')}>
           <Segmented
             value={preset}
             onChange={(v) => applyPreset(v as 'executor' | 'custom')}
@@ -249,21 +282,14 @@ function CreateKeyModal({ open, onClose, onDone }: { open: boolean; onClose: () 
             ]}
           />
         </Form.Item>
-        <Form.Item
-          name="permissions"
-          label={t('ak.colPerms', '权限')}
-          extra={t('ak.permsHint', '格式:资源:动作+动作,如 DELIVERY:UPDATE')}
-          rules={[{ required: true, message: t('ak.permsRequired', '请至少填写一条权限') }]}
-        >
-          <Select
-            mode="tags"
-            className="ms-mono"
-            tokenSeparators={[',', ' ']}
-            placeholder={t('ak.permsPh', 'DELIVERY:UPDATE')}
-            options={PRESET_EXECUTOR.map((p) => ({ value: p, label: p }))}
-            onChange={() => setPreset('custom')}
-          />
+        <Form.Item label={t('ak.colPerms', '权限')}>
+          <PermissionMatrix checked={checked} onChange={onMatrix} />
         </Form.Item>
+        {extras.length > 0 && (
+          <Form.Item label={t('ak.permsExtra', '其他权限(不在此表内,已保留)')}>
+            <div className="ms-mono" style={{ fontSize: 12, color: 'var(--text-3)' }}>{extras.join('  ·  ')}</div>
+          </Form.Item>
+        )}
       </Form>
     </EditDrawer>
   )

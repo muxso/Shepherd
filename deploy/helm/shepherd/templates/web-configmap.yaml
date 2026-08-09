@@ -1,7 +1,7 @@
 {{- $component := "web" -}}
 {{- $ctx := dict "root" . "component" $component -}}
 {{- $server := printf "http://%s:%v" (include "shepherd.serverServiceName" .) .Values.server.service.port -}}
-{{- $prefixes := list "/api" "/auth" "/project" "/organization" "/system" "/role" "/user-role" "/requirement" "/decomposition" "/delivery" "/verification" "/skill" "/bug" "/functional-case" "/test-plan" "/perf" "/runner" "/runner-agent" "/case-review" "/mcp" "/notice" "/follow" "/comment" "/template" "/me" "/prd-draft" -}}
+{{- $prefixes := list "/api" "/auth" "/project" "/organization" "/system" "/role" "/user-role" "/requirement" "/decomposition" "/delivery" "/verification" "/skill" "/bug" "/functional-case" "/test-plan" "/perf" "/runner" "/runner-agent" "/case-review" "/mcp" "/notice" "/follow" "/comment" "/template" "/me" "/prd-draft" "/rag" -}}
 apiVersion: v1
 kind: ConfigMap
 metadata:

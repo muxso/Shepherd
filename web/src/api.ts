@@ -613,6 +613,37 @@ export interface Role {
   permissions?: string[]
 }
 
+/** RAG knowledge-base document (management view). */
+export interface RagDoc {
+  id: string
+  title: string
+  sourceType: string
+  ownerId?: string
+  /** Ids of the visibility groups this doc belongs to; empty = uploader + admins only. */
+  visibilityGroups: string[]
+  updatedAt: number
+}
+
+/** Live connectivity probe for one RAG provider (embedding or generation). */
+export interface RagProbe {
+  ok: boolean
+  latencyMs?: number
+  error?: string
+}
+export interface RagTestResult {
+  embed: RagProbe
+  chat: RagProbe
+}
+
+/** A named bundle of RBAC role names controlling who can retrieve a KB document. */
+export interface RagVisibilityGroup {
+  id: string
+  name: string
+  roleNames: string[]
+  createdAt: number
+  updatedAt: number
+}
+
 export interface User {
   id: string
   name: string
@@ -1615,6 +1646,26 @@ export const api = {
   deleteRole: (id: string) => http.del(`/role/${id}`),
   grantUserRole: (userId: string, roleId: string) => http.post('/user-role/grant', { userId, roleId }),
   revokeUserRole: (userId: string, roleId: string) => http.post('/user-role/revoke', { userId, roleId }),
+
+  // RAG knowledge base: documents + visibility groups
+  ragDocs: (projectId: string) => http.get<RagDoc[]>(`/rag/document?projectId=${encodeURIComponent(projectId)}`),
+  ingestRagDoc: (b: { projectId: string; title: string; text: string; visibilityGroups?: string[] }) =>
+    http.post<{ documentId: string; chunks: number; embedded: boolean }>('/rag/document', b),
+  reindexRag: (projectId?: string) =>
+    http.post<{ reindexed: number }>('/rag/reindex', projectId ? { projectId } : {}),
+  deleteRagDoc: (id: string) => http.del(`/rag/document/${encodeURIComponent(id)}`),
+  setRagDocAudience: (id: string, visibilityGroups: string[]) =>
+    http.put(`/rag/document/${encodeURIComponent(id)}/audience`, { visibilityGroups }),
+  testRagConfig: () => http.post<RagTestResult>('/system/rag/test'),
+  ragStats: (projectId: string) => http.get<{ documents: number; chunks: number }>(`/rag/stats?projectId=${encodeURIComponent(projectId)}`),
+  submitRagFeedback: (b: { projectId: string; sessionId?: string; vote: 'up' | 'down'; question: string; answer: string; comment?: string }) =>
+    http.post('/rag/feedback', b),
+  ragGroups: () => http.get<RagVisibilityGroup[]>('/rag/visibility-group'),
+  createRagGroup: (b: { name: string; roleNames: string[] }) =>
+    http.post<RagVisibilityGroup>('/rag/visibility-group', b),
+  updateRagGroup: (id: string, b: { name: string; roleNames: string[] }) =>
+    http.put(`/rag/visibility-group/${encodeURIComponent(id)}`, b),
+  deleteRagGroup: (id: string) => http.del(`/rag/visibility-group/${encodeURIComponent(id)}`),
   users: () => http.get<Page<User>>('/system/user?pageSize=100'),
   createUser: (b: { name: string; email: string }) => http.post<User>('/system/user', b),
   updateUser: (id: string, b: { name: string; email: string; enable: boolean }) =>

@@ -5,7 +5,7 @@ use async_trait::async_trait;
 use serde_json::json;
 use sqlx::PgPool;
 
-use crate::domain::{Hit, RagChunk, RagDocument, RagError, Result};
+use crate::domain::{Audience, Hit, RagChunk, RagDocument, RagError, Result};
 use crate::ports::{Chat, Embedder, VectorStore};
 
 // ---------- Embedder ----------
@@ -47,7 +47,7 @@ impl Embedder for OpenAiEmbedder {
         let (url, key, model) = self.snapshot();
         if key.is_empty() {
             return Err(RagError::Config(
-                "embedding API key not configured (系统设置 → RAG)".into(),
+                "embedding API key not configured (系统参数 → RAG 配置)".into(),
             ));
         }
         // Volcano Engine multimodal embeddings take one {type:text} input at a time and return
@@ -137,7 +137,9 @@ impl Chat for OpenAiChat {
     async fn complete(&self, system: &str, user: &str) -> Result<String> {
         let (url, key, model, max_tokens) = self.snapshot();
         if key.is_empty() {
-            return Err(RagError::Config("LLM API key not configured (系统设置 → RAG)".into()));
+            return Err(RagError::Config(
+                "LLM API key not configured (系统参数 → RAG 配置)".into(),
+            ));
         }
         let resp = self
             .client
@@ -179,7 +181,9 @@ impl Chat for OpenAiChat {
         use futures_util::StreamExt;
         let (url, key, model, max_tokens) = self.snapshot();
         if key.is_empty() {
-            return Err(RagError::Config("LLM API key not configured (系统设置 → RAG)".into()));
+            return Err(RagError::Config(
+                "LLM API key not configured (系统参数 → RAG 配置)".into(),
+            ));
         }
         let resp = self
             .client
@@ -265,6 +269,17 @@ fn be(e: sqlx::Error) -> RagError {
     RagError::Backend(e.to_string())
 }
 
+/// SQL predicate (over joined document alias `d`) limiting rows to what the audience may retrieve:
+/// admin bypass, or the uploader, or an overlap between the doc's `visibility_groups` and the groups
+/// the caller can see. Positional params `$admin` (bool), `$user` (text, nullable), `$groups` (text[])
+/// must be bound in that order.
+fn audience_where(admin: usize, user: usize, groups: usize) -> String {
+    format!(
+        "(${admin} OR (d.owner_id IS NOT NULL AND d.owner_id = ${user}) \
+          OR d.visibility_groups && ${groups}::text[])"
+    )
+}
+
 /// Rebuild the tantivy keyword index from all stored chunks (called once on startup so the RAM
 /// index matches the DB). Returns the number of chunks indexed.
 pub async fn rebuild_keyword_index(
@@ -286,16 +301,21 @@ pub async fn rebuild_keyword_index(
 impl VectorStore for PgVectorStore {
     async fn upsert_document(&self, doc: &RagDocument) -> Result<()> {
         sqlx::query(
-            "INSERT INTO ms_rag_document (id, project_id, source_type, source_id, title, created_at, updated_at) \
-             VALUES ($1,$2,$3,$4,$5,$6,$7) \
+            "INSERT INTO ms_rag_document \
+                (id, project_id, source_type, source_id, title, owner_id, visibility_groups, created_at, updated_at) \
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) \
              ON CONFLICT (id) DO UPDATE SET title = EXCLUDED.title, source_type = EXCLUDED.source_type, \
-                source_id = EXCLUDED.source_id, updated_at = EXCLUDED.updated_at",
+                source_id = EXCLUDED.source_id, visibility_groups = EXCLUDED.visibility_groups, \
+                owner_id = COALESCE(ms_rag_document.owner_id, EXCLUDED.owner_id), \
+                updated_at = EXCLUDED.updated_at",
         )
         .bind(&doc.id)
         .bind(&doc.project_id)
         .bind(&doc.source_type)
         .bind(&doc.source_id)
         .bind(&doc.title)
+        .bind(&doc.owner_id)
+        .bind(&doc.visibility_groups)
         .bind(doc.created_at)
         .bind(doc.updated_at)
         .execute(&self.pool)
@@ -339,6 +359,52 @@ impl VectorStore for PgVectorStore {
         Ok(())
     }
 
+    async fn chunks_missing_embedding(
+        &self,
+        project_id: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<RagChunk>> {
+        let rows = sqlx::query_as::<_, (String, String, String, String, String)>(
+            "SELECT id, document_id, project_id, heading, content FROM ms_rag_chunk \
+             WHERE cardinality(embedding) = 0 AND ($1::text IS NULL OR project_id = $1) \
+             ORDER BY created_at LIMIT $2",
+        )
+        .bind(project_id)
+        .bind(limit as i64)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(be)?;
+        Ok(rows
+            .into_iter()
+            .map(|(id, document_id, project_id, heading, content)| RagChunk {
+                id,
+                document_id,
+                project_id,
+                chunk_index: 0,
+                heading,
+                content,
+                embedding: Vec::new(),
+                created_at: 0,
+            })
+            .collect())
+    }
+
+    async fn set_chunk_embeddings(&self, updates: &[(String, Vec<f32>)]) -> Result<usize> {
+        let mut tx = self.pool.begin().await.map_err(be)?;
+        let mut n = 0;
+        for (id, emb) in updates {
+            let r = sqlx::query("UPDATE ms_rag_chunk SET embedding = $1 WHERE id = $2")
+                .bind(emb)
+                .bind(id)
+                .execute(&mut *tx)
+                .await
+                .map_err(be)?;
+            n += r.rows_affected() as usize;
+        }
+        tx.commit().await.map_err(be)?;
+        Ok(n)
+    }
+
     async fn delete_document(&self, id: &str) -> Result<()> {
         // Chunks cascade in PG; the tantivy index keys on document_id so delete there too.
         if let Some(kw) = &self.keyword {
@@ -352,17 +418,27 @@ impl VectorStore for PgVectorStore {
         Ok(())
     }
 
-    async fn search(&self, project_id: &str, query: &[f32], top_k: usize) -> Result<Vec<Hit>> {
-        let rows = sqlx::query_as::<_, (String, String, String, String, String, f64)>(
+    async fn search(
+        &self,
+        project_id: &str,
+        query: &[f32],
+        top_k: usize,
+        audience: &Audience,
+    ) -> Result<Vec<Hit>> {
+        let rows = sqlx::query_as::<_, (String, String, String, String, String, f64)>(&format!(
             "SELECT c.id, c.document_id, COALESCE(d.title,''), c.heading, c.content, \
                     rag_cosine(c.embedding, $2) AS score \
              FROM ms_rag_chunk c JOIN ms_rag_document d ON d.id = c.document_id \
-             WHERE c.project_id = $1 \
+             WHERE c.project_id = $1 AND cardinality(c.embedding) > 0 AND {} \
              ORDER BY score DESC LIMIT $3",
-        )
+            audience_where(4, 5, 6)
+        ))
         .bind(project_id)
         .bind(query)
         .bind(top_k as i64)
+        .bind(audience.is_admin)
+        .bind(&audience.user_id)
+        .bind(&audience.visible_group_ids)
         .fetch_all(&self.pool)
         .await
         .map_err(be)?;
@@ -384,20 +460,26 @@ impl VectorStore for PgVectorStore {
         project_id: &str,
         query: &str,
         top_k: usize,
+        audience: &Audience,
     ) -> Result<Vec<Hit>> {
         // Tantivy (jieba full-text) when available: rank chunk ids, then hydrate them from PG.
         if let Some(kw) = &self.keyword {
+            // Over-fetch: the audience filter runs after tantivy ranking, so restricted hits are dropped.
             let ranked = kw.search(project_id, query, top_k)?;
             if ranked.is_empty() {
                 return Ok(Vec::new());
             }
             let ids: Vec<String> = ranked.iter().map(|(id, _)| id.clone()).collect();
-            let rows = sqlx::query_as::<_, (String, String, String, String, String)>(
+            let rows = sqlx::query_as::<_, (String, String, String, String, String)>(&format!(
                 "SELECT c.id, c.document_id, COALESCE(d.title,''), c.heading, c.content \
                  FROM ms_rag_chunk c JOIN ms_rag_document d ON d.id = c.document_id \
-                 WHERE c.id = ANY($1)",
-            )
+                 WHERE c.id = ANY($1) AND {}",
+                audience_where(2, 3, 4)
+            ))
             .bind(&ids)
+            .bind(audience.is_admin)
+            .bind(&audience.user_id)
+            .bind(&audience.visible_group_ids)
             .fetch_all(&self.pool)
             .await
             .map_err(be)?;
@@ -429,16 +511,20 @@ impl VectorStore for PgVectorStore {
         if terms.is_empty() {
             return Ok(Vec::new());
         }
-        let rows = sqlx::query_as::<_, (String, String, String, String, String, f64)>(
+        let rows = sqlx::query_as::<_, (String, String, String, String, String, f64)>(&format!(
             "SELECT c.id, c.document_id, COALESCE(d.title,''), c.heading, c.content, \
                     (SELECT count(*) FROM unnest($2::text[]) p WHERE c.content ILIKE p)::float8 AS score \
              FROM ms_rag_chunk c JOIN ms_rag_document d ON d.id = c.document_id \
-             WHERE c.project_id = $1 AND c.content ILIKE ANY($2::text[]) \
+             WHERE c.project_id = $1 AND c.content ILIKE ANY($2::text[]) AND {} \
              ORDER BY score DESC LIMIT $3",
-        )
+            audience_where(4, 5, 6)
+        ))
         .bind(project_id)
         .bind(&terms)
         .bind(top_k as i64)
+        .bind(audience.is_admin)
+        .bind(&audience.user_id)
+        .bind(&audience.visible_group_ids)
         .fetch_all(&self.pool)
         .await
         .map_err(be)?;
