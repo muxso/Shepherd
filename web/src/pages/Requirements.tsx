@@ -18,7 +18,7 @@ import {
   type DeliveryEvent,
   type FleetRuntime,
   type FunctionalCase,
-  type ProjectMember,
+  type User,
   type RagReviewResult,
   type Requirement,
   type RequirementChange,
@@ -1058,8 +1058,7 @@ function RequirementDetail({ reqId, projectId, modules, onChanged, onDeleted, on
                   column={1}
                   size="small"
                   bordered
-                  labelStyle={{ width: 120, minWidth: 120, whiteSpace: 'nowrap' }}
-                  contentStyle={{ width: 'auto', whiteSpace: 'normal' }}
+                  styles={{ label: { width: 120, minWidth: 120, whiteSpace: 'nowrap' }, content: { width: 'auto', whiteSpace: 'normal' } }}
                 >
                   <Descriptions.Item label={t('req.title', '标题')}>{req?.title}</Descriptions.Item>
                   <Descriptions.Item label={t('req.baselineVersion', '基线版本')}>v{req?.baselineVersion}</Descriptions.Item>
@@ -1401,17 +1400,15 @@ function DecompositionView({ decompId, verificationId, projectId, reqId, req }: 
     // Members come back as ids only, so resolve display names via /system/user/names.
     // Any failure degrades silently; the board/columns still render.
     const buildAssignees = async () => {
-      const members = await api.projectMembers(projectId).catch(() => [] as ProjectMember[])
-      const ids = members.map((m) => m.userId).filter(Boolean)
-      const names = ids.length ? await api.userNames(ids).catch(() => ({}) as Record<string, string>) : {}
-      setAssignees([
-        ...members.map((m) => ({
-          value: `HUMAN:${m.userId}`,
-          label: `👤 ${names[m.userId] || m.userId}`,
+      const users = await api.users().catch(() => ({ items: [] as User[] }))
+      setAssignees(
+        users.items.map((u) => ({
+          value: `HUMAN:${u.id}`,
+          label: `👤 ${u.name || u.id}`,
           kind: 'HUMAN',
-          id: m.userId,
+          id: u.id,
         })),
-      ])
+      )
     }
     buildAssignees()
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1625,7 +1622,7 @@ function DecompositionView({ decompId, verificationId, projectId, reqId, req }: 
                       disabled={dispatching.has(row.id) || !depsReady(row)}
                       menu={executorMenu(row, rtSearch)}
                       onOpenChange={(o) => { if (o) loadFleet(); else setRtSearch('') }}
-                      dropdownRender={(menu) => (
+                      popupRender={(menu) => (
                         <div>
                           <div style={{ padding: 8, borderBottom: '1px solid var(--border, #f0f0f0)' }}>
                             <Input
