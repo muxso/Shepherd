@@ -1302,6 +1302,8 @@ export interface Bug {
   severity?: string | null
   /** Handler user id. */
   handler?: string | null
+  /** Markdown description body (defect details). */
+  description?: string | null
   /** Last mutator's user id (stamped on every mutation). */
   updatedBy?: string | null
   /** Last mutation time (timestamptz text). */
@@ -1966,9 +1968,9 @@ export const api = {
   // Bugs — list/create/status transitions all backend-driven (project-scoped, newest first)
   bugs: (projectId: string) =>
     projectId ? http.get<Bug[]>(`/bug?projectId=${encodeURIComponent(projectId)}`) : Promise.resolve([] as Bug[]),
-  createBug: (b: { projectId: string; title: string; initialStatus: string; severity?: string; handler?: string; customFields?: Record<string, string> }) => http.post<Bug>('/bug', b),
-  // Meta update: severity/handler are full replacements (omit to clear); omitted title keeps the current one.
-  updateBug: (id: string, b: { title?: string; severity?: string; handler?: string }) => http.put<Bug>(`/bug/${encodeURIComponent(id)}`, b),
+  createBug: (b: { projectId: string; title: string; initialStatus: string; severity?: string; handler?: string; description?: string; customFields?: Record<string, string> }) => http.post<Bug>('/bug', b),
+  // Meta update: severity/handler are full replacements (omit to clear); omitted title keeps the current one; omitted description keeps the current value.
+  updateBug: (id: string, b: { title?: string; severity?: string; handler?: string; description?: string }) => http.put<Bug>(`/bug/${encodeURIComponent(id)}`, b),
   setBugStatus: (id: string, status: string) => http.post<Bug>(`/bug/${id}/status`, { status }),
 
   // In-app notifications (message center): always scoped to the current session user.

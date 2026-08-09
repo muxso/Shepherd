@@ -34,6 +34,7 @@ impl UpdateBugMetaUseCase {
         title: Option<&str>,
         severity: Option<&str>,
         handler: Option<&str>,
+        description: Option<&str>,
         operator: Option<&str>,
     ) -> Result<Bug, UpdateBugMetaError> {
         let severity = normalize_severity(severity)?;
@@ -44,7 +45,14 @@ impl UpdateBugMetaUseCase {
             Some(t) => t.to_string(),
         };
         self.repo
-            .update_meta(bug_id, &title, severity.as_deref(), handler.as_deref(), operator)
+            .update_meta(
+                bug_id,
+                &title,
+                severity.as_deref(),
+                handler.as_deref(),
+                description,
+                operator,
+            )
             .await?
             .ok_or(UpdateBugMetaError::BugNotFound)
     }
@@ -65,6 +73,7 @@ mod tests {
                 Some("alice"),
                 Some("P2"),
                 Some("bob"),
+                None,
                 &std::collections::BTreeMap::new(),
             )
             .await
@@ -78,7 +87,7 @@ mod tests {
         let uc = UpdateBugMetaUseCase::new(Arc::new(repo));
 
         let bug = uc
-            .execute(&seeded.id, Some("boom v2"), Some(" p0 "), Some(" carol "), Some("dave"))
+            .execute(&seeded.id, Some("boom v2"), Some(" p0 "), Some(" carol "), None, Some("dave"))
             .await
             .expect("ok");
         assert_eq!(bug.title, "boom v2");
@@ -97,7 +106,7 @@ mod tests {
         let seeded = seed_bug(&repo).await;
         let uc = UpdateBugMetaUseCase::new(Arc::new(repo));
 
-        let bug = uc.execute(&seeded.id, None, None, None, Some("dave")).await.expect("ok");
+        let bug = uc.execute(&seeded.id, None, None, None, None, Some("dave")).await.expect("ok");
         assert_eq!(bug.title, "boom");
         assert_eq!(bug.severity, None);
         assert_eq!(bug.handler, None);
@@ -110,11 +119,11 @@ mod tests {
         let uc = UpdateBugMetaUseCase::new(Arc::new(repo));
 
         assert_eq!(
-            uc.execute(&seeded.id, None, Some("HIGH"), None, None).await.unwrap_err(),
+            uc.execute(&seeded.id, None, Some("HIGH"), None, None, None).await.unwrap_err(),
             UpdateBugMetaError::Validation(BugError::InvalidSeverity("HIGH".into()))
         );
         assert_eq!(
-            uc.execute("ghost", None, None, None, None).await.unwrap_err(),
+            uc.execute("ghost", None, None, None, None, None).await.unwrap_err(),
             UpdateBugMetaError::BugNotFound
         );
     }
