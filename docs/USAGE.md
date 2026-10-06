@@ -1,6 +1,8 @@
 # Shepherd — Usage Guide
 
-> Audience: anyone running, operating, or evaluating Shepherd. For production deployment (Helm, Terraform, CI/CD, day-2 ops) see [DEPLOYMENT.md](DEPLOYMENT.md). 简体中文版见 [USAGE.zh-CN.md](USAGE.zh-CN.md).
+[简体中文](USAGE.zh-CN.md) · English
+
+> Audience: anyone running, operating, or evaluating Shepherd. For production deployment (Helm, Terraform, CI/CD, day-2 ops) see [DEPLOYMENT.md](DEPLOYMENT.md).
 
 Shepherd is an AI-development *supervision* platform: from idea to delivery — safer, more reliable quality gates. It breaks a requirement down for AI executors to work on, puts a **human approval gate at two points** (design and verification), and keeps a record of the whole loop.
 

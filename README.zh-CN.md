@@ -8,7 +8,7 @@ AI ROI、人效分析、软件工程建模、Task Graph。
 [![Rust](https://img.shields.io/badge/Rust-2021-orange.svg)](https://www.rust-lang.org/)
 [![License](https://img.shields.io/badge/License-GPL--2.0-blue.svg)](LICENSE)
 [![status](https://img.shields.io/badge/status-experimental-yellow.svg)](#状态)
-&nbsp; · &nbsp; 简体中文 | [English](README.md)
+&nbsp; · &nbsp; 简体中文 · [English](README.md)
 
 Shepherd 是一个还在早期阶段的研发监督平台。AI 现在能写代码了,但它不会判断自己有没有真正做完需求,也不会替结果负责。与其再造一个"更聪明的 agent",Shepherd 做的是 agent 外面那一层——把需求拆给 AI 执行机去干,然后在设计和验证两个环节卡上人工审批,过程留痕。
 
@@ -81,39 +81,6 @@ Shepherd 是一个还在早期阶段的研发监督平台。AI 现在能写代�
 
 它量的是交付结果,不是敲键盘。所以这些数字会比「我们 90% 的代码是 AI 写的」那种说法难看得多,但也更实。
 
-## 跑起来
-
-```bash
-# 1) 一个 Postgres,迁移会在启动时自动施加
-docker run -d --name shep-pg \
-  -e POSTGRES_USER=msuser -e POSTGRES_PASSWORD=mspass -e POSTGRES_DB=mstest \
-  -p 55432:5432 postgres:16-alpine
-
-# 2) 起服务(根目录设了 default-members,直接 cargo run)
-DATABASE_URL=postgres://msuser:mspass@localhost:55432/mstest \
-SHEPHERD_ADMIN_PASSWORD=s3cret \
-cargo run                       # → http://localhost:8088
-```
-
-```bash
-# 登录拿令牌
-curl -s localhost:8088/auth/login -H 'content-type: application/json' \
-  -d '{"username":"admin","password":"s3cret"}'
-```
-
-前端控制台,以及在内网机上起一台执行机:
-
-```bash
-cd web && npm install && npm run dev          # Vite 控制台
-
-SHEPHERD_AGENT_FLEET=1 cargo run              # 服务端开机群模式
-SHEPHERD_BASE=http://<server>:8088 SHEPHERD_CAPS=CLAUDE_CODE cargo run -p agent-runtime
-```
-
-<!-- 控制台截图待补:见 docs/assets/。 -->
-
-想一条命令起全栈?`docker compose -f deploy/docker/docker-compose.yml up --build` 会拉起整套服务(server + agent-runtime + web + Postgres + Redis)——详见[使用指南](docs/USAGE.zh-CN.md)与[部署指南](docs/DEPLOYMENT.zh-CN.md)。
-
 ## 里面有什么
 
 每个业务模块是一个独立 crate,按六边形分层:`domain` / `ports` / `application` 是纯逻辑、默认不碰 IO,数据库和 HTTP 都在 `adapters` 里用 feature 开关。`tests/architecture.rs` 会扫源码,纯层一旦引了 sqlx / axum 这类 IO crate 就让构建挂掉——免得分层写着写着被写穿。
@@ -145,37 +112,21 @@ web/               React + antd 前端
 ```
 </details>
 
-<details>
-<summary>主要环境变量</summary>
+> 完整环境变量与逐 crate 配置见[使用指南](docs/USAGE.zh-CN.md#5-配置环境变量)。
 
-服务端(收拢在 typed `ServerConfig`):
+## 快速开始
 
-| 变量 | 默认 | 含义 |
-|---|---|---|
-| `DATABASE_URL` | 本地 mstest | PG 连接串 |
-| `SHEPHERD_BIND` | `0.0.0.0:8088` | 主 API 监听 |
-| `SHEPHERD_ADMIN_PASSWORD` | `admin` | 启动时幂等 upsert 的 admin 密码 |
-| `SHEPHERD_AGENT_FLEET` | — | 设置即开机群模式 |
-| `SHEPHERD_FLEET_REDIS` | — | 设置即用 Redis 分布式队列 / 注册表 |
-| `SHEPHERD_FEISHU_*` / `SHEPHERD_WECOM_*` | — | OIDC 第三方登录 |
+想一条命令起全栈?`docker compose -f deploy/docker/docker-compose.yml up --build` 会拉起整套服务(server + agent-runtime + web + Postgres + Redis)。
 
-执行机 `agent-runtime`:
-
-| 变量 | 默认 | 含义 |
-|---|---|---|
-| `SHEPHERD_BASE` | `http://127.0.0.1:9180` | 服务端地址 |
-| `SHEPHERD_CAPS` | `CLAUDE_CODE` | 逗号分隔的能力(认领哪类任务) |
-| `AGENT_CONCURRENCY` | `1` | 并发任务上限 |
-| `CLAUDE_BIN` / `CODEX_CMD` / `OPENCODE_CMD` | `claude` / `codex exec` / `opencode run` | 各 CLI 调用 |
-| `AGENT_MOCK` | — | 设置即用 mock 后端(免真实 CLI) |
-</details>
+其余内容——源码方式运行、完整环境变量参考、Web 控制台、机群与执行机配置、HTTP API——见**[使用指南](docs/USAGE.zh-CN.md)**([English](docs/USAGE.md))。生产部署(Helm、Terraform、CI/CD、Day-2 运维)见**[部署与运维指南](docs/DEPLOYMENT.zh-CN.md)**([English](docs/DEPLOYMENT.md))。
 
 ## 文档
 
 - **[使用指南](docs/USAGE.zh-CN.md)**([English](docs/USAGE.md))—— 概念、快速上手、完整配置参考、Web 控制台、机群与执行机配置、HTTP API。
 - **[部署与运维](docs/DEPLOYMENT.zh-CN.md)**([English](docs/DEPLOYMENT.md))—— Docker Compose、Kubernetes(Helm,`deploy/helm/shepherd`)、多云 Terraform(`deploy/terraform/{aws,gcp,azure}`)、CI/CD 自动部署。
+- **[安装 agent-runtime](docs/INSTALL.zh-CN.md)**([English](docs/INSTALL.md))—— Homebrew、Windows(Scoop / PowerShell)、Linux 二进制,以及接入服务端。
 - **[AI 执行者运行指南](docs/EXECUTORS.zh-CN.md)**([English](docs/EXECUTORS.md))—— 在 `agent-runtime` 下运行 Claude Code / Codex / OpenCode / CodeBuddy。
-- **[安装 agent-runtime](docs/INSTALL.md)** —— Homebrew、Windows(Scoop / PowerShell)、Linux 二进制,以及接入服务端(目前为英文)。
+- **[注释规范](docs/COMMENT_CONVENTIONS.zh-CN.md)**([English](docs/COMMENT_CONVENTIONS.md))—— 全仓库代码注释的统一约定。
 
 ## 和别的方案比
 

@@ -8,7 +8,7 @@ AI ROI · human-AI efficiency analytics · software engineering modeling · Task
 [![Rust](https://img.shields.io/badge/Rust-2021-orange.svg)](https://www.rust-lang.org/)
 [![License](https://img.shields.io/badge/License-GPL--2.0-blue.svg)](LICENSE)
 [![status](https://img.shields.io/badge/status-experimental-yellow.svg)](#status)
-&nbsp; · &nbsp; [简体中文](README.zh-CN.md) | English
+&nbsp; · &nbsp; [简体中文](README.zh-CN.md) · English
 
 Shepherd is a platform for supervising AI-driven development. AI can write code, but it won't judge whether it actually finished the requirement, and it won't be accountable for the result. Instead of building another "smarter agent," Shepherd sits around the agent: it breaks requirements down for AI executors to work on, puts a human approval step at two points (design and verification), and keeps a record of the whole thing.
 
@@ -16,9 +16,6 @@ Shepherd is a platform for supervising AI-driven development. AI can write code,
 > **Status:** `v0.0.4`, experimental, dogfooded internally. The full loop works, but it isn't production-ready and there's no public benchmark. Don't treat it as a finished tool.
 
 <img src="docs/assets/screenshot-intro.png" alt="Shepherd — scenario run report" width="100%" />
-
-<!-- demo GIF pending: see docs/assets/. Uncomment the next line once it exists. -->
-<!-- ![demo](docs/assets/demo.gif) -->
 
 ## How it works
 
@@ -81,39 +78,6 @@ On top of that rule you get, per project and per requirement:
 
 It measures shipped outcomes rather than keystrokes. The numbers come out smaller and more boring than "90% of our code is AI-written" claims — which is the point.
 
-## Running it
-
-```bash
-# 1) A Postgres; migrations are applied automatically on startup
-docker run -d --name shep-pg \
-  -e POSTGRES_USER=msuser -e POSTGRES_PASSWORD=mspass -e POSTGRES_DB=mstest \
-  -p 55432:5432 postgres:16-alpine
-
-# 2) Start the server (the root sets default-members, so plain `cargo run` works)
-DATABASE_URL=postgres://msuser:mspass@localhost:55432/mstest \
-SHEPHERD_ADMIN_PASSWORD=s3cret \
-cargo run                       # → http://localhost:8088
-```
-
-```bash
-# Log in for a token
-curl -s localhost:8088/auth/login -H 'content-type: application/json' \
-  -d '{"username":"admin","password":"s3cret"}'
-```
-
-The web console, and starting an executor on an internal machine:
-
-```bash
-cd web && npm install && npm run dev          # Vite console
-
-SHEPHERD_AGENT_FLEET=1 cargo run              # server in fleet mode
-SHEPHERD_BASE=http://<server>:8088 SHEPHERD_CAPS=CLAUDE_CODE cargo run -p agent-runtime
-```
-
-<!-- console screenshot pending: see docs/assets/. -->
-
-Prefer one command? `docker compose -f deploy/docker/docker-compose.yml up --build` brings up the whole stack (server + agent-runtime + web + Postgres + Redis) — see the [usage guide](docs/USAGE.md) and [deployment guide](docs/DEPLOYMENT.md).
-
 ## What's in here
 
 Each business module is its own crate, laid out hexagonally: `domain` / `ports` / `application` are pure logic with no IO by default, while the database and HTTP live in `adapters` behind feature flags. `tests/architecture.rs` scans the source and fails the build if a pure layer ever imports an IO crate like sqlx or axum — that keeps the layering from quietly eroding over time.
@@ -145,37 +109,21 @@ web/               React + antd frontend
 ```
 </details>
 
-<details>
-<summary>Main environment variables</summary>
+> Full environment-variable reference and per-crate configuration live in the [Usage guide](docs/USAGE.md#5-configuration-environment-variables).
 
-Server (consolidated into a typed `ServerConfig`):
+## Get started
 
-| Variable | Default | Meaning |
-|---|---|---|
-| `DATABASE_URL` | local mstest | PG connection string |
-| `SHEPHERD_BIND` | `0.0.0.0:8088` | main API listen address |
-| `SHEPHERD_ADMIN_PASSWORD` | `admin` | admin password upserted idempotently on boot |
-| `SHEPHERD_AGENT_FLEET` | — | set to enable fleet mode |
-| `SHEPHERD_FLEET_REDIS` | — | set to use a Redis distributed queue / registry |
-| `SHEPHERD_FEISHU_*` / `SHEPHERD_WECOM_*` | — | OIDC third-party login |
+Prefer one command? `docker compose -f deploy/docker/docker-compose.yml up --build` brings up the whole stack (server + agent-runtime + web + Postgres + Redis).
 
-Executor `agent-runtime`:
-
-| Variable | Default | Meaning |
-|---|---|---|
-| `SHEPHERD_BASE` | `http://127.0.0.1:9180` | server address |
-| `SHEPHERD_CAPS` | `CLAUDE_CODE` | comma-separated capabilities (which tasks to claim) |
-| `AGENT_CONCURRENCY` | `1` | max concurrent tasks |
-| `CLAUDE_BIN` / `CODEX_CMD` / `OPENCODE_CMD` | `claude` / `codex exec` / `opencode run` | each CLI invocation |
-| `AGENT_MOCK` | — | set to use the mock backend (no real CLI) |
-</details>
+For everything else — from-source run, the full environment-variable reference, the web console, fleet & executor setup, and the HTTP API — see the **[Usage guide](docs/USAGE.md)** ([中文](docs/USAGE.zh-CN.md)). Production deployment (Helm, Terraform, CI/CD, day-2 ops) is covered in the **[Deployment & ops guide](docs/DEPLOYMENT.md)** ([中文](docs/DEPLOYMENT.zh-CN.md)).
 
 ## Documentation
 
 - **[Usage guide](docs/USAGE.md)** ([中文](docs/USAGE.zh-CN.md)) — concepts, quick start, the full configuration reference, the web console, fleet & executor setup, and the HTTP API.
 - **[Deployment & ops](docs/DEPLOYMENT.md)** ([中文](docs/DEPLOYMENT.zh-CN.md)) — Docker Compose, Kubernetes via Helm (`deploy/helm/shepherd`), multi-cloud Terraform (`deploy/terraform/{aws,gcp,azure}`), and CI/CD auto-deploy.
-- **[Install agent-runtime](docs/INSTALL.md)** — Homebrew, Windows (Scoop / PowerShell), Linux binary, and registering to a server.
+- **[Install agent-runtime](docs/INSTALL.md)** ([中文](docs/INSTALL.zh-CN.md)) — Homebrew, Windows (Scoop / PowerShell), Linux binary, and registering to a server.
 - **[Running AI executors](docs/EXECUTORS.md)** ([中文](docs/EXECUTORS.zh-CN.md)) — Claude Code / Codex / OpenCode / CodeBuddy behind `agent-runtime`.
+- **[Comment conventions](docs/COMMENT_CONVENTIONS.md)** ([中文](docs/COMMENT_CONVENTIONS.zh-CN.md)) — rules for code comments across the workspace.
 
 ## How it compares
 

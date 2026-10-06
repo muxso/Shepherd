@@ -5,10 +5,24 @@ import { fmtDuration } from './ScenarioReport'
 export function LiveElapsed({ since }: { since: number }) {
   const [, tick] = useState(0)
   useEffect(() => {
-    const id = window.setInterval(() => tick((n) => n + 1), 100)
+    const id = window.setInterval(() => tick((n) => n + 1), 500)
     return () => window.clearInterval(id)
   }, [])
-  return <span className="ms-mono" style={{ fontSize: 12, color: 'var(--brand)', whiteSpace: 'nowrap' }}>{fmtDuration(Math.max(Date.now() - since, 0))}</span>
+  return (
+    <span
+      className="ms-mono"
+      style={{
+        fontSize: 12,
+        color: 'var(--brand)',
+        whiteSpace: 'nowrap',
+        minWidth: 55,
+        textAlign: 'right',
+        fontVariantNumeric: 'tabular-nums',
+      }}
+    >
+      {fmtDuration(Math.max(Date.now() - since, 0))}
+    </span>
+  )
 }
 
 /** Inline live-run pill: looping brand sweep (.ms-step-fillbg.live) + label + count-up elapsed. */

@@ -1,5 +1,7 @@
 # Shepherd — 部署与运维
 
+简体中文 · [English](DEPLOYMENT.md)
+
 本指南涵盖镜像构建、本地运行、通过 Helm 部署到 Kubernetes、使用 Terraform 预置云基础设施、
 CI/CD 流水线以及 Day-2 运维。终端用户与 API 使用方式见 [USAGE.zh-CN.md](./USAGE.zh-CN.md)。
 

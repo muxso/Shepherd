@@ -1,5 +1,7 @@
 # Shepherd — Deployment & Operations
 
+[简体中文](DEPLOYMENT.zh-CN.md) · English
+
 This guide covers building images, running locally, deploying to Kubernetes via Helm,
 provisioning cloud infrastructure with Terraform, the CI/CD pipeline, and Day-2
 operations. For end-user and API usage see [USAGE.md](./USAGE.md).

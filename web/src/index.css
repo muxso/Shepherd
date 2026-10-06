@@ -6,6 +6,7 @@
   --brand: #1664ff; /* standard blue */
   --brand-hover: #4086ff;
   --brand-soft: #eaf2ff; /* faint brand bg for selected/hover */
+  --brand-mindmap-root: #225ed9; /* deeper, less glaring blue for the mindmap root node */
   --accent: #6ad2ff; /* secondary cyan-blue for charts/decoration */
   --success: #00b42a;
   --error: #f53f3f;
@@ -32,6 +33,7 @@
   --brand: #4086ff; /* standard blue, brightened for the dark gray canvas */
   --brand-hover: #5b9aff;
   --brand-soft: #1c2b4a; /* dark blue bg for selected rows */
+  --brand-mindmap-root: #3b7ce0; /* less bright against the dark canvas */
   --accent: #6ad2ff;
   --success: #27c346;
   --error: #f76965;
@@ -284,17 +286,20 @@ body::before {
   pointer-events: none;
 }
 .ms-step-fillbg.run {
-  width: 0;
+  width: 100%;
+  transform: scaleX(0);
+  transform-origin: left;
   background: rgba(22, 100, 255, 0.12);
   animation: ms-step-grow 0.7s ease-out forwards;
+  will-change: transform;
 }
 .ms-step-fillbg.done {
   width: 100%;
   transition: background 0.2s ease;
 }
 @keyframes ms-step-grow {
-  from { width: 0; }
-  to { width: 100%; }
+  from { transform: scaleX(0); }
+  to { transform: scaleX(1); }
 }
 /* Live execution (WS events): looping brand-tinted sweep while the step runs. */
 .ms-step-fillbg.live {

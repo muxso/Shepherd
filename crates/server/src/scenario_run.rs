@@ -212,7 +212,14 @@ impl ScenarioRunner {
         pool_id: Option<&str>,
     ) -> Result<StartedRun, RunError> {
         let (nodes, count) = self.prepare(scenario_id).await?;
-        let env = self.resolve_env(environment_id).await?;
+        // Env fallback: when the caller does not pin an environment, use the
+        // scenario's own configured environment (meta.envId) so scenarios that
+        // declare a default base URL still resolve relative paths correctly.
+        let effective_env = match environment_id.filter(|s| !s.trim().is_empty()) {
+            Some(eid) => Some(eid.to_string()),
+            None => self.default_env_of(scenario_id).await,
+        };
+        let env = self.resolve_env(effective_env.as_deref()).await?;
         let report_id = self
             .reports
             .create("SERIAL", count as i32)
