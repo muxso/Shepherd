@@ -63,6 +63,7 @@ pub trait Reviser: Send + Sync {
         criteria: &[String],
         previous: &DeliverableView,
         feedback: &str,
+        executor: &str,
     ) -> Result<DeliverableView, OrchError>;
 }
 

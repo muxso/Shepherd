@@ -126,7 +126,10 @@ impl Reviser for ExecutorReviser {
         criteria: &[String],
         previous: &DeliverableView,
         feedback: &str,
+        executor: &str,
     ) -> Result<DeliverableView, OrchError> {
+        // Keep the task on its original executor kind; unknown kinds fall back to Claude.
+        let kind = ExecutorKind::parse(executor).unwrap_or(ExecutorKind::ClaudeCode);
         let spec = WorkSpec {
             // Revision finishes synchronously, no async callback, so attempt_id stays empty.
             attempt_id: String::new(),
@@ -135,7 +138,7 @@ impl Reviser for ExecutorReviser {
             title: format!("修订任务 {task_id}"),
             description: previous.summary.clone(),
             acceptance_criteria: criteria.to_vec(),
-            executor: ExecutorKind::ClaudeCode,
+            executor: kind,
             context: None,
             instructions: Some(format!(
                 "上一轮交付未通过验证门,请据反馈修正后重做。\n反馈: {feedback}"
@@ -206,7 +209,10 @@ impl DeliveryObserver for OrchestratorObserver {
                         reference: String::new(),
                         summary: String::new(),
                     });
-                DeliveryProgress::Delivered { deliverable }
+                DeliveryProgress::Delivered {
+                    deliverable,
+                    executor: attempt.executor.as_str().to_string(),
+                }
             }
             AttemptStatus::Failed => DeliveryProgress::Failed,
             // Dispatched-but-not-started / deliberately stopped: don't drive the verification gate.
