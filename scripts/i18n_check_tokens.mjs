@@ -27,6 +27,23 @@ for (const [key, v] of Object.entries(base)) {
   }
 }
 
+// Product/brand names must survive translation verbatim in every locale. They
+// are proper nouns, not prose: a machine-translation pass must not drop or
+// rewrite them (e.g. "Codex" once got eaten down to "n" in several locales).
+const BRANDS = ['Claude Code', 'OpenCode', 'CodeBuddy', 'DeepCode', 'Codex']
+
+const badBrand = []
+for (const [key, v] of Object.entries(base)) {
+  const src = (v.en && v.en.trim() ? v.en : v.zh) || ''
+  for (const brand of BRANDS) {
+    if (!src.includes(brand)) continue
+    for (const l of LANGS) {
+      const text = String(locales[l][key] || '')
+      if (!text.includes(brand)) badBrand.push({ key, lang: l, brand, text })
+    }
+  }
+}
+
 const byKey = new Map()
 for (const b of bad) {
   if (!byKey.has(b.key)) byKey.set(b.key, [])
@@ -34,7 +51,7 @@ for (const b of bad) {
 }
 
 if (process.argv.includes('--json')) {
-  console.log(JSON.stringify([...byKey.keys()], null, 2))
+  console.log(JSON.stringify([...new Set([...byKey.keys(), ...badBrand.map((b) => b.key)])], null, 2))
 } else {
   console.log('keys with token mismatch:', byKey.size, '/ occurrences:', bad.length)
   for (const [key, list] of byKey) {
@@ -43,5 +60,9 @@ if (process.argv.includes('--json')) {
     console.log('  langs:', list.map((x) => x.lang).join(' '))
     console.log('  e.g.', list[0].lang, '=', JSON.stringify(list[0].text))
   }
+  console.log('\nbrand name drift:', badBrand.length)
+  for (const b of badBrand) {
+    console.log(`  ${b.key} ${b.lang}: missing ${JSON.stringify(b.brand)} in ${JSON.stringify(b.text)}`)
+  }
 }
-process.exit(byKey.size ? 1 : 0)
+process.exit(byKey.size || badBrand.length ? 1 : 0)
