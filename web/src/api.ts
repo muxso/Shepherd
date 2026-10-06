@@ -1148,7 +1148,8 @@ export interface DeliveryEvent {
   detail?: unknown
 }
 
-/** Dispatchable executor type → display name (shared by task-center filter and dispatch picker). */
+/** Dispatchable executor type → display name (shared by task-center filter and dispatch picker).
+ *  Keep in sync with delivery::ExecutorKind::ALL (crates/delivery/src/domain/delivery.rs). */
 export const EXECUTOR_LABEL: Record<string, string> = {
   CLAUDE_CODE: 'Claude Code',
   CODEX: 'Codex',
@@ -1167,7 +1168,7 @@ export interface TaskCenterItem {
   description: string
   /** Module (title of the owning requirement; empty string when none). */
   module: string
-  /** Executor: CLAUDE_CODE / CODEX / OPENCODE / CODEBUDDY / DEEPCODE. */
+  /** Executor kind; display label via EXECUTOR_LABEL (kept in sync with the server enum). */
   executor: string
   /** Target runtime name for directed dispatch; empty = any runtime with the capability. */
   targetRuntime?: string | null

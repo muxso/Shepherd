@@ -338,6 +338,7 @@ pub fn scaffold_files() -> Vec<(&'static str, &'static str)> {
     ]
 }
 
+// Keep in sync with delivery::ExecutorKind::ALL (crates/delivery/src/domain/delivery.rs).
 pub fn normalize_agent(t: &str) -> R<String> {
     match t.to_ascii_lowercase().replace('-', "_").as_str() {
         "claude_code" => Ok("CLAUDE_CODE".into()),

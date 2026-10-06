@@ -17,9 +17,9 @@ pub enum ExecutorKind {
 
 impl ExecutorKind {
     /// Single authoritative list of executor kinds; queue adapters and tests consume
-    /// it, so a new variant only touches this file.
-    pub const ALL: [ExecutorKind; 5] =
-        [Self::ClaudeCode, Self::Codex, Self::OpenCode, Self::CodeBuddy, Self::DeepCode];
+    /// it. A slice (not a fixed-size array) so adding a variant only touches this file.
+    pub const ALL: &[ExecutorKind] =
+        &[Self::ClaudeCode, Self::Codex, Self::OpenCode, Self::CodeBuddy, Self::DeepCode];
 
     pub fn as_str(&self) -> &'static str {
         match self {
@@ -267,7 +267,7 @@ mod tests {
 
     #[test]
     fn enum_str_roundtrips() {
-        for e in ExecutorKind::ALL {
+        for &e in ExecutorKind::ALL {
             assert_eq!(ExecutorKind::parse(e.as_str()), Some(e));
         }
         assert_eq!(ExecutorKind::parse("X"), None);

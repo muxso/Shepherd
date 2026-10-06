@@ -30,6 +30,8 @@ impl WorkSpec {
         self.context.as_deref() == Some("design")
     }
 
+    /// Mirror of `delivery::ports::WorkSpec::to_prompt` (this crate deliberately
+    /// avoids depending on `delivery`); the two must stay in sync.
     pub fn to_prompt(&self) -> String {
         let mut p = String::new();
         if let Some(instr) = &self.instructions {
