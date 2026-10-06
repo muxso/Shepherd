@@ -11,6 +11,7 @@ mod debug_send;
 mod decomposition_run;
 mod design_bridge;
 mod import_scheduler;
+mod jev;
 mod judge;
 mod llm;
 mod mcp_bus;

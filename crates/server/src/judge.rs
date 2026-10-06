@@ -41,6 +41,12 @@ impl Judge for HttpJudge {
 }
 
 pub fn build_judge() -> Arc<dyn Judge> {
+    // Jev first: it is the cheap typed-judgment alternative to the LLM judge.
+    // Setting SHEPHERD_JEV_API_KEY (or TYPESAFE_API_KEY) routes the verification
+    // gate to Jev even when SHEPHERD_LLM_URL is also set for planner/PRD use.
+    if let Some(j) = crate::jev::JevJudge::from_env() {
+        return Arc::new(j);
+    }
     if let Some(j) = crate::llm::judge() {
         return j;
     }

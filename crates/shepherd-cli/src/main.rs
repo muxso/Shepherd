@@ -323,6 +323,8 @@ mod tests {
         assert_eq!(normalize_agent("opencode").unwrap(), "OPENCODE");
         assert_eq!(normalize_agent("CodeBuddy").unwrap(), "CODEBUDDY");
         assert_eq!(normalize_agent("code-buddy").unwrap(), "CODEBUDDY");
+        assert_eq!(normalize_agent("deepcode").unwrap(), "DEEPCODE");
+        assert_eq!(normalize_agent("DeepCode").unwrap(), "DEEPCODE");
         assert!(normalize_agent("gpt").is_err());
     }
 

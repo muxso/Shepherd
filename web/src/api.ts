@@ -1154,6 +1154,7 @@ export const EXECUTOR_LABEL: Record<string, string> = {
   CODEX: 'Codex',
   OPENCODE: 'OpenCode',
   CODEBUDDY: 'CodeBuddy',
+  DEEPCODE: 'DeepCode',
 }
 
 /** One task-center row: system-wide delivery attempts aggregated by status/executor/result/completion rate. */
@@ -1166,7 +1167,7 @@ export interface TaskCenterItem {
   description: string
   /** Module (title of the owning requirement; empty string when none). */
   module: string
-  /** Executor: CLAUDE_CODE / CODEX / OPENCODE / CODEBUDDY. */
+  /** Executor: CLAUDE_CODE / CODEX / OPENCODE / CODEBUDDY / DEEPCODE. */
   executor: string
   /** Target runtime name for directed dispatch; empty = any runtime with the capability. */
   targetRuntime?: string | null
