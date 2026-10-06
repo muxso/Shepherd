@@ -27,6 +27,31 @@ pub struct WorkSpec {
     pub target_runtime: Option<String>,
 }
 
+impl WorkSpec {
+    /// Canonical prompt rendering for executor CLIs. `agent-runtime` keeps a
+    /// standalone mirror of this function (it deliberately avoids depending on
+    /// this crate); the two must stay in sync.
+    pub fn to_prompt(&self) -> String {
+        let mut p = String::new();
+        if let Some(instr) = &self.instructions {
+            p.push_str(&format!("# Behavior (skills)\n{instr}\n\n"));
+        }
+        p.push_str(&format!("# Task: {}\n\n{}\n", self.title, self.description));
+        if !self.acceptance_criteria.is_empty() {
+            p.push_str("\nAcceptance criteria:\n");
+            for c in &self.acceptance_criteria {
+                p.push_str(&format!("- {c}\n"));
+            }
+        }
+        if let Some(ctx) = &self.context {
+            if ctx != "design" {
+                p.push_str(&format!("\nContext: {ctx}\n"));
+            }
+        }
+        p
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DispatchOutcome {
     Accepted { run_id: String },
@@ -40,4 +65,33 @@ pub trait AgentExecutor: Send + Sync {
         spec: &WorkSpec,
         sink: &dyn EventSink,
     ) -> Result<DispatchOutcome, ExecError>;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn spec() -> WorkSpec {
+        WorkSpec {
+            attempt_id: "a".into(),
+            decomposition_id: "d".into(),
+            task_id: "t".into(),
+            title: "login".into(),
+            description: "do it".into(),
+            acceptance_criteria: vec!["c1".into()],
+            executor: ExecutorKind::ClaudeCode,
+            context: Some("design".into()),
+            instructions: Some("be careful".into()),
+            target_runtime: None,
+        }
+    }
+
+    #[test]
+    fn prompt_renders_instructions_task_criteria_and_skips_design_context() {
+        let p = spec().to_prompt();
+        assert!(p.contains("# Behavior (skills)\nbe careful"));
+        assert!(p.contains("# Task: login"));
+        assert!(p.contains("- c1"));
+        assert!(!p.contains("Context: design"));
+    }
 }
