@@ -347,7 +347,7 @@ pub fn normalize_agent(t: &str) -> R<String> {
         "codebuddy" | "code_buddy" => Ok("CODEBUDDY".into()),
         "deepcode" | "deep_code" => Ok("DEEPCODE".into()),
         other => Err(format!(
-            "unknown agent type: {other} (supported: claude-code | codex | opencode | codebuddy | deepcode)"
+            "unknown agent type: {other} (supported: claude-code | codex | opencode | codebuddy)"
         )
         .into()),
     }
