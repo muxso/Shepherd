@@ -186,6 +186,22 @@ cargo clippy --workspace -- -D warnings
 
 可插拔 AI 触点还有若干进阶/懒读开关:`SHEPHERD_AGENT_URL` / `SHEPHERD_AGENT_CMD` / `SHEPHERD_AGENT_ASYNC`(执行者路由)、`SHEPHERD_LLM_URL`、`SHEPHERD_PLANNER_URL`、`SHEPHERD_JUDGE_URL`、`SHEPHERD_MAX_REVISIONS`。默认全都无需设置。
 
+#### 5.1.1 验证门 Judge:Jev
+
+交付验证门(`Judge`)可以跑在 [Jev](https://learnjev.com)(TypeSafe 的快速类型化判断
+模型,只回答是/否概率,不生成文字)上,替代 LLM judge。配好 key 后,验证门会为每条
+验收标准发一个 `noul` 问题(单次请求),所有概率都达到阈值才判过。
+
+| 变量 | 默认 | 含义 |
+|---|---|---|
+| `SHEPHERD_JEV_API_KEY` | *(缺省回退 `TYPESAFE_API_KEY`)* | TypeSafe API key——设了即启用 Jev judge(优先级高于 LLM judge) |
+| `SHEPHERD_JEV_URL` | `https://api.typesafe.ai/v1/systemone` | Jev System One 端点 |
+| `SHEPHERD_JEV_MODEL` | `jev-latest` | Jev 模型别名 |
+| `SHEPHERD_JEV_THRESHOLD` | `0.8` | 每条标准的最低 `noul` 通过概率 |
+
+失败一律 fail-closed:任何 HTTP/解析错误都判为不通过,即 Jev 配置坏了会阻断交付,
+而不是静默放行。
+
 ### 5.2 Agent-runtime(`agent-runtime`)
 
 | 变量 | 默认 | 含义 |
