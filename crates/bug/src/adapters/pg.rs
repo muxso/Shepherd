@@ -45,7 +45,7 @@ fn json_to_fields(v: &serde_json::Value) -> BTreeMap<String, String> {
 }
 
 const BUG_COLS: &str = "id, project_id, title, status, deleted, created_at, created_by, \
-     severity, handler, updated_by, updated_at::text AS updated_at, custom_fields";
+     severity, handler, description, updated_by, updated_at::text AS updated_at, custom_fields";
 
 fn row_to_bug(row: &sqlx::postgres::PgRow) -> Result<Bug, RepoError> {
     let custom: serde_json::Value = row.try_get("custom_fields").map_err(map_err)?;
@@ -59,6 +59,7 @@ fn row_to_bug(row: &sqlx::postgres::PgRow) -> Result<Bug, RepoError> {
         created_by: row.try_get("created_by").map_err(map_err)?,
         severity: row.try_get("severity").map_err(map_err)?,
         handler: row.try_get("handler").map_err(map_err)?,
+        description: row.try_get("description").map_err(map_err)?,
         updated_by: row.try_get("updated_by").map_err(map_err)?,
         updated_at: row.try_get("updated_at").map_err(map_err)?,
         custom_fields: json_to_fields(&custom),
@@ -108,8 +109,8 @@ impl BugRepository for PgBugRepository {
         // updated_by/updated_at seed from the creator so the audit pair is never empty.
         let row = sqlx::query(&format!(
             "INSERT INTO ms_bug (project_id, title, status, created_by, custom_fields, \
-             severity, handler, updated_by, updated_at) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $4, now()) RETURNING {BUG_COLS}"
+             severity, handler, description, updated_by, updated_at) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $4, now()) RETURNING {BUG_COLS}"
         ))
         .bind(&new_bug.project_id)
         .bind(&new_bug.title)
@@ -118,6 +119,7 @@ impl BugRepository for PgBugRepository {
         .bind(fields_to_json(&new_bug.custom_fields))
         .bind(&new_bug.severity)
         .bind(&new_bug.handler)
+        .bind(&new_bug.description)
         .fetch_one(&self.pool)
         .await
         .map_err(map_err)?;
@@ -171,10 +173,12 @@ impl BugRepository for PgBugRepository {
         title: &str,
         severity: Option<&str>,
         handler: Option<&str>,
+        description: Option<&str>,
         operator: Option<&str>,
     ) -> Result<Option<Bug>, RepoError> {
         let row = sqlx::query(&format!(
             "UPDATE ms_bug SET title = $2, severity = $3, handler = $4, \
+             description = COALESCE($6, description), \
              updated_by = $5, updated_at = now() \
              WHERE id = $1 AND deleted = false RETURNING {BUG_COLS}"
         ))
@@ -183,6 +187,7 @@ impl BugRepository for PgBugRepository {
         .bind(severity)
         .bind(handler)
         .bind(operator)
+        .bind(description)
         .fetch_optional(&self.pool)
         .await
         .map_err(map_err)?;
@@ -368,7 +373,7 @@ mod tests {
 
         // Meta update replaces severity/handler and stamps the operator.
         let updated = repo
-            .update_meta(&bug.id, "login crash (modified)", Some("P0"), None, Some("dave"))
+            .update_meta(&bug.id, "login crash (modified)", Some("P0"), None, None, Some("dave"))
             .await
             .expect("meta")
             .expect("some");
@@ -376,7 +381,11 @@ mod tests {
         assert_eq!(updated.severity.as_deref(), Some("P0"));
         assert_eq!(updated.handler, None);
         assert_eq!(updated.updated_by.as_deref(), Some("dave"));
-        assert!(repo.update_meta("ghost", "x", None, None, None).await.expect("meta").is_none());
+        assert!(repo
+            .update_meta("ghost", "x", None, None, None, None)
+            .await
+            .expect("meta")
+            .is_none());
 
         // Full replacement; empty map clears all.
         repo.set_custom_fields(&bug.id, &cf(&[("env", "prod")]), Some("erin"))

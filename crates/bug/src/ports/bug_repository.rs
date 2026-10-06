@@ -31,14 +31,16 @@ pub trait BugRepository: Send + Sync {
     ) -> Result<(), RepoError>;
 
     /// Updates title/severity/handler (severity/handler are full replacements,
-    /// None clears) and stamps updated_by/updated_at. Returns the updated bug,
-    /// or None when it doesn't exist.
+    /// None clears) and the markdown description (None keeps the current value,
+    /// Some sets it, including an empty string to clear). Stamps updated_by/
+    /// updated_at. Returns the updated bug, or None when it doesn't exist.
     async fn update_meta(
         &self,
         id: &str,
         title: &str,
         severity: Option<&str>,
         handler: Option<&str>,
+        description: Option<&str>,
         operator: Option<&str>,
     ) -> Result<Option<Bug>, RepoError>;
 

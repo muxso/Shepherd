@@ -187,6 +187,23 @@ All server start-up switches are consolidated into a typed config (`crates/serve
 
 Advanced/lazy-read switches also exist for the pluggable AI touchpoints — `SHEPHERD_AGENT_URL` / `SHEPHERD_AGENT_CMD` / `SHEPHERD_AGENT_ASYNC` (executor routing), `SHEPHERD_LLM_URL`, `SHEPHERD_PLANNER_URL`, `SHEPHERD_JUDGE_URL`, `SHEPHERD_MAX_REVISIONS`. Defaults need none of them.
 
+#### 5.1.1 Verification judge: Jev
+
+The delivery verification gate (`Judge`) can run on [Jev](https://learnjev.com), TypeSafe's
+fast typed-judgment model (yes/no probability answers, no prose) instead of an LLM.
+Set the key and the gate asks one `noul` question per acceptance criterion in a single
+call; it passes only when every probability reaches the threshold.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `SHEPHERD_JEV_API_KEY` | *(falls back to `TYPESAFE_API_KEY`)* | TypeSafe API key — presence enables the Jev judge (takes priority over the LLM judge) |
+| `SHEPHERD_JEV_URL` | `https://api.typesafe.ai/v1/systemone` | Jev System One endpoint |
+| `SHEPHERD_JEV_MODEL` | `jev-latest` | Jev model alias |
+| `SHEPHERD_JEV_THRESHOLD` | `0.8` | Minimum `noul` probability per criterion to pass |
+
+Failures fail closed: any HTTP/parse error returns a not-passed verdict, so a broken
+Jev setup blocks delivery instead of silently passing it.
+
 ### 5.2 Agent-runtime (`agent-runtime`)
 
 | Variable | Default | Meaning |

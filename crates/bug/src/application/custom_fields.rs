@@ -55,7 +55,7 @@ mod tests {
 
     async fn seed_bug(repo: &InMemoryBugRepository) -> String {
         CreateBugUseCase::new(Arc::new(repo.clone()))
-            .execute("p1", "boom", "NEW", None, None, None, &fields(&[("severity", "P1")]))
+            .execute("p1", "boom", "NEW", None, None, None, None, &fields(&[("severity", "P1")]))
             .await
             .expect("seed")
             .id

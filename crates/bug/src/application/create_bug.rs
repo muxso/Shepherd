@@ -40,6 +40,7 @@ impl CreateBugUseCase {
         created_by: Option<&str>,
         severity: Option<&str>,
         handler: Option<&str>,
+        description: Option<&str>,
         custom_fields: &BTreeMap<String, String>,
     ) -> Result<Bug, CreateBugError> {
         let custom_fields = normalize_custom_fields(custom_fields)?;
@@ -48,6 +49,7 @@ impl CreateBugUseCase {
             .with_created_by(created_by)
             .with_severity(severity)
             .with_handler(normalize_handler(handler))
+            .with_description(description.map(|s| s.to_string()))
             .with_custom_fields(custom_fields);
 
         let flow = self.repo.status_flow(project_id).await?;
@@ -71,7 +73,7 @@ mod tests {
         let repo = InMemoryBugRepository::with_default_flow("p1");
         let uc = CreateBugUseCase::new(Arc::new(repo));
         let bug = uc
-            .execute("p1", "login crash", "NEW", Some("alice"), None, None, &BTreeMap::new())
+            .execute("p1", "login crash", "NEW", Some("alice"), None, None, None, &BTreeMap::new())
             .await
             .expect("ok");
         assert_eq!(bug.status, "NEW");
@@ -95,6 +97,7 @@ mod tests {
                 None,
                 Some(" p0 "),
                 Some(" bob "),
+                None,
                 &BTreeMap::new(),
             )
             .await
@@ -108,7 +111,7 @@ mod tests {
         let repo = InMemoryBugRepository::with_default_flow("p1");
         let uc = CreateBugUseCase::new(Arc::new(repo));
         let err = uc
-            .execute("p1", "x", "NEW", None, Some("SEV1"), None, &BTreeMap::new())
+            .execute("p1", "x", "NEW", None, Some("SEV1"), None, None, &BTreeMap::new())
             .await
             .unwrap_err();
         assert_eq!(err, CreateBugError::Validation(BugError::InvalidSeverity("SEV1".into())));
@@ -119,12 +122,15 @@ mod tests {
         let repo = InMemoryBugRepository::with_default_flow("p1");
         let uc = CreateBugUseCase::new(Arc::new(repo));
         let raw = BTreeMap::from([(" severity ".to_string(), "P0".to_string())]);
-        let bug = uc.execute("p1", "login crash", "NEW", None, None, None, &raw).await.expect("ok");
+        let bug =
+            uc.execute("p1", "login crash", "NEW", None, None, None, None, &raw).await.expect("ok");
         assert_eq!(bug.custom_fields, BTreeMap::from([("severity".to_string(), "P0".to_string())]));
         // Blank key is a validation error.
         let bad = BTreeMap::from([("  ".to_string(), "v".to_string())]);
         assert_eq!(
-            uc.execute("p1", "crashed again", "NEW", None, None, None, &bad).await.unwrap_err(),
+            uc.execute("p1", "crashed again", "NEW", None, None, None, None, &bad)
+                .await
+                .unwrap_err(),
             CreateBugError::Validation(BugError::EmptyCustomFieldKey)
         );
     }
@@ -133,8 +139,10 @@ mod tests {
     async fn rejects_unknown_initial_status() {
         let repo = InMemoryBugRepository::with_default_flow("p1");
         let uc = CreateBugUseCase::new(Arc::new(repo));
-        let err =
-            uc.execute("p1", "x", "GHOST", None, None, None, &BTreeMap::new()).await.unwrap_err();
+        let err = uc
+            .execute("p1", "x", "GHOST", None, None, None, None, &BTreeMap::new())
+            .await
+            .unwrap_err();
         assert_eq!(err, CreateBugError::Validation(BugError::UnknownStatus("GHOST".into())));
     }
 
@@ -142,8 +150,10 @@ mod tests {
     async fn rejects_blank_title() {
         let repo = InMemoryBugRepository::with_default_flow("p1");
         let uc = CreateBugUseCase::new(Arc::new(repo));
-        let err =
-            uc.execute("p1", "  ", "NEW", None, None, None, &BTreeMap::new()).await.unwrap_err();
+        let err = uc
+            .execute("p1", "  ", "NEW", None, None, None, None, &BTreeMap::new())
+            .await
+            .unwrap_err();
         assert_eq!(err, CreateBugError::Validation(BugError::EmptyTitle));
     }
 }
