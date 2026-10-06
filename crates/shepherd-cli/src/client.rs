@@ -345,8 +345,9 @@ pub fn normalize_agent(t: &str) -> R<String> {
         "opencode" => Ok("OPENCODE".into()),
         // The brand is one word, but the claude-code spelling invites code-buddy; accept both.
         "codebuddy" | "code_buddy" => Ok("CODEBUDDY".into()),
+        "deepcode" | "deep_code" => Ok("DEEPCODE".into()),
         other => Err(format!(
-            "unknown agent type: {other} (supported: claude-code | codex | opencode | codebuddy)"
+            "unknown agent type: {other} (supported: claude-code | codex | opencode | codebuddy | deepcode)"
         )
         .into()),
     }

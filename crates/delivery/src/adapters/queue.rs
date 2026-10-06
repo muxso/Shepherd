@@ -22,7 +22,7 @@ use crate::ports::{
     RuntimeInfo, WorkQueue, WorkSpec,
 };
 
-const KNOWN_CAPS: [ExecutorKind; 4] = ExecutorKind::ALL;
+const KNOWN_CAPS: [ExecutorKind; 5] = ExecutorKind::ALL;
 
 #[derive(Default)]
 pub struct InMemoryWorkQueue {

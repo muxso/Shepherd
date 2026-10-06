@@ -25,7 +25,7 @@ const ACKMAP: &str = "fleet:ackmap";
 const RT_INDEX: &str = "fleet:rt:index";
 const SEP: char = '\u{1f}';
 
-fn known_caps() -> [ExecutorKind; 4] {
+fn known_caps() -> [ExecutorKind; 5] {
     ExecutorKind::ALL
 }
 
