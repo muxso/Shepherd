@@ -8,7 +8,7 @@ use crate::ports::{
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DeliveryProgress {
     Running,
-    Delivered { deliverable: DeliverableView },
+    Delivered { deliverable: DeliverableView, executor: String },
     Failed,
 }
 
@@ -71,7 +71,7 @@ impl DeliveryFeedbackOrchestrator {
                     self.task.task_criteria(decomposition_id, task_id).await.unwrap_or_default();
                 (Some(TaskTarget::Failed), Some(false), None, criteria)
             }
-            DeliveryProgress::Delivered { deliverable } => {
+            DeliveryProgress::Delivered { deliverable, executor } => {
                 let _ =
                     self.task.advance_task(decomposition_id, task_id, TaskTarget::Delivered).await;
                 let criteria = self.task.task_criteria(decomposition_id, task_id).await?;
@@ -80,7 +80,14 @@ impl DeliveryFeedbackOrchestrator {
                 if let Some(reviser) = &self.reviser {
                     while !v.passed && revisions < self.max_revisions {
                         match reviser
-                            .revise(decomposition_id, task_id, &criteria, &current, &v.reason)
+                            .revise(
+                                decomposition_id,
+                                task_id,
+                                &criteria,
+                                &current,
+                                &v.reason,
+                                &executor,
+                            )
                             .await
                         {
                             Ok(next) => {
@@ -229,7 +236,10 @@ mod tests {
             .on_progress(
                 "d1",
                 "t1",
-                DeliveryProgress::Delivered { deliverable: dv("branch:x", "done") },
+                DeliveryProgress::Delivered {
+                    deliverable: dv("branch:x", "done"),
+                    executor: "CLAUDE_CODE".into(),
+                },
             )
             .await
             .expect("ok");
@@ -259,9 +269,16 @@ mod tests {
         });
         let orch = DeliveryFeedbackOrchestrator::new(task, verif.clone(), Arc::new(AcceptAllJudge));
 
-        orch.on_progress("d1", "t1", DeliveryProgress::Delivered { deliverable: dv("b", "d") })
-            .await
-            .expect("ok");
+        orch.on_progress(
+            "d1",
+            "t1",
+            DeliveryProgress::Delivered {
+                deliverable: dv("b", "d"),
+                executor: "CLAUDE_CODE".into(),
+            },
+        )
+        .await
+        .expect("ok");
         let linked = verif.linked.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         assert_eq!(linked.len(), 1);
         assert_eq!(linked[0], ("v1/t1".to_string(), vec!["login success".to_string()]));
@@ -283,7 +300,10 @@ mod tests {
             .on_progress(
                 "d1",
                 "t1",
-                DeliveryProgress::Delivered { deliverable: dv("branch:x", "") },
+                DeliveryProgress::Delivered {
+                    deliverable: dv("branch:x", ""),
+                    executor: "CLAUDE_CODE".into(),
+                },
             )
             .await
             .expect("ok");
@@ -310,7 +330,14 @@ mod tests {
         });
         let orch = DeliveryFeedbackOrchestrator::new(task.clone(), verif, Arc::new(AcceptAllJudge));
         let out = orch
-            .on_progress("d1", "t1", DeliveryProgress::Delivered { deliverable: dv("", "") })
+            .on_progress(
+                "d1",
+                "t1",
+                DeliveryProgress::Delivered {
+                    deliverable: dv("", ""),
+                    executor: "CLAUDE_CODE".into(),
+                },
+            )
             .await
             .expect("ok");
         assert!(out.verdict.unwrap().passed);
@@ -338,6 +365,7 @@ mod tests {
             _c: &[String],
             _prev: &DeliverableView,
             _feedback: &str,
+            _executor: &str,
         ) -> Result<DeliverableView, OrchError> {
             let mut n = self.calls.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
             *n += 1;
@@ -365,7 +393,10 @@ mod tests {
             .on_progress(
                 "d1",
                 "t1",
-                DeliveryProgress::Delivered { deliverable: dv("branch:x", "") },
+                DeliveryProgress::Delivered {
+                    deliverable: dv("branch:x", ""),
+                    executor: "CLAUDE_CODE".into(),
+                },
             )
             .await
             .expect("ok");
@@ -407,7 +438,10 @@ mod tests {
             .on_progress(
                 "d1",
                 "t1",
-                DeliveryProgress::Delivered { deliverable: dv("branch:x", "") },
+                DeliveryProgress::Delivered {
+                    deliverable: dv("branch:x", ""),
+                    executor: "CLAUDE_CODE".into(),
+                },
             )
             .await
             .expect("ok");

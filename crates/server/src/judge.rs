@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::time::Duration;
 
 use async_trait::async_trait;
 use serde::Deserialize;
@@ -54,10 +55,18 @@ pub fn build_judge() -> Arc<dyn Judge> {
         Ok(url) if !url.trim().is_empty() => {
             let client = reqwest::Client::builder()
                 .no_proxy()
+                .timeout(Duration::from_secs(30))
+                .connect_timeout(Duration::from_secs(10))
                 .build()
                 .unwrap_or_else(|_| reqwest::Client::new());
             Arc::new(HttpJudge { client, url })
         }
-        _ => Arc::new(AcceptAllJudge),
+        _ => {
+            tracing::warn!(
+                "no verification judge configured (SHEPHERD_JEV_API_KEY / SHEPHERD_LLM_URL / \
+                 SHEPHERD_JUDGE_URL unset): the delivery gate will accept every deliverable"
+            );
+            Arc::new(AcceptAllJudge)
+        }
     }
 }
