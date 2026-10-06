@@ -117,6 +117,7 @@ fn backend_for(executor: &str, task_timeout: Duration) -> Arc<dyn CliAgentBacken
         "CODEX" => Arc::new(GenericCliBackend::codex(task_timeout)),
         "OPENCODE" => Arc::new(GenericCliBackend::opencode(task_timeout)),
         "CODEBUDDY" => Arc::new(GenericCliBackend::codebuddy(task_timeout)),
+        "DEEPCODE" => Arc::new(GenericCliBackend::deepcode(task_timeout)),
         _ => Arc::new(ClaudeBackend::new(task_timeout)),
     }
 }

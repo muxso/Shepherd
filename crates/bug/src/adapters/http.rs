@@ -109,6 +109,9 @@ struct BugResponse {
     /// Handler user id.
     #[serde(skip_serializing_if = "Option::is_none")]
     handler: Option<String>,
+    /// Markdown description body (defect details).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    description: Option<String>,
     /// Last mutator's user id (stamped on every mutation).
     #[serde(skip_serializing_if = "Option::is_none")]
     updated_by: Option<String>,
@@ -131,6 +134,7 @@ impl From<Bug> for BugResponse {
             created_by: b.created_by,
             severity: b.severity,
             handler: b.handler,
+            description: b.description,
             updated_by: b.updated_by,
             updated_at: b.updated_at,
             custom_fields: b.custom_fields,
@@ -148,6 +152,8 @@ struct CreateBugRequest {
     severity: Option<String>,
     /// Handler user id (optional).
     handler: Option<String>,
+    /// Markdown description body (optional).
+    description: Option<String>,
     /// Custom field values, key → string value (max 32 keys, key ≤ 64 chars, value ≤ 2000 chars).
     #[serde(default)]
     custom_fields: BTreeMap<String, String>,
@@ -171,6 +177,7 @@ async fn create_bug(
             Some(&user.user_id),
             req.severity.as_deref(),
             req.handler.as_deref(),
+            req.description.as_deref(),
             &req.custom_fields,
         )
         .await
@@ -261,6 +268,8 @@ struct UpdateBugRequest {
     severity: Option<String>,
     /// Handler user id; absent clears.
     handler: Option<String>,
+    /// Markdown description body; absent keeps the current value.
+    description: Option<String>,
 }
 
 /// Updates title/severity/handler and stamps updated_by/updated_at with the caller.
@@ -281,6 +290,7 @@ async fn update_bug(
             req.title.as_deref(),
             req.severity.as_deref(),
             req.handler.as_deref(),
+            req.description.as_deref(),
             Some(&user.user_id),
         )
         .await

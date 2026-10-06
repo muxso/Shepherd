@@ -22,7 +22,7 @@ use crate::ports::{
     RuntimeInfo, WorkQueue, WorkSpec,
 };
 
-const KNOWN_CAPS: [ExecutorKind; 4] = ExecutorKind::ALL;
+const KNOWN_CAPS: &[ExecutorKind] = ExecutorKind::ALL;
 
 #[derive(Default)]
 pub struct InMemoryWorkQueue {
@@ -94,8 +94,8 @@ impl WorkQueue for InMemoryWorkQueue {
     async fn stats(&self) -> Vec<QueueStat> {
         let q = self.inner.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         KNOWN_CAPS
-            .into_iter()
-            .map(|k| QueueStat {
+            .iter()
+            .map(|&k| QueueStat {
                 executor: k,
                 ready: q.iter().filter(|s| s.executor == k).count() as u64,
                 in_flight: 0,

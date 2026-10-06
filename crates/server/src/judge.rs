@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::time::Duration;
 
 use async_trait::async_trait;
 use serde::Deserialize;
@@ -41,6 +42,12 @@ impl Judge for HttpJudge {
 }
 
 pub fn build_judge() -> Arc<dyn Judge> {
+    // Jev first: it is the cheap typed-judgment alternative to the LLM judge.
+    // Setting SHEPHERD_JEV_API_KEY (or TYPESAFE_API_KEY) routes the verification
+    // gate to Jev even when SHEPHERD_LLM_URL is also set for planner/PRD use.
+    if let Some(j) = crate::jev::JevJudge::from_env() {
+        return Arc::new(j);
+    }
     if let Some(j) = crate::llm::judge() {
         return j;
     }
@@ -48,10 +55,18 @@ pub fn build_judge() -> Arc<dyn Judge> {
         Ok(url) if !url.trim().is_empty() => {
             let client = reqwest::Client::builder()
                 .no_proxy()
+                .timeout(Duration::from_secs(30))
+                .connect_timeout(Duration::from_secs(10))
                 .build()
                 .unwrap_or_else(|_| reqwest::Client::new());
             Arc::new(HttpJudge { client, url })
         }
-        _ => Arc::new(AcceptAllJudge),
+        _ => {
+            tracing::warn!(
+                "no verification judge configured (SHEPHERD_JEV_API_KEY / SHEPHERD_LLM_URL / \
+                 SHEPHERD_JUDGE_URL unset): the delivery gate will accept every deliverable"
+            );
+            Arc::new(AcceptAllJudge)
+        }
     }
 }

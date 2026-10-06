@@ -36,29 +36,14 @@ impl LocalCommandAgentExecutor {
         match kind {
             ExecutorKind::ClaudeCode => &self.claude_code,
             ExecutorKind::Codex => &self.codex,
-            // The local path only configures two argvs; OpenCode/CodeBuddy deliberately
-            // fall back to the claude argv (real routing lives in crates/agent-runtime).
-            ExecutorKind::OpenCode | ExecutorKind::CodeBuddy => &self.claude_code,
+            // The local path only configures two argvs; OpenCode/CodeBuddy/DeepCode
+            // deliberately fall back to the claude argv (real routing lives in
+            // crates/agent-runtime).
+            ExecutorKind::OpenCode | ExecutorKind::CodeBuddy | ExecutorKind::DeepCode => {
+                &self.claude_code
+            }
         }
     }
-}
-
-fn spec_to_prompt(spec: &WorkSpec) -> String {
-    let mut p = String::new();
-    if let Some(instr) = &spec.instructions {
-        p.push_str(&format!("# Behavior (skills)\n{instr}\n\n"));
-    }
-    p.push_str(&format!("# Task: {}\n\n{}\n", spec.title, spec.description));
-    if !spec.acceptance_criteria.is_empty() {
-        p.push_str("\nAcceptance criteria:\n");
-        for c in &spec.acceptance_criteria {
-            p.push_str(&format!("- {c}\n"));
-        }
-    }
-    if let Some(ctx) = &spec.context {
-        p.push_str(&format!("\nContext: {ctx}\n"));
-    }
-    p
 }
 
 enum Line {
@@ -115,7 +100,7 @@ impl AgentExecutor for LocalCommandAgentExecutor {
                 .map_err(|e| ExecError::Backend(format!("spawn {program}: {e}")))?;
             if let Some(mut stdin) = child.stdin.take() {
                 stdin
-                    .write_all(spec_to_prompt(spec).as_bytes())
+                    .write_all(spec.to_prompt().as_bytes())
                     .await
                     .map_err(|e| ExecError::Backend(e.to_string()))?;
             }
@@ -136,7 +121,7 @@ impl AgentExecutor for LocalCommandAgentExecutor {
 
         if let Some(mut stdin) = child.stdin.take() {
             stdin
-                .write_all(spec_to_prompt(spec).as_bytes())
+                .write_all(spec.to_prompt().as_bytes())
                 .await
                 .map_err(|e| ExecError::Backend(e.to_string()))?;
             // stdin drops here, sending EOF to the child (line reads would block forever otherwise)

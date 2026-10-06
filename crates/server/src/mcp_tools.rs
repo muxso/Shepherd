@@ -95,6 +95,7 @@ impl<S: Send + Sync> FromRequestParts<S> for SessionHeader {
 }
 
 use delivery::application::DeliveryService;
+use delivery::domain::ExecutorKind;
 use requirement::application::{CreateRequirementUseCase, RequirementCmdError, RequirementService};
 use skill::application::{CreateSkillUseCase, SkillService};
 use task::application::{BreakdownUseCase, CreateDecompositionUseCase, TaskService};
@@ -485,7 +486,7 @@ pub fn router(
         .requires("TASK", "ADD"))
         .tool(Tool::new(
             "shepherd_dispatch_delivery",
-            "把任务派发给 AI 执行者(executor: CLAUDE_CODE | CODEX | OPENCODE | CODEBUDDY);自动驱动任务、过验证门并回灌验证。\
+            "把任务派发给 AI 执行者(executor 枚举见 schema);自动驱动任务、过验证门并回灌验证。\
              可直接传 skillIds(+projectId)自动组合行为规范注入,无需先调 compose。",
             obj(
                 json!({
@@ -494,7 +495,10 @@ pub fn router(
                     "title": { "type": "string" },
                     "description": { "type": "string" },
                     "acceptanceCriteria": { "type": "array", "items": { "type": "string" } },
-                    "executor": { "type": "string", "enum": ["CLAUDE_CODE", "CODEX", "OPENCODE", "CODEBUDDY"] },
+                    "executor": {
+                        "type": "string",
+                        "enum": ExecutorKind::ALL.iter().map(|k| json!(k.as_str())).collect::<Vec<_>>()
+                    },
                     "projectId": { "type": "string", "description": "skillIds 非空时必填(用于组合)" },
                     "skillIds": { "type": "array", "items": { "type": "string" }, "description": "可选:自动组合这些 skill 为行为规范" },
                     "instructions": { "type": "string", "description": "可选:显式行为规范(与 skillIds 组合结果合并)" }

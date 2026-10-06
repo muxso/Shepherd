@@ -3,7 +3,7 @@
 简体中文 · [English](EXECUTORS.md)
 
 介绍如何在 `agent-runtime` 下运行各家 AI 执行者(Claude Code / Codex / OpenCode /
-CodeBuddy)。机群架构与服务端配置见 [USAGE.zh-CN.md §7](./USAGE.zh-CN.md),
+CodeBuddy / DeepCode)。机群架构与服务端配置见 [USAGE.zh-CN.md §7](./USAGE.zh-CN.md),
 镜像构建与部署见 [DEPLOYMENT.zh-CN.md](./DEPLOYMENT.zh-CN.md)。
 
 - [派发如何到达 CLI](#派发如何到达-cli)
@@ -12,6 +12,7 @@ CodeBuddy)。机群架构与服务端配置见 [USAGE.zh-CN.md §7](./USAGE.zh-C
 - [Codex](#codex)
 - [OpenCode](#opencode)
 - [CodeBuddy](#codebuddy)
+- [DeepCode](#deepcode)
 - [一个 runtime 承接多种执行者](#一个-runtime-承接多种执行者)
 - [mock 执行者(无需 CLI)](#mock-执行者无需-cli)
 - [Windows](#windows)
@@ -26,7 +27,7 @@ CodeBuddy)。机群架构与服务端配置见 [USAGE.zh-CN.md §7](./USAGE.zh-C
 ## 派发如何到达 CLI
 
 每个交付尝试都带 `executor` 类型(`CLAUDE_CODE` / `CODEX` / `OPENCODE` /
-`CODEBUDDY`)。服务端按类型入队;`agent-runtime` 以 `SHEPHERD_CAPS` 长轮询,
+`CODEBUDDY` / `DEEPCODE`)。服务端按类型入队;`agent-runtime` 以 `SHEPHERD_CAPS` 长轮询,
 只认领自己声明过的类型。认领后 runtime 在独立 git worktree 中拉起对应 CLI,
 把产生的改动快照成 commit 并回报。
 
@@ -142,6 +143,20 @@ SHEPHERD_CAPS=CODEBUDDY AGENT_WORKDIR=/repo … ./agent-runtime
 用 `CODEBUDDY_CMD` 覆盖,例如任务需要跑 shell 时放宽权限:
 `CODEBUDDY_CMD="codebuddy -p --permission-mode bypassPermissions"`。
 
+## DeepCode
+
+通用后端。默认调用 `deepcode exec --json "<prompt>"` —— `--json` 让输出保持
+机器可读,便于回填结果摘要。
+
+```bash
+deepcode --version
+
+SHEPHERD_CAPS=DEEPCODE AGENT_WORKDIR=/repo … ./agent-runtime
+```
+
+用 `DEEPCODE_CMD` 覆盖,例如 headless 下需要放开文件编辑权限时:
+`DEEPCODE_CMD="deepcode exec --access full-access --json"`。
+
 ## 一个 runtime 承接多种执行者
 
 单个 runtime 可以声明多种类型——全部列出,并保证对应 CLI 都装好且已登录:
@@ -160,7 +175,7 @@ runtime(能力任意组合)。服务端设了 `SHEPHERD_FLEET_REDIS` 时,跨机 
 CLI——适合在装 CLI 之前先冒烟验证派发链路。
 
 ```bash
-AGENT_MOCK=1 SHEPHERD_CAPS=CLAUDE_CODE,CODEX,OPENCODE,CODEBUDDY … ./agent-runtime
+AGENT_MOCK=1 SHEPHERD_CAPS=CLAUDE_CODE,CODEX,OPENCODE,CODEBUDDY,DEEPCODE … ./agent-runtime
 ```
 
 ## Windows
@@ -173,7 +188,7 @@ runtime 可在 Windows 原生运行(MSVC 工具链:`cargo build --release -p age
   (`codex.exe` 这类原生二进制优先);`CLAUDE_BIN` / `*_CMD` 里写的显式路径原样使用。
   `CLAUDE_BIN=D:\nvm4w\nodejs\claude.cmd` 没问题:Claude 后端的 prompt 走 stdin,
   经 cmd.exe 一跳无害。
-- **通用后端(codebuddy/codex/opencode)不能走 `.cmd` 垫片**:它们把 prompt 作为
+- **通用后端(codebuddy/codex/opencode/deepcode)不能走 `.cmd` 垫片**:它们把 prompt 作为
   命令行参数传,prompt 必含换行,而 Rust 拒绝给批处理文件传含换行的参数
   (cmd.exe 无法安全携带)。绕开 cmd.exe,直接用 node 调包入口——先
   `type codebuddy.cmd` 看垫片真正调用什么,然后照抄,如
@@ -235,7 +250,7 @@ shepherd dispatch --decomp d1 --task t1 --executor CODEBUDDY
 # 或先绑定默认:shepherd agent connect --kind codebuddy
 ```
 
-MCP 工具 `shepherd_dispatch_delivery` 同样接受这四种类型。
+MCP 工具 `shepherd_dispatch_delivery` 同样接受这五种类型。
 
 ### 定向到具体某台 runtime
 
@@ -295,5 +310,5 @@ cargo r -p pool-runner
 |---|---|
 | 任务一直排队(`ready` 增长) | 没有在线 runtime 声明该类型——核对 `SHEPHERD_CAPS` 与任务 `executor`,再看 `GET /agent/runtime` 的在线状态 |
 | 交付显示"无代码变动" | CLI 跑了但拒绝改文件(权限模式),或提示词本身没要求改文件——看交付摘要,里面是 CLI 的原始输出 |
-| 事件里报 spawn 错误 | CLI 不在 runtime 进程的 `PATH` 上——设 `CLAUDE_BIN` / `CODEX_CMD` / `OPENCODE_CMD` / `CODEBUDDY_CMD` |
+| 事件里报 spawn 错误 | CLI 不在 runtime 进程的 `PATH` 上——设 `CLAUDE_BIN` / `CODEX_CMD` / `OPENCODE_CMD` / `CODEBUDDY_CMD` / `DEEPCODE_CMD` |
 | 任务超时失败 | 调大 `AGENT_TASK_TIMEOUT_SECS`;通用后端到点会被整进程组杀掉 |

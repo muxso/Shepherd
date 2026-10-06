@@ -3,7 +3,7 @@ use clap::Subcommand;
 
 #[derive(Subcommand)]
 pub enum AgentCmd {
-    /// Connect an AI executor (claude-code | codex | opencode | codebuddy) and save it as the dispatch default.
+    /// Connect an AI executor (claude-code | codex | opencode | codebuddy | deepcode) and save it as the dispatch default.
     Connect {
         #[arg(long = "type")]
         kind: String,

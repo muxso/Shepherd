@@ -89,6 +89,8 @@ pub struct NewBug {
     pub severity: Option<String>,
     /// Handler user id.
     pub handler: Option<String>,
+    /// Markdown description body (defect details); blank → None.
+    pub description: Option<String>,
     /// Validated custom field values (see `normalize_custom_fields`); field definitions
     /// live in the project template.
     pub custom_fields: BTreeMap<String, String>,
@@ -106,6 +108,7 @@ impl NewBug {
             created_by: None,
             severity: None,
             handler: None,
+            description: None,
             custom_fields: BTreeMap::new(),
         })
     }
@@ -123,6 +126,12 @@ impl NewBug {
 
     pub fn with_handler(mut self, handler: Option<String>) -> Self {
         self.handler = handler;
+        self
+    }
+
+    /// Attaches a markdown description; blank text collapses to None.
+    pub fn with_description(mut self, description: Option<String>) -> Self {
+        self.description = description.map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
         self
     }
 
@@ -146,6 +155,8 @@ pub struct Bug {
     pub severity: Option<String>,
     /// Handler user id.
     pub handler: Option<String>,
+    /// Markdown description body (defect details).
+    pub description: Option<String>,
     /// Last mutator's user id; stamped by every mutation, seeded from created_by on insert.
     pub updated_by: Option<String>,
     /// Last mutation time as timestamptz text (adapter-formatted).
@@ -198,6 +209,7 @@ mod tests {
             created_by: None,
             severity: None,
             handler: None,
+            description: None,
             updated_by: None,
             updated_at: None,
             custom_fields: BTreeMap::new(),

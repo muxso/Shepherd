@@ -22,7 +22,7 @@ you file a requirement
         │                        │ dispatch
         ▼                        ▼
                           FLEET DISPATCH ──► agent-runtime executor
-                          (pull / long-poll)   (claude / codex / opencode / codebuddy)
+                          (pull / long-poll)   (claude / codex / opencode / codebuddy / deepcode)
                                  │ runs in a git worktree
                                  ▼
                           deliverable (diff / PR)
@@ -61,7 +61,7 @@ Company AI tools (Claude Code, Codex, …) run on internal dev machines or CI �
 | Quick start (Docker) | Docker + Docker Compose v2 |
 | From-source dev | Rust (stable, edition 2021; CI uses `rust:1.86`), Node.js 18+, a PostgreSQL 16 instance |
 | Multi-host fleet | Redis 7 |
-| Real AI executors | `git` plus the agent CLIs on `PATH` (`claude` / `codex` / `opencode` / `codebuddy`) |
+| Real AI executors | `git` plus the agent CLIs on `PATH` (`claude` / `codex` / `opencode` / `codebuddy` / `deepcode`) |
 
 PostgreSQL is required; the server **auto-applies migrations on startup**. Redis is required **only** for the multi-host fleet.
 
@@ -189,6 +189,23 @@ All server start-up switches are consolidated into a typed config (`crates/serve
 
 Advanced/lazy-read switches also exist for the pluggable AI touchpoints — `SHEPHERD_AGENT_URL` / `SHEPHERD_AGENT_CMD` / `SHEPHERD_AGENT_ASYNC` (executor routing), `SHEPHERD_LLM_URL`, `SHEPHERD_PLANNER_URL`, `SHEPHERD_JUDGE_URL`, `SHEPHERD_MAX_REVISIONS`. Defaults need none of them.
 
+#### 5.1.1 Verification judge: Jev
+
+The delivery verification gate (`Judge`) can run on [Jev](https://learnjev.com), TypeSafe's
+fast typed-judgment model (yes/no probability answers, no prose) instead of an LLM.
+Set the key and the gate asks one `noul` question per acceptance criterion in a single
+call; it passes only when every probability reaches the threshold.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `SHEPHERD_JEV_API_KEY` | *(falls back to `TYPESAFE_API_KEY`)* | TypeSafe API key — presence enables the Jev judge (takes priority over the LLM judge) |
+| `SHEPHERD_JEV_URL` | `https://api.typesafe.ai/v1/systemone` | Jev System One endpoint |
+| `SHEPHERD_JEV_MODEL` | `jev-latest` | Jev model alias |
+| `SHEPHERD_JEV_THRESHOLD` | `0.8` | Minimum `noul` probability per criterion to pass |
+
+Failures fail closed: any HTTP/parse error returns a not-passed verdict, so a broken
+Jev setup blocks delivery instead of silently passing it.
+
 ### 5.2 Agent-runtime (`agent-runtime`)
 
 | Variable | Default | Meaning |
@@ -205,6 +222,7 @@ Advanced/lazy-read switches also exist for the pluggable AI touchpoints — `SHE
 | `CODEX_CMD` | `codex exec` | Codex CLI invocation |
 | `OPENCODE_CMD` | `opencode run` | OpenCode CLI invocation |
 | `CODEBUDDY_CMD` | `codebuddy -p --permission-mode acceptEdits` | CodeBuddy CLI invocation |
+| `DEEPCODE_CMD` | `deepcode exec --json` | DeepCode CLI invocation |
 
 ---
 
@@ -277,6 +295,7 @@ The runtime picks a backend per task by its `executor` kind, unless `AGENT_MOCK=
 | `CODEX` | generic CLI | `codex exec` (`CODEX_CMD`) |
 | `OPENCODE` | generic CLI | `opencode run` (`OPENCODE_CMD`) |
 | `CODEBUDDY` | generic CLI | `codebuddy -p --permission-mode acceptEdits` (`CODEBUDDY_CMD`) |
+| `DEEPCODE` | generic CLI | `deepcode exec --json` (`DEEPCODE_CMD`) |
 | any (with `AGENT_MOCK=1`) | mock — returns canned output | none |
 
 Real backends need `git` and the CLI on `PATH` (or pointed at via the override env). Per-executor run recipes (login, permission modes, dispatch examples) are in [EXECUTORS.md](./EXECUTORS.md). Adding a new backend means implementing one `CliAgentBackend` (`async fn execute(prompt, cwd, sink)`) and registering an enum variant — see `crates/agent-runtime/src/backend.rs`.
@@ -346,7 +365,7 @@ Both honour `SHEPHERD_BASE` (default `http://127.0.0.1:9180`) and `SHEPHERD_USER
 | Web console shows blank / API 404 in dev | Vite proxy target mismatch. The dev proxy points at `:9180`; bind the server there or set `SHEPHERD_API` to your server URL. |
 | Tasks never get claimed | Server not in fleet mode (`SHEPHERD_AGENT_FLEET=1`), no runtime online, or capability mismatch — check `SHEPHERD_CAPS` vs the task's executor kind, and `GET /agent/work/stats`. |
 | Multi-host runtimes can't share work | `SHEPHERD_FLEET_REDIS` not set (or not the same Redis) on all server replicas → each falls back to its own in-process queue. |
-| Real agent does nothing / errors spawning | CLI not on `PATH`; set `CLAUDE_BIN` / `CODEX_CMD` / `OPENCODE_CMD` / `CODEBUDDY_CMD`, or run with `AGENT_MOCK=1` to confirm the loop. |
+| Real agent does nothing / errors spawning | CLI not on `PATH`; set `CLAUDE_BIN` / `CODEX_CMD` / `OPENCODE_CMD` / `CODEBUDDY_CMD` / `DEEPCODE_CMD`, or run with `AGENT_MOCK=1` to confirm the loop. |
 | API batch-run stuck `RUNNING` with no results | `SHEPHERD_RUNNER=noop` is set (demo placeholder). Unset it to use the native runner. |
 | New migration not applied | Restart the server — migrations run on boot; a new migration file needs a rebuild. |
 | OIDC endpoint 404 | The provider is only registered when **both** id and secret env vars are set. |

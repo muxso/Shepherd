@@ -338,6 +338,7 @@ pub fn scaffold_files() -> Vec<(&'static str, &'static str)> {
     ]
 }
 
+// Keep in sync with delivery::ExecutorKind::ALL (crates/delivery/src/domain/delivery.rs).
 pub fn normalize_agent(t: &str) -> R<String> {
     match t.to_ascii_lowercase().replace('-', "_").as_str() {
         "claude_code" => Ok("CLAUDE_CODE".into()),
@@ -345,8 +346,9 @@ pub fn normalize_agent(t: &str) -> R<String> {
         "opencode" => Ok("OPENCODE".into()),
         // The brand is one word, but the claude-code spelling invites code-buddy; accept both.
         "codebuddy" | "code_buddy" => Ok("CODEBUDDY".into()),
+        "deepcode" | "deep_code" => Ok("DEEPCODE".into()),
         other => Err(format!(
-            "unknown agent type: {other} (supported: claude-code | codex | opencode | codebuddy)"
+            "unknown agent type: {other} (supported: claude-code | codex | opencode | codebuddy | deepcode)"
         )
         .into()),
     }

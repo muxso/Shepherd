@@ -2,7 +2,7 @@
 
 [简体中文](EXECUTORS.zh-CN.md) · English
 
-How to run each supported AI executor (Claude Code / Codex / OpenCode / CodeBuddy)
+How to run each supported AI executor (Claude Code / Codex / OpenCode / CodeBuddy / DeepCode)
 behind `agent-runtime`. For fleet architecture and server-side setup see
 [USAGE.md §7](./USAGE.md); for image builds and deployment see [DEPLOYMENT.md](./DEPLOYMENT.md).
 
@@ -12,6 +12,7 @@ behind `agent-runtime`. For fleet architecture and server-side setup see
 - [Codex](#codex)
 - [OpenCode](#opencode)
 - [CodeBuddy](#codebuddy)
+- [DeepCode](#deepcode)
 - [One runtime, multiple executors](#one-runtime-multiple-executors)
 - [Mock executor (no CLI)](#mock-executor-no-cli)
 - [Windows](#windows)
@@ -26,7 +27,7 @@ behind `agent-runtime`. For fleet architecture and server-side setup see
 ## How dispatch reaches a CLI
 
 Every delivery attempt carries an `executor` kind (`CLAUDE_CODE` / `CODEX` /
-`OPENCODE` / `CODEBUDDY`). The server enqueues the task per kind; an
+`OPENCODE` / `CODEBUDDY` / `DEEPCODE`). The server enqueues the task per kind; an
 `agent-runtime` long-polls with its `SHEPHERD_CAPS` and only claims kinds it
 declared. On claim, the runtime spawns the matching CLI in a dedicated git
 worktree, snapshots the resulting changes as a commit, and reports back.
@@ -150,6 +151,20 @@ SHEPHERD_CAPS=CODEBUDDY AGENT_WORKDIR=/repo … ./agent-runtime
 Override with `CODEBUDDY_CMD`, e.g. widen permissions for tasks that need to
 run shell commands: `CODEBUDDY_CMD="codebuddy -p --permission-mode bypassPermissions"`.
 
+## DeepCode
+
+Generic backend. The default invocation is `deepcode exec --json "<prompt>"` —
+`--json` keeps the output machine-readable for the result summary.
+
+```bash
+deepcode --version
+
+SHEPHERD_CAPS=DEEPCODE AGENT_WORKDIR=/repo … ./agent-runtime
+```
+
+Override with `DEEPCODE_CMD`, e.g. widen permissions for tasks that need to
+edit files headlessly: `DEEPCODE_CMD="deepcode exec --access full-access --json"`.
+
 ## One runtime, multiple executors
 
 A single runtime can claim several kinds — list them all and make sure every
@@ -171,7 +186,7 @@ canned output without spawning a CLI — useful to smoke-test the dispatch loop
 before installing real CLIs.
 
 ```bash
-AGENT_MOCK=1 SHEPHERD_CAPS=CLAUDE_CODE,CODEX,OPENCODE,CODEBUDDY … ./agent-runtime
+AGENT_MOCK=1 SHEPHERD_CAPS=CLAUDE_CODE,CODEX,OPENCODE,CODEBUDDY,DEEPCODE … ./agent-runtime
 ```
 
 ## Windows
@@ -185,7 +200,7 @@ The runtime runs natively on Windows (build with the MSVC toolchain:
   `codex.exe` take precedence); explicit paths via `CLAUDE_BIN` / `*_CMD` are
   used as-is. `CLAUDE_BIN=D:\nvm4w\nodejs\claude.cmd` works: the Claude
   backend feeds the prompt over stdin, so the cmd.exe hop is harmless.
-- **Generic backends (codebuddy/codex/opencode) cannot go through a `.cmd`
+- **Generic backends (codebuddy/codex/opencode/deepcode) cannot go through a `.cmd`
   shim**: they pass the prompt as an argv, prompts contain newlines, and Rust
   refuses newline arguments to batch files (cmd.exe cannot carry them safely).
   Bypass cmd.exe by invoking node directly — read the shim (`type
@@ -256,7 +271,7 @@ shepherd dispatch --decomp d1 --task t1 --executor CODEBUDDY
 # or bind a default once: shepherd agent connect --kind codebuddy
 ```
 
-The MCP tool `shepherd_dispatch_delivery` accepts the same four kinds.
+The MCP tool `shepherd_dispatch_delivery` accepts the same five kinds.
 
 ### Pinning a task to one runtime
 
@@ -325,5 +340,5 @@ animation look the same as local ones.
 |---|---|
 | Task stays queued (`ready` grows) | No online runtime declares that kind — compare `SHEPHERD_CAPS` with the task's `executor`, then `GET /agent/runtime` for liveness |
 | Attempt delivers with "no code change" | CLI ran but refused edits (permission mode) or the prompt didn't ask for file changes — read the deliverable summary, it contains the CLI's own output |
-| Spawn error in events | CLI not on `PATH` inside the runtime's environment — set `CLAUDE_BIN` / `CODEX_CMD` / `OPENCODE_CMD` / `CODEBUDDY_CMD` |
+| Spawn error in events | CLI not on `PATH` inside the runtime's environment — set `CLAUDE_BIN` / `CODEX_CMD` / `OPENCODE_CMD` / `CODEBUDDY_CMD` / `DEEPCODE_CMD` |
 | Attempt fails at timeout | Raise `AGENT_TASK_TIMEOUT_SECS`; generic backends get killed (process group) at the deadline |

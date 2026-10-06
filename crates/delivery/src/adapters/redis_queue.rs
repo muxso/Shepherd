@@ -25,7 +25,7 @@ const ACKMAP: &str = "fleet:ackmap";
 const RT_INDEX: &str = "fleet:rt:index";
 const SEP: char = '\u{1f}';
 
-fn known_caps() -> [ExecutorKind; 4] {
+fn known_caps() -> &'static [ExecutorKind] {
     ExecutorKind::ALL
 }
 
@@ -71,7 +71,7 @@ impl RedisStreamQueue {
         let client = redis::Client::open(url)?;
         let mut conn = client.get_multiplexed_async_connection().await?;
         for cap in known_caps() {
-            let key = stream_key(cap);
+            let key = stream_key(*cap);
             // Existing group yields BUSYGROUP; ignore for idempotency.
             let res: redis::RedisResult<()> = redis::cmd("XGROUP")
                 .arg("CREATE")
@@ -174,7 +174,7 @@ impl WorkQueue for RedisStreamQueue {
         let grace_ms = grace.as_millis() as usize;
         let mut conn = self.conn.clone();
         let mut requeued = 0usize;
-        let mut keys: Vec<String> = known_caps().into_iter().map(stream_key).collect();
+        let mut keys: Vec<String> = known_caps().iter().map(|&cap| stream_key(cap)).collect();
         let rt_names: Vec<String> = conn.smembers(RT_INDEX).await.unwrap_or_default();
         keys.extend(rt_names.iter().map(|n| rt_stream_key(n)));
         for key in keys {
@@ -220,12 +220,12 @@ impl WorkQueue for RedisStreamQueue {
         let mut conn = self.conn.clone();
         let mut out = Vec::with_capacity(known_caps().len());
         for cap in known_caps() {
-            let key = stream_key(cap);
+            let key = stream_key(*cap);
             let groups: StreamInfoGroupsReply = match conn.xinfo_groups(&key).await {
                 Ok(g) => g,
                 Err(_) => {
                     out.push(QueueStat {
-                        executor: cap,
+                        executor: *cap,
                         ready: 0,
                         in_flight: 0,
                         oldest_in_flight_ms: 0,
@@ -246,7 +246,7 @@ impl WorkQueue for RedisStreamQueue {
             } else {
                 0
             };
-            out.push(QueueStat { executor: cap, ready, in_flight, oldest_in_flight_ms });
+            out.push(QueueStat { executor: *cap, ready, in_flight, oldest_in_flight_ms });
         }
         out
     }
