@@ -1,5 +1,7 @@
 # Install
 
+[简体中文](INSTALL.zh-CN.md) · English
+
 How to get `agent-runtime` running on your machine. `agent-runtime` is the executor that registers to a Shepherd server, long-polls for work, and shells out to your AI CLI (Claude Code / Codex / OpenCode / CodeBuddy). The server and web console are deployed separately — see [Deployment & ops](DEPLOYMENT.md) and the [GHCR docker-compose](../deploy/docker/docker-compose.ghcr.yml) for a single-host Linux deploy.
 
 Pick the install method for your OS:

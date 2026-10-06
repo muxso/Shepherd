@@ -557,9 +557,9 @@ export default function PlanMindmap({ planId, projectId }: { planId: string; pro
           alignItems: 'center',
           borderRadius: 8,
           cursor: isRoot ? 'default' : 'pointer',
-          background: isRoot ? 'var(--brand)' : 'var(--panel)',
+          background: isRoot ? 'var(--brand-mindmap-root)' : 'var(--panel)',
           color: isRoot ? '#fff' : 'var(--text)',
-          border: isRoot ? '1px solid var(--brand)' : `1px solid ${isSelected ? 'var(--brand)' : 'var(--border)'}`,
+          border: isRoot ? '1px solid var(--brand-mindmap-root)' : `1px solid ${isSelected ? 'var(--brand)' : 'var(--border)'}`,
           boxShadow: isSelected ? '0 0 0 2px var(--brand-soft)' : '0 1px 3px rgba(0,0,0,0.06)',
         }}
       >

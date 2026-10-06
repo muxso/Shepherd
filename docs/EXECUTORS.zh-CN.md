@@ -1,5 +1,7 @@
 # Shepherd — AI 执行者运行指南
 
+简体中文 · [English](EXECUTORS.md)
+
 介绍如何在 `agent-runtime` 下运行各家 AI 执行者(Claude Code / Codex / OpenCode /
 CodeBuddy)。机群架构与服务端配置见 [USAGE.zh-CN.md §7](./USAGE.zh-CN.md),
 镜像构建与部署见 [DEPLOYMENT.zh-CN.md](./DEPLOYMENT.zh-CN.md)。

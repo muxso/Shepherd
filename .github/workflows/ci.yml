@@ -52,6 +52,25 @@ jobs:
       - uses: taiki-e/install-action@cargo-audit
       - run: cargo audit
 
+  # —— 文档门:多语言文档链接 / 跨语言配对 校验(纯 Python,无需编译)——
+  docs:
+    name: docs link check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+      - name: check doc links
+        run: python3 scripts/docs-link-check.py --report
+      # 不论通过与否都留存报告,便于排查失效链接。
+      - name: upload report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: docs-link-check-report
+          path: docs/link-check-report.md
+
   # —— 前端构建门:类型检查 + 产物构建,防 web/ 腐化 ——
   web:
     name: web build

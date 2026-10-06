@@ -1,5 +1,7 @@
 # Shepherd — Running AI Executors
 
+[简体中文](EXECUTORS.zh-CN.md) · English
+
 How to run each supported AI executor (Claude Code / Codex / OpenCode / CodeBuddy)
 behind `agent-runtime`. For fleet architecture and server-side setup see
 [USAGE.md §7](./USAGE.md); for image builds and deployment see [DEPLOYMENT.md](./DEPLOYMENT.md).

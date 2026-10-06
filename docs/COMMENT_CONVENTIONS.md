@@ -1,5 +1,7 @@
 # Comment Conventions
 
+[简体中文](COMMENT_CONVENTIONS.zh-CN.md) · English
+
 Unified rules for comments in this workspace. The goal is consistent, English,
 rustdoc-friendly comments across every crate.
 

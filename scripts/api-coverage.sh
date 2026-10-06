@@ -158,7 +158,15 @@ sec "环境 / 资源池 / 批量"
 call POST /api/environment "{\"projectId\":\"$PJ\",\"name\":\"env\",\"baseUrl\":\"$B\"}"; sc "建环境" "200 201"; jchk "baseUrl" 'd.get("baseUrl")=="'$B'"'; ENV=$(jval 'd["id"]')
 call GET "/api/environment?projectId=$PJ"; sc "环境列表" 200
 call PUT "/api/environment/$ENV" "{\"projectId\":\"$PJ\",\"name\":\"env2\",\"baseUrl\":\"$B\"}"; sc "改环境" "200 201"; jchk "名已改" 'd.get("name")=="env2"'
-call POST /api/resource-pool '{"name":"本地池"}'; sc "建资源池" "200 201"; jchk "池名" 'd.get("name")=="本地池"'
+# 资源池全局按名唯一:用固定名做幂等 upsert(存在则复用,不存在则创建),避免每轮留下孤儿池。
+POOL_NAME="自测资源池"
+POOL_LIST=$(curl -s -H "$A" "$B/api/resource-pool")
+POOL_ID=$(printf '%s' "$POOL_LIST" | python3 -c "import sys,json;d=json.load(sys.stdin);print(next((p['id'] for p in d if p.get('name')=='$POOL_NAME'),''))")
+if [ -n "$POOL_ID" ]; then
+  call GET "/api/resource-pool/$POOL_ID"; sc "复用资源池" 200; jchk "池名" "d.get(\"name\")==\"$POOL_NAME\""
+else
+  call POST /api/resource-pool "{\"name\":\"$POOL_NAME\"}"; sc "建资源池" "200 201"; jchk "池名" "d.get(\"name\")==\"$POOL_NAME\""
+fi
 call GET /api/resource-pool; sc "资源池列表" 200
 call POST /api/batch-run "{\"projectId\":\"$PJ\",\"caseIds\":[\"$CASE\"],\"runMode\":\"PARALLEL\"}"; sc "批量运行(无池→400 / 有则 200)" "200 400"
 
