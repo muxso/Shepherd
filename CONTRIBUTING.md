@@ -49,3 +49,7 @@ cargo test -p server --test scenarios -- --ignored --test-threads=1
 - Commit messages use conventional style, lowercase single line: `feat(delivery): …` / `fix(web): …`.
 - One PR does one thing; include tests; UI changes attach screenshots.
 - PR description should state the motivation and how it was verified.
+- Long-lived branches must not be squash-merged and kept open: a squash merge rewrites the
+  history on the target, so the surviving branch diverges and its next PR conflicts with
+  content that is already merged. After squash-merging a long-lived branch, reset/delete it
+  and open follow-up PRs from the new base (see PR #141 for the failure mode).
