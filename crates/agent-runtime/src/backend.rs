@@ -250,6 +250,11 @@ impl GenericCliBackend {
             timeout,
         )
     }
+    pub fn deepcode(timeout: Duration) -> Self {
+        // Headless one-shot; --json keeps the output machine-readable. The prompt
+        // is appended as the final argv by GenericCliBackend::execute.
+        Self::from_env("deepcode", "DEEPCODE_CMD", "deepcode exec --json", timeout)
+    }
 }
 
 #[async_trait]

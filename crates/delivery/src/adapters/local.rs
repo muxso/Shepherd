@@ -36,9 +36,12 @@ impl LocalCommandAgentExecutor {
         match kind {
             ExecutorKind::ClaudeCode => &self.claude_code,
             ExecutorKind::Codex => &self.codex,
-            // The local path only configures two argvs; OpenCode/CodeBuddy deliberately
-            // fall back to the claude argv (real routing lives in crates/agent-runtime).
-            ExecutorKind::OpenCode | ExecutorKind::CodeBuddy => &self.claude_code,
+            // The local path only configures two argvs; OpenCode/CodeBuddy/DeepCode
+            // deliberately fall back to the claude argv (real routing lives in
+            // crates/agent-runtime).
+            ExecutorKind::OpenCode | ExecutorKind::CodeBuddy | ExecutorKind::DeepCode => {
+                &self.claude_code
+            }
         }
     }
 }
