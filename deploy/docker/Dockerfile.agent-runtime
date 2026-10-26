@@ -2,7 +2,7 @@
 
 # ---- build stage ---- (pin to bookworm so the binary's glibc matches the
 # bookworm-slim runtime stage; rust:latest now ships glibc 2.39 and breaks it)
-FROM rust:1.86-bookworm AS build
+FROM rust:1.88-bookworm AS build
 WORKDIR /app
 
 COPY Cargo.toml Cargo.lock ./

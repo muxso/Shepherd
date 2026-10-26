@@ -202,7 +202,8 @@ impl TantivyKeyword {
             (Occur::Must, Box::new(proj) as Box<dyn Query>),
             (Occur::Must, parsed),
         ]);
-        let hits = searcher.search(&bool_q, &TopDocs::with_limit(top_k)).map_err(be)?;
+        let hits =
+            searcher.search(&bool_q, &TopDocs::with_limit(top_k).order_by_score()).map_err(be)?;
         let mut out = Vec::with_capacity(hits.len());
         for (score, addr) in hits {
             let doc: TantivyDocument = searcher.doc(addr).map_err(be)?;
