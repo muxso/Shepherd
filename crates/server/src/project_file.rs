@@ -5,6 +5,7 @@ use axum::{
     routing::get,
     Json, Router,
 };
+use base64::Engine;
 use serde::{Deserialize, Serialize};
 use sqlx::{PgPool, Row};
 use std::sync::Arc;
@@ -95,9 +96,21 @@ struct UploadBody {
     content_base64: String,
 }
 
+const MAX_PROJECT_FILE_BYTES: i64 = 50 * 1024 * 1024;
+
 async fn upload_file(user: AuthUser, State(st): State<St>, Json(b): Json<UploadBody>) -> Response {
     if b.name.trim().is_empty() {
         return (StatusCode::BAD_REQUEST, "name required").into_response();
+    }
+    if b.size_bytes < 0 || b.size_bytes > MAX_PROJECT_FILE_BYTES {
+        return (StatusCode::PAYLOAD_TOO_LARGE, "file must be 50 MiB or smaller").into_response();
+    }
+    let decoded = match base64::engine::general_purpose::STANDARD.decode(&b.content_base64) {
+        Ok(bytes) => bytes,
+        Err(_) => return (StatusCode::BAD_REQUEST, "invalid base64 file content").into_response(),
+    };
+    if decoded.len() as i64 != b.size_bytes {
+        return (StatusCode::BAD_REQUEST, "file size does not match content").into_response();
     }
     let module = b.module_id.as_deref().filter(|s| !s.is_empty());
     let row = sqlx::query(

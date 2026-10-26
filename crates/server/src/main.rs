@@ -780,8 +780,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             project_routes
                 .merge(project_member_routes)
                 .merge(project_template_routes)
-                .merge(project_file_routes)
                 .merge(references_routes),
+        ),
+        routes::group_with_body_limit(
+            "project-file",
+            project_file_routes,
+            routes::PROJECT_FILE_REQUEST_BODY_LIMIT_BYTES,
         ),
         routes::group("requirement", requirement_routes.merge(comment_routes)),
         routes::group(

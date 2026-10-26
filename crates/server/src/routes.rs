@@ -67,8 +67,26 @@ pub struct RouteGroup {
     pub router: Router,
 }
 
+const DEFAULT_REQUEST_BODY_LIMIT_BYTES: usize = 2 * 1024 * 1024;
+/// Project files are sent as base64 JSON. A 50 MiB attachment expands to about
+/// 66.7 MiB before the JSON envelope, so leave a small amount of headroom.
+pub const PROJECT_FILE_REQUEST_BODY_LIMIT_BYTES: usize = 70 * 1024 * 1024;
+
 pub fn group(label: &'static str, router: Router) -> RouteGroup {
-    RouteGroup { label, router }
+    group_with_body_limit(label, router, DEFAULT_REQUEST_BODY_LIMIT_BYTES)
+}
+
+pub fn group_with_body_limit(
+    label: &'static str,
+    router: Router,
+    max_body_bytes: usize,
+) -> RouteGroup {
+    RouteGroup {
+        label,
+        router: router
+            .layer(axum::extract::DefaultBodyLimit::max(max_body_bytes))
+            .layer(RequestBodyLimitLayer::new(max_body_bytes)),
+    }
 }
 
 pub fn assemble(groups: Vec<RouteGroup>) -> Router {
@@ -83,8 +101,7 @@ pub fn assemble(groups: Vec<RouteGroup>) -> Router {
     let mut app = app
         .merge(metrics_route)
         .layer(TraceLayer::new_for_http())
-        .layer(axum::middleware::from_fn(timeout_by_route))
-        .layer(RequestBodyLimitLayer::new(2 * 1024 * 1024));
+        .layer(axum::middleware::from_fn(timeout_by_route));
     if let Some(cors) = cors_layer() {
         tracing::info!("CORS allowlist enabled");
         app = app.layer(cors);
@@ -103,6 +120,11 @@ pub fn assemble(groups: Vec<RouteGroup>) -> Router {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use axum::body::{Body, Bytes};
+    use axum::http::Request;
+    use axum::http::StatusCode;
+    use axum::routing::post;
+    use tower::ServiceExt;
 
     #[test]
     fn run_endpoints_get_long_timeout() {
@@ -133,5 +155,31 @@ mod tests {
         }
         // Non-POST never gets the long-run exemption.
         assert_eq!(timeout_for(&Method::GET, "/api/scenario/abc-123/run"), DEFAULT_TIMEOUT);
+    }
+
+    #[tokio::test]
+    async fn project_file_group_accepts_large_workbook_payloads_only_on_its_routes() {
+        let files = Router::new()
+            .route("/api/project-file", post(|_body: Bytes| async { StatusCode::CREATED }));
+        let ordinary =
+            Router::new().route("/ordinary", post(|_body: Bytes| async { StatusCode::CREATED }));
+        let app = assemble(vec![
+            group_with_body_limit("project-file", files, PROJECT_FILE_REQUEST_BODY_LIMIT_BYTES),
+            group("ordinary", ordinary),
+        ]);
+        let payload = vec![b'x'; 3 * 1024 * 1024];
+
+        let file_response = app
+            .clone()
+            .oneshot(Request::post("/api/project-file").body(Body::from(payload.clone())).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(file_response.status(), StatusCode::CREATED);
+
+        let ordinary_response = app
+            .oneshot(Request::post("/ordinary").body(Body::from(payload)).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(ordinary_response.status(), StatusCode::PAYLOAD_TOO_LARGE);
     }
 }
