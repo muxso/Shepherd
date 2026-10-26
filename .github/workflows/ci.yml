@@ -12,8 +12,8 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
-  # 与本地一致(home 0.5.11 适配 rustc 1.86;Cargo.lock 已 pin)。升级 rustc 时一并调整。
-  RUST_TOOLCHAIN: "1.86.0"
+  # Keep CI aligned with the workspace MSRV declared in Cargo.toml.
+  RUST_TOOLCHAIN: "1.88.0"
 
 jobs:
   # —— 质量门:production(lib+bin)clippy 零告警 + 全量构建 ——

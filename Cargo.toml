@@ -46,8 +46,8 @@ members = [
 edition = "2021"
 version = "0.0.4"
 license = "GPL-2.0"
-# CI 钉在 1.86.0;各成员 crate 用 rust-version.workspace = true 继承。
-rust-version = "1.86"
+# Workspace MSRV;各成员 crate 用 rust-version.workspace = true 继承。
+rust-version = "1.88"
 # crate 名(bug/task/case/delivery…)是通用词,与 crates.io 现有包冲突;整个 workspace 不发布。
 publish = false
 
