@@ -467,7 +467,7 @@ pub fn report_markdown(name: &str, stats: &PlanStatistics, cases: &[PlanCase]) -
             }
             md_assertions(&mut o, &r.assertions);
             if let Some(b) = r.body.as_ref().filter(|b| !b.is_empty()) {
-                o.push_str(&format!("\n**响应体**\n\n```\n{}\n```\n", b));
+                o.push_str(&format!("\n**响应体**\n\n```\n{b}\n```\n"));
             }
         }
     }
