@@ -2,7 +2,7 @@
 import { test, expect } from '@playwright/test'
 import { readFileSync } from 'node:fs'
 const authFile = process.env.SHEPHERD_E2E_AUTH_FILE
-const auth = authFile ? JSON.parse(readFileSync(authFile, 'utf8')) as { token: string; projectId: string } : null
+const auth = authFile ? JSON.parse(readFileSync(authFile, 'utf8')) as { token: string; projectId: string; codeRequirementId?: string } : null
 test.skip(!auth, 'Requires a private SHEPHERD_E2E_AUTH_FILE for a read-only QA session')
 test.beforeEach(async ({ page }) => {
   page.on('pageerror', e => console.error('Browser page error:', e.message))
@@ -152,4 +152,38 @@ test('every requirement exposes deduplicated people roles and searchable efficie
   const expectedShare = Number(scoped.find(r => r.personId === sample.personId)!.requirementShare.toFixed(2))
   await expect(detailPeople.getByRole('row').filter({ hasText: sample.personName }).getByRole('cell', { name: String(expectedShare), exact: true }).first()).toBeVisible()
   await page.screenshot({ path: testInfo.outputPath('requirement-people-detail.png') })
+})
+
+test('requirement links open details, survive reload and show linked author commits', async ({ page }, testInfo) => {
+  test.setTimeout(120_000)
+  test.skip(!auth!.codeRequirementId, 'Requires a read-only requirement fixture with linked commits')
+  const id = auth!.codeRequirementId!
+  const headers = { authorization: `Bearer ${auth!.token}` }
+  const response = await page.request.get(`/delivery/requirement-code?projectId=${auth!.projectId}&requirementId=${id}`, { headers })
+  expect(response.ok()).toBeTruthy()
+  const data = await response.json() as { commits: { repo: string; author: string; sha: string }[] }
+  expect(data.commits.length).toBeGreaterThan(0)
+  const requirement = await (await page.request.get(`/requirement/${id}`, { headers })).json() as { title: string }
+  await page.goto('/home')
+  const people = page.getByTestId('collab-people')
+  await people.getByRole('tab', { name: '需求人员明细', exact: true }).click()
+  await people.getByPlaceholder('搜索需求、人员或角色').fill(requirement.title)
+  const link = people.getByRole('link', { name: requirement.title, exact: true }).first()
+  await expect(link).toHaveAttribute('href', `/p/${auth!.projectId}/requirement?open=${id}`)
+  await link.click()
+  await expect(page).toHaveURL(new RegExp(`requirement\\?open=${id}`))
+  const code = page.getByTestId('requirement-code')
+  await expect(code.getByText(data.commits[0].author, { exact: true }).first()).toBeVisible()
+  await expect(code.getByText(data.commits[0].repo, { exact: true }).first()).toBeVisible()
+  await code.scrollIntoViewIfNeeded()
+  await page.screenshot({ path: testInfo.outputPath('requirement-code.png') })
+  await page.reload()
+  await expect(page).toHaveURL(new RegExp(`requirement\\?open=${id}`))
+  await expect(page.getByTestId('requirement-code').getByText(data.commits[0].author, { exact: true }).first()).toBeVisible()
+  await page.goto(`/p/${auth!.projectId}/requirement`)
+  await page.getByPlaceholder('搜索标题').fill(requirement.title)
+  const rowLink = page.locator('.ant-table-tbody').getByRole('link', { name: requirement.title, exact: true }).first()
+  await rowLink.click()
+  await expect(page).toHaveURL(new RegExp(`requirement\\?open=${id}`))
+  await expect(page.getByTestId('collab-people')).toBeVisible()
 })

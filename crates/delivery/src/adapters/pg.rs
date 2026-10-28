@@ -254,6 +254,44 @@ impl DeliveryRepository for PgDeliveryRepository {
     // plus delivery quality: attempt success rate / first-pass). Delivered requirements
     // without child tasks count as one human unit with zero estimated points. With requirement_id,
     // scope to that requirement only.
+    async fn requirement_code(
+        &self,
+        project_id: &str,
+        requirement_id: &str,
+    ) -> Result<Option<crate::ports::RequirementCode>, RepoError> {
+        let Some(meta) = sqlx::query("SELECT s.code_since::text AS code_since,s.code_until::text AS code_until FROM ms_requirement r LEFT JOIN ms_devops_source s ON s.id=r.external_source_id WHERE r.project_id=$1 AND r.id=$2 AND NOT r.deleted")
+            .bind(project_id).bind(requirement_id).fetch_optional(&self.pool).await.map_err(map_err)? else { return Ok(None); };
+        let commits = sqlx::query(include_str!("requirement_code.sql"))
+            .bind(project_id)
+            .bind(requirement_id)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(map_err)?
+            .iter()
+            .map(|r| {
+                Ok(crate::ports::RequirementCommit {
+                    repo_id: r
+                        .try_get::<Option<String>, _>("repo_id")
+                        .map_err(map_err)?
+                        .unwrap_or_default(),
+                    repo: r.try_get("repo").map_err(map_err)?,
+                    sha: r.try_get("sha").map_err(map_err)?,
+                    title: r.try_get("title").map_err(map_err)?,
+                    author: r.try_get("author").map_err(map_err)?,
+                    authored_at: r.try_get("authored_at").map_err(map_err)?,
+                    additions: r.try_get("additions").map_err(map_err)?,
+                    deletions: r.try_get("deletions").map_err(map_err)?,
+                    url: r.try_get("url").map_err(map_err)?,
+                })
+            })
+            .collect::<Result<Vec<_>, RepoError>>()?;
+        Ok(Some(crate::ports::RequirementCode {
+            code_since: meta.try_get("code_since").map_err(map_err)?,
+            code_until: meta.try_get("code_until").map_err(map_err)?,
+            commits,
+        }))
+    }
+
     async fn collab_people(
         &self,
         project_id: &str,
@@ -592,6 +630,58 @@ mod collab_tests {
         assert!(!rows
             .iter()
             .any(|r| ["watcher", "creator", "robot"].contains(&r.person_id.as_str())));
+        sqlx::query("UPDATE ms_devops_entity SET payload=jsonb_set(payload,'{serial}','\"SER-1\"') WHERE source_id=$1 AND kind='requirement' AND external_id='shared'")
+            .bind(&project).execute(&pool).await.expect("source serial");
+        for (key, payload) in [
+            (
+                "linked",
+                r#"{"repoId":"repo","repo":"Repo","sha":"sha","author":"Actual coder","additions":4,"deletions":2,"requirementIds":["SER-1"],"parentIds":["base"],"isMerge":false}"#,
+            ),
+            (
+                "unknown-stats",
+                r#"{"repoId":"repo2","sha":"sha2","author":"Other coder","requirementIds":["shared","tasks"]}"#,
+            ),
+            ("merge", r#"{"requirementIds":["shared"],"isMerge":true}"#),
+            ("parents", r#"{"requirementIds":["shared"],"parentIds":["one","two"]}"#),
+            ("other-req", r#"{"requirementIds":["tasks"]}"#),
+            ("unlinked", r#"{}"#),
+        ] {
+            sqlx::query("INSERT INTO ms_devops_entity(source_id,kind,external_id,payload) VALUES($1,'commit',$2,$3::jsonb)")
+                .bind(&project).bind(key).bind(payload).execute(&pool).await.expect("commit");
+        }
+        let code = repo
+            .requirement_code(&project, &format!("{project}-shared"))
+            .await
+            .expect("code")
+            .expect("requirement");
+        assert_eq!(code.commits.len(), 2);
+        let actual = code.commits.iter().find(|c| c.sha == "sha").expect("actual");
+        assert_eq!(actual.author, "Actual coder");
+        assert_eq!(actual.additions, Some(4));
+        assert!(code
+            .commits
+            .iter()
+            .find(|c| c.sha == "sha2")
+            .expect("unknown")
+            .additions
+            .is_none());
+        assert!(repo
+            .requirement_code("other-project", &format!("{project}-shared"))
+            .await
+            .expect("scope")
+            .is_none());
+        assert!(repo
+            .requirement_code(&project, &format!("{project}-deleted"))
+            .await
+            .expect("deleted")
+            .is_none());
+        assert!(repo
+            .requirement_code(&project, &format!("{project}-unknown"))
+            .await
+            .expect("empty")
+            .expect("exists")
+            .commits
+            .is_empty());
         let shared =
             repo.collab_people(&project, Some(&format!("{project}-shared"))).await.expect("shared");
         assert_eq!(shared.len(), 3);

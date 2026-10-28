@@ -1,3 +1,5 @@
+import { RequirementCodePanel } from '../components/RequirementCodePanel'
+import { Link, useSearchParams } from 'react-router-dom'
 import { CollabPeopleTable } from '../components/CollabPeopleTable'
 import { useCallback, useEffect, useState } from 'react'
 import { Badge, Button, Card, Col, DatePicker, Descriptions, Dropdown, Empty, Form, Input, InputNumber, Modal, Popover, Progress, Row, Segmented, Select, Space, Spin, Statistic, Table, Tabs, Tag, Timeline, Tooltip, Typography } from 'antd'
@@ -143,6 +145,8 @@ export default function Requirements() {
   const [selModule, setSelModule] = useState('ALL') // ALL | UNFILED | <moduleId>
   const [moduleSearch, setModuleSearch] = useState('')
   const tabs = useWorkTabs()
+  const [searchParams] = useSearchParams()
+  const linkedRequirement = searchParams.get('open') || undefined
   // Requirement field template: resolves custom-field display names in the inline preview.
   const { fields: reqTplFields } = useFieldTemplate('requirement')
 
@@ -171,7 +175,7 @@ export default function Requirements() {
         const pct = crits.length ? Math.round((covered / crits.length) * 100) : 0
         const base = localById.get(r.id) || { id: r.id, label: r.title, createdAt: 0 }
         const label = (
-          <span>{r.customFields?.['来源'] === '云效' && <Tag color="blue">云效 · {r.customFields['云效状态']}</Tag>}{r.title}{crits.length ? <Tag color={pct === 100 ? 'green' : pct > 0 ? 'gold' : 'default'} style={{ marginLeft: 6 }}>{pct}%</Tag> : null}</span>
+          <span>{r.customFields?.['来源'] === '云效' && <Tag color="blue">云效 · {r.customFields['云效状态']}</Tag>}<Link to={`/p/${encodeURIComponent(projectId)}/requirement?open=${encodeURIComponent(r.id)}`}>{r.title}</Link>{crits.length ? <Tag color={pct === 100 ? 'green' : pct > 0 ? 'gold' : 'default'} style={{ marginLeft: 6 }}>{pct}%</Tag> : null}</span>
         )
         return { ...base, status: r.status, reqType: r.reqType, priority: r.priority, tags: r.tags, overdue: r.overdue, label, titleText: r.title, raw: r }
       }))
@@ -183,7 +187,7 @@ export default function Requirements() {
     loadList()
     loadModules()
     setSelModule('ALL')
-    tabs.reset()
+    tabs.reset(linkedRequirement)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId])
 
@@ -1089,6 +1093,7 @@ function RequirementDetail({ reqId, projectId, modules, onChanged, onDeleted, on
                   </Descriptions.Item>
                 </Descriptions>
                 <CollabPeopleTable projectId={projectId} requirementId={reqId} />
+                <RequirementCodePanel projectId={projectId} requirementId={reqId} />
                 {/* AI review opinion: KB-grounded, advisory. The reviewer still approves/rejects manually. */}
                 {(aiLoading || aiReview) && (
                   <AiReviewPanel loading={aiLoading} result={aiReview} onClose={() => setAiReview(null)} />

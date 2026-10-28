@@ -1341,6 +1341,13 @@ export interface CollabPersonRow {
   humanTasks: number
   points: number
 }
+export interface RequirementCommit {
+  repoId: string; repo: string; sha: string; title: string; author: string
+  authoredAt: string; additions: number | null; deletions: number | null; url: string
+}
+export interface RequirementCode {
+  codeSince: string | null; codeUntil: string | null; commits: RequirementCommit[]
+}
 export interface CollabDayItem {
   /** Date, YYYY-MM-DD. */
   date: string
@@ -2035,6 +2042,8 @@ export const api = {
   deleteNoticeRule: (id: string, projectId: string) =>
     http.del(`/notice/rules/${encodeURIComponent(id)}?projectId=${encodeURIComponent(projectId)}`),
   // Human-AI collaboration stats (per-requirement AI/human split + weekly trend)
+  requirementCode: (projectId: string, requirementId: string) =>
+    http.get<RequirementCode>(`/delivery/requirement-code?projectId=${encodeURIComponent(projectId)}&requirementId=${encodeURIComponent(requirementId)}`),
   collabPeople: (projectId: string, requirementId?: string) =>
     http.get<CollabPersonRow[]>(`/delivery/collab-people?projectId=${encodeURIComponent(projectId)}${requirementId ? `&requirementId=${encodeURIComponent(requirementId)}` : ''}`),
   collabStats: (projectId: string, requirementId?: string) =>

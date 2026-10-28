@@ -35,6 +35,7 @@ pub fn router(svc: DeliveryService, sessions: Arc<dyn SessionStore>) -> Router {
         .route("/delivery/tasks", get(list_tasks))
         .route("/delivery/collab-stats", get(collab_stats))
         .route("/delivery/collab-people", get(collab_people))
+        .route("/delivery/requirement-code", get(requirement_code))
         .route("/delivery/{id}", get(get_attempt).delete(delete_attempt))
         .route("/delivery/{id}/running", post(report_running))
         .route("/delivery/{id}/complete", post(complete))
@@ -493,6 +494,25 @@ async fn collab_people(
     }
 }
 
+#[utoipa::path(get, path = "/delivery/requirement-code", tag = "delivery", params(CollabQuery), responses((status = 200, body = crate::ports::RequirementCode), (status = 400), (status = 403), (status = 404)), security(("bearer" = [])))]
+async fn requirement_code(
+    user: AuthUser,
+    State(st): State<DelState>,
+    Query(q): Query<CollabQuery>,
+) -> Response {
+    if !user.can("DELIVERY", "READ") {
+        return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
+    let Some(id) = q.requirement_id.filter(|id| !id.is_empty()) else {
+        return (StatusCode::BAD_REQUEST, "requirementId required").into_response();
+    };
+    match st.svc.requirement_code(&q.project_id, &id).await {
+        Ok(Some(rows)) => (StatusCode::OK, Json(rows)).into_response(),
+        Ok(None) => (StatusCode::NOT_FOUND, "requirement not found").into_response(),
+        Err(e) => cmd_err(e),
+    }
+}
+
 // Human/AI collaboration stats: a task counts as AI when it is VERIFIED and has a
 // DELIVERED delivery record, otherwise as human.
 #[utoipa::path(
@@ -579,8 +599,8 @@ async fn delete_attempt(
 
 #[derive(OpenApi)]
 #[openapi(
-    paths(dispatch, list_by_task, get_attempt, report_running, complete, fail, record_event, list_events, list_tasks, collab_stats, collab_people, stop, delete_attempt),
-    components(schemas(DispatchBody, RunningBody, CompleteBody, FailBody, EventBody, EventResponse, DeliverableResponse, AttemptResponse, TaskItemResponse, TaskPageResponse, CollabRequirementItem, CollabDayItem, CollabStatsResponse, crate::ports::CollabPersonRow, StopBody)),
+    paths(dispatch, list_by_task, get_attempt, report_running, complete, fail, record_event, list_events, list_tasks, collab_stats, collab_people, requirement_code, stop, delete_attempt),
+    components(schemas(DispatchBody, RunningBody, CompleteBody, FailBody, EventBody, EventResponse, DeliverableResponse, AttemptResponse, TaskItemResponse, TaskPageResponse, CollabRequirementItem, CollabDayItem, CollabStatsResponse, crate::ports::CollabPersonRow, crate::ports::RequirementCode, crate::ports::RequirementCommit, StopBody)),
     tags((name = "delivery", description = "Delivery execution (AI executor)"))
 )]
 struct ApiDoc;

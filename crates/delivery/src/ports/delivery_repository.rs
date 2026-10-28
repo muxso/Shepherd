@@ -80,6 +80,31 @@ pub struct CollabPersonRow {
     pub points: i64,
 }
 
+/// Actual author commits explicitly linked to the source requirement.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "http", derive(serde::Serialize, utoipa::ToSchema))]
+#[cfg_attr(feature = "http", serde(rename_all = "camelCase"))]
+pub struct RequirementCommit {
+    pub repo_id: String,
+    pub repo: String,
+    pub sha: String,
+    pub title: String,
+    pub author: String,
+    pub authored_at: String,
+    pub additions: Option<i64>,
+    pub deletions: Option<i64>,
+    pub url: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[cfg_attr(feature = "http", derive(serde::Serialize, utoipa::ToSchema))]
+#[cfg_attr(feature = "http", serde(rename_all = "camelCase"))]
+pub struct RequirementCode {
+    pub code_since: Option<String>,
+    pub code_until: Option<String>,
+    pub commits: Vec<RequirementCommit>,
+}
+
 /// Per-day verified-task split (past year; data source for the GitHub-style
 /// contribution grid). Historical tasks with a null verified_at are excluded.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -144,6 +169,15 @@ pub trait DeliveryRepository: Send + Sync {
     ) -> Result<Vec<CollabPersonRow>, RepoError> {
         let _ = (project_id, requirement_id);
         Ok(Vec::new())
+    }
+
+    async fn requirement_code(
+        &self,
+        project_id: &str,
+        requirement_id: &str,
+    ) -> Result<Option<RequirementCode>, RepoError> {
+        let _ = (project_id, requirement_id);
+        Ok(None)
     }
 
     async fn delete(&self, id: &str) -> Result<bool, RepoError>;

@@ -1,3 +1,4 @@
+import { Link } from 'react-router-dom'
 import { useEffect, useMemo, useState } from 'react'
 import { Alert, Button, Input, Table, Tabs, Tag } from 'antd'
 import { api, type CollabPersonRow } from '../api'
@@ -61,7 +62,7 @@ export function CollabPeopleTable({ projectId, requirementId }: { projectId: str
           ...sharedColumns,
         ]} /> },
         { key: 'requirements', label: '需求人员明细', children: <Table<CollabPersonRow> size="small" loading={loading} rowKey={r => `${r.requirementId}:${r.personId}`} dataSource={filtered} scroll={{ x: requirementId ? 1040 : 1360 }} pagination={{ pageSize: 10, showSizeChanger: false, showTotal: n => `共 ${n} 条人员明细` }} columns={[
-          ...(!requirementId ? [{ title: '需求', dataIndex: 'title', width: 320, ellipsis: true, fixed: 'left' as const }] : []),
+          ...(!requirementId ? [{ title: '需求', dataIndex: 'title', width: 320, ellipsis: true, fixed: 'left' as const, render: (title: string, r: CollabPersonRow) => <Link to={`/p/${encodeURIComponent(projectId)}/requirement?open=${encodeURIComponent(r.requirementId)}`}>{title}</Link> }] : []),
           { title: '需求状态', dataIndex: 'status', width: 110, render: (s: string) => statusName[s] ?? s },
           { title: '人员', dataIndex: 'personName', width: 120 },
           { title: '参与角色', width: 230, render: (_, r) => roles(r.roles) },
