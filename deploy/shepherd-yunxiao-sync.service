@@ -1,0 +1,16 @@
+[Unit]
+Description=Sync read-only Yunxiao facts into Shepherd
+After=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/liber/Shepherd/scripts
+EnvironmentFile=/home/liber/.config/shepherd-yunxiao/env
+ExecStart=/usr/bin/python3 /home/liber/Shepherd/scripts/yunxiao_sync.py
+TimeoutStartSec=1800
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/liber/.cache/shepherd-yunxiao
+UMask=0077

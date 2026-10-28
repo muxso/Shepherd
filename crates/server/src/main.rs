@@ -732,6 +732,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     report_archive_job::spawn(pool.clone());
 
+    let devops_routes = devops::adapters::http::router(
+        devops::application::Service(Arc::new(devops::adapters::pg::PgStore(pool.clone()))),
+        sessions.clone(),
+    );
     let case_summary_routes = case_exec_summary::router(pool.clone(), sessions.clone());
 
     let project_file_routes = project_file::router(pool.clone(), sessions.clone());
@@ -824,6 +828,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         ),
         routes::group("perf", perf_routes),
         routes::group("rag", rag_routes),
+        routes::group("devops", devops_routes),
         routes::group("debug", debug_send_routes),
         routes::group("meta", openapi::routes().merge(health_routes(pool.clone()))),
     ]);

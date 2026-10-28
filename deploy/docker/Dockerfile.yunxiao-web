@@ -1,0 +1,2 @@
+FROM ghcr.io/muxso/shepherd-web:v0.0.6
+COPY web/dist /usr/share/nginx/html

@@ -1,0 +1,33 @@
+[package]
+name = "devops"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+publish.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+async-trait.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+chrono = { version = "0.4", default-features = false, features = ["std"] }
+sqlx = { workspace = true, features = ["runtime-tokio", "postgres", "json"], optional = true }
+axum = { workspace = true, optional = true }
+utoipa = { workspace = true, optional = true }
+webauth = { workspace = true, optional = true, features = ["http"] }
+uuid = { workspace = true, optional = true }
+tracing = { workspace = true, optional = true }
+
+[features]
+pg = ["dep:sqlx", "dep:uuid", "dep:tracing"]
+http = ["dep:axum", "dep:utoipa", "dep:webauth"]
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+tower = { workspace = true, features = ["util"] }
+webauth = { workspace = true, features = ["http", "test-util"] }
+migrate.workspace = true
+
+[lints]
+workspace = true

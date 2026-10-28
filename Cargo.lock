@@ -1634,6 +1634,26 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "abd57806937c9cc163efc8ea3910e00a62e2aeb0b8119f1793a978088f8f6b04"
 
 [[package]]
+name = "devops"
+version = "0.0.4"
+dependencies = [
+ "async-trait",
+ "axum 0.8.9",
+ "chrono",
+ "migrate",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "thiserror 2.0.18",
+ "tokio",
+ "tower 0.5.3",
+ "tracing",
+ "utoipa",
+ "uuid",
+ "webauth",
+]
+
+[[package]]
 name = "digest"
 version = "0.10.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4710,6 +4730,7 @@ dependencies = [
  "comment",
  "delivery",
  "design",
+ "devops",
  "environment",
  "follow",
  "mcp",

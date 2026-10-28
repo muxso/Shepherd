@@ -1,0 +1,11 @@
+--- service.py
++++ service.py
+@@ -526,7 +526,7 @@
+             "ciPassRate":ci["totals"]["passRate"],"ciRuns":ci["totals"]["runs"],"ciRunning":ci["totals"]["running"],
+             "ciPassed":ci["totals"]["passed"],"ciFailed":ci["totals"]["failed"],
+             "ciErrors":ci["totals"]["pipelineErrors"]},
+-        "people":people,"repositories":repo_summary,"commitsDetail":[dict(v,group=group_for(v["author"])) for v in commit_map.values()],"requirements":delivered_report,"delayedRequirements":delayed,"ci":ci,
++        "people":people,"repositories":repo_summary,"commitsDetail":[dict(v,group=group_for(v["author"]),requirementIds=sorted({str(byid[ik].get("serialNumber") or byid[ik].get("id")) for ik,linked in item_commits.items() if key in linked and ik in byid})) for key,v in commit_map.items()],"requirements":delivered_report,"delayedRequirements":delayed,"ci":ci,
+         "notes":["最近一周按需求状态变更时间 updateStatusAt 识别已交付需求。",
+             "代码时间按提交 authoredDate，按 Asia/Shanghai 小时分桶；每仓库 SHA 去重。多父提交及通用合并说明的提交不计入代码量。",
+             "代码人员仅包含实际提交作者 authorName/authorEmail，不以 committer、需求负责人/创建人、MR 作者/评审人填充；合并提交按父提交数量及标题排除。",

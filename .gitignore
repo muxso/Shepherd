@@ -22,3 +22,7 @@ docs/dogfood-report.html
 /.i18n-work/
 # deepcode CLI 本地会话/缓存目录
 /.deepcode/
+
+# Python sync helper caches
+__pycache__/
+*.pyc

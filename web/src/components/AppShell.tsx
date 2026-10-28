@@ -98,9 +98,10 @@ const MODULES: ModuleDef[] = [
     key: '/home',
     label: ['nav.home', '首页'],
     icon: <DashboardOutlined />,
-    match: ['/home', '/todo', '/follow'],
+    match: ['/home', '/todo', '/follow', '/devops'],
     children: [
       { key: '/home', icon: <DashboardOutlined />, label: ['m.home', '工作台'] },
+      { key: '/devops', icon: <DashboardOutlined />, label: ['devops.nav', '云效研发统计'] },
       { key: '/todo', icon: <CarryOutOutlined />, label: ['home.todo.nav', '待办'] },
       { key: '/follow', icon: <StarOutlined />, label: ['home.follow.nav', '关注'] },
     ],

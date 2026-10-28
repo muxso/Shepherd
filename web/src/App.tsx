@@ -8,6 +8,7 @@ import AppShell from './components/AppShell'
 import { ProjectGuard, LegacyRedirect } from './components/RouteScope'
 
 // Route-level lazy loading: per-page bundles; first paint only downloads login/shell, the rest load on entry.
+const Devops = lazy(() => import('./pages/Devops'))
 const Home = lazy(() => import('./pages/Home'))
 const Todos = lazy(() => import('./pages/Todos'))
 const Follows = lazy(() => import('./pages/Follows'))
@@ -95,6 +96,7 @@ export default function App() {
           <Route path="/" element={<Navigate to="/home" replace />} />
           {/* Global (project-agnostic) pages */}
           <Route path="/home" element={<Home />} />
+          <Route path="/devops" element={<Devops />} />
           <Route path="/todo" element={<Todos />} />
           <Route path="/follow" element={<Follows />} />
           <Route path="/resource-pool" element={<ResourcePoolsPage />} />
