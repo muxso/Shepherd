@@ -37,16 +37,19 @@ pub struct TaskPage {
     pub total: i64,
 }
 
-/// AI/human split of verified tasks under one requirement.
+/// AI/human split of delivered work under one requirement.
 ///
 /// Definition: a VERIFIED task with a DELIVERED delivery record counts as AI-delivered;
-/// VERIFIED without one counts as human-delivered.
+/// VERIFIED without one counts as human-delivered. Delivered requirements with no
+/// child tasks count as one human work item with zero estimated points.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CollabRequirementRow {
     pub requirement_id: String,
     pub title: String,
     pub ai_tasks: i64,
     pub human_tasks: i64,
+    /// Delivered requirements without any child tasks, counted as one human unit each.
+    pub requirement_units: i64,
     pub ai_points: i64,
     pub human_points: i64,
     /// Delivery quality at attempt level (not limited to verified tasks):

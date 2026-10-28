@@ -347,6 +347,7 @@ export default function Home() {
         const sum = (f: (x: (typeof items)[number]) => number) => items.reduce((n, x) => n + f(x), 0)
         const aiTasks = sum((x) => x.aiTasks)
         const humanTasks = sum((x) => x.humanTasks)
+        const requirementUnits = sum((x) => x.requirementUnits ?? 0)
         const aiPoints = sum((x) => x.aiPoints)
         const humanPoints = sum((x) => x.humanPoints)
 
@@ -366,9 +367,12 @@ export default function Home() {
         return (
           <Card title={<span><RobotOutlined style={{ color: AI_COLOR, marginRight: 6 }} />{cardTitle.collab}</span>} size="small" style={{ marginBottom: 16 }}>
             {aiTasks + humanTasks === 0 ? (
-              <Empty description={t('home.collabEmpty', '暂无已验收任务;任务派发并验收通过后,这里展示 AI/人工 的交付拆分')} />
+              <Empty description={t('home.collabWorkEmpty', '暂无已交付工作项；已验收任务或未拆分的已交付需求会计入统计')} />
             ) : (
               <>
+                {requirementUnits > 0 && <div data-testid="collab-requirement-note" style={{ color: 'var(--text-2)', fontSize: 12, marginBottom: 12 }}>
+                  {t('home.requirementUnits', '未拆分的已交付需求')}: {requirementUnits} {t('home.requirementUnitRule', '条，按每条 1 个人工交付工作项统计；无工作量记录时不折算点数。')}
+                </div>}
                 <Row gutter={[24, 16]} align="middle">
                   <Col xs={24} lg={10}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 24 }}>
@@ -379,9 +383,9 @@ export default function Home() {
                         ]}
                         size={120}
                         thickness={16}
-                        centerLabel={t('home.byCount', '已验收任务')}
+                        centerLabel={t('home.workCount', '已交付工作项')}
                       />
-                      <Donut
+                      {aiPoints + humanPoints > 0 ? <Donut
                         segments={[
                           { label: t('home.aiDelivered', 'AI 交付'), value: aiPoints, color: C.blue },
                           { label: t('home.humanDelivered', '人工交付'), value: humanPoints, color: C.human },
@@ -389,7 +393,7 @@ export default function Home() {
                         size={120}
                         thickness={16}
                         centerLabel={t('home.byPoints', '工作量(点)')}
-                      />
+                      /> : <span style={{ color: 'var(--text-3)', fontSize: 12 }}>{t('home.noWorkPoints', '未记录工作量')}</span>}
                       <div>
                         <div style={{ marginBottom: 8 }}>{legend(C.blue, t('home.aiDelivered', 'AI 交付'), aiTasks, aiPoints)}</div>
                         <div>{legend(C.human, t('home.humanDelivered', '人工交付'), humanTasks, humanPoints)}</div>
@@ -398,7 +402,7 @@ export default function Home() {
                   </Col>
                   <Col xs={24} lg={14}>
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
-                      <span style={{ fontSize: 12, color: 'var(--text-3)' }}>{t('home.collabGridTitle', '近一年验收日历(格子=当日验收任务数)')}</span>
+                      <span style={{ fontSize: 12, color: 'var(--text-3)' }}>{t('home.collabWorkGrid', '近一年交付日历（已验收任务及已交付需求，仅含已知完成日期）')}</span>
                       <Segmented
                         size="small"
                         value={collabMetric}

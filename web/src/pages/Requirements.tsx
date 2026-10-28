@@ -1300,6 +1300,9 @@ function CollabPanel({ projectId, reqId, refreshKey }: { projectId: string; reqI
   const firstPassRate = row.aiTasks > 0 ? (row.aiFirstPass * 100) / row.aiTasks : 0
   return (
     <Card size="small" title={t('req.collabTitle', '人机协同')}>
+      {(row.requirementUnits ?? 0) > 0 && <div style={{ color: 'var(--text-2)', fontSize: 12, marginBottom: 12 }}>
+        {t('home.requirementUnits', '未拆分的已交付需求')}: {row.requirementUnits} {t('home.requirementUnitRule', '条，按每条 1 个人工交付工作项统计；无工作量记录时不折算点数。')}
+      </div>}
       <Row gutter={[16, 16]} align="middle" justify="space-around" wrap>
         <Col xs={12} sm={12} md={6} lg={4}>
           <Progress
@@ -1309,11 +1312,11 @@ function CollabPanel({ projectId, reqId, refreshKey }: { projectId: string; reqI
             format={() => `${aiShare.toFixed(0)}%`}
             strokeColor="#1664ff"
           />
-          <div style={{ marginTop: 6, fontSize: 12, color: 'var(--text-2)' }}>{t('req.aiShare', 'AI 参与度(工作量)')}</div>
+          <div style={{ marginTop: 6, fontSize: 12, color: 'var(--text-2)' }}>{totalPts > 0 ? t('req.aiShare', 'AI 参与度(工作量)') : t('req.aiShareCount', 'AI 参与度(数量)')}</div>
         </Col>
         <Col xs={12} sm={12} md={6} lg={4}>
           <MiniSplit
-            label={t('req.deliverSplit', '交付任务(AI / 人)')}
+            label={t('req.deliverWorkSplit', '交付工作项(AI / 人)')}
             left={row.aiTasks}
             right={row.humanTasks}
             leftColor="#1664ff"

@@ -85,3 +85,25 @@ test('Yunxiao rich text renders as paragraphs in preview and full details', asyn
   await expect(body.locator('article p').first()).toBeVisible()
   await page.screenshot({ path: testInfo.outputPath('rich-text-details.png') })
 })
+test('collaboration includes delivered requirements without child tasks', async ({ page }, testInfo) => {
+  test.setTimeout(120_000)
+  const response = await page.request.get(`/delivery/collab-stats?projectId=${auth!.projectId}`, { headers: { authorization: `Bearer ${auth!.token}` } })
+  expect(response.ok()).toBeTruthy()
+  const stats = await response.json() as { items: { requirementUnits: number; humanTasks: number; humanPoints: number; aiTasks: number }[] }
+  const fallback = stats.items.filter(r => r.requirementUnits > 0)
+  expect(fallback.length).toBeGreaterThan(0)
+  for (const row of fallback) {
+    expect(row.requirementUnits).toBe(1)
+    expect(row.humanTasks).toBe(1)
+    expect(row.humanPoints).toBe(0)
+    expect(row.aiTasks).toBe(0)
+  }
+  const total = fallback.reduce((n, r) => n + r.requirementUnits, 0)
+  await page.goto('/home')
+  const note = page.getByTestId('collab-requirement-note')
+  await expect(note).toBeVisible({ timeout: 60_000 })
+  await expect(note).toContainText(String(total))
+  await expect(page.getByText('已交付工作项', { exact: true })).toBeVisible()
+  await expect(page.getByText('暂无已验收任务;任务派发并验收通过后,这里展示 AI/人工 的交付拆分', { exact: true })).toHaveCount(0)
+  await page.screenshot({ path: testInfo.outputPath('collab-requirements.png') })
+})

@@ -1312,12 +1312,14 @@ export interface Bug {
   updatedAt?: string | null
 }
 
-/** Human-AI collaboration stats: per-requirement AI/human delivery split (measured as VERIFIED + presence of a DELIVERED attempt). */
+/** Human-AI split: verified tasks; delivered requirements without child tasks count as one human unit without estimated points. */
 export interface CollabRequirementItem {
   requirementId: string
   title: string
   aiTasks: number
   humanTasks: number
+  /** Delivered requirements counted when no child tasks exist. */
+  requirementUnits: number
   aiPoints: number
   humanPoints: number
   /** Delivery quality (attempt level): total/success/failed attempts; tasks accepted on the first delivery. */
