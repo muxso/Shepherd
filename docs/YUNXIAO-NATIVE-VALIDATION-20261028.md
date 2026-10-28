@@ -26,3 +26,9 @@
 浏览器回归脚本位于web/e2e/yunxiao.spec.ts和module-index.spec.ts。凭据从私有文件读取，不进入仓库。截图由Playwright在web/test-results生成。
 
 上线前数据库和源代码备份位于服务器/home/liber/.local/share/shepherd-backups/20261028-native-fix/。本轮未变更n8n通知工作流。
+
+## 富文本预览修复
+
+云效部分正文是包含htmlValue与jsonMLValue的JSON封装。展示层提取htmlValue后沿用DOMPurify过滤，避免将整个封装作为Markdown显示；原始来源和不可变历史正文保留。需求预览、完整详情、版本列表及版本明细统一使用相同渲染器，普通Markdown和JSON示例保持原格式。
+
+新增富文本解析回归覆盖段落、表格、图片和空正文，并对DCDZ-3992执行生产预览及完整详情浏览器验证。

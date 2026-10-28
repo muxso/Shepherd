@@ -1130,7 +1130,7 @@ function RequirementDetail({ reqId, projectId, modules, onChanged, onDeleted, on
                     dataSource={req.versions}
                     columns={[
                       { title: t('req.version', '版本'), dataIndex: 'version', width: 80, render: (v: number) => <span>v{v}{v === req.baselineVersion ? <Tag color="blue" style={{ marginLeft: 6 }}>{t('req.baseline', '基线')}</Tag> : null}</span> },
-                      { title: t('req.versionDesc', '版本说明'), dataIndex: 'description', render: (d?: string) => d || '—' },
+                      { title: t('req.versionDesc', '版本说明'), dataIndex: 'description', render: (d?: string) => <MarkdownRenderer value={d} /> },
                       { title: t('req.action', '操作'), width: 80, render: (_v, row) => <Button type="link" size="small" onClick={() => viewVersion(row.version)}>{t('req.view', '查看')}</Button> },
                     ]}
                   />
@@ -1270,7 +1270,7 @@ function RequirementDetail({ reqId, projectId, modules, onChanged, onDeleted, on
       <Modal title={verView ? `${t('req.versionDetail', '版本明细')} · v${verView.version}` : ''} open={!!verView} onCancel={() => setVerView(null)} footer={null} destroyOnHidden>
         {verView && (
           <Descriptions column={1} size="small" bordered>
-            <Descriptions.Item label={t('req.versionDesc', '版本说明')}>{verView.description || '—'}</Descriptions.Item>
+            <Descriptions.Item label={t('req.versionDesc', '版本说明')}><MarkdownRenderer value={verView.description} /></Descriptions.Item>
             <Descriptions.Item label={t('req.acceptanceCriteria', '验收标准')}>
               {verView.acceptanceCriteria?.length ? (
                 <ul style={{ margin: 0, paddingLeft: 18 }}>{verView.acceptanceCriteria.map((c, i) => <li key={i}>{c}</li>)}</ul>

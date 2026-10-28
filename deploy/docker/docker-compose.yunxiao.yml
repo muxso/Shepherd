@@ -3,4 +3,4 @@ services:
   server:
     image: shepherd-server:yunxiao-native-20261028
   web:
-    image: shepherd-web:yunxiao-native-20261028
+    image: shepherd-web:yunxiao-richtext-20261028
