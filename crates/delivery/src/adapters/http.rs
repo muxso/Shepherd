@@ -34,6 +34,7 @@ pub fn router(svc: DeliveryService, sessions: Arc<dyn SessionStore>) -> Router {
         // or the wildcard swallows it.
         .route("/delivery/tasks", get(list_tasks))
         .route("/delivery/collab-stats", get(collab_stats))
+        .route("/delivery/collab-people", get(collab_people))
         .route("/delivery/{id}", get(get_attempt).delete(delete_attempt))
         .route("/delivery/{id}/running", post(report_running))
         .route("/delivery/{id}/complete", post(complete))
@@ -477,6 +478,21 @@ struct CollabStatsResponse {
     daily: Vec<CollabDayItem>,
 }
 
+#[utoipa::path(get, path = "/delivery/collab-people", tag = "delivery", params(CollabQuery), responses((status = 200, body = Vec<crate::ports::CollabPersonRow>), (status = 403)), security(("bearer" = [])))]
+async fn collab_people(
+    user: AuthUser,
+    State(st): State<DelState>,
+    Query(q): Query<CollabQuery>,
+) -> Response {
+    if !user.can("DELIVERY", "READ") {
+        return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
+    match st.svc.collab_people(&q.project_id, q.requirement_id.as_deref()).await {
+        Ok(rows) => (StatusCode::OK, Json(rows)).into_response(),
+        Err(e) => cmd_err(e),
+    }
+}
+
 // Human/AI collaboration stats: a task counts as AI when it is VERIFIED and has a
 // DELIVERED delivery record, otherwise as human.
 #[utoipa::path(
@@ -563,8 +579,8 @@ async fn delete_attempt(
 
 #[derive(OpenApi)]
 #[openapi(
-    paths(dispatch, list_by_task, get_attempt, report_running, complete, fail, record_event, list_events, list_tasks, collab_stats, stop, delete_attempt),
-    components(schemas(DispatchBody, RunningBody, CompleteBody, FailBody, EventBody, EventResponse, DeliverableResponse, AttemptResponse, TaskItemResponse, TaskPageResponse, CollabRequirementItem, CollabDayItem, CollabStatsResponse, StopBody)),
+    paths(dispatch, list_by_task, get_attempt, report_running, complete, fail, record_event, list_events, list_tasks, collab_stats, collab_people, stop, delete_attempt),
+    components(schemas(DispatchBody, RunningBody, CompleteBody, FailBody, EventBody, EventResponse, DeliverableResponse, AttemptResponse, TaskItemResponse, TaskPageResponse, CollabRequirementItem, CollabDayItem, CollabStatsResponse, crate::ports::CollabPersonRow, StopBody)),
     tags((name = "delivery", description = "Delivery execution (AI executor)"))
 )]
 struct ApiDoc;

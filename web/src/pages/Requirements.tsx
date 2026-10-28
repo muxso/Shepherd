@@ -1,3 +1,4 @@
+import { CollabPeopleTable } from '../components/CollabPeopleTable'
 import { useCallback, useEffect, useState } from 'react'
 import { Badge, Button, Card, Col, DatePicker, Descriptions, Dropdown, Empty, Form, Input, InputNumber, Modal, Popover, Progress, Row, Segmented, Select, Space, Spin, Statistic, Table, Tabs, Tag, Timeline, Tooltip, Typography } from 'antd'
 import ResizableDrawer from '../components/ResizableDrawer'
@@ -1087,6 +1088,7 @@ function RequirementDetail({ reqId, projectId, modules, onChanged, onDeleted, on
                     ) : '—'}
                   </Descriptions.Item>
                 </Descriptions>
+                <CollabPeopleTable projectId={projectId} requirementId={reqId} />
                 {/* AI review opinion: KB-grounded, advisory. The reviewer still approves/rejects manually. */}
                 {(aiLoading || aiReview) && (
                   <AiReviewPanel loading={aiLoading} result={aiReview} onClose={() => setAiReview(null)} />

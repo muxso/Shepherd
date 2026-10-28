@@ -61,6 +61,25 @@ pub struct CollabRequirementRow {
     pub ai_first_pass: i64,
 }
 
+/// One person's registered role and measured work in a requirement.
+#[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "http", derive(serde::Serialize, utoipa::ToSchema))]
+#[cfg_attr(feature = "http", serde(rename_all = "camelCase"))]
+pub struct CollabPersonRow {
+    pub requirement_id: String,
+    pub title: String,
+    pub status: String,
+    pub person_id: String,
+    pub person_name: String,
+    pub roles: Vec<String>,
+    pub delivered: bool,
+    /// Equal share of one delivered, undecomposed requirement; not time or points.
+    pub requirement_share: f64,
+    pub ai_tasks: i64,
+    pub human_tasks: i64,
+    pub points: i64,
+}
+
 /// Per-day verified-task split (past year; data source for the GitHub-style
 /// contribution grid). Historical tasks with a null verified_at are excluded.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -116,6 +135,15 @@ pub trait DeliveryRepository: Send + Sync {
     ) -> Result<CollabStats, RepoError> {
         let _ = (project_id, requirement_id);
         Ok(CollabStats::default())
+    }
+
+    async fn collab_people(
+        &self,
+        project_id: &str,
+        requirement_id: Option<&str>,
+    ) -> Result<Vec<CollabPersonRow>, RepoError> {
+        let _ = (project_id, requirement_id);
+        Ok(Vec::new())
     }
 
     async fn delete(&self, id: &str) -> Result<bool, RepoError>;

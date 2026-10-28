@@ -1,3 +1,4 @@
+import { CollabPeopleTable } from '../components/CollabPeopleTable'
 import { useEffect, useMemo, useState } from 'react'
 import { Button, Card, Col, Empty, Progress, Row, Select, Spin, Statistic, Table, Tag, Tooltip, Segmented } from 'antd'
 import {
@@ -441,6 +442,7 @@ export default function Home() {
                 </div>
               </>
             )}
+            <CollabPeopleTable projectId={projectId} />
           </Card>
         )
       }

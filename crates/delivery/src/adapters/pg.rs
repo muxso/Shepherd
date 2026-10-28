@@ -254,6 +254,36 @@ impl DeliveryRepository for PgDeliveryRepository {
     // plus delivery quality: attempt success rate / first-pass). Delivered requirements
     // without child tasks count as one human unit with zero estimated points. With requirement_id,
     // scope to that requirement only.
+    async fn collab_people(
+        &self,
+        project_id: &str,
+        requirement_id: Option<&str>,
+    ) -> Result<Vec<crate::ports::CollabPersonRow>, RepoError> {
+        sqlx::query(include_str!("collab_people.sql"))
+            .bind(project_id)
+            .bind(requirement_id.unwrap_or(""))
+            .fetch_all(&self.pool)
+            .await
+            .map_err(map_err)?
+            .iter()
+            .map(|r| {
+                Ok(crate::ports::CollabPersonRow {
+                    requirement_id: r.try_get("requirement_id").map_err(map_err)?,
+                    title: r.try_get("title").map_err(map_err)?,
+                    status: r.try_get("status").map_err(map_err)?,
+                    person_id: r.try_get("person_id").map_err(map_err)?,
+                    person_name: r.try_get("person_name").map_err(map_err)?,
+                    roles: r.try_get("roles").map_err(map_err)?,
+                    delivered: r.try_get("delivered").map_err(map_err)?,
+                    requirement_share: r.try_get("requirement_share").map_err(map_err)?,
+                    ai_tasks: r.try_get("ai_tasks").map_err(map_err)?,
+                    human_tasks: r.try_get("human_tasks").map_err(map_err)?,
+                    points: r.try_get("points").map_err(map_err)?,
+                })
+            })
+            .collect()
+    }
+
     async fn collab_stats(
         &self,
         project_id: &str,
@@ -521,5 +551,68 @@ mod collab_tests {
             .expect("missing date")
             .daily
             .is_empty());
+    }
+    #[tokio::test]
+    #[ignore = "requires isolated SHEPHERD_TEST_DATABASE_URL"]
+    async fn people_roles_deduplicate_share_and_attribute_only_real_assignees() {
+        let pool =
+            PgPool::connect(&std::env::var("SHEPHERD_TEST_DATABASE_URL").expect("isolated DB"))
+                .await
+                .expect("pool");
+        migrate::run(&pool).await.expect("migrate");
+        let project: String=sqlx::query_scalar("INSERT INTO ms_project(organization_id,name) VALUES('people-test',gen_random_uuid()::text) RETURNING id").fetch_one(&pool).await.expect("project");
+        sqlx::query("INSERT INTO ms_devops_source(id,project_id,cloud_org_id,cloud_project_id,name) VALUES($1,$1,'people-test',$1,'people')").bind(&project).execute(&pool).await.expect("source");
+        for name in ["shared", "tasks", "unknown", "deleted"] {
+            sqlx::query("INSERT INTO ms_requirement(id,project_id,title,status,deleted,external_source_id,external_id) VALUES($1,$2,$3,CASE WHEN $3='unknown' THEN 'DRAFT' ELSE 'DELIVERED' END,$3='deleted',$2,$3)")
+                .bind(format!("{project}-{name}")).bind(&project).bind(name).execute(&pool).await.expect("req");
+            if name != "unknown" {
+                sqlx::query(r#"INSERT INTO ms_devops_entity(source_id,kind,external_id,payload) VALUES($1,'requirement',$2,'{"raw":{"assignedTo":{"id":"a","name":"Alice"},"participants":[{"id":"a","name":"Alice"},{"id":"b","name":"Bob"}],"trackers":[{"id":"watcher","name":"Watcher"}],"creator":{"id":"creator","name":"Creator"},"customFieldValues":[{"fieldName":"开发者","values":[{"identifier":"a","displayValue":"Alice"}]},{"fieldName":"测试人员","values":[{"identifier":"c","displayValue":"Carol"}]}]}}')"#)
+                    .bind(&project).bind(name).execute(&pool).await.expect("entity");
+            }
+        }
+        sqlx::query("INSERT INTO ms_task_decomposition(id,requirement_id,requirement_version) VALUES($1,$1,1)").bind(format!("{project}-tasks")).execute(&pool).await.expect("decomp");
+        sqlx::query("INSERT INTO ms_task(decomposition_id,id,title,status,assignee,assignee_kind,points) VALUES($1,'one','one','VERIFIED','Bob','HUMAN',3),($1,'unassigned','unassigned','VERIFIED','','',5),($1,'agent','agent','VERIFIED','robot','AGENT',2)")
+            .bind(format!("{project}-tasks")).execute(&pool).await.expect("tasks");
+        let repo = PgDeliveryRepository::new(pool.clone());
+        let mut attempt = repo
+            .create(&format!("{project}-tasks"), "one", ExecutorKind::Codex, None)
+            .await
+            .expect("attempt");
+        attempt.start_running("run").expect("start");
+        attempt
+            .deliver(Deliverable {
+                kind: DeliverableKind::PullRequest,
+                reference: "pr".into(),
+                summary: "test".into(),
+            })
+            .expect("deliver");
+        repo.save(&attempt).await.expect("save");
+        let rows = repo.collab_people(&project, None).await.expect("people");
+        assert_eq!(rows.len(), 7); // three shared + three task participants + unregistered
+        assert!(!rows
+            .iter()
+            .any(|r| ["watcher", "creator", "robot"].contains(&r.person_id.as_str())));
+        let shared =
+            repo.collab_people(&project, Some(&format!("{project}-shared"))).await.expect("shared");
+        assert_eq!(shared.len(), 3);
+        assert!((shared.iter().map(|r| r.requirement_share).sum::<f64>() - 1.0).abs() < 1e-9);
+        let alice = shared.iter().find(|r| r.person_id == "a").expect("alice");
+        assert_eq!(alice.roles, vec!["参与人", "开发者", "负责人"]);
+        let tasks = repo
+            .collab_people(&project, Some(&format!("{project}-tasks")))
+            .await
+            .expect("task people");
+        assert!(tasks.iter().all(|r| r.requirement_share == 0.0));
+        let bob = tasks.iter().find(|r| r.person_id == "b").expect("bob");
+        assert_eq!((bob.ai_tasks, bob.human_tasks, bob.points), (1, 0, 3));
+        assert!(tasks
+            .iter()
+            .filter(|r| r.person_id != "b")
+            .all(|r| r.points == 0 && r.ai_tasks == 0 && r.human_tasks == 0));
+        let unknown = rows.iter().find(|r| r.title == "unknown").expect("unknown");
+        assert_eq!(unknown.person_id, "");
+        assert!(!unknown.delivered);
+        assert_eq!(unknown.requirement_share, 0.0);
+        assert!(repo.collab_people("other-project", None).await.expect("scope").is_empty());
     }
 }
