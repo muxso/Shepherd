@@ -5,6 +5,6 @@ COPY Cargo.toml Cargo.lock ./
 COPY crates ./crates
 COPY deploy/docker/cargo.yunxiao.toml /usr/local/cargo/config.toml
 RUN --mount=type=cache,target=/usr/local/cargo/registry --mount=type=cache,target=/app/target --mount=type=bind,from=cargo-cache,target=/seed,ro \
-    cp -an /seed/. /usr/local/cargo/registry/ && find crates -name "._*" -delete && cargo build --release -p server --locked -j 8 && cp /app/target/release/server /usr/local/bin/server
+    cp -an /seed/. /usr/local/cargo/registry/ && find crates -name "._*" -delete && touch crates/migrate/src/lib.rs && cargo build --release -p server --locked -j 8 && cp /app/target/release/server /usr/local/bin/server
 FROM ghcr.io/muxso/shepherd-server:v0.0.6
 COPY --from=build /usr/local/bin/server /usr/local/bin/server

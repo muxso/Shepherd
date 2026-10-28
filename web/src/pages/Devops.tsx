@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { Alert, Button, Card, Col, Input, Row, Select, Space, Statistic, Switch, Table, Tabs, Tag, Typography } from 'antd'
 import { ReloadOutlined } from '@ant-design/icons'
 import { devopsApi, type DevopsDashboard, type DevopsRow, type DevopsSource } from '../api'
-const kinds = [{ key: 'requirement', label: '需求' }, { key: 'bug', label: '缺陷' }, { key: 'sprint', label: '迭代' }, { key: 'commit', label: '实际提交' }, { key: 'history', label: '状态变化' }, { key: 'runs', label: '同步记录' }]
+const kinds = [{ key: 'requirement', label: '需求' }, { key: 'bug', label: '缺陷' }, { key: 'sprint', label: '迭代' }, { key: 'testcase', label: '测试用例' }, { key: 'commit', label: '实际提交' }, { key: 'history', label: '状态变化' }, { key: 'runs', label: '同步记录' }]
 const when = (v?: string) => v ? new Date(v).toLocaleString('zh-CN', { hour12: false }) : '—'
 const text = (v: unknown) => v == null || v === '' ? '—' : String(v)
 export default function Devops() {
@@ -35,7 +35,9 @@ export default function Devops() {
   const groups = Array.from(new Set(dashboard?.authors.map(x => x.group) || []))
   const info = sources.find(s => s.id === source)
   const code = dashboard?.authors.reduce((a, p) => ({ commits: a.commits + p.commits, linked: a.linked + p.linkedCommits }), { commits: 0, linked: 0 })
-  const columns = kind === 'commit' ? [
+  const columns = kind === 'testcase' ? [
+    { title: '云效编号', dataIndex: 'serial', width: 140 }, { title: '用例名称', dataIndex: 'title' }, { title: '用例库', dataIndex: 'repo', width: 140 }, { title: '目录', dataIndex: 'directory', width: 200 }, { title: '负责人', dataIndex: 'owner', width: 110 }, { title: '优先级', dataIndex: 'priority', width: 90 }, { title: '步骤数', dataIndex: 'steps', width: 90, render: (v?: unknown[]) => v?.length || 0 },
+  ] : kind === 'commit' ? [
     { title: '提交', dataIndex: 'sha', width: 115, render: (v: string, r: DevopsRow) => r.url?.startsWith('https://') ? <a href={r.url} target="_blank" rel="noreferrer">{v?.slice(0, 10)}</a> : v?.slice(0, 10) },
     { title: '说明', dataIndex: 'title' }, { title: '实际作者', dataIndex: 'author', width: 120 }, { title: '分组', dataIndex: 'group', width: 140 }, { title: '仓库', dataIndex: 'repo' },
     { title: '作者时间', dataIndex: 'authoredAt', width: 175, render: when },
@@ -59,7 +61,7 @@ export default function Devops() {
       { title: '状态变更', dataIndex: 'statusChangedAt', width: 175, render: when },
     ]),
   ]
-  return <div style={{ padding: 24 }}>
+  return <div data-testid="devops-scroll" style={{ height: '100%', minHeight: 0, overflowY: 'auto', padding: 24, boxSizing: 'border-box' }}>
     <Space style={{ width: '100%', justifyContent: 'space-between', marginBottom: 16 }} wrap>
       <div><Typography.Title level={3} style={{ margin: 0 }}>云效研发统计</Typography.Title><Typography.Text type="secondary">需求、缺陷、迭代与实际提交 · 外部来源数据</Typography.Text></div>
       <Space wrap>
@@ -68,6 +70,7 @@ export default function Devops() {
         <Button icon={<ReloadOutlined />} onClick={() => setRevision(x => x + 1)}>刷新数据</Button>
       </Space>
     </Space>
+    {info && <Space style={{ marginBottom: 16 }}><Typography.Link href={`/p/${info.project_id}/requirement`}>查看项目需求</Typography.Link><Typography.Link href={`/p/${info.project_id}/functional-case`}>查看功能用例</Typography.Link></Space>}
     {error && <Alert showIcon type="error" message={error} style={{ marginBottom: 16 }} />}
     <Alert type="info" showIcon style={{ marginBottom: 16 }} message={info?.last_success_at ? `最近成功同步：${when(info.last_success_at)} · 每小时自动更新` : '等待首次同步完成；本页不会触发 AI 交付或修改云效数据。'} description={<>延期只统计紧急、高、中；代码只统计实际作者，排除合并提交。代码采集覆盖：{when(info?.code_since || undefined)} 至 {when(info?.code_until || undefined)}。历史指标只使用已采集的数据。</>} />
     <Row gutter={[12, 12]} style={{ marginBottom: 16 }}>
@@ -85,7 +88,7 @@ export default function Devops() {
       <Tabs activeKey={kind} items={kinds} onChange={v => { setKind(v); setPage(1); setSearch(''); setGroup(''); setDelayed(false) }} />
       {!['history', 'runs'].includes(kind) && <Space wrap style={{ marginBottom: 16 }}>
         <Input.Search aria-label="搜索云效记录" placeholder="编号、标题、负责人或作者" allowClear onSearch={v => { setSearch(v); setPage(1) }} style={{ width: 320 }} />
-        {kind !== 'sprint' && <Select aria-label="组织分组" style={{ width: 180 }} value={group} onChange={v => { setGroup(v); setPage(1) }} options={[{ value: '', label: '全部分组' }, ...Array.from(new Set([...groups, '上海研发组', '产品运营一组', '产品运营二组', '沈阳服务端', '沈阳大前端', '质量交付组', 'AI算法组', '运维组', '待归属'])).map(g => ({ value: g, label: g }))]} />}
+        {kind !== 'sprint' && kind !== 'testcase' && <Select aria-label="组织分组" style={{ width: 180 }} value={group} onChange={v => { setGroup(v); setPage(1) }} options={[{ value: '', label: '全部分组' }, ...Array.from(new Set([...groups, '上海研发组', '产品运营一组', '产品运营二组', '沈阳服务端', '沈阳大前端', '质量交付组', 'AI算法组', '运维组', '待归属'])).map(g => ({ value: g, label: g }))]} />}
         {kind === 'requirement' && <Space><Switch checked={delayed} onChange={v => { setDelayed(v); setPage(1) }} />只看延期（紧急 / 高 / 中）</Space>}
       </Space>}
       <Table<DevopsRow> rowKey={r => String(r.externalId || r.id)} loading={loading} dataSource={rows} columns={columns} scroll={{ x: 1300 }} pagination={{ current: page, pageSize: 30, total, showSizeChanger: false, showTotal: n => `${n} 条`, onChange: setPage }} />

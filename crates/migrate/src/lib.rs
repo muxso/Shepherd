@@ -1,3 +1,4 @@
+//! Embedded migration inventory revision: 0113 (external native projections).
 //! Database migrations: embeds the sqlx migrations under this crate's
 //! migrations/ dir and runs them in order; also provides PgPool connect and
 //! ping. After adding a migration, touch this file and rebuild or it won't be embedded.

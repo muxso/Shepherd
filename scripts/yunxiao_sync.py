@@ -16,6 +16,7 @@ import urllib.error
 import urllib.request
 
 KINDS = ('requirement', 'bug', 'sprint', 'commit')
+from yunxiao_testhub import enrich_requirements, collect_testcases
 
 def load_env(path):
     for line in Path(path).read_text().splitlines():
@@ -29,7 +30,7 @@ def request(method, path, body=None):
         headers={'Authorization': 'Bearer ' + os.environ['SHEPHERD_SYNC_KEY'], 'Content-Type': 'application/json'})
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
     try:
-        with opener.open(req, timeout=120) as r:
+        with opener.open(req, timeout=600 if path.endswith("/complete") else 120) as r:
             return json.load(r)
     except urllib.error.HTTPError as e:
         # Do not log keys or source payloads.
@@ -93,6 +94,9 @@ def collect(collector, groups, days):
     with concurrent.futures.ThreadPoolExecutor(max_workers=3) as ex:
         fs = [ex.submit(collector.workitems,c,'Req'), ex.submit(collector.workitems,c,'Bug'), ex.submit(collector.sprints,c)]
         items, bugs, sprints = [f.result() for f in fs]
+    items = enrich_requirements(items, collector)
+    repo_ids = [x.strip() for x in os.environ.get('SHEPHERD_TEST_REPO_IDS','').split(',') if x.strip()]
+    testcases = collect_testcases(collector, repo_ids)
     # All source requests must succeed before a complete snapshot may be published.
     records = [normalize_workitem(x,'requirement',collector,groups,sprints) for x in items]
     records += [normalize_workitem(x,'bug',collector,groups,sprints) for x in bugs]
@@ -123,6 +127,7 @@ def collect(collector, groups, days):
             'additions':stats.get('additions'),'deletions':stats.get('deletions'),
             'requirementIds':cm['requirementIds'],'isMerge':False,
             'parentIds':cm.get('parentIds') or [],'url':cm.get('url') or ''}})
+    records.extend(testcases)
     unique = deduplicate(records)
     if len(unique) != len(records): print(f"Cloud pagination duplicates deduplicated: {len(records)-len(unique)}", flush=True)
     return unique,since.isoformat(),until.isoformat()
@@ -148,6 +153,7 @@ def main():
         cache.parent.mkdir(mode=0o700,parents=True,exist_ok=True)
         temp=cache.with_suffix('.tmp');temp.write_text(json.dumps(snapshot,ensure_ascii=False));temp.chmod(0o600);temp.replace(cache)
         counts=dict.fromkeys(KINDS,0)
+        if os.environ.get("SHEPHERD_TEST_REPO_IDS"): counts["testcase"]=0
         for r in records: counts[r['kind']]+=1
         for batch in batches(records):request('PUT',f'/api/devops/runs/{run}/records',{'records':batch})
         result=request('POST',f'/api/devops/runs/{run}/complete',{'counts':counts,'codeSince':since,'codeUntil':until})

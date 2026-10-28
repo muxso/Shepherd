@@ -1,6 +1,6 @@
 # Apply after docker-compose.ghcr.yml and the existing host-specific overrides.
 services:
   server:
-    image: shepherd-server:yunxiao-20261028
+    image: shepherd-server:yunxiao-native-20261028
   web:
-    image: shepherd-web:yunxiao-20261028
+    image: shepherd-web:yunxiao-native-20261028

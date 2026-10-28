@@ -157,7 +157,7 @@ export default function CaseDetailDrawer({
       styles={{ body: { padding: 0, display: 'flex', flexDirection: 'column' } }}
     >
       {/* Header: priority selector + [num] name; actions on the right */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 16px', borderBottom: '1px solid var(--border-soft)' }}>
+      <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8, padding: '10px 16px', borderBottom: '1px solid var(--border-soft)' }}>
         <Select
           size="small"
           value={c?.priority || 'P2'}
@@ -173,10 +173,9 @@ export default function CaseDetailDrawer({
             ),
           }))}
         />
-        <span style={{ fontSize: 16, fontWeight: 600 }}>
+        <span title={c?.name} style={{ flex: '1 1 240px', minWidth: 180, fontSize: 16, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
           [ {c?.num || '—'} ]&nbsp;&nbsp;{c?.name || ''}
         </span>
-        <span style={{ flex: 1 }} />
         <Button size="small" icon={<LeftOutlined />} disabled={idx <= 0} onClick={() => onNavigate(cases[idx - 1].id)} />
         <Button size="small" icon={<RightOutlined />} disabled={idx < 0 || idx >= cases.length - 1} onClick={() => onNavigate(cases[idx + 1].id)} />
         <Button type="text" icon={<EditOutlined />} onClick={() => c && onEdit(c)}>{t('a.edit', '编辑')}</Button>

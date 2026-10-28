@@ -152,6 +152,7 @@ async fn records(
     let resource = match q.kind.as_deref().unwrap_or("requirement") {
         "requirement" => "REQUIREMENT",
         "bug" => "BUG",
+        "testcase" => "FUNCTIONAL_CASE",
         _ => "PROJECT",
     };
     if !u.can("PROJECT", "READ")

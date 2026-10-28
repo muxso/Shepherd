@@ -7,7 +7,7 @@ use serde_json::{json, Value};
 use sqlx::{PgPool, Row};
 #[derive(Clone)]
 pub struct PgStore(pub PgPool);
-fn db(e: sqlx::Error) -> Error {
+pub(super) fn db(e: sqlx::Error) -> Error {
     tracing::error!(error=%e,"DevOps storage failed");
     Error::Storage
 }
@@ -91,7 +91,9 @@ impl Store for PgStore {
         for r in counts {
             actual.insert(r.get("kind"), r.get("n"));
         }
-        if actual != b.counts {
+        let mut expected = b.counts.clone();
+        expected.entry("testcase".into()).or_insert(0);
+        if actual != expected {
             return Err(Error::Conflict(
                 "staged counts do not match complete snapshot; previous data retained".into(),
             ));
@@ -99,6 +101,10 @@ impl Store for PgStore {
         sqlx::query("INSERT INTO ms_devops_history(source_id,kind,external_id,old_status,new_status,source_changed_at) SELECT $2,s.kind,s.external_id,e.payload->>'status',s.payload->>'status',s.payload->>'statusChangedAt' FROM ms_devops_stage s JOIN ms_devops_entity e ON e.source_id=$2 AND e.kind=s.kind AND e.external_id=s.external_id WHERE s.run_id=$1 AND s.kind IN ('requirement','bug') AND e.payload->>'status' IS DISTINCT FROM s.payload->>'status'").bind(run).bind(&source).execute(&mut *tx).await.map_err(db)?;
         sqlx::query("INSERT INTO ms_devops_entity(source_id,kind,external_id,payload) SELECT $2,kind,external_id,payload FROM ms_devops_stage WHERE run_id=$1 ON CONFLICT(source_id,kind,external_id) DO UPDATE SET payload=EXCLUDED.payload,active=true,observed_at=now() WHERE ms_devops_entity.payload IS DISTINCT FROM EXCLUDED.payload OR NOT ms_devops_entity.active").bind(run).bind(&source).execute(&mut *tx).await.map_err(db)?;
         sqlx::query("UPDATE ms_devops_entity e SET active=false,observed_at=now() WHERE e.source_id=$2 AND e.kind IN ('requirement','bug','sprint') AND e.active AND NOT EXISTS(SELECT 1 FROM ms_devops_stage s WHERE s.run_id=$1 AND s.kind=e.kind AND s.external_id=e.external_id)").bind(run).bind(&source).execute(&mut *tx).await.map_err(db)?;
+        if b.counts.contains_key("testcase") {
+            sqlx::query("UPDATE ms_devops_entity e SET active=false,observed_at=now() WHERE e.source_id=$2 AND e.kind='testcase' AND e.active AND NOT EXISTS(SELECT 1 FROM ms_devops_stage s WHERE s.run_id=$1 AND s.kind='testcase' AND s.external_id=e.external_id)").bind(run).bind(&source).execute(&mut *tx).await.map_err(db)?;
+        }
+        super::mirror::project(&mut tx, &source).await?;
         // Refresh the successfully scanned code window; older facts remain available for history.
         sqlx::query("UPDATE ms_devops_entity e SET active=false,observed_at=now() WHERE e.source_id=$2 AND e.kind='commit' AND e.active AND (payload->>'authoredAt')::timestamptz >= $3::text::timestamptz AND (payload->>'authoredAt')::timestamptz < $4::text::timestamptz AND NOT EXISTS(SELECT 1 FROM ms_devops_stage s WHERE s.run_id=$1 AND s.kind='commit' AND s.external_id=e.external_id)").bind(run).bind(&source).bind(&b.code_since).bind(&b.code_until).execute(&mut *tx).await.map_err(db)?;
         sqlx::query("UPDATE ms_devops_source SET last_success_at=now(),code_since=LEAST(COALESCE(code_since,$2::text::timestamptz),$2::text::timestamptz),code_until=$3::text::timestamptz WHERE id=$1").bind(&source).bind(&b.code_since).bind(&b.code_until).execute(&mut *tx).await.map_err(db)?;

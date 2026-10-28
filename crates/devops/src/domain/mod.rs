@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use thiserror::Error;
 
-pub const KINDS: &[&str] = &["requirement", "bug", "sprint", "commit"];
+pub const KINDS: &[&str] = &["requirement", "bug", "sprint", "commit", "testcase"];
 #[derive(Debug, Error)]
 pub enum Error {
     #[error("{0}")]
@@ -93,10 +93,16 @@ pub struct CompleteRun {
 }
 impl CompleteRun {
     pub fn validate(&self) -> Result<(), Error> {
-        if self.counts.len() != 4
-            || KINDS.iter().any(|k| self.counts.get(*k).is_none_or(|n| *n < 0))
+        if !(self.counts.len() == 4 || self.counts.len() == 5)
+            || self.counts.keys().any(|k| !KINDS.contains(&k.as_str()))
+            || ["requirement", "bug", "sprint", "commit"]
+                .iter()
+                .any(|k| self.counts.get(*k).is_none_or(|n| *n < 0))
+            || self.counts.get("testcase").is_some_and(|n| *n < 0)
         {
-            return Err(Error::Invalid("expected counts for all four record kinds".into()));
+            return Err(Error::Invalid(
+                "expected counts for all core record kinds (testcase optional)".into(),
+            ));
         }
         let a = chrono::DateTime::parse_from_rfc3339(&self.code_since)
             .map_err(|_| Error::Invalid("invalid codeSince".into()))?;

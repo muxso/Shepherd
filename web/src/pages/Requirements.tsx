@@ -162,7 +162,7 @@ export default function Requirements() {
     try {
       const page = await api.requirements(projectId)
       // Fetch coverage for all requirements in parallel to badge row labels (lists are usually small).
-      const covs = await Promise.all(page.items.map((r) => api.requirementCoverage(r.id).then((c) => [r.id, c] as const).catch(() => [r.id, []] as const)))
+      const covs = await Promise.all(page.items.filter((r) => critsOf(r).length > 0).map((r) => api.requirementCoverage(r.id).then((c) => [r.id, c] as const).catch(() => [r.id, []] as const)))
       const covMap: Record<string, CoverageCase[]> = Object.fromEntries(covs)
       setItems(page.items.map((r) => {
         const crits = critsOf(r)
@@ -170,7 +170,7 @@ export default function Requirements() {
         const pct = crits.length ? Math.round((covered / crits.length) * 100) : 0
         const base = localById.get(r.id) || { id: r.id, label: r.title, createdAt: 0 }
         const label = (
-          <span>{r.title}{crits.length ? <Tag color={pct === 100 ? 'green' : pct > 0 ? 'gold' : 'default'} style={{ marginLeft: 6 }}>{pct}%</Tag> : null}</span>
+          <span>{r.customFields?.['来源'] === '云效' && <Tag color="blue">云效 · {r.customFields['云效状态']}</Tag>}{r.title}{crits.length ? <Tag color={pct === 100 ? 'green' : pct > 0 ? 'gold' : 'default'} style={{ marginLeft: 6 }}>{pct}%</Tag> : null}</span>
         )
         return { ...base, status: r.status, reqType: r.reqType, priority: r.priority, tags: r.tags, overdue: r.overdue, label, titleText: r.title, raw: r }
       }))
