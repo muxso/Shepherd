@@ -148,6 +148,10 @@ pub fn router(host: PgPool, sessions: Arc<dyn SessionStore>, runtime: Option<Run
             put(update_profile).delete(delete_profile),
         )
         .route(
+            "/api/environment-plugins/environments/{environment}/profiles/{profile}/metadata",
+            get(profile_metadata),
+        )
+        .route(
             "/api/environment-plugins/environments/{environment}/bindings/{profile}",
             put(bind_profile).delete(unbind_profile),
         )
@@ -267,6 +271,18 @@ async fn configuration(
     let execute = policy.check(&scope, Access::Execute).await.is_ok();
     Ok(Json(
         json!({"profiles":runtime.store.list(&scope.project_id).await?,"bindings":runtime.store.bindings(&scope.project_id,&environment).await?,"credentials":runtime.vault(policy).list(&scope).await?,"permissions":{"manage":manage,"execute":execute}}),
+    ))
+}
+#[utoipa::path(get,path="/api/environment-plugins/environments/{environment}/profiles/{profile}/metadata",tag="environment-plugins",params(("environment"=String,Path),("profile"=String,Path)),responses((status=200,body=Value),(status=400),(status=401),(status=403),(status=404),(status=503)),security(("bearer"=[])))]
+async fn profile_metadata(
+    user: AuthUser,
+    State(state): State<AppState>,
+    Path((environment, id)): Path<(String, String)>,
+) -> ApiResult {
+    let (scope, _, runtime) = state.scope(user, &environment, Access::Read).await?;
+    let profile = runtime.store.get(&scope.project_id, &id).await?;
+    Ok(Json(
+        json!({"metadata":runtime.registry.inspect_config(&profile.plugin_id,&profile.config)?}),
     ))
 }
 async fn validate_profile(
@@ -499,7 +515,7 @@ async fn delete_credential(
 }
 
 #[derive(utoipa::OpenApi)]
-#[openapi(paths(capabilities,configuration,create_profile,update_profile,delete_profile,bind_profile,unbind_profile,test_profile,execute_profile,create_credential,delete_credential),tags((name="environment-plugins",description="Plugin-owned environment configuration and execution")))]
+#[openapi(paths(capabilities,configuration,profile_metadata,create_profile,update_profile,delete_profile,bind_profile,unbind_profile,test_profile,execute_profile,create_credential,delete_credential),tags((name="environment-plugins",description="Plugin-owned environment configuration and execution")))]
 struct Api;
 pub fn openapi() -> utoipa::openapi::OpenApi {
     <Api as utoipa::OpenApi>::openapi()
@@ -508,6 +524,10 @@ pub fn openapi() -> utoipa::openapi::OpenApi {
 #[cfg(test)]
 #[path = "../../probe/tests/support/ssh.rs"]
 mod ssh_fixture;
+
+#[cfg(test)]
+#[path = "../../probe/tests/support/grpc.rs"]
+mod grpc_fixture;
 
 #[cfg(test)]
 mod tests {
@@ -542,6 +562,80 @@ mod tests {
         assert_eq!(response.status().as_u16(), status, "{method} {path}");
         let bytes = to_bytes(response.into_body(), 2_000_000).await.expect("body");
         serde_json::from_slice(&bytes).unwrap_or(Value::Null)
+    }
+    async fn exercise_grpc_profiles(app: &Router, base: &str, owner: &str, viewer: &str) {
+        let fixture = grpc_fixture::Fixture::start(true).await;
+        let mut secrets = serde_json::Map::new();
+        for (name, value) in [
+            ("credential", "Bearer fixture-token"),
+            ("ca_certificate", fixture.ca.as_str()),
+            ("client_certificate", fixture.certificate.as_str()),
+            ("client_key", fixture.key.as_str()),
+        ] {
+            let created = call(
+                app,
+                "POST",
+                &format!("{base}/credentials"),
+                Some(owner),
+                Some(json!({"label":name,"value":value,"environmentOnly":true})),
+                200,
+            )
+            .await;
+            secrets.insert(name.into(), created["reference"].clone());
+        }
+        let body = json!({"pluginId":"grpc","name":"gRPC fixture","enabled":true,"config":{"schemaVersion":1,"values":{"endpoint":fixture.endpoint,"server_name":"localhost","proto_files":grpc_fixture::Fixture::files()},"secrets":secrets}});
+        let mut plaintext = body.clone();
+        plaintext["config"]["values"]["client_key"] = json!(fixture.key);
+        call(app, "POST", &format!("{base}/profiles"), Some(owner), Some(plaintext), 400).await;
+        let profile =
+            call(app, "POST", &format!("{base}/profiles"), Some(owner), Some(body), 200).await;
+        let id = profile["id"].as_str().expect("gRPC profile");
+        let path = format!("{base}/profiles/{id}");
+        let metadata = call(app, "GET", &format!("{path}/metadata"), Some(viewer), None, 200).await;
+        assert_eq!(metadata["metadata"]["methods"][0]["path"], "/fixture.Echo/Call");
+        assert_eq!(fixture.calls.load(std::sync::atomic::Ordering::SeqCst), 0);
+        call(
+            app,
+            "GET",
+            &format!("/api/environment-plugins/environments/other/profiles/{id}/metadata"),
+            Some(owner),
+            None,
+            403,
+        )
+        .await;
+        call(app, "POST", &format!("{path}/test"), Some(owner), None, 200).await;
+        call(
+            app,
+            "PUT",
+            &format!("{base}/bindings/{id}"),
+            Some(owner),
+            Some(json!({"slot":"connection","priority":0,"enabled":true})),
+            200,
+        )
+        .await;
+        let request = json!({"method":"/fixture.Echo/Call","message":{"value":"Bearer fixture-token","count":"9007199254740993"}});
+        let result =
+            call(app, "POST", &format!("{path}/execute"), Some(owner), Some(request.clone()), 200)
+                .await;
+        assert_eq!(result["status"], "success");
+        assert_eq!(result["data"]["response"]["count"], "9007199254740993");
+        assert!(!result.to_string().contains("fixture-token"));
+        call(app, "POST", &format!("{path}/execute"), Some(viewer), Some(request), 403).await;
+        let failed = call(
+            app,
+            "POST",
+            &format!("{path}/execute"),
+            Some(owner),
+            Some(json!({"method":"/fixture.Echo/Call","message":{"value":"fail"}})),
+            200,
+        )
+        .await;
+        assert_eq!(failed["status"], "failure");
+        assert_eq!(failed["data"]["status"]["code"], 7);
+        let loaded = call(app, "GET", base, Some(owner), None, 200).await.to_string();
+        assert!(!loaded.contains("fixture-token"));
+        assert!(!loaded.contains("BEGIN PRIVATE KEY"));
+        fixture.idle().await;
     }
     async fn exercise_ssh_profiles(app: &Router, base: &str, owner: &str, viewer: &str) {
         let fixture = ssh_fixture::Fixture::start().await;
@@ -908,6 +1002,7 @@ mod tests {
             .await
             .expect("Redis ACL cleanup");
         exercise_ssh_profiles(&app, base, &owner, &viewer).await;
+        exercise_grpc_profiles(&app, base, &owner, &viewer).await;
         let projects: i64 = sqlx::query_scalar("SELECT count(*) FROM ms_project")
             .fetch_one(&host)
             .await

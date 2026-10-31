@@ -1,3 +1,4 @@
+import { GrpcCall } from './GrpcCall'
 import { SshCommand } from './SshCommand'
 import { RedisCommand } from './RedisCommand'
 import { DatabaseQuery } from './DatabaseQuery'
@@ -41,6 +42,7 @@ export function EnvironmentPluginPanel({ section }: { section: string }) {
   if (!state) throw new Error('Environment plugin provider is missing')
   const { environmentId, descriptors, profiles, bindings, credentials, reload } = state
   const available = descriptors.filter(d => d.section === section)
+  const [grpcCall, setGrpcCall] = useState<Profile | null>(null)
   const [sshCommand, setSshCommand] = useState<Profile | null>(null)
   const [redisCommand, setRedisCommand] = useState<Profile | null>(null)
   const [querying, setQuerying] = useState<Profile | null>(null)
@@ -58,7 +60,7 @@ export function EnvironmentPluginPanel({ section }: { section: string }) {
   const descriptor = available.find(d => d.id === pluginId)
   const slot = slotFor(section)
   const locked = busy || !state.permissions.manage
-  useEffect(() => { setEditing(null); setQuerying(null); setRedisCommand(null); setSshCommand(null); setSecretDrafts({}); setResult(null); setError('') }, [environmentId])
+  useEffect(() => { setEditing(null); setQuerying(null); setRedisCommand(null); setSshCommand(null); setGrpcCall(null); setSecretDrafts({}); setResult(null); setError('') }, [environmentId])
   function initialize(descriptor: Descriptor, profile?: Profile) {
     setPluginId(descriptor.id); setName(profile?.name || ''); setProfileEnabled(profile?.enabled ?? true)
     setConfig(profile ? structuredClone(profile.config) : blank(descriptor)); setSecretDrafts({}); setError(''); setResult(null)
@@ -145,11 +147,13 @@ export function EnvironmentPluginPanel({ section }: { section: string }) {
         {available.find(d => d.id === p.pluginId)?.capabilities.includes('connection_test') && <Button size="small" disabled={busy || !p.enabled || !state.permissions.execute} onClick={() => void test(p)}>测试连接</Button>}
         {['postgres', 'mysql'].includes(p.pluginId) && <Button size="small" disabled={busy || !p.enabled || !state.permissions.execute || !bindings.some(b => b.profileId === p.id && b.slot === 'connection' && b.enabled)} onClick={() => setQuerying(p)}>数据库查询</Button>}
         {p.pluginId === 'redis' && <Button size="small" disabled={busy || !p.enabled || !state.permissions.execute || !bindings.some(b => b.profileId === p.id && b.slot === 'connection' && b.enabled)} onClick={() => setRedisCommand(p)}>Redis 命令</Button>}
+        {p.pluginId === 'grpc' && <Button size="small" disabled={busy || !p.enabled || !state.permissions.execute || !bindings.some(b => b.profileId === p.id && b.slot === 'connection' && b.enabled)} onClick={() => setGrpcCall(p)}>gRPC 调用</Button>}
         {p.pluginId === 'ssh' && <Button size="small" disabled={busy || !p.enabled || !state.permissions.execute || !bindings.some(b => b.profileId === p.id && b.slot === 'connection' && b.enabled)} onClick={() => setSshCommand(p)}>SSH 命令</Button>}
         <Button size="small" disabled={locked} onClick={() => void toggleBinding(p)}>{bindings.some(b => b.profileId === p.id && b.slot === slot) ? '取消应用' : '应用'}</Button>
         <Popconfirm title="删除此配置？请先取消它在各环境中的应用。" onConfirm={() => remove(p)}><Button aria-label="删除" size="small" danger disabled={locked}>删除</Button></Popconfirm>
       </Space> },
     ]} />
+    {grpcCall && <GrpcCall key={`${environmentId}/${grpcCall.id}`} environmentId={environmentId} profile={grpcCall} onClose={() => setGrpcCall(null)} />}
     {sshCommand && <SshCommand key={`${environmentId}/${sshCommand.id}`} environmentId={environmentId} profile={sshCommand} onClose={() => setSshCommand(null)} />}
     {redisCommand && <RedisCommand key={`${environmentId}/${redisCommand.id}`} environmentId={environmentId} profile={redisCommand} onClose={() => setRedisCommand(null)} />}
     {querying && <DatabaseQuery key={`${environmentId}/${querying.id}`} environmentId={environmentId} profile={querying} onClose={() => setQuerying(null)} />}

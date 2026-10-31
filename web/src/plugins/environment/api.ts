@@ -43,6 +43,7 @@ export const environmentPluginApi = {
   remove: (environment: string, id: string, revision: number) => call('DELETE', `${profilePath(environment, id)}?revision=${revision}`),
   bind: (environment: string, id: string, slot: Slot, enabled = true) => call('PUT', `${root(environment)}/bindings/${encodeURIComponent(id)}`, { slot, priority: 0, enabled }),
   unbind: (environment: string, id: string, slot: Slot) => call('DELETE', `${root(environment)}/bindings/${encodeURIComponent(id)}?slot=${slot}`),
+  metadata: <T = unknown>(environment: string, id: string) => call<{ metadata: T }>('GET', `${profilePath(environment, id)}/metadata`),
   test: (environment: string, id: string) => call<PluginOutput>('POST', `${profilePath(environment, id)}/test`),
   execute: <T = unknown>(environment: string, id: string, input: unknown) => call<PluginOutput<T>>('POST', `${profilePath(environment, id)}/execute`, input),
   createCredential: (environment: string, label: string, value: string) => call<{ reference: string }>('POST', `${root(environment)}/credentials`, { label, value, environmentOnly: true }),
@@ -66,3 +67,6 @@ export interface SshReport {
   termination: { kind: 'exit'; code: number } | { kind: 'signal'; name: string; coreDumped: boolean; message: string } | { kind: 'missing' }
   elapsedMs: number
 }
+
+export interface GrpcMethod { path: string; inputType: string; outputType: string; clientStreaming: boolean; serverStreaming: boolean; inputExample?: unknown }
+export interface GrpcReport { operation: 'called'; method: string; status: { code: number; message: string; details: string | null }; response: unknown; metadata: Record<string, { encoding: 'ascii' | 'base64'; value: string }[]>; elapsedMs: number }

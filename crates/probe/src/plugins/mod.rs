@@ -40,3 +40,6 @@ pub mod redis_command;
 
 #[cfg(feature = "ssh")]
 pub mod ssh_command;
+
+#[cfg(feature = "grpc-dynamic")]
+pub mod grpc_dynamic;

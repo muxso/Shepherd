@@ -70,6 +70,11 @@ environment-plugins = ["dep:environment-plugins", "dep:plugin-runtime"]
 yunxiao = ["dep:yunxiao"]
 
 [dev-dependencies]
+rcgen = "0.13"
+prost = "0.13"
+prost-types = "0.13"
+tonic = { version = "0.12", features = ["tls"] }
+tokio-stream = { version = "0.1", features = ["net"] }
 russh = "0.62"
 tempfile = "3"
 webauth = { workspace = true, features = ["test-util"] }
