@@ -31,8 +31,8 @@ export function useOpenParam(onOpen: (id: string) => void) {
 // URL is shareable and survives reload / back-forward.
 export function useWorkTabs() {
   const [params, setParams] = useSearchParams()
-  const [openIds, setOpenIds] = useState<string[]>([])
-  const [activeKey, setActiveKey] = useState(LIST_KEY)
+  const [openIds, setOpenIds] = useState<string[]>(() => params.get('open') ? [params.get('open')!] : [])
+  const [activeKey, setActiveKey] = useState(() => params.get('open') || LIST_KEY)
   const open = (id: string) => {
     setOpenIds((ids) => (ids.includes(id) ? ids : [...ids, id]))
     setActiveKey(id)
@@ -44,9 +44,9 @@ export function useWorkTabs() {
       return next
     })
   }
-  const reset = () => {
-    setOpenIds([])
-    setActiveKey(LIST_KEY)
+  const reset = (id?: string) => {
+    setOpenIds(id ? [id] : [])
+    setActiveKey(id || LIST_KEY)
   }
 
   // Restore from ?open=<id> (shared URL / deep link / back-forward).

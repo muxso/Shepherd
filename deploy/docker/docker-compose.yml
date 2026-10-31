@@ -51,6 +51,8 @@ services:
       dockerfile: deploy/docker/Dockerfile.server
     environment:
       DATABASE_URL: postgres://shepherd:${POSTGRES_PASSWORD:?set in deploy/docker/.env}@postgres:5432/shepherd
+      SHEPHERD_YUNXIAO_DATABASE_URL: ${SHEPHERD_YUNXIAO_DATABASE_URL:-}
+      SHEPHERD_PLUGINS: ${SHEPHERD_PLUGINS:-}
       SHEPHERD_BIND: 0.0.0.0:8088
       SHEPHERD_ADMIN_PASSWORD: ${SHEPHERD_ADMIN_PASSWORD:?set in deploy/docker/.env}
       SHEPHERD_AGENT_FLEET: "1"

@@ -1,0 +1,11 @@
+[Unit]
+Description=Hourly Yunxiao to Shepherd synchronization
+
+[Timer]
+OnCalendar=*-*-* *:15:00
+RandomizedDelaySec=60
+Persistent=true
+Unit=shepherd-yunxiao-sync.service
+
+[Install]
+WantedBy=timers.target

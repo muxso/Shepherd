@@ -7,6 +7,7 @@ WORKDIR /app
 
 COPY Cargo.toml Cargo.lock ./
 COPY crates ./crates
+COPY plugins ./plugins
 RUN cargo build --release -p agent-runtime && \
     cp target/release/agent-runtime /usr/local/bin/agent-runtime
 

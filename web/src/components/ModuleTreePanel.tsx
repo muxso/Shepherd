@@ -5,6 +5,7 @@ import { message, modal } from '../feedback'
 import { FolderOutlined, InboxOutlined, MinusSquareOutlined, MoreOutlined, PlusOutlined, SearchOutlined } from '@ant-design/icons'
 import { api, ApiError, type ApiModule } from '../api'
 import { useI18n } from '../i18n'
+import { moduleIndex } from './moduleIndex'
 
 // Return a module id plus all descendant ids (parent selection includes children, keeping counts consistent with the list).
 export function collectSubtreeIds(modules: ApiModule[], moduleId: string): string[] {
@@ -61,10 +62,10 @@ export function ModuleTreePanel<T>({
   const [expanded, setExpanded] = useState<string[]>(['ALL'])
   const [form, setForm] = useState<{ mode: 'create' | 'rename'; id?: string; parentId?: string | null; name?: string } | null>(null)
 
-  const childModulesOf = (mid: string | null) => modules.filter((m) => (m.parentId || null) === mid)
-  const directCount = (mid: string) => items.filter((it) => getModuleId(it) === mid).length
-  const subtreeCount = (mid: string): number => directCount(mid) + childModulesOf(mid).reduce((n, c) => n + subtreeCount(c.id), 0)
-  const unfiledCount = items.filter((it) => !getModuleId(it)).length
+  const index = useMemo(() => moduleIndex(modules, items, getModuleId), [modules, items, getModuleId])
+  const childModulesOf = (mid: string | null) => index.children.get(mid) || []
+  const subtreeCount = (mid: string) => index.counts.get(mid) || 0
+  const unfiledCount = index.unfiled
   const allExpandableKeys = useMemo(() => ['ALL', ...modules.map((m) => m.id)], [modules])
 
   const onModuleAction = (action: string, m: ApiModule) => {
@@ -133,7 +134,7 @@ export function ModuleTreePanel<T>({
       ],
     }]
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [modules, items, moduleSearch, allLabel, unfiledLabel, expanded, allExpandableKeys])
+  }, [modules, items, index, moduleSearch, allLabel, unfiledLabel, expanded, allExpandableKeys])
 
   return (
     <>

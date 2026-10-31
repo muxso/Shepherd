@@ -1,0 +1,32 @@
+// Read-only acceptance against the deployed pilot (no test assets are created).
+import { test, expect } from '@playwright/test'
+import { readFileSync } from 'node:fs'
+const authFile = process.env.SHEPHERD_E2E_AUTH_FILE
+const auth = authFile ? JSON.parse(readFileSync(authFile, 'utf8')) as { token: string; projectId: string; codeRequirementId?: string } : null
+test.skip(!auth, 'Requires a private SHEPHERD_E2E_AUTH_FILE for a read-only QA session')
+test.beforeEach(async ({ page }) => {
+  page.on('pageerror', e => console.error('Browser page error:', e.message))
+  page.on('requestfailed', r => console.error('Request failed:', new URL(r.url()).pathname, r.failure()?.errorText))
+  await page.addInitScript(({ token, projectId }) => {
+    localStorage.setItem('shepherd.token', token)
+    localStorage.setItem('shepherd.projectId', projectId)
+  }, auth!)
+})
+test('statistics scrolling reaches all six data tabs in a 720px viewport', async ({ page }, testInfo) => {
+  await page.setViewportSize({ width: 1280, height: 720 })
+  await page.goto('/devops')
+  await expect(page.getByRole('heading', { name: '云效研发统计' })).toBeVisible()
+  const scroll = page.getByTestId('devops-scroll')
+  await expect.poll(() => scroll.evaluate(e => ({ overflow: getComputedStyle(e).overflowY, fits: e.clientHeight < window.innerHeight }))).toEqual({ overflow: 'auto', fits: true })
+  await scroll.hover()
+  await page.mouse.wheel(0, 1100)
+  await expect.poll(() => scroll.evaluate(e => e.scrollTop)).toBeGreaterThan(0)
+  for (const name of ['缺陷', '迭代', '实际提交', '状态变化', '同步记录', '需求']) {
+    const tab = page.getByRole('tab', { name, exact: true })
+    await tab.scrollIntoViewIfNeeded(); await tab.click()
+    const table = scroll.locator('.ant-card').last()
+    await expect(table.locator('.ant-spin-spinning')).toHaveCount(0)
+    await expect(table.locator('.ant-table-tbody .ant-table-row').first()).toBeVisible()
+  }
+  await page.screenshot({ path: testInfo.outputPath('devops-records.png') })
+})

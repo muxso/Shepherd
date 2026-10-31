@@ -42,6 +42,7 @@ fn timeout_for(method: &Method, path: &str) -> Duration {
         return DEFAULT_TIMEOUT;
     }
     let long_run = path == "/api/scenario/batch-run"
+        || (path.starts_with("/api/devops/runs/") && path.ends_with("/complete"))
         || (path.ends_with("/run")
             && (path.starts_with("/api/scenario/")
                 || path.starts_with("/api/case/")
@@ -129,6 +130,7 @@ mod tests {
     #[test]
     fn run_endpoints_get_long_timeout() {
         for path in [
+            "/api/devops/runs/sync-123/complete",
             "/api/scenario/abc-123/run",
             "/api/scenario/batch-run",
             "/api/case/abc-123/run",
@@ -143,6 +145,7 @@ mod tests {
     #[test]
     fn other_routes_keep_default_timeout() {
         for path in [
+            "/api/devops/runs/sync-123/records",
             "/api/scenario",
             "/api/scenario/abc-123",
             "/api/import-schedule/abc-123/run",

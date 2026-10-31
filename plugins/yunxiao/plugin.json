@@ -1,0 +1,6 @@
+{
+  "id": "yunxiao",
+  "name": "云效同步",
+  "description": "将云效需求、缺陷、迭代、用例和提交单向同步到 Shepherd。",
+  "entry": "/devops"
+}

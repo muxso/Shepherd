@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { Button, Descriptions, Empty, Form, Input, Popconfirm, Select, Space, Table, Tabs, Tag, Upload } from 'antd'
 import type { FormInstance } from 'antd'
 import { DeleteOutlined, DownloadOutlined, EditOutlined, ImportOutlined } from '@ant-design/icons'
@@ -6,7 +6,7 @@ import { message } from '../feedback'
 import { api, ApiError, userIdStore, type ApiModule, type CaseRequirementLink, type CaseStep, type FunctionalCase, type Requirement, type TemplateField } from '../api'
 import { useApp } from '../context'
 import { Workspace, WorkList, useWorkTabs } from '../components/Workspace'
-import { ModuleTreePanel, inSelectedModule } from '../components/ModuleTreePanel'
+import { ModuleTreePanel, collectSubtreeIds } from '../components/ModuleTreePanel'
 import StepsEditor from '../components/StepsEditor'
 import { CF_GROUP, CustomFieldItem, collectCustomValues, customFormValues, useFieldTemplate } from '../components/TemplateFields'
 import { useI18n } from '../i18n'
@@ -60,8 +60,9 @@ export default function FunctionalCases() {
   }, [projectId])
 
   // module now stores a module id; legacy data stored name text → treat values matching no module id as unfiled.
-  const moduleIdOf = (c: FunctionalCase) => (modules.some((m) => m.id === c.module) ? c.module! : '')
-  const moduleNameOf = (id: string) => modules.find((m) => m.id === id)?.name
+  const modulesById = useMemo(() => new Map(modules.map(m => [m.id, m])), [modules])
+  const moduleIdOf = useCallback((c: FunctionalCase) => modulesById.has(c.module || '') ? c.module! : '', [modulesById])
+  const moduleNameOf = (id: string) => modulesById.get(id)?.name
   // Module column: matched module shows its name; legacy text values render as-is (gray); empty shows unfiled.
   const renderModule = (m?: string) => {
     if (!m) return unfiled
@@ -107,7 +108,7 @@ export default function FunctionalCases() {
 
   // View/filter/column toolbar: useListView must be called before the conditional return below.
   const allColumns: ListColumn<FunctionalCase>[] = [
-    { key: 'name', label: t('func.colName', '名称'), title: t('func.colName', '名称'), dataIndex: 'name', ellipsis: true },
+    { key: 'name', label: t('func.colName', '名称'), title: t('func.colName', '名称'), dataIndex: 'name', ellipsis: true, render: (name: string) => <span>{name}</span> },
     { key: 'module', label: t('func.colModule', '模块'), title: t('func.colModule', '模块'), dataIndex: 'module', width: 140, render: renderModule },
     { key: 'priority', label: t('func.colPriority', '优先级'), title: t('func.colPriority', '优先级'), dataIndex: 'priority', width: 90, render: (p?: string) => <Tag color={prioColor(p)}>{p || 'P2'}</Tag> },
     { key: 'steps', label: t('func.colSteps', '步骤'), title: t('func.colSteps', '步骤'), dataIndex: 'steps', width: 70, render: (s?: CaseStep[]) => (s?.length || 0) },
@@ -167,10 +168,12 @@ export default function FunctionalCases() {
     rows: cases,
   })
 
+  const selectedModuleIds = useMemo(() => moduleKey === 'ALL' || moduleKey === 'UNFILED' ? null : new Set(collectSubtreeIds(modules, moduleKey)), [modules, moduleKey])
+
   if (!projectId) return <SelectProjectEmpty />
 
   // Module-tree filter stacks on top of toolbar filters (selecting a parent includes children; legacy text values count as unfiled).
-  const visible = lv.rows.filter((c) => inSelectedModule(modules, moduleKey, moduleIdOf(c)))
+  const visible = moduleKey === 'ALL' ? lv.rows : lv.rows.filter(c => moduleKey === 'UNFILED' ? !moduleIdOf(c) : selectedModuleIds?.has(moduleIdOf(c)))
 
   // Left: project-level module tree, same as the scenarios page.
   const left = (

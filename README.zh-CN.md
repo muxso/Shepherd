@@ -168,3 +168,5 @@ GPL-2.0,见 [LICENSE](LICENSE)。
 - **微信交流群 —— Shepherd 人机协同 交流群:** 扫码加入。
 
 <img src="docs/assets/wechat-group.jpg" alt="Shepherd 人机协同 交流群" width="240" />
+
+Shepherd 可选插件接入与运维：[云效同步插件](docs/YUNXIAO.zh-CN.md)。

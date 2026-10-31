@@ -40,7 +40,7 @@ export class ApiError extends Error {
   }
 }
 
-async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
+export async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
   const headers: Record<string, string> = {}
   const token = tokenStore.get()
   if (token) headers['authorization'] = `Bearer ${token}`
@@ -1851,8 +1851,17 @@ export const api = {
     http.post<{ title: string; description: string; acceptanceCriteria: string[]; priority: string; source: 'llm' | 'heuristic' }>('/requirement/draft', { raw }),
   getRequirement: (id: string) => http.get<Requirement>(`/requirement/${id}`),
   // List comes from the backend (paged); large pageSize pulls everything at once so CLI/API-created requirements show in the UI.
-  requirements: (projectId: string) =>
-    http.get<Page<Requirement>>(`/requirement?projectId=${encodeURIComponent(projectId)}&current=1&pageSize=200`),
+  requirements: async (projectId: string) => {
+    const url = `/requirement?projectId=${encodeURIComponent(projectId)}&pageSize=200`
+    const first = await http.get<Page<Requirement>>(`${url}&current=1`)
+    const items = [...first.items]
+    // Fetch every page; an imported project can contain far more than 200 requirements.
+    for (let start = 2; start <= first.totalPages; start += 4) {
+      const pages = await Promise.all(Array.from({ length: Math.min(4, first.totalPages - start + 1) }, (_, i) => http.get<Page<Requirement>>(`${url}&current=${start + i}`)))
+      for (const page of pages) items.push(...page.items)
+    }
+    return { ...first, items: Array.from(new Map(items.map(r => [r.id, r])).values()) }
+  },
   addRequirementVersion: (id: string, b: { description: string; acceptanceCriteria: string[] }) =>
     http.post<{ version: number }>(`/requirement/${id}/version`, b),
   getRequirementVersion: (id: string, n: number) =>
@@ -2198,4 +2207,16 @@ export const api = {
     http.put(`/api/project-file/${id}/module`, { moduleId }),
   scenarioChanges: (scenarioId: string) =>
     http.get<ScenarioChange[]>(`/api/scenario/${scenarioId}/changes`),
+}
+
+export interface Plugin {
+  id: string
+  name: string
+  description: string
+  entry: string
+  installed: boolean
+  enabled: boolean
+}
+export const pluginApi = {
+  list: () => request<{ items: Plugin[] }>('GET', '/api/plugins'),
 }

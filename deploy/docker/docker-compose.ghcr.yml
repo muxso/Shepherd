@@ -42,6 +42,8 @@ services:
     image: ghcr.io/muxso/shepherd-server:main
     environment:
       DATABASE_URL: postgres://${POSTGRES_USER:-shepherd}:${POSTGRES_PASSWORD:-shepherd}@postgres:5432/${POSTGRES_DB:-shepherd}
+      SHEPHERD_YUNXIAO_DATABASE_URL: ${SHEPHERD_YUNXIAO_DATABASE_URL:-}
+      SHEPHERD_PLUGINS: ${SHEPHERD_PLUGINS:-}
       SHEPHERD_BIND: 0.0.0.0:8088
       SHEPHERD_ADMIN_PASSWORD: ${SHEPHERD_ADMIN_PASSWORD}
       SHEPHERD_AGENT_FLEET: "1"
