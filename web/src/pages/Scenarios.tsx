@@ -1330,7 +1330,7 @@ function ScenarioDetail({ scenario, active }: { scenario: Scenario; active?: boo
     const req = buildStepRequest(reqInfo.method, reqInfo.url, reqInfo.body, reqInfo.headers, reqInfo.auth as { type: string; token?: string } | undefined, env)
     if (!req) return message.warning(t('editor.needEnvOrAbs', '相对路径需先选择带 baseUrl 的环境,或填写绝对 URL(http(s)://)'))
     try {
-      const resp = await api.debugSend({ ...req, assertions: reqInfo.assertions as unknown[], processors: reqInfo.processors as unknown[] })
+      const resp = await api.debugSend({ ...req, environmentId: env?.id, assertions: reqInfo.assertions as unknown[], processors: reqInfo.processors as unknown[] })
       const fails = (resp.assertions || []).filter((a) => !a.passed)
       setStepResults((prev) => ({ ...prev, [k]: { caseId: k, outcome: fails.length ? 'ERROR' : 'SUCCESS', failures: fails.map((a) => a.reason || a.item), executedAt: '', statusCode: resp.status, latencyMs: resp.latencyMs, respSize: resp.body.length, body: resp.body, headers: resp.headers } }))
     } catch (e) {
@@ -1872,7 +1872,7 @@ function StepDetailDrawer({
     setLastReq(req)
     setRunning(true); setErr(''); setResp(null)
     try {
-      setResp(await api.debugSend({ ...req, assertions: reqInfo.assertions as unknown[], processors: reqInfo.processors as unknown[] }))
+      setResp(await api.debugSend({ ...req, environmentId: env?.id, assertions: reqInfo.assertions as unknown[], processors: reqInfo.processors as unknown[] }))
     } catch (e) {
       setErr(e instanceof ApiError ? e.message : t('editor.sendFail', '发送失败'))
     } finally {
@@ -2284,7 +2284,7 @@ function CustomRequestDrawer({
     if (!req) return message.warning(t('editor.needEnvOrAbs', '相对路径需先选择带 baseUrl 的环境,或填写绝对 URL(http(s)://)'))
     setLastReq(req); setRunning(true); setErr(''); setResp(null)
     try {
-      setResp(await api.debugSend({ ...req, assertions: assertions as unknown[], processors: mergedProcessors() as unknown[] }))
+      setResp(await api.debugSend({ ...req, environmentId: env?.id, assertions: assertions as unknown[], processors: mergedProcessors() as unknown[] }))
     } catch (e) {
       setErr(e instanceof ApiError ? e.message : t('editor.sendFail', '发送失败'))
     } finally {

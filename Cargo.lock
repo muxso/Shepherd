@@ -185,11 +185,13 @@ name = "api-runner"
 version = "0.0.4"
 dependencies = [
  "axum 0.8.9",
+ "rcgen",
  "regex",
  "reqwest",
  "serde",
  "serde_json",
  "tokio",
+ "tokio-rustls",
  "url",
 ]
 
@@ -1830,6 +1832,7 @@ dependencies = [
 name = "environment-plugins"
 version = "0.0.4"
 dependencies = [
+ "api-runner",
  "async-trait",
  "plugin-runtime",
  "probe",

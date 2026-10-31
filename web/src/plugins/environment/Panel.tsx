@@ -135,9 +135,10 @@ export function EnvironmentPluginPanel({ section }: { section: string }) {
   return <Space direction="vertical" style={{ width: '100%' }}>
     {error && !editing && <Alert type="error" closable onClose={() => setError('')} message={error} />}
     {result && !editing && <Result output={result} />}
+    {section === 'host' && <Alert type="info" message="HOST 用于服务端 HTTP 调试，保留原始 Host 和 TLS SNI。浏览器直连、批量用例和场景/计划运行暂不支持。" />}
     <Typography.Text type="secondary">配置在项目内共享，修改会影响使用它的环境；新凭据默认仅用于当前环境。</Typography.Text>
     {!state.permissions.execute && <Typography.Text type="secondary">需启用环境并具备执行权限，才能测试连接。</Typography.Text>}
-    <Button type="primary" disabled={!state.permissions.manage} onClick={() => { initialize(available[0]); setEditing('new') }}>新增连接配置</Button>
+    <Button type="primary" disabled={!state.permissions.manage} onClick={() => { initialize(available[0]); setEditing('new') }}>{section === 'host' ? '新增 HOST 配置' : '新增连接配置'}</Button>
     <Table<Profile> size="small" rowKey="id" dataSource={visible} pagination={false} columns={[
       { title: '名称', dataIndex: 'name' },
       { title: '插件', render: (_, p) => available.find(d => d.id === p.pluginId)?.name || p.pluginId },

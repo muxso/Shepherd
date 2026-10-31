@@ -2064,7 +2064,7 @@ export const api = {
     http.post<{ instructions: string }>('/skill/compose', { projectId, skillIds }),
 
   // API debug console: fire a request in-process (POST /api/debug/send)
-  debugSend: (b: { protocol?: string; method: string; url: string; headers?: { key: string; value: string }[]; body?: string; meta?: Record<string, string>; assertions?: unknown[]; processors?: unknown[] }) =>
+  debugSend: (b: { environmentId?: string; protocol?: string; method: string; url: string; headers?: { key: string; value: string }[]; body?: string; meta?: Record<string, string>; assertions?: unknown[]; processors?: unknown[] }) =>
     http.post<DebugResponse>('/api/debug/send', b),
   // Protocol plugins enabled on the backend (returns whichever features are compiled in); debug console renders them dynamically.
   debugProtocols: () => http.get<{ protocols: string[] }>('/api/debug/protocols'),

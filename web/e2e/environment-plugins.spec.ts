@@ -26,6 +26,12 @@ const redis: Descriptor = {
   ] },
 }
 
+const host: Descriptor = {
+  id: 'host', name: 'HOST', section: 'host', version: '1.0.0', apiVersion: 1,
+  capabilities: ['execute', 'host_override'], operations: ['execute'],
+  configSchema: { version: 1, fields: [{ name: 'addresses', label: 'DNS names to IP arrays (JSON)', required: true, kind: { type: 'json' } }] },
+}
+
 const grpc: Descriptor = {
   id: 'grpc', name: 'gRPC', section: 'grpc', version: '1.0.0', apiVersion: 1,
   capabilities: ['execute', 'connection_test'], operations: ['test', 'execute'],
@@ -65,7 +71,7 @@ async function fixture(page: Page, enabled = true, readonly = false) {
     else if (path === '/project') body = { items: [{ id: 'project', name: 'Project', organizationId: 'organization' }], totalPages: 1 }
     else if (path === '/api/environment') body = [{ id: 'environment', projectId: 'project', name: 'Test environment', baseUrl: '', headers: [], variables: {}, enabled: true }]
     else if (path === '/api/plugins') body = { items: [] }
-    else if (path === '/api/environment-plugins/capabilities') body = { enabled, items: enabled ? [postgres, redis, ssh, grpc] : [] }
+    else if (path === '/api/environment-plugins/capabilities') body = { enabled, items: enabled ? [postgres, redis, ssh, grpc, host] : [] }
     else if (path === '/api/environment-plugins/environments/environment') {
       configurationReads++
       body = { profiles, bindings, credentials, permissions: { manage: !readonly, execute: !readonly } } satisfies Configuration
@@ -137,7 +143,7 @@ test('plugin configuration saves secret references, binds, tests, and survives r
   await dialog.getByRole('button', { name: '关闭', exact: true }).click()
   await expect(dialog).not.toBeVisible()
   await page.getByRole('tab', { name: 'HOST', exact: true }).click()
-  await expect(page.getByText('此项能力尚未安装可用插件', { exact: true })).toBeVisible()
+  await expect(page.getByText('HOST 用于服务端 HTTP 调试，保留原始 Host 和 TLS SNI。浏览器直连、批量用例和场景/计划运行暂不支持。', { exact: true })).toBeVisible()
   expect(data.tested()).toBe(1)
 })
 
@@ -281,4 +287,23 @@ test('gRPC methods are inspected locally and calls report actual gRPC status', a
   const download = page.waitForEvent('download')
   await dialog.getByRole('button', { name: '导出报告', exact: true }).click()
   expect((await download).suggestedFilename()).toBe('grpc-report-profile-1.json')
+})
+
+
+test('HOST configuration persists address rules and binds the host slot', async ({ page }) => {
+  const data = await fixture(page)
+  await open(page)
+  await page.getByRole('tab', { name: 'HOST', exact: true }).click()
+  await page.getByRole('button', { name: '新增 HOST 配置', exact: true }).click()
+  const dialog = page.getByRole('dialog')
+  await dialog.getByLabel('配置名称', { exact: true }).fill('Internal service')
+  await dialog.getByLabel('DNS names to IP arrays (JSON)', { exact: true }).fill('{"example.test":["127.0.0.1","::1"]}')
+  await dialog.getByRole('button', { name: '保存配置', exact: true }).click()
+  await expect(page.getByText('Internal service', { exact: true }).first()).toBeVisible()
+  expect(data.saved[0].config.values.addresses).toEqual({ 'example.test': ['127.0.0.1', '::1'] })
+  expect(data.bindings[0].slot).toBe('host')
+  expect(data.tested()).toBe(0)
+  await dialog.getByRole('button', { name: '关闭', exact: true }).click()
+  await page.getByRole('button', { name: '编辑', exact: true }).click()
+  await expect(dialog.getByLabel('DNS names to IP arrays (JSON)', { exact: true })).toHaveValue(/example.test/)
 })

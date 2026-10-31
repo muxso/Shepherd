@@ -7,6 +7,7 @@ use webauth::{AuthUser, SessionStore};
 pub fn enabled() -> bool {
     false
 }
+#[derive(Clone)]
 pub struct Runtime;
 impl Runtime {
     pub async fn load(_host: &sqlx::PgPool) -> Result<Option<Self>, Box<dyn std::error::Error>> {
@@ -34,4 +35,19 @@ async fn capabilities(user: AuthUser) -> Result<Json<Value>, StatusCode> {
 struct Api;
 pub fn openapi() -> utoipa::openapi::OpenApi {
     <Api as utoipa::OpenApi>::openapi()
+}
+
+#[derive(Clone)]
+pub struct ExecutionResolver;
+impl ExecutionResolver {
+    pub fn new(_host: sqlx::PgPool, _runtime: Option<Runtime>) -> Self {
+        Self
+    }
+    pub async fn host_overrides(
+        &self,
+        _user: AuthUser,
+        _environment: &str,
+    ) -> Result<api_runner::HostOverrides, axum::response::Response> {
+        Ok(api_runner::HostOverrides::default())
+    }
 }

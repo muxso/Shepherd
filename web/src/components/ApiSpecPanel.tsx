@@ -263,7 +263,7 @@ const ApiSpecPanel = forwardRef<ApiSpecPanelHandle, {
       setResp(
         m === 'local'
           ? await localSend(req)
-          : await api.debugSend({ ...req, assertions: spec.assertions, processors: spec.postProcessors }),
+          : await api.debugSend({ ...req, environmentId: env?.id, assertions: spec.assertions, processors: spec.postProcessors }),
       )
     } catch (e) {
       setRunErr(e instanceof ApiError ? e.message : e instanceof Error ? e.message : t('editor.sendFail', '发送失败'))

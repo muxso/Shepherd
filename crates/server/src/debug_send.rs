@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use axum::{
-    extract::FromRef,
+    extract::{FromRef, State},
     http::StatusCode,
     response::{IntoResponse, Response},
     routing::{get, post},
@@ -19,6 +19,7 @@ use probe::{default_registry, ProbeRequest};
 #[derive(Clone)]
 struct DebugState {
     sessions: Arc<dyn SessionStore>,
+    environment: crate::environment_extension::ExecutionResolver,
 }
 
 impl FromRef<DebugState> for Arc<dyn SessionStore> {
@@ -27,11 +28,14 @@ impl FromRef<DebugState> for Arc<dyn SessionStore> {
     }
 }
 
-pub fn router(sessions: Arc<dyn SessionStore>) -> Router {
+pub fn router(
+    sessions: Arc<dyn SessionStore>,
+    environment: crate::environment_extension::ExecutionResolver,
+) -> Router {
     Router::new()
         .route("/api/debug/send", post(send))
         .route("/api/debug/protocols", get(protocols))
-        .with_state(DebugState { sessions })
+        .with_state(DebugState { sessions, environment })
 }
 
 async fn protocols(_user: AuthUser) -> Response {
@@ -53,6 +57,8 @@ struct HeaderKv {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct SendBody {
+    #[serde(default)]
+    environment_id: Option<String>,
     #[serde(default)]
     protocol: Option<String>,
     #[serde(default = "default_method")]
@@ -113,7 +119,11 @@ struct SendResponse {
     extractions: Vec<(String, String)>,
 }
 
-async fn send(_user: AuthUser, Json(req): Json<SendBody>) -> Response {
+async fn send(
+    user: AuthUser,
+    State(state): State<DebugState>,
+    Json(req): Json<SendBody>,
+) -> Response {
     if req.url.trim().is_empty() {
         return (StatusCode::BAD_REQUEST, "url required").into_response();
     }
@@ -169,7 +179,21 @@ async fn send(_user: AuthUser, Json(req): Json<SendBody>) -> Response {
         headers: req.headers.into_iter().map(|h| (h.key, h.value)).collect(),
         body: req.body,
     };
-    match ReqwestRunner::no_proxy().execute(&spec).await {
+    let hosts = match req.environment_id.as_deref() {
+        Some(environment) => match state.environment.host_overrides(user, environment).await {
+            Ok(hosts) => hosts,
+            Err(response) => return response,
+        },
+        None => api_runner::HostOverrides::default(),
+    };
+    let runner = match ReqwestRunner::with_host_overrides(&hosts) {
+        Ok(runner) => runner,
+        Err(error) => {
+            return (StatusCode::BAD_GATEWAY, Json(serde_json::json!({"error":error.message()})))
+                .into_response()
+        }
+    };
+    match runner.execute(&spec).await {
         Ok(s) => {
             let snapshot = ResponseSnapshot {
                 status: s.status,
