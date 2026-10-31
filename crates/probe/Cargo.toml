@@ -32,10 +32,11 @@ russh = { version = "0.62", optional = true }
 
 [features]
 default = ["http"]
+database-results = ["dep:tokio", "dep:futures-util", "sqlx/json", "sqlx/chrono", "sqlx/uuid", "sqlx/bigdecimal"]
 http = ["dep:api-runner"]
 grpc = ["dep:tonic", "dep:bytes", "dep:http"]
-sql = ["dep:sqlx", "sqlx/postgres"]
-mysql = ["dep:sqlx", "sqlx/mysql"]
+sql = ["dep:sqlx", "sqlx/postgres", "database-results"]
+mysql = ["dep:sqlx", "sqlx/mysql", "database-results"]
 redis = ["dep:redis"]
 websocket = ["dep:tokio-tungstenite", "dep:futures-util", "dep:tokio"]
 ssh = ["dep:russh"]

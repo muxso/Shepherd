@@ -1,3 +1,5 @@
+#[cfg(any(feature = "sql", feature = "mysql"))]
+pub mod database;
 #[cfg(feature = "http")]
 pub mod http;
 #[cfg(feature = "http")]

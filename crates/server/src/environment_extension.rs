@@ -699,6 +699,35 @@ mod tests {
         )
         .await;
         assert_eq!(result["status"], "success");
+        assert_eq!(result["data"]["rows"][0][0], 1);
+        let query = call(&app,"POST",&format!("{path}/execute"),Some(&owner),Some(json!({"query":"SELECT $1::text AS credential, 9007199254740993::bigint AS id", "parameters":[{"type":"text","value":target.password().expect("password")}],"extract":[{"variable":"secret","row":0,"column":"credential"},{"variable":"id","row":0,"column":1}]})),200).await;
+        assert_eq!(query["status"], "success");
+        assert_eq!(query["variables"]["id"], "9007199254740993");
+        assert!(
+            !query.to_string().contains(target.password().expect("password")),
+            "query cells and variables must redact configured credentials"
+        );
+        let missing = call(&app,"POST",&format!("{path}/execute"),Some(&owner),Some(json!({"query":"SELECT 1 AS id WHERE false","extract":[{"variable":"id","row":0,"column":"id"}]})),200).await;
+        assert_eq!(missing["status"], "failure");
+        assert_eq!(missing["assertions"][0]["passed"], false);
+        call(
+            &app,
+            "POST",
+            &format!("{path}/execute"),
+            Some(&viewer),
+            Some(json!({"query":"SELECT 1"})),
+            403,
+        )
+        .await;
+        call(
+            &app,
+            "POST",
+            &format!("{path}/execute"),
+            Some(&owner),
+            Some(json!({"query":"SELECT 1","ignored":true})),
+            400,
+        )
+        .await;
         let loaded = call(&app, "GET", base, Some(&owner), None, 200).await;
         assert_eq!(loaded["profiles"].as_array().expect("profiles").len(), 1);
         assert_eq!(loaded["bindings"][0]["profileId"], id);
