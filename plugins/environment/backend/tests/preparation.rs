@@ -142,6 +142,13 @@ impl EnvironmentPlugin for Data {
         let value = inv.input["value"].as_str().unwrap_or("none").to_string();
         self.0.lock().expect("trace").push(value.clone());
         let mut output = PluginOutput::success(json!({"value":value}));
+        if value == "assert-fail" {
+            output.assertions.push(AssertionResult {
+                id: "fixture.assertion".into(),
+                passed: false,
+                message: "fixture assertion failed".into(),
+            });
+        }
         output.variables.insert("db".into(), value);
         Ok(output)
     }
@@ -184,6 +191,19 @@ async fn preparation_orders_environment_before_case_and_preflights_every_credent
     assert_eq!(result.steps.len(), 5);
     assert!(result.steps[0].source.starts_with("environment:first"));
     assert!(result.steps[3].source.starts_with("case:1"));
+    let failed = profile(
+        "failed",
+        "setup",
+        json!({"steps":[{"type":"invoke","profileId":"data","input":{"value":"assert-fail"}}]}),
+    );
+    store.profiles.insert("failed".into(), failed);
+    let result = Preparation { store: &store, registry: &registry, context: &context }
+        .run(BTreeMap::new(), &[Processor::Plugin { profile_id: "failed".into() }])
+        .await;
+    assert!(
+        matches!(result,Err(PluginError::Execution(message)) if message.contains("data-source preparation returned a failure")),
+        "failed assertions must stop preparation even when the provider status is success"
+    );
     trace.lock().expect("trace").clear();
     let mut denied = profile("denied", "fixture", json!({}));
     denied.config.secrets.insert("credential".into(), SecretRef("foreign-credential".into()));

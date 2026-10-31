@@ -359,7 +359,7 @@ impl ExecutionResolver {
                     &context,
                 )
                 .await?;
-            if output.status != OutputStatus::Success {
+            if !output.passed() {
                 return Err(PluginError::Execution("HOST resolution failed".into()).into());
             }
             let addresses =

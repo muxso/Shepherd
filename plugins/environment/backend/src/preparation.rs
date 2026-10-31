@@ -162,7 +162,7 @@ impl Preparation<'_> {
                 self.context,
             )
             .await?;
-        if output.status != OutputStatus::Success {
+        if !output.passed() {
             return Err(PluginError::Execution("setup planning failed".into()));
         }
         let steps: Vec<Step> =
@@ -341,7 +341,7 @@ impl Preparation<'_> {
                                 &context,
                             )
                             .await?;
-                        if output.status != OutputStatus::Success {
+                        if !output.passed() {
                             return Err(PluginError::Execution(
                                 "JavaScript preparation failed".into(),
                             ));
@@ -363,7 +363,7 @@ impl Preparation<'_> {
                                 &context,
                             )
                             .await?;
-                        if output.status != OutputStatus::Success {
+                        if !output.passed() {
                             return Err(PluginError::Execution(
                                 "data-source preparation returned a failure".into(),
                             ));
