@@ -7,6 +7,8 @@ rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
+rquickjs = { version = "0.14", optional = true }
+tokio = { workspace = true, optional = true, features = ["time", "rt-multi-thread"] }
 api-runner = { workspace = true, optional = true }
 plugin-runtime = { path = "../../../crates/plugin-runtime" }
 async-trait.workspace = true
@@ -23,7 +25,7 @@ url = { version = "2", optional = true }
 default = []
 pg = ["dep:sqlx", "dep:uuid"]
 vault = ["pg", "dep:ring"]
-protocols = ["dep:api-runner","dep:probe", "dep:url"]
+protocols = ["dep:rquickjs", "dep:tokio","dep:api-runner","dep:probe", "dep:url"]
 
 [dev-dependencies]
 russh = "0.62"

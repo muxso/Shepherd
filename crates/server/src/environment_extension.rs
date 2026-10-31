@@ -265,6 +265,58 @@ impl ExecutionResolver {
     ) -> Result<api_runner::HostOverrides, Response> {
         self.resolve_hosts(user, environment).await.map_err(IntoResponse::into_response)
     }
+    pub async fn prepare(
+        &self,
+        user: AuthUser,
+        environment: Option<&str>,
+        variables: BTreeMap<String, String>,
+        processors: &[api_runner::Processor],
+    ) -> Result<api_runner::PreparedVariables, Response> {
+        self.prepare_inner(user, environment, variables, processors)
+            .await
+            .map_err(IntoResponse::into_response)
+    }
+    async fn prepare_inner(
+        &self,
+        user: AuthUser,
+        environment: Option<&str>,
+        variables: BTreeMap<String, String>,
+        processors: &[api_runner::Processor],
+    ) -> Result<api_runner::PreparedVariables, ApiError> {
+        let Some(runtime) = &self.runtime else {
+            if !processors.is_empty() {
+                return Err(
+                    PluginError::Unavailable("environment preparation plugin".into()).into()
+                );
+            }
+            return Ok(api_runner::PreparedVariables { variables, steps: Vec::new() });
+        };
+        let Some(environment) = environment else {
+            if !processors.is_empty() {
+                return Err(PluginError::InvalidConfig(
+                    "select an environment for preparation".into(),
+                )
+                .into());
+            }
+            return Ok(api_runner::PreparedVariables { variables, steps: Vec::new() });
+        };
+        let (scope, policy) =
+            authorize_environment(&self.host, user, environment, Access::Execute).await?;
+        let context = ExecutionContext {
+            scope,
+            limits: ExecutionLimits::default(),
+            secrets: Arc::new(runtime.vault(policy.clone())),
+            authorization: policy,
+            cancellation: Arc::new(CancellationToken::default()),
+        };
+        Ok(environment_plugins::preparation::Preparation {
+            store: &runtime.store,
+            registry: &runtime.registry,
+            context: &context,
+        }
+        .run(variables, processors)
+        .await?)
+    }
     async fn resolve_hosts(
         &self,
         user: AuthUser,
@@ -307,7 +359,7 @@ impl ExecutionResolver {
                     &context,
                 )
                 .await?;
-            if output.status != OutputStatus::Success {
+            if !output.passed() {
                 return Err(PluginError::Execution("HOST resolution failed".into()).into());
             }
             let addresses =
@@ -646,9 +698,132 @@ mod tests {
         };
         let response =
             app.clone().oneshot(request.body(body).expect("request")).await.expect("response");
-        assert_eq!(response.status().as_u16(), status, "{method} {path}");
+        let actual = response.status().as_u16();
         let bytes = to_bytes(response.into_body(), 2_000_000).await.expect("body");
-        serde_json::from_slice(&bytes).unwrap_or(Value::Null)
+        let value: Value = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
+        assert_eq!(
+            actual,
+            status,
+            "{method} {path}: {}",
+            value.get("error").unwrap_or(&Value::Null)
+        );
+        value
+    }
+    async fn exercise_preparation(
+        app: &Router,
+        base: &str,
+        owner: &str,
+        viewer: &str,
+        database: &str,
+        host: &PgPool,
+    ) {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let count = Arc::new(AtomicUsize::new(0));
+        let received = count.clone();
+        let fixture = axum::Router::new().fallback(
+            move |uri: axum::http::Uri, headers: axum::http::HeaderMap, body: String| {
+                let received = received.clone();
+                async move {
+                    received.fetch_add(1, Ordering::SeqCst);
+                    assert_eq!(uri.path(), "/prepared/case");
+                    assert_eq!(uri.query(), Some("q=environment"));
+                    assert_eq!(headers["x-order"], "environment:env-script:profile:case:profile");
+                    assert_eq!(body, "case");
+                    axum::Json(json!({"prepared":true}))
+                }
+            },
+        );
+        let listener =
+            tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("preparation fixture");
+        let address = listener.local_addr().expect("address");
+        let service = tokio::spawn(async move {
+            axum::serve(listener, fixture).await.expect("HTTP fixture");
+        });
+        sqlx::query("CREATE TABLE setup_hook_fixture(value TEXT NOT NULL)")
+            .execute(host)
+            .await
+            .expect("disposable SQL fixture");
+        let setup = json!({"pluginId":"setup","name":"Setup fixture","enabled":true,"config":{"schemaVersion":1,"values":{"steps":[
+            {"type":"variables","values":{"value":"environment","order":"environment"}},
+            {"type":"invoke","profileId":database,"input":{"mode":"execute","query":"INSERT INTO setup_hook_fixture(value) VALUES ($1)","parameters":[{"type":"text","value":"{{value}}"}]},"resultVariable":"insertReport"},
+            {"type":"invoke","profileId":database,"input":{"query":"SELECT $1::text AS value","parameters":[{"type":"text","value":"{{value}}"}],"extract":[{"variable":"dbValue","row":0,"column":"value"}]}},
+            {"type":"javascript","code":"vars.order += ':env-script'; vars.rows = String(JSON.parse(vars.insertReport).rowsAffected);"}
+        ]},"secrets":{}}});
+        let setup =
+            call(app, "POST", &format!("{base}/profiles"), Some(owner), Some(setup), 200).await;
+        let setup_id = setup["id"].as_str().expect("setup id");
+        let script = json!({"pluginId":"javascript","name":"Script fixture","enabled":true,"config":{"schemaVersion":1,"values":{"code":"vars.order += ':profile';"},"secrets":{}}});
+        let script =
+            call(app, "POST", &format!("{base}/profiles"), Some(owner), Some(script), 200).await;
+        let script_id = script["id"].as_str().expect("script id");
+        for (id, priority) in [(script_id, 20), (setup_id, -10)] {
+            call(
+                app,
+                "PUT",
+                &format!("{base}/bindings/{id}"),
+                Some(owner),
+                Some(json!({"slot":"pre","priority":priority,"enabled":true})),
+                200,
+            )
+            .await;
+        }
+        let request = json!({"environmentId":"e","method":"POST","url":"/prepared/{{value}}","baseUrl":format!("http://{address}"),"variables":{"value":"seed"},"query":[{"key":"q","value":"{{dbValue}}"}],"headers":[{"key":"x-order","value":"{{order}}"}],"body":"{{value}}","preProcessors":[{"type":"Script","args":{"lang":"JS","code":"vars.value='case';vars.order += ':case';"}},{"type":"Plugin","args":{"profileId":script_id}}],"assertions":[{"type":"Variable","args":{"name":"rows","condition":"EQUALS","expected":"1"}}]});
+        call(app, "POST", "/api/debug/send", Some(viewer), Some(request.clone()), 403).await;
+        let mut foreign = request.clone();
+        foreign["environmentId"] = json!("other");
+        call(app, "POST", "/api/debug/send", Some(owner), Some(foreign), 403).await;
+        let mut unsupported = request.clone();
+        unsupported["preProcessors"] =
+            json!([{"type":"Script","args":{"lang":"BEANSHELL","code":"noop"}}]);
+        call(app, "POST", "/api/debug/send", Some(owner), Some(unsupported), 400).await;
+        let rows: i64 = sqlx::query_scalar("SELECT count(*) FROM setup_hook_fixture")
+            .fetch_one(host)
+            .await
+            .expect("preflight has no writes");
+        assert_eq!(rows, 0);
+        let result =
+            call(app, "POST", "/api/debug/send", Some(owner), Some(request.clone()), 200).await;
+        assert_eq!(result["body"], json!({"prepared":true}).to_string());
+        assert_eq!(
+            result["request"]["url"],
+            format!("http://{address}/prepared/case?q=environment")
+        );
+        assert_eq!(result["request"]["body"], "case");
+        assert_eq!(result["assertions"][0]["passed"], true);
+        assert_eq!(result["preparation"].as_array().expect("steps").len(), 7);
+        assert_eq!(count.load(Ordering::SeqCst), 1);
+        let mut failed = request.clone();
+        failed["preProcessors"] = json!([{"type":"Script","args":{"lang":"JS","code":"throw new Error(vars.privateValue)"}}]);
+        failed["variables"]["privateValue"] = json!("do-not-log-this-value");
+        let result = call(app, "POST", "/api/debug/send", Some(owner), Some(failed), 502).await;
+        assert!(!result.to_string().contains("do-not-log-this-value"));
+        assert_eq!(count.load(Ordering::SeqCst), 1);
+        let mut timeout = request.clone();
+        timeout["preProcessors"] =
+            json!([{"type":"Script","args":{"lang":"JS","code":"while(true){}"}}]);
+        call(app, "POST", "/api/debug/send", Some(owner), Some(timeout), 504).await;
+        assert_eq!(count.load(Ordering::SeqCst), 1);
+        let mut denied = request.clone();
+        denied["preProcessors"] = json!([{"type":"Sql","args":{"name":"denied","datasource":"foreign-profile","sql":"SELECT 1"}}]);
+        let rows_before: i64 = sqlx::query_scalar("SELECT count(*) FROM setup_hook_fixture")
+            .fetch_one(host)
+            .await
+            .expect("before denied operation");
+        call(app, "POST", "/api/debug/send", Some(owner), Some(denied), 403).await;
+        let rows_after: i64 = sqlx::query_scalar("SELECT count(*) FROM setup_hook_fixture")
+            .fetch_one(host)
+            .await
+            .expect("after denied operation");
+        assert_eq!(rows_before, rows_after);
+        for id in [setup_id, script_id] {
+            call(app, "DELETE", &format!("{base}/bindings/{id}?slot=pre"), Some(owner), None, 200)
+                .await;
+        }
+        sqlx::query("DROP TABLE setup_hook_fixture")
+            .execute(host)
+            .await
+            .expect("SQL fixture cleanup");
+        service.abort();
     }
     async fn exercise_host_profiles(app: &Router, base: &str, owner: &str, viewer: &str) {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -1044,6 +1219,9 @@ mod tests {
         assert_eq!(loaded["permissions"], json!({"manage":true,"execute":true}));
         let read_only = call(&app, "GET", base, Some(&viewer), None, 200).await;
         assert_eq!(read_only["permissions"], json!({"manage":false,"execute":false}));
+        let source = PgPool::connect(&plugin_url).await.expect("disposable data source");
+        exercise_preparation(&app, base, &owner, &viewer, id, &source).await;
+        source.close().await;
         profile["name"] = json!("Updated name");
         call(&app, "PUT", &path, Some(&owner), Some(json!({"revision":1,"profile":profile})), 200)
             .await;

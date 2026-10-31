@@ -511,18 +511,23 @@ impl Extractor {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", content = "args")]
 pub enum Processor {
+    /// Generic reference: provider configuration lives in the plugin database.
+    Plugin {
+        #[serde(rename = "profileId")]
+        profile_id: String,
+    },
     Wait {
         ms: u64,
     },
     Extract {
         extractors: Vec<Extractor>,
     },
-    /// Stored round-trip with the case; no script engine is wired up yet, so the executor ignores it.
+    /// JavaScript preparation is provided by the environment plugin; other stages must reject unsupported scripts.
     Script {
         lang: String,
         code: String,
     },
-    /// Stored round-trip with the case; datasource execution is not wired up yet, so the executor ignores it.
+    /// Legacy datasource reference; the environment plugin resolves this as a scoped profile id.
     Sql {
         name: String,
         datasource: String,

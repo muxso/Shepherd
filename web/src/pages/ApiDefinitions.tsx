@@ -1,3 +1,4 @@
+import { splitProcessors } from '../plugins/environment/preparation'
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { Button, Checkbox, Divider, Dropdown, Empty, Input, Table, Modal, Popover, Radio, Segmented, Select, Space, Switch, Tabs, Tag, Tooltip, Tree, Upload } from 'antd'
 import ResizableDrawer from '../components/ResizableDrawer'
@@ -831,20 +832,14 @@ function CaseDetailTab({ caseItem, projectId, onClose, onDeleted }: { caseItem: 
   const headers = c.headers || []
   const tags = c.tags || []
 
-  const resolveUrl = (u: string) => {
-    if (/^https?:\/\//i.test(u)) return u
-    const b = env?.baseUrl?.trim().replace(/\/+$/, '')
-    return b ? `${b}${u.startsWith('/') ? '' : '/'}${u}` : u
-  }
   const run = async () => {
-    const url = resolveUrl(c.url)
-    if (!/^https?:\/\//i.test(url)) return message.warning(t('editor.needEnvOrAbs', '相对路径需先选择带 baseUrl 的环境,或填写绝对 URL(http(s)://)'))
+    const url = c.url
     const hdrs = [...headers]
     if (c.auth?.token && (c.auth.type === 'bearer' || c.auth.type === 'basic')) hdrs.push({ key: 'Authorization', value: `${c.auth.type === 'bearer' ? 'Bearer' : 'Basic'} ${c.auth.token}` })
     const req: SentRequest = { method: c.method, url, headers: hdrs, body: c.body || undefined }
     setLastReq(req); setRunning(true); setErr(''); setResp(null)
     try {
-      setResp(await api.debugSend({ ...req, environmentId: env?.id, assertions: (c.assertions as unknown[]) || [], processors: (c.processors as unknown[]) || [] }))
+      setResp(await api.debugSend({ ...req, environmentId: env?.id, baseUrl: env?.baseUrl, variables: env?.variables, ...splitProcessors(c.processors as unknown[]), assertions: (c.assertions as unknown[]) || [] }))
     } catch (e) {
       setErr(e instanceof ApiError ? e.message : t('editor.sendFail', '发送失败'))
     } finally {

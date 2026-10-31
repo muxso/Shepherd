@@ -15,3 +15,5 @@ pub use domain::{
     ExtractKind, ExtractScope, Extractor, HostOverrideError, HostOverrides, HttpMethod,
     MatchCondition, PhaseTimings, Processor, RequestSpec, ResponseSnapshot,
 };
+
+pub use domain::{PreparationStepReport, PreparedVariables};

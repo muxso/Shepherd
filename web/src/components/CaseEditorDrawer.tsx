@@ -1,9 +1,10 @@
+import { phaseProcessors } from '../plugins/environment/preparation'
 import { useEffect, useState } from 'react'
 import { Button, Card, Input, Radio, Segmented, Select, Space, Table, Tabs, Tag, Typography } from 'antd'
 import ResizableDrawer from './ResizableDrawer'
 import { message } from '../feedback'
 import { SendOutlined } from '@ant-design/icons'
-import { api, ApiError, contentTypeForBodyType, withBodyContentType, type ApiBodyType, type ApiDefinition, type DebugResponse } from '../api'
+import { api, ApiError, contentTypeForBodyType, withBodyContentType, type ApiBodyType, type ApiDefinition, type DebugResponse, type Environment } from '../api'
 import { methodColor, caseStatusLabel } from './tags'
 import AssertionEditor, { type Assertion } from './AssertionEditor'
 import KVEditor, { type KVRow } from './KVEditor'
@@ -59,6 +60,15 @@ export default function CaseEditorDrawer({
   const [bodyType, setBodyType] = useState<ApiBodyType>('json')
   const [body, setBody] = useState('')
   const [assertions, setAssertions] = useState<Assertion[]>([{ type: 'StatusIs', args: 200 }])
+  const [envs, setEnvs] = useState<Environment[]>([])
+  const [envId, setEnvId] = useState('')
+  const env = envs.find(e => e.id === envId)
+  useEffect(() => {
+    if (!open) return
+    let active = true
+    void api.environments(definition.projectId).then(list => { if (active) { setEnvs(list); setEnvId(current => list.some(e => e.id === current) ? current : list.find(e => e.enabled !== false)?.id || '') } }).catch(() => { if (active) setEnvs([]) })
+    return () => { active = false }
+  }, [open, definition.projectId])
   const [sending, setSending] = useState(false)
   const [saving, setSaving] = useState(false)
   const [resp, setResp] = useState<DebugResponse | null>(null)
@@ -102,6 +112,12 @@ export default function CaseEditorDrawer({
         await api.debugSend({
           method,
           url,
+          environmentId: env?.id,
+          baseUrl: env?.baseUrl,
+          variables: env?.variables,
+          query: query.filter(q => q.enabled && q.key.trim()).map(q => ({ key: q.key, value: q.value })),
+          preProcessors,
+          processors: postProcessors,
           headers: withBodyContentType(headers.filter((h) => h.key.trim()), hasBody ? bodyType : 'none'),
           body: hasBody ? body.trim() : undefined,
         }),
@@ -114,7 +130,7 @@ export default function CaseEditorDrawer({
   }
 
   // Merge pre + post processors into the runner-consumable array (Wait pre / Extract post; script/SQL stored until an execution engine exists).
-  const buildProcessors = (): unknown[] => [...preProcessors, ...postProcessors]
+  const buildProcessors = (): unknown[] => phaseProcessors(preProcessors, postProcessors)
 
   const doSave = async (): Promise<boolean> => {
     if (!name.trim()) {
@@ -218,7 +234,7 @@ export default function CaseEditorDrawer({
     {
       key: 'pre',
       label: `${t('case.preProcess', '前置')}${preProcessors.length ? ` (${preProcessors.length})` : ''}`,
-      children: <ProcessorEditor value={preProcessors} onChange={setPreProcessors} allowed={['wait', 'script', 'sql']} />,
+      children: <ProcessorEditor value={preProcessors} onChange={setPreProcessors} allowed={['wait', 'plugin']} />,
     },
     {
       key: 'post',
@@ -280,6 +296,7 @@ export default function CaseEditorDrawer({
         </div>
       </Card>
 
+      <Select aria-label="用例调试环境" allowClear style={{ width: 280, marginBottom: 10 }} placeholder="选择执行环境" value={envId || undefined} onChange={id => setEnvId(id || '')} options={envs.map(e => ({ value: e.id, label: e.name }))} />
       {/* Name + server-side run */}
       <Space.Compact style={{ width: '100%', marginBottom: 10 }}>
         <Input

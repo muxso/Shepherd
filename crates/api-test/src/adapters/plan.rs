@@ -233,6 +233,16 @@ impl PlanExecutor {
             }
         };
 
+        if api_runner::domain::preparation::needs_plugin_preparation(&processors) {
+            self.sink.record(report_id,&case_id,"ERROR",&["this runner does not support plugin preparation; use server-side HTTP debugging".into()]).await?;
+            if let Some(obs) = &self.observer {
+                obs.step_finished(report_id, &step_id, "ERROR", None);
+            }
+            if stop_on_failure {
+                state.stopped = true;
+            }
+            return Ok(false);
+        }
         apply_env_static(&mut req, env);
         substitute_request(&mut req, &state.vars);
         let wait = wait_millis(&processors);
@@ -364,6 +374,44 @@ mod tests {
         format!("http://{addr}")
     }
 
+    #[tokio::test]
+    async fn plan_runner_rejects_unwired_scripts_before_http() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let calls = Arc::new(AtomicUsize::new(0));
+        let counter = calls.clone();
+        let app = Router::new().fallback(move || {
+            let counter = counter.clone();
+            async move {
+                counter.fetch_add(1, Ordering::SeqCst);
+                "ok"
+            }
+        });
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("listener");
+        let address = listener.local_addr().expect("address");
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.expect("server");
+        });
+        let sink = SpySink::default();
+        let plan = vec![PlanNode::Leaf(Leaf::Request {
+            label: "hook".into(),
+            request: RequestSpec {
+                method: HttpMethod::Get,
+                url: format!("http://{address}"),
+                headers: vec![],
+                body: None,
+            },
+            assertions: vec![],
+            processors: vec![Processor::Script { lang: "JS".into(), code: "vars.x='ok'".into() }],
+        })];
+        let passed = exec(InMemorySpecs::default(), sink.clone())
+            .run("report", &plan, &ResolvedEnv::default(), true)
+            .await
+            .expect("record failure");
+        assert!(!passed);
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+        assert_eq!(sink.rows.lock().expect("rows")[0].1, "ERROR");
+        server.abort();
+    }
     fn get_case(
         url: String,
         assertions: Vec<Assertion>,

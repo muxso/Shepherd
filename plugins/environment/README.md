@@ -148,3 +148,34 @@ Rules accept at most 128 DNS names with 1–16 distinct IPv4/IPv6 addresses each
 The UI explicitly limits this support to server-side HTTP debugging. Browser direct execution cannot apply custom DNS; batch cases and full scenario/test-plan runs await the shared pipeline in T17. Non-HTTP protocols retain their existing transport settings.
 
 Native tests verify real HTTP authority, HTTPS SNI, certificate-name rejection, and resolver isolation. The isolated API fixture saves/binds rules, invokes a real HTTP service through an otherwise unresolvable name, rejects viewers/cross-project access and conflicting bindings, and verifies host database isolation. Browser checks verify save/reload and the HOST binding slot.
+
+## Pre-processors (T10)
+
+Environment preparation uses profiles in the plugin database, bound to the `pre` slot. The JavaScript profile edits string variables through `vars.name`; the Setup pipeline profile defines ordered steps as JSON. Use the editor's configuration ID when referencing a saved profile. New case entries persist only a generic reference, for example `{"type":"Plugin","args":{"profileId":"saved-setup-id","phase":"pre"}}`. Existing inline JavaScript/SQL entries remain readable for compatibility.
+
+Server-side HTTP debugging executes: enabled environment bindings (ascending priority, then profile ID) → case `preProcessors` (list order) → one-pass variable substitution → HTTP request → supported response extractors/assertions. A case reference executes its profile explicitly, whether or not it is also an environment binding. Disabled environment profiles/bindings are skipped; an explicitly referenced disabled case profile fails. The editors pass original URL/header/body/query templates plus the selected environment's variable/base-URL snapshot, so setup can override existing variables. API callers supply `variables`, optional `baseUrl`, `query`, and `preProcessors` themselves. Both `${name}` and `{{name}}` work; missing variables fail. Query pairs are encoded after substitution. Inserted values are never interpreted again as templates.
+
+Example Setup pipeline `steps`:
+
+```json
+[
+  {"type":"variables","values":{"record":"seed"}},
+  {"type":"javascript","code":"vars.record = vars.record + '-ready';"},
+  {"type":"invoke","profileId":"database-profile-id","input":{
+    "query":"SELECT $1::text AS record",
+    "parameters":[{"type":"text","value":"{{record}}"}],
+    "extract":[{"variable":"record","row":0,"column":"record"}]
+  }},
+  {"type":"wait","ms":10}
+]
+```
+
+`variables` step values use the state before that step, so use separate ordered steps for dependent assignments. `invoke` reuses an enabled connection profile applied to the same environment, with its scoped encrypted credentials, protocol limits, extraction, and redaction. Optional `resultVariable` stores the complete redacted data report as a JSON string. Prefer parameter bindings to SQL string interpolation. Legacy `Sql.datasource` is a saved connection profile ID; its query defaults to read-only, and a nonempty `name` receives the JSON report. Setup writes require an explicit invocation input such as `"mode":"execute"`.
+
+All plans, data-source references, and credential permissions are checked before any setup operation performs IO. Runtime failures stop preparation and prevent the main HTTP request. Earlier data-source writes are not rolled back and are never retried automatically. Preparation has one overall execution deadline/cancellation boundary, at most 128 steps (32 per saved Setup profile), 128 variables/64 KiB variable data, bounded input rendering, and a final report limit. Waits may not exceed 30 seconds. Preparation reports list actual step order, source, elapsed time, and variable names; they omit values. Successful HTTP debug responses also include the rendered request snapshot used by the actual-request and cURL views.
+
+Each JavaScript operation owns a fresh QuickJS runtime with an 8 MiB heap, 128 KiB stack, 64 KiB source, and at most 100 ms execution/compilation. The smaller system deadline applies to execution. Scripts mutate string entries in `vars` and return no value. No filesystem/network/host functions, module loader, timers, or background-job executor are installed; Promise creation and pending jobs fail explicitly. Multi-thread Tokio workers use scoped `block_in_place`; no detached thread/runtime survives the operation. Exceptions are not printed because they may contain variable values. BeanShell and other languages are explicitly unsupported.
+
+This support currently covers server-side single HTTP debugging, including individual case/step debug sends. Browser-direct execution and full batch/scenario/plan integration remain T17. Existing native batch/plan executors explicitly reject Script/Sql/Plugin entries before HTTP instead of silently ignoring them. Post-processing beyond response extraction remains T11; unsupported post-processors fail before preparation or HTTP.
+
+Validation covers ordering/overrides, references, credential preflight, scope denial, timeout/cancellation/output limits, JavaScript isolation/CPU/heap/stack/async rejection, actual PostgreSQL writes/query extraction, failure-before-HTTP behavior, host database isolation, multiline profile priority/save/reload, raw-template browser requests, and preparation reports.

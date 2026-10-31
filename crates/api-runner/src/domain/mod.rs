@@ -8,3 +8,6 @@ pub use runner::{
     ExtractKind, ExtractScope, Extractor, HttpMethod, MatchCondition, PhaseTimings, Processor,
     RequestSpec, ResponseSnapshot,
 };
+
+pub mod preparation;
+pub use preparation::{PreparationStepReport, PreparedVariables};

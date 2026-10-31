@@ -496,6 +496,7 @@ export interface ReportResultItem {
   headers?: [string, string][]
   /** Per-assertion results (including passes) + extracted variables (since 0048; empty arrays on older reports). */
   assertions?: AssertionResult[]
+  preparation?: { source: string; kind: string; elapsedMs: number; variableNames: string[] }[]
   extractions?: [string, string][]
   /** Per-phase HTTP timings (since 0095; absent on older reports). */
   timings?: PhaseTimings | null
@@ -1376,6 +1377,7 @@ export interface AssertionResult {
   reason: string
 }
 export interface DebugResponse {
+  request?: { method: string; url: string; headers: { key: string; value: string }[]; body?: string }
   status: number
   latencyMs: number
   /** Per-phase HTTP timings (absent for non-HTTP protocols). */
@@ -1385,6 +1387,7 @@ export interface DebugResponse {
   /** Per-assertion results (evaluated on server-side runs; absent for local runs). */
   assertions?: AssertionResult[]
   /** Extracted variables (name, value). */
+  preparation?: { source: string; kind: string; elapsedMs: number; variableNames: string[] }[]
   extractions?: [string, string][]
 }
 
@@ -2064,7 +2067,7 @@ export const api = {
     http.post<{ instructions: string }>('/skill/compose', { projectId, skillIds }),
 
   // API debug console: fire a request in-process (POST /api/debug/send)
-  debugSend: (b: { environmentId?: string; protocol?: string; method: string; url: string; headers?: { key: string; value: string }[]; body?: string; meta?: Record<string, string>; assertions?: unknown[]; processors?: unknown[] }) =>
+  debugSend: (b: { baseUrl?: string; variables?: Record<string, string>; preProcessors?: unknown[]; query?: { key: string; value: string }[]; environmentId?: string; protocol?: string; method: string; url: string; headers?: { key: string; value: string }[]; body?: string; meta?: Record<string, string>; assertions?: unknown[]; processors?: unknown[] }) =>
     http.post<DebugResponse>('/api/debug/send', b),
   // Protocol plugins enabled on the backend (returns whichever features are compiled in); debug console renders them dynamically.
   debugProtocols: () => http.get<{ protocols: string[] }>('/api/debug/protocols'),

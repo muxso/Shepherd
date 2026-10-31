@@ -43,6 +43,23 @@ impl ExecutionResolver {
     pub fn new(_host: sqlx::PgPool, _runtime: Option<Runtime>) -> Self {
         Self
     }
+    pub async fn prepare(
+        &self,
+        _user: AuthUser,
+        _environment: Option<&str>,
+        variables: std::collections::BTreeMap<String, String>,
+        processors: &[api_runner::Processor],
+    ) -> Result<api_runner::PreparedVariables, axum::response::Response> {
+        if !processors.is_empty() {
+            use axum::response::IntoResponse;
+            return Err((
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(json!({"error":"environment preparation plugin is not installed"})),
+            )
+                .into_response());
+        }
+        Ok(api_runner::PreparedVariables { variables, steps: Vec::new() })
+    }
     pub async fn host_overrides(
         &self,
         _user: AuthUser,

@@ -50,6 +50,7 @@ export function EnvironmentPluginPanel({ section }: { section: string }) {
   const [pluginId, setPluginId] = useState('')
   const [name, setName] = useState('')
   const [profileEnabled, setProfileEnabled] = useState(true)
+  const [priority, setPriority] = useState(0)
   const [applied, setApplied] = useState(true)
   const [config, setConfig] = useState<PluginConfig>({ schemaVersion: 1, values: {}, secrets: {} })
   const [secretDrafts, setSecretDrafts] = useState<Record<string, string>>({})
@@ -65,6 +66,7 @@ export function EnvironmentPluginPanel({ section }: { section: string }) {
     setPluginId(descriptor.id); setName(profile?.name || ''); setProfileEnabled(profile?.enabled ?? true)
     setConfig(profile ? structuredClone(profile.config) : blank(descriptor)); setSecretDrafts({}); setError(''); setResult(null)
     setJsonDrafts(Object.fromEntries(descriptor.configSchema.fields.filter(f => f.kind.type === 'json').map(f => [f.name, profile?.config.values[f.name] === undefined ? '' : JSON.stringify(profile.config.values[f.name], null, 2)])))
+    setPriority(profile ? bindings.find(b => b.profileId === profile.id && b.slot === slot)?.priority ?? 0 : 0)
     setApplied(profile ? bindings.some(b => b.profileId === profile.id && b.slot === slot && b.enabled) : true)
   }
   function changeValue(field: string, value: unknown) {
@@ -101,7 +103,7 @@ export function EnvironmentPluginPanel({ section }: { section: string }) {
       const saved = editing === 'new' ? await api.create(environmentId, body) : await api.update(environmentId, editing.id, editing.revision, body)
       setEditing(saved); setConfig(next)
       const existing = bindings.find(b => b.profileId === saved.id && b.slot === slot)
-      if (applied) await api.bind(environmentId, saved.id, slot)
+      if (applied) await api.bind(environmentId, saved.id, slot, true, priority)
       else if (existing) await api.unbind(environmentId, saved.id, slot)
       await reload()
       if (testAfter) setResult(await api.test(environmentId, saved.id))
@@ -135,12 +137,14 @@ export function EnvironmentPluginPanel({ section }: { section: string }) {
   return <Space direction="vertical" style={{ width: '100%' }}>
     {error && !editing && <Alert type="error" closable onClose={() => setError('')} message={error} />}
     {result && !editing && <Result output={result} />}
+    {section === 'pre' && <Alert type="info" message="环境前置按优先级和配置 ID 排序，之后执行用例前置，再替换请求变量。当前支持服务端 HTTP 调试；批量用例和场景/计划运行暂不支持。" />}
     {section === 'host' && <Alert type="info" message="HOST 用于服务端 HTTP 调试，保留原始 Host 和 TLS SNI。浏览器直连、批量用例和场景/计划运行暂不支持。" />}
     <Typography.Text type="secondary">配置在项目内共享，修改会影响使用它的环境；新凭据默认仅用于当前环境。</Typography.Text>
     {!state.permissions.execute && <Typography.Text type="secondary">需启用环境并具备执行权限，才能测试连接。</Typography.Text>}
-    <Button type="primary" disabled={!state.permissions.manage} onClick={() => { initialize(available[0]); setEditing('new') }}>{section === 'host' ? '新增 HOST 配置' : '新增连接配置'}</Button>
+    <Button type="primary" disabled={!state.permissions.manage} onClick={() => { initialize(available[0]); setEditing('new') }}>{section === 'host' ? '新增 HOST 配置' : section === 'pre' ? '新增前置配置' : '新增连接配置'}</Button>
     <Table<Profile> size="small" rowKey="id" dataSource={visible} pagination={false} columns={[
       { title: '名称', dataIndex: 'name' },
+      ...(section === 'pre' ? [{ title: '优先级', render: (_: unknown, p: Profile) => bindings.find(b => b.profileId === p.id && b.slot === slot)?.priority ?? '—' }, { title: '配置 ID', render: (_: unknown, p: Profile) => <Typography.Text copyable code>{p.id}</Typography.Text> }] : []),
       { title: '插件', render: (_, p) => available.find(d => d.id === p.pluginId)?.name || p.pluginId },
       { title: '状态', render: (_, p) => <Space><Tag color={p.enabled ? 'green' : 'default'}>{p.enabled ? '启用' : '禁用'}</Tag><Tag>{bindings.some(b => b.profileId === p.id && b.slot === slot && b.enabled) ? '已应用' : '未应用'}</Tag></Space> },
       { title: '操作', render: (_, p) => <Space wrap>
@@ -165,6 +169,7 @@ export function EnvironmentPluginPanel({ section }: { section: string }) {
     </Space>}>
       <Space direction="vertical" size={14} style={{ width: '100%' }}>
         {error && <Alert type="error" message={error} />}
+        {editing && editing !== 'new' && <Typography.Text copyable code>{editing.id}</Typography.Text>}
         <label style={{ width: '100%' }}>插件<Select aria-label="插件类型" disabled={editing !== 'new' || locked} value={pluginId || undefined} style={{ width: '100%' }} options={available.map(d => ({ value: d.id, label: d.name }))} onChange={id => initialize(available.find(d => d.id === id)!)} /></label>
         <label style={{ width: '100%' }}>配置名称<Input aria-label="配置名称" value={name} disabled={locked} onChange={e => setName(e.target.value)} /></label>
         {descriptor?.configSchema.fields.map(field => <div key={field.name} style={{ width: '100%' }}>
@@ -175,10 +180,12 @@ export function EnvironmentPluginPanel({ section }: { section: string }) {
           </Space> : field.kind.type === 'integer' ? <InputNumber aria-label={field.label} disabled={locked} style={{ width: '100%' }} min={field.kind.min} max={field.kind.max} value={typeof config.values[field.name] === 'number' ? config.values[field.name] as number : null} placeholder="使用插件默认值" onChange={value => changeValue(field.name, value)} />
             : field.kind.type === 'choice' ? <Select aria-label={field.label} disabled={locked} style={{ width: '100%' }} allowClear placeholder="使用插件默认值" value={config.values[field.name] as string | undefined} options={field.kind.options.map(value => ({ value, label: value }))} onChange={value => changeValue(field.name, value)} />
               : field.kind.type === 'boolean' ? <Select aria-label={field.label} disabled={locked} style={{ width: '100%' }} allowClear placeholder="使用插件默认值" value={typeof config.values[field.name] === 'boolean' ? String(config.values[field.name]) : undefined} options={[{ value: 'true', label: '是' }, { value: 'false', label: '否' }]} onChange={value => changeValue(field.name, value === undefined ? undefined : value === 'true')} />
+                : field.kind.type === 'multiline' ? <Input.TextArea aria-label={field.label} disabled={locked} rows={8} maxLength={field.kind.max_length} value={String(config.values[field.name] ?? '')} onChange={e => changeValue(field.name, e.target.value)} />
                 : field.kind.type === 'json' ? <Input.TextArea aria-label={field.label} disabled={locked} rows={4} value={jsonDrafts[field.name] || ''} onChange={e => setJsonDrafts(d => ({ ...d, [field.name]: e.target.value }))} />
                   : field.kind.type === 'string_list' ? <Input.TextArea aria-label={field.label} disabled={locked} rows={3} value={(config.values[field.name] as string[] | undefined)?.join('\n') || ''} onChange={e => changeValue(field.name, e.target.value.split('\n').filter(Boolean))} />
                     : <Input aria-label={field.label} disabled={locked} maxLength={field.kind.max_length} value={String(config.values[field.name] ?? '')} onChange={e => changeValue(field.name, e.target.value || undefined)} />}
         </div>)}
+        {section === 'pre' && <label>前置优先级（数字较小的先执行）<InputNumber aria-label="前置优先级" min={-2147483648} max={2147483647} value={priority} disabled={locked} onChange={v => setPriority(v ?? 0)} /></label>}
         <Space><Switch aria-label="启用配置" checked={profileEnabled} disabled={locked} onChange={setProfileEnabled} />启用配置<Switch aria-label="应用到当前环境" checked={applied} disabled={locked} onChange={setApplied} />应用到当前环境</Space>
         {result && <Result output={result} />}
       </Space>

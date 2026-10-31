@@ -32,6 +32,12 @@ const host: Descriptor = {
   configSchema: { version: 1, fields: [{ name: 'addresses', label: 'DNS names to IP arrays (JSON)', required: true, kind: { type: 'json' } }] },
 }
 
+const javascript: Descriptor = {
+  id: 'javascript', name: 'JavaScript', section: 'pre', version: '1.0.0', apiVersion: 1,
+  capabilities: ['execute', 'preprocess'], operations: ['execute'],
+  configSchema: { version: 1, fields: [{ name: 'code', label: 'JavaScript (vars.name = value)', required: true, kind: { type: 'multiline', max_length: 65536 } }] },
+}
+
 const grpc: Descriptor = {
   id: 'grpc', name: 'gRPC', section: 'grpc', version: '1.0.0', apiVersion: 1,
   capabilities: ['execute', 'connection_test'], operations: ['test', 'execute'],
@@ -71,7 +77,7 @@ async function fixture(page: Page, enabled = true, readonly = false) {
     else if (path === '/project') body = { items: [{ id: 'project', name: 'Project', organizationId: 'organization' }], totalPages: 1 }
     else if (path === '/api/environment') body = [{ id: 'environment', projectId: 'project', name: 'Test environment', baseUrl: '', headers: [], variables: {}, enabled: true }]
     else if (path === '/api/plugins') body = { items: [] }
-    else if (path === '/api/environment-plugins/capabilities') body = { enabled, items: enabled ? [postgres, redis, ssh, grpc, host] : [] }
+    else if (path === '/api/environment-plugins/capabilities') body = { enabled, items: enabled ? [postgres, redis, ssh, grpc, host, javascript] : [] }
     else if (path === '/api/environment-plugins/environments/environment') {
       configurationReads++
       body = { profiles, bindings, credentials, permissions: { manage: !readonly, execute: !readonly } } satisfies Configuration
@@ -306,4 +312,57 @@ test('HOST configuration persists address rules and binds the host slot', async 
   await dialog.getByRole('button', { name: '关闭', exact: true }).click()
   await page.getByRole('button', { name: '编辑', exact: true }).click()
   await expect(dialog.getByLabel('DNS names to IP arrays (JSON)', { exact: true })).toHaveValue(/example.test/)
+})
+
+test('preparation profiles preserve multiline scripts and explicit environment priority', async ({ page }) => {
+  const data = await fixture(page)
+  await open(page)
+  await page.getByRole('tab', { name: '前置', exact: true }).click()
+  await page.getByRole('button', { name: '新增前置配置', exact: true }).click()
+  const dialog = page.getByRole('dialog')
+  await dialog.getByLabel('配置名称', { exact: true }).fill('Prepare variables')
+  const code = "vars.value = 'prepared';\nvars.order = 'environment';"
+  await dialog.getByLabel('JavaScript (vars.name = value)', { exact: true }).fill(code)
+  await dialog.getByLabel('前置优先级', { exact: true }).fill('-10')
+  await dialog.getByRole('button', { name: '保存配置', exact: true }).click()
+  await expect(page.getByText('Prepare variables', { exact: true }).first()).toBeVisible()
+  expect(data.saved[0].config.values.code).toBe(code)
+  expect(data.bindings[0]).toMatchObject({ slot: 'pre', priority: -10 })
+  await dialog.getByRole('button', { name: '关闭', exact: true }).click()
+  await expect(dialog).not.toBeVisible()
+  await expect(page.getByRole('table').getByText('profile-1', { exact: true })).toBeVisible()
+  await page.getByRole('button', { name: '编辑', exact: true }).click()
+  await expect(dialog.getByLabel('JavaScript (vars.name = value)', { exact: true })).toHaveValue(code)
+  await expect(dialog.getByLabel('前置优先级', { exact: true })).toHaveValue('-10')
+})
+
+test('server debugging sends raw templates and plugin references, then displays preparation reports', async ({ page }) => {
+  await fixture(page)
+  const preProcessors = [{ type: 'Plugin', args: { profileId: 'setup-profile' } }]
+  const definition = { id: 'definition', projectId: 'project', name: 'Prepared request', protocol: 'HTTP', method: 'POST', path: '/prepared/{{value}}', status: 'DRAFT', spec: { bodyType: 'raw', requestBody: '{{value}}', requestQuery: [{ name: 'q', value: '{{value}}' }], requestHeaders: [{ name: 'x-order', value: '{{order}}' }], preProcessors, postProcessors: [], assertions: [] } }
+  const sent: Record<string, unknown>[] = []
+  await page.route('**/*', async route => {
+    const path = new URL(route.request().url()).pathname
+    if (path === '/api/definition') return route.fulfill({ json: [definition] })
+    if (path === '/api/definition/definition') return route.fulfill({ json: definition })
+    if (path === '/api/environment') return route.fulfill({ json: [{ id: 'environment', projectId: 'project', name: 'Test environment', baseUrl: 'http://fixture.invalid', headers: [], variables: { value: 'seed', order: 'seed' }, enabled: true }] })
+    if (path === '/api/debug/send') {
+      sent.push(route.request().postDataJSON() as Record<string, unknown>)
+      return route.fulfill({ json: { status: 200, headers: [], body: 'prepared-response', latencyMs: 4, request: { method: 'POST', url: 'http://fixture.invalid/prepared/prepared?q=prepared', headers: [{ key: 'x-order', value: 'environment:case' }], body: 'prepared' }, preparation: [{ source: 'environment:setup-profile', kind: 'javascript', elapsedMs: 1, variableNames: ['value', 'order'] }] } })
+    }
+    return route.fallback()
+  })
+  await page.goto('/p/project/api/definition?open=definition')
+  await page.getByRole('button', { name: '服务端执行', exact: true }).click()
+  await expect(page.getByText('Test environment · http://fixture.invalid', { exact: true }).first()).toBeVisible()
+  await page.getByRole('button', { name: /服务端执行/ }).first().click()
+  await expect(page.getByText('prepared-response', { exact: true })).toBeVisible()
+  expect(sent).toHaveLength(1)
+  expect(sent[0]).toMatchObject({ environmentId: 'environment', url: '/prepared/{{value}}', baseUrl: 'http://fixture.invalid', body: '{{value}}', variables: { value: 'seed', order: 'seed' }, query: [{ key: 'q', value: '{{value}}' }], preProcessors })
+  await page.getByRole('tab', { name: '前置报告 (1)', exact: true }).click()
+  await expect(page.getByText('environment:setup-profile', { exact: true })).toBeVisible()
+  await page.getByRole('tab', { name: '实际请求', exact: true }).click()
+  await expect(page.getByText('POST http://fixture.invalid/prepared/prepared?q=prepared', { exact: false })).toBeVisible()
+  await page.getByRole('tab', { name: 'cURL', exact: true }).click()
+  await expect(page.locator('pre').filter({ hasText: 'http://fixture.invalid/prepared/prepared?q=prepared' }).last()).toContainText('environment:case')
 })
