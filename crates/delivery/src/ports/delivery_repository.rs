@@ -37,19 +37,16 @@ pub struct TaskPage {
     pub total: i64,
 }
 
-/// AI/human split of delivered work under one requirement.
+/// AI/human split of verified tasks under one requirement.
 ///
 /// Definition: a VERIFIED task with a DELIVERED delivery record counts as AI-delivered;
-/// VERIFIED without one counts as human-delivered. Delivered requirements with no
-/// child tasks count as one human work item with zero estimated points.
+/// VERIFIED without one counts as human-delivered.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CollabRequirementRow {
     pub requirement_id: String,
     pub title: String,
     pub ai_tasks: i64,
     pub human_tasks: i64,
-    /// Delivered requirements without any child tasks, counted as one human unit each.
-    pub requirement_units: i64,
     pub ai_points: i64,
     pub human_points: i64,
     /// Delivery quality at attempt level (not limited to verified tasks):
@@ -59,50 +56,6 @@ pub struct CollabRequirementRow {
     pub ai_failed: i64,
     /// AI tasks verified on the first delivery (attempt count = 1 and VERIFIED).
     pub ai_first_pass: i64,
-}
-
-/// One person's registered role and measured work in a requirement.
-#[derive(Debug, Clone, PartialEq)]
-#[cfg_attr(feature = "http", derive(serde::Serialize, utoipa::ToSchema))]
-#[cfg_attr(feature = "http", serde(rename_all = "camelCase"))]
-pub struct CollabPersonRow {
-    pub requirement_id: String,
-    pub title: String,
-    pub status: String,
-    pub person_id: String,
-    pub person_name: String,
-    pub roles: Vec<String>,
-    pub delivered: bool,
-    /// Equal share of one delivered, undecomposed requirement; not time or points.
-    pub requirement_share: f64,
-    pub ai_tasks: i64,
-    pub human_tasks: i64,
-    pub points: i64,
-}
-
-/// Actual author commits explicitly linked to the source requirement.
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "http", derive(serde::Serialize, utoipa::ToSchema))]
-#[cfg_attr(feature = "http", serde(rename_all = "camelCase"))]
-pub struct RequirementCommit {
-    pub repo_id: String,
-    pub repo: String,
-    pub sha: String,
-    pub title: String,
-    pub author: String,
-    pub authored_at: String,
-    pub additions: Option<i64>,
-    pub deletions: Option<i64>,
-    pub url: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
-#[cfg_attr(feature = "http", derive(serde::Serialize, utoipa::ToSchema))]
-#[cfg_attr(feature = "http", serde(rename_all = "camelCase"))]
-pub struct RequirementCode {
-    pub code_since: Option<String>,
-    pub code_until: Option<String>,
-    pub commits: Vec<RequirementCommit>,
 }
 
 /// Per-day verified-task split (past year; data source for the GitHub-style
@@ -160,24 +113,6 @@ pub trait DeliveryRepository: Send + Sync {
     ) -> Result<CollabStats, RepoError> {
         let _ = (project_id, requirement_id);
         Ok(CollabStats::default())
-    }
-
-    async fn collab_people(
-        &self,
-        project_id: &str,
-        requirement_id: Option<&str>,
-    ) -> Result<Vec<CollabPersonRow>, RepoError> {
-        let _ = (project_id, requirement_id);
-        Ok(Vec::new())
-    }
-
-    async fn requirement_code(
-        &self,
-        project_id: &str,
-        requirement_id: &str,
-    ) -> Result<Option<RequirementCode>, RepoError> {
-        let _ = (project_id, requirement_id);
-        Ok(None)
     }
 
     async fn delete(&self, id: &str) -> Result<bool, RepoError>;

@@ -169,4 +169,4 @@ GPL-2.0,见 [LICENSE](LICENSE)。
 
 <img src="docs/assets/wechat-group.jpg" alt="Shepherd 人机协同 交流群" width="240" />
 
-云效外部项目统计接入与运维：[云效研发统计](docs/YUNXIAO.zh-CN.md)。
+Shepherd 可选插件接入与运维：[云效同步插件](docs/YUNXIAO.zh-CN.md)。

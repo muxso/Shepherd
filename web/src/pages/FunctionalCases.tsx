@@ -108,7 +108,7 @@ export default function FunctionalCases() {
 
   // View/filter/column toolbar: useListView must be called before the conditional return below.
   const allColumns: ListColumn<FunctionalCase>[] = [
-    { key: 'name', label: t('func.colName', '名称'), title: t('func.colName', '名称'), dataIndex: 'name', ellipsis: true, render: (name: string, c: FunctionalCase) => <span>{c.customFields?.['来源'] === '云效' && <Tag color="blue">云效</Tag>}{name}</span> },
+    { key: 'name', label: t('func.colName', '名称'), title: t('func.colName', '名称'), dataIndex: 'name', ellipsis: true, render: (name: string) => <span>{name}</span> },
     { key: 'module', label: t('func.colModule', '模块'), title: t('func.colModule', '模块'), dataIndex: 'module', width: 140, render: renderModule },
     { key: 'priority', label: t('func.colPriority', '优先级'), title: t('func.colPriority', '优先级'), dataIndex: 'priority', width: 90, render: (p?: string) => <Tag color={prioColor(p)}>{p || 'P2'}</Tag> },
     { key: 'steps', label: t('func.colSteps', '步骤'), title: t('func.colSteps', '步骤'), dataIndex: 'steps', width: 70, render: (s?: CaseStep[]) => (s?.length || 0) },

@@ -1,3 +1,4 @@
+import { usePlugins } from '../plugins'
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { Layout, Menu, Select, Button, Space, Tooltip, Avatar, Segmented, Empty, Dropdown, Badge, Tag, Spin } from 'antd'
 import ResizableDrawer from './ResizableDrawer'
@@ -186,6 +187,8 @@ const MODULES: ModuleDef[] = [
 ]
 
 export default function AppShell({ children }: { children: ReactNode }) {
+  const { enabled } = usePlugins()
+  const modules = MODULES.map(m => ({ ...m, children: m.children.filter(c => c.key !== "/devops" || enabled("yunxiao")) }))
   const { projects, projectId, setProjectId, logout } = useApp()
   const { t, lang, setLang } = useI18n()
   const { mode, toggle } = useThemeMode()
@@ -303,7 +306,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
   const username = userStore.get()
 
   // Current module is inferred from the route; the secondary bar follows it.
-  const activeModule = MODULES.find((m) => m.match.some((x) => logicalPath.startsWith(x))) || MODULES[0]
+  const activeModule = modules.find((m) => m.match.some((x) => logicalPath.startsWith(x))) || modules[0]
   // Pick the longest child whose key prefixes the current path, so nested routes
   // (/resource-pool/new, /project/files) highlight the right secondary item instead of
   // falling back to the first child.
@@ -311,8 +314,8 @@ export default function AppShell({ children }: { children: ReactNode }) {
     activeModule.children
       .filter((c) => logicalPath === c.key || logicalPath.startsWith(c.key + '/'))
       .sort((a, b) => b.key.length - a.key.length)[0] || activeModule.children[0]
-  const topModules = MODULES.filter((m) => !m.bottom)
-  const sysModule = MODULES.find((m) => m.bottom)
+  const topModules = modules.filter((m) => !m.bottom)
+  const sysModule = modules.find((m) => m.bottom)
 
   // Browser tab title tracks current page + language, using the active secondary item's i18n label.
   useEffect(() => {

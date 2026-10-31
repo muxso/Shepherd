@@ -34,8 +34,6 @@ pub fn router(svc: DeliveryService, sessions: Arc<dyn SessionStore>) -> Router {
         // or the wildcard swallows it.
         .route("/delivery/tasks", get(list_tasks))
         .route("/delivery/collab-stats", get(collab_stats))
-        .route("/delivery/collab-people", get(collab_people))
-        .route("/delivery/requirement-code", get(requirement_code))
         .route("/delivery/{id}", get(get_attempt).delete(delete_attempt))
         .route("/delivery/{id}/running", post(report_running))
         .route("/delivery/{id}/complete", post(complete))
@@ -455,7 +453,6 @@ struct CollabRequirementItem {
     title: String,
     ai_tasks: i64,
     human_tasks: i64,
-    requirement_units: i64,
     ai_points: i64,
     human_points: i64,
     ai_attempts: i64,
@@ -477,40 +474,6 @@ struct CollabDayItem {
 struct CollabStatsResponse {
     items: Vec<CollabRequirementItem>,
     daily: Vec<CollabDayItem>,
-}
-
-#[utoipa::path(get, path = "/delivery/collab-people", tag = "delivery", params(CollabQuery), responses((status = 200, body = Vec<crate::ports::CollabPersonRow>), (status = 403)), security(("bearer" = [])))]
-async fn collab_people(
-    user: AuthUser,
-    State(st): State<DelState>,
-    Query(q): Query<CollabQuery>,
-) -> Response {
-    if !user.can("DELIVERY", "READ") {
-        return (StatusCode::FORBIDDEN, "permission denied").into_response();
-    }
-    match st.svc.collab_people(&q.project_id, q.requirement_id.as_deref()).await {
-        Ok(rows) => (StatusCode::OK, Json(rows)).into_response(),
-        Err(e) => cmd_err(e),
-    }
-}
-
-#[utoipa::path(get, path = "/delivery/requirement-code", tag = "delivery", params(CollabQuery), responses((status = 200, body = crate::ports::RequirementCode), (status = 400), (status = 403), (status = 404)), security(("bearer" = [])))]
-async fn requirement_code(
-    user: AuthUser,
-    State(st): State<DelState>,
-    Query(q): Query<CollabQuery>,
-) -> Response {
-    if !user.can("DELIVERY", "READ") {
-        return (StatusCode::FORBIDDEN, "permission denied").into_response();
-    }
-    let Some(id) = q.requirement_id.filter(|id| !id.is_empty()) else {
-        return (StatusCode::BAD_REQUEST, "requirementId required").into_response();
-    };
-    match st.svc.requirement_code(&q.project_id, &id).await {
-        Ok(Some(rows)) => (StatusCode::OK, Json(rows)).into_response(),
-        Ok(None) => (StatusCode::NOT_FOUND, "requirement not found").into_response(),
-        Err(e) => cmd_err(e),
-    }
 }
 
 // Human/AI collaboration stats: a task counts as AI when it is VERIFIED and has a
@@ -538,7 +501,6 @@ async fn collab_stats(
                         title: r.title,
                         ai_tasks: r.ai_tasks,
                         human_tasks: r.human_tasks,
-                        requirement_units: r.requirement_units,
                         ai_points: r.ai_points,
                         human_points: r.human_points,
                         ai_attempts: r.ai_attempts,
@@ -599,8 +561,8 @@ async fn delete_attempt(
 
 #[derive(OpenApi)]
 #[openapi(
-    paths(dispatch, list_by_task, get_attempt, report_running, complete, fail, record_event, list_events, list_tasks, collab_stats, collab_people, requirement_code, stop, delete_attempt),
-    components(schemas(DispatchBody, RunningBody, CompleteBody, FailBody, EventBody, EventResponse, DeliverableResponse, AttemptResponse, TaskItemResponse, TaskPageResponse, CollabRequirementItem, CollabDayItem, CollabStatsResponse, crate::ports::CollabPersonRow, crate::ports::RequirementCode, crate::ports::RequirementCommit, StopBody)),
+    paths(dispatch, list_by_task, get_attempt, report_running, complete, fail, record_event, list_events, list_tasks, collab_stats, stop, delete_attempt),
+    components(schemas(DispatchBody, RunningBody, CompleteBody, FailBody, EventBody, EventResponse, DeliverableResponse, AttemptResponse, TaskItemResponse, TaskPageResponse, CollabRequirementItem, CollabDayItem, CollabStatsResponse, StopBody)),
     tags((name = "delivery", description = "Delivery execution (AI executor)"))
 )]
 struct ApiDoc;

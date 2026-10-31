@@ -24,7 +24,7 @@ def text(value):
     return re.sub(r'\n{3,}','\n\n',''.join(p.parts)).strip()
 
 def enrich_requirements(items,collector):
-    path=Path(os.environ.get('SHEPHERD_REQUIREMENT_CACHE','/home/liber/.cache/shepherd-yunxiao/requirement-details.json'))
+    path=Path(os.environ.get('SHEPHERD_REQUIREMENT_CACHE',str(Path.home() / '.cache/shepherd-yunxiao/requirement-details.json')))
     try:cache=json.loads(path.read_text())
     except FileNotFoundError:cache={}
     org=collector.cfg()['YUNXIAO_ORG']
@@ -48,7 +48,7 @@ def case_body(item):
     return {'steps':steps,'precondition':text(item.get('preCondition'))}
 
 def enrich_testcases(records,collector):
-    path=Path(os.environ.get('SHEPHERD_TESTCASE_CACHE','/home/liber/.cache/shepherd-yunxiao/testcase-details.json'))
+    path=Path(os.environ.get('SHEPHERD_TESTCASE_CACHE',str(Path.home() / '.cache/shepherd-yunxiao/testcase-details.json')))
     try:cache=json.loads(path.read_text())
     except FileNotFoundError:cache={}
     org=collector.cfg()['YUNXIAO_ORG']

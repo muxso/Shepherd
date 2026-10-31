@@ -7,6 +7,7 @@ WORKDIR /app
 
 COPY Cargo.toml Cargo.lock ./
 COPY crates ./crates
+COPY plugins ./plugins
 RUN cargo build --release -p server && \
     cp target/release/server /usr/local/bin/server
 

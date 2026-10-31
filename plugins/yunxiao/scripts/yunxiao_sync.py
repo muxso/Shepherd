@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Synchronize Yunxiao facts into Shepherd. No writes to Yunxiao or messages.
 Reuses the tested read-only collector installed for the n8n report; credentials
-remain in ~/.config/devops-weekly/env. See docs/YUNXIAO.zh-CN.md.
+remain in ~/.config/devops-weekly/env. See docs/YUNXIAO.zh-CN.md in the Shepherd repository.
 """
 import collections
 import concurrent.futures
@@ -134,7 +134,7 @@ def collect(collector, groups, days):
 
 def main():
     if len(sys.argv)>1:load_env(sys.argv[1])
-    collector_path=os.environ.get('SHEPHERD_COLLECTOR_PATH','/home/liber/requirement-code-metrics')
+    collector_path=os.environ.get('SHEPHERD_COLLECTOR_PATH',str(Path.home() / 'requirement-code-metrics'))
     sys.path.insert(0,collector_path)
     collector=importlib.import_module('service');groups=importlib.import_module('report_groups')
     days=max(1,min(366,int(os.environ.get('SHEPHERD_SYNC_DAYS','7'))))
@@ -149,7 +149,7 @@ def main():
         records,since,until=collect(collector,groups,days)
         # Keep a private replay snapshot so the exact same run can be verified for idempotency.
         snapshot={'records':records,'codeSince':since,'codeUntil':until}
-        cache=Path(os.environ.get('SHEPHERD_SYNC_CACHE','/home/liber/.cache/shepherd-yunxiao/snapshot.json'))
+        cache=Path(os.environ.get('SHEPHERD_SYNC_CACHE',str(Path.home() / '.cache/shepherd-yunxiao/snapshot.json')))
         cache.parent.mkdir(mode=0o700,parents=True,exist_ok=True)
         temp=cache.with_suffix('.tmp');temp.write_text(json.dumps(snapshot,ensure_ascii=False));temp.chmod(0o600);temp.replace(cache)
         counts=dict.fromkeys(KINDS,0)
@@ -165,7 +165,7 @@ def main():
         raise
 
 if __name__=='__main__':
-    lock=Path('/home/liber/.cache/shepherd-yunxiao/sync.lock');lock.parent.mkdir(mode=0o700,parents=True,exist_ok=True)
+    lock=(Path.home() / '.cache/shepherd-yunxiao/sync.lock');lock.parent.mkdir(mode=0o700,parents=True,exist_ok=True)
     with lock.open('w') as f:
         try:fcntl.flock(f,fcntl.LOCK_EX|fcntl.LOCK_NB)
         except BlockingIOError:raise SystemExit('sync already running')

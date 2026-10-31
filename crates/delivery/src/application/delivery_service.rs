@@ -219,22 +219,6 @@ impl DeliveryService {
         Ok(self.repo.list_tasks(filter).await?)
     }
 
-    pub async fn requirement_code(
-        &self,
-        project_id: &str,
-        requirement_id: &str,
-    ) -> Result<Option<crate::ports::RequirementCode>, DeliveryCmdError> {
-        Ok(self.repo.requirement_code(project_id, requirement_id).await?)
-    }
-
-    pub async fn collab_people(
-        &self,
-        project_id: &str,
-        requirement_id: Option<&str>,
-    ) -> Result<Vec<crate::ports::CollabPersonRow>, DeliveryCmdError> {
-        Ok(self.repo.collab_people(project_id, requirement_id).await?)
-    }
-
     pub async fn collab_stats(
         &self,
         project_id: &str,

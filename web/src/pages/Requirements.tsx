@@ -1,6 +1,3 @@
-import { RequirementCodePanel } from '../components/RequirementCodePanel'
-import { Link, useSearchParams } from 'react-router-dom'
-import { CollabPeopleTable } from '../components/CollabPeopleTable'
 import { useCallback, useEffect, useState } from 'react'
 import { Badge, Button, Card, Col, DatePicker, Descriptions, Dropdown, Empty, Form, Input, InputNumber, Modal, Popover, Progress, Row, Segmented, Select, Space, Spin, Statistic, Table, Tabs, Tag, Timeline, Tooltip, Typography } from 'antd'
 import ResizableDrawer from '../components/ResizableDrawer'
@@ -145,8 +142,6 @@ export default function Requirements() {
   const [selModule, setSelModule] = useState('ALL') // ALL | UNFILED | <moduleId>
   const [moduleSearch, setModuleSearch] = useState('')
   const tabs = useWorkTabs()
-  const [searchParams] = useSearchParams()
-  const linkedRequirement = searchParams.get('open') || undefined
   // Requirement field template: resolves custom-field display names in the inline preview.
   const { fields: reqTplFields } = useFieldTemplate('requirement')
 
@@ -167,7 +162,7 @@ export default function Requirements() {
     try {
       const page = await api.requirements(projectId)
       // Fetch coverage for all requirements in parallel to badge row labels (lists are usually small).
-      const covs = await Promise.all(page.items.filter((r) => critsOf(r).length > 0).map((r) => api.requirementCoverage(r.id).then((c) => [r.id, c] as const).catch(() => [r.id, []] as const)))
+      const covs = await Promise.all(page.items.map((r) => api.requirementCoverage(r.id).then((c) => [r.id, c] as const).catch(() => [r.id, []] as const)))
       const covMap: Record<string, CoverageCase[]> = Object.fromEntries(covs)
       setItems(page.items.map((r) => {
         const crits = critsOf(r)
@@ -175,7 +170,7 @@ export default function Requirements() {
         const pct = crits.length ? Math.round((covered / crits.length) * 100) : 0
         const base = localById.get(r.id) || { id: r.id, label: r.title, createdAt: 0 }
         const label = (
-          <span>{r.customFields?.['来源'] === '云效' && <Tag color="blue">云效 · {r.customFields['云效状态']}</Tag>}<Link to={`/p/${encodeURIComponent(projectId)}/requirement?open=${encodeURIComponent(r.id)}`}>{r.title}</Link>{crits.length ? <Tag color={pct === 100 ? 'green' : pct > 0 ? 'gold' : 'default'} style={{ marginLeft: 6 }}>{pct}%</Tag> : null}</span>
+          <span>{r.title}{crits.length ? <Tag color={pct === 100 ? 'green' : pct > 0 ? 'gold' : 'default'} style={{ marginLeft: 6 }}>{pct}%</Tag> : null}</span>
         )
         return { ...base, status: r.status, reqType: r.reqType, priority: r.priority, tags: r.tags, overdue: r.overdue, label, titleText: r.title, raw: r }
       }))
@@ -187,7 +182,7 @@ export default function Requirements() {
     loadList()
     loadModules()
     setSelModule('ALL')
-    tabs.reset(linkedRequirement)
+    tabs.reset()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId])
 
@@ -1092,8 +1087,6 @@ function RequirementDetail({ reqId, projectId, modules, onChanged, onDeleted, on
                     ) : '—'}
                   </Descriptions.Item>
                 </Descriptions>
-                <CollabPeopleTable projectId={projectId} requirementId={reqId} />
-                <RequirementCodePanel projectId={projectId} requirementId={reqId} />
                 {/* AI review opinion: KB-grounded, advisory. The reviewer still approves/rejects manually. */}
                 {(aiLoading || aiReview) && (
                   <AiReviewPanel loading={aiLoading} result={aiReview} onClose={() => setAiReview(null)} />
@@ -1137,7 +1130,7 @@ function RequirementDetail({ reqId, projectId, modules, onChanged, onDeleted, on
                     dataSource={req.versions}
                     columns={[
                       { title: t('req.version', '版本'), dataIndex: 'version', width: 80, render: (v: number) => <span>v{v}{v === req.baselineVersion ? <Tag color="blue" style={{ marginLeft: 6 }}>{t('req.baseline', '基线')}</Tag> : null}</span> },
-                      { title: t('req.versionDesc', '版本说明'), dataIndex: 'description', render: (d?: string) => <MarkdownRenderer value={d} /> },
+                      { title: t('req.versionDesc', '版本说明'), dataIndex: 'description', render: (d?: string) => d || '—' },
                       { title: t('req.action', '操作'), width: 80, render: (_v, row) => <Button type="link" size="small" onClick={() => viewVersion(row.version)}>{t('req.view', '查看')}</Button> },
                     ]}
                   />
@@ -1277,7 +1270,7 @@ function RequirementDetail({ reqId, projectId, modules, onChanged, onDeleted, on
       <Modal title={verView ? `${t('req.versionDetail', '版本明细')} · v${verView.version}` : ''} open={!!verView} onCancel={() => setVerView(null)} footer={null} destroyOnHidden>
         {verView && (
           <Descriptions column={1} size="small" bordered>
-            <Descriptions.Item label={t('req.versionDesc', '版本说明')}><MarkdownRenderer value={verView.description} /></Descriptions.Item>
+            <Descriptions.Item label={t('req.versionDesc', '版本说明')}>{verView.description || '—'}</Descriptions.Item>
             <Descriptions.Item label={t('req.acceptanceCriteria', '验收标准')}>
               {verView.acceptanceCriteria?.length ? (
                 <ul style={{ margin: 0, paddingLeft: 18 }}>{verView.acceptanceCriteria.map((c, i) => <li key={i}>{c}</li>)}</ul>
@@ -1307,9 +1300,6 @@ function CollabPanel({ projectId, reqId, refreshKey }: { projectId: string; reqI
   const firstPassRate = row.aiTasks > 0 ? (row.aiFirstPass * 100) / row.aiTasks : 0
   return (
     <Card size="small" title={t('req.collabTitle', '人机协同')}>
-      {(row.requirementUnits ?? 0) > 0 && <div style={{ color: 'var(--text-2)', fontSize: 12, marginBottom: 12 }}>
-        {t('home.requirementUnits', '未拆分的已交付需求')}: {row.requirementUnits} {t('home.requirementUnitRule', '条，按每条 1 个人工交付工作项统计；无工作量记录时不折算点数。')}
-      </div>}
       <Row gutter={[16, 16]} align="middle" justify="space-around" wrap>
         <Col xs={12} sm={12} md={6} lg={4}>
           <Progress
@@ -1319,11 +1309,11 @@ function CollabPanel({ projectId, reqId, refreshKey }: { projectId: string; reqI
             format={() => `${aiShare.toFixed(0)}%`}
             strokeColor="#1664ff"
           />
-          <div style={{ marginTop: 6, fontSize: 12, color: 'var(--text-2)' }}>{totalPts > 0 ? t('req.aiShare', 'AI 参与度(工作量)') : t('req.aiShareCount', 'AI 参与度(数量)')}</div>
+          <div style={{ marginTop: 6, fontSize: 12, color: 'var(--text-2)' }}>{t('req.aiShare', 'AI 参与度(工作量)')}</div>
         </Col>
         <Col xs={12} sm={12} md={6} lg={4}>
           <MiniSplit
-            label={t('req.deliverWorkSplit', '交付工作项(AI / 人)')}
+            label={t('req.deliverSplit', '交付任务(AI / 人)')}
             left={row.aiTasks}
             right={row.humanTasks}
             leftColor="#1664ff"

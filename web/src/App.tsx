@@ -5,10 +5,12 @@ import { useApp } from './context'
 import { useI18n } from './i18n'
 import Login from './pages/Login'
 import AppShell from './components/AppShell'
+import { PluginProvider, PluginGuard } from './plugins'
 import { ProjectGuard, LegacyRedirect } from './components/RouteScope'
 
 // Route-level lazy loading: per-page bundles; first paint only downloads login/shell, the rest load on entry.
-const Devops = lazy(() => import('./pages/Devops'))
+const Devops = lazy(() => import('./plugins/yunxiao/Page'))
+const Plugins = lazy(() => import('./pages/Plugins'))
 const Home = lazy(() => import('./pages/Home'))
 const Todos = lazy(() => import('./pages/Todos'))
 const Follows = lazy(() => import('./pages/Follows'))
@@ -90,13 +92,13 @@ export default function App() {
   ]
 
   return (
-    <AppShell>
+    <PluginProvider><AppShell>
       <Suspense fallback={<div style={{ display: 'flex', justifyContent: 'center', paddingTop: 120 }}><Spin size="large" /></div>}>
         <Routes>
           <Route path="/" element={<Navigate to="/home" replace />} />
           {/* Global (project-agnostic) pages */}
           <Route path="/home" element={<Home />} />
-          <Route path="/devops" element={<Devops />} />
+          <Route path="/devops" element={<PluginGuard id="yunxiao"><Devops /></PluginGuard>} />
           <Route path="/todo" element={<Todos />} />
           <Route path="/follow" element={<Follows />} />
           <Route path="/resource-pool" element={<ResourcePoolsPage />} />
@@ -110,7 +112,7 @@ export default function App() {
           {/* RAG config moved into 系统参数; keep the old path working. */}
           <Route path="/system/rag" element={<Navigate to="/system/params" replace />} />
           <Route path="/system/tasks" element={<TaskCenter />} />
-          <Route path="/system/plugins" element={<ComingSoon title={t('sys.plugins', '插件')} />} />
+          <Route path="/system/plugins" element={<Plugins />} />
           <Route path="/system/logs" element={<ComingSoon title={t('sys.logs', '日志')} />} />
           {/* Project-scoped canonical routes: /p/:projectId/... behind the access guard */}
           <Route path="/p/:projectId" element={<ProjectGuard />}>
@@ -125,6 +127,6 @@ export default function App() {
           <Route path="*" element={<Navigate to="/home" replace />} />
         </Routes>
       </Suspense>
-    </AppShell>
+    </AppShell></PluginProvider>
   )
 }

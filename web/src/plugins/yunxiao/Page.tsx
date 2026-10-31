@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Alert, Button, Card, Col, Input, Row, Select, Space, Statistic, Switch, Table, Tabs, Tag, Typography } from 'antd'
 import { ReloadOutlined } from '@ant-design/icons'
-import { devopsApi, type DevopsDashboard, type DevopsRow, type DevopsSource } from '../api'
+import { devopsApi, type DevopsDashboard, type DevopsRow, type DevopsSource } from './api'
 const kinds = [{ key: 'requirement', label: '需求' }, { key: 'bug', label: '缺陷' }, { key: 'sprint', label: '迭代' }, { key: 'testcase', label: '测试用例' }, { key: 'commit', label: '实际提交' }, { key: 'history', label: '状态变化' }, { key: 'runs', label: '同步记录' }]
 const when = (v?: string) => v ? new Date(v).toLocaleString('zh-CN', { hour12: false }) : '—'
 const text = (v: unknown) => v == null || v === '' ? '—' : String(v)
@@ -63,14 +63,13 @@ export default function Devops() {
   ]
   return <div data-testid="devops-scroll" style={{ height: '100%', minHeight: 0, overflowY: 'auto', padding: 24, boxSizing: 'border-box' }}>
     <Space style={{ width: '100%', justifyContent: 'space-between', marginBottom: 16 }} wrap>
-      <div><Typography.Title level={3} style={{ margin: 0 }}>云效研发统计</Typography.Title><Typography.Text type="secondary">需求、缺陷、迭代与实际提交 · 外部来源数据</Typography.Text></div>
+      <div><Typography.Title level={3} style={{ margin: 0 }}>云效研发统计</Typography.Title><Typography.Text type="secondary">需求、缺陷、迭代与实际提交 · 插件独立数据</Typography.Text></div>
       <Space wrap>
         <Select aria-label="云效项目" style={{ minWidth: 220 }} value={source || undefined} onChange={v => { setSource(v); setPage(1); setGroup('') }} options={sources.map(s => ({ value: s.id, label: s.name }))} placeholder="尚未配置数据源" />
         <Select aria-label="统计区间" value={days} onChange={v => { setDays(v); setPage(1) }} options={[7, 14, 30, 90].map(v => ({ value: v, label: `最近 ${v} 天` }))} />
         <Button icon={<ReloadOutlined />} onClick={() => setRevision(x => x + 1)}>刷新数据</Button>
       </Space>
     </Space>
-    {info && <Space style={{ marginBottom: 16 }}><Typography.Link href={`/p/${info.project_id}/requirement`}>查看项目需求</Typography.Link><Typography.Link href={`/p/${info.project_id}/functional-case`}>查看功能用例</Typography.Link></Space>}
     {error && <Alert showIcon type="error" message={error} style={{ marginBottom: 16 }} />}
     <Alert type="info" showIcon style={{ marginBottom: 16 }} message={info?.last_success_at ? `最近成功同步：${when(info.last_success_at)} · 每小时自动更新` : '等待首次同步完成；本页不会触发 AI 交付或修改云效数据。'} description={<>延期只统计紧急、高、中；代码只统计实际作者，排除合并提交。代码采集覆盖：{when(info?.code_since || undefined)} 至 {when(info?.code_until || undefined)}。历史指标只使用已采集的数据。</>} />
     <Row gutter={[12, 12]} style={{ marginBottom: 16 }}>

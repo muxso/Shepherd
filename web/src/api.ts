@@ -40,7 +40,7 @@ export class ApiError extends Error {
   }
 }
 
-async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
+export async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
   const headers: Record<string, string> = {}
   const token = tokenStore.get()
   if (token) headers['authorization'] = `Bearer ${token}`
@@ -1312,14 +1312,12 @@ export interface Bug {
   updatedAt?: string | null
 }
 
-/** Human-AI split: verified tasks; delivered requirements without child tasks count as one human unit without estimated points. */
+/** Human-AI collaboration stats: per-requirement AI/human delivery split (measured as VERIFIED + presence of a DELIVERED attempt). */
 export interface CollabRequirementItem {
   requirementId: string
   title: string
   aiTasks: number
   humanTasks: number
-  /** Delivered requirements counted when no child tasks exist. */
-  requirementUnits: number
   aiPoints: number
   humanPoints: number
   /** Delivery quality (attempt level): total/success/failed attempts; tasks accepted on the first delivery. */
@@ -1327,26 +1325,6 @@ export interface CollabRequirementItem {
   aiDelivered: number
   aiFailed: number
   aiFirstPass: number
-}
-export interface CollabPersonRow {
-  requirementId: string
-  title: string
-  status: string
-  personId: string
-  personName: string
-  roles: string[]
-  delivered: boolean
-  requirementShare: number
-  aiTasks: number
-  humanTasks: number
-  points: number
-}
-export interface RequirementCommit {
-  repoId: string; repo: string; sha: string; title: string; author: string
-  authoredAt: string; additions: number | null; deletions: number | null; url: string
-}
-export interface RequirementCode {
-  codeSince: string | null; codeUntil: string | null; commits: RequirementCommit[]
 }
 export interface CollabDayItem {
   /** Date, YYYY-MM-DD. */
@@ -2042,10 +2020,6 @@ export const api = {
   deleteNoticeRule: (id: string, projectId: string) =>
     http.del(`/notice/rules/${encodeURIComponent(id)}?projectId=${encodeURIComponent(projectId)}`),
   // Human-AI collaboration stats (per-requirement AI/human split + weekly trend)
-  requirementCode: (projectId: string, requirementId: string) =>
-    http.get<RequirementCode>(`/delivery/requirement-code?projectId=${encodeURIComponent(projectId)}&requirementId=${encodeURIComponent(requirementId)}`),
-  collabPeople: (projectId: string, requirementId?: string) =>
-    http.get<CollabPersonRow[]>(`/delivery/collab-people?projectId=${encodeURIComponent(projectId)}${requirementId ? `&requirementId=${encodeURIComponent(requirementId)}` : ''}`),
   collabStats: (projectId: string, requirementId?: string) =>
     http.get<CollabStats>(
       `/delivery/collab-stats?projectId=${encodeURIComponent(projectId)}${requirementId ? `&requirementId=${encodeURIComponent(requirementId)}` : ''}`,
@@ -2235,23 +2209,14 @@ export const api = {
     http.get<ScenarioChange[]>(`/api/scenario/${scenarioId}/changes`),
 }
 
-// External Yunxiao facts are separate from native verified deliveries.
-export interface DevopsSource {
-  id: string; name: string; project_id: string; cloud_org_id: string; cloud_project_id: string;
-  last_success_at?: string | null; code_since?: string | null; code_until?: string | null;
+export interface Plugin {
+  id: string
+  name: string
+  description: string
+  entry: string
+  installed: boolean
+  enabled: boolean
 }
-export interface DevopsAuthor { name: string; group: string; commits: number; linkedCommits: number; additions: number | null; deletions: number | null; unknownStats: number }
-export interface DevopsDashboard {
-  source: DevopsSource; totals: { requirements: number; bugs: number; sprints: number; delayed: number; delivered: number };
-  authors: DevopsAuthor[]; codeScope: string; historyScope: string;
-}
-export interface DevopsRow {
-  externalId?: string; id?: string | number; serial?: string; title?: string; sha?: string; url?: string;
-  additions?: number | null; deletions?: number | null; requirementIds?: string[];
-  [key: string]: unknown;
-}
-export const devopsApi = {
-  sources: () => request<{ items: DevopsSource[] }>('GET', '/api/devops/sources'),
-  dashboard: (id: string, days: number) => request<DevopsDashboard>('GET', `/api/devops/sources/${encodeURIComponent(id)}/dashboard?days=${days}`),
-  records: (id: string, query: Record<string, string | number | boolean>) => request<{ items: DevopsRow[]; total: number }>('GET', `/api/devops/sources/${encodeURIComponent(id)}/records?${new URLSearchParams(Object.entries(query).map(([k, v]) => [k, String(v)]))}`),
+export const pluginApi = {
+  list: () => request<{ items: Plugin[] }>('GET', '/api/plugins'),
 }

@@ -7,6 +7,11 @@ use serde_json::{json, Value};
 use sqlx::{PgPool, Row};
 #[derive(Clone)]
 pub struct PgStore(pub PgPool);
+
+/// Runs only against the plugin database; never uses Shepherd's migration inventory.
+pub async fn migrate(pool: &PgPool) -> Result<(), sqlx::migrate::MigrateError> {
+    sqlx::migrate!("./migrations").run(pool).await
+}
 pub(super) fn db(e: sqlx::Error) -> Error {
     tracing::error!(error=%e,"DevOps storage failed");
     Error::Storage
@@ -15,21 +20,16 @@ const LATE: &str = "kind='requirement' AND payload->>'priority' IN ('紧急','�
 #[async_trait]
 impl Store for PgStore {
     async fn sources(&self) -> Result<Value, Error> {
-        let rows=sqlx::query_scalar::<_,Value>("SELECT to_jsonb(s) || jsonb_build_object('projectName',p.name) FROM ms_devops_source s JOIN ms_project p ON p.id=s.project_id ORDER BY s.name").fetch_all(&self.0).await.map_err(db)?;
+        let rows = sqlx::query_scalar::<_, Value>(
+            "SELECT to_jsonb(s) FROM ms_devops_source s ORDER BY s.name",
+        )
+        .fetch_all(&self.0)
+        .await
+        .map_err(db)?;
         Ok(json!({"items":rows}))
     }
     async fn create_source(&self, s: NewSource) -> Result<Value, Error> {
         s.validate()?;
-        let project = sqlx::query_scalar::<_, bool>(
-            "SELECT EXISTS(SELECT 1 FROM ms_project WHERE id=$1 AND NOT deleted)",
-        )
-        .bind(&s.project_id)
-        .fetch_one(&self.0)
-        .await
-        .map_err(db)?;
-        if !project {
-            return Err(Error::NotFound);
-        }
         let id = uuid::Uuid::new_v4().to_string();
         let row=sqlx::query_scalar::<_,Value>("INSERT INTO ms_devops_source(id,project_id,cloud_org_id,cloud_project_id,name) VALUES($1,$2,$3,$4,$5) ON CONFLICT(cloud_org_id,cloud_project_id) DO UPDATE SET name=EXCLUDED.name WHERE ms_devops_source.project_id=EXCLUDED.project_id RETURNING to_jsonb(ms_devops_source)")
    .bind(id).bind(s.project_id).bind(s.cloud_org_id).bind(s.cloud_project_id).bind(s.name).fetch_optional(&self.0).await.map_err(db)?;
@@ -104,7 +104,6 @@ impl Store for PgStore {
         if b.counts.contains_key("testcase") {
             sqlx::query("UPDATE ms_devops_entity e SET active=false,observed_at=now() WHERE e.source_id=$2 AND e.kind='testcase' AND e.active AND NOT EXISTS(SELECT 1 FROM ms_devops_stage s WHERE s.run_id=$1 AND s.kind='testcase' AND s.external_id=e.external_id)").bind(run).bind(&source).execute(&mut *tx).await.map_err(db)?;
         }
-        super::mirror::project(&mut tx, &source).await?;
         // Refresh the successfully scanned code window; older facts remain available for history.
         sqlx::query("UPDATE ms_devops_entity e SET active=false,observed_at=now() WHERE e.source_id=$2 AND e.kind='commit' AND e.active AND (payload->>'authoredAt')::timestamptz >= $3::text::timestamptz AND (payload->>'authoredAt')::timestamptz < $4::text::timestamptz AND NOT EXISTS(SELECT 1 FROM ms_devops_stage s WHERE s.run_id=$1 AND s.kind='commit' AND s.external_id=e.external_id)").bind(run).bind(&source).bind(&b.code_since).bind(&b.code_until).execute(&mut *tx).await.map_err(db)?;
         sqlx::query("UPDATE ms_devops_source SET last_success_at=now(),code_since=LEAST(COALESCE(code_since,$2::text::timestamptz),$2::text::timestamptz),code_until=$3::text::timestamptz WHERE id=$1").bind(&source).bind(&b.code_since).bind(&b.code_until).execute(&mut *tx).await.map_err(db)?;

@@ -251,77 +251,8 @@ impl DeliveryRepository for PgDeliveryRepository {
 
     // Human/AI collaboration stats: VERIFIED tasks split into AI/human by whether a
     // DELIVERED delivery record exists; aggregated per requirement (counts, points,
-    // plus delivery quality: attempt success rate / first-pass). Delivered requirements
-    // without child tasks count as one human unit with zero estimated points. With requirement_id,
+    // plus delivery quality: attempt success rate / first-pass). With requirement_id,
     // scope to that requirement only.
-    async fn requirement_code(
-        &self,
-        project_id: &str,
-        requirement_id: &str,
-    ) -> Result<Option<crate::ports::RequirementCode>, RepoError> {
-        let Some(meta) = sqlx::query("SELECT s.code_since::text AS code_since,s.code_until::text AS code_until FROM ms_requirement r LEFT JOIN ms_devops_source s ON s.id=r.external_source_id WHERE r.project_id=$1 AND r.id=$2 AND NOT r.deleted")
-            .bind(project_id).bind(requirement_id).fetch_optional(&self.pool).await.map_err(map_err)? else { return Ok(None); };
-        let commits = sqlx::query(include_str!("requirement_code.sql"))
-            .bind(project_id)
-            .bind(requirement_id)
-            .fetch_all(&self.pool)
-            .await
-            .map_err(map_err)?
-            .iter()
-            .map(|r| {
-                Ok(crate::ports::RequirementCommit {
-                    repo_id: r
-                        .try_get::<Option<String>, _>("repo_id")
-                        .map_err(map_err)?
-                        .unwrap_or_default(),
-                    repo: r.try_get("repo").map_err(map_err)?,
-                    sha: r.try_get("sha").map_err(map_err)?,
-                    title: r.try_get("title").map_err(map_err)?,
-                    author: r.try_get("author").map_err(map_err)?,
-                    authored_at: r.try_get("authored_at").map_err(map_err)?,
-                    additions: r.try_get("additions").map_err(map_err)?,
-                    deletions: r.try_get("deletions").map_err(map_err)?,
-                    url: r.try_get("url").map_err(map_err)?,
-                })
-            })
-            .collect::<Result<Vec<_>, RepoError>>()?;
-        Ok(Some(crate::ports::RequirementCode {
-            code_since: meta.try_get("code_since").map_err(map_err)?,
-            code_until: meta.try_get("code_until").map_err(map_err)?,
-            commits,
-        }))
-    }
-
-    async fn collab_people(
-        &self,
-        project_id: &str,
-        requirement_id: Option<&str>,
-    ) -> Result<Vec<crate::ports::CollabPersonRow>, RepoError> {
-        sqlx::query(include_str!("collab_people.sql"))
-            .bind(project_id)
-            .bind(requirement_id.unwrap_or(""))
-            .fetch_all(&self.pool)
-            .await
-            .map_err(map_err)?
-            .iter()
-            .map(|r| {
-                Ok(crate::ports::CollabPersonRow {
-                    requirement_id: r.try_get("requirement_id").map_err(map_err)?,
-                    title: r.try_get("title").map_err(map_err)?,
-                    status: r.try_get("status").map_err(map_err)?,
-                    person_id: r.try_get("person_id").map_err(map_err)?,
-                    person_name: r.try_get("person_name").map_err(map_err)?,
-                    roles: r.try_get("roles").map_err(map_err)?,
-                    delivered: r.try_get("delivered").map_err(map_err)?,
-                    requirement_share: r.try_get("requirement_share").map_err(map_err)?,
-                    ai_tasks: r.try_get("ai_tasks").map_err(map_err)?,
-                    human_tasks: r.try_get("human_tasks").map_err(map_err)?,
-                    points: r.try_get("points").map_err(map_err)?,
-                })
-            })
-            .collect()
-    }
-
     async fn collab_stats(
         &self,
         project_id: &str,
@@ -329,7 +260,15 @@ impl DeliveryRepository for PgDeliveryRepository {
     ) -> Result<CollabStats, RepoError> {
         // attempt_cnt feeds the first-pass check; attempt-level quality metrics are
         // aggregated separately and LEFT JOINed in.
-        const VERIFIED_SPLIT: &str = include_str!("collab_units.sql");
+        const VERIFIED_SPLIT: &str = "SELECT t.points, t.verified_at, dc.requirement_id, \
+                (SELECT count(*) FROM ms_delivery_attempt a \
+                 WHERE a.decomposition_id = t.decomposition_id AND a.task_id = t.id) AS attempt_cnt, \
+                EXISTS(SELECT 1 FROM ms_delivery_attempt a \
+                       WHERE a.decomposition_id = t.decomposition_id AND a.task_id = t.id \
+                         AND a.status = 'DELIVERED') AS ai \
+             FROM ms_task t \
+             JOIN ms_task_decomposition dc ON dc.id = t.decomposition_id \
+             WHERE t.status = 'VERIFIED'";
         // Attempt level (not limited to verified tasks): total/succeeded/failed
         // delivery attempts per requirement.
         const ATTEMPT_AGG: &str = "SELECT dc.requirement_id, \
@@ -346,7 +285,6 @@ impl DeliveryRepository for PgDeliveryRepository {
             "SELECT r.id, r.title, \
                 count(x.requirement_id) FILTER (WHERE x.ai) AS ai_tasks, \
                 count(x.requirement_id) FILTER (WHERE NOT x.ai) AS human_tasks, \
-                count(x.requirement_id) FILTER (WHERE x.requirement_unit) AS requirement_units, \
                 COALESCE(sum(x.points) FILTER (WHERE x.ai), 0)::BIGINT AS ai_points, \
                 COALESCE(sum(x.points) FILTER (WHERE NOT x.ai), 0)::BIGINT AS human_points, \
                 count(x.requirement_id) FILTER (WHERE x.ai AND x.attempt_cnt = 1) AS ai_first_pass, \
@@ -356,7 +294,7 @@ impl DeliveryRepository for PgDeliveryRepository {
              FROM ms_requirement r \
              LEFT JOIN ({VERIFIED_SPLIT}) x ON x.requirement_id = r.id \
              LEFT JOIN ({ATTEMPT_AGG}) att ON att.requirement_id = r.id \
-             WHERE r.project_id = $1 AND NOT r.deleted AND ($2 = '' OR r.id = $2) \
+             WHERE r.project_id = $1 AND ($2 = '' OR r.id = $2) \
              GROUP BY r.id, r.title \
              HAVING count(x.requirement_id) > 0 OR COALESCE(max(att.ai_attempts), 0) > 0 \
              ORDER BY count(x.requirement_id) DESC, r.id"
@@ -374,7 +312,6 @@ impl DeliveryRepository for PgDeliveryRepository {
                     title: r.try_get("title").map_err(map_err)?,
                     ai_tasks: r.try_get("ai_tasks").map_err(map_err)?,
                     human_tasks: r.try_get("human_tasks").map_err(map_err)?,
-                    requirement_units: r.try_get("requirement_units").map_err(map_err)?,
                     ai_points: r.try_get("ai_points").map_err(map_err)?,
                     human_points: r.try_get("human_points").map_err(map_err)?,
                     ai_attempts: r.try_get("ai_attempts").map_err(map_err)?,
@@ -393,7 +330,7 @@ impl DeliveryRepository for PgDeliveryRepository {
                 count(*) FILTER (WHERE NOT x.ai) AS human \
              FROM ({VERIFIED_SPLIT}) x \
              JOIN ms_requirement r ON r.id = x.requirement_id \
-             WHERE r.project_id = $1 AND NOT r.deleted AND ($2 = '' OR r.id = $2) \
+             WHERE r.project_id = $1 AND ($2 = '' OR r.id = $2) \
                AND x.verified_at >= now() - interval '370 days' \
              GROUP BY d ORDER BY d"
         ))
@@ -494,215 +431,5 @@ mod tests {
         assert_eq!(orphan.title, None);
         assert_eq!(orphan.description, None);
         assert_eq!(orphan.module, None);
-    }
-}
-
-#[cfg(test)]
-mod collab_tests {
-    use super::*;
-    use crate::domain::{Deliverable, DeliverableKind};
-
-    #[tokio::test]
-    #[ignore = "requires isolated SHEPHERD_TEST_DATABASE_URL"]
-    async fn requirements_fallback_preserves_task_precedence_and_real_completion_dates() {
-        let pool =
-            PgPool::connect(&std::env::var("SHEPHERD_TEST_DATABASE_URL").expect("isolated DB"))
-                .await
-                .expect("connect");
-        migrate::run(&pool).await.expect("migrate");
-        let project: String = sqlx::query_scalar("INSERT INTO ms_project(organization_id,name) VALUES('collab-test',gen_random_uuid()::text) RETURNING id")
-            .fetch_one(&pool).await.expect("project");
-        for (name, status, deleted) in [
-            ("fallback", "DELIVERED", false),
-            ("undated", "DELIVERED", false),
-            ("pending", "BASELINED", false),
-            ("cancelled", "ARCHIVED", false),
-            ("deleted", "DELIVERED", true),
-            ("tasks", "DELIVERED", false),
-            ("unverified", "DELIVERED", false),
-            ("empty-decomp", "DELIVERED", false),
-        ] {
-            sqlx::query("INSERT INTO ms_requirement(id,project_id,title,status,deleted) VALUES($1,$2,$3,$4,$5)")
-                .bind(format!("{project}-{name}")).bind(&project).bind(name).bind(status).bind(deleted)
-                .execute(&pool).await.expect("req");
-        }
-        // Empty decompositions are not tasks; non-verified tasks must suppress fallback.
-        for name in ["tasks", "unverified", "empty-decomp"] {
-            sqlx::query("INSERT INTO ms_task_decomposition(id,requirement_id,requirement_version) VALUES($1,$1,1)")
-                .bind(format!("{project}-{name}")).execute(&pool).await.expect("decomp");
-        }
-        for (name, task, status, points) in [
-            ("tasks", "ai", "VERIFIED", 3),
-            ("tasks", "human", "VERIFIED", 2),
-            ("unverified", "todo", "PENDING", 1),
-        ] {
-            sqlx::query("INSERT INTO ms_task(decomposition_id,id,title,status,points,verified_at) VALUES($1,$2,$2,$3,$4,CASE WHEN $3='VERIFIED' THEN now()-interval '2 days' END)")
-                .bind(format!("{project}-{name}")).bind(task).bind(status).bind(points)
-                .execute(&pool).await.expect("task");
-        }
-        let repo = PgDeliveryRepository::new(pool.clone());
-        let mut a = repo
-            .create(&format!("{project}-tasks"), "ai", ExecutorKind::Codex, None)
-            .await
-            .expect("attempt");
-        a.start_running("collab-test").expect("start");
-        a.deliver(Deliverable {
-            kind: DeliverableKind::PullRequest,
-            reference: "test".into(),
-            summary: "test".into(),
-        })
-        .expect("deliver");
-        repo.save(&a).await.expect("save");
-        // Cloud status transition date, not the import/update timestamp.
-        sqlx::query("INSERT INTO ms_devops_source(id,project_id,cloud_org_id,cloud_project_id,name) VALUES($1,$1,'test',$1,'test')")
-            .bind(&project).execute(&pool).await.expect("source");
-        sqlx::query("UPDATE ms_requirement SET external_source_id=$1,external_id='cloud' WHERE id=$1||'-fallback'")
-            .bind(&project).execute(&pool).await.expect("link");
-        sqlx::query("INSERT INTO ms_devops_entity(source_id,kind,external_id,payload) VALUES($1,'requirement','cloud',jsonb_build_object('raw',jsonb_build_object('updateStatusAt',(extract(epoch FROM now()-interval '3 days')*1000)::bigint)))")
-            .bind(&project).execute(&pool).await.expect("entity");
-        let stats = repo.collab_stats(&project, None).await.expect("stats");
-        assert_eq!(stats.items.len(), 4); // fallback, undated, tasks, empty-decomp
-        assert_eq!(stats.items.iter().map(|r| r.requirement_units).sum::<i64>(), 3);
-        assert_eq!(stats.items.iter().map(|r| r.human_tasks).sum::<i64>(), 4);
-        assert_eq!(stats.items.iter().map(|r| r.ai_tasks).sum::<i64>(), 1);
-        assert_eq!(stats.items.iter().map(|r| r.human_points).sum::<i64>(), 2);
-        assert_eq!(stats.items.iter().map(|r| r.ai_points).sum::<i64>(), 3);
-        assert_eq!(stats.daily.iter().map(|r| r.human).sum::<i64>(), 2); // excludes undated requirements
-        assert_eq!(stats.daily.iter().map(|r| r.ai).sum::<i64>(), 1);
-        assert!(repo.collab_stats("other-project", None).await.expect("scope").items.is_empty());
-        let one = repo
-            .collab_stats(&project, Some(&format!("{project}-fallback")))
-            .await
-            .expect("filter");
-        assert_eq!(one.items.len(), 1);
-        assert_eq!(one.items[0].requirement_units, 1);
-        assert_eq!(one.items[0].ai_attempts, 0);
-        assert_eq!(one.items[0].human_points, 0);
-        sqlx::query("UPDATE ms_devops_entity SET payload='{}' WHERE source_id=$1")
-            .bind(&project)
-            .execute(&pool)
-            .await
-            .expect("missing source date");
-        assert!(repo
-            .collab_stats(&project, Some(&format!("{project}-fallback")))
-            .await
-            .expect("missing date")
-            .daily
-            .is_empty());
-    }
-    #[tokio::test]
-    #[ignore = "requires isolated SHEPHERD_TEST_DATABASE_URL"]
-    async fn people_roles_deduplicate_share_and_attribute_only_real_assignees() {
-        let pool =
-            PgPool::connect(&std::env::var("SHEPHERD_TEST_DATABASE_URL").expect("isolated DB"))
-                .await
-                .expect("pool");
-        migrate::run(&pool).await.expect("migrate");
-        let project: String=sqlx::query_scalar("INSERT INTO ms_project(organization_id,name) VALUES('people-test',gen_random_uuid()::text) RETURNING id").fetch_one(&pool).await.expect("project");
-        sqlx::query("INSERT INTO ms_devops_source(id,project_id,cloud_org_id,cloud_project_id,name) VALUES($1,$1,'people-test',$1,'people')").bind(&project).execute(&pool).await.expect("source");
-        for name in ["shared", "tasks", "unknown", "deleted"] {
-            sqlx::query("INSERT INTO ms_requirement(id,project_id,title,status,deleted,external_source_id,external_id) VALUES($1,$2,$3,CASE WHEN $3='unknown' THEN 'DRAFT' ELSE 'DELIVERED' END,$3='deleted',$2,$3)")
-                .bind(format!("{project}-{name}")).bind(&project).bind(name).execute(&pool).await.expect("req");
-            if name != "unknown" {
-                sqlx::query(r#"INSERT INTO ms_devops_entity(source_id,kind,external_id,payload) VALUES($1,'requirement',$2,'{"raw":{"assignedTo":{"id":"a","name":"Alice"},"participants":[{"id":"a","name":"Alice"},{"id":"b","name":"Bob"}],"trackers":[{"id":"watcher","name":"Watcher"}],"creator":{"id":"creator","name":"Creator"},"customFieldValues":[{"fieldName":"开发者","values":[{"identifier":"a","displayValue":"Alice"}]},{"fieldName":"测试人员","values":[{"identifier":"c","displayValue":"Carol"}]}]}}')"#)
-                    .bind(&project).bind(name).execute(&pool).await.expect("entity");
-            }
-        }
-        sqlx::query("INSERT INTO ms_task_decomposition(id,requirement_id,requirement_version) VALUES($1,$1,1)").bind(format!("{project}-tasks")).execute(&pool).await.expect("decomp");
-        sqlx::query("INSERT INTO ms_task(decomposition_id,id,title,status,assignee,assignee_kind,points) VALUES($1,'one','one','VERIFIED','Bob','HUMAN',3),($1,'unassigned','unassigned','VERIFIED','','',5),($1,'agent','agent','VERIFIED','robot','AGENT',2)")
-            .bind(format!("{project}-tasks")).execute(&pool).await.expect("tasks");
-        let repo = PgDeliveryRepository::new(pool.clone());
-        let mut attempt = repo
-            .create(&format!("{project}-tasks"), "one", ExecutorKind::Codex, None)
-            .await
-            .expect("attempt");
-        attempt.start_running("run").expect("start");
-        attempt
-            .deliver(Deliverable {
-                kind: DeliverableKind::PullRequest,
-                reference: "pr".into(),
-                summary: "test".into(),
-            })
-            .expect("deliver");
-        repo.save(&attempt).await.expect("save");
-        let rows = repo.collab_people(&project, None).await.expect("people");
-        assert_eq!(rows.len(), 7); // three shared + three task participants + unregistered
-        assert!(!rows
-            .iter()
-            .any(|r| ["watcher", "creator", "robot"].contains(&r.person_id.as_str())));
-        sqlx::query("UPDATE ms_devops_entity SET payload=jsonb_set(payload,'{serial}','\"SER-1\"') WHERE source_id=$1 AND kind='requirement' AND external_id='shared'")
-            .bind(&project).execute(&pool).await.expect("source serial");
-        for (key, payload) in [
-            (
-                "linked",
-                r#"{"repoId":"repo","repo":"Repo","sha":"sha","author":"Actual coder","additions":4,"deletions":2,"requirementIds":["SER-1"],"parentIds":["base"],"isMerge":false}"#,
-            ),
-            (
-                "unknown-stats",
-                r#"{"repoId":"repo2","sha":"sha2","author":"Other coder","requirementIds":["shared","tasks"]}"#,
-            ),
-            ("merge", r#"{"requirementIds":["shared"],"isMerge":true}"#),
-            ("parents", r#"{"requirementIds":["shared"],"parentIds":["one","two"]}"#),
-            ("other-req", r#"{"requirementIds":["tasks"]}"#),
-            ("unlinked", r#"{}"#),
-        ] {
-            sqlx::query("INSERT INTO ms_devops_entity(source_id,kind,external_id,payload) VALUES($1,'commit',$2,$3::jsonb)")
-                .bind(&project).bind(key).bind(payload).execute(&pool).await.expect("commit");
-        }
-        let code = repo
-            .requirement_code(&project, &format!("{project}-shared"))
-            .await
-            .expect("code")
-            .expect("requirement");
-        assert_eq!(code.commits.len(), 2);
-        let actual = code.commits.iter().find(|c| c.sha == "sha").expect("actual");
-        assert_eq!(actual.author, "Actual coder");
-        assert_eq!(actual.additions, Some(4));
-        assert!(code
-            .commits
-            .iter()
-            .find(|c| c.sha == "sha2")
-            .expect("unknown")
-            .additions
-            .is_none());
-        assert!(repo
-            .requirement_code("other-project", &format!("{project}-shared"))
-            .await
-            .expect("scope")
-            .is_none());
-        assert!(repo
-            .requirement_code(&project, &format!("{project}-deleted"))
-            .await
-            .expect("deleted")
-            .is_none());
-        assert!(repo
-            .requirement_code(&project, &format!("{project}-unknown"))
-            .await
-            .expect("empty")
-            .expect("exists")
-            .commits
-            .is_empty());
-        let shared =
-            repo.collab_people(&project, Some(&format!("{project}-shared"))).await.expect("shared");
-        assert_eq!(shared.len(), 3);
-        assert!((shared.iter().map(|r| r.requirement_share).sum::<f64>() - 1.0).abs() < 1e-9);
-        let alice = shared.iter().find(|r| r.person_id == "a").expect("alice");
-        assert_eq!(alice.roles, vec!["参与人", "开发者", "负责人"]);
-        let tasks = repo
-            .collab_people(&project, Some(&format!("{project}-tasks")))
-            .await
-            .expect("task people");
-        assert!(tasks.iter().all(|r| r.requirement_share == 0.0));
-        let bob = tasks.iter().find(|r| r.person_id == "b").expect("bob");
-        assert_eq!((bob.ai_tasks, bob.human_tasks, bob.points), (1, 0, 3));
-        assert!(tasks
-            .iter()
-            .filter(|r| r.person_id != "b")
-            .all(|r| r.points == 0 && r.ai_tasks == 0 && r.human_tasks == 0));
-        let unknown = rows.iter().find(|r| r.title == "unknown").expect("unknown");
-        assert_eq!(unknown.person_id, "");
-        assert!(!unknown.delivered);
-        assert_eq!(unknown.requirement_share, 0.0);
-        assert!(repo.collab_people("other-project", None).await.expect("scope").is_empty());
     }
 }
