@@ -91,25 +91,35 @@ pub fn prepare_request(
     spec.url = render(&spec.url, variables, max)?;
     if !spec.url.starts_with("http://") && !spec.url.starts_with("https://") {
         let base = render(base.ok_or(TemplateError::InvalidUrl)?, variables, max)?;
+        if base.len().saturating_add(spec.url.len()).saturating_add(1) > max {
+            return Err(TemplateError::Limit);
+        }
         spec.url = format!("{}/{}", base.trim_end_matches('/'), spec.url.trim_start_matches('/'));
     }
     let mut url = url::Url::parse(&spec.url).map_err(|_| TemplateError::InvalidUrl)?;
     if !matches!(url.scheme(), "http" | "https") || url.host_str().is_none() {
         return Err(TemplateError::InvalidUrl);
     }
-    if !query.is_empty() {
-        let mut pairs = url.query_pairs_mut();
-        for (name, value) in query {
-            pairs.append_pair(&render(name, variables, max)?, &render(value, variables, max)?);
-        }
+    let mut remaining = max.checked_sub(url.as_str().len()).ok_or(TemplateError::Limit)?;
+    for (name, value) in query {
+        let name = render(name, variables, remaining)?;
+        let value = render(value, variables, remaining.saturating_sub(name.len()))?;
+        let before = url.as_str().len();
+        url.query_pairs_mut().append_pair(&name, &value);
+        // Encoding can expand a pair. Charge it before processing another pair,
+        // so total allocation stays bounded even for repeated large variables.
+        remaining = remaining
+            .checked_sub(url.as_str().len().saturating_sub(before))
+            .ok_or(TemplateError::Limit)?;
     }
     spec.url = url.into();
-    spec.headers = spec
-        .headers
-        .into_iter()
-        .map(|(k, v)| Ok((render(&k, variables, max)?, render(&v, variables, max)?)))
-        .collect::<Result<_, TemplateError>>()?;
-    spec.body = spec.body.map(|body| render(&body, variables, max)).transpose()?;
+    for (key, value) in &mut spec.headers {
+        *key = render(key, variables, remaining)?;
+        remaining = remaining.checked_sub(key.len()).ok_or(TemplateError::Limit)?;
+        *value = render(value, variables, remaining)?;
+        remaining = remaining.checked_sub(value.len()).ok_or(TemplateError::Limit)?;
+    }
+    spec.body = spec.body.map(|body| render(&body, variables, remaining)).transpose()?;
     let size = spec.url.len()
         + spec.headers.iter().map(|(k, v)| k.len() + v.len()).sum::<usize>()
         + spec.body.as_ref().map_or(0, String::len);
@@ -133,6 +143,25 @@ pub fn needs_plugin_preparation(processors: &[super::Processor]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn request_parts_share_one_budget_after_encoding_and_substitution() {
+        let vars = [("large".into(), "界".repeat(64))].into();
+        let request = super::super::RequestSpec {
+            method: super::super::HttpMethod::Get,
+            url: "http://example.test/".into(),
+            headers: vec![("x-value".into(), "{{large}}".into())],
+            body: Some("{{large}}".into()),
+        };
+        assert_eq!(
+            prepare_request(request.clone(), None, &[("q".into(), "{{large}}".into())], &vars, 512),
+            Err(TemplateError::Limit)
+        );
+        let queries = vec![("q".into(), "{{large}}".into()); 1000];
+        assert_eq!(
+            prepare_request(request, None, &queries, &vars, 1024),
+            Err(TemplateError::Limit)
+        );
+    }
     #[test]
     fn preparation_renders_once_bounds_expansion_and_encodes_query_values() {
         let vars =
