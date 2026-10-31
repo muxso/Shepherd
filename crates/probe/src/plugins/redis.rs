@@ -19,6 +19,16 @@ impl RedisPlugin {
         Self::default()
     }
 
+    /// Structured command execution owns the connection and never reuses authentication state.
+    pub async fn execute_command(
+        &self,
+        target: &str,
+        command: &crate::domain::redis::RedisCommand,
+        budget: super::redis_command::RedisBudget,
+    ) -> Result<crate::domain::redis::RedisReport, super::redis_command::RedisCommandError> {
+        super::redis_command::execute(target, command, budget).await
+    }
+
     async fn conn_for(&self, target: &str) -> Result<MultiplexedConnection, String> {
         if let Some(c) = self
             .conns

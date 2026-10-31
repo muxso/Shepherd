@@ -576,7 +576,7 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires disposable ENVIRONMENT_PLUGIN_TEST_HOST_URL and ENVIRONMENT_PLUGIN_TEST_DATABASE_URL"]
+    #[ignore = "requires disposable ENVIRONMENT_PLUGIN_TEST_HOST_URL, ENVIRONMENT_PLUGIN_TEST_DATABASE_URL, and REDIS_URL"]
     async fn isolated_environment_plugin_api_persists_binds_and_tests_a_real_connection() {
         let host_url =
             std::env::var("ENVIRONMENT_PLUGIN_TEST_HOST_URL").expect("disposable host database");
@@ -750,6 +750,100 @@ mod tests {
         )
         .await;
         call(&app, "DELETE", &format!("{path}?revision=2"), Some(&owner), None, 200).await;
+        let redis_url = std::env::var("REDIS_URL").expect("disposable Redis URL");
+        let redis_target = reqwest::Url::parse(&redis_url).expect("Redis URL");
+        let redis_driver = probe::plugins::RedisPlugin::new();
+        let redis_budget =
+            probe::plugins::redis_command::RedisBudget { timeout_ms: 5_000, max_bytes: 65_536 };
+        let redis_secret = "api fixture credential @:/?#";
+        let redis_command = |name: &str, args: Value| {
+            serde_json::from_value::<probe::domain::redis::RedisCommand>(
+                json!({"command":name,"arguments":args}),
+            )
+            .expect("Redis command")
+        };
+        redis_driver
+            .execute_command(
+                &redis_url,
+                &redis_command(
+                    "ACL",
+                    json!([
+                        "SETUSER",
+                        "ep_api_test",
+                        "on",
+                        format!(">{redis_secret}"),
+                        "~ep_api:*",
+                        "+@all"
+                    ]),
+                ),
+                redis_budget,
+            )
+            .await
+            .expect("Redis ACL fixture");
+        let credential = call(
+            &app,
+            "POST",
+            &format!("{base}/credentials"),
+            Some(&owner),
+            Some(json!({"label":"Redis password","value":redis_secret,"environmentOnly":true})),
+            200,
+        )
+        .await;
+        let body = json!({"pluginId":"redis","name":"Redis fixture","enabled":true,"config":{"schemaVersion":1,"values":{"host":redis_target.host_str().expect("host"),"port":redis_target.port().unwrap_or(6379),"database":13,"username":"ep_api_test","tls":if redis_target.scheme()=="rediss" {"require"} else {"disable"},"protocol":"resp3"},"secrets":{"password":credential["reference"]}}});
+        let profile =
+            call(&app, "POST", &format!("{base}/profiles"), Some(&owner), Some(body), 200).await;
+        let redis_id = profile["id"].as_str().expect("Redis profile id");
+        let redis_path = format!("{base}/profiles/{redis_id}");
+        call(&app, "POST", &format!("{redis_path}/test"), Some(&owner), None, 200).await;
+        call(
+            &app,
+            "PUT",
+            &format!("{base}/bindings/{redis_id}"),
+            Some(&owner),
+            Some(json!({"slot":"connection","priority":0,"enabled":true})),
+            200,
+        )
+        .await;
+        let result=call(&app,"POST",&format!("{redis_path}/execute"),Some(&owner),Some(json!({"command":"ECHO","arguments":[redis_secret],"extract":[{"variable":"secret","pointer":""}]})),200).await;
+        assert_eq!(result["status"], "success");
+        assert!(
+            !result.to_string().contains(redis_secret),
+            "Redis replies and variables must redact configured credentials"
+        );
+        let encoded = redis_secret.bytes().map(|byte| format!("{byte:02x}")).collect::<String>();
+        let binary=call(&app,"POST",&format!("{redis_path}/execute"),Some(&owner),Some(json!({"command":"ECHO","arguments":[{"hex":format!("ff{encoded}")}],"extract":[{"variable":"binary","pointer":"/hex"}]})),200).await;
+        assert!(
+            !binary.to_string().contains(&encoded),
+            "binary Redis replies must redact hex-encoded credentials"
+        );
+        let missing=call(&app,"POST",&format!("{redis_path}/execute"),Some(&owner),Some(json!({"command":"ECHO","arguments":["hello world"],"extract":[{"variable":"missing","pointer":"/absent"}]})),200).await;
+        assert_eq!(missing["status"], "failure");
+        call(
+            &app,
+            "POST",
+            &format!("{redis_path}/execute"),
+            Some(&viewer),
+            Some(json!({"command":"PING"})),
+            403,
+        )
+        .await;
+        call(
+            &app,
+            "POST",
+            &format!("{redis_path}/execute"),
+            Some(&owner),
+            Some(json!({"command":"SELECT","arguments":["0"]})),
+            400,
+        )
+        .await;
+        redis_driver
+            .execute_command(
+                &redis_url,
+                &redis_command("ACL", json!(["DELUSER", "ep_api_test"])),
+                redis_budget,
+            )
+            .await
+            .expect("Redis ACL cleanup");
         let projects: i64 = sqlx::query_scalar("SELECT count(*) FROM ms_project")
             .fetch_one(&host)
             .await

@@ -1,3 +1,4 @@
+import { downloadReport } from './reports'
 import { useState } from 'react'
 import { Alert, Button, Input, InputNumber, Modal, Select, Space, Table, Typography } from 'antd'
 import { environmentPluginApi as api, type DatabaseReport, type PluginOutput, type Profile } from './api'
@@ -21,21 +22,18 @@ export function DatabaseQuery({ environmentId, profile, onClose }: { environment
   async function run() {
     setBusy(true); setError(''); setResult(null)
     try {
-      setResult(await api.execute(environmentId, profile.id, { query, mode, parameters: jsonArray(parameters, '参数'), extract: mode === 'query' ? jsonArray(extract, '提取规则') : [], maxRows }))
+      setResult(await api.execute<DatabaseReport>(environmentId, profile.id, { query, mode, parameters: jsonArray(parameters, '参数'), extract: mode === 'query' ? jsonArray(extract, '提取规则') : [], maxRows }))
     } catch (error) { setError(error instanceof Error ? error.message : String(error)) }
     finally { setBusy(false) }
   }
   function download() {
     if (!result) return
-    const url = URL.createObjectURL(new Blob([JSON.stringify(result, null, 2)], { type: 'application/json' }))
-    const link = document.createElement('a')
-    link.href = url; link.download = `database-report-${profile.id}.json`; link.click()
-    setTimeout(() => URL.revokeObjectURL(url), 0)
+    downloadReport(`database-report-${profile.id}.json`, result)
   }
   return <Modal title={`数据库查询 · ${profile.name}`} open width={960} maskClosable={!busy} closable={!busy} onCancel={onClose} footer={<Space>
     <Button aria-label="关闭查询" disabled={busy} onClick={onClose}>关闭</Button>
     <Button disabled={!result || busy} onClick={download}>导出报告</Button>
-    <Button type="primary" loading={busy} disabled={!query.trim()} onClick={() => void run()}>{mode === 'query' ? '运行查询' : '执行语句'}</Button>
+    <Button type="primary" aria-label={mode === 'query' ? '运行查询' : '执行语句'} loading={busy} disabled={!query.trim()} onClick={() => void run()}>{mode === 'query' ? '运行查询' : '执行语句'}</Button>
   </Space>}>
     <Space direction="vertical" style={{ width: '100%' }}>
       <Space wrap><Select aria-label="执行模式" disabled={busy} value={mode} onChange={setMode} style={{ width: 200 }} options={[{ value: 'query', label: '查询（只读事务）' }, { value: 'execute', label: '执行（提交写入）' }]} />

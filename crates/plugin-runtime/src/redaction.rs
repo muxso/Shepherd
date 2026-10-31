@@ -16,6 +16,15 @@ impl Redactor {
         let mut patterns = Vec::new();
         for secret in secrets.filter(|s| !s.is_empty()) {
             patterns.push(secret.to_string());
+            // Binary database/Redis replies use hexadecimal JSON values.
+            const HEX: &[u8; 16] = b"0123456789abcdef";
+            let mut hex = String::with_capacity(secret.len() * 2);
+            for byte in secret.bytes() {
+                hex.push(HEX[(byte >> 4) as usize] as char);
+                hex.push(HEX[(byte & 15) as usize] as char);
+            }
+            patterns.push(hex.to_ascii_uppercase());
+            patterns.push(hex);
             patterns.push(STANDARD.encode(secret));
             patterns.push(URL_SAFE_NO_PAD.encode(secret));
             patterns.push(url::form_urlencoded::byte_serialize(secret.as_bytes()).collect());
@@ -90,6 +99,15 @@ impl Redactor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn hexadecimal_credentials_are_redacted_inside_binary_replies() {
+        let secret = "secret";
+        let redactor = Redactor::new(std::iter::once(secret)).expect("redactor");
+        assert_eq!(redactor.text("ff73656372657400"), "ff[REDACTED]00");
+        assert_eq!(redactor.text("FF73656372657400"), "FF[REDACTED]00");
+        let redactor = Redactor::new(std::iter::once("jkl")).expect("redactor");
+        assert_eq!(redactor.text("006A6B6C"), "00[REDACTED]");
+    }
     #[test]
     fn overlapping_credentials_never_rescan_inserted_redaction_markers() {
         let redactor =

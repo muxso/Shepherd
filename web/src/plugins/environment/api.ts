@@ -43,7 +43,7 @@ export const environmentPluginApi = {
   bind: (environment: string, id: string, slot: Slot, enabled = true) => call('PUT', `${root(environment)}/bindings/${encodeURIComponent(id)}`, { slot, priority: 0, enabled }),
   unbind: (environment: string, id: string, slot: Slot) => call('DELETE', `${root(environment)}/bindings/${encodeURIComponent(id)}?slot=${slot}`),
   test: (environment: string, id: string) => call<PluginOutput>('POST', `${profilePath(environment, id)}/test`),
-  execute: (environment: string, id: string, input: unknown) => call<PluginOutput<DatabaseReport>>('POST', `${profilePath(environment, id)}/execute`, input),
+  execute: <T = unknown>(environment: string, id: string, input: unknown) => call<PluginOutput<T>>('POST', `${profilePath(environment, id)}/execute`, input),
   createCredential: (environment: string, label: string, value: string) => call<{ reference: string }>('POST', `${root(environment)}/credentials`, { label, value, environmentOnly: true }),
 }
 
@@ -54,3 +54,5 @@ export interface DatabaseReport {
   truncated: boolean
   elapsedMs: number
 }
+
+export interface RedisReport { kind: string; value: unknown; elapsedMs: number }

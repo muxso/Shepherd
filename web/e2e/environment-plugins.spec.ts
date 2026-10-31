@@ -13,6 +13,19 @@ const postgres: Descriptor = {
   ] },
 }
 
+const redis: Descriptor = {
+  id: 'redis', name: 'Redis', section: 'redis', version: '1.0.0', apiVersion: 1,
+  capabilities: ['execute', 'connection_test'], operations: ['test', 'execute'],
+  configSchema: { version: 1, fields: [
+    { name: 'host', label: 'Host', required: true, kind: { type: 'string', max_length: 253 } },
+    { name: 'port', label: 'Port', required: false, kind: { type: 'integer', min: 1, max: 65535 } },
+    { name: 'database', label: 'Database', required: false, kind: { type: 'integer', min: 0, max: 2147483647 } },
+    { name: 'username', label: 'Username', required: false, kind: { type: 'string', max_length: 128 } },
+    { name: 'password', label: 'Password', required: false, kind: { type: 'secret' } },
+    { name: 'tls', label: 'TLS', required: false, kind: { type: 'choice', options: ['require', 'disable'] } },
+  ] },
+}
+
 async function fixture(page: Page, enabled = true, readonly = false) {
   const profiles: Profile[] = readonly ? [{ id: 'profile-1', projectId: 'project', pluginId: 'postgres', name: 'Existing database', enabled: true, revision: 1, config: { schemaVersion: 1, values: { host: 'localhost', database: 'fixture', user: 'reader' }, secrets: {} } }] : []
   const bindings: Binding[] = []
@@ -31,7 +44,7 @@ async function fixture(page: Page, enabled = true, readonly = false) {
     else if (path === '/project') body = { items: [{ id: 'project', name: 'Project', organizationId: 'organization' }], totalPages: 1 }
     else if (path === '/api/environment') body = [{ id: 'environment', projectId: 'project', name: 'Test environment', baseUrl: '', headers: [], variables: {}, enabled: true }]
     else if (path === '/api/plugins') body = { items: [] }
-    else if (path === '/api/environment-plugins/capabilities') body = { enabled, items: enabled ? [postgres] : [] }
+    else if (path === '/api/environment-plugins/capabilities') body = { enabled, items: enabled ? [postgres, redis] : [] }
     else if (path === '/api/environment-plugins/environments/environment') {
       configurationReads++
       body = { profiles, bindings, credentials, permissions: { manage: !readonly, execute: !readonly } } satisfies Configuration
@@ -50,10 +63,11 @@ async function fixture(page: Page, enabled = true, readonly = false) {
       const input = route.request().postDataJSON() as Omit<Binding, 'profileId'>
       bindings.push({ ...input, profileId: id }); body = { bound: true }
     } else if (path.endsWith('/execute')) {
-      const input = route.request().postDataJSON() as { extract: { variable: string }[] }
+      const input = route.request().postDataJSON() as { command?: string; extract: { variable: string }[] }
       executed.push(input)
       const failed = input.extract.some(e => e.variable === 'missing')
-      body = { status: failed ? 'failure' : 'success', data: { columns: [{ name: 'id', sqlType: 'INT8' }, { name: 'note', sqlType: 'TEXT' }], rows: [['9007199254740993', null]], rowsAffected: 0, truncated: !failed, elapsedMs: 12 }, variables: failed ? {} : { id: '9007199254740993' }, assertions: failed ? [{ id: 'extract.missing', passed: false, message: 'required result cell is missing' }] : [] }
+      if (input.command) body = { status: failed ? 'failure' : 'success', data: { kind: 'array', value: ['hello world', null], elapsedMs: 4 }, variables: failed ? {} : { first: 'hello world', nil: 'null' }, assertions: failed ? [{ id: 'extract.missing', passed: false, message: 'required Redis result path is missing' }] : [] }
+      else body = { status: failed ? 'failure' : 'success', data: { columns: [{ name: 'id', sqlType: 'INT8' }, { name: 'note', sqlType: 'TEXT' }], rows: [['9007199254740993', null]], rowsAffected: 0, truncated: !failed, elapsedMs: 12 }, variables: failed ? {} : { id: '9007199254740993' }, assertions: failed ? [{ id: 'extract.missing', passed: false, message: 'required result cell is missing' }] : [] }
     } else if (path.endsWith('/test')) {
       tested++; body = { status: 'success', data: { output: 'rows_affected=1' }, variables: {}, assertions: [] }
     }
@@ -144,4 +158,41 @@ test('database query uses the saved binding and renders rows, extraction failure
   await dialog.getByRole('button', { name: '运行查询', exact: true }).click()
   await expect(dialog.getByText('结果提取未通过', { exact: true })).toBeVisible()
   await expect(dialog.getByText('extract.missing: required result cell is missing', { exact: true })).toBeVisible()
+})
+
+test('Redis profile saves credential references and executes structured arguments with extraction and report download', async ({ page }) => {
+  await page.setViewportSize({ width: 1920, height: 1080 })
+  const data = await fixture(page)
+  await open(page)
+  await page.getByRole('tab', { name: 'Redis 配置', exact: true }).click()
+  await page.getByRole('button', { name: '新增连接配置', exact: true }).click()
+  let dialog = page.getByRole('dialog')
+  await dialog.getByLabel('配置名称', { exact: true }).fill('Redis fixture')
+  await dialog.getByLabel('Host', { exact: true }).fill('127.0.0.1')
+  await dialog.getByLabel('Database', { exact: true }).fill('13')
+  await dialog.getByLabel('Username', { exact: true }).fill('default')
+  await dialog.getByLabel('Password', { exact: true }).fill('private-fixture-password')
+  await dialog.getByRole('button', { name: '保存并测试', exact: true }).click()
+  await expect(dialog.getByText('连接测试通过', { exact: true })).toBeVisible()
+  expect(data.saved[0].pluginId).toBe('redis')
+  expect(data.saved[0].config.values.database).toBe(13)
+  expect(data.saved[0].config.secrets.password).toBe('credential-1')
+  await dialog.getByRole('button', { name: '关闭', exact: true }).click()
+  await expect(dialog).not.toBeVisible()
+  await page.getByRole('button', { name: 'Redis 命令', exact: true }).click()
+  dialog = page.getByRole('dialog')
+  await dialog.getByLabel('Redis 命令名称', { exact: true }).fill('MGET')
+  await dialog.getByLabel('Redis 命令参数', { exact: true }).fill('["key with spaces", "missing"]')
+  await dialog.getByLabel('Redis 提取规则', { exact: true }).fill('[{"variable":"first","pointer":"/0"},{"variable":"nil","pointer":"/1"}]')
+  await dialog.getByRole('button', { name: '执行命令', exact: true }).click()
+  await expect(dialog.getByText('Redis 执行通过', { exact: true })).toBeVisible()
+  expect(data.executed[0]).toEqual({ command: 'MGET', arguments: ['key with spaces', 'missing'], extract: [{ variable: 'first', pointer: '/0' }, { variable: 'nil', pointer: '/1' }] })
+  await expect(dialog.locator('pre').first()).toContainText('hello world')
+  await expect(dialog.locator('pre').last()).toContainText('"nil": "null"')
+  const downloading = page.waitForEvent('download')
+  await dialog.getByRole('button', { name: '导出报告', exact: true }).click()
+  expect((await downloading).suggestedFilename()).toBe('redis-report-profile-1.json')
+  await dialog.getByLabel('Redis 提取规则', { exact: true }).fill('[{"variable":"missing","pointer":"/5"}]')
+  await dialog.getByRole('button', { name: '执行命令', exact: true }).click()
+  await expect(dialog.getByText('Redis 结果提取未通过', { exact: true })).toBeVisible()
 })

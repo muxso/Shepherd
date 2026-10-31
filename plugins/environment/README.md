@@ -24,7 +24,7 @@ Profiles are project scoped and may be shared across environments. New credentia
 
 Management requires environment read/update permission and project membership. Viewers can inspect configuration but cannot modify or execute it. Execution additionally requires an applicable API definition/scenario/test-plan/runner execution permission and an enabled environment. Administrators retain access across projects. Caller-provided actor/project claims are not accepted.
 
-Credentials are authenticated-encrypted with project, environment, credential ID, and key ID bound into the ciphertext. Keep old key IDs in the keyring when selecting a new active key; removing them makes old credentials unreadable. APIs return references and metadata, never plaintext. The runtime resolves only declared references and masks their raw, URL-encoded, and base64 forms in outputs and failures.
+Credentials are authenticated-encrypted with project, environment, credential ID, and key ID bound into the ciphertext. Keep old key IDs in the keyring when selecting a new active key; removing them makes old credentials unreadable. APIs return references and metadata, never plaintext. The runtime resolves only declared references and masks their raw, URL-encoded, base64, and hexadecimal forms in outputs and failures.
 
 ## Checks
 
@@ -33,7 +33,7 @@ cargo test -p plugin-runtime -p environment-plugins --all-features --locked
 cargo test -p server --bin server environment_extension::tests --locked
 ```
 
-Database tests require disposable `ENVIRONMENT_PLUGIN_TEST_HOST_URL` and `ENVIRONMENT_PLUGIN_TEST_DATABASE_URL`. Run the ignored storage test first, then `environment_extension::tests::isolated_environment_plugin_api`. CI provisions and removes both databases. Browser checks are in `web/e2e/environment-plugins.spec.ts`.
+API tests require disposable `ENVIRONMENT_PLUGIN_TEST_HOST_URL`, `ENVIRONMENT_PLUGIN_TEST_DATABASE_URL`, and `REDIS_URL`. Storage-only tests require the two database URLs. Run the ignored storage test first, then `environment_extension::tests::isolated_environment_plugin_api`. CI provisions and removes both databases. Browser checks are in `web/e2e/environment-plugins.spec.ts`.
 
 ## Database statements (T05)
 
@@ -63,3 +63,30 @@ Results contain `columns` (name and SQL type), positional `rows`, `rowsAffected`
 Extraction uses a zero-based row and column index or a unique column name. A required missing cell or ambiguous name fails the report with a named assertion; `required: false` skips a missing value. Extracted variables are returned in the report, with JSON null represented as `"null"`. They do not update host environment variables. Results and variables use the same credential redaction as connection tests. Reports can be downloaded as JSON without persisting query results in core business tables.
 
 The MySQL provider's bounded query path targets MySQL 8; MariaDB is not covered by this adapter. CI requires real PostgreSQL and MySQL result tests, including parameter binding, precision, NULLs, empty results, limits, timeouts, and read/write transaction behavior.
+
+## Redis profiles (T06)
+
+Profiles provide host/port, database (default 0), optional ACL username, password references, TLS (default `require`), and protocol (`resp2` by default). RESP3 requires a compatible server. Set TLS to `disable` for plaintext test servers. TLS uses rustls and Mozilla roots with hostname/certificate verification; custom CA profiles and insecure verification are not exposed. A username requires a credential reference.
+
+The Redis tab saves/tests profiles, executes commands through the scoped execution API, extracts variables, and downloads reports:
+
+```json
+{
+  "command": "MGET",
+  "arguments": ["key with spaces", "missing-key"],
+  "extract": [
+    { "variable": "first", "pointer": "/0" },
+    { "variable": "second", "pointer": "/1", "required": false }
+  ]
+}
+```
+
+Each argument is a complete string or binary object such as `{"hex":"00ff"}`. Empty strings, spaces, and Unicode are preserved. Legacy probe requests retain their existing behavior.
+
+Reports contain `kind`, normalized `value`, and `elapsedMs`. Integers use strings; UTF-8 replies are text, other bytes use `{"hex":"..."}`, null remains JSON null, arrays/sets are arrays, and maps are arrays of key/value pairs. This preserves duplicate/binary map keys. Extraction uses JSON Pointer against `value`: an empty pointer selects the full value, `/0` the first array item, and `/0/1` the first map pair's value. Required missing paths fail a named assertion; a present null is extracted as `"null"`. Variables stay in the report and do not modify host variables. Credential redaction covers results, variables, and errors.
+
+Each call owns its multiplexed connection and driver task; timeout/cancellation drops the connection. This does not roll back a command already executed by Redis. Do not automatically retry writes after a timeout. Input is limited to 256 arguments, 64 KiB per decoded argument, and 1 MiB total; replies enforce the output budget, 10,000 nodes, and 64 nesting levels. Oversized results fail explicitly.
+
+Authentication, database selection, and protocol negotiation belong to the profile. The single-command interface rejects connection-management, transaction, streaming, replication, and cluster-session commands: AUTH, SELECT, HELLO, RESET, QUIT, CLIENT, MULTI/EXEC/DISCARD/WATCH/UNWATCH, subscription commands, MONITOR, SYNC/PSYNC/REPLCONF, READONLY/READWRITE/ASKING. Stateful sessions, subscriptions, cluster routing, and shared runner integration remain separate work.
+
+CI requires real Redis command tests (`probe --test redis_commands`) with a disposable Redis 6+ fixture: ACL authentication, RESP3, spaced/binary arguments, precision, nulls, output limits, timeout cleanup, wrong credentials, and server failures. The isolated host API test also verifies saved Redis profiles, encrypted credentials, permissions, extraction, and redaction. TLS URL construction is unit-tested; trusted TLS endpoint tests are not part of this fixture.
