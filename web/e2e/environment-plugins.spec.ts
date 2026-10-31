@@ -26,6 +26,15 @@ const redis: Descriptor = {
   ] },
 }
 
+const grpc: Descriptor = {
+  id: 'grpc', name: 'gRPC', section: 'grpc', version: '1.0.0', apiVersion: 1,
+  capabilities: ['execute', 'connection_test'], operations: ['test', 'execute'],
+  configSchema: { version: 1, fields: [
+    { name: 'endpoint', label: 'Endpoint', required: true, kind: { type: 'string', max_length: 2048 } },
+    { name: 'proto_files', label: 'Proto files (JSON)', required: true, kind: { type: 'json' } },
+  ] },
+}
+
 const fixturePrivateKey = '-----BEGIN OPENSSH PRIVATE KEY-----\nfixture-key-data\n-----END OPENSSH PRIVATE KEY-----'
 const ssh: Descriptor = {
   id: 'ssh', name: 'SSH', section: 'ssh', version: '1.0.0', apiVersion: 1,
@@ -56,7 +65,7 @@ async function fixture(page: Page, enabled = true, readonly = false) {
     else if (path === '/project') body = { items: [{ id: 'project', name: 'Project', organizationId: 'organization' }], totalPages: 1 }
     else if (path === '/api/environment') body = [{ id: 'environment', projectId: 'project', name: 'Test environment', baseUrl: '', headers: [], variables: {}, enabled: true }]
     else if (path === '/api/plugins') body = { items: [] }
-    else if (path === '/api/environment-plugins/capabilities') body = { enabled, items: enabled ? [postgres, redis, ssh] : [] }
+    else if (path === '/api/environment-plugins/capabilities') body = { enabled, items: enabled ? [postgres, redis, ssh, grpc] : [] }
     else if (path === '/api/environment-plugins/environments/environment') {
       configurationReads++
       body = { profiles, bindings, credentials, permissions: { manage: !readonly, execute: !readonly } } satisfies Configuration
@@ -74,12 +83,15 @@ async function fixture(page: Page, enabled = true, readonly = false) {
       const id = path.split('/').at(-1)!
       const input = route.request().postDataJSON() as Omit<Binding, 'profileId'>
       bindings.push({ ...input, profileId: id }); body = { bound: true }
+    } else if (path.endsWith('/metadata')) {
+      body = { metadata: { methods: [{ path: '/fixture.Echo/Call', inputType: 'fixture.Message', outputType: 'fixture.Message', clientStreaming: false, serverStreaming: false, inputExample: { value: '', count: '0' } }, { path: '/fixture.Echo/Stream', inputType: 'fixture.Message', outputType: 'fixture.Message', clientStreaming: true, serverStreaming: true }] } }
     } else if (path.endsWith('/execute')) {
       const input = route.request().postDataJSON() as { command?: string; extract?: { variable: string }[] }
       executed.push(input)
       const failed = input.extract?.some(e => e.variable === 'missing') ?? false
       const plugin = profiles.find(profile => profile.id === path.split('/').at(-2))?.pluginId
-      if (plugin === 'ssh') body = { status: 'failure', data: { operation: 'executed', hostKeySha256: `SHA256:${'A'.repeat(43)}`, stdout: { encoding: 'utf8', value: 'output\n' }, stderr: { encoding: 'utf8', value: 'failure\n' }, termination: { kind: 'exit', code: 7 }, elapsedMs: 8 }, variables: {}, assertions: [{ id: 'ssh.exit', passed: false, message: 'command exited with status 7' }] }
+      if (plugin === 'grpc') body = { status: 'failure', data: { operation: 'called', method: '/fixture.Echo/Call', status: { code: 7, message: 'fixture rejection', details: null }, response: null, metadata: {}, elapsedMs: 3 }, variables: {}, assertions: [{ id: 'grpc.status', passed: false, message: 'gRPC method returned a non-OK status' }] }
+      else if (plugin === 'ssh') body = { status: 'failure', data: { operation: 'executed', hostKeySha256: `SHA256:${'A'.repeat(43)}`, stdout: { encoding: 'utf8', value: 'output\n' }, stderr: { encoding: 'utf8', value: 'failure\n' }, termination: { kind: 'exit', code: 7 }, elapsedMs: 8 }, variables: {}, assertions: [{ id: 'ssh.exit', passed: false, message: 'command exited with status 7' }] }
       else if (input.command) body = { status: failed ? 'failure' : 'success', data: { kind: 'array', value: ['hello world', null], elapsedMs: 4 }, variables: failed ? {} : { first: 'hello world', nil: 'null' }, assertions: failed ? [{ id: 'extract.missing', passed: false, message: 'required Redis result path is missing' }] : [] }
       else body = { status: failed ? 'failure' : 'success', data: { columns: [{ name: 'id', sqlType: 'INT8' }, { name: 'note', sqlType: 'TEXT' }], rows: [['9007199254740993', null]], rowsAffected: 0, truncated: !failed, elapsedMs: 12 }, variables: failed ? {} : { id: '9007199254740993' }, assertions: failed ? [{ id: 'extract.missing', passed: false, message: 'required result cell is missing' }] : [] }
     } else if (path.endsWith('/test')) {
@@ -240,4 +252,33 @@ test('SSH profiles keep multiline keys in credential references and report separ
   await expect(dialog.locator('pre').first()).toContainText('output')
   await expect(dialog.locator('pre').last()).toContainText('failure')
   expect(data.executed[0]).toEqual({ command })
+})
+
+
+test('gRPC methods are inspected locally and calls report actual gRPC status', async ({ page }) => {
+  await page.setViewportSize({ width: 1920, height: 1080 })
+  const data = await fixture(page)
+  await open(page)
+  await page.getByRole('tab', { name: 'GRPC配置', exact: true }).click()
+  await page.getByRole('button', { name: '新增连接配置' }).click()
+  const dialog = page.getByRole('dialog')
+  await dialog.getByLabel('配置名称', { exact: true }).fill('gRPC fixture')
+  await dialog.getByLabel('Endpoint', { exact: true }).fill('https://localhost:8443')
+  await dialog.getByLabel('Proto files (JSON)', { exact: true }).fill(JSON.stringify({ 'fixture.proto': 'syntax="proto3";' }))
+  await dialog.getByRole('button', { name: '保存配置', exact: true }).click()
+  await expect(page.getByText('gRPC fixture', { exact: true }).first()).toBeVisible()
+  await dialog.getByRole('button', { name: '关闭', exact: true }).click()
+  await page.getByRole('button', { name: 'gRPC 调用', exact: true }).click()
+  await expect(dialog.getByLabel('gRPC 请求', { exact: true })).toHaveValue(/"count": "0"/)
+  expect(data.executed).toHaveLength(0)
+  await dialog.getByRole('combobox', { name: 'gRPC 方法', exact: true }).press('ArrowDown')
+  await expect(page.getByText('/fixture.Echo/Stream（流式，暂不支持）', { exact: true })).toBeVisible()
+  await page.keyboard.press('Escape')
+  await dialog.getByLabel('gRPC 请求', { exact: true }).fill('{"value":"hello","count":"9007199254740993"}')
+  await dialog.getByRole('button', { name: '执行 gRPC 调用', exact: true }).click()
+  await expect(dialog.getByText('gRPC 状态 7 · fixture rejection', { exact: true })).toBeVisible()
+  expect(data.executed).toEqual([{ method: '/fixture.Echo/Call', message: { value: 'hello', count: '9007199254740993' }, metadata: {} }])
+  const download = page.waitForEvent('download')
+  await dialog.getByRole('button', { name: '导出报告', exact: true }).click()
+  expect((await download).suggestedFilename()).toBe('grpc-report-profile-1.json')
 })

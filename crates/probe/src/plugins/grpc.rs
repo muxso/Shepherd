@@ -55,6 +55,16 @@ impl GrpcPlugin {
         Self::default()
     }
 
+    #[cfg(feature = "grpc-dynamic")]
+    pub async fn execute_call(
+        &self,
+        schema: &super::grpc_dynamic::CompiledSchema,
+        target: &super::grpc_dynamic::GrpcTarget<'_>,
+        action: super::grpc_dynamic::GrpcAction<'_>,
+        budget: super::grpc_dynamic::GrpcBudget,
+    ) -> Result<crate::domain::grpc::GrpcReport, super::grpc_dynamic::GrpcError> {
+        super::grpc_dynamic::execute(schema, target, action, budget).await
+    }
     async fn channel_for(&self, target: &str) -> Result<Channel, String> {
         if let Some(c) = self
             .channels

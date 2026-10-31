@@ -59,6 +59,11 @@ pub trait EnvironmentPlugin: Send + Sync {
     fn validate_config(&self, _config: &PluginConfig) -> Result<(), PluginError> {
         Ok(())
     }
+    /// Inspect public configuration without a credential resolver or execution context.
+    fn inspect_config(&self, _config: &PluginConfig) -> Result<serde_json::Value, PluginError> {
+        Ok(serde_json::Value::Null)
+    }
+
     /// Implementations must not detach work that outlives this future. Cancellation
     /// and deadlines drop the future; resource guards must release owned resources.
     async fn execute(

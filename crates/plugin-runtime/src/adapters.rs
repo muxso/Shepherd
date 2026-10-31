@@ -70,6 +70,25 @@ impl PluginRegistry {
         descriptor.config_schema.validate(config)?;
         plugin.validate_config(config)
     }
+    /// The host must authorize configuration reads before calling this pure inspection path.
+    pub fn inspect_config(
+        &self,
+        id: &str,
+        config: &PluginConfig,
+    ) -> Result<serde_json::Value, PluginError> {
+        let (descriptor, plugin) =
+            self.plugins.get(id).ok_or_else(|| PluginError::Unavailable(id.into()))?;
+        descriptor.config_schema.validate(config)?;
+        let metadata = plugin.inspect_config(config)?;
+        if serde_json::to_vec(&metadata)
+            .map_err(|_| PluginError::Execution("invalid configuration metadata".into()))?
+            .len()
+            > ExecutionLimits::default().max_output_bytes
+        {
+            return Err(PluginError::OutputLimit);
+        }
+        Ok(metadata)
+    }
     pub async fn execute(
         &self,
         invocation: &Invocation,

@@ -19,6 +19,14 @@ api-runner = { workspace = true, optional = true }
 tonic = { version = "0.12", optional = true }
 bytes = { version = "1", optional = true }
 http = { version = "1", optional = true }
+prost = { version = "0.13", optional = true }
+prost-reflect = { version = "0.14.7", features = ["serde"], optional = true }
+protox = { version = "0.7.2", optional = true }
+base64 = { version = "0.22", optional = true }
+url = { version = "2", optional = true }
+hyper-util = { version = "0.1", features = ["tokio"], optional = true }
+tower = { workspace = true, features = ["util"], optional = true }
+
 # SQL 驱动按需启用:sql→postgres、mysql→mysql(同一 sqlx 依赖,feature 加驱动)。
 sqlx = { workspace = true, features = ["runtime-tokio"], optional = true }
 # Redis 协议:纯 Rust 客户端(无 C 依赖),tokio 异步多路复用连接。
@@ -35,6 +43,7 @@ default = ["http"]
 database-results = ["dep:tokio", "dep:futures-util", "sqlx/json", "sqlx/chrono", "sqlx/uuid", "sqlx/bigdecimal"]
 http = ["dep:api-runner"]
 grpc = ["dep:tonic", "dep:bytes", "dep:http"]
+grpc-dynamic = ["grpc", "dep:prost", "dep:prost-reflect", "dep:protox", "dep:base64", "dep:url", "dep:hyper-util", "dep:tower", "dep:tokio", "tonic/tls", "tonic/tls-webpki-roots"]
 sql = ["dep:sqlx", "sqlx/postgres", "database-results"]
 mysql = ["dep:sqlx", "sqlx/mysql", "database-results"]
 redis = ["dep:redis", "dep:tokio", "redis/tokio-rustls-comp", "redis/tls-rustls-webpki-roots"]
@@ -42,6 +51,9 @@ websocket = ["dep:tokio-tungstenite", "dep:futures-util", "dep:tokio"]
 ssh = ["dep:russh", "dep:tokio"]
 
 [dev-dependencies]
+rcgen = "0.13"
+prost-types = "0.13"
+tokio-stream = { version = "0.1", features = ["net"] }
 tempfile = "3"
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "net"] }
 # websocket e2e:测试内起一个本地 echo 服务,验证插件 连接→发送→收回→断言。
