@@ -1798,6 +1798,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "environment-plugins"
+version = "0.0.4"
+dependencies = [
+ "async-trait",
+ "plugin-runtime",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "thiserror 2.0.18",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
 name = "equivalent"
 version = "1.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
