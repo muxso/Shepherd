@@ -89,12 +89,16 @@ pub fn prepare_request(
     max: usize,
 ) -> Result<super::RequestSpec, TemplateError> {
     spec.url = render(&spec.url, variables, max)?;
-    if !spec.url.starts_with("http://") && !spec.url.starts_with("https://") {
+    let absolute = spec.url.get(..7).is_some_and(|prefix| prefix.eq_ignore_ascii_case("http://"))
+        || spec.url.get(..8).is_some_and(|prefix| prefix.eq_ignore_ascii_case("https://"));
+    if !absolute {
         let base = render(base.ok_or(TemplateError::InvalidUrl)?, variables, max)?;
-        if base.len().saturating_add(spec.url.len()).saturating_add(1) > max {
+        let base = base.trim().trim_end_matches('/');
+        let separator = if spec.url.starts_with('/') { "" } else { "/" };
+        if base.len().saturating_add(separator.len()).saturating_add(spec.url.len()) > max {
             return Err(TemplateError::Limit);
         }
-        spec.url = format!("{}/{}", base.trim_end_matches('/'), spec.url.trim_start_matches('/'));
+        spec.url = format!("{base}{separator}{}", spec.url);
     }
     let mut url = url::Url::parse(&spec.url).map_err(|_| TemplateError::InvalidUrl)?;
     if !matches!(url.scheme(), "http" | "https") || url.host_str().is_none() {
@@ -143,6 +147,34 @@ pub fn needs_plugin_preparation(processors: &[super::Processor]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn prepared_urls_keep_absolute_scheme_case_and_leading_path_slashes() {
+        let request = super::super::RequestSpec {
+            method: super::super::HttpMethod::Get,
+            url: "HTTP://example.test//path".into(),
+            headers: vec![],
+            body: None,
+        };
+        assert_eq!(
+            prepare_request(
+                request.clone(),
+                Some("http://wrong.invalid"),
+                &[],
+                &BTreeMap::new(),
+                1024
+            )
+            .expect("absolute URL")
+            .url,
+            "http://example.test//path"
+        );
+        let request = super::super::RequestSpec { url: "//path".into(), ..request };
+        assert_eq!(
+            prepare_request(request, Some("  http://example.test/  "), &[], &BTreeMap::new(), 1024)
+                .expect("relative URL")
+                .url,
+            "http://example.test//path"
+        );
+    }
     #[test]
     fn request_parts_share_one_budget_after_encoding_and_substitution() {
         let vars = [("large".into(), "界".repeat(64))].into();
