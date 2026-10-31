@@ -2,6 +2,7 @@ import { request, ApiError } from '../../api'
 
 export type FieldType =
   | { type: 'string'; max_length: number }
+  | { type: 'multiline'; max_length: number }
   | { type: 'integer'; min: number; max: number }
   | { type: 'boolean' }
   | { type: 'choice'; options: string[] }
@@ -41,7 +42,7 @@ export const environmentPluginApi = {
   create: (environment: string, profile: NewProfile) => call<Profile>('POST', `${root(environment)}/profiles`, profile),
   update: (environment: string, id: string, revision: number, profile: NewProfile) => call<Profile>('PUT', profilePath(environment, id), { revision, profile }),
   remove: (environment: string, id: string, revision: number) => call('DELETE', `${profilePath(environment, id)}?revision=${revision}`),
-  bind: (environment: string, id: string, slot: Slot, enabled = true) => call('PUT', `${root(environment)}/bindings/${encodeURIComponent(id)}`, { slot, priority: 0, enabled }),
+  bind: (environment: string, id: string, slot: Slot, enabled = true, priority = 0) => call('PUT', `${root(environment)}/bindings/${encodeURIComponent(id)}`, { slot, priority, enabled }),
   unbind: (environment: string, id: string, slot: Slot) => call('DELETE', `${root(environment)}/bindings/${encodeURIComponent(id)}?slot=${slot}`),
   metadata: <T = unknown>(environment: string, id: string) => call<{ metadata: T }>('GET', `${profilePath(environment, id)}/metadata`),
   test: (environment: string, id: string) => call<PluginOutput>('POST', `${profilePath(environment, id)}/test`),

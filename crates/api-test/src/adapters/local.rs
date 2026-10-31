@@ -133,6 +133,9 @@ impl LocalRunnerDispatcher {
             Vec<Processor>,
             Option<ResponseSnapshot>,
         ) = match self.specs.spec_of(case_id).await? {
+            Some(spec) if api_runner::domain::preparation::needs_plugin_preparation(&spec.processors) => (
+                "ERROR",vec!["this runner does not support plugin preparation; use server-side HTTP debugging".into()],Vec::new(),None
+            ),
             Some(spec) => {
                 let mut req = spec.request;
                 apply_env_static(&mut req, env);
@@ -258,6 +261,39 @@ mod tests {
         }
     }
 
+    #[tokio::test]
+    async fn batch_runner_rejects_unwired_plugin_steps_before_http() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let calls = Arc::new(AtomicUsize::new(0));
+        let counter = calls.clone();
+        let app = Router::new().fallback(move || {
+            let counter = counter.clone();
+            async move {
+                counter.fetch_add(1, Ordering::SeqCst);
+                "ok"
+            }
+        });
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("listener");
+        let address = listener.local_addr().expect("address");
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.expect("server");
+        });
+        let mut case = spec(format!("http://{address}"), vec![]);
+        case.processors.push(Processor::Plugin { profile_id: "setup".into() });
+        let specs = InMemorySpecs::default().with("hook", case);
+        let sink = SpySink::default();
+        let runner = LocalRunnerDispatcher::new(Arc::new(specs), Arc::new(sink.clone()));
+        let outcome = runner
+            .dispatch_task(&task(BatchRunMode::Serial, &["hook"]))
+            .await
+            .expect("record failure");
+        assert!(matches!(outcome,DispatchOutcome::Completed{status} if status=="ERROR"));
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+        assert!(
+            sink.rows.lock().expect("rows")[0].2[0].contains("does not support plugin preparation")
+        );
+        server.abort();
+    }
     async fn spawn() -> String {
         let app = Router::new()
             .route("/ok", get(|| async { Json(serde_json::json!({"status":"ok"})) }))

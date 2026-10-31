@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use webauth::{AuthUser, SessionStore};
 
 use api_runner::{
-    evaluate_detailed, run_extracts, Assertion, AssertionReport, HttpMethod, Processor,
+    evaluate_detailed_with_vars, run_extracts, Assertion, AssertionReport, HttpMethod, Processor,
     RequestSpec, ReqwestRunner, ResponseSnapshot,
 };
 use probe::{default_registry, ProbeRequest};
@@ -54,11 +54,19 @@ struct HeaderKv {
     value: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct SendBody {
     #[serde(default)]
     environment_id: Option<String>,
+    #[serde(default)]
+    base_url: Option<String>,
+    #[serde(default)]
+    variables: std::collections::BTreeMap<String, String>,
+    #[serde(default)]
+    pre_processors: Vec<Processor>,
+    #[serde(default)]
+    query: Vec<HeaderKv>,
     #[serde(default)]
     protocol: Option<String>,
     #[serde(default = "default_method")]
@@ -117,6 +125,8 @@ struct SendResponse {
     assertions: Vec<AssertionResult>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     extractions: Vec<(String, String)>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    preparation: Vec<api_runner::PreparationStepReport>,
 }
 
 async fn send(
@@ -127,8 +137,24 @@ async fn send(
     if req.url.trim().is_empty() {
         return (StatusCode::BAD_REQUEST, "url required").into_response();
     }
+    if req.variables.len() > 128
+        || req.variables.iter().any(|(k, v)| k.is_empty() || k.len() > 128 || v.len() > 65_536)
+        || req.variables.iter().map(|(k, v)| k.len() + v.len()).sum::<usize>() > 65_536
+    {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error":"preparation variables exceed limits"})),
+        )
+            .into_response();
+    }
+    if req.processors.iter().any(|p| !matches!(p, Processor::Extract { .. })) {
+        return (StatusCode::BAD_REQUEST,Json(serde_json::json!({"error":"this post-processor is not supported yet; preparation belongs in preProcessors"}))).into_response();
+    }
     let proto = req.protocol.as_deref().unwrap_or("http").trim().to_lowercase();
     if !proto.is_empty() && proto != "http" {
+        if !req.pre_processors.is_empty() {
+            return (StatusCode::BAD_REQUEST,Json(serde_json::json!({"error":"preparation currently supports server-side HTTP debugging"}))).into_response();
+        }
         let reg = default_registry();
         if !reg.protocols().iter().any(|p| p == &proto) {
             return (
@@ -156,6 +182,7 @@ async fn send(
                     body: out.output.unwrap_or_default(),
                     assertions: Vec::new(),
                     extractions: Vec::new(),
+                    preparation: Vec::new(),
                 }),
             )
                 .into_response()
@@ -171,13 +198,37 @@ async fn send(
         };
     }
     let method: HttpMethod =
-        serde_json::from_value(serde_json::Value::String(req.method.to_uppercase()))
-            .unwrap_or(HttpMethod::Get);
+        match serde_json::from_value(serde_json::Value::String(req.method.to_uppercase())) {
+            Ok(method) => method,
+            Err(_) => return (StatusCode::BAD_REQUEST, "unsupported HTTP method").into_response(),
+        };
+    let prepared = match state
+        .environment
+        .prepare(user.clone(), req.environment_id.as_deref(), req.variables, &req.pre_processors)
+        .await
+    {
+        Ok(prepared) => prepared,
+        Err(response) => return response,
+    };
     let spec = RequestSpec {
         method,
         url: req.url.clone(),
         headers: req.headers.into_iter().map(|h| (h.key, h.value)).collect(),
         body: req.body,
+    };
+    let query: Vec<_> = req.query.into_iter().map(|q| (q.key, q.value)).collect();
+    let spec = match api_runner::domain::preparation::prepare_request(
+        spec,
+        req.base_url.as_deref(),
+        &query,
+        &prepared.variables,
+        1_048_576,
+    ) {
+        Ok(spec) => spec,
+        Err(error) => {
+            return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error":error.to_string()})))
+                .into_response()
+        }
     };
     let hosts = match req.environment_id.as_deref() {
         Some(environment) => match state.environment.host_overrides(user, environment).await {
@@ -205,7 +256,10 @@ async fn send(
             let assertions: Vec<AssertionResult> = if req.assertions.is_empty() {
                 Vec::new()
             } else {
-                evaluate_detailed(&req.assertions, &snapshot).into_iter().map(Into::into).collect()
+                evaluate_detailed_with_vars(&req.assertions, &snapshot, &prepared.variables)
+                    .into_iter()
+                    .map(Into::into)
+                    .collect()
             };
             let extractions = if req.processors.is_empty() {
                 Vec::new()
@@ -222,6 +276,7 @@ async fn send(
                     body: snapshot.body,
                     assertions,
                     extractions,
+                    preparation: prepared.steps,
                 }),
             )
                 .into_response()

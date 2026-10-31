@@ -315,3 +315,24 @@ fn multiline_secrets_accept_only_credential_references() {
     config.secrets.insert("key".into(), SecretRef("vault-key".into()));
     schema.validate(&config).expect("credential reference");
 }
+
+#[test]
+fn multiline_configuration_preserves_source_and_enforces_byte_limits() {
+    let schema = ConfigSchema {
+        version: 1,
+        fields: vec![ConfigField {
+            name: "code".into(),
+            label: "Source".into(),
+            required: true,
+            kind: FieldType::Multiline { max_length: 16 },
+        }],
+    };
+    let mut config = PluginConfig {
+        schema_version: 1,
+        values: [("code".into(), json!("line1\nline2"))].into(),
+        secrets: Default::default(),
+    };
+    schema.validate(&config).expect("multiline source");
+    config.values.insert("code".into(), json!("界".repeat(6)));
+    assert!(schema.validate(&config).is_err());
+}

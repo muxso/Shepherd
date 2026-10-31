@@ -144,9 +144,6 @@ export default function RequestEditor({
       .catch(() => setEnvs([]))
   }, [projectId])
 
-  // Resolve {{var}} with environment variables (unknown vars kept as-is).
-  const resolveVars = (s: string): string =>
-    env?.variables ? s.replace(/\{\{\s*(\w+)\s*\}\}/g, (whole, k: string) => env.variables?.[k] ?? whole) : s
   const spec = PROTOCOLS.find((p) => p.value === protocol) || PROTOCOLS[0]
   const protoOptions = PROTOCOLS.filter((p) => availProtos.includes(p.proto)).map((p) => ({ value: p.value, label: p.label }))
   const [url, setUrl] = useState(initialUrl)
@@ -189,34 +186,20 @@ export default function RequestEditor({
       }
       return
     }
-    // Resolve {{variables}}, then absolutize relative paths with the environment baseUrl.
-    const raw = resolveVars(url.trim())
-    let base = raw
-    if (!/^https?:\/\//i.test(raw)) {
-      const baseUrl = env?.baseUrl?.trim().replace(/\/+$/, '')
-      if (!baseUrl) {
-        // Debug send connects from the server: relative paths need an environment baseUrl, otherwise nothing to dial.
-        return message.warning(t('editor.needEnvOrAbs', '相对路径需先选择带 baseUrl 的环境,或填写绝对 URL(http(s)://)'))
-      }
-      base = `${baseUrl}${raw.startsWith('/') ? '' : '/'}${raw}`
-    }
-    // Build the query string (resolving @mock + {{variables}})
-    const qs = query
-      .filter((q) => q.on && q.key.trim())
-      .map((q) => `${encodeURIComponent(q.key)}=${encodeURIComponent(resolveMock(resolveVars(q.value)))}`)
-      .join('&')
-    const finalUrl = qs ? `${base}${base.includes('?') ? '&' : '?'}${qs}` : base
+    // Preserve templates until environment and case preparation completes on the server.
+    const finalUrl = resolveMock(url.trim())
+    const queryValues = query.filter(q => q.on && q.key.trim()).map(q => ({ key: q.key, value: resolveMock(q.value) }))
     // Inject environment default headers first; explicit headers can override (last write wins, backend processes in order).
     const hs: { key: string; value: string }[] = []
-    for (const eh of env?.headers || []) if (eh.name?.trim()) hs.push({ key: eh.name, value: resolveVars(eh.value || '') })
-    for (const h of headers.filter((h) => h.on && h.key.trim())) hs.push({ key: h.key, value: resolveMock(resolveVars(h.value)) })
+    for (const eh of env?.headers || []) if (eh.name?.trim()) hs.push({ key: eh.name, value: eh.value || '' })
+    for (const h of headers.filter((h) => h.on && h.key.trim())) hs.push({ key: h.key, value: resolveMock(h.value) })
     if (authType === 'bearer' && authToken) hs.push({ key: 'Authorization', value: `Bearer ${authToken}` })
     if (authType === 'basic' && authToken) hs.push({ key: 'Authorization', value: `Basic ${btoa(authToken)}` })
     setSending(true)
     setErr('')
     setResp(null)
     try {
-      setResp(await api.debugSend({ environmentId: env?.id, method, url: finalUrl, headers: hs, body: body.trim() ? resolveMock(resolveVars(body)) : undefined }))
+      setResp(await api.debugSend({ environmentId: env?.id, baseUrl: env?.baseUrl, variables: env?.variables, query: queryValues, method, url: finalUrl, headers: hs, body: body.trim() ? resolveMock(body) : undefined }))
     } catch (e) {
       setErr(e instanceof ApiError ? e.message : t('editor.sendFail', '发送失败'))
     } finally {

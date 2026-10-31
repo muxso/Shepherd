@@ -7,3 +7,6 @@ pub mod ports;
 pub mod providers;
 #[cfg(feature = "vault")]
 pub mod vault;
+
+#[cfg(feature = "protocols")]
+pub mod preparation;

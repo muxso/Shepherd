@@ -1,3 +1,4 @@
+import { splitProcessors } from '../plugins/environment/preparation'
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { Link, useSearchParams } from 'react-router-dom'
@@ -1330,7 +1331,7 @@ function ScenarioDetail({ scenario, active }: { scenario: Scenario; active?: boo
     const req = buildStepRequest(reqInfo.method, reqInfo.url, reqInfo.body, reqInfo.headers, reqInfo.auth as { type: string; token?: string } | undefined, env)
     if (!req) return message.warning(t('editor.needEnvOrAbs', '相对路径需先选择带 baseUrl 的环境,或填写绝对 URL(http(s)://)'))
     try {
-      const resp = await api.debugSend({ ...req, environmentId: env?.id, assertions: reqInfo.assertions as unknown[], processors: reqInfo.processors as unknown[] })
+      const resp = await api.debugSend({ ...req, environmentId: env?.id, baseUrl: env?.baseUrl, variables: env?.variables, ...splitProcessors(reqInfo.processors as unknown[]), assertions: reqInfo.assertions as unknown[] })
       const fails = (resp.assertions || []).filter((a) => !a.passed)
       setStepResults((prev) => ({ ...prev, [k]: { caseId: k, outcome: fails.length ? 'ERROR' : 'SUCCESS', failures: fails.map((a) => a.reason || a.item), executedAt: '', statusCode: resp.status, latencyMs: resp.latencyMs, respSize: resp.body.length, body: resp.body, headers: resp.headers } }))
     } catch (e) {
@@ -1654,7 +1655,7 @@ function ScenarioDetail({ scenario, active }: { scenario: Scenario; active?: boo
         <Space direction="vertical" size={20} style={{ width: '100%' }}>
           <div>
             <Typography.Text strong>{t('apidef.preProcessors', '前置')}</Typography.Text>
-            <div style={{ marginTop: 8 }}><ProcessorEditor value={form.preProcessors as Record<string, unknown>[]} onChange={(v) => patchForm({ preProcessors: v })} allowed={['script', 'sql', 'wait']} /></div>
+            <div style={{ marginTop: 8 }}><ProcessorEditor value={form.preProcessors as Record<string, unknown>[]} onChange={(v) => patchForm({ preProcessors: v })} allowed={['wait', 'plugin']} /></div>
           </div>
           <div>
             <Typography.Text strong>{t('apidef.postProcessors', '后置')}</Typography.Text>
@@ -1730,17 +1731,9 @@ function ScenarioDetail({ scenario, active }: { scenario: Scenario; active?: boo
 
 // Resolve {{var}} and prefix baseUrl onto relative paths; assemble a case/inline request into a sendable request (same conventions as debug send).
 function buildStepRequest(method: string, url: string, body: string | null | undefined, headers: { key: string; value: string }[], auth: { type: string; token?: string } | undefined, env?: Environment): SentRequest | null {
-  const resolveVars = (s: string): string =>
-    env?.variables ? s.replace(/\{\{\s*(\w+)\s*\}\}/g, (whole, k: string) => env.variables?.[k] ?? whole) : s
-  const path = (url || '').trim()
-  if (!path) return null
-  const raw = resolveVars(path)
-  let base = raw
-  if (!/^https?:\/\//i.test(raw)) {
-    const baseUrl = env?.baseUrl?.trim().replace(/\/+$/, '')
-    if (!baseUrl) return null
-    base = `${baseUrl}${raw.startsWith('/') ? '' : '/'}${raw}`
-  }
+  const base = (url || '').trim()
+  if (!base) return null
+  const resolveVars = (s: string) => s
   const hs: { key: string; value: string }[] = []
   for (const eh of env?.headers || []) if (eh.name?.trim()) hs.push({ key: eh.name, value: resolveVars(eh.value || '') })
   for (const h of headers) if (h.key?.trim()) hs.push({ key: h.key, value: resolveVars(h.value || '') })
@@ -1872,7 +1865,7 @@ function StepDetailDrawer({
     setLastReq(req)
     setRunning(true); setErr(''); setResp(null)
     try {
-      setResp(await api.debugSend({ ...req, environmentId: env?.id, assertions: reqInfo.assertions as unknown[], processors: reqInfo.processors as unknown[] }))
+      setResp(await api.debugSend({ ...req, environmentId: env?.id, baseUrl: env?.baseUrl, variables: env?.variables, ...splitProcessors(reqInfo.processors as unknown[]), assertions: reqInfo.assertions as unknown[] }))
     } catch (e) {
       setErr(e instanceof ApiError ? e.message : t('editor.sendFail', '发送失败'))
     } finally {
@@ -2278,13 +2271,11 @@ function CustomRequestDrawer({
     if (!url.trim()) return message.warning(t('editor.urlRequired', '请输入 URL'))
     let u = url.trim()
     for (const r of clean(rest)) u = u.replace(`{${r.key}}`, r.value)
-    const qs = clean(query).map((q) => `${q.key}=${q.value}`).join('&')
-    if (qs) u += (u.includes('?') ? '&' : '?') + qs
     const req = buildStepRequest(method, u, body || null, clean(headers), authObj(), env)
     if (!req) return message.warning(t('editor.needEnvOrAbs', '相对路径需先选择带 baseUrl 的环境,或填写绝对 URL(http(s)://)'))
     setLastReq(req); setRunning(true); setErr(''); setResp(null)
     try {
-      setResp(await api.debugSend({ ...req, environmentId: env?.id, assertions: assertions as unknown[], processors: mergedProcessors() as unknown[] }))
+      setResp(await api.debugSend({ ...req, environmentId: env?.id, baseUrl: env?.baseUrl, variables: env?.variables, preProcessors: pre, processors: post, query: clean(query), assertions: assertions as unknown[] }))
     } catch (e) {
       setErr(e instanceof ApiError ? e.message : t('editor.sendFail', '发送失败'))
     } finally {
@@ -2342,7 +2333,7 @@ function CustomRequestDrawer({
     { key: 'body', label: t('apidef.requestBody', '请求体'), children: <Input.TextArea rows={8} value={body} onChange={(e) => setBody(e.target.value)} className="ms-mono" placeholder='{"k":"v"}' /> },
     kvTab(query, setQuery, clean(query).length, 'Query'),
     kvTab(rest, setRest, clean(rest).length, 'REST'),
-    { key: 'pre', label: t('scenario.pre', '前置'), children: <ProcessorEditor value={pre as never} onChange={(v) => setPre(v)} allowed={['wait', 'extract', 'script', 'sql']} /> },
+    { key: 'pre', label: t('scenario.pre', '前置'), children: <ProcessorEditor value={pre as never} onChange={(v) => setPre(v)} allowed={['wait', 'plugin']} /> },
     { key: 'post', label: t('scenario.post', '后置'), children: <ProcessorEditor value={post as never} onChange={(v) => setPost(v)} allowed={['wait', 'extract', 'script', 'sql']} /> },
     { key: 'assert', label: t('apidef.assertions', '断言'), children: <AssertionEditor value={assertions as never} onChange={(v) => setAssertions(v)} /> },
     { key: 'auth', label: t('apidef.auth', '认证'), children: (

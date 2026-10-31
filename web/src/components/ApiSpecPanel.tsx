@@ -1,3 +1,4 @@
+import { phaseProcessors } from '../plugins/environment/preparation'
 import { forwardRef, useEffect, useImperativeHandle, useState } from 'react'
 import { Button, Card, Empty, Input, InputNumber, Radio, Segmented, Select, Space, Table, Tabs, Tag, Tooltip, Typography } from 'antd'
 import ResizableDrawer from './ResizableDrawer'
@@ -202,9 +203,9 @@ const ApiSpecPanel = forwardRef<ApiSpecPanelHandle, {
   const [lastReq, setLastReq] = useState<SentRequest | null>(null)
 
   // Assemble request line + spec into a sendable request (URL/headers/body). Warns and returns null on failure.
-  const buildRequest = (): { method: string; url: string; headers: { key: string; value: string }[]; body?: string } | null => {
+  const buildRequest = (mode: ExecMode): (SentRequest & { baseUrl?: string; query?: { key: string; value: string }[] }) | null => {
     const resolveVars = (s: string): string =>
-      env?.variables ? s.replace(/\{\{\s*(\w+)\s*\}\}/g, (whole, k: string) => env.variables?.[k] ?? whole) : s
+      mode === 'local' && env?.variables ? s.replace(/\{\{\s*(\w+)\s*\}\}/g, (whole, k: string) => env.variables?.[k] ?? whole) : s
     const path = (reqPath ?? definition.path ?? '').trim()
     if (!path) {
       message.warning(t('editor.urlRequired', '请输入 URL'))
@@ -212,7 +213,7 @@ const ApiSpecPanel = forwardRef<ApiSpecPanelHandle, {
     }
     const rawUrl = resolveVars(path)
     let base = rawUrl
-    if (!/^https?:\/\//i.test(rawUrl)) {
+    if (mode === 'local' && !/^https?:\/\//i.test(rawUrl)) {
       const baseUrl = env?.baseUrl?.trim().replace(/\/+$/, '')
       if (!baseUrl) {
         message.warning(t('editor.needEnvOrAbs', '相对路径需先选择带 baseUrl 的环境,或填写绝对 URL(http(s)://)'))
@@ -224,7 +225,7 @@ const ApiSpecPanel = forwardRef<ApiSpecPanelHandle, {
       .filter((q) => q.name?.trim())
       .map((q) => `${encodeURIComponent(q.name)}=${encodeURIComponent(resolveVars(q.value || ''))}`)
       .join('&')
-    const finalUrl = qs ? `${base}${base.includes('?') ? '&' : '?'}${qs}` : base
+    const finalUrl = mode === 'local' && qs ? `${base}${base.includes('?') ? '&' : '?'}${qs}` : base
     const hs: { key: string; value: string }[] = []
     for (const eh of env?.headers || []) if (eh.name?.trim()) hs.push({ key: eh.name, value: resolveVars(eh.value || '') })
     for (const h of spec.requestHeaders || []) if (h.name?.trim()) hs.push({ key: h.name, value: resolveVars(h.value || '') })
@@ -236,6 +237,8 @@ const ApiSpecPanel = forwardRef<ApiSpecPanelHandle, {
     return {
       method: reqMethod || definition.method || 'GET',
       url: finalUrl,
+      baseUrl: mode === 'server' ? env?.baseUrl : undefined,
+      query: mode === 'server' ? (spec.requestQuery || []).filter(q => q.name?.trim()).map(q => ({ key: q.name, value: q.value || '' })) : undefined,
       // Add a default Content-Type per body type (skipped when user/environment already set one).
       headers: withBodyContentType(hs, hasBody ? bt : 'none'),
       body: hasBody ? resolveVars(spec.requestBody || '') : undefined,
@@ -253,7 +256,8 @@ const ApiSpecPanel = forwardRef<ApiSpecPanelHandle, {
   }
 
   const execute = async (m: ExecMode = execMode) => {
-    const req = buildRequest()
+    if (m === 'local' && spec.preProcessors?.length) return message.warning('前置处理需要使用服务端执行')
+    const req = buildRequest(m)
     if (!req) return
     setLastReq(req)
     setRunning(true)
@@ -263,7 +267,7 @@ const ApiSpecPanel = forwardRef<ApiSpecPanelHandle, {
       setResp(
         m === 'local'
           ? await localSend(req)
-          : await api.debugSend({ ...req, environmentId: env?.id, assertions: spec.assertions, processors: spec.postProcessors }),
+          : await api.debugSend({ ...req, environmentId: env?.id, variables: env?.variables, preProcessors: spec.preProcessors, assertions: spec.assertions, processors: spec.postProcessors }),
       )
     } catch (e) {
       setRunErr(e instanceof ApiError ? e.message : e instanceof Error ? e.message : t('editor.sendFail', '发送失败'))
@@ -298,7 +302,7 @@ const ApiSpecPanel = forwardRef<ApiSpecPanelHandle, {
         restParams: kvToCase(spec.restParams),
         auth: spec.auth?.type && spec.auth.type !== 'none' ? { type: spec.auth.type, token: spec.auth.token } : undefined,
         assertions: spec.assertions,
-        processors: [...(spec.preProcessors || []), ...(spec.postProcessors || [])],
+        processors: phaseProcessors(spec.preProcessors, spec.postProcessors),
         tags: spec.tags,
       })
       message.success(t('apidef.caseSaved', '已另存为用例'))
@@ -371,7 +375,7 @@ const ApiSpecPanel = forwardRef<ApiSpecPanelHandle, {
           {
             key: 'pre',
             label: t('apidef.preProcessors', '前置'),
-            children: <ProcessorEditor value={spec.preProcessors as Record<string, unknown>[] | undefined} onChange={(v) => patch({ preProcessors: v })} allowed={['script', 'sql', 'wait']} />,
+            children: <ProcessorEditor value={spec.preProcessors as Record<string, unknown>[] | undefined} onChange={(v) => patch({ preProcessors: v })} allowed={['wait', 'plugin']} />,
           },
           {
             key: 'post',
@@ -632,6 +636,7 @@ export function DebugResultPanel({
           children: req ? <pre style={codeBox}>{reqToCurl(req)}</pre> : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('apidef.notRunYet', '尚未执行')} />,
         }]
       : []),
+    ...(resp?.preparation?.length ? [{ key: 'preparation', label: `前置报告 (${resp.preparation.length})`, children: <Table size="small" rowKey={(_, index) => String(index)} pagination={false} dataSource={resp.preparation} columns={[{ title: '来源', dataIndex: 'source' }, { title: '操作', dataIndex: 'kind' }, { title: '耗时 (ms)', dataIndex: 'elapsedMs' }, { title: '变量名称', render: (_, step) => step.variableNames.join(', ') }]} /> }] : []),
     {
       key: 'extract',
       label: `${t('apidef.preExtract', '提取')}${resp?.extractions?.length ? ` (${resp.extractions.length})` : extractRows.length ? ` (${extractRows.length})` : ''}`,

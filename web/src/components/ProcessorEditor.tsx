@@ -5,10 +5,11 @@ import { useI18n } from '../i18n'
 
 // Backend processor (api-runner Processor, serde tag=type / content=args).
 export type Processor = Record<string, unknown>
-export type OpKind = 'wait' | 'extract' | 'script' | 'sql'
+export type OpKind = 'wait' | 'extract' | 'script' | 'sql' | 'plugin'
 
 type Extractor = { variable: string; kind: 'JSON_PATH' | 'REGEX'; expression: string }
 type Op =
+  | { kind: 'plugin'; enabled: boolean; profileId: string }
   | { kind: 'wait'; enabled: boolean; ms: number }
   | { kind: 'extract'; enabled: boolean; extractors: Extractor[] }
   | { kind: 'script'; enabled: boolean; lang: string; code: string }
@@ -16,6 +17,7 @@ type Op =
 
 const emptyOp = (kind: OpKind): Op => {
   switch (kind) {
+    case 'plugin': return { kind, enabled: true, profileId: '' }
     case 'wait':
       return { kind, enabled: true, ms: 1000 }
     case 'extract':
@@ -32,6 +34,7 @@ function parse(value?: Processor[]): Op[] {
   return value.map((p): Op => {
     const args = p.args as any
     switch (String(p.type)) {
+      case 'Plugin': return { kind: 'plugin', enabled: true, profileId: String(args?.profileId || '') }
       case 'Wait':
         return { kind: 'wait', enabled: true, ms: Number(args?.ms) || 0 }
       case 'Extract':
@@ -51,6 +54,7 @@ function serialize(ops: Op[]): Processor[] {
     .filter((o) => o.enabled)
     .map((o): Processor => {
       switch (o.kind) {
+        case 'plugin': return { type: 'Plugin', args: { profileId: o.profileId } }
         case 'wait':
           return { type: 'Wait', args: { ms: o.ms } }
         case 'extract':
@@ -65,7 +69,7 @@ function serialize(ops: Op[]): Processor[] {
 
 /**
  * Pre/post processor editor: add dropdown + processor list left + editor right.
- * Wait/Extract are wired to the executor; script/SQL are stored only (execution engine pending, labeled as such in the UI).
+ * New preparation entries reference plugin-owned profiles; legacy inline entries remain readable.
  */
 export default function ProcessorEditor({
   value,
@@ -91,6 +95,7 @@ export default function ProcessorEditor({
   }
 
   const LABEL: Record<OpKind, string> = {
+    plugin: '前置插件',
     wait: t('proc.wait', '等待时间'),
     extract: t('proc.extract', '提取参数'),
     script: t('proc.script', '脚本操作'),
@@ -130,14 +135,15 @@ export default function ProcessorEditor({
               ))}
             </Space>
           </div>
-          <div style={{ flex: 1, padding: 12 }}>{cur && <OpEditor op={cur} onChange={(p) => update(sel, p)} t={t} />}</div>
+          <div style={{ flex: 1, padding: 12 }}>{cur && <OpEditor op={cur} onChange={(p) => update(sel, p)} t={t} preparation={!allowed.includes('extract')} />}</div>
         </div>
       )}
     </div>
   )
 }
 
-function OpEditor({ op, onChange, t }: { op: Op; onChange: (p: Partial<Op>) => void; t: (k: string, f?: string) => string }) {
+function OpEditor({ op, onChange, t, preparation }: { op: Op; onChange: (p: Partial<Op>) => void; t: (k: string, f?: string) => string; preparation: boolean }) {
+  if (op.kind === 'plugin') return <Space direction="vertical" style={{ width: '100%' }}><Typography.Text>选择环境后，按列表顺序执行引用的前置插件。配置和数据源凭据保存在插件中。</Typography.Text><Input aria-label="前置插件配置 ID" placeholder="从环境的前置配置复制配置 ID" value={op.profileId} onChange={e => onChange({ profileId: e.target.value })} /></Space>
   if (op.kind === 'wait') {
     return (
       <Space>
@@ -165,8 +171,8 @@ function OpEditor({ op, onChange, t }: { op: Op; onChange: (p: Partial<Op>) => v
   if (op.kind === 'script') {
     return (
       <Space direction="vertical" style={{ width: '100%' }} size={8}>
-        <Typography.Text type="warning" style={{ fontSize: 12 }}>{t('proc.scriptNote', '脚本会随用例存储,但执行引擎尚未接入(暂不执行)')}</Typography.Text>
-        <Select value={op.lang} onChange={(v) => onChange({ lang: v })} style={{ width: 200 }} options={[{ value: 'JS', label: 'JavaScript' }, { value: 'BEANSHELL', label: 'BeanShell' }]} />
+        <Typography.Text type="warning" style={{ fontSize: 12 }}>{preparation ? 'JavaScript 前置处理支持服务端 HTTP 调试。使用 vars.name 读写字符串变量；批量用例和场景/计划运行暂不支持。' : '后置脚本暂不支持，执行时会明确报错。'}</Typography.Text>
+        <Select value={op.lang} onChange={(v) => onChange({ lang: v })} style={{ width: 200 }} options={[{ value: 'JS', label: 'JavaScript' }, { value: 'BEANSHELL', label: 'BeanShell（暂不支持）', disabled: true }]} />
         <Input.TextArea rows={8} value={op.code} onChange={(e) => onChange({ code: e.target.value })} placeholder="// script" className="ms-mono" />
       </Space>
     )
@@ -174,7 +180,7 @@ function OpEditor({ op, onChange, t }: { op: Op; onChange: (p: Partial<Op>) => v
   // sql
   return (
     <Space direction="vertical" style={{ width: '100%' }} size={8}>
-      <Typography.Text type="warning" style={{ fontSize: 12 }}>{t('proc.sqlNote', 'SQL 会随用例存储,但数据源执行尚未接入(暂不执行)')}</Typography.Text>
+      <Typography.Text type="warning" style={{ fontSize: 12 }}>{preparation ? 'SQL 前置处理需要当前环境已应用的数据库插件配置 ID。查询以只读模式执行，名称非空时将结果报告保存为同名运行变量。' : '后置 SQL 暂不支持，执行时会明确报错。'}</Typography.Text>
       <Input placeholder={t('proc.sqlName', 'SQL 操作名称')} value={op.name} onChange={(e) => onChange({ name: e.target.value })} />
       <Input placeholder={t('proc.datasource', '数据源')} value={op.datasource} onChange={(e) => onChange({ datasource: e.target.value })} />
       <Input.TextArea rows={6} value={op.sql} onChange={(e) => onChange({ sql: e.target.value })} placeholder="SELECT ..." className="ms-mono" />

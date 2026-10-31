@@ -45,6 +45,7 @@ pub enum Capability {
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum FieldType {
     String { max_length: usize },
+    Multiline { max_length: usize },
     Integer { min: i64, max: i64 },
     Boolean,
     Choice { options: Vec<String> },
@@ -111,7 +112,9 @@ impl ConfigSchema {
         }
         for field in &self.fields {
             let valid = match &field.kind {
-                FieldType::String { max_length } => *max_length > 0,
+                FieldType::String { max_length } | FieldType::Multiline { max_length } => {
+                    *max_length > 0
+                }
                 FieldType::Integer { min, max } => min <= max,
                 FieldType::Choice { options } => {
                     !options.is_empty()
@@ -157,9 +160,11 @@ impl ConfigSchema {
                 (_, _, Some(_)) | (FieldType::Secret | FieldType::SecretMultiline, Some(_), _) => {
                     false
                 }
-                (FieldType::String { max_length }, Some(v), _) => {
-                    v.as_str().is_some_and(|s| s.len() <= *max_length)
-                }
+                (
+                    FieldType::String { max_length } | FieldType::Multiline { max_length },
+                    Some(v),
+                    _,
+                ) => v.as_str().is_some_and(|s| s.len() <= *max_length),
                 (FieldType::Integer { min, max }, Some(v), _) => {
                     v.as_i64().is_some_and(|n| (*min..=*max).contains(&n))
                 }
