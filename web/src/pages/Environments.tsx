@@ -1,3 +1,4 @@
+import { EnvironmentPluginsProvider, EnvironmentPluginPanel } from '../plugins/environment/Panel'
 import { useEffect, useState } from 'react'
 import { Button, Empty, Input, Select, Space, Switch, Table, Tabs, Typography } from 'antd'
 import { PlusOutlined, DeleteOutlined, SaveOutlined, ReloadOutlined } from '@ant-design/icons'
@@ -51,15 +52,8 @@ function VarTable({ rows, onChange, t }: { rows: VarRow[]; onChange: (r: VarRow[
   )
 }
 
-// Placeholder: the backend persists only name/baseUrl/global headers/variables/enabled; the
-// remaining protocol-level config tabs are stubs (tab row kept to match ref #19).
-function Placeholder({ label }: { label: string }) {
-  const { t } = useI18n()
-  return <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={`${label} · ${t('env.notWired', '暂未接入(仅 HTTP/变量已生效)')}`} style={{ margin: '32px 0' }} />
-}
-
 // Environment management: env list on the left, editor on the right. Backend EnvironmentBody
-// supports name/baseUrl/headers/variables/enabled; the other tabs are placeholders.
+// supports common settings; provider-specific settings use the plugin runtime.
 export function EnvironmentsPage() {
   const { projectId } = useApp()
   const { t } = useI18n()
@@ -72,6 +66,7 @@ export function EnvironmentsPage() {
   const [vars, setVars] = useState<VarRow[]>([])
   const [enabled, setEnabled] = useState(true)
   const [saving, setSaving] = useState(false)
+  const [pluginRevision, setPluginRevision] = useState(0)
 
   const reset = () => {
     setSel(null)
@@ -123,6 +118,7 @@ export function EnvironmentsPage() {
         const e = await api.createEnvironment(body)
         setSel(e.id)
       }
+      setPluginRevision(n => n + 1)
       message.success(t('env.saved', '已保存'))
       load()
     } catch (e) {
@@ -143,7 +139,7 @@ export function EnvironmentsPage() {
       </div>
     )
 
-  // Protocol-level config tabs (ref #19); only variables/HTTP/display settings are wired.
+  // Provider forms are discovered from installed environment capabilities.
   const tabs = [
     { key: 'vars', label: t('env.variables', '环境变量'), children: <VarTable rows={vars} onChange={setVars} t={t} /> },
     {
@@ -162,31 +158,32 @@ export function EnvironmentsPage() {
         </Space>
       ),
     },
-    { key: 'db', label: t('env.db', '数据库'), children: <Placeholder label={t('env.db', '数据库')} /> },
-    { key: 'host', label: 'HOST', children: <Placeholder label="HOST" /> },
-    { key: 'pre', label: t('apidef.preProcessors', '前置'), children: <Placeholder label={t('apidef.preProcessors', '前置')} /> },
-    { key: 'post', label: t('apidef.postProcessors', '后置'), children: <Placeholder label={t('apidef.postProcessors', '后置')} /> },
-    { key: 'assert', label: t('apidef.assertions', '断言'), children: <Placeholder label={t('apidef.assertions', '断言')} /> },
-    { key: 'ssh', label: t('env.ssh', 'SSH配置'), children: <Placeholder label={t('env.ssh', 'SSH配置')} /> },
-    { key: 'amqp', label: t('env.amqp', 'AMQP配置'), children: <Placeholder label={t('env.amqp', 'AMQP配置')} /> },
-    { key: 'redis', label: t('env.redis', 'Redis 配置'), children: <Placeholder label={t('env.redis', 'Redis 配置')} /> },
-    { key: 'tcp', label: t('env.tcp', 'TCP配置'), children: <Placeholder label={t('env.tcp', 'TCP配置')} /> },
-    { key: 'mongo', label: t('env.mongo', 'MongoDB 配置'), children: <Placeholder label={t('env.mongo', 'MongoDB 配置')} /> },
-    { key: 'grpc', label: t('env.grpc', 'GRPC配置'), children: <Placeholder label={t('env.grpc', 'GRPC配置')} /> },
+    { key: 'db', label: t('env.db', '数据库'), children: <EnvironmentPluginPanel section="database" /> },
+    { key: 'host', label: 'HOST', children: <EnvironmentPluginPanel section="host" /> },
+    { key: 'pre', label: t('apidef.preProcessors', '前置'), children: <EnvironmentPluginPanel section="pre" /> },
+    { key: 'post', label: t('apidef.postProcessors', '后置'), children: <EnvironmentPluginPanel section="post" /> },
+    { key: 'assert', label: t('apidef.assertions', '断言'), children: <EnvironmentPluginPanel section="assert" /> },
+    { key: 'ssh', label: t('env.ssh', 'SSH配置'), children: <EnvironmentPluginPanel section="ssh" /> },
+    { key: 'amqp', label: t('env.amqp', 'AMQP配置'), children: <EnvironmentPluginPanel section="amqp" /> },
+    { key: 'redis', label: t('env.redis', 'Redis 配置'), children: <EnvironmentPluginPanel section="redis" /> },
+    { key: 'tcp', label: t('env.tcp', 'TCP配置'), children: <EnvironmentPluginPanel section="tcp" /> },
+    { key: 'mongo', label: t('env.mongo', 'MongoDB 配置'), children: <EnvironmentPluginPanel section="mongodb" /> },
+    { key: 'grpc', label: t('env.grpc', 'GRPC配置'), children: <EnvironmentPluginPanel section="grpc" /> },
     {
       key: 'display',
       label: t('env.display', '显示设置'),
       children: (
-        <Space>
-          <span style={{ fontWeight: 600 }}>{t('env.enabled', '启用')}</span>
-          <Switch checked={enabled} onChange={setEnabled} />
+        <Space direction="vertical" style={{ width: '100%' }}>
+          <Space><span style={{ fontWeight: 600 }}>{t('env.enabled', '启用')}</span>
+          <Switch checked={enabled} onChange={setEnabled} /></Space>
+          <EnvironmentPluginPanel section="display" />
         </Space>
       ),
     },
   ]
 
   return (
-    <div style={{ display: 'flex', height: '100%' }}>
+    <EnvironmentPluginsProvider environmentId={sel} revision={pluginRevision}><div style={{ display: 'flex', height: '100%' }}>
       {/* Left: env list + search */}
       <div style={{ width: 248, background: 'var(--panel)', borderRight: '1px solid var(--border-soft)', display: 'flex', flexDirection: 'column' }}>
         <div style={{ padding: '10px 10px 6px' }}>
@@ -249,6 +246,6 @@ export function EnvironmentsPage() {
           <Button type="primary" icon={<SaveOutlined />} loading={saving} onClick={save}>{t('a.save', '保存')}</Button>
         </div>
       </div>
-    </div>
+    </div></EnvironmentPluginsProvider>
   )
 }

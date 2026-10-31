@@ -1,0 +1,6 @@
+{
+  "id": "environment",
+  "name": "环境配置",
+  "description": "通过插件管理连接配置、凭据和环境执行能力。",
+  "entry": "/environment"
+}

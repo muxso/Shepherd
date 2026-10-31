@@ -90,6 +90,12 @@ jobs:
       # tsc -b(严格类型)+ vite build,任一失败即挡板。
       - name: build
         run: npm run build
+      - name: install browser for plugin UI checks
+        run: npx playwright install --with-deps chromium
+      - name: environment plugin UI contracts
+        run: npx playwright test environment-plugins.spec.ts plugins.spec.ts
+        env:
+          E2E_START_VITE: "1"
 
   # —— 单元 + 自包含集成(不需外部服务;含架构守卫)——
   test:
@@ -149,6 +155,17 @@ jobs:
       # LLM agent(mock LLM)、自纠正、并行 DAG、MCP、api-definition→run…
       - name: server scenarios
         run: cargo test -p server --test scenarios --locked -- --ignored --test-threads=1
+      - name: environment plugin storage and credentials (isolated databases)
+        env:
+          PGPASSWORD: mspass
+          ENVIRONMENT_PLUGIN_TEST_HOST_URL: postgres://msuser:mspass@localhost:5432/environment_plugin_host_test
+          ENVIRONMENT_PLUGIN_TEST_DATABASE_URL: postgres://msuser:mspass@localhost:5432/environment_plugin_data_test
+        run: |
+          trap 'dropdb -h localhost -U msuser --if-exists --force environment_plugin_host_test; dropdb -h localhost -U msuser --if-exists --force environment_plugin_data_test' EXIT
+          createdb -h localhost -U msuser environment_plugin_host_test
+          createdb -h localhost -U msuser environment_plugin_data_test
+          cargo test -p environment-plugins --all-features --test storage --locked -- --ignored --test-threads=1
+          cargo test -p server --bin server environment_extension::tests::isolated_environment_plugin_api --locked -- --ignored --test-threads=1
       - name: runner protocol routing (pg)
         run: cargo test -p runner --features pg --test pg_protocol --locked -- --ignored --test-threads=1
       - name: test-plan pg aggregate

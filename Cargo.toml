@@ -28,6 +28,7 @@ members = [
     "crates/api-definition",
     "crates/api-scenario",
     "crates/environment",
+    "crates/plugin-runtime",
     "crates/perf",
     "crates/case-management",
     "crates/runner-agent",
@@ -39,6 +40,7 @@ members = [
     "crates/notice",
     "crates/rag",
     "plugins/yunxiao/backend",
+    "plugins/environment/backend",
 ]
 
 # 统一版本/lint 策略。阶段 0 刻意零外部依赖,保证离线可编译、测试秒级反馈。

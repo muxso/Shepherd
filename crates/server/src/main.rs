@@ -10,6 +10,11 @@ mod config;
 mod debug_send;
 mod decomposition_run;
 mod design_bridge;
+#[cfg(feature = "environment-plugins")]
+mod environment_extension;
+#[cfg(not(feature = "environment-plugins"))]
+#[path = "environment_extension_disabled.rs"]
+mod environment_extension;
 mod import_scheduler;
 mod jev;
 mod judge;
@@ -733,7 +738,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     report_archive_job::spawn(pool.clone());
 
-    let plugin_routes = plugins::router(&pool, sessions.clone()).await?;
+    let environment_runtime = environment_extension::Runtime::load(&pool).await?;
+    let plugin_routes = plugins::router(&pool, sessions.clone())
+        .await?
+        .merge(environment_extension::router(pool.clone(), sessions.clone(), environment_runtime));
     let case_summary_routes = case_exec_summary::router(pool.clone(), sessions.clone());
 
     let project_file_routes = project_file::router(pool.clone(), sessions.clone());

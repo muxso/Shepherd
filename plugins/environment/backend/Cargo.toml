@@ -1,0 +1,31 @@
+[package]
+name = "environment-plugins"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+plugin-runtime = { path = "../../../crates/plugin-runtime" }
+async-trait.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+sqlx = { workspace = true, optional = true, features = ["runtime-tokio", "postgres", "json", "migrate", "macros"] }
+uuid = { workspace = true, optional = true }
+ring = { version = "0.17", optional = true }
+probe = { workspace = true, optional = true, features = ["sql", "mysql"] }
+url = { version = "2", optional = true }
+
+[features]
+default = []
+pg = ["dep:sqlx", "dep:uuid"]
+vault = ["pg", "dep:ring"]
+protocols = ["dep:probe", "dep:url"]
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+
+[lints]
+workspace = true
