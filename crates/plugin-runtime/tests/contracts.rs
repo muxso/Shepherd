@@ -68,7 +68,19 @@ impl SecretResolver for NoSecrets {
         _scope: &ExecutionScope,
         _reference: &SecretRef,
     ) -> Result<SecretValue, PluginError> {
-        Err(PluginError::PermissionDenied)
+        Ok(SecretValue::new("fixture-credential".into()))
+    }
+}
+struct Allow;
+#[async_trait]
+impl ExecutionAuthorizer for Allow {
+    async fn authorize(
+        &self,
+        _scope: &ExecutionScope,
+        _plugin: &str,
+        _operation: &str,
+    ) -> Result<(), PluginError> {
+        Ok(())
     }
 }
 fn context(token: &CancellationToken) -> ExecutionContext {
@@ -81,6 +93,7 @@ fn context(token: &CancellationToken) -> ExecutionContext {
         limits: ExecutionLimits::default(),
         cancellation: Arc::new(token.clone()),
         secrets: Arc::new(NoSecrets),
+        authorization: Arc::new(Allow),
     }
 }
 struct Guard(Arc<AtomicBool>);

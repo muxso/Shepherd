@@ -19,7 +19,7 @@ impl DatabaseIdentity {
 
 #[derive(Clone)]
 pub struct PgProfileStore {
-    pool: PgPool,
+    pub(crate) pool: PgPool,
 }
 impl PgProfileStore {
     /// Compare actual database identity before running any DDL. The host supplies

@@ -2,6 +2,7 @@
 pub mod adapters;
 pub mod domain;
 pub mod ports;
+mod redaction;
 
 pub use adapters::{CancellationToken, PluginRegistry};
 pub use domain::*;

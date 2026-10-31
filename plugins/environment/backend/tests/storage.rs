@@ -131,6 +131,86 @@ async fn isolated_profiles_persist_with_cas_and_cross_project_binding_protection
             .await
             .expect("host untouched");
     assert_eq!(host_tables, 0, "the host database must remain untouched");
+    #[cfg(feature = "vault")]
+    check_vault(&store, &pool).await;
+}
+
+#[cfg(feature = "vault")]
+async fn check_vault(store: &PgProfileStore, pool: &sqlx::PgPool) {
+    use async_trait::async_trait;
+    use environment_plugins::vault::{CredentialVault, Keyring};
+    use plugin_runtime::{
+        ExecutionAuthorizer, ExecutionScope, PluginError, SecretResolver, SecretValue,
+    };
+    use std::sync::Arc;
+    struct Policy;
+    #[async_trait]
+    impl ExecutionAuthorizer for Policy {
+        async fn authorize(
+            &self,
+            scope: &ExecutionScope,
+            _plugin: &str,
+            _operation: &str,
+        ) -> Result<(), PluginError> {
+            if scope.project_id == "project-a" && scope.actor_id == "owner" {
+                Ok(())
+            } else {
+                Err(PluginError::PermissionDenied)
+            }
+        }
+    }
+    let keys = Arc::new(Keyring::new("v1".into(), [("v1".into(), [17; 32])].into()).expect("keys"));
+    let vault = CredentialVault::new(store.clone(), keys, Arc::new(Policy));
+    let scope = ExecutionScope {
+        project_id: "project-a".into(),
+        environment_id: "environment-a".into(),
+        actor_id: "owner".into(),
+    };
+    let plaintext = "PRIVATE-CREDENTIAL-NOT-IN-TABLES";
+    let reference = vault
+        .create(&scope, "password", true, SecretValue::new(plaintext.into()))
+        .await
+        .expect("create encrypted credential");
+    assert_eq!(vault.resolve(&scope, &reference).await.expect("resolve").expose(), plaintext);
+    let ciphertext: Vec<u8> = sqlx::query_scalar("SELECT ciphertext FROM ep_secret WHERE id=$1")
+        .bind(&reference.0)
+        .fetch_one(pool)
+        .await
+        .expect("ciphertext");
+    assert!(!ciphertext.windows(plaintext.len()).any(|w| w == plaintext.as_bytes()));
+    let metadata = vault.list(&scope).await.expect("list metadata");
+    assert_eq!(metadata.len(), 1);
+    assert!(!serde_json::to_string(&metadata).expect("metadata json").contains(plaintext));
+    for (project, environment, actor) in [
+        ("foreign", "environment-a", "owner"),
+        ("project-a", "foreign", "owner"),
+        ("project-a", "environment-a", "foreign"),
+    ] {
+        let other = ExecutionScope {
+            project_id: project.into(),
+            environment_id: environment.into(),
+            actor_id: actor.into(),
+        };
+        assert!(matches!(
+            vault.resolve(&other, &reference).await,
+            Err(PluginError::PermissionDenied)
+        ));
+        assert!(matches!(
+            vault.delete(&other, &reference).await,
+            Err(PluginError::PermissionDenied)
+        ));
+    }
+    let shared = vault
+        .create(&scope, "shared", false, SecretValue::new("project-wide-secret".into()))
+        .await
+        .expect("shared secret");
+    let other_env = ExecutionScope { environment_id: "environment-b".into(), ..scope.clone() };
+    assert_eq!(
+        vault.resolve(&other_env, &shared).await.expect("project-wide resolution").expose(),
+        "project-wide-secret"
+    );
+    vault.delete(&scope, &reference).await.expect("delete owned secret");
+    assert!(matches!(vault.resolve(&scope, &reference).await, Err(PluginError::PermissionDenied)));
 }
 
 #[test]

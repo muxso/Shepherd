@@ -14,10 +14,12 @@ serde_json.workspace = true
 thiserror.workspace = true
 sqlx = { workspace = true, optional = true, features = ["runtime-tokio", "postgres", "json", "migrate", "macros"] }
 uuid = { workspace = true, optional = true }
+ring = { version = "0.17", optional = true }
 
 [features]
 default = []
 pg = ["dep:sqlx", "dep:uuid"]
+vault = ["pg", "dep:ring"]
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

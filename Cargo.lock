@@ -1803,6 +1803,7 @@ version = "0.0.4"
 dependencies = [
  "async-trait",
  "plugin-runtime",
+ "ring",
  "serde",
  "serde_json",
  "sqlx",
@@ -3721,11 +3722,14 @@ checksum = "b4596b6d070b27117e987119b4dac604f3c58cfb0b191112e24771b2faeac1a6"
 name = "plugin-runtime"
 version = "0.0.4"
 dependencies = [
+ "aho-corasick",
  "async-trait",
+ "base64 0.22.1",
  "serde",
  "serde_json",
  "thiserror 2.0.18",
  "tokio",
+ "url",
 ]
 
 [[package]]

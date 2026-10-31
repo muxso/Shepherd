@@ -3,3 +3,5 @@ pub mod domain;
 #[cfg(feature = "pg")]
 pub mod pg;
 pub mod ports;
+#[cfg(feature = "vault")]
+pub mod vault;

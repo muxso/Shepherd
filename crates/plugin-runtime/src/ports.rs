@@ -28,6 +28,17 @@ pub trait SecretResolver: Send + Sync {
 }
 
 #[async_trait]
+pub trait ExecutionAuthorizer: Send + Sync {
+    /// Resolve permissions from host-owned identity, never from caller-supplied claims.
+    async fn authorize(
+        &self,
+        scope: &ExecutionScope,
+        plugin: &str,
+        operation: &str,
+    ) -> Result<(), PluginError>;
+}
+
+#[async_trait]
 pub trait Cancellation: Send + Sync {
     fn is_cancelled(&self) -> bool;
     async fn cancelled(&self);
@@ -38,6 +49,7 @@ pub struct ExecutionContext {
     pub scope: ExecutionScope,
     pub limits: ExecutionLimits,
     pub secrets: Arc<dyn SecretResolver>,
+    pub authorization: Arc<dyn ExecutionAuthorizer>,
     pub cancellation: Arc<dyn Cancellation>,
 }
 
