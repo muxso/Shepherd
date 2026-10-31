@@ -252,7 +252,7 @@ const ApiSpecPanel = forwardRef<ApiSpecPanelHandle, {
     const text = await res.text()
     const headers: [string, string][] = []
     res.headers.forEach((v, k) => headers.push([k, v]))
-    return { status: res.status, latencyMs: Math.round(performance.now() - t0), headers, body: text }
+    return { status: res.status, latencyMs: Math.round(performance.now() - t0), headers, body: text, request: req }
   }
 
   const execute = async (m: ExecMode = execMode) => {
@@ -576,6 +576,7 @@ export function DebugResultPanel({
     .filter((p) => String(p.type) === 'Extract')
     .flatMap((p) => ((p.args as { extractors?: { variable?: string; kind?: string; expression?: string }[] })?.extractors || []))
 
+  const sentRequest = resp?.request ?? req
   const items = [
     {
       key: 'body',
@@ -609,9 +610,9 @@ export function DebugResultPanel({
     },
     {
       key: 'actual',
-      label: t('apidef.actualReq', '实际请求'),
-      children: req ? (
-        <pre style={codeBox}>{`${req.method} ${req.url}\n\n${req.headers.map((h) => `${h.key}: ${h.value}`).join('\n')}${req.body ? `\n\n${req.body}` : ''}`}</pre>
+      label: resp?.request ? t('apidef.actualReq', '实际请求') : '请求模板',
+      children: sentRequest ? (
+        <pre style={codeBox}>{`${sentRequest.method} ${sentRequest.url}\n\n${sentRequest.headers.map((h) => `${h.key}: ${h.value}`).join('\n')}${sentRequest.body ? `\n\n${sentRequest.body}` : ''}`}</pre>
       ) : (
         <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('apidef.notRunYet', '尚未执行')} />
       ),
@@ -622,7 +623,7 @@ export function DebugResultPanel({
       children: (
         <pre style={codeBox}>
           {[
-            req ? `→ ${req.method} ${req.url}` : t('apidef.notRunYet', '尚未执行'),
+            sentRequest ? `→ ${sentRequest.method} ${sentRequest.url}` : t('apidef.notRunYet', '尚未执行'),
             err ? `✗ ${err}` : resp ? `← ${resp.status} · ${resp.latencyMs} ms` : running ? '… ' + t('a.loading', '加载中…') : '',
           ].filter(Boolean).join('\n')}
         </pre>
@@ -633,7 +634,7 @@ export function DebugResultPanel({
       ? [{
           key: 'curl',
           label: 'cURL',
-          children: req ? <pre style={codeBox}>{reqToCurl(req)}</pre> : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('apidef.notRunYet', '尚未执行')} />,
+          children: sentRequest ? <pre style={codeBox}>{reqToCurl(sentRequest)}</pre> : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('apidef.notRunYet', '尚未执行')} />,
         }]
       : []),
     ...(resp?.preparation?.length ? [{ key: 'preparation', label: `前置报告 (${resp.preparation.length})`, children: <Table size="small" rowKey={(_, index) => String(index)} pagination={false} dataSource={resp.preparation} columns={[{ title: '来源', dataIndex: 'source' }, { title: '操作', dataIndex: 'kind' }, { title: '耗时 (ms)', dataIndex: 'elapsedMs' }, { title: '变量名称', render: (_, step) => step.variableNames.join(', ') }]} /> }] : []),

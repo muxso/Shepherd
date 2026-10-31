@@ -784,6 +784,11 @@ mod tests {
         let result =
             call(app, "POST", "/api/debug/send", Some(owner), Some(request.clone()), 200).await;
         assert_eq!(result["body"], json!({"prepared":true}).to_string());
+        assert_eq!(
+            result["request"]["url"],
+            format!("http://{address}/prepared/case?q=environment")
+        );
+        assert_eq!(result["request"]["body"], "case");
         assert_eq!(result["assertions"][0]["passed"], true);
         assert_eq!(result["preparation"].as_array().expect("steps").len(), 7);
         assert_eq!(count.load(Ordering::SeqCst), 1);

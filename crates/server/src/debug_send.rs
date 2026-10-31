@@ -47,7 +47,7 @@ async fn protocols(_user: AuthUser) -> Response {
     (StatusCode::OK, Json(serde_json::json!({ "protocols": list }))).into_response()
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct HeaderKv {
     key: String,
@@ -112,7 +112,15 @@ impl From<AssertionReport> for AssertionResult {
     }
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Serialize)]
+struct RequestSnapshot {
+    method: HttpMethod,
+    url: String,
+    headers: Vec<HeaderKv>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    body: Option<String>,
+}
+#[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct SendResponse {
     status: u16,
@@ -127,6 +135,8 @@ struct SendResponse {
     extractions: Vec<(String, String)>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     preparation: Vec<api_runner::PreparationStepReport>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    request: Option<RequestSnapshot>,
 }
 
 async fn send(
@@ -183,6 +193,7 @@ async fn send(
                     assertions: Vec::new(),
                     extractions: Vec::new(),
                     preparation: Vec::new(),
+                    request: None,
                 }),
             )
                 .into_response()
@@ -277,6 +288,16 @@ async fn send(
                     assertions,
                     extractions,
                     preparation: prepared.steps,
+                    request: Some(RequestSnapshot {
+                        method: spec.method,
+                        url: spec.url,
+                        headers: spec
+                            .headers
+                            .into_iter()
+                            .map(|(key, value)| HeaderKv { key, value })
+                            .collect(),
+                        body: spec.body,
+                    }),
                 }),
             )
                 .into_response()

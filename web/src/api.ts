@@ -1377,6 +1377,7 @@ export interface AssertionResult {
   reason: string
 }
 export interface DebugResponse {
+  request?: { method: string; url: string; headers: { key: string; value: string }[]; body?: string }
   status: number
   latencyMs: number
   /** Per-phase HTTP timings (absent for non-HTTP protocols). */

@@ -348,7 +348,7 @@ test('server debugging sends raw templates and plugin references, then displays 
     if (path === '/api/environment') return route.fulfill({ json: [{ id: 'environment', projectId: 'project', name: 'Test environment', baseUrl: 'http://fixture.invalid', headers: [], variables: { value: 'seed', order: 'seed' }, enabled: true }] })
     if (path === '/api/debug/send') {
       sent.push(route.request().postDataJSON() as Record<string, unknown>)
-      return route.fulfill({ json: { status: 200, headers: [], body: 'prepared-response', latencyMs: 4, preparation: [{ source: 'environment:setup-profile', kind: 'javascript', elapsedMs: 1, variableNames: ['value', 'order'] }] } })
+      return route.fulfill({ json: { status: 200, headers: [], body: 'prepared-response', latencyMs: 4, request: { method: 'POST', url: 'http://fixture.invalid/prepared/prepared?q=prepared', headers: [{ key: 'x-order', value: 'environment:case' }], body: 'prepared' }, preparation: [{ source: 'environment:setup-profile', kind: 'javascript', elapsedMs: 1, variableNames: ['value', 'order'] }] } })
     }
     return route.fallback()
   })
@@ -361,4 +361,8 @@ test('server debugging sends raw templates and plugin references, then displays 
   expect(sent[0]).toMatchObject({ environmentId: 'environment', url: '/prepared/{{value}}', baseUrl: 'http://fixture.invalid', body: '{{value}}', variables: { value: 'seed', order: 'seed' }, query: [{ key: 'q', value: '{{value}}' }], preProcessors })
   await page.getByRole('tab', { name: '前置报告 (1)', exact: true }).click()
   await expect(page.getByText('environment:setup-profile', { exact: true })).toBeVisible()
+  await page.getByRole('tab', { name: '实际请求', exact: true }).click()
+  await expect(page.getByText('POST http://fixture.invalid/prepared/prepared?q=prepared', { exact: false })).toBeVisible()
+  await page.getByRole('tab', { name: 'cURL', exact: true }).click()
+  await expect(page.locator('pre').filter({ hasText: 'http://fixture.invalid/prepared/prepared?q=prepared' }).last()).toContainText('environment:case')
 })
