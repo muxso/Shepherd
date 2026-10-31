@@ -1,3 +1,4 @@
+import { SshCommand } from './SshCommand'
 import { RedisCommand } from './RedisCommand'
 import { DatabaseQuery } from './DatabaseQuery'
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from 'react'
@@ -40,6 +41,7 @@ export function EnvironmentPluginPanel({ section }: { section: string }) {
   if (!state) throw new Error('Environment plugin provider is missing')
   const { environmentId, descriptors, profiles, bindings, credentials, reload } = state
   const available = descriptors.filter(d => d.section === section)
+  const [sshCommand, setSshCommand] = useState<Profile | null>(null)
   const [redisCommand, setRedisCommand] = useState<Profile | null>(null)
   const [querying, setQuerying] = useState<Profile | null>(null)
   const [editing, setEditing] = useState<Profile | 'new' | null>(null)
@@ -56,7 +58,7 @@ export function EnvironmentPluginPanel({ section }: { section: string }) {
   const descriptor = available.find(d => d.id === pluginId)
   const slot = slotFor(section)
   const locked = busy || !state.permissions.manage
-  useEffect(() => { setEditing(null); setQuerying(null); setRedisCommand(null); setResult(null); setError('') }, [environmentId])
+  useEffect(() => { setEditing(null); setQuerying(null); setRedisCommand(null); setSshCommand(null); setSecretDrafts({}); setResult(null); setError('') }, [environmentId])
   function initialize(descriptor: Descriptor, profile?: Profile) {
     setPluginId(descriptor.id); setName(profile?.name || ''); setProfileEnabled(profile?.enabled ?? true)
     setConfig(profile ? structuredClone(profile.config) : blank(descriptor)); setSecretDrafts({}); setError(''); setResult(null)
@@ -80,7 +82,7 @@ export function EnvironmentPluginPanel({ section }: { section: string }) {
       if (!name.trim()) throw new Error('请输入配置名称')
       const next = structuredClone(config)
       for (const field of descriptor.configSchema.fields) {
-        if (field.kind.type === 'secret') {
+        if ((field.kind.type === 'secret' || field.kind.type === 'secret_multiline')) {
           const value = secretDrafts[field.name]
           if (value) {
             const created = await api.createCredential(environmentId, `${name.trim()} · ${field.label}`, value)
@@ -143,14 +145,16 @@ export function EnvironmentPluginPanel({ section }: { section: string }) {
         {available.find(d => d.id === p.pluginId)?.capabilities.includes('connection_test') && <Button size="small" disabled={busy || !p.enabled || !state.permissions.execute} onClick={() => void test(p)}>测试连接</Button>}
         {['postgres', 'mysql'].includes(p.pluginId) && <Button size="small" disabled={busy || !p.enabled || !state.permissions.execute || !bindings.some(b => b.profileId === p.id && b.slot === 'connection' && b.enabled)} onClick={() => setQuerying(p)}>数据库查询</Button>}
         {p.pluginId === 'redis' && <Button size="small" disabled={busy || !p.enabled || !state.permissions.execute || !bindings.some(b => b.profileId === p.id && b.slot === 'connection' && b.enabled)} onClick={() => setRedisCommand(p)}>Redis 命令</Button>}
+        {p.pluginId === 'ssh' && <Button size="small" disabled={busy || !p.enabled || !state.permissions.execute || !bindings.some(b => b.profileId === p.id && b.slot === 'connection' && b.enabled)} onClick={() => setSshCommand(p)}>SSH 命令</Button>}
         <Button size="small" disabled={locked} onClick={() => void toggleBinding(p)}>{bindings.some(b => b.profileId === p.id && b.slot === slot) ? '取消应用' : '应用'}</Button>
         <Popconfirm title="删除此配置？请先取消它在各环境中的应用。" onConfirm={() => remove(p)}><Button aria-label="删除" size="small" danger disabled={locked}>删除</Button></Popconfirm>
       </Space> },
     ]} />
+    {sshCommand && <SshCommand key={`${environmentId}/${sshCommand.id}`} environmentId={environmentId} profile={sshCommand} onClose={() => setSshCommand(null)} />}
     {redisCommand && <RedisCommand key={`${environmentId}/${redisCommand.id}`} environmentId={environmentId} profile={redisCommand} onClose={() => setRedisCommand(null)} />}
     {querying && <DatabaseQuery key={`${environmentId}/${querying.id}`} environmentId={environmentId} profile={querying} onClose={() => setQuerying(null)} />}
-    <Modal title={editing === 'new' ? '新增插件配置' : '编辑插件配置'} open={!!editing} width={700} destroyOnHidden onCancel={() => { if (!busy) setEditing(null) }} footer={<Space>
-      <Button aria-label="关闭" disabled={busy} onClick={() => setEditing(null)}>关闭</Button>
+    <Modal title={editing === 'new' ? '新增插件配置' : '编辑插件配置'} open={!!editing} width={700} destroyOnHidden onCancel={() => { if (!busy) { setSecretDrafts({}); setEditing(null) } }} footer={<Space>
+      <Button aria-label="关闭" disabled={busy} onClick={() => { setSecretDrafts({}); setEditing(null) }}>关闭</Button>
       <Button loading={busy} disabled={locked} onClick={() => void save(false)}>保存配置</Button>
       {descriptor?.capabilities.includes('connection_test') && <Button type="primary" loading={busy} disabled={!profileEnabled || !state.permissions.execute || !state.permissions.manage} onClick={() => void save(true)}>保存并测试</Button>}
     </Space>}>
@@ -160,9 +164,9 @@ export function EnvironmentPluginPanel({ section }: { section: string }) {
         <label style={{ width: '100%' }}>配置名称<Input aria-label="配置名称" value={name} disabled={locked} onChange={e => setName(e.target.value)} /></label>
         {descriptor?.configSchema.fields.map(field => <div key={field.name} style={{ width: '100%' }}>
           <Typography.Text>{field.label}{field.required ? ' *' : ''}</Typography.Text>
-          {field.kind.type === 'secret' ? <Space direction="vertical" style={{ width: '100%' }}>
+          {(field.kind.type === 'secret' || field.kind.type === 'secret_multiline') ? <Space direction="vertical" style={{ width: '100%' }}>
             <Select aria-label={`${field.label} credential`} value={config.secrets[field.name]} allowClear disabled={locked} style={{ width: '100%' }} placeholder="选择已保存的凭据" options={credentials.map(c => ({ value: c.id, label: c.label }))} onChange={value => setConfig(c => { const secrets = { ...c.secrets }; if (value) secrets[field.name] = value; else delete secrets[field.name]; return { ...c, secrets } })} />
-            <Input.Password aria-label={field.label} autoComplete="new-password" value={secretDrafts[field.name] || ''} disabled={locked} placeholder="或填写新凭据，保存后不回显" onChange={e => setSecretDrafts(d => ({ ...d, [field.name]: e.target.value }))} />
+            {field.kind.type === 'secret_multiline' ? <Input.TextArea aria-label={field.label} autoComplete="off" rows={6} value={secretDrafts[field.name] || ''} disabled={locked} placeholder="粘贴完整密钥，保存后不回显" onChange={e => setSecretDrafts(d => ({ ...d, [field.name]: e.target.value }))} /> : <Input.Password aria-label={field.label} autoComplete="new-password" value={secretDrafts[field.name] || ''} disabled={locked} placeholder="或填写新凭据，保存后不回显" onChange={e => setSecretDrafts(d => ({ ...d, [field.name]: e.target.value }))} />}
           </Space> : field.kind.type === 'integer' ? <InputNumber aria-label={field.label} disabled={locked} style={{ width: '100%' }} min={field.kind.min} max={field.kind.max} value={typeof config.values[field.name] === 'number' ? config.values[field.name] as number : null} placeholder="使用插件默认值" onChange={value => changeValue(field.name, value)} />
             : field.kind.type === 'choice' ? <Select aria-label={field.label} disabled={locked} style={{ width: '100%' }} allowClear placeholder="使用插件默认值" value={config.values[field.name] as string | undefined} options={field.kind.options.map(value => ({ value, label: value }))} onChange={value => changeValue(field.name, value)} />
               : field.kind.type === 'boolean' ? <Select aria-label={field.label} disabled={locked} style={{ width: '100%' }} allowClear placeholder="使用插件默认值" value={typeof config.values[field.name] === 'boolean' ? String(config.values[field.name]) : undefined} options={[{ value: 'true', label: '是' }, { value: 'false', label: '否' }]} onChange={value => changeValue(field.name, value === undefined ? undefined : value === 'true')} />

@@ -26,6 +26,18 @@ const redis: Descriptor = {
   ] },
 }
 
+const fixturePrivateKey = '-----BEGIN OPENSSH PRIVATE KEY-----\nfixture-key-data\n-----END OPENSSH PRIVATE KEY-----'
+const ssh: Descriptor = {
+  id: 'ssh', name: 'SSH', section: 'ssh', version: '1.0.0', apiVersion: 1,
+  capabilities: ['execute', 'connection_test'], operations: ['test', 'execute'],
+  configSchema: { version: 1, fields: [
+    { name: 'host', label: 'Host', required: true, kind: { type: 'string', max_length: 253 } },
+    { name: 'username', label: 'Username', required: true, kind: { type: 'string', max_length: 128 } },
+    { name: 'host_key_sha256', label: 'Host key SHA256', required: true, kind: { type: 'string', max_length: 128 } },
+    { name: 'private_key', label: 'Private key', required: false, kind: { type: 'secret_multiline' } },
+  ] },
+}
+
 async function fixture(page: Page, enabled = true, readonly = false) {
   const profiles: Profile[] = readonly ? [{ id: 'profile-1', projectId: 'project', pluginId: 'postgres', name: 'Existing database', enabled: true, revision: 1, config: { schemaVersion: 1, values: { host: 'localhost', database: 'fixture', user: 'reader' }, secrets: {} } }] : []
   const bindings: Binding[] = []
@@ -44,13 +56,13 @@ async function fixture(page: Page, enabled = true, readonly = false) {
     else if (path === '/project') body = { items: [{ id: 'project', name: 'Project', organizationId: 'organization' }], totalPages: 1 }
     else if (path === '/api/environment') body = [{ id: 'environment', projectId: 'project', name: 'Test environment', baseUrl: '', headers: [], variables: {}, enabled: true }]
     else if (path === '/api/plugins') body = { items: [] }
-    else if (path === '/api/environment-plugins/capabilities') body = { enabled, items: enabled ? [postgres, redis] : [] }
+    else if (path === '/api/environment-plugins/capabilities') body = { enabled, items: enabled ? [postgres, redis, ssh] : [] }
     else if (path === '/api/environment-plugins/environments/environment') {
       configurationReads++
       body = { profiles, bindings, credentials, permissions: { manage: !readonly, execute: !readonly } } satisfies Configuration
     } else if (path.endsWith('/credentials') && method === 'POST') {
       const input = route.request().postDataJSON() as { label: string; value: string }
-      expect(input.value).toBe('private-fixture-password')
+      expect(input.value).toBe(input.label.endsWith('Private key') ? fixturePrivateKey : 'private-fixture-password')
       const id = `credential-${credentials.length + 1}`
       credentials.push({ id, label: input.label, environmentId: 'environment' }); body = { reference: id }
     } else if (path.endsWith('/profiles') && method === 'POST') {
@@ -63,10 +75,12 @@ async function fixture(page: Page, enabled = true, readonly = false) {
       const input = route.request().postDataJSON() as Omit<Binding, 'profileId'>
       bindings.push({ ...input, profileId: id }); body = { bound: true }
     } else if (path.endsWith('/execute')) {
-      const input = route.request().postDataJSON() as { command?: string; extract: { variable: string }[] }
+      const input = route.request().postDataJSON() as { command?: string; extract?: { variable: string }[] }
       executed.push(input)
-      const failed = input.extract.some(e => e.variable === 'missing')
-      if (input.command) body = { status: failed ? 'failure' : 'success', data: { kind: 'array', value: ['hello world', null], elapsedMs: 4 }, variables: failed ? {} : { first: 'hello world', nil: 'null' }, assertions: failed ? [{ id: 'extract.missing', passed: false, message: 'required Redis result path is missing' }] : [] }
+      const failed = input.extract?.some(e => e.variable === 'missing') ?? false
+      const plugin = profiles.find(profile => profile.id === path.split('/').at(-2))?.pluginId
+      if (plugin === 'ssh') body = { status: 'failure', data: { operation: 'executed', hostKeySha256: `SHA256:${'A'.repeat(43)}`, stdout: { encoding: 'utf8', value: 'output\n' }, stderr: { encoding: 'utf8', value: 'failure\n' }, termination: { kind: 'exit', code: 7 }, elapsedMs: 8 }, variables: {}, assertions: [{ id: 'ssh.exit', passed: false, message: 'command exited with status 7' }] }
+      else if (input.command) body = { status: failed ? 'failure' : 'success', data: { kind: 'array', value: ['hello world', null], elapsedMs: 4 }, variables: failed ? {} : { first: 'hello world', nil: 'null' }, assertions: failed ? [{ id: 'extract.missing', passed: false, message: 'required Redis result path is missing' }] : [] }
       else body = { status: failed ? 'failure' : 'success', data: { columns: [{ name: 'id', sqlType: 'INT8' }, { name: 'note', sqlType: 'TEXT' }], rows: [['9007199254740993', null]], rowsAffected: 0, truncated: !failed, elapsedMs: 12 }, variables: failed ? {} : { id: '9007199254740993' }, assertions: failed ? [{ id: 'extract.missing', passed: false, message: 'required result cell is missing' }] : [] }
     } else if (path.endsWith('/test')) {
       tested++; body = { status: 'success', data: { output: 'rows_affected=1' }, variables: {}, assertions: [] }
@@ -195,4 +209,35 @@ test('Redis profile saves credential references and executes structured argument
   await dialog.getByLabel('Redis 提取规则', { exact: true }).fill('[{"variable":"missing","pointer":"/5"}]')
   await dialog.getByRole('button', { name: '执行命令', exact: true }).click()
   await expect(dialog.getByText('Redis 结果提取未通过', { exact: true })).toBeVisible()
+})
+
+test('SSH profiles keep multiline keys in credential references and report separate streams and nonzero exits', async ({ page }) => {
+  await page.setViewportSize({ width: 1920, height: 1080 })
+  const data = await fixture(page)
+  await open(page)
+  await page.getByRole('tab', { name: 'SSH配置', exact: true }).click()
+  await page.getByRole('button', { name: '新增连接配置', exact: true }).click()
+  let dialog = page.getByRole('dialog')
+  await dialog.getByLabel('配置名称', { exact: true }).fill('SSH fixture')
+  await dialog.getByLabel('Host', { exact: true }).fill('127.0.0.1')
+  await dialog.getByLabel('Username', { exact: true }).fill('fixture')
+  await dialog.getByLabel('Host key SHA256', { exact: true }).fill(`SHA256:${'A'.repeat(43)}`)
+  await dialog.getByLabel('Private key', { exact: true }).fill(fixturePrivateKey)
+  await dialog.getByRole('button', { name: '保存并测试', exact: true }).click()
+  await expect(dialog.getByText('连接测试通过', { exact: true })).toBeVisible()
+  expect(data.saved[0].config.secrets.private_key).toBe('credential-1')
+  expect(data.saved[0].config.values).not.toHaveProperty('private_key')
+  await expect(dialog.getByLabel('Private key', { exact: true })).toHaveValue('')
+  await dialog.getByRole('button', { name: '关闭', exact: true }).click()
+  await expect(dialog).not.toBeVisible()
+  await page.getByRole('button', { name: 'SSH 命令', exact: true }).click()
+  dialog = page.getByRole('dialog')
+  const command = 'printf "output"; printf "failure" >&2; exit 7'
+  await dialog.getByLabel('SSH 远端命令', { exact: true }).fill(command)
+  await dialog.getByRole('button', { name: '执行 SSH 命令', exact: true }).click()
+  await expect(dialog.getByText('SSH 命令未成功完成', { exact: true })).toBeVisible()
+  await expect(dialog.getByText('退出码 7', { exact: true })).toBeVisible()
+  await expect(dialog.locator('pre').first()).toContainText('output')
+  await expect(dialog.locator('pre').last()).toContainText('failure')
+  expect(data.executed[0]).toEqual({ command })
 })

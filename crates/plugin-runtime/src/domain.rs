@@ -51,6 +51,7 @@ pub enum FieldType {
     StringList { max_items: usize },
     Json,
     Secret,
+    SecretMultiline,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -149,11 +150,13 @@ impl ConfigSchema {
             let value = config.values.get(&field.name);
             let secret = config.secrets.get(&field.name);
             let valid = match (&field.kind, value, secret) {
-                (FieldType::Secret, None, Some(reference)) => {
+                (FieldType::Secret | FieldType::SecretMultiline, None, Some(reference)) => {
                     !reference.0.trim().is_empty() && reference.0.len() <= 256
                 }
                 (_, None, None) => !field.required,
-                (_, _, Some(_)) | (FieldType::Secret, Some(_), _) => false,
+                (_, _, Some(_)) | (FieldType::Secret | FieldType::SecretMultiline, Some(_), _) => {
+                    false
+                }
                 (FieldType::String { max_length }, Some(v), _) => {
                     v.as_str().is_some_and(|s| s.len() <= *max_length)
                 }

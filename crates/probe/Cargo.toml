@@ -26,7 +26,7 @@ redis = { workspace = true, features = ["tokio-comp"], optional = true }
 # WebSocket 协议:纯 Rust(tokio-tungstenite,默认 connect+handshake,无 TLS C 依赖;支持 ws://)。
 tokio-tungstenite = { version = "0.24", optional = true }
 futures-util = { version = "0.3", default-features = false, features = ["sink"], optional = true }
-tokio = { workspace = true, features = ["time"], optional = true }
+tokio = { workspace = true, features = ["time", "net"], optional = true }
 # SSH 协议:纯 Rust(russh,无 libssh2 C 依赖)。target=host:port,payload=命令,认证用 metadata。
 russh = { version = "0.62", optional = true }
 
@@ -39,9 +39,10 @@ sql = ["dep:sqlx", "sqlx/postgres", "database-results"]
 mysql = ["dep:sqlx", "sqlx/mysql", "database-results"]
 redis = ["dep:redis", "dep:tokio", "redis/tokio-rustls-comp", "redis/tls-rustls-webpki-roots"]
 websocket = ["dep:tokio-tungstenite", "dep:futures-util", "dep:tokio"]
-ssh = ["dep:russh"]
+ssh = ["dep:russh", "dep:tokio"]
 
 [dev-dependencies]
+tempfile = "3"
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "net"] }
 # websocket e2e:测试内起一个本地 echo 服务,验证插件 连接→发送→收回→断言。
 tokio-tungstenite = "0.24"

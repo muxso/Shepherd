@@ -1,96 +1,138 @@
+use super::ssh_command::{SshBudget, SshError};
+use crate::{
+    domain::{
+        ssh::{
+            SshAction, SshAuthentication, SshCommand, SshOutput, SshReport, SshTarget,
+            SshTermination,
+        },
+        ProbeRequest, RawProbe,
+    },
+    ports::ProtocolPlugin,
+};
 use async_trait::async_trait;
-use std::sync::Arc;
-use std::time::Instant;
-
-use russh::client::{self, Handler};
-use russh::keys::PublicKey;
-use russh::ChannelMsg;
-
-use crate::domain::{ProbeRequest, RawProbe};
-use crate::ports::ProtocolPlugin;
-
+use std::{
+    net::{IpAddr, SocketAddr},
+    time::Instant,
+};
 #[derive(Default)]
 pub struct SshPlugin;
-
 impl SshPlugin {
     pub fn new() -> Self {
         Self
     }
-}
-
-// Debug/probe use case: skip host key verification (accept any), matching the one-shot connection semantics.
-struct AcceptAll;
-
-impl Handler for AcceptAll {
-    type Error = russh::Error;
-    async fn check_server_key(&mut self, _key: &PublicKey) -> Result<bool, Self::Error> {
-        Ok(true)
+    /// Profiles and legacy probes share the same pinned, bounded transport.
+    pub async fn execute_command(
+        &self,
+        target: &SshTarget,
+        authentication: SshAuthentication<'_>,
+        action: SshAction<'_>,
+        budget: SshBudget,
+    ) -> Result<SshReport, SshError> {
+        super::ssh_command::execute(target, authentication, action, budget).await
     }
 }
-
-async fn run_ssh(
-    target: &str,
-    command: &str,
-    user: &str,
-    password: &str,
-) -> Result<(String, i64), String> {
-    let (host, port) = match target.rsplit_once(':') {
-        Some((h, p)) => (h.to_string(), p.parse::<u16>().map_err(|_| "invalid port".to_string())?),
-        None => (target.to_string(), 22u16),
-    };
-    let config = Arc::new(client::Config::default());
-    let mut handle = client::connect(config, (host.as_str(), port), AcceptAll)
-        .await
-        .map_err(|e| format!("connection failed: {e}"))?;
-    let authed = handle
-        .authenticate_password(user, password)
-        .await
-        .map_err(|e| format!("authentication error: {e}"))?;
-    if !authed.success() {
-        return Err("authentication failed (username/password)".to_string());
-    }
-    let mut channel =
-        handle.channel_open_session().await.map_err(|e| format!("failed to open channel: {e}"))?;
-    channel.exec(true, command).await.map_err(|e| format!("execution failed: {e}"))?;
-
-    let mut out: Vec<u8> = Vec::new();
-    let mut code: i64 = 0;
-    while let Some(msg) = channel.wait().await {
-        match msg {
-            ChannelMsg::Data { ref data } => out.extend_from_slice(data),
-            ChannelMsg::ExtendedData { ref data, .. } => out.extend_from_slice(data),
-            ChannelMsg::ExitStatus { exit_status } => code = exit_status as i64,
-            _ => {}
+fn target(request: &ProbeRequest) -> Result<SshTarget, SshError> {
+    let (host, port) = if let Ok(address) = request.target.parse::<SocketAddr>() {
+        (address.ip().to_string(), address.port())
+    } else if let Ok(address) =
+        request.target.trim_start_matches('[').trim_end_matches(']').parse::<IpAddr>()
+    {
+        (address.to_string(), 22)
+    } else if let Some((host, port)) = request.target.rsplit_once(':') {
+        if host.contains(':') {
+            return Err(SshError::InvalidTarget);
         }
-    }
-    Ok((String::from_utf8_lossy(&out).into_owned(), code))
+        (host.into(), port.parse().map_err(|_| SshError::InvalidTarget)?)
+    } else {
+        (request.target.clone(), 22)
+    };
+    Ok(SshTarget {
+        host,
+        port,
+        username: request.metadata.get("user").cloned().unwrap_or_default(),
+        host_key_sha256: request.metadata.get("host_key_sha256").cloned().unwrap_or_default(),
+    })
 }
-
+fn output(output: SshOutput) -> String {
+    match output {
+        SshOutput::Utf8(text) => text,
+        SshOutput::Hex(hex) => format!("hex:{hex}"),
+    }
+}
 #[async_trait]
 impl ProtocolPlugin for SshPlugin {
     fn protocol(&self) -> &'static str {
         "ssh"
     }
-
-    async fn run(&self, req: &ProbeRequest) -> RawProbe {
-        let command = req.payload.clone().unwrap_or_else(|| "echo ok".to_string());
-        let user = req.metadata.get("user").cloned().unwrap_or_default();
-        let password = req.metadata.get("password").cloned().unwrap_or_default();
-        let t = Instant::now();
-        match run_ssh(&req.target, &command, &user, &password).await {
-            Ok((output, code)) => RawProbe {
-                transport_ok: true,
-                status: Some(code),
-                latency_ms: t.elapsed().as_millis() as u64,
-                output: Some(output),
-                error: None,
-            },
-            Err(e) => RawProbe {
+    async fn run(&self, request: &ProbeRequest) -> RawProbe {
+        let started = Instant::now();
+        let result = async {
+            let target = target(request)?;
+            let timeout_ms = request
+                .metadata
+                .get("timeout_ms")
+                .map(|value| value.parse::<u64>().map_err(|_| SshError::InvalidBudget))
+                .transpose()?
+                .unwrap_or(30_000);
+            let password = request.metadata.get("password").map(String::as_str).unwrap_or("");
+            let command =
+                SshCommand { command: request.payload.clone().unwrap_or_else(|| "echo ok".into()) };
+            self.execute_command(
+                &target,
+                SshAuthentication::Password(password),
+                SshAction::Execute(&command),
+                SshBudget { timeout_ms, max_bytes: 1_048_576 },
+            )
+            .await
+        }
+        .await;
+        match result {
+            Ok(SshReport::Executed { stdout, stderr, termination, .. }) => {
+                let status = match termination {
+                    SshTermination::Exit { code } => Some(i64::from(code)),
+                    _ => None,
+                };
+                RawProbe {
+                    transport_ok: status.is_some(),
+                    status,
+                    latency_ms: started.elapsed().as_millis() as u64,
+                    output: Some(output(stdout) + &output(stderr)),
+                    error: if status.is_none() {
+                        Some("SSH command did not report an exit code".into())
+                    } else {
+                        None
+                    },
+                }
+            }
+            Ok(_) => RawProbe {
                 transport_ok: false,
-                latency_ms: t.elapsed().as_millis() as u64,
-                error: Some(e),
+                error: Some("unexpected SSH connection report".into()),
+                ..Default::default()
+            },
+            Err(error) => RawProbe {
+                transport_ok: false,
+                latency_ms: started.elapsed().as_millis() as u64,
+                error: Some(error.to_string()),
                 ..Default::default()
             },
         }
+    }
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[tokio::test]
+    async fn unverified_legacy_connections_are_rejected_before_network_access() {
+        let request = ProbeRequest {
+            protocol: "ssh".into(),
+            target: "127.0.0.1:1".into(),
+            payload: Some("echo ok".into()),
+            metadata: [("user".into(), "fixture".into()), ("password".into(), "fixture".into())]
+                .into(),
+            assertions: vec![],
+        };
+        let result = SshPlugin::new().run(&request).await;
+        assert!(!result.transport_ok);
+        assert!(result.error.expect("error").contains("SHA256"));
     }
 }

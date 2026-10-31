@@ -506,6 +506,10 @@ pub fn openapi() -> utoipa::openapi::OpenApi {
 }
 
 #[cfg(test)]
+#[path = "../../probe/tests/support/ssh.rs"]
+mod ssh_fixture;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use axum::{
@@ -538,6 +542,65 @@ mod tests {
         assert_eq!(response.status().as_u16(), status, "{method} {path}");
         let bytes = to_bytes(response.into_body(), 2_000_000).await.expect("body");
         serde_json::from_slice(&bytes).unwrap_or(Value::Null)
+    }
+    async fn exercise_ssh_profiles(app: &Router, base: &str, owner: &str, viewer: &str) {
+        let fixture = ssh_fixture::Fixture::start().await;
+        let key=call(app,"POST",&format!("{base}/credentials"),Some(owner),Some(json!({"label":"SSH key fixture","value":fixture.encrypted_key,"environmentOnly":true})),200).await;
+        let phrase=call(app,"POST",&format!("{base}/credentials"),Some(owner),Some(json!({"label":"SSH passphrase fixture","value":"fixture passphrase","environmentOnly":true})),200).await;
+        let body = json!({"pluginId":"ssh","name":"SSH fixture","enabled":true,"config":{"schemaVersion":1,"values":{"host":fixture.target.host,"port":fixture.target.port,"username":fixture.target.username,"host_key_sha256":fixture.target.host_key_sha256},"secrets":{"private_key":key["reference"],"passphrase":phrase["reference"]}}});
+        let mut plaintext = body.clone();
+        plaintext["config"]["values"]["private_key"] = json!(fixture.private_key);
+        call(app, "POST", &format!("{base}/profiles"), Some(owner), Some(plaintext), 400).await;
+        let profile =
+            call(app, "POST", &format!("{base}/profiles"), Some(owner), Some(body), 200).await;
+        let id = profile["id"].as_str().expect("SSH profile id");
+        let path = format!("{base}/profiles/{id}");
+        call(app, "POST", &format!("{path}/test"), Some(owner), None, 200).await;
+        call(
+            app,
+            "PUT",
+            &format!("{base}/bindings/{id}"),
+            Some(owner),
+            Some(json!({"slot":"connection","priority":0,"enabled":true})),
+            200,
+        )
+        .await;
+        let result = call(
+            app,
+            "POST",
+            &format!("{path}/execute"),
+            Some(owner),
+            Some(json!({"command":"echo fixture passphrase"})),
+            200,
+        )
+        .await;
+        assert_eq!(result["status"], "success");
+        assert!(!result.to_string().contains("fixture passphrase"));
+        let failed = call(
+            app,
+            "POST",
+            &format!("{path}/execute"),
+            Some(owner),
+            Some(json!({"command":"streams"})),
+            200,
+        )
+        .await;
+        assert_eq!(failed["status"], "failure");
+        assert_eq!(failed["data"]["termination"]["code"], 7);
+        call(
+            app,
+            "POST",
+            &format!("{path}/execute"),
+            Some(viewer),
+            Some(json!({"command":"echo denied"})),
+            403,
+        )
+        .await;
+        let loaded = call(app, "GET", base, Some(owner), None, 200).await;
+        let encoded = loaded.to_string();
+        assert!(!encoded.contains("BEGIN OPENSSH PRIVATE KEY"));
+        assert!(!encoded.contains("fixture passphrase"));
+        fixture.idle().await;
     }
     #[tokio::test]
     async fn disabled_capabilities_remain_authenticated_without_opening_a_plugin_database() {
@@ -844,6 +907,7 @@ mod tests {
             )
             .await
             .expect("Redis ACL cleanup");
+        exercise_ssh_profiles(&app, base, &owner, &viewer).await;
         let projects: i64 = sqlx::query_scalar("SELECT count(*) FROM ms_project")
             .fetch_one(&host)
             .await

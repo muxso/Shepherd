@@ -293,3 +293,25 @@ async fn output_limits_cover_the_entire_report_and_failed_assertions_remain_fail
     };
     assert!(!output.passed());
 }
+
+#[test]
+fn multiline_secrets_accept_only_credential_references() {
+    let schema = ConfigSchema {
+        version: 1,
+        fields: vec![ConfigField {
+            name: "key".into(),
+            label: "Private key".into(),
+            required: true,
+            kind: FieldType::SecretMultiline,
+        }],
+    };
+    let mut config = PluginConfig {
+        schema_version: 1,
+        values: [("key".into(), json!("private\nkey"))].into(),
+        secrets: Default::default(),
+    };
+    assert!(schema.validate(&config).is_err());
+    config.values.clear();
+    config.secrets.insert("key".into(), SecretRef("vault-key".into()));
+    schema.validate(&config).expect("credential reference");
+}

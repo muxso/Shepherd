@@ -37,3 +37,6 @@ pub use ssh::SshPlugin;
 
 #[cfg(feature = "redis")]
 pub mod redis_command;
+
+#[cfg(feature = "ssh")]
+pub mod ssh_command;
