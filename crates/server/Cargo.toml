@@ -70,4 +70,6 @@ environment-plugins = ["dep:environment-plugins", "dep:plugin-runtime"]
 yunxiao = ["dep:yunxiao"]
 
 [dev-dependencies]
+russh = "0.62"
+tempfile = "3"
 webauth = { workspace = true, features = ["test-util"] }

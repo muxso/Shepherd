@@ -171,6 +171,10 @@ jobs:
         run: cargo test -p runner --features pg --test pg_protocol --locked -- --ignored --test-threads=1
       - name: test-plan pg aggregate
         run: cargo test -p test-plan --features pg --lib --locked -- --ignored --test-threads=1
+      - name: SSH profiles and pinned transport
+        run: |
+          cargo test -p probe --no-default-features --features ssh --test ssh_commands --locked -- --ignored --test-threads=1
+          cargo test -p environment-plugins --all-features --test ssh_provider --locked -- --ignored --test-threads=1
       - name: probe redis live
         run: |
           cargo test -p probe --features redis --test redis_live --locked -- --ignored --test-threads=1

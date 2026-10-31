@@ -15,7 +15,7 @@ thiserror.workspace = true
 sqlx = { workspace = true, optional = true, features = ["runtime-tokio", "postgres", "json", "migrate", "macros"] }
 uuid = { workspace = true, optional = true }
 ring = { version = "0.17", optional = true }
-probe = { workspace = true, optional = true, features = ["sql", "mysql", "redis"] }
+probe = { workspace = true, optional = true, features = ["sql", "mysql", "redis", "ssh"] }
 url = { version = "2", optional = true }
 
 [features]
@@ -25,6 +25,8 @@ vault = ["pg", "dep:ring"]
 protocols = ["dep:probe", "dep:url"]
 
 [dev-dependencies]
+russh = "0.62"
+tempfile = "3"
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 
 [lints]

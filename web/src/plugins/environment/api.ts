@@ -8,6 +8,7 @@ export type FieldType =
   | { type: 'string_list'; max_items: number }
   | { type: 'json' }
   | { type: 'secret' }
+  | { type: 'secret_multiline' }
 export interface ConfigField { name: string; label: string; required: boolean; kind: FieldType }
 export interface Descriptor {
   id: string; name: string; section: string; version: string; apiVersion: number
@@ -56,3 +57,12 @@ export interface DatabaseReport {
 }
 
 export interface RedisReport { kind: string; value: unknown; elapsedMs: number }
+
+export interface SshReport {
+  operation: 'executed'
+  hostKeySha256: string
+  stdout: { encoding: 'utf8' | 'hex'; value: string }
+  stderr: { encoding: 'utf8' | 'hex'; value: string }
+  termination: { kind: 'exit'; code: number } | { kind: 'signal'; name: string; coreDumped: boolean; message: string } | { kind: 'missing' }
+  elapsedMs: number
+}
