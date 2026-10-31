@@ -216,7 +216,7 @@ export default function RequestEditor({
     setErr('')
     setResp(null)
     try {
-      setResp(await api.debugSend({ method, url: finalUrl, headers: hs, body: body.trim() ? resolveMock(resolveVars(body)) : undefined }))
+      setResp(await api.debugSend({ environmentId: env?.id, method, url: finalUrl, headers: hs, body: body.trim() ? resolveMock(resolveVars(body)) : undefined }))
     } catch (e) {
       setErr(e instanceof ApiError ? e.message : t('editor.sendFail', '发送失败'))
     } finally {

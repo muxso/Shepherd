@@ -12,6 +12,8 @@ pub enum SchemaError {
     InvalidFiles,
     #[error("invalid protobuf definition: {0}")]
     Definition(#[from] protox::Error),
+    #[error("protobuf source nesting exceeds 64 levels")]
+    SourceDepth,
     #[error("standard protobuf namespaces cannot be redefined")]
     ReservedNamespace,
     #[error("provide at least one service and no more than 256 methods")]
@@ -20,6 +22,72 @@ pub enum SchemaError {
     UnknownMethod,
     #[error("streaming gRPC methods are unsupported")]
     Streaming,
+}
+// Bound recursive parser work before handing a definition to protox. Quoted
+// strings and comments must not count as protobuf delimiters.
+fn bounded_source(source: &str) -> bool {
+    #[derive(Clone, Copy)]
+    enum State {
+        Code,
+        Quote(u8),
+        Line,
+        Block(usize),
+    }
+    let bytes = source.as_bytes();
+    let mut state = State::Code;
+    let mut depth = 0usize;
+    let mut i = 0;
+    while i < bytes.len() {
+        let byte = bytes[i];
+        let next = bytes.get(i + 1).copied();
+        match state {
+            State::Quote(quote) => {
+                if byte == b'\\' {
+                    i += 1;
+                } else if byte == quote {
+                    state = State::Code;
+                }
+            }
+            State::Line => {
+                if matches!(byte, b'\n' | b'\r') {
+                    state = State::Code;
+                }
+            }
+            State::Block(n) => {
+                if byte == b'/' && next == Some(b'*') {
+                    if n >= 64 {
+                        return false;
+                    }
+                    state = State::Block(n + 1);
+                    i += 1;
+                } else if byte == b'*' && next == Some(b'/') {
+                    state = if n == 1 { State::Code } else { State::Block(n - 1) };
+                    i += 1;
+                }
+            }
+            State::Code => match (byte, next) {
+                (b'/', Some(b'/')) => {
+                    state = State::Line;
+                    i += 1;
+                }
+                (b'/', Some(b'*')) => {
+                    state = State::Block(1);
+                    i += 1;
+                }
+                (b'\'' | b'"', _) => state = State::Quote(byte),
+                (b'{' | b'[' | b'(' | b'<', _) => {
+                    depth += 1;
+                    if depth > 64 {
+                        return false;
+                    }
+                }
+                (b'}' | b']' | b')' | b'>', _) => depth = depth.saturating_sub(1),
+                _ => {}
+            },
+        }
+        i += 1;
+    }
+    true
 }
 struct MemoryFiles(BTreeMap<String, String>);
 impl FileResolver for MemoryFiles {
@@ -64,6 +132,9 @@ impl CompiledSchema {
             })
         {
             return Err(SchemaError::InvalidFiles);
+        }
+        if files.values().any(|source| !bounded_source(source)) {
+            return Err(SchemaError::SourceDepth);
         }
         let mut resolver = ChainFileResolver::new();
         resolver.add(MemoryFiles(files.clone()));
@@ -128,6 +199,21 @@ impl CompiledSchema {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn deeply_nested_sources_are_rejected_before_recursive_compilation() {
+        let source = format!("{}{}", "message M {".repeat(65), "}".repeat(65));
+        assert!(matches!(
+            CompiledSchema::compile(&[("deep.proto".into(), source)].into()),
+            Err(SchemaError::SourceDepth)
+        ));
+        assert!(bounded_source(&format!(
+            "// {}\nmessage M {{ string value=1; }}",
+            "{".repeat(1000)
+        )));
+        assert!(bounded_source(&format!("/* {} */ message M {{}}", "{".repeat(1000))));
+        assert!(bounded_source(&format!("option x=\"{}\";", "{".repeat(1000))));
+        assert!(!bounded_source(&"/*".repeat(65)));
+    }
     #[test]
     fn definitions_resolve_only_memory_and_bundled_standard_files() {
         let files=[("types.proto".into(),"syntax=\"proto3\";package fixture; import \"google/protobuf/timestamp.proto\";message Input {string value=1;google.protobuf.Timestamp time=2;}".into()),("service.proto".into(),"syntax=\"proto3\";package fixture;import \"types.proto\";service Echo {rpc Call(Input) returns (Input);rpc Stream(stream Input) returns(stream Input);}".into())].into();

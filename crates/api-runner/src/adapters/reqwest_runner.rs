@@ -1,4 +1,5 @@
-use std::time::Duration;
+use crate::domain::HostOverrides;
+use std::{collections::BTreeSet, net::SocketAddr, time::Duration};
 
 use crate::domain::{Assertion, CaseReport, RequestSpec, ResponseSnapshot};
 
@@ -53,6 +54,7 @@ fn host_port(url: &str) -> Option<String> {
 #[derive(Clone)]
 pub struct ReqwestRunner {
     client: reqwest::Client,
+    overridden_hosts: BTreeSet<String>,
 }
 
 impl Default for ReqwestRunner {
@@ -63,17 +65,41 @@ impl Default for ReqwestRunner {
 
 impl ReqwestRunner {
     pub fn new() -> Self {
-        Self { client: configured_builder().build().unwrap_or_default() }
+        Self {
+            client: configured_builder().build().unwrap_or_default(),
+            overridden_hosts: BTreeSet::new(),
+        }
     }
 
     pub fn with_client(client: reqwest::Client) -> Self {
-        Self { client }
+        Self { client, overridden_hosts: BTreeSet::new() }
     }
 
     pub fn no_proxy() -> Self {
-        Self { client: configured_builder().no_proxy().build().unwrap_or_default() }
+        Self {
+            client: configured_builder().no_proxy().build().unwrap_or_default(),
+            overridden_hosts: BTreeSet::new(),
+        }
     }
 
+    /// Per-execution resolver overrides; no proxy or global resolver mutation.
+    pub fn with_host_overrides(hosts: &HostOverrides) -> Result<Self, RunError> {
+        Self::build_overridden(configured_builder(), hosts)
+    }
+    fn build_overridden(
+        mut builder: reqwest::ClientBuilder,
+        hosts: &HostOverrides,
+    ) -> Result<Self, RunError> {
+        builder = builder.no_proxy();
+        for (name, addresses) in hosts.addresses() {
+            let sockets: Vec<_> = addresses.iter().map(|ip| SocketAddr::new(*ip, 0)).collect();
+            builder = builder.resolve_to_addrs(name, &sockets);
+        }
+        Ok(Self {
+            client: builder.build().map_err(|e| RunError::from_reqwest(&e))?,
+            overridden_hosts: hosts.addresses().keys().cloned().collect(),
+        })
+    }
     pub async fn execute(&self, spec: &RequestSpec) -> Result<ResponseSnapshot, RunError> {
         let method = reqwest::Method::from_bytes(spec.method.as_str().as_bytes())
             .map_err(|e| RunError::Transport(e.to_string()))?;
@@ -87,15 +113,23 @@ impl ReqwestRunner {
 
         // DNS phase: a separately timed resolver lookup (the OS cache applies,
         // so this reflects what the actual request will pay).
-        let dns_ms = match host_port(&spec.url) {
-            Some(hp) => {
-                let t = std::time::Instant::now();
-                match tokio::net::lookup_host(hp).await {
-                    Ok(_) => Some(t.elapsed().as_millis() as u64),
-                    Err(_) => None,
+        let overridden = url::Url::parse(&spec.url)
+            .ok()
+            .and_then(|url| url.host_str().map(str::to_owned))
+            .is_some_and(|host| self.overridden_hosts.contains(&host));
+        let dns_ms = if overridden {
+            Some(0)
+        } else {
+            match host_port(&spec.url) {
+                Some(hp) => {
+                    let t = std::time::Instant::now();
+                    match tokio::net::lookup_host(hp).await {
+                        Ok(_) => Some(t.elapsed().as_millis() as u64),
+                        Err(_) => None,
+                    }
                 }
+                None => None,
             }
-            None => None,
         };
 
         let started = std::time::Instant::now();
@@ -255,3 +289,7 @@ mod tests {
         assert!(report.failures[0].contains("timeout"), "got: {}", report.failures[0]);
     }
 }
+
+#[cfg(test)]
+#[path = "host_override_tests.rs"]
+mod host_override_tests;

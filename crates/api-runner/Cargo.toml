@@ -19,6 +19,8 @@ tokio = { workspace = true, features = ["net"] }
 url = "2"
 
 [dev-dependencies]
+rcgen = "0.13"
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"] }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "net"] }
 axum = { workspace = true }
 

@@ -221,6 +221,110 @@ impl IntoResponse for ApiError {
 }
 type ApiResult = Result<Json<Value>, ApiError>;
 
+async fn authorize_environment(
+    host: &PgPool,
+    user: AuthUser,
+    environment: &str,
+    access: Access,
+) -> Result<(ExecutionScope, Arc<HostPolicy>), ApiError> {
+    if !user.can("ENVIRONMENT", "READ") {
+        return Err(PluginError::PermissionDenied.into());
+    }
+    let project = sqlx::query_scalar::<_, String>(
+        "SELECT project_id FROM ms_environment WHERE id=$1 AND NOT deleted",
+    )
+    .bind(environment)
+    .fetch_optional(host)
+    .await
+    .map_err(|_| PluginError::Unavailable("environment authorization".into()))?
+    .ok_or(ApiError::NotFound)?;
+    let scope = ExecutionScope {
+        project_id: project,
+        environment_id: environment.into(),
+        actor_id: user.user_id.clone(),
+    };
+    let policy = Arc::new(HostPolicy { host: host.clone(), user });
+    policy.check(&scope, access).await?;
+    Ok((scope, policy))
+}
+
+/// Host assembly for plugin-owned settings; no provider storage in native tables.
+#[derive(Clone)]
+pub struct ExecutionResolver {
+    host: PgPool,
+    runtime: Option<Runtime>,
+}
+impl ExecutionResolver {
+    pub fn new(host: PgPool, runtime: Option<Runtime>) -> Self {
+        Self { host, runtime }
+    }
+    pub async fn host_overrides(
+        &self,
+        user: AuthUser,
+        environment: &str,
+    ) -> Result<api_runner::HostOverrides, Response> {
+        self.resolve_hosts(user, environment).await.map_err(IntoResponse::into_response)
+    }
+    async fn resolve_hosts(
+        &self,
+        user: AuthUser,
+        environment: &str,
+    ) -> Result<api_runner::HostOverrides, ApiError> {
+        let Some(runtime) = &self.runtime else {
+            return Ok(api_runner::HostOverrides::default());
+        };
+        let (scope, policy) =
+            authorize_environment(&self.host, user, environment, Access::Execute).await?;
+        let context = ExecutionContext {
+            scope: scope.clone(),
+            limits: ExecutionLimits::default(),
+            secrets: Arc::new(runtime.vault(policy.clone())),
+            authorization: policy,
+            cancellation: Arc::new(CancellationToken::default()),
+        };
+        let mut hosts = api_runner::HostOverrides::default();
+        for binding in runtime
+            .store
+            .bindings(&scope.project_id, environment)
+            .await?
+            .into_iter()
+            .filter(|b| b.enabled && b.slot == BindingSlot::Host)
+        {
+            let profile = runtime.store.get(&scope.project_id, &binding.profile_id).await?;
+            if !profile.enabled {
+                continue;
+            }
+            supports(&profile, runtime, BindingSlot::Host)?;
+            let output = runtime
+                .registry
+                .execute(
+                    &Invocation {
+                        plugin_id: profile.plugin_id,
+                        operation: "execute".into(),
+                        config: profile.config,
+                        input: Value::Null,
+                    },
+                    &context,
+                )
+                .await?;
+            if output.status != OutputStatus::Success {
+                return Err(PluginError::Execution("HOST resolution failed".into()).into());
+            }
+            let addresses =
+                serde_json::from_value(output.data.get("addresses").cloned().ok_or_else(|| {
+                    PluginError::Execution("HOST provider returned no addresses".into())
+                })?)
+                .map_err(|_| {
+                    PluginError::Execution("HOST provider returned invalid addresses".into())
+                })?;
+            let resolved = api_runner::HostOverrides::new(addresses)
+                .map_err(|e| PluginError::InvalidConfig(e.to_string()))?;
+            hosts.merge(resolved).map_err(|e| PluginError::InvalidConfig(e.to_string()))?;
+        }
+        Ok(hosts)
+    }
+}
+
 impl AppState {
     async fn scope(
         &self,
@@ -228,24 +332,7 @@ impl AppState {
         environment: &str,
         access: Access,
     ) -> Result<(ExecutionScope, Arc<HostPolicy>, Runtime), ApiError> {
-        if !user.can("ENVIRONMENT", "READ") {
-            return Err(PluginError::PermissionDenied.into());
-        }
-        let project = sqlx::query_scalar::<_, String>(
-            "SELECT project_id FROM ms_environment WHERE id=$1 AND NOT deleted",
-        )
-        .bind(environment)
-        .fetch_optional(&self.host)
-        .await
-        .map_err(|_| PluginError::Unavailable("environment authorization".into()))?
-        .ok_or(ApiError::NotFound)?;
-        let scope = ExecutionScope {
-            project_id: project,
-            environment_id: environment.into(),
-            actor_id: user.user_id.clone(),
-        };
-        let policy = Arc::new(HostPolicy { host: self.host.clone(), user });
-        policy.check(&scope, access).await?;
+        let (scope, policy) = authorize_environment(&self.host, user, environment, access).await?;
         let runtime =
             self.runtime.clone().ok_or_else(|| PluginError::Unavailable("environment".into()))?;
         Ok((scope, policy, runtime))
@@ -563,6 +650,70 @@ mod tests {
         let bytes = to_bytes(response.into_body(), 2_000_000).await.expect("body");
         serde_json::from_slice(&bytes).unwrap_or(Value::Null)
     }
+    async fn exercise_host_profiles(app: &Router, base: &str, owner: &str, viewer: &str) {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("HTTP fixture");
+        let port = listener.local_addr().expect("address").port();
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.expect("HTTP connection");
+            let mut bytes = vec![0; 4096];
+            let n = socket.read(&mut bytes).await.expect("request");
+            let request = String::from_utf8_lossy(&bytes[..n]).to_ascii_lowercase();
+            assert!(request.contains(&format!("host: host-fixture.invalid:{port}")));
+            socket
+                .write_all(
+                    b"HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Length: 7\r\n\r\nhost-ok",
+                )
+                .await
+                .expect("response");
+        });
+        let body = json!({"pluginId":"host","name":"HOST fixture","enabled":true,"config":{"schemaVersion":1,"values":{"addresses":{"host-fixture.invalid":["127.0.0.1"]}},"secrets":{}}});
+        let profile =
+            call(app, "POST", &format!("{base}/profiles"), Some(owner), Some(body.clone()), 200)
+                .await;
+        let id = profile["id"].as_str().expect("HOST profile");
+        call(
+            app,
+            "PUT",
+            &format!("{base}/bindings/{id}"),
+            Some(owner),
+            Some(json!({"slot":"host","priority":0,"enabled":true})),
+            200,
+        )
+        .await;
+        let request = json!({"environmentId":"e","method":"GET","url":format!("http://host-fixture.invalid:{port}/")});
+        call(app, "POST", "/api/debug/send", Some(viewer), Some(request.clone()), 403).await;
+        let mut foreign = request.clone();
+        foreign["environmentId"] = json!("other");
+        call(app, "POST", "/api/debug/send", Some(owner), Some(foreign), 403).await;
+        let result =
+            call(app, "POST", "/api/debug/send", Some(owner), Some(request.clone()), 200).await;
+        assert_eq!(result["body"], "host-ok");
+        assert_eq!(result["timings"]["dnsMs"], 0);
+        server.await.expect("HTTP fixture");
+        let duplicate =
+            call(app, "POST", &format!("{base}/profiles"), Some(owner), Some(body), 200).await;
+        let duplicate = duplicate["id"].as_str().expect("duplicate profile");
+        call(
+            app,
+            "PUT",
+            &format!("{base}/bindings/{duplicate}"),
+            Some(owner),
+            Some(json!({"slot":"host","priority":1,"enabled":true})),
+            200,
+        )
+        .await;
+        call(app, "POST", "/api/debug/send", Some(owner), Some(request), 400).await;
+        call(
+            app,
+            "DELETE",
+            &format!("{base}/bindings/{duplicate}?slot=host"),
+            Some(owner),
+            None,
+            200,
+        )
+        .await;
+    }
     async fn exercise_grpc_profiles(app: &Router, base: &str, owner: &str, viewer: &str) {
         let fixture = grpc_fixture::Fixture::start(true).await;
         let mut secrets = serde_json::Map::new();
@@ -778,7 +929,9 @@ mod tests {
             )
             .await
             .expect("administrator session");
-        let app = router(host.clone(), sessions, Some(runtime));
+        let resolver = ExecutionResolver::new(host.clone(), Some(runtime.clone()));
+        let app = router(host.clone(), sessions.clone(), Some(runtime))
+            .merge(crate::debug_send::router(sessions, resolver));
         let base = "/api/environment-plugins/environments/e";
         let capabilities =
             call(&app, "GET", "/api/environment-plugins/capabilities", Some(&owner), None, 200)
@@ -1003,6 +1156,7 @@ mod tests {
             .expect("Redis ACL cleanup");
         exercise_ssh_profiles(&app, base, &owner, &viewer).await;
         exercise_grpc_profiles(&app, base, &owner, &viewer).await;
+        exercise_host_profiles(&app, base, &owner, &viewer).await;
         let projects: i64 = sqlx::query_scalar("SELECT count(*) FROM ms_project")
             .fetch_one(&host)
             .await

@@ -844,7 +844,7 @@ function CaseDetailTab({ caseItem, projectId, onClose, onDeleted }: { caseItem: 
     const req: SentRequest = { method: c.method, url, headers: hdrs, body: c.body || undefined }
     setLastReq(req); setRunning(true); setErr(''); setResp(null)
     try {
-      setResp(await api.debugSend({ ...req, assertions: (c.assertions as unknown[]) || [], processors: (c.processors as unknown[]) || [] }))
+      setResp(await api.debugSend({ ...req, environmentId: env?.id, assertions: (c.assertions as unknown[]) || [], processors: (c.processors as unknown[]) || [] }))
     } catch (e) {
       setErr(e instanceof ApiError ? e.message : t('editor.sendFail', '发送失败'))
     } finally {

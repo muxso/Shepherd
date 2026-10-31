@@ -729,7 +729,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Arc::new(PgCaseSpecSource::new(pool.clone())),
         api_envs,
     );
-    let debug_send_routes = debug_send::router(sessions.clone());
+    let environment_runtime = environment_extension::Runtime::load(&pool).await?;
+    let environment_resolver =
+        environment_extension::ExecutionResolver::new(pool.clone(), environment_runtime.clone());
+    let debug_send_routes = debug_send::router(sessions.clone(), environment_resolver);
 
     let plan_scheduler_routes =
         plan_scheduler::build(pool.clone(), sessions.clone(), Some(notifier.clone())).await?;
@@ -738,7 +741,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     report_archive_job::spawn(pool.clone());
 
-    let environment_runtime = environment_extension::Runtime::load(&pool).await?;
     let plugin_routes = plugins::router(&pool, sessions.clone())
         .await?
         .merge(environment_extension::router(pool.clone(), sessions.clone(), environment_runtime));
