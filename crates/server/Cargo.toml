@@ -10,6 +10,8 @@ rust-version.workspace = true
 # 唯一允许同时认识具体存储(PG)、HTTP(axum)、各模块用例的地方:
 # 把它们 new 出来、合并路由、启动。其余各层永远只认抽象。
 [dependencies]
+environment-plugins = { path = "../../plugins/environment/backend", features = ["vault", "protocols"], optional = true }
+plugin-runtime = { path = "../plugin-runtime", optional = true }
 yunxiao = { package = "shepherd-yunxiao", path = "../../plugins/yunxiao/backend", features = ["pg", "http"], optional = true }
 system-setting = { path = "../system-setting", features = ["pg", "http", "auth", "oidc", "ldap"] }
 rag = { path = "../rag", features = ["http"] }
@@ -63,7 +65,8 @@ uuid = { workspace = true }
 workspace = true
 
 [features]
-default = ["yunxiao"]
+default = ["yunxiao", "environment-plugins"]
+environment-plugins = ["dep:environment-plugins", "dep:plugin-runtime"]
 yunxiao = ["dep:yunxiao"]
 
 [dev-dependencies]

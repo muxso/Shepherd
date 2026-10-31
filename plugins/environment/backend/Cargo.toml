@@ -15,11 +15,14 @@ thiserror.workspace = true
 sqlx = { workspace = true, optional = true, features = ["runtime-tokio", "postgres", "json", "migrate", "macros"] }
 uuid = { workspace = true, optional = true }
 ring = { version = "0.17", optional = true }
+probe = { workspace = true, optional = true, features = ["sql", "mysql"] }
+url = { version = "2", optional = true }
 
 [features]
 default = []
 pg = ["dep:sqlx", "dep:uuid"]
 vault = ["pg", "dep:ring"]
+protocols = ["dep:probe", "dep:url"]
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

@@ -64,6 +64,12 @@ impl PluginRegistry {
     pub fn descriptors(&self) -> Vec<PluginDescriptor> {
         self.plugins.values().map(|(descriptor, _)| descriptor.clone()).collect()
     }
+    pub fn validate_config(&self, id: &str, config: &PluginConfig) -> Result<(), PluginError> {
+        let (descriptor, plugin) =
+            self.plugins.get(id).ok_or_else(|| PluginError::Unavailable(id.into()))?;
+        descriptor.config_schema.validate(config)?;
+        plugin.validate_config(config)
+    }
     pub async fn execute(
         &self,
         invocation: &Invocation,
@@ -82,6 +88,7 @@ impl PluginRegistry {
             return Err(PluginError::UnsupportedOperation(invocation.operation.clone()));
         }
         descriptor.config_schema.validate(&invocation.config)?;
+        plugin.validate_config(&invocation.config)?;
         tokio::select! {
             biased;
             _ = context.cancellation.cancelled() => Err(PluginError::Cancelled),

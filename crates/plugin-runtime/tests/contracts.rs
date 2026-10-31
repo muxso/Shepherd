@@ -45,6 +45,8 @@ fn config() -> PluginConfig {
 fn descriptor() -> PluginDescriptor {
     PluginDescriptor {
         id: "test.database".into(),
+        name: "Test database".into(),
+        section: "database".into(),
         version: "1.0.0".into(),
         api_version: PLUGIN_API_VERSION,
         capabilities: vec![Capability::Execute, Capability::ConnectionTest],

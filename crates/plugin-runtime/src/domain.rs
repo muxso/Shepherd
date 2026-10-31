@@ -185,6 +185,8 @@ impl ConfigSchema {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct PluginDescriptor {
     pub id: String,
+    pub name: String,
+    pub section: String,
     pub version: String,
     pub api_version: u32,
     pub capabilities: Vec<Capability>,
@@ -195,6 +197,8 @@ pub struct PluginDescriptor {
 impl PluginDescriptor {
     pub fn validate(&self) -> Result<(), PluginError> {
         if !valid_name(&self.id)
+            || self.name.trim().is_empty()
+            || !valid_name(&self.section)
             || self.version.trim().is_empty()
             || self.api_version != PLUGIN_API_VERSION
             || self.capabilities.is_empty()

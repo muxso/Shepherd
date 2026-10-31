@@ -6,6 +6,12 @@ use sqlx::{PgPool, Row};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DatabaseIdentity(String, Option<String>, Option<i32>);
 impl DatabaseIdentity {
+    fn conflicts_with(&self, host: &Self) -> bool {
+        // Require a different database name. Server addresses can differ for the
+        // same database (socket, loopback, proxy, or another network interface).
+        // This intentionally also rejects same-named databases on another cluster.
+        self.0 == host.0
+    }
     pub async fn read(pool: &PgPool) -> Result<Self, StoreError> {
         let (name, address, port) = sqlx::query_as::<_, (String, Option<String>, Option<i32>)>(
             "SELECT current_database()::text, inet_server_addr()::text, inet_server_port()",
@@ -26,7 +32,7 @@ impl PgProfileStore {
     /// only its identity, never a business-data repository to a provider.
     pub async fn connect(url: &str, host: &DatabaseIdentity) -> Result<Self, StoreError> {
         let pool = PgPool::connect(url).await.map_err(db)?;
-        if &DatabaseIdentity::read(&pool).await? == host {
+        if DatabaseIdentity::read(&pool).await?.conflicts_with(host) {
             return Err(StoreError::HostDatabase);
         }
         sqlx::migrate!("./migrations").run(&pool).await.map_err(|_| StoreError::Unavailable)?;
@@ -39,6 +45,7 @@ impl PgProfileStore {
         }
     }
 }
+
 fn db(error: sqlx::Error) -> StoreError {
     match error.as_database_error().and_then(|e| e.code()).as_deref() {
         Some("23503" | "23505") => StoreError::Conflict,
@@ -159,5 +166,17 @@ impl ProfileStore for PgProfileStore {
             return Err(StoreError::NotFound);
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod isolation_tests {
+    use super::*;
+    #[test]
+    fn alternate_connection_addresses_cannot_bypass_host_database_rejection() {
+        let host = DatabaseIdentity("host".into(), None, None);
+        let alternate = DatabaseIdentity("host".into(), Some("172.18.0.4".into()), Some(5432));
+        assert!(alternate.conflicts_with(&host));
+        assert!(!DatabaseIdentity("plugin".into(), alternate.1, alternate.2).conflicts_with(&host));
     }
 }

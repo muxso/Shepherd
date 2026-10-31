@@ -1,0 +1,115 @@
+import { test, expect, type Page } from '@playwright/test'
+import type { Binding, Configuration, Credential, Descriptor, NewProfile, Profile } from '../src/plugins/environment/api'
+
+const postgres: Descriptor = {
+  id: 'postgres', name: 'PostgreSQL', section: 'database', version: '1.0.0', apiVersion: 1,
+  capabilities: ['execute', 'connection_test'], operations: ['test', 'execute'],
+  configSchema: { version: 1, fields: [
+    { name: 'host', label: 'Host', required: true, kind: { type: 'string', max_length: 253 } },
+    { name: 'port', label: 'Port', required: false, kind: { type: 'integer', min: 1, max: 65535 } },
+    { name: 'database', label: 'Database', required: true, kind: { type: 'string', max_length: 128 } },
+    { name: 'user', label: 'User', required: true, kind: { type: 'string', max_length: 128 } },
+    { name: 'password', label: 'Password', required: false, kind: { type: 'secret' } },
+  ] },
+}
+
+async function fixture(page: Page, enabled = true, readonly = false) {
+  const profiles: Profile[] = readonly ? [{ id: 'profile-1', projectId: 'project', pluginId: 'postgres', name: 'Existing database', enabled: true, revision: 1, config: { schemaVersion: 1, values: { host: 'localhost', database: 'fixture', user: 'reader' }, secrets: {} } }] : []
+  const bindings: Binding[] = []
+  const credentials: Credential[] = []
+  const saved: NewProfile[] = []
+  let tested = 0
+  let configurationReads = 0
+  await page.addInitScript(() => { localStorage.setItem('shepherd.token', 'environment-plugin-fixture'); localStorage.setItem('shepherd.projectId', 'project') })
+  await page.route('**/*', async route => {
+    if (!['fetch', 'xhr'].includes(route.request().resourceType())) return route.continue()
+    const path = new URL(route.request().url()).pathname
+    const method = route.request().method()
+    let body: unknown = { items: [], total: 0 }
+    if (path === '/organization') body = { items: [{ id: 'organization', name: 'Organization' }], totalPages: 1 }
+    else if (path === '/project') body = { items: [{ id: 'project', name: 'Project', organizationId: 'organization' }], totalPages: 1 }
+    else if (path === '/api/environment') body = [{ id: 'environment', projectId: 'project', name: 'Test environment', baseUrl: '', headers: [], variables: {}, enabled: true }]
+    else if (path === '/api/plugins') body = { items: [] }
+    else if (path === '/api/environment-plugins/capabilities') body = { enabled, items: enabled ? [postgres] : [] }
+    else if (path === '/api/environment-plugins/environments/environment') {
+      configurationReads++
+      body = { profiles, bindings, credentials, permissions: { manage: !readonly, execute: !readonly } } satisfies Configuration
+    } else if (path.endsWith('/credentials') && method === 'POST') {
+      const input = route.request().postDataJSON() as { label: string; value: string }
+      expect(input.value).toBe('private-fixture-password')
+      const id = `credential-${credentials.length + 1}`
+      credentials.push({ id, label: input.label, environmentId: 'environment' }); body = { reference: id }
+    } else if (path.endsWith('/profiles') && method === 'POST') {
+      const input = route.request().postDataJSON() as NewProfile
+      saved.push(input)
+      const record: Profile = { ...input, id: `profile-${profiles.length + 1}`, projectId: 'project', revision: 1 }
+      profiles.push(record); body = record
+    } else if (path.includes('/bindings/') && method === 'PUT') {
+      const id = path.split('/').at(-1)!
+      const input = route.request().postDataJSON() as Omit<Binding, 'profileId'>
+      bindings.push({ ...input, profileId: id }); body = { bound: true }
+    } else if (path.endsWith('/test')) {
+      tested++; body = { status: 'success', data: { output: 'rows_affected=1' }, variables: {}, assertions: [] }
+    }
+    await route.fulfill({ json: body })
+  })
+  return { saved, profiles, bindings, tested: () => tested, reads: () => configurationReads }
+}
+async function open(page: Page) {
+  await page.goto('/p/project/environment')
+  await page.getByText('Test environment', { exact: true }).click()
+  await page.getByRole('tab', { name: '数据库', exact: true }).click()
+}
+
+test('plugin configuration saves secret references, binds, tests, and survives reload without revealing credentials', async ({ page }) => {
+  const data = await fixture(page)
+  await open(page)
+  await page.getByRole('button', { name: '新增连接配置' }).click()
+  const dialog = page.getByRole('dialog')
+  await dialog.getByLabel('配置名称', { exact: true }).fill('Local PostgreSQL')
+  await dialog.getByLabel('Host', { exact: true }).fill('127.0.0.1')
+  await dialog.getByLabel('Port', { exact: true }).fill('5432')
+  await dialog.getByLabel('Database', { exact: true }).fill('fixture')
+  await dialog.getByLabel('User', { exact: true }).fill('tester')
+  await dialog.getByLabel('Password', { exact: true }).fill('private-fixture-password')
+  await dialog.getByRole('button', { name: '保存并测试' }).click()
+  await expect(dialog.getByText('连接测试通过', { exact: true })).toBeVisible()
+  expect(data.saved).toHaveLength(1)
+  expect(data.saved[0].config.secrets.password).toBe('credential-1')
+  expect(JSON.stringify(data.saved[0])).not.toContain('private-fixture-password')
+  expect(data.bindings[0].profileId).toBe(data.profiles[0].id)
+  expect(data.tested()).toBe(1)
+  await dialog.getByRole('button', { name: '关闭', exact: true }).click()
+  await expect(dialog).not.toBeVisible()
+  await page.reload()
+  await page.getByText('Test environment', { exact: true }).click()
+  await page.getByRole('tab', { name: '数据库', exact: true }).click()
+  await expect(page.getByText('Local PostgreSQL', { exact: true })).toBeVisible()
+  await page.getByRole('button', { name: '编辑', exact: true }).click()
+  await expect(dialog.getByLabel('Host', { exact: true })).toHaveValue('127.0.0.1')
+  await expect(dialog.getByLabel('Password', { exact: true })).toHaveValue('')
+  await dialog.getByRole('button', { name: '关闭', exact: true }).click()
+  await expect(dialog).not.toBeVisible()
+  await page.getByRole('tab', { name: 'HOST', exact: true }).click()
+  await expect(page.getByText('此项能力尚未安装可用插件', { exact: true })).toBeVisible()
+  expect(data.tested()).toBe(1)
+})
+
+test('disabled plugin shows its state and never requests provider configuration', async ({ page }) => {
+  const data = await fixture(page, false)
+  await open(page)
+  await expect(page.getByText('环境配置插件未启用', { exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: '新增连接配置' })).toHaveCount(0)
+  expect(data.reads()).toBe(0)
+})
+
+test('project viewers can inspect profiles but cannot edit or execute them', async ({ page }) => {
+  await fixture(page, true, true)
+  await open(page)
+  await expect(page.getByRole('button', { name: '新增连接配置' })).toBeDisabled()
+  await expect(page.getByRole('button', { name: '测试连接', exact: true })).toBeDisabled()
+  await page.getByRole('button', { name: '编辑', exact: true }).click()
+  const dialog = page.getByRole('dialog')
+  await expect(dialog.getByLabel('Host', { exact: true })).toBeDisabled()
+  await expect(dialog.getByRole('button', { name: '保存配置', exact: true })).toBeDisabled()
+})

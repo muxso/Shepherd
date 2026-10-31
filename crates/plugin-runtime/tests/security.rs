@@ -58,6 +58,8 @@ impl EnvironmentPlugin for Echo {
     fn descriptor(&self) -> PluginDescriptor {
         PluginDescriptor {
             id: "echo".into(),
+            name: "Echo".into(),
+            section: "test".into(),
             version: "1".into(),
             api_version: 1,
             capabilities: vec![Capability::Execute],

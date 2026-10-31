@@ -20,7 +20,12 @@ fn catalog(enabled: bool) -> Value {
             .expect("valid bundled plugin manifest");
     plugin["installed"] = json!(cfg!(feature = "yunxiao"));
     plugin["enabled"] = json!(enabled);
-    json!({"items": [plugin]})
+    let mut environment: Value =
+        serde_json::from_str(include_str!("../../../plugins/environment/plugin.json"))
+            .expect("valid environment plugin manifest");
+    environment["installed"] = json!(cfg!(feature = "environment-plugins"));
+    environment["enabled"] = json!(crate::environment_extension::enabled());
+    json!({"items": [plugin, environment]})
 }
 
 pub async fn router(
@@ -39,7 +44,8 @@ pub async fn router(
         type Identity = (String, Option<String>, Option<i32>);
         let host: Identity = sqlx::query_as(identity).fetch_one(host_pool).await?;
         let plugin: Identity = sqlx::query_as(identity).fetch_one(&pool).await?;
-        if host == plugin {
+        // A distinct name also prevents alternate interfaces/proxies from bypassing isolation.
+        if host.0 == plugin.0 {
             return Err("Yunxiao must use a different database from Shepherd".into());
         }
         yunxiao::adapters::pg::migrate(&pool).await?;

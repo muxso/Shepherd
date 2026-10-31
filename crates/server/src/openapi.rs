@@ -31,6 +31,7 @@ pub fn merged() -> utoipa::openapi::OpenApi {
     if crate::plugins::yunxiao_enabled() {
         doc.merge(yunxiao::adapters::http::openapi());
     }
+    doc.merge(crate::environment_extension::openapi());
     doc.merge(requirement::adapters::http::openapi());
     doc.merge(task::adapters::http::openapi());
     doc.merge(delivery::adapters::http::openapi());

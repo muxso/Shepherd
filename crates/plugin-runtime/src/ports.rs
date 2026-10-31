@@ -56,6 +56,9 @@ pub struct ExecutionContext {
 #[async_trait]
 pub trait EnvironmentPlugin: Send + Sync {
     fn descriptor(&self) -> PluginDescriptor;
+    fn validate_config(&self, _config: &PluginConfig) -> Result<(), PluginError> {
+        Ok(())
+    }
     /// Implementations must not detach work that outlives this future. Cancellation
     /// and deadlines drop the future; resource guards must release owned resources.
     async fn execute(
