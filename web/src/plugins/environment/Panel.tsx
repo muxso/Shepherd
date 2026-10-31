@@ -1,3 +1,4 @@
+import { DatabaseQuery } from './DatabaseQuery'
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from 'react'
 import { Alert, Button, Card, Empty, Input, InputNumber, Modal, Popconfirm, Select, Space, Spin, Switch, Table, Tag, Typography } from 'antd'
 import { environmentPluginApi as api, type Configuration, type Descriptor, type NewProfile, type PluginConfig, type PluginOutput, type Profile, type Slot } from './api'
@@ -38,6 +39,7 @@ export function EnvironmentPluginPanel({ section }: { section: string }) {
   if (!state) throw new Error('Environment plugin provider is missing')
   const { environmentId, descriptors, profiles, bindings, credentials, reload } = state
   const available = descriptors.filter(d => d.section === section)
+  const [querying, setQuerying] = useState<Profile | null>(null)
   const [editing, setEditing] = useState<Profile | 'new' | null>(null)
   const [pluginId, setPluginId] = useState('')
   const [name, setName] = useState('')
@@ -52,7 +54,7 @@ export function EnvironmentPluginPanel({ section }: { section: string }) {
   const descriptor = available.find(d => d.id === pluginId)
   const slot = slotFor(section)
   const locked = busy || !state.permissions.manage
-  useEffect(() => { setEditing(null); setResult(null); setError('') }, [environmentId])
+  useEffect(() => { setEditing(null); setQuerying(null); setResult(null); setError('') }, [environmentId])
   function initialize(descriptor: Descriptor, profile?: Profile) {
     setPluginId(descriptor.id); setName(profile?.name || ''); setProfileEnabled(profile?.enabled ?? true)
     setConfig(profile ? structuredClone(profile.config) : blank(descriptor)); setSecretDrafts({}); setError(''); setResult(null)
@@ -137,10 +139,12 @@ export function EnvironmentPluginPanel({ section }: { section: string }) {
       { title: '操作', render: (_, p) => <Space wrap>
         <Button aria-label="编辑" size="small" disabled={busy} onClick={() => { const d = available.find(d => d.id === p.pluginId)!; initialize(d, p); setEditing(p) }}>编辑</Button>
         {available.find(d => d.id === p.pluginId)?.capabilities.includes('connection_test') && <Button size="small" disabled={busy || !p.enabled || !state.permissions.execute} onClick={() => void test(p)}>测试连接</Button>}
+        {['postgres', 'mysql'].includes(p.pluginId) && <Button size="small" disabled={busy || !p.enabled || !state.permissions.execute || !bindings.some(b => b.profileId === p.id && b.slot === 'connection' && b.enabled)} onClick={() => setQuerying(p)}>数据库查询</Button>}
         <Button size="small" disabled={locked} onClick={() => void toggleBinding(p)}>{bindings.some(b => b.profileId === p.id && b.slot === slot) ? '取消应用' : '应用'}</Button>
         <Popconfirm title="删除此配置？请先取消它在各环境中的应用。" onConfirm={() => remove(p)}><Button aria-label="删除" size="small" danger disabled={locked}>删除</Button></Popconfirm>
       </Space> },
     ]} />
+    {querying && <DatabaseQuery key={`${environmentId}/${querying.id}`} environmentId={environmentId} profile={querying} onClose={() => setQuerying(null)} />}
     <Modal title={editing === 'new' ? '新增插件配置' : '编辑插件配置'} open={!!editing} width={700} destroyOnHidden onCancel={() => { if (!busy) setEditing(null) }} footer={<Space>
       <Button aria-label="关闭" disabled={busy} onClick={() => setEditing(null)}>关闭</Button>
       <Button loading={busy} disabled={locked} onClick={() => void save(false)}>保存配置</Button>

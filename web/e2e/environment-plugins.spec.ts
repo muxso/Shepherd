@@ -18,6 +18,7 @@ async function fixture(page: Page, enabled = true, readonly = false) {
   const bindings: Binding[] = []
   const credentials: Credential[] = []
   const saved: NewProfile[] = []
+  const executed: unknown[] = []
   let tested = 0
   let configurationReads = 0
   await page.addInitScript(() => { localStorage.setItem('shepherd.token', 'environment-plugin-fixture'); localStorage.setItem('shepherd.projectId', 'project') })
@@ -48,12 +49,17 @@ async function fixture(page: Page, enabled = true, readonly = false) {
       const id = path.split('/').at(-1)!
       const input = route.request().postDataJSON() as Omit<Binding, 'profileId'>
       bindings.push({ ...input, profileId: id }); body = { bound: true }
+    } else if (path.endsWith('/execute')) {
+      const input = route.request().postDataJSON() as { extract: { variable: string }[] }
+      executed.push(input)
+      const failed = input.extract.some(e => e.variable === 'missing')
+      body = { status: failed ? 'failure' : 'success', data: { columns: [{ name: 'id', sqlType: 'INT8' }, { name: 'note', sqlType: 'TEXT' }], rows: [['9007199254740993', null]], rowsAffected: 0, truncated: !failed, elapsedMs: 12 }, variables: failed ? {} : { id: '9007199254740993' }, assertions: failed ? [{ id: 'extract.missing', passed: false, message: 'required result cell is missing' }] : [] }
     } else if (path.endsWith('/test')) {
       tested++; body = { status: 'success', data: { output: 'rows_affected=1' }, variables: {}, assertions: [] }
     }
     await route.fulfill({ json: body })
   })
-  return { saved, profiles, bindings, tested: () => tested, reads: () => configurationReads }
+  return { saved, profiles, bindings, executed, tested: () => tested, reads: () => configurationReads }
 }
 async function open(page: Page) {
   await page.goto('/p/project/environment')
@@ -112,4 +118,30 @@ test('project viewers can inspect profiles but cannot edit or execute them', asy
   const dialog = page.getByRole('dialog')
   await expect(dialog.getByLabel('Host', { exact: true })).toBeDisabled()
   await expect(dialog.getByRole('button', { name: '保存配置', exact: true })).toBeDisabled()
+})
+
+test('database query uses the saved binding and renders rows, extraction failures, truncation, and report download', async ({ page }) => {
+  const data = await fixture(page)
+  data.profiles.push({ id: 'profile-query', projectId: 'project', pluginId: 'postgres', name: 'Query database', enabled: true, revision: 1, config: { schemaVersion: 1, values: { host: 'localhost', database: 'fixture', user: 'reader' }, secrets: {} } })
+  data.bindings.push({ profileId: 'profile-query', slot: 'connection', priority: 0, enabled: true })
+  await open(page)
+  await page.getByRole('button', { name: '数据库查询', exact: true }).click()
+  const dialog = page.getByRole('dialog')
+  await dialog.getByLabel('SQL', { exact: true }).fill('SELECT $1::bigint AS id')
+  await dialog.getByLabel('查询参数', { exact: true }).fill('[{"type":"integer","value":42}]')
+  await dialog.getByLabel('结果提取规则', { exact: true }).fill('[{"variable":"id","row":0,"column":"id"}]')
+  await dialog.getByRole('button', { name: '运行查询', exact: true }).click()
+  await expect(dialog.getByText('数据库执行通过', { exact: true })).toBeVisible()
+  await expect(dialog.getByRole('cell', { name: '9007199254740993', exact: true })).toBeVisible()
+  await expect(dialog.getByRole('cell', { name: 'NULL', exact: true })).toBeVisible()
+  await expect(dialog.getByText('结果已达到行数上限，仅展示部分结果', { exact: true })).toBeVisible()
+  expect(data.executed[0]).toEqual({ query: 'SELECT $1::bigint AS id', mode: 'query', parameters: [{ type: 'integer', value: 42 }], extract: [{ variable: 'id', row: 0, column: 'id' }], maxRows: 100 })
+  const downloading = page.waitForEvent('download')
+  await dialog.getByRole('button', { name: '导出报告', exact: true }).click()
+  const download = await downloading
+  expect(download.suggestedFilename()).toBe('database-report-profile-query.json')
+  await dialog.getByLabel('结果提取规则', { exact: true }).fill('[{"variable":"missing","row":9,"column":0}]')
+  await dialog.getByRole('button', { name: '运行查询', exact: true }).click()
+  await expect(dialog.getByText('结果提取未通过', { exact: true })).toBeVisible()
+  await expect(dialog.getByText('extract.missing: required result cell is missing', { exact: true })).toBeVisible()
 })

@@ -20,7 +20,7 @@ export type Slot = 'connection' | 'pre' | 'post' | 'assert' | 'host' | 'display'
 export interface Binding { profileId: string; slot: Slot; priority: number; enabled: boolean }
 export interface Credential { id: string; label: string; environmentId: string | null }
 export interface Configuration { profiles: Profile[]; bindings: Binding[]; credentials: Credential[]; permissions: { manage: boolean; execute: boolean } }
-export interface PluginOutput { status: 'success' | 'failure'; data: unknown; variables: Record<string, string>; assertions: { id: string; passed: boolean; message: string }[] }
+export interface PluginOutput<T = unknown> { status: 'success' | 'failure'; data: T; variables: Record<string, string>; assertions: { id: string; passed: boolean; message: string }[] }
 const root = (environment: string) => `/api/environment-plugins/environments/${encodeURIComponent(environment)}`
 const profilePath = (environment: string, id: string) => `${root(environment)}/profiles/${encodeURIComponent(id)}`
 async function call<T>(method: string, path: string, body?: unknown): Promise<T> {
@@ -43,5 +43,14 @@ export const environmentPluginApi = {
   bind: (environment: string, id: string, slot: Slot, enabled = true) => call('PUT', `${root(environment)}/bindings/${encodeURIComponent(id)}`, { slot, priority: 0, enabled }),
   unbind: (environment: string, id: string, slot: Slot) => call('DELETE', `${root(environment)}/bindings/${encodeURIComponent(id)}?slot=${slot}`),
   test: (environment: string, id: string) => call<PluginOutput>('POST', `${profilePath(environment, id)}/test`),
+  execute: (environment: string, id: string, input: unknown) => call<PluginOutput<DatabaseReport>>('POST', `${profilePath(environment, id)}/execute`, input),
   createCredential: (environment: string, label: string, value: string) => call<{ reference: string }>('POST', `${root(environment)}/credentials`, { label, value, environmentOnly: true }),
+}
+
+export interface DatabaseReport {
+  columns: { name: string; sqlType: string }[]
+  rows: unknown[][]
+  rowsAffected: number
+  truncated: boolean
+  elapsedMs: number
 }

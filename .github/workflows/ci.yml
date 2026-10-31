@@ -166,6 +166,7 @@ jobs:
           createdb -h localhost -U msuser environment_plugin_data_test
           cargo test -p environment-plugins --all-features --test storage --locked -- --ignored --test-threads=1
           cargo test -p server --bin server environment_extension::tests::isolated_environment_plugin_api --locked -- --ignored --test-threads=1
+          cargo test -p probe --no-default-features --features sql,mysql --test database_results --locked -- --ignored --test-threads=1
       - name: runner protocol routing (pg)
         run: cargo test -p runner --features pg --test pg_protocol --locked -- --ignored --test-threads=1
       - name: test-plan pg aggregate

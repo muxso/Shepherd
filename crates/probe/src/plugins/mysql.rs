@@ -18,6 +18,16 @@ impl MysqlPlugin {
         Self::default()
     }
 
+    /// Execute one bounded statement on a connection owned by this call.
+    pub async fn query(
+        &self,
+        target: &str,
+        statement: &crate::domain::database::DatabaseStatement,
+        budget: super::database::QueryBudget,
+    ) -> Result<crate::domain::database::DatabaseReport, super::database::DatabaseError> {
+        super::database::query_mysql(target, statement, budget).await
+    }
+
     async fn pool_for(&self, target: &str) -> Result<MySqlPool, String> {
         if let Some(p) = self
             .pools
