@@ -28,6 +28,8 @@ import Donut from '../components/Donut'
 import type { CollabStats } from '../api'
 import ContributionGrid from '../components/ContributionGrid'
 import GroupedBars, { type BarRow } from '../components/GroupedBars'
+import './Home.css'
+import Productivity from '../plugins/yunxiao/Productivity'
 import CardSettings, { CARD_DEFAULT_SIZE, type CardSize } from '../components/CardSettings'
 
 interface Counts {
@@ -111,6 +113,11 @@ function loadLayout(): CardLayout[] {
 
 // Home workbench: test-asset overview for the current project, with customizable card layout.
 export default function Home() {
+  const { projectId } = useApp()
+  return <ProjectHome key={projectId} />
+}
+
+function ProjectHome() {
   const { projectId, projects } = useApp()
   const { t } = useI18n()
   const navigate = useScopedNavigate()
@@ -503,6 +510,7 @@ export default function Home() {
                       size={132}
                       thickness={18}
                       centerLabel={t('home.coverRate', '覆盖率')}
+                      centerValue={`${coverRate.toFixed(1)}%`}
                     />
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <div style={{ fontSize: 22, fontWeight: 700, color: coverRate >= 60 ? C.green : coverRate >= 30 ? C.orange : C.red }}>{coverRate.toFixed(1)}%</div>
@@ -541,10 +549,9 @@ export default function Home() {
           </div>
         )
         const rateBlock = (label: string, rate: number, segs: { label: string; value: number; color: string }[]) => (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
-            <Donut segments={segs} size={104} thickness={14} centerLabel={label} />
+          <div className="ms-case-rate" role="figure" aria-label={`${label} ${rate.toFixed(1)}%`}>
+            <Donut segments={segs} size={104} thickness={14} centerLabel={label} centerValue={`${rate.toFixed(1)}%`} />
             <div>
-              <div style={{ fontSize: 18, fontWeight: 700, color: rate >= 60 ? C.green : rate >= 30 ? C.orange : C.red }}>{rate.toFixed(1)}%</div>
               {segs.map((s) => (
                 <div key={s.label} style={{ display: 'flex', alignItems: 'center', fontSize: 12, padding: '2px 0' }}>
                   <span style={{ width: 8, height: 8, borderRadius: 2, background: s.color, marginRight: 6 }} />
@@ -556,27 +563,27 @@ export default function Home() {
           </div>
         )
         return (
-          <Card title={<span><ProfileOutlined style={{ color: C.cyan, marginRight: 6 }} />{cardTitle.caseStats}</span>} size="small" style={{ marginBottom: 16 }}>
-            <Row gutter={[24, 16]} align="middle">
-              <Col xs={24} md={6}>
+          <Card title={<span><ProfileOutlined style={{ color: C.cyan, marginRight: 6 }} />{cardTitle.caseStats}</span>} size="small" className="ms-case-stats" style={{ marginBottom: 16 }}>
+            <div className="ms-case-stats-grid">
+              <div className="ms-case-stats-summary">
                 <div style={{ display: 'flex', gap: 24, flexWrap: 'wrap' }}>
                   {metric(t('home.caseTotal', '接口用例数'), totalCases, C.cyan)}
                   {metric(t('home.execCount', '执行次数'), executions, C.skyblue)}
                 </div>
-              </Col>
-              <Col xs={24} md={9}>
+              </div>
+              <div>
                 {rateBlock(t('home.execRate', '执行率'), execRate, [
                   { label: t('home.executed', '已执行'), value: executedCases, color: C.skyblue },
                   { label: t('home.unexecuted', '未执行'), value: unexecuted, color: 'var(--text-3)' },
                 ])}
-              </Col>
-              <Col xs={24} md={9}>
+              </div>
+              <div>
                 {rateBlock(t('home.passRate', '通过率'), passRate, [
                   { label: t('home.passed', '已通过'), value: passed, color: C.green },
                   { label: t('home.failedExec', '未通过'), value: failed, color: C.red },
                 ])}
-              </Col>
-            </Row>
+              </div>
+            </div>
           </Card>
         )
       }
@@ -869,6 +876,7 @@ export default function Home() {
 
   return (
     <div style={{ padding: 16, height: '100%', overflow: 'auto' }}>
+      <Productivity projectId={projectId} />
       {loopHero}
       <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 12 }}>
         <Button size="small" icon={<SettingOutlined />} onClick={() => setEditing(true)}>{t('home.cs.edit', '编辑')}</Button>
@@ -879,7 +887,7 @@ export default function Home() {
         ) : (
           <Row gutter={16} className="ms-home-grid">
             {layout.map((p) => (
-              <Col key={p.key} span={p.size === 'full' ? 24 : 12}>
+              <Col key={p.key} xs={24} lg={p.size === 'full' ? 24 : 12}>
                 {renderCard(p.key)}
               </Col>
             ))}

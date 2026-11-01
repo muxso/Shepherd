@@ -6,7 +6,15 @@ export interface DevopsSource {
   last_success_at?: string | null; code_since?: string | null; code_until?: string | null;
 }
 export interface DevopsAuthor { name: string; group: string; commits: number; linkedCommits: number; additions: number | null; deletions: number | null; unknownStats: number }
+export interface OutputMetric {
+  current: number; previous: number; missingTime: number; unattributed: number;
+  trend: { date: string; value: number }[]; contributors: { name: string; count: number }[];
+}
+export interface ProductivityStats {
+  from: string; through: string; timezone: string; metrics: Record<string, OutputMetric>;
+}
 export interface DevopsDashboard {
+  productivity?: ProductivityStats;
   source: DevopsSource; totals: { requirements: number; bugs: number; sprints: number; delayed: number; delivered: number };
   authors: DevopsAuthor[]; codeScope: string; historyScope: string;
 }

@@ -160,13 +160,14 @@ export default function Requirements() {
     const local = regList('requirement', projectId)
     const localById = new Map(local.map((r) => [r.id, r]))
     try {
-      const page = await api.requirements(projectId)
-      // Fetch coverage for all requirements in parallel to badge row labels (lists are usually small).
-      const covs = await Promise.all(page.items.map((r) => api.requirementCoverage(r.id).then((c) => [r.id, c] as const).catch(() => [r.id, []] as const)))
-      const covMap: Record<string, CoverageCase[]> = Object.fromEntries(covs)
+      // One compact coverage summary per project, independent of requirement count.
+      const [page, covMap] = await Promise.all([
+        api.requirements(projectId),
+        api.projectRequirementCoverage(projectId).catch(() => ({} as Record<string, number[]>)),
+      ])
       setItems(page.items.map((r) => {
         const crits = critsOf(r)
-        const covered = crits.filter((_, i) => (covMap[r.id] || []).some((c) => c.criterionIndex === i)).length
+        const covered = crits.filter((_, i) => (covMap[r.id] || []).includes(i)).length
         const pct = crits.length ? Math.round((covered / crits.length) * 100) : 0
         const base = localById.get(r.id) || { id: r.id, label: r.title, createdAt: 0 }
         const label = (

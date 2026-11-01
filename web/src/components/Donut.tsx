@@ -14,11 +14,13 @@ export default function Donut({
   size = 120,
   thickness = 16,
   centerLabel,
+  centerValue,
 }: {
   segments: DonutSeg[]
   size?: number
   thickness?: number
   centerLabel?: string
+  centerValue?: string
 }) {
   const { t } = useI18n()
   const [hover, setHover] = useState<number | null>(null)
@@ -34,7 +36,7 @@ export default function Donut({
   const pct = hovered && total > 0 ? `${((hovered.value * 100) / total).toFixed(0)}%` : ''
 
   return (
-    <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
+    <svg style={{ flexShrink: 0 }} width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
       <g transform={`rotate(-90 ${cx} ${cx})`}>
         <circle cx={cx} cy={cx} r={r} fill="none" stroke="var(--border-soft)" strokeWidth={thickness} />
         {total > 0 &&
@@ -63,7 +65,7 @@ export default function Donut({
           })}
       </g>
       <text x={cx} y={cx - 2} textAnchor="middle" fontSize={20} fontWeight={700} fill="currentColor" style={{ color: hovered ? hovered.color : 'var(--text)', pointerEvents: 'none' }}>
-        {hovered ? hovered.value : total}
+        {hovered ? hovered.value : centerValue ?? total}
       </text>
       <text x={cx} y={cx + 16} textAnchor="middle" fontSize={11} fill="#8a9099" style={{ pointerEvents: 'none' }}>
         {hovered ? `${hovered.label} ${pct}` : label}

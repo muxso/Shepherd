@@ -93,7 +93,7 @@ jobs:
       - name: install browser for plugin UI checks
         run: npx playwright install --with-deps chromium
       - name: environment plugin UI contracts
-        run: npx playwright test environment-plugins.spec.ts plugins.spec.ts
+        run: npx playwright test environment-plugins.spec.ts plugins.spec.ts project-switch.spec.ts productivity.spec.ts
         env:
           E2E_START_VITE: "1"
 
@@ -167,6 +167,22 @@ jobs:
           cargo test -p environment-plugins --all-features --test storage --locked -- --ignored --test-threads=1
           cargo test -p server --bin server environment_extension::tests::isolated_environment_plugin_api --locked -- --ignored --test-threads=1
           cargo test -p probe --no-default-features --features sql,mysql --test database_results --locked -- --ignored --test-threads=1
+      - name: Yunxiao plugin statistics (isolated database)
+        env:
+          PGPASSWORD: mspass
+          SHEPHERD_YUNXIAO_TEST_DATABASE_URL: postgres://msuser:mspass@localhost:5432/yunxiao_plugin_test
+        run: |
+          trap 'dropdb -h localhost -U msuser --if-exists --force yunxiao_plugin_test' EXIT
+          createdb -h localhost -U msuser yunxiao_plugin_test
+          cargo test -p shepherd-yunxiao --all-features --test pg_sync --locked -- --ignored --test-threads=1
+      - name: project requirement coverage summary (isolated database)
+        env:
+          PGPASSWORD: mspass
+          SHEPHERD_COVERAGE_TEST_DATABASE_URL: postgres://msuser:mspass@localhost:5432/coverage_summary_test
+        run: |
+          trap 'dropdb -h localhost -U msuser --if-exists --force coverage_summary_test' EXIT
+          createdb -h localhost -U msuser coverage_summary_test
+          cargo test -p case-management --all-features --test coverage_pg --locked -- --ignored
       - name: runner protocol routing (pg)
         run: cargo test -p runner --features pg --test pg_protocol --locked -- --ignored --test-threads=1
       - name: test-plan pg aggregate

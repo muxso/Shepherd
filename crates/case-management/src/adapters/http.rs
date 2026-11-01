@@ -70,6 +70,7 @@ pub fn router(
         )
         .route("/requirement-case/link", post(link_req_case))
         .route("/requirement-case/unlink", post(unlink_req_case))
+        .route("/requirement/functional-coverage", get(project_coverage))
         .route("/requirement/{id}/functional-coverage", get(requirement_coverage))
         .with_state(CaseState { create, update, delete, list, import, repo, sessions })
 }
@@ -139,6 +140,24 @@ async fn unlink_req_case(
         .await
     {
         Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
+    }
+}
+
+#[utoipa::path(get, path = "/requirement/functional-coverage", tag = "functional-case", params(ProjectQuery), responses((status = 200, body = BTreeMap<String, Vec<i32>>), (status = 400), (status = 403)), security(("bearer" = [])))]
+async fn project_coverage(
+    user: AuthUser,
+    State(st): State<CaseState>,
+    Query(q): Query<ProjectQuery>,
+) -> Response {
+    if !user.can("FUNCTIONAL_CASE", "READ") || !user.can("REQUIREMENT", "READ") {
+        return (StatusCode::FORBIDDEN, "permission denied").into_response();
+    }
+    if q.project_id.trim().is_empty() {
+        return (StatusCode::BAD_REQUEST, "projectId is required").into_response();
+    }
+    match st.repo.project_coverage(&q.project_id).await {
+        Ok(covered) => Json(covered).into_response(),
         Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response(),
     }
 }
@@ -727,7 +746,7 @@ fn rows_to_xlsx(rows: &[Vec<String>]) -> Result<Vec<u8>, rust_xlsxwriter::XlsxEr
 #[derive(OpenApi)]
 #[openapi(
     paths(
-        create_case, update_case, delete_case, list_cases, get_case, export_cases, import_cases,
+        project_coverage, create_case, update_case, delete_case, list_cases, get_case, export_cases, import_cases,
         list_case_changes, list_case_bugs, list_case_reviews, list_case_plans,
         list_case_dependencies, add_case_dependency, remove_case_dependency
     ),
@@ -756,7 +775,7 @@ mod tests {
     async fn app(perms: &str) -> (Router, String) {
         let repo = Arc::new(InMemoryCaseRepository::new());
         let sessions = Arc::new(InMemorySessionStore::new());
-        let set = PermissionSet::from_raw([perms.to_string()]).expect("perms");
+        let set = PermissionSet::from_raw(perms.split(',').map(str::to_string)).expect("perms");
         let token = sessions.create("u", set, 3600).await.expect("token");
         let r = router(
             CreateCaseUseCase::new(repo.clone()),
@@ -777,6 +796,29 @@ mod tests {
             b = b.header("authorization", format!("Bearer {t}"));
         }
         b.body(Body::from(body.to_string())).expect("req")
+    }
+
+    #[tokio::test]
+    async fn project_coverage_requires_both_read_permissions_and_a_project() {
+        for (permissions, query, expected) in [
+            ("FUNCTIONAL_CASE:READ", "?projectId=p1", StatusCode::FORBIDDEN),
+            ("REQUIREMENT:READ", "?projectId=p1", StatusCode::FORBIDDEN),
+            ("FUNCTIONAL_CASE:READ,REQUIREMENT:READ", "?projectId=", StatusCode::BAD_REQUEST),
+            ("FUNCTIONAL_CASE:READ,REQUIREMENT:READ", "?projectId=p1", StatusCode::OK),
+        ] {
+            let (app, token) = app(permissions).await;
+            let response = app
+                .oneshot(
+                    Request::builder()
+                        .uri(format!("/requirement/functional-coverage{query}"))
+                        .header("authorization", format!("Bearer {token}"))
+                        .body(Body::empty())
+                        .expect("request"),
+                )
+                .await
+                .expect("response");
+            assert_eq!(response.status(), expected);
+        }
     }
 
     #[tokio::test]

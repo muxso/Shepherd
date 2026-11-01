@@ -4,7 +4,11 @@ const FORBIDDEN: &[&str] = &["sqlx", "axum", "reqwest", "tower_http"];
 #[test]
 fn storage_has_no_native_business_table_dependencies() {
     let base = Path::new(env!("CARGO_MANIFEST_DIR"));
-    for relative in ["src/adapters/pg.rs", "migrations/0001_external_facts.sql"] {
+    for relative in [
+        "src/adapters/pg.rs",
+        "src/adapters/productivity.sql",
+        "migrations/0001_external_facts.sql",
+    ] {
         let source = fs::read_to_string(base.join(relative)).expect("storage source");
         for table in [
             "ms_project",

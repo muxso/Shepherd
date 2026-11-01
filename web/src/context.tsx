@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
+import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { api, setUnauthorizedHandler, tokenStore, userStore, type Project } from './api'
 import { isProjectScoped, stripScope } from './scope'
@@ -28,15 +28,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const urlProjectId = stripScope(loc.pathname).projectId
   const projectId = urlProjectId || defaultProjectId
 
-  const logout = () => {
+  const logout = useCallback(() => {
     tokenStore.clear()
     userStore.clear()
     setToken('')
     setProjects([])
     setProjectsLoaded(false)
-  }
+  }, [])
 
-  useEffect(() => setUnauthorizedHandler(logout), [])
+  useEffect(() => setUnauthorizedHandler(logout), [logout])
 
   // Keep the remembered default in sync with the URL's project — but only once we've confirmed
   // it's accessible, so a shared link to someone else's project never pollutes the viewer's default.
@@ -48,15 +48,21 @@ export function AppProvider({ children }: { children: ReactNode }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [urlProjectId, projects])
 
-  const setProjectId = (id: string) => {
+  const setProjectId = useCallback((id: string) => {
     setDefaultProjectId(id)
     localStorage.setItem(PROJECT_KEY, id)
-    // On a project-scoped page the URL is the source of truth → re-scope it (keeps deep links shareable).
-    const { path } = stripScope(loc.pathname)
-    if (isProjectScoped(path)) navigate(`/p/${id}${path}${loc.search}`)
-  }
+    const { projectId: currentProject, path } = stripScope(loc.pathname)
+    if (currentProject || isProjectScoped(path)) {
+      // Detail/view IDs belong to the old project. Keep the logical page and
+      // unrelated query settings, but never reopen another project's entity.
+      const search = new URLSearchParams(loc.search)
+      if (id !== currentProject) { search.delete('open'); search.delete('view') }
+      const query = search.toString()
+      navigate(`/p/${encodeURIComponent(id)}${path}${query ? `?${query}` : ''}`)
+    }
+  }, [loc.pathname, loc.search, navigate])
 
-  const reloadProjects = async () => {
+  const reloadProjects = useCallback(async () => {
     if (!token) return
     // Fetch projects across all orgs and flatten (fresh installs usually have one org). /organization is paginated.
     const orgs = (await api.organizations()).items
@@ -66,26 +72,25 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setProjectsLoaded(true)
     // Only fix the *default* when it's missing/stale — never override the project the URL points at
     // (a shared link to an inaccessible project must fail loud in <ProjectGuard>, not silently switch).
-    if (all.length && !all.some((p) => p.id === defaultProjectId)) {
-      setDefaultProjectId(all[0].id)
+    setDefaultProjectId(current => {
+      if (!all.length || all.some(p => p.id === current)) return current
       localStorage.setItem(PROJECT_KEY, all[0].id)
-    }
-  }
+      return all[0].id
+    })
+  }, [token])
 
   useEffect(() => {
     if (token) reloadProjects().catch(() => undefined)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [token])
+  }, [token, reloadProjects])
 
-  const login = (t: string) => {
+  const login = useCallback((t: string) => {
     tokenStore.set(t)
     setToken(t)
-  }
+  }, [])
 
   const value = useMemo<AppState>(
     () => ({ token, login, logout, projects, projectsLoaded, projectId, setProjectId, reloadProjects }),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [token, projects, projectsLoaded, projectId],
+    [token, login, logout, projects, projectsLoaded, projectId, setProjectId, reloadProjects],
   )
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>
 }

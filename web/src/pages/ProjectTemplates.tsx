@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Button, Form, Input, Popconfirm, Select, Space, Switch, Table, Tabs, Tag } from 'antd'
+import { createPortal } from 'react-dom'
 import { DeleteOutlined, HolderOutlined, PlusOutlined } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
 import { message } from '../feedback'
@@ -26,24 +27,27 @@ const FIELD_TYPES: TemplateFieldType[] = ['text', 'textarea', 'select', 'multise
 export default function ProjectTemplates() {
   const { t } = useI18n()
   const { projectId } = useApp()
+  const [kind, setKind] = useState<TemplateKind>('requirement')
+  const [toolbar, setToolbar] = useState<HTMLDivElement | null>(null)
   if (!projectId) return <SelectProjectEmpty />
   return (
     <PageContainer>
       <PageHeader title={t('tmpl.title', '模板管理')} />
       <PageBody>
-        <Tabs
-          items={[
-            { key: 'requirement', label: t('tmpl.kindRequirement', '需求'), children: <FieldTemplateEditor kind="requirement" projectId={projectId} /> },
-            { key: 'functional-case', label: t('tmpl.kindCase', '测试用例'), children: <FieldTemplateEditor kind="functional-case" projectId={projectId} /> },
-            { key: 'bug', label: t('tmpl.kindBug', '缺陷'), children: <FieldTemplateEditor kind="bug" projectId={projectId} /> },
-          ]}
+        <Tabs activeKey={kind} onChange={value => setKind(value as TemplateKind)} tabBarStyle={{ marginBottom: 8 }}
+          tabBarExtraContent={<div ref={setToolbar} />}
+          items={([
+            ['requirement', t('tmpl.kindRequirement', '需求')],
+            ['functional-case', t('tmpl.kindCase', '测试用例')],
+            ['bug', t('tmpl.kindBug', '缺陷')],
+          ] as const).map(([key, label]) => ({ key, label, children: <FieldTemplateEditor key={projectId} kind={key} projectId={projectId} active={kind === key} toolbar={toolbar} /> }))}
         />
       </PageBody>
     </PageContainer>
   )
 }
 
-function FieldTemplateEditor({ kind, projectId }: { kind: TemplateKind; projectId: string }) {
+function FieldTemplateEditor({ kind, projectId, active, toolbar }: { kind: TemplateKind; projectId: string; active: boolean; toolbar: HTMLDivElement | null }) {
   const { t } = useI18n()
   const [fields, setFields] = useState<TemplateField[]>(() => defaultTemplateFields(kind))
   // Saved snapshot (JSON) for dirty checking; empty templateId = first save goes through POST.
@@ -153,12 +157,10 @@ function FieldTemplateEditor({ kind, projectId }: { kind: TemplateKind; projectI
 
   return (
     <div>
-      <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', marginBottom: 12 }}>
-        <Space>
-          <Button icon={<PlusOutlined />} onClick={() => setAddOpen(true)}>{t('tmpl.addField', '添加字段')}</Button>
-          <Button type="primary" loading={saving} disabled={!dirty} onClick={save}>{t('a.save', '保存')}</Button>
-        </Space>
-      </div>
+      {active && toolbar && createPortal(<Space size={8}>
+        <Button icon={<PlusOutlined />} onClick={() => setAddOpen(true)}>{t('tmpl.addField', '添加字段')}</Button>
+        <Button type="primary" loading={saving} disabled={!dirty} onClick={save}>{t('a.save', '保存')}</Button>
+      </Space>, toolbar)}
       <Table<TemplateField>
         rowKey="key"
         size="middle"

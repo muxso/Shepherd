@@ -137,7 +137,11 @@ async fn dashboard(
     Path(id): Path<String>,
     Query(q): Query<ListQuery>,
 ) -> Response {
-    if !u.can("PROJECT", "READ") || !u.can("REQUIREMENT", "READ") || !u.can("BUG", "READ") {
+    if !u.can("PROJECT", "READ")
+        || !u.can("REQUIREMENT", "READ")
+        || !u.can("BUG", "READ")
+        || !u.can("FUNCTIONAL_CASE", "READ")
+    {
         return denied();
     }
     reply(s.svc.0.dashboard(&id, q.days.unwrap_or(7).clamp(1, 366)).await)

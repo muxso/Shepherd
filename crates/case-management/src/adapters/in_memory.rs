@@ -115,6 +115,25 @@ impl CaseRepository for InMemoryCaseRepository {
         Ok(())
     }
 
+    async fn project_coverage(
+        &self,
+        project_id: &str,
+    ) -> Result<std::collections::BTreeMap<String, Vec<i32>>, RepoError> {
+        let links = self.links.lock().map_err(|e| RepoError::Backend(e.to_string()))?;
+        let cases = self.cases.lock().map_err(|e| RepoError::Backend(e.to_string()))?;
+        let mut covered = std::collections::BTreeMap::<String, Vec<i32>>::new();
+        for (requirement, index, case_id, _) in links.iter() {
+            if cases.iter().any(|case| &case.id == case_id && case.project_id == project_id) {
+                covered.entry(requirement.clone()).or_default().push(*index);
+            }
+        }
+        for indexes in covered.values_mut() {
+            indexes.sort_unstable();
+            indexes.dedup();
+        }
+        Ok(covered)
+    }
+
     async fn cases_for_requirement(
         &self,
         requirement_id: &str,
