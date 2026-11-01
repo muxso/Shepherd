@@ -175,7 +175,7 @@ async fn productivity_uses_source_dates_creators_and_isolated_project_facts() {
         (
             "commit",
             "unknown",
-            json!({"author":"研发作者","authoredAt":format!("{today}T02:00:00+08:00"),"requirementIds":["new"]}),
+            json!({"author":"研发作者","authoredAt":format!("{today}T02:00:00+08:00"),"requirementIds":["REQ-42"]}),
         ),
         (
             "commit",
