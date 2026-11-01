@@ -7,6 +7,9 @@ fn storage_has_no_native_business_table_dependencies() {
     for relative in [
         "src/adapters/pg.rs",
         "src/adapters/productivity.sql",
+        "src/adapters/record_select.sql",
+        "src/adapters/requirement_output.sql",
+        "src/adapters/bug_statistics.sql",
         "migrations/0001_external_facts.sql",
     ] {
         let source = fs::read_to_string(base.join(relative)).expect("storage source");

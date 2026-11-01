@@ -15,6 +15,7 @@ export interface ProductivityStats {
 }
 export interface DevopsDashboard {
   productivity?: ProductivityStats;
+  bugStatistics?: BugStatistics;
   source: DevopsSource; totals: { requirements: number; bugs: number; sprints: number; delayed: number; delivered: number };
   authors: DevopsAuthor[]; codeScope: string; historyScope: string;
 }
@@ -25,8 +26,25 @@ export interface DevopsRow {
   [key: string]: unknown;
 }
 export const devopsApi = {
+  requirementOutput: (query: Record<string, string | number>) => request<RequirementOutputData>('GET', `/api/devops/requirement-output?${new URLSearchParams(Object.entries(query).map(([key,value]) => [key,String(value)]))}`),
   sources: () => request<{ items: DevopsSource[] }>('GET', '/api/devops/sources'),
   dashboard: (id: string, days: number) => request<DevopsDashboard>('GET', `/api/devops/sources/${encodeURIComponent(id)}/dashboard?days=${days}`),
   records: (id: string, query: Record<string, string | number | boolean>) => request<{ items: DevopsRow[]; total: number }>('GET', `/api/devops/sources/${encodeURIComponent(id)}/records?${new URLSearchParams(Object.entries(query).map(([k, v]) => [k, String(v)]))}`),
 }
 
+
+export interface BugStatistics {
+  total: number; new: number; linked: number; unlinked: number;
+  statuses: { status: string; count: number }[]; reporters: { name: string; count: number }[];
+}
+export interface RequirementOutputData {
+  source: DevopsSource;
+  requirement: DevopsRow & { creator?: string; owner?: string; status?: string };
+  output: {
+    bugTotal?: number; commitTotal: number; bugs?: DevopsRow[]; commits: DevopsRow[];
+    testers?: { name: string; bugs: number }[]; developers: { name: string; commits: number }[];
+    bugStates?: { status: string; count: number }[];
+    repositories: { id: string; name: string; commits: number; additions: number | null; deletions: number | null; unknownStats: number; authors: string[] }[];
+  };
+  permissions: { bugs: boolean }; pageSize: number; bugPage: number; commitPage: number;
+}

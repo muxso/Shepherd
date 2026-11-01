@@ -1,4 +1,4 @@
-use crate::domain::{CompleteRun, Error, ListQuery, NewSource, Record};
+use crate::domain::{CompleteRun, Error, ListQuery, NewSource, Record, RequirementOutputQuery};
 use async_trait::async_trait;
 use serde_json::Value;
 #[async_trait]
@@ -10,5 +10,6 @@ pub trait Store: Send + Sync {
     async fn complete(&self, run: &str, body: CompleteRun) -> Result<Value, Error>;
     async fn fail(&self, run: &str, error: &str) -> Result<Value, Error>;
     async fn dashboard(&self, source: &str, days: i64) -> Result<Value, Error>;
+    async fn requirement_output(&self, query: RequirementOutputQuery) -> Result<Value, Error>;
     async fn records(&self, source: &str, query: ListQuery) -> Result<Value, Error>;
 }

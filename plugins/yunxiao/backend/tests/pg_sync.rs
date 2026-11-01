@@ -2,7 +2,9 @@
 use serde_json::json;
 use shepherd_yunxiao::{
     adapters::pg::PgStore,
-    domain::{CompleteRun, ListQuery, NewSource, ProductivityMetric, Record},
+    domain::{
+        CompleteRun, ListQuery, NewSource, ProductivityMetric, Record, RequirementOutputQuery,
+    },
     ports::Store,
 };
 fn completion() -> CompleteRun {
@@ -160,7 +162,7 @@ async fn productivity_uses_source_dates_creators_and_isolated_project_facts() {
         (
             "bug",
             "missing-creator",
-            json!({"owner":"不能算创建人","createdAt":format!("{today}T01:00:00+08:00")}),
+            json!({"parentId":"new","owner":"不能算创建人","status":"修复中","createdAt":format!("{today}T01:00:00+08:00")}),
         ),
         (
             "testcase",
@@ -170,12 +172,12 @@ async fn productivity_uses_source_dates_creators_and_isolated_project_facts() {
         (
             "commit",
             "linked",
-            json!({"author":"研发作者","authoredAt":format!("{today}T01:00:00+08:00"),"requirementIds":["new"],"additions":12,"deletions":3}),
+            json!({"repoId":"repo-a","repo":"服务端","author":"研发作者","authoredAt":format!("{today}T01:00:00+08:00"),"requirementIds":["new"],"additions":12,"deletions":3}),
         ),
         (
             "commit",
             "unknown",
-            json!({"author":"研发作者","authoredAt":format!("{today}T02:00:00+08:00"),"requirementIds":["REQ-42"]}),
+            json!({"repoId":"repo-b","repo":"前端","author":"研发作者","authoredAt":format!("{today}T02:00:00+08:00"),"requirementIds":["REQ-42"]}),
         ),
         (
             "commit",
@@ -215,6 +217,47 @@ async fn productivity_uses_source_dates_creators_and_isolated_project_facts() {
     .expect("inactive");
     let dashboard = store.dashboard(id, 7).await.expect("dashboard");
     let metrics = &dashboard["productivity"]["metrics"];
+    assert_eq!(dashboard["bugStatistics"]["total"], 1);
+    assert_eq!(dashboard["bugStatistics"]["linked"], 1);
+    assert_eq!(dashboard["bugStatistics"]["unlinked"], 0);
+    let output = store
+        .requirement_output(RequirementOutputQuery {
+            source_id: Some(id.into()),
+            reference: "REQ-42".into(),
+            ..Default::default()
+        })
+        .await
+        .expect("requirement output");
+    assert_eq!(output["requirement"]["creator"], "产品作者");
+    assert_eq!(output["output"]["bugTotal"], 1);
+    assert_eq!(output["output"]["commitTotal"], 2);
+    assert_eq!(output["output"]["repositories"].as_array().expect("repositories").len(), 2);
+    assert!(output["output"]["bugs"][0].get("raw").is_none());
+    let project_output = store
+        .requirement_output(RequirementOutputQuery {
+            project_id: Some("output-test".into()),
+            reference: "new".into(),
+            ..Default::default()
+        })
+        .await
+        .expect("project reference");
+    assert_eq!(project_output["output"]["commitTotal"], 2);
+    assert!(store
+        .requirement_output(RequirementOutputQuery {
+            project_id: Some("foreign-project".into()),
+            reference: "REQ-42".into(),
+            ..Default::default()
+        })
+        .await
+        .is_err());
+    assert!(store
+        .requirement_output(RequirementOutputQuery {
+            reference: "REQ-42".into(),
+            ..Default::default()
+        })
+        .await
+        .is_err());
+
     assert_eq!(metrics["requirements"]["current"], 1);
     assert_eq!(metrics["requirements"]["previous"], 1);
     assert_eq!(metrics["requirements"]["missingTime"], 1);

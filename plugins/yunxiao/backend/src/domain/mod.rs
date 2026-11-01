@@ -41,6 +41,20 @@ impl Record {
             chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d")
                 .map_err(|_| Error::Invalid("invalid due date".into()))?;
         }
+        if let Some(references) = self.data.get("requirementIds") {
+            let valid = references.as_array().is_some_and(|items| {
+                items.len() <= 1000
+                    && items.iter().all(|item| {
+                        item.as_str()
+                            .is_some_and(|value| !value.trim().is_empty() && value.len() <= 300)
+                    })
+            });
+            if !valid {
+                return Err(Error::Invalid(
+                    "requirementIds must contain bounded, nonempty references".into(),
+                ));
+            }
+        }
         if self.kind == "commit" {
             if self.data.get("isMerge").and_then(Value::as_bool) == Some(true)
                 || self.data.get("parentIds").and_then(Value::as_array).is_some_and(|p| p.len() > 1)
@@ -114,6 +128,19 @@ impl CompleteRun {
         Ok(())
     }
 }
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "http", derive(utoipa::IntoParams))]
+pub struct RequirementOutputQuery {
+    pub project_id: Option<String>,
+    pub source_id: Option<String>,
+    pub reference: String,
+    pub days: Option<i32>,
+    pub bug_page: Option<i64>,
+    pub commit_page: Option<i64>,
+    pub page_size: Option<i64>,
+}
+
 #[derive(Debug, Clone, Copy, Deserialize)]
 #[serde(rename_all = "camelCase")]
 #[cfg_attr(feature = "http", derive(utoipa::ToSchema))]

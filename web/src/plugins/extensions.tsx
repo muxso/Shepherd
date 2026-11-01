@@ -12,3 +12,14 @@ export function PluginHomeExtensions(props: HomeExtensionProps) {
   return <>{homeExtensions.filter(extension => enabled(extension.pluginId)).map(({ pluginId, component: Component }) =>
     <Suspense key={pluginId} fallback={null}><Component {...props} /></Suspense>)}</>
 }
+
+interface RequirementExtensionProps { projectId: string; requirementId: string; title: string }
+const requirementExtensions = [
+  { pluginId: 'yunxiao', key: 'yunxiao-output', label: '岗位产出', component: lazy(() => import('./yunxiao/RequirementExtension')) },
+]
+export function useRequirementExtensions(props: RequirementExtensionProps) {
+  const { enabled } = usePlugins()
+  return requirementExtensions.filter(extension => enabled(extension.pluginId)).map(({ key, label, component: Component }) => ({
+    key, label, children: <Suspense fallback={null}><Component {...props} /></Suspense>,
+  }))
+}
