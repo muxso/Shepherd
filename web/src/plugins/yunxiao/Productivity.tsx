@@ -85,7 +85,7 @@ export function ProductivityContent({ data, info, controls, embedded = false }: 
       </Space>}>
         <div className="yx-output-kpis">
           {config.metrics.map(([key, label]) => { const item = productivity.metrics[key]; return <button type="button" key={key}
-            className={`yx-output-kpi ${key === metricKey ? 'selected' : ''}`} aria-pressed={key === metricKey} onClick={() => setMetricKey(key)}>
+            className={`yx-output-kpi ${key === metricKey ? 'selected' : ''}`} aria-pressed={key === metricKey} onClick={() => { setMetricKey(key); setActiveDay(null) }}>
             <span>{label}</span><strong>{item ? number(item.current) : '—'}</strong>{item && <Comparison metric={item} />}
           </button> })}
         </div>

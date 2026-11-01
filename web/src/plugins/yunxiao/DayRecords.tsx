@@ -14,6 +14,7 @@ export default function DayRecords({ source, date, metric, cache }: { source: st
   const [error, setError] = useState('')
   useEffect(() => {
     let live = true
+    setData(null); setError('')
     const key = `${source}:${metric}:${date}`
     let pending = cache.get(key)
     if (!pending) {

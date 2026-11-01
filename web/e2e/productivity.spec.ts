@@ -194,6 +194,8 @@ test('trend popovers load concrete records on demand, cache them and link to fil
   await bar.hover()
   expect(lookups).toEqual(['requirements'])
   await panel.getByRole('button', { name: /已交付需求/ }).click()
+  await expect(panel.getByText('已交付需求趋势', { exact: true })).toBeVisible()
+  expect(lookups).toEqual(['requirements'])
   await bar.hover()
   await expect.poll(() => lookups.at(-1)).toBe('delivered')
   await expect(popup.getByText('登录需求交付')).toBeVisible()
