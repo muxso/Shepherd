@@ -93,7 +93,7 @@ jobs:
       - name: install browser for plugin UI checks
         run: npx playwright install --with-deps chromium
       - name: environment plugin UI contracts
-        run: npx playwright test environment-plugins.spec.ts plugins.spec.ts project-switch.spec.ts productivity.spec.ts
+        run: npx playwright test environment-plugins.spec.ts plugins.spec.ts project-switch.spec.ts productivity.spec.ts requirement-output.spec.ts rich-text.spec.ts
         env:
           E2E_START_VITE: "1"
 

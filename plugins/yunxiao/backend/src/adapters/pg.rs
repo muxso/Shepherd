@@ -1,5 +1,8 @@
 use crate::{
-    domain::{CompleteRun, Error, ListQuery, NewSource, ProductivityMetric, Record},
+    domain::{
+        CompleteRun, Error, ListQuery, NewSource, ProductivityMetric, Record,
+        RequirementOutputQuery,
+    },
     ports::Store,
 };
 use async_trait::async_trait;
@@ -153,10 +156,59 @@ impl Store for PgStore {
             .fetch_one(&self.0)
             .await
             .map_err(db)?;
+        let bug_statistics = sqlx::query_scalar::<_, Value>(include_str!("bug_statistics.sql"))
+            .bind(source)
+            .bind(days as i32)
+            .fetch_one(&self.0)
+            .await
+            .map_err(db)?;
         let runs=sqlx::query_scalar::<_,Value>("SELECT to_jsonb(r) FROM ms_devops_sync_run r WHERE source_id=$1 ORDER BY started_at DESC LIMIT 10").bind(source).fetch_all(&self.0).await.map_err(db)?;
         Ok(
-            json!({"source":source_data,"productivity":productivity,"totals":totals,"authors":authors,"statuses":statuses,"runs":runs,"days":days,"codeScope":"组织可见仓库；关联提交按需求ID归属项目，未关联提交单独保留","historyScope":"首次同步建立基线，此后记录观察到的状态变化；不推算导入前历史"}),
+            json!({"source":source_data,"productivity":productivity,"bugStatistics":bug_statistics,"totals":totals,"authors":authors,"statuses":statuses,"runs":runs,"days":days,"codeScope":"组织可见仓库；关联提交按需求ID归属项目，未关联提交单独保留","historyScope":"首次同步建立基线，此后记录观察到的状态变化；不推算导入前历史"}),
         )
+    }
+    async fn requirement_output(&self, q: RequirementOutputQuery) -> Result<Value, Error> {
+        let project = q.project_id.unwrap_or_default();
+        let source = q.source_id.unwrap_or_default();
+        if (project.is_empty() && source.is_empty())
+            || q.reference.trim().is_empty()
+            || q.reference.len() > 300
+        {
+            return Err(Error::Invalid(
+                "a source/project and exact requirement reference are required".into(),
+            ));
+        }
+        let targets=sqlx::query_scalar::<_,Value>("SELECT jsonb_build_object('source',to_jsonb(s),'requirement',(e.payload-'raw')||jsonb_build_object('externalId',e.external_id,'creator',COALESCE(NULLIF(e.payload->>'creator',''),NULLIF(e.payload->'raw'->'creator'->>'name',''),'待归属'))) FROM ms_devops_entity e JOIN ms_devops_source s ON s.id=e.source_id WHERE e.kind='requirement' AND e.active AND ($1='' OR s.id=$1) AND ($2='' OR s.project_id=$2) AND (e.external_id=$3 OR e.payload->>'serial'=$3) ORDER BY e.external_id LIMIT 2")
+            .bind(source).bind(project).bind(&q.reference).fetch_all(&self.0).await.map_err(db)?;
+        if targets.len() > 1 {
+            return Err(Error::Conflict("ambiguous reference; select a source".into()));
+        }
+        let mut result = targets.into_iter().next().ok_or(Error::NotFound)?;
+        let source = result["source"]["id"].as_str().ok_or(Error::Storage)?;
+        let id = result["requirement"]["externalId"].as_str().ok_or(Error::Storage)?;
+        let serial = result["requirement"]["serial"]
+            .as_str()
+            .filter(|value| !value.is_empty())
+            .unwrap_or(id);
+        let size = q.page_size.unwrap_or(20).clamp(1, 100);
+        let bug_page = q.bug_page.unwrap_or(1).max(1);
+        let commit_page = q.commit_page.unwrap_or(1).max(1);
+        let output = sqlx::query_scalar::<_, Value>(include_str!("requirement_output.sql"))
+            .bind(source)
+            .bind(id)
+            .bind(serial)
+            .bind(q.days.map(|days| days.clamp(1, 366)))
+            .bind(size)
+            .bind((bug_page - 1).saturating_mul(size))
+            .bind((commit_page - 1).saturating_mul(size))
+            .fetch_one(&self.0)
+            .await
+            .map_err(db)?;
+        result["output"] = output;
+        result["pageSize"] = json!(size);
+        result["bugPage"] = json!(bug_page);
+        result["commitPage"] = json!(commit_page);
+        Ok(result)
     }
     async fn records(&self, source: &str, q: ListQuery) -> Result<Value, Error> {
         let page = q.page.unwrap_or(1).max(1);
@@ -198,7 +250,8 @@ impl Store for PgStore {
         .fetch_one(&self.0)
         .await
         .map_err(db)?;
-        let rows=sqlx::query_scalar::<_,Value>(&format!("SELECT payload || jsonb_build_object('externalId',external_id,'observedAt',observed_at) FROM ms_devops_entity WHERE {filters} ORDER BY COALESCE(payload->>'authoredAt',payload->>'updatedAt',payload->>'serial',external_id) DESC,external_id LIMIT $7 OFFSET $8")).bind(source).bind(&kind).bind(&search).bind(&group).bind(delayed).bind(days).bind(size).bind((page-1)*size).fetch_all(&self.0).await.map_err(db)?;
+        let rows=sqlx::query_scalar::<_,Value>(&record_query(&filters,"COALESCE(e.payload->>'authoredAt',e.payload->>'updatedAt',e.payload->>'serial',e.external_id) DESC,e.external_id","$7","$8"))
+            .bind(source).bind(&kind).bind(&search).bind(&group).bind(delayed).bind(days).bind(size).bind((page-1).saturating_mul(size)).fetch_all(&self.0).await.map_err(db)?;
         Ok(json!({"total":n,"items":rows,"page":page,"pageSize":size}))
     }
 }
@@ -240,12 +293,29 @@ impl PgStore {
         .await
         .map_err(db)?;
         // Resolve associations inside the plugin database and the same source, including unresolved IDs.
-        let rows = sqlx::query_scalar::<_,Value>(&format!(
-            "SELECT (e.payload - 'raw') || jsonb_build_object('externalId',e.external_id,'requirements',COALESCE((SELECT jsonb_agg(jsonb_build_object('externalId',COALESCE(r.external_id,link.id),'title',r.payload->>'title','serial',r.payload->>'serial') ORDER BY link.id) FROM jsonb_array_elements_text(CASE WHEN e.kind='commit' THEN COALESCE(e.payload->'requirementIds','[]') ELSE '[]'::jsonb END) link(id) LEFT JOIN LATERAL (SELECT r.external_id,r.payload FROM ms_devops_entity r WHERE r.source_id=e.source_id AND r.kind='requirement' AND r.active AND (r.external_id=link.id OR r.payload->>'serial'=link.id) ORDER BY (r.external_id=link.id) DESC,r.external_id LIMIT 1) r ON true),'[]'::jsonb)) FROM ms_devops_entity e WHERE {filters} ORDER BY e.payload->>'{field}' DESC,e.external_id LIMIT $5 OFFSET $6"
-        )).bind(source).bind(kind).bind(date.to_string()).bind(&search).bind(size).bind((page-1).saturating_mul(size))
-            .fetch_all(&self.0).await.map_err(db)?;
+        let order = format!("(NULLIF(e.payload->>'{field}','')::timestamptz) DESC,e.external_id");
+        let rows = sqlx::query_scalar::<_, Value>(&record_query(&filters, &order, "$5", "$6"))
+            .bind(source)
+            .bind(kind)
+            .bind(date.to_string())
+            .bind(&search)
+            .bind(size)
+            .bind((page - 1).saturating_mul(size))
+            .fetch_all(&self.0)
+            .await
+            .map_err(db)?;
         Ok(json!({"total":count,"items":rows,"page":page,"pageSize":size}))
     }
+}
+
+fn record_query(filters: &str, order: &str, limit: &str, offset: &str) -> String {
+    format!(
+        include_str!("record_select.sql"),
+        filters = filters,
+        order = order,
+        limit = limit,
+        offset = offset
+    )
 }
 
 async fn lock_run(

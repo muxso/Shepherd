@@ -1,3 +1,5 @@
+import { useRequirementExtensions } from '../plugins/extensions'
+import './Requirements.css'
 import { useCallback, useEffect, useState } from 'react'
 import { Badge, Button, Card, Col, DatePicker, Descriptions, Dropdown, Empty, Form, Input, InputNumber, Modal, Popover, Progress, Row, Segmented, Select, Space, Spin, Statistic, Table, Tabs, Tag, Timeline, Tooltip, Typography } from 'antd'
 import ResizableDrawer from '../components/ResizableDrawer'
@@ -821,6 +823,7 @@ function AiReviewPanel({ loading, result, onClose }: { loading: boolean; result:
 function RequirementDetail({ reqId, projectId, modules, onChanged, onDeleted, onOpen }: { reqId: string; projectId: string; modules: ApiModule[]; onChanged: () => void; onDeleted: () => void; onOpen?: (id: string) => void }) {
   const { t } = useI18n()
   const [req, setReq] = useState<Requirement | null>(null)
+  const extensionTabs = useRequirementExtensions({ projectId, requirementId: reqId, title: req?.title || '' })
   // Field template: the edit modal renders custom fields (prefill current values; submit replaces the whole map).
   const { fields: tplFields } = useFieldTemplate('requirement')
   const [cov, setCov] = useState<CoverageCase[]>([])
@@ -1131,7 +1134,7 @@ function RequirementDetail({ reqId, projectId, modules, onChanged, onDeleted, on
                     dataSource={req.versions}
                     columns={[
                       { title: t('req.version', '版本'), dataIndex: 'version', width: 80, render: (v: number) => <span>v{v}{v === req.baselineVersion ? <Tag color="blue" style={{ marginLeft: 6 }}>{t('req.baseline', '基线')}</Tag> : null}</span> },
-                      { title: t('req.versionDesc', '版本说明'), dataIndex: 'description', render: (d?: string) => d || '—' },
+                      { title: t('req.versionDesc', '版本说明'), dataIndex: 'description', render: (d?: string) => <div className="requirement-version-preview"><MarkdownRenderer value={d} /></div> },
                       { title: t('req.action', '操作'), width: 80, render: (_v, row) => <Button type="link" size="small" onClick={() => viewVersion(row.version)}>{t('req.view', '查看')}</Button> },
                     ]}
                   />
@@ -1153,6 +1156,7 @@ function RequirementDetail({ reqId, projectId, modules, onChanged, onDeleted, on
               <Empty description={t('req.notDecomposedHint', '尚未拆分,去「需求信息」点「自动拆分」生成任务图')} />
             ),
           },
+          ...extensionTabs,
         ]}
       />
       <EditDrawer title={t('req.addVersionTitle', '新增需求版本')} open={verOpen} onCancel={() => setVerOpen(false)} footer={null}>
@@ -1268,10 +1272,10 @@ function RequirementDetail({ reqId, projectId, modules, onChanged, onDeleted, on
           <Empty description={t('req.noChanges', '暂无变更记录')} />
         )}
       </ResizableDrawer>
-      <Modal title={verView ? `${t('req.versionDetail', '版本明细')} · v${verView.version}` : ''} open={!!verView} onCancel={() => setVerView(null)} footer={null} destroyOnHidden>
+      <Modal title={verView ? `${t('req.versionDetail', '版本明细')} · v${verView.version}` : ''} open={!!verView} onCancel={() => setVerView(null)} footer={null} width={800} destroyOnHidden>
         {verView && (
-          <Descriptions column={1} size="small" bordered>
-            <Descriptions.Item label={t('req.versionDesc', '版本说明')}>{verView.description || '—'}</Descriptions.Item>
+          <Descriptions column={1} size="small" bordered styles={{ label: { width: 96, minWidth: 96, whiteSpace: 'nowrap' } }}>
+            <Descriptions.Item label={t('req.versionDesc', '版本说明')}><div style={{ maxHeight: '65vh', overflow: 'auto' }}><MarkdownRenderer value={verView.description} /></div></Descriptions.Item>
             <Descriptions.Item label={t('req.acceptanceCriteria', '验收标准')}>
               {verView.acceptanceCriteria?.length ? (
                 <ul style={{ margin: 0, paddingLeft: 18 }}>{verView.acceptanceCriteria.map((c, i) => <li key={i}>{c}</li>)}</ul>

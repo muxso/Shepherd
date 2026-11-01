@@ -1,6 +1,9 @@
 use crate::{
     application::Service,
-    domain::{CompleteRun, Error, ListQuery, NewSource, ProductivityMetric, Record},
+    domain::{
+        CompleteRun, Error, ListQuery, NewSource, ProductivityMetric, Record,
+        RequirementOutputQuery,
+    },
 };
 use axum::{
     extract::{FromRef, Path, Query, State},
@@ -26,6 +29,7 @@ impl FromRef<AppState> for Arc<dyn SessionStore> {
 }
 pub fn router(svc: Service, sessions: Arc<dyn SessionStore>) -> Router {
     Router::new()
+        .route("/api/devops/requirement-output", get(requirement_output))
         .route("/api/devops/sources", get(sources).post(create_source))
         .route("/api/devops/sources/{id}/runs", post(start))
         .route("/api/devops/sources/{id}/dashboard", get(dashboard))
@@ -146,6 +150,29 @@ async fn dashboard(
     }
     reply(s.svc.0.dashboard(&id, q.days.unwrap_or(7).clamp(1, 366)).await)
 }
+#[utoipa::path(get,path="/api/devops/requirement-output",tag="devops",params(RequirementOutputQuery),responses((status=200,body=Value),(status=400),(status=403),(status=404),(status=409)),security(("bearer"=[])))]
+async fn requirement_output(
+    u: AuthUser,
+    State(s): State<AppState>,
+    Query(q): Query<RequirementOutputQuery>,
+) -> Response {
+    if !u.can("PROJECT", "READ") || !u.can("REQUIREMENT", "READ") {
+        return denied();
+    }
+    let result = s.svc.0.requirement_output(q).await.map(|mut result| {
+        let can_bugs = u.can("BUG", "READ");
+        if !can_bugs {
+            if let Some(output) = result["output"].as_object_mut() {
+                for field in ["bugs", "bugTotal", "bugStates", "testers"] {
+                    output.remove(field);
+                }
+            }
+        }
+        result["permissions"] = serde_json::json!({"bugs":can_bugs});
+        result
+    });
+    reply(result)
+}
 #[utoipa::path(get,path="/api/devops/sources/{id}/records",tag="devops",params(("id"=String,Path),ListQuery),responses((status=200,body=Value),(status=403)),security(("bearer"=[])))]
 async fn records(
     u: AuthUser,
@@ -173,10 +200,21 @@ async fn records(
     {
         return denied();
     }
-    reply(s.svc.0.records(&id, q).await)
+    reply(s.svc.0.records(&id, q).await.map(|mut result| {
+        if !u.can("REQUIREMENT", "READ") {
+            if let Some(items) = result["items"].as_array_mut() {
+                for item in items {
+                    if let Some(row) = item.as_object_mut() {
+                        row.remove("requirements");
+                    }
+                }
+            }
+        }
+        result
+    }))
 }
 #[derive(OpenApi)]
-#[openapi(paths(sources,create_source,start,stage,complete,fail,dashboard,records),components(schemas(NewSource,Record,CompleteRun,Batch,Failure,ProductivityMetric)),tags((name="devops",description="External DevOps facts and synchronization")))]
+#[openapi(paths(sources,create_source,start,stage,complete,fail,dashboard,requirement_output,records),components(schemas(NewSource,Record,CompleteRun,Batch,Failure,ProductivityMetric)),tags((name="devops",description="External DevOps facts and synchronization")))]
 struct ApiDoc;
 pub fn openapi() -> utoipa::openapi::OpenApi {
     ApiDoc::openapi()
@@ -215,10 +253,47 @@ mod tests {
         async fn dashboard(&self, _: &str, _: i64) -> Result<Value, Error> {
             Ok(json!({}))
         }
+        async fn requirement_output(&self, _: RequirementOutputQuery) -> Result<Value, Error> {
+            Ok(
+                json!({"output":{"bugs":[{"title":"private bug"}],"bugTotal":1,"testers":[{"name":"private tester"}],"bugStates":[],"commitTotal":2}}),
+            )
+        }
         async fn records(&self, _: &str, _: ListQuery) -> Result<Value, Error> {
             Ok(json!({}))
         }
     }
+    #[tokio::test]
+    async fn requirement_output_hides_bug_details_without_bug_read_permission() {
+        let sessions = Arc::new(InMemorySessionStore::new());
+        let token = sessions
+            .create(
+                "product",
+                PermissionSet::from_raw(["PROJECT:READ", "REQUIREMENT:READ"]).expect("permissions"),
+                3600,
+            )
+            .await
+            .expect("session");
+        let app = router(Service(Arc::new(Stub)), sessions);
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/devops/requirement-output?projectId=p&reference=REQ-42")
+                    .header("Authorization", format!("Bearer {token}"))
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("response");
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), 1_000_000).await.expect("body");
+        let data: Value = serde_json::from_slice(&body).expect("json");
+        assert_eq!(data["permissions"]["bugs"], false);
+        assert!(data["output"].get("bugs").is_none());
+        assert!(data["output"].get("testers").is_none());
+        assert!(data["output"].get("bugTotal").is_none());
+        assert_eq!(data["output"]["commitTotal"], 2);
+    }
+
     #[tokio::test]
     async fn auth_and_sync_permissions_are_enforced() {
         let sessions = Arc::new(InMemorySessionStore::new());
@@ -233,6 +308,8 @@ mod tests {
         let app = router(Service(Arc::new(Stub)), sessions);
         for (method, path, token, expected) in [
             ("GET", "/api/devops/sources", None, 401),
+            ("GET", "/api/devops/requirement-output?projectId=p&reference=REQ-42", None, 401),
+            ("GET", "/api/devops/requirement-output?projectId=p&reference=REQ-42", Some(read.as_str()), 403),
             ("GET", "/api/devops/sources", Some(read.as_str()), 200),
             ("POST", "/api/devops/sources/source/runs", Some(read.as_str()), 403),
             ("POST", "/api/devops/sources/source/runs", Some(sync.as_str()), 200),

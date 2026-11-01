@@ -1,0 +1,3 @@
+.requirement-version-preview { max-height: 96px; overflow: hidden; }
+.requirement-version-preview .markdown-renderer { font-size: 13px; }
+.requirement-version-preview .markdown-renderer > :first-child { margin-top: 0; }
