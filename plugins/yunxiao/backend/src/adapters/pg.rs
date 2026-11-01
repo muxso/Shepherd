@@ -1,5 +1,5 @@
 use crate::{
-    domain::{CompleteRun, Error, ListQuery, NewSource, Record},
+    domain::{CompleteRun, Error, ListQuery, NewSource, ProductivityMetric, Record},
     ports::Store,
 };
 use async_trait::async_trait;
@@ -161,6 +161,9 @@ impl Store for PgStore {
     async fn records(&self, source: &str, q: ListQuery) -> Result<Value, Error> {
         let page = q.page.unwrap_or(1).max(1);
         let size = q.page_size.unwrap_or(30).clamp(1, 100);
+        if q.metric.is_some() || q.date.is_some() {
+            return self.productivity_records(source, q, size, page).await;
+        }
         let kind = q.kind.unwrap_or_else(|| "requirement".into());
         if kind == "history" || kind == "runs" {
             let table = if kind == "history" { "ms_devops_history" } else { "ms_devops_sync_run" };
@@ -199,6 +202,52 @@ impl Store for PgStore {
         Ok(json!({"total":n,"items":rows,"page":page,"pageSize":size}))
     }
 }
+impl PgStore {
+    async fn productivity_records(
+        &self,
+        source: &str,
+        q: ListQuery,
+        size: i64,
+        page: i64,
+    ) -> Result<Value, Error> {
+        let metric = q
+            .metric
+            .ok_or_else(|| Error::Invalid("metric and date are required together".into()))?;
+        let date = chrono::NaiveDate::parse_from_str(q.date.as_deref().unwrap_or(""), "%Y-%m-%d")
+            .map_err(|_| Error::Invalid("invalid event date".into()))?;
+        let kind = metric.record_kind();
+        if q.kind.as_deref().is_some_and(|supplied| supplied != kind) {
+            return Err(Error::Invalid("metric does not match record kind".into()));
+        }
+        let (field, condition) = match metric {
+            ProductivityMetric::Delivered => ("statusChangedAt", "e.payload->>'status'='已发布'"),
+            ProductivityMetric::Commits => ("authoredAt", "true"),
+            ProductivityMetric::LinkedCommits | ProductivityMetric::Additions | ProductivityMetric::Deletions =>
+                ("authoredAt", "jsonb_array_length(COALESCE(e.payload->'requirementIds','[]'))>0"),
+            ProductivityMetric::UnknownStats => ("authoredAt", "jsonb_array_length(COALESCE(e.payload->'requirementIds','[]'))>0 AND (e.payload->>'additions' IS NULL OR e.payload->>'deletions' IS NULL)"),
+            _ => ("createdAt", "true"),
+        };
+        let filters = format!("e.source_id=$1 AND e.active AND e.kind=$2 AND (NULLIF(e.payload->>'{field}','')::timestamptz AT TIME ZONE 'Asia/Shanghai')::date=$3::date AND ({condition}) AND (COALESCE(e.payload->>'title','') ILIKE $4 OR e.external_id ILIKE $4 OR COALESCE(e.payload->>'serial','') ILIKE $4)");
+        let search = format!("%{}%", q.search.unwrap_or_default());
+        let count = sqlx::query_scalar::<_, i64>(&format!(
+            "SELECT count(*) FROM ms_devops_entity e WHERE {filters}"
+        ))
+        .bind(source)
+        .bind(kind)
+        .bind(date.to_string())
+        .bind(&search)
+        .fetch_one(&self.0)
+        .await
+        .map_err(db)?;
+        // Resolve associations inside the plugin database and the same source, including unresolved IDs.
+        let rows = sqlx::query_scalar::<_,Value>(&format!(
+            "SELECT (e.payload - 'raw') || jsonb_build_object('externalId',e.external_id,'requirements',COALESCE((SELECT jsonb_agg(jsonb_build_object('externalId',link.id,'title',r.payload->>'title','serial',r.payload->>'serial') ORDER BY link.id) FROM jsonb_array_elements_text(CASE WHEN e.kind='commit' THEN COALESCE(e.payload->'requirementIds','[]') ELSE '[]'::jsonb END) link(id) LEFT JOIN ms_devops_entity r ON r.source_id=e.source_id AND r.kind='requirement' AND r.external_id=link.id AND r.active),'[]'::jsonb)) FROM ms_devops_entity e WHERE {filters} ORDER BY e.payload->>'{field}' DESC,e.external_id LIMIT $5 OFFSET $6"
+        )).bind(source).bind(kind).bind(date.to_string()).bind(&search).bind(size).bind((page-1).saturating_mul(size))
+            .fetch_all(&self.0).await.map_err(db)?;
+        Ok(json!({"total":count,"items":rows,"page":page,"pageSize":size}))
+    }
+}
+
 async fn lock_run(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     run: &str,

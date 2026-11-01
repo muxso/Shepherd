@@ -1,6 +1,6 @@
 use crate::{
     application::Service,
-    domain::{CompleteRun, Error, ListQuery, NewSource, Record},
+    domain::{CompleteRun, Error, ListQuery, NewSource, ProductivityMetric, Record},
 };
 use axum::{
     extract::{FromRef, Path, Query, State},
@@ -153,7 +153,12 @@ async fn records(
     Path(id): Path<String>,
     Query(q): Query<ListQuery>,
 ) -> Response {
-    let resource = match q.kind.as_deref().unwrap_or("requirement") {
+    let resource = match q
+        .metric
+        .map(|metric| metric.record_kind())
+        .or(q.kind.as_deref())
+        .unwrap_or("requirement")
+    {
         "requirement" => "REQUIREMENT",
         "bug" => "BUG",
         "testcase" => "FUNCTIONAL_CASE",
@@ -161,6 +166,8 @@ async fn records(
     };
     if !u.can("PROJECT", "READ")
         || !u.can(resource, "READ")
+        || (q.metric.is_some_and(|metric| metric.record_kind() == "commit")
+            && !u.can("REQUIREMENT", "READ"))
         || (q.kind.as_deref() == Some("history")
             && (!u.can("BUG", "READ") || !u.can("REQUIREMENT", "READ")))
     {
@@ -169,7 +176,7 @@ async fn records(
     reply(s.svc.0.records(&id, q).await)
 }
 #[derive(OpenApi)]
-#[openapi(paths(sources,create_source,start,stage,complete,fail,dashboard,records),components(schemas(NewSource,Record,CompleteRun,Batch,Failure)),tags((name="devops",description="External DevOps facts and synchronization")))]
+#[openapi(paths(sources,create_source,start,stage,complete,fail,dashboard,records),components(schemas(NewSource,Record,CompleteRun,Batch,Failure,ProductivityMetric)),tags((name="devops",description="External DevOps facts and synchronization")))]
 struct ApiDoc;
 pub fn openapi() -> utoipa::openapi::OpenApi {
     ApiDoc::openapi()
@@ -231,6 +238,8 @@ mod tests {
             ("POST", "/api/devops/sources/source/runs", Some(sync.as_str()), 200),
             ("GET", "/api/devops/sources/source/dashboard", Some(read.as_str()), 403),
             ("GET", "/api/devops/sources/source/records?kind=bug", Some(read.as_str()), 403),
+            ("GET", "/api/devops/sources/source/records?metric=linkedCommits&date=2026-11-01&kind=commit", Some(read.as_str()), 403),
+            ("GET", "/api/devops/sources/source/records?metric=testcases&date=2026-11-01&kind=requirement", Some(read.as_str()), 403),
         ] {
             let mut r = Request::builder().method(method).uri(path);
             if let Some(t) = token {

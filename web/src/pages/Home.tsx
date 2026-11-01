@@ -29,7 +29,7 @@ import type { CollabStats } from '../api'
 import ContributionGrid from '../components/ContributionGrid'
 import GroupedBars, { type BarRow } from '../components/GroupedBars'
 import './Home.css'
-import Productivity from '../plugins/yunxiao/Productivity'
+import { PluginHomeExtensions } from '../plugins/extensions'
 import CardSettings, { CARD_DEFAULT_SIZE, type CardSize } from '../components/CardSettings'
 
 interface Counts {
@@ -876,7 +876,6 @@ function ProjectHome() {
 
   return (
     <div style={{ padding: 16, height: '100%', overflow: 'auto' }}>
-      <Productivity projectId={projectId} />
       {loopHero}
       <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 12 }}>
         <Button size="small" icon={<SettingOutlined />} onClick={() => setEditing(true)}>{t('home.cs.edit', '编辑')}</Button>
@@ -894,6 +893,7 @@ function ProjectHome() {
           </Row>
         )}
       </Spin>
+      <PluginHomeExtensions projectId={projectId} />
       {editing && (
         <CardSettings
           layout={layout}

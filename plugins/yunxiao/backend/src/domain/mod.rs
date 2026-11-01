@@ -114,10 +114,37 @@ impl CompleteRun {
         Ok(())
     }
 }
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "http", derive(utoipa::ToSchema))]
+pub enum ProductivityMetric {
+    Requirements,
+    Delivered,
+    Testcases,
+    Bugs,
+    Commits,
+    LinkedCommits,
+    Additions,
+    Deletions,
+    UnknownStats,
+}
+impl ProductivityMetric {
+    pub fn record_kind(self) -> &'static str {
+        match self {
+            Self::Requirements | Self::Delivered => "requirement",
+            Self::Testcases => "testcase",
+            Self::Bugs => "bug",
+            _ => "commit",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Deserialize, Default)]
 #[cfg_attr(feature = "http", derive(utoipa::IntoParams))]
 #[serde(rename_all = "camelCase")]
 pub struct ListQuery {
+    pub metric: Option<ProductivityMetric>,
+    pub date: Option<String>,
     pub kind: Option<String>,
     pub search: Option<String>,
     pub page: Option<i64>,
