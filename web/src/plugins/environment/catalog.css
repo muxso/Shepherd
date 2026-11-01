@@ -1,0 +1,8 @@
+.environment-plugin-browser { display: grid; grid-template-columns: 180px minmax(0, 1fr); gap: 20px; }
+.environment-plugin-browser > .ant-menu { background: transparent; }
+.environment-plugin-content { min-width: 0; padding-top: 8px; }
+.plugin-catalog-groups { display: flex; flex-direction: column; gap: 20px; }
+.plugin-catalog-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; }
+.plugin-catalog-grid .ant-card-body { display: flex; flex-direction: column; min-height: 130px; gap: 12px; }
+.plugin-catalog-grid .ant-card-body > :last-child { margin-top: auto; }
+@media (max-width: 700px) { .environment-plugin-browser { grid-template-columns: 140px minmax(0, 1fr); gap: 10px; } .plugin-catalog-grid { grid-template-columns: 1fr; } }

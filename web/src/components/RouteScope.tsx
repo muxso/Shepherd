@@ -43,7 +43,7 @@ export function ProjectGuard() {
       </div>
     )
   }
-  return <Outlet />
+  return <Outlet key={projectId} />
 }
 
 /**

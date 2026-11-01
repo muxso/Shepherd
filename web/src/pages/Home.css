@@ -1,0 +1,11 @@
+.ms-case-stats { container-type: inline-size; }
+.ms-case-stats-grid { display: grid; grid-template-columns: 96px repeat(2, minmax(0, 1fr)); align-items: center; gap: 20px; }
+.ms-case-rate { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+.ms-case-rate > div { min-width: 90px; }
+@container (max-width: 600px) {
+  .ms-case-stats-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .ms-case-stats-summary { grid-column: 1 / -1; }
+}
+@container (max-width: 350px) {
+  .ms-case-stats-grid { grid-template-columns: 1fr; }
+}

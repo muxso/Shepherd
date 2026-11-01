@@ -191,6 +191,32 @@ impl CaseRepository for PgCaseRepository {
         Ok(())
     }
 
+    async fn project_coverage(
+        &self,
+        project_id: &str,
+    ) -> Result<std::collections::BTreeMap<String, Vec<i32>>, RepoError> {
+        let rows = sqlx::query(
+            "SELECT DISTINCT rc.requirement_id, rc.criterion_index \
+             FROM ms_requirement r \
+             JOIN ms_requirement_case rc ON rc.requirement_id=r.id \
+             JOIN ms_functional_case c ON c.id=rc.functional_case_id \
+             WHERE r.project_id=$1 AND c.project_id=$1 AND NOT r.deleted AND NOT c.deleted \
+             ORDER BY rc.requirement_id, rc.criterion_index",
+        )
+        .bind(project_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(map_err)?;
+        let mut covered = std::collections::BTreeMap::<String, Vec<i32>>::new();
+        for row in rows {
+            covered
+                .entry(row.try_get("requirement_id").map_err(map_err)?)
+                .or_default()
+                .push(row.try_get("criterion_index").map_err(map_err)?);
+        }
+        Ok(covered)
+    }
+
     async fn cases_for_requirement(
         &self,
         requirement_id: &str,

@@ -1,4 +1,4 @@
-import { EnvironmentPluginsProvider, EnvironmentPluginPanel } from '../plugins/environment/Panel'
+import { EnvironmentPluginsProvider, EnvironmentPluginPanel, EnvironmentPluginBrowser } from '../plugins/environment/Panel'
 import { useEffect, useState } from 'react'
 import { Button, Empty, Input, Select, Space, Switch, Table, Tabs, Typography } from 'antd'
 import { PlusOutlined, DeleteOutlined, SaveOutlined, ReloadOutlined } from '@ant-design/icons'
@@ -158,17 +158,7 @@ export function EnvironmentsPage() {
         </Space>
       ),
     },
-    { key: 'db', label: t('env.db', '数据库'), children: <EnvironmentPluginPanel section="database" /> },
-    { key: 'host', label: 'HOST', children: <EnvironmentPluginPanel section="host" /> },
-    { key: 'pre', label: t('apidef.preProcessors', '前置'), children: <EnvironmentPluginPanel section="pre" /> },
-    { key: 'post', label: t('apidef.postProcessors', '后置'), children: <EnvironmentPluginPanel section="post" /> },
-    { key: 'assert', label: t('apidef.assertions', '断言'), children: <EnvironmentPluginPanel section="assert" /> },
-    { key: 'ssh', label: t('env.ssh', 'SSH配置'), children: <EnvironmentPluginPanel section="ssh" /> },
-    { key: 'amqp', label: t('env.amqp', 'AMQP配置'), children: <EnvironmentPluginPanel section="amqp" /> },
-    { key: 'redis', label: t('env.redis', 'Redis 配置'), children: <EnvironmentPluginPanel section="redis" /> },
-    { key: 'tcp', label: t('env.tcp', 'TCP配置'), children: <EnvironmentPluginPanel section="tcp" /> },
-    { key: 'mongo', label: t('env.mongo', 'MongoDB 配置'), children: <EnvironmentPluginPanel section="mongodb" /> },
-    { key: 'grpc', label: t('env.grpc', 'GRPC配置'), children: <EnvironmentPluginPanel section="grpc" /> },
+    { key: 'plugins', label: '插件配置', children: <EnvironmentPluginBrowser /> },
     {
       key: 'display',
       label: t('env.display', '显示设置'),
@@ -238,7 +228,7 @@ export function EnvironmentsPage() {
             <div style={{ fontWeight: 600, marginBottom: 6 }}>{t('env.desc', '描述')}</div>
             <Input.TextArea rows={2} value={desc} onChange={(e) => setDesc(e.target.value)} placeholder={t('env.descPlaceholder', '请输入描述')} />
           </div>
-          <Tabs className="ms-detail-tabs" size="small" items={tabs} />
+          <Tabs className="ms-detail-tabs" size="small" defaultActiveKey={new URLSearchParams(window.location.search).has('section') ? 'plugins' : new URLSearchParams(window.location.search).get('settings') === 'display' ? 'display' : 'vars'} items={tabs} />
         </div>
         {/* Bottom save bar */}
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, padding: '10px 20px', borderTop: '1px solid var(--border-soft)', background: 'var(--panel)' }}>

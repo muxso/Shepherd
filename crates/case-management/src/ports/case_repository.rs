@@ -104,6 +104,12 @@ pub trait CaseRepository: Send + Sync {
         functional_case_id: &str,
     ) -> Result<(), RepoError>;
 
+    /// Distinct covered acceptance-criterion indexes, scoped to one project.
+    async fn project_coverage(
+        &self,
+        project_id: &str,
+    ) -> Result<std::collections::BTreeMap<String, Vec<i32>>, RepoError>;
+
     async fn cases_for_requirement(
         &self,
         requirement_id: &str,

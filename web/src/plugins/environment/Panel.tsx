@@ -1,9 +1,11 @@
+import './catalog.css'
+import { environmentGroups, environmentSections } from './catalog'
 import { GrpcCall } from './GrpcCall'
 import { SshCommand } from './SshCommand'
 import { RedisCommand } from './RedisCommand'
 import { DatabaseQuery } from './DatabaseQuery'
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from 'react'
-import { Alert, Button, Card, Empty, Input, InputNumber, Modal, Popconfirm, Select, Space, Spin, Switch, Table, Tag, Typography } from 'antd'
+import { Alert, Button, Card, Empty, Input, InputNumber, Modal, Popconfirm, Select, Menu, Space, Spin, Switch, Table, Tag, Typography } from 'antd'
 import { environmentPluginApi as api, type Configuration, type Descriptor, type NewProfile, type PluginConfig, type PluginOutput, type Profile, type Slot } from './api'
 
 const EMPTY: Configuration = { profiles: [], bindings: [], credentials: [], permissions: { manage: false, execute: false } }
@@ -195,4 +197,29 @@ export function EnvironmentPluginPanel({ section }: { section: string }) {
 function Result({ output }: { output: PluginOutput }) {
   const passed = output.status === 'success' && output.assertions.every(a => a.passed)
   return <Card size="small"><Alert type={passed ? 'success' : 'error'} message={passed ? '连接测试通过' : '连接测试未通过'} /><pre style={{ maxHeight: 260, overflow: 'auto', whiteSpace: 'pre-wrap' }}>{JSON.stringify(output.data, null, 2)}</pre>{output.assertions.filter(a => !a.passed).map(a => <div key={a.id}>{a.message}</div>)}</Card>
+}
+
+
+/** A grouped provider navigator keeps connection types out of the page's top-level tabs. */
+export function EnvironmentPluginBrowser() {
+  const state = useContext(Context)
+  if (!state) throw new Error('Environment plugin provider is missing')
+  const [section, setSection] = useState(() => {
+    const requested = new URLSearchParams(window.location.search).get('section')
+    return environmentSections.some(item => item.section === requested) ? requested! : 'database'
+  })
+  const groups = environmentGroups.filter(group => group.key !== 'display')
+  const current = environmentSections.find(item => item.section === section)!
+  const available = state.descriptors.some(descriptor => descriptor.section === section)
+  return <div className="environment-plugin-browser">
+    <Menu aria-label="插件分类" mode="inline" selectedKeys={[section]} onClick={({ key }) => setSection(key)}
+      items={groups.map(group => ({ type: 'group', key: group.key, label: group.name, children: group.items.map(item => ({ key: item.section, label: item.name })) }))} />
+    <div className="environment-plugin-content">
+      <Typography.Title level={5} style={{ marginTop: 0 }}>{current.name}</Typography.Title>
+      <Typography.Paragraph type="secondary">{current.description}</Typography.Paragraph>
+      {state.loading || state.error || !state.environmentId || !state.enabled || available
+        ? <EnvironmentPluginPanel key={section} section={section} />
+        : <Alert type="info" message="待支持" description="当前服务尚无此项可用插件，实现后将在此提供配置。" />}
+    </div>
+  </div>
 }

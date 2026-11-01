@@ -83,6 +83,7 @@ def normalize_workitem(item, kind, collector, groups, sprint_map):
     data = {'serial':item.get('serialNumber') or str(item['id']), 'title':item.get('subject') or '',
         'status':status.get('displayName') or status.get('name') or '',
         'priority':groups.priority_name(item), 'owner':owner, 'group':groups.group_for(owner),
+        'creator':groups.canonical_name(name(item.get('creator'))) if name(item.get('creator')) else '',
         'sprintId':str(sprint.get('id') or ''), 'sprint':sd.get('name') or name(sprint),
         'parentId':str(item.get('parentId') or ''), 'due':end.strftime('%Y-%m-%d') if end else '',
         'dueSource':due_source, 'createdAt':iso(item.get('gmtCreate')), 'updatedAt':iso(item.get('gmtModified')),

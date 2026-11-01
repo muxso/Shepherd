@@ -112,3 +112,135 @@ async fn snapshot_stays_in_plugin_database_without_native_tables() {
         .fetch_one(&pool).await.expect("native table check");
     assert!(!native_exists, "plugin migrations must not install native tables");
 }
+
+#[tokio::test]
+#[ignore = "requires isolated SHEPHERD_YUNXIAO_TEST_DATABASE_URL"]
+async fn productivity_uses_source_dates_creators_and_isolated_project_facts() {
+    let pool = sqlx::PgPool::connect(
+        &std::env::var("SHEPHERD_YUNXIAO_TEST_DATABASE_URL").expect("isolated test database"),
+    )
+    .await
+    .expect("connect");
+    shepherd_yunxiao::adapters::pg::migrate(&pool).await.expect("migrate");
+    let store = PgStore(pool.clone());
+    let source = store
+        .create_source(NewSource {
+            project_id: "output-test".into(),
+            cloud_org_id: "test".into(),
+            cloud_project_id: uuid::Uuid::new_v4().to_string(),
+            name: "Output test".into(),
+        })
+        .await
+        .expect("source");
+    let id = source["id"].as_str().expect("id");
+    let today = sqlx::query_scalar::<_, String>(
+        "SELECT to_char((now() AT TIME ZONE 'Asia/Shanghai')::date,'YYYY-MM-DD')",
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("today");
+    let previous = sqlx::query_scalar::<_, String>(
+        "SELECT to_char((now() AT TIME ZONE 'Asia/Shanghai')::date-7,'YYYY-MM-DD')",
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("previous");
+    let records = [
+        (
+            "requirement",
+            "new",
+            json!({"creator":"产品作者","owner":"当前负责人","createdAt":format!("{today}T00:00:00+08:00"),"status":"已发布","statusChangedAt":format!("{today}T12:00:00+08:00")}),
+        ),
+        (
+            "requirement",
+            "previous",
+            json!({"creator":"产品作者","createdAt":format!("{previous}T23:59:59+08:00")}),
+        ),
+        ("requirement", "missing-time", json!({"creator":"产品作者"})),
+        (
+            "bug",
+            "missing-creator",
+            json!({"owner":"不能算创建人","createdAt":format!("{today}T01:00:00+08:00")}),
+        ),
+        (
+            "testcase",
+            "case",
+            json!({"creator":"测试作者","createdAt":format!("{today}T01:00:00+08:00")}),
+        ),
+        (
+            "commit",
+            "linked",
+            json!({"author":"研发作者","authoredAt":format!("{today}T01:00:00+08:00"),"requirementIds":["new"],"additions":12,"deletions":3}),
+        ),
+        (
+            "commit",
+            "unknown",
+            json!({"author":"研发作者","authoredAt":format!("{today}T02:00:00+08:00"),"requirementIds":["new"]}),
+        ),
+        (
+            "commit",
+            "unlinked",
+            json!({"author":"其他作者","authoredAt":format!("{today}T03:00:00+08:00"),"requirementIds":[],"additions":999,"deletions":999}),
+        ),
+        (
+            "testcase",
+            "inactive",
+            json!({"creator":"删除作者","createdAt":format!("{today}T01:00:00+08:00")}),
+        ),
+        (
+            "testcase",
+            "future",
+            json!({"creator":"未来作者","createdAt":"2999-01-01T00:00:00+08:00"}),
+        ),
+    ];
+    for (kind, external, data) in records {
+        sqlx::query(
+            "INSERT INTO ms_devops_entity(source_id,kind,external_id,payload) VALUES($1,$2,$3,$4)",
+        )
+        .bind(id)
+        .bind(kind)
+        .bind(external)
+        .bind(data)
+        .execute(&pool)
+        .await
+        .expect("fact");
+    }
+    // Inactive snapshots never contribute, regardless of their dates.
+    sqlx::query(
+        "UPDATE ms_devops_entity SET active=false WHERE source_id=$1 AND external_id='inactive'",
+    )
+    .bind(id)
+    .execute(&pool)
+    .await
+    .expect("inactive");
+    let dashboard = store.dashboard(id, 7).await.expect("dashboard");
+    let metrics = &dashboard["productivity"]["metrics"];
+    assert_eq!(metrics["requirements"]["current"], 1);
+    assert_eq!(metrics["requirements"]["previous"], 1);
+    assert_eq!(metrics["requirements"]["missingTime"], 1);
+    assert_eq!(metrics["requirements"]["contributors"][0]["name"], "产品作者");
+    assert_eq!(metrics["delivered"]["contributors"][0]["name"], "当前负责人");
+    assert_eq!(metrics["bugs"]["unattributed"], 1);
+    assert_eq!(metrics["bugs"]["contributors"][0]["name"], "待归属");
+    assert_eq!(metrics["testcases"]["current"], 1);
+    assert_eq!(metrics["commits"]["current"], 3);
+    assert_eq!(metrics["linkedCommits"]["current"], 2);
+    assert_eq!(metrics["additions"]["current"], 12);
+    assert_eq!(metrics["deletions"]["current"], 3);
+    assert_eq!(metrics["unknownStats"]["current"], 1);
+    let trend = metrics["requirements"]["trend"].as_array().expect("trend");
+    assert_eq!(trend.len(), 7);
+    assert_eq!(trend.last().expect("today")["date"], today);
+    assert_eq!(trend.last().expect("today")["value"], 1);
+    assert!(trend[..6].iter().all(|point| point["value"] == 0));
+    sqlx::query("DELETE FROM ms_devops_entity WHERE source_id=$1")
+        .bind(id)
+        .execute(&pool)
+        .await
+        .expect("cleanup");
+    sqlx::query("DELETE FROM ms_devops_source WHERE id=$1")
+        .bind(id)
+        .execute(&pool)
+        .await
+        .expect("cleanup");
+}

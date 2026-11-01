@@ -413,6 +413,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
               style={{ flex: 1, minWidth: 0, borderBottom: 'none', background: 'transparent' }}
             />
             <Select
+              aria-label="项目切换"
               style={{ width: 200 }}
               value={projectId || undefined}
               placeholder={t('top.project')}

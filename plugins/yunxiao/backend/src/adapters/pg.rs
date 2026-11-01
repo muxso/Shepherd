@@ -147,9 +147,15 @@ impl Store for PgStore {
         let totals=sqlx::query_scalar::<_,Value>(&format!("SELECT jsonb_build_object('requirements',count(*) FILTER(WHERE kind='requirement'),'bugs',count(*) FILTER(WHERE kind='bug'),'sprints',count(*) FILTER(WHERE kind='sprint'),'delayed',count(*) FILTER(WHERE {LATE}),'delivered',count(*) FILTER(WHERE kind='requirement' AND payload->>'status'='已发布' AND NULLIF(payload->>'statusChangedAt','')::timestamptz>=now()-make_interval(days => $2::int))) FROM ms_devops_entity WHERE source_id=$1 AND active")).bind(source).bind(days as i32).fetch_one(&self.0).await.map_err(db)?;
         let authors=sqlx::query_scalar::<_,Value>("SELECT jsonb_build_object('name',payload->>'author','group',payload->>'group','commits',count(*),'linkedCommits',count(*) FILTER(WHERE jsonb_array_length(COALESCE(payload->'requirementIds','[]'))>0),'additions',sum((payload->>'additions')::bigint),'deletions',sum((payload->>'deletions')::bigint),'unknownStats',count(*) FILTER(WHERE payload->>'additions' IS NULL OR payload->>'deletions' IS NULL)) FROM ms_devops_entity WHERE source_id=$1 AND active AND kind='commit' AND (payload->>'authoredAt')::timestamptz>=now()-make_interval(days => $2::int) GROUP BY payload->>'author',payload->>'group' ORDER BY count(*) DESC").bind(source).bind(days as i32).fetch_all(&self.0).await.map_err(db)?;
         let statuses=sqlx::query_scalar::<_,Value>("SELECT jsonb_build_object('kind',kind,'status',payload->>'status','count',count(*)) FROM ms_devops_entity WHERE source_id=$1 AND active AND kind IN ('requirement','bug') GROUP BY kind,payload->>'status'").bind(source).fetch_all(&self.0).await.map_err(db)?;
+        let productivity = sqlx::query_scalar::<_, Value>(include_str!("productivity.sql"))
+            .bind(source)
+            .bind(days as i32)
+            .fetch_one(&self.0)
+            .await
+            .map_err(db)?;
         let runs=sqlx::query_scalar::<_,Value>("SELECT to_jsonb(r) FROM ms_devops_sync_run r WHERE source_id=$1 ORDER BY started_at DESC LIMIT 10").bind(source).fetch_all(&self.0).await.map_err(db)?;
         Ok(
-            json!({"source":source_data,"totals":totals,"authors":authors,"statuses":statuses,"runs":runs,"days":days,"codeScope":"组织可见仓库；关联提交按需求ID归属项目，未关联提交单独保留","historyScope":"首次同步建立基线，此后记录观察到的状态变化；不推算导入前历史"}),
+            json!({"source":source_data,"productivity":productivity,"totals":totals,"authors":authors,"statuses":statuses,"runs":runs,"days":days,"codeScope":"组织可见仓库；关联提交按需求ID归属项目，未关联提交单独保留","historyScope":"首次同步建立基线，此后记录观察到的状态变化；不推算导入前历史"}),
         )
     }
     async fn records(&self, source: &str, q: ListQuery) -> Result<Value, Error> {

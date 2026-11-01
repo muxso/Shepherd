@@ -1746,6 +1746,8 @@ export const api = {
     http.post('/requirement-case/link', b),
   unlinkRequirementCase: (b: { requirementId: string; criterionIndex: number; functionalCaseId: string }) =>
     http.post('/requirement-case/unlink', b),
+  projectRequirementCoverage: (projectId: string) =>
+    http.get<Record<string, number[]>>(`/requirement/functional-coverage?projectId=${encodeURIComponent(projectId)}`),
   requirementCoverage: (requirementId: string) =>
     http.get<CoverageCase[]>(`/requirement/${requirementId}/functional-coverage`),
   caseRequirements: (caseId: string) =>

@@ -15,8 +15,10 @@ class SyncTests(unittest.TestCase):
    try:return dt.datetime.fromisoformat(v)
    except (TypeError,ValueError):return None
   c=types.SimpleNamespace(pname=lambda x:x.get('name','') if isinstance(x,dict) else str(x or ''),dateval=date)
-  g=types.SimpleNamespace(priority_name=lambda x:'低',group_for=lambda x:'产品运营一组')
-  r=sync.normalize_workitem({'id':'1','subject':'测试','assignedTo':{'name':'产品'},'status':{'name':'开发中'},'customFieldValues':[{'fieldName':'计划完成日期','values':[{'identifier':'2026-10-01'}]}]},'requirement',c,g,{})
+  g=types.SimpleNamespace(canonical_name=lambda x:x,priority_name=lambda x:'低',group_for=lambda x:'产品运营一组')
+  r=sync.normalize_workitem({'id':'1','subject':'测试','assignedTo':{'name':'产品'},'creator':{'name':'原始创建人'},'status':{'name':'开发中'},'customFieldValues':[{'fieldName':'计划完成日期','values':[{'identifier':'2026-10-01'}]}]},'requirement',c,g,{})
   self.assertEqual(r['data']['due'],'2026-10-01');self.assertEqual(r['data']['priority'],'低')
   self.assertNotIn('author',r['data'])
+  self.assertEqual(r['data']['creator'],'原始创建人')
+  self.assertEqual(r['data']['owner'],'产品')
 if __name__=='__main__':unittest.main()
