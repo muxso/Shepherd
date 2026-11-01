@@ -20,6 +20,7 @@ export interface DevopsDashboard {
 }
 export interface DevopsRow {
   externalId?: string; id?: string | number; serial?: string; title?: string; sha?: string; url?: string;
+  requirements?: { externalId: string; title?: string | null; serial?: string | null }[];
   additions?: number | null; deletions?: number | null; requirementIds?: string[];
   [key: string]: unknown;
 }

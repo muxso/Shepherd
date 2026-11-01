@@ -21,6 +21,7 @@ test('statistics scrolling reaches all six data tabs in a 720px viewport', async
   await scroll.hover()
   await page.mouse.wheel(0, 1100)
   await expect.poll(() => scroll.evaluate(e => e.scrollTop)).toBeGreaterThan(0)
+  await page.getByRole('tab', { name: '明细记录', exact: true }).click()
   for (const name of ['缺陷', '迭代', '实际提交', '状态变化', '同步记录', '需求']) {
     const tab = page.getByRole('tab', { name, exact: true })
     await tab.scrollIntoViewIfNeeded(); await tab.click()

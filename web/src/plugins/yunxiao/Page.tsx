@@ -1,20 +1,34 @@
+import { useLocation } from 'react-router-dom'
 import { useEffect, useState } from 'react'
-import { Alert, Button, Card, Col, Input, Row, Select, Space, Statistic, Switch, Table, Tabs, Tag, Typography } from 'antd'
+import { Alert, Button, Card, Col, Input, Row, Select, Space, Statistic, Switch, Table, Tabs, Tag } from 'antd'
 import { ReloadOutlined } from '@ant-design/icons'
-import Productivity from './Productivity'
+import { ProductivityContent } from './Productivity'
+import StatisticsNotes from './StatisticsNotes'
+import { PageBody, PageContainer, PageHeader } from '../../components/Page'
 import { devopsApi, type DevopsDashboard, type DevopsRow, type DevopsSource } from './api'
 const kinds = [{ key: 'requirement', label: '需求' }, { key: 'bug', label: '缺陷' }, { key: 'sprint', label: '迭代' }, { key: 'testcase', label: '测试用例' }, { key: 'commit', label: '实际提交' }, { key: 'history', label: '状态变化' }, { key: 'runs', label: '同步记录' }]
 const when = (v?: string) => v ? new Date(v).toLocaleString('zh-CN', { hour12: false }) : '—'
 const text = (v: unknown) => v == null || v === '' ? '—' : String(v)
 export default function Devops() {
-  const [sources, setSources] = useState<DevopsSource[]>([]), [source, setSource] = useState('')
+  const location = useLocation()
+  const [query] = useState(() => new URLSearchParams(window.location.search))
+  const [view, setView] = useState(query.has('kind') ? 'records' : 'overview')
+  const [metric, setMetric] = useState(query.get('metric') || '')
+  const [eventDate, setEventDate] = useState(query.get('date') || '')
+  const [sources, setSources] = useState<DevopsSource[]>([]), [source, setSource] = useState(query.get('source') || '')
   const [dashboard, setDashboard] = useState<DevopsDashboard | null>(null), [rows, setRows] = useState<DevopsRow[]>([])
-  const [total, setTotal] = useState(0), [kind, setKind] = useState('requirement'), [days, setDays] = useState(7)
+  const [total, setTotal] = useState(0), [kind, setKind] = useState(kinds.some(item => item.key === query.get('kind')) ? query.get('kind')! : 'requirement'), [days, setDays] = useState(7)
   const [group, setGroup] = useState(''), [search, setSearch] = useState(''), [delayed, setDelayed] = useState(false)
   const [page, setPage] = useState(1), [revision, setRevision] = useState(0), [loading, setLoading] = useState(false), [error, setError] = useState('')
   useEffect(() => {
+    const next = new URLSearchParams(location.search)
+    if (next.get('source')) setSource(next.get('source')!)
+    if (kinds.some(item => item.key === next.get('kind'))) { setKind(next.get('kind')!); setView('records') }
+    setMetric(next.get('metric') || ''); setEventDate(next.get('date') || ''); setPage(1)
+  }, [location.search])
+  useEffect(() => {
     let live = true
-    devopsApi.sources().then(d => { if (live) { setSources(d.items); setSource(s => s || d.items[0]?.id || '') } }).catch(e => { if (live) setError(String(e.message || e)) })
+    devopsApi.sources().then(d => { if (live) { setSources(d.items); setSource(s => d.items.some(item => item.id === s) ? s : d.items[0]?.id || '') } }).catch(e => { if (live) setError(String(e.message || e)) })
     return () => { live = false }
   }, [revision])
   useEffect(() => {
@@ -28,14 +42,14 @@ export default function Devops() {
     if (!source) return
     let live = true
     setLoading(true); setError('')
-    devopsApi.records(source, { kind, days, group, search, page, pageSize: 30, delayedOnly: kind === 'requirement' && delayed }).then(d => {
+    devopsApi.records(source, { kind, days, group, search, page, pageSize: 30, delayedOnly: kind === 'requirement' && delayed, ...(metric && eventDate ? { metric, date: eventDate } : {}) }).then(d => {
       if (live) { setRows(d.items); setTotal(d.total) }
     }).catch(e => { if (live) { setRows([]); setTotal(0); setError(String(e.message || e)) } }).finally(() => { if (live) setLoading(false) })
     return () => { live = false }
-  }, [source, kind, days, group, search, page, delayed, revision])
-  const groups = Array.from(new Set(dashboard?.authors.map(x => x.group) || []))
+  }, [source, kind, days, group, search, page, delayed, revision, metric, eventDate])
+  const groups = Array.from(new Set(dashboard?.authors?.map(x => x.group) || []))
   const info = sources.find(s => s.id === source)
-  const code = dashboard?.authors.reduce((a, p) => ({ commits: a.commits + p.commits, linked: a.linked + p.linkedCommits }), { commits: 0, linked: 0 })
+  const code = dashboard?.authors?.reduce((a, p) => ({ commits: a.commits + p.commits, linked: a.linked + p.linkedCommits }), { commits: 0, linked: 0 })
   const columns = kind === 'testcase' ? [
     { title: '云效编号', dataIndex: 'serial', width: 140 }, { title: '用例名称', dataIndex: 'title' }, { title: '用例库', dataIndex: 'repo', width: 140 }, { title: '目录', dataIndex: 'directory', width: 200 }, { title: '负责人', dataIndex: 'owner', width: 110 }, { title: '优先级', dataIndex: 'priority', width: 90 }, { title: '步骤数', dataIndex: 'steps', width: 90, render: (v?: unknown[]) => v?.length || 0 },
   ] : kind === 'commit' ? [
@@ -62,38 +76,44 @@ export default function Devops() {
       { title: '状态变更', dataIndex: 'statusChangedAt', width: 175, render: when },
     ]),
   ]
-  return <div data-testid="devops-scroll" style={{ height: '100%', minHeight: 0, overflowY: 'auto', padding: 24, boxSizing: 'border-box' }}>
-    <Space style={{ width: '100%', justifyContent: 'space-between', marginBottom: 16 }} wrap>
-      <div><Typography.Title level={3} style={{ margin: 0 }}>云效研发统计</Typography.Title><Typography.Text type="secondary">需求、缺陷、迭代与实际提交 · 插件独立数据</Typography.Text></div>
-      <Space wrap>
-        <Select aria-label="云效项目" style={{ minWidth: 220 }} value={source || undefined} onChange={v => { setSource(v); setPage(1); setGroup('') }} options={sources.map(s => ({ value: s.id, label: s.name }))} placeholder="尚未配置数据源" />
-        <Select aria-label="统计区间" value={days} onChange={v => { setDays(v); setPage(1) }} options={[7, 14, 30, 90].map(v => ({ value: v, label: `最近 ${v} 天` }))} />
-        <Button icon={<ReloadOutlined />} onClick={() => setRevision(x => x + 1)}>刷新数据</Button>
-      </Space>
-    </Space>
-    {error && <Alert showIcon type="error" message={error} style={{ marginBottom: 16 }} />}
-    <Alert type="info" showIcon style={{ marginBottom: 16 }} message={info?.last_success_at ? `最近成功同步：${when(info.last_success_at)} · 每小时自动更新` : '等待首次同步完成；本页不会触发 AI 交付或修改云效数据。'} description={<>延期只统计紧急、高、中；代码只统计实际作者，排除合并提交。代码采集覆盖：{when(info?.code_since || undefined)} 至 {when(info?.code_until || undefined)}。历史指标只使用已采集的数据。</>} />
+  return <PageContainer>
+    <PageHeader title={<span role="heading" aria-level={2}>云效研发统计</span>} extra={<Space size={8} wrap>
+      <Select aria-label="云效项目" style={{ minWidth: 180 }} value={source || undefined} onChange={v => { setSource(v); setPage(1); setGroup('') }} options={sources.map(s => ({ value: s.id, label: s.name }))} placeholder="选择数据源" />
+      <Select aria-label="统计区间" value={days} onChange={v => { setDays(v); setPage(1) }} options={[7,14,30,90,365].map(v => ({ value:v, label:`最近 ${v} 天` }))} />
+      <Button aria-label="刷新数据" icon={<ReloadOutlined />} onClick={() => setRevision(x => x + 1)} />
+      <StatisticsNotes info={info} data={dashboard} />
+    </Space>} />
+    <PageBody testId="devops-scroll">
+      {error && <Alert showIcon type="error" message={error} style={{ marginBottom: 12 }} />}
+      <div className="yx-page-status"><Tag>云效插件</Tag><span>{info?.last_success_at ? `最近同步 ${when(info.last_success_at)}` : '等待首次同步'}</span></div>
+      <Tabs activeKey={view} onChange={setView} items={[
+        { key:'overview', label:'概览', children: <>
     <Row gutter={[12, 12]} style={{ marginBottom: 16 }}>
       {[
         ['需求总数', dashboard?.totals.requirements], ['本期已发布', dashboard?.totals.delivered], ['当前延期', dashboard?.totals.delayed], ['缺陷总数', dashboard?.totals.bugs], ['迭代数', dashboard?.totals.sprints], ['关联需求提交 / 组织提交', code ? `${code.linked} / ${code.commits}` : '—'],
       ].map(([title, value]) => <Col xs={12} lg={4} key={String(title)}><Card size="small"><Statistic title={title} value={value ?? '—'} /></Card></Col>)}
     </Row>
-    {info && <Productivity projectId={info.project_id} sourceId={source} days={days} revision={revision} />}
+    {info && dashboard && <ProductivityContent key={source} info={info} data={dashboard} embedded />}
+        </> },
+        { key:'authors', label:'代码作者', children: <>
+
     <Card title="代码作者与组织分组" size="small" style={{ marginBottom: 16 }}>
-      <Typography.Paragraph type="secondary">{dashboard?.codeScope}。英文别名统一映射；无法确认的身份保留为“待归属”。</Typography.Paragraph>
       <Table size="small" rowKey={r => `${r.name}:${r.group}`} dataSource={dashboard?.authors || []} pagination={{ pageSize: 8, hideOnSinglePage: true }} columns={[
         { title: '实际作者', dataIndex: 'name' }, { title: '分组', dataIndex: 'group' }, { title: '组织提交', dataIndex: 'commits' }, { title: '关联需求提交', dataIndex: 'linkedCommits' }, { title: '新增行', dataIndex: 'additions', render: text }, { title: '删除行', dataIndex: 'deletions', render: text }, { title: '行数未知提交', dataIndex: 'unknownStats' },
       ]} />
     </Card>
-    <Card size="small">
-      <Tabs activeKey={kind} items={kinds} onChange={v => { setKind(v); setPage(1); setSearch(''); setGroup(''); setDelayed(false) }} />
+        </> },
+        { key:'records', label:'明细记录', children: <Card size="small">
+      <Tabs activeKey={kind} items={kinds} onChange={v => { setKind(v); setPage(1); setSearch(''); setGroup(''); setDelayed(false); setMetric(''); setEventDate('') }} />
+      {eventDate && <Tag closable onClose={() => { setEventDate(''); setMetric(''); setPage(1) }}>{eventDate}</Tag>}
       {!['history', 'runs'].includes(kind) && <Space wrap style={{ marginBottom: 16 }}>
         <Input.Search aria-label="搜索云效记录" placeholder="编号、标题、负责人或作者" allowClear onSearch={v => { setSearch(v); setPage(1) }} style={{ width: 320 }} />
-        {kind !== 'sprint' && kind !== 'testcase' && <Select aria-label="组织分组" style={{ width: 180 }} value={group} onChange={v => { setGroup(v); setPage(1) }} options={[{ value: '', label: '全部分组' }, ...Array.from(new Set([...groups, '上海研发组', '产品运营一组', '产品运营二组', '沈阳服务端', '沈阳大前端', '质量交付组', 'AI算法组', '运维组', '待归属'])).map(g => ({ value: g, label: g }))]} />}
-        {kind === 'requirement' && <Space><Switch checked={delayed} onChange={v => { setDelayed(v); setPage(1) }} />只看延期（紧急 / 高 / 中）</Space>}
+        {!metric && kind !== 'sprint' && kind !== 'testcase' && <Select aria-label="组织分组" style={{ width: 180 }} value={group} onChange={v => { setGroup(v); setPage(1) }} options={[{ value: '', label: '全部分组' }, ...Array.from(new Set([...groups, '上海研发组', '产品运营一组', '产品运营二组', '沈阳服务端', '沈阳大前端', '质量交付组', 'AI算法组', '运维组', '待归属'])).map(g => ({ value: g, label: g }))]} />}
+        {!metric && kind === 'requirement' && <Space><Switch checked={delayed} onChange={v => { setDelayed(v); setPage(1) }} />只看延期（紧急 / 高 / 中）</Space>}
       </Space>}
       <Table<DevopsRow> rowKey={r => String(r.externalId || r.id)} loading={loading} dataSource={rows} columns={columns} scroll={{ x: 1300 }} pagination={{ current: page, pageSize: 30, total, showSizeChanger: false, showTotal: n => `${n} 条`, onChange: setPage }} />
-      {kind === 'history' && <Typography.Paragraph type="secondary" style={{ marginTop: 12 }}>{dashboard?.historyScope}</Typography.Paragraph>}
-    </Card>
-  </div>
+    </Card> },
+      ]} />
+    </PageBody>
+  </PageContainer>
 }

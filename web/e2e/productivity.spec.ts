@@ -52,7 +52,9 @@ test('workbench offers role metrics, daily trends and interval comparison', asyn
   await expect(panel.getByText('发现缺陷趋势')).toBeVisible()
   await panel.getByText('研发', { exact: true }).click()
   await expect(panel.getByRole('button', { name: /需求关联提交/ })).toContainText('16')
-  await expect(panel.getByText(/次提交行数未知/)).toBeVisible()
+  await panel.getByRole('button', { name: '统计口径' }).click()
+  await expect(page.getByText(/次行数未知/)).toBeVisible()
+  await panel.getByRole('heading', { name: '岗位产出' }).click()
   await panel.getByRole('combobox', { name: '产出统计区间' }).press('ArrowDown')
   await page.locator('.ant-select-item-option').filter({ hasText: '最近 7 天' }).click()
   await expect.poll(() => requests.at(-1)).toContain('days=7')
@@ -81,13 +83,16 @@ test('home statistics follow the selected project without showing another source
 for (const state of ['disabled', 'unlinked', 'failed'] as const) {
   test(`workbench handles ${state} plugin statistics without inventing values`, async ({ page }) => {
     const requests = await fixture(page, { enabled: state !== 'disabled', linked: state !== 'unlinked', failed: state === 'failed' })
+    const pluginCalls: string[] = []
+    page.on('request', request => { if (new URL(request.url()).pathname.startsWith('/api/devops/')) pluginCalls.push(request.url()) })
     await page.goto('/home')
-    if (state === 'disabled') {
+    if (state === 'disabled' || state === 'unlinked') {
       await expect(page.getByText('编辑', { exact: true })).toBeVisible()
       await expect(page.getByRole('region', { name: '岗位产出统计' })).toHaveCount(0)
       expect(requests).toHaveLength(0)
+      if (state === 'disabled') expect(pluginCalls).toHaveLength(0)
     } else {
-      await expect(page.getByText(state === 'unlinked' ? '当前项目尚未关联云效数据源' : '岗位产出读取失败', { exact: true })).toBeVisible()
+      await expect(page.getByText('岗位产出读取失败', { exact: true })).toBeVisible()
       await expect(page.getByRole('button', { name: /新增需求/ })).toHaveCount(0)
     }
   })
@@ -164,3 +169,68 @@ test('Yunxiao output follows the page source and interval controls', async ({ pa
   await expect(panel.getByRole('button', { name: /新增需求/ })).toContainText('101')
   await expect(panel.getByText('alpha 创建人')).toHaveCount(0)
 })
+
+
+test('trend popovers load concrete records on demand, cache them and link to filtered details', async ({ page }) => {
+  await fixture(page)
+  const lookups: string[] = []
+  await page.route('**/api/devops/sources/*/records?**', route => {
+    const url = new URL(route.request().url()), metric = url.searchParams.get('metric')
+    if (!metric) return route.fulfill({ json: { items: [], total: 0 } })
+    lookups.push(metric)
+    return route.fulfill({ json: { total: 12, items: [{ externalId: 'req-42', serial: 'REQ-42', title: metric === 'testcases' ? '登录校验用例' : metric === 'linkedCommits' ? '实现登录交付' : '登录需求交付', requirements: metric === 'linkedCommits' ? [{ externalId: 'linked', serial: 'REQ-18', title: '关联登录需求' }] : [] }] } })
+  })
+  await page.goto('/devops')
+  const panel = page.getByRole('region', { name: '岗位产出统计' })
+  await expect(panel.locator('.yx-block-column')).toHaveCount(7)
+  expect(lookups).toHaveLength(0)
+  const bar = panel.locator('.yx-block-column').nth(1)
+  await bar.hover()
+  const popup = page.getByLabel('当日产出明细')
+  await expect(popup.getByText('登录需求交付')).toBeVisible()
+  await expect(popup.getByText('REQ-42')).toBeVisible()
+  expect(lookups).toEqual(['requirements'])
+  await panel.getByRole('heading', { name: '岗位产出' }).hover()
+  await bar.hover()
+  expect(lookups).toEqual(['requirements'])
+  await panel.getByRole('button', { name: /已交付需求/ }).click()
+  await expect(panel.getByText('已交付需求趋势', { exact: true })).toBeVisible()
+  expect(lookups).toEqual(['requirements'])
+  await bar.hover()
+  await expect.poll(() => lookups.at(-1)).toBe('delivered')
+  await expect(popup.getByText('登录需求交付')).toBeVisible()
+  await panel.getByText('测试', { exact: true }).click()
+  await bar.hover()
+  await expect(popup.getByText('登录校验用例')).toBeVisible()
+  await panel.getByText('研发', { exact: true }).click()
+  await bar.hover()
+  await expect(popup.getByText(/关联登录需求/)).toBeVisible()
+  await popup.getByRole('link', { name: '查看全部 12 条记录' }).click()
+  await expect(page.getByRole('tab', { name: '明细记录', exact: true })).toHaveAttribute('aria-selected', 'true')
+  await expect(page).toHaveURL(/metric=linkedCommits&date=2026-10-02/)
+  await expect(page.getByRole('cell', { name: '实现登录交付', exact: true })).toBeVisible()
+})
+
+for (const mode of ['light','dark']) {
+  test(`plugin uses shared layout, brand colors and a single compact notes entry in ${mode} mode`, async ({ page }) => {
+    const requests = await fixture(page)
+    await page.addInitScript(mode => localStorage.setItem('shepherd.theme', mode), mode)
+    await page.goto('/devops')
+    const panel = page.getByRole('region', { name: '岗位产出统计' })
+    await expect(panel.getByRole('button', { name: /新增需求/ })).toBeVisible()
+    await expect(page.getByRole('heading', { name: '云效研发统计' })).toHaveCSS('font-size', '15px')
+    await expect(page.getByRole('button', { name: '统计口径' })).toHaveCount(1)
+    await expect(page.locator('.ant-alert-info')).toHaveCount(0)
+    expect(requests.filter(path => path.includes('dashboard'))).toHaveLength(1)
+    for (const role of ['产品','测试','研发']) {
+      await panel.getByText(role, { exact: true }).click()
+      const consistent = await panel.locator('.yx-block-column .filled').first().evaluate(el => {
+        const swatch = document.createElement('span'); swatch.style.color = 'var(--brand)'; document.body.append(swatch)
+        const expected = getComputedStyle(swatch).color; swatch.remove()
+        return getComputedStyle(el).backgroundColor === expected
+      })
+      expect(consistent).toBe(true)
+    }
+    await page.screenshot({ path: `/tmp/shepherd-devops-${mode}.png`, fullPage: true })
+  })
+}

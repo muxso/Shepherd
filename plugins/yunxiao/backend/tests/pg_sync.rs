@@ -2,7 +2,7 @@
 use serde_json::json;
 use shepherd_yunxiao::{
     adapters::pg::PgStore,
-    domain::{CompleteRun, NewSource, Record},
+    domain::{CompleteRun, ListQuery, NewSource, ProductivityMetric, Record},
     ports::Store,
 };
 fn completion() -> CompleteRun {
@@ -149,7 +149,7 @@ async fn productivity_uses_source_dates_creators_and_isolated_project_facts() {
         (
             "requirement",
             "new",
-            json!({"creator":"产品作者","owner":"当前负责人","createdAt":format!("{today}T00:00:00+08:00"),"status":"已发布","statusChangedAt":format!("{today}T12:00:00+08:00")}),
+            json!({"title":"交付具体需求","serial":"REQ-42","creator":"产品作者","owner":"当前负责人","createdAt":format!("{today}T00:00:00+08:00"),"status":"已发布","statusChangedAt":format!("{today}T12:00:00+08:00")}),
         ),
         (
             "requirement",
@@ -233,6 +233,61 @@ async fn productivity_uses_source_dates_creators_and_isolated_project_facts() {
     assert_eq!(trend.last().expect("today")["date"], today);
     assert_eq!(trend.last().expect("today")["value"], 1);
     assert!(trend[..6].iter().all(|point| point["value"] == 0));
+    for (metric, kind, expected) in [
+        (ProductivityMetric::Requirements, "requirement", 1),
+        (ProductivityMetric::Delivered, "requirement", 1),
+        (ProductivityMetric::Testcases, "testcase", 1),
+        (ProductivityMetric::Bugs, "bug", 1),
+        (ProductivityMetric::LinkedCommits, "commit", 2),
+    ] {
+        let rows = store
+            .records(
+                id,
+                ListQuery {
+                    metric: Some(metric),
+                    date: Some(today.clone()),
+                    kind: Some(kind.into()),
+                    page_size: Some(1),
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect("daily records");
+        assert_eq!(rows["total"], expected);
+        assert_eq!(rows["items"].as_array().expect("items").len(), 1);
+        assert!(rows["items"][0].get("raw").is_none());
+        if kind == "commit" {
+            assert_eq!(rows["items"][0]["requirements"][0]["externalId"], "new");
+            assert_eq!(rows["items"][0]["requirements"][0]["title"], "交付具体需求");
+        }
+    }
+    assert!(store
+        .records(
+            id,
+            ListQuery {
+                metric: Some(ProductivityMetric::Delivered),
+                date: Some("2026-02-30".into()),
+                ..Default::default()
+            }
+        )
+        .await
+        .is_err());
+    assert!(store
+        .records(
+            id,
+            ListQuery {
+                metric: Some(ProductivityMetric::Testcases),
+                date: Some(today.clone()),
+                kind: Some("requirement".into()),
+                ..Default::default()
+            }
+        )
+        .await
+        .is_err());
+    assert!(store
+        .records(id, ListQuery { date: Some(today), ..Default::default() })
+        .await
+        .is_err());
     sqlx::query("DELETE FROM ms_devops_entity WHERE source_id=$1")
         .bind(id)
         .execute(&pool)

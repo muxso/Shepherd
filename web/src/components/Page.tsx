@@ -51,8 +51,8 @@ export function PageHeader({
   )
 }
 
-export function PageBody({ children }: { children: ReactNode }) {
-  return <div style={{ flex: 1, overflow: 'auto', padding: 16 }}>{children}</div>
+export function PageBody({ children, testId }: { children: ReactNode; testId?: string }) {
+  return <div data-testid={testId} style={{ flex: 1, overflow: 'auto', padding: 16 }}>{children}</div>
 }
 
 // Shared empty state for pages that require a project selected in the top bar.
