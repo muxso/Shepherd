@@ -78,7 +78,7 @@ export default function Devops() {
         ['需求总数', dashboard?.totals.requirements], ['本期已发布', dashboard?.totals.delivered], ['当前延期', dashboard?.totals.delayed], ['缺陷总数', dashboard?.totals.bugs], ['迭代数', dashboard?.totals.sprints], ['关联需求提交 / 组织提交', code ? `${code.linked} / ${code.commits}` : '—'],
       ].map(([title, value]) => <Col xs={12} lg={4} key={String(title)}><Card size="small"><Statistic title={title} value={value ?? '—'} /></Card></Col>)}
     </Row>
-    {info && <Productivity projectId={info.project_id} sourceId={source} />}
+    {info && <Productivity projectId={info.project_id} sourceId={source} days={days} revision={revision} />}
     <Card title="代码作者与组织分组" size="small" style={{ marginBottom: 16 }}>
       <Typography.Paragraph type="secondary">{dashboard?.codeScope}。英文别名统一映射；无法确认的身份保留为“待归属”。</Typography.Paragraph>
       <Table size="small" rowKey={r => `${r.name}:${r.group}`} dataSource={dashboard?.authors || []} pagination={{ pageSize: 8, hideOnSinglePage: true }} columns={[

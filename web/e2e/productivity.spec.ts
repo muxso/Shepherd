@@ -8,7 +8,7 @@ function dashboard(project: string, days: number) {
     trend: Array.from({ length: days }, (_, day) => ({ date: `2026-10-${String(day + 1).padStart(2, '0')}`, value: day % 5 })),
     contributors: [{ name: `${project} 创建人`, count: project === 'alpha' ? 12 + i : 101 + i }],
   }]))
-  return { totals: { requirements: 80, delivered: 13, delayed: 2 }, productivity: { from: '2026-10-03', through: '2026-11-01', timezone: 'Asia/Shanghai', metrics } }
+  return { authors: [], totals: { requirements: 80, delivered: 13, delayed: 2 }, productivity: { from: '2026-10-03', through: '2026-11-01', timezone: 'Asia/Shanghai', metrics } }
 }
 async function fixture(page: Page, options: { enabled?: boolean; failed?: boolean; linked?: boolean } = {}) {
   await page.addInitScript(() => {
@@ -148,4 +148,19 @@ test('1330 requirements use bounded coverage summaries and no per-row requests',
   expect(summaries).toBeGreaterThan(0)
   expect(summaries).toBeLessThanOrEqual(2)
   expect(perRow).toBe(0)
+})
+
+
+test('Yunxiao output follows the page source and interval controls', async ({ page }) => {
+  await fixture(page)
+  await page.goto('/devops')
+  const panel = page.getByRole('region', { name: '岗位产出统计' })
+  await expect(panel.locator('.yx-block-column')).toHaveCount(7)
+  await page.getByRole('combobox', { name: '统计区间', exact: true }).press('ArrowDown')
+  await page.locator('.ant-select-item-option').filter({ hasText: '最近 30 天' }).click()
+  await expect(panel.locator('.yx-block-column')).toHaveCount(30)
+  await page.getByRole('combobox', { name: '云效项目', exact: true }).press('ArrowDown')
+  await page.locator('.ant-select-item-option').filter({ hasText: 'beta' }).click()
+  await expect(panel.getByRole('button', { name: /新增需求/ })).toContainText('101')
+  await expect(panel.getByText('alpha 创建人')).toHaveCount(0)
 })

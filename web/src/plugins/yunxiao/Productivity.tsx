@@ -11,6 +11,7 @@ const roles: Record<Role, { label: string; color: string; metrics: [string, stri
   testing: { label: '测试', color: '#f59e0b', metrics: [['testcases', '新增用例'], ['bugs', '发现缺陷']] },
   development: { label: '研发', color: '#1685ff', metrics: [['linkedCommits', '需求关联提交'], ['commits', '组织实际提交'], ['additions', '关联提交新增行'], ['deletions', '关联提交删除行']] },
 }
+interface ProductivityProps { projectId: string; sourceId?: string; days?: number; revision?: number }
 const number = (v: number) => v.toLocaleString('zh-CN')
 function Comparison({ metric }: { metric: OutputMetric }) {
   const diff = metric.current - metric.previous
@@ -20,14 +21,15 @@ function Comparison({ metric }: { metric: OutputMetric }) {
 }
 
 // The host only supplies an opaque project reference. Facts stay in the Yunxiao plugin.
-export default function Productivity({ projectId, sourceId }: { projectId: string; sourceId?: string }) {
+export default function Productivity(props: ProductivityProps) {
   const { enabled } = usePlugins()
-  return enabled('yunxiao') ? <ProjectProductivity key={`${projectId}:${sourceId || ''}`} projectId={projectId} sourceId={sourceId} /> : null
+  return enabled('yunxiao') ? <ProjectProductivity key={`${props.projectId}:${props.sourceId || ''}`} {...props} /> : null
 }
-function ProjectProductivity({ projectId, sourceId }: { projectId: string; sourceId?: string }) {
+function ProjectProductivity({ projectId, sourceId, days: selectedDays, revision: outerRevision = 0 }: ProductivityProps) {
   const [sources, setSources] = useState<DevopsSource[]>([])
   const [source, setSource] = useState('')
-  const [days, setDays] = useState(30)
+  const [localDays, setDays] = useState(30)
+  const days = selectedDays ?? localDays
   const [role, setRole] = useState<Role>('product')
   const [metricKey, setMetricKey] = useState('requirements')
   const [data, setData] = useState<DevopsDashboard | null>(null)
@@ -45,7 +47,7 @@ function ProjectProductivity({ projectId, sourceId }: { projectId: string; sourc
       if (!matching.length) setLoading(false)
     }).catch(e => { if (live) { setError(String(e.message || e)); setLoading(false) } })
     return () => { live = false }
-  }, [projectId, sourceId, revision])
+  }, [projectId, sourceId, revision, outerRevision])
   useEffect(() => {
     if (!source) return
     let live = true
@@ -54,7 +56,7 @@ function ProjectProductivity({ projectId, sourceId }: { projectId: string; sourc
       .catch(e => { if (live) setError(String(e.message || e)) })
       .finally(() => { if (live) setLoading(false) })
     return () => { live = false }
-  }, [source, days, revision])
+  }, [source, days, revision, outerRevision])
   const config = roles[role]
   const metric = data?.productivity?.metrics[metricKey]
   const max = Math.max(1, ...(metric?.trend.map(point => point.value) || []))
@@ -71,7 +73,7 @@ function ProjectProductivity({ projectId, sourceId }: { projectId: string; sourc
         <Segmented aria-label="产出岗位" value={role} options={Object.entries(roles).map(([value, item]) => ({ value, label: item.label }))}
           onChange={value => { const next = value as Role; setRole(next); setMetricKey(roles[next].metrics[0][0]) }} />
         {sources.length > 1 && <Select aria-label="产出数据源" value={source} onChange={setSource} options={sources.map(item => ({ value: item.id, label: item.name }))} />}
-        <Select aria-label="产出统计区间" value={days} onChange={setDays} options={[7, 30, 90, 365].map(value => ({ value, label: `最近 ${value} 天` }))} />
+        {selectedDays === undefined && <Select aria-label="产出统计区间" value={days} onChange={setDays} options={[7, 30, 90, 365].map(value => ({ value, label: `最近 ${value} 天` }))} />}
         <Button aria-label="刷新产出统计" icon={<ReloadOutlined />} onClick={() => setRevision(value => value + 1)} />
       </div>
     </div>
