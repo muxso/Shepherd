@@ -8,7 +8,7 @@ fn req(id: &str, status: &str, changed: &str, due: &str) -> Record {
     record(
         id,
         "requirement",
-        json!({"serial":format!("REQ-{id}"),"title":"shared requirement","status":status,"createdAt":"2026-10-01T00:00:00+08:00","statusChangedAt":changed,"due":due,"owner":"甲","group":"研发组","customFieldValues":[{"fieldName":"开发者","values":[{"displayValue":"乙"}]}]}),
+        json!({"serial":format!("REQ-{id}"),"title":"shared requirement","status":status,"createdAt":"2026-10-01T00:00:00+08:00","statusChangedAt":changed,"due":due,"owner":"甲","group":"研发组","customFieldValues":[{"fieldName":"开发者","fieldFormat":"multiUser","values":[{"identifier":"user-b","displayValue":"乙"}]}]}),
     )
 }
 fn query() -> MemberMetricsQuery {
@@ -135,4 +135,26 @@ fn current_month_only_counts_deadlines_that_have_passed() {
     let data = build_member_metrics(&records, &query(), clock).expect("metrics");
     assert_eq!(data.members[0].due_requirements, 1);
     assert_eq!(data.members[0].delay_rate, Some(100.0));
+}
+
+#[test]
+fn free_text_roles_are_never_promoted_to_people() {
+    let mut requirement = req("typed", "已发布", "2026-10-10T00:00:00+08:00", "2026-10-11");
+    requirement.data["customFieldValues"] = json!([
+        {"fieldName":"需求提出人","fieldFormat":"text","values":[{"identifier":"cxl","displayValue":"客户名称与很长的需求说明"}]},
+        {"fieldName":"开发者","fieldFormat":"text","values":[{"identifier":"text-is-not-id","displayValue":"看似姓名"}]},
+        {"fieldName":"协作人","values":[{"identifier":"unknown-type","displayValue":"缺少类型"}]},
+        {"fieldName":"测试人员","fieldFormat":"user","values":[{"identifier":"tester-id","displayValue":"测试甲"}]},
+        {"fieldName":"开发者","fieldFormat":"multiUser","values":[{"identifier":"dev-id","displayValue":"开发乙"},{"displayValue":"缺少标识"},{"identifier":"AK-rule","displayValue":"自动规则"}]}
+    ]);
+    let data = build_member_metrics(&[requirement], &query(), now()).expect("metrics");
+    let names: Vec<_> = data.members.iter().map(|p| p.name.as_str()).collect();
+    assert_eq!(names.len(), 3);
+    for name in ["甲", "测试甲", "开发乙"] {
+        assert!(names.contains(&name));
+    }
+    for name in ["客户名称与很长的需求说明", "看似姓名", "缺少类型", "缺少标识", "自动规则"]
+    {
+        assert!(!names.contains(&name));
+    }
 }

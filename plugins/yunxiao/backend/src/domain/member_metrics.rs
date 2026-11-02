@@ -46,13 +46,19 @@ fn members(data: &Value) -> BTreeSet<String> {
     if let Some(owner) = human(text(data, "owner")) {
         names.insert(owner);
     }
-    // Only explicitly registered roles; generic watchers are not delivery participants.
+    // A role label alone is not proof of identity: text fields may contain customer
+    // names or entire requirement descriptions. Only typed user references qualify.
     if let Some(fields) = data.get("customFieldValues").and_then(Value::as_array) {
         for field in fields {
             if ["开发者", "测试人员", "协同人", "协作人", "需求提出人"]
                 .contains(&text(field, "fieldName"))
+                && matches!(text(field, "fieldFormat"), "user" | "multiUser")
             {
                 for value in field.get("values").and_then(Value::as_array).into_iter().flatten() {
+                    let identifier = text(value, "identifier");
+                    if identifier.is_empty() || identifier.starts_with("AK-") {
+                        continue;
+                    }
                     if let Some(name) = human(text(value, "displayValue")) {
                         names.insert(name);
                     }

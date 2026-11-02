@@ -53,3 +53,9 @@ Shepherd 需求详情通过通用可选扩展位按需加载该视图，仅使�
 API：`GET /api/devops/sources/{id}/member-metrics?month=2026-10&requirementTarget=10`，要求 `PROJECT:READ`、`REQUIREMENT:READ`、`BUG:READ`。来源、时间和投影事实在插件数据库的单条查询快照中读取，不访问核心业务表，不返回原始采集载荷；无需新迁移或新采集任务。关闭插件时入口及请求均不存在。可视化参考[飞书表格雷达图](https://www.feishu.cn/hc/zh-CN/articles/352365254274-表格雷达图)，跟随应用明暗主题并支持窄屏。
 
 验证：`cargo test -p shepherd-yunxiao --all-features --locked`；使用隔离的 `SHEPHERD_YUNXIAO_TEST_DATABASE_URL` 运行 `pg_sync` 的 ignored 集成测试；前端执行 `npm run build` 和 `npx playwright test member-metrics.spec.ts`。
+
+### 人员识别与展示边界
+
+自定义角色字段只有 `fieldFormat=user/multiUser` 且带有效用户 `identifier` 才计作成员；字段名包含“人”或 `displayValue` 看起来像姓名都不是依据。“需求提出人”等自由文本中的客户名称、说明不会生成成员。已有快照已保留字段类型，无需重新同步即可修正。
+
+个人指标默认按交付量排序，默认查看当月有需求/交付/到期数据的成员，可开启「包含无活动成员」查看其余已同步参与人。指标表与雷达图共用筛选、排序及分页，每页默认6人。比率在同一格展示分子/分母；表格固定列宽，长成员名、分组和需求标题使用省略与全文提示，明细抽屉同样约束宽度。雷达卡片按桌面3列、中屏2列、窄屏1列排布。
