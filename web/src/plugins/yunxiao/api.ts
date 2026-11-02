@@ -26,6 +26,7 @@ export interface DevopsRow {
   [key: string]: unknown;
 }
 export const devopsApi = {
+  memberMetrics: (id: string, month: string, requirementTarget: number) => request<MemberMetricsData>('GET', `/api/devops/sources/${encodeURIComponent(id)}/member-metrics?${new URLSearchParams({ month, requirementTarget: String(requirementTarget) })}`),
   requirementOutput: (query: Record<string, string | number>) => request<RequirementOutputData>('GET', `/api/devops/requirement-output?${new URLSearchParams(Object.entries(query).map(([key,value]) => [key,String(value)]))}`),
   sources: () => request<{ items: DevopsSource[] }>('GET', '/api/devops/sources'),
   dashboard: (id: string, days: number) => request<DevopsDashboard>('GET', `/api/devops/sources/${encodeURIComponent(id)}/dashboard?days=${days}`),
@@ -47,4 +48,24 @@ export interface RequirementOutputData {
     repositories: { id: string; name: string; commits: number; additions: number | null; deletions: number | null; unknownStats: number; authors: string[] }[];
   };
   permissions: { bugs: boolean }; pageSize: number; bugPage: number; commitPage: number;
+}
+
+export interface MemberRequirementMetric {
+  externalId: string; serial: string; title: string; status: string; due: string;
+  delivered: boolean; newInMonth: boolean; deliveryClass: string; bugIds: string[];
+}
+export interface MemberMetric {
+  name: string; group: string; newRequirements: number; deliveredRequirements: number;
+  linkedBugs: number; bugAffectedRequirements: number; bugRate: number | null;
+  dueRequirements: number; onTime: number; deliveredLate: number; overdueAtEnd: number;
+  unknownDelivery: number; delayRate: number | null; radar: [number | null, number | null, number | null];
+  requirements: MemberRequirementMetric[];
+}
+export interface MemberMetricsData {
+  source: DevopsSource;
+  metrics: {
+    month: string; start: string; endExclusive: string; timezone: string; requirementTarget: number;
+    members: MemberMetric[]; newValidBugs: number; linkedValidBugs: number;
+    requirementsMissingDue: number; requirementsMissingTime: number; snapshotBased: boolean;
+  };
 }

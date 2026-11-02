@@ -1,7 +1,7 @@
 use crate::{
     domain::{
-        CompleteRun, Error, ListQuery, NewSource, ProductivityMetric, Record,
-        RequirementOutputQuery,
+        build_member_metrics, CompleteRun, Error, ListQuery, MemberMetricsQuery, NewSource,
+        ProductivityMetric, Record, RequirementOutputQuery,
     },
     ports::Store,
 };
@@ -166,6 +166,26 @@ impl Store for PgStore {
         Ok(
             json!({"source":source_data,"productivity":productivity,"bugStatistics":bug_statistics,"totals":totals,"authors":authors,"statuses":statuses,"runs":runs,"days":days,"codeScope":"组织可见仓库；关联提交按需求ID归属项目，未关联提交单独保留","historyScope":"首次同步建立基线，此后记录观察到的状态变化；不推算导入前历史"}),
         )
+    }
+    async fn member_metrics(
+        &self,
+        source: &str,
+        query: MemberMetricsQuery,
+    ) -> Result<Value, Error> {
+        query.validate()?;
+        let snapshot = sqlx::query_scalar::<_, Value>(include_str!("member_metrics.sql"))
+            .bind(source)
+            .fetch_optional(&self.0)
+            .await
+            .map_err(db)?
+            .ok_or(Error::NotFound)?;
+        let records: Vec<Record> =
+            serde_json::from_value(snapshot["records"].clone()).map_err(|_| Error::Storage)?;
+        let now =
+            chrono::DateTime::parse_from_rfc3339(snapshot["now"].as_str().ok_or(Error::Storage)?)
+                .map_err(|_| Error::Storage)?;
+        let data = build_member_metrics(&records, &query, now)?;
+        Ok(json!({"source":snapshot["source"],"metrics":data}))
     }
     async fn requirement_output(&self, q: RequirementOutputQuery) -> Result<Value, Error> {
         let project = q.project_id.unwrap_or_default();

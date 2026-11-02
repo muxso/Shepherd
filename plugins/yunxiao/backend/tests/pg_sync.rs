@@ -342,3 +342,69 @@ async fn productivity_uses_source_dates_creators_and_isolated_project_facts() {
         .await
         .expect("cleanup");
 }
+
+#[tokio::test]
+#[ignore = "requires isolated SHEPHERD_YUNXIAO_TEST_DATABASE_URL"]
+async fn monthly_member_metrics_use_one_source_and_projected_snapshot() {
+    use shepherd_yunxiao::domain::MemberMetricsQuery;
+    let pool = sqlx::PgPool::connect(
+        &std::env::var("SHEPHERD_YUNXIAO_TEST_DATABASE_URL").expect("isolated db"),
+    )
+    .await
+    .expect("connect");
+    shepherd_yunxiao::adapters::pg::migrate(&pool).await.expect("migrate");
+    let store = PgStore(pool);
+    let mut sources = Vec::new();
+    for n in 0..2 {
+        let source = store
+            .create_source(NewSource {
+                project_id: format!("radar-{n}"),
+                cloud_org_id: "test".into(),
+                cloud_project_id: uuid::Uuid::new_v4().to_string(),
+                name: "radar".into(),
+            })
+            .await
+            .expect("source");
+        let id = source["id"].as_str().expect("id").to_owned();
+        let run = store.start(&id).await.expect("start");
+        let run = run["id"].as_str().expect("id");
+        let mut complete = completion();
+        complete.counts.insert("bug".into(), if n == 0 { 1 } else { 0 });
+        let mut records = vec![Record {
+            kind: "requirement".into(),
+            external_id: "shared-id".into(),
+            data: json!({"serial":"REQ-42","status":"已发布","createdAt":"2026-10-01T00:00:00+08:00","statusChangedAt":"2026-10-15T23:59:59+08:00","due":"2026-10-15","owner":"owner","group":"test-group","raw":{"description":"secret raw text","customFieldValues":[{"fieldName":"开发者","values":[{"displayValue":"developer"}]}]}}),
+        }];
+        if n == 0 {
+            records.push(Record {kind:"bug".into(),external_id:"bug".into(),data:json!({"createdAt":"2026-10-10T00:00:00+08:00","status":"已解决","parentId":"shared-id","requirementIds":["REQ-42"]})});
+        }
+        store.stage(run, records).await.expect("stage");
+        store.complete(run, complete).await.expect("complete");
+        sources.push(id);
+    }
+    for (n, source) in sources.iter().enumerate() {
+        let data = store
+            .member_metrics(
+                source,
+                MemberMetricsQuery {
+                    month: Some("2026-10".into()),
+                    requirement_target: Some(20.0),
+                },
+            )
+            .await
+            .expect("metrics");
+        assert_eq!(data["source"]["id"], *source);
+        let members = data["metrics"]["members"].as_array().expect("members");
+        assert_eq!(members.len(), 2);
+        for member in members {
+            assert_eq!(member["deliveredRequirements"], 1);
+            assert_eq!(member["onTime"], 1);
+            assert_eq!(member["delayRate"], 0.0);
+            assert_eq!(member["bugAffectedRequirements"], if n == 0 { 1 } else { 0 });
+            assert_eq!(member["radar"][0], 5.0);
+        }
+        assert!(!data.to_string().contains("secret raw text"));
+        assert!(!data.to_string().contains("customFieldValues"));
+    }
+    assert!(store.member_metrics("missing-source", MemberMetricsQuery::default()).await.is_err());
+}

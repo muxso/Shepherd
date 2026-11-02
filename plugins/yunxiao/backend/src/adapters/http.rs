@@ -1,7 +1,7 @@
 use crate::{
     application::Service,
     domain::{
-        CompleteRun, Error, ListQuery, NewSource, ProductivityMetric, Record,
+        CompleteRun, Error, ListQuery, MemberMetricsQuery, NewSource, ProductivityMetric, Record,
         RequirementOutputQuery,
     },
 };
@@ -30,6 +30,7 @@ impl FromRef<AppState> for Arc<dyn SessionStore> {
 pub fn router(svc: Service, sessions: Arc<dyn SessionStore>) -> Router {
     Router::new()
         .route("/api/devops/requirement-output", get(requirement_output))
+        .route("/api/devops/sources/{id}/member-metrics", get(member_metrics))
         .route("/api/devops/sources", get(sources).post(create_source))
         .route("/api/devops/sources/{id}/runs", post(start))
         .route("/api/devops/sources/{id}/dashboard", get(dashboard))
@@ -150,6 +151,21 @@ async fn dashboard(
     }
     reply(s.svc.0.dashboard(&id, q.days.unwrap_or(7).clamp(1, 366)).await)
 }
+#[utoipa::path(get,path="/api/devops/sources/{id}/member-metrics",tag="devops",params(("id"=String,Path),MemberMetricsQuery),responses((status=200,body=Value),(status=400),(status=401),(status=403),(status=404)),security(("bearer"=[])))]
+async fn member_metrics(
+    u: AuthUser,
+    State(s): State<AppState>,
+    Path(id): Path<String>,
+    Query(q): Query<MemberMetricsQuery>,
+) -> Response {
+    if !u.can("PROJECT", "READ") || !u.can("REQUIREMENT", "READ") || !u.can("BUG", "READ") {
+        return denied();
+    }
+    if let Err(error) = q.validate() {
+        return reply(Err(error));
+    }
+    reply(s.svc.0.member_metrics(&id, q).await)
+}
 #[utoipa::path(get,path="/api/devops/requirement-output",tag="devops",params(RequirementOutputQuery),responses((status=200,body=Value),(status=400),(status=403),(status=404),(status=409)),security(("bearer"=[])))]
 async fn requirement_output(
     u: AuthUser,
@@ -214,7 +230,7 @@ async fn records(
     }))
 }
 #[derive(OpenApi)]
-#[openapi(paths(sources,create_source,start,stage,complete,fail,dashboard,requirement_output,records),components(schemas(NewSource,Record,CompleteRun,Batch,Failure,ProductivityMetric)),tags((name="devops",description="External DevOps facts and synchronization")))]
+#[openapi(paths(sources,create_source,start,stage,complete,fail,dashboard,requirement_output,member_metrics,records),components(schemas(NewSource,Record,CompleteRun,Batch,Failure,ProductivityMetric)),tags((name="devops",description="External DevOps facts and synchronization")))]
 struct ApiDoc;
 pub fn openapi() -> utoipa::openapi::OpenApi {
     ApiDoc::openapi()
@@ -257,6 +273,9 @@ mod tests {
             Ok(
                 json!({"output":{"bugs":[{"title":"private bug"}],"bugTotal":1,"testers":[{"name":"private tester"}],"bugStates":[],"commitTotal":2}}),
             )
+        }
+        async fn member_metrics(&self, _: &str, _: MemberMetricsQuery) -> Result<Value, Error> {
+            Ok(json!({"metrics":{"members":[]}}))
         }
         async fn records(&self, _: &str, _: ListQuery) -> Result<Value, Error> {
             Ok(json!({}))
@@ -305,9 +324,23 @@ mod tests {
             .create("sync", PermissionSet::from_raw(["DEVOPS:SYNC"]).expect("perms"), 3600)
             .await
             .expect("session");
+        let metrics = sessions
+            .create(
+                "metrics",
+                PermissionSet::from_raw(["PROJECT:READ", "REQUIREMENT:READ", "BUG:READ"])
+                    .expect("perms"),
+                3600,
+            )
+            .await
+            .expect("session");
         let app = router(Service(Arc::new(Stub)), sessions);
         for (method, path, token, expected) in [
+            ("GET", "/api/devops/sources/source/member-metrics?month=2026-10",Some(metrics.as_str()),200),
+            ("GET", "/api/devops/sources/source/member-metrics?month=2026-13",Some(metrics.as_str()),400),
+            ("GET", "/api/devops/sources/source/member-metrics?requirementTarget=0",Some(metrics.as_str()),400),
             ("GET", "/api/devops/sources", None, 401),
+            ("GET", "/api/devops/sources/source/member-metrics?month=2026-10", None, 401),
+            ("GET", "/api/devops/sources/source/member-metrics?month=2026-10", Some(read.as_str()), 403),
             ("GET", "/api/devops/requirement-output?projectId=p&reference=REQ-42", None, 401),
             ("GET", "/api/devops/requirement-output?projectId=p&reference=REQ-42", Some(read.as_str()), 403),
             ("GET", "/api/devops/sources", Some(read.as_str()), 200),
