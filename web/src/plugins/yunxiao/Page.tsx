@@ -5,6 +5,7 @@ import { ReloadOutlined } from '@ant-design/icons'
 import { ProductivityContent } from './Productivity'
 import RequirementOutput from './RequirementOutput'
 import BugStatistics from './BugStatistics'
+import MemberMetrics from './MemberMetrics'
 import StatisticsNotes from './StatisticsNotes'
 import { PageBody, PageContainer, PageHeader } from '../../components/Page'
 import { devopsApi, type DevopsDashboard, type DevopsRow, type DevopsSource } from './api'
@@ -15,7 +16,7 @@ export default function Devops() {
   const location = useLocation()
   const navigate = useNavigate()
   const [query] = useState(() => new URLSearchParams(window.location.search))
-  const [view, setView] = useState(query.has('reference') ? 'delivery' : query.has('kind') ? 'records' : 'overview')
+  const [view, setView] = useState(query.has('reference') ? 'delivery' : query.has('kind') ? 'records' : query.get('view') === 'radar' ? 'radar' : 'overview')
   const [reference, setReference] = useState(query.get('reference') || '')
   const [metric, setMetric] = useState(query.get('metric') || '')
   const [eventDate, setEventDate] = useState(query.get('date') || '')
@@ -28,6 +29,7 @@ export default function Devops() {
     const next = new URLSearchParams(location.search)
     if (next.get('source')) setSource(next.get('source')!)
     if (kinds.some(item => item.key === next.get('kind'))) { setKind(next.get('kind')!); setView('records') }
+    if (next.get('view') === 'radar') setView('radar')
     if (next.get('reference')) { setReference(next.get('reference')!); setView('delivery') }
     setSearch(next.get('search') || '')
     setMetric(next.get('metric') || ''); setEventDate(next.get('date') || ''); setPage(1)
@@ -38,7 +40,7 @@ export default function Devops() {
     return () => { live = false }
   }, [revision])
   useEffect(() => {
-    if (!source || view === 'delivery') return
+    if (!source || view === 'delivery' || view === 'radar') return
     let live = true
     setDashboard(null)
     devopsApi.dashboard(source, days).then(d => { if (live) setDashboard(d) }).catch(e => { if (live) setError(String(e.message || e)) })
@@ -89,9 +91,9 @@ export default function Devops() {
   return <PageContainer>
     <PageHeader title={<span role="heading" aria-level={2}>云效研发统计</span>} extra={<Space size={8} wrap>
       <Select aria-label="云效项目" style={{ minWidth: 180 }} value={source || undefined} onChange={v => { setSource(v); setPage(1); setGroup(''); setReference('') }} options={sources.map(s => ({ value: s.id, label: s.name }))} placeholder="选择数据源" />
-      {view !== 'delivery' && <Select aria-label="统计区间" value={days} onChange={v => { setDays(v); setPage(1) }} options={[7,14,30,90,365].map(v => ({ value:v, label:`最近 ${v} 天` }))} />}
+      {!['delivery','radar'].includes(view) && <Select aria-label="统计区间" value={days} onChange={v => { setDays(v); setPage(1) }} options={[7,14,30,90,365].map(v => ({ value:v, label:`最近 ${v} 天` }))} />}
       <Button aria-label="刷新数据" icon={<ReloadOutlined />} onClick={() => setRevision(x => x + 1)} />
-      {view !== 'delivery' && <StatisticsNotes info={info} data={dashboard} />}
+      {!['delivery','radar'].includes(view) && <StatisticsNotes info={info} data={dashboard} />}
     </Space>} />
     <PageBody testId="devops-scroll">
       {error && <Alert showIcon type="error" message={error} style={{ marginBottom: 12 }} />}
@@ -105,6 +107,7 @@ export default function Devops() {
     </Row>
     {info && dashboard && <ProductivityContent key={source} info={info} data={dashboard} embedded />}
         </> },
+        { key:'radar', label:'个人雷达指标', children: source && view === 'radar' ? <MemberMetrics key={source} sourceId={source} revision={revision} /> : null },
         { key:'delivery', label:'需求产出', children: source ? <RequirementOutput key={source} sourceId={source} reference={reference} /> : null },
         { key:'bugs', label:'缺陷统计', children:<BugStatistics data={dashboard?.bugStatistics} /> },
         { key:'authors', label:'代码作者', children: <>

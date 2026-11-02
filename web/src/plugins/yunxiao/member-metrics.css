@@ -1,0 +1,16 @@
+.yx-member-toolbar { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:12px; margin-bottom:16px; }
+.yx-member-toolbar label { display:inline-flex; align-items:center; gap:8px; }
+.yx-member-scope { display:flex; align-items:center; flex-wrap:wrap; gap:8px; margin-bottom:12px; font-size:12px; color:var(--text-3); }
+.yx-member-notes { max-width:580px; font-size:13px; }
+.yx-member-radars { display:grid; grid-template-columns:repeat(auto-fill,minmax(280px,1fr)); gap:16px; }
+.yx-member-radar-card { min-width:0; padding:12px; text-align:center; border:1px solid var(--border-soft); border-radius:8px; }
+.yx-member-radar { display:block; width:100%; max-width:360px; margin:8px auto; overflow:visible; }
+.yx-radar-grid polygon { fill:none; stroke:var(--border); stroke-width:.65; }
+.yx-radar-grid text { fill:var(--text-3); font-size:7px; }
+.yx-radar-axis { stroke:var(--border); stroke-width:.65; }
+.yx-radar-value { fill:var(--brand); fill-opacity:.17; stroke:var(--brand); stroke-width:1.8; }
+.yx-radar-point { fill:var(--brand); }
+.yx-radar-label { fill:var(--text); font-size:10px; }
+.yx-member-radar-card p { font-size:12px; margin:4px 0; color:var(--text-3); }
+.yx-member-pagination { display:flex; justify-content:center; margin-top:16px; }
+@media(max-width:600px) { .yx-member-radars { grid-template-columns:1fr; } .yx-member-toolbar label { flex-wrap:wrap; } }
