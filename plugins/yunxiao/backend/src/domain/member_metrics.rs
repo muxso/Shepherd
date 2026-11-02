@@ -25,7 +25,10 @@ impl MemberMetricsQuery {
     }
 }
 fn month_start(month: &str) -> Result<NaiveDate, Error> {
-    if month.len() != 7 || month.as_bytes().get(4) != Some(&b'-') {
+    if month.len() != 7
+        || month.as_bytes().get(4) != Some(&b'-')
+        || month.bytes().enumerate().any(|(index, byte)| index != 4 && !byte.is_ascii_digit())
+    {
         return Err(Error::Invalid("month must be YYYY-MM".into()));
     }
     NaiveDate::parse_from_str(&format!("{month}-01"), "%Y-%m-%d")
