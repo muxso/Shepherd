@@ -29,7 +29,7 @@ def project_history(rows, item_id):
     if not isinstance(rows, list) or not all(isinstance(row, dict) for row in rows):
         raise RuntimeError('invalid Bug activity response')
     complete = any(row.get('eventType') == 'workitem.created' and str(row.get('resourceId')) == str(item_id) for row in rows)
-    events = {}
+    events, transitions, resolutions = {}, {}, {}
     for row in rows:
         if row.get('eventType') != 'workitem.transitioned':
             continue
@@ -42,19 +42,25 @@ def project_history(rows, item_id):
         known = RESOLVED | ACTIVE | REOPEN | OTHER
         if before not in known or after not in known:
             complete = False
-        if before != after and (after in REOPEN or before in RESOLVED and after in ACTIVE):
+        if before != after:
             identity = row.get('eventId')
             if identity is None or isinstance(identity, bool):
                 raise RuntimeError('Bug activity has no event identifier')
             event = {'id': str(identity), 'at': event_time(row.get('eventTime'))}
-            if event['id'] in events and events[event['id']] != event:
+            transition = {**event, 'from': old[0]['displayValue'].strip(), 'to': new[0]['displayValue'].strip()}
+            if event['id'] in transitions and transitions[event['id']] != transition:
                 raise RuntimeError('conflicting Bug activities')
-            events[event['id']] = event
-    return {'complete': complete, 'events': sorted(events.values(), key=lambda e: (e['at'], e['id']))}
+            transitions[event['id']] = transition
+            if after in REOPEN or before in RESOLVED and after in ACTIVE:
+                events[event['id']] = event
+            if after in RESOLVED:
+                resolutions[event['id']] = event
+    ordered = lambda values: sorted(values, key=lambda e: (e['at'], e['id']))
+    return {'schemaVersion': 2, 'complete': complete, 'events': ordered(events.values()), 'resolutions': ordered(resolutions.values()), 'transitions': ordered(transitions.values())}
 
 
 def enrich_bug_history(bugs, collector):
-    path = Path(os.environ.get('SHEPHERD_BUG_HISTORY_CACHE', str(Path.home() / '.cache/shepherd-yunxiao/bug-history.json')))
+    path = Path(os.environ.get('SHEPHERD_BUG_HISTORY_CACHE', str(Path.home() / '.cache/shepherd-yunxiao/bug-history-v2.json')))
     try:
         cache = json.loads(path.read_text())
     except (FileNotFoundError, json.JSONDecodeError):
@@ -68,7 +74,7 @@ def enrich_bug_history(bugs, collector):
     def load(item):
         key, modified = f"{org}:{item['id']}", str(item.get('gmtModified'))
         previous = cache.get(key, {})
-        if modified not in ('None', '') and previous.get('modified') == modified and previous.get('history', {}).get('complete') and now - previous.get('checkedAt', 0) < ttl:
+        if modified not in ('None', '') and previous.get('modified') == modified and previous.get('history', {}).get('schemaVersion') == 2 and previous.get('history', {}).get('complete') and now - previous.get('checkedAt', 0) < ttl:
             return key, previous
         with throttle:
             delay = max(0, next_call[0] - time.monotonic())

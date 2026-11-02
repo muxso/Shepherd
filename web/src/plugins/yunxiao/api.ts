@@ -56,20 +56,26 @@ export interface MemberRequirementMetric {
 }
 export interface MemberBugMetric {
   externalId:string; serial:string; title:string; status:string; reopenCount:number | null; reopenTimes:string[];
+  createdAt:string; bugType:string; responsibles:string[]; developers:string[]; testers:string[]; reporter:string;
+  processed:boolean; historyAvailable:boolean; history:{id:string;at:string;from:string;to:string}[];
 }
 export interface MemberMetric {
   name: string; group: string; newRequirements: number; deliveredRequirements: number;
   linkedBugs: number; bugAffectedRequirements: number; bugRate: number | null;
+  processedBugs:number; qualityBugs:number; reopenUnknownBugs:number;
   reopenCount:number; reopenedBugs:number; reopenEvaluatedBugs:number; reopenRate:number | null; bugs:MemberBugMetric[];
   dueRequirements: number; onTime: number; deliveredLate: number; overdueAtEnd: number;
   unknownDelivery: number; delayRate: number | null; radar: [number | null, number | null, number | null];
   requirements: MemberRequirementMetric[];
 }
+export interface BugQualityData {
+ totalSourceBugs:number; verifiedSourceBugs:number; unknownSourceBugs:number; processedBugs:number; reopenedBugs:number; reopenCount:number; reopenRate:number | null; rows:MemberBugMetric[];
+}
 export interface MemberMetricsData {
   source: DevopsSource;
   metrics: {
     month: string; start: string; endExclusive: string; timezone: string; requirementTarget: number;
-    members: MemberMetric[]; newValidBugs: number; linkedValidBugs: number;
+    bugQuality:BugQualityData; members: MemberMetric[]; newValidBugs: number; linkedValidBugs: number;
     requirementsMissingDue: number; requirementsMissingTime: number; snapshotBased: boolean;
   };
 }

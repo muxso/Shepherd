@@ -1,4 +1,5 @@
 //! Snapshot-based monthly participation metrics; never an employee responsibility score.
+use super::bug_quality::{build_bug_quality, BugMetric, BugQuality};
 use super::{Error, Record};
 use chrono::{DateTime, Datelike, Duration, FixedOffset, NaiveDate};
 use serde::{Deserialize, Serialize};
@@ -36,10 +37,10 @@ fn month_start(month: &str) -> Result<NaiveDate, Error> {
         .filter(|date| (1..=9998).contains(&date.year()))
         .ok_or_else(|| Error::Invalid("month must be a valid YYYY-MM".into()))
 }
-fn text<'a>(data: &'a Value, key: &str) -> &'a str {
+pub(super) fn text<'a>(data: &'a Value, key: &str) -> &'a str {
     data.get(key).and_then(Value::as_str).unwrap_or("").trim()
 }
-fn human(name: &str) -> Option<String> {
+pub(super) fn human(name: &str) -> Option<String> {
     let name = name.trim();
     (!name.is_empty() && !["自动化规则", "系统", "机器人", "未指派", "待归属"].contains(&name))
         .then(|| name.to_owned())
@@ -71,10 +72,10 @@ fn members(data: &Value) -> BTreeSet<String> {
     }
     names
 }
-fn timestamp(data: &Value, key: &str) -> Option<DateTime<FixedOffset>> {
+pub(super) fn timestamp(data: &Value, key: &str) -> Option<DateTime<FixedOffset>> {
     DateTime::parse_from_rfc3339(text(data, key)).ok()
 }
-fn rate(numerator: usize, denominator: usize) -> Option<f64> {
+pub(super) fn rate(numerator: usize, denominator: usize) -> Option<f64> {
     (denominator > 0).then(|| (numerator as f64 * 1000.0 / denominator as f64).round() / 10.0)
 }
 const CANCELLED: &[&str] = &["已取消", "已拒绝", "已关闭", "已完成", "已验收", "完成"];
@@ -103,54 +104,6 @@ pub struct RequirementMetric {
 }
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct BugMetric {
-    pub external_id: String,
-    pub serial: String,
-    pub title: String,
-    pub status: String,
-    pub reopen_count: Option<usize>,
-    pub reopen_times: Vec<String>,
-}
-
-// Missing/unverified history is unknown, never a zero-reopen Bug. The current
-// month uses the collector snapshot; completed months require coverage to month end.
-fn bug_history(
-    data: &Value,
-    start: DateTime<FixedOffset>,
-    end: DateTime<FixedOffset>,
-    coverage: DateTime<FixedOffset>,
-) -> Option<Vec<String>> {
-    let history = data.get("reopenHistory")?;
-    if !history.get("complete")?.as_bool()? {
-        return None;
-    }
-    let checked = timestamp(history, "checkedAt")?;
-    if checked < coverage {
-        return None;
-    }
-    let created = timestamp(data, "createdAt")?;
-    let mut events = BTreeMap::new();
-    for event in history.get("events")?.as_array()? {
-        let id = text(event, "id");
-        let at = timestamp(event, "at")?;
-        if id.is_empty() || at < created || at > checked {
-            return None;
-        }
-        if events.insert(id, at).is_some_and(|previous| previous != at) {
-            return None;
-        }
-    }
-    let mut times: Vec<_> = events
-        .into_values()
-        .filter(|at| start <= *at && *at < end)
-        .map(|at| at.to_rfc3339())
-        .collect();
-    times.sort();
-    Some(times)
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
 pub struct MemberMetric {
     pub name: String,
     pub group: String,
@@ -164,6 +117,9 @@ pub struct MemberMetric {
     pub reopen_evaluated_bugs: usize,
     pub reopen_rate: Option<f64>,
     pub bugs: Vec<BugMetric>,
+    pub processed_bugs: usize,
+    pub quality_bugs: usize,
+    pub reopen_unknown_bugs: usize,
     pub due_requirements: usize,
     pub on_time: usize,
     pub delivered_late: usize,
@@ -187,6 +143,7 @@ pub struct MemberMetrics {
     pub requirements_missing_due: usize,
     pub requirements_missing_time: usize,
     pub snapshot_based: bool,
+    pub bug_quality: BugQuality,
 }
 
 /// Caller provides one atomic, active-source snapshot and its database clock.
@@ -311,7 +268,6 @@ pub fn build_member_metrics(
     }
     let mut valid_bugs = BTreeSet::new();
     let mut linked_bugs = BTreeSet::new();
-    let mut bug_details = BTreeMap::new();
     for bug in records.iter().filter(|r| r.kind == "bug") {
         if !inside(timestamp(&bug.data, "createdAt"))
             || INVALID_BUG.contains(&text(&bug.data, "status"))
@@ -319,19 +275,6 @@ pub fn build_member_metrics(
             continue;
         }
         valid_bugs.insert(bug.external_id.clone());
-        let times =
-            bug_history(&bug.data, start, end, if now.date_naive() < b { start } else { end });
-        bug_details.insert(
-            bug.external_id.clone(),
-            BugMetric {
-                external_id: bug.external_id.clone(),
-                serial: text(&bug.data, "serial").to_owned(),
-                title: text(&bug.data, "title").to_owned(),
-                status: text(&bug.data, "status").to_owned(),
-                reopen_count: times.as_ref().map(Vec::len),
-                reopen_times: times.unwrap_or_default(),
-            },
-        );
         let mut refs: BTreeSet<String> =
             [text(&bug.data, "parentId"), text(&bug.data, "parentSerial")]
                 .into_iter()
@@ -365,6 +308,11 @@ pub fn build_member_metrics(
             || !text(&r.data, "parentSerial").is_empty()
             || r.data.get("requirementIds").and_then(Value::as_array).is_some_and(|a| !a.is_empty())
     });
+    let quality =
+        build_bug_quality(records, start, end, if now.date_naive() < b { start } else { end });
+    for name in quality.by_person.keys() {
+        people.entry(name.clone()).or_default();
+    }
     let members = people
         .into_iter()
         .map(|(name, rows)| {
@@ -373,14 +321,14 @@ pub fn build_member_metrics(
             let delivered_count = rows.iter().filter(|r| r.delivered).count();
             let affected = rows.iter().filter(|r| !r.bug_ids.is_empty()).count();
             let bugs: BTreeSet<_> = rows.iter().flat_map(|r| r.bug_ids.iter()).collect();
-            let bug_rows: Vec<_> =
-                bugs.iter().filter_map(|id| bug_details.get(*id).cloned()).collect();
-            let evaluated = bug_rows.iter().filter(|bug| bug.reopen_count.is_some()).count();
+            let bug_rows = quality.by_person.get(&name).cloned().unwrap_or_default();
+            let evaluated = bug_rows.iter().filter(|bug| bug.history_available).count();
+            let unknown_bugs = bug_rows.len() - evaluated;
+            let processed = bug_rows.iter().filter(|bug| bug.processed).count();
             let reopened =
                 bug_rows.iter().filter(|bug| bug.reopen_count.is_some_and(|n| n > 0)).count();
             let reopen_count = bug_rows.iter().filter_map(|bug| bug.reopen_count).sum();
-            let reopen_rate =
-                if evaluated == bugs.len() { rate(reopened, evaluated) } else { None };
+            let reopen_rate = if unknown_bugs == 0 { rate(reopened, processed) } else { None };
             let due = rows.iter().filter(|r| r.delivery_class != "notDue").count();
             let unknown = count("unknown");
             let bug_rate = if bug_links_available { rate(affected, delivered_count) } else { None };
@@ -403,6 +351,9 @@ pub fn build_member_metrics(
                 reopened_bugs: reopened,
                 reopen_evaluated_bugs: evaluated,
                 reopen_rate,
+                quality_bugs: bug_rows.len(),
+                processed_bugs: processed,
+                reopen_unknown_bugs: unknown_bugs,
                 bugs: bug_rows,
                 due_requirements: due,
                 on_time: count("onTime"),
@@ -431,5 +382,6 @@ pub fn build_member_metrics(
         requirements_missing_due: missing_due,
         requirements_missing_time: missing_time,
         snapshot_based: true,
+        bug_quality: quality,
     })
 }

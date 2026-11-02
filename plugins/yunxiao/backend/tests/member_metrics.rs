@@ -76,7 +76,7 @@ fn bug_links_are_exact_deduplicated_and_not_assigned_to_bug_owner() {
     let data = build_member_metrics(&records, &query(), now()).expect("metrics");
     assert_eq!(data.new_valid_bugs, 2);
     assert_eq!(data.linked_valid_bugs, 2);
-    for p in data.members {
+    for p in data.members.into_iter().filter(|p| p.name == "甲" || p.name == "乙") {
         assert_ne!(p.name, "处理人");
         assert_eq!(p.linked_bugs, 2);
         assert_eq!(p.bug_affected_requirements, 1);
@@ -159,76 +159,98 @@ fn free_text_roles_are_never_promoted_to_people() {
     }
 }
 
-#[test]
-fn reopen_events_are_monthly_deduplicated_per_bug_with_explicit_coverage() {
-    let history = json!({"complete":true,"checkedAt":"2026-11-02T00:00:00+08:00","events":[
-        {"id":"1","at":"2026-10-15T00:00:00+08:00"},
-        {"id":"1","at":"2026-10-15T00:00:00+08:00"},
-        {"id":"2","at":"2026-10-31T15:59:59Z"},
-        {"id":"3","at":"2026-10-31T16:00:00Z"}
-    ]});
-    let mut records = vec![
-        req("a", "已发布", "2026-10-12T00:00:00+08:00", "2026-10-15"),
-        req("b", "已发布", "2026-10-12T00:00:00+08:00", "2026-10-15"),
-        record(
-            "bug-1",
-            "bug",
-            json!({"createdAt":"2026-10-02T00:00:00+08:00","parentId":"a","requirementIds":["a","REQ-a","b"],"reopenHistory":history}),
-        ),
-        record(
-            "bug-2",
-            "bug",
-            json!({"createdAt":"2026-10-02T00:00:00+08:00","parentId":"a","reopenHistory":{"complete":true,"checkedAt":"2026-11-02T00:00:00+08:00","events":[]}}),
-        ),
-        record("bug-3", "bug", json!({"createdAt":"2026-10-02T00:00:00+08:00","parentId":"b"})),
-        record(
-            "invalid",
-            "bug",
-            json!({"createdAt":"2026-10-02T00:00:00+08:00","parentId":"a","status":"重复缺陷","reopenHistory":history}),
-        ),
-        record(
-            "other",
-            "bug",
-            json!({"createdAt":"2026-10-02T00:00:00+08:00","parentId":"another-source","reopenHistory":history}),
-        ),
-    ];
-    for p in build_member_metrics(&records, &query(), now()).expect("metrics").members {
-        assert_eq!(p.linked_bugs, 3);
-        assert_eq!((p.reopen_count, p.reopened_bugs, p.reopen_evaluated_bugs), (2, 1, 2));
-        assert_eq!(p.reopen_rate, None);
-        assert_eq!(p.bugs.len(), 3);
-        assert_eq!(p.bugs[0].reopen_times.len(), 2);
-        assert_eq!(p.bugs[2].reopen_count, None);
-    }
-    records[4].data["reopenHistory"] =
-        json!({"complete":true,"checkedAt":"2026-11-02T00:00:00+08:00","events":[]});
-    for p in build_member_metrics(&records, &query(), now()).expect("metrics").members {
-        assert_eq!(p.reopen_rate, Some(33.3));
-        assert_eq!(p.reopen_count, 2);
-    }
+fn quality_bug(
+    id: &str,
+    created: &str,
+    responsible: &str,
+    transitions: Value,
+    events: Value,
+    resolutions: Value,
+) -> Record {
+    record(
+        id,
+        "bug",
+        json!({"serial":id,"createdAt":created,"status":"已验证","owner":"当前测试处理人","creator":"发现人","parentId":"never-published-requirement","customFieldValues":[
+        {"fieldName":"缺陷责任人","fieldFormat":"user","values":[{"identifier":"developer","displayValue":responsible}]},
+        {"fieldName":"开发者","fieldFormat":"multiUser","values":[{"identifier":"fixer","displayValue":"本次修复人"}]},
+        {"fieldName":"测试人员","fieldFormat":"user","values":[{"identifier":"tester","displayValue":"测试人"}]},
+        {"fieldName":"缺陷类型","fieldFormat":"list","values":[{"displayValue":"程序逻辑"}]}
+    ],"reopenHistory":{"schemaVersion":2,"complete":true,"checkedAt":"2026-11-02T00:00:00+08:00","transitions":transitions,"events":events,"resolutions":resolutions}}),
+    )
 }
-
 #[test]
-fn incomplete_or_invalid_history_never_becomes_a_zero_rate() {
-    for history in [
-        json!(null),
-        json!({"complete":false,"checkedAt":"2026-11-02T00:00:00+08:00","events":[]}),
-        json!({"complete":true,"checkedAt":"2026-10-30T00:00:00+08:00","events":[]}),
-        json!({"complete":true,"checkedAt":"2026-11-02T00:00:00+08:00"}),
-        json!({"complete":true,"checkedAt":"2026-11-02T00:00:00+08:00","events":[{"id":"1","at":"invalid"}]}),
-        json!({"complete":true,"checkedAt":"2026-11-02T00:00:00+08:00","events":[{"id":"1","at":"2026-10-10T00:00:00+08:00"},{"id":"1","at":"2026-10-11T00:00:00+08:00"}]}),
-    ] {
-        let records = [
-            req("a", "已发布", "2026-10-12T00:00:00+08:00", "2026-10-15"),
-            record(
-                "b",
-                "bug",
-                json!({"createdAt":"2026-10-02T00:00:00+08:00","parentId":"a","reopenHistory":history}),
-            ),
-        ];
-        let p = &build_member_metrics(&records, &query(), now()).expect("metrics").members[0];
-        assert_eq!(p.reopen_evaluated_bugs, 0);
-        assert_eq!(p.reopen_rate, None);
-        assert_eq!(p.bugs[0].reopen_count, None);
-    }
+fn legacy_bugs_and_unpublished_unlinked_requirements_follow_bug_responsibility() {
+    let t = json!({"id":"reopen","at":"2026-10-19T17:00:00+08:00","from":"已解决","to":"重新打开"});
+    let e = json!({"id":"reopen","at":"2026-10-19T17:00:00+08:00"});
+    let old = quality_bug(
+        "legacy",
+        "2026-07-17T00:00:00+08:00",
+        "责任开发",
+        json!([t, t]),
+        json!([e, e]),
+        json!([]),
+    );
+    let data = build_member_metrics(&[old], &query(), now()).expect("metrics");
+    assert_eq!(data.members.len(), 1);
+    let p = &data.members[0];
+    assert_eq!(p.name, "责任开发");
+    assert_eq!(
+        (p.delivered_requirements, p.linked_bugs, p.processed_bugs, p.reopen_count),
+        (0, 0, 1, 1)
+    );
+    assert_eq!(p.reopen_rate, Some(100.0));
+    assert_eq!(p.bugs[0].bug_type, "程序逻辑");
+    assert!(p.bugs[0].developers.contains("本次修复人"));
+    assert!(p.bugs[0].testers.contains("测试人"));
+    assert_eq!(p.bugs[0].history.len(), 1);
+    assert_eq!(data.bug_quality.reopen_count, 1);
+}
+#[test]
+fn monthly_reopen_ratio_uses_unique_processed_bugs_and_counts_events_separately() {
+    let t1 = json!({"id":"1","at":"2026-10-15T00:00:00+08:00","from":"已解决","to":"重新打开"});
+    let t2 = json!({"id":"2","at":"2026-10-31T15:59:59Z","from":"已解决","to":"修复中"});
+    let t3 = json!({"id":"3","at":"2026-10-31T16:00:00Z","from":"已解决","to":"重新打开"});
+    let a = quality_bug(
+        "a",
+        "2026-07-01T00:00:00+08:00",
+        "甲",
+        json!([t1, t2, t3]),
+        json!([
+        {"id":"1","at":"2026-10-15T00:00:00+08:00"},{"id":"2","at":"2026-10-31T15:59:59Z"},{"id":"3","at":"2026-10-31T16:00:00Z"}]),
+        json!([]),
+    );
+    let b = quality_bug(
+        "b",
+        "2026-09-01T00:00:00+08:00",
+        "甲",
+        json!([{"id":"r","at":"2026-10-02T00:00:00+08:00","from":"待处理","to":"已解决"}]),
+        json!([]),
+        json!([{"id":"r","at":"2026-10-02T00:00:00+08:00"}]),
+    );
+    let new =
+        quality_bug("new", "2026-10-02T00:00:00+08:00", "甲", json!([]), json!([]), json!([]));
+    let data = build_member_metrics(&[a, b, new], &query(), now()).expect("metrics");
+    let p = &data.members[0];
+    assert_eq!((p.processed_bugs, p.reopened_bugs, p.reopen_count, p.quality_bugs), (2, 1, 2, 3));
+    assert_eq!(p.reopen_rate, Some(50.0));
+    assert_eq!(data.bug_quality.rows.len(), 3);
+}
+#[test]
+fn unknown_history_and_role_fields_are_never_guessed() {
+    let mut b = quality_bug(
+        "legacy",
+        "2026-07-01T00:00:00+08:00",
+        "自由文本",
+        json!([]),
+        json!([]),
+        json!([]),
+    );
+    b.data["customFieldValues"][0]["fieldFormat"] = json!("text");
+    b.data["reopenHistory"]["schemaVersion"] = json!(1);
+    let data = build_member_metrics(&[b], &query(), now()).expect("metrics");
+    assert_eq!(data.members[0].name, "待归属");
+    assert_eq!(data.members[0].reopen_rate, None);
+    assert_eq!(data.members[0].reopen_unknown_bugs, 1);
+    assert_eq!(data.bug_quality.unknown_source_bugs, 1);
+    assert_eq!(data.bug_quality.reopen_rate, None);
 }
