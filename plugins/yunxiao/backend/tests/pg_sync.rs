@@ -373,7 +373,7 @@ async fn monthly_member_metrics_use_one_source_and_projected_snapshot() {
         let mut records = vec![Record {
             kind: "requirement".into(),
             external_id: "shared-id".into(),
-            data: json!({"serial":"REQ-42","status":"已发布","createdAt":"2026-10-01T00:00:00+08:00","statusChangedAt":"2026-10-15T23:59:59+08:00","due":"2026-10-15","owner":"owner","group":"test-group","raw":{"description":"secret raw text","customFieldValues":[{"fieldName":"开发者","values":[{"displayValue":"developer"}]}]}}),
+            data: json!({"serial":"REQ-42","status":"已发布","createdAt":"2026-10-01T00:00:00+08:00","statusChangedAt":"2026-10-15T23:59:59+08:00","due":"2026-10-15","owner":"owner","group":"test-group","raw":{"description":"secret raw text","customFieldValues":[{"fieldName":"开发者","fieldFormat":"multiUser","values":[{"identifier":"developer-id","displayValue":"developer"}]}]}}),
         }];
         if n == 0 {
             records.push(Record {kind:"bug".into(),external_id:"bug".into(),data:json!({"createdAt":"2026-10-10T00:00:00+08:00","status":"已解决","parentId":"shared-id","requirementIds":["REQ-42"]})});
