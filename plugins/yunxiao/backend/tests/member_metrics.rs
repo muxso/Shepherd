@@ -158,3 +158,77 @@ fn free_text_roles_are_never_promoted_to_people() {
         assert!(!names.contains(&name));
     }
 }
+
+#[test]
+fn reopen_events_are_monthly_deduplicated_per_bug_with_explicit_coverage() {
+    let history = json!({"complete":true,"checkedAt":"2026-11-02T00:00:00+08:00","events":[
+        {"id":"1","at":"2026-10-15T00:00:00+08:00"},
+        {"id":"1","at":"2026-10-15T00:00:00+08:00"},
+        {"id":"2","at":"2026-10-31T15:59:59Z"},
+        {"id":"3","at":"2026-10-31T16:00:00Z"}
+    ]});
+    let mut records = vec![
+        req("a", "已发布", "2026-10-12T00:00:00+08:00", "2026-10-15"),
+        req("b", "已发布", "2026-10-12T00:00:00+08:00", "2026-10-15"),
+        record(
+            "bug-1",
+            "bug",
+            json!({"createdAt":"2026-10-02T00:00:00+08:00","parentId":"a","requirementIds":["a","REQ-a","b"],"reopenHistory":history}),
+        ),
+        record(
+            "bug-2",
+            "bug",
+            json!({"createdAt":"2026-10-02T00:00:00+08:00","parentId":"a","reopenHistory":{"complete":true,"checkedAt":"2026-11-02T00:00:00+08:00","events":[]}}),
+        ),
+        record("bug-3", "bug", json!({"createdAt":"2026-10-02T00:00:00+08:00","parentId":"b"})),
+        record(
+            "invalid",
+            "bug",
+            json!({"createdAt":"2026-10-02T00:00:00+08:00","parentId":"a","status":"重复缺陷","reopenHistory":history}),
+        ),
+        record(
+            "other",
+            "bug",
+            json!({"createdAt":"2026-10-02T00:00:00+08:00","parentId":"another-source","reopenHistory":history}),
+        ),
+    ];
+    for p in build_member_metrics(&records, &query(), now()).expect("metrics").members {
+        assert_eq!(p.linked_bugs, 3);
+        assert_eq!((p.reopen_count, p.reopened_bugs, p.reopen_evaluated_bugs), (2, 1, 2));
+        assert_eq!(p.reopen_rate, None);
+        assert_eq!(p.bugs.len(), 3);
+        assert_eq!(p.bugs[0].reopen_times.len(), 2);
+        assert_eq!(p.bugs[2].reopen_count, None);
+    }
+    records[4].data["reopenHistory"] =
+        json!({"complete":true,"checkedAt":"2026-11-02T00:00:00+08:00","events":[]});
+    for p in build_member_metrics(&records, &query(), now()).expect("metrics").members {
+        assert_eq!(p.reopen_rate, Some(33.3));
+        assert_eq!(p.reopen_count, 2);
+    }
+}
+
+#[test]
+fn incomplete_or_invalid_history_never_becomes_a_zero_rate() {
+    for history in [
+        json!(null),
+        json!({"complete":false,"checkedAt":"2026-11-02T00:00:00+08:00","events":[]}),
+        json!({"complete":true,"checkedAt":"2026-10-30T00:00:00+08:00","events":[]}),
+        json!({"complete":true,"checkedAt":"2026-11-02T00:00:00+08:00"}),
+        json!({"complete":true,"checkedAt":"2026-11-02T00:00:00+08:00","events":[{"id":"1","at":"invalid"}]}),
+        json!({"complete":true,"checkedAt":"2026-11-02T00:00:00+08:00","events":[{"id":"1","at":"2026-10-10T00:00:00+08:00"},{"id":"1","at":"2026-10-11T00:00:00+08:00"}]}),
+    ] {
+        let records = [
+            req("a", "已发布", "2026-10-12T00:00:00+08:00", "2026-10-15"),
+            record(
+                "b",
+                "bug",
+                json!({"createdAt":"2026-10-02T00:00:00+08:00","parentId":"a","reopenHistory":history}),
+            ),
+        ];
+        let p = &build_member_metrics(&records, &query(), now()).expect("metrics").members[0];
+        assert_eq!(p.reopen_evaluated_bugs, 0);
+        assert_eq!(p.reopen_rate, None);
+        assert_eq!(p.bugs[0].reopen_count, None);
+    }
+}
