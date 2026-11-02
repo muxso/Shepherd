@@ -96,7 +96,7 @@ fn shanghai_boundaries_defaults_and_target_validation() {
         build_member_metrics(&[], &MemberMetricsQuery::default(), january).expect("default").month,
         "2026-12"
     );
-    for month in ["2026-13", "2026-1", "2026-00", "0000-01", "2027-01"] {
+    for month in ["2026-13", "2026-1", "2026- 1", "2026-+1", "2026-00", "0000-01", "2027-01"] {
         let q = MemberMetricsQuery { month: Some(month.into()), ..query() };
         assert!(build_member_metrics(&[], &q, now()).is_err());
     }

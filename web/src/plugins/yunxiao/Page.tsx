@@ -90,7 +90,7 @@ export default function Devops() {
   ]
   return <PageContainer>
     <PageHeader title={<span role="heading" aria-level={2}>云效研发统计</span>} extra={<Space size={8} wrap>
-      <Select aria-label="云效项目" style={{ minWidth: 180 }} value={source || undefined} onChange={v => { setSource(v); setPage(1); setGroup(''); setReference('') }} options={sources.map(s => ({ value: s.id, label: s.name }))} placeholder="选择数据源" />
+      <Select aria-label="云效项目" style={{ minWidth: 180 }} value={source || undefined} onChange={v => { setSource(v); setPage(1); setGroup(''); setReference(''); if (view === 'radar') { const next = new URLSearchParams(location.search); next.set('source',v); next.delete('group'); next.delete('chart'); next.delete('compare'); navigate({ pathname:location.pathname,search:next.toString() }) } }} options={sources.map(s => ({ value: s.id, label: s.name }))} placeholder="选择数据源" />
       {!['delivery','radar'].includes(view) && <Select aria-label="统计区间" value={days} onChange={v => { setDays(v); setPage(1) }} options={[7,14,30,90,365].map(v => ({ value:v, label:`最近 ${v} 天` }))} />}
       <Button aria-label="刷新数据" icon={<ReloadOutlined />} onClick={() => setRevision(x => x + 1)} />
       {!['delivery','radar'].includes(view) && <StatisticsNotes info={info} data={dashboard} />}
