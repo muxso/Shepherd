@@ -4,8 +4,8 @@ test.use({ viewport:{ width:1600,height:1100 } })
 const endForMonth=(month:string) => { const [year,value]=month.split('-').map(Number);return `${value===12?year+1:year}-${String(value===12?1:value+1).padStart(2,'0')}-01T00:00:00+08:00` }
 const source = { id:'source-a',name:'测试需求池',project_id:'project' }
 const requirement = { externalId:'req-a',serial:'REQ-42',title:'登录需求',status:'已发布',due:'2026-10-15',delivered:true,newInMonth:true,deliveryClass:'deliveredLate',bugIds:['b1'] }
-const alice = { name:'研发甲',group:'研发组',newRequirements:6,deliveredRequirements:4,linkedBugs:2,bugAffectedRequirements:1,bugRate:25,reopenCount:2,reopenedBugs:1,reopenEvaluatedBugs:2,reopenRate:50,bugs:[{externalId:'b1',serial:'BUG-1',title:'登录失败',status:'已解决',reopenCount:2,reopenTimes:['2026-10-10T02:00:00Z','2026-10-15T03:00:00Z']},{externalId:'b2',serial:'BUG-2',title:'样式问题',status:'已验证',reopenCount:0,reopenTimes:[]}],dueRequirements:5,onTime:3,deliveredLate:1,overdueAtEnd:1,unknownDelivery:0,delayRate:40,radar:[40,75,60],requirements:[requirement] }
-const bob = { ...alice,name:'研发乙',group:'协作组',deliveredRequirements:0,linkedBugs:0,bugAffectedRequirements:0,bugRate:null,reopenCount:0,reopenedBugs:0,reopenEvaluatedBugs:0,reopenRate:null,bugs:[],dueRequirements:0,onTime:0,deliveredLate:0,overdueAtEnd:0,unknownDelivery:0,delayRate:null,radar:[0,null,null],requirements:[] }
+const alice = { name:'研发甲',group:'研发组',newRequirements:6,deliveredRequirements:4,linkedBugs:2,bugAffectedRequirements:1,bugRate:25,processedBugs:2,qualityBugs:2,reopenUnknownBugs:0,reopenCount:2,reopenedBugs:1,reopenEvaluatedBugs:2,reopenRate:50,bugs:[{externalId:'b1',serial:'BUG-1',title:'登录失败',status:'已解决',createdAt:'2026-07-01T00:00:00+08:00',bugType:'程序逻辑',responsibles:['研发甲'],developers:['修复人'],testers:['测试人'],reporter:'发现人',processed:true,historyAvailable:true,history:[{id:'1',at:'2026-10-10T02:00:00Z',from:'已解决',to:'重新打开'},{id:'2',at:'2026-10-15T03:00:00Z',from:'已解决',to:'重新打开'}],reopenCount:2,reopenTimes:['2026-10-10T02:00:00Z','2026-10-15T03:00:00Z']},{externalId:'b2',serial:'BUG-2',title:'样式问题',status:'已验证',createdAt:'2026-10-01T00:00:00+08:00',bugType:'界面',responsibles:['研发甲'],developers:['修复人'],testers:[],reporter:'发现人',processed:true,historyAvailable:true,history:[],reopenCount:0,reopenTimes:[]}],dueRequirements:5,onTime:3,deliveredLate:1,overdueAtEnd:1,unknownDelivery:0,delayRate:40,radar:[40,75,60],requirements:[requirement] }
+const bob = { ...alice,name:'研发乙',group:'协作组',deliveredRequirements:0,linkedBugs:0,bugAffectedRequirements:0,bugRate:null,processedBugs:0,qualityBugs:0,reopenUnknownBugs:0,reopenCount:0,reopenedBugs:0,reopenEvaluatedBugs:0,reopenRate:null,bugs:[],dueRequirements:0,onTime:0,deliveredLate:0,overdueAtEnd:0,unknownDelivery:0,delayRate:null,radar:[0,null,null],requirements:[] }
 async function fixture(page:Page,enabled=true) {
   const calls:URL[]=[]
   await page.addInitScript(() => { localStorage.setItem('shepherd.token','radar-test');localStorage.setItem('shepherd.projectId','project');localStorage.setItem('shepherd.theme','light') })
@@ -281,7 +281,7 @@ test('three group members share the same radar scale with matching legends',asyn
   await fixture(page)
   const members=[
     {...alice,name:'算法甲',group:'AI算法组',deliveredRequirements:6,linkedBugs:0,bugAffectedRequirements:0,bugRate:0,radar:[60,100,60]},
-    {...alice,name:'算法乙',group:'AI算法组',deliveredRequirements:4,bugRate:25,reopenCount:2,reopenedBugs:1,reopenEvaluatedBugs:2,reopenRate:50,bugs:[{externalId:'b1',serial:'BUG-1',title:'登录失败',status:'已解决',reopenCount:2,reopenTimes:['2026-10-10T02:00:00Z','2026-10-15T03:00:00Z']},{externalId:'b2',serial:'BUG-2',title:'样式问题',status:'已验证',reopenCount:0,reopenTimes:[]}],dueRequirements:3,onTime:0,deliveredLate:1,overdueAtEnd:2,delayRate:100,radar:[40,75,0]},
+    {...alice,name:'算法乙',group:'AI算法组',deliveredRequirements:4,bugRate:25,processedBugs:2,qualityBugs:2,reopenUnknownBugs:0,reopenCount:2,reopenedBugs:1,reopenEvaluatedBugs:2,reopenRate:50,bugs:[{externalId:'b1',serial:'BUG-1',title:'登录失败',status:'已解决',createdAt:'2026-07-01T00:00:00+08:00',bugType:'程序逻辑',responsibles:['研发甲'],developers:['修复人'],testers:['测试人'],reporter:'发现人',processed:true,historyAvailable:true,history:[{id:'1',at:'2026-10-10T02:00:00Z',from:'已解决',to:'重新打开'},{id:'2',at:'2026-10-15T03:00:00Z',from:'已解决',to:'重新打开'}],reopenCount:2,reopenTimes:['2026-10-10T02:00:00Z','2026-10-15T03:00:00Z']},{externalId:'b2',serial:'BUG-2',title:'样式问题',status:'已验证',createdAt:'2026-10-01T00:00:00+08:00',bugType:'界面',responsibles:['研发甲'],developers:['修复人'],testers:[],reporter:'发现人',processed:true,historyAvailable:true,history:[],reopenCount:0,reopenTimes:[]}],dueRequirements:3,onTime:0,deliveredLate:1,overdueAtEnd:2,delayRate:100,radar:[40,75,0]},
     {...alice,name:'算法丙',group:'AI算法组',deliveredRequirements:8,linkedBugs:1,bugRate:12.5,dueRequirements:4,onTime:3,deliveredLate:1,overdueAtEnd:0,delayRate:25,radar:[80,87.5,75]},
   ]
   await page.route('**/member-metrics**',route=>{
@@ -332,7 +332,7 @@ test('global count sorting covers every page and keeps table, radars, team compa
 test('reopen counts, distinct Bug ratio, coverage and drilldown stay accurate and sortable',async ({ page }) => {
   await fixture(page)
   const complete={...alice,name:'历史完整'}
-  const unknown={...alice,name:'历史未采集',reopenCount:0,reopenedBugs:0,reopenEvaluatedBugs:0,reopenRate:null,bugs:alice.bugs.map(b=>({...b,reopenCount:null,reopenTimes:[]}))}
+  const unknown={...alice,name:'历史未采集',reopenUnknownBugs:2,reopenCount:0,reopenedBugs:0,reopenEvaluatedBugs:0,reopenRate:null,bugs:alice.bugs.map(b=>({...b,reopenCount:null,reopenTimes:[]}))}
   const zero={...alice,name:'无重开',reopenCount:0,reopenedBugs:0,reopenEvaluatedBugs:2,reopenRate:0,bugs:alice.bugs.map(b=>({...b,reopenCount:0,reopenTimes:[]}))}
   await page.route('**/member-metrics**',route => { if (!new URL(route.request().url()).pathname.endsWith('/member-metrics')) return route.fallback(); return route.fulfill({json:{source,metrics:{month:'2026-10',endExclusive:endForMonth('2026-10'),requirementTarget:10,members:[unknown,zero,complete]}}}) })
   await page.goto('/devops?view=radar&month=2026-10&sort=reopenCount&order=desc')
@@ -355,7 +355,41 @@ test('reopen counts, distinct Bug ratio, coverage and drilldown stay accurate an
   await page.screenshot({path:'/tmp/shepherd-member-reopen.png',fullPage:true,animations:'disabled'})
   await rows.first().getByRole('button',{name:'历史完整',exact:true}).click()
   const drawer=page.getByRole('dialog')
-  await expect(drawer.getByText('关联Bug重开明细',{exact:true})).toBeVisible()
-  await expect(drawer.getByText('BUG-1 登录失败',{exact:true})).toBeVisible()
-  await expect(drawer.getByText('2026/10/15 11:00 等2次')).toBeVisible()
+  await expect(drawer.getByText('本人责任缺陷',{exact:true})).toBeVisible()
+  await drawer.getByRole('button',{name:'BUG-1',exact:true}).click()
+  const history=page.getByRole('dialog',{name:'BUG-1 · 云效状态流水'})
+  await expect(history.getByText('2026/10/15 11:00',{exact:true})).toBeVisible()
+  await expect(history.getByText('重开事件',{exact:true})).toHaveCount(2)
+})
+
+
+test('Bug audit includes July legacy and unlinked Bugs, separates responsibility and exposes actual status evidence',async ({page}) => {
+  await fixture(page)
+  const legacy={...alice.bugs[0],externalId:'old',serial:'BUG-LEGACY',createdAt:'2026-07-17T00:00:00+08:00',responsibles:['原缺陷责任人'],developers:['本次修复人'],testers:['源测试人员'],reporter:'发现人',reopenCount:1,reopenTimes:['2026-10-19T09:00:00Z'],history:[{id:'original',at:'2026-09-16T08:00:00Z',from:'待处理',to:'已解决'},{id:'reopen',at:'2026-10-19T09:00:00Z',from:'已解决',to:'重新打开'}]}
+  const communication={...alice.bugs[1],externalId:'communication',serial:'BUG-COMM',reopenCount:0,responsibles:['原缺陷责任人'],history:[{id:'fixed',at:'2026-10-21T09:00:00Z',from:'待处理',to:'已解决'},{id:'verified',at:'2026-10-22T01:00:00Z',from:'已解决',to:'已验证'}]}
+  const developer={...alice,name:'原缺陷责任人',newRequirements:0,deliveredRequirements:0,dueRequirements:0,processedBugs:2,qualityBugs:2,reopenCount:1,reopenedBugs:1,reopenRate:50,bugs:[legacy,communication]}
+  await page.route('**/member-metrics**',route=>{if(!new URL(route.request().url()).pathname.endsWith('/member-metrics'))return route.fallback();return route.fulfill({json:{source,metrics:{month:'2026-10',endExclusive:endForMonth('2026-10'),requirementTarget:10,members:[developer],bugQuality:{totalSourceBugs:2,verifiedSourceBugs:2,unknownSourceBugs:0,processedBugs:2,reopenedBugs:1,reopenCount:1,reopenRate:50,rows:[legacy,communication]}}}})})
+  await page.goto('/devops?view=radar&month=2026-10')
+  const panel=page.getByRole('region',{name:'个人月度雷达指标'})
+  await expect(panel.locator('.yx-members-table .ant-table-row').first().getByRole('button',{name:'原缺陷责任人'})).toBeVisible()
+  const audit=page.locator('#yx-bug-quality')
+  await expect(audit.getByText('状态重开率 50.0%',{exact:true})).toBeVisible()
+  await audit.getByLabel('搜索缺陷重开流水').fill('BUG-LEGACY')
+  await expect(audit.getByRole('button',{name:'BUG-LEGACY',exact:true})).toBeVisible()
+  await expect(audit.getByText('原缺陷责任人',{exact:true})).toBeVisible()
+  await expect(audit.getByText('本次修复人',{exact:true})).toBeVisible()
+  await audit.getByRole('button',{name:'BUG-LEGACY',exact:true}).click()
+  const drawer=page.getByRole('dialog',{name:'BUG-LEGACY · 云效状态流水'})
+  await expect(drawer.getByText('创建：2026/07/17 00:00',{exact:true})).toBeVisible()
+  await expect(drawer.getByText('2026/09/16 16:00',{exact:true})).toBeVisible()
+  await expect(drawer.getByText('2026/10/19 17:00',{exact:true})).toBeVisible()
+  await drawer.getByRole('button',{name:'关闭',exact:true}).click()
+  await audit.getByLabel('搜索缺陷重开流水').fill('BUG-COMM')
+  await expect(audit.locator('.ant-table-row td').nth(2)).toHaveText('0')
+  await audit.getByLabel('搜索缺陷重开流水').fill('')
+  await audit.screenshot({path:'/tmp/shepherd-bug-quality-correction.png',animations:'disabled'})
+  await page.setViewportSize({width:390,height:1100})
+  const bounds=await audit.evaluate(el=>({right:el.getBoundingClientRect().right,width:el.clientWidth,content:el.scrollWidth}))
+  expect(bounds.right).toBeLessThanOrEqual(390)
+  expect(bounds.content).toBeLessThanOrEqual(bounds.width+1)
 })

@@ -376,7 +376,7 @@ async fn monthly_member_metrics_use_one_source_and_projected_snapshot() {
             data: json!({"serial":"REQ-42","status":"已发布","createdAt":"2026-10-01T00:00:00+08:00","statusChangedAt":"2026-10-15T23:59:59+08:00","due":"2026-10-15","owner":"owner","group":"test-group","raw":{"description":"secret raw text","customFieldValues":[{"fieldName":"开发者","fieldFormat":"multiUser","values":[{"identifier":"developer-id","displayValue":"developer"}]}]}}),
         }];
         if n == 0 {
-            records.push(Record {kind:"bug".into(),external_id:"bug".into(),data:json!({"createdAt":"2026-10-10T00:00:00+08:00","status":"已解决","parentId":"shared-id","requirementIds":["REQ-42"],"reopenHistory":{"complete":true,"checkedAt":"2026-11-02T00:00:00+08:00","events":[{"id":"reopen-1","at":"2026-10-20T00:00:00+08:00"}]}})});
+            records.push(Record {kind:"bug".into(),external_id:"bug".into(),data:json!({"createdAt":"2026-10-10T00:00:00+08:00","status":"已解决","parentId":"shared-id","requirementIds":["REQ-42"],"raw":{"customFieldValues":[{"fieldName":"缺陷责任人","fieldFormat":"user","values":[{"identifier":"developer-id","displayValue":"developer"}]}]},"reopenHistory":{"schemaVersion":2,"complete":true,"checkedAt":"2026-11-02T00:00:00+08:00","events":[{"id":"reopen-1","at":"2026-10-20T00:00:00+08:00"}],"resolutions":[],"transitions":[{"id":"reopen-1","at":"2026-10-20T00:00:00+08:00","from":"已解决","to":"重新打开"}]}})});
         }
         store.stage(run, records).await.expect("stage");
         store.complete(run, complete).await.expect("complete");
@@ -402,9 +402,10 @@ async fn monthly_member_metrics_use_one_source_and_projected_snapshot() {
             assert_eq!(member["delayRate"], 0.0);
             assert_eq!(member["bugAffectedRequirements"], if n == 0 { 1 } else { 0 });
             assert_eq!(member["radar"][0], 5.0);
-            assert_eq!(member["reopenCount"], if n == 0 { 1 } else { 0 });
-            assert_eq!(member["reopenEvaluatedBugs"], if n == 0 { 1 } else { 0 });
-            assert_eq!(member["reopenRate"], if n == 0 { json!(100.0) } else { json!(null) });
+            let responsible = n == 0 && member["name"] == "developer";
+            assert_eq!(member["reopenCount"], if responsible { 1 } else { 0 });
+            assert_eq!(member["reopenEvaluatedBugs"], if responsible { 1 } else { 0 });
+            assert_eq!(member["reopenRate"], if responsible { json!(100.0) } else { json!(null) });
         }
         assert!(!data.to_string().contains("secret raw text"));
         assert!(!data.to_string().contains("customFieldValues"));

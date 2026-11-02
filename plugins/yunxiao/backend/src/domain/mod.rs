@@ -1,3 +1,4 @@
+mod bug_quality;
 mod member_metrics;
 pub use member_metrics::{build_member_metrics, MemberMetricsQuery};
 use serde::{Deserialize, Serialize};

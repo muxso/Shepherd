@@ -7,18 +7,19 @@ import 'dayjs/locale/zh-cn'
 import monthLocale from 'antd/es/date-picker/locale/zh_CN'
 import { previousMonth, shanghaiMonth, validMonth } from './memberMonth'
 import { MemberRadar, GroupRadar, radarColors } from './MemberRadar'
+import BugQuality, { BugRows } from './BugQuality'
 import { ApiError } from '../../api'
-import { devopsApi, type MemberMetric, type MemberBugMetric, type MemberMetricsData, type MemberRequirementMetric } from './api'
+import { devopsApi, type MemberMetric, type MemberMetricsData, type MemberRequirementMetric } from './api'
 import './member-metrics.css'
 
 const percent = (value: number | null) => value == null ? '待评价' : `${value.toFixed(1)}%`
 const sortFields = [{key:'delivered',label:'交付需求量'},{key:'bugs',label:'关联Bug数'},{key:'bugRate',label:'关联Bug率'},{key:'reopenCount',label:'重开次数'},{key:'reopenRate',label:'重开比例'},{key:'name',label:'姓名'}]
-const historyCount = (p:MemberMetric) => p.linkedBugs > 0 && !p.reopenEvaluatedBugs ? '待同步' : `${(p.reopenEvaluatedBugs ?? 0) < p.linkedBugs ? '≥' : ''}${p.reopenCount ?? 0}`
-const shanghaiTime = (value:string) => new Intl.DateTimeFormat('zh-CN',{timeZone:'Asia/Shanghai',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hour12:false}).format(new Date(value))
+const qualityCount = (p:MemberMetric) => p.qualityBugs ?? p.linkedBugs
+const unknownCount = (p:MemberMetric) => p.reopenUnknownBugs ?? Math.max(0,qualityCount(p)-(p.reopenEvaluatedBugs ?? 0))
+const historyCount = (p:MemberMetric) => unknownCount(p) > 0 && !p.reopenEvaluatedBugs ? '待同步' : `${unknownCount(p) > 0 ? '≥' : ''}${p.reopenCount ?? 0}`
 function ReopenValue({ member:p,rate=false }: { member:MemberMetric; rate?:boolean }) {
-  const complete = (p.reopenEvaluatedBugs ?? 0) === p.linkedBugs
-  return <Tooltip title={`重开比例按Bug去重：重开Bug ${p.reopenedBugs ?? 0} / 关联Bug ${p.linkedBugs}；已核验历史 ${p.reopenEvaluatedBugs ?? 0} / ${p.linkedBugs}。同一Bug每次重开分别计次数；历史不完整时次数仅为已知下限，比例待评价。`}>
-    <div className="yx-member-number"><strong>{rate ? percent(p.reopenRate ?? null) : historyCount(p)}</strong><small>{complete ? `${p.reopenedBugs ?? 0} / ${p.linkedBugs} 个Bug` : `已核验 ${p.reopenEvaluatedBugs ?? 0} / ${p.linkedBugs} 个Bug`}</small></div>
+  return <Tooltip title={`按缺陷本月状态流转统计，含遗留缺陷，归源缺陷责任人。比例：重开Bug ${p.reopenedBugs ?? 0} / 本月修复、验证或重开Bug ${p.processedBugs ?? p.linkedBugs}；已核验历史 ${p.reopenEvaluatedBugs ?? 0} / ${qualityCount(p)}。人工沟通返修次数不能从状态流转推算。`}>
+    <div className="yx-member-number"><strong>{rate ? percent(p.reopenRate ?? null) : historyCount(p)}</strong><small>{unknownCount(p) === 0 ? `${p.reopenedBugs ?? 0} / ${p.processedBugs ?? p.linkedBugs} 个Bug` : `已核验 ${p.reopenEvaluatedBugs ?? 0} / ${qualityCount(p)} 个Bug`}</small></div>
   </Tooltip>
 }
 const classes: Record<string,string> = { notDue:'不在本月到期范围',onTime:'按期交付',deliveredLate:'延期交付',overdueAtEnd:'月底未交付',unknown:'状态不明' }
@@ -77,9 +78,9 @@ export default function MemberMetrics({ sourceId,revision }: { sourceId:string; 
   const groups = knownGroups
   const groupOptions = group && !groups.includes(group) ? [...groups,group] : groups
   const activeGroup = group
-  const rows = (metrics?.members || []).filter(p => (!activeGroup || p.group === activeGroup) && p.name.toLocaleLowerCase().includes(search.toLocaleLowerCase()) && (includeInactive || p.newRequirements+p.deliveredRequirements+p.dueRequirements > 0))
+  const rows = (metrics?.members || []).filter(p => (!activeGroup || p.group === activeGroup) && p.name.toLocaleLowerCase().includes(search.toLocaleLowerCase()) && (includeInactive || p.newRequirements+p.deliveredRequirements+p.dueRequirements+(p.qualityBugs ?? 0) > 0))
     .sort((a,b) => {
-      const value = (p:MemberMetric) => sort === 'delivered' ? p.deliveredRequirements : sort === 'bugs' ? p.linkedBugs : sort === 'bugRate' ? p.bugRate : sort === 'reopenCount' ? ((p.reopenEvaluatedBugs ?? 0) === p.linkedBugs ? p.reopenCount ?? 0 : null) : p.reopenRate ?? null
+      const value = (p:MemberMetric) => sort === 'delivered' ? p.deliveredRequirements : sort === 'bugs' ? p.linkedBugs : sort === 'bugRate' ? p.bugRate : sort === 'reopenCount' ? (unknownCount(p) === 0 ? p.reopenCount ?? 0 : null) : p.reopenRate ?? null
       const x=value(a),y=value(b)
       if (sort !== 'name' && (x == null || y == null)) return (x == null ? 1 : 0)-(y == null ? 1 : 0) || a.name.localeCompare(b.name,'zh-CN')
       const difference = sort === 'name' ? a.name.localeCompare(b.name,'zh-CN') : x!-y!
@@ -101,12 +102,13 @@ export default function MemberMetrics({ sourceId,revision }: { sourceId:string; 
     <div className="yx-member-toolbar"><Space wrap size={12}>
       <label>统计月份 <DatePicker aria-label="统计月份" picker="month" locale={monthLocale} value={dayjs(`${month}-01`).locale('zh-cn')} format="YYYY年MM月" allowClear={false} inputReadOnly style={{ width:160 }} disabledDate={date => date.format('YYYY-MM') > shanghaiMonth()} onChange={date => { if (date) { setInvalidMonth(false);updateQuery({ month:date.format('YYYY-MM') }) } }} /></label>
       <label>个人交付参考目标 <InputNumber aria-label="个人交付参考目标" value={draftTarget} min={0.1} max={10000} onChange={setDraftTarget} /> 项</label>
+      <Button onClick={() => document.getElementById('yx-bug-quality')?.scrollIntoView({behavior:'smooth'})}>核对缺陷流水</Button>
       <Button disabled={!targetValid || draftTarget === target} onClick={() => { if (targetValid) updateQuery({ requirementTarget:String(draftTarget) }) }}>应用参考目标</Button>
     </Space><Popover trigger="click" title="个人指标统计口径" content={<div className="yx-member-notes">
       <p>需求量按本月已发布需求，归当前负责人及明确登记的开发、测试、协作等参与人；仅识别带用户标识的人员类型字段，自由文本不作为成员。多人分别计一次，不能通过成员数求组总量。</p>
       <p>关联Bug率=本月已交付需求中，本月存在有效关联Bug的需求数/本月交付需求数。按同一源的明确父需求或关联记录识别；取消、重复及误报等状态排除。参与需求的缺陷情况不代表个人责任认定。</p>
       <p>延期率=(延期交付+月底未交付)/(本月应交付-状态不明)。包含全部优先级，取最早排期日当天结束；无有效分母时待评价。本月未结束时以采集时点为截点，仅纳入已经到期的需求。</p>
-      <p>重开次数与比例沿用本月有效关联Bug范围。只读采集云效状态动态：已解决/已验证/已发布/已关闭等状态退回待处理、修复中，或明确进入重开状态计一次；同一Bug多次重开分别计数。重开比例=本月重开过的关联Bug数/本月关联Bug数，按Bug去重。仅统计本月重开事件；未同步、历史不完整或未知状态时比例待评价，次数显示已知下限，不按当前状态猜测。归属沿用需求参与人，不代表个人责任认定。</p>
+      <p>状态重开独立于需求交付：纳入本月发生修复完成、验证完成或重开状态流转的全部源Bug，包含过去月份创建的遗留缺陷，不要求已关联需求或需求已发布。次数按本月重开事件累加；比例=本月重开过的Bug去重数/本月修复、验证或重开Bug去重数。归属仅取源“缺陷责任人”，不以当前处理人、开发者或需求参与人代替；缺失归待归属。历史未核验时比例待评价、次数显示已知下限。状态流转不能推算聊天中重复返修次数；可在下方核验表逐条查看源状态流水。</p>
       <p>雷达三轴：交付量=min(已交付/参考目标,1)×100；关联质量=100-Bug率；交付时效=100-延期率。缺失维度只显示已知点；参考目标仅调整展示尺度，不产生综合OKR分。</p>
       <p>历史月份由当前快照推算，无法还原需求排期、负责人修改或需求重开；截点后变更的非发布状态与缺少状态时间的到期需求列为不明。分组冲突或未知时列为待归属；可开启“包含无活动成员”查看本月无记录的已同步参与人。</p>
       {metrics && <p>有效Bug {metrics.newValidBugs} 条，其中关联本月交付需求 {metrics.linkedValidBugs} 条；未记录排期 {metrics.requirementsMissingDue} 项，缺少创建/交付时间 {metrics.requirementsMissingTime} 项。</p>}
@@ -125,6 +127,7 @@ export default function MemberMetrics({ sourceId,revision }: { sourceId:string; 
       {metrics && <>
         <div className="yx-member-scope"><Tag>{metrics.month}</Tag><span>上海时区 · 截止 {metrics.endExclusive.replace('T',' ').slice(0,16)}（不含）</span><span>当前快照推算，关联Bug率供复盘参考</span></div>
         <Card size="small" title="个人指标表" className="yx-members-table">
+          <Typography.Paragraph type="secondary">需求与关联Bug指标按需求参与人；状态重开指标独立按源缺陷责任人统计，包含遗留缺陷。两类指标的范围与分母不同，可点击成员或“核对缺陷流水”查看依据。</Typography.Paragraph>
           <Table<MemberMetric> size="small" tableLayout="fixed" rowKey="name" dataSource={pageRows} scroll={{ x:1250 }} pagination={false} onChange={(_,__,sorter,extra) => { if (extra.action !== 'sort') return; const selected = Array.isArray(sorter) ? sorter[0] : sorter; if (selected?.order) changeSort(String(selected.columnKey),selected.order === 'ascend' ? 'asc' : 'desc') }} columns={[
             { title:'成员',dataIndex:'name',fixed:'left',width:140,ellipsis:true,render:(name:string,p) => <MemberName name={name} onClick={() => setSelected(p)} /> },
             { title:'分组',dataIndex:'group',width:150,ellipsis:true },
@@ -157,6 +160,7 @@ export default function MemberMetrics({ sourceId,revision }: { sourceId:string; 
           </>}
         </Card>
         {pagination('雷达图分页')}
+        <BugQuality data={metrics.bugQuality} group={activeGroup} members={metrics.members}/>
       </>}
       {!metrics && !loading && !error && <Empty description="请选择统计月份" />}
       </div>
@@ -168,14 +172,9 @@ export default function MemberMetrics({ sourceId,revision }: { sourceId:string; 
         { title:'当前状态',dataIndex:'status',width:100,ellipsis:true },{ title:'截止日期',dataIndex:'due',width:110,render:(v:string) => v || '未记录' },{ title:'本月交付',dataIndex:'delivered',width:90,render:(v:boolean) => v ? '是' : '否' },
         { title:'交付分类',dataIndex:'deliveryClass',width:120,render:(v:string) => classes[v] || v },{ title:'本月关联Bug',dataIndex:'bugIds',width:110,align:'right',render:(v:string[]) => v.length },
       ]} />
-      <Typography.Title level={5}>关联Bug重开明细</Typography.Title>
-      <Typography.Paragraph type="secondary">沿用本月关联Bug范围；次数仅统计本月事件，时间为上海时区。历史未完整采集时待同步。</Typography.Paragraph>
-      <Table<MemberBugMetric> size="small" tableLayout="fixed" rowKey="externalId" dataSource={selected?.bugs || []} scroll={{ x:800 }} pagination={{ pageSize:10,hideOnSinglePage:true }} columns={[
-        { title:'Bug',width:350,ellipsis:true,render:(_:unknown,b) => `${b.serial || b.externalId} ${b.title}` },
-        { title:'当前状态',dataIndex:'status',width:100,ellipsis:true },
-        { title:'本月重开次数',dataIndex:'reopenCount',width:120,align:'right',render:(n:number | null) => n == null ? '待同步' : n },
-        { title:'本月重开时间',width:230,render:(_:unknown,b) => !b.reopenTimes.length ? '—' : <Tooltip title={b.reopenTimes.map(shanghaiTime).join('；')}><span>{shanghaiTime(b.reopenTimes[b.reopenTimes.length-1])}{b.reopenTimes.length > 1 ? ` 等${b.reopenTimes.length}次` : ''}</span></Tooltip> },
-      ]} />
+      <Typography.Title level={5}>本人责任缺陷</Typography.Title>
+      <Typography.Paragraph type="secondary">按源“缺陷责任人”归属，含遗留缺陷；与上方需求参与口径分开。点击缺陷编号核对状态流水。</Typography.Paragraph>
+      <BugRows rows={selected?.bugs || []}/>
     </Drawer>
   </section>
 }
