@@ -6,9 +6,9 @@
 .yx-member-notes { max-width:min(580px,80vw); font-size:13px; overflow-wrap:anywhere; }
 .yx-member-filters { display:flex; align-items:center; flex-wrap:wrap; gap:12px; margin-bottom:16px; }
 .yx-member-inactive { display:inline-flex; align-items:center; gap:8px; font-size:12px; color:var(--text-3); }
-.yx-members-table { margin-bottom:16px; min-width:0; }
-.yx-members-table .ant-table-wrapper { max-width:100%; min-width:0; }
-.yx-members-table .ant-table-thead th { white-space:nowrap; }
+.yx-members-table,.yx-member-quality-table { margin-bottom:16px; min-width:0; }
+.yx-members-table .ant-table-wrapper,.yx-member-quality-table .ant-table-wrapper { max-width:100%; min-width:0; }
+.yx-members-table .ant-table-thead th,.yx-member-quality-table .ant-table-thead th { white-space:nowrap; }
 .yx-member-number { font-variant-numeric:tabular-nums; white-space:nowrap; line-height:1.6; }
 .yx-member-number strong { display:block; font-size:14px; font-weight:500; }
 .yx-member-number small { display:block; font-size:11px; color:var(--text-3); }
@@ -50,5 +50,3 @@
 .yx-group-radar-person > div > span,.yx-group-radar-person small { display:block; font-size:12px; color:var(--text-3); overflow-wrap:anywhere; }
 .yx-group-radar-swatch { width:10px; height:10px; flex:0 0 10px; margin-top:10px; border-radius:50%; }
 @media(max-width:900px) { .yx-group-radar-layout { grid-template-columns:minmax(0,1fr); gap:16px; } }
-
-.yx-member-reopen-summary { margin-top:12px; font-size:12px; color:var(--text-3); text-align:center; overflow-wrap:anywhere; }
