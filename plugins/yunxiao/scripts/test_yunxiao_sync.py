@@ -21,4 +21,7 @@ class SyncTests(unittest.TestCase):
   self.assertNotIn('author',r['data'])
   self.assertEqual(r['data']['creator'],'原始创建人')
   self.assertEqual(r['data']['owner'],'产品')
+  history={'complete':True,'checkedAt':'2026-11-02T00:00:00+08:00','events':[{'id':'1','at':'2026-10-20T00:00:00+08:00'}]}
+  bug=sync.normalize_workitem({'id':'bug','reopenHistory':history},'bug',c,g,{})
+  self.assertEqual(bug['data']['reopenHistory'],history)
 if __name__=='__main__':unittest.main()

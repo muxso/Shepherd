@@ -4,8 +4,8 @@ test.use({ viewport:{ width:1600,height:1100 } })
 const endForMonth=(month:string) => { const [year,value]=month.split('-').map(Number);return `${value===12?year+1:year}-${String(value===12?1:value+1).padStart(2,'0')}-01T00:00:00+08:00` }
 const source = { id:'source-a',name:'测试需求池',project_id:'project' }
 const requirement = { externalId:'req-a',serial:'REQ-42',title:'登录需求',status:'已发布',due:'2026-10-15',delivered:true,newInMonth:true,deliveryClass:'deliveredLate',bugIds:['b1'] }
-const alice = { name:'研发甲',group:'研发组',newRequirements:6,deliveredRequirements:4,linkedBugs:2,bugAffectedRequirements:1,bugRate:25,dueRequirements:5,onTime:3,deliveredLate:1,overdueAtEnd:1,unknownDelivery:0,delayRate:40,radar:[40,75,60],requirements:[requirement] }
-const bob = { ...alice,name:'研发乙',group:'协作组',deliveredRequirements:0,linkedBugs:0,bugAffectedRequirements:0,bugRate:null,dueRequirements:0,onTime:0,deliveredLate:0,overdueAtEnd:0,unknownDelivery:0,delayRate:null,radar:[0,null,null],requirements:[] }
+const alice = { name:'研发甲',group:'研发组',newRequirements:6,deliveredRequirements:4,linkedBugs:2,bugAffectedRequirements:1,bugRate:25,reopenCount:2,reopenedBugs:1,reopenEvaluatedBugs:2,reopenRate:50,bugs:[{externalId:'b1',serial:'BUG-1',title:'登录失败',status:'已解决',reopenCount:2,reopenTimes:['2026-10-10T02:00:00Z','2026-10-15T03:00:00Z']},{externalId:'b2',serial:'BUG-2',title:'样式问题',status:'已验证',reopenCount:0,reopenTimes:[]}],dueRequirements:5,onTime:3,deliveredLate:1,overdueAtEnd:1,unknownDelivery:0,delayRate:40,radar:[40,75,60],requirements:[requirement] }
+const bob = { ...alice,name:'研发乙',group:'协作组',deliveredRequirements:0,linkedBugs:0,bugAffectedRequirements:0,bugRate:null,reopenCount:0,reopenedBugs:0,reopenEvaluatedBugs:0,reopenRate:null,bugs:[],dueRequirements:0,onTime:0,deliveredLate:0,overdueAtEnd:0,unknownDelivery:0,delayRate:null,radar:[0,null,null],requirements:[] }
 async function fixture(page:Page,enabled=true) {
   const calls:URL[]=[]
   await page.addInitScript(() => { localStorage.setItem('shepherd.token','radar-test');localStorage.setItem('shepherd.projectId','project');localStorage.setItem('shepherd.theme','light') })
@@ -32,7 +32,7 @@ test('monthly table and filled radars preserve raw rates, sample sizes and missi
   const calls=await fixture(page)
   await page.goto('/devops?view=radar&month=2026-10')
   const panel=page.getByRole('region',{ name:'个人月度雷达指标' })
-  await expect(panel.getByRole('columnheader',{ name:'关联Bug率 ↓',exact:true })).toBeVisible()
+  await expect(panel.getByRole('columnheader',{ name:'关联Bug率 ↓' })).toBeVisible()
   await expect(panel.getByText('25.0%',{exact:true}).first()).toBeVisible()
   await expect(panel.getByText('1 / 4 项需求',{exact:true})).toBeVisible()
   await expect(panel.getByRole('img',{ name:'研发甲个人雷达图' })).toBeVisible()
@@ -281,7 +281,7 @@ test('three group members share the same radar scale with matching legends',asyn
   await fixture(page)
   const members=[
     {...alice,name:'算法甲',group:'AI算法组',deliveredRequirements:6,linkedBugs:0,bugAffectedRequirements:0,bugRate:0,radar:[60,100,60]},
-    {...alice,name:'算法乙',group:'AI算法组',deliveredRequirements:4,bugRate:25,dueRequirements:3,onTime:0,deliveredLate:1,overdueAtEnd:2,delayRate:100,radar:[40,75,0]},
+    {...alice,name:'算法乙',group:'AI算法组',deliveredRequirements:4,bugRate:25,reopenCount:2,reopenedBugs:1,reopenEvaluatedBugs:2,reopenRate:50,bugs:[{externalId:'b1',serial:'BUG-1',title:'登录失败',status:'已解决',reopenCount:2,reopenTimes:['2026-10-10T02:00:00Z','2026-10-15T03:00:00Z']},{externalId:'b2',serial:'BUG-2',title:'样式问题',status:'已验证',reopenCount:0,reopenTimes:[]}],dueRequirements:3,onTime:0,deliveredLate:1,overdueAtEnd:2,delayRate:100,radar:[40,75,0]},
     {...alice,name:'算法丙',group:'AI算法组',deliveredRequirements:8,linkedBugs:1,bugRate:12.5,dueRequirements:4,onTime:3,deliveredLate:1,overdueAtEnd:0,delayRate:25,radar:[80,87.5,75]},
   ]
   await page.route('**/member-metrics**',route=>{
@@ -326,4 +326,36 @@ test('global count sorting covers every page and keeps table, radars, team compa
   await panel.getByRole('columnheader',{name:'关联Bug数'}).click()
   await expect(panel.locator('.yx-group-radar-legend .yx-member-name').first()).toHaveText('成员00')
   await page.screenshot({path:'/tmp/shepherd-member-sorting.png',fullPage:true,animations:'disabled'})
+})
+
+
+test('reopen counts, distinct Bug ratio, coverage and drilldown stay accurate and sortable',async ({ page }) => {
+  await fixture(page)
+  const complete={...alice,name:'历史完整'}
+  const unknown={...alice,name:'历史未采集',reopenCount:0,reopenedBugs:0,reopenEvaluatedBugs:0,reopenRate:null,bugs:alice.bugs.map(b=>({...b,reopenCount:null,reopenTimes:[]}))}
+  const zero={...alice,name:'无重开',reopenCount:0,reopenedBugs:0,reopenEvaluatedBugs:2,reopenRate:0,bugs:alice.bugs.map(b=>({...b,reopenCount:0,reopenTimes:[]}))}
+  await page.route('**/member-metrics**',route => { if (!new URL(route.request().url()).pathname.endsWith('/member-metrics')) return route.fallback(); return route.fulfill({json:{source,metrics:{month:'2026-10',endExclusive:endForMonth('2026-10'),requirementTarget:10,members:[unknown,zero,complete]}}}) })
+  await page.goto('/devops?view=radar&month=2026-10&sort=reopenCount&order=desc')
+  const panel=page.getByRole('region',{name:'个人月度雷达指标'}), table=panel.locator('.yx-members-table')
+  const rows=table.locator('.ant-table-row')
+  await expect(rows.first().getByRole('button',{name:'历史完整',exact:true})).toBeVisible()
+  await expect(rows.first().getByText('50.0%',{exact:true})).toBeVisible()
+  await expect(rows.last().getByText('待同步',{exact:true})).toBeVisible()
+  await expect(rows.last().getByText('已核验 0 / 2 个Bug')).toHaveCount(2)
+  await panel.getByRole('columnheader',{name:'重开次数'}).click()
+  await expect(rows.first().getByRole('button',{name:'无重开',exact:true})).toBeVisible()
+  await expect(rows.last().getByRole('button',{name:'历史未采集',exact:true})).toBeVisible()
+  await panel.getByLabel('成员排序').first().click()
+  await page.locator('.ant-select-dropdown').getByTitle('重开比例降序',{exact:true}).click()
+  await expect(rows.first().getByRole('button',{name:'历史完整',exact:true})).toBeVisible()
+  await expect(panel.locator('.yx-member-radar-card').first().getByText('重开 2 次 · 比例 50.0%')).toBeVisible()
+  await page.reload()
+  await expect(rows.first().getByRole('button',{name:'历史完整',exact:true})).toBeVisible()
+  await page.mouse.move(10,10)
+  await page.screenshot({path:'/tmp/shepherd-member-reopen.png',fullPage:true,animations:'disabled'})
+  await rows.first().getByRole('button',{name:'历史完整',exact:true}).click()
+  const drawer=page.getByRole('dialog')
+  await expect(drawer.getByText('关联Bug重开明细',{exact:true})).toBeVisible()
+  await expect(drawer.getByText('BUG-1 登录失败',{exact:true})).toBeVisible()
+  await expect(drawer.getByText('2026/10/15 11:00 等2次')).toBeVisible()
 })

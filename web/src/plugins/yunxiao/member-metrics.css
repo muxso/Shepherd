@@ -50,3 +50,5 @@
 .yx-group-radar-person > div > span,.yx-group-radar-person small { display:block; font-size:12px; color:var(--text-3); overflow-wrap:anywhere; }
 .yx-group-radar-swatch { width:10px; height:10px; flex:0 0 10px; margin-top:10px; border-radius:50%; }
 @media(max-width:900px) { .yx-group-radar-layout { grid-template-columns:minmax(0,1fr); gap:16px; } }
+
+.yx-member-reopen-summary { margin-top:12px; font-size:12px; color:var(--text-3); text-align:center; overflow-wrap:anywhere; }

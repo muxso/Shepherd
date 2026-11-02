@@ -92,6 +92,9 @@ jobs:
         run: npm run build
       - name: install browser for plugin UI checks
         run: npx playwright install --with-deps chromium
+      - name: Yunxiao read-only collector contracts
+        working-directory: .
+        run: python3 -m unittest discover -s plugins/yunxiao/scripts -p 'test_*.py'
       - name: environment plugin UI contracts
         run: npx playwright test environment-plugins.spec.ts plugins.spec.ts project-switch.spec.ts productivity.spec.ts requirement-output.spec.ts member-metrics.spec.ts rich-text.spec.ts
         env:

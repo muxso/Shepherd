@@ -18,6 +18,7 @@ import urllib.request
 KINDS = ('requirement', 'bug', 'sprint', 'commit')
 from yunxiao_testhub import enrich_requirements, collect_testcases
 from yunxiao_relations import enrich_bug_relations
+from yunxiao_bug_history import enrich_bug_history
 
 def load_env(path):
     for line in Path(path).read_text().splitlines():
@@ -90,6 +91,7 @@ def normalize_workitem(item, kind, collector, groups, sprint_map):
         'parentId':str(item.get('parentId') or ''), 'due':end.strftime('%Y-%m-%d') if end else '',
         'dueSource':due_source, 'createdAt':iso(item.get('gmtCreate')), 'updatedAt':iso(item.get('gmtModified')),
         'statusChangedAt':iso(item.get('updateStatusAt')), 'raw':item}
+    if kind == 'bug': data['reopenHistory'] = item.get('reopenHistory')
     return {'kind':kind, 'externalId':str(item['id']), 'data':data}
 
 def collect(collector, groups, days):
@@ -98,7 +100,7 @@ def collect(collector, groups, days):
         fs = [ex.submit(collector.workitems,c,'Req'), ex.submit(collector.workitems,c,'Bug'), ex.submit(collector.sprints,c)]
         items, bugs, sprints = [f.result() for f in fs]
     items = enrich_requirements(items, collector)
-    bugs = enrich_bug_relations(bugs, items, collector)
+    bugs = enrich_bug_history(enrich_bug_relations(bugs, items, collector), collector)
     repo_ids = [x.strip() for x in os.environ.get('SHEPHERD_TEST_REPO_IDS','').split(',') if x.strip()]
     testcases = collect_testcases(collector, repo_ids)
     # All source requests must succeed before a complete snapshot may be published.
