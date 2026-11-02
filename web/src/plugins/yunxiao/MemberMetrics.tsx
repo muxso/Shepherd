@@ -32,7 +32,9 @@ export default function MemberMetrics({ sourceId,revision }: { sourceId:string; 
   const chartView = query.get('chart') === 'members' || !group ? 'members' : 'group'
   const [draftTarget,setDraftTarget] = useState<number | null>(target)
   const [invalidMonth,setInvalidMonth] = useState(!!rawMonth && !validMonth(rawMonth))
-  const [search,setSearch] = useState(''),[sort,setSort] = useState('delivered')
+  const [search,setSearch] = useState('')
+  const sort = ['delivered','bugs','name'].includes(query.get('sort') || '') ? query.get('sort')! : 'delivered'
+  const order = query.get('order') === 'asc' ? 'asc' : 'desc'
   const [includeInactive,setIncludeInactive] = useState(false)
   const [knownGroups,setKnownGroups] = useState<string[]>([])
   const [result,setResult] = useState<{ key:string; data?:MemberMetricsData; error?:string; loading:boolean } | null>(null)
@@ -67,14 +69,18 @@ export default function MemberMetrics({ sourceId,revision }: { sourceId:string; 
   const groupOptions = group && !groups.includes(group) ? [...groups,group] : groups
   const activeGroup = group
   const rows = (metrics?.members || []).filter(p => (!activeGroup || p.group === activeGroup) && p.name.toLocaleLowerCase().includes(search.toLocaleLowerCase()) && (includeInactive || p.newRequirements+p.deliveredRequirements+p.dueRequirements > 0))
-    .sort((a,b) => (sort === 'delivered' ? b.deliveredRequirements-a.deliveredRequirements || b.newRequirements-a.newRequirements : 0) || a.name.localeCompare(b.name,'zh-CN'))
+    .sort((a,b) => {
+      const difference = sort === 'delivered' ? a.deliveredRequirements-b.deliveredRequirements : sort === 'bugs' ? a.linkedBugs-b.linkedBugs : a.name.localeCompare(b.name,'zh-CN')
+      return difference*(order === 'asc' ? 1 : -1) || a.name.localeCompare(b.name,'zh-CN')
+    })
+  const changeSort = (field:string,direction:string) => { setMemberPage(1);updateQuery({ sort:field,order:direction }) }
   let selectedNames:string[] | null = null
   try {
     const names:unknown = JSON.parse(query.get('compare') || 'null')
     if (Array.isArray(names) && names.length <= 6 && names.every(name => typeof name === 'string' && name.length <= 300)) selectedNames = [...new Set(names)]
   } catch { /* A malformed selection falls back to the visible team defaults. */ }
   const comparisonNames = selectedNames ?? rows.slice(0,6).map(p => p.name)
-  const compared = comparisonNames.flatMap(name => rows.find(p => p.name === name) || []).slice(0,6)
+  const compared = rows.filter(p => comparisonNames.includes(p.name)).slice(0,6)
   const currentPage = Math.min(memberPage,Math.max(1,Math.ceil(rows.length/pageSize)))
   const pageRows = rows.slice((currentPage-1)*pageSize,currentPage*pageSize)
   const targetValid = draftTarget != null && Number.isFinite(draftTarget) && draftTarget > 0 && draftTarget <= 10000
@@ -95,7 +101,7 @@ export default function MemberMetrics({ sourceId,revision }: { sourceId:string; 
         <div className="yx-member-filters">
           <Select aria-label="雷达组织分组" style={{ width:170 }} value={activeGroup} onChange={v => { setMemberPage(1);setPageSize(v ? 12 : 6);updateQuery({ group:v,chart:v ? 'group' : 'members',compare:'' }) }} options={[{ value:'',label:'全部分组' },...groupOptions.map(value => ({ value,label:value }))]} />
           <Input.Search aria-label="筛选雷达成员" placeholder="搜索成员" allowClear style={{ width:210 }} onChange={e => { setSearch(e.target.value);setMemberPage(1) }} />
-          <Select aria-label="成员排序" style={{ width:160 }} value={sort} onChange={v => { setSort(v);setMemberPage(1) }} options={[{ value:'delivered',label:'按交付量排序' },{ value:'name',label:'按姓名排序' }]} />
+          <Select aria-label="成员排序" style={{ width:200 }} value={`${sort}:${order}`} onChange={v => { const [field,direction] = v.split(':');changeSort(field,direction) }} options={['delivered','bugs','name'].flatMap(field => ['desc','asc'].map(direction => ({ value:`${field}:${direction}`,label:`${field === 'delivered' ? '交付需求量' : field === 'bugs' ? '关联Bug数' : '姓名'}${direction === 'asc' ? '升序' : '降序'}` })))} />
           <label className="yx-member-inactive"><Switch size="small" aria-label="包含无活动成员" checked={includeInactive} onChange={v => { setIncludeInactive(v);setMemberPage(1) }} />包含无活动成员</label>
           <Typography.Text type="secondary">{loading ? '正在更新…' : `筛选 ${rows.length} / 已同步 ${metrics?.members.length || 0} 人`}</Typography.Text>
         </div>
@@ -106,11 +112,11 @@ export default function MemberMetrics({ sourceId,revision }: { sourceId:string; 
       {metrics && <>
         <div className="yx-member-scope"><Tag>{metrics.month}</Tag><span>上海时区 · 截止 {metrics.endExclusive.replace('T',' ').slice(0,16)}（不含）</span><span>当前快照推算，关联Bug率供复盘参考</span></div>
         <Card size="small" title="个人指标表" className="yx-members-table">
-          <Table<MemberMetric> size="small" tableLayout="fixed" rowKey="name" dataSource={pageRows} scroll={{ x:960 }} pagination={false} columns={[
+          <Table<MemberMetric> size="small" tableLayout="fixed" rowKey="name" dataSource={pageRows} scroll={{ x:960 }} pagination={false} onChange={(_,__,sorter,extra) => { if (extra.action !== 'sort') return; const selected = Array.isArray(sorter) ? sorter[0] : sorter; if (selected?.order) changeSort(String(selected.columnKey),selected.order === 'ascend' ? 'asc' : 'desc') }} columns={[
             { title:'成员',dataIndex:'name',fixed:'left',width:140,ellipsis:true,render:(name:string,p) => <MemberName name={name} onClick={() => setSelected(p)} /> },
             { title:'分组',dataIndex:'group',width:150,ellipsis:true },
-            { title:'交付需求量',dataIndex:'deliveredRequirements',width:115,align:'right',render:(v:number,p) => <div className="yx-member-number"><strong>{v.toLocaleString('zh-CN')}</strong><small>新增 {p.newRequirements.toLocaleString('zh-CN')}</small></div> },
-            { title:'关联Bug数',dataIndex:'linkedBugs',width:105,align:'right' },
+            { title:'交付需求量',key:'delivered',sorter:true,sortDirections:['descend','ascend','descend'],sortOrder:sort === 'delivered' ? (order === 'asc' ? 'ascend' : 'descend') : null,dataIndex:'deliveredRequirements',width:115,align:'right',render:(v:number,p) => <div className="yx-member-number"><strong>{v.toLocaleString('zh-CN')}</strong><small>新增 {p.newRequirements.toLocaleString('zh-CN')}</small></div> },
+            { title:'关联Bug数',key:'bugs',sorter:true,sortDirections:['descend','ascend','descend'],sortOrder:sort === 'bugs' ? (order === 'asc' ? 'ascend' : 'descend') : null,dataIndex:'linkedBugs',width:105,align:'right' },
             { title:'关联Bug率 ↓',width:170,align:'right',render:(_:unknown,p) => <RateValue label="关联Bug率" value={p.bugRate} numerator={p.bugAffectedRequirements} denominator={p.deliveredRequirements} /> },
             { title:'延期率 ↓',width:170,align:'right',render:(_:unknown,p) => <RateValue label="延期率" value={p.delayRate} numerator={p.deliveredLate+p.overdueAtEnd} denominator={p.dueRequirements-p.unknownDelivery} /> },
             { title:'状态不明',dataIndex:'unknownDelivery',width:110,align:'right' },
