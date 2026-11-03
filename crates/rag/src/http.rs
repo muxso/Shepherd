@@ -62,15 +62,19 @@ pub fn router(
         .with_state(RagState { store, embedder, chat, sessions, config, pool })
 }
 
-/// Project-scope gate: a global admin (`SYSTEM_USER:READ`) passes; anyone else must be a member of
-/// `project_id`, so a logged-in user can't reach another project's KB by passing its id in the body.
-/// Returns the ready-to-send 403/500 response on denial.
+// Directory read permission is part of ordinary users' baseline; it must not bypass KB ACLs.
+fn is_rag_admin(user: &AuthUser) -> bool {
+    user.can("SYSTEM_USER", "UPDATE")
+}
+
+/// Project-scope gate: user-management administrators bypass membership; other users must belong
+/// to the requested project. Directory read permission alone never bypasses membership.
 async fn require_project_member(
     user: &AuthUser,
     pool: &sqlx::PgPool,
     project_id: &str,
 ) -> std::result::Result<(), Response> {
-    if user.can("SYSTEM_USER", "READ") {
+    if is_rag_admin(user) {
         return Ok(());
     }
     let is_member: bool = sqlx::query_scalar(
@@ -112,7 +116,7 @@ fn rag_error_code(e: &RagError) -> &'static str {
 /// otherwise resolve the caller's roles (ms_role/ms_user_role) to the set of visibility groups whose
 /// role_names overlap them — the groups the caller can see. Docs they uploaded stay visible via owner_id.
 async fn load_audience(user: &AuthUser, pool: &sqlx::PgPool) -> Audience {
-    let is_admin = user.can("SYSTEM_USER", "READ");
+    let is_admin = is_rag_admin(user);
     let visible_group_ids: Vec<String> = if is_admin {
         Vec::new() // admin bypasses the group filter anyway; skip the lookup
     } else {
@@ -387,8 +391,7 @@ async fn ingest_document(
         match existing {
             Ok(Some((project, owner)))
                 if project != b.project_id
-                    || (!user.can("SYSTEM_USER", "READ")
-                        && owner.as_deref() != Some(&user.user_id)) =>
+                    || (!is_rag_admin(&user) && owner.as_deref() != Some(&user.user_id)) =>
             {
                 return (StatusCode::FORBIDDEN, "document outside importer scope").into_response();
             }
@@ -1030,4 +1033,24 @@ async fn ask_stream(
         }
     };
     Sse::new(stream).into_response()
+}
+
+#[cfg(test)]
+mod audience_policy_tests {
+    use super::*;
+    #[test]
+    fn directory_readers_do_not_bypass_project_or_document_scope() {
+        let reader = AuthUser {
+            user_id: "reader".into(),
+            permissions: webauth::PermissionSet::from_raw(["SYSTEM_USER:READ", "RAG:READ"])
+                .expect("permissions"),
+        };
+        assert!(!is_rag_admin(&reader));
+        let admin = AuthUser {
+            user_id: "admin".into(),
+            permissions: webauth::PermissionSet::from_raw(["SYSTEM_USER:READ+UPDATE", "RAG:READ"])
+                .expect("permissions"),
+        };
+        assert!(is_rag_admin(&admin));
+    }
 }
