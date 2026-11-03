@@ -1655,7 +1655,7 @@ export const api = {
   revokeUserRole: (userId: string, roleId: string) => http.post('/user-role/revoke', { userId, roleId }),
 
   // RAG knowledge base: documents + visibility groups
-  ragDocs: (projectId: string) => http.get<RagDoc[]>(`/rag/document?projectId=${encodeURIComponent(projectId)}`),
+  ragDocs: (projectId: string, page = 1, search = '') => http.get<Page<RagDoc>>(`/rag/document?projectId=${encodeURIComponent(projectId)}&page=${page}&pageSize=20&search=${encodeURIComponent(search)}`),
   ingestRagDoc: (b: { projectId: string; title: string; text: string; visibilityGroups?: string[] }) =>
     http.post<{ documentId: string; chunks: number; embedded: boolean }>('/rag/document', b),
   reindexRag: (projectId?: string) =>

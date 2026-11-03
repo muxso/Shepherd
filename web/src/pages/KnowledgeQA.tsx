@@ -846,17 +846,23 @@ function ManageDrawer({
   const { t } = useI18n()
   const [docs, setDocs] = useState<RagDoc[]>([])
   const [loading, setLoading] = useState(false)
+  const [page, setPage] = useState(1)
+  const [total, setTotal] = useState(0)
+  const [search, setSearch] = useState('')
+  const requestId = useRef(0)
   const [savingId, setSavingId] = useState<string | null>(null)
   const [reindexing, setReindexing] = useState(false)
 
   const load = useCallback(() => {
     if (!projectId) return
     setLoading(true)
-    api.ragDocs(projectId)
-      .then(setDocs)
+    const id = ++requestId.current
+    api.ragDocs(projectId, page, search)
+      .then((r) => { if (id === requestId.current) { setDocs(r.items); setTotal(r.total) } })
       .catch((e) => message.error(e instanceof Error ? e.message : t('rag.loadDocsFail', '加载文档失败')))
-      .finally(() => setLoading(false))
-  }, [projectId, t])
+      .finally(() => { if (id === requestId.current) setLoading(false) })
+  }, [projectId, page, search, t])
+  useEffect(() => { setPage(1); setSearch(''); setDocs([]); setTotal(0); requestId.current += 1 }, [projectId])
   useEffect(() => { if (open) load() }, [open, load])
 
   const setAudience = async (doc: RagDoc, next: string[]) => {
@@ -875,7 +881,8 @@ function ManageDrawer({
   const remove = async (doc: RagDoc) => {
     try {
       await api.deleteRagDoc(doc.id)
-      setDocs((ds) => ds.filter((d) => d.id !== doc.id))
+      if (docs.length === 1 && page > 1) setPage(page - 1)
+      else load()
       message.success(t('common.deleted', '已删除'))
     } catch (e) {
       message.error(e instanceof Error ? e.message : t('common.delFail', '删除失败'))
@@ -912,12 +919,14 @@ function ManageDrawer({
       {!projectId ? (
         <Empty description={t('rag.needProject', '请先选择项目')} />
       ) : (
+        <>
+        <Input.Search allowClear placeholder={t('rag.searchDocuments', '搜索仓库、路径或文档标题')} onSearch={(value) => { setSearch(value); setPage(1) }} style={{ marginBottom: 16 }} />
         <Table<RagDoc>
           rowKey="id"
           size="small"
           loading={loading}
           dataSource={docs}
-          pagination={false}
+          pagination={{ current: page, pageSize: 20, total, showSizeChanger: false, onChange: setPage }}
           locale={{ emptyText: <Empty description={t('rag.docsEmpty', '暂无文档')} /> }}
           columns={[
             { title: t('rag.docTitle', '文档标题'), dataIndex: 'title', ellipsis: true },
@@ -956,6 +965,7 @@ function ManageDrawer({
             },
           ]}
         />
+        </>
       )}
     </Drawer>
   )

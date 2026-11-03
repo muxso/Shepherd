@@ -17,3 +17,6 @@ pub mod adapters;
 pub mod http;
 #[cfg(feature = "http")]
 pub mod tantivy_kw;
+
+#[cfg(feature = "http")]
+mod qdrant;

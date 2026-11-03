@@ -137,3 +137,55 @@ mod tests {
         assert!(chunks.iter().all(|c| c.content.chars().count() <= 500 + 10));
     }
 }
+
+/// Code chunks preserve complete lines (including preprocessor directives) and exact provenance.
+/// Very long lines are split with the same line reference. No markdown heading interpretation.
+pub fn chunk_code(title: &str, text: &str, max_chars: usize) -> Vec<Chunk> {
+    let cap = max_chars.max(200);
+    let mut out = Vec::new();
+    let mut body = String::new();
+    let mut start = 1;
+    let mut end = 1;
+    for (index, line) in text.lines().enumerate() {
+        let line_no = index + 1;
+        for piece in split_capped(line, cap) {
+            if !body.is_empty() && body.chars().count() + piece.chars().count() + 1 > cap {
+                out.push(Chunk {
+                    heading: format!("{title}:L{start}-L{end}"),
+                    content: std::mem::take(&mut body),
+                });
+            }
+            if body.is_empty() {
+                start = line_no;
+            }
+            end = line_no;
+            body.push_str(&piece);
+            body.push('\n');
+        }
+    }
+    if !body.trim().is_empty() {
+        out.push(Chunk { heading: format!("{title}:L{start}-L{end}"), content: body });
+    }
+    out
+}
+
+#[cfg(test)]
+mod code_tests {
+    use super::*;
+    #[test]
+    fn preserves_directives_and_real_line_numbers() {
+        let text = "#include <x>\n\nfn main() {}\n";
+        let chunks = chunk_code("repo/src/main.rs@abc", text, 500);
+        assert_eq!(chunks.len(), 1);
+        assert_eq!(chunks[0].content, text);
+        assert_eq!(chunks[0].heading, "repo/src/main.rs@abc:L1-L3");
+    }
+    #[test]
+    fn bounds_unicode_and_keeps_line_provenance() {
+        let chunks = chunk_code("repo/a", &format!("{}\nend", "中".repeat(450)), 200);
+        assert!(chunks.len() >= 3);
+        assert!(chunks.iter().all(|c| c.content.chars().count() <= 201));
+        assert!(chunks[0].heading.ends_with(":L1-L1"));
+        assert!(chunks.last().is_some_and(|c| c.heading.ends_with("-L2")));
+    }
+}
