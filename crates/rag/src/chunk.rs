@@ -148,8 +148,11 @@ pub fn chunk_code(title: &str, text: &str, max_chars: usize) -> Vec<Chunk> {
     let mut end = 1;
     for (index, line) in text.lines().enumerate() {
         let line_no = index + 1;
-        for piece in split_capped(line, cap) {
-            if !body.is_empty() && body.chars().count() + piece.chars().count() + 1 > cap {
+        let label = format!("L{line_no}: ");
+        for piece in split_capped(line, cap.saturating_sub(label.chars().count() + 1).max(1)) {
+            if !body.is_empty()
+                && body.chars().count() + label.chars().count() + piece.chars().count() + 1 > cap
+            {
                 out.push(Chunk {
                     heading: format!("{title}:L{start}-L{end}"),
                     content: std::mem::take(&mut body),
@@ -159,6 +162,7 @@ pub fn chunk_code(title: &str, text: &str, max_chars: usize) -> Vec<Chunk> {
                 start = line_no;
             }
             end = line_no;
+            body.push_str(&label);
             body.push_str(&piece);
             body.push('\n');
         }
@@ -177,15 +181,42 @@ mod code_tests {
         let text = "#include <x>\n\nfn main() {}\n";
         let chunks = chunk_code("repo/src/main.rs@abc", text, 500);
         assert_eq!(chunks.len(), 1);
-        assert_eq!(chunks[0].content, text);
+        assert_eq!(chunks[0].content, "L1: #include <x>\nL2: \nL3: fn main() {}\n");
         assert_eq!(chunks[0].heading, "repo/src/main.rs@abc:L1-L3");
     }
     #[test]
     fn bounds_unicode_and_keeps_line_provenance() {
         let chunks = chunk_code("repo/a", &format!("{}\nend", "中".repeat(450)), 200);
         assert!(chunks.len() >= 3);
-        assert!(chunks.iter().all(|c| c.content.chars().count() <= 201));
+        assert!(chunks.iter().all(|c| c.content.chars().count() <= 200));
         assert!(chunks[0].heading.ends_with(":L1-L1"));
         assert!(chunks.last().is_some_and(|c| c.heading.ends_with("-L2")));
+    }
+}
+
+#[cfg(test)]
+mod code_line_tests {
+    use super::*;
+    #[test]
+    fn every_source_line_is_numbered_inside_its_cited_range() {
+        let text = (1..=60).map(|n| format!("pub fn method_{n}() {{}}\n")).collect::<String>();
+        let chunks = chunk_code("repo/file@sha", &text, 200);
+        let mut seen = Vec::new();
+        for chunk in chunks {
+            let lines: Vec<_> = chunk
+                .content
+                .lines()
+                .map(|line| line.split_once(": ").expect("numbered line"))
+                .collect();
+            let first = lines.first().expect("first").0;
+            let last = lines.last().expect("last").0;
+            assert!(chunk.heading.ends_with(&format!(":{first}-{last}")));
+            for (label, content) in lines {
+                let n: usize = label.trim_start_matches('L').parse().expect("number");
+                assert_eq!(content, format!("pub fn method_{n}() {{}}"));
+                seen.push(n);
+            }
+        }
+        assert_eq!(seen, (1..=60).collect::<Vec<_>>());
     }
 }

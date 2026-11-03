@@ -25,6 +25,14 @@ type TraceStep =
   | { kind: string; [k: string]: unknown }
 type AskTrace = { question: string; started_at: string; steps: TraceStep[]; total_ms: number }
 type Citation = { title?: string; heading?: string; doc_id?: string; content_preview?: string; relevance_score?: number }
+// Keep code references readable; the full repository/path/commit remains in the tooltip and drawer.
+function sourceLabel(source: Citation): string {
+  const full = source.heading || source.title || ''
+  const match = full.match(/^(.*?) \[([^\]]+)\] \/ (.*?) @([0-9a-f]{40}):(L\d+-L\d+)$/)
+  if (!match) return full
+  const [, repo, branch, path, sha, lines] = match
+  return `${repo.split('/').at(-1)} [${branch}] / ${path.split('/').at(-1)} · ${lines} · @${sha.slice(0, 7)}`
+}
 type Msg = {
   role: 'user' | 'assistant'
   content: string
@@ -646,10 +654,11 @@ export default function KnowledgeQA() {
                   {!!m.citations?.length && (
                     <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 6 }}>
                       {m.citations.map((c, j) => (
-                        <Tooltip key={j} title={t('rag.viewSource', '查看原文片段')}>
-                          <span data-chip={j + 1} onClick={() => setCitePanel(c)}
-                            style={{ fontSize: 12, padding: '3px 8px', borderRadius: 6, background: 'var(--panel-2)', border: '1px solid var(--border-soft)', color: 'var(--text-2)', cursor: 'pointer' }}>
-                            <b style={{ color: 'var(--brand)' }}>[{j + 1}]</b> {c.heading || c.title}
+                        <Tooltip key={j} title={`${t('rag.viewSource', '查看原文片段')}: ${c.heading || c.title}`}>
+                          <span data-chip={j + 1} role="button" tabIndex={0} onClick={() => setCitePanel(c)}
+                            onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); setCitePanel(c) } }}
+                            style={{ maxWidth: '100%', minWidth: 0, overflowWrap: 'anywhere', fontSize: 12, padding: '3px 8px', borderRadius: 6, background: 'var(--panel-2)', border: '1px solid var(--border-soft)', color: 'var(--text-2)', cursor: 'pointer' }}>
+                            <b style={{ color: 'var(--brand)' }}>[{j + 1}]</b> {sourceLabel(c)}
                             {c.relevance_score != null && <span style={{ color: 'var(--text-3)' }}> · {c.relevance_score.toFixed(2)}</span>}
                           </span>
                         </Tooltip>
@@ -758,17 +767,17 @@ export default function KnowledgeQA() {
         onClose={() => setCitePanel(null)}
         width={420}
         mask={false}
-        title={citePanel ? (citePanel.heading || citePanel.title || t('rag.source', '来源')) : ''}
+        title={citePanel ? <span style={{ overflowWrap: 'anywhere' }}>{sourceLabel(citePanel) || t('rag.source', '来源')}</span> : ''}
       >
         {citePanel && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px 18px', fontSize: 12, color: 'var(--text-3)' }}>
-              {citePanel.title && <span>{t('rag.docTitle', '文档标题')}: <span style={{ color: 'var(--text-2)' }}>{citePanel.title}</span></span>}
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px 18px', minWidth: 0, maxWidth: '100%', overflowWrap: 'anywhere', fontSize: 12, color: 'var(--text-3)' }}>
+              {citePanel.title && !citePanel.heading?.startsWith(citePanel.title) && <span>{t('rag.docTitle', '文档标题')}: <span style={{ color: 'var(--text-2)' }}>{citePanel.title}</span></span>}
               {citePanel.heading && <span>{t('rag.position', '位置')}: <span style={{ color: 'var(--text-2)' }}>{citePanel.heading}</span></span>}
               {citePanel.relevance_score != null && <span>{t('rag.relevance', '相关性')}: <span style={{ color: 'var(--brand)' }}>{citePanel.relevance_score.toFixed(3)}</span></span>}
             </div>
             <div style={{ fontSize: 12, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: 0.4 }}>{t('rag.excerpt', '原文片段')}</div>
-            <div style={{ background: 'var(--panel-2)', border: '1px solid var(--border-soft)', borderRadius: 8, padding: '12px 14px', fontSize: 13.5, lineHeight: 1.75, color: 'var(--text)', whiteSpace: 'pre-wrap' }}>
+            <div style={{ background: 'var(--panel-2)', border: '1px solid var(--border-soft)', borderRadius: 8, padding: '12px 14px', fontSize: 13.5, lineHeight: 1.75, color: 'var(--text)', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', fontFamily: 'ui-monospace, SFMono-Regular, Consolas, monospace' }}>
               {citePanel.content_preview || <span style={{ color: 'var(--text-3)' }}>{t('rag.noExcerpt', '(无预览内容)')}</span>}
             </div>
           </div>

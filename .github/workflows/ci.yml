@@ -103,7 +103,7 @@ jobs:
         if: always()
         with:
           name: rag-code-ui
-          path: web/test-results/**/rag-pagination.png
+          path: web/test-results/**/rag-*.png
           if-no-files-found: ignore
           retention-days: 7
 

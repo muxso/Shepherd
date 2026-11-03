@@ -113,10 +113,19 @@ class Indexer:
         with (self.root / (key + '.lock')).open('w') as lock:
             fcntl.flock(lock, fcntl.LOCK_EX)
             identity = [self.c['apiUrl'], self.c['projectId'], spec['url'], spec['branch'],
-                        self.c.get('visibilityGroups', []), self.c['embeddingRevision'], 1]
+                        self.c.get('visibilityGroups', []), self.c['embeddingRevision'], 2]
             old = json.loads(state_path.read_text()) if state_path.exists() else {}
             if old and old.get('identity') != identity:
-                raise RuntimeError('Index identity changed; use a fresh stateDir and explicitly remove old documents')
+                previous = old.get('identity', [])
+                if previous[:-1] == identity[:-1] and previous[-1:] == [1]:
+                    # Format-only upgrade: retain stable ids for deletion tracking, re-embed all files.
+                    for file in old.get('files', {}).values():
+                        file['blob'] = ''
+                    old['identity'] = identity
+                    old['status'] = 'reindexing'
+                    save(state_path, old)
+                else:
+                    raise RuntimeError('Index identity changed; use a fresh stateDir and explicitly remove old documents')
             repo = self.root / 'repos' / key
             repo.parent.mkdir(exist_ok=True)
             if not repo.exists():

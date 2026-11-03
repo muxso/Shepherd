@@ -35,7 +35,7 @@ Manifest format:
 Use an existing read-only SSH identity with preapproved host keys. Do not put credentials in clone
 URLs. `python3 index.py --config /absolute/private/config.json` clones bare shallow default branches,
 reads regular committed blobs without checkout/execution, and sends one stable document per file.
-Code chunks retain repository, branch, full commit and exact line range. File allowlist, size cap,
+Code chunks retain repository, branch, full commit and exact line range. Each code line carries an explicit `L<number>:` label so generated method references can use actual line numbers. Format revision 1 checkpoints automatically migrate to revision 2 by re-embedding every tracked file while retaining stable document IDs and deletion tracking; all other identity changes still require explicit migration. File allowlist, size cap,
 UTF-8 validation, credential-line redaction and private-key rejection run before upload. This is
 conservative filtering, not a comprehensive secret scanner: review source access before sharing.
 
