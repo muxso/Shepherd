@@ -64,6 +64,19 @@ class InventoryTests(unittest.TestCase):
                 m.refresh(config, self.fake)
             self.assertEqual(manifest.read_bytes(), before)
 
+    def test_full_source_inventory_and_previously_observed_refs_are_retained(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config = self.setup_config(root)
+            config['codeup']['requiredRepositoryIds'] = ['1']
+            self.assertEqual(m.refresh(config, self.fake)['devopsRepositories'], 2)
+            config['codeup']['requiredRepositoryIds'] = []
+            Path(config['codeup']['devopsSnapshotFile']).write_text('{"records":[]}')
+            self.assertEqual(m.refresh(config, self.fake)['devopsRepositories'], 2)
+            config['codeup']['requiredRepositoryIds'] = ['99']
+            with self.assertRaisesRegex(RuntimeError, 'not readable'):
+                m.refresh(config, self.fake)
+
     def test_missing_pagination_header_reads_next_full_page(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

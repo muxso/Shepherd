@@ -111,7 +111,12 @@ def refresh(config, call=None):
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:
         inventory = list(pool.map(detail, repositories))
-    required = set()
+    required = {str(value) for value in settings.get('requiredRepositoryIds', [])}
+    metadata_path = manifest_path.with_name('inventory.json')
+    if metadata_path.exists():
+        previous = json.loads(metadata_path.read_text())
+        if (previous.get('sourceId'), previous.get('projectId'), previous.get('organizationId')) == (settings['sourceId'], config['projectId'], org):
+            required.update(str(value) for value in previous.get('observedDevopsRepositoryIds', []))
     snapshot_path = settings.get('devopsSnapshotFile')
     if snapshot_path:
         snapshot = json.loads(Path(snapshot_path).read_text())
@@ -133,7 +138,7 @@ def refresh(config, call=None):
                'checkedAt': int(time.time()), 'repositories': inventory,
                'total': len(inventory), 'indexable': len(ready),
                'empty': sum(row['state'] == 'empty' for row in inventory),
-               'devopsRepositories': len(required), 'missingDevopsRepositories': []}
+               'devopsRepositories': len(required), 'observedDevopsRepositoryIds': sorted(required), 'missingDevopsRepositories': []}
     # Publish only after every page/detail and the Devops coverage audit succeeded.
     save(manifest_path, ready)
     summary['manifestSha256'] = hashlib.sha256(manifest_path.read_bytes()).hexdigest()

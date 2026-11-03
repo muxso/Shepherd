@@ -100,6 +100,7 @@ To index every repository visible to the organization bound to a Devops source, 
   "codeup": {
     "sourceId": "YUNXIAO_SOURCE_UUID",
     "organizationId": "CODEUP_ORGANIZATION_ID",
+    "requiredRepositoryIds": ["REPOSITORY_ID_FROM_SOURCE_HISTORY"],
     "envFile": "/home/service/.config/devops-weekly/env",
     "devopsSnapshotFile": "/home/service/.cache/shepherd-yunxiao/snapshot.json"
   }
@@ -114,7 +115,7 @@ permissions and membership in that project. No credentials are written to manife
 Before every scan the worker reads **all pages** of Codeup's organization-visible repositories and
 fetches each default branch. It atomically updates the manifest, retaining existing priority and adding
 new repositories. Empty repositories are recorded separately. A local Devops snapshot, when configured,
-audits that every repository referenced by its commit records appears in the inventory. Missing access,
+audits that every repository referenced by its commit records appears in the inventory. Seed `requiredRepositoryIds` from the source’s full retained commit history at provisioning; observed repository IDs are retained across later snapshots so rolling collection windows do not drop coverage obligations. Missing access,
 incomplete detail or upstream failure aborts refresh and retains the previous manifest; the run fails
 instead of claiming complete coverage. `inventory.json` beside the manifest records the bound source,
 repository counts, empty repositories, coverage audit, timestamp and manifest checksum. Git checkpoints
