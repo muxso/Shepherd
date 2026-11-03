@@ -376,6 +376,26 @@ async fn ingest_document(
     if let Err(resp) = authorize_project(&user, &st.pool, &b.project_id, "ADD").await {
         return resp;
     }
+    // Stable ids must not let an importer move/overwrite documents outside its scope.
+    if let Some(id) = b.document_id.as_ref() {
+        let existing = sqlx::query_as::<_, (String, Option<String>)>(
+            "SELECT project_id, owner_id FROM ms_rag_document WHERE id = $1",
+        )
+        .bind(id)
+        .fetch_optional(&st.pool)
+        .await;
+        match existing {
+            Ok(Some((project, owner)))
+                if project != b.project_id
+                    || (!user.can("SYSTEM_USER", "READ")
+                        && owner.as_deref() != Some(&user.user_id)) =>
+            {
+                return (StatusCode::FORBIDDEN, "document outside importer scope").into_response();
+            }
+            Err(e) => return rag_error_response(RagError::Backend(e.to_string())),
+            _ => {}
+        }
+    }
     let ts = now_ms();
     let doc = RagDocument {
         id: b.document_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
@@ -570,6 +590,9 @@ async fn delete_document(
 #[serde(rename_all = "camelCase")]
 struct ListDocsQuery {
     project_id: String,
+    page: Option<u32>,
+    page_size: Option<u32>,
+    search: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -594,32 +617,54 @@ async fn list_documents(
         return resp;
     }
     let audience = load_audience(&user, &st.pool).await;
-    let rows = sqlx::query_as::<_, (String, String, String, Option<String>, Vec<String>, i64)>(
-        "SELECT id, title, source_type, owner_id, visibility_groups, updated_at \
-         FROM ms_rag_document d \
-         WHERE d.project_id = $1 \
-           AND ($2 OR (d.owner_id IS NOT NULL AND d.owner_id = $3) OR d.visibility_groups && $4::text[]) \
-         ORDER BY updated_at DESC",
+    let page = q.page.unwrap_or(1).max(1);
+    let page_size = q.page_size.unwrap_or(20).clamp(1, 100);
+    let search = format!("%{}%", q.search.as_deref().unwrap_or(""));
+    let total = sqlx::query_scalar::<_, i64>(
+        "SELECT count(*) FROM ms_rag_document d WHERE d.project_id=$1 \
+         AND ($2 OR d.owner_id=$3 OR d.visibility_groups && $4::text[]) AND d.title ILIKE $5",
     )
     .bind(&q.project_id)
     .bind(audience.is_admin)
     .bind(&audience.user_id)
     .bind(&audience.visible_group_ids)
+    .bind(&search)
+    .fetch_one(&st.pool)
+    .await;
+    let total = match total {
+        Ok(n) => n,
+        Err(e) => return rag_error_response(RagError::Backend(e.to_string())),
+    };
+    let rows = sqlx::query_as::<_, (String, String, String, Option<String>, Vec<String>, i64)>(
+        "SELECT id, title, source_type, owner_id, visibility_groups, updated_at \
+         FROM ms_rag_document d WHERE d.project_id = $1 \
+           AND ($2 OR d.owner_id = $3 OR d.visibility_groups && $4::text[]) \
+           AND d.title ILIKE $5 ORDER BY updated_at DESC, id LIMIT $6 OFFSET $7",
+    )
+    .bind(&q.project_id)
+    .bind(audience.is_admin)
+    .bind(&audience.user_id)
+    .bind(&audience.visible_group_ids)
+    .bind(&search)
+    .bind(if q.page.is_some() { i64::from(page_size) } else { i64::MAX })
+    .bind(i64::from(page - 1) * i64::from(page_size))
     .fetch_all(&st.pool)
     .await;
     match rows {
-        Ok(rs) => (
-            StatusCode::OK,
-            Json(
+        Ok(rs) => {
+            let items =
                 rs.into_iter()
                     .map(|(id, title, source_type, owner_id, visibility_groups, updated_at)| {
                         DocView { id, title, source_type, owner_id, visibility_groups, updated_at }
                     })
-                    .collect::<Vec<_>>(),
-            ),
-        )
-            .into_response(),
-        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+                    .collect::<Vec<_>>();
+            if q.page.is_some() {
+                Json(serde_json::json!({"items": items, "total": total, "current": page, "pageSize": page_size})).into_response()
+            } else {
+                Json(items).into_response()
+            }
+        }
+        Err(e) => rag_error_response(RagError::Backend(e.to_string())),
     }
 }
 

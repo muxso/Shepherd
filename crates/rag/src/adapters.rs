@@ -112,6 +112,32 @@ impl Embedder for OpenAiEmbedder {
     }
 }
 
+fn is_ollama_chat(url: &str) -> bool {
+    url.trim_end_matches('/').ends_with("/api/chat")
+}
+
+/// Native Ollama uses NDJSON, explicit thinking controls and an options token budget.
+fn chat_request(
+    url: &str,
+    model: &str,
+    max_tokens: u32,
+    system: &str,
+    user: &str,
+    stream: bool,
+) -> serde_json::Value {
+    let messages = json!([
+        {"role": "system", "content": system},
+        {"role": "user", "content": user},
+    ]);
+    if is_ollama_chat(url) {
+        json!({"model": model, "messages": messages, "stream": stream, "think": false,
+            "options": {"num_predict": max_tokens, "temperature": 0.0}})
+    } else {
+        json!({"model": model, "messages": messages, "stream": stream,
+            "max_tokens": max_tokens, "temperature": 0.0})
+    }
+}
+
 // ---------- Chat ----------
 
 pub struct OpenAiChat {
@@ -136,7 +162,7 @@ impl OpenAiChat {
 impl Chat for OpenAiChat {
     async fn complete(&self, system: &str, user: &str) -> Result<String> {
         let (url, key, model, max_tokens) = self.snapshot();
-        if key.is_empty() {
+        if key.is_empty() && !is_ollama_chat(&url) {
             return Err(RagError::Config(
                 "LLM API key not configured (System Params → RAG config)".into(),
             ));
@@ -145,15 +171,7 @@ impl Chat for OpenAiChat {
             .client
             .post(&url)
             .bearer_auth(&key)
-            .json(&json!({
-                "model": model,
-                "max_tokens": max_tokens,
-                "temperature": 0.0,
-                "messages": [
-                    { "role": "system", "content": system },
-                    { "role": "user", "content": user },
-                ],
-            }))
+            .json(&chat_request(&url, &model, max_tokens, system, user, false))
             .send()
             .await
             .map_err(|e| RagError::Llm(e.to_string()))?;
@@ -163,6 +181,16 @@ impl Chat for OpenAiChat {
             return Err(RagError::Llm(format!("chat HTTP {s}: {body}")));
         }
         let v: serde_json::Value = resp.json().await.map_err(|e| RagError::Llm(e.to_string()))?;
+        if is_ollama_chat(&url) {
+            if let Some(error) = v.get("error").and_then(|e| e.as_str()) {
+                return Err(RagError::Llm(error.into()));
+            }
+            return v
+                .pointer("/message/content")
+                .and_then(|c| c.as_str())
+                .map(str::to_owned)
+                .ok_or_else(|| RagError::Llm("Ollama response missing message.content".into()));
+        }
         v.get("choices")
             .and_then(|c| c.get(0))
             .and_then(|c| c.get("message"))
@@ -180,7 +208,7 @@ impl Chat for OpenAiChat {
     ) -> Result<String> {
         use futures_util::StreamExt;
         let (url, key, model, max_tokens) = self.snapshot();
-        if key.is_empty() {
+        if key.is_empty() && !is_ollama_chat(&url) {
             return Err(RagError::Config(
                 "LLM API key not configured (System Params → RAG config)".into(),
             ));
@@ -189,16 +217,7 @@ impl Chat for OpenAiChat {
             .client
             .post(&url)
             .bearer_auth(&key)
-            .json(&json!({
-                "model": model,
-                "max_tokens": max_tokens,
-                "temperature": 0.0,
-                "stream": true,
-                "messages": [
-                    { "role": "system", "content": system },
-                    { "role": "user", "content": user },
-                ],
-            }))
+            .json(&chat_request(&url, &model, max_tokens, system, user, true))
             .send()
             .await
             .map_err(|e| RagError::Llm(e.to_string()))?;
@@ -209,27 +228,34 @@ impl Chat for OpenAiChat {
         }
         // Parse the OpenAI SSE stream: `data: {choices:[{delta:{content}}]}` lines, `data: [DONE]` ends it.
         let mut stream = resp.bytes_stream();
-        let mut buf = String::new();
+        let mut buf = Vec::<u8>::new();
         let mut full = String::new();
         while let Some(chunk) = stream.next().await {
             let bytes = chunk.map_err(|e| RagError::Llm(e.to_string()))?;
-            buf.push_str(&String::from_utf8_lossy(&bytes));
-            while let Some(nl) = buf.find('\n') {
-                let line: String = buf.drain(..=nl).collect();
+            buf.extend_from_slice(&bytes);
+            while let Some(nl) = buf.iter().position(|b| *b == b'\n') {
+                let line: Vec<u8> = buf.drain(..=nl).collect();
+                let line = std::str::from_utf8(&line).map_err(|e| RagError::Llm(e.to_string()))?;
                 let line = line.trim();
-                let Some(data) = line.strip_prefix("data:") else { continue };
-                let data = data.trim();
+                let data = if is_ollama_chat(&url) {
+                    line
+                } else {
+                    let Some(data) = line.strip_prefix("data:") else { continue };
+                    data.trim()
+                };
                 if data.is_empty() || data == "[DONE]" {
                     continue;
                 }
                 if let Ok(v) = serde_json::from_str::<serde_json::Value>(data) {
-                    if let Some(c) = v
-                        .get("choices")
-                        .and_then(|c| c.get(0))
-                        .and_then(|c| c.get("delta"))
-                        .and_then(|d| d.get("content"))
-                        .and_then(|c| c.as_str())
-                    {
+                    if let Some(error) = v.get("error").and_then(|e| e.as_str()) {
+                        return Err(RagError::Llm(error.into()));
+                    }
+                    let content = if is_ollama_chat(&url) {
+                        v.pointer("/message/content")
+                    } else {
+                        v.pointer("/choices/0/delta/content")
+                    };
+                    if let Some(c) = content.and_then(|c| c.as_str()) {
                         if !c.is_empty() {
                             full.push_str(c);
                             if tx.send(c.to_string()).await.is_err() {
@@ -239,6 +265,9 @@ impl Chat for OpenAiChat {
                     }
                 }
             }
+        }
+        if full.trim().is_empty() {
+            return Err(RagError::Llm("Model returned no answer content".into()));
         }
         Ok(full)
     }
@@ -250,18 +279,19 @@ impl Chat for OpenAiChat {
 pub struct PgVectorStore {
     pool: PgPool,
     keyword: Option<std::sync::Arc<crate::tantivy_kw::TantivyKeyword>>,
+    ann: Option<crate::qdrant::QdrantIndex>,
 }
 
 impl PgVectorStore {
     pub fn new(pool: PgPool) -> Self {
-        Self { pool, keyword: None }
+        Self { pool, keyword: None, ann: crate::qdrant::QdrantIndex::from_env() }
     }
     /// Attach a tantivy keyword index (jieba full-text). Without it, keyword search uses PG ILIKE.
     pub fn with_keyword(
         pool: PgPool,
         keyword: std::sync::Arc<crate::tantivy_kw::TantivyKeyword>,
     ) -> Self {
-        Self { pool, keyword: Some(keyword) }
+        Self { pool, keyword: Some(keyword), ann: crate::qdrant::QdrantIndex::from_env() }
     }
 }
 
@@ -349,6 +379,10 @@ impl VectorStore for PgVectorStore {
             .map_err(be)?;
         }
         tx.commit().await.map_err(be)?;
+        if let Some(ann) = &self.ann {
+            ann.delete_document(document_id).await?;
+            ann.upsert(chunks).await?;
+        }
         if let Some(kw) = &self.keyword {
             let rows: Vec<(String, String, String, String)> = chunks
                 .iter()
@@ -402,10 +436,33 @@ impl VectorStore for PgVectorStore {
             n += r.rows_affected() as usize;
         }
         tx.commit().await.map_err(be)?;
+        if let Some(ann) = &self.ann {
+            let ids: Vec<&str> = updates.iter().map(|(id, _)| id.as_str()).collect();
+            let rows = sqlx::query_as::<_, (String, String, String, Vec<f32>)>(
+                "SELECT id, document_id, project_id, embedding FROM ms_rag_chunk WHERE id = ANY($1)",
+            ).bind(ids).fetch_all(&self.pool).await.map_err(be)?;
+            let chunks: Vec<RagChunk> = rows
+                .into_iter()
+                .map(|(id, document_id, project_id, embedding)| RagChunk {
+                    id,
+                    document_id,
+                    project_id,
+                    embedding,
+                    chunk_index: 0,
+                    heading: String::new(),
+                    content: String::new(),
+                    created_at: 0,
+                })
+                .collect();
+            ann.upsert(&chunks).await?;
+        }
         Ok(n)
     }
 
     async fn delete_document(&self, id: &str) -> Result<()> {
+        if let Some(ann) = &self.ann {
+            ann.delete_document(id).await?;
+        }
         // Chunks cascade in PG; the tantivy index keys on document_id so delete there too.
         if let Some(kw) = &self.keyword {
             let _ = kw.delete_doc(id);
@@ -425,6 +482,43 @@ impl VectorStore for PgVectorStore {
         top_k: usize,
         audience: &Audience,
     ) -> Result<Vec<Hit>> {
+        if let Some(ann) = &self.ann {
+            let ranked = ann.search(project_id, query, (top_k * 16).clamp(256, 1000)).await?;
+            let ids: Vec<&str> = ranked.iter().map(|(id, _)| id.as_str()).collect();
+            // Never trust side-index payload for authorization. Re-check current project and ACLs.
+            let rows = sqlx::query_as::<_, (String, String, String, String, String)>(&format!(
+                "SELECT c.id, c.document_id, d.title, c.heading, c.content FROM ms_rag_chunk c \
+                 JOIN ms_rag_document d ON d.id=c.document_id \
+                 WHERE c.id = ANY($1) AND {} AND c.project_id=$5 AND d.project_id=$5",
+                audience_where(2, 3, 4)
+            ))
+            .bind(ids)
+            .bind(audience.is_admin)
+            .bind(&audience.user_id)
+            .bind(&audience.visible_group_ids)
+            .bind(project_id)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(be)?;
+            let by_id: std::collections::HashMap<_, _> = rows
+                .into_iter()
+                .map(|(id, doc, title, heading, content)| (id, (doc, title, heading, content)))
+                .collect();
+            return Ok(ranked
+                .into_iter()
+                .filter_map(|(id, score)| {
+                    by_id.get(&id).map(|(doc, title, heading, content)| Hit {
+                        chunk_id: id,
+                        document_id: doc.clone(),
+                        title: title.clone(),
+                        heading: heading.clone(),
+                        content: content.clone(),
+                        score,
+                    })
+                })
+                .take(top_k)
+                .collect());
+        }
         let rows = sqlx::query_as::<_, (String, String, String, String, String, f64)>(&format!(
             "SELECT c.id, c.document_id, COALESCE(d.title,''), c.heading, c.content, \
                     rag_cosine(c.embedding, $2) AS score \
@@ -539,5 +633,78 @@ impl VectorStore for PgVectorStore {
                 score: score as f32,
             })
             .collect())
+    }
+}
+
+#[cfg(test)]
+mod provider_tests {
+    use super::*;
+    #[test]
+    fn ollama_disables_thinking_and_uses_native_budget() {
+        let v = chat_request("http://ollama:11434/api/chat", "qwen3:8b", 123, "s", "u", true);
+        assert_eq!(v["think"], false);
+        assert_eq!(v["options"]["num_predict"], 123);
+        assert_eq!(v["stream"], true);
+        assert!(v.get("max_tokens").is_none());
+    }
+    #[tokio::test]
+    async fn native_stream_preserves_split_utf8_and_returns_only_answer() {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+        let address = listener.local_addr().expect("address");
+        let handle = std::thread::spawn(move || {
+            let (mut socket, _) = listener.accept().expect("accept");
+            socket.set_read_timeout(Some(std::time::Duration::from_secs(5))).expect("timeout");
+            let mut request = Vec::new();
+            let mut byte = [0];
+            while !request.ends_with(b"\r\n\r\n") {
+                socket.read_exact(&mut byte).expect("headers");
+                request.push(byte[0]);
+            }
+            let headers = String::from_utf8(request).expect("headers utf8");
+            let length = headers
+                .lines()
+                .find_map(|line| {
+                    line.to_ascii_lowercase()
+                        .strip_prefix("content-length:")
+                        .and_then(|n| n.trim().parse::<usize>().ok())
+                })
+                .expect("length");
+            let mut body = vec![0; length];
+            socket.read_exact(&mut body).expect("body");
+            let request: serde_json::Value = serde_json::from_slice(&body).expect("json");
+            assert_eq!(request["think"], false);
+            socket.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: application/x-ndjson\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n").expect("response");
+            let text = "{\"message\":{\"thinking\":\"hidden\",\"content\":\"中文答案\"},\"done\":false}\n{\"done\":true}\n";
+            let split = text.find('中').expect("Chinese") + 1;
+            for part in [&text.as_bytes()[..split], &text.as_bytes()[split..]] {
+                write!(socket, "{:x}\r\n", part.len()).expect("chunk size");
+                socket.write_all(part).expect("chunk");
+                socket.write_all(b"\r\n").expect("newline");
+                socket.flush().expect("flush");
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            socket.write_all(b"0\r\n\r\n").expect("end");
+        });
+        let cfg = crate::config::RagConfig::handle_from_env();
+        {
+            let mut c = cfg.write().expect("config");
+            c.chat_url = format!("http://{address}/api/chat");
+            c.chat_key.clear();
+        }
+        let chat = OpenAiChat::new(cfg);
+        let (tx, mut rx) = tokio::sync::mpsc::channel(8);
+        let full = chat.complete_stream("system", "question", tx).await.expect("answer");
+        assert_eq!(full, "中文答案");
+        assert_eq!(rx.recv().await.as_deref(), Some("中文答案"));
+        handle.join().expect("server");
+    }
+
+    #[test]
+    fn openai_retains_compatible_payload() {
+        let v =
+            chat_request("https://example.com/v1/chat/completions", "model", 123, "s", "u", false);
+        assert_eq!(v["max_tokens"], 123);
+        assert!(v.get("think").is_none());
     }
 }

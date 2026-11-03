@@ -1,0 +1,11 @@
+[Unit]
+Description=Shepherd read-only repository RAG indexing
+After=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/shepherd-code-rag
+ExecStart=/usr/bin/python3 %h/shepherd-code-rag/index.py --config %h/.config/shepherd-code-rag/config.json
+TimeoutStartSec=infinity
+UMask=0077
+NoNewPrivileges=true
