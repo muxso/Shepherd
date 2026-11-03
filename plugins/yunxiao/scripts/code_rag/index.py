@@ -18,7 +18,9 @@ import uuid
 EXTENSIONS = set('rs java kt kts py js jsx ts tsx vue svelte go c h cpp hpp cs rb php swift m mm scala sh bash sql proto graphql groovy xml html css scss less md rst txt toml yaml yml json properties gradle'.split())
 EXCLUDED = set('.git node_modules target dist build vendor .idea .vscode coverage __pycache__ .next .nuxt .gradle .mvn test-output generated'.split())
 SECRET_NAME = re.compile(r'(^|[._-])(secret|credential|password|keystore|id_rsa|id_ed25519)([._-]|$)', re.I)
-SECRET_LINE = re.compile(r'(?i)(password|passwd|secret|api[_-]?key|access[_-]?key|private[_-]?key|token)\s*[=:]\s*["\']?[^\s"\']{8,}')
+SECRET_LINE = re.compile(r'(?i)(password|passwd|secret|api[_-]?key|access[_-]?key|private[_-]?key|token|authorization)["\']?\s*[=:]\s*["\']?[^\s"\']+')
+SECRET_XML = re.compile(r'(?i)<(password|passwd|secret|token|privateKey|apiKey)>')
+URL_CREDENTIAL = re.compile(r'://[^\s/:]+:[^\s@]+@')
 
 
 def eligible(path, size):
@@ -39,7 +41,8 @@ def sanitize(raw):
     if '-----BEGIN ' in text and 'PRIVATE KEY-----' in text:
         return None
     # Preserve line count so citations still locate the original source accurately.
-    return '\n'.join('[REDACTED credential line]' if SECRET_LINE.search(l) else l for l in text.splitlines())
+    return '\n'.join('[REDACTED credential line]' if any(p.search(l) for p in
+                     (SECRET_LINE, SECRET_XML, URL_CREDENTIAL)) else l for l in text.splitlines())
 
 
 def save(path, data):

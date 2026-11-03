@@ -23,6 +23,8 @@ class PolicyTests(unittest.TestCase):
         self.assertIsNone(m.sanitize(b'-----BEGIN RSA PRIVATE KEY-----\nabc'))
         self.assertIsNone(m.sanitize(b'\x00binary'))
         self.assertIsNone(m.sanitize(b'\xff'))
+        for line in (b'"password": "abc"', b'<password>123</password>', b'url=https://user:pass@host'):
+            self.assertEqual(m.sanitize(line), '[REDACTED credential line]')
 
 class IncrementalTests(unittest.TestCase):
     def test_retry_idempotence_and_deleted_files(self):
