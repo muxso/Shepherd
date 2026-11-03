@@ -55,7 +55,7 @@ For periodic scans use the supplied systemd units, install the scripts in
 30 minutes. Never use an administrator password for the worker. If a session
 expires mid-scan, refresh it and rerun; successful files are retained. Do not log tokens or upstream
 response bodies. `summary.json` and per-repository checkpoints record completion; `indexing` after a
-stopped process means interrupted, not complete. Newly created repositories require manifest refresh.
+stopped process means interrupted, not complete. Newly created repositories require manifest refresh in manual mode; the optional Codeup binding below refreshes automatically before every run.
 
 Ollama configuration in System parameters → RAG:
 
@@ -88,3 +88,35 @@ incomplete results. PostgreSQL remains authoritative: every ANN candidate is reh
 current project and audience checks, so revoked/deleted documents cannot leak via a stale index.
 ANN over-fetches up to 1000 candidates before authorization; highly restricted users may get fewer
 hits. Without this environment variable the existing PostgreSQL cosine path remains available.
+
+
+## Cover the Yunxiao /devops repository scope automatically
+
+To index every repository visible to the organization bound to a Devops source, add an optional
+`codeup` block to the private worker configuration:
+
+```json
+{
+  "codeup": {
+    "sourceId": "YUNXIAO_SOURCE_UUID",
+    "organizationId": "CODEUP_ORGANIZATION_ID",
+    "envFile": "/home/service/.config/devops-weekly/env",
+    "devopsSnapshotFile": "/home/service/.cache/shepherd-yunxiao/snapshot.json"
+  }
+}
+```
+
+Keep `codeup_inventory.py` next to `index.py`. Bind `projectId` to that Devops source's Shepherd
+project and validate the source organization at provisioning. The environment file supplies existing
+`YUNXIAO_ORG`/`YUNXIAO_TOKEN` read credentials; the worker's Shepherd account still needs only RAG
+permissions and membership in that project. No credentials are written to manifests or logs.
+
+Before every scan the worker reads **all pages** of Codeup's organization-visible repositories and
+fetches each default branch. It atomically updates the manifest, retaining existing priority and adding
+new repositories. Empty repositories are recorded separately. A local Devops snapshot, when configured,
+audits that every repository referenced by its commit records appears in the inventory. Missing access,
+incomplete detail or upstream failure aborts refresh and retains the previous manifest; the run fails
+instead of claiming complete coverage. `inventory.json` beside the manifest records the bound source,
+repository counts, empty repositories, coverage audit, timestamp and manifest checksum. Git checkpoints
+still provide per-file progress and commit versions. Repository removal and branch changes retain the
+explicit retirement/migration rules above; visibility is never broadened automatically.
