@@ -121,3 +121,11 @@ instead of claiming complete coverage. `inventory.json` beside the manifest reco
 repository counts, empty repositories, coverage audit, timestamp and manifest checksum. Git checkpoints
 still provide per-file progress and commit versions. Repository removal and branch changes retain the
 explicit retirement/migration rules above; visibility is never broadened automatically.
+
+
+Embedding context limits are token-based, not character-based. The host retries ingestion with
+progressively smaller source chunks only when the provider explicitly reports an input-context
+limit. All original source lines and their references are retained; data is never silently truncated
+or converted to keyword-only after a configured provider fails. Retry stops at the minimum chunk size
+and reports an error if it still cannot fit. Completed files keep their existing checkpoints and do
+not need re-embedding when this retry behavior is deployed.
