@@ -996,7 +996,7 @@ async fn ask_stream(
                         "doc_id": h.document_id,
                         "title": h.title,
                         "heading": h.heading,
-                        "content_preview": h.content.chars().take(1500).collect::<String>(),
+                        "content_preview": h.content.chars().take(4096).collect::<String>(),
                         "relevance_score": h.score,
                     }))
                     .collect();
