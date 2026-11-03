@@ -187,6 +187,12 @@ class Indexer:
             print(json.dumps({k: v for k, v in state.items() if k not in ('files', 'identity')}, ensure_ascii=False), flush=True)
 
     def run(self):
+        if self.c.get('codeup'):
+            if __package__:
+                from .codeup_inventory import refresh
+            else:
+                from codeup_inventory import refresh
+            print(json.dumps({'inventory': refresh(self.c)}), flush=True)
         repos = json.loads(Path(self.c['repositoriesFile']).read_text())
         def work(spec):
             try:
