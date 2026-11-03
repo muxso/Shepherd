@@ -99,6 +99,10 @@ async fn require_project_member(
 fn rag_error_response(e: RagError) -> Response {
     match e {
         RagError::Config(m) => (StatusCode::SERVICE_UNAVAILABLE, m).into_response(),
+        RagError::EmbeddingInputTooLong => {
+            (StatusCode::BAD_REQUEST, "embedding input exceeds model context length")
+                .into_response()
+        }
         other => (StatusCode::INTERNAL_SERVER_ERROR, other.to_string()).into_response(),
     }
 }
@@ -108,6 +112,7 @@ fn rag_error_response(e: RagError) -> Response {
 fn rag_error_code(e: &RagError) -> &'static str {
     match e {
         RagError::Config(_) => "not_configured",
+        RagError::EmbeddingInputTooLong => "input_too_long",
         _ => "error",
     }
 }

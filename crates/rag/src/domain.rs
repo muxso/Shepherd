@@ -149,6 +149,8 @@ pub enum RagError {
     Backend(String),
     #[error("embedding error: {0}")]
     Embedding(String),
+    #[error("embedding input exceeds model context length")]
+    EmbeddingInputTooLong,
     #[error("llm error: {0}")]
     Llm(String),
     #[error("rag config error: {0}")]

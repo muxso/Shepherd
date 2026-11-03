@@ -8,6 +8,16 @@ use sqlx::PgPool;
 use crate::domain::{Audience, Hit, RagChunk, RagDocument, RagError, Result};
 use crate::ports::{Chat, Embedder, VectorStore};
 
+fn embedding_http_error(status: reqwest::StatusCode, body: &str) -> RagError {
+    if status == reqwest::StatusCode::BAD_REQUEST
+        && body.to_ascii_lowercase().contains("input length exceeds the context length")
+    {
+        RagError::EmbeddingInputTooLong
+    } else {
+        RagError::Embedding(format!("embeddings HTTP {status}: {body}"))
+    }
+}
+
 // ---------- Embedder ----------
 
 pub struct OpenAiEmbedder {
@@ -66,7 +76,7 @@ impl Embedder for OpenAiEmbedder {
                 if !resp.status().is_success() {
                     let s = resp.status();
                     let body = resp.text().await.unwrap_or_default();
-                    return Err(RagError::Embedding(format!("embeddings HTTP {s}: {body}")));
+                    return Err(embedding_http_error(s, &body));
                 }
                 let v: serde_json::Value =
                     resp.json().await.map_err(|e| RagError::Embedding(e.to_string()))?;
@@ -92,7 +102,7 @@ impl Embedder for OpenAiEmbedder {
         if !resp.status().is_success() {
             let s = resp.status();
             let body = resp.text().await.unwrap_or_default();
-            return Err(RagError::Embedding(format!("embeddings HTTP {s}: {body}")));
+            return Err(embedding_http_error(s, &body));
         }
         let v: serde_json::Value =
             resp.json().await.map_err(|e| RagError::Embedding(e.to_string()))?;
@@ -706,5 +716,26 @@ mod provider_tests {
             chat_request("https://example.com/v1/chat/completions", "model", 123, "s", "u", false);
         assert_eq!(v["max_tokens"], 123);
         assert!(v.get("think").is_none());
+    }
+}
+
+#[cfg(test)]
+mod embedding_limit_tests {
+    use super::*;
+    #[test]
+    fn only_a_provider_context_bad_request_is_rechunkable() {
+        let message = r#"{"error":{"message":"the input length exceeds the context length"}}"#;
+        assert!(matches!(
+            embedding_http_error(reqwest::StatusCode::BAD_REQUEST, message),
+            RagError::EmbeddingInputTooLong
+        ));
+        assert!(matches!(
+            embedding_http_error(reqwest::StatusCode::UNAUTHORIZED, message),
+            RagError::Embedding(_)
+        ));
+        assert!(matches!(
+            embedding_http_error(reqwest::StatusCode::BAD_REQUEST, "model not found"),
+            RagError::Embedding(_)
+        ));
     }
 }

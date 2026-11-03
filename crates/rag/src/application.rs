@@ -26,36 +26,44 @@ pub async fn ingest(
     doc: RagDocument,
     text: &str,
 ) -> Result<IngestOutcome> {
-    let pieces = if doc.source_type == "code" {
-        chunk_code(&doc.title, text, 3072)
-    } else {
-        chunk_markdown(&doc.title, text, CHUNK_MAX_CHARS)
-    };
-    // Prepend the heading breadcrumb to the embedded text so retrieval has that context.
-    let texts: Vec<String> =
-        pieces.iter().map(|c| format!("{}\n{}", c.heading, c.content)).collect();
-    // Embedding is best-effort: if no endpoint is configured (Config error) fall back to keyword-only
-    // ingest with empty vectors — the doc is still stored and keyword-indexed (tantivy), and the
-    // vectors can be backfilled via `reindex` once a provider is set. A configured provider that
-    // errors (network/HTTP) still fails hard, so a real misconfiguration stays visible.
-    let embeddings = if texts.is_empty() {
-        Vec::new()
-    } else {
-        match embedder.embed_batch(&texts).await {
-            Ok(v) => {
-                if v.len() != texts.len()
-                    || v.iter()
-                        .any(|e| e.len() != embedder.dim() || e.iter().any(|x| !x.is_finite()))
-                {
-                    return Err(RagError::Embedding(
-                        "Embedding count/dimension does not match configured model".into(),
-                    ));
+    let mut cap = if doc.source_type == "code" { 3072 } else { CHUNK_MAX_CHARS };
+    // Character bounds are not token bounds (dense coordinates, Unicode and generated data differ).
+    // Rechunk the complete source on a typed provider length error; never truncate or persist a
+    // partially embedded document. Other provider/storage failures must remain visible.
+    let (pieces, embeddings) = loop {
+        let pieces = if doc.source_type == "code" {
+            chunk_code(&doc.title, text, cap)
+        } else {
+            chunk_markdown(&doc.title, text, cap)
+        };
+        let texts: Vec<String> =
+            pieces.iter().map(|c| format!("{}\n{}", c.heading, c.content)).collect();
+        let vectors = if texts.is_empty() {
+            Vec::new()
+        } else {
+            match embedder.embed_batch(&texts).await {
+                Ok(v) => {
+                    if v.len() != texts.len()
+                        || v.iter()
+                            .any(|e| e.len() != embedder.dim() || e.iter().any(|x| !x.is_finite()))
+                    {
+                        return Err(RagError::Embedding(
+                            "Embedding count/dimension does not match configured model".into(),
+                        ));
+                    }
+                    v
                 }
-                v
+                Err(RagError::EmbeddingInputTooLong) if cap > 200 => {
+                    cap = (cap / 2).max(200);
+                    continue;
+                }
+                // An unconfigured provider still supports keyword-only ingestion. A configured
+                // provider's errors do not silently degrade the document to keyword-only.
+                Err(RagError::Config(_)) => Vec::new(),
+                Err(e) => return Err(e),
             }
-            Err(RagError::Config(_)) => Vec::new(),
-            Err(e) => return Err(e),
-        }
+        };
+        break (pieces, vectors);
     };
     let embedded = !embeddings.is_empty();
 
@@ -553,5 +561,123 @@ mod tests {
         let (_s, user) = build_prompt("q?", &ctx, &[]);
         assert!(user.contains("[1] (H)"));
         assert!(user.contains("【问题】\nq?"));
+    }
+}
+
+#[cfg(test)]
+mod adaptive_ingest_tests {
+    use super::*;
+    use async_trait::async_trait;
+    use std::sync::{
+        atomic::{AtomicUsize, Ordering},
+        Mutex,
+    };
+
+    #[derive(Default)]
+    struct Store {
+        chunks: Mutex<Vec<RagChunk>>,
+        writes: AtomicUsize,
+    }
+    #[async_trait]
+    impl VectorStore for Store {
+        async fn upsert_document(&self, _: &RagDocument) -> Result<()> {
+            self.writes.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+        async fn replace_chunks(&self, _: &str, chunks: &[RagChunk]) -> Result<()> {
+            *self.chunks.lock().unwrap_or_else(std::sync::PoisonError::into_inner) =
+                chunks.to_vec();
+            Ok(())
+        }
+        async fn delete_document(&self, _: &str) -> Result<()> {
+            Ok(())
+        }
+        async fn search(&self, _: &str, _: &[f32], _: usize, _: &Audience) -> Result<Vec<Hit>> {
+            Ok(Vec::new())
+        }
+    }
+    struct Limited {
+        limit: usize,
+        other_error: bool,
+        attempts: AtomicUsize,
+    }
+    #[async_trait]
+    impl Embedder for Limited {
+        fn dim(&self) -> usize {
+            2
+        }
+        async fn embed(&self, _: &str) -> Result<Vec<f32>> {
+            Ok(vec![1.0, 0.0])
+        }
+        async fn embed_batch(&self, texts: &[String]) -> Result<Vec<Vec<f32>>> {
+            self.attempts.fetch_add(1, Ordering::SeqCst);
+            if self.other_error {
+                return Err(RagError::Embedding("provider unavailable".into()));
+            }
+            if texts.iter().any(|t| t.chars().count() > self.limit) {
+                return Err(RagError::EmbeddingInputTooLong);
+            }
+            Ok(texts.iter().map(|_| vec![1.0, 0.0]).collect())
+        }
+    }
+    fn document() -> RagDocument {
+        RagDocument {
+            id: "d".into(),
+            project_id: "p".into(),
+            source_type: "code".into(),
+            source_id: None,
+            title: "repo/file.rs@sha".into(),
+            owner_id: Some("owner".into()),
+            visibility_groups: vec![],
+            created_at: 0,
+            updated_at: 0,
+        }
+    }
+    #[tokio::test]
+    async fn retries_with_smaller_chunks_preserving_every_source_line() {
+        let store = Store::default();
+        let embed = Limited { limit: 600, other_error: false, attempts: AtomicUsize::new(0) };
+        let text = (1..=100).map(|n| format!("pub fn method_{n}() {{}}\n")).collect::<String>();
+        let result = ingest(&store, &embed, document(), &text).await.expect("ingest");
+        assert!(result.embedded);
+        assert!(embed.attempts.load(Ordering::SeqCst) > 1);
+        assert_eq!(store.writes.load(Ordering::SeqCst), 1);
+        let chunks = store.chunks.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        assert_eq!(result.chunks, chunks.len());
+        let mut recovered = String::new();
+        let mut n = 0;
+        for chunk in chunks.iter() {
+            assert_eq!(chunk.embedding.len(), 2);
+            for line in chunk.content.lines() {
+                n += 1;
+                let (label, body) = line.split_once(": ").expect("line label");
+                assert_eq!(label, format!("L{n}"));
+                recovered.push_str(body);
+                recovered.push('\n');
+            }
+        }
+        assert_eq!(recovered, text);
+    }
+    #[tokio::test]
+    async fn unrelated_provider_errors_do_not_retry_or_write() {
+        let store = Store::default();
+        let embed = Limited { limit: 600, other_error: true, attempts: AtomicUsize::new(0) };
+        assert!(matches!(
+            ingest(&store, &embed, document(), "fn main() {}").await,
+            Err(RagError::Embedding(_))
+        ));
+        assert_eq!(embed.attempts.load(Ordering::SeqCst), 1);
+        assert_eq!(store.writes.load(Ordering::SeqCst), 0);
+    }
+    #[tokio::test]
+    async fn irreducible_context_error_is_bounded_without_partial_documents() {
+        let store = Store::default();
+        let embed = Limited { limit: 1, other_error: false, attempts: AtomicUsize::new(0) };
+        assert!(matches!(
+            ingest(&store, &embed, document(), "fn main() {}").await,
+            Err(RagError::EmbeddingInputTooLong)
+        ));
+        assert_eq!(embed.attempts.load(Ordering::SeqCst), 5);
+        assert_eq!(store.writes.load(Ordering::SeqCst), 0);
     }
 }
