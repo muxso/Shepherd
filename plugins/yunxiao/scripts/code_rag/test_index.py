@@ -65,6 +65,13 @@ class IncrementalTests(unittest.TestCase):
             self.assertEqual(sum(c[0] == 'DELETE' for c in calls), 1)
             checkpoint = next((root / 'state').glob('*.json'))
             self.assertEqual(list(json.loads(checkpoint.read_text())['files']), ['b.rs'])
+            old = json.loads(checkpoint.read_text())
+            old['identity'][-1] = 1
+            checkpoint.write_text(json.dumps(old))
+            posts = sum(c[0] == 'POST' for c in calls)
+            index.repo(spec)
+            self.assertEqual(sum(c[0] == 'POST' for c in calls), posts + 1)
+            self.assertEqual(json.loads(checkpoint.read_text())['identity'][-1], 2)
             index.c['projectId'] = 'other'
             with self.assertRaises(RuntimeError):
                 index.repo(spec)
