@@ -99,6 +99,13 @@ jobs:
         run: npx playwright test environment-plugins.spec.ts plugins.spec.ts project-switch.spec.ts productivity.spec.ts requirement-output.spec.ts member-metrics.spec.ts rich-text.spec.ts rag-code.spec.ts
         env:
           E2E_START_VITE: "1"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: rag-code-ui
+          path: web/test-results/**/rag-pagination.png
+          if-no-files-found: ignore
+          retention-days: 7
 
   # —— 单元 + 自包含集成(不需外部服务;含架构守卫)——
   test:
