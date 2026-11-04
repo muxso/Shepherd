@@ -88,7 +88,7 @@ class Indexer:
             return Path(self.c['tokenFile']).read_text().strip()
 
     def api(self, method, path, body=None):
-        for attempt in range(4):
+        for attempt in range(7):
             token = self.token()
             req = urllib.request.Request(self.c['apiUrl'].rstrip('/') + path,
                     data=None if body is None else json.dumps(body).encode(), method=method,
@@ -98,10 +98,10 @@ class Indexer:
                     raw = res.read()
                     return json.loads(raw) if raw else None
             except urllib.error.HTTPError as e:
-                if e.code not in (429, 500, 502, 503, 504) or attempt == 3:
+                if e.code not in (429, 500, 502, 503, 504) or attempt == 6:
                     raise RuntimeError(f'Shepherd HTTP {e.code}') from None
             except (urllib.error.URLError, TimeoutError):
-                if attempt == 3:
+                if attempt == 6:
                     raise RuntimeError('Shepherd unavailable') from None
             time.sleep(2 ** attempt)
 
