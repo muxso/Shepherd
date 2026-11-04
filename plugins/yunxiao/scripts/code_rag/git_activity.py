@@ -13,14 +13,37 @@ def cutoff(config):
     return (dt.datetime.now(TZ)-dt.timedelta(days=max(1,min(366,int(config.get('gitHistoryDays',90)))))).replace(hour=0,minute=0,second=0,microsecond=0)
 
 def fetch(repo,spec,config,git):
-    since=cutoff(config).isoformat()
-    refspec='+refs/heads/*:refs/remotes/origin/*'
-    try: git(repo,'fetch','--prune','--no-tags','--shallow-since='+since,'origin',refspec)
-    except subprocess.CalledProcessError as e:
-        # Old dormant repositories have no commits in the selected window.
-        if not any(s in (e.stderr or b'').lower() for s in (b'no commits selected',b'no history')): raise
-        git(repo,'fetch','--prune','--no-tags','--depth=1','origin',refspec)
-    return git(repo,'rev-parse','--verify','refs/remotes/origin/'+spec['branch']).decode().strip()
+    start=cutoff(config);prefix='refs/remotes/origin/'
+    heads={}
+    for line in git(repo,'ls-remote','--heads','origin').decode().splitlines():
+        sha,ref=line.split()
+        if not ref.startswith('refs/heads/'):raise RuntimeError('Invalid remote branch reference')
+        heads[prefix+ref[len('refs/heads/'):]]=sha
+    default=prefix+spec['branch']
+    if default not in heads:raise RuntimeError('Configured default branch is not advertised')
+    marker=Path(repo)/'shepherd-history.json'
+    old=json.loads(marker.read_text()) if marker.exists() else {}
+    covered=old.get('since') and dt.datetime.fromisoformat(old['since'])<=start
+    unknown=[]
+    for ref,sha in heads.items():
+        try:git(repo,'cat-file','-e',sha+'^{commit}')
+        except subprocess.CalledProcessError:unknown.append('+refs/heads/'+ref[len(prefix):]+':'+ref)
+    # Bound first contact with a branch to its tip. Dormant Codeup repositories can hang when
+    # deepen-since is requested before checking whether any branch has commits in that window.
+    if unknown:git(repo,'fetch','--no-tags','--depth=1','origin',*unknown)
+    current=git(repo,'for-each-ref','--format=%(refname)','refs/remotes/origin/').decode().splitlines()
+    for ref in current:
+        if ref not in heads:git(repo,'update-ref','--no-deref','-d',ref)
+    for ref,sha in heads.items():git(repo,'update-ref',ref,sha)
+    active=[]
+    for line in git(repo,'for-each-ref','--format=%(refname)%00%(objectname)%00%(committerdate:iso-strict)','refs/remotes/origin/').decode().splitlines():
+        ref,sha,date=line.split('\0',2)
+        if dt.datetime.fromisoformat(date)>=start and not (covered and old.get('heads',{}).get(ref)==sha):
+            active.append('+refs/heads/'+ref[len(prefix):]+':'+ref)
+    if active:git(repo,'fetch','--no-tags','--shallow-since='+start.isoformat(),'origin',*active)
+    temp=marker.with_suffix('.tmp');temp.write_text(json.dumps({'since':start.isoformat(),'heads':heads}));temp.chmod(0o600);temp.replace(marker)
+    return heads[default]
+
 
 def collect(repo,spec,config,git,eligible,sanitize):
     refs=git(repo,'for-each-ref','--format=%(refname)','refs/remotes/origin/').decode().splitlines()

@@ -134,13 +134,15 @@ class Indexer:
                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=900,
                     env={**os.environ, 'GIT_TERMINAL_PROMPT': '0', 'GIT_SSH_COMMAND': 'ssh -o BatchMode=yes -o ConnectTimeout=10'})
                 sha = git(repo, 'rev-parse', 'HEAD').decode().strip()
-            else:
+            elif not self.c.get('gitHistoryDays'):
                 git(repo, 'fetch', '--depth=1', 'origin', spec['branch'])
                 sha = git(repo, 'rev-parse', 'FETCH_HEAD').decode().strip()
             if self.c.get('gitHistoryDays'):
                 if __package__: from .git_activity import fetch
                 else: from git_activity import fetch
                 sha = fetch(repo, spec, self.c, git)
+            if not self.c.get('gitHistoryDays'):
+                (repo/'shepherd-history.json').unlink(missing_ok=True)
             git(repo, 'update-ref', 'refs/shepherd/default', sha)
             state = {**old, 'identity': identity, 'status': 'indexing', 'targetCommit': sha,
                      'startedAt': int(time.time()), 'files': old.get('files', {}), 'repository': spec['name']}
