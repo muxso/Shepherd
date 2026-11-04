@@ -97,9 +97,23 @@ def daily_documents(config,commits):
                       f"可索引文件新增 {c['additions']} / 删除 {c['deletions']} 行，{c['unknownStats']} 个文件行数未知。",'变更文件：\n'+'\n'.join(c['files'])]
         doc_id=str(uuid.uuid5(uuid.NAMESPACE_URL,json.dumps([config['projectId'],scope,'git_activity',author,date])))
         meta={'scope':scope,'author':author,'date':date,'aliases':sorted({author,*(c['author'] for c in items),*(c['email'] for c in items)}),'commits':len(items),'repositories':dict(repos)}
-        result.append({'projectId':config['projectId'],'documentId':doc_id,'title':f'Git 每日活动 {author} {date}',
-                       'text':'\n\n'.join(lines),'sourceType':'git_activity','sourceId':json.dumps(meta,ensure_ascii=False),
-                       'visibilityGroups':config.get('visibilityGroups',[])})
+        evidence='\n\n'.join(lines[1:]);segments=[]
+        # Small uploads keep embedding/storage within the normal authenticated API deadline.
+        # Preserve every source character, preferring line boundaries so paths remain searchable.
+        while evidence:
+            edge=min(12000,len(evidence))
+            if edge<len(evidence):
+                newline=evidence.rfind('\n',0,edge)
+                if newline>=edge//2:edge=newline+1
+            segments.append(evidence[:edge]);evidence=evidence[edge:]
+        for part,segment in enumerate(segments or ['']):
+            multipart=len(segments)>1
+            part_id=doc_id if part==0 else str(uuid.uuid5(uuid.UUID(doc_id),'part:'+str(part+1)))
+            part_meta={**meta,**({'part':part+1,'parts':len(segments)} if multipart else {})}
+            note=f'\n\n本作者当天记录分为 {len(segments)} 段；当前第 {part+1} 段。上方总量为当天去重总量，不能按分段累加。' if multipart else ''
+            result.append({'projectId':config['projectId'],'documentId':part_id,'title':f'Git 每日活动 {author} {date}'+(f'（第{part+1}/{len(segments)}段）' if multipart else ''),
+                           'text':overview+note+'\n\n'+segment,'sourceType':'git_activity','sourceId':json.dumps(part_meta,ensure_ascii=False),
+                           'visibilityGroups':config.get('visibilityGroups',[])})
     return result
 
 def publish(indexer,commits,save):

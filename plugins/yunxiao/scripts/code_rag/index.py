@@ -98,7 +98,7 @@ class Indexer:
                     raw = res.read()
                     return json.loads(raw) if raw else None
             except urllib.error.HTTPError as e:
-                if e.code not in (429, 500, 502, 503, 504) or attempt == 6:
+                if e.code not in (408, 429, 500, 502, 503, 504) or attempt == 6:
                     raise RuntimeError(f'Shepherd HTTP {e.code}') from None
             except (urllib.error.URLError, TimeoutError):
                 if attempt == 6:
@@ -230,8 +230,9 @@ class Indexer:
                     commits.extend(json.loads((self.root/'activities'/(key+'.json')).read_text())['commits'])
                 publish(self,commits,save)
                 summary['gitActivity']='complete'
-            except Exception:
+            except Exception as e:
                 summary['gitActivity']='failed'
+                print(json.dumps({'stage':'gitActivity','status':'failed','error':type(e).__name__ + (': ' + str(e)[:160] if isinstance(e,RuntimeError) else '')}),flush=True)
         save(self.root / 'summary.json', summary)
         return 1 if summary['failed'] or summary.get('gitActivity')=='failed' else 0
 

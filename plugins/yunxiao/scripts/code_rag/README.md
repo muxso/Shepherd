@@ -141,7 +141,9 @@ author dates are converted to Shanghai days, and committer timestamps remain in 
 `authorAliasesFile` optionally names a private JSON map from Git names/emails to approved canonical
 names. The worker publishes stable per-author/day documents only after all repositories succeed;
 older already-indexed daily facts remain archived outside the current fetch window. Git activity
-is evidence of commits, not a claim about hours, complete work, or performance.
+is evidence of commits, not a claim about hours, complete work, or performance. Large author-day
+evidence is split into bounded uploads without discarding messages or changed paths. Each part
+repeats the daily summary and declares its part number; daily totals must not be summed across parts.
 
 Questions such as “王震昨天干了什么”, “cxl 在 2026-11-04 的提交记录” and “团队本周工作总结”
 use exact author/alias + calendar-date retrieval before generation. Project and current document
