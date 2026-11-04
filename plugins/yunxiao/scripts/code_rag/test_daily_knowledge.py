@@ -65,3 +65,26 @@ class KnowledgeTests(unittest.TestCase):
             self.assertTrue(all('不等于全部工作或工时' in d['text'] for d in docs))
             self.assertTrue(all(d['visibilityGroups']==[] for d in docs))
             self.assertTrue(any('修改 b.rs' in d['text'] for d in docs))
+
+class HistoryRefreshTests(unittest.TestCase):
+    def test_dormant_repositories_do_not_deepen_and_active_history_is_reused(self):
+        import os
+        for dormant in (True,False):
+            with tempfile.TemporaryDirectory() as tmp:
+                source=Path(tmp)/'source';bare=Path(tmp)/'bare'
+                subprocess.run(['git','init','-q','-b','main',str(source)],check=True)
+                (source/'a.rs').write_text('fn sample() {}')
+                subprocess.run(['git','-C',str(source),'add','.'],check=True)
+                env={**os.environ}
+                if dormant:env.update(GIT_AUTHOR_DATE='2019-01-01T00:00:00+08:00',GIT_COMMITTER_DATE='2019-01-01T00:00:00+08:00')
+                subprocess.run(['git','-C',str(source),'-c','user.name=Alice','-c','user.email=alice@example.invalid','commit','-qm','first'],check=True,env=env)
+                subprocess.run(['git','clone','--bare','--depth=1',source.as_uri(),str(bare)],check=True,stderr=subprocess.PIPE)
+                calls=[]
+                def tracked(repo,*args):calls.append(args);return git(repo,*args)
+                spec={'id':'r','name':'repo','branch':'main'};c={'gitHistoryDays':90}
+                sha=fetch(bare,spec,c,tracked)
+                self.assertEqual(sha,git(source,'rev-parse','HEAD').decode().strip())
+                self.assertEqual(any(any(a.startswith('--shallow-since=') for a in args) for args in calls),not dormant)
+                calls.clear();fetch(bare,spec,c,tracked)
+                self.assertFalse(any(args[0]=='fetch' for args in calls))
+                self.assertEqual(len(collect(bare,spec,c,git,eligible,sanitize)),0 if dormant else 1)

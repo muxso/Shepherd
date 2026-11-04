@@ -135,7 +135,8 @@ not need re-embedding when this retry behavior is deployed.
 The code timer runs every day at **02:00 Asia/Shanghai** (plus up to five minutes of jitter),
 with boot catch-up and persistent scheduling. Set `gitHistoryDays` (1–366, deployed value 90)
 to fetch all remote branches within a rolling history window. Latest code files still follow the
-configured default branch. Commit evidence excludes merges and deduplicates repository + SHA;
+configured default branch. Remote tips are checked before deepening: dormant repositories skip
+history deepening, and unchanged branches reuse the verified local history window. Commit evidence excludes merges and deduplicates repository + SHA;
 author dates are converted to Shanghai days, and committer timestamps remain in the evidence.
 `authorAliasesFile` optionally names a private JSON map from Git names/emails to approved canonical
 names. The worker publishes stable per-author/day documents only after all repositories succeed;
