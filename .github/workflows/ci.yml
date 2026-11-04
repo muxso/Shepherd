@@ -160,6 +160,9 @@ jobs:
           --health-cmd "mysqladmin ping -h 127.0.0.1 -uroot -pmspass"
           --health-interval 5s --health-timeout 5s --health-retries 30
     env:
+      CARGO_PROFILE_DEV_DEBUG: "0"
+      CARGO_PROFILE_TEST_DEBUG: "0"
+      CARGO_INCREMENTAL: "0"
       DATABASE_URL: postgres://msuser:mspass@localhost:5432/mstest
       REDIS_URL: redis://localhost:6379/0
       MYSQL_URL: mysql://root:mspass@localhost:3306/mstest
@@ -169,6 +172,8 @@ jobs:
         with:
           toolchain: ${{ env.RUST_TOOLCHAIN }}
       - uses: Swatinem/rust-cache@v2
+        with:
+          key: integration-no-debug-v1
       # 跨上下文端到端(真 server + 真库):auth/RBAC、需求→拆分→交付→验证、
       # LLM agent(mock LLM)、自纠正、并行 DAG、MCP、api-definition→run…
       - name: server scenarios
