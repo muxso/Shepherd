@@ -21,8 +21,9 @@ async fn activity_uses_exact_author_dates_project_and_current_document_audience(
         ("group", "p", "other", vec!["readers".into()], "2026-11-04"),
         ("foreign", "q", "owner", vec![], "2026-11-04"),
         ("old", "p", "owner", vec![], "2026-10-04"),
+        ("part2", "p", "owner", vec![], "2026-11-04"),
     ] {
-        let source = json!({"author":"崔少平","aliases":["cxl"],"date":date}).to_string();
+        let source = json!({"author":"崔少平","aliases":["cxl"],"date":date,"part":if id=="part2" {2} else {1}}).to_string();
         store
             .upsert_document(&RagDocument {
                 id: id.into(),

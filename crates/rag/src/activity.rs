@@ -128,6 +128,8 @@ pub struct ActivityMetadata {
     pub date: String,
     #[serde(default)]
     pub aliases: Vec<String>,
+    #[serde(default)]
+    pub part: Option<usize>,
 }
 impl ActivityMetadata {
     pub fn matches_author(&self, question: &str) -> bool {
