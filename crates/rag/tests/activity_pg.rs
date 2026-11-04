@@ -83,6 +83,7 @@ async fn activity_uses_exact_author_dates_project_and_current_document_audience(
         .expect("activity")
         .is_empty());
     assert!(store.activity_search("p", "支付接口怎么实现", &owner).await.expect("query").is_none());
+    assert!(store.activity_search("p", "日报接口", &owner).await.expect("query").is_none());
     let admin = Audience { is_admin: true, ..Default::default() };
     assert_eq!(
         store.activity_search("p", q, &admin).await.expect("query").expect("activity").len(),

@@ -585,6 +585,24 @@ impl VectorStore for PgVectorStore {
             })
             .collect();
         let author_named = metadata.iter().any(|(_, m)| m.matches_author(question));
+        let explicit_activity = [
+            "干了",
+            "干嘛",
+            "干什么",
+            "干啥",
+            "做了",
+            "做什么",
+            "做啥",
+            "改了",
+            "git log",
+            "提交记录",
+            "提交历史",
+        ]
+        .iter()
+        .any(|s| question.to_lowercase().contains(s));
+        if !author_named && !team_mentioned(question) && !explicit_activity {
+            return Ok(None);
+        }
         let mut selected = Vec::new();
         for (id, meta) in metadata {
             if window.includes(&meta.date)

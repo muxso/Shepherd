@@ -10,6 +10,14 @@ pub struct ActivityWindow {
 impl ActivityWindow {
     pub fn parse(question: &str, now_ms: i64) -> Option<Self> {
         let q = question.to_lowercase();
+        if ["云效需求", "需求文档", "测试用例", "前置条件", "预期结果"]
+            .iter()
+            .any(|s| q.contains(s))
+            && !["git log", "提交记录", "提交历史"].iter().any(|s| q.contains(s))
+        {
+            return None;
+        }
+
         if ["怎么实现", "如何实现", "实现原理", "调用链", "依赖关系"].iter().any(|s| q.contains(s))
         {
             return None;
@@ -172,6 +180,8 @@ mod tests {
         }
         assert!(ActivityWindow::parse("这个接口怎么实现", now()).is_none());
         assert!(ActivityWindow::parse("每天定时任务如何实现", now()).is_none());
+        assert!(ActivityWindow::parse("云效需求每日统计的验收要求", now()).is_none());
+        assert!(ActivityWindow::parse("每日支付测试用例的预期结果", now()).is_none());
     }
     #[test]
     fn aliases_are_exact_not_substrings() {

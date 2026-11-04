@@ -147,8 +147,7 @@ use exact author/alias + calendar-date retrieval before generation. Project and 
 audiences are checked for metadata selection and again when hydrating evidence. No matching
 person/day produces no evidence rather than borrowing another person's semantic matches. Up to
 31 author/day documents and a bounded context are returned; the context states the requested
-range, matched count and selection limit. Source drawers retain the complete commit messages,
-repositories, SHA values and eligible changed file paths. No repository scripts or hooks run.
+range, matched count and selection limit. Retrieved excerpts retain commit messages, repositories, SHA values and eligible changed file paths within the stated context budget; one answer may not include the entire stored document. No repository scripts or hooks run.
 
 Install `yunxiao_documents.py` next to `index.py`, plus `shepherd-yunxiao-rag.service` and its timer.
 This second job runs at **03:30 Asia/Shanghai** and reads completed plugin snapshots through the
