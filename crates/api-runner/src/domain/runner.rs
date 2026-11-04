@@ -24,6 +24,14 @@ impl HttpMethod {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RequestSpec {
+    /// Per-request transport deadline. None preserves the runner's default.
+    #[serde(
+        default,
+        rename = "timeoutMs",
+        alias = "timeout_ms",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub timeout_ms: Option<u64>,
     pub method: HttpMethod,
     pub url: String,
     pub headers: Vec<(String, String)>,

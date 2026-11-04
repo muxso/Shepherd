@@ -326,6 +326,7 @@ export interface ApiDefinitionChange {
 }
 
 export interface ApiCase {
+  timeoutMs?: number | null
   id: string
   apiDefinitionId: string
   projectId: string

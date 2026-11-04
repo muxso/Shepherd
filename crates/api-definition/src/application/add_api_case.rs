@@ -51,13 +51,15 @@ impl AddApiCaseUseCase {
         .with_processors(processors)
         .with_meta(&meta.priority, &meta.status, meta.tags)
         .with_headers(meta.headers)
-        .with_request(meta.query_params, meta.rest_params, meta.auth);
+        .with_request(meta.query_params, meta.rest_params, meta.auth)
+        .with_timeout_ms(meta.timeout_ms)?;
         Ok(self.repo.insert_case(&new_case).await?)
     }
 }
 
 #[derive(Debug, Clone, Default)]
 pub struct ApiCaseMeta {
+    pub timeout_ms: Option<u64>,
     pub priority: String,
     pub status: String,
     pub tags: serde_json::Value,

@@ -1180,6 +1180,7 @@ fn to_node(step: &PlanStep, once: &mut u32) -> PlanNode {
             PlanNode::Leaf(Leaf::Request {
                 label: format!("{} {}", r.method, url),
                 request: RequestSpec {
+                    timeout_ms: None,
                     method: method_of(&r.method),
                     url,
                     headers,

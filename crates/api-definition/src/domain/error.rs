@@ -22,6 +22,8 @@ pub enum ApiDefinitionError {
     BadImport(String),
     #[error("config must be a json object")]
     BadConfig,
+    #[error("timeoutMs must be between 1 and 900000")]
+    BadTimeout,
 }
 
 pub(crate) fn normalize_http_method(method: &str) -> Result<String, ApiDefinitionError> {

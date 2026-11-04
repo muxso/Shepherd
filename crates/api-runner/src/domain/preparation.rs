@@ -150,6 +150,7 @@ mod tests {
     #[test]
     fn prepared_urls_keep_absolute_scheme_case_and_leading_path_slashes() {
         let request = super::super::RequestSpec {
+            timeout_ms: None,
             method: super::super::HttpMethod::Get,
             url: "HTTP://example.test//path".into(),
             headers: vec![],
@@ -179,6 +180,7 @@ mod tests {
     fn request_parts_share_one_budget_after_encoding_and_substitution() {
         let vars = [("large".into(), "界".repeat(64))].into();
         let request = super::super::RequestSpec {
+            timeout_ms: None,
             method: super::super::HttpMethod::Get,
             url: "http://example.test/".into(),
             headers: vec![("x-value".into(), "{{large}}".into())],
@@ -202,6 +204,7 @@ mod tests {
         assert!(render("${value}", &vars, 1).is_err());
         assert!(render("{{missing}}", &vars, 100).is_err());
         let spec = super::super::RequestSpec {
+            timeout_ms: None,
             method: super::super::HttpMethod::Get,
             url: "/test".into(),
             headers: vec![],

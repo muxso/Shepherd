@@ -211,6 +211,7 @@ mod tests {
 
     fn spec() -> RequestSpec {
         RequestSpec {
+            timeout_ms: None,
             method: HttpMethod::Get,
             url: "http://t/x".into(),
             headers: vec![],

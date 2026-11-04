@@ -1,6 +1,6 @@
 import { splitProcessors } from '../plugins/environment/preparation'
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { Button, Checkbox, Divider, Dropdown, Empty, Input, Table, Modal, Popover, Radio, Segmented, Select, Space, Switch, Tabs, Tag, Tooltip, Tree, Upload } from 'antd'
+import { Button, Checkbox, Divider, Dropdown, Empty, Input, InputNumber, Table, Modal, Popover, Radio, Segmented, Select, Space, Switch, Tabs, Tag, Tooltip, Tree, Upload } from 'antd'
 import ResizableDrawer from '../components/ResizableDrawer'
 import EditDrawer from '../components/EditDrawer'
 import { useSearchParams } from 'react-router-dom'
@@ -731,6 +731,7 @@ function CaseEditDrawer({ open, caseItem, onClose, onSaved }: { open: boolean; c
   const [method, setMethod] = useState(caseItem.method)
   const [url, setUrl] = useState(caseItem.url)
   const [priority, setPriority] = useState(caseItem.priority || 'P0')
+  const [timeoutMs, setTimeoutMs] = useState<number | null>(caseItem.timeoutMs ?? null)
   const [status, setStatus] = useState(caseItem.status || '进行中')
   const [tags, setTags] = useState<string[]>(caseItem.tags || [])
   const [tagInput, setTagInput] = useState('')
@@ -747,7 +748,7 @@ function CaseEditDrawer({ open, caseItem, onClose, onSaved }: { open: boolean; c
   useEffect(() => {
     if (!open) return
     setName(caseItem.name); setMethod(caseItem.method); setUrl(caseItem.url)
-    setPriority(caseItem.priority || 'P0'); setStatus(caseItem.status || '进行中'); setTags(caseItem.tags || [])
+    setPriority(caseItem.priority || 'P0'); setTimeoutMs(caseItem.timeoutMs ?? null); setStatus(caseItem.status || '进行中'); setTags(caseItem.tags || [])
     setHeaders(caseItem.headers?.length ? caseItem.headers : [blankKv()])
     setQuery(caseItem.queryParams?.length ? caseItem.queryParams : [blankKv()])
     setRest(caseItem.restParams?.length ? caseItem.restParams : [blankKv()])
@@ -761,7 +762,7 @@ function CaseEditDrawer({ open, caseItem, onClose, onSaved }: { open: boolean; c
     if (!name.trim()) return message.warning(t('apidef.caseNameRequired', '请输入用例名称'))
     if (!url.trim()) return message.warning(t('editor.urlRequired', '请输入 URL'))
     const auth = authType === 'none' ? { type: 'none' } : { type: authType, token: authToken }
-    const payload = { name, method, url, body: body || null, assertions, processors: caseItem.processors, priority, status, tags, headers: clean(headers), queryParams: clean(query), restParams: clean(rest), auth }
+    const payload = { name, method, url, body: body || null, assertions, processors: caseItem.processors, priority, status, tags, headers: clean(headers), queryParams: clean(query), restParams: clean(rest), auth, timeoutMs }
     setSaving(true)
     try {
       await api.updateCase(caseItem.id, payload)
@@ -799,6 +800,7 @@ function CaseEditDrawer({ open, caseItem, onClose, onSaved }: { open: boolean; c
     >
       <Input value={name} onChange={(e) => setName(e.target.value)} maxLength={255} showCount placeholder={t('apidef.caseName', '用例名称')} style={{ marginBottom: 12 }} />
       <Space style={{ marginBottom: 12 }} wrap>
+        <label>{t('apidef.requestTimeout', '请求超时（秒）')} <InputNumber min={0.001} max={900} step={1} value={timeoutMs == null ? null : timeoutMs / 1000} onChange={(v) => setTimeoutMs(v == null ? null : Math.round(v * 1000))} placeholder="30" style={{ width: 100 }} /></label>
         <Select value={priority} onChange={setPriority} style={{ width: 120 }} options={['P0', 'P1', 'P2', 'P3'].map((p) => ({ value: p, label: p }))} />
         <Select value={status} onChange={setStatus} style={{ width: 140 }} options={CASE_STATUSES.map((s) => ({ value: s, label: caseStatusLabel(s, t) }))} />
       </Space>

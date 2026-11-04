@@ -34,6 +34,7 @@ impl ProtocolPlugin for HttpPlugin {
     async fn run(&self, req: &ProbeRequest) -> RawProbe {
         let method = req.metadata.get("method").map(|m| method_of(m)).unwrap_or(HttpMethod::Get);
         let spec = RequestSpec {
+            timeout_ms: None,
             method,
             url: req.target.clone(),
             headers: vec![],
