@@ -30,7 +30,7 @@ class PlainText(HTMLParser):
 
 def rich_text(value):
     if isinstance(value,dict):
-        return rich_text(value.get('content') or value.get('jsonML') or value.get('text') or '')
+        return rich_text(value.get('htmlValue') or value.get('jsonMLValue') or value.get('content') or value.get('jsonML') or value.get('text') or '')
     if isinstance(value,list):
         if value and isinstance(value[0],str):
             if value[0].lower() in ('script','style'): return ''

@@ -13,6 +13,8 @@ class KnowledgeTests(unittest.TestCase):
         c={'projectId':'p','yunxiao':{'sourceId':'s'}}
         raw=json.dumps({'format':'jsonML','content':json.dumps(['article',{},['h1',{},'支付申请'],['p',{},'负数不可提交']])})
         self.assertIn('负数不可提交',rich_text(raw))
+        self.assertEqual(rich_text(json.dumps({'htmlValue':'<p>真实正文</p>','jsonMLValue':['p',{},'真实正文']})),'真实正文')
+        self.assertIn('真实正文',rich_text({'jsonMLValue':['p',{},'真实正文']}))
         self.assertIn('图片',rich_text(['img',{'src':'private image'}]))
         self.assertNotIn('evil',rich_text('<p>正文</p><script>evil()</script>'))
         req=document(c,'requirement',{'externalId':'r','serial':'REQ-1','title':'支付','description':raw})
