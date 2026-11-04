@@ -412,3 +412,57 @@ async fn monthly_member_metrics_use_one_source_and_projected_snapshot() {
     }
     assert!(store.member_metrics("missing-source", MemberMetricsQuery::default()).await.is_err());
 }
+
+#[tokio::test]
+#[ignore = "requires isolated SHEPHERD_YUNXIAO_TEST_DATABASE_URL"]
+async fn code_authors_use_exact_month_source_and_requirement_visibility() {
+    use shepherd_yunxiao::domain::code_authors::CodeAuthorsQuery;
+    let pool = sqlx::PgPool::connect(
+        &std::env::var("SHEPHERD_YUNXIAO_TEST_DATABASE_URL").expect("test database"),
+    )
+    .await
+    .expect("connect");
+    shepherd_yunxiao::adapters::pg::migrate(&pool).await.expect("migrate");
+    let store = PgStore(pool.clone());
+    let source = store
+        .create_source(NewSource {
+            project_id: "code-test".into(),
+            cloud_org_id: "test".into(),
+            cloud_project_id: uuid::Uuid::new_v4().to_string(),
+            name: "code".into(),
+        })
+        .await
+        .expect("source");
+    let id = source["id"].as_str().expect("id");
+    for (external, at) in [
+        ("before", "2026-10-31T15:59:59Z"),
+        ("start", "2026-10-31T16:00:00Z"),
+        ("end", "2026-11-30T15:59:59Z"),
+        ("after", "2026-11-30T16:00:00Z"),
+    ] {
+        sqlx::query("INSERT INTO ms_devops_entity(source_id,kind,external_id,payload) VALUES($1,'commit',$2,$3)")
+        .bind(id).bind(external).bind(json!({"repoId":42,"sha":external,"authoredAt":at,"author":"甲","requirementIds":["R-1"]})).execute(&pool).await.expect("commit");
+    }
+    sqlx::query("INSERT INTO ms_devops_entity(source_id,kind,external_id,payload) VALUES($1,'requirement','req-1',$2)").bind(id).bind(json!({"serial":"R-1","title":"源内需求"})).execute(&pool).await.expect("requirement");
+    let query = || CodeAuthorsQuery { month: "2026-11".into() };
+    let result = store.code_authors(id, query(), true).await.expect("facts");
+    let commits = result["commits"].as_array().expect("commits");
+    assert_eq!(commits.len(), 2);
+    assert_eq!(commits[0]["id"], "start");
+    assert_eq!(commits[1]["id"], "end");
+    assert_eq!(commits[0]["requirements"][0]["title"], "源内需求");
+    assert!(commits[0]["additions"].is_null());
+    let hidden = store.code_authors(id, query(), false).await.expect("redacted");
+    assert_eq!(hidden["commits"][0]["requirements"], json!([]));
+    assert!(store.code_authors("missing", query(), true).await.is_err());
+    sqlx::query("DELETE FROM ms_devops_entity WHERE source_id=$1")
+        .bind(id)
+        .execute(&pool)
+        .await
+        .expect("cleanup");
+    sqlx::query("DELETE FROM ms_devops_source WHERE id=$1")
+        .bind(id)
+        .execute(&pool)
+        .await
+        .expect("cleanup source");
+}

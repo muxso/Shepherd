@@ -167,6 +167,37 @@ impl Store for PgStore {
             json!({"source":source_data,"productivity":productivity,"bugStatistics":bug_statistics,"totals":totals,"authors":authors,"statuses":statuses,"runs":runs,"days":days,"codeScope":"组织可见仓库；关联提交按需求ID归属项目，未关联提交单独保留","historyScope":"首次同步建立基线，此后记录观察到的状态变化；不推算导入前历史"}),
         )
     }
+    async fn code_authors(
+        &self,
+        source: &str,
+        query: crate::domain::code_authors::CodeAuthorsQuery,
+        can_requirements: bool,
+    ) -> Result<Value, Error> {
+        let (start, end) = query.bounds()?;
+        let source_data = sqlx::query_scalar::<_, Value>(
+            "SELECT to_jsonb(s) FROM ms_devops_source s WHERE id=$1",
+        )
+        .bind(source)
+        .fetch_optional(&self.0)
+        .await
+        .map_err(db)?
+        .ok_or(Error::NotFound)?;
+        let rows=sqlx::query_as::<_,(String,Value)>("SELECT external_id,payload-'raw' FROM ms_devops_entity WHERE source_id=$1 AND active AND kind='commit' AND NULLIF(payload->>'authoredAt','')::timestamptz >= $2::text::timestamptz AND NULLIF(payload->>'authoredAt','')::timestamptz < $3::text::timestamptz ORDER BY NULLIF(payload->>'authoredAt','')::timestamptz,external_id")
+            .bind(source).bind(start.to_rfc3339()).bind(end.to_rfc3339()).fetch_all(&self.0).await.map_err(db)?;
+        let requirements = if can_requirements {
+            sqlx::query_as::<_,(String,Value)>("SELECT external_id,jsonb_build_object('serial',payload->>'serial','title',payload->>'title') FROM ms_devops_entity WHERE source_id=$1 AND active AND kind='requirement'").bind(source).fetch_all(&self.0).await.map_err(db)?
+                .into_iter().map(|(external_id,data)| Record {kind:"requirement".into(),external_id,data}).collect()
+        } else {
+            Vec::new()
+        };
+        let commits = rows
+            .into_iter()
+            .map(|(external_id, data)| Record { kind: "commit".into(), external_id, data })
+            .collect();
+        Ok(
+            json!({"source":source_data,"month":query.month,"start":start.to_rfc3339(),"endExclusive":end.to_rfc3339(),"timezone":"Asia/Shanghai","commits":crate::domain::code_authors::facts(commits,requirements,can_requirements),"permissions":{"requirements":can_requirements}}),
+        )
+    }
     async fn member_metrics(
         &self,
         source: &str,

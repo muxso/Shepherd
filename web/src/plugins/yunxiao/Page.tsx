@@ -7,6 +7,7 @@ import RequirementOutput from './RequirementOutput'
 import BugStatistics from './BugStatistics'
 import MemberMetrics from './MemberMetrics'
 import StatisticsNotes from './StatisticsNotes'
+import CodeAuthors from './CodeAuthors'
 import { PageBody, PageContainer, PageHeader } from '../../components/Page'
 import { devopsApi, type DevopsDashboard, type DevopsRow, type DevopsSource } from './api'
 const kinds = [{ key: 'requirement', label: '需求' }, { key: 'bug', label: '缺陷' }, { key: 'sprint', label: '迭代' }, { key: 'testcase', label: '测试用例' }, { key: 'commit', label: '实际提交' }, { key: 'history', label: '状态变化' }, { key: 'runs', label: '同步记录' }]
@@ -16,7 +17,7 @@ export default function Devops() {
   const location = useLocation()
   const navigate = useNavigate()
   const [query] = useState(() => new URLSearchParams(window.location.search))
-  const [view, setView] = useState(query.has('reference') ? 'delivery' : query.has('kind') ? 'records' : query.get('view') === 'radar' ? 'radar' : 'overview')
+  const [view, setView] = useState(query.has('reference') ? 'delivery' : query.has('kind') ? 'records' : ['overview','radar','delivery','bugs','authors','records'].includes(query.get('view') || '') ? query.get('view')! : 'overview')
   const [reference, setReference] = useState(query.get('reference') || '')
   const [metric, setMetric] = useState(query.get('metric') || '')
   const [eventDate, setEventDate] = useState(query.get('date') || '')
@@ -29,7 +30,7 @@ export default function Devops() {
     const next = new URLSearchParams(location.search)
     if (next.get('source')) setSource(next.get('source')!)
     if (kinds.some(item => item.key === next.get('kind'))) { setKind(next.get('kind')!); setView('records') }
-    if (next.get('view') === 'radar') setView('radar')
+    if (['overview','radar','delivery','bugs','authors','records'].includes(next.get('view') || '')) setView(next.get('view')!)
     if (next.get('reference')) { setReference(next.get('reference')!); setView('delivery') }
     setSearch(next.get('search') || '')
     setMetric(next.get('metric') || ''); setEventDate(next.get('date') || ''); setPage(1)
@@ -40,7 +41,7 @@ export default function Devops() {
     return () => { live = false }
   }, [revision])
   useEffect(() => {
-    if (!source || view === 'delivery' || view === 'radar') return
+    if (!source || view === 'delivery' || view === 'radar' || view === 'authors') return
     let live = true
     setDashboard(null)
     devopsApi.dashboard(source, days).then(d => { if (live) setDashboard(d) }).catch(e => { if (live) setError(String(e.message || e)) })
@@ -90,15 +91,15 @@ export default function Devops() {
   ]
   return <PageContainer>
     <PageHeader title={<span role="heading" aria-level={2}>云效研发统计</span>} extra={<Space size={8} wrap>
-      <Select aria-label="云效项目" style={{ minWidth: 180 }} value={source || undefined} onChange={v => { setSource(v); setPage(1); setGroup(''); setReference(''); if (view === 'radar') { const next = new URLSearchParams(location.search); next.set('source',v); next.delete('group'); next.delete('chart'); next.delete('compare'); navigate({ pathname:location.pathname,search:next.toString() }) } }} options={sources.map(s => ({ value: s.id, label: s.name }))} placeholder="选择数据源" />
-      {!['delivery','radar'].includes(view) && <Select aria-label="统计区间" value={days} onChange={v => { setDays(v); setPage(1) }} options={[7,14,30,90,365].map(v => ({ value:v, label:`最近 ${v} 天` }))} />}
+      <Select aria-label="云效项目" style={{ minWidth: 180 }} value={source || undefined} onChange={v => { setSource(v); setPage(1); setGroup(''); setReference(''); if (view === 'radar' || view === 'authors') { const next = new URLSearchParams(location.search); next.set('source',v); next.delete('group'); next.delete('chart'); next.delete('compare'); navigate({ pathname:location.pathname,search:next.toString() }) } }} options={sources.map(s => ({ value: s.id, label: s.name }))} placeholder="选择数据源" />
+      {!['delivery','radar','authors'].includes(view) && <Select aria-label="统计区间" value={days} onChange={v => { setDays(v); setPage(1) }} options={[7,14,30,90,365].map(v => ({ value:v, label:`最近 ${v} 天` }))} />}
       <Button aria-label="刷新数据" icon={<ReloadOutlined />} onClick={() => setRevision(x => x + 1)} />
-      {!['delivery','radar'].includes(view) && <StatisticsNotes info={info} data={dashboard} />}
+      {!['delivery','radar','authors'].includes(view) && <StatisticsNotes info={info} data={dashboard} />}
     </Space>} />
     <PageBody testId="devops-scroll">
       {error && <Alert showIcon type="error" message={error} style={{ marginBottom: 12 }} />}
       <div className="yx-page-status"><Tag>云效插件</Tag><span>{info?.last_success_at ? `最近同步 ${when(info.last_success_at)}` : '等待首次同步'}</span></div>
-      <Tabs activeKey={view} onChange={value => { setView(value); setError('') }} items={[
+      <Tabs activeKey={view} onChange={value => { setView(value); setError(''); const next = new URLSearchParams(location.search); next.set('view', value); if (source) next.set('source', source); if (value !== 'delivery') next.delete('reference'); if (value !== 'records') { next.delete('kind'); next.delete('metric'); next.delete('date') } navigate({ pathname: location.pathname, search: next.toString() }) }} items={[
         { key:'overview', label:'概览', children: <>
     <Row gutter={[12, 12]} style={{ marginBottom: 16 }}>
       {[
@@ -110,14 +111,7 @@ export default function Devops() {
         { key:'radar', label:'个人雷达指标', children: source && view === 'radar' ? <MemberMetrics key={source} sourceId={source} revision={revision} /> : null },
         { key:'delivery', label:'需求产出', children: source ? <RequirementOutput key={source} sourceId={source} reference={reference} /> : null },
         { key:'bugs', label:'缺陷统计', children:<BugStatistics data={dashboard?.bugStatistics} /> },
-        { key:'authors', label:'代码作者', children: <>
-
-    <Card title="代码作者与组织分组" size="small" style={{ marginBottom: 16 }}>
-      <Table size="small" rowKey={r => `${r.name}:${r.group}`} dataSource={dashboard?.authors || []} pagination={{ pageSize: 8, hideOnSinglePage: true }} columns={[
-        { title: '实际作者', dataIndex: 'name' }, { title: '分组', dataIndex: 'group' }, { title: '组织提交', dataIndex: 'commits' }, { title: '关联需求提交', dataIndex: 'linkedCommits' }, { title: '新增行', dataIndex: 'additions', render: text }, { title: '删除行', dataIndex: 'deletions', render: text }, { title: '行数未知提交', dataIndex: 'unknownStats' },
-      ]} />
-    </Card>
-        </> },
+        { key:'authors', label:'代码作者', children: source && view === 'authors' ? <CodeAuthors key={source} sourceId={source} revision={revision} /> : null },
         { key:'records', label:'明细记录', children: <Card size="small">
       <Tabs activeKey={kind} items={kinds} onChange={v => { setKind(v); setPage(1); setSearch(''); setGroup(''); setDelayed(false); setMetric(''); setEventDate('') }} />
       {eventDate && <Tag closable onClose={() => { setEventDate(''); setMetric(''); setPage(1) }}>{eventDate}</Tag>}

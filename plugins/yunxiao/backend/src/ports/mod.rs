@@ -1,3 +1,4 @@
+use crate::domain::code_authors::CodeAuthorsQuery;
 use crate::domain::{
     CompleteRun, Error, ListQuery, MemberMetricsQuery, NewSource, Record, RequirementOutputQuery,
 };
@@ -11,6 +12,12 @@ pub trait Store: Send + Sync {
     async fn stage(&self, run: &str, records: Vec<Record>) -> Result<Value, Error>;
     async fn complete(&self, run: &str, body: CompleteRun) -> Result<Value, Error>;
     async fn fail(&self, run: &str, error: &str) -> Result<Value, Error>;
+    async fn code_authors(
+        &self,
+        source: &str,
+        query: CodeAuthorsQuery,
+        can_requirements: bool,
+    ) -> Result<Value, Error>;
     async fn dashboard(&self, source: &str, days: i64) -> Result<Value, Error>;
     async fn requirement_output(&self, query: RequirementOutputQuery) -> Result<Value, Error>;
     async fn member_metrics(&self, source: &str, query: MemberMetricsQuery)
