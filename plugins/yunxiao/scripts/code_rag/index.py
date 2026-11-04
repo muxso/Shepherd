@@ -141,6 +141,7 @@ class Indexer:
                 if __package__: from .git_activity import fetch
                 else: from git_activity import fetch
                 sha = fetch(repo, spec, self.c, git)
+            git(repo, 'update-ref', 'refs/shepherd/default', sha)
             state = {**old, 'identity': identity, 'status': 'indexing', 'targetCommit': sha,
                      'startedAt': int(time.time()), 'files': old.get('files', {}), 'repository': spec['name']}
             save(state_path, state)
