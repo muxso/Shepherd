@@ -95,7 +95,8 @@ export default function CodeAuthors({ sourceId, revision }: { sourceId: string; 
     {data?.source.last_success_at && <div className="yx-muted" style={{ marginBottom: 12 }}>最近同步 {dateTime(data.source.last_success_at)}（上海）；仅统计已采集提交{data.source.code_since && data.source.code_until ? `，最近采集范围 ${dateTime(data.source.code_since)} 至 ${dateTime(data.source.code_until)}（不含）` : ''}。</div>}
     {error && <Alert type="error" showIcon message={error} style={{ marginBottom: 12 }} />}
     <Spin spinning={loading}>
-      <Card title={`${author || '全部作者'} · 每日代码提交趋势`} size="small" style={{ marginBottom: 16 }} extra={<Segmented aria-label="代码趋势指标" value={metric} onChange={v => setMetric(String(v))} options={[{ value: 'commits', label: '提交次数' }, { value: 'lines', label: '变更行数' }]} />}>
+      <Card title={`${author || '全部作者'} · 每日代码提交趋势`} size="small" style={{ marginBottom: 16 }} styles={{ title: { whiteSpace: 'normal', overflowWrap: 'anywhere' } }}>
+        <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 12 }}><Segmented aria-label="代码趋势指标" value={metric} onChange={v => setMetric(String(v))} options={[{ value: 'commits', label: '提交次数' }, { value: 'lines', label: '变更行数' }]} /></div>
         <Trend commits={selected} metric={metric} canRequirements={!!data?.permissions.requirements} openRequirement={openRequirement} />
       </Card>
       <Card title="代码作者与仓库明细" size="small">

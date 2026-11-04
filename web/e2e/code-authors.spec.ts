@@ -68,6 +68,7 @@ test('no requirement permission, contained narrow layout',async({page},info)=>{
  const point=page.getByRole('button',{name:'2026-11-01 最后提交 18:30:00，2 次提交',exact:true})
  await expect(point).toBeVisible()
  expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(390)
+ await page.screenshot({path:info.outputPath('code-authors-mobile-layout.png'),fullPage:true,animations:'disabled'})
  await point.focus()
  await expect(page.getByTestId('code-author-point-detail').getByText('无需求读取权限')).toBeVisible()
  await expect(page.getByText('支付申请负数校验',{exact:false})).toHaveCount(0)
