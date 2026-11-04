@@ -19,7 +19,7 @@ utoipa = { workspace = true, optional = true }
 webauth = { workspace = true, optional = true }
 serde = { workspace = true }
 rust_xlsxwriter = { version = "0.101", optional = true }
-calamine = { version = "0.37", optional = true }
+calamine = { version = "0.38", optional = true }
 
 [features]
 pg = ["dep:sqlx"]
