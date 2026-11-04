@@ -9,6 +9,7 @@ rust-version.workspace = true
 # Bounded context = one crate. domain/ports/application always compile; the IO adapters
 # (embeddings HTTP, pg store, LLM chat, axum http) are feature-gated behind `http`/`pg`.
 [dependencies]
+chrono = { version = "0.4", default-features = false, features = ["std"] }
 kernel = { workspace = true }
 webauth = { workspace = true }
 async-trait = { workspace = true }
@@ -34,4 +35,5 @@ pg = ["dep:sqlx"]
 http = ["dep:axum", "dep:reqwest", "dep:utoipa", "dep:async-stream", "dep:tokio", "dep:futures-util", "dep:sqlx", "dep:tantivy", "dep:jieba-rs", "webauth/http"]
 
 [dev-dependencies]
+migrate = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

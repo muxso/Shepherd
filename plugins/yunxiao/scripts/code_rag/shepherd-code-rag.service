@@ -1,9 +1,13 @@
 [Unit]
 Description=Shepherd read-only repository RAG indexing
 After=network-online.target
+StartLimitIntervalSec=3h
+StartLimitBurst=3
 
 [Service]
 Type=oneshot
+Restart=on-failure
+RestartSec=15min
 WorkingDirectory=%h/shepherd-code-rag
 ExecStart=/usr/bin/python3 %h/shepherd-code-rag/index.py --config %h/.config/shepherd-code-rag/config.json
 TimeoutStartSec=infinity

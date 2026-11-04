@@ -129,3 +129,50 @@ limit. All original source lines and their references are retained; data is neve
 or converted to keyword-only after a configured provider fails. Retry stops at the minimum chunk size
 and reports an error if it still cannot fit. Completed files keep their existing checkpoints and do
 not need re-embedding when this retry behavior is deployed.
+
+## Daily source, Git activity and Yunxiao knowledge refresh
+
+The code timer runs every day at **02:00 Asia/Shanghai** (plus up to five minutes of jitter),
+with boot catch-up and persistent scheduling. Set `gitHistoryDays` (1–366, deployed value 90)
+to fetch all remote branches within a rolling history window. Latest code files still follow the
+configured default branch. Commit evidence excludes merges and deduplicates repository + SHA;
+author dates are converted to Shanghai days, and committer timestamps remain in the evidence.
+`authorAliasesFile` optionally names a private JSON map from Git names/emails to approved canonical
+names. The worker publishes stable per-author/day documents only after all repositories succeed;
+older already-indexed daily facts remain archived outside the current fetch window. Git activity
+is evidence of commits, not a claim about hours, complete work, or performance.
+
+Questions such as “王震昨天干了什么”, “cxl 在 2026-11-04 的提交记录” and “团队本周工作总结”
+use exact author/alias + calendar-date retrieval before generation. Project and current document
+audiences are checked for metadata selection and again when hydrating evidence. No matching
+person/day produces no evidence rather than borrowing another person's semantic matches. Up to
+31 author/day documents and a bounded context are returned; the context states the requested
+range, matched count and selection limit. Retrieved excerpts retain commit messages, repositories, SHA values and eligible changed file paths within the stated context budget; one answer may not include the entire stored document. No repository scripts or hooks run.
+
+Install `yunxiao_documents.py` next to `index.py`, plus `shepherd-yunxiao-rag.service` and its timer.
+This second job runs at **03:30 Asia/Shanghai** and reads completed plugin snapshots through the
+existing permission-checked records API. Example additions to a separate private config:
+
+```json
+{
+  "yunxiao": {"sourceId": "YUNXIAO_SOURCE_UUID"},
+  "stateDir": "/home/service/shepherd-code-rag/yunxiao-state"
+}
+```
+
+Reuse the API/project/auth/embedding/audience fields from the code worker. Its source-reader role
+also needs `PROJECT:READ`, `REQUIREMENT:READ` and `FUNCTIONAL_CASE:READ`. Empty visibility groups
+remain uploader/admin only; indexing never grants project-wide access automatically.
+
+Requirements include canonical source number, title, owner/status and normalized HTML/JSONML
+body. Test cases include library, directory, preconditions, ordered steps and expected results.
+Image-only or missing content is explicitly reported and is not inferred. Embedded images and
+linked binary attachments are not OCRed or downloaded. Source identity and content digests skip
+unchanged documents; stable IDs replace changed versions. Missing source items retire only after a
+complete stable source read and successful ingestion. Concurrent source revision changes or any
+embedding error keep previous completed knowledge and resumable checkpoints.
+
+Run `python3 ~/shepherd-code-rag/progress.py` for code, Git activity and cloud-document progress;
+`journalctl --user -u shepherd-code-rag.service -f` and
+`journalctl --user -u shepherd-yunxiao-rag.service -f` show their separate jobs. Daily job updates and
+initial full import can take time; a deployed endpoint does not imply all documents are indexed.

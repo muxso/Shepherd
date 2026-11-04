@@ -1,0 +1,15 @@
+[Unit]
+Description=Index completed Yunxiao requirements and test cases into Shepherd RAG
+After=network-online.target
+StartLimitIntervalSec=3h
+StartLimitBurst=3
+
+[Service]
+Type=oneshot
+Restart=on-failure
+RestartSec=15min
+WorkingDirectory=%h/shepherd-code-rag
+ExecStart=/usr/bin/python3 %h/shepherd-code-rag/yunxiao_documents.py --config %h/.config/shepherd-code-rag/yunxiao.json
+TimeoutStartSec=infinity
+UMask=0077
+NoNewPrivileges=true

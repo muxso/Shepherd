@@ -3,7 +3,8 @@ Description=Refresh Shepherd repository code knowledge
 
 [Timer]
 OnBootSec=10min
-OnUnitInactiveSec=6h
+OnCalendar=*-*-* 02:00:00 Asia/Shanghai
+RandomizedDelaySec=5min
 Persistent=true
 
 [Install]

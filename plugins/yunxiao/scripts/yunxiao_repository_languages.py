@@ -46,9 +46,12 @@ def repository_language(repository_id, root=None):
              timeout=30, env={**os.environ, 'GIT_OPTIONAL_LOCKS': '0'})
     try:
         try:
-            sha = git('rev-parse', '--verify', 'FETCH_HEAD').decode().strip()
+            sha = git('rev-parse', '--verify', 'refs/shepherd/default').decode().strip()
         except subprocess.CalledProcessError:
-            sha = git('rev-parse', '--verify', 'HEAD').decode().strip()
+            try:
+                sha = git('rev-parse', '--verify', 'FETCH_HEAD').decode().strip()
+            except subprocess.CalledProcessError:
+                sha = git('rev-parse', '--verify', 'HEAD').decode().strip()
         values = tree_languages(git('ls-tree', '-r', '-l', '-z', sha))
         return {'repositoryLanguages': [v['name'] for v in values],
                 'repositoryLanguageBytes': values, 'repositoryLanguageSource': 'git-default-branch-extensions',

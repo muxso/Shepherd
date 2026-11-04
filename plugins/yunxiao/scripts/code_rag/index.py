@@ -88,7 +88,7 @@ class Indexer:
             return Path(self.c['tokenFile']).read_text().strip()
 
     def api(self, method, path, body=None):
-        for attempt in range(4):
+        for attempt in range(7):
             token = self.token()
             req = urllib.request.Request(self.c['apiUrl'].rstrip('/') + path,
                     data=None if body is None else json.dumps(body).encode(), method=method,
@@ -98,10 +98,10 @@ class Indexer:
                     raw = res.read()
                     return json.loads(raw) if raw else None
             except urllib.error.HTTPError as e:
-                if e.code not in (429, 500, 502, 503, 504) or attempt == 3:
+                if e.code not in (429, 500, 502, 503, 504) or attempt == 6:
                     raise RuntimeError(f'Shepherd HTTP {e.code}') from None
             except (urllib.error.URLError, TimeoutError):
-                if attempt == 3:
+                if attempt == 6:
                     raise RuntimeError('Shepherd unavailable') from None
             time.sleep(2 ** attempt)
 
@@ -137,6 +137,11 @@ class Indexer:
             else:
                 git(repo, 'fetch', '--depth=1', 'origin', spec['branch'])
                 sha = git(repo, 'rev-parse', 'FETCH_HEAD').decode().strip()
+            if self.c.get('gitHistoryDays'):
+                if __package__: from .git_activity import fetch
+                else: from git_activity import fetch
+                sha = fetch(repo, spec, self.c, git)
+            git(repo, 'update-ref', 'refs/shepherd/default', sha)
             state = {**old, 'identity': identity, 'status': 'indexing', 'targetCommit': sha,
                      'startedAt': int(time.time()), 'files': old.get('files', {}), 'repository': spec['name']}
             save(state_path, state)
@@ -184,6 +189,12 @@ class Indexer:
             state.update(status='complete', commit=sha, completedAt=int(time.time()),
                          indexedFiles=len(state['files']), changed=changed, unchanged=skipped)
             save(state_path, state)
+            if self.c.get('gitHistoryDays'):
+                if __package__: from .git_activity import collect
+                else: from git_activity import collect
+                activity = collect(repo, spec, self.c, git, eligible, sanitize)
+                activity_root = self.root / 'activities'; activity_root.mkdir(exist_ok=True)
+                save(activity_root / (key + '.json'), {'repository': rid, 'commits': activity, 'updatedAt': int(time.time())})
             print(json.dumps({k: v for k, v in state.items() if k not in ('files', 'identity')}, ensure_ascii=False), flush=True)
 
     def run(self):
@@ -207,8 +218,20 @@ class Indexer:
             results = list(pool.map(work, repos))
         summary = {'repositories': len(results), 'complete': sum(results), 'failed': len(results)-sum(results),
                    'updatedAt': int(time.time())}
+        if self.c.get('gitHistoryDays') and not summary['failed']:
+            if __package__: from .git_activity import publish
+            else: from git_activity import publish
+            try:
+                commits=[]
+                for spec in repos:
+                    key=hashlib.sha256(str(spec['id']).encode()).hexdigest()[:24]
+                    commits.extend(json.loads((self.root/'activities'/(key+'.json')).read_text())['commits'])
+                publish(self,commits,save)
+                summary['gitActivity']='complete'
+            except Exception:
+                summary['gitActivity']='failed'
         save(self.root / 'summary.json', summary)
-        return 1 if summary['failed'] else 0
+        return 1 if summary['failed'] or summary.get('gitActivity')=='failed' else 0
 
 
 if __name__ == '__main__':

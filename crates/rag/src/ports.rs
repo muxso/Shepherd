@@ -37,6 +37,15 @@ pub trait VectorStore: Send + Sync {
     async fn set_chunk_embeddings(&self, _updates: &[(String, Vec<f32>)]) -> Result<usize> {
         Ok(0)
     }
+    /// Exact author/date Git evidence; Some(empty) must not fall back to unrelated semantic hits.
+    async fn activity_search(
+        &self,
+        _project_id: &str,
+        _question: &str,
+        _audience: &Audience,
+    ) -> Result<Option<Vec<Hit>>> {
+        Ok(None)
+    }
     /// Top-k chunks in `project_id` by cosine similarity to `query`, filtered to what `audience` may see.
     async fn search(
         &self,

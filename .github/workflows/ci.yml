@@ -119,12 +119,18 @@ jobs:
   test:
     name: unit tests
     runs-on: ubuntu-latest
+    env:
+      CARGO_PROFILE_DEV_DEBUG: "0"
+      CARGO_PROFILE_TEST_DEBUG: "0"
+      CARGO_INCREMENTAL: "0"
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: ${{ env.RUST_TOOLCHAIN }}
       - uses: Swatinem/rust-cache@v2
+        with:
+          key: unit-no-debug-v1
       # --all-features:覆盖各上下文全部适配器 + 协议插件 + 架构守卫;不跑 #[ignore]。
       - name: cargo test
         run: cargo test --workspace --all-features --locked
@@ -160,6 +166,9 @@ jobs:
           --health-cmd "mysqladmin ping -h 127.0.0.1 -uroot -pmspass"
           --health-interval 5s --health-timeout 5s --health-retries 30
     env:
+      CARGO_PROFILE_DEV_DEBUG: "0"
+      CARGO_PROFILE_TEST_DEBUG: "0"
+      CARGO_INCREMENTAL: "0"
       DATABASE_URL: postgres://msuser:mspass@localhost:5432/mstest
       REDIS_URL: redis://localhost:6379/0
       MYSQL_URL: mysql://root:mspass@localhost:3306/mstest
@@ -169,6 +178,8 @@ jobs:
         with:
           toolchain: ${{ env.RUST_TOOLCHAIN }}
       - uses: Swatinem/rust-cache@v2
+        with:
+          key: integration-no-debug-v1
       # 跨上下文端到端(真 server + 真库):auth/RBAC、需求→拆分→交付→验证、
       # LLM agent(mock LLM)、自纠正、并行 DAG、MCP、api-definition→run…
       - name: server scenarios
@@ -201,6 +212,14 @@ jobs:
           trap 'dropdb -h localhost -U msuser --if-exists --force coverage_summary_test' EXIT
           createdb -h localhost -U msuser coverage_summary_test
           cargo test -p case-management --all-features --test coverage_pg --locked -- --ignored
+      - name: Git activity RAG audience and date contracts (isolated database)
+        env:
+          PGPASSWORD: mspass
+          SHEPHERD_RAG_TEST_DATABASE_URL: postgres://msuser:mspass@localhost:5432/rag_activity_test
+        run: |
+          trap 'dropdb -h localhost -U msuser --if-exists --force rag_activity_test' EXIT
+          createdb -h localhost -U msuser rag_activity_test
+          cargo test -p rag --all-features --test activity_pg --locked -- --ignored --test-threads=1
       - name: runner protocol routing (pg)
         run: cargo test -p runner --features pg --test pg_protocol --locked -- --ignored --test-threads=1
       - name: test-plan pg aggregate

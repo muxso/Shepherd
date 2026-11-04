@@ -1,0 +1,11 @@
+[Unit]
+Description=Daily Yunxiao requirements and test case RAG refresh
+
+[Timer]
+OnCalendar=*-*-* 03:30:00 Asia/Shanghai
+OnBootSec=15min
+Persistent=true
+RandomizedDelaySec=5min
+
+[Install]
+WantedBy=timers.target
