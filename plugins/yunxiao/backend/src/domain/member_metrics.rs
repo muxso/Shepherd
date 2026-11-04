@@ -1,7 +1,7 @@
 //! Snapshot-based monthly participation metrics; never an employee responsibility score.
 use super::bug_quality::{build_bug_quality, BugMetric, BugQuality};
 use super::{Error, Record};
-use chrono::{DateTime, Datelike, Duration, FixedOffset, NaiveDate};
+use chrono::{DateTime, Datelike, Duration, FixedOffset, Months, NaiveDate};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
@@ -144,21 +144,107 @@ pub struct MemberMetrics {
     pub requirements_missing_time: usize,
     pub snapshot_based: bool,
     pub bug_quality: BugQuality,
+    pub comparisons: Option<MonthlyComparisons>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MonthlyComparisons {
+    pub same_elapsed_time: bool,
+    pub previous_month: Option<ComparisonPeriod>,
+    pub previous_year: Option<ComparisonPeriod>,
+}
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ComparisonPeriod {
+    pub month: String,
+    pub start: String,
+    pub end_exclusive: String,
+    pub members: Vec<ComparisonMember>,
+}
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ComparisonMember {
+    pub name: String,
+    pub delivered_requirements: usize,
+    pub linked_bugs: usize,
+    pub bug_rate: Option<f64>,
+    pub delay_rate: Option<f64>,
+    pub reopen_count: usize,
+    pub reopen_unknown_bugs: usize,
+    pub reopen_rate: Option<f64>,
+}
+impl From<MemberMetrics> for ComparisonPeriod {
+    fn from(value: MemberMetrics) -> Self {
+        Self {
+            month: value.month,
+            start: value.start,
+            end_exclusive: value.end_exclusive,
+            members: value
+                .members
+                .into_iter()
+                .map(|m| ComparisonMember {
+                    name: m.name,
+                    delivered_requirements: m.delivered_requirements,
+                    linked_bugs: m.linked_bugs,
+                    bug_rate: m.bug_rate,
+                    delay_rate: m.delay_rate,
+                    reopen_count: m.reopen_count,
+                    reopen_unknown_bugs: m.reopen_unknown_bugs,
+                    reopen_rate: m.reopen_rate,
+                })
+                .collect(),
+        }
+    }
 }
 
 /// Caller provides one atomic, active-source snapshot and its database clock.
+/// All three periods use the same facts. Partial months share a Shanghai day/time cutoff;
+/// a shorter comparison month ends at its next midnight rather than spilling into another month.
 pub fn build_member_metrics(
     records: &[Record],
     query: &MemberMetricsQuery,
     now: DateTime<FixedOffset>,
 ) -> Result<MemberMetrics, Error> {
+    let mut current = build_period(records, query, now, None)?;
+    let a = month_start(&current.month)?;
+    let end = DateTime::parse_from_rfc3339(&current.end_exclusive).map_err(|_| Error::Storage)?;
+    let partial = end.date_naive().format("%Y-%m").to_string() == current.month;
+    let compare = |months| -> Result<Option<ComparisonPeriod>, Error> {
+        let Some(start) = a.checked_sub_months(Months::new(months)).filter(|d| d.year() >= 1)
+        else {
+            return Ok(None);
+        };
+        let next = start.checked_add_months(Months::new(1)).ok_or(Error::Storage)?;
+        let date = if partial { start.with_day(end.day()).unwrap_or(next) } else { next };
+        let cutoff =
+            if date == next { date.and_hms_opt(0, 0, 0) } else { Some(date.and_time(end.time())) }
+                .and_then(|d| d.and_local_timezone(*end.offset()).single())
+                .ok_or(Error::Storage)?;
+        let q = MemberMetricsQuery {
+            month: Some(start.format("%Y-%m").to_string()),
+            requirement_target: query.requirement_target,
+        };
+        Ok(Some(build_period(records, &q, now, Some(cutoff))?.into()))
+    };
+    current.comparisons = Some(MonthlyComparisons {
+        same_elapsed_time: partial,
+        previous_month: compare(1)?,
+        previous_year: compare(12)?,
+    });
+    Ok(current)
+}
+
+fn build_period(
+    records: &[Record],
+    query: &MemberMetricsQuery,
+    now: DateTime<FixedOffset>,
+    cutoff: Option<DateTime<FixedOffset>>,
+) -> Result<MemberMetrics, Error> {
     query.validate()?;
     let tz = FixedOffset::east_opt(8 * 3600).ok_or(Error::Storage)?;
     let now = now.with_timezone(&tz);
-    let month = query.month.clone().unwrap_or_else(|| {
-        let first = now.date_naive().with_day(1).unwrap_or(now.date_naive());
-        (first - Duration::days(1)).format("%Y-%m").to_string()
-    });
+    let month = query.month.clone().unwrap_or_else(|| now.format("%Y-%m").to_string());
     let a = month_start(&month)?;
     let b = if a.month() == 12 {
         NaiveDate::from_ymd_opt(a.year() + 1, 1, 1)
@@ -175,7 +261,7 @@ pub fn build_member_metrics(
     if start > now {
         return Err(Error::Invalid("month has not started".into()));
     }
-    let end = at_midnight(b)?.min(now);
+    let end = at_midnight(b)?.min(cutoff.unwrap_or(now)).min(now);
     let inside =
         |value: Option<DateTime<FixedOffset>>| value.is_some_and(|t| start <= t && t < end);
     let target = query.requirement_target.unwrap_or(10.0);
@@ -309,7 +395,7 @@ pub fn build_member_metrics(
             || r.data.get("requirementIds").and_then(Value::as_array).is_some_and(|a| !a.is_empty())
     });
     let quality =
-        build_bug_quality(records, start, end, if now.date_naive() < b { start } else { end });
+        build_bug_quality(records, start, end, if end.date_naive() < b { start } else { end });
     for name in quality.by_person.keys() {
         people.entry(name.clone()).or_default();
     }
@@ -383,5 +469,6 @@ pub fn build_member_metrics(
         requirements_missing_time: missing_time,
         snapshot_based: true,
         bug_quality: quality,
+        comparisons: None,
     })
 }

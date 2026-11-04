@@ -94,7 +94,7 @@ fn shanghai_boundaries_defaults_and_target_validation() {
     let january = DateTime::parse_from_rfc3339("2027-01-01T00:01:00+08:00").expect("clock");
     assert_eq!(
         build_member_metrics(&[], &MemberMetricsQuery::default(), january).expect("default").month,
-        "2026-12"
+        "2027-01"
     );
     for month in ["2026-13", "2026-1", "2026- 1", "2026-+1", "2026-00", "0000-01", "2027-01"] {
         let q = MemberMetricsQuery { month: Some(month.into()), ..query() };
@@ -253,4 +253,60 @@ fn unknown_history_and_role_fields_are_never_guessed() {
     assert_eq!(data.members[0].reopen_unknown_bugs, 1);
     assert_eq!(data.bug_quality.unknown_source_bugs, 1);
     assert_eq!(data.bug_quality.reopen_rate, None);
+}
+
+#[test]
+fn current_month_default_and_comparisons_use_matching_shanghai_cutoffs() {
+    let clock = DateTime::parse_from_rfc3339("2026-11-04T12:34:00+08:00").expect("clock");
+    let data = build_member_metrics(&[], &MemberMetricsQuery::default(), clock).expect("metrics");
+    assert_eq!(data.month, "2026-11");
+    assert_eq!(data.end_exclusive, "2026-11-04T12:34:00+08:00");
+    let comparison = data.comparisons.expect("comparison");
+    assert!(comparison.same_elapsed_time);
+    assert_eq!(
+        comparison.previous_month.expect("month").end_exclusive,
+        "2026-10-04T12:34:00+08:00"
+    );
+    assert_eq!(comparison.previous_year.expect("year").end_exclusive, "2025-11-04T12:34:00+08:00");
+    let data = build_member_metrics(&[], &query(), clock).expect("past month");
+    let comparison = data.comparisons.expect("comparison");
+    assert!(!comparison.same_elapsed_time);
+    assert_eq!(
+        comparison.previous_month.expect("month").end_exclusive,
+        "2026-10-01T00:00:00+08:00"
+    );
+    assert_eq!(comparison.previous_year.expect("year").end_exclusive, "2025-11-01T00:00:00+08:00");
+}
+
+#[test]
+fn comparison_cutoffs_do_not_overflow_short_months_or_leap_years() {
+    for (clock, prior_month_end, prior_year_end) in [
+        ("2026-03-31T12:00:00+08:00", "2026-03-01T00:00:00+08:00", "2025-03-31T12:00:00+08:00"),
+        ("2024-02-29T12:00:00+08:00", "2024-01-29T12:00:00+08:00", "2023-03-01T00:00:00+08:00"),
+        ("2027-01-04T12:00:00+08:00", "2026-12-04T12:00:00+08:00", "2026-01-04T12:00:00+08:00"),
+    ] {
+        let clock = DateTime::parse_from_rfc3339(clock).expect("clock");
+        let comparison = build_member_metrics(&[], &MemberMetricsQuery::default(), clock)
+            .expect("metrics")
+            .comparisons
+            .expect("comparison");
+        assert_eq!(comparison.previous_month.expect("month").end_exclusive, prior_month_end);
+        assert_eq!(comparison.previous_year.expect("year").end_exclusive, prior_year_end);
+    }
+}
+
+#[test]
+fn comparison_counts_exclude_deliveries_after_the_aligned_cutoff() {
+    let records = [
+        req("before", "已发布", "2026-10-03T12:00:00+08:00", "2026-10-03"),
+        req("after", "已发布", "2026-10-05T12:00:00+08:00", "2026-10-05"),
+    ];
+    let clock = DateTime::parse_from_rfc3339("2026-11-04T12:00:00+08:00").expect("clock");
+    let data =
+        build_member_metrics(&records, &MemberMetricsQuery::default(), clock).expect("metrics");
+    let prior = data.comparisons.expect("comparison").previous_month.expect("prior");
+    assert_eq!(prior.members.len(), 2);
+    assert!(prior.members.iter().all(|m| m.delivered_requirements == 1));
+    let full = build_member_metrics(&records, &query(), clock).expect("full");
+    assert!(full.members.iter().all(|m| m.delivered_requirements == 2));
 }
