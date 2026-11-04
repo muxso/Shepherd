@@ -397,7 +397,6 @@ export default function AppShell({ children }: { children: ReactNode }) {
           <div
             className={`ms-topbar${scrolled ? ' ms-scrolled' : ''}`}
             style={{
-              height: 48,
               display: 'flex',
               alignItems: 'center',
               paddingInline: 16,
