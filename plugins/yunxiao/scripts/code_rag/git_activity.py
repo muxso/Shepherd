@@ -127,16 +127,19 @@ def publish(indexer,commits,save):
         for doc in documents:
             key=doc['documentId'];live.add(key)
             digest=hashlib.sha256(json.dumps(doc,ensure_ascii=False,sort_keys=True).encode()).hexdigest()
-            if state['documents'].get(key,{}).get('digest')==digest:continue
+            meta=json.loads(doc['sourceId']);day_key=json.dumps([meta['author'],meta['date']],ensure_ascii=False)
+            if state['documents'].get(key,{}).get('digest')==digest:
+                state['documents'][key]['dayKey']=day_key
+                continue
             response=indexer.api('POST','/rag/document',doc)
             if not response.get('embedded'):raise RuntimeError('Git activity embedding unavailable')
             date=json.loads(doc['sourceId'])['date']
-            state['documents'][key]={'digest':digest,'date':date,'chunks':response['chunks']};state['updatedAt']=int(time.time());save(path,state)
+            state['documents'][key]={'digest':digest,'date':date,'dayKey':day_key,'chunks':response['chunks']};state['updatedAt']=int(time.time());save(path,state)
         since=cutoff(c).date().isoformat()
         # Retain older successfully observed daily facts; reconcile only the current scan window.
         for key,old in list(state['documents'].items()):
             if key not in live and old['date']>=since:
                 indexer.api('DELETE','/rag/document/'+key);del state['documents'][key];save(path,state)
-        state.update(status='complete',indexedDays=len(state['documents']),windowDays=len(documents),completedAt=int(time.time()));save(path,state)
+        state.update(status='complete',indexedDays=len({v.get('dayKey',key) for key,v in state['documents'].items()}),indexedDocuments=len(state['documents']),windowDays=len({(json.loads(d['sourceId'])['author'],json.loads(d['sourceId'])['date']) for d in documents}),completedAt=int(time.time()));save(path,state)
     except Exception:
         state.update(status='failed',updatedAt=int(time.time()));save(path,state);raise
