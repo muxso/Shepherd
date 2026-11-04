@@ -25,7 +25,7 @@ impl MemberMetricsQuery {
         Ok(())
     }
 }
-fn month_start(month: &str) -> Result<NaiveDate, Error> {
+pub(super) fn month_start(month: &str) -> Result<NaiveDate, Error> {
     if month.len() != 7
         || month.as_bytes().get(4) != Some(&b'-')
         || month.bytes().enumerate().any(|(index, byte)| index != 4 && !byte.is_ascii_digit())

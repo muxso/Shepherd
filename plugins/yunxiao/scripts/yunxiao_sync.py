@@ -19,6 +19,7 @@ KINDS = ('requirement', 'bug', 'sprint', 'commit')
 from yunxiao_testhub import enrich_requirements, collect_testcases
 from yunxiao_relations import enrich_bug_relations
 from yunxiao_bug_history import enrich_bug_history
+from yunxiao_repository_languages import repository_language
 
 def load_env(path):
     for line in Path(path).read_text().splitlines():
@@ -122,17 +123,21 @@ def collect(collector, groups, days):
     finally: collector.workitems,collector.sprints,collector.flow_ci = old_workitems,old_sprints,old_ci
     if report['totals'].get('branchScanErrors'):
         raise RuntimeError('Codeup branch scan incomplete; snapshot will not be published')
+    repository_metadata = {}
     for cm in report['commitsDetail']:
         if 'requirementIds' not in cm:
             raise RuntimeError('collector requires requirementIds extension; see deployment guide')
         stats = cm.get('stats') or {}
+        rid = str(cm['repo_id'])
+        if rid not in repository_metadata:
+            repository_metadata[rid] = repository_language(rid)
         records.append({'kind':'commit','externalId':str(cm['repo_id'])+':'+cm['sha'], 'data':{
             'title':cm.get('title') or '', 'author':groups.canonical_name(cm['author']),
             'authorRaw':cm['author'],'email':cm.get('email') or '', 'group':groups.group_for(cm['author']),
             'repoId':cm['repo_id'],'repo':cm['repo'],'sha':cm['sha'], 'authoredAt':cm['date'],
             'additions':stats.get('additions'),'deletions':stats.get('deletions'),
             'requirementIds':cm['requirementIds'],'isMerge':False,
-            'parentIds':cm.get('parentIds') or [],'url':cm.get('url') or ''}})
+            'parentIds':cm.get('parentIds') or [],'url':cm.get('url') or '', **repository_metadata[rid]}})
     records.extend(testcases)
     unique = deduplicate(records)
     if len(unique) != len(records): print(f"Cloud pagination duplicates deduplicated: {len(records)-len(unique)}", flush=True)

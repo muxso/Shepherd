@@ -1,3 +1,4 @@
+use crate::domain::code_authors::CodeAuthorsQuery;
 use crate::{
     application::Service,
     domain::{
@@ -31,6 +32,7 @@ pub fn router(svc: Service, sessions: Arc<dyn SessionStore>) -> Router {
     Router::new()
         .route("/api/devops/requirement-output", get(requirement_output))
         .route("/api/devops/sources/{id}/member-metrics", get(member_metrics))
+        .route("/api/devops/sources/{id}/code-authors", get(code_authors))
         .route("/api/devops/sources", get(sources).post(create_source))
         .route("/api/devops/sources/{id}/runs", post(start))
         .route("/api/devops/sources/{id}/dashboard", get(dashboard))
@@ -151,6 +153,33 @@ async fn dashboard(
     }
     reply(s.svc.0.dashboard(&id, q.days.unwrap_or(7).clamp(1, 366)).await)
 }
+#[utoipa::path(get,path="/api/devops/sources/{id}/code-authors",tag="devops",params(("id"=String,Path),CodeAuthorsQuery),responses((status=200,body=Value),(status=400),(status=401),(status=403),(status=404)),security(("bearer"=[])))]
+async fn code_authors(
+    u: AuthUser,
+    State(s): State<AppState>,
+    Path(id): Path<String>,
+    Query(q): Query<CodeAuthorsQuery>,
+) -> Response {
+    if !u.can("PROJECT", "READ") {
+        return denied();
+    }
+    if let Err(error) = q.bounds() {
+        return reply(Err(error));
+    }
+    let can = u.can("REQUIREMENT", "READ");
+    let result = s.svc.0.code_authors(&id, q, can).await.map(|mut data| {
+        data["permissions"] = serde_json::json!({"requirements":can});
+        if !can {
+            if let Some(commits) = data["commits"].as_array_mut() {
+                for commit in commits {
+                    commit["requirements"] = serde_json::json!([]);
+                }
+            }
+        }
+        data
+    });
+    reply(result)
+}
 #[utoipa::path(get,path="/api/devops/sources/{id}/member-metrics",tag="devops",params(("id"=String,Path),MemberMetricsQuery),responses((status=200,body=Value),(status=400),(status=401),(status=403),(status=404)),security(("bearer"=[])))]
 async fn member_metrics(
     u: AuthUser,
@@ -230,7 +259,7 @@ async fn records(
     }))
 }
 #[derive(OpenApi)]
-#[openapi(paths(sources,create_source,start,stage,complete,fail,dashboard,requirement_output,member_metrics,records),components(schemas(NewSource,Record,CompleteRun,Batch,Failure,ProductivityMetric)),tags((name="devops",description="External DevOps facts and synchronization")))]
+#[openapi(paths(sources,create_source,start,stage,complete,fail,dashboard,requirement_output,member_metrics,code_authors,records),components(schemas(NewSource,Record,CompleteRun,Batch,Failure,ProductivityMetric)),tags((name="devops",description="External DevOps facts and synchronization")))]
 struct ApiDoc;
 pub fn openapi() -> utoipa::openapi::OpenApi {
     ApiDoc::openapi()
@@ -274,6 +303,16 @@ mod tests {
                 json!({"output":{"bugs":[{"title":"private bug"}],"bugTotal":1,"testers":[{"name":"private tester"}],"bugStates":[],"commitTotal":2}}),
             )
         }
+        async fn code_authors(
+            &self,
+            _: &str,
+            _: CodeAuthorsQuery,
+            can: bool,
+        ) -> Result<Value, Error> {
+            Ok(
+                json!({"permissions":{"requirements":can},"commits":[{"requirements":[{"title":"private requirement"}]}]}),
+            )
+        }
         async fn member_metrics(&self, _: &str, _: MemberMetricsQuery) -> Result<Value, Error> {
             Ok(json!({"metrics":{"members":[]}}))
         }
@@ -314,6 +353,30 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn code_authors_redacts_requirement_names_at_http_boundary() {
+        let sessions = Arc::new(InMemorySessionStore::new());
+        let token = sessions
+            .create("reader", PermissionSet::from_raw(["PROJECT:READ"]).expect("perms"), 3600)
+            .await
+            .expect("session");
+        let response = router(Service(Arc::new(Stub)), sessions)
+            .oneshot(
+                Request::builder()
+                    .uri("/api/devops/sources/source/code-authors?month=2026-11")
+                    .header("Authorization", format!("Bearer {token}"))
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("response");
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), 1_000_000).await.expect("body");
+        let data: Value = serde_json::from_slice(&body).expect("json");
+        assert_eq!(data["permissions"]["requirements"], false);
+        assert_eq!(data["commits"][0]["requirements"], json!([]));
+    }
+
+    #[tokio::test]
     async fn auth_and_sync_permissions_are_enforced() {
         let sessions = Arc::new(InMemorySessionStore::new());
         let read = sessions
@@ -335,6 +398,10 @@ mod tests {
             .expect("session");
         let app = router(Service(Arc::new(Stub)), sessions);
         for (method, path, token, expected) in [
+            ("GET", "/api/devops/sources/source/code-authors?month=2026-11", None, 401),
+            ("GET", "/api/devops/sources/source/code-authors?month=2026-11", Some(sync.as_str()), 403),
+            ("GET", "/api/devops/sources/source/code-authors?month=2026-13", Some(read.as_str()), 400),
+            ("GET", "/api/devops/sources/source/code-authors?month=2026-11", Some(read.as_str()), 200),
             ("GET", "/api/devops/sources/source/member-metrics?month=2026-10",Some(metrics.as_str()),200),
             ("GET", "/api/devops/sources/source/member-metrics?month=2026-13",Some(metrics.as_str()),400),
             ("GET", "/api/devops/sources/source/member-metrics?requirementTarget=0",Some(metrics.as_str()),400),

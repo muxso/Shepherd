@@ -26,6 +26,7 @@ export interface DevopsRow {
   [key: string]: unknown;
 }
 export const devopsApi = {
+  codeAuthors: (id: string, month: string) => request<CodeAuthorsData>('GET', `/api/devops/sources/${encodeURIComponent(id)}/code-authors?${new URLSearchParams({ month })}`),
   memberMetrics: (id: string, month: string, requirementTarget: number) => request<MemberMetricsData>('GET', `/api/devops/sources/${encodeURIComponent(id)}/member-metrics?${new URLSearchParams({ month, requirementTarget: String(requirementTarget) })}`),
   requirementOutput: (query: Record<string, string | number>) => request<RequirementOutputData>('GET', `/api/devops/requirement-output?${new URLSearchParams(Object.entries(query).map(([key,value]) => [key,String(value)]))}`),
   sources: () => request<{ items: DevopsSource[] }>('GET', '/api/devops/sources'),
@@ -78,4 +79,15 @@ export interface MemberMetricsData {
     bugQuality:BugQualityData; members: MemberMetric[]; newValidBugs: number; linkedValidBugs: number;
     requirementsMissingDue: number; requirementsMissingTime: number; snapshotBased: boolean;
   };
+}
+
+export interface CodeCommit {
+  id: string; sha: string; author: string; group: string; repoId: string; repo: string;
+  authoredAt: string; additions: number | null; deletions: number | null; linked: boolean;
+  requirements: { externalId: string; serial?: string | null; title?: string | null }[];
+  languages: string[]; languageSource?: string | null; languageCommit?: string | null;
+}
+export interface CodeAuthorsData {
+  source: DevopsSource; month: string; start: string; endExclusive: string; timezone: string;
+  commits: CodeCommit[]; permissions: { requirements: boolean };
 }
