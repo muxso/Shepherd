@@ -14,7 +14,7 @@ async function fixture(page:Page,enabled=true,comparison=false) {
     const url=new URL(route.request().url()),path=url.pathname
     let body:unknown={ items:[],total:0 }
     if (path==='/organization') body={ items:[{ id:'org' }] }
-    if (path==='/project') body={ items:[{ id:'project',name:'项目',organizationId:'org' }] }
+    if (path==='/project') body={ items:[{ id:'project',name:'云效 · 需求池',organizationId:'org' }] }
     if (path==='/api/plugins') body={ items:[{ id:'yunxiao',name:'云效同步',enabled }] }
     if (path==='/api/devops/sources') body={ items:[source,{ ...source,id:'source-b',name:'另一需求池' }] }
     if (path.endsWith('/dashboard')) body={ source,authors:[],totals:{ requirements:1,bugs:2,sprints:0,delivered:1,delayed:0 } }
@@ -393,6 +393,10 @@ test('Bug audit includes July legacy and unlinked Bugs, separates responsibility
   const bounds=await audit.evaluate(el=>({right:el.getBoundingClientRect().right,width:el.clientWidth,content:el.scrollWidth}))
   expect(bounds.right).toBeLessThanOrEqual(390)
   expect(bounds.content).toBeLessThanOrEqual(bounds.width+1)
+  await expect(page.getByRole('combobox',{name:'项目切换'})).toBeVisible()
+  const toolbar=await page.locator('.ms-topbar').evaluate(el=>({width:el.clientWidth,content:el.scrollWidth}))
+  expect(toolbar.content).toBeLessThanOrEqual(toolbar.width+1)
+  await page.screenshot({path:'/tmp/shepherd-mobile-statistics.png',fullPage:true,animations:'disabled'})
 })
 
 
@@ -464,4 +468,8 @@ test('monthly comparisons share member filtering and show percentage points and 
   const bounds=await card.evaluate(el=>({right:el.getBoundingClientRect().right,width:el.clientWidth,content:el.scrollWidth}))
   expect(bounds.right).toBeLessThanOrEqual(391)
   expect(bounds.content).toBeLessThanOrEqual(bounds.width+1)
+  await expect(page.getByRole('combobox',{name:'项目切换'})).toBeVisible()
+  const toolbar=await page.locator('.ms-topbar').evaluate(el=>({width:el.clientWidth,content:el.scrollWidth}))
+  expect(toolbar.content).toBeLessThanOrEqual(toolbar.width+1)
+  await page.screenshot({path:'/tmp/shepherd-mobile-statistics.png',fullPage:true,animations:'disabled'})
 })

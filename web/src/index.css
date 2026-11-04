@@ -334,11 +334,18 @@ body::before {
    frosted solid + thin border + faint shadow once scrolled, 0.25s transition. Scroll detection
    lives in AppShell, listening on the content area in capture phase. */
 .ms-topbar {
+  height: 48px;
   background: var(--glass-0);
   backdrop-filter: var(--glass-blur);
   -webkit-backdrop-filter: var(--glass-blur);
   border-bottom: 1px solid transparent;
   transition: background-color 0.25s ease, border-color 0.25s ease, box-shadow 0.25s ease;
+}
+/* Keep navigation and every tool reachable when a real project name fills the selector. */
+@media (max-width: 700px) {
+  .ms-topbar { height:auto; min-height:48px; flex-wrap:wrap; padding-block:8px; }
+  .ms-topbar > .ant-menu { flex-basis:100% !important; }
+  .ms-topbar > .ant-select { max-width:100%; }
 }
 .ms-topbar.ms-scrolled {
   background: var(--glass);
