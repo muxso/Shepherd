@@ -66,6 +66,20 @@ class KnowledgeTests(unittest.TestCase):
             self.assertTrue(all(d['visibilityGroups']==[] for d in docs))
             self.assertTrue(any('修改 b.rs' in d['text'] for d in docs))
 
+class ActivityUploadTests(unittest.TestCase):
+    def test_large_author_day_is_split_without_losing_messages_or_paths(self):
+        commit={'repositoryId':'r','repository':'org/repo','sha':'abc','author':'Alice','email':'alice@example.invalid','authoredAt':'2026-11-04T10:00:00+08:00','committedAt':'2026-11-04T10:00:00+08:00','message':'修复需求\n'+('完整说明'*9000),'files':[f'src/path{i:05}.rs' for i in range(3000)],'additions':3000,'deletions':0,'unknownStats':0}
+        c={'projectId':'p'};docs=daily_documents(c,[commit]);again=daily_documents(c,[commit])
+        self.assertGreater(len(docs),1)
+        self.assertEqual([d['documentId'] for d in docs],[d['documentId'] for d in again])
+        self.assertEqual(len({d['documentId'] for d in docs}),len(docs))
+        self.assertTrue(all(len(json.dumps(d).encode())<100000 for d in docs))
+        self.assertTrue(all(json.loads(d['sourceId'])['commits']==1 for d in docs))
+        content=''.join(d['text'].split('\n\n',2)[-1] for d in docs)
+        self.assertIn(commit['message'],content)
+        self.assertTrue(all(path in content for path in commit['files']))
+        self.assertTrue(all(json.loads(d['sourceId'])['parts']==len(docs) for d in docs))
+
 class HistoryRefreshTests(unittest.TestCase):
     def test_dormant_repositories_do_not_deepen_and_active_history_is_reused(self):
         import os

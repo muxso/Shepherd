@@ -605,7 +605,10 @@ impl VectorStore for PgVectorStore {
         }
         let mut selected = Vec::new();
         for (id, meta) in metadata {
-            if window.includes(&meta.date)
+            // Each multipart day repeats its global summary. Select that summary once;
+            // remaining evidence parts remain available through ordinary source retrieval.
+            if meta.part.unwrap_or(1) == 1
+                && window.includes(&meta.date)
                 && (meta.matches_author(question) || (!author_named && team_mentioned(question)))
             {
                 selected.push((meta.date, id));
@@ -640,7 +643,7 @@ impl VectorStore for PgVectorStore {
                     hit.content.extend(content.chars().take(remaining));
                 }
             } else {
-                hits.push(Hit{document_id:id,chunk_id,title,heading,content:format!("检索范围 {} 至 {}（上海），共匹配 {} 条作者日记录，本次列出最多31条；只表示已索引Git提交，不代表全部工作。\n{}",window.from,window.through,matched,content.chars().take(cap).collect::<String>()),score:1.0});
+                hits.push(Hit{document_id:id,chunk_id,title,heading,content:format!("检索范围 {} 至 {}（上海），共匹配 {} 条作者日摘要，本次列出最多31条；大记录可能分段，此处仅列摘要与部分明细。只表示已索引Git提交，不代表全部工作。\n{}",window.from,window.through,matched,content.chars().take(cap).collect::<String>()),score:1.0});
             }
         }
         Ok(Some(hits))
