@@ -13,6 +13,7 @@ class KnowledgeTests(unittest.TestCase):
         c={'projectId':'p','yunxiao':{'sourceId':'s'}}
         raw=json.dumps({'format':'jsonML','content':json.dumps(['article',{},['h1',{},'支付申请'],['p',{},'负数不可提交']])})
         self.assertIn('负数不可提交',rich_text(raw))
+        self.assertIn('图片',rich_text(['img',{'src':'private image'}]))
         self.assertNotIn('evil',rich_text('<p>正文</p><script>evil()</script>'))
         req=document(c,'requirement',{'externalId':'r','serial':'REQ-1','title':'支付','description':raw})
         case=document(c,'testcase',{'externalId':'case','title':'负数校验','precondition':'已登录','steps':[{'step':'输入负数','expected':'提示错误'}]})

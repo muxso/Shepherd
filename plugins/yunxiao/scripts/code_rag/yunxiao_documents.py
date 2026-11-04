@@ -34,6 +34,7 @@ def rich_text(value):
     if isinstance(value,list):
         if value and isinstance(value[0],str):
             if value[0].lower() in ('script','style'): return ''
+            if value[0].lower()=='img': return '[图片；文字索引不包含图片内容]'
             return '\n'+' '.join(rich_text(v) for v in value[1:] if not isinstance(v,dict))+'\n'
         return '\n'.join(rich_text(v) for v in value)
     if not isinstance(value,str): return ''
