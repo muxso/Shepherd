@@ -458,5 +458,10 @@ test('monthly comparisons share member filtering and show percentage points and 
   await expect(card.getByRole('cell',{name:'研发甲',exact:true})).toHaveCount(0)
   await expect(card.getByRole('cell',{name:'研发乙',exact:true})).toBeVisible()
   await page.setViewportSize({width:390,height:1000})
-  expect(await page.evaluate(()=>document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
+  // Ant Table updates its measured scroll container via ResizeObserver after viewport changes.
+  // Await the final layout and allow the same one-pixel rounding as other responsive checks.
+  await expect.poll(() => page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(391)
+  const bounds=await card.evaluate(el=>({right:el.getBoundingClientRect().right,width:el.clientWidth,content:el.scrollWidth}))
+  expect(bounds.right).toBeLessThanOrEqual(391)
+  expect(bounds.content).toBeLessThanOrEqual(bounds.width+1)
 })

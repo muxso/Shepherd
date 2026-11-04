@@ -55,3 +55,8 @@
 .yx-member-comparison .ant-card-head-wrapper { flex-wrap:wrap; gap:8px; padding-block:8px; }
 .yx-member-comparison .ant-table-wrapper { min-width:0; max-width:100%; }
 .yx-member-comparison .ant-table-thead th { white-space:nowrap; }
+
+.yx-member-comparison .ant-card-head-title { flex:1 1 140px; }
+.yx-member-comparison .ant-card-extra { min-width:0; max-width:100%; }
+.yx-member-comparison .ant-card-extra .ant-select { max-width:100%; }
+.yx-member-comparison .ant-space-item { min-width:0; max-width:100%; }
