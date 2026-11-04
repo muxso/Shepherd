@@ -6,7 +6,7 @@ const source = { id:'source-a',name:'测试需求池',project_id:'project' }
 const requirement = { externalId:'req-a',serial:'REQ-42',title:'登录需求',status:'已发布',due:'2026-10-15',delivered:true,newInMonth:true,deliveryClass:'deliveredLate',bugIds:['b1'] }
 const alice = { name:'研发甲',group:'研发组',newRequirements:6,deliveredRequirements:4,linkedBugs:2,bugAffectedRequirements:1,bugRate:25,processedBugs:2,qualityBugs:2,reopenUnknownBugs:0,reopenCount:2,reopenedBugs:1,reopenEvaluatedBugs:2,reopenRate:50,bugs:[{externalId:'b1',serial:'BUG-1',title:'登录失败',status:'已解决',createdAt:'2026-07-01T00:00:00+08:00',bugType:'程序逻辑',responsibles:['研发甲'],developers:['修复人'],testers:['测试人'],reporter:'发现人',processed:true,historyAvailable:true,history:[{id:'1',at:'2026-10-10T02:00:00Z',from:'已解决',to:'重新打开'},{id:'2',at:'2026-10-15T03:00:00Z',from:'已解决',to:'重新打开'}],reopenCount:2,reopenTimes:['2026-10-10T02:00:00Z','2026-10-15T03:00:00Z']},{externalId:'b2',serial:'BUG-2',title:'样式问题',status:'已验证',createdAt:'2026-10-01T00:00:00+08:00',bugType:'界面',responsibles:['研发甲'],developers:['修复人'],testers:[],reporter:'发现人',processed:true,historyAvailable:true,history:[],reopenCount:0,reopenTimes:[]}],dueRequirements:5,onTime:3,deliveredLate:1,overdueAtEnd:1,unknownDelivery:0,delayRate:40,radar:[40,75,60],requirements:[requirement] }
 const bob = { ...alice,name:'研发乙',group:'协作组',deliveredRequirements:0,linkedBugs:0,bugAffectedRequirements:0,bugRate:null,processedBugs:0,qualityBugs:0,reopenUnknownBugs:0,reopenCount:0,reopenedBugs:0,reopenEvaluatedBugs:0,reopenRate:null,bugs:[],dueRequirements:0,onTime:0,deliveredLate:0,overdueAtEnd:0,unknownDelivery:0,delayRate:null,radar:[0,null,null],requirements:[] }
-async function fixture(page:Page,enabled=true) {
+async function fixture(page:Page,enabled=true,comparison=false) {
   const calls:URL[]=[]
   await page.addInitScript(() => { localStorage.setItem('shepherd.token','radar-test');localStorage.setItem('shepherd.projectId','project');localStorage.setItem('shepherd.theme','light') })
   await page.route('**/*',async route => {
@@ -21,7 +21,7 @@ async function fixture(page:Page,enabled=true) {
     if (path.endsWith('/member-metrics')) {
       calls.push(url)
       const target=Number(url.searchParams.get('requirementTarget'))
-      body={ source,metrics:{ month:url.searchParams.get('month'),start:'2026-10-01T00:00:00+08:00',endExclusive:endForMonth(url.searchParams.get('month') || '2026-10'),timezone:'Asia/Shanghai',requirementTarget:target,members:[{ ...alice,radar:[Math.min(100,4/target*100),75,60] },bob],newValidBugs:3,linkedValidBugs:2,requirementsMissingDue:1,requirementsMissingTime:0,snapshotBased:true } }
+      body={ source,metrics:{ month:url.searchParams.get('month'),start:comparison ? '2026-11-01T00:00:00+08:00' : '2026-10-01T00:00:00+08:00',endExclusive:comparison ? '2026-11-04T12:00:00+08:00' : endForMonth(url.searchParams.get('month') || '2026-10'),timezone:'Asia/Shanghai',requirementTarget:target,members:[{ ...alice,radar:[Math.min(100,4/target*100),75,60] },bob],newValidBugs:3,linkedValidBugs:2,requirementsMissingDue:1,requirementsMissingTime:0,snapshotBased:true,...(comparison ? { comparisons:{ sameElapsedTime:true,previousMonth:{month:"2026-10",start:"2026-10-01T00:00:00+08:00",endExclusive:"2026-10-04T12:00:00+08:00",members:[{...alice,deliveredRequirements:2,bugRate:50}]},previousYear:{month:"2025-11",start:"2025-11-01T00:00:00+08:00",endExclusive:"2025-11-04T12:00:00+08:00",members:[{...alice,deliveredRequirements:0,bugRate:null}]} } } : {}) } }
     }
     await route.fulfill({ json:body })
   })
@@ -224,8 +224,8 @@ test('Shanghai month defaults are independent of the browser timezone at year bo
     await page.clock.setFixedTime(new Date('2026-12-31T16:30:00Z'))
     const calls=await fixture(page)
     await page.goto('/devops?view=radar')
-    await expect(page.getByLabel('统计月份',{exact:true})).toHaveValue('2026年12月')
-    await expect.poll(()=>calls.at(-1)?.searchParams.get('month')).toBe('2026-12')
+    await expect(page.getByLabel('统计月份',{exact:true})).toHaveValue('2027年01月')
+    await expect.poll(()=>calls.at(-1)?.searchParams.get('month')).toBe('2027-01')
   }finally{await context.close()}
 })
 
@@ -233,10 +233,10 @@ test('invalid shared month is repaired before any invalid API request is sent',a
   await page.clock.setFixedTime(new Date('2026-11-02T02:00:00Z'))
   const calls=await fixture(page)
   await page.goto('/devops?view=radar&month=2026-13&group=研发组')
-  await expect(page.getByLabel('统计月份',{exact:true})).toHaveValue('2026年10月')
-  await expect.poll(()=>new URL(page.url()).searchParams.get('month')).toBe('2026-10')
+  await expect(page.getByLabel('统计月份',{exact:true})).toHaveValue('2026年11月')
+  await expect.poll(()=>new URL(page.url()).searchParams.get('month')).toBe('2026-11')
   await expect.poll(()=>calls.length).toBeGreaterThan(0)
-  expect(calls.every(url=>url.searchParams.get('month')==='2026-10')).toBe(true)
+  expect(calls.every(url=>url.searchParams.get('month')==='2026-11')).toBe(true)
   await expect(page.getByRole('img',{name:'研发组组内成员雷达对比图'})).toBeVisible()
 })
 
@@ -426,4 +426,37 @@ test('delivery participation and Bug responsibility keep their own denominators 
     expect(b.right).toBeLessThanOrEqual(390)
     expect(b.content).toBeLessThanOrEqual(b.width+1)
   }
+})
+
+
+test('default month advances in an open page and explicit historical selection stays fixed',async ({ page }) => {
+  await page.clock.install({ time:new Date('2026-11-30T15:59:30Z') })
+  const calls=await fixture(page)
+  await page.goto('/devops?view=radar')
+  await expect.poll(()=>calls.at(-1)?.searchParams.get('month')).toBe('2026-11')
+  await page.clock.fastForward(61_000)
+  await expect.poll(()=>calls.at(-1)?.searchParams.get('month')).toBe('2026-12')
+  await page.goto('/devops?view=radar&month=2026-10')
+  await page.clock.fastForward(61_000)
+  await expect(page.getByLabel('统计月份',{exact:true})).toHaveValue('2026年10月')
+  expect(calls.at(-1)?.searchParams.get('month')).toBe('2026-10')
+})
+
+test('monthly comparisons share member filtering and show percentage points and zero bases honestly',async ({ page }) => {
+  await page.clock.setFixedTime(new Date('2026-11-04T04:00:00Z'))
+  await fixture(page,true,true)
+  await page.goto('/devops?view=radar')
+  const card=page.locator('.ant-card').filter({has:page.getByText('月度同比 / 环比',{exact:true})})
+  await expect(card.getByText('+100.0%',{exact:true})).toBeVisible()
+  await expect(card.getByText('基期为0',{exact:true})).toBeVisible()
+  await card.getByLabel('同比环比指标').first().click()
+  await page.locator('.ant-select-dropdown:visible').getByTitle('含Bug交付需求占比',{exact:true}).click()
+  await expect(card.getByText('-25.0 个百分点',{exact:true})).toBeVisible()
+  await expect(card.getByRole('columnheader',{name:'环比（百分点）'})).toBeVisible()
+  await page.screenshot({path:'/tmp/shepherd-monthly-comparisons.png',fullPage:true,animations:'disabled'})
+  await page.getByPlaceholder('搜索成员').fill('研发乙')
+  await expect(card.getByRole('cell',{name:'研发甲',exact:true})).toHaveCount(0)
+  await expect(card.getByRole('cell',{name:'研发乙',exact:true})).toBeVisible()
+  await page.setViewportSize({width:390,height:1000})
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
 })

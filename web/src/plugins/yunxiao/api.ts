@@ -72,11 +72,14 @@ export interface MemberMetric {
 export interface BugQualityData {
  totalSourceBugs:number; verifiedSourceBugs:number; unknownSourceBugs:number; processedBugs:number; reopenedBugs:number; reopenCount:number; reopenRate:number | null; rows:MemberBugMetric[];
 }
+export type ComparisonMember = Pick<MemberMetric,'name' | 'deliveredRequirements' | 'linkedBugs' | 'bugRate' | 'delayRate' | 'reopenCount' | 'reopenUnknownBugs' | 'reopenRate'>
+export interface ComparisonPeriod { month:string; start:string; endExclusive:string; members:ComparisonMember[] }
+export interface MonthlyComparisons { sameElapsedTime:boolean; previousMonth:ComparisonPeriod | null; previousYear:ComparisonPeriod | null }
 export interface MemberMetricsData {
   source: DevopsSource;
   metrics: {
     month: string; start: string; endExclusive: string; timezone: string; requirementTarget: number;
-    bugQuality:BugQualityData; members: MemberMetric[]; newValidBugs: number; linkedValidBugs: number;
+    comparisons?:MonthlyComparisons; bugQuality:BugQualityData; members: MemberMetric[]; newValidBugs: number; linkedValidBugs: number;
     requirementsMissingDue: number; requirementsMissingTime: number; snapshotBased: boolean;
   };
 }

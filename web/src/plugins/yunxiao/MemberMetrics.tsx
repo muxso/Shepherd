@@ -5,8 +5,9 @@ import { useLocation, useNavigate } from 'react-router-dom'
 import dayjs from 'dayjs'
 import 'dayjs/locale/zh-cn'
 import monthLocale from 'antd/es/date-picker/locale/zh_CN'
-import { previousMonth, shanghaiMonth, validMonth } from './memberMonth'
+import { shanghaiMonth, validMonth } from './memberMonth'
 import { MemberRadar, GroupRadar, radarColors } from './MemberRadar'
+import MonthlyComparison from './MonthlyComparison'
 import BugQuality, { BugRows } from './BugQuality'
 import { ApiError } from '../../api'
 import { devopsApi, type MemberMetric, type MemberMetricsData, type MemberRequirementMetric } from './api'
@@ -35,7 +36,9 @@ export default function MemberMetrics({ sourceId,revision }: { sourceId:string; 
   const navigate = useNavigate(), location = useLocation()
   const query = new URLSearchParams(location.search)
   const rawMonth = query.get('month')
-  const month = validMonth(rawMonth) ? rawMonth : previousMonth()
+  const [currentMonth,setCurrentMonth] = useState(shanghaiMonth)
+  useEffect(() => { const timer = window.setInterval(() => setCurrentMonth(shanghaiMonth()),60_000); return () => window.clearInterval(timer) },[])
+  const month = validMonth(rawMonth) ? rawMonth : currentMonth
   const group = query.get('group') || ''
   const rawTarget = Number(query.get('requirementTarget') || 10)
   const target = Number.isFinite(rawTarget) && rawTarget > 0 && rawTarget <= 10000 ? rawTarget : 10
@@ -120,7 +123,7 @@ export default function MemberMetrics({ sourceId,revision }: { sourceId:string; 
           <label className="yx-member-inactive"><Switch size="small" aria-label="包含无活动成员" checked={includeInactive} onChange={v => { setIncludeInactive(v);setMemberPage(1) }} />包含无活动成员</label>
           <Typography.Text type="secondary">{loading ? '正在更新…' : `筛选 ${rows.length} / 已同步 ${metrics?.members.length || 0} 人`}</Typography.Text>
         </div>
-    {invalidMonth && <Alert type="info" showIcon closable onClose={() => setInvalidMonth(false)} message="月份参数不可用，已显示上一个完整月份，请按需重新选择。" style={{ marginBottom:12 }} />}
+    {invalidMonth && <Alert type="info" showIcon closable onClose={() => setInvalidMonth(false)} message="月份参数不可用，已显示当前月份，请按需重新选择。" style={{ marginBottom:12 }} />}
     {error && <Alert type="error" message="个人指标读取失败" description={error} showIcon />}
     <Spin spinning={loading}>
       <div className="yx-member-results">
@@ -139,6 +142,7 @@ export default function MemberMetrics({ sourceId,revision }: { sourceId:string; 
             { title:'状态不明',dataIndex:'unknownDelivery',width:110,align:'right' },
           ]} />
         </Card>
+        {metrics.comparisons && <MonthlyComparison metrics={metrics} members={pageRows} />}
         <Card size="small" title="缺陷质量 · 按源缺陷责任人" className="yx-member-quality-table">
           <Typography.Paragraph type="secondary">责任处理Bug为本月进入已解决、已验证、已发布、已关闭等完成态或发生重开的责任Bug，包含遗留缺陷，按Bug去重。重开Bug占比＝重开Bug数 / 责任处理Bug数；状态重开次数按事件累加。</Typography.Paragraph>
           <Table<MemberMetric> size="small" tableLayout="fixed" rowKey="name" dataSource={pageRows} scroll={{x:1050}} pagination={false} onChange={(_,__,sorter,extra) => { if (extra.action !== 'sort') return; const selected = Array.isArray(sorter) ? sorter[0] : sorter; if (selected?.order) changeSort(String(selected.columnKey),selected.order === 'ascend' ? 'asc' : 'desc') }} columns={[
