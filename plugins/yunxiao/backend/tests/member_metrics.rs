@@ -310,3 +310,22 @@ fn comparison_counts_exclude_deliveries_after_the_aligned_cutoff() {
     let full = build_member_metrics(&records, &query(), clock).expect("full");
     assert!(full.members.iter().all(|m| m.delivered_requirements == 2));
 }
+
+#[test]
+fn past_partial_comparison_requires_bug_history_through_its_actual_cutoff() {
+    let mut bug = quality_bug(
+        "partial-history",
+        "2026-10-02T00:00:00+08:00",
+        "责任开发",
+        json!([]),
+        json!([]),
+        json!([]),
+    );
+    bug.data["reopenHistory"]["checkedAt"] = json!("2026-10-02T00:00:00+08:00");
+    let clock = DateTime::parse_from_rfc3339("2026-11-04T12:00:00+08:00").expect("clock");
+    let data =
+        build_member_metrics(&[bug], &MemberMetricsQuery::default(), clock).expect("metrics");
+    let prior = data.comparisons.expect("comparison").previous_month.expect("prior");
+    assert_eq!(prior.members[0].reopen_unknown_bugs, 1);
+    assert_eq!(prior.members[0].reopen_rate, None);
+}

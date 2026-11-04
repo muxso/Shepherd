@@ -395,7 +395,7 @@ fn build_period(
             || r.data.get("requirementIds").and_then(Value::as_array).is_some_and(|a| !a.is_empty())
     });
     let quality =
-        build_bug_quality(records, start, end, if end.date_naive() < b { start } else { end });
+        build_bug_quality(records, start, end, if now.date_naive() < b { start } else { end });
     for name in quality.by_person.keys() {
         people.entry(name.clone()).or_default();
     }
