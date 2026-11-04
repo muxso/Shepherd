@@ -559,6 +559,75 @@ impl VectorStore for PgVectorStore {
             .collect())
     }
 
+    async fn activity_search(
+        &self,
+        project_id: &str,
+        question: &str,
+        audience: &Audience,
+    ) -> Result<Option<Vec<Hit>>> {
+        use crate::activity::{team_mentioned, ActivityMetadata, ActivityWindow};
+        let Some(window) = ActivityWindow::parse(question, crate::application::now_ms()) else {
+            return Ok(None);
+        };
+        let sql=format!("SELECT d.id,d.source_id FROM ms_rag_document d WHERE d.project_id=$1 AND d.source_type='git_activity' AND {}",audience_where(2,3,4));
+        let rows = sqlx::query_as::<_, (String, Option<String>)>(&sql)
+            .bind(project_id)
+            .bind(audience.is_admin)
+            .bind(&audience.user_id)
+            .bind(&audience.visible_group_ids)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(be)?;
+        let metadata: Vec<_> = rows
+            .into_iter()
+            .filter_map(|(id, raw)| {
+                raw.and_then(|r| serde_json::from_str::<ActivityMetadata>(&r).ok()).map(|m| (id, m))
+            })
+            .collect();
+        let author_named = metadata.iter().any(|(_, m)| m.matches_author(question));
+        let mut selected = Vec::new();
+        for (id, meta) in metadata {
+            if window.includes(&meta.date)
+                && (meta.matches_author(question) || (!author_named && team_mentioned(question)))
+            {
+                selected.push((meta.date, id));
+            }
+        }
+        selected.sort();
+        selected.reverse();
+        let matched = selected.len();
+        selected.truncate(31);
+        let ids: Vec<_> = selected.into_iter().map(|(_, id)| id).collect();
+        if ids.is_empty() {
+            return Ok(Some(Vec::new()));
+        }
+        // Recheck audience when hydrating, even if access changed since the metadata lookup.
+        let sql=format!("SELECT d.id,d.title,c.id,c.heading,c.content FROM ms_rag_document d JOIN LATERAL (SELECT id,heading,content,chunk_index FROM ms_rag_chunk WHERE document_id=d.id ORDER BY chunk_index LIMIT 40) c ON true WHERE d.project_id=$1 AND d.id=ANY($2::text[]) AND {} ORDER BY array_position($2::text[],d.id),c.chunk_index",audience_where(3,4,5));
+        let rows = sqlx::query_as::<_, (String, String, String, String, String)>(&sql)
+            .bind(project_id)
+            .bind(&ids)
+            .bind(audience.is_admin)
+            .bind(&audience.user_id)
+            .bind(&audience.visible_group_ids)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(be)?;
+        let cap = (8000 / ids.len()).max(100);
+        let mut hits: Vec<Hit> = Vec::new();
+        for (id, title, chunk_id, heading, content) in rows {
+            if let Some(hit) = hits.last_mut().filter(|h| h.document_id == id) {
+                let remaining = cap.saturating_sub(hit.content.chars().count());
+                if remaining > 0 {
+                    hit.content.push('\n');
+                    hit.content.extend(content.chars().take(remaining));
+                }
+            } else {
+                hits.push(Hit{document_id:id,chunk_id,title,heading,content:format!("检索范围 {} 至 {}（上海），共匹配 {} 条作者日记录，本次列出最多31条；只表示已索引Git提交，不代表全部工作。\n{}",window.from,window.through,matched,content.chars().take(cap).collect::<String>()),score:1.0});
+            }
+        }
+        Ok(Some(hits))
+    }
+
     async fn keyword_search(
         &self,
         project_id: &str,

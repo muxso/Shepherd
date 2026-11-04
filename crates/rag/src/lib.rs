@@ -20,3 +20,5 @@ pub mod tantivy_kw;
 
 #[cfg(feature = "http")]
 mod qdrant;
+
+pub mod activity;

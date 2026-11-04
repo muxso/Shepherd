@@ -137,6 +137,10 @@ class Indexer:
             else:
                 git(repo, 'fetch', '--depth=1', 'origin', spec['branch'])
                 sha = git(repo, 'rev-parse', 'FETCH_HEAD').decode().strip()
+            if self.c.get('gitHistoryDays'):
+                if __package__: from .git_activity import fetch
+                else: from git_activity import fetch
+                sha = fetch(repo, spec, self.c, git)
             state = {**old, 'identity': identity, 'status': 'indexing', 'targetCommit': sha,
                      'startedAt': int(time.time()), 'files': old.get('files', {}), 'repository': spec['name']}
             save(state_path, state)
@@ -184,6 +188,12 @@ class Indexer:
             state.update(status='complete', commit=sha, completedAt=int(time.time()),
                          indexedFiles=len(state['files']), changed=changed, unchanged=skipped)
             save(state_path, state)
+            if self.c.get('gitHistoryDays'):
+                if __package__: from .git_activity import collect
+                else: from git_activity import collect
+                activity = collect(repo, spec, self.c, git, eligible, sanitize)
+                activity_root = self.root / 'activities'; activity_root.mkdir(exist_ok=True)
+                save(activity_root / (key + '.json'), {'repository': rid, 'commits': activity, 'updatedAt': int(time.time())})
             print(json.dumps({k: v for k, v in state.items() if k not in ('files', 'identity')}, ensure_ascii=False), flush=True)
 
     def run(self):
@@ -207,8 +217,20 @@ class Indexer:
             results = list(pool.map(work, repos))
         summary = {'repositories': len(results), 'complete': sum(results), 'failed': len(results)-sum(results),
                    'updatedAt': int(time.time())}
+        if self.c.get('gitHistoryDays') and not summary['failed']:
+            if __package__: from .git_activity import publish
+            else: from git_activity import publish
+            try:
+                commits=[]
+                for spec in repos:
+                    key=hashlib.sha256(str(spec['id']).encode()).hexdigest()[:24]
+                    commits.extend(json.loads((self.root/'activities'/(key+'.json')).read_text())['commits'])
+                publish(self,commits,save)
+                summary['gitActivity']='complete'
+            except Exception:
+                summary['gitActivity']='failed'
         save(self.root / 'summary.json', summary)
-        return 1 if summary['failed'] else 0
+        return 1 if summary['failed'] or summary.get('gitActivity')=='failed' else 0
 
 
 if __name__ == '__main__':

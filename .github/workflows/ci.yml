@@ -201,6 +201,14 @@ jobs:
           trap 'dropdb -h localhost -U msuser --if-exists --force coverage_summary_test' EXIT
           createdb -h localhost -U msuser coverage_summary_test
           cargo test -p case-management --all-features --test coverage_pg --locked -- --ignored
+      - name: Git activity RAG audience and date contracts (isolated database)
+        env:
+          PGPASSWORD: mspass
+          SHEPHERD_RAG_TEST_DATABASE_URL: postgres://msuser:mspass@localhost:5432/rag_activity_test
+        run: |
+          trap 'dropdb -h localhost -U msuser --if-exists --force rag_activity_test' EXIT
+          createdb -h localhost -U msuser rag_activity_test
+          cargo test -p rag --all-features --test activity_pg --locked -- --ignored --test-threads=1
       - name: runner protocol routing (pg)
         run: cargo test -p runner --features pg --test pg_protocol --locked -- --ignored --test-threads=1
       - name: test-plan pg aggregate
