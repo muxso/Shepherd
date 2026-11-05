@@ -1,17 +1,13 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useId, useMemo, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { Alert, Button, Card, DatePicker, Empty, Popover, Segmented, Select, Space, Spin, Table, Tag, Tooltip } from 'antd'
 import dayjs from 'dayjs'
 import { devopsApi, type CodeAuthorsData, type CodeCommit } from './api'
 
-const zone = 'Asia/Shanghai'
-const formatter = new Intl.DateTimeFormat('en-GB', { timeZone: zone, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' })
-const parts = (date: Date) => Object.fromEntries(formatter.formatToParts(date).map(p => [p.type, p.value]))
-function dateTime(value: string) { const p = parts(new Date(value)); return `${p.year}-${p.month}-${p.day} ${p.hour}:${p.minute}:${p.second}` }
-function dateKey(value: string) { return dateTime(value).slice(0, 10) }
-const currentMonth = () => dateTime(new Date().toISOString()).slice(0, 7)
-function initialMonth(search: string) { const v = new URLSearchParams(search).get('month') || ''; return /^\d{4}-(0[1-9]|1[0-2])$/.test(v) && Number(v.slice(0, 4)) > 0 ? v : currentMonth() }
-const latest = (items: CodeCommit[]) => items.reduce((a, c) => (!a || Date.parse(c.authoredAt) > Date.parse(a)) ? c.authoredAt : a, '')
+import AuthorCommitCalendar from './AuthorCommitCalendar'
+import { dateTime, dateKey, latest, groupBy } from './codeActivity'
+const currentMonth = () => dateTime(new Date().toISOString()).slice(0,7)
+function initialMonth(search:string) { const v=new URLSearchParams(search).get('month') || '';return /^\d{4}-(0[1-9]|1[0-2])$/.test(v) && Number(v.slice(0,4))>0 ? v : currentMonth() }
 const knownSum = (items: CodeCommit[], field: 'additions' | 'deletions') => items.reduce((n, c) => n + (c[field] ?? 0), 0)
 const unknown = (items: CodeCommit[]) => items.filter(c => c.additions == null || c.deletions == null).length
 const languages = (items: CodeCommit[]) => Array.from(new Set(items.flatMap(c => c.languages || []))).sort()
@@ -23,13 +19,9 @@ function LanguageTags({ items }: { items: CodeCommit[] }) {
   const values = languages(items)
   return values.length ? <Tooltip title={`仓库默认分支源码，按扩展名与字节数识别；语言组成：${values.join('、')}`}><Space size={[0, 4]} wrap>{values.slice(0, 3).map(v => <Tag key={v}>{v}</Tag>)}{values.length > 3 && <Tag>+{values.length - 3}</Tag>}</Space></Tooltip> : <Tag>未识别</Tag>
 }
-function groupBy(items: CodeCommit[], key: (c: CodeCommit) => string) {
-  const values = new Map<string, CodeCommit[]>()
-  for (const c of items) { const k = key(c); const row = values.get(k); if (row) row.push(c); else values.set(k, [c]) }
-  return Array.from(values, ([key, commits]) => ({ key, commits }))
-}
 
 function Trend({ commits, metric, canRequirements, openRequirement }: { commits: CodeCommit[]; metric: string; canRequirements: boolean; openRequirement: (id: string) => void }) {
+  const gradient=useId()
   const [active, setActive] = useState<string | null>(null)
   const points = useMemo(() => groupBy(commits, c => dateKey(c.authoredAt)).map(row => ({ ...row, at: latest(row.commits), value: metric === 'commits' ? row.commits.length : unknown(row.commits) ? null : knownSum(row.commits, 'additions') + knownSum(row.commits, 'deletions') })).sort((a, b) => a.key.localeCompare(b.key)), [commits, metric])
   if (!points.length) return <Empty description="所选范围暂无代码提交" />
@@ -43,10 +35,11 @@ function Trend({ commits, metric, canRequirements, openRequirement }: { commits:
   const stride = Math.max(1, Math.ceil(points.length / 6))
   return <>
     <div style={{ overflowX: 'auto', maxWidth: '100%' }}>
-      <svg role="group" aria-label="每日代码提交折线趋势，横轴为每日最后提交时间" viewBox="0 0 1020 340" style={{ width: '100%', minWidth: 680, display: 'block' }}>
-        {[0, 1, 2, 3, 4].map(i => <g key={i}><line x1={64} x2={964} y1={52 + i * 51.5} y2={52 + i * 51.5} stroke="var(--border-soft)" /><text x={55} y={56 + i * 51.5} textAnchor="end" fontSize={12} fill="var(--text-3)">{Math.round(ceiling * (4 - i) / 4).toLocaleString()}</text></g>)}
+      <svg role="group" aria-label="每日代码提交折线趋势，横轴为每日最后提交时间" viewBox="0 0 1020 340" style={{ width: '100%', minWidth: 680, maxWidth:1120, margin:'0 auto', display: 'block' }}>
+        <defs><linearGradient id={gradient} x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#4d9f92" stopOpacity=".28"/><stop offset="100%" stopColor="#4d9f92" stopOpacity=".02"/></linearGradient></defs>
+        {[0, 1, 2, 3, 4].map(i => <g key={i}><line x1={64} x2={964} y1={52 + i * 51.5} y2={52 + i * 51.5} stroke="var(--border-soft)" strokeDasharray="4 4" /><text x={55} y={56 + i * 51.5} textAnchor="end" fontSize={12} fill="var(--text-3)">{Math.round(ceiling * (4 - i) / 4).toLocaleString()}</text></g>)}
         <text x={64} y={26} fontSize={13} fill="var(--text-2)">{metric === 'commits' ? '提交次数（次）' : '代码变更行数（新增 + 删除）'}</text>
-        {segments.map((s, i) => <polyline key={i} points={s} fill="none" stroke="var(--brand)" strokeWidth={2.5} />)}
+        {segments.map((s, i) => { const coords=s.trim().split(/\s+/);return <g key={i}><polygon points={`${s} ${coords[coords.length-1].split(',')[0]},258 ${coords[0].split(',')[0]},258`} fill={`url(#${gradient})`} /><polyline points={s} fill="none" stroke="#4d9f92" strokeWidth={2} /></g> })}
         {points.map((p, index) => {
           const repos = groupBy(p.commits, c => c.repoId)
           const requirements = Array.from(new Map(p.commits.flatMap(c => c.requirements).map(r => [r.externalId, r])).values())
@@ -58,7 +51,7 @@ function Trend({ commits, metric, canRequirements, openRequirement }: { commits:
               <div style={{ marginTop: 10, fontWeight: 600 }}>代码仓库</div>{repos.map(r => <div key={r.key}>{r.commits[0].repo || r.key} · {r.commits.length} 次 <LanguageTags items={r.commits} /></div>)}
               <div style={{ marginTop: 10, fontWeight: 600 }}>关联需求</div>{!canRequirements ? <span>无需求读取权限</span> : requirements.length ? requirements.map(r => r.title ? <div key={r.externalId}><Button type="link" size="small" style={{ whiteSpace: 'normal', height: 'auto', textAlign: 'left', paddingInline: 0 }} onClick={() => openRequirement(r.externalId)}>{r.serial || r.externalId} {r.title}</Button></div> : <div key={r.externalId}>{r.externalId}（名称未同步）</div>) : <span>未关联需求</span>}
             </div>}>
-              <g role="button" tabIndex={0} onFocus={e => { if (e.currentTarget.matches(':focus-visible')) setActive(p.key) }} onKeyDown={e => { if (e.key === 'Escape') setActive(null); if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setActive(p.key) } }} aria-label={label} style={{ cursor: 'pointer', outlineOffset: 3 }}><circle cx={x(p.at)} cy={p.value == null ? 258 : y(p.value)} r={12} fill="transparent" /><circle cx={x(p.at)} cy={p.value == null ? 258 : y(p.value)} r={4.5} fill={p.value == null ? 'var(--panel)' : 'var(--brand)'} stroke="var(--brand)" strokeWidth={2} /></g>
+              <g role="button" tabIndex={0} onFocus={e => { if (e.currentTarget.matches(':focus-visible')) setActive(p.key) }} onKeyDown={e => { if (e.key === 'Escape') setActive(null); if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setActive(p.key) } }} aria-label={label} style={{ cursor: 'pointer', outlineOffset: 3 }}><circle cx={x(p.at)} cy={p.value == null ? 258 : y(p.value)} r={12} fill="transparent" /><circle cx={x(p.at)} cy={p.value == null ? 258 : y(p.value)} r={3.5} fill={p.value == null ? 'var(--panel)' : '#4d9f92'} stroke="#4d9f92" strokeWidth={1.5} /></g>
             </Popover>
             {(index % stride === 0 || index === points.length - 1) && <text x={x(p.at)} y={283} textAnchor="middle" fontSize={12} fill="var(--text-3)"><tspan x={x(p.at)}>{p.key.slice(5)}</tspan><tspan x={x(p.at)} dy={17}>{dateTime(p.at).slice(11, 16)}</tspan></text>}
           </g>
@@ -78,6 +71,8 @@ export default function CodeAuthors({ sourceId, revision }: { sourceId: string; 
   const [author, setAuthor] = useState(''), [group, setGroup] = useState(''), [repo, setRepo] = useState(''), [language, setLanguage] = useState(''), [metric, setMetric] = useState('commits')
   useEffect(() => { setMonth(initialMonth(location.search)) }, [location.search])
   useEffect(() => { let live = true; setLoading(true); setError(''); setData(null); devopsApi.codeAuthors(sourceId, month).then(v => { if (live) setData(v) }).catch(e => { if (live) setError(String(e.message || e)) }).finally(() => { if (live) setLoading(false) }); return () => { live = false } }, [sourceId, month, revision])
+  const view = new URLSearchParams(location.search).get('activity') === 'trend' ? 'trend' : 'calendar'
+  const changeView = (value:string) => { const q=new URLSearchParams(location.search);q.set('activity',value);navigate({pathname:location.pathname,search:q.toString()}) }
   const commits = data?.commits || []
   const selected = commits.filter(c => (!author || c.author === author) && (!group || c.group === group) && (!repo || c.repoId === repo) && (!language || (language === '?' ? !c.languages.length : c.languages.includes(language))))
   const authors = groupBy(selected, c => JSON.stringify([c.author, c.group])).map(r => ({ ...r, name: r.commits[0].author || '待归属', group: r.commits[0].group || '待归属', last: latest(r.commits) })).sort((a, b) => b.commits.length - a.commits.length || a.name.localeCompare(b.name))
@@ -95,9 +90,9 @@ export default function CodeAuthors({ sourceId, revision }: { sourceId: string; 
     {data?.source.last_success_at && <div className="yx-muted" style={{ marginBottom: 12 }}>最近同步 {dateTime(data.source.last_success_at)}（上海）；仅统计已采集提交{data.source.code_since && data.source.code_until ? `，最近采集范围 ${dateTime(data.source.code_since)} 至 ${dateTime(data.source.code_until)}（不含）` : ''}。</div>}
     {error && <Alert type="error" showIcon message={error} style={{ marginBottom: 12 }} />}
     <Spin spinning={loading}>
-      <Card title={`${author || '全部作者'} · 每日代码提交趋势`} size="small" style={{ marginBottom: 16 }} styles={{ title: { whiteSpace: 'normal', overflowWrap: 'anywhere' } }}>
-        <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 12 }}><Segmented aria-label="代码趋势指标" value={metric} onChange={v => setMetric(String(v))} options={[{ value: 'commits', label: '提交次数' }, { value: 'lines', label: '变更行数' }]} /></div>
-        <Trend commits={selected} metric={metric} canRequirements={!!data?.permissions.requirements} openRequirement={openRequirement} />
+      <Card className="yx-code-chart" title={`${author || '全部作者'} · ${view === 'calendar' ? '每日最后提交日历' : '每日代码提交趋势'}`} extra={<Segmented aria-label="代码活动视图" value={view} onChange={v=>changeView(String(v))} options={[{value:'calendar',label:'提交日历'},{value:'trend',label:'提交趋势'}]} />} size="small" style={{ marginBottom: 16 }} styles={{ title: { whiteSpace: 'normal', overflowWrap: 'anywhere' } }}>
+        {view === 'calendar' ? <AuthorCommitCalendar key={`${sourceId}:${month}:${author}:${group}:${repo}:${language}`} month={month} commits={selected} canRequirements={!!data?.permissions.requirements} openRequirement={openRequirement} /> : <><div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 12 }}><Segmented aria-label="代码趋势指标" value={metric} onChange={v => setMetric(String(v))} options={[{ value: 'commits', label: '提交次数' }, { value: 'lines', label: '变更行数' }]} /></div>
+        <Trend commits={selected} metric={metric} canRequirements={!!data?.permissions.requirements} openRequirement={openRequirement} /></>}
       </Card>
       <Card title="代码作者与仓库明细" size="small">
         <div className="yx-muted" style={{ marginBottom: 12 }}>本期 {selected.length.toLocaleString()} 次提交 · {new Set(selected.map(c => c.repoId)).size} 个仓库。每仓库 SHA 去重，排除合并提交；仓库语言按默认分支源码扩展名识别，最近提交为本期最后一次 Git 作者时间。</div>

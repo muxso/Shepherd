@@ -113,3 +113,9 @@ API：`GET /api/devops/sources/{id}/member-metrics?month=2026-10&requirementTarg
 月度接口 `GET /api/devops/sources/{id}/code-authors?month=YYYY-MM` 使用上海自然月左闭右开范围，在同一源内按仓库 ID + SHA 去重并排除合并提交。X 轴为每个有提交日期最后一次 Git 作者时间，Y 轴可选提交次数或新增+删除行数。缺少行数时图中留空、表格显示已知下限，不伪造零。悬浮、键盘聚焦/回车可查看当天仓库与关联需求，需求名称仅在有需求读取权限时返回。最近采集范围并不等于历史完整覆盖范围。
 
 部署需一并更新 `yunxiao_sync.py` 与 `yunxiao_repository_languages.py`；历史提交可只补充语言元数据，不能把仅含提交的批次作为完整快照发布。
+
+### 每日最后提交日历
+
+代码作者默认显示提交日历；每个成员每天独立展示最后一次 Git 作者提交时间（上海时区），支持成员、分组、仓库和语言筛选。点击成员可查看当天提交、仓库及有权限读取的关联需求。空白日期表示尚无已采集记录，不用于推断工作时长。当前月默认折叠后续周，可展开整月；历史月份完整展示。`activity=trend` 可切回提交趋势图。
+
+![每日最后提交日历](../../docs/assets/yunxiao-code-calendar.png)
