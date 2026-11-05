@@ -23,7 +23,7 @@ function ReopenValue({ member:p,rate=false }: { member:MemberMetric; rate?:boole
     <div className="yx-member-number"><strong>{rate ? percent(p.reopenRate ?? null) : `${historyCount(p)}${historyCount(p) === '待同步' ? '' : ' 次'}`}</strong><small>{unknownCount(p) > 0 ? `已核验 ${p.reopenEvaluatedBugs ?? 0} / ${qualityCount(p)} 个Bug` : rate ? `${p.reopenedBugs ?? 0} / ${p.processedBugs ?? 0} 个Bug` : '按状态流转累加'}</small></div>
   </Tooltip>
 }
-const classes: Record<string,string> = { notDue:'不在本月到期范围',onTime:'按期交付',deliveredLate:'延期交付',overdueAtEnd:'月底未交付',unknown:'状态不明' }
+const classes: Record<string,string> = { notDue:'不在本月到期范围',onTime:'已交付，不计延期',deliveredLate:'已交付，不计延期',delivered:'已交付，不计延期',overdueAtEnd:'未交付且已超期',unknown:'状态待核验' }
 function MemberName({ name, onClick }: { name:string; onClick:() => void }) {
   return <Tooltip title={name}><Button type="link" size="small" className="yx-member-name" aria-label={name} onClick={onClick}><span>{name}</span></Button></Tooltip>
 }
@@ -110,7 +110,7 @@ export default function MemberMetrics({ sourceId,revision }: { sourceId:string; 
     </Space><Popover trigger="click" title="个人指标统计口径" content={<div className="yx-member-notes">
       <p>需求量按本月已发布需求，归当前负责人及明确登记的开发、测试、协作等参与人；仅识别带用户标识的人员类型字段，自由文本不作为成员。多人分别计一次，不能通过成员数求组总量。</p>
       <p>含Bug交付需求占比=本月已交付需求中，本月存在有效关联Bug的需求数/本月交付需求数。按同一源的明确父需求或关联记录识别；取消、重复及误报等状态排除。参与需求的缺陷情况不代表个人责任认定。</p>
-      <p>延期率=(延期交付+月底未交付)/(本月应交付-状态不明)。包含全部优先级，取最早排期日当天结束；无有效分母时待评价。本月未结束时以采集时点为截点，仅纳入已经到期的需求。</p>
+      <p>延期率=未交付且已超期需求数/(本月应交付-状态不明)。当前已发布、已交付及其他完成终态不计延期，超期后完成、统计月之后完成或缺少完成时间也不计延期；历史月份同样按当前快照排除已交付项。包含全部优先级，取最早排期日当天结束；本月进行中仅评价已经到期的需求，无有效分母时待评价。</p>
       <p>状态重开独立于需求交付：纳入本月发生修复完成、验证完成或重开状态流转的全部源Bug，包含过去月份创建的遗留缺陷，不要求已关联需求或需求已发布。次数按本月重开事件累加；比例=本月重开过的Bug去重数/本月修复、验证或重开Bug去重数。归属仅取源“缺陷责任人”，不以当前处理人、开发者或需求参与人代替；缺失归待归属。历史未核验时比例待评价、次数显示已知下限。状态流转不能推算聊天中重复返修次数；可在下方核验表逐条查看源状态流水。</p>
       <p>雷达三轴：交付量=min(已交付/参考目标,1)×100；交付需求质量=100-含Bug交付需求占比；交付时效=100-延期率。缺失维度只显示已知点；参考目标仅调整展示尺度，不产生综合OKR分。</p>
       <p>历史月份由当前快照推算，无法还原需求排期、负责人修改或需求重开；截点后变更的非发布状态与缺少状态时间的到期需求列为不明。分组冲突或未知时列为待归属；可开启“包含无活动成员”查看本月无记录的已同步参与人。</p>
@@ -138,7 +138,7 @@ export default function MemberMetrics({ sourceId,revision }: { sourceId:string; 
             { title:'关联Bug数',key:'bugs',sorter:true,sortDirections:['descend','ascend','descend'],sortOrder:sort === 'bugs' ? (order === 'asc' ? 'ascend' : 'descend') : null,dataIndex:'linkedBugs',width:105,align:'right' },
             { title:'有Bug交付需求数',dataIndex:'bugAffectedRequirements',width:140,align:'right' },
             { title:'含Bug交付需求占比 ↓',key:'bugRate',sorter:true,sortDirections:['descend','ascend','descend'],sortOrder:sort === 'bugRate' ? (order === 'asc' ? 'ascend' : 'descend') : null,width:210,align:'right',render:(_:unknown,p) => <RateValue label="含Bug交付需求占比" value={p.bugRate} numerator={p.bugAffectedRequirements} denominator={p.deliveredRequirements} /> },
-            { title:'延期率 ↓',width:170,align:'right',render:(_:unknown,p) => <RateValue label="延期率" value={p.delayRate} numerator={p.deliveredLate+p.overdueAtEnd} denominator={p.dueRequirements-p.unknownDelivery} /> },
+            { title:'延期率 ↓',width:170,align:'right',render:(_:unknown,p) => <RateValue label="延期率" value={p.delayRate} numerator={p.overdueAtEnd} denominator={p.dueRequirements-p.unknownDelivery} /> },
             { title:'状态不明',dataIndex:'unknownDelivery',width:110,align:'right' },
           ]} />
         </Card>
@@ -184,7 +184,7 @@ export default function MemberMetrics({ sourceId,revision }: { sourceId:string; 
       <Table<MemberRequirementMetric> size="small" tableLayout="fixed" rowKey="externalId" dataSource={selected?.requirements || []} scroll={{ x:860 }} pagination={{ pageSize:15 }} columns={[
         { title:'需求',width:330,ellipsis:true,render:(_:unknown,r) => <MemberName name={`${r.serial || r.externalId} ${r.title}`} onClick={() => navigate(`/devops?${new URLSearchParams({ source:sourceId,reference:r.externalId })}`)} /> },
         { title:'当前状态',dataIndex:'status',width:100,ellipsis:true },{ title:'截止日期',dataIndex:'due',width:110,render:(v:string) => v || '未记录' },{ title:'本月交付',dataIndex:'delivered',width:90,render:(v:boolean) => v ? '是' : '否' },
-        { title:'交付分类',dataIndex:'deliveryClass',width:120,render:(v:string) => classes[v] || v },{ title:'本月关联Bug',dataIndex:'bugIds',width:110,align:'right',render:(v:string[]) => v.length },
+        { title:'交付分类',dataIndex:'deliveryClass',width:120,render:(v:string,r) => r.currentDelivered ? '已交付，不计延期' : classes[v] || v },{ title:'本月关联Bug',dataIndex:'bugIds',width:110,align:'right',render:(v:string[]) => v.length },
       ]} />
       <Typography.Title level={5}>本人责任处理缺陷</Typography.Title>
       <Typography.Paragraph type="secondary">按源“缺陷责任人”归属，仅列本月进入完成态或重开的处理Bug，以及历史待核验记录。此处对应责任处理Bug分母，点击缺陷编号核对状态流水。</Typography.Paragraph>

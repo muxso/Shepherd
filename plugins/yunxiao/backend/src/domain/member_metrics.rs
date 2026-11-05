@@ -78,6 +78,7 @@ pub(super) fn timestamp(data: &Value, key: &str) -> Option<DateTime<FixedOffset>
 pub(super) fn rate(numerator: usize, denominator: usize) -> Option<f64> {
     (denominator > 0).then(|| (numerator as f64 * 1000.0 / denominator as f64).round() / 10.0)
 }
+const DELIVERED: &[&str] = &["已发布", "已交付", "已完成", "已验收", "完成"];
 const CANCELLED: &[&str] = &["已取消", "已拒绝", "已关闭", "已完成", "已验收", "完成"];
 const INVALID_BUG: &[&str] = &[
     "已取消",
@@ -98,6 +99,7 @@ pub struct RequirementMetric {
     pub status: String,
     pub due: String,
     pub delivered: bool,
+    pub current_delivered: bool,
     pub new_in_month: bool,
     pub delivery_class: String,
     pub bug_ids: BTreeSet<String>,
@@ -121,6 +123,7 @@ pub struct MemberMetric {
     pub quality_bugs: usize,
     pub reopen_unknown_bugs: usize,
     pub due_requirements: usize,
+    pub delivered_due_requirements: usize,
     pub on_time: usize,
     pub delivered_late: usize,
     pub overdue_at_end: usize,
@@ -295,6 +298,7 @@ fn build_period(
         }
         let changed = timestamp(data, "statusChangedAt");
         let published = text(data, "status") == "已发布";
+        let current_delivered = DELIVERED.contains(&text(data, "status"));
         let is_delivered = published && inside(changed);
         let is_new = inside(created);
         let due = NaiveDate::parse_from_str(text(data, "due"), "%Y-%m-%d").ok();
@@ -309,12 +313,14 @@ fn build_period(
             if let Some(due) = due.filter(|due| a <= *due && *due < b) {
                 let deadline = at_midnight(due + Duration::days(1))?;
                 if deadline <= end {
-                    class = if published {
+                    // Pending delay is a current-snapshot risk, not historical delivery lateness.
+                    // A delivered requirement never re-enters it, even if delivered after the
+                    // selected period or missing a completion timestamp.
+                    class = if current_delivered {
                         match changed {
                             Some(t) if t < deadline => "onTime",
-                            Some(t) if t < end => "deliveredLate",
-                            Some(_) => "overdueAtEnd",
-                            None => "unknown",
+                            Some(_) => "deliveredLate",
+                            None => "delivered",
                         }
                     } else if text(data, "status").is_empty() || changed.is_none_or(|t| t >= end) {
                         "unknown"
@@ -334,6 +340,7 @@ fn build_period(
             status: text(data, "status").to_owned(),
             due: text(data, "due").to_owned(),
             delivered: is_delivered,
+            current_delivered,
             new_in_month: is_new,
             delivery_class: class.to_owned(),
             bug_ids: BTreeSet::new(),
@@ -418,7 +425,7 @@ fn build_period(
             let due = rows.iter().filter(|r| r.delivery_class != "notDue").count();
             let unknown = count("unknown");
             let bug_rate = if bug_links_available { rate(affected, delivered_count) } else { None };
-            let delay_rate = rate(count("deliveredLate") + count("overdueAtEnd"), due - unknown);
+            let delay_rate = rate(count("overdueAtEnd"), due - unknown);
             let group = group_candidates
                 .get(&name)
                 .filter(|groups| groups.len() == 1)
@@ -442,6 +449,10 @@ fn build_period(
                 reopen_unknown_bugs: unknown_bugs,
                 bugs: bug_rows,
                 due_requirements: due,
+                delivered_due_requirements: rows
+                    .iter()
+                    .filter(|r| r.current_delivered && r.delivery_class != "notDue")
+                    .count(),
                 on_time: count("onTime"),
                 delivered_late: count("deliveredLate"),
                 overdue_at_end: count("overdueAtEnd"),

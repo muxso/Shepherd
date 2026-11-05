@@ -38,7 +38,7 @@ fn due_cohorts_shared_participation_and_missing_time() {
             (p.on_time, p.delivered_late, p.overdue_at_end, p.unknown_delivery),
             (1, 1, 1, 2)
         );
-        assert_eq!(p.delay_rate, Some(66.7));
+        assert_eq!(p.delay_rate, Some(33.3));
         assert_eq!(p.bug_rate, None);
         assert_eq!(p.radar[0], Some(20.0));
         assert_eq!(p.radar[1], None);
@@ -90,7 +90,9 @@ fn shanghai_boundaries_defaults_and_target_validation() {
     r.data["createdAt"] = json!("2026-10-01T00:00:00+08:00");
     let data = build_member_metrics(&[r], &query(), now()).expect("metrics");
     assert_eq!(data.members[0].delivered_requirements, 0);
-    assert_eq!(data.members[0].overdue_at_end, 1);
+    assert_eq!(data.members[0].overdue_at_end, 0);
+    assert_eq!(data.members[0].delay_rate, Some(0.0));
+    assert!(data.members[0].requirements[0].current_delivered);
     let january = DateTime::parse_from_rfc3339("2027-01-01T00:01:00+08:00").expect("clock");
     assert_eq!(
         build_member_metrics(&[], &MemberMetricsQuery::default(), january).expect("default").month,
@@ -328,4 +330,58 @@ fn past_partial_comparison_requires_bug_history_through_its_actual_cutoff() {
     let prior = data.comparisons.expect("comparison").previous_month.expect("prior");
     assert_eq!(prior.members[0].reopen_unknown_bugs, 1);
     assert_eq!(prior.members[0].reopen_rate, None);
+}
+
+#[test]
+fn delivered_requirements_never_count_as_pending_delay() {
+    let records = vec![
+        req("on", "已发布", "2026-10-14T12:00:00+08:00", "2026-10-15"),
+        req("late", "已发布", "2026-10-16T12:00:00+08:00", "2026-10-15"),
+        req("after-month", "已发布", "2026-11-01T12:00:00+08:00", "2026-10-15"),
+        req("no-time", "已发布", "", "2026-10-15"),
+        req("delivered-alias", "已交付", "2026-11-01T12:00:00+08:00", "2026-10-15"),
+        req("pending", "开发中", "2026-10-02T12:00:00+08:00", "2026-10-15"),
+        req("completed", "已完成", "2026-11-01T12:00:00+08:00", "2026-10-15"),
+    ];
+    let data = build_member_metrics(&records, &query(), now()).expect("metrics");
+    for p in data.members {
+        assert_eq!(p.delivered_requirements, 2, "monthly publication count stays unchanged");
+        assert_eq!(p.delivered_due_requirements, 5);
+        assert_eq!(p.due_requirements, 6);
+        assert_eq!(p.unknown_delivery, 0);
+        assert_eq!(p.overdue_at_end, 1);
+        assert_eq!(p.delay_rate, Some(16.7));
+        assert_eq!(p.radar[2], Some(83.3));
+        assert!(p
+            .requirements
+            .iter()
+            .filter(|r| r.current_delivered)
+            .all(|r| r.delivery_class != "overdueAtEnd"));
+        assert_eq!(
+            p.due_requirements,
+            p.delivered_due_requirements + p.overdue_at_end + p.unknown_delivery
+        );
+    }
+    let completed: Vec<_> = records.into_iter().filter(|r| r.external_id != "pending").collect();
+    let data = build_member_metrics(&completed, &query(), now()).expect("completed only");
+    assert!(data.members.iter().all(|p| p.delay_rate == Some(0.0) && p.overdue_at_end == 0));
+}
+
+#[test]
+fn delay_comparisons_also_exclude_completed_late_deliveries() {
+    let mut previous_year = req("year", "已发布", "2025-11-11T12:00:00+08:00", "2025-11-10");
+    previous_year.data["createdAt"] = json!("2025-11-01T00:00:00+08:00");
+    let records = [
+        req("current", "已发布", "2026-11-11T12:00:00+08:00", "2026-11-10"),
+        req("prior", "已发布", "2026-10-11T12:00:00+08:00", "2026-10-10"),
+        previous_year,
+    ];
+    let clock = DateTime::parse_from_rfc3339("2026-11-20T12:00:00+08:00").expect("clock");
+    let data =
+        build_member_metrics(&records, &MemberMetricsQuery::default(), clock).expect("metrics");
+    assert!(data.members.iter().all(|m| m.delay_rate == Some(0.0)));
+    let c = data.comparisons.expect("comparisons");
+    for period in [c.previous_month, c.previous_year] {
+        assert!(period.expect("period").members.iter().all(|m| m.delay_rate == Some(0.0)));
+    }
 }
