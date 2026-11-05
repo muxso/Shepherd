@@ -24,7 +24,7 @@ import { priorityColor } from './tags'
 
 const PRIORITIES = ['P0', 'P1', 'P2', 'P3']
 
-/** Detail-tab sections togglable via the 显示设置 popover; hidden keys persist in localStorage. */
+/** Persist section visibility in localStorage. */
 const FIELDS_KEY = 'shepherd.caseDetailFields'
 const DETAIL_FIELDS = [
   { key: 'prerequisite', i18nKey: 'func.prerequisite', fallback: '前置条件' },

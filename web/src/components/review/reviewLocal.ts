@@ -54,7 +54,7 @@ export function inReviewModule(modules: ReviewModule[], selectedKey: string, mod
   return known ? moduleSubtreeIds(modules, selectedKey).includes(moduleId) : false
 }
 
-/** Slash path from root to the module ('' when unknown → caller renders /未规划评审). */
+/** Module path from the root; empty when unassigned. */
 export function modulePathOf(modules: ReviewModule[], id?: string | null): string {
   let cur = id ? modules.find((m) => m.id === id) : undefined
   const parts: string[] = []

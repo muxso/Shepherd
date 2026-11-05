@@ -975,7 +975,7 @@ const DICT: Record<string, Partial<Record<Lang, string>>> = {
   "scenario.caseRef": { zh: "用例", en: "Case" },
   "scenario.loopPrefix": { zh: "循环", en: "Loop" },
   "scenario.loopSuffix": { zh: "次", en: "times" },
-  // Loop round label in the report tree ("第 N 次" / "Round N").
+  // Loop iteration label in the report tree.
   "scenario.iterPrefix": { zh: "第", en: "Round" },
   "scenario.iterSuffix": { zh: "次", en: "times" },
   "scenario.onceOnly": { zh: "仅执行一次", en: "Run once only" },
@@ -1580,7 +1580,7 @@ const DICT: Record<string, Partial<Record<Lang, string>>> = {
   "plan.srcScenario": { zh: "场景", en: "Scenarios" },
   "plan.selectScenario": { zh: "选择项目下的场景", en: "Select a scenario in this project" },
   "plan.noScenario": { zh: "项目暂无场景(先去「接口场景」创建)", en: "No scenarios in this project (create one in \"Scenarios\")" },
-  // Plan cases tab (测试点/模块 tree + case table)
+  // Plan cases tab: planning tree and case table.
   "plan.pcTestPoint": { zh: "测试点", en: "Test Points" },
   "plan.pcModule": { zh: "模块", en: "Modules" },
   "plan.pcSearchName": { zh: "请输入名称", en: "Enter a name" },

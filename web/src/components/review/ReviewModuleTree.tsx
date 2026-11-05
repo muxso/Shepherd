@@ -23,7 +23,7 @@ import {
 } from './reviewLocal'
 
 // Left module-tree panel for case reviews (modules are local, reviews carry moduleId backend-side):
-// "新建" primary button + module name search + tree with "全部评审 (N)" root / per-module counts / 未规划评审.
+// Review module tree with search and per-module counts.
 export default function ReviewModuleTree({
   projectId,
   items,

@@ -52,7 +52,7 @@ import PersonalCenter from './PersonalCenter'
 
 const { Content } = Layout
 
-// Drawer tab → backend tab filter (`@我的` = at-mentions).
+// Map drawer tabs to backend filters, including mentions.
 const MSG_TAB_PARAM: Record<string, string> = { all: 'all', mine: 'at', unread: 'unread', read: 'read' }
 
 // resource_type → route for message click-through. Comment mentions carry the

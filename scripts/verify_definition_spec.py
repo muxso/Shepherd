@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""集成验证: 接口定义「定义」编辑器 spec 全字段往返 (基本信息/请求体content-type/子标签)。
+"""Verify an API definition spec survives a PUT/GET round trip.
 
-登录 → 找/建项目 → 新建接口 → PUT 一份覆盖所有子标签与请求体 content-type 的 spec
-→ GET 读回 → 逐字段比对。证明前端「定义」编辑器写入的 spec 经后端无损往返。
+Create a definition, write all spec sections and body content types, then compare
+returned fields with the original values.
 """
 import json
 import sys

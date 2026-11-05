@@ -4,7 +4,7 @@ import type { Environment, PlanningNode, PlanningNodeConfig, ResourcePool } from
 import { useI18n } from '../../i18n'
 
 /**
- * Right slide-in config panel for a category node (接口用例 / 场景用例):
+ * Configuration panel for API-case and scenario categories:
  * pool + env selects, serial/parallel radio, stop-on-fail / retry switches.
  * No case picker at category level.
  */

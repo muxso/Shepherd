@@ -1,6 +1,6 @@
 # Build & publish cross-platform `agent-runtime` binaries to a GitHub Release.
 #
-# Triggered by pushing a `v*` tag (same trigger as images.yml), so a "发布"
+# Triggered by a v* tag, alongside images.yml. A release
 # also yields installable binaries for brew / Windows / bare-metal Linux/macOS.
 # No OpenSSL in agent-runtime (rustls-tls) → pure-Rust cross-compile, no system libs.
 #

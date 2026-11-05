@@ -6,9 +6,8 @@ license.workspace = true
 publish.workspace = true
 rust-version.workspace = true
 
-# Mock 运行时:把 api-definition 里登记的 Mock 规则变成"可被真实请求命中的服务"。
-# 核心是零 IO 的匹配引擎(domain):给定一个请求视图 + 一组规则,确定性地选出命中的响应。
-# axum 兜底路由(http feature)只做 DTO 翻译,匹配/优先级全在 domain。
+# Match requests against mock rules in the pure domain engine.
+# The HTTP adapter translates requests and responses.
 [dependencies]
 thiserror = { workspace = true }
 serde = { workspace = true }
@@ -25,7 +24,7 @@ fake = { version = "2", optional = true }
 [features]
 http = ["dep:axum", "dep:tokio"]
 pg = ["dep:sqlx"]
-# 响应体模板渲染(minijinja + 请求上下文 + uuid()/now()/randint()/fake_* 动态函数)。
+# Response templates expose request context and dynamic helper functions.
 template = ["dep:minijinja", "dep:uuid", "dep:fake"]
 
 [dev-dependencies]

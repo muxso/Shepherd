@@ -127,7 +127,7 @@ export default function PlanMindmap({ planId, projectId }: { planId: string; pro
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [planId, projectId])
 
-  // Virtual root: the fixed "测试规划" node; real nodes are its children.
+  // Real planning nodes are children of a virtual root.
   const root: PlanningNode = useMemo(
     () => ({ id: '__root__', name: t('plan.mm.root', '测试规划'), kind: 'category', children: nodes }),
     [nodes, t],
@@ -156,7 +156,7 @@ export default function PlanMindmap({ planId, projectId }: { planId: string; pro
   }, [nodes])
   const catTypeOf = (id: string): PlanCatType => catTypes.get(id) || 'api'
 
-  // Display tree: 测试点 nodes grow virtual leaves for case count / env / pool.
+  // Add virtual leaves for case count, environment, and pool.
   // API/scenario test points always show env + pool leaves (default text when unset).
   const dispRoot = useMemo(() => {
     const build = (n: PlanningNode): DispNode => {
@@ -533,7 +533,7 @@ export default function PlanMindmap({ planId, projectId }: { planId: string; pro
     const cfg = node.config
     const isCat = node.kind === 'category' && !isRoot
     const ct = catTypeOf(node.id)
-    // Serial/parallel badge: api/scenario subtrees only (功能用例 has no exec mode).
+    // Execution mode applies only to API and scenario subtrees.
     const showMode = !isRoot && ct !== 'func' && !!cfg?.mode
     const hovered = hoverId === node.id
     const isSelected = selectedId === node.id
@@ -605,7 +605,7 @@ export default function PlanMindmap({ planId, projectId }: { planId: string; pro
             <Tooltip title={t('plan.mm.addPoint', '添加测试点')}>
               <Button type="text" size="small" icon={<PlusCircleOutlined />} onClick={(e) => { e.stopPropagation(); addChild(node.id) }} />
             </Tooltip>
-            {/* API/scenario categories: serial-parallel toggle + category config. 功能用例 only adds points. */}
+            {/* API and scenario categories support execution settings; functional cases add points. */}
             {isCat && ct !== 'func' && (
               <>
                 <Tooltip title={t('plan.mm.toggleMode', '串行/并行')}>
@@ -814,7 +814,7 @@ export default function PlanMindmap({ planId, projectId }: { planId: string; pro
           }}
         />
       )}
-      {/* Category config panel (接口用例 / 场景用例). */}
+      {/* API-case and scenario category settings. */}
       {catCfgNode && (
         <PlanCategoryConfig
           node={catCfgNode}
@@ -827,7 +827,7 @@ export default function PlanMindmap({ planId, projectId }: { planId: string; pro
           }}
         />
       )}
-      {/* Link-cases dialog opened from a 用例数 leaf. */}
+      {/* Link cases from a case-count leaf. */}
       {pickerNode && (
         <PlanCasePicker
           open

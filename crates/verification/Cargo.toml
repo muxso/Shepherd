@@ -6,10 +6,8 @@ license.workspace = true
 publish.workspace = true
 rust-version.workspace = true
 
-# Shepherd 完整性验证上下文:需求 ←→ 任务 ←→ 实现 双向追溯 + 缺口检测。
-# 一个需求版本一个 Verification 聚合,持有验收标准 + 覆盖链(criterion ↔ task)。
-# 把"每条验收标准是否被已交付且验证的任务覆盖"聚合成确定性的完整性报告(复用 case-review 的聚合精神)。
-# 通过 requirement_id/version + decomposition_id/task_id(字符串)引用其它上下文,无类型耦合。
+# Trace acceptance criteria through tasks and verified deliveries.
+# Cross-context references use IDs and versions without type dependencies.
 [dependencies]
 kernel = { workspace = true }
 async-trait = { workspace = true }

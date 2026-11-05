@@ -1,6 +1,6 @@
 import { type Page } from '@playwright/test'
 
-/** 登录页对象:封装登录 UI 交互(选择器集中在此,spec 不碰 DOM 细节)。 */
+/** Login interactions and selectors. */
 export class LoginPage {
   constructor(private readonly page: Page) {}
 

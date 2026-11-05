@@ -11,7 +11,7 @@ import type { RegItem } from '../registry'
 import { fetchPlanItems, isGroup } from './plan/planLocal'
 import { funcCaseStatusLabel, priorityColor } from './tags'
 
-// Shared body for the 待办 / 关注 workbench pages: stacked full-width section
+// Shared body for todo and followed-item pages: stacked full-width section
 // tables with a project switcher, a section-visibility dropdown and a refresh
 // button, per the reference layout.
 //   todo   → three sections (plans / reviews / bugs), pending items only
@@ -361,7 +361,7 @@ export default function WorkbenchSections({ mode }: { mode: 'todo' | 'follow' })
       render: (s?: string) => <Tag style={{ marginInlineEnd: 0 }}>{funcCaseStatusLabel(s, t)}</Tag>,
     },
     {
-      // Functional cases carry no execution result yet; everything reads 未执行.
+      // Functional cases have no execution results yet.
       title: t('home.wb.execResult', '执行结果'),
       key: 'execResult',
       width: 110,
@@ -570,7 +570,7 @@ export default function WorkbenchSections({ mode }: { mode: 'todo' | 'follow' })
     </Card>
   )
 
-  // Follow mode: 全部 | 计划 | 计划组 scope switch on the plan card header.
+  // Follow scopes: all, plans, or plan groups.
   const planExtra =
     mode === 'follow' ? (
       <Segmented

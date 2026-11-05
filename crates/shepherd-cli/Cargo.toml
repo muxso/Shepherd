@@ -6,7 +6,7 @@ license.workspace = true
 publish.workspace = true
 rust-version.workspace = true
 
-# Shepherd CLI:封装 REST API 的命令行,驱动「需求→拆分→派发→验证」与 skill 编排。
+# REST client for requirements, decomposition, delivery, verification, and skills.
 [[bin]]
 name = "shepherd"
 path = "src/main.rs"

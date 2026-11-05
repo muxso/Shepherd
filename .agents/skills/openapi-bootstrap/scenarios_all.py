@@ -1,17 +1,8 @@
 #!/usr/bin/env python3
-"""Shepherd full-module scenario bootstrap: one real chained scenario per business module (OpenAPI tag).
+"""Create and run a reusable scenario for each OpenAPI module.
 
-Extends selftest.py (single chain) to **per-module** coverage: one scenario
-per module, referencing real api cases (kind=CASE, with auth headers /
-variable extraction / assertions), chained in CRUD/lifecycle order and
-executed in-process with an environment. Failure strategy CONTINUE -> even if
-a step fails the rest still run, so one run yields per-step pass/fail +
-reasons for every module.
-
-Idempotent: cases/scenarios are create-or-reuse by name; repeated runs do not
-accumulate. Persisted lookup names (自举环境 / 自举-全模块 / 自举M·*) are kept
-as-is — they are reuse-by-name keys; renaming them would orphan existing rows.
-Exit codes: 0 all green; 1 some step failed; 2 the flow itself errored.
+Continue after failures to report every step. Persisted names are lookup keys.
+Exit codes: 0 for success, 1 for failed steps, 2 for setup or execution errors.
 """
 import json
 import os

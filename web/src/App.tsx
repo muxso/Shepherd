@@ -109,7 +109,7 @@ export default function App() {
           <Route path="/user" element={<UsersPage />} />
           <Route path="/system/apikeys" element={<ApiKeysPage />} />
           <Route path="/system/params" element={<SystemParams />} />
-          {/* RAG config moved into 系统参数; keep the old path working. */}
+          {/* Preserve the old route after moving RAG configuration to system settings. */}
           <Route path="/system/rag" element={<Navigate to="/system/params" replace />} />
           <Route path="/system/tasks" element={<TaskCenter />} />
           <Route path="/system/plugins" element={<Plugins />} />

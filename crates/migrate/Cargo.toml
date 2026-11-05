@@ -6,9 +6,8 @@ license.workspace = true
 publish.workspace = true
 rust-version.workspace = true
 
-# 版本化数据库迁移:主系统业务表在此集中演进；插件的独立数据库由插件自行迁移。
-# 这是 schema 的**唯一生产真源**,取代各 -pg crate 里的零散 CREATE TABLE。
-# sqlx 迁移器执行时会持有 Postgres advisory lock,并发调用(如并行集成测试)被自动串行化。
+# Versioned migrations for the main database; plugins migrate their own databases.
+# SQLx serializes concurrent migration runs with a PostgreSQL advisory lock.
 [dependencies]
 sqlx = { workspace = true, features = ["runtime-tokio", "postgres", "migrate", "macros"] }
 

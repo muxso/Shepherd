@@ -129,7 +129,7 @@ interface PlanRunRow {
   triggeredAt: string
 }
 
-/** 执行历史 tab: scheduled/manual run records of the plan. */
+/** Scheduled and manual plan runs. */
 export function PlanRunsTable({ planId }: { planId: string }) {
   const { t } = useI18n()
   const [rows, setRows] = useState<PlanRunRow[]>([])

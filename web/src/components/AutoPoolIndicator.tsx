@@ -40,7 +40,7 @@ export function useAutoPool(projectId: string, active: boolean) {
   }, [pools, detail, projects, projectId])
 }
 
-/** Passive run-target indicator: 自动: <pool> · N在线, or 本地执行. */
+/** Show the selected pool and online agents, or local execution. */
 export default function AutoPoolIndicator({ projectId, active }: { projectId: string; active?: boolean }) {
   const { t } = useI18n()
   const pick = useAutoPool(projectId, active !== false)

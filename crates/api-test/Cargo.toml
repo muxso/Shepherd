@@ -6,21 +6,16 @@ license.workspace = true
 publish.workspace = true
 rust-version.workspace = true
 
-# 接口测试上下文。核心(domain/ports/application)纯净;多种执行器适配器 feature 门控:
-#   local  —— 原生 Rust runner(api-runner)就地跑
-#   jmeter —— HTTP 下发 JMeter 节点
-#   pg     —— PG 资源池/报告/用例规格(含 per-case 结果),依赖 local 的 trait
-#   http   —— axum 入口
+# API testing with feature-gated local, JMeter, PostgreSQL, and HTTP adapters.
 [dependencies]
 async-trait = { workspace = true }
 thiserror = { workspace = true }
-# kernel/serde_json 属核心:用例执行记录读模型(CaseExecutionRecord)的分页与 failures(JSONB)
-# 都落在纯核心层(ports/application),故非 feature 门控。serde_json::Value 不属 IO,架构守卫放行。
+# Execution read models use serde_json in the core; it has no IO dependency.
 kernel = { workspace = true }
 serde_json = { workspace = true }
 api-runner = { workspace = true, optional = true }
 futures = { version = "0.3", optional = true }
-# 串行执行 WAIT 处理器需要 sleep;只在 local 执行器启用。
+# Sequential WAIT processors need sleep only in the local executor.
 tokio = { workspace = true, features = ["time"], optional = true }
 sqlx = { workspace = true, features = ["runtime-tokio", "postgres", "json"], optional = true }
 axum = { workspace = true, optional = true }
@@ -28,7 +23,7 @@ utoipa = { workspace = true, optional = true }
 serde = { workspace = true, optional = true }
 webauth = { workspace = true, optional = true }
 reqwest = { workspace = true, features = ["json", "rustls-tls"], optional = true }
-# Parquet 报告归档(object_store:本地/内存/S3);与 perf 的 parquet-sink 同版本。
+# Keep Parquet archive dependencies aligned with perf.
 arrow = { workspace = true, optional = true }
 parquet = { workspace = true, optional = true }
 object_store = { workspace = true, optional = true }
@@ -38,7 +33,7 @@ local = ["dep:api-runner", "dep:futures", "dep:tokio"]
 pg = ["dep:sqlx", "local"]
 http = ["dep:axum", "dep:serde", "dep:utoipa", "dep:webauth", "webauth/http"]
 jmeter = ["dep:reqwest", "dep:serde"]
-# 已完成报告导出 Parquet 冷存储(读模型来自 pg)。
+# Export completed reports from PostgreSQL to Parquet.
 parquet-archive = ["pg", "dep:arrow", "dep:parquet", "dep:object_store"]
 
 [dev-dependencies]

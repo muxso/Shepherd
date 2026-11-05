@@ -153,7 +153,7 @@ pub fn author_mentioned(question: &str, name: &str) -> bool {
             && !q[i + name.len()..].chars().next().is_some_and(word)
     })
 }
-/// Git change summaries are event queries even without “git log” or “提交记录”.
+/// Git change summaries are event queries even without explicit log terminology.
 pub fn git_change_mentioned(question: &str) -> bool {
     let q = question.to_lowercase();
     (q.contains("git") || q.contains("代码"))

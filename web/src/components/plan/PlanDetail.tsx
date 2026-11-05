@@ -18,7 +18,7 @@ import PlanDetailHeader, { PlanRunsTable } from './PlanDetailHeader'
 import PlanCasesPanel, { planCaseStatusLabel } from './PlanCasesPanel'
 import PlanBugsPanel from './PlanBugsPanel'
 
-// Plan detail (workspace tab content): header + tabs (测试规划 mind-map | 场景用例 | 缺陷列表 | 执行历史).
+// Plan workspace with planning, cases, bugs, and run history tabs.
 export default function PlanDetail({ planId, name, projectId }: { planId: string; name: string; projectId: string }) {
   const { t } = useI18n()
   const [stats, setStats] = useState<PlanStats | null>(null)
@@ -104,7 +104,7 @@ export default function PlanDetail({ planId, name, projectId }: { planId: string
     })
   }
 
-  // 场景用例 tab body: left 测试点/模块 tree + enriched case table (reference layout);
+  // Cases tab: planning tree and case table;
   // the original action buttons stay in the panel toolbar.
   const casesTab = (
     <PlanCasesPanel

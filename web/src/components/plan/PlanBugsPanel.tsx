@@ -27,7 +27,7 @@ function useMemberOptions(projectId: string) {
   return options
 }
 
-// 缺陷列表 tab of plan detail: bugs linked to the plan (relation kind = PLAN,
+// Bugs linked to the plan (relation kind = PLAN,
 // reverse endpoint /bug/by-plan) + link picker / create-and-link / unlink.
 export default function PlanBugsPanel({ planId, projectId, bugs, loading, reload }: {
   planId: string

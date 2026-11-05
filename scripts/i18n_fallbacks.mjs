@@ -25,7 +25,7 @@ function walk(dir, acc = []) {
 const RE = /\bt\(\s*(['"])((?:\\.|(?!\1).)*)\1\s*,\s*(['"`])((?:\\.|(?!\3)[\s\S])*)\3\s*[,)]/g
 
 // Module-scope tables that cannot call the hook pair the key with its Chinese
-// source instead, e.g. `{ labelKey: 'rag.stepRerank', labelZh: '重排' }`.
+// source instead, using labelKey and labelZh fields.
 const RE_PAIR = /\bl(?:abel)?Key\s*:\s*(['"])((?:\\.|(?!\1).)*)\1\s*,\s*l(?:abel)?Zh\s*:\s*(['"])((?:\\.|(?!\3).)*)\3/g
 
 const found = {}
