@@ -23,16 +23,16 @@ test('reference cards retain full CJK and long Latin names inside their bounds i
   await expect(nodes).toHaveCount(7)
   for (const [index, name] of names.entries()) {
     const node = page.locator(`[data-reference-node="case-${index}"]`)
-    expect(await node.locator('text').textContent()).toBe(name)
+    expect(await node.locator('.reference-card-label').textContent()).toBe(name)
   }
   const checkBounds = async () => {
     const results = await nodes.evaluateAll(elements => elements.map(el => {
       const rect = el.querySelector('rect:last-of-type') as SVGRectElement
-      const box = rect.getBBox()
-      const lines = [...el.querySelectorAll('tspan')].map(line => line.getBBox())
+      const box = rect.getBoundingClientRect()
+      const label = el.querySelector('.reference-card-label') as HTMLElement
+      const text = label.getBoundingClientRect()
       const viewport = el.ownerSVGElement!.getBoundingClientRect()
-      const screen = rect.getBoundingClientRect()
-      return { id:el.getAttribute('data-reference-node'), box:{x:box.x,y:box.y,width:box.width,height:box.height}, lines:lines.map(b=>({x:b.x,y:b.y,width:b.width,height:b.height})), contained: lines.every(b => b.x >= box.x && b.y >= box.y && b.x + b.width <= box.x + box.width && b.y + b.height <= box.y + box.height), fitted: screen.left >= viewport.left && screen.right <= viewport.right && screen.top >= viewport.top && screen.bottom <= viewport.bottom }
+      return { id:el.getAttribute('data-reference-node'), contained: label.scrollWidth <= label.clientWidth + 1 && label.scrollHeight <= (el.querySelector('foreignObject') as SVGForeignObjectElement).height.baseVal.value + 1 && text.left >= box.left - 1 && text.right <= box.right + 1 && text.top >= box.top - 1 && text.bottom <= box.bottom + 1, fitted: box.left >= viewport.left && box.right <= viewport.right && box.top >= viewport.top && box.bottom <= viewport.bottom }
     }))
     expect(results.filter(r => !r.contained)).toEqual([])
     expect(results.every(r => r.fitted)).toBe(true)

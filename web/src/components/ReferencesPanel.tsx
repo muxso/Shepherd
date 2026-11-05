@@ -517,9 +517,11 @@ function ReferenceGraph({ definition, rows, loading }: { definition: ApiDefiniti
                   filter={dim ? undefined : 'url(#ref-card-shadow)'}
                 />
                 <circle cx={-w / 2 + 15} cy={-h / 2 + 19} r={4.5} fill={n.color} />
-                <text fontFamily="system-ui, sans-serif" fontSize={12.5} fill={on ? C.text : C.text2} fontWeight={500} style={{ pointerEvents: 'none' }}>
-                  {n.lines.map((line, i) => <tspan key={i} x={-w / 2 + 27} y={-h / 2 + 23 + i * 18}>{line}</tspan>)}
-                </text>
+                <foreignObject x={-w / 2 + 27} y={-h / 2 + 10} width={w - 42} height={h - 20} style={{ pointerEvents: 'none' }}>
+                  <div className="reference-card-label" style={{ font: '500 12.5px/18px system-ui, sans-serif', color: on ? C.text : C.text2, whiteSpace: 'pre', textSizeAdjust: 'none', WebkitTextSizeAdjust: 'none' }}>
+                    {n.lines.map((line, i) => <span key={i} style={{ display: 'block' }}>{line}</span>)}
+                  </div>
+                </foreignObject>
               </g>
             )
           })}
@@ -529,7 +531,9 @@ function ReferenceGraph({ definition, rows, loading }: { definition: ApiDefiniti
             {focus === HUB && <rect x={-hub.width / 2 - 5} y={-hub.height / 2 - 5} width={hub.width + 10} height={hub.height + 10} rx={15} fill="none" stroke={C.brand} strokeWidth={1.5} opacity={0.35} />}
             <rect x={-hub.width / 2} y={-hub.height / 2} width={hub.width} height={hub.height} rx={12} fill={C.brand} filter="url(#ref-card-shadow)" />
             <text x={0} y={-hub.height / 2 + 23} textAnchor="middle" fontSize={13} fill="#fff" fontWeight={700} letterSpacing={0.4} style={{ pointerEvents: 'none' }}>{definition.method || definition.protocol}</text>
-            <text textAnchor="middle" fontFamily="system-ui, sans-serif" fontWeight={500} fontSize={11} fill="rgba(255,255,255,0.82)" style={{ pointerEvents: 'none' }}>{hub.lines.map((line, i) => <tspan key={i} x={0} y={-hub.height / 2 + 43 + i * 18}>{line}</tspan>)}</text>
+            <foreignObject x={-hub.width / 2 + 16} y={-hub.height / 2 + 31} width={hub.width - 32} height={hub.height - 36} style={{ pointerEvents: 'none' }}>
+              <div className="reference-card-label" style={{ font: '500 11px/18px system-ui, sans-serif', color: 'rgba(255,255,255,0.82)', textAlign: 'center', whiteSpace: 'pre', textSizeAdjust: 'none', WebkitTextSizeAdjust: 'none' }}>{hub.lines.map((line, i) => <span key={i} style={{ display: 'block' }}>{line}</span>)}</div>
+            </foreignObject>
           </g>
         </g>
       </svg>

@@ -1,4 +1,4 @@
-/** Measure the font used by the SVG; CJK, Latin and emoji have different widths. */
+/** Measure the font used by the card labels; CJK, Latin and emoji have different widths. */
 let context: CanvasRenderingContext2D | null | undefined
 export function referenceCard(name: string, hub = false) {
   if (context === undefined) context = document.createElement('canvas').getContext('2d')
