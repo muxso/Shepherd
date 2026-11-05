@@ -6,8 +6,8 @@ license.workspace = true
 publish.workspace = true
 rust-version.workspace = true
 
-# 功能用例管理:用例 CRUD + 自定义字段(jsonb)+ Excel 导出。
-# domain/ports/application 纯净;sqlx/axum/xlsx 只在 adapters,feature 门控。
+# Functional case management with custom fields and Excel export.
+# IO dependencies are confined to feature-gated adapters.
 [dependencies]
 kernel = { workspace = true }
 async-trait = { workspace = true }

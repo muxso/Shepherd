@@ -756,7 +756,7 @@ function StagePipeline({ req, onAction }: { req: Requirement; onAction: (stage: 
 }
 
 // Advisory AI review opinion, grounded in retrieved KB context. Verdict is a suggestion; the human
-// reviewer still drives 定基线/交付. Renders summary + risks + missing coverage + suggestions + sources.
+// reviewer still approves baselines and delivery.
 const AI_VERDICT: Record<string, { color: string; label: [string, string] }> = {
   APPROVE: { color: 'green', label: ['req.aiV.APPROVE', '建议通过'] },
   REVISE: { color: 'gold', label: ['req.aiV.REVISE', '建议修订'] },
@@ -849,7 +849,7 @@ function RequirementDetail({ reqId, projectId, modules, onChanged, onDeleted, on
     try {
       const r = await api.getRequirement(reqId)
       setReq(r)
-      // Restore the orchestration tab from the backend (not browser-local state) so 拆分/交付/验证
+      // Restore decomposition, delivery, and verification state from the backend to
       // survive switching browsers. Show the decomposition for the selected version (default baseline).
       const v = splitVersion ?? r.baselineVersion
       setSplitVersion(v)
@@ -998,7 +998,7 @@ function RequirementDetail({ reqId, projectId, modules, onChanged, onDeleted, on
     req?.versions?.[req.versions.length - 1]?.description ||
     ''
 
-  // Ask the knowledge base for an advisory review opinion; the reviewer still decides via 定基线/交付.
+  // Retrieve advisory feedback; baseline and delivery decisions remain with the reviewer.
   const runAiReview = async () => {
     if (!req) return
     const text = [baselineDesc, baselineCriteria.length ? `验收标准:\n- ${baselineCriteria.join('\n- ')}` : '']

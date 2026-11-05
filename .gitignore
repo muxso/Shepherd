@@ -3,24 +3,24 @@
 *.pdb
 .DS_Store
 .playwright-mcp/
-# 根目录参考截图(派单交付的 git 快照不应卷入这些噪声)
+# Local reference screenshots.
 /*.png
-# 报告归档 Parquet 冷存储(REPORT_ARCHIVE_DIR 默认落点)
+# Default REPORT_ARCHIVE_DIR storage.
 /data/report-archive/
-# Playwright E2E 产物
+# Playwright artifacts.
 /web/test-results/
 /web/playwright-report/
 /web/blob-report/
-# compose 密钥(deploy/docker/.env.example 为模板)
+# Compose secrets; see deploy/docker/.env.example.
 deploy/docker/.env
-# 自测脚本生成的报告(scripts/api-coverage.sh 等),不入库
+# Generated test reports.
 docs/api-coverage.md
 docs/api-coverage.html
 docs/self-regression.md
 docs/dogfood-report.html
-# i18n 翻译流水线中间产物(scripts/i18n_*.mjs),最终产物是 web/src/locales/
+# Translation intermediates; final output lives in web/src/locales/.
 /.i18n-work/
-# deepcode CLI 本地会话/缓存目录
+# Local deepcode CLI sessions and cache.
 /.deepcode/
 
 # Python sync helper caches

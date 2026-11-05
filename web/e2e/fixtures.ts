@@ -2,7 +2,7 @@ import { test as base, expect, type APIRequestContext } from '@playwright/test'
 import { RequirementsPage } from './pages/RequirementsPage'
 import { TaskCenterPage } from './pages/TaskCenterPage'
 
-// 与 src/api.ts、src/context.tsx 对齐的 localStorage 键。
+// Match the storage keys in api.ts and context.tsx.
 const TOKEN_KEY = 'shepherd.token'
 const PROJECT_KEY = 'shepherd.projectId'
 const PASSWORD = process.env.E2E_PASSWORD || 's3cret'
@@ -13,7 +13,7 @@ export async function adminToken(request: APIRequestContext): Promise<string> {
   return (await r.json()).token
 }
 
-// 每次运行建一个全新隔离项目 —— 列表里只有本次 E2E 的需求(不被海量历史数据/分页淹没)。
+// Isolate each run in a fresh project to avoid pagination and stale data.
 export async function freshProjectId(request: APIRequestContext, token: string): Promise<string> {
   const headers = { authorization: `Bearer ${token}` }
   const orgs = await (await request.get('/organization?pageSize=100', { headers })).json()
@@ -24,7 +24,7 @@ export async function freshProjectId(request: APIRequestContext, token: string):
   return (await r.json()).id
 }
 
-// 经 API 建需求(不拆分;拆分留给 UI 点「自动拆分」以测真实流程),返回 requirementId。
+// Create through the API; leave decomposition to the UI.
 export async function createRequirement(
   request: APIRequestContext,
   token: string,
@@ -42,12 +42,12 @@ type Fixtures = {
   auth: { token: string; projectId: string }
   requirements: RequirementsPage
   taskCenter: TaskCenterPage
-  /** 经 API 建需求(不拆分),返回 {id, title};标题唯一。 */
+  /** Create a uniquely titled requirement without decomposing it. */
   createReq: (criteria: string[], prefix?: string) => Promise<{ id: string; title: string }>
 }
 
-// authed:API 登录 + 注入 localStorage(token + 选中项目),页面打开即已登录、已选项目。
-// 并注入页面对象(requirements/taskCenter)与 createReq 助手,spec 直接拿来组合。
+// Inject the API session and selected project before opening pages.
+// Expose page objects and a requirement creation helper.
 export const test = base.extend<Fixtures>({
   auth: async ({ request }, use) => {
     const token = await adminToken(request)

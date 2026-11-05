@@ -382,7 +382,7 @@ export default function KnowledgeQA() {
   // One-time fullscreen Lottie intro (per session), shrinking away to reveal the landing.
   const [intro, setIntro] = useState<boolean>(() => !sessionStorage.getItem('rag_intro_seen'))
   const [introLeaving, setIntroLeaving] = useState(false)
-  // 决策追溯 toggle (persisted) — whether the stream captures the decision chain.
+  // Persist whether the stream captures the decision trace.
   const [traceOn, setTraceOn] = useState<boolean>(() => localStorage.getItem('rag_trace_on') !== '0')
   const [phIdx, setPhIdx] = useState(0)
   const hist = useChatHistory(projectId || '')
@@ -481,7 +481,7 @@ export default function KnowledgeQA() {
           patchLast((m) => ({ ...m, content: m.content + delta, displayed: m.content.length + delta.length }))
         } else if (ev === 'trace') patchLast((m) => ({ ...m, trace: data as unknown as AskTrace }))
         else if (ev === 'error') {
-          // Unify the "provider not configured" case with the eval flow: a "去配置" prompt, not a raw error.
+          // Offer a settings link when the provider is missing.
           const notConfigured = data.code === 'not_configured'
           const hint = notConfigured
             ? t('rag.notConfigured', '⚠ 尚未配置 RAG 模型:请到「系统参数 → RAG 配置」填写 Embedding 与生成模型后重试')
@@ -788,7 +788,7 @@ export default function KnowledgeQA() {
   )
 }
 
-// Left rail of recent conversations (localStorage-backed), faithful to feishu's "最近对话" sidebar:
+// Recent conversations stored in localStorage:
 // new-chat button, title list with active highlight, per-item delete, clear-all.
 function HistorySidebar({ list, activeId, onNew, onPick, onRemove, onClear }: {
   list: { id: string; title: string }[]

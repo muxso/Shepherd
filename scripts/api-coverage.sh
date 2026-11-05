@@ -158,7 +158,7 @@ sec "环境 / 资源池 / 批量"
 call POST /api/environment "{\"projectId\":\"$PJ\",\"name\":\"env\",\"baseUrl\":\"$B\"}"; sc "建环境" "200 201"; jchk "baseUrl" 'd.get("baseUrl")=="'$B'"'; ENV=$(jval 'd["id"]')
 call GET "/api/environment?projectId=$PJ"; sc "环境列表" 200
 call PUT "/api/environment/$ENV" "{\"projectId\":\"$PJ\",\"name\":\"env2\",\"baseUrl\":\"$B\"}"; sc "改环境" "200 201"; jchk "名已改" 'd.get("name")=="env2"'
-# 资源池全局按名唯一:用固定名做幂等 upsert(存在则复用,不存在则创建),避免每轮留下孤儿池。
+# Reuse the globally unique pool name to avoid orphan pools across runs.
 POOL_NAME="自测资源池"
 POOL_LIST=$(curl -s -H "$A" "$B/api/resource-pool")
 POOL_ID=$(printf '%s' "$POOL_LIST" | python3 -c "import sys,json;d=json.load(sys.stdin);print(next((p['id'] for p in d if p.get('name')=='$POOL_NAME'),''))")

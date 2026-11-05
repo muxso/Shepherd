@@ -2,7 +2,7 @@
 // Find i18n keys referenced by the app but absent from the DICT in web/src/i18n.tsx.
 // Such keys silently fall back to their hardcoded Chinese literal in every language,
 // which is invisible in a build and only shows up when someone switches locale.
-// Covers both `t('key', '中文')` calls and the `label: ['key', '中文']` tables used by
+// Covers translation calls and label-key tables used by
 // AppShell's nav and similar module-scope metadata.
 // Usage: node scripts/i18n_check_keys.mjs
 import fs from 'node:fs'

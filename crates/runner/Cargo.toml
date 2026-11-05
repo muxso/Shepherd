@@ -6,13 +6,12 @@ license.workspace = true
 publish.workspace = true
 rust-version.workspace = true
 
-# 中央侧 runner 闭环(对应 runner-agent 二进制):
-# 按环境注册多个 agent → 把自包含用例派给选定 agent 就地执行 → 回传结果。
-# domain/ports/application 纯净;sqlx(注册表)/reqwest(派发)/axum(入口)在 adapters,feature 门控。
+# Register environment agents, dispatch self-contained cases, and collect results.
+# Storage, HTTP dispatch, and routes live in feature-gated adapters.
 [dependencies]
 kernel = { workspace = true }
 api-runner = { workspace = true }
-# 只取协议无关的探测类型(ProbeRequest/ProbeOutcome/ProbeAssertion),不带任何协议插件(无 IO)。
+# Use protocol-neutral probe types without IO plugins.
 probe = { workspace = true }
 async-trait = { workspace = true }
 thiserror = { workspace = true }

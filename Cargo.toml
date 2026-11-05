@@ -1,7 +1,7 @@
 [workspace]
 resolver = "2"
-# 唯一的二进制入口是组装根 server(crates/server/src/main.rs)。
-# 设为 default-members 后,根目录直接 `cargo run` 即启动它,无需 `-p server`。
+# Default binary: crates/server/src/main.rs.
+# Run it from the workspace root with cargo run.
 default-members = ["crates/server"]
 members = [
     "crates/kernel",
@@ -43,21 +43,21 @@ members = [
     "plugins/environment/backend",
 ]
 
-# 统一版本/lint 策略。阶段 0 刻意零外部依赖,保证离线可编译、测试秒级反馈。
-# 引入 sqlx/axum/tokio 等 IO 依赖时,只加在 adapters 层的 crate,domain/application 永远保持纯净。
+# Shared versions and lints.
+# Keep IO dependencies in adapters; domain and application layers remain IO-free.
 [workspace.package]
 edition = "2021"
 version = "0.0.4"
 license = "GPL-2.0"
-# Workspace MSRV;各成员 crate 用 rust-version.workspace = true 继承。
+# Members inherit the workspace MSRV.
 rust-version = "1.88"
-# crate 名(bug/task/case/delivery…)是通用词,与 crates.io 现有包冲突;整个 workspace 不发布。
+# Internal crate names may overlap crates.io packages; do not publish workspace crates.
 publish = false
 
-# 依赖版本的单一来源:被 2+ 个成员 crate 使用的依赖集中在这里,成员用 `dep = { workspace = true }` 继承。
-# features 只在所有使用方完全一致时写在这里,否则由成员各自补 `features = [...]`。
+# Centralize dependencies shared by multiple members.
+# Set shared features here only when all consumers need them.
 [workspace.dependencies]
-# —— 内部 path 依赖(2+ 处使用)——
+# Shared internal dependencies.
 kernel = { path = "crates/kernel" }
 webauth = { path = "crates/webauth" }
 migrate = { path = "crates/migrate" }
@@ -65,9 +65,9 @@ api-runner = { path = "crates/api-runner" }
 delivery = { path = "crates/delivery" }
 notice = { path = "crates/notice" }
 rag = { path = "crates/rag" }
-# probe 多数使用方关默认插件(perf/runner/runner-agent 只要类型);server 自行开 default-features = true。
+# Most consumers need only probe types; the server enables default plugins.
 probe = { path = "crates/probe", default-features = false }
-# —— 外部依赖 ——
+# External dependencies.
 async-trait = "0.1"
 thiserror = "2"
 serde = { version = "1", features = ["derive"] }
@@ -88,5 +88,5 @@ parquet = { version = "58.4.1", default-features = false, features = ["arrow"] }
 object_store = "0.11"
 
 [workspace.lints.clippy]
-# 领域层禁止 panic/unwrap,逼迫用 Result 表达边界(TDD 友好)
+# Use Result instead of panic or unwrap in domain code.
 unwrap_used = "warn"

@@ -1,30 +1,9 @@
 #!/usr/bin/env python3
-"""Shepherd OpenAPI self-bootstrap (dogfooding): test Shepherd's HTTP API with Shepherd itself.
+"""Test Shepherd's API through reusable cases and a chained scenario.
 
-Differences from the early version (fixed after feedback):
-  - No longer runs hardcoded inline GETs; builds **real api cases** referenced
-    by the scenario (kind=CASE).
-  - Covers POST + GET + auth headers + variable extraction + cross-step
-    chaining (login -> extract token -> authed call with token -> extract
-    orgId -> chained call).
-  - Cases execute **in-process** (no resource pool); assertions include status
-    codes + business checks; a negative case verifies unauthorized rejection.
-
-Flow:
-  1. Login for a token (admin calls for resource setup only)
-  2. Resolve/create organization -> project
-  3. Fetch this system's OpenAPI -> idempotent import as API definitions
-     (same method+path overwrites, no duplicates); check spec/case quality
-  4. Create-or-reuse an environment pointing at this host (baseUrl = this server)
-  5. Create-or-reuse 4 real cases under the bootstrap-chain definition
-     (extraction/auth/negative included)
-  6. Create-or-reuse a scenario **referencing** those cases as steps
-     (kind=CASE), execute with the environment
-  7. Fetch the report; print per-step pass/fail + extracted variables +
-     assertion counts
-
-Note: persisted resource names (自举环境 / 自举链路 / 自举链路场景 and the case
-names) are reuse-by-name keys — renaming them would orphan existing rows.
+Import OpenAPI definitions, reuse setup resources by name, execute cases in-process,
+and report assertions and extracted variables. Persisted names are lookup keys;
+changing them would orphan existing resources.
 """
 import json
 import os
@@ -125,7 +104,7 @@ def main():
     eid = env["id"]
     print(f"[4/7] environment 自举环境 baseUrl={env['baseUrl']}")
 
-    # 5) Real chained cases (create or reuse, under the 自举链路 holder definition)
+    # 5) Create or reuse chained cases under the bootstrap definition.
     defs = j("GET", f"/api/definition?projectId={pid}", token)
     holder = find(defs, "自举链路")
     if not holder:

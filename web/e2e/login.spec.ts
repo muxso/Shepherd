@@ -3,7 +3,7 @@ import { LoginPage } from './pages/LoginPage'
 
 const PW = process.env.E2E_PASSWORD || 's3cret'
 
-// 真实登录流程(不走 fixture 注入,测登录 UI 本身)。
+// Exercise login through the UI.
 test('登录:admin/密码 → 进入应用', async ({ page }) => {
   const login = new LoginPage(page)
   await login.goto()

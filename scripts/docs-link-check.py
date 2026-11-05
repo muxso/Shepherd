@@ -1,20 +1,9 @@
 #!/usr/bin/env python3
-"""多语言文档链接检查 / Documentation link checker.
+"""Check local Markdown links, heading anchors, and English/Chinese document pairs.
 
-扫描仓库内的 Markdown 文档（README + docs/*.md，英文 + 简体中文），校验：
-
-1. 内部链接目标文件是否存在（文档、资源、deploy/ 等任意文件）；
-2. 章节锚点是否解析（GitHub 风格 slug，含显式 `{#id}` 与 `<a id>`）；
-3. 跨语言配对完整性（每个文档组是否 EN + ZH-CN 成对存在）。
-
-用法：
-    python3 scripts/docs-link-check.py [--root <path>] [--report [path]] [--quiet]
-
-- 默认打印通过/失败摘要到 stdout；
-- `--report`（可省略路径，默认 docs/link-check-report.md）写出完整 Markdown 报告；
-- 退出码：0 = 全部有效，1 = 存在无效链接或跨语言缺失，2 = 参数错误。
-
-HTML 注释中的占位链接（如 docs/assets/demo.gif）与外部链接（http/https/mailto）不计入判定。
+Usage: python3 scripts/docs-link-check.py [--root PATH] [--report [PATH]] [--quiet]
+Exit codes: 0 for success, 1 for invalid links or missing pairs, 2 for invalid arguments.
+Ignore external links and placeholders inside HTML comments.
 """
 import argparse
 import datetime
@@ -32,7 +21,7 @@ COMMENT_RE = re.compile(r"<!--.*?-->", re.S)
 
 
 def slug(text: str) -> str:
-    """GitHub 风格标题 slug：小写，保留字母/数字/连字符，空格转 '-'，丢弃其余标点（含 。、()# 等）。"""
+    """Build a lowercase GitHub heading slug, preserving letters, digits, and hyphens."""
     s = text.strip().lower()
     out = []
     for ch in s:
@@ -71,7 +60,7 @@ def discover_docs(root: str, exclude: set = None) -> list:
         os.path.relpath(p, root)
         for p in glob.glob(os.path.join(root, "docs", "*.md"))
     )
-    # 仅保留真实存在的文件（例如 README.zh-CN.md 缺失时不报错），并排除生成的报告本身
+    # Check existing files only and exclude the generated report.
     return [
         d
         for d in docs

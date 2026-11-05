@@ -53,7 +53,7 @@ function collectNodeIds(node: PlanningNode, into: Map<string, Set<string>>): Set
   return own
 }
 
-/** First planning node that directly links the id (leaf 测试点 wins over categories). */
+/** First matching planning node; leaf points take precedence over categories. */
 function pointNameOf(nodes: PlanningNode[], id: string): string {
   for (const n of nodes) {
     const deep = pointNameOf(n.children || [], id)
@@ -63,7 +63,7 @@ function pointNameOf(nodes: PlanningNode[], id: string): string {
   return ''
 }
 
-// 场景用例 tab: left 测试点/模块 tree + case table with per-row run/unlink,
+// Cases tab: planning tree and case table with run and unlink actions,
 // column settings and batch actions (layout mirrors the reference UI).
 export default function PlanCasesPanel({ planId, projectId, cases, loading, reload, toolbar }: {
   planId: string
@@ -97,7 +97,7 @@ export default function PlanCasesPanel({ planId, projectId, cases, loading, relo
     Object.values(liveWs.current).forEach((w) => { try { w.close() } catch { /* already closed */ } })
   }, [])
   const [batchBusy, setBatchBusy] = useState(false)
-  // 筛选 popover: extra priority/result filters on top of column filters.
+  // Additional priority and result filters.
   const [fltPriority, setFltPriority] = useState<string[]>([])
   const [fltResult, setFltResult] = useState<string[]>([])
 
@@ -141,7 +141,7 @@ export default function PlanCasesPanel({ planId, projectId, cases, loading, relo
     })
   }, [cases, scenarios, apiCases, modules, planningNodes, t])
 
-  // Left tree (测试点 mode): planning hierarchy with per-node linked counts.
+  // Planning hierarchy with linked-case counts.
   const pointIdSets = useMemo(() => {
     const m = new Map<string, Set<string>>()
     for (const n of planningNodes) collectNodeIds(n, m)
@@ -169,7 +169,7 @@ export default function PlanCasesPanel({ planId, projectId, cases, loading, relo
           .filter((x): x is DataNode => !!x)
       return [{ key: 'ALL', title: countLabel(`${t('plan.tabCases', '场景用例')} (${rows.length})`, rows.length), children: build(planningNodes) }]
     }
-    // 模块 mode: modules referenced by linked scenarios (flat), plus 未规划模块.
+    // Flat module list for linked scenarios, including unassigned ones.
     const counts = new Map<string, number>()
     for (const r of rows) counts.set(r.isScenario ? r.moduleId : '', (counts.get(r.isScenario ? r.moduleId : '') || 0) + 1)
     const children: DataNode[] = [...counts.entries()]
@@ -407,7 +407,7 @@ export default function PlanCasesPanel({ planId, projectId, cases, loading, relo
 
   return (
     <div style={{ height: '100%', minHeight: 0, display: 'flex' }}>
-      {/* Left: 测试点 | 模块 tree */}
+      {/* Planning and module tree. */}
       <div style={{ width: 230, flexShrink: 0, borderRight: '1px solid var(--border-soft)', display: 'flex', flexDirection: 'column', padding: 12, gap: 8, overflow: 'auto' }}>
         <Segmented
           block

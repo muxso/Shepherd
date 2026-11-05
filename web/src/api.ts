@@ -903,7 +903,7 @@ export interface PlanningNodeConfig {
   retry?: boolean
 }
 
-/** Mind-map node: category (功能/接口/场景用例) or custom 测试点; leaves carry linked case/scenario ids. */
+/** Category or custom planning node; leaves link cases or scenarios. */
 export interface PlanningNode {
   id: string
   name: string

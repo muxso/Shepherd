@@ -6,9 +6,8 @@ license.workspace = true
 publish.workspace = true
 rust-version.workspace = true
 
-# Shepherd 任务上下文:把需求(某版本)拆分成可独立交付的任务 DAG。
-# 一致性边界是 Decomposition 聚合(一个需求版本一张任务图):校验依赖存在、无环(增量构造保证)、
-# 就绪判定(依赖全部 Verified 才可派发)、状态机流转。执行者(Claude Code/Codex)归 delivery 上下文。
+# Decompose a requirement version into a validated task DAG.
+# Dependencies must be verified before dispatch; execution belongs to delivery.
 [dependencies]
 kernel = { workspace = true }
 async-trait = { workspace = true }

@@ -251,7 +251,7 @@ export default function RagSettings({ embedded }: { embedded?: boolean } = {}) {
   )
 }
 
-// One provider's probe result in the "测试连接" banner: green/red icon + latency or error message.
+// Provider probe status with latency or an error.
 function ProbeLine({ label, probe, t }: {
   label: string
   probe: import('../api').RagProbe

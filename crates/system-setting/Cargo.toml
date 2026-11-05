@@ -6,27 +6,25 @@ license.workspace = true
 publish.workspace = true
 rust-version.workspace = true
 
-# 限界上下文 = 一个 crate。domain/ports/application 为模块;IO 适配器(pg/http)是
-# **feature 门控**的模块,可选依赖只在对应 feature 开启时拉入。
-# 默认 build(无 feature)根本没有 sqlx/axum —— domain/application 物理上 import 不到它们。
+# Keep the core IO-free; load optional adapter dependencies through features.
 [dependencies]
 kernel = { workspace = true }
 webauth = { workspace = true }
 async-trait = { workspace = true }
 thiserror = { workspace = true }
-# —— IO 适配器的可选依赖 ——
+# Optional IO adapters.
 sqlx = { workspace = true, features = ["runtime-tokio", "postgres"], optional = true }
 axum = { workspace = true, optional = true }
 utoipa = { workspace = true, optional = true }
 serde = { workspace = true, optional = true }
-# 真实密码哈希(adapters::auth,feature 门控)
+# Password hashing.
 argon2 = { version = "0.5", optional = true }
-# 第三方登录(adapters::oidc 飞书/企业微信,feature 门控)
+# OIDC authentication.
 reqwest = { workspace = true, features = ["json", "rustls-tls"], optional = true }
 serde_json = { workspace = true, optional = true }
-# OIDC state(CSRF)随机 token,feature 门控。
+# Random OIDC state tokens for CSRF protection.
 uuid = { workspace = true, optional = true }
-# LDAP 目录认证(adapters::ldap,feature 门控);rustls 避免系统 OpenSSL。
+# LDAP authentication with rustls.
 ldap3 = { version = "0.12", default-features = false, features = ["tls-rustls-ring"], optional = true }
 
 [features]

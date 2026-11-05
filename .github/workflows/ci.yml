@@ -5,7 +5,7 @@ on:
     branches: [main]
   pull_request:
 
-# 同一分支新推送取消旧运行,省 CI 时间。
+# Cancel superseded runs on the same branch.
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
@@ -16,7 +16,7 @@ env:
   RUST_TOOLCHAIN: "1.88.0"
 
 jobs:
-  # —— 质量门:production(lib+bin)clippy 零告警 + 全量构建 ——
+  # Production lint and build checks.
   check:
     name: clippy + build
     runs-on: ubuntu-latest
@@ -29,21 +29,21 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: fmt
         run: cargo fmt --all --check
-      # 仅 lib+bin(production)零告警:domain 的 unwrap 等已被 workspace lint 约束。
+      # Production code must pass Clippy without warnings.
       - name: clippy (production, deny warnings)
         run: cargo clippy --workspace --locked -- -D warnings
-      # 测试目标也必须编译零告警(unwrap 在测试里放行):防"lib 编译过但测试夹具漏改"。
+      # Check test targets too; allow unwrap in tests.
       - name: clippy (all targets)
         run: cargo clippy --workspace --all-targets --locked -- -D warnings -A clippy::unwrap-used
       - name: build
         run: cargo build --workspace --locked
-      # rustdoc 零告警(坏链接/孤儿文档),保证 cargo doc 可用。
+      # Reject rustdoc warnings, including broken links.
       - name: doc
         run: cargo doc --workspace --no-deps --locked
         env:
           RUSTDOCFLAGS: -D warnings
 
-  # —— 供应链:依赖漏洞扫描(RustSec 通告库)——
+  # Audit dependencies against RustSec.
   audit:
     name: cargo audit
     runs-on: ubuntu-latest
@@ -52,7 +52,7 @@ jobs:
       - uses: taiki-e/install-action@cargo-audit
       - run: cargo audit
 
-  # —— 文档门:多语言文档链接 / 跨语言配对 校验(纯 Python,无需编译)——
+  # Check documentation links and language pairs.
   docs:
     name: docs link check
     runs-on: ubuntu-latest
@@ -63,7 +63,7 @@ jobs:
           python-version: "3.x"
       - name: check doc links
         run: python3 scripts/docs-link-check.py --report
-      # 不论通过与否都留存报告,便于排查失效链接。
+      # Retain the report on success and failure.
       - name: upload report
         if: always()
         uses: actions/upload-artifact@v4
@@ -71,7 +71,7 @@ jobs:
           name: docs-link-check-report
           path: docs/link-check-report.md
 
-  # —— 前端构建门:类型检查 + 产物构建,防 web/ 腐化 ——
+  # Frontend type checks and production build.
   web:
     name: web build
     runs-on: ubuntu-latest
@@ -87,7 +87,7 @@ jobs:
           cache-dependency-path: web/package-lock.json
       - name: install
         run: npm ci
-      # tsc -b(严格类型)+ vite build,任一失败即挡板。
+      # Require both TypeScript and Vite to pass.
       - name: build
         run: npm run build
       - name: install browser for plugin UI checks
@@ -115,7 +115,7 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
-  # —— 单元 + 自包含集成(不需外部服务;含架构守卫)——
+  # Unit and self-contained integration tests, including architecture checks.
   test:
     name: unit tests
     runs-on: ubuntu-latest
@@ -131,11 +131,11 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: unit-no-debug-v1
-      # --all-features:覆盖各上下文全部适配器 + 协议插件 + 架构守卫;不跑 #[ignore]。
+      # Cover all adapters and protocol plugins; ignored tests run separately.
       - name: cargo test
         run: cargo test --workspace --all-features --locked
 
-  # —— gated 集成:需真 PostgreSQL / Redis / MySQL ——
+  # Integration tests against PostgreSQL, Redis, and MySQL.
   integration:
     name: integration (pg/redis/mysql)
     runs-on: ubuntu-latest
@@ -180,8 +180,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: integration-no-debug-v1
-      # 跨上下文端到端(真 server + 真库):auth/RBAC、需求→拆分→交付→验证、
-      # LLM agent(mock LLM)、自纠正、并行 DAG、MCP、api-definition→run…
+      # Cross-context tests with a real server and database:
+      # RBAC, delivery, agent workflows, DAGs, MCP, and API execution.
       - name: server scenarios
         run: cargo test -p server --test scenarios --locked -- --ignored --test-threads=1
       - name: environment plugin storage and credentials (isolated databases)
@@ -232,16 +232,16 @@ jobs:
         run: |
           cargo test -p probe --features redis --test redis_live --locked -- --ignored --test-threads=1
           cargo test -p probe --no-default-features --features redis --test redis_commands --locked -- --ignored --test-threads=1
-      # mysql:8 就绪/认证偶有抖动,先设非阻断(本地未跑过);稳定后可改为必过。
+      # MySQL readiness and authentication can be flaky; keep this check non-blocking.
       - name: probe mysql live
         continue-on-error: true
         run: cargo test -p probe --features mysql --test mysql_live --locked -- --ignored --test-threads=1
-      # 全量 API 自测:脚本起 server + 编排打 ~80 个端点 + 断状态码(资源链)。需先有 server 二进制。
+      # Start the built server and verify API workflows and status codes.
       - name: build server binary
         run: cargo build -p server --locked
       - name: full API self-test (scripts/api-coverage.sh)
         run: bash scripts/api-coverage.sh
-      # 前后端契约对账:api.ts 引用的路径必须在 OpenAPI 里(历史缺口走基线,只挡新增漂移)。
+      # Check frontend API paths against OpenAPI; baseline existing gaps.
       - name: web/API contract drift (scripts/ts-drift.sh)
         run: |
           SHEPHERD_BIND=127.0.0.1:9280 ./target/debug/server & SRV=$!
