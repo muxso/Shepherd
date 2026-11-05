@@ -3,8 +3,8 @@ import { test, expect, type Page } from '@playwright/test'
 test.use({ viewport:{ width:1600,height:1100 } })
 const endForMonth=(month:string) => { const [year,value]=month.split('-').map(Number);return `${value===12?year+1:year}-${String(value===12?1:value+1).padStart(2,'0')}-01T00:00:00+08:00` }
 const source = { id:'source-a',name:'测试需求池',project_id:'project' }
-const requirement = { externalId:'req-a',serial:'REQ-42',title:'登录需求',status:'已发布',due:'2026-10-15',delivered:true,newInMonth:true,deliveryClass:'deliveredLate',bugIds:['b1'] }
-const alice = { name:'研发甲',group:'研发组',newRequirements:6,deliveredRequirements:4,linkedBugs:2,bugAffectedRequirements:1,bugRate:25,processedBugs:2,qualityBugs:2,reopenUnknownBugs:0,reopenCount:2,reopenedBugs:1,reopenEvaluatedBugs:2,reopenRate:50,bugs:[{externalId:'b1',serial:'BUG-1',title:'登录失败',status:'已解决',createdAt:'2026-07-01T00:00:00+08:00',bugType:'程序逻辑',responsibles:['研发甲'],developers:['修复人'],testers:['测试人'],reporter:'发现人',processed:true,historyAvailable:true,history:[{id:'1',at:'2026-10-10T02:00:00Z',from:'已解决',to:'重新打开'},{id:'2',at:'2026-10-15T03:00:00Z',from:'已解决',to:'重新打开'}],reopenCount:2,reopenTimes:['2026-10-10T02:00:00Z','2026-10-15T03:00:00Z']},{externalId:'b2',serial:'BUG-2',title:'样式问题',status:'已验证',createdAt:'2026-10-01T00:00:00+08:00',bugType:'界面',responsibles:['研发甲'],developers:['修复人'],testers:[],reporter:'发现人',processed:true,historyAvailable:true,history:[],reopenCount:0,reopenTimes:[]}],dueRequirements:5,onTime:3,deliveredLate:1,overdueAtEnd:1,unknownDelivery:0,delayRate:40,radar:[40,75,60],requirements:[requirement] }
+const requirement = { externalId:'req-a',serial:'REQ-42',title:'登录需求',status:'已发布',due:'2026-10-15',delivered:true,currentDelivered:true,newInMonth:true,deliveryClass:'deliveredLate',bugIds:['b1'] }
+const alice = { name:'研发甲',group:'研发组',newRequirements:6,deliveredRequirements:4,linkedBugs:2,bugAffectedRequirements:1,bugRate:25,processedBugs:2,qualityBugs:2,reopenUnknownBugs:0,reopenCount:2,reopenedBugs:1,reopenEvaluatedBugs:2,reopenRate:50,bugs:[{externalId:'b1',serial:'BUG-1',title:'登录失败',status:'已解决',createdAt:'2026-07-01T00:00:00+08:00',bugType:'程序逻辑',responsibles:['研发甲'],developers:['修复人'],testers:['测试人'],reporter:'发现人',processed:true,historyAvailable:true,history:[{id:'1',at:'2026-10-10T02:00:00Z',from:'已解决',to:'重新打开'},{id:'2',at:'2026-10-15T03:00:00Z',from:'已解决',to:'重新打开'}],reopenCount:2,reopenTimes:['2026-10-10T02:00:00Z','2026-10-15T03:00:00Z']},{externalId:'b2',serial:'BUG-2',title:'样式问题',status:'已验证',createdAt:'2026-10-01T00:00:00+08:00',bugType:'界面',responsibles:['研发甲'],developers:['修复人'],testers:[],reporter:'发现人',processed:true,historyAvailable:true,history:[],reopenCount:0,reopenTimes:[]}],dueRequirements:5,onTime:3,deliveredLate:1,overdueAtEnd:1,unknownDelivery:0,delayRate:20,radar:[40,75,80],requirements:[requirement] }
 const bob = { ...alice,name:'研发乙',group:'协作组',deliveredRequirements:0,linkedBugs:0,bugAffectedRequirements:0,bugRate:null,processedBugs:0,qualityBugs:0,reopenUnknownBugs:0,reopenCount:0,reopenedBugs:0,reopenEvaluatedBugs:0,reopenRate:null,bugs:[],dueRequirements:0,onTime:0,deliveredLate:0,overdueAtEnd:0,unknownDelivery:0,delayRate:null,radar:[0,null,null],requirements:[] }
 async function fixture(page:Page,enabled=true,comparison=false) {
   const calls:URL[]=[]
@@ -21,7 +21,7 @@ async function fixture(page:Page,enabled=true,comparison=false) {
     if (path.endsWith('/member-metrics')) {
       calls.push(url)
       const target=Number(url.searchParams.get('requirementTarget'))
-      body={ source,metrics:{ month:url.searchParams.get('month'),start:comparison ? '2026-11-01T00:00:00+08:00' : '2026-10-01T00:00:00+08:00',endExclusive:comparison ? '2026-11-04T12:00:00+08:00' : endForMonth(url.searchParams.get('month') || '2026-10'),timezone:'Asia/Shanghai',requirementTarget:target,members:[{ ...alice,radar:[Math.min(100,4/target*100),75,60] },bob],newValidBugs:3,linkedValidBugs:2,requirementsMissingDue:1,requirementsMissingTime:0,snapshotBased:true,...(comparison ? { comparisons:{ sameElapsedTime:true,previousMonth:{month:"2026-10",start:"2026-10-01T00:00:00+08:00",endExclusive:"2026-10-04T12:00:00+08:00",members:[{...alice,deliveredRequirements:2,bugRate:50}]},previousYear:{month:"2025-11",start:"2025-11-01T00:00:00+08:00",endExclusive:"2025-11-04T12:00:00+08:00",members:[{...alice,deliveredRequirements:0,bugRate:null}]} } } : {}) } }
+      body={ source,metrics:{ month:url.searchParams.get('month'),start:comparison ? '2026-11-01T00:00:00+08:00' : '2026-10-01T00:00:00+08:00',endExclusive:comparison ? '2026-11-04T12:00:00+08:00' : endForMonth(url.searchParams.get('month') || '2026-10'),timezone:'Asia/Shanghai',requirementTarget:target,members:[{ ...alice,radar:[Math.min(100,4/target*100),75,80] },bob],newValidBugs:3,linkedValidBugs:2,requirementsMissingDue:1,requirementsMissingTime:0,snapshotBased:true,...(comparison ? { comparisons:{ sameElapsedTime:true,previousMonth:{month:"2026-10",start:"2026-10-01T00:00:00+08:00",endExclusive:"2026-10-04T12:00:00+08:00",members:[{...alice,deliveredRequirements:2,bugRate:50}]},previousYear:{month:"2025-11",start:"2025-11-01T00:00:00+08:00",endExclusive:"2025-11-04T12:00:00+08:00",members:[{...alice,deliveredRequirements:0,bugRate:null}]} } } : {}) } }
     }
     await route.fulfill({ json:body })
   })
@@ -35,6 +35,8 @@ test('monthly table and filled radars preserve raw rates, sample sizes and missi
   await expect(panel.getByRole('columnheader',{ name:'含Bug交付需求占比 ↓' })).toBeVisible()
   await expect(panel.getByText('25.0%',{exact:true}).first()).toBeVisible()
   await expect(panel.getByText('1 / 4 项需求',{exact:true})).toBeVisible()
+  await expect(panel.getByText('1 / 5 项需求',{exact:true})).toBeVisible()
+  await expect(panel.getByText('20.0%',{exact:true}).first()).toBeVisible()
   await expect(panel.getByRole('img',{ name:'研发甲个人雷达图' })).toBeVisible()
   await expect(panel.getByRole('img',{ name:'研发甲个人雷达图' }).locator('.yx-radar-value')).toHaveCount(1)
   await expect(panel.getByRole('img',{ name:'研发乙个人雷达图' }).locator('.yx-radar-value')).toHaveCount(0)
@@ -42,7 +44,7 @@ test('monthly table and filled radars preserve raw rates, sample sizes and missi
   expect(calls.at(-1)?.searchParams.get('month')).toBe('2026-10')
   await panel.getByRole('button',{ name:'研发甲',exact:true }).first().click()
   const drawer=page.getByRole('dialog',{ name:'研发甲 · 月度需求明细' })
-  await expect(drawer.getByText('延期交付',{ exact:true })).toBeVisible()
+  await expect(drawer.getByText('已交付，不计延期',{ exact:true })).toBeVisible()
   await drawer.getByRole('button',{ name:'关闭',exact:true }).click()
   await page.screenshot({ path:'/tmp/shepherd-member-radar-light.png',fullPage:true,animations:'disabled' })
 })
@@ -280,9 +282,9 @@ for(const width of [700,390]) {
 test('three group members share the same radar scale with matching legends',async({page})=>{
   await fixture(page)
   const members=[
-    {...alice,name:'算法甲',group:'AI算法组',deliveredRequirements:6,linkedBugs:0,bugAffectedRequirements:0,bugRate:0,radar:[60,100,60]},
-    {...alice,name:'算法乙',group:'AI算法组',deliveredRequirements:4,bugRate:25,processedBugs:2,qualityBugs:2,reopenUnknownBugs:0,reopenCount:2,reopenedBugs:1,reopenEvaluatedBugs:2,reopenRate:50,bugs:[{externalId:'b1',serial:'BUG-1',title:'登录失败',status:'已解决',createdAt:'2026-07-01T00:00:00+08:00',bugType:'程序逻辑',responsibles:['研发甲'],developers:['修复人'],testers:['测试人'],reporter:'发现人',processed:true,historyAvailable:true,history:[{id:'1',at:'2026-10-10T02:00:00Z',from:'已解决',to:'重新打开'},{id:'2',at:'2026-10-15T03:00:00Z',from:'已解决',to:'重新打开'}],reopenCount:2,reopenTimes:['2026-10-10T02:00:00Z','2026-10-15T03:00:00Z']},{externalId:'b2',serial:'BUG-2',title:'样式问题',status:'已验证',createdAt:'2026-10-01T00:00:00+08:00',bugType:'界面',responsibles:['研发甲'],developers:['修复人'],testers:[],reporter:'发现人',processed:true,historyAvailable:true,history:[],reopenCount:0,reopenTimes:[]}],dueRequirements:3,onTime:0,deliveredLate:1,overdueAtEnd:2,delayRate:100,radar:[40,75,0]},
-    {...alice,name:'算法丙',group:'AI算法组',deliveredRequirements:8,linkedBugs:1,bugRate:12.5,dueRequirements:4,onTime:3,deliveredLate:1,overdueAtEnd:0,delayRate:25,radar:[80,87.5,75]},
+    {...alice,name:'算法甲',group:'AI算法组',deliveredRequirements:6,linkedBugs:0,bugAffectedRequirements:0,bugRate:0,radar:[60,100,80]},
+    {...alice,name:'算法乙',group:'AI算法组',deliveredRequirements:4,bugRate:25,processedBugs:2,qualityBugs:2,reopenUnknownBugs:0,reopenCount:2,reopenedBugs:1,reopenEvaluatedBugs:2,reopenRate:50,bugs:[{externalId:'b1',serial:'BUG-1',title:'登录失败',status:'已解决',createdAt:'2026-07-01T00:00:00+08:00',bugType:'程序逻辑',responsibles:['研发甲'],developers:['修复人'],testers:['测试人'],reporter:'发现人',processed:true,historyAvailable:true,history:[{id:'1',at:'2026-10-10T02:00:00Z',from:'已解决',to:'重新打开'},{id:'2',at:'2026-10-15T03:00:00Z',from:'已解决',to:'重新打开'}],reopenCount:2,reopenTimes:['2026-10-10T02:00:00Z','2026-10-15T03:00:00Z']},{externalId:'b2',serial:'BUG-2',title:'样式问题',status:'已验证',createdAt:'2026-10-01T00:00:00+08:00',bugType:'界面',responsibles:['研发甲'],developers:['修复人'],testers:[],reporter:'发现人',processed:true,historyAvailable:true,history:[],reopenCount:0,reopenTimes:[]}],dueRequirements:3,onTime:0,deliveredLate:1,overdueAtEnd:2,delayRate:66.7,radar:[40,75,33.3]},
+    {...alice,name:'算法丙',group:'AI算法组',deliveredRequirements:8,linkedBugs:1,bugRate:12.5,dueRequirements:4,onTime:3,deliveredLate:1,overdueAtEnd:0,delayRate:0,radar:[80,87.5,100]},
   ]
   await page.route('**/member-metrics**',route=>{
     if(!new URL(route.request().url()).pathname.endsWith('/member-metrics'))return route.fallback()
@@ -316,7 +318,10 @@ test('global count sorting covers every page and keeps table, radars, team compa
   await page.reload()
   await expect(firstName()).toHaveText('成员13')
   await panel.getByLabel('成员排序').first().click()
-  await page.getByTitle('交付需求量升序',{exact:true}).click()
+  const sortInput=panel.getByRole('combobox',{name:'成员排序'})
+  await sortInput.press('ArrowUp')
+  await sortInput.press('ArrowUp')
+  await sortInput.press('Enter')
   await expect(firstName()).toHaveText('成员00')
   await panel.getByRole('columnheader',{name:'交付需求量'}).click()
   await expect(firstName()).toHaveText('成员13')
@@ -403,7 +408,7 @@ test('Bug audit includes July legacy and unlinked Bugs, separates responsibility
 test('delivery participation and Bug responsibility keep their own denominators and event units',async ({page})=>{
   await fixture(page)
   await page.setViewportSize({width:1765,height:1800})
-  const person={...alice,name:'研发成员',radar:[30,33.3,60],deliveredRequirements:3,linkedBugs:25,bugAffectedRequirements:2,bugRate:66.7,processedBugs:58,qualityBugs:60,reopenEvaluatedBugs:60,reopenedBugs:11,reopenCount:14,reopenRate:19,bugs:[]}
+  const person={...alice,name:'研发成员',radar:[30,33.3,80],deliveredRequirements:3,linkedBugs:25,bugAffectedRequirements:2,bugRate:66.7,processedBugs:58,qualityBugs:60,reopenEvaluatedBugs:60,reopenedBugs:11,reopenCount:14,reopenRate:19,bugs:[]}
   await page.route('**/member-metrics**',route=>{if(!new URL(route.request().url()).pathname.endsWith('/member-metrics'))return route.fallback();return route.fulfill({json:{source,metrics:{month:'2026-10',endExclusive:endForMonth('2026-10'),requirementTarget:10,members:[person]}}})})
   await page.goto('/devops?view=radar&month=2026-10')
   const panel=page.getByRole('region',{name:'个人月度雷达指标'}),delivery=panel.locator('.yx-member-delivery-table'),quality=panel.locator('.yx-member-quality-table')

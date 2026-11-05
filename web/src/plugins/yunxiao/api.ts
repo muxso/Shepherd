@@ -53,7 +53,7 @@ export interface RequirementOutputData {
 
 export interface MemberRequirementMetric {
   externalId: string; serial: string; title: string; status: string; due: string;
-  delivered: boolean; newInMonth: boolean; deliveryClass: string; bugIds: string[];
+  delivered: boolean; currentDelivered?: boolean; newInMonth: boolean; deliveryClass: string; bugIds: string[];
 }
 export interface MemberBugMetric {
   externalId:string; serial:string; title:string; status:string; reopenCount:number | null; reopenTimes:string[];
@@ -65,7 +65,7 @@ export interface MemberMetric {
   linkedBugs: number; bugAffectedRequirements: number; bugRate: number | null;
   processedBugs:number; qualityBugs:number; reopenUnknownBugs:number;
   reopenCount:number; reopenedBugs:number; reopenEvaluatedBugs:number; reopenRate:number | null; bugs:MemberBugMetric[];
-  dueRequirements: number; onTime: number; deliveredLate: number; overdueAtEnd: number;
+  deliveredDueRequirements?: number; dueRequirements: number; onTime: number; deliveredLate: number; overdueAtEnd: number;
   unknownDelivery: number; delayRate: number | null; radar: [number | null, number | null, number | null];
   requirements: MemberRequirementMetric[];
 }
