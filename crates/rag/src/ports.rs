@@ -46,6 +46,17 @@ pub trait VectorStore: Send + Sync {
     ) -> Result<Option<Vec<Hit>>> {
         Ok(None)
     }
+    /// Pin relative dates to the request clock; older implementations remain compatible.
+    async fn activity_search_at(
+        &self,
+        project_id: &str,
+        question: &str,
+        audience: &Audience,
+        _at_ms: i64,
+    ) -> Result<Option<Vec<Hit>>> {
+        self.activity_search(project_id, question, audience).await
+    }
+
     /// Top-k chunks in `project_id` by cosine similarity to `query`, filtered to what `audience` may see.
     async fn search(
         &self,

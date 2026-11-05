@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use webauth::{AuthUser, SessionStore};
 
-use crate::application::{build_prompt, elapsed_since, ingest, now_ms, retrieve};
+use crate::application::{elapsed_since, ingest, now_ms, retrieve};
 use crate::config::RagConfigHandle;
 use crate::domain::{Audience, RagDocument, RagError, TraceStep};
 use crate::ports::{Chat, Embedder, VectorStore};
@@ -1008,7 +1008,7 @@ async fn ask_stream(
                 yield ev("sources", json!({ "session_id": sid, "sources": sources }));
 
                 // 2) stream the answer token-by-token: the LLM task sends deltas on a channel we forward as `chunk`s
-                let (system, user) = build_prompt(&b.question, &context, &b.history);
+                let (system, user) = crate::application::build_prompt_at(&b.question, &context, &b.history, trace.started_at.parse().unwrap_or_else(|_| crate::application::now_ms()));
                 let (tx, mut rx) = tokio::sync::mpsc::channel::<String>(64);
                 let chat2 = chat.clone();
                 let gen_start = std::time::Instant::now();

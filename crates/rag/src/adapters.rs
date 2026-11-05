@@ -565,8 +565,19 @@ impl VectorStore for PgVectorStore {
         question: &str,
         audience: &Audience,
     ) -> Result<Option<Vec<Hit>>> {
-        use crate::activity::{team_mentioned, ActivityMetadata, ActivityWindow};
-        let Some(window) = ActivityWindow::parse(question, crate::application::now_ms()) else {
+        self.activity_search_at(project_id, question, audience, crate::application::now_ms()).await
+    }
+    async fn activity_search_at(
+        &self,
+        project_id: &str,
+        question: &str,
+        audience: &Audience,
+        at_ms: i64,
+    ) -> Result<Option<Vec<Hit>>> {
+        use crate::activity::{
+            git_change_mentioned, team_mentioned, ActivityMetadata, ActivityWindow,
+        };
+        let Some(window) = ActivityWindow::parse(question, at_ms) else {
             return Ok(None);
         };
         let sql=format!("SELECT d.id,d.source_id FROM ms_rag_document d WHERE d.project_id=$1 AND d.source_type='git_activity' AND {}",audience_where(2,3,4));
@@ -585,21 +596,22 @@ impl VectorStore for PgVectorStore {
             })
             .collect();
         let author_named = metadata.iter().any(|(_, m)| m.matches_author(question));
-        let explicit_activity = [
-            "干了",
-            "干嘛",
-            "干什么",
-            "干啥",
-            "做了",
-            "做什么",
-            "做啥",
-            "改了",
-            "git log",
-            "提交记录",
-            "提交历史",
-        ]
-        .iter()
-        .any(|s| question.to_lowercase().contains(s));
+        let explicit_activity = git_change_mentioned(question)
+            || [
+                "干了",
+                "干嘛",
+                "干什么",
+                "干啥",
+                "做了",
+                "做什么",
+                "做啥",
+                "改了",
+                "git log",
+                "提交记录",
+                "提交历史",
+            ]
+            .iter()
+            .any(|s| question.to_lowercase().contains(s));
         if !author_named && !team_mentioned(question) && !explicit_activity {
             return Ok(None);
         }

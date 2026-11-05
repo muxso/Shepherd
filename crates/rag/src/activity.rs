@@ -23,32 +23,33 @@ impl ActivityWindow {
             return None;
         }
 
-        if ![
-            "干了",
-            "干嘛",
-            "干什么",
-            "干啥",
-            "做了",
-            "做什么",
-            "做啥",
-            "改了",
-            "日报",
-            "周报",
-            "工作总结",
-            "工作内容",
-            "提交记录",
-            "提交历史",
-            "提交了",
-            "有哪些提交",
-            "git log",
-            "daily activity",
-            "daily work",
-            "daily commits",
-            "worked on",
-            "activity",
-        ]
-        .iter()
-        .any(|s| q.contains(s))
+        if !git_change_mentioned(&q)
+            && ![
+                "干了",
+                "干嘛",
+                "干什么",
+                "干啥",
+                "做了",
+                "做什么",
+                "做啥",
+                "改了",
+                "日报",
+                "周报",
+                "工作总结",
+                "工作内容",
+                "提交记录",
+                "提交历史",
+                "提交了",
+                "有哪些提交",
+                "git log",
+                "daily activity",
+                "daily work",
+                "daily commits",
+                "worked on",
+                "activity",
+            ]
+            .iter()
+            .any(|s| q.contains(s))
         {
             return None;
         }
@@ -73,9 +74,9 @@ impl ActivityWindow {
         } else if let Some((month, day)) = partial_month(&q) {
             let start = NaiveDate::from_ymd_opt(today.year(), month, day.unwrap_or(1))?;
             (start, if day.is_some() { start } else { next_month(start)? - Duration::days(1) })
-        } else if q.contains("昨天") || q.contains("yesterday") {
+        } else if q.contains("昨天") || q.contains("昨日") || q.contains("yesterday") {
             (today - Duration::days(1), today - Duration::days(1))
-        } else if q.contains("今天") || q.contains("today") {
+        } else if q.contains("今天") || q.contains("今日") || q.contains("today") {
             (today, today)
         } else if q.contains("上周") {
             let end = today - Duration::days(i64::from(today.weekday().num_days_from_monday()) + 1);
@@ -152,10 +153,89 @@ pub fn author_mentioned(question: &str, name: &str) -> bool {
             && !q[i + name.len()..].chars().next().is_some_and(word)
     })
 }
+/// Git change summaries are event queries even without “git log” or “提交记录”.
+pub fn git_change_mentioned(question: &str) -> bool {
+    let q = question.to_lowercase();
+    (q.contains("git") || q.contains("代码"))
+        && ["变化", "变更", "改动", "更新", "提交", "changes", "updates", "commits"]
+            .iter()
+            .any(|s| q.contains(s))
+}
+/// Recognize only actor-free summaries. An unknown person's name must never expand to the team.
+pub fn generic_git_scope(question: &str) -> bool {
+    if !git_change_mentioned(question) {
+        return false;
+    }
+    let mut rest = question.to_lowercase();
+    for token in [
+        "能不能",
+        "帮我",
+        "请问",
+        "帮忙",
+        "查看",
+        "看看",
+        "一下",
+        "看下",
+        "请",
+        "今天",
+        "今日",
+        "昨天",
+        "昨日",
+        "本周",
+        "这周",
+        "上周",
+        "本月",
+        "这个月",
+        "上个月",
+        "上月",
+        "最近",
+        "过去",
+        "git log",
+        "git",
+        "代码",
+        "变化",
+        "变更",
+        "改动",
+        "更新",
+        "提交",
+        "记录",
+        "历史",
+        "怎么样",
+        "有什么",
+        "有哪些",
+        "如何",
+        "什么",
+        "情况",
+        "总结",
+        "汇总",
+        "有啥",
+        "today",
+        "yesterday",
+        "this week",
+        "last week",
+        "this month",
+        "last month",
+        "changes",
+        "updates",
+        "commits",
+        "what are",
+        "what is",
+        "show me",
+        "the",
+        "的",
+        "了",
+        "吗",
+    ] {
+        rest = rest.replace(token, "");
+    }
+    rest.chars()
+        .all(|c| c.is_whitespace() || c.is_ascii_digit() || "年月日天-/:,.，。?!？！'’".contains(c))
+}
 pub fn team_mentioned(question: &str) -> bool {
     ["所有人", "团队", "大家", "我们", "每个人", "谁", "all authors", "team"]
         .iter()
         .any(|s| question.to_lowercase().contains(s))
+        || generic_git_scope(question)
 }
 
 #[cfg(test)]
@@ -169,6 +249,9 @@ mod tests {
     #[test]
     fn dates_use_shanghai_calendar() {
         for (q, from, to) in [
+            ("今天git变化怎么样", "2026-11-01", "2026-11-01"),
+            ("昨日代码更新情况", "2026-10-31", "2026-10-31"),
+            ("王震今天git有哪些变化", "2026-11-01", "2026-11-01"),
             ("王震昨天干了什么", "2026-10-31", "2026-10-31"),
             ("王震10月19日干了什么", "2026-10-19", "2026-10-19"),
             ("王震10月每天在干嘛", "2026-10-01", "2026-10-31"),
@@ -184,6 +267,14 @@ mod tests {
         assert!(ActivityWindow::parse("每天定时任务如何实现", now()).is_none());
         assert!(ActivityWindow::parse("云效需求每日统计的验收要求", now()).is_none());
         assert!(ActivityWindow::parse("每日支付测试用例的预期结果", now()).is_none());
+    }
+    #[test]
+    fn actor_free_git_summaries_do_not_swallow_unknown_authors() {
+        assert!(team_mentioned("今天git变化怎么样"));
+        assert!(team_mentioned("请帮我看看2026年11月5日git有什么变化？"));
+        assert!(!team_mentioned("张三今天git变化怎么样"));
+        assert!(!team_mentioned("never-indexed-author今天git变化怎么样"));
+        assert!(ActivityWindow::parse("git变更检测如何实现", now()).is_none());
     }
     #[test]
     fn aliases_are_exact_not_substrings() {
