@@ -32,9 +32,9 @@ test('reference cards retain full CJK and long Latin names inside their bounds i
       const lines = [...el.querySelectorAll('tspan')].map(line => line.getBBox())
       const viewport = el.ownerSVGElement!.getBoundingClientRect()
       const screen = rect.getBoundingClientRect()
-      return { contained: lines.every(b => b.x >= box.x && b.y >= box.y && b.x + b.width <= box.x + box.width && b.y + b.height <= box.y + box.height), fitted: screen.left >= viewport.left && screen.right <= viewport.right && screen.top >= viewport.top && screen.bottom <= viewport.bottom }
+      return { id:el.getAttribute('data-reference-node'), box:{x:box.x,y:box.y,width:box.width,height:box.height}, lines:lines.map(b=>({x:b.x,y:b.y,width:b.width,height:b.height})), contained: lines.every(b => b.x >= box.x && b.y >= box.y && b.x + b.width <= box.x + box.width && b.y + b.height <= box.y + box.height), fitted: screen.left >= viewport.left && screen.right <= viewport.right && screen.top >= viewport.top && screen.bottom <= viewport.bottom }
     }))
-    expect(results.every(r => r.contained)).toBe(true)
+    expect(results.filter(r => !r.contained)).toEqual([])
     expect(results.every(r => r.fitted)).toBe(true)
   }
   await checkBounds()

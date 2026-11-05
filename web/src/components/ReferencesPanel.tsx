@@ -451,7 +451,7 @@ function ReferenceGraph({ definition, rows, loading }: { definition: ApiDefiniti
       <svg
         ref={svgRef}
         viewBox={`0 0 ${VW} ${VH}`}
-        style={{ width: '100%', height: '100%', display: 'block', cursor: drag.current ? 'grabbing' : 'grab', touchAction: 'none' }}
+        style={{ width: '100%', height: '100%', display: 'block', WebkitTextSizeAdjust: 'none', textSizeAdjust: 'none', cursor: drag.current ? 'grabbing' : 'grab', touchAction: 'none' }}
         onMouseDown={onDown}
         onMouseMove={onMove}
         onMouseUp={onUp}
