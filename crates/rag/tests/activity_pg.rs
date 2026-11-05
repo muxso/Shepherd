@@ -61,6 +61,29 @@ async fn activity_uses_exact_author_dates_project_and_current_document_audience(
     assert_eq!(own.len(), 1);
     assert_eq!(own[0].document_id, "own");
     assert!(own[0].content.contains("修改支付校验"));
+    let at = chrono::DateTime::parse_from_rfc3339("2026-11-04T23:59:59+08:00")
+        .expect("clock")
+        .timestamp_millis();
+    let today = store
+        .activity_search_at("p", "今天git变化怎么样", &owner, at)
+        .await
+        .expect("today")
+        .expect("activity");
+    assert_eq!(today.len(), 1);
+    assert_eq!(today[0].document_id, "own");
+    assert!(today[0].content.contains("2026-11-04 至 2026-11-04"));
+    let tomorrow = store
+        .activity_search_at("p", "今天git变化怎么样", &owner, at + 2000)
+        .await
+        .expect("next day")
+        .expect("activity");
+    assert!(tomorrow.is_empty(), "never replace missing today's facts with older dates");
+    assert!(store
+        .activity_search_at("p", "张三今天git变化怎么样", &owner, at)
+        .await
+        .expect("unknown author")
+        .expect("activity")
+        .is_empty());
     let reader = Audience {
         user_id: Some("reader".into()),
         visible_group_ids: vec!["readers".into()],
