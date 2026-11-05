@@ -1,3 +1,4 @@
+import { referenceCard } from './referenceCard'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useScopedNavigate } from '../scope'
 import { Button, Empty, Input, Segmented, Table, Tag, Tooltip } from 'antd'
@@ -113,9 +114,6 @@ export default function ReferencesPanel({ definition }: { definition: ApiDefinit
 type GLayout = 'radial' | 'grouped'
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v))
 
-/** Card width from label length (monospace-ish estimate), bounded so short/long names stay tidy. */
-const cardWidth = (label: string) => clamp(label.length * 7.4 + 40, 104, 190)
-const CARD_H = 34
 /** Quadratic-bezier edge that bows gently perpendicular to the center→node line (deck-style curved connectors). */
 function edgePath(cx: number, cy: number, x: number, y: number): string {
   const mx = (cx + x) / 2
@@ -168,7 +166,7 @@ function ReferenceGraph({ definition, rows, loading }: { definition: ApiDefiniti
   const viewRef = useRef(view)
   viewRef.current = view
   const travelRaf = useRef<number | undefined>(undefined)
-  const trim = (s: string, n = 16) => (s.length > n ? s.slice(0, n - 1) + '…' : s)
+  const hub = useMemo(() => referenceCard(definition.name, true), [definition.name])
   // Viewport tracks the container (viewBox uses container pixel size → no letterboxing, content fills).
   const [size, setSize] = useState({ w: 1000, h: 560 })
   const N = rows.length
@@ -188,8 +186,8 @@ function ReferenceGraph({ definition, rows, loading }: { definition: ApiDefiniti
     const key = `${layout}|${N}`
     if (fittedKey.current !== key) {
       fittedKey.current = key
-      const w = Math.max(1, bounds.x1 - bounds.x0 + 200)
-      const h = Math.max(1, bounds.y1 - bounds.y0 + 160)
+      const w = Math.max(1, bounds.x1 - bounds.x0 + 96)
+      const h = Math.max(1, bounds.y1 - bounds.y0 + 120)
       const k = clamp(Math.min(s.w / w, s.h / h), 0.25, 1.6)
       setView({ k, tx: -((bounds.x0 + bounds.x1) / 2) * k, ty: -((bounds.y0 + bounds.y1) / 2) * k })
     }
@@ -237,9 +235,9 @@ function ReferenceGraph({ definition, rows, loading }: { definition: ApiDefiniti
 
   // ---- Layout: node coordinates (origin-centered); `center` = this API's position ----
   const { nodes, center, bounds } = useMemo(() => {
-    const colored = rows.map((r) => ({ ...r, color: r.kind === 'case' ? CASE_COLOR : SCN_COLOR }))
+    const colored = rows.map((r) => ({ ...r, ...referenceCard(r.name), color: r.kind === 'case' ? CASE_COLOR : SCN_COLOR }))
     let center = { x: 0, y: 0 }
-    let placed: { id: string; name: string; resType: string; kind: string; color: string; x: number; y: number }[] = []
+    let placed: (typeof colored[number] & { x: number; y: number })[] = []
     if (layout === 'radial') {
       // Phyllotaxis (sunflower) spread: golden-angle placement gives an organic cloud around the hub,
       // instead of rigid concentric rings — closer to the graphcon-deck look.
@@ -255,23 +253,35 @@ function ReferenceGraph({ definition, rows, loading }: { definition: ApiDefiniti
       // Grouped: center on the left; api cases and scenarios each form a vertical column on the right.
       const cases = colored.filter((r) => r.kind === 'case')
       const scns = colored.filter((r) => r.kind === 'scenario')
-      const gap = 48
+      const gap = Math.max(48, ...colored.map(n => n.height + 24))
       const colX = 420
       const place = (arr: typeof colored, x: number) =>
         arr.map((row, i) => ({ ...row, x, y: (i - (arr.length - 1) / 2) * gap }))
-      placed = [...place(cases, colX), ...place(scns, colX + 360)]
+      placed = [...place(cases, colX), ...place(scns, colX + Math.max(360, ...colored.map(n => n.width + 64)))]
       center = { x: -320, y: 0 }
     }
-    const xs = [center.x, ...placed.map((p) => p.x)]
-    const ys = [center.y, ...placed.map((p) => p.y)]
-    const bounds = { x0: Math.min(...xs), x1: Math.max(...xs), y0: Math.min(...ys), y1: Math.max(...ys) }
+    // Keep complete, variable-height cards apart, including the central API card.
+    const occupied = [{ ...center, width: hub.width, height: hub.height }]
+    for (const node of placed) {
+      let collision
+      while ((collision = occupied.find(p => Math.abs(node.x - p.x) < (node.width + p.width) / 2 + 20 && Math.abs(node.y - p.y) < (node.height + p.height) / 2 + 20))) {
+        node.y = Math.ceil(collision.y + (node.height + collision.height) / 2 + 21)
+      }
+      occupied.push(node)
+    }
+    const bounds = {
+      x0: Math.min(...occupied.map(p => p.x - p.width / 2)),
+      x1: Math.max(...occupied.map(p => p.x + p.width / 2)),
+      y0: Math.min(...occupied.map(p => p.y - p.height / 2)),
+      y1: Math.max(...occupied.map(p => p.y + p.height / 2)),
+    }
     return { nodes: placed, center, bounds }
-  }, [rows, layout, N])
+  }, [rows, layout, N, hub])
 
   // Fit: scale and center to the content bounding box.
   const fit = () => {
-    const w = Math.max(1, bounds.x1 - bounds.x0 + 200)
-    const h = Math.max(1, bounds.y1 - bounds.y0 + 160)
+    const w = Math.max(1, bounds.x1 - bounds.x0 + 96)
+    const h = Math.max(1, bounds.y1 - bounds.y0 + 120)
     const k = clamp(Math.min(VW / w, VH / h), 0.25, 1.6)
     const cxC = (bounds.x0 + bounds.x1) / 2
     const cyC = (bounds.y0 + bounds.y1) / 2
@@ -478,12 +488,13 @@ function ReferenceGraph({ definition, rows, loading }: { definition: ApiDefiniti
             const dim = active != null && !on
             const isFocus = focus === n.id
             const p = posOf(n.id, n.x, n.y)
-            const label = trim(n.name)
-            const w = cardWidth(label)
+            const w = n.width
+            const h = n.height
             const dragging = draggingId === n.id
             return (
               <g
                 key={n.id}
+                data-reference-node={n.id}
                 transform={`translate(${p.x} ${p.y})`}
                 onMouseEnter={() => setHover(n.id)}
                 onMouseLeave={() => setHover((h) => (h === n.id ? null : h))}
@@ -493,32 +504,32 @@ function ReferenceGraph({ definition, rows, loading }: { definition: ApiDefiniti
                 style={{ cursor: dragging ? 'grabbing' : 'pointer', transition: 'opacity .16s' }}
               >
                 <title>{`${n.resType} · ${n.name}（${n.id.slice(0, 8)}）— ${isFocus ? t('apidef.refClickOpen', '点击打开') : t('apidef.refClickFocus', '点击聚焦')}`}</title>
-                {isFocus && <rect x={-w / 2 - 4} y={-CARD_H / 2 - 4} width={w + 8} height={CARD_H + 8} rx={12} fill="none" stroke={n.color} strokeWidth={1.5} opacity={0.4} />}
+                {isFocus && <rect x={-w / 2 - 4} y={-h / 2 - 4} width={w + 8} height={h + 8} rx={12} fill="none" stroke={n.color} strokeWidth={1.5} opacity={0.4} />}
                 <rect
                   x={-w / 2}
-                  y={-CARD_H / 2}
+                  y={-h / 2}
                   width={w}
-                  height={CARD_H}
+                  height={h}
                   rx={9}
                   fill={C.panel}
                   stroke={on || isFocus ? n.color : C.border}
                   strokeWidth={on || isFocus ? 2 : 1.25}
                   filter={dim ? undefined : 'url(#ref-card-shadow)'}
                 />
-                <circle cx={-w / 2 + 15} cy={0} r={4.5} fill={n.color} />
-                <text x={-w / 2 + 27} y={4} fontSize={12.5} fill={on ? C.text : C.text2} fontWeight={on ? 600 : 500} style={{ pointerEvents: 'none' }}>
-                  {label}
+                <circle cx={-w / 2 + 15} cy={-h / 2 + 19} r={4.5} fill={n.color} />
+                <text fontFamily="system-ui, sans-serif" fontSize={12.5} fill={on ? C.text : C.text2} fontWeight={500} style={{ pointerEvents: 'none' }}>
+                  {n.lines.map((line, i) => <tspan key={i} x={-w / 2 + 27} y={-h / 2 + 23 + i * 18}>{line}</tspan>)}
                 </text>
               </g>
             )
           })}
           {/* Center: this API — the hub card. Click recenters (travel back to overview). */}
-          <g transform={`translate(${center.x} ${center.y})`} onClick={() => travelTo(HUB)} style={{ cursor: 'pointer' }}>
+          <g data-reference-hub="true" transform={`translate(${center.x} ${center.y})`} onClick={() => travelTo(HUB)} style={{ cursor: 'pointer' }}>
             <title>{`${definition.method || definition.protocol} ${definition.name} — ${t('apidef.refBackToHub', '回到中心')}`}</title>
-            {focus === HUB && <rect x={-77} y={-32} width={154} height={64} rx={15} fill="none" stroke={C.brand} strokeWidth={1.5} opacity={0.35} />}
-            <rect x={-72} y={-27} width={144} height={54} rx={12} fill={C.brand} filter="url(#ref-card-shadow)" />
-            <text x={0} y={-4} textAnchor="middle" fontSize={13} fill="#fff" fontWeight={700} letterSpacing={0.4} style={{ pointerEvents: 'none' }}>{definition.method || definition.protocol}</text>
-            <text x={0} y={15} textAnchor="middle" fontSize={11} fill="rgba(255,255,255,0.82)" style={{ pointerEvents: 'none' }}>{trim(definition.name, 15)}</text>
+            {focus === HUB && <rect x={-hub.width / 2 - 5} y={-hub.height / 2 - 5} width={hub.width + 10} height={hub.height + 10} rx={15} fill="none" stroke={C.brand} strokeWidth={1.5} opacity={0.35} />}
+            <rect x={-hub.width / 2} y={-hub.height / 2} width={hub.width} height={hub.height} rx={12} fill={C.brand} filter="url(#ref-card-shadow)" />
+            <text x={0} y={-hub.height / 2 + 23} textAnchor="middle" fontSize={13} fill="#fff" fontWeight={700} letterSpacing={0.4} style={{ pointerEvents: 'none' }}>{definition.method || definition.protocol}</text>
+            <text textAnchor="middle" fontFamily="system-ui, sans-serif" fontWeight={500} fontSize={11} fill="rgba(255,255,255,0.82)" style={{ pointerEvents: 'none' }}>{hub.lines.map((line, i) => <tspan key={i} x={0} y={-hub.height / 2 + 43 + i * 18}>{line}</tspan>)}</text>
           </g>
         </g>
       </svg>
