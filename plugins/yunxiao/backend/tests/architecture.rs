@@ -11,6 +11,11 @@ fn storage_has_no_native_business_table_dependencies() {
         "src/adapters/requirement_output.sql",
         "src/adapters/bug_statistics.sql",
         "src/adapters/member_metrics.sql",
+        "src/adapters/team_activity.sql",
+        "migrations/0002_author_identities.sql",
+        "migrations/0003_activity_members.sql",
+        "migrations/0004_identity_group_aggregation.sql",
+        "migrations/0005_activity_review_policy.sql",
         "migrations/0001_external_facts.sql",
     ] {
         let source = fs::read_to_string(base.join(relative)).expect("storage source");

@@ -80,7 +80,7 @@ pub(super) fn rate(numerator: usize, denominator: usize) -> Option<f64> {
 }
 const DELIVERED: &[&str] = &["已发布", "已交付", "已完成", "已验收", "完成"];
 const CANCELLED: &[&str] = &["已取消", "已拒绝", "已关闭", "已完成", "已验收", "完成"];
-const INVALID_BUG: &[&str] = &[
+pub(super) const INVALID_BUG: &[&str] = &[
     "已取消",
     "已拒绝",
     "已拒绝（不修复）",
@@ -316,7 +316,9 @@ fn build_period(
                     // Pending delay is a current-snapshot risk, not historical delivery lateness.
                     // A delivered requirement never re-enters it, even if delivered after the
                     // selected period or missing a completion timestamp.
-                    class = if current_delivered {
+                    class = if text(data, "status") == "待发布" {
+                        "pendingRelease"
+                    } else if current_delivered {
                         match changed {
                             Some(t) if t < deadline => "onTime",
                             Some(_) => "deliveredLate",
@@ -422,7 +424,10 @@ fn build_period(
                 bug_rows.iter().filter(|bug| bug.reopen_count.is_some_and(|n| n > 0)).count();
             let reopen_count = bug_rows.iter().filter_map(|bug| bug.reopen_count).sum();
             let reopen_rate = if unknown_bugs == 0 { rate(reopened, processed) } else { None };
-            let due = rows.iter().filter(|r| r.delivery_class != "notDue").count();
+            let due = rows
+                .iter()
+                .filter(|r| !["notDue", "pendingRelease"].contains(&r.delivery_class.as_str()))
+                .count();
             let unknown = count("unknown");
             let bug_rate = if bug_links_available { rate(affected, delivered_count) } else { None };
             let delay_rate = rate(count("overdueAtEnd"), due - unknown);

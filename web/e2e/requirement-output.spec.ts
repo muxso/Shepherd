@@ -30,6 +30,8 @@ async function fixture(page: Page, enabled = true) {
     if (path === '/requirement/native/version/1') body = version
     if (path === '/api/devops/sources') body = { items: [source] }
     if (path.endsWith('/dashboard')) body = { source, authors: [], totals: { requirements: 1, bugs: 2, sprints: 0, delivered: 1, delayed: 0 }, bugStatistics: { total: 2, new: 1, linked: 2, unlinked: 0, statuses: [{ status: '修复中', count: 2 }], reporters: [{ name: '测试乙', count: 2 }] } }
+    if (path.endsWith('/bug-statistics')) body = { source, from:'2026-11-01',through:'2026-11-07',timezone:'Asia/Shanghai',total:2,new:2,linked:2,unlinked:0,unassigned:0,missingTime:0,statuses:[{status:'修复中',count:2}],people:[{name:'测试乙',count:2}],reporters:[{name:'测试乙',count:2}],personOptions:['测试乙'],groups:['研发组'],trend:[{date:'2026-11-07',value:2}],priorities:[] }
+    if (path.endsWith('/team-activity')) body = { source,role:'code',days:7,from:'2026-11-01',through:'2026-11-07',permissions:{requirements:true,bugs:true,testcases:true},events:[{id:'commit:a',externalId:'repo:a',actor:'研发丙',kind:'commit',date:'2026-11-07',at:'2026-11-07T15:00:00+08:00',repoId:'a',repo:'服务端仓库',additions:12,deletions:3,requirements:[{externalId:'cloud',serial:'REQ-42',title:'登录需求'}]}],bugs:[],members:[] }
     if (path.endsWith('/records')) body = { items: [{ externalId: 'cloud', serial: 'REQ-42', title: '登录需求' }], total: 1 }
     if (path === '/api/devops/requirement-output') { calls.push(url); body = output }
     if (['/api/module','/functional-case','/api/definition','/requirement/native/functional-coverage'].includes(path)) body = []
@@ -92,6 +94,7 @@ test('devops visualizes one requirement across product, testing and multiple rep
   const calls = await fixture(page)
   await page.goto('/devops')
   await page.getByRole('tab', { name: '需求产出', exact: true }).click()
+  await page.getByText('单项需求', { exact:true }).click()
   const panel = page.getByRole('region', { name: '需求岗位产出' })
   await expect(panel.getByText('产品 · 需求', { exact: true })).toBeVisible()
   await expect(panel.getByText('测试 · 缺陷', { exact: true })).toBeVisible()
@@ -102,5 +105,39 @@ test('devops visualizes one requirement across product, testing and multiple rep
   await page.getByRole('tab', { name: '缺陷统计', exact: true }).click()
   const stats = page.getByRole('region', { name: '云效缺陷统计' })
   await expect(stats.getByText('已关联需求')).toBeVisible()
-  await expect(stats.getByRole('cell', { name: '测试乙', exact: true })).toBeVisible()
+  await expect(stats.getByRole('button', { name: '测试乙 2 个', exact: true })).toBeVisible()
+})
+
+test('requirement overview starts with a chart and drills into the selected requirement', async ({page}) => {
+  const calls=await fixture(page)
+  await page.goto('/devops?view=delivery&source=source')
+  const overview=page.getByLabel('需求产出可视化总览')
+  await expect(overview.getByLabel('需求参与人数、代码变动、仓库与缺陷气泡图')).toHaveAttribute('aria-busy','false')
+  await expect(overview.locator('.ant-table')).toHaveCount(0)
+  expect(calls).toHaveLength(0)
+  await overview.getByRole('button',{name:/参与人数最多/}).click()
+  const detail=page.getByRole('dialog',{name:'REQ-42 · 需求证据'})
+  await detail.getByRole('button',{name:'查看需求产出',exact:true}).click()
+  await expect(page.getByText('产品 · 需求',{exact:true})).toBeVisible()
+  await expect.poll(()=>calls.at(-1)?.searchParams.get('reference')).toBe('cloud')
+})
+
+test('defect time, person and group filters are sent together with explicit person semantics', async ({page}) => {
+  await fixture(page);const queries:URL[]=[]
+  await page.route('**/bug-statistics?**',route=>{queries.push(new URL(route.request().url()));return route.fulfill({json:{source,from:'2026-11-01',through:'2026-11-07',timezone:'Asia/Shanghai',total:2,new:2,linked:1,unlinked:1,unassigned:0,missingTime:0,statuses:[{status:'修复中',count:2}],people:[{name:'测试乙',count:2}],reporters:[{name:'测试乙',count:2}],personOptions:['测试乙'],groups:['研发组'],trend:[{date:'2026-11-07',value:2}],priorities:[{name:'高',count:2}]}})})
+  await page.goto('/devops?view=bugs&source=source')
+  const panel=page.getByRole('region',{name:'云效缺陷统计'})
+  await expect(panel.getByRole('img',{name:'所选范围新增缺陷趋势'})).toBeVisible()
+  await panel.getByRole('combobox',{name:'缺陷时间范围',exact:true}).click();await page.locator('.ant-select-dropdown:visible').getByTitle('最近 30 天',{exact:true}).click()
+  await panel.getByRole('combobox',{name:'缺陷人员口径',exact:true}).click();await page.locator('.ant-select-dropdown:visible').getByTitle('实际发现人',{exact:true}).click()
+  await panel.getByRole('combobox',{name:'缺陷人员',exact:true}).click();await page.locator('.ant-select-dropdown:visible').getByTitle('测试乙',{exact:true}).click()
+  await panel.getByRole('combobox',{name:'缺陷分组',exact:true}).click();await page.locator('.ant-select-dropdown:visible').getByTitle('研发组',{exact:true}).click()
+  await expect.poll(()=>queries.at(-1)?.searchParams.get('days')).toBe('30')
+  await expect.poll(()=>queries.at(-1)?.searchParams.get('personRole')).toBe('reporter')
+  await expect.poll(()=>queries.at(-1)?.searchParams.get('person')).toBe('测试乙')
+  await expect.poll(()=>queries.at(-1)?.searchParams.get('group')).toBe('研发组')
+  const dates=panel.locator('.ant-picker-range input');await dates.first().fill('2026-11-01');await dates.first().press('Enter');await dates.nth(1).fill('2026-11-07');await dates.nth(1).press('Enter')
+  await expect.poll(()=>queries.at(-1)?.searchParams.get('from')).toBe('2026-11-01')
+  await expect.poll(()=>queries.at(-1)?.searchParams.get('through')).toBe('2026-11-07')
+  expect(queries.at(-1)?.searchParams.has('days')).toBe(false)
 })

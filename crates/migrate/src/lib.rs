@@ -1,3 +1,4 @@
+//! User appearance preferences belong to the host database.
 //! Legacy Yunxiao migrations are validation-only; new host databases never apply them.
 //! Database migrations: embeds the sqlx migrations under this crate's
 //! migrations/ dir and runs them in order; also provides PgPool connect and

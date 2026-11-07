@@ -1,25 +1,27 @@
 import { useEffect, useState } from 'react'
-import { Alert, Card, Empty, Select, Space, Spin, Table, Tabs, Tag, Typography } from 'antd'
-import { ArrowRightOutlined } from '@ant-design/icons'
+import { Alert, Card, Empty, Segmented, Select, Space, Spin, Table, Tabs, Tag, Typography } from 'antd'
 import { ApiError } from '../../api'
 import { devopsApi, type DevopsRow, type RequirementOutputData } from './api'
+import RequirementOverview from './RequirementOverview'
 import './requirement-output.css'
+import './management.css'
 
-interface Props { sourceId?: string; projectId?: string; reference?: string }
+interface Props { sourceId?: string; projectId?: string; reference?: string; revision?: number }
 const when = (value: unknown) => typeof value === 'string' && value ? new Date(value).toLocaleString('zh-CN') : '—'
 const names = (items: { name: string }[] = []) => items.map(item => item.name).join('、') || '未记录'
 const lines = (value: number | null) => value == null ? '未知' : value.toLocaleString('zh-CN')
 
-export default function RequirementOutput({ sourceId, projectId, reference: initialReference = '' }: Props) {
+export default function RequirementOutput({ sourceId, projectId, reference: initialReference = '', revision = 0 }: Props) {
   const [reference, setReference] = useState(initialReference)
+  const [overview, setOverview] = useState(!!sourceId && !initialReference)
   const [search, setSearch] = useState('')
   const [options, setOptions] = useState<{ value: string; label: string }[]>([])
   const [data, setData] = useState<RequirementOutputData | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
-  const [days, setDays] = useState(0)
+  const [days, setDays] = useState(initialReference || !sourceId ? 0 : 7)
   const [bugPage, setBugPage] = useState(1), [commitPage, setCommitPage] = useState(1)
-  useEffect(() => { setReference(initialReference); setBugPage(1); setCommitPage(1) }, [initialReference, sourceId, projectId])
+  useEffect(() => { setReference(initialReference); setOverview(!!sourceId && !initialReference); setBugPage(1); setCommitPage(1) }, [initialReference, sourceId, projectId])
   useEffect(() => {
     if (!sourceId) return
     let live = true
@@ -28,13 +30,13 @@ export default function RequirementOutput({ sourceId, projectId, reference: init
         if (!live) return
         const next = result.items.map(item => ({ value: String(item.externalId), label: `${item.serial || ''} ${item.title || ''}`.trim() }))
         setOptions(next)
-        setReference(current => current || next[0]?.value || '')
+        if (!overview) setReference(current => current || next[0]?.value || '')
       }).catch(e => { if (live) setError(String(e.message || e)) })
     }, 250)
     return () => { live = false; clearTimeout(timer) }
-  }, [sourceId, search])
+  }, [sourceId, search, overview])
   useEffect(() => {
-    if (!reference || (!sourceId && !projectId)) { setData(null); return }
+    if (overview || !reference || (!sourceId && !projectId)) { setData(null); return }
     let live = true
     setLoading(true); setError(''); setData(null)
     devopsApi.requirementOutput({ ...(sourceId ? { sourceId } : { projectId: projectId! }), reference,
@@ -42,20 +44,21 @@ export default function RequirementOutput({ sourceId, projectId, reference: init
       .catch(e => { if (live && !(e instanceof ApiError && e.status === 404)) setError(String(e.message || e)) })
       .finally(() => { if (live) setLoading(false) })
     return () => { live = false }
-  }, [sourceId, projectId, reference, days, bugPage, commitPage])
+  }, [sourceId, projectId, reference, days, bugPage, commitPage, overview, revision])
   const output = data?.output
   const requirement = data?.requirement
   return <section aria-label="需求岗位产出" className="yx-requirement-output">
     <div className="yx-requirement-toolbar">
+      {sourceId && <Segmented aria-label="需求产出视图" value={overview ? 'overview' : 'detail'} onChange={value => setOverview(value === 'overview')} options={[{value:'overview',label:'需求总览'},{value:'detail',label:'单项需求'}]} />}
       {sourceId && <Select aria-label="选择产出需求" showSearch filterOption={false} onSearch={setSearch}
         style={{ width: 480, maxWidth: '100%' }} placeholder="搜索需求编号或标题" value={reference || undefined}
         options={options.some(item => item.value === reference) ? options : requirement ? [{ value: reference, label: `${requirement.serial || ''} ${requirement.title || ''}` }, ...options] : options}
-        onChange={value => { setReference(value); setBugPage(1); setCommitPage(1) }} />}
+        onChange={value => { setOverview(false); setReference(value); setBugPage(1); setCommitPage(1) }} />}
       <Space size={8}>{!sourceId && <Tag>云效插件</Tag>}<Select aria-label="需求产出范围" value={days} onChange={value => { setDays(value); setBugPage(1); setCommitPage(1) }}
         options={[{ value: 0, label: '全部已采集' }, ...[7,30,90,365].map(value => ({ value, label: `最近 ${value} 天` }))]} /></Space>
     </div>
     {error && <Alert type="error" message="需求产出读取失败" description={error} />}
-    <Spin spinning={loading}>
+    {overview && sourceId ? <RequirementOverview sourceId={sourceId} days={days} revision={revision} openRequirement={value => {setReference(value);setOverview(false);setBugPage(1);setCommitPage(1)}} /> : <Spin spinning={loading}>
       {!loading && !data && !error && <Empty description={reference ? '未找到对应的同步需求' : '当前需求尚未关联同步产出'} />}
       {data && requirement && output && <>
         <div className="yx-role-flow">
@@ -64,13 +67,11 @@ export default function RequirementOutput({ sourceId, projectId, reference: init
             <Tag>{String(requirement.status || '未记录状态')}</Tag>
             <dl><dt>创建人</dt><dd>{requirement.creator || '未记录'}</dd><dt>当前负责人</dt><dd>{requirement.owner || '未记录'}</dd></dl>
           </Card>
-          <ArrowRightOutlined className="yx-role-arrow" />
           <Card size="small" title="测试 · 缺陷">
             <div className="yx-role-number">{data.permissions.bugs ? output.bugTotal : '—'}<small>关联缺陷</small></div>
             <dl><dt>实际发现人</dt><dd>{data.permissions.bugs ? names(output.testers) : '无缺陷读取权限'}</dd></dl>
             <Space size={[4,4]} wrap>{output.bugStates?.map(state => <Tag key={state.status}>{state.status} {state.count}</Tag>)}</Space>
           </Card>
-          <ArrowRightOutlined className="yx-role-arrow" />
           <Card size="small" title="研发 · 代码与仓库">
             <div className="yx-role-number">{output.commitTotal}<small>实际提交 · {output.repositories.length} 个仓库</small></div>
             <dl><dt>代码作者</dt><dd>{names(output.developers)}</dd></dl>
@@ -99,6 +100,6 @@ export default function RequirementOutput({ sourceId, projectId, reference: init
         ]} />
         <Typography.Text type="secondary" className="yx-output-coverage">代码采集范围：{data.source.code_since?.slice(0,10) || '未知'} 至 {data.source.code_until?.slice(0,10) || '未知'}；按实际创建人、提交作者和明确关联归属。</Typography.Text>
       </>}
-    </Spin>
+    </Spin>}
   </section>
 }

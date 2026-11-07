@@ -17,7 +17,7 @@ export function MemberRadar({ member }: { member: MemberMetric }) {
     </g>)}
   </svg>
 }
-export const radarColors = ['#3370FF','#D97706','#0F8A6B','#9254DE','#C83E75','#137C9B']
+export const radarColors = ['var(--brand)','#D97706','#0F8A6B','#9254DE','#C83E75','#137C9B']
 export function GroupRadar({ group,members }: { group:string; members:MemberMetric[] }) {
   return <svg viewBox="-140 -135 280 240" role="img" aria-label={`${group}组内成员雷达对比图`} className="yx-group-radar">
     <title>{group}：{members.map(p => p.name).join('、')}的交付量、关联质量与交付时效</title>

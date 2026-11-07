@@ -24,6 +24,23 @@ pub struct UserService {
 }
 
 impl UserService {
+    pub async fn theme(
+        &self,
+        user_id: &str,
+    ) -> Result<Option<crate::domain::UserTheme>, UserCmdError> {
+        Ok(self.repo.theme(user_id).await?)
+    }
+    pub async fn save_theme(
+        &self,
+        user_id: &str,
+        mode: &str,
+        color: &str,
+    ) -> Result<crate::domain::UserTheme, UserCmdError> {
+        let theme = crate::domain::UserTheme::new(mode, color)?;
+        self.repo.save_theme(user_id, &theme).await?;
+        Ok(theme)
+    }
+
     pub fn new(repo: Arc<dyn UserRepository>) -> Self {
         Self { repo }
     }

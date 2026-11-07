@@ -1,15 +1,13 @@
-// Shepherd design baseline: clean, light style (after Volcengine console / Arco design language).
-// Key decision: brand = standard blue; green is reserved for the "success" semantic (brand ≠ success).
-// Light = white panels + neutral gray text + faint borders; dark = neutral dark gray.
-// AntD theme tokens change here, apply globally; non-AntD custom styles use the CSS vars in index.css (same values).
+// Primary colors follow the user palette; semantic status colors remain independent.
 import { theme as antdTheme, type ThemeConfig } from 'antd'
+import { DEFAULT_PRIMARY_COLOR, themePalette } from './themeColor'
 
 export type ThemeMode = 'light' | 'dark'
 
 // Brand & semantic colors (light)
-export const BRAND = '#1664ff'
-const BRAND_HOVER = '#4086ff'
-const BRAND_ACTIVE = '#0e42d2'
+export const BRAND = DEFAULT_PRIMARY_COLOR
+const BRAND_HOVER = '#599F94'
+const BRAND_ACTIVE = '#397F74'
 
 const fontFamily =
   "'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', system-ui, sans-serif"
@@ -32,7 +30,7 @@ const shared: ThemeConfig['token'] = {
   wireframe: false,
 }
 
-export const lightTheme: ThemeConfig = {
+const lightBase: ThemeConfig = {
   algorithm: antdTheme.defaultAlgorithm,
   token: {
     ...shared,
@@ -61,13 +59,13 @@ export const lightTheme: ThemeConfig = {
   },
 }
 
-export const darkTheme: ThemeConfig = {
+const darkBase: ThemeConfig = {
   algorithm: antdTheme.darkAlgorithm,
   token: {
     ...shared,
-    colorPrimary: '#4086ff', // standard blue, brightened for the dark gray canvas
-    colorInfo: '#4086ff',
-    colorLink: '#5b9aff',
+    colorPrimary: BRAND, // Adjusted by the selected user palette.
+    colorInfo: BRAND,
+    colorLink: BRAND,
     colorSuccess: '#27c346',
     colorWarning: '#ff9a2e',
     colorError: '#f76965',
@@ -88,12 +86,17 @@ export const darkTheme: ThemeConfig = {
   },
   components: {
     Layout: { headerBg: 'transparent', bodyBg: 'transparent', siderBg: 'transparent' },
-    Menu: { itemSelectedColor: '#5b9aff', itemSelectedBg: 'transparent' },
+    Menu: { itemSelectedColor: BRAND, itemSelectedBg: 'transparent' },
     Table: { headerBg: '#24262e', headerColor: '#a3aab6', rowHoverBg: '#24262e' },
-    Tabs: { inkBarColor: '#4086ff', itemSelectedColor: '#5b9aff' },
+    Tabs: { inkBarColor: BRAND, itemSelectedColor: BRAND },
     Card: { borderRadiusLG: 8 },
     Segmented: { itemSelectedBg: '#24262e', trackBg: '#161719' },
   },
 }
 
-export const themeFor = (mode: ThemeMode) => (mode === 'dark' ? darkTheme : lightTheme)
+export const themeFor = (mode: ThemeMode, color = DEFAULT_PRIMARY_COLOR): ThemeConfig => {
+  const base = mode === 'dark' ? darkBase : lightBase, palette = themePalette(color, mode)
+  return { ...base, token: { ...base.token, colorPrimary: palette.primary, colorInfo: palette.primary, colorLink: palette.primary, colorTextLightSolid: palette.onPrimary }, components: { ...base.components, Button: { ...base.components?.Button, colorPrimaryHover: palette.hover, colorPrimaryActive: palette.active }, Menu: { ...base.components?.Menu, itemSelectedColor: palette.primary }, Tabs: { ...base.components?.Tabs, inkBarColor: palette.primary, itemSelectedColor: palette.primary } } }
+}
+export const lightTheme = themeFor('light')
+export const darkTheme = themeFor('dark')
