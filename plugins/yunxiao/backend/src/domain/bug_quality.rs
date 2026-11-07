@@ -47,7 +47,7 @@ pub struct BugQuality {
     #[serde(skip)]
     pub by_person: BTreeMap<String, Vec<BugMetric>>,
 }
-fn people(data: &Value, role: &str) -> BTreeSet<String> {
+pub(super) fn people(data: &Value, role: &str) -> BTreeSet<String> {
     data.get("customFieldValues")
         .and_then(Value::as_array)
         .into_iter()

@@ -466,3 +466,246 @@ async fn code_authors_use_exact_month_source_and_requirement_visibility() {
         .await
         .expect("cleanup source");
 }
+
+#[tokio::test]
+#[ignore = "requires isolated SHEPHERD_YUNXIAO_TEST_DATABASE_URL"]
+async fn configurable_identities_apply_before_every_code_query_and_survive_sync() {
+    use chrono::{DateTime, Duration, FixedOffset};
+    use shepherd_yunxiao::domain::{
+        author_identities::AuthorIdentities,
+        code_authors::CodeAuthorsQuery,
+        team_activity::{ActivityMembers, ActivityPermissions, ActivityQuery, ActivityRole},
+    };
+    let pool = sqlx::PgPool::connect(
+        &std::env::var("SHEPHERD_YUNXIAO_TEST_DATABASE_URL").expect("isolated db"),
+    )
+    .await
+    .expect("connect");
+    shepherd_yunxiao::adapters::pg::migrate(&pool).await.expect("migrate");
+    let store = PgStore(pool.clone());
+    let mut ids = Vec::new();
+    for _ in 0..2 {
+        let s = store
+            .create_source(NewSource {
+                project_id: "identity-test".into(),
+                cloud_org_id: "test".into(),
+                cloud_project_id: uuid::Uuid::new_v4().to_string(),
+                name: "identity test".into(),
+            })
+            .await
+            .expect("source");
+        ids.push(s["id"].as_str().expect("id").to_owned());
+    }
+    let clock: serde_json::Value =
+        sqlx::query_scalar("SELECT to_jsonb(now())").fetch_one(&pool).await.expect("clock");
+    let now = DateTime::parse_from_rfc3339(clock.as_str().expect("clock string")).expect("time");
+    let stamp = (now - Duration::hours(1)).to_rfc3339();
+    let records = vec![
+        Record {
+            kind: "requirement".into(),
+            external_id: "r1".into(),
+            data: json!({"serial":"REQ-1","title":"first request","creator":"Product creator","owner":"Delivery owner","status":"已发布","createdAt":stamp,"statusChangedAt":stamp,"url":"https://example.com/requests/r1"}),
+        },
+        Record {
+            kind: "requirement".into(),
+            external_id: "r2".into(),
+            data: json!({"serial":"REQ-2","title":"second request","createdAt":stamp}),
+        },
+        Record {
+            kind: "commit".into(),
+            external_id: "repo:a".into(),
+            data: json!({"author":"Alice","group":"Team","repoId":"repo","repo":"service","sha":"a","authoredAt":stamp,"requirementIds":["r1"],"additions":10,"deletions":5}),
+        },
+        Record {
+            kind: "commit".into(),
+            external_id: "repo:b".into(),
+            data: json!({"author":"git-a","group":"待归属","repoId":"repo","repo":"service","sha":"b","authoredAt":stamp,"requirementIds":["r1","REQ-1","r2"],"additions":20,"deletions":2,"url":"https://codeup.aliyun.com/org/service/commit/b"}),
+        },
+        Record {
+            kind: "commit".into(),
+            external_id: "repo-2:c".into(),
+            data: json!({"author":"git-b","group":"待归属","repoId":"repo-2","repo":"console","sha":"c","authoredAt":stamp,"requirementIds":["r1"]}),
+        },
+        Record {
+            kind: "bug".into(),
+            external_id: "bug".into(),
+            data: json!({"creator":"Real reporter","owner":"Not the creator","createdAt":stamp,"requirementIds":["r1"],"raw":{"customFieldValues":[{"fieldName":"缺陷责任人","fieldFormat":"user","values":[{"identifier":"alice-id","displayValue":"git-b"}]}]}}),
+        },
+        Record {
+            kind: "testcase".into(),
+            external_id: "case".into(),
+            data: json!({"creator":"Real case author","owner":"Not the case creator","createdAt":stamp}),
+        },
+    ];
+    for r in &records {
+        sqlx::query(
+            "INSERT INTO ms_devops_entity(source_id,kind,external_id,payload) VALUES($1,$2,$3,$4)",
+        )
+        .bind(&ids[0])
+        .bind(&r.kind)
+        .bind(&r.external_id)
+        .bind(&r.data)
+        .execute(&pool)
+        .await
+        .expect("fact");
+    }
+    sqlx::query("INSERT INTO ms_devops_entity(source_id,kind,external_id,payload) VALUES($1,'commit','repo:b',$2)").bind(&ids[1]).bind(&records[3].data).execute(&pool).await.expect("foreign source");
+    for id in &ids {
+        sqlx::query("UPDATE ms_devops_source SET last_success_at=now(),code_since=now()-interval '90 days',code_until=now() WHERE id=$1").bind(id).execute(&pool).await.expect("coverage");
+    }
+    let config:AuthorIdentities=serde_json::from_value(json!({"identities":[{"name":"Alice","aliases":["git-a","git-b"]},{"name":"Bob","group":"Other team","aliases":["git-c"]}]})).expect("config");
+    store.set_author_identities(&ids[0], config.clone()).await.expect("save");
+    let invalid:AuthorIdentities=serde_json::from_value(json!({"identities":[{"name":"Alice","aliases":["shared"]},{"name":"Bob","aliases":["shared"]}]})).expect("invalid");
+    assert!(store.set_author_identities(&ids[0], invalid).await.is_err());
+    assert_eq!(
+        store.author_identities(&ids[0]).await.expect("config")["identities"]
+            .as_array()
+            .expect("identities")
+            .len(),
+        2
+    );
+    let dashboard = store.dashboard(&ids[0], 7).await.expect("dashboard");
+    assert_eq!(dashboard["authors"].as_array().expect("authors").len(), 1);
+    assert_eq!(dashboard["authors"][0]["name"], "Alice");
+    assert_eq!(dashboard["authors"][0]["group"], "Team");
+    assert_eq!(dashboard["authors"][0]["commits"], 3);
+    assert_eq!(dashboard["authors"][0]["unknownStats"], 1);
+    assert_eq!(dashboard["productivity"]["metrics"]["commits"]["contributors"][0]["name"], "Alice");
+    assert_eq!(dashboard["productivity"]["metrics"]["commits"]["contributors"][0]["count"], 3);
+    let rows = store
+        .records(
+            &ids[0],
+            ListQuery {
+                kind: Some("commit".into()),
+                search: Some("Alice".into()),
+                group: Some("Team".into()),
+                page_size: Some(1),
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("filtered page");
+    assert_eq!(rows["total"], 3);
+    assert_eq!(rows["items"].as_array().expect("page").len(), 1);
+    let raw = store
+        .records(
+            &ids[0],
+            ListQuery {
+                kind: Some("commit".into()),
+                search: Some("git-a".into()),
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("raw search");
+    assert_eq!(raw["total"], 1);
+    assert_eq!(raw["items"][0]["author"], "Alice");
+    assert_eq!(raw["items"][0]["authorRaw"], "git-a");
+    let output = store
+        .requirement_output(RequirementOutputQuery {
+            source_id: Some(ids[0].clone()),
+            reference: "REQ-1".into(),
+            ..Default::default()
+        })
+        .await
+        .expect("output");
+    assert_eq!(output["output"]["developers"].as_array().expect("developers").len(), 1);
+    assert_eq!(output["output"]["developers"][0]["commits"], 3);
+    let month = now
+        .with_timezone(&FixedOffset::east_opt(8 * 3600).expect("tz"))
+        .format("%Y-%m")
+        .to_string();
+    let authors = store
+        .code_authors(&ids[0], CodeAuthorsQuery { month: month.clone() }, true)
+        .await
+        .expect("authors");
+    assert!(authors["commits"].as_array().expect("commits").iter().all(|c| c["author"] == "Alice"));
+    let foreign = store
+        .code_authors(&ids[1], CodeAuthorsQuery { month }, true)
+        .await
+        .expect("foreign authors");
+    assert_eq!(foreign["commits"][0]["author"], "git-a");
+    let roster:ActivityMembers=serde_json::from_value(json!({"members":[{"name":"Alice","roles":["code"]},{"name":"No activity","roles":["code","product"]}]})).expect("roster");
+    store.set_activity_members(&ids[0], roster).await.expect("roster save");
+    let perms = ActivityPermissions { requirements: true, bugs: true, testcases: true };
+    let activity =
+        store.team_activity(&ids[0], ActivityQuery::default(), perms).await.expect("activity");
+    assert_eq!(activity["events"].as_array().expect("events").len(), 3);
+    assert_eq!(activity["bugs"][0]["responsibles"], json!(["Alice"]));
+    assert!(activity["members"]
+        .as_array()
+        .expect("members")
+        .iter()
+        .any(|m| m["name"] == "No activity" && m["status"] == "noRecords"));
+    let original: serde_json::Value = sqlx::query_scalar(
+        "SELECT payload FROM ms_devops_entity WHERE source_id=$1 AND external_id='repo:b'",
+    )
+    .bind(&ids[0])
+    .fetch_one(&pool)
+    .await
+    .expect("original");
+    assert_eq!(original["author"], "git-a");
+    assert_eq!(original["group"], "待归属");
+    let run = store.start(&ids[0]).await.expect("sync");
+    let run = run["id"].as_str().expect("run");
+    store.stage(run, records).await.expect("stage");
+    store
+        .complete(
+            run,
+            CompleteRun {
+                counts: [
+                    ("requirement".into(), 2),
+                    ("bug".into(), 1),
+                    ("commit".into(), 3),
+                    ("testcase".into(), 1),
+                    ("sprint".into(), 0),
+                ]
+                .into(),
+                code_since: (now - Duration::days(2)).to_rfc3339(),
+                code_until: now.to_rfc3339(),
+            },
+        )
+        .await
+        .expect("complete");
+    assert_eq!(
+        store.author_identities(&ids[0]).await.expect("config retained")["identities"]
+            .as_array()
+            .expect("identities")
+            .len(),
+        2
+    );
+    for role in [ActivityRole::Product, ActivityRole::Test] {
+        let data = store
+            .team_activity(&ids[0], ActivityQuery { role, ..Default::default() }, perms)
+            .await
+            .expect("real role events");
+        assert!(!data.to_string().contains("Not the creator"));
+        assert!(!data.to_string().contains("Not the case creator"));
+        let actors: Vec<_> = data["events"]
+            .as_array()
+            .expect("events")
+            .iter()
+            .filter_map(|e| e["actor"].as_str())
+            .collect();
+        if role == ActivityRole::Product {
+            assert!(actors.contains(&"Product creator"));
+            assert!(actors.contains(&"Delivery owner"));
+        } else {
+            assert!(actors.contains(&"Real reporter"));
+            assert!(actors.contains(&"Real case author"));
+        }
+    }
+    assert!(store.activity_members("missing-source").await.is_err());
+    assert!(store.author_identities("missing-source").await.is_err());
+    for table in ["ms_devops_history", "ms_devops_entity", "ms_devops_sync_run", "ms_devops_source"]
+    {
+        sqlx::query(&format!(
+            "DELETE FROM {table} WHERE {}=ANY($1)",
+            if table == "ms_devops_source" { "id" } else { "source_id" }
+        ))
+        .bind(&ids)
+        .execute(&pool)
+        .await
+        .expect("cleanup");
+    }
+}

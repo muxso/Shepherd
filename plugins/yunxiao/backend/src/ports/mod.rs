@@ -6,6 +6,24 @@ use async_trait::async_trait;
 use serde_json::Value;
 #[async_trait]
 pub trait Store: Send + Sync {
+    async fn activity_members(&self, source: &str) -> Result<Value, Error>;
+    async fn set_activity_members(
+        &self,
+        source: &str,
+        config: crate::domain::team_activity::ActivityMembers,
+    ) -> Result<Value, Error>;
+    async fn team_activity(
+        &self,
+        source: &str,
+        query: crate::domain::team_activity::ActivityQuery,
+        permissions: crate::domain::team_activity::ActivityPermissions,
+    ) -> Result<Value, Error>;
+    async fn author_identities(&self, source: &str) -> Result<Value, Error>;
+    async fn set_author_identities(
+        &self,
+        source: &str,
+        config: crate::domain::author_identities::AuthorIdentities,
+    ) -> Result<Value, Error>;
     async fn sources(&self) -> Result<Value, Error>;
     async fn create_source(&self, source: NewSource) -> Result<Value, Error>;
     async fn start(&self, source: &str) -> Result<Value, Error>;

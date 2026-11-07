@@ -747,7 +747,7 @@ export default function PlanMindmap({ planId, projectId }: { planId: string; pro
           trigger="click"
           placement="bottomRight"
           arrow={false}
-          styles={{ body: { padding: 4 } }}
+          styles={{ container: { padding: 4 } }}
           content={canvasMenu}
         >
           <Tooltip title={t('plan.mm.canvasMenu', '画布工具')}>

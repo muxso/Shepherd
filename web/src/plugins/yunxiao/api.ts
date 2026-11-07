@@ -25,7 +25,11 @@ export interface DevopsRow {
   additions?: number | null; deletions?: number | null; requirementIds?: string[];
   [key: string]: unknown;
 }
+export interface AuthorIdentity { name: string; group?: string | null; aliases: string[] }
+export interface AuthorIdentitiesData { identities: AuthorIdentity[]; permissions: { update: boolean } }
 export const devopsApi = {
+  authorIdentities: (id: string) => request<AuthorIdentitiesData>('GET', `/api/devops/sources/${encodeURIComponent(id)}/author-identities`),
+  setAuthorIdentities: (id: string, identities: AuthorIdentity[]) => request<{ identities: AuthorIdentity[] }>('PUT', `/api/devops/sources/${encodeURIComponent(id)}/author-identities`, { identities }),
   codeAuthors: (id: string, month: string) => request<CodeAuthorsData>('GET', `/api/devops/sources/${encodeURIComponent(id)}/code-authors?${new URLSearchParams({ month })}`),
   memberMetrics: (id: string, month: string, requirementTarget: number) => request<MemberMetricsData>('GET', `/api/devops/sources/${encodeURIComponent(id)}/member-metrics?${new URLSearchParams({ month, requirementTarget: String(requirementTarget) })}`),
   requirementOutput: (query: Record<string, string | number>) => request<RequirementOutputData>('GET', `/api/devops/requirement-output?${new URLSearchParams(Object.entries(query).map(([key,value]) => [key,String(value)]))}`),
@@ -85,7 +89,7 @@ export interface MemberMetricsData {
 }
 
 export interface CodeCommit {
-  id: string; sha: string; author: string; group: string; repoId: string; repo: string;
+  id: string; sha: string; author: string; authorRaw?: string; group: string; repoId: string; repo: string;
   authoredAt: string; additions: number | null; deletions: number | null; linked: boolean;
   requirements: { externalId: string; serial?: string | null; title?: string | null }[];
   languages: string[]; languageSource?: string | null; languageCommit?: string | null;
@@ -93,4 +97,26 @@ export interface CodeCommit {
 export interface CodeAuthorsData {
   source: DevopsSource; month: string; start: string; endExclusive: string; timezone: string;
   commits: CodeCommit[]; permissions: { requirements: boolean };
+}
+
+export type ActivityRole = 'code' | 'product' | 'test'
+export type ActivityKind = 'commit' | 'requirementCreated' | 'requirementDelivered' | 'testcaseCreated' | 'bugReported'
+export interface ActivityMemberSetting { name: string; group?: string | null; roles: ActivityRole[]; enabled: boolean }
+export interface ActivityMember { name: string; group: string; inRoster: boolean; eventCount: number; lastActivityAt: string | null; status: 'active' | 'noRecords' | 'unverified' }
+export interface ActivityEvent {
+  id: string; externalId: string; actor: string; authorRaw: string; group: string; kind: ActivityKind; date: string; at: string;
+  url?: string | null; repositoryUrl?: string | null; title: string | null; serial: string | null; status: string | null; repoId: string | number | null; repo: string | null; sha: string | null;
+  additions: number | null; deletions: number | null; linked: boolean; requirements: { externalId: string; serial: string | null; title: string | null; url?: string | null }[];
+}
+export interface ActivityBug { id: string; serial: string | null; title: string | null; status: string | null; at: string; date: string; responsibles: string[]; requirements: { externalId: string; serial: string | null; title: string | null; url?: string | null }[]; url?: string | null }
+export interface TeamActivityData {
+  source: DevopsSource; role: ActivityRole; days: number; from: string; through: string; start: string; endExclusive: string; timezone: string; observedAt: string | null;
+  members: ActivityMember[]; events: ActivityEvent[]; bugs: ActivityBug[];
+  coverage: { complete: boolean; rosterConfigured: boolean; unattributedEvents: number; testcasesCollected: boolean };
+  permissions: { requirements: boolean; bugs: boolean; testcases: boolean };
+}
+export const activityApi = {
+  activity: (id: string, role: ActivityRole, days: number) => request<TeamActivityData>('GET', `/api/devops/sources/${encodeURIComponent(id)}/team-activity?${new URLSearchParams({ role, days: String(days) })}`),
+  members: (id: string) => request<{ members: ActivityMemberSetting[]; permissions: { update: boolean } }>('GET', `/api/devops/sources/${encodeURIComponent(id)}/activity-members`),
+  saveMembers: (id: string, members: ActivityMemberSetting[]) => request<{ members: ActivityMemberSetting[] }>('PUT', `/api/devops/sources/${encodeURIComponent(id)}/activity-members`, { members }),
 }

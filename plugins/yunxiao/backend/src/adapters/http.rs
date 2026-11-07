@@ -1,4 +1,8 @@
+use crate::domain::author_identities::AuthorIdentities;
 use crate::domain::code_authors::CodeAuthorsQuery;
+use crate::domain::team_activity::{
+    ActivityMembers, ActivityPermissions, ActivityQuery, ActivityRole,
+};
 use crate::{
     application::Service,
     domain::{
@@ -30,9 +34,18 @@ impl FromRef<AppState> for Arc<dyn SessionStore> {
 }
 pub fn router(svc: Service, sessions: Arc<dyn SessionStore>) -> Router {
     Router::new()
+        .route("/api/devops/sources/{id}/team-activity", get(team_activity))
+        .route(
+            "/api/devops/sources/{id}/activity-members",
+            get(activity_members).put(set_activity_members),
+        )
         .route("/api/devops/requirement-output", get(requirement_output))
         .route("/api/devops/sources/{id}/member-metrics", get(member_metrics))
         .route("/api/devops/sources/{id}/code-authors", get(code_authors))
+        .route(
+            "/api/devops/sources/{id}/author-identities",
+            get(author_identities).put(set_author_identities),
+        )
         .route("/api/devops/sources", get(sources).post(create_source))
         .route("/api/devops/sources/{id}/runs", post(start))
         .route("/api/devops/sources/{id}/dashboard", get(dashboard))
@@ -258,8 +271,89 @@ async fn records(
         result
     }))
 }
+#[utoipa::path(get,path="/api/devops/sources/{id}/author-identities",tag="devops",params(("id"=String,Path)),responses((status=200,body=Value),(status=403),(status=404)),security(("bearer"=[])))]
+async fn author_identities(
+    u: AuthUser,
+    State(s): State<AppState>,
+    Path(id): Path<String>,
+) -> Response {
+    if !u.can("PROJECT", "READ") {
+        return denied();
+    }
+    reply(s.svc.0.author_identities(&id).await.map(|mut value| {
+        value["permissions"] = serde_json::json!({"update":u.can("PROJECT", "UPDATE")});
+        value
+    }))
+}
+#[utoipa::path(put,path="/api/devops/sources/{id}/author-identities",tag="devops",params(("id"=String,Path)),request_body=AuthorIdentities,responses((status=200,body=Value),(status=400),(status=403),(status=404),(status=409)),security(("bearer"=[])))]
+async fn set_author_identities(
+    u: AuthUser,
+    State(s): State<AppState>,
+    Path(id): Path<String>,
+    Json(config): Json<AuthorIdentities>,
+) -> Response {
+    if !u.can("PROJECT", "UPDATE") {
+        return denied();
+    }
+    match config.normalize() {
+        Ok(config) => reply(s.svc.0.set_author_identities(&id, config).await),
+        Err(error) => reply(Err(error)),
+    }
+}
+#[utoipa::path(get,path="/api/devops/sources/{id}/team-activity",tag="devops",params(("id"=String,Path),ActivityQuery),responses((status=200,body=Value),(status=400),(status=403),(status=404)),security(("bearer"=[])))]
+async fn team_activity(
+    u: AuthUser,
+    State(s): State<AppState>,
+    Path(id): Path<String>,
+    Query(q): Query<ActivityQuery>,
+) -> Response {
+    let permissions = ActivityPermissions {
+        requirements: u.can("REQUIREMENT", "READ"),
+        bugs: u.can("BUG", "READ"),
+        testcases: u.can("FUNCTIONAL_CASE", "READ"),
+    };
+    if !u.can("PROJECT", "READ")
+        || q.role == ActivityRole::Product && !permissions.requirements
+        || q.role == ActivityRole::Test && (!permissions.bugs || !permissions.testcases)
+    {
+        return denied();
+    }
+    if let Err(error) = q.validate() {
+        return reply(Err(error));
+    }
+    reply(s.svc.0.team_activity(&id, q, permissions).await)
+}
+#[utoipa::path(get,path="/api/devops/sources/{id}/activity-members",tag="devops",params(("id"=String,Path)),responses((status=200,body=Value),(status=403),(status=404)),security(("bearer"=[])))]
+async fn activity_members(
+    u: AuthUser,
+    State(s): State<AppState>,
+    Path(id): Path<String>,
+) -> Response {
+    if !u.can("PROJECT", "READ") {
+        return denied();
+    }
+    reply(s.svc.0.activity_members(&id).await.map(|mut value| {
+        value["permissions"] = serde_json::json!({"update":u.can("PROJECT","UPDATE")});
+        value
+    }))
+}
+#[utoipa::path(put,path="/api/devops/sources/{id}/activity-members",tag="devops",params(("id"=String,Path)),request_body=ActivityMembers,responses((status=200,body=Value),(status=400),(status=403),(status=404),(status=409)),security(("bearer"=[])))]
+async fn set_activity_members(
+    u: AuthUser,
+    State(s): State<AppState>,
+    Path(id): Path<String>,
+    Json(config): Json<ActivityMembers>,
+) -> Response {
+    if !u.can("PROJECT", "UPDATE") {
+        return denied();
+    }
+    match config.normalize() {
+        Ok(config) => reply(s.svc.0.set_activity_members(&id, config).await),
+        Err(error) => reply(Err(error)),
+    }
+}
 #[derive(OpenApi)]
-#[openapi(paths(sources,create_source,start,stage,complete,fail,dashboard,requirement_output,member_metrics,code_authors,records),components(schemas(NewSource,Record,CompleteRun,Batch,Failure,ProductivityMetric)),tags((name="devops",description="External DevOps facts and synchronization")))]
+#[openapi(paths(team_activity,activity_members,set_activity_members,author_identities,set_author_identities,sources,create_source,start,stage,complete,fail,dashboard,requirement_output,member_metrics,code_authors,records),components(schemas(ActivityMembers,crate::domain::team_activity::ActivityMember,ActivityRole,AuthorIdentities,crate::domain::author_identities::AuthorIdentity,NewSource,Record,CompleteRun,Batch,Failure,ProductivityMetric)),tags((name="devops",description="External DevOps facts and synchronization")))]
 struct ApiDoc;
 pub fn openapi() -> utoipa::openapi::OpenApi {
     ApiDoc::openapi()
@@ -277,6 +371,36 @@ mod tests {
     struct Stub;
     #[async_trait]
     impl Store for Stub {
+        async fn activity_members(&self, _: &str) -> Result<Value, Error> {
+            Ok(json!({"members":[]}))
+        }
+        async fn set_activity_members(
+            &self,
+            _: &str,
+            config: ActivityMembers,
+        ) -> Result<Value, Error> {
+            Ok(json!(config))
+        }
+        async fn team_activity(
+            &self,
+            _: &str,
+            _: ActivityQuery,
+            _: ActivityPermissions,
+        ) -> Result<Value, Error> {
+            Ok(json!({"members":[],"events":[],"bugs":[]}))
+        }
+
+        async fn author_identities(&self, _: &str) -> Result<Value, Error> {
+            Ok(json!({"identities":[]}))
+        }
+        async fn set_author_identities(
+            &self,
+            _: &str,
+            config: AuthorIdentities,
+        ) -> Result<Value, Error> {
+            Ok(json!(config))
+        }
+
         async fn sources(&self) -> Result<Value, Error> {
             Ok(json!({"items":[]}))
         }
@@ -374,6 +498,138 @@ mod tests {
         let data: Value = serde_json::from_slice(&body).expect("json");
         assert_eq!(data["permissions"]["requirements"], false);
         assert_eq!(data["commits"][0]["requirements"], json!([]));
+    }
+
+    #[tokio::test]
+    async fn activity_and_identity_configuration_require_their_own_permissions() {
+        let sessions = Arc::new(InMemorySessionStore::new());
+        let reader = sessions
+            .create("reader", PermissionSet::from_raw(["PROJECT:READ"]).expect("permissions"), 3600)
+            .await
+            .expect("reader");
+        let admin = sessions
+            .create(
+                "admin",
+                PermissionSet::from_raw([
+                    "PROJECT:READ",
+                    "PROJECT:UPDATE",
+                    "REQUIREMENT:READ",
+                    "BUG:READ",
+                    "FUNCTIONAL_CASE:READ",
+                ])
+                .expect("permissions"),
+                3600,
+            )
+            .await
+            .expect("admin");
+        let sync = sessions
+            .create("sync", PermissionSet::from_raw(["DEVOPS:SYNC"]).expect("permissions"), 3600)
+            .await
+            .expect("sync");
+        let app = router(Service(Arc::new(Stub)), sessions);
+        for (method, path, token, body, expected) in [
+            ("GET", "/api/devops/sources/s/team-activity?role=code&days=7", None, "", 401),
+            (
+                "GET",
+                "/api/devops/sources/s/team-activity?role=code&days=7",
+                Some(reader.as_str()),
+                "",
+                200,
+            ),
+            (
+                "GET",
+                "/api/devops/sources/s/team-activity?role=product&days=7",
+                Some(reader.as_str()),
+                "",
+                403,
+            ),
+            (
+                "GET",
+                "/api/devops/sources/s/team-activity?role=test&days=7",
+                Some(reader.as_str()),
+                "",
+                403,
+            ),
+            (
+                "GET",
+                "/api/devops/sources/s/team-activity?role=test&days=0",
+                Some(admin.as_str()),
+                "",
+                400,
+            ),
+            (
+                "GET",
+                "/api/devops/sources/s/team-activity?role=test&days=365",
+                Some(admin.as_str()),
+                "",
+                200,
+            ),
+            ("GET", "/api/devops/sources/s/author-identities", Some(reader.as_str()), "", 200),
+            ("GET", "/api/devops/sources/s/activity-members", Some(reader.as_str()), "", 200),
+            (
+                "PUT",
+                "/api/devops/sources/s/author-identities",
+                Some(reader.as_str()),
+                r#"{"identities":[]}"#,
+                403,
+            ),
+            (
+                "PUT",
+                "/api/devops/sources/s/author-identities",
+                Some(sync.as_str()),
+                r#"{"identities":[]}"#,
+                403,
+            ),
+            (
+                "PUT",
+                "/api/devops/sources/s/activity-members",
+                Some(sync.as_str()),
+                r#"{"members":[]}"#,
+                403,
+            ),
+            (
+                "PUT",
+                "/api/devops/sources/s/activity-members",
+                Some(admin.as_str()),
+                r#"{"members":[{"name":"A","roles":[]}]}"#,
+                400,
+            ),
+            (
+                "PUT",
+                "/api/devops/sources/s/activity-members",
+                Some(admin.as_str()),
+                r#"{"members":[{"name":"A","roles":["product","test"]}]}"#,
+                200,
+            ),
+            (
+                "PUT",
+                "/api/devops/sources/s/author-identities",
+                Some(admin.as_str()),
+                r#"{"identities":[{"name":"A","aliases":["shared"]},{"name":"B","aliases":["shared"]}]}"#,
+                409,
+            ),
+            (
+                "PUT",
+                "/api/devops/sources/s/author-identities",
+                Some(admin.as_str()),
+                r#"{"identities":[{"name":"A","aliases":["git-a","git-b"]}]}"#,
+                200,
+            ),
+        ] {
+            let mut request = Request::builder().method(method).uri(path);
+            if let Some(token) = token {
+                request = request.header("Authorization", format!("Bearer {token}"));
+            }
+            if method == "PUT" {
+                request = request.header("Content-Type", "application/json");
+            }
+            let response = app
+                .clone()
+                .oneshot(request.body(Body::from(body)).expect("request"))
+                .await
+                .expect("response");
+            assert_eq!(response.status().as_u16(), expected, "{method} {path}");
+        }
     }
 
     #[tokio::test]

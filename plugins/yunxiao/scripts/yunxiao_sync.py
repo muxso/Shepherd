@@ -85,6 +85,7 @@ def normalize_workitem(item, kind, collector, groups, sprint_map):
     status = item.get('status') or {}
     data = {'serial':item.get('serialNumber') or str(item['id']), 'title':item.get('subject') or '',
         'description':item.get('description') or '',
+        'url':item.get('url') or item.get('webUrl') or item.get('web_url') or '',
         'status':status.get('displayName') or status.get('name') or '',
         'priority':groups.priority_name(item), 'owner':owner, 'group':groups.group_for(owner),
         'creator':groups.canonical_name(name(item.get('creator'))) if name(item.get('creator')) else '',

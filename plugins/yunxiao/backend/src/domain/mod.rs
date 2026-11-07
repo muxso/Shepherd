@@ -1,6 +1,8 @@
+pub mod author_identities;
 mod bug_quality;
 pub mod code_authors;
 mod member_metrics;
+pub mod team_activity;
 pub use member_metrics::{build_member_metrics, MemberMetricsQuery};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;

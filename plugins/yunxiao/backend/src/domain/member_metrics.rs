@@ -80,7 +80,7 @@ pub(super) fn rate(numerator: usize, denominator: usize) -> Option<f64> {
 }
 const DELIVERED: &[&str] = &["已发布", "已交付", "已完成", "已验收", "完成"];
 const CANCELLED: &[&str] = &["已取消", "已拒绝", "已关闭", "已完成", "已验收", "完成"];
-const INVALID_BUG: &[&str] = &[
+pub(super) const INVALID_BUG: &[&str] = &[
     "已取消",
     "已拒绝",
     "已拒绝（不修复）",
