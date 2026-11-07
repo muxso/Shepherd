@@ -25,7 +25,7 @@
 .yx-activity-matrix th small { display:block;font-size:10px;margin-top:2px;line-height:1; }
 .yx-activity-matrix th.is-weekend { background:color-mix(in srgb,var(--activity-warm) 9%,var(--panel));color:var(--activity-warm);border-radius:4px; }
 .yx-activity-matrix td.is-weekend { background:color-mix(in srgb,var(--activity-warm) 2%,var(--panel)); }
-.yx-activity-cell { display:flex;align-items:center;justify-content:center;gap:7px;width:100%;height:25px;border:0;border-radius:4px;background:transparent;color:var(--text);font:inherit;cursor:pointer;font-variant-numeric:tabular-nums; }
+.yx-activity-cell { display:flex;align-items:center;justify-content:center;gap:7px;width:100%;height:var(--activity-cell-height,25px);padding:0;border:0;border-radius:4px;background:transparent;color:var(--text);font:inherit;line-height:1.1;cursor:pointer;font-variant-numeric:tabular-nums; }
 .yx-activity-cell time { font-size:12px;font-weight:400;letter-spacing:.15px; }
 .yx-activity-cell.level-1 { background:color-mix(in srgb,var(--activity-accent) 10%,var(--panel)); }
 .yx-activity-cell.level-2 { background:color-mix(in srgb,var(--activity-accent) 19%,var(--panel)); }
@@ -38,12 +38,12 @@
 .yx-activity-cell.is-outside { opacity:.3; }
 .yx-activity-dot { font-size:13px;color:var(--text-3);opacity:.45; }
 .yx-activity-bug { flex-shrink:0;font-size:10px;line-height:1.1;padding:2px 4px;color:var(--activity-warm);background:color-mix(in srgb,var(--activity-warm) 16%,var(--panel));border-radius:4px; }
-.yx-activity-matrix .yx-activity-total { width:36px;text-align:center;font-size:11px;color:var(--text-3); }
+.yx-activity-matrix .yx-activity-total { width:36px;text-align:center;font-size:11px;line-height:1.2;color:var(--text-3); }
 .yx-activity-matrix .yx-activity-total.has-bugs { color:var(--activity-warm); }
 .yx-activity-matrix tbody tr:nth-child(5n) td { border-bottom:1px solid color-mix(in srgb,var(--border-soft) 40%,transparent); }
 .yx-activity-matrix.is-month { min-width:1240px;border-spacing:3px 2px; }
 .yx-activity-matrix.is-month .yx-activity-name { width:110px; }
-.yx-activity-matrix.is-month .yx-activity-cell { font-size:10px;height:24px;padding:0; }
+.yx-activity-matrix.is-month .yx-activity-cell { font-size:10px;height:var(--activity-cell-height,24px);padding:0; }
 .yx-activity-matrix.is-expanded .yx-activity-cell { min-height:52px;height:auto;padding:5px 3px;flex-wrap:wrap;gap:3px 7px; }
 .yx-activity-matrix.is-expanded .yx-activity-lines { display:block;width:100%;font-size:10px; }
 .yx-activity-matrix.is-expanded .yx-activity-cell small { font-size:10px; }

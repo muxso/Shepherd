@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useMemo, useState } from 'react'
+import { lazy, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { Alert, Button, Dropdown, Empty, Input, InputNumber, Popover, Segmented, Select, Space, Spin, Tooltip } from 'antd'
 import { activityApi, type ActivityKind, type ActivityMember, type ActivityRole, type TeamActivityData } from './api'
@@ -14,6 +14,7 @@ function daysFrom(search: string) { const value = Number(new URLSearchParams(sea
 const compactNumber = (value: number) => value.toLocaleString()
 export default function TeamActivity({ sourceId, revision }: { sourceId: string; revision: number }) {
   const location = useLocation(), navigate = useNavigate()
+  const matrixRef = useRef<HTMLTableElement>(null)
   const [role, setRole] = useState<ActivityRole>(() => roleFrom(location.search)), [days, setDays] = useState(() => daysFrom(location.search))
   const [metric, setMetric] = useState<ActivityKind>(() => activityRoles.find(r => r.value === roleFrom(location.search))!.metrics[0].value)
   const [view, setView] = useState(new URLSearchParams(location.search).get('activity') === 'month' ? 'month' : 'week')
@@ -37,6 +38,20 @@ export default function TeamActivity({ sourceId, revision }: { sourceId: string;
   const memberEvents = useMemo(() => new Map((data?.members || []).map(p => [p.name, data!.events.filter(e => e.actor === p.name && e.kind === metric)])), [data, metric])
   const filtered = useMemo(() => (data?.members || []).filter(p => (!group || p.group === group) && (!search || `${p.name} ${data?.events.filter(e => e.actor === p.name).map(e => e.authorRaw).join(' ')}`.toLowerCase().includes(search.toLowerCase()))).sort((a, b) => (memberEvents.get(b.name)?.length || 0) - (memberEvents.get(a.name)?.length || 0) || a.name.localeCompare(b.name, 'zh-CN')), [data, group, search, memberEvents])
   const members = filtered.filter(p => !absence || p.status !== 'active')
+  useLayoutEffect(() => {
+    const table = matrixRef.current
+    if (!table || !members.length) return
+    const fit = () => {
+      const available = window.innerHeight - table.getBoundingClientRect().top - (table.tHead?.getBoundingClientRect().height || 0) - 70
+      const height = Math.max(16, Math.min(25, Math.floor(available / members.length) - 2))
+      table.style.setProperty('--activity-cell-height', `${height}px`)
+    }
+    fit()
+    const observer = new ResizeObserver(fit)
+    observer.observe(table.parentElement!)
+    window.addEventListener('resize', fit)
+    return () => { observer.disconnect(); window.removeEventListener('resize', fit) }
+  }, [data, members.length, view, absence, analysis, loading])
   const scope = useMemo(() => filtered.map(p => p.name), [filtered])
   const dates = data ? datesFor(data, view) : []
   const noRecords = filtered.filter(p => p.status === 'noRecords').length, unverified = filtered.filter(p => p.status === 'unverified').length
@@ -69,7 +84,7 @@ export default function TeamActivity({ sourceId, revision }: { sourceId: string;
         <div className="yx-activity-chart-heading"><h3>{absence ? `最近 ${days} 天未记录产出人员` : `${roleInfo.metrics.find(m => m.value === metric)?.label} · 成员热力图`}</h3><Space size={6} wrap>{!absence && <><Button size="small" type={expanded ? 'primary' : 'default'} onClick={() => setExpanded(v => !v)}>{expanded ? '收起格子指标' : '展开格子指标'}</Button><Segmented size="small" aria-label="热力图时间视图" value={view} onChange={value => { setView(String(value)); updateLocation({ activity: String(value) }) }} options={[{ value: 'week', label: '近 7 天' }, { value: 'month', label: '月度概览' }]} /></>}</Space></div>
         {absence && data && !data.coverage.rosterConfigured && <Alert type="info" showIcon title="尚未配置完整统计名单，无法判断组织全员是否无记录" action={<Button size="small" onClick={() => setManage('roster')}>维护名单</Button>} style={{ marginBottom: 12 }} />}
         {absence && data && !data.coverage.complete && <Alert type="info" showIcon title="所选区间采集尚未覆盖完整，无记录者保留待核验" style={{ marginBottom: 12 }} />}
-        {!members.length ? <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={loading ? '正在读取已采集数据' : absence ? '没有可确认的未记录产出人员' : '所选范围暂无已同步的真实人员或活动'} /> : absence ? <div className="yx-activity-table-scroll"><table className="yx-activity-absence"><thead><tr><th>成员</th><th>分组</th><th>最近记录</th><th>本期记录</th><th>统计状态</th><th /></tr></thead><tbody>{members.map(p => <tr key={p.name}><td>{p.name}</td><td>{p.group}</td><td>{p.lastActivityAt ? dateTime(p.lastActivityAt) : '采集范围内暂无记录'}</td><td>0 条</td><td>{p.status === 'noRecords' ? `最近 ${days} 天未记录产出` : '待核验'}</td><td><Button type="link" size="small" onClick={() => setSelection({ person: p.name, history: true })}>最近记录</Button></td></tr>)}</tbody></table></div> : data && <div className="yx-activity-table-scroll"><table className={`yx-activity-matrix ${view === 'month' ? 'is-month' : ''} ${expanded ? 'is-expanded' : ''}`} aria-label="成员每日活动热力图"><thead><tr><th className="yx-activity-name">成员</th>{dates.map(date => { const weekday = new Date(`${date}T00:00:00Z`).getUTCDay(); return <th key={date} className={weekday === 0 || weekday === 6 ? 'is-weekend' : ''}><button type="button" aria-label={`查看 ${date} 全员明细`} onClick={() => setSelection({ date })}><time dateTime={date}>{date.slice(5).replace('-', '/')}</time><small>周{'日一二三四五六'[weekday]}</small></button></th> })}{totalHeaders.map((label, i) => <th key={label} className="yx-activity-total"><Tooltip title={i === 1 && role === 'code' ? '统计期关联需求，按需求 ID 去重' : label === 'Bug' && role === 'code' ? '统计期新增责任 Bug，按 Bug ID 去重' : '所选统计期累计'}>{label}</Tooltip></th>)}</tr></thead><tbody>{members.map(p => <tr key={p.name}><td className="yx-activity-name"><Tooltip title={`${p.name} · ${p.group}${p.inRoster ? '' : ' · 未纳入统计名单'}`}><span>{p.name}</span></Tooltip></td>{dates.map(date => {
+        {!members.length ? <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={loading ? '正在读取已采集数据' : absence ? '没有可确认的未记录产出人员' : '所选范围暂无已同步的真实人员或活动'} /> : absence ? <div className="yx-activity-table-scroll"><table className="yx-activity-absence"><thead><tr><th>成员</th><th>分组</th><th>最近记录</th><th>本期记录</th><th>统计状态</th><th /></tr></thead><tbody>{members.map(p => <tr key={p.name}><td>{p.name}</td><td>{p.group}</td><td>{p.lastActivityAt ? dateTime(p.lastActivityAt) : '采集范围内暂无记录'}</td><td>0 条</td><td>{p.status === 'noRecords' ? `最近 ${days} 天未记录产出` : '待核验'}</td><td><Button type="link" size="small" onClick={() => setSelection({ person: p.name, history: true })}>最近记录</Button></td></tr>)}</tbody></table></div> : data && <div className="yx-activity-table-scroll"><table ref={matrixRef} className={`yx-activity-matrix ${view === 'month' ? 'is-month' : ''} ${expanded ? 'is-expanded' : ''}`} aria-label="成员每日活动热力图"><thead><tr><th className="yx-activity-name">成员</th>{dates.map(date => { const weekday = new Date(`${date}T00:00:00Z`).getUTCDay(); return <th key={date} className={weekday === 0 || weekday === 6 ? 'is-weekend' : ''}><button type="button" aria-label={`查看 ${date} 全员明细`} onClick={() => setSelection({ date })}><time dateTime={date}>{date.slice(5).replace('-', '/')}</time><small>周{'日一二三四五六'[weekday]}</small></button></th> })}{totalHeaders.map((label, i) => <th key={label} className="yx-activity-total"><Tooltip title={i === 1 && role === 'code' ? '统计期关联需求，按需求 ID 去重' : label === 'Bug' && role === 'code' ? '统计期新增责任 Bug，按 Bug ID 去重' : '所选统计期累计'}>{label}</Tooltip></th>)}</tr></thead><tbody>{members.map(p => <tr key={p.name}><td className="yx-activity-name"><Tooltip title={`${p.name} · ${p.group}${p.inRoster ? '' : ' · 未纳入统计名单'}`}><span>{p.name}</span></Tooltip></td>{dates.map(date => {
           const facts = dayFacts(data, p.name, date, metric), count = facts.events.length, future = date > data.through, outside = date < data.from, weekend = [0, 6].includes(new Date(`${date}T00:00:00Z`).getUTCDay())
           const level = count > 9 ? 4 : count > 5 ? 3 : count > 2 ? 2 : count ? 1 : 0
           const time = facts.last ? dateTime(facts.last).slice(11, 16) : ''
