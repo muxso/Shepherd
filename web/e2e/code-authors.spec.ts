@@ -190,6 +190,8 @@ test('role and group perspectives are exclusive and code sorting updates visible
   await page.getByRole('combobox', { name: '组织分组', exact: true }).click(); await page.locator('.ant-select-dropdown:visible').getByTitle('服务端', { exact: true }).click()
   await expect(page.locator('.yx-activity-toolbar .ant-segmented-item-selected')).toHaveCount(0)
   await expect(page).toHaveURL(/perspective=group/)
+  await page.getByRole('combobox', { name: '活动指标', exact: true }).click(); await page.locator('.ant-select-dropdown:visible').getByTitle('新增需求', { exact: true }).click()
+  await expect(page.getByRole('combobox', { name: '成员排序', exact: true }).locator('..')).toContainText('按活动次数')
   await page.getByText('产品 · 需求', { exact: true }).click()
   await expect(page.locator('.yx-activity-toolbar .ant-segmented-item-selected')).toHaveText('产品 · 需求')
   await expect(page).not.toHaveURL(/activityGroup=/)
