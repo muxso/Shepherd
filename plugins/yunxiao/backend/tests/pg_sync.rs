@@ -782,7 +782,7 @@ async fn defect_filters_and_pending_release_risk_use_the_same_source_facts() {
         Record {
             kind: "bug".into(),
             external_id: "one".into(),
-            data: json!({"title":"One","creator":"Reporter","owner":"Bob","group":"B","createdAt":at,"parentId":"ready","customFieldValues":[{"fieldName":"缺陷责任人","fieldFormat":"user","values":[{"identifier":"a","displayValue":"git-a"}]}]}),
+            data: json!({"title":"One","creator":"Reporter","owner":"Bob","group":"B","createdAt":at,"parentId":"ready","raw":{"customFieldValues":[{"fieldName":"缺陷责任人","fieldFormat":"user","values":[{"identifier":"a","displayValue":"git-a"}]}]}}),
         },
         Record {
             kind: "bug".into(),
