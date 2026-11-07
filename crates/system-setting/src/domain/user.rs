@@ -5,6 +5,8 @@ pub struct Email(String);
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum UserError {
+    #[error("theme requires light or dark mode and a six-digit hex color")]
+    InvalidTheme,
     #[error("user name must not be empty")]
     EmptyName,
     #[error("invalid email address")]

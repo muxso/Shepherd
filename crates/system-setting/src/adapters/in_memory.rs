@@ -9,6 +9,7 @@ use crate::ports::{RepoError, UserRepository};
 struct State {
     users: Vec<User>,
     seq: u64,
+    themes: std::collections::HashMap<String, crate::domain::UserTheme>,
 }
 
 #[derive(Clone, Default)]
@@ -28,6 +29,28 @@ impl InMemoryUserRepository {
 
 #[async_trait]
 impl UserRepository for InMemoryUserRepository {
+    async fn theme(&self, user_id: &str) -> Result<Option<crate::domain::UserTheme>, RepoError> {
+        Ok(self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .themes
+            .get(user_id)
+            .cloned())
+    }
+    async fn save_theme(
+        &self,
+        user_id: &str,
+        theme: &crate::domain::UserTheme,
+    ) -> Result<(), RepoError> {
+        self.state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .themes
+            .insert(user_id.into(), theme.clone());
+        Ok(())
+    }
+
     async fn find_by_email(&self, email: &Email) -> Result<Option<User>, RepoError> {
         Ok(self
             .state

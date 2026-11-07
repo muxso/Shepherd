@@ -15,6 +15,8 @@ export interface ProductivityStats {
 }
 export interface DevopsDashboard {
   productivity?: ProductivityStats;
+  groups?: string[];
+  statuses?: { kind: string; status: string; count: number }[];
   bugStatistics?: BugStatistics;
   source: DevopsSource; totals: { requirements: number; bugs: number; sprints: number; delayed: number; delivered: number };
   authors: DevopsAuthor[]; codeScope: string; historyScope: string;
@@ -33,6 +35,7 @@ export const devopsApi = {
   codeAuthors: (id: string, month: string) => request<CodeAuthorsData>('GET', `/api/devops/sources/${encodeURIComponent(id)}/code-authors?${new URLSearchParams({ month })}`),
   memberMetrics: (id: string, month: string, requirementTarget: number) => request<MemberMetricsData>('GET', `/api/devops/sources/${encodeURIComponent(id)}/member-metrics?${new URLSearchParams({ month, requirementTarget: String(requirementTarget) })}`),
   requirementOutput: (query: Record<string, string | number>) => request<RequirementOutputData>('GET', `/api/devops/requirement-output?${new URLSearchParams(Object.entries(query).map(([key,value]) => [key,String(value)]))}`),
+  bugStatistics: (id: string, query: Record<string,string>) => request<FilteredBugStatistics>('GET', `/api/devops/sources/${encodeURIComponent(id)}/bug-statistics?${new URLSearchParams(query)}`),
   sources: () => request<{ items: DevopsSource[] }>('GET', '/api/devops/sources'),
   dashboard: (id: string, days: number) => request<DevopsDashboard>('GET', `/api/devops/sources/${encodeURIComponent(id)}/dashboard?days=${days}`),
   records: (id: string, query: Record<string, string | number | boolean>) => request<{ items: DevopsRow[]; total: number }>('GET', `/api/devops/sources/${encodeURIComponent(id)}/records?${new URLSearchParams(Object.entries(query).map(([k, v]) => [k, String(v)]))}`),
@@ -42,6 +45,11 @@ export const devopsApi = {
 export interface BugStatistics {
   total: number; new: number; linked: number; unlinked: number;
   statuses: { status: string; count: number }[]; reporters: { name: string; count: number }[];
+}
+export interface FilteredBugStatistics extends BugStatistics {
+  source: DevopsSource; from: string; through: string; timezone: string; unassigned: number; missingTime: number;
+  people: { name: string; count: number }[]; personOptions: string[]; groups: string[];
+  trend: { date: string; value: number }[]; priorities: { name: string; count: number }[];
 }
 export interface RequirementOutputData {
   source: DevopsSource;

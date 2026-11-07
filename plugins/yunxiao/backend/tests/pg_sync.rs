@@ -733,3 +733,164 @@ async fn configurable_identities_apply_before_every_code_query_and_survive_sync(
         .expect("cleanup");
     }
 }
+
+#[tokio::test]
+#[ignore = "requires isolated SHEPHERD_YUNXIAO_TEST_DATABASE_URL"]
+async fn defect_filters_and_pending_release_risk_use_the_same_source_facts() {
+    use shepherd_yunxiao::domain::{
+        author_identities::AuthorIdentities,
+        bug_statistics::{BugPersonRole, BugStatisticsQuery},
+    };
+    let pool = sqlx::PgPool::connect(
+        &std::env::var("SHEPHERD_YUNXIAO_TEST_DATABASE_URL").expect("valid fixture"),
+    )
+    .await
+    .expect("valid fixture");
+    shepherd_yunxiao::adapters::pg::migrate(&pool).await.expect("valid fixture");
+    let store = PgStore(pool.clone());
+    let source = store
+        .create_source(NewSource {
+            project_id: "defects".into(),
+            cloud_org_id: "test".into(),
+            cloud_project_id: uuid::Uuid::new_v4().to_string(),
+            name: "defect filters".into(),
+        })
+        .await
+        .expect("valid fixture");
+    let id = source["id"].as_str().expect("valid fixture");
+    let clock: serde_json::Value =
+        sqlx::query_scalar("SELECT to_jsonb(now())").fetch_one(&pool).await.expect("valid fixture");
+    let now = chrono::DateTime::parse_from_rfc3339(clock.as_str().expect("valid fixture"))
+        .expect("valid fixture");
+    let at = (now - chrono::Duration::hours(1)).to_rfc3339();
+    let due = (now
+        .with_timezone(&chrono::FixedOffset::east_opt(8 * 3600).expect("valid fixture"))
+        .date_naive()
+        - chrono::Duration::days(1))
+    .to_string();
+    let records = vec![
+        Record {
+            kind: "requirement".into(),
+            external_id: "ready".into(),
+            data: json!({"serial":"R-1","title":"Ready","status":"待发布","priority":"高","due":due,"createdAt":at}),
+        },
+        Record {
+            kind: "requirement".into(),
+            external_id: "late".into(),
+            data: json!({"title":"Late","status":"开发中","priority":"高","due":due,"createdAt":at}),
+        },
+        Record {
+            kind: "bug".into(),
+            external_id: "one".into(),
+            data: json!({"title":"One","creator":"Reporter","owner":"Bob","group":"B","createdAt":at,"parentId":"ready","customFieldValues":[{"fieldName":"缺陷责任人","fieldFormat":"user","values":[{"identifier":"a","displayValue":"git-a"}]}]}),
+        },
+        Record {
+            kind: "bug".into(),
+            external_id: "two".into(),
+            data: json!({"title":"Two","creator":"Reporter","owner":"Bob","group":"B","createdAt":at,"parentId":"EMPTY_VALUE"}),
+        },
+    ];
+    let run = store.start(id).await.expect("valid fixture");
+    let run = run["id"].as_str().expect("valid fixture");
+    store.stage(run, records).await.expect("valid fixture");
+    store
+        .complete(
+            run,
+            CompleteRun {
+                counts: [
+                    ("requirement".into(), 2),
+                    ("bug".into(), 2),
+                    ("commit".into(), 0),
+                    ("sprint".into(), 0),
+                ]
+                .into(),
+                code_since: (now - chrono::Duration::days(7)).to_rfc3339(),
+                code_until: now.to_rfc3339(),
+            },
+        )
+        .await
+        .expect("valid fixture");
+    let identities: AuthorIdentities = serde_json::from_value(
+        json!({"identities":[{"name":"Alice","aliases":["git-a"],"group":"A"}]}),
+    )
+    .expect("valid fixture");
+    store.set_author_identities(id, identities).await.expect("valid fixture");
+    let stats = store
+        .bug_statistics(
+            id,
+            BugStatisticsQuery {
+                person: Some("Alice".into()),
+                group: Some("A".into()),
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("valid fixture");
+    assert_eq!(stats["total"], 1);
+    assert_eq!(stats["linked"], 1);
+    let discovered = store
+        .bug_statistics(
+            id,
+            BugStatisticsQuery {
+                person_role: Some(BugPersonRole::Reporter),
+                person: Some("Reporter".into()),
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("valid fixture");
+    assert_eq!(discovered["total"], 2);
+    let period = store
+        .records(
+            id,
+            ListQuery {
+                kind: Some("requirement".into()),
+                metric: Some(ProductivityMetric::Requirements),
+                period: Some(true),
+                days: Some(7),
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("valid fixture");
+    assert_eq!(period["total"], 2);
+    let ready = store
+        .records(
+            id,
+            ListQuery {
+                kind: Some("requirement".into()),
+                status: Some("待发布".into()),
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("valid fixture");
+    assert_eq!(ready["total"], 1);
+    assert_eq!(ready["items"][0]["status"], "待发布");
+    let late = store
+        .records(
+            id,
+            ListQuery {
+                kind: Some("requirement".into()),
+                delayed_only: Some(true),
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("valid fixture");
+    assert_eq!(late["total"], 1);
+    assert_eq!(late["items"][0]["externalId"], "late");
+    assert_eq!(store.dashboard(id, 7).await.expect("valid fixture")["totals"]["delayed"], 1);
+    assert!(store.bug_statistics("missing-source", BugStatisticsQuery::default()).await.is_err());
+    for table in ["ms_devops_history", "ms_devops_entity", "ms_devops_sync_run", "ms_devops_source"]
+    {
+        sqlx::query(&format!(
+            "DELETE FROM {table} WHERE {}=$1",
+            if table == "ms_devops_source" { "id" } else { "source_id" }
+        ))
+        .bind(id)
+        .execute(&pool)
+        .await
+        .expect("valid fixture");
+    }
+}

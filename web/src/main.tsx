@@ -60,10 +60,10 @@ function FeedbackBridge() {
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <ThemeModeProvider>
-      {(mode) => (
+      {(mode, primaryColor) => (
         <LangProvider>
           {(lang) => (
-            <ConfigProvider locale={ANTD_LOCALE[lang]} direction={lang === 'ar' ? 'rtl' : 'ltr'} theme={themeFor(mode)}>
+            <ConfigProvider locale={ANTD_LOCALE[lang]} direction={lang === 'ar' ? 'rtl' : 'ltr'} theme={themeFor(mode, primaryColor)}>
               <AntApp component={false}>
                 <FeedbackBridge />
                 <BrowserRouter>

@@ -11,6 +11,12 @@ pub enum RepoError {
 
 #[async_trait]
 pub trait UserRepository: Send + Sync {
+    async fn theme(&self, user_id: &str) -> Result<Option<crate::domain::UserTheme>, RepoError>;
+    async fn save_theme(
+        &self,
+        user_id: &str,
+        theme: &crate::domain::UserTheme,
+    ) -> Result<(), RepoError>;
     async fn find_by_email(&self, email: &Email) -> Result<Option<User>, RepoError>;
     async fn insert(&self, new_user: &NewUser) -> Result<User, RepoError>;
     async fn get(&self, id: &str) -> Result<Option<User>, RepoError>;

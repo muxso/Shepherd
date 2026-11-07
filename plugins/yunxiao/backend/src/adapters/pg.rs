@@ -19,7 +19,7 @@ pub(super) fn db(e: sqlx::Error) -> Error {
     tracing::error!(error=%e,"DevOps storage failed");
     Error::Storage
 }
-const LATE: &str = "kind='requirement' AND payload->>'priority' IN ('紧急','高','中') AND payload->>'status' NOT IN ('已发布','已取消','已完成','已关闭','已验收','完成') AND NULLIF(payload->>'due','')::date < (now() AT TIME ZONE 'Asia/Shanghai')::date";
+const LATE: &str = "kind='requirement' AND payload->>'priority' IN ('紧急','高','中') AND payload->>'status' NOT IN ('待发布','已发布','已交付','已拒绝','已取消','已完成','已关闭','已验收','完成') AND NULLIF(payload->>'due','')::date < (now() AT TIME ZONE 'Asia/Shanghai')::date";
 #[async_trait]
 impl Store for PgStore {
     async fn activity_members(&self, source: &str) -> Result<Value, Error> {
@@ -299,6 +299,36 @@ impl Store for PgStore {
         tx.commit().await.map_err(db)?;
         Ok(json!({"id":run,"status":"FAILED"}))
     }
+    async fn bug_statistics(
+        &self,
+        source: &str,
+        query: crate::domain::bug_statistics::BugStatisticsQuery,
+    ) -> Result<Value, Error> {
+        query.validate()?;
+        let snapshot = sqlx::query_scalar::<_, Value>(include_str!("bug_statistics_snapshot.sql"))
+            .bind(source)
+            .fetch_optional(&self.0)
+            .await
+            .map_err(db)?
+            .ok_or(Error::NotFound)?;
+        let records: Vec<Record> =
+            serde_json::from_value(snapshot["records"].clone()).map_err(|_| Error::Storage)?;
+        let identities = serde_json::from_value(self.author_identities(source).await?)
+            .map_err(|_| Error::Storage)?;
+        let roster = serde_json::from_value(self.activity_members(source).await?)
+            .map_err(|_| Error::Storage)?;
+        let now =
+            chrono::DateTime::parse_from_rfc3339(snapshot["now"].as_str().ok_or(Error::Storage)?)
+                .map_err(|_| Error::Storage)?;
+        crate::domain::bug_statistics::build(
+            &snapshot["source"],
+            &query,
+            now,
+            &records,
+            &identities,
+            &roster,
+        )
+    }
     async fn dashboard(&self, source: &str, days: i64) -> Result<Value, Error> {
         let source_data = sqlx::query_scalar::<_, Value>(
             "SELECT to_jsonb(s) FROM ms_devops_source s WHERE id=$1",
@@ -310,6 +340,7 @@ impl Store for PgStore {
         .ok_or(Error::NotFound)?;
         let totals=sqlx::query_scalar::<_,Value>(&format!("SELECT jsonb_build_object('requirements',count(*) FILTER(WHERE kind='requirement'),'bugs',count(*) FILTER(WHERE kind='bug'),'sprints',count(*) FILTER(WHERE kind='sprint'),'delayed',count(*) FILTER(WHERE {LATE}),'delivered',count(*) FILTER(WHERE kind='requirement' AND payload->>'status'='已发布' AND (NULLIF(payload->>'statusChangedAt','')::timestamptz AT TIME ZONE 'Asia/Shanghai')::date BETWEEN (now() AT TIME ZONE 'Asia/Shanghai')::date-$2::int+1 AND (now() AT TIME ZONE 'Asia/Shanghai')::date)) FROM ms_devops_resolved_entity WHERE source_id=$1 AND active")).bind(source).bind(days as i32).fetch_one(&self.0).await.map_err(db)?;
         let authors=sqlx::query_scalar::<_,Value>("SELECT jsonb_build_object('name',payload->>'author','group',payload->>'group','commits',count(*),'linkedCommits',count(*) FILTER(WHERE jsonb_array_length(COALESCE(payload->'requirementIds','[]'))>0),'additions',sum((payload->>'additions')::bigint),'deletions',sum((payload->>'deletions')::bigint),'unknownStats',count(*) FILTER(WHERE payload->>'additions' IS NULL OR payload->>'deletions' IS NULL)) FROM ms_devops_resolved_entity WHERE source_id=$1 AND active AND kind='commit' AND (payload->>'authoredAt')::timestamptz>=now()-make_interval(days => $2::int) GROUP BY payload->>'author',payload->>'group' ORDER BY count(*) DESC").bind(source).bind(days as i32).fetch_all(&self.0).await.map_err(db)?;
+        let groups=sqlx::query_scalar::<_,String>("SELECT DISTINCT payload->>'group' FROM ms_devops_resolved_entity WHERE source_id=$1 AND active AND NULLIF(payload->>'group','') IS NOT NULL ORDER BY 1").bind(source).fetch_all(&self.0).await.map_err(db)?;
         let statuses=sqlx::query_scalar::<_,Value>("SELECT jsonb_build_object('kind',kind,'status',payload->>'status','count',count(*)) FROM ms_devops_resolved_entity WHERE source_id=$1 AND active AND kind IN ('requirement','bug') GROUP BY kind,payload->>'status'").bind(source).fetch_all(&self.0).await.map_err(db)?;
         let productivity = sqlx::query_scalar::<_, Value>(include_str!("productivity.sql"))
             .bind(source)
@@ -325,7 +356,7 @@ impl Store for PgStore {
             .map_err(db)?;
         let runs=sqlx::query_scalar::<_,Value>("SELECT to_jsonb(r) FROM ms_devops_sync_run r WHERE source_id=$1 ORDER BY started_at DESC LIMIT 10").bind(source).fetch_all(&self.0).await.map_err(db)?;
         Ok(
-            json!({"source":source_data,"productivity":productivity,"bugStatistics":bug_statistics,"totals":totals,"authors":authors,"statuses":statuses,"runs":runs,"days":days,"codeScope":"组织可见仓库；关联提交按需求ID归属项目，未关联提交单独保留","historyScope":"首次同步建立基线，此后记录观察到的状态变化；不推算导入前历史"}),
+            json!({"source":source_data,"productivity":productivity,"bugStatistics":bug_statistics,"totals":totals,"authors":authors,"statuses":statuses,"groups":groups,"runs":runs,"days":days,"codeScope":"组织可见仓库；关联提交按需求ID归属项目，未关联提交单独保留","historyScope":"首次同步建立基线，此后记录观察到的状态变化；不推算导入前历史"}),
         )
     }
     async fn code_authors(
@@ -425,7 +456,7 @@ impl Store for PgStore {
     async fn records(&self, source: &str, q: ListQuery) -> Result<Value, Error> {
         let page = q.page.unwrap_or(1).max(1);
         let size = q.page_size.unwrap_or(30).clamp(1, 100);
-        if q.metric.is_some() || q.date.is_some() {
+        if q.metric.is_some() || q.date.is_some() || q.period.unwrap_or(false) {
             return self.productivity_records(source, q, size, page).await;
         }
         let kind = q.kind.unwrap_or_else(|| "requirement".into());
@@ -448,7 +479,8 @@ impl Store for PgStore {
         let search = format!("%{}%", q.search.unwrap_or_default());
         let group = q.group.unwrap_or_default();
         let delayed = q.delayed_only.unwrap_or(false);
-        let filters=format!("source_id=$1 AND active AND kind=$2 AND (payload->>'title' ILIKE $3 OR external_id ILIKE $3 OR payload->>'serial' ILIKE $3 OR payload->>'owner' ILIKE $3 OR payload->>'author' ILIKE $3 OR payload->>'authorRaw' ILIKE $3) AND ($4='' OR payload->>'group'=$4) AND (NOT $5 OR ({LATE})) AND (kind<>'commit' OR (payload->>'authoredAt')::timestamptz>=now()-make_interval(days => $6::int))");
+        let status = q.status.unwrap_or_default();
+        let filters=format!("source_id=$1 AND active AND kind=$2 AND (payload->>'title' ILIKE $3 OR external_id ILIKE $3 OR payload->>'serial' ILIKE $3 OR payload->>'owner' ILIKE $3 OR payload->>'author' ILIKE $3 OR payload->>'authorRaw' ILIKE $3) AND ($4='' OR payload->>'group'=$4) AND (NOT $5 OR ({LATE})) AND ($7='' OR payload->>'status'=$7) AND (kind<>'commit' OR (payload->>'authoredAt')::timestamptz>=now()-make_interval(days => $6::int))");
         let days = q.days.unwrap_or(7).clamp(1, 366) as i32;
         let n = sqlx::query_scalar::<_, i64>(&format!(
             "SELECT count(*) FROM ms_devops_resolved_entity WHERE {filters}"
@@ -459,11 +491,12 @@ impl Store for PgStore {
         .bind(&group)
         .bind(delayed)
         .bind(days)
+        .bind(&status)
         .fetch_one(&self.0)
         .await
         .map_err(db)?;
-        let rows=sqlx::query_scalar::<_,Value>(&record_query(&filters,"COALESCE(e.payload->>'authoredAt',e.payload->>'updatedAt',e.payload->>'serial',e.external_id) DESC,e.external_id","$7","$8"))
-            .bind(source).bind(&kind).bind(&search).bind(&group).bind(delayed).bind(days).bind(size).bind((page-1).saturating_mul(size)).fetch_all(&self.0).await.map_err(db)?;
+        let rows=sqlx::query_scalar::<_,Value>(&record_query(&filters,"COALESCE(e.payload->>'authoredAt',e.payload->>'updatedAt',e.payload->>'serial',e.external_id) DESC,e.external_id","$8","$9"))
+            .bind(source).bind(&kind).bind(&search).bind(&group).bind(delayed).bind(days).bind(&status).bind(size).bind((page-1).saturating_mul(size)).fetch_all(&self.0).await.map_err(db)?;
         Ok(json!({"total":n,"items":rows,"page":page,"pageSize":size}))
     }
 }
@@ -478,8 +511,28 @@ impl PgStore {
         let metric = q
             .metric
             .ok_or_else(|| Error::Invalid("metric and date are required together".into()))?;
-        let date = chrono::NaiveDate::parse_from_str(q.date.as_deref().unwrap_or(""), "%Y-%m-%d")
-            .map_err(|_| Error::Invalid("invalid event date".into()))?;
+        let period = q.period.unwrap_or(false);
+        if period && q.date.is_some() {
+            return Err(Error::Invalid("choose a date or period, not both".into()));
+        }
+        let through = if period {
+            let date = sqlx::query_scalar::<_, String>(
+                "SELECT to_char((now() AT TIME ZONE 'Asia/Shanghai')::date,'YYYY-MM-DD')",
+            )
+            .fetch_one(&self.0)
+            .await
+            .map_err(db)?;
+            chrono::NaiveDate::parse_from_str(&date, "%Y-%m-%d").map_err(|_| Error::Storage)?
+        } else {
+            chrono::NaiveDate::parse_from_str(q.date.as_deref().unwrap_or(""), "%Y-%m-%d")
+                .map_err(|_| Error::Invalid("invalid event date".into()))?
+        };
+        let from = through
+            - chrono::Duration::days(if period {
+                q.days.unwrap_or(7).clamp(1, 366) - 1
+            } else {
+                0
+            });
         let kind = metric.record_kind();
         if q.kind.as_deref().is_some_and(|supplied| supplied != kind) {
             return Err(Error::Invalid("metric does not match record kind".into()));
@@ -492,25 +545,27 @@ impl PgStore {
             ProductivityMetric::UnknownStats => ("authoredAt", "jsonb_array_length(COALESCE(e.payload->'requirementIds','[]'))>0 AND (e.payload->>'additions' IS NULL OR e.payload->>'deletions' IS NULL)"),
             _ => ("createdAt", "true"),
         };
-        let filters = format!("e.source_id=$1 AND e.active AND e.kind=$2 AND (NULLIF(e.payload->>'{field}','')::timestamptz AT TIME ZONE 'Asia/Shanghai')::date=$3::date AND ({condition}) AND (COALESCE(e.payload->>'title','') ILIKE $4 OR e.external_id ILIKE $4 OR COALESCE(e.payload->>'serial','') ILIKE $4 OR e.payload->>'author' ILIKE $4 OR e.payload->>'authorRaw' ILIKE $4)");
+        let filters = format!("e.source_id=$1 AND e.active AND e.kind=$2 AND (NULLIF(e.payload->>'{field}','')::timestamptz AT TIME ZONE 'Asia/Shanghai')::date BETWEEN $3::date AND $5::date AND ({condition}) AND (COALESCE(e.payload->>'title','') ILIKE $4 OR e.external_id ILIKE $4 OR COALESCE(e.payload->>'serial','') ILIKE $4 OR e.payload->>'author' ILIKE $4 OR e.payload->>'authorRaw' ILIKE $4)");
         let search = format!("%{}%", q.search.unwrap_or_default());
         let count = sqlx::query_scalar::<_, i64>(&format!(
             "SELECT count(*) FROM ms_devops_resolved_entity e WHERE {filters}"
         ))
         .bind(source)
         .bind(kind)
-        .bind(date.to_string())
+        .bind(from.to_string())
         .bind(&search)
+        .bind(through.to_string())
         .fetch_one(&self.0)
         .await
         .map_err(db)?;
         // Resolve associations inside the plugin database and the same source, including unresolved IDs.
         let order = format!("(NULLIF(e.payload->>'{field}','')::timestamptz) DESC,e.external_id");
-        let rows = sqlx::query_scalar::<_, Value>(&record_query(&filters, &order, "$5", "$6"))
+        let rows = sqlx::query_scalar::<_, Value>(&record_query(&filters, &order, "$6", "$7"))
             .bind(source)
             .bind(kind)
-            .bind(date.to_string())
+            .bind(from.to_string())
             .bind(&search)
+            .bind(through.to_string())
             .bind(size)
             .bind((page - 1).saturating_mul(size))
             .fetch_all(&self.0)

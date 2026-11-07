@@ -13,6 +13,7 @@ export default function AnimatedLogo({ size = 96, className }: { size?: number; 
       viewBox="0 0 1024 1024"
       width={size}
       height={size}
+      role="img"
       aria-label="Shepherd"
     >
       <g fill="currentColor" transform="translate(20,115)">

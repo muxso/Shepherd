@@ -1,6 +1,7 @@
 pub mod activity_review;
 pub mod author_identities;
 mod bug_quality;
+pub mod bug_statistics;
 pub mod code_authors;
 mod member_metrics;
 pub mod team_activity;
@@ -186,6 +187,8 @@ pub struct ListQuery {
     pub days: Option<i64>,
     pub group: Option<String>,
     pub delayed_only: Option<bool>,
+    pub status: Option<String>,
+    pub period: Option<bool>,
 }
 #[cfg(test)]
 mod tests {

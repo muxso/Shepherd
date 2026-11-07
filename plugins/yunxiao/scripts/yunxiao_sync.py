@@ -21,6 +21,7 @@ from yunxiao_testhub import enrich_requirements, collect_testcases
 from yunxiao_relations import enrich_bug_relations
 from yunxiao_bug_history import enrich_bug_history
 from yunxiao_repository_languages import repository_language
+from yunxiao_commits import list_commits
 
 def load_env(path):
     for line in Path(path).read_text().splitlines():
@@ -117,6 +118,14 @@ def collect(collector, groups, days):
         records.append({'kind':'sprint','externalId':sid,'data':{'title':sprint.get('name') or '', 'status':str(sprint.get('status') or ''), 'startAt':(collector.dateval(sprint.get('startDate')).isoformat() if collector.dateval(sprint.get('startDate')) else ''), 'endAt':(collector.dateval(sprint.get('endDate')).isoformat() if collector.dateval(sprint.get('endDate')) else ''), 'raw':sprint}})
     until = dt.datetime.now(collector.TZ).replace(second=0,microsecond=0)
     since = until-dt.timedelta(days=days)
+    records.extend(collect_code(collector,groups,since,until,items,bugs,sprints))
+    records.extend(testcases)
+    unique = deduplicate(records)
+    if len(unique) != len(records): print(f"Cloud pagination duplicates deduplicated: {len(records)-len(unique)}", flush=True)
+    return unique,since.isoformat(),until.isoformat()
+
+def collect_code(collector,groups,since,until,items,bugs,sprints):
+    records=[]
     # Cache the already-completed source snapshot for the collector's associations.
     old_workitems, old_sprints, old_ci = collector.workitems, collector.sprints, collector.flow_ci
     original_commits = getattr(collector, 'commits', None)
@@ -124,7 +133,7 @@ def collect(collector, groups, days):
     branch_lock = threading.Lock()
     if callable(original_commits):
         def tracked_commits(repo, branch, start, end, config):
-            commits = original_commits(repo, branch, start, end, config)
+            commits = list_commits(collector,repo,branch,start,end,config) if callable(getattr(collector,'api',None)) and callable(getattr(collector,'rows',None)) else original_commits(repo,branch,start,end,config)
             with branch_lock:
                 for commit in commits:
                     if commit.get('id'):
@@ -157,10 +166,7 @@ def collect(collector, groups, days):
             'parentIds':cm.get('parentIds') or [],'url':cm.get('url') or '',
             **({'branches':sorted(branch_refs.get(rid+':'+cm['sha'],set()))} if callable(original_commits) else {}),
             **repository_metadata[rid]}})
-    records.extend(testcases)
-    unique = deduplicate(records)
-    if len(unique) != len(records): print(f"Cloud pagination duplicates deduplicated: {len(records)-len(unique)}", flush=True)
-    return unique,since.isoformat(),until.isoformat()
+    return records
 
 def main():
     if len(sys.argv)>1:load_env(sys.argv[1])

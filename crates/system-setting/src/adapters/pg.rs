@@ -48,6 +48,28 @@ impl PgUserRepository {
 
 #[async_trait]
 impl UserRepository for PgUserRepository {
+    async fn theme(&self, user_id: &str) -> Result<Option<crate::domain::UserTheme>, RepoError> {
+        let row = sqlx::query("SELECT mode,primary_color FROM ms_user_theme WHERE user_id=$1")
+            .bind(user_id)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(repo_err)?;
+        row.map(|row| {
+            crate::domain::UserTheme::new(row.get("mode"), row.get("primary_color"))
+                .map_err(|_| RepoError::Backend("invalid stored theme".into()))
+        })
+        .transpose()
+    }
+    async fn save_theme(
+        &self,
+        user_id: &str,
+        theme: &crate::domain::UserTheme,
+    ) -> Result<(), RepoError> {
+        sqlx::query("INSERT INTO ms_user_theme(user_id,mode,primary_color) VALUES($1,$2,$3) ON CONFLICT(user_id) DO UPDATE SET mode=EXCLUDED.mode,primary_color=EXCLUDED.primary_color,updated_at=now()")
+            .bind(user_id).bind(&theme.mode).bind(&theme.primary_color).execute(&self.pool).await.map_err(repo_err)?;
+        Ok(())
+    }
+
     async fn find_by_email(&self, email: &Email) -> Result<Option<User>, RepoError> {
         let row = sqlx::query(
             "SELECT id, name, email, enable, deleted FROM ms_user \
@@ -1210,6 +1232,28 @@ mod tests {
         assert!(!repo.delete("u-bob", &rec.id).await.expect("del"));
         assert!(repo.delete("u-alice", &rec.id).await.expect("del"));
         assert!(repo.list_by_user("u-alice").await.expect("list").is_empty());
+    }
+
+    #[tokio::test]
+    #[ignore = "requires DATABASE_URL pointing to a PostgreSQL instance"]
+    async fn pg_user_themes_survive_new_repository_instances_and_keep_users_separate() {
+        let pool = PgPool::connect(&std::env::var("DATABASE_URL").expect("valid fixture"))
+            .await
+            .expect("valid fixture");
+        migrate::run(&pool).await.expect("valid fixture");
+        let repo = PgUserRepository::new(pool.clone());
+        let first = "theme-test-one";
+        let second = "theme-test-two";
+        let theme = crate::domain::UserTheme::new("dark", "#8064ad").expect("valid fixture");
+        repo.save_theme(first, &theme).await.expect("valid fixture");
+        let fresh = PgUserRepository::new(pool.clone());
+        assert_eq!(fresh.theme(first).await.expect("valid fixture"), Some(theme));
+        assert!(fresh.theme(second).await.expect("valid fixture").is_none());
+        sqlx::query("DELETE FROM ms_user_theme WHERE user_id=$1")
+            .bind(first)
+            .execute(&pool)
+            .await
+            .expect("valid fixture");
     }
 
     #[tokio::test]
