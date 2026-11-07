@@ -48,3 +48,14 @@ export function sourceHref(value?: string | null): string | undefined {
   if (!value || /[\u0000-\u001f\u007f]/.test(value)) return undefined
   try { const url = new URL(value); return ['https:', 'http:'].includes(url.protocol) && !url.username && !url.password ? url.href : undefined } catch { return undefined }
 }
+
+export type ActivitySort = 'commits' | 'bugs' | 'last' | 'repositories' | 'requirements' | 'lines'
+export function activitySortValue(data: TeamActivityData, member: import('./api').ActivityMember, metric: import('./api').ActivityKind, sort: ActivitySort): number {
+  const events = data.events.filter(e => e.actor === member.name)
+  if (sort === 'last') return member.lastActivityAt ? Date.parse(member.lastActivityAt) : 0
+  if (sort === 'bugs') return data.role === 'code' ? new Set(data.bugs.filter(b => b.responsibles.includes(member.name)).map(b => b.id)).size : new Set(events.filter(e => e.kind === 'bugReported').map(e => e.externalId)).size
+  if (sort === 'repositories') return new Set(events.filter(e => e.kind === 'commit').map(repositoryKey)).size
+  if (sort === 'requirements') return data.role === 'code' ? uniqueRequirements(events).length : new Set(events.filter(e => e.kind === 'requirementCreated' || e.kind === 'requirementDelivered').map(e => e.externalId)).size
+  if (sort === 'lines') return events.reduce((sum, e) => sum + (e.additions || 0) + (e.deletions || 0), 0)
+  return events.filter(e => e.kind === metric).length
+}

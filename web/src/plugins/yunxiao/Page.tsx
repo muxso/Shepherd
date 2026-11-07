@@ -8,7 +8,7 @@ import BugStatistics from './BugStatistics'
 import MemberMetrics from './MemberMetrics'
 import StatisticsNotes from './StatisticsNotes'
 import CodeAuthors from './TeamActivity'
-import { PageBody, PageContainer, PageHeader } from '../../components/Page'
+import { PageBody, PageContainer } from '../../components/Page'
 import { devopsApi, type DevopsDashboard, type DevopsRow, type DevopsSource } from './api'
 const kinds = [{ key: 'requirement', label: '需求' }, { key: 'bug', label: '缺陷' }, { key: 'sprint', label: '迭代' }, { key: 'testcase', label: '测试用例' }, { key: 'commit', label: '实际提交' }, { key: 'history', label: '状态变化' }, { key: 'runs', label: '同步记录' }]
 const when = (v?: string) => v ? new Date(v).toLocaleString('zh-CN', { hour12: false }) : '—'
@@ -89,17 +89,17 @@ export default function Devops() {
       { title: '状态变更', dataIndex: 'statusChangedAt', width: 175, render: when },
     ]),
   ]
-  return <PageContainer>
-    <PageHeader title={<span role="heading" aria-level={2}>云效研发统计</span>} extra={<Space size={8} wrap>
-      <Select aria-label="云效项目" style={{ minWidth: 180 }} value={source || undefined} onChange={v => { setSource(v); setPage(1); setGroup(''); setReference(''); if (view === 'radar' || view === 'authors') { const next = new URLSearchParams(location.search); next.set('source',v); next.delete('group'); next.delete('chart'); next.delete('compare'); navigate({ pathname:location.pathname,search:next.toString() }) } }} options={sources.map(s => ({ value: s.id, label: s.name }))} placeholder="选择数据源" />
+  const sourceControls = <Space size={8} wrap>
+      <Select aria-label="云效项目" style={{ minWidth: 180 }} value={source || undefined} onChange={v => { setSource(v); setPage(1); setGroup(''); setReference(''); if (view === 'radar' || view === 'authors') { const next = new URLSearchParams(location.search); next.set('source',v); next.delete('group'); next.delete('activityGroup'); next.delete('perspective'); next.delete('chart'); next.delete('compare'); navigate({ pathname:location.pathname,search:next.toString() }) } }} options={sources.map(s => ({ value: s.id, label: s.name }))} placeholder="选择数据源" />
       {!['delivery','radar','authors'].includes(view) && <Select aria-label="统计区间" value={days} onChange={v => { setDays(v); setPage(1) }} options={[7,14,30,90,365].map(v => ({ value:v, label:`最近 ${v} 天` }))} />}
       <Button aria-label="刷新数据" icon={<ReloadOutlined />} onClick={() => setRevision(x => x + 1)} />
       {!['delivery','radar','authors'].includes(view) && <StatisticsNotes info={info} data={dashboard} />}
-    </Space>} />
+    </Space>
+  return <PageContainer>
     <PageBody testId="devops-scroll">
       {error && <Alert showIcon type="error" message={error} style={{ marginBottom: 12 }} />}
       {view !== 'authors' && <div className="yx-page-status"><Tag>云效插件</Tag><span>{info?.last_success_at ? `最近同步 ${when(info.last_success_at)}` : '等待首次同步'}</span></div>}
-      <Tabs activeKey={view} onChange={value => { setView(value); setError(''); const next = new URLSearchParams(location.search); next.set('view', value); if (source) next.set('source', source); if (value !== 'delivery') next.delete('reference'); if (value !== 'records') { next.delete('kind'); next.delete('metric'); next.delete('date') } navigate({ pathname: location.pathname, search: next.toString() }) }} items={[
+      <Tabs tabBarExtraContent={sourceControls} activeKey={view} onChange={value => { setView(value); setError(''); const next = new URLSearchParams(location.search); next.set('view', value); if (source) next.set('source', source); if (value !== 'delivery') next.delete('reference'); if (value !== 'records') { next.delete('kind'); next.delete('metric'); next.delete('date') } navigate({ pathname: location.pathname, search: next.toString() }) }} items={[
         { key:'overview', label:'概览', children: <>
     <Row gutter={[12, 12]} style={{ marginBottom: 16 }}>
       {[

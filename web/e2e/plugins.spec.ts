@@ -18,7 +18,7 @@ for (const enabled of [false, true]) {
     await expect(page.getByText(enabled ? '已启用' : '未启用', { exact: true })).toBeVisible()
     await page.goto('/devops')
     if (enabled) {
-      await expect(page.getByRole('heading', { name: '云效研发统计' })).toBeVisible()
+      await expect(page.getByRole('tab', { name: '概览', exact: true })).toBeVisible()
       await expect.poll(() => syncRequests).toBeGreaterThan(0)
       await expect(page.getByRole('menuitem', { name: '云效研发统计' })).toBeVisible()
     } else {

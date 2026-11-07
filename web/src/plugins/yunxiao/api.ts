@@ -102,20 +102,24 @@ export interface CodeAuthorsData {
 export type ActivityRole = 'code' | 'product' | 'test'
 export type ActivityKind = 'commit' | 'requirementCreated' | 'requirementDelivered' | 'testcaseCreated' | 'bugReported'
 export interface ActivityMemberSetting { name: string; group?: string | null; roles: ActivityRole[]; enabled: boolean }
-export interface ActivityMember { name: string; group: string; inRoster: boolean; eventCount: number; lastActivityAt: string | null; status: 'active' | 'noRecords' | 'unverified' }
+export interface ActivityMember { displayName?: string; attribution?: 'person' | 'unmappedAccount' | 'unknownAuthor'; unknownActivityTimes?: boolean; name: string; group: string; inRoster: boolean; eventCount: number; lastActivityAt: string | null; status: 'active' | 'noRecords' | 'unverified' }
 export interface ActivityEvent {
   id: string; externalId: string; actor: string; authorRaw: string; group: string; kind: ActivityKind; date: string; at: string;
-  url?: string | null; repositoryUrl?: string | null; title: string | null; serial: string | null; status: string | null; repoId: string | number | null; repo: string | null; sha: string | null;
+  branches?: string[] | null; url?: string | null; repositoryUrl?: string | null; title: string | null; serial: string | null; status: string | null; repoId: string | number | null; repo: string | null; sha: string | null;
   additions: number | null; deletions: number | null; linked: boolean; requirements: { externalId: string; serial: string | null; title: string | null; url?: string | null }[];
 }
 export interface ActivityBug { id: string; serial: string | null; title: string | null; status: string | null; at: string; date: string; responsibles: string[]; requirements: { externalId: string; serial: string | null; title: string | null; url?: string | null }[]; url?: string | null }
 export interface TeamActivityData {
   source: DevopsSource; role: ActivityRole; days: number; from: string; through: string; start: string; endExclusive: string; timezone: string; observedAt: string | null;
-  members: ActivityMember[]; events: ActivityEvent[]; bugs: ActivityBug[];
+  members: ActivityMember[]; events: ActivityEvent[]; bugs: ActivityBug[]; reviewPolicy?: ActivityReviewPolicy;
   coverage: { complete: boolean; rosterConfigured: boolean; unattributedEvents: number; testcasesCollected: boolean };
   permissions: { requirements: boolean; bugs: boolean; testcases: boolean };
 }
+export interface ReviewRule { enabled: boolean; inactiveDays: number; activeWindowDays: number; minActiveDays: number }
+export type ActivityReviewPolicy = Record<ActivityRole, ReviewRule>
 export const activityApi = {
+  reviewPolicy: (id: string) => request<ActivityReviewPolicy & { permissions: { update: boolean } }>('GET', `/api/devops/sources/${encodeURIComponent(id)}/activity-review-policy`),
+  saveReviewPolicy: (id: string, policy: ActivityReviewPolicy) => request<ActivityReviewPolicy>('PUT', `/api/devops/sources/${encodeURIComponent(id)}/activity-review-policy`, policy),
   activity: (id: string, role: ActivityRole, days: number) => request<TeamActivityData>('GET', `/api/devops/sources/${encodeURIComponent(id)}/team-activity?${new URLSearchParams({ role, days: String(days) })}`),
   members: (id: string) => request<{ members: ActivityMemberSetting[]; permissions: { update: boolean } }>('GET', `/api/devops/sources/${encodeURIComponent(id)}/activity-members`),
   saveMembers: (id: string, members: ActivityMemberSetting[]) => request<{ members: ActivityMemberSetting[] }>('PUT', `/api/devops/sources/${encodeURIComponent(id)}/activity-members`, { members }),

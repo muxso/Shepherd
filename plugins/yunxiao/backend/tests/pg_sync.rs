@@ -637,6 +637,30 @@ async fn configurable_identities_apply_before_every_code_query_and_survive_sync(
         .expect("members")
         .iter()
         .any(|m| m["name"] == "No activity" && m["status"] == "noRecords"));
+    let mut policy = shepherd_yunxiao::domain::activity_review::ActivityReviewPolicy::default();
+    assert_eq!(
+        store.activity_review_policy(&ids[0]).await.expect("default policy")["code"]
+            ["inactiveDays"],
+        3
+    );
+    policy.code.inactive_days = 5;
+    store.set_activity_review_policy(&ids[0], policy).await.expect("save policy");
+    assert_eq!(
+        store.activity_review_policy(&ids[0]).await.expect("saved policy")["code"]["inactiveDays"],
+        5
+    );
+    assert_eq!(
+        store.activity_review_policy(&ids[1]).await.expect("isolated policy")["code"]
+            ["inactiveDays"],
+        3
+    );
+    assert_eq!(
+        store
+            .team_activity(&ids[0], ActivityQuery::default(), perms)
+            .await
+            .expect("policy in activity")["reviewPolicy"]["code"]["inactiveDays"],
+        5
+    );
     let original: serde_json::Value = sqlx::query_scalar(
         "SELECT payload FROM ms_devops_entity WHERE source_id=$1 AND external_id='repo:b'",
     )

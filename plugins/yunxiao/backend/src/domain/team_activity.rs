@@ -99,7 +99,14 @@ pub struct ActivityPermissions {
     pub testcases: bool,
 }
 
+#[derive(Deserialize)]
+pub struct AuthorGroup {
+    pub author: String,
+    pub group: String,
+}
+
 pub struct CollectionWindow {
+    pub author_groups: Vec<AuthorGroup>,
     pub now: DateTime<FixedOffset>,
     pub collected_since: Option<DateTime<FixedOffset>>,
     pub testcases_collected: bool,
@@ -114,7 +121,7 @@ pub fn build_activity(
     permissions: ActivityPermissions,
     window: CollectionWindow,
 ) -> Result<Value, Error> {
-    let CollectionWindow { now, collected_since, testcases_collected } = window;
+    let CollectionWindow { now, collected_since, testcases_collected, author_groups } = window;
     query.validate()?;
     let tz = FixedOffset::east_opt(8 * 3600).ok_or(Error::Storage)?;
     let now = now.with_timezone(&tz);
@@ -138,6 +145,11 @@ pub fn build_activity(
             .map_or_else(|| name.to_owned(), |p| p.name.clone())
     };
     let mut groups: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    for entry in author_groups {
+        if !entry.author.is_empty() && !entry.group.is_empty() && entry.group != "待归属" {
+            groups.entry(canonical(&entry.author)).or_default().insert(entry.group);
+        }
+    }
     for r in records {
         let actor = if r.kind == "commit" {
             text(&r.data, "author")
@@ -251,11 +263,18 @@ pub fn build_activity(
             _ => {}
         }
         for (kind, raw_actor, field) in kinds {
-            let Some(actor) = human(raw_actor).map(|p| canonical(&p)) else {
+            let actor = if let Some(person) = human(raw_actor).filter(|name| {
+                kind != "commit" || !["作者未知", "未知作者", "未识别作者"].contains(&name.as_str())
+            }) {
+                canonical(&person)
+            } else {
                 if timestamp(d, field).is_some_and(|at| start <= at && at <= now) {
                     unattributed += 1;
                 }
-                continue;
+                if kind != "commit" {
+                    continue;
+                }
+                String::new()
             };
             let at = timestamp(d, field);
             if at.is_some_and(|at| at > now) {
@@ -269,7 +288,7 @@ pub fn build_activity(
                 continue;
             };
             let ids = links(d);
-            events.push(json!({"id":format!("{kind}:{}",record.external_id),"externalId":record.external_id,"actor":actor,"authorRaw":d.get("authorRaw").and_then(Value::as_str).unwrap_or(raw_actor),"group":group_for(&actor),"kind":kind,"date":at.with_timezone(&tz).date_naive().to_string(),"at":at.to_rfc3339(),"title":d["title"].as_str(),"serial":d["serial"].as_str(),"status":d["status"].as_str(),"repoId":d["repoId"],"repo":d["repo"],"sha":d["sha"],"additions":d["additions"].as_u64(),"deletions":d["deletions"].as_u64(),"linked":!ids.is_empty(),"requirements":resolve(ids),"url":if record.kind=="commit" {original_url(d)} else {workitem_url(source,&record.kind,&record.external_id,d)},"repositoryUrl":repository_url(d)}));
+            events.push(json!({"id":format!("{kind}:{}",record.external_id),"externalId":record.external_id,"actor":actor,"authorRaw":d.get("authorRaw").and_then(Value::as_str).unwrap_or(raw_actor),"group":group_for(&actor),"kind":kind,"date":at.with_timezone(&tz).date_naive().to_string(),"at":at.to_rfc3339(),"title":d["title"].as_str(),"serial":d["serial"].as_str(),"status":d["status"].as_str(),"repoId":d["repoId"],"repo":d["repo"],"sha":d["sha"],"additions":d["additions"].as_u64(),"deletions":d["deletions"].as_u64(),"linked":!ids.is_empty(),"requirements":resolve(ids),"url":if record.kind=="commit" {original_url(d)} else {workitem_url(source,&record.kind,&record.external_id,d)},"repositoryUrl":repository_url(d),"branches":d.get("branches").and_then(Value::as_array)}));
         }
         if record.kind == "bug"
             && query.role == ActivityRole::Code
@@ -336,7 +355,28 @@ pub fn build_activity(
         } else {
             "unverified"
         };
-        members.push(json!({"name":name,"group":group_for(&name),"inRoster":in_roster,"eventCount":count,"lastActivityAt":observed.get(&name).copied().flatten().map(|at|at.to_rfc3339()),"status":status}));
+        let source_person = records.iter().any(|r| {
+            r.kind == "requirement"
+                && [text(&r.data, "owner"), creator(&r.data)]
+                    .iter()
+                    .any(|p| !p.is_empty() && canonical(p) == name)
+        }) || bugs.iter().any(|b| {
+            b["responsibles"]
+                .as_array()
+                .is_some_and(|people| people.iter().any(|p| p.as_str() == Some(&name)))
+        });
+        let attribution = if name.is_empty() {
+            "unknownAuthor"
+        } else if query.role != ActivityRole::Code
+            || in_roster
+            || source_person
+            || identities.identities.iter().any(|p| p.name == name)
+        {
+            "person"
+        } else {
+            "unmappedAccount"
+        };
+        members.push(json!({"name":name,"displayName":if name.is_empty(){"未识别作者"}else{&name},"attribution":attribution,"unknownActivityTimes":unknown_times.contains(&name),"group":group_for(&name),"inRoster":in_roster,"eventCount":count,"lastActivityAt":observed.get(&name).copied().flatten().map(|at|at.to_rfc3339()),"status":status}));
     }
     members.sort_by(|a, b| {
         b["eventCount"]
@@ -371,10 +411,11 @@ fn links(data: &Value) -> Vec<String> {
         .collect();
     for key in ["parentId", "parentSerial"] {
         let id = text(data, key);
-        if !id.is_empty() {
+        if !id.is_empty() && id != "EMPTY_VALUE" {
             ids.push(id.to_owned());
         }
     }
+    ids.retain(|id| !id.trim().is_empty() && id != "EMPTY_VALUE");
     ids
 }
 

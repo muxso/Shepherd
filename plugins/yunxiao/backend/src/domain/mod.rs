@@ -1,3 +1,4 @@
+pub mod activity_review;
 pub mod author_identities;
 mod bug_quality;
 pub mod code_authors;

@@ -6,6 +6,12 @@ use async_trait::async_trait;
 use serde_json::Value;
 #[async_trait]
 pub trait Store: Send + Sync {
+    async fn activity_review_policy(&self, source: &str) -> Result<Value, Error>;
+    async fn set_activity_review_policy(
+        &self,
+        source: &str,
+        policy: crate::domain::activity_review::ActivityReviewPolicy,
+    ) -> Result<Value, Error>;
     async fn activity_members(&self, source: &str) -> Result<Value, Error>;
     async fn set_activity_members(
         &self,
