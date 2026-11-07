@@ -87,7 +87,7 @@ export function priorityColor(p: string): string {
     case 'P1':
       return '#fa8c16'
     case 'P2':
-      return '#1677ff'
+      return 'var(--brand)'
     case 'P3':
       return '#52c41a'
     case 'P4':

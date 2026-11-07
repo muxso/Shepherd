@@ -35,7 +35,7 @@ export function requirementFocus(data: TeamActivityData): RequirementFocus[] {
     byId.get(r.externalId)!.events.push(e)
   }
   for (const r of byId.values()) {
-    r.people = new Set(r.events.map(e => e.actor)).size
+    r.people = new Set(r.events.map(e => e.actor).filter(Boolean)).size
     r.lines = r.events.reduce((n, e) => n + (e.additions ?? 0) + (e.deletions ?? 0), 0)
     r.unknownLines = r.events.filter(e => e.additions == null || e.deletions == null).length
     r.repositories = new Set(r.events.map(repositoryKey)).size

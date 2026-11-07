@@ -1312,7 +1312,7 @@ function CollabPanel({ projectId, reqId, refreshKey }: { projectId: string; reqI
             size={72}
             percent={Math.round(aiShare)}
             format={() => `${aiShare.toFixed(0)}%`}
-            strokeColor="#1664ff"
+            strokeColor="var(--brand)"
           />
           <div style={{ marginTop: 6, fontSize: 12, color: 'var(--text-2)' }}>{t('req.aiShare', 'AI 参与度(工作量)')}</div>
         </Col>
@@ -1321,7 +1321,7 @@ function CollabPanel({ projectId, reqId, refreshKey }: { projectId: string; reqI
             label={t('req.deliverSplit', '交付任务(AI / 人)')}
             left={row.aiTasks}
             right={row.humanTasks}
-            leftColor="#1664ff"
+            leftColor="var(--brand)"
             rightColor="#8c8c8c"
           />
         </Col>

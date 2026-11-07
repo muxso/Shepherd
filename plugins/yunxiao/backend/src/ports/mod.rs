@@ -43,6 +43,11 @@ pub trait Store: Send + Sync {
         can_requirements: bool,
     ) -> Result<Value, Error>;
     async fn dashboard(&self, source: &str, days: i64) -> Result<Value, Error>;
+    async fn bug_statistics(
+        &self,
+        source: &str,
+        query: crate::domain::bug_statistics::BugStatisticsQuery,
+    ) -> Result<Value, Error>;
     async fn requirement_output(&self, query: RequirementOutputQuery) -> Result<Value, Error>;
     async fn member_metrics(&self, source: &str, query: MemberMetricsQuery)
         -> Result<Value, Error>;

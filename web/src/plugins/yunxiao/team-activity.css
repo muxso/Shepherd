@@ -1,5 +1,5 @@
-.yx-activity-board { --activity-accent:#4d9f92;--activity-warm:#b9733f;min-width:0;color:var(--text); }
-[data-theme='dark'] .yx-activity-board { --activity-accent:#8ac3a2;--activity-warm:#e2b183; }
+.yx-activity-board { --activity-accent:var(--brand);--activity-warm:#b9733f;min-width:0;color:var(--text); }
+[data-theme='dark'] .yx-activity-board { --activity-accent:var(--brand);--activity-warm:#e2b183; }
 .yx-activity-toolbar,.yx-activity-filters,.yx-activity-chart-heading,.yx-activity-chart-footer,.yx-activity-analysis-head,.yx-activity-analysis-tools { display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px; }
 .yx-activity-toolbar { margin-bottom:12px; }
 .yx-activity-filters { margin-bottom:12px; }

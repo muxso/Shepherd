@@ -17,7 +17,7 @@ const WEEKS = 53
 const PAD_L = 28 // room for weekday labels
 const PAD_T = 16 // room for month labels
 
-// Value → opacity levels; base color depends on metric (AI/total = brand blue, human = orange).
+// Value → opacity levels; base color depends on metric (AI/total = user primary, human = orange).
 const LEVELS = [0.16, 0.34, 0.55, 0.8]
 
 export default function ContributionGrid({
@@ -34,7 +34,7 @@ export default function ContributionGrid({
 
   const byDate = useMemo(() => new Map(days.map((d) => [d.date, d])), [days])
   const valueOf = (c: DayCell) => (metric === 'ai' ? c.ai : metric === 'human' ? c.human : c.ai + c.human)
-  const base = metric === 'human' ? '255, 125, 0' : '22, 100, 255'
+  const base = metric === 'human' ? '255, 125, 0' : 'var(--brand-rgb)'
 
   // Grid: 52 weeks back from the Sunday of the current week; generated column (week) by row (weekday).
   const { cols, monthMarks, max } = useMemo(() => {

@@ -2,7 +2,7 @@
   <!-- Shepherd mark: an S built from sheared strata — stacked execution traces meeting along
        45-degree seams, the hand-off line between the AI end and the human end.
        Original geometry drawn on a clean integer grid (bar 40, pitch 73, bevel 40/42). -->
-  <g fill="#1664ff" transform="translate(20,115)">
+  <g fill="#4D9F92" transform="translate(20,115)">
     <polygon points="310,0 850,0 810,40 310,40"/>
     <polygon points="310,73 777,73 737,113 310,113"/>
     <polygon points="310,146 704,146 664,186 310,186"/>

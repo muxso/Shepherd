@@ -47,6 +47,7 @@ import { api, userStore, type Notice, type NoticeUnreadCount } from '../api'
 import { useApp } from '../context'
 import { useI18n, LANG_LIST, type Lang } from '../i18n'
 import { useThemeMode } from '../themeMode'
+import AnimatedLogo from './AnimatedLogo'
 import NewProjectModal from './NewProjectModal'
 import PersonalCenter from './PersonalCenter'
 
@@ -364,7 +365,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
               onClick={() => nav('/home')}
               style={{ height: 56, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 2, cursor: 'pointer' }}
             >
-              <img src="/logo.svg" alt="Shepherd" width={24} height={24} style={{ display: 'block' }} />
+              <AnimatedLogo size={24} className="shepherd-shell-logo" />
               <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: 0.3, color: 'var(--brand)' }}>Shepherd</span>
             </div>
           </Tooltip>

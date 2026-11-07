@@ -55,7 +55,7 @@ export default function OrgProjects() {
     { title: 'ID', dataIndex: 'id', width: 130, ellipsis: true, render: (v: string) => <span className="ms-mono" style={{ fontSize: 12 }}>{v.slice(0, 12)}</span> },
     { title: t('op.name', '名称'), dataIndex: 'name', width: 160, render: (v: string) => <span style={{ fontWeight: 600 }}>{v}</span> },
     { title: t('op.members', '成员'), width: 90, render: () => <span style={{ color: 'var(--brand)' }}>{userCount}</span> },
-    { title: t('op.projects', '项目'), width: 90, render: (_v, o) => <span style={{ color: '#1677ff' }}>{projByOrg[o.id]?.length ?? 0}</span> },
+    { title: t('op.projects', '项目'), width: 90, render: (_v, o) => <span style={{ color: 'var(--brand)' }}>{projByOrg[o.id]?.length ?? 0}</span> },
     { title: t('op.status', '状态'), width: 80, render: (_v, o) => <Switch size="small" checked={o.enable !== false} onChange={(c) => toggleOrg(o, c)} /> },
     { title: t('op.desc', '描述'), render: () => <span style={{ color: 'var(--text-3)' }}>{t('op.sysDefault', '系统默认创建的组织')}</span> },
     { title: t('op.creator', '创建人'), width: 120, render: () => userStore.get() },

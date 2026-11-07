@@ -54,6 +54,7 @@ pub fn router(svc: Service, sessions: Arc<dyn SessionStore>) -> Router {
         .route("/api/devops/sources", get(sources).post(create_source))
         .route("/api/devops/sources/{id}/runs", post(start))
         .route("/api/devops/sources/{id}/dashboard", get(dashboard))
+        .route("/api/devops/sources/{id}/bug-statistics", get(bug_statistics))
         .route("/api/devops/sources/{id}/records", get(records))
         .route("/api/devops/runs/{id}/records", put(stage))
         .route("/api/devops/runs/{id}/complete", post(complete))
@@ -154,6 +155,21 @@ async fn fail(
         return denied();
     }
     reply(s.svc.0.fail(&id, &b.error).await)
+}
+#[utoipa::path(get,path="/api/devops/sources/{id}/bug-statistics",tag="devops",params(("id"=String,Path),crate::domain::bug_statistics::BugStatisticsQuery),responses((status=200,body=Value),(status=400),(status=403),(status=404)),security(("bearer"=[])))]
+async fn bug_statistics(
+    u: AuthUser,
+    State(s): State<AppState>,
+    Path(id): Path<String>,
+    Query(q): Query<crate::domain::bug_statistics::BugStatisticsQuery>,
+) -> Response {
+    if !u.can("PROJECT", "READ") || !u.can("BUG", "READ") {
+        return denied();
+    }
+    if let Err(error) = q.validate() {
+        return reply(Err(error));
+    }
+    reply(s.svc.0.bug_statistics(&id, q).await)
 }
 #[utoipa::path(get,path="/api/devops/sources/{id}/dashboard",tag="devops",params(("id"=String,Path),ListQuery),responses((status=200,body=Value),(status=403)),security(("bearer"=[])))]
 async fn dashboard(
@@ -387,7 +403,7 @@ async fn set_activity_members(
     }
 }
 #[derive(OpenApi)]
-#[openapi(paths(activity_review_policy,set_activity_review_policy,team_activity,activity_members,set_activity_members,author_identities,set_author_identities,sources,create_source,start,stage,complete,fail,dashboard,requirement_output,member_metrics,code_authors,records),components(schemas(ActivityReviewPolicy,crate::domain::activity_review::ReviewRule,ActivityMembers,crate::domain::team_activity::ActivityMember,ActivityRole,AuthorIdentities,crate::domain::author_identities::AuthorIdentity,NewSource,Record,CompleteRun,Batch,Failure,ProductivityMetric)),tags((name="devops",description="External DevOps facts and synchronization")))]
+#[openapi(paths(bug_statistics,activity_review_policy,set_activity_review_policy,team_activity,activity_members,set_activity_members,author_identities,set_author_identities,sources,create_source,start,stage,complete,fail,dashboard,requirement_output,member_metrics,code_authors,records),components(schemas(crate::domain::bug_statistics::BugPersonRole,ActivityReviewPolicy,crate::domain::activity_review::ReviewRule,ActivityMembers,crate::domain::team_activity::ActivityMember,ActivityRole,AuthorIdentities,crate::domain::author_identities::AuthorIdentity,NewSource,Record,CompleteRun,Batch,Failure,ProductivityMetric)),tags((name="devops",description="External DevOps facts and synchronization")))]
 struct ApiDoc;
 pub fn openapi() -> utoipa::openapi::OpenApi {
     ApiDoc::openapi()
@@ -405,6 +421,13 @@ mod tests {
     struct Stub;
     #[async_trait]
     impl Store for Stub {
+        async fn bug_statistics(
+            &self,
+            _: &str,
+            _: crate::domain::bug_statistics::BugStatisticsQuery,
+        ) -> Result<Value, Error> {
+            Ok(json!({"total":0}))
+        }
         async fn activity_review_policy(&self, _: &str) -> Result<Value, Error> {
             Ok(serde_json::json!(ActivityReviewPolicy::default()))
         }
@@ -642,6 +665,16 @@ mod tests {
                 Some(admin.as_str()),
                 r#"{"code":{"enabled":true,"inactiveDays":3,"activeWindowDays":7,"minActiveDays":2},"product":{"enabled":true,"inactiveDays":3,"activeWindowDays":7,"minActiveDays":2},"test":{"enabled":true,"inactiveDays":3,"activeWindowDays":7,"minActiveDays":2}}"#,
                 200,
+            ),
+            ("GET", "/api/devops/sources/s/bug-statistics", Some(reader.as_str()), "", 403),
+            ("GET", "/api/devops/sources/s/bug-statistics", Some(admin.as_str()), "", 200),
+            ("GET", "/api/devops/sources/s/bug-statistics?days=0", Some(admin.as_str()), "", 400),
+            (
+                "GET",
+                "/api/devops/sources/s/bug-statistics?from=2026-11-04",
+                Some(admin.as_str()),
+                "",
+                400,
             ),
             ("GET", "/api/devops/sources/s/author-identities", Some(reader.as_str()), "", 200),
             ("GET", "/api/devops/sources/s/activity-members", Some(reader.as_str()), "", 200),
