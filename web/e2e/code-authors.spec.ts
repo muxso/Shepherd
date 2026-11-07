@@ -135,3 +135,18 @@ test('calendar boundaries and source protocols remain explicit', () => {
   expect(sourceHref('https://name:password@example.com')).toBeUndefined()
   expect(sourceHref('https://codeup.aliyun.com/org/repo')).toBe('https://codeup.aliyun.com/org/repo')
 })
+
+test('realistic member counts fit the desktop viewport without scrolling the board', async ({ page }) => {
+  await fixture(page)
+  await page.setViewportSize({ width: 1765, height: 1080 })
+  await page.route('**/team-activity?**', route => {
+    const value = data()
+    value.members = Array.from({ length: 33 }, (_, i) => ({ ...value.members[0], name: `Member ${i + 1}`, eventCount: 0 }))
+    return route.fulfill({ json: value })
+  })
+  await page.goto('/devops?view=authors&source=source-a')
+  const table = page.getByRole('table', { name: '成员每日活动热力图' })
+  await expect(table.locator('tbody tr')).toHaveCount(33)
+  await expect.poll(() => table.evaluate(t => t.getBoundingClientRect().bottom)).toBeLessThan(1040)
+  await expect(table.locator('tbody tr').last()).toBeInViewport()
+})
