@@ -12,6 +12,7 @@ import json
 import os
 from pathlib import Path
 import sys
+import threading
 import urllib.error
 import urllib.request
 
@@ -118,11 +119,25 @@ def collect(collector, groups, days):
     since = until-dt.timedelta(days=days)
     # Cache the already-completed source snapshot for the collector's associations.
     old_workitems, old_sprints, old_ci = collector.workitems, collector.sprints, collector.flow_ci
+    original_commits = getattr(collector, 'commits', None)
+    branch_refs = collections.defaultdict(set)
+    branch_lock = threading.Lock()
+    if callable(original_commits):
+        def tracked_commits(repo, branch, start, end, config):
+            commits = original_commits(repo, branch, start, end, config)
+            with branch_lock:
+                for commit in commits:
+                    if commit.get('id'):
+                        branch_refs[str(repo['id']) + ':' + str(commit['id'])].add(branch)
+            return commits
+        collector.commits = tracked_commits
     collector.workitems = lambda c,category='Req': items if category=='Req' else bugs
     collector.sprints = lambda c:sprints
     collector.flow_ci = lambda c,a,b:{'totals':{'passRate':None,'runs':0,'running':0,'passed':0,'failed':0,'pipelineErrors':0},'pipelines':[]}
     try: report = collector.report(since,until,[])
-    finally: collector.workitems,collector.sprints,collector.flow_ci = old_workitems,old_sprints,old_ci
+    finally:
+        collector.workitems,collector.sprints,collector.flow_ci = old_workitems,old_sprints,old_ci
+        if callable(original_commits): collector.commits = original_commits
     if report['totals'].get('branchScanErrors'):
         raise RuntimeError('Codeup branch scan incomplete; snapshot will not be published')
     repository_metadata = {}
@@ -139,7 +154,9 @@ def collect(collector, groups, days):
             'repoId':cm['repo_id'],'repo':cm['repo'],'sha':cm['sha'], 'authoredAt':cm['date'],
             'additions':stats.get('additions'),'deletions':stats.get('deletions'),
             'requirementIds':cm['requirementIds'],'isMerge':False,
-            'parentIds':cm.get('parentIds') or [],'url':cm.get('url') or '', **repository_metadata[rid]}})
+            'parentIds':cm.get('parentIds') or [],'url':cm.get('url') or '',
+            **({'branches':sorted(branch_refs.get(rid+':'+cm['sha'],set()))} if callable(original_commits) else {}),
+            **repository_metadata[rid]}})
     records.extend(testcases)
     unique = deduplicate(records)
     if len(unique) != len(records): print(f"Cloud pagination duplicates deduplicated: {len(records)-len(unique)}", flush=True)

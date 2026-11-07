@@ -52,6 +52,34 @@ impl Store for PgStore {
         tx.commit().await.map_err(db)?;
         Ok(json!(config))
     }
+    async fn activity_review_policy(&self, source: &str) -> Result<Value, Error> {
+        sqlx::query_scalar::<_,Value>("SELECT COALESCE(p.policy,$2) FROM ms_devops_source s LEFT JOIN ms_devops_activity_review_policy p ON p.source_id=s.id WHERE s.id=$1")
+            .bind(source).bind(json!(crate::domain::activity_review::ActivityReviewPolicy::default()))
+            .fetch_optional(&self.0).await.map_err(db)?.ok_or(Error::NotFound)
+    }
+    async fn set_activity_review_policy(
+        &self,
+        source: &str,
+        policy: crate::domain::activity_review::ActivityReviewPolicy,
+    ) -> Result<Value, Error> {
+        policy.validate()?;
+        let mut tx = self.0.begin().await.map_err(db)?;
+        let found = sqlx::query_scalar::<_, String>(
+            "SELECT id FROM ms_devops_source WHERE id=$1 FOR UPDATE",
+        )
+        .bind(source)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(db)?;
+        if found.is_none() {
+            return Err(Error::NotFound);
+        }
+        let value = json!(policy);
+        sqlx::query("INSERT INTO ms_devops_activity_review_policy(source_id,policy) VALUES($1,$2) ON CONFLICT(source_id) DO UPDATE SET policy=EXCLUDED.policy").bind(source).bind(&value).execute(&mut *tx).await.map_err(db)?;
+        tx.commit().await.map_err(db)?;
+        Ok(value)
+    }
+
     async fn team_activity(
         &self,
         source: &str,
@@ -61,6 +89,12 @@ impl Store for PgStore {
         query.validate()?;
         let snapshot = sqlx::query_scalar::<_, Value>(include_str!("team_activity.sql"))
             .bind(source)
+            .bind(query.role.as_str())
+            .bind(permissions.requirements)
+            .bind(permissions.bugs)
+            .bind(permissions.testcases)
+            .bind(query.days.unwrap_or(7) as i32)
+            .bind(json!(crate::domain::activity_review::ActivityReviewPolicy::default()))
             .fetch_optional(&self.0)
             .await
             .map_err(db)?
@@ -81,7 +115,7 @@ impl Store for PgStore {
         let since = snapshot["collectedSince"]
             .as_str()
             .and_then(|at| chrono::DateTime::parse_from_rfc3339(at).ok());
-        crate::domain::team_activity::build_activity(
+        let mut activity = crate::domain::team_activity::build_activity(
             &records,
             &snapshot["source"],
             &query,
@@ -89,11 +123,15 @@ impl Store for PgStore {
             &roster,
             permissions,
             crate::domain::team_activity::CollectionWindow {
+                author_groups: serde_json::from_value(snapshot["authorGroups"].clone())
+                    .map_err(|_| Error::Storage)?,
                 now,
                 collected_since: since,
                 testcases_collected: snapshot["testcasesCollected"].as_bool().unwrap_or(false),
             },
-        )
+        )?;
+        activity["reviewPolicy"] = snapshot["reviewPolicy"].clone();
+        Ok(activity)
     }
 
     async fn author_identities(&self, source: &str) -> Result<Value, Error> {

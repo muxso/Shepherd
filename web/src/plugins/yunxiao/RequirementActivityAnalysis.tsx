@@ -10,26 +10,27 @@ type Measure = typeof measures[number]['value']
 const amount = (r: RequirementFocus, metric: Measure) => metric === 'bugs' ? r.bugs.length : r[metric]
 function Distribution({ rows, canBugs, select }: { rows: RequirementFocus[]; canBugs: boolean; select: (id: string) => void }) {
   const ref = useRef<HTMLDivElement>(null), { mode } = useThemeMode()
-  const [error, setError] = useState('')
+  const [error, setError] = useState(''), [rendering, setRendering] = useState(true)
   useEffect(() => {
     if (!ref.current || !rows.length) return
     const chart = new Chart({ container: ref.current, autoFit: true, height: 340 })
-    setError('')
+    let live = true
+    setError(''); setRendering(true)
     chart.options({
       type: 'point', theme: mode,
       data: rows.map(r => ({ ...r, title: `${r.serial || r.id} ${r.title || ''}`, logLines: Math.log10(r.lines + 1), bugCount: canBugs ? r.bugs.length : null, bugBand: !canBugs ? '无缺陷读取权限' : r.bugs.length >= 3 ? '3+ Bug' : r.bugs.length ? '1–2 Bug' : '0 Bug' })),
       encode: { x: 'people', y: 'logLines', size: 'repositories', color: 'bugBand' },
-      scale: { x: { nice: true, tickMethod: 'd3-ticks' }, size: { range: [5, 24] }, color: { domain: ['0 Bug', '1–2 Bug', '3+ Bug', '无缺陷读取权限'], range: mode === 'dark' ? ['#78a2df', '#e1b36c', '#e18e90', '#7f8fa2'] : ['#7b9fd9', '#d8a05d', '#ce7b7d', '#9ca8b7'] } },
+      scale: { x: { nice: true }, size: { range: [5, 24] }, color: { domain: ['0 Bug', '1–2 Bug', '3+ Bug', '无缺陷读取权限'], range: mode === 'dark' ? ['#78a2df', '#e1b36c', '#e18e90', '#7f8fa2'] : ['#7b9fd9', '#d8a05d', '#ce7b7d', '#9ca8b7'] } },
       axis: { x: { title: '提交参与人数 / 人', labelFormatter: (v: number) => Number.isInteger(Number(v)) ? String(v) : '' }, y: { title: '代码变动 / 行（对数刻度）', labelFormatter: (v: number) => Math.round(10 ** Number(v) - 1).toLocaleString() } },
       legend: { size: false, color: { position: 'bottom' } },
       style: { fillOpacity: 0.65, lineWidth: 1 },
       tooltip: { title: 'title', items: [{ field: 'people', name: '参与人数' }, { field: 'lines', name: '已采集变动行' }, { field: 'repositories', name: '涉及仓库' }, { field: 'bugCount', name: '新增有效 Bug' }, { field: 'unknownLines', name: '行数未采集的提交' }] },
     })
     chart.on('element:click', (event: { data?: { data?: { id?: string } } }) => { if (event.data?.data?.id) select(event.data.data.id) })
-    chart.render().catch(e => setError(String(e.message || e)))
-    return () => { chart.destroy() }
+    chart.render().then(() => { if (live) setRendering(false) }).catch(e => { if (live) { setError(String(e.message || e)); setRendering(false) } })
+    return () => { live = false; chart.destroy() }
   }, [rows, mode, canBugs, select])
-  return <>{error && <Alert type="error" showIcon title={error} />}<div ref={ref} className="yx-activity-distribution" aria-label="需求参与人数、代码变动、仓库与缺陷气泡图" /><p className="yx-muted">气泡面积表示涉及仓库数，颜色表示本期新增有效 Bug。代码变动仅为已采集行数，缺少行数时为下限。</p></>
+  return <>{error && <Alert type="error" showIcon title={error} />}<div ref={ref} aria-busy={rendering} className="yx-activity-distribution" aria-label="需求参与人数、代码变动、仓库与缺陷气泡图" /><p className="yx-muted">气泡面积表示涉及仓库数，颜色表示本期新增有效 Bug。代码变动仅为已采集行数，缺少行数时为下限。</p></>
 }
 export default function RequirementActivityAnalysis({ data, onBack, openRequirement }: { data: TeamActivityData; onBack: () => void; openRequirement: (id: string) => void }) {
   const rows = useMemo(() => requirementFocus(data), [data])

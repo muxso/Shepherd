@@ -35,6 +35,7 @@ fn run(
         &serde_json::from_value::<ActivityMembers>(roster).expect("roster"),
         perms,
         CollectionWindow {
+            author_groups: vec![],
             now: at("2026-11-07T21:00:00+08:00"),
             collected_since: Some(at("2026-10-01T00:00:00+08:00")),
             testcases_collected: true,
@@ -203,6 +204,7 @@ fn absence_needs_roster_coverage_and_usable_timestamps_for_all_role_metrics() {
         &serde_json::from_value(roster).expect("roster"),
         permissions(),
         CollectionWindow {
+            author_groups: vec![],
             now: at("2026-11-07T21:00:00+08:00"),
             collected_since: Some(at("2026-11-06T00:00:00+08:00")),
             testcases_collected: true,
@@ -267,6 +269,7 @@ fn workitem_links_use_source_identifiers_and_keep_original_urls() {
         &ActivityMembers::default(),
         permissions(),
         CollectionWindow {
+            author_groups: vec![],
             now: at("2026-11-07T21:00:00+08:00"),
             collected_since: None,
             testcases_collected: false,
@@ -283,4 +286,39 @@ fn workitem_links_use_source_identifiers_and_keep_original_urls() {
         "https://example.com/original"
     );
     assert!(events.iter().find(|e| e["externalId"] == "../bad").expect("invalid")["url"].is_null());
+}
+
+#[test]
+fn unknown_git_authors_and_unmapped_accounts_keep_their_commits_and_lines() {
+    let records = vec![
+        record(
+            "commit",
+            "r:a",
+            json!({"repoId":"r","sha":"a","author":"作者未知","authoredAt":"2026-11-04T09:00:00+08:00","additions":9,"deletions":6}),
+        ),
+        record(
+            "commit",
+            "r:b",
+            json!({"repoId":"r","sha":"b","author":"unmapped-account","authoredAt":"2026-11-04T10:00:00+08:00","additions":3,"deletions":1}),
+        ),
+    ];
+    let data = run(
+        &records,
+        ActivityRole::Code,
+        json!({"members":[]}),
+        json!({"identities":[]}),
+        permissions(),
+    );
+    assert_eq!(data["events"].as_array().expect("events").len(), 2);
+    assert_eq!(data["coverage"]["unattributedEvents"], 1);
+    let members = data["members"].as_array().expect("members");
+    assert!(members.iter().any(|p| p["name"] == "" && p["attribution"] == "unknownAuthor"));
+    assert!(members
+        .iter()
+        .any(|p| p["name"] == "unmapped-account" && p["attribution"] == "unmappedAccount"));
+    assert_eq!(data["events"][0]["additions"], 9);
+    let mut policy = shepherd_yunxiao::domain::activity_review::ActivityReviewPolicy::default();
+    assert!(policy.validate().is_ok());
+    policy.code.min_active_days = 8;
+    assert!(policy.validate().is_err());
 }

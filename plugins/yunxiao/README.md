@@ -129,6 +129,7 @@ API：`GET /api/devops/sources/{id}/member-metrics?month=2026-10&requirementTarg
 - **测试**：新增用例按创建时间和创建人；有效缺陷按创建时间和发现人。没有验证事件的可靠人员证据时，不推算个人验证记录。来源缺少姓名时保留未归属计数，不生成示例人员。
 - **无记录人员**：以明确配置且启用的统计名单为基准。最近 X 天任一对应岗位活动有记录即为活跃；未配置人员、区间采集不完整、事件缺时间时保留待核验，不能由「没有返回记录」反推「没有产出」。研发要求代码采集窗口覆盖起点及最新成功同步截点；产品、测试要求完整快照采集已覆盖区间，测试还需最新同步包含用例集合。超过一天未成功同步时不确认无记录。
 - **账号归并**：配置按数据源存储，支持多人、每人多个账号。原始账号及统一姓名都参与精确匹配，区分大小写；拒绝别名重复归属、姓名冲突和链式映射。配置分组优先，未配置时仅采用统一姓名唯一已知的分组。接口在筛选、分页及汇总前归并，覆盖作者图、提交明细、岗位产出、成员分组和需求产出；不改写原始事实，后续同步不覆盖配置。
+- **核验与排序**：支持按 Bug、完整最后提交时间、去重仓库、去重需求、增删总行数、提交次数升降序。岗位与组织分组视角互斥。按源、岗位保存距最近活动天数与区间最少活跃日阈值，仅采集完整时标记“需核验”，不据此认定没有工作。未关联的 Git 账号保留原名；缺少作者的提交独立汇总，不当作一个人员。90 天补采后默认收起本期无记录且不在统计名单中的历史账号，可搜索或展开查看。
 - **来源跳转**：仓库、提交优先使用采集到的原始 URL；仓库可从确定的提交链接提取。需求、Bug 使用原始 URL，或通过来源项目 ID、工作项类型和外部 ID 生成 Projex 资源链接。缺少可靠标识时显示文本。仅允许 HTTP(S)，新标签页隔离 opener；不从标题猜链接。
 - **需求管理分析**：AntV G2 气泡图比较提交参与人数、已采集代码变动、涉及仓库和本期新增关联 Bug；四项最大值可直接下钻。缺少行数时保留下限。同一提交可关联多需求，不跨需求累加为团队总量；人数不是人天，数量不代表绩效。
 
@@ -136,8 +137,11 @@ API（仅插件数据库）：
 
 - `GET /api/devops/sources/{id}/team-activity?role=code|product|test&days=7`
 - `GET/PUT /api/devops/sources/{id}/author-identities`，结构为 `identities: [{name, group?, aliases: []}]`。
+- `GET/PUT /api/devops/sources/{id}/activity-review-policy`，按 `code/product/test` 配置 `{enabled,inactiveDays,activeWindowDays,minActiveDays}`；范围不超过 365 天。
 - `GET/PUT /api/devops/sources/{id}/activity-members`，结构为 `members: [{name, group?, roles: [], enabled: true}]`；一个人可属于多个视角。
 
 读取均要求 `PROJECT:READ`。产品另需 `REQUIREMENT:READ`；测试另需 `BUG:READ` 和 `FUNCTIONAL_CASE:READ`。研发缺少需求或缺陷读取权限时，接口不返回相应名称和明细。配置写入要求 `PROJECT:UPDATE`，同步权限不能修改名单或归并设置。设置修改在数据源锁内原子替换，配置错误保留旧值。
 
-插件迁移新增 `0002_author_identities.sql` 和 `0003_activity_members.sql`，没有预置人员或映射；页面数据完全来自 API。前端使用 Ant Design 6，需求图按需加载 G2。发布遵循现有 k3s Deployment，保留当前镜像、数据库备份及回滚记录，不调用旧 Compose 发布脚本。
+插件迁移新增 `0002_author_identities.sql`、`0003_activity_members.sql`、`0004_identity_group_aggregation.sql`（减少重复分组扫描）和 `0005_activity_review_policy.sql`，没有预置人员或映射；页面数据完全来自 API。前端使用 Ant Design 6，需求图按需加载 G2。发布遵循现有 k3s Deployment，保留当前镜像、数据库备份及回滚记录，不调用旧 Compose 发布脚本。
+
+提交明细提供“查看代码改动”来源链接，未关联需求也可查看。采集器记录同仓库 SHA 出现的全部已扫描分支；旧记录缺少分支字段时提示待补采。统计查询仅投影当前岗位需要的字段，并保留窗口外每个作者及分组的最近代码记录和全量作者分组元数据。数据库要求 PostgreSQL 16 或更新版本（使用 `pg_input_is_valid` 安全解析时间）。
