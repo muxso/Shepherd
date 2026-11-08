@@ -37,6 +37,8 @@ class Gateway:
         self.last_message_at = None
 
     def config(self):
+        if os.environ.get("WECOM_REMOTE_POLICY", "1") == "1":
+            return {}
         config = json.loads(Path(self.config_path).read_text())
         if not isinstance(config.get("projectId"), str) or not config["projectId"].strip():
             raise ValueError("project_required")
@@ -57,7 +59,7 @@ class Gateway:
             return response.status == 200
 
     async def report_status(self, receipt=None):
-        if os.environ.get("WECOM_REMOTE_POLICY") != "1":
+        if os.environ.get("WECOM_REMOTE_POLICY", "1") != "1":
             return
         age = None if not getattr(self, "heartbeat_at", None) else time.monotonic()-self.heartbeat_at
         body = {"authenticated": self.authenticated, "heartbeatAgeSeconds": age,
@@ -147,7 +149,7 @@ class Gateway:
         stream = "shepherd_"+uuid.uuid4().hex
         config = self.config()
         binding = re.fullmatch(r"(?:绑定|bind)\s+(\S+)", question, flags=re.I)
-        remote = os.environ.get("WECOM_REMOTE_POLICY") == "1"
+        remote = os.environ.get("WECOM_REMOTE_POLICY", "1") == "1"
         if binding and remote:
             if not room or body.get("chattype") == "single":
                 success = False
@@ -162,7 +164,7 @@ class Gateway:
             success = self.state.bind(room, binding.group(1), os.environ.get("WECOM_SETUP_CODE", ""))
             await self.client.reply_stream(frame, stream, "绑定成功。本群已获授权访问项目的机器人共享资料，可直接 @ 我提问或请求统计图。" if success else "绑定码无效或已使用，请联系管理员。", True)
             return
-        project = config["projectId"]
+        project = config.get("projectId", "")
         if remote:
             try:
                 project = await asyncio.wait_for(self.remote_project(body, room, sender), timeout=12)

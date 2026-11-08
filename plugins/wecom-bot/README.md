@@ -32,7 +32,7 @@ Report checks locate candidate evidence in collected commits and their linked Yu
 
 ## Backend authorization
 
-Set `WECOM_REMOTE_POLICY=1` to require backend-managed authorization. In **System parameters → RAG → WeCom conversations**, choose the connector's dedicated account, enable the channel, and associate each group chat ID or direct-message user ID with a project. The account must already belong to that project. Its API key and role still limit available data. Each message checks the current policy; unavailable policy checks fail closed. Local bindings do not override backend policy.
+Backend-managed authorization is required by default (`WECOM_REMOTE_POLICY=1`). The local setup-code flow described above is available only through explicit `WECOM_REMOTE_POLICY=0` during migration. In **System parameters → RAG → WeCom conversations**, choose the connector's dedicated account, enable the channel, and associate each group chat ID or direct-message user ID with a project. The account must already belong to that project. Its API key and role still limit available data. Each message checks the current policy; unavailable policy checks fail closed. Local bindings do not override backend policy.
 
 Group binding is disabled by default. An administrator can enable it and generate a project-specific code valid for 1–1440 minutes. Send `绑定 <code>` while mentioning the bot in the target group. Codes are single-use and stored only as SHA-256 hashes. Turning off group binding invalidates unused codes while preserving approved conversations. Disable or remove a conversation to revoke its access.
 
