@@ -131,7 +131,11 @@ impl SessionStore for ApiKeySessionStore {
         }
         let permissions = PermissionSet::from_raw(&rec.permissions)
             .map_err(|_| AuthRepoError::Backend("corrupt apikey permissions".into()))?;
-        let user_id = format!("apikey:{}", rec.name);
+        let user_id = if rec.user_id.is_empty() {
+            format!("apikey:{}", rec.name)
+        } else {
+            rec.user_id.clone()
+        };
         self.cache_put(token, &user_id, permissions.clone());
         Ok(Some(session_for(token, &user_id, permissions)))
     }
@@ -181,9 +185,20 @@ mod tests {
         let (store, keys) = store(DEFAULT_CACHE_TTL);
         seed(&keys).await;
         let s = store.get(&token()).await.expect("ok").expect("some");
-        assert_eq!(s.user_id, "apikey:runner-1");
+        assert_eq!(s.user_id, "u-owner");
+        assert_eq!(store.get(&token()).await.expect("cached").expect("session").user_id, "u-owner");
         assert!(s.permissions.allows("DELIVERY", "UPDATE"));
         assert!(!s.permissions.allows("SYSTEM_USER", "READ"));
+    }
+
+    #[tokio::test]
+    async fn unowned_keys_keep_the_legacy_principal() {
+        let (store, keys) = store(DEFAULT_CACHE_TTL);
+        keys.insert(ID, "runner-1", SECRET, &[], "", None).await.expect("seed");
+        assert_eq!(
+            store.get(&token()).await.expect("ok").expect("session").user_id,
+            "apikey:runner-1"
+        );
     }
 
     #[tokio::test]

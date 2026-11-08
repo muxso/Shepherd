@@ -1,0 +1,90 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: shepherd-wecom-bot
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: shepherd-wecom-bot
+# Replace this example before applying.
+data:
+  bindings.json: '{"projectId":"REPLACE_PROJECT_ID","allowedChatIds":[]}'
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: shepherd-wecom-bot
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: shepherd-wecom-bot
+  template:
+    metadata:
+      labels:
+        app: shepherd-wecom-bot
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+      containers:
+        - name: gateway
+          image: REPLACE_GATEWAY_IMAGE
+          imagePullPolicy: IfNotPresent
+          envFrom:
+            - secretRef:
+                name: shepherd-wecom-bot
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          ports:
+            - name: health
+              containerPort: 8080
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: health
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: health
+            initialDelaySeconds: 20
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: '1'
+              memory: 512Mi
+          volumeMounts:
+            - name: state
+              mountPath: /data
+            - name: config
+              mountPath: /config
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: state
+          persistentVolumeClaim:
+            claimName: shepherd-wecom-bot
+        - name: config
+          configMap:
+            name: shepherd-wecom-bot
+        - name: tmp
+          emptyDir: {}
