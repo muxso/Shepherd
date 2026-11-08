@@ -38,6 +38,7 @@ mod references_route;
 mod report_archive_job;
 mod routes;
 mod scenario_run;
+mod system_qa;
 mod test_assets_source;
 
 use std::sync::Arc;
@@ -774,7 +775,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         asset_source.clone(),
         sessions.clone(),
     );
-    let rag_routes = rag::http::router_with_changes(
+    let query_routes = axum::Router::new().merge(plugin_routes.clone());
+    let system_queries = Arc::new(
+        system_qa::SystemQueries::new(query_routes).with_business(pool.clone(), rag_chat.clone()),
+    );
+    let rag_routes = rag::http::router_with_queries(
         rag_store,
         rag_embedder,
         rag_chat,
@@ -782,6 +787,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         rag_config,
         pool.clone(),
         test_assets_source::changes(asset_source),
+        Some(system_queries),
     );
 
     let app = routes::assemble(vec![

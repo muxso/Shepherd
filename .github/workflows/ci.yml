@@ -99,7 +99,7 @@ jobs:
         working-directory: .
         run: python3 -m unittest discover -s plugins/wecom-bot/tests -v
       - name: environment plugin UI contracts
-        run: npx playwright test environment-plugins.spec.ts plugins.spec.ts project-switch.spec.ts productivity.spec.ts requirement-output.spec.ts member-metrics.spec.ts rich-text.spec.ts rag-code.spec.ts code-authors.spec.ts reference-graph.spec.ts
+        run: npx playwright test environment-plugins.spec.ts plugins.spec.ts project-switch.spec.ts productivity.spec.ts requirement-output.spec.ts member-metrics.spec.ts rich-text.spec.ts rag-code.spec.ts grounded-qa.spec.ts code-authors.spec.ts reference-graph.spec.ts
         env:
           E2E_START_VITE: "1"
       - uses: actions/upload-artifact@v4
@@ -225,6 +225,16 @@ jobs:
           trap 'dropdb -h localhost -U msuser --if-exists --force rag_activity_test' EXIT
           createdb -h localhost -U msuser rag_activity_test
           cargo test -p rag --all-features --test activity_pg --locked -- --ignored --test-threads=1
+      - name: grounded business reads and channel authorization (isolated database)
+        env:
+          PGPASSWORD: mspass
+          SHEPHERD_RAG_TEST_DATABASE_URL: postgres://msuser:mspass@127.0.0.1:5432/grounded_qa_test
+          SHEPHERD_QA_TEST_DATABASE_URL: postgres://msuser:mspass@127.0.0.1:5432/grounded_qa_test
+        run: |
+          trap 'dropdb -h localhost -U msuser --if-exists --force grounded_qa_test' EXIT
+          createdb -h localhost -U msuser grounded_qa_test
+          cargo test -p server catalog_database_contract_and_scope --locked -- --ignored --test-threads=1
+          cargo test -p rag --all-features http:: --locked -- --ignored --test-threads=1
       - name: runner protocol routing (pg)
         run: cargo test -p runner --features pg --test pg_protocol --locked -- --ignored --test-threads=1
       - name: test-plan pg aggregate

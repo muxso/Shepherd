@@ -1,8 +1,11 @@
 //! HTTP adapter (feature `http`): document ingest + the streaming Q&A endpoint whose SSE events
 //! (`sources` / `chunk` / `trace` / `done`) drive the Q&A UI and its decision-chain view.
 
+mod channels;
 mod code;
 mod impact;
+mod onboarding;
+mod sources;
 #[cfg(test)]
 mod test_support;
 
@@ -34,6 +37,7 @@ pub struct RagState {
     pub config: RagConfigHandle,
     pub pool: sqlx::PgPool,
     pub changes: Option<Arc<dyn crate::ports::ChangeSource>>,
+    pub queries: Option<Arc<dyn crate::grounding::QuerySource>>,
 }
 
 impl FromRef<RagState> for Arc<dyn SessionStore> {
@@ -64,11 +68,30 @@ pub fn router_with_changes(
     pool: sqlx::PgPool,
     changes: Option<Arc<dyn crate::ports::ChangeSource>>,
 ) -> Router {
+    router_with_queries(store, embedder, chat, sessions, config, pool, changes, None)
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn router_with_queries(
+    store: Arc<dyn VectorStore>,
+    embedder: Arc<dyn Embedder>,
+    chat: Arc<dyn Chat>,
+    sessions: Arc<dyn SessionStore>,
+    config: RagConfigHandle,
+    pool: sqlx::PgPool,
+    changes: Option<Arc<dyn crate::ports::ChangeSource>>,
+    queries: Option<Arc<dyn crate::grounding::QuerySource>>,
+) -> Router {
     Router::new()
         .merge(code::routes())
+        .merge(channels::routes())
+        .merge(onboarding::routes())
         .merge(impact::routes())
         .route("/rag/document", post(ingest_document).get(list_documents))
-        .route("/rag/document/{id}", axum::routing::delete(delete_document))
+        .route(
+            "/rag/document/{id}",
+            axum::routing::delete(delete_document).get(sources::get_document),
+        )
         .route("/rag/document/{id}/audience", axum::routing::put(update_document_audience))
         .route("/rag/reindex", post(reindex_embeddings))
         .route("/rag/feedback", post(submit_feedback))
@@ -80,7 +103,7 @@ pub fn router_with_changes(
         .route("/rag/visibility-group/{id}", axum::routing::put(update_group).delete(delete_group))
         .route("/system/rag/config", axum::routing::get(get_config).put(put_config))
         .route("/system/rag/test", post(test_config))
-        .with_state(RagState { store, embedder, chat, sessions, config, pool, changes })
+        .with_state(RagState { store, embedder, chat, sessions, config, pool, changes, queries })
 }
 
 // Directory read permission is part of ordinary users' baseline; it must not bypass KB ACLs.
@@ -406,17 +429,22 @@ async fn ingest_document(
     if let Err(resp) = authorize_project(&user, &st.pool, &b.project_id, "ADD").await {
         return resp;
     }
+    if b.source_type.as_deref() == Some("onboarding") {
+        return (StatusCode::BAD_REQUEST, "publish maintained knowledge through /rag/onboarding")
+            .into_response();
+    }
     // Stable ids must not let an importer move/overwrite documents outside its scope.
     if let Some(id) = b.document_id.as_ref() {
-        let existing = sqlx::query_as::<_, (String, Option<String>)>(
-            "SELECT project_id, owner_id FROM ms_rag_document WHERE id = $1",
+        let existing = sqlx::query_as::<_, (String, Option<String>, String)>(
+            "SELECT project_id, owner_id, source_type FROM ms_rag_document WHERE id = $1",
         )
         .bind(id)
         .fetch_optional(&st.pool)
         .await;
         match existing {
-            Ok(Some((project, owner)))
-                if project != b.project_id
+            Ok(Some((project, owner, kind)))
+                if kind == "onboarding"
+                    || project != b.project_id
                     || (!is_rag_admin(&user) && owner.as_deref() != Some(&user.user_id)) =>
             {
                 return (StatusCode::FORBIDDEN, "document outside importer scope").into_response();
@@ -997,6 +1025,7 @@ async fn review_requirement(
 /// when requested) → `done`. Errors surface as an `error` event so the stream always closes cleanly.
 async fn ask_stream(
     user: AuthUser,
+    headers: axum::http::HeaderMap,
     State(st): State<RagState>,
     Json(b): Json<AskBody>,
 ) -> Response {
@@ -1004,7 +1033,19 @@ async fn ask_stream(
         return resp;
     }
     let audience = load_audience(&user, &st.pool).await;
-    let RagState { store, embedder, chat, .. } = st;
+    let authorization = headers
+        .get(axum::http::header::AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or_default()
+        .to_owned();
+    let query = crate::grounding::QueryContext {
+        user: user.clone(),
+        project_id: b.project_id.clone(),
+        question: b.question.clone(),
+        history: b.history.clone(),
+        at_ms: now_ms(),
+    };
+    let RagState { store, embedder, chat, pool, queries, .. } = st;
     let session_id = b.session_id.clone().unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
 
     let stream = async_stream::stream! {
@@ -1012,21 +1053,54 @@ async fn ask_stream(
             Ok(Event::default().event(name).json_data(data).unwrap_or_default())
         };
         let sid = session_id.clone();
+        if let Some(ref provider) = queries {
+            yield ev("status", json!({"stage":"routing","message":"正在选择数据来源"}));
+            match provider.answer(&query, &authorization).await {
+                Ok(Some(answer)) => {
+                    yield ev("sources", json!({"session_id":sid,"sources":answer.sources}));
+                    yield ev("scope", answer.scope);
+                    for chart in answer.charts { yield ev("chart", chart); }
+                    yield ev("chunk", json!({"delta":answer.content}));
+                    yield ev("done", json!({"session_id":sid,"grounded":true}));
+                    return;
+                }
+                Ok(None) => {}
+                Err(error) => {
+                    yield ev("scope", json!({"status":"failed","projectId":query.project_id}));
+                    yield ev("chunk", json!({"delta":format!("本次业务数据查询未完成，不能据此判断没有记录。\n\n{error}")}));
+                    yield ev("done", json!({"session_id":sid,"grounded":true,"status":"failed"}));
+                    return;
+                }
+            }
+        }
         // 1) retrieve (embed → hybrid → fuse → rerank → context) and emit the sources up front
         match retrieve(&*store, &*embedder, &*chat, &b.project_id, &b.question, b.top_k, b.rerank, &audience).await {
             Err(e) => { yield ev("error", json!({ "message": e.to_string(), "code": rag_error_code(&e) })); }
-            Ok((hits, context, mut trace)) => {
-                let sources: Vec<_> = hits
-                    .iter()
-                    .map(|h| json!({
-                        "doc_id": h.document_id,
-                        "title": h.title,
-                        "heading": h.heading,
-                        "content_preview": h.content.chars().take(4096).collect::<String>(),
-                        "relevance_score": h.score,
-                    }))
-                    .collect();
-                yield ev("sources", json!({ "session_id": sid, "sources": sources }));
+            Ok((mut hits, mut context, mut trace)) => {
+                let mut sources = match crate::references::load(&pool, &b.project_id, &hits, &audience).await {
+                    Ok(sources) => sources,
+                    Err(error) => { yield ev("error", json!({"message":error.to_string(),"code":rag_error_code(&error)})); return; }
+                };
+                if crate::references::recency_requested(&b.question) {
+                    let mut ordered: Vec<_> = hits.into_iter().zip(sources).collect();
+                    ordered.sort_by_key(|(_, source)| std::cmp::Reverse(crate::references::date_key(source)));
+                    (hits, sources) = ordered.into_iter().unzip();
+                    trace.steps.retain(|step| !matches!(step, TraceStep::ContextBuilt { .. }));
+                    trace.steps.push(TraceStep::Fusion { method: "event-date-within-retrieved-candidates", candidates: hits.len(), selected: hits.len() });
+                    context = crate::application::build_context(&hits, &mut trace);
+                }
+                let mut source_values: Vec<serde_json::Value> = sources.iter().filter_map(|source|serde_json::to_value(source).ok()).collect();
+                if let Some(ref provider)=queries {
+                    source_values=provider.reference_links(&query,&authorization,source_values.clone()).await.unwrap_or(source_values);
+                }
+                yield ev("sources", json!({ "session_id": sid, "sources": source_values }));
+                if crate::grounding::needs_change_proof(&b.question) {
+                    yield ev("scope", json!({"status":"evidence_required","coverage":"retrieved_candidates_only","candidateSources":source_values.len()}));
+                    yield ev("chunk", json!({"delta":"当前检索结果是候选资料，尚未完成具体提交差异核验，不能据此确认是谁修改或升级了版本。\n\n需要核对：仓库与分支、提交 SHA、依赖版本变更前后值、实际作者与提交时间。生产故障还需要部署版本和报错日志证据。每日活动文档的作者不能直接作为升级责任人。\n\n本次没有执行全仓库或全部分支扫描；请先查看下方来源。"}));
+                    yield ev("done", json!({"session_id":sid,"status":"evidence_required"}));
+                    return;
+                }
+
 
                 // 2) stream the answer token-by-token: the LLM task sends deltas on a channel we forward as `chunk`s
                 let (system, user) = crate::application::build_prompt_at(&b.question, &context, &b.history, trace.started_at.parse().unwrap_or_else(|_| crate::application::now_ms()));

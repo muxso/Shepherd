@@ -497,6 +497,32 @@ impl VectorStore for PgVectorStore {
         Ok(())
     }
 
+    async fn scoped_search(
+        &self,
+        project: &str,
+        query: &[f32],
+        question: &str,
+        source_type: &str,
+        top_k: usize,
+        audience: &Audience,
+    ) -> Result<Option<Vec<Hit>>> {
+        let rows=sqlx::query_as::<_,(String,String,String,String,String,f64)>(&format!(
+            "SELECT c.id,c.document_id,d.title,c.heading,c.content,COALESCE(rag_cosine(c.embedding,$2),0)::double precision AS score FROM ms_rag_chunk c JOIN ms_rag_document d ON d.id=c.document_id WHERE c.project_id=$1 AND d.project_id=$1 AND d.source_type=$3 AND {} ORDER BY (CASE WHEN strpos(lower(d.title || ' ' || c.content),lower($4))>0 THEN 1 ELSE 0 END) DESC, score DESC,d.updated_at DESC,c.id LIMIT $5",audience_where(6,7,8)))
+            .bind(project).bind(query).bind(source_type).bind(question).bind(top_k as i64).bind(audience.is_admin).bind(&audience.user_id).bind(&audience.visible_group_ids).fetch_all(&self.pool).await.map_err(be)?;
+        Ok(Some(
+            rows.into_iter()
+                .map(|(chunk_id, document_id, title, heading, content, score)| Hit {
+                    chunk_id,
+                    document_id,
+                    title,
+                    heading,
+                    content,
+                    score: score as f32,
+                })
+                .collect(),
+        ))
+    }
+
     async fn search(
         &self,
         project_id: &str,
@@ -546,7 +572,7 @@ impl VectorStore for PgVectorStore {
                     rag_cosine(c.embedding, $2) AS score \
              FROM ms_rag_chunk c JOIN ms_rag_document d ON d.id = c.document_id \
              WHERE c.project_id = $1 AND cardinality(c.embedding) > 0 AND {} \
-             ORDER BY score DESC LIMIT $3",
+             ORDER BY score DESC,c.id ASC LIMIT $3",
             audience_where(4, 5, 6)
         ))
         .bind(project_id)
@@ -734,7 +760,7 @@ impl VectorStore for PgVectorStore {
                     (SELECT count(*) FROM unnest($2::text[]) p WHERE c.content ILIKE p)::float8 AS score \
              FROM ms_rag_chunk c JOIN ms_rag_document d ON d.id = c.document_id \
              WHERE c.project_id = $1 AND c.content ILIKE ANY($2::text[]) AND {} \
-             ORDER BY score DESC LIMIT $3",
+             ORDER BY score DESC,c.id ASC LIMIT $3",
             audience_where(4, 5, 6)
         ))
         .bind(project_id)

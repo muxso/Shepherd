@@ -158,6 +158,25 @@ pub async fn retrieve(
         channel: "ask",
     };
 
+    if ["入职", "新员工", "新人", "报销", "请假", "考勤", "福利", "办公制度", "账号开通"]
+        .iter()
+        .any(|word| question.contains(word))
+    {
+        let vector = embedder.embed(question).await.unwrap_or_default();
+        if let Some(hits) = store
+            .scoped_search(project_id, &vector, question, "onboarding", top_k, audience)
+            .await?
+        {
+            trace.steps.push(TraceStep::Fusion {
+                method: "maintained-onboarding",
+                candidates: hits.len(),
+                selected: hits.len(),
+            });
+            let context = build_context(&hits, &mut trace);
+            return Ok((hits, context, trace));
+        }
+    }
+
     if let Some(hits) = store
         .activity_search_at(
             project_id,
@@ -239,7 +258,7 @@ pub async fn retrieve(
     Ok((hits, context, trace))
 }
 
-fn build_context(hits: &[Hit], trace: &mut AskTrace) -> Vec<ContextChunk> {
+pub(crate) fn build_context(hits: &[Hit], trace: &mut AskTrace) -> Vec<ContextChunk> {
     let context: Vec<ContextChunk> = hits
         .iter()
         .enumerate()
@@ -449,7 +468,9 @@ fn rrf(lists: &[Vec<Hit>], k: f32, top_k: usize) -> Vec<Hit> {
         }
     }
     let mut items: Vec<(String, f32)> = score.into_iter().collect();
-    items.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+    items.sort_by(|a, b| {
+        b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal).then_with(|| a.0.cmp(&b.0))
+    });
     items
         .into_iter()
         .take(top_k)
@@ -539,6 +560,7 @@ pub fn build_prompt_at(
     if let Some(window) = crate::activity::ActivityWindow::parse(question, at_ms) {
         system.push_str(&format!("\n本次Git活动范围：{} 至 {}（上海自然日，含首尾）。只能总结该范围内本次检索提供的提交；没有资料时说明该范围未采集到记录，禁止用其他日期或历史对话补齐，也不能断言实际没有提交。",window.from,window.through));
     }
+    system.push_str("\n检索仅提供有限候选片段，未执行工具时禁止声称已扫描全部仓库、全部分支或全部记录。片段未提到某人不等于该人没有提交；不得由缺少片段推断零产出、工时或绩效。升级归因必须有具体提交和版本差异证据，生产事故归因还需部署及运行证据；缺失时明确未确认，禁止凭活动文档标题认定责任人。引用必须与陈述匹配，禁止补写资料未提供的 API 兼容性、版本变化或来源 URL。");
     let mut ctx = String::from("【上下文】\n");
     if context.is_empty() {
         ctx.push_str("(无)\n");
@@ -745,5 +767,28 @@ mod activity_clock_tests {
         assert!(system.contains("对话历史不是事实来源"));
         assert!(system.contains("禁止用其他日期或历史对话补齐"));
         assert!(user.contains("【上下文】\n(无)"));
+    }
+}
+
+#[cfg(test)]
+mod ranking_stability_tests {
+    use super::*;
+    #[test]
+    fn fusion_uses_chunk_identity_to_break_equal_scores() {
+        let hit = |id: &str| Hit {
+            chunk_id: id.into(),
+            document_id: id.into(),
+            title: id.into(),
+            heading: String::new(),
+            content: String::new(),
+            score: 1.0,
+        };
+        for _ in 0..100 {
+            let hits = rrf(&[vec![hit("b")], vec![hit("a")]], 60.0, 2);
+            assert_eq!(
+                hits.iter().map(|hit| hit.chunk_id.as_str()).collect::<Vec<_>>(),
+                vec!["a", "b"]
+            );
+        }
     }
 }

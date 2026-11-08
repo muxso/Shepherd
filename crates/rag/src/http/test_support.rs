@@ -55,6 +55,7 @@ pub async fn fixture() -> (RagState, AuthUser, String, String) {
         config: crate::config::RagConfig::handle_from_env(),
         pool,
         changes: None,
+        queries: None,
     };
     (state, user, project, requirement)
 }

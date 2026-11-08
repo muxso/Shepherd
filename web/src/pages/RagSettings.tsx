@@ -13,6 +13,8 @@ import {
 } from '../api'
 import { message } from '../feedback'
 import { useI18n } from '../i18n'
+import RagChannels from '../components/RagChannels'
+import OnboardingKnowledge from '../components/OnboardingKnowledge'
 
 // System-level RAG config, laid out in three columns matching the pipeline:
 //   left = embedding (vectorize) · middle = vector store / retrieval · right = generation (output).
@@ -246,6 +248,8 @@ export default function RagSettings({ embedded }: { embedded?: boolean } = {}) {
         </Row>
       </Form>
 
+      <Card title="新人入职知识与问答" style={{ marginTop: 20 }}><Space direction="vertical"><span style={{ color: 'var(--text-3)' }}>维护当前项目的入职指南和 FAQ，按版本发布并设置可见范围。</span><OnboardingKnowledge /></Space></Card>
+      <RagChannels />
       <VisibilityGroups />
     </div>
   )

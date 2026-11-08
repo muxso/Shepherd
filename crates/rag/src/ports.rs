@@ -37,6 +37,18 @@ pub trait VectorStore: Send + Sync {
     async fn set_chunk_embeddings(&self, _updates: &[(String, Vec<f32>)]) -> Result<usize> {
         Ok(0)
     }
+    /// Restrict maintained knowledge to its source class before ranking.
+    async fn scoped_search(
+        &self,
+        _project: &str,
+        _query: &[f32],
+        _question: &str,
+        _source_type: &str,
+        _top_k: usize,
+        _audience: &Audience,
+    ) -> Result<Option<Vec<Hit>>> {
+        Ok(None)
+    }
     /// Exact author/date Git evidence; Some(empty) must not fall back to unrelated semantic hits.
     async fn activity_search(
         &self,

@@ -9,12 +9,15 @@ pub mod application;
 pub mod chunk;
 pub mod config;
 pub mod domain;
+pub mod grounding;
 pub mod ports;
 
 #[cfg(feature = "http")]
 pub mod adapters;
 #[cfg(feature = "http")]
 pub mod http;
+#[cfg(feature = "http")]
+pub mod references;
 #[cfg(feature = "http")]
 pub mod tantivy_kw;
 
