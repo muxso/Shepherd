@@ -9,10 +9,16 @@ import uuid
 from pathlib import Path
 from urllib.parse import quote
 from channel import Conversations, chart_request, incoming_text, render_chart, utf8_limit
+from evidence import activity_summary, activity_window, evidence_request, report_evidence
 
 
 class SafeLogger:
-    def debug(self, *args): pass
+    def __init__(self):
+        self.last_heartbeat_at = None
+
+    def debug(self, message, *args):
+        if message == "Received heartbeat ack":
+            self.last_heartbeat_at = time.monotonic()
     def info(self, *args): pass
     def warn(self, *args): print("sdk_warning", flush=True)
     def error(self, *args): print("sdk_error", flush=True)
@@ -43,6 +49,13 @@ class Gateway:
             if response.status != 200:
                 raise RuntimeError("backend_unavailable")
             return await response.json()
+
+    async def activity(self, project, days, role="code"):
+        sources = await self.api("/api/devops/sources")
+        source = next((s for s in sources.get("items", []) if s.get("project_id") == project), None)
+        if source is None:
+            raise ValueError("project_source_missing")
+        return await self.api("/api/devops/sources/"+quote(source["id"], safe="")+f"/team-activity?role={role}&days={days}")
 
     async def ask(self, project, question, history, frame, stream):
         headers = {"Authorization": "Bearer "+os.environ["SHEPHERD_API_KEY"]}
@@ -117,22 +130,27 @@ class Gateway:
         try:
             lock = self.locks.setdefault((room, sender), asyncio.Lock())
             async with lock:
-                await self.client.reply_stream(frame, stream, "正在查询项目资料…", False)
+                await self.client.reply_stream(frame, stream, "正在查询…", False)
                 print("message_acknowledged", flush=True)
-                chart = chart_request(question)
                 images = None
-                if chart:
-                    days, role, metric = chart
-                    sources = await self.api("/api/devops/sources")
-                    source = next((s for s in sources.get("items", []) if s.get("project_id") == config["projectId"]), None)
-                    if source is None:
-                        raise ValueError("项目尚未配置统计数据源")
-                    data = await self.api("/api/devops/sources/"+quote(source["id"], safe="")+f"/team-activity?role={role}&days={days}")
-                    images = [await asyncio.to_thread(render_chart, data, metric, os.environ["WECOM_CHART_FONT"])]
-                    answer = f"{data['from']} 至 {data['through']}（上海时间）\n已采集活动 {len(data.get('events', []))} 条，新增责任缺陷 {len(data.get('bugs', []))} 个。\n统计图按实际来源记录汇总，完整明细可在项目页面查看。"
+                if evidence_request(question):
+                    start, end, days = activity_window(question)
+                    print("activity_query_started", flush=True)
+                    data = await self.activity(config["projectId"], days)
+                    if any(word in question for word in ("核对", "核实", "真实性", "对应")) and (len(question.splitlines()) > 3 or any(word in question for word in ("日报", "周报", "逐条", "这些", "对应"))):
+                        answer = report_evidence(question, self.state.history(room, sender), data, start, end)
+                    else:
+                        answer = activity_summary(question, data, start, end)
                 else:
-                    print("query_started", flush=True)
-                    answer = await self.ask(config["projectId"], question, self.state.history(room, sender), frame, stream)
+                    chart = chart_request(question)
+                    if chart:
+                        days, role, metric = chart
+                        data = await self.activity(config["projectId"], days, role)
+                        images = [await asyncio.to_thread(render_chart, data, metric, os.environ["WECOM_CHART_FONT"])]
+                        answer = f"{data['from']} 至 {data['through']}（上海时间）\n已采集活动 {len(data.get('events', []))} 条，新增责任缺陷 {len(data.get('bugs', []))} 个。\n统计图按实际来源记录汇总，完整明细可在项目页面查看。"
+                    else:
+                        print("query_started", flush=True)
+                        answer = await self.ask(config["projectId"], question, self.state.history(room, sender), frame, stream)
                 if any(item.get("msgtype") != "text" for item in (body.get("mixed") or {}).get("msg_item", [])):
                     answer = "本次仅根据消息中的文字查询，未读取附件。\n\n"+answer
                 await self.client.reply_stream(frame, stream, utf8_limit(answer), True, msg_item=images)
@@ -154,23 +172,37 @@ async def main():
     import aiohttp
     from aiohttp import web
     from aibot import WSClient, WSClientOptions
-    client = WSClient(WSClientOptions(bot_id=os.environ["WECOM_BOT_ID"], secret=os.environ["WECOM_BOT_SECRET"], max_reconnect_attempts=-1, logger=SafeLogger()))
+    logger = SafeLogger()
+    client = WSClient(WSClientOptions(bot_id=os.environ["WECOM_BOT_ID"], secret=os.environ["WECOM_BOT_SECRET"], max_reconnect_attempts=-1, logger=logger))
     async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=240)) as http:
         gateway = Gateway(client, http, os.environ.get("WECOM_CONFIG", "/config/bindings.json"), "/data/private/conversations.sqlite")
         @client.on("authenticated")
         def authenticated():
             gateway.authenticated = True
+            logger.last_heartbeat_at = time.monotonic()
             print("websocket_authenticated", flush=True)
         @client.on("disconnected")
         def disconnected(*args):
             gateway.authenticated = False
             print("websocket_disconnected", flush=True)
+        @client.on("event")
+        def event(frame):
+            kind = ((frame.get("body") or {}).get("event") or {}).get("eventtype", "unknown")
+            safe_kind = kind if re.fullmatch(r"[a-z_]{1,64}", str(kind)) else "unknown"
+            print("event_received type="+safe_kind, flush=True)
+            if kind in ("disconnected_event", "disconnected"):
+                gateway.authenticated = False
+                stop.set()
         @client.on("error")
         def error(*args):
             print("websocket_error", flush=True)
         client.on("message", gateway.on_message)
         async def health(request):
-            return web.json_response({"authenticated": gateway.authenticated, "lastMessageAt": gateway.last_message_at, "activeQueries": len(gateway.locks)}, status=200 if request.path == "/healthz" or gateway.authenticated else 503)
+            age = None if logger.last_heartbeat_at is None else time.monotonic()-logger.last_heartbeat_at
+            fresh = age is None or age < 90
+            ready = gateway.authenticated and fresh
+            status = 200 if (request.path == "/healthz" and fresh) or ready else 503
+            return web.json_response({"authenticated": gateway.authenticated, "heartbeatAgeSeconds": None if age is None else round(age, 1), "lastMessageAt": gateway.last_message_at, "activeQueries": len(gateway.locks)}, status=status)
         app = web.Application(); app.router.add_get("/healthz", health); app.router.add_get("/readyz", health)
         runner = web.AppRunner(app, access_log=None); await runner.setup(); await web.TCPSite(runner, "0.0.0.0", 8080).start()
         stop = asyncio.Event()
