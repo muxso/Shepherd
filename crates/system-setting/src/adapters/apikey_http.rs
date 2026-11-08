@@ -171,10 +171,12 @@ struct CreateMyApiKeyBody {
     /// Lifetime in seconds; default null = never expires.
     #[serde(default)]
     ttl_secs: Option<i64>,
+    /// Optional subset of the caller's permissions.
+    #[serde(default)]
+    permissions: Option<Vec<String>>,
 }
 
-// Personal self-service (act-as-user): only requires login; permissions = a snapshot of
-// the session's current permissions, owner = the session user.
+// Personal keys retain the user identity and can narrow the session permission snapshot.
 #[utoipa::path(post, path = "/system/apikey/mine", tag = "apikey", request_body = CreateMyApiKeyBody, responses((status = 201, body = CreatedApiKey), (status = 400), (status = 409)), security(("bearer" = [])))]
 async fn create_my_apikey(
     user: AuthUser,
@@ -185,7 +187,21 @@ async fn create_my_apikey(
         return (StatusCode::BAD_REQUEST, "ttlSecs must be positive").into_response();
     }
     let name = req.name.as_deref().unwrap_or("").trim().to_string();
-    let perms = user.permissions.to_raw();
+    let perms = if let Some(requested) = req.permissions {
+        let parsed = match PermissionSet::from_raw(&requested) {
+            Ok(parsed) => parsed.to_raw(),
+            Err(_) => return (StatusCode::BAD_REQUEST, "invalid permission").into_response(),
+        };
+        for raw in &parsed {
+            let (resource, actions) = raw.split_once(':').expect("normalized permission");
+            if actions.split('+').any(|action| !user.can(resource, action)) {
+                return (StatusCode::FORBIDDEN, "permission denied").into_response();
+            }
+        }
+        parsed
+    } else {
+        user.permissions.to_raw()
+    };
     let expires = req.ttl_secs.map(|t| now_ms() + t * 1000);
     mint_and_insert(&st, &name, &perms, &user.user_id, expires).await
 }
@@ -514,6 +530,34 @@ mod tests {
             .await
             .expect("r");
         assert_eq!(del.status(), StatusCode::NO_CONTENT);
+    }
+
+    #[tokio::test]
+    async fn personal_keys_can_reduce_permissions_but_cannot_escalate() {
+        let c = ctx().await;
+        for (body, status) in [
+            (r#"{"permissions":[]}"#, StatusCode::CREATED),
+            (r#"{"permissions":["project:read"]}"#, StatusCode::CREATED),
+            (r#"{"permissions":["PROJECT:READ+UPDATE"]}"#, StatusCode::FORBIDDEN),
+            (r#"{"permissions":["SYSTEM_USER:READ"]}"#, StatusCode::FORBIDDEN),
+            (r#"{"permissions":["invalid"]}"#, StatusCode::BAD_REQUEST),
+        ] {
+            let r = c
+                .app
+                .clone()
+                .oneshot(req("POST", "/system/apikey/mine", body, Some(&c.viewer)))
+                .await
+                .expect("response");
+            assert_eq!(r.status(), status);
+            if status == StatusCode::CREATED {
+                let result = json_body(r).await;
+                assert!(!result["permissions"]
+                    .as_array()
+                    .expect("permissions")
+                    .iter()
+                    .any(|p| p == "SYSTEM_USER:READ"));
+            }
+        }
     }
 
     #[tokio::test]

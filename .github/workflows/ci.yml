@@ -95,6 +95,9 @@ jobs:
       - name: Yunxiao read-only collector contracts
         working-directory: .
         run: python3 -m unittest discover -s plugins/yunxiao/scripts -p 'test_*.py'
+      - name: WeCom gateway authorization contracts
+        working-directory: .
+        run: python3 -m unittest discover -s plugins/wecom-bot/tests -v
       - name: environment plugin UI contracts
         run: npx playwright test environment-plugins.spec.ts plugins.spec.ts project-switch.spec.ts productivity.spec.ts requirement-output.spec.ts member-metrics.spec.ts rich-text.spec.ts rag-code.spec.ts code-authors.spec.ts reference-graph.spec.ts
         env:
