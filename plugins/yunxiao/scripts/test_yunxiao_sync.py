@@ -24,4 +24,23 @@ class SyncTests(unittest.TestCase):
   history={'complete':True,'checkedAt':'2026-11-02T00:00:00+08:00','events':[{'id':'1','at':'2026-10-20T00:00:00+08:00'}]}
   bug=sync.normalize_workitem({'id':'bug','reopenHistory':history},'bug',c,g,{})
   self.assertEqual(bug['data']['reopenHistory'],history)
+
+class BranchTrackingTests(unittest.TestCase):
+ def test_shared_commits_keep_every_scanned_branch_and_restore_collector(self):
+  from unittest.mock import patch
+  now=dt.datetime.now(dt.timezone(dt.timedelta(hours=8))).isoformat()
+  commit={'id':'sha','authorName':'GitAuthor','authoredDate':now}
+  original=lambda *args:[commit]
+  collector=types.SimpleNamespace(cfg=lambda:{},workitems=lambda *args:[],sprints=lambda *args:{},flow_ci=lambda *args:{},commits=original,TZ=dt.timezone(dt.timedelta(hours=8)))
+  def report(a,b,allow):
+   collector.commits({'id':'repo'},'feature/a',a,b,{})
+   collector.commits({'id':'repo'},'feature/b',a,b,{})
+   return {'totals':{},'commitsDetail':[{'repo_id':'repo','repo':'service','sha':'sha','author':'GitAuthor','date':now,'stats':{'additions':1,'deletions':0},'requirementIds':[]}]}
+  collector.report=report
+  groups=types.SimpleNamespace(canonical_name=lambda s:s,group_for=lambda s:'Team')
+  with patch.object(sync,'enrich_requirements',lambda rows,*a:rows),patch.object(sync,'enrich_bug_relations',lambda rows,*a:rows),patch.object(sync,'enrich_bug_history',lambda rows,*a:rows),patch.object(sync,'collect_testcases',lambda *a:[]),patch.object(sync,'repository_language',lambda *a:{}):
+   records,_,_=sync.collect(collector,groups,7)
+  self.assertEqual(records[0]['data']['branches'],['feature/a','feature/b'])
+  self.assertIs(collector.commits,original)
+
 if __name__=='__main__':unittest.main()

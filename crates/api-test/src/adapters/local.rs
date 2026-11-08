@@ -309,7 +309,13 @@ mod tests {
 
     fn spec(url: String, assertions: Vec<Assertion>) -> CaseRunSpec {
         CaseRunSpec {
-            request: RequestSpec { method: HttpMethod::Get, url, headers: vec![], body: None },
+            request: RequestSpec {
+                timeout_ms: None,
+                method: HttpMethod::Get,
+                url,
+                headers: vec![],
+                body: None,
+            },
             assertions,
             processors: vec![],
         }
@@ -352,6 +358,7 @@ mod tests {
         tokio::spawn(async move { axum::serve(listener, app).await.expect("serve") });
         let a = CaseRunSpec {
             request: RequestSpec {
+                timeout_ms: None,
                 method: HttpMethod::Get,
                 url: format!("http://{addr}/token"),
                 headers: vec![],
@@ -394,6 +401,7 @@ mod tests {
         vars.insert("tok".to_string(), "secret".to_string());
 
         let mut req = RequestSpec {
+            timeout_ms: None,
             method: HttpMethod::Get,
             url: "/api/x".into(),
             headers: vec![],
@@ -405,6 +413,7 @@ mod tests {
         assert_eq!(req.headers, vec![("Authorization".to_string(), "Bearer secret".to_string())]);
 
         let mut req2 = RequestSpec {
+            timeout_ms: None,
             method: HttpMethod::Get,
             url: "http://other/y".into(),
             headers: vec![("authorization".into(), "keep".into())],
@@ -433,6 +442,7 @@ mod tests {
 
         let a = CaseRunSpec {
             request: RequestSpec {
+                timeout_ms: None,
                 method: HttpMethod::Get,
                 url: format!("{base}/token"),
                 headers: vec![],
@@ -450,6 +460,7 @@ mod tests {
         };
         let b = CaseRunSpec {
             request: RequestSpec {
+                timeout_ms: None,
                 method: HttpMethod::Get,
                 url: format!("{base}/echo?id=${{tk}}"),
                 headers: vec![],

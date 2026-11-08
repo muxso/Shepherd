@@ -1,0 +1,26 @@
+import { test,expect } from './fixtures'
+
+test('service definitions support reviewed manual scenarios and immutable runs',async({page,request,auth})=>{
+ const headers={authorization:`Bearer ${auth.token}`,'content-type':'application/json'},root=`/test-assets/projects/${auth.projectId}`
+ const serviceResponse=await request.post(root+'/services',{headers,data:{name:'E2E order service',description:'Isolated scenario fixture',repositories:[]}});expect(serviceResponse.ok()).toBeTruthy();const service=await serviceResponse.json()
+ const caseResponse=await request.post('/functional-case',{headers,data:{projectId:auth.projectId,name:'E2E place order',priority:'P1',steps:[{step:'Submit order',expected:'Order created'}]}});expect(caseResponse.ok()).toBeTruthy();const definition=await caseResponse.json()
+ expect((await request.put(root+'/case-services',{headers,data:{caseIds:[definition.id],serviceId:service.id}})).ok()).toBeTruthy()
+ await page.goto(`/p/${auth.projectId}/functional-case`)
+ await expect(page.getByText('E2E place order',{exact:true}).first()).toBeVisible()
+ await page.getByText('场景测试',{exact:true}).click()
+ await page.getByRole('button',{name:'新建场景',exact:true}).click()
+ await page.getByLabel('场景名称',{exact:true}).fill('E2E order journey')
+ await page.getByLabel('引用功能定义 / 用例',{exact:true}).click()
+ await page.getByText('E2E place order · E2E order service',{exact:true}).click()
+ await page.getByLabel('明确预期与断言',{exact:true}).fill('Order created')
+ await page.getByLabel('复核状态',{exact:true}).click();await page.getByText('已复核步骤与预期',{exact:true}).click()
+ await page.getByRole('button',{name:'保存场景版本',exact:true}).click()
+ await expect(page.getByRole('row').filter({hasText:'E2E order journey'})).toBeVisible()
+ await page.getByRole('button',{name:'记录执行',exact:true}).click()
+ await page.getByLabel('实际环境与版本',{exact:true}).fill('isolated E2E build')
+ await page.getByLabel('实际结果 / 证据',{exact:true}).fill('Created order with expected identifier')
+ await page.getByRole('button',{name:'确 定',exact:true}).click()
+ await expect(page.getByText('已保存本次逐步执行结果',{exact:true})).toBeVisible()
+ await page.getByRole('button',{name:'执行历史',exact:true}).click()
+ await expect(page.getByText('isolated E2E build',{exact:true})).toBeVisible()
+})

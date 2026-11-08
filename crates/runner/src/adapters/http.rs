@@ -423,6 +423,7 @@ mod tests {
         cases.seed(
             "case1",
             RequestSpec {
+                timeout_ms: None,
                 method: HttpMethod::Get,
                 url: "http://t/x".into(),
                 headers: vec![],

@@ -391,7 +391,7 @@ fn merge_query(url: &str, query: &[(String, String)]) -> String {
 impl CaseSpecSource for PgCaseSpecSource {
     async fn spec_of(&self, case_id: &str) -> Result<Option<CaseRunSpec>, PortError> {
         let row = sqlx::query(
-            "SELECT method, url, body, assertions, processors, headers, query_params, auth \
+            "SELECT method, url, body, assertions, processors, headers, query_params, auth, timeout_ms \
              FROM ms_api_case WHERE id = $1",
         )
         .bind(case_id)
@@ -423,7 +423,16 @@ impl CaseSpecSource for PgCaseSpecSource {
         let url = merge_query(&url, &parse_kv(&query_json));
 
         Ok(Some(CaseRunSpec {
-            request: RequestSpec { method: parse_method(&method), url, headers, body },
+            request: RequestSpec {
+                timeout_ms: r
+                    .try_get::<Option<i64>, _>("timeout_ms")
+                    .map_err(map_err)?
+                    .map(|ms| ms as u64),
+                method: parse_method(&method),
+                url,
+                headers,
+                body,
+            },
             assertions,
             processors,
         }))

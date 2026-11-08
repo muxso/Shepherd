@@ -3,18 +3,20 @@
 
 const TOKEN_KEY = 'shepherd.token'
 const USER_KEY = 'shepherd.user'
+export const SESSION_CHANGE_EVENT = 'shepherd-session-change'
+const sessionChanged = () => window.dispatchEvent(new Event(SESSION_CHANGE_EVENT))
 
 export const tokenStore = {
   get: () => localStorage.getItem(TOKEN_KEY) || '',
-  set: (t: string) => localStorage.setItem(TOKEN_KEY, t),
-  clear: () => localStorage.removeItem(TOKEN_KEY),
+  set: (t: string) => { localStorage.setItem(TOKEN_KEY, t); sessionChanged() },
+  clear: () => {localStorage.removeItem(TOKEN_KEY);sessionChanged()},
 }
 
 // Current login username: written at login, shown in personal center / creator columns.
 // Single source so pages don't each hardcode the localStorage key and fallback.
 export const userStore = {
   get: () => localStorage.getItem(USER_KEY) || 'admin',
-  set: (u: string) => localStorage.setItem(USER_KEY, u),
+  set: (u: string) => {localStorage.setItem(USER_KEY, u);sessionChanged()},
   clear: () => localStorage.removeItem(USER_KEY),
 }
 
@@ -23,7 +25,7 @@ export const userStore = {
 const USER_ID_KEY = 'shepherd.userId'
 export const userIdStore = {
   get: () => localStorage.getItem(USER_ID_KEY) || localStorage.getItem(USER_KEY) || 'admin',
-  set: (u: string) => localStorage.setItem(USER_ID_KEY, u),
+  set: (u: string) => {localStorage.setItem(USER_ID_KEY, u);sessionChanged()},
   clear: () => localStorage.removeItem(USER_ID_KEY),
 }
 
@@ -326,6 +328,7 @@ export interface ApiDefinitionChange {
 }
 
 export interface ApiCase {
+  timeoutMs?: number | null
   id: string
   apiDefinitionId: string
   projectId: string
@@ -668,6 +671,8 @@ export interface ApiKey {
 }
 
 // Session identity (GET /auth/me): data source for the personal-center info page; falls back to local store on failure.
+export interface UserThemePreference { mode: 'light' | 'dark'; primaryColor: string }
+export interface UserThemeResponse { userId: string; theme: UserThemePreference | null }
 export interface AuthMe {
   userId: string
   permissions: string[]
@@ -1687,6 +1692,8 @@ export const api = {
 
   // Personal center: identity / password change / my API keys / my model configs
   me: () => http.get<AuthMe>('/auth/me'),
+  myTheme: () => http.get<UserThemeResponse>('/auth/theme'),
+  saveMyTheme: (theme: UserThemePreference) => http.put<UserThemeResponse>('/auth/theme',theme),
   changePassword: (b: { oldPassword: string; newPassword: string }) => http.post<void>('/auth/password', b),
   myApiKeys: () => http.get<{ items: ApiKey[] }>('/system/apikey/mine'),
   createMyApiKey: (b: { name?: string; ttlSecs?: number }) => http.post<ApiKey>('/system/apikey/mine', b),

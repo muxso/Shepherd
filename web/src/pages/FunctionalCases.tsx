@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { Button, Descriptions, Empty, Form, Input, Popconfirm, Select, Space, Table, Tabs, Tag, Upload } from 'antd'
 import type { FormInstance } from 'antd'
 import { DeleteOutlined, DownloadOutlined, EditOutlined, ImportOutlined } from '@ant-design/icons'
@@ -15,6 +15,9 @@ import { useListView, type ListColumn } from '../components/ListView'
 import { funcCaseStatusLabel } from '../components/tags'
 import CaseDetailDrawer from '../components/CaseDetailDrawer'
 import EditDrawer from '../components/EditDrawer'
+import { useSearchParams } from 'react-router-dom'
+import TestAssetToolbar, { useTestAssets } from '../components/test-assets/TestAssetToolbar'
+import ScenarioManager from '../components/test-assets/ScenarioManager'
 
 const PRIORITIES = ['P0', 'P1', 'P2', 'P3']
 const prioColor = (p?: string) => (p === 'P0' ? 'red' : p === 'P1' ? 'orange' : 'blue')
@@ -25,6 +28,12 @@ const NEW_KEY = '__new_case__'
 export default function FunctionalCases() {
   const { t } = useI18n()
   const { projectId } = useApp()
+  const assets = useTestAssets(projectId)
+  const [assetParams, setAssetParams] = useSearchParams()
+  const assetView = assetParams.get('testView') === 'scenarios' ? 'scenarios' : 'definitions'
+  const serviceFilter = assetParams.get('service') || ''
+  const caseServices = useMemo(() => new Map(assets.data.cases.map(c => [c.id,c.serviceId])), [assets.data.cases])
+  const selectAssetParam = (name:string,value:string) => {const next=new URLSearchParams(assetParams);if(value)next.set(name,value);else next.delete(name);setAssetParams(next,{replace:true})}
   const unfiled = t('func.unfiled', '未归类')
   const [cases, setCases] = useState<FunctionalCase[]>([])
   const [modules, setModules] = useState<ApiModule[]>([])
@@ -37,7 +46,10 @@ export default function FunctionalCases() {
   const [detailId, setDetailId] = useState<string | null>(null)
   const tabs = useWorkTabs()
 
+  const currentProject = useRef(projectId)
+  currentProject.current = projectId
   const load = async () => {
+    const loadedProject = projectId
     if (!projectId) { setCases([]); setModules([]); return }
     setLoading(true)
     try {
@@ -45,15 +57,18 @@ export default function FunctionalCases() {
         api.functionalCases(projectId),
         api.modules(projectId).catch(() => []),
       ])
+      if (currentProject.current !== loadedProject) return
       setCases(cs)
       setModules(Array.isArray(mm) ? mm : [])
     } catch (e) {
+      if (currentProject.current !== loadedProject) return
       message.error(e instanceof ApiError ? e.message : t('func.loadFailed', '加载失败'))
     } finally {
-      setLoading(false)
+      if (currentProject.current === loadedProject) setLoading(false)
     }
   }
   useEffect(() => {
+    setCases([]); setModules([]); setModuleKey('ALL'); setModuleSearch(''); setDetailId(null); setEditing(null)
     load()
     tabs.reset()
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -110,6 +125,7 @@ export default function FunctionalCases() {
   const allColumns: ListColumn<FunctionalCase>[] = [
     { key: 'name', label: t('func.colName', '名称'), title: t('func.colName', '名称'), dataIndex: 'name', ellipsis: true, render: (name: string) => <span>{name}</span> },
     { key: 'module', label: t('func.colModule', '模块'), title: t('func.colModule', '模块'), dataIndex: 'module', width: 140, render: renderModule },
+    { key: 'service', label: '服务', title: '服务', width: 130, render: (_: unknown,c: FunctionalCase) => assets.data.services.find(s => s.id === caseServices.get(c.id))?.name || '待归属' },
     { key: 'priority', label: t('func.colPriority', '优先级'), title: t('func.colPriority', '优先级'), dataIndex: 'priority', width: 90, render: (p?: string) => <Tag color={prioColor(p)}>{p || 'P2'}</Tag> },
     { key: 'steps', label: t('func.colSteps', '步骤'), title: t('func.colSteps', '步骤'), dataIndex: 'steps', width: 70, render: (s?: CaseStep[]) => (s?.length || 0) },
     { key: 'status', label: t('func.colStatus', '状态'), title: t('func.colStatus', '状态'), dataIndex: 'status', width: 110, render: (s?: string) => <Tag>{funcCaseStatusLabel(s, t)}</Tag> },
@@ -173,14 +189,15 @@ export default function FunctionalCases() {
   if (!projectId) return <SelectProjectEmpty />
 
   // Module-tree filter stacks on top of toolbar filters (selecting a parent includes children; legacy text values count as unfiled).
-  const visible = moduleKey === 'ALL' ? lv.rows : lv.rows.filter(c => moduleKey === 'UNFILED' ? !moduleIdOf(c) : selectedModuleIds?.has(moduleIdOf(c)))
+  const serviceRows = lv.rows.filter(c => !serviceFilter || (serviceFilter === 'UNASSIGNED' ? !caseServices.get(c.id) : caseServices.get(c.id) === serviceFilter))
+  const visible = moduleKey === 'ALL' ? serviceRows : serviceRows.filter(c => moduleKey === 'UNFILED' ? !moduleIdOf(c) : selectedModuleIds?.has(moduleIdOf(c)))
 
   // Left: project-level module tree, same as the scenarios page.
   const left = (
     <ModuleTreePanel
       projectId={projectId}
       modules={modules}
-      items={cases}
+      items={cases.filter(c => !serviceFilter || (serviceFilter === 'UNASSIGNED' ? !caseServices.get(c.id) : caseServices.get(c.id) === serviceFilter))}
       getModuleId={moduleIdOf}
       selectedKey={moduleKey}
       onSelect={setModuleKey}
@@ -214,8 +231,10 @@ export default function FunctionalCases() {
   })
 
   return (
-    <>
-      <Workspace
+    <div style={{height:'100%',display:'flex',flexDirection:'column',minHeight:0}}>
+      <TestAssetToolbar key={projectId} projectId={projectId} data={assets.data} error={assets.error} view={assetView} onView={v=>selectAssetParam('testView',v)} service={serviceFilter} onService={v=>selectAssetParam('service',v)} onChanged={()=>{assets.reload();void load()}} />
+      <div style={{flex:1,minHeight:0}}>
+      {assetView==='scenarios' ? <ScenarioManager key={projectId} projectId={projectId} data={assets.data} cases={cases} serviceFilter={serviceFilter} onChanged={assets.reload} onOpenCase={setDetailId}/> : <Workspace
         left={left}
         listLabel={t('func.allCases', '全部用例')}
         activeKey={tabs.activeKey}
@@ -244,7 +263,8 @@ export default function FunctionalCases() {
             emptyText={t('func.emptyCase', '暂无用例')}
           />
         }
-      />
+      />}
+      </div>
       <CaseDetailDrawer
         open={!!detailId}
         caseId={detailId || ''}
@@ -267,7 +287,7 @@ export default function FunctionalCases() {
           load()
         }}
       />
-    </>
+    </div>
   )
 }
 

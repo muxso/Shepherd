@@ -80,9 +80,9 @@ pub fn facts(
             .filter_map(Value::as_str)
             .filter(|v| !v.trim().is_empty())
             .collect();
-        result.push(json!({"id":commit.external_id,"sha":sha,"author":data["author"],"group":data["group"],"repoId":repo_id,"repo":data["repo"],"authoredAt":data["authoredAt"],
+        result.push(json!({"id":commit.external_id,"sha":sha,"author":data["author"],"authorRaw":data.get("authorRaw").unwrap_or(&data["author"]),"group":data["group"],"repoId":repo_id,"repo":data["repo"],"authoredAt":data["authoredAt"],
             "additions":data["additions"].as_u64(),"deletions":data["deletions"].as_u64(),"linked":!ids.is_empty(),"requirements":linked.into_values().collect::<Vec<_>>(),
-            "languages":languages,"languageSource":data["repositoryLanguageSource"],"languageCommit":data["repositoryLanguageCommit"]}));
+            "languages":languages,"languageSource":data["repositoryLanguageSource"],"languageCommit":data["repositoryLanguageCommit"],"branches":data.get("branches")}));
     }
     result
 }

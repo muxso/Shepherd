@@ -13,18 +13,19 @@
     "e2e:ui": "playwright test --ui"
   },
   "dependencies": {
-    "@ant-design/icons": "^5.5.1",
+    "@ant-design/icons": "^6.3.4",
+    "@antv/g2": "^5.4.8",
     "@dagrejs/dagre": "^1.1.8",
     "@types/dagre": "^0.7.54",
     "@types/dompurify": "^3.0.5",
-    "antd": "^5.26.0",
+    "antd": "^6.7.0",
+    "dayjs": "1.11.21",
     "dompurify": "^3.4.12",
     "lottie-web": "^5.13.0",
     "marked": "^15.0.12",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
-    "react-router-dom": "^6.27.0",
-    "dayjs": "1.11.21"
+    "react-router-dom": "^6.27.0"
   },
   "devDependencies": {
     "@playwright/test": "^1.61.0",

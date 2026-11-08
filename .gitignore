@@ -26,3 +26,10 @@ docs/dogfood-report.html
 # Python sync helper caches
 __pycache__/
 *.pyc
+
+# Private requirement review plans and local credentials.
+/docs/requirement-impact-review/
+/docs/REQUIREMENT-IMPACT-REVIEW.zh-CN.md
+.env
+.env.*
+!.env.example

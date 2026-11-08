@@ -105,6 +105,7 @@ def normalize_case(item,repo,directories,collector):
     rid=repo['testRepoIdentifier'];name=repo.get('name') or rid
     return {'kind':'testcase','externalId':rid+':'+str(item['id']),'data':{
         'serial':item.get('customCode') or str(item['id']),'title':item.get('subject') or '',
+        'url':item.get('url') or item.get('webUrl') or item.get('web_url') or '',
         'repo':name,'repoId':rid,'directory':' / '.join(path),'modulePath':['云效测试库',name]+path,
         'owner':collector.pname(item.get('assignedTo')),'creator':collector.pname(item.get('creator')),
         'priority':priority,'status':'PREPARED','precondition':text(item.get('preCondition')),

@@ -21,12 +21,13 @@ import { EyeInvisibleOutlined, PlusOutlined, QuestionCircleOutlined } from '@ant
 import { api, ApiError, userIdStore, userStore, type ApiKey, type AuthMe, type LlmModel } from '../api'
 import { message } from '../feedback'
 import { useI18n } from '../i18n'
+import AppearanceSettings from './AppearanceSettings'
 
 // Personal center (mirrors MeterSphere): fullscreen drawer, grouped nav on the left,
 // content switches with the nav. Data contract: the personal-center section of api.ts.
 // Backend is developed in parallel — panels degrade to empty state / local fallback
 // when endpoints aren't ready, so opening never blocks.
-type TabKey = 'basic' | 'password' | 'apikey' | 'models'
+type TabKey = 'basic' | 'password' | 'apikey' | 'models' | 'appearance'
 
 export default function PersonalCenter({ open, onClose }: { open: boolean; onClose: () => void }) {
   const { t } = useI18n()
@@ -43,6 +44,7 @@ export default function PersonalCenter({ open, onClose }: { open: boolean; onClo
     {
       title: t('pc.groupSettings', '个人设置'),
       items: [
+        { key: 'appearance', label: t('pc.appearance', '主题与外观') },
         { key: 'apikey', label: 'API KEY' },
         { key: 'models', label: t('pc.models', '模型设置') },
       ],
@@ -54,20 +56,23 @@ export default function PersonalCenter({ open, onClose }: { open: boolean; onClo
       open={open}
       onClose={onClose}
       title={t('pc.title', '个人中心')}
+      rootClassName="personal-center-drawer"
       width="min(1100px, calc(100vw - 72px))"
       destroyOnHidden
       styles={{ body: { padding: 0, display: 'flex', overflow: 'hidden' } }}
     >
       {/* Left: narrow grouped nav, selected item highlighted in brand color */}
-      <div style={{ width: 208, flexShrink: 0, borderRight: '1px solid var(--border-soft)', overflowY: 'auto', padding: '12px 8px' }}>
+      <div className="personal-center-nav" style={{ width: 208, flexShrink: 0, borderRight: '1px solid var(--border-soft)', overflowY: 'auto', padding: '12px 8px' }}>
         {groups.map((g, gi) => (
           <div key={g.title}>
-            {gi > 0 && <div style={{ height: 1, background: 'var(--border-soft)', margin: '8px 4px' }} />}
-            <div style={{ padding: '8px 12px 4px', fontSize: 12, color: 'var(--text-3)' }}>{g.title}</div>
+            {gi > 0 && <div className="personal-center-nav-divider" style={{ height: 1, background: 'var(--border-soft)', margin: '8px 4px' }} />}
+            <div className="personal-center-nav-title" style={{ padding: '8px 12px 4px', fontSize: 12, color: 'var(--text-3)' }}>{g.title}</div>
             {g.items.map((it) => {
               const active = it.key === tab
               return (
-                <div
+                <button
+                  type="button"
+                  className="personal-center-nav-item"
                   key={it.key}
                   onClick={() => setTab(it.key)}
                   style={{
@@ -81,18 +86,19 @@ export default function PersonalCenter({ open, onClose }: { open: boolean; onClo
                   }}
                 >
                   {it.label}
-                </div>
+                </button>
               )
             })}
           </div>
         ))}
       </div>
       {/* Right: content area */}
-      <div style={{ flex: 1, minWidth: 0, overflowY: 'auto', padding: 24 }}>
+      <div className="personal-center-content" style={{ flex: 1, minWidth: 0, overflowY: 'auto', padding: 24 }}>
         {tab === 'basic' && <BasicPanel />}
         {tab === 'password' && <PasswordPanel />}
         {tab === 'apikey' && <ApiKeyPanel />}
         {tab === 'models' && <ModelPanel />}
+        {tab === 'appearance' && <AppearanceSettings />}
       </div>
     </ResizableDrawer>
   )

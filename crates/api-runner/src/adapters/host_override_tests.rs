@@ -44,7 +44,13 @@ fn rules() -> HostOverrides {
     .expect("overrides")
 }
 fn request(url: String) -> RequestSpec {
-    RequestSpec { method: crate::HttpMethod::Get, url, headers: vec![], body: None }
+    RequestSpec {
+        timeout_ms: None,
+        method: crate::HttpMethod::Get,
+        url,
+        headers: vec![],
+        body: None,
+    }
 }
 #[tokio::test]
 async fn host_overrides_preserve_http_authority_and_do_not_leak_between_runners() {

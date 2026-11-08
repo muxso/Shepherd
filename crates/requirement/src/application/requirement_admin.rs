@@ -419,11 +419,7 @@ impl RequirementService {
         Ok(self.repo.list_changes(id, MAX_CHANGE_ENTRIES).await?)
     }
 
-    // TODO(AI review): beyond manual approve/reject, add an AI review opinion — retrieve the
-    // requirement's linked test cases (functional coverage chain) and PRD corpus (RAG) and have
-    // the model output "approve/reject + rationale" as decision input. Lands as the fifth LLM
-    // touchpoint (see server/llm.rs for the first four: split/execute/verify/case drafting);
-    // the review gate stays human-decided, with the AI verdict shown as an attached opinion.
+    // Versioned impact opinions live in RAG; approval remains a human decision.
     pub async fn reject_review(
         &self,
         id: &str,

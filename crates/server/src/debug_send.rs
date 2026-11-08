@@ -222,6 +222,7 @@ async fn send(
         Err(response) => return response,
     };
     let spec = RequestSpec {
+        timeout_ms: None,
         method,
         url: req.url.clone(),
         headers: req.headers.into_iter().map(|h| (h.key, h.value)).collect(),

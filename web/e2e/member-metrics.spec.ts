@@ -6,9 +6,9 @@ const source = { id:'source-a',name:'测试需求池',project_id:'project' }
 const requirement = { externalId:'req-a',serial:'REQ-42',title:'登录需求',status:'已发布',due:'2026-10-15',delivered:true,currentDelivered:true,newInMonth:true,deliveryClass:'deliveredLate',bugIds:['b1'] }
 const alice = { name:'研发甲',group:'研发组',newRequirements:6,deliveredRequirements:4,linkedBugs:2,bugAffectedRequirements:1,bugRate:25,processedBugs:2,qualityBugs:2,reopenUnknownBugs:0,reopenCount:2,reopenedBugs:1,reopenEvaluatedBugs:2,reopenRate:50,bugs:[{externalId:'b1',serial:'BUG-1',title:'登录失败',status:'已解决',createdAt:'2026-07-01T00:00:00+08:00',bugType:'程序逻辑',responsibles:['研发甲'],developers:['修复人'],testers:['测试人'],reporter:'发现人',processed:true,historyAvailable:true,history:[{id:'1',at:'2026-10-10T02:00:00Z',from:'已解决',to:'重新打开'},{id:'2',at:'2026-10-15T03:00:00Z',from:'已解决',to:'重新打开'}],reopenCount:2,reopenTimes:['2026-10-10T02:00:00Z','2026-10-15T03:00:00Z']},{externalId:'b2',serial:'BUG-2',title:'样式问题',status:'已验证',createdAt:'2026-10-01T00:00:00+08:00',bugType:'界面',responsibles:['研发甲'],developers:['修复人'],testers:[],reporter:'发现人',processed:true,historyAvailable:true,history:[],reopenCount:0,reopenTimes:[]}],dueRequirements:5,onTime:3,deliveredLate:1,overdueAtEnd:1,unknownDelivery:0,delayRate:20,radar:[40,75,80],requirements:[requirement] }
 const bob = { ...alice,name:'研发乙',group:'协作组',deliveredRequirements:0,linkedBugs:0,bugAffectedRequirements:0,bugRate:null,processedBugs:0,qualityBugs:0,reopenUnknownBugs:0,reopenCount:0,reopenedBugs:0,reopenEvaluatedBugs:0,reopenRate:null,bugs:[],dueRequirements:0,onTime:0,deliveredLate:0,overdueAtEnd:0,unknownDelivery:0,delayRate:null,radar:[0,null,null],requirements:[] }
-async function fixture(page:Page,enabled=true,comparison=false) {
+async function fixture(page:Page,enabled=true,comparison=false,details=true) {
   const calls:URL[]=[]
-  await page.addInitScript(() => { localStorage.setItem('shepherd.token','radar-test');localStorage.setItem('shepherd.projectId','project');localStorage.setItem('shepherd.theme','light') })
+  await page.addInitScript(details => { localStorage.setItem('shepherd.token','radar-test');localStorage.setItem('shepherd.projectId','project');localStorage.setItem('shepherd.theme','light');localStorage.setItem('shepherd.devops.memberDetails',String(details)) },details)
   await page.route('**/*',async route => {
     if (!['fetch','xhr'].includes(route.request().resourceType())) return route.continue()
     const url=new URL(route.request().url()),path=url.pathname
@@ -177,7 +177,7 @@ test('late month responses cannot overwrite the current month or reset the selec
   await panel.getByLabel('统计月份',{exact:true}).click()
   await page.locator('.ant-picker-dropdown').getByTitle('2026-09',{exact:true}).click()
   await expect(chart).toHaveCount(0)
-  await expect(panel.getByLabel('雷达组织分组').first()).toContainText('研发组')
+  await expect(panel.getByLabel('雷达组织分组').first().locator('xpath=ancestor::*[contains(concat(" ", normalize-space(@class), " "), " ant-select ")][1]')).toContainText('研发组')
   await panel.getByLabel('统计月份',{exact:true}).click()
   await page.locator('.ant-picker-dropdown').getByTitle('2026-10',{exact:true}).click()
   await expect(chart).toBeVisible()
@@ -193,7 +193,7 @@ test('a team with no records in the selected month never falls back to all teams
   await fixture(page)
   await page.goto('/devops?view=radar&month=2026-10&group=不存在的小组')
   const panel=page.getByRole('region',{name:'个人月度雷达指标'})
-  await expect(panel.getByLabel('雷达组织分组').first()).toContainText('不存在的小组')
+  await expect(panel.getByLabel('雷达组织分组').first().locator('xpath=ancestor::*[contains(concat(" ", normalize-space(@class), " "), " ant-select ")][1]')).toContainText('不存在的小组')
   await expect(panel.locator('.yx-member-delivery-table .ant-table-row')).toHaveCount(0)
   await expect(panel.getByText('请选择本组成员进行对比',{exact:true})).toBeVisible()
   await expect(panel.locator('svg.yx-group-radar,svg.yx-member-radar')).toHaveCount(0)
@@ -311,17 +311,14 @@ test('global count sorting covers every page and keeps table, radars, team compa
   await panel.getByRole('columnheader',{name:'关联Bug数'}).click()
   await expect(firstName()).toHaveText('成员00')
   await expect(panel.locator('.yx-member-radar-card').first()).toHaveAttribute('aria-label','成员00指标卡')
-  await expect(panel.getByLabel('成员排序').first()).toContainText('关联Bug数降序')
+  await expect(panel.getByLabel('成员排序').first().locator('xpath=ancestor::*[contains(concat(" ", normalize-space(@class), " "), " ant-select ")][1]')).toContainText('关联Bug数降序')
   expect(new URL(page.url()).searchParams.get('sort')).toBe('bugs')
   await panel.getByRole('columnheader',{name:'关联Bug数'}).click()
   await expect(firstName()).toHaveText('成员13')
   await page.reload()
   await expect(firstName()).toHaveText('成员13')
   await panel.getByLabel('成员排序').first().click()
-  const sortInput=panel.getByRole('combobox',{name:'成员排序'})
-  await sortInput.press('ArrowUp')
-  await sortInput.press('ArrowUp')
-  await sortInput.press('Enter')
+  await page.locator('.ant-select-dropdown:visible').getByTitle('交付需求量升序',{exact:true}).click()
   await expect(firstName()).toHaveText('成员00')
   await panel.getByRole('columnheader',{name:'交付需求量'}).click()
   await expect(firstName()).toHaveText('成员13')
@@ -477,4 +474,18 @@ test('monthly comparisons share member filtering and show percentage points and 
   const toolbar=await page.locator('.ms-topbar').evaluate(el=>({width:el.clientWidth,content:el.scrollWidth}))
   expect(toolbar.content).toBeLessThanOrEqual(toolbar.width+1)
   await page.screenshot({path:'/tmp/shepherd-mobile-statistics.png',fullPage:true,animations:'disabled'})
+})
+
+test('manager overview compares signals before opening detailed tables and radars',async ({page})=>{
+  await fixture(page,true,false,false)
+  await page.goto('/devops?view=radar&month=2026-10')
+  const board=page.getByRole('region',{name:'个人月度雷达指标'}),overview=page.getByLabel('成员指标管理总览')
+  await expect(overview.getByRole('button',{name:'研发甲 4 项',exact:true})).toBeVisible()
+  await expect(board.locator('.yx-member-delivery-table')).toHaveCount(0)
+  await overview.getByRole('button',{name:'研发甲 4 项',exact:true}).click()
+  await expect(page.getByRole('dialog',{name:'研发甲 · 月度需求明细'})).toBeVisible()
+  await page.keyboard.press('Escape')
+  await board.getByRole('button',{name:'查看明细与雷达',exact:true}).click()
+  await expect(board.locator('.yx-member-delivery-table')).toBeVisible()
+  await expect(board.getByRole('img',{name:'研发甲个人雷达图'})).toBeVisible()
 })

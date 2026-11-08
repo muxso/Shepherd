@@ -2,6 +2,7 @@ use crate::domain::error::{normalize_http_method, ApiDefinitionError};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NewApiCase {
+    pub timeout_ms: Option<u64>,
     pub api_definition_id: String,
     pub project_id: String,
     pub name: String,
@@ -45,6 +46,7 @@ impl NewApiCase {
             return Err(ApiDefinitionError::BadAssertions);
         }
         Ok(Self {
+            timeout_ms: None,
             api_definition_id: api_definition_id.to_string(),
             project_id: project_id.to_string(),
             name: name.to_string(),
@@ -67,6 +69,14 @@ impl NewApiCase {
         self.processors =
             if processors.is_array() { processors } else { serde_json::Value::Array(Vec::new()) };
         self
+    }
+
+    pub fn with_timeout_ms(mut self, timeout_ms: Option<u64>) -> Result<Self, ApiDefinitionError> {
+        if timeout_ms.is_some_and(|ms| !(1..=900_000).contains(&ms)) {
+            return Err(ApiDefinitionError::BadTimeout);
+        }
+        self.timeout_ms = timeout_ms;
+        Ok(self)
     }
 
     pub fn with_meta(mut self, priority: &str, status: &str, tags: serde_json::Value) -> Self {
@@ -106,6 +116,7 @@ impl NewApiCase {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ApiCase {
+    pub timeout_ms: Option<u64>,
     pub id: String,
     pub api_definition_id: String,
     pub project_id: String,

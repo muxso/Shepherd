@@ -8,6 +8,7 @@ import monthLocale from 'antd/es/date-picker/locale/zh_CN'
 import { shanghaiMonth, validMonth } from './memberMonth'
 import { MemberRadar, GroupRadar, radarColors } from './MemberRadar'
 import MonthlyComparison from './MonthlyComparison'
+import MemberManagementOverview from './MemberManagementOverview'
 import BugQuality, { BugRows } from './BugQuality'
 import { ApiError } from '../../api'
 import { devopsApi, type MemberMetric, type MemberMetricsData, type MemberRequirementMetric } from './api'
@@ -23,7 +24,7 @@ function ReopenValue({ member:p,rate=false }: { member:MemberMetric; rate?:boole
     <div className="yx-member-number"><strong>{rate ? percent(p.reopenRate ?? null) : `${historyCount(p)}${historyCount(p) === '待同步' ? '' : ' 次'}`}</strong><small>{unknownCount(p) > 0 ? `已核验 ${p.reopenEvaluatedBugs ?? 0} / ${qualityCount(p)} 个Bug` : rate ? `${p.reopenedBugs ?? 0} / ${p.processedBugs ?? 0} 个Bug` : '按状态流转累加'}</small></div>
   </Tooltip>
 }
-const classes: Record<string,string> = { notDue:'不在本月到期范围',onTime:'已交付，不计延期',deliveredLate:'已交付，不计延期',delivered:'已交付，不计延期',overdueAtEnd:'未交付且已超期',unknown:'状态待核验' }
+const classes: Record<string,string> = { notDue:'不在本月到期范围',pendingRelease:'待发布，不计延期',onTime:'已交付，不计延期',deliveredLate:'已交付，不计延期',delivered:'已交付，不计延期',overdueAtEnd:'未交付且已超期',unknown:'状态待核验' }
 function MemberName({ name, onClick }: { name:string; onClick:() => void }) {
   return <Tooltip title={name}><Button type="link" size="small" className="yx-member-name" aria-label={name} onClick={onClick}><span>{name}</span></Button></Tooltip>
 }
@@ -45,6 +46,7 @@ export default function MemberMetrics({ sourceId,revision }: { sourceId:string; 
   const chartView = query.get('chart') === 'members' || !group ? 'members' : 'group'
   const [draftTarget,setDraftTarget] = useState<number | null>(target)
   const [invalidMonth,setInvalidMonth] = useState(!!rawMonth && !validMonth(rawMonth))
+  const [showDetails,setShowDetails] = useState(() => localStorage.getItem('shepherd.devops.memberDetails') === 'true')
   const [search,setSearch] = useState('')
   const sort = sortFields.some(field => field.key === query.get('sort')) ? query.get('sort')! : 'delivered'
   const order = query.get('order') === 'asc' ? 'asc' : 'desc'
@@ -105,12 +107,12 @@ export default function MemberMetrics({ sourceId,revision }: { sourceId:string; 
     <div className="yx-member-toolbar"><Space wrap size={12}>
       <label>统计月份 <DatePicker aria-label="统计月份" picker="month" locale={monthLocale} value={dayjs(`${month}-01`).locale('zh-cn')} format="YYYY年MM月" allowClear={false} inputReadOnly style={{ width:160 }} disabledDate={date => date.format('YYYY-MM') > shanghaiMonth()} onChange={date => { if (date) { setInvalidMonth(false);updateQuery({ month:date.format('YYYY-MM') }) } }} /></label>
       <label>个人交付参考目标 <InputNumber aria-label="个人交付参考目标" value={draftTarget} min={0.1} max={10000} onChange={setDraftTarget} /> 项</label>
-      <Button onClick={() => document.getElementById('yx-bug-quality')?.scrollIntoView({behavior:'smooth'})}>核对缺陷流水</Button>
+      <Button onClick={() => {setShowDetails(true);window.setTimeout(() => document.getElementById('yx-bug-quality')?.scrollIntoView({behavior:'smooth'}),0)}}>核对缺陷流水</Button>
       <Button disabled={!targetValid || draftTarget === target} onClick={() => { if (targetValid) updateQuery({ requirementTarget:String(draftTarget) }) }}>应用参考目标</Button>
     </Space><Popover trigger="click" title="个人指标统计口径" content={<div className="yx-member-notes">
       <p>需求量按本月已发布需求，归当前负责人及明确登记的开发、测试、协作等参与人；仅识别带用户标识的人员类型字段，自由文本不作为成员。多人分别计一次，不能通过成员数求组总量。</p>
       <p>含Bug交付需求占比=本月已交付需求中，本月存在有效关联Bug的需求数/本月交付需求数。按同一源的明确父需求或关联记录识别；取消、重复及误报等状态排除。参与需求的缺陷情况不代表个人责任认定。</p>
-      <p>延期率=未交付且已超期需求数/(本月应交付-状态不明)。当前已发布、已交付及其他完成终态不计延期，超期后完成、统计月之后完成或缺少完成时间也不计延期；历史月份同样按当前快照排除已交付项。包含全部优先级，取最早排期日当天结束；本月进行中仅评价已经到期的需求，无有效分母时待评价。</p>
+      <p>延期率=未交付且已超期需求数/(本月应交付-状态不明)。当前待发布、已发布、已交付及其他完成终态不计延期，超期后完成、统计月之后完成或缺少完成时间也不计延期；历史月份同样按当前快照排除已交付项。包含全部优先级，取最早排期日当天结束；本月进行中仅评价已经到期的需求，无有效分母时待评价。</p>
       <p>状态重开独立于需求交付：纳入本月发生修复完成、验证完成或重开状态流转的全部源Bug，包含过去月份创建的遗留缺陷，不要求已关联需求或需求已发布。次数按本月重开事件累加；比例=本月重开过的Bug去重数/本月修复、验证或重开Bug去重数。归属仅取源“缺陷责任人”，不以当前处理人、开发者或需求参与人代替；缺失归待归属。历史未核验时比例待评价、次数显示已知下限。状态流转不能推算聊天中重复返修次数；可在下方核验表逐条查看源状态流水。</p>
       <p>雷达三轴：交付量=min(已交付/参考目标,1)×100；交付需求质量=100-含Bug交付需求占比；交付时效=100-延期率。缺失维度只显示已知点；参考目标仅调整展示尺度，不产生综合OKR分。</p>
       <p>历史月份由当前快照推算，无法还原需求排期、负责人修改或需求重开；截点后变更的非发布状态与缺少状态时间的到期需求列为不明。分组冲突或未知时列为待归属；可开启“包含无活动成员”查看本月无记录的已同步参与人。</p>
@@ -123,12 +125,14 @@ export default function MemberMetrics({ sourceId,revision }: { sourceId:string; 
           <label className="yx-member-inactive"><Switch size="small" aria-label="包含无活动成员" checked={includeInactive} onChange={v => { setIncludeInactive(v);setMemberPage(1) }} />包含无活动成员</label>
           <Typography.Text type="secondary">{loading ? '正在更新…' : `筛选 ${rows.length} / 已同步 ${metrics?.members.length || 0} 人`}</Typography.Text>
         </div>
+    <Button style={{ marginBottom:12 }} onClick={() => setShowDetails(value => {localStorage.setItem('shepherd.devops.memberDetails',String(!value));return !value})}>{showDetails ? '返回指标总览' : '查看明细与雷达'}</Button>
     {invalidMonth && <Alert type="info" showIcon closable onClose={() => setInvalidMonth(false)} message="月份参数不可用，已显示当前月份，请按需重新选择。" style={{ marginBottom:12 }} />}
     {error && <Alert type="error" message="个人指标读取失败" description={error} showIcon />}
     <Spin spinning={loading}>
       <div className="yx-member-results">
       {metrics && <>
         <div className="yx-member-scope"><Tag>{metrics.month}</Tag><span>上海时区 · 截止 {metrics.endExclusive.replace('T',' ').slice(0,16)}（不含）</span><span>当前快照推算，含Bug交付需求占比供复盘参考</span></div>
+        {!showDetails ? <MemberManagementOverview members={rows} select={setSelected} /> : <>
         <Card size="small" title="需求交付 · 按需求参与人" className="yx-members-table yx-member-delivery-table">
           <Typography.Paragraph type="secondary">交付需求按参与人统计；关联Bug数为这些交付需求在本月新增的有效关联Bug去重数。含Bug交付需求占比＝其中有Bug的需求数 / 交付需求数。</Typography.Paragraph>
           <Table<MemberMetric> size="small" tableLayout="fixed" rowKey="name" dataSource={pageRows} scroll={{ x:1140 }} pagination={false} onChange={(_,__,sorter,extra) => { if (extra.action !== 'sort') return; const selected = Array.isArray(sorter) ? sorter[0] : sorter; if (selected?.order) changeSort(String(selected.columnKey),selected.order === 'ascend' ? 'asc' : 'desc') }} columns={[
@@ -175,6 +179,7 @@ export default function MemberMetrics({ sourceId,revision }: { sourceId:string; 
         </Card>
         {pagination('雷达图分页')}
         <BugQuality data={metrics.bugQuality} group={activeGroup} members={metrics.members}/>
+        </>}
       </>}
       {!metrics && !loading && !error && <Empty description="请选择统计月份" />}
       </div>

@@ -156,20 +156,23 @@ test('1330 requirements use bounded coverage summaries and no per-row requests',
 })
 
 
-test('Yunxiao output follows the page source and interval controls', async ({ page }) => {
-  await fixture(page)
+test('Yunxiao management overview follows the source and interval controls', async ({ page }) => {
+  const requests = await fixture(page)
   await page.goto('/devops')
-  const panel = page.getByRole('region', { name: '岗位产出统计' })
-  await expect(panel.locator('.yx-block-column')).toHaveCount(7)
-  await page.getByRole('combobox', { name: '统计区间', exact: true }).press('ArrowDown')
-  await page.locator('.ant-select-item-option').filter({ hasText: '最近 30 天' }).click()
-  await expect(panel.locator('.yx-block-column')).toHaveCount(30)
-  await page.getByRole('combobox', { name: '云效项目', exact: true }).press('ArrowDown')
-  await page.locator('.ant-select-item-option').filter({ hasText: 'beta' }).click()
-  await expect(panel.getByRole('button', { name: /新增需求/ })).toContainText('101')
+  const panel = page.getByRole('region', { name: '研发管理概览' })
+  await expect(panel.getByRole('img', { name: '新增需求与已发布需求趋势' })).toBeVisible()
+  await page.getByRole('combobox', { name: '统计区间', exact: true }).click()
+  await page.locator('.ant-select-dropdown:visible').getByTitle('最近 30 天', {exact:true}).click()
+  await expect.poll(() => requests.at(-1)).toContain('days=30')
+  await expect(panel.getByText(/2026-10-30 · 新增需求/)).toBeVisible()
+  await page.getByRole('combobox', { name: '云效项目', exact: true }).click()
+  await page.locator('.ant-select-dropdown:visible').getByTitle('beta', {exact:true}).click()
+  await expect(panel.getByRole('button', { name: /本期新增需求/ })).toContainText('101')
   await expect(panel.getByText('alpha 创建人')).toHaveCount(0)
+  await panel.getByRole('button', { name: /本期已发布/ }).click()
+  await expect(page).toHaveURL(/metric=delivered/)
+  await expect(page).toHaveURL(/period=true/)
 })
-
 
 test('trend popovers load concrete records on demand, cache them and link to filtered details', async ({ page }) => {
   await fixture(page)
@@ -180,9 +183,9 @@ test('trend popovers load concrete records on demand, cache them and link to fil
     lookups.push(metric)
     return route.fulfill({ json: { total: 12, items: [{ externalId: 'req-42', serial: 'REQ-42', title: metric === 'testcases' ? '登录校验用例' : metric === 'linkedCommits' ? '实现登录交付' : '登录需求交付', requirements: metric === 'linkedCommits' ? [{ externalId: 'linked', serial: 'REQ-18', title: '关联登录需求' }] : [] }] } })
   })
-  await page.goto('/devops')
+  await page.goto('/home')
   const panel = page.getByRole('region', { name: '岗位产出统计' })
-  await expect(panel.locator('.yx-block-column')).toHaveCount(7)
+  await expect(panel.locator('.yx-block-column')).toHaveCount(30)
   expect(lookups).toHaveLength(0)
   const bar = panel.locator('.yx-block-column').nth(1)
   await bar.hover()
@@ -216,21 +219,17 @@ for (const mode of ['light','dark']) {
     const requests = await fixture(page)
     await page.addInitScript(mode => localStorage.setItem('shepherd.theme', mode), mode)
     await page.goto('/devops')
-    const panel = page.getByRole('region', { name: '岗位产出统计' })
-    await expect(panel.getByRole('button', { name: /新增需求/ })).toBeVisible()
-    await expect(page.getByRole('heading', { name: '云效研发统计' })).toHaveCSS('font-size', '15px')
+    const panel = page.getByRole('region', { name: '研发管理概览' })
+    await expect(panel.getByRole('button', { name: /本期新增需求/ })).toBeVisible()
+    await expect(page.getByRole('heading', { name: '云效研发统计' })).toHaveCount(0)
+    await expect(page.getByLabel('云效项目').first()).toBeVisible()
     await expect(page.getByRole('button', { name: '统计口径' })).toHaveCount(1)
     await expect(page.locator('.ant-alert-info')).toHaveCount(0)
     expect(requests.filter(path => path.includes('dashboard'))).toHaveLength(1)
-    for (const role of ['产品','测试','研发']) {
-      await panel.getByText(role, { exact: true }).click()
-      const consistent = await panel.locator('.yx-block-column .filled').first().evaluate(el => {
-        const swatch = document.createElement('span'); swatch.style.color = 'var(--brand)'; document.body.append(swatch)
-        const expected = getComputedStyle(swatch).color; swatch.remove()
-        return getComputedStyle(el).backgroundColor === expected
-      })
-      expect(consistent).toBe(true)
-    }
+    await expect(panel.getByRole('img', {name:'新增需求与已发布需求趋势'})).toBeVisible()
+    await expect(panel.getByRole('img', {name:'新增缺陷趋势'})).toBeVisible()
+    const stroke = await panel.getByRole('img', {name:'新增需求与已发布需求趋势'}).locator('path').first().evaluate(el => getComputedStyle(el).stroke)
+    expect(stroke).not.toBe('none')
     await page.screenshot({ path: `/tmp/shepherd-devops-${mode}.png`, fullPage: true })
   })
 }

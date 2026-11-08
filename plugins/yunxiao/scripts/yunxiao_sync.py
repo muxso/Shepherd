@@ -12,6 +12,7 @@ import json
 import os
 from pathlib import Path
 import sys
+import threading
 import urllib.error
 import urllib.request
 
@@ -20,6 +21,7 @@ from yunxiao_testhub import enrich_requirements, collect_testcases
 from yunxiao_relations import enrich_bug_relations
 from yunxiao_bug_history import enrich_bug_history
 from yunxiao_repository_languages import repository_language
+from yunxiao_commits import list_commits
 
 def load_env(path):
     for line in Path(path).read_text().splitlines():
@@ -85,6 +87,7 @@ def normalize_workitem(item, kind, collector, groups, sprint_map):
     status = item.get('status') or {}
     data = {'serial':item.get('serialNumber') or str(item['id']), 'title':item.get('subject') or '',
         'description':item.get('description') or '',
+        'url':item.get('url') or item.get('webUrl') or item.get('web_url') or '',
         'status':status.get('displayName') or status.get('name') or '',
         'priority':groups.priority_name(item), 'owner':owner, 'group':groups.group_for(owner),
         'creator':groups.canonical_name(name(item.get('creator'))) if name(item.get('creator')) else '',
@@ -115,13 +118,35 @@ def collect(collector, groups, days):
         records.append({'kind':'sprint','externalId':sid,'data':{'title':sprint.get('name') or '', 'status':str(sprint.get('status') or ''), 'startAt':(collector.dateval(sprint.get('startDate')).isoformat() if collector.dateval(sprint.get('startDate')) else ''), 'endAt':(collector.dateval(sprint.get('endDate')).isoformat() if collector.dateval(sprint.get('endDate')) else ''), 'raw':sprint}})
     until = dt.datetime.now(collector.TZ).replace(second=0,microsecond=0)
     since = until-dt.timedelta(days=days)
+    records.extend(collect_code(collector,groups,since,until,items,bugs,sprints))
+    records.extend(testcases)
+    unique = deduplicate(records)
+    if len(unique) != len(records): print(f"Cloud pagination duplicates deduplicated: {len(records)-len(unique)}", flush=True)
+    return unique,since.isoformat(),until.isoformat()
+
+def collect_code(collector,groups,since,until,items,bugs,sprints):
+    records=[]
     # Cache the already-completed source snapshot for the collector's associations.
     old_workitems, old_sprints, old_ci = collector.workitems, collector.sprints, collector.flow_ci
+    original_commits = getattr(collector, 'commits', None)
+    branch_refs = collections.defaultdict(set)
+    branch_lock = threading.Lock()
+    if callable(original_commits):
+        def tracked_commits(repo, branch, start, end, config):
+            commits = list_commits(collector,repo,branch,start,end,config) if callable(getattr(collector,'api',None)) and callable(getattr(collector,'rows',None)) else original_commits(repo,branch,start,end,config)
+            with branch_lock:
+                for commit in commits:
+                    if commit.get('id'):
+                        branch_refs[str(repo['id']) + ':' + str(commit['id'])].add(branch)
+            return commits
+        collector.commits = tracked_commits
     collector.workitems = lambda c,category='Req': items if category=='Req' else bugs
     collector.sprints = lambda c:sprints
     collector.flow_ci = lambda c,a,b:{'totals':{'passRate':None,'runs':0,'running':0,'passed':0,'failed':0,'pipelineErrors':0},'pipelines':[]}
     try: report = collector.report(since,until,[])
-    finally: collector.workitems,collector.sprints,collector.flow_ci = old_workitems,old_sprints,old_ci
+    finally:
+        collector.workitems,collector.sprints,collector.flow_ci = old_workitems,old_sprints,old_ci
+        if callable(original_commits): collector.commits = original_commits
     if report['totals'].get('branchScanErrors'):
         raise RuntimeError('Codeup branch scan incomplete; snapshot will not be published')
     repository_metadata = {}
@@ -138,11 +163,10 @@ def collect(collector, groups, days):
             'repoId':cm['repo_id'],'repo':cm['repo'],'sha':cm['sha'], 'authoredAt':cm['date'],
             'additions':stats.get('additions'),'deletions':stats.get('deletions'),
             'requirementIds':cm['requirementIds'],'isMerge':False,
-            'parentIds':cm.get('parentIds') or [],'url':cm.get('url') or '', **repository_metadata[rid]}})
-    records.extend(testcases)
-    unique = deduplicate(records)
-    if len(unique) != len(records): print(f"Cloud pagination duplicates deduplicated: {len(records)-len(unique)}", flush=True)
-    return unique,since.isoformat(),until.isoformat()
+            'parentIds':cm.get('parentIds') or [],'url':cm.get('url') or '',
+            **({'branches':sorted(branch_refs.get(rid+':'+cm['sha'],set()))} if callable(original_commits) else {}),
+            **repository_metadata[rid]}})
+    return records
 
 def main():
     if len(sys.argv)>1:load_env(sys.argv[1])

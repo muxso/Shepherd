@@ -3,6 +3,7 @@
 
 use async_trait::async_trait;
 use serde_json::json;
+use serde_json::Value;
 use sqlx::PgPool;
 
 use crate::domain::{Audience, Hit, RagChunk, RagDocument, RagError, Result};
@@ -340,14 +341,20 @@ pub async fn rebuild_keyword_index(
 #[async_trait]
 impl VectorStore for PgVectorStore {
     async fn upsert_document(&self, doc: &RagDocument) -> Result<()> {
+        let metadata: Value = doc
+            .source_id
+            .as_deref()
+            .and_then(|v| serde_json::from_str(v).ok())
+            .unwrap_or(Value::Null);
+        let code = doc.source_type == "code";
         sqlx::query(
             "INSERT INTO ms_rag_document \
-                (id, project_id, source_type, source_id, title, owner_id, visibility_groups, created_at, updated_at) \
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) \
+                (id, project_id, source_type, source_id, title, owner_id, visibility_groups, created_at, updated_at,code_repository_id,code_branch,code_path,code_commit,code_blob) \
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) \
              ON CONFLICT (id) DO UPDATE SET title = EXCLUDED.title, source_type = EXCLUDED.source_type, \
                 source_id = EXCLUDED.source_id, visibility_groups = EXCLUDED.visibility_groups, \
                 owner_id = COALESCE(ms_rag_document.owner_id, EXCLUDED.owner_id), \
-                updated_at = EXCLUDED.updated_at",
+                updated_at = EXCLUDED.updated_at,code_repository_id=EXCLUDED.code_repository_id,code_branch=EXCLUDED.code_branch,code_path=EXCLUDED.code_path,code_commit=EXCLUDED.code_commit,code_blob=EXCLUDED.code_blob",
         )
         .bind(&doc.id)
         .bind(&doc.project_id)
@@ -358,6 +365,11 @@ impl VectorStore for PgVectorStore {
         .bind(&doc.visibility_groups)
         .bind(doc.created_at)
         .bind(doc.updated_at)
+        .bind(if code {metadata["repositoryId"].as_str()}else{None})
+        .bind(if code {metadata["branch"].as_str()}else{None})
+        .bind(if code {metadata["path"].as_str()}else{None})
+        .bind(if code {metadata["commit"].as_str()}else{None})
+        .bind(if code {metadata["blob"].as_str()}else{None})
         .execute(&self.pool)
         .await
         .map_err(be)?;

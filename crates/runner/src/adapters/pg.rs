@@ -243,7 +243,13 @@ impl CaseSpecSource for PgCaseSpecSource {
         let assertions: Vec<Assertion> =
             serde_json::from_value(assertions_json).unwrap_or_default();
         Ok(Some(CaseSpec {
-            request: RequestSpec { method: method_of(&method), url, headers: vec![], body },
+            request: RequestSpec {
+                timeout_ms: None,
+                method: method_of(&method),
+                url,
+                headers: vec![],
+                body,
+            },
             assertions,
         }))
     }

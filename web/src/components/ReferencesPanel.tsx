@@ -12,7 +12,7 @@ import { useThemeMode } from '../themeMode'
 type RefRow = { id: string; name: string; resType: string; refType: string; kind: 'case' | 'scenario' }
 
 const CASE_COLOR = '#06a561'
-const SCN_COLOR = '#1677ff'
+const SCN_COLOR = 'var(--brand)'
 const HUB = '__hub__' // sentinel focus id for the center (this API) node
 
 /** API definition reference relations: which resources (api cases / scenarios) reference it. Two views: table (search + sort) / graph (SVG hub-spoke). */
@@ -130,7 +130,7 @@ function edgePath(cx: number, cy: number, x: number, y: number): string {
  *  detail card, wheel zoom, drag pan, drag a node (springs back). Phyllotaxis / grouped layouts. Zero-dependency SVG. */
 function ReferenceGraph({ definition, rows, loading }: { definition: ApiDefinition; rows: RefRow[]; loading: boolean }) {
   const { t } = useI18n()
-  const { mode } = useThemeMode()
+  const { mode, primaryColor } = useThemeMode()
   const navigate = useScopedNavigate()
   const [hover, setHover] = useState<string | null>(null)
   // SVG presentation attributes don't resolve CSS var(), so read resolved token values per theme mode for fill/stroke.
@@ -145,9 +145,9 @@ function ReferenceGraph({ definition, rows, loading }: { definition: ApiDefiniti
       text: g('--text', '#1c2024'),
       text2: g('--text-2', '#60646c'),
       text3: g('--text-3', '#8b8d98'),
-      brand: g('--brand', '#1664ff'),
+      brand: g('--brand', '#4D9F92'),
     }
-  }, [mode])
+  }, [mode, primaryColor])
   const [layout, setLayout] = useState<GLayout>('radial')
   const [view, setView] = useState({ k: 1, tx: 0, ty: 0 })
   const wrapRef = useRef<HTMLDivElement>(null)

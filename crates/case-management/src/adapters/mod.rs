@@ -8,3 +8,11 @@ pub use pg::PgCaseRepository;
 
 #[cfg(feature = "http")]
 pub mod http;
+
+#[cfg(feature = "http")]
+pub mod test_assets_http;
+#[cfg(feature = "pg")]
+pub mod test_assets_pg;
+
+#[cfg(feature = "pg")]
+mod test_assets_import;

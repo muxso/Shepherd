@@ -53,6 +53,10 @@ fn row_to_module(row: &sqlx::postgres::PgRow) -> Result<ApiModule, RepoError> {
 
 fn row_to_case(row: &sqlx::postgres::PgRow) -> Result<ApiCase, RepoError> {
     Ok(ApiCase {
+        timeout_ms: row
+            .try_get::<Option<i64>, _>("timeout_ms")
+            .map_err(map_err)?
+            .map(|ms| ms as u64),
         id: row.try_get("id").map_err(map_err)?,
         api_definition_id: row.try_get("api_definition_id").map_err(map_err)?,
         project_id: row.try_get("project_id").map_err(map_err)?,
@@ -271,10 +275,10 @@ impl ApiDefinitionRepository for PgApiDefinitionRepository {
         let row = sqlx::query(
             "INSERT INTO ms_api_case \
                 (api_definition_id, project_id, name, method, url, body, assertions, processors, \
-                 priority, case_status, tags, headers, query_params, rest_params, auth) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15) \
+                 priority, case_status, tags, headers, query_params, rest_params, auth, timeout_ms) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16) \
              RETURNING id, api_definition_id, project_id, name, method, url, body, assertions, processors, \
-                       priority, case_status AS status, tags, headers, query_params, rest_params, auth",
+                       priority, case_status AS status, tags, headers, query_params, rest_params, auth, timeout_ms",
         )
         .bind(&c.api_definition_id)
         .bind(&c.project_id)
@@ -291,6 +295,7 @@ impl ApiDefinitionRepository for PgApiDefinitionRepository {
         .bind(&c.query_params)
         .bind(&c.rest_params)
         .bind(&c.auth)
+        .bind(c.timeout_ms.map(|ms| ms as i64))
         .fetch_one(&self.pool)
         .await
         .map_err(map_err)?;
@@ -300,7 +305,7 @@ impl ApiDefinitionRepository for PgApiDefinitionRepository {
     async fn update_case(&self, id: &str, c: &NewApiCase) -> Result<bool, RepoError> {
         let res = sqlx::query(
             "UPDATE ms_api_case SET name=$2, method=$3, url=$4, body=$5, assertions=$6, processors=$7, \
-                    priority=$8, case_status=$9, tags=$10, headers=$11, query_params=$12, rest_params=$13, auth=$14 \
+                    priority=$8, case_status=$9, tags=$10, headers=$11, query_params=$12, rest_params=$13, auth=$14, timeout_ms=$15 \
              WHERE id=$1",
         )
         .bind(id)
@@ -317,6 +322,7 @@ impl ApiDefinitionRepository for PgApiDefinitionRepository {
         .bind(&c.query_params)
         .bind(&c.rest_params)
         .bind(&c.auth)
+        .bind(c.timeout_ms.map(|ms| ms as i64))
         .execute(&self.pool)
         .await
         .map_err(map_err)?;
@@ -368,7 +374,7 @@ impl ApiDefinitionRepository for PgApiDefinitionRepository {
     async fn list_cases(&self, api_definition_id: &str) -> Result<Vec<ApiCase>, RepoError> {
         let rows = sqlx::query(
             "SELECT id, api_definition_id, project_id, name, method, url, body, assertions, processors, \
-                    priority, case_status AS status, tags, headers, query_params, rest_params, auth \
+                    priority, case_status AS status, tags, headers, query_params, rest_params, auth, timeout_ms \
              FROM ms_api_case WHERE api_definition_id = $1",
         )
         .bind(api_definition_id)
@@ -396,7 +402,7 @@ impl ApiDefinitionRepository for PgApiDefinitionRepository {
     ) -> Result<Vec<ApiCase>, RepoError> {
         let rows = sqlx::query(
             "SELECT id, api_definition_id, project_id, name, method, url, body, assertions, processors, \
-                    priority, case_status AS status, tags, headers, query_params, rest_params, auth \
+                    priority, case_status AS status, tags, headers, query_params, rest_params, auth, timeout_ms \
              FROM ms_api_case WHERE project_id = $1 ORDER BY id LIMIT $2 OFFSET $3",
         )
         .bind(project_id)
@@ -655,7 +661,7 @@ impl ApiDefinitionRepository for PgApiDefinitionRepository {
         let rows = sqlx::query(
             "SELECT c.id, c.api_definition_id, c.project_id, c.name, c.method, c.url, c.body, \
                     c.assertions, c.processors, c.priority, c.case_status AS status, c.tags, c.headers, \
-                    c.query_params, c.rest_params, c.auth \
+                    c.query_params, c.rest_params, c.auth, c.timeout_ms \
              FROM ms_task_case tc JOIN ms_api_case c ON c.id = tc.case_id \
              WHERE tc.decomposition_id = $1 AND tc.task_id = $2",
         )

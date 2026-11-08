@@ -949,6 +949,7 @@ dependencies = [
  "thiserror 2.0.18",
  "tokio",
  "tower 0.5.3",
+ "tracing",
  "utoipa",
  "webauth",
 ]
@@ -4155,6 +4156,7 @@ dependencies = [
  "jieba-rs",
  "kernel",
  "migrate",
+ "regex",
  "reqwest",
  "serde",
  "serde_json",

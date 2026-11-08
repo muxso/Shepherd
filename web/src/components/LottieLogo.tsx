@@ -17,5 +17,5 @@ export default function LottieLogo({ size = 96, src = '/logo-animation.json', lo
       anim?.destroy()
     }
   }, [src, loop])
-  return <div ref={ref} style={{ width: size, height: size }} aria-hidden />
+  return <div className={src === '/logo-animation.json' ? 'shepherd-lottie-brand' : undefined} ref={ref} style={{ width: size, height: size }} aria-hidden />
 }

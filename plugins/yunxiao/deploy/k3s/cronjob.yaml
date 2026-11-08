@@ -1,0 +1,94 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: shepherd-yunxiao-sync-cache
+  namespace: shepherd
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: local-path
+  resources:
+    requests:
+      storage: 5Gi
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: shepherd-yunxiao-sync
+  namespace: shepherd
+spec:
+  schedule: "15 * * * *"
+  timeZone: Asia/Shanghai
+  suspend: true
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 300
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      activeDeadlineSeconds: 7200
+      backoffLimit: 0
+      ttlSecondsAfterFinished: 604800
+      template:
+        spec:
+          automountServiceAccountToken: false
+          restartPolicy: Never
+          nodeSelector:
+            kubernetes.io/hostname: SYNC_NODE_NAME
+          securityContext:
+            runAsUser: 1000
+            runAsGroup: 1000
+            fsGroup: 1000
+            seccompProfile:
+              type: RuntimeDefault
+          imagePullSecrets:
+            - name: registry-credentials
+          containers:
+            - name: sync
+              image: SYNC_IMAGE_DIGEST
+              imagePullPolicy: IfNotPresent
+              envFrom:
+                - secretRef:
+                    name: shepherd-yunxiao-sync
+              env:
+                - name: SHEPHERD_URL
+                  value: http://shepherd-server:8088
+                - name: SHEPHERD_CODE_REPO_CACHE
+                  value: /code-cache
+              resources:
+                requests:
+                  cpu: "500m"
+                  memory: 2Gi
+                limits:
+                  cpu: "4"
+                  memory: 12Gi
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop: [ALL]
+              volumeMounts:
+                - name: cache
+                  mountPath: /data
+                - name: tmp
+                  mountPath: /tmp
+                - name: repositories
+                  mountPath: /code-cache/repos
+                  readOnly: true
+                - name: indexed-repositories
+                  mountPath: /code-cache/state/repos
+                  readOnly: true
+          volumes:
+            - name: cache
+              persistentVolumeClaim:
+                claimName: shepherd-yunxiao-sync-cache
+            - name: tmp
+              emptyDir:
+                sizeLimit: 256Mi
+            - name: repositories
+              hostPath:
+                path: /path/to/code-cache/repos
+                type: Directory
+            - name: indexed-repositories
+              hostPath:
+                path: /path/to/code-cache/state/repos
+                type: Directory

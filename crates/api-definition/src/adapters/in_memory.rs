@@ -184,6 +184,7 @@ impl ApiDefinitionRepository for InMemoryApiDefinitionRepository {
         let mut state = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         state.seq += 1;
         let case = ApiCase {
+            timeout_ms: c.timeout_ms,
             id: format!("apicase-{}", state.seq),
             api_definition_id: c.api_definition_id.clone(),
             project_id: c.project_id.clone(),
@@ -213,6 +214,7 @@ impl ApiDefinitionRepository for InMemoryApiDefinitionRepository {
         existing.method = c.method.clone();
         existing.url = c.url.clone();
         existing.body = c.body.clone();
+        existing.timeout_ms = c.timeout_ms;
         existing.assertions = c.assertions.clone();
         existing.processors = c.processors.clone();
         existing.priority = c.priority.clone();

@@ -34,12 +34,17 @@ fn cors_layer() -> Option<CorsLayer> {
 
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
 const LONG_RUN_TIMEOUT: Duration = Duration::from_secs(600);
+const ASSET_IMPORT_TIMEOUT: Duration = Duration::from_secs(300);
 
-/// Execution endpoints that run scenarios/plans/cases in-request and can
-/// legitimately outlive the default guard. Everything else keeps 30s.
+/// Long executions and bulk imports use bounded route-specific windows; ordinary calls keep 30s.
 fn timeout_for(method: &Method, path: &str) -> Duration {
     if method != Method::POST {
         return DEFAULT_TIMEOUT;
+    }
+    if path.starts_with("/test-assets/projects/")
+        && (path.ends_with("/imports") || (path.contains("/imports/") && path.ends_with("/apply")))
+    {
+        return ASSET_IMPORT_TIMEOUT;
     }
     let long_run = path == "/api/scenario/batch-run"
         || (path.starts_with("/api/devops/runs/") && path.ends_with("/complete"))
@@ -140,6 +145,17 @@ mod tests {
         ] {
             assert_eq!(timeout_for(&Method::POST, path), LONG_RUN_TIMEOUT, "{path}");
         }
+    }
+
+    #[test]
+    fn bulk_asset_imports_have_a_bounded_transaction_window() {
+        for path in
+            ["/test-assets/projects/p/imports", "/test-assets/projects/p/imports/batch/apply"]
+        {
+            assert_eq!(timeout_for(&Method::POST, path), ASSET_IMPORT_TIMEOUT);
+            assert_eq!(timeout_for(&Method::GET, path), DEFAULT_TIMEOUT);
+        }
+        assert_eq!(timeout_for(&Method::POST, "/test-assets/projects/p/services"), DEFAULT_TIMEOUT);
     }
 
     #[test]

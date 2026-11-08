@@ -1,6 +1,11 @@
 //! HTTP adapter (feature `http`): document ingest + the streaming Q&A endpoint whose SSE events
 //! (`sources` / `chunk` / `trace` / `done`) drive the Q&A UI and its decision-chain view.
 
+mod code;
+mod impact;
+#[cfg(test)]
+mod test_support;
+
 use std::sync::Arc;
 
 use axum::{
@@ -28,6 +33,7 @@ pub struct RagState {
     pub sessions: Arc<dyn SessionStore>,
     pub config: RagConfigHandle,
     pub pool: sqlx::PgPool,
+    pub changes: Option<Arc<dyn crate::ports::ChangeSource>>,
 }
 
 impl FromRef<RagState> for Arc<dyn SessionStore> {
@@ -45,7 +51,22 @@ pub fn router(
     config: RagConfigHandle,
     pool: sqlx::PgPool,
 ) -> Router {
+    router_with_changes(store, embedder, chat, sessions, config, pool, None)
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn router_with_changes(
+    store: Arc<dyn VectorStore>,
+    embedder: Arc<dyn Embedder>,
+    chat: Arc<dyn Chat>,
+    sessions: Arc<dyn SessionStore>,
+    config: RagConfigHandle,
+    pool: sqlx::PgPool,
+    changes: Option<Arc<dyn crate::ports::ChangeSource>>,
+) -> Router {
     Router::new()
+        .merge(code::routes())
+        .merge(impact::routes())
         .route("/rag/document", post(ingest_document).get(list_documents))
         .route("/rag/document/{id}", axum::routing::delete(delete_document))
         .route("/rag/document/{id}/audience", axum::routing::put(update_document_audience))
@@ -59,7 +80,7 @@ pub fn router(
         .route("/rag/visibility-group/{id}", axum::routing::put(update_group).delete(delete_group))
         .route("/system/rag/config", axum::routing::get(get_config).put(put_config))
         .route("/system/rag/test", post(test_config))
-        .with_state(RagState { store, embedder, chat, sessions, config, pool })
+        .with_state(RagState { store, embedder, chat, sessions, config, pool, changes })
 }
 
 // Directory read permission is part of ordinary users' baseline; it must not bypass KB ACLs.

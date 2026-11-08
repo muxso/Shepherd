@@ -1,0 +1,7 @@
+.test-assets-toolbar{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px;padding:12px 16px;border-bottom:1px solid var(--border-soft);background:var(--panel);flex-shrink:0;}
+.test-assets-note{color:var(--text-3);font-size:12px;line-height:1.7;}
+@media(max-width:1000px){.test-assets-toolbar{gap:8px;padding:10px 12px;}.test-assets-toolbar>.ant-space{flex-wrap:wrap;}.test-assets-toolbar .test-assets-note{display:none;}}
+
+.impact-finding { padding: 16px 0; border-bottom: 1px solid var(--border); }
+.impact-finding p { line-height: 1.7; white-space: pre-wrap; }
+.impact-evidence { padding: 16px; background: var(--bg-layout); border-radius: 8px; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 400px; overflow: auto; }

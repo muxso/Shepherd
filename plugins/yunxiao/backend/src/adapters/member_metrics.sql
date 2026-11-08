@@ -6,9 +6,9 @@ SELECT jsonb_build_object('source',to_jsonb(s),'now',now(), 'records',COALESCE((
     SELECT jsonb_agg(field) FROM jsonb_array_elements(CASE WHEN jsonb_typeof(payload#>'{raw,customFieldValues}')='array' THEN payload#>'{raw,customFieldValues}' ELSE '[]'::jsonb END) field
     WHERE field->>'fieldName' IN ('开发者','测试人员','协同人','协作人','需求提出人','缺陷责任人','缺陷类型')
   ),'[]')) AS data
-  FROM ms_devops_entity WHERE source_id=s.id AND active AND kind IN ('requirement','bug')
+  FROM ms_devops_resolved_entity WHERE source_id=s.id AND active AND kind IN ('requirement','bug')
   UNION ALL
   SELECT DISTINCT 'commit',COALESCE(payload->>'author',''),jsonb_build_object('author',payload->>'author','group',payload->>'group')
-  FROM ms_devops_entity WHERE source_id=s.id AND active AND kind='commit'
+  FROM ms_devops_resolved_entity WHERE source_id=s.id AND active AND kind='commit'
  ) f
 ),'[]')) FROM ms_devops_source s WHERE s.id=$1

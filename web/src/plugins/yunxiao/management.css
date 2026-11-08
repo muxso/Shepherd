@@ -1,0 +1,28 @@
+.yx-management-grid-layout { display:grid;grid-template-columns:minmax(0,1.45fr) minmax(300px,1fr);gap:16px;margin-block:16px; }
+.yx-management-grid-layout > * { min-width:0; }
+.yx-management-summary { display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-bottom:16px; }
+.yx-management-summary > button,.yx-management-summary > article { border:1px solid var(--border);background:var(--panel);border-radius:10px;text-align:left;padding:16px 18px;color:var(--text);cursor:pointer; }
+.yx-management-summary > button:hover { border-color:var(--brand); }
+.yx-management-summary small,.yx-management-summary span { display:block;color:var(--text-3);font-size:12px; }
+.yx-management-summary strong { display:block;font-size:27px;font-weight:600;line-height:1.7; }
+.yx-management-bars > button:not(.ant-btn) { display:grid;grid-template-columns:minmax(85px,1fr) minmax(50px,2.5fr) minmax(52px,auto);gap:14px;align-items:center;width:100%;border:0;background:transparent;color:var(--text);padding:9px 0;font:inherit;font-size:12px;text-align:left;cursor:pointer; }
+.yx-management-bars > button:disabled { cursor:default;opacity:1; }
+.yx-management-bar-name { overflow:hidden;text-overflow:ellipsis;white-space:nowrap; }
+.yx-management-bar-track { height:7px;border-radius:4px;background:var(--border-soft);overflow:hidden; }
+.yx-management-bar-track i { display:block;height:100%;background:var(--brand);opacity:.62;border-radius:4px; }
+.yx-management-bars strong { text-align:right;font-size:12px;font-variant-numeric:tabular-nums; }
+.yx-management-trend svg { display:block;width:100%;height:210px;overflow:visible; }
+.yx-management-trend svg text { fill:var(--text-3);font-size:11px; }
+.yx-management-grid { stroke:var(--border-soft);stroke-dasharray:3 4; }
+.yx-management-crosshair { stroke:var(--text-3);stroke-dasharray:3 3;opacity:.5; }
+.yx-management-trend-legend { display:flex;gap:18px;margin-bottom:8px; }
+.yx-management-trend-legend button { display:flex;align-items:center;gap:6px;border:0;background:transparent;color:var(--text-3);font:inherit;font-size:12px;cursor:pointer;padding:0; }
+.yx-management-trend-legend button[aria-pressed=true] { color:var(--text); }
+.yx-management-trend-legend i { width:7px;height:7px;border-radius:50%; }
+.yx-management-trend-caption { display:flex;justify-content:space-between;align-items:center;gap:12px;font-size:12px;color:var(--text-3);min-height:26px; }
+.yx-management-scope { display:flex;align-items:center;justify-content:space-between;gap:12px;color:var(--text-3);font-size:12px;margin-bottom:16px; }
+.yx-management-filters { display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin-bottom:16px; }
+.yx-management-notes { color:var(--text-3);font-size:12px;line-height:1.7;margin-top:14px; }
+@media(max-width:1000px) { .yx-management-grid-layout { grid-template-columns:1fr; }.yx-management-summary {grid-template-columns:repeat(2,minmax(0,1fr));}.yx-management-trend-caption {flex-wrap:wrap;} }
+
+.yx-management-summary > article { cursor:default; }

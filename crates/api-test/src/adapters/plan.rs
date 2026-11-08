@@ -395,6 +395,7 @@ mod tests {
         let plan = vec![PlanNode::Leaf(Leaf::Request {
             label: "hook".into(),
             request: RequestSpec {
+                timeout_ms: None,
                 method: HttpMethod::Get,
                 url: format!("http://{address}"),
                 headers: vec![],
@@ -418,7 +419,13 @@ mod tests {
         processors: Vec<Processor>,
     ) -> CaseRunSpec {
         CaseRunSpec {
-            request: RequestSpec { method: HttpMethod::Get, url, headers: vec![], body: None },
+            request: RequestSpec {
+                timeout_ms: None,
+                method: HttpMethod::Get,
+                url,
+                headers: vec![],
+                body: None,
+            },
             assertions,
             processors,
         }
