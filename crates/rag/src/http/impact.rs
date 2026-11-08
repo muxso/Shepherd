@@ -915,6 +915,26 @@ async fn decide(
     match sqlx::query("UPDATE ms_requirement_impact_review SET decision=jsonb_build_object('verdict',$2::text,'notes',$3::text,'actor',$4::text,'at',now()) WHERE id=$1").bind(id).bind(b.verdict).bind(b.notes).bind(u.user_id).execute(&s.pool).await{Ok(_)=>Json(json!({"saved":true})).into_response(),Err(_)=>error("decision storage failed",StatusCode::INTERNAL_SERVER_ERROR)}
 }
 
+async fn summaries(u: AuthUser, State(s): State<RagState>, Query(q): Query<Project>) -> Response {
+    if let Err(r) = gate(&u, &s, &q.project_id).await {
+        return r;
+    }
+    let a = load_audience(&u, &s.pool).await;
+    let rows=sqlx::query_scalar::<_,Value>(r#"SELECT jsonb_build_object('requirementId',r.requirement_id,'reviewId',r.id,'state',r.state,'version',r.requirement_version,'versionChanged',r.requirement_version<>(SELECT max(version) FROM ms_requirement_version WHERE requirement_id=r.requirement_id),'risk',COALESCE((SELECT severity FROM (SELECT f->>'severity' severity FROM jsonb_array_elements(COALESCE(r.result->'opinion'->'findings','[]')) f) f ORDER BY CASE severity WHEN 'critical' THEN 4 WHEN 'high' THEN 3 WHEN 'medium' THEN 2 ELSE 1 END DESC LIMIT 1),'none'),'repositories',COALESCE((SELECT jsonb_agg(jsonb_build_object('id',repo->>'id','name',repo->>'name')) FROM jsonb_array_elements(r.baseline->'services') svc CROSS JOIN LATERAL jsonb_array_elements(svc->'repositories') repo),'[]'),'gaps',jsonb_array_length(COALESCE(r.result->'coverageGaps','[]')),'createdAt',r.created_at)
+FROM (SELECT DISTINCT ON(requirement_id) * FROM ms_requirement_impact_review WHERE project_id=$1 ORDER BY requirement_id,created_at DESC,id DESC) r
+JOIN ms_requirement req ON req.id=r.requirement_id AND NOT req.deleted
+WHERE ($6 OR COALESCE((r.baseline->>'canReadCases')::boolean,false)=false)
+AND ($7 OR COALESCE((r.baseline->>'canReadApi')::boolean,false)=false)
+AND NOT EXISTS(SELECT 1 FROM jsonb_array_elements_text(COALESCE(r.result->'sourceDocumentIds','[]')) d WHERE NOT EXISTS(SELECT 1 FROM ms_rag_document WHERE project_id=$1 AND id=d AND ($2 OR owner_id=$3 OR visibility_groups&&$4::text[])))
+AND NOT EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(r.baseline->'inventories','[]')) i CROSS JOIN LATERAL jsonb_array_elements_text(COALESCE(i->'source_document_ids','[]')) d WHERE NOT EXISTS(SELECT 1 FROM ms_rag_document WHERE project_id=$1 AND id=d AND ($2 OR owner_id=$3 OR visibility_groups&&$4::text[])))
+AND NOT EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(r.result->'commitEvidence','[]')) c WHERE NOT EXISTS(SELECT 1 FROM ms_rag_git_commit WHERE project_id=$1 AND repository_id=c->>'repositoryId' AND sha=c->>'sha' AND ($2 OR owner_id=$3 OR visibility_groups&&$4::text[])))
+ORDER BY r.created_at DESC LIMIT $5"#).bind(&q.project_id).bind(a.is_admin).bind(&a.user_id).bind(&a.visible_group_ids).bind(1000i64).bind(u.can("FUNCTIONAL_CASE","READ")).bind(u.can("API_DEFINITION","READ")).fetch_all(&s.pool).await;
+    match rows {
+        Ok(items) => Json(json!({"items":items,"limit":1000})).into_response(),
+        Err(_) => error("review summaries unavailable", StatusCode::INTERNAL_SERVER_ERROR),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::super::test_support::{body, fixture};
@@ -1024,25 +1044,5 @@ mod tests {
                 .await
                 .expect("state");
         assert_eq!(status, "CANCELLED");
-    }
-}
-
-async fn summaries(u: AuthUser, State(s): State<RagState>, Query(q): Query<Project>) -> Response {
-    if let Err(r) = gate(&u, &s, &q.project_id).await {
-        return r;
-    }
-    let a = load_audience(&u, &s.pool).await;
-    let rows=sqlx::query_scalar::<_,Value>(r#"SELECT jsonb_build_object('requirementId',r.requirement_id,'reviewId',r.id,'state',r.state,'version',r.requirement_version,'versionChanged',r.requirement_version<>(SELECT max(version) FROM ms_requirement_version WHERE requirement_id=r.requirement_id),'risk',COALESCE((SELECT severity FROM (SELECT f->>'severity' severity FROM jsonb_array_elements(COALESCE(r.result->'opinion'->'findings','[]')) f) f ORDER BY CASE severity WHEN 'critical' THEN 4 WHEN 'high' THEN 3 WHEN 'medium' THEN 2 ELSE 1 END DESC LIMIT 1),'none'),'repositories',COALESCE((SELECT jsonb_agg(jsonb_build_object('id',repo->>'id','name',repo->>'name')) FROM jsonb_array_elements(r.baseline->'services') svc CROSS JOIN LATERAL jsonb_array_elements(svc->'repositories') repo),'[]'),'gaps',jsonb_array_length(COALESCE(r.result->'coverageGaps','[]')),'createdAt',r.created_at)
-FROM (SELECT DISTINCT ON(requirement_id) * FROM ms_requirement_impact_review WHERE project_id=$1 ORDER BY requirement_id,created_at DESC,id DESC) r
-JOIN ms_requirement req ON req.id=r.requirement_id AND NOT req.deleted
-WHERE ($6 OR COALESCE((r.baseline->>'canReadCases')::boolean,false)=false)
-AND ($7 OR COALESCE((r.baseline->>'canReadApi')::boolean,false)=false)
-AND NOT EXISTS(SELECT 1 FROM jsonb_array_elements_text(COALESCE(r.result->'sourceDocumentIds','[]')) d WHERE NOT EXISTS(SELECT 1 FROM ms_rag_document WHERE project_id=$1 AND id=d AND ($2 OR owner_id=$3 OR visibility_groups&&$4::text[])))
-AND NOT EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(r.baseline->'inventories','[]')) i CROSS JOIN LATERAL jsonb_array_elements_text(COALESCE(i->'source_document_ids','[]')) d WHERE NOT EXISTS(SELECT 1 FROM ms_rag_document WHERE project_id=$1 AND id=d AND ($2 OR owner_id=$3 OR visibility_groups&&$4::text[])))
-AND NOT EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(r.result->'commitEvidence','[]')) c WHERE NOT EXISTS(SELECT 1 FROM ms_rag_git_commit WHERE project_id=$1 AND repository_id=c->>'repositoryId' AND sha=c->>'sha' AND ($2 OR owner_id=$3 OR visibility_groups&&$4::text[])))
-ORDER BY r.created_at DESC LIMIT $5"#).bind(&q.project_id).bind(a.is_admin).bind(&a.user_id).bind(&a.visible_group_ids).bind(1000i64).bind(u.can("FUNCTIONAL_CASE","READ")).bind(u.can("API_DEFINITION","READ")).fetch_all(&s.pool).await;
-    match rows {
-        Ok(items) => Json(json!({"items":items,"limit":1000})).into_response(),
-        Err(_) => error("review summaries unavailable", StatusCode::INTERNAL_SERVER_ERROR),
     }
 }

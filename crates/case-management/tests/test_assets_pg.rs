@@ -158,8 +158,8 @@ async fn service_scope_mapping_and_scenario_execution_are_enforced() {
     let sid = service["id"].as_str().expect("id");
     let c:String=sqlx::query_scalar("INSERT INTO ms_functional_case(project_id,name,num) VALUES($1,'Order flow',100001) RETURNING id").bind(&p).fetch_one(&pool).await.expect("case");
     let outsider:String=sqlx::query_scalar("INSERT INTO ms_functional_case(project_id,name,num) VALUES($1,'Other',100001) RETURNING id").bind(&other).fetch_one(&pool).await.expect("outside case");
-    assert!(store.assign_cases(&p, Some(sid), &[outsider.clone()]).await.is_err());
-    store.assign_cases(&p, Some(sid), &[c.clone()]).await.expect("assign");
+    assert!(store.assign_cases(&p, Some(sid), std::slice::from_ref(&outsider)).await.is_err());
+    store.assign_cases(&p, Some(sid), std::slice::from_ref(&c)).await.expect("assign");
     let definition:String=sqlx::query_scalar("INSERT INTO ms_api_definition(project_id,name,method,path) VALUES($1,'Orders','POST','/orders') RETURNING id").bind(&p).fetch_one(&pool).await.expect("API definition");
     let api_case:String=sqlx::query_scalar("INSERT INTO ms_api_case(project_id,api_definition_id,name,method,url) VALUES($1,$2,'Empty order','POST','/orders') RETURNING id").bind(&p).bind(&definition).fetch_one(&pool).await.expect("API case");
     store
