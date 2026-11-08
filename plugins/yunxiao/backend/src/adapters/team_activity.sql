@@ -1,5 +1,5 @@
 WITH resolved_code AS MATERIALIZED (
- SELECT kind,external_id,payload FROM ms_devops_resolved_entity
+ SELECT kind,external_id,payload FROM ms_devops_statistics_resolved
  WHERE source_id=$1 AND active AND kind='commit'
 ), code_times AS MATERIALIZED (
  SELECT kind,external_id,payload,
@@ -20,7 +20,7 @@ WITH resolved_code AS MATERIALIZED (
 ), activity_facts AS MATERIALIZED (
  SELECT * FROM activity_code
  UNION ALL
- SELECT e.kind,e.external_id,e.payload FROM ms_devops_entity e WHERE e.source_id=$1 AND e.active AND (
+ SELECT e.kind,e.external_id,e.payload FROM ms_devops_statistics_entity e WHERE e.source_id=$1 AND e.active AND (
      (e.kind='requirement' AND $3::bool) OR
      -- Keep a timezone margin here; the domain applies exact event bounds.
      (e.kind='bug' AND $4::bool AND $2 IN ('code','test') AND

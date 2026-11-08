@@ -65,10 +65,19 @@ fn registered(pool: sqlx::PgPool, sessions: Arc<dyn SessionStore>, enabled: bool
         .with_state(sessions.clone());
     #[cfg(feature = "yunxiao")]
     if enabled {
-        return routes.merge(yunxiao::adapters::http::router(
-            yunxiao::application::Service(Arc::new(yunxiao::adapters::pg::PgStore(pool))),
-            sessions,
-        ));
+        let cache_url = std::env::var("SHEPHERD_YUNXIAO_REDIS_URL")
+            .or_else(|_| std::env::var("SHEPHERD_FLEET_REDIS"))
+            .or_else(|_| std::env::var("REDIS_URL"))
+            .ok();
+        let store = yunxiao::adapters::pg::PgStore::new(pool).with_redis_url(cache_url.as_deref());
+        store.start_statistics_warmer();
+        return routes.merge(
+            yunxiao::adapters::http::router(
+                yunxiao::application::Service(Arc::new(store)),
+                sessions,
+            )
+            .layer(tower_http::compression::CompressionLayer::new()),
+        );
     }
     let _ = pool;
     routes

@@ -16,6 +16,8 @@ fn storage_has_no_native_business_table_dependencies() {
         "migrations/0003_activity_members.sql",
         "migrations/0004_identity_group_aggregation.sql",
         "migrations/0005_activity_review_policy.sql",
+        "migrations/0006_statistics_read_model.sql",
+        "src/adapters/statistics_cache.rs",
         "migrations/0001_external_facts.sql",
     ] {
         let source = fs::read_to_string(base.join(relative)).expect("storage source");

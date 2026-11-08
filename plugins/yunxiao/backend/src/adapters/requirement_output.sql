@@ -1,9 +1,9 @@
 WITH bugs AS MATERIALIZED (
- SELECT external_id,payload FROM ms_devops_resolved_entity WHERE source_id=$1 AND kind='bug' AND active
+ SELECT external_id,payload FROM ms_devops_statistics_resolved WHERE source_id=$1 AND kind='bug' AND active
  AND (payload->>'parentId' IN ($2,$3) OR payload->>'parentSerial'=$3 OR COALESCE(payload->'requirementIds','[]') ? $2 OR COALESCE(payload->'requirementIds','[]') ? $3)
  AND ($4::int IS NULL OR (NULLIF(payload->>'createdAt','')::timestamptz AT TIME ZONE 'Asia/Shanghai')::date BETWEEN (now() AT TIME ZONE 'Asia/Shanghai')::date-$4+1 AND (now() AT TIME ZONE 'Asia/Shanghai')::date)
 ), commits AS MATERIALIZED (
- SELECT external_id,payload FROM ms_devops_resolved_entity WHERE source_id=$1 AND kind='commit' AND active
+ SELECT external_id,payload FROM ms_devops_statistics_resolved WHERE source_id=$1 AND kind='commit' AND active
  AND (COALESCE(payload->'requirementIds','[]') ? $2 OR COALESCE(payload->'requirementIds','[]') ? $3)
  AND ($4::int IS NULL OR (NULLIF(payload->>'authoredAt','')::timestamptz AT TIME ZONE 'Asia/Shanghai')::date BETWEEN (now() AT TIME ZONE 'Asia/Shanghai')::date-$4+1 AND (now() AT TIME ZONE 'Asia/Shanghai')::date)
 ), testers AS (
