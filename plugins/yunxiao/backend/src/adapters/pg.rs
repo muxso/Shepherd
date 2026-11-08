@@ -250,6 +250,7 @@ impl Store for PgStore {
             .execute(&mut *tx)
             .await
             .map_err(db)?;
+        sqlx::query("ANALYZE ms_devops_statistics_entity").execute(&mut *tx).await.map_err(db)?;
         tx.commit().await.map_err(db)?;
         self.warm_statistics(&source);
         Ok(json!({"id":run,"status":"SUCCESS","counts":actual}))
