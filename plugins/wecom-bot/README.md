@@ -24,3 +24,7 @@ The PVC stores bindings, deduplication IDs, and conversation history. It keeps u
 ```sh
 python3 -m unittest discover -s tests -v
 ```
+
+Activity summaries read the configured project's collected Git records directly, with server-calculated Shanghai dates and person filters. Calendar weeks run Monday through Sunday. On Sunday 2026-11-08, this week is November 2–8 and last week is October 26–November 1. Explicit ISO date ranges and the latest N days are supported within the last 365 days. Replies show collection coverage and at most 15 commit links.
+
+Report checks locate candidate evidence in collected commits and their linked Yunxiao requirements. Similar titles are candidates, not proof of the same work, a production release, test execution, or report truthfulness. Missing candidates do not mean no work occurred. The gateway does not automatically inspect code diffs, release pipelines, or unseen group history for these checks.

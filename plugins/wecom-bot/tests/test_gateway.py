@@ -53,12 +53,12 @@ class GatewayTests(unittest.IsolatedAsyncioTestCase):
         message = frame()
         message["body"].pop("text")
         message["body"].update(msgtype="mixed", mixed={"msg_item": [
-            {"msgtype": "text", "text": {"content": "@机器人 梳理一下"}},
-            {"msgtype": "text", "text": {"content": "本周的提交"}},
+            {"msgtype": "text", "text": {"content": "@机器人 解释一下"}},
+            {"msgtype": "text", "text": {"content": "这个接口"}},
         ]})
         await self.gateway.on_message(message)
         await self.gateway.on_message(message)
-        self.assertEqual(calls, ["梳理一下\n本周的提交"])
+        self.assertEqual(calls, ["解释一下\n这个接口"])
         self.assertIsNotNone(self.gateway.last_message_at)
         self.assertTrue(self.client.replies[-1][1])
 
@@ -70,6 +70,20 @@ class GatewayTests(unittest.IsolatedAsyncioTestCase):
         await self.gateway.on_message(message)
         self.assertIn("暂时无法读取", self.client.replies[-1][0])
         self.assertEqual(self.gateway.state.history("group-a", "user-a"), [])
+
+    async def test_activity_summary_uses_collected_records_instead_of_rag(self):
+        self.gateway.state.bind("group-a", "secret", "secret")
+        calls = []
+        async def activity(project, days, role="code"):
+            calls.append((project, days, role))
+            return {"events": [{"kind": "commit", "actor": "成员甲", "date": "2026-11-04", "title": "订单修正", "sha": "abc123", "repo": "service-a", "requirements": []}]}
+        self.gateway.activity = activity
+        with patch("gateway.activity_window", return_value=("2026-11-02", "2026-11-08", 7)):
+            await self.gateway.on_message(frame(question="梳理git和云效成员甲本周干啥了"))
+        self.assertEqual(calls, [("project-a", 7, "code")])
+        self.assertIn("2026-11-02 ～ 2026-11-08", self.client.replies[-1][0])
+        self.assertIn("abc123", self.client.replies[-1][0])
+        self.assertTrue(self.client.replies[-1][1])
 
     async def test_unbound_room_is_rejected_without_backend_or_history(self):
         await self.gateway.on_text(frame())
