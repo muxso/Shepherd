@@ -33,6 +33,9 @@ def frame(message="m1", room="group-a", user="user-a", question="说明接口"):
 
 class GatewayTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
+        self.policy_mode = patch.dict(os.environ, {"WECOM_REMOTE_POLICY": "0"})
+        self.policy_mode.start()
+        self.addCleanup(self.policy_mode.stop)
         self.directory = tempfile.TemporaryDirectory()
         path = Path(self.directory.name)
         (path / "config.json").write_text(json.dumps({"projectId": "project-a", "allowedChatIds": []}))
@@ -153,6 +156,19 @@ class GatewayTests(unittest.IsolatedAsyncioTestCase):
             await self.gateway.on_text(frame(question="绑定 secret"))
         self.assertIn("后台开启", self.client.replies[-1][0])
         self.assertFalse(self.gateway.state.allowed("group-a", []))
+
+    async def test_backend_authorization_is_required_when_no_mode_is_configured(self):
+        self.gateway.state.bind("group-a", "secret", "secret")
+        calls = []
+        async def api(path):
+            calls.append(path)
+            return {"enabled": False, "conversations": []}
+        async def report(receipt=None): pass
+        self.gateway.api, self.gateway.report_status = api, report
+        with patch.dict(os.environ, {}, clear=True):
+            await self.gateway.on_text(frame())
+        self.assertEqual(calls, ["/rag/channel/runtime"])
+        self.assertIn("尚未授权", self.client.replies[-1][0])
 
 
 if __name__ == "__main__":

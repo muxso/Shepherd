@@ -162,6 +162,18 @@ pub async fn retrieve(
         .iter()
         .any(|word| question.contains(word))
     {
+        if store
+            .scoped_search(project_id, &[], question, "onboarding", 1, audience)
+            .await?
+            .is_some_and(|hits| hits.is_empty())
+        {
+            trace.steps.push(TraceStep::Fusion {
+                method: "maintained-onboarding",
+                candidates: 0,
+                selected: 0,
+            });
+            return Ok((Vec::new(), Vec::new(), trace));
+        }
         let vector = embedder.embed(question).await.unwrap_or_default();
         if let Some(hits) = store
             .scoped_search(project_id, &vector, question, "onboarding", top_k, audience)

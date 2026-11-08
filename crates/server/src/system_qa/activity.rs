@@ -33,26 +33,30 @@ impl Intent {
         {
             return None;
         }
-        let source = ["云效", "git", "代码", "提交", "产出", "bug", "缺陷", "测试", "需求"]
+        let source = ["云效", "git", "代码", "仓库", "提交", "产出", "bug", "缺陷", "测试", "需求"]
             .iter()
             .any(|word| q.contains(word));
         let chart =
             ["热力图", "统计图", "趋势图", "柱状图", "图表"].iter().any(|word| q.contains(word));
-        let activity = [
-            "干啥",
-            "干了",
-            "做了",
-            "干什么",
-            "工作",
-            "摸鱼",
-            "偷懒",
-            "贡献",
-            "提交情况",
-            "提交记录",
-            "有没有提交",
-        ]
-        .iter()
-        .any(|word| q.contains(word));
+        let activity = ((q.contains("git") || q.contains("代码") || q.contains("仓库"))
+            && ["多少", "数量", "几次", "排行", "最大", "最多"]
+                .iter()
+                .any(|word| q.contains(word)))
+            || [
+                "干啥",
+                "干了",
+                "做了",
+                "干什么",
+                "工作",
+                "摸鱼",
+                "偷懒",
+                "贡献",
+                "提交情况",
+                "提交记录",
+                "有没有提交",
+            ]
+            .iter()
+            .any(|word| q.contains(word));
         let assessment =
             ["摸鱼", "偷懒", "绩效", "干啥", "干了", "做了", "干什么", "工作量", "有没有产出"]
                 .iter()
@@ -568,6 +572,11 @@ mod tests {
     fn assessment_questions_without_source_keywords_still_require_real_activity() {
         assert!(Intent::parse("本周成员甲摸鱼了吗").is_some());
         assert!(Intent::parse("成员甲上周干啥了").is_some());
+    }
+    #[test]
+    fn count_questions_use_observed_code_activity() {
+        assert!(Intent::parse("云效本周代码提交有多少").is_some());
+        assert!(Intent::parse("本周代码行数最多").is_some());
     }
     #[test]
     fn implementation_questions_keep_document_retrieval() {

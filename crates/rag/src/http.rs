@@ -1094,6 +1094,12 @@ async fn ask_stream(
                     source_values=provider.reference_links(&query,&authorization,source_values.clone()).await.unwrap_or(source_values);
                 }
                 yield ev("sources", json!({ "session_id": sid, "sources": source_values }));
+                if hits.is_empty() && trace.steps.iter().any(|step|matches!(step,TraceStep::Fusion {method:"maintained-onboarding",..})) {
+                    yield ev("scope",json!({"kind":"onboarding_knowledge","status":"missing_visible_material","projectId":b.project_id}));
+                    yield ev("chunk",json!({"delta":"当前项目尚无你有权访问的已维护入职资料，无法核实具体办理手续或公司制度。请在“入职知识”中维护真实指南／FAQ，并配置可见组后再提问。"}));
+                    yield ev("done",json!({"session_id":sid,"grounded":true}));
+                    return;
+                }
                 if crate::grounding::needs_change_proof(&b.question) {
                     yield ev("scope", json!({"status":"evidence_required","coverage":"retrieved_candidates_only","candidateSources":source_values.len()}));
                     yield ev("chunk", json!({"delta":"当前检索结果是候选资料，尚未完成具体提交差异核验，不能据此确认是谁修改或升级了版本。\n\n需要核对：仓库与分支、提交 SHA、依赖版本变更前后值、实际作者与提交时间。生产故障还需要部署版本和报错日志证据。每日活动文档的作者不能直接作为升级责任人。\n\n本次没有执行全仓库或全部分支扫描；请先查看下方来源。"}));

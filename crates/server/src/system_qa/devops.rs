@@ -12,6 +12,7 @@ pub(super) async fn answer(
 ) -> Result<Option<GroundedAnswer>> {
     let q = &context.question;
     if !q.contains("云效")
+        || prefers_activity(q)
         || q.contains("热力图")
         || q.contains("团队")
         || q.contains("成员")
@@ -213,4 +214,20 @@ pub(super) async fn answer(
         charts,
         scope: json!({"kind":"devops_query","projectId":context.project_id,"sourceId":id,"evidence":evidence}),
     }))
+}
+
+fn prefers_activity(q: &str) -> bool {
+    let q = q.to_lowercase();
+    ["git", "代码", "提交情况", "提交记录", "摸鱼", "偷懒", "干啥", "干了", "工作情况", "工作内容"]
+        .iter()
+        .any(|word| q.contains(word))
+}
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn cloud_prefix_does_not_override_git_or_person_activity() {
+        assert!(super::prefers_activity("云效和 Git 看成员甲上周的工作情况"));
+        assert!(super::prefers_activity("云效本周代码提交有多少"));
+        assert!(!super::prefers_activity("云效新增缺陷按提交人统计"));
+    }
 }
