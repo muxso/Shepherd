@@ -43,6 +43,34 @@ class GatewayTests(unittest.IsolatedAsyncioTestCase):
         self.gateway.state.db.close()
         self.directory.cleanup()
 
+    async def test_mixed_text_reaches_the_query_handler_once(self):
+        self.gateway.state.bind("group-a", "secret", "secret")
+        calls = []
+        async def ask(project, question, history, received, stream):
+            calls.append(question)
+            return "回答"
+        self.gateway.ask = ask
+        message = frame()
+        message["body"].pop("text")
+        message["body"].update(msgtype="mixed", mixed={"msg_item": [
+            {"msgtype": "text", "text": {"content": "@机器人 梳理一下"}},
+            {"msgtype": "text", "text": {"content": "本周的提交"}},
+        ]})
+        await self.gateway.on_message(message)
+        await self.gateway.on_message(message)
+        self.assertEqual(calls, ["梳理一下\n本周的提交"])
+        self.assertIsNotNone(self.gateway.last_message_at)
+        self.assertTrue(self.client.replies[-1][1])
+
+    async def test_unsupported_attachment_gets_a_clear_reply_without_query(self):
+        self.gateway.state.bind("group-a", "secret", "secret")
+        message = frame()
+        message["body"].pop("text")
+        message["body"]["msgtype"] = "image"
+        await self.gateway.on_message(message)
+        self.assertIn("暂时无法读取", self.client.replies[-1][0])
+        self.assertEqual(self.gateway.state.history("group-a", "user-a"), [])
+
     async def test_unbound_room_is_rejected_without_backend_or_history(self):
         await self.gateway.on_text(frame())
         self.assertIn("尚未授权", self.client.replies[0][0])
