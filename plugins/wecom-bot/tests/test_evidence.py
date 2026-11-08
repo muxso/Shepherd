@@ -52,6 +52,15 @@ class EvidenceTests(unittest.TestCase):
         self.assertNotIn("伪造条目", answer)
         self.assertIn("请将要核对的日报条目", report_evidence("从git核对日报", [], self.data(), "2026-11-02", "2026-11-08"))
 
+    def test_activity_assessments_do_not_fall_back_to_semantic_guesses(self):
+        for question in ("基于git分析本周成员甲摸鱼没用", "基于git分析本周成员甲贡献", "检查本周成员甲git", "成员甲今天有没有提交代码"):
+            self.assertTrue(evidence_request(question), question)
+        self.assertFalse(evidence_request("本周git变更检测如何实现"))
+        answer = activity_summary("基于git分析本周成员甲摸鱼没用", self.data(), "2026-11-02", "2026-11-08")
+        self.assertIn("1 次提交", answer)
+        self.assertIn("不能据此判断", answer)
+        self.assertNotIn("无提交记录", answer)
+
     def test_ordinary_knowledge_questions_keep_rag_routing(self):
         self.assertTrue(evidence_request("梳理git和云效检查下成员甲本周干啥了"))
         self.assertTrue(evidence_request("从git记录和云效核对这些日报真实性"))

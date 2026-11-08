@@ -8,7 +8,14 @@ SHANGHAI = dt.timezone(dt.timedelta(hours=8))
 
 def evidence_request(question):
     value = question.lower()
-    return not any(word in value for word in ("统计图", "柱状图", "饼图", "热力图")) and any(word in value for word in ("git", "代码", "提交", "云效")) and any(word in value for word in ("梳理", "核对", "核实", "真实性", "干啥", "干了", "做了", "做什么", "干什么", "总结", "汇总", "哪些", "对应", "工作"))
+    if any(word in value for word in ("统计图", "柱状图", "饼图", "热力图")):
+        return False
+    if any(word in value for word in ("如何实现", "怎么实现", "实现原理", "调用链")):
+        return False
+    source = any(word in value for word in ("git", "代码", "提交", "云效"))
+    period = any(word in value for word in ("本周", "上周", "这周", "今天", "昨天", "本月", "上月")) or bool(re.search(r"(?:最近|近)\s*\d+\s*天|\d{4}-\d{2}-\d{2}", value))
+    work = any(word in value for word in ("梳理", "核对", "核实", "真实性", "干啥", "干了", "做了", "做什么", "干什么", "总结", "汇总", "哪些", "对应", "工作", "摸鱼", "偷懒", "干活", "贡献", "有没有提交", "有无提交"))
+    return source and (work or (period and any(word in value for word in ("分析", "查看", "检查", "评价"))))
 
 
 def activity_window(question, now=None):
@@ -80,6 +87,8 @@ def scope_header(data, start, end, people):
 def activity_summary(question, data, start, end):
     people, events = scoped_events(question, data, start, end)
     lines = scope_header(data, start, end, people)
+    if any(word in question for word in ("摸鱼", "偷懒", "绩效", "工作表现")):
+        lines.append("Git 记录只能说明已观测代码活动，不能据此判断是否摸鱼、工作时长或绩效。")
     if not events:
         return "\n\n".join(lines+["该范围未找到已采集的 Git 提交。不能据此认定没有工作；请检查账号归并、分支采集与同步覆盖。"])
     repos = {str(e.get("repoId") or e.get("repo") or "未标识仓库") for e in events}
