@@ -49,7 +49,7 @@ pub(super) const RESOURCES: &[Resource] = &[
     Resource { visible:"NOT t.deleted", ..resource!("api_scenarios","接口测试场景","API_SCENARIO","api/scenario","ms_api_scenario") },
     Resource { from:"ms_api_case_result t JOIN ms_api_case c ON c.id=t.case_id", project:"c.project_id", document:"to_jsonb(t) || jsonb_build_object('name',c.name)", ..resource!("api_executions","接口用例执行与报告","API_DEFINITION","api/definition","ms_api_case_result") },
     resource!("scenario_executions","接口场景执行与报告","API_SCENARIO","api/scenario","ms_api_scenario_execution"),
-    Resource { visible:"NOT COALESCE((to_jsonb(t)->>'archived')::boolean,false)", ..resource!("perf_reports","性能测试报告","PERF","perf","ms_perf_report") },
+    resource!("perf_reports","性能测试报告","PERF","perf","ms_perf_report"),
     Resource { from:"ms_task t JOIN ms_task_decomposition d ON d.id=t.decomposition_id JOIN ms_requirement r ON r.id=d.requirement_id", project:"r.project_id", visible:"NOT r.deleted", ..resource!("tasks","研发任务","TASK","requirement","ms_task") },
     Resource { from:"ms_delivery_attempt t JOIN ms_task_decomposition d ON d.id=t.decomposition_id JOIN ms_requirement r ON r.id=d.requirement_id", project:"r.project_id", visible:"NOT r.deleted", ..resource!("deliveries","交付执行记录","DELIVERY","requirement","ms_delivery_attempt") },
     Resource { from:"ms_design_proposal t JOIN ms_requirement r ON r.id=t.requirement_id", project:"r.project_id", visible:"NOT r.deleted", ..resource!("designs","设计方案","REQUIREMENT","requirement","ms_design_proposal") },
@@ -345,13 +345,73 @@ pub(super) fn explicit_time(q: &str) -> bool {
     ) || regex::Regex::new(r"(?:近|过去)\s*\d+\s*天|\d{4}[-年/]").expect("time pattern").is_match(q)
 }
 
+const METADATA_COLUMNS: &[&str] = &[
+    "id",
+    "name",
+    "title",
+    "status",
+    "outcome",
+    "state",
+    "priority",
+    "severity",
+    "module",
+    "module_id",
+    "service",
+    "assignee",
+    "handler",
+    "executed_by",
+    "created_by",
+    "description",
+    "design_doc",
+    "created_at",
+    "updated_at",
+    "modified_at",
+    "executed_at",
+    "triggered_at",
+    "added_at",
+    "due_date",
+    "end_at",
+    "requirement_id",
+    "report_id",
+    "case_id",
+    "plan_id",
+    "scenario_id",
+    "method",
+];
+
 pub(super) struct Business {
     pool: PgPool,
     planner: Arc<dyn Chat>,
+    columns: tokio::sync::OnceCell<std::collections::BTreeMap<String, Vec<String>>>,
 }
 impl Business {
     pub fn new(pool: PgPool, planner: Arc<dyn Chat>) -> Self {
-        Self { pool, planner }
+        Self { pool, planner, columns: tokio::sync::OnceCell::new() }
+    }
+    async fn projection(&self, resource: &Resource) -> Result<String> {
+        let columns=self.columns.get_or_try_init(||async {
+            let tables:Vec<_>=RESOURCES.iter().filter_map(|r|r.from.split_whitespace().next()).collect();
+            let rows:Vec<(String,String)>=sqlx::query_as("SELECT c.relname,a.attname FROM pg_class c JOIN pg_attribute a ON a.attrelid=c.oid WHERE c.oid IN (SELECT to_regclass(name) FROM unnest($1::text[]) resources(name)) AND a.attnum>0 AND NOT a.attisdropped AND a.attname=ANY($2) ORDER BY c.relname,a.attnum")
+                .bind(tables).bind(METADATA_COLUMNS).fetch_all(&self.pool).await.map_err(storage)?;
+            let mut map:std::collections::BTreeMap<String,Vec<String>>=std::collections::BTreeMap::new();
+            for (table,column) in rows {map.entry(table).or_default().push(column);}
+            Ok::<_,RagError>(map)
+        }).await?;
+        let table = resource.from.split_whitespace().next().expect("catalog table");
+        let fields = columns.get(table).ok_or_else(|| {
+            RagError::Backend("业务模块的元数据结构不可用，请联系管理员。".into())
+        })?;
+        let values: Vec<_> = fields
+            .iter()
+            .map(|field| {
+                if ["description", "design_doc"].contains(&field.as_str()) {
+                    format!("'{field}',CASE WHEN $2='' THEN '' ELSE LEFT(t.{field},4000) END")
+                } else {
+                    format!("'{field}',t.{field}")
+                }
+            })
+            .collect();
+        Ok(format!("jsonb_build_object({})", values.join(",")))
     }
     pub async fn answer(&self, context: &QueryContext) -> Result<Option<GroundedAnswer>> {
         if contains(&context.question, &["可以查询哪些数据", "能查哪些数据", "支持哪些业务数据"])
@@ -492,7 +552,8 @@ impl Business {
             }
             let owner =
                 if plan.owner == "我" { context.user.user_id.as_str() } else { &plan.owner };
-            let sql = read_sql(r, plan.group_by, plan.updated);
+            let projection = self.projection(r).await?;
+            let sql = read_sql(r, plan.group_by, plan.updated, Some(&projection));
             let value: Value = sqlx::query_scalar(&sql)
                 .bind(&context.project_id)
                 .bind(&plan.text)
@@ -610,7 +671,16 @@ fn format_time(s: &str) -> String {
         .unwrap_or_else(|_| s.to_owned())
 }
 
-fn read_sql(r: &Resource, group: GroupBy, updated: bool) -> String {
+fn read_sql(r: &Resource, group: GroupBy, updated: bool, projection: Option<&str>) -> String {
+    let document = r
+        .document
+        .replace("to_jsonb(t)", projection.unwrap_or("to_jsonb(t)"))
+        .replace("v.description", "CASE WHEN $2='' THEN '' ELSE LEFT(v.description,4000) END");
+    let status = if r.id == "bugs" {
+        "(SELECT si.name FROM ms_status_item si WHERE si.project_id=$1 AND si.id=j->>'status')"
+    } else {
+        "NULL::text"
+    };
     let time = if updated {
         "COALESCE(j->>'updated_at',j->>'modified_at')"
     } else {
@@ -623,7 +693,7 @@ fn read_sql(r: &Resource, group: GroupBy, updated: bool) -> String {
     ), projected AS (
       SELECT COALESCE(j->>'id',j->>'report_id',j->>'case_id','') AS id,
         COALESCE(j->>'name',j->>'title',j->>'method',j->>'plan_id',j->>'scenario_id',j->>'requirement_id','未命名') AS name,
-        COALESCE((SELECT si.name FROM ms_status_item si WHERE si.project_id=$1 AND si.id=j->>'status'),j->>'status',j->>'outcome',j->>'state','未设置') AS status,
+        COALESCE({status},j->>'status',j->>'outcome',j->>'state','未设置') AS status,
         COALESCE(j->>'priority',j->>'severity','未设置') AS priority,
         COALESCE(j->>'module',j->>'module_id','未设置') AS module,
         COALESCE(j->>'service','未归属') AS service,
@@ -652,7 +722,6 @@ fn read_sql(r: &Resource, group: GroupBy, updated: bool) -> String {
       'unknownDates',(SELECT count(*) FROM base WHERE date=''),
       'buckets',COALESCE((SELECT jsonb_agg(to_jsonb(x) ORDER BY x.count DESC,x.label) FROM (SELECT * FROM grouped ORDER BY count DESC,label LIMIT 100) x),'[]'::jsonb),
       'items',COALESCE((SELECT jsonb_agg(to_jsonb(samples) ORDER BY date DESC,id ASC) FROM samples),'[]'::jsonb))"#,
-        document = r.document,
         from = r.from,
         project = r.project,
         visible = r.visible,
@@ -698,7 +767,7 @@ mod tests {
     #[test]
     fn all_resources_have_project_fences_and_parameterized_filters() {
         for r in RESOURCES {
-            let sql = read_sql(r, GroupBy::Status, false);
+            let sql = read_sql(r, GroupBy::Status, false, None);
             assert!(sql.contains("=$1 AND"));
             assert!(sql.contains("LIMIT 12"));
             assert!(!sql.contains("content_b64"));
@@ -750,11 +819,27 @@ mod tests {
         };
         let business = Business::new(pool.clone(), Arc::new(NoModel));
         for r in RESOURCES {
+            let projection = business.projection(r).await.unwrap();
+            let sql = read_sql(r, GroupBy::Status, false, Some(&projection));
+            assert!(!sql.contains("to_jsonb(t)"));
+            for forbidden in
+                ["content_b64", "headers", "auth", "instructions", "definition_snapshot"]
+            {
+                assert!(!projection.contains(forbidden), "{} includes {}", r.id, forbidden);
+            }
             let result = business
                 .execute(&context, &Plan { resources: vec![r.id.into()], ..Plan::default() })
                 .await;
             assert!(result.is_ok(), "{}: {:?}", r.id, result.err());
         }
+        sqlx::query("INSERT INTO ms_requirement(project_id,title) SELECT $1,'Large fixture '||n FROM generate_series(1,100) n").bind(&project).execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO ms_requirement_version(requirement_id,version,description) SELECT id,1,$2 FROM ms_requirement WHERE project_id=$1").bind(&project).bind("large fixture body ".repeat(60000)).execute(&pool).await.unwrap();
+        let metadata = business
+            .execute(&context, &Plan { resources: vec!["requirements".into()], ..Plan::default() })
+            .await
+            .unwrap();
+        assert_eq!(metadata.scope["results"][0]["total"], 100);
+        assert!(!metadata.content.contains("large fixture body"));
         for (name, scope, deleted) in [
             ("visible", project.as_str(), false),
             ("foreign", "another-project", false),

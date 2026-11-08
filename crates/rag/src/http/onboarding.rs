@@ -146,10 +146,42 @@ async fn detail(user: AuthUser, State(st): State<RagState>, Path(id): Path<Strin
 mod tests {
     use super::super::test_support::{body, fixture};
     use super::*;
+    struct NoEmbedding;
+    #[async_trait::async_trait]
+    impl crate::ports::Embedder for NoEmbedding {
+        fn dim(&self) -> usize {
+            1
+        }
+        async fn embed(&self, _: &str) -> crate::domain::Result<Vec<f32>> {
+            panic!("missing maintained knowledge must not call embeddings")
+        }
+    }
     #[tokio::test]
     #[ignore = "requires isolated SHEPHERD_RAG_TEST_DATABASE_URL"]
     async fn maintained_knowledge_has_versions_and_live_visibility() {
-        let (st, user, project, _) = fixture().await;
+        let (mut st, user, project, _) = fixture().await;
+        let original = st.embedder.clone();
+        st.embedder = std::sync::Arc::new(NoEmbedding);
+        let response = super::super::ask_stream(
+            user.clone(),
+            axum::http::HeaderMap::new(),
+            State(st.clone()),
+            Json(super::super::AskBody {
+                project_id: project.clone(),
+                question: "新人入职需要哪些手续？".into(),
+                top_k: 8,
+                trace: false,
+                rerank: true,
+                history: vec![],
+                session_id: None,
+            }),
+        )
+        .await;
+        let stream = axum::body::to_bytes(response.into_body(), 1_000_000).await.unwrap();
+        let text = String::from_utf8(stream.to_vec()).unwrap();
+        assert!(text.contains("missing_visible_material"));
+        assert!(!text.contains("verdict"));
+        st.embedder = original;
         let request = |id: Option<String>, version: u32, text: &str| Publish {
             project_id: project.clone(),
             document_id: id,
