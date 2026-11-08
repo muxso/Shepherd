@@ -8,7 +8,7 @@ import time
 import uuid
 from pathlib import Path
 from urllib.parse import quote
-from channel import Conversations, chart_request, clean_question, render_chart, utf8_limit
+from channel import Conversations, chart_request, incoming_text, render_chart, utf8_limit
 
 
 class SafeLogger:
@@ -27,6 +27,7 @@ class Gateway:
         self.authenticated = False
         self.tasks = asyncio.Semaphore(3)
         self.locks = {}
+        self.last_message_at = None
 
     def config(self):
         config = json.loads(Path(self.config_path).read_text())
@@ -74,13 +75,25 @@ class Gateway:
             answer += "\n\n资料来源：\n"+"\n".join(f"[{i+1}] {str(c.get('title') or '项目资料')[:160]}" for i, c in enumerate(citations[:5]))
         return answer or "当前没有足够资料回答，请补充问题背景。"
 
+    async def on_message(self, frame):
+        body = frame.get("body") or {}
+        self.last_message_at = time.time()
+        kind = body.get("msgtype", "unknown")
+        safe_kind = kind if kind in ("text", "mixed", "image", "voice", "file") else "unknown"
+        print("message_received type="+safe_kind, flush=True)
+        await self.on_text(frame)
+
     async def on_text(self, frame):
         body = frame.get("body", {})
         room = str(body.get("chatid") or "")
         sender = str((body.get("from") or {}).get("userid") or "")
-        question = clean_question((body.get("text") or {}).get("content"))
+        question = incoming_text(body)
         message = str(body.get("msgid") or frame.get("headers", {}).get("req_id") or "")
-        if not sender or not question or not self.state.claim(message):
+        if not sender or not message:
+            print("message_skipped missing_identity", flush=True)
+            return
+        if not self.state.claim(message):
+            print("message_skipped duplicate", flush=True)
             return
         stream = "shepherd_"+uuid.uuid4().hex
         config = self.config()
@@ -92,6 +105,10 @@ class Gateway:
         if not room or not self.state.allowed(room, config.get("allowedChatIds", [])):
             await self.client.reply_stream(frame, stream, "此会话尚未授权。请管理员在目标群内 @ 我发送一次性绑定指令；绑定前不会读取或发送项目资料。", True)
             return
+        if not question:
+            print("message_skipped unsupported_content", flush=True)
+            await self.client.reply_stream(frame, stream, "当前支持文字提问；图片、文件和语音暂时无法读取，请 @ 我用文字描述问题。", True)
+            return
         try:
             await asyncio.wait_for(self.tasks.acquire(), timeout=0.1)
         except asyncio.TimeoutError:
@@ -101,6 +118,7 @@ class Gateway:
             lock = self.locks.setdefault((room, sender), asyncio.Lock())
             async with lock:
                 await self.client.reply_stream(frame, stream, "正在查询项目资料…", False)
+                print("message_acknowledged", flush=True)
                 chart = chart_request(question)
                 images = None
                 if chart:
@@ -113,9 +131,13 @@ class Gateway:
                     images = [await asyncio.to_thread(render_chart, data, metric, os.environ["WECOM_CHART_FONT"])]
                     answer = f"{data['from']} 至 {data['through']}（上海时间）\n已采集活动 {len(data.get('events', []))} 条，新增责任缺陷 {len(data.get('bugs', []))} 个。\n统计图按实际来源记录汇总，完整明细可在项目页面查看。"
                 else:
+                    print("query_started", flush=True)
                     answer = await self.ask(config["projectId"], question, self.state.history(room, sender), frame, stream)
+                if any(item.get("msgtype") != "text" for item in (body.get("mixed") or {}).get("msg_item", [])):
+                    answer = "本次仅根据消息中的文字查询，未读取附件。\n\n"+answer
                 await self.client.reply_stream(frame, stream, utf8_limit(answer), True, msg_item=images)
                 self.state.append(room, sender, question, answer)
+                print("message_completed", flush=True)
         except ValueError:
             await self.client.reply_stream(frame, stream, "统计图支持今天或最近 1～365 天的团队汇总，例如：最近 7 天代码提交统计图。其他问题可直接用文字提问。", True)
         except Exception as error:
@@ -146,9 +168,9 @@ async def main():
         @client.on("error")
         def error(*args):
             print("websocket_error", flush=True)
-        client.on("message.text", gateway.on_text)
+        client.on("message", gateway.on_message)
         async def health(request):
-            return web.json_response({"authenticated": gateway.authenticated}, status=200 if request.path == "/healthz" or gateway.authenticated else 503)
+            return web.json_response({"authenticated": gateway.authenticated, "lastMessageAt": gateway.last_message_at, "activeQueries": len(gateway.locks)}, status=200 if request.path == "/healthz" or gateway.authenticated else 503)
         app = web.Application(); app.router.add_get("/healthz", health); app.router.add_get("/readyz", health)
         runner = web.AppRunner(app, access_log=None); await runner.setup(); await web.TCPSite(runner, "0.0.0.0", 8080).start()
         stop = asyncio.Event()

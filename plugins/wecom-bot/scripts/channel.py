@@ -16,6 +16,16 @@ def clean_question(value):
     return re.sub(r"^@\S+\s+", "", value).strip()[:8000]
 
 
+def incoming_text(body):
+    kind = body.get("msgtype", "text")
+    if kind == "text":
+        return clean_question((body.get("text") or {}).get("content"))
+    if kind == "mixed":
+        items = (body.get("mixed") or {}).get("msg_item", [])
+        return clean_question("\n".join(str((item.get("text") or {}).get("content") or "") for item in items if item.get("msgtype") == "text"))
+    return ""
+
+
 def utf8_limit(value, limit=19000):
     raw = str(value).encode()
     return raw[:limit].decode(errors="ignore") + ("…" if len(raw) > limit else "")
